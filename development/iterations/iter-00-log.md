@@ -1,7 +1,7 @@
 # Iteration 0 — LOG (Structured Logging)
 
 **Subsystem:** `LOG`
-**Status:** pending
+**Status:** done
 **Est. LOC:** ~1,500
 
 ## Overview
@@ -34,22 +34,22 @@ internal/LOG/
 
 | ID | Requirement | Status |
 |---|---|---|
-| R01 | `Logger` interface: `Debug/Info/Warn/Error` with atomic level check | pending |
-| R02 | `Sync()` flushes underlying handler | pending |
-| R03 | `With(args ...any) Logger` returns a child logger | pending |
-| R04 | `SetLevel(slog.Level)` updates level atomically | pending |
-| R05 | JSON or text output format configurable via `Options.LogFormat` | pending |
-| R06 | `Hook` interface: `OnLog(level, msg, args)`, `Close` | pending |
-| R07 | `HookRegistry` interface: `Register/Unregister` named hooks | pending |
-| R08 | Bounded async channel dispatcher for hook events (non-blocking, drop on overflow) | pending |
-| R09 | `logEvent` struct: level, msg, args, ts | pending |
-| R10 | `OnLog` called in background goroutine — never blocks logging path | pending |
-| R11 | `TraceHook` stub: implements `Hook`, listens for SQL events (stub — real impl later) | pending |
-| R12 | `MetricHook` stub: implements `Hook`, lock-free counters/histograms (stub) | pending |
-| R13 | `ProfileHook` stub: implements `Hook`, triggered by Error level (stub) | pending |
-| R14 | `go vet ./internal/LOG/...` zero warnings | pending |
-| R15 | `go test ./internal/LOG/... -race -count=1` all green | pending |
-| R16 | Benchmark: concurrent logging throughput | pending |
+| R01 | `Logger` interface: `Debug/Info/Warn/Error` with atomic level check | done |
+| R02 | `Sync()` flushes underlying handler | done |
+| R03 | `With(args ...any) Logger` returns a child logger | done |
+| R04 | `SetLevel(slog.Level)` updates level atomically | done |
+| R05 | JSON or text output format configurable via `Options.LogFormat` | done |
+| R06 | `Hook` interface: `OnLog(level, msg, args)`, `Close` | done |
+| R07 | `HookRegistry` interface: `Register/Unregister` named hooks | done |
+| R08 | Bounded async channel dispatcher for hook events (non-blocking, drop on overflow) | done |
+| R09 | `logEvent` struct: level, msg, args, ts | done |
+| R10 | `OnLog` called in background goroutine — never blocks logging path | done |
+| R11 | `TraceHook` stub: implements `Hook`, listens for SQL events (stub — real impl later) | done |
+| R12 | `MetricHook` stub: implements `Hook`, lock-free counters/histograms (stub) | done |
+| R13 | `ProfileHook` stub: implements `Hook`, triggered by Error level (stub) | done |
+| R14 | `go vet ./internal/LOG/...` zero warnings | done |
+| R15 | `go test ./internal/LOG/... -race -count=1` all green | done |
+| R16 | Benchmark: concurrent logging throughput | done |
 
 ## Implementation
 
@@ -57,10 +57,11 @@ internal/LOG/
 
 1. Define `Logger` interface matching design: `Debug/Info/Warn/Error/With/SetLevel/Sync`
 2. Implement `logger` struct wrapping `*slog.Logger`
-3. `level atomic.Int32` for atomic level check before every log call (zero overhead when disabled)
+3. `levelp *atomic.Int32` for atomic level check before every log call (zero overhead when disabled)
 4. Choose `slog.NewJSONHandler` or `slog.NewTextHandler` based on `Options.LogFormat`
 5. Default output: `os.Stderr` via `slog.NewTextHandler(os.Stderr, nil)` when no file configured
 6. `With` returns a new `logger` with extra args merged into the underlying slog logger
+7. `Sync()` uses interface assertion for `Handler.Sync()` (Go 1.24+), falls back to no-op
 
 ### Phase 2: Hook (`HK/hook.go`)
 
@@ -80,13 +81,13 @@ internal/LOG/
 
 ### Phase 4: Benchmarks
 
-1. `logger_bench.go`: `BenchmarkConcurrentLog` — 10k goroutines, 100k total log calls
+1. `logger_bench.go`: `BenchmarkConcurrentLog` — concurrent logging throughput
 
 ## Key Decisions
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Level field | `atomic.Int32` | Matches `slog.Level` underlying type |
+| Level field | `*atomic.Int32` pointer | Avoids copying `noCopy`; shared via pointer in `With()` |
 | Hook channel buffer | 1024 | Non-blocking, recoverable overflow |
 | `With` return | `Logger` interface | Caller doesn't know implementation |
 | Default output | `os.Stderr` | Never lose logs, even without config |
