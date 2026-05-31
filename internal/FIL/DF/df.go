@@ -178,6 +178,9 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 }
 
 func (d *BlockDevice) Sync() error {
+	if d.fd == -1 {
+		return nil
+	}
 	err := unix.Fsync(d.fd)
 	if err != nil && d.log != nil {
 		d.log.Error("df.sync", "err", err)

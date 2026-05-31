@@ -124,6 +124,15 @@ func (r *MetaReader) Read() (*MetaPage, error) {
 		return nil, ErrUpgradeRequired
 	}
 
+	storedSum := binary.LittleEndian.Uint32(raw[metaPageSize-4 : metaPageSize])
+	computedSum := crc32.ChecksumIEEE(raw[:metaPageSize-4])
+	if storedSum != computedSum {
+		if r.log != nil {
+			r.log.Error("mf.read", "path", r.path, "err", ErrCorrupt)
+		}
+		return nil, ErrCorrupt
+	}
+
 	return mp, nil
 }
 

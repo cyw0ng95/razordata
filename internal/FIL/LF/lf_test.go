@@ -178,3 +178,160 @@ func TestRefcount(t *testing.T) {
 		t.Fatalf("FD should be -1 after final Close")
 	}
 }
+
+func TestIncref(t *testing.T) {
+	tmp := t.TempDir()
+	sm, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sm.Close()
+
+	h, err := sm.CreateSegment(3)
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	if h.Refs.Load() != 1 {
+		t.Fatalf("refs should be 1 after CreateSegment, got %d", h.Refs.Load())
+	}
+
+	h.Incref()
+	if h.Refs.Load() != 2 {
+		t.Fatalf("refs should be 2 after Incref, got %d", h.Refs.Load())
+	}
+
+	h.Incref()
+	if h.Refs.Load() != 3 {
+		t.Fatalf("refs should be 3 after second Incref, got %d", h.Refs.Load())
+	}
+
+	h.Close()
+	h.Close()
+}
+
+func TestCloseIdempotent(t *testing.T) {
+	tmp := t.TempDir()
+	sm, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sm.Close()
+
+	h, err := sm.CreateSegment(4)
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+
+	h.Close()
+	err = h.Close()
+	if err == nil {
+		t.Fatalf("second Close should return error")
+	}
+}
+
+func TestCloseWithStaleFD(t *testing.T) {
+	tmp := t.TempDir()
+	sm, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sm.Close()
+
+	h, err := sm.CreateSegment(5)
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	h.Close()
+
+	err = h.Close()
+	if err == nil {
+		t.Fatalf("Close on stale handle should return error")
+	}
+}
+
+func TestGetSegmentReopenStale(t *testing.T) {
+	tmp := t.TempDir()
+	sm, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sm.Close()
+
+	h1, err := sm.CreateSegment(6)
+	if err != nil {
+		t.Fatalf("CreateSegment: %v", err)
+	}
+	h1.Close()
+
+	h2, err := sm.GetSegment(6)
+	if err != nil {
+		t.Fatalf("GetSegment after stale close: %v", err)
+	}
+	if h2.FD < 0 {
+		t.Fatalf("FD should be reopened, got %d", h2.FD)
+	}
+	h2.Close()
+}
+
+func TestGetSegmentCorruptDir(t *testing.T) {
+	tmp := t.TempDir()
+	sm, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sm.Close()
+
+	walDir := filepath.Join(tmp, "wal")
+	if err := os.MkdirAll(walDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	corruptPath := filepath.Join(walDir, "wal.999")
+	if err := os.MkdirAll(corruptPath, 0700); err != nil {
+		t.Fatalf("MkdirAll corrupt: %v", err)
+	}
+
+	_, err = sm.GetSegment(999)
+	if err != ErrCorruptSegment {
+		t.Fatalf("expected ErrCorruptSegment, got %v", err)
+	}
+}
+
+func TestTruncateNotFound(t *testing.T) {
+	tmp := t.TempDir()
+	sm, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sm.Close()
+
+	err = sm.Truncate(99, 0)
+	if err != ErrSegmentNotFound {
+		t.Fatalf("expected ErrSegmentNotFound, got %v", err)
+	}
+}
+
+func TestCloseWithMultipleHandles(t *testing.T) {
+	tmp := t.TempDir()
+	sm, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sm.Close()
+
+	var handles []*FileHandle
+	for i := uint64(10); i < 15; i++ {
+		h, err := sm.CreateSegment(i)
+		if err != nil {
+			t.Fatalf("CreateSegment %d: %v", i, err)
+		}
+		handles = append(handles, h)
+	}
+
+	for _, h := range handles {
+		h.Close()
+	}
+
+	if err := sm.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}

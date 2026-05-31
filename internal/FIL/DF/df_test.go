@@ -2,6 +2,7 @@ package df
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -395,6 +396,266 @@ func TestPersistAndReadBack(t *testing.T) {
 		}
 		if string(buf[:len(data)]) != string(data) {
 			t.Fatalf("data mismatch after reopen")
+		}
+	}
+}
+
+func TestReadBlockCorruptEOF(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "short.block")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	bd.Close()
+
+	// Truncate to zero so pread reads nothing (EOF).
+	os.Truncate(path, 0)
+
+	bd, err = Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer bd.Close()
+
+	buf := make([]byte, DataLen)
+	ctx := context.Background()
+	err = bd.ReadBlock(ctx, 0, 8, buf)
+	if err == nil {
+		t.Fatalf("ReadBlock on zero-sized file should fail")
+	}
+}
+
+func TestSizeAfterTruncate(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "trunc.bin")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	ctx := context.Background()
+	bd.WriteBlock(ctx, 0, []byte("x"))
+	bd.WriteBlock(ctx, 1, []byte("y"))
+	bd.Sync()
+	bd.Close()
+
+	fd, err := unix.Open(path, unix.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	unix.Ftruncate(fd, int64(DefaultBlockSize))
+	unix.Close(fd)
+
+	bd, err = Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer bd.Close()
+
+	size, err := bd.Size()
+	if err != nil {
+		t.Fatalf("Size: %v", err)
+	}
+	if size != int64(DefaultBlockSize) {
+		t.Fatalf("expected size %d, got %d", DefaultBlockSize, size)
+	}
+}
+
+func TestSyncCloseError(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "syncerr.bin")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Close first — subsequent operations should be no-ops.
+	bd.Close()
+
+	// Second Sync should be safe (fd is -1).
+	if err := bd.Sync(); err != nil {
+		t.Fatalf("Sync after close: %v", err)
+	}
+	// Second Close should be safe.
+	if err := bd.Close(); err != nil {
+		t.Fatalf("Second Close: %v", err)
+	}
+}
+
+func TestWriteReadLargeBlock(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "large.block")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	// Write max-sized data.
+	data := make([]byte, DataLen-ChecksumLen)
+	for i := range data {
+		data[i] = byte((i * 31) % 256)
+	}
+
+	ctx := context.Background()
+	if err := bd.WriteBlock(ctx, 0, data); err != nil {
+		t.Fatalf("WriteBlock max: %v", err)
+	}
+	bd.Sync()
+	bd.Close()
+
+	bd, err = Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer bd.Close()
+
+	buf := make([]byte, DataLen)
+	if err := bd.ReadBlock(ctx, 0, DataLen-ChecksumLen, buf); err != nil {
+		t.Fatalf("ReadBlock max: %v", err)
+	}
+	for i := range data {
+		if buf[i] != data[i] {
+			t.Fatalf("byte %d: got %x, want %x", i, buf[i], data[i])
+		}
+	}
+}
+
+func TestSupportsODirect(t *testing.T) {
+	if !supportsODirect() {
+		t.Skip("O_DIRECT not supported on this system")
+	}
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "direct.bin")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	if !bd.direct {
+		t.Fatalf("expected O_DIRECT mode")
+	}
+
+	ctx := context.Background()
+	data := []byte("direct io test")
+	if err := bd.WriteBlock(ctx, 0, data); err != nil {
+		t.Fatalf("WriteBlock in O_DIRECT mode: %v", err)
+	}
+	bd.Sync()
+
+	buf := make([]byte, DataLen)
+	if err := bd.ReadBlock(ctx, 0, len(data), buf); err != nil {
+		t.Fatalf("ReadBlock in O_DIRECT mode: %v", err)
+	}
+	if string(buf[:len(data)]) != string(data) {
+		t.Fatalf("O_DIRECT data mismatch: got %q", string(buf[:len(data)]))
+	}
+}
+
+func TestErrBigBlockRead(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "bigread.block")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	ctx := context.Background()
+
+	// buf smaller than DataLen.
+	smallBuf := make([]byte, DataLen-ChecksumLen-1)
+	err = bd.ReadBlock(ctx, 0, DataLen-ChecksumLen, smallBuf)
+	if err != ErrBigBlock {
+		t.Fatalf("expected ErrBigBlock, got %v", err)
+	}
+}
+
+func TestReadBlockNegativeN(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "neg_n.block")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	ctx := context.Background()
+	buf := make([]byte, DataLen)
+	err = bd.ReadBlock(ctx, 0, -1, buf)
+	if err != ErrBigBlock {
+		t.Fatalf("expected ErrBigBlock for n=-1, got %v", err)
+	}
+}
+
+func TestWriteReadEmptyBlock(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "empty.block")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	ctx := context.Background()
+	empty := []byte{}
+	if err := bd.WriteBlock(ctx, 0, empty); err != nil {
+		t.Fatalf("WriteBlock empty: %v", err)
+	}
+	bd.Sync()
+
+	buf := make([]byte, DataLen)
+	if err := bd.ReadBlock(ctx, 0, 0, buf); err != nil {
+		t.Fatalf("ReadBlock empty: %v", err)
+	}
+	for i := 0; i < DataLen; i++ {
+		if buf[i] != 0 {
+			t.Fatalf("block 0 should be all zeros, byte %d = %x", i, buf[i])
+		}
+	}
+}
+
+func TestWriteReadSingleByte(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "single.block")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	ctx := context.Background()
+	for i := uint64(0); i < 256; i++ {
+		data := []byte{byte(i)}
+		if err := bd.WriteBlock(ctx, i, data); err != nil {
+			t.Fatalf("WriteBlock %d: %v", i, err)
+		}
+	}
+	bd.Sync()
+
+	bd, err = Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer bd.Close()
+
+	for i := uint64(0); i < 256; i++ {
+		buf := make([]byte, DataLen)
+		if err := bd.ReadBlock(ctx, i, 1, buf); err != nil {
+			t.Fatalf("ReadBlock %d: %v", i, err)
+		}
+		if buf[0] != byte(i) {
+			t.Fatalf("block %d: got %d, want %d", i, buf[0], byte(i))
 		}
 	}
 }

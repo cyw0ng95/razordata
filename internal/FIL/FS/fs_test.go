@@ -23,6 +23,18 @@ func TestNewNonExistent(t *testing.T) {
 	}
 }
 
+func TestNewFileNotDir(t *testing.T) {
+	tmp := t.TempDir()
+	file := tmp + "/afile"
+	if err := os.WriteFile(file, []byte("x"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	_, err := New(file)
+	if err == nil {
+		t.Fatalf("expected error for file-as-root")
+	}
+}
+
 func TestPathValidator(t *testing.T) {
 	tmp := t.TempDir()
 	pv, err := newPathValidator(tmp)
@@ -43,6 +55,38 @@ func TestPathValidator(t *testing.T) {
 	}
 	if _, err := pv.Resolve("foo/../../etc/passwd"); err != ErrPathTraversal {
 		t.Fatalf("expected ErrPathTraversal for foo/../../etc/passwd, got %v", err)
+	}
+}
+
+func TestValidate(t *testing.T) {
+	tmp := t.TempDir()
+	pv, err := newPathValidator(tmp)
+	if err != nil {
+		t.Fatalf("newPathValidator: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		path    string
+		wantErr error
+	}{
+		{"absolute path", "/etc/passwd", ErrNotAbsolute},
+		{"traversal", "../foo", ErrPathTraversal},
+		{"deep traversal", "a/b/../../../x", ErrPathTraversal},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := pv.Validate(tc.path)
+			if err != tc.wantErr {
+				t.Fatalf("Validate(%q): got %v, want %v", tc.path, err, tc.wantErr)
+			}
+		})
+	}
+
+	// Valid path: no error.
+	if err := pv.Validate("foo/bar"); err != nil {
+		t.Fatalf("Validate(valid): unexpected error %v", err)
 	}
 }
 
@@ -114,6 +158,34 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+func TestRemoveMissing(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := NewOrCreate(tmp)
+	if err != nil {
+		t.Fatalf("NewOrCreate: %v", err)
+	}
+	defer fm.Close()
+
+	err = fm.Remove("nonexistent")
+	if err != ErrDoesNotExist {
+		t.Fatalf("expected ErrDoesNotExist, got %v", err)
+	}
+}
+
+func TestRemovePathTraversal(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := NewOrCreate(tmp)
+	if err != nil {
+		t.Fatalf("NewOrCreate: %v", err)
+	}
+	defer fm.Close()
+
+	err = fm.Remove("../foo")
+	if err != ErrPathTraversal {
+		t.Fatalf("expected ErrPathTraversal, got %v", err)
+	}
+}
+
 func TestMkdirAll(t *testing.T) {
 	tmp := t.TempDir()
 	fm, err := NewOrCreate(tmp)
@@ -169,6 +241,178 @@ func TestSyncDir(t *testing.T) {
 
 	if err := fm.SyncDir("."); err != nil {
 		t.Fatalf("SyncDir: %v", err)
+	}
+}
+
+func TestSyncDirTwice(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := NewOrCreate(tmp)
+	if err != nil {
+		t.Fatalf("NewOrCreate: %v", err)
+	}
+	defer fm.Close()
+
+	// Sync same directory twice to exercise cached FD path.
+	for i := 0; i < 2; i++ {
+		if err := fm.SyncDir("."); err != nil {
+			t.Fatalf("SyncDir round %d: %v", i, err)
+		}
+	}
+}
+
+func TestSyncDirPathTraversal(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := NewOrCreate(tmp)
+	if err != nil {
+		t.Fatalf("NewOrCreate: %v", err)
+	}
+	defer fm.Close()
+
+	err = fm.SyncDir("../foo")
+	if err != ErrPathTraversal {
+		t.Fatalf("expected ErrPathTraversal, got %v", err)
+	}
+}
+
+func TestOpenMissingFile(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := NewOrCreate(tmp)
+	if err != nil {
+		t.Fatalf("NewOrCreate: %v", err)
+	}
+	defer fm.Close()
+
+	_, err = fm.Open("nonexistent")
+	if err != ErrDoesNotExist {
+		t.Fatalf("expected ErrDoesNotExist, got %v", err)
+	}
+}
+
+func TestOpenPathTraversal(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := NewOrCreate(tmp)
+	if err != nil {
+		t.Fatalf("NewOrCreate: %v", err)
+	}
+	defer fm.Close()
+
+	_, err = fm.Open("../foo")
+	if err != ErrPathTraversal {
+		t.Fatalf("expected ErrPathTraversal, got %v", err)
+	}
+}
+
+func TestOpenSymlinkInPath(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := NewOrCreate(tmp)
+	if err != nil {
+		t.Fatalf("NewOrCreate: %v", err)
+	}
+	defer fm.Close()
+
+	linkPath := filepath.Join(tmp, "link")
+	if err := os.Symlink("/nonexistent", linkPath); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	_, err = fm.Open("link")
+	if err != ErrSymlink {
+		t.Fatalf("expected ErrSymlink, got %v", err)
+	}
+}
+
+func TestCreatePathTraversal(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := NewOrCreate(tmp)
+	if err != nil {
+		t.Fatalf("NewOrCreate: %v", err)
+	}
+	defer fm.Close()
+
+	_, err = fm.Create("../foo")
+	if err != ErrPathTraversal {
+		t.Fatalf("expected ErrPathTraversal, got %v", err)
+	}
+}
+
+func TestListNoMatch(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := NewOrCreate(tmp)
+	if err != nil {
+		t.Fatalf("NewOrCreate: %v", err)
+	}
+	defer fm.Close()
+
+	names, err := fm.List("nothing_*")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("expected 0 matches, got %d", len(names))
+	}
+}
+
+func TestListSubDir(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := NewOrCreate(tmp)
+	if err != nil {
+		t.Fatalf("NewOrCreate: %v", err)
+	}
+	defer fm.Close()
+
+	fm.MkdirAll("sub")
+	for _, name := range []string{"sub/a", "sub/b"} {
+		h, err := fm.Create(name)
+		if err != nil {
+			t.Fatalf("Create %s: %v", name, err)
+		}
+		h.Close()
+	}
+
+	names, err := fm.List("sub/*")
+	if err != nil {
+		t.Fatalf("List sub/*: %v", err)
+	}
+	if len(names) != 2 {
+		t.Fatalf("expected 2, got %d: %v", len(names), names)
+	}
+}
+
+func TestMkdirAllPathTraversal(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := NewOrCreate(tmp)
+	if err != nil {
+		t.Fatalf("NewOrCreate: %v", err)
+	}
+	defer fm.Close()
+
+	err = fm.MkdirAll("../foo")
+	if err != ErrPathTraversal {
+		t.Fatalf("expected ErrPathTraversal, got %v", err)
+	}
+}
+
+func TestCloseWithHandles(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := NewOrCreate(tmp)
+	if err != nil {
+		t.Fatalf("NewOrCreate: %v", err)
+	}
+
+	h1, err := fm.Create("f1")
+	if err != nil {
+		t.Fatalf("Create f1: %v", err)
+	}
+	h2, err := fm.Create("f2")
+	if err != nil {
+		t.Fatalf("Create f2: %v", err)
+	}
+
+	h1.Close()
+	h2.Close()
+
+	if err := fm.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 }
 
