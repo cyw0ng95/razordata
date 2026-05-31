@@ -19,7 +19,7 @@ Joins, subqueries, foreign keys, network server, external C dependencies.
 |---|---|---|---|---|---|
 | 0 | LOG | Structured logging | `LG`, `HK` | ~1,500 | done |
 | 1 | FIL | File I/O | `DF`, `MF`, `LF`, `FS` | ~2,500 | done |
-| 2 | MEM | Buffer pool | `BF`, `PC`, `SP` | ~1,350 | pending |
+| 2 | MEM | Buffer pool | `BF`, `SP` | ~2,000 | done |
 | 3 | WAL | Write-Ahead Log | `WR`, `FL`, `RP` | ~2,000 | pending |
 | 4 | ENG/Memtable | Lock-free skiplist + memtable | `LS` | ~2,000 | pending |
 | 5 | ENG/SST | SST writer + reader + manifest | `LS` | ~3,500 | pending |
@@ -55,8 +55,7 @@ internal/
 ├── FIL/MF/  # MetaFile: meta.razor, magic/version
 ├── FIL/LF/  # LogFile: WAL segment handles
 ├── FIL/FS/  # FileSystem: path validation, SyncDir
-├── MEM/BF/  # Buffer pool: clock-sweep LRU
-├── MEM/PC/  # Page cache: slot, hint file
+├── MEM/BF/  # Buffer pool: clock-sweep LRU, hash table, hint file
 ├── MEM/SP/  # Sync pool: page/iterator buffers
 ├── WAL/WR/  # Writer: append, segment rotation
 ├── WAL/FL/  # Flusher: fsync, LSN counter
