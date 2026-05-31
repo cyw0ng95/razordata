@@ -177,6 +177,37 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 	return err
 }
 
+// ReadBlockFull reads a full block (DataLen bytes) with checksum verification.
+// Does not need the data length as a parameter — reads the full checksummed data.
+// buf must be at least DataLen bytes. Returns ErrCorrupt on checksum mismatch.
+func (d *BlockDevice) ReadBlockFull(blockID uint64, buf []byte) error {
+	if len(buf) < DataLen {
+		return ErrBigBlock
+	}
+
+	offset := blockID * uint64(DefaultBlockSize)
+
+	tmp := borrowTempBuf()
+	defer returnTempBuf(tmp)
+
+	_, err := unix.Pread(d.fd, tmp, int64(offset))
+	if err != nil {
+		if d.log != nil {
+			d.log.Error("df.read_block_full", "blockID", blockID, "err", err)
+		}
+		return err
+	}
+
+	storedSum := binary.LittleEndian.Uint32(tmp[DataLen-ChecksumLen:])
+	computedSum := crc32.ChecksumIEEE(tmp[:DataLen-ChecksumLen])
+	if storedSum != computedSum {
+		return ErrCorrupt
+	}
+
+	copy(buf, tmp[:DataLen-ChecksumLen])
+	return nil
+}
+
 func (d *BlockDevice) Sync() error {
 	if d.fd == -1 {
 		return nil
