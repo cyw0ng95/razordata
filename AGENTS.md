@@ -54,6 +54,11 @@ See `design/ARCH.md` for the full SQL surface and API shape.
 - Property-based tests for storage (crash/recovery).
 - `go test ./... -race -count=1` must pass.
 - No network, no external services in tests.
+- **Add tests per function/method — every public API must have test coverage.
+  Error paths, edge cases (empty, large, corrupt input, missing files),
+  idempotency (double-close, sync-after-close), and boundary conditions
+  are as important as happy paths. Strive for concrete, comprehensive coverage
+  on key foundational modules before moving on.**
 
 ## CI / Linting
 
