@@ -17,7 +17,7 @@ Joins, subqueries, foreign keys, network server, external C dependencies.
 
 | # | Name | Subsystem | Clusters | Est. LOC | Status |
 |---|---|---|---|---|---|
-| 0 | LOG | Structured logging | `LG`, `HK` | ~1,500 | pending |
+| 0 | LOG | Structured logging | `LG`, `HK` | ~1,500 | done |
 | 1 | FIL | File I/O | `DF`, `MF`, `LF`, `FS` | ~2,500 | pending |
 | 2 | MEM | Buffer pool | `BF`, `PC`, `SP` | ~2,000 | pending |
 | 3 | WAL | Write-Ahead Log | `WR`, `FL`, `RP` | ~2,000 | pending |
@@ -49,8 +49,8 @@ All iterations use directory structures that match `design/subsystems/*.md`:
 
 ```
 internal/
-├── LOG/LG/  # Logger: slog wrapper, level control
-├── LOG/HK/  # Hook: registry, async dispatch
+├── LOG/LG/  # Logger: slog wrapper, sharedLogger (level pointer shared in With()), SetOutput
+├── LOG/HK/  # Hook: LogEvent (exported), HookRegistry with Dropped/Dispatched stats
 ├── FIL/DF/  # DataFile: block I/O, checksum
 ├── FIL/MF/  # MetaFile: meta.razor, magic/version
 ├── FIL/LF/  # LogFile: WAL segment handles
