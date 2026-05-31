@@ -107,8 +107,8 @@ type session struct {
 
 - Goroutine-safe: all public methods acquire `mu`.
 - `Query` / `Exec`: parse SQL → bind params → execute → return result.
-- `Begin`: start a new transaction (or reuse existing if none).
-- `Commit` / `Rollback`: commit or abort the current transaction.
+- `Begin`: start a new transaction. Returns `ErrLocked` if a transaction is already active in this session.
+- `Commit` / `Rollback`: commit or abort the current transaction, then set `session.txn = nil`.
 - `SetDeadline`: set a deadline for all subsequent operations in this session.
 
 ### Transaction
@@ -129,23 +129,27 @@ type transaction struct {
 
 ```go
 var (
-    ErrNotFound     = errors.New("razordata: key not found")
-    ErrDuplicateKey = errors.New("razordata: duplicate key")
-    ErrLocked       = errors.New("razordata: resource locked")
-    ErrCorrupt      = errors.New("razordata: data corrupt")
-    ErrSyntax       = errors.New("razordata: syntax error")
-    ErrTypeMismatch = errors.New("razordata: type mismatch")
-    ErrTxAborted    = errors.New("razordata: transaction aborted")
-    ErrIO           = errors.New("razordata: I/O error")
-    ErrUpgradeRequired = errors.New("razordata: upgrade required")
-    ErrReadOnly     = errors.New("razordata: read-only")
+    ErrNotFound         = errors.New("razordata: key not found")
+    ErrDuplicateKey     = errors.New("razordata: duplicate key")
+    ErrLocked           = errors.New("razordata: resource locked")
+    ErrCorrupt          = errors.New("razordata: data corrupt")
+    ErrSyntax           = errors.New("razordata: syntax error")
+    ErrTypeMismatch     = errors.New("razordata: type mismatch")
+    ErrTxAborted        = errors.New("razordata: transaction aborted")
+    ErrIO               = errors.New("razordata: I/O error")
+    ErrUpgradeRequired  = errors.New("razordata: upgrade required")
+    ErrReadOnly         = errors.New("razordata: read-only")
     ErrDeadlineExceeded = errors.New("razordata: deadline exceeded")
 )
+
+var retryable = []error{ErrIO, ErrLocked}
+var fatal = []error{ErrTxAborted, ErrCorrupt, ErrSyntax, ErrTypeMismatch, ErrUpgradeRequired, ErrReadOnly}
 ```
 
 - All errors wrap: I/O errors → structural errors → API-level errors.
 - Error messages are lowercase, no trailing punctuation.
 - Errors are wrapped with `fmt.Errorf("razordata: %w", err)` to preserve the error chain.
+- **Retry classification:** callers should retry on `retryable` errors (with exponential backoff for `ErrLocked`); `fatal` errors must not be retried — they indicate application-level bugs or unrecoverable state.
 
 ### EngineStats
 
@@ -211,8 +215,10 @@ type SessionStats struct {
 **Responsibility:** Session creation, lifecycle, goroutine-safety, deadline, session stats.
 
 **Key behaviors:**
-- `NewSession(engine) *session`: allocate from a `sync.Pool` (reuse inactive sessions).
+- `NewSession(engine) *session`: allocate from a `sync.Pool`. On `Put` back to the pool, clear `txn`, `params`, and `deadline` fields to avoid stale data in reused sessions.
 - `Query` / `Exec`: acquire `mu`, bind params, call `SQL/EX.Exec()`, release `mu`.
+- `Begin`: if `session.txn` is `nil` and not active, create a new transaction; if `session.txn` is already active, return `ErrLocked`. The session-level `mu` ensures no concurrent transactions within a session.
+- `Commit` / `Rollback`: commit or abort the current transaction, then set `session.txn = nil`.
 - `SetDeadline`: set a `time.Time` in an `atomic.Value`. All subsequent `Query`/`Exec` calls respect this deadline.
 - `Stats`: return `SessionStats` including query count, rows returned, bytes read/written.
 - Goroutine-safety: `mu` is held for the duration of each operation. Sessions are not shareable between goroutines by default.

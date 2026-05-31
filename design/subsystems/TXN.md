@@ -82,9 +82,9 @@ func (a *arena) Alloc(n int) []byte {
 }
 ```
 
-- Each goroutine has a thread-local arena (via `sync.Map` keyed by goroutine ID, initialized lazily).
+- Each goroutine has a thread-local arena (via `runtime.GOMAXPROCS(0)`-sized `[]*arena`, indexed by goroutine ID modulo the slice length). Arenas are allocated lazily on first `Alloc` call per goroutine, via `sync.Pool` for reuse.
 - Typically 1 MB per arena. Version nodes are allocated from the arena via pointer arithmetic — no `new` or `make` in the hot path.
-- When an arena is exhausted, a new one is allocated. Old arenas are freed by the epoch reclamation pass.
+- When an arena is exhausted, a new one is fetched from `sync.Pool` (or allocated if the pool is empty). Old arenas are freed by the epoch reclamation pass.
 
 ### Hazard Pointer
 
@@ -126,16 +126,21 @@ type threadRecord struct {
 ### ReadView
 
 ```go
+type versionChainSnapshot struct {
+    key   []byte
+    head  *versionNode // snapshot of the chain head at readTS
+}
+
 type readView struct {
     readTS    uint64
-    snapshot  *versionChainSnapshot // snapshot of the version chain head
+    snapshot  []versionChainSnapshot // one snapshot per key read
     arena     *arena
     mv        *MV
 }
 ```
 
 - A `ReadView` is created when a transaction begins.
-- Contains `readTS` (the transaction's start timestamp) and a snapshot of the version chain heads.
+- Contains `readTS` (the transaction's start timestamp) and snapshots of the version chain heads for all keys read.
 - Readers traverse the version chain, skipping entries where `endTS < readTS` or `beginTS >= readTS` (deleted/tombstone versions).
 - The hazard pointer protocol ensures readers never see a node that is being reclaimed.
 - `Close()` releases the arena and deregisters from the epoch manager.
@@ -160,7 +165,7 @@ type KeyRange struct {
 const MaxConcurrentTXNs = 1024
 ```
 
-- On transaction begin, a slot is allocated from a pre-allocated fixed-size array (no GC pressure). `MaxConcurrentTXNs = 1024`.
+- On transaction begin, a slot is allocated from a pre-allocated fixed-size array (no GC pressure). `MaxConcurrentTXNs = 1024`. The array itself is fixed; allocation uses a mutex-protected free list to pick a free slot from the array.
 - `status`: 0=inactive, 1=active, 2=committed, 3=aborted.
 - `writeSet` tracks the key ranges modified by this transaction.
 - Write-write conflict detection: before commit, check that no other committed transaction with `commitTS > myBeginTS` modified any key in `writeSet`.
@@ -249,10 +254,10 @@ const MaxConcurrentTXNs = 1024
 **Responsibility:** Commit protocol, write-write conflict detection, transaction slot management.
 
 **Key behaviors:**
-- `Begin()`: allocate slot, assign beginTS, create read view.
+- `Begin()`: allocate slot from a mutex-protected free list (no CAS contention — the free list itself is protected by `sync.Mutex`), assign beginTS, create read view.
 - `Validate()`: scan slots, check write-write conflicts.
 - `Commit()`: assign commitTS, update version nodes, write WAL.
-- `Abort()`: mark slot as aborted, release resources.
+- `Abort()`: mark slot as aborted, return slot to free list.
 
 ## Implementation Plan
 
@@ -270,6 +275,4 @@ const MaxConcurrentTXNs = 1024
 ## Open Issues
 
 - Should we use a generational arena instead of a single large allocation? Generational arenas reduce GC pressure but add complexity.
-- What is the maximum number of concurrent transactions? 1024 is a compile-time constant — should it be configurable?
 - How to handle very long-running read transactions? They may prevent GC of many versions. Consider periodic refresh of the read view.
-- Should the transaction slot array be lock-free (using atomic slot allocation) or use a mutex-protected free list?

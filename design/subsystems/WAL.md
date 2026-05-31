@@ -43,10 +43,11 @@ type Replayer interface {
 type RecordType uint8
 
 const (
-    RTData      RecordType = 0
-    RTCommit    RecordType = 1
-    RTRollback  RecordType = 2
+    RTData       RecordType = 0
+    RTCommit     RecordType = 1
+    RTRollback   RecordType = 2
     RTCheckpoint RecordType = 3
+    RTMerge      RecordType = 4 // compaction output: ENG writes SST directly, no WAL involvement
 )
 ```
 
@@ -100,13 +101,14 @@ type lsnCounter struct {
 ```go
 type writeBuffer struct {
     seg     *logSegment
-    records []byte // pre-allocated from MEM/SP
+    records []byte // pre-allocated 256 KB from MEM/SP
     lsn     uint64
     mu      sync.Mutex
     synced  int64  // lsn that has been fsynced
 }
 ```
 
+- `records` is pre-allocated once per active segment at 256 KB. Small batches are copied into the buffer without allocation; if the buffer is full, a new segment is created (the 64 MB segment size handles the large case, the 256 KB buffer handles per-record overhead).
 - Records are appended to `records` via `binary.LittleEndian` — no intermediate allocations.
 - `Sync()` calls `fsync` on the segment FD, then updates `synced`.
 - Batch commit: multiple transactions can be grouped into one `fsync` call via a `sync.WaitGroup` and a single write barrier.
@@ -141,6 +143,7 @@ type replayer struct {
 
 - Scans all WAL segments from the checkpoint LSN to the end.
 - Replay order is determined by LSN (which encodes segment + offset), not segment filename order.
+- **Replayer scope:** `onData` callbacks only populate the in-memory memtable state. The replayer does NOT write SST files or update the manifest — those are derived from the manifest on startup, not from WAL replay.
 - For `RTData`: apply the block image to the buffer pool and update the memtable in memory.
 - For `RTCommit`: mark the transaction as committed in `TXN/SN`.
 - For `RTRollback`: discard the transaction's write set.
@@ -176,11 +179,11 @@ type replayer struct {
 
 ### RP — Replay
 
-**Responsibility:** WAL replay on startup, recovery, checkpoint detection, manifest update.
+**Responsibility:** WAL replay on startup, checkpoint detection, segment truncation.
 
 **Key behaviors:**
 - `Replay()`: find last checkpoint, scan from checkpoint LSN, apply records in LSN order.
-- After replay: truncate clean segments, warm buffer pool with manifest.
+- After replay: truncate clean segments before the checkpoint. Do not update the manifest — manifest state comes from the manifest file on startup.
 - If no checkpoint found (new database), initialize empty state.
 
 ## Implementation Plan
@@ -195,6 +198,5 @@ type replayer struct {
 
 ## Open Issues
 
-- Should the WAL support `RTMerge` records (for compaction output) or is that handled by `ENG/LS` directly?
 - How to handle WAL corruption (partial record at end of segment)? Skip to next segment or fail recovery?
 - Should we support WAL compression (lz4) to reduce I/O, at the cost of CPU?

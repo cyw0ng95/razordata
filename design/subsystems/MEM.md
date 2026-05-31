@@ -7,7 +7,7 @@ Buffer pool that caches SST blocks in memory. All reads from and writes to the L
 ## Dependencies
 
 - Required: `FIL`
-- Consumed interfaces: `BlockDevice`, `FileManager`, `PathValidator`
+- Consumed interfaces: `BlockDevice`, `FileManager`
 
 ## Exposed Interfaces
 
@@ -80,20 +80,16 @@ type bufferHashTable struct {
 - `RLock` for reads (`Get`), `Lock` for writes (eviction, insertion).
 - The map stores only cached blocks; `nil` means block is not in memory.
 
-### ClockSweep
+### ClockSweep Integration
 
-```go
-type clockSweep struct {
-    hand    atomic.Uint64       // global clock hand
-    slots   []*bufferSlot       // ring buffer of all slots
-    capacity int64
-}
-```
+The clock sweep runs concurrently with `Get`/`Pin`/`Unpin` operations:
 
-- Global `hand` is atomically incremented after each eviction attempt.
-- Each slot has a `refKey` (initially the hand value at last access). When the hand passes the `refKey`, the slot becomes a candidate.
-- Candidate is evicted if `pinCount == 0` and `dirty == false`. If `dirty == true`, the slot is flushed to disk first.
-- No element movement in the ring — only `refKey` values change. O(1) per eviction tick.
+- `hand` is an `atomic.Uint64` — no mutex needed to read or increment it.
+- Each slot's `refKey` is atomically updated on access (after a successful `Get`, set `refKey = hand.Load()`).
+- Eviction loop: read `hand` → check slot's `refKey` → if `refKey < hand - N` (N = clock interval), candidate for eviction.
+- Eviction is gated by `mu.Lock()` on the hash table — it acquires write lock, checks `pinCount == 0`, flushes if dirty, removes from map, releases lock.
+- This means eviction may briefly stall a `Get` that needs to insert a new slot, but `Get` itself is never blocked on a pending eviction.
+- `loading` flag on a slot prevents multiple goroutines from loading the same block simultaneously — only the first acquires the write lock; others wait on `wait` channel.
 
 ### SyncPool
 
@@ -112,15 +108,18 @@ type syncPool struct {
 
 ```go
 type hintEntry struct {
-    BlockID uint64
-    LastAccess int64 // Unix timestamp
+    BlockID     uint64
+    LastAccess  int64 // Unix timestamp in seconds
 }
 ```
 
-- Serialized as a binary list: `[count:varint][entry_0][entry_1]...[entry_N]`.
+- Serialized as a binary list: `[count:varint][entry_0][entry_1]...[entry_N]`
+- Each entry: `[blockID:varint][lastAccess:varint]`
+- Both fields are varint-encoded (1-10 bytes each), making the file compact.
+- No checksum on the hint file — it is advisory only. On corruption, the buffer pool starts cold.
+- **When to compress:** compress only if the hint file exceeds 1 MB. Use gzip with level 6. Compression is done lazily on the next write; the old uncompressed file is removed after the compressed version is written.
 - Written on clean `Close()` via `Engine.Close`.
-- On startup, read from `<name>.razor/hint` and eagerly loaded into the buffer pool before serving queries.
-- `HintFile` is colocated in `MEM/PC` as it is the warm-up mechanism for the buffer pool.
+- On startup, read from `<name>.razor/hint` (decompress if `.gz` suffix exists) and eagerly loaded into the buffer pool before serving queries.
 
 ## Function Clusters
 
@@ -174,4 +173,3 @@ type hintEntry struct {
 
 - Should the buffer pool use `mmap` instead of `read`/`write` for even lower overhead?
 - How to handle huge databases that exceed the buffer pool? Memory-mapped files with OS-managed eviction?
-- Should `HintFile` be compressed (gzip) to reduce startup I/O for large working sets?

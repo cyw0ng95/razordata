@@ -37,18 +37,6 @@ type FileHandle struct {
     FD   int
     Refs atomic.Int64
 }
-
-// PathValidator validates paths against the database root
-type PathValidator interface {
-    Validate(path string) error
-    Resolve(path string) (string, error)
-}
-
-// MetaReader reads the meta page
-type MetaReader interface {
-    Read() (*MetaPage, error)
-    Write(p *MetaPage) error
-}
 ```
 
 ## Data Structures
@@ -74,29 +62,56 @@ type MetaPage struct {
 
 ```go
 type FileHandle struct {
-    path string
-    fd   int
-    refs atomic.Int64
+    Path string
+    FD   int
+    Refs atomic.Int64
     mu   sync.Mutex
 }
 ```
 
-- Reference-counted. `Open()` increments `refs`; `Close()` decrements and closes when `refs == 0`.
-- All operations protected by `sync.Mutex` to prevent double-close and concurrent access to the same FD.
+- `FD` is the OS file descriptor.
+- `Refs` is atomically incremented on `Open()` and decremented on `Close()`. When `Refs == 0`, the FD is closed.
+- `mu` protects `FD` from concurrent access and prevents double-close. All public methods acquire `mu` before operating on `FD`.
+- `Path` is the absolute path to the file, used for debugging and identification.
 
 ### FileManager
 
 ```go
 type fileManager struct {
-    dir    string
-    root   string
-    handles sync.Map // map[string]*FileHandle
-    mu     sync.RWMutex
+    dir     string
+    handles sync.Map // map[string]*FileHandle, keyed by absolute path
+    dirFDs  sync.Map // map[string]int, cached directory FDs for SyncDir
 }
 ```
 
-- All paths are validated against `root` (the database directory).
-- `handles` is a `sync.Map` keyed by absolute path — provides concurrent-safe access to open file handles.
+- `handles` provides concurrent-safe access to open file handles.
+- `dirFDs` caches open directory FDs to avoid repeated `Open`/`Close` for `SyncDir`. Cached FDs are closed on `fileManager.Close()`.
+
+### PathValidator (colocated in FS)
+
+```go
+type pathValidator struct {
+    root string
+}
+
+func (v *pathValidator) Validate(path string) error
+func (v *pathValidator) Resolve(path string) (string, error)
+```
+
+- Reject any path containing `..` or symlinks. All paths resolved against `root` before use.
+- `Resolve` returns the absolute path under `root`; `Validate` returns an error if resolution would escape `root`.
+
+### MetaReader (colocated in MF)
+
+```go
+type metaReader struct {
+    handle *FileHandle
+    path   string
+}
+
+func (r *metaReader) Read() (*MetaPage, error)
+func (r *metaReader) Write(p *MetaPage) error
+```
 
 ### File Path Conventions
 
@@ -163,8 +178,8 @@ All files follow these conventions under the database root `<name>.razor/`:
 
 **Key behaviors:**
 - `MkdirAll` creates directories with permission `0700`.
-- `SyncDir` calls `fsync` on the directory FD to ensure directory entry changes are durable.
-- Path validation: reject any path containing `..` or symlinks. All paths resolved against the database root before use.
+- `SyncDir` uses a cached directory FD from `dirFDs` map. On first call for a directory, opens the FD and caches it. On `fileManager.Close()`, all cached directory FDs are closed.
+- Path validation (via embedded `pathValidator`): reject any path containing `..` or symlinks. All paths resolved against the database root before use.
 - `Remove` unlinks a file; `List` uses `os.ReadDir` with glob pattern matching.
 
 ## Implementation Plan
@@ -179,4 +194,4 @@ All files follow these conventions under the database root `<name>.razor/`:
 
 - Should we use `MADV_DONTNEED` or `madvise` for buffer eviction hints?
 - How to handle disk full gracefully? Retry with backoff or propagate `ErrIO`?
-- Should `FileManager` support file locking (flock) to prevent concurrent access from multiple processes?
+- Should `FileManager` support file locking (flock) to prevent concurrent access from multiple processes? (multi-process access is out of scope for v1 — single-process embedding is the primary use case).

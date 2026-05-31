@@ -57,7 +57,7 @@ type memtable struct {
 - Each writer inserts nodes via CAS on the head pointer. No mutex, no lock-free array.
 - When `size >= Options.MemTableSize` (default 64 MB), the memtable is frozen and a background goroutine flushes it to L0.
 - Frozen memtables are immutable — no new writes accepted. New writes go to the active memtable.
-- All memtables are also appended to WAL as a `Checkpoint` record so recovery can reconstruct them.
+- On flush, the catalog root pointer is updated in the WAL as an `RTCheckpoint` record so recovery can locate the system catalog.
 
 ### SkipList
 
@@ -101,7 +101,7 @@ type node struct {
   - One entry per data block: `[largestKey:varint][blockOffset:varint][blockSize:varint]`
   - Sorted by `largestKey`. Binary search for the target block.
 - **BloomFilter:**
-  - 10 bits per key. A static `map[uint64]struct{}` for the bitset (hash to bucket, set bit).
+  - `[]byte` bitset, 10 bits per key. On `Insert`: hash the key to a 64-bit value, use `hash % (size * 8)` to find the first bit bucket, set `bits[bucket] |= 1 << (hash & 63)`. Use a second hash to set a second bit (double-hashing to reduce false negatives).
   - On read: check bloom filter first. If bloom says "probably not present", skip the file.
 - **Footer (28 bytes):**
   ```
@@ -138,7 +138,7 @@ type SSTFileMeta struct {
 ```
 
 - The manifest stores the current version of the LSM tree: which SST files exist at each level, their key ranges, and their sizes.
-- On every flush or compaction, a new version is created and written to `manifest` atomically (rename).
+- On every flush or compaction, a new version is created and written to `manifest` atomically: write to a temp file → `fsync` the temp file → `rename` to the final path → `fsync` the directory.
 - The manifest is the single source of truth for which SST files are live. Compaction and reads consult the manifest.
 - `Version` is immutable once created — new versions are created by applying a `VersionDiff`.
 
@@ -191,7 +191,7 @@ const (
 ```
 
 - The system catalog is a special LSM tree (catalog SST files stored under `sst/catalog/`).
-- Schema data is stored as key-value pairs: `__catalog:<tableID>` → serialized `TableSchema`.
+- Schema data is stored as key-value pairs: `__catalog:<tableID>` → `MessagePack`-encoded `TableSchema`.
 - Table registry: `map[tableID]*TableSchema`, protected by `sync.RWMutex`.
 
 ### Deparser
@@ -287,7 +287,5 @@ func decodeBlock(data []byte) ([]KV, []int, error) // KVs, restart positions
 
 ## Open Issues
 
-- Should the bloom filter be a counting bloom filter (to support deletions)?
-- Should compaction run in a dedicated goroutine or on-demand (when read detects too many SST files)?
 - How to estimate the number of levels and size budget per level? Start with: L0 = 4 MB, L1 = 32 MB, each subsequent level 10x larger.
 - Should we support prefix bloom filters (per-column prefix) for range scans?

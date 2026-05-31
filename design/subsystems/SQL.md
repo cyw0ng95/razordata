@@ -179,6 +179,26 @@ func flattenSubquery(e *InExpr) (Expr, bool) // true if flattened
 - **Predicate pushdown:** move `WHERE` conditions as close to the data source as possible. E.g., `SELECT * FROM t WHERE a > 10 AND b < 20` → the engine applies `a > 10` first (index), then `b < 20` as a filter.
 - **Subquery flattening:** merge single-row subqueries in `WHERE IN` into a join or a list lookup.
 
+### Built-in Functions (v1)
+
+```go
+const (
+    FN_COUNT    = "COUNT"
+    FN_SUM      = "SUM"
+    FN_AVG      = "AVG"
+    FN_MIN      = "MIN"
+    FN_MAX      = "MAX"
+    FN_NOW      = "NOW"
+    FN_COALESCE = "COALESCE"
+    FN_IFNULL   = "IFNULL"
+    FN_LENGTH   = "LENGTH"
+    FN_SUBSTR   = "SUBSTR"
+)
+```
+
+- Aggregates (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`): handled by a dedicated `Aggregate` operator in the executor.
+- Scalar functions (`NOW`, `COALESCE`, `IFNULL`, `LENGTH`, `SUBSTR`): evaluated at expression evaluation time in `EX/eval.go`.
+
 ### Planner (`PL`)
 
 ```go
@@ -192,7 +212,7 @@ type plan struct {
 func plan(stmt Stmt) (*plan, error)
 ```
 
-- **Plan memoization:** equivalent query shapes share sub-plans. Memo key = fingerprint of the AST (e.g., `SHA256(serialize(AST))`).
+- **Plan memoization:** equivalent query shapes share sub-plans. Memo key = `SHA256(serialize(AST))` where `serialize` produces a canonical binary encoding of the AST (node type + field indices + string lengths). The binary format avoids a JSON overhead — Go struct tags drive the serialization.
 - **Cost model:** estimates I/O cost based on key selectivity (from statistics, initially uniform distribution). Each operator has an estimated cost.
 - **Index selection:** if a `WHERE` column has an index, consider `IndexScan`; otherwise `SeqScan`.
 - **Sort ordering:** if `ORDER BY` matches the primary key order, avoid explicit sort; use the natural order from the LSM tree.
@@ -286,7 +306,7 @@ type HashJoin    struct{ left, right Operator; keys []string }
 - `Filter.Next`: loop on child `Next`, evaluate `predicate` on each row; yield if true.
 - `Sort.Next`: collect all rows from child into a slice, sort by keys, yield in order.
 - `Limit.Next`: loop on child `Next`, count rows, stop after `n` rows.
-- `Insert.Next`: encode rows, call `txn.Insert()` for each.
+- `Insert.Next`: evaluate all expressions per row, encode the entire batch (all rows) via `ENG/DP`, and call `txn.Insert()` once with the batched key-value data. Batch encoding: `[rowCount:varint][row_0:encoded][row_1:encoded]...` where each row is `[col_0:varint/blob]...[col_N:varint/blob]` — avoids per-row `Insert` call overhead.
 - `Update.Next`: find rows via `iter`, encode new version, call `txn.Insert()` (TXN creates new version).
 - `Delete.Next`: find rows via `iter`, insert tombstone into TXN.
 
@@ -318,4 +338,3 @@ type HashJoin    struct{ left, right Operator; keys []string }
 - Should the planner support subquery planning (currently just flatten)?
 - How to estimate selectivity without statistics? Start with uniform distribution, add histogram support later.
 - Should the executor support parallel query execution (each operator in a separate goroutine, merge via channel)?
-- Should `INSERT` values be evaluated expression-by-expression or can we batch-encode? Batch encoding is more efficient.

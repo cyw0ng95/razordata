@@ -18,7 +18,7 @@ type Logger interface {
     Info(msg string, args ...any)
     Warn(msg string, args ...any)
     Error(msg string, args ...any)
-    With(args ...any) *Logger
+    With(args ...any) Logger
     SetLevel(level slog.Level)
     Sync() error
 }
@@ -55,7 +55,8 @@ type logger struct {
 - `Info`, `Warn`, `Error`, `Debug` methods emit structured key-value pairs.
 - Output: JSON for machine-readable logs, plain text for human-readable (configurable via `Options.LogFormat`).
 - **Log file rotation:** when the log file exceeds `maxSize`, the current file is renamed with a timestamp suffix and a new file is opened.
-- **Zero-allocation hot path:** log arguments are captured as `any` and passed to `slog` lazily; in debug mode, a `fmt.Sprintf` fallback is used only if the level is enabled.
+- **Default output:** if no log file is configured (i.e., `dir` is empty), log output goes to standard error (`os.Stderr`) via `slog.NewTextHandler(os.Stderr, nil)`.
+- **Debug-level allocation trade-off:** at `Debug` level, when `fmt.Sprintf` is used to format a message, the string is allocated on the heap. This is an accepted trade-off for debug mode — production `Debug` should be disabled via `SetLevel(slog.LevelWarn)` to avoid allocations in the hot path.
 
 ### HookRegistry
 
