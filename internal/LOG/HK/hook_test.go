@@ -554,3 +554,82 @@ func TestStatsDispatched(t *testing.T) {
 		t.Errorf("expected Dispatched >= 10, got %d", stats.Dispatched)
 	}
 }
+
+// TestMetricHook tests the metricHook stub implementation.
+func TestMetricHook(t *testing.T) {
+	m := &metricHook{}
+	
+	// Test OnLog (stub - does nothing)
+	m.OnLog(slog.LevelInfo, "test message", []any{"key", "value"})
+	
+	// Test initial counters are zero
+	if count := m.QueryCount(); count != 0 {
+		t.Errorf("expected QueryCount=0, got %d", count)
+	}
+	if rows := m.RowsReturned(); rows != 0 {
+		t.Errorf("expected RowsReturned=0, got %d", rows)
+	}
+	if bytes := m.BytesRead(); bytes != 0 {
+		t.Errorf("expected BytesRead=0, got %d", bytes)
+	}
+	if bytes := m.BytesWritten(); bytes != 0 {
+		t.Errorf("expected BytesWritten=0, got %d", bytes)
+	}
+	
+	// Test Close (returns nil)
+	if err := m.Close(); err != nil {
+		t.Errorf("expected Close to return nil, got %v", err)
+	}
+}
+
+// TestTraceHook tests the traceHook stub implementation.
+func TestTraceHook(t *testing.T) {
+	h := traceHook{}
+	
+	// Test OnLog (stub - does nothing)
+	h.OnLog(slog.LevelDebug, "SQL query", []any{"query", "SELECT *", "duration", "1ms"})
+	h.OnLog(slog.LevelInfo, "SQL complete", nil)
+	
+	// Test Close (returns nil)
+	if err := h.Close(); err != nil {
+		t.Errorf("expected Close to return nil, got %v", err)
+	}
+}
+
+// TestProfileHook tests the profileHook stub implementation.
+func TestProfileHook(t *testing.T) {
+	p := &profileHook{}
+	
+	// Test OnLog with different levels (stub - does nothing)
+	p.OnLog(slog.LevelDebug, "debug message", nil)
+	p.OnLog(slog.LevelInfo, "info message", nil)
+	p.OnLog(slog.LevelWarn, "warn message", nil)
+	p.OnLog(slog.LevelError, "error message", nil)
+	
+	// Test Close (returns nil)
+	if err := p.Close(); err != nil {
+		t.Errorf("expected Close to return nil, got %v", err)
+	}
+}
+
+// TestNewCreatesAllHooks verifies New() initializes the registry.
+func TestNewCreatesAllHooks(t *testing.T) {
+	hooks := New(100)
+	if hooks == nil {
+		t.Fatal("New() returned nil")
+	}
+	
+	// Verify hooks structure is initialized
+	hooks.mu.RLock()
+	if hooks.hooks == nil {
+		hooks.mu.RUnlock()
+		t.Error("hooks map not initialized")
+	} else {
+		hooks.mu.RUnlock()
+	}
+	
+	// Test Close all hooks
+	if err := hooks.Close(); err != nil {
+		t.Errorf("Close returned error: %v", err)
+	}
+}

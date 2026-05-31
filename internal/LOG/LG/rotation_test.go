@@ -390,3 +390,221 @@ func TestRotationWithSmallMaxSize(t *testing.T) {
 		t.Error("expected at least one log file")
 	}
 }
+
+// TestRotationWriterErrorPaths verifies error handling
+func TestRotationWriterErrorPaths(t *testing.T) {
+	s := &sharedLogger{}
+	
+	// Test Write with nil file
+	rw := &rotationWriter{shared: s}
+	_, err := rw.Write([]byte("test"))
+	if err == nil {
+		t.Error("expected error writing to nil file")
+	}
+	
+	// Test Sync with nil file
+	err = rw.Sync()
+	if err != nil {
+		t.Errorf("expected nil error on nil file Sync, got %v", err)
+	}
+	
+	// Test Close twice (idempotent)
+	err = rw.Close()
+	if err != nil {
+		t.Errorf("expected nil error on first Close, got %v", err)
+	}
+	err = rw.Close()
+	if err != nil {
+		t.Errorf("expected nil error on second Close, got %v", err)
+	}
+}
+
+// TestCleanupOldLogsEmptyDir verifies cleanup with no files
+func TestCleanupOldLogsEmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	
+	l := New(Options{
+		Dir:      dir,
+		BaseName: "test.log",
+		MaxFiles: 3,
+	}).(*logger)
+	
+	err := l.shared.cleanupOldLogs()
+	if err != nil {
+		t.Errorf("cleanupOldLogs failed: %v", err)
+	}
+}
+
+// TestCleanupWithErrorPermission verifies cleanup handles errors
+func TestCleanupWithErrorPermission(t *testing.T) {
+	dir := t.TempDir()
+	
+	// Create lots of rotated files
+	for i := 0; i < 10; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("test.240101_1200%02d.log", i))
+		if err := os.WriteFile(name, []byte("data"), 0444); err != nil {
+			t.Fatal(err)
+		}
+	}
+	
+	l := New(Options{
+		Dir:      dir,
+		BaseName: "test.log",
+		MaxFiles: 1, // Force deletion of 9 files
+	}).(*logger)
+	
+	// Should attempt cleanup without erroring on permission issues
+	err := l.shared.cleanupOldLogs()
+	if err != nil {
+		t.Logf("cleanup returned error (expected): %v", err)
+	}
+}
+
+// TestListRotatedFilesWithInvalidFormat verifies filtering
+func TestListRotatedFilesWithInvalidFormat(t *testing.T) {
+	dir := t.TempDir()
+	
+	l := New(Options{
+		Dir:      dir,
+		BaseName: "test.log",
+	}).(*logger)
+	
+	// Create files with invalid formats
+	invalidNames := []string{
+		"test.240101.log",           // wrong timestamp length
+		"test.txt",                  // wrong extension
+		"other.240101_120000.log",   // wrong prefix
+		"test.240101_12.log",        // wrong format
+		"test.log.240101_120000",    // extension in wrong place
+	}
+	for _, name := range invalidNames {
+		os.Create(filepath.Join(dir, name))
+	}
+	
+	// Create valid rotated file
+	os.Create(filepath.Join(dir, "test.240101_120000.log"))
+	
+	files, err := l.shared.listRotatedFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	
+	// Should only return the valid format file
+	if len(files) != 1 {
+		t.Errorf("expected 1 valid file, got %d: %v", len(files), files)
+	}
+}
+
+// TestRotationWriterWriteSizeTracking verifies accurate size tracking
+func TestRotationWriterWriteSizeTracking(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "size.log")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	
+	s := &sharedLogger{baseName: "size.log", dir: dir}
+	rw := &rotationWriter{shared: s}
+	rw.setFile(f)
+	
+	// Write multiple times
+	data1 := []byte("hello")
+	data2 := []byte(" world")
+	
+	n1, err := rw.Write(data1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	
+	n2, err := rw.Write(data2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	
+	totalSize := s.curSize.Load()
+	if totalSize != int64(n1+n2) {
+		t.Errorf("expected size %d, got %d", n1+n2, totalSize)
+	}
+}
+
+// TestRotateFileDirectly tests the rotateFile function by triggering it manually
+func TestRotateFileDirectly(t *testing.T) {
+	dir := t.TempDir()
+	
+	// Create logger with large MaxSize to avoid auto-rotation during test
+	l := New(Options{
+		Level:    slog.LevelInfo,
+		Dir:      dir,
+		BaseName: "manual.log",
+		MaxSize:  1024 * 1024, // 1MB
+		MaxFiles: 3,
+	}).(*logger)
+	
+	// Write some content first
+	if _, err := l.shared.output.Write([]byte("test content\n")); err != nil {
+		t.Fatal(err)
+	}
+	
+	// Manually trigger rotation
+	err := l.shared.rotateFile()
+	if err != nil {
+		t.Fatalf("rotateFile failed: %v", err)
+	}
+	
+	// Verify rotation happened - should have rotated file and new current file
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	
+	var rotatedFiles []string
+	var currentFile string
+	for _, f := range files {
+		name := f.Name()
+		if name == "manual.log" {
+			currentFile = name
+		} else if strings.HasPrefix(name, "manual.") && strings.HasSuffix(name, ".log") {
+			rotatedFiles = append(rotatedFiles, name)
+		}
+	}
+	
+	if currentFile == "" {
+		t.Error("expected current log file to exist after rotation")
+	}
+	if len(rotatedFiles) == 0 {
+		t.Error("expected at least one rotated file")
+	}
+	
+	// Verify current file is empty (fresh after rotation)
+	currentPath := filepath.Join(dir, "manual.log")
+	info, err := os.Stat(currentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Size should be 0 or very small (just created)
+	if info.Size() > 10 {
+		t.Errorf("expected empty current file, got size %d", info.Size())
+	}
+}
+
+// TestRotateFileNoRotationWriter handles case where output is not rotationWriter
+func TestRotateFileNoRotationWriter(t *testing.T) {
+	dir := t.TempDir()
+	
+	l := New(Options{
+		Level:    slog.LevelInfo,
+		Dir:      dir,
+		BaseName: "test.log",
+	}).(*logger)
+	
+	// Replace output with non-rotation writer
+	l.shared.output = os.Stdout
+	
+	// Should return nil without error
+	err := l.shared.rotateFile()
+	if err != nil {
+		t.Errorf("expected nil error when output is not rotationWriter, got %v", err)
+	}
+}
