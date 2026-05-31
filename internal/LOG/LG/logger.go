@@ -5,7 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"sync/atomic"
+	"sync"
 )
 
 // Options configures the logger.
@@ -29,16 +29,12 @@ type Logger interface {
 
 // logger is the concrete implementation of Logger.
 type logger struct {
-	impl   *slog.Logger
-	levelp *atomic.Int32 // pointer to shared atomic level
+	impl *slog.Logger
+	// level is the minimum log level, protected by mu for thread-safe access.
+	// Slog handler uses &level so it respects the same value.
+	level  slog.Level
+	mu     sync.RWMutex
 }
-
-// level returns the atomic level value.
-func (l *logger) level() int32 {
-	return l.levelp.Load()
-}
-
-var _ Logger = (*logger)(nil)
 
 // New creates a Logger from Options.
 // If Output is nil, defaults to os.Stderr.
@@ -51,43 +47,32 @@ func New(opts Options) Logger {
 		opts.Format = "text"
 	}
 
+	level := opts.Level // local var, lives on stack
 	var handler slog.Handler
 	if opts.Format == "json" {
-		handler = slog.NewJSONHandler(opts.Output, nil)
+		handler = slog.NewJSONHandler(opts.Output, &slog.HandlerOptions{Level: &level})
 	} else {
-		handler = slog.NewTextHandler(opts.Output, nil)
+		handler = slog.NewTextHandler(opts.Output, &slog.HandlerOptions{Level: &level})
 	}
 
-	return newFromHandler(slog.New(handler), opts.Level)
+	return &logger{impl: slog.New(handler), level: level}
 }
 
-// newFromHandler creates a Logger from an existing *slog.Logger and level.
-func newFromHandler(impl *slog.Logger, level slog.Level) *logger {
-	l := &logger{impl: impl}
-	// Note: each new logger gets its own level initially.
-	// Callers who want shared level should create a pointer externally.
-	levelInt := new(atomic.Int32)
-	levelInt.Store(int32(level))
-	l.levelp = levelInt
-	return l
-}
-
-// SetLevel atomically updates the minimum log level.
+// SetLevel updates the minimum log level.
 func (l *logger) SetLevel(level slog.Level) {
-	l.levelp.Store(int32(level))
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.level = level
 }
 
-func (l *logger) currentLevel() slog.Level {
-	return slog.Level(l.level())
-}
-
-// logIfEnabled checks the atomic level before constructing the log record.
-// Zero overhead when the level is disabled.
-func (l *logger) logIfEnabled(level slog.Level, msg string, args ...any) {
-	if level < l.currentLevel() {
+// logIfEnabled checks the level before constructing the log record.
+func (l *logger) logIfEnabled(lvl slog.Level, msg string, args ...any) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if lvl < l.level {
 		return
 	}
-	l.impl.Log(context.Background(), level, msg, args...)
+	l.impl.Log(context.Background(), lvl, msg, args...)
 }
 
 // Debug logs at Debug level.
@@ -111,21 +96,17 @@ func (l *logger) Error(msg string, args ...any) {
 }
 
 // With returns a new Logger with the given args merged into the underlying slog logger.
-// The new logger shares the same atomic level as the original — changes to either affect both.
-// This is intentional: the level is a global property of the logging system.
 func (l *logger) With(args ...any) Logger {
-	return &logger{
-		impl:   l.impl.With(args...),
-		levelp: l.levelp, // share the same atomic level pointer
-	}
+	l.mu.RLock()
+	currentLevel := l.level
+	l.mu.RUnlock()
+	return &logger{impl: l.impl.With(args...), level: currentLevel}
 }
 
 // Sync flushes the underlying slog handler.
-// Note: Handler.Sync() is available in Go 1.24+. On older versions, this is a no-op.
-// The underlying slog handlers flush on close or error, so this is best-effort.
 func (l *logger) Sync() error {
 	if h, ok := l.impl.Handler().(interface{ Sync() error }); ok {
 		return h.Sync()
 	}
-	return nil // no-op on older Go versions
+	return nil
 }

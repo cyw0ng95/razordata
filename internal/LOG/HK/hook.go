@@ -29,6 +29,8 @@ type HookRegistry struct {
 	ch    chan logEvent
 	mu    sync.RWMutex
 	done  chan struct{}
+	closed bool
+	muClose sync.Mutex // protects closing
 }
 
 // New creates a HookRegistry with the given buffer size.
@@ -107,7 +109,16 @@ func (r *HookRegistry) Emit(level slog.Level, msg string, args []any) {
 }
 
 // Close shuts down the dispatch goroutine and closes all hooks.
+// Safe to call multiple times.
 func (r *HookRegistry) Close() error {
+	r.muClose.Lock()
+	defer r.muClose.Unlock()
+
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+
 	close(r.done)
 	close(r.ch)
 

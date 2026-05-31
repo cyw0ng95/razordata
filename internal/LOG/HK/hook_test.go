@@ -37,6 +37,33 @@ func (h *mockHook) eventsCopy() []logEvent {
 	return events
 }
 
+func (h *mockHook) eventCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.events)
+}
+
+// TestNewDefaultBufferSize verifies New uses default buffer size when <= 0.
+func TestNewDefaultBufferSize(t *testing.T) {
+	registry := New(0)
+	defer registry.Close()
+
+	stats := registry.Stats()
+	if stats.ChannelCap != 1024 {
+		t.Errorf("expected default ChannelCap 1024, got %d", stats.ChannelCap)
+	}
+}
+
+func TestNewNegativeBufferSize(t *testing.T) {
+	registry := New(-1)
+	defer registry.Close()
+
+	stats := registry.Stats()
+	if stats.ChannelCap != 1024 {
+		t.Errorf("expected default ChannelCap 1024 for negative, got %d", stats.ChannelCap)
+	}
+}
+
 // TestRegisterUnregister verifies hook registration and unregistration.
 func TestRegisterUnregister(t *testing.T) {
 	registry := New(1024)
@@ -76,6 +103,35 @@ func TestDuplicateRegister(t *testing.T) {
 	}
 }
 
+// TestRegisterMultiple verifies registering multiple unique hooks.
+func TestRegisterMultiple(t *testing.T) {
+	registry := New(1024)
+	defer registry.Close()
+
+	for i := 0; i < 10; i++ {
+		registry.Register(string(rune('a'+i)), newMockHook(string(rune('a'+i))))
+	}
+
+	stats := registry.Stats()
+	if stats.Registered != 10 {
+		t.Errorf("expected 10 registered hooks, got %d", stats.Registered)
+	}
+}
+
+// TestUnregisterNonExistent verifies Unregister on non-existent hook is safe.
+func TestUnregisterNonExistent(t *testing.T) {
+	registry := New(1024)
+	defer registry.Close()
+
+	// Should not panic
+	registry.Unregister("nonexistent")
+
+	stats := registry.Stats()
+	if stats.Registered != 0 {
+		t.Errorf("expected 0 registered hooks, got %d", stats.Registered)
+	}
+}
+
 // TestEventDelivery verifies OnLog is called with correct arguments.
 func TestEventDelivery(t *testing.T) {
 	registry := New(1024)
@@ -102,6 +158,47 @@ func TestEventDelivery(t *testing.T) {
 
 	if events[0].level != slog.LevelInfo {
 		t.Errorf("expected level=Info, got %v", events[0].level)
+	}
+}
+
+// TestEventDeliveryWithArgs verifies event args are delivered correctly.
+func TestEventDeliveryWithArgs(t *testing.T) {
+	registry := New(1024)
+	defer registry.Close()
+
+	hook := newMockHook("args")
+	registry.Register("args", hook)
+
+	args := []any{"key1", "value1", "key2", "value2"}
+	registry.Emit(slog.LevelWarn, "args test", args)
+
+	time.Sleep(10 * time.Millisecond)
+
+	events := hook.eventsCopy()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	if len(events[0].args) != len(args) {
+		t.Errorf("expected %d args, got %d", len(args), len(events[0].args))
+	}
+}
+
+// TestEventDeliveryWithNilArgs verifies event with nil args.
+func TestEventDeliveryWithNilArgs(t *testing.T) {
+	registry := New(1024)
+	defer registry.Close()
+
+	hook := newMockHook("nilargs")
+	registry.Register("nilargs", hook)
+
+	registry.Emit(slog.LevelInfo, "nil args", nil)
+
+	time.Sleep(10 * time.Millisecond)
+
+	events := hook.eventsCopy()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
 	}
 }
 
@@ -170,6 +267,39 @@ func TestMultipleHooks(t *testing.T) {
 	}
 }
 
+// TestAllLogLevels verifies all slog levels are delivered.
+func TestAllLogLevels(t *testing.T) {
+	registry := New(1024)
+	defer registry.Close()
+
+	hook := newMockHook("levels")
+	registry.Register("levels", hook)
+
+	// Use unique messages so we can verify all levels arrive (order not guaranteed async)
+	registry.Emit(slog.LevelDebug, "debug", nil)
+	registry.Emit(slog.LevelInfo, "info", nil)
+	registry.Emit(slog.LevelWarn, "warn", nil)
+	registry.Emit(slog.LevelError, "error", nil)
+
+	time.Sleep(20 * time.Millisecond)
+
+	events := hook.eventsCopy()
+	if len(events) != 4 {
+		t.Fatalf("expected 4 events, got %d", len(events))
+	}
+
+	// Check that all 4 unique messages arrived
+	msgSet := make(map[string]bool)
+	for _, e := range events {
+		msgSet[e.msg] = true
+	}
+	for _, msg := range []string{"debug", "info", "warn", "error"} {
+		if !msgSet[msg] {
+			t.Errorf("expected message %q in events", msg)
+		}
+	}
+}
+
 // TestDropOnOverflow verifies events are dropped when channel is full.
 func TestDropOnOverflow(t *testing.T) {
 	registry := New(10) // small buffer
@@ -194,6 +324,39 @@ func TestDropOnOverflow(t *testing.T) {
 	}
 }
 
+// TestEmitNoHook verifies Emit without any hook is safe.
+func TestEmitNoHook(t *testing.T) {
+	registry := New(1024)
+	defer registry.Close()
+
+	// Should not panic
+	registry.Emit(slog.LevelInfo, "no hook", nil)
+	time.Sleep(10 * time.Millisecond)
+}
+
+// TestEmitAfterUnregister verifies Emit after unregistering hook.
+func TestEmitAfterUnregister(t *testing.T) {
+	registry := New(1024)
+	defer registry.Close()
+
+	hook := newMockHook("unreg")
+	registry.Register("unreg", hook)
+
+	registry.Emit(slog.LevelInfo, "before unregister", nil)
+	time.Sleep(10 * time.Millisecond)
+
+	registry.Unregister("unreg")
+
+	beforeCount := hook.eventCount()
+	registry.Emit(slog.LevelInfo, "after unregister", nil)
+	time.Sleep(10 * time.Millisecond)
+
+	afterCount := hook.eventCount()
+	if afterCount > beforeCount {
+		t.Errorf("expected no new events after unregister, got %d -> %d", beforeCount, afterCount)
+	}
+}
+
 // TestClose verifies Close shuts down dispatch and closes hooks.
 func TestClose(t *testing.T) {
 	registry := New(1024)
@@ -215,6 +378,17 @@ func TestClose(t *testing.T) {
 	if afterCount > beforeCount {
 		t.Error("events delivered after Close")
 	}
+}
+
+// TestDoubleClose verifies calling Close twice is safe.
+func TestDoubleClose(t *testing.T) {
+	registry := New(1024)
+
+	hook := newMockHook("doubleclose")
+	registry.Register("doubleclose", hook)
+
+	registry.Close()
+	registry.Close() // should not panic
 }
 
 // TestInterfaceCompliance verifies registry implements HookRegistry interface.
@@ -246,6 +420,93 @@ func TestStats(t *testing.T) {
 	stats = registry.Stats()
 	if stats.Registered != 2 {
 		t.Errorf("expected 2 registered, got %d", stats.Registered)
+	}
+}
+
+// TestStatsAfterUnregister verifies Stats after unregistering.
+func TestStatsAfterUnregister(t *testing.T) {
+	registry := New(1024)
+	defer registry.Close()
+
+	registry.Register("hook1", newMockHook("hook1"))
+	registry.Register("hook2", newMockHook("hook2"))
+
+	stats := registry.Stats()
+	if stats.Registered != 2 {
+		t.Errorf("expected 2, got %d", stats.Registered)
+	}
+
+	registry.Unregister("hook1")
+	stats = registry.Stats()
+	if stats.Registered != 1 {
+		t.Errorf("expected 1, got %d", stats.Registered)
+	}
+}
+
+// TestConcurrentRegisterUnregister verifies concurrent register/unregister.
+func TestConcurrentRegisterUnregister(t *testing.T) {
+	registry := New(1024)
+	defer registry.Close()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			name := string(rune('a' + id%26))
+			registry.Register(name, newMockHook(name))
+			time.Sleep(time.Microsecond)
+			registry.Unregister(name)
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+// TestEmitWithEmptyMessage verifies Emit with empty message.
+func TestEmitWithEmptyMessage(t *testing.T) {
+	registry := New(1024)
+	defer registry.Close()
+
+	hook := newMockHook("empty")
+	registry.Register("empty", hook)
+
+	registry.Emit(slog.LevelInfo, "", nil)
+
+	time.Sleep(10 * time.Millisecond)
+
+	events := hook.eventsCopy()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].msg != "" {
+		t.Errorf("expected empty message, got %q", events[0].msg)
+	}
+}
+
+// TestEmitWithManyArgs verifies Emit with many args.
+func TestEmitWithManyArgs(t *testing.T) {
+	registry := New(1024)
+	defer registry.Close()
+
+	hook := newMockHook("manyargs")
+	registry.Register("manyargs", hook)
+
+	args := make([]any, 100)
+	for i := 0; i < 100; i++ {
+		args[i] = i
+	}
+
+	registry.Emit(slog.LevelInfo, "many args", args)
+
+	time.Sleep(10 * time.Millisecond)
+
+	events := hook.eventsCopy()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if len(events[0].args) != len(args) {
+		t.Errorf("expected %d args, got %d", len(args), len(events[0].args))
 	}
 }
 
