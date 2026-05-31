@@ -34,8 +34,8 @@ type HookRegistry struct {
 	muClose sync.Mutex // protects closing
 
 	// Statistics
-	dropped     atomic.Int64
-	dispatched  atomic.Int64
+	dropped    atomic.Int64
+	dispatched atomic.Int64
 }
 
 // New creates a HookRegistry with the given buffer size.

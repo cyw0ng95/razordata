@@ -10,6 +10,13 @@ See `design/ARCH.md` for the full directory layout (subsystem → cluster → co
 
 See `design/ARCH.md` for the full build order (8 steps: LOG → FIL → MEM → WAL → ENG → TXN → SQL → SYS).
 
+## Integration
+
+Each iteration must integrate with already implemented parts. Before implementing, cross-check:
+- Existing subsystem interfaces and concrete types for compatibility.
+- File layouts, error types, and naming conventions for consistency.
+- Any required adjustments to prior iterations (e.g., missing methods on existing types) and document them in the iteration plan's gap analysis.
+
 ## SQL Surface (MVP)
 
 See `design/ARCH.md` for the full SQL surface and API shape.
@@ -59,6 +66,9 @@ See `design/ARCH.md` for the full SQL surface and API shape.
   idempotency (double-close, sync-after-close), and boundary conditions
   are as important as happy paths. Strive for concrete, comprehensive coverage
   on key foundational modules before moving on.**
+- **Commit in-time — after each requirement is implemented and its tests pass,
+  commit immediately. Do not batch multiple requirements into one commit.
+  Each commit is a stable checkpoint.**
 
 ## CI / Linting
 

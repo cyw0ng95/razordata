@@ -19,7 +19,7 @@ Joins, subqueries, foreign keys, network server, external C dependencies.
 |---|---|---|---|---|---|
 | 0 | LOG | Structured logging | `LG`, `HK` | ~1,500 | done |
 | 1 | FIL | File I/O | `DF`, `MF`, `LF`, `FS` | ~2,500 | done |
-| 2 | MEM | Buffer pool | `BF`, `PC`, `SP` | ~2,000 | pending |
+| 2 | MEM | Buffer pool | `BF`, `PC`, `SP` | ~1,350 | pending |
 | 3 | WAL | Write-Ahead Log | `WR`, `FL`, `RP` | ~2,000 | pending |
 | 4 | ENG/Memtable | Lock-free skiplist + memtable | `LS` | ~2,000 | pending |
 | 5 | ENG/SST | SST writer + reader + manifest | `LS` | ~3,500 | pending |
