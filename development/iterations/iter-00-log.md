@@ -8,6 +8,28 @@
 
 Foundation logging layer. Thin wrapper over `log/slog`. No business logic — purely OS/file primitives.
 
+## Dependencies
+
+- Required: none (foundation)
+- Consumed interfaces: none
+
+## Design Alignment
+
+Directory structure matches `design/subsystems/LOG.md`:
+```
+internal/LOG/
+├── LG/               # Logger cluster
+│   ├── logger.go    # Logger interface, slog wrapper, atomic level
+│   ├── logger_test.go
+│   └── logger_bench.go
+└── HK/               # Hook cluster
+    ├── hook.go      # HookRegistry, event dispatcher
+    ├── hook_test.go
+    ├── trace.go     # TraceHook stub
+    ├── metric.go    # MetricHook stub
+    └── profile.go   # ProfileHook stub
+```
+
 ## Requirements
 
 | ID | Requirement | Status |
@@ -17,29 +39,62 @@ Foundation logging layer. Thin wrapper over `log/slog`. No business logic — pu
 | R03 | `With(args ...any) Logger` returns a child logger | pending |
 | R04 | `SetLevel(slog.Level)` updates level atomically | pending |
 | R05 | JSON or text output format configurable via `Options.LogFormat` | pending |
-| R06 | `HookRegistry` interface: `Register/Unregister` named hooks | pending |
-| R07 | Bounded async channel dispatcher for hook events (non-blocking, drop on overflow) | pending |
-| R08 | `OnLog(level, msg, args)` called in background goroutine | pending |
-| R09 | `TraceHook` stub (SQL events come later) | pending |
-| R10 | `MetricHook` stub (counter + histogram) | pending |
-| R11 | `ProfileHook` stub (trigger on Error level) | pending |
-| R12 | `go vet ./internal/LOG/...` zero warnings | pending |
-| R13 | `go test ./internal/LOG/... -race -count=1` all green | pending |
-| R14 | Benchmark: concurrent logging throughput | pending |
+| R06 | `Hook` interface: `OnLog(level, msg, args)`, `Close` | pending |
+| R07 | `HookRegistry` interface: `Register/Unregister` named hooks | pending |
+| R08 | Bounded async channel dispatcher for hook events (non-blocking, drop on overflow) | pending |
+| R09 | `logEvent` struct: level, msg, args, ts | pending |
+| R10 | `OnLog` called in background goroutine — never blocks logging path | pending |
+| R11 | `TraceHook` stub: implements `Hook`, listens for SQL events (stub — real impl later) | pending |
+| R12 | `MetricHook` stub: implements `Hook`, lock-free counters/histograms (stub) | pending |
+| R13 | `ProfileHook` stub: implements `Hook`, triggered by Error level (stub) | pending |
+| R14 | `go vet ./internal/LOG/...` zero warnings | pending |
+| R15 | `go test ./internal/LOG/... -race -count=1` all green | pending |
+| R16 | Benchmark: concurrent logging throughput | pending |
 
 ## Implementation
 
-```
-internal/LOG/
-├── logger.go      # Logger interface, slog wrapper, atomic level
-├── options.go     # Options struct, LogFormat
-├── handler.go     # slog handler (JSON/text)
-├── hook.go        # HookRegistry, event dispatcher
-└── hook_builtin.go # TraceHook, MetricHook, ProfileHook stubs
-```
+### Phase 1: Logger (`LG/logger.go`)
 
-## Deferred
+1. Define `Logger` interface matching design: `Debug/Info/Warn/Error/With/SetLevel/Sync`
+2. Implement `logger` struct wrapping `*slog.Logger`
+3. `level atomic.Int32` for atomic level check before every log call (zero overhead when disabled)
+4. Choose `slog.NewJSONHandler` or `slog.NewTextHandler` based on `Options.LogFormat`
+5. Default output: `os.Stderr` via `slog.NewTextHandler(os.Stderr, nil)` when no file configured
+6. `With` returns a new `logger` with extra args merged into the underlying slog logger
 
-- Log file rotation on size
+### Phase 2: Hook (`HK/hook.go`)
+
+1. Define `Hook` interface: `OnLog(level, msg, args)`, `Close() error`
+2. Define `logEvent` struct: level, msg, args, ts
+3. Implement `hookRegistry` struct: hooks map, bounded channel (`ch chan logEvent`), `sync.RWMutex`
+4. `Register(h Hook)` — hooks identified by name, duplicate names overwrite previous
+5. `Unregister(name string)` — remove hook by name
+6. Dispatch loop: `for event := range ch { for _, h := range hooks { go h.OnLog(...) } }`
+7. Bounded channel size 1024. Non-blocking send (`select default`), drop on overflow
+
+### Phase 3: Built-in Hooks (`HK/trace.go`, `metric.go`, `profile.go`)
+
+1. `TraceHook`: implements `Hook`, returns immediately (real impl when SQL/EX is built)
+2. `MetricHook`: implements `Hook`, returns immediately (real impl when metrics are needed)
+3. `ProfileHook`: implements `Hook`, returns immediately (trigger on Error level — stub)
+
+### Phase 4: Benchmarks
+
+1. `logger_bench.go`: `BenchmarkConcurrentLog` — 10k goroutines, 100k total log calls
+
+## Key Decisions
+
+| Decision | Choice | Reason |
+|---|---|---|
+| Level field | `atomic.Int32` | Matches `slog.Level` underlying type |
+| Hook channel buffer | 1024 | Non-blocking, recoverable overflow |
+| `With` return | `Logger` interface | Caller doesn't know implementation |
+| Default output | `os.Stderr` | Never lose logs, even without config |
+| Hook dispatch | `go h.OnLog(...)` in loop | Never blocks logging hot path |
+
+## Deferred to v2
+
+- Log file rotation on size (`LG/rotation.go` stub only)
 - Log file compression after rotation
-- `ProfileHook` CPU/memory dump on Error events
+- `ProfileHook` CPU/memory dump on Error events (stub only)
+- Hook metrics exposure via admin endpoint
