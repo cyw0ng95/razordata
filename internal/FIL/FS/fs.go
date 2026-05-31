@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"golang.org/x/sys/unix"
 )
 
@@ -97,11 +98,12 @@ type FileManager struct {
 	handles  sync.Map // map[string]*FileHandle, keyed by absolute path
 	dirFDs   sync.Map // map[string]int, cached directory FDs for SyncDir
 	validate *pathValidator
+	log      lg.Logger
 }
 
 // New creates a new FileManager rooted at root.
 // Returns ErrDoesNotExist if root is not an existing directory.
-func New(root string) (*FileManager, error) {
+func New(root string, log ...lg.Logger) (*FileManager, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -120,11 +122,11 @@ func New(root string) (*FileManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileManager{root: abs, validate: pv}, nil
+	return &FileManager{root: abs, validate: pv, log: firstLogger(log)}, nil
 }
 
 // NewOrCreate creates a new FileManager, creating root and any parents if needed.
-func NewOrCreate(root string) (*FileManager, error) {
+func NewOrCreate(root string, log ...lg.Logger) (*FileManager, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -136,7 +138,14 @@ func NewOrCreate(root string) (*FileManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileManager{root: abs, validate: pv}, nil
+	return &FileManager{root: abs, validate: pv, log: firstLogger(log)}, nil
+}
+
+func firstLogger(logs []lg.Logger) lg.Logger {
+	if len(logs) > 0 {
+		return logs[0]
+	}
+	return nil
 }
 
 // Open opens an existing file. Returns ErrDoesNotExist if absent.
@@ -146,7 +155,6 @@ func (fm *FileManager) Open(name string) (*FileHandle, error) {
 		return nil, err
 	}
 
-	// Always open a fresh FD; the cached handle (if any) has a stale FD.
 	if h, ok := fm.handles.Load(abs); ok {
 		fh := h.(*FileHandle)
 		fh.mu.Lock()
@@ -158,6 +166,9 @@ func (fm *FileManager) Open(name string) (*FileHandle, error) {
 		if err != nil {
 			if errors.Is(err, unix.ENOENT) {
 				return nil, ErrDoesNotExist
+			}
+			if fm.log != nil {
+				fm.log.Error("fs.open", "path", abs, "err", err)
 			}
 			return nil, err
 		}
@@ -171,6 +182,9 @@ func (fm *FileManager) Open(name string) (*FileHandle, error) {
 	if err != nil {
 		if errors.Is(err, unix.ENOENT) {
 			return nil, ErrDoesNotExist
+		}
+		if fm.log != nil {
+			fm.log.Error("fs.open", "path", abs, "err", err)
 		}
 		return nil, err
 	}
@@ -193,6 +207,9 @@ func (fm *FileManager) Create(name string) (*FileHandle, error) {
 		if errors.Is(err, unix.EEXIST) {
 			return nil, ErrAlreadyExists
 		}
+		if fm.log != nil {
+			fm.log.Error("fs.create", "path", abs, "err", err)
+		}
 		return nil, err
 	}
 
@@ -211,6 +228,9 @@ func (fm *FileManager) Remove(name string) error {
 	if err := unix.Unlink(abs); err != nil {
 		if errors.Is(err, unix.ENOENT) {
 			return ErrDoesNotExist
+		}
+		if fm.log != nil {
+			fm.log.Error("fs.remove", "path", abs, "err", err)
 		}
 		return err
 	}
@@ -263,19 +283,36 @@ func (fm *FileManager) SyncDir(name string) error {
 	}
 
 	if dfd, ok := fm.dirFDs.Load(abs); ok {
-		return unix.Fsync(dfd.(int))
+		if err := unix.Fsync(dfd.(int)); err != nil {
+			if fm.log != nil {
+				fm.log.Error("fs.syncdir", "path", abs, "err", err)
+			}
+			return err
+		}
+		return nil
 	}
 
 	dirfd, err := unix.Open(abs, unix.O_RDONLY, 0)
 	if err != nil {
+		if fm.log != nil {
+			fm.log.Error("fs.syncdir", "path", abs, "err", err)
+		}
 		return err
 	}
 	fm.dirFDs.Store(abs, dirfd)
-	return unix.Fsync(dirfd)
+	if err := unix.Fsync(dirfd); err != nil {
+		if fm.log != nil {
+			fm.log.Error("fs.syncdir", "path", abs, "err", err)
+		}
+		return err
+	}
+	return nil
 }
 
 // Close closes all cached file handles and directory FDs.
 func (fm *FileManager) Close() error {
+	var last error
+
 	fm.dirFDs.Range(func(key, value any) bool {
 		unix.Close(value.(int))
 		return true
@@ -286,7 +323,9 @@ func (fm *FileManager) Close() error {
 		h := value.(*FileHandle)
 		h.mu.Lock()
 		if h.FD != -1 {
-			unix.Close(h.FD)
+			if err := unix.Close(h.FD); err != nil {
+				last = err
+			}
 			h.FD = -1
 		}
 		h.mu.Unlock()
@@ -294,5 +333,5 @@ func (fm *FileManager) Close() error {
 	})
 	fm.handles = sync.Map{}
 
-	return nil
+	return last
 }

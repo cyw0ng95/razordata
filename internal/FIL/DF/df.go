@@ -8,6 +8,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"golang.org/x/sys/unix"
 )
 
@@ -36,12 +37,19 @@ var bufPool = sync.Pool{
 type BlockDevice struct {
 	fd     int
 	direct bool
+	log    lg.Logger
 }
 
-func Open(path string) (*BlockDevice, error)   { return openFile(path, false, false) }
-func Create(path string) (*BlockDevice, error) { return openFile(path, false, true) }
+func Open(path string, log ...lg.Logger) (*BlockDevice, error) {
+	return openFile(path, false, false, log)
+}
+func Create(path string, log ...lg.Logger) (*BlockDevice, error) {
+	return openFile(path, false, true, log)
+}
 
-func openFile(path string, readOnly, create bool) (*BlockDevice, error) {
+func openFile(path string, readOnly, create bool, logs []lg.Logger) (*BlockDevice, error) {
+	log := firstLogger(logs)
+
 	flags := unix.O_RDWR
 	if readOnly {
 		flags = unix.O_RDONLY
@@ -55,7 +63,7 @@ func openFile(path string, readOnly, create bool) (*BlockDevice, error) {
 		return nil, err
 	}
 
-	bd := &BlockDevice{fd: fd}
+	bd := &BlockDevice{fd: fd, log: log}
 
 	if !readOnly && supportsODirect() {
 		unix.Close(fd)
@@ -63,10 +71,21 @@ func openFile(path string, readOnly, create bool) (*BlockDevice, error) {
 		if err == nil {
 			bd.fd = fd2
 			bd.direct = true
+		} else {
+			if log != nil {
+				log.Info("df.open", "path", path, "msg", "O_DIRECT not supported, using buffered I/O", "err", err)
+			}
 		}
 	}
 
 	return bd, nil
+}
+
+func firstLogger(logs []lg.Logger) lg.Logger {
+	if len(logs) > 0 {
+		return logs[0]
+	}
+	return nil
 }
 
 func supportsODirect() bool {
@@ -96,6 +115,9 @@ func (d *BlockDevice) ReadBlock(_ context.Context, blockID uint64, n int, buf []
 
 	_, err := unix.Pread(d.fd, tmp, int64(offset))
 	if err != nil {
+		if d.log != nil {
+			d.log.Error("df.read_block", "blockID", blockID, "err", err)
+		}
 		return err
 	}
 
@@ -132,6 +154,9 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 		binary.LittleEndian.PutUint32(poolBuf[DataLen-ChecksumLen:DataLen], sum)
 
 		_, err := unix.Pwrite(d.fd, poolBuf[:], int64(offset))
+		if err != nil && d.log != nil {
+			d.log.Error("df.write_block", "blockID", blockID, "err", err)
+		}
 		return err
 	}
 
@@ -146,10 +171,19 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 	binary.LittleEndian.PutUint32(tmp[DataLen-ChecksumLen:DataLen], sum)
 
 	_, err := unix.Pwrite(d.fd, tmp[:], int64(offset))
+	if err != nil && d.log != nil {
+		d.log.Error("df.write_block", "blockID", blockID, "err", err)
+	}
 	return err
 }
 
-func (d *BlockDevice) Sync() error { return unix.Fsync(d.fd) }
+func (d *BlockDevice) Sync() error {
+	err := unix.Fsync(d.fd)
+	if err != nil && d.log != nil {
+		d.log.Error("df.sync", "err", err)
+	}
+	return err
+}
 
 // Close closes the block device. Safe to call multiple times.
 func (d *BlockDevice) Close() error {
@@ -158,12 +192,18 @@ func (d *BlockDevice) Close() error {
 	}
 	err := unix.Close(d.fd)
 	d.fd = -1
+	if err != nil && d.log != nil {
+		d.log.Error("df.close", "err", err)
+	}
 	return err
 }
 
 func (d *BlockDevice) Size() (int64, error) {
 	var stat unix.Stat_t
 	if err := unix.Fstat(d.fd, &stat); err != nil {
+		if d.log != nil {
+			d.log.Error("df.size", "err", err)
+		}
 		return 0, err
 	}
 	return stat.Size, nil

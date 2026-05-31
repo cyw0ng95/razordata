@@ -5,6 +5,7 @@ import (
 	"errors"
 	"hash/crc32"
 
+	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"golang.org/x/sys/unix"
 )
 
@@ -70,11 +71,13 @@ func DefaultMetaPage() *MetaPage {
 // MetaReader reads and validates the meta page.
 type MetaReader struct {
 	path string
+	log  lg.Logger
 }
 
 // NewMetaReader returns a MetaReader for the given meta.razor path.
-func NewMetaReader(path string) *MetaReader {
-	return &MetaReader{path: path}
+// log is optional; pass nil to disable logging.
+func NewMetaReader(path string, log ...lg.Logger) *MetaReader {
+	return &MetaReader{path: path, log: firstLogger(log)}
 }
 
 // Read opens meta.razor, reads block 0, validates magic and version.
@@ -109,9 +112,15 @@ func (r *MetaReader) Read() (*MetaPage, error) {
 	}
 
 	if mp.Magic != MagicValue {
+		if r.log != nil {
+			r.log.Error("mf.read", "path", r.path, "err", ErrBadMagic)
+		}
 		return nil, ErrBadMagic
 	}
 	if mp.Version > CurrentVersion {
+		if r.log != nil {
+			r.log.Warn("mf.read", "path", r.path, "err", ErrUpgradeRequired)
+		}
 		return nil, ErrUpgradeRequired
 	}
 
@@ -119,25 +128,34 @@ func (r *MetaReader) Read() (*MetaPage, error) {
 }
 
 // MetaWriter writes the meta page to block 0 of meta.razor.
-// Should only be called during CREATE DATABASE or CHECKPOINT.
 type MetaWriter struct {
 	path string
+	log  lg.Logger
 }
 
 // NewMetaWriter returns a MetaWriter for the given meta.razor path.
-func NewMetaWriter(path string) *MetaWriter {
-	return &MetaWriter{path: path}
+func NewMetaWriter(path string, log ...lg.Logger) *MetaWriter {
+	return &MetaWriter{path: path, log: firstLogger(log)}
 }
 
 // Write writes the MetaPage to block 0 of meta.razor.
 func (w *MetaWriter) Write(p *MetaPage) error {
 	fd, err := unix.Open(w.path, unix.O_RDWR|unix.O_CREAT, 0600)
 	if err != nil {
+		if w.log != nil {
+			w.log.Error("mf.write", "path", w.path, "err", err)
+		}
 		return err
 	}
 	defer unix.Close(fd)
 
-	return writeMeta(fd, p)
+	if err := writeMeta(fd, p); err != nil {
+		if w.log != nil {
+			w.log.Error("mf.write", "path", w.path, "err", err)
+		}
+		return err
+	}
+	return nil
 }
 
 func writeMeta(fd int, p *MetaPage) error {
@@ -156,4 +174,11 @@ func writeMeta(fd int, p *MetaPage) error {
 
 	_, err = unix.Pwrite(fd, raw[:], 0)
 	return err
+}
+
+func firstLogger(logs []lg.Logger) lg.Logger {
+	if len(logs) > 0 {
+		return logs[0]
+	}
+	return nil
 }
