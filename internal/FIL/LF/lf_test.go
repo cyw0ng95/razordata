@@ -3,6 +3,7 @@ package lf
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
@@ -342,7 +343,7 @@ func TestCloseWithMultipleHandles(t *testing.T) {
 func TestNewWithLogger(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
-	
+
 	// New should succeed
 	sm, err := New(path)
 	if err != nil {
@@ -355,13 +356,13 @@ func TestNewWithLogger(t *testing.T) {
 func TestNewCreatesWalDir(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf_test")
-	
+
 	sm, err := New(path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer sm.Close()
-	
+
 	// Wal directory should exist
 	walDir := filepath.Join(path, "wal")
 	if _, err := os.Stat(walDir); os.IsNotExist(err) {
@@ -373,20 +374,20 @@ func TestNewCreatesWalDir(t *testing.T) {
 func TestCreateSegmentWithLogger(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
-	
+
 	sm, err := New(path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer sm.Close()
-	
+
 	// Create segment should succeed
 	fh, err := sm.CreateSegment(1)
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
 	fh.Close()
-	
+
 	// Create same segment again - should reuse from pool
 	fh2, err := sm.CreateSegment(1)
 	if err != nil {
@@ -399,29 +400,29 @@ func TestCreateSegmentWithLogger(t *testing.T) {
 func TestGetSegmentFromPool(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
-	
+
 	sm, err := New(path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer sm.Close()
-	
+
 	// Create a segment
 	fh, err := sm.CreateSegment(5)
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
-	
+
 	// Get same segment - should come from pool
 	fh2, err := sm.GetSegment(5)
 	if err != nil {
 		t.Fatalf("GetSegment: %v", err)
 	}
-	
+
 	if fh != fh2 {
 		t.Error("expected same FileHandle from pool")
 	}
-	
+
 	fh2.Close()
 	fh.Close()
 }
@@ -430,20 +431,20 @@ func TestGetSegmentFromPool(t *testing.T) {
 func TestGetSegmentReopenClosed(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
-	
+
 	sm, err := New(path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer sm.Close()
-	
+
 	// Create and close a segment
 	fh, err := sm.CreateSegment(10)
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
 	fh.Close()
-	
+
 	// GetSegment should reopen it
 	fh2, err := sm.GetSegment(10)
 	if err != nil {
@@ -456,13 +457,13 @@ func TestGetSegmentReopenClosed(t *testing.T) {
 func TestGetSegmentNotExist(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
-	
+
 	sm, err := New(path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer sm.Close()
-	
+
 	_, err = sm.GetSegment(999)
 	if err != ErrSegmentNotFound {
 		t.Errorf("expected ErrSegmentNotFound, got %v", err)
@@ -473,19 +474,19 @@ func TestGetSegmentNotExist(t *testing.T) {
 func TestTruncateWithSegment(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
-	
+
 	sm, err := New(path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer sm.Close()
-	
+
 	fh, err := sm.CreateSegment(1)
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
 	fh.Close()
-	
+
 	err = sm.Truncate(1, 1024)
 	if err != nil {
 		t.Fatalf("Truncate: %v", err)
@@ -496,13 +497,13 @@ func TestTruncateWithSegment(t *testing.T) {
 func TestSegmentPath(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
-	
+
 	sm, err := New(path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer sm.Close()
-	
+
 	segPath := sm.segmentPath(5)
 	expected := filepath.Join(path, "wal", "wal.005")
 	if segPath != expected {
@@ -516,7 +517,7 @@ func TestFirstLoggerNilLF(t *testing.T) {
 	if result != nil {
 		t.Error("expected nil for nil input")
 	}
-	
+
 	result = firstLogger([]lg.Logger{})
 	if result != nil {
 		t.Error("expected nil for empty slice")
@@ -527,12 +528,12 @@ func TestFirstLoggerNilLF(t *testing.T) {
 func TestCloseMultipleSegments(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
-	
+
 	sm, err := New(path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	
+
 	// Create multiple segments
 	for i := 1; i <= 3; i++ {
 		fh, err := sm.CreateSegment(uint64(i))
@@ -541,12 +542,12 @@ func TestCloseMultipleSegments(t *testing.T) {
 		}
 		fh.Close()
 	}
-	
+
 	// Close should close all
 	if err := sm.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	
+
 	// Second close should be safe
 	if err := sm.Close(); err != nil {
 		t.Errorf("second Close: %v", err)
@@ -557,40 +558,40 @@ func TestCloseMultipleSegments(t *testing.T) {
 func TestFileHandleCloseWithRefs(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
-	
+
 	sm, err := New(path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer sm.Close()
-	
+
 	fh, err := sm.CreateSegment(1)
 	if err != nil {
 		t.Fatalf("CreateSegment: %v", err)
 	}
-	
+
 	// Add extra references
 	fh.Incref()
 	fh.Incref()
-	
+
 	// Close once - should not close file yet (refs went from 3 to 2)
 	err = fh.Close()
 	if err != nil {
 		t.Errorf("first Close: %v", err)
 	}
-	
+
 	// Close again - should not close file yet (refs went from 2 to 1)
 	err = fh.Close()
 	if err != nil {
 		t.Errorf("second Close: %v", err)
 	}
-	
+
 	// Third close - refs went from 1 to 0, file should be closed
 	err = fh.Close()
 	if err != nil {
 		t.Errorf("third Close: %v", err)
 	}
-	
+
 	// Fourth close - already closed, should return error
 	err = fh.Close()
 	if err == nil {
@@ -603,13 +604,13 @@ func TestCreateSegmentError(t *testing.T) {
 	// Create sm with valid path first
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
-	
+
 	sm, err := New(path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer sm.Close()
-	
+
 	// CreateSegment with invalid directory should fail
 	// But since we use tmp dir, it should succeed - just test normal case
 	fh, err := sm.CreateSegment(100)
@@ -617,4 +618,139 @@ func TestCreateSegmentError(t *testing.T) {
 		t.Fatalf("CreateSegment: %v", err)
 	}
 	fh.Close()
+}
+
+// TestListSegmentsEmpty verifies ListSegments returns nil/empty when no
+// segments exist (R12 — clean-shutdown path).
+func TestListSegmentsEmpty(t *testing.T) {
+	tmp := t.TempDir()
+	sm, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sm.Close()
+
+	nums, err := sm.ListSegments()
+	if err != nil {
+		t.Fatalf("ListSegments: %v", err)
+	}
+	if len(nums) != 0 {
+		t.Errorf("expected empty, got %v", nums)
+	}
+}
+
+// TestListSegmentsSorted verifies segments are returned in ascending
+// numeric order regardless of creation order (R12).
+func TestListSegmentsSorted(t *testing.T) {
+	tmp := t.TempDir()
+	sm, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sm.Close()
+
+	for _, n := range []uint64{5, 1, 3, 2, 4} {
+		h, err := sm.CreateSegment(n)
+		if err != nil {
+			t.Fatalf("CreateSegment(%d): %v", n, err)
+		}
+		h.Close()
+	}
+
+	nums, err := sm.ListSegments()
+	if err != nil {
+		t.Fatalf("ListSegments: %v", err)
+	}
+	want := []uint64{1, 2, 3, 4, 5}
+	if !reflect.DeepEqual(nums, want) {
+		t.Errorf("expected %v, got %v", want, nums)
+	}
+}
+
+// TestListSegmentsIgnoresNoise verifies files that don't match the
+// wal.<digits> pattern are ignored (R12).
+func TestListSegmentsIgnoresNoise(t *testing.T) {
+	tmp := t.TempDir()
+	sm, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sm.Close()
+
+	for _, n := range []uint64{0, 1} {
+		h, err := sm.CreateSegment(n)
+		if err != nil {
+			t.Fatalf("CreateSegment(%d): %v", n, err)
+		}
+		h.Close()
+	}
+
+	walDir := filepath.Join(tmp, "wal")
+	for _, name := range []string{"wal.abc", "wal.", "wal.12x", "WAL.000", "other.000", "wal..0"} {
+		if err := os.WriteFile(filepath.Join(walDir, name), nil, 0600); err != nil {
+			t.Fatalf("WriteFile %s: %v", name, err)
+		}
+	}
+
+	nums, err := sm.ListSegments()
+	if err != nil {
+		t.Fatalf("ListSegments: %v", err)
+	}
+	want := []uint64{0, 1}
+	if !reflect.DeepEqual(nums, want) {
+		t.Errorf("expected %v, got %v", want, nums)
+	}
+}
+
+// TestListSegmentsLarge verifies that segments beyond 3 digits (e.g.
+// wal.1000) are also enumerated — the format is minimum-3-digit, not
+// strictly 3 digits.
+func TestListSegmentsLarge(t *testing.T) {
+	tmp := t.TempDir()
+	sm, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sm.Close()
+
+	for _, n := range []uint64{0, 999, 1000, 50000} {
+		h, err := sm.CreateSegment(n)
+		if err != nil {
+			t.Fatalf("CreateSegment(%d): %v", n, err)
+		}
+		h.Close()
+	}
+
+	nums, err := sm.ListSegments()
+	if err != nil {
+		t.Fatalf("ListSegments: %v", err)
+	}
+	want := []uint64{0, 999, 1000, 50000}
+	if !reflect.DeepEqual(nums, want) {
+		t.Errorf("expected %v, got %v", want, nums)
+	}
+}
+
+// TestListSegmentsMissingWalDir verifies that ListSegments returns an
+// empty slice (no error) if the wal directory has been removed out from
+// under the manager.
+func TestListSegmentsMissingWalDir(t *testing.T) {
+	tmp := t.TempDir()
+	sm, err := New(tmp)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sm.Close()
+
+	if err := os.RemoveAll(filepath.Join(tmp, "wal")); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+
+	nums, err := sm.ListSegments()
+	if err != nil {
+		t.Fatalf("ListSegments: %v", err)
+	}
+	if len(nums) != 0 {
+		t.Errorf("expected empty, got %v", nums)
+	}
 }
