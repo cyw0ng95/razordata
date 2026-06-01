@@ -1,14 +1,17 @@
 package rp
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/DF"
 	"github.com/cyw0ng95/razordata/internal/FIL/LF"
+	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"github.com/cyw0ng95/razordata/internal/MEM/BF"
 	"github.com/cyw0ng95/razordata/internal/MEM/SP"
+	"github.com/cyw0ng95/razordata/internal/WAL/WR"
 )
 
 func TestNew(t *testing.T) {
@@ -226,4 +229,283 @@ func newTestReplayer(t *testing.T) (Replayer, func()) {
 	}
 
 	return r, cleanup
+}
+
+func TestReplayWithData(t *testing.T) {
+	tmp := t.TempDir()
+
+	sm, err := setupSegmentManager(tmp)
+	if err != nil {
+		t.Fatalf("setupSegmentManager: %v", err)
+	}
+	defer sm.Close()
+
+	bp, err := setupBufferPool(tmp)
+	if err != nil {
+		t.Fatalf("setupBufferPool: %v", err)
+	}
+	defer bp.Close()
+
+	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+	if err != nil {
+		t.Fatalf("wr.New: %v", err)
+	}
+
+	batch := &wr.WriteBatch{
+		TxnID: 1,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTData, BlockID: 1, Value: []byte("block1_data")},
+			{Type: wr.RTData, BlockID: 2, Value: []byte("block2_data")},
+			{Type: wr.RTCommit, TxnID: 1},
+		},
+	}
+	_, err = w.Append(batch)
+	if err != nil {
+		t.Fatalf("wr.Append: %v", err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatalf("wr.Sync: %v", err)
+	}
+	w.Close()
+
+	r, err := New(tmp, sm, bp, Callbacks{}, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Close()
+
+	if err := r.Replay(); err != nil {
+		t.Errorf("Replay: %v", err)
+	}
+}
+
+func TestReplayTriggersCallbacks(t *testing.T) {
+	tmp := t.TempDir()
+
+	sm, err := setupSegmentManager(tmp)
+	if err != nil {
+		t.Fatalf("setupSegmentManager: %v", err)
+	}
+	defer sm.Close()
+
+	bp, err := setupBufferPool(tmp)
+	if err != nil {
+		t.Fatalf("setupBufferPool: %v", err)
+	}
+	defer bp.Close()
+
+	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+	if err != nil {
+		t.Fatalf("wr.New: %v", err)
+	}
+
+	batch := &wr.WriteBatch{
+		TxnID: 42,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTData, BlockID: 100, Value: []byte("callback_test_data")},
+			{Type: wr.RTCommit, TxnID: 42},
+		},
+	}
+	_, err = w.Append(batch)
+	if err != nil {
+		t.Fatalf("wr.Append: %v", err)
+	}
+	w.Sync()
+	w.Close()
+
+	var onDataCalled, onCommitCalled bool
+	var onCommitTxnID uint64
+
+	cb := Callbacks{
+		OnData: func(blockID uint64, data []byte) error {
+			onDataCalled = true
+			if blockID != 100 {
+				t.Errorf("OnData blockID: got %d, want 100", blockID)
+			}
+			if string(data) != "callback_test_data" {
+				t.Errorf("OnData data: got %q, want %q", string(data), "callback_test_data")
+			}
+			return nil
+		},
+		OnCommit: func(txnID uint64, commitTS uint64) error {
+			onCommitCalled = true
+			onCommitTxnID = txnID
+			return nil
+		},
+	}
+
+	r, err := New(tmp, sm, bp, cb, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Close()
+
+	if err := r.Replay(); err != nil {
+		t.Errorf("Replay: %v", err)
+	}
+
+	if !onDataCalled {
+		t.Error("OnData was not called")
+	}
+	if !onCommitCalled {
+		t.Error("OnCommit was not called")
+	}
+	if onCommitTxnID != 42 {
+		t.Errorf("OnCommit txnID: got %d, want 42", onCommitTxnID)
+	}
+}
+
+func TestLastCheckpointFindsCheckpoint(t *testing.T) {
+	tmp := t.TempDir()
+
+	sm, err := setupSegmentManager(tmp)
+	if err != nil {
+		t.Fatalf("setupSegmentManager: %v", err)
+	}
+	defer sm.Close()
+
+	bp, err := setupBufferPool(tmp)
+	if err != nil {
+		t.Fatalf("setupBufferPool: %v", err)
+	}
+	defer bp.Close()
+
+	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+	if err != nil {
+		t.Fatalf("wr.New: %v", err)
+	}
+
+	for i := uint64(0); i < 3; i++ {
+		batch := &wr.WriteBatch{
+			TxnID: i + 1,
+			Recs: []wr.LogRecord{
+				{Type: wr.RTData, BlockID: i + 10, Value: []byte("block")},
+				{Type: wr.RTCommit, TxnID: i + 1},
+			},
+		}
+		_, err = w.Append(batch)
+		if err != nil {
+			t.Fatalf("wr.Append: %v", err)
+		}
+	}
+
+	cp := &wr.Checkpoint{
+		LSN:              100,
+		CatalogRootPtr:   200,
+		ManifestChecksum: 300,
+		ActiveTXNs:       []uint64{1, 2, 3},
+	}
+	header, txns := wr.AppendCheckpointPayload(cp)
+	cpBatch := &wr.WriteBatch{
+		TxnID: 999,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTCheckpoint, BlockID: uint64(len(cp.ActiveTXNs)), Key: header, Value: txns},
+		},
+	}
+	_, err = w.Append(cpBatch)
+	if err != nil {
+		t.Fatalf("wr.Append checkpoint: %v", err)
+	}
+	w.Sync()
+	w.Close()
+
+	r, err := New(tmp, sm, bp, Callbacks{}, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Close()
+
+	foundCp, err := r.LastCheckpoint()
+	if err != nil {
+		t.Fatalf("LastCheckpoint: %v", err)
+	}
+	if foundCp == nil {
+		t.Fatal("expected checkpoint, got nil")
+	}
+	if foundCp.LSN != 100 {
+		t.Errorf("checkpoint LSN: got %d, want 100", foundCp.LSN)
+	}
+	if foundCp.CatalogRootPtr != 200 {
+		t.Errorf("checkpoint CatalogRootPtr: got %d, want 200", foundCp.CatalogRootPtr)
+	}
+}
+
+func TestReplayWithCheckpointTruncation(t *testing.T) {
+	tmp := t.TempDir()
+
+	sm, err := setupSegmentManager(tmp)
+	if err != nil {
+		t.Fatalf("setupSegmentManager: %v", err)
+	}
+	defer sm.Close()
+
+	bp, err := setupBufferPool(tmp)
+	if err != nil {
+		t.Fatalf("setupBufferPool: %v", err)
+	}
+	defer bp.Close()
+
+	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+	if err != nil {
+		t.Fatalf("wr.New: %v", err)
+	}
+
+	_, err = w.Append(&wr.WriteBatch{
+		TxnID: 1,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTData, BlockID: 1, Value: []byte("old_data")},
+			{Type: wr.RTCommit, TxnID: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("wr.Append: %v", err)
+	}
+
+	cp := &wr.Checkpoint{
+		LSN:              50,
+		CatalogRootPtr:   100,
+		ManifestChecksum: 0,
+		ActiveTXNs:       []uint64{},
+	}
+	header, txns := wr.AppendCheckpointPayload(cp)
+	_, err = w.Append(&wr.WriteBatch{
+		TxnID: 2,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTData, BlockID: 2, Value: []byte("new_data")},
+			{Type: wr.RTCommit, TxnID: 2},
+		},
+	})
+	_, err = w.Append(&wr.WriteBatch{
+		TxnID: 3,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTCheckpoint, BlockID: 0, Key: header, Value: txns},
+		},
+	})
+	if err != nil {
+		t.Fatalf("wr.Append checkpoint: %v", err)
+	}
+	w.Sync()
+	w.Close()
+
+	var replayedBlocks []uint64
+	cb := Callbacks{
+		OnData: func(blockID uint64, data []byte) error {
+			replayedBlocks = append(replayedBlocks, blockID)
+			return nil
+		},
+	}
+
+	r, err := New(tmp, sm, bp, cb, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Close()
+
+	if err := r.Replay(); err != nil {
+		t.Errorf("Replay: %v", err)
+	}
+
+	if len(replayedBlocks) == 0 {
+		t.Error("expected some blocks to be replayed")
+	}
 }
