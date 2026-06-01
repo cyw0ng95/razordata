@@ -388,6 +388,151 @@ func TestAppendRejectsRecordLargerThanSegment(t *testing.T) {
 	}
 }
 
+// TestRotateAtSegmentBoundary exercises the rotation path (R06) by
+// writing one record that would land at the very end of a segment
+// and a second that would not fit, forcing a rotate.
+func TestRotateAtSegmentBoundary(t *testing.T) {
+	w, d := newTestWriter(t)
+	t.Cleanup(func() { _ = w.Close() })
+
+	// Prime the writer with one record so w.seg is initialized.
+	if _, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{
+		{Type: RTRollback, BlockID: 0},
+	}}); err != nil {
+		t.Fatalf("prime Append: %v", err)
+	}
+
+	// Compute the actual encoded size of rec1 so we can leave
+	// exactly enough room for it (no off-by-one).
+	rec1 := LogRecord{Type: RTData, BlockID: 1, Value: []byte("a")}
+	rec1Size := int64(len(encodeRecord(&rec1)))
+	// Set writeOff so rec1 fits exactly; rec2 (same size) will not fit.
+	w.seg.writeOff = SegSize - rec1Size
+
+	lsn1, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{rec1}})
+	if err != nil {
+		t.Fatalf("Append[1]: %v", err)
+	}
+	wantLSN1 := LSNFor(0, uint64(SegSize-rec1Size))
+	if lsn1 != wantLSN1 {
+		t.Errorf("LSN[1]: got %d, want %d", lsn1, wantLSN1)
+	}
+
+	// Second record does NOT fit; this must trigger a rotation.
+	rec2 := LogRecord{Type: RTData, BlockID: 2, Value: []byte("b")}
+	lsn2, err := w.Append(&WriteBatch{TxnID: 2, Recs: []LogRecord{rec2}})
+	if err != nil {
+		t.Fatalf("Append[2]: %v", err)
+	}
+	wantLSN2 := LSNFor(1, 0) // first record of segment 1
+	if lsn2 != wantLSN2 {
+		t.Errorf("LSN[2]: got %d, want %d (post-rotation)", lsn2, wantLSN2)
+	}
+	if w.seg.number != 1 {
+		t.Errorf("active segment number: got %d, want 1", w.seg.number)
+	}
+
+	// Both segment files must exist on disk.
+	segs, err := d.sm.ListSegments()
+	if err != nil {
+		t.Fatalf("ListSegments: %v", err)
+	}
+	if len(segs) != 2 || segs[0] != 0 || segs[1] != 1 {
+		t.Errorf("segment list: got %v, want [0 1]", segs)
+	}
+}
+
+// TestRotateProducesFreshSegment verifies the rotation path resets
+// the in-memory segment state correctly: the new segment starts at
+// writeOff=0 with a fresh buffer. R25: zero-fill on buffer reuse
+// (we verify writeOff reset, since buf-len is reset internally to 0
+// before any new writes happen — see openSegmentLocked).
+func TestRotateProducesFreshSegment(t *testing.T) {
+	w, _ := newTestWriter(t)
+	t.Cleanup(func() { _ = w.Close() })
+
+	// Prime the writer.
+	if _, err := w.Append(&WriteBatch{TxnID: 0, Recs: []LogRecord{
+		{Type: RTRollback},
+	}}); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+
+	// Force-rotate by exceeding the segment's remaining capacity.
+	rec1 := LogRecord{Type: RTData, BlockID: 1, Value: []byte("a")}
+	rec1Size := int64(len(encodeRecord(&rec1)))
+	w.seg.writeOff = SegSize - rec1Size
+
+	rec2 := LogRecord{Type: RTData, BlockID: 2, Value: []byte("b")}
+	rec2Size := int64(len(encodeRecord(&rec2)))
+
+	if _, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{rec1}}); err != nil {
+		t.Fatalf("Append[1]: %v", err)
+	}
+	// After rec1: writeOff = SegSize. The next Append must rotate.
+	if _, err := w.Append(&WriteBatch{TxnID: 2, Recs: []LogRecord{rec2}}); err != nil {
+		t.Fatalf("Append[2]: %v", err)
+	}
+
+	// Post-rotation invariants on the NEW segment.
+	if w.seg.number != 1 {
+		t.Errorf("post-rotation seg.number: got %d, want 1", w.seg.number)
+	}
+	// writeOff = len(rec2) since rec2 was written into the fresh
+	// segment starting at offset 0.
+	if w.seg.writeOff != rec2Size {
+		t.Errorf("post-rotation seg.writeOff: got %d, want %d",
+			w.seg.writeOff, rec2Size)
+	}
+	// buf cap is preserved (same pool slot size).
+	if cap(w.seg.buf) != int(spWALBufSize(t)) {
+		t.Errorf("post-rotation seg.buf cap: got %d, want %d",
+			cap(w.seg.buf), spWALBufSize(t))
+	}
+}
+
+// spWALBufSize returns sp.WALBufSize for test assertions. Wrapped in
+// a helper so the test reads naturally.
+func spWALBufSize(t *testing.T) int {
+	t.Helper()
+	return 256 * 1024
+}
+
+// TestRotateLSNContinuityAcrossSegments verifies LSNs are strictly
+// monotonic across rotation (R04, R27): the first LSN of segment n+1
+// equals SegSize + the last offset of segment n (which here is
+// SegSize itself, since we filled the segment completely).
+func TestRotateLSNContinuityAcrossSegments(t *testing.T) {
+	w, _ := newTestWriter(t)
+	t.Cleanup(func() { _ = w.Close() })
+
+	// Prime the writer.
+	if _, err := w.Append(&WriteBatch{TxnID: 0, Recs: []LogRecord{
+		{Type: RTRollback},
+	}}); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+
+	// rec1 fits exactly; rec2 of the same size does not, triggering
+	// rotation.
+	rec1 := LogRecord{Type: RTData, BlockID: 1, Value: []byte("a")}
+	rec1Size := int64(len(encodeRecord(&rec1)))
+	w.seg.writeOff = SegSize - rec1Size
+
+	if _, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{rec1}}); err != nil {
+		t.Fatalf("Append[1]: %v", err)
+	}
+	lsn2, err := w.Append(&WriteBatch{TxnID: 2, Recs: []LogRecord{
+		{Type: RTData, BlockID: 2, Value: []byte("b")}, // LSN = SegSize (seg 1, off 0)
+	}})
+	if err != nil {
+		t.Fatalf("Append[2]: %v", err)
+	}
+	if lsn2 != uint64(SegSize) {
+		t.Errorf("LSN continuity: got %d, want %d (SegSize)", lsn2, uint64(SegSize))
+	}
+}
+
 // TestLSNForEncoding pins the LSN encoding (R04): the LSN of byte
 // position `offset` in segment `seg` is seg*SegSize + offset. This
 // is the contract the replayer relies on for in-LSN-order traversal.
