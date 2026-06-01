@@ -933,3 +933,133 @@ func TestSupportsODirectPath(t *testing.T) {
 		t.Log("O_DIRECT is not supported on this system")
 	}
 }
+
+func TestOpenEmptyPath(t *testing.T) {
+	_, err := Open("")
+	if err == nil {
+		t.Error("expected error for empty path")
+	}
+}
+
+func TestCreateEmptyPath(t *testing.T) {
+	_, err := Create("")
+	if err == nil {
+		t.Error("expected error for empty path")
+	}
+}
+
+func TestCreateParentDoesNotExist(t *testing.T) {
+	_, err := Create("/nonexistent/parent/dir/file.razor")
+	if err == nil {
+		t.Error("expected error when parent dir does not exist")
+	}
+}
+
+func TestSyncOnEmptyDevice(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "sync.razor")
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	bd.Close()
+	err = bd.Sync()
+	if err != nil {
+		t.Errorf("Sync after Close: %v", err)
+	}
+}
+
+func TestCloseIdempotentMultiple(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "close.razor")
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	bd.Close()
+	bd.Close()
+	bd.Close()
+}
+
+func TestSizeOnNewDevice(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "size.razor")
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	size, err := bd.Size()
+	if err != nil {
+		t.Errorf("Size: %v", err)
+	}
+	if size != 0 {
+		t.Errorf("expected size 0, got %d", size)
+	}
+}
+
+func TestWriteBlockZeroBlockID(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "zero.razor")
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	data := make([]byte, 4088)
+	err = bd.WriteBlock(context.Background(), 0, data)
+	if err != nil {
+		t.Errorf("WriteBlock with blockID=0: %v", err)
+	}
+}
+
+func TestWriteBlockLargeBlockID(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "large.razor")
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	data := make([]byte, 4088)
+	err = bd.WriteBlock(context.Background(), 1000000, data)
+	if err != nil {
+		t.Errorf("WriteBlock with large blockID: %v", err)
+	}
+}
+
+func TestMultipleWritesSameBlock(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "multi.razor")
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	data := make([]byte, 4088)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+	for i := 0; i < 5; i++ {
+		if err := bd.WriteBlock(context.Background(), 0, data); err != nil {
+			t.Errorf("WriteBlock attempt %d: %v", i, err)
+		}
+	}
+}
+
+func TestReadBlockSmallBuffer(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "small.razor")
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	data := make([]byte, 4088)
+	bd.WriteBlock(context.Background(), 0, data)
+	buf := make([]byte, 100)
+	err = bd.ReadBlock(context.Background(), 0, 4088, buf)
+	if err == nil {
+		t.Error("expected error for buffer too small")
+	}
+}
