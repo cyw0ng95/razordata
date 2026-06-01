@@ -659,3 +659,226 @@ func TestWriteReadSingleByte(t *testing.T) {
 		}
 	}
 }
+
+// TestReadBlockFull tests ReadBlockFull with valid and corrupt data.
+func TestReadBlockFull(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "full.block")
+
+	// Write a full block
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	fullData := make([]byte, DataLen-ChecksumLen)
+	for i := range fullData {
+		fullData[i] = byte(i % 256)
+	}
+
+	ctx := context.Background()
+	if err := bd.WriteBlock(ctx, 0, fullData); err != nil {
+		t.Fatalf("WriteBlock: %v", err)
+	}
+	if err := bd.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	bd.Close()
+
+	// Reopen and read full block
+	bd, err = Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer bd.Close()
+
+	buf := make([]byte, DataLen)
+	if err := bd.ReadBlockFull(0, buf); err != nil {
+		t.Fatalf("ReadBlockFull: %v", err)
+	}
+	if string(buf[:len(fullData)]) != string(fullData) {
+		t.Errorf("data mismatch")
+	}
+
+	// Test with buffer too small
+	smallBuf := make([]byte, DataLen-1)
+	if err := bd.ReadBlockFull(0, smallBuf); err != ErrBigBlock {
+		t.Errorf("expected ErrBigBlock for small buffer, got %v", err)
+	}
+}
+
+// TestReadBlockFullCorrupt tests ReadBlockFull with corrupted checksum.
+func TestReadBlockFullCorrupt(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "corrupt_full.block")
+
+	// Create and write
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	ctx := context.Background()
+	bd.WriteBlock(ctx, 0, []byte("test data"))
+	bd.Sync()
+	bd.Close()
+
+	// Corrupt checksum
+	fd, err := unix.Open(path, unix.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	var zeros [4]byte
+	unix.Pwrite(fd, zeros[:], int64(DataLen-ChecksumLen))
+	unix.Close(fd)
+
+	// Read should fail with ErrCorrupt
+	bd, err = Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer bd.Close()
+
+	buf := make([]byte, DataLen)
+	if err := bd.ReadBlockFull(0, buf); err != ErrCorrupt {
+		t.Errorf("expected ErrCorrupt, got %v", err)
+	}
+}
+
+// TestSizeClosed tests Size on closed device.
+func TestSizeClosed(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "closed.block")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	bd.Close()
+
+	_, err = bd.Size()
+	if err == nil {
+		t.Error("expected error on closed device")
+	}
+}
+
+// TestWriteBlockMaxSize tests WriteBlock with maximum allowed data size.
+func TestWriteBlockMaxSize(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "max.block")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	maxData := make([]byte, DataLen-ChecksumLen)
+	for i := range maxData {
+		maxData[i] = byte(i % 256)
+	}
+
+	ctx := context.Background()
+	if err := bd.WriteBlock(ctx, 0, maxData); err != nil {
+		t.Errorf("WriteBlock with max size failed: %v", err)
+	}
+
+	// Verify by reading back
+	buf := make([]byte, DataLen)
+	if err := bd.ReadBlock(ctx, 0, len(maxData), buf); err != nil {
+		t.Errorf("ReadBlock failed: %v", err)
+	}
+	if string(buf[:len(maxData)]) != string(maxData) {
+		t.Errorf("data mismatch")
+	}
+}
+
+// TestOpenFails tests openFile with invalid path.
+func TestOpenFails(t *testing.T) {
+	// Try to open a file in a non-existent directory
+	_, err := openFile("/nonexistent/dir/test.block", false, false, nil)
+	if err == nil {
+		t.Error("expected error opening non-existent path")
+	}
+}
+
+// TestFirstLoggerNil tests firstLogger with empty slice.
+func TestFirstLoggerNil(t *testing.T) {
+	result := firstLogger(nil)
+	if result != nil {
+		t.Error("expected nil for nil input")
+	}
+}
+
+// TestWriteReadMultipleBlocks tests writing and reading multiple blocks.
+func TestWriteReadMultipleBlocks(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "multi.block")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	ctx := context.Background()
+	blocks := [][]byte{
+		[]byte("block 0 data"),
+		[]byte("block 1 data"),
+		[]byte("block 2 data"),
+	}
+
+	// Write blocks
+	for i, data := range blocks {
+		if err := bd.WriteBlock(ctx, uint64(i), data); err != nil {
+			t.Fatalf("WriteBlock %d: %v", i, err)
+		}
+	}
+
+	// Sync and reopen
+	if err := bd.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	bd.Close()
+
+	bd, err = Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer bd.Close()
+
+	// Read and verify
+	buf := make([]byte, DataLen)
+	for i, expected := range blocks {
+		if err := bd.ReadBlock(ctx, uint64(i), len(expected), buf); err != nil {
+			t.Fatalf("ReadBlock %d: %v", i, err)
+		}
+		if string(buf[:len(expected)]) != string(expected) {
+			t.Errorf("block %d mismatch", i)
+		}
+	}
+}
+
+// TestReadBlockFullWithLogger tests ReadBlockFull error handling.
+func TestReadBlockFullWithLogger(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "bad.block")
+
+	// Create file manually without proper format
+	if err := os.WriteFile(path, []byte("invalid"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	bd, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer bd.Close()
+
+	buf := make([]byte, DataLen)
+	// Read should fail - file too small
+	err = bd.ReadBlockFull(0, buf)
+	if err == nil {
+		t.Error("expected error reading invalid file")
+	}
+}
