@@ -1180,3 +1180,244 @@ func TestCloseWithLogger(t *testing.T) {
 	// Close should not panic (may or may not return error depending on OS)
 	_ = bp.Close()
 }
+
+// TestUpsertBasic verifies a fresh insert into an empty cache (R34).
+func TestUpsertBasic(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("df.Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	data := make([]byte, BlockSize)
+	for i := range data {
+		data[i] = 0xAB
+	}
+	if err := bp.Upsert(&Page{ID: 7, Data: data}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	stats := bp.Stats()
+	if stats.Used != 1 {
+		t.Errorf("expected used=1, got %d", stats.Used)
+	}
+
+	// The page should be retrievable via Get (without disk I/O).
+	page, found, err := bp.Get(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("Get(7): %v", err)
+	}
+	if !found {
+		t.Error("expected Upserted page to be in cache")
+	}
+	if page.Data[0] != 0xAB {
+		t.Errorf("data corruption: got %x, want 0xAB", page.Data[0])
+	}
+}
+
+// TestUpsertOverwrite verifies that Upserting an existing blockID
+// replaces the data in place (R34 bullet 3).
+func TestUpsertOverwrite(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("df.Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	first := make([]byte, BlockSize)
+	first[0] = 0x11
+	if err := bp.Upsert(&Page{ID: 5, Data: first}); err != nil {
+		t.Fatalf("first Upsert: %v", err)
+	}
+
+	second := make([]byte, BlockSize)
+	second[0] = 0x22
+	if err := bp.Upsert(&Page{ID: 5, Data: second}); err != nil {
+		t.Fatalf("second Upsert: %v", err)
+	}
+
+	// used should still be 1 (overwrite, not insert)
+	if got := bp.Stats().Used; got != 1 {
+		t.Errorf("expected used=1 after overwrite, got %d", got)
+	}
+
+	page, found, err := bp.Get(context.Background(), 5)
+	if err != nil || !found {
+		t.Fatalf("Get(5): found=%v err=%v", found, err)
+	}
+	if page.Data[0] != 0x22 {
+		t.Errorf("expected overwritten data 0x22, got 0x%x", page.Data[0])
+	}
+}
+
+// TestUpsertRejectsBadSize verifies that data with len != BlockSize
+// is rejected (R34 bullet 2 — padding would mask caller bugs).
+func TestUpsertRejectsBadSize(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("df.Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	tooSmall := make([]byte, BlockSize-1)
+	if err := bp.Upsert(&Page{ID: 1, Data: tooSmall}); err != ErrInvalidBlockID {
+		t.Errorf("expected ErrInvalidBlockID for too-small data, got %v", err)
+	}
+
+	tooBig := make([]byte, BlockSize+1)
+	if err := bp.Upsert(&Page{ID: 1, Data: tooBig}); err != ErrInvalidBlockID {
+		t.Errorf("expected ErrInvalidBlockID for too-big data, got %v", err)
+	}
+
+	empty := make([]byte, 0)
+	if err := bp.Upsert(&Page{ID: 1, Data: empty}); err != ErrInvalidBlockID {
+		t.Errorf("expected ErrInvalidBlockID for empty data, got %v", err)
+	}
+
+	// No slot should have been created.
+	if got := bp.Stats().Used; got != 0 {
+		t.Errorf("expected used=0 after rejected Upserts, got %d", got)
+	}
+}
+
+// TestUpsertRejectsBadBlockID verifies blockID=0 and nil page are
+// rejected (R34).
+func TestUpsertRejectsBadBlockID(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("df.Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	data := make([]byte, BlockSize)
+	if err := bp.Upsert(&Page{ID: 0, Data: data}); err != ErrInvalidBlockID {
+		t.Errorf("expected ErrInvalidBlockID for blockID=0, got %v", err)
+	}
+	if err := bp.Upsert(nil); err != ErrInvalidBlockID {
+		t.Errorf("expected ErrInvalidBlockID for nil page, got %v", err)
+	}
+	if got := bp.Stats().Used; got != 0 {
+		t.Errorf("expected used=0 after rejected Upserts, got %d", got)
+	}
+}
+
+// TestUpsertAtCapacityEvicts verifies that Upsert evicts one slot when
+// the pool is at capacity (R34 bullet 4).
+func TestUpsertAtCapacityEvicts(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("df.Create: %v", err)
+	}
+	defer bd.Close()
+
+	capacity := int64(3)
+	bp, err := New(capacity, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	// Fill the pool.
+	for i := uint64(1); i <= uint64(capacity); i++ {
+		data := make([]byte, BlockSize)
+		data[0] = byte(i)
+		if err := bp.Upsert(&Page{ID: i, Data: data}); err != nil {
+			t.Fatalf("Upsert(%d): %v", i, err)
+		}
+	}
+	if got := bp.Stats().Used; got != capacity {
+		t.Fatalf("expected used=%d, got %d", capacity, got)
+	}
+
+	// Insert one more — should evict one slot to make room.
+	extra := make([]byte, BlockSize)
+	extra[0] = 0xEE
+	if err := bp.Upsert(&Page{ID: 99, Data: extra}); err != nil {
+		t.Fatalf("Upsert at capacity: %v", err)
+	}
+
+	// Used must not exceed capacity.
+	if got := bp.Stats().Used; got > capacity {
+		t.Errorf("expected used <= %d, got %d", capacity, got)
+	}
+	if got := bp.Stats().Evicts; got == 0 {
+		t.Error("expected at least one eviction")
+	}
+
+	// The newly inserted page should be retrievable.
+	page, found, err := bp.Get(context.Background(), 99)
+	if err != nil || !found {
+		t.Errorf("Get(99) after Upsert: found=%v err=%v", found, err)
+	}
+	if found && page.Data[0] != 0xEE {
+		t.Errorf("data corruption after Upsert: got 0x%x", page.Data[0])
+	}
+}
+
+// TestUpsertDoesNotPin verifies that Upserted pages are not pinned and
+// can be evicted by subsequent Upserts (R34 bullet 6).
+func TestUpsertDoesNotPin(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("df.Create: %v", err)
+	}
+	defer bd.Close()
+
+	capacity := int64(2)
+	bp, err := New(capacity, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	for i := uint64(1); i <= uint64(capacity); i++ {
+		data := make([]byte, BlockSize)
+		if err := bp.Upsert(&Page{ID: i, Data: data}); err != nil {
+			t.Fatalf("Upsert(%d): %v", i, err)
+		}
+	}
+
+	// Pin count should be 0 (Upsert never pins).
+	if got := bp.Stats().Pins; got != 0 {
+		t.Errorf("expected pins=0, got %d", got)
+	}
+
+	// Insert at capacity: eviction should succeed since nothing is pinned.
+	extra := make([]byte, BlockSize)
+	if err := bp.Upsert(&Page{ID: 99, Data: extra}); err != nil {
+		t.Fatalf("Upsert at capacity: %v", err)
+	}
+	if got := bp.Stats().Evicts; got == 0 {
+		t.Error("expected eviction of an Upserted page (Upserted pages are not pinned)")
+	}
+}

@@ -70,6 +70,14 @@ type BufferPool interface {
 	// Unpin decrements the pin count on the page. Eviction may proceed once
 	// the pin count reaches zero.
 	Unpin(page *Page)
+	// Upsert injects a page directly into the hash table without disk I/O.
+	// Used by the WAL replayer (R16) to populate the cache with recovered
+	// page images. page.Data must have len == BlockSize. If a slot for the
+	// same blockID already exists, its data is overwritten in place (the
+	// caller's previous buffer is not returned to the pool). Does not pin
+	// the page, does not verify the checksum, and counts against capacity
+	// (evicting one slot first if at capacity).
+	Upsert(page *Page) error
 	// SetCapacity resizes the buffer pool. Deferred to v2 — returns ErrCapacityExceeded.
 	SetCapacity(n int64) error
 	// Stats returns current buffer pool statistics.
@@ -326,6 +334,75 @@ func (b *bp) Unpin(page *Page) {
 		return
 	}
 	slot.pinCount.Add(-1)
+}
+
+// Upsert implements BufferPool. See the interface comment for the
+// 6-point contract (R34). Used by the WAL replayer to inject recovered
+// page images without disk I/O.
+func (b *bp) Upsert(page *Page) error {
+	if page == nil {
+		return ErrInvalidBlockID
+	}
+	if page.ID == 0 {
+		return ErrInvalidBlockID
+	}
+	if len(page.Data) != BlockSize {
+		return ErrInvalidBlockID
+	}
+
+	b.ht.mu.Lock()
+	defer b.ht.mu.Unlock()
+
+	// Existing slot: overwrite in place. The previous data buffer is
+	// the caller's responsibility — we do not return it to the pool.
+	if existing, ok := b.ht.slots[page.ID]; ok {
+		existing.data = page.Data
+		existing.loading.Store(false)
+		// Pin count is intentionally untouched (Upsert does not pin).
+		return nil
+	}
+
+	// Not in cache. At capacity? Evict one slot before inserting.
+	if b.used.Load() >= b.capacity {
+		hand := b.hand.Add(1)
+		for blockID, slot := range b.ht.slots {
+			if slot.refKey.Load() < hand-uint64(clockInterval) {
+				if slot.pinCount.Load() == 0 {
+					delete(b.ht.slots, blockID)
+					b.used.Add(-1)
+					b.evicts.Add(1)
+					if len(slot.data) == BlockSize {
+						b.sp.Put(slot.data)
+					}
+					goto insert
+				}
+			}
+		}
+		for blockID, slot := range b.ht.slots {
+			if slot.pinCount.Load() == 0 {
+				delete(b.ht.slots, blockID)
+				b.used.Add(-1)
+				b.evicts.Add(1)
+				if len(slot.data) == BlockSize {
+					b.sp.Put(slot.data)
+				}
+				goto insert
+			}
+		}
+		// Both passes failed (all slots pinned). Insert over capacity
+		// to match Get's behavior — the next Get will evict instead.
+	}
+insert:
+	slot := &bufferSlot{
+		blockID: page.ID,
+		data:    page.Data,
+		loading: atomic.Bool{},
+	}
+	slot.loading.Store(false)
+	slot.refKey.Store(b.hand.Add(1))
+	b.ht.slots[page.ID] = slot
+	b.used.Add(1)
+	return nil
 }
 
 // SetCapacity implements BufferPool. Deferred to v2.
