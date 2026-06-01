@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/DF"
+	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 )
 
 // mockSyncPool is a simple SyncPool implementation for testing.
@@ -873,4 +874,298 @@ func BenchmarkPinUnpin(b *testing.B) {
 			bp.Unpin(page)
 		}
 	})
+}
+
+// TestGetContextCancelled tests Get with cancelled context.
+func TestGetContextCancelled(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "cancel.block")
+	
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	
+	bp, err := New(10, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+	
+	// Cancelled context should return error for non-existent block
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	
+	_, _, err = bp.Get(cancelledCtx, 999)
+	// Could be context.Canceled or error from device, both acceptable
+	if err == nil {
+		t.Error("expected error with cancelled context")
+	}
+}
+
+// TestGetTimeout tests Get with timeout during loading.
+func TestGetTimeout(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "timeout.block")
+	
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	
+	bp, err := New(10, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+	
+	// Timeout context
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	
+	// Block device won't have block 999, should return error
+	_, _, err = bp.Get(timeoutCtx, 999)
+	if err == nil {
+		t.Error("expected error for missing block")
+	}
+}
+
+// TestCloseWithWriteError tests Close when hint file write fails.
+func TestCloseWithWriteError(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "close.block")
+	
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	
+	// Use tmp dir but make path unwritable
+	hintPath := filepath.Join(tmp, "subdir", "hint.bin")
+	
+	bp, err := New(10, hintPath, bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	
+	// Get a block to populate slots (so writeHintFile has work to do)
+	ctx := context.Background()
+	data := make([]byte, 100)
+	if err := bd.WriteBlock(ctx, 1, data); err != nil {
+		t.Fatalf("WriteBlock: %v", err)
+	}
+	bd.Sync()
+	page, _, _ := bp.Get(ctx, 1)
+	if page != nil {
+		bp.Pin(page)
+		bp.Unpin(page)
+	}
+	
+	// Close may or may not error depending on OS, but should not panic
+	_ = bp.Close()
+}
+
+// TestWarmContextCancelled tests Warm with cancelled context.
+func TestWarmContextCancelled(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "warm_cancel.block")
+	
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	
+	hintPath := filepath.Join(tmp, "cancel_hint.bin")
+	
+	// Create hint file with some entries
+	entries := []hintEntry{
+		{BlockID: 1, LastAccess: 100},
+		{BlockID: 2, LastAccess: 200},
+	}
+	if err := writeHintFile(entries, hintPath); err != nil {
+		t.Fatalf("writeHintFile: %v", err)
+	}
+	
+	bp, err := New(10, hintPath, bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+	
+	// Cancelled context
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	
+	err = bp.Warm(cancelledCtx)
+	if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
+
+// TestWarmWithCorruptHintFile tests Warm with invalid hint file.
+func TestWarmWithCorruptHintFile(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "corrupt_hint.block")
+	
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	
+	hintPath := filepath.Join(tmp, "corrupt.bin")
+	// Write garbage to hint file
+	if err := os.WriteFile(hintPath, []byte("not valid hint data"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	
+	bp, err := New(10, hintPath, bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+	
+	// Warm should return error but not panic
+	err = bp.Warm(context.Background())
+	if err == nil {
+		t.Error("expected error with corrupt hint file")
+	}
+}
+
+// TestWriteHintFileEmptyEntries tests writeHintFile with no entries.
+func TestWriteHintFileEmptyEntries(t *testing.T) {
+	tmp := t.TempDir()
+	hintPath := filepath.Join(tmp, "empty.bin")
+	
+	// Empty entries should return nil - implementation may or may not create file
+	err := writeHintFile([]hintEntry{}, hintPath)
+	if err != nil {
+		t.Errorf("writeHintFile with empty entries failed: %v", err)
+	}
+	// Note: implementation creates an empty file, which is acceptable
+}
+
+// TestFirstLoggerNilBF tests firstLogger with nil/empty input.
+func TestFirstLoggerNilBF(t *testing.T) {
+	result := firstLogger(nil)
+	if result != nil {
+		t.Error("expected nil for nil input")
+	}
+	
+	result = firstLogger([]lg.Logger{})
+	if result != nil {
+		t.Error("expected nil for empty slice")
+	}
+}
+
+// TestGetNilBlockID tests Get with blockID=0 (invalid).
+func TestGetNilBlockID(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "nil.block")
+	
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	
+	bp, err := New(10, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+	
+	_, _, err = bp.Get(context.Background(), 0)
+	if err != ErrInvalidBlockID {
+		t.Errorf("expected ErrInvalidBlockID, got %v", err)
+	}
+}
+
+// TestWarmNilHintPath tests Warm with empty hint path.
+func TestWarmNilHintPath(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "nil_hint.block")
+	
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	
+	bp, err := New(10, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+	
+	// Warm with no hint path should return nil
+	err = bp.Warm(context.Background())
+	if err != nil {
+		t.Errorf("Warm with no hint path returned error: %v", err)
+	}
+}
+
+// TestCloseIdempotentBF verifies Close is safe to call multiple times.
+func TestCloseIdempotentBF(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "idempotent.block")
+	
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	
+	hintPath := filepath.Join(tmp, "hint.bin")
+	bp, err := New(10, hintPath, bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	
+	// First close
+	if err := bp.Close(); err != nil {
+		t.Fatalf("first Close failed: %v", err)
+	}
+	
+	// Second close should be safe
+	if err := bp.Close(); err != nil {
+		t.Fatalf("second Close failed: %v", err)
+	}
+}
+
+// TestCloseWithLogger tests Close with invalid hint path.
+func TestCloseWithLogger(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "log_close.block")
+	
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+	
+	// Invalid hint path in subdirectory that doesn't exist
+	invalidHintPath := filepath.Join(tmp, "nonexistent", "hint.bin")
+	
+	bp, err := New(10, invalidHintPath, bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	
+	// Get a block to have data in slots
+	ctx := context.Background()
+	data := make([]byte, 100)
+	bd.WriteBlock(ctx, 1, data)
+	page, _, _ := bp.Get(ctx, 1)
+	if page != nil {
+		bp.Pin(page)
+		bp.Unpin(page)
+	}
+	
+	// Close should not panic (may or may not return error depending on OS)
+	_ = bp.Close()
 }
