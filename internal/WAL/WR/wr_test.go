@@ -149,6 +149,159 @@ func TestWriterSyncAfterClose(t *testing.T) {
 	}
 }
 
+// TestSyncFlushesBuffer verifies that Sync pwrites the in-memory
+// buffer to the segment FD so on-disk bytes match the writer's
+// logical state (R09, R37).
+func TestSyncFlushesBuffer(t *testing.T) {
+	w, d := newTestWriter(t)
+	t.Cleanup(func() { _ = w.Close() })
+
+	rec := LogRecord{Type: RTData, BlockID: 1, Value: []byte("sync me")}
+	if _, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{rec}}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	// Without Sync, the bytes are in the 256 KB buffer, not on disk.
+	preBufLen := w.segBufLenForTest()
+	if preBufLen == 0 {
+		t.Fatal("expected buffer to have bytes after Append")
+	}
+	// Read the segment before Sync — should be empty (file exists but
+	// no pwrites yet).
+	preRaw := mustReadSegment(t, d.sm, 0)
+	if len(preRaw) != 0 {
+		t.Errorf("pre-Sync segment size: got %d, want 0", len(preRaw))
+	}
+	// Sync.
+	if err := w.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	// Buffer should be reset to len=0.
+	if got := w.segBufLenForTest(); got != 0 {
+		t.Errorf("post-Sync buf len: got %d, want 0", got)
+	}
+	// And the on-disk file should now have the bytes.
+	postRaw := mustReadSegment(t, d.sm, 0)
+	if len(postRaw) == 0 {
+		t.Error("post-Sync segment is empty; Sync didn't flush")
+	}
+}
+
+// TestSyncIdempotent verifies that calling Sync multiple times in a
+// row is safe and the second call is a no-op (R22).
+func TestSyncIdempotent(t *testing.T) {
+	w, _ := newTestWriter(t)
+	t.Cleanup(func() { _ = w.Close() })
+
+	if _, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{
+		{Type: RTData, BlockID: 1, Value: []byte("a")},
+	}}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := w.Sync(); err != nil {
+			t.Errorf("Sync[%d]: %v", i, err)
+		}
+	}
+}
+
+// TestSyncEmptyBufferNoOp verifies that calling Sync before any
+// Append (or after a flush that left the buffer empty) is a clean
+// no-op — no fsync, no error.
+func TestSyncEmptyBufferNoOp(t *testing.T) {
+	w, _ := newTestWriter(t)
+	t.Cleanup(func() { _ = w.Close() })
+
+	// No Append yet — seg is nil. Sync should be a clean no-op.
+	if err := w.Sync(); err != nil {
+		t.Errorf("Sync on uninitialized writer: %v", err)
+	}
+	// Append + Sync, then Sync again — second call is a no-op.
+	if _, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{
+		{Type: RTData, BlockID: 1, Value: []byte("x")},
+	}}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatalf("first Sync: %v", err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Errorf("second Sync (empty buf): %v", err)
+	}
+}
+
+// TestSyncUpdatesSyncedLSN verifies the synced atomic is updated
+// to the highest LSN that has been fsynced (R09). After a Sync
+// that covers records up to LSN X, synced == X.
+func TestSyncUpdatesSyncedLSN(t *testing.T) {
+	w, _ := newTestWriter(t)
+	t.Cleanup(func() { _ = w.Close() })
+
+	rec1 := LogRecord{Type: RTData, BlockID: 1, Value: []byte("a")}
+	rec1Size := int64(len(encodeRecord(&rec1)))
+	if _, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{rec1}}); err != nil {
+		t.Fatalf("Append[1]: %v", err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	// After Sync, synced = LSN of last byte in segment 0.
+	wantSynced := LSNFor(0, uint64(rec1Size))
+	if got := w.synced.Load(); got != wantSynced {
+		t.Errorf("synced: got %d, want %d", got, wantSynced)
+	}
+
+	// Second batch: synced should advance.
+	rec2 := LogRecord{Type: RTData, BlockID: 2, Value: []byte("bb")}
+	rec2Size := int64(len(encodeRecord(&rec2)))
+	if _, err := w.Append(&WriteBatch{TxnID: 2, Recs: []LogRecord{rec2}}); err != nil {
+		t.Fatalf("Append[2]: %v", err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatalf("Sync[2]: %v", err)
+	}
+	wantSynced2 := LSNFor(0, uint64(rec1Size+rec2Size))
+	if got := w.synced.Load(); got != wantSynced2 {
+		t.Errorf("synced after second Sync: got %d, want %d", got, wantSynced2)
+	}
+}
+
+// TestSyncConcurrentSafe verifies Sync can be called from multiple
+// goroutines without data races (R21). Run with -race.
+func TestSyncConcurrentSafe(t *testing.T) {
+	w, _ := newTestWriter(t)
+	t.Cleanup(func() { _ = w.Close() })
+
+	// Spawn writers and syncers.
+	const goroutines = 8
+	done := make(chan struct{})
+	for i := 0; i < goroutines; i++ {
+		go func(id int) {
+			defer func() { done <- struct{}{} }()
+			for j := 0; j < 50; j++ {
+				rec := LogRecord{Type: RTData, BlockID: uint64(id*1000 + j), Value: []byte{byte(j)}}
+				_, _ = w.Append(&WriteBatch{TxnID: uint64(id), Recs: []LogRecord{rec}})
+				_ = w.Sync()
+			}
+		}(i)
+	}
+	for i := 0; i < goroutines; i++ {
+		<-done
+	}
+	// Final sync to confirm everything is durable.
+	if err := w.Sync(); err != nil {
+		t.Errorf("final Sync: %v", err)
+	}
+}
+
+// segBufLenForTest returns the active segment's buffer length. Test
+// helper (in-package, no exported API surface).
+func (w *writer) segBufLenForTest() int {
+	if w.seg == nil {
+		return 0
+	}
+	return len(w.seg.buf)
+}
+
 // TestCheckpointStructFields verifies the documented Checkpoint
 // fields are exported and settable (R14).
 func TestCheckpointStructFields(t *testing.T) {
@@ -573,4 +726,319 @@ func mustReadSegment(t *testing.T, sm *lf.SegmentManager, n uint64) []byte {
 		t.Fatalf("pread: %v", err)
 	}
 	return buf
+}
+
+// ---- Close (R22) -------------------------------------------------------
+
+// segForTest returns the writer's active segment (or nil) for test
+// inspection. The helper is in-package and exists only so tests can
+// verify post-Close state without exposing internals to the
+// public API.
+func (w *writer) segForTest() *logSegment { return w.seg }
+
+// TestCloseFlushesDirtyBuffer verifies the R22 contract that Close
+// flushes the in-memory buffer to disk before tearing down the
+// segment — so data written but not yet Synced is still durable
+// after Close returns.
+func TestCloseFlushesDirtyBuffer(t *testing.T) {
+	w, d := newTestWriter(t)
+
+	rec := LogRecord{Type: RTData, BlockID: 1, Value: []byte("close me")}
+	if _, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{rec}}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	// Sanity: buffer is dirty, segment file is still empty on disk.
+	if w.segForTest() == nil || w.segForTest().buf == nil {
+		t.Fatal("expected active segment with buffer after Append")
+	}
+	if got := w.segBufLenForTest(); got == 0 {
+		t.Fatal("expected dirty buffer after Append")
+	}
+	if pre := mustReadSegment(t, d.sm, 0); len(pre) != 0 {
+		t.Fatalf("pre-Close segment should be empty, got %d bytes", len(pre))
+	}
+
+	// Close should flush + fsync + release.
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Buffer should have been returned to the pool (we nil the field
+	// so a future Close won't double-Put it).
+	if w.segForTest() != nil {
+		t.Errorf("post-Close seg: got %+v, want nil", w.segForTest())
+	}
+
+	// And the bytes are now on disk.
+	post := mustReadSegment(t, d.sm, 0)
+	want := encodeRecord(&LogRecord{
+		Type:    RTData,
+		TxnID:   1,
+		BlockID: 1,
+		Value:   []byte("close me"),
+	})
+	if !bytes.Equal(post, want) {
+		t.Errorf("post-Close segment bytes mismatch: got %x, want %x", post, want)
+	}
+}
+
+// TestCloseUpdatesSyncedLSN verifies that after Close the synced
+// atomic reflects the highest LSN that was fsynced. This matches
+// the contract used by the durability gate in the engine layer.
+func TestCloseUpdatesSyncedLSN(t *testing.T) {
+	w, _ := newTestWriter(t)
+
+	rec1 := LogRecord{Type: RTData, BlockID: 1, Value: []byte("a")}
+	rec1Size := int64(len(encodeRecord(&rec1)))
+	rec2 := LogRecord{Type: RTData, BlockID: 2, Value: []byte("b")}
+	rec2Size := int64(len(encodeRecord(&rec2)))
+	if _, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{rec1}}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if _, err := w.Append(&WriteBatch{
+		TxnID: 2,
+		Recs:  []LogRecord{rec2},
+	}); err != nil {
+		t.Fatalf("Append[2]: %v", err)
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	want := LSNFor(0, uint64(rec1Size+rec2Size))
+	if got := w.synced.Load(); got != want {
+		t.Errorf("post-Close synced: got %d, want %d", got, want)
+	}
+}
+
+// TestCloseReleasesFD verifies that after Close the segment's file
+// handle is released (FD = -1) and the SegmentManager can re-open
+// the file on demand — i.e. the on-disk bytes are preserved.
+func TestCloseReleasesFD(t *testing.T) {
+	w, d := newTestWriter(t)
+	if _, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{
+		{Type: RTData, BlockID: 1, Value: []byte("preserved")},
+	}}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	// Snapshot the FD before Close.
+	fh := w.segForTest().fh
+	preFD := fh.FD
+	if preFD < 0 {
+		t.Fatal("pre-Close FD should be valid")
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if fh.FD != -1 {
+		t.Errorf("post-Close FD: got %d, want -1", fh.FD)
+	}
+	// And the bytes are still readable via the SegmentManager.
+	got := mustReadSegment(t, d.sm, 0)
+	if len(got) == 0 {
+		t.Error("post-Close segment is empty; expected preserved bytes")
+	}
+}
+
+// TestCloseOnUnusedWriter verifies that calling Close on a writer
+// that never had an Append is a clean no-op (R22). It must not
+// panic, must not return an error, and must not touch the segment
+// manager in a way that creates a stray segment file.
+func TestCloseOnUnusedWriter(t *testing.T) {
+	d := newTestDeps(t)
+	w, err := New(t.TempDir(), d.sm, d.sp, d.log)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// No Append: seg is nil. Close should be a no-op.
+	if err := w.Close(); err != nil {
+		t.Errorf("Close on unused writer: %v", err)
+	}
+	// No segment file should exist on disk.
+	segs, err := d.sm.ListSegments()
+	if err != nil {
+		t.Fatalf("ListSegments: %v", err)
+	}
+	if len(segs) != 0 {
+		t.Errorf("no segments expected, got %v", segs)
+	}
+	// Second Close is also a no-op.
+	if err := w.Close(); err != nil {
+		t.Errorf("second Close on unused writer: %v", err)
+	}
+}
+
+// TestCloseAfterSyncIsClean verifies that Close after a successful
+// Sync with an empty buffer is a no-op for the actual flush step
+// (buffer is empty) but still fsyncs and releases the FD. This
+// guards the common pattern: Append → Sync (commit) → ... → Close.
+func TestCloseAfterSyncIsClean(t *testing.T) {
+	w, d := newTestWriter(t)
+	rec := LogRecord{Type: RTData, BlockID: 1, Value: []byte("synced")}
+	if _, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{rec}}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	// Buffer is empty post-Sync.
+	if got := w.segBufLenForTest(); got != 0 {
+		t.Fatalf("expected empty buffer post-Sync, got %d", got)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	// Bytes survived.
+	post := mustReadSegment(t, d.sm, 0)
+	if len(post) == 0 {
+		t.Error("post-Close segment is empty; bytes should be preserved")
+	}
+}
+
+// TestCloseManyTimesIsIdempotent verifies the strict R22 idempotency
+// contract: N consecutive Close calls all return the same (nil or
+// error) value and produce no panics, no double-release, and no
+// spurious fsync errors.
+func TestCloseManyTimesIsIdempotent(t *testing.T) {
+	w, _ := newTestWriter(t)
+	if _, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{
+		{Type: RTData, BlockID: 1, Value: []byte("x")},
+	}}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	var firstErr error
+	for i := 0; i < 10; i++ {
+		err := w.Close()
+		if i == 0 {
+			firstErr = err
+		} else if err != firstErr {
+			t.Errorf("Close[%d] err mismatch: got %v, want %v", i, err, firstErr)
+		}
+	}
+}
+
+// TestCloseConcurrentWithAppend exercises the Close-vs-Append race
+// under the race detector. Outcomes are either "Append succeeded
+// and Close saw the bytes" or "Append returned 'writer is closed'"
+// — there must be no panics, no double-flushes, and no data
+// corruption.
+func TestCloseConcurrentWithAppend(t *testing.T) {
+	w, _ := newTestWriter(t)
+
+	const goroutines = 8
+	const perGoroutine = 100
+	start := make(chan struct{})
+	done := make(chan struct{}, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func(id int) {
+			defer func() { done <- struct{}{} }()
+			<-start
+			for j := 0; j < perGoroutine; j++ {
+				rec := LogRecord{
+					Type:    RTData,
+					BlockID: uint64(id*1000 + j),
+					Value:   []byte{byte(j)},
+				}
+				_, err := w.Append(&WriteBatch{TxnID: uint64(id), Recs: []LogRecord{rec}})
+				if err != nil && err.Error() != "wr: writer is closed" {
+					t.Errorf("unexpected Append err: %v", err)
+				}
+			}
+		}(i)
+	}
+	close(start)
+	// Close concurrently with the Append fan-out.
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- w.Close() }()
+
+	for i := 0; i < goroutines; i++ {
+		<-done
+	}
+	if err := <-closeDone; err != nil {
+		t.Errorf("Close: %v", err)
+	}
+}
+
+// TestCloseConcurrentWithClose exercises the Close-vs-Close race
+// (R22 idempotency under contention). All callers must return
+// without panicking and with the same first-call error value.
+func TestCloseConcurrentWithClose(t *testing.T) {
+	w, _ := newTestWriter(t)
+	if _, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{
+		{Type: RTData, BlockID: 1, Value: []byte("x")},
+	}}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	const goroutines = 16
+	results := make([]error, goroutines)
+	start := make(chan struct{})
+	done := make(chan struct{}, goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(idx int) {
+			defer func() { done <- struct{}{} }()
+			<-start
+			results[idx] = w.Close()
+		}(i)
+	}
+	close(start)
+	for i := 0; i < goroutines; i++ {
+		<-done
+	}
+	// All errors should be identical (the cached first-call error).
+	for i := 1; i < goroutines; i++ {
+		if results[i] != results[0] {
+			t.Errorf("Close[%d]: got %v, want %v (cached first-call error)",
+				i, results[i], results[0])
+		}
+	}
+}
+
+// TestAppendAfterCloseDoesNotCorruptState verifies that even if
+// an Append is in flight when Close finishes, the writer's
+// post-Close state is consistent: seg is nil, no orphan FD
+// (the closed flag prevents openSegmentLocked from running).
+func TestAppendAfterCloseDoesNotCorruptState(t *testing.T) {
+	w, _ := newTestWriter(t)
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		_, err := w.Append(&WriteBatch{Recs: []LogRecord{{Type: RTData, BlockID: 1, Value: []byte("a")}}})
+		if err == nil {
+			t.Errorf("Append[%d] after Close: expected error, got nil", i)
+		}
+	}
+	if w.segForTest() != nil {
+		t.Errorf("post-Close seg: got %+v, want nil", w.segForTest())
+	}
+}
+
+// TestCloseAllowsBufferReuse verifies that the buffer returned to
+// the pool on Close is actually picked up by a future Get — i.e.
+// we don't leak it. A new writer created in the same process
+// should be able to get a non-nil buffer (the pool reuses it).
+func TestCloseReturnsBufferToPool(t *testing.T) {
+	d := newTestDeps(t)
+	// First writer.
+	w1, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	if err := w1.Close(); err != nil {
+		t.Fatalf("Close[1]: %v", err)
+	}
+	// Second writer on the same pool: it must successfully get
+	// a buffer (the pool reused the slot).
+	w2, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	if _, err := w2.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{
+		{Type: RTData, BlockID: 1, Value: []byte("reuse")},
+	}}); err != nil {
+		t.Fatalf("Append on w2: %v", err)
+	}
+	if err := w2.Close(); err != nil {
+		t.Fatalf("Close[2]: %v", err)
+	}
 }

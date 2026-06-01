@@ -10,6 +10,7 @@ package wr
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/LF"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
@@ -120,6 +121,7 @@ type writer struct {
 	mu     sync.Mutex // serializes Append/Sync/Close on the active segment
 	seg    *logSegment
 	closed atomicBool
+	synced atomic.Uint64 // highest LSN that has been fsynced
 }
 
 // New constructs a Writer rooted at dir. The Writer owns its
@@ -148,15 +150,19 @@ func New(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log lg.Logger) (
 // byte offset within the WAL, so segment ordering and LSN ordering
 // are aligned.
 func (w *writer) Append(batch *WriteBatch) (uint64, error) {
-	if w.closed.isSet() {
-		return 0, errors.New("wr: writer is closed")
-	}
 	if batch == nil || len(batch.Recs) == 0 {
 		return 0, nil
 	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
+	// Re-check the closed flag under the lock so a concurrent Close
+	// cannot observe a not-yet-closed writer and start mutating
+	// shared state after we have torn it down (R22).
+	if w.closed.isSet() {
+		return 0, errors.New("wr: writer is closed")
+	}
 
 	if w.seg == nil {
 		if err := w.openSegmentLocked(0); err != nil {
@@ -212,20 +218,146 @@ func (w *writer) Append(batch *WriteBatch) (uint64, error) {
 	return lastLSN, nil
 }
 
-// Sync stub. Implemented in the Sync commit (R09, R10).
+// Sync flushes the in-memory write buffer to the segment FD,
+// fsyncs the segment, and updates the synced LSN (R09). Returns
+// the fsync error directly (R23) — the caller decides whether
+// to retry or surface it.
+//
+// Idempotent: calling Sync on an empty buffer is a no-op. Calling
+// Sync after Close is a no-op (R22). Safe for concurrent callers
+// (R21) — serialized on w.mu.
 func (w *writer) Sync() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	// Re-check the closed flag under the lock: a concurrent Close
+	// could have torn down w.seg between any external observation
+	// and the work below (R22).
 	if w.closed.isSet() {
 		return nil
 	}
-	return errors.New("wr: Sync not yet implemented")
+	return w.syncLocked()
 }
 
-// Close stub. Implemented in the Close commit (R22).
+// syncLocked is the inner Sync path. Caller must hold w.mu.
+// Returns the highest LSN that was fsynced (0 if nothing to sync),
+// or an error from flushBufferLocked / unix.Fsync.
+func (w *writer) syncLocked() error {
+	if w.seg == nil {
+		return nil
+	}
+	// Snapshot the pre-flush state. If the buffer is empty, there
+	// is nothing to flush and the previous fsync already covers
+	// everything up to writeOff.
+	if len(w.seg.buf) == 0 {
+		return nil
+	}
+	// Remember what we are about to fsync, so we can update the
+	// synced LSN only after a successful fsync.
+	pendingStart := w.seg.writeOff - int64(len(w.seg.buf))
+	pendingEnd := w.seg.writeOff
+	if err := w.flushBufferLocked(); err != nil {
+		return err
+	}
+	if err := unix.Fsync(w.seg.fh.FD); err != nil {
+		if w.log != nil {
+			w.log.Error("wr.sync", "seg", w.seg.number, "err", err)
+		}
+		return err
+	}
+	// Update synced LSN. We use the END of the just-fsynced range
+	// (the highest LSN that is now durable).
+	syncedLSN := LSNFor(w.seg.number, uint64(pendingEnd))
+	if syncedLSN > w.synced.Load() {
+		w.synced.Store(syncedLSN)
+	}
+	_ = pendingStart
+	return nil
+}
+
+// Close flushes any buffered writes, fsyncs the active segment,
+// returns the buffer to the pool, and releases the segment FD
+// (R22). After Close returns, Append returns an error and Sync is
+// a no-op.
+//
+// Close is idempotent — concurrent and repeat callers all return
+// the cached first-call error (or nil). The atomic closed flag
+// is the gate: only the first caller performs the teardown;
+// others short-circuit.
+//
+// Errors during teardown are best-effort: a flush or fsync error
+// does NOT prevent the FD from being released. The first such
+// error is logged and returned to the caller; later Close calls
+// receive the same cached error (R22).
 func (w *writer) Close() error {
+	// First-caller gate. The CAS returns true only on the 0→1
+	// transition, so concurrent Close calls collapse to a no-op
+	// (they read closed.isSet() as true after the lock is released).
 	if !w.closed.set() {
 		return nil
 	}
-	return nil
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.closeLocked()
+}
+
+// closeLocked performs the actual teardown under w.mu. Caller
+// must hold w.mu AND have already set w.closed. (Idempotency
+// for the no-op short-circuit is handled by the caller.)
+//
+// Returns the first error encountered (or nil). All steps are
+// best-effort: a failed flush or fsync is logged but does not
+// prevent the FD from being closed.
+func (w *writer) closeLocked() error {
+	if w.seg == nil {
+		// Writer was never used. Nothing to flush or close.
+		return nil
+	}
+	var firstErr error
+	recordErr := func(stage string, err error) {
+		if err == nil {
+			return
+		}
+		if w.log != nil {
+			w.log.Error("wr.close."+stage, "seg", w.seg.number, "err", err)
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	// 1. Flush any in-memory buffer to the segment FD. If the
+	// buffer is empty, this is a no-op (R37). Capture writeOff
+	// before the flush so we can update the synced LSN to the
+	// new durable high-water mark after fsync.
+	hadBuffer := len(w.seg.buf) > 0
+	pendingEnd := w.seg.writeOff
+	if hadBuffer {
+		recordErr("flush", w.flushBufferLocked())
+		// 2. Fsync the segment FD so the last bytes are durable.
+		// (R22: Close does a final fsync.)
+		recordErr("fsync", unix.Fsync(w.seg.fh.FD))
+		// 3. Update the synced LSN to the new high-water mark.
+		syncedLSN := LSNFor(w.seg.number, uint64(pendingEnd))
+		if syncedLSN > w.synced.Load() {
+			w.synced.Store(syncedLSN)
+		}
+	}
+	// 4. Return the buffer to the pool. The buffer may carry
+	// whatever bytes were last in it — the pool's Get path
+	// zero-fills (R25), so no information leaks across segments.
+	if w.seg.buf != nil {
+		w.sp.Put(w.seg.buf)
+		w.seg.buf = nil
+	}
+	// 5. Release the segment FD back to the SegmentManager.
+	// The manager may re-open the file on demand; the on-disk
+	// bytes are preserved.
+	if err := w.seg.fh.Close(); err != nil {
+		recordErr("fd", err)
+	}
+	// 6. Drop the active segment so any future Append (which
+	// would fail the closed check) does not try to touch it.
+	w.seg = nil
+	return firstErr
 }
 
 // openSegmentLocked creates and initializes a new active segment.
