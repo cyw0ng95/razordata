@@ -882,3 +882,54 @@ func TestReadBlockFullWithLogger(t *testing.T) {
 		t.Error("expected error reading invalid file")
 	}
 }
+
+func TestOpenNonExistentFile(t *testing.T) {
+	_, err := Open("/non/existent/file/path/razor")
+	if err == nil {
+		t.Error("expected error opening non-existent file")
+	}
+}
+
+func TestCreateInNonExistentDir(t *testing.T) {
+	_, err := Create("/non/existent/directory/razor")
+	if err == nil {
+		t.Error("expected error creating file in non-existent directory")
+	}
+}
+
+func TestWriteBlockErrorPath(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "data.razor")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	bd.Close()
+
+	bd2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer bd2.Close()
+
+	data := make([]byte, DataLen-ChecksumLen)
+	for i := range data {
+		data[i] = byte(i & 0xff)
+	}
+
+	ctx := context.Background()
+	err = bd2.WriteBlock(ctx, 0, data)
+	if err != nil {
+		t.Errorf("WriteBlock: %v", err)
+	}
+}
+
+func TestSupportsODirectPath(t *testing.T) {
+	result := supportsODirect()
+	if result {
+		t.Log("O_DIRECT is supported on this system")
+	} else {
+		t.Log("O_DIRECT is not supported on this system")
+	}
+}
