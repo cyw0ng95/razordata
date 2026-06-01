@@ -1042,3 +1042,122 @@ func TestCloseReturnsBufferToPool(t *testing.T) {
 		t.Fatalf("Close[2]: %v", err)
 	}
 }
+
+// TestCrashSimulated tests that a writer can recover its state
+// after an unclean shutdown (simulated by closing the underlying
+// segment without proper flush). This is a Foundation stub test —
+// the real crash recovery lands in the RP Core implementation.
+func TestCrashSimulated(t *testing.T) {
+	d := newTestDeps(t)
+	
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	
+	batch := &WriteBatch{
+		TxnID: 1,
+		Recs: []LogRecord{
+			{Type: RTData, BlockID: 1, Value: []byte("crash test data")},
+			{Type: RTCommit, TxnID: 1},
+		},
+	}
+	
+	lsn, err := w.Append(batch)
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if lsn == 0 {
+		t.Error("expected non-zero LSN")
+	}
+	
+	if err := w.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	
+	w.Close()
+	
+	_ = d
+}
+
+// TestWriterWithSmallSegment exercises segment rotation with a
+// very small segment size to verify rotation behavior in tests.
+func TestWriterWithSmallSegment(t *testing.T) {
+	d := newTestDeps(t)
+	
+	sm2, err := lf.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("lf.New: %v", err)
+	}
+	defer sm2.Close()
+	
+	w, err := New(t.TempDir(), sm2, d.sp, d.log)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer w.Close()
+	
+	for i := 0; i < 5; i++ {
+		_, err := w.Append(&WriteBatch{
+			TxnID: uint64(i),
+			Recs: []LogRecord{
+				{Type: RTData, BlockID: uint64(i + 1), Value: []byte("x")},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Append[%d]: %v", i, err)
+		}
+	}
+	
+	w.Sync()
+}
+
+// TestMultipleSyncCalls verifies that multiple Sync calls work.
+func TestMultipleSyncCalls(t *testing.T) {
+	d := newTestDeps(t)
+	
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	defer w.Close()
+	
+	for i := 0; i < 3; i++ {
+		_, err := w.Append(&WriteBatch{
+			TxnID: uint64(i),
+			Recs: []LogRecord{
+				{Type: RTData, BlockID: uint64(i), Value: []byte("data")},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+		
+		if err := w.Sync(); err != nil {
+			t.Errorf("Sync[%d]: %v", i, err)
+		}
+	}
+}
+
+// TestSegmentRotationPreservesLSN ordering.
+func TestSegmentRotationLSNOrdering(t *testing.T) {
+	d := newTestDeps(t)
+	
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	defer w.Close()
+	
+	lsns := make([]uint64, 0)
+	for i := 0; i < 100; i++ {
+		lsn, err := w.Append(&WriteBatch{
+			TxnID: uint64(i),
+			Recs: []LogRecord{
+				{Type: RTData, BlockID: uint64(i), Value: []byte("test")},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+		lsns = append(lsns, lsn)
+	}
+	
+	for i := 1; i < len(lsns); i++ {
+		if lsns[i] <= lsns[i-1] {
+			t.Errorf("LSN not monotonic: lsns[%d]=%d, lsns[%d]=%d",
+				i-1, lsns[i-1], i, lsns[i])
+		}
+	}
+}

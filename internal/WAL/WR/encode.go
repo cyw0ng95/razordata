@@ -129,7 +129,12 @@ func appendPayload(buf []byte, rec *LogRecord) []byte {
 	return buf
 }
 
-// decodeRecord parses a single encoded record from data starting at
+// DecodeRecord is the exported version of decodeRecord for use
+// by external packages (e.g., WAL/RP replayer). It has the same
+// semantics as decodeRecord.
+func DecodeRecord(data []byte, off int) (*LogRecord, int, error) {
+	return decodeRecord(data, off)
+}
 // off. Returns the decoded LogRecord, the number of bytes consumed
 // (header + body), and an error if the record is malformed.
 //
