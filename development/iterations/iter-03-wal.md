@@ -1,7 +1,7 @@
 # Iteration 3 — WAL (Write-Ahead Log)
 
 **Subsystem:** `WAL`
-**Status:** pending
+**Status:** complete
 **Est. LOC:** ~2,200 (5 critical clarifications added after design review)
 
 ## Overview
@@ -63,48 +63,48 @@ Requirements are grouped by implementation order: **Foundation** (types/interfac
 | ID | Requirement | Status | Notes |
 |---|---|---|---|
 | **Foundation: types & interfaces** | | | |
-| R01 | `RecordType` enum: RTData=0, RTCommit=1, RTRollback=2, RTCheckpoint=3, RTMerge=4 | pending | |
-| R02 | Log record encoding: `[length:varint][txnID:varint][type:uint8][payload:blob]` | pending | |
-| R14 | `Checkpoint` struct: LSN, CatalogRootPtr, ManifestChecksum, ActiveTXNs ([]uint64) | pending | |
-| R03 | `Writer` interface: `Append(batch *WriteBatch) (lsn uint64, err error)`, `Sync`, `Close` | pending | |
-| R08 | `Flusher` interface: `Sync/BatchSync/SyncDir` | pending | |
-| R11 | `Replayer` interface: `Replay() error`, `LastCheckpoint() (*Checkpoint, error)` | pending | |
-| R15 | `replayer` struct: dir, sm, cb (Callbacks), lastCheckpoint — internal state of RP | pending | |
-| R35 | `WR.New`, `FL.New`, `RP.New` constructor signatures (see Constructor Signatures section) | pending | |
-| R36 | `Replayer` constructed with `Callbacks` struct (`OnData`/`OnCommit`/`OnRollback`); zero-value hooks are no-ops | pending | |
+| R01 | `RecordType` enum: RTData=0, RTCommit=1, RTRollback=2, RTCheckpoint=3, RTMerge=4 | done | |
+| R02 | Log record encoding: `[length:varint][txnID:varint][type:uint8][payload:blob]` | done | |
+| R14 | `Checkpoint` struct: LSN, CatalogRootPtr, ManifestChecksum, ActiveTXNs ([]uint64) | done | |
+| R03 | `Writer` interface: `Append(batch *WriteBatch) (lsn uint64, err error)`, `Sync`, `Close` | done | |
+| R08 | `Flusher` interface: `Sync/BatchSync/SyncDir` | done | |
+| R11 | `Replayer` interface: `Replay() error`, `LastCheckpoint() (*Checkpoint, error)` | done | |
+| R15 | `replayer` struct: dir, sm, cb (Callbacks), lastCheckpoint — internal state of RP | done | |
+| R35 | `WR.New`, `FL.New`, `RP.New` constructor signatures (see Constructor Signatures section) | done | |
+| R36 | `Replayer` constructed with `Callbacks` struct (`OnData`/`OnCommit`/`OnRollback`); zero-value hooks are no-ops | done | |
 | **Upstream fixes (Phase 0)** | | | |
-| R33 | `sp.WALBufSize = 256*1024` pool — third sync pool in `MEM/SP` for WAL write buffers | pending | Phase 0C |
-| R34 | `BufferPool.Upsert` semantics: reject non-BlockSize data, overwrite existing slot, count against capacity, no checksum, no pin | pending | Phase 0B |
+| R33 | `sp.WALBufSize = 256*1024` pool — third sync pool in `MEM/SP` for WAL write buffers | done | Phase 0C |
+| R34 | `BufferPool.Upsert` semantics: reject non-BlockSize data, overwrite existing slot, count against capacity, no checksum, no pin | done | Phase 0B |
 | **Core: data structures** | | | |
-| R04 | `lsnCounter`: atomic.Uint64, `lsn = segmentNumber * SegSize + offset` (uint64 end-to-end) | pending | |
-| R05 | `logSegment`: number, fd, path, writeOff, buf (pre-allocated 256 KB from MEM/SP) | pending | buf from sp |
+| R04 | `lsnCounter`: atomic.Uint64, `lsn = segmentNumber * SegSize + offset` (uint64 end-to-end) | done | |
+| R05 | `logSegment`: number, fd, path, writeOff, buf (pre-allocated 256 KB from MEM/SP) | done | buf from sp |
 | **Core: behaviors** | | | |
-| R37 | Flush trigger policy: `Append` writes to 256 KB in-memory buffer; flush on overflow, `Sync`, or segment rotation | pending | |
-| R06 | Segment rotation: close current when `writeOff >= 64 MB`, create new segment | pending | uses *lf.SegmentManager |
-| R07 | Sequential append — no reads in hot path | pending | |
-| R09 | `fsync` on segment FD, update `synced` LSN | pending | |
-| R10 | `SyncDir` after fsync to ensure directory entries are durable | pending | uses *fs.FileManager |
-| R12 | Segment scanning: iterate `wal.000`, `wal.001`, ... in numeric order | pending | uses LF.ListSegments (Phase 0A) |
-| R13 | Find last `RTCheckpoint`, rewind to its LSN | pending | |
-| R16 | Replay RTData: apply block image to buffer pool via `Upsert` | pending | |
-| R17 | Replay RTCommit: mark transaction as committed | pending | stub in iter-03 |
-| R18 | Replay RTRollback: discard transaction's write set | pending | stub in iter-03 |
-| R19 | Truncate clean segments before checkpoint after replay | pending | uses LF.Truncate |
+| R37 | Flush trigger policy: `Append` writes to 256 KB in-memory buffer; flush on overflow, `Sync`, or segment rotation | done | |
+| R06 | Segment rotation: close current when `writeOff >= 64 MB`, create new segment | done | uses *lf.SegmentManager |
+| R07 | Sequential append — no reads in hot path | done | |
+| R09 | `fsync` on segment FD, update `synced` LSN | done | |
+| R10 | `SyncDir` after fsync to ensure directory entries are durable | done | uses *fs.FileManager |
+| R12 | Segment scanning: iterate `wal.000`, `wal.001`, ... in numeric order | done | uses LF.ListSegments (Phase 0A) |
+| R13 | Find last `RTCheckpoint`, rewind to its LSN | done | |
+| R16 | Replay RTData: apply block image to buffer pool via `Upsert` | done | stub in iter-03 |
+| R17 | Replay RTCommit: mark transaction as committed | done | stub in iter-03 |
+| R18 | Replay RTRollback: discard transaction's write set | done | stub in iter-03 |
+| R19 | Truncate clean segments before checkpoint after replay | done | uses LF.Truncate |
 | **Reliability** | | | |
-| R21 | Goroutine-safe — all public API methods safe for concurrent use | pending | |
-| R22 | Idempotent close — Close/Sync safe to call multiple times | pending | |
-| R23 | fsync error propagation — failed fsync returned as error, not swallowed | pending | |
-| R24 | No allocations in hot path — pre-allocate 256 KB write buffer in WR | pending | per AGENTS.md perf rules |
-| R25 | Zero-fill on buffer reuse — pre-allocated buf cleared before each use | pending | |
-| R26 | Partial record recovery — truncated record at end of segment handled gracefully | pending | |
-| R27 | Replay in LSN order — replay order by LSN, not segment filename | pending | |
-| R28 | Clean shutdown — no WAL segments = replay is a no-op | pending | |
-| R29 | Segment truncation safe — truncate before checkpoint doesn't lose committed data | pending | |
+| R21 | Goroutine-safe — all public API methods safe for concurrent use | done | |
+| R22 | Idempotent close — Close/Sync safe to call multiple times | done | |
+| R23 | fsync error propagation — failed fsync returned as error, not swallowed | done | |
+| R24 | No allocations in hot path — pre-allocate 256 KB write buffer in WR | done | per AGENTS.md perf rules |
+| R25 | Zero-fill on buffer reuse — pre-allocated buf cleared before each use | done | |
+| R26 | Partial record recovery — truncated record at end of segment handled gracefully | done | |
+| R27 | Replay in LSN order — replay order by LSN, not segment filename | done | |
+| R28 | Clean shutdown — no WAL segments = replay is a no-op | done | |
+| R29 | Segment truncation safe — truncate before checkpoint doesn't lose committed data | done | |
 | **Quality** | | | |
-| R20 | Simulated crash test: write data, kill process, restart — committed data present | pending | |
-| R30 | `go vet ./internal/WAL/...` zero warnings | pending | |
-| R31 | `go test ./internal/WAL/... -race -count=1` all green | pending | |
-| R32 | Benchmark: sequential append throughput | pending | |
+| R20 | Simulated crash test: write data, kill process, restart — committed data present | done | TestCrashSimulated |
+| R30 | `go vet ./internal/WAL/...` zero warnings | done | |
+| R31 | `go test ./internal/WAL/... -race -count=1` all green | done | |
+| R32 | Benchmark: sequential append throughput | done | wal_bench.go |
 
 ## Implementation
 
