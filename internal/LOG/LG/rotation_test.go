@@ -395,20 +395,20 @@ func TestRotationWithSmallMaxSize(t *testing.T) {
 // TestRotationWriterErrorPaths verifies error handling
 func TestRotationWriterErrorPaths(t *testing.T) {
 	s := &sharedLogger{}
-	
+
 	// Test Write with nil file
 	rw := &rotationWriter{shared: s}
 	_, err := rw.Write([]byte("test"))
 	if err == nil {
 		t.Error("expected error writing to nil file")
 	}
-	
+
 	// Test Sync with nil file
 	err = rw.Sync()
 	if err != nil {
 		t.Errorf("expected nil error on nil file Sync, got %v", err)
 	}
-	
+
 	// Test Close twice (idempotent)
 	err = rw.Close()
 	if err != nil {
@@ -423,13 +423,13 @@ func TestRotationWriterErrorPaths(t *testing.T) {
 // TestCleanupOldLogsEmptyDir verifies cleanup with no files
 func TestCleanupOldLogsEmptyDir(t *testing.T) {
 	dir := t.TempDir()
-	
+
 	l := New(Options{
 		Dir:      dir,
 		BaseName: "test.log",
 		MaxFiles: 3,
 	}).(*logger)
-	
+
 	err := l.shared.cleanupOldLogs()
 	if err != nil {
 		t.Errorf("cleanupOldLogs failed: %v", err)
@@ -439,7 +439,7 @@ func TestCleanupOldLogsEmptyDir(t *testing.T) {
 // TestCleanupWithErrorPermission verifies cleanup handles errors
 func TestCleanupWithErrorPermission(t *testing.T) {
 	dir := t.TempDir()
-	
+
 	// Create lots of rotated files
 	for i := 0; i < 10; i++ {
 		name := filepath.Join(dir, fmt.Sprintf("test.240101_1200%02d.log", i))
@@ -447,13 +447,13 @@ func TestCleanupWithErrorPermission(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	
+
 	l := New(Options{
 		Dir:      dir,
 		BaseName: "test.log",
 		MaxFiles: 1, // Force deletion of 9 files
 	}).(*logger)
-	
+
 	// Should attempt cleanup without erroring on permission issues
 	err := l.shared.cleanupOldLogs()
 	if err != nil {
@@ -464,32 +464,32 @@ func TestCleanupWithErrorPermission(t *testing.T) {
 // TestListRotatedFilesWithInvalidFormat verifies filtering
 func TestListRotatedFilesWithInvalidFormat(t *testing.T) {
 	dir := t.TempDir()
-	
+
 	l := New(Options{
 		Dir:      dir,
 		BaseName: "test.log",
 	}).(*logger)
-	
+
 	// Create files with invalid formats
 	invalidNames := []string{
-		"test.240101.log",           // wrong timestamp length
-		"test.txt",                  // wrong extension
-		"other.240101_120000.log",   // wrong prefix
-		"test.240101_12.log",        // wrong format
-		"test.log.240101_120000",    // extension in wrong place
+		"test.240101.log",         // wrong timestamp length
+		"test.txt",                // wrong extension
+		"other.240101_120000.log", // wrong prefix
+		"test.240101_12.log",      // wrong format
+		"test.log.240101_120000",  // extension in wrong place
 	}
 	for _, name := range invalidNames {
 		os.Create(filepath.Join(dir, name))
 	}
-	
+
 	// Create valid rotated file
 	os.Create(filepath.Join(dir, "test.240101_120000.log"))
-	
+
 	files, err := l.shared.listRotatedFiles()
 	if err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Should only return the valid format file
 	if len(files) != 1 {
 		t.Errorf("expected 1 valid file, got %d: %v", len(files), files)
@@ -505,25 +505,25 @@ func TestRotationWriterWriteSizeTracking(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	
+
 	s := &sharedLogger{baseName: "size.log", dir: dir}
 	rw := &rotationWriter{shared: s}
 	rw.setFile(f)
-	
+
 	// Write multiple times
 	data1 := []byte("hello")
 	data2 := []byte(" world")
-	
+
 	n1, err := rw.Write(data1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	
+
 	n2, err := rw.Write(data2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	
+
 	totalSize := s.curSize.Load()
 	if totalSize != int64(n1+n2) {
 		t.Errorf("expected size %d, got %d", n1+n2, totalSize)
@@ -533,7 +533,7 @@ func TestRotationWriterWriteSizeTracking(t *testing.T) {
 // TestRotateFileDirectly tests the rotateFile function by triggering it manually
 func TestRotateFileDirectly(t *testing.T) {
 	dir := t.TempDir()
-	
+
 	// Create logger with large MaxSize to avoid auto-rotation during test
 	l := New(Options{
 		Level:    slog.LevelInfo,
@@ -542,24 +542,29 @@ func TestRotateFileDirectly(t *testing.T) {
 		MaxSize:  1024 * 1024, // 1MB
 		MaxFiles: 3,
 	}).(*logger)
-	
+
 	// Write some content first
 	if _, err := l.shared.output.Write([]byte("test content\n")); err != nil {
 		t.Fatal(err)
 	}
-	
+
+	// Simulate threshold being reached. rotateFile short-circuits when
+	// curSize < maxSize, so the test must push the counter past the limit
+	// to exercise the rotation path.
+	l.shared.curSize.Store(int64(l.shared.maxSize))
+
 	// Manually trigger rotation
 	err := l.shared.rotateFile()
 	if err != nil {
 		t.Fatalf("rotateFile failed: %v", err)
 	}
-	
+
 	// Verify rotation happened - should have rotated file and new current file
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	
+
 	var rotatedFiles []string
 	var currentFile string
 	for _, f := range files {
@@ -570,14 +575,14 @@ func TestRotateFileDirectly(t *testing.T) {
 			rotatedFiles = append(rotatedFiles, name)
 		}
 	}
-	
+
 	if currentFile == "" {
 		t.Error("expected current log file to exist after rotation")
 	}
 	if len(rotatedFiles) == 0 {
 		t.Error("expected at least one rotated file")
 	}
-	
+
 	// Verify current file is empty (fresh after rotation)
 	currentPath := filepath.Join(dir, "manual.log")
 	info, err := os.Stat(currentPath)
@@ -593,16 +598,16 @@ func TestRotateFileDirectly(t *testing.T) {
 // TestRotateFileNoRotationWriter handles case where output is not rotationWriter
 func TestRotateFileNoRotationWriter(t *testing.T) {
 	dir := t.TempDir()
-	
+
 	l := New(Options{
 		Level:    slog.LevelInfo,
 		Dir:      dir,
 		BaseName: "test.log",
 	}).(*logger)
-	
+
 	// Replace output with non-rotation writer
 	l.shared.output = os.Stdout
-	
+
 	// Should return nil without error
 	err := l.shared.rotateFile()
 	if err != nil {
@@ -613,7 +618,7 @@ func TestRotateFileNoRotationWriter(t *testing.T) {
 // TestRotateFileRenameFailure tests rotateFile when rename fails.
 func TestRotateFileRenameFailure(t *testing.T) {
 	dir := t.TempDir()
-	
+
 	l := New(Options{
 		Level:    slog.LevelInfo,
 		Dir:      dir,
@@ -621,14 +626,14 @@ func TestRotateFileRenameFailure(t *testing.T) {
 		MaxSize:  1024,
 		MaxFiles: 2,
 	}).(*logger)
-	
+
 	// Make the log file read-only to cause rename failure
 	logPath := filepath.Join(dir, "test.log")
 	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0644); err == nil {
 		f.Write([]byte("data"))
 		f.Close()
 	}
-	
+
 	// Make directory read-only
 	if err := os.Chmod(dir, 0555); err == nil {
 		// Try to rotate - rename should fail
@@ -644,7 +649,7 @@ func TestRotateFileRenameFailure(t *testing.T) {
 // TestRotateFileOpenNewFailure tests rotateFile when opening new file fails.
 func TestRotateFileOpenNewFailure(t *testing.T) {
 	dir := t.TempDir()
-	
+
 	l := New(Options{
 		Level:    slog.LevelInfo,
 		Dir:      dir,
@@ -652,17 +657,17 @@ func TestRotateFileOpenNewFailure(t *testing.T) {
 		MaxSize:  1024,
 		MaxFiles: 2,
 	}).(*logger)
-	
+
 	// Create the log file
 	if f, err := os.Create(filepath.Join(dir, "openerror.log")); err == nil {
 		f.Write([]byte("data"))
 		f.Close()
 	}
-	
+
 	// Make the current log file read-only so new file creation fails
 	logPath := filepath.Join(dir, "openerror.log")
 	os.Chmod(logPath, 0444)
-	
+
 	err := l.shared.rotateFile()
 	// Should error but not panic
 	if err != nil {
@@ -674,7 +679,7 @@ func TestRotateFileOpenNewFailure(t *testing.T) {
 // TestLogIfEnabledWithRotation tests logIfEnabled triggering rotation.
 func TestLogIfEnabledWithRotation(t *testing.T) {
 	dir := t.TempDir()
-	
+
 	l := New(Options{
 		Level:    slog.LevelDebug,
 		Dir:      dir,
@@ -682,12 +687,12 @@ func TestLogIfEnabledWithRotation(t *testing.T) {
 		MaxSize:  50, // Very small to trigger rotation
 		MaxFiles: 3,
 	}).(*logger)
-	
+
 	// Write multiple times to trigger rotation
 	for i := 0; i < 5; i++ {
 		l.Debug("test message", "i", i)
 	}
-	
+
 	// Should have rotated files
 	files, _ := os.ReadDir(dir)
 	if len(files) < 2 {
@@ -700,7 +705,7 @@ func TestLogIfEnabledNoLog(t *testing.T) {
 	l := New(Options{
 		Level: slog.LevelDebug,
 	})
-	
+
 	// Should not panic when logging
 	l.Debug("test")
 	l.Info("test")
@@ -710,18 +715,18 @@ func TestLogIfEnabledNoLog(t *testing.T) {
 // TestSyncWithHandler tests Sync with underlying handler.
 func TestSyncWithHandler(t *testing.T) {
 	dir := t.TempDir()
-	
+
 	l := New(Options{
 		Level:    slog.LevelInfo,
 		Dir:      dir,
 		BaseName: "sync.log",
 	}).(*logger)
-	
+
 	// Sync should not error
 	if err := l.Sync(); err != nil {
 		t.Errorf("Sync: %v", err)
 	}
-	
+
 	// Sync again - should still work
 	if err := l.Sync(); err != nil {
 		t.Errorf("Sync again: %v", err)
@@ -732,21 +737,21 @@ func TestSyncWithHandler(t *testing.T) {
 func TestSetOutputToWriter(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "custom.log")
-	
+
 	f, err := os.Create(logPath)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	defer f.Close()
-	
+
 	l := New(Options{
 		Level: slog.LevelInfo,
 	})
-	
+
 	l.SetOutput(f)
-	
+
 	l.Info("test message")
-	
+
 	// Verify content was written
 	f.Close()
 	content, _ := os.ReadFile(logPath)
@@ -758,24 +763,24 @@ func TestSetOutputToWriter(t *testing.T) {
 // TestCleanupWithPermissionError tests cleanup when file removal fails.
 func TestCleanupWithPermissionError(t *testing.T) {
 	dir := t.TempDir()
-	
+
 	l := New(Options{
 		Dir:      dir,
 		BaseName: "perm.log",
 		MaxFiles: 0, // Force aggressive cleanup
 	}).(*logger)
-	
+
 	// Create some rotated files
 	for i := 0; i < 3; i++ {
 		name := filepath.Join(dir, fmt.Sprintf("perm.%s.log", time.Now().Format("20060102_150405")))
 		os.WriteFile(name, []byte("data"), 0644)
 	}
-	
+
 	// Make directory read-only to cause cleanup failure
 	os.Chmod(dir, 0555)
 	err := l.shared.cleanupOldLogs()
 	os.Chmod(dir, 0755)
-	
+
 	// Should not panic
 	if err != nil {
 		t.Logf("cleanup error (expected in restricted env): %v", err)
@@ -785,12 +790,12 @@ func TestCleanupWithPermissionError(t *testing.T) {
 // TestListRotatedFilesSorted tests that listRotatedFiles returns sorted files.
 func TestListRotatedFilesSorted(t *testing.T) {
 	dir := t.TempDir()
-	
+
 	l := New(Options{
 		Dir:      dir,
 		BaseName: "sort.log",
 	}).(*logger)
-	
+
 	// Create rotated files with different timestamps
 	timestamps := []string{"240601_120000", "240602_130000", "240603_140000"}
 	for _, ts := range timestamps {
@@ -798,16 +803,16 @@ func TestListRotatedFilesSorted(t *testing.T) {
 		os.WriteFile(name, []byte("data"), 0644)
 		time.Sleep(10 * time.Millisecond)
 	}
-	
+
 	files, err := l.shared.listRotatedFiles()
 	if err != nil {
 		t.Fatalf("listRotatedFiles: %v", err)
 	}
-	
+
 	if len(files) != 3 {
 		t.Errorf("expected 3 files, got %d", len(files))
 	}
-	
+
 	// Files should be sorted oldest first
 	for i := 1; i < len(files); i++ {
 		if files[i-1] > files[i] {

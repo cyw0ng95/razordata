@@ -189,14 +189,10 @@ func (l *logger) logIfEnabled(lvl slog.Level, msg string, args ...any) {
 		}
 	}
 
-	// Perform rotation with its own mutex to avoid deadlock
+	// Perform rotation. rotateFile acquires rotMu itself; the double-check
+	// after locking prevents redundant rotations from concurrent goroutines.
 	if rotationNeeded {
-		l.shared.rotMu.Lock()
-		// Double-check after acquiring lock
-		if l.shared.curSize.Load() >= l.shared.maxSize {
-			l.shared.rotationFn()
-		}
-		l.shared.rotMu.Unlock()
+		l.shared.rotationFn()
 	}
 
 	l.impl.Log(context.Background(), lvl, msg, args...)
@@ -284,6 +280,11 @@ func (s *sharedLogger) rotateFile() error {
 	// Use rotMu instead of s.mu to avoid deadlock with slog handler
 	s.rotMu.Lock()
 	defer s.rotMu.Unlock()
+
+	// Double-check under lock: another goroutine may have rotated already
+	if s.curSize.Load() < s.maxSize {
+		return nil
+	}
 
 	// Get current file from output
 	rw, ok := s.output.(*rotationWriter)
