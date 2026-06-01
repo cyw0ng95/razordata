@@ -1,10 +1,13 @@
 package fs
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 )
 
 func TestNewOrCreate(t *testing.T) {
@@ -504,4 +507,247 @@ func errorsIs(got, want error) bool {
 		return want == nil
 	}
 	return strings.Contains(got.Error(), want.Error())
+}
+
+// TestSyncDirCached tests SyncDir when dir FD is cached.
+func TestSyncDirCached(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := New(tmp, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer fm.Close()
+	
+	if err := os.MkdirAll(filepath.Join(tmp, "subdir"), 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	
+	// SyncDir expects relative path
+	if err := fm.SyncDir("subdir"); err != nil {
+		t.Errorf("SyncDir: %v", err)
+	}
+	
+	// Second call uses cached FD
+	if err := fm.SyncDir("subdir"); err != nil {
+		t.Errorf("SyncDir cached: %v", err)
+	}
+}
+
+// TestSyncDirNewFD tests SyncDir when dir FD is not cached.
+func TestSyncDirNewFD(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := New(tmp, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer fm.Close()
+	
+	if err := os.MkdirAll(filepath.Join(tmp, "newdir"), 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	
+	if err := fm.SyncDir("newdir"); err != nil {
+		t.Errorf("SyncDir: %v", err)
+	}
+}
+
+// TestSyncDirError tests SyncDir error path.
+func TestSyncDirError(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := New(tmp, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer fm.Close()
+	
+	invalidPath := filepath.Join(tmp, "nonexistent")
+	if err := fm.SyncDir(invalidPath); err == nil {
+		t.Error("expected error for non-existent path")
+	}
+}
+
+// TestNewValidDir tests New with existing directory.
+func TestNewValidDir(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := New(tmp, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	fm.Close()
+}
+
+// TestNewOrCreateReuse tests NewOrCreate when directory exists.
+func TestNewOrCreateReuse(t *testing.T) {
+	tmp := t.TempDir()
+	
+	fm, err := NewOrCreate(tmp, nil)
+	if err != nil {
+		t.Fatalf("NewOrCreate: %v", err)
+	}
+	fm.Close()
+	
+	fm2, err := NewOrCreate(tmp, nil)
+	if err != nil {
+		t.Fatalf("NewOrCreate reuse: %v", err)
+	}
+	fm2.Close()
+}
+
+// TestOpenMissing tests Open with non-existent file.
+func TestOpenMissing(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := New(tmp, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer fm.Close()
+	
+	_, err = fm.Open("nonexistent.txt")
+	if err == nil {
+		t.Error("expected error for non-existent file")
+	}
+}
+
+// TestCreateThenOpen tests Create followed by Open.
+func TestCreateThenOpen(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := New(tmp, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer fm.Close()
+	
+	handle, err := fm.Create("created.txt")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	handle.Close()
+	
+	path := filepath.Join(tmp, "created.txt")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Error("file not created")
+	}
+	
+	handle2, err := fm.Open("created.txt")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	handle2.Close()
+}
+
+// TestRemoveFile tests Remove with existing file.
+func TestRemoveFile(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := New(tmp, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer fm.Close()
+	
+	path := filepath.Join(tmp, "to_remove.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	
+	if err := fm.Remove("to_remove.txt"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("file still exists after Remove")
+	}
+}
+
+// TestListPattern tests List with glob pattern.
+func TestListPattern(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := New(tmp, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer fm.Close()
+	
+	for i := 1; i <= 3; i++ {
+		path := filepath.Join(tmp, fmt.Sprintf("file%d.txt", i))
+		os.WriteFile(path, []byte("content"), 0600)
+	}
+	
+	files, err := fm.List("*.txt")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(files) < 3 {
+		t.Errorf("expected at least 3 files, got %d", len(files))
+	}
+}
+
+// TestFirstLoggerNilFS tests firstLogger with nil/empty input.
+func TestFirstLoggerNilFS(t *testing.T) {
+	result := firstLogger(nil)
+	if result != nil {
+		t.Error("expected nil for nil input")
+	}
+	
+	result = firstLogger([]lg.Logger{})
+	if result != nil {
+		t.Error("expected nil for empty slice")
+	}
+}
+
+// TestPathValidatorOK tests path validation with valid paths.
+func TestPathValidatorOK(t *testing.T) {
+	pv, err := newPathValidator("/tmp")
+	if err != nil {
+		t.Fatalf("newPathValidator: %v", err)
+	}
+	
+	_, err = pv.Resolve("subdir/file.txt")
+	if err != nil {
+		t.Errorf("expected valid, got %v", err)
+	}
+}
+
+// TestPathValidatorBad tests path validation with invalid paths.
+func TestPathValidatorBad(t *testing.T) {
+	pv, err := newPathValidator("/tmp")
+	if err != nil {
+		t.Fatalf("newPathValidator: %v", err)
+	}
+	
+	_, err = pv.Resolve("/etc/passwd")
+	if err == nil {
+		t.Error("expected error for path outside root")
+	}
+}
+
+// TestCloseSafe tests that Close can be called multiple times.
+func TestCloseSafe(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := New(tmp, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	
+	if err := fm.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	
+	if err := fm.Close(); err != nil {
+		t.Errorf("second Close: %v", err)
+	}
+}
+
+// TestCloseWithOpenHandles tests Close when handles exist.
+func TestCloseWithOpenHandles(t *testing.T) {
+	tmp := t.TempDir()
+	fm, err := New(tmp, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	
+	fm.Create("test.txt")
+	
+	if err := fm.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 }
