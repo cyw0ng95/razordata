@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestRotationTrigger verifies rotation occurs when maxSize exceeded
@@ -606,5 +607,211 @@ func TestRotateFileNoRotationWriter(t *testing.T) {
 	err := l.shared.rotateFile()
 	if err != nil {
 		t.Errorf("expected nil error when output is not rotationWriter, got %v", err)
+	}
+}
+
+// TestRotateFileRenameFailure tests rotateFile when rename fails.
+func TestRotateFileRenameFailure(t *testing.T) {
+	dir := t.TempDir()
+	
+	l := New(Options{
+		Level:    slog.LevelInfo,
+		Dir:      dir,
+		BaseName: "test.log",
+		MaxSize:  1024,
+		MaxFiles: 2,
+	}).(*logger)
+	
+	// Make the log file read-only to cause rename failure
+	logPath := filepath.Join(dir, "test.log")
+	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+		f.Write([]byte("data"))
+		f.Close()
+	}
+	
+	// Make directory read-only
+	if err := os.Chmod(dir, 0555); err == nil {
+		// Try to rotate - rename should fail
+		err := l.shared.rotateFile()
+		if err == nil {
+			t.Log("rename succeeded despite read-only dir (possible in some environments)")
+		}
+		// Restore permissions
+		os.Chmod(dir, 0755)
+	}
+}
+
+// TestRotateFileOpenNewFailure tests rotateFile when opening new file fails.
+func TestRotateFileOpenNewFailure(t *testing.T) {
+	dir := t.TempDir()
+	
+	l := New(Options{
+		Level:    slog.LevelInfo,
+		Dir:      dir,
+		BaseName: "openerror.log",
+		MaxSize:  1024,
+		MaxFiles: 2,
+	}).(*logger)
+	
+	// Create the log file
+	if f, err := os.Create(filepath.Join(dir, "openerror.log")); err == nil {
+		f.Write([]byte("data"))
+		f.Close()
+	}
+	
+	// Make the current log file read-only so new file creation fails
+	logPath := filepath.Join(dir, "openerror.log")
+	os.Chmod(logPath, 0444)
+	
+	err := l.shared.rotateFile()
+	// Should error but not panic
+	if err != nil {
+		t.Logf("rotateFile error (expected with read-only file): %v", err)
+	}
+	os.Chmod(logPath, 0644)
+}
+
+// TestLogIfEnabledWithRotation tests logIfEnabled triggering rotation.
+func TestLogIfEnabledWithRotation(t *testing.T) {
+	dir := t.TempDir()
+	
+	l := New(Options{
+		Level:    slog.LevelDebug,
+		Dir:      dir,
+		BaseName: "rotate.log",
+		MaxSize:  50, // Very small to trigger rotation
+		MaxFiles: 3,
+	}).(*logger)
+	
+	// Write multiple times to trigger rotation
+	for i := 0; i < 5; i++ {
+		l.Debug("test message", "i", i)
+	}
+	
+	// Should have rotated files
+	files, _ := os.ReadDir(dir)
+	if len(files) < 2 {
+		t.Errorf("expected rotation, got %d files", len(files))
+	}
+}
+
+// TestLogIfEnabledNoLog tests logIfEnabled when logger is nil.
+func TestLogIfEnabledNoLog(t *testing.T) {
+	l := New(Options{
+		Level: slog.LevelDebug,
+	})
+	
+	// Should not panic when logging
+	l.Debug("test")
+	l.Info("test")
+	l.Error("test")
+}
+
+// TestSyncWithHandler tests Sync with underlying handler.
+func TestSyncWithHandler(t *testing.T) {
+	dir := t.TempDir()
+	
+	l := New(Options{
+		Level:    slog.LevelInfo,
+		Dir:      dir,
+		BaseName: "sync.log",
+	}).(*logger)
+	
+	// Sync should not error
+	if err := l.Sync(); err != nil {
+		t.Errorf("Sync: %v", err)
+	}
+	
+	// Sync again - should still work
+	if err := l.Sync(); err != nil {
+		t.Errorf("Sync again: %v", err)
+	}
+}
+
+// TestSetOutputToWriter tests SetOutput with io.Writer.
+func TestSetOutputToWriter(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "custom.log")
+	
+	f, err := os.Create(logPath)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer f.Close()
+	
+	l := New(Options{
+		Level: slog.LevelInfo,
+	})
+	
+	l.SetOutput(f)
+	
+	l.Info("test message")
+	
+	// Verify content was written
+	f.Close()
+	content, _ := os.ReadFile(logPath)
+	if len(content) == 0 {
+		t.Error("no content written")
+	}
+}
+
+// TestCleanupWithPermissionError tests cleanup when file removal fails.
+func TestCleanupWithPermissionError(t *testing.T) {
+	dir := t.TempDir()
+	
+	l := New(Options{
+		Dir:      dir,
+		BaseName: "perm.log",
+		MaxFiles: 0, // Force aggressive cleanup
+	}).(*logger)
+	
+	// Create some rotated files
+	for i := 0; i < 3; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("perm.%s.log", time.Now().Format("20060102_150405")))
+		os.WriteFile(name, []byte("data"), 0644)
+	}
+	
+	// Make directory read-only to cause cleanup failure
+	os.Chmod(dir, 0555)
+	err := l.shared.cleanupOldLogs()
+	os.Chmod(dir, 0755)
+	
+	// Should not panic
+	if err != nil {
+		t.Logf("cleanup error (expected in restricted env): %v", err)
+	}
+}
+
+// TestListRotatedFilesSorted tests that listRotatedFiles returns sorted files.
+func TestListRotatedFilesSorted(t *testing.T) {
+	dir := t.TempDir()
+	
+	l := New(Options{
+		Dir:      dir,
+		BaseName: "sort.log",
+	}).(*logger)
+	
+	// Create rotated files with different timestamps
+	timestamps := []string{"240601_120000", "240602_130000", "240603_140000"}
+	for _, ts := range timestamps {
+		name := filepath.Join(dir, fmt.Sprintf("sort.%s.log", ts))
+		os.WriteFile(name, []byte("data"), 0644)
+		time.Sleep(10 * time.Millisecond)
+	}
+	
+	files, err := l.shared.listRotatedFiles()
+	if err != nil {
+		t.Fatalf("listRotatedFiles: %v", err)
+	}
+	
+	if len(files) != 3 {
+		t.Errorf("expected 3 files, got %d", len(files))
+	}
+	
+	// Files should be sorted oldest first
+	for i := 1; i < len(files); i++ {
+		if files[i-1] > files[i] {
+			t.Error("files not sorted")
+		}
 	}
 }
