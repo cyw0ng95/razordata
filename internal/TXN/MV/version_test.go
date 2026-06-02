@@ -7,7 +7,7 @@ import (
 )
 
 func TestVersionNodeFields(t *testing.T) {
-	node := newVersionNode(1, 100, []byte("key"), []byte("value"), false)
+	node := NewVersionNode(1, 100, []byte("key"), []byte("value"), false)
 
 	if node.txnID != 1 {
 		t.Errorf("expected txnID 1, got %d", node.txnID)
@@ -30,7 +30,7 @@ func TestVersionNodeFields(t *testing.T) {
 }
 
 func TestVersionNodeIsUncommitted(t *testing.T) {
-	node := newVersionNode(1, 100, []byte("key"), []byte("value"), false)
+	node := NewVersionNode(1, 100, []byte("key"), []byte("value"), false)
 
 	if !node.IsUncommitted() {
 		t.Error("new node should be uncommitted")
@@ -38,7 +38,7 @@ func TestVersionNodeIsUncommitted(t *testing.T) {
 }
 
 func TestVersionNodeIsVisible(t *testing.T) {
-	node := newVersionNode(1, 50, []byte("key"), []byte("value"), false)
+	node := NewVersionNode(1, 50, []byte("key"), []byte("value"), false)
 
 	if !node.IsVisible(100) {
 		t.Error("node should be visible at readTS 100 (beginTS 50 < 100 && endTS=maxUint64 >= 100)")
@@ -58,7 +58,7 @@ func TestVersionNodeIsVisible(t *testing.T) {
 }
 
 func TestVersionNodeCommittedVisibility(t *testing.T) {
-	node := newVersionNode(1, 50, []byte("key"), []byte("value"), false)
+	node := NewVersionNode(1, 50, []byte("key"), []byte("value"), false)
 	node.endTS.Store(200)
 
 	if !node.IsVisible(100) {
@@ -81,8 +81,8 @@ func TestVersionNodeCommittedVisibility(t *testing.T) {
 func TestVersionChainInsert(t *testing.T) {
 	vc := &VersionChain{}
 
-	node1 := newVersionNode(1, 10, []byte("key1"), []byte("value1"), false)
-	node2 := newVersionNode(2, 20, []byte("key2"), []byte("value2"), false)
+	node1 := NewVersionNode(1, 10, []byte("key1"), []byte("value1"), false)
+	node2 := NewVersionNode(2, 20, []byte("key2"), []byte("value2"), false)
 
 	if !vc.Insert(node1) {
 		t.Error("first insert should succeed")
@@ -105,8 +105,8 @@ func TestVersionChainInsert(t *testing.T) {
 func TestVersionChainInsertSameKey(t *testing.T) {
 	vc := &VersionChain{}
 
-	node1 := newVersionNode(1, 10, []byte("key"), []byte("value1"), false)
-	node2 := newVersionNode(2, 20, []byte("key"), []byte("value2"), false)
+	node1 := NewVersionNode(1, 10, []byte("key"), []byte("value1"), false)
+	node2 := NewVersionNode(2, 20, []byte("key"), []byte("value2"), false)
 
 	vc.Insert(node1)
 	vc.Insert(node2)
@@ -119,7 +119,7 @@ func TestVersionChainInsertSameKey(t *testing.T) {
 
 func TestVersionChainCommit(t *testing.T) {
 	vc := &VersionChain{}
-	node := newVersionNode(1, 10, []byte("key"), []byte("value"), false)
+	node := NewVersionNode(1, 10, []byte("key"), []byte("value"), false)
 
 	if !vc.Commit(node, 100) {
 		t.Error("commit should succeed")
@@ -132,7 +132,7 @@ func TestVersionChainCommit(t *testing.T) {
 
 func TestVersionChainCommitTwice(t *testing.T) {
 	vc := &VersionChain{}
-	node := newVersionNode(1, 10, []byte("key"), []byte("value"), false)
+	node := NewVersionNode(1, 10, []byte("key"), []byte("value"), false)
 
 	vc.Commit(node, 100)
 
@@ -148,9 +148,9 @@ func TestVersionChainCommitTwice(t *testing.T) {
 func TestVersionChainFindVisible(t *testing.T) {
 	vc := &VersionChain{}
 
-	node1 := newVersionNode(1, 10, []byte("key"), []byte("v1"), false)
-	node2 := newVersionNode(2, 20, []byte("key"), []byte("v2"), false)
-	node3 := newVersionNode(3, 30, []byte("key"), []byte("v3"), false)
+	node1 := NewVersionNode(1, 10, []byte("key"), []byte("v1"), false)
+	node2 := NewVersionNode(2, 20, []byte("key"), []byte("v2"), false)
+	node3 := NewVersionNode(3, 30, []byte("key"), []byte("v3"), false)
 
 	vc.Insert(node1)
 	vc.Insert(node2)
@@ -178,8 +178,8 @@ func TestVersionChainFindVisible(t *testing.T) {
 func TestVersionChainFindVisibleDeleted(t *testing.T) {
 	vc := &VersionChain{}
 
-	node1 := newVersionNode(1, 10, []byte("key"), []byte("value"), false)
-	node2 := newVersionNode(2, 20, []byte("key"), []byte(""), true)
+	node1 := NewVersionNode(1, 10, []byte("key"), []byte("value"), false)
+	node2 := NewVersionNode(2, 20, []byte("key"), []byte(""), true)
 
 	vc.Insert(node1)
 	vc.Insert(node2)
@@ -216,7 +216,7 @@ func TestVersionChainConcurrency(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
-				node := newVersionNode(uint64(id), uint64(j*10), []byte("key"), []byte("value"), false)
+				node := NewVersionNode(uint64(id), uint64(j*10), []byte("key"), []byte("value"), false)
 				if vc.Insert(node) {
 					atomic.AddInt64(&inserted, 1)
 				}
@@ -242,7 +242,7 @@ func TestVersionChainConcurrency(t *testing.T) {
 }
 
 func TestVersionNodeDeleted(t *testing.T) {
-	node := newVersionNode(1, 10, []byte("key"), []byte("value"), true)
+	node := NewVersionNode(1, 10, []byte("key"), []byte("value"), true)
 
 	if !node.deleted {
 		t.Error("expected deleted to be true")
@@ -269,7 +269,7 @@ func TestVersionChainGetHead(t *testing.T) {
 		t.Error("empty chain head should be nil")
 	}
 
-	node := newVersionNode(1, 10, []byte("key"), []byte("value"), false)
+	node := NewVersionNode(1, 10, []byte("key"), []byte("value"), false)
 	vc.Insert(node)
 
 	if vc.GetHead() != node {
@@ -280,8 +280,8 @@ func TestVersionChainGetHead(t *testing.T) {
 func TestVersionChainFindVisibleMultipleVersions(t *testing.T) {
 	vc := &VersionChain{}
 
-	node1 := newVersionNode(1, 10, []byte("key"), []byte("v1"), false)
-	node2 := newVersionNode(2, 20, []byte("key"), []byte("v2"), false)
+	node1 := NewVersionNode(1, 10, []byte("key"), []byte("v1"), false)
+	node2 := NewVersionNode(2, 20, []byte("key"), []byte("v2"), false)
 
 	vc.Insert(node1)
 	vc.Insert(node2)
@@ -304,7 +304,7 @@ func BenchmarkVersionChainInsert(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		node := newVersionNode(uint64(i), uint64(i), []byte("key"), []byte("value"), false)
+		node := NewVersionNode(uint64(i), uint64(i), []byte("key"), []byte("value"), false)
 		vc.Insert(node)
 	}
 }
@@ -313,7 +313,7 @@ func BenchmarkVersionChainFindVisible(b *testing.B) {
 	vc := &VersionChain{}
 
 	for i := 0; i < 1000; i++ {
-		node := newVersionNode(uint64(i), uint64(i*10), []byte("key"), []byte("value"), false)
+		node := NewVersionNode(uint64(i), uint64(i*10), []byte("key"), []byte("value"), false)
 		vc.Insert(node)
 	}
 

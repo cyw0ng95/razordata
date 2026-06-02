@@ -16,7 +16,7 @@ type VersionNode struct {
 	next    atomic.Pointer[VersionNode]
 }
 
-func newVersionNode(txnID, beginTS uint64, key, value []byte, deleted bool) *VersionNode {
+func NewVersionNode(txnID, beginTS uint64, key, value []byte, deleted bool) *VersionNode {
 	node := allocVersionNode()
 	node.txnID = txnID
 	node.beginTS = beginTS
