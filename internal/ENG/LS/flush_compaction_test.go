@@ -526,3 +526,63 @@ func TestCompactionJob_RunWithOverlap(t *testing.T) {
 		t.Fatalf("compaction job with overlap failed: %v", err)
 	}
 }
+
+func TestPkIteratorKeyPrimaryNil(t *testing.T) {
+	it := &pkIterator{}
+
+	if key := it.Key(); key != nil {
+		t.Errorf("expected nil key for nil current, got %v", key)
+	}
+
+	if primary := it.Primary(); primary != nil {
+		t.Errorf("expected nil primary for nil current, got %v", primary)
+	}
+}
+
+func TestPkIteratorWithEntry(t *testing.T) {
+	entry := &pkEntry{
+		key:     []byte("testkey"),
+		primary: []byte("testprimary"),
+	}
+
+	it := &pkIterator{
+		current: entry,
+	}
+
+	if key := it.Key(); string(key) != "testkey" {
+		t.Errorf("expected key=testkey, got %s", key)
+	}
+
+	if primary := it.Primary(); string(primary) != "testprimary" {
+		t.Errorf("expected primary=testprimary, got %s", primary)
+	}
+}
+
+func TestPkIteratorNext(t *testing.T) {
+	head := &pkEntry{}
+	nextEntry := &pkEntry{
+		key:     []byte("key1"),
+		primary: []byte("primary1"),
+	}
+	head.next.Store(nextEntry)
+
+	it := &pkIterator{
+		head: head,
+	}
+
+	if !it.Next() {
+		t.Fatal("expected Next to return true")
+	}
+
+	if key := it.Key(); string(key) != "key1" {
+		t.Errorf("expected key=key1, got %s", key)
+	}
+
+	if primary := it.Primary(); string(primary) != "primary1" {
+		t.Errorf("expected primary=primary1, got %s", primary)
+	}
+
+	if it.Next() {
+		t.Error("expected Next to return false at end")
+	}
+}

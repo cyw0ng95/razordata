@@ -2,10 +2,12 @@ package df
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"golang.org/x/sys/unix"
 )
 
@@ -952,6 +954,52 @@ func TestCreateParentDoesNotExist(t *testing.T) {
 	_, err := Create("/nonexistent/parent/dir/file.razor")
 	if err == nil {
 		t.Error("expected error when parent dir does not exist")
+	}
+}
+
+func TestOpenFileReadOnly(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "readonly.block")
+
+	bd, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	bd.Close()
+
+	bd2, err := openFile(path, true, false, nil)
+	if err != nil {
+		t.Fatalf("openFile readOnly: %v", err)
+	}
+	bd2.Close()
+}
+
+func TestOpenFileNoCreateNonExistent(t *testing.T) {
+	_, err := openFile("/nonexistent/path/no_create.block", false, false, nil)
+	if err == nil {
+		t.Error("expected error when opening non-existent file without create flag")
+	}
+}
+
+func TestOpenFileWithLogger(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "withlog.block")
+
+	log := lg.New(lg.Options{Output: io.Discard})
+	bd, err := openFile(path, false, true, []lg.Logger{log})
+	if err != nil {
+		t.Fatalf("openFile with logger: %v", err)
+	}
+	bd.Close()
+}
+
+func TestFirstLoggerWithMultiple(t *testing.T) {
+	log1 := lg.New(lg.Options{Output: io.Discard})
+	log2 := lg.New(lg.Options{Output: io.Discard})
+
+	result := firstLogger([]lg.Logger{log1, log2})
+	if result != log1 {
+		t.Error("expected first logger")
 	}
 }
 
