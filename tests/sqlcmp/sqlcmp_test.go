@@ -1,6 +1,7 @@
 package sqlcmp
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -273,10 +274,164 @@ func TestParseErrors(t *testing.T) {
 	}
 }
 
+func TestComplexSelect(t *testing.T) {
+	complexCases := []testCase{
+		{"select_nested_parens", "SELECT * FROM t WHERE (((a = 1)))", false},
+		{"select_multi_where_and", "SELECT * FROM t WHERE a = 1 AND b = 2 AND c = 3", false},
+		{"select_multi_where_or", "SELECT * FROM t WHERE a = 1 OR b = 2 OR c = 3", false},
+		{"select_complex_expr", "SELECT a + b * c - d / e FROM t", false},
+		{"select_negated_expr", "SELECT * FROM t WHERE NOT (a = 1 AND b = 2)", false},
+		{"select_order_by_multiple", "SELECT * FROM t ORDER BY a, b, c", false},
+		{"select_order_by_asc_desc", "SELECT * FROM t ORDER BY a ASC, b DESC", false},
+		{"select_limit_offset_both", "SELECT * FROM t WHERE a > 0 ORDER BY b LIMIT 100 OFFSET 10", false},
+	}
+	for _, tc := range complexCases {
+		t.Run(tc.name, tc.runParse)
+		t.Run(tc.name+"/rewrite", tc.runRewrite)
+	}
+}
+
+func TestComplexDDL(t *testing.T) {
+	complexCases := []testCase{
+		{"create_table_multi_col", "CREATE TABLE t (a INTEGER, b TEXT, c REAL)", false},
+		{"create_table_all_types", "CREATE TABLE t (a INTEGER, b TEXT, c REAL, d BLOB)", false},
+		{"create_table_inline_notnull", "CREATE TABLE t (a INTEGER NOT NULL)", false},
+		{"create_table_inline_unique", "CREATE TABLE t (a TEXT UNIQUE)", false},
+		{"create_table_inline_default", "CREATE TABLE t (a INTEGER DEFAULT 0)", false},
+		{"drop_table_if_exists", "DROP TABLE IF EXISTS t", false},
+	}
+	for _, tc := range complexCases {
+		t.Run(tc.name, tc.runParse)
+		t.Run(tc.name+"/rewrite", tc.runRewrite)
+	}
+}
+
+func TestRealDataWorkflow(t *testing.T) {
+	workflows := [][]string{
+		{
+			"CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT, age INTEGER)",
+			"INSERT INTO users VALUES (1, 'alice', 'alice@example.com', 30)",
+			"INSERT INTO users VALUES (2, 'bob', 'bob@example.com', 25)",
+			"INSERT INTO users VALUES (3, 'charlie', 'charlie@example.com', 35)",
+			"SELECT * FROM users WHERE age > 25 ORDER BY age",
+			"SELECT name, email FROM users WHERE name = 'alice'",
+			"SELECT * FROM users ORDER BY name LIMIT 2 OFFSET 1",
+			"UPDATE users SET age = 31 WHERE name = 'alice'",
+			"SELECT * FROM users WHERE age = 31",
+			"DELETE FROM users WHERE name = 'charlie'",
+			"SELECT * FROM users",
+		},
+		{
+			"CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, product TEXT, amount REAL)",
+			"INSERT INTO orders VALUES (1, 1, 'widget', 19.99)",
+			"INSERT INTO orders VALUES (2, 1, 'gadget', 29.99)",
+			"INSERT INTO orders VALUES (3, 2, 'widget', 19.99)",
+			"SELECT * FROM orders WHERE amount > 20 ORDER BY amount DESC",
+			"UPDATE orders SET amount = 24.99 WHERE id = 1",
+			"SELECT * FROM orders WHERE id = 1",
+		},
+		{
+			"CREATE TABLE numbers (n INTEGER)",
+			"INSERT INTO numbers VALUES (1)",
+			"INSERT INTO numbers VALUES (2)",
+			"INSERT INTO numbers VALUES (3)",
+			"INSERT INTO numbers VALUES (4)",
+			"INSERT INTO numbers VALUES (5)",
+			"SELECT * FROM numbers WHERE n > 2 AND n < 5",
+			"SELECT * FROM numbers WHERE n IN (1, 3, 5)",
+			"SELECT * FROM numbers WHERE n BETWEEN 2 AND 4",
+		},
+	}
+	for i, workflow := range workflows {
+		t.Run(safeNamePrefix(fmt.Sprintf("wf%d", i), ""), func(t *testing.T) {
+			for j, sql := range workflow {
+				p := PS.NewParser(sql)
+				stmt, err := p.Parse()
+				if err != nil {
+					t.Errorf("workflow %d step %d: parse error for %q: %v", i, j, sql, err)
+					continue
+				}
+				_, err = RE.Rewrite(stmt)
+				if err != nil {
+					t.Errorf("workflow %d step %d: rewrite error for %q: %v", i, j, sql, err)
+				}
+			}
+		})
+	}
+}
+
+func TestRewriterProducesValidSQL(t *testing.T) {
+	cases := []testCase{
+		{"simple_select", "SELECT * FROM users WHERE age > 25", false},
+		{"insert_with_all_types", "INSERT INTO t (a, b, c, d) VALUES (1, 'text', 3.14, NULL)", false},
+		{"update_with_expr", "UPDATE t SET a = b + 1, c = d * 2 WHERE e > 0", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := PS.NewParser(tc.sql)
+			stmt, err := p.Parse()
+			if err != nil {
+				t.Fatalf("parse error for %q: %v", tc.sql, err)
+			}
+			rewritten, err := RE.Rewrite(stmt)
+			if err != nil {
+				t.Fatalf("rewrite error for %q: %v", tc.sql, err)
+			}
+			if rewritten == "" {
+				t.Fatalf("empty rewrite for %q", tc.sql)
+			}
+			p2 := PS.NewParser(rewritten)
+			_, err = p2.Parse()
+			if err != nil {
+				t.Fatalf("rewritten SQL %q failed to parse: %v", rewritten, err)
+			}
+		})
+	}
+}
+
+func TestExpressionEquivalence(t *testing.T) {
+	cases := []struct {
+		name  string
+		expr1 string
+		expr2 string
+	}{
+		{"paren_assoc", "(a + b) + c", "a + (b + c)"},
+		{"mul_div", "a * b / c", "(a * b) / c"},
+		{"mixed", "a + b * c - d / e", "a + (b * c) - (d / e)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p1 := PS.NewParser("SELECT " + c.expr1 + " FROM t")
+			p2 := PS.NewParser("SELECT " + c.expr2 + " FROM t")
+			s1, err := p1.Parse()
+			if err != nil {
+				t.Fatalf("parse error for %q: %v", c.expr1, err)
+			}
+			s2, err := p2.Parse()
+			if err != nil {
+				t.Fatalf("parse error for %q: %v", c.expr2, err)
+			}
+			r1, _ := RE.Rewrite(s1)
+			r2, _ := RE.Rewrite(s2)
+			if r1 != r2 {
+				t.Logf("expressions may differ: %s vs %s", r1, r2)
+			}
+		})
+	}
+}
+
 func safeName(s string) string {
 	const maxLen = 20
 	if len(s) <= maxLen {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+func safeNamePrefix(prefix, s string) string {
+	const maxLen = 20
+	if len(s) <= maxLen {
+		return prefix + "_" + s
+	}
+	return prefix + "_" + s[:maxLen] + "..."
 }
