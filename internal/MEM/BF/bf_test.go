@@ -1489,3 +1489,105 @@ func TestUpsertDoesNotPin(t *testing.T) {
 		t.Error("expected eviction of an Upserted page (Upserted pages are not pinned)")
 	}
 }
+
+// TestGetConcurrentLoading tests Get when slot is loading.
+func TestGetConcurrentLoading(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	data := make([]byte, df.DefaultBlockSize)
+	for i := uint64(1); i <= 3; i++ {
+		if err := bp.Upsert(&Page{ID: i, Data: data}); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err = bp.Get(ctx, 999)
+	if err == nil {
+		t.Error("expected error for cancelled context")
+	}
+}
+
+// TestUpsertSecondEvictionLoop tests second eviction loop when first can't find unpinned slot.
+func TestUpsertSecondEvictionLoop(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	capacity := int64(3)
+	bp, err := New(capacity, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	data := make([]byte, df.DefaultBlockSize)
+	for i := uint64(1); i <= uint64(capacity); i++ {
+		if err := bp.Upsert(&Page{ID: i, Data: data}); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+	}
+
+	page, _, _ := bp.Get(context.Background(), 1)
+	bp.Pin(page)
+
+	extra := make([]byte, df.DefaultBlockSize)
+	if err := bp.Upsert(&Page{ID: 99, Data: extra}); err != nil {
+		t.Fatalf("Upsert at capacity: %v", err)
+	}
+
+	bp.Unpin(page)
+}
+
+// TestPinUnpinMultiple verifies Pin/Unpin with multiple pins.
+func TestPinUnpinMultiple(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	data := make([]byte, df.DefaultBlockSize)
+	if err := bp.Upsert(&Page{ID: 1, Data: data}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	page, _, _ := bp.Get(context.Background(), 1)
+
+	stats := bp.Stats()
+	initialPins := stats.Pins
+
+	bp.Pin(page)
+	bp.Pin(page)
+
+	stats = bp.Stats()
+	if stats.Pins != initialPins+2 {
+		t.Errorf("expected pins=%d, got %d", initialPins+2, stats.Pins)
+	}
+
+	bp.Unpin(page)
+	bp.Unpin(page)
+}
