@@ -55,8 +55,94 @@ internal/SQL/
 │   ├── ps_test.go
 │   ├── expr.go       # expression parser with precedence
 │   └── ast.go        # AST node types (shared across LX, PS, RE)
-└── RE/               # Rewriter cluster
+├── RE/               # Rewriter cluster
+└── tests/
+    └── sqlcmp/       # SQLite comparison test framework
+        ├── sqlcmp.go       # Compare framework
+        ├── sqlcmp_test.go # Table-driven comparison tests
+        └── README.md      # Usage documentation
 ```
+
+## SQL Compare Framework (`tests/sqlcmp`)
+
+SQLite-compatible test harness that runs identical SQL against both our parser and SQLite, then compares AST/result equivalence.
+
+### Purpose
+
+- **Parser validation**: Compare parsed AST structure with SQLite's interpretation
+- **Round-trip test**: Parse SQL → AST → (reconstruct SQL) → compare with original
+- **Semantic equivalence**: For DML (INSERT/UPDATE/DELETE), verify row counts and final values match SQLite
+- **Error compatibility**: SQLite syntax errors should map to our parse errors
+
+### Requirements
+
+| ID | Requirement | Status |
+|---|---|---|
+| C01 | `Compare(query string)` — parse query, return AST or error | pending |
+| C02 | `CompareParse(query string) (AST, error)` — parse to AST, compare with SQLite AST | pending |
+| C03 | `CompareDML(query string) (rows int64, err error)` — execute DML, return affected rows | pending |
+| C04 | `CompareQuery(query string) ([]Row, error)` — execute SELECT, return rows | pending |
+| C05 | Table-driven test format: `TestSQL{Name, Input, ExpectedAST, ExpectError, SkipSQLite}` | pending |
+| C06 | `sqlite3` exec as subprocess for reference results | pending |
+| C07 | Skipped tests when SQLite unavailable (`-short` flag or no `sqlite3` binary) | pending |
+| C08 | `go test ./tests/sqlcmp/... -v` shows pass/fail with SQLite diff | pending |
+| C09 | Test coverage report: statements parsed, expressions covered | pending |
+
+### Test Format
+
+```go
+type SQLTestCase struct {
+    Name       string   // e.g., "simple_select"
+    Input      string   // SQL query
+    ExpectAST  bool     // true if should produce AST
+    ExpectErr  bool     // true if should error
+    SkipSQLite bool      // skip SQLite comparison
+    Notes      string   // explanation
+}
+
+var testCases = []SQLTestCase{
+    {"simple_select", "SELECT * FROM t", true, false, false, "basic SELECT"},
+    {"insert_values", "INSERT INTO t VALUES (1, 'a')", true, false, false, "INSERT"},
+    {"invalid_syntax", "SELECT * FROM", false, true, false, "expected table name"},
+}
+```
+
+### SQLite Integration
+
+- Uses `sqlite3` CLI via `exec.Command` for reference
+- Temp in-memory database: `sqlite3 :memory: "sql"`
+- Captures stdout/stderr for comparison
+- Falls back gracefully if sqlite3 not installed
+
+### Design
+
+```go
+// sqlcmp.go
+type Runner struct {
+    sqlitePath string
+    parser     *Parser  // our SQL parser
+}
+
+func NewRunner() (*Runner, error) {
+    r := &Runner{}
+    if path, err := exec.LookPath("sqlite3"); err == nil {
+        r.sqlitePath = path
+    }
+    return r, nil
+}
+
+func (r *Runner) Parse(query string) (*AST, error) { ... }
+func (r *Runner) ParseAndCompare(query string) error { ... }
+func (r *Runner) ExecDML(ctx context.Context, query string) (int64, error) { ... }
+func (r *Runner) Query(ctx context.Context, query string) ([]Row, error) { ... }
+```
+
+### Test Categories
+
+1. **Lexer tests**: Token round-trip, keyword recognition
+2. **Parser tests**: All statement types, expression precedence
+3. **Rewriter tests**: Constant fold, predicate pushdown
+4. **集成 tests**: End-to-end SQL against SQLite reference
 
 ## Requirements
 
@@ -90,6 +176,15 @@ internal/SQL/
 | R26 | `go vet ./internal/SQL/...` zero warnings | pending |
 | R27 | `go test ./internal/SQL/... -race -count=1` all green | pending |
 | R28 | Table-driven parse tests for all statement types | pending |
+| C01 | `Compare(query string)` — parse query, return AST or error | pending |
+| C02 | `CompareParse(query string) (AST, error)` — parse to AST, compare with SQLite AST | pending |
+| C03 | `CompareDML(query string) (rows int64, err error)` — execute DML, return affected rows | pending |
+| C04 | `CompareQuery(query string) ([]Row, error)` — execute SELECT, return rows | pending |
+| C05 | Table-driven test format: `TestSQL{Name, Input, ExpectedAST, ExpectError, SkipSQLite}` | pending |
+| C06 | `sqlite3` exec as subprocess for reference results | pending |
+| C07 | Skipped tests when SQLite unavailable | pending |
+| C08 | `go test ./tests/sqlcmp/... -v` shows pass/fail with SQLite diff | pending |
+| C09 | Test coverage report: statements parsed, expressions covered | pending |
 
 ## Implementation
 
