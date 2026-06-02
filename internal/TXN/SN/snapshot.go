@@ -7,46 +7,46 @@ import (
 	"github.com/cyw0ng95/razordata/internal/TXN/MV"
 )
 
-type versionChainSnapshot struct {
-	key  []byte
-	head *MV.VersionNode
+type VersionChainSnapshot struct {
+	Key  []byte
+	Head *MV.VersionNode
 }
 
-type readView struct {
+type ReadView struct {
 	readTS   uint64
-	snapshot []versionChainSnapshot
+	snapshot []VersionChainSnapshot
 	arena    *MV.Arena
 	mv       *MV.MV
 	closed   atomic.Bool
 	mu       sync.Mutex
 }
 
-func newReadView(mv *MV.MV, readTS uint64) *readView {
-	return &readView{
+func NewReadView(mv *MV.MV, readTS uint64) *ReadView {
+	return &ReadView{
 		readTS:   readTS,
-		snapshot: make([]versionChainSnapshot, 0),
+		snapshot: make([]VersionChainSnapshot, 0),
 		mv:       mv,
 	}
 }
 
-func (rv *readView) addSnapshot(key []byte, head *MV.VersionNode) {
+func (rv *ReadView) addSnapshot(key []byte, head *MV.VersionNode) {
 	rv.mu.Lock()
 	defer rv.mu.Unlock()
-	rv.snapshot = append(rv.snapshot, versionChainSnapshot{
-		key:  key,
-		head: head,
+	rv.snapshot = append(rv.snapshot, VersionChainSnapshot{
+		Key:  key,
+		Head: head,
 	})
 }
 
-func (rv *readView) Get(key []byte) ([]byte, error) {
+func (rv *ReadView) Get(key []byte) ([]byte, error) {
 	if rv.closed.Load() {
 		return nil, MV.ErrInvalidTx
 	}
 
 	rv.mu.Lock()
 	for _, snap := range rv.snapshot {
-		if string(snap.key) == string(key) {
-			node := snap.head
+		if string(snap.Key) == string(key) {
+			node := snap.Head
 			for node != nil {
 				if node.IsVisible(rv.readTS) {
 					rv.mu.Unlock()
@@ -81,7 +81,7 @@ func (rv *readView) Get(key []byte) ([]byte, error) {
 	return nil, MV.ErrNotFound
 }
 
-func (rv *readView) Close() {
+func (rv *ReadView) Close() {
 	if rv.closed.CompareAndSwap(false, true) {
 		if rv.arena != nil {
 			MV.PutArena(rv.arena)
@@ -89,6 +89,6 @@ func (rv *readView) Close() {
 	}
 }
 
-func (rv *readView) IsClosed() bool {
+func (rv *ReadView) IsClosed() bool {
 	return rv.closed.Load()
 }
