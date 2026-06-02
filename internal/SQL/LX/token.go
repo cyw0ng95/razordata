@@ -72,6 +72,7 @@ const (
 	T_TIMESTAMP
 	T_VALUES
 	T_SET
+	T_INTO
 	T_ORDER
 	T_JOIN
 	T_LEFT

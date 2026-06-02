@@ -1,0 +1,171 @@
+package PS
+
+type Expr interface {
+	exprNode()
+}
+
+type Stmt interface {
+	stmtNode()
+}
+
+type NumberLiteral struct {
+	Val int64
+}
+
+func (n *NumberLiteral) exprNode() {}
+
+type FloatLiteral struct {
+	Val float64
+}
+
+func (f *FloatLiteral) exprNode() {}
+
+type StringLiteral struct {
+	Val string
+}
+
+func (s *StringLiteral) exprNode() {}
+
+type BoolLiteral struct {
+	Val bool
+}
+
+func (b *BoolLiteral) exprNode() {}
+
+type NullLiteral struct{}
+
+func (n *NullLiteral) exprNode() {}
+
+type Ident struct {
+	Name string
+}
+
+func (i *Ident) exprNode() {}
+
+type Param struct {
+	Index int
+}
+
+func (p *Param) exprNode() {}
+
+type BinaryExpr struct {
+	Op    int
+	Left  Expr
+	Right Expr
+}
+
+func (b *BinaryExpr) exprNode() {}
+
+type UnaryExpr struct {
+	Op      int
+	Operand Expr
+}
+
+func (u *UnaryExpr) exprNode() {}
+
+type FunctionCall struct {
+	Name string
+	Args []Expr
+}
+
+func (f *FunctionCall) exprNode() {}
+
+type StarExpr struct{}
+
+func (s *StarExpr) exprNode() {}
+
+type ListExpr struct {
+	Items []Expr
+}
+
+func (l *ListExpr) exprNode() {}
+
+type BetweenExpr struct {
+	Expr Expr
+	Low  Expr
+	High Expr
+}
+
+func (b *BetweenExpr) exprNode() {}
+
+type InExpr struct {
+	Expr   Expr
+	List   []Expr
+	Subquery Stmt
+}
+
+func (i *InExpr) exprNode() {}
+
+type ColDef struct {
+	Name     string
+	Type     int
+	Size     int
+	Nullable bool
+	Default  Expr
+	PK       bool
+}
+
+type Pair struct {
+	Col string
+	Val Expr
+}
+
+type CreateTable struct {
+	Name string
+	Cols []ColDef
+	PK   *string
+}
+
+func (c *CreateTable) stmtNode() {}
+
+type DropTable struct {
+	Name string
+}
+
+func (d *DropTable) stmtNode() {}
+
+type Insert struct {
+	Table  string
+	Cols   []string
+	Values [][]Expr
+}
+
+func (i *Insert) stmtNode() {}
+
+type Update struct {
+	Table string
+	Set   []Pair
+	Where Expr
+}
+
+func (u *Update) stmtNode() {}
+
+type Delete struct {
+	Table string
+	Where Expr
+}
+
+func (d *Delete) stmtNode() {}
+
+type Select struct {
+	Cols    []Expr
+	From    string
+	Where   Expr
+	OrderBy Expr
+	Limit   Expr
+	Offset  Expr
+}
+
+func (s *Select) stmtNode() {}
+
+type BeginTX struct{}
+
+func (b *BeginTX) stmtNode() {}
+
+type CommitTX struct{}
+
+func (c *CommitTX) stmtNode() {}
+
+type RollbackTX struct{}
+
+func (r *RollbackTX) stmtNode() {}

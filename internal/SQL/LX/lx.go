@@ -13,6 +13,7 @@ var keywords = map[string]TokenType{
 	"CREATE":   T_CREATE,
 	"DROP":     T_DROP,
 	"INSERT":   T_INSERT,
+	"INTO":     T_INTO,
 	"UPDATE":   T_UPDATE,
 	"DELETE":   T_DELETE,
 	"SELECT":   T_SELECT,
@@ -82,10 +83,13 @@ var keywords = map[string]TokenType{
 }
 
 type Lexer struct {
-	input string
-	pos   int
-	line  int
-	col   int
+	input     string
+	pos       int
+	line      int
+	col       int
+	savedPos  int
+	savedLine int
+	savedCol  int
 }
 
 func NewLexer(input string) *Lexer {
@@ -102,6 +106,20 @@ func (l *Lexer) peek() byte {
 		return 0
 	}
 	return l.input[l.pos]
+}
+
+func (l *Lexer) Peek() Token {
+	l.savedPos = l.pos
+	l.savedLine = l.line
+	l.savedCol = l.col
+
+	token := l.Next()
+
+	l.pos = l.savedPos
+	l.line = l.savedLine
+	l.col = l.savedCol
+
+	return token
 }
 
 func (l *Lexer) advance() byte {
