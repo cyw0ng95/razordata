@@ -53,6 +53,13 @@ var selectCases = []testCase{
 	{"select_null", "SELECT NULL FROM t", false},
 	{"select_bool_true", "SELECT TRUE FROM t", false},
 	{"select_bool_false", "SELECT FALSE FROM t", false},
+	{"select_complex_where", "SELECT * FROM t WHERE (a + b) * c > 10", false},
+	{"select_where_eq_string", "SELECT * FROM t WHERE a = 'foo'", false},
+	{"select_where_ne_string", "SELECT * FROM t WHERE a != 'bar'", false},
+	{"select_where_like_underscore", "SELECT * FROM t WHERE a LIKE 'foo_'", false},
+	{"select_where_like_percent", "SELECT * FROM t WHERE a LIKE '%foo%' AND b > 0", false},
+	{"select_where_is", "SELECT * FROM t WHERE a IS 1", false},
+	{"select_multiple_and", "SELECT * FROM t WHERE a = 1 AND b = 2 AND c = 3 AND d = 4", false},
 }
 
 func TestSelectRewrite(t *testing.T) {
