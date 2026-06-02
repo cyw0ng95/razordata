@@ -3,6 +3,7 @@ package ls
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestEngine_Close_Idempotent_v2(t *testing.T) {
@@ -150,6 +151,140 @@ func TestCompactionManager_RequestCompaction(t *testing.T) {
 	defer cm.Close()
 
 	cm.requestCompaction(0)
+}
+
+func TestMaybeCompact_WhenAlreadyCompacting(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_already_compacting")
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("failed to create manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	cm := newCompactionManager(dir, manifest)
+	defer cm.Close()
+
+	v := manifest.Current()
+	v.levels = [][]SSTFileMeta{
+		{{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 10 * 1024 * 1024}},
+		{},
+	}
+	manifest.Apply(*v)
+
+	cm.compacting.Store(true)
+
+	cm.MaybeCompact()
+}
+
+func TestRequestCompaction_WhenAlreadyCompacting(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_req_already_compacting")
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("failed to create manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	cm := newCompactionManager(dir, manifest)
+	defer cm.Close()
+
+	v := manifest.Current()
+	v.levels = [][]SSTFileMeta{
+		{{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 100}},
+		{},
+	}
+	manifest.Apply(*v)
+
+	cm.compacting.Store(true)
+
+	cm.requestCompaction(0)
+}
+
+func TestRequestCompaction_InvalidLevel(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_invalid_level")
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("failed to create manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	cm := newCompactionManager(dir, manifest)
+	defer cm.Close()
+
+	cm.requestCompaction(999)
+}
+
+func TestRequestCompaction_EmptyLevel(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_empty_level")
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("failed to create manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	cm := newCompactionManager(dir, manifest)
+	defer cm.Close()
+
+	v := manifest.Current()
+	v.levels = [][]SSTFileMeta{
+		{},
+	}
+	manifest.Apply(*v)
+
+	cm.requestCompaction(0)
+}
+
+func TestCompactionManager_CloseIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_close_idempotent")
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("failed to create manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	cm := newCompactionManager(dir, manifest)
+
+	if err := cm.Close(); err != nil {
+		t.Fatalf("first close failed: %v", err)
+	}
+
+	if err := cm.Close(); err != nil {
+		t.Fatalf("second close failed: %v", err)
+	}
+}
+
+func TestMaybeCompact_BudgetExceeded(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_budget_exceeded")
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("failed to create manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	cm := newCompactionManager(dir, manifest)
+	defer cm.Close()
+
+	v := manifest.Current()
+	v.levels = [][]SSTFileMeta{
+		{{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 10 * 1024 * 1024}},
+		{},
+	}
+	manifest.Apply(*v)
+
+	cm.MaybeCompact()
+
+	time.Sleep(100 * time.Millisecond)
 }
 
 func TestEngine_MultipleMemtableHits(t *testing.T) {

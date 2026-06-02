@@ -1,12 +1,14 @@
 package lf
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
+	"golang.org/x/sys/unix"
 )
 
 func TestCreateSegment(t *testing.T) {
@@ -339,17 +341,29 @@ func TestCloseWithMultipleHandles(t *testing.T) {
 	}
 }
 
-// TestNewWithLogger tests New when mkdir fails with logger.
-func TestNewWithLogger(t *testing.T) {
+// TestNewBasic tests basic New functionality.
+func TestNewBasic(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
 
-	// New should succeed
 	sm, err := New(path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	sm.Close()
+}
+
+// TestNewWithLogger tests New with logger.
+func TestNewWithLogger(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "lf_with_log")
+
+	log := lg.New(lg.Options{Output: io.Discard})
+	sm, err := New(path, log)
+	if err != nil {
+		t.Fatalf("New with logger: %v", err)
+	}
+	defer sm.Close()
 }
 
 // TestNewCreatesWalDir tests that New creates the wal subdirectory.
@@ -363,10 +377,49 @@ func TestNewCreatesWalDir(t *testing.T) {
 	}
 	defer sm.Close()
 
-	// Wal directory should exist
 	walDir := filepath.Join(path, "wal")
 	if _, err := os.Stat(walDir); os.IsNotExist(err) {
 		t.Error("wal directory not created")
+	}
+}
+
+// TestNewMkdirFails tests New when mkdir fails.
+// Skipped on root or when permissions don't restrict creation.
+func TestNewMkdirFails(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping permission test as root")
+	}
+
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "subdir", "lf")
+
+	unix.Chmod(tmp, 0000)
+	defer unix.Chmod(tmp, 0755)
+
+	sm, err := New(path)
+	if err == nil {
+		sm.Close()
+		t.Fatal("expected error when mkdir fails")
+	}
+}
+
+// TestFirstLogger tests firstLogger function.
+func TestFirstLogger(t *testing.T) {
+	log := lg.New(lg.Options{Output: io.Discard})
+
+	result := firstLogger(nil)
+	if result != nil {
+		t.Error("expected nil for nil input")
+	}
+
+	result = firstLogger([]lg.Logger{})
+	if result != nil {
+		t.Error("expected nil for empty slice")
+	}
+
+	result = firstLogger([]lg.Logger{log})
+	if result != log {
+		t.Error("expected log from single element slice")
 	}
 }
 

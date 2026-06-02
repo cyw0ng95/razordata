@@ -676,6 +676,56 @@ func TestRotateFileOpenNewFailure(t *testing.T) {
 	os.Chmod(logPath, 0644)
 }
 
+// TestRotateFileSyncFailure tests rotateFile when Sync fails.
+func TestRotateFileSyncFailure(t *testing.T) {
+	dir := t.TempDir()
+
+	l := New(Options{
+		Level:    slog.LevelInfo,
+		Dir:      dir,
+		BaseName: "syncfail.log",
+		MaxSize:  1024,
+		MaxFiles: 2,
+	}).(*logger)
+
+	// Force size to exceed maxSize to trigger rotation
+	l.shared.curSize.Store(1024 * 1024)
+
+	// Get the rotationWriter and close its file to make Sync fail
+	if rw, ok := l.shared.output.(*rotationWriter); ok {
+		f := rw.file.Load()
+		if f != nil {
+			f.Close()
+		}
+	}
+
+	err := l.shared.rotateFile()
+	if err != nil {
+		t.Logf("rotateFile error: %v", err)
+	}
+}
+
+// TestRotateFileDoubleCheck tests rotateFile double-check under lock.
+func TestRotateFileDoubleCheck(t *testing.T) {
+	dir := t.TempDir()
+
+	l := New(Options{
+		Level:    slog.LevelInfo,
+		Dir:      dir,
+		BaseName: "doublecheck.log",
+		MaxSize:  1024,
+		MaxFiles: 2,
+	}).(*logger)
+
+	// Set size below maxSize - should short-circuit
+	l.shared.curSize.Store(100)
+
+	err := l.shared.rotateFile()
+	if err != nil {
+		t.Errorf("rotateFile should return nil when size < maxSize: %v", err)
+	}
+}
+
 // TestLogIfEnabledWithRotation tests logIfEnabled triggering rotation.
 func TestLogIfEnabledWithRotation(t *testing.T) {
 	dir := t.TempDir()
