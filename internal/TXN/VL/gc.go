@@ -115,7 +115,7 @@ func ReclaimVersionNodes(batch []unsafe.Pointer) {
 
 type gcThreadRecord struct {
 	goroutineID uint64
-	enteredAt    atomic.Int64
+	enteredAt   atomic.Int64
 }
 
 var gcThreadRecords sync.Map
@@ -123,7 +123,7 @@ var gcThreadRecords sync.Map
 func RegisterGCThread(goroutineID uint64) {
 	record := &gcThreadRecord{
 		goroutineID: goroutineID,
-		enteredAt:    atomic.Int64{},
+		enteredAt:   atomic.Int64{},
 	}
 	record.enteredAt.Store(globalGC.em.CurrentEpoch())
 	gcThreadRecords.Store(goroutineID, record)

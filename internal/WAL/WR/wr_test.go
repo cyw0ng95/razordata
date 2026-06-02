@@ -125,7 +125,7 @@ func TestWriterAppendMultipleBatches(t *testing.T) {
 			TxnID: uint64(batch),
 			Recs: []LogRecord{
 				{Type: RTData, BlockID: uint64(batch), Value: []byte("data1")},
-				{Type: RTData, BlockID: uint64(batch+100), Value: []byte("data2")},
+				{Type: RTData, BlockID: uint64(batch + 100), Value: []byte("data2")},
 			},
 		})
 		if err != nil {

@@ -1,8 +1,35 @@
 # Iteration 7 — SQL/Core (Lexer + Parser + Rewriter)
 
 **Subsystem:** `SQL`
-**Status:** pending
+**Dialect:** SQLite-compatible
+**Status:** in_progress
 **Est. LOC:** ~2,500
+
+## Dialect Alignment
+
+SQLite-compatible subset for embedded/embedded-testing use case.
+
+**Supported features:**
+- DDL: CREATE TABLE, DROP TABLE
+- DML: INSERT, UPDATE, DELETE, SELECT
+- Clauses: WHERE, ORDER BY, LIMIT, OFFSET
+- Constraints: PRIMARY KEY, NOT NULL, DEFAULT
+- Types: INTEGER, TEXT, REAL, BLOB (SQLite storage classes)
+- Comments: `--` until EOL, `/* */` block comments
+- String literals: single quotes only `'...'`
+- Parameter placeholder: `?`
+- Operators: `=`, `!=`, `<`, `<=`, `>`, `>=`, `+`, `-`, `*`, `/`, `AND`, `OR`, `NOT`, `IN`, `BETWEEN`, `LIKE`, `IS NULL`, `IS NOT NULL`
+
+**Not in v1 scope (deferred):**
+- AUTOINCREMENT, REPLACE/INSERT OR
+- GLOB, GLOB patterns
+- CASE expressions
+- JOINs (CROSS, INNER, LEFT)
+- GROUP BY, HAVING, aggregates (COUNT, SUM, etc.)
+- CREATE INDEX, DROP INDEX
+- ALTER TABLE
+- Transactions keywords (BEGIN/COMMIT/ROLLBACK handled at TXN layer)
+- Subqueries in FROM clause
 
 ## Overview
 

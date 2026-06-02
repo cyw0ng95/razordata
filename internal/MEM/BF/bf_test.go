@@ -1173,7 +1173,7 @@ func TestCloseWithHintPathAndLogger(t *testing.T) {
 	if err := bd.WriteBlock(ctx, 1, data); err != nil {
 		t.Fatalf("WriteBlock: %v", err)
 	}
-		bd.Sync()
+	bd.Sync()
 
 	bp.Get(ctx, 1)
 	bp.Get(ctx, 2)
