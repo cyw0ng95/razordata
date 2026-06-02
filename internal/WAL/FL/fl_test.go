@@ -10,6 +10,37 @@ import (
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 )
 
+func TestAtomicBoolClear_FL(t *testing.T) {
+	var a atomicBool
+
+	if a.isSet() {
+		t.Error("expected initially clear")
+	}
+
+	a.set()
+	if !a.isSet() {
+		t.Error("expected set after set()")
+	}
+
+	a.clear()
+	if a.isSet() {
+		t.Error("expected clear after clear()")
+	}
+}
+
+func TestAtomicBoolClearMultiple_FL(t *testing.T) {
+	var a atomicBool
+
+	a.set()
+	a.clear()
+	a.clear()
+	a.clear()
+
+	if a.isSet() {
+		t.Error("expected clear after multiple clears")
+	}
+}
+
 // nullWriter is a no-op io.Writer used to silence the logger in
 // tests. (Mirrors the WR stub — duplicated rather than shared to
 // keep each cluster self-contained.)

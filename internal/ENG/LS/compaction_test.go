@@ -149,3 +149,67 @@ func TestVersion_LevelsInitialized(t *testing.T) {
 		t.Fatalf("expected 2 levels, got %d", len(v.levels))
 	}
 }
+
+func TestLevelBudget_BudgetFor(t *testing.T) {
+	budget := defaultBudget
+
+	tests := []struct {
+		level    int
+		expected int64
+	}{
+		{0, 4 * 1024 * 1024},
+		{1, 32 * 1024 * 1024},
+		{2, 320 * 1024 * 1024},
+		{3, 320 * 1024 * 1024 * 2},
+		{10, 320 * 1024 * 1024 * 9},
+	}
+
+	for _, tt := range tests {
+		t.Run("", func(t *testing.T) {
+			got := budget.budgetFor(tt.level)
+			if got != tt.expected {
+				t.Errorf("budgetFor(%d) = %d, want %d", tt.level, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRemoveFiles_Compaction(t *testing.T) {
+	files := []SSTFileMeta{
+		{FileID: 1},
+		{FileID: 2},
+		{FileID: 3},
+	}
+	toRemove := []SSTFileMeta{
+		{FileID: 2},
+	}
+
+	result := removeFiles(files, toRemove)
+	if len(result) != 2 {
+		t.Errorf("len(result) = %d, want 2", len(result))
+	}
+}
+
+func TestRemoveFiles_All(t *testing.T) {
+	files := []SSTFileMeta{
+		{FileID: 1},
+		{FileID: 2},
+	}
+	toRemove := []SSTFileMeta{
+		{FileID: 1},
+		{FileID: 2},
+	}
+
+	result := removeFiles(files, toRemove)
+	if len(result) != 0 {
+		t.Errorf("len(result) = %d, want 0", len(result))
+	}
+}
+
+func TestCloseIterators_Nil(t *testing.T) {
+	closeIterators(nil)
+}
+
+func TestCloseIterators_Empty(t *testing.T) {
+	closeIterators([]*sstIterator{})
+}

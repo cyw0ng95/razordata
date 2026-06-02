@@ -14,6 +14,37 @@ import (
 	"github.com/cyw0ng95/razordata/internal/WAL/WR"
 )
 
+func TestAtomicBoolClear_RP(t *testing.T) {
+	var a atomicBool
+
+	if a.isSet() {
+		t.Error("expected initially clear")
+	}
+
+	a.set()
+	if !a.isSet() {
+		t.Error("expected set after set()")
+	}
+
+	a.clear()
+	if a.isSet() {
+		t.Error("expected clear after clear()")
+	}
+}
+
+func TestAtomicBoolClearMultiple_RP(t *testing.T) {
+	var a atomicBool
+
+	a.set()
+	a.clear()
+	a.clear()
+	a.clear()
+
+	if a.isSet() {
+		t.Error("expected clear after multiple clears")
+	}
+}
+
 func TestNew(t *testing.T) {
 	tmp := t.TempDir()
 

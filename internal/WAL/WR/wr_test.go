@@ -11,6 +11,192 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestAtomicBoolClear(t *testing.T) {
+	var a atomicBool
+
+	if a.isSet() {
+		t.Error("expected initially clear")
+	}
+
+	a.set()
+	if !a.isSet() {
+		t.Error("expected set after set()")
+	}
+
+	a.clear()
+	if a.isSet() {
+		t.Error("expected clear after clear()")
+	}
+}
+
+func TestAtomicBoolSetFalseWhenAlreadySet(t *testing.T) {
+	var a atomicBool
+
+	a.set()
+	firstResult := a.set()
+
+	a.set()
+	secondResult := a.set()
+
+	if firstResult && !secondResult {
+		t.Error("first CAS should succeed, second should fail")
+	}
+}
+
+func TestAtomicBoolClearMultipleTimes(t *testing.T) {
+	var a atomicBool
+
+	a.set()
+	a.clear()
+	a.clear()
+	a.clear()
+
+	if a.isSet() {
+		t.Error("expected clear after multiple clears")
+	}
+}
+
+func TestWriterOpenSegmentZeroFilled(t *testing.T) {
+	d := newTestDeps(t)
+
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	defer w.Close()
+
+	for i := 0; i < 100; i++ {
+		w.Append(&WriteBatch{
+			TxnID: uint64(i),
+			Recs: []LogRecord{
+				{Type: RTData, BlockID: uint64(i), Value: bytes.Repeat([]byte("x"), 1000)},
+			},
+		})
+	}
+}
+
+func TestWriterFlushBufferShortWrite(t *testing.T) {
+	d := newTestDeps(t)
+	tmp := t.TempDir()
+
+	w, _ := New(tmp, d.sm, d.sp, d.log)
+	defer w.Close()
+
+	for i := 0; i < 10; i++ {
+		_, err := w.Append(&WriteBatch{
+			TxnID: uint64(i),
+			Recs: []LogRecord{
+				{Type: RTData, BlockID: uint64(i), Value: []byte("test")},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+
+	w.Close()
+
+	lsns, err := d.sm.ListSegments()
+	if err != nil {
+		t.Fatalf("ListSegments: %v", err)
+	}
+	if len(lsns) == 0 {
+		t.Error("expected at least one segment")
+	}
+}
+
+func TestWriterAppendNilRecordBatch(t *testing.T) {
+	d := newTestDeps(t)
+
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	defer w.Close()
+
+	_, err := w.Append(&WriteBatch{})
+	if err != nil {
+		t.Fatalf("Append empty batch: %v", err)
+	}
+}
+
+func TestWriterAppendMultipleBatches(t *testing.T) {
+	d := newTestDeps(t)
+
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	defer w.Close()
+
+	for batch := 0; batch < 5; batch++ {
+		_, err := w.Append(&WriteBatch{
+			TxnID: uint64(batch),
+			Recs: []LogRecord{
+				{Type: RTData, BlockID: uint64(batch), Value: []byte("data1")},
+				{Type: RTData, BlockID: uint64(batch+100), Value: []byte("data2")},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Append batch %d: %v", batch, err)
+		}
+	}
+}
+
+func TestWriterSyncIdempotentMultiple(t *testing.T) {
+	d := newTestDeps(t)
+
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	defer w.Close()
+
+	w.Append(&WriteBatch{
+		Recs: []LogRecord{
+			{Type: RTData, BlockID: 1, Value: []byte("test")},
+		},
+	})
+
+	w.Sync()
+	w.Sync()
+	w.Sync()
+}
+
+func TestWriterCloseWithNilSegment(t *testing.T) {
+	d := newTestDeps(t)
+
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+
+	w.Close()
+	w.Close()
+}
+
+func TestWriterSyncWithNilSegment(t *testing.T) {
+	d := newTestDeps(t)
+
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	defer w.Close()
+
+	w.Close()
+
+	err := w.Sync()
+	if err != nil {
+		t.Fatalf("Sync after close: %v", err)
+	}
+}
+
+func TestWriterAppendAfterSync(t *testing.T) {
+	d := newTestDeps(t)
+
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	defer w.Close()
+
+	_, err := w.Append(&WriteBatch{
+		Recs: []LogRecord{{Type: RTData, BlockID: 1, Value: []byte("before")}},
+	})
+	if err != nil {
+		t.Fatalf("Append before sync: %v", err)
+	}
+
+	w.Sync()
+
+	_, err = w.Append(&WriteBatch{
+		Recs: []LogRecord{{Type: RTData, BlockID: 2, Value: []byte("after")}},
+	})
+	if err != nil {
+		t.Fatalf("Append after sync: %v", err)
+	}
+}
+
 // TestRecordTypeValues pins the RecordType enum values (R01). The
 // numeric values are part of the on-disk format — changing them is a
 // breaking change.
