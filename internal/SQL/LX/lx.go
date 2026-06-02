@@ -8,6 +8,8 @@ import (
 
 var ErrUnexpectedChar = errors.New("lx: unexpected character")
 var ErrUnterminatedString = errors.New("lx: unterminated string")
+var ErrInvalidInt = errors.New("lx: invalid integer literal")
+var ErrIntOverflow = errors.New("lx: integer literal overflows int64")
 
 var keywords = map[string]TokenType{
 	"CREATE":    T_CREATE,
@@ -277,7 +279,33 @@ func (l *Lexer) scanNumber() Token {
 		return Token{Type: T_FLOAT, Lexeme: lit, Literal: lit, Line: startLine, Col: startCol}
 	}
 
-	return Token{Type: T_INT, Lexeme: lit, Literal: lit, Line: startLine, Col: startCol}
+	val, err := parseInt64(lit)
+	if err != nil {
+		return Token{Type: T_EOF, Lexeme: "ERROR", Literal: err, Line: startLine, Col: startCol}
+	}
+	return Token{Type: T_INT, Lexeme: lit, Literal: val, Line: startLine, Col: startCol}
+}
+
+func parseInt64(s string) (int64, error) {
+	return ParseIntLiteral(s)
+}
+
+func ParseIntLiteral(s string) (int64, error) {
+	if s == "" {
+		return 0, ErrInvalidInt
+	}
+	var val int64
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, ErrInvalidInt
+		}
+		d := int64(c - '0')
+		if val > (1<<63-1-d)/10 {
+			return 0, ErrIntOverflow
+		}
+		val = val*10 + d
+	}
+	return val, nil
 }
 
 func (l *Lexer) scanOperator() Token {

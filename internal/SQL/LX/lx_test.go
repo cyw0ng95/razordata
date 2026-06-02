@@ -67,6 +67,28 @@ func TestLexerInt(t *testing.T) {
 	if tok.Lexeme != "123" {
 		t.Errorf("expected '123', got %q", tok.Lexeme)
 	}
+	if tok.Literal != int64(123) {
+		t.Errorf("expected Literal=int64(123), got %v (%T)", tok.Literal, tok.Literal)
+	}
+}
+
+func TestLexerIntOverflow(t *testing.T) {
+	l := NewLexer("99999999999999999999")
+	tok := l.Next()
+	if tok.Type != T_EOF || tok.Lexeme != "ERROR" {
+		t.Errorf("expected overflow error token, got %v %q", tok.Type, tok.Lexeme)
+	}
+}
+
+func TestLexerIntMaxInt64(t *testing.T) {
+	l := NewLexer("9223372036854775807")
+	tok := l.Next()
+	if tok.Type != T_INT {
+		t.Fatalf("expected T_INT for max int64, got %v", tok.Type)
+	}
+	if tok.Literal != int64(9223372036854775807) {
+		t.Errorf("expected max int64 literal, got %v", tok.Literal)
+	}
 }
 
 func TestLexerFloat(t *testing.T) {
@@ -370,5 +392,11 @@ func TestErrors(t *testing.T) {
 	}
 	if ErrUnterminatedString.Error() != "lx: unterminated string" {
 		t.Error("unexpected ErrUnterminatedString message")
+	}
+	if ErrIntOverflow.Error() != "lx: integer literal overflows int64" {
+		t.Error("unexpected ErrIntOverflow message")
+	}
+	if ErrInvalidInt.Error() != "lx: invalid integer literal" {
+		t.Error("unexpected ErrInvalidInt message")
 	}
 }

@@ -40,9 +40,9 @@ func (p *Parser) peek() LX.Token {
 func (p *Parser) parsePrimary() (Expr, error) {
 	switch p.current.Type {
 	case LX.T_INT:
-		val := p.current.Lexeme
+		val := p.current.Literal.(int64)
 		p.advance()
-		return &NumberLiteral{Val: parseInt(val)}, nil
+		return &NumberLiteral{Val: val}, nil
 	case LX.T_FLOAT:
 		val := p.current.Lexeme
 		p.advance()
@@ -601,10 +601,7 @@ func (p *Parser) parseDropTable() (*DropTable, error) {
 }
 
 func parseInt(s string) int64 {
-	var val int64
-	for _, c := range s {
-		val = val*10 + int64(c-'0')
-	}
+	val, _ := LX.ParseIntLiteral(s)
 	return val
 }
 
