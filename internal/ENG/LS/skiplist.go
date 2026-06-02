@@ -3,15 +3,17 @@ package ls
 import (
 	"bytes"
 	"math/rand"
+	"sync"
 	"sync/atomic"
 )
 
 const maxLevel = 12
 
 type node struct {
-	key   []byte
-	value []byte
-	next  [maxLevel]atomic.Pointer[node]
+	key    []byte
+	value  atomic.Value
+	next   [maxLevel]atomic.Pointer[node]
+	mu     sync.Mutex
 }
 
 type skipList struct {
@@ -71,11 +73,14 @@ func (sl *skipList) Insert(key, value []byte) {
 
 		next := successors[0]
 		if next != nil && bytes.Equal(next.key, key) {
-			next.value = value
+			next.mu.Lock()
+			next.value.Store(value)
+			next.mu.Unlock()
 			return
 		}
 
-		newNode := &node{key: key, value: value}
+		newNode := &node{key: key, value: atomic.Value{}}
+		newNode.value.Store(value)
 		for i := 0; i < lvl; i++ {
 			newNode.next[i].Store(successors[i])
 		}
@@ -108,7 +113,10 @@ func (sl *skipList) Find(key []byte) ([]byte, bool) {
 		return nil, false
 	}
 	if bytes.Equal(curr.key, key) {
-		return curr.value, true
+		curr.mu.Lock()
+		val := curr.value.Load().([]byte)
+		curr.mu.Unlock()
+		return val, true
 	}
 	return nil, false
 }
@@ -146,5 +154,8 @@ func (it *Iterator) Value() []byte {
 	if it.current == nil {
 		return nil
 	}
-	return it.current.value
+	it.current.mu.Lock()
+	val := it.current.value.Load().([]byte)
+	it.current.mu.Unlock()
+	return val
 }

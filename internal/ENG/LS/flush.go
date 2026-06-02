@@ -12,7 +12,6 @@ import (
 var (
 	ErrMemtableNotFrozen = errors.New("memtable is not frozen")
 	ErrFlushInProgress   = errors.New("flush already in progress")
-	ErrNoActiveMemtable = errors.New("no active memtable")
 )
 
 type flushJob struct {
