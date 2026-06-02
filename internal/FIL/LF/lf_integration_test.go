@@ -218,8 +218,6 @@ func TestSegmentManager_Path(t *testing.T) {
 	}
 }
 
-
-
 func TestFileHandle_Incref(t *testing.T) {
 	dir := t.TempDir()
 

@@ -158,8 +158,6 @@ func TestDecodeRecord_EmptyPayload(t *testing.T) {
 	}
 }
 
-
-
 func TestRecordType_ByteValues(t *testing.T) {
 	if RTData != 0 {
 		t.Fatalf("expected RTData=0, got %d", RTData)
@@ -224,7 +222,7 @@ func TestLogRecord_Fields(t *testing.T) {
 	rec := LogRecord{
 		Type:    RTData,
 		TxnID:   100,
-		BlockID:  1,
+		BlockID: 1,
 		Key:     []byte("key"),
 		Value:   []byte("value"),
 	}

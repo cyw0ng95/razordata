@@ -517,16 +517,16 @@ func TestSyncDirCached(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	defer fm.Close()
-	
+
 	if err := os.MkdirAll(filepath.Join(tmp, "subdir"), 0700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	
+
 	// SyncDir expects relative path
 	if err := fm.SyncDir("subdir"); err != nil {
 		t.Errorf("SyncDir: %v", err)
 	}
-	
+
 	// Second call uses cached FD
 	if err := fm.SyncDir("subdir"); err != nil {
 		t.Errorf("SyncDir cached: %v", err)
@@ -541,11 +541,11 @@ func TestSyncDirNewFD(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	defer fm.Close()
-	
+
 	if err := os.MkdirAll(filepath.Join(tmp, "newdir"), 0700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	
+
 	if err := fm.SyncDir("newdir"); err != nil {
 		t.Errorf("SyncDir: %v", err)
 	}
@@ -559,7 +559,7 @@ func TestSyncDirError(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	defer fm.Close()
-	
+
 	invalidPath := filepath.Join(tmp, "nonexistent")
 	if err := fm.SyncDir(invalidPath); err == nil {
 		t.Error("expected error for non-existent path")
@@ -579,13 +579,13 @@ func TestNewValidDir(t *testing.T) {
 // TestNewOrCreateReuse tests NewOrCreate when directory exists.
 func TestNewOrCreateReuse(t *testing.T) {
 	tmp := t.TempDir()
-	
+
 	fm, err := NewOrCreate(tmp, nil)
 	if err != nil {
 		t.Fatalf("NewOrCreate: %v", err)
 	}
 	fm.Close()
-	
+
 	fm2, err := NewOrCreate(tmp, nil)
 	if err != nil {
 		t.Fatalf("NewOrCreate reuse: %v", err)
@@ -601,7 +601,7 @@ func TestOpenMissing(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	defer fm.Close()
-	
+
 	_, err = fm.Open("nonexistent.txt")
 	if err == nil {
 		t.Error("expected error for non-existent file")
@@ -616,18 +616,18 @@ func TestCreateThenOpen(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	defer fm.Close()
-	
+
 	handle, err := fm.Create("created.txt")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	handle.Close()
-	
+
 	path := filepath.Join(tmp, "created.txt")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Error("file not created")
 	}
-	
+
 	handle2, err := fm.Open("created.txt")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -643,16 +643,16 @@ func TestRemoveFile(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	defer fm.Close()
-	
+
 	path := filepath.Join(tmp, "to_remove.txt")
 	if err := os.WriteFile(path, []byte("hello"), 0600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	
+
 	if err := fm.Remove("to_remove.txt"); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	
+
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Error("file still exists after Remove")
 	}
@@ -666,12 +666,12 @@ func TestListPattern(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	defer fm.Close()
-	
+
 	for i := 1; i <= 3; i++ {
 		path := filepath.Join(tmp, fmt.Sprintf("file%d.txt", i))
 		os.WriteFile(path, []byte("content"), 0600)
 	}
-	
+
 	files, err := fm.List("*.txt")
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -687,7 +687,7 @@ func TestFirstLoggerNilFS(t *testing.T) {
 	if result != nil {
 		t.Error("expected nil for nil input")
 	}
-	
+
 	result = firstLogger([]lg.Logger{})
 	if result != nil {
 		t.Error("expected nil for empty slice")
@@ -700,7 +700,7 @@ func TestPathValidatorOK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newPathValidator: %v", err)
 	}
-	
+
 	_, err = pv.Resolve("subdir/file.txt")
 	if err != nil {
 		t.Errorf("expected valid, got %v", err)
@@ -713,7 +713,7 @@ func TestPathValidatorBad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newPathValidator: %v", err)
 	}
-	
+
 	_, err = pv.Resolve("/etc/passwd")
 	if err == nil {
 		t.Error("expected error for path outside root")
@@ -727,11 +727,11 @@ func TestCloseSafe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	
+
 	if err := fm.Close(); err != nil {
 		t.Fatalf("first Close: %v", err)
 	}
-	
+
 	if err := fm.Close(); err != nil {
 		t.Errorf("second Close: %v", err)
 	}
@@ -744,9 +744,9 @@ func TestCloseWithOpenHandles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	
+
 	fm.Create("test.txt")
-	
+
 	if err := fm.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}

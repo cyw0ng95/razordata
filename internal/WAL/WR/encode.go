@@ -135,6 +135,7 @@ func appendPayload(buf []byte, rec *LogRecord) []byte {
 func DecodeRecord(data []byte, off int) (*LogRecord, int, error) {
 	return decodeRecord(data, off)
 }
+
 // off. Returns the decoded LogRecord, the number of bytes consumed
 // (header + body), and an error if the record is malformed.
 //

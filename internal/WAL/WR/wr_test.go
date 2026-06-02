@@ -1049,9 +1049,9 @@ func TestCloseReturnsBufferToPool(t *testing.T) {
 // the real crash recovery lands in the RP Core implementation.
 func TestCrashSimulated(t *testing.T) {
 	d := newTestDeps(t)
-	
+
 	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
-	
+
 	batch := &WriteBatch{
 		TxnID: 1,
 		Recs: []LogRecord{
@@ -1059,7 +1059,7 @@ func TestCrashSimulated(t *testing.T) {
 			{Type: RTCommit, TxnID: 1},
 		},
 	}
-	
+
 	lsn, err := w.Append(batch)
 	if err != nil {
 		t.Fatalf("Append: %v", err)
@@ -1067,13 +1067,13 @@ func TestCrashSimulated(t *testing.T) {
 	if lsn == 0 {
 		t.Error("expected non-zero LSN")
 	}
-	
+
 	if err := w.Sync(); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	
+
 	w.Close()
-	
+
 	_ = d
 }
 
@@ -1081,19 +1081,19 @@ func TestCrashSimulated(t *testing.T) {
 // very small segment size to verify rotation behavior in tests.
 func TestWriterWithSmallSegment(t *testing.T) {
 	d := newTestDeps(t)
-	
+
 	sm2, err := lf.New(t.TempDir())
 	if err != nil {
 		t.Fatalf("lf.New: %v", err)
 	}
 	defer sm2.Close()
-	
+
 	w, err := New(t.TempDir(), sm2, d.sp, d.log)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer w.Close()
-	
+
 	for i := 0; i < 5; i++ {
 		_, err := w.Append(&WriteBatch{
 			TxnID: uint64(i),
@@ -1105,17 +1105,17 @@ func TestWriterWithSmallSegment(t *testing.T) {
 			t.Fatalf("Append[%d]: %v", i, err)
 		}
 	}
-	
+
 	w.Sync()
 }
 
 // TestMultipleSyncCalls verifies that multiple Sync calls work.
 func TestMultipleSyncCalls(t *testing.T) {
 	d := newTestDeps(t)
-	
+
 	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
 	defer w.Close()
-	
+
 	for i := 0; i < 3; i++ {
 		_, err := w.Append(&WriteBatch{
 			TxnID: uint64(i),
@@ -1126,7 +1126,7 @@ func TestMultipleSyncCalls(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Append: %v", err)
 		}
-		
+
 		if err := w.Sync(); err != nil {
 			t.Errorf("Sync[%d]: %v", i, err)
 		}
@@ -1136,10 +1136,10 @@ func TestMultipleSyncCalls(t *testing.T) {
 // TestSegmentRotationPreservesLSN ordering.
 func TestSegmentRotationLSNOrdering(t *testing.T) {
 	d := newTestDeps(t)
-	
+
 	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
 	defer w.Close()
-	
+
 	lsns := make([]uint64, 0)
 	for i := 0; i < 100; i++ {
 		lsn, err := w.Append(&WriteBatch{
@@ -1153,7 +1153,7 @@ func TestSegmentRotationLSNOrdering(t *testing.T) {
 		}
 		lsns = append(lsns, lsn)
 	}
-	
+
 	for i := 1; i < len(lsns); i++ {
 		if lsns[i] <= lsns[i-1] {
 			t.Errorf("LSN not monotonic: lsns[%d]=%d, lsns[%d]=%d",

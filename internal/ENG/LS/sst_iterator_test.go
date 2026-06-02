@@ -25,8 +25,6 @@ func TestEngine_Close_Idempotent_v2(t *testing.T) {
 	}
 }
 
-
-
 func TestEngine_GetStats(t *testing.T) {
 	dir := t.TempDir()
 	dir = filepath.Join(dir, "test_engine_stats_detailed")

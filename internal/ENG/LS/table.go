@@ -7,9 +7,9 @@ import (
 )
 
 var (
-	ErrTableNotFound    = errors.New("table not found")
-	ErrTableExists      = errors.New("table already exists")
-	ErrInvalidTableID   = errors.New("invalid table ID")
+	ErrTableNotFound  = errors.New("table not found")
+	ErrTableExists    = errors.New("table already exists")
+	ErrInvalidTableID = errors.New("invalid table ID")
 )
 
 type TableSchema struct {
@@ -41,9 +41,9 @@ const (
 )
 
 type tableRegistry struct {
-	mu      sync.RWMutex
-	tables  map[uint64]*TableSchema
-	nextID  uint64
+	mu     sync.RWMutex
+	tables map[uint64]*TableSchema
+	nextID uint64
 }
 
 func newTableRegistry() *tableRegistry {
