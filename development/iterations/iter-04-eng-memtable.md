@@ -3,7 +3,7 @@
 **Subsystem:** `ENG`
 **Status:** in_progress
 **Est. LOC:** ~8,000
-**Test Coverage:** 74.5% (ENG/LS)
+**Test Coverage:** 75.2% (ENG/LS)
 
 ## Overview
 
