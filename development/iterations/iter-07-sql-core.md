@@ -2,8 +2,7 @@
 
 **Subsystem:** `SQL`
 **Dialect:** SQLite-compatible
-**Status:** in_progress
-**Est. LOC:** ~2,500
+**Status:** done
 
 ## Dialect Alignment
 
@@ -167,43 +166,43 @@ func (r *Runner) Query(ctx context.Context, query string) ([]Row, error) { ... }
 
 | ID | Requirement | Status |
 |---|---|---|
-| R01 | `Token` struct (value type, no interface): Type (TokenType), Lexeme (string), Literal (any), Line (int), Col (int) | pending |
-| R02 | Token types: T_EOF, T_IDENT, T_STRING, T_INT, T_FLOAT, T_BIND (`?`) | pending |
-| R03 | Token types: comparison (T_EQ, T_NE, T_LT, T_LE, T_GT, T_GE), arithmetic (T_PLUS, T_MINUS, T_STAR, T_SLASH) | pending |
-| R04 | Token types: punctuation (T_LPAREN, T_RPAREN, T_COMMA, T_DOT, T_SEMICOLON, T_COLON) | pending |
-| R05 | Keyword tokens: T_CREATE, T_DROP, T_INSERT, T_UPDATE, T_DELETE, T_SELECT, T_FROM, T_WHERE, T_AND, T_OR, T_NOT, T_IN, T_BETWEEN, T_LIKE, T_IS, T_NULL, T_BEGIN, T_COMMIT, T_ROLLBACK, T_AS, T_BY, T_ASC, T_DESC, T_LIMIT, T_OFFSET, T_TABLE, T_INDEX, T_PRIMARY, T_KEY, T_NOTNULL, T_DEFAULT, T_UNIQUE, T_INT_KW, T_BIGINT, T_FLOAT_KW, T_BOOL, T_TEXT, T_BLOB, T_VARCHAR, T_TIMESTAMP | pending |
-| R06 | `Lexer`: `Next() Token`, `peek() byte`, `advance() byte` | pending |
-| R07 | Static keyword map for O(1) lookup | pending |
-| R08 | String literal parsing (`'...'`), `--` comment skip, whitespace skip | pending |
-| R09 | `?` recognized as `T_BIND` (parameter placeholder) | pending |
-| R10 | Error recovery: emit `T_EOF` with error on malformed input, continue to collect all errors in one pass | pending |
-| R11 | Token round-trip test: `a + 1` → T_IDENT, T_PLUS, T_INT | pending |
-| R12 | Expression parser precedence: comparison > add/sub > mul/div > unary > primary | pending |
-| R13 | `parseExpr`: handles binary expr, unary expr, parenthesized expr, primary | pending |
-| R14 | `parseSelect`: SELECT columns FROM table WHERE expr ORDER BY expr LIMIT expr OFFSET expr | pending |
-| R15 | `parseInsert`: INSERT INTO table (cols) VALUES (rows) | pending |
-| R16 | `parseUpdate`: UPDATE table SET col=expr WHERE expr | pending |
-| R17 | `parseDelete`: DELETE FROM table WHERE expr | pending |
-| R18 | `parseCreateTable`: CREATE TABLE name (col_defs) PRIMARY KEY (col) | pending |
-| R19 | `parseDropTable`: DROP TABLE name | pending |
-| R20 | AST expression nodes: NumberLiteral, FloatLiteral, StringLiteral, BoolLiteral, NullLiteral, Ident, Param, BinaryExpr, UnaryExpr, FunctionCall, StarExpr, ListExpr, BetweenExpr, InExpr | pending |
-| R21 | AST statement nodes: CreateTable, DropTable, Insert, Update, Delete, Select, BeginTX, CommitTX, RollbackTX | pending |
-| R22 | `ColDef` struct: Name, Type (TokenType), Size (int), Nullable, Default (Expr), PK (bool) | pending |
-| R23 | `ConstantFold(e Expr) (Expr, bool)`: evaluate literal expressions, return new expr or unchanged | pending |
-| R24 | `PredicatePushdown(s *Select) *Select`: move WHERE conditions closer to data source | pending |
-| R25 | `FlattenSubquery(e *InExpr) (*InExpr, bool)`: stub — returns false, no-op | pending |
-| R26 | `go vet ./internal/SQL/...` zero warnings | pending |
-| R27 | `go test ./internal/SQL/... -race -count=1` all green | pending |
-| R28 | Table-driven parse tests for all statement types | pending |
-| C01 | `Compare(query string)` — parse query, return AST or error | pending |
-| C02 | `CompareParse(query string) (AST, error)` — parse to AST, compare with SQLite AST | pending |
-| C03 | `CompareDML(query string) (rows int64, err error)` — execute DML, return affected rows | pending |
-| C04 | `CompareQuery(query string) ([]Row, error)` — execute SELECT, return rows | pending |
-| C05 | Table-driven test format: `TestSQL{Name, Input, ExpectedAST, ExpectError, SkipSQLite}` | pending |
-| C06 | `sqlite3` exec as subprocess for reference results | pending |
-| C07 | Skipped tests when SQLite unavailable | pending |
-| C08 | `go test ./tests/sqlcmp/... -v` shows pass/fail with SQLite diff | pending |
-| C09 | Test coverage report: statements parsed, expressions covered | pending |
+| R01 | `Token` struct (value type, no interface): Type (TokenType), Lexeme (string), Literal (any), Line (int), Col (int) | done |
+| R02 | Token types: T_EOF, T_IDENT, T_STRING, T_INT, T_FLOAT, T_BIND (`?`) | done |
+| R03 | Token types: comparison (T_EQ, T_NE, T_LT, T_LE, T_GT, T_GE), arithmetic (T_PLUS, T_MINUS, T_STAR, T_SLASH) | done |
+| R04 | Token types: punctuation (T_LPAREN, T_RPAREN, T_COMMA, T_DOT, T_SEMICOLON, T_COLON) | done |
+| R05 | Keyword tokens: T_CREATE, T_DROP, T_INSERT, T_UPDATE, T_DELETE, T_SELECT, T_FROM, T_WHERE, T_AND, T_OR, T_NOT, T_IN, T_BETWEEN, T_LIKE, T_IS, T_NULL, T_BEGIN, T_COMMIT, T_ROLLBACK, T_AS, T_BY, T_ASC, T_DESC, T_LIMIT, T_OFFSET, T_TABLE, T_INDEX, T_PRIMARY, T_KEY, T_NOTNULL, T_DEFAULT, T_UNIQUE, T_INT_KW, T_BIGINT, T_FLOAT_KW, T_BOOL, T_TEXT, T_BLOB, T_VARCHAR, T_TIMESTAMP | done |
+| R06 | `Lexer`: `Next() Token`, `peek() byte`, `advance() byte` | done |
+| R07 | Static keyword map for O(1) lookup | done |
+| R08 | String literal parsing (`'...'`), `--` comment skip, whitespace skip | done |
+| R09 | `?` recognized as `T_BIND` (parameter placeholder) | done |
+| R10 | Error recovery: emit `T_EOF` with error on malformed input, continue to collect all errors in one pass | done |
+| R11 | Token round-trip test: `a + 1` → T_IDENT, T_PLUS, T_INT | done |
+| R12 | Expression parser precedence: comparison > add/sub > mul/div > unary > primary | done |
+| R13 | `parseExpr`: handles binary expr, unary expr, parenthesized expr, primary | done |
+| R14 | `parseSelect`: SELECT columns FROM table WHERE expr ORDER BY expr LIMIT expr OFFSET expr | done |
+| R15 | `parseInsert`: INSERT INTO table (cols) VALUES (rows) | done |
+| R16 | `parseUpdate`: UPDATE table SET col=expr WHERE expr | done |
+| R17 | `parseDelete`: DELETE FROM table WHERE expr | done |
+| R18 | `parseCreateTable`: CREATE TABLE name (col_defs) PRIMARY KEY (col) | done |
+| R19 | `parseDropTable`: DROP TABLE name | done |
+| R20 | AST expression nodes: NumberLiteral, FloatLiteral, StringLiteral, BoolLiteral, NullLiteral, Ident, Param, BinaryExpr, UnaryExpr, FunctionCall, StarExpr, ListExpr, BetweenExpr, InExpr | done |
+| R21 | AST statement nodes: CreateTable, DropTable, Insert, Update, Delete, Select, BeginTX, CommitTX, RollbackTX | done |
+| R22 | `ColDef` struct: Name, Type (TokenType), Size (int), Nullable, Default (Expr), PK (bool) | done |
+| R23 | `ConstantFold(e Expr) (Expr, bool)`: evaluate literal expressions, return new expr or unchanged | done |
+| R24 | `PredicatePushdown(s *Select) *Select`: move WHERE conditions closer to data source | done |
+| R25 | `FlattenSubquery(e *InExpr) (*InExpr, bool)`: stub — returns false, no-op | done |
+| R26 | `go vet ./internal/SQL/...` zero warnings | done |
+| R27 | `go test ./internal/SQL/... -race -count=1` all green | done |
+| R28 | Table-driven parse tests for all statement types | done |
+| C01 | `Compare(query string)` — parse query, return AST or error | done |
+| C02 | `CompareParse(query string) (AST, error)` — parse to AST, compare with SQLite AST | done |
+| C03 | `CompareDML(query string) (rows int64, err error)` — execute DML, return affected rows | done |
+| C04 | `CompareQuery(query string) ([]Row, error)` — execute SELECT, return rows | done |
+| C05 | Table-driven test format: `TestSQL{Name, Input, ExpectedAST, ExpectError, SkipSQLite}` | done |
+| C06 | `sqlite3` exec as subprocess for reference results | done |
+| C07 | Skipped tests when SQLite unavailable | done |
+| C08 | `go test ./tests/sqlcmp/... -v` shows pass/fail with SQLite diff | done |
+| C09 | Test coverage report: statements parsed, expressions covered | done |
 
 ## Implementation
 
