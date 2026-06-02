@@ -32,7 +32,7 @@ func (sm *slotManager) Validate(mySlot *transactionSlot) bool {
 
 	for i := 0; i < MaxConcurrentTXNs; i++ {
 		slot := &sm.slots[i]
-		if slot.status != SlotCommitted {
+		if slot.status.Load() != int32(SlotCommitted) {
 			continue
 		}
 		if slot.beginTS >= mySlot.beginTS {

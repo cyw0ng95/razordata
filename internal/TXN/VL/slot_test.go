@@ -58,8 +58,8 @@ func TestAllocateSlot(t *testing.T) {
 		t.Errorf("expected %d free slots, got %d", MaxConcurrentTXNs-1, sm.NumFreeSlots())
 	}
 
-	if slot.status != SlotActive {
-		t.Errorf("expected status %d, got %d", SlotActive, slot.status)
+	if slot.status.Load() != int32(SlotActive) {
+		t.Errorf("expected status %d, got %d", SlotActive, slot.status.Load())
 	}
 }
 
@@ -155,12 +155,12 @@ func TestSlotStatus(t *testing.T) {
 		t.Errorf("expected status %d, got %d", SlotActive, sm.GetSlotStatus(idx))
 	}
 
-	slot.status = SlotCommitted
+	slot.status.Store(int32(SlotCommitted))
 	if sm.GetSlotStatus(idx) != SlotCommitted {
 		t.Errorf("expected status %d, got %d", SlotCommitted, sm.GetSlotStatus(idx))
 	}
 
-	slot.status = SlotAborted
+	slot.status.Store(int32(SlotAborted))
 	if sm.GetSlotStatus(idx) != SlotAborted {
 		t.Errorf("expected status %d, got %d", SlotAborted, sm.GetSlotStatus(idx))
 	}
@@ -190,7 +190,7 @@ func TestValidateNoConflict(t *testing.T) {
 	slot1.beginTS = 10
 	slot1.commitTS = 20
 	slot1.writeSet = []KeyRange{{Start: []byte("a"), End: []byte("c")}}
-	slot1.status = SlotCommitted
+	slot1.status.Store(int32(SlotCommitted))
 
 	slot2 := sm.AllocateSlot()
 	slot2.beginTS = 30
@@ -208,7 +208,7 @@ func TestValidateWithConflict(t *testing.T) {
 	slot1.beginTS = 10
 	slot1.commitTS = 40
 	slot1.writeSet = []KeyRange{{Start: []byte("a"), End: []byte("c")}}
-	slot1.status = SlotCommitted
+	slot1.status.Store(int32(SlotCommitted))
 
 	slot2 := sm.AllocateSlot()
 	slot2.beginTS = 30
@@ -226,7 +226,7 @@ func TestValidateNoOverlapWhenNotCommitted(t *testing.T) {
 	slot1.beginTS = 10
 	slot1.commitTS = 20
 	slot1.writeSet = []KeyRange{{Start: []byte("a"), End: []byte("c")}}
-	slot1.status = SlotActive
+	slot1.status.Store(int32(SlotActive))
 
 	slot2 := sm.AllocateSlot()
 	slot2.beginTS = 30
@@ -292,6 +292,22 @@ func TestGetSlotCommitTS(t *testing.T) {
 	}
 }
 
+func TestNextTS(t *testing.T) {
+	ts1 := NextTS()
+	ts2 := NextTS()
+
+	if ts2 <= ts1 {
+		t.Errorf("expected ts2 > ts1, got ts1=%d, ts2=%d", ts1, ts2)
+	}
+}
+
+func TestGetCurrentTS(t *testing.T) {
+	ts := GetCurrentTS()
+	if ts == 0 {
+		t.Error("expected current TS > 0 after NextTS calls")
+	}
+}
+
 func BenchmarkAllocateSlot(b *testing.B) {
 	sm := newSlotManager()
 
@@ -321,7 +337,7 @@ func BenchmarkValidateNoConflict(b *testing.B) {
 	slot1.beginTS = 10
 	slot1.commitTS = 20
 	slot1.writeSet = []KeyRange{{Start: []byte("a"), End: []byte("c")}}
-	slot1.status = SlotCommitted
+	slot1.status.Store(int32(SlotCommitted))
 
 	slot2 := sm.AllocateSlot()
 	slot2.beginTS = 30

@@ -2,6 +2,7 @@ package VL
 
 import (
 	"sync"
+	"sync/atomic"
 )
 
 type KeyRange struct {
@@ -22,7 +23,7 @@ const (
 
 type transactionSlot struct {
 	txnID    uint64
-	status   SlotStatus
+	status   atomic.Int32
 	beginTS  uint64
 	commitTS uint64
 	writeSet []KeyRange
@@ -58,7 +59,7 @@ func (sm *slotManager) AllocateSlot() *transactionSlot {
 
 	slot := &sm.slots[idx]
 	slot.txnID = 0
-	slot.status = SlotActive
+	slot.status.Store(int32(SlotActive))
 	slot.beginTS = 0
 	slot.commitTS = 0
 	slot.writeSet = nil
@@ -72,7 +73,7 @@ func (sm *slotManager) ReleaseSlot(slot *transactionSlot) {
 
 	idx := slot.index
 
-	slot.status = SlotInactive
+	slot.status.Store(int32(SlotInactive))
 	slot.txnID = 0
 	slot.beginTS = 0
 	slot.commitTS = 0
@@ -84,7 +85,7 @@ func (sm *slotManager) ReleaseSlot(slot *transactionSlot) {
 }
 
 func (sm *slotManager) GetSlotStatus(idx int) SlotStatus {
-	return sm.slots[idx].status
+	return SlotStatus(sm.slots[idx].status.Load())
 }
 
 func (sm *slotManager) GetSlotBeginTS(idx int) uint64 {
@@ -109,4 +110,19 @@ func (sm *slotManager) NumActiveSlots() int {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	return MaxConcurrentTXNs - len(sm.freeList)
+}
+
+func (sm *slotManager) GetSlot(index int) *transactionSlot {
+	return &sm.slots[index]
+}
+
+func (sm *slotManager) ScanSlots(fn func(int, *transactionSlot) bool) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	for i := 0; i < MaxConcurrentTXNs; i++ {
+		slot := &sm.slots[i]
+		if !fn(i, slot) {
+			return
+		}
+	}
 }
