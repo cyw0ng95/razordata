@@ -55,6 +55,25 @@ internal/SQL/
 │   ├── ps_test.go
 │   ├── expr.go       # expression parser with precedence
 │   └── ast.go        # AST node types (shared across LX, PS, RE)
+└── RE/               # Rewriter cluster
+
+tests/                # Parallel with internal/
+└── sqlcmp/          # SQLite comparison test framework
+    ├── sqlcmp.go       # Compare framework
+    ├── sqlcmp_test.go  # Table-driven comparison tests
+    └── README.md       # Usage documentation
+```
+internal/SQL/
+├── LX/               # Lexer cluster
+│   ├── token.go      # Token struct, token type constants
+│   ├── token_test.go
+│   ├── lx.go         # Lexer, Next/peek/advance, keyword map
+│   └── lx_test.go
+├── PS/               # Parser cluster
+│   ├── ps.go         # recursive descent: parseSelect/parseInsert/parseUpdate/parseDelete/parseCreateTable/parseDropTable
+│   ├── ps_test.go
+│   ├── expr.go       # expression parser with precedence
+│   └── ast.go        # AST node types (shared across LX, PS, RE)
 ├── RE/               # Rewriter cluster
 └── tests/
     └── sqlcmp/       # SQLite comparison test framework
@@ -65,7 +84,7 @@ internal/SQL/
 
 ## SQL Compare Framework (`tests/sqlcmp`)
 
-SQLite-compatible test harness that runs identical SQL against both our parser and SQLite, then compares AST/result equivalence.
+SQLite-compatible test harness that runs identical SQL against both our parser and SQLite, then compares AST/result equivalence. Located parallel to `internal/` at `tests/sqlcmp/`.
 
 ### Purpose
 
