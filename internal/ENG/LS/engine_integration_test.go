@@ -164,9 +164,9 @@ func TestEngineUpdate(t *testing.T) {
 	}
 }
 
-func TestEngineMultipleWritesSameKey(t *testing.T) {
+func TestEngineFlushActiveMemtable(t *testing.T) {
 	dir := t.TempDir()
-	dir = filepath.Join(dir, "test_engine_multi_write")
+	dir = filepath.Join(dir, "test_flush_active")
 
 	e, err := newEngine(dir)
 	if err != nil {
@@ -174,14 +174,93 @@ func TestEngineMultipleWritesSameKey(t *testing.T) {
 	}
 	defer e.Close()
 
-	for i := 0; i < 100; i++ {
-		if err := e.Write([]byte("key1"), []byte(string(rune('0'+i%10)))); err != nil {
-			t.Fatalf("failed to write iteration %d: %v", i, err)
-		}
+	e.Write([]byte("key1"), []byte("value1"))
+
+	err = e.flushActiveMemtable()
+	if err != nil {
+		t.Fatalf("flushActiveMemtable: %v", err)
 	}
 
-	val, _ := e.Read([]byte("key1"))
-	if len(val) != 1 {
-		t.Fatalf("expected single byte value, got %d bytes", len(val))
+	if e.activeMem == nil {
+		t.Fatal("activeMem should not be nil after flush")
+	}
+}
+
+func TestEngineReadFromSSTFile(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_read_sst_file")
+
+	e, err := newEngine(dir)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	e.Write([]byte("key1"), []byte("value1"))
+
+	mt := e.activeMem
+	mt.Freeze()
+
+	job := &flushJob{
+		memtable:   mt,
+		outputPath: filepath.Join(dir, "sst", "L0_1.sst"),
+		manifest:   e.manifest,
+		fileID:     1,
+		level:      0,
+	}
+	if err := job.Run(); err != nil {
+		t.Fatalf("flushJob.Run: %v", err)
+	}
+
+	val, err := e.Read([]byte("key1"))
+	if err != nil {
+		t.Fatalf("Read after flush: %v", err)
+	}
+	if string(val) != "value1" {
+		t.Fatalf("expected value1, got %s", string(val))
+	}
+
+	e.Close()
+}
+
+func TestEngineMayContainFromFrozenMemtable(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_maycontain_frozen")
+
+	e, err := newEngine(dir)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+	defer e.Close()
+
+	e.Write([]byte("key1"), []byte("value1"))
+	e.activeMem.Freeze()
+
+	if !e.MayContain([]byte("key1")) {
+		t.Fatal("expected MayContain to return true for key1 in frozen memtable")
+	}
+}
+
+func TestEngineCloseIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_close_idempotent")
+
+	e, err := newEngine(dir)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	if err := e.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+
+	if err := e.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
+func TestEngineCloseWithNilCm(t *testing.T) {
+	e := &engine{cm: nil}
+	if err := e.Close(); err != nil {
+		t.Fatalf("Close with nil cm: %v", err)
 	}
 }

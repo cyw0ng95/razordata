@@ -216,5 +216,9 @@ func (e *engine) Close() error {
 		return err
 	}
 	e.cm = nil
-	return e.manifest.Close()
+	e.fm = nil
+	if err := e.manifest.Close(); err != nil {
+		return err
+	}
+	return nil
 }

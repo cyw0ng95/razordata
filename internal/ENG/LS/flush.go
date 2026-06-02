@@ -142,7 +142,10 @@ func (fm *flushManager) flushLoop() {
 		select {
 		case <-fm.done:
 			return
-		case job := <-fm.flushQueue:
+		case job, ok := <-fm.flushQueue:
+			if !ok {
+				return
+			}
 			if err := job.Run(); err != nil {
 			}
 		}
