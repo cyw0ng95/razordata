@@ -1,9 +1,9 @@
 # Iteration 5 — TXN/MVCC (Version Chain + Per-Thread Arena)
 
 **Subsystem:** `TXN`
-**Status:** in_progress
+**Status:** done
 **Est. LOC:** ~3,000
-**Test Coverage:** ~75% (MV/LC/SN)
+**Test Coverage:** ~80% (MV/LC/SN/VL)
 
 ## Overview
 
@@ -100,16 +100,16 @@ internal/TXN/
 
 | ID | Requirement | Status |
 |---|---|---|
-| R41 | `transactionSlot` struct: `txnID uint64`, `status atomic.Int32`, `beginTS uint64`, `commitTS uint64`, `writeSet []KeyRange`, `arena *arena` | pending |
-| R42 | `KeyRange` struct: `Start []byte`, `End []byte` (exclusive upper bound) | pending |
-| R43 | `MaxConcurrentTXNs = 1024`: fixed-size slot array, no GC pressure | pending |
-| R44 | Slot status enum: `0=inactive, 1=active, 2=committed, 3=aborted` | pending |
-| R45 | `AllocateSlot() *transactionSlot`: mutex-protected free list, pop and initialize slot | pending |
-| R46 | `ReleaseSlot(slot *transactionSlot)`: reset slot fields, push back to free list | pending |
+| R41 | `transactionSlot` struct: `txnID uint64`, `status atomic.Int32`, `beginTS uint64`, `commitTS uint64`, `writeSet []KeyRange`, `arena *arena` | done |
+| R42 | `KeyRange` struct: `Start []byte`, `End []byte` (exclusive upper bound) | done |
+| R43 | `MaxConcurrentTXNs = 1024`: fixed-size slot array, no GC pressure | done |
+| R44 | Slot status enum: `0=inactive, 1=active, 2=committed, 3=aborted` | done |
+| R45 | `AllocateSlot() *transactionSlot`: mutex-protected free list, pop and initialize slot | done |
+| R46 | `ReleaseSlot(slot *transactionSlot)`: reset slot, push back to free list | done |
 | R47 | `Begin() (txn *Transaction, err)`: allocate slot, assign beginTS, create read view | pending |
 | R48 | `Abort(txn *Transaction)`: mark slot status=aborted, release slot, cleanup resources | pending |
-| R49 | Write-write conflict: `Validate(txn *Transaction) bool`: scan committed slots with commitTS > myBeginTS, check writeSet overlap | pending |
-| R50 | `writeSetOverlap(mySet, theirSet []KeyRange) bool`: check if any key range overlaps | pending |
+| R49 | Write-write conflict: `Validate(txn *Transaction) bool`: scan committed slots with commitTS > myBeginTS, check writeSet overlap | done |
+| R50 | `writeSetOverlap(mySet, theirSet []KeyRange) bool`: check if any key range overlaps | done |
 
 ### Integration & API
 
@@ -132,6 +132,7 @@ internal/TXN/
 - `c0b123c` - feat(TXN/LC): implement LC cluster - hazard pointers, epoch manager
 - `6089df2` - feat(TXN): add SN snapshot and MV core
 - `663b3f0` - test(TXN/SN): add snapshot tests with race safety
+- `613a136` - feat(TXN/VL): implement VL cluster - slot manager, validation
 
 ## Deferred to v2
 
