@@ -6,17 +6,17 @@ import (
 
 const maxUint64 = ^uint64(0)
 
-type versionNode struct {
+type VersionNode struct {
 	txnID   uint64
 	beginTS uint64
 	endTS   atomic.Uint64
 	key     []byte
 	value   []byte
 	deleted bool
-	next    atomic.Pointer[versionNode]
+	next    atomic.Pointer[VersionNode]
 }
 
-func newVersionNode(txnID, beginTS uint64, key, value []byte, deleted bool) *versionNode {
+func newVersionNode(txnID, beginTS uint64, key, value []byte, deleted bool) *VersionNode {
 	node := allocVersionNode()
 	node.txnID = txnID
 	node.beginTS = beginTS
@@ -27,23 +27,51 @@ func newVersionNode(txnID, beginTS uint64, key, value []byte, deleted bool) *ver
 	return node
 }
 
-func (n *versionNode) IsUncommitted() bool {
+func (n *VersionNode) IsUncommitted() bool {
 	return n.endTS.Load() == maxUint64
 }
 
-func (n *versionNode) IsVisible(readTS uint64) bool {
+func (n *VersionNode) IsVisible(readTS uint64) bool {
 	return n.beginTS < readTS && n.endTS.Load() >= readTS
 }
 
-type versionChain struct {
-	head atomic.Pointer[versionNode]
+func (n *VersionNode) TxnID() uint64 {
+	return n.txnID
 }
 
-func (vc *versionChain) GetHead() *versionNode {
+func (n *VersionNode) BeginTS() uint64 {
+	return n.beginTS
+}
+
+func (n *VersionNode) EndTS() uint64 {
+	return n.endTS.Load()
+}
+
+func (n *VersionNode) Key() []byte {
+	return n.key
+}
+
+func (n *VersionNode) Value() []byte {
+	return n.value
+}
+
+func (n *VersionNode) Deleted() bool {
+	return n.deleted
+}
+
+func (n *VersionNode) Next() *VersionNode {
+	return n.next.Load()
+}
+
+type VersionChain struct {
+	head atomic.Pointer[VersionNode]
+}
+
+func (vc *VersionChain) GetHead() *VersionNode {
 	return vc.head.Load()
 }
 
-func (vc *versionChain) Insert(node *versionNode) bool {
+func (vc *VersionChain) Insert(node *VersionNode) bool {
 	for {
 		oldHead := vc.head.Load()
 		node.next.Store(oldHead)
@@ -53,11 +81,11 @@ func (vc *versionChain) Insert(node *versionNode) bool {
 	}
 }
 
-func (vc *versionChain) Commit(node *versionNode, commitTS uint64) bool {
+func (vc *VersionChain) Commit(node *VersionNode, commitTS uint64) bool {
 	return node.endTS.CompareAndSwap(maxUint64, commitTS)
 }
 
-func (vc *versionChain) FindVisible(readTS uint64) *versionNode {
+func (vc *VersionChain) FindVisible(readTS uint64) *VersionNode {
 	for node := vc.GetHead(); node != nil; node = node.next.Load() {
 		if node.IsVisible(readTS) {
 			return node

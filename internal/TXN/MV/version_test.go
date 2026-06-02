@@ -79,7 +79,7 @@ func TestVersionNodeCommittedVisibility(t *testing.T) {
 }
 
 func TestVersionChainInsert(t *testing.T) {
-	vc := new(versionChain)
+	vc := &VersionChain{}
 
 	node1 := newVersionNode(1, 10, []byte("key1"), []byte("value1"), false)
 	node2 := newVersionNode(2, 20, []byte("key2"), []byte("value2"), false)
@@ -97,13 +97,13 @@ func TestVersionChainInsert(t *testing.T) {
 		t.Error("head should be node2 (newest)")
 	}
 
-	if head.next.Load() != node1 {
+	if head.Next() != node1 {
 		t.Error("next should be node1")
 	}
 }
 
 func TestVersionChainInsertSameKey(t *testing.T) {
-	vc := new(versionChain)
+	vc := &VersionChain{}
 
 	node1 := newVersionNode(1, 10, []byte("key"), []byte("value1"), false)
 	node2 := newVersionNode(2, 20, []byte("key"), []byte("value2"), false)
@@ -118,7 +118,7 @@ func TestVersionChainInsertSameKey(t *testing.T) {
 }
 
 func TestVersionChainCommit(t *testing.T) {
-	vc := new(versionChain)
+	vc := &VersionChain{}
 	node := newVersionNode(1, 10, []byte("key"), []byte("value"), false)
 
 	if !vc.Commit(node, 100) {
@@ -131,7 +131,7 @@ func TestVersionChainCommit(t *testing.T) {
 }
 
 func TestVersionChainCommitTwice(t *testing.T) {
-	vc := new(versionChain)
+	vc := &VersionChain{}
 	node := newVersionNode(1, 10, []byte("key"), []byte("value"), false)
 
 	vc.Commit(node, 100)
@@ -146,7 +146,7 @@ func TestVersionChainCommitTwice(t *testing.T) {
 }
 
 func TestVersionChainFindVisible(t *testing.T) {
-	vc := new(versionChain)
+	vc := &VersionChain{}
 
 	node1 := newVersionNode(1, 10, []byte("key"), []byte("v1"), false)
 	node2 := newVersionNode(2, 20, []byte("key"), []byte("v2"), false)
@@ -176,7 +176,7 @@ func TestVersionChainFindVisible(t *testing.T) {
 }
 
 func TestVersionChainFindVisibleDeleted(t *testing.T) {
-	vc := new(versionChain)
+	vc := &VersionChain{}
 
 	node1 := newVersionNode(1, 10, []byte("key"), []byte("value"), false)
 	node2 := newVersionNode(2, 20, []byte("key"), []byte(""), true)
@@ -204,7 +204,7 @@ func TestVersionChainFindVisibleDeleted(t *testing.T) {
 }
 
 func TestVersionChainConcurrency(t *testing.T) {
-	vc := new(versionChain)
+	vc := &VersionChain{}
 	var inserted int64
 
 	var wg sync.WaitGroup
@@ -250,7 +250,7 @@ func TestVersionNodeDeleted(t *testing.T) {
 }
 
 func TestVersionChainEmpty(t *testing.T) {
-	vc := new(versionChain)
+	vc := &VersionChain{}
 
 	if vc.GetHead() != nil {
 		t.Error("empty chain should have nil head")
@@ -263,7 +263,7 @@ func TestVersionChainEmpty(t *testing.T) {
 }
 
 func TestVersionChainGetHead(t *testing.T) {
-	vc := new(versionChain)
+	vc := &VersionChain{}
 
 	if vc.GetHead() != nil {
 		t.Error("empty chain head should be nil")
@@ -278,7 +278,7 @@ func TestVersionChainGetHead(t *testing.T) {
 }
 
 func TestVersionChainFindVisibleMultipleVersions(t *testing.T) {
-	vc := new(versionChain)
+	vc := &VersionChain{}
 
 	node1 := newVersionNode(1, 10, []byte("key"), []byte("v1"), false)
 	node2 := newVersionNode(2, 20, []byte("key"), []byte("v2"), false)
@@ -300,7 +300,7 @@ func TestVersionChainFindVisibleMultipleVersions(t *testing.T) {
 }
 
 func BenchmarkVersionChainInsert(b *testing.B) {
-	vc := new(versionChain)
+	vc := &VersionChain{}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -310,7 +310,7 @@ func BenchmarkVersionChainInsert(b *testing.B) {
 }
 
 func BenchmarkVersionChainFindVisible(b *testing.B) {
-	vc := new(versionChain)
+	vc := &VersionChain{}
 
 	for i := 0; i < 1000; i++ {
 		node := newVersionNode(uint64(i), uint64(i*10), []byte("key"), []byte("value"), false)

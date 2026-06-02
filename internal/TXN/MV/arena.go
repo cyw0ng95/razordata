@@ -16,20 +16,20 @@ func getGoroutineID() uint64 {
 	return goid
 }
 
-type arena struct {
+type Arena struct {
 	buf    []byte
 	offset atomic.Int64
 	size   int64
 }
 
-func newArena() *arena {
-	return &arena{
+func newArena() *Arena {
+	return &Arena{
 		buf:  make([]byte, arenaSize),
 		size: arenaSize,
 	}
 }
 
-func (a *arena) Alloc(n int) []byte {
+func (a *Arena) Alloc(n int) []byte {
 	for {
 		old := a.offset.Load()
 		new := old + int64(n)
@@ -42,8 +42,12 @@ func (a *arena) Alloc(n int) []byte {
 	}
 }
 
-func (a *arena) remaining() int64 {
+func (a *Arena) Remaining() int64 {
 	return a.size - a.offset.Load()
+}
+
+func (a *Arena) Size() int64 {
+	return a.size
 }
 
 var arenaPool = sync.Pool{
@@ -52,22 +56,22 @@ var arenaPool = sync.Pool{
 	},
 }
 
-func getArena() *arena {
-	return arenaPool.Get().(*arena)
+func GetArena() *Arena {
+	return arenaPool.Get().(*Arena)
 }
 
-func putArena(a *arena) {
+func PutArena(a *Arena) {
 	a.offset.Store(0)
 	arenaPool.Put(a)
 }
 
-var arenaPoolSlice = make([]*arena, runtime.GOMAXPROCS(0))
+var arenaPoolSlice = make([]*Arena, runtime.GOMAXPROCS(0))
 
-func threadArena() *arena {
+func threadArena() *Arena {
 	goid := getGoroutineID()
 	idx := int(goid) % len(arenaPoolSlice)
 	if arenaPoolSlice[idx] == nil {
-		arenaPoolSlice[idx] = getArena()
+		arenaPoolSlice[idx] = GetArena()
 	}
 	return arenaPoolSlice[idx]
 }
@@ -77,19 +81,19 @@ func allocFromThreadArena(n int) []byte {
 		goid := getGoroutineID()
 		idx := int(goid) % len(arenaPoolSlice)
 		if arenaPoolSlice[idx] == nil {
-			arenaPoolSlice[idx] = getArena()
+			arenaPoolSlice[idx] = GetArena()
 		}
 		a := arenaPoolSlice[idx]
 		if ptr := a.Alloc(n); ptr != nil {
 			return ptr
 		}
-		newArena := getArena()
+		newArena := GetArena()
 		arenaPoolSlice[idx] = newArena
 	}
 }
 
-func allocVersionNode() *versionNode {
-	size := int(unsafe.Sizeof(versionNode{}))
+func allocVersionNode() *VersionNode {
+	size := int(unsafe.Sizeof(VersionNode{}))
 	mem := allocFromThreadArena(size)
-	return (*versionNode)(unsafe.Pointer(&mem[0]))
+	return (*VersionNode)(unsafe.Pointer(&mem[0]))
 }

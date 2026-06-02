@@ -76,30 +76,30 @@ func TestArenaCAS(t *testing.T) {
 func TestArenaRemaining(t *testing.T) {
 	a := newArena()
 
-	initial := a.remaining()
+	initial := a.Remaining()
 	if initial != arenaSize {
 		t.Fatalf("expected initial remaining %d, got %d", arenaSize, initial)
 	}
 
 	a.Alloc(100)
-	after := a.remaining()
+	after := a.Remaining()
 	if after != arenaSize-100 {
 		t.Fatalf("expected remaining %d, got %d", arenaSize-100, after)
 	}
 }
 
 func TestArenaPool(t *testing.T) {
-	a1 := getArena()
-	a2 := getArena()
+	a1 := GetArena()
+	a2 := GetArena()
 
 	if a1 == nil || a2 == nil {
-		t.Fatal("getArena should return non-nil arena")
+		t.Fatal("GetArena should return non-nil arena")
 	}
 
-	putArena(a1)
-	putArena(a2)
+	PutArena(a1)
+	PutArena(a2)
 
-	a3 := getArena()
+	a3 := GetArena()
 	if a3 == nil {
 		t.Fatal("should get arena from pool")
 	}
