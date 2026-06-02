@@ -105,6 +105,10 @@ type ColDef struct {
 	PK       bool
 }
 
+func NewColDef(name string, typ int) ColDef {
+	return ColDef{Name: name, Type: typ, Nullable: true}
+}
+
 type Pair struct {
 	Col string
 	Val Expr

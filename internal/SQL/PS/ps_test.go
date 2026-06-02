@@ -264,3 +264,171 @@ func TestParseMultipleRows(t *testing.T) {
 		t.Errorf("expected 2 rows, got %d", len(ins.Values))
 	}
 }
+
+func TestParseFloatLiteral(t *testing.T) {
+	p := NewParser("SELECT 3.14 FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	sel := stmt.(*Select)
+	lit, ok := sel.Cols[0].(*FloatLiteral)
+	if !ok {
+		t.Fatalf("expected *FloatLiteral, got %T", sel.Cols[0])
+	}
+	if lit.Val != 3.14 {
+		t.Errorf("expected 3.14, got %f", lit.Val)
+	}
+}
+
+func TestParseNegativeFloat(t *testing.T) {
+	p := NewParser("SELECT -2.5 FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	sel := stmt.(*Select)
+	unary, ok := sel.Cols[0].(*UnaryExpr)
+	if !ok {
+		t.Fatalf("expected *UnaryExpr, got %T", sel.Cols[0])
+	}
+	lit, ok := unary.Operand.(*FloatLiteral)
+	if !ok {
+		t.Fatalf("expected *FloatLiteral, got %T", unary.Operand)
+	}
+	if lit.Val != 2.5 {
+		t.Errorf("expected 2.5, got %f", lit.Val)
+	}
+}
+
+func TestParseUnaryMinus(t *testing.T) {
+	p := NewParser("SELECT -a FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	sel := stmt.(*Select)
+	unary, ok := sel.Cols[0].(*UnaryExpr)
+	if !ok {
+		t.Fatalf("expected *UnaryExpr, got %T", sel.Cols[0])
+	}
+	if unary.Op != int(LX.T_MINUS) {
+		t.Errorf("expected MINUS op, got %d", unary.Op)
+	}
+}
+
+func TestParseUnaryPlus(t *testing.T) {
+	p := NewParser("SELECT +a FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	sel := stmt.(*Select)
+	unary, ok := sel.Cols[0].(*UnaryExpr)
+	if !ok {
+		t.Fatalf("expected *UnaryExpr, got %T", sel.Cols[0])
+	}
+	if unary.Op != int(LX.T_PLUS) {
+		t.Errorf("expected PLUS op, got %d", unary.Op)
+	}
+}
+
+func TestParseNotExpression(t *testing.T) {
+	p := NewParser("SELECT NOT a FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	sel := stmt.(*Select)
+	unary, ok := sel.Cols[0].(*UnaryExpr)
+	if !ok {
+		t.Fatalf("expected *UnaryExpr, got %T", sel.Cols[0])
+	}
+	if unary.Op != int(LX.T_NOT) {
+		t.Errorf("expected NOT op, got %d", unary.Op)
+	}
+}
+
+func TestParseStringLiteral(t *testing.T) {
+	p := NewParser("SELECT 'hello' FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	sel := stmt.(*Select)
+	lit, ok := sel.Cols[0].(*StringLiteral)
+	if !ok {
+		t.Fatalf("expected *StringLiteral, got %T", sel.Cols[0])
+	}
+	if lit.Val != "hello" {
+		t.Errorf("expected 'hello', got %q", lit.Val)
+	}
+}
+
+func TestParseNullLiteral(t *testing.T) {
+	p := NewParser("SELECT NULL FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	sel := stmt.(*Select)
+	_, ok := sel.Cols[0].(*NullLiteral)
+	if !ok {
+		t.Fatalf("expected *NullLiteral, got %T", sel.Cols[0])
+	}
+}
+
+func TestParseParam(t *testing.T) {
+	p := NewParser("SELECT ? FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	sel := stmt.(*Select)
+	_, ok := sel.Cols[0].(*Param)
+	if !ok {
+		t.Fatalf("expected *Param, got %T", sel.Cols[0])
+	}
+}
+
+func TestParseBinaryExpr(t *testing.T) {
+	p := NewParser("SELECT a + b FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	sel := stmt.(*Select)
+	bin, ok := sel.Cols[0].(*BinaryExpr)
+	if !ok {
+		t.Fatalf("expected *BinaryExpr, got %T", sel.Cols[0])
+	}
+	if bin.Op != int(LX.T_PLUS) {
+		t.Errorf("expected PLUS, got %d", bin.Op)
+	}
+}
+
+func TestParseComplexExpression(t *testing.T) {
+	p := NewParser("SELECT a + b * c - d / e FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	sel := stmt.(*Select)
+	bin, ok := sel.Cols[0].(*BinaryExpr)
+	if !ok {
+		t.Fatalf("expected *BinaryExpr, got %T", sel.Cols[0])
+	}
+	if bin.Op != int(LX.T_MINUS) {
+		t.Errorf("expected MINUS at top level, got %d", bin.Op)
+	}
+}

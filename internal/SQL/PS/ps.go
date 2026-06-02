@@ -414,7 +414,7 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 		colType := p.current.Type
 		p.advance()
 
-		col := ColDef{Name: colName, Type: int(colType)}
+		col := NewColDef(colName, int(colType))
 
 		for p.current.Type == LX.T_NOTNULL || p.current.Type == LX.T_PRIMARY ||
 			p.current.Type == LX.T_DEFAULT || p.current.Type == LX.T_UNIQUE ||
@@ -443,6 +443,7 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 				}
 			case LX.T_PRIMARY:
 				col.PK = true
+				col.Nullable = false
 				p.advance()
 				if p.current.Type == LX.T_KEY {
 					p.advance()

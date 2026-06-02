@@ -48,6 +48,11 @@ var selectCases = []testCase{
 	{"select_order_by_multiple", "SELECT * FROM t ORDER BY a, b, c", false},
 	{"select_order_by_asc_desc", "SELECT * FROM t ORDER BY a ASC, b DESC", false},
 	{"select_limit_offset_both", "SELECT * FROM t WHERE a > 0 ORDER BY b LIMIT 100 OFFSET 10", false},
+	{"select_float_negative", "SELECT -2.5 FROM t", false},
+	{"select_not_expr", "SELECT NOT a FROM t", false},
+	{"select_null", "SELECT NULL FROM t", false},
+	{"select_bool_true", "SELECT TRUE FROM t", false},
+	{"select_bool_false", "SELECT FALSE FROM t", false},
 }
 
 func TestSelectRewrite(t *testing.T) {

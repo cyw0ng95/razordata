@@ -127,9 +127,54 @@ func TestRewriteCreateTable(t *testing.T) {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
 
-	expected := "CREATE TABLE t (a INTEGER PRIMARY KEY NOT NULL, b TEXT NOT NULL)"
+	expected := "CREATE TABLE t (a INTEGER PRIMARY KEY, b TEXT NOT NULL)"
 	if sql != expected {
 		t.Errorf("expected %q, got %q", expected, sql)
+	}
+}
+
+func TestRewriteCreateTableBigint(t *testing.T) {
+	p := PS.NewParser("CREATE TABLE t (a BIGINT)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sql, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite() failed: %v", err)
+	}
+	if sql != "CREATE TABLE t (a BIGINT)" {
+		t.Errorf("expected BIGINT, got %q", sql)
+	}
+}
+
+func TestRewriteCreateTableVarchar(t *testing.T) {
+	p := PS.NewParser("CREATE TABLE t (a VARCHAR)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sql, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite() failed: %v", err)
+	}
+	if sql != "CREATE TABLE t (a VARCHAR)" {
+		t.Errorf("expected VARCHAR, got %q", sql)
+	}
+}
+
+func TestRewriteCreateTableTimestamp(t *testing.T) {
+	p := PS.NewParser("CREATE TABLE t (a TIMESTAMP)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sql, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite() failed: %v", err)
+	}
+	if sql != "CREATE TABLE t (a TIMESTAMP)" {
+		t.Errorf("expected TIMESTAMP, got %q", sql)
 	}
 }
 
@@ -225,8 +270,8 @@ func TestRewriteStringLiteral(t *testing.T) {
 
 func TestOpString(t *testing.T) {
 	tests := []struct {
-		op   LX.TokenType
-		want string
+		op      LX.TokenType
+		want    string
 	}{
 		{LX.T_EQ, "="},
 		{LX.T_NE, "<>"},
@@ -252,5 +297,65 @@ func TestOpString(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("opString(%v) = %q, want %q", tt.op, got, tt.want)
 		}
+	}
+}
+
+func TestRewriteNull(t *testing.T) {
+	p := PS.NewParser("SELECT NULL FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sql, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite() failed: %v", err)
+	}
+	if sql != "SELECT NULL FROM t" {
+		t.Errorf("expected NULL, got %q", sql)
+	}
+}
+
+func TestRewriteBool(t *testing.T) {
+	p := PS.NewParser("SELECT TRUE, FALSE FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sql, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite() failed: %v", err)
+	}
+	if sql != "SELECT TRUE, FALSE FROM t" {
+		t.Errorf("expected TRUE, FALSE, got %q", sql)
+	}
+}
+
+func TestRewriteUnaryMinus(t *testing.T) {
+	p := PS.NewParser("SELECT -a FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sql, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite() failed: %v", err)
+	}
+	if sql != "SELECT -a FROM t" {
+		t.Errorf("expected -a, got %q", sql)
+	}
+}
+
+func TestRewriteUnaryNot(t *testing.T) {
+	p := PS.NewParser("SELECT NOT a FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sql, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite() failed: %v", err)
+	}
+	if sql != "SELECT NOT a FROM t" {
+		t.Errorf("expected NOT a, got %q", sql)
 	}
 }

@@ -206,7 +206,12 @@ func exprString(e PS.Expr) string {
 	case *PS.BinaryExpr:
 		return fmt.Sprintf("(%s %s %s)", exprString(expr.Left), opString(expr.Op), exprString(expr.Right))
 	case *PS.UnaryExpr:
-		return fmt.Sprintf("%s%s", opString(expr.Op), exprString(expr.Operand))
+		op := opString(expr.Op)
+		operand := exprString(expr.Operand)
+		if op == "NOT" || op == "AND" || op == "OR" {
+			return fmt.Sprintf("%s %s", op, operand)
+		}
+		return fmt.Sprintf("%s%s", op, operand)
 	case *PS.FunctionCall:
 		var b strings.Builder
 		b.WriteString(expr.Name)
