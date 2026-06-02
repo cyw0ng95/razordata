@@ -264,3 +264,30 @@ func TestEngineCloseWithNilCm(t *testing.T) {
 		t.Fatalf("Close with nil cm: %v", err)
 	}
 }
+
+func TestEngineWriteNilActiveMemtable(t *testing.T) {
+	e := &engine{activeMem: nil}
+
+	err := e.Write([]byte("key1"), []byte("value1"))
+	if err != ErrNoActiveMemtable {
+		t.Fatalf("expected ErrNoActiveMemtable, got %v", err)
+	}
+}
+
+func TestEngineWriteTriggersFlushOnSize(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_write_flush_size")
+
+	e, err := newEngine(dir)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+	defer e.Close()
+
+	smallMem := newMemtable(200)
+	e.activeMem = smallMem
+
+	for i := 0; i < 10; i++ {
+		e.Write([]byte(string(rune('a'+i))), []byte("value"))
+	}
+}

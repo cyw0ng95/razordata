@@ -83,6 +83,128 @@ func TestCompactionJob_Run(t *testing.T) {
 	}
 }
 
+func TestCompactionJob_RunReadFileError(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_compaction_read_error")
+
+	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0755); err != nil {
+		t.Fatalf("failed to create sst dir: %v", err)
+	}
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("failed to create manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	v := manifest.Current()
+	v.levels = make([][]SSTFileMeta, 3)
+	manifest.Apply(*v)
+
+	job := &compactionJob{
+		level: 0,
+		inputs: []SSTFileMeta{
+			{FileID: 999, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 100, BloomBits: 10},
+		},
+		outputs: nil,
+		overlap: nil,
+	}
+
+	err = job.Run(manifest, dir)
+	if err == nil {
+		t.Fatalf("expected error for non-existent SST file")
+	}
+}
+
+func TestCompactionJob_RunOpenSSTError(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_compaction_open_error")
+
+	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0755); err != nil {
+		t.Fatalf("failed to create sst dir: %v", err)
+	}
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("failed to create manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	v := manifest.Current()
+	v.levels = make([][]SSTFileMeta, 3)
+	manifest.Apply(*v)
+
+	sstPath := filepath.Join(dir, "sst", "L0_a_z_1.sst")
+	if err := os.WriteFile(sstPath, []byte("invalid sst data"), 0644); err != nil {
+		t.Fatalf("failed to write SST file: %v", err)
+	}
+
+	job := &compactionJob{
+		level: 0,
+		inputs: []SSTFileMeta{
+			{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 100, BloomBits: 10},
+		},
+		outputs: nil,
+		overlap: nil,
+	}
+
+	err = job.Run(manifest, dir)
+	if err == nil {
+		t.Fatalf("expected error for invalid SST file")
+	}
+}
+
+func TestCompactionJob_RunWriteError(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_compaction_write_error")
+
+	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0755); err != nil {
+		t.Fatalf("failed to create sst dir: %v", err)
+	}
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("failed to create manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	v := manifest.Current()
+	v.levels = make([][]SSTFileMeta, 3)
+	manifest.Apply(*v)
+
+	w := newSSTWriter()
+	w.Add([]byte("key1"), []byte("value1"))
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("failed to finish SST writer: %v", err)
+	}
+
+	sstPath := filepath.Join(dir, "sst", "L0_a_z_1.sst")
+	if err := os.WriteFile(sstPath, sstData, 0644); err != nil {
+		t.Fatalf("failed to write SST file: %v", err)
+	}
+
+	job := &compactionJob{
+		level: 0,
+		inputs: []SSTFileMeta{
+			{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: int64(len(sstData)), BloomBits: 10},
+		},
+		outputs: nil,
+		overlap: nil,
+	}
+
+	// Use a read-only directory for the compaction output
+	readOnlyDir := filepath.Join(dir, "readonly")
+	if err := os.MkdirAll(readOnlyDir, 0555); err != nil {
+		t.Fatalf("failed to create read-only dir: %v", err)
+	}
+
+	err = job.Run(manifest, readOnlyDir)
+	if err == nil {
+		t.Fatalf("expected error for read-only output dir")
+	}
+}
+
 func TestCompactionManager_NoOpWhenNoFiles(t *testing.T) {
 	dir := t.TempDir()
 	dir = filepath.Join(dir, "test_compaction_noop")
