@@ -3,7 +3,7 @@
 **Subsystem:** `ENG`
 **Status:** in_progress
 **Est. LOC:** ~8,000
-**Test Coverage:** 72.9% (ENG/LS)
+**Test Coverage:** 74.1% (ENG/LS)
 
 ## Overview
 
@@ -87,12 +87,22 @@ internal/ENG/
 - `886a648` - feat(ENG/LS): implement R11 table catalog and schema registry
 - `45913e4` - feat(ENG/LS): implement R12 schema validation and type encoding
 - `422371f` - feat(ENG/LS): implement R13 row/block encoding and deparser
+- `a62424b` - fix(ENG/LS): close flushQueue channel before manifest.Close to prevent panic
+- `50fd37e` - test(ENG/LS): add engine Write/Read/Close/MayContain coverage tests (reverted)
+- `b7f1032` - Revert "test(ENG/LS): add engine Write/Read/Close/MayContain coverage tests"
+- `12cf0a2` - test: improve coverage for FIL/DF openFile, ENG/LS index and flush
+- `386a7de` - test: improve coverage for ENG/LS compaction, FIL/LF, LOG/LG
+- `ff9e5de` - test: add keyHeap, compactionJob, and WAL writer path coverage
+- `4691202` - test(bf): add coverage for Get, Pin, eviction paths
+- `71f6a07` - test(bf): add Close path coverage tests
+- `67fcd99` - test: add boundary coverage cases for BF, DF, ENG, WAL clusters
 
 ## Test Results
 
 ```
-ok  github.com/cyw0ng95/razordata/internal/ENG/LS  1.034s
-PASS (56 tests, race detection green)
+ok  github.com/cyw0ng95/razordata/internal/ENG/LS  1.278s
+PASS (race detection green)
+Coverage: 74.1%
 ```
 
 ## Deferred to v2
