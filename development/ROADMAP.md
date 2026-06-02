@@ -20,15 +20,13 @@ Joins, subqueries, foreign keys, network server, external C dependencies.
 | 0 | LOG | Structured logging | `LG`, `HK` | ~1,500 | done |
 | 1 | FIL | File I/O | `DF`, `MF`, `LF`, `FS` | ~2,500 | done |
 | 2 | MEM | Buffer pool | `BF`, `SP` | ~2,000 | done |
-| 3 | WAL | Write-Ahead Log | `WR`, `FL`, `RP` | ~2,000 | pending |
-| 4 | ENG/Memtable | Lock-free skiplist + memtable | `LS` | ~2,000 | pending |
-| 5 | ENG/SST | SST writer + reader + manifest | `LS` | ~3,500 | pending |
-| 6 | ENG/Schema+Read | Row serialization + read path | `SC`, `DP`, `TB`, `ID`, `LS` | ~2,000 | pending |
-| 7 | TXN/MVCC | Version chain + per-thread arena | `MV`, `LC`, `SN` | ~3,000 | pending |
-| 8 | TXN/Protocol | Transaction slot + commit + WAL | `VL` | ~2,000 | pending |
-| 9 | SQL/Core | Lexer + parser + rewriter | `LX`, `PS`, `RE` | ~2,500 | pending |
-| 10 | SQL/Execute | Planner + executor | `PL`, `EX` | ~3,000 | pending |
-| 11 | SYS+Integration | Public API + end-to-end | `SY`, `AP`, `SE`, `TX`, `ST` | ~3,000 | pending |
+| 3 | WAL | Write-Ahead Log | `WR`, `FL`, `RP` | ~2,000 | done |
+| 4 | ENG/Memtable+SST | Lock-free skiplist + memtable + SST + manifest + compaction + read path | `LS` | ~8,000 | done |
+| 5 | TXN/MVCC | Version chain + per-thread arena | `MV`, `LC`, `SN` | ~3,000 | pending |
+| 6 | TXN/Protocol | Transaction slot + commit + WAL | `VL` | ~2,000 | pending |
+| 7 | SQL/Core | Lexer + parser + rewriter | `LX`, `PS`, `RE` | ~2,500 | pending |
+| 8 | SQL/Execute | Planner + executor | `PL`, `EX` | ~3,000 | pending |
+| 9 | SYS+Integration | Public API + end-to-end | `SY`, `AP`, `SE`, `TX`, `ST` | ~3,000 | pending |
 
 ## Completion Criteria (All Iterations)
 
