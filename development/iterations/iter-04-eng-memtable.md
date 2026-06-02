@@ -1,12 +1,13 @@
-# Iteration 4 — ENG/LSM (Lock-Free Skiplist + Memtable + SST + Compaction + Read Path)
+# Iteration 4 — ENG/LSM (Lock-Free Skiplist + Memtable + SST + Flush)
 
 **Subsystem:** `ENG`
-**Status:** done
+**Status:** in_progress
 **Est. LOC:** ~8,000
+**Test Coverage:** 72.9% (ENG/LS)
 
 ## Overview
 
-Complete LSM tree implementation with lock-free skiplist memtable, SST storage, leveled compaction, and read path. Combines what was originally planned as iterations 4, 5, and 6.
+Complete LSM tree implementation with lock-free skiplist memtable, SST storage, and flush. Compaction and full read path remain pending.
 
 ## Dependencies
 
@@ -62,8 +63,8 @@ internal/ENG/
 | R13 | SST writer: bloom filter, block encoding with restart points, footer | done |
 | R14 | SST reader: bloom check, binary search index, block decoding | done |
 | R15 | Manifest: versioning, Apply, Checkpoint, atomic rename, persistence | done |
-| R16 | Compaction: leveled compaction with key heap merge sort | done |
-| R17 | Read path: memtable → L0 → L1+, bloom filter check | done |
+| R16 | Compaction: leveled compaction with key heap merge sort | partial |
+| R17 | Read path: memtable → L0 → L1+, bloom filter check | partial |
 | R18 | Primary key index: pkEntry, pkIterator, Insert/Find/Delete | done |
 | R19 | Table registry: Create/Get/Drop/List tables | done |
 | R20 | Table catalog: CreateTable/DropTable/GetTableByName | done |
