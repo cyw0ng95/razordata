@@ -100,9 +100,7 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	for h.Len() > 0 {
 		minItem := heap.Pop(h).(*sstIterator)
 		w.Add(minItem.Key(), minItem.Value())
-		if !minItem.Next() {
-			heap.Pop(h)
-		} else {
+		if minItem.Next() {
 			heap.Push(h, minItem)
 		}
 	}
