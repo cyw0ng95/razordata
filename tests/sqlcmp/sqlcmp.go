@@ -74,6 +74,11 @@ func (r *Runner) SkipSQLite() bool {
 	return r.sqlitePath == ""
 }
 
+func SkipSQLite() bool {
+	_, err := exec.LookPath("sqlite3")
+	return err != nil
+}
+
 func Tokenize(input string) []LX.Token {
 	lex := LX.NewLexer(input)
 	var tokens []LX.Token
@@ -86,3 +91,21 @@ func Tokenize(input string) []LX.Token {
 	}
 	return tokens
 }
+
+func NewLexer(input string) *LX.Lexer {
+	return LX.NewLexer(input)
+}
+
+func NewParser(input string) *PS.Parser {
+	return PS.NewParser(input)
+}
+
+func Rewrite(stmt PS.Stmt) (string, error) {
+	return RE.Rewrite(stmt)
+}
+
+type Token = LX.Token
+
+const (
+	T_EOF = LX.T_EOF
+)
