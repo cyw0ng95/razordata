@@ -59,8 +59,41 @@ func TestParseSelectOrderBy(t *testing.T) {
 	}
 
 	sel := stmt.(*Select)
-	if sel.OrderBy == nil {
+	if len(sel.OrderBy) == 0 {
 		t.Error("expected ORDER BY clause")
+	}
+}
+
+func TestParseSelectOrderByDesc(t *testing.T) {
+	p := NewParser("SELECT * FROM t ORDER BY a DESC")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sel := stmt.(*Select)
+	if len(sel.OrderBy) != 1 {
+		t.Fatalf("expected 1 order item, got %d", len(sel.OrderBy))
+	}
+	if !sel.OrderBy[0].Desc {
+		t.Error("expected DESC flag")
+	}
+}
+
+func TestParseSelectOrderByMultiKey(t *testing.T) {
+	p := NewParser("SELECT * FROM t ORDER BY a, b DESC")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sel := stmt.(*Select)
+	if len(sel.OrderBy) != 2 {
+		t.Fatalf("expected 2 order items, got %d", len(sel.OrderBy))
+	}
+	if sel.OrderBy[0].Desc {
+		t.Error("expected first key ASC")
+	}
+	if !sel.OrderBy[1].Desc {
+		t.Error("expected second key DESC")
 	}
 }
 

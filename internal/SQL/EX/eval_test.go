@@ -81,7 +81,7 @@ func TestOperators(t *testing.T) {
 		t.Fatal("NewProject returned nil")
 	}
 
-	sort := NewSort(scan, nil, true)
+	sort := NewSort(scan, nil)
 	if sort == nil {
 		t.Fatal("NewSort returned nil")
 	}
@@ -120,7 +120,7 @@ func TestProjectNotImplemented(t *testing.T) {
 
 func TestSortNotImplemented(t *testing.T) {
 	scan := NewSeqScan("t", nil)
-	sort := NewSort(scan, nil, true)
+	sort := NewSort(scan, nil)
 	_, err := sort.Next(context.Background())
 	if err != ErrNotImplemented {
 		t.Errorf("expected ErrNotImplemented, got %v", err)

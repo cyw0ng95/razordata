@@ -60,6 +60,73 @@ func TestPlannerMemoization(t *testing.T) {
 	}
 }
 
+func TestPlannerMemoizationDistinctAST(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("t", []colInfo{{name: "a", typ: 1}}, "a")
+
+	cases := []struct {
+		name string
+		sql1 string
+		sql2 string
+	}{
+		{"different_table", "SELECT * FROM t", "SELECT * FROM t2"},
+		{"different_where", "SELECT * FROM t WHERE a = 1", "SELECT * FROM t WHERE a = 2"},
+		{"different_limit", "SELECT * FROM t LIMIT 1", "SELECT * FROM t LIMIT 2"},
+		{"different_orderby", "SELECT * FROM t ORDER BY a", "SELECT * FROM t ORDER BY a DESC"},
+		{"different_distinct", "SELECT * FROM t", "SELECT DISTINCT * FROM t"},
+		{"different_insert_table", "INSERT INTO t VALUES (1)", "INSERT INTO t2 VALUES (1)"},
+		{"different_update_where", "UPDATE t SET a = 1 WHERE a = 1", "UPDATE t SET a = 1 WHERE a = 2"},
+		{"different_create_pk", "CREATE TABLE t (a INTEGER PRIMARY KEY)", "CREATE TABLE t (a INTEGER, PRIMARY KEY (a))"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			plan1, err := p.ParseAndPlan(c.sql1)
+			if err != nil {
+				t.Fatalf("plan1 error: %v", err)
+			}
+			plan2, err := p.ParseAndPlan(c.sql2)
+			if err != nil {
+				t.Fatalf("plan2 error: %v", err)
+			}
+			if plan1.memoKey == plan2.memoKey {
+				t.Errorf("expected distinct memo keys for\n  %q\n  %q\nboth: %s", c.sql1, c.sql2, plan1.memoKey)
+			}
+		})
+	}
+}
+
+func TestPlannerMemoizationSameAST(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("t", []colInfo{{name: "a", typ: 1}}, "a")
+
+	cases := []struct {
+		name string
+		sql  string
+	}{
+		{"select_star", "SELECT * FROM t"},
+		{"select_where", "SELECT * FROM t WHERE a = 1"},
+		{"insert", "INSERT INTO t VALUES (1)"},
+		{"update", "UPDATE t SET a = 1 WHERE a = 1"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			plan1, err := p.ParseAndPlan(c.sql)
+			if err != nil {
+				t.Fatalf("plan1 error: %v", err)
+			}
+			plan2, err := p.ParseAndPlan(c.sql)
+			if err != nil {
+				t.Fatalf("plan2 error: %v", err)
+			}
+			if plan1.memoKey != plan2.memoKey {
+				t.Errorf("expected identical memo key for two parses of %q", c.sql)
+			}
+		})
+	}
+}
+
 func TestPlannerEstimateCost(t *testing.T) {
 	p := NewPlanner()
 	plan := &plan{cost: 0}

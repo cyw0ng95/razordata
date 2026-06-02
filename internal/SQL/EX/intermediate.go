@@ -48,15 +48,13 @@ func (p *Project) Close() error {
 
 type Sort struct {
 	child Operator
-	keys  PS.Expr
-	asc   bool
+	keys  []PS.OrderItem
 }
 
-func NewSort(child Operator, keys PS.Expr, asc bool) *Sort {
+func NewSort(child Operator, keys []PS.OrderItem) *Sort {
 	return &Sort{
 		child: child,
 		keys:  keys,
-		asc:   asc,
 	}
 }
 

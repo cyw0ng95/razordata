@@ -249,14 +249,31 @@ func (p *Parser) parseSelect() (*Select, error) {
 		where, _ = p.parseExpr()
 	}
 
-	var orderBy Expr
+	var orderBy []OrderItem
 	if p.current.Type == LX.T_ORDER {
 		p.advance()
 		if err := p.expect(LX.T_BY); err != nil {
 			return nil, err
 		}
 		p.advance()
-		orderBy, _ = p.parseExpr()
+		for {
+			expr, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			desc := false
+			if p.current.Type == LX.T_ASC {
+				p.advance()
+			} else if p.current.Type == LX.T_DESC {
+				desc = true
+				p.advance()
+			}
+			orderBy = append(orderBy, OrderItem{Expr: expr, Desc: desc})
+			if p.current.Type != LX.T_COMMA {
+				break
+			}
+			p.advance()
+		}
 	}
 
 	var limit Expr

@@ -1,8 +1,6 @@
 package PL
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"sync"
 
@@ -139,8 +137,8 @@ func (p *Planner) planSelect(s *PS.Select) EX.Operator {
 		current = project
 	}
 
-	if s.OrderBy != nil {
-		sort := EX.NewSort(current, s.OrderBy, true)
+	if len(s.OrderBy) > 0 {
+		sort := EX.NewSort(current, s.OrderBy)
 		current = sort
 	}
 
@@ -153,7 +151,11 @@ func (p *Planner) planSelect(s *PS.Select) EX.Operator {
 }
 
 func isStarExpr(cols []PS.Expr) bool {
-	return len(cols) == 1 && cols[0].(*PS.StarExpr) != nil
+	if len(cols) != 1 {
+		return false
+	}
+	_, ok := cols[0].(*PS.StarExpr)
+	return ok
 }
 
 func (p *Planner) planInsert(s *PS.Insert) EX.Operator {
@@ -176,62 +178,6 @@ func (p *Planner) planCreateTable(s *PS.CreateTable) EX.Operator {
 
 func (p *Planner) planDropTable(s *PS.DropTable) EX.Operator {
 	return EX.NewDropTable(s)
-}
-
-func serializeKey(stmt PS.Stmt) string {
-	var b []byte
-	switch s := stmt.(type) {
-	case *PS.Select:
-		b = serializeSelect(s)
-	case *PS.Insert:
-		b = serializeInsert(s)
-	case *PS.Update:
-		b = serializeUpdate(s)
-	case *PS.Delete:
-		b = serializeDelete(s)
-	case *PS.CreateTable:
-		b = serializeCreateTable(s)
-	case *PS.DropTable:
-		b = serializeDropTable(s)
-	}
-	h := sha256.Sum256(b)
-	return string(h[:])
-}
-
-func serializeSelect(s *PS.Select) []byte {
-	var b [8]byte
-	binary.LittleEndian.PutUint32(b[:4], 1)
-	return b[:]
-}
-
-func serializeInsert(s *PS.Insert) []byte {
-	var b [8]byte
-	binary.LittleEndian.PutUint32(b[:4], 2)
-	return b[:]
-}
-
-func serializeUpdate(s *PS.Update) []byte {
-	var b [8]byte
-	binary.LittleEndian.PutUint32(b[:4], 3)
-	return b[:]
-}
-
-func serializeDelete(s *PS.Delete) []byte {
-	var b [8]byte
-	binary.LittleEndian.PutUint32(b[:4], 4)
-	return b[:]
-}
-
-func serializeCreateTable(s *PS.CreateTable) []byte {
-	var b [8]byte
-	binary.LittleEndian.PutUint32(b[:4], 5)
-	return b[:]
-}
-
-func serializeDropTable(s *PS.DropTable) []byte {
-	var b [8]byte
-	binary.LittleEndian.PutUint32(b[:4], 6)
-	return b[:]
 }
 
 func (p *Planner) ParseAndPlan(sql string) (*plan, error) {

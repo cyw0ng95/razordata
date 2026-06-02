@@ -59,9 +59,17 @@ func rewriteSelect(s *PS.Select) string {
 		b.WriteString(" WHERE ")
 		b.WriteString(exprString(s.Where))
 	}
-	if s.OrderBy != nil {
+	if len(s.OrderBy) > 0 {
 		b.WriteString(" ORDER BY ")
-		b.WriteString(exprString(s.OrderBy))
+		for i, o := range s.OrderBy {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(exprString(o.Expr))
+			if o.Desc {
+				b.WriteString(" DESC")
+			}
+		}
 	}
 	if s.Limit != nil {
 		b.WriteString(" LIMIT ")

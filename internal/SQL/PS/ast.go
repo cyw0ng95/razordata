@@ -173,12 +173,17 @@ type Delete struct {
 
 func (d *Delete) stmtNode() {}
 
+type OrderItem struct {
+	Expr Expr
+	Desc bool
+}
+
 type Select struct {
 	Cols      []Expr
 	From      string
 	FromAlias string
 	Where     Expr
-	OrderBy   Expr
+	OrderBy   []OrderItem
 	Limit     Expr
 	Offset    Expr
 	Distinct  bool
