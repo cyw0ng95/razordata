@@ -76,7 +76,9 @@ func (m *manifest) Current() *Version {
 }
 
 func (m *manifest) Apply(v Version) error {
-	v.num = m.version.Load() + 1
+	if v.num == 0 {
+		v.num = m.version.Load() + 1
+	}
 	v.created = time.Now()
 
 	data, err := encodeManifest(&v)

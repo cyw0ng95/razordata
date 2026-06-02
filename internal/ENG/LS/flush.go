@@ -204,7 +204,11 @@ func (fm *flushManager) Insert(key, value []byte) error {
 }
 
 func (fm *flushManager) Close() error {
-	close(fm.done)
+	select {
+	case <-fm.done:
+	default:
+		close(fm.done)
+	}
 	return nil
 }
 

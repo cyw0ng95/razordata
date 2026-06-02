@@ -206,11 +206,15 @@ func (e *engine) GetStats() ReadStats {
 }
 
 func (e *engine) Close() error {
+	if e.cm == nil {
+		return nil
+	}
 	if err := e.cm.Close(); err != nil {
 		return err
 	}
 	if err := e.fm.Close(); err != nil {
 		return err
 	}
+	e.cm = nil
 	return e.manifest.Close()
 }

@@ -308,6 +308,10 @@ func (cm *compactionManager) requestCompaction(level int) {
 }
 
 func (cm *compactionManager) Close() error {
-	close(cm.done)
+	select {
+	case <-cm.done:
+	default:
+		close(cm.done)
+	}
 	return nil
 }
