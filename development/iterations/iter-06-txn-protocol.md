@@ -1,9 +1,9 @@
 # Iteration 6 — TXN/Protocol (Transaction Slot + Commit + WAL)
 
 **Subsystem:** `TXN`
-**Status:** in_progress
+**Status:** done
 **Est. LOC:** ~2,000
-**Test Coverage:** 0%
+**Test Coverage:** 89.5% (VL), 98% (LC), 89.6% (MV), 82.4% (SN)
 
 ## Overview
 
@@ -45,23 +45,23 @@ Per `design/subsystems/TXN.md` §TransactionSlot and §Commit Protocol:
 
 | ID | Requirement | Status |
 |---|---|---|
-| R01 | Global `txnCounter` atomic Uint64, `NextTS() uint64` for beginTS/commitTS | pending |
-| R02 | `transactionSlot.status` as `atomic.Int32` | pending |
-| R03 | `transactionSlot.arena *arena` field for per-txn allocation | pending |
-| R04 | `Begin(ctx) (Tx, error)`: allocate slot, assign beginTS, create read view, write WAL Begin | pending |
-| R05 | `Insert(ctx, key, value)`: allocate VersionNode, CAS insert, add KeyRange, write WAL Insert | pending |
-| R06 | `Delete(ctx, key)`: allocate VersionNode (deleted=true), CAS insert, add KeyRange, write WAL Delete | pending |
-| R07 | `Get(ctx, key) ([]byte, error)`: read via MV snapshot | pending |
-| R08 | `Validate(slot) bool`: write-write conflict detection, scan committed slots | pending |
-| R09 | `Commit(ctx) error`: assign commitTS, CAS update version nodes, update slot, write WAL Commit | pending |
-| R10 | `Abort(ctx) error`: mark slot aborted, write WAL Abort | pending |
-| R11 | WAL record types: `Begin=1, Insert=2, Delete=3, Commit=4, Abort=5` | pending |
-| R12 | `Commit` WAL record format: `[type:1][txnID:8][commitTS:8][keyCount:4][keys...]` | pending |
-| R13 | `gc.go`: `ReclaimVersionNodes(batch)`, epoch barrier wait, bulk free | pending |
-| R14 | Background epoch advancement goroutine: `Start()`, `Stop()`, ~100ms interval | pending |
-| R15 | `go vet ./internal/TXN/...` zero warnings | pending |
-| R16 | `go test ./internal/TXN/... -race -count=1` all green | pending |
-| R17 | Benchmark: concurrent commit throughput | pending |
+| R01 | Global `txnCounter` atomic Uint64, `NextTS() uint64` for beginTS/commitTS | done |
+| R02 | `transactionSlot.status` as `atomic.Int32` | done |
+| R03 | `transactionSlot.arena *arena` field for per-txn allocation | done |
+| R04 | `Begin(ctx) (Tx, error)`: allocate slot, assign beginTS, create read view, write WAL Begin | done |
+| R05 | `Insert(ctx, key, value)`: allocate VersionNode, CAS insert, add KeyRange, write WAL Insert | done |
+| R06 | `Delete(ctx, key)`: allocate VersionNode (deleted=true), CAS insert, add KeyRange, write WAL Delete | done |
+| R07 | `Get(ctx, key) ([]byte, error)`: read via MV snapshot | done |
+| R08 | `Validate(slot) bool`: write-write conflict detection, scan committed slots | done |
+| R09 | `Commit(ctx) error`: assign commitTS, CAS update version nodes, update slot, write WAL Commit | done |
+| R10 | `Abort(ctx) error`: mark slot aborted, write WAL Abort | done |
+| R11 | WAL record types: `Begin=1, Insert=2, Delete=3, Commit=4, Abort=5` | done |
+| R12 | `Commit` WAL record format: `[type:1][txnID:8][commitTS:8][keyCount:4][keys...]` | done |
+| R13 | `gc.go`: `ReclaimVersionNodes(batch)`, epoch barrier wait, bulk free | done |
+| R14 | Background epoch advancement goroutine: `Start()`, `Stop()`, ~100ms interval | done |
+| R15 | `go vet ./internal/TXN/...` zero warnings | done |
+| R16 | `go test ./internal/TXN/... -race -count=1` all green | done |
+| R17 | Benchmark: concurrent commit throughput | done |
 
 ## Commit Protocol (Full)
 
