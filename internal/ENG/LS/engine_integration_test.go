@@ -291,3 +291,94 @@ func TestEngineWriteTriggersFlushOnSize(t *testing.T) {
 		e.Write([]byte(string(rune('a'+i))), []byte("value"))
 	}
 }
+
+func TestEngineMayContainNoMemtables(t *testing.T) {
+	e, _ := newEngine(t.TempDir())
+	e.memtables = []*memtable{}
+
+	if e.MayContain([]byte("key1")) {
+		t.Error("expected false for empty engine")
+	}
+	e.Close()
+}
+
+func TestEngineMayContainInSST(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_maycontain_sst")
+
+	e, err := newEngine(dir)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	e.Write([]byte("sstkey"), []byte("sstvalue"))
+
+	mt := e.activeMem
+	mt.Freeze()
+
+	job := &flushJob{
+		memtable:   mt,
+		outputPath: filepath.Join(dir, "sst", "L0_a_z_1.sst"),
+		manifest:   e.manifest,
+		fileID:     1,
+		level:      0,
+	}
+	if err := job.Run(); err != nil {
+		t.Fatalf("flushJob.Run: %v", err)
+	}
+
+	if !e.MayContain([]byte("sstkey")) {
+		t.Fatal("expected MayContain to return true for sstkey")
+	}
+
+	if e.MayContain([]byte("nonexistent")) {
+		t.Fatal("expected MayContain to return false for nonexistent key")
+	}
+
+	e.Close()
+}
+
+func TestEngineReadFromSSTFull(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_read_sst_full")
+
+	e, err := newEngine(dir)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	e.Write([]byte("key1"), []byte("value1"))
+	e.Write([]byte("key2"), []byte("value2"))
+
+	mt := e.activeMem
+	mt.Freeze()
+
+	job := &flushJob{
+		memtable:   mt,
+		outputPath: filepath.Join(dir, "sst", "L0_a_z_1.sst"),
+		manifest:   e.manifest,
+		fileID:     1,
+		level:      0,
+	}
+	if err := job.Run(); err != nil {
+		t.Fatalf("flushJob.Run: %v", err)
+	}
+
+	val1, err := e.Read([]byte("key1"))
+	if err != nil {
+		t.Fatalf("Read key1: %v", err)
+	}
+	if string(val1) != "value1" {
+		t.Fatalf("expected value1, got %s", string(val1))
+	}
+
+	val2, err := e.Read([]byte("key2"))
+	if err != nil {
+		t.Fatalf("Read key2: %v", err)
+	}
+	if string(val2) != "value2" {
+		t.Fatalf("expected value2, got %s", string(val2))
+	}
+
+	e.Close()
+}
