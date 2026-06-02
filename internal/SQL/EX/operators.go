@@ -2,20 +2,14 @@ package EX
 
 import (
 	"context"
-
-	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
 type SeqScan struct {
-	table  string
-	filter PS.Expr
+	table string
 }
 
-func NewSeqScan(table string, filter PS.Expr) *SeqScan {
-	return &SeqScan{
-		table:  table,
-		filter: filter,
-	}
+func NewSeqScan(table string) *SeqScan {
+	return &SeqScan{table: table}
 }
 
 func (s *SeqScan) Next(ctx context.Context) (Row, error) {

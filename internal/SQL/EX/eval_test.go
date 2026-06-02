@@ -66,7 +66,7 @@ func TestEval(t *testing.T) {
 }
 
 func TestOperators(t *testing.T) {
-	scan := NewSeqScan("t", nil)
+	scan := NewSeqScan("t")
 	if scan == nil {
 		t.Fatal("NewSeqScan returned nil")
 	}
@@ -93,7 +93,7 @@ func TestOperators(t *testing.T) {
 }
 
 func TestSeqScanNotImplemented(t *testing.T) {
-	scan := NewSeqScan("t", nil)
+	scan := NewSeqScan("t")
 	_, err := scan.Next(context.Background())
 	if err != ErrNotImplemented {
 		t.Errorf("expected ErrNotImplemented, got %v", err)
@@ -101,7 +101,7 @@ func TestSeqScanNotImplemented(t *testing.T) {
 }
 
 func TestFilterNotImplemented(t *testing.T) {
-	scan := NewSeqScan("t", nil)
+	scan := NewSeqScan("t")
 	filter := NewFilter(scan, nil)
 	_, err := filter.Next(context.Background())
 	if err != ErrNotImplemented {
@@ -110,7 +110,7 @@ func TestFilterNotImplemented(t *testing.T) {
 }
 
 func TestProjectNotImplemented(t *testing.T) {
-	scan := NewSeqScan("t", nil)
+	scan := NewSeqScan("t")
 	project := NewProject(scan, nil)
 	_, err := project.Next(context.Background())
 	if err != ErrNotImplemented {
@@ -119,7 +119,7 @@ func TestProjectNotImplemented(t *testing.T) {
 }
 
 func TestSortNotImplemented(t *testing.T) {
-	scan := NewSeqScan("t", nil)
+	scan := NewSeqScan("t")
 	sort := NewSort(scan, nil)
 	_, err := sort.Next(context.Background())
 	if err != ErrNotImplemented {
@@ -128,7 +128,7 @@ func TestSortNotImplemented(t *testing.T) {
 }
 
 func TestLimitNotImplemented(t *testing.T) {
-	scan := NewSeqScan("t", nil)
+	scan := NewSeqScan("t")
 	limit := NewLimit(scan, nil)
 	_, err := limit.Next(context.Background())
 	if err != ErrNotImplemented {
@@ -145,7 +145,7 @@ func TestInsertNotImplemented(t *testing.T) {
 }
 
 func TestUpdateNotImplemented(t *testing.T) {
-	scan := NewSeqScan("t", nil)
+	scan := NewSeqScan("t")
 	update := NewUpdate("t", nil, nil, scan)
 	_, err := update.Next(context.Background())
 	if err != ErrNotImplemented {
@@ -154,7 +154,7 @@ func TestUpdateNotImplemented(t *testing.T) {
 }
 
 func TestDeleteNotImplemented(t *testing.T) {
-	scan := NewSeqScan("t", nil)
+	scan := NewSeqScan("t")
 	delete := NewDelete("t", nil, scan)
 	_, err := delete.Next(context.Background())
 	if err != ErrNotImplemented {

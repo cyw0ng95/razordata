@@ -123,7 +123,7 @@ func (p *Planner) selectIndex(table, col string) (string, bool) {
 }
 
 func (p *Planner) planSelect(s *PS.Select) EX.Operator {
-	scan := EX.NewSeqScan(s.From, s.Where)
+	scan := EX.NewSeqScan(s.From)
 
 	var current EX.Operator = scan
 
@@ -163,12 +163,12 @@ func (p *Planner) planInsert(s *PS.Insert) EX.Operator {
 }
 
 func (p *Planner) planUpdate(s *PS.Update) EX.Operator {
-	scan := EX.NewSeqScan(s.Table, s.Where)
+	scan := EX.NewSeqScan(s.Table)
 	return EX.NewUpdate(s.Table, s.Set, s.Where, scan)
 }
 
 func (p *Planner) planDelete(s *PS.Delete) EX.Operator {
-	scan := EX.NewSeqScan(s.Table, s.Where)
+	scan := EX.NewSeqScan(s.Table)
 	return EX.NewDelete(s.Table, s.Where, scan)
 }
 
