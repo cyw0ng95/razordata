@@ -37,3 +37,7 @@ func (m *MV) FindVisible(key []byte, readTS uint64) *VersionNode {
 	}
 	return chain.FindVisible(readTS)
 }
+
+func (m *MV) Commit(node *VersionNode, commitTS uint64) bool {
+	return node.Commit(commitTS)
+}

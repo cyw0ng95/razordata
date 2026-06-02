@@ -268,6 +268,30 @@ func TestNumActiveSlots(t *testing.T) {
 	}
 }
 
+func TestGetSlotBeginTS(t *testing.T) {
+	sm := newSlotManager()
+
+	slot := sm.AllocateSlot()
+	slot.beginTS = 12345
+	idx := slot.index
+
+	if sm.GetSlotBeginTS(idx) != 12345 {
+		t.Errorf("expected beginTS 12345, got %d", sm.GetSlotBeginTS(idx))
+	}
+}
+
+func TestGetSlotCommitTS(t *testing.T) {
+	sm := newSlotManager()
+
+	slot := sm.AllocateSlot()
+	slot.commitTS = 67890
+	idx := slot.index
+
+	if sm.GetSlotCommitTS(idx) != 67890 {
+		t.Errorf("expected commitTS 67890, got %d", sm.GetSlotCommitTS(idx))
+	}
+}
+
 func BenchmarkAllocateSlot(b *testing.B) {
 	sm := newSlotManager()
 

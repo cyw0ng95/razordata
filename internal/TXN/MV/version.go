@@ -81,8 +81,12 @@ func (vc *VersionChain) Insert(node *VersionNode) bool {
 	}
 }
 
+func (n *VersionNode) Commit(commitTS uint64) bool {
+	return n.endTS.CompareAndSwap(maxUint64, commitTS)
+}
+
 func (vc *VersionChain) Commit(node *VersionNode, commitTS uint64) bool {
-	return node.endTS.CompareAndSwap(maxUint64, commitTS)
+	return node.Commit(commitTS)
 }
 
 func (vc *VersionChain) FindVisible(readTS uint64) *VersionNode {
