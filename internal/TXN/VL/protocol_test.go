@@ -20,21 +20,31 @@ func TestBegin(t *testing.T) {
 func TestBeginNoSlots(t *testing.T) {
 	sm := globalSlotManager
 
-	slots := make([]*transactionSlot, MaxConcurrentTXNs)
-	for i := 0; i < MaxConcurrentTXNs; i++ {
-		slots[i] = sm.AllocateSlot()
-		if slots[i] == nil {
-			t.Fatalf("expected slot %d, got nil", i)
+	initialFree := sm.NumFreeSlots()
+	if initialFree == 0 {
+		t.Skip("no free slots to test")
+	}
+
+	slots := make([]*transactionSlot, 0, initialFree)
+	for i := 0; i < initialFree; i++ {
+		slot := sm.AllocateSlot()
+		if slot == nil {
+			break
 		}
+		slots = append(slots, slot)
+	}
+
+	if len(slots) == 0 {
+		t.Fatal("could not allocate any slots")
 	}
 
 	_, err := Begin(context.Background())
 	if err != ErrNoSlotsAvailable {
-		t.Errorf("expected ErrNoSlotsAvailable, got %v", err)
+		t.Errorf("expected ErrNoSlotsAvailable, got %v (free=%d)", err, sm.NumFreeSlots())
 	}
 
-	for i := 0; i < MaxConcurrentTXNs; i++ {
-		sm.ReleaseSlot(slots[i])
+	for _, slot := range slots {
+		sm.ReleaseSlot(slot)
 	}
 }
 

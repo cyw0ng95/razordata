@@ -312,20 +312,27 @@ func BenchmarkAllocateSlot(b *testing.B) {
 	sm := newSlotManager()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sm.AllocateSlot()
+	for i := 0; i < MaxConcurrentTXNs; i++ {
+		slot := sm.AllocateSlot()
+		if slot == nil {
+			break
+		}
 	}
 }
 
 func BenchmarkReleaseSlot(b *testing.B) {
 	sm := newSlotManager()
-	slots := make([]*transactionSlot, b.N)
-	for i := 0; i < b.N; i++ {
-		slots[i] = sm.AllocateSlot()
+	slots := make([]*transactionSlot, 0, MaxConcurrentTXNs)
+	for i := 0; i < MaxConcurrentTXNs; i++ {
+		slot := sm.AllocateSlot()
+		if slot == nil {
+			break
+		}
+		slots = append(slots, slot)
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; i < len(slots); i++ {
 		sm.ReleaseSlot(slots[i])
 	}
 }

@@ -62,6 +62,19 @@ func (em *epochManager) AdvanceEpoch() {
 	em.epoch.Add(1)
 }
 
+func CurrentEpoch() int64 {
+	if globalGC.em == nil {
+		return 0
+	}
+	return globalGC.em.CurrentEpoch()
+}
+
+func AdvanceEpoch() {
+	if globalGC.em != nil {
+		globalGC.em.AdvanceEpoch()
+	}
+}
+
 var globalGC = &versionGC{
 	reclaimQ: make(chan []unsafe.Pointer, 1024),
 	stopCh:   make(chan struct{}),
