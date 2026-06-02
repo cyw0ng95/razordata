@@ -102,8 +102,10 @@ internal/ENG/
 ```
 ok  github.com/cyw0ng95/razordata/internal/ENG/LS  1.278s
 PASS (race detection green)
-Coverage: 74.1%
+Coverage: 75.2%
 ```
+
+**Coverage Target:** 75%
 
 ## Deferred to v2
 

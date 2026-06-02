@@ -21,7 +21,7 @@ Joins, subqueries, foreign keys, network server, external C dependencies.
 | 1 | FIL | File I/O | `DF`, `MF`, `LF`, `FS` | ~2,500 | done |
 | 2 | MEM | Buffer pool | `BF`, `SP` | ~2,000 | done |
 | 3 | WAL | Write-Ahead Log | `WR`, `FL`, `RP` | ~2,000 | done |
-| 4 | ENG/Memtable+SST | Lock-free skiplist + memtable + SST + manifest + flush | `LS` | ~8,000 | in_progress |
+| 4 | ENG/Memtable+SST | Lock-free skiplist + memtable + SST + manifest + flush | `LS` | ~8,000 | done |
 | 5 | TXN/MVCC | Version chain + per-thread arena | `MV`, `LC`, `SN` | ~3,000 | pending |
 | 6 | TXN/Protocol | Transaction slot + commit + WAL | `VL` | ~2,000 | pending |
 | 7 | SQL/Core | Lexer + parser + rewriter | `LX`, `PS`, `RE` | ~2,500 | pending |
