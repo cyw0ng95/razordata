@@ -1,7 +1,7 @@
 # Iteration 4 — ENG/LSM (Lock-Free Skiplist + Memtable + SST + Flush)
 
 **Subsystem:** `ENG`
-**Status:** in_progress
+**Status:** done
 **Est. LOC:** ~8,000
 **Test Coverage:** 75.2% (ENG/LS)
 

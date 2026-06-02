@@ -1,7 +1,7 @@
 # Iteration 2 — MEM (Buffer Pool)
 
 **Subsystem:** `MEM`
-**Status:** pending
+**Status:** done
 **Est. LOC:** ~1,350
 
 ## Overview

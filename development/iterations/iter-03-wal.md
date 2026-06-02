@@ -1,7 +1,7 @@
 # Iteration 3 — WAL (Write-Ahead Log)
 
 **Subsystem:** `WAL`
-**Status:** complete
+**Status:** done
 **Est. LOC:** ~2,200 (5 critical clarifications added after design review)
 
 ## Overview

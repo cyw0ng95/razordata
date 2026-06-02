@@ -1,92 +1,98 @@
-# Iteration 6 — TXN/Protocol (Transaction Slot + Commit + WAL Integration)
+# Iteration 6 — ENG/Schema + Read Path
 
-**Subsystem:** `TXN`
+**Subsystem:** `ENG`
 **Status:** pending
 **Est. LOC:** ~2,000
 
 ## Overview
 
-Full commit protocol. Transaction slot management. Write-write conflict detection. WAL integration. Depends on TXN/MVCC.
+Row serialization, table management, read path with merge iterator. Depends on ENG/SST.
 
 ## Dependencies
 
-- Required: `ENG`, `LOG`, `TXN/MVCC`
-- Consumed interfaces: `Store`, `Writer`, `Logger`, `VersionChain`
+- Required: `ENG/SST`
+- Consumed interfaces: `SSTReader`, `SSTWriter`, `Manifest`
 
 ## Design Alignment
 
-Directory structure matches `design/subsystems/TXN.md`:
+Directory structure matches `design/subsystems/ENG.md`:
 ```
-internal/TXN/
-└── VL/               # Validation cluster
-    ├── slot.go       # TransactionSlot, free list, Begin/AllocateSlot/ReleaseSlot
-    ├── slot_test.go
-    ├── validate.go   # write-write conflict detection
-    ├── validate_test.go
-    ├── protocol.go   # commit protocol: Begin → Write → Pre-commit → Commit → Post-commit
-    ├── protocol_test.go
-    └── wal.go        # WAL integration: RTCommit/RTRollback/RTCheckpoint
+internal/ENG/
+├── SC/               # Schema cluster
+│   └── sc.go         # ColumnType, ColumnDef, TableSchema, ValidateRow
+├── DP/               # Deparser cluster
+│   ├── dp.go         # row serialization, block encoding, value encode/decode
+│   ├── dp_test.go
+│   └── row.go        # row encode/decode helpers
+├── TB/               # Table cluster
+│   ├── tb.go         # CREATE TABLE, DROP TABLE, schema registry
+│   └── tb_test.go
+├── ID/               # Index cluster
+│   └── id.go         # primary key index (placeholder: pk IS table key)
+├── LS/               # LSM tree cluster (part 3: read path)
+│   ├── read.go       # read path, search order, merge iterator
+│   └── read_test.go
 ```
 
 ## Requirements
 
 | ID | Requirement | Status |
 |---|---|---|
-| R01 | `TransactionSlot` array: `[MaxConcurrentTXNs=1024]`, pre-allocated, no GC pressure | pending |
-| R02 | Slot status: 0=inactive, 1=active, 2=committed, 3=aborted (atomic.Int32) | pending |
-| R03 | Mutex-protected free list for slot allocation (not CAS — low contention) | pending |
-| R04 | `KeyRange` struct: Start ([]byte), End ([]byte, exclusive) | pending |
-| R05 | `Begin(ctx) (Tx, error)`: allocate slot from free list, assign beginTS from global atomic counter | pending |
-| R06 | `WriteSet`: track key ranges modified by transaction | pending |
-| R07 | Write: allocate `VersionNode` from thread-local arena, CAS-insert, add key range to `writeSet` | pending |
-| R08 | Pre-commit validation: scan committed slots with `commitTS > myBeginTS`, check `writeSet` overlap | pending |
-| R09 | Write-write conflict: if overlap detected, abort this transaction | pending |
-| R10 | `Commit(ctx) error`: assign `commitTS` (atomic counter++), CAS-update all `endTS`, write WAL `RTCommit` | pending |
-| R11 | `Abort`: mark slot as aborted, discard write set, release slot to free list | pending |
-| R12 | Post-commit: release slot to free list | pending |
-| R13 | Savepoint: `Savepoint(name)` stores `readTS` under name in `map[string]uint64` | pending |
-| R14 | `RTCommit` payload: `[commitTS:8]` | pending |
-| R15 | `RTRollback` payload: `[]` (empty) | pending |
-| R16 | `RTCheckpoint` payload: `[checkpointLSN:8][catalogRootPtr:8][manifestChecksum:4][activeTXNCount:varint]` | pending |
-| R17 | Simulated write-write conflict test: two concurrent txns modifying same key — one must abort | pending |
-| R18 | `go vet ./internal/TXN/...` zero warnings | pending |
-| R19 | `go test ./internal/TXN/... -race -count=1` all green | pending |
-| R20 | Benchmark: concurrent transaction throughput with conflict rate measured | pending |
+| R01 | `ColumnType` enum: CTInt=0, CTBigInt=1, CTVarchar=2, CTFloat=3, CTBool=4, CTText=5, CTBlob=6, CTTimestamp=7 | pending |
+| R02 | `ColumnDef`: Name (string), Type (ColumnType), Nullable (bool), Default (Value), PK (bool) | pending |
+| R03 | `TableSchema`: TableID (uint64), Name (string), Columns ([]ColumnDef), PrimaryKey ([]int, column indices) | pending |
+| R04 | `ValidateRow(row, schema) error`: check NOT NULL, type match, constraints | pending |
+| R05 | Row serialization: INT (8 bytes), BIGINT (8 bytes), FLOAT (8 bytes), BOOL (1 byte) inline | pending |
+| R06 | Row serialization: VARCHAR/TEXT/BLOB as `[length:varint][data:blob]` | pending |
+| R07 | Row serialization: null bitmap in header (one bit per column) | pending |
+| R08 | `encodeRow(row Row, schema *TableSchema) ([]byte, error)` | pending |
+| R09 | `decodeRow(data []byte, schema *TableSchema) (Row, error)` | pending |
+| R10 | `encodeValue(v Value, t ColumnType) ([]byte, error)` for scalar values | pending |
+| R11 | `decodeValue(data []byte, t ColumnType) (Value, error)` for scalar values | pending |
+| R12 | `CREATE TABLE`: allocate tableID, serialize TableSchema, insert into catalog | pending |
+| R13 | `DROP TABLE`: insert tombstone in catalog, remove from registry | pending |
+| R14 | Schema registry: `map[tableID]*TableSchema` with `sync.RWMutex` | pending |
+| R15 | Primary key IS the table key: `__pk:<tableID>:<pkValue>` → row data (no secondary index in v1) | pending |
+| R16 | Read path search order: active memtable → frozen memtables → L0 (newest first) → L1+ (binary search + bloom) | pending |
+| R17 | `MergeIterator`: min-heap over all sources (memtable + SST files) in sorted key order | pending |
+| R18 | End-to-end read: insert data, flush to SST, read back — data matches | pending |
+| R19 | `go vet ./internal/ENG/...` zero warnings | pending |
+| R20 | `go test ./internal/ENG/... -race -count=1` all green | pending |
 
 ## Implementation
 
-### Phase 1: Transaction Slot (`VL/slot.go`)
+### Phase 1: Schema (`SC/sc.go`)
 
-1. `transactionSlots [MaxConcurrentTXNs]transactionSlot` — pre-allocated array (no `make`)
-2. `freeList []int` — indices of available slots, protected by `sync.Mutex`
-3. `AllocateSlot() int`: pop from freeList, initialize slot (status=active, beginTS=atomic counter++)
-4. `ReleaseSlot(idx int)`: reset slot, push idx onto freeList
-5. `Begin`: call AllocateSlot, create ReadView, return Tx handle
+1. Define all `ColumnType` constants as in design
+2. `ColumnDef` and `TableSchema` structs
+3. `ValidateRow`: iterate columns, check NOT NULL (null bitmap), check type match
 
-### Phase 2: Validation (`VL/validate.go`)
+### Phase 2: Deparser (`DP/dp.go` + `row.go`)
 
-1. `writeSetOverlap(a, b []KeyRange) bool`: O(n*m) check, acceptable since write sets are small
-2. `Validate() bool`: iterate all slots with status=committed and commitTS > myBeginTS, check overlap
-3. On conflict: call Abort, return error
+1. `encodeValue`: switch on ColumnType — inline fixed-size for int/bool/float, length+blob for varlen
+2. `decodeValue`: reverse of encodeValue
+3. Null bitmap: `[(numCols + 7) / 8]` bytes header, then column data
+4. `encodeRow`: build null bitmap, encode each column sequentially
+5. `decodeRow`: read null bitmap, decode each column sequentially
 
-### Phase 3: Commit Protocol (`VL/protocol.go`)
+### Phase 3: Table (`TB/tb.go` + `ID/id.go`)
 
-1. `Tx` interface: `Get/Insert/Delete/Commit/Rollback/Savepoint/RollbackTo`
-2. `Insert`: allocate version node from arena, CAS-insert at chain head, track key range
-3. `Commit`: Validate → assign commitTS → CAS-update endTS on all nodes → write WAL → ReleaseSlot
-4. `Abort`: status=aborted, discard write set, ReleaseSlot
-5. Savepoints: `savepoints map[string]uint64` in Tx, `Savepoint(name)` stores readTS, `RollbackTo(name)` restores
+1. `tableRegistry sync.RWMutex` — `map[uint64]*TableSchema`
+2. `NextTableID() uint64` — atomic counter
+3. `CreateTable(schema *TableSchema) (uint64, error)`: assign ID, serialize (MessagePack or custom), insert into catalog LSM
+4. `GetSchema(tableID uint64) (*TableSchema, error)`: lookup in registry or load from catalog
+5. `DropTable(tableID uint64) error`: insert tombstone, remove from registry
+6. Primary key key format: tableKey = `encodeTableKey(tableID, pkValue)` — encode as `[tableID:varint][pkLen:varint][pkValue]`
 
-### Phase 4: WAL Integration (`VL/wal.go`)
+### Phase 4: Read Path (`LS/read.go`)
 
-1. `WriteRTCommit(txnID, commitTS uint64)` → WAL `RTCommit`
-2. `WriteRTRollback(txnID uint64)` → WAL `RTRollback`
-3. `WriteRTCheckpoint(cp *Checkpoint)` → WAL `RTCheckpoint`
-4. Replayer calls `onCommit`/`onRollback` during recovery
+1. `Store` interface: `Insert/Get/Delete/NewIterator/Flush/Compact/Close`
+2. Search order: active memtable → frozen memtables (newest first) → L0 (newest first) → L1+ (binary search in index block, bloom check)
+3. `MergeIterator`: maintain min-heap of current position from each source. `Next()` pops min, advances that source, re-heapifies.
+4. `NewIterator(prefix)`: create merge iterator over all sources, seek to prefix
 
 ## Deferred to v2
 
-- Hazard pointers + epoch-based reclamation
-- Full savepoint rollback (restore readTS from name — stub in this iteration)
-- Version GC
-- Generational arena
+- Compaction
+- Secondary indexes (`__idx__` structure)
+- Statistics for selectivity estimation
