@@ -1,32 +1,19 @@
 package PL
 
 import (
-	"context"
+	"github.com/cyw0ng95/razordata/internal/SQL/EX"
 )
 
-type Operator interface {
-	Next(ctx context.Context) (Row, error)
-	Close() error
-}
+type Operator = EX.Operator
 
-type Row struct {
-	Cols  []string
-	Types []int
-	Data  [][]byte
-}
+type Row = EX.Row
 
-type Result struct {
-	RowsAffected int64
-	LastInsertID uint64
-}
+type Result = EX.Result
+
+type Rows = EX.Rows
 
 type Stmt interface {
-	Query(ctx context.Context, args ...any) (*Rows, error)
-	Exec(ctx context.Context, args ...any) (Result, error)
+	Query(args ...any) (*Rows, error)
+	Exec(args ...any) (Result, error)
 	Close() error
-}
-
-type Rows struct {
-	Cols  []string
-	Types []int
 }

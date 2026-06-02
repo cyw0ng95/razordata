@@ -24,3 +24,8 @@ type Result struct {
 	RowsAffected int64
 	LastInsertID uint64
 }
+
+type Rows struct {
+	Cols  []string
+	Types []int
+}
