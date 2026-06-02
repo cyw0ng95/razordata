@@ -1,4 +1,4 @@
-# Iteration 10 — SQL/Execute (Planner + Executor)
+# Iteration 8 — SQL/Execute (Planner + Executor)
 
 **Subsystem:** `SQL`
 **Status:** pending

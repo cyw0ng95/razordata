@@ -1,4 +1,4 @@
-# Iteration 8 — TXN/Protocol (Transaction Slot + Commit + WAL Integration)
+# Iteration 6 — TXN/Protocol (Transaction Slot + Commit + WAL Integration)
 
 **Subsystem:** `TXN`
 **Status:** pending

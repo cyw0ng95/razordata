@@ -1,4 +1,4 @@
-# Iteration 7 — TXN/MVCC (Version Chain + Per-Thread Arena)
+# Iteration 5 — TXN/MVCC (Version Chain + Per-Thread Arena)
 
 **Subsystem:** `TXN`
 **Status:** pending
@@ -6,7 +6,7 @@
 
 ## Overview
 
-MVCC version chain per key. Per-thread arena for zero-allocation writes. Snapshot isolation for readers. Depends on ENG, LOG.
+MVCC version chain per key. Per-thread arena for zero-allocation writes. Snapshot isolation for readers. Depends on ENG (done), LOG.
 
 ## Dependencies
 
@@ -26,7 +26,7 @@ internal/TXN/
 │   └── lc.go         # stub: thread registration placeholder
 ├── SN/               # Snapshot cluster
 │   └── snapshot.go   # ReadView, Get, Close
-└── VL/               # Validation cluster (preparation — slot/validate/protocol in iter-08)
+└── VL/               # Validation cluster (preparation — slot/validate/protocol in iter-06)
     └── snapshot_test.go
 ```
 

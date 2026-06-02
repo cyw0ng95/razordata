@@ -1,4 +1,4 @@
-# Iteration 9 — SQL/Core (Lexer + Parser + Rewriter)
+# Iteration 7 — SQL/Core (Lexer + Parser + Rewriter)
 
 **Subsystem:** `SQL`
 **Status:** pending
