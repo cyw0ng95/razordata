@@ -501,7 +501,11 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 				p.advance()
 				col.Default, _ = p.parseExpr()
 			case LX.T_UNIQUE:
+				col.Unique = true
 				p.advance()
+				if p.current.Type == LX.T_KEY {
+					p.advance()
+				}
 			}
 		}
 
@@ -521,11 +525,16 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 	}
 
 	for p.current.Type == LX.T_PRIMARY || p.current.Type == LX.T_UNIQUE {
+		isPK := p.current.Type == LX.T_PRIMARY
 		p.advance()
-		if err := p.expect(LX.T_KEY); err != nil {
-			return nil, err
+		if isPK {
+			if err := p.expect(LX.T_KEY); err != nil {
+				return nil, err
+			}
+			p.advance()
+		} else if p.current.Type == LX.T_KEY {
+			p.advance()
 		}
-		p.advance()
 		if err := p.expect(LX.T_LPAREN); err != nil {
 			return nil, err
 		}

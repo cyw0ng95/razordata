@@ -124,6 +124,7 @@ type ColDef struct {
 	Nullable bool
 	Default  Expr
 	PK       bool
+	Unique   bool
 }
 
 func NewColDef(name string, typ int) ColDef {

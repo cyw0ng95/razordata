@@ -202,6 +202,66 @@ func TestParseCreateTableWithPK(t *testing.T) {
 	}
 }
 
+func TestParseCreateTableColumnUnique(t *testing.T) {
+	p := NewParser("CREATE TABLE t (a INTEGER UNIQUE NOT NULL)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct := stmt.(*CreateTable)
+	if len(ct.Cols) != 1 {
+		t.Fatalf("expected 1 col, got %d", len(ct.Cols))
+	}
+	if !ct.Cols[0].Unique {
+		t.Errorf("expected col[0].Unique=true")
+	}
+	if ct.Cols[0].Nullable {
+		t.Errorf("expected col[0].Nullable=false")
+	}
+}
+
+func TestParseCreateTableUniqueNotNull(t *testing.T) {
+	p := NewParser("CREATE TABLE t (a INTEGER NOT NULL UNIQUE)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct := stmt.(*CreateTable)
+	if len(ct.Cols) != 1 {
+		t.Fatalf("expected 1 col, got %d", len(ct.Cols))
+	}
+	if !ct.Cols[0].Unique {
+		t.Errorf("expected col[0].Unique=true")
+	}
+	if ct.Cols[0].Nullable {
+		t.Errorf("expected col[0].Nullable=false")
+	}
+}
+
+func TestParseCreateTableTableLevelUnique(t *testing.T) {
+	p := NewParser("CREATE TABLE t (a INTEGER, b TEXT, UNIQUE (a))")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct := stmt.(*CreateTable)
+	if len(ct.Cols) != 2 {
+		t.Fatalf("expected 2 cols, got %d", len(ct.Cols))
+	}
+}
+
+func TestParseCreateTableTableLevelUniqueKey(t *testing.T) {
+	p := NewParser("CREATE TABLE t (a INTEGER, b TEXT, UNIQUE KEY (a))")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct := stmt.(*CreateTable)
+	if len(ct.Cols) != 2 {
+		t.Fatalf("expected 2 cols, got %d", len(ct.Cols))
+	}
+}
+
 func TestParseDropTable(t *testing.T) {
 	p := NewParser("DROP TABLE t")
 	stmt, err := p.Parse()
