@@ -19,20 +19,20 @@ var (
 )
 
 type indexEntry struct {
-	largestKey []byte
+	largestKey  []byte
 	blockOffset int
 	blockSize   int
 }
 
 type sstWriter struct {
-	blocks              [][]byte
-	indexEntries        []indexEntry
-	bloom               []byte
-	keyCount            int
-	minKey              []byte
-	maxKey              []byte
-	lastKey             []byte
-	currentBlockOffset  int
+	blocks             [][]byte
+	indexEntries       []indexEntry
+	bloom              []byte
+	keyCount           int
+	minKey             []byte
+	maxKey             []byte
+	lastKey            []byte
+	currentBlockOffset int
 }
 
 func newSSTWriter() *sstWriter {

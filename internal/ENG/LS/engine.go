@@ -19,14 +19,14 @@ type ReadStats struct {
 }
 
 type engine struct {
-	dir          string
-	memtables    []*memtable
-	activeMem    *memtable
-	manifest     *manifest
-	cm           *compactionManager
-	fm           *flushManager
-	stats        ReadStats
-	statsMu      sync.RWMutex
+	dir       string
+	memtables []*memtable
+	activeMem *memtable
+	manifest  *manifest
+	cm        *compactionManager
+	fm        *flushManager
+	stats     ReadStats
+	statsMu   sync.RWMutex
 }
 
 func newEngine(dir string) (*engine, error) {
@@ -47,10 +47,10 @@ func newEngine(dir string) (*engine, error) {
 	activeMem := newMemtable(64 * 1024 * 1024)
 
 	e := &engine{
-		dir:        dir,
-		memtables:  []*memtable{activeMem},
-		activeMem:  activeMem,
-		manifest:   manifest,
+		dir:       dir,
+		memtables: []*memtable{activeMem},
+		activeMem: activeMem,
+		manifest:  manifest,
 	}
 
 	e.cm = newCompactionManager(dir, manifest)
@@ -135,9 +135,9 @@ func (e *engine) readFromSST(key []byte) ([]byte, error) {
 		for i := len(files) - 1; i >= 0; i-- {
 			file := files[i]
 
-		if bytes.Compare(key, file.MinKey) < 0 || bytes.Compare(key, file.MaxKey) > 0 {
-			continue
-		}
+			if bytes.Compare(key, file.MinKey) < 0 || bytes.Compare(key, file.MaxKey) > 0 {
+				continue
+			}
 
 			e.stats.DiskReads++
 

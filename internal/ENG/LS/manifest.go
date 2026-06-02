@@ -32,10 +32,10 @@ type SSTFileMeta struct {
 }
 
 type manifest struct {
-	version  atomic.Int64
-	current  atomic.Pointer[Version]
-	dir      string
-	changes  chan Version
+	version atomic.Int64
+	current atomic.Pointer[Version]
+	dir     string
+	changes chan Version
 }
 
 func newManifest(dir string) (*manifest, error) {

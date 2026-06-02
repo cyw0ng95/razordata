@@ -13,7 +13,7 @@ import (
 
 var (
 	ErrCompactionInProgress = errors.New("compaction already in progress")
-	ErrNoFilesToCompact    = errors.New("no files to compact")
+	ErrNoFilesToCompact     = errors.New("no files to compact")
 )
 
 type levelBudget struct {
@@ -184,7 +184,7 @@ type keyHeap struct {
 	items []*sstIterator
 }
 
-func (h *keyHeap) Len() int { return len(h.items) }
+func (h *keyHeap) Len() int           { return len(h.items) }
 func (h *keyHeap) Less(i, j int) bool { return bytes.Compare(h.items[i].Key(), h.items[j].Key()) < 0 }
 func (h *keyHeap) Swap(i, j int)      { h.items[i], h.items[j] = h.items[j], h.items[i] }
 func (h *keyHeap) Push(x any)         { h.items = append(h.items, x.(*sstIterator)) }
@@ -218,13 +218,13 @@ func removeFiles(files []SSTFileMeta, toRemove []SSTFileMeta) []SSTFileMeta {
 }
 
 type compactionManager struct {
-	manifest      *manifest
-	dir           string
-	budget        levelBudget
-	compactionMu  sync.Mutex
-	compacting    atomic.Bool
+	manifest        *manifest
+	dir             string
+	budget          levelBudget
+	compactionMu    sync.Mutex
+	compacting      atomic.Bool
 	compactionQueue chan *compactionJob
-	done          chan struct{}
+	done            chan struct{}
 }
 
 func newCompactionManager(dir string, manifest *manifest) *compactionManager {

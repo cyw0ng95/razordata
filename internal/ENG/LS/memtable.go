@@ -144,7 +144,7 @@ func decodeRow(data []byte, schema *tableSchema) ([][]byte, error) {
 		return nil, ErrInvalidRowData
 	}
 
-	nullBitmapLen := int(data[0]) | int(data[1])<<8|int(data[2])<<16|int(data[3])<<24
+	nullBitmapLen := int(data[0]) | int(data[1])<<8 | int(data[2])<<16 | int(data[3])<<24
 	nullBitmap := data[4 : 4+nullBitmapLen]
 
 	values := make([][]byte, len(schema.Columns))

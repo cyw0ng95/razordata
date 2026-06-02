@@ -14,11 +14,11 @@ var (
 )
 
 type sstReader struct {
-	data        []byte
-	indexBlock  []indexEntry
-	bloom       []byte
-	minKey      []byte
-	maxKey      []byte
+	data       []byte
+	indexBlock []indexEntry
+	bloom      []byte
+	minKey     []byte
+	maxKey     []byte
 }
 
 func openSST(data []byte) (*sstReader, error) {

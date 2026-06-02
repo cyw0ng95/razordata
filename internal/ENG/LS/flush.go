@@ -113,7 +113,7 @@ type flushManager struct {
 	memtables       []*memtable
 	activeMemtable  atomic.Pointer[memtable]
 	frozenMemtables []*memtable
-	manifest       *manifest
+	manifest        *manifest
 	dir             string
 	maxMemSize      int64
 	flushQueue      chan *flushJob

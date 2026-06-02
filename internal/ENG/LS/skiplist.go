@@ -10,10 +10,10 @@ import (
 const maxLevel = 12
 
 type node struct {
-	key    []byte
-	value  atomic.Value
-	next   [maxLevel]atomic.Pointer[node]
-	mu     sync.Mutex
+	key   []byte
+	value atomic.Value
+	next  [maxLevel]atomic.Pointer[node]
+	mu    sync.Mutex
 }
 
 type skipList struct {
