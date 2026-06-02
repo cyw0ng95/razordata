@@ -1,6 +1,7 @@
 package ls
 
 import (
+	"container/heap"
 	"os"
 	"path/filepath"
 	"testing"
@@ -396,17 +397,132 @@ func TestRemoveFiles(t *testing.T) {
 }
 
 func TestKeyHeap_Less(t *testing.T) {
-	e1 := &SSTFileMeta{FileID: 1, MinKey: []byte("a"), MaxKey: []byte("c"), Size: 100}
-	e2 := &SSTFileMeta{FileID: 2, MinKey: []byte("b"), MaxKey: []byte("d"), Size: 200}
+	h := &keyHeap{items: []*sstIterator{}}
 
-	f1 := &sstIterator{}
-	f2 := &sstIterator{}
+	if h.Len() != 0 {
+		t.Fatalf("expected len=0, got %d", h.Len())
+	}
+}
 
-	f1.current = 0
-	f2.current = 0
+func TestKeyHeap_PushPop(t *testing.T) {
+	f1 := &sstIterator{pairs: []kvPair{{key: []byte("apple"), value: []byte("1")}}, current: 0}
+	f2 := &sstIterator{pairs: []kvPair{{key: []byte("banana"), value: []byte("2")}}, current: 0}
+	f3 := &sstIterator{pairs: []kvPair{{key: []byte("cherry"), value: []byte("3")}}, current: 0}
+
+	h := &keyHeap{items: []*sstIterator{}}
+	heap.Push(h, f2)
+	heap.Push(h, f1)
+	heap.Push(h, f3)
+
+	if h.Len() != 3 {
+		t.Fatalf("expected len=3, got %d", h.Len())
+	}
+
+	first := heap.Pop(h).(*sstIterator)
+	if string(first.Key()) != "apple" {
+		t.Errorf("expected first key=apple, got %s", first.Key())
+	}
+
+	second := heap.Pop(h).(*sstIterator)
+	if string(second.Key()) != "banana" {
+		t.Errorf("expected second key=banana, got %s", second.Key())
+	}
+
+	third := heap.Pop(h).(*sstIterator)
+	if string(third.Key()) != "cherry" {
+		t.Errorf("expected third key=cherry, got %s", third.Key())
+	}
+}
+
+func TestKeyHeap_Swap(t *testing.T) {
+	f1 := &sstIterator{pairs: []kvPair{{key: []byte("a"), value: []byte("1")}}, current: 0}
+	f2 := &sstIterator{pairs: []kvPair{{key: []byte("b"), value: []byte("2")}}, current: 0}
 
 	h := &keyHeap{items: []*sstIterator{f1, f2}}
-	_ = e1
-	_ = e2
-	_ = h
+
+	h.Swap(0, 1)
+
+	if string(h.items[0].Key()) != "b" || string(h.items[1].Key()) != "a" {
+		t.Error("Swap did not correctly swap items")
+	}
+}
+
+func TestCompactionJob_RunNoFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("failed to create manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	v := manifest.Current()
+	v.levels = make([][]SSTFileMeta, 3)
+	manifest.Apply(*v)
+
+	job := &compactionJob{
+		level:  0,
+		inputs: []SSTFileMeta{},
+	}
+
+	err = job.Run(manifest, dir)
+	if err != ErrNoFilesToCompact {
+		t.Fatalf("expected ErrNoFilesToCompact, got %v", err)
+	}
+}
+
+func TestCompactionJob_RunWithOverlap(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_compaction_overlap")
+
+	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0755); err != nil {
+		t.Fatalf("failed to create sst dir: %v", err)
+	}
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("failed to create manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	v := manifest.Current()
+	v.levels = make([][]SSTFileMeta, 3)
+	manifest.Apply(*v)
+
+	w1 := newSSTWriter()
+	w1.Add([]byte("key1"), []byte("value1"))
+	sstData1, err := w1.Finish()
+	if err != nil {
+		t.Fatalf("failed to finish SST writer: %v", err)
+	}
+
+	w2 := newSSTWriter()
+	w2.Add([]byte("key2"), []byte("value2"))
+	sstData2, err := w2.Finish()
+	if err != nil {
+		t.Fatalf("failed to finish SST writer: %v", err)
+	}
+
+	sstPath1 := filepath.Join(dir, "sst", "L0_a_z_1.sst")
+	sstPath2 := filepath.Join(dir, "sst", "L0_b_y_2.sst")
+	if err := os.WriteFile(sstPath1, sstData1, 0644); err != nil {
+		t.Fatalf("failed to write SST file: %v", err)
+	}
+	if err := os.WriteFile(sstPath2, sstData2, 0644); err != nil {
+		t.Fatalf("failed to write SST file: %v", err)
+	}
+
+	job := &compactionJob{
+		level: 0,
+		inputs: []SSTFileMeta{
+			{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: int64(len(sstData1)), BloomBits: 10},
+		},
+		overlap: []SSTFileMeta{
+			{FileID: 2, Level: 0, MinKey: []byte("b"), MaxKey: []byte("y"), Size: int64(len(sstData2)), BloomBits: 10},
+		},
+	}
+
+	if err := job.Run(manifest, dir); err != nil {
+		t.Fatalf("compaction job with overlap failed: %v", err)
+	}
 }

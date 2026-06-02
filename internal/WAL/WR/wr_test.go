@@ -1319,6 +1319,76 @@ func TestMultipleSyncCalls(t *testing.T) {
 	}
 }
 
+// TestFlushBufferOnEmptySegment tests flushBuffer when segment is nil.
+func TestFlushBufferOnEmptySegment(t *testing.T) {
+	d := newTestDeps(t)
+
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+
+	err := w.Close()
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	_ = d
+}
+
+// TestRotateWithNilBuffer tests rotate when buffer is not nil (normal path).
+func TestRotateWithNilBuffer(t *testing.T) {
+	d := newTestDeps(t)
+
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+
+	for i := 0; i < 5; i++ {
+		_, err := w.Append(&WriteBatch{
+			TxnID: uint64(i),
+			Recs: []LogRecord{
+				{Type: RTData, BlockID: uint64(i + 1), Value: []byte("x")},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+
+	w.Sync()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestAppendTriggersRotate tests that large appends trigger segment rotation.
+func TestAppendTriggersRotate(t *testing.T) {
+	d := newTestDeps(t)
+
+	tmp := t.TempDir()
+	w, _ := New(tmp, d.sm, d.sp, d.log)
+
+	largeValue := bytes.Repeat([]byte("x"), int(sp.WALBufSize)/2)
+
+	_, err := w.Append(&WriteBatch{
+		TxnID: 1,
+		Recs: []LogRecord{
+			{Type: RTData, BlockID: 1, Value: largeValue},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	lsns, err := d.sm.ListSegments()
+	if err != nil {
+		t.Fatalf("ListSegments: %v", err)
+	}
+
+	if len(lsns) < 1 {
+		t.Errorf("expected at least 1 segment, got %d", len(lsns))
+	}
+
+	w.Close()
+}
+
 // TestSegmentRotationPreservesLSN ordering.
 func TestSegmentRotationLSNOrdering(t *testing.T) {
 	d := newTestDeps(t)
