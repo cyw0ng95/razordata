@@ -270,8 +270,8 @@ func TestRewriteStringLiteral(t *testing.T) {
 
 func TestOpString(t *testing.T) {
 	tests := []struct {
-		op      LX.TokenType
-		want    string
+		op   LX.TokenType
+		want string
 	}{
 		{LX.T_EQ, "="},
 		{LX.T_NE, "<>"},

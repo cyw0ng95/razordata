@@ -64,6 +64,25 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		name := p.current.Lexeme
 		p.advance()
 		return &Ident{Name: name}, nil
+	case LX.T_COUNT, LX.T_SUM, LX.T_AVG, LX.T_MIN, LX.T_MAX:
+		name := p.current.Lexeme
+		p.advance()
+		if err := p.expect(LX.T_LPAREN); err != nil {
+			return nil, err
+		}
+		p.advance()
+		var arg Expr
+		if p.current.Type == LX.T_STAR {
+			arg = &StarExpr{}
+			p.advance()
+		} else {
+			arg, _ = p.parseExpr()
+		}
+		if err := p.expect(LX.T_RPAREN); err != nil {
+			return nil, err
+		}
+		p.advance()
+		return &AggregateFunc{Name: name, Arg: arg}, nil
 	case LX.T_LPAREN:
 		p.advance()
 		expr, err := p.parseExpr()
@@ -75,6 +94,8 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		}
 		p.advance()
 		return expr, nil
+	case LX.T_CASE:
+		return p.parseCaseExpr()
 	}
 	return nil, fmt.Errorf("%w: unexpected token %v at line %d col %d",
 		ErrSyntax, p.current.Type, p.current.Line, p.current.Col)
@@ -167,6 +188,12 @@ func (p *Parser) Parse() (Stmt, error) {
 func (p *Parser) parseSelect() (*Select, error) {
 	p.advance()
 
+	var distinct bool
+	if p.current.Type == LX.T_DISTINCT {
+		distinct = true
+		p.advance()
+	}
+
 	var cols []Expr
 	if p.current.Type == LX.T_STAR {
 		cols = append(cols, &StarExpr{})
@@ -176,6 +203,16 @@ func (p *Parser) parseSelect() (*Select, error) {
 			expr, err := p.parseExpr()
 			if err != nil {
 				return nil, err
+			}
+			if p.current.Type == LX.T_AS {
+				p.advance()
+				if p.current.Type == LX.T_IDENT || p.current.Type == LX.T_MINUS || p.current.Type == LX.T_PLUS {
+					switch e := expr.(type) {
+					case *Ident:
+						e.Alias = p.current.Lexeme
+					}
+					p.advance()
+				}
 			}
 			cols = append(cols, expr)
 			if p.current.Type != LX.T_COMMA {
@@ -195,6 +232,16 @@ func (p *Parser) parseSelect() (*Select, error) {
 	}
 	from := p.current.Lexeme
 	p.advance()
+
+	var fromAlias string
+	if p.current.Type == LX.T_AS {
+		p.advance()
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		fromAlias = p.current.Lexeme
+		p.advance()
+	}
 
 	var where Expr
 	if p.current.Type == LX.T_WHERE {
@@ -225,12 +272,14 @@ func (p *Parser) parseSelect() (*Select, error) {
 	}
 
 	return &Select{
-		Cols:    cols,
-		From:    from,
-		Where:   where,
-		OrderBy: orderBy,
-		Limit:   limit,
-		Offset:  offset,
+		Cols:      cols,
+		From:      from,
+		FromAlias: fromAlias,
+		Where:     where,
+		OrderBy:   orderBy,
+		Limit:     limit,
+		Offset:    offset,
+		Distinct:  distinct,
 	}, nil
 }
 
@@ -531,6 +580,51 @@ func parseInt(s string) int64 {
 		val = val*10 + int64(c-'0')
 	}
 	return val
+}
+
+func (p *Parser) parseCaseExpr() (Expr, error) {
+	p.advance()
+
+	var expr Expr
+	var whenList []WhenClause
+	var elseExpr Expr
+
+	if p.current.Type != LX.T_WHEN {
+		expr, _ = p.parseExpr()
+	}
+
+	for p.current.Type == LX.T_WHEN {
+		p.advance()
+		cond, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expect(LX.T_THEN); err != nil {
+			return nil, err
+		}
+		p.advance()
+		then, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		whenList = append(whenList, WhenClause{Cond: cond, Then: then})
+	}
+
+	if p.current.Type == LX.T_ELSE {
+		p.advance()
+		var err error
+		elseExpr, err = p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := p.expect(LX.T_END); err != nil {
+		return nil, err
+	}
+	p.advance()
+
+	return &CaseExpr{Expr: expr, WhenList: whenList, Else: elseExpr}, nil
 }
 
 func parseFloat(s string) float64 {

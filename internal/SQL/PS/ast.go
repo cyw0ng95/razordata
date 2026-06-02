@@ -37,7 +37,8 @@ type NullLiteral struct{}
 func (n *NullLiteral) exprNode() {}
 
 type Ident struct {
-	Name string
+	Name  string
+	Alias string
 }
 
 func (i *Ident) exprNode() {}
@@ -70,6 +71,13 @@ type FunctionCall struct {
 
 func (f *FunctionCall) exprNode() {}
 
+type AggregateFunc struct {
+	Name string
+	Arg  Expr
+}
+
+func (a *AggregateFunc) exprNode() {}
+
 type StarExpr struct{}
 
 func (s *StarExpr) exprNode() {}
@@ -87,6 +95,19 @@ type BetweenExpr struct {
 }
 
 func (b *BetweenExpr) exprNode() {}
+
+type CaseExpr struct {
+	Expr     Expr
+	WhenList []WhenClause
+	Else     Expr
+}
+
+type WhenClause struct {
+	Cond Expr
+	Then Expr
+}
+
+func (c *CaseExpr) exprNode() {}
 
 type InExpr struct {
 	Expr     Expr
@@ -152,12 +173,14 @@ type Delete struct {
 func (d *Delete) stmtNode() {}
 
 type Select struct {
-	Cols    []Expr
-	From    string
-	Where   Expr
-	OrderBy Expr
-	Limit   Expr
-	Offset  Expr
+	Cols      []Expr
+	From      string
+	FromAlias string
+	Where     Expr
+	OrderBy   Expr
+	Limit     Expr
+	Offset    Expr
+	Distinct  bool
 }
 
 func (s *Select) stmtNode() {}

@@ -34,6 +34,9 @@ func Rewrite(stmt PS.Stmt) (string, error) {
 func rewriteSelect(s *PS.Select) string {
 	var b strings.Builder
 	b.WriteString("SELECT ")
+	if s.Distinct {
+		b.WriteString("DISTINCT ")
+	}
 	if len(s.Cols) == 0 {
 		b.WriteString("*")
 	} else {
@@ -47,6 +50,10 @@ func rewriteSelect(s *PS.Select) string {
 	if s.From != "" {
 		b.WriteString(" FROM ")
 		b.WriteString(s.From)
+		if s.FromAlias != "" {
+			b.WriteString(" AS ")
+			b.WriteString(s.FromAlias)
+		}
 	}
 	if s.Where != nil {
 		b.WriteString(" WHERE ")
@@ -198,6 +205,9 @@ func exprString(e PS.Expr) string {
 	case *PS.NullLiteral:
 		return "NULL"
 	case *PS.Ident:
+		if expr.Alias != "" {
+			return fmt.Sprintf("%s AS %s", expr.Name, expr.Alias)
+		}
 		return expr.Name
 	case *PS.Param:
 		return "?"
@@ -224,6 +234,13 @@ func exprString(e PS.Expr) string {
 		}
 		b.WriteString(")")
 		return b.String()
+	case *PS.AggregateFunc:
+		var b strings.Builder
+		b.WriteString(expr.Name)
+		b.WriteString("(")
+		b.WriteString(exprString(expr.Arg))
+		b.WriteString(")")
+		return b.String()
 	case *PS.ListExpr:
 		var b strings.Builder
 		b.WriteString("(")
@@ -237,6 +254,25 @@ func exprString(e PS.Expr) string {
 		return b.String()
 	case *PS.BetweenExpr:
 		return fmt.Sprintf("%s BETWEEN %s AND %s", exprString(expr.Expr), exprString(expr.Low), exprString(expr.High))
+	case *PS.CaseExpr:
+		var b strings.Builder
+		b.WriteString("CASE")
+		if expr.Expr != nil {
+			b.WriteString(" ")
+			b.WriteString(exprString(expr.Expr))
+		}
+		for _, w := range expr.WhenList {
+			b.WriteString(" WHEN ")
+			b.WriteString(exprString(w.Cond))
+			b.WriteString(" THEN ")
+			b.WriteString(exprString(w.Then))
+		}
+		if expr.Else != nil {
+			b.WriteString(" ELSE ")
+			b.WriteString(exprString(expr.Else))
+		}
+		b.WriteString(" END")
+		return b.String()
 	}
 	return "?"
 }

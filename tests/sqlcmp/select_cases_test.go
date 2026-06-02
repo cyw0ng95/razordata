@@ -81,6 +81,23 @@ var selectCases = []testCase{
 	{"select_limit_expr", "SELECT * FROM t LIMIT a + 1", false},
 	{"select_offset_expr", "SELECT * FROM t OFFSET a - b", false},
 	{"select_limit_offset_expr", "SELECT * FROM t LIMIT a + 1 OFFSET b - 2", false},
+	{"select_case_simple", "SELECT CASE a WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END FROM t", false},
+	{"select_case_no_expr", "SELECT CASE WHEN a > 0 THEN 'positive' ELSE 'non-positive' END FROM t", false},
+	{"select_case_nested", "SELECT CASE a WHEN 1 THEN CASE b WHEN 1 THEN 'one-one' ELSE 'one-other' END ELSE 'other' END FROM t", false},
+	{"select_count_star", "SELECT COUNT(*) FROM t", false},
+	{"select_count_col", "SELECT COUNT(a) FROM t", false},
+	{"select_sum_col", "SELECT SUM(a) FROM t", false},
+	{"select_avg_col", "SELECT AVG(a) FROM t", false},
+	{"select_min_col", "SELECT MIN(a) FROM t", false},
+	{"select_max_col", "SELECT MAX(a) FROM t", false},
+	{"select_agg_multiple", "SELECT COUNT(*), SUM(a), AVG(b) FROM t", false},
+	{"select_alias_col", "SELECT a AS b FROM t", false},
+	{"select_alias_multiple", "SELECT a AS x, b AS y FROM t", false},
+	{"select_alias_col", "SELECT a AS b FROM t", false},
+	{"select_alias_multiple", "SELECT a AS x, b AS y FROM t", false},
+	{"select_alias_table", "SELECT * FROM t AS x", false},
+	{"select_distinct", "SELECT DISTINCT a FROM t", false},
+	{"select_distinct_multi", "SELECT DISTINCT a, b FROM t", false},
 }
 
 func TestSelectRewrite(t *testing.T) {
