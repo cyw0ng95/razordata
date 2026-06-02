@@ -27,6 +27,9 @@ var ddlCases = []testCase{
 	{"create_table_inline_unique", "CREATE TABLE t (a TEXT UNIQUE)", false},
 	{"create_table_inline_default", "CREATE TABLE t (a INTEGER DEFAULT 0)", false},
 	{"create_table_col_after_type", "CREATE TABLE t (a TEXT) ", false},
+	{"create_table_notnull_unique", "CREATE TABLE t (a TEXT NOT NULL UNIQUE)", false},
+	{"create_table_all_constraints", "CREATE TABLE t (a INTEGER PRIMARY KEY NOT NULL, b TEXT UNIQUE DEFAULT 'x')", false},
+	{"create_table_escaped_default", "CREATE TABLE t (a TEXT DEFAULT 'it''s a test')", false},
 	{"drop_table", "DROP TABLE t", false},
 	{"drop_table_if_exists", "DROP TABLE IF EXISTS t", false},
 }
