@@ -256,8 +256,8 @@ func TestLexerMixedCase(t *testing.T) {
 
 func TestLexerAllKeywords(t *testing.T) {
 	kwCases := []struct {
-		kw      string
-		typ     TokenType
+		kw  string
+		typ TokenType
 	}{
 		{"CREATE", T_CREATE},
 		{"DROP", T_DROP},

@@ -89,8 +89,8 @@ type BetweenExpr struct {
 func (b *BetweenExpr) exprNode() {}
 
 type InExpr struct {
-	Expr   Expr
-	List   []Expr
+	Expr     Expr
+	List     []Expr
 	Subquery Stmt
 }
 
