@@ -1148,8 +1148,9 @@ func TestCloseIdempotentBF(t *testing.T) {
 	}
 }
 
-// TestCloseWithLogger tests Close with invalid hint path.
-func TestCloseWithLogger(t *testing.T) {
+// TestCloseWithHintPathAndLogger tests Close with invalid hint path and logger.
+// This exercises the error logging path when writeHintFile fails.
+func TestCloseWithHintPathAndLogger(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "log_close.block")
 
@@ -1159,26 +1160,93 @@ func TestCloseWithLogger(t *testing.T) {
 	}
 	defer bd.Close()
 
-	// Invalid hint path in subdirectory that doesn't exist
-	invalidHintPath := filepath.Join(tmp, "nonexistent", "hint.bin")
+	invalidHintPath := filepath.Join(tmp, "nonexistent_dir", "hint.bin")
 
-	bp, err := New(10, invalidHintPath, bd, newMockSyncPool())
+	log := lg.New(lg.Options{Output: io.Discard})
+	bp, err := New(10, invalidHintPath, bd, newMockSyncPool(), log)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	// Get a block to have data in slots
 	ctx := context.Background()
 	data := make([]byte, 100)
-	bd.WriteBlock(ctx, 1, data)
-	page, _, _ := bp.Get(ctx, 1)
-	if page != nil {
+	if err := bd.WriteBlock(ctx, 1, data); err != nil {
+		t.Fatalf("WriteBlock: %v", err)
+	}
+		bd.Sync()
+
+	bp.Get(ctx, 1)
+	bp.Get(ctx, 2)
+	bp.Get(ctx, 3)
+
+	_ = bp.Close()
+}
+
+// TestCloseWithEntriesAndBadPath tests Close when there are entries but path is invalid.
+func TestCloseWithEntriesAndBadPath(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "close_entries.block")
+
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	hintPath := filepath.Join(tmp, "a", "b", "c", "hint.bin")
+
+	bp, err := New(10, hintPath, bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := context.Background()
+	for i := uint64(1); i <= 5; i++ {
+		data := make([]byte, 100)
+		if err := bd.WriteBlock(ctx, i, data); err != nil {
+			t.Fatalf("WriteBlock: %v", err)
+		}
+		bp.Get(ctx, i)
+	}
+
+	_ = bp.Close()
+}
+
+// TestCloseAfterMultipleAccesses tests Close after many accesses to ensure entries.
+func TestCloseAfterMultipleAccesses(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "multi_access.block")
+
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	hintPath := filepath.Join(tmp, "hint.bin")
+
+	bp, err := New(128, hintPath, bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	data := make([]byte, df.DefaultBlockSize)
+	for i := uint64(1); i <= 20; i++ {
+		page := &Page{ID: i, Data: data}
+		if err := bp.Upsert(page); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+		page, _, err := bp.Get(context.Background(), i)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
 		bp.Pin(page)
 		bp.Unpin(page)
 	}
 
-	// Close should not panic (may or may not return error depending on OS)
-	_ = bp.Close()
+	if err := bp.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 }
 
 // TestUpsertBasic verifies a fresh insert into an empty cache (R34).
@@ -1196,7 +1264,7 @@ func TestUpsertBasic(t *testing.T) {
 	}
 	defer bp.Close()
 
-	data := make([]byte, BlockSize)
+	data := make([]byte, df.DefaultBlockSize)
 	for i := range data {
 		data[i] = 0xAB
 	}
@@ -1317,7 +1385,7 @@ func TestUpsertRejectsBadBlockID(t *testing.T) {
 	}
 	defer bp.Close()
 
-	data := make([]byte, BlockSize)
+	data := make([]byte, df.DefaultBlockSize)
 	if err := bp.Upsert(&Page{ID: 0, Data: data}); err != ErrInvalidBlockID {
 		t.Errorf("expected ErrInvalidBlockID for blockID=0, got %v", err)
 	}
@@ -1348,7 +1416,7 @@ func TestUpsertAtCapacityEvicts(t *testing.T) {
 
 	// Fill the pool.
 	for i := uint64(1); i <= uint64(capacity); i++ {
-		data := make([]byte, BlockSize)
+		data := make([]byte, df.DefaultBlockSize)
 		data[0] = byte(i)
 		if err := bp.Upsert(&Page{ID: i, Data: data}); err != nil {
 			t.Fatalf("Upsert(%d): %v", i, err)
@@ -1401,7 +1469,7 @@ func TestUpsertDoesNotPin(t *testing.T) {
 	defer bp.Close()
 
 	for i := uint64(1); i <= uint64(capacity); i++ {
-		data := make([]byte, BlockSize)
+		data := make([]byte, df.DefaultBlockSize)
 		if err := bp.Upsert(&Page{ID: i, Data: data}); err != nil {
 			t.Fatalf("Upsert(%d): %v", i, err)
 		}
