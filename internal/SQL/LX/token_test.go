@@ -147,9 +147,20 @@ func TestTokenIsError(t *testing.T) {
 }
 
 func TestTokenString(t *testing.T) {
-	token := Token{Type: T_IDENT, Lexeme: "foo"}
-	s := token.String()
-	if s == "" {
-		t.Error("expected non-empty String()")
+	cases := []struct {
+		typ  TokenType
+		lex  string
+		want string
+	}{
+		{T_IDENT, "foo", "IDENT:foo"},
+		{T_SELECT, "SELECT", "SELECT:SELECT"},
+		{T_INT, "42", "INT:42"},
+		{T_EOF, "", "EOF:"},
+	}
+	for _, c := range cases {
+		got := Token{Type: c.typ, Lexeme: c.lex}.String()
+		if got != c.want {
+			t.Errorf("String() for %v = %q, want %q", c.typ, got, c.want)
+		}
 	}
 }
