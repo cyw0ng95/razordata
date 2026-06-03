@@ -135,6 +135,78 @@ func TestEvalLike(t *testing.T) {
 	}
 }
 
+func TestEvalNullArithmetic(t *testing.T) {
+	cases := []struct {
+		name string
+		expr PS.Expr
+		want interface{}
+	}{
+		{"null_plus_int", &PS.BinaryExpr{Op: int(LX.T_PLUS), Left: &PS.NullLiteral{}, Right: &PS.NumberLiteral{Val: 5}}, nil},
+		{"int_plus_null", &PS.BinaryExpr{Op: int(LX.T_PLUS), Left: &PS.NumberLiteral{Val: 5}, Right: &PS.NullLiteral{}}, nil},
+		{"null_times_int", &PS.BinaryExpr{Op: int(LX.T_STAR), Left: &PS.NullLiteral{}, Right: &PS.NumberLiteral{Val: 5}}, nil},
+		{"null_div_int", &PS.BinaryExpr{Op: int(LX.T_SLASH), Left: &PS.NullLiteral{}, Right: &PS.NumberLiteral{Val: 5}}, nil},
+		{"int_div_by_zero", &PS.BinaryExpr{Op: int(LX.T_SLASH), Left: &PS.NumberLiteral{Val: 10}, Right: &PS.NumberLiteral{Val: 0}}, nil},
+		{"float_div_by_zero", &PS.BinaryExpr{Op: int(LX.T_SLASH), Left: &PS.FloatLiteral{Val: 10}, Right: &PS.FloatLiteral{Val: 0}}, nil},
+		{"int_plus_float_promotes", &PS.BinaryExpr{Op: int(LX.T_PLUS), Left: &PS.NumberLiteral{Val: 1}, Right: &PS.FloatLiteral{Val: 2.5}}, float64(3.5)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := Eval(c.expr, nil, nil)
+			if c.name == "int_div_by_zero" || c.name == "float_div_by_zero" {
+				if err != ErrDivByZero {
+					t.Errorf("expected ErrDivByZero, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if got != c.want {
+				t.Errorf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestEvalCast(t *testing.T) {
+	cases := []struct {
+		name string
+		expr PS.Expr
+		want interface{}
+		err  bool
+	}{
+		{"int_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 42}, Type: int(LX.T_INT_KW)}, int64(42), false},
+		{"int_from_float", &PS.CastExpr{Expr: &PS.FloatLiteral{Val: 3.7}, Type: int(LX.T_INT_KW)}, int64(3), false},
+		{"int_from_string", &PS.CastExpr{Expr: &PS.StringLiteral{Val: "123"}, Type: int(LX.T_INT_KW)}, int64(123), false},
+		{"int_from_string_bad", &PS.CastExpr{Expr: &PS.StringLiteral{Val: "abc"}, Type: int(LX.T_INT_KW)}, nil, true},
+		{"float_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 5}, Type: int(LX.T_FLOAT_KW)}, float64(5), false},
+		{"text_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 5}, Type: int(LX.T_TEXT)}, "5", false},
+		{"text_from_float", &PS.CastExpr{Expr: &PS.FloatLiteral{Val: 1.5}, Type: int(LX.T_TEXT)}, "1.5", false},
+		{"bool_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 1}, Type: int(LX.T_BOOL)}, true, false},
+		{"bool_from_zero", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 0}, Type: int(LX.T_BOOL)}, false, false},
+		{"null_to_int", &PS.CastExpr{Expr: &PS.NullLiteral{}, Type: int(LX.T_INT_KW)}, nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := Eval(c.expr, nil, nil)
+			if c.err {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if got != c.want {
+				t.Errorf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
 func TestEvalCrossTypeEq(t *testing.T) {
 	cases := []struct {
 		name string

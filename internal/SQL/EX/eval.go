@@ -2,12 +2,16 @@ package EX
 
 import (
 	"errors"
+	"fmt"
+	"strconv"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
 var ErrEval = errors.New("ex: eval error")
+var ErrDivByZero = errors.New("ex: division by zero")
+var ErrTypeMismatch = errors.New("ex: type mismatch")
 
 func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 	if expr == nil {
@@ -55,6 +59,8 @@ func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 		return evalAggregate(e, row, params)
 	case *PS.FunctionCall:
 		return evalFunction(e, row, params)
+	case *PS.CastExpr:
+		return evalCast(e, row, params)
 	case *PS.AliasedExpr:
 		return Eval(e.Expr, row, params)
 	default:
@@ -165,6 +171,54 @@ func evalIn(e *PS.InExpr, row *Row, params []interface{}) (interface{}, error) {
 	return false, nil
 }
 
+func evalCast(e *PS.CastExpr, row *Row, params []interface{}) (interface{}, error) {
+	v, err := Eval(e.Expr, row, params)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, nil
+	}
+	switch LX.TokenType(e.Type) {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		switch x := v.(type) {
+		case int64:
+			return x, nil
+		case float64:
+			return int64(x), nil
+		case string:
+			n, err := strconv.ParseInt(x, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("ex: cast %q to int: %w", x, err)
+			}
+			return n, nil
+		case bool:
+			if x {
+				return int64(1), nil
+			}
+			return int64(0), nil
+		}
+	case LX.T_FLOAT_KW:
+		switch x := v.(type) {
+		case int64:
+			return float64(x), nil
+		case float64:
+			return x, nil
+		case string:
+			f, err := strconv.ParseFloat(x, 64)
+			if err != nil {
+				return nil, fmt.Errorf("ex: cast %q to float: %w", x, err)
+			}
+			return f, nil
+		}
+	case LX.T_TEXT:
+		return fmt.Sprintf("%v", v), nil
+	case LX.T_BOOL:
+		return truthy(v), nil
+	}
+	return nil, ErrEval
+}
+
 func evalCase(e *PS.CaseExpr, row *Row, params []interface{}) (interface{}, error) {
 	if e.Expr != nil {
 		target, err := Eval(e.Expr, row, params)
@@ -273,111 +327,134 @@ func compare(a, b interface{}) int {
 	if b == nil {
 		return 1
 	}
+	if af, aok := numericFloat(a); aok {
+		if bf, bok := numericFloat(b); bok {
+			return cmpFloat(af, bf)
+		}
+	}
 	switch v := a.(type) {
-	case int64:
-		if vb, ok := b.(int64); ok {
-			if v < vb {
-				return -1
-			}
-			if v > vb {
-				return 1
-			}
-			return 0
-		}
-	case float64:
-		if vb, ok := b.(float64); ok {
-			if v < vb {
-				return -1
-			}
-			if v > vb {
-				return 1
-			}
-			return 0
-		}
 	case string:
 		if vb, ok := b.(string); ok {
-			if v < vb {
-				return -1
-			}
-			if v > vb {
-				return 1
-			}
-			return 0
+			return cmpString(v, vb)
 		}
 	case bool:
 		if vb, ok := b.(bool); ok {
-			if v == vb {
-				return 0
-			}
-			if v {
-				return 1
-			}
-			return -1
+			return cmpBool(v, vb)
 		}
 	}
 	return 0
 }
 
-func add(a, b interface{}) (interface{}, error) {
-	switch a.(type) {
-	case int64:
-		if b, ok := b.(int64); ok {
-			return a.(int64) + b, nil
-		}
-	case float64:
-		if b, ok := b.(float64); ok {
-			return a.(float64) + b, nil
-		}
+func cmpFloat(a, b float64) int {
+	if a < b {
+		return -1
 	}
-	return nil, ErrEval
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
+func cmpString(a, b string) int {
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
+func cmpBool(a, b bool) int {
+	if a == b {
+		return 0
+	}
+	if a {
+		return 1
+	}
+	return -1
+}
+
+func add(a, b interface{}) (interface{}, error) {
+	return numericArith(a, b, '+')
 }
 
 func sub(a, b interface{}) (interface{}, error) {
-	switch a.(type) {
-	case int64:
-		if b, ok := b.(int64); ok {
-			return a.(int64) - b, nil
-		}
-	case float64:
-		if b, ok := b.(float64); ok {
-			return a.(float64) - b, nil
-		}
-	}
-	return nil, ErrEval
+	return numericArith(a, b, '-')
 }
 
 func mul(a, b interface{}) (interface{}, error) {
-	switch a.(type) {
-	case int64:
-		if b, ok := b.(int64); ok {
-			return a.(int64) * b, nil
-		}
-	case float64:
-		if b, ok := b.(float64); ok {
-			return a.(float64) * b, nil
-		}
-	}
-	return nil, ErrEval
+	return numericArith(a, b, '*')
 }
 
 func div(a, b interface{}) (interface{}, error) {
-	switch a.(type) {
-	case int64:
-		if b, ok := b.(int64); ok {
-			if b == 0 {
-				return nil, ErrEval
+	if a == nil || b == nil {
+		return nil, nil
+	}
+	if ai, ok := a.(int64); ok {
+		if bi, ok := b.(int64); ok {
+			if bi == 0 {
+				return nil, ErrDivByZero
 			}
-			return a.(int64) / b, nil
-		}
-	case float64:
-		if b, ok := b.(float64); ok {
-			if b == 0 {
-				return nil, ErrEval
-			}
-			return a.(float64) / b, nil
+			return ai / bi, nil
 		}
 	}
-	return nil, ErrEval
+	af, aok := numericFloat(a)
+	bf, bok := numericFloat(b)
+	if !aok || !bok {
+		return nil, nil
+	}
+	if bf == 0 {
+		return nil, ErrDivByZero
+	}
+	return af / bf, nil
+}
+
+func numericArith(a, b interface{}, op rune) (interface{}, error) {
+	if a == nil || b == nil {
+		return nil, nil
+	}
+	af, aok := numericFloat(a)
+	bf, bok := numericFloat(b)
+	if !aok || !bok {
+		return nil, nil
+	}
+	var r float64
+	switch op {
+	case '+':
+		r = af + bf
+	case '-':
+		r = af - bf
+	case '*':
+		r = af * bf
+	}
+	if _, aok := a.(int64); aok {
+		if _, bok := b.(int64); bok {
+			ai := int64(af)
+			bi := int64(bf)
+			var ri int64
+			switch op {
+			case '+':
+				ri = ai + bi
+			case '-':
+				ri = ai - bi
+			case '*':
+				ri = ai * bi
+			}
+			return ri, nil
+		}
+	}
+	return r, nil
+}
+
+func numericFloat(v interface{}) (float64, bool) {
+	switch x := v.(type) {
+	case int64:
+		return float64(x), true
+	case float64:
+		return x, true
+	}
+	return 0, false
 }
 
 func band(a, b interface{}) (interface{}, error) {

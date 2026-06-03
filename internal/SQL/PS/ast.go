@@ -49,6 +49,13 @@ type AliasedExpr struct {
 
 func (a *AliasedExpr) exprNode() {}
 
+type CastExpr struct {
+	Expr Expr
+	Type int
+}
+
+func (c *CastExpr) exprNode() {}
+
 type Param struct {
 	Index int
 }

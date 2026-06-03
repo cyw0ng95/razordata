@@ -33,6 +33,7 @@ const (
 	tagCase      = 24
 	tagIn        = 25
 	tagAlias     = 26
+	tagCast      = 27
 )
 
 type enc struct {
@@ -120,6 +121,10 @@ func (e *enc) writeExpr(x PS.Expr) {
 		e.buf = append(e.buf, tagAgg)
 		e.writeString(v.Name)
 		e.writeExpr(v.Arg)
+	case *PS.CastExpr:
+		e.buf = append(e.buf, tagCast)
+		e.writeExpr(v.Expr)
+		e.writeUvarint(uint64(v.Type))
 	case *PS.ListExpr:
 		e.buf = append(e.buf, tagList)
 		e.writeUvarint(uint64(len(v.Items)))

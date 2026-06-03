@@ -228,6 +228,36 @@ func collectParams(e Expr, out *[]int) {
 	}
 }
 
+func TestParseCast(t *testing.T) {
+	cases := []struct {
+		sql      string
+		wantType int
+	}{
+		{"SELECT CAST(x AS INTEGER) FROM t", int(LX.T_INT_KW)},
+		{"SELECT CAST(x AS FLOAT) FROM t", int(LX.T_FLOAT_KW)},
+		{"SELECT CAST(x AS TEXT) FROM t", int(LX.T_TEXT)},
+		{"SELECT CAST(x AS BOOLEAN) FROM t", int(LX.T_BOOL)},
+		{"SELECT CAST(x AS BIGINT) FROM t", int(LX.T_INT_KW)},
+	}
+	for _, c := range cases {
+		t.Run(c.sql, func(t *testing.T) {
+			p := NewParser(c.sql)
+			stmt, err := p.Parse()
+			if err != nil {
+				t.Fatalf("Parse() failed: %v", err)
+			}
+			sel := stmt.(*Select)
+			cast, ok := sel.Cols[0].(*CastExpr)
+			if !ok {
+				t.Fatalf("expected CastExpr, got %T", sel.Cols[0])
+			}
+			if cast.Type != c.wantType {
+				t.Errorf("got type %d, want %d", cast.Type, c.wantType)
+			}
+		})
+	}
+}
+
 func TestParseInList(t *testing.T) {
 	p := NewParser("SELECT * FROM t WHERE a IN (1, 2, 3)")
 	stmt, err := p.Parse()

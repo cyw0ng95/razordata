@@ -248,6 +248,8 @@ func exprString(e PS.Expr) string {
 		b.WriteString(exprString(expr.Arg))
 		b.WriteString(")")
 		return b.String()
+	case *PS.CastExpr:
+		return fmt.Sprintf("CAST(%s AS %s)", exprString(expr.Expr), typeName(expr.Type))
 	case *PS.ListExpr:
 		var b strings.Builder
 		b.WriteString("(")

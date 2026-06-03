@@ -113,6 +113,8 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		return expr, nil
 	case LX.T_CASE:
 		return p.parseCaseExpr()
+	case LX.T_CAST:
+		return p.parseCast()
 	}
 	return nil, fmt.Errorf("%w: unexpected token %v at line %d col %d",
 		ErrSyntax, p.current.Type, p.current.Line, p.current.Col)
@@ -701,6 +703,51 @@ func (p *Parser) parseDropTable() (*DropTable, error) {
 func parseInt(s string) int64 {
 	val, _ := LX.ParseIntLiteral(s)
 	return val
+}
+
+func (p *Parser) parseCast() (Expr, error) {
+	p.advance()
+	if err := p.expect(LX.T_LPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(LX.T_AS); err != nil {
+		return nil, err
+	}
+	p.advance()
+	typ, err := p.parseCastType()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(LX.T_RPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	return &CastExpr{Expr: expr, Type: typ}, nil
+}
+
+func (p *Parser) parseCastType() (int, error) {
+	var typ int
+	switch p.current.Type {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		typ = int(LX.T_INT_KW)
+	case LX.T_FLOAT_KW:
+		typ = int(LX.T_FLOAT_KW)
+	case LX.T_BOOL:
+		typ = int(LX.T_BOOL)
+	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+		typ = int(LX.T_TEXT)
+	case LX.T_TIMESTAMP:
+		typ = int(LX.T_TIMESTAMP)
+	default:
+		return 0, fmt.Errorf("%w: unsupported CAST type %v", ErrSyntax, p.current.Type)
+	}
+	p.advance()
+	return typ, nil
 }
 
 func (p *Parser) parseCaseExpr() (Expr, error) {
