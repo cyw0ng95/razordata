@@ -136,6 +136,33 @@ func TestPlannerEstimateCost(t *testing.T) {
 	}
 }
 
+func TestPlannerAggregate(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("t", []colInfo{{name: "x", typ: 1}}, "x")
+
+	cases := []struct {
+		name string
+		sql  string
+	}{
+		{"count_star", "SELECT COUNT(*) FROM t"},
+		{"sum_col", "SELECT SUM(x) FROM t"},
+		{"avg_col", "SELECT AVG(x) FROM t"},
+		{"min_col", "SELECT MIN(x) FROM t"},
+		{"max_col", "SELECT MAX(x) FROM t"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			plan, err := p.ParseAndPlan(c.sql)
+			if err != nil {
+				t.Fatalf("plan error: %v", err)
+			}
+			if plan == nil || plan.root == nil {
+				t.Fatal("plan nil")
+			}
+		})
+	}
+}
+
 func TestSelectIndex(t *testing.T) {
 	p := NewPlanner()
 	p.RegisterTable("t", []colInfo{{name: "a", typ: 1}, {name: "b", typ: 1}}, "a")

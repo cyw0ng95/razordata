@@ -1,0 +1,259 @@
+package EX
+
+import (
+	"context"
+	"sort"
+
+	"github.com/cyw0ng95/razordata/internal/SQL/PS"
+)
+
+type Aggregate struct {
+	child     Operator
+	groupCols []PS.Expr
+	aggs      []PS.Expr
+	buf       []Row
+	pos       int
+}
+
+func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
+	return &Aggregate{child: child, groupCols: groupCols, aggs: aggs}
+}
+
+func (a *Aggregate) Next(ctx context.Context) (Row, error) {
+	if a.buf == nil {
+		if err := a.materialize(ctx); err != nil {
+			return Row{}, err
+		}
+	}
+	if a.pos >= len(a.buf) {
+		return Row{}, ErrNoRows
+	}
+	r := a.buf[a.pos]
+	a.pos++
+	return r, nil
+}
+
+func (a *Aggregate) Close() error {
+	a.buf = nil
+	a.pos = 0
+	return a.child.Close()
+}
+
+type groupBucket struct {
+	key  []interface{}
+	rows []Row
+}
+
+func (a *Aggregate) materialize(ctx context.Context) error {
+	var groups []groupBucket
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		row, err := a.child.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return err
+		}
+		key, err := evalGroupKey(a.groupCols, &row)
+		if err != nil {
+			return err
+		}
+		idx := -1
+		for i, g := range groups {
+			if keysEqual(g.key, key) {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			groups = append(groups, groupBucket{key: key, rows: []Row{row}})
+		} else {
+			groups[idx].rows = append(groups[idx].rows, row)
+		}
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		return keysLess(groups[i].key, groups[j].key)
+	})
+	for _, g := range groups {
+		out := Row{Cols: make([]string, 0, len(a.groupCols)+len(a.aggs))}
+		for i, gc := range a.groupCols {
+			name := groupColName(gc)
+			out.Cols = append(out.Cols, name)
+			out.Data = append(out.Data, g.key[i])
+		}
+		for _, ag := range a.aggs {
+			v, err := evalAggregateOver(ag, g.rows)
+			if err != nil {
+				return err
+			}
+			name := aggregateColName(ag)
+			out.Cols = append(out.Cols, name)
+			out.Data = append(out.Data, v)
+		}
+		a.buf = append(a.buf, out)
+	}
+	return nil
+}
+
+func evalGroupKey(cols []PS.Expr, row *Row) ([]interface{}, error) {
+	if len(cols) == 0 {
+		return nil, nil
+	}
+	out := make([]interface{}, len(cols))
+	for i, c := range cols {
+		v, err := Eval(c, row, nil)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
+func keysEqual(a, b []interface{}) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !equalValue(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func keysLess(a, b []interface{}) bool {
+	for i := range a {
+		if i >= len(b) {
+			return false
+		}
+		c := compare(a[i], b[i])
+		if c < 0 {
+			return true
+		}
+		if c > 0 {
+			return false
+		}
+	}
+	return len(a) < len(b)
+}
+
+func groupColName(e PS.Expr) string {
+	switch v := e.(type) {
+	case *PS.Ident:
+		return v.Name
+	case *PS.AliasedExpr:
+		if a, ok := v.Expr.(*PS.Ident); ok {
+			return a.Name
+		}
+		return v.Alias
+	}
+	return ""
+}
+
+func aggregateColName(e PS.Expr) string {
+	if agg, ok := e.(*PS.AggregateFunc); ok {
+		if _, ok := agg.Arg.(*PS.StarExpr); ok {
+			return agg.Name + "(*)"
+		}
+		return agg.Name
+	}
+	return ""
+}
+
+func evalAggregateOver(e PS.Expr, rows []Row) (interface{}, error) {
+	agg, ok := e.(*PS.AggregateFunc)
+	if !ok {
+		return nil, nil
+	}
+	switch agg.Name {
+	case "COUNT":
+		return int64(len(rows)), nil
+	case "SUM":
+		var sumI int64
+		var sumF float64
+		var seenI, seenF bool
+		for _, r := range rows {
+			v, err := Eval(agg.Arg, &r, nil)
+			if err != nil {
+				return nil, err
+			}
+			if v == nil {
+				continue
+			}
+			if f, ok := v.(float64); ok {
+				sumF += f
+				seenF = true
+				continue
+			}
+			if i, ok := v.(int64); ok {
+				sumI += i
+				seenI = true
+			}
+		}
+		if seenF {
+			return sumF + float64(sumI), nil
+		}
+		if seenI {
+			return sumI, nil
+		}
+		return nil, nil
+	case "AVG":
+		var sumF float64
+		var n int64
+		for _, r := range rows {
+			v, err := Eval(agg.Arg, &r, nil)
+			if err != nil {
+				return nil, err
+			}
+			if v == nil {
+				continue
+			}
+			if f, ok := v.(float64); ok {
+				sumF += f
+				n++
+			} else if i, ok := v.(int64); ok {
+				sumF += float64(i)
+				n++
+			}
+		}
+		if n == 0 {
+			return nil, nil
+		}
+		return sumF / float64(n), nil
+	case "MIN":
+		var best interface{}
+		for _, r := range rows {
+			v, err := Eval(agg.Arg, &r, nil)
+			if err != nil {
+				return nil, err
+			}
+			if v == nil {
+				continue
+			}
+			if best == nil || compare(v, best) < 0 {
+				best = v
+			}
+		}
+		return best, nil
+	case "MAX":
+		var best interface{}
+		for _, r := range rows {
+			v, err := Eval(agg.Arg, &r, nil)
+			if err != nil {
+				return nil, err
+			}
+			if v == nil {
+				continue
+			}
+			if best == nil || compare(v, best) > 0 {
+				best = v
+			}
+		}
+		return best, nil
+	}
+	return nil, nil
+}

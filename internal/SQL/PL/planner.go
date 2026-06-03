@@ -132,6 +132,14 @@ func (p *Planner) planSelect(s *PS.Select) EX.Operator {
 		current = filter
 	}
 
+	aggs, groupCols, nonAggCols := splitSelectCols(s.Cols)
+	if len(aggs) > 0 || s.Distinct {
+		agg := EX.NewAggregate(current, groupCols, append([]PS.Expr(nil), s.Cols...))
+		current = agg
+		_ = aggs
+		_ = nonAggCols
+	}
+
 	if len(s.OrderBy) > 0 {
 		sort := EX.NewSort(current, s.OrderBy)
 		current = sort
@@ -146,12 +154,57 @@ func (p *Planner) planSelect(s *PS.Select) EX.Operator {
 		current = limit
 	}
 
-	if len(s.Cols) > 0 && !isStarExpr(s.Cols) {
+	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) {
 		project := EX.NewProject(current, s.Cols)
 		current = project
 	}
 
 	return current
+}
+
+func splitSelectCols(cols []PS.Expr) (aggs, groupCols, other []PS.Expr) {
+	if !hasAnyAggregate(cols) {
+		return nil, nil, cols
+	}
+	for _, c := range cols {
+		if containsAggregate(c) {
+			aggs = append(aggs, c)
+			continue
+		}
+		if _, ok := c.(*PS.StarExpr); ok {
+			continue
+		}
+		groupCols = append(groupCols, c)
+	}
+	return aggs, groupCols, nil
+}
+
+func hasAnyAggregate(cols []PS.Expr) bool {
+	for _, c := range cols {
+		if containsAggregate(c) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAggregate(e PS.Expr) bool {
+	if e == nil {
+		return false
+	}
+	switch v := e.(type) {
+	case *PS.AggregateFunc:
+		return true
+	case *PS.BinaryExpr:
+		return containsAggregate(v.Left) || containsAggregate(v.Right)
+	case *PS.UnaryExpr:
+		return containsAggregate(v.Operand)
+	case *PS.AliasedExpr:
+		return containsAggregate(v.Expr)
+	case *PS.CastExpr:
+		return containsAggregate(v.Expr)
+	}
+	return false
 }
 
 func isStarExpr(cols []PS.Expr) bool {

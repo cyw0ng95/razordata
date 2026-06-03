@@ -113,6 +113,48 @@ func TestExecutorEndToEnd(t *testing.T) {
 				{int64(31)},
 			},
 		},
+		{
+			name: "select_count_star",
+			sql:  "SELECT COUNT(*) FROM users",
+			want: [][]interface{}{
+				{int64(3)},
+			},
+		},
+		{
+			name: "select_sum_age",
+			sql:  "SELECT SUM(age) FROM users",
+			want: [][]interface{}{
+				{int64(95)},
+			},
+		},
+		{
+			name: "select_avg_age",
+			sql:  "SELECT AVG(age) FROM users",
+			want: [][]interface{}{
+				{float64(95) / float64(3)},
+			},
+		},
+		{
+			name: "select_min_age",
+			sql:  "SELECT MIN(age) FROM users",
+			want: [][]interface{}{
+				{int64(25)},
+			},
+		},
+		{
+			name: "select_max_age",
+			sql:  "SELECT MAX(age) FROM users",
+			want: [][]interface{}{
+				{int64(40)},
+			},
+		},
+		{
+			name: "select_count_with_filter",
+			sql:  "SELECT COUNT(*) FROM users WHERE age > 25",
+			want: [][]interface{}{
+				{int64(2)},
+			},
+		},
 	}
 
 	for _, c := range cases {
@@ -142,6 +184,10 @@ func buildPlan(t *testing.T, stmt PS.Stmt) Operator {
 	if sel.Where != nil {
 		current = NewFilter(current, sel.Where)
 	}
+	hasAgg := hasAggregatePublic(sel.Cols)
+	if hasAgg {
+		current = NewAggregate(current, nil, sel.Cols)
+	}
 	if len(sel.OrderBy) > 0 {
 		current = NewSort(current, sel.OrderBy)
 	}
@@ -152,10 +198,36 @@ func buildPlan(t *testing.T, stmt PS.Stmt) Operator {
 		}
 		current = NewLimit(current, n)
 	}
-	if !isStarExprPublic(sel.Cols) {
+	if !hasAgg && !isStarExprPublic(sel.Cols) {
 		current = NewProject(current, sel.Cols)
 	}
 	return current
+}
+
+func hasAggregatePublic(cols []PS.Expr) bool {
+	for _, c := range cols {
+		if walkAgg(c) {
+			return true
+		}
+	}
+	return false
+}
+
+func walkAgg(e PS.Expr) bool {
+	if e == nil {
+		return false
+	}
+	switch v := e.(type) {
+	case *PS.AggregateFunc:
+		return true
+	case *PS.BinaryExpr:
+		return walkAgg(v.Left) || walkAgg(v.Right)
+	case *PS.UnaryExpr:
+		return walkAgg(v.Operand)
+	case *PS.AliasedExpr:
+		return walkAgg(v.Expr)
+	}
+	return false
 }
 
 func isStarExprPublic(cols []PS.Expr) bool {
