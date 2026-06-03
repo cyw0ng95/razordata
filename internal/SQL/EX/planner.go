@@ -136,11 +136,20 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	}
 
 	aggs, groupCols, nonAggCols := splitSelectCols(s.Cols)
-	if len(aggs) > 0 || s.Distinct {
+	if len(aggs) > 0 {
 		agg := NewAggregate(current, groupCols, append([]PS.Expr(nil), s.Cols...))
 		current = agg
 		_ = aggs
 		_ = nonAggCols
+	}
+
+	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) {
+		project := NewProject(current, s.Cols)
+		current = project
+	}
+
+	if s.Distinct && !hasAnyAggregate(s.Cols) {
+		current = NewDistinct(current)
 	}
 
 	if len(s.OrderBy) > 0 {
@@ -155,11 +164,6 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		}
 		limit := NewLimit(current, n)
 		current = limit
-	}
-
-	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) {
-		project := NewProject(current, s.Cols)
-		current = project
 	}
 
 	return current

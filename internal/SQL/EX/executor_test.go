@@ -107,3 +107,59 @@ func TestExecutorInSubquery(t *testing.T) {
 		t.Errorf("unexpected results: %v", got)
 	}
 }
+
+func TestExecutorDistinct(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"category", "value"})
+	ctx := context.Background()
+	for _, v := range []string{
+		"INSERT INTO t VALUES ('a', 1)",
+		"INSERT INTO t VALUES ('a', 2)",
+		"INSERT INTO t VALUES ('a', 1)",
+		"INSERT INTO t VALUES ('b', 10)",
+		"INSERT INTO t VALUES ('b', 10)",
+		"INSERT INTO t VALUES ('c', 100)",
+	} {
+		if _, err := ex.Exec(ctx, v); err != nil {
+			t.Fatalf("%s: %v", v, err)
+		}
+	}
+	rows, err := ex.QueryAll(ctx, "SELECT DISTINCT category FROM t")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 distinct, got %d", len(rows))
+	}
+	rows, err = ex.QueryAll(ctx, "SELECT DISTINCT category, value FROM t")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 distinct (a,1), (a,2), (b,10), (c,100), got %d", len(rows))
+	}
+}
+
+func TestExecutorDistinctWithWhere(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"x"})
+	ctx := context.Background()
+	for _, v := range []string{
+		"INSERT INTO t VALUES (1)",
+		"INSERT INTO t VALUES (2)",
+		"INSERT INTO t VALUES (2)",
+		"INSERT INTO t VALUES (3)",
+		"INSERT INTO t VALUES (3)",
+		"INSERT INTO t VALUES (3)",
+	} {
+		ex.Exec(ctx, v)
+	}
+	rows, _ := ex.QueryAll(ctx, "SELECT DISTINCT x FROM t WHERE x > 1")
+	if len(rows) != 2 {
+		t.Errorf("expected 2 distinct (2, 3), got %d", len(rows))
+	}
+}
