@@ -6,17 +6,31 @@ import (
 
 type SeqScan struct {
 	table string
+	rows  []Row
+	pos   int
 }
 
 func NewSeqScan(table string) *SeqScan {
-	return &SeqScan{table: table}
+	s := &SeqScan{table: table}
+	tablesMu.RLock()
+	if r, ok := tables[table]; ok {
+		s.rows = r
+	}
+	tablesMu.RUnlock()
+	return s
 }
 
 func (s *SeqScan) Next(ctx context.Context) (Row, error) {
-	return Row{}, ErrNotImplemented
+	if s.pos >= len(s.rows) {
+		return Row{}, ErrNoRows
+	}
+	r := s.rows[s.pos]
+	s.pos++
+	return r, nil
 }
 
 func (s *SeqScan) Close() error {
+	s.pos = 0
 	return nil
 }
 

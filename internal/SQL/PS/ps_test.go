@@ -81,9 +81,9 @@ func TestParseSelectOrderByDesc(t *testing.T) {
 
 func TestParseTrueFalse(t *testing.T) {
 	cases := []struct {
-		sql      string
-		want     bool
-		negated  bool
+		sql     string
+		want    bool
+		negated bool
 	}{
 		{"SELECT TRUE FROM t", true, false},
 		{"SELECT FALSE FROM t", false, false},

@@ -26,6 +26,11 @@ func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 	case *PS.NullLiteral:
 		return nil, nil
 	case *PS.Ident:
+		if row != nil {
+			if v, ok := row.Lookup(e.Name); ok {
+				return v, nil
+			}
+		}
 		return e.Name, nil
 	case *PS.Param:
 		if e.Index < len(params) {
@@ -50,6 +55,8 @@ func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 		return evalAggregate(e, row, params)
 	case *PS.FunctionCall:
 		return evalFunction(e, row, params)
+	case *PS.AliasedExpr:
+		return Eval(e.Expr, row, params)
 	default:
 		return nil, ErrEval
 	}

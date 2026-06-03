@@ -17,7 +17,19 @@ type Operator interface {
 type Row struct {
 	Cols  []string
 	Types []int
-	Data  [][]byte
+	Data  []interface{}
+}
+
+func (r *Row) Lookup(name string) (interface{}, bool) {
+	for i, c := range r.Cols {
+		if c == name {
+			if i < len(r.Data) {
+				return r.Data[i], true
+			}
+			return nil, false
+		}
+	}
+	return nil, false
 }
 
 type Result struct {

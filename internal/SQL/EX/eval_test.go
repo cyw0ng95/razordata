@@ -179,53 +179,105 @@ func TestOperators(t *testing.T) {
 		t.Fatal("NewSort returned nil")
 	}
 
-	limit := NewLimit(scan, nil)
+	limit := NewLimit(scan, 0)
 	if limit == nil {
 		t.Fatal("NewLimit returned nil")
 	}
 }
 
-func TestSeqScanNotImplemented(t *testing.T) {
-	scan := NewSeqScan("t")
+func TestSeqScanEmpty(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	scan := NewSeqScan("missing")
 	_, err := scan.Next(context.Background())
-	if err != ErrNotImplemented {
-		t.Errorf("expected ErrNotImplemented, got %v", err)
+	if err != ErrNoRows {
+		t.Errorf("expected ErrNoRows for missing table, got %v", err)
 	}
 }
 
-func TestFilterNotImplemented(t *testing.T) {
+func TestFilterPassesThrough(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	RegisterTable("t", []Row{
+		{Cols: []string{"x"}, Data: []interface{}{int64(1)}},
+		{Cols: []string{"x"}, Data: []interface{}{int64(2)}},
+	})
 	scan := NewSeqScan("t")
-	filter := NewFilter(scan, nil)
-	_, err := filter.Next(context.Background())
-	if err != ErrNotImplemented {
-		t.Errorf("expected ErrNotImplemented, got %v", err)
+	filter := NewFilter(scan, &PS.NumberLiteral{Val: 1})
+	row, err := filter.Next(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if row.Data[0] != int64(1) {
+		t.Errorf("expected 1, got %v", row.Data[0])
 	}
 }
 
-func TestProjectNotImplemented(t *testing.T) {
+func TestProjectStarPassesThrough(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	RegisterTable("t", []Row{
+		{Cols: []string{"x"}, Data: []interface{}{int64(7)}},
+	})
 	scan := NewSeqScan("t")
-	project := NewProject(scan, nil)
-	_, err := project.Next(context.Background())
-	if err != ErrNotImplemented {
-		t.Errorf("expected ErrNotImplemented, got %v", err)
+	project := NewProject(scan, []PS.Expr{&PS.StarExpr{}})
+	row, err := project.Next(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if row.Data[0] != int64(7) {
+		t.Errorf("expected 7, got %v", row.Data[0])
 	}
 }
 
-func TestSortNotImplemented(t *testing.T) {
+func TestSortThenIterate(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	RegisterTable("t", []Row{
+		{Cols: []string{"x"}, Data: []interface{}{int64(3)}},
+		{Cols: []string{"x"}, Data: []interface{}{int64(1)}},
+		{Cols: []string{"x"}, Data: []interface{}{int64(2)}},
+	})
 	scan := NewSeqScan("t")
-	sort := NewSort(scan, nil)
-	_, err := sort.Next(context.Background())
-	if err != ErrNotImplemented {
-		t.Errorf("expected ErrNotImplemented, got %v", err)
+	s := NewSort(scan, []PS.OrderItem{{Expr: &PS.Ident{Name: "x"}, Desc: false}})
+	want := []int64{1, 2, 3}
+	for _, w := range want {
+		row, err := s.Next(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if row.Data[0] != w {
+			t.Errorf("expected %d, got %v", w, row.Data[0])
+		}
+	}
+	if _, err := s.Next(context.Background()); err != ErrNoRows {
+		t.Errorf("expected ErrNoRows, got %v", err)
 	}
 }
 
-func TestLimitNotImplemented(t *testing.T) {
+func TestLimitStops(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	RegisterTable("t", []Row{
+		{Cols: []string{"x"}, Data: []interface{}{int64(1)}},
+		{Cols: []string{"x"}, Data: []interface{}{int64(2)}},
+		{Cols: []string{"x"}, Data: []interface{}{int64(3)}},
+	})
 	scan := NewSeqScan("t")
-	limit := NewLimit(scan, nil)
-	_, err := limit.Next(context.Background())
-	if err != ErrNotImplemented {
-		t.Errorf("expected ErrNotImplemented, got %v", err)
+	l := NewLimit(scan, 2)
+	count := 0
+	for {
+		_, err := l.Next(context.Background())
+		if err == ErrNoRows {
+			break
+		}
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		count++
+	}
+	if count != 2 {
+		t.Errorf("expected 2 rows, got %d", count)
 	}
 }
 

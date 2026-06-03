@@ -132,19 +132,23 @@ func (p *Planner) planSelect(s *PS.Select) EX.Operator {
 		current = filter
 	}
 
-	if len(s.Cols) > 0 && !isStarExpr(s.Cols) {
-		project := EX.NewProject(current, s.Cols)
-		current = project
-	}
-
 	if len(s.OrderBy) > 0 {
 		sort := EX.NewSort(current, s.OrderBy)
 		current = sort
 	}
 
 	if s.Limit != nil {
-		limit := EX.NewLimit(current, s.Limit)
+		n, ok := limitInt64(s.Limit)
+		if !ok {
+			return nil
+		}
+		limit := EX.NewLimit(current, n)
 		current = limit
+	}
+
+	if len(s.Cols) > 0 && !isStarExpr(s.Cols) {
+		project := EX.NewProject(current, s.Cols)
+		current = project
 	}
 
 	return current
@@ -156,6 +160,19 @@ func isStarExpr(cols []PS.Expr) bool {
 	}
 	_, ok := cols[0].(*PS.StarExpr)
 	return ok
+}
+
+func limitInt64(e PS.Expr) (int64, bool) {
+	switch v := e.(type) {
+	case *PS.NumberLiteral:
+		if v.Val < 0 {
+			return 0, false
+		}
+		return v.Val, true
+	case *PS.Param:
+		_ = v
+	}
+	return 0, false
 }
 
 func (p *Planner) planInsert(s *PS.Insert) EX.Operator {
