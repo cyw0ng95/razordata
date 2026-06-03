@@ -126,6 +126,10 @@ func (l *Lexer) Peek() Token {
 	return token
 }
 
+func (l *Lexer) Input() string {
+	return l.input
+}
+
 func (l *Lexer) advance() byte {
 	if l.pos >= len(l.input) {
 		return 0

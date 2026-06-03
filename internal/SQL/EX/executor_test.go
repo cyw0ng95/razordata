@@ -73,3 +73,37 @@ func TestExecutorQueryCols(t *testing.T) {
 		t.Errorf("expected cols [a b], got %v", rs.Cols)
 	}
 }
+
+func TestExecutorInSubquery(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("users", []string{"id", "name", "age"})
+	ex.RegisterTable("orders", []string{"user_id"})
+	ctx := context.Background()
+	for _, v := range []string{
+		"INSERT INTO users VALUES (1, 'alice', 30)",
+		"INSERT INTO users VALUES (2, 'bob', 25)",
+		"INSERT INTO users VALUES (3, 'carol', 40)",
+		"INSERT INTO orders VALUES (1)",
+		"INSERT INTO orders VALUES (3)",
+	} {
+		if _, err := ex.Exec(ctx, v); err != nil {
+			t.Fatalf("%s: %v", v, err)
+		}
+	}
+	rows, err := ex.QueryAll(ctx, "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders)")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+	got := map[string]bool{}
+	for _, r := range rows {
+		got[r.Data[0].(string)] = true
+	}
+	if !got["alice"] || !got["carol"] || got["bob"] {
+		t.Errorf("unexpected results: %v", got)
+	}
+}

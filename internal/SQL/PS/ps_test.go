@@ -1,6 +1,8 @@
 package PS
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
@@ -228,6 +230,37 @@ func collectParams(e Expr, out *[]int) {
 	}
 }
 
+func TestParseSyntaxErrorMessage(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+		want string
+	}{
+		{"missing_from", "SELECT *", "expected FROM"},
+		{"bad_keyword", "SELECT * FROB t", "expected FROM"},
+		{"unterminated_at_eof", "SELECT", "got EOF"},
+		{"missing_rparen", "SELECT COUNT( FROM t", "got FROM"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := NewParser(c.sql)
+			_, err := p.Parse()
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !errors.Is(err, ErrSyntax) {
+				t.Errorf("expected ErrSyntax, got %v", err)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error message missing %q: %s", c.want, err.Error())
+			}
+			if !strings.Contains(err.Error(), "^") {
+				t.Errorf("error message missing caret: %s", err.Error())
+			}
+		})
+	}
+}
+
 func TestParseCast(t *testing.T) {
 	cases := []struct {
 		sql      string
@@ -271,6 +304,29 @@ func TestParseInList(t *testing.T) {
 	}
 	if len(in.List) != 3 {
 		t.Errorf("expected 3 items, got %d", len(in.List))
+	}
+}
+
+func TestParseInSubquery(t *testing.T) {
+	p := NewParser("SELECT * FROM t WHERE id IN (SELECT id FROM users WHERE age > 30)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sel := stmt.(*Select)
+	in, ok := sel.Where.(*InExpr)
+	if !ok {
+		t.Fatalf("expected InExpr, got %T", sel.Where)
+	}
+	if in.Subquery == nil {
+		t.Fatal("expected Subquery to be set")
+	}
+	sub, ok := in.Subquery.(*Select)
+	if !ok {
+		t.Fatalf("expected subquery *Select, got %T", in.Subquery)
+	}
+	if sub.From != "users" {
+		t.Errorf("expected subquery from 'users', got %q", sub.From)
 	}
 }
 

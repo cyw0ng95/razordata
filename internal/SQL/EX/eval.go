@@ -1,6 +1,7 @@
 package EX
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 var ErrEval = errors.New("ex: eval error")
 var ErrDivByZero = errors.New("ex: division by zero")
 var ErrTypeMismatch = errors.New("ex: type mismatch")
+var ErrSubquery = errors.New("ex: subquery not supported here")
 
 func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 	if expr == nil {
@@ -159,12 +161,47 @@ func evalIn(e *PS.InExpr, row *Row, params []interface{}) (interface{}, error) {
 	if target == nil {
 		return false, nil
 	}
+	if e.Subquery != nil {
+		return evalInSubquery(target, e.Subquery, row, params)
+	}
 	for _, item := range e.List {
 		v, err := Eval(item, row, params)
 		if err != nil {
 			return nil, err
 		}
 		if equalValue(target, v) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func evalInSubquery(target interface{}, subq PS.Stmt, outer *Row, params []interface{}) (interface{}, error) {
+	sel, ok := subq.(*PS.Select)
+	if !ok {
+		return nil, ErrSubquery
+	}
+	p := NewPlanner()
+	pl, err := p.Plan(sel)
+	if err != nil {
+		return nil, err
+	}
+	if pl == nil || pl.root == nil {
+		return nil, ErrSubquery
+	}
+	defer pl.root.Close()
+	for {
+		row, err := pl.root.Next(context.Background())
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return nil, err
+		}
+		if len(row.Cols) == 0 {
+			continue
+		}
+		if equalValue(target, row.Data[0]) {
 			return true, nil
 		}
 	}
