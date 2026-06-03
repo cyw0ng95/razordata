@@ -1,15 +1,14 @@
-package PL
+package EX
 
 import (
 	"fmt"
 	"sync"
 
-	"github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
 type plan struct {
-	root    EX.Operator
+	root    Operator
 	params  []string
 	cost    float64
 	memoKey string
@@ -23,14 +22,9 @@ type Planner struct {
 
 type tableInfo struct {
 	name    string
-	cols    []colInfo
+	cols    []ColInfo
 	pk      string
 	indexes map[string][]string
-}
-
-type colInfo struct {
-	name string
-	typ  int
 }
 
 func NewPlanner() *Planner {
@@ -40,7 +34,7 @@ func NewPlanner() *Planner {
 	}
 }
 
-func (p *Planner) RegisterTable(name string, cols []colInfo, pk string) {
+func (p *Planner) RegisterTable(name string, cols []ColInfo, pk string) {
 	p.catalog[name] = &tableInfo{
 		name:    name,
 		cols:    cols,
@@ -64,7 +58,7 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 	}
 	p.mu.Unlock()
 
-	var root EX.Operator
+	var root Operator
 
 	switch s := stmt.(type) {
 	case *PS.Select:
@@ -100,7 +94,7 @@ func (p *Planner) memoize(key string, plan *plan) {
 	p.memo[key] = plan
 }
 
-func (p *Planner) estimateCost(op EX.Operator) float64 {
+func (p *Planner) estimateCost(op Operator) float64 {
 	if op == nil {
 		return 0
 	}
@@ -122,26 +116,26 @@ func (p *Planner) selectIndex(table, col string) (string, bool) {
 	return "", false
 }
 
-func (p *Planner) planSelect(s *PS.Select) EX.Operator {
-	scan := EX.NewSeqScan(s.From)
+func (p *Planner) planSelect(s *PS.Select) Operator {
+	scan := NewSeqScan(s.From)
 
-	var current EX.Operator = scan
+	var current Operator = scan
 
 	if s.Where != nil {
-		filter := EX.NewFilter(scan, s.Where)
+		filter := NewFilter(scan, s.Where)
 		current = filter
 	}
 
 	aggs, groupCols, nonAggCols := splitSelectCols(s.Cols)
 	if len(aggs) > 0 || s.Distinct {
-		agg := EX.NewAggregate(current, groupCols, append([]PS.Expr(nil), s.Cols...))
+		agg := NewAggregate(current, groupCols, append([]PS.Expr(nil), s.Cols...))
 		current = agg
 		_ = aggs
 		_ = nonAggCols
 	}
 
 	if len(s.OrderBy) > 0 {
-		sort := EX.NewSort(current, s.OrderBy)
+		sort := NewSort(current, s.OrderBy)
 		current = sort
 	}
 
@@ -150,12 +144,12 @@ func (p *Planner) planSelect(s *PS.Select) EX.Operator {
 		if !ok {
 			return nil
 		}
-		limit := EX.NewLimit(current, n)
+		limit := NewLimit(current, n)
 		current = limit
 	}
 
 	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) {
-		project := EX.NewProject(current, s.Cols)
+		project := NewProject(current, s.Cols)
 		current = project
 	}
 
@@ -228,26 +222,26 @@ func limitInt64(e PS.Expr) (int64, bool) {
 	return 0, false
 }
 
-func (p *Planner) planInsert(s *PS.Insert) EX.Operator {
-	return EX.NewInsert(s.Table, s.Cols, s.Values)
+func (p *Planner) planInsert(s *PS.Insert) Operator {
+	return NewInsert(s.Table, s.Cols, s.Values)
 }
 
-func (p *Planner) planUpdate(s *PS.Update) EX.Operator {
-	scan := EX.NewSeqScan(s.Table)
-	return EX.NewUpdate(s.Table, s.Set, s.Where, scan)
+func (p *Planner) planUpdate(s *PS.Update) Operator {
+	scan := NewSeqScan(s.Table)
+	return NewUpdate(s.Table, s.Set, s.Where, scan)
 }
 
-func (p *Planner) planDelete(s *PS.Delete) EX.Operator {
-	scan := EX.NewSeqScan(s.Table)
-	return EX.NewDelete(s.Table, s.Where, scan)
+func (p *Planner) planDelete(s *PS.Delete) Operator {
+	scan := NewSeqScan(s.Table)
+	return NewDelete(s.Table, s.Where, scan)
 }
 
-func (p *Planner) planCreateTable(s *PS.CreateTable) EX.Operator {
-	return EX.NewCreateTable(s)
+func (p *Planner) planCreateTable(s *PS.CreateTable) Operator {
+	return NewCreateTable(s)
 }
 
-func (p *Planner) planDropTable(s *PS.DropTable) EX.Operator {
-	return EX.NewDropTable(s)
+func (p *Planner) planDropTable(s *PS.DropTable) Operator {
+	return NewDropTable(s)
 }
 
 func (p *Planner) ParseAndPlan(sql string) (*plan, error) {

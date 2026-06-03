@@ -1,4 +1,4 @@
-package PL
+package EX
 
 import (
 	"testing"
@@ -6,7 +6,7 @@ import (
 
 func TestPlannerPlan(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []colInfo{{name: "a", typ: 1}, {name: "b", typ: 1}}, "a")
+	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 
 	cases := []struct {
 		name string
@@ -42,7 +42,7 @@ func TestPlannerPlan(t *testing.T) {
 
 func TestPlannerMemoization(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []colInfo{{name: "a", typ: 1}}, "a")
+	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
 
 	sql := "SELECT * FROM t"
 	plan1, err := p.ParseAndPlan(sql)
@@ -62,7 +62,7 @@ func TestPlannerMemoization(t *testing.T) {
 
 func TestPlannerMemoizationDistinctAST(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []colInfo{{name: "a", typ: 1}}, "a")
+	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
 
 	cases := []struct {
 		name string
@@ -98,7 +98,7 @@ func TestPlannerMemoizationDistinctAST(t *testing.T) {
 
 func TestPlannerMemoizationSameAST(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []colInfo{{name: "a", typ: 1}}, "a")
+	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
 
 	cases := []struct {
 		name string
@@ -138,7 +138,7 @@ func TestPlannerEstimateCost(t *testing.T) {
 
 func TestPlannerAggregate(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []colInfo{{name: "x", typ: 1}}, "x")
+	p.RegisterTable("t", []ColInfo{{Name: "x", Typ: 1}}, "x")
 
 	cases := []struct {
 		name string
@@ -165,7 +165,7 @@ func TestPlannerAggregate(t *testing.T) {
 
 func TestSelectIndex(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []colInfo{{name: "a", typ: 1}, {name: "b", typ: 1}}, "a")
+	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 	p.RegisterIndex("t", "idx_b", []string{"b"})
 
 	idx, ok := p.selectIndex("t", "b")

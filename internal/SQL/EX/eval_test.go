@@ -353,28 +353,103 @@ func TestLimitStops(t *testing.T) {
 	}
 }
 
-func TestInsertNotImplemented(t *testing.T) {
-	insert := NewInsert("t", nil, nil)
+func TestInsertAppendsRows(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	RegisterTable("t", []Row{{Cols: []string{"a"}, Data: []interface{}{int64(0)}}})
+	insert := NewInsert("t", nil, [][]PS.Expr{
+		{&PS.NumberLiteral{Val: 1}},
+		{&PS.NumberLiteral{Val: 2}},
+	})
 	_, err := insert.Next(context.Background())
-	if err != ErrNotImplemented {
-		t.Errorf("expected ErrNotImplemented, got %v", err)
+	if err != ErrNoRows {
+		t.Errorf("expected ErrNoRows, got %v", err)
+	}
+	if insert.RowsAffected() != 2 {
+		t.Errorf("expected 2 rows affected, got %d", insert.RowsAffected())
+	}
+	tablesMu.RLock()
+	defer tablesMu.RUnlock()
+	if len(tables["t"]) != 3 {
+		t.Errorf("expected 3 rows in table (1 seed + 2 inserts), got %d", len(tables["t"]))
 	}
 }
 
-func TestUpdateNotImplemented(t *testing.T) {
+func TestUpdateModifiesRows(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	RegisterTable("t", []Row{
+		{Cols: []string{"a", "b"}, Data: []interface{}{int64(1), "x"}},
+		{Cols: []string{"a", "b"}, Data: []interface{}{int64(2), "y"}},
+	})
 	scan := NewSeqScan("t")
-	update := NewUpdate("t", nil, nil, scan)
+	update := NewUpdate("t", []PS.Pair{{Col: "b", Val: &PS.StringLiteral{Val: "z"}}}, nil, scan)
 	_, err := update.Next(context.Background())
-	if err != ErrNotImplemented {
-		t.Errorf("expected ErrNotImplemented, got %v", err)
+	if err != ErrNoRows {
+		t.Errorf("expected ErrNoRows, got %v", err)
+	}
+	if update.RowsAffected() != 2 {
+		t.Errorf("expected 2 rows affected, got %d", update.RowsAffected())
+	}
+	tablesMu.RLock()
+	defer tablesMu.RUnlock()
+	for _, r := range tables["t"] {
+		if r.Data[1] != "z" {
+			t.Errorf("expected b='z', got %v", r.Data[1])
+		}
 	}
 }
 
-func TestDeleteNotImplemented(t *testing.T) {
+func TestDeleteRemovesMatching(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	RegisterTable("t", []Row{
+		{Cols: []string{"a"}, Data: []interface{}{int64(1)}},
+		{Cols: []string{"a"}, Data: []interface{}{int64(2)}},
+		{Cols: []string{"a"}, Data: []interface{}{int64(3)}},
+	})
 	scan := NewSeqScan("t")
-	delete := NewDelete("t", nil, scan)
-	_, err := delete.Next(context.Background())
-	if err != ErrNotImplemented {
-		t.Errorf("expected ErrNotImplemented, got %v", err)
+	del := NewDelete("t", &PS.BinaryExpr{
+		Op: int(LX.T_GT), Left: &PS.Ident{Name: "a"}, Right: &PS.NumberLiteral{Val: 1},
+	}, scan)
+	_, err := del.Next(context.Background())
+	if err != ErrNoRows {
+		t.Errorf("expected ErrNoRows, got %v", err)
 	}
+	if del.RowsAffected() != 2 {
+		t.Errorf("expected 2 rows affected, got %d", del.RowsAffected())
+	}
+	tablesMu.RLock()
+	defer tablesMu.RUnlock()
+	if len(tables["t"]) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(tables["t"]))
+	}
+	if tables["t"][0].Data[0] != int64(1) {
+		t.Errorf("expected row 1 to remain, got %v", tables["t"][0].Data[0])
+	}
+}
+
+func TestCreateAndDropTable(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ct := NewCreateTable(&PS.CreateTable{Name: "new", Cols: []PS.ColDef{{Name: "a", Type: int(LX.T_INT_KW)}}})
+	_, err := ct.Next(context.Background())
+	if err != ErrNoRows {
+		t.Errorf("expected ErrNoRows, got %v", err)
+	}
+	tablesMu.RLock()
+	if _, ok := tables["new"]; !ok {
+		t.Error("expected table to be created")
+	}
+	tablesMu.RUnlock()
+	dt := NewDropTable(&PS.DropTable{Name: "new"})
+	_, err = dt.Next(context.Background())
+	if err != ErrNoRows {
+		t.Errorf("expected ErrNoRows, got %v", err)
+	}
+	tablesMu.RLock()
+	if _, ok := tables["new"]; ok {
+		t.Error("expected table to be dropped")
+	}
+	tablesMu.RUnlock()
 }
