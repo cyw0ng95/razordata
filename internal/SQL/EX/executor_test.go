@@ -383,3 +383,94 @@ func TestExecutorCrossJoin(t *testing.T) {
 		t.Errorf("expected 4 (2x2) rows, got %d", len(rows))
 	}
 }
+
+func TestExecutorGroupBy(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("orders", []string{"category", "amount"})
+	ctx := context.Background()
+	for _, v := range []string{
+		"INSERT INTO orders VALUES ('a', 10)",
+		"INSERT INTO orders VALUES ('a', 20)",
+		"INSERT INTO orders VALUES ('b', 5)",
+		"INSERT INTO orders VALUES ('b', 15)",
+		"INSERT INTO orders VALUES ('c', 100)",
+	} {
+		ex.Exec(ctx, v)
+	}
+	rows, err := ex.QueryAll(ctx, "SELECT category, SUM(amount) FROM orders GROUP BY category ORDER BY category")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 groups, got %d", len(rows))
+	}
+	want := map[string]int64{"a": 30, "b": 20, "c": 100}
+	for _, r := range rows {
+		cat := r.Data[0].(string)
+		sum := r.Data[1].(int64)
+		if want[cat] != sum {
+			t.Errorf("category %s: got %d, want %d", cat, sum, want[cat])
+		}
+	}
+}
+
+func TestExecutorHaving(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("orders", []string{"category", "amount"})
+	ctx := context.Background()
+	for _, v := range []string{
+		"INSERT INTO orders VALUES ('a', 10)",
+		"INSERT INTO orders VALUES ('a', 20)",
+		"INSERT INTO orders VALUES ('b', 5)",
+		"INSERT INTO orders VALUES ('b', 15)",
+		"INSERT INTO orders VALUES ('c', 100)",
+	} {
+		ex.Exec(ctx, v)
+	}
+	rows, err := ex.QueryAll(ctx, "SELECT category, SUM(amount) FROM orders GROUP BY category HAVING SUM(amount) > 25 ORDER BY category")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 groups (>25), got %d", len(rows))
+	}
+	seen := map[string]bool{}
+	for _, r := range rows {
+		seen[r.Data[0].(string)] = true
+	}
+	if !seen["a"] || !seen["c"] || seen["b"] {
+		t.Errorf("unexpected: %v", seen)
+	}
+}
+
+func TestExecutorGroupByCount(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"k"})
+	ctx := context.Background()
+	for _, v := range []string{
+		"INSERT INTO t VALUES ('a')",
+		"INSERT INTO t VALUES ('a')",
+		"INSERT INTO t VALUES ('a')",
+		"INSERT INTO t VALUES ('b')",
+		"INSERT INTO t VALUES ('b')",
+		"INSERT INTO t VALUES ('c')",
+	} {
+		ex.Exec(ctx, v)
+	}
+	rows, _ := ex.QueryAll(ctx, "SELECT k, COUNT(*) FROM t GROUP BY k ORDER BY k")
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 groups, got %d", len(rows))
+	}
+	want := map[string]int64{"a": 3, "b": 2, "c": 1}
+	for _, r := range rows {
+		if want[r.Data[0].(string)] != r.Data[1].(int64) {
+			t.Errorf("%s: got %d, want %d", r.Data[0], r.Data[1], want[r.Data[0].(string)])
+		}
+	}
+}

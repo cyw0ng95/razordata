@@ -531,6 +531,36 @@ func (p *Parser) parseSelect() (*Select, error) {
 		where = w
 	}
 
+	var groupBy []Expr
+	if p.current.Type == LX.T_GROUP {
+		p.advance()
+		if err := p.expect(LX.T_BY); err != nil {
+			return nil, err
+		}
+		p.advance()
+		for {
+			expr, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			groupBy = append(groupBy, expr)
+			if p.current.Type != LX.T_COMMA {
+				break
+			}
+			p.advance()
+		}
+	}
+
+	var having Expr
+	if p.current.Type == LX.T_HAVING {
+		p.advance()
+		h, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		having = h
+	}
+
 	var orderBy []OrderItem
 	if p.current.Type == LX.T_ORDER {
 		p.advance()
@@ -584,6 +614,8 @@ func (p *Parser) parseSelect() (*Select, error) {
 		FromAlias: fromAlias,
 		Joins:     joins,
 		Where:     where,
+		GroupBy:   groupBy,
+		Having:    having,
 		OrderBy:   orderBy,
 		Limit:     limit,
 		Offset:    offset,

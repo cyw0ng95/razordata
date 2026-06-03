@@ -158,12 +158,22 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		}
 	}
 
-	aggs, groupCols, nonAggCols := splitSelectCols(s.Cols)
-	if len(aggs) > 0 {
-		agg := NewAggregate(current, groupCols, append([]PS.Expr(nil), s.Cols...))
+	needsAggregate := hasAnyAggregate(s.Cols) || len(s.GroupBy) > 0
+	groupCols := s.GroupBy
+	var aggExprs []PS.Expr
+	if needsAggregate {
+		aggsOnly, autoGroup, _ := splitSelectCols(s.Cols)
+		aggExprs = aggsOnly
+		if len(groupCols) == 0 {
+			groupCols = autoGroup
+		}
+		agg := NewAggregate(current, groupCols, aggExprs)
 		current = agg
-		_ = aggs
-		_ = nonAggCols
+	}
+
+	if s.Having != nil {
+		filter := NewFilter(current, s.Having)
+		current = filter
 	}
 
 	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) {

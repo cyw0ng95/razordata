@@ -361,6 +361,14 @@ func truthy(v interface{}) bool {
 }
 
 func evalAggregate(e *PS.AggregateFunc, row *Row, params []interface{}) (interface{}, error) {
+	if row != nil {
+		if ident, ok := e.Arg.(*PS.Ident); ok {
+			name := e.Name + "(" + ident.Name + ")"
+			if v, found := row.Lookup(name); found {
+				return v, nil
+			}
+		}
+	}
 	switch e.Name {
 	case "COUNT":
 		return int64(0), nil

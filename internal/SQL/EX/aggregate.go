@@ -155,13 +155,17 @@ func groupColName(e PS.Expr) string {
 }
 
 func aggregateColName(e PS.Expr) string {
-	if agg, ok := e.(*PS.AggregateFunc); ok {
-		if _, ok := agg.Arg.(*PS.StarExpr); ok {
-			return agg.Name + "(*)"
-		}
-		return agg.Name
+	agg, ok := e.(*PS.AggregateFunc)
+	if !ok {
+		return ""
 	}
-	return ""
+	if _, ok := agg.Arg.(*PS.StarExpr); ok {
+		return agg.Name + "(*)"
+	}
+	if ident, ok := agg.Arg.(*PS.Ident); ok {
+		return agg.Name + "(" + ident.Name + ")"
+	}
+	return agg.Name
 }
 
 func evalAggregateOver(e PS.Expr, rows []Row) (interface{}, error) {
