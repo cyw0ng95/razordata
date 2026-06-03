@@ -32,6 +32,7 @@ const (
 	tagBetween   = 23
 	tagCase      = 24
 	tagIn        = 25
+	tagAlias     = 26
 )
 
 type enc struct {
@@ -90,6 +91,9 @@ func (e *enc) writeExpr(x PS.Expr) {
 	case *PS.Ident:
 		e.buf = append(e.buf, tagIdent)
 		e.writeString(v.Name)
+	case *PS.AliasedExpr:
+		e.buf = append(e.buf, tagAlias)
+		e.writeExpr(v.Expr)
 		e.writeString(v.Alias)
 	case *PS.Param:
 		e.buf = append(e.buf, tagParam)

@@ -79,6 +79,111 @@ func TestParseSelectOrderByDesc(t *testing.T) {
 	}
 }
 
+func TestParseTrueFalse(t *testing.T) {
+	cases := []struct {
+		sql      string
+		want     bool
+		negated  bool
+	}{
+		{"SELECT TRUE FROM t", true, false},
+		{"SELECT FALSE FROM t", false, false},
+		{"SELECT NOT TRUE FROM t", true, true},
+		{"SELECT NOT FALSE FROM t", false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.sql, func(t *testing.T) {
+			p := NewParser(c.sql)
+			stmt, err := p.Parse()
+			if err != nil {
+				t.Fatalf("Parse() failed: %v", err)
+			}
+			sel := stmt.(*Select)
+			var u *UnaryExpr
+			var b *BoolLiteral
+			if u, _ = sel.Cols[0].(*UnaryExpr); u != nil {
+				b, _ = u.Operand.(*BoolLiteral)
+			} else {
+				b, _ = sel.Cols[0].(*BoolLiteral)
+			}
+			if b == nil {
+				t.Fatalf("expected BoolLiteral under Cols[0], got %T", sel.Cols[0])
+			}
+			hasNot := u != nil
+			if hasNot != c.negated {
+				t.Errorf("NOT wrapper mismatch: negated=%v got=%v", c.negated, hasNot)
+			}
+			if b.Val != c.want {
+				t.Errorf("got %v, want %v", b.Val, c.want)
+			}
+		})
+	}
+}
+
+func TestParseSelectAliasNonIdent(t *testing.T) {
+	p := NewParser("SELECT a + 1 AS x FROM t")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sel := stmt.(*Select)
+	a, ok := sel.Cols[0].(*AliasedExpr)
+	if !ok {
+		t.Fatalf("expected AliasedExpr, got %T", sel.Cols[0])
+	}
+	if a.Alias != "x" {
+		t.Errorf("expected alias x, got %q", a.Alias)
+	}
+	if _, ok := a.Expr.(*BinaryExpr); !ok {
+		t.Errorf("expected wrapped BinaryExpr, got %T", a.Expr)
+	}
+}
+
+func TestParseSelectAliasRejectsKeyword(t *testing.T) {
+	p := NewParser("SELECT 1 AS 5 FROM t")
+	if _, err := p.Parse(); err == nil {
+		t.Error("expected error for numeric alias, got nil")
+	}
+}
+
+func TestParseBetweenRequiresAnd(t *testing.T) {
+	p := NewParser("SELECT * FROM t WHERE a BETWEEN 1 AND 10")
+	if _, err := p.Parse(); err != nil {
+		t.Errorf("expected parse ok, got %v", err)
+	}
+}
+
+func TestParseBetweenWithExpression(t *testing.T) {
+	p := NewParser("SELECT * FROM t WHERE a BETWEEN 1 + 1 AND 10 * 2")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sel := stmt.(*Select)
+	b, ok := sel.Where.(*BetweenExpr)
+	if !ok {
+		t.Fatalf("expected BetweenExpr, got %T", sel.Where)
+	}
+	if _, ok := b.Low.(*BinaryExpr); !ok {
+		t.Errorf("expected BinaryExpr in Low, got %T", b.Low)
+	}
+}
+
+func TestParseInList(t *testing.T) {
+	p := NewParser("SELECT * FROM t WHERE a IN (1, 2, 3)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sel := stmt.(*Select)
+	in, ok := sel.Where.(*InExpr)
+	if !ok {
+		t.Fatalf("expected InExpr, got %T", sel.Where)
+	}
+	if len(in.List) != 3 {
+		t.Errorf("expected 3 items, got %d", len(in.List))
+	}
+}
+
 func TestParseSelectOrderByMultiKey(t *testing.T) {
 	p := NewParser("SELECT * FROM t ORDER BY a, b DESC")
 	stmt, err := p.Parse()

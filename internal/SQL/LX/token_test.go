@@ -113,6 +113,8 @@ func TestTokenTypesExist(t *testing.T) {
 		T_END,
 		T_CAST,
 		T_EXISTS,
+		T_TRUE,
+		T_FALSE,
 	}
 
 	for i, typ := range types {
@@ -135,9 +137,9 @@ func TestTokenIsEOF(t *testing.T) {
 }
 
 func TestTokenIsError(t *testing.T) {
-	errToken := Token{Type: T_EOF, Lexeme: "ERROR"}
+	errToken := Token{Type: T_ERROR}
 	if !errToken.IsError() {
-		t.Error("expected IsError() to return true for Lexeme='ERROR'")
+		t.Error("expected IsError() to return true for T_ERROR")
 	}
 
 	normal := Token{Type: T_IDENT, Lexeme: "foo"}

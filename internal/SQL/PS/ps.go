@@ -54,6 +54,12 @@ func (p *Parser) parsePrimary() (Expr, error) {
 	case LX.T_NULL:
 		p.advance()
 		return &NullLiteral{}, nil
+	case LX.T_TRUE:
+		p.advance()
+		return &BoolLiteral{Val: true}, nil
+	case LX.T_FALSE:
+		p.advance()
+		return &BoolLiteral{Val: false}, nil
 	case LX.T_BIND:
 		p.advance()
 		return &Param{Index: 0}, nil
@@ -76,7 +82,11 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			arg = &StarExpr{}
 			p.advance()
 		} else {
-			arg, _ = p.parseExpr()
+			a, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			arg = a
 		}
 		if err := p.expect(LX.T_RPAREN); err != nil {
 			return nil, err
@@ -130,7 +140,7 @@ func (p *Parser) parsePostfix() (Expr, error) {
 
 func (p *Parser) parseBetween(expr Expr) (Expr, error) {
 	p.advance()
-	low, err := p.parseExpr()
+	low, err := p.parseBinary(3)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +148,7 @@ func (p *Parser) parseBetween(expr Expr) (Expr, error) {
 		return nil, err
 	}
 	p.advance()
-	high, err := p.parseExpr()
+	high, err := p.parseBinary(3)
 	if err != nil {
 		return nil, err
 	}
@@ -264,13 +274,11 @@ func (p *Parser) parseSelect() (*Select, error) {
 			}
 			if p.current.Type == LX.T_AS {
 				p.advance()
-				if p.current.Type == LX.T_IDENT || p.current.Type == LX.T_MINUS || p.current.Type == LX.T_PLUS {
-					switch e := expr.(type) {
-					case *Ident:
-						e.Alias = p.current.Lexeme
-					}
-					p.advance()
+				if err := p.expect(LX.T_IDENT); err != nil {
+					return nil, err
 				}
+				expr = &AliasedExpr{Expr: expr, Alias: p.current.Lexeme}
+				p.advance()
 			}
 			cols = append(cols, expr)
 			if p.current.Type != LX.T_COMMA {
@@ -304,7 +312,11 @@ func (p *Parser) parseSelect() (*Select, error) {
 	var where Expr
 	if p.current.Type == LX.T_WHERE {
 		p.advance()
-		where, _ = p.parseExpr()
+		w, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		where = w
 	}
 
 	var orderBy []OrderItem
@@ -337,13 +349,21 @@ func (p *Parser) parseSelect() (*Select, error) {
 	var limit Expr
 	if p.current.Type == LX.T_LIMIT {
 		p.advance()
-		limit, _ = p.parseExpr()
+		l, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		limit = l
 	}
 
 	var offset Expr
 	if p.current.Type == LX.T_OFFSET {
 		p.advance()
-		offset, _ = p.parseExpr()
+		o, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		offset = o
 	}
 
 	return &Select{
@@ -475,7 +495,11 @@ func (p *Parser) parseUpdate() (*Update, error) {
 	var where Expr
 	if p.current.Type == LX.T_WHERE {
 		p.advance()
-		where, _ = p.parseExpr()
+		w, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		where = w
 	}
 
 	return &Update{Table: table, Set: set, Where: where}, nil
@@ -498,7 +522,11 @@ func (p *Parser) parseDelete() (*Delete, error) {
 	var where Expr
 	if p.current.Type == LX.T_WHERE {
 		p.advance()
-		where, _ = p.parseExpr()
+		w, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		where = w
 	}
 
 	return &Delete{Table: table, Where: where}, nil
@@ -574,7 +602,11 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 				}
 			case LX.T_DEFAULT:
 				p.advance()
-				col.Default, _ = p.parseExpr()
+				d, err := p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				col.Default = d
 			case LX.T_UNIQUE:
 				col.Unique = true
 				p.advance()
@@ -671,7 +703,11 @@ func (p *Parser) parseCaseExpr() (Expr, error) {
 	var elseExpr Expr
 
 	if p.current.Type != LX.T_WHEN {
-		expr, _ = p.parseExpr()
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		expr = e
 	}
 
 	for p.current.Type == LX.T_WHEN {

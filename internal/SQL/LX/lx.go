@@ -82,6 +82,8 @@ var keywords = map[string]TokenType{
 	"END":       T_END,
 	"CAST":      T_CAST,
 	"EXISTS":    T_EXISTS,
+	"TRUE":      T_TRUE,
+	"FALSE":     T_FALSE,
 }
 
 type Lexer struct {
@@ -214,7 +216,7 @@ func (l *Lexer) scanString() Token {
 	for {
 		c := l.peek()
 		if c == 0 {
-			return Token{Type: T_EOF, Lexeme: "ERROR", Literal: ErrUnterminatedString, Line: startLine, Col: startCol}
+			return Token{Type: T_ERROR, Lexeme: "", Literal: ErrUnterminatedString, Line: startLine, Col: startCol}
 		}
 		if c == '\'' {
 			if len(l.input) > l.pos+1 && l.input[l.pos+1] == '\'' {
@@ -281,7 +283,7 @@ func (l *Lexer) scanNumber() Token {
 
 	val, err := parseInt64(lit)
 	if err != nil {
-		return Token{Type: T_EOF, Lexeme: "ERROR", Literal: err, Line: startLine, Col: startCol}
+		return Token{Type: T_ERROR, Lexeme: "", Literal: err, Line: startLine, Col: startCol}
 	}
 	return Token{Type: T_INT, Lexeme: lit, Literal: val, Line: startLine, Col: startCol}
 }
@@ -322,7 +324,7 @@ func (l *Lexer) scanOperator() Token {
 			l.advance()
 			return Token{Type: T_NE, Lexeme: "!=", Line: startLine, Col: startCol}
 		}
-		return Token{Type: T_EOF, Lexeme: "ERROR", Literal: ErrUnexpectedChar, Line: startLine, Col: startCol}
+		return Token{Type: T_ERROR, Lexeme: "", Literal: ErrUnexpectedChar, Line: startLine, Col: startCol}
 	case '<':
 		if l.peek() == '=' {
 			l.advance()
@@ -359,5 +361,5 @@ func (l *Lexer) scanOperator() Token {
 		return Token{Type: T_BIND, Lexeme: "?", Line: startLine, Col: startCol}
 	}
 
-	return Token{Type: T_EOF, Lexeme: "ERROR", Literal: ErrUnexpectedChar, Line: startLine, Col: startCol}
+	return Token{Type: T_ERROR, Lexeme: "", Literal: ErrUnexpectedChar, Line: startLine, Col: startCol}
 }

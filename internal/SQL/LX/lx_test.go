@@ -75,7 +75,7 @@ func TestLexerInt(t *testing.T) {
 func TestLexerIntOverflow(t *testing.T) {
 	l := NewLexer("99999999999999999999")
 	tok := l.Next()
-	if tok.Type != T_EOF || tok.Lexeme != "ERROR" {
+	if tok.Type != T_ERROR {
 		t.Errorf("expected overflow error token, got %v %q", tok.Type, tok.Lexeme)
 	}
 }
@@ -116,7 +116,7 @@ func TestLexerString(t *testing.T) {
 func TestLexerUnterminatedString(t *testing.T) {
 	l := NewLexer("'unterminated")
 	tok := l.Next()
-	if tok.Type != T_EOF || tok.Lexeme != "ERROR" {
+	if tok.Type != T_ERROR {
 		t.Errorf("expected error token for unterminated string")
 	}
 }
@@ -349,6 +349,8 @@ func TestLexerAllKeywords(t *testing.T) {
 		{"BLOB", T_BLOB},
 		{"VARCHAR", T_VARCHAR},
 		{"TIMESTAMP", T_TIMESTAMP},
+		{"TRUE", T_TRUE},
+		{"FALSE", T_FALSE},
 	}
 
 	for _, c := range kwCases {
@@ -363,7 +365,7 @@ func TestLexerAllKeywords(t *testing.T) {
 func TestLexerErrorRecovery(t *testing.T) {
 	l := NewLexer("@")
 	tok := l.Next()
-	if tok.Type != T_EOF || tok.Lexeme != "ERROR" {
+	if tok.Type != T_ERROR {
 		t.Errorf("expected error token, got %v %q", tok.Type, tok.Lexeme)
 	}
 }

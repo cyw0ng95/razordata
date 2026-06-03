@@ -213,10 +213,9 @@ func exprString(e PS.Expr) string {
 	case *PS.NullLiteral:
 		return "NULL"
 	case *PS.Ident:
-		if expr.Alias != "" {
-			return fmt.Sprintf("%s AS %s", expr.Name, expr.Alias)
-		}
 		return expr.Name
+	case *PS.AliasedExpr:
+		return fmt.Sprintf("%s AS %s", exprString(expr.Expr), expr.Alias)
 	case *PS.Param:
 		return "?"
 	case *PS.StarExpr:

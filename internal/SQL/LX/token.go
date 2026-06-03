@@ -96,6 +96,10 @@ const (
 	T_END
 	T_CAST
 	T_EXISTS
+	T_TRUE
+	T_FALSE
+
+	T_ERROR TokenType = -1
 )
 
 type Token struct {
@@ -209,5 +213,5 @@ func (t Token) IsEOF() bool {
 }
 
 func (t Token) IsError() bool {
-	return t.Lexeme == "ERROR"
+	return t.Type == T_ERROR
 }

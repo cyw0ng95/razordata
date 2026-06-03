@@ -37,11 +37,17 @@ type NullLiteral struct{}
 func (n *NullLiteral) exprNode() {}
 
 type Ident struct {
-	Name  string
-	Alias string
+	Name string
 }
 
 func (i *Ident) exprNode() {}
+
+type AliasedExpr struct {
+	Expr  Expr
+	Alias string
+}
+
+func (a *AliasedExpr) exprNode() {}
 
 type Param struct {
 	Index int
