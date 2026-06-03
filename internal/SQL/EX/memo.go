@@ -34,6 +34,7 @@ const (
 	tagIn        = 25
 	tagAlias     = 26
 	tagCast      = 27
+	tagExists    = 28
 )
 
 type enc struct {
@@ -152,6 +153,14 @@ func (e *enc) writeExpr(x PS.Expr) {
 		for _, it := range v.List {
 			e.writeExpr(it)
 		}
+		if v.Subquery == nil {
+			e.buf = append(e.buf, 0)
+		} else {
+			e.buf = append(e.buf, 1)
+			e.writeStmt(v.Subquery)
+		}
+	case *PS.ExistsExpr:
+		e.buf = append(e.buf, tagExists)
 		if v.Subquery == nil {
 			e.buf = append(e.buf, 0)
 		} else {

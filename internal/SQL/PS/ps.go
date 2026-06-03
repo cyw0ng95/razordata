@@ -221,6 +221,8 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		return p.parseCaseExpr()
 	case LX.T_CAST:
 		return p.parseCast()
+	case LX.T_EXISTS:
+		return p.parseExists()
 	}
 	return nil, &SyntaxError{
 		Input:  p.lex.Input(),
@@ -878,6 +880,23 @@ func (p *Parser) parseCast() (Expr, error) {
 	}
 	p.advance()
 	return &CastExpr{Expr: expr, Type: typ}, nil
+}
+
+func (p *Parser) parseExists() (Expr, error) {
+	p.advance()
+	if err := p.expect(LX.T_LPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	sel, err := p.parseSelect()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(LX.T_RPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	return &ExistsExpr{Subquery: sel}, nil
 }
 
 func (p *Parser) parseCastType() (int, error) {

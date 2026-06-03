@@ -205,6 +205,8 @@ func RewriteExpr(e PS.Expr) PS.Expr {
 		return v
 	case *PS.InExpr:
 		return simplifyIn(v)
+	case *PS.ExistsExpr:
+		return v
 	}
 	return e
 }

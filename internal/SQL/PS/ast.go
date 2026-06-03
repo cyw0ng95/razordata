@@ -130,6 +130,12 @@ type InExpr struct {
 
 func (i *InExpr) exprNode() {}
 
+type ExistsExpr struct {
+	Subquery Stmt
+}
+
+func (e *ExistsExpr) exprNode() {}
+
 type ColDef struct {
 	Name     string
 	Type     int

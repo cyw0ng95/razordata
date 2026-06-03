@@ -163,3 +163,37 @@ func TestExecutorDistinctWithWhere(t *testing.T) {
 		t.Errorf("expected 2 distinct (2, 3), got %d", len(rows))
 	}
 }
+
+func TestExecutorExists(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"a"})
+	ex.RegisterTable("has_orders", []string{"id"})
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (2)")
+	ex.Exec(ctx, "INSERT INTO has_orders VALUES (10)")
+	rows, err := ex.QueryAll(ctx, "SELECT a FROM t WHERE EXISTS (SELECT 1 FROM has_orders)")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("expected 2 (EXISTS matches every row), got %d", len(rows))
+	}
+}
+
+func TestExecutorExistsFalse(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("users", []string{"id", "name"})
+	ex.RegisterTable("orders", []string{"user_id"})
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO users VALUES (1, 'alice')")
+	ex.Exec(ctx, "INSERT INTO users VALUES (2, 'bob')")
+	rows, _ := ex.QueryAll(ctx, "SELECT name FROM users WHERE EXISTS (SELECT 1 FROM orders)")
+	if len(rows) != 0 {
+		t.Errorf("expected 0 rows (no orders), got %d", len(rows))
+	}
+}

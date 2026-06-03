@@ -55,6 +55,8 @@ func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 		return evalBetween(e, row, params)
 	case *PS.InExpr:
 		return evalIn(e, row, params)
+	case *PS.ExistsExpr:
+		return evalExists(e, row, params)
 	case *PS.CaseExpr:
 		return evalCase(e, row, params)
 	case *PS.AggregateFunc:
@@ -206,6 +208,30 @@ func evalInSubquery(target interface{}, subq PS.Stmt, outer *Row, params []inter
 		}
 	}
 	return false, nil
+}
+
+func evalExists(e *PS.ExistsExpr, outer *Row, params []interface{}) (interface{}, error) {
+	sel, ok := e.Subquery.(*PS.Select)
+	if !ok {
+		return nil, ErrSubquery
+	}
+	p := NewPlanner()
+	pl, err := p.Plan(sel)
+	if err != nil {
+		return nil, err
+	}
+	if pl == nil || pl.root == nil {
+		return nil, ErrSubquery
+	}
+	defer pl.root.Close()
+	_, err = pl.root.Next(context.Background())
+	if err == nil {
+		return true, nil
+	}
+	if err == ErrNoRows {
+		return false, nil
+	}
+	return nil, err
 }
 
 func evalCast(e *PS.CastExpr, row *Row, params []interface{}) (interface{}, error) {
