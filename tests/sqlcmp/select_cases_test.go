@@ -98,6 +98,15 @@ var selectCases = []testCase{
 	{"select_alias_table", "SELECT * FROM t AS x", false},
 	{"select_distinct", "SELECT DISTINCT a FROM t", false},
 	{"select_distinct_multi", "SELECT DISTINCT a, b FROM t", false},
+	{"select_qualified_col", "SELECT t.a FROM t", false},
+	{"select_inner_join", "SELECT a.id, b.y FROM a INNER JOIN b ON b.a_id = a.id", false},
+	{"select_cross_join", "SELECT * FROM a CROSS JOIN b", false},
+	{"select_group_by", "SELECT a, SUM(b) FROM t GROUP BY a", false},
+	{"select_having", "SELECT a, SUM(b) FROM t GROUP BY a HAVING SUM(b) > 5", false},
+	{"select_exists", "SELECT * FROM t WHERE EXISTS (SELECT 1 FROM t)", false},
+	{"select_in_subquery", "SELECT * FROM t WHERE a IN (SELECT a FROM t)", false},
+	{"select_scalar_subquery", "SELECT (SELECT 1) FROM t", false},
+	{"select_cast", "SELECT CAST(a AS INTEGER) FROM t", false},
 }
 
 func TestSelectRewrite(t *testing.T) {

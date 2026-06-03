@@ -102,6 +102,42 @@ func BenchmarkPlannerMemoization(b *testing.B) {
 	}
 }
 
+func BenchmarkExecutorGroupBy(b *testing.B) {
+	UnregisterAll()
+	RegisterTableSchema("t", []string{"category", "amount"})
+	ex := NewExecutor()
+	ctx := context.Background()
+	for i := 0; i < 1000; i++ {
+		ex.Exec(ctx, fmt.Sprintf("INSERT INTO t VALUES ('c%d', %d)", i%50, i))
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := ex.QueryAll(ctx, "SELECT category, SUM(amount) FROM t GROUP BY category")
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkExecutorInnerJoin(b *testing.B) {
+	UnregisterAll()
+	RegisterTableSchema("a", []string{"id", "x"})
+	RegisterTableSchema("b", []string{"a_id", "y"})
+	ex := NewExecutor()
+	ctx := context.Background()
+	for i := 0; i < 200; i++ {
+		ex.Exec(ctx, fmt.Sprintf("INSERT INTO a VALUES (%d, %d)", i, i*2))
+		ex.Exec(ctx, fmt.Sprintf("INSERT INTO b VALUES (%d, %d)", i, i*3))
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := ex.QueryAll(ctx, "SELECT a.id, b.y FROM a INNER JOIN b ON b.a_id = a.id")
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkPlannerMemoizeKey(b *testing.B) {
 	stmt := memoKeyFixture()
 	for i := 0; i < b.N; i++ {
