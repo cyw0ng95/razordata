@@ -474,3 +474,22 @@ func TestExecutorGroupByCount(t *testing.T) {
 		}
 	}
 }
+
+func TestExecutorIndexScanSelection(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("users", []string{"id", "name"})
+	ex.RegisterIndex("users", "idx_id", []string{"id"})
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO users VALUES (1, 'alice')")
+	ex.Exec(ctx, "INSERT INTO users VALUES (2, 'bob')")
+	plan, _ := ex.Explain("SELECT * FROM users WHERE id = 1")
+	if !strings.Contains(plan, "IndexScan") {
+		t.Errorf("expected IndexScan, plan was:\n%s", plan)
+	}
+	plan2, _ := ex.Explain("SELECT * FROM users WHERE name = 'alice'")
+	if !strings.Contains(plan2, "SeqScan") {
+		t.Errorf("expected SeqScan (no index on name), plan was:\n%s", plan2)
+	}
+}

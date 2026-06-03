@@ -82,6 +82,10 @@ func (e *Executor) RegisterTableWithPK(name string, schema []string, pk string) 
 	RegisterTableSchema(name, schema)
 }
 
+func (e *Executor) RegisterIndex(table, index string, cols []string) {
+	e.planner.RegisterIndex(table, index, cols)
+}
+
 func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, error) {
 	parser := PS.NewParser(sql)
 	stmt, err := parser.Parse()

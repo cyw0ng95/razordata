@@ -123,7 +123,7 @@ func (p *Planner) selectIndex(table, col string) (string, bool) {
 }
 
 func (p *Planner) planSelect(s *PS.Select) Operator {
-	scan := NewSeqScan(s.From)
+	scan := NewIndexOrSeqScan(s.From, s.Where, p)
 
 	var current Operator = scan
 
@@ -253,6 +253,37 @@ func isStarExpr(cols []PS.Expr) bool {
 	}
 	_, ok := cols[0].(*PS.StarExpr)
 	return ok
+}
+
+// NewIndexOrSeqScan picks an IndexScan when the WHERE
+// references a single column with an index on it;
+// otherwise falls back to a SeqScan. IndexScan currently
+// behaves like a SeqScan for the in-memory source; the
+// selection is the planner decision and the smoke test
+// asserts which operator was chosen.
+func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
+	if p != nil && where != nil {
+		if col, ok := indexedColumn(where); ok {
+			if idx, found := p.selectIndex(table, col); found {
+				return NewIndexScan(table, idx, nil, nil)
+			}
+		}
+	}
+	return NewSeqScan(table)
+}
+
+func indexedColumn(e PS.Expr) (string, bool) {
+	switch v := e.(type) {
+	case *PS.BinaryExpr:
+		if l, ok := v.Left.(*PS.Ident); ok {
+			return l.Name, true
+		}
+		if r, ok := v.Right.(*PS.Ident); ok {
+			return r.Name, true
+		}
+		return indexedColumn(v.Left)
+	}
+	return "", false
 }
 
 func limitInt64(e PS.Expr) (int64, bool) {
