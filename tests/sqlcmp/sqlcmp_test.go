@@ -100,8 +100,9 @@ func TestSQLiteAvailable(t *testing.T) {
 func TestParseErrors(t *testing.T) {
 	errCases := []testCase{
 		{"empty", "", false},
-		{"select_no_from", "SELECT *", false},
 		{"select_no_table", "SELECT * FROM", false},
+		{"unterminated", "SELECT 'unterminated", false},
+		{"missing_rparen_aggregate", "SELECT COUNT( FROM t", false},
 	}
 	for _, tc := range errCases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -30,7 +30,7 @@ func (r *Runner) Compare(input string) error {
 	if err != nil {
 		return err
 	}
-	_, err = RE.Rewrite(stmt)
+	_, err = RE.Format(stmt)
 	return err
 }
 
@@ -101,7 +101,7 @@ func NewParser(input string) *PS.Parser {
 }
 
 func Rewrite(stmt PS.Stmt) (string, error) {
-	return RE.Rewrite(stmt)
+	return RE.Format(stmt)
 }
 
 type Token = LX.Token

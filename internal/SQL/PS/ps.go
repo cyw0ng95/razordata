@@ -1,6 +1,8 @@
 package PS
 
 import (
+	"strings"
+
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 )
 
@@ -366,27 +368,43 @@ func (p *Parser) Parse() (Stmt, error) {
 	p.reset()
 	p.advance()
 
+	var stmt Stmt
+	var err error
 	switch p.current.Type {
 	case LX.T_SELECT:
-		return p.parseSelect()
+		stmt, err = p.parseSelect()
 	case LX.T_INSERT:
-		return p.parseInsert()
+		stmt, err = p.parseInsert()
 	case LX.T_UPDATE:
-		return p.parseUpdate()
+		stmt, err = p.parseUpdate()
 	case LX.T_DELETE:
-		return p.parseDelete()
+		stmt, err = p.parseDelete()
 	case LX.T_CREATE:
-		return p.parseCreateTable()
+		stmt, err = p.parseCreateTable()
 	case LX.T_DROP:
-		return p.parseDropTable()
+		stmt, err = p.parseDropTable()
+	default:
+		return nil, &SyntaxError{
+			Input:  p.lex.Input(),
+			Line:   p.current.Line,
+			Col:    p.current.Col,
+			Got:    tokenName(p.current.Type),
+			Lexeme: p.current.Lexeme,
+		}
 	}
-	return nil, &SyntaxError{
-		Input:  p.lex.Input(),
-		Line:   p.current.Line,
-		Col:    p.current.Col,
-		Got:    tokenName(p.current.Type),
-		Lexeme: p.current.Lexeme,
+	if err != nil {
+		return nil, err
 	}
+	if p.current.Type != LX.T_EOF {
+		return nil, &SyntaxError{
+			Input:  p.lex.Input(),
+			Line:   p.current.Line,
+			Col:    p.current.Col,
+			Got:    tokenName(p.current.Type),
+			Lexeme: p.current.Lexeme,
+		}
+	}
+	return stmt, nil
 }
 
 func (p *Parser) parseSelect() (*Select, error) {
@@ -424,16 +442,15 @@ func (p *Parser) parseSelect() (*Select, error) {
 		}
 	}
 
-	if err := p.expect(LX.T_FROM); err != nil {
-		return nil, err
+	var from string
+	if p.current.Type == LX.T_FROM {
+		p.advance()
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		from = p.current.Lexeme
+		p.advance()
 	}
-	p.advance()
-
-	if err := p.expect(LX.T_IDENT); err != nil {
-		return nil, err
-	}
-	from := p.current.Lexeme
-	p.advance()
 
 	var fromAlias string
 	if p.current.Type == LX.T_AS {
@@ -816,6 +833,13 @@ func (p *Parser) parseDropTable() (*DropTable, error) {
 		return nil, err
 	}
 	p.advance()
+
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
+		p.advance()
+	}
+	if p.current.Type == LX.T_EXISTS {
+		p.advance()
+	}
 
 	if err := p.expect(LX.T_IDENT); err != nil {
 		return nil, err

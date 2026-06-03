@@ -236,8 +236,7 @@ func TestParseSyntaxErrorMessage(t *testing.T) {
 		sql  string
 		want string
 	}{
-		{"missing_from", "SELECT *", "expected FROM"},
-		{"bad_keyword", "SELECT * FROB t", "expected FROM"},
+		{"bad_keyword", "SELECT * FROB t", "got identifier"},
 		{"unterminated_at_eof", "SELECT", "got EOF"},
 		{"missing_rparen", "SELECT COUNT( FROM t", "got FROM"},
 	}

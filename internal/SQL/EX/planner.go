@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
+	"github.com/cyw0ng95/razordata/internal/SQL/RE"
 )
 
 type plan struct {
@@ -60,7 +61,12 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 
 	var root Operator
 
-	switch s := stmt.(type) {
+	rewritten, err := RE.Rewrite(stmt)
+	if err != nil {
+		return nil, err
+	}
+
+	switch s := rewritten.(type) {
 	case *PS.Select:
 		root = p.planSelect(s)
 	case *PS.Insert:
@@ -122,8 +128,11 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	var current Operator = scan
 
 	if s.Where != nil {
-		filter := NewFilter(scan, s.Where)
-		current = filter
+		conjuncts := RE.SplitAnd(s.Where)
+		current = NewFilter(scan, conjuncts[0])
+		for _, c := range conjuncts[1:] {
+			current = NewFilter(current, c)
+		}
 	}
 
 	aggs, groupCols, nonAggCols := splitSelectCols(s.Cols)

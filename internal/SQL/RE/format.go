@@ -13,25 +13,25 @@ type Result struct {
 	Args []any
 }
 
-func Rewrite(stmt PS.Stmt) (string, error) {
+func Format(stmt PS.Stmt) (string, error) {
 	switch s := stmt.(type) {
 	case *PS.Select:
-		return rewriteSelect(s), nil
+		return formatSelect(s), nil
 	case *PS.Insert:
-		return rewriteInsert(s), nil
+		return formatInsertStmt(s), nil
 	case *PS.Update:
-		return rewriteUpdate(s), nil
+		return formatUpdateStmt(s), nil
 	case *PS.Delete:
-		return rewriteDelete(s), nil
+		return formatDeleteStmt(s), nil
 	case *PS.CreateTable:
-		return rewriteCreateTable(s), nil
+		return formatCreateTableStmt(s), nil
 	case *PS.DropTable:
-		return rewriteDropTable(s), nil
+		return formatDropTableStmt(s), nil
 	}
 	return "", fmt.Errorf("re: unknown statement type %T", stmt)
 }
 
-func rewriteSelect(s *PS.Select) string {
+func formatSelect(s *PS.Select) string {
 	var b strings.Builder
 	b.WriteString("SELECT ")
 	if s.Distinct {
@@ -82,7 +82,7 @@ func rewriteSelect(s *PS.Select) string {
 	return b.String()
 }
 
-func rewriteInsert(i *PS.Insert) string {
+func formatInsertStmt(i *PS.Insert) string {
 	var b strings.Builder
 	b.WriteString("INSERT INTO ")
 	b.WriteString(i.Table)
@@ -113,7 +113,7 @@ func rewriteInsert(i *PS.Insert) string {
 	return b.String()
 }
 
-func rewriteUpdate(u *PS.Update) string {
+func formatUpdateStmt(u *PS.Update) string {
 	var b strings.Builder
 	b.WriteString("UPDATE ")
 	b.WriteString(u.Table)
@@ -133,7 +133,7 @@ func rewriteUpdate(u *PS.Update) string {
 	return b.String()
 }
 
-func rewriteDelete(d *PS.Delete) string {
+func formatDeleteStmt(d *PS.Delete) string {
 	var b strings.Builder
 	b.WriteString("DELETE FROM ")
 	b.WriteString(d.Table)
@@ -144,7 +144,7 @@ func rewriteDelete(d *PS.Delete) string {
 	return b.String()
 }
 
-func rewriteCreateTable(c *PS.CreateTable) string {
+func formatCreateTableStmt(c *PS.CreateTable) string {
 	var b strings.Builder
 	b.WriteString("CREATE TABLE ")
 	b.WriteString(c.Name)
@@ -190,7 +190,7 @@ func typeName(t int) string {
 	}
 }
 
-func rewriteDropTable(d *PS.DropTable) string {
+func formatDropTableStmt(d *PS.DropTable) string {
 	var b strings.Builder
 	b.WriteString("DROP TABLE ")
 	b.WriteString(d.Name)

@@ -14,7 +14,7 @@ func TestRewriteSelect(t *testing.T) {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestRewriteSelectColumns(t *testing.T) {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestRewriteInsert(t *testing.T) {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestRewriteInsertWithColumns(t *testing.T) {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestRewriteUpdate(t *testing.T) {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestRewriteDelete(t *testing.T) {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestRewriteCreateTable(t *testing.T) {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestRewriteCreateTableBigint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse() failed: %v", err)
 	}
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestRewriteCreateTableVarchar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse() failed: %v", err)
 	}
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestRewriteCreateTableTimestamp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse() failed: %v", err)
 	}
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestRewriteDropTable(t *testing.T) {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestRewriteExpression(t *testing.T) {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestRewriteBinaryExpr(t *testing.T) {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestRewriteParam(t *testing.T) {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestRewriteStringLiteral(t *testing.T) {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestRewriteNull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse() failed: %v", err)
 	}
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestRewriteBool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse() failed: %v", err)
 	}
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestRewriteUnaryMinus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse() failed: %v", err)
 	}
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestRewriteUnaryNot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse() failed: %v", err)
 	}
-	sql, err := Rewrite(stmt)
+	sql, err := Format(stmt)
 	if err != nil {
 		t.Fatalf("Rewrite() failed: %v", err)
 	}
