@@ -168,6 +168,66 @@ func TestParseBetweenWithExpression(t *testing.T) {
 	}
 }
 
+func TestParseParamIndex(t *testing.T) {
+	cases := []struct {
+		sql  string
+		want []int
+	}{
+		{"SELECT ? FROM t", []int{0}},
+		{"SELECT ?, ? FROM t", []int{0, 1}},
+		{"SELECT ?, ?, ? FROM t", []int{0, 1, 2}},
+		{"SELECT a + ?, b * ? FROM t", []int{0, 1}},
+		{"INSERT INTO t VALUES (?, ?, ?)", []int{0, 1, 2}},
+	}
+	for _, c := range cases {
+		t.Run(c.sql, func(t *testing.T) {
+			p := NewParser(c.sql)
+			stmt, err := p.Parse()
+			if err != nil {
+				t.Fatalf("Parse() failed: %v", err)
+			}
+			var got []int
+			switch s := stmt.(type) {
+			case *Select:
+				for _, e := range s.Cols {
+					collectParams(e, &got)
+				}
+			case *Insert:
+				for _, row := range s.Values {
+					for _, e := range row {
+						collectParams(e, &got)
+					}
+				}
+			}
+			if len(got) != len(c.want) {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Errorf("idx %d: got %d, want %d", i, got[i], c.want[i])
+				}
+			}
+		})
+	}
+}
+
+func collectParams(e Expr, out *[]int) {
+	if e == nil {
+		return
+	}
+	switch v := e.(type) {
+	case *Param:
+		*out = append(*out, v.Index)
+	case *BinaryExpr:
+		collectParams(v.Left, out)
+		collectParams(v.Right, out)
+	case *UnaryExpr:
+		collectParams(v.Operand, out)
+	case *AliasedExpr:
+		collectParams(v.Expr, out)
+	}
+}
+
 func TestParseInList(t *testing.T) {
 	p := NewParser("SELECT * FROM t WHERE a IN (1, 2, 3)")
 	stmt, err := p.Parse()

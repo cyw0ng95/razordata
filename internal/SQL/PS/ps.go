@@ -10,8 +10,9 @@ import (
 var ErrSyntax = errors.New("ps: syntax error")
 
 type Parser struct {
-	lex     *LX.Lexer
-	current LX.Token
+	lex        *LX.Lexer
+	current    LX.Token
+	paramIndex int
 }
 
 func NewParser(input string) *Parser {
@@ -19,6 +20,10 @@ func NewParser(input string) *Parser {
 		lex:     LX.NewLexer(input),
 		current: LX.Token{Type: LX.T_EOF, Lexeme: "", Line: 0, Col: 0},
 	}
+}
+
+func (p *Parser) reset() {
+	p.paramIndex = 0
 }
 
 func (p *Parser) advance() {
@@ -61,8 +66,10 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		p.advance()
 		return &BoolLiteral{Val: false}, nil
 	case LX.T_BIND:
+		idx := p.paramIndex
+		p.paramIndex++
 		p.advance()
-		return &Param{Index: 0}, nil
+		return &Param{Index: idx}, nil
 	case LX.T_STAR:
 		p.advance()
 		return &StarExpr{}, nil
@@ -234,6 +241,7 @@ func precedence(typ LX.TokenType) int {
 }
 
 func (p *Parser) Parse() (Stmt, error) {
+	p.reset()
 	p.advance()
 
 	switch p.current.Type {
