@@ -98,6 +98,7 @@ const (
 	T_EXISTS
 	T_TRUE
 	T_FALSE
+	T_OUTER
 
 	T_ERROR TokenType = -1
 )

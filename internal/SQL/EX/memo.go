@@ -36,6 +36,7 @@ const (
 	tagCast      = 27
 	tagExists    = 28
 	tagSubq      = 29
+	tagQName     = 30
 )
 
 type enc struct {
@@ -93,6 +94,10 @@ func (e *enc) writeExpr(x PS.Expr) {
 		e.buf = append(e.buf, tagNullLit)
 	case *PS.Ident:
 		e.buf = append(e.buf, tagIdent)
+		e.writeString(v.Name)
+	case *PS.QualifiedName:
+		e.buf = append(e.buf, tagQName)
+		e.writeString(v.Table)
 		e.writeString(v.Name)
 	case *PS.AliasedExpr:
 		e.buf = append(e.buf, tagAlias)

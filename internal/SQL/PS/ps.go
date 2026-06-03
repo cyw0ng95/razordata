@@ -182,6 +182,15 @@ func (p *Parser) parsePrimary() (Expr, error) {
 	case LX.T_IDENT:
 		name := p.current.Lexeme
 		p.advance()
+		if p.current.Type == LX.T_DOT {
+			p.advance()
+			if err := p.expect(LX.T_IDENT); err != nil {
+				return nil, err
+			}
+			col := p.current.Lexeme
+			p.advance()
+			return &QualifiedName{Table: name, Name: col}, nil
+		}
 		return &Ident{Name: name}, nil
 	case LX.T_COUNT, LX.T_SUM, LX.T_AVG, LX.T_MIN, LX.T_MAX:
 		name := p.current.Lexeme
@@ -475,6 +484,43 @@ func (p *Parser) parseSelect() (*Select, error) {
 		p.advance()
 	}
 
+	var joins []JoinClause
+	for p.current.Type == LX.T_JOIN || p.current.Type == LX.T_LEFT ||
+		p.current.Type == LX.T_RIGHT || p.current.Type == LX.T_INNER ||
+		p.current.Type == LX.T_CROSS {
+		kind := "INNER"
+		switch p.current.Type {
+		case LX.T_LEFT:
+			kind = "LEFT"
+		case LX.T_RIGHT:
+			kind = "RIGHT"
+		case LX.T_CROSS:
+			kind = "CROSS"
+		}
+		p.advance()
+		if p.current.Type == LX.T_OUTER {
+			p.advance()
+		}
+		if p.current.Type == LX.T_JOIN {
+			p.advance()
+		}
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		right := p.current.Lexeme
+		p.advance()
+		var on Expr
+		if p.current.Type == LX.T_ON {
+			p.advance()
+			e, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			on = e
+		}
+		joins = append(joins, JoinClause{Kind: kind, Right: right, On: on})
+	}
+
 	var where Expr
 	if p.current.Type == LX.T_WHERE {
 		p.advance()
@@ -536,6 +582,7 @@ func (p *Parser) parseSelect() (*Select, error) {
 		Cols:      cols,
 		From:      from,
 		FromAlias: fromAlias,
+		Joins:     joins,
 		Where:     where,
 		OrderBy:   orderBy,
 		Limit:     limit,

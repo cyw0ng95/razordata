@@ -84,6 +84,7 @@ var keywords = map[string]TokenType{
 	"EXISTS":    T_EXISTS,
 	"TRUE":      T_TRUE,
 	"FALSE":     T_FALSE,
+	"OUTER":     T_OUTER,
 }
 
 type Lexer struct {

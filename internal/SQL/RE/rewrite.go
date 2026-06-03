@@ -111,8 +111,8 @@ func RewriteExpr(e PS.Expr) PS.Expr {
 	}
 	switch v := e.(type) {
 	case *PS.NumberLiteral, *PS.FloatLiteral, *PS.StringLiteral,
-		*PS.BoolLiteral, *PS.NullLiteral, *PS.Ident, *PS.Param,
-		*PS.StarExpr:
+		*PS.BoolLiteral, *PS.NullLiteral, *PS.Ident, *PS.QualifiedName,
+		*PS.Param, *PS.StarExpr:
 		return v
 	case *PS.UnaryExpr:
 		return simplifyUnary(v)

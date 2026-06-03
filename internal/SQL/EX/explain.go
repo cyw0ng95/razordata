@@ -48,6 +48,15 @@ func explainOperator(op Operator, depth int) string {
 			b.WriteByte('\n')
 			b.WriteString(explainOperator(v.child, depth+1))
 		}
+	case *NestedLoopJoin:
+		if v.left != nil {
+			b.WriteByte('\n')
+			b.WriteString(explainOperator(v.left, depth+1))
+		}
+		if v.right != nil {
+			b.WriteByte('\n')
+			b.WriteString(explainOperator(v.right, depth+1))
+		}
 	case *Update:
 		if v.iter != nil {
 			b.WriteByte('\n')
@@ -68,6 +77,8 @@ func describeOp(op Operator) string {
 		return fmt.Sprintf("SeqScan(table=%s)", v.table)
 	case *IndexScan:
 		return fmt.Sprintf("IndexScan(table=%s idx=%s)", v.table, v.idx)
+	case *NestedLoopJoin:
+		return fmt.Sprintf("NestedLoopJoin(left=%s right=%s)", v.leftTbl, v.rightTbl)
 	case *Filter:
 		return "Filter"
 	case *Project:

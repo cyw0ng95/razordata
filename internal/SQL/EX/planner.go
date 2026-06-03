@@ -127,6 +127,29 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 
 	var current Operator = scan
 
+	if len(s.Joins) > 0 {
+		leftTbl := s.From
+		for _, j := range s.Joins {
+			if j.Kind != "INNER" && j.Kind != "CROSS" {
+				continue
+			}
+			var on func(outer, inner *Row) (bool, error)
+			if j.On != nil {
+				pred := j.On
+				on = func(outer, inner *Row) (bool, error) {
+					v, err := Eval(pred, inner, nil)
+					if err != nil {
+						return false, err
+					}
+					return truthy(v), nil
+				}
+			}
+			joinOp := NewNestedLoopJoin(current, NewSeqScan(j.Right), leftTbl, j.Right, on)
+			current = joinOp
+			leftTbl = j.Right
+		}
+	}
+
 	if s.Where != nil {
 		conjuncts := RE.SplitAnd(s.Where)
 		current = NewFilter(scan, conjuncts[0])

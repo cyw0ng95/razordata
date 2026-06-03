@@ -42,6 +42,13 @@ type Ident struct {
 
 func (i *Ident) exprNode() {}
 
+type QualifiedName struct {
+	Table string
+	Name  string
+}
+
+func (q *QualifiedName) exprNode() {}
+
 type AliasedExpr struct {
 	Expr  Expr
 	Alias string
@@ -203,15 +210,24 @@ type OrderItem struct {
 	Desc bool
 }
 
+type JoinClause struct {
+	Kind  string // "INNER", "LEFT", "RIGHT", "CROSS"
+	Right string
+	On    Expr
+}
+
 type Select struct {
 	Cols      []Expr
 	From      string
 	FromAlias string
+	Joins     []JoinClause
 	Where     Expr
 	OrderBy   []OrderItem
 	Limit     Expr
 	Offset    Expr
 	Distinct  bool
+	GroupBy   []Expr
+	Having    Expr
 }
 
 func (s *Select) stmtNode() {}

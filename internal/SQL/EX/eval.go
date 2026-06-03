@@ -37,6 +37,20 @@ func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 			}
 		}
 		return e.Name, nil
+	case *PS.QualifiedName:
+		if row != nil {
+			key := e.Table + "." + e.Name
+			for cur := row; cur != nil; cur = cur.Outer {
+				for i, c := range cur.Cols {
+					if c == key {
+						if i < len(cur.Data) {
+							return cur.Data[i], nil
+						}
+					}
+				}
+			}
+		}
+		return e.Table + "." + e.Name, nil
 	case *PS.Param:
 		if e.Index < len(params) {
 			return params[e.Index], nil
