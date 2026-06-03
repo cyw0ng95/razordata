@@ -35,6 +35,7 @@ const (
 	tagAlias     = 26
 	tagCast      = 27
 	tagExists    = 28
+	tagSubq      = 29
 )
 
 type enc struct {
@@ -161,6 +162,14 @@ func (e *enc) writeExpr(x PS.Expr) {
 		}
 	case *PS.ExistsExpr:
 		e.buf = append(e.buf, tagExists)
+		if v.Subquery == nil {
+			e.buf = append(e.buf, 0)
+		} else {
+			e.buf = append(e.buf, 1)
+			e.writeStmt(v.Subquery)
+		}
+	case *PS.SubqueryExpr:
+		e.buf = append(e.buf, tagSubq)
 		if v.Subquery == nil {
 			e.buf = append(e.buf, 0)
 		} else {

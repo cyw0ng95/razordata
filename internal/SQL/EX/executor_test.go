@@ -197,3 +197,45 @@ func TestExecutorExistsFalse(t *testing.T) {
 		t.Errorf("expected 0 rows (no orders), got %d", len(rows))
 	}
 }
+
+func TestExecutorScalarSubquery(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"x"})
+	ex.RegisterTable("counters", []string{"n"})
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (2)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (3)")
+	ex.Exec(ctx, "INSERT INTO counters VALUES (10)")
+	rows, err := ex.QueryAll(ctx, "SELECT x, (SELECT n FROM counters) AS c FROM t")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(rows))
+	}
+	for _, r := range rows {
+		if r.Data[1] != int64(10) {
+			t.Errorf("expected c=10, got %v", r.Data[1])
+		}
+	}
+}
+
+func TestExecutorScalarSubqueryEmpty(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"x"})
+	ex.RegisterTable("counters", []string{"n"})
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
+	rows, _ := ex.QueryAll(ctx, "SELECT x, (SELECT n FROM counters) AS c FROM t")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].Data[1] != nil {
+		t.Errorf("expected nil c, got %v", rows[0].Data[1])
+	}
+}

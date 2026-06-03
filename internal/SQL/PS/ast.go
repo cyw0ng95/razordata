@@ -136,6 +136,12 @@ type ExistsExpr struct {
 
 func (e *ExistsExpr) exprNode() {}
 
+type SubqueryExpr struct {
+	Subquery Stmt
+}
+
+func (s *SubqueryExpr) exprNode() {}
+
 type ColDef struct {
 	Name     string
 	Type     int

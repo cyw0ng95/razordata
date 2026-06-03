@@ -208,6 +208,17 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		return &AggregateFunc{Name: name, Arg: arg}, nil
 	case LX.T_LPAREN:
 		p.advance()
+		if p.current.Type == LX.T_SELECT {
+			sel, err := p.parseSelect()
+			if err != nil {
+				return nil, err
+			}
+			if err := p.expect(LX.T_RPAREN); err != nil {
+				return nil, err
+			}
+			p.advance()
+			return &SubqueryExpr{Subquery: sel}, nil
+		}
 		expr, err := p.parseExpr()
 		if err != nil {
 			return nil, err
