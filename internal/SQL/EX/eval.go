@@ -1,7 +1,6 @@
 package EX
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -185,23 +184,15 @@ func evalInSubquery(target interface{}, subq PS.Stmt, outer *Row, params []inter
 	if !ok {
 		return nil, ErrSubquery
 	}
-	p := NewPlanner()
-	pl, err := p.Plan(sel)
+	pl, err := NewPlanner().Plan(sel)
 	if err != nil {
 		return nil, err
 	}
-	if pl == nil || pl.root == nil {
-		return nil, ErrSubquery
+	rows, err := runSubqueryPlan(pl, outer, params)
+	if err != nil {
+		return nil, err
 	}
-	defer pl.root.Close()
-	for {
-		row, err := pl.root.Next(context.Background())
-		if err != nil {
-			if err == ErrNoRows {
-				break
-			}
-			return nil, err
-		}
+	for _, row := range rows {
 		if len(row.Cols) == 0 {
 			continue
 		}
@@ -212,28 +203,26 @@ func evalInSubquery(target interface{}, subq PS.Stmt, outer *Row, params []inter
 	return false, nil
 }
 
+// EvalForTest exposes Eval for tests; do not use in production
+// code paths where the row may not be valid.
+func EvalForTest(e PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	return Eval(e, row, params)
+}
+
 func evalExists(e *PS.ExistsExpr, outer *Row, params []interface{}) (interface{}, error) {
 	sel, ok := e.Subquery.(*PS.Select)
 	if !ok {
 		return nil, ErrSubquery
 	}
-	p := NewPlanner()
-	pl, err := p.Plan(sel)
+	pl, err := NewPlanner().Plan(sel)
 	if err != nil {
 		return nil, err
 	}
-	if pl == nil || pl.root == nil {
-		return nil, ErrSubquery
+	rows, err := runSubqueryPlan(pl, outer, params)
+	if err != nil {
+		return nil, err
 	}
-	defer pl.root.Close()
-	_, err = pl.root.Next(context.Background())
-	if err == nil {
-		return true, nil
-	}
-	if err == ErrNoRows {
-		return false, nil
-	}
-	return nil, err
+	return len(rows) > 0, nil
 }
 
 func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []interface{}) (interface{}, error) {
@@ -241,26 +230,21 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []interface{}) (i
 	if !ok {
 		return nil, ErrSubquery
 	}
-	p := NewPlanner()
-	pl, err := p.Plan(sel)
+	pl, err := NewPlanner().Plan(sel)
 	if err != nil {
 		return nil, err
 	}
-	if pl == nil || pl.root == nil {
-		return nil, ErrSubquery
-	}
-	defer pl.root.Close()
-	row, err := pl.root.Next(context.Background())
+	rows, err := runSubqueryPlan(pl, outer, params)
 	if err != nil {
-		if err == ErrNoRows {
-			return nil, nil
-		}
 		return nil, err
 	}
-	if len(row.Data) == 0 {
+	if len(rows) == 0 {
 		return nil, nil
 	}
-	return row.Data[0], nil
+	if len(rows[0].Data) == 0 {
+		return nil, nil
+	}
+	return rows[0].Data[0], nil
 }
 
 func evalCast(e *PS.CastExpr, row *Row, params []interface{}) (interface{}, error) {

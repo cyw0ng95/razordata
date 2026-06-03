@@ -3,6 +3,7 @@ package EX
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -198,6 +199,60 @@ func TestExecutorExistsFalse(t *testing.T) {
 	}
 }
 
+func TestExecutorExistsCorrelated(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("users", []string{"id", "name"})
+	ex.RegisterTable("orders", []string{"user_id"})
+	ctx := context.Background()
+	for _, v := range []string{
+		"INSERT INTO users VALUES (1, 'alice')",
+		"INSERT INTO users VALUES (2, 'bob')",
+		"INSERT INTO users VALUES (3, 'carol')",
+		"INSERT INTO orders VALUES (1)",
+		"INSERT INTO orders VALUES (3)",
+	} {
+		ex.Exec(ctx, v)
+	}
+	rows, err := ex.QueryAll(ctx, "SELECT name FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE user_id = id)")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 users with orders, got %d", len(rows))
+	}
+	got := map[string]bool{}
+	for _, r := range rows {
+		got[r.Data[0].(string)] = true
+	}
+	if !got["alice"] || !got["carol"] || got["bob"] {
+		t.Errorf("unexpected: %v", got)
+	}
+}
+
+func TestExecutorInSubqueryCorrelated(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("users", []string{"id", "name"})
+	ex.RegisterTable("orders", []string{"user_id"})
+	ctx := context.Background()
+	for _, v := range []string{
+		"INSERT INTO users VALUES (1, 'alice')",
+		"INSERT INTO users VALUES (2, 'bob')",
+		"INSERT INTO users VALUES (3, 'carol')",
+		"INSERT INTO orders VALUES (1)",
+		"INSERT INTO orders VALUES (3)",
+	} {
+		ex.Exec(ctx, v)
+	}
+	rows, _ := ex.QueryAll(ctx, "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders WHERE user_id = id)")
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+}
+
 func TestExecutorScalarSubquery(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
@@ -237,5 +292,35 @@ func TestExecutorScalarSubqueryEmpty(t *testing.T) {
 	}
 	if rows[0].Data[1] != nil {
 		t.Errorf("expected nil c, got %v", rows[0].Data[1])
+	}
+}
+
+func TestExecutorExplain(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("users", []string{"id", "name", "age"})
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO users VALUES (1, 'alice', 30)")
+	out, err := ex.Explain("SELECT name FROM users WHERE age > 25 ORDER BY name LIMIT 10")
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	for _, want := range []string{"SeqScan(table=users)", "Filter", "Sort", "Limit", "Project"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestExecutorExplainDistinct(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"x"})
+	ex.Exec(context.Background(), "INSERT INTO t VALUES (1)")
+	out, _ := ex.Explain("SELECT DISTINCT x FROM t")
+	if !strings.Contains(out, "Distinct") {
+		t.Errorf("expected Distinct in plan, got:\n%s", out)
 	}
 }

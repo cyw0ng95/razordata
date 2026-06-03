@@ -20,15 +20,18 @@ type Row struct {
 	Cols  []string
 	Types []int
 	Data  []interface{}
+	Outer *Row
 }
 
 func (r *Row) Lookup(name string) (interface{}, bool) {
-	for i, c := range r.Cols {
-		if c == name {
-			if i < len(r.Data) {
-				return r.Data[i], true
+	for cur := r; cur != nil; cur = cur.Outer {
+		for i, c := range cur.Cols {
+			if c == name {
+				if i < len(cur.Data) {
+					return cur.Data[i], true
+				}
+				return nil, false
 			}
-			return nil, false
 		}
 	}
 	return nil, false
@@ -147,6 +150,26 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+// Explain plans the statement and returns a human-readable
+// description of the operator tree. The plan is closed before
+// returning, so Explain does not run the query.
+func (e *Executor) Explain(sql string) (string, error) {
+	parser := PS.NewParser(sql)
+	stmt, err := parser.Parse()
+	if err != nil {
+		return "", err
+	}
+	plan, err := e.planner.Plan(stmt)
+	if err != nil {
+		return "", err
+	}
+	if plan == nil || plan.root == nil {
+		return "", errors.New("ex: plan produced no root")
+	}
+	defer plan.root.Close()
+	return explainOperator(plan.root, 0), nil
 }
 
 func buildWriterOp(stmt PS.Stmt) (Operator, error) {
