@@ -111,7 +111,65 @@ func (p *Parser) parseUnary() (Expr, error) {
 		}
 		return &UnaryExpr{Op: op, Operand: operand}, nil
 	}
-	return p.parsePrimary()
+	return p.parsePostfix()
+}
+
+func (p *Parser) parsePostfix() (Expr, error) {
+	expr, err := p.parsePrimary()
+	if err != nil {
+		return nil, err
+	}
+	switch p.current.Type {
+	case LX.T_BETWEEN:
+		return p.parseBetween(expr)
+	case LX.T_IN:
+		return p.parseIn(expr)
+	}
+	return expr, nil
+}
+
+func (p *Parser) parseBetween(expr Expr) (Expr, error) {
+	p.advance()
+	low, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(LX.T_AND); err != nil {
+		return nil, err
+	}
+	p.advance()
+	high, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	return &BetweenExpr{Expr: expr, Low: low, High: high}, nil
+}
+
+func (p *Parser) parseIn(expr Expr) (Expr, error) {
+	p.advance()
+	if err := p.expect(LX.T_LPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	var items []Expr
+	if p.current.Type != LX.T_RPAREN {
+		for {
+			it, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, it)
+			if p.current.Type != LX.T_COMMA {
+				break
+			}
+			p.advance()
+		}
+	}
+	if err := p.expect(LX.T_RPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	return &InExpr{Expr: expr, List: items}, nil
 }
 
 func (p *Parser) parseBinary(minPrec int) (Expr, error) {
@@ -143,7 +201,7 @@ func isBinaryOp(typ LX.TokenType) bool {
 	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE,
 		LX.T_AND, LX.T_OR,
 		LX.T_PLUS, LX.T_MINUS, LX.T_STAR, LX.T_SLASH,
-		LX.T_IN, LX.T_BETWEEN, LX.T_LIKE, LX.T_IS:
+		LX.T_LIKE, LX.T_IS:
 		return true
 	}
 	return false
@@ -155,7 +213,7 @@ func precedence(typ LX.TokenType) int {
 		return 1
 	case LX.T_AND:
 		return 2
-	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE, LX.T_IN, LX.T_BETWEEN, LX.T_LIKE, LX.T_IS:
+	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE, LX.T_LIKE, LX.T_IS:
 		return 3
 	case LX.T_PLUS, LX.T_MINUS:
 		return 4

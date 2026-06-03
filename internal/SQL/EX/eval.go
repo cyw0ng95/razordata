@@ -42,6 +42,8 @@ func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 		return e.Items, nil
 	case *PS.BetweenExpr:
 		return evalBetween(e, row, params)
+	case *PS.InExpr:
+		return evalIn(e, row, params)
 	case *PS.CaseExpr:
 		return evalCase(e, row, params)
 	case *PS.AggregateFunc:
@@ -70,12 +72,7 @@ func evalUnary(e *PS.UnaryExpr, row *Row, params []interface{}) (interface{}, er
 	case int(LX.T_PLUS):
 		return operand, nil
 	case int(LX.T_NOT):
-		if b, ok := operand.(bool); ok {
-			return !b, nil
-		}
-		if operand == nil {
-			return true, nil
-		}
+		return !truthy(operand), nil
 	}
 	return nil, ErrEval
 }
@@ -92,9 +89,9 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []interface{}) (interface{}, 
 
 	switch e.Op {
 	case int(LX.T_EQ):
-		return left == right, nil
+		return equalValue(left, right), nil
 	case int(LX.T_NE):
-		return left != right, nil
+		return !equalValue(left, right), nil
 	case int(LX.T_LT):
 		return compare(left, right) < 0, nil
 	case int(LX.T_LE):
@@ -117,10 +114,6 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []interface{}) (interface{}, 
 		return bor(left, right)
 	case int(LX.T_LIKE):
 		return like(left, right)
-	case int(LX.T_IN):
-		return in(left, right)
-	case int(LX.T_BETWEEN):
-		return between(left, right)
 	case int(LX.T_IS):
 		return is(left, right)
 	}
@@ -145,20 +138,75 @@ func evalBetween(e *PS.BetweenExpr, row *Row, params []interface{}) (interface{}
 	return cmpLow >= 0 && cmpHigh <= 0, nil
 }
 
-func evalCase(e *PS.CaseExpr, row *Row, params []interface{}) (interface{}, error) {
-	for _, w := range e.WhenList {
-		cond, err := Eval(w.Cond, row, params)
+func evalIn(e *PS.InExpr, row *Row, params []interface{}) (interface{}, error) {
+	target, err := Eval(e.Expr, row, params)
+	if err != nil {
+		return nil, err
+	}
+	if target == nil {
+		return false, nil
+	}
+	for _, item := range e.List {
+		v, err := Eval(item, row, params)
 		if err != nil {
 			return nil, err
 		}
-		if cond == true {
-			return Eval(w.Then, row, params)
+		if equalValue(target, v) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func evalCase(e *PS.CaseExpr, row *Row, params []interface{}) (interface{}, error) {
+	if e.Expr != nil {
+		target, err := Eval(e.Expr, row, params)
+		if err != nil {
+			return nil, err
+		}
+		for _, w := range e.WhenList {
+			v, err := Eval(w.Cond, row, params)
+			if err != nil {
+				return nil, err
+			}
+			if equalValue(target, v) {
+				return Eval(w.Then, row, params)
+			}
+		}
+	} else {
+		for _, w := range e.WhenList {
+			cond, err := Eval(w.Cond, row, params)
+			if err != nil {
+				return nil, err
+			}
+			if truthy(cond) {
+				return Eval(w.Then, row, params)
+			}
 		}
 	}
 	if e.Else != nil {
 		return Eval(e.Else, row, params)
 	}
 	return nil, nil
+}
+
+func truthy(v interface{}) bool {
+	if v == nil {
+		return false
+	}
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	if i, ok := v.(int64); ok {
+		return i != 0
+	}
+	if f, ok := v.(float64); ok {
+		return f != 0
+	}
+	if s, ok := v.(string); ok {
+		return s != ""
+	}
+	return true
 }
 
 func evalAggregate(e *PS.AggregateFunc, row *Row, params []interface{}) (interface{}, error) {
@@ -348,15 +396,44 @@ func like(a, b interface{}) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	return len(pattern) > 0 && len(s) > 0, nil
+	return matchLike(pattern, s), nil
 }
 
-func in(a, b interface{}) (bool, error) {
-	return false, nil
-}
-
-func between(a, b interface{}) (bool, error) {
-	return false, nil
+func matchLike(pattern, s string) bool {
+	pi, si := 0, 0
+	starPI, starSI := -1, -1
+	for si < len(s) {
+		if pi < len(pattern) {
+			c := pattern[pi]
+			switch c {
+			case '%':
+				starPI = pi
+				starSI = si
+				pi++
+				continue
+			case '_':
+				pi++
+				si++
+				continue
+			}
+			if c == s[si] {
+				pi++
+				si++
+				continue
+			}
+		}
+		if starPI >= 0 {
+			pi = starPI + 1
+			starSI++
+			si = starSI
+			continue
+		}
+		return false
+	}
+	for pi < len(pattern) && pattern[pi] == '%' {
+		pi++
+	}
+	return pi == len(pattern)
 }
 
 func is(a, b interface{}) (bool, error) {
@@ -367,4 +444,27 @@ func is(a, b interface{}) (bool, error) {
 		return false, nil
 	}
 	return a == b, nil
+}
+
+func equalValue(a, b interface{}) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if ai, ok := a.(int64); ok {
+		switch v := b.(type) {
+		case int64:
+			return ai == v
+		case float64:
+			return float64(ai) == v
+		}
+	}
+	if af, ok := a.(float64); ok {
+		switch v := b.(type) {
+		case int64:
+			return af == float64(v)
+		case float64:
+			return af == v
+		}
+	}
+	return a == b
 }

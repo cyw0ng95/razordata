@@ -43,6 +43,48 @@ func TestEval(t *testing.T) {
 			WhenList: []PS.WhenClause{{Cond: &PS.BoolLiteral{Val: true}, Then: &PS.StringLiteral{Val: "yes"}}},
 			Else:     &PS.StringLiteral{Val: "no"},
 		}, nil, "yes", false},
+		{"case_searched_int_truthy", &PS.CaseExpr{
+			WhenList: []PS.WhenClause{{Cond: &PS.NumberLiteral{Val: 1}, Then: &PS.StringLiteral{Val: "yes"}}},
+		}, nil, "yes", false},
+		{"case_searched_int_falsy", &PS.CaseExpr{
+			WhenList: []PS.WhenClause{{Cond: &PS.NumberLiteral{Val: 0}, Then: &PS.StringLiteral{Val: "yes"}}},
+			Else:     &PS.StringLiteral{Val: "no"},
+		}, nil, "no", false},
+		{"case_simple_form", &PS.CaseExpr{
+			Expr:     &PS.Ident{Name: "x"},
+			WhenList: []PS.WhenClause{{Cond: &PS.NumberLiteral{Val: 1}, Then: &PS.StringLiteral{Val: "one"}}},
+			Else:     &PS.StringLiteral{Val: "other"},
+		}, nil, "other", false},
+		{"unary_not_truthy_int", &PS.UnaryExpr{Op: int(LX.T_NOT), Operand: &PS.NumberLiteral{Val: 5}}, nil, false, false},
+		{"unary_not_falsy_int", &PS.UnaryExpr{Op: int(LX.T_NOT), Operand: &PS.NumberLiteral{Val: 0}}, nil, true, false},
+		{"unary_not_empty_string", &PS.UnaryExpr{Op: int(LX.T_NOT), Operand: &PS.StringLiteral{Val: ""}}, nil, true, false},
+		{"between_in_range", &PS.BetweenExpr{
+			Expr: &PS.NumberLiteral{Val: 5},
+			Low:  &PS.NumberLiteral{Val: 1},
+			High: &PS.NumberLiteral{Val: 10},
+		}, nil, true, false},
+		{"between_below", &PS.BetweenExpr{
+			Expr: &PS.NumberLiteral{Val: 0},
+			Low:  &PS.NumberLiteral{Val: 1},
+			High: &PS.NumberLiteral{Val: 10},
+		}, nil, false, false},
+		{"between_above", &PS.BetweenExpr{
+			Expr: &PS.NumberLiteral{Val: 11},
+			Low:  &PS.NumberLiteral{Val: 1},
+			High: &PS.NumberLiteral{Val: 10},
+		}, nil, false, false},
+		{"in_list_hit", &PS.InExpr{
+			Expr: &PS.NumberLiteral{Val: 2},
+			List: []PS.Expr{&PS.NumberLiteral{Val: 1}, &PS.NumberLiteral{Val: 2}, &PS.NumberLiteral{Val: 3}},
+		}, nil, true, false},
+		{"in_list_miss", &PS.InExpr{
+			Expr: &PS.NumberLiteral{Val: 5},
+			List: []PS.Expr{&PS.NumberLiteral{Val: 1}, &PS.NumberLiteral{Val: 2}, &PS.NumberLiteral{Val: 3}},
+		}, nil, false, false},
+		{"in_list_null", &PS.InExpr{
+			Expr: &PS.NullLiteral{},
+			List: []PS.Expr{&PS.NumberLiteral{Val: 1}, &PS.NumberLiteral{Val: 2}},
+		}, nil, false, false},
 	}
 
 	for _, tc := range cases {
@@ -60,6 +102,57 @@ func TestEval(t *testing.T) {
 			}
 			if got != tc.want {
 				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvalLike(t *testing.T) {
+	cases := []struct {
+		name    string
+		pattern string
+		s       string
+		want    bool
+	}{
+		{"prefix_pct", "abc%", "abcdef", true},
+		{"prefix_pct_miss", "abc%", "xabcdef", false},
+		{"suffix_pct", "%abc", "xyzabc", true},
+		{"contains_pct", "%abc%", "xabcy", true},
+		{"underscore_single", "a_c", "abc", true},
+		{"underscore_miss", "a_c", "ac", false},
+		{"only_pct", "%", "anything", true},
+		{"empty_pattern", "", "abc", false},
+		{"pct_then_literal", "a%b", "axxxyb", true},
+		{"pct_then_literal_miss", "a%b", "axxxyc", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := matchLike(c.pattern, c.s)
+			if got != c.want {
+				t.Errorf("matchLike(%q, %q) = %v, want %v", c.pattern, c.s, got, c.want)
+			}
+		})
+	}
+}
+
+func TestEvalCrossTypeEq(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b interface{}
+		want bool
+	}{
+		{"int_eq_int", int64(1), int64(1), true},
+		{"int_eq_float", int64(1), float64(1), true},
+		{"float_eq_int", float64(2.5), int64(2), false},
+		{"string_eq_string", "abc", "abc", true},
+		{"nil_eq_nil", nil, nil, true},
+		{"nil_eq_int", nil, int64(0), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := equalValue(c.a, c.b)
+			if got != c.want {
+				t.Errorf("equalValue(%v, %v) = %v, want %v", c.a, c.b, got, c.want)
 			}
 		})
 	}
