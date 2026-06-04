@@ -35,9 +35,10 @@ func TestMVGetOrCreateVersionChain(t *testing.T) {
 }
 
 func TestMVInsert(t *testing.T) {
+	arena := newArena()
 	mv := NewMV()
 
-	node := NewVersionNode(1, 10, []byte("key"), []byte("value"), false)
+	node := NewVersionNode(arena, 1, 10, []byte("key"), []byte("value"), false)
 
 	if !mv.Insert([]byte("key"), node) {
 		t.Error("expected insert to succeed")
@@ -55,9 +56,10 @@ func TestMVInsert(t *testing.T) {
 }
 
 func TestMVFindVisible(t *testing.T) {
+	arena := newArena()
 	mv := NewMV()
 
-	node := NewVersionNode(1, 10, []byte("key"), []byte("value"), false)
+	node := NewVersionNode(arena, 1, 10, []byte("key"), []byte("value"), false)
 	mv.Insert([]byte("key"), node)
 
 	found := mv.FindVisible([]byte("key"), 100)
@@ -72,10 +74,11 @@ func TestMVFindVisible(t *testing.T) {
 }
 
 func TestMVMultipleKeys(t *testing.T) {
+	arena := newArena()
 	mv := NewMV()
 
-	node1 := NewVersionNode(1, 10, []byte("key1"), []byte("value1"), false)
-	node2 := NewVersionNode(2, 20, []byte("key2"), []byte("value2"), false)
+	node1 := NewVersionNode(arena, 1, 10, []byte("key1"), []byte("value1"), false)
+	node2 := NewVersionNode(arena, 2, 20, []byte("key2"), []byte("value2"), false)
 
 	mv.Insert([]byte("key1"), node1)
 	mv.Insert([]byte("key2"), node2)
@@ -92,7 +95,8 @@ func TestMVMultipleKeys(t *testing.T) {
 }
 
 func TestMVVersionNodeAccessors(t *testing.T) {
-	node := NewVersionNode(1, 10, []byte("key"), []byte("value"), false)
+	arena := newArena()
+	node := NewVersionNode(arena, 1, 10, []byte("key"), []byte("value"), false)
 
 	if node.TxnID() != 1 {
 		t.Errorf("expected TxnID 1, got %d", node.TxnID())
@@ -115,7 +119,8 @@ func TestMVVersionNodeAccessors(t *testing.T) {
 }
 
 func TestMVVersionNodeDeleted(t *testing.T) {
-	node := NewVersionNode(1, 10, []byte("key"), []byte(""), true)
+	arena := newArena()
+	node := NewVersionNode(arena, 1, 10, []byte("key"), []byte(""), true)
 
 	if !node.Deleted() {
 		t.Error("expected Deleted true")
@@ -123,9 +128,10 @@ func TestMVVersionNodeDeleted(t *testing.T) {
 }
 
 func TestMVVersionNodeCommit(t *testing.T) {
+	arena := newArena()
 	mv := NewMV()
 
-	node := NewVersionNode(1, 10, []byte("key"), []byte("value"), false)
+	node := NewVersionNode(arena, 1, 10, []byte("key"), []byte("value"), false)
 	mv.Insert([]byte("key"), node)
 
 	chain := mv.GetVersionChain([]byte("key"))
@@ -148,19 +154,21 @@ func TestArenaSize(t *testing.T) {
 
 func BenchmarkMVInsert(b *testing.B) {
 	mv := NewMV()
+	arena := newArena()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		node := NewVersionNode(uint64(i), uint64(i), []byte("key"), []byte("value"), false)
+		node := NewVersionNode(arena, uint64(i), uint64(i), []byte("key"), []byte("value"), false)
 		mv.Insert([]byte("key"), node)
 	}
 }
 
 func BenchmarkMVFindVisible(b *testing.B) {
 	mv := NewMV()
+	arena := newArena()
 
 	for i := 0; i < 1000; i++ {
-		node := NewVersionNode(uint64(i), uint64(i*10), []byte("key"), []byte("value"), false)
+		node := NewVersionNode(arena, uint64(i), uint64(i*10), []byte("key"), []byte("value"), false)
 		mv.Insert([]byte("key"), node)
 	}
 

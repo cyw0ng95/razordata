@@ -105,13 +105,6 @@ func TestArenaPool(t *testing.T) {
 	}
 }
 
-func TestArenaPoolSlice(t *testing.T) {
-	sliceLen := len(arenaPoolSlice)
-	if sliceLen != runtime.GOMAXPROCS(0) {
-		t.Fatalf("expected arenaPoolSlice size %d, got %d", runtime.GOMAXPROCS(0), sliceLen)
-	}
-}
-
 func TestArenaConcurrency(t *testing.T) {
 	a := newArena()
 

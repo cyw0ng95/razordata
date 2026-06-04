@@ -86,7 +86,7 @@ func (m *Manager) Begin(ctx context.Context) (Tx, error) {
 	slot.beginTS = ts
 	slot.status.Store(int32(SlotActive))
 
-	arena := MV.GetArena()
+	arena := MV.NewArena()
 	readView := SN.NewReadView(m.mv, slot.beginTS)
 
 	return &tx{

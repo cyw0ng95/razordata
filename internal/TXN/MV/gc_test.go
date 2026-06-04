@@ -14,9 +14,10 @@ func TestGCVersionChain_Empty(t *testing.T) {
 }
 
 func TestGCVersionChain_NoCandidates(t *testing.T) {
+	arena := newArena()
 	mv := NewMV()
 	key := []byte("k")
-	n1 := NewVersionNode(1, 10, key, []byte("v1"), false)
+	n1 := NewVersionNode(arena, 1, 10, key, []byte("v1"), false)
 	mv.Insert(key, n1)
 	if !n1.Commit(20) {
 		t.Fatal("commit failed")
@@ -29,9 +30,10 @@ func TestGCVersionChain_NoCandidates(t *testing.T) {
 }
 
 func TestGCVersionChain_OneCandidate(t *testing.T) {
+	arena := newArena()
 	mv := NewMV()
 	key := []byte("k")
-	n1 := NewVersionNode(1, 10, key, []byte("v1"), false)
+	n1 := NewVersionNode(arena, 1, 10, key, []byte("v1"), false)
 	mv.Insert(key, n1)
 	if !n1.Commit(20) {
 		t.Fatal("commit failed")
@@ -47,32 +49,33 @@ func TestGCVersionChain_OneCandidate(t *testing.T) {
 }
 
 func TestGCVersionChain_MultipleVersionsMixed(t *testing.T) {
+	arena := newArena()
 	mv := NewMV()
 	key := []byte("k")
 
 	// v1: commit at 20 (reclaimable when oldestReadTS > 20)
-	v1 := NewVersionNode(1, 10, key, []byte("v1"), false)
+	v1 := NewVersionNode(arena, 1, 10, key, []byte("v1"), false)
 	mv.Insert(key, v1)
 	if !v1.Commit(20) {
 		t.Fatal("commit v1 failed")
 	}
 
 	// v2: commit at 30 (reclaimable when oldestReadTS > 30)
-	v2 := NewVersionNode(2, 15, key, []byte("v2"), false)
+	v2 := NewVersionNode(arena, 2, 15, key, []byte("v2"), false)
 	mv.Insert(key, v2)
 	if !v2.Commit(30) {
 		t.Fatal("commit v2 failed")
 	}
 
 	// v3: commit at 50 (still visible at oldestReadTS=40)
-	v3 := NewVersionNode(3, 20, key, []byte("v3"), false)
+	v3 := NewVersionNode(arena, 3, 20, key, []byte("v3"), false)
 	mv.Insert(key, v3)
 	if !v3.Commit(50) {
 		t.Fatal("commit v3 failed")
 	}
 
 	// uncommitted head — endTS == MaxUint64, never reclaimable
-	v4 := NewVersionNode(4, 25, key, []byte("v4"), false)
+	v4 := NewVersionNode(arena, 4, 25, key, []byte("v4"), false)
 	mv.Insert(key, v4)
 
 	cases := []struct {
@@ -97,9 +100,10 @@ func TestGCVersionChain_MultipleVersionsMixed(t *testing.T) {
 }
 
 func TestGCVersionChain_ChainUnchanged(t *testing.T) {
+	arena := newArena()
 	mv := NewMV()
 	key := []byte("k")
-	v1 := NewVersionNode(1, 10, key, []byte("v1"), false)
+	v1 := NewVersionNode(arena, 1, 10, key, []byte("v1"), false)
 	mv.Insert(key, v1)
 	if !v1.Commit(20) {
 		t.Fatal("commit failed")
@@ -129,11 +133,12 @@ func TestGCAllChains_Empty(t *testing.T) {
 }
 
 func TestGCAllChains_MultipleKeys(t *testing.T) {
+	arena := newArena()
 	mv := NewMV()
 	keys := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
 	var nodes []*VersionNode
 	for i, k := range keys {
-		n := NewVersionNode(uint64(i+1), 10, k, []byte("v"), false)
+		n := NewVersionNode(arena, uint64(i+1), 10, k, []byte("v"), false)
 		mv.Insert(k, n)
 		if !n.Commit(20) {
 			t.Fatalf("commit %d failed", i)
@@ -153,17 +158,18 @@ func TestGCAllChains_MultipleKeys(t *testing.T) {
 }
 
 func TestNumChains(t *testing.T) {
+	arena := newArena()
 	mv := NewMV()
 	if got := mv.NumChains(); got != 0 {
 		t.Errorf("expected 0 chains, got %d", got)
 	}
-	mv.Insert([]byte("a"), NewVersionNode(1, 1, []byte("a"), []byte("v"), false))
-	mv.Insert([]byte("b"), NewVersionNode(2, 2, []byte("b"), []byte("v"), false))
+	mv.Insert([]byte("a"), NewVersionNode(arena, 1, 1, []byte("a"), []byte("v"), false))
+	mv.Insert([]byte("b"), NewVersionNode(arena, 2, 2, []byte("b"), []byte("v"), false))
 	if got := mv.NumChains(); got != 2 {
 		t.Errorf("expected 2 chains, got %d", got)
 	}
 	// Insert into existing chain — count must not change
-	mv.Insert([]byte("a"), NewVersionNode(3, 3, []byte("a"), []byte("v2"), false))
+	mv.Insert([]byte("a"), NewVersionNode(arena, 3, 3, []byte("a"), []byte("v2"), false))
 	if got := mv.NumChains(); got != 2 {
 		t.Errorf("expected 2 chains after second insert on same key, got %d", got)
 	}

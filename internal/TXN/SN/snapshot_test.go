@@ -21,11 +21,12 @@ func TestNewReadView(t *testing.T) {
 }
 
 func TestReadViewGetFromChain(t *testing.T) {
+	arena := MV.NewArena()
 	mv := MV.NewMV()
 	rv := NewReadView(mv, 100)
 
 	key := []byte("testkey")
-	node := MV.NewVersionNode(1, 10, key, []byte("value1"), false)
+	node := MV.NewVersionNode(arena, 1, 10, key, []byte("value1"), false)
 	chain := mv.GetOrCreateVersionChain(key)
 	chain.Insert(node)
 
@@ -52,11 +53,12 @@ func TestReadViewGetNotFound(t *testing.T) {
 }
 
 func TestReadViewGetDeleted(t *testing.T) {
+	arena := MV.NewArena()
 	mv := MV.NewMV()
 	rv := NewReadView(mv, 100)
 
 	key := []byte("testkey")
-	node := MV.NewVersionNode(1, 10, key, []byte(""), true)
+	node := MV.NewVersionNode(arena, 1, 10, key, []byte(""), true)
 	chain := mv.GetOrCreateVersionChain(key)
 	chain.Insert(node)
 
@@ -70,11 +72,12 @@ func TestReadViewGetDeleted(t *testing.T) {
 }
 
 func TestReadViewGetFromSnapshot(t *testing.T) {
+	arena := MV.NewArena()
 	mv := MV.NewMV()
 	rv := NewReadView(mv, 100)
 
 	key := []byte("testkey")
-	node := MV.NewVersionNode(1, 10, key, []byte("value1"), false)
+	node := MV.NewVersionNode(arena, 1, 10, key, []byte("value1"), false)
 	chain := mv.GetOrCreateVersionChain(key)
 	chain.Insert(node)
 
@@ -132,13 +135,14 @@ func TestReadViewCloseIdempotent(t *testing.T) {
 }
 
 func TestReadViewGetVisibleVersion(t *testing.T) {
+	arena := MV.NewArena()
 	mv := MV.NewMV()
 	rv := NewReadView(mv, 50)
 
 	key := []byte("testkey")
 
-	node1 := MV.NewVersionNode(1, 10, key, []byte("value1"), false)
-	node2 := MV.NewVersionNode(2, 30, key, []byte("value2"), false)
+	node1 := MV.NewVersionNode(arena, 1, 10, key, []byte("value1"), false)
+	node2 := MV.NewVersionNode(arena, 2, 30, key, []byte("value2"), false)
 
 	chain := mv.GetOrCreateVersionChain(key)
 	chain.Insert(node1)
@@ -154,13 +158,14 @@ func TestReadViewGetVisibleVersion(t *testing.T) {
 }
 
 func TestReadViewGetCommittedVersion(t *testing.T) {
+	arena := MV.NewArena()
 	mv := MV.NewMV()
 	rv := NewReadView(mv, 100)
 
 	key := []byte("testkey")
 
-	node1 := MV.NewVersionNode(1, 10, key, []byte("value1"), false)
-	node2 := MV.NewVersionNode(2, 30, key, []byte("value2"), false)
+	node1 := MV.NewVersionNode(arena, 1, 10, key, []byte("value1"), false)
+	node2 := MV.NewVersionNode(arena, 2, 30, key, []byte("value2"), false)
 
 	chain := mv.GetOrCreateVersionChain(key)
 	chain.Insert(node1)
@@ -178,13 +183,14 @@ func TestReadViewGetCommittedVersion(t *testing.T) {
 }
 
 func TestReadViewGetUncommittedNotVisible(t *testing.T) {
+	arena := MV.NewArena()
 	mv := MV.NewMV()
 	rv := NewReadView(mv, 25)
 
 	key := []byte("testkey")
 
-	node1 := MV.NewVersionNode(1, 10, key, []byte("value1"), false)
-	node2 := MV.NewVersionNode(2, 30, key, []byte("value2"), false)
+	node1 := MV.NewVersionNode(arena, 1, 10, key, []byte("value1"), false)
+	node2 := MV.NewVersionNode(arena, 2, 30, key, []byte("value2"), false)
 
 	chain := mv.GetOrCreateVersionChain(key)
 	chain.Insert(node1)
@@ -197,14 +203,15 @@ func TestReadViewGetUncommittedNotVisible(t *testing.T) {
 }
 
 func TestReadViewMultipleKeys(t *testing.T) {
+	arena := MV.NewArena()
 	mv := MV.NewMV()
 	rv := NewReadView(mv, 100)
 
 	key1 := []byte("key1")
 	key2 := []byte("key2")
 
-	node1 := MV.NewVersionNode(1, 10, key1, []byte("value1"), false)
-	node2 := MV.NewVersionNode(2, 20, key2, []byte("value2"), false)
+	node1 := MV.NewVersionNode(arena, 1, 10, key1, []byte("value1"), false)
+	node2 := MV.NewVersionNode(arena, 2, 20, key2, []byte("value2"), false)
 
 	chain1 := mv.GetOrCreateVersionChain(key1)
 	chain1.Insert(node1)
@@ -230,13 +237,14 @@ func TestReadViewMultipleKeys(t *testing.T) {
 }
 
 func TestReadViewSnapshotUpdated(t *testing.T) {
+	arena := MV.NewArena()
 	mv := MV.NewMV()
 	rv := NewReadView(mv, 100)
 
 	key := []byte("testkey")
 	chain := mv.GetOrCreateVersionChain(key)
 
-	node1 := MV.NewVersionNode(1, 10, key, []byte("value1"), false)
+	node1 := MV.NewVersionNode(arena, 1, 10, key, []byte("value1"), false)
 	chain.Insert(node1)
 
 	_, _ = rv.Get(key)
@@ -245,7 +253,7 @@ func TestReadViewSnapshotUpdated(t *testing.T) {
 		t.Errorf("expected 1 snapshot, got %d", len(rv.snapshot))
 	}
 
-	node2 := MV.NewVersionNode(2, 20, key, []byte("value2"), false)
+	node2 := MV.NewVersionNode(arena, 2, 20, key, []byte("value2"), false)
 	chain.Insert(node2)
 
 	_, _ = rv.Get(key)
@@ -256,11 +264,12 @@ func TestReadViewSnapshotUpdated(t *testing.T) {
 }
 
 func TestReadViewConcurrency(t *testing.T) {
+	arena := MV.NewArena()
 	mv := MV.NewMV()
 	rv := NewReadView(mv, 100)
 
 	key := []byte("testkey")
-	node := MV.NewVersionNode(1, 10, key, []byte("value1"), false)
+	node := MV.NewVersionNode(arena, 1, 10, key, []byte("value1"), false)
 	chain := mv.GetOrCreateVersionChain(key)
 	chain.Insert(node)
 
@@ -279,12 +288,13 @@ func TestReadViewConcurrency(t *testing.T) {
 }
 
 func TestVersionChainSnapshot(t *testing.T) {
+	arena := MV.NewArena()
 	mv := MV.NewMV()
 	rv := NewReadView(mv, 100)
 
 	key := []byte("testkey")
 	chain := mv.GetOrCreateVersionChain(key)
-	node := MV.NewVersionNode(1, 10, key, []byte("value1"), false)
+	node := MV.NewVersionNode(arena, 1, 10, key, []byte("value1"), false)
 	chain.Insert(node)
 
 	rv.addSnapshot(key, chain.GetHead())

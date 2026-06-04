@@ -2,6 +2,7 @@ package VL
 
 import (
 	"context"
+	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/TXN/MV"
 	"github.com/cyw0ng95/razordata/internal/TXN/SN"
@@ -30,6 +31,12 @@ type tx struct {
 	slot     *transactionSlot
 	readView *SN.ReadView
 	arena    *MV.Arena
+	// mu serializes the per-txn write set and arena against concurrent
+	// goroutines that might call Insert/Delete on the same transaction.
+	// The arena is per-txn and not safe for concurrent use; without this
+	// lock, two goroutines could race on t.arena.Alloc.
+	mu       sync.Mutex
+	finished bool
 }
 
 func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
@@ -62,7 +69,12 @@ func (t *tx) Insert(ctx context.Context, key, value []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	node := MV.NewVersionNode(t.slot.txnID, t.slot.beginTS, key, value, false)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.finished {
+		return ErrTxFinished
+	}
+	node := MV.NewVersionNode(t.arena, t.slot.txnID, t.slot.beginTS, key, value, false)
 	if !t.mv.Insert(key, node) {
 		return ErrInsertFailed
 	}
@@ -74,7 +86,12 @@ func (t *tx) Delete(ctx context.Context, key []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	node := MV.NewVersionNode(t.slot.txnID, t.slot.beginTS, key, nil, true)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.finished {
+		return ErrTxFinished
+	}
+	node := MV.NewVersionNode(t.arena, t.slot.txnID, t.slot.beginTS, key, nil, true)
 	if !t.mv.Insert(key, node) {
 		return ErrDeleteFailed
 	}
@@ -86,8 +103,17 @@ func (t *tx) Commit(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.finished {
+		return ErrTxFinished
+	}
 	if !t.sm.Validate(t.slot) {
-		return t.Abort(ctx)
+		t.finalize(SlotAborted)
+		if t.manager != nil {
+			t.manager.recordAbort()
+		}
+		return ErrWriteConflict
 	}
 
 	commitTS := NextTS()
@@ -105,9 +131,7 @@ func (t *tx) Commit(ctx context.Context) error {
 		}
 	}
 
-	t.slot.commitTS = commitTS
-	t.slot.status.Store(int32(SlotCommitted))
-	t.sm.ReleaseSlot(t.slot)
+	t.finalize(SlotCommitted)
 	if t.manager != nil {
 		t.manager.recordCommit()
 	}
@@ -118,12 +142,33 @@ func (t *tx) Abort(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	t.slot.status.Store(int32(SlotAborted))
-	t.sm.ReleaseSlot(t.slot)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.finished {
+		// Abort is idempotent: a second call after the first is a no-op
+		// and does NOT increment the abort counter or re-release the slot.
+		// (The pre-existing code re-released the slot, which was a latent
+		// bug; see the iter-05 audit notes.)
+		return nil
+	}
+	t.finalize(SlotAborted)
 	if t.manager != nil {
 		t.manager.recordAbort()
 	}
 	return nil
+}
+
+// finalize marks the slot's terminal state, releases the slot back to
+// the pool, and returns the per-txn arena to the global pool. Must be
+// called with t.mu held.
+func (t *tx) finalize(status SlotStatus) {
+	t.slot.status.Store(int32(status))
+	t.sm.ReleaseSlot(t.slot)
+	if t.arena != nil {
+		MV.PutArena(t.arena)
+		t.arena = nil
+	}
+	t.finished = true
 }
 
 // Begin allocates a transaction on the default (global) manager. Preserved

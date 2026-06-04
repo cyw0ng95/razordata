@@ -1,4 +1,4 @@
-# Iteration 5 — TXN/MVCC (Version Chain + Per-Thread Arena)
+# Iteration 5 — TXN/MVCC (Version Chain + Per-Transaction Arena)
 
 **Subsystem:** `TXN`
 **Status:** done
@@ -19,10 +19,10 @@ MVCC snapshot isolation for readers and serializable writes. Built on `ENG` — 
 Directory structure matches `design/subsystems/TXN.md`:
 ```
 internal/TXN/
-├── MV/               # MVCC: version chain, CAS insertion, per-thread arena
+├── MV/               # MVCC: version chain, CAS insertion, per-txn arena
 │   ├── version.go     # VersionNode, VersionChain, CAS insertion, commit
 │   ├── version_test.go
-│   ├── arena.go       # Per-thread arena: Alloc, exhaustion, lazy init
+│   ├── arena.go       # Per-txn arena: Alloc, exhaustion, sync.Pool reuse via NewArena/GetArena/PutArena
 │   ├── arena_test.go
 │   ├── mv.go          # MV struct: GetVersionChain, GetOrCreateVersionChain, Insert
 │   └── errors.go      # ErrNotFound, ErrDuplicateKey, ErrTxAborted, etc.
@@ -54,11 +54,11 @@ internal/TXN/
 | R07 | `InsertVersion(key []byte, node *VersionNode) error`: CAS-insert at chain head, return error on CAS failure | done |
 | R08 | `CommitVersion(node *VersionNode, commitTS uint64) bool`: CAS-update endTS from MaxUint64 to commitTS, return success | done |
 | R09 | `GCVersionChain(key []byte, oldestReadTS uint64)`: compact versions where all active txns have endTS < oldestReadTS | pending |
-| R10 | Per-thread arena struct: `buf []byte`, `offset atomic.Int64`, `size int64` | done |
+| R10 | Per-transaction arena struct: `buf []byte`, `offset atomic.Int64`, `size int64` | done |
 | R11 | Arena `Alloc(n int) []byte`: CAS loop on offset, return slice at old offset, nil if exhausted | done |
-| R12 | Arena lazy init: allocate 1MB buffer on first Alloc, via sync.Pool for reuse | done |
-| R13 | Arena pool: `runtime.GOMAXPROCS(0)`-sized `[]*arena`, indexed by goroutine ID modulo length | done |
-| R14 | When arena exhausted: fetch new from sync.Pool or allocate; old arenas freed by epoch reclamation | done |
+| R12 | Per-txn arena allocation: each transaction gets a fresh `*Arena` from `NewArena()`; arena is returned to the global `sync.Pool` via `PutArena` on Commit/Abort | done |
+| R13 | `NewVersionNode(arena *Arena, ...)`: arena is supplied by the caller (the transaction); the function is single-driver per arena | done |
+| R14 | When arena exhausted: `NewVersionNode` falls back to a heap allocation; subsequent Insert/Delete on the same transaction resume from the arena | done |
 | R15 | `VersionNode` fields accessed only via atomic operations or within single CAS window | done |
 
 ### LC — Lock (Hazard) Cluster

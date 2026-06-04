@@ -277,13 +277,14 @@ func TestTx_Abort_AfterAbort(t *testing.T) {
 	if err := tx.Abort(context.Background()); err != nil {
 		t.Errorf("second Abort: %v", err)
 	}
-	if got := m.Stats().Aborted; got != 2 {
-		// The slot is released after first Abort, so a second Abort
-		// finds no slot to release — but the atomic counter still
-		// increments. This is acceptable as long as we don't double-
-		// release the same slot. The test pins the count at 2 to
-		// surface any future change.
-		t.Errorf("expected Aborted=2, got %d", got)
+	if got := m.Stats().Aborted; got != 1 {
+		// Abort is idempotent: a second call is a no-op and does NOT
+		// increment the abort counter. The pre-release version of this
+		// test pinned Aborted=2, which reflected a latent bug where the
+		// second Abort re-released the slot and double-incremented the
+		// counter. The current contract: Aborted=1 after N Aborts on the
+		// same transaction.
+		t.Errorf("expected Aborted=1, got %d", got)
 	}
 }
 
@@ -369,6 +370,8 @@ func TestTx_ErrorTypes_AreExported(t *testing.T) {
 		ErrCommitFailed,
 		ErrInvalidWALRecord,
 		ErrManagerClosed,
+		ErrTxFinished,
+		ErrWriteConflict,
 	}
 	for _, e := range sentinels {
 		if e == nil {
