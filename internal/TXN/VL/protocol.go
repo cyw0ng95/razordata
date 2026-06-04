@@ -10,6 +10,11 @@ import (
 var globalSlotManager = newSlotManager()
 var globalMV = MV.NewMV()
 
+// defaultManager backs the package-level Begin function for backward
+// compatibility. New code should construct a Manager explicitly via
+// NewManager.
+var defaultManager = NewManagerShared(globalSlotManager, globalMV)
+
 type Tx interface {
 	Get(ctx context.Context, key []byte) ([]byte, error)
 	Insert(ctx context.Context, key, value []byte) error
@@ -19,13 +24,19 @@ type Tx interface {
 }
 
 type tx struct {
+	sm       *slotManager
+	mv       *MV.MV
+	manager  *Manager
 	slot     *transactionSlot
 	readView *SN.ReadView
 	arena    *MV.Arena
 }
 
 func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
-	chain := globalMV.GetVersionChain(key)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	chain := t.mv.GetVersionChain(key)
 	if chain != nil {
 		for node := chain.GetHead(); node != nil; node = node.Next() {
 			if node.TxnID() == t.slot.txnID && node.BeginTS() == t.slot.beginTS {
@@ -37,7 +48,7 @@ func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
 		}
 	}
 
-	node := globalMV.FindVisible(key, t.slot.beginTS)
+	node := t.mv.FindVisible(key, t.slot.beginTS)
 	if node == nil {
 		return nil, nil
 	}
@@ -48,8 +59,11 @@ func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
 }
 
 func (t *tx) Insert(ctx context.Context, key, value []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	node := MV.NewVersionNode(t.slot.txnID, t.slot.beginTS, key, value, false)
-	if !globalMV.Insert(key, node) {
+	if !t.mv.Insert(key, node) {
 		return ErrInsertFailed
 	}
 	t.slot.writeSet = append(t.slot.writeSet, KeyRange{Start: key, End: nil})
@@ -57,8 +71,11 @@ func (t *tx) Insert(ctx context.Context, key, value []byte) error {
 }
 
 func (t *tx) Delete(ctx context.Context, key []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	node := MV.NewVersionNode(t.slot.txnID, t.slot.beginTS, key, nil, true)
-	if !globalMV.Insert(key, node) {
+	if !t.mv.Insert(key, node) {
 		return ErrDeleteFailed
 	}
 	t.slot.writeSet = append(t.slot.writeSet, KeyRange{Start: key, End: nil})
@@ -66,14 +83,17 @@ func (t *tx) Delete(ctx context.Context, key []byte) error {
 }
 
 func (t *tx) Commit(ctx context.Context) error {
-	if !globalSlotManager.Validate(t.slot) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !t.sm.Validate(t.slot) {
 		return t.Abort(ctx)
 	}
 
 	commitTS := NextTS()
 
 	for _, kr := range t.slot.writeSet {
-		chain := globalMV.GetVersionChain(kr.Start)
+		chain := t.mv.GetVersionChain(kr.Start)
 		if chain == nil {
 			continue
 		}
@@ -87,32 +107,28 @@ func (t *tx) Commit(ctx context.Context) error {
 
 	t.slot.commitTS = commitTS
 	t.slot.status.Store(int32(SlotCommitted))
-	globalSlotManager.ReleaseSlot(t.slot)
+	t.sm.ReleaseSlot(t.slot)
+	if t.manager != nil {
+		t.manager.recordCommit()
+	}
 	return nil
 }
 
 func (t *tx) Abort(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	t.slot.status.Store(int32(SlotAborted))
-	globalSlotManager.ReleaseSlot(t.slot)
+	t.sm.ReleaseSlot(t.slot)
+	if t.manager != nil {
+		t.manager.recordAbort()
+	}
 	return nil
 }
 
+// Begin allocates a transaction on the default (global) manager. Preserved
+// for backward compatibility with code written before TxnManager existed.
+// New code should call Manager.Begin on an explicit manager instance.
 func Begin(ctx context.Context) (Tx, error) {
-	slot := globalSlotManager.AllocateSlot()
-	if slot == nil {
-		return nil, ErrNoSlotsAvailable
-	}
-
-	slot.txnID = NextTS()
-	slot.beginTS = slot.txnID
-	slot.status.Store(int32(SlotActive))
-
-	arena := MV.GetArena()
-	readView := SN.NewReadView(globalMV, slot.beginTS)
-
-	return &tx{
-		slot:     slot,
-		readView: readView,
-		arena:    arena,
-	}, nil
+	return defaultManager.Begin(ctx)
 }

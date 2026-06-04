@@ -9,4 +9,5 @@ var (
 	ErrValidationFailed = errors.New("txn: validation failed")
 	ErrCommitFailed     = errors.New("txn: commit failed")
 	ErrInvalidWALRecord = errors.New("txn: invalid WAL record")
+	ErrManagerClosed    = errors.New("txn: manager is closed")
 )
