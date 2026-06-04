@@ -2,6 +2,8 @@ package bf
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -232,5 +234,259 @@ func TestUpsert_ExistingSlot_OverwritesAndClearsLoading(t *testing.T) {
 	stats := bp.Stats()
 	if stats.Used != 1 {
 		t.Errorf("expected used=1 after duplicate Upsert, got %d", stats.Used)
+	}
+}
+
+// --- Round 2: more MEM/BF coverage ---
+
+// TestGet_BlockIDZero covers the ErrInvalidBlockID short-circuit at
+// the top of Get.
+func TestGet_BlockIDZero(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "zero.razor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bp.Close()
+
+	if _, _, err := bp.Get(context.Background(), 0); !errors.Is(err, ErrInvalidBlockID) {
+		t.Errorf("Get(0): want ErrInvalidBlockID, got %v", err)
+	}
+}
+
+// TestUpsert_NilPage covers the nil-page short-circuit in Upsert.
+func TestUpsert_NilPage(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "nil.razor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bp.Close()
+
+	if err := bp.Upsert(nil); !errors.Is(err, ErrInvalidBlockID) {
+		t.Errorf("Upsert(nil): want ErrInvalidBlockID, got %v", err)
+	}
+}
+
+// TestUpsert_PageIDZero covers the page.ID == 0 branch in Upsert.
+func TestUpsert_PageIDZero(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "idzero.razor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bp.Close()
+
+	data := make([]byte, df.DefaultBlockSize)
+	if err := bp.Upsert(&Page{ID: 0, Data: data}); !errors.Is(err, ErrInvalidBlockID) {
+		t.Errorf("Upsert(ID=0): want ErrInvalidBlockID, got %v", err)
+	}
+}
+
+// TestUpsert_WrongDataLen covers the len(page.Data) != BlockSize
+// branch in Upsert.
+func TestUpsert_WrongDataLen(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "wronglen.razor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bp.Close()
+
+	if err := bp.Upsert(&Page{ID: 1, Data: []byte("short")}); !errors.Is(err, ErrInvalidBlockID) {
+		t.Errorf("Upsert(short data): want ErrInvalidBlockID, got %v", err)
+	}
+}
+
+// TestPin_Unpin_NonExistentPage covers the !ok early return in Pin
+// and Unpin — both must be no-ops for an unknown page.
+func TestPin_Unpin_NonExistentPage(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "pin-unknown.razor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bp.Close()
+
+	// Pin/Unpin a page that was never inserted — must not panic.
+	bp.Pin(&Page{ID: 999})
+	bp.Unpin(&Page{ID: 999})
+
+	if got := bp.Stats().Pins; got != 0 {
+		t.Errorf("Pin on unknown page must not increment Pins, got %d", got)
+	}
+}
+
+// TestPin_AfterEvict covers the Pin/Stats interaction: a pinned
+// page should not be evicted; an unpinned page can be.
+func TestPin_BlocksEviction(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "pin-evict.razor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bd.Close()
+
+	bp, err := New(2, "", bd, newMockSyncPool()) // capacity 2
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bp.Close()
+
+	data := make([]byte, df.DefaultBlockSize)
+	for i := uint64(1); i <= 2; i++ {
+		if err := bp.Upsert(&Page{ID: i, Data: data}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Pin page 1.
+	page, _, _ := bp.Get(context.Background(), 1)
+	bp.Pin(page)
+	// Insert a third — should evict one of the unpinned pages.
+	if err := bp.Upsert(&Page{ID: 3, Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	// Page 1 must still be present.
+	_, cached, _ := bp.Get(context.Background(), 1)
+	if !cached {
+		t.Error("pinned page 1 was evicted")
+	}
+	bp.Unpin(page)
+}
+
+// TestSetCapacity_AlwaysErrors covers the deferred-to-v2 stub.
+func TestSetCapacity_AlwaysErrors(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "setcap.razor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bp.Close()
+
+	if err := bp.SetCapacity(8); !errors.Is(err, ErrCapacityExceeded) {
+		t.Errorf("SetCapacity: want ErrCapacityExceeded, got %v", err)
+	}
+}
+
+// TestStats_AfterActivity covers the Stats snapshot shape after a
+// sequence of hits, misses, and pins.
+func TestStats_AfterActivity(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "stats.razor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bp.Close()
+
+	data := make([]byte, df.DataLen-df.ChecksumLen)
+	if err := bd.WriteBlock(context.Background(), 1, data); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1 miss
+	if _, _, err := bp.Get(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
+	// 1 hit
+	if _, _, err := bp.Get(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
+	// 1 pin
+	page, _, _ := bp.Get(context.Background(), 1)
+	bp.Pin(page)
+
+	stats := bp.Stats()
+	if stats.Hits < 1 {
+		t.Errorf("Hits: want >=1, got %d", stats.Hits)
+	}
+	if stats.Misses < 1 {
+		t.Errorf("Misses: want >=1, got %d", stats.Misses)
+	}
+	if stats.Pins < 1 {
+		t.Errorf("Pins: want >=1, got %d", stats.Pins)
+	}
+	if stats.Capacity != 4 {
+		t.Errorf("Capacity: want 4, got %d", stats.Capacity)
+	}
+}
+
+// TestClose_HintPathWriteFails covers the writeHintFile error branch
+// in Close. The function must capture the error and return it on
+// subsequent calls (via the cached closeErr).
+func TestClose_HintPathWriteFails(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "close-err.razor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bd.Close()
+
+	// Use a path that points at an existing regular file — the
+	// os.WriteFile inside writeHintFile will fail.
+	badHint := filepath.Join(tmp, "not-a-dir-or-file")
+	if err := os.WriteFile(badHint, []byte("blocking"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// A directory in the path would also fail; a regular file at
+	// the parent of the hint path forces writeFile to fail with
+	// ENOTDIR.
+	bp, err := New(4, filepath.Join(badHint, "hint"), bd, newMockSyncPool())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Insert a slot so writeHintFile has something to write.
+	data := make([]byte, df.DefaultBlockSize)
+	if err := bp.Upsert(&Page{ID: 1, Data: data}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := bp.Close(); err == nil {
+		t.Error("expected Close to fail when hint path is invalid")
+	}
+	// Second Close returns the same cached error.
+	if err := bp.Close(); err == nil {
+		t.Error("expected cached closeErr on second Close")
 	}
 }

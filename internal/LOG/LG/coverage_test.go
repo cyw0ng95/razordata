@@ -267,3 +267,185 @@ func TestRotationWriter_CloseIdempotent(t *testing.T) {
 		t.Errorf("second Close: %v", err)
 	}
 }
+
+// --- Round 2: more coverage cases ---
+
+// TestSync_RotationWriter_SyncSuccess covers the rotationWriter.Sync
+// fast path that delegates to f.Sync. The Sync method on the
+// Logger must reach this path when the output is a rotationWriter.
+func TestSync_RotationWriter_SyncSuccess(t *testing.T) {
+	dir := t.TempDir()
+	log := New(Options{
+		Level:    slog.LevelInfo,
+		Dir:      dir,
+		BaseName: "sync.log",
+		MaxSize:  1 << 20,
+	})
+	// Force a write so the underlying file exists and is non-empty.
+	log.Info("bootstrap")
+	// Sync should call the underlying file Sync via the
+	// rotationWriter, which delegates to f.Sync(). We can't
+	// observe the call directly, but we verify Sync does not
+	// return an error and is idempotent.
+	if err := log.Sync(); err != nil {
+		t.Errorf("first Sync: %v", err)
+	}
+	if err := log.Sync(); err != nil {
+		t.Errorf("second Sync: %v", err)
+	}
+}
+
+// TestSetOutput_JSON_DisablesRotation covers the SetOutput branch
+// that switches to JSON format and disables rotation.
+func TestSetOutput_JSON_DisablesRotation(t *testing.T) {
+	dir := t.TempDir()
+	log := New(Options{
+		Level:    slog.LevelInfo,
+		Dir:      dir,
+		BaseName: "json.log",
+		MaxSize:  1 << 20,
+	})
+	shared := log.(*logger).shared
+	if shared.rotationFn == nil {
+		t.Fatal("expected rotationFn to be set after New with Dir")
+	}
+	log.SetOutput(&bytes.Buffer{})
+	if shared.rotationFn != nil {
+		t.Error("SetOutput must clear rotationFn")
+	}
+}
+
+// TestSetOutput_Nil_DefaultsToStderr covers the nil-writer fallback
+// in SetOutput.
+func TestSetOutput_Nil_DefaultsToStderr(t *testing.T) {
+	log := New(Options{Format: "text", Output: &bytes.Buffer{}})
+	// SetOutput(nil) must not panic; it falls back to os.Stderr.
+	log.SetOutput(nil)
+	log.Info("after-nil")
+	// No observable side-effect we can assert beyond no-panic.
+}
+
+// TestSetOutput_JSON_Format covers the SetOutput branch that
+// rebuilds the handler as slog.NewJSONHandler when shared.format
+// is "json". Constructing with Format:"json" and then calling
+// SetOutput must rebuild a JSON handler, observable via output.
+func TestSetOutput_JSON_Format(t *testing.T) {
+	var buf bytes.Buffer
+	log := New(Options{Format: "json", Output: &buf})
+	var buf2 bytes.Buffer
+	log.SetOutput(&buf2)
+	log.Info("json-msg", "k", "v")
+	// JSON output is observable as a non-empty buffer with '{'.
+	if buf2.Len() == 0 {
+		t.Error("expected non-empty JSON output")
+	}
+	if buf2.Bytes()[0] != '{' {
+		t.Errorf("expected JSON object at start, got %q", buf2.String())
+	}
+}
+
+// TestListRotatedFiles_IgnoresSubdir covers the IsDir continue
+// branch — a subdirectory whose name happens to match the rotated
+// prefix must be ignored.
+func TestListRotatedFiles_IgnoresSubdir(t *testing.T) {
+	dir := t.TempDir()
+	log := New(Options{
+		Level:    slog.LevelInfo,
+		Dir:      dir,
+		BaseName: "sub.log",
+		MaxSize:  1 << 20,
+	})
+	shared := log.(*logger).shared
+
+	// Create a subdir that matches the rotated prefix.
+	if err := os.Mkdir(filepath.Join(dir, "sub.20240101_000000.log"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create a real rotated file for the positive case.
+	if err := os.WriteFile(filepath.Join(dir, "sub.20240102_000000.log"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := shared.listRotatedFiles()
+	if err != nil {
+		t.Fatalf("listRotatedFiles: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("expected 1 rotated file (subdir ignored), got %d: %v", len(got), got)
+	}
+}
+
+// TestRotateFile_FailedRename_ReopensCurrent covers the recovery
+// branch in rotateFile when os.Rename fails: rotateFile should
+// attempt to reopen the current file and update curSize.
+func TestRotateFile_FailedRename_ReopensCurrent(t *testing.T) {
+	dir := t.TempDir()
+	log := New(Options{
+		Level:    slog.LevelInfo,
+		Dir:      dir,
+		BaseName: "recov.log",
+		MaxSize:  64,
+	})
+	log.Info("bootstrap")
+	// Delete the current file so os.Rename(src, dst) fails.
+	if err := os.Remove(filepath.Join(dir, "recov.log")); err != nil {
+		t.Fatal(err)
+	}
+
+	shared := log.(*logger).shared
+	shared.curSize.Store(shared.maxSize)
+	if err := shared.rotateFile(); err == nil {
+		t.Error("expected error from rotateFile when source file is missing")
+	}
+	// After the failure, recovery must have created either the
+	// original file (recov.log) or a rotated file. We just need
+	// at least one entry to be present.
+	entries, _ := os.ReadDir(dir)
+	if len(entries) == 0 {
+		t.Error("expected at least one file after recovery attempt")
+	}
+}
+
+// TestNew_DefaultOptions_Applies covers the default-application
+// branch in New: when Output, Format, baseName, maxSize, and
+// maxFiles are all zero, sensible defaults must be applied.
+func TestNew_DefaultOptions_Applies(t *testing.T) {
+	log := New(Options{}) // everything zero / nil
+	shared := log.(*logger).shared
+	if shared.baseName != "razordata.log" {
+		t.Errorf("default baseName: want razordata.log, got %q", shared.baseName)
+	}
+	if shared.maxSize != 100*1024*1024 {
+		t.Errorf("default maxSize: want 100MB, got %d", shared.maxSize)
+	}
+	if shared.maxFiles != 10 {
+		t.Errorf("default maxFiles: want 10, got %d", shared.maxFiles)
+	}
+	if shared.format != "text" {
+		t.Errorf("default format: want text, got %q", shared.format)
+	}
+}
+
+// TestNew_DirMkdirFails covers the path where Dir is set but
+// MkdirAll fails (e.g., a regular file is at the Dir path).
+// New must not crash; it falls back to the Output writer.
+func TestNew_DirMkdirFails(t *testing.T) {
+	dir := t.TempDir()
+	// Create a regular file where we'd expect a subdirectory.
+	regular := filepath.Join(dir, "subdir")
+	if err := os.WriteFile(regular, []byte("not a dir"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	log := New(Options{
+		Level:    slog.LevelInfo,
+		Dir:      filepath.Join(regular, "logs"), // MkdirAll fails
+		BaseName: "x.log",
+		MaxSize:  1 << 20,
+	})
+	// Output is os.Stderr (default) since Dir failed to create.
+	shared := log.(*logger).shared
+	if shared.rotationFn != nil {
+		t.Error("expected rotationFn to remain nil when Dir creation fails")
+	}
+	// Logger must still be usable.
+	log.Info("after-fail")
+}
