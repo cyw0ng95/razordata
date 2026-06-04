@@ -169,9 +169,9 @@ func TestListRotatedFiles(t *testing.T) {
 	// baseName = "test.log", ext = ".log", base = "test"
 	// So files should be: test.YYMMDD_HHMMSS.log
 	names := []string{
-		"test.240101_120000.log",
-		"test.240102_120000.log",
-		"test.240103_120000.log",
+		"test.20240101_120000.log",
+		"test.20240102_120000.log",
+		"test.20240103_120000.log",
 	}
 	for _, name := range names {
 		os.Create(filepath.Join(dir, name))
@@ -188,7 +188,7 @@ func TestListRotatedFiles(t *testing.T) {
 	if len(files) != 3 {
 		t.Fatalf("expected 3 files, got %d", len(files))
 	}
-	if !strings.HasSuffix(files[0], "test.240101_120000.log") {
+	if !strings.HasSuffix(files[0], "test.20240101_120000.log") {
 		t.Error("expected oldest file first")
 	}
 }
@@ -204,9 +204,9 @@ func TestCleanupOldLogs(t *testing.T) {
 		MaxFiles: 3,
 	}).(*logger)
 
-	// Create fake rotated files matching expected pattern: test.YYMMDD_HHMMSS.log
+	// Create fake rotated files matching expected pattern: test.YYYYMMDD_HHMMSS.log
 	for i := 1; i <= 5; i++ {
-		name := filepath.Join(dir, fmt.Sprintf("test.24010%d_120000.log", i))
+		name := filepath.Join(dir, fmt.Sprintf("test.2024010%d_120000.log", i))
 		os.Create(name)
 	}
 	// Create current log file
@@ -472,9 +472,9 @@ func TestListRotatedFilesWithInvalidFormat(t *testing.T) {
 
 	// Create files with invalid formats
 	invalidNames := []string{
-		"test.240101.log",         // wrong timestamp length
+		"test.240101.log",         // wrong timestamp length (13 chars)
 		"test.txt",                // wrong extension
-		"other.240101_120000.log", // wrong prefix
+		"other.240101_120000.log", // wrong prefix (also 13-char timestamp, would be invalid on both counts)
 		"test.240101_12.log",      // wrong format
 		"test.log.240101_120000",  // extension in wrong place
 	}
@@ -483,7 +483,7 @@ func TestListRotatedFilesWithInvalidFormat(t *testing.T) {
 	}
 
 	// Create valid rotated file
-	os.Create(filepath.Join(dir, "test.240101_120000.log"))
+	os.Create(filepath.Join(dir, "test.20240101_120000.log"))
 
 	files, err := l.shared.listRotatedFiles()
 	if err != nil {
@@ -847,7 +847,7 @@ func TestListRotatedFilesSorted(t *testing.T) {
 	}).(*logger)
 
 	// Create rotated files with different timestamps
-	timestamps := []string{"240601_120000", "240602_130000", "240603_140000"}
+	timestamps := []string{"20240601_120000", "20240602_130000", "20240603_140000"}
 	for _, ts := range timestamps {
 		name := filepath.Join(dir, fmt.Sprintf("sort.%s.log", ts))
 		os.WriteFile(name, []byte("data"), 0644)

@@ -386,13 +386,13 @@ func (s *sharedLogger) listRotatedFiles() ([]string, error) {
 			continue
 		}
 
-		// Verify suffix format: YYMMDD_HHMMSS<ext>
+		// Verify suffix format: YYYYMMDD_HHMMSS<ext>
 		suffix := strings.TrimPrefix(name, prefix)
 		if !strings.HasSuffix(suffix, ext) {
 			continue
 		}
 		timestampPart := strings.TrimSuffix(suffix, ext)
-		if len(timestampPart) != 13 { // YYMMDD_HHMMSS
+		if len(timestampPart) != 15 { // YYYYMMDD_HHMMSS
 			continue
 		}
 
