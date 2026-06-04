@@ -25,7 +25,7 @@ Joins, subqueries, foreign keys, network server, external C dependencies.
 | 5 | TXN/MVCC | Version chain + per-thread arena | `MV`, `LC`, `SN` | ~3,000 | 67 | 91.8 / 98.0 / 82.4 | 6 / 3 / 0 | done |
 | 6 | TXN/Protocol | Transaction slot + commit + WAL | `VL` | ~2,000 | 93 | 98.7 | 5 | done |
 | 7 | SQL/Core | Lexer + parser + rewriter | `LX`, `PS`, `RE` | ~2,500 | 102 | 89.5 / 66.6 / 49.0 | 2 / 4 / 0 | done |
-| 8 | SQL/Execute | Planner + executor | `PL`, `EX` | ~3,000 | 0 / 42 | n/a / 72.8 | 0 / 8 | partial (EX has ~4.4k LoC of planner/eval/operators/writers; no wired end-to-end driver; PL/ has only a stub) |
+| 8 | SQL/Execute | Planner + executor | `PL`, `EX` | ~3,000 | 0 / 42 | n/a / 72.8 | 0 / 8 | partial (EX has 4.4k LoC, in-memory tables, planner in EX not PL; 14/23 done, 7 partial, 2 not done) |
 | 9 | SYS+Integration | Public API + end-to-end | `SY`, `AP`, `SE`, `TX`, `ST` | ~3,000 | 0 | n/a | 0 | pending |
 
 **Coverage / Benchmark legend:** each iter's cluster columns are listed in the order the clusters appear in the design dir tree. `0 / 42` for iter-08 = "0 in PL / 42 in EX".
@@ -35,7 +35,7 @@ Joins, subqueries, foreign keys, network server, external C dependencies.
 - **iter-04 (ENG/LS)** — 0 benchmarks, which violates the AGENTS.md rule that every storage component must have a benchmark. Needs `Benchmark*` for skiplist insert/get, SST write/read, and flush.
 - **iter-05 (TXN/SN)** — 0 benchmarks, but SN is small and read-only; arguably exempt.
 - **iter-07 (SQL/RE)** — 49.0% coverage is the lowest in the project. Parser/rewriter paths are exercised but error/edge branches aren't.
-- **iter-08 (SQL/Execute)** — partially scaffolded: `EX/` has ~4.4k LoC (planner, memo, eval, operators, writers, joins, subqueries, aggregates, 8 benchmarks) but no wired end-to-end driver. The iter-08 spec's planned `PL/` cluster is mostly empty; the planner code lives in `EX/`. The `iter-08.md` requirements list is fully pending.
+- **iter-08 (SQL/Execute)** — partial. `EX/` has ~4.4k LoC (planner, memo, eval, operators, intermediate, writers, joins, subqueries, aggregates, distinct, explain, 8 benchmarks, 72.8% coverage). Operators run end-to-end against an in-memory table registry, not against `ENG.Store` / `TXN.Tx`. Spec-vs-code divergence: planner lives in `EX/` (not `PL/` as `design/subsystems/SQL.md` says); several extra operators (aggregate, join, subq, distinct, explain) are out of v1 scope per `design/ARCH.md` but shipped anyway. `IndexScan` is `ErrNotImplemented`; `OFFSET` parsed but not executed; no `ORDER BY` natural-order pushdown. See `development/iterations/iter-08-sql-execute.md` §Divergence from Design for the per-requirement status.
 
 ## Completion Criteria (All Iterations)
 
