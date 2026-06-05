@@ -226,15 +226,17 @@ func TestListRotatedFiles_IgnoresUnrelated(t *testing.T) {
 }
 
 func TestListRotatedFiles_DirMissing(t *testing.T) {
-	log := New(Options{
-		Level:    slog.LevelInfo,
-		Dir:      "/this/path/does/not/exist/anywhere",
-		BaseName: "x.log",
-		MaxSize:  1 << 20,
-	})
-	shared := log.(*logger).shared
+	// Use a fresh temp dir, then point the sharedLogger at a
+	// guaranteed-missing subdirectory. This is robust against
+	// /this/path/... style hardcoded paths that prior test runs
+	// may have left behind in the workspace.
+	missing := t.TempDir() + "/does/not/exist"
+	shared := &sharedLogger{
+		dir:      missing,
+		baseName: "x.log",
+	}
 	if _, err := shared.listRotatedFiles(); err == nil {
-		t.Errorf("expected error for missing dir, got nil")
+		t.Errorf("expected error for missing dir %q, got nil", missing)
 	}
 }
 

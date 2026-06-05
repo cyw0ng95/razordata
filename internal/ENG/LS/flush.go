@@ -118,6 +118,8 @@ type flushManager struct {
 	maxMemSize      int64
 	flushQueue      chan *flushJob
 	done            chan struct{}
+	closed          atomic.Bool
+	loopDone        chan struct{}
 }
 
 func newFlushManager(dir string, maxMemSize int64, manifest *manifest) *flushManager {
@@ -127,6 +129,7 @@ func newFlushManager(dir string, maxMemSize int64, manifest *manifest) *flushMan
 		manifest:   manifest,
 		flushQueue: make(chan *flushJob, 10),
 		done:       make(chan struct{}),
+		loopDone:   make(chan struct{}),
 	}
 
 	active := newMemtable(maxMemSize)
@@ -138,6 +141,7 @@ func newFlushManager(dir string, maxMemSize int64, manifest *manifest) *flushMan
 }
 
 func (fm *flushManager) flushLoop() {
+	defer close(fm.loopDone)
 	for {
 		select {
 		case <-fm.done:
@@ -207,11 +211,15 @@ func (fm *flushManager) Insert(key, value []byte) error {
 }
 
 func (fm *flushManager) Close() error {
-	select {
-	case <-fm.done:
-	default:
-		close(fm.done)
+	if !fm.closed.CompareAndSwap(false, true) {
+		return nil
 	}
+	close(fm.done)
+	// Wait for the flushLoop goroutine to finish processing
+	// pending jobs. Without this, the engine's manifest.Close
+	// can race with a flush job's updateManifest call, causing a
+	// "send on closed channel" panic.
+	<-fm.loopDone
 	return nil
 }
 
