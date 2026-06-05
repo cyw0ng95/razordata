@@ -6,6 +6,7 @@ import (
 	"context"
 	"sync"
 
+	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
@@ -29,6 +30,20 @@ func Prepare(engine *SY.Engine, sql string) (*Stmt, error) {
 		return nil, AP.ErrSyntax
 	}
 	return &Stmt{engine: engine, sql: sql}, nil
+}
+
+// PrepareFromInterface is the entry point used by tests and the
+// top-level SYS package. It type-asserts the AP.Engine to the
+// concrete *SY.Engine that ST.Prepare needs.
+func PrepareFromInterface(e AP.Engine, sql string) (*Stmt, error) {
+	if e == nil {
+		return nil, AP.ErrNotOpen
+	}
+	syEng, ok := e.(*SY.Engine)
+	if !ok {
+		return nil, AP.ErrNotOpen
+	}
+	return Prepare(syEng, sql)
 }
 
 // SQL returns the original SQL text.
@@ -79,3 +94,6 @@ func (s *Stmt) Close() error {
 	s.closed = true
 	return nil
 }
+
+// Compile-time check that the executor import is reachable.
+var _ = executor.ErrNoRows

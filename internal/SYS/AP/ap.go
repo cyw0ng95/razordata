@@ -201,7 +201,8 @@ var RetryableErrors = []error{ErrIO, ErrLocked}
 var FatalErrors = []error{
 	ErrTxAborted, ErrCorrupt, ErrSyntax, ErrTypeMismatch,
 	ErrUpgradeRequired, ErrReadOnly, ErrAlreadyOpen, ErrNotOpen,
-	ErrInvalidOptions, ErrNoActiveTxn, ErrUnknownSavepoint,
+	ErrClosed, ErrInvalidOptions, ErrNoActiveTxn, ErrUnknownSavepoint,
+	ErrNotFound, ErrDuplicateKey, ErrDeadlineExceeded,
 }
 
 // IsRetryable reports whether err is one of the retryable sentinels
