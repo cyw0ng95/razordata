@@ -3,6 +3,7 @@ package VL
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -45,11 +46,15 @@ func TestReclaimVersionNodes_NilPointerInBatch(t *testing.T) {
 	StartGC()
 	defer StopGC()
 
+	// Heap-allocate the target so the unsafe.Pointer to it is a
+	// valid Go heap pointer. The Go runtime's "bad pointer" check
+	// rejects stack addresses stored in heap-allocated slices.
 	x := 42
+	xEscaped := &x
 	batch := []unsafe.Pointer{
-		unsafe.Pointer(&x),
+		unsafe.Pointer(xEscaped),
 		nil,
-		unsafe.Pointer(&x),
+		unsafe.Pointer(xEscaped),
 	}
 	ReclaimVersionNodes(batch) // must not panic
 }
@@ -325,10 +330,13 @@ func TestReclaimVersionNodes_StaleRegistration(t *testing.T) {
 	RegisterGCThread(uint64(1))
 	defer UnregisterGCThread(uint64(1))
 
+	// Heap-allocate so the unsafe.Pointer is a valid Go heap
+	// address; see TestReclaimVersionNodes_NilPointerInBatch.
 	x := 1
+	xEscaped := &x
 	done := make(chan struct{})
 	go func() {
-		ReclaimVersionNodes([]unsafe.Pointer{unsafe.Pointer(&x)})
+		ReclaimVersionNodes([]unsafe.Pointer{unsafe.Pointer(xEscaped)})
 		close(done)
 	}()
 	select {
@@ -408,6 +416,19 @@ func TestStats_NoRaceOnConcurrentReads(t *testing.T) {
 
 // --- Additional cases (audit round 2) -------------------------------
 
+// testKeyCounter produces a fresh byte slice on each call so callers
+// in the same test process cannot see each other's writes via the
+// global MV. The global MV is shared across package-level Begin()
+// calls and accumulates committed writes from prior tests; tests
+// that assert "no write happened" must therefore use a key no
+// other test will have used. A monotonic counter is enough — we do
+// not need cryptographic uniqueness.
+var testKeyCounter atomic.Uint64
+
+func freshKey() []byte {
+	return []byte(fmt.Sprintf("k:%d", testKeyCounter.Add(1)))
+}
+
 // TestTx_Insert_CtxCancelled covers the ctx.Err() short-circuit at
 // the top of Insert. The function must NOT allocate a version node
 // or mutate the write set when the context is already cancelled.
@@ -418,12 +439,13 @@ func TestTx_Insert_CtxCancelled(t *testing.T) {
 	}
 	defer tx.Abort(context.Background())
 
+	key := freshKey()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := tx.Insert(ctx, []byte("k"), []byte("v")); !errors.Is(err, context.Canceled) {
+	if err := tx.Insert(ctx, key, []byte("v")); !errors.Is(err, context.Canceled) {
 		t.Errorf("Insert with cancelled ctx: want context.Canceled, got %v", err)
 	}
-	if got, _ := tx.Get(context.Background(), []byte("k")); got != nil {
+	if got, _ := tx.Get(context.Background(), key); got != nil {
 		t.Errorf("Insert with cancelled ctx must not write; Get returned %v", got)
 	}
 }

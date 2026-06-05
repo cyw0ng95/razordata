@@ -100,12 +100,12 @@ func TestSession_Stats_StableID(t *testing.T) {
 func TestSession_SetDeadline(t *testing.T) {
 	eng, ctx := testEngine(t)
 	s, _ := eng.Begin(ctx)
-	deadline := time.Now().Add(50 * time.Millisecond)
+	deadline := time.Now().Add(30 * time.Millisecond)
 	if err := s.SetDeadline(deadline); err != nil {
 		t.Fatalf("SetDeadline: %v", err)
 	}
 	// Wait past the deadline; subsequent Exec/Query should fail.
-	time.Sleep(80 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	_, err := s.Exec(ctx, "INSERT INTO users VALUES (100, 'late')")
 	if !errors.Is(err, AP.ErrDeadlineExceeded) {
 		t.Errorf("Exec after deadline: got %v, want ErrDeadlineExceeded", err)

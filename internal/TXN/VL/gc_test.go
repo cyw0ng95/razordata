@@ -21,7 +21,9 @@ func TestCurrentEpoch(t *testing.T) {
 	defer StopGC()
 
 	epoch1 := CurrentEpoch()
-	time.Sleep(150 * time.Millisecond)
+	// Ticker interval is 100 ms; sleep just past one tick so at
+	// least one increment is observable.
+	time.Sleep(110 * time.Millisecond)
 	epoch2 := CurrentEpoch()
 
 	if epoch2 <= epoch1 {
