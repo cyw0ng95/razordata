@@ -36,13 +36,16 @@ var _ SyncPool = (*syncPool)(nil)
 func New() *syncPool {
 	sp := &syncPool{}
 	sp.pagePool.New = func() any {
-		return make([]byte, BlockSize)
+		b := make([]byte, BlockSize)
+		return &b
 	}
 	sp.iterPool.New = func() any {
-		return make([]byte, IterBufferSize)
+		b := make([]byte, IterBufferSize)
+		return &b
 	}
 	sp.walPool.New = func() any {
-		return make([]byte, WALBufSize)
+		b := make([]byte, WALBufSize)
+		return &b
 	}
 	return sp
 }
@@ -53,17 +56,17 @@ func New() *syncPool {
 func (sp *syncPool) Get(size int) []byte {
 	if size <= BlockSize {
 		if p := sp.pagePool.Get(); p != nil {
-			return p.([]byte)[:size]
+			return (*p.(*[]byte))[:size]
 		}
 	}
 	if size <= IterBufferSize {
 		if p := sp.iterPool.Get(); p != nil {
-			return p.([]byte)[:size]
+			return (*p.(*[]byte))[:size]
 		}
 	}
 	if size <= WALBufSize {
 		if p := sp.walPool.Get(); p != nil {
-			return p.([]byte)[:size]
+			return (*p.(*[]byte))[:size]
 		}
 	}
 	return make([]byte, size)
@@ -75,10 +78,13 @@ func (sp *syncPool) Get(size int) []byte {
 func (sp *syncPool) Put(buf []byte) {
 	switch cap(buf) {
 	case BlockSize:
-		sp.pagePool.Put(buf[:BlockSize])
+		b := buf[:BlockSize]
+		sp.pagePool.Put(&b)
 	case IterBufferSize:
-		sp.iterPool.Put(buf[:IterBufferSize])
+		b := buf[:IterBufferSize]
+		sp.iterPool.Put(&b)
 	case WALBufSize:
-		sp.walPool.Put(buf[:WALBufSize])
+		b := buf[:WALBufSize]
+		sp.walPool.Put(&b)
 	}
 }
