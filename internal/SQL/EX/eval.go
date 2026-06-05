@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
@@ -408,11 +409,73 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 			}
 		}
 	case "NOW":
-		return "CURRENT_TIMESTAMP", nil
+		return time.Now().UTC().Format(time.RFC3339), nil
 	case "SUBSTR":
-		return "", nil
+		return evalSubstr(e.Args, row, params)
 	}
 	return nil, ErrEval
+}
+
+// evalSubstr implements SUBSTR(str, start[, length]).
+//   - start is 1-based per SQL convention; values <= 0 are clamped to 1.
+//   - length is optional; when omitted the substring runs to the end of str.
+//   - non-string inputs are coerced via fmt.Sprint.
+func evalSubstr(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) < 2 {
+		return nil, ErrEval
+	}
+	rawStr, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	s := fmt.Sprint(rawStr)
+	startV, err := Eval(args[1], row, params)
+	if err != nil {
+		return nil, err
+	}
+	start, ok := toInt64(startV)
+	if !ok {
+		return nil, ErrEval
+	}
+	if start < 1 {
+		start = 1
+	}
+	// Convert 1-based start to 0-based offset.
+	offset := int(start) - 1
+	if offset >= len(s) {
+		return "", nil
+	}
+	if len(args) >= 3 {
+		lenV, err := Eval(args[2], row, params)
+		if err != nil {
+			return nil, err
+		}
+		length, ok := toInt64(lenV)
+		if !ok {
+			return nil, ErrEval
+		}
+		if length < 0 {
+			return "", nil
+		}
+		end := offset + int(length)
+		if end > len(s) {
+			end = len(s)
+		}
+		return s[offset:end], nil
+	}
+	return s[offset:], nil
+}
+
+func toInt64(v interface{}) (int64, bool) {
+	switch x := v.(type) {
+	case int64:
+		return x, true
+	case float64:
+		return int64(x), true
+	case int:
+		return int64(x), true
+	}
+	return 0, false
 }
 
 func compare(a, b interface{}) int {
