@@ -146,12 +146,6 @@ func TestSSTWriter_MultipleBlocks(t *testing.T) {
 	}
 }
 
-func TestSSTReader_decodePrefix(t *testing.T) {
-	key1 := []byte("key1")
-	key2 := []byte("key2")
-	decodePrefix(key2, key1)
-}
-
 func TestSSTReader_Iterator_CloseTwice(t *testing.T) {
 	dir := t.TempDir()
 	dir = filepath.Join(dir, "test_sst_iter_close")

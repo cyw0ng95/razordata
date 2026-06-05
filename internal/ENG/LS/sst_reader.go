@@ -17,8 +17,6 @@ type sstReader struct {
 	data       []byte
 	indexBlock []indexEntry
 	bloom      []byte
-	minKey     []byte
-	maxKey     []byte
 }
 
 func openSST(data []byte) (*sstReader, error) {
@@ -251,10 +249,6 @@ func decodeBlock(data []byte) ([]kvPair, error) {
 	return pairs, nil
 }
 
-func decodePrefix(key, prev []byte) {
-	// No prefix compression in v1 - keys are stored in full
-}
-
 type sstIterator struct {
 	reader  *sstReader
 	current int
@@ -307,20 +301,6 @@ func (it *sstIterator) Close() error {
 
 func (it *sstIterator) Err() error {
 	return nil
-}
-
-func (it *sstIterator) seekToFirst() {
-	if it.reader != nil && len(it.reader.indexBlock) > 0 {
-		it.current = 0
-		blockData := it.reader.readBlock(it.reader.indexBlock[0].blockOffset, it.reader.indexBlock[0].blockSize)
-		it.pairs, _ = decodeBlock(blockData)
-	}
-}
-
-func copyData(dst, src []byte) []byte {
-	result := make([]byte, len(src))
-	copy(result, src)
-	return result
 }
 
 var _ io.Closer = (*sstReader)(nil)

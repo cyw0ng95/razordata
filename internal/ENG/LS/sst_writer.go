@@ -159,51 +159,6 @@ func (w *sstWriter) Finish() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func findRestartPoints(block []byte, interval int) []int {
-	points := make([]int, 0)
-	for i := 0; i < len(block); {
-		pos := bytes.LastIndex(block[:i], []byte{0, 0, 0, 0})
-		if pos >= 0 {
-			keyLen := binary.LittleEndian.Uint32(block[pos:])
-			if keyLen == 0 {
-				points = append(points, i)
-			}
-		}
-		i += 4096
-	}
-	if len(points) == 0 && len(block) > 0 {
-		points = append(points, 0)
-	}
-	return points
-}
-
-func extractLargestKey(block []byte) []byte {
-	if len(block) < 8 {
-		return nil
-	}
-
-	var pos int
-	var fullKey []byte
-
-	for pos < len(block) {
-		keyLen, n := decodeVarint(block[pos:])
-		if keyLen == 0 || pos+n+int(keyLen) > len(block) {
-			break
-		}
-		pos += n
-		fullKey = block[pos : pos+int(keyLen)]
-		pos += int(keyLen)
-
-		valueLen, n := decodeVarint(block[pos:])
-		if valueLen == 0 || pos+n+int(valueLen) > len(block) {
-			break
-		}
-		pos += n + int(valueLen)
-	}
-
-	return fullKey
-}
-
 func (w *sstWriter) Reset() {
 	w.blocks = w.blocks[:0]
 	w.indexEntries = w.indexEntries[:0]

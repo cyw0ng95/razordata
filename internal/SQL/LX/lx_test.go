@@ -1,7 +1,6 @@
 package LX
 
 import (
-	"errors"
 	"testing"
 )
 
@@ -385,8 +384,6 @@ func TestNewLexer(t *testing.T) {
 		t.Errorf("expected col 1, got %d", l.col)
 	}
 }
-
-var errTest = errors.New("test error")
 
 func TestErrors(t *testing.T) {
 	if ErrUnexpectedChar.Error() != "lx: unexpected character" {

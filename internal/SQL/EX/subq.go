@@ -11,13 +11,6 @@ type outerInjector struct {
 	outer *Row
 }
 
-func newOuterInjector(child Operator, outer *Row) Operator {
-	if outer == nil {
-		return child
-	}
-	return &outerInjector{child: child, outer: outer}
-}
-
 func (o *outerInjector) Next(ctx context.Context) (Row, error) {
 	row, err := o.child.Next(ctx)
 	if err != nil {

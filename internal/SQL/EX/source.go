@@ -61,13 +61,6 @@ func cloneRow(r Row) Row {
 	return out
 }
 
-func tableSchema(name string, existing []Row) []string {
-	if len(existing) > 0 {
-		return existing[0].Cols
-	}
-	return nil
-}
-
 func buildInsertRow(schema []string, cols []string, values []PS.Expr) (Row, error) {
 	out := Row{Cols: append([]string(nil), schema...)}
 	if len(cols) == 0 {
@@ -119,11 +112,6 @@ func applyUpdate(row *Row, set []PS.Pair) error {
 		row.Data[idx] = val
 	}
 	return nil
-}
-
-func replaceRow(table string, updated Row) error {
-	snapshot := cloneRow(updated)
-	return replaceBySnapshot(table, snapshot, updated)
 }
 
 func replaceBySnapshot(table string, snapshot, updated Row) error {
