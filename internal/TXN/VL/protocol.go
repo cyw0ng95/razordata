@@ -43,6 +43,15 @@ func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// Once the tx is finished, its arena has been released back to
+	// the pool and the slot reused. Walking the MV chain would read
+	// recycled memory; refuse the operation explicitly so callers get
+	// a defined error rather than undefined behaviour.
+	if t.finished {
+		return nil, ErrTxFinished
+	}
 	chain := t.mv.GetVersionChain(key)
 	if chain != nil {
 		for node := chain.GetHead(); node != nil; node = node.Next() {

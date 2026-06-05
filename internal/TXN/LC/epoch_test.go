@@ -166,7 +166,9 @@ func TestEpochManagerStartStop(t *testing.T) {
 	em.Start()
 	initialEpoch := em.epoch.Load()
 
-	time.Sleep(150 * time.Millisecond)
+	// Ticker interval is 100 ms; sleep just past one tick so at
+	// least one increment is observable.
+	time.Sleep(110 * time.Millisecond)
 
 	em.Stop()
 
@@ -182,7 +184,7 @@ func TestEpochManagerEpochIncrement(t *testing.T) {
 
 	initialEpoch := em.epoch.Load()
 
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(110 * time.Millisecond)
 
 	newEpoch := em.epoch.Load()
 	if newEpoch <= initialEpoch {

@@ -261,6 +261,16 @@ func newTestWriter(t *testing.T) (*writer, *testDeps) {
 	return w.(*writer), d
 }
 
+// newTestWriterWithMaxRecord creates a writer with a per-record-size
+// cap lower than the production SegSize. Tests that exercise the
+// "record too large" path use this to avoid allocating a 64 MB slice.
+func newTestWriterWithMaxRecord(t *testing.T, maxRecord int64) (*writer, *testDeps) {
+	t.Helper()
+	w, d := newTestWriter(t)
+	w.maxRecordSize = maxRecord
+	return w, d
+}
+
 // TestNewRejectsEmptyArgs verifies the constructor enforces required
 // arguments (R35). Foundation contracts.
 func TestNewRejectsEmptyArgs(t *testing.T) {
@@ -713,17 +723,20 @@ func TestAppendEmptyBatch(t *testing.T) {
 }
 
 // TestAppendRejectsRecordLargerThanSegment verifies that a single
-// record exceeding SegSize fails loudly rather than silently looping.
+// record exceeding the per-record cap fails loudly rather than
+// silently looping. We use a small cap (1 KiB) instead of the
+// production SegSize (64 MiB) to avoid paying the 64 MiB allocation
+// cost in every CI run.
 func TestAppendRejectsRecordLargerThanSegment(t *testing.T) {
-	d := newTestDeps(t)
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	const cap = 1024
+	w, _ := newTestWriterWithMaxRecord(t, cap)
 	t.Cleanup(func() { _ = w.Close() })
 
-	huge := make([]byte, SegSize+1)
-	rec := LogRecord{Type: RTData, BlockID: 1, Value: huge}
+	tooBig := make([]byte, cap+1)
+	rec := LogRecord{Type: RTData, BlockID: 1, Value: tooBig}
 	_, err := w.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{rec}})
 	if err == nil {
-		t.Error("expected error for record larger than SegSize")
+		t.Error("expected error for record larger than the per-record cap")
 	}
 }
 

@@ -122,6 +122,11 @@ type writer struct {
 	seg    *logSegment
 	closed atomicBool
 	synced atomic.Uint64 // highest LSN that has been fsynced
+	// maxRecordSize is the per-record-size cap used by Append. Zero
+	// means "use SegSize" (the default for production writers). Tests
+	// that need to exercise the "record too large" code path override
+	// this to a small value to avoid allocating a 64 MB slice.
+	maxRecordSize int64
 }
 
 // New constructs a Writer rooted at dir. The Writer owns its
@@ -181,9 +186,13 @@ func (w *writer) Append(batch *WriteBatch) (uint64, error) {
 		recLen := int64(len(encoded))
 
 		// If a single record would not fit in the remaining segment
-		// space, flush and rotate first. (If recLen > SegSize, the
+		// space, flush and rotate first. (If recLen > maxRec, the
 		// record is malformed — fail loudly.)
-		if recLen > SegSize {
+		maxRec := w.maxRecordSize
+		if maxRec <= 0 {
+			maxRec = SegSize
+		}
+		if recLen > maxRec {
 			return lastLSN, errors.New("wr: single record exceeds SegSize")
 		}
 		if w.seg.writeOff+recLen > SegSize {
