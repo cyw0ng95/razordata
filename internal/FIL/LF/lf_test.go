@@ -407,17 +407,17 @@ func TestNewMkdirFails(t *testing.T) {
 func TestFirstLogger(t *testing.T) {
 	log := lg.New(lg.Options{Output: io.Discard})
 
-	result := firstLogger(nil)
+	result := lg.FirstLogger(nil)
 	if result != nil {
 		t.Error("expected nil for nil input")
 	}
 
-	result = firstLogger([]lg.Logger{})
+	result = lg.FirstLogger([]lg.Logger{})
 	if result != nil {
 		t.Error("expected nil for empty slice")
 	}
 
-	result = firstLogger([]lg.Logger{log})
+	result = lg.FirstLogger([]lg.Logger{log})
 	if result != log {
 		t.Error("expected log from single element slice")
 	}
@@ -566,12 +566,12 @@ func TestSegmentPath(t *testing.T) {
 
 // TestFirstLoggerNilLF tests firstLogger with nil/empty input.
 func TestFirstLoggerNilLF(t *testing.T) {
-	result := firstLogger(nil)
+	result := lg.FirstLogger(nil)
 	if result != nil {
 		t.Error("expected nil for nil input")
 	}
 
-	result = firstLogger([]lg.Logger{})
+	result = lg.FirstLogger([]lg.Logger{})
 	if result != nil {
 		t.Error("expected nil for empty slice")
 	}

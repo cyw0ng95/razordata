@@ -49,7 +49,7 @@ func Create(path string, log ...lg.Logger) (*BlockDevice, error) {
 }
 
 func openFile(path string, readOnly, create bool, logs []lg.Logger) (*BlockDevice, error) {
-	log := firstLogger(logs)
+	log := lg.FirstLogger(logs)
 
 	flags := unix.O_RDWR
 	if readOnly {
@@ -80,13 +80,6 @@ func openFile(path string, readOnly, create bool, logs []lg.Logger) (*BlockDevic
 	}
 
 	return bd, nil
-}
-
-func firstLogger(logs []lg.Logger) lg.Logger {
-	if len(logs) > 0 {
-		return logs[0]
-	}
-	return nil
 }
 
 func supportsODirect() bool {

@@ -12,10 +12,7 @@ func TestEncodeVarintRoundTrip(t *testing.T) {
 	cases := []uint64{0, 1, 127, 128, 255, 16383, 16384, 1 << 30, 1<<64 - 1}
 	for _, v := range cases {
 		buf := encodeVarint(nil, v)
-		got, n, err := decodeVarint(buf, 0)
-		if err != nil {
-			t.Errorf("decodeVarint(%d): %v", v, err)
-		}
+		got, n := DecodeVarint(buf, 0)
 		if got != v {
 			t.Errorf("round-trip: got %d, want %d", got, v)
 		}
@@ -31,20 +28,17 @@ func TestDecodeVarintPastEnd(t *testing.T) {
 	// Encode 128 (2 bytes), then truncate to 1.
 	buf := encodeVarint(nil, 128)
 	buf = buf[:1]
-	_, n, err := decodeVarint(buf, 0)
+	_, n := DecodeVarint(buf, 0)
 	if n != -1 {
 		t.Errorf("expected n=-1 for truncated varint, got %d", n)
-	}
-	if err != nil {
-		t.Errorf("expected no error for truncated varint, got %v", err)
 	}
 }
 
 // TestDecodeVarintEmpty verifies reading from an empty buffer.
 func TestDecodeVarintEmpty(t *testing.T) {
-	_, n, err := decodeVarint(nil, 0)
-	if n != -1 || err != nil {
-		t.Errorf("expected n=-1, err=nil; got n=%d, err=%v", n, err)
+	_, n := DecodeVarint(nil, 0)
+	if n != -1 {
+		t.Errorf("expected n=-1 for empty buffer, got %d", n)
 	}
 }
 
@@ -59,9 +53,9 @@ func TestEncodeRecordHeader(t *testing.T) {
 	if len(enc) == 0 {
 		t.Fatal("encodeRecord returned empty slice")
 	}
-	length, n, err := decodeVarint(enc, 0)
-	if err != nil {
-		t.Fatalf("decodeVarint: %v", err)
+	length, n := DecodeVarint(enc, 0)
+	if n < 0 {
+		t.Fatalf("decodeVarint: truncated")
 	}
 	if int(length) != len(enc)-n {
 		t.Errorf("length prefix: got %d, want %d", length, len(enc)-n)

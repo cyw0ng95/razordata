@@ -122,7 +122,7 @@ func New(root string, log ...lg.Logger) (*FileManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileManager{root: abs, validate: pv, log: firstLogger(log)}, nil
+	return &FileManager{root: abs, validate: pv, log: lg.FirstLogger(log)}, nil
 }
 
 // NewOrCreate creates a new FileManager, creating root and any parents if needed.
@@ -138,14 +138,7 @@ func NewOrCreate(root string, log ...lg.Logger) (*FileManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileManager{root: abs, validate: pv, log: firstLogger(log)}, nil
-}
-
-func firstLogger(logs []lg.Logger) lg.Logger {
-	if len(logs) > 0 {
-		return logs[0]
-	}
-	return nil
+	return &FileManager{root: abs, validate: pv, log: lg.FirstLogger(log)}, nil
 }
 
 // Open opens an existing file. Returns ErrDoesNotExist if absent.

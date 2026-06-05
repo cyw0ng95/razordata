@@ -251,9 +251,9 @@ func (w *writer) syncLocked() error {
 	if len(w.seg.buf) == 0 {
 		return nil
 	}
-	// Remember what we are about to fsync, so we can update the
-	// synced LSN only after a successful fsync.
-	pendingStart := w.seg.writeOff - int64(len(w.seg.buf))
+	// Snapshot the high-water mark of the buffer before flushing, so we
+	// can update the synced LSN to the END of the just-fsynced range
+	// (the highest LSN that is now durable) only after a successful fsync.
 	pendingEnd := w.seg.writeOff
 	if err := w.flushBufferLocked(); err != nil {
 		return err
@@ -264,13 +264,10 @@ func (w *writer) syncLocked() error {
 		}
 		return err
 	}
-	// Update synced LSN. We use the END of the just-fsynced range
-	// (the highest LSN that is now durable).
 	syncedLSN := LSNFor(w.seg.number, uint64(pendingEnd))
 	if syncedLSN > w.synced.Load() {
 		w.synced.Store(syncedLSN)
 	}
-	_ = pendingStart
 	return nil
 }
 

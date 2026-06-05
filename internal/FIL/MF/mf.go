@@ -77,7 +77,7 @@ type MetaReader struct {
 // NewMetaReader returns a MetaReader for the given meta.razor path.
 // log is optional; pass nil to disable logging.
 func NewMetaReader(path string, log ...lg.Logger) *MetaReader {
-	return &MetaReader{path: path, log: firstLogger(log)}
+	return &MetaReader{path: path, log: lg.FirstLogger(log)}
 }
 
 // Read opens meta.razor, reads block 0, validates magic and version.
@@ -144,7 +144,7 @@ type MetaWriter struct {
 
 // NewMetaWriter returns a MetaWriter for the given meta.razor path.
 func NewMetaWriter(path string, log ...lg.Logger) *MetaWriter {
-	return &MetaWriter{path: path, log: firstLogger(log)}
+	return &MetaWriter{path: path, log: lg.FirstLogger(log)}
 }
 
 // Write writes the MetaPage to block 0 of meta.razor.
@@ -183,11 +183,4 @@ func writeMeta(fd int, p *MetaPage) error {
 
 	_, err = unix.Pwrite(fd, raw[:], 0)
 	return err
-}
-
-func firstLogger(logs []lg.Logger) lg.Logger {
-	if len(logs) > 0 {
-		return logs[0]
-	}
-	return nil
 }

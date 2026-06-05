@@ -683,12 +683,12 @@ func TestListPattern(t *testing.T) {
 
 // TestFirstLoggerNilFS tests firstLogger with nil/empty input.
 func TestFirstLoggerNilFS(t *testing.T) {
-	result := firstLogger(nil)
+	result := lg.FirstLogger(nil)
 	if result != nil {
 		t.Error("expected nil for nil input")
 	}
 
-	result = firstLogger([]lg.Logger{})
+	result = lg.FirstLogger([]lg.Logger{})
 	if result != nil {
 		t.Error("expected nil for empty slice")
 	}

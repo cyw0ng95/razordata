@@ -410,7 +410,7 @@ func (r *replayer) decodeCheckpoint(rec *wr.LogRecord) *wr.Checkpoint {
 		cp.ActiveTXNs = make([]uint64, 0, txnCount)
 		off := 0
 		for i := uint64(0); i < txnCount && off < len(rec.Value); i++ {
-			v, n, _ := decodeVarint(rec.Value, off)
+			v, n := wr.DecodeVarint(rec.Value, off)
 			if n < 0 {
 				break
 			}
@@ -420,20 +420,6 @@ func (r *replayer) decodeCheckpoint(rec *wr.LogRecord) *wr.Checkpoint {
 	}
 
 	return cp
-}
-
-func decodeVarint(data []byte, off int) (uint64, int, error) {
-	if off < 0 || off >= len(data) {
-		return 0, -1, nil
-	}
-	v, n := binary.Uvarint(data[off:])
-	if n <= 0 {
-		return 0, -1, nil
-	}
-	if off+n > len(data) {
-		return 0, -1, nil
-	}
-	return v, n, nil
 }
 
 func (r *replayer) truncateBeforeCheckpoint(cpLSN uint64) {
