@@ -1,4 +1,4 @@
-package SYS
+package SY
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 
 	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
-	sy "github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
 
 // TestEngine_ReopenPreservesCatalog verifies that CREATE TABLE
@@ -30,8 +29,7 @@ func TestEngine_ReopenPreservesCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
-	concrete1 := eng1.(*sy.Engine)
-	if _, err := concrete1.Executor().Exec(context.Background(),
+	if _, err := eng1.Executor().Exec(context.Background(),
 		"CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)"); err != nil {
 		t.Fatalf("CREATE TABLE: %v", err)
 	}
@@ -53,13 +51,11 @@ func TestEngine_ReopenPreservesCatalog(t *testing.T) {
 		t.Fatalf("second Open: %v", err)
 	}
 	defer eng2.Close(context.Background())
-
-	concrete2 := eng2.(*sy.Engine)
 	// Query a SELECT against the table — this exercises the
 	// catalog-populated path. An empty result is fine; we just
 	// want to verify the table is reachable (no error about
 	// "table not registered").
-	rows, err := concrete2.Executor().QueryAll(context.Background(),
+	rows, err := eng2.Executor().QueryAll(context.Background(),
 		"SELECT name FROM t")
 	if err != nil {
 		t.Fatalf("SELECT on reopened table: %v", err)

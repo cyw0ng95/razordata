@@ -1,4 +1,4 @@
-package SYS
+package ST
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 
 	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
-	"github.com/cyw0ng95/razordata/internal/SYS/ST"
+	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
 
 // TestStmt_PrepareAndReuse — R16/R17: prepare a statement, execute it
@@ -16,7 +16,7 @@ import (
 func TestStmt_PrepareAndReuse(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -38,7 +38,7 @@ func TestStmt_PrepareAndReuse(t *testing.T) {
 	t.Cleanup(func() { _ = eng.Close(context.Background()) })
 	ctx := context.Background()
 
-	stmt, err := ST.PrepareFromInterface(eng, "INSERT INTO users VALUES (1, 'a')")
+	stmt, err := PrepareFromInterface(eng, "INSERT INTO users VALUES (1, 'a')")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestStmt_PrepareAndReuse(t *testing.T) {
 func TestStmt_CloseIdempotent(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -81,7 +81,7 @@ func TestStmt_CloseIdempotent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = eng.Close(context.Background()) })
 
-	stmt, err := ST.PrepareFromInterface(eng, "SELECT 1")
+	stmt, err := PrepareFromInterface(eng, "SELECT 1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestStmt_CloseIdempotent(t *testing.T) {
 func TestStmt_ExecAfterClose(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -120,7 +120,7 @@ func TestStmt_ExecAfterClose(t *testing.T) {
 	t.Cleanup(func() { _ = eng.Close(context.Background()) })
 	ctx := context.Background()
 
-	stmt, err := ST.PrepareFromInterface(eng, "SELECT 1")
+	stmt, err := PrepareFromInterface(eng, "SELECT 1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestStmt_ExecAfterClose(t *testing.T) {
 func TestStmt_PrepareEmptySQL(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -158,7 +158,7 @@ func TestStmt_PrepareEmptySQL(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = eng.Close(context.Background()) })
 
-	_, err = ST.PrepareFromInterface(eng, "")
+	_, err = PrepareFromInterface(eng, "")
 	if !errors.Is(err, AP.ErrSyntax) {
 		t.Errorf("empty SQL: got %v, want ErrSyntax", err)
 	}
@@ -166,7 +166,7 @@ func TestStmt_PrepareEmptySQL(t *testing.T) {
 
 // TestStmt_PrepareNilEngine — AP.ErrNotOpen.
 func TestStmt_PrepareNilEngine(t *testing.T) {
-	_, err := ST.PrepareFromInterface(nil, "SELECT 1")
+	_, err := PrepareFromInterface(nil, "SELECT 1")
 	if !errors.Is(err, AP.ErrNotOpen) {
 		t.Errorf("nil engine: got %v, want ErrNotOpen", err)
 	}
@@ -177,7 +177,7 @@ func TestStmt_PrepareNilEngine(t *testing.T) {
 func TestStmt_QueryReturnsCols(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -202,7 +202,7 @@ func TestStmt_QueryReturnsCols(t *testing.T) {
 	t.Cleanup(func() { _ = eng.Close(context.Background()) })
 	ctx := context.Background()
 
-	stmt, err := ST.PrepareFromInterface(eng, "SELECT id, name FROM users")
+	stmt, err := PrepareFromInterface(eng, "SELECT id, name FROM users")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestStmt_QueryReturnsCols(t *testing.T) {
 func TestStmt_ExecReturnsRowsAffected(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -243,7 +243,7 @@ func TestStmt_ExecReturnsRowsAffected(t *testing.T) {
 	t.Cleanup(func() { _ = eng.Close(context.Background()) })
 	ctx := context.Background()
 
-	stmt, err := ST.PrepareFromInterface(eng, "INSERT INTO users VALUES (1, 'a')")
+	stmt, err := PrepareFromInterface(eng, "INSERT INTO users VALUES (1, 'a')")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestStmt_ExecReturnsRowsAffected(t *testing.T) {
 func TestStmt_SQLAccessor(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -282,7 +282,7 @@ func TestStmt_SQLAccessor(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = eng.Close(context.Background()) })
 
-	stmt, err := ST.PrepareFromInterface(eng, "SELECT 1")
+	stmt, err := PrepareFromInterface(eng, "SELECT 1")
 	if err != nil {
 		t.Fatal(err)
 	}

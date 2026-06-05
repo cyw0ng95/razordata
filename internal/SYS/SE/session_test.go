@@ -1,4 +1,4 @@
-package SYS
+package SE
 
 import (
 	"context"
@@ -9,14 +9,15 @@ import (
 
 	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
+	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
 
 // TestSession_ErrLockedOnDoubleBegin — R11: Begin while a transaction
-// is already active returns AP.ErrLocked.
+// is already active returns .ErrLocked.
 func TestSession_ErrLockedOnDoubleBegin(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -53,7 +54,7 @@ func TestSession_ErrLockedOnDoubleBegin(t *testing.T) {
 func TestSession_CommitRollbackWithoutTxn(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -88,7 +89,7 @@ func TestSession_CommitRollbackWithoutTxn(t *testing.T) {
 func TestSession_StatsCountersIncrement(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -156,7 +157,7 @@ func TestSession_StatsCountersIncrement(t *testing.T) {
 func TestSession_Stats_StableID(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -193,7 +194,7 @@ func TestSession_Stats_StableID(t *testing.T) {
 func TestSession_SetDeadline(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -232,7 +233,7 @@ func TestSession_SetDeadline(t *testing.T) {
 func TestSession_SetDeadline_Future(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -268,7 +269,7 @@ func TestSession_SetDeadline_Future(t *testing.T) {
 func TestSession_Begin_TxQuery_TxExec(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -318,7 +319,7 @@ func TestSession_Begin_TxQuery_TxExec(t *testing.T) {
 func TestSession_MultipleSessions_Independent(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,

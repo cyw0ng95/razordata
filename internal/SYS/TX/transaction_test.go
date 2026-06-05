@@ -1,4 +1,4 @@
-package SYS
+package TX
 
 import (
 	"context"
@@ -8,13 +8,14 @@ import (
 
 	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
+	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
 
 // TestTransaction_DoubleCommit — Commit after Commit returns ErrTxAborted.
 func TestTransaction_DoubleCommit(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -56,7 +57,7 @@ func TestTransaction_DoubleCommit(t *testing.T) {
 func TestTransaction_CommitAfterRollback(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -93,7 +94,7 @@ func TestTransaction_CommitAfterRollback(t *testing.T) {
 func TestTransaction_SavepointAndRollbackTo(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -143,7 +144,7 @@ func TestTransaction_SavepointAndRollbackTo(t *testing.T) {
 func TestTransaction_RollbackToUnknownSavepoint(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -177,7 +178,7 @@ func TestTransaction_RollbackToUnknownSavepoint(t *testing.T) {
 func TestTransaction_SavepointEmptyName(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -210,7 +211,7 @@ func TestTransaction_SavepointEmptyName(t *testing.T) {
 func TestTransaction_NestedSavepoint_InnerRollback(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -256,7 +257,7 @@ func TestTransaction_NestedSavepoint_InnerRollback(t *testing.T) {
 func TestTransaction_NoOpsOnFinished(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -302,7 +303,7 @@ func TestTransaction_NoOpsOnFinished(t *testing.T) {
 func TestTransaction_FinishedReport(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
@@ -338,7 +339,7 @@ func TestTransaction_FinishedReport(t *testing.T) {
 func TestTransaction_DoubleRollback(t *testing.T) {
 	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
 		BufferPoolMB: 16,
