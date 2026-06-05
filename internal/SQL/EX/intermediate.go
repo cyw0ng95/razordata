@@ -188,3 +188,40 @@ func (l *Limit) Close() error {
 	l.seen = 0
 	return l.child.Close()
 }
+
+// Offset skips the first n rows from its child before yielding. It pairs
+// with Limit to implement LIMIT/OFFSET pagination. A nil child or a
+// negative n is treated as zero (no offset).
+type Offset struct {
+	child   Operator
+	offset  int64
+	skipped int64
+}
+
+func NewOffset(child Operator, n int64) *Offset {
+	if n < 0 {
+		n = 0
+	}
+	return &Offset{child: child, offset: n}
+}
+
+func (o *Offset) Next(ctx context.Context) (Row, error) {
+	for o.skipped < o.offset {
+		if err := ctx.Err(); err != nil {
+			return Row{}, err
+		}
+		if _, err := o.child.Next(ctx); err != nil {
+			return Row{}, err
+		}
+		o.skipped++
+	}
+	return o.child.Next(ctx)
+}
+
+func (o *Offset) Close() error {
+	o.skipped = 0
+	if o.child == nil {
+		return nil
+	}
+	return o.child.Close()
+}

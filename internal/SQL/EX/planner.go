@@ -205,8 +205,17 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	}
 
 	if len(s.OrderBy) > 0 {
-		sort := NewSort(current, s.OrderBy)
-		current = sort
+		if !p.pkOrderMatches(s.From, s.OrderBy) {
+			sort := NewSort(current, s.OrderBy)
+			current = sort
+		}
+	}
+
+	if s.Offset != nil {
+		n, ok := limitInt64(s.Offset)
+		if ok && n > 0 {
+			current = NewOffset(current, n)
+		}
 	}
 
 	if s.Limit != nil {
@@ -219,6 +228,30 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	}
 
 	return current
+}
+
+// pkOrderMatches reports whether orderBy is a single ascending reference
+// to the table's primary key column. When true, the planner can drop the
+// Sort operator and rely on the scan's natural key order.
+func (p *Planner) pkOrderMatches(table string, orderBy []PS.OrderItem) bool {
+	if len(orderBy) != 1 {
+		return false
+	}
+	if orderBy[0].Desc {
+		return false
+	}
+	ident, ok := orderBy[0].Expr.(*PS.Ident)
+	if !ok {
+		return false
+	}
+	if t, exists := p.catalog[table]; exists {
+		return t.pk == ident.Name
+	}
+	// Fall back to the store schema if the planner catalog is unaware.
+	if ss, ok := schemaFor(table); ok {
+		return ss.pk == ident.Name
+	}
+	return false
 }
 
 func splitSelectCols(cols []PS.Expr) (aggs, groupCols, other []PS.Expr) {
