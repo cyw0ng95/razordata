@@ -10,8 +10,10 @@
 - **Transactions:** BEGIN, COMMIT, ROLLBACK
 
 The v1 dependency chain **LOG → FIL → MEM → WAL → ENG → TXN → SQL → SYS** is
-complete as of v0.6.0. All eight iterations (0-9) are done; iter-08 and
-iter-09 both shipped as fully-tested milestones.
+complete as of v0.6.0. All ten iterations (0-9) are done; iter-08 and
+iter-09 both shipped as fully-tested milestones. iter-10 (v0.7.0) is the
+next planned milestone and adds the v2 ENG/ID + ENG/TB + ENG/SC + ENG/DP
+clusters.
 
 ## Out of Scope (v1)
 
@@ -34,6 +36,7 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 7 | SQL/Core | Lexer + parser + rewriter | `LX`, `PS`, `RE` | ~2,500 | 102 | 89.5 / 66.6 / 49.0 | 2 / 4 / 0 | done (RE 49% is the project low) |
 | 8 | SQL/Execute | Planner + executor | `PL`, `EX` | ~3,000 | 4 / 63 | 30.6 / 72.8 | 0 / 8 | **done** (v0.5.0; PL/ now owns memo + planner entry, EX/ has full operator tree) |
 | 9 | SYS+Integration | Public API + end-to-end | `AP`, `SY`, `SE`, `TX`, `ST` | ~3,000 | 57 | 100.0 | 2 | **done** (v0.6.0) |
+| 10 | ENG/Index+Catalog | v2 ENG/ID + ENG/TB (+ DP/SC extraction) + EX IndexScan real seek | `ID`, `TB`, `SC`, `DP`, `EX`, `SY` | ~5,000 | ~25 new | ID ≥ 80, TB ≥ 85, DP/SC ≥ 90 | 3 (PKIndex) + 2 (Catalog) | **pending** (v0.7.0) |
 
 **Coverage / Benchmark legend:** each iter's cluster columns are listed in
 the order the clusters appear in the design dir tree. For example
@@ -60,22 +63,23 @@ the order the clusters appear in the design dir tree. For example
   model: read-uncommitted between transactions, read-your-own-writes
   within, shadow writeSet ROLLBACK.
 
-## What's Remaining (post-v0.6.0)
+## What's Remaining (post-v0.6.0; v0.7.0 in flight via iter-10)
 
-The v1 chain LOG → SYS is closed. Remaining work splits into
-**v1.1 (in-process refinements)** and **v2 (architectural upgrades)**.
+The v1 chain LOG → SYS is closed. iter-10 (v0.7.0) ships the
+`ENG/ID/` and `ENG/TB/` architectural pieces and extracts the
+`ENG/SC/` and `ENG/DP/` clusters. After iter-10 lands, remaining
+work splits into **v1.1 (in-process refinements)** and **v2
+(architectural upgrades)**.
 
 ### v1.1 — in-process refinements (small, low-risk)
 
 | # | Item | Subsystem | Owner | Notes |
 |---|---|---|---|---|
 | 1 | Round-2 coverage for `SQL/RE` | RE | SQL | 49% → 80%+; tests for constant-fold branches, pushdown, subquery flatten. |
-| 2 | Add `Benchmark*` for `ENG/LS` | LS | ENG | Skiplist insert/get, SST write/read, flush. AGENTS.md rule. |
-| 3 | IndexScan real seek | EX/ID | ENG+SQL | Once `ENG/ID/` lands, swap the prefix-scan fallback for a true index seek. iter-08 R10 partial becomes done. |
-| 4 | Full MVCC reads inside transactions | TX/SYS | TXN+SYS | Current R29 is shadow-writeSet; v1.1 adds MVCC-aware iterator so SELECT in tx sees own writes through Tx. |
-| 5 | NOT NULL + DEFAULT constraints | PS/EX | SQL | Parser already accepts; validator/evaluator paths need wiring. |
-| 6 | LOG/LG `TestListRotatedFiles_DirMissing` fix | LG | LOG | Fixed in v0.6.x: pre-existing test bug (hardcoded path) and the underlying race in ENG/LS flushManager close. |
-| 7 | Catalog persistence | EX/TX | SYS | Reopen loses the in-memory table schema; ship a catalog LSM in `ENG/ID/`. |
+| 2 | Add `Benchmark*` for `ENG/LS` skiplist/memtable/SST | LS | ENG | Skiplist insert/get, SST write/read, flush. AGENTS.md rule. iter-10 ships `pkindex_bench.go` and `catalog_bench.go`; the skiplist/memtable/SST benchmarks remain. |
+| 3 | Full MVCC reads inside transactions | TX/SYS | TXN+SYS | Current R29 is shadow-writeSet; v1.1 adds MVCC-aware iterator so SELECT in tx sees own writes through Tx. |
+| 4 | NOT NULL + DEFAULT constraints | PS/EX/SC | SQL+ENG | Parser accepts; validator/evaluator paths need wiring. **Blocked** by iter-10's row codec unification (EX-side and SC-side formats must converge before enforcement). |
+| 5 | LOG/LG `TestListRotatedFiles_DirMissing` fix | LG | LOG | Fixed in v0.6.x: pre-existing test bug (hardcoded path) and the underlying race in ENG/LS flushManager close. |
 
 ### v1.1+ operators already in EX/ (work is shipping+documenting, not building)
 
@@ -94,12 +98,11 @@ v0.5/v0.6 but are tagged as v1.1+ in source. Document them in
 
 ### v2 — architectural upgrades (large, defer)
 
+iter-10 (v0.7.0) closes **items 1–4** of this list: `ENG/ID/`, `ENG/TB/`,
+`ENG/SC/`, `ENG/DP/` all ship in iter-10. The remaining items are:
+
 | # | Item | Notes |
 |---|---|---|
-| 1 | `ENG/ID/` — primary key index cluster | Replace `ENG/ID` placeholder; secondary indexes; replace `IndexScan` fallback with real seek. |
-| 2 | `ENG/TB/` — table registry | Persist CREATE TABLE / DROP TABLE across restarts; currently in-memory only. |
-| 3 | `ENG/SC/` — schema cluster | Column types, constraints, version check; currently folded into LS schema. |
-| 4 | `ENG/DP/` — deparser cluster | Split row serialization out of LS; expose `EncodeRow`/`DecodeRow` as a separate package. |
 | 5 | `MEM/PC/` — page cluster | Page-level operations as a separate concern from BF. |
 | 6 | Read-committed isolation | Bring inter-transaction isolation up from read-uncommitted (R29 v1) to read-committed. |
 | 7 | Network server | TCP/gRPC listener; SYS.Serve() entry point. |
@@ -107,6 +110,8 @@ v0.5/v0.6 but are tagged as v1.1+ in source. Document them in
 | 9 | Session pooling | `sync.Pool` for sessions; v1 allocates per call. |
 | 10 | Read-only mode | Honor `Options.ReadOnly = true`; skip WAL writes. |
 | 11 | Admin interface | Operational tooling: schema dump, vacuum, manual compaction. |
+| 12 | Secondary indexes | Build on the `ENG/ID/` PK index surface; same `Insert/Search/Delete` API extended to non-PK columns. **Pre-req:** iter-10 done. |
+| 13 | `EX/planner.go` → `PL/` reconcile | iter-08 unresolved divergence: planner code lives in `EX/`, design says `PL/`. Requires human decision on `design/subsystems/SQL.md`. |
 
 ## Completion Criteria (All Iterations)
 
@@ -119,8 +124,9 @@ v0.5/v0.6 but are tagged as v1.1+ in source. Document them in
 
 ## Iteration Detail
 
-Each iteration is documented in `development/iterations/iter-XXX.md`.
-All eight iterations are now in `done` state.
+Each iteration is documented in `development/iterations/iter-XX-<name>.md`.
+iter-00 through iter-09 are now in `done` state; **iter-10 is `pending`**
+and is the next unit of work.
 
 ## Design Alignment
 
@@ -139,11 +145,11 @@ internal/
 ├── WAL/WR/  # Writer: append, segment rotation
 ├── WAL/FL/  # Flusher: fsync, LSN counter
 ├── WAL/RP/  # Replay: WAL recovery
-├── ENG/LS/  # LSM tree: skiplist, SST, manifest  (v1)
-├── ENG/ID/  # Index: primary key                  (v2 — placeholder only)
-├── ENG/TB/  # Table: create/drop, schema registry (v2 — folded into EX for v1)
-├── ENG/SC/  # Schema: column types, constraints   (v2 — folded into LS for v1)
-├── ENG/DP/  # Deparser: row serialization          (v2 — folded into LS for v1)
+├── ENG/LS/  # LSM tree: skiplist, SST, manifest  (v1; iter-10 keeps as the storage driver)
+├── ENG/ID/  # Index: primary key                  (v0.7.0 — iter-10)
+├── ENG/TB/  # Table: persistent catalog            (v0.7.0 — iter-10)
+├── ENG/SC/  # Schema: column types, constraints   (v0.7.0 — iter-10, extracted from LS)
+├── ENG/DP/  # Deparser: row serialization          (v0.7.0 — iter-10, extracted from LS)
 ├── TXN/MV/  # MVCC: version chain, arena
 ├── TXN/LC/  # Lock: hazard pointers, epoch
 ├── TXN/SN/  # Snapshot: read view
@@ -170,6 +176,8 @@ internal/
 | v0.4.0–v0.4.1 | WAL + TXN/MV fix | iter-03, iter-05/06 |
 | v0.5.0 | SQL/Execute close-out | iter-08 |
 | **v0.6.0** | **SYS + Integration** | **iter-09** |
+| **v0.6.1** | Test-race + LG fix (post-v0.6.0 close-out) | — |
+| **v0.7.0** (planned) | **Real PK Index + Persistent Catalog** | **iter-10** |
 
 ## Design Protection
 
