@@ -2,7 +2,7 @@ package EX
 
 import (
 	"context"
-	"errors"
+	"fmt"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
@@ -31,7 +31,7 @@ func NewInsert(table string, cols []string, values [][]PS.Expr) *Insert {
 func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.Expr) (*Insert, error) {
 	ss, ok := schemaFor(table)
 	if !ok {
-		return nil, errors.New("ex: table not registered: " + table)
+		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
 	if ss.pk == "" {
 		return nil, ErrNoPKForStorage
@@ -129,7 +129,7 @@ func NewUpdate(table string, set []PS.Pair, where PS.Expr, iter Operator) *Updat
 func NewUpdateWithStore(store Store, table string, set []PS.Pair, where PS.Expr, iter Operator) (*Update, error) {
 	ss, ok := schemaFor(table)
 	if !ok {
-		return nil, errors.New("ex: table not registered: " + table)
+		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
 	if ss.pk == "" {
 		return nil, ErrNoPKForStorage
@@ -250,7 +250,7 @@ func NewDelete(table string, where PS.Expr, iter Operator) *Delete {
 func NewDeleteWithStore(store Store, table string, where PS.Expr, iter Operator) (*Delete, error) {
 	ss, ok := schemaFor(table)
 	if !ok {
-		return nil, errors.New("ex: table not registered: " + table)
+		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
 	if ss.pk == "" {
 		return nil, ErrNoPKForStorage

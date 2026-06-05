@@ -806,7 +806,7 @@ func TestOpenFails(t *testing.T) {
 
 // TestFirstLoggerNil tests firstLogger with empty slice.
 func TestFirstLoggerNil(t *testing.T) {
-	result := firstLogger(nil)
+	result := lg.FirstLogger(nil)
 	if result != nil {
 		t.Error("expected nil for nil input")
 	}
@@ -997,7 +997,7 @@ func TestFirstLoggerWithMultiple(t *testing.T) {
 	log1 := lg.New(lg.Options{Output: io.Discard})
 	log2 := lg.New(lg.Options{Output: io.Discard})
 
-	result := firstLogger([]lg.Logger{log1, log2})
+	result := lg.FirstLogger([]lg.Logger{log1, log2})
 	if result != log1 {
 		t.Error("expected first logger")
 	}

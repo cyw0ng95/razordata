@@ -403,3 +403,14 @@ func (s *sharedLogger) listRotatedFiles() ([]string, error) {
 	sort.Strings(rotated)
 	return rotated, nil
 }
+
+// FirstLogger returns the first logger in logs, or nil if logs is empty.
+// Many subsystems accept an optional logger via variadic arguments; this
+// helper consolidates the "first-or-nil" pick so each subsystem does
+// not re-implement it.
+func FirstLogger(logs []Logger) Logger {
+	if len(logs) > 0 {
+		return logs[0]
+	}
+	return nil
+}

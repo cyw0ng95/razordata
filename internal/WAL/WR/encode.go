@@ -28,22 +28,21 @@ func encodeVarint(buf []byte, v uint64) []byte {
 	return binary.AppendUvarint(buf, v)
 }
 
-// decodeVarint reads a varint from data starting at offset. Returns
-// the decoded value, the number of bytes consumed, and an error if the
-// varint is malformed. If the varint extends past data, the returned
-// bytes-consumed is -1 (caller should treat as end-of-segment).
-func decodeVarint(data []byte, off int) (uint64, int, error) {
+// DecodeVarint reads a varint at off in data. The second return is
+// the number of bytes consumed, or -1 if the data was truncated or
+// the offset was out of range.
+func DecodeVarint(data []byte, off int) (uint64, int) {
 	if off < 0 || off >= len(data) {
-		return 0, -1, nil
+		return 0, -1
 	}
 	v, n := binary.Uvarint(data[off:])
 	if n <= 0 {
-		return 0, -1, nil
+		return 0, -1
 	}
 	if off+n > len(data) {
-		return 0, -1, nil
+		return 0, -1
 	}
-	return v, n, nil
+	return v, n
 }
 
 // encodeRecord encodes a single LogRecord into the format documented
@@ -148,10 +147,7 @@ func decodeRecord(data []byte, off int) (*LogRecord, int, error) {
 	}
 
 	// 1. Read length varint.
-	length, hdrN, err := decodeVarint(data, off)
-	if err != nil {
-		return nil, -1, err
-	}
+	length, hdrN := DecodeVarint(data, off)
 	if hdrN < 0 {
 		return nil, -1, ErrTruncatedRecord
 	}
@@ -169,7 +165,7 @@ func decodeRecord(data []byte, off int) (*LogRecord, int, error) {
 	// (txnN) to avoid clobbering hdrN, which we still need for the
 	// final consumed-byte count.
 	cur := 0
-	txnID, txnN, _ := decodeVarint(body, cur)
+	txnID, txnN := DecodeVarint(body, cur)
 	if txnN < 0 {
 		return nil, -1, ErrTruncatedRecord
 	}
@@ -204,7 +200,7 @@ func decodePayload(body []byte, cur int, rec *LogRecord) int {
 		// the envelope CRC is deferred to v2 (R-corrupt-deferred).
 		_ = binary.LittleEndian.Uint32(body[cur+8 : cur+12])
 		cur += 12
-		dataLen, n, _ := decodeVarint(body, cur)
+		dataLen, n := DecodeVarint(body, cur)
 		if n < 0 || cur+n+int(dataLen) > len(body) {
 			return cur
 		}
@@ -227,7 +223,7 @@ func decodePayload(body []byte, cur int, rec *LogRecord) int {
 		rec.Key = make([]byte, 24)
 		copy(rec.Key, body[cur:cur+24])
 		cur += 24
-		count, txnN, _ := decodeVarint(body, cur)
+		count, txnN := DecodeVarint(body, cur)
 		if txnN < 0 {
 			return cur
 		}
@@ -241,7 +237,7 @@ func decodePayload(body []byte, cur int, rec *LogRecord) int {
 		cur = len(body)
 	default:
 		// Unknown type: payload is varint length + raw bytes.
-		dataLen, n, _ := decodeVarint(body, cur)
+		dataLen, n := DecodeVarint(body, cur)
 		if n < 0 || cur+n+int(dataLen) > len(body) {
 			return cur
 		}

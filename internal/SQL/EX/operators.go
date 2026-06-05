@@ -3,7 +3,14 @@ package EX
 import (
 	"context"
 	"errors"
+	"fmt"
 )
+
+// ErrTableNotRegisteredForStorage is returned when an operator is asked to
+// route through the storage engine for a table that has not been registered
+// in the in-memory catalog. Callers can match it with errors.Is and inspect
+// the table name via the wrapped error.
+var ErrTableNotRegisteredForStorage = errors.New("ex: table not registered for storage")
 
 var ErrNoPKForStorage = errors.New("ex: cannot write to storage without a primary key")
 
@@ -33,7 +40,7 @@ func NewSeqScan(table string) *SeqScan {
 func NewSeqScanWithStore(store Store, table string) (*SeqScan, error) {
 	ss, ok := schemaFor(table)
 	if !ok {
-		return nil, errors.New("ex: table not registered for storage: " + table)
+		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
 	return &SeqScan{
 		table:  table,
@@ -142,7 +149,7 @@ func NewIndexScan(table, idx string, rangeStart, rangeEnd []byte) *IndexScan {
 func NewIndexScanWithStore(store Store, table, idx string) (*IndexScan, error) {
 	ss, ok := schemaFor(table)
 	if !ok {
-		return nil, errors.New("ex: table not registered: " + table)
+		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
 	return &IndexScan{
 		table:  table,

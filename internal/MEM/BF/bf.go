@@ -136,7 +136,7 @@ func New(capacity int64, hintPath string, bd *df.BlockDevice, sp SyncPool, log .
 		capacity = 256 // default capacity
 	}
 
-	l := firstLogger(log)
+	l := lg.FirstLogger(log)
 
 	b := &bp{
 		bd:       bd,
@@ -148,13 +148,6 @@ func New(capacity int64, hintPath string, bd *df.BlockDevice, sp SyncPool, log .
 	b.ht.slots = make(map[uint64]*bufferSlot)
 
 	return b, nil
-}
-
-func firstLogger(logs []lg.Logger) lg.Logger {
-	if len(logs) > 0 {
-		return logs[0]
-	}
-	return nil
 }
 
 // Get implements BufferPool.

@@ -28,7 +28,7 @@ type SegmentManager struct {
 
 // New creates a SegmentManager under root (the database directory).
 func New(root string, log ...lg.Logger) (*SegmentManager, error) {
-	sm := &SegmentManager{root: root, log: firstLogger(log)}
+	sm := &SegmentManager{root: root, log: lg.FirstLogger(log)}
 	if err := os.MkdirAll(filepath.Join(root, "wal"), 0700); err != nil {
 		if sm.log != nil {
 			sm.log.Error("lf.new", "root", root, "err", err)
@@ -36,13 +36,6 @@ func New(root string, log ...lg.Logger) (*SegmentManager, error) {
 		return nil, err
 	}
 	return sm, nil
-}
-
-func firstLogger(logs []lg.Logger) lg.Logger {
-	if len(logs) > 0 {
-		return logs[0]
-	}
-	return nil
 }
 
 func (sm *SegmentManager) segmentPath(n uint64) string {
