@@ -1,9 +1,12 @@
 package SYS
 
 import (
+	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
+	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/ST"
 )
@@ -11,7 +14,30 @@ import (
 // TestStmt_PrepareAndReuse — R16/R17: prepare a statement, execute it
 // multiple times.
 func TestStmt_PrepareAndReuse(t *testing.T) {
-	eng, ctx := testEngine(t)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	stmt, err := ST.PrepareFromInterface(eng, "INSERT INTO users VALUES (1, 'a')")
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +58,29 @@ func TestStmt_PrepareAndReuse(t *testing.T) {
 
 // TestStmt_CloseIdempotent — R16: Close is idempotent.
 func TestStmt_CloseIdempotent(t *testing.T) {
-	eng, _ := testEngine(t)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+
 	stmt, err := ST.PrepareFromInterface(eng, "SELECT 1")
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +96,30 @@ func TestStmt_CloseIdempotent(t *testing.T) {
 // TestStmt_ExecAfterClose — R16: executing a closed statement
 // returns AP.ErrClosed.
 func TestStmt_ExecAfterClose(t *testing.T) {
-	eng, ctx := testEngine(t)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	stmt, err := ST.PrepareFromInterface(eng, "SELECT 1")
 	if err != nil {
 		t.Fatal(err)
@@ -64,8 +135,30 @@ func TestStmt_ExecAfterClose(t *testing.T) {
 
 // TestStmt_PrepareEmptySQL — R16: empty SQL returns AP.ErrSyntax.
 func TestStmt_PrepareEmptySQL(t *testing.T) {
-	eng, _ := testEngine(t)
-	_, err := ST.PrepareFromInterface(eng, "")
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+
+	_, err = ST.PrepareFromInterface(eng, "")
 	if !errors.Is(err, AP.ErrSyntax) {
 		t.Errorf("empty SQL: got %v, want ErrSyntax", err)
 	}
@@ -82,11 +175,33 @@ func TestStmt_PrepareNilEngine(t *testing.T) {
 // TestStmt_QueryReturnsCols — R17: prepare + Query returns the
 // expected column metadata.
 func TestStmt_QueryReturnsCols(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
-	if _, err := s.Exec(ctx, "INSERT INTO users VALUES (1, 'a')"); err != nil {
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "INSERT INTO users VALUES (1, 'a')"); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	stmt, err := ST.PrepareFromInterface(eng, "SELECT id, name FROM users")
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +219,30 @@ func TestStmt_QueryReturnsCols(t *testing.T) {
 // TestStmt_ExecReturnsRowsAffected — R16: Exec returns the result's
 // RowsAffected.
 func TestStmt_ExecReturnsRowsAffected(t *testing.T) {
-	eng, ctx := testEngine(t)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	stmt, err := ST.PrepareFromInterface(eng, "INSERT INTO users VALUES (1, 'a')")
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +259,29 @@ func TestStmt_ExecReturnsRowsAffected(t *testing.T) {
 
 // TestStmt_SQLAccessor — R17: the SQL text is preserved.
 func TestStmt_SQLAccessor(t *testing.T) {
-	eng, _ := testEngine(t)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+
 	stmt, err := ST.PrepareFromInterface(eng, "SELECT 1")
 	if err != nil {
 		t.Fatal(err)

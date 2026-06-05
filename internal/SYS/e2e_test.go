@@ -12,46 +12,6 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
-// testEngine opens a fresh Engine rooted in a per-test temp dir. It
-// also registers a `users(id INTEGER PK, name TEXT)` table so the
-// common test bodies can skip boilerplate. The test also wipes the
-// EX package's in-memory table registry (carried over from iter-08)
-// so tests do not collide on the `users` name.
-func testEngine(t *testing.T) (AP.Engine, context.Context) {
-	t.Helper()
-	resetExecutorRegistry()
-	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
-		PageSize:     4096,
-		MemTableSize: 1024 * 1024,
-		BufferPoolMB: 16,
-		WALSizeMB:    4,
-		MaxLevel:     3,
-		LogLevel:     8, // above Error to silence info output
-		LogFormat:    "text",
-	})
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	s, err := eng.Begin(context.Background())
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	t.Cleanup(func() { _ = eng.Close(context.Background()) })
-	return eng, context.Background()
-}
-
-// resetExecutorRegistry clears the iter-08 in-memory `tables` and
-// `schemas` package globals so each SYS test starts from a clean
-// catalog. Without this, the second testEngine call would see
-// "table already exists" from the first test's leftovers.
-func resetExecutorRegistry() {
-	executor.UnregisterAll()
-}
-
 // TestR05_OpenValidation covers negative option cases.
 func TestR05_OpenValidation(t *testing.T) {
 	if _, err := Open(context.Background(), "", AP.Options{}); !errors.Is(err, AP.ErrInvalidOptions) {
@@ -68,11 +28,30 @@ func TestR05_OpenValidation(t *testing.T) {
 // TestR21_EndToEndCRUD covers CREATE → INSERT → SELECT → UPDATE →
 // DELETE in auto-commit mode.
 func TestR21_EndToEndCRUD(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, err := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open: %v", err)
 	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	if _, err := s.Exec(ctx, "INSERT INTO users VALUES (1, 'alice')"); err != nil {
 		t.Fatalf("insert 1: %v", err)
 	}
@@ -105,11 +84,30 @@ func TestR21_EndToEndCRUD(t *testing.T) {
 // TestR22_TransactionCommit covers BEGIN → INSERT → COMMIT → data
 // persists across sessions.
 func TestR22_TransactionCommit(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, err := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open: %v", err)
 	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	tx, err := s.Begin(ctx)
 	if err != nil {
 		t.Fatalf("session begin: %v", err)
@@ -137,11 +135,30 @@ func TestR22_TransactionCommit(t *testing.T) {
 // TestR23_TransactionRollback covers BEGIN → INSERT → ROLLBACK →
 // data absent.
 func TestR23_TransactionRollback(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, err := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open: %v", err)
 	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	tx, err := s.Begin(ctx)
 	if err != nil {
 		t.Fatalf("session begin: %v", err)
@@ -173,14 +190,33 @@ func TestR23_TransactionRollback(t *testing.T) {
 // TestR23b_RollbackRestoresPreTxValue covers the case where the
 // rolled-back transaction updated a key that existed before the tx.
 func TestR23b_RollbackRestoresPreTxValue(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, err := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
 	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "INSERT INTO users VALUES (1, 'original')"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Exec(ctx, "INSERT INTO users VALUES (1, 'original')"); err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	tx, err := s.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -210,7 +246,30 @@ func TestR23b_RollbackRestoresPreTxValue(t *testing.T) {
 // TestR24_ConcurrentSessions exercises two sessions reading and
 // writing the same table.
 func TestR24_ConcurrentSessions(t *testing.T) {
-	eng, ctx := testEngine(t)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	s1, err := eng.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -275,7 +334,22 @@ func TestR25_OpenCloseReopen(t *testing.T) {
 // TestR10_VersionAndStats confirms the engine advertises its version
 // and aggregates subsystem counters.
 func TestR10_VersionAndStats(t *testing.T) {
-	eng, _ := testEngine(t)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+
 	st := eng.Stats()
 	if st.Version != AP.Version {
 		t.Errorf("version = %q, want %q", st.Version, AP.Version)
@@ -302,18 +376,4 @@ func TestR03_ErrorClassification(t *testing.T) {
 	if AP.IsFatal(AP.ErrIO) {
 		t.Error("IO must not be fatal")
 	}
-}
-
-// containsString is a small helper that avoids importing strings in
-// tests.
-func containsString(haystack, needle string) bool {
-	if len(needle) == 0 {
-		return true
-	}
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }

@@ -7,19 +7,42 @@ import (
 	"sync"
 	"testing"
 
+	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
 // TestEngine_DoubleClose — R08 Close is idempotent.
 func TestEngine_DoubleClose(t *testing.T) {
-	eng, _ := testEngine(t)
-	if err := eng.Close(context.Background()); err != nil {
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	ctx := context.Background()
+
+	if err := eng.Close(ctx); err != nil {
 		t.Errorf("first Close: %v", err)
 	}
-	if err := eng.Close(context.Background()); err != nil {
+	if err := eng.Close(ctx); err != nil {
 		t.Errorf("second Close: %v", err)
 	}
-	if err := eng.Close(context.Background()); err != nil {
+	if err := eng.Close(ctx); err != nil {
 		t.Errorf("third Close: %v", err)
 	}
 }
@@ -27,9 +50,31 @@ func TestEngine_DoubleClose(t *testing.T) {
 // TestEngine_BeginAfterClose — Begin on a closed engine returns
 // AP.ErrClosed.
 func TestEngine_BeginAfterClose(t *testing.T) {
-	eng, _ := testEngine(t)
-	_ = eng.Close(context.Background())
-	if _, err := eng.Begin(context.Background()); !errors.Is(err, AP.ErrClosed) {
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	ctx := context.Background()
+
+	_ = eng.Close(ctx)
+	if _, err := eng.Begin(ctx); !errors.Is(err, AP.ErrClosed) {
 		t.Errorf("Begin after Close: got %v, want ErrClosed", err)
 	}
 }
@@ -37,7 +82,29 @@ func TestEngine_BeginAfterClose(t *testing.T) {
 // TestEngine_OpenMethodNoOp — R01 / R08: the public Open method on an
 // already-constructed engine returns AP.ErrAlreadyOpen.
 func TestEngine_OpenMethodNoOp(t *testing.T) {
-	eng, _ := testEngine(t)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	defer eng.Close(context.Background())
+
 	if err := eng.Open(context.Background(), "/tmp", AP.Options{}); !errors.Is(err, AP.ErrAlreadyOpen) {
 		t.Errorf("Open on running engine: got %v, want ErrAlreadyOpen", err)
 	}
@@ -46,8 +113,30 @@ func TestEngine_OpenMethodNoOp(t *testing.T) {
 // TestEngine_StatsAfterOperations — R09: stats are non-zero after
 // some activity.
 func TestEngine_StatsAfterOperations(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	// Run a real transaction so Tx.Committed goes up.
 	tx, err := s.Begin(ctx)
 	if err != nil {
@@ -126,7 +215,7 @@ func TestEngine_OpenDuplicateDir(t *testing.T) {
 		t.Fatalf("first Close: %v", err)
 	}
 	// Wipe the in-memory catalog so the second engine can re-create.
-	resetExecutorRegistry()
+	executor.UnregisterAll()
 	eng2, err := Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,

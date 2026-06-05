@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	sy "github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
@@ -14,7 +15,7 @@ import (
 // engine's catalog lists the table that was created in the
 // previous session.
 func TestEngine_ReopenPreservesCatalog(t *testing.T) {
-	resetExecutorRegistry()
+	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
 
 	// First session: open, create a table, close.

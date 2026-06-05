@@ -1,21 +1,43 @@
 package SYS
 
 import (
+	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
+	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
 // TestSession_ErrLockedOnDoubleBegin — R11: Begin while a transaction
 // is already active returns AP.ErrLocked.
 func TestSession_ErrLockedOnDoubleBegin(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, err := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open: %v", err)
 	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	_, err = s.Begin(ctx)
 	if err != nil {
 		t.Fatalf("first Begin: %v", err)
@@ -29,11 +51,30 @@ func TestSession_ErrLockedOnDoubleBegin(t *testing.T) {
 // TestSession_CommitRollbackWithoutTxn — R11: Commit/Rollback on a
 // session without an active transaction returns ErrNoActiveTxn.
 func TestSession_CommitRollbackWithoutTxn(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, err := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open: %v", err)
 	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	if err := s.Commit(ctx); !errors.Is(err, AP.ErrNoActiveTxn) {
 		t.Errorf("Commit without txn: got %v, want ErrNoActiveTxn", err)
 	}
@@ -45,8 +86,37 @@ func TestSession_CommitRollbackWithoutTxn(t *testing.T) {
 // TestSession_StatsCountersIncrement — R14: QueryCount and ActiveTXN
 // reflect the session's activity.
 func TestSession_StatsCountersIncrement(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	setup, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := setup.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
+	// The test session is a fresh session separate from the
+	// setup session, so its QueryCount starts at 0.
+	s, err := eng.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin test session: %v", err)
+	}
+
 	before := s.Stats()
 	if before.QueryCount != 0 {
 		t.Errorf("initial QueryCount = %d, want 0", before.QueryCount)
@@ -84,7 +154,30 @@ func TestSession_StatsCountersIncrement(t *testing.T) {
 
 // TestSession_Stats_StableID — R14: ID is set once and stable.
 func TestSession_Stats_StableID(t *testing.T) {
-	eng, ctx := testEngine(t)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	s1, _ := eng.Begin(ctx)
 	s2, _ := eng.Begin(ctx)
 	if s1.Stats().ID == s2.Stats().ID {
@@ -98,15 +191,37 @@ func TestSession_Stats_StableID(t *testing.T) {
 
 // TestSession_SetDeadline — R13: SetDeadline stores a time.
 func TestSession_SetDeadline(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	deadline := time.Now().Add(50 * time.Millisecond)
 	if err := s.SetDeadline(deadline); err != nil {
 		t.Fatalf("SetDeadline: %v", err)
 	}
 	// Wait past the deadline; subsequent Exec/Query should fail.
 	time.Sleep(80 * time.Millisecond)
-	_, err := s.Exec(ctx, "INSERT INTO users VALUES (100, 'late')")
+	_, err = s.Exec(ctx, "INSERT INTO users VALUES (100, 'late')")
 	if !errors.Is(err, AP.ErrDeadlineExceeded) {
 		t.Errorf("Exec after deadline: got %v, want ErrDeadlineExceeded", err)
 	}
@@ -115,8 +230,30 @@ func TestSession_SetDeadline(t *testing.T) {
 // TestSession_SetDeadline_Future — R13: future deadline does not
 // affect operations.
 func TestSession_SetDeadline_Future(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	deadline := time.Now().Add(1 * time.Hour)
 	if err := s.SetDeadline(deadline); err != nil {
 		t.Fatal(err)
@@ -129,8 +266,30 @@ func TestSession_SetDeadline_Future(t *testing.T) {
 // TestSession_Begin_TxQuery_TxExec — exercises the session
 // through both Query and Exec on the same transaction.
 func TestSession_Begin_TxQuery_TxExec(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	if _, err := s.Exec(ctx, "INSERT INTO users VALUES (1, 'a')"); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +316,30 @@ func TestSession_Begin_TxQuery_TxExec(t *testing.T) {
 // independent: one session's actions don't affect another's view of
 // ActiveTXN.
 func TestSession_MultipleSessions_Independent(t *testing.T) {
-	eng, ctx := testEngine(t)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	s1, _ := eng.Begin(ctx)
 	s2, _ := eng.Begin(ctx)
 	tx1, err := s1.Begin(ctx)

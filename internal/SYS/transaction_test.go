@@ -1,16 +1,41 @@
 package SYS
 
 import (
+	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
+	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
 // TestTransaction_DoubleCommit — Commit after Commit returns ErrTxAborted.
 func TestTransaction_DoubleCommit(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	tx, err := s.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -29,8 +54,30 @@ func TestTransaction_DoubleCommit(t *testing.T) {
 // TestTransaction_CommitAfterRollback — Commit after Rollback returns
 // ErrTxAborted.
 func TestTransaction_CommitAfterRollback(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	tx, _ := s.Begin(ctx)
 	_, _ = tx.Exec(ctx, "INSERT INTO users VALUES (1, 'a')")
 	if err := tx.Rollback(ctx); err != nil {
@@ -44,8 +91,30 @@ func TestTransaction_CommitAfterRollback(t *testing.T) {
 // TestTransaction_SavepointAndRollbackTo — write, savepoint, write
 // more, rollback to savepoint: the second write is undone.
 func TestTransaction_SavepointAndRollbackTo(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	tx, _ := s.Begin(ctx)
 	if _, err := tx.Exec(ctx, "INSERT INTO users VALUES (1, 'a')"); err != nil {
 		t.Fatal(err)
@@ -72,8 +141,30 @@ func TestTransaction_SavepointAndRollbackTo(t *testing.T) {
 // TestTransaction_RollbackToUnknownSavepoint — returns
 // AP.ErrUnknownSavepoint.
 func TestTransaction_RollbackToUnknownSavepoint(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	tx, _ := s.Begin(ctx)
 	_, _ = tx.Exec(ctx, "INSERT INTO users VALUES (1, 'a')")
 	if err := tx.RollbackTo(ctx, "missing"); !errors.Is(err, AP.ErrUnknownSavepoint) {
@@ -84,8 +175,30 @@ func TestTransaction_RollbackToUnknownSavepoint(t *testing.T) {
 // TestTransaction_SavepointEmptyName — empty savepoint name returns
 // AP.ErrUnknownSavepoint.
 func TestTransaction_SavepointEmptyName(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	tx, _ := s.Begin(ctx)
 	if err := tx.Savepoint(ctx, ""); !errors.Is(err, AP.ErrUnknownSavepoint) {
 		t.Errorf("Savepoint empty: got %v, want ErrUnknownSavepoint", err)
@@ -95,8 +208,30 @@ func TestTransaction_SavepointEmptyName(t *testing.T) {
 // TestTransaction_NestedSavepoint_InnerRollback — three savepoints,
 // rollback the middle one.
 func TestTransaction_NestedSavepoint_InnerRollback(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	tx, _ := s.Begin(ctx)
 	_, _ = tx.Exec(ctx, "INSERT INTO users VALUES (1, 'a')")
 	_ = tx.Savepoint(ctx, "sp1")
@@ -119,8 +254,30 @@ func TestTransaction_NestedSavepoint_InnerRollback(t *testing.T) {
 // TestTransaction_NoOpsOnFinished — Savepoint, RollbackTo, and Exec
 // after Commit/Rollback return ErrTxAborted.
 func TestTransaction_NoOpsOnFinished(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	tx, _ := s.Begin(ctx)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -143,8 +300,30 @@ func TestTransaction_NoOpsOnFinished(t *testing.T) {
 // reports itself as finished via the type assertion to the concrete
 // *TX.Transaction.
 func TestTransaction_FinishedReport(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	tx, _ := s.Begin(ctx)
 	_ = tx.Commit(ctx)
 	// tx is the interface type, so Finished() is not directly
@@ -157,8 +336,30 @@ func TestTransaction_FinishedReport(t *testing.T) {
 
 // TestTransaction_DoubleRollback — second Rollback returns ErrTxAborted.
 func TestTransaction_DoubleRollback(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	tx, _ := s.Begin(ctx)
 	_, _ = tx.Exec(ctx, "INSERT INTO users VALUES (1, 'a')")
 	if err := tx.Rollback(ctx); err != nil {

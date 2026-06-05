@@ -5,13 +5,36 @@ import (
 	"path/filepath"
 	"testing"
 
+	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
 // TestCRUD_WhereFilter — R21: WHERE clause returns matching rows.
 func TestCRUD_WhereFilter(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	for _, sql := range []string{
 		"INSERT INTO users VALUES (1, 'alice')",
 		"INSERT INTO users VALUES (2, 'bob')",
@@ -32,8 +55,30 @@ func TestCRUD_WhereFilter(t *testing.T) {
 
 // TestCRUD_OrderByLimit — R21: ORDER BY + LIMIT.
 func TestCRUD_OrderByLimit(t *testing.T) {
-	eng, ctx := createOrderByTestEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE t (id INTEGER, v INTEGER, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	for i := 0; i < 5; i++ {
 		if _, err := s.Exec(ctx, "INSERT INTO t (id, v) VALUES (1, 10)"); err != nil {
 			t.Fatal(err)
@@ -50,8 +95,30 @@ func TestCRUD_OrderByLimit(t *testing.T) {
 
 // TestCRUD_AggregateCount — R21: COUNT(*) returns row count.
 func TestCRUD_AggregateCount(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	for i := 0; i < 3; i++ {
 		if _, err := s.Exec(ctx, "INSERT INTO users VALUES (1, 'u')"); err != nil {
 			t.Fatal(err)
@@ -68,8 +135,30 @@ func TestCRUD_AggregateCount(t *testing.T) {
 
 // TestCRUD_AggregateSum — R21: SUM returns the total.
 func TestCRUD_AggregateSum(t *testing.T) {
-	eng, ctx := createOrderByTestEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE t (id INTEGER, v INTEGER, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	for i := 1; i <= 4; i++ {
 		if _, err := s.Exec(ctx, "INSERT INTO t (id, v) VALUES (1, 10)"); err != nil {
 			t.Fatal(err)
@@ -86,8 +175,30 @@ func TestCRUD_AggregateSum(t *testing.T) {
 
 // TestCRUD_DropTable — DDL: DROP TABLE removes the table.
 func TestCRUD_DropTable(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	if _, err := s.Exec(ctx, "DROP TABLE users"); err != nil {
 		t.Fatalf("drop: %v", err)
 	}
@@ -103,8 +214,30 @@ func TestCRUD_DropTable(t *testing.T) {
 // TestCRUD_InvalidSQL — R03: a malformed query returns an error and
 // does not panic the engine.
 func TestCRUD_InvalidSQL(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	if _, err := s.Exec(ctx, "SELEKT 1"); err == nil {
 		t.Error("expected parse error for SELEKT")
 	}
@@ -118,8 +251,30 @@ func TestCRUD_InvalidSQL(t *testing.T) {
 // TestCRUD_EmptyTableQuery — querying an empty table returns
 // *Rows{} without error.
 func TestCRUD_EmptyTableQuery(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	rows, err := s.Query(ctx, "SELECT id, name FROM users")
 	if err != nil {
 		t.Fatalf("empty query: %v", err)
@@ -130,8 +285,30 @@ func TestCRUD_EmptyTableQuery(t *testing.T) {
 // TestCRUD_MultipleStatements_OneSession — execute many DML
 // statements in sequence; the engine handles them all.
 func TestCRUD_MultipleStatements_OneSession(t *testing.T) {
-	eng, ctx := createOrderByTestEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE t (id INTEGER, v INTEGER, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	// Insert 10 rows with unique ids.
 	for i := 1; i <= 10; i++ {
 		if _, err := s.Exec(ctx, "INSERT INTO t (id, v) VALUES (1, 10)"); err != nil {
@@ -168,8 +345,30 @@ func TestCRUD_MultipleStatements_OneSession(t *testing.T) {
 // TestCRUD_SyntaxErrorDoesNotPanic — a syntax error in one
 // statement does not crash subsequent operations.
 func TestCRUD_SyntaxErrorDoesNotPanic(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	for i := 0; i < 5; i++ {
 		_, _ = s.Exec(ctx, "INVALID SQL STATEMENT")
 	}
@@ -181,8 +380,30 @@ func TestCRUD_SyntaxErrorDoesNotPanic(t *testing.T) {
 // TestCRUD_Where_NoMatch — a query that matches no rows returns an
 // empty Rows without error.
 func TestCRUD_Where_NoMatch(t *testing.T) {
-	eng, ctx := testEngine(t)
-	s, _ := eng.Begin(ctx)
+	executor.UnregisterAll()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	ctx := context.Background()
+
 	if _, err := s.Exec(ctx, "INSERT INTO users VALUES (1, 'a')"); err != nil {
 		t.Fatal(err)
 	}
@@ -199,24 +420,7 @@ func TestCRUD_Where_NoMatch(t *testing.T) {
 // important contract is that the operator chain (Filter/Project/
 // Sort/Offset/Limit) is correctly composed.
 func TestCRUD_LimitOffset(t *testing.T) {
-	eng, ctx := createOrderByTestEngine(t)
-	s, _ := eng.Begin(ctx)
-	for i := 1; i <= 5; i++ {
-		_, _ = s.Exec(ctx, "INSERT INTO t (id, v) VALUES (1, 10)")
-	}
-	rows, err := s.Query(ctx, "SELECT v FROM t ORDER BY v LIMIT 2 OFFSET 2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = rows
-}
-
-// createOrderByTestEngine builds an engine with a `t(id, v)` table
-// suitable for ORDER BY / aggregate tests. Returns the engine and a
-// context ready to use.
-func createOrderByTestEngine(t *testing.T) (AP.Engine, context.Context) {
-	t.Helper()
-	resetExecutorRegistry()
+	executor.UnregisterAll()
 	dir := filepath.Join(t.TempDir(), "db")
 	eng, err := Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
@@ -225,14 +429,27 @@ func createOrderByTestEngine(t *testing.T) (AP.Engine, context.Context) {
 		WALSizeMB:    4,
 		MaxLevel:     3,
 		LogLevel:     8,
+		LogFormat:    "text",
 	})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	s, _ := eng.Begin(context.Background())
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
 	if _, err := s.Exec(context.Background(), "CREATE TABLE t (id INTEGER, v INTEGER, PRIMARY KEY (id))"); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	t.Cleanup(func() { _ = eng.Close(context.Background()) })
-	return eng, context.Background()
+	ctx := context.Background()
+
+	for i := 1; i <= 5; i++ {
+		_, _ = s.Exec(ctx, "INSERT INTO t (id, v) VALUES (1, 10)")
+	}
+	rows, err := s.Query(ctx, "SELECT v FROM t ORDER BY v LIMIT 2 OFFSET 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = rows
 }
