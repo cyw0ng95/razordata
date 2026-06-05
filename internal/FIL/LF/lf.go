@@ -23,7 +23,6 @@ var (
 type SegmentManager struct {
 	root string
 	pool sync.Map // map[uint64]*FileHandle keyed by segment number
-	mu   sync.Mutex
 	log  lg.Logger
 }
 

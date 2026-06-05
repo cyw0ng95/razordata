@@ -11,7 +11,6 @@ import (
 
 type plan struct {
 	root    Operator
-	params  []string
 	cost    float64
 	memoKey string
 }
@@ -104,12 +103,6 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 	p.mu.Unlock()
 
 	return result, nil
-}
-
-func (p *Planner) memoize(key string, plan *plan) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.memo[key] = plan
 }
 
 // estimateCost returns a unitless cost for the operator tree rooted at op.

@@ -54,44 +54,6 @@ func (sp *mockSyncPool) Put(buf []byte) {
 	}
 }
 
-// testBD is a simple in-memory block device for testing.
-type testBD struct {
-	blocks  map[uint64][]byte
-	mu      sync.RWMutex
-	onRead  func(blockID uint64) error // optional hook
-	onWrite func(blockID uint64, data []byte)
-}
-
-func newTestBD() *testBD {
-	return &testBD{blocks: make(map[uint64][]byte)}
-}
-
-func (bd *testBD) WriteBlock(_ context.Context, blockID uint64, data []byte) error {
-	bd.mu.Lock()
-	defer bd.mu.Unlock()
-	dst := make([]byte, df.DataLen)
-	copy(dst, data)
-	bd.blocks[blockID] = dst
-	if bd.onWrite != nil {
-		bd.onWrite(blockID, data)
-	}
-	return nil
-}
-
-func (bd *testBD) ReadBlock(_ context.Context, blockID uint64, n int, buf []byte) error {
-	bd.mu.RLock()
-	data, ok := bd.blocks[blockID]
-	bd.mu.RUnlock()
-	if !ok {
-		return io.EOF
-	}
-	if len(buf) < n {
-		return io.ErrShortBuffer
-	}
-	copy(buf, data[:n])
-	return nil
-}
-
 // TestNew tests buffer pool creation and basic lifecycle.
 func TestNew(t *testing.T) {
 	tmp := t.TempDir()

@@ -13,7 +13,6 @@ import (
 
 type Runner struct {
 	sqlitePath string
-	parser     *PS.Parser
 }
 
 func NewRunner() *Runner {

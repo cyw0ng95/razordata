@@ -144,10 +144,6 @@ var tokenNames = [...]string{
 	LX.T_FALSE:     "FALSE",
 }
 
-func (p *Parser) peek() LX.Token {
-	return p.lex.Peek()
-}
-
 func (p *Parser) parsePrimary() (Expr, error) {
 	switch p.current.Type {
 	case LX.T_INT:
@@ -940,11 +936,6 @@ func (p *Parser) parseDropTable() (*DropTable, error) {
 	p.advance()
 
 	return &DropTable{Name: name}, nil
-}
-
-func parseInt(s string) int64 {
-	val, _ := LX.ParseIntLiteral(s)
-	return val
 }
 
 func (p *Parser) parseCast() (Expr, error) {

@@ -21,7 +21,6 @@ type Session struct {
 	txn      AP.Transaction
 	mu       sync.Mutex
 	deadline atomic.Value // time.Time
-	params   []any
 
 	stats struct {
 		queryCount   atomic.Int64

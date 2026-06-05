@@ -17,7 +17,6 @@ type versionGC struct {
 	em       *epochManager
 	reclaimQ chan []unsafe.Pointer
 	stopCh   chan struct{}
-	wg       sync.WaitGroup
 }
 
 type epochManager struct {

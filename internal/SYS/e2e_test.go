@@ -303,17 +303,3 @@ func TestR03_ErrorClassification(t *testing.T) {
 		t.Error("IO must not be fatal")
 	}
 }
-
-// containsString is a small helper that avoids importing strings in
-// tests.
-func containsString(haystack, needle string) bool {
-	if len(needle) == 0 {
-		return true
-	}
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
-}

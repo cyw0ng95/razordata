@@ -211,10 +211,6 @@ func (e *Executor) Explain(sql string) (string, error) {
 	return explainOperator(plan.root, 0), nil
 }
 
-func buildWriterOp(stmt PS.Stmt) (Operator, error) {
-	return nil, errors.New("ex: buildWriterOp called without executor context; use Executor.buildWriterOp")
-}
-
 func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	switch s := stmt.(type) {
 	case *PS.Insert:
