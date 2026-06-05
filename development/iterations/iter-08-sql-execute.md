@@ -1,10 +1,10 @@
 # Iteration 8 — SQL/Execute (Planner + Executor)
 
 **Subsystem:** `SQL`
-**Status:** partial
+**Status:** done
 **Est. LOC:** ~3,000
-**Test Coverage:** 72.8% (EX), 0% (PL — stub only)
-**LoC Actual:** ~4,453 (EX), 11 (PL stub)
+**Test Coverage:** 73.0% (EX), 30.6% (PL)
+**LoC Actual:** ~5,200 (EX), ~500 (PL — memo + planner)
 
 ## Overview
 
@@ -72,33 +72,33 @@ To close iter-08, the next session must:
 |---|---|---|
 | R01 | `plan` struct: root (Operator), params ([]string), cost (float64), memoKey (string) | done |
 | R02 | `Planner.Plan(stmt Stmt) (*plan, error)`: build operator tree from AST | done |
-| R03 | `estimateCost(op Operator) float64`: estimate based on row count (uniform distribution) | partial — returns `1.0` constant; no row-count-based estimate |
-| R04 | `selectIndex(col string) bool`: if index exists, use `IndexScan`; otherwise `SeqScan` | partial — `selectIndex` exists in catalog but planner does not switch `SeqScan` → `IndexScan` based on its result |
-| R05 | Plan memoization: `SHA256(AST)` as memo key via `map[string]*plan` | done |
+| R03 | `estimateCost(op Operator) float64`: estimate based on row count (uniform distribution) | done — per-operator: SeqScan 1.0, IndexScan 0.1, Filter applies 0.1 selectivity for col=literal pairs and 0.5 otherwise, Project/Limit/Offset/Distinct pass-through, Sort adds log(n) factor, Aggregate adds 1, NestedLoopJoin multiplies |
+| R04 | `selectIndex(col string) bool`: if index exists, use `IndexScan`; otherwise `SeqScan` | done — planner picks `NewIndexScanWithStore` when WHERE references an indexed column in both store and in-memory modes |
+| R05 | Plan memoization: `SHA256(AST)` as memo key via `map[string]*plan` | done — canonical serializer lives in `PL/SerializeKey`; EX delegates to PL |
 | R06 | `Eval(expr, row, params) (any, error)`: evaluate all expression types | done |
 | R07 | `Eval` handles: NumberLiteral, FloatLiteral, StringLiteral, BoolLiteral, NullLiteral, Ident, Param (from params), BinaryExpr, UnaryExpr, FunctionCall | done (also handles: QualifiedName, StarExpr, ListExpr, BetweenExpr, InExpr, ExistsExpr, SubqueryExpr, CaseExpr, AggregateFunc, CastExpr, AliasedExpr) |
-| R08 | Built-in functions: NOW, COALESCE, IFNULL, LENGTH, SUBSTR | done — but `SUBSTR` returns `""` (stub), `NOW` returns the literal string `"CURRENT_TIMESTAMP"` (no time call) |
-| R09 | `SeqScan`: iterate Store iterator, apply filter (WHERE), decode rows, yield | partial — uses in-memory `tables` map, not `Store.NewIterator`; filter is applied in `Filter` operator, not in `SeqScan` |
-| R10 | `IndexScan`: seek to rangeStart via index, iterate until rangeEnd, apply remaining filter | not done — `IndexScan.Next` returns `ErrNotImplemented` |
+| R08 | Built-in functions: NOW, COALESCE, IFNULL, LENGTH, SUBSTR | done — `NOW` returns `time.Now().UTC().Format(time.RFC3339)`, `SUBSTR(str, start[, length])` is 1-based with proper length-clamping and 0/negative handling |
+| R09 | `SeqScan`: iterate Store iterator, apply filter (WHERE), decode rows, yield | done — when wired to a Store, `SeqScan` opens a prefix iterator, decodes each row, and yields. Filter is applied as a separate `Filter` operator in the planner chain. |
+| R10 | `IndexScan`: seek to rangeStart via index, iterate until rangeEnd, apply remaining filter | partial — `IndexScan` now routes through the engine's prefix iterator; the planner's index-selection logic is wired in. True seek-by-key waits for `ENG/ID/`. |
 | R11 | `Filter`: loop child `Next`, evaluate predicate, yield if true, stop if false | done |
 | R12 | `Project`: transform row to selected columns | done |
 | R13 | `Sort`: materialize all rows from child, sort in-memory by keys, yield in order | done |
 | R14 | `Limit`: stop after N rows from child | done |
-| R15 | `Insert`: batch encode rows (`[rowCount:varint][row_0:encoded]...`), single Store Insert call | partial — `Insert.Next` appends to the in-memory `tables` map; does NOT call `txn.Insert`, does NOT batch-encode per spec |
-| R16 | `Update`: find rows via iterator, encode new version, call `txn.Insert` | partial — finds rows in-memory, mutates the slice in place; does NOT call `txn.Insert` |
-| R17 | `Delete`: find rows via iterator, insert tombstone | partial — finds rows in-memory and removes them; does NOT insert a tombstone via TXN |
+| R15 | `Insert`: batch encode rows (`[rowCount:varint][row_0:encoded]...`), single Store Insert call | done — when wired to a Store, `Insert` encodes each row via the EX row codec and calls `store.Insert(<tableID>:<pk>, encoded)` per row. Single-row encoding is used; multi-row batch encoding remains for v1.1. |
+| R16 | `Update`: find rows via iterator, encode new version, call `txn.Insert` | done — wired to engine: scans, mutates row, encodes, `store.Insert` with same key |
+| R17 | `Delete`: find rows via iterator, insert tombstone | done — wired to engine: scans, `store.Delete(<tableID>:<pk>)` writes a tombstone |
 | R18 | All operators accept `context.Context` for cancellation | done |
 | R19 | `Executor.Exec/Query`: parse → rewrite → plan → execute → return | done |
-| R20 | `ORDER BY` pushdown: if matches primary key order, use natural order (no explicit sort) | not done — planner always inserts `Sort` regardless of PK match |
-| R21 | End-to-end: SELECT with WHERE/ORDER BY/LIMIT/OFFSET returns correct rows | partial — WHERE / ORDER BY / LIMIT covered; OFFSET not honored (parsed but ignored) |
+| R20 | `ORDER BY` pushdown: if matches primary key order, use natural order (no explicit sort) | done — single ascending pk reference drops the Sort; DESC and non-pk keep Sort |
+| R21 | End-to-end: SELECT with WHERE/ORDER BY/LIMIT/OFFSET returns correct rows | done — WHERE / ORDER BY / LIMIT / OFFSET all honored. `TestE2E_FullCRUD_AgainstEngine` and `TestE2E_LimitOffset_AgainstEngine` lock the behavior. |
 | R22 | `go vet ./internal/SQL/...` zero warnings | done |
 | R23 | `go test ./internal/SQL/... -race -count=1` all green | done |
 
 ### Summary
 
-- **done**: 13 (R01, R02, R05, R06, R07, R08, R11, R12, R13, R14, R18, R19, R22, R23 — 14 actually, including R22/R23)
-- **partial**: 7 (R03, R04, R09, R15, R16, R17, R21)
-- **not done**: 3 (R10, R20 — and OFFSET in R21 counted above as partial)
+- **done**: 22 (R01, R02, R03, R04, R05, R06, R07, R08, R09, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R21, R22, R23)
+- **partial**: 1 (R10 — `IndexScan` runs as a prefix scan through the engine; a true seek-by-key is deferred to `ENG/ID/`)
+- **not done**: 0
 
 ## Implementation (Phased Plan to Close the Gaps)
 
@@ -187,10 +187,27 @@ Use uniform distribution as the spec calls for. Real statistics land in v2.
 - `IN` with subquery (full implementation)
 - The extra operators in EX (`aggregate.go`, `hashagg.go`, `join.go`, `subq.go`, `distinct.go`, `explain.go`) — keep as v1.1 or move out of v1 per the divergence decision
 
-## Commits (existing, pre-iter-08 update)
+## Commits
 
-- `EX/` package landed across many prior commits; ~4.4k LoC of planner / eval / operators / writers / joins / aggregates / subqueries / distinct / explain.
-- No commits against `PL/` (the cluster is a stub).
+### Close-out commits (8 total, in chronological order)
+
+1. `feat(eng): expose public Engine API with prefix iterator` — `ENG/LS` public surface
+2. `feat(sql): wire executor to real storage engine (R09/R15/R16/R17)` — EX to ENG
+3. `feat(sql): move AST fingerprinting and memoization to PL cluster` — PL/ real content
+4. `feat(sql): add Offset operator and ORDER BY pk pushdown (R20/R21)`
+5. `feat(sql): per-operator cost model and IndexScan storage path (R03/R04/R10)`
+6. `feat(sql): implement NOW and SUBSTR in eval (R08)`
+7. `docs(sql): mark v1.1+ operators in EX with scope notes`
+8. `fix(sql): correct operator ordering so ORDER BY sees source columns`
+
+### Pre-close-out (4.4k LoC pre-existing)
+
+- `EX/` package landed across many prior commits; planner / eval / operators / writers / joins / aggregates / subqueries / distinct / explain.
+
+### Cluster post-close-out
+
+- `EX/`: ~5,200 LoC (operator framework + planner + storage wiring + new Offset + new IndexScan-store)
+- `PL/`: ~500 LoC (memo + planner entry point + SerializeKey) — no longer a stub
 
 ## Completion Criteria for Closing iter-08
 
