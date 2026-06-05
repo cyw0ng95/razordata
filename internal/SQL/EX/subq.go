@@ -1,3 +1,7 @@
+// Package EX's subq.go hosts the subquery planning and execution
+// helpers (IN-subquery, EXISTS, scalar subquery). Subqueries are not
+// part of the v1 MVP scope per design/ARCH.md; the helpers are
+// retained in v1.1 for upcoming releases.
 package EX
 
 import "context"

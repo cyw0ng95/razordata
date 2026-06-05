@@ -1,3 +1,9 @@
+// Package EX's aggregate.go hosts the Aggregate and HashAggregate
+// operators (COUNT/SUM/AVG/MIN/MAX plus grouped variants). These are
+// working end-to-end against the executor's in-memory and engine-backed
+// paths but are not part of the v1 MVP scope per design/ARCH.md
+// ("Out of Scope (v1)" — joins, aggregates, subqueries, DISTINCT).
+// They are retained in v1.1 for upcoming releases.
 package EX
 
 import (

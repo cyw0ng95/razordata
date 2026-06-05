@@ -1,3 +1,7 @@
+// Package EX's hashagg.go hosts HashAggregate, an alternative to the
+// streaming Aggregate. Hash-based aggregation is a v1.1 extension; v1
+// only requires the basic Aggregate operator. Retained for upcoming
+// releases where grouped performance matters.
 package EX
 
 import (

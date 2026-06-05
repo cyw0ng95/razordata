@@ -1,3 +1,6 @@
+// Package EX's distinct.go hosts the Distinct operator. DISTINCT is
+// not part of the v1 MVP scope per design/ARCH.md; the operator is
+// retained in v1.1 for upcoming releases.
 package EX
 
 import (

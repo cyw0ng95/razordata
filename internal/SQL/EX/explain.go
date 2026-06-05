@@ -1,3 +1,7 @@
+// Package EX's explain.go renders an operator tree as a human-readable
+// description. EXPLAIN is not part of the v1 MVP scope per
+// design/ARCH.md but the implementation is retained in v1.1 because
+// it is the primary debugging surface for the executor.
 package EX
 
 import (
