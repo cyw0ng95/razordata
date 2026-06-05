@@ -152,7 +152,9 @@ func (fm *FileManager) Open(name string) (*FileHandle, error) {
 		fh := h.(*FileHandle)
 		fh.mu.Lock()
 		if fh.FD != -1 {
-			unix.Close(fh.FD)
+			if err := unix.Close(fh.FD); err != nil && fm.log != nil {
+				fm.log.Warn("fs.open.close", "path", abs, "err", err)
+			}
 		}
 		fd, err := unix.Open(abs, unix.O_RDWR, 0)
 		fh.mu.Unlock()
@@ -307,7 +309,9 @@ func (fm *FileManager) Close() error {
 	var last error
 
 	fm.dirFDs.Range(func(key, value any) bool {
-		unix.Close(value.(int))
+		if err := unix.Close(value.(int)); err != nil && last == nil {
+			last = err
+		}
 		return true
 	})
 	fm.dirFDs = sync.Map{}

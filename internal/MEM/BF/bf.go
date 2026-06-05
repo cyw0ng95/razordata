@@ -503,13 +503,20 @@ type hintEntry struct {
 	LastAccess int64
 }
 
-// writeHintFile serializes a list of hint entries to path.
+// writeHintFile serializes a list of hint entries to path. Writes go
+// through a temp file + rename so a crash mid-write cannot leave a
+// half-written hint file that would be loaded as garbage on the next
+// Warm.
 func writeHintFile(entries []hintEntry, path string) error {
 	data, err := encodeHintEntries(entries)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // readHintFile deserializes hint entries from path.

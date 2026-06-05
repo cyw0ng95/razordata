@@ -163,6 +163,22 @@ func (r *replayer) Replay() error {
 }
 
 func (r *replayer) replaySegment(segNum uint64, minLSN uint64) error {
+	return r.forEachRecord(segNum, func(rec *wr.LogRecord, recLSN uint64) error {
+		if recLSN < minLSN {
+			return nil
+		}
+		return r.applyRecord(rec)
+	})
+}
+
+// forEachRecord reads every record in segment segNum and invokes fn
+// for each successfully decoded one. The LSN passed to fn is the
+// record's location in the segment (used by replaySegment to filter
+// below minLSN). fn returning an error short-circuits the iteration
+// and surfaces that error to the caller. Truncated or unknown
+// records at the tail are skipped so a torn write or an unfamiliar
+// record type does not abort replay.
+func (r *replayer) forEachRecord(segNum uint64, fn func(rec *wr.LogRecord, recLSN uint64) error) error {
 	fh, err := r.sm.GetSegment(segNum)
 	if err != nil {
 		return fmt.Errorf("rp: GetSegment(%d): %w", segNum, err)
@@ -212,22 +228,12 @@ func (r *replayer) replaySegment(segNum uint64, minLSN uint64) error {
 				if errors.Is(err, wr.ErrTruncatedRecord) {
 					break
 				}
-				if errors.Is(err, wr.ErrUnknownRecord) {
-					off++
-					continue
-				}
 				off++
 				continue
 			}
 
 			recLSN := segNum*uint64(rpSegSize) + uint64(offset) + uint64(consumed)
-			if recLSN < minLSN {
-				off += consumed
-				offset += int64(consumed)
-				continue
-			}
-
-			if err := r.applyRecord(rec); err != nil {
+			if err := fn(rec, recLSN); err != nil {
 				return err
 			}
 
@@ -310,84 +316,19 @@ func (r *replayer) LastCheckpoint() (*CheckpointResult, error) {
 }
 
 func (r *replayer) findCheckpointInSegment(segNum uint64) (*CheckpointResult, error) {
-	fh, err := r.sm.GetSegment(segNum)
-	if err != nil {
-		return nil, err
-	}
-	defer fh.Close()
-
-	fd, err := unix.Open(fh.Path, os.O_RDONLY, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer unix.Close(fd)
-
-	var stat unix.Stat_t
-	if err := unix.Fstat(fd, &stat); err != nil {
-		return nil, err
-	}
-
-	fileSize := stat.Size
-	if fileSize == 0 {
-		return nil, ErrNoCheckpoint
-	}
-
-	buf := make([]byte, 64*1024)
-	offset := int64(0)
 	var lastCheckpoint *wr.Checkpoint
-
-	for offset < fileSize {
-		readN := int64(len(buf))
-		if offset+readN > fileSize {
-			readN = fileSize - offset
+	err := r.forEachRecord(segNum, func(rec *wr.LogRecord, _ uint64) error {
+		if rec.Type == wr.RTCheckpoint {
+			lastCheckpoint = r.decodeCheckpoint(rec)
 		}
-
-		n, err := unix.Pread(fd, buf[:readN], offset)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return nil, err
-		}
-		if n == 0 {
-			break
-		}
-
-		off := 0
-		for off < n {
-			rec, consumed, err := wr.DecodeRecord(buf[:n], off)
-			if err != nil {
-				if errors.Is(err, wr.ErrTruncatedRecord) {
-					break
-				}
-				if errors.Is(err, wr.ErrUnknownRecord) {
-					off++
-					continue
-				}
-				off++
-				continue
-			}
-
-			if rec.Type == wr.RTCheckpoint {
-				lastCheckpoint = r.decodeCheckpoint(rec)
-			}
-
-			off += consumed
-			offset += int64(consumed)
-		}
-
-		if off > 0 {
-			offset += int64(off)
-		}
-		if offset >= fileSize {
-			break
-		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-
 	if lastCheckpoint == nil {
 		return nil, ErrNoCheckpoint
 	}
-
 	return lastCheckpoint, nil
 }
 
