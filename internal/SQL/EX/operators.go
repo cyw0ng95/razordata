@@ -77,7 +77,7 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 	if s.it == nil {
 		s.it = s.store.NewIterator(s.prefix)
 	}
-	for s.it.Next() {
+	if s.it.Next() {
 		if err := ctx.Err(); err != nil {
 			return Row{}, err
 		}
@@ -157,7 +157,7 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 	if i.it == nil {
 		i.it = i.store.NewIterator(i.prefix)
 	}
-	for i.it.Next() {
+	if i.it.Next() {
 		if err := ctx.Err(); err != nil {
 			return Row{}, err
 		}

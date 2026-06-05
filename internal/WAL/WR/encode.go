@@ -183,7 +183,7 @@ func decodeRecord(data []byte, off int) (*LogRecord, int, error) {
 	cur++
 
 	rec := &LogRecord{Type: recType, TxnID: txnID}
-	cur = decodePayload(body, cur, rec)
+	decodePayload(body, cur, rec)
 
 	return rec, hdrN + int(length), nil
 }

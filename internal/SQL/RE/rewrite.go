@@ -358,9 +358,8 @@ func constantFoldUnaryMinus(operand PS.Expr) PS.Expr {
 }
 
 func constantFoldNot(operand PS.Expr) PS.Expr {
-	switch operand.(type) {
+	switch v := operand.(type) {
 	case *PS.BoolLiteral:
-		v := operand.(*PS.BoolLiteral)
 		return &PS.BoolLiteral{Val: !v.Val}
 	case *PS.NullLiteral:
 		return &PS.NullLiteral{}

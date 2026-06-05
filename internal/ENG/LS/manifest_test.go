@@ -17,7 +17,7 @@ func TestManifestNew(t *testing.T) {
 
 	v := m.Current()
 	if v == nil {
-		t.Error("expected current version to be non-nil")
+		t.Fatal("expected current version to be non-nil")
 	}
 	if v.num != 0 {
 		t.Errorf("expected version 0, got %d", v.num)

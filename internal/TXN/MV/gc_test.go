@@ -136,14 +136,12 @@ func TestGCAllChains_MultipleKeys(t *testing.T) {
 	arena := newArena()
 	mv := NewMV()
 	keys := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
-	var nodes []*VersionNode
 	for i, k := range keys {
 		n := NewVersionNode(arena, uint64(i+1), 10, k, []byte("v"), false)
 		mv.Insert(k, n)
 		if !n.Commit(20) {
 			t.Fatalf("commit %d failed", i)
 		}
-		nodes = append(nodes, n)
 	}
 
 	got := mv.GCAllChains(50)

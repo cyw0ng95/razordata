@@ -499,20 +499,21 @@ func TestReplayWithCheckpointTruncation(t *testing.T) {
 		ActiveTXNs:       []uint64{},
 	}
 	header, txns := wr.AppendCheckpointPayload(cp)
-	_, err = w.Append(&wr.WriteBatch{
+	if _, err = w.Append(&wr.WriteBatch{
 		TxnID: 2,
 		Recs: []wr.LogRecord{
 			{Type: wr.RTData, BlockID: 2, Value: []byte("new_data")},
 			{Type: wr.RTCommit, TxnID: 2},
 		},
-	})
-	_, err = w.Append(&wr.WriteBatch{
+	}); err != nil {
+		t.Fatalf("wr.Append data: %v", err)
+	}
+	if _, err = w.Append(&wr.WriteBatch{
 		TxnID: 3,
 		Recs: []wr.LogRecord{
 			{Type: wr.RTCheckpoint, BlockID: 0, Key: header, Value: txns},
 		},
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("wr.Append checkpoint: %v", err)
 	}
 	w.Sync()
