@@ -110,6 +110,18 @@ type IndexScan struct {
 	idx        string
 	rangeStart []byte
 	rangeEnd   []byte
+	store      Store
+	schema     *storeSchema
+	prefix     []byte
+	it         interface {
+		Next() bool
+		Key() []byte
+		Value() []byte
+		Err() error
+		Close() error
+	}
+	rows []Row
+	pos  int
 }
 
 func NewIndexScan(table, idx string, rangeStart, rangeEnd []byte) *IndexScan {
@@ -121,10 +133,80 @@ func NewIndexScan(table, idx string, rangeStart, rangeEnd []byte) *IndexScan {
 	}
 }
 
+// NewIndexScanWithStore builds an IndexScan that reads through the engine.
+// In v1 the planner selects IndexScan based on catalog presence; until
+// ENG/ID/ lands, the scan performs a full prefix read against the
+// memtable + SSTs and the planner's decision is the only signal that
+// the column is indexed. Future work replaces this with a real index
+// seek.
+func NewIndexScanWithStore(store Store, table, idx string) (*IndexScan, error) {
+	ss, ok := schemaFor(table)
+	if !ok {
+		return nil, errors.New("ex: table not registered: " + table)
+	}
+	return &IndexScan{
+		table:  table,
+		idx:    idx,
+		store:  store,
+		schema: ss,
+		prefix: tablePrefix(table),
+	}, nil
+}
+
+func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
+	if i.it == nil {
+		i.it = i.store.NewIterator(i.prefix)
+	}
+	for i.it.Next() {
+		if err := ctx.Err(); err != nil {
+			return Row{}, err
+		}
+		v := i.it.Value()
+		row, err := decodeRow(v, i.schema)
+		if err != nil {
+			return Row{}, err
+		}
+		return row, nil
+	}
+	if err := i.it.Err(); err != nil {
+		return Row{}, err
+	}
+	return Row{}, ErrNoRows
+}
+
 func (i *IndexScan) Next(ctx context.Context) (Row, error) {
-	return Row{}, ErrNotImplemented
+	if err := ctx.Err(); err != nil {
+		return Row{}, err
+	}
+	if i.store != nil {
+		return i.nextFromStore(ctx)
+	}
+	if i.rows == nil {
+		tablesMu.RLock()
+		src := tables[i.table]
+		out := make([]Row, len(src))
+		for k, r := range src {
+			out[k] = cloneRow(r)
+		}
+		tablesMu.RUnlock()
+		i.rows = out
+		i.pos = 0
+	}
+	if i.pos >= len(i.rows) {
+		return Row{}, ErrNoRows
+	}
+	r := i.rows[i.pos]
+	i.pos++
+	return r, nil
 }
 
 func (i *IndexScan) Close() error {
+	if i.it != nil {
+		err := i.it.Close()
+		i.it = nil
+		return err
+	}
+	i.pos = 0
+	i.rows = nil
 	return nil
 }

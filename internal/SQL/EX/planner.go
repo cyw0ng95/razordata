@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 	"github.com/cyw0ng95/razordata/internal/SQL/RE"
 )
@@ -111,11 +112,87 @@ func (p *Planner) memoize(key string, plan *plan) {
 	p.memo[key] = plan
 }
 
+// estimateCost returns a unitless cost for the operator tree rooted at op.
+// The model uses uniform distribution: each row is 1.0 unit, filters and
+// joins apply selectivity, sort adds a log(n) factor. Real statistics land
+// in v2.
 func (p *Planner) estimateCost(op Operator) float64 {
 	if op == nil {
 		return 0
 	}
-	return 1.0
+	switch v := op.(type) {
+	case *SeqScan:
+		// In v1 we don't track row counts; assume 1.0 per row.
+		return 1.0
+	case *IndexScan:
+		// Cheaper than full scan; one seek + ordered reads.
+		return 0.1
+	case *Filter:
+		return p.estimateCost(v.child) * estimateSelectivity(v.predicate)
+	case *Project:
+		return p.estimateCost(v.child)
+	case *Limit:
+		return p.estimateCost(v.child)
+	case *Offset:
+		return p.estimateCost(v.child)
+	case *Distinct:
+		return p.estimateCost(v.child)
+	case *Sort:
+		childCost := p.estimateCost(v.child)
+		if childCost < 1 {
+			childCost = 1
+		}
+		return childCost * (1 + log2ish(childCost))
+	case *Aggregate:
+		return p.estimateCost(v.child) + 1
+	case *NestedLoopJoin:
+		leftCost := p.estimateCost(v.left)
+		rightCost := p.estimateCost(v.right)
+		return leftCost * rightCost
+	case *Insert, *Update, *Delete, *CreateTable, *DropTable:
+		// Writer operators: cost ~ 1 (single mutation).
+		return 1.0
+	default:
+		return 1.0
+	}
+}
+
+func estimateSelectivity(e PS.Expr) float64 {
+	if e == nil {
+		return 1.0
+	}
+	if v, ok := e.(*PS.BinaryExpr); ok {
+		switch v.Op {
+		case int(LX.T_EQ):
+			if isColumnLiteralPair(v.Left, v.Right) || isColumnLiteralPair(v.Right, v.Left) {
+				return 0.1
+			}
+		}
+	}
+	return 0.5
+}
+
+func isColumnLiteralPair(a, b PS.Expr) bool {
+	if _, ok := a.(*PS.Ident); !ok {
+		return false
+	}
+	switch b.(type) {
+	case *PS.NumberLiteral, *PS.StringLiteral, *PS.BoolLiteral, *PS.NullLiteral:
+		return true
+	}
+	return false
+}
+
+func log2ish(x float64) float64 {
+	if x <= 1 {
+		return 0
+	}
+	n := 0.0
+	for x > 1 {
+		x /= 2
+		n++
+	}
+	return n
 }
 
 func (p *Planner) selectIndex(table, col string) (string, bool) {
@@ -136,8 +213,20 @@ func (p *Planner) selectIndex(table, col string) (string, bool) {
 func (p *Planner) planSelect(s *PS.Select) Operator {
 	var scan Operator
 	if p.store != nil {
-		if ssc, err := NewSeqScanWithStore(p.store, s.From); err == nil {
-			scan = ssc
+		// Try IndexScan first when the WHERE references an indexed column.
+		if s.Where != nil {
+			if col, ok := indexedColumn(s.Where); ok {
+				if idx, found := p.selectIndex(s.From, col); found {
+					if isc, err := NewIndexScanWithStore(p.store, s.From, idx); err == nil {
+						scan = isc
+					}
+				}
+			}
+		}
+		if scan == nil {
+			if ssc, err := NewSeqScanWithStore(p.store, s.From); err == nil {
+				scan = ssc
+			}
 		}
 	}
 	if scan == nil {
@@ -317,6 +406,11 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 	if p != nil && where != nil {
 		if col, ok := indexedColumn(where); ok {
 			if idx, found := p.selectIndex(table, col); found {
+				if p.store != nil {
+					if isc, err := NewIndexScanWithStore(p.store, table, idx); err == nil {
+						return isc
+					}
+				}
 				return NewIndexScan(table, idx, nil, nil)
 			}
 		}
