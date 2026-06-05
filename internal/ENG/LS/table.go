@@ -6,38 +6,15 @@ import (
 	"sync"
 )
 
+// Note: TableSchema, ColumnDef, ColumnType, and the CTInt/.../CTTimestamp
+// constants now live in ENG/SC/ (moved in iter-10 Phase 0). The
+// LS/schema.go shim re-exports them as type aliases so the references
+// below (e.g. *TableSchema, ColumnType) resolve to the SC/ types.
+
 var (
 	ErrTableNotFound  = errors.New("table not found")
 	ErrTableExists    = errors.New("table already exists")
 	ErrInvalidTableID = errors.New("invalid table ID")
-)
-
-type TableSchema struct {
-	TableID    uint64
-	Name       string
-	Columns    []ColumnDef
-	PrimaryKey []int
-}
-
-type ColumnDef struct {
-	Name       string
-	Type       ColumnType
-	Nullable   bool
-	Default    []byte
-	PrimaryKey bool
-}
-
-type ColumnType uint8
-
-const (
-	CTInt       ColumnType = 0
-	CTBigInt    ColumnType = 1
-	CTVarchar   ColumnType = 2
-	CTFloat     ColumnType = 3
-	CTBool      ColumnType = 4
-	CTText      ColumnType = 5
-	CTBlob      ColumnType = 6
-	CTTimestamp ColumnType = 7
 )
 
 type tableRegistry struct {

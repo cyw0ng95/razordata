@@ -306,41 +306,10 @@ func TestDecodeBlock_Empty(t *testing.T) {
 	}
 }
 
-func TestEncodeUint64_Small(t *testing.T) {
-	result := encodeUint64(100)
-	if len(result) == 0 {
-		t.Fatal("expected non-empty result")
-	}
-}
-
-func TestDecodeUint64_Small(t *testing.T) {
-	encoded := encodeUint64(100)
-	val, n := decodeUint64(encoded)
-	if val != 100 {
-		t.Fatalf("expected 100, got %d", val)
-	}
-	if n != len(encoded) {
-		t.Fatalf("expected consumed %d bytes, got %d", len(encoded), n)
-	}
-}
-
-func TestEncodeUint64_Large(t *testing.T) {
-	result := encodeUint64(1 << 62)
-	if len(result) == 0 {
-		t.Fatal("expected non-empty result")
-	}
-}
-
-func TestDecodeUint64_Large(t *testing.T) {
-	encoded := encodeUint64(1 << 62)
-	val, n := decodeUint64(encoded)
-	if val != 1<<62 {
-		t.Fatalf("expected %d, got %d", 1<<62, val)
-	}
-	if n != len(encoded) {
-		t.Fatalf("expected consumed %d bytes, got %d", len(encoded), n)
-	}
-}
+// Note: TestEncodeUint64_* and TestDecodeUint64_* were moved to
+// internal/ENG/DP/block_test.go in iter-10 Phase 0 (where the
+// helpers now live). The varint helpers are package-private in
+// DP/ and have no LS/ shim — the DP/ tests are the canonical ones.
 
 func TestKV(t *testing.T) {
 	pair := KV{Key: []byte("key"), Value: []byte("value")}
