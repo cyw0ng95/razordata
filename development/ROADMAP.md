@@ -74,7 +74,7 @@ The v1 chain LOG → SYS is closed. Remaining work splits into
 | 3 | IndexScan real seek | EX/ID | ENG+SQL | Once `ENG/ID/` lands, swap the prefix-scan fallback for a true index seek. iter-08 R10 partial becomes done. |
 | 4 | Full MVCC reads inside transactions | TX/SYS | TXN+SYS | Current R29 is shadow-writeSet; v1.1 adds MVCC-aware iterator so SELECT in tx sees own writes through Tx. |
 | 5 | NOT NULL + DEFAULT constraints | PS/EX | SQL | Parser already accepts; validator/evaluator paths need wiring. |
-| 6 | LOG/LG `TestListRotatedFiles_DirMissing` fix | LG | LOG | Pre-existing test bug: function returns nil for missing dir but test expects error. One-line fix. |
+| 6 | LOG/LG `TestListRotatedFiles_DirMissing` fix | LG | LOG | Fixed in v0.6.x: pre-existing test bug (hardcoded path) and the underlying race in ENG/LS flushManager close. |
 | 7 | Catalog persistence | EX/TX | SYS | Reopen loses the in-memory table schema; ship a catalog LSM in `ENG/ID/`. |
 
 ### v1.1+ operators already in EX/ (work is shipping+documenting, not building)
@@ -114,7 +114,7 @@ v0.5/v0.6 but are tagged as v1.1+ in source. Document them in
 |---|---|---|
 | Lint | `go vet ./...` — zero warnings | green |
 | Format | `gofmt -s -l .` — no drift | green |
-| Test | `go test ./... -race -count=1` — all green | **1 known pre-existing failure**: `LOG/LG/TestListRotatedFiles_DirMissing` (since v0.4 era, unrelated to iter-09). |
+| Test | `go test ./... -race -count=1` — all green | green (race-stable across 5+ runs as of v0.6.x) |
 | Benchmark | At least one `Benchmark*` per storage component | **partial** — `ENG/LS` has none (see iter-04 note). |
 
 ## Iteration Detail
