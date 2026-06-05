@@ -19,6 +19,7 @@ type Planner struct {
 	mu      sync.Mutex
 	memo    map[string]*plan
 	catalog map[string]*tableInfo
+	store   Store
 }
 
 type tableInfo struct {
@@ -32,6 +33,16 @@ func NewPlanner() *Planner {
 	return &Planner{
 		memo:    make(map[string]*plan),
 		catalog: make(map[string]*tableInfo),
+	}
+}
+
+// NewPlannerWithStore returns a planner that routes its leaf operators
+// through store. The store may be nil to fall back to in-memory mode.
+func NewPlannerWithStore(store Store) *Planner {
+	return &Planner{
+		memo:    make(map[string]*plan),
+		catalog: make(map[string]*tableInfo),
+		store:   store,
 	}
 }
 
@@ -123,7 +134,15 @@ func (p *Planner) selectIndex(table, col string) (string, bool) {
 }
 
 func (p *Planner) planSelect(s *PS.Select) Operator {
-	scan := NewIndexOrSeqScan(s.From, s.Where, p)
+	var scan Operator
+	if p.store != nil {
+		if ssc, err := NewSeqScanWithStore(p.store, s.From); err == nil {
+			scan = ssc
+		}
+	}
+	if scan == nil {
+		scan = NewIndexOrSeqScan(s.From, s.Where, p)
+	}
 
 	var current Operator = scan
 
@@ -300,15 +319,39 @@ func limitInt64(e PS.Expr) (int64, bool) {
 }
 
 func (p *Planner) planInsert(s *PS.Insert) Operator {
+	if p.store != nil {
+		op, err := NewInsertWithStore(p.store, s.Table, s.Cols, s.Values)
+		if err == nil {
+			return op
+		}
+	}
 	return NewInsert(s.Table, s.Cols, s.Values)
 }
 
 func (p *Planner) planUpdate(s *PS.Update) Operator {
+	if p.store != nil {
+		scan, err := NewSeqScanWithStore(p.store, s.Table)
+		if err == nil {
+			op, err := NewUpdateWithStore(p.store, s.Table, s.Set, s.Where, scan)
+			if err == nil {
+				return op
+			}
+		}
+	}
 	scan := NewSeqScan(s.Table)
 	return NewUpdate(s.Table, s.Set, s.Where, scan)
 }
 
 func (p *Planner) planDelete(s *PS.Delete) Operator {
+	if p.store != nil {
+		scan, err := NewSeqScanWithStore(p.store, s.Table)
+		if err == nil {
+			op, err := NewDeleteWithStore(p.store, s.Table, s.Where, scan)
+			if err == nil {
+				return op
+			}
+		}
+	}
 	scan := NewSeqScan(s.Table)
 	return NewDelete(s.Table, s.Where, scan)
 }

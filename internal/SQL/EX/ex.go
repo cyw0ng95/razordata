@@ -54,6 +54,7 @@ type ColInfo struct {
 
 type Executor struct {
 	planner *Planner
+	store   Store
 }
 
 func NewExecutor() *Executor {
@@ -64,6 +65,14 @@ func NewExecutorWithPlanner(pl *Planner) *Executor {
 	return &Executor{planner: pl}
 }
 
+// NewExecutorWithEngine wires the executor to a real storage engine. When
+// store is non-nil, SeqScan / Insert / Update / Delete route through it
+// instead of the in-memory tables map. Pass nil to revert to in-memory
+// mode.
+func NewExecutorWithEngine(store Store) *Executor {
+	return &Executor{planner: NewPlannerWithStore(store), store: store}
+}
+
 func (e *Executor) RegisterTable(name string, schema []string) {
 	cols := make([]ColInfo, len(schema))
 	for i, n := range schema {
@@ -71,6 +80,9 @@ func (e *Executor) RegisterTable(name string, schema []string) {
 	}
 	e.planner.RegisterTable(name, cols, "")
 	RegisterTableSchema(name, schema)
+	if e.store != nil {
+		registerStoreSchema(name, schema, "")
+	}
 }
 
 func (e *Executor) RegisterTableWithPK(name string, schema []string, pk string) {
@@ -80,6 +92,9 @@ func (e *Executor) RegisterTableWithPK(name string, schema []string, pk string) 
 	}
 	e.planner.RegisterTable(name, cols, pk)
 	RegisterTableSchema(name, schema)
+	if e.store != nil {
+		registerStoreSchema(name, schema, pk)
+	}
 }
 
 func (e *Executor) RegisterIndex(table, index string, cols []string) {
@@ -92,7 +107,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	if err != nil {
 		return Result{}, err
 	}
-	op, err := buildWriterOp(stmt)
+	op, err := e.buildWriterOp(stmt)
 	if err != nil {
 		return Result{}, err
 	}
@@ -177,16 +192,55 @@ func (e *Executor) Explain(sql string) (string, error) {
 }
 
 func buildWriterOp(stmt PS.Stmt) (Operator, error) {
+	return nil, errors.New("ex: buildWriterOp called without executor context; use Executor.buildWriterOp")
+}
+
+func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	switch s := stmt.(type) {
 	case *PS.Insert:
+		if e.store != nil {
+			op, err := NewInsertWithStore(e.store, s.Table, s.Cols, s.Values)
+			if err != nil {
+				return nil, err
+			}
+			return op, nil
+		}
 		return NewInsert(s.Table, s.Cols, s.Values), nil
 	case *PS.Update:
-		scan := NewSeqScan(s.Table)
+		var scan Operator = NewSeqScan(s.Table)
+		if e.store != nil {
+			ssc, err := NewSeqScanWithStore(e.store, s.Table)
+			if err != nil {
+				return nil, err
+			}
+			scan = ssc
+		}
 		filter := NewFilter(scan, s.Where)
+		if e.store != nil {
+			op, err := NewUpdateWithStore(e.store, s.Table, s.Set, s.Where, filter)
+			if err != nil {
+				return nil, err
+			}
+			return op, nil
+		}
 		return NewUpdate(s.Table, s.Set, s.Where, filter), nil
 	case *PS.Delete:
-		scan := NewSeqScan(s.Table)
+		var scan Operator = NewSeqScan(s.Table)
+		if e.store != nil {
+			ssc, err := NewSeqScanWithStore(e.store, s.Table)
+			if err != nil {
+				return nil, err
+			}
+			scan = ssc
+		}
 		filter := NewFilter(scan, s.Where)
+		if e.store != nil {
+			op, err := NewDeleteWithStore(e.store, s.Table, s.Where, filter)
+			if err != nil {
+				return nil, err
+			}
+			return op, nil
+		}
 		return NewDelete(s.Table, s.Where, filter), nil
 	case *PS.CreateTable:
 		return NewCreateTable(s), nil
