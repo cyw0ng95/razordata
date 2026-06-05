@@ -16,7 +16,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	id "github.com/cyw0ng95/razordata/internal/ENG/ID"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	tb "github.com/cyw0ng95/razordata/internal/ENG/TB"
 	df "github.com/cyw0ng95/razordata/internal/FIL/DF"
 	fs "github.com/cyw0ng95/razordata/internal/FIL/FS"
 	lf "github.com/cyw0ng95/razordata/internal/FIL/LF"
@@ -38,18 +40,20 @@ type Engine struct {
 	opts AP.Options
 
 	// Subsystems (constructed in dependency order).
-	log lg.Logger
-	fs  *fs.FileManager
-	lf  *lf.SegmentManager
-	df  *df.BlockDevice
-	sp  sp.SyncPool
-	bp  bf.BufferPool
-	wr  wr.Writer
-	fl  fl.Flusher
-	rp  rp.Replayer
-	eng *ls.Engine
-	txn *vl.Manager
-	exe *executor.Executor
+	log     lg.Logger
+	fs      *fs.FileManager
+	lf      *lf.SegmentManager
+	df      *df.BlockDevice
+	sp      sp.SyncPool
+	bp      bf.BufferPool
+	wr      wr.Writer
+	fl      fl.Flusher
+	rp      rp.Replayer
+	eng     *ls.Engine
+	catalog *tb.Catalog
+	pkindex *id.PKIndex
+	txn     *vl.Manager
+	exe     *executor.Executor
 
 	// Lifecycle.
 	mu      sync.Mutex
@@ -242,12 +246,44 @@ func (e *Engine) open(ctx context.Context) (err error) {
 		return err
 	}
 
+	// Step 10.1: TB catalog (iter-10). The catalog persists the
+	// system table registry; on Load it scans the engine's
+	// __catalog__ prefix and rebuilds the in-memory cache.
+	e.catalog = tb.New(&catalogStoreAdapter{eng: e.eng})
+	if err := e.catalog.Load(); err != nil {
+		return fmt.Errorf("sy: catalog load: %w", err)
+	}
+
+	// Step 10.2: ID primary-key index (iter-10). The PK index is
+	// a thin wrapper over the engine; the executor uses it for
+	// IndexScan real-seek.
+	e.pkindex = id.NewPKIndex(&idStoreAdapter{eng: e.eng})
+
 	// Step 11: VL TxnManager.
 	e.txn = vl.NewManager()
 
-	// Step 12: SQL executor.
+	// Step 12: SQL executor (wired with catalog + PK index).
 	e.exeAdapter = &executorStoreAdapter{eng: e.eng}
-	e.exe = executor.NewExecutorWithEngine(e.exeAdapter)
+	e.exe = executor.NewExecutorWithEngineAndIndexAndCatalog(
+		e.exeAdapter, e.catalog, e.pkindex)
+
+	// Step 13: populate the executor with all persisted tables.
+	// This makes the schemas visible to the planner/executor
+	// without each session having to re-load them.
+	for _, sch := range e.catalog.ListTables() {
+		cols := make([]string, len(sch.Columns))
+		var pk string
+		for i, c := range sch.Columns {
+			cols[i] = c.Name
+			if c.PrimaryKey {
+				pk = c.Name
+			}
+		}
+		if len(sch.PrimaryKey) == 1 {
+			pk = cols[sch.PrimaryKey[0]]
+		}
+		e.exe.RegisterTableWithPK(sch.Name, cols, pk)
+	}
 
 	e.started = time.Now()
 	e.opened.Store(true)
@@ -286,7 +322,17 @@ func (e *Engine) closeBestEffort() error {
 			firstErr = err
 		}
 	}
-	// Reverse order: TXN → EX → ENG → RP → FL → WR → BF → DF → LF → FS.
+	// Reverse order: TB → ID → TXN → EX → ENG → RP → FL → WR →
+	// BF → DF → LF → FS. TB/ID are no-op close in v1; they are
+	// included here as the public seam for future checkpoint-based
+	// catalog sync (R14) and PK index GC.
+	stop("tb", func() error {
+		if e.catalog == nil {
+			return nil
+		}
+		return e.catalog.Flush()
+	})
+	stop("id", func() error { return nil })
 	stop("vl", func() error {
 		if e.txn == nil {
 			return nil
@@ -423,6 +469,47 @@ func (a *executorStoreAdapter) Insert(k, v []byte) error { return a.eng.Insert(k
 func (a *executorStoreAdapter) Delete(k []byte) error    { return a.eng.Delete(k) }
 func (a *executorStoreAdapter) NewIterator(prefix []byte) ls.RangeIter {
 	return a.eng.NewIterator(prefix)
+}
+
+// catalogStoreAdapter wraps an *ls.Engine to the TB.Store interface.
+// The adapter is needed because TB.Store.NewIterator returns
+// tb.Iterator (a different declared type from ls.RangeIter, even
+// though they have the same shape).
+type catalogStoreAdapter struct {
+	eng *ls.Engine
+}
+
+func (a *catalogStoreAdapter) Insert(k, v []byte) error     { return a.eng.Insert(k, v) }
+func (a *catalogStoreAdapter) Get(k []byte) ([]byte, error) { return a.eng.Get(k) }
+func (a *catalogStoreAdapter) Delete(k []byte) error        { return a.eng.Delete(k) }
+func (a *catalogStoreAdapter) NewIterator(prefix []byte) tb.Iterator {
+	return &lsRangeIterAdapter{inner: a.eng.NewIterator(prefix)}
+}
+
+// lsRangeIterAdapter bridges ls.RangeIter to the tb.Iterator
+// interface. The two types have the same method set; Go requires
+// the adapter because they are distinct declared types.
+type lsRangeIterAdapter struct {
+	inner ls.RangeIter
+}
+
+func (a *lsRangeIterAdapter) Next() bool    { return a.inner.Next() }
+func (a *lsRangeIterAdapter) Key() []byte   { return a.inner.Key() }
+func (a *lsRangeIterAdapter) Value() []byte { return a.inner.Value() }
+func (a *lsRangeIterAdapter) Err() error    { return a.inner.Err() }
+func (a *lsRangeIterAdapter) Close() error  { return a.inner.Close() }
+
+// idStoreAdapter wraps an *ls.Engine to the ID.Store interface,
+// same purpose as catalogStoreAdapter for the ID cluster.
+type idStoreAdapter struct {
+	eng *ls.Engine
+}
+
+func (a *idStoreAdapter) Insert(k, v []byte) error     { return a.eng.Insert(k, v) }
+func (a *idStoreAdapter) Get(k []byte) ([]byte, error) { return a.eng.Get(k) }
+func (a *idStoreAdapter) Delete(k []byte) error        { return a.eng.Delete(k) }
+func (a *idStoreAdapter) NewIterator(prefix []byte) tb.Iterator {
+	return &lsRangeIterAdapter{inner: a.eng.NewIterator(prefix)}
 }
 
 // Executor returns the SQL executor bound to this engine. Used by

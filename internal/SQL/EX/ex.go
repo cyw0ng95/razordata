@@ -55,6 +55,8 @@ type ColInfo struct {
 type Executor struct {
 	planner *Planner
 	store   Store
+	catalog Catalog
+	pkIndex PKIndex
 	// txWriter, when non-nil, is notified of every key the executor
 	// writes (Insert/Update/Delete) so a higher-level transaction
 	// layer can capture a shadow writeSet for ROLLBACK. SetTxWriter
@@ -91,6 +93,20 @@ func NewExecutorWithPlanner(pl *Planner) *Executor {
 // mode.
 func NewExecutorWithEngine(store Store) *Executor {
 	return &Executor{planner: NewPlannerWithStore(store), store: store}
+}
+
+// NewExecutorWithEngineAndIndexAndCatalog wires the executor to a
+// real storage engine, a primary-key index for IndexScan real-seek,
+// and a system catalog for CREATE TABLE / DROP TABLE. The catalog
+// is also used to populate the executor's in-memory schema cache
+// on first use; the engine handles persistence.
+func NewExecutorWithEngineAndIndexAndCatalog(store Store, catalog Catalog, pkIndex PKIndex) *Executor {
+	return &Executor{
+		planner: NewPlannerWithStore(store),
+		store:   store,
+		catalog: catalog,
+		pkIndex: pkIndex,
+	}
 }
 
 func (e *Executor) RegisterTable(name string, schema []string) {

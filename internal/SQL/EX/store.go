@@ -8,7 +8,15 @@ import (
 	"sync"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
+	tb "github.com/cyw0ng95/razordata/internal/ENG/TB"
 )
+
+// PKIndexIterator is the streaming surface the IndexScan needs
+// from a PK index range scan. The shape matches tb.Iterator; the
+// type alias lets the production wiring (ID.PKIndex returning
+// tb.Iterator) satisfy this interface directly.
+type PKIndexIterator = tb.Iterator
 
 // Store is the minimal storage surface the executor needs to integrate
 // with the real engine. The in-memory map (tables/schemas) is the fallback
@@ -23,42 +31,22 @@ type Store interface {
 // CREATE TABLE / DROP TABLE. The production implementation is
 // *ENG/TB.Catalog; tests can supply any compatible type.
 type Catalog interface {
-	CreateTable(name string, columns []ColumnDef, primaryKey []int) (*TableSchema, error)
+	CreateTable(name string, columns []sc.ColumnDef, primaryKey []int) (*sc.TableSchema, error)
 	DropTable(id uint64) error
-	GetTable(id uint64) (*TableSchema, error)
-	GetTableByName(name string) (*TableSchema, error)
-}
-
-// ColumnDef is the per-column definition the EX/ layer passes to
-// the catalog. The shape mirrors SC/ColumnDef but is duplicated
-// here to keep the EX/ package free of a dependency on the SC/
-// schema cluster. The two definitions are kept in sync by hand
-// in the iter-10 close-out.
-type ColumnDef struct {
-	Name     string
-	Type     int
-	Nullable bool
-	Default  []byte
-	Pk       bool
-}
-
-// TableSchema is the per-table schema the EX/ layer holds. The
-// shape mirrors SC/TableSchema.
-type TableSchema struct {
-	ID         uint64
-	Name       string
-	Columns    []ColumnDef
-	PrimaryKey []int
+	GetTable(id uint64) (*sc.TableSchema, error)
+	GetTableByName(name string) (*sc.TableSchema, error)
 }
 
 // PKIndex is the primary key index interface the executor uses
 // for IndexScan real-seek. The production implementation is
-// *ENG/ID.PKIndex.
+// *ENG/ID.PKIndex. The pkTypes parameter is the declared type of
+// each column in the primary key (in PK order); it is used to
+// encode the values for index lookup.
 type PKIndex interface {
-	Insert(tableID uint64, pkValues [][]byte, rowPointer []byte) error
-	Delete(tableID uint64, pkValues [][]byte) error
-	Seek(tableID uint64, pkValues [][]byte) ([]byte, bool, error)
-	Range(tableID uint64, lo, hi [][]byte) (PKIndexIterator, error)
+	Insert(tableID uint64, pkTypes []sc.ColumnType, pkValues [][]byte, rowPointer []byte) error
+	Delete(tableID uint64, pkTypes []sc.ColumnType, pkValues [][]byte) error
+	Seek(tableID uint64, pkTypes []sc.ColumnType, pkValues [][]byte) ([]byte, bool, error)
+	Range(tableID uint64, pkTypes []sc.ColumnType, lo, hi [][]byte) (PKIndexIterator, error)
 }
 
 // ErrNoEngine is returned when a query requires a wired store but the

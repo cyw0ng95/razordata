@@ -3,6 +3,8 @@ package EX
 import (
 	"context"
 	"testing"
+
+	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
 )
 
 // TestIndexScan_RealSeek_ConstructorWiresPKIndex verifies that
@@ -129,20 +131,20 @@ type countingPKIndex struct {
 	seekCalls int
 }
 
-func (c *countingPKIndex) Insert(tableID uint64, pkValues [][]byte, rowPointer []byte) error {
+func (c *countingPKIndex) Insert(tableID uint64, pkTypes []sc.ColumnType, pkValues [][]byte, rowPointer []byte) error {
 	return nil
 }
 
-func (c *countingPKIndex) Delete(tableID uint64, pkValues [][]byte) error {
+func (c *countingPKIndex) Delete(tableID uint64, pkTypes []sc.ColumnType, pkValues [][]byte) error {
 	return nil
 }
 
-func (c *countingPKIndex) Seek(tableID uint64, pkValues [][]byte) ([]byte, bool, error) {
+func (c *countingPKIndex) Seek(tableID uint64, pkTypes []sc.ColumnType, pkValues [][]byte) ([]byte, bool, error) {
 	c.seekCalls++
 	return nil, false, nil // always miss
 }
 
-func (c *countingPKIndex) Range(tableID uint64, lo, hi [][]byte) (PKIndexIterator, error) {
+func (c *countingPKIndex) Range(tableID uint64, pkTypes []sc.ColumnType, lo, hi [][]byte) (PKIndexIterator, error) {
 	return &emptyPKIter{}, nil
 }
 
@@ -153,22 +155,22 @@ type stubPKIndex struct {
 	rowKeyFor func(values [][]byte) []byte
 }
 
-func (s *stubPKIndex) Insert(tableID uint64, pkValues [][]byte, rowPointer []byte) error {
+func (s *stubPKIndex) Insert(tableID uint64, pkTypes []sc.ColumnType, pkValues [][]byte, rowPointer []byte) error {
 	return nil
 }
 
-func (s *stubPKIndex) Delete(tableID uint64, pkValues [][]byte) error {
+func (s *stubPKIndex) Delete(tableID uint64, pkTypes []sc.ColumnType, pkValues [][]byte) error {
 	return nil
 }
 
-func (s *stubPKIndex) Seek(tableID uint64, pkValues [][]byte) ([]byte, bool, error) {
+func (s *stubPKIndex) Seek(tableID uint64, pkTypes []sc.ColumnType, pkValues [][]byte) ([]byte, bool, error) {
 	if s.rowKeyFor != nil {
 		return s.rowKeyFor(pkValues), true, nil
 	}
 	return nil, false, nil
 }
 
-func (s *stubPKIndex) Range(tableID uint64, lo, hi [][]byte) (PKIndexIterator, error) {
+func (s *stubPKIndex) Range(tableID uint64, pkTypes []sc.ColumnType, lo, hi [][]byte) (PKIndexIterator, error) {
 	return &emptyPKIter{}, nil
 }
 

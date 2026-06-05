@@ -3,6 +3,8 @@ package EX
 import (
 	"context"
 	"errors"
+
+	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
 )
 
 var ErrNoPKForStorage = errors.New("ex: cannot write to storage without a primary key")
@@ -128,6 +130,7 @@ type IndexScan struct {
 	// primary key instead of scanning the full table prefix.
 	pkIndex   PKIndex
 	pkTableID uint64
+	pkTypes   []sc.ColumnType
 	pkValues  [][]byte
 	pkRangeLo [][]byte
 	pkRangeHi [][]byte
@@ -188,15 +191,8 @@ func NewIndexScanWithStoreAndIndex(store Store, pkIndex PKIndex, table, idx stri
 	}, nil
 }
 
-// PKIndexIterator is the minimal streaming surface the IndexScan
-// needs from a PK index range scan.
-type PKIndexIterator interface {
-	Next() bool
-	Key() []byte
-	Value() []byte
-	Err() error
-	Close() error
-}
+// PKIndexIterator is defined in store.go as a type alias for
+// tb.Iterator. The IndexScan uses it via the package-level alias.
 
 // nextFromIndex performs the real-seek path. It first opens a
 // range iterator on the PK index (or, for a point lookup, uses
@@ -212,7 +208,7 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 			// Already resolved.
 			return i.decodeResolvedRow(ctx)
 		}
-		rowKey, found, err := i.pkIndex.Seek(i.pkTableID, i.pkValues)
+		rowKey, found, err := i.pkIndex.Seek(i.pkTableID, i.pkTypes, i.pkValues)
 		if err != nil {
 			return Row{}, err
 		}
@@ -224,7 +220,7 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 	}
 	// Range-scan path.
 	if i.pkRangeIt == nil {
-		it, err := i.pkIndex.Range(i.pkTableID, i.pkRangeLo, i.pkRangeHi)
+		it, err := i.pkIndex.Range(i.pkTableID, i.pkTypes, i.pkRangeLo, i.pkRangeHi)
 		if err != nil {
 			return Row{}, err
 		}
