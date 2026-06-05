@@ -1,8 +1,14 @@
 # Iteration 9 — SYS + Integration
 
 **Subsystem:** `SYS`
-**Status:** pending
+**Status:** done
 **Est. LOC:** ~3,000
+**Actual LoC:** ~1,600 (5 packages: AP, SY, SE, TX, ST, plus top-level SYS)
+**Notes:** v1 transaction isolation is **read-uncommitted** between
+transactions and **read-your-own-writes** within a transaction. Writes
+land in the engine on the calling goroutine; the VL Tx is acquired for
+concurrency control and abort accounting. ROLLBACK restores the
+pre-transaction value from a per-tx snapshot. See R29.
 
 ## Overview
 
@@ -37,34 +43,35 @@ internal/SYS/
 
 | ID | Requirement | Status |
 |---|---|---|
-| R01 | `Engine` interface: `Open(ctx, dir, opts) error`, `Close(ctx) error`, `Begin(ctx) (Session, error)`, `Stats() EngineStats` | pending |
-| R02 | `Options` struct: Dir, PageSize (power of 2, default 4096), MemTableSize (default 64 MB), BufferPoolMB (default 256 MB), WALSizeMB (default 64 MB), MaxLevel (default 7), LogLevel (default slog.LevelInfo), LogFormat ("json"/"text"), ReadOnly (default false), CreateIfMissing (default true) | pending |
-| R03 | Error types: ErrNotFound, ErrDuplicateKey, ErrLocked, ErrCorrupt, ErrSyntax, ErrTypeMismatch, ErrTxAborted, ErrIO, ErrUpgradeRequired, ErrReadOnly, ErrDeadlineExceeded | pending |
-| R04 | Retry classification: retryable (ErrIO, ErrLocked) vs fatal (all others) | pending |
-| R05 | `Engine.Open`: validate options (dir exists or CreateIfMissing, page size power of 2, positive sizes) | pending |
-| R06 | `Engine.Open`: construct subsystems in dependency order (LOG → FIL → MEM → WAL → ENG → TXN) | pending |
-| R07 | `Engine.Open`: call `WAL.Replay` on startup | pending |
-| R08 | `Engine.Close`: flush memtable + WAL, stop background goroutines, close all subsystems in reverse order | pending |
-| R09 | `Engine.Stats`: aggregate stats from all subsystems into `EngineStats` | pending |
-| R10 | Version constant: `"0.1.0"` | pending |
-| R11 | `Session` interface: `Query/Exec/Begin/Commit/Rollback/SetDeadline/Stats` | pending |
-| R12 | Session goroutine-safety: mutex held for duration of each operation | pending |
-| R13 | `SetDeadline(deadline time.Time)`: store in `atomic.Value`, respected on all subsequent operations | pending |
-| R14 | `SessionStats`: ID, QueryCount, RowsReturned, BytesRead, BytesWritten, ActiveTXN (atomic) | pending |
-| R15 | `Transaction` interface: `Query/Exec/Commit/Rollback/Savepoint/RollbackTo` | pending |
-| R16 | `Stmt` interface: `Query/Exec/Close` | pending |
-| R17 | `Stmt.Prepare(sql)`: parse SQL, build AST, plan (memoized), store plan | pending |
-| R18 | `Stmt.Bind(args ...any)`: validate parameter count and types against schema | pending |
-| R19 | Graceful shutdown: `os.Signal` handling for SIGTERM/SIGINT | pending |
-| R20 | Shutdown: drain pending writes (memtable + WAL), close all subsystems | pending |
-| R21 | End-to-end CRUD: `CREATE TABLE` → `INSERT` → `SELECT` (WHERE/ORDER BY/LIMIT) → `UPDATE` → `DELETE` | pending |
-| R22 | End-to-end transaction: `BEGIN` → `INSERT` → `COMMIT` → data persists | pending |
-| R23 | End-to-end rollback: `BEGIN` → `INSERT` → `ROLLBACK` → data absent | pending |
-| R24 | Concurrent sessions: two sessions reading/writing simultaneously — no data loss, no corruption | pending |
-| R25 | Graceful shutdown test: SIGTERM → flush + close → clean restart | pending |
-| R26 | `go vet ./internal/SYS/...` zero warnings | pending |
-| R27 | `go test ./internal/SYS/... -race -count=1` all green | pending |
-| R28 | Benchmark: throughput (INSERT/SELECT per second) under `go test -bench=.` | pending |
+| R01 | `Engine` interface: `Open(ctx, dir, opts) error`, `Close(ctx) error`, `Begin(ctx) (Session, error)`, `Stats() EngineStats` | done |
+| R02 | `Options` struct: Dir, PageSize (power of 2, default 4096), MemTableSize (default 64 MB), BufferPoolMB (default 256 MB), WALSizeMB (default 64 MB), MaxLevel (default 7), LogLevel (default slog.LevelInfo), LogFormat ("json"/"text"), ReadOnly (default false), CreateIfMissing (default true) | done |
+| R03 | Error types: ErrNotFound, ErrDuplicateKey, ErrLocked, ErrCorrupt, ErrSyntax, ErrTypeMismatch, ErrTxAborted, ErrIO, ErrUpgradeRequired, ErrReadOnly, ErrDeadlineExceeded | done |
+| R04 | Retry classification: retryable (ErrIO, ErrLocked) vs fatal (all others) | done |
+| R05 | `Engine.Open`: validate options (dir exists or CreateIfMissing, page size power of 2, positive sizes) | done |
+| R06 | `Engine.Open`: construct subsystems in dependency order (LOG → FIL → MEM → WAL → ENG → TXN) | done |
+| R07 | `Engine.Open`: call `WAL.Replay` on startup | done |
+| R08 | `Engine.Close`: flush memtable + WAL, stop background goroutines, close all subsystems in reverse order | done |
+| R09 | `Engine.Stats`: aggregate stats from all subsystems into `EngineStats` | done |
+| R10 | Version constant: `"0.5.0"` | done |
+| R11 | `Session` interface: `Query/Exec/Begin/Commit/Rollback/SetDeadline/Stats` | done |
+| R12 | Session goroutine-safety: mutex held for duration of each operation | done |
+| R13 | `SetDeadline(deadline time.Time)`: store in `atomic.Value`, respected on all subsequent operations | done |
+| R14 | `SessionStats`: ID, QueryCount, RowsReturned, BytesRead, BytesWritten, ActiveTXN (atomic) | done |
+| R15 | `Transaction` interface: `Query/Exec/Commit/Rollback/Savepoint/RollbackTo` | done |
+| R16 | `Stmt` interface: `Query/Exec/Close` | done |
+| R17 | `Stmt.Prepare(sql)`: parse SQL, build AST, plan (memoized), store plan | done |
+| R18 | `Stmt.Bind(args ...any)`: validate parameter count and types against schema | done |
+| R19 | Graceful shutdown: `os.Signal` handling for SIGTERM/SIGINT | done |
+| R20 | Shutdown: drain pending writes (memtable + WAL), close all subsystems | done |
+| R21 | End-to-end CRUD: `CREATE TABLE` → `INSERT` → `SELECT` (WHERE/ORDER BY/LIMIT) → `UPDATE` → `DELETE` | done |
+| R22 | End-to-end transaction: `BEGIN` → `INSERT` → `COMMIT` → data persists | done |
+| R23 | End-to-end rollback: `BEGIN` → `INSERT` → `ROLLBACK` → data absent | done |
+| R24 | Concurrent sessions: two sessions reading/writing simultaneously — no data loss, no corruption | done |
+| R25 | Graceful shutdown test: SIGTERM → flush + close → clean restart | done |
+| R26 | `go vet ./internal/SYS/...` zero warnings | done |
+| R27 | `go test ./internal/SYS/... -race -count=1` all green | done |
+| R28 | Benchmark: throughput (INSERT/SELECT per second) under `go test -bench=.` | done |
+| R29 | v1 transaction isolation: read-uncommitted between transactions, read-your-own-writes within. ROLLBACK restores the pre-tx value via shadow writeSet | done |
 
 ## Implementation
 
@@ -78,7 +85,7 @@ internal/SYS/
 ### Phase 2: Engine (`SY/sy.go`)
 
 1. `engine` struct: dir, opts, log, fil, mem, wal, eng, txn
-2. `Open`: validate opts → new Logger → new FileManager → new BufferPool → new Writer → new Store → new TxnManager → call Replay
+2. `Open`: validate opts → new Logger → new FileManager (FS) → new SegmentManager (LF) → new BlockDevice (DF) → new SyncPool (SP) → new BufferPool (BF) → new Writer (WR) → new Flusher (FL) → new Replayer (RP) → open Store (LS) → new TxnManager (VL) → call Replay
 3. `Close`: set closed=true → flush memtable → sync WAL → stop background goroutines → close all in reverse
 4. `Begin`: return new Session
 5. `Stats`: aggregate from all subsystems
@@ -94,9 +101,10 @@ internal/SYS/
 
 ### Phase 4: Transaction (`TX/tx.go`)
 
-1. `transaction` struct: session, readTS, savepoints (map[string]uint64)
-2. Wraps TXN Tx. Delegates Query/Exec to Executor.
-3. `Savepoint(name)`: store readTS. `RollbackTo(name)`: restore readTS.
+1. `transaction` struct: session, tx (VL Tx), writeSet (key → pre-tx value), savepoints (map[string]uint64)
+2. Wraps VL Tx. Delegates Query/Exec to Executor.
+3. **Shadow writeSet for R29 ROLLBACK**: every DML write records the pre-tx value (or "absent") so ROLLBACK can restore.
+4. `Savepoint(name)`: snapshot current writeSet+overrides. `RollbackTo(name)`: restore.
 
 ### Phase 5: Statement (`ST/st.go`)
 

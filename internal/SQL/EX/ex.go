@@ -55,7 +55,27 @@ type ColInfo struct {
 type Executor struct {
 	planner *Planner
 	store   Store
+	// txWriter, when non-nil, is notified of every key the executor
+	// writes (Insert/Update/Delete) so a higher-level transaction
+	// layer can capture a shadow writeSet for ROLLBACK. SetTxWriter
+	// and ClearTxWriter toggle it; reads are unaffected.
+	txWriter TxWriter
 }
+
+// TxWriter is the optional hook an Executor notifies on every key
+// write. Implementations record the pre-write value so ROLLBACK can
+// restore. The SYS layer wires this for transactional sessions.
+type TxWriter interface {
+	RecordWrite(key []byte, newValue []byte)
+}
+
+// SetTxWriter installs w as the current transaction's write hook. Pass
+// nil to disable. Not safe to call concurrently with Exec; the
+// caller (a Session) is responsible for serialization.
+func (e *Executor) SetTxWriter(w TxWriter) { e.txWriter = w }
+
+// ClearTxWriter resets the write hook to nil. Pair with SetTxWriter.
+func (e *Executor) ClearTxWriter() { e.txWriter = nil }
 
 func NewExecutor() *Executor {
 	return &Executor{planner: NewPlanner()}

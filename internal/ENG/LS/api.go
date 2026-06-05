@@ -93,6 +93,14 @@ func (eng *Engine) Close() error {
 	return err
 }
 
+// Stats returns a snapshot of the engine's read-side counters.
+func (eng *Engine) Stats() ReadStats {
+	if eng == nil || eng.e == nil {
+		return ReadStats{}
+	}
+	return eng.e.GetStats()
+}
+
 // RangeIter is the public iteration interface over a key range.
 type RangeIter interface {
 	Next() bool

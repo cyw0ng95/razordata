@@ -8,13 +8,14 @@ import (
 )
 
 type Insert struct {
-	table  string
-	cols   []string
-	values [][]PS.Expr
-	store  Store
-	schema *storeSchema
-	rows   int64
-	done   bool
+	table    string
+	cols     []string
+	values   [][]PS.Expr
+	store    Store
+	schema   *storeSchema
+	txWriter TxWriter
+	rows     int64
+	done     bool
 }
 
 func NewInsert(table string, cols []string, values [][]PS.Expr) *Insert {
@@ -90,6 +91,9 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		if err := i.store.Insert(key, buf); err != nil {
 			return Row{}, err
 		}
+		if i.txWriter != nil {
+			i.txWriter.RecordWrite(key, buf)
+		}
 		i.rows++
 	}
 	_ = ctx
@@ -105,14 +109,15 @@ func (i *Insert) RowsAffected() int64 {
 }
 
 type Update struct {
-	table  string
-	set    []PS.Pair
-	where  PS.Expr
-	iter   Operator
-	store  Store
-	schema *storeSchema
-	rows   int64
-	done   bool
+	table    string
+	set      []PS.Pair
+	where    PS.Expr
+	iter     Operator
+	store    Store
+	schema   *storeSchema
+	txWriter TxWriter
+	rows     int64
+	done     bool
 }
 
 func NewUpdate(table string, set []PS.Pair, where PS.Expr, iter Operator) *Update {
@@ -210,6 +215,9 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 		if err := u.store.Insert(key, buf); err != nil {
 			return Row{}, err
 		}
+		if u.txWriter != nil {
+			u.txWriter.RecordWrite(key, buf)
+		}
 		u.rows++
 	}
 	return Row{}, ErrNoRows
@@ -224,13 +232,14 @@ func (u *Update) RowsAffected() int64 {
 }
 
 type Delete struct {
-	table  string
-	where  PS.Expr
-	iter   Operator
-	store  Store
-	schema *storeSchema
-	rows   int64
-	done   bool
+	table    string
+	where    PS.Expr
+	iter     Operator
+	store    Store
+	schema   *storeSchema
+	txWriter TxWriter
+	rows     int64
+	done     bool
 }
 
 func NewDelete(table string, where PS.Expr, iter Operator) *Delete {
@@ -328,6 +337,9 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 		key := rowKey(prefix, pk)
 		if err := d.store.Delete(key); err != nil {
 			return Row{}, err
+		}
+		if d.txWriter != nil {
+			d.txWriter.RecordWrite(key, nil)
 		}
 		d.rows++
 	}
