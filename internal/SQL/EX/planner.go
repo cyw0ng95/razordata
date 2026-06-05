@@ -284,6 +284,13 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		current = filter
 	}
 
+	if len(s.OrderBy) > 0 {
+		if !p.pkOrderMatches(s.From, s.OrderBy) {
+			sort := NewSort(current, s.OrderBy)
+			current = sort
+		}
+	}
+
 	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) {
 		project := NewProject(current, s.Cols)
 		current = project
@@ -291,13 +298,6 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 
 	if s.Distinct && !hasAnyAggregate(s.Cols) {
 		current = NewDistinct(current)
-	}
-
-	if len(s.OrderBy) > 0 {
-		if !p.pkOrderMatches(s.From, s.OrderBy) {
-			sort := NewSort(current, s.OrderBy)
-			current = sort
-		}
 	}
 
 	if s.Offset != nil {
