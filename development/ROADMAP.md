@@ -170,6 +170,8 @@ internal/
 | v0.4.0–v0.4.1 | WAL + TXN/MV fix | iter-03, iter-05/06 |
 | v0.5.0 | SQL/Execute close-out | iter-08 |
 | **v0.6.0** | **SYS + Integration** | **iter-09** |
+| v0.6.1 | Pre-existing test failure fixes (LOG/LG + ENG/LS flush race) |
+| v0.6.2 | Code-quality pass: staticcheck warnings, dead code removal, perf (sync.Pool boxing), deduplication (firstLogger / table-not-registered sentinel / replaySegment-forEachRecord / decodeVarint), hint-file atomic write |
 
 ## Design Protection
 
