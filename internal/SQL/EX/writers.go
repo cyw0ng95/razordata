@@ -384,7 +384,7 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	if c.stmt.PK != nil {
 		pk = *c.stmt.PK
 	}
-	registerStoreSchema(c.stmt.Name, cols, pk)
+	registerStoreSchema(c.stmt.Name, cols, pk, 0)
 	return Row{}, ErrNoRows
 }
 

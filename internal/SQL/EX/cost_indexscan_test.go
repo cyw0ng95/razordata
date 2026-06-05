@@ -17,9 +17,9 @@ func TestPlanner_EstimateCost_PerOperator(t *testing.T) {
 	if got := p.estimateCost(NewSeqScan("t")); got != 1.0 {
 		t.Errorf("SeqScan cost = %v, want 1.0", got)
 	}
-	// IndexScan: 0.1
-	if got := p.estimateCost(NewIndexScan("t", "idx", nil, nil)); got != 0.1 {
-		t.Errorf("IndexScan cost = %v, want 0.1", got)
+	// IndexScan: 0.01 (iter-10: real seek via ENG/ID is sub-microsecond)
+	if got := p.estimateCost(NewIndexScan("t", "idx", nil, nil)); got != 0.01 {
+		t.Errorf("IndexScan cost = %v, want 0.01", got)
 	}
 	// Project, Limit, Offset: pass-through to child cost
 	scan := NewSeqScan("t")

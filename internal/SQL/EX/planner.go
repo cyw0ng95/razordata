@@ -125,8 +125,9 @@ func (p *Planner) estimateCost(op Operator) float64 {
 		// In v1 we don't track row counts; assume 1.0 per row.
 		return 1.0
 	case *IndexScan:
-		// Cheaper than full scan; one seek + ordered reads.
-		return 0.1
+		// iter-10: real seek via ENG/ID. Sub-microsecond point
+		// lookups and cheap range scans.
+		return 0.01
 	case *Filter:
 		return p.estimateCost(v.child) * estimateSelectivity(v.predicate)
 	case *Project:

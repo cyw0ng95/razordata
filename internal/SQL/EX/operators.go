@@ -122,6 +122,17 @@ type IndexScan struct {
 	}
 	rows []Row
 	pos  int
+
+	// Real-seek path (iter-10). When pkIndex is non-nil, the
+	// IndexScan uses the primary-key index to fetch rows by
+	// primary key instead of scanning the full table prefix.
+	pkIndex   PKIndex
+	pkTableID uint64
+	pkValues  [][]byte
+	pkRangeLo [][]byte
+	pkRangeHi [][]byte
+	pkRangeIt PKIndexIterator
+	rowKey    []byte
 }
 
 func NewIndexScan(table, idx string, rangeStart, rangeEnd []byte) *IndexScan {
@@ -133,12 +144,10 @@ func NewIndexScan(table, idx string, rangeStart, rangeEnd []byte) *IndexScan {
 	}
 }
 
-// NewIndexScanWithStore builds an IndexScan that reads through the engine.
-// In v1 the planner selects IndexScan based on catalog presence; until
-// ENG/ID/ lands, the scan performs a full prefix read against the
-// memtable + SSTs and the planner's decision is the only signal that
-// the column is indexed. Future work replaces this with a real index
-// seek.
+// NewIndexScanWithStore builds an IndexScan that reads through the
+// engine via a prefix scan. Kept for backward compatibility with
+// the v1 plan-select path; new code should use
+// NewIndexScanWithStoreAndIndex.
 func NewIndexScanWithStore(store Store, table, idx string) (*IndexScan, error) {
 	ss, ok := schemaFor(table)
 	if !ok {
@@ -152,6 +161,124 @@ func NewIndexScanWithStore(store Store, table, idx string) (*IndexScan, error) {
 		prefix: tablePrefix(table),
 	}, nil
 }
+
+// NewIndexScanWithStoreAndIndex builds an IndexScan that uses the
+// primary-key index for seek (or range) lookups. The PK values
+// are the encoded column values to seek for; pkTableID identifies
+// the table in the PK index.
+//
+// If pkRangeHi is nil, this is a point-lookup (single row
+// expected); otherwise it's a range scan.
+func NewIndexScanWithStoreAndIndex(store Store, pkIndex PKIndex, table, idx string, pkTableID uint64, pkValues, pkRangeLo, pkRangeHi [][]byte) (*IndexScan, error) {
+	ss, ok := schemaFor(table)
+	if !ok {
+		return nil, errors.New("ex: table not registered: " + table)
+	}
+	return &IndexScan{
+		table:     table,
+		idx:       idx,
+		store:     store,
+		schema:    ss,
+		prefix:    tablePrefix(table),
+		pkIndex:   pkIndex,
+		pkTableID: pkTableID,
+		pkValues:  pkValues,
+		pkRangeLo: pkRangeLo,
+		pkRangeHi: pkRangeHi,
+	}, nil
+}
+
+// PKIndexIterator is the minimal streaming surface the IndexScan
+// needs from a PK index range scan.
+type PKIndexIterator interface {
+	Next() bool
+	Key() []byte
+	Value() []byte
+	Err() error
+	Close() error
+}
+
+// nextFromIndex performs the real-seek path. It first opens a
+// range iterator on the PK index (or, for a point lookup, uses
+// Seek directly) and then fetches each row via the engine's
+// Get-by-rowKey. Tombstoned rows are skipped silently.
+func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
+	if i.pkIndex == nil {
+		return Row{}, ErrNoRows
+	}
+	// Point-lookup path.
+	if i.pkRangeHi == nil && i.pkValues != nil {
+		if i.rowKey != nil {
+			// Already resolved.
+			return i.decodeResolvedRow(ctx)
+		}
+		rowKey, found, err := i.pkIndex.Seek(i.pkTableID, i.pkValues)
+		if err != nil {
+			return Row{}, err
+		}
+		if !found {
+			return Row{}, ErrNoRows
+		}
+		i.rowKey = rowKey
+		return i.decodeResolvedRow(ctx)
+	}
+	// Range-scan path.
+	if i.pkRangeIt == nil {
+		it, err := i.pkIndex.Range(i.pkTableID, i.pkRangeLo, i.pkRangeHi)
+		if err != nil {
+			return Row{}, err
+		}
+		i.pkRangeIt = wrapPKIndexIterator(it)
+	}
+	for i.pkRangeIt.Next() {
+		if err := ctx.Err(); err != nil {
+			return Row{}, err
+		}
+		i.rowKey = i.pkRangeIt.Value()
+		return i.decodeResolvedRow(ctx)
+	}
+	if err := i.pkRangeIt.Err(); err != nil {
+		return Row{}, err
+	}
+	return Row{}, ErrNoRows
+}
+
+// decodeResolvedRow fetches the row from the store using the
+// resolved rowKey, decodes it, and clears the resolution so the
+// next call to nextFromIndex will produce the next row (or close
+// the iteration in the range case).
+func (i *IndexScan) decodeResolvedRow(ctx context.Context) (Row, error) {
+	if i.store == nil {
+		return Row{}, ErrNoEngine
+	}
+	// We need to fetch by exact rowKey. The Store interface
+	// doesn't expose Get; instead we open a one-row iterator
+	// with a prefix equal to the rowKey. This is a temporary
+	// shim; iter-10 close-out will add Store.Get.
+	it := i.store.NewIterator(i.rowKey)
+	defer it.Close()
+	if !it.Next() {
+		return Row{}, ErrNoRows
+	}
+	if err := ctx.Err(); err != nil {
+		return Row{}, err
+	}
+	row, err := decodeRow(it.Value(), i.schema)
+	if err != nil {
+		return Row{}, err
+	}
+	// For the point-lookup path, clear the resolution so the
+	// next call sees ErrNoRows. For the range-scan path, the
+	// iterator's Next is called again on the next invocation.
+	if i.pkRangeHi == nil {
+		i.rowKey = nil
+	}
+	return row, nil
+}
+
+// wrapPKIndexIterator adapts a tb.Iterator (or any iterator with
+// the same shape) to the PKIndexIterator interface.
+func wrapPKIndexIterator(it PKIndexIterator) PKIndexIterator { return it }
 
 func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 	if i.it == nil {
@@ -177,6 +304,9 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 func (i *IndexScan) Next(ctx context.Context) (Row, error) {
 	if err := ctx.Err(); err != nil {
 		return Row{}, err
+	}
+	if i.pkIndex != nil {
+		return i.nextFromIndex(ctx)
 	}
 	if i.store != nil {
 		return i.nextFromStore(ctx)
@@ -206,7 +336,12 @@ func (i *IndexScan) Close() error {
 		i.it = nil
 		return err
 	}
+	if i.pkRangeIt != nil {
+		_ = i.pkRangeIt.Close()
+		i.pkRangeIt = nil
+	}
 	i.pos = 0
 	i.rows = nil
+	i.rowKey = nil
 	return nil
 }

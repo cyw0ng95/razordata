@@ -101,7 +101,7 @@ func (e *Executor) RegisterTable(name string, schema []string) {
 	e.planner.RegisterTable(name, cols, "")
 	RegisterTableSchema(name, schema)
 	if e.store != nil {
-		registerStoreSchema(name, schema, "")
+		registerStoreSchema(name, schema, "", 0)
 	}
 }
 
@@ -113,7 +113,7 @@ func (e *Executor) RegisterTableWithPK(name string, schema []string, pk string) 
 	e.planner.RegisterTable(name, cols, pk)
 	RegisterTableSchema(name, schema)
 	if e.store != nil {
-		registerStoreSchema(name, schema, pk)
+		registerStoreSchema(name, schema, pk, 0)
 	}
 }
 

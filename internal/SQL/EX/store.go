@@ -19,14 +19,57 @@ type Store interface {
 	NewIterator(prefix []byte) ls.RangeIter
 }
 
+// Catalog is the system catalog interface the executor uses for
+// CREATE TABLE / DROP TABLE. The production implementation is
+// *ENG/TB.Catalog; tests can supply any compatible type.
+type Catalog interface {
+	CreateTable(name string, columns []ColumnDef, primaryKey []int) (*TableSchema, error)
+	DropTable(id uint64) error
+	GetTable(id uint64) (*TableSchema, error)
+	GetTableByName(name string) (*TableSchema, error)
+}
+
+// ColumnDef is the per-column definition the EX/ layer passes to
+// the catalog. The shape mirrors SC/ColumnDef but is duplicated
+// here to keep the EX/ package free of a dependency on the SC/
+// schema cluster. The two definitions are kept in sync by hand
+// in the iter-10 close-out.
+type ColumnDef struct {
+	Name     string
+	Type     int
+	Nullable bool
+	Default  []byte
+	Pk       bool
+}
+
+// TableSchema is the per-table schema the EX/ layer holds. The
+// shape mirrors SC/TableSchema.
+type TableSchema struct {
+	ID         uint64
+	Name       string
+	Columns    []ColumnDef
+	PrimaryKey []int
+}
+
+// PKIndex is the primary key index interface the executor uses
+// for IndexScan real-seek. The production implementation is
+// *ENG/ID.PKIndex.
+type PKIndex interface {
+	Insert(tableID uint64, pkValues [][]byte, rowPointer []byte) error
+	Delete(tableID uint64, pkValues [][]byte) error
+	Seek(tableID uint64, pkValues [][]byte) ([]byte, bool, error)
+	Range(tableID uint64, lo, hi [][]byte) (PKIndexIterator, error)
+}
+
 // ErrNoEngine is returned when a query requires a wired store but the
 // executor was constructed without one.
 var ErrNoEngine = errors.New("ex: no engine wired; use NewExecutorWithEngine")
 
 // storeSchema describes a table's column layout for row encoding.
 type storeSchema struct {
-	cols []string
-	pk   string
+	cols    []string
+	pk      string
+	tableID uint64
 }
 
 var (
@@ -64,9 +107,26 @@ func tableIDFor(name string) (uint64, bool) {
 
 // registerStoreSchema assigns a table ID to a name and stores its schema.
 // Safe to call multiple times for the same name (idempotent).
-func registerStoreSchema(name string, cols []string, pk string) uint64 {
+//
+// The caller may pass a non-zero tableID to claim a specific
+// tableID (used when the catalog has already assigned one). When
+// the caller passes 0, a fresh ID is allocated. The returned
+// tableID is the effective one (the caller's or the freshly
+// allocated one).
+func registerStoreSchema(name string, cols []string, pk string, wantID uint64) uint64 {
 	storeMu.Lock()
 	defer storeMu.Unlock()
+	if wantID != 0 {
+		// Honor the caller-supplied ID. Replace any existing
+		// entry under that ID and update the name map.
+		storeSchemas[wantID] = &storeSchema{
+			cols:    append([]string(nil), cols...),
+			pk:      pk,
+			tableID: wantID,
+		}
+		tableIDs[name] = wantID
+		return wantID
+	}
 	if id, ok := tableIDs[name]; ok {
 		if ss, ok := storeSchemas[id]; ok {
 			cp := make([]string, len(cols))
@@ -78,7 +138,7 @@ func registerStoreSchema(name string, cols []string, pk string) uint64 {
 	}
 	id := nextTableID()
 	tableIDs[name] = id
-	storeSchemas[id] = &storeSchema{cols: append([]string(nil), cols...), pk: pk}
+	storeSchemas[id] = &storeSchema{cols: append([]string(nil), cols...), pk: pk, tableID: id}
 	return id
 }
 
