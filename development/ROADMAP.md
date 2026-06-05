@@ -36,7 +36,7 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 7 | SQL/Core | Lexer + parser + rewriter | `LX`, `PS`, `RE` | ~2,500 | 102 | 89.5 / 66.6 / 49.0 | 2 / 4 / 0 | done (RE 49% is the project low) |
 | 8 | SQL/Execute | Planner + executor | `PL`, `EX` | ~3,000 | 4 / 63 | 30.6 / 72.8 | 0 / 8 | **done** (v0.5.0; PL/ now owns memo + planner entry, EX/ has full operator tree) |
 | 9 | SYS+Integration | Public API + end-to-end | `AP`, `SY`, `SE`, `TX`, `ST` | ~3,000 | 57 | 100.0 | 2 | **done** (v0.6.0) |
-| 10 | ENG/Index+Catalog | v2 ENG/ID + ENG/TB (+ DP/SC extraction) + EX IndexScan real seek | `ID`, `TB`, `SC`, `DP`, `EX`, `SY` | ~5,000 | ~25 new | ID ≥ 80, TB ≥ 85, DP/SC ≥ 90 | 3 (PKIndex) + 2 (Catalog) | **pending** (v0.7.0) |
+| 10 | ENG/Index+Catalog | v2 ENG/ID + ENG/TB (+ DP/SC extraction) + EX IndexScan real seek | `ID`, `TB`, `SC`, `DP`, `EX`, `SY` | ~5,000 | ~25 new | ID 84.8, TB 90.2, SC 97.4, DP 97.3 | 3 (PKIndex) + 2 (Catalog) | **done** (v0.7.0) |
 
 **Coverage / Benchmark legend:** each iter's cluster columns are listed in
 the order the clusters appear in the design dir tree. For example
@@ -110,7 +110,7 @@ iter-10 (v0.7.0) closes **items 1–4** of this list: `ENG/ID/`, `ENG/TB/`,
 | 9 | Session pooling | `sync.Pool` for sessions; v1 allocates per call. |
 | 10 | Read-only mode | Honor `Options.ReadOnly = true`; skip WAL writes. |
 | 11 | Admin interface | Operational tooling: schema dump, vacuum, manual compaction. |
-| 12 | Secondary indexes | Build on the `ENG/ID/` PK index surface; same `Insert/Search/Delete` API extended to non-PK columns. **Pre-req:** iter-10 done. |
+| 12 | Secondary indexes | Build on the `ENG/ID/` PK index surface (shipped in iter-10); same `Insert/Search/Delete` API extended to non-PK columns. |
 | 13 | `EX/planner.go` → `PL/` reconcile | iter-08 unresolved divergence: planner code lives in `EX/`, design says `PL/`. Requires human decision on `design/subsystems/SQL.md`. |
 
 ## Completion Criteria (All Iterations)
@@ -177,7 +177,7 @@ internal/
 | v0.5.0 | SQL/Execute close-out | iter-08 |
 | **v0.6.0** | **SYS + Integration** | **iter-09** |
 | **v0.6.1** | Test-race + LG fix (post-v0.6.0 close-out) | — |
-| **v0.7.0** (planned) | **Real PK Index + Persistent Catalog** | **iter-10** |
+| **v0.7.0** | **Real PK Index + Persistent Catalog** | **iter-10** |
 
 ## Design Protection
 

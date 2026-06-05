@@ -12,7 +12,7 @@ import (
 )
 
 // Version is the razordata release version, surfaced in EngineStats.
-const Version = "0.5.0"
+const Version = "0.7.0"
 
 // Options configures an Engine opened via Open. Zero values for tunable
 // fields are filled with package defaults in SY.Open.
