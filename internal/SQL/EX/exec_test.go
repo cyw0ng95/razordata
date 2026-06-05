@@ -10,7 +10,6 @@ import (
 type runCase struct {
 	name string
 	sql  string
-	rows []Row
 	want [][]interface{}
 }
 

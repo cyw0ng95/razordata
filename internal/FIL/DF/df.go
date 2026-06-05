@@ -30,7 +30,8 @@ var bufPool = sync.Pool{
 		for uintptr(unsafe.Pointer(&data[0]))%4096 != 0 {
 			data = data[1:]
 		}
-		return data[:DefaultBlockSize]
+		buf := data[:DefaultBlockSize]
+		return &buf
 	},
 }
 
@@ -143,8 +144,8 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 	offset := blockID * uint64(DefaultBlockSize)
 
 	if d.direct {
-		poolBuf := bufPool.Get().([]byte)
-		defer bufPool.Put(poolBuf)
+		poolBuf := *bufPool.Get().(*[]byte)
+		defer bufPool.Put(&poolBuf)
 
 		for i := range poolBuf[:DataLen-ChecksumLen] {
 			poolBuf[i] = 0
@@ -245,14 +246,15 @@ func (d *BlockDevice) Size() (int64, error) {
 
 var tempBufPool = sync.Pool{
 	New: func() any {
-		return make([]byte, DefaultBlockSize)
+		b := make([]byte, DefaultBlockSize)
+		return &b
 	},
 }
 
-func borrowTempBuf() []byte { return tempBufPool.Get().([]byte) }
+func borrowTempBuf() []byte { return *tempBufPool.Get().(*[]byte) }
 func returnTempBuf(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
-	tempBufPool.Put(b)
+	tempBufPool.Put(&b)
 }

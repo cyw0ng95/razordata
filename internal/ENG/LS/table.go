@@ -113,7 +113,6 @@ func (tr *tableRegistry) Len() int {
 type catalog struct {
 	registry *tableRegistry
 	index    *primaryIndex
-	mu       sync.RWMutex
 }
 
 func newCatalog() *catalog {

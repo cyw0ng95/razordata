@@ -24,10 +24,12 @@ type mockSyncPool struct {
 func newMockSyncPool() *mockSyncPool {
 	sp := &mockSyncPool{}
 	sp.pagePool.New = func() any {
-		return make([]byte, BlockSize)
+		b := make([]byte, BlockSize)
+		return &b
 	}
 	sp.iterPool.New = func() any {
-		return make([]byte, iterBufferSize)
+		b := make([]byte, iterBufferSize)
+		return &b
 	}
 	return sp
 }
@@ -35,12 +37,12 @@ func newMockSyncPool() *mockSyncPool {
 func (sp *mockSyncPool) Get(size int) []byte {
 	if size == BlockSize {
 		if p := sp.pagePool.Get(); p != nil {
-			return p.([]byte)
+			return *p.(*[]byte)
 		}
 	}
 	if size == iterBufferSize {
 		if p := sp.iterPool.Get(); p != nil {
-			return p.([]byte)
+			return *p.(*[]byte)
 		}
 	}
 	return make([]byte, size)
@@ -48,9 +50,11 @@ func (sp *mockSyncPool) Get(size int) []byte {
 
 func (sp *mockSyncPool) Put(buf []byte) {
 	if cap(buf) == BlockSize {
-		sp.pagePool.Put(buf[:BlockSize])
+		b := buf[:BlockSize]
+		sp.pagePool.Put(&b)
 	} else if cap(buf) == iterBufferSize {
-		sp.iterPool.Put(buf[:iterBufferSize])
+		b := buf[:iterBufferSize]
+		sp.iterPool.Put(&b)
 	}
 }
 
