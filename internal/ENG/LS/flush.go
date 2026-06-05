@@ -95,9 +95,7 @@ func (fj *flushJob) updateManifest() error {
 
 	current := fj.manifest.Current()
 	newLevels := make([][]SSTFileMeta, len(current.levels)+1)
-	for i, level := range current.levels {
-		newLevels[i] = level
-	}
+	copy(newLevels, current.levels)
 	newLevels[len(current.levels)] = files
 
 	v := Version{
@@ -110,7 +108,6 @@ func (fj *flushJob) updateManifest() error {
 }
 
 type flushManager struct {
-	memtables       []*memtable
 	activeMemtable  atomic.Pointer[memtable]
 	frozenMemtables []*memtable
 	manifest        *manifest
@@ -120,6 +117,7 @@ type flushManager struct {
 	done            chan struct{}
 	closed          atomic.Bool
 	loopDone        chan struct{}
+	lastErr         atomic.Pointer[error]
 }
 
 func newFlushManager(dir string, maxMemSize int64, manifest *manifest) *flushManager {
@@ -151,6 +149,8 @@ func (fm *flushManager) flushLoop() {
 				return
 			}
 			if err := job.Run(); err != nil {
+				e := err
+				fm.lastErr.Store(&e)
 			}
 		}
 	}
@@ -220,6 +220,9 @@ func (fm *flushManager) Close() error {
 	// can race with a flush job's updateManifest call, causing a
 	// "send on closed channel" panic.
 	<-fm.loopDone
+	if p := fm.lastErr.Load(); p != nil {
+		return *p
+	}
 	return nil
 }
 
