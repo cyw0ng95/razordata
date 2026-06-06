@@ -43,23 +43,24 @@ This is a critical prerequisite for production use and blocks后续 requirements
 
 ## Requirements
 
-| ID | Requirement | Status |
-|---|---|---|
-| REQ000127 | Catalog persistence across restarts (`CREATE TABLE` survives `Close`/`Open`) | planned |
-| R12-1 | Reserve tablespace ID `0` for system catalog | planned |
-| R12-2 | New `Catalog` type in `ENG/LS/catalog.go` with `Get(tableID)`, `Put(tableID, schema)`, `Delete(tableID)`, `List()` methods | planned |
-| R12-3 | `Catalog` uses internal `Store` (separate LSM tree instance) for persistence | planned |
-| R12-4 | MessagePack encoding for `TableSchema` (portable, versioned) | planned |
-| R12-5 | `Catalog.Put()` writes through WAL (RTData record) before updating memtable | planned |
-| R12-6 | `SYS.Open()` calls `Catalogbootstrap()` after WAL replay to load all schemas | planned |
-| R12-7 | `CREATE TABLE` calls `Catalog.Put()` atomically with user table creation | planned |
-| R12-8 | `DROP TABLE` calls `Catalog.Delete()` atomically with user table deletion | planned |
-| R12-9 | Handle catalog corruption gracefully: if catalog SST files are unreadable, return `ErrCorrupt` with specific message | planned |
-| R12-10 | Backward compatibility: detect schema format version, return `ErrUpgradeRequired` if future version | planned |
-| R12-11 | `Catalog.List()` returns all table schemas in deterministic order (sorted by tableID) | planned |
-| R12-12 | `go test ./internal/ENG/LS/... -race -count=1` all green | planned |
-| R12-13 | Crash recovery test: create table, crash (kill process), restart, verify table exists | planned |
-| R12-14 | Coverage for catalog paths ≥ 85% | planned |
+| ID | Subsystem | Requirement | Status |
+|---|---|---|---|
+| REQ000127 | SQL | Catalog persistence across restarts (`CREATE TABLE` survives `Close`/`Open`) | planned |
+| REQ000155 | ENG | Catalog persistence across restarts (design mentions multiple times, still TBD in REQ000127) | consolidated into REQ000127 |
+| R12-1 | - | Reserve tablespace ID `0` for system catalog | planned |
+| R12-2 | - | New `Catalog` type in `ENG/LS/catalog.go` with `Get(tableID)`, `Put(tableID, schema)`, `Delete(tableID)`, `List()` methods | planned |
+| R12-3 | - | `Catalog` uses internal `Store` (separate LSM tree instance) for persistence | planned |
+| R12-4 | - | MessagePack encoding for `TableSchema` (portable, versioned) | planned |
+| R12-5 | - | `Catalog.Put()` writes through WAL (RTData record) before updating memtable | planned |
+| R12-6 | - | `SYS.Open()` calls `Catalog.bootstrap()` after WAL replay to load all schemas | planned |
+| R12-7 | - | `CREATE TABLE` calls `Catalog.Put()` atomically with user table creation | planned |
+| R12-8 | - | `DROP TABLE` calls `Catalog.Delete()` atomically with user table deletion | planned |
+| R12-9 | - | Handle catalog corruption gracefully: if catalog SST files are unreadable, return `ErrCorrupt` with specific message | planned |
+| R12-10 | - | Backward compatibility: detect schema format version, return `ErrUpgradeRequired` if future version | planned |
+| R12-11 | - | `Catalog.List()` returns all table schemas in deterministic order (sorted by tableID) | planned |
+| R12-12 | - | `go test ./internal/ENG/LS/... -race -count=1` all green | planned |
+| R12-13 | - | Crash recovery test: create table, crash (kill process), restart, verify table exists | planned |
+| R12-14 | - | Coverage for catalog paths ≥ 85% | planned |
 
 ## Design
 
@@ -341,6 +342,37 @@ func TestCatalogCrashRecovery(t *testing.T) {
     // Restart and verify remaining tables exist
 }
 ```
+
+## Related TBD Requirements
+
+This iteration unlocks several downstream requirements. Track these for future iterations:
+
+### Addressed in iter-12
+
+| REQ ID | Subsystem | Requirement | Action |
+|---|---|---|---|
+| REQ000127 | SQL | Catalog persistence across restarts | **primary requirement** |
+| REQ000155 | ENG | Catalog persistence across restarts (duplicate tracking) | **consolidated with REQ000127** |
+
+### Unlocked by iter-12 (future iterations)
+
+These requirements depend on catalog persistence and will be enabled once iter-12 ships:
+
+| REQ ID | Subsystem | Requirement | Priority | Next Iter |
+|---|---|---|---|---|
+| REQ000126 | SQL | Foreign keys (REFERENCES, ON DELETE/UPDATE) | high | iter-20 |
+| REQ000102 | SYS | Admin CLI (`razor-admin`: schema dump, vacuum, manual compact) | high | iter-16 |
+| REQ000045 | ENG | Secondary indexes (non-PK columns) | low | future |
+| REQ000048 | ENG | Table registry persistence (`ENG/TB/`) | medium | **covered by REQ000127** |
+| REQ000085 | SQL | Histogram-based selectivity | medium | future |
+
+### Recommended follow-up iterations
+
+After iter-12 completes, consider prioritizing:
+
+1. **iter-13**: REQ000035 (WAL corruption recovery) — orthogonal to catalog, also critical
+2. **iter-14**: REQ000126 (Foreign keys) — high priority, builds on catalog foundation
+3. **iter-16**: REQ000102 (Admin CLI) — high priority, unblocks operational workflows
 
 ## Open Issues
 
