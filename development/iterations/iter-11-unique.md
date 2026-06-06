@@ -1,17 +1,28 @@
-# Iteration 11 — UNIQUE Constraint
+# Iteration 11 — UNIQUE Constraint + I/O Refinements
 
-**Subsystem:** `SQL` (`PS`, `EX`)
+**Subsystem:** `SQL` (`PS`, `EX`) for UNIQUE; `MEM` (`BF`), `FIL` (`DF`) for mmap/madvise
 **Status:** planned
-**Est. LOC:** ~700
-**Requirements:** REQ000107
-**Target release:** v0.8.0
+**Est. LOC:** ~900
+**Requirements:** REQ000107, REQ000026, REQ000019
+**Target release:** v0.8.1
 
 ## Overview
 
-Enforce column-level and table-level `UNIQUE` constraints. On
-INSERT/UPDATE that would produce a duplicate value in any UNIQUE
-column or composite key, return `ErrConstraint` (same sentinel used
-for NOT NULL violations in iter-10).
+Two-track iteration:
+
+**Track 1 — UNIQUE (REQ000107):** Enforce column-level and table-level
+`UNIQUE` constraints. On INSERT/UPDATE that would produce a duplicate
+value in any UNIQUE column or composite key, return `ErrConstraint`
+(same sentinel used for NOT NULL violations in iter-10).
+
+**Track 2 — I/O refinements (REQ000019, REQ000026):** Reduce syscall
+overhead on the hot read path.
+- REQ000019: `MADV_DONTNEED` hint to the kernel on buffer eviction,
+  so freed pages can be reclaimed immediately instead of staying in
+  the page cache.
+- REQ000026: `mmap` the SST files instead of `pread`/`pwrite` for
+  reads. Same BlockDevice interface; lower syscall overhead for
+  warm pages (no copy_to_user on the kernel side).
 
 ## Dependencies
 
@@ -19,8 +30,13 @@ for NOT NULL violations in iter-10).
   `fillDefaults` / `registerStoreSchemaWithConstraints` path)
 - Required: iter-09 (in-memory catalog; switch path is best-effort
   for v1 since catalog persistence is iter-12)
-- Touches: `SQL/PS/ast.go`, `SQL/PS/ps.go`, `SQL/EX/store.go`,
-  `SQL/EX/writers.go`, `SQL/EX/constraints.go`, `SQL/EX/operators.go`
+- Required: iter-02 (BufferPool — for `MADV_DONTNEED` integration)
+- Required: iter-01 (BlockDevice — for `mmap` integration)
+- Touches (UNIQUE track): `SQL/PS/ast.go`, `SQL/PS/ps.go`,
+  `SQL/EX/store.go`, `SQL/EX/writers.go`, `SQL/EX/constraints.go`,
+  `SQL/EX/operators.go`
+- Touches (I/O track): `MEM/BF/bf.go`, `MEM/BF/sys_linux.go` (new),
+  `MEM/BF/sys_other.go` (new), `FIL/DF/df.go`, `FIL/DF/df_test.go`
 
 ## Current State
 
@@ -62,6 +78,11 @@ for NOT NULL violations in iter-10).
 | R11-10 | `Update` only checks new values against existing rows whose PK is different (the row's pre-update key is excluded to allow no-op updates) | planned |
 | R11-11 | `go test ./internal/SQL/... -race -count=1` all green | planned |
 | R11-12 | Coverage for unique-check paths ≥ 80% | planned |
+| R11-13 | `MADV_DONTNEED` hint on buffer eviction (Linux build tag; no-op elsewhere) | planned |
+| R11-14 | `BenchmarkBufferPoolEviction` shows no regression after madvise | planned |
+| R11-15 | `mmap` BlockDevice for SST reads (Linux build tag; pread fallback elsewhere) | planned |
+| R11-16 | `BenchmarkBlockRead` mmap ≥ 2x pread on warm reads | planned |
+| R11-17 | Build matrix: `GOOS=linux` builds with madvise+mmap; `GOOS=darwin` and `GOOS=windows` build with pread fallback | planned |
 
 ## Design
 
@@ -291,6 +312,58 @@ for {
    unique-check overhead is bounded. Target: ≤ 1.5x of
    `BenchmarkConstraintsInsert` baseline (no-unique).
 
+### Phase 8: `MADV_DONTNEED` hints (REQ000019)
+
+Reduce page-cache pressure on buffer eviction. Linux-specific;
+guarded with a build tag so other platforms (macOS, Windows) keep
+the no-op default.
+
+1. `MEM/BF/bf.go` — when a buffer slot is evicted (the
+   `release`/`evict` path that hands the underlying byte slice back
+   to `sync.Pool`), call `syscall.Madvise(buf, syscall.MADV_DONTNEED)`
+   on Linux. On other platforms, no-op.
+   - Group the syscall into a helper `madviseDontNeed(b []byte)` in
+     `MEM/BF/sys_linux.go` and `MEM/BF/sys_other.go` (build-tag
+     split, same package).
+2. `MEM/BF/bf.go` — call the helper at the eviction site only; do
+   not call it on `Unpin` (Unpin is not an eviction). Confirm via
+   `MEM/BF/bf_test.go` that the helper is invoked the expected
+   number of times under eviction pressure (mock the syscall via a
+   package-level var `madviseFn = syscall.Madvise`).
+3. `MEM/BF/bf_test.go` (extend) — eviction test that asserts the
+   mock `madviseFn` was called. No syscall in the test path.
+4. `MEM/BF/sys_linux.go` and `MEM/BF/sys_other.go` — build tags:
+   `//go:build linux` and `//go:build !linux` respectively. `sys_other`
+   defines `madviseDontNeed(b []byte) {}` as a no-op.
+5. Bench: `BenchmarkBufferPoolEviction` should show no regression
+   vs. iter-02 baseline (the syscall is async w.r.t. user space).
+
+### Phase 9: `mmap` BlockDevice (REQ000026)
+
+Replace `pread`/`pwrite` on SST files with `mmap` for reads; keep
+`pwrite` for writes (O_DIRECT is already in place; mmap is for the
+read path only in v1).
+
+1. `FIL/DF/df.go` — add a second read implementation:
+   `mmapBlockDevice` that opens SST files with `os.OpenFile` and
+   `mmap`s them with `syscall.Mmap` (or `golang.org/x/exp/mmap` —
+   evaluate during implementation). Reads become slice copies from
+   the mapped region.
+   - Build tag: `//go:build linux` for the mmap path; fallback to
+     pread on other platforms.
+2. `FIL/DF/df.go` — keep `preadBlockDevice` (current iter-01 code)
+   as the fallback. The `BlockDevice` interface is unchanged; the
+   factory picks the implementation based on a build tag.
+3. `FIL/DF/df.go` — `Close()` calls `syscall.Munmap` on the mapped
+   region before closing the FD.
+4. `MEM/BF/bf.go` — when loading a block from a `mmapBlockDevice`,
+   `copy(buf, mapped[offset:offset+len])` instead of
+   `pread(...)`. The checksum check on the copy is unchanged.
+5. `FIL/DF/df_test.go` (extend) — round-trip test against an mmap
+   device: write blocks, read them back, verify contents.
+6. Bench: `BenchmarkBlockRead` mmap vs. pread — expect ≥ 2x
+   improvement on warm reads (kernel page cache hit).
+
 ## Open Questions
 
 - **Q1**: Composite UNIQUE on TEXT columns — exact match or
@@ -321,7 +394,10 @@ for {
 - `gofmt -s -l .` no drift
 - `SQL/EX` coverage for unique paths ≥ 80%
 - New `tests/sqlcmp` cases: single + composite UNIQUE
-- Tag `v0.8.0` on completion
+- Build matrix verified: `GOOS=linux`, `GOOS=darwin`, `GOOS=windows` all build
+- `BenchmarkBufferPoolEviction` no regression (madvise is async)
+- `BenchmarkBlockRead` mmap ≥ 2x pread on warm reads
+- Tag `v0.8.1` on completion (minor version bump due to mmap+constraint changes)
 
 ## Migration Note (for release notes)
 
@@ -332,3 +408,11 @@ for {
   `unique []EX.UniqueKey` parameter. Update any direct callers.
 - `AP.ErrConstraint` now also covers UNIQUE violations (was NOT NULL
   only in iter-10).
+- `BlockDevice` implementation is auto-selected by build tag on
+  Linux (mmap). External code that imports `FIL/DF` and references
+  the unexported `preadBlockDevice` directly will break; use the
+  `BlockDevice` interface only.
+- `MEM/BF` exports new `madviseDontNeed` helper (unexported
+  actually, but call site added); no public API change.
+- v0.8.1 (this) is a minor bump: AST shape, BlockDevice
+  implementation, and the madvise syscall all changed.
