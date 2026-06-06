@@ -1,6 +1,7 @@
 package VL
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,14 +21,17 @@ type versionGC struct {
 }
 
 type epochManager struct {
-	epoch   atomic.Int64
-	threads sync.Map
-	stopCh  chan struct{}
-	wg      sync.WaitGroup
+	epoch    atomic.Int64
+	threads  sync.Map
+	stopCh   chan struct{}
+	wg       sync.WaitGroup
+	stopOnce sync.Once
 }
 
 func newEpochManager() *epochManager {
-	return &epochManager{}
+	return &epochManager{
+		stopCh: make(chan struct{}),
+	}
 }
 
 func (em *epochManager) Start() {
@@ -48,9 +52,28 @@ func (em *epochManager) Start() {
 	}()
 }
 
-func (em *epochManager) Stop() {
-	close(em.stopCh)
-	em.wg.Wait()
+// Stop signals the epoch manager's background goroutine to exit and
+// waits for it, bounded by ctx. Idempotent.
+//
+// Stop is the graceful-shutdown entry point (Phase 4.2 of
+// SYS.md:253-256). The wg.Wait runs in a side goroutine so that
+// ctx.Done can preempt it; the side goroutine exits on its own once
+// the wait completes.
+func (em *epochManager) Stop(ctx context.Context) error {
+	em.stopOnce.Do(func() {
+		close(em.stopCh)
+	})
+	finished := make(chan struct{})
+	go func() {
+		em.wg.Wait()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (em *epochManager) CurrentEpoch() int64 {
@@ -86,7 +109,7 @@ func StartGC() {
 
 func StopGC() {
 	if globalGC.em != nil {
-		globalGC.em.Stop()
+		_ = globalGC.em.Stop(context.Background())
 	}
 }
 

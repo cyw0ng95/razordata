@@ -3,6 +3,7 @@ package ls
 import (
 	"bytes"
 	"container/heap"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -223,6 +224,9 @@ type compactionManager struct {
 	compacting      atomic.Bool
 	compactionQueue chan *compactionJob
 	done            chan struct{}
+	loopDone        chan struct{}
+	wg              sync.WaitGroup
+	stopOnce        sync.Once
 }
 
 func newCompactionManager(dir string, manifest *manifest) *compactionManager {
@@ -232,12 +236,16 @@ func newCompactionManager(dir string, manifest *manifest) *compactionManager {
 		budget:          defaultBudget,
 		compactionQueue: make(chan *compactionJob, 10),
 		done:            make(chan struct{}),
+		loopDone:        make(chan struct{}),
 	}
+	cm.wg.Add(1)
 	go cm.compactionLoop()
 	return cm
 }
 
 func (cm *compactionManager) compactionLoop() {
+	defer cm.wg.Done()
+	defer close(cm.loopDone)
 	for {
 		select {
 		case <-cm.done:
@@ -247,6 +255,25 @@ func (cm *compactionManager) compactionLoop() {
 			}
 			cm.compacting.Store(false)
 		}
+	}
+}
+
+// Stop signals the compaction goroutine to exit and waits for it,
+// bounded by ctx. Idempotent: a second call with the same ctx
+// returns nil immediately if the loop has already exited.
+//
+// Stop is distinct from Close: Stop is the graceful-shutdown entry
+// point (Phase 4.1 of SYS.md:245-251) and respects a timeout; Close
+// is the destructor and uses an infinite wait.
+func (cm *compactionManager) Stop(ctx context.Context) error {
+	cm.stopOnce.Do(func() {
+		close(cm.done)
+	})
+	select {
+	case <-cm.loopDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -308,10 +335,5 @@ func (cm *compactionManager) requestCompaction(level int) {
 }
 
 func (cm *compactionManager) Close() error {
-	select {
-	case <-cm.done:
-	default:
-		close(cm.done)
-	}
-	return nil
+	return cm.Stop(context.Background())
 }

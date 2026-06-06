@@ -1,6 +1,7 @@
 package ls
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -119,6 +120,7 @@ type flushManager struct {
 	done            chan struct{}
 	closed          atomic.Bool
 	loopDone        chan struct{}
+	stopOnce        sync.Once
 	lastErr         atomic.Pointer[error]
 }
 
@@ -191,6 +193,26 @@ func (fm *flushManager) WaitForFlush() {
 	fm.pendingWGs.Wait()
 }
 
+// Stop signals the flush goroutine to exit and waits for it,
+// bounded by ctx. Idempotent: a second call returns nil immediately
+// if the loop has already exited.
+//
+// Stop is the graceful-shutdown entry point (Phase 4.1 of
+// SYS.md:245-251). It does NOT wait for in-flight flush jobs to
+// finish — call WaitForFlush for that. It only waits for the
+// dispatch loop to exit.
+func (fm *flushManager) Stop(ctx context.Context) error {
+	fm.stopOnce.Do(func() {
+		close(fm.done)
+	})
+	select {
+	case <-fm.loopDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (fm *flushManager) ActiveMemtable() *memtable {
 	return fm.activeMemtable.Load()
 }
@@ -227,12 +249,13 @@ func (fm *flushManager) Close() error {
 	if !fm.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	close(fm.done)
 	// Wait for the flushLoop goroutine to finish processing
 	// pending jobs. Without this, the engine's manifest.Close
 	// can race with a flush job's updateManifest call, causing a
 	// "send on closed channel" panic.
-	<-fm.loopDone
+	if err := fm.Stop(context.Background()); err != nil {
+		return err
+	}
 	if p := fm.lastErr.Load(); p != nil {
 		return *p
 	}
