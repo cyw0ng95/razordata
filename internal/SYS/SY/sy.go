@@ -62,6 +62,10 @@ type Engine struct {
 	started time.Time
 	// exeAdapter bridges the LS engine to the EX Store interface.
 	exeAdapter *executorStoreAdapter
+	// lastShutdown captures the outcome of the most recent
+	// Shutdown() call. Populated by runShutdown, surfaced via
+	// Stats() for post-mortem observability.
+	lastShutdown AP.ShutdownStats
 }
 
 // Open validates opts, constructs every subsystem in dependency
@@ -246,13 +250,7 @@ func (e *Engine) open(ctx context.Context) (err error) {
 // Close flushes pending writes and tears down every subsystem in
 // reverse construction order. Safe to call multiple times.
 func (e *Engine) Close(ctx context.Context) error {
-	if !e.opened.Load() {
-		return nil
-	}
-	if !e.closed.CompareAndSwap(false, true) {
-		return nil
-	}
-	return e.closeBestEffort()
+	return e.Shutdown(ctx)
 }
 
 func (e *Engine) closeBestEffort() error {
@@ -383,8 +381,11 @@ func (e *Engine) Open(ctx context.Context, dir string, opts AP.Options) error {
 
 // Stats aggregates metrics from every subsystem.
 func (e *Engine) Stats() AP.EngineStats {
+	lastShutdownMu.Lock()
+	snap := e.lastShutdown
+	lastShutdownMu.Unlock()
 	if !e.opened.Load() {
-		return AP.EngineStats{Version: AP.Version}
+		return AP.EngineStats{Version: AP.Version, LastShutdown: snap}
 	}
 	lsm := e.eng.Stats()
 	bp := e.bp.Stats()
@@ -414,6 +415,7 @@ func (e *Engine) Stats() AP.EngineStats {
 			Committed: tx.Committed,
 			Aborted:   tx.Aborted,
 		},
+		LastShutdown: snap,
 	}
 }
 
