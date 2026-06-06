@@ -37,6 +37,7 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 10 | NOT NULL / DEFAULT | Column constraints end-to-end | `PS`, `EX` | 16 | done (v0.7.0) |
 | 11 | UNIQUE Constraint | Single + composite + multi-clause UNIQUE | `PS`, `EX` | 11 | done (v0.8.0); I/O refinements pending v0.8.1 |
 | 11b | I/O refinements | MADV_DONTNEED + mmap BlockDevice | `MEM/BF`, `FIL/DF` | 4 | done (v0.8.1) |
+| 12 | Catalog Persistence | System catalog LSM tree, bootstrap, schema versioning | `LS`, `ID`, `EX`, `SY` | planned (v0.9.0) |
 
 All iterations complete. Coverage details: `go test ./... -cover`.
 
@@ -46,14 +47,14 @@ The v1 chain LOG → SYS is closed. Production-ready path: two phases.
 
 ### Phase 1: Correctness & Ops Foundation (iter-12 to iter-17)
 
-| Iter | Requirements | Goal |
-|---|---|---|
-| iter-12 | REQ000127 | Catalog persistence across restarts |
-| iter-13 | REQ000035 | WAL corruption recovery policy |
-| iter-14 | REQ000061 | Read-committed isolation (default) |
-| iter-15 | REQ000062 | MVCC reads in transaction (SELECT sees own writes) |
-| iter-16 | REQ000102 | Admin CLI (`razor-admin`: schema dump, vacuum, manual compaction) |
-| iter-17 | REQ000044, REQ000138, REQ000143 | `ENG/LS` benchmarks + coverage lift |
+| Iter | Requirements | Goal | Status |
+|---|---|---|---|
+| iter-12 | REQ000127 | Catalog persistence across restarts | planned (v0.9.0) |
+| iter-13 | REQ000035 | WAL corruption recovery policy | remaining |
+| iter-14 | REQ000061 | Read-committed isolation (default) | remaining |
+| iter-15 | REQ000062 | MVCC reads in transaction (SELECT sees own writes) | remaining |
+| iter-16 | REQ000102 | Admin CLI (`razor-admin`: schema dump, vacuum, manual compaction) | remaining |
+| iter-17 | REQ000044, REQ000138, REQ000143 | `ENG/LS` benchmarks + coverage lift | remaining |
 
 ### Phase 2: SQL Standards Compliance (iter-18 to iter-20)
 
