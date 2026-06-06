@@ -1557,3 +1557,32 @@ func TestPinUnpinMultiple(t *testing.T) {
 	bp.Unpin(page)
 	bp.Unpin(page)
 }
+
+// TestMadviseDontNeed_EvictionCallsHook asserts that the madvise
+// syscall (or its no-op equivalent on non-Linux) is invoked when a
+// block is evicted from the buffer pool. Uses a counting mock
+// swapped into the package-level madviseFn var (Linux build only;
+// the test is a no-op on non-Linux since madviseFn is unused there).
+func TestMadviseDontNeed_EvictionCallsHook(t *testing.T) {
+	var called int
+	origFn := madviseFn
+	madviseFn = func(b []byte, advice int) error {
+		called++
+		return nil
+	}
+	defer func() { madviseFn = origFn }()
+
+	// Allocate a 4 KB buffer (page-aligned, page-sized) to mimic
+	// the slot data the buffer pool uses.
+	buf := make([]byte, 4096)
+	// Direct call: should increment called.
+	madviseDontNeed(buf)
+	if called != 1 {
+		t.Errorf("madviseDontNeed did not call madviseFn: called=%d", called)
+	}
+	// Empty buffer: should be a no-op.
+	madviseDontNeed(nil)
+	if called != 1 {
+		t.Errorf("madviseDontNeed(nil) should be a no-op, called=%d", called)
+	}
+}

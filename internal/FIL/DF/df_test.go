@@ -1111,3 +1111,124 @@ func TestReadBlockSmallBuffer(t *testing.T) {
 		t.Error("expected error for buffer too small")
 	}
 }
+
+// TestMmapRoundTrip: write blocks via a regular BlockDevice, then
+// re-open with OpenMmap and read them back. The mmap path should
+// return the same content (and the same checksums).
+func TestMmapRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "mmap.dat")
+	// Write phase: 4 blocks.
+	w, err := Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for i := 0; i < 4; i++ {
+		data := make([]byte, 100)
+		for j := range data {
+			data[j] = byte(i*10 + j)
+		}
+		if err := w.WriteBlock(ctx, uint64(i), data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+
+	// Read phase via mmap.
+	r, err := OpenMmap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if !r.mmap {
+		t.Logf("mmap not active on this platform; falling back to pread")
+	}
+	for i := 0; i < 4; i++ {
+		buf := make([]byte, 4092)
+		if err := r.ReadBlock(ctx, uint64(i), 100, buf); err != nil {
+			t.Fatalf("block %d: %v", i, err)
+		}
+		for j := 0; j < 100; j++ {
+			if buf[j] != byte(i*10+j) {
+				t.Errorf("block %d byte %d: got %d, want %d", i, j, buf[j], i*10+j)
+			}
+		}
+	}
+}
+
+// BenchmarkBlockReadPread reads via the standard pread path.
+// BenchmarkBlockReadMmap reads via the mmap path (zero-copy on
+// warm kernel page cache).
+func BenchmarkBlockReadPread(b *testing.B) {
+	tmp := b.TempDir()
+	path := filepath.Join(tmp, "pread.dat")
+	w, err := Create(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	ctx := context.Background()
+	for i := 0; i < 1024; i++ {
+		data := make([]byte, DataLen-ChecksumLen)
+		for j := range data {
+			data[j] = byte(i + j)
+		}
+		if err := w.WriteBlock(ctx, uint64(i), data); err != nil {
+			b.Fatal(err)
+		}
+	}
+	w.Sync()
+	w.Close()
+
+	r, err := Open(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer r.Close()
+	buf := make([]byte, DataLen)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		blockID := uint64(i % 1024)
+		if err := r.ReadBlock(ctx, blockID, DataLen-ChecksumLen, buf); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkBlockReadMmap(b *testing.B) {
+	tmp := b.TempDir()
+	path := filepath.Join(tmp, "mmap.dat")
+	w, err := Create(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	ctx := context.Background()
+	for i := 0; i < 1024; i++ {
+		data := make([]byte, DataLen-ChecksumLen)
+		for j := range data {
+			data[j] = byte(i + j)
+		}
+		if err := w.WriteBlock(ctx, uint64(i), data); err != nil {
+			b.Fatal(err)
+		}
+	}
+	w.Sync()
+	w.Close()
+
+	r, err := OpenMmap(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer r.Close()
+	buf := make([]byte, DataLen)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		blockID := uint64(i % 1024)
+		if err := r.ReadBlock(ctx, blockID, DataLen-ChecksumLen, buf); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

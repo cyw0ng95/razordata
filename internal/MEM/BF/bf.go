@@ -255,6 +255,7 @@ func (b *bp) Get(ctx context.Context, blockID uint64) (*Page, bool, error) {
 				b.used.Add(-1)
 				b.evicts.Add(1)
 				if len(slot.data) == BlockSize {
+					madviseDontNeed(slot.data)
 					b.sp.Put(slot.data)
 				}
 				goto allocated
@@ -377,6 +378,7 @@ func (b *bp) Upsert(page *Page) error {
 				b.used.Add(-1)
 				b.evicts.Add(1)
 				if len(slot.data) == BlockSize {
+					madviseDontNeed(slot.data)
 					b.sp.Put(slot.data)
 				}
 				goto insert
