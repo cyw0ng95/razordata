@@ -59,7 +59,13 @@ type versionNode struct {
 - `deleted = true` means this is a tombstone (logical deletion).
 - Lock-free insertion: new version nodes are allocated from a per-thread arena, inserted via CAS on the `next` pointer. No mutex needed for writes.
 
-### Per-Thread Arena
+### Per-Transaction Arena (v1 Decision: per-transaction vs. per-goroutine)
+
+The original design (iter-05) specified per-goroutine arenas indexed by goroutine ID. However, the implementation uses **per-transaction arenas** for the following reasons:
+
+1. **Simpler lifecycle**: Arena allocation/deallocation aligns with transaction boundaries (Begin/Commit/Abort).
+2. **No goroutine ID required**: Go doesn't expose goroutine IDs; simulating them with atomic counters defeats the purpose.
+3. **Better memory isolation**: Each transaction's writes are isolated to its own arena, simplifying rollback.
 
 ```go
 type arena struct {
@@ -82,9 +88,12 @@ func (a *arena) Alloc(n int) []byte {
 }
 ```
 
-- Each goroutine has a thread-local arena (via `runtime.GOMAXPROCS(0)`-sized `[]*arena`, indexed by goroutine ID modulo the slice length). Arenas are allocated lazily on first `Alloc` call per goroutine, via `sync.Pool` for reuse.
-- Typically 1 MB per arena. Version nodes are allocated from the arena via pointer arithmetic — no `new` or `make` in the hot path.
-- When an arena is exhausted, a new one is fetched from `sync.Pool` (or allocated if the pool is empty). Old arenas are freed by the epoch reclamation pass.
+- Allocated in `TXN/VL/manager.go` on `Begin()`: `arena := MV.NewArena(1 * MB)`.
+- Released in `TXN/VL/protocol.go` on `Commit()`/`Abort()`: `MV.ReleaseArena(arena)`.
+- Arenas are pooled via `sync.Pool` for reuse across transactions.
+- **Trade-off**: Per-transaction arenas may allocate more frequently than per-goroutine arenas under high concurrency, but the simplicity and correct lifecycle semantics outweigh the cost.
+
+**Future work (post-v1)**: If profiling shows arena allocation is a hotspot, consider hybrid approach: per-goroutine scratch arenas that feed into per-transaction committed arenas.
 
 ### Hazard Pointer
 
@@ -96,10 +105,28 @@ type hazardPointerSet struct {
 const MaxHazardPtrs = 2 // one for current read, one for next
 ```
 
-- Each reader goroutine holds a local `hazardPointerSet`.
-- Before dereferencing a version node pointer, the reader publishes it to its hazard pointer set via `atomic.Store`.
-- The reclamation pass scans all registered hazard pointers before freeing any node.
+**Design intent:** Each reader goroutine holds a local `hazardPointerSet`. Before dereferencing a version node pointer, the reader publishes it to **one slot** (current or next) via `atomic.Store`. The reclamation pass scans all registered hazard pointers before freeing any node.
+
+**Current implementation gap (REQ000175):** The current `TXN/LC/hazard.go` publishes to **all slots** instead of a single slot, which defeats the double-slot design. This is a known misalignment that should be fixed in a future iteration.
+
+**Correct protocol:**
+```go
+func (h *hazardPointerSet) PublishCurrent(ptr unsafe.Pointer) {
+    h.ptrs[0].Store(ptr) // current read slot
+}
+
+func (h *hazardPointerSet) PublishNext(ptr unsafe.Pointer) {
+    h.ptrs[1].Store(ptr) // prefetch slot for next node
+}
+
+func (h *hazardPointerSet) Clear() {
+    h.ptrs[0].Store(nil)
+    h.ptrs[1].Store(nil)
+}
+```
+
 - If a node is in any hazard pointer set, it is not reclaimed.
+- The double-slot design allows readers to prefetch the next node while holding the current node in the other slot.
 
 ### Epoch Manager
 
@@ -116,12 +143,50 @@ type threadRecord struct {
 }
 ```
 
-- Global epoch counter incremented by the epoch manager goroutine (every ~100 ms or on demand).
-- Each reader thread registers with the epoch manager on first read and deregisters on exit.
-- `EnterEpoch()`: atomically read the current epoch, store it in the thread record.
-- `ExitEpoch()`: mark the thread as having exited the epoch.
-- `Reclaim(batch []unsafe.Pointer)`: wait for all registered threads to exit the old epoch, then free the batch in bulk.
+**Design intent:** Global epoch counter incremented by the epoch manager goroutine (every ~100 ms or on demand). Each reader thread registers with the epoch manager on first read and deregisters on exit.
+
+**Current implementation gaps:**
+1. **REQ000175**: The `Reclaim()` function does not wait for threads to exit the old epoch and does not actually free memory (stub implementation).
+2. **REQ000181**: Go does not expose goroutine IDs; the current implementation uses an atomic counter which can produce duplicate IDs. A proper solution would use `runtime.Callers` or context-based tracking.
+
+**Correct protocol (design):**
+```go
+func (em *epochManager) EnterEpoch() {
+    curr := em.epoch.Load()
+    tr := em.getThreadRecord()
+    tr.enteredAt.Store(curr)
+}
+
+func (em *epochManager) ExitEpoch() {
+    tr := em.getThreadRecord()
+    tr.enteredAt.Store(math.MaxInt64) // mark as exited
+}
+
+func (em *epochManager) Reclaim(batch []unsafe.Pointer) {
+    // Wait for all threads to exit the current epoch
+    target := em.epoch.Load() + 1
+    for {
+        allExited := true
+        em.threads.Range(func(_, v any) bool {
+            tr := v.(*threadRecord)
+            if tr.enteredAt.Load() < target {
+                allExited = false
+                return false
+            }
+            return true
+        })
+        if allExited {
+            break
+        }
+        time.Sleep(1 * ms)
+    }
+    // Now safe to free the batch
+    freeBatch(batch)
+}
+```
+
 - This guarantees that no reader is mid-read on a freed node.
+- The epoch manager goroutine increments the epoch counter periodically (~100 ms).
 
 ### ReadView
 
@@ -205,7 +270,7 @@ const MaxConcurrentTXNs = 1024
      }
      ```
    - add key (or key range) to writeSet
-   - write RTData record to WAL (not yet synced)
+   - **write RTData record to WAL (not yet synced)** (CRITICAL GAP REQ000171: not implemented)
 
 4. Pre-commit (Validation) — Serializability Check:
    - acquire read lock on transaction slot array
@@ -220,8 +285,8 @@ const MaxConcurrentTXNs = 1024
 
 5. Commit:
    - assign commitTS = globalAtomicCounter++
-   - write RTCommit record to WAL: [txnID][commitTS]
-   - call WAL.Sync() to fsync the commit record (durability point)
+   - **write RTCommit record to WAL: [txnID][commitTS]** (CRITICAL GAP REQ000171: not implemented)
+   - **call WAL.Sync() to fsync the commit record (durability point)** (not implemented)
    - for each version node in writeSet:
      - CAS update endTS from MaxUint64 to commitTS:
        ```go
@@ -236,6 +301,8 @@ const MaxConcurrentTXNs = 1024
    - update slot.status = COMMITTED (atomic store)
    - release transaction slot (return to free list)
    - unregister thread from epoch manager
+
+**Current implementation gap (REQ000171):** The `TXN/VL/protocol.go` Commit() function does NOT write RTCommit records to WAL and does NOT call WAL.Sync(). This is a critical durability gap — committed data will be lost on crash.
 
 6. Post-commit:
    - release all resources (arena, read view)
