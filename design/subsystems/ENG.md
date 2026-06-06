@@ -101,8 +101,21 @@ type node struct {
   - One entry per data block: `[largestKey:varint][blockOffset:varint][blockSize:varint]`
   - Sorted by `largestKey`. Binary search for the target block.
 - **BloomFilter:**
-  - `[]byte` bitset, 10 bits per key. On `Insert`: hash the key to a 64-bit value, use `hash % (size * 8)` to find the first bit bucket, set `bits[bucket] |= 1 << (hash & 63)`. Use a second hash to set a second bit (double-hashing to reduce false negatives).
-  - On read: check bloom filter first. If bloom says "probably not present", skip the file.
+  - **Structure:** `[]byte` bitset with 10 bits per key (expected). For N keys, bit array size = `(N * 10 + 7) / 8` bytes.
+  - **Hash functions:** Double hashing using two independent FNV-1a hashes with different seeds:
+    - `h1 = FNV1a(key, seed=0x811C9DC5)`
+    - `h2 = FNV1a(key, seed=0x01000193)`
+    - Combined position: `pos = (h1 + i * h2) % (bitSize * 8)` for i in [0, 1] (2 probes per key)
+  - **Insert:** For each key, compute h1 and h2, then set 2 bits:
+    ```go
+    for i := 0; i < 2; i++ {
+        pos := (h1 + uint64(i) * h2) % uint64(len(bits) * 8)
+        bits[pos/8] |= 1 << (pos % 8)
+    }
+    ```
+  - **Query:** Check both bit positions. If either bit is 0, key is definitely not present. If both bits are 1, key is probably present.
+  - **False positive rate:** With 10 bits per key and 2 hash functions, expected false positive rate ≈ `(1 - e^(-2N/M))^2` where M = bit array size, N = key count. For 10 bits/key, this yields ~1% false positive rate.
+  - On read: check bloom filter first. If bloom says "definitely not present", skip the SST file entirely.
 - **Footer (28 bytes):**
   ```
   [indexOffset:8][indexSize:4][bloomOffset:8][bloomSize:4][magic:4]

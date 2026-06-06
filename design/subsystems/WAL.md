@@ -82,6 +82,7 @@ type logSegment struct {
 - `payload` for `RTCommit`: `[commitTS:8]`
 - `payload` for `RTRollback`: `[]` (empty)
 - `payload` for `RTCheckpoint`: `[checkpointLSN:8][catalogRootPtr:8][manifestChecksum:4][activeTXNCount:varint][activeTXNs:varint...]`
+- `payload` for `RTMerge`: `[newVersion:8][deletedFileCount:varint][deletedFiles:varint...][addedFileCount:varint][addedFiles:varint...]`
 
 ### LSN Counter
 

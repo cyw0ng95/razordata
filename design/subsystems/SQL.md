@@ -296,19 +296,124 @@ type HashJoin    struct{ left, right Operator; keys []string }
 
 ### EX — Executor
 
-**Responsibility:** Direct execution of operator tree against storage.
+**Responsibility:** Direct execution of operator tree against storage with SIMD acceleration and concurrent execution.
 
 **Key behaviors:**
+
+#### Execution Model
 - `Exec(ctx, stmt, args)` → `Query` or `Exec`: parse → rewrite → plan → execute → return.
 - Each operator implements `Next(ctx) (Row, error)`.
-- `SeqScan.Next`: iterate `ENG.NewIterator()` over the table's key range, apply `filter`, decode rows, yield.
-- `IndexScan.Next`: use the index to seek to `rangeStart`, iterate until `rangeEnd`, apply any remaining filter.
+- **Vectorized execution (SIMD):** For filter-heavy queries, operators can process batches of 1024 rows at once using Go's `golang.org/x/exp/constraints` and manual SIMD-like patterns:
+  - Batch layout: columnar arrays (`[]int64`, `[]float64`, `[]string`) instead of row-by-row.
+  - Predicate evaluation: loop over arrays with manual unrolling (process 4-8 elements per iteration).
+  - Selection vectors: `[]uint16` mask indicating which rows pass the filter.
+- **Parallel execution:** For large scans and joins, use worker pool (`runtime.GOMAXPROCS(0)` workers):
+  - Table scan split into key-range partitions, each worker scans a partition.
+  - Merge results via channel with bounded buffer (non-blocking send, drop on overflow).
+  - Hash join build phase: parallel hash table construction using `sync.Map` or sharded maps.
+
+#### Operator Implementations
+
+**SeqScan (with SIMD acceleration):**
+- Default: iterate `ENG.NewIterator()` over the table's key range.
+- **Vectorized mode:** Collect 1024 rows into columnar arrays, apply `filter` via SIMD-like batch evaluation:
+  ```go
+  func evaluateBatch(pred Expr, cols [][]byte, mask []uint16) (count int) {
+      // Manual unrolling: process 4 rows per iteration
+      for i := 0; i < len(cols[0]); i += 4 {
+          // Load 4 values into registers
+          v0, v1, v2, v3 := cols[0][i], cols[0][i+1], cols[0][i+2], cols[0][i+3]
+          // Compare all 4 in parallel (SIMD-style)
+          if pred(v0) { mask[count] = uint16(i); count++ }
+          if pred(v1) { mask[count] = uint16(i+1); count++ }
+          if pred(v2) { mask[count] = uint16(i+2); count++ }
+          if pred(v3) { mask[count] = uint16(i+3); count++ }
+      }
+      return count
+  }
+  ```
+- Yield rows matching the selection vector.
+- **Parallel SeqScan:** If table size > 1 MB, split key range into `N = runtime.GOMAXPROCS(0)` partitions. Launch workers, merge results via channel.
+
+**IndexScan:**
+- Use the index to seek to `rangeStart`, iterate until `rangeEnd`.
+- Apply any remaining filter via vectorized evaluation.
+- **Parallel IndexScan:** For range scans covering > 1000 keys, split range into sub-ranges, scan in parallel.
+
+**Filter (SIMD-optimized):**
 - `Filter.Next`: loop on child `Next`, evaluate `predicate` on each row; yield if true.
-- `Sort.Next`: collect all rows from child into a slice, sort by keys, yield in order.
+- **Vectorized Filter:** Accept columnar batches from child, evaluate predicate on entire batch using SIMD-like loops, output selection vector.
+- Predicate types supported:
+  - Comparison: `=`, `!=`, `<`, `<=`, `>`, `>=`
+  - Range: `BETWEEN`, `IN` (converted to sorted array + binary search)
+  - Pattern: `LIKE` (prefix/suffix optimization, otherwise fallback to regex)
+
+**Project:**
+- `Project.Next`: call child `Next`, extract specified columns, yield.
+- **Vectorized Project:** Process batches, extract columns into new columnar arrays.
+
+**Sort:**
+- **Single-threaded:** `Sort.Next` must collect all rows from child into a slice, sort by keys, yield in order.
+- **Parallel Sort (top-k):** For `ORDER BY ... LIMIT k`:
+  - Use parallel sample sort: each worker sorts its partition, then merge k smallest/largest.
+  - For large datasets: external merge sort (spill to disk if memory exceeds threshold).
+
+**Limit:**
 - `Limit.Next`: loop on child `Next`, count rows, stop after `n` rows.
-- `Insert.Next`: evaluate all expressions per row, encode the entire batch (all rows) via `ENG/DP`, and call `txn.Insert()` once with the batched key-value data. Batch encoding: `[rowCount:varint][row_0:encoded][row_1:encoded]...` where each row is `[col_0:varint/blob]...[col_N:varint/blob]` — avoids per-row `Insert` call overhead.
+- **Parallel Limit:** For `LIMIT k` with large `k`, use parallel tournament: each worker finds top-k/N, then merge.
+
+**Aggregate (SIMD acceleration):**
+- Aggregates (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`): accumulate in per-worker local state, then merge.
+- **Vectorized Aggregate:** Process batches, update accumulators with SIMD loops:
+  ```go
+  func sumBatch(vals []int64, acc *int64) {
+      var local0, local1, local2, local3 int64
+      for i := 0; i < len(vals); i += 4 {
+          local0 += vals[i]
+          local1 += vals[i+1]
+          local2 += vals[i+2]
+          local3 += vals[i+3]
+      }
+      *acc += local0 + local1 + local2 + local3
+  }
+  ```
+
+**Insert (batched + parallel):**
+- `Insert.Next`: evaluate all expressions per row, encode the entire batch (all rows) via `ENG/DP`, and call `txn.Insert()` once with the batched key-value data.
+- **Parallel Insert:** For bulk load (> 10000 rows):
+  - Split rows into N batches, each worker encodes and inserts its batch.
+  - WAL serialization ensures atomicity: final `Commit` writes all batches atomically.
+- Batch encoding: `[rowCount:varint][row_0:encoded][row_1:encoded]...` where each row is `[col_0:varint/blob]...[col_N:varint/blob]` — avoids per-row `Insert` call overhead.
+
+**Update (parallel + optimistic concurrency):**
 - `Update.Next`: find rows via `iter`, encode new version, call `txn.Insert()` (TXN creates new version).
+- **Parallel Update:** Split scan range, workers update disjoint key ranges concurrently.
+- **Optimistic locking:** Workers validate no write-write conflict at commit time (TXN/VL handles this).
+
+**Delete (parallel + batch tombstones):**
 - `Delete.Next`: find rows via `iter`, insert tombstone into TXN.
+- **Parallel Delete:** Split scan range, workers insert tombstones for their partitions.
+- **Batch tombstone encoding:** `[count:varint][key_0][key_1]...` — single WAL record for multiple deletions.
+
+**HashJoin (future v2, parallel build + probe):**
+- Build phase: scan build input, hash table construction using sharded maps (one map per worker, no contention).
+- Probe phase: scan probe input, lookup in hash table, yield matches.
+- **Parallel HashJoin:** Build: workers partition hash keys (key % N), each worker builds its shard. Probe: workers probe all shards in round-robin.
+
+#### Memory Management
+- **Row format:** `Row` struct borrows `[]byte` slices from `MEM/SP` — no copies, caller responsible for returning to pool.
+- **Batch allocation:** Columnar arrays pre-allocated at 1024 rows, reused via `sync.Pool`.
+- **Memory limit:** If Sort/Aggregate exceeds `BufferPoolMB * 0.5`, spill to disk (temp SST files) and continue.
+
+#### Concurrency Patterns
+- **Fan-out/Fan-in:** Scatter work to N workers, gather results via channel merge.
+- **Pipeline parallelism:** Different operators run concurrently (e.g., SeqScan → Filter → Project), each stage buffered via bounded channel.
+- **Data parallelism:** Same operator processes different partitions in parallel.
+
+#### Future Enhancements (post-v1)
+- **SIMD intrinsics:** Use Go `asm` or `golang.org/x/sys/cpu` for AVX2/NEON vectorization (bitwise AND/OR for bloom filters, comparison intrinsics).
+- **Morsel execution:** Break input into 10K-row morsels, workers steal morsels from a shared queue (dynamic load balancing).
+- **Code generation:** Generate LLVM IR or Go source for hot operators (experimental).
 
 ### RE — Rewriter
 
@@ -328,13 +433,32 @@ type HashJoin    struct{ left, right Operator; keys []string }
 4. **`internal/SQL/PS/expr.go`** — `parseExpr()` with operator precedence. `parsePrimary()`, `parseUnary()`, `parseBinary()`.
 5. **`internal/SQL/RE/re.go`** — `Rewrite`, `ConstantFold`, `PredicatePushdown`, `FlattenSubquery`.
 6. **`internal/SQL/PL/pl.go`** — `Planner`: `Plan()`, `memoize()`, `estimateCost()`, `selectIndex()`.
-7. **`internal/SQL/EX/ex.go`** — `Executor`: `Exec()`, `Query()`. All operator implementations.
-8. **`internal/SQL/EX/operators.go`** — all operator structs: `SeqScan`, `IndexScan`, `Filter`, `Project`, `Sort`, `Limit`, `Insert`, `Update`, `Delete`.
-9. **`internal/SQL/EX/eval.go`** — expression evaluation: `Eval(expr, row, params) (any, error)`. Handles all expression types.
-10. **Tests:** `lx_test.go` (token round-trip), `ps_test.go` (parse errors), `re_test.go` (constant fold), `pl_test.go` (plan memoization), `ex_test.go` (end-to-end execution). Use table-driven tests.
+7. **`internal/SQL/EX/ex.go`** — `Executor`: `Exec()`, `Query()`. Core execution framework.
+8. **`internal/SQL/EX/operators.go`** — basic operator structs: `SeqScan`, `IndexScan`, `Filter`, `Project`, `Sort`, `Limit`, `Insert`, `Update`, `Delete`.
+9. **`internal/SQL/EX/operators_vec.go`** — SIMD-optimized operators: vectorized `SeqScan`, `Filter`, `Project`, `Aggregate`. Batch evaluation with manual unrolling.
+10. **`internal/SQL/EX/operators_parallel.go`** — parallel operators: parallel `SeqScan`, `IndexScan`, `Update`, `Delete`. Worker pool, fan-out/fan-in, channel merge.
+11. **`internal/SQL/EX/eval.go`** — expression evaluation: `Eval(expr, row, params) (any, error)`. Handles all expression types.
+12. **`internal/SQL/EX/batch.go`** — columnar batch management: `Batch` struct, selection vectors, memory pooling via `sync.Pool`.
+13. **`internal/SQL/EX/sort_parallel.go`** — parallel sort: sample sort for top-k, external merge sort for large datasets.
+14. **`internal/SQL/EX/join.go`** — (future v2) `HashJoin`, `NestedLoopJoin`: parallel build and probe phases.
+15. **Tests:** 
+    - `lx_test.go` (token round-trip)
+    - `ps_test.go` (parse errors)
+    - `re_test.go` (constant fold)
+    - `pl_test.go` (plan memoization)
+    - `ex_test.go` (end-to-end execution)
+    - `ex_vec_test.go` (SIMD batch evaluation correctness)
+    - `ex_parallel_test.go` (parallel execution, race detection)
+    - `batch_test.go` (columnar batch management)
+    - Use table-driven tests throughout.
+16. **Benchmarks:**
+    - `ex_bench.go`: single-threaded vs vectorized vs parallel for SeqScan, Filter, Aggregate.
+    - Measure throughput (rows/s), latency (p50/p99), memory allocation (allocs/op).
 
 ## Open Issues
 
 - Should the planner support subquery planning (currently just flatten)?
 - How to estimate selectivity without statistics? Start with uniform distribution, add histogram support later.
-- Should the executor support parallel query execution (each operator in a separate goroutine, merge via channel)?
+- Should SIMD vectorization use Go 1.24's new `vector` package (if available) or hand-written manual unrolling?
+- What is the optimal batch size for vectorized execution? 1024 rows is a starting point; may need tuning based on cache line size and predicate complexity.
+- Should parallel query execution be enabled by default or opt-in via query hint (e.g., `SELECT /*+ PARALLEL(4) */ ...`)?
