@@ -39,29 +39,34 @@ All iterations complete. Coverage details: `go test ./... -cover`.
 
 ## Remaining Work
 
-The v1 chain LOG → SYS is closed. Remaining work:
+The v1 chain LOG → SYS is closed. Production-ready path: two phases.
 
-### v1.1 — Refinements
+### Phase 1: Correctness & Ops Foundation (iter-10 to iter-17)
 
-| # | Item | Subsystem | Notes |
-|---|---|---|---|
-| 1 | SQL/RE coverage | SQL | 49% → 80%+ |
-| 2 | ENG/LS benchmarks | ENG | Skiplist, SST writer/read |
-| 3 | IndexScan seek | ENG+SQL | Real index seek via ENG/ID/ |
-| 4 | MVCC reads in tx | TXN+SYS | SELECT sees own writes through Tx |
-| 5 | NOT NULL + DEFAULT | SQL | Validator/evaluator wiring |
-| 6 | Catalog persistence | SYS | Persist schemas across restarts |
+| Iter | Requirements | Goal |
+|---|---|---|
+| iter-10 | REQ000105, REQ000106 | `NOT NULL` and `DEFAULT` enforcement |
+| iter-11 | REQ000107 | `UNIQUE` constraint |
+| iter-12 | REQ000127 | Catalog persistence across restarts |
+| iter-13 | REQ000035 | WAL corruption recovery policy |
+| iter-14 | REQ000061 | Read-committed isolation (default) |
+| iter-15 | REQ000062 | MVCC reads in transaction (SELECT sees own writes) |
+| iter-16 | REQ000102 | Admin CLI (`razor-admin`: schema dump, vacuum, manual compaction) |
+| iter-17 | REQ000044, REQ000138, REQ000143 | `ENG/LS` benchmarks + coverage lift |
 
-### v2 — Architectural (deferred)
+### Phase 2: SQL Standards Compliance (iter-18 to iter-20)
 
-- `ENG/ID/` — Secondary indexes
-- `ENG/TB/`, `ENG/SC/`, `ENG/DP/` — Table/schema registry
-- Read-committed isolation
-- Network server (TCP/gRPC)
-- Prometheus metrics
-- Session pooling
-- Read-only mode
-- Admin interface
+| Iter | Requirements | Goal |
+|---|---|---|
+| iter-18 | REQ000113 | `GROUP BY` |
+| iter-19 | REQ000117 | `OUTER JOIN` (LEFT/RIGHT/FULL) |
+| iter-20 | REQ000126 | Foreign keys |
+
+### Out of scope (deferred)
+
+- Network server, Prometheus, session pooling, read-only mode, multi-process
+- Secondary indexes, mmap, WAL/log compression, generational arena
+- Backup/restore, online schema migration, advanced SQL features
 
 ## Completion Criteria (All Iterations)
 

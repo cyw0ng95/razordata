@@ -124,15 +124,11 @@
 | REQ000019 | FIL | `MADV_DONTNEED` hints for buffer eviction |
 | REQ000026 | MEM | `mmap` instead of `read`/`write` |
 | REQ000034 | WAL | WAL compression (lz4) |
-| REQ000035 | WAL | Corruption recovery policy: skip vs. fail |
-| REQ000044 | ENG | `ENG/LS` benchmarks (skiplist, SST, flush) |
 | REQ000045 | ENG | Secondary indexes |
 | REQ000047 | ENG | Prefix bloom filters for range scans |
 | REQ000048 | ENG | Table registry persistence (`ENG/TB/`) |
 | REQ000049 | ENG | Schema cluster (`ENG/SC/`) split from LS |
 | REQ000050 | ENG | Deparser cluster (`ENG/DP/`) split from LS |
-| REQ000061 | TXN | Read-committed isolation |
-| REQ000062 | TXN | Full MVCC reads inside transactions (SELECT in tx sees own writes) |
 | REQ000064 | TXN | Generational arena |
 | REQ000074 | SQL | `IndexScan` real seek (replace prefix-scan fallback) |
 | REQ000083 | SQL | `SQL/RE` coverage: 49% → 80%+ |
@@ -143,16 +139,6 @@
 | REQ000099 | SYS | `ReadOnly` mode in `Options` |
 | REQ000100 | SYS | Network server (TCP/gRPC) |
 | REQ000101 | SYS | Prometheus metrics endpoint |
-| REQ000102 | SYS | Admin interface (schema dump, vacuum, manual compaction) |
-| REQ000105 | DDL | `NOT NULL` constraint enforcement |
-| REQ000106 | DDL | `DEFAULT` value substitution |
-| REQ000107 | DDL | `UNIQUE` constraint |
-| REQ000113 | DML | `GROUP BY` |
-| REQ000117 | DML | `OUTER JOIN` (LEFT/RIGHT/FULL) |
 | REQ000123 | TXN-API | `READ COMMITTED` / `REPEATABLE READ` / `SERIALIZABLE` isolation levels |
-| REQ000126 | API | Foreign keys |
-| REQ000127 | OPS | Catalog persistence across restarts |
 | REQ000128 | OPS | Point-in-time backup / restore |
 | REQ000129 | OPS | Online schema migration |
-| REQ000138 | QUAL | `Benchmark*` for every storage component (currently `ENG/LS` missing) |
-| REQ000143 | QUAL | Test coverage per subsystem ≥ 70% (currently `SQL/RE` at 49%) |
