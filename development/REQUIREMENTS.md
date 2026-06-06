@@ -15,7 +15,33 @@ Columns for selection:
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-| REQ000127 | SQL | Catalog persistence across restarts (CREATE TABLE survives Close/Open) | critical | L | iter-09 (in-memory catalog) | new `ENG/ID/catalog.go`, `SQL/EX/store.go`, `SYS/SY` startup hook |
+| REQ000144 | SQL | SIMD vectorized execution (batch processing, manual unrolling, selection vectors) | high | XL | iter-08 (operators) | new `SQL/EX/operators_vec.go`, `SQL/EX/batch.go`, columnar batch memory management |
+| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | high | XL | iter-08 (operators) | new `SQL/EX/operators_parallel.go`, `SQL/EX/sort_parallel.go` |
+| REQ000146 | SYS | 6-phase graceful shutdown (stop accept → wait tx → flush → stop goroutines → close subsystems → cleanup) | critical | L | iter-09 (SY) | `SYS/SY/shutdown.go` — expand from 36 lines to full 6-phase sequence |
+| REQ000147 | TXN | Complete commit protocol implementation (6 phases: Begin/Read/Write/Pre-commit/Commit/Post-commit, Abort flow) | critical | L | iter-06 (VL) | `TXN/VL/protocol.go` — add detailed CAS loops, validation scan, error handling |
+| REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with design spec |
+| REQ000149 | SQL | Columnar batch memory management (`sync.Pool` for 1024-row batches) | medium | M | REQ000144 (vectorization) | new `SQL/EX/batch.go` — `Batch` struct, selection vectors |
+| REQ000150 | SQL | Parallel Sort implementation (sample sort for top-k, external merge sort for large datasets) | medium | L | REQ000145 (parallel exec) | new `SQL/EX/sort_parallel.go` |
+| REQ000151 | SQL | Parallel HashJoin (sharded hash tables, parallel build and probe) | low | XL | REQ000145 (parallel exec) | `SQL/EX/join.go` — extend with parallel variants |
+| REQ000152 | SYS | Config validation function (`validateOptions`) with descriptive errors | high | S | iter-09 (Options) | new `SYS/SY/validate.go` — field-by-field validation |
+| REQ000153 | SYS | Active transaction wait during shutdown (30s timeout, force-abort remaining) | high | M | REQ000146 (graceful shutdown) | `SYS/SY/shutdown.go` — Phase 2 implementation |
+| REQ000154 | SYS | Background goroutine coordination (compaction, epoch manager, hook dispatcher stop) | high | M | REQ000146 (graceful shutdown) | `SYS/SY/shutdown.go` — Phase 4 implementation |
+| REQ000155 | ENG | Catalog persistence across restarts (design mentions multiple times, still TBD in REQ000127) | critical | L | iter-09 (in-memory catalog) | consolidate REQ000127 here, track as critical gap |
+| REQ000156 | SQL | Executor cost model integration (design mentions cost estimation, no operator selection based on cost) | medium | M | iter-08 (planner) | `SQL/EX/planner.go` — use cost for operator selection |
+| REQ000157 | SQL | Expression evaluation SIMD acceleration (batch predicate evaluation) | medium | M | REQ000144 (vectorization) | `SQL/EX/eval.go` — vectorized `EvalBatch` function |
+| REQ000158 | TXN | Hazard pointer publication/clear protocol in Read flow (design specifies, verify implementation) | high | S | iter-05 (hazard) | audit `TXN/LC/hazard.go` + `TXN/SN/snapshot.go` |
+| REQ000159 | TXN | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | medium | M | iter-05 (arena) | `TXN/MV/arena.go` — add lazy init, exhaustion handling |
+| REQ000160 | WAL | Batch commit with `sync.WaitGroup` and write barrier (design in FL cluster) | medium | M | iter-03 (WAL) | `WAL/FL/fl.go` — `BatchSync` implementation |
+| REQ000161 | MEM | Clock-sweep integration details (atomic hand, refKey update, eviction gating) | medium | S | iter-02 (buffer pool) | audit `MEM/BF/bf.go` — verify matches design |
+| REQ000162 | SQL | Plan memoization with SHA256(AST binary encoding) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — canonical AST serialization |
+| REQ000163 | SQL | Rewriter AST normalization (design mentions, verify completeness) | medium | S | iter-07 (RE) | audit `SQL/RE/` — constant fold, predicate pushdown, subquery flatten |
+| REQ000164 | TXN | Epoch manager background goroutine (100ms interval, drain coordination) | high | M | iter-05 (epoch) | `TXN/LC/epoch.go` — add background goroutine if missing |
+| REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | medium | M | iter-04 (compaction) | `ENG/LS/compaction.go` — size budget monitoring |
+| REQ000166 | SYS | Per-subsystem Close() behaviors (design specifies exact cleanup per subsystem) | high | L | REQ000146 (graceful shutdown) | `SYS/SY/shutdown.go` — Phase 5: TXN/ENG/WAL/MEM/FIL/LOG Close |
+| REQ000167 | SQL | Parameter binding type coercion (Go int → BIGINT, string → INT error) | medium | S | iter-08 (ST) | `SYS/ST/st.go` — `Bind` validation |
+| REQ000168 | FIL | O_DIRECT alignment handling (`syscall.Mmap` or `unix.RawSyscall`) | high | M | iter-01 (DF) | `FIL/DF/df.go` — verify alignment implementation |
+| REQ000169 | LOG | Debug-level allocation trade-off documentation (design mentions, verify implementation) | low | S | iter-00 (LG) | audit `LOG/LG/logger.go` — level check before allocation |
+| REQ000170 | WAL | RTMerge record encoding implementation | medium | S | iter-03 (WAL) | `WAL/WR/encode.go` — add merge record encoding |
 | REQ000035 | WAL | Corruption recovery policy: detect torn write, skip vs. fail | critical | S | iter-03 (replay) | `WAL/RP/rp.go` — return `ErrCorrupt` on torn record; add tests |
 | REQ000061 | TXN | Read-committed isolation (default); upgrade from v1 read-uncommitted | critical | L | iter-05/06 (MVCC + VL) | `TXN/VL/protocol.go`, `TXN/SN/snapshot.go` — re-snapshot per statement |
 | REQ000062 | TXN | MVCC reads inside transactions (SELECT in tx sees own writes through Tx iterator) | critical | L | iter-09 (shadow writeSet) | `TXN/SN`, `SQL/EX` — switch session to Tx-aware iterator |
