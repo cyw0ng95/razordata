@@ -6,6 +6,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"sync"
+	"syscall"
 	"unsafe"
 
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
@@ -19,9 +20,10 @@ const (
 )
 
 var (
-	ErrCorrupt  = errors.New("block checksum mismatch: data corrupted")
-	ErrIO       = errors.New("I/O error")
-	ErrBigBlock = errors.New("data exceeds block capacity")
+	ErrCorrupt         = errors.New("block checksum mismatch: data corrupted")
+	ErrIO              = errors.New("I/O error")
+	ErrBigBlock        = errors.New("data exceeds block capacity")
+	errMmapUnsupported = errors.New("mmap not supported on this platform")
 )
 
 var bufPool = sync.Pool{
@@ -36,9 +38,12 @@ var bufPool = sync.Pool{
 }
 
 type BlockDevice struct {
-	fd     int
-	direct bool
-	log    lg.Logger
+	fd      int
+	direct  bool
+	mmap    bool   // true: reads via mmap; writes still pwrite
+	mmapSz  int    // size of the mapped region
+	mmapBuf []byte // mapped region (mmap path)
+	log     lg.Logger
 }
 
 func Open(path string, log ...lg.Logger) (*BlockDevice, error) {
@@ -46,6 +51,36 @@ func Open(path string, log ...lg.Logger) (*BlockDevice, error) {
 }
 func Create(path string, log ...lg.Logger) (*BlockDevice, error) {
 	return openFile(path, false, true, log)
+}
+
+// OpenMmap opens a file with the file's full contents mmap'd. Reads
+// are served from the mapped region (zero-copy via the kernel page
+// cache); writes still go through pwrite. The mmap is unmapped in
+// Close. On non-Linux platforms, falls back to Open (pread).
+func OpenMmap(path string, log ...lg.Logger) (*BlockDevice, error) {
+	bd, err := Open(path, log...)
+	if err != nil {
+		return nil, err
+	}
+	// Determine file size.
+	var st syscall.Stat_t
+	if err := syscall.Fstat(bd.fd, &st); err != nil {
+		bd.Close()
+		return nil, err
+	}
+	if st.Size == 0 {
+		// Empty file — nothing to map. Fall back to pread.
+		return bd, nil
+	}
+	mapped, err := mmapBlock(bd.fd, 0, int(st.Size))
+	if err != nil {
+		// mmap failed (e.g., on non-Linux). Fall back silently.
+		return bd, nil
+	}
+	bd.mmap = true
+	bd.mmapSz = int(st.Size)
+	bd.mmapBuf = mapped
+	return bd, nil
 }
 
 func openFile(path string, readOnly, create bool, logs []lg.Logger) (*BlockDevice, error) {
@@ -107,12 +142,21 @@ func (d *BlockDevice) ReadBlock(_ context.Context, blockID uint64, n int, buf []
 	tmp := borrowTempBuf()
 	defer returnTempBuf(tmp)
 
-	_, err := unix.Pread(d.fd, tmp, int64(offset))
-	if err != nil {
-		if d.log != nil {
-			d.log.Error("df.read_block", "blockID", blockID, "err", err)
+	if d.mmap && d.mmapBuf != nil {
+		// mmap path: zero-copy read from the mapped region.
+		off := int64(offset)
+		if off+int64(len(tmp)) > int64(d.mmapSz) {
+			return ErrIO
 		}
-		return err
+		copy(tmp, d.mmapBuf[off:off+int64(len(tmp))])
+	} else {
+		_, err := unix.Pread(d.fd, tmp, int64(offset))
+		if err != nil {
+			if d.log != nil {
+				d.log.Error("df.read_block", "blockID", blockID, "err", err)
+			}
+			return err
+		}
 	}
 
 	storedSum := binary.LittleEndian.Uint32(tmp[DataLen-ChecksumLen:])
@@ -215,6 +259,10 @@ func (d *BlockDevice) Sync() error {
 
 // Close closes the block device. Safe to call multiple times.
 func (d *BlockDevice) Close() error {
+	if d.mmapBuf != nil {
+		_ = munmapBlock(d.mmapBuf)
+		d.mmapBuf = nil
+	}
 	if d.fd == -1 {
 		return nil
 	}
