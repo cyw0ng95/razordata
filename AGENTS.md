@@ -81,8 +81,12 @@ When an iteration is complete, update the tracking docs in this order:
    "Remaining Work" into the completed `Iterations Overview` table; add a
    release tag row in `Release Tags` if a new tag was cut.
 3. **`development/REQUIREMENTS.md`** — for every `REQ` the iteration
-   satisfied, move the row from `TBD` to `DONE` and set the `Iteration`
-   column to the iter number.
+   satisfied, **delete the row from `TBD` entirely** and add a new row
+   to `DONE` with the `Iteration` column set to the iter number. A
+   `REQ` lives in exactly one of the two tables: `TBD` (pipeline) or
+   `DONE` (shipped). Never both. Never annotate a `TBD` row with
+   "MOVED TO DONE" and leave it in place — that is a copy-paste
+   duplicate and the file will drift.
 
 Do this as a single commit at the end of the iteration (after the final
 implementation commit, before the release tag). Do not defer doc updates

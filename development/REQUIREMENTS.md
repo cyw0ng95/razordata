@@ -17,16 +17,11 @@ Columns for selection:
 |---|---|---|---|---|---|---|
 | REQ000144 | SQL | SIMD vectorized execution (batch processing, manual unrolling, selection vectors) | high | XL | iter-08 (operators) | new `SQL/EX/operators_vec.go`, `SQL/EX/batch.go`, columnar batch memory management |
 | REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | high | XL | iter-08 (operators) | new `SQL/EX/operators_parallel.go`, `SQL/EX/sort_parallel.go` |
-| REQ000146 | SYS | 6-phase graceful shutdown (stop accept → wait tx → flush → stop goroutines → close subsystems → cleanup) | critical | L | iter-09 (SY) | `SYS/SY/shutdown.go` — expand from 36 lines to full 6-phase sequence |
 | REQ000147 | TXN | Complete commit protocol implementation (6 phases: Begin/Read/Write/Pre-commit/Commit/Post-commit, Abort flow) | critical | L | iter-06 (VL) | `TXN/VL/protocol.go` — add detailed CAS loops, validation scan, error handling |
 | REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with design spec |
 | REQ000149 | SQL | Columnar batch memory management (`sync.Pool` for 1024-row batches) | medium | M | REQ000144 (vectorization) | new `SQL/EX/batch.go` — `Batch` struct, selection vectors |
 | REQ000150 | SQL | Parallel Sort implementation (sample sort for top-k, external merge sort for large datasets) | medium | L | REQ000145 (parallel exec) | new `SQL/EX/sort_parallel.go` |
 | REQ000151 | SQL | Parallel HashJoin (sharded hash tables, parallel build and probe) | low | XL | REQ000145 (parallel exec) | `SQL/EX/join.go` — extend with parallel variants |
-| REQ000152 | SYS | Config validation function (`validateOptions`) with descriptive errors | high | S | iter-09 (Options) | new `SYS/SY/validate.go` — field-by-field validation |
-| REQ000153 | SYS | Active transaction wait during shutdown (30s timeout, force-abort remaining) | high | M | REQ000146 (graceful shutdown) | `SYS/SY/shutdown.go` — Phase 2 implementation |
-| REQ000154 | SYS | Background goroutine coordination (compaction, epoch manager, hook dispatcher stop) | high | M | REQ000146 (graceful shutdown) | `SYS/SY/shutdown.go` — Phase 4 implementation |
-| REQ000155 | ENG | Catalog persistence across restarts (design mentions multiple times, still TBD in REQ000127) | critical | L | iter-12 (catalog) | **MOVED TO DONE** — consolidated with REQ000127, shipped in iter-12 |
 | REQ000156 | SQL | Executor cost model integration (design mentions cost estimation, no operator selection based on cost) | medium | M | iter-08 (planner) | `SQL/EX/planner.go` — use cost for operator selection |
 | REQ000157 | SQL | Expression evaluation SIMD acceleration (batch predicate evaluation) | medium | M | REQ000144 (vectorization) | `SQL/EX/eval.go` — vectorized `EvalBatch` function |
 | REQ000158 | TXN | Hazard pointer publication/clear protocol in Read flow (design specifies, verify implementation) | high | S | iter-05 (hazard) | audit `TXN/LC/hazard.go` + `TXN/SN/snapshot.go` |
@@ -37,7 +32,6 @@ Columns for selection:
 | REQ000163 | SQL | Rewriter AST normalization (design mentions, verify completeness) | medium | S | iter-07 (RE) | audit `SQL/RE/` — constant fold, predicate pushdown, subquery flatten |
 | REQ000164 | TXN | Epoch manager background goroutine (100ms interval, drain coordination) | high | M | iter-05 (epoch) | `TXN/LC/epoch.go` — add background goroutine if missing |
 | REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | medium | M | iter-04 (compaction) | `ENG/LS/compaction.go` — size budget monitoring |
-| REQ000166 | SYS | Per-subsystem Close() behaviors (design specifies exact cleanup per subsystem) | high | L | REQ000146 (graceful shutdown) | `SYS/SY/shutdown.go` — Phase 5: TXN/ENG/WAL/MEM/FIL/LOG Close |
 | REQ000167 | SQL | Parameter binding type coercion (Go int → BIGINT, string → INT error) | medium | S | iter-08 (ST) | `SYS/ST/st.go` — `Bind` validation |
 | REQ000168 | FIL | O_DIRECT alignment handling (`syscall.Mmap` or `unix.RawSyscall`) | high | M | iter-01 (DF) | `FIL/DF/df.go` — verify alignment implementation |
 | REQ000169 | LOG | Debug-level allocation trade-off documentation (design mentions, verify implementation) | low | S | iter-00 (LG) | audit `LOG/LG/logger.go` — level check before allocation |
@@ -49,7 +43,6 @@ Columns for selection:
 | REQ000175 | TXN/LC | Fix hazard pointer Publish (store to single slot, not all) and implement actual memory reclamation | high | L | iter-05 (hazard/epoch) | `TXN/LC/hazard.go` fix Publish, `TXN/LC/epoch.go` implement Reclaim wait+free per TXN.md:96-121 |
 | REQ000176 | WAL/FL | Implement batch commit with sync.WaitGroup and write barrier (group multiple fsync into one) | high | M | iter-03 (WAL) | Replace `WAL/FL/fl.go` Sync/BatchSync stubs with actual implementation per WAL.md:103-117 |
 | REQ000177 | SQL/EX | Parallel query execution (worker pool, fan-out/fan-in, channel merge for SeqScan/IndexScan) | high | XL | iter-08 (operators) | Create `SQL/EX/operators_parallel.go` per SQL.md:307-314,378 |
-| REQ000178 | SYS/SY | Config validation function (validateOptions with field-by-field checks and descriptive errors) | high | S | iter-09 (Options) | Create `SYS/SY/validate.go` per SYS.md:198-214 |
 | REQ000179 | TXN/VL | Add arena field to transactionSlot struct for per-transaction tracking | medium | S | iter-06 (slot) | `TXN/VL/slot.go` — add arena *arena field per TXN.md:150-158 |
 | REQ000180 | ENG/LS | Dynamic BloomFilter sizing ((N * 10 + 7) / 8 bytes) replace fixed 4096 bytes | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go` — compute bloom size from key count per ENG.md:91-92 |
 | REQ000181 | TXN/LC | Fix goroutine ID tracking (use real goroutine identity, not atomic counter) | medium | M | iter-05 (epoch) | `TXN/LC/epoch.go` — proper goroutine tracking per TXN.md:113-121 |
@@ -109,6 +102,12 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 |---|---|---|---|
 | REQ000035 | WAL | Corruption recovery policy: detect torn write, skip vs. fail | iter-13 |
 | REQ000127 | SQL | Catalog persistence across restarts (`CREATE TABLE` / `DROP TABLE` survive `Close`/`Open`) | iter-12 |
+| REQ000146 | SYS | 6-phase graceful shutdown sequence per SYS.md:215-282 | iter-14 |
+| REQ000152 | SYS | `validateOptions` with field-by-field checks per SYS.md:198-214 | iter-14 |
+| REQ000153 | SYS | Active-tx wait (30s timeout, force-abort on timeout) | iter-14 |
+| REQ000154 | SYS | Background-goroutine coordination (compaction, flush, epoch, hook dispatcher) | iter-14 |
+| REQ000166 | SYS | Per-subsystem `Close()` ordering in Phase 5 of shutdown | iter-14 |
+| REQ000178 | SYS/SY | `validateOptions` (duplicate of REQ000152, same code) | iter-14 |
 | REQ000155 | ENG | Catalog persistence across restarts | iter-12 (consolidated with REQ000127) |
 | REQ000001 | LOG | `Logger` wraps `log/slog` with atomic level control | iter-00 |
 | REQ000002 | LOG | Structured key-value output (JSON/text) | iter-00 |
