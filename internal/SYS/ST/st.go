@@ -51,6 +51,9 @@ func (s *Stmt) SQL() string { return s.sql }
 
 // Query executes the prepared statement with the given args.
 func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
+	if s.engine.IsClosed() {
+		return nil, AP.ErrClosed
+	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -67,6 +70,9 @@ func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 
 // Exec executes the prepared statement as a DML/DDL.
 func (s *Stmt) Exec(ctx context.Context, args ...any) (AP.Result, error) {
+	if s.engine.IsClosed() {
+		return AP.Result{}, AP.ErrClosed
+	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()

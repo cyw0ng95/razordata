@@ -53,6 +53,9 @@ func (s *Session) ID() uint64 { return s.id }
 // rows back to the caller is left to the engine's own iterator in v1;
 // for the AP contract we expose a *AP.Rows that names the columns.
 func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows, error) {
+	if s.engine.IsClosed() {
+		return nil, AP.ErrClosed
+	}
 	if err := s.lock(ctx); err != nil {
 		return nil, err
 	}
@@ -69,6 +72,9 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 
 // Exec runs a DML or DDL statement and returns its result.
 func (s *Session) Exec(ctx context.Context, sql string, args ...any) (AP.Result, error) {
+	if s.engine.IsClosed() {
+		return AP.Result{}, AP.ErrClosed
+	}
 	if err := s.lock(ctx); err != nil {
 		return AP.Result{}, err
 	}
@@ -89,6 +95,9 @@ func (s *Session) Exec(ctx context.Context, sql string, args ...any) (AP.Result,
 // Begin starts a new transaction. Returns AP.ErrLocked if a
 // transaction is already active.
 func (s *Session) Begin(ctx context.Context) (AP.Transaction, error) {
+	if s.engine.IsClosed() {
+		return nil, AP.ErrClosed
+	}
 	if err := s.lock(ctx); err != nil {
 		return nil, err
 	}
@@ -113,6 +122,9 @@ func (s *Session) Begin(ctx context.Context) (AP.Transaction, error) {
 
 // Commit finalizes the current transaction.
 func (s *Session) Commit(ctx context.Context) error {
+	if s.engine.IsClosed() {
+		return AP.ErrClosed
+	}
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
@@ -129,6 +141,9 @@ func (s *Session) Commit(ctx context.Context) error {
 
 // Rollback aborts the current transaction.
 func (s *Session) Rollback(ctx context.Context) error {
+	if s.engine.IsClosed() {
+		return AP.ErrClosed
+	}
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
