@@ -1,5 +1,3 @@
----
-
 # Iteration 14 — Graceful Shutdown Completion
 
 **Subsystem:** `SYS` (`SY`, `AP`)
@@ -7,9 +5,9 @@
 **Est. LOC:** ~2800 (incl. tests)
 **Actual LOC:** ~1900 (net new code; +2280 insertions / -380 modifications across 6 commits)
 **Requirements:** REQ000146, REQ000152, REQ000153, REQ000154, REQ000166, REQ000178
-**Target release:** v0.11.0
+**Target release:** v0.10.1
 **Commit:** `7476d76` (final implementation commit — 5-run stability + benchmark)
-**Tag:** v0.11.0 (to be cut on the doc-update commit)
+**Tag:** v0.10.1 (also v0.9.0 on iter-12 and v0.10.0 on iter-13, all in version order)
 
 ## Outcome
 
@@ -114,7 +112,7 @@ This iteration builds the 6-phase sequence end-to-end and makes the existing `va
 
 This is a critical prerequisite for production deployment. iter-12 (catalog) shipped on the assumption that shutdown is safe; the gap analysis at the end of iter-12-catalog.md and iter-13-wal-recovery.md both flag shutdown as the next priority.
 
-> **Sequencing note:** iter-12b (the four pre-existing `ENG/LS` bugs, REQ000186-189) should ideally land *before* this iteration. iter-14's Phase 3 calls `eng.Flush()` and `wal.Sync()`; if iter-12b is not yet fixed, the flush may produce an SST that the next `Open()` cannot read. The shutdown sequence itself does not depend on a correct roundtrip-read of the flushed data, so iter-14 can land independently — but operators who deploy v0.11.0 without iter-12b first will see a write that disappears on restart.
+> **Sequencing note:** iter-12b (the four pre-existing `ENG/LS` bugs, REQ000186-189) should ideally land *before* this iteration. iter-14's Phase 3 calls `eng.Flush()` and `wal.Sync()`; if iter-12b is not yet fixed, the flush may produce an SST that the next `Open()` cannot read. The shutdown sequence itself does not depend on a correct roundtrip-read of the flushed data, so iter-14 can land independently — but operators who deploy v0.10.1 without iter-12b first will see a write that disappears on restart.
 
 ## Dependencies
 
