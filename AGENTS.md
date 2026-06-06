@@ -70,6 +70,25 @@ See `design/ARCH.md` for the full SQL surface and API shape.
   commit immediately. Do not batch multiple requirements into one commit.
   Each commit is a stable checkpoint.**
 
+## Iteration Lifecycle
+
+When an iteration is complete, update the tracking docs in this order:
+
+1. **`development/iterations/iter-XX-*.md`** — mark status `done`, add an
+   "Outcome" section summarizing what shipped, actual LoC, any deviations
+   from the plan, and the final commit/tag.
+2. **`development/ROADMAP.md`** — move the iteration from "Phase 1/2" /
+   "Remaining Work" into the completed `Iterations Overview` table; add a
+   release tag row in `Release Tags` if a new tag was cut.
+3. **`development/REQUIREMENTS.md`** — for every `REQ` the iteration
+   satisfied, move the row from `TBD` to `DONE` and set the `Iteration`
+   column to the iter number.
+
+Do this as a single commit at the end of the iteration (after the final
+implementation commit, before the release tag). Do not defer doc updates
+to a later session — the docs must reflect reality at the same commit
+that cuts the tag.
+
 ## CI / Linting
 
 ```bash
