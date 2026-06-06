@@ -37,11 +37,11 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 10 | NOT NULL / DEFAULT | Column constraints end-to-end | `PS`, `EX` | 16 | done (v0.7.0) |
 | 11 | UNIQUE Constraint | Single + composite + multi-clause UNIQUE | `PS`, `EX` | 11 | done (v0.8.0); I/O refinements pending v0.8.1 |
 | 11b | I/O refinements | MADV_DONTNEED + mmap BlockDevice | `MEM/BF`, `FIL/DF` | 4 | done (v0.8.1) |
-| 12 | Catalog Persistence | System catalog (single-file, atomic rename, schema versioning) | `LS`, `EX`, `SY` | done in code (v0.9.0 tag pending); 4 pre-existing LS bugs (REQ000186–189) deferred to iter-12b |
-| 13 | WAL Corruption Recovery | Segment header + envelope CRC + bounded resync + Stats | `WAL/WR`, `WAL/RP` | done in code (v0.10.0 tag pending); coverage 72.5% (target 85%) — see REQ000191 |
-| 14 | Graceful Shutdown Completion | 6-phase sequence + per-subsystem Close + active-tx wait + config validation | `SYS/SY`, `SYS/AP`, `TXN/VL`, `ENG/LS`, `LOG/HK` | done (v0.11.0) |
+| 12 | Catalog Persistence | System catalog (single-file, atomic rename, schema versioning) | `LS`, `EX`, `SY` | done (v0.9.0); 4 pre-existing LS bugs (REQ000186–189) deferred to iter-12b |
+| 13 | WAL Corruption Recovery | Segment header + envelope CRC + bounded resync + Stats | `WAL/WR`, `WAL/RP` | done (v0.10.0); coverage 72.5% (target 85%) — see REQ000191 |
+| 14 | Graceful Shutdown Completion | 6-phase sequence + per-subsystem Close + active-tx wait + config validation | `SYS/SY`, `SYS/AP`, `TXN/VL`, `ENG/LS`, `LOG/HK` | done (v0.10.1) |
 
-All iterations through iter-14 complete. v0.9.0 and v0.10.0 release tags remain pending (separate from iter-14's v0.11.0). Coverage details: `go test ./... -cover`.
+All iterations through iter-14 complete. Released as v0.9.0, v0.10.0, v0.10.1. Coverage details: `go test ./... -cover`.
 
 ## Completion Criteria (All Iterations)
 
@@ -79,9 +79,9 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 | v0.7.1 | Test reorganization: function-domain grouping, root `SYS/doc.go` cleanup. No code change. |
 | **v0.8.0** | **UNIQUE constraint** single + composite + multi-clause (`SQL/PS` AST + parser, `SQL/EX` `checkUnique`) |
 | **v0.8.1** | **I/O refinements**: `MADV_DONTNEED` hints on buffer eviction + `mmap` BlockDevice for SST reads (Linux build tag; pread fallback elsewhere) |
-| **v0.9.0** *(tag pending)* | **Catalog Persistence** (`ENG/LS/catalog.go` + `SYS/SY/catalog_init.go`). `CREATE TABLE` / `DROP TABLE` survive `Close`/`Open` via an atomic-rename single-file format. Code in `87a3b61`. Recorded technical debt: four pre-existing LSM bugs (path mismatch, sstIterator state, checksum layout, double-`nextFileID`) deferred to iter-12b. |
-| **v0.10.0** *(tag pending)* | **WAL Corruption Recovery** (`WAL/WR/header.go` + `WAL/RP/rp.go`). Segment header (12 B) + envelope CRC32-IEEE + bounded resync to `MaxRecordLen`; tail-of-segment torn writes tolerated (`TruncatedSegments++`), mid-segment corruption surfaces `ErrCorrupt` (`CorruptionFailures++`); Replayer.Stats() exposed. Code in `495bdac`. Coverage 72.5% (target 85%, gap tracked as REQ000191). |
-| **v0.11.0** | **Graceful Shutdown Completion** (`SYS/SY/shutdown.go` + `validate.go` + `TXN/VL/cond.go` + 4 subsystem `Stop(ctx)` APIs). Implements SYS.md:215-282: stop accept (closed flag flips first), wait for active tx (30s, force-abort on timeout, see `ForceAbortAll`), flush (`eng.Sync` + `wal.Sync` + `fl.Sync`), stop background goroutines (compaction/flush/epoch; 5s budget each), close subsystems in reverse order, log final stats. New `ShutdownStats` type on `EngineStats.LastShutdown`. Iter-12's 4 pre-existing LS bugs (REQ000186-189) still surface on shutdown; deploy iter-12b first if production read-after-restart matters. See `iterations/iter-14-shutdown.md`. |
+| **v0.9.0** | **Catalog Persistence** (`ENG/LS/catalog.go` + `SYS/SY/catalog_init.go`). `CREATE TABLE` / `DROP TABLE` survive `Close`/`Open` via an atomic-rename single-file format. Code in `87a3b61`. Recorded technical debt: four pre-existing LSM bugs (path mismatch, sstIterator state, checksum layout, double-`nextFileID`) deferred to iter-12b. |
+| **v0.10.0** | **WAL Corruption Recovery** (`WAL/WR/header.go` + `WAL/RP/rp.go`). Segment header (12 B) + envelope CRC32-IEEE + bounded resync to `MaxRecordLen`; tail-of-segment torn writes tolerated (`TruncatedSegments++`), mid-segment corruption surfaces `ErrCorrupt` (`CorruptionFailures++`); Replayer.Stats() exposed. Code in `495bdac`. Coverage 72.5% (target 85%, gap tracked as REQ000191). |
+| **v0.10.1** | **Graceful Shutdown Completion** (`SYS/SY/shutdown.go` + `validate.go` + `TXN/VL/cond.go` + 4 subsystem `Stop(ctx)` APIs). Implements SYS.md:215-282: stop accept (closed flag flips first), wait for active tx (30s, force-abort on timeout, see `ForceAbortAll`), flush (`eng.Sync` + `wal.Sync` + `fl.Sync`), stop background goroutines (compaction/flush/epoch; 5s budget each), close subsystems in reverse order, log final stats. New `ShutdownStats` type on `EngineStats.LastShutdown`. Iter-12's 4 pre-existing LS bugs (REQ000186-189) still surface on shutdown; deploy iter-12b first if production read-after-restart matters. See `iterations/iter-14-shutdown.md`. |
 
 ## Design Protection
 
