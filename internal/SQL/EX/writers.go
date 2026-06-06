@@ -66,6 +66,8 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 	tablesMu.Lock()
 	defer tablesMu.Unlock()
 	existing := tables[i.table]
+	pending := make(map[string]struct{}, len(i.values))
+	lookup := inMemoryLookup(i.table)
 	for _, row := range i.values {
 		out, err := buildInsertRow(schema, i.cols, row)
 		if err != nil {
@@ -78,6 +80,9 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			if err := validateRow(cschema, out); err != nil {
 				return Row{}, err
 			}
+			if err := checkUnique(cschema, out, pending, nil, lookup); err != nil {
+				return Row{}, err
+			}
 		}
 		existing = append(existing, out)
 		i.rows++
@@ -88,6 +93,13 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 
 func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 	prefix := tablePrefix(i.table)
+	pending := make(map[string]struct{}, len(i.values))
+	// In the engine path, unique lookups are best-effort: the LSM
+	// iterator would need a composite-key range scan. For v1, we
+	// check pending-batch duplicates only and skip the in-store
+	// lookup (correctness note: true cross-row UNIQUE in the engine
+	// path is deferred until REQ000045 / index work).
+	noopLookup := func(cols []int, vals []interface{}) (bool, error) { return false, nil }
 	for _, row := range i.values {
 		out, err := buildInsertRow(i.schema.cols, i.cols, row)
 		if err != nil {
@@ -97,6 +109,9 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		if err := validateRow(i.schema, out); err != nil {
+			return Row{}, err
+		}
+		if err := checkUnique(i.schema, out, pending, nil, noopLookup); err != nil {
 			return Row{}, err
 		}
 		pk, err := extractPK(i.schema, out)
@@ -178,6 +193,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 	if ss, ok := schemaFor(u.table); ok {
 		cschema = ss
 	}
+	noopLookup := func(cols []int, vals []interface{}) (bool, error) { return false, nil }
 	for {
 		row, err := u.iter.Next(ctx)
 		if err != nil {
@@ -204,6 +220,24 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 			if err := validateRow(cschema, row); err != nil {
+				return Row{}, err
+			}
+			// Self-exclude: encode the pre-update row's unique key so
+			// a no-op update (same values) does not self-conflict.
+			var selfKey []byte
+			if cschema.pk != "" {
+				pkIdx := -1
+				for i, n := range cschema.cols {
+					if n == cschema.pk {
+						pkIdx = i
+						break
+					}
+				}
+				if pkIdx >= 0 && len(snapshot.Data) > pkIdx {
+					selfKey = encodeUniqueKey([]int{pkIdx}, []interface{}{snapshot.Data[pkIdx]})
+				}
+			}
+			if err := checkUnique(cschema, row, nil, selfKey, noopLookup); err != nil {
 				return Row{}, err
 			}
 		}
@@ -241,6 +275,12 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		if err := validateRow(u.schema, row); err != nil {
+			return Row{}, err
+		}
+		// Engine-path unique: best-effort no-op (correct UNIQUE in the
+		// engine path requires a real index, deferred to REQ000045).
+		noopLookup := func(cols []int, vals []interface{}) (bool, error) { return false, nil }
+		if err := checkUnique(u.schema, row, nil, nil, noopLookup); err != nil {
 			return Row{}, err
 		}
 		pk, err := extractPK(u.schema, row)
@@ -437,7 +477,36 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 			}
 		}
 	}
-	registerStoreSchemaWithConstraints(c.stmt.Name, cols, nullable, defaults, pk)
+	// Build unique constraints: column-level ColDef.Unique + table-level
+	// UniqueConstraints from the AST. Resolve names to indices.
+	var unique []UniqueKey
+	colIndex := make(map[string]int, len(cols))
+	for i, n := range cols {
+		colIndex[n] = i
+	}
+	for _, col := range c.stmt.Cols {
+		if col.Unique {
+			if idx, ok := colIndex[col.Name]; ok {
+				unique = append(unique, UniqueKey{Cols: []int{idx}})
+			}
+		}
+	}
+	for _, uk := range c.stmt.UniqueConstraints {
+		idxs := make([]int, 0, len(uk.Cols))
+		allFound := true
+		for _, name := range uk.Cols {
+			idx, ok := colIndex[name]
+			if !ok {
+				allFound = false
+				break
+			}
+			idxs = append(idxs, idx)
+		}
+		if allFound && len(idxs) > 0 {
+			unique = append(unique, UniqueKey{Cols: idxs})
+		}
+	}
+	registerStoreSchemaFull(c.stmt.Name, cols, nullable, defaults, unique, pk)
 	return Row{}, ErrNoRows
 }
 

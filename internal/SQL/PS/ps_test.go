@@ -593,6 +593,12 @@ func TestParseCreateTableTableLevelUnique(t *testing.T) {
 	if len(ct.Cols) != 2 {
 		t.Fatalf("expected 2 cols, got %d", len(ct.Cols))
 	}
+	if len(ct.UniqueConstraints) != 1 {
+		t.Fatalf("expected 1 unique constraint, got %d", len(ct.UniqueConstraints))
+	}
+	if len(ct.UniqueConstraints[0].Cols) != 1 || ct.UniqueConstraints[0].Cols[0] != "a" {
+		t.Errorf("expected UNIQUE (a), got %v", ct.UniqueConstraints[0].Cols)
+	}
 }
 
 func TestParseCreateTableTableLevelUniqueKey(t *testing.T) {
@@ -604,6 +610,47 @@ func TestParseCreateTableTableLevelUniqueKey(t *testing.T) {
 	ct := stmt.(*CreateTable)
 	if len(ct.Cols) != 2 {
 		t.Fatalf("expected 2 cols, got %d", len(ct.Cols))
+	}
+	if len(ct.UniqueConstraints) != 1 || ct.UniqueConstraints[0].Cols[0] != "a" {
+		t.Errorf("UNIQUE KEY should produce a constraint on 'a'")
+	}
+}
+
+// TestParseCreateTableCompositeUnique: UNIQUE (a, b) parses as a
+// 2-column unique constraint.
+func TestParseCreateTableCompositeUnique(t *testing.T) {
+	p := NewParser("CREATE TABLE t (a INTEGER, b TEXT, c INTEGER, UNIQUE (a, b))")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct := stmt.(*CreateTable)
+	if len(ct.UniqueConstraints) != 1 {
+		t.Fatalf("expected 1 unique constraint, got %d", len(ct.UniqueConstraints))
+	}
+	cols := ct.UniqueConstraints[0].Cols
+	if len(cols) != 2 || cols[0] != "a" || cols[1] != "b" {
+		t.Errorf("expected UNIQUE (a, b), got %v", cols)
+	}
+}
+
+// TestParseCreateTableMultipleUniques: two UNIQUE clauses produce
+// two constraints.
+func TestParseCreateTableMultipleUniques(t *testing.T) {
+	p := NewParser("CREATE TABLE t (a INTEGER, b TEXT, c INTEGER, UNIQUE (a), UNIQUE (b, c))")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct := stmt.(*CreateTable)
+	if len(ct.UniqueConstraints) != 2 {
+		t.Fatalf("expected 2 unique constraints, got %d", len(ct.UniqueConstraints))
+	}
+	if len(ct.UniqueConstraints[0].Cols) != 1 || ct.UniqueConstraints[0].Cols[0] != "a" {
+		t.Errorf("first should be UNIQUE (a), got %v", ct.UniqueConstraints[0].Cols)
+	}
+	if len(ct.UniqueConstraints[1].Cols) != 2 {
+		t.Errorf("second should be UNIQUE (b, c), got %v", ct.UniqueConstraints[1].Cols)
 	}
 }
 

@@ -1,6 +1,7 @@
 package PS
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
@@ -872,6 +873,7 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 		break
 	}
 
+	var uniqueConstraints []UniqueKey
 	for p.current.Type == LX.T_PRIMARY || p.current.Type == LX.T_UNIQUE {
 		isPK := p.current.Type == LX.T_PRIMARY
 		p.advance()
@@ -887,16 +889,38 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 			return nil, err
 		}
 		p.advance()
+		// Parse one or more identifiers inside the parens.
 		if err := p.expect(LX.T_IDENT); err != nil {
 			return nil, err
 		}
-		pkName := p.current.Lexeme
-		pk = &pkName
+		firstName := p.current.Lexeme
 		p.advance()
+		names := []string{firstName}
+		for p.current.Type == LX.T_COMMA {
+			p.advance()
+			if err := p.expect(LX.T_IDENT); err != nil {
+				return nil, err
+			}
+			names = append(names, p.current.Lexeme)
+			p.advance()
+		}
 		if err := p.expect(LX.T_RPAREN); err != nil {
 			return nil, err
 		}
 		p.advance()
+		if isPK {
+			if len(names) != 1 {
+				return nil, fmt.Errorf("ps: composite PRIMARY KEY (a, b) not supported, got %d columns", len(names))
+			}
+			pkName := names[0]
+			pk = &pkName
+		} else {
+			uniqueConstraints = append(uniqueConstraints, UniqueKey{Cols: names})
+		}
+		// Allow comma between multiple UNIQUE / PRIMARY clauses.
+		if p.current.Type == LX.T_COMMA {
+			p.advance()
+		}
 	}
 
 	if err := p.expect(LX.T_RPAREN); err != nil {
@@ -911,7 +935,7 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 		}
 	}
 
-	return &CreateTable{Name: name, Cols: cols, PK: pk}, nil
+	return &CreateTable{Name: name, Cols: cols, PK: pk, UniqueConstraints: uniqueConstraints}, nil
 }
 
 func (p *Parser) parseDropTable() (*DropTable, error) {
