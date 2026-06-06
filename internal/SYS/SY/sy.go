@@ -73,7 +73,7 @@ func Open(ctx context.Context, dir string, opts AP.Options) (*Engine, error) {
 	}
 	opts.Dir = dir
 	applyDefaults(&opts)
-	if err := validate(&opts); err != nil {
+	if err := validateOptions(&opts); err != nil {
 		return nil, err
 	}
 
@@ -114,28 +114,6 @@ func applyDefaults(o *AP.Options) {
 		o.CreateIfMissing = true
 		o.CreateIfMissingSet = true
 	}
-}
-
-func validate(o *AP.Options) error {
-	if o.Dir == "" {
-		return fmt.Errorf("%w: dir is required", AP.ErrInvalidOptions)
-	}
-	if o.PageSize <= 0 || (o.PageSize&(o.PageSize-1)) != 0 {
-		return fmt.Errorf("%w: PageSize must be a power of two", AP.ErrInvalidOptions)
-	}
-	if o.MemTableSize <= 0 {
-		return fmt.Errorf("%w: MemTableSize must be positive", AP.ErrInvalidOptions)
-	}
-	if o.BufferPoolMB <= 0 {
-		return fmt.Errorf("%w: BufferPoolMB must be positive", AP.ErrInvalidOptions)
-	}
-	if o.WALSizeMB <= 0 {
-		return fmt.Errorf("%w: WALSizeMB must be positive", AP.ErrInvalidOptions)
-	}
-	if o.MaxLevel <= 0 {
-		return fmt.Errorf("%w: MaxLevel must be positive", AP.ErrInvalidOptions)
-	}
-	return nil
 }
 
 // open is the constructor body. It is split out so tests can drive

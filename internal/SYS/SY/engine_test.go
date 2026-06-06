@@ -81,8 +81,8 @@ func TestEngine_ConcurrentClose(t *testing.T) {
 	eng, err := Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
-		BufferPoolMB: 16,
-		WALSizeMB:    4,
+		BufferPoolMB: 64,
+		WALSizeMB:    16,
 		MaxLevel:     3,
 		LogLevel:     8,
 	})
@@ -111,8 +111,8 @@ func TestEngine_OpenDuplicateDir(t *testing.T) {
 	eng1, err := Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
-		BufferPoolMB: 16,
-		WALSizeMB:    4,
+		BufferPoolMB: 64,
+		WALSizeMB:    16,
 		MaxLevel:     3,
 		LogLevel:     8,
 	})
@@ -130,8 +130,8 @@ func TestEngine_OpenDuplicateDir(t *testing.T) {
 	eng2, err := Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
-		BufferPoolMB: 16,
-		WALSizeMB:    4,
+		BufferPoolMB: 64,
+		WALSizeMB:    16,
 		MaxLevel:     3,
 		LogLevel:     8,
 	})
@@ -160,8 +160,8 @@ func TestEngine_Reopen_LargeDataSet(t *testing.T) {
 	eng1, err := Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
-		BufferPoolMB: 16,
-		WALSizeMB:    4,
+		BufferPoolMB: 64,
+		WALSizeMB:    16,
 		MaxLevel:     3,
 		LogLevel:     8,
 	})
