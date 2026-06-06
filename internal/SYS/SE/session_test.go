@@ -1,12 +1,47 @@
-package SYS
+package SE
 
 import (
+	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
+	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
+	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
+
+func testEngine(t *testing.T) (AP.Engine, context.Context) {
+	t.Helper()
+	resetExecutorRegistry()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	return eng, context.Background()
+}
+
+func resetExecutorRegistry() {
+	executor.UnregisterAll()
+}
 
 // TestSession_ErrLockedOnDoubleBegin — R11: Begin while a transaction
 // is already active returns AP.ErrLocked.
