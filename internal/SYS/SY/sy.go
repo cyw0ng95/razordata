@@ -360,10 +360,21 @@ func (e *Engine) Begin(ctx context.Context) (AP.Session, error) {
 	return sessionConstructor(e), nil
 }
 
+// IsClosed reports whether Close has been called on this engine. It
+// is the post-Close guard for Session/Transaction/Stmt methods and
+// is goroutine-safe. The flag is flipped at the very start of
+// Close, before any teardown work begins; callers observing true
+// can rely on Close having committed to the shutdown sequence even
+// if subsystem Close methods are still running in the background.
+func (e *Engine) IsClosed() bool { return e.closed.Load() }
+
 // Open is a no-op on an already-constructed *Engine; it exists to
 // satisfy the AP.Engine interface. New callers should use the
 // package-level Open constructor.
 func (e *Engine) Open(ctx context.Context, dir string, opts AP.Options) error {
+	if e.closed.Load() {
+		return AP.ErrClosed
+	}
 	if e.opened.Load() {
 		return AP.ErrAlreadyOpen
 	}

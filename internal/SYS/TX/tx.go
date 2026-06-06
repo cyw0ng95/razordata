@@ -51,6 +51,9 @@ func NewTransaction(session *sy.Engine, tx vl.Tx) *Transaction {
 }
 
 func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.Rows, error) {
+	if t.session.IsClosed() {
+		return nil, ap.ErrClosed
+	}
 	t.mu.Lock()
 	if t.finished {
 		t.mu.Unlock()
@@ -66,6 +69,9 @@ func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.R
 }
 
 func (t *Transaction) Exec(ctx context.Context, sql string, args ...any) (ap.Result, error) {
+	if t.session.IsClosed() {
+		return ap.Result{}, ap.ErrClosed
+	}
 	t.mu.Lock()
 	if t.finished {
 		t.mu.Unlock()
@@ -111,6 +117,9 @@ func (t *Transaction) RecordWrite(key []byte, newValue []byte) {
 }
 
 func (t *Transaction) Commit(ctx context.Context) error {
+	if t.session.IsClosed() {
+		return ap.ErrClosed
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.finished {
@@ -126,6 +135,9 @@ func (t *Transaction) Commit(ctx context.Context) error {
 }
 
 func (t *Transaction) Rollback(ctx context.Context) error {
+	if t.session.IsClosed() {
+		return ap.ErrClosed
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.finished {
@@ -158,6 +170,9 @@ func (t *Transaction) Rollback(ctx context.Context) error {
 }
 
 func (t *Transaction) Savepoint(ctx context.Context, name string) error {
+	if t.session.IsClosed() {
+		return ap.ErrClosed
+	}
 	if name == "" {
 		return ap.ErrUnknownSavepoint
 	}
@@ -175,6 +190,9 @@ func (t *Transaction) Savepoint(ctx context.Context, name string) error {
 }
 
 func (t *Transaction) RollbackTo(ctx context.Context, name string) error {
+	if t.session.IsClosed() {
+		return ap.ErrClosed
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.finished {
