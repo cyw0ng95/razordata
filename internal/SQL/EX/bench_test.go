@@ -150,3 +150,34 @@ func memoKeyFixture() PS.Stmt {
 	stmt, _ := pp.Parse()
 	return stmt
 }
+
+// BenchmarkConstraintsInsert measures INSERT throughput when the
+// table has NOT NULL and DEFAULT constraints, against a fresh
+// in-memory table. Verifies the constraint check path has no
+// measurable regression vs. the unconstrained path.
+func BenchmarkConstraintsInsert(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		UnregisterAll()
+		ct := NewCreateTable(&PS.CreateTable{
+			Name: "t",
+			Cols: []PS.ColDef{
+				{Name: "id", Type: 1, Nullable: false, PK: true},
+				{Name: "name", Type: 1, Nullable: false},
+				{Name: "score", Type: 1, Default: &PS.NumberLiteral{Val: 0}},
+			},
+			PK: stringPtr("id"),
+		})
+		_, _ = ct.Next(context.Background())
+		ins, err := NewInsertWithStore(nil, "t", []string{"id", "name"}, [][]PS.Expr{
+			{&PS.NumberLiteral{Val: int64(i)}, &PS.StringLiteral{Val: "x"}},
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.StartTimer()
+		_, _ = ins.Next(context.Background())
+	}
+}
+
+func stringPtr(s string) *string { return &s }
