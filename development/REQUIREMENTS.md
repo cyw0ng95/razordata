@@ -1,9 +1,55 @@
 # Razordata Requirements
 
-> Feature catalog for future iteration planning. Each row describes one
-> requirement. Select rows from the TBD section to form new iterations.
+> Feature catalog for future iteration planning. Select rows from the
+> TBD section to form new iterations.
 >
-> **Status**: DONE = implemented and tested. TBD = pending.
+> **Sections**: TBD (pending) → DONE (shipped).
+
+## TBD
+
+Columns for selection:
+- **Priority**: critical / high / medium / low
+- **Effort**: rough size in person-days (S = ≤1, M = 1-3, L = 3-7, XL = 7+)
+- **Deps**: prerequisite REQs that must ship first
+- **Touches**: packages / files that need to change
+
+| ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
+|---|---|---|---|---|---|---|
+| REQ000107 | SQL | `UNIQUE` constraint (single + composite; auto-index) | critical | M | iter-10 (NOT NULL plumbing) | `SQL/EX/constraints.go`, `SQL/EX/writers.go`, `SQL/PS/ast.go`, `ENG/LS` (index lookup) |
+| REQ000127 | SQL | Catalog persistence across restarts (CREATE TABLE survives Close/Open) | critical | L | iter-09 (in-memory catalog) | new `ENG/ID/catalog.go`, `SQL/EX/store.go`, `SYS/SY` startup hook |
+| REQ000035 | WAL | Corruption recovery policy: detect torn write, skip vs. fail | critical | S | iter-03 (replay) | `WAL/RP/rp.go` — return `ErrCorrupt` on torn record; add tests |
+| REQ000061 | TXN | Read-committed isolation (default); upgrade from v1 read-uncommitted | critical | L | iter-05/06 (MVCC + VL) | `TXN/VL/protocol.go`, `TXN/SN/snapshot.go` — re-snapshot per statement |
+| REQ000062 | TXN | MVCC reads inside transactions (SELECT in tx sees own writes through Tx iterator) | critical | L | iter-09 (shadow writeSet) | `TXN/SN`, `SQL/EX` — switch session to Tx-aware iterator |
+| REQ000113 | SQL | `GROUP BY` (single + multi col; with/without aggregates) | critical | M | iter-08 (Aggregate) | `SQL/PS`, `SQL/EX/aggregate.go` (extend HashAggregate), `SQL/RE` (pushdown) |
+| REQ000117 | SQL | `OUTER JOIN` (LEFT/RIGHT/FULL) | critical | M | iter-08 (NestedLoopJoin) | `SQL/EX/join.go` — add outer variants; `SQL/PS` |
+| REQ000126 | SQL | Foreign keys (REFERENCES, ON DELETE/UPDATE) | high | L | iter-11 (UNIQUE), iter-12 (catalog), iter-21 (FKEY index?) | `SQL/PS`, `SQL/EX/constraints.go`, new FK validation in writers |
+| REQ000102 | SYS | Admin CLI `razor-admin` (schema dump, vacuum, manual compact, integrity check) | high | M | iter-12 (catalog), iter-17 (bench coverage) | new `cmd/razor-admin/main.go`, reuse `SQL/EX` for SQL ops |
+| REQ000044 | ENG | `ENG/LS` benchmarks (skiplist insert/find, SST write/read, flush, compaction) | high | S | iter-04 (LSM tree) | `ENG/LS/*_test.go` — add `Benchmark*` per AGENTS.md |
+| REQ000138 | QUAL | `Benchmark*` for every storage component (catch any missing) | high | S | iter-44 (ENG/LS) | audit `ENG/MEM/WAL/FIL` for missing benchmarks |
+| REQ000143 | QUAL | `SQL/RE` coverage: 49% → 80%+ | high | M | iter-07 (RE implementation) | `SQL/RE/*_test.go` — fill error-path branches, subquery flatten cases |
+| REQ000074 | SQL | `IndexScan` real seek (replace prefix-scan fallback) | high | M | iter-08 (IndexScan op) | `SQL/EX/operators.go` — call into real `ENG/ID/` once iter-21 ships, or stub |
+| REQ000009 | LOG | Log compression after rotation (gzip) | low | S | iter-00 (rotation) | `LOG/LG/rotation.go` |
+| REQ000019 | FIL | `MADV_DONTNEED` hints for buffer eviction | low | S | iter-02 (BF) | `MEM/BF/bf.go` — Linux-specific via `syscall.Madvise` |
+| REQ000026 | MEM | `mmap` instead of `read`/`write` | low | L | iter-02 (BF) | `FIL/DF/df.go`, `MEM/BF/bf.go` — gated by build tag |
+| REQ000034 | WAL | WAL compression (lz4) | low | M | iter-03 (WAL writer) | `WAL/WR/encode.go` |
+| REQ000045 | ENG | Secondary indexes (non-PK columns; lookup by `__idx__:<table>:<col>:<val>`) | low | XL | iter-12 (catalog), iter-21 (ID) | new `ENG/ID/` package, `SQL/PL` index selection |
+| REQ000047 | ENG | Prefix bloom filters for range scans | low | M | iter-04 (bloom) | `ENG/LS/sst_writer.go` |
+| REQ000048 | ENG | Table registry persistence (`ENG/TB/`) | medium | L | iter-12 (catalog basic) | new `ENG/TB/tb.go` |
+| REQ000049 | ENG | Schema cluster (`ENG/SC/`) split from LS | low | M | iter-04 | new `ENG/SC/sc.go`; move `TableSchema` from LS |
+| REQ000050 | ENG | Deparser cluster (`ENG/DP/`) split from LS | low | M | iter-04 | new `ENG/DP/dp.go`; move row/block encoding |
+| REQ000064 | TXN | Generational arena (reduce GC pressure vs. single allocation) | low | L | iter-05 (arena) | `TXN/MV/arena.go` |
+| REQ000084 | SQL | `RE` subquery planning (not just flatten) | medium | M | iter-07 (RE), iter-08 (Subq op) | `SQL/RE/subq.go`, `SQL/PL/planner.go` |
+| REQ000085 | SQL | Histogram-based selectivity (replace uniform distribution) | medium | M | iter-12 (catalog stats) | new stats storage, `SQL/PL/estimateCost` |
+| REQ000086 | SQL | Parallel query execution (operators in goroutines, merge via channel) | low | XL | iter-08 (operators) | `SQL/EX/ex.go` — channel-based Next; cancellation hygiene |
+| REQ000098 | SYS | Session pooling (`sync.Pool`) | medium | S | iter-09 (Session) | `SYS/SE/se.go` |
+| REQ000099 | SYS | `ReadOnly` mode in `Options` (skip WAL writes, O_RDONLY opens) | medium | S | iter-09 (Options) | `SYS/SY/sy.go`, `WAL/WR/wr.go` |
+| REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | low | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
+| REQ000101 | SYS | Prometheus metrics endpoint (`/metrics` HTTP) | medium | S | iter-00 (MetricHook), iter-100 (server) | `LOG/HK/metric.go` export, `SYS/SV/sv.go` |
+| REQ000123 | TXN-API | Configurable isolation levels (`READ COMMITTED` / `REPEATABLE READ` / `SERIALIZABLE` via `SET TRANSACTION`) | medium | M | iter-61 (RC implementation) | `SQL/PS`, `SQL/EX`, `TXN/SN/snapshot.go`, `AP.Options` |
+| REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
+| REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
+| REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
+| REQ000100 | SYS | Network server (TCP/gRPC) — duplicates row above; see priority | low | XL | (see above) | (see above) |
 
 ## DONE
 
@@ -116,31 +162,3 @@
 | REQ000140 | QUAL | All public API methods goroutine-safe | iter-09 |
 | REQ000141 | QUAL | `log/slog` only — no `fmt.Printf` in library | all |
 | REQ000142 | QUAL | Error messages: lowercase, no trailing punctuation | all |
-
-## TBD
-
-| ID | Subsystem | Requirement |
-|---|---|---|
-| REQ000009 | LOG | Log compression after rotation |
-| REQ000018 | FIL | File locking (`flock`) for multi-process access |
-| REQ000019 | FIL | `MADV_DONTNEED` hints for buffer eviction |
-| REQ000026 | MEM | `mmap` instead of `read`/`write` |
-| REQ000034 | WAL | WAL compression (lz4) |
-| REQ000045 | ENG | Secondary indexes |
-| REQ000047 | ENG | Prefix bloom filters for range scans |
-| REQ000048 | ENG | Table registry persistence (`ENG/TB/`) |
-| REQ000049 | ENG | Schema cluster (`ENG/SC/`) split from LS |
-| REQ000050 | ENG | Deparser cluster (`ENG/DP/`) split from LS |
-| REQ000064 | TXN | Generational arena |
-| REQ000074 | SQL | `IndexScan` real seek (replace prefix-scan fallback) |
-| REQ000083 | SQL | `SQL/RE` coverage: 49% → 80%+ |
-| REQ000084 | SQL | `RE` subquery planning (not just flatten) |
-| REQ000085 | SQL | Histogram-based selectivity |
-| REQ000086 | SQL | Parallel query execution |
-| REQ000098 | SYS | Session pooling (`sync.Pool`) |
-| REQ000099 | SYS | `ReadOnly` mode in `Options` |
-| REQ000100 | SYS | Network server (TCP/gRPC) |
-| REQ000101 | SYS | Prometheus metrics endpoint |
-| REQ000123 | TXN-API | `READ COMMITTED` / `REPEATABLE READ` / `SERIALIZABLE` isolation levels |
-| REQ000128 | OPS | Point-in-time backup / restore |
-| REQ000129 | OPS | Online schema migration |
