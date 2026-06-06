@@ -117,6 +117,27 @@ func (eng *Engine) Stats() ReadStats {
 	return eng.e.GetStats()
 }
 
+// Compaction returns the underlying compaction manager. Used by the
+// shutdown sequence (Phase 4.1 of SYS.md:245-251) to call
+// Stop(ctx) before tearing the engine down. Returns nil if the
+// engine is closed.
+func (eng *Engine) Compaction() *compactionManager {
+	if eng == nil || eng.e == nil {
+		return nil
+	}
+	return eng.e.cm
+}
+
+// Flush returns the underlying flush manager. Used by the shutdown
+// sequence (Phase 4.1) to call Stop(ctx). Returns nil if the engine
+// is closed.
+func (eng *Engine) Flush() *flushManager {
+	if eng == nil || eng.e == nil {
+		return nil
+	}
+	return eng.e.fm
+}
+
 // RangeIter is the public iteration interface over a key range.
 type RangeIter interface {
 	Next() bool

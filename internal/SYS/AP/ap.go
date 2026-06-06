@@ -123,12 +123,27 @@ type Rows struct {
 
 // EngineStats is an aggregate of per-subsystem statistics.
 type EngineStats struct {
-	Version    string
-	Uptime     time.Duration
-	LSMTree    LSMTreeStats
-	BufferPool BufferPoolStats
-	WAL        WALStats
-	Tx         TxnStats
+	Version      string
+	Uptime       time.Duration
+	LSMTree      LSMTreeStats
+	BufferPool   BufferPoolStats
+	WAL          WALStats
+	Tx           TxnStats
+	LastShutdown ShutdownStats
+}
+
+// ShutdownStats captures the outcome of the most recent
+// graceful-shutdown sequence (SYS.md:215-282). Operators can read
+// this via Engine.Stats() after a Close to see whether the
+// shutdown was clean, whether transactions were force-aborted, and
+// how long each phase took.
+type ShutdownStats struct {
+	At              time.Time `json:"at"`
+	DurationMS      int64     `json:"duration_ms"`
+	ForceAborted    int       `json:"force_aborted"`
+	BackgroundStops int       `json:"background_stops"`
+	UptimeSeconds   int64     `json:"uptime_seconds"`
+	FirstError      string    `json:"first_error,omitempty"`
 }
 
 // LSMTreeStats summarizes the LSM engine's read-side counters.

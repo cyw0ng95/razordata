@@ -113,6 +113,17 @@ func StopGC() {
 	}
 }
 
+// StopGCWithCtx is the ctx-aware variant of StopGC. Used by the
+// graceful-shutdown sequence (Phase 4.2) to stop the global epoch
+// manager with a bounded wait. Returns the Stop error (which is
+// ctx.Err() on timeout, nil on graceful exit).
+func StopGCWithCtx(ctx context.Context) error {
+	if globalGC.em != nil {
+		return globalGC.em.Stop(ctx)
+	}
+	return nil
+}
+
 func ReclaimVersionNodes(batch []unsafe.Pointer) {
 	if len(batch) == 0 {
 		return

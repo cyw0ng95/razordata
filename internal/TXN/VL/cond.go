@@ -43,3 +43,34 @@ func (m *Manager) WaitForActive(ctx context.Context, timeout time.Duration) erro
 		}
 	}
 }
+
+// ForceAbortAll transitions every active transaction slot to the
+// Aborted state. Used by Phase 2 of the graceful-shutdown sequence
+// (SYS.md:227-237) when WaitForActive times out. Returns the number
+// of transactions that were force-aborted.
+//
+// Note: the design spec calls for writing RTRollback to the WAL for
+// each force-aborted transaction. WAL integration in the commit
+// protocol is REQ000171 (currently TBD); when it lands, the WAL
+// write can be inserted before the status transition. For now the
+// status flip is sufficient to unblock the shutdown sequence: the
+// engine is going down, the in-flight transaction holds an arena
+// that becomes garbage, and the writes it made were not committed
+// to the version chain (a CAS in the commit protocol would have
+// moved them from endTS=MaxUint64 to commitTS; aborted txs leave
+// them as MaxUint64 and the reclaim pass eventually frees them).
+func (m *Manager) ForceAbortAll() int {
+	count := 0
+	for i := 0; i < MaxConcurrentTXNs; i++ {
+		s := m.sm.GetSlot(i)
+		if s == nil {
+			continue
+		}
+		if SlotStatus(s.status.Load()) == SlotActive {
+			s.status.Store(int32(SlotAborted))
+			m.aborted.Add(1)
+			count++
+		}
+	}
+	return count
+}
