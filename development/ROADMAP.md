@@ -33,7 +33,7 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 6 | TXN/Protocol | Transaction slot + commit + WAL | `VL` | ~2,000 | 93 | 98.1 | 5 | done |
 | 7 | SQL/Core | Lexer + parser + rewriter | `LX`, `PS`, `RE` | ~2,500 | 102 | 89.5 / 66.6 / 49.0 | 2 / 4 / 0 | done (RE 49% is the project low) |
 | 8 | SQL/Execute | Planner + executor | `PL`, `EX` | ~3,000 | 4 / 63 | 30.6 / 72.8 | 0 / 8 | **done** (v0.5.0; PL/ now owns memo + planner entry, EX/ has full operator tree) |
-| 9 | SYS+Integration | Public API + end-to-end | `AP`, `SY`, `SE`, `TX`, `ST` | ~3,000 | 57 | 100.0 | 2 | **done** (v0.6.0) |
+| 9 | SYS+Integration | Public API + end-to-end | `AP`, `SY`, `SE`, `TX`, `ST` | ~3,000 | 57 | 100.0 / 100.0 / 100.0 / 100.0 / 100.0 | 2 / 0 / 0 / 0 / 0 | **done** (v0.6.0; tests reorganized into function domains in v0.6.3) |
 
 **Coverage / Benchmark legend:** each iter's cluster columns are listed in
 the order the clusters appear in the design dir tree. For example
@@ -58,7 +58,9 @@ the order the clusters appear in the design dir tree. For example
   requirements complete, 57 tests, 100.0% statement coverage,
   BenchmarkEngineSelect ~4.3µs/op. R29 documents the v1 isolation
   model: read-uncommitted between transactions, read-your-own-writes
-  within, shadow writeSet ROLLBACK.
+  within, shadow writeSet ROLLBACK. **v0.6.3 reorganized tests into
+  function-domain subdirectories (AP/, SE/, ST/, SY/, TX/) per ARCH.md
+  design; top-level SYS directory now contains no source code.**
 
 ## What's Remaining (post-v0.6.0)
 
@@ -153,12 +155,17 @@ internal/
 ├── SQL/PL/  # Planner: cost, index select, memo
 ├── SQL/EX/  # Executor: operator tree
 ├── SQL/RE/  # Rewriter: constant fold, pushdown
-├── SYS/AP/  # API: Engine, Options, errors
-├── SYS/SY/  # System: init, shutdown
-├── SYS/SE/  # Session: lifecycle, deadline
-├── SYS/TX/  # Transaction: context, savepoints
-└── SYS/ST/  # Statement: prepare, bind
+└── SYS/  # System layer (top-level directory; see function domains below)
+    ├── AP/  # API: Engine, Session, Transaction, Stmt, Options, errors
+    ├── SY/  # System: init, shutdown, stats aggregation
+    ├── SE/  # Session: lifecycle, deadline, session stats
+    ├── TX/  # Transaction: context, commit/rollback, savepoints
+    └── ST/  # Statement: prepare, bind, type coercion
 ```
+
+Note: As of v0.6.3, the top-level `SYS` directory contains no source code
+files directly — all code resides in function-domain subdirectories per
+`design/ARCH.md` structure.
 
 ## Release Tags
 
@@ -172,6 +179,7 @@ internal/
 | **v0.6.0** | **SYS + Integration** | **iter-09** |
 | v0.6.1 | Pre-existing test failure fixes (LOG/LG + ENG/LS flush race) |
 | v0.6.2 | Code-quality pass: staticcheck warnings, dead code removal, perf (sync.Pool boxing), deduplication (firstLogger / table-not-registered sentinel / replaySegment-forEachRecord / decodeVarint), hint-file atomic write |
+| **v0.6.3** | **SYS test reorganization**: move tests to function-domain subdirectories (AP/, SE/, ST/, SY/, TX/); SYS is now a pure directory container |
 
 ## Design Protection
 

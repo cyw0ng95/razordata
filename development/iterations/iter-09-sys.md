@@ -3,7 +3,8 @@
 **Subsystem:** `SYS`
 **Status:** done
 **Est. LOC:** ~3,000
-**Actual LoC:** ~1,600 (5 packages: AP, SY, SE, TX, ST, plus top-level SYS)
+**Actual LoC:** ~1,600 (5 packages: AP, SY, SE, TX, ST)
+**Latest:** v0.6.3 — test reorganization into function domains
 **Notes:** v1 transaction isolation is **read-uncommitted** between
 transactions and **read-your-own-writes** within a transaction. Writes
 land in the engine on the calling goroutine; the VL Tx is acquired for
@@ -19,25 +20,59 @@ Public API and end-to-end integration. Top-level engine, session, transaction, s
 - Required: `TXN`, `ENG`, `LOG`
 - Consumed interfaces: `TxnManager`, `Store`, `Logger`
 
+## Test Organization (v0.6.3)
+
+Tests are organized into function-domain subdirectories matching
+`design/ARCH.md`:
+
+```
+internal/SYS/
+├── AP/ap_test.go           # API tests: error types, constants, version
+├── SE/session_test.go      # Session tests: lifecycle, stats, deadline
+├── ST/stmt_test.go         # Statement tests: prepare, exec, close
+├── SY/
+│   ├── engine_test.go      # Engine tests: Open/Close/Stats
+│   ├── crud_test.go        # CRUD operations tests
+│   ├── e2e_test.go         # End-to-end integration tests
+│   └── bench_test.go       # Throughput benchmarks
+└── TX/
+    └── transaction_test.go # Transaction tests: savepoints, commit/rollback
+```
+
+Note: `init_test.go` files in ST/, SY/, and TX/ ensure SE package
+initialization registers Session constructor.
+
 ## Design Alignment
 
 Directory structure matches `design/subsystems/SYS.md`:
 ```
 internal/SYS/
 ├── AP/               # API cluster
-│   └── ap.go         # Engine/Session/Transaction/Stmt/Options, error types, EngineStats
+│   ├── ap.go         # Engine/Session/Transaction/Stmt/Options, error types, EngineStats
+│   └── ap_test.go    # API tests
 ├── SY/               # System cluster
 │   ├── sy.go         # engine struct, Open/Close/Stats, version
-│   ├── sy_test.go
-│   ├── sy_bench.go   # engine throughput benchmark
-│   └── shutdown.go   # graceful shutdown, signal handling
+│   ├── shutdown.go   # graceful shutdown, signal handling
+│   ├── engine_test.go
+│   ├── crud_test.go
+│   ├── e2e_test.go
+│   ├── bench_test.go
+│   └── init_test.go
 ├── SE/               # Session cluster
-│   └── se.go         # session struct, Query/Exec/Begin/Commit/Rollback/SetDeadline/Stats
+│   ├── se.go         # session struct, Query/Exec/Begin/Commit/Rollback/SetDeadline/Stats
+│   └── session_test.go
 ├── TX/               # Transaction cluster
-│   └── tx.go         # transaction struct, Query/Exec/Commit/Rollback/Savepoint/RollbackTo
+│   ├── tx.go         # transaction struct, Query/Exec/Commit/Rollback/Savepoint/RollbackTo
+│   ├── transaction_test.go
+│   └── init_test.go
 └── ST/               # Statement cluster
-    └── st.go         # stmt struct, Prepare/Bind/Query/Exec/Close
+    ├── st.go         # stmt struct, Prepare/Bind/Query/Exec/Close
+    ├── stmt_test.go
+    └── init_test.go
 ```
+
+Note: Top-level `SYS` directory contains no source code files directly —
+all code resides in function-domain subdirectories per ARCH.md design.
 
 ## Requirements
 
