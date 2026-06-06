@@ -169,9 +169,24 @@ type Pair struct {
 }
 
 type CreateTable struct {
-	Name string
-	Cols []ColDef
-	PK   *string
+	Name              string
+	Cols              []ColDef
+	PK                *string
+	UniqueConstraints []UniqueKey
+}
+
+// UniqueKey represents a UNIQUE constraint over one or more columns.
+// Cols holds column names as written in the SQL (resolved to indices
+// at registration time by the executor).
+type UniqueKey struct {
+	Cols []string
+}
+
+func (u UniqueKey) stmtNode() {}
+
+// UniqueKeyFromName constructs a single-column UniqueKey.
+func UniqueKeyFromName(name string) UniqueKey {
+	return UniqueKey{Cols: []string{name}}
 }
 
 func (c *CreateTable) stmtNode() {}

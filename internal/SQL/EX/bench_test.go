@@ -181,3 +181,43 @@ func BenchmarkConstraintsInsert(b *testing.B) {
 }
 
 func stringPtr(s string) *string { return &s }
+
+// BenchmarkUniqueInsert measures INSERT throughput when the table
+// has a UNIQUE constraint. The benchmark is the in-memory path; the
+// engine path is a no-op lookup in v1 (deferred to REQ000045).
+func BenchmarkUniqueInsert(b *testing.B) {
+	UnregisterAll()
+	ct := NewCreateTable(&PS.CreateTable{
+		Name: "t",
+		Cols: []PS.ColDef{
+			{Name: "id", Type: 1, Nullable: false, PK: true},
+			{Name: "email", Type: 1, Unique: true},
+		},
+		PK: stringPtr("id"),
+	})
+	_, _ = ct.Next(context.Background())
+	ex := NewExecutor()
+	_ = ex
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		UnregisterAll()
+		ct := NewCreateTable(&PS.CreateTable{
+			Name: "t",
+			Cols: []PS.ColDef{
+				{Name: "id", Type: 1, Nullable: false, PK: true},
+				{Name: "email", Type: 1, Unique: true},
+			},
+			PK: stringPtr("id"),
+		})
+		_, _ = ct.Next(context.Background())
+		ins, err := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
+			{&PS.NumberLiteral{Val: int64(i)}, &PS.StringLiteral{Val: "u@x"}},
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.StartTimer()
+		_, _ = ins.Next(context.Background())
+	}
+}

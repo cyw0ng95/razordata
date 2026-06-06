@@ -311,3 +311,235 @@ func TestConstraints_E2E_CreateTable_PropagatesConstraints(t *testing.T) {
 		t.Errorf("score should have DEFAULT, got nil")
 	}
 }
+
+// TestUnique_ColumnLevel_DuplicateRejected: a column declared UNIQUE
+// rejects a second row with the same value.
+func TestUnique_ColumnLevel_DuplicateRejected(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ct := NewCreateTable(&PS.CreateTable{
+		Name: "t",
+		Cols: []PS.ColDef{
+			{Name: "id", Type: 1, Nullable: false, PK: true},
+			{Name: "email", Type: 1, Unique: true},
+		},
+		PK: ptr("id"),
+	})
+	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+		t.Fatalf("CREATE: %v", err)
+	}
+	ins, err := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
+		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "a@x"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ins.Next(context.Background()); err != nil && err != ErrNoRows {
+		t.Fatalf("first INSERT: %v", err)
+	}
+	// Second insert with same email → ErrConstraint.
+	ins2, _ := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
+		{&PS.NumberLiteral{Val: 2}, &PS.StringLiteral{Val: "a@x"}},
+	})
+	_, err = ins2.Next(context.Background())
+	if !errors.Is(err, ap.ErrConstraint) {
+		t.Errorf("duplicate UNIQUE: got %v, want ErrConstraint", err)
+	}
+}
+
+// TestUnique_ColumnLevel_DistinctValuesOK: distinct values on UNIQUE
+// column are accepted.
+func TestUnique_ColumnLevel_DistinctValuesOK(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ct := NewCreateTable(&PS.CreateTable{
+		Name: "t",
+		Cols: []PS.ColDef{
+			{Name: "id", Type: 1, Nullable: false, PK: true},
+			{Name: "email", Type: 1, Unique: true},
+		},
+		PK: ptr("id"),
+	})
+	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+		t.Fatalf("CREATE: %v", err)
+	}
+	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
+		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "a@x"}},
+		{&PS.NumberLiteral{Val: 2}, &PS.StringLiteral{Val: "b@x"}},
+	})
+	if _, err := ins.Next(context.Background()); err != nil && err != ErrNoRows {
+		t.Errorf("distinct emails: %v", err)
+	}
+}
+
+// TestUnique_Composite_PartialMatchAllowed: composite UNIQUE (a, b)
+// allows (1, 'x') and (1, 'y') — partial matches are OK.
+func TestUnique_Composite_PartialMatchAllowed(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ct := NewCreateTable(&PS.CreateTable{
+		Name: "t",
+		Cols: []PS.ColDef{
+			{Name: "id", Type: 1, Nullable: false, PK: true},
+			{Name: "a", Type: 1},
+			{Name: "b", Type: 1},
+		},
+		PK:                ptr("id"),
+		UniqueConstraints: []PS.UniqueKey{{Cols: []string{"a", "b"}}},
+	})
+	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+		t.Fatalf("CREATE: %v", err)
+	}
+	ss, ok := schemaFor("t")
+	if !ok {
+		t.Fatal("schema not found")
+	}
+	if len(ss.unique) != 1 || len(ss.unique[0].Cols) != 2 {
+		t.Fatalf("expected 1 composite unique, got %v", ss.unique)
+	}
+	if ss.unique[0].Cols[0] != 1 || ss.unique[0].Cols[1] != 2 {
+		t.Errorf("composite indices wrong: %v", ss.unique[0].Cols)
+	}
+}
+
+// TestUnique_Composite_FullMatchRejected: composite UNIQUE (a, b)
+// rejects (1, 'x') then (1, 'x').
+func TestUnique_Composite_FullMatchRejected(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ct := NewCreateTable(&PS.CreateTable{
+		Name: "t",
+		Cols: []PS.ColDef{
+			{Name: "id", Type: 1, Nullable: false, PK: true},
+			{Name: "a", Type: 1},
+			{Name: "b", Type: 1},
+		},
+		PK:                ptr("id"),
+		UniqueConstraints: []PS.UniqueKey{{Cols: []string{"a", "b"}}},
+	})
+	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+		t.Fatalf("CREATE: %v", err)
+	}
+	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "a", "b"}, [][]PS.Expr{
+		{&PS.NumberLiteral{Val: 1}, &PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "x"}},
+		{&PS.NumberLiteral{Val: 2}, &PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "x"}},
+	})
+	_, err := ins.Next(context.Background())
+	if !errors.Is(err, ap.ErrConstraint) {
+		t.Errorf("composite duplicate: got %v, want ErrConstraint", err)
+	}
+}
+
+// TestUnique_WithinStatement: multi-row INSERT with duplicates
+// in the batch returns ErrConstraint.
+func TestUnique_WithinStatement(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ct := NewCreateTable(&PS.CreateTable{
+		Name: "t",
+		Cols: []PS.ColDef{
+			{Name: "id", Type: 1, Nullable: false, PK: true},
+			{Name: "email", Type: 1, Unique: true},
+		},
+		PK: ptr("id"),
+	})
+	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+		t.Fatalf("CREATE: %v", err)
+	}
+	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
+		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "a@x"}},
+		{&PS.NumberLiteral{Val: 2}, &PS.StringLiteral{Val: "a@x"}}, // dup within batch
+	})
+	_, err := ins.Next(context.Background())
+	if !errors.Is(err, ap.ErrConstraint) {
+		t.Errorf("within-statement duplicate: got %v, want ErrConstraint", err)
+	}
+}
+
+// TestUnique_PrimaryKeyImplied: PK is implicitly UNIQUE. Two rows
+// with the same PK → ErrConstraint.
+func TestUnique_PrimaryKeyImplied(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ct := NewCreateTable(&PS.CreateTable{
+		Name: "t",
+		Cols: []PS.ColDef{
+			{Name: "id", Type: 1, Nullable: false, PK: true},
+		},
+		PK: ptr("id"),
+	})
+	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+		t.Fatalf("CREATE: %v", err)
+	}
+	ins, _ := NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
+		{&PS.NumberLiteral{Val: 1}},
+		{&PS.NumberLiteral{Val: 1}}, // duplicate PK
+	})
+	_, err := ins.Next(context.Background())
+	if !errors.Is(err, ap.ErrConstraint) {
+		t.Errorf("duplicate PK: got %v, want ErrConstraint", err)
+	}
+}
+
+// TestUnique_NullSkipped: NULL in a UNIQUE column does NOT trigger
+// a uniqueness check (SQL standard). Multiple NULLs are allowed.
+func TestUnique_NullSkipped(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ct := NewCreateTable(&PS.CreateTable{
+		Name: "t",
+		Cols: []PS.ColDef{
+			{Name: "id", Type: 1, Nullable: false, PK: true},
+			{Name: "tag", Type: 1, Unique: true, Nullable: true},
+		},
+		PK: ptr("id"),
+	})
+	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+		t.Fatalf("CREATE: %v", err)
+	}
+	ins, _ := NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
+		{&PS.NumberLiteral{Val: 1}}, // tag omitted → NULL
+		{&PS.NumberLiteral{Val: 2}}, // tag omitted → NULL (allowed)
+	})
+	if _, err := ins.Next(context.Background()); err != nil && err != ErrNoRows {
+		t.Errorf("multiple NULLs on UNIQUE: %v", err)
+	}
+}
+
+// TestUnique_EncodeKey_Stable: encoding the same values produces the
+// same key; different values produce different keys.
+func TestUnique_EncodeKey_Stable(t *testing.T) {
+	k1 := encodeUniqueKey([]int{0}, []interface{}{int64(42)})
+	k2 := encodeUniqueKey([]int{0}, []interface{}{int64(42)})
+	if string(k1) != string(k2) {
+		t.Errorf("same values produced different keys: %x vs %x", k1, k2)
+	}
+	k3 := encodeUniqueKey([]int{0}, []interface{}{int64(99)})
+	if string(k1) == string(k3) {
+		t.Errorf("different values produced same key: %x", k1)
+	}
+	// Composite: (a=1, b='x') vs (a=1, b='y') should differ.
+	k4 := encodeUniqueKey([]int{0, 1}, []interface{}{int64(1), "x"})
+	k5 := encodeUniqueKey([]int{0, 1}, []interface{}{int64(1), "y"})
+	if string(k4) == string(k5) {
+		t.Errorf("composite with different second col produced same key")
+	}
+}
+
+// TestUnique_E2E_FullSQL: SQL DDL + DML through the executor.
+func TestUnique_E2E_FullSQL(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ctx := context.Background()
+	if _, err := ex.Exec(ctx, "CREATE TABLE users (id INTEGER NOT NULL, email TEXT UNIQUE)"); err != nil {
+		t.Fatalf("CREATE: %v", err)
+	}
+	if _, err := ex.Exec(ctx, "INSERT INTO users VALUES (1, 'a@x')"); err != nil {
+		t.Errorf("first INSERT: %v", err)
+	}
+	_, err := ex.Exec(ctx, "INSERT INTO users VALUES (2, 'a@x')")
+	if !errors.Is(err, ap.ErrConstraint) {
+		t.Errorf("second INSERT duplicate: got %v, want ErrConstraint", err)
+	}
+}

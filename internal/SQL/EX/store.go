@@ -24,12 +24,19 @@ type Store interface {
 // executor was constructed without one.
 var ErrNoEngine = errors.New("ex: no engine wired; use NewExecutorWithEngine")
 
+// UniqueKey is a UNIQUE constraint resolved to column indices. Cols
+// references positions in the parent storeSchema.cols slice.
+type UniqueKey struct {
+	Cols []int
+}
+
 // storeSchema describes a table's column layout for row encoding.
 type storeSchema struct {
 	cols     []string
 	pk       string
-	nullable []bool    // parallel to cols; false means NOT NULL
-	defaults []PS.Expr // parallel to cols; nil means no DEFAULT
+	nullable []bool      // parallel to cols; false means NOT NULL
+	defaults []PS.Expr   // parallel to cols; nil means no DEFAULT
+	unique   []UniqueKey // each entry is 1+ columns
 }
 
 var (
@@ -96,7 +103,8 @@ func registerStoreSchema(name string, cols []string, pk string) uint64 {
 // registerStoreSchemaWithConstraints stores schema with NOT NULL and DEFAULT
 // info carried in the parallel slices. Safe to call multiple times for the
 // same name (idempotent). cols, nullable, and defaults must be the same
-// length.
+// length. No UNIQUE constraints are recorded; use
+// registerStoreSchemaFull for that.
 func registerStoreSchemaWithConstraints(name string, cols []string, nullable []bool, defaults []PS.Expr, pk string) uint64 {
 	storeMu.Lock()
 	defer storeMu.Unlock()
@@ -112,12 +120,48 @@ func registerStoreSchemaWithConstraints(name string, cols []string, nullable []b
 			ss.pk = pk
 			ss.nullable = cpNullable
 			ss.defaults = cpDefaults
+			ss.unique = nil
 			return id
 		}
 	}
 	id := nextTableID()
 	tableIDs[name] = id
 	storeSchemas[id] = &storeSchema{cols: cpCols, pk: pk, nullable: cpNullable, defaults: cpDefaults}
+	return id
+}
+
+// registerStoreSchemaFull stores the full constraint set including
+// UNIQUE. unique may be nil. Safe to call multiple times for the same
+// name (idempotent).
+func registerStoreSchemaFull(name string, cols []string, nullable []bool, defaults []PS.Expr, unique []UniqueKey, pk string) uint64 {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	cpCols := append([]string(nil), cols...)
+	cpNullable := append([]bool(nil), nullable...)
+	var cpDefaults []PS.Expr
+	if defaults != nil {
+		cpDefaults = append([]PS.Expr(nil), defaults...)
+	}
+	var cpUnique []UniqueKey
+	if unique != nil {
+		cpUnique = make([]UniqueKey, len(unique))
+		for i, u := range unique {
+			cpUnique[i] = UniqueKey{Cols: append([]int(nil), u.Cols...)}
+		}
+	}
+	if id, ok := tableIDs[name]; ok {
+		if ss, ok := storeSchemas[id]; ok {
+			ss.cols = cpCols
+			ss.pk = pk
+			ss.nullable = cpNullable
+			ss.defaults = cpDefaults
+			ss.unique = cpUnique
+			return id
+		}
+	}
+	id := nextTableID()
+	tableIDs[name] = id
+	storeSchemas[id] = &storeSchema{cols: cpCols, pk: pk, nullable: cpNullable, defaults: cpDefaults, unique: cpUnique}
 	return id
 }
 
