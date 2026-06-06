@@ -18,9 +18,7 @@
 ## Dependency Order
 
 ```
-LOG → FIL → MEM
-           └→ WAL → ENG → TXN → SQL
-                               └→ SYS
+LOG → FIL → MEM → WAL → ENG → TXN → SQL → SYS
 ```
 
 ## Cross-Subsystem Interfaces

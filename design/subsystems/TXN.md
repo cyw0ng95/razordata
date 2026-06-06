@@ -174,40 +174,98 @@ const MaxConcurrentTXNs = 1024
 
 ```
 1. Begin:
-   - allocate slot from pre-allocated array
-   - assign beginTS from global atomic counter
-   - take snapshot of all version chain heads (ReadView)
+   - allocate slot from pre-allocated array (mutex-protected free list)
+   - assign beginTS = globalAtomicCounter++
+   - register thread with epoch manager
+   - take snapshot of all version chain heads for keys that will be read (ReadView)
+   - slot.status = ACTIVE
 
 2. Read:
    - for each Get(key):
-     a. get version chain head
-     b. publish head to hazard pointer
-     c. traverse chain, find first version where beginTS < readTS and endTS >= readTS
-     d. if found and not deleted, return value
-     e. else return ErrNotFound
+     a. get version chain head via ENG.Store
+     b. publish head to hazard pointer set (atomic.Store)
+     c. traverse chain: find first version where beginTS < readTS AND endTS >= readTS
+     d. if found AND version.deleted == false: return value
+     e. else: return ErrNotFound
+     f. clear hazard pointer after read completes
+   - record all read keys in readSet (for SSI if enabled in future)
 
 3. Write (Insert/Delete):
-   - allocate version node from thread-local arena
-   - set txnID, beginTS, endTS=MaxUint64, key, value, deleted flag
-   - insert into version chain via CAS on head pointer
-   - add key range to writeSet
+   - allocate version node from thread-local arena (CAS-based Alloc)
+   - set version fields: txnID, beginTS, endTS=MaxUint64, key, value, deleted flag
+   - insert into version chain via CAS loop:
+     ```go
+     for {
+         oldHead := loadHead(key)
+         newVersion.next = oldHead
+         if CAS(&head, oldHead, newVersion) {
+             break
+         }
+         // CAS failed: another writer inserted concurrently, retry
+     }
+     ```
+   - add key (or key range) to writeSet
+   - write RTData record to WAL (not yet synced)
 
-4. Pre-commit (Validation):
-   - scan all transaction slots
-   - for any committed transaction with commitTS > myBeginTS:
-     - check if any key in my writeSet overlaps with their writeSet
-   - if overlap found: abort this transaction
+4. Pre-commit (Validation) — Serializability Check:
+   - acquire read lock on transaction slot array
+   - for each slot S in transaction array:
+     - if S.status == COMMITTED AND S.commitTS > myBeginTS:
+       - for each key K in my writeSet:
+         - if K overlaps with S.writeSet:
+           - CONFLICT DETECTED: abort this transaction
+   - release read lock
+   - if validation passed: proceed to commit
+   - if validation failed: goto Abort
 
 5. Commit:
-   - assign commitTS = atomic counter++
+   - assign commitTS = globalAtomicCounter++
+   - write RTCommit record to WAL: [txnID][commitTS]
+   - call WAL.Sync() to fsync the commit record (durability point)
    - for each version node in writeSet:
-     - CAS update endTS from MaxUint64 to commitTS
-   - update slot status to committed
+     - CAS update endTS from MaxUint64 to commitTS:
+       ```go
+       for {
+           expected := MaxUint64
+           if CAS(&version.endTS, expected, commitTS) {
+               break
+           }
+           // CAS failed: another commit already updated, should not happen
+       }
+       ```
+   - update slot.status = COMMITTED (atomic store)
+   - release transaction slot (return to free list)
+   - unregister thread from epoch manager
 
 6. Post-commit:
-   - release transaction slot
-   - write Commit record to WAL
+   - release all resources (arena, read view)
+   - epoch manager will eventually reclaim old version nodes
+   - notify waiting readers (if any) via LOG/TraceHook
+
+7. Abort (if validation fails or user calls Rollback):
+   - for each version node in writeSet:
+     - CAS to remove from version chain (or mark as aborted)
+   - write RTRollback record to WAL
+   - update slot.status = ABORTED
+   - release slot to free list
+   - unregister thread from epoch manager
+
+8. Savepoint (optional):
+   - save current readTS and writeSet snapshot under a name
+   - on RollbackTo(name): restore readTS, discard writeSet entries added after savepoint
 ```
+
+**Concurrency Guarantees:**
+- Read-Write: Lock-free — readers traverse version chains without blocking writers.
+- Write-Write: Detected at pre-commit — serializable isolation.
+- Write-Read: Writers never block readers — MVCC ensures old versions remain visible.
+- Durability: WAL fsync before commitTS assignment — no commit acknowledged until durable.
+
+**Failure Scenarios:**
+- CAS failure on write insertion: retry with new head pointer.
+- CAS failure on commit (endTS update): should never happen — indicates bug.
+- Validation conflict: abort immediately, return `ErrTxAborted` to caller.
+- WAL write failure: abort transaction, return `ErrIO` (retryable).
 
 ## Function Clusters
 

@@ -194,11 +194,118 @@ type SessionStats struct {
 **Responsibility:** Global init, config validation, graceful shutdown signal handling, version, stats aggregation.
 
 **Key behaviors:**
-- `Open`: validate `Options` (dir exists or `CreateIfMissing`, page size is power of 2, sizes are positive). Construct all subsystems. Call `WAL/RP.Replay()`.
-- `Close`: set `closed = true`, flush all pending writes (memtable, WAL), stop background goroutines (compaction, epoch manager), close all subsystems in reverse order.
-- `Stats`: aggregate stats from all subsystems into `EngineStats`.
-- Graceful shutdown: on `SIGTERM` / `SIGINT`, call `Close()`. On `Close()` error, log and continue closing other subsystems.
-- Version: `Version = "0.1.0"` (semantic versioning).
+
+#### Open (Initialization)
+- `Open`: validate `Options` (dir exists or `CreateIfMissing`, page size is power of 2, sizes are positive). Construct all subsystems in order: `LOG` → `FIL` → `MEM` → `WAL` → `ENG` → `TXN`. Call `WAL/RP.Replay()` to recover from crash.
+- **Version:** `Version = "0.1.0"` (semantic versioning).
+- **Config validation:** Before any subsystem is constructed, validate all fields:
+  - `Dir`: must be non-empty, absolute path or relative to cwd.
+  - `PageSize`: must be power of 2, range [1024, 65536].
+  - `MemTableSize`: must be >= 1 MB, <= 1 GB.
+  - `BufferPoolMB`: must be >= 64, <= 4096.
+  - `WALSizeMB`: must be >= 16, <= 256.
+  - `MaxLevel`: must be in range [3, 10].
+  - Invalid options return `fmt.Errorf("razordata: invalid option: %s", field)` before any subsystem is constructed.
+
+#### Close (Graceful Shutdown)
+- `Close` follows a strict shutdown sequence to ensure data durability and goroutine safety:
+
+```
+Phase 1: Stop accepting new requests
+  1.1. Set `closed = true` (atomic.Bool)
+  1.2. Close `ctxCancel` to signal all goroutines
+  1.3. All public API methods check `closed` — return `ErrClosed` if true
+
+Phase 2: Wait for active transactions to complete (timeout: 30s)
+  2.1. Acquire read lock on transaction slot array
+  2.2. Count active transactions (slots with status == ACTIVE)
+  2.3. If count > 0:
+       - Log: "waiting for N active transactions to complete"
+       - Wait on `sync.Cond` (broadcast when a transaction commits/aborts)
+       - Timeout after 30s: force-abort remaining transactions
+  2.4. For force-aborted transactions:
+       - Write RTRollback to WAL
+       - Log: "force-aborted transaction %d after shutdown timeout"
+
+Phase 3: Flush pending writes
+  3.1. Call `ENG.Flush()` — flush memtable to SST
+  3.2. Call `WAL.Sync()` — fsync all pending WAL records
+  3.3. Call `FIL.SyncDir()` — fsync directory entries
+
+Phase 4: Stop background goroutines
+  4.1. Stop compaction goroutine:
+       - Send stop signal via `stopCh`
+       - Wait for goroutine to exit (via `sync.WaitGroup`)
+       - Timeout after 5s: log warning and proceed
+  4.2. Stop epoch manager goroutine:
+       - Close `drainCh` to signal exit
+       - Wait for goroutine to exit
+  4.3. Stop hook dispatcher goroutine (LOG/HK):
+       - Close event channel
+       - Wait for dispatcher to drain pending events
+  4.4. Stop metric collection goroutine (if enabled):
+       - Flush pending metrics
+       - Close goroutine
+
+Phase 5: Close subsystems in reverse order
+  5.1. `TXN.Close()`:
+       - Release all transaction slots
+       - Clear hazard pointer sets
+       - Free all arena buffers
+  5.2. `ENG.Close()`:
+       - Close memtable (release skiplist nodes)
+       - Close manifest file
+       - Release iterator pool
+  5.3. `WAL.Close()`:
+       - Final `fsync` on current segment
+       - Close segment FD
+       - Sync WAL directory
+  5.4. `MEM.Close()`:
+       - Write hint file (serialize hot working set)
+       - Flush all dirty pages to disk
+       - Release buffer pool slots
+       - Return all buffers to `sync.Pool`
+  5.5. `FIL.Close()`:
+       - Close all open file handles (via `handles` map)
+       - Close directory FDs (via `dirFDs` map)
+       - Sync root directory
+  5.6. `LOG.Close()`:
+       - Flush all pending log events
+       - Call `Sync()` on underlying slog handler
+       - Close log file (if configured)
+
+Phase 6: Cleanup and logging
+  6.1. Log: "razordata shutdown complete"
+  6.2. Aggregate final stats: uptime, total queries, total bytes read/written
+  6.3. Write stats to `EngineStats` for post-mortem analysis
+```
+
+**Error Handling During Close:**
+- On any error during shutdown, log the error with `slog.Error` and continue closing remaining subsystems.
+- Shutdown is best-effort — the goal is to flush as much data as possible, not to guarantee 100% durability if an error occurs.
+- After `Close()` returns, the `Engine` is unusable. Any subsequent API calls return `ErrClosed`.
+
+#### Signal Handling
+- Register signal handler in `Open()`:
+  ```go
+  sigCh := make(chan os.Signal, 1)
+  signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+  go func() {
+      <-sigCh
+      log.Info("received shutdown signal")
+      engine.Close()
+      os.Exit(0)
+  }()
+  ```
+- Users can override this by catching signals themselves and calling `Close()` manually.
+
+#### Stats Aggregation
+- `Stats()`: acquire read lock, aggregate stats from all subsystems:
+  - `BufferPool`: hits, misses, pins, evicts
+  - `WAL`: records written, bytes written, fsync count
+  - `ENG`: memtable size, SST count per level, compaction bytes
+  - `TXN`: transactions started, committed, aborted, conflicts
+  - `SQL`: queries executed, rows returned, rows modified
 
 ### AP — API
 
@@ -247,13 +354,17 @@ type SessionStats struct {
 ## Implementation Plan
 
 1. **`internal/SYS/AP/ap.go`** — `Engine` interface, `Options` struct, all error types, `EngineStats`.
-2. **`internal/SYS/SY/sy.go`** — `engine` struct, `Open`, `Close`, `Stats`, version constant.
-3. **`internal/SYS/SE/se.go`** — `session` struct, `NewSession`, `Query`, `Exec`, `Begin`, `Commit`, `Rollback`, `SetDeadline`, `Stats`.
-4. **`internal/SYS/TX/tx.go`** — `transaction` struct, `Query`, `Exec`, `Commit`, `Rollback`, `Savepoint`, `RollbackTo`.
-5. **`internal/SYS/ST/st.go`** — `stmt` struct, `Prepare`, `Bind`, `Query`, `Exec`, `Close`.
-6. **`internal/SYS/SY/shutdown.go`** — graceful shutdown: signal handling (`os/signal`), drain pending writes, close subsystems.
-7. **Integration tests:** `engine_test.go` — `Open`/`Close`, concurrent sessions, graceful shutdown, error types.
-8. **Benchmark tests:** `engine_bench.go` — throughput benchmark: `go test -bench=BenchmarkEngine -benchtime=10s`.
+2. **`internal/SYS/SY/sy.go`** — `engine` struct, `Open` (config validation, subsystem construction), `Stats`, version constant.
+3. **`internal/SYS/SY/shutdown.go`** — graceful shutdown: 6-phase close sequence, signal handling (`os/signal`), active transaction wait, background goroutine stop, subsystem close order, error handling.
+4. **`internal/SYS/SY/validate.go`** — `validateOptions(opts Options) error`: field-by-field validation with descriptive error messages.
+5. **`internal/SYS/SE/se.go`** — `session` struct, `NewSession`, `Query`, `Exec`, `Begin`, `Commit`, `Rollback`, `SetDeadline`, `Stats`. Session pooling via `sync.Pool`.
+6. **`internal/SYS/TX/tx.go`** — `transaction` struct, `Query`, `Exec`, `Commit`, `Rollback`, `Savepoint`, `RollbackTo`.
+7. **`internal/SYS/ST/st.go`** — `stmt` struct, `Prepare`, `Bind`, `Query`, `Exec`, `Close`. Plan memoization, type coercion.
+8. **Integration tests:**
+   - `engine_test.go` — `Open`/`Close`, concurrent sessions, graceful shutdown, error types.
+   - `shutdown_test.go` — simulate SIGTERM, verify 6-phase close sequence, test timeout handling.
+   - `validate_test.go` — invalid options (page size not power of 2, negative sizes), verify rejection.
+9. **Benchmark tests:** `engine_bench.go` — throughput benchmark: `go test -bench=BenchmarkEngine -benchtime=10s`.
 
 ## Open Issues
 
@@ -261,3 +372,6 @@ type SessionStats struct {
 - Should we support read-only mode (`ReadOnly = true`)? Yes, skip WAL writes, open files read-only.
 - How to handle `SetDeadline` cancellation? Use `context.WithDeadline` internally.
 - Should the engine support a metrics endpoint (Prometheus)? Future work — add an admin interface.
+- What is the optimal timeout for waiting active transactions during shutdown? 30s is the default; may need tuning based on workload.
+- Should force-aborted transactions during shutdown be rolled back to a savepoint instead of full abort? (preserves partial work)
+- Should the shutdown sequence be configurable (e.g., skip waiting for transactions in emergency shutdown)?
