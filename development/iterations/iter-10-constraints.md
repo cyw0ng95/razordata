@@ -1,10 +1,32 @@
 # Iteration 10 — NOT NULL / DEFAULT Constraints
 
 **Subsystem:** `SQL` (`PS`, `EX`)
-**Status:** planned
+**Status:** done
 **Est. LOC:** ~600
+**Actual LoC:** ~480 (impl ~280, tests ~200)
 **Requirements:** REQ000105, REQ000106
 **Target release:** v0.7.0
+
+## Outcome
+
+Shipped in v0.7.0. All requirements met; no deviations from the plan.
+
+**What shipped:**
+- `ColInfo` extended with `Nullable`, `Default`, `PK` fields
+- `storeSchema` extended with `nullable` and `defaults` parallel slices
+- New `registerStoreSchemaWithConstraints` registration function
+- `AP.ErrConstraint` sentinel, classified as fatal
+- `SQL/EX/constraints.go` with `fillDefaults` and `validateRow`
+- Wired into Insert (both in-memory and engine paths) and Update (both paths)
+- `CreateTable` propagates `ColDef.Nullable` / `ColDef.Default`; PRIMARY KEY
+  implies NOT NULL
+- `UnregisterAll` now also clears `storeSchemas` / `tableIDs` (test isolation fix)
+
+**Tests:** 16 new (12 EX + 3 PS + 1 AP regression); all pass with `-race`.
+
+**Benchmark:** `BenchmarkConstraintsInsert` ~1µs/op (no regression).
+
+**Final commit/tag:** commit 4c48713, tag v0.7.0.
 
 ## Overview
 
