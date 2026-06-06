@@ -407,9 +407,7 @@ func (e *Engine) Stats() AP.EngineStats {
 			Misses:    bp.Misses,
 			Evictions: bp.Evicts,
 		},
-		WAL: AP.WALStats{
-			CurrentLSN: 0,
-		},
+		WAL: e.walStats(),
 		Tx: AP.TxnStats{
 			Active:    tx.Active,
 			Committed: tx.Committed,
@@ -428,6 +426,22 @@ func (a *executorStoreAdapter) Insert(k, v []byte) error { return a.eng.Insert(k
 func (a *executorStoreAdapter) Delete(k []byte) error    { return a.eng.Delete(k) }
 func (a *executorStoreAdapter) NewIterator(prefix []byte) ls.RangeIter {
 	return a.eng.NewIterator(prefix)
+}
+
+// walStats surfaces the replayer's counters into AP.WALStats so
+// Engine.Stats() can show what the most recent Replay observed.
+// Returns a zero-value struct if the replayer is not yet
+// constructed (e.g. Stats() called before Open completes).
+func (e *Engine) walStats() AP.WALStats {
+	if e.rp == nil {
+		return AP.WALStats{}
+	}
+	rs := e.rp.Stats()
+	return AP.WALStats{
+		TruncatedSegments:  int64(rs.TruncatedSegments),
+		UnknownRecords:     int64(rs.UnknownRecords),
+		CorruptionFailures: int64(rs.CorruptionFailures),
+	}
 }
 
 // Executor returns the SQL executor bound to this engine. Used by

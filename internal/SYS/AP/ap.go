@@ -166,6 +166,21 @@ type WALStats struct {
 	BytesWritten   int64
 	Syncs          int64
 	CurrentLSN     uint64
+	// TruncatedSegments counts segments whose tail was dropped
+	// at the end of the most recent Replay because the
+	// records were torn. Surface via Engine.Stats so operators
+	// can distinguish a clean restart from one that tolerated
+	// a partial write at shutdown. Added in iter-15 (REQ000190).
+	TruncatedSegments int64
+	// UnknownRecords counts records whose type was not
+	// recognised by the current reader; skipped on the
+	// forward-compat path. See WAL/RP/rp.go and TXN.md.
+	UnknownRecords int64
+	// CorruptionFailures counts records that failed the
+	// envelope CRC; each is a mid-segment corruption that
+	// aborted the replay. Non-zero here is a strong signal
+	// that the WAL is damaged and the database needs repair.
+	CorruptionFailures int64
 }
 
 // TxnStats summarizes the transaction manager.
