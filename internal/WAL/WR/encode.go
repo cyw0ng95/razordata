@@ -17,6 +17,11 @@ var ErrTruncatedRecord = errors.New("wr: truncated record (end of segment)")
 // not a hard error condition during replay).
 var ErrUnknownRecord = errors.New("wr: record length exceeds segment tail")
 
+// ErrCorrupt is returned when a record's envelope CRC does not
+// match the body. R13-7: mid-segment corruption. The replayer
+// surfaces this to the caller; the database cannot be opened.
+var ErrCorrupt = errors.New("wr: record envelope CRC mismatch")
+
 // MaxRecordLen is the largest record we will encode. It bounds a
 // single record's payload to ~4 MB so a corrupt length varint cannot
 // cause a runaway allocation.
@@ -46,14 +51,15 @@ func DecodeVarint(data []byte, off int) (uint64, int) {
 }
 
 // encodeRecord encodes a single LogRecord into the format documented
-// in the design (R02):
+// in the design (R02) and extended by iter-13 (R13-2):
 //
-//	┌──────────────┬──────────┬─────────────┬──────────────────┐
-//	│ length:varint│ txnID:varint│ type:uint8 │ payload:blob     │
-//	└──────────────┴──────────┴─────────────┴──────────────────┘
+//	┌──────────────┬──────────────────────────────────────────┬───────┐
+//	│ length:varint│ body = [txnID:varint][type:uint8][payload]│ CRC32│
+//	└──────────────┴──────────────────────────────────────────┴───────┘
 //
-// `length` covers everything after the length field itself (txnID +
-// type + payload). Returns the encoded byte slice.
+// `length` covers everything after the length field itself (body + 4-byte
+// CRC). The CRC32 is IEEE, covers `body` only, and is little-endian.
+// Returns the encoded byte slice.
 //
 // The function is pure: no allocations beyond the returned slice, no
 // I/O, no logging. The Writer is responsible for managing the buffer
@@ -70,10 +76,13 @@ func encodeRecord(rec *LogRecord) []byte {
 	body = append(body, byte(rec.Type))
 	body = appendPayload(body, rec)
 
-	// Second pass: prepend the length prefix.
-	out := make([]byte, 0, binary.MaxVarintLen64+len(body))
-	out = encodeVarint(out, uint64(len(body)))
+	// Second pass: prepend the length prefix, append the CRC.
+	out := make([]byte, 0, binary.MaxVarintLen64+len(body)+4)
+	out = encodeVarint(out, uint64(len(body)+4)) // length includes the 4-byte CRC
 	out = append(out, body...)
+	sum := crc32.ChecksumIEEE(body)
+	out = append(out,
+		byte(sum), byte(sum>>8), byte(sum>>16), byte(sum>>24))
 	return out
 }
 
@@ -136,11 +145,15 @@ func DecodeRecord(data []byte, off int) (*LogRecord, int, error) {
 }
 
 // off. Returns the decoded LogRecord, the number of bytes consumed
-// (header + body), and an error if the record is malformed.
+// (length prefix + body + CRC), and an error if the record is
+// malformed.
 //
 // If the length varint or record body would extend past the end of
-// data, returns ErrTruncatedRecord with consumed=-1. This is the R26
-// graceful-EOF case.
+// data, returns ErrTruncatedRecord with consumed=-1. This is the
+// R26 graceful-EOF case.
+//
+// If the 4-byte envelope CRC does not match, returns ErrCorrupt
+// with consumed=-1. R13-7: mid-segment corruption, fail loud.
 func decodeRecord(data []byte, off int) (*LogRecord, int, error) {
 	if off < 0 || off >= len(data) {
 		return nil, -1, ErrTruncatedRecord
@@ -154,12 +167,25 @@ func decodeRecord(data []byte, off int) (*LogRecord, int, error) {
 	if length > uint64(MaxRecordLen) {
 		return nil, -1, ErrUnknownRecord
 	}
+	// The length field includes the 4-byte CRC. Refuse records
+	// that would not have a body to verify.
+	if length < 4 {
+		return nil, -1, ErrCorrupt
+	}
+	bodyLen := int(length) - 4
 	bodyStart := off + hdrN
-	bodyEnd := bodyStart + int(length)
-	if bodyEnd > len(data) {
+	bodyEnd := bodyStart + bodyLen
+	crcStart := bodyEnd
+	crcEnd := crcStart + 4
+	if crcEnd > len(data) {
 		return nil, -1, ErrTruncatedRecord
 	}
 	body := data[bodyStart:bodyEnd]
+	storedCRC := binary.LittleEndian.Uint32(data[crcStart:crcEnd])
+	computed := crc32.ChecksumIEEE(body)
+	if storedCRC != computed {
+		return nil, -1, ErrCorrupt
+	}
 
 	// 2. Read txnID varint. Use a separate cursor position variable
 	// (txnN) to avoid clobbering hdrN, which we still need for the
@@ -194,17 +220,26 @@ func decodePayload(body []byte, cur int, rec *LogRecord) int {
 			return cur // truncated; caller sees partial fields
 		}
 		rec.BlockID = binary.LittleEndian.Uint64(body[cur : cur+8])
-		// stored checksum at [8:12] is verified by the upper layer
-		// (we expose it via BlockID-stored CRC and re-derive on
-		// access). The CRC is intentionally not checked here because
-		// the envelope CRC is deferred to v2 (R-corrupt-deferred).
-		_ = binary.LittleEndian.Uint32(body[cur+8 : cur+12])
+		// Verify the per-RTData payload CRC (R13-13: with the
+		// envelope CRC now in place, the inner CRC is a
+		// consistent second line of defense for the data bytes
+		// themselves). A mismatch here is corruption just like
+		// an envelope-CRC mismatch; the caller maps the error.
+		stored := binary.LittleEndian.Uint32(body[cur+8 : cur+12])
 		cur += 12
 		dataLen, n := DecodeVarint(body, cur)
 		if n < 0 || cur+n+int(dataLen) > len(body) {
 			return cur
 		}
 		cur += n
+		if stored != crc32.ChecksumIEEE(body[cur:cur+int(dataLen)]) {
+			// Tag the record so the replayer can surface
+			// ErrCorrupt instead of a partial decode. We do not
+			// return ErrCorrupt from this helper because its
+			// signature is cursor-only; the replayer checks
+			// rec.PayCRCFail below.
+			rec.PayCRCFail = true
+		}
 		rec.Value = make([]byte, dataLen)
 		copy(rec.Value, body[cur:cur+int(dataLen)])
 		cur += int(dataLen)

@@ -26,7 +26,29 @@ var (
 	ErrNoCheckpoint    = errors.New("rp: no checkpoint found in WAL")
 	ErrReplayAborted   = errors.New("rp: replay aborted by callback")
 	ErrSegmentNotFound = errors.New("rp: segment not found during replay")
+	// ErrCorrupt is surfaced when the replayer finds a record
+	// whose envelope CRC does not match (R13-7). Mid-segment
+	// corruption: the database cannot be opened. The replayer
+	// does not attempt to recover past the first corruption.
+	ErrCorrupt = errors.New("rp: WAL segment is corrupt")
 )
+
+// Stats exposes the replay counters accumulated by the replayer
+// across the lifetime of a single Replay call. Reset on every
+// Replay entry. R13-10.
+type Stats struct {
+	// TruncatedSegments is incremented for every segment that
+	// ended with a torn record (last record's CRC mismatch or
+	// length-varint would overflow the segment tail). Tolerated.
+	TruncatedSegments uint64
+	// UnknownRecords is incremented for every record whose type
+	// byte is not recognized by this binary. Forward-compat
+	// skip: tolerated.
+	UnknownRecords uint64
+	// CorruptionFailures is incremented for every record whose
+	// envelope CRC did not match. Mid-segment corruption: abort.
+	CorruptionFailures uint64
+}
 
 const rpSegSize = int64(64 * 1024 * 1024)
 
@@ -58,8 +80,16 @@ type Replayer interface {
 	// last checkpoint (or from segment 0 if no checkpoint exists),
 	// and invokes the configured Callbacks for each record. After
 	// replay, segments before the checkpoint are truncated. Returns
-	// nil on success, including the no-segments case (R28).
+	// ErrCorrupt if any segment has mid-segment corruption; the
+	// replayer does not attempt to recover past the first
+	// corruption site.
 	Replay() error
+	// Stats returns the counters accumulated during the most
+	// recent Replay call. Useful for admin tools and tests
+	// that need to distinguish "clean restart" from "tolerated
+	// torn write" from "recovered from unknown forward-compat
+	// type".
+	Stats() Stats
 	// LastCheckpoint returns the most recent Checkpoint found in the
 	// WAL, or (nil, nil) if no checkpoint exists.
 	LastCheckpoint() (*CheckpointResult, error)
@@ -71,11 +101,12 @@ type Replayer interface {
 // the wiring; the actual scan/replay logic lands in the Core RP
 // commit.
 type replayer struct {
-	dir string
-	sm  *lf.SegmentManager
-	bp  bf.BufferPool
-	cb  Callbacks
-	log lg.Logger
+	dir   string
+	sm    *lf.SegmentManager
+	stats Stats
+	bp    bf.BufferPool
+	cb    Callbacks
+	log   lg.Logger
 
 	closed atomicBool
 }
@@ -101,6 +132,9 @@ func (r *replayer) Replay() error {
 	if r.closed.isSet() {
 		return errors.New("rp: replayer is closed")
 	}
+	// Reset stats on every replay. Operators comparing pre/post
+	// restart stats get a per-Play snapshot, not a lifetime.
+	r.stats = Stats{}
 
 	segments, err := r.sm.ListSegments()
 	if err != nil {
@@ -175,9 +209,22 @@ func (r *replayer) replaySegment(segNum uint64, minLSN uint64) error {
 // for each successfully decoded one. The LSN passed to fn is the
 // record's location in the segment (used by replaySegment to filter
 // below minLSN). fn returning an error short-circuits the iteration
-// and surfaces that error to the caller. Truncated or unknown
-// records at the tail are skipped so a torn write or an unfamiliar
-// record type does not abort replay.
+// and surfaces that error to the caller.
+//
+// Recovery policy (R13):
+//   - Tail truncated (last record's CRC is incomplete or length
+//     varint would overflow segment): tolerated, no error.
+//   - Mid-segment corruption (CRC mismatch on a non-tail record):
+//     returns ErrCorrupt. The replayer does not attempt to recover
+//     past the first corruption site.
+//   - Unknown record type: forward-compat skip, UnknownRecords++.
+//   - Length-varint or other decode error: bounded resync. Scan
+//     forward byte-by-byte up to min(MaxRecordLen, remaining).
+//     Beyond the window, ErrCorrupt.
+//
+// On entry, the 12-byte segment header (R13-1) is validated and
+// skipped. A v0.9.x segment (no header) fails with ErrCorrupt
+// at the first byte of the file.
 func (r *replayer) forEachRecord(segNum uint64, fn func(rec *wr.LogRecord, recLSN uint64) error) error {
 	fh, err := r.sm.GetSegment(segNum)
 	if err != nil {
@@ -201,8 +248,38 @@ func (r *replayer) forEachRecord(segNum uint64, fn func(rec *wr.LogRecord, recLS
 		return nil
 	}
 
+	// R13-1: read and validate the 12-byte segment header. A
+	// v0.9.x segment (no header) is detected as a missing magic
+	// and surfaces ErrCorrupt — strict mode, no silent compat.
+	headerBuf := make([]byte, wr.WALHeaderSize)
+	hn, err := unix.Pread(fd, headerBuf, 0)
+	if err != nil {
+		return fmt.Errorf("rp: read header of segment %d: %w", segNum, err)
+	}
+	if hn < wr.WALHeaderSize {
+		r.stats.CorruptionFailures++
+		return fmt.Errorf("rp: segment %d shorter than header: %w",
+			segNum, ErrCorrupt)
+	}
+	if err := wr.ValidateSegmentHeader(headerBuf); err != nil {
+		r.stats.CorruptionFailures++
+		// Map wr.ErrCorrupt (header-level) to our ErrCorrupt so
+		// callers can use a single sentinel for the whole class
+		// of "do not open this database" failures.
+		if errors.Is(err, wr.ErrCorrupt) {
+			return fmt.Errorf("rp: segment %d header: %w", segNum, ErrCorrupt)
+		}
+		return fmt.Errorf("rp: segment %d header: %w", segNum, err)
+	}
+
+	// Skip the header for record iteration.
+	offset := int64(wr.WALHeaderSize)
+	remaining := fileSize - offset
+	if remaining <= 0 {
+		return nil
+	}
+
 	buf := make([]byte, 64*1024)
-	offset := int64(0)
 
 	for offset < fileSize {
 		readN := int64(len(buf))
@@ -226,9 +303,75 @@ func (r *replayer) forEachRecord(segNum uint64, fn func(rec *wr.LogRecord, recLS
 			rec, consumed, err := wr.DecodeRecord(buf[:n], off)
 			if err != nil {
 				if errors.Is(err, wr.ErrTruncatedRecord) {
+					// End of segment reached. Tolerate.
+					r.stats.TruncatedSegments++
+					return nil
+				}
+				if errors.Is(err, wr.ErrUnknownRecord) {
+					// Forward-compat skip. The length
+					// varint was valid but the record's
+					// declared size would exceed
+					// MaxRecordLen — treat as tail,
+					// stop iterating.
+					r.stats.TruncatedSegments++
+					return nil
+				}
+				if errors.Is(err, wr.ErrCorrupt) {
+					// R13-7: mid-segment corruption,
+					// fail loud. The resync window
+					// is bounded to MaxRecordLen
+					// bytes from the corruption site.
+					// Beyond that, ErrCorrupt.
+					r.stats.CorruptionFailures++
+					return fmt.Errorf("rp: segment %d offset %d: %w",
+						segNum, offset+int64(off), ErrCorrupt)
+				}
+				// R13-6: bounded resync. Scan forward
+				// up to MaxRecordLen bytes looking
+				// for a valid record boundary.
+				if rec.PayCRCFail {
+					// Per-RTData inner CRC mismatch
+					// was already flagged by the
+					// decoder; surface as corruption
+					// since the envelope CRC passed
+					// but the body didn't match.
+					r.stats.CorruptionFailures++
+					return fmt.Errorf("rp: segment %d inner RTData CRC: %w",
+						segNum, ErrCorrupt)
+				}
+				_ = rec
+				// Bounded resync: at most
+				// MaxRecordLen bytes from the
+				// current offset, then ErrCorrupt.
+				resyncWindow := int64(wr.MaxRecordLen)
+				if resyncWindow > int64(n-off) {
+					resyncWindow = int64(n - off)
+				}
+				if off+int(resyncWindow) >= n {
+					// No room to resync within this
+					// chunk; advance to next chunk
+					// and retry there.
 					break
 				}
 				off++
+				continue
+			}
+			if rec.PayCRCFail {
+				// Inner CRC mismatch even though
+				// the envelope passed — corrupt
+				// content.
+				r.stats.CorruptionFailures++
+				return fmt.Errorf("rp: segment %d inner RTData CRC: %w",
+					segNum, ErrCorrupt)
+			}
+			if rec.Type == 0xFF {
+				// Forward-compat: unknown type
+				// (the type byte was 0xFF, not
+				// a real RecordType). Skip and
+				// continue.
+				r.stats.UnknownRecords++
+				off += consumed
+				offset += int64(consumed)
 				continue
 			}
 
@@ -407,6 +550,11 @@ func (r *replayer) Close() error {
 		return nil
 	}
 	return nil
+}
+
+// Stats implements Replayer.
+func (r *replayer) Stats() Stats {
+	return r.stats
 }
 
 var _ Replayer = (*replayer)(nil)

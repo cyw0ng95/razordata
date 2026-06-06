@@ -361,11 +361,13 @@ func TestSyncFlushesBuffer(t *testing.T) {
 	if preBufLen == 0 {
 		t.Fatal("expected buffer to have bytes after Append")
 	}
-	// Read the segment before Sync — should be empty (file exists but
-	// no pwrites yet).
+	// Read the segment before Sync — should be the header only
+	// (R13-1: the 12-byte header is written at segment creation
+	// time, before any record).
 	preRaw := mustReadSegment(t, d.sm, 0)
-	if len(preRaw) != 0 {
-		t.Errorf("pre-Sync segment size: got %d, want 0", len(preRaw))
+	if len(preRaw) != WALHeaderSize {
+		t.Errorf("pre-Sync segment size: got %d, want %d",
+			len(preRaw), WALHeaderSize)
 	}
 	// Sync.
 	if err := w.Sync(); err != nil {
@@ -440,8 +442,9 @@ func TestSyncUpdatesSyncedLSN(t *testing.T) {
 	if err := w.Sync(); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	// After Sync, synced = LSN of last byte in segment 0.
-	wantSynced := LSNFor(0, uint64(rec1Size))
+	// After Sync, synced = LSN of last byte in segment 0. The
+	// first record's LSN is offset WALHeaderSize (R13-1).
+	wantSynced := LSNFor(0, uint64(WALHeaderSize+rec1Size))
 	if got := w.synced.Load(); got != wantSynced {
 		t.Errorf("synced: got %d, want %d", got, wantSynced)
 	}
@@ -455,7 +458,7 @@ func TestSyncUpdatesSyncedLSN(t *testing.T) {
 	if err := w.Sync(); err != nil {
 		t.Fatalf("Sync[2]: %v", err)
 	}
-	wantSynced2 := LSNFor(0, uint64(rec1Size+rec2Size))
+	wantSynced2 := LSNFor(0, uint64(WALHeaderSize+rec1Size+rec2Size))
 	if got := w.synced.Load(); got != wantSynced2 {
 		t.Errorf("synced after second Sync: got %d, want %d", got, wantSynced2)
 	}
@@ -578,9 +581,10 @@ func TestAppendSingleRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	if lsn != 0 {
-		// First record in segment 0 starts at LSN 0.
-		t.Errorf("LSN: got %d, want 0", lsn)
+	// First record in segment 0 starts at LSN WALHeaderSize
+	// (R13-1: the segment header occupies the first 12 bytes).
+	if lsn != LSNFor(0, uint64(WALHeaderSize)) {
+		t.Errorf("LSN: got %d, want %d", lsn, LSNFor(0, uint64(WALHeaderSize)))
 	}
 	// Flush the in-memory buffer (R37: Append doesn't auto-flush;
 	// the test forces a flush so we can verify on-disk bytes).
@@ -588,12 +592,13 @@ func TestAppendSingleRecord(t *testing.T) {
 		t.Fatalf("flushForTest: %v", err)
 	}
 	got := mustReadSegment(t, d.sm, 0)
-	want := encodeRecord(&LogRecord{
+	// The on-disk layout is now: header(12) + record.
+	want := append(append([]byte{}, headerEncode...), encodeRecord(&LogRecord{
 		Type:    RTData,
 		TxnID:   1,
 		BlockID: 0xABCDEF,
 		Value:   []byte("hello world"),
-	})
+	})...)
 	if !bytes.Equal(got, want) {
 		t.Errorf("on-disk bytes mismatch: got %x, want %x", got, want)
 	}
@@ -622,9 +627,10 @@ func TestAppendBatchOfRecords(t *testing.T) {
 		t.Fatalf("flushForTest: %v", err)
 	}
 
-	// Re-read the segment and decode all records.
+	// Re-read the segment and decode all records. The first
+	// record is at offset WALHeaderSize (R13-1).
 	raw := mustReadSegment(t, d.sm, 0)
-	off := 0
+	off := WALHeaderSize
 	for i := 0; i < n; i++ {
 		rec, consumed, derr := decodeRecord(raw, off)
 		if derr != nil {
@@ -643,6 +649,7 @@ func TestAppendBatchOfRecords(t *testing.T) {
 	}
 
 	// LSN of the last record should be at offset off in segment 0.
+	// The first record's LSN is WALHeaderSize (R13-1).
 	wantLastLSN := LSNFor(0, uint64(off-len(encodeRecord(&recs[n-1]))))
 	if lsn != wantLastLSN {
 		t.Errorf("last LSN: got %d, want %d", lsn, wantLastLSN)
@@ -667,7 +674,7 @@ func TestAppendAssignsTxnIDFromBatch(t *testing.T) {
 		t.Fatalf("flushForTest: %v", err)
 	}
 	raw := mustReadSegment(t, d.sm, 0)
-	off := 0
+	off := WALHeaderSize
 	for i := 0; i < len(recs); i++ {
 		rec, consumed, _ := decodeRecord(raw, off)
 		if rec.TxnID != 999 {
@@ -776,7 +783,9 @@ func TestRotateAtSegmentBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Append[2]: %v", err)
 	}
-	wantLSN2 := LSNFor(1, 0) // first record of segment 1
+	// First record of segment 1, after the new segment's
+	// WALHeaderSize (R13-1).
+	wantLSN2 := LSNFor(1, uint64(WALHeaderSize))
 	if lsn2 != wantLSN2 {
 		t.Errorf("LSN[2]: got %d, want %d (post-rotation)", lsn2, wantLSN2)
 	}
@@ -830,11 +839,17 @@ func TestRotateProducesFreshSegment(t *testing.T) {
 	if w.seg.number != 1 {
 		t.Errorf("post-rotation seg.number: got %d, want 1", w.seg.number)
 	}
-	// writeOff = len(rec2) since rec2 was written into the fresh
-	// segment starting at offset 0.
-	if w.seg.writeOff != rec2Size {
+	// writeOff = WALHeaderSize + rec2Size since rec2 was written
+	// into the fresh segment starting at offset WALHeaderSize (R13-1).
+	if w.seg.writeOff != WALHeaderSize+rec2Size {
 		t.Errorf("post-rotation seg.writeOff: got %d, want %d",
-			w.seg.writeOff, rec2Size)
+			w.seg.writeOff, WALHeaderSize+rec2Size)
+	}
+	// writeOff = WALHeaderSize + rec2Size since rec2 was written
+	// into the fresh segment starting at offset WALHeaderSize (R13-1).
+	if w.seg.writeOff != WALHeaderSize+rec2Size {
+		t.Errorf("post-rotation seg.writeOff: got %d, want %d",
+			w.seg.writeOff, WALHeaderSize+rec2Size)
 	}
 	// buf cap is preserved (same pool slot size).
 	if cap(w.seg.buf) != int(spWALBufSize(t)) {
@@ -880,8 +895,11 @@ func TestRotateLSNContinuityAcrossSegments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Append[2]: %v", err)
 	}
-	if lsn2 != uint64(SegSize) {
-		t.Errorf("LSN continuity: got %d, want %d (SegSize)", lsn2, uint64(SegSize))
+	// After rotation, rec2 is the first record in segment 1,
+	// which starts at offset WALHeaderSize (R13-1).
+	wantLSN2 := LSNFor(1, uint64(WALHeaderSize))
+	if lsn2 != wantLSN2 {
+		t.Errorf("LSN continuity: got %d, want %d", lsn2, wantLSN2)
 	}
 }
 
@@ -953,8 +971,9 @@ func TestCloseFlushesDirtyBuffer(t *testing.T) {
 	if got := w.segBufLenForTest(); got == 0 {
 		t.Fatal("expected dirty buffer after Append")
 	}
-	if pre := mustReadSegment(t, d.sm, 0); len(pre) != 0 {
-		t.Fatalf("pre-Close segment should be empty, got %d bytes", len(pre))
+	if pre := mustReadSegment(t, d.sm, 0); len(pre) != WALHeaderSize {
+		t.Fatalf("pre-Close segment should be header-only (%d bytes), got %d bytes",
+			WALHeaderSize, len(pre))
 	}
 
 	// Close should flush + fsync + release.
@@ -968,14 +987,14 @@ func TestCloseFlushesDirtyBuffer(t *testing.T) {
 		t.Errorf("post-Close seg: got %+v, want nil", w.segForTest())
 	}
 
-	// And the bytes are now on disk.
+	// And the bytes are now on disk: header + record.
 	post := mustReadSegment(t, d.sm, 0)
-	want := encodeRecord(&LogRecord{
+	want := append(append([]byte{}, headerEncode...), encodeRecord(&LogRecord{
 		Type:    RTData,
 		TxnID:   1,
 		BlockID: 1,
 		Value:   []byte("close me"),
-	})
+	})...)
 	if !bytes.Equal(post, want) {
 		t.Errorf("post-Close segment bytes mismatch: got %x, want %x", post, want)
 	}
@@ -1005,7 +1024,7 @@ func TestCloseUpdatesSyncedLSN(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	want := LSNFor(0, uint64(rec1Size+rec2Size))
+	want := LSNFor(0, uint64(WALHeaderSize+rec1Size+rec2Size))
 	if got := w.synced.Load(); got != want {
 		t.Errorf("post-Close synced: got %d, want %d", got, want)
 	}
