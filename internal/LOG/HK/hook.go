@@ -1,6 +1,7 @@
 package hk
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -26,12 +27,14 @@ type LogEvent struct {
 // Hooks receive events asynchronously via a bounded channel.
 // Events are non-blocking — if the channel is full, events are dropped.
 type HookRegistry struct {
-	hooks   map[string]Hook
-	ch      chan LogEvent
-	mu      sync.RWMutex
-	done    chan struct{}
-	closed  bool
-	muClose sync.Mutex // protects closing
+	hooks    map[string]Hook
+	ch       chan LogEvent
+	mu       sync.RWMutex
+	done     chan struct{}
+	loopDone chan struct{}
+	stopOnce sync.Once
+	closed   bool
+	muClose  sync.Mutex // protects closing
 
 	// Statistics
 	dropped    atomic.Int64
@@ -45,9 +48,10 @@ func New(bufferSize int) *HookRegistry {
 	}
 
 	r := &HookRegistry{
-		hooks: make(map[string]Hook),
-		ch:    make(chan LogEvent, bufferSize),
-		done:  make(chan struct{}),
+		hooks:    make(map[string]Hook),
+		ch:       make(chan LogEvent, bufferSize),
+		done:     make(chan struct{}),
+		loopDone: make(chan struct{}),
 	}
 
 	// Start the dispatch goroutine.
@@ -59,6 +63,7 @@ func New(bufferSize int) *HookRegistry {
 // dispatch loops over the channel and sends events to all registered hooks.
 // Runs in a background goroutine — never blocks the logging path.
 func (r *HookRegistry) dispatch() {
+	defer close(r.loopDone)
 	for {
 		select {
 		case event, ok := <-r.ch:
@@ -126,7 +131,11 @@ func (r *HookRegistry) Close() error {
 	}
 	r.closed = true
 
-	close(r.done)
+	// Stop the dispatch goroutine first so it does not see a
+	// closed-and-being-iterated hook map.
+	if err := r.Stop(context.Background()); err != nil {
+		return err
+	}
 	close(r.ch)
 
 	r.mu.Lock()
@@ -141,6 +150,26 @@ func (r *HookRegistry) Close() error {
 	}
 
 	return err
+}
+
+// Stop signals the dispatch goroutine to exit and waits for it,
+// bounded by ctx. Idempotent.
+//
+// Stop is the graceful-shutdown entry point (Phase 4.3 of
+// SYS.md:258-261). It does not close the event channel nor any
+// hooks; Close does both. Splitting the two lets a shutdown caller
+// drain in-flight events with a bounded wait before tearing hooks
+// down.
+func (r *HookRegistry) Stop(ctx context.Context) error {
+	r.stopOnce.Do(func() {
+		close(r.done)
+	})
+	select {
+	case <-r.loopDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Stats holds hook registry statistics.
