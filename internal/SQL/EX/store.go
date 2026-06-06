@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
 // Store is the minimal storage surface the executor needs to integrate
@@ -25,8 +26,10 @@ var ErrNoEngine = errors.New("ex: no engine wired; use NewExecutorWithEngine")
 
 // storeSchema describes a table's column layout for row encoding.
 type storeSchema struct {
-	cols []string
-	pk   string
+	cols     []string
+	pk       string
+	nullable []bool     // parallel to cols; false means NOT NULL
+	defaults []PS.Expr  // parallel to cols; nil means no DEFAULT
 }
 
 var (
@@ -63,8 +66,14 @@ func tableIDFor(name string) (uint64, bool) {
 }
 
 // registerStoreSchema assigns a table ID to a name and stores its schema.
-// Safe to call multiple times for the same name (idempotent).
+// Safe to call multiple times for the same name (idempotent). All columns
+// default to nullable=true with no DEFAULT clause. Use
+// registerStoreSchemaWithConstraints to set NOT NULL and DEFAULT.
 func registerStoreSchema(name string, cols []string, pk string) uint64 {
+	nullable := make([]bool, len(cols))
+	for i := range nullable {
+		nullable[i] = true
+	}
 	storeMu.Lock()
 	defer storeMu.Unlock()
 	if id, ok := tableIDs[name]; ok {
@@ -73,12 +82,42 @@ func registerStoreSchema(name string, cols []string, pk string) uint64 {
 			copy(cp, cols)
 			ss.cols = cp
 			ss.pk = pk
+			ss.nullable = nullable
+			ss.defaults = nil
 			return id
 		}
 	}
 	id := nextTableID()
 	tableIDs[name] = id
-	storeSchemas[id] = &storeSchema{cols: append([]string(nil), cols...), pk: pk}
+	storeSchemas[id] = &storeSchema{cols: append([]string(nil), cols...), pk: pk, nullable: nullable}
+	return id
+}
+
+// registerStoreSchemaWithConstraints stores schema with NOT NULL and DEFAULT
+// info carried in the parallel slices. Safe to call multiple times for the
+// same name (idempotent). cols, nullable, and defaults must be the same
+// length.
+func registerStoreSchemaWithConstraints(name string, cols []string, nullable []bool, defaults []PS.Expr, pk string) uint64 {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	cpCols := append([]string(nil), cols...)
+	cpNullable := append([]bool(nil), nullable...)
+	var cpDefaults []PS.Expr
+	if defaults != nil {
+		cpDefaults = append([]PS.Expr(nil), defaults...)
+	}
+	if id, ok := tableIDs[name]; ok {
+		if ss, ok := storeSchemas[id]; ok {
+			ss.cols = cpCols
+			ss.pk = pk
+			ss.nullable = cpNullable
+			ss.defaults = cpDefaults
+			return id
+		}
+	}
+	id := nextTableID()
+	tableIDs[name] = id
+	storeSchemas[id] = &storeSchema{cols: cpCols, pk: pk, nullable: cpNullable, defaults: cpDefaults}
 	return id
 }
 

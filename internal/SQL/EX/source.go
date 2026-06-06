@@ -51,6 +51,11 @@ func UnregisterAll() {
 	defer tablesMu.Unlock()
 	tables = map[string][]Row{}
 	schemas = map[string][]string{}
+	storeMu.Lock()
+	storeSchemas = map[uint64]*storeSchema{}
+	tableIDs = map[string]uint64{}
+	tableIDSeq = 0
+	storeMu.Unlock()
 }
 
 func cloneRow(r Row) Row {
