@@ -191,6 +191,7 @@ var (
 	ErrInvalidOptions   = errors.New("razordata: invalid options")
 	ErrNoActiveTxn      = errors.New("razordata: no active transaction")
 	ErrUnknownSavepoint = errors.New("razordata: unknown savepoint")
+	ErrConstraint       = errors.New("razordata: constraint violation")
 )
 
 // RetryableErrors is the set of sentinels callers should treat as
@@ -202,7 +203,7 @@ var FatalErrors = []error{
 	ErrTxAborted, ErrCorrupt, ErrSyntax, ErrTypeMismatch,
 	ErrUpgradeRequired, ErrReadOnly, ErrAlreadyOpen, ErrNotOpen,
 	ErrClosed, ErrInvalidOptions, ErrNoActiveTxn, ErrUnknownSavepoint,
-	ErrNotFound, ErrDuplicateKey, ErrDeadlineExceeded,
+	ErrNotFound, ErrDuplicateKey, ErrDeadlineExceeded, ErrConstraint,
 }
 
 // IsRetryable reports whether err is one of the retryable sentinels

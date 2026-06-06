@@ -57,6 +57,12 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 	if schema == nil && len(i.cols) > 0 {
 		schema = i.cols
 	}
+	// Resolve the constraint-aware schema for NOT NULL / DEFAULT
+	// enforcement. Falls back to nil for ad-hoc schemas.
+	var cschema *storeSchema
+	if ss, ok := schemaFor(i.table); ok {
+		cschema = ss
+	}
 	tablesMu.Lock()
 	defer tablesMu.Unlock()
 	existing := tables[i.table]
@@ -64,6 +70,14 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		out, err := buildInsertRow(schema, i.cols, row)
 		if err != nil {
 			return Row{}, err
+		}
+		if cschema != nil {
+			if out, err = fillDefaults(cschema, out); err != nil {
+				return Row{}, err
+			}
+			if err := validateRow(cschema, out); err != nil {
+				return Row{}, err
+			}
 		}
 		existing = append(existing, out)
 		i.rows++
@@ -77,6 +91,12 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 	for _, row := range i.values {
 		out, err := buildInsertRow(i.schema.cols, i.cols, row)
 		if err != nil {
+			return Row{}, err
+		}
+		if out, err = fillDefaults(i.schema, out); err != nil {
+			return Row{}, err
+		}
+		if err := validateRow(i.schema, out); err != nil {
 			return Row{}, err
 		}
 		pk, err := extractPK(i.schema, out)
@@ -152,6 +172,12 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 	if u.store != nil {
 		return u.nextFromStore(ctx)
 	}
+	// Resolve the constraint-aware schema for NOT NULL / DEFAULT
+	// enforcement on the new row.
+	var cschema *storeSchema
+	if ss, ok := schemaFor(u.table); ok {
+		cschema = ss
+	}
 	for {
 		row, err := u.iter.Next(ctx)
 		if err != nil {
@@ -172,6 +198,14 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 		snapshot := cloneRow(row)
 		if err := applyUpdate(&row, u.set); err != nil {
 			return Row{}, err
+		}
+		if cschema != nil {
+			if row, err = fillDefaults(cschema, row); err != nil {
+				return Row{}, err
+			}
+			if err := validateRow(cschema, row); err != nil {
+				return Row{}, err
+			}
 		}
 		if err := replaceBySnapshot(u.table, snapshot, row); err != nil {
 			return Row{}, err
@@ -201,6 +235,12 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 			}
 		}
 		if err := applyUpdate(&row, u.set); err != nil {
+			return Row{}, err
+		}
+		if row, err = fillDefaults(u.schema, row); err != nil {
+			return Row{}, err
+		}
+		if err := validateRow(u.schema, row); err != nil {
 			return Row{}, err
 		}
 		pk, err := extractPK(u.schema, row)
@@ -374,8 +414,12 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 		return Row{}, errTableExists
 	}
 	cols := make([]string, len(c.stmt.Cols))
+	nullable := make([]bool, len(c.stmt.Cols))
+	defaults := make([]PS.Expr, len(c.stmt.Cols))
 	for i, col := range c.stmt.Cols {
 		cols[i] = col.Name
+		nullable[i] = col.Nullable
+		defaults[i] = col.Default
 	}
 	tables[c.stmt.Name] = []Row{}
 	schemas[c.stmt.Name] = cols
@@ -384,7 +428,16 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	if c.stmt.PK != nil {
 		pk = *c.stmt.PK
 	}
-	registerStoreSchema(c.stmt.Name, cols, pk)
+	// PRIMARY KEY implies NOT NULL. If PK is one of the cols, flip its
+	// nullable bit so validateRow rejects NULL PK inserts.
+	if pk != "" {
+		for i, n := range cols {
+			if n == pk {
+				nullable[i] = false
+			}
+		}
+	}
+	registerStoreSchemaWithConstraints(c.stmt.Name, cols, nullable, defaults, pk)
 	return Row{}, ErrNoRows
 }
 
