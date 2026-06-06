@@ -37,38 +37,10 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 10 | NOT NULL / DEFAULT | Column constraints end-to-end | `PS`, `EX` | 16 | done (v0.7.0) |
 | 11 | UNIQUE Constraint | Single + composite + multi-clause UNIQUE | `PS`, `EX` | 11 | done (v0.8.0); I/O refinements pending v0.8.1 |
 | 11b | I/O refinements | MADV_DONTNEED + mmap BlockDevice | `MEM/BF`, `FIL/DF` | 4 | done (v0.8.1) |
-| 12 | Catalog Persistence | System catalog (single-file, atomic rename, schema versioning) | `LS`, `EX`, `SY` | done (v0.9.0) |
+| 12 | Catalog Persistence | System catalog (single-file, atomic rename, schema versioning) | `LS`, `EX`, `SY` | done in code (v0.9.0 tag pending); 4 pre-existing LS bugs (REQ000186–189) deferred to iter-12b |
+| 13 | WAL Corruption Recovery | Segment header + envelope CRC + bounded resync + Stats | `WAL/WR`, `WAL/RP` | done in code (v0.10.0 tag pending); coverage 72.5% (target 85%) — see REQ000191 |
 
-All iterations complete. Coverage details: `go test ./... -cover`.
-
-## Remaining Work
-
-The v1 chain LOG → SYS is closed. Production-ready path: two phases.
-
-### Phase 1: Correctness & Ops Foundation (iter-12 to iter-17)
-
-| Iter | Requirements | Goal | Status |
-|---|---|---|---|
-| iter-12 | REQ000127 | Catalog persistence across restarts | done (v0.9.0) |
-| iter-13 | REQ000035 | WAL corruption recovery policy | done (v0.10.0) |
-| iter-14 | REQ000061 | Read-committed isolation (default) | remaining |
-| iter-15 | REQ000062 | MVCC reads in transaction (SELECT sees own writes) | remaining |
-| iter-16 | REQ000102 | Admin CLI (`razor-admin`: schema dump, vacuum, manual compaction) | remaining |
-| iter-17 | REQ000044, REQ000138, REQ000143 | `ENG/LS` benchmarks + coverage lift | remaining |
-
-### Phase 2: SQL Standards Compliance (iter-18 to iter-20)
-
-| Iter | Requirements | Goal |
-|---|---|---|
-| iter-18 | REQ000113 | `GROUP BY` |
-| iter-19 | REQ000117 | `OUTER JOIN` (LEFT/RIGHT/FULL) |
-| iter-20 | REQ000126 | Foreign keys |
-
-### Out of scope (deferred)
-
-- Network server, Prometheus, session pooling, read-only mode, multi-process
-- Secondary indexes, mmap, WAL/log compression, generational arena
-- Backup/restore, online schema migration, advanced SQL features
+All iterations through iter-13 complete in code. v0.9.0 and v0.10.0 release tags are pending cut. Coverage details: `go test ./... -cover`.
 
 ## Completion Criteria (All Iterations)
 
@@ -103,9 +75,11 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 | v0.6.2 | Code quality: staticcheck, dead code, perf |
 | **v0.6.3** | **SYS tests**: reorganized into function domains |
 | **v0.7.0** | **NOT NULL / DEFAULT constraints** end-to-end (`AP.ErrConstraint`, `SQL/EX/constraints.go`) |
+| v0.7.1 | Test reorganization: function-domain grouping, root `SYS/doc.go` cleanup. No code change. |
 | **v0.8.0** | **UNIQUE constraint** single + composite + multi-clause (`SQL/PS` AST + parser, `SQL/EX` `checkUnique`) |
 | **v0.8.1** | **I/O refinements**: `MADV_DONTNEED` hints on buffer eviction + `mmap` BlockDevice for SST reads (Linux build tag; pread fallback elsewhere) |
-| **v0.9.0** | **Catalog Persistence** (`ENG/LS/catalog.go` + `SYS/SY/catalog_init.go`). `CREATE TABLE` / `DROP TABLE` survive `Close`/`Open` via an atomic-rename single-file format. Recorded technical debt: four pre-existing LSM bugs (path mismatch, sstIterator state, checksum layout, double-`nextFileID`) deferred to iter-12b. |
+| **v0.9.0** *(tag pending)* | **Catalog Persistence** (`ENG/LS/catalog.go` + `SYS/SY/catalog_init.go`). `CREATE TABLE` / `DROP TABLE` survive `Close`/`Open` via an atomic-rename single-file format. Code in `87a3b61`. Recorded technical debt: four pre-existing LSM bugs (path mismatch, sstIterator state, checksum layout, double-`nextFileID`) deferred to iter-12b. |
+| **v0.10.0** *(tag pending)* | **WAL Corruption Recovery** (`WAL/WR/header.go` + `WAL/RP/rp.go`). Segment header (12 B) + envelope CRC32-IEEE + bounded resync to `MaxRecordLen`; tail-of-segment torn writes tolerated (`TruncatedSegments++`), mid-segment corruption surfaces `ErrCorrupt` (`CorruptionFailures++`); Replayer.Stats() exposed. Code in `495bdac`. Coverage 72.5% (target 85%, gap tracked as REQ000191). |
 
 ## Design Protection
 
