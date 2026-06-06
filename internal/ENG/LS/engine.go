@@ -90,6 +90,25 @@ func (e *engine) flushActiveMemtable() error {
 	return nil
 }
 
+// Sync flushes the active memtable to SST and blocks until the flush
+// job completes. Idempotent. Returns ErrNoActiveMemtable after Close.
+func (e *engine) Sync() error {
+	if e.activeMem == nil {
+		return ErrNoActiveMemtable
+	}
+	if e.activeMem.Size() == 0 {
+		return nil
+	}
+	if err := e.flushActiveMemtable(); err != nil {
+		return err
+	}
+	e.fm.WaitForFlush()
+	if p := e.fm.lastErr.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
 func (e *engine) Read(key []byte) ([]byte, error) {
 	e.statsMu.Lock()
 	defer e.statsMu.Unlock()

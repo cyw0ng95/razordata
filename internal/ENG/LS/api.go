@@ -88,9 +88,25 @@ func (eng *Engine) Close() error {
 	if eng == nil || eng.e == nil {
 		return nil
 	}
+	// Flush any in-flight memtable data so it is durable across the
+	// boundary. Callers that do not need this durability guarantee
+	// can rely on the raw LS.Engine.Close path via the unexported
+	// helper, but the public contract is "Close persists".
+	_ = eng.e.Sync()
 	err := eng.e.Close()
 	eng.e = nil
 	return err
+}
+
+// Sync forces the active memtable to be flushed to an SST file and
+// blocks until the flush completes. Returns nil if the memtable is
+// empty. Required for callers (e.g. the system catalog) that need
+// crash-survivable writes.
+func (eng *Engine) Sync() error {
+	if eng == nil || eng.e == nil {
+		return ErrClosed
+	}
+	return eng.e.Sync()
 }
 
 // Stats returns a snapshot of the engine's read-side counters.

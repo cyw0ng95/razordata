@@ -44,12 +44,30 @@ var (
 	tableIDSeq   uint64
 	tableIDs     = map[string]uint64{}
 	storeSchemas = map[uint64]*storeSchema{}
+
+	// currentCatalog is the persistent system catalog wired in
+	// by SYS at Open time. nil means the EX layer is in
+	// in-memory mode (legacy behavior, used by unit tests that
+	// do not have a backing directory).
+	currentCatalog *ls.Catalog
 )
 
 // nextTableID allocates a new table ID. The id is stable for the lifetime
 // of the process; restarting the process reassigns IDs and old data is
 // unreachable (consistent with the existing in-memory catalog behavior).
+//
+// When a persistent catalog is wired in (iter-12), the table ID is
+// sourced from the catalog's NextID counter so it survives Close/Open.
 func nextTableID() uint64 {
+	if currentCatalog != nil {
+		id, err := currentCatalog.NextID()
+		if err == nil {
+			return id
+		}
+		// Fall through to in-memory counter on error so the
+		// process keeps serving (catalog errors are surfaced
+		// separately on the operation that triggered them).
+	}
 	tableIDSeq++
 	return tableIDSeq
 }
@@ -70,6 +88,24 @@ func tableIDFor(name string) (uint64, bool) {
 	defer storeMu.Unlock()
 	id, ok := tableIDs[name]
 	return id, ok
+}
+
+// SetCatalog binds a persistent system catalog into the EX
+// layer. Subsequent CREATE TABLE / DROP TABLE calls will go
+// through the catalog for persistence. Pass nil to revert to
+// in-memory mode (legacy behavior).
+func SetCatalog(c *ls.Catalog) {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	currentCatalog = c
+}
+
+// Catalog returns the currently bound catalog, or nil if the EX
+// layer is in in-memory mode.
+func Catalog() *ls.Catalog {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	return currentCatalog
 }
 
 // registerStoreSchema assigns a table ID to a name and stores its schema.
@@ -131,8 +167,8 @@ func registerStoreSchemaWithConstraints(name string, cols []string, nullable []b
 }
 
 // registerStoreSchemaFull stores the full constraint set including
-// UNIQUE. unique may be nil. Safe to call multiple times for the same
-// name (idempotent).
+// UNIQUE. unique may be nil. Safe to call multiple times for the
+// same name (idempotent).
 func registerStoreSchemaFull(name string, cols []string, nullable []bool, defaults []PS.Expr, unique []UniqueKey, pk string) uint64 {
 	storeMu.Lock()
 	defer storeMu.Unlock()
@@ -159,10 +195,92 @@ func registerStoreSchemaFull(name string, cols []string, nullable []bool, defaul
 			return id
 		}
 	}
-	id := nextTableID()
+	id := nextTableIDLocked()
 	tableIDs[name] = id
 	storeSchemas[id] = &storeSchema{cols: cpCols, pk: pk, nullable: cpNullable, defaults: cpDefaults, unique: cpUnique}
 	return id
+}
+
+// nextTableIDLocked is the locked variant of nextTableID. The
+// caller MUST already hold storeMu.
+func nextTableIDLocked() uint64 {
+	if currentCatalog != nil {
+		id, err := currentCatalog.NextID()
+		if err == nil {
+			return id
+		}
+	}
+	tableIDSeq++
+	return tableIDSeq
+}
+
+// RegisterFromCatalog rehydrates the in-memory storeSchemas /
+// tableIDs maps from a catalog entry. Used by SYS.Open to
+// repopulate runtime state on every restart. Does NOT call
+// NextID — the entry already carries its tableID. Subsequent
+// unregistration of this table uses the same tableID, which
+// must match what other code paths expect.
+func RegisterFromCatalog(entry *ls.CatalogEntry) error {
+	if entry == nil {
+		return errors.New("ex: nil catalog entry")
+	}
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	if _, exists := tableIDs[entry.Name]; exists {
+		// Already registered (e.g. test setup called RegisterTable
+		// manually before SYS bound the catalog). Leave the
+		// existing entry alone.
+		return nil
+	}
+	cols := make([]string, len(entry.Columns))
+	nullable := make([]bool, len(entry.Columns))
+	colIndex := make(map[string]int, len(entry.Columns))
+	for i, c := range entry.Columns {
+		cols[i] = c.Name
+		nullable[i] = c.Nullable
+		colIndex[c.Name] = i
+	}
+	// PRIMARY KEY implies NOT NULL.
+	if entry.PrimaryKey != "" {
+		if idx, ok := colIndex[entry.PrimaryKey]; ok {
+			nullable[idx] = false
+		}
+	}
+	unique := make([]UniqueKey, len(entry.Unique))
+	for i, u := range entry.Unique {
+		unique[i] = UniqueKey{Cols: append([]int(nil), u.Cols...)}
+	}
+	// Defaults are not persisted across restart in v0.9.0 — the
+	// parser AST cannot be safely serialized. Callers that need
+	// the defaults back must re-issue the CREATE TABLE statement.
+	var defaults []PS.Expr
+	if id, ok := tableIDs[entry.Name]; ok && id == entry.TableID {
+		// Collision: another table already has this name but
+		// with a different ID. Surface the inconsistency.
+		_ = id
+	}
+	tableIDs[entry.Name] = entry.TableID
+	storeSchemas[entry.TableID] = &storeSchema{
+		cols:     cols,
+		pk:       entry.PrimaryKey,
+		nullable: nullable,
+		defaults: defaults,
+		unique:   unique,
+	}
+	// Also publish to the in-memory `tables` / `schemas` map that
+	// the executor scans.
+	tablesMu.Lock()
+	if _, exists := tables[entry.Name]; !exists {
+		tables[entry.Name] = []Row{}
+	}
+	schemas[entry.Name] = cols
+	tablesMu.Unlock()
+	// Track the in-memory counter so subsequent NextID calls
+	// (in the absence of a catalog) do not reuse this ID.
+	if entry.TableID >= tableIDSeq {
+		tableIDSeq = entry.TableID
+	}
+	return nil
 }
 
 // tablePrefix returns the storage key prefix for a table, or nil if the

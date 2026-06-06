@@ -26,7 +26,7 @@ Columns for selection:
 | REQ000152 | SYS | Config validation function (`validateOptions`) with descriptive errors | high | S | iter-09 (Options) | new `SYS/SY/validate.go` — field-by-field validation |
 | REQ000153 | SYS | Active transaction wait during shutdown (30s timeout, force-abort remaining) | high | M | REQ000146 (graceful shutdown) | `SYS/SY/shutdown.go` — Phase 2 implementation |
 | REQ000154 | SYS | Background goroutine coordination (compaction, epoch manager, hook dispatcher stop) | high | M | REQ000146 (graceful shutdown) | `SYS/SY/shutdown.go` — Phase 4 implementation |
-| REQ000155 | ENG | Catalog persistence across restarts (design mentions multiple times, still TBD in REQ000127) | critical | L | iter-09 (in-memory catalog) | consolidate REQ000127 here, track as critical gap |
+| REQ000155 | ENG | Catalog persistence across restarts (design mentions multiple times, still TBD in REQ000127) | critical | L | iter-12 (catalog) | **MOVED TO DONE** — consolidated with REQ000127, shipped in iter-12 |
 | REQ000156 | SQL | Executor cost model integration (design mentions cost estimation, no operator selection based on cost) | medium | M | iter-08 (planner) | `SQL/EX/planner.go` — use cost for operator selection |
 | REQ000157 | SQL | Expression evaluation SIMD acceleration (batch predicate evaluation) | medium | M | REQ000144 (vectorization) | `SQL/EX/eval.go` — vectorized `EvalBatch` function |
 | REQ000158 | TXN | Hazard pointer publication/clear protocol in Read flow (design specifies, verify implementation) | high | S | iter-05 (hazard) | audit `TXN/LC/hazard.go` + `TXN/SN/snapshot.go` |
@@ -92,6 +92,8 @@ Columns for selection:
 
 | ID | Subsystem | Requirement | Iteration |
 |---|---|---|---|
+| REQ000127 | SQL | Catalog persistence across restarts (`CREATE TABLE` / `DROP TABLE` survive `Close`/`Open`) | iter-12 |
+| REQ000155 | ENG | Catalog persistence across restarts | iter-12 (consolidated with REQ000127) |
 | REQ000001 | LOG | `Logger` wraps `log/slog` with atomic level control | iter-00 |
 | REQ000002 | LOG | Structured key-value output (JSON/text) | iter-00 |
 | REQ000003 | LOG | Log file rotation on size threshold | iter-00 |

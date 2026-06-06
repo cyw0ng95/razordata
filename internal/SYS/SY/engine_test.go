@@ -139,15 +139,12 @@ func TestEngine_OpenDuplicateDir(t *testing.T) {
 		t.Fatalf("second Open: %v", err)
 	}
 	defer eng2.Close(context.Background())
-	// Recreate the table on the new handle to query it.
 	s2, _ := eng2.Begin(context.Background())
-	if _, err := s2.Exec(context.Background(), "CREATE TABLE t (id INTEGER, v TEXT, PRIMARY KEY (id))"); err != nil {
-		t.Fatalf("re-create: %v", err)
+	// iter-12 invariant: the table is already registered via the
+	// on-disk catalog. A second CREATE TABLE must fail.
+	if _, err := s2.Exec(context.Background(), "CREATE TABLE t (id INTEGER, v TEXT, PRIMARY KEY (id))"); err == nil {
+		t.Fatal("expected errTableExists on duplicate CREATE, got nil")
 	}
-	// The catalog is fresh; the SELECT may return zero cols (no
-	// rows) because the executor's table schema registry is empty.
-	// What we assert here is that the second engine accepts the
-	// query without erroring.
 	rows, err := s2.Query(context.Background(), "SELECT v FROM t")
 	if err != nil {
 		t.Fatalf("post-reopen query: %v", err)
