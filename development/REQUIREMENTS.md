@@ -15,9 +15,6 @@ Columns for selection:
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-| REQ000019 | FIL | `MADV_DONTNEED` hints for buffer eviction | low | S | iter-02 (BF) | `MEM/BF/bf.go` — Linux-specific via `syscall.Madvise` | **DONE v0.8.1** |
-| REQ000026 | MEM | `mmap` instead of `read`/`write` | low | L | iter-02 (BF) | `FIL/DF/df.go`, `MEM/BF/bf.go` — gated by build tag | **DONE v0.8.1** |
-| REQ000107 | SQL | `UNIQUE` constraint (single + composite; auto-index) | critical | M | iter-10 (NOT NULL plumbing) | `SQL/EX/constraints.go`, `SQL/EX/writers.go`, `SQL/PS/ast.go`, `ENG/LS` (index lookup) |
 | REQ000127 | SQL | Catalog persistence across restarts (CREATE TABLE survives Close/Open) | critical | L | iter-09 (in-memory catalog) | new `ENG/ID/catalog.go`, `SQL/EX/store.go`, `SYS/SY` startup hook |
 | REQ000035 | WAL | Corruption recovery policy: detect torn write, skip vs. fail | critical | S | iter-03 (replay) | `WAL/RP/rp.go` — return `ErrCorrupt` on torn record; add tests |
 | REQ000061 | TXN | Read-committed isolation (default); upgrade from v1 read-uncommitted | critical | L | iter-05/06 (MVCC + VL) | `TXN/VL/protocol.go`, `TXN/SN/snapshot.go` — re-snapshot per statement |
@@ -31,8 +28,6 @@ Columns for selection:
 | REQ000143 | QUAL | `SQL/RE` coverage: 49% → 80%+ | high | M | iter-07 (RE implementation) | `SQL/RE/*_test.go` — fill error-path branches, subquery flatten cases |
 | REQ000074 | SQL | `IndexScan` real seek (replace prefix-scan fallback) | high | M | iter-08 (IndexScan op) | `SQL/EX/operators.go` — call into real `ENG/ID/` once iter-21 ships, or stub |
 | REQ000009 | LOG | Log compression after rotation (gzip) | low | S | iter-00 (rotation) | `LOG/LG/rotation.go` |
-| REQ000019 | FIL | `MADV_DONTNEED` hints for buffer eviction | low | S | iter-02 (BF) | `MEM/BF/bf.go` — Linux-specific via `syscall.Madvise` |
-| REQ000026 | MEM | `mmap` instead of `read`/`write` | low | L | iter-02 (BF) | `FIL/DF/df.go`, `MEM/BF/bf.go` — gated by build tag |
 | REQ000034 | WAL | WAL compression (lz4) | low | M | iter-03 (WAL writer) | `WAL/WR/encode.go` |
 | REQ000045 | ENG | Secondary indexes (non-PK columns; lookup by `__idx__:<table>:<col>:<val>`) | low | XL | iter-12 (catalog), iter-21 (ID) | new `ENG/ID/` package, `SQL/PL` index selection |
 | REQ000047 | ENG | Prefix bloom filters for range scans | low | M | iter-04 (bloom) | `ENG/LS/sst_writer.go` |
@@ -51,7 +46,6 @@ Columns for selection:
 | REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
-| REQ000100 | SYS | Network server (TCP/gRPC) — duplicates row above; see priority | low | XL | (see above) | (see above) |
 
 ## DONE
 
