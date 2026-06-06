@@ -42,6 +42,21 @@ Columns for selection:
 | REQ000168 | FIL | O_DIRECT alignment handling (`syscall.Mmap` or `unix.RawSyscall`) | high | M | iter-01 (DF) | `FIL/DF/df.go` — verify alignment implementation |
 | REQ000169 | LOG | Debug-level allocation trade-off documentation (design mentions, verify implementation) | low | S | iter-00 (LG) | audit `LOG/LG/logger.go` — level check before allocation |
 | REQ000170 | WAL | RTMerge record encoding implementation | medium | S | iter-03 (WAL) | `WAL/WR/encode.go` — add merge record encoding |
+| REQ000171 | TXN/VL | WAL integration in commit protocol (write RTCommit/RTData records, call WAL.Sync) | critical | L | iter-06 (VL) | `TXN/VL/protocol.go` — Commit/Insert/Delete must write WAL records per design TXN.md:203-226 |
+| REQ000172 | SYS/SY | Implement 6-phase graceful shutdown (stop accept → wait tx → flush → stop goroutines → close subsystems → cleanup) | critical | XL | iter-09 (SY) | Replace `SYS/SY/shutdown.go` (36 lines) with full implementation per SYS.md:196-283 |
+| REQ000173 | SQL/EX | SIMD vectorized operators (columnar batch layout, selection vectors, manual unrolling) | critical | XL | iter-08 (operators) | Create `SQL/EX/operators_vec.go`, `SQL/EX/batch.go` per SQL.md:377-380 |
+| REQ000174 | ENG/LS | BloomFilter double-hash with FNV-1a (seeds 0x811C9DC5, 0x01000193) replace CRC32 | critical | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with ENG.md:93-98 |
+| REQ000175 | TXN/LC | Fix hazard pointer Publish (store to single slot, not all) and implement actual memory reclamation | high | L | iter-05 (hazard/epoch) | `TXN/LC/hazard.go` fix Publish, `TXN/LC/epoch.go` implement Reclaim wait+free per TXN.md:96-121 |
+| REQ000176 | WAL/FL | Implement batch commit with sync.WaitGroup and write barrier (group multiple fsync into one) | high | M | iter-03 (WAL) | Replace `WAL/FL/fl.go` Sync/BatchSync stubs with actual implementation per WAL.md:103-117 |
+| REQ000177 | SQL/EX | Parallel query execution (worker pool, fan-out/fan-in, channel merge for SeqScan/IndexScan) | high | XL | iter-08 (operators) | Create `SQL/EX/operators_parallel.go` per SQL.md:307-314,378 |
+| REQ000178 | SYS/SY | Config validation function (validateOptions with field-by-field checks and descriptive errors) | high | S | iter-09 (Options) | Create `SYS/SY/validate.go` per SYS.md:198-214 |
+| REQ000179 | TXN/VL | Add arena field to transactionSlot struct for per-transaction tracking | medium | S | iter-06 (slot) | `TXN/VL/slot.go` — add arena *arena field per TXN.md:150-158 |
+| REQ000180 | ENG/LS | Dynamic BloomFilter sizing ((N * 10 + 7) / 8 bytes) replace fixed 4096 bytes | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go` — compute bloom size from key count per ENG.md:91-92 |
+| REQ000181 | TXN/LC | Fix goroutine ID tracking (use real goroutine identity, not atomic counter) | medium | M | iter-05 (epoch) | `TXN/LC/epoch.go` — proper goroutine tracking per TXN.md:113-121 |
+| REQ000182 | SQL/EX | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | medium | L | iter-08 (Sort) | Create `SQL/EX/sort_parallel.go` per SQL.md:367-372 |
+| REQ000183 | SQL/EX | Expression evaluation SIMD (batch predicate EvalBatch function) | medium | M | iter-08 (eval) | `SQL/EX/eval.go` — add vectorized EvalBatch per SQL.md:303-306 |
+| REQ000184 | WAL/FL | Implement WriteBuffer struct with 256 KB pre-allocated buffer | medium | S | iter-03 (WAL) | `WAL/FL/fl.go` — add writeBuffer struct per WAL.md:103-117 |
+| REQ000185 | SQL/EX | Plan memoization with SHA256 canonical AST binary encoding (not JSON) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — implement binary serialization per SQL.md:215 |
 | REQ000035 | WAL | Corruption recovery policy: detect torn write, skip vs. fail | critical | S | iter-03 (replay) | `WAL/RP/rp.go` — return `ErrCorrupt` on torn record; add tests |
 | REQ000061 | TXN | Read-committed isolation (default); upgrade from v1 read-uncommitted | critical | L | iter-05/06 (MVCC + VL) | `TXN/VL/protocol.go`, `TXN/SN/snapshot.go` — re-snapshot per statement |
 | REQ000062 | TXN | MVCC reads inside transactions (SELECT in tx sees own writes through Tx iterator) | critical | L | iter-09 (shadow writeSet) | `TXN/SN`, `SQL/EX` — switch session to Tx-aware iterator |
