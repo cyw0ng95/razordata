@@ -15,6 +15,8 @@ Columns for selection:
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
+| REQ000019 | FIL | `MADV_DONTNEED` hints for buffer eviction | low | S | iter-02 (BF) | `MEM/BF/bf.go` — Linux-specific via `syscall.Madvise` | **DONE v0.8.1** |
+| REQ000026 | MEM | `mmap` instead of `read`/`write` | low | L | iter-02 (BF) | `FIL/DF/df.go`, `MEM/BF/bf.go` — gated by build tag | **DONE v0.8.1** |
 | REQ000107 | SQL | `UNIQUE` constraint (single + composite; auto-index) | critical | M | iter-10 (NOT NULL plumbing) | `SQL/EX/constraints.go`, `SQL/EX/writers.go`, `SQL/PS/ast.go`, `ENG/LS` (index lookup) |
 | REQ000127 | SQL | Catalog persistence across restarts (CREATE TABLE survives Close/Open) | critical | L | iter-09 (in-memory catalog) | new `ENG/ID/catalog.go`, `SQL/EX/store.go`, `SYS/SY` startup hook |
 | REQ000035 | WAL | Corruption recovery policy: detect torn write, skip vs. fail | critical | S | iter-03 (replay) | `WAL/RP/rp.go` — return `ErrCorrupt` on torn record; add tests |
@@ -137,6 +139,8 @@ Columns for selection:
 | REQ000105 | DDL | `NOT NULL` constraint enforcement | iter-10 |
 | REQ000106 | DDL | `DEFAULT` value substitution | iter-10 |
 | REQ000107 | SQL | `UNIQUE` constraint (in-memory path) | iter-11 |
+| REQ000019 | MEM | `MADV_DONTNEED` hints for buffer eviction | iter-11 |
+| REQ000026 | FIL | `mmap` BlockDevice for SST reads | iter-11 |
 | REQ000108 | DML | `INSERT` with column list | iter-08 |
 | REQ000109 | DML | `UPDATE` with `WHERE` | iter-08 |
 | REQ000110 | DML | `DELETE` with `WHERE` | iter-08 |

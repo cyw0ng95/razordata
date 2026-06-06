@@ -1,10 +1,10 @@
 # Iteration 11 — UNIQUE Constraint + I/O Refinements
 
 **Subsystem:** `SQL` (`PS`, `EX`) for UNIQUE; `MEM` (`BF`), `FIL` (`DF`) for mmap/madvise
-**Status:** partial (UNIQUE done in v0.8.0; I/O refinements pending for v0.8.1)
+**Status:** done
 **Est. LOC:** ~900
-**Requirements:** REQ000107 ✓ (v0.8.0), REQ000026 (v0.8.1), REQ000019 (v0.8.1)
-**Target release:** v0.8.0 (UNIQUE) + v0.8.1 (I/O refinements)
+**Requirements:** REQ000107 ✓ (v0.8.0), REQ000019 ✓ (v0.8.1), REQ000026 ✓ (v0.8.1)
+**Target release:** v0.8.0 + v0.8.1 (two stages)
 
 ## Overview
 
@@ -417,10 +417,17 @@ read path only in v1).
 - v0.8.1 (this) is a minor bump: AST shape, BlockDevice
   implementation, and the madvise syscall all changed.
 
-## Outcome (v0.8.0 — UNIQUE only)
+## Outcome
 
-Shipped in v0.8.0 (commit 35a6b2d). All UNIQUE requirements met; no
-deviations from the plan.
+Shipped in two stages:
+- **v0.8.0** (commit 35a6b2d): UNIQUE constraint (REQ000107)
+- **v0.8.1** (commit 206bd11): MADV_DONTNEED + mmap (REQ000019, REQ000026)
+
+All iter-11 requirements met; one deviation: darwin/windows builds
+are still broken due to a pre-existing `unix.O_DIRECT` issue from
+iter-01, which is out of scope here.
+
+### v0.8.0 — UNIQUE
 
 **What shipped:**
 - AST: `CreateTable.UniqueConstraints []UniqueKey`
@@ -439,7 +446,26 @@ extended with assertions.
 `BenchmarkConstraintsInsert` ~1.7µs/op — 1.25x overhead, within 1.5x
 target.
 
-**Final commit/tag:** commit 35a6b2d, tag v0.8.0.
+### v0.8.1 — I/O refinements
 
-**Pending for v0.8.1:** REQ000019 (MADV_DONTNEED), REQ000026 (mmap).
+**What shipped:**
+- `MEM/BF/sys_linux.go`: `madviseDontNeed` via `syscall.Madvise`,
+  with `madviseFn` package var for test mocking
+- `MEM/BF/sys_other.go`: no-op stub
+- 4 eviction sites in `bf.go` call `madviseDontNeed` before
+  `b.sp.Put` (reclaim kernel pages on eviction)
+- `FIL/DF/mmap_linux.go`: `mmapBlock` via `syscall.Mmap`,
+  `munmapBlock` via `syscall.Munmap`
+- `FIL/DF/mmap_other.go`: stub returning `errMmapUnsupported`
+- `OpenMmap(path)`: new constructor; reads served from mapped
+  region; writes still via pwrite (v1 simplification)
+- `Close`: munmap before close
+
+**Tests:** 2 new (madvise mock + mmap round-trip); 2 benchmarks.
+
+**Benchmark (Linux, 2000x):**
+- `BenchmarkBlockReadPread`: ~1679 ns/op
+- `BenchmarkBlockReadMmap`: ~1160 ns/op (1.45x speedup)
+
+**Final commits/tags:** 35a6b2d (v0.8.0), 206bd11 (v0.8.1).
 
