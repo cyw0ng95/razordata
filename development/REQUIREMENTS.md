@@ -88,6 +88,21 @@ Columns for selection:
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
 
+## Unfixed Bugs (surfaces as requirements)
+
+These rows are bugs that were discovered during a prior iteration but
+not fixed in that iteration's scope. The "Touches" column points to
+the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
+
+| ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
+|---|---|---|---|---|---|---|
+| REQ000186 | ENG/LS | Fix `SST` file path mismatch: `compaction.fileName` returns `<dir>/sst/L<level>_<minkey>_<maxkey>_<id>.sst` but `flushManager.requestFlush` writes to `<dir>/L0_<id>.sst` (flat). Reader cannot find writer output, so post-flush data is invisible to subsequent reads. | high | M | iter-12 (catalog) | `ENG/LS/compaction.go`, `ENG/LS/{compaction,flush}_test.go`. See iter-12-catalog.md Gap Analysis Bug 1 |
+| REQ000187 | ENG/LS | Fix `sstIterator` first-block read: `Next()` on the initial call returns `false` because `current > 0` guard skips the first block load. The very first block is never materialized, so the iterator is empty even when the SST contains entries. | high | S | iter-12 (catalog) | `ENG/LS/sst_reader.go` — split `current` into `blockIdx` + `pairIdx`, load block 0 on first call. See iter-12-catalog.md Gap Analysis Bug 2 |
+| REQ000188 | ENG/LS | Fix block-checksum layout mismatch in `sstReader.decodeBlock`: the writer appends `[0,0,0,0][1,0,0,0][crc32:4]` (pad + restart count + CRC) but the reader parses `[restartCount:4][crc32:4]` from the wrong offset, so every flushed block returns `ErrInvalidSSTFormat`. | high | M | iter-12 (catalog), REQ000186 (path) | `ENG/LS/{sst_reader,sst_writer}.go`. See iter-12-catalog.md Gap Analysis Bug 3 |
+| REQ000189 | ENG/LS | Fix `flushManager.requestFlush` double-`nextFileID()` per job: the `outputPath` and `fileID` fields use two separate `nextFileID()` calls that drift, so the on-disk filename and the manifest entry disagree. | medium | S | iter-12 (catalog) | `ENG/LS/flush.go` — call `nextFileID()` once. See iter-12-catalog.md Gap Analysis Bug 4 |
+| REQ000190 | SYS | Wire `WAL.Stats` (`TruncatedSegments` / `UnknownRecords` / `CorruptionFailures`) into `Engine.Stats().WAL` so operators can observe recovery history via the public stats API. The counters exist on the replayer since iter-13; this is the surface. | low | S | iter-13 (recovery) | `SYS/SY/sy.go`, `SYS/AP/ap.go`. See iter-13-wal-recovery.md Post-Iteration |
+| REQ000191 | WAL/RP | Coverage lift: `WAL/RP` is at 72.5% (target 85%). The shortfall is in `truncateBeforeCheckpoint` (43.5%) and parts of `forEachRecord` (60.7%) — pre-existing code paths. | low | M | iter-13 (recovery) | `WAL/RP/rp.go` — table-driven tests for `truncateBeforeCheckpoint` and the recovery-policy error branches. See iter-13-wal-recovery.md Deviations |
+
 ## DONE
 
 | ID | Subsystem | Requirement | Iteration |

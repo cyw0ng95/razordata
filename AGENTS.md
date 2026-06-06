@@ -89,6 +89,41 @@ implementation commit, before the release tag). Do not defer doc updates
 to a later session — the docs must reflect reality at the same commit
 that cuts the tag.
 
+## Bug-To-Requirement Rule
+
+When an iteration discovers a concrete bug that it does **not** fix in
+its own scope (pre-existing latent defects, deferred items, follow-ups
+called out in the "Gap Analysis" / "Deviations" section), the bug
+**must be encoded as a `REQ` row and added to
+`development/REQUIREMENTS.md`** in the same commit that closes the
+iteration. A bug that lives only in an iteration doc's narrative
+section is invisible to the planning workflow and will be forgotten.
+
+Encoding rules:
+
+- One `REQ` per atomic bug. Do not bundle multiple distinct defects
+  into a single row — they have different fix surfaces, different
+  effort estimates, and different test plans.
+- Use the next free `REQ` number (the file is append-only; never reuse
+  a number even if a row was deleted).
+- Set `Priority` based on the bug's blast radius: `critical` if it
+  can lose data / corrupt state, `high` if it can crash a process,
+  `medium` if it produces wrong output silently, `low` if it is
+  cosmetic or only affects non-default code paths.
+- Set `Deps` to the iteration that surfaced the bug (so the next
+  planner can sequence the fix correctly) and any code packages the
+  fix will touch.
+- Reference the source doc in the `Touches` column: e.g. "see
+  iter-12-catalog.md Gap Analysis Bug 1" so the bug is traceable
+  back to its discovery context.
+- The `TBD` row is the working-state. `DONE` is only for bugs that
+  have actually been fixed and moved by a subsequent iteration.
+
+The "current unfixed bugs" backlog lives in the `TBD` section of
+`development/REQUIREMENTS.md` and is the source of truth for future
+iteration planning. A bare prose mention in an iteration doc is no
+longer acceptable.
+
 ## CI / Linting
 
 ```bash
