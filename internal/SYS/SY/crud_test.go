@@ -221,8 +221,8 @@ func createOrderByTestEngine(t *testing.T) (AP.Engine, context.Context) {
 	eng, err := Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
 		MemTableSize: 1024 * 1024,
-		BufferPoolMB: 16,
-		WALSizeMB:    4,
+		BufferPoolMB: 64,
+		WALSizeMB:    16,
 		MaxLevel:     3,
 		LogLevel:     8,
 	})
