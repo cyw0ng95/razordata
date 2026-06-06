@@ -28,8 +28,8 @@ var ErrNoEngine = errors.New("ex: no engine wired; use NewExecutorWithEngine")
 type storeSchema struct {
 	cols     []string
 	pk       string
-	nullable []bool     // parallel to cols; false means NOT NULL
-	defaults []PS.Expr  // parallel to cols; nil means no DEFAULT
+	nullable []bool    // parallel to cols; false means NOT NULL
+	defaults []PS.Expr // parallel to cols; nil means no DEFAULT
 }
 
 var (

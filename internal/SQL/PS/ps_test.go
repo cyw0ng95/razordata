@@ -521,6 +521,68 @@ func TestParseCreateTableUniqueNotNull(t *testing.T) {
 	}
 }
 
+// TestParseCreateTableDefaultLiteral covers DEFAULT <int literal>.
+func TestParseCreateTableDefaultLiteral(t *testing.T) {
+	p := NewParser("CREATE TABLE t (id INTEGER NOT NULL, n INTEGER DEFAULT 0)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct := stmt.(*CreateTable)
+	if len(ct.Cols) != 2 {
+		t.Fatalf("expected 2 cols, got %d", len(ct.Cols))
+	}
+	if ct.Cols[0].Default != nil {
+		t.Errorf("col[0] should have no DEFAULT, got %v", ct.Cols[0].Default)
+	}
+	if ct.Cols[1].Default == nil {
+		t.Fatal("col[1] should have a DEFAULT expression")
+	}
+	num, ok := ct.Cols[1].Default.(*NumberLiteral)
+	if !ok {
+		t.Fatalf("expected NumberLiteral, got %T", ct.Cols[1].Default)
+	}
+	if num.Val != 0 {
+		t.Errorf("expected DEFAULT 0, got %d", num.Val)
+	}
+}
+
+// TestParseCreateTableDefaultString covers DEFAULT <string literal>.
+func TestParseCreateTableDefaultString(t *testing.T) {
+	p := NewParser(`CREATE TABLE t (id INTEGER NOT NULL, name TEXT DEFAULT 'unknown')`)
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct := stmt.(*CreateTable)
+	if ct.Cols[1].Default == nil {
+		t.Fatal("col[1] should have a DEFAULT expression")
+	}
+	str, ok := ct.Cols[1].Default.(*StringLiteral)
+	if !ok {
+		t.Fatalf("expected StringLiteral, got %T", ct.Cols[1].Default)
+	}
+	if str.Val != "unknown" {
+		t.Errorf("expected DEFAULT 'unknown', got %q", str.Val)
+	}
+}
+
+// TestParseCreateTableDefaultNull covers DEFAULT NULL on a nullable column.
+func TestParseCreateTableDefaultNull(t *testing.T) {
+	p := NewParser("CREATE TABLE t (id INTEGER NOT NULL, v INTEGER DEFAULT NULL)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct := stmt.(*CreateTable)
+	if ct.Cols[1].Default == nil {
+		t.Fatal("col[1] should have a DEFAULT expression")
+	}
+	if _, ok := ct.Cols[1].Default.(*NullLiteral); !ok {
+		t.Errorf("expected NullLiteral, got %T", ct.Cols[1].Default)
+	}
+}
+
 func TestParseCreateTableTableLevelUnique(t *testing.T) {
 	p := NewParser("CREATE TABLE t (a INTEGER, b TEXT, UNIQUE (a))")
 	stmt, err := p.Parse()
