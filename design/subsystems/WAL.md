@@ -114,6 +114,8 @@ type writeBuffer struct {
 - `Sync()` calls `fsync` on the segment FD, then updates `synced`.
 - Batch commit: multiple transactions can be grouped into one `fsync` call via a `sync.WaitGroup` and a single write barrier.
 
+**Implementation gap (REQ000176, REQ000184):** The current `WAL/FL/fl.go` has stub implementations of `Sync()` and `BatchSync()` that return `nil` without doing anything. The `writeBuffer` struct is also missing. This is a known gap that should be fixed in a future iteration.
+
 ### Checkpoint
 
 ```go
