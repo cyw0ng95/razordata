@@ -37,7 +37,7 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 10 | NOT NULL / DEFAULT | Column constraints end-to-end | `PS`, `EX` | 16 | done (v0.7.0) |
 | 11 | UNIQUE Constraint | Single + composite + multi-clause UNIQUE | `PS`, `EX` | 11 | done (v0.8.0); I/O refinements pending v0.8.1 |
 | 11b | I/O refinements | MADV_DONTNEED + mmap BlockDevice | `MEM/BF`, `FIL/DF` | 4 | done (v0.8.1) |
-| 12 | Catalog Persistence | System catalog LSM tree, bootstrap, schema versioning | `LS`, `ID`, `EX`, `SY` | planned (v0.9.0) |
+| 12 | Catalog Persistence | System catalog (single-file, atomic rename, schema versioning) | `LS`, `EX`, `SY` | done (v0.9.0) |
 
 All iterations complete. Coverage details: `go test ./... -cover`.
 
@@ -49,7 +49,7 @@ The v1 chain LOG → SYS is closed. Production-ready path: two phases.
 
 | Iter | Requirements | Goal | Status |
 |---|---|---|---|
-| iter-12 | REQ000127 | Catalog persistence across restarts | planned (v0.9.0) |
+| iter-12 | REQ000127 | Catalog persistence across restarts | done (v0.9.0) |
 | iter-13 | REQ000035 | WAL corruption recovery policy | remaining |
 | iter-14 | REQ000061 | Read-committed isolation (default) | remaining |
 | iter-15 | REQ000062 | MVCC reads in transaction (SELECT sees own writes) | remaining |
@@ -105,6 +105,7 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 | **v0.7.0** | **NOT NULL / DEFAULT constraints** end-to-end (`AP.ErrConstraint`, `SQL/EX/constraints.go`) |
 | **v0.8.0** | **UNIQUE constraint** single + composite + multi-clause (`SQL/PS` AST + parser, `SQL/EX` `checkUnique`) |
 | **v0.8.1** | **I/O refinements**: `MADV_DONTNEED` hints on buffer eviction + `mmap` BlockDevice for SST reads (Linux build tag; pread fallback elsewhere) |
+| **v0.9.0** | **Catalog Persistence** (`ENG/LS/catalog.go` + `SYS/SY/catalog_init.go`). `CREATE TABLE` / `DROP TABLE` survive `Close`/`Open` via an atomic-rename single-file format. Recorded technical debt: four pre-existing LSM bugs (path mismatch, sstIterator state, checksum layout, double-`nextFileID`) deferred to iter-12b. |
 
 ## Design Protection
 

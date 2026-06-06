@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -114,6 +115,7 @@ type flushManager struct {
 	dir             string
 	maxMemSize      int64
 	flushQueue      chan *flushJob
+	pendingWGs      sync.WaitGroup
 	done            chan struct{}
 	closed          atomic.Bool
 	loopDone        chan struct{}
@@ -152,6 +154,7 @@ func (fm *flushManager) flushLoop() {
 				e := err
 				fm.lastErr.Store(&e)
 			}
+			fm.pendingWGs.Done()
 		}
 	}
 }
@@ -166,16 +169,26 @@ func (fm *flushManager) MaybeFlush() {
 func (fm *flushManager) requestFlush(m *memtable) {
 	m.Freeze()
 
+	id := nextFileID()
+	fm.pendingWGs.Add(1)
 	select {
 	case fm.flushQueue <- &flushJob{
 		memtable:   m,
-		outputPath: filepath.Join(fm.dir, fmt.Sprintf("L0_%d.sst", nextFileID())),
+		outputPath: filepath.Join(fm.dir, fmt.Sprintf("L0_%d.sst", id)),
 		manifest:   fm.manifest,
-		fileID:     nextFileID(),
+		fileID:     id,
 		level:      0,
 	}:
 	default:
+		fm.pendingWGs.Done()
 	}
+}
+
+// WaitForFlush blocks until every enqueued flush job has completed.
+// Used by Engine.Sync to ensure active memtable data is durable in
+// an SST before the caller proceeds.
+func (fm *flushManager) WaitForFlush() {
+	fm.pendingWGs.Wait()
 }
 
 func (fm *flushManager) ActiveMemtable() *memtable {

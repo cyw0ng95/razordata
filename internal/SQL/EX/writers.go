@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	LX "github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
@@ -507,6 +509,34 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 		}
 	}
 	registerStoreSchemaFull(c.stmt.Name, cols, nullable, defaults, unique, pk)
+
+	// Persist to the system catalog if one is wired in (iter-12).
+	// The catalog write is best-effort: a failure does not roll
+	// back the in-memory registration because the user-visible
+	// operation has already succeeded. A subsequent Open will
+	// re-replay the catalog and re-register the schema.
+	if cat := Catalog(); cat != nil {
+		catCols := make([]ls.CatalogColumn, len(cols))
+		for i, n := range cols {
+			catCols[i] = ls.CatalogColumn{Name: n, Nullable: nullable[i]}
+		}
+		catUnique := make([]ls.CatalogUnique, len(unique))
+		for i, u := range unique {
+			catUnique[i] = ls.CatalogUnique{Cols: append([]int(nil), u.Cols...)}
+		}
+		id, _ := tableIDFor(c.stmt.Name)
+		if id == 0 {
+			id, _ = cat.NextID()
+		}
+		_ = cat.Put(ls.CatalogEntry{
+			TableID:    id,
+			Name:       c.stmt.Name,
+			Columns:    catCols,
+			PrimaryKey: pk,
+			Unique:     catUnique,
+			CreateSQL:  buildCreateSQL(c.stmt),
+		})
+	}
 	return Row{}, ErrNoRows
 }
 
@@ -538,12 +568,117 @@ func (d *DropTable) Next(ctx context.Context) (Row, error) {
 	// Drop the store schema mapping; actual data is left in the engine and
 	// unreachable until the same tableID is reused.
 	storeMu.Lock()
-	if id, ok := tableIDs[d.stmt.Name]; ok {
+	id, ok := tableIDs[d.stmt.Name]
+	if ok {
 		delete(storeSchemas, id)
 		delete(tableIDs, d.stmt.Name)
 	}
 	storeMu.Unlock()
+	// Persist the drop to the system catalog (iter-12). The
+	// catalog write is best-effort; a failure leaves the
+	// in-memory state already gone, so the table is no longer
+	// queryable in this process.
+	if ok {
+		if cat := Catalog(); cat != nil {
+			_ = cat.Delete(id)
+		}
+	}
 	return Row{}, ErrNoRows
+}
+
+// buildCreateSQL reconstructs a canonical CREATE TABLE statement
+// from a parsed PS.CreateTable. The output is best-effort — it is
+// used for catalog persistence (display + admin dumps), not for
+// re-parsing.
+func buildCreateSQL(stmt *PS.CreateTable) string {
+	b := []byte("CREATE TABLE ")
+	b = append(b, stmt.Name...)
+	b = append(b, []byte(" (")...)
+	for i, col := range stmt.Cols {
+		if i > 0 {
+			b = append(b, []byte(", ")...)
+		}
+		b = append(b, col.Name...)
+		if tok := typeToken(col.Type); tok != "" {
+			b = append(b, ' ')
+			b = append(b, []byte(tok)...)
+		}
+		if !col.Nullable {
+			b = append(b, []byte(" NOT NULL")...)
+		}
+		if col.Unique {
+			b = append(b, []byte(" UNIQUE")...)
+		}
+		if col.Default != nil {
+			b = append(b, []byte(" DEFAULT ")...)
+			b = append(b, []byte(defaultLiteral(col.Default))...)
+		}
+	}
+	if stmt.PK != nil {
+		b = append(b, []byte(", PRIMARY KEY (")...)
+		b = append(b, *stmt.PK...)
+		b = append(b, ')')
+	}
+	for _, uk := range stmt.UniqueConstraints {
+		b = append(b, []byte(", UNIQUE (")...)
+		for i, c := range uk.Cols {
+			if i > 0 {
+				b = append(b, []byte(", ")...)
+			}
+			b = append(b, c...)
+		}
+		b = append(b, ')')
+	}
+	b = append(b, ')')
+	return string(b)
+}
+
+// typeToken maps a parser column-type token to its SQL spelling.
+// The token IDs are the LX.T_* constants stored as int on the
+// ColDef. Returns "" if the type is unknown.
+func typeToken(t int) string {
+	switch t {
+	case int(LX.T_INT_KW):
+		return "INTEGER"
+	case int(LX.T_BIGINT):
+		return "BIGINT"
+	case int(LX.T_TEXT):
+		return "TEXT"
+	case int(LX.T_VARCHAR):
+		return "VARCHAR"
+	case int(LX.T_BOOL):
+		return "BOOLEAN"
+	case int(LX.T_FLOAT_KW):
+		return "FLOAT"
+	case int(LX.T_BLOB):
+		return "BLOB"
+	case int(LX.T_TIMESTAMP):
+		return "TIMESTAMP"
+	default:
+		return ""
+	}
+}
+
+// defaultLiteral renders a parser Expr as a SQL literal. The
+// catalog only needs a faithful display string; for expressions
+// other than the four built-in literal kinds we fall back to "?"
+// rather than risking a wrong rendering.
+func defaultLiteral(e PS.Expr) string {
+	switch v := e.(type) {
+	case *PS.NumberLiteral:
+		return fmt.Sprintf("%d", v.Val)
+	case *PS.FloatLiteral:
+		return fmt.Sprintf("%v", v.Val)
+	case *PS.StringLiteral:
+		return "'" + v.Val + "'"
+	case *PS.BoolLiteral:
+		if v.Val {
+			return "TRUE"
+		}
+		return "FALSE"
+	default:
+		return "?"
+	}
 }
 
 func (d *DropTable) Close() error {

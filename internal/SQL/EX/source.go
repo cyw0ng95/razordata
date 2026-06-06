@@ -55,6 +55,11 @@ func UnregisterAll() {
 	storeSchemas = map[uint64]*storeSchema{}
 	tableIDs = map[string]uint64{}
 	tableIDSeq = 0
+	// Note: currentCatalog is NOT cleared here. The catalog is
+	// a persistent, externally-owned resource (the SYS layer
+	// sets it at Open). UnregisterAll is used by tests to wipe
+	// in-memory state without disturbing the catalog, so that
+	// the next test sees the same persisted tables.
 	storeMu.Unlock()
 }
 

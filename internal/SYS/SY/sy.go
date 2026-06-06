@@ -50,6 +50,10 @@ type Engine struct {
 	eng *ls.Engine
 	txn *vl.Manager
 	exe *executor.Executor
+	// catalog is the persistent system catalog (iter-12). It
+	// outlives the SQL executor's lifetime and is bound into
+	// the EX package via SetCatalog at Open.
+	catalog *ls.Catalog
 
 	// Lifecycle.
 	mu      sync.Mutex
@@ -249,6 +253,12 @@ func (e *Engine) open(ctx context.Context) (err error) {
 	e.exeAdapter = &executorStoreAdapter{eng: e.eng}
 	e.exe = executor.NewExecutorWithEngine(e.exeAdapter)
 
+	// Step 13: System catalog (iter-12). Must come after the
+	// executor is constructed so the EX package can be bound.
+	if err := e.openCatalog(); err != nil {
+		return err
+	}
+
 	e.started = time.Now()
 	e.opened.Store(true)
 	success = true
@@ -286,7 +296,11 @@ func (e *Engine) closeBestEffort() error {
 			firstErr = err
 		}
 	}
-	// Reverse order: TXN → EX → ENG → RP → FL → WR → BF → DF → LF → FS.
+	// Reverse order: CATALOG → TXN → EX → ENG → RP → FL → WR → BF → DF → LF → FS.
+	stop("catalog", func() error {
+		e.closeCatalog()
+		return nil
+	})
 	stop("vl", func() error {
 		if e.txn == nil {
 			return nil
