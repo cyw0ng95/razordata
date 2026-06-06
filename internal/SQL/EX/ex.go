@@ -50,9 +50,9 @@ type Rows struct {
 type ColInfo struct {
 	Name     string
 	Typ      int
-	Nullable bool          // default true; false means NOT NULL
-	Default  PS.Expr       // nil means no DEFAULT clause
-	PK       bool          // true means primary key (implies NOT NULL)
+	Nullable bool    // default true; false means NOT NULL
+	Default  PS.Expr // nil means no DEFAULT clause
+	PK       bool    // true means primary key (implies NOT NULL)
 }
 
 type Executor struct {

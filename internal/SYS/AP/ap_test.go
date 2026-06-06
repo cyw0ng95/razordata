@@ -31,6 +31,7 @@ func TestAP_RetryableAndFatal(t *testing.T) {
 		{"invalid_options", ErrInvalidOptions, false, true},
 		{"no_active_txn", ErrNoActiveTxn, false, true},
 		{"unknown_savepoint", ErrUnknownSavepoint, false, true},
+		{"constraint", ErrConstraint, false, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
