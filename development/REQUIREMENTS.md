@@ -88,6 +88,8 @@
 | REQ000097 | SYS | SIGTERM/SIGINT graceful shutdown handler | iter-09 |
 | REQ000103 | DDL | `CREATE TABLE` with column types and `PRIMARY KEY` | iter-08 |
 | REQ000104 | DDL | `DROP TABLE` | iter-08 |
+| REQ000105 | DDL | `NOT NULL` constraint enforcement | iter-10 |
+| REQ000106 | DDL | `DEFAULT` value substitution | iter-10 |
 | REQ000108 | DML | `INSERT` with column list | iter-08 |
 | REQ000109 | DML | `UPDATE` with `WHERE` | iter-08 |
 | REQ000110 | DML | `DELETE` with `WHERE` | iter-08 |
