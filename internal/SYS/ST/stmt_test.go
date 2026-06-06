@@ -1,24 +1,58 @@
-package SYS
+package ST
 
 import (
+	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
+	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
-	"github.com/cyw0ng95/razordata/internal/SYS/ST"
+	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
+
+func testEngine(t *testing.T) (AP.Engine, context.Context) {
+	t.Helper()
+	resetExecutorRegistry()
+	dir := filepath.Join(t.TempDir(), "db")
+	eng, err := SY.Open(context.Background(), dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 16,
+		WALSizeMB:    4,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	return eng, context.Background()
+}
+
+func resetExecutorRegistry() {
+	executor.UnregisterAll()
+}
 
 // TestStmt_PrepareAndReuse — R16/R17: prepare a statement, execute it
 // multiple times.
 func TestStmt_PrepareAndReuse(t *testing.T) {
 	eng, ctx := testEngine(t)
-	stmt, err := ST.PrepareFromInterface(eng, "INSERT INTO users VALUES (1, 'a')")
+	stmt, err := PrepareFromInterface(eng, "INSERT INTO users VALUES (1, 'a')")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer stmt.Close()
 	// Reuse the prepared statement for two executions. The first
-	// succeeds; the second violates the unique PK and reports 0
+	// succeed; the second violates the unique PK and reports 0
 	// rows affected, which exercises the not-error path.
 	if _, err := stmt.Exec(ctx); err != nil {
 		t.Fatalf("first exec: %v", err)
@@ -33,7 +67,7 @@ func TestStmt_PrepareAndReuse(t *testing.T) {
 // TestStmt_CloseIdempotent — R16: Close is idempotent.
 func TestStmt_CloseIdempotent(t *testing.T) {
 	eng, _ := testEngine(t)
-	stmt, err := ST.PrepareFromInterface(eng, "SELECT 1")
+	stmt, err := PrepareFromInterface(eng, "SELECT 1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +83,7 @@ func TestStmt_CloseIdempotent(t *testing.T) {
 // returns AP.ErrClosed.
 func TestStmt_ExecAfterClose(t *testing.T) {
 	eng, ctx := testEngine(t)
-	stmt, err := ST.PrepareFromInterface(eng, "SELECT 1")
+	stmt, err := PrepareFromInterface(eng, "SELECT 1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +99,7 @@ func TestStmt_ExecAfterClose(t *testing.T) {
 // TestStmt_PrepareEmptySQL — R16: empty SQL returns AP.ErrSyntax.
 func TestStmt_PrepareEmptySQL(t *testing.T) {
 	eng, _ := testEngine(t)
-	_, err := ST.PrepareFromInterface(eng, "")
+	_, err := PrepareFromInterface(eng, "")
 	if !errors.Is(err, AP.ErrSyntax) {
 		t.Errorf("empty SQL: got %v, want ErrSyntax", err)
 	}
@@ -73,7 +107,7 @@ func TestStmt_PrepareEmptySQL(t *testing.T) {
 
 // TestStmt_PrepareNilEngine — AP.ErrNotOpen.
 func TestStmt_PrepareNilEngine(t *testing.T) {
-	_, err := ST.PrepareFromInterface(nil, "SELECT 1")
+	_, err := PrepareFromInterface(nil, "SELECT 1")
 	if !errors.Is(err, AP.ErrNotOpen) {
 		t.Errorf("nil engine: got %v, want ErrNotOpen", err)
 	}
@@ -87,7 +121,7 @@ func TestStmt_QueryReturnsCols(t *testing.T) {
 	if _, err := s.Exec(ctx, "INSERT INTO users VALUES (1, 'a')"); err != nil {
 		t.Fatal(err)
 	}
-	stmt, err := ST.PrepareFromInterface(eng, "SELECT id, name FROM users")
+	stmt, err := PrepareFromInterface(eng, "SELECT id, name FROM users")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +139,7 @@ func TestStmt_QueryReturnsCols(t *testing.T) {
 // RowsAffected.
 func TestStmt_ExecReturnsRowsAffected(t *testing.T) {
 	eng, ctx := testEngine(t)
-	stmt, err := ST.PrepareFromInterface(eng, "INSERT INTO users VALUES (1, 'a')")
+	stmt, err := PrepareFromInterface(eng, "INSERT INTO users VALUES (1, 'a')")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +156,7 @@ func TestStmt_ExecReturnsRowsAffected(t *testing.T) {
 // TestStmt_SQLAccessor — R17: the SQL text is preserved.
 func TestStmt_SQLAccessor(t *testing.T) {
 	eng, _ := testEngine(t)
-	stmt, err := ST.PrepareFromInterface(eng, "SELECT 1")
+	stmt, err := PrepareFromInterface(eng, "SELECT 1")
 	if err != nil {
 		t.Fatal(err)
 	}
