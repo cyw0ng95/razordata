@@ -136,6 +136,7 @@ Columns for selection:
 | REQ000104 | DDL | `DROP TABLE` | iter-08 |
 | REQ000105 | DDL | `NOT NULL` constraint enforcement | iter-10 |
 | REQ000106 | DDL | `DEFAULT` value substitution | iter-10 |
+| REQ000107 | SQL | `UNIQUE` constraint (in-memory path) | iter-11 |
 | REQ000108 | DML | `INSERT` with column list | iter-08 |
 | REQ000109 | DML | `UPDATE` with `WHERE` | iter-08 |
 | REQ000110 | DML | `DELETE` with `WHERE` | iter-08 |

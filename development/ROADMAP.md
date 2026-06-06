@@ -35,6 +35,7 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 8 | SQL/Execute | Planner + executor | `PL`, `EX` | 67 | done |
 | 9 | SYS+Integration | Public API + end-to-end | `AP`, `SY`, `SE`, `TX`, `ST` | 57 | done (v0.6.3) |
 | 10 | NOT NULL / DEFAULT | Column constraints end-to-end | `PS`, `EX` | 16 | done (v0.7.0) |
+| 11 | UNIQUE Constraint | Single + composite + multi-clause UNIQUE | `PS`, `EX` | 11 | done (v0.8.0); I/O refinements pending v0.8.1 |
 
 All iterations complete. Coverage details: `go test ./... -cover`.
 
@@ -42,11 +43,10 @@ All iterations complete. Coverage details: `go test ./... -cover`.
 
 The v1 chain LOG → SYS is closed. Production-ready path: two phases.
 
-### Phase 1: Correctness & Ops Foundation (iter-11 to iter-17)
+### Phase 1: Correctness & Ops Foundation (iter-12 to iter-17)
 
 | Iter | Requirements | Goal |
 |---|---|---|
-| iter-11 | REQ000107 | `UNIQUE` constraint |
 | iter-12 | REQ000127 | Catalog persistence across restarts |
 | iter-13 | REQ000035 | WAL corruption recovery policy |
 | iter-14 | REQ000061 | Read-committed isolation (default) |
@@ -101,6 +101,7 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 | v0.6.2 | Code quality: staticcheck, dead code, perf |
 | **v0.6.3** | **SYS tests**: reorganized into function domains |
 | **v0.7.0** | **NOT NULL / DEFAULT constraints** end-to-end (`AP.ErrConstraint`, `SQL/EX/constraints.go`) |
+| **v0.8.0** | **UNIQUE constraint** single + composite + multi-clause (`SQL/PS` AST + parser, `SQL/EX` `checkUnique`) |
 
 ## Design Protection
 

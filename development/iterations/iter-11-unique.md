@@ -1,10 +1,10 @@
 # Iteration 11 — UNIQUE Constraint + I/O Refinements
 
 **Subsystem:** `SQL` (`PS`, `EX`) for UNIQUE; `MEM` (`BF`), `FIL` (`DF`) for mmap/madvise
-**Status:** planned
+**Status:** partial (UNIQUE done in v0.8.0; I/O refinements pending for v0.8.1)
 **Est. LOC:** ~900
-**Requirements:** REQ000107, REQ000026, REQ000019
-**Target release:** v0.8.1
+**Requirements:** REQ000107 ✓ (v0.8.0), REQ000026 (v0.8.1), REQ000019 (v0.8.1)
+**Target release:** v0.8.0 (UNIQUE) + v0.8.1 (I/O refinements)
 
 ## Overview
 
@@ -416,3 +416,30 @@ read path only in v1).
   actually, but call site added); no public API change.
 - v0.8.1 (this) is a minor bump: AST shape, BlockDevice
   implementation, and the madvise syscall all changed.
+
+## Outcome (v0.8.0 — UNIQUE only)
+
+Shipped in v0.8.0 (commit 35a6b2d). All UNIQUE requirements met; no
+deviations from the plan.
+
+**What shipped:**
+- AST: `CreateTable.UniqueConstraints []UniqueKey`
+- Parser: composite `UNIQUE (a, b)` and multiple UNIQUE clauses
+- Storage: `storeSchema.unique []UniqueKey` (EX type, indices)
+- Engine: `checkUnique` with `inMemoryLookup`, `encodeUniqueKey`
+- Wiring: Insert/Update (in-memory paths); engine path is best-effort
+  no-op (true cross-row UNIQUE in engine requires REQ000045 index)
+- Self-exclusion for UPDATE no-ops via `selfKey`
+- NULL semantics: skipped per SQL standard
+
+**Tests:** 11 new (8 EX UNIQUE + 3 parser); 2 existing parser tests
+extended with assertions.
+
+**Benchmark:** `BenchmarkUniqueInsert` ~2.1µs/op vs baseline
+`BenchmarkConstraintsInsert` ~1.7µs/op — 1.25x overhead, within 1.5x
+target.
+
+**Final commit/tag:** commit 35a6b2d, tag v0.8.0.
+
+**Pending for v0.8.1:** REQ000019 (MADV_DONTNEED), REQ000026 (mmap).
+
