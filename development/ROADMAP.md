@@ -50,7 +50,7 @@ The v1 chain LOG → SYS is closed. Production-ready path: two phases.
 | Iter | Requirements | Goal | Status |
 |---|---|---|---|
 | iter-12 | REQ000127 | Catalog persistence across restarts | done (v0.9.0) |
-| iter-13 | REQ000035 | WAL corruption recovery policy | remaining |
+| iter-13 | REQ000035 | WAL corruption recovery policy | done (v0.10.0) |
 | iter-14 | REQ000061 | Read-committed isolation (default) | remaining |
 | iter-15 | REQ000062 | MVCC reads in transaction (SELECT sees own writes) | remaining |
 | iter-16 | REQ000102 | Admin CLI (`razor-admin`: schema dump, vacuum, manual compaction) | remaining |

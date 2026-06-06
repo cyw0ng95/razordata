@@ -57,7 +57,7 @@ Columns for selection:
 | REQ000183 | SQL/EX | Expression evaluation SIMD (batch predicate EvalBatch function) | medium | M | iter-08 (eval) | `SQL/EX/eval.go` — add vectorized EvalBatch per SQL.md:303-306 |
 | REQ000184 | WAL/FL | Implement WriteBuffer struct with 256 KB pre-allocated buffer | medium | S | iter-03 (WAL) | `WAL/FL/fl.go` — add writeBuffer struct per WAL.md:103-117 |
 | REQ000185 | SQL/EX | Plan memoization with SHA256 canonical AST binary encoding (not JSON) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — implement binary serialization per SQL.md:215 |
-| REQ000035 | WAL | Corruption recovery policy: detect torn write, skip vs. fail | critical | S | iter-03 (replay) | `WAL/RP/rp.go` — return `ErrCorrupt` on torn record; add tests |
+| REQ000035 | WAL | Corruption recovery policy: detect torn write, skip vs. fail | critical | S | iter-13 (recovery) | **MOVED TO DONE** — segment file header + envelope CRC; tail tolerated, mid-segment fails loud, Stats counters |
 | REQ000061 | TXN | Read-committed isolation (default); upgrade from v1 read-uncommitted | critical | L | iter-05/06 (MVCC + VL) | `TXN/VL/protocol.go`, `TXN/SN/snapshot.go` — re-snapshot per statement |
 | REQ000062 | TXN | MVCC reads inside transactions (SELECT in tx sees own writes through Tx iterator) | critical | L | iter-09 (shadow writeSet) | `TXN/SN`, `SQL/EX` — switch session to Tx-aware iterator |
 | REQ000113 | SQL | `GROUP BY` (single + multi col; with/without aggregates) | critical | M | iter-08 (Aggregate) | `SQL/PS`, `SQL/EX/aggregate.go` (extend HashAggregate), `SQL/RE` (pushdown) |
@@ -92,6 +92,7 @@ Columns for selection:
 
 | ID | Subsystem | Requirement | Iteration |
 |---|---|---|---|
+| REQ000035 | WAL | Corruption recovery policy: detect torn write, skip vs. fail | iter-13 |
 | REQ000127 | SQL | Catalog persistence across restarts (`CREATE TABLE` / `DROP TABLE` survive `Close`/`Open`) | iter-12 |
 | REQ000155 | ENG | Catalog persistence across restarts | iter-12 (consolidated with REQ000127) |
 | REQ000001 | LOG | `Logger` wraps `log/slog` with atomic level control | iter-00 |

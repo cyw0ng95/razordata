@@ -52,11 +52,12 @@ const (
 
 // LogRecord is a single WAL record (design WAL.md LogRecord Encoding).
 //
-//	┌──────────────┬──────────┬─────────────┬──────────────────┐
-//	│ length:varint│ txnID:varint│ type:uint8 │ payload:blob     │
-//	└──────────────┴──────────┴─────────────┴──────────────────┘
+//	┌──────────────┬──────────┬─────────────┬──────────────────┬───────┐
+//	│ length:varint│ txnID:varint│ type:uint8 │ payload:blob     │ CRC32│
+//	└──────────────┴──────────┴─────────────┴──────────────────┴───────┘
 //
-// `length` covers everything after the length field itself.
+// `length` covers everything after the length field itself (body + CRC).
+// As of iter-13 (R13-13) the per-RTData payload CRC is also verified.
 type LogRecord struct {
 	Type    RecordType
 	TxnID   uint64
@@ -65,6 +66,12 @@ type LogRecord struct {
 	BlockID uint64 // SST/manifest block this record modifies (RTData only).
 	// For RTCheckpoint, BlockID is repurposed as the active-TXN count
 	// (the field is otherwise unused for that record type).
+	// PayCRCFail is set by decodePayload when the inner RTData
+	// payload CRC does not match. The replayer reads this flag
+	// to surface ErrCorrupt (the envelope CRC is verified inside
+	// the decoder, but the inner CRC is checked after payload
+	// slicing, which is when this flag is set).
+	PayCRCFail bool
 }
 
 // WriteBatch is a batch of log records for one transaction.
@@ -388,10 +395,21 @@ func (w *writer) openSegmentLocked(n uint64) error {
 	for i := range buf {
 		buf[i] = 0
 	}
+	// R13-1 / R13-3: write the segment header immediately after
+	// the file is created so the replayer can distinguish a
+	// v0.10.0 segment from a v0.9.x segment. The header is
+	// outside the buffered write path — a short pwrite with no
+	// batching. writeOff starts at WALHeaderSize so the LSN
+	// math (segNum * SegSize + writeOff) correctly accounts for
+	// the header bytes.
+	if err := writeSegmentHeader(fh.FD); err != nil {
+		_ = fh.Close()
+		return err
+	}
 	w.seg = &logSegment{
 		number:   n,
 		fh:       fh,
-		writeOff: 0,
+		writeOff: WALHeaderSize,
 		buf:      buf[:0], // accumulate into pre-allocated backing array
 	}
 	return nil
