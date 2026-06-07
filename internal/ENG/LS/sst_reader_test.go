@@ -198,3 +198,47 @@ func TestSSTReader_Err(t *testing.T) {
 		t.Fatalf("expected nil error, got %v", iter.Err())
 	}
 }
+
+// TestSSTIterator_FirstBlockRead is the REQ000187 regression test:
+// the first call to Next() on a fresh iterator must load block 0
+// and return true with the correct key/value. Before the
+// blockIdx/pairIdx split, the iterator's `current > 0` guard
+// skipped the first block, so a single-key SST iterated as
+// empty.
+func TestSSTIterator_FirstBlockRead(t *testing.T) {
+	w := newSSTWriter()
+	w.Add([]byte("alpha"), []byte("one"))
+
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	reader, err := openSST(sstData)
+	if err != nil {
+		t.Fatalf("openSST: %v", err)
+	}
+	t.Logf("indexBlock len: %d", len(reader.indexBlock))
+	for i, e := range reader.indexBlock {
+		t.Logf("  [%d] blockOffset=%d blockSize=%d", i, e.blockOffset, e.blockSize)
+	}
+	defer reader.Close()
+
+	iter := reader.Iterator()
+	defer iter.Close()
+
+	// First Next must return true and surface the key/value.
+	if !iter.Next() {
+		t.Fatalf("REQ000187: first Next() returned false; the first block was not loaded")
+	}
+	if got := string(iter.Key()); got != "alpha" {
+		t.Errorf("Key: want %q, got %q", "alpha", got)
+	}
+	if got := string(iter.Value()); got != "one" {
+		t.Errorf("Value: want %q, got %q", "one", got)
+	}
+	// Iterator now exhausted; the second Next returns false.
+	if iter.Next() {
+		t.Errorf("second Next() returned true; expected end-of-iteration")
+	}
+}

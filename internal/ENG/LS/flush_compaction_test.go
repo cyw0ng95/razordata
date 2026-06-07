@@ -405,9 +405,9 @@ func TestKeyHeap_Less(t *testing.T) {
 }
 
 func TestKeyHeap_PushPop(t *testing.T) {
-	f1 := &sstIterator{pairs: []kvPair{{key: []byte("apple"), value: []byte("1")}}, current: 0}
-	f2 := &sstIterator{pairs: []kvPair{{key: []byte("banana"), value: []byte("2")}}, current: 0}
-	f3 := &sstIterator{pairs: []kvPair{{key: []byte("cherry"), value: []byte("3")}}, current: 0}
+	f1 := &sstIterator{pairs: []kvPair{{key: []byte("apple"), value: []byte("1")}}, pairIdx: 0}
+	f2 := &sstIterator{pairs: []kvPair{{key: []byte("banana"), value: []byte("2")}}, pairIdx: 0}
+	f3 := &sstIterator{pairs: []kvPair{{key: []byte("cherry"), value: []byte("3")}}, pairIdx: 0}
 
 	h := &keyHeap{items: []*sstIterator{}}
 	heap.Push(h, f2)
@@ -435,8 +435,8 @@ func TestKeyHeap_PushPop(t *testing.T) {
 }
 
 func TestKeyHeap_Swap(t *testing.T) {
-	f1 := &sstIterator{pairs: []kvPair{{key: []byte("a"), value: []byte("1")}}, current: 0}
-	f2 := &sstIterator{pairs: []kvPair{{key: []byte("b"), value: []byte("2")}}, current: 0}
+	f1 := &sstIterator{pairs: []kvPair{{key: []byte("a"), value: []byte("1")}}, pairIdx: 0}
+	f2 := &sstIterator{pairs: []kvPair{{key: []byte("b"), value: []byte("2")}}, pairIdx: 0}
 
 	h := &keyHeap{items: []*sstIterator{f1, f2}}
 
