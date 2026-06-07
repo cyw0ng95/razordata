@@ -277,7 +277,7 @@ func TestReplayWithData(t *testing.T) {
 	}
 	defer bp.Close()
 
-	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
 	if err != nil {
 		t.Fatalf("wr.New: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestReplayTriggersCallbacks(t *testing.T) {
 	}
 	defer bp.Close()
 
-	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
 	if err != nil {
 		t.Fatalf("wr.New: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestLastCheckpointFindsCheckpoint(t *testing.T) {
 	}
 	defer bp.Close()
 
-	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
 	if err != nil {
 		t.Fatalf("wr.New: %v", err)
 	}
@@ -476,7 +476,7 @@ func TestReplayWithCheckpointTruncation(t *testing.T) {
 	}
 	defer bp.Close()
 
-	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
 	if err != nil {
 		t.Fatalf("wr.New: %v", err)
 	}

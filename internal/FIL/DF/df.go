@@ -53,6 +53,13 @@ func Create(path string, log ...lg.Logger) (*BlockDevice, error) {
 	return openFile(path, false, true, log)
 }
 
+// OpenReadOnly opens an existing block device in read-only mode
+// (O_RDONLY). Write operations will fail. Added in iter-15
+// (REQ000099).
+func OpenReadOnly(path string, log ...lg.Logger) (*BlockDevice, error) {
+	return openFile(path, true, false, log)
+}
+
 // OpenMmap opens a file with the file's full contents mmap'd. Reads
 // are served from the mapped region (zero-copy via the kernel page
 // cache); writes still go through pwrite. The mmap is unmapped in

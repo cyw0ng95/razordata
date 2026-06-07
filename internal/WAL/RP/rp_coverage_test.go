@@ -85,7 +85,7 @@ func TestRP_TruncateBeforeCheckpoint_Cases(t *testing.T) {
 
 			// Write `preWrite` data records, then a checkpoint
 			// with the in-record LSN set to the test's cpLSN.
-			w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+			w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
 			for j := 0; j < tc.preWrite; j++ {
 				if _, err := w.Append(&wr.WriteBatch{TxnID: uint64(j + 1), Recs: []wr.LogRecord{
 					{Type: wr.RTData, BlockID: uint64(j), Value: []byte("payload")},
@@ -188,7 +188,7 @@ func TestRP_ForEachRecord_ErrorBranches(t *testing.T) {
 			tmp := t.TempDir()
 			sm, bp := newReplayerHarness(t, tmp)
 
-			w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+			w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
 			for i := 0; i < 10; i++ {
 				if _, err := w.Append(&wr.WriteBatch{TxnID: uint64(i), Recs: []wr.LogRecord{
 					{Type: wr.RTData, BlockID: uint64(i), Value: []byte("payload-" + segName(uint64(i)))},

@@ -59,7 +59,7 @@ func TestAtomicBoolClearMultipleTimes(t *testing.T) {
 func TestWriterOpenSegmentZeroFilled(t *testing.T) {
 	d := newTestDeps(t)
 
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	defer w.Close()
 
 	for i := 0; i < 100; i++ {
@@ -76,7 +76,7 @@ func TestWriterFlushBufferShortWrite(t *testing.T) {
 	d := newTestDeps(t)
 	tmp := t.TempDir()
 
-	w, _ := New(tmp, d.sm, d.sp, d.log)
+	w, _ := New(tmp, d.sm, d.sp, d.log, false)
 	defer w.Close()
 
 	for i := 0; i < 10; i++ {
@@ -105,7 +105,7 @@ func TestWriterFlushBufferShortWrite(t *testing.T) {
 func TestWriterAppendNilRecordBatch(t *testing.T) {
 	d := newTestDeps(t)
 
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	defer w.Close()
 
 	_, err := w.Append(&WriteBatch{})
@@ -117,7 +117,7 @@ func TestWriterAppendNilRecordBatch(t *testing.T) {
 func TestWriterAppendMultipleBatches(t *testing.T) {
 	d := newTestDeps(t)
 
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	defer w.Close()
 
 	for batch := 0; batch < 5; batch++ {
@@ -137,7 +137,7 @@ func TestWriterAppendMultipleBatches(t *testing.T) {
 func TestWriterSyncIdempotentMultiple(t *testing.T) {
 	d := newTestDeps(t)
 
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	defer w.Close()
 
 	w.Append(&WriteBatch{
@@ -154,7 +154,7 @@ func TestWriterSyncIdempotentMultiple(t *testing.T) {
 func TestWriterCloseWithNilSegment(t *testing.T) {
 	d := newTestDeps(t)
 
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 
 	w.Close()
 	w.Close()
@@ -163,7 +163,7 @@ func TestWriterCloseWithNilSegment(t *testing.T) {
 func TestWriterSyncWithNilSegment(t *testing.T) {
 	d := newTestDeps(t)
 
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	defer w.Close()
 
 	w.Close()
@@ -177,7 +177,7 @@ func TestWriterSyncWithNilSegment(t *testing.T) {
 func TestWriterAppendAfterSync(t *testing.T) {
 	d := newTestDeps(t)
 
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	defer w.Close()
 
 	_, err := w.Append(&WriteBatch{
@@ -254,7 +254,7 @@ func newTestDeps(t *testing.T) *testDeps {
 func newTestWriter(t *testing.T) (*writer, *testDeps) {
 	t.Helper()
 	d := newTestDeps(t)
-	w, err := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, err := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -276,13 +276,13 @@ func newTestWriterWithMaxRecord(t *testing.T, maxRecord int64) (*writer, *testDe
 func TestNewRejectsEmptyArgs(t *testing.T) {
 	d := newTestDeps(t)
 
-	if _, err := New("", d.sm, d.sp, d.log); err == nil {
+	if _, err := New("", d.sm, d.sp, d.log, false); err == nil {
 		t.Error("expected error for empty dir")
 	}
-	if _, err := New("/tmp", nil, d.sp, d.log); err == nil {
+	if _, err := New("/tmp", nil, d.sp, d.log, false); err == nil {
 		t.Error("expected error for nil SegmentManager")
 	}
-	if _, err := New("/tmp", d.sm, nil, d.log); err == nil {
+	if _, err := New("/tmp", d.sm, nil, d.log, false); err == nil {
 		t.Error("expected error for nil SyncPool")
 	}
 }
@@ -292,7 +292,7 @@ func TestNewRejectsEmptyArgs(t *testing.T) {
 func TestNewAcceptsValidArgs(t *testing.T) {
 	d := newTestDeps(t)
 
-	w, err := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, err := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestWriterImplementsInterface(t *testing.T) {
 // times safely (R22).
 func TestWriterCloseIdempotent(t *testing.T) {
 	d := newTestDeps(t)
-	w, err := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, err := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestWriterCloseIdempotent(t *testing.T) {
 // error rather than panicking (R22).
 func TestWriterAppendAfterClose(t *testing.T) {
 	d := newTestDeps(t)
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	_ = w.Close()
 	if _, err := w.Append(&WriteBatch{Recs: []LogRecord{{Type: RTData}}}); err == nil {
 		t.Error("expected error from Append after Close")
@@ -338,7 +338,7 @@ func TestWriterAppendAfterClose(t *testing.T) {
 // TestWriterSyncAfterClose verifies post-close Sync is a no-op (R22).
 func TestWriterSyncAfterClose(t *testing.T) {
 	d := newTestDeps(t)
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	_ = w.Close()
 	if err := w.Sync(); err != nil {
 		t.Errorf("expected nil from Sync after Close, got %v", err)
@@ -689,7 +689,7 @@ func TestAppendAssignsTxnIDFromBatch(t *testing.T) {
 // is strictly increasing within a segment).
 func TestAppendMonotonicLSNsAcrossBatches(t *testing.T) {
 	d := newTestDeps(t)
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	t.Cleanup(func() { _ = w.Close() })
 
 	var prevLSN uint64
@@ -710,7 +710,7 @@ func TestAppendMonotonicLSNsAcrossBatches(t *testing.T) {
 // (returns 0, nil, no I/O).
 func TestAppendEmptyBatch(t *testing.T) {
 	d := newTestDeps(t)
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	t.Cleanup(func() { _ = w.Close() })
 
 	if lsn, err := w.Append(nil); err != nil || lsn != 0 {
@@ -1068,7 +1068,7 @@ func TestCloseReleasesFD(t *testing.T) {
 // manager in a way that creates a stray segment file.
 func TestCloseOnUnusedWriter(t *testing.T) {
 	d := newTestDeps(t)
-	w, err := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, err := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1244,13 +1244,13 @@ func TestAppendAfterCloseDoesNotCorruptState(t *testing.T) {
 func TestCloseReturnsBufferToPool(t *testing.T) {
 	d := newTestDeps(t)
 	// First writer.
-	w1, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w1, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	if err := w1.Close(); err != nil {
 		t.Fatalf("Close[1]: %v", err)
 	}
 	// Second writer on the same pool: it must successfully get
 	// a buffer (the pool reused the slot).
-	w2, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w2, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	if _, err := w2.Append(&WriteBatch{TxnID: 1, Recs: []LogRecord{
 		{Type: RTData, BlockID: 1, Value: []byte("reuse")},
 	}}); err != nil {
@@ -1268,7 +1268,7 @@ func TestCloseReturnsBufferToPool(t *testing.T) {
 func TestCrashSimulated(t *testing.T) {
 	d := newTestDeps(t)
 
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 
 	batch := &WriteBatch{
 		TxnID: 1,
@@ -1306,7 +1306,7 @@ func TestWriterWithSmallSegment(t *testing.T) {
 	}
 	defer sm2.Close()
 
-	w, err := New(t.TempDir(), sm2, d.sp, d.log)
+	w, err := New(t.TempDir(), sm2, d.sp, d.log, false)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1331,7 +1331,7 @@ func TestWriterWithSmallSegment(t *testing.T) {
 func TestMultipleSyncCalls(t *testing.T) {
 	d := newTestDeps(t)
 
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	defer w.Close()
 
 	for i := 0; i < 3; i++ {
@@ -1355,7 +1355,7 @@ func TestMultipleSyncCalls(t *testing.T) {
 func TestFlushBufferOnEmptySegment(t *testing.T) {
 	d := newTestDeps(t)
 
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 
 	err := w.Close()
 	if err != nil {
@@ -1369,7 +1369,7 @@ func TestFlushBufferOnEmptySegment(t *testing.T) {
 func TestRotateWithNilBuffer(t *testing.T) {
 	d := newTestDeps(t)
 
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 
 	for i := 0; i < 5; i++ {
 		_, err := w.Append(&WriteBatch{
@@ -1395,7 +1395,7 @@ func TestAppendTriggersRotate(t *testing.T) {
 	d := newTestDeps(t)
 
 	tmp := t.TempDir()
-	w, _ := New(tmp, d.sm, d.sp, d.log)
+	w, _ := New(tmp, d.sm, d.sp, d.log, false)
 
 	largeValue := bytes.Repeat([]byte("x"), int(sp.WALBufSize)/2)
 
@@ -1425,7 +1425,7 @@ func TestAppendTriggersRotate(t *testing.T) {
 func TestSegmentRotationLSNOrdering(t *testing.T) {
 	d := newTestDeps(t)
 
-	w, _ := New(t.TempDir(), d.sm, d.sp, d.log)
+	w, _ := New(t.TempDir(), d.sm, d.sp, d.log, false)
 	defer w.Close()
 
 	lsns := make([]uint64, 0)

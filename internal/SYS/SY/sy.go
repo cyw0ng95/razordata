@@ -175,9 +175,14 @@ func (e *Engine) open(ctx context.Context) (err error) {
 
 	// Step 4: DF block device for the buffer pool. Create the file
 	// if it does not exist (CreateIfMissing implies we may be
-	// opening a fresh database).
+	// opening a fresh database). In read-only mode, only Open is
+	// allowed (R-open issue: read-only engine).
 	bdPath := filepath.Join(e.dir, "meta.razor")
-	if e.opts.CreateIfMissing {
+	if e.opts.ReadOnly {
+		if e.df, err = df.OpenReadOnly(bdPath, e.log); err != nil {
+			return err
+		}
+	} else if e.opts.CreateIfMissing {
 		if e.df, err = df.Create(bdPath, e.log); err != nil {
 			// Already exists is fine; reopen as Open.
 			if os.IsExist(err) {
@@ -202,8 +207,9 @@ func (e *Engine) open(ctx context.Context) (err error) {
 		return err
 	}
 
-	// Step 7: WR WAL writer.
-	if e.wr, err = wr.New(walDir, e.lf, e.sp, e.log); err != nil {
+	// Step 7: WR WAL writer. In read-only mode, appends are
+	// rejected with ErrReadOnly (iter-15 REQ000099).
+	if e.wr, err = wr.New(walDir, e.lf, e.sp, e.log, e.opts.ReadOnly); err != nil {
 		return err
 	}
 
@@ -366,9 +372,10 @@ func (e *Engine) Begin(ctx context.Context) (AP.Session, error) {
 // if subsystem Close methods are still running in the background.
 func (e *Engine) IsClosed() bool { return e.closed.Load() }
 
-// Open is a no-op on an already-constructed *Engine; it exists to
-// satisfy the AP.Engine interface. New callers should use the
-// package-level Open constructor.
+// IsReadOnly reports whether the engine was opened in read-only mode.
+// Added in iter-15 (REQ000099).
+func (e *Engine) IsReadOnly() bool { return e.opts.ReadOnly }
+
 func (e *Engine) Open(ctx context.Context, dir string, opts AP.Options) error {
 	if e.closed.Load() {
 		return AP.ErrClosed

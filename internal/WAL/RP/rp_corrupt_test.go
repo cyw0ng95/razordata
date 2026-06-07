@@ -87,7 +87,7 @@ func TestRP_TailTruncated(t *testing.T) {
 	tmp := t.TempDir()
 	sm, bp := newReplayerHarness(t, tmp)
 
-	w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+	w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
 	for i := 0; i < 10; i++ {
 		if _, err := w.Append(&wr.WriteBatch{TxnID: uint64(i), Recs: []wr.LogRecord{
 			{Type: wr.RTData, BlockID: uint64(i), Value: []byte("x")},
@@ -141,7 +141,7 @@ func TestRP_MidSegmentCorruption(t *testing.T) {
 	tmp := t.TempDir()
 	sm, bp := newReplayerHarness(t, tmp)
 
-	w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+	w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
 	for i := 0; i < 10; i++ {
 		if _, err := w.Append(&wr.WriteBatch{TxnID: uint64(i), Recs: []wr.LogRecord{
 			{Type: wr.RTData, BlockID: uint64(i), Value: []byte("payload")},
@@ -198,7 +198,7 @@ func TestRP_EndToEnd_Restart(t *testing.T) {
 	defer sm.Close()
 	bp, _ := setupBufferPool(tmp)
 	defer bp.Close()
-	w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+	w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
 	const n = 100
 	for i := 0; i < n; i++ {
 		if _, err := w.Append(&wr.WriteBatch{TxnID: uint64(i), Recs: []wr.LogRecord{
@@ -243,7 +243,7 @@ func TestRP_EndToEnd_5Runs(t *testing.T) {
 		tmp := t.TempDir()
 		sm, _ := setupSegmentManager(tmp)
 		bp, _ := setupBufferPool(tmp)
-		w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+		w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
 		for i := 0; i < 50; i++ {
 			if _, err := w.Append(&wr.WriteBatch{TxnID: uint64(i), Recs: []wr.LogRecord{
 				{Type: wr.RTData, BlockID: uint64(i), Value: []byte("p")},
@@ -279,7 +279,7 @@ func TestRP_UnknownRecordType_SkippedAndCounted(t *testing.T) {
 	defer sm.Close()
 	defer bp.Close()
 
-	w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}))
+	w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
 	// 2 valid records.
 	for i := 0; i < 2; i++ {
 		if _, err := w.Append(&wr.WriteBatch{TxnID: uint64(i), Recs: []wr.LogRecord{
