@@ -49,6 +49,49 @@ type flusher struct {
 	log lg.Logger
 
 	closed atomicBool
+	wbuf   *writeBuffer
+}
+
+// writeBuffer is a pre-allocated 256 KB buffer for batched WAL writes
+// (iter-15 REQ000184). It is owned by the Flusher and can be shared
+// with the Writer for group-commit scenarios.
+type writeBuffer struct {
+	buf []byte
+	off int
+}
+
+// newWriteBuffer allocates a 256 KB write buffer as per WAL.md:103-117.
+func newWriteBuffer() *writeBuffer {
+	return &writeBuffer{
+		buf: make([]byte, 256*1024),
+		off: 0,
+	}
+}
+
+// Reset clears the buffer for reuse.
+func (wb *writeBuffer) Reset() {
+	wb.off = 0
+}
+
+// Available returns the number of bytes remaining in the buffer.
+func (wb *writeBuffer) Available() int {
+	return len(wb.buf) - wb.off
+}
+
+// Write copies data into the buffer. Returns the number of bytes
+// written (always len(p)) and an error if the buffer is too small.
+func (wb *writeBuffer) Write(p []byte) (int, error) {
+	if len(p) > wb.Available() {
+		return 0, errors.New("fl.WriteBuffer: buffer full")
+	}
+	n := copy(wb.buf[wb.off:], p)
+	wb.off += n
+	return n, nil
+}
+
+// Bytes returns the buffered data as a slice (valid until Reset).
+func (wb *writeBuffer) Bytes() []byte {
+	return wb.buf[:wb.off]
 }
 
 // New constructs a Flusher (R35). All four dependencies are required.
@@ -62,7 +105,7 @@ func New(dir string, sm *lf.SegmentManager, fm *fs.FileManager, log lg.Logger) (
 	if fm == nil {
 		return nil, errors.New("fl: FileManager is required")
 	}
-	return &flusher{sm: sm, fm: fm, lsn: newLSNCounter(), log: log}, nil
+	return &flusher{sm: sm, fm: fm, lsn: newLSNCounter(), log: log, wbuf: newWriteBuffer()}, nil
 }
 
 // Sync is a v1 Foundation stub (see interface comment). Real
