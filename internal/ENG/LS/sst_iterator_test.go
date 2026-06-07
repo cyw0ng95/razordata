@@ -1,7 +1,11 @@
 package ls
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -102,6 +106,82 @@ func TestFlushManager_RequestFlush(t *testing.T) {
 	mt.Insert([]byte("key1"), []byte("value1"))
 
 	fm.requestFlush(mt)
+}
+
+// TestFlushManager_RequestFlush_IDConsistency is the REQ000189
+// regression test: the on-disk SST filename and the manifest
+// entry must agree on the same fileID. Before the iter-12
+// single-nextFileID fix, outputPath used a separate
+// nextFileID() call than the job's fileID field, so the
+// manifest and the filesystem could drift. This test pins
+// the invariant end-to-end: drive a flush, read the
+// manifest, parse the SST filename, and assert the IDs match.
+func TestFlushManager_RequestFlush_IDConsistency(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_flush_id_consistency")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("failed to create manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	fm := newFlushManager(dir, 64*1024*1024, manifest)
+	defer fm.Close()
+
+	mt := newMemtable(1024 * 1024)
+	for i := 0; i < 5; i++ {
+		mt.Insert([]byte(fmt.Sprintf("key-%d", i)), []byte("value"))
+	}
+	fm.requestFlush(mt)
+	fm.WaitForFlush()
+	if p := fm.lastErr.Load(); p != nil {
+		t.Fatalf("flush job failed: %v", *p)
+	}
+
+	// The flush job ran. Find the SST file in the dir.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	var sstName string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), "L0_") && strings.HasSuffix(e.Name(), ".sst") {
+			sstName = e.Name()
+			break
+		}
+	}
+	if sstName == "" {
+		t.Fatalf("no L0_*.sst file in %s after WaitForFlush", dir)
+	}
+	// Parse the fileID from the filename: "L0_<id>.sst"
+	stripped := strings.TrimSuffix(strings.TrimPrefix(sstName, "L0_"), ".sst")
+	idFromName, err := strconv.ParseUint(stripped, 10, 64)
+	if err != nil {
+		t.Fatalf("parse fileID from %q: %v", sstName, err)
+	}
+
+	// The manifest should record the same ID. If
+	// requestFlush used two separate nextFileID() calls,
+	// this would fail.
+	v := manifest.Current()
+	if len(v.levels) == 0 || len(v.levels[0]) == 0 {
+		t.Fatalf("manifest has no L0 entries: %+v", v)
+	}
+	var idFromManifest uint64
+	for _, f := range v.levels[0] {
+		if f.MinKey != nil {
+			idFromManifest = f.FileID
+			break
+		}
+	}
+	if idFromName != idFromManifest {
+		t.Errorf("REQ000189: SST filename id=%d != manifest id=%d (filename=%s)",
+			idFromName, idFromManifest, sstName)
+	}
 }
 
 func TestFlushManager_MaybeFlush(t *testing.T) {
