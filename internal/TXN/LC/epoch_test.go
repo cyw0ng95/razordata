@@ -7,25 +7,74 @@ import (
 	"unsafe"
 )
 
-func TestHazardPointerSetPublish(t *testing.T) {
+// TestHazardPointerSetPublishCurrent pins REQ000158 (R158-1):
+// PublishCurrent writes to slot 0 only. Before the fix, a
+// single 'Publish(ptr)' wrote to BOTH slots, defeating the
+// double-slot design.
+func TestHazardPointerSetPublishCurrent(t *testing.T) {
 	h := newHazardPointerSet()
 
 	var ptr unsafe.Pointer = unsafe.Pointer(new(int))
-	h.Publish(ptr)
+	h.PublishCurrent(ptr)
 
-	for i := 0; i < MaxHazardPtrs; i++ {
-		stored := h.ptrs[i].Load()
-		if stored == nil || stored.(unsafe.Pointer) != ptr {
-			t.Errorf("ptr[%d] should be %v", i, ptr)
-		}
+	if stored := h.ptrs[0].Load(); stored == nil || stored.(unsafe.Pointer) != ptr {
+		t.Errorf("ptr[0] should be %v, got %v", ptr, stored)
+	}
+	// Slot 1 must remain untouched.
+	if stored := h.ptrs[1].Load(); stored != nil {
+		t.Errorf("ptr[1] should be nil after PublishCurrent, got %v", stored)
+	}
+}
+
+// TestHazardPointerSetPublishNext pins REQ000158 (R158-2):
+// PublishNext writes to slot 1 only. Together with
+// PublishCurrent, this gives the reader a 'current' and a
+// 'prefetch' pointer simultaneously.
+func TestHazardPointerSetPublishNext(t *testing.T) {
+	h := newHazardPointerSet()
+
+	cur := unsafe.Pointer(new(int))
+	nxt := unsafe.Pointer(new(int))
+
+	h.PublishCurrent(cur)
+	h.PublishNext(nxt)
+
+	if stored := h.ptrs[0].Load(); stored == nil || stored.(unsafe.Pointer) != cur {
+		t.Errorf("ptr[0] should be %v, got %v", cur, stored)
+	}
+	if stored := h.ptrs[1].Load(); stored == nil || stored.(unsafe.Pointer) != nxt {
+		t.Errorf("ptr[1] should be %v, got %v", nxt, stored)
+	}
+}
+
+// TestHazardPointerSetPublishSequentialOrder: when the same
+// pointer is published to both slots, the second publish must
+// not be clobbered by the first (the pre-fix bug had a tight
+// loop that wrote to all slots in unspecified order).
+func TestHazardPointerSetPublishSequentialOrder(t *testing.T) {
+	h := newHazardPointerSet()
+
+	cur := unsafe.Pointer(new(int))
+	nxt := unsafe.Pointer(new(int))
+
+	h.PublishCurrent(cur)
+	h.PublishNext(nxt) // different pointer on purpose
+
+	if stored := h.ptrs[0].Load(); stored == nil || stored.(unsafe.Pointer) != cur {
+		t.Errorf("after PublishCurrent/PublishNext, ptr[0] should be %v, got %v", cur, stored)
+	}
+	if stored := h.ptrs[1].Load(); stored == nil || stored.(unsafe.Pointer) != nxt {
+		t.Errorf("after PublishCurrent/PublishNext, ptr[1] should be %v, got %v", nxt, stored)
 	}
 }
 
 func TestHazardPointerSetClear(t *testing.T) {
 	h := newHazardPointerSet()
 
-	var ptr unsafe.Pointer = unsafe.Pointer(new(int))
-	h.Publish(ptr)
+	cur := unsafe.Pointer(new(int))
+	nxt := unsafe.Pointer(new(int))
+	h.PublishCurrent(cur)
+	h.PublishNext(nxt)
 	h.Clear()
 
 	for i := 0; i < MaxHazardPtrs; i++ {
@@ -41,7 +90,7 @@ func TestHazardPointerSetScan(t *testing.T) {
 
 	ptr1 := unsafe.Pointer(new(int))
 
-	h.Publish(ptr1)
+	h.PublishCurrent(ptr1)
 
 	scanned := h.Scan()
 	if len(scanned) == 0 {
@@ -66,8 +115,10 @@ func TestHazardPointerSetConcurrency(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
-				ptr := unsafe.Pointer(new(int))
-				h.Publish(ptr)
+				cur := unsafe.Pointer(new(int))
+				nxt := unsafe.Pointer(new(int))
+				h.PublishCurrent(cur)
+				h.PublishNext(nxt)
 				h.Scan()
 				h.Clear()
 			}
@@ -209,23 +260,28 @@ func TestThreadRecord(t *testing.T) {
 
 func BenchmarkHazardPublish(b *testing.B) {
 	h := newHazardPointerSet()
-	ptr := unsafe.Pointer(new(int))
+	cur := unsafe.Pointer(new(int))
+	nxt := unsafe.Pointer(new(int))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		h.Publish(ptr)
+		h.PublishCurrent(cur)
+		h.PublishNext(nxt)
 	}
 }
 
 func BenchmarkHazardClear(b *testing.B) {
 	h := newHazardPointerSet()
-	ptr := unsafe.Pointer(new(int))
-	h.Publish(ptr)
+	cur := unsafe.Pointer(new(int))
+	nxt := unsafe.Pointer(new(int))
+	h.PublishCurrent(cur)
+	h.PublishNext(nxt)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		h.Clear()
-		h.Publish(ptr)
+		h.PublishCurrent(cur)
+		h.PublishNext(nxt)
 	}
 }
 
