@@ -207,6 +207,13 @@ func decodeBlock(data []byte) ([]kvPair, error) {
 		}
 	}
 
+	// R188-2: when restartCount=0, the block has no restart
+	// points; treat the whole blockData as a single segment
+	// so the entry-decode loop runs at least once.
+	if restartCount == 0 {
+		restartPoints = append(restartPoints, 0)
+	}
+
 	var pairs []kvPair
 
 	for i, restartPos := range restartPoints {
@@ -220,14 +227,14 @@ func decodeBlock(data []byte) ([]kvPair, error) {
 			if pos >= len(blockData) {
 				break
 			}
+			// Entry format (R188-3): [keyLen:varint]
+			// [key:keyLen bytes] [valueLen:varint]
+			// [value:valueLen bytes]. The decoder must
+			// read the key BYTES between the two
+			// varints — earlier versions of the decoder
+			// read valueLen immediately after keyLen,
+			// which corrupted every entry.
 			keyLen, n := decodeVarint(blockData[pos:])
-			pos += n
-
-			if pos >= len(blockData) {
-				break
-			}
-
-			valueLen, n := decodeVarint(blockData[pos:])
 			pos += n
 
 			if pos+int(keyLen) > len(blockData) {
@@ -235,6 +242,9 @@ func decodeBlock(data []byte) ([]kvPair, error) {
 			}
 			key := blockData[pos : pos+int(keyLen)]
 			pos += int(keyLen)
+
+			valueLen, n := decodeVarint(blockData[pos:])
+			pos += n
 
 			if pos+int(valueLen) > len(blockData) {
 				break
@@ -250,49 +260,72 @@ func decodeBlock(data []byte) ([]kvPair, error) {
 }
 
 type sstIterator struct {
-	reader  *sstReader
-	current int
-	pairs   []kvPair
+	reader   *sstReader
+	blockIdx int      // current block index in reader.indexBlock
+	pairIdx  int      // current pair index within the loaded block
+	pairs    []kvPair // pairs for the current block; nil until first block is loaded
 }
 
 func (r *sstReader) Iterator() *sstIterator {
 	return &sstIterator{
-		reader:  r,
-		current: 0,
-		pairs:   nil,
+		reader:   r,
+		blockIdx: -1, // sentinel: no block loaded yet
+		pairIdx:  0,
+		pairs:    nil,
 	}
+}
+
+// loadBlock reads reader.indexBlock[blockIdx] and decodes its
+// kvPairs. Returns false if blockIdx is out of range.
+func (it *sstIterator) loadBlock(blockIdx int) bool {
+	if it.reader == nil || blockIdx < 0 || blockIdx >= len(it.reader.indexBlock) {
+		return false
+	}
+	entry := it.reader.indexBlock[blockIdx]
+	blockData := it.reader.readBlock(entry.blockOffset, entry.blockSize)
+	pairs, err := decodeBlock(blockData)
+	if err != nil {
+		it.pairs = nil
+		return false
+	}
+	it.pairs = pairs
+	it.blockIdx = blockIdx
+	it.pairIdx = 0
+	return true
 }
 
 func (it *sstIterator) Next() bool {
-	if it.pairs == nil || it.current >= len(it.pairs) {
-		if it.current > 0 && it.reader != nil && it.current < len(it.reader.indexBlock) {
-			blockData := it.reader.readBlock(it.reader.indexBlock[it.current].blockOffset, it.reader.indexBlock[it.current].blockSize)
-			var err error
-			it.pairs, err = decodeBlock(blockData)
-			if err != nil {
-				return false
-			}
-			it.current = 0
-			return len(it.pairs) > 0
+	// First call: pairs is nil, blockIdx is -1. Load block 0.
+	if it.pairs == nil {
+		if !it.loadBlock(0) {
+			return false
 		}
+		return it.pairIdx < len(it.pairs)
+	}
+	// Advance within the current block.
+	if it.pairIdx+1 < len(it.pairs) {
+		it.pairIdx++
+		return true
+	}
+	// Current block exhausted; advance to next block.
+	if !it.loadBlock(it.blockIdx + 1) {
 		return false
 	}
-	it.current++
-	return it.current < len(it.pairs)
+	return it.pairIdx < len(it.pairs)
 }
 
 func (it *sstIterator) Key() []byte {
-	if it.pairs == nil || it.current >= len(it.pairs) {
+	if it.pairs == nil || it.pairIdx >= len(it.pairs) {
 		return nil
 	}
-	return it.pairs[it.current].key
+	return it.pairs[it.pairIdx].key
 }
 
 func (it *sstIterator) Value() []byte {
-	if it.pairs == nil || it.current >= len(it.pairs) {
+	if it.pairs == nil || it.pairIdx >= len(it.pairs) {
 		return nil
 	}
-	return it.pairs[it.current].value
+	return it.pairs[it.pairIdx].value
 }
 
 func (it *sstIterator) Close() error {
