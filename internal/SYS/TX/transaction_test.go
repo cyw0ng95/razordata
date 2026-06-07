@@ -114,6 +114,10 @@ func TestTransaction_RollbackToUnknownSavepoint(t *testing.T) {
 	if err := tx.RollbackTo(ctx, "missing"); !errors.Is(err, AP.ErrUnknownSavepoint) {
 		t.Errorf("RollbackTo unknown: got %v, want ErrUnknownSavepoint", err)
 	}
+	// Clean up the active transaction to avoid shutdown delay
+	if err := tx.Rollback(ctx); err != nil {
+		t.Logf("rollback: %v", err)
+	}
 }
 
 // TestTransaction_SavepointEmptyName — empty savepoint name returns
@@ -124,6 +128,10 @@ func TestTransaction_SavepointEmptyName(t *testing.T) {
 	tx, _ := s.Begin(ctx)
 	if err := tx.Savepoint(ctx, ""); !errors.Is(err, AP.ErrUnknownSavepoint) {
 		t.Errorf("Savepoint empty: got %v, want ErrUnknownSavepoint", err)
+	}
+	// Clean up the active transaction to avoid shutdown delay
+	if err := tx.Rollback(ctx); err != nil {
+		t.Logf("rollback: %v", err)
 	}
 }
 

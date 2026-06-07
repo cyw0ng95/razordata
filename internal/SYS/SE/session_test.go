@@ -51,13 +51,17 @@ func TestSession_ErrLockedOnDoubleBegin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.Begin(ctx)
+	tx, err := s.Begin(ctx)
 	if err != nil {
 		t.Fatalf("first Begin: %v", err)
 	}
 	_, err = s.Begin(ctx)
 	if !errors.Is(err, AP.ErrLocked) {
 		t.Errorf("second Begin: got %v, want ErrLocked", err)
+	}
+	// Clean up the active transaction to avoid shutdown delay
+	if err := tx.Rollback(ctx); err != nil {
+		t.Logf("rollback: %v", err)
 	}
 }
 
@@ -205,5 +209,9 @@ func TestSession_MultipleSessions_Independent(t *testing.T) {
 	}
 	if s2.Stats().ActiveTXN {
 		t.Error("s2 should NOT be in txn")
+	}
+	// Clean up the active transaction to avoid shutdown delay
+	if err := tx1.Rollback(ctx); err != nil {
+		t.Logf("rollback: %v", err)
 	}
 }
