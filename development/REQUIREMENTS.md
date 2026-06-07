@@ -48,7 +48,6 @@ Columns for selection:
 | REQ000181 | TXN/LC | Fix goroutine ID tracking (use real goroutine identity, not atomic counter) | medium | M | iter-05 (epoch) | `TXN/LC/epoch.go` — proper goroutine tracking per TXN.md:113-121 |
 | REQ000182 | SQL/EX | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | medium | L | iter-08 (Sort) | Create `SQL/EX/sort_parallel.go` per SQL.md:367-372 |
 | REQ000183 | SQL/EX | Expression evaluation SIMD (batch predicate EvalBatch function) | medium | M | iter-08 (eval) | `SQL/EX/eval.go` — add vectorized EvalBatch per SQL.md:303-306 |
-| REQ000184 | WAL/FL | Implement WriteBuffer struct with 256 KB pre-allocated buffer | medium | S | iter-03 (WAL) | `WAL/FL/fl.go` — add writeBuffer struct per WAL.md:103-117 |
 | REQ000185 | SQL/EX | Plan memoization with SHA256 canonical AST binary encoding (not JSON) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — implement binary serialization per SQL.md:215 |
 | REQ000035 | WAL | Corruption recovery policy: detect torn write, skip vs. fail | critical | S | iter-13 (recovery) | **MOVED TO DONE** — segment file header + envelope CRC; tail tolerated, mid-segment fails loud, Stats counters |
 | REQ000061 | TXN | Read-committed isolation (default); upgrade from v1 read-uncommitted | critical | L | iter-05/06 (MVCC + VL) | `TXN/VL/protocol.go`, `TXN/SN/snapshot.go` — re-snapshot per statement |
@@ -72,8 +71,6 @@ Columns for selection:
 | REQ000084 | SQL | `RE` subquery planning (not just flatten) | medium | M | iter-07 (RE), iter-08 (Subq op) | `SQL/RE/subq.go`, `SQL/PL/planner.go` |
 | REQ000085 | SQL | Histogram-based selectivity (replace uniform distribution) | medium | M | iter-12 (catalog stats) | new stats storage, `SQL/PL/estimateCost` |
 | REQ000086 | SQL | Parallel query execution (operators in goroutines, merge via channel) | low | XL | iter-08 (operators) | `SQL/EX/ex.go` — channel-based Next; cancellation hygiene |
-| REQ000098 | SYS | Session pooling (`sync.Pool`) | medium | S | iter-09 (Session) | `SYS/SE/se.go` |
-| REQ000099 | SYS | `ReadOnly` mode in `Options` (skip WAL writes, O_RDONLY opens) | medium | S | iter-09 (Options) | `SYS/SY/sy.go`, `WAL/WR/wr.go` |
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | low | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
 | REQ000101 | SYS | Prometheus metrics endpoint (`/metrics` HTTP) | medium | S | iter-00 (MetricHook), iter-100 (server) | `LOG/HK/metric.go` export, `SYS/SV/sv.go` |
 | REQ000123 | TXN-API | Configurable isolation levels (`READ COMMITTED` / `REPEATABLE READ` / `SERIALIZABLE` via `SET TRANSACTION`) | medium | M | iter-61 (RC implementation) | `SQL/PS`, `SQL/EX`, `TXN/SN/snapshot.go`, `AP.Options` |
@@ -101,6 +98,8 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | ID | Subsystem | Requirement | Iteration |
 |---|---|---|---|
 | REQ000035 | WAL | Corruption recovery policy: detect torn write, skip vs. fail | iter-13 |
+| REQ000098 | SYS | Session pooling (`sync.Pool`) | iter-15 |
+| REQ000099 | SYS | `ReadOnly` mode in `Options` (skip WAL writes, O_RDONLY opens) | iter-15 |
 | REQ000127 | SQL | Catalog persistence across restarts (`CREATE TABLE` / `DROP TABLE` survive `Close`/`Open`) | iter-12 |
 | REQ000146 | SYS | 6-phase graceful shutdown sequence per SYS.md:215-282 | iter-14 |
 | REQ000152 | SYS | `validateOptions` with field-by-field checks per SYS.md:198-214 | iter-14 |
@@ -108,6 +107,7 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000154 | SYS | Background-goroutine coordination (compaction, flush, epoch, hook dispatcher) | iter-14 |
 | REQ000166 | SYS | Per-subsystem `Close()` ordering in Phase 5 of shutdown | iter-14 |
 | REQ000178 | SYS/SY | `validateOptions` (duplicate of REQ000152, same code) | iter-14 |
+| REQ000184 | WAL/FL | Implement WriteBuffer struct with 256 KB pre-allocated buffer | iter-15 |
 | REQ000155 | ENG | Catalog persistence across restarts | iter-12 (consolidated with REQ000127) |
 | REQ000001 | LOG | `Logger` wraps `log/slog` with atomic level control | iter-00 |
 | REQ000002 | LOG | Structured key-value output (JSON/text) | iter-00 |
