@@ -120,10 +120,11 @@ type logSegment struct {
 
 // writer is the concrete Writer implementation.
 type writer struct {
-	dir string
-	sm  *lf.SegmentManager
-	sp  sp.SyncPool
-	log lg.Logger
+	dir      string
+	sm       *lf.SegmentManager
+	sp       sp.SyncPool
+	log      lg.Logger
+	readOnly bool
 
 	mu     sync.Mutex // serializes Append/Sync/Close on the active segment
 	seg    *logSegment
@@ -139,8 +140,9 @@ type writer struct {
 // New constructs a Writer rooted at dir. The Writer owns its
 // dependencies (sm, sp, log) and is safe to use from a single writer
 // goroutine; concurrent Append/Sync is serialized by an internal mutex
-// (R21).
-func New(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log lg.Logger) (Writer, error) {
+// (R21). Pass readOnly=true to open the WAL in read-only mode (no
+// appends allowed; used for Engine.Open with Options.ReadOnly).
+func New(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log lg.Logger, readOnly bool) (Writer, error) {
 	if dir == "" {
 		return nil, errors.New("wr: dir is required")
 	}
@@ -150,7 +152,7 @@ func New(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log lg.Logger) (
 	if spPool == nil {
 		return nil, errors.New("wr: SyncPool is required")
 	}
-	return &writer{dir: dir, sm: sm, sp: spPool, log: log}, nil
+	return &writer{dir: dir, sm: sm, sp: spPool, log: log, readOnly: readOnly}, nil
 }
 
 // Append encodes and appends every record in batch, returning the LSN
@@ -174,6 +176,11 @@ func (w *writer) Append(batch *WriteBatch) (uint64, error) {
 	// shared state after we have torn it down (R22).
 	if w.closed.isSet() {
 		return 0, errors.New("wr: writer is closed")
+	}
+
+	// Read-only mode: reject appends (R-open issue: read-only engine).
+	if w.readOnly {
+		return 0, errors.New("wr: read-only mode")
 	}
 
 	if w.seg == nil {

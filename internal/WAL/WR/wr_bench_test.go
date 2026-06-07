@@ -23,7 +23,7 @@ func BenchmarkSequentialAppend(b *testing.B) {
 	sp := sp.New()
 	log := lg.New(lg.Options{Output: &nullWriter{}})
 
-	w, err := New(dir, sm, sp, log)
+	w, err := New(dir, sm, sp, log, false)
 	if err != nil {
 		b.Fatalf("New: %v", err)
 	}
@@ -65,7 +65,7 @@ func BenchmarkSequentialAppendWithSync(b *testing.B) {
 	sp := sp.New()
 	log := lg.New(lg.Options{Output: &nullWriter{}})
 
-	w, err := New(dir, sm, sp, log)
+	w, err := New(dir, sm, sp, log, false)
 	if err != nil {
 		b.Fatalf("New: %v", err)
 	}
@@ -106,7 +106,7 @@ func BenchmarkBatchAppend(b *testing.B) {
 	sp := sp.New()
 	log := lg.New(lg.Options{Output: &nullWriter{}})
 
-	w, err := New(dir, sm, sp, log)
+	w, err := New(dir, sm, sp, log, false)
 	if err != nil {
 		b.Fatalf("New: %v", err)
 	}
@@ -152,7 +152,7 @@ func BenchmarkSegmentRotation(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		w, err := New(filepath.Join(dir, "wal"), sm, sp, log)
+		w, err := New(filepath.Join(dir, "wal"), sm, sp, log, false)
 		if err != nil {
 			b.Fatalf("New: %v", err)
 		}

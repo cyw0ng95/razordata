@@ -14,6 +14,16 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SYS/TX"
 )
 
+// sessionPool is a sync.Pool for Session objects to reduce GC
+// pressure under high connection churn. Sessions are reset on Get
+// and returned to the pool on Close (via eng.Close -> session release).
+// Added in iter-15 (REQ000098).
+var sessionPool = sync.Pool{
+	New: func() any {
+		return &Session{}
+	},
+}
+
 // Session is the concrete AP.Session.
 type Session struct {
 	engine   *SY.Engine
@@ -35,15 +45,24 @@ type Session struct {
 var sessionIDSeq atomic.Uint64
 
 // NewSession returns a fresh Session bound to engine. Sessions are
-// pool-allocated in a future iteration (R-open issue: "should
-// sessions be pooled?"); v1 allocates per call.
+// pool-allocated from sessionPool to reduce GC pressure (iter-15
+// REQ000098). The session is reset before use.
 func NewSession(engine *SY.Engine) *Session {
-	s := &Session{
-		engine: engine,
-		id:     sessionIDSeq.Add(1),
-	}
-	s.deadline.Store(time.Time{})
+	s := sessionPool.Get().(*Session)
+	s.reset(engine)
 	return s
+}
+
+// reset initializes/reinitializes a pooled Session.
+func (s *Session) reset(engine *SY.Engine) {
+	s.engine = engine
+	s.id = sessionIDSeq.Add(1)
+	s.txn = nil
+	s.deadline.Store(time.Time{})
+	s.stats.queryCount.Store(0)
+	s.stats.rowsReturned.Store(0)
+	s.stats.bytesRead.Store(0)
+	s.stats.bytesWritten.Store(0)
 }
 
 // ID returns the session's unique identifier (used for tracing).
@@ -70,10 +89,14 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 	return &AP.Rows{Cols: rs.Cols, Types: rs.Types}, nil
 }
 
-// Exec runs a DML or DDL statement and returns its result.
+// Exec runs a DML or DDL statement and returns its result. In read-only
+// mode, Exec returns ErrReadOnly (iter-15 REQ000099).
 func (s *Session) Exec(ctx context.Context, sql string, args ...any) (AP.Result, error) {
 	if s.engine.IsClosed() {
 		return AP.Result{}, AP.ErrClosed
+	}
+	if s.engine.IsReadOnly() {
+		return AP.Result{}, AP.ErrReadOnly
 	}
 	if err := s.lock(ctx); err != nil {
 		return AP.Result{}, err

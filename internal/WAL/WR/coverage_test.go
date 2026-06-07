@@ -137,7 +137,7 @@ func TestAppend_WithLogger(t *testing.T) {
 	d := newTestDeps(t)
 	log := lg.New(lg.Options{Output: &nullWriter{}})
 
-	w, err := New(t.TempDir(), d.sm, d.sp, log)
+	w, err := New(t.TempDir(), d.sm, d.sp, log, false)
 	if err != nil {
 		t.Fatal(err)
 	}
