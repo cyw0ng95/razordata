@@ -96,10 +96,20 @@ func (w *sstWriter) finishCurrentBlock() {
 		return
 	}
 
-	block = append(block, 0, 0, 0, 0)
-	block = append(block, 1, 0, 0, 0)
-
+	// Block trailer layout (REQ000188, R188-1, R188-2): the
+	// file order is [entries][restartCount:4][CRC:4]. The CRC
+	// is computed over [entries] only — there is no pad
+	// region. The decoder reads:
+	//   - data[0 : len-8]   = CRC'd region (entries)
+	//   - data[len-8 : len-4] = restartCount (uint32 LE, 0)
+	//   - data[len-4 : len]  = CRC (uint32 LE)
+	// Earlier versions inserted a 4-byte zero pad between
+	// the entries and the trailer; that pad was
+	// indistinguishable from zero-length key/value pairs
+	// and corrupted iteration. R188-2 drops the pad
+	// entirely.
 	checksum := crc32.Checksum(block, crc32.MakeTable(crc32.Koopman))
+	block = append(block, 0, 0, 0, 0) // restartCount = 0
 	block = append(block, byte(checksum), byte(checksum>>8), byte(checksum>>16), byte(checksum>>24))
 
 	blockLen := len(block)
