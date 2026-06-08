@@ -19,10 +19,23 @@ type Aggregate struct {
 	aggs      []PS.Expr
 	buf       []Row
 	pos       int
+	params    []interface{}
 }
 
 func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
 	return &Aggregate{child: child, groupCols: groupCols, aggs: aggs}
+}
+
+// WithParams propagates the bound `?` placeholders to this
+// operator and its child (R16-1..2).
+func (a *Aggregate) WithParams(p []interface{}) Operator {
+	a.params = p
+	if a.child != nil {
+		if w, ok := a.child.(interface{ WithParams([]interface{}) Operator }); ok {
+			w.WithParams(p)
+		}
+	}
+	return a
 }
 
 func (a *Aggregate) Next(ctx context.Context) (Row, error) {
@@ -63,7 +76,7 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 			}
 			return err
 		}
-		key, err := evalGroupKey(a.groupCols, &row)
+		key, err := evalGroupKey(a.groupCols, &row, a.params)
 		if err != nil {
 			return err
 		}
@@ -91,7 +104,7 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 			out.Data = append(out.Data, g.key[i])
 		}
 		for _, ag := range a.aggs {
-			v, err := evalAggregateOver(ag, g.rows)
+			v, err := evalAggregateOver(ag, g.rows, a.params)
 			if err != nil {
 				return err
 			}
@@ -104,13 +117,13 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 	return nil
 }
 
-func evalGroupKey(cols []PS.Expr, row *Row) ([]interface{}, error) {
+func evalGroupKey(cols []PS.Expr, row *Row, params []interface{}) ([]interface{}, error) {
 	if len(cols) == 0 {
 		return nil, nil
 	}
 	out := make([]interface{}, len(cols))
 	for i, c := range cols {
-		v, err := Eval(c, row, nil)
+		v, err := Eval(c, row, params)
 		if err != nil {
 			return nil, err
 		}
@@ -174,7 +187,7 @@ func aggregateColName(e PS.Expr) string {
 	return agg.Name
 }
 
-func evalAggregateOver(e PS.Expr, rows []Row) (interface{}, error) {
+func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}, error) {
 	agg, ok := e.(*PS.AggregateFunc)
 	if !ok {
 		return nil, nil
@@ -187,7 +200,7 @@ func evalAggregateOver(e PS.Expr, rows []Row) (interface{}, error) {
 		var sumF float64
 		var seenI, seenF bool
 		for _, r := range rows {
-			v, err := Eval(agg.Arg, &r, nil)
+			v, err := Eval(agg.Arg, &r, params)
 			if err != nil {
 				return nil, err
 			}
@@ -215,7 +228,7 @@ func evalAggregateOver(e PS.Expr, rows []Row) (interface{}, error) {
 		var sumF float64
 		var n int64
 		for _, r := range rows {
-			v, err := Eval(agg.Arg, &r, nil)
+			v, err := Eval(agg.Arg, &r, params)
 			if err != nil {
 				return nil, err
 			}
@@ -237,7 +250,7 @@ func evalAggregateOver(e PS.Expr, rows []Row) (interface{}, error) {
 	case "MIN":
 		var best interface{}
 		for _, r := range rows {
-			v, err := Eval(agg.Arg, &r, nil)
+			v, err := Eval(agg.Arg, &r, params)
 			if err != nil {
 				return nil, err
 			}
@@ -252,7 +265,7 @@ func evalAggregateOver(e PS.Expr, rows []Row) (interface{}, error) {
 	case "MAX":
 		var best interface{}
 		for _, r := range rows {
-			v, err := Eval(agg.Arg, &r, nil)
+			v, err := Eval(agg.Arg, &r, params)
 			if err != nil {
 				return nil, err
 			}
