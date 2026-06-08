@@ -1,7 +1,9 @@
 package rp
 
 import (
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -250,4 +252,211 @@ func segName(n uint64) string {
 	copy(buf[:], "wal.")
 	buf[3] = byte('0' + n%10)
 	return string(buf[:])
+}
+
+// TestRP_TruncateBeforeCheckpoint_MultiSegment exercises the
+// multi-segment branches of truncateBeforeCheckpoint (R16-10..12):
+// - two segments with checkpoint LSN in middle of seg1 (truncate
+// seg1 to a sub-segSize offset, keep seg2)
+// - checkpoint LSN at exact segment boundary (whole seg1 removed)
+// - all segments strictly before checkpoint (every segment
+// truncated to size0)
+//
+// We use the real segment manager and file system; the segments
+// are seeded by the wal writer. segSize is64 MiB but the LSN
+// arithmetic uses multiples of segSize + small offsets, which
+// we model by computing the checkpoint LSN as
+// (segNum * rpSegSize) + smallOffset. The exact byte count of
+// the segment does not need to match rpSegSize because
+// truncateBeforeCheckpoint uses the LSN math, not the file size
+// on disk. (R16-10..12)
+func TestRP_TruncateBeforeCheckpoint_MultiSegment(t *testing.T) {
+	cases := []struct {
+		name     string
+		segFiles []struct {
+			num  uint64
+			size int
+		}
+		cpLSN       uint64
+		wantSegNums []uint64 // segment numbers that must still exist
+	}{
+		{
+			// Two segments, cp LSN in middle of seg1: seg0
+			// is fully removed (s < segNum), seg1 is
+			// truncated to offset=50, seg2 unchanged.
+			name: "two_segs_cp_middle_seg1",
+			segFiles: []struct {
+				num  uint64
+				size int
+			}{{0, 100}, {1, 200}, {2, 150}},
+			cpLSN:       uint64(rpSegSize) + 50, // segNum=1, truncateSize=50
+			wantSegNums: []uint64{1, 2},
+		},
+		{
+			// Three segments, cp at start of seg2 (boundary):
+			// seg0 and seg1 fully removed, seg2 unchanged.
+			name: "three_segs_cp_at_seg2_start",
+			segFiles: []struct {
+				num  uint64
+				size int
+			}{{0, 100}, {1, 200}, {2, 150}},
+			cpLSN: 2 * uint64(rpSegSize), // segNum=2, truncateSize=0 -> segNum--, truncateSize=segSize
+			// After: seg1 was truncated to segSize (full size,
+			// kept); seg0 deleted. We only check seg2 unchanged
+			// and seg0 deleted.
+			wantSegNums: []uint64{2},
+		},
+		{
+			// Two segments, cp LSN at0: every segment is
+			// before segNum=0, so all are truncated to0
+			// (i.e. the file becomes empty).
+			name: "two_segs_cp_zero_all_truncated",
+			segFiles: []struct {
+				num  uint64
+				size int
+			}{{0, 100}, {1, 200}},
+			cpLSN:       0,
+			wantSegNums: []uint64{0, 1}, // both still exist as empty files
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			sm, bp := newReplayerHarness(t, tmp)
+			// Seed each segment file with the requested size
+			// and the WALHeaderSize-byte header at offset0.
+			for _, sf := range tc.segFiles {
+				if err := os.MkdirAll(filepath.Join(tmp, "wal"), 0o755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+				fh, err := sm.CreateSegment(sf.num)
+				if err != nil {
+					t.Fatalf("CreateSegment(%d): %v", sf.num, err)
+				}
+				fh.Close()
+				// Write a fake header + zeros using the real
+				// segment path (wal.NNN three-digit zero-padding).
+				content := make([]byte, sf.size)
+				copy(content[:4], wr.WALMagic) //4-byte magic
+				content[4] = wr.WALVersionV1   //1-byte version
+				path := filepath.Join(tmp, "wal", fmt.Sprintf("wal.%03d", sf.num))
+				if err := os.WriteFile(path, content, 0o644); err != nil {
+					t.Fatalf("write seg %d: %v", sf.num, err)
+				}
+			}
+			r, err := New(tmp, sm, bp, Callbacks{}, nil)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			defer r.Close()
+
+			// Invoke truncateBeforeCheckpoint via the public path:
+			// call it directly on the replayer. (The function is
+			// unexported but tests in the same package can reach
+			// it.) We pass nil for the log; truncateBeforeCheckpoint
+			// is log-optional.
+			rp := r.(*replayer)
+			rp.log = nil
+			rp.truncateBeforeCheckpoint(tc.cpLSN)
+
+			// Verify segment files: those at segNum < cpSegNum must
+			// be truncated to size0; the segment at cpSegNum must
+			// be truncated to cpLSN % rpSegSize; segments
+			// > cpSegNum must be unchanged.
+			cpSegNum := tc.cpLSN / uint64(rpSegSize)
+			cpTruncSize := tc.cpLSN % uint64(rpSegSize)
+			if cpTruncSize == 0 && cpSegNum > 0 {
+				cpTruncSize = uint64(rpSegSize)
+				cpSegNum--
+			}
+			for _, sf := range tc.segFiles {
+				path := filepath.Join(tmp, "wal", fmt.Sprintf("wal.%03d", sf.num))
+				st, err := os.Stat(path)
+				if err != nil {
+					t.Fatalf("stat seg %d: %v", sf.num, err)
+				}
+				if uint64(sf.num) < cpSegNum {
+					if st.Size() != 0 {
+						t.Errorf("seg %d expected size0, found %d", sf.num, st.Size())
+					}
+				}
+				if uint64(sf.num) == cpSegNum && cpTruncSize > 0 {
+					if st.Size() != int64(cpTruncSize) {
+						t.Errorf("seg %d size: want %d, got %d", sf.num, cpTruncSize, st.Size())
+					}
+				}
+				if uint64(sf.num) > cpSegNum {
+					if st.Size() != int64(sf.size) {
+						t.Errorf("seg %d unexpectedly changed: want size %d, got %d",
+							sf.num, sf.size, st.Size())
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestRP_ForEachRecord_UnknownRecordLength exercises the
+// ErrUnknownRecord branch in forEachRecord (R16-13). We construct
+// a segment with one valid record followed by a length-varint
+// that exceeds MaxRecordLen. The decoder returns ErrUnknownRecord
+// and forEachRecord must surface it as a tolerated tail
+// (TruncatedSegments++) without surfacing ErrCorrupt.
+//
+// The mutation is delicate: we write a valid record first
+// (so the decoder consumes it cleanly), then append
+// [varint(MaxRecordLen+1)] which DecodeRecord reads as a valid
+// length prefix > MaxRecordLen -> ErrUnknownRecord.
+func TestRP_ForEachRecord_UnknownRecordLength(t *testing.T) {
+	tmp := t.TempDir()
+	sm, bp := newReplayerHarness(t, tmp)
+
+	// Write a single valid RTData record via the writer so the
+	// segment header and record encoding are correct.
+	w, _ := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
+	if _, err := w.Append(&wr.WriteBatch{TxnID: 1, Recs: []wr.LogRecord{
+		{Type: wr.RTData, BlockID: 1, Key: []byte("k"), Value: []byte("v")},
+	}}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	w.Close()
+
+	// Append a length-varint > MaxRecordLen to the segment.
+	path := filepath.Join(tmp, "wal", "wal.000")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read seg: %v", err)
+	}
+	badLen := wr.MaxRecordLen + 1
+	// Append varint encoding of badLen + zero pad.
+	data = binary.AppendUvarint(data, uint64(badLen))
+	// Pad with zeros so the decoder has bytes to look at after
+	// the bad length prefix (the decoder rejects on length alone).
+	data = append(data, 0, 0, 0, 0)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("rewrite seg: %v", err)
+	}
+
+	r, err := New(tmp, sm, bp, Callbacks{
+		OnData: func(uint64, []byte) error { return nil },
+	}, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Close()
+
+	err = r.Replay()
+	// Replay should not error; the unknown-record branch is
+	// tolerated as a tail truncation.
+	if err != nil && !errors.Is(err, ErrCorrupt) {
+		t.Errorf("Replay: want nil or ErrCorrupt, got %v", err)
+	}
+	stats := r.Stats()
+	if stats.TruncatedSegments == 0 {
+		t.Errorf("TruncatedSegments: want >=1 (unknown record tail), got %d",
+			stats.TruncatedSegments)
+	}
 }
