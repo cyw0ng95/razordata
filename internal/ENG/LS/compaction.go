@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -165,7 +166,19 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 }
 
 func fileName(meta *SSTFileMeta) string {
-	return filepath.Join("sst", "L"+string(rune('0'+meta.Level))+"_"+string(meta.MinKey)+"_"+string(meta.MaxKey)+"_"+u64toa(meta.FileID)+".sst")
+	// R16-7: returns the relative path WITHIN the engine dir, e.g.
+	// "sst/L0_<minkey-hex>_<maxkey-hex>_<id>.sst". Callers join
+	// with the engine dir to get the absolute path.
+	//
+	// MinKey/MaxKey are hex-encoded so the on-disk filename is
+	// filesystem-safe (no null bytes, slashes, or other
+	// path-traversal hazards from raw user-supplied bytes).
+	// The pre-iter-16 shape used string(meta.MinKey) directly,
+	// which broke on integer primary keys (8-byte int64 LE
+	// contains null bytes). Iter-16 also unifies flush and
+	// compaction output to this same shape (REQ000186).
+	return filepath.Join("sst",
+		"L"+string(rune('0'+meta.Level))+"_"+hex.EncodeToString(meta.MinKey)+"_"+hex.EncodeToString(meta.MaxKey)+"_"+u64toa(meta.FileID)+".sst")
 }
 
 func u64toa(n uint64) string {

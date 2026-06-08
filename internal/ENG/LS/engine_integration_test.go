@@ -202,7 +202,7 @@ func TestEngineReadFromSSTFile(t *testing.T) {
 
 	job := &flushJob{
 		memtable:   mt,
-		outputPath: filepath.Join(dir, "sst", "L0_1.sst"),
+		outputPath: filepath.Join(dir, "sst"),
 		manifest:   e.manifest,
 		fileID:     1,
 		level:      0,
@@ -318,7 +318,7 @@ func TestEngineMayContainInSST(t *testing.T) {
 
 	job := &flushJob{
 		memtable:   mt,
-		outputPath: filepath.Join(dir, "sst", "L0_a_z_1.sst"),
+		outputPath: filepath.Join(dir, "sst"),
 		manifest:   e.manifest,
 		fileID:     1,
 		level:      0,
@@ -355,7 +355,7 @@ func TestEngineReadFromSSTFull(t *testing.T) {
 
 	job := &flushJob{
 		memtable:   mt,
-		outputPath: filepath.Join(dir, "sst", "L0_a_z_1.sst"),
+		outputPath: filepath.Join(dir, "sst"),
 		manifest:   e.manifest,
 		fileID:     1,
 		level:      0,

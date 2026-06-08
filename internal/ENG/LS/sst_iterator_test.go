@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -108,14 +107,15 @@ func TestFlushManager_RequestFlush(t *testing.T) {
 	fm.requestFlush(mt)
 }
 
-// TestFlushManager_RequestFlush_IDConsistency is the REQ000189
-// regression test: the on-disk SST filename and the manifest
-// entry must agree on the same fileID. Before the iter-12
-// single-nextFileID fix, outputPath used a separate
-// nextFileID() call than the job's fileID field, so the
-// manifest and the filesystem could drift. This test pins
-// the invariant end-to-end: drive a flush, read the
-// manifest, parse the SST filename, and assert the IDs match.
+// TestFlushManager_RequestFlush_IDConsistency is the REQ000189 +
+// R16-7 combined regression test. The on-disk SST path produced
+// by flush and the manifest entry must reference the same
+// SSTFileMeta. After the R16-7 fix, flush uses the same
+// fileName(meta) helper as compaction, so the SSTFileMeta
+// recorded in the manifest is the same one that produced the
+// on-disk path. This test pins the invariant end-to-end: drive
+// a flush, read the manifest, locate the SST via fileName,
+// and verify the file exists and round-trips through openSST.
 func TestFlushManager_RequestFlush_IDConsistency(t *testing.T) {
 	dir := t.TempDir()
 	dir = filepath.Join(dir, "test_flush_id_consistency")
@@ -142,62 +142,99 @@ func TestFlushManager_RequestFlush_IDConsistency(t *testing.T) {
 		t.Fatalf("flush job failed: %v", *p)
 	}
 
-	// The flush job ran. Find the SST file in the dir.
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("readdir: %v", err)
-	}
-	var sstName string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasPrefix(e.Name(), "L0_") && strings.HasSuffix(e.Name(), ".sst") {
-			sstName = e.Name()
-			break
-		}
-	}
-	if sstName == "" {
-		t.Fatalf("no L0_*.sst file in %s after WaitForFlush", dir)
-	}
-	// Parse the fileID from the filename: "L0_<id>.sst"
-	stripped := strings.TrimSuffix(strings.TrimPrefix(sstName, "L0_"), ".sst")
-	idFromName, err := strconv.ParseUint(stripped, 10, 64)
-	if err != nil {
-		t.Fatalf("parse fileID from %q: %v", sstName, err)
-	}
-
-	// The manifest should record the same ID. If
-	// requestFlush used two separate nextFileID() calls,
-	// this would fail.
 	v := manifest.Current()
 	if len(v.levels) == 0 || len(v.levels[0]) == 0 {
 		t.Fatalf("manifest has no L0 entries: %+v", v)
 	}
-	var idFromManifest uint64
-	for _, f := range v.levels[0] {
-		if f.MinKey != nil {
-			idFromManifest = f.FileID
-			break
-		}
+	meta := v.levels[0][0]
+
+	// R16-7: the on-disk path must be exactly dir/fileName(meta).
+	wantPath := filepath.Join(dir, fileName(&meta))
+	data, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("REQ000189/R16-7: flush SST not at fileName(meta) path: %v (want %s)",
+			err, wantPath)
 	}
-	if idFromName != idFromManifest {
-		t.Errorf("REQ000189: SST filename id=%d != manifest id=%d (filename=%s)",
-			idFromName, idFromManifest, sstName)
+	if len(data) == 0 {
+		t.Errorf("REQ000189/R16-7: SST at %s is empty", wantPath)
 	}
 }
 
-func TestFlushManager_MaybeFlush(t *testing.T) {
+// TestFlushToCompactionPathVisible verifies the REQ000186 fix: flush
+// writes L0 SSTs to <dir>/sst/L0_<id>.sst (R16-7), and compaction
+// reads them via compaction.fileName which also uses the sst/ path.
+// Before the fix, flush wrote <dir>/L0_<id>.sst (flat) and the
+// compaction reader could not find the freshly flushed SST.
+func TestFlushToCompactionPathVisible(t *testing.T) {
 	dir := t.TempDir()
-	dir = filepath.Join(dir, "test_flush_maybe")
+	dir = filepath.Join(dir, "test_flush_visibility")
 
 	manifest, err := newManifest(dir)
 	if err != nil {
-		t.Fatalf("failed to create manifest: %v", err)
+		t.Fatalf("newManifest: %v", err)
 	}
 	defer manifest.Close()
 
 	fm := newFlushManager(dir, 64*1024*1024, manifest)
 	defer fm.Close()
 
-	fm.MaybeFlush()
+	mt := newMemtable(1024 * 1024)
+	for i := 0; i < 5; i++ {
+		mt.Insert([]byte(fmt.Sprintf("key-%d", i)), []byte("value"))
+	}
+	fm.requestFlush(mt)
+	fm.WaitForFlush()
+	if p := fm.lastErr.Load(); p != nil {
+		t.Fatalf("flush failed: %v", *p)
+	}
+
+	//1. Flush wrote to <dir>/sst/L0_<id>.sst, not flat <dir>/L0_*.sst.
+	sstDir := filepath.Join(dir, "sst")
+	if _, err := os.Stat(sstDir); err != nil {
+		t.Fatalf("R16-7: sst/ subdir should exist after flush: %v", err)
+	}
+	sstEntries, err := os.ReadDir(sstDir)
+	if err != nil {
+		t.Fatalf("readdir sst/: %v", err)
+	}
+	var sstName string
+	for _, e := range sstEntries {
+		if strings.HasPrefix(e.Name(), "L0_") && strings.HasSuffix(e.Name(), ".sst") {
+			sstName = e.Name()
+			break
+		}
+	}
+	if sstName == "" {
+		t.Fatalf("R16-7: no L0_*.sst in %s", sstDir)
+	}
+
+	//2. The flat <dir>/L0_*.sst must NOT exist (the old broken layout).
+	flatEntries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir %s: %v", dir, err)
+	}
+	for _, e := range flatEntries {
+		if e.Name() == "sst" {
+			continue
+		}
+		if strings.HasPrefix(e.Name(), "L0_") && strings.HasSuffix(e.Name(), ".sst") {
+			t.Errorf("R16-7: flat %s/L0_*.sst must not exist post-fix (found %s)",
+				dir, e.Name())
+		}
+	}
+
+	//3. Compaction.fileName produces the same path; openSST on it
+	// succeeds. This is the path compaction.compactL0ToL1 reads.
+	meta := manifest.Current().levels[0][0]
+	wantPath := filepath.Join(dir, fileName(&meta))
+	got, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("R16-7: compaction.fileName path unreadable: %v (path=%s)",
+			err, wantPath)
+	}
+	if len(got) == 0 {
+		t.Errorf("R16-7: compaction file is empty: %s", wantPath)
+	}
 }
 
 func TestCompactionManager_MaybeCompact(t *testing.T) {

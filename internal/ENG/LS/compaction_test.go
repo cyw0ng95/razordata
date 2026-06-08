@@ -52,7 +52,7 @@ func TestCompactionJob_Run(t *testing.T) {
 		t.Fatalf("failed to finish SST writer: %v", err)
 	}
 
-	sstPath := filepath.Join(dir, "sst", "L0_a_z_1.sst")
+	sstPath := filepath.Join(dir, "sst", "L0_61_7a_1.sst")
 	if err := os.WriteFile(sstPath, sstData, 0644); err != nil {
 		t.Fatalf("failed to write SST file: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestCompactionJob_RunOpenSSTError(t *testing.T) {
 	v.levels = make([][]SSTFileMeta, 3)
 	manifest.Apply(*v)
 
-	sstPath := filepath.Join(dir, "sst", "L0_a_z_1.sst")
+	sstPath := filepath.Join(dir, "sst", "L0_61_7a_1.sst")
 	if err := os.WriteFile(sstPath, []byte("invalid sst data"), 0644); err != nil {
 		t.Fatalf("failed to write SST file: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestCompactionJob_RunWriteError(t *testing.T) {
 		t.Fatalf("failed to finish SST writer: %v", err)
 	}
 
-	sstPath := filepath.Join(dir, "sst", "L0_a_z_1.sst")
+	sstPath := filepath.Join(dir, "sst", "L0_61_7a_1.sst")
 	if err := os.WriteFile(sstPath, sstData, 0644); err != nil {
 		t.Fatalf("failed to write SST file: %v", err)
 	}
