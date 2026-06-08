@@ -71,12 +71,17 @@ func cloneRow(r Row) Row {
 	return out
 }
 
-func buildInsertRow(schema []string, cols []string, values []PS.Expr) (Row, error) {
+// buildInsertRow materializes an INSERT row from values. The
+// params slice is forwarded to Eval for `?` placeholder
+// resolution (R16-1..2). When params is nil the slice is a
+// no-op and `?` placeholders resolve to nil (preserving the
+// pre-iter-16 behavior for callers that do not bind args).
+func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []interface{}) (Row, error) {
 	out := Row{Cols: append([]string(nil), schema...)}
 	if len(cols) == 0 {
 		out.Data = make([]interface{}, len(values))
 		for i, v := range values {
-			val, err := Eval(v, nil, nil)
+			val, err := Eval(v, nil, params)
 			if err != nil {
 				return Row{}, err
 			}
@@ -86,7 +91,7 @@ func buildInsertRow(schema []string, cols []string, values []PS.Expr) (Row, erro
 	}
 	byName := make(map[string]interface{}, len(cols))
 	for i, name := range cols {
-		val, err := Eval(values[i], nil, nil)
+		val, err := Eval(values[i], nil, params)
 		if err != nil {
 			return Row{}, err
 		}
@@ -103,9 +108,12 @@ func buildInsertRow(schema []string, cols []string, values []PS.Expr) (Row, erro
 	return out, nil
 }
 
-func applyUpdate(row *Row, set []PS.Pair) error {
+// applyUpdate evaluates SET expressions against the current
+// row, forwarding params for `?` placeholder resolution
+// (R16-1..2).
+func applyUpdate(row *Row, set []PS.Pair, params []interface{}) error {
 	for _, p := range set {
-		val, err := Eval(p.Val, row, nil)
+		val, err := Eval(p.Val, row, params)
 		if err != nil {
 			return err
 		}

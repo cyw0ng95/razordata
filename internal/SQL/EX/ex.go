@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	LX "github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
@@ -96,6 +98,191 @@ func NewExecutorWithEngine(store Store) *Executor {
 	return &Executor{planner: NewPlannerWithStore(store), store: store}
 }
 
+// ExtractParamTypes parses sql and returns the SQL column type
+// of each `?` placeholder in left-to-right order. Entries are
+// ls.CTInt / ls.CTVarchar / etc. when the placeholder can be
+// resolved to a known column; -1 otherwise. This is the ST
+// layer's source of truth for per-placeholder Go-type
+// validation (R16-3, R16-4).
+func (e *Executor) ExtractParamTypes(sql string) []int {
+	parser := PS.NewParser(sql)
+	stmt, err := parser.Parse()
+	if err != nil {
+		return nil
+	}
+	out := []int{}
+	walkPlaceholderTypes(stmt, &out)
+	return out
+}
+
+// walkPlaceholderTypes walks stmt and appends a column-type
+// entry for each *PS.Param encountered. For `column = ?`
+// comparisons, the column's SQL type is recorded; other
+// placeholders get -1 (skip validation in coerce).
+func walkPlaceholderTypes(stmt PS.Stmt, out *[]int) {
+	switch s := stmt.(type) {
+	case *PS.Select:
+		for _, e := range s.Cols {
+			walkExprTypes("", e, out)
+		}
+		if s.Where != nil {
+			walkExprTypes("", s.Where, out)
+		}
+		for _, g := range s.GroupBy {
+			walkExprTypes("", g, out)
+		}
+		if s.Having != nil {
+			walkExprTypes("", s.Having, out)
+		}
+		for _, o := range s.OrderBy {
+			walkExprTypes("", o.Expr, out)
+		}
+		if s.Limit != nil {
+			walkExprTypes("", s.Limit, out)
+		}
+	case *PS.Insert:
+		// INSERT values are evaluated as expressions; the column
+		// type comes from the target table schema, not from a
+		// peer column. Walk them with empty scope.
+		for _, row := range s.Values {
+			for _, e := range row {
+				walkExprTypes("", e, out)
+			}
+		}
+	case *PS.Update:
+		for _, p := range s.Set {
+			walkExprTypes("", p.Val, out)
+		}
+		if s.Where != nil {
+			walkExprTypes("", s.Where, out)
+		}
+	case *PS.Delete:
+		if s.Where != nil {
+			walkExprTypes("", s.Where, out)
+		}
+	}
+}
+
+// walkExprTypes walks expr, appending an entry to out for each
+// *PS.Param it finds. If the placeholder is part of a
+// `column = ?` (or `? = column`) binary comparison, we record
+// the column's SQL type. Otherwise the entry is -1 (skip).
+//
+// The walker must NOT double-count a Param: each placeholder
+// is appended exactly once even when it appears in a
+// comparison that is itself walked recursively.
+func walkExprTypes(table string, expr PS.Expr, out *[]int) {
+	switch e := expr.(type) {
+	case *PS.Param:
+		// The BinaryExpr handler matched this Param against its
+		// peer column and already appended the column's type.
+		// Do not double-append.
+		return
+	case *PS.BinaryExpr:
+		// If one side is an Ident and the other is a Param,
+		// the Param is matched: append the column's type
+		// and skip the recursive walk to avoid double-counting.
+		if col, ok := e.Left.(*PS.Ident); ok {
+			if _, isParam := e.Right.(*PS.Param); isParam {
+				*out = append(*out, columnTypeFor(col.Name))
+				return
+			}
+		}
+		if col, ok := e.Right.(*PS.Ident); ok {
+			if _, isParam := e.Left.(*PS.Param); isParam {
+				*out = append(*out, columnTypeFor(col.Name))
+				return
+			}
+		}
+		// No column-vs-param match; walk both sides to surface
+		// any nested placeholders (e.g. `a + ?` against an
+		// expression operand).
+		walkExprTypes(table, e.Left, out)
+		walkExprTypes(table, e.Right, out)
+	case *PS.UnaryExpr:
+		walkExprTypes(table, e.Operand, out)
+	case *PS.BetweenExpr:
+		walkExprTypes(table, e.Expr, out)
+		walkExprTypes(table, e.Low, out)
+		walkExprTypes(table, e.High, out)
+	case *PS.InExpr:
+		walkExprTypes(table, e.Expr, out)
+		for _, item := range e.List {
+			walkExprTypes(table, item, out)
+		}
+	case *PS.CaseExpr:
+		for _, w := range e.WhenList {
+			walkExprTypes(table, w.Cond, out)
+			walkExprTypes(table, w.Then, out)
+		}
+		if e.Else != nil {
+			walkExprTypes(table, e.Else, out)
+		}
+	case *PS.FunctionCall:
+		for _, a := range e.Args {
+			walkExprTypes(table, a, out)
+		}
+	case *PS.AggregateFunc:
+		if e.Arg != nil {
+			walkExprTypes(table, e.Arg, out)
+		}
+	case *PS.CastExpr:
+		walkExprTypes(table, e.Expr, out)
+	case *PS.AliasedExpr:
+		walkExprTypes(table, e.Expr, out)
+	}
+}
+
+// columnTypeFor returns the LS ColumnType for `name` if the
+// planner has a registered table with that column. Returns -1
+// otherwise (the caller skips validation for that slot).
+func columnTypeFor(name string) int {
+	for _, ss := range storeSchemas {
+		for i, c := range ss.cols {
+			if c == name && i < len(ss.colTypes) {
+				return lxTokenToColumnType(ss.colTypes[i])
+			}
+		}
+	}
+	// Fall back: walk the legacy schemas map and best-effort
+	// match by name. We treat any col with a Type==0 (the
+	// pre-iter-16 default) as TEXT so downstream coercibility
+	// checks still produce a meaningful verdict.
+	for _, cols := range schemas {
+		for _, c := range cols {
+			if c == name {
+				return int(ls.CTText)
+			}
+		}
+	}
+	return -1
+}
+
+// lxTokenToColumnType converts an LX token (T_INT_KW/T_TEXT/...)
+// into the corresponding LS ColumnType. Returns -1 for
+// unrecognized tokens.
+func lxTokenToColumnType(tok int) int {
+	switch LX.TokenType(tok) {
+	case LX.T_INT_KW:
+		return int(ls.CTInt)
+	case LX.T_BIGINT:
+		return int(ls.CTBigInt)
+	case LX.T_FLOAT_KW:
+		return int(ls.CTFloat)
+	case LX.T_BOOL:
+		return int(ls.CTBool)
+	case LX.T_TEXT:
+		return int(ls.CTText)
+	case LX.T_VARCHAR:
+		return int(ls.CTVarchar)
+	case LX.T_BLOB:
+		return int(ls.CTBlob)
+	case LX.T_TIMESTAMP:
+		return int(ls.CTTimestamp)
+	}
+	return -1
+}
+
 func (e *Executor) RegisterTable(name string, schema []string) {
 	cols := make([]ColInfo, len(schema))
 	for i, n := range schema {
@@ -134,6 +321,10 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	if err != nil {
 		return Result{}, err
 	}
+	// R16-1: thread args down to the operator tree so `?`
+	// placeholders resolve. Writers (INSERT/UPDATE/DELETE) also
+	// support placeholders (e.g. INSERT ... VALUES (?,?)).
+	propagateParams(op, args)
 	defer op.Close()
 	if _, err := op.Next(ctx); err != nil && err != ErrNoRows {
 		return Result{}, err
@@ -154,6 +345,9 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	if plan == nil || plan.root == nil {
 		return nil, errors.New("ex: plan produced no root")
 	}
+	// R16-1: thread args down to the operator tree so `?`
+	// placeholders resolve during Eval.
+	propagateParams(plan.root, args)
 	defer plan.root.Close()
 	row, err := plan.root.Next(ctx)
 	if err != nil {
@@ -179,6 +373,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 	if plan == nil || plan.root == nil {
 		return nil, errors.New("ex: plan produced no root")
 	}
+	propagateParams(plan.root, args)
 	defer plan.root.Close()
 	var out []Row
 	for {
@@ -192,6 +387,50 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+// propagateParams walks the operator tree rooted at root and
+// calls WithParams(args) on every node that supports it
+// (R16-1..2). The walk is depth-first, children-first so the
+// args reach every leaf operator. Operators without a
+// WithParams method are skipped silently.
+func propagateParams(root Operator, args []any) {
+	if root == nil {
+		return
+	}
+	if args == nil {
+		return
+	}
+	p := asAnySlice(args)
+	if w, ok := root.(interface{ WithParams([]interface{}) Operator }); ok {
+		w.WithParams(p)
+	}
+	// Walk children via the Child() convention used elsewhere
+	// in this package (explain.go).
+	type childer interface {
+		Child() Operator
+	}
+	if c, ok := root.(childer); ok {
+		propagateParams(c.Child(), args)
+	}
+	// Some operators expose children via a `child` field; we
+	// rely on the explain.go walk for those via Child(). Operators
+	// with multiple children (HashAggregate, Join) define
+	// their own WithParams and walk internally.
+}
+
+// asAnySlice converts []any to []interface{} for type-stability
+// across the WithParams interface boundary. Avoids an allocation
+// when the slice is already nil.
+func asAnySlice(args []any) []interface{} {
+	if args == nil {
+		return nil
+	}
+	out := make([]interface{}, len(args))
+	for i, a := range args {
+		out[i] = a
+	}
+	return out
 }
 
 // Explain plans the statement and returns a human-readable

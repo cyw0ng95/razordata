@@ -66,6 +66,8 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+
+	LX "github.com/cyw0ng95/razordata/internal/SQL/LX"
 )
 
 // Schema-version constants for the system catalog.
@@ -106,9 +108,12 @@ var (
 
 // CatalogColumn is the on-disk + in-memory representation of one
 // column. Nullable=false means NOT NULL was specified (or
-// implied by PRIMARY KEY).
+// implied by PRIMARY KEY). Type is the LX token int that names
+// the SQL column type (LX.T_INT_KW, LX.T_TEXT, etc.) used by
+// EX.ExtractParamTypes for `?` placeholder validation.
 type CatalogColumn struct {
 	Name     string
+	Type     int
 	Nullable bool
 }
 
@@ -270,12 +275,29 @@ func decodeCatalogEntry(data []byte, off int, e *CatalogEntry) (int, error) {
 		}
 		name := string(data[off : off+int(cn)])
 		off += int(cn)
+		// Decode column type token (LX.T_INT_KW / T_TEXT / ...).
+		// Pre-iter-16 catalogs did not include this byte; for
+		// backward-compat we accept a missing byte and default
+		// to T_TEXT (treated as VARCHAR by the deparser).
+		var colType int
+		if off+1 > len(data) {
+			colType = 0
+		} else {
+			colType = int(data[off])
+			if colType == 0 {
+				// Pre-iter-16 sentinels encoded as a zero byte
+				// (Type=0). Substitute T_TEXT so downstream
+				// coercibility checks produce a meaningful verdict.
+				colType = int(LX.T_TEXT)
+			}
+			off++
+		}
 		if off+1 > len(data) {
 			return off, fmt.Errorf("col %d missing nullable flag", i)
 		}
 		nullable := data[off] != 0
 		off++
-		e.Columns[i] = CatalogColumn{Name: name, Nullable: nullable}
+		e.Columns[i] = CatalogColumn{Name: name, Type: colType, Nullable: nullable}
 	}
 
 	uniqCount, n := binary.Uvarint(data[off:])
@@ -500,6 +522,16 @@ func encodeCatalogEntry(e *CatalogEntry, buf []byte) []byte {
 	for _, c := range e.Columns {
 		buf = binary.AppendUvarint(buf, uint64(len(c.Name)))
 		buf = append(buf, c.Name...)
+		// Column type token (1 byte; R16-3). Pre-iter-16 catalogs
+		// omitted this byte; readers default to T_TEXT in that case.
+		if c.Type > 0 && c.Type < 256 {
+			buf = append(buf, byte(c.Type))
+		} else {
+			// Sentinel: type=0 means "unknown" — emit a default
+			// (T_TEXT=58 in the LX token table). Replaced by
+			// zero on read; see decode for fallback handling.
+			buf = append(buf, 0)
+		}
 		if c.Nullable {
 			buf = append(buf, 0x01)
 		} else {

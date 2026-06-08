@@ -29,6 +29,19 @@ type SeqScan struct {
 	// in-memory fallback
 	rows []Row
 	pos  int
+	// params are the bound `?` placeholders (R16-1..2). SeqScan
+	// itself does not evaluate expressions, but child operators
+	// (Filter/Project) need access. Stored here so WithParams
+	// can propagate it down through the tree at executor
+	// construction time.
+	params []interface{}
+}
+
+// WithParams propagates the bound `?` placeholders to this
+// operator (R16-1..2). Returns the receiver for chaining.
+func (s *SeqScan) WithParams(p []interface{}) Operator {
+	s.params = p
+	return s
 }
 
 func NewSeqScan(table string) *SeqScan {
@@ -127,8 +140,16 @@ type IndexScan struct {
 		Err() error
 		Close() error
 	}
-	rows []Row
-	pos  int
+	rows   []Row
+	pos    int
+	params []interface{}
+}
+
+// WithParams propagates the bound `?` placeholders to this
+// operator (R16-1..2).
+func (i *IndexScan) WithParams(p []interface{}) Operator {
+	i.params = p
+	return i
 }
 
 func NewIndexScan(table, idx string, rangeStart, rangeEnd []byte) *IndexScan {

@@ -455,6 +455,19 @@ func (e *Engine) walStats() AP.WALStats {
 // Session/Transaction/Stmt to dispatch Query/Exec.
 func (e *Engine) Executor() *executor.Executor { return e.exe }
 
+// ExtractParamTypes parses sql and returns the SQL column type
+// of each `?` placeholder, in left-to-right order. Entries are
+// ls.CTInt / ls.CTVarchar / etc. when the planner can resolve
+// the placeholder's column, or -1 otherwise. This is the ST
+// layer's source of truth for per-placeholder Go-type
+// validation at bind time (R16-3, R16-4).
+func (e *Engine) ExtractParamTypes(sql string) []int {
+	if e.exe == nil {
+		return nil
+	}
+	return e.exe.ExtractParamTypes(sql)
+}
+
 // Engine returns the underlying storage engine. Used by Transaction
 // to apply rollback writes (engine.Insert / engine.Delete).
 func (e *Engine) Engine() *ls.Engine { return e.eng }

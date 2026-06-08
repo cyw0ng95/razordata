@@ -18,6 +18,13 @@ type Insert struct {
 	txWriter TxWriter
 	rows     int64
 	done     bool
+	params   []interface{}
+}
+
+// WithParams propagates the bound `?` placeholders (R16-1..2).
+func (i *Insert) WithParams(p []interface{}) Operator {
+	i.params = p
+	return i
 }
 
 func NewInsert(table string, cols []string, values [][]PS.Expr) *Insert {
@@ -71,7 +78,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 	pending := make(map[string]struct{}, len(i.values))
 	lookup := inMemoryLookup(i.table)
 	for _, row := range i.values {
-		out, err := buildInsertRow(schema, i.cols, row)
+		out, err := buildInsertRow(schema, i.cols, row, i.params)
 		if err != nil {
 			return Row{}, err
 		}
@@ -103,7 +110,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 	// path is deferred until REQ000045 / index work).
 	noopLookup := func(cols []int, vals []interface{}) (bool, error) { return false, nil }
 	for _, row := range i.values {
-		out, err := buildInsertRow(i.schema.cols, i.cols, row)
+		out, err := buildInsertRow(i.schema.cols, i.cols, row, i.params)
 		if err != nil {
 			return Row{}, err
 		}
@@ -155,6 +162,18 @@ type Update struct {
 	txWriter TxWriter
 	rows     int64
 	done     bool
+	params   []interface{}
+}
+
+// WithParams propagates the bound `?` placeholders (R16-1..2).
+func (u *Update) WithParams(p []interface{}) Operator {
+	u.params = p
+	if u.iter != nil {
+		if w, ok := u.iter.(interface{ WithParams([]interface{}) Operator }); ok {
+			w.WithParams(p)
+		}
+	}
+	return u
 }
 
 func NewUpdate(table string, set []PS.Pair, where PS.Expr, iter Operator) *Update {
@@ -214,7 +233,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			}
 		}
 		snapshot := cloneRow(row)
-		if err := applyUpdate(&row, u.set); err != nil {
+		if err := applyUpdate(&row, u.set, u.params); err != nil {
 			return Row{}, err
 		}
 		if cschema != nil {
@@ -270,7 +289,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 				continue
 			}
 		}
-		if err := applyUpdate(&row, u.set); err != nil {
+		if err := applyUpdate(&row, u.set, u.params); err != nil {
 			return Row{}, err
 		}
 		if row, err = fillDefaults(u.schema, row); err != nil {
@@ -322,6 +341,18 @@ type Delete struct {
 	txWriter TxWriter
 	rows     int64
 	done     bool
+	params   []interface{}
+}
+
+// WithParams propagates the bound `?` placeholders (R16-1..2).
+func (d *Delete) WithParams(p []interface{}) Operator {
+	d.params = p
+	if d.iter != nil {
+		if w, ok := d.iter.(interface{ WithParams([]interface{}) Operator }); ok {
+			w.WithParams(p)
+		}
+	}
+	return d
 }
 
 func NewDelete(table string, where PS.Expr, iter Operator) *Delete {
@@ -458,10 +489,12 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	cols := make([]string, len(c.stmt.Cols))
 	nullable := make([]bool, len(c.stmt.Cols))
 	defaults := make([]PS.Expr, len(c.stmt.Cols))
+	colTypes := make([]int, len(c.stmt.Cols))
 	for i, col := range c.stmt.Cols {
 		cols[i] = col.Name
 		nullable[i] = col.Nullable
 		defaults[i] = col.Default
+		colTypes[i] = col.Type
 	}
 	tables[c.stmt.Name] = []Row{}
 	schemas[c.stmt.Name] = cols
@@ -508,7 +541,15 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 			unique = append(unique, UniqueKey{Cols: idxs})
 		}
 	}
-	registerStoreSchemaFull(c.stmt.Name, cols, nullable, defaults, unique, pk)
+	id := registerStoreSchemaFull(c.stmt.Name, cols, nullable, defaults, unique, pk)
+	// R16-3: record each column's SQL type token alongside the
+	// schema so ExtractParamTypes can resolve `column = ?`
+	// placeholders to their column type at Prepare time.
+	storeMu.Lock()
+	if ss, ok := storeSchemas[id]; ok {
+		ss.colTypes = append([]int(nil), colTypes...)
+	}
+	storeMu.Unlock()
 
 	// Persist to the system catalog if one is wired in (iter-12).
 	// The catalog write is best-effort: a failure does not roll
@@ -518,7 +559,7 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	if cat := Catalog(); cat != nil {
 		catCols := make([]ls.CatalogColumn, len(cols))
 		for i, n := range cols {
-			catCols[i] = ls.CatalogColumn{Name: n, Nullable: nullable[i]}
+			catCols[i] = ls.CatalogColumn{Name: n, Type: colTypes[i], Nullable: nullable[i]}
 		}
 		catUnique := make([]ls.CatalogUnique, len(unique))
 		for i, u := range unique {

@@ -36,7 +36,11 @@ type storeSchema struct {
 	pk       string
 	nullable []bool      // parallel to cols; false means NOT NULL
 	defaults []PS.Expr   // parallel to cols; nil means no DEFAULT
-	unique   []UniqueKey // each entry is 1+ columns
+	unique   []UniqueKey // each entry is1+ columns
+	// colTypes parallel to cols; stores the LX.T_* int token
+	// that names the SQL column type. nil means types were not
+	// registered (the legacy in-memory mode).
+	colTypes []int
 }
 
 var (
@@ -234,10 +238,12 @@ func RegisterFromCatalog(entry *ls.CatalogEntry) error {
 	}
 	cols := make([]string, len(entry.Columns))
 	nullable := make([]bool, len(entry.Columns))
+	colTypes := make([]int, len(entry.Columns))
 	colIndex := make(map[string]int, len(entry.Columns))
 	for i, c := range entry.Columns {
 		cols[i] = c.Name
 		nullable[i] = c.Nullable
+		colTypes[i] = c.Type
 		colIndex[c.Name] = i
 	}
 	// PRIMARY KEY implies NOT NULL.
@@ -266,6 +272,7 @@ func RegisterFromCatalog(entry *ls.CatalogEntry) error {
 		nullable: nullable,
 		defaults: defaults,
 		unique:   unique,
+		colTypes: colTypes,
 	}
 	// Also publish to the in-memory `tables` / `schemas` map that
 	// the executor scans.
