@@ -109,6 +109,22 @@ func appendPayload(buf []byte, rec *LogRecord) []byte {
 		buf = append(buf, tmp[:]...)
 	case RTRollback:
 		// empty payload
+	case RTMerge:
+		// [newVersion:8][deletedFileCount:varint][deletedFiles:varint...]
+		// [addedFileCount:varint][addedFiles:varint...]
+		// Per WAL.md:85, RTMerge records the per-file manifest
+		// deltas produced by compaction: a new manifest version
+		// plus the lists of deleted and added SST file IDs.
+		// We use rec.BlockID as newVersion, rec.Key as the
+		// varint-packed deletedFiles, rec.Value as the
+		// varint-packed addedFiles.
+		var tmp [8]byte
+		binary.LittleEndian.PutUint64(tmp[:], rec.BlockID)
+		buf = append(buf, tmp[:]...)
+		buf = encodeVarint(buf, uint64(len(rec.Key)))
+		buf = append(buf, rec.Key...)
+		buf = encodeVarint(buf, uint64(len(rec.Value)))
+		buf = append(buf, rec.Value...)
 	case RTCheckpoint:
 		// [checkpointLSN:8][catalogRootPtr:8][manifestChecksum:4]
 		// [activeTXNCount:varint][activeTXNs:varint...]
@@ -251,6 +267,38 @@ func decodePayload(body []byte, cur int, rec *LogRecord) int {
 		cur += 8
 	case RTRollback:
 		// empty
+	case RTMerge:
+		// [newVersion:8][deletedFileCount:varint][deletedFiles:varint...]
+		// [addedFileCount:varint][addedFiles:varint...]
+		if cur+8 > len(body) {
+			return cur
+		}
+		rec.BlockID = binary.LittleEndian.Uint64(body[cur : cur+8])
+		cur +=8
+		// deletedFiles: varint length + varint-packed bytes.
+		delLen, n := DecodeVarint(body, cur)
+		if n <0 {
+			return cur
+		}
+		cur += n
+		if cur+int(delLen) > len(body) {
+			return cur
+		}
+		rec.Key = make([]byte, delLen)
+		copy(rec.Key, body[cur:cur+int(delLen)])
+		cur += int(delLen)
+		// addedFiles: varint length + varint-packed bytes.
+		addLen, n := DecodeVarint(body, cur)
+		if n <0 {
+			return cur
+		}
+		cur += n
+		if cur+int(addLen) > len(body) {
+			return cur
+		}
+		rec.Value = make([]byte, addLen)
+		copy(rec.Value, body[cur:cur+int(addLen)])
+		cur += int(addLen)
 	case RTCheckpoint:
 		if cur+24 > len(body) {
 			return cur

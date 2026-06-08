@@ -188,20 +188,85 @@ func TestRoundTripCheckpoint(t *testing.T) {
 // record types not yet known to the encoder (forward compatibility).
 func TestRoundTripUnknownType(t *testing.T) {
 	original := &LogRecord{
-		Type:  RecordType(200),
-		TxnID: 1,
+		Type: RecordType(200),
+		TxnID:1,
 		Value: []byte("future payload"),
 	}
 	enc := encodeRecord(original)
-	decoded, _, err := decodeRecord(enc, 0)
+	decoded, _, err := decodeRecord(enc,0)
 	if err != nil {
 		t.Fatalf("decodeRecord: %v", err)
 	}
 	if decoded.Type != RecordType(200) {
-		t.Errorf("Type: got %d, want 200", decoded.Type)
+		t.Errorf("Type: got %d, want200", decoded.Type)
 	}
 	if !bytes.Equal(decoded.Value, original.Value) {
 		t.Errorf("Value: got %q, want %q", decoded.Value, original.Value)
+	}
+}
+
+// TestRoundTripRTMerge pins REQ000170 (R17-14..R17-16): an RTMerge
+// record encodes [newVersion:8][deletedFileCount:varint][deletedFiles:varint...]
+// [addedFileCount:varint][addedFiles:varint...] per WAL.md:85, and
+// decodePayload reconstructs the same fields from the encoded bytes.
+// The record stores newVersion in BlockID, deletedFiles in Key, and
+// addedFiles in Value. The decoded record must equal the original.
+func TestRoundTripRTMerge(t *testing.T) {
+	cases := []struct {
+		name string
+		newVersion uint64
+		deletedFiles []byte
+		addedFiles []byte
+	}{
+		{
+			name: "empty_lists",
+			newVersion:99,
+			deletedFiles: []byte{},
+			addedFiles: []byte{},
+		},
+		{
+			name: "one_deleted_three_added",
+			newVersion:100,
+			deletedFiles: []byte{0x01},
+			addedFiles: []byte{0x0a,0x0b,0x0c},
+		},
+		{
+			name: "varint_packed_ids",
+			newVersion:0xdeadbeef,
+			deletedFiles: []byte{0x80,0x01,0xff,0x01},
+			addedFiles: []byte{0x80,0x02,0x80,0x03,0x04},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := &LogRecord{
+				Type: RTMerge,
+				TxnID:42,
+				BlockID: c.newVersion,
+				Key: c.deletedFiles,
+				Value: c.addedFiles,
+			}
+			enc := encodeRecord(rec)
+			decoded, _, err := decodeRecord(enc,0)
+			if err != nil {
+				t.Fatalf("decodeRecord: %v", err)
+			}
+			if decoded.Type != RTMerge {
+				t.Errorf("Type: got %d, want %d", decoded.Type, RTMerge)
+			}
+			if decoded.BlockID != c.newVersion {
+				t.Errorf("newVersion (BlockID): got %d, want %d",
+					decoded.BlockID, c.newVersion)
+			}
+			if !bytes.Equal(decoded.Key, c.deletedFiles) {
+				t.Errorf("deletedFiles (Key): got %v, want %v",
+					decoded.Key, c.deletedFiles)
+			}
+			if !bytes.Equal(decoded.Value, c.addedFiles) {
+				t.Errorf("addedFiles (Value): got %v, want %v",
+					decoded.Value, c.addedFiles)
+			}
+		})
 	}
 }
 
