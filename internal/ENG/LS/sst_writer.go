@@ -28,6 +28,7 @@ type sstWriter struct {
 	blocks             [][]byte
 	indexEntries       []indexEntry
 	bloom              []byte
+	keys               [][]byte
 	keyCount           int
 	minKey             []byte
 	maxKey             []byte
@@ -36,12 +37,22 @@ type sstWriter struct {
 }
 
 func newSSTWriter() *sstWriter {
-	bloomSize := 4096
 	return &sstWriter{
 		blocks:       make([][]byte, 0, 16),
 		indexEntries: make([]indexEntry, 0),
-		bloom:        make([]byte, bloomSize),
+		keys:         make([][]byte, 0, 256),
 	}
+}
+
+// bloomSizeFor returns the bloom filter byte size for n keys
+// at10 bits/key (ENG.md:91-92). The ceiling division
+// guarantees at least1 byte even for empty inputs so the
+// footer always encodes a positive size.
+func bloomSizeFor(n int) int {
+	if n <= 0 {
+		return 1
+	}
+	return (n*10 + 7) / 8
 }
 
 func (w *sstWriter) Add(key, value []byte) {
@@ -70,17 +81,21 @@ func (w *sstWriter) Add(key, value []byte) {
 
 	w.blocks[len(w.blocks)-1] = append(w.blocks[len(w.blocks)-1], buf.Bytes()...)
 	w.keyCount++
-	w.setBloomBit(key)
+	w.keys = append(w.keys, append([]byte(nil), key...))
 	w.lastKey = append(w.lastKey[:0], key...)
 }
 
-func (w *sstWriter) setBloomBit(key []byte) {
+// setBloomBitForSize sets the two bloom bits for key against a
+// bloom filter of byte size size. The bucket positions are
+// computed from size, so the keys collected during Add are now
+// hashed into a bloom sized for the actual keyCount.
+func (w *sstWriter) setBloomBitForSize(key []byte, size int) {
 	hash1 := crc32.Checksum(key, crc32.MakeTable(crc32.Koopman))
 	hash2 := crc32.Checksum(key, crc32.MakeTable(crc32.Castagnoli))
 
-	size := len(w.bloom) * 8
-	bucket1 := int(hash1) % size
-	bucket2 := int(hash2) % size
+	bitCount := size * 8
+	bucket1 := int(hash1) % bitCount
+	bucket2 := int(hash2) % bitCount
 
 	w.bloom[bucket1/8] |= 1 << (bucket1 % 8)
 	w.bloom[bucket2/8] |= 1 << (bucket2 % 8)
@@ -96,24 +111,11 @@ func (w *sstWriter) finishCurrentBlock() {
 		return
 	}
 
-	// Block trailer layout (REQ000188, R188-1, R188-2): the
-	// file order is [entries][restartCount:4][CRC:4]. The CRC
-	// is computed over [entries] only — there is no pad
-	// region. The decoder reads:
-	//   - data[0 : len-8]   = CRC'd region (entries)
-	//   - data[len-8 : len-4] = restartCount (uint32 LE, 0)
-	//   - data[len-4 : len]  = CRC (uint32 LE)
-	// Earlier versions inserted a 4-byte zero pad between
-	// the entries and the trailer; that pad was
-	// indistinguishable from zero-length key/value pairs
-	// and corrupted iteration. R188-2 drops the pad
-	// entirely.
 	checksum := crc32.Checksum(block, crc32.MakeTable(crc32.Koopman))
-	block = append(block, 0, 0, 0, 0) // restartCount = 0
+	block = append(block, 0, 0, 0, 0)
 	block = append(block, byte(checksum), byte(checksum>>8), byte(checksum>>16), byte(checksum>>24))
 
 	blockLen := len(block)
-
 	w.blocks[len(w.blocks)-1] = block
 
 	w.indexEntries = append(w.indexEntries, indexEntry{
@@ -121,7 +123,6 @@ func (w *sstWriter) finishCurrentBlock() {
 		blockOffset: w.currentBlockOffset,
 		blockSize:   blockLen,
 	})
-
 	w.currentBlockOffset += blockLen
 }
 
@@ -131,6 +132,15 @@ func (w *sstWriter) Finish() ([]byte, error) {
 	}
 
 	w.finishCurrentBlock()
+
+	// R16-9: compute bloom size from final keyCount (10 bits/key
+	// per ENG.md:91-92). Defer bit-set until now so the size is
+	// known and we never have to re-hash on grow.
+	bloomSize := bloomSizeFor(w.keyCount)
+	w.bloom = make([]byte, bloomSize)
+	for _, k := range w.keys {
+		w.setBloomBitForSize(k, bloomSize)
+	}
 
 	var buf bytes.Buffer
 
@@ -156,7 +166,6 @@ func (w *sstWriter) Finish() ([]byte, error) {
 
 	bloomOffset := buf.Len()
 	buf.Write(w.bloom)
-	bloomSize := len(w.bloom)
 
 	footer := make([]byte, sstFooterSize)
 	binary.LittleEndian.PutUint64(footer[0:8], uint64(indexOffset))
@@ -172,6 +181,8 @@ func (w *sstWriter) Finish() ([]byte, error) {
 func (w *sstWriter) Reset() {
 	w.blocks = w.blocks[:0]
 	w.indexEntries = w.indexEntries[:0]
+	w.keys = w.keys[:0]
+	w.bloom = nil
 	w.keyCount = 0
 	w.minKey = w.minKey[:0]
 	w.maxKey = w.maxKey[:0]
