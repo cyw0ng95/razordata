@@ -2,6 +2,8 @@ package lg
 
 import (
 	"bytes"
+	"compress/gzip"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -450,4 +452,153 @@ func TestNew_DirMkdirFails(t *testing.T) {
 	}
 	// Logger must still be usable.
 	log.Info("after-fail")
+}
+
+// TestRotateFile_GzipProducesValidGz verifies that when CompressRotated
+// is true (default), rotateFile produces a .log.gz whose contents
+// decompress back to the original log lines. (R16-15)
+func TestRotateFile_GzipProducesValidGz(t *testing.T) {
+	dir := t.TempDir()
+	log := New(Options{
+		Level:           slog.LevelInfo,
+		Dir:             dir,
+		BaseName:        "app.log",
+		MaxSize:         1024,
+		CompressRotated: true,
+	})
+	defer func() { _ = log.Sync() }()
+
+	log.Info("first line of log")
+	log.Info("second line of log")
+	if err := log.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	// Force rotation by pushing curSize over the limit.
+	shared := log.(*logger).shared
+	shared.curSize.Store(shared.maxSize + 1)
+	if err := shared.rotateFile(); err != nil {
+		t.Fatalf("rotateFile: %v", err)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	var gzFiles []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".log.gz") {
+			gzFiles = append(gzFiles, e.Name())
+		}
+	}
+	if len(gzFiles) != 1 {
+		t.Fatalf("expected exactly one .log.gz after rotation, got %d (entries=%v)", len(gzFiles), entries)
+	}
+	// The active app.log must still exist (re-opened by rotateFile).
+	var foundActive bool
+	for _, e := range entries {
+		if e.Name() == "app.log" {
+			foundActive = true
+		}
+	}
+	if !foundActive {
+		t.Errorf("expected app.log to be re-opened after rotation")
+	}
+
+	// Decompress and verify content is the two log lines we wrote.
+	gzPath := filepath.Join(dir, gzFiles[0])
+	gz, err := os.Open(gzPath)
+	if err != nil {
+		t.Fatalf("open gz: %v", err)
+	}
+	defer gz.Close()
+	gr, err := gzip.NewReader(gz)
+	if err != nil {
+		t.Fatalf("gzip.NewReader: %v", err)
+	}
+	defer gr.Close()
+	got, err := io.ReadAll(gr)
+	if err != nil {
+		t.Fatalf("read gz: %v", err)
+	}
+	s := string(got)
+	if !strings.Contains(s, "first line of log") || !strings.Contains(s, "second line of log") {
+		t.Errorf("decompressed content missing expected lines:\n%s", s)
+	}
+}
+
+// TestRotateFile_NoGzipWhenDisabled verifies CompressRotated=false
+// keeps the plain .log rotated file (R16-15).
+func TestRotateFile_NoGzipWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	log := New(Options{
+		Level:           slog.LevelInfo,
+		Dir:             dir,
+		BaseName:        "plain.log",
+		MaxSize:         1024,
+		CompressRotated: false,
+	})
+	log.Info("a line")
+	if err := log.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	shared := log.(*logger).shared
+	shared.curSize.Store(shared.maxSize + 1)
+	if err := shared.rotateFile(); err != nil {
+		t.Fatalf("rotateFile: %v", err)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	var hasPlainRotated, hasGz bool
+	for _, e := range entries {
+		switch {
+		case strings.HasSuffix(e.Name(), ".log.gz"):
+			hasGz = true
+		case strings.HasPrefix(e.Name(), "plain.") && strings.HasSuffix(e.Name(), ".log"):
+			hasPlainRotated = true
+		}
+	}
+	if !hasPlainRotated {
+		t.Errorf("expected plain rotated .log file, entries=%v", entries)
+	}
+	if hasGz {
+		t.Errorf("unexpected .log.gz when CompressRotated=false, entries=%v", entries)
+	}
+}
+
+// TestListRotatedFiles_AcceptsGzSuffix verifies listRotatedFiles
+// recognizes both .log and .log.gz rotated files (R16-16).
+func TestListRotatedFiles_AcceptsGzSuffix(t *testing.T) {
+	dir := t.TempDir()
+	// Create two rotated files in the two formats with valid
+	// timestamps so the matcher accepts them.
+	for _, name := range []string{
+		"app.20240101_120000.log",
+		"app.20240102_120000.log.gz",
+	} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("dummy"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	// Active log must NOT be matched.
+	if err := os.WriteFile(filepath.Join(dir, "app.log"), []byte("active"), 0o644); err != nil {
+		t.Fatalf("write app.log: %v", err)
+	}
+
+	s := &sharedLogger{
+		dir:      dir,
+		baseName: "app.log",
+	}
+	files, err := s.listRotatedFiles()
+	if err != nil {
+		t.Fatalf("listRotatedFiles: %v", err)
+	}
+	if len(files) != 2 {
+		t.Errorf("expected2 rotated files, got %d: %v", len(files), files)
+	}
+	for _, f := range files {
+		base := filepath.Base(f)
+		if !strings.HasSuffix(base, ".log") && !strings.HasSuffix(base, ".log.gz") {
+			t.Errorf("unexpected file in result: %s", base)
+		}
+	}
 }

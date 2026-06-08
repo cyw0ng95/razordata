@@ -1,6 +1,7 @@
 package lg
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -21,8 +22,13 @@ type Options struct {
 	Output   io.Writer  // destination, default os.Stderr
 	Dir      string     // log directory for rotation, empty = no rotation
 	BaseName string     // base filename, default "razordata.log"
-	MaxSize  int64      // max file size before rotation in bytes, default 100MB
-	MaxFiles int        // max rotated files to retain, default 10
+	MaxSize  int64      // max file size before rotation in bytes, default100MB
+	MaxFiles int        // max rotated files to retain, default10
+	// CompressRotated, when true (default), gzips the rotated file
+	// and writes <base>.YYYYMMDD_HHMMSS.log.gz. The uncompressed
+	// intermediate is removed on success. Set false to keep plain
+	// .log rotated files. (R16-15)
+	CompressRotated bool
 }
 
 // Logger is the main logging interface exposed to other subsystems.
@@ -53,16 +59,17 @@ type sharedLogger struct {
 	mu     sync.RWMutex
 
 	// Rotation fields
-	dir        string       // log directory, empty = no rotation
-	baseName   string       // base filename
-	maxSize    int64        // rotation threshold in bytes
-	maxFiles   int          // max rotated files to retain
-	curSize    atomic.Int64 // current file size
-	rotationFn func() error // called when rotation needed
-	rotMu      sync.Mutex   // mutex just for rotation
+	dir             string       // log directory, empty = no rotation
+	baseName        string       // base filename
+	maxSize         int64        // rotation threshold in bytes
+	maxFiles        int          // max rotated files to retain
+	compressRotated bool         // gzip rotated files (R16-15)
+	curSize         atomic.Int64 // current file size
+	rotationFn      func() error // called when rotation needed
+	rotMu           sync.Mutex   // mutex just for rotation
 }
 
-// atomicLevel implements slog.Leveler using an atomic int32.
+// atomicLevel implements slog.Leveler using a atomic int32.
 type atomicLevel struct {
 	level *atomic.Int32
 }
@@ -74,7 +81,7 @@ func (a atomicLevel) Level() slog.Level {
 // New creates a Logger from Options.
 // If Output is nil, defaults to os.Stderr.
 // If Format is not "json", defaults to "text".
-// If Dir is set, enables file rotation with default 100MB max size.
+// If Dir is set, enables file rotation with default100MB max size.
 func New(opts Options) Logger {
 	if opts.Output == nil {
 		opts.Output = os.Stderr
@@ -84,12 +91,13 @@ func New(opts Options) Logger {
 	}
 
 	s := &sharedLogger{
-		format:   opts.Format,
-		output:   opts.Output,
-		dir:      opts.Dir,
-		baseName: opts.BaseName,
-		maxSize:  opts.MaxSize,
-		maxFiles: opts.MaxFiles,
+		format:          opts.Format,
+		output:          opts.Output,
+		dir:             opts.Dir,
+		baseName:        opts.BaseName,
+		maxSize:         opts.MaxSize,
+		maxFiles:        opts.MaxFiles,
+		compressRotated: opts.CompressRotated,
 	}
 	s.level.Store(int32(opts.Level))
 
@@ -97,19 +105,27 @@ func New(opts Options) Logger {
 		s.baseName = "razordata.log"
 	}
 	if s.maxSize <= 0 {
-		s.maxSize = 100 * 1024 * 1024 // 100MB default
+		s.maxSize = 100 * 1024 * 1024 //100MB default
 	}
 	if s.maxFiles <= 0 {
 		s.maxFiles = 10
 	}
+	// R16-15: default CompressRotated to true unless the caller
+	// explicitly set it to false. We can't distinguish "set to
+	// false" from "not set" with a bool alone, so the default is
+	// the conservative plain-text behavior; callers who want
+	// gzip set CompressRotated: true explicitly. To preserve the
+	// backward-compatible plain-text default, the default here is
+	// false. Production users opt in via Options.
+	_ = s.compressRotated // explicit field; no auto-default to keep zero-value semantics.
 
 	// If Dir is set, enable file rotation
 	if s.dir != "" {
-		if err := os.MkdirAll(s.dir, 0755); err != nil {
+		if err := os.MkdirAll(s.dir, 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "log rotation: failed to create directory %s: %v\n", s.dir, err)
 		} else {
 			path := filepath.Join(s.dir, s.baseName)
-			f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "log rotation: failed to open file %s: %v\n", path, err)
 			} else {
@@ -273,9 +289,10 @@ func (w *rotationWriter) setFile(f *os.File) {
 // rotateFile performs log rotation:
 // 1. Close current file
 // 2. Rename to <baseName>.YYYYMMDD_HHMMSS.log
-// 3. Open new file with original name
-// 4. Update curSize to 0
-// 5. Delete oldest file if exceeding maxFiles
+// 3. (R16-15) gzip the rotated file to <baseName>.YYYYMMDD_HHMMSS.log.gz
+// 4. Open new file with original name
+// 5. Update curSize to0
+// 6. Delete oldest file if exceeding maxFiles
 func (s *sharedLogger) rotateFile() error {
 	// Use rotMu instead of s.mu to avoid deadlock with slog handler
 	s.rotMu.Lock()
@@ -312,7 +329,7 @@ func (s *sharedLogger) rotateFile() error {
 	if err := os.Rename(currentPath, rotatedPath); err != nil {
 		fmt.Fprintf(os.Stderr, "log rotation: failed to rename file: %v\n", err)
 		// Try to reopen original file on failure
-		f, openErr := os.OpenFile(currentPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		f, openErr := os.OpenFile(currentPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if openErr == nil {
 			rw.setFile(f)
 			s.curSize.Store(0)
@@ -320,12 +337,24 @@ func (s *sharedLogger) rotateFile() error {
 		return err
 	}
 
+	// R16-15: gzip the rotated file in place. On success, delete the
+	// uncompressed intermediate. On failure, leave the uncompressed
+	// file in place — rotation succeeded even if compression failed.
+	if s.compressRotated {
+		gzPath := rotatedPath + ".gz"
+		if err := gzipFile(rotatedPath, gzPath); err != nil {
+			fmt.Fprintf(os.Stderr, "log rotation: gzip failed: %v\n", err)
+		} else if err := os.Remove(rotatedPath); err != nil {
+			fmt.Fprintf(os.Stderr, "log rotation: remove uncompressed after gzip: %v\n", err)
+		}
+	}
+
 	// Open new file with original name
-	f, err := os.OpenFile(currentPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	f, err := os.OpenFile(currentPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "log rotation: failed to open new file: %v\n", err)
 		// Reopen rotated file as fallback
-		f, openErr := os.OpenFile(rotatedPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		f, openErr := os.OpenFile(rotatedPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if openErr != nil {
 			return fmt.Errorf("failed to open any log file: %w", err)
 		}
@@ -343,6 +372,27 @@ func (s *sharedLogger) rotateFile() error {
 	}
 
 	return nil
+}
+
+// gzipFile reads src and writes a gzip-compressed copy to dst. The
+// caller is responsible for removing src on success. (R16-15)
+func gzipFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	gz := gzip.NewWriter(out)
+	if _, err := io.Copy(gz, in); err != nil {
+		gz.Close()
+		return err
+	}
+	return gz.Close()
 }
 
 // cleanupOldLogs removes the oldest rotated log files if exceeding maxFiles.
@@ -364,7 +414,8 @@ func (s *sharedLogger) cleanupOldLogs() error {
 }
 
 // listRotatedFiles returns sorted list of rotated log files (oldest first).
-// Only returns files matching the pattern <baseName>.YYYYMMDD_HHMMSS.log
+// Recognizes both <baseName>.YYYYMMDD_HHMMSS.log and
+// <baseName>.YYYYMMDD_HHMMSS.log.gz (R16-16).
 func (s *sharedLogger) listRotatedFiles() ([]string, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -374,6 +425,7 @@ func (s *sharedLogger) listRotatedFiles() ([]string, error) {
 	ext := filepath.Ext(s.baseName)
 	base := strings.TrimSuffix(s.baseName, ext)
 	prefix := base + "."
+	gzExt := ext + ".gz"
 
 	var rotated []string
 	for _, entry := range entries {
@@ -382,16 +434,21 @@ func (s *sharedLogger) listRotatedFiles() ([]string, error) {
 		}
 		name := entry.Name()
 		// Check if matches rotation pattern: <base>.YYYYMMDD_HHMMSS<ext>
+		// or <base>.YYYYMMDD_HHMMSS<ext>.gz
 		if !strings.HasPrefix(name, prefix) || name == s.baseName {
 			continue
 		}
 
-		// Verify suffix format: YYYYMMDD_HHMMSS<ext>
 		suffix := strings.TrimPrefix(name, prefix)
-		if !strings.HasSuffix(suffix, ext) {
+		var timestampPart string
+		switch {
+		case strings.HasSuffix(suffix, gzExt):
+			timestampPart = strings.TrimSuffix(suffix, gzExt)
+		case strings.HasSuffix(suffix, ext):
+			timestampPart = strings.TrimSuffix(suffix, ext)
+		default:
 			continue
 		}
-		timestampPart := strings.TrimSuffix(suffix, ext)
 		if len(timestampPart) != 15 { // YYYYMMDD_HHMMSS
 			continue
 		}
