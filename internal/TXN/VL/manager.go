@@ -67,6 +67,9 @@ func NewManagerShared(sm *slotManager, mv *MV.MV) *Manager {
 // tx's Commit/Abort release the slot back to *this* manager's pool, not
 // the global pool.
 //
+// The slot's arena is acquired inside AllocateSlot (R16-18); the tx
+// struct no longer owns its own arena — it borrows from t.slot.arena.
+//
 // Returns ErrNoSlotsAvailable if the pool is exhausted.
 func (m *Manager) Begin(ctx context.Context) (Tx, error) {
 	if err := ctx.Err(); err != nil {
@@ -86,7 +89,6 @@ func (m *Manager) Begin(ctx context.Context) (Tx, error) {
 	slot.beginTS = ts
 	slot.status.Store(int32(SlotActive))
 
-	arena := MV.NewArena()
 	readView := SN.NewReadView(m.mv, slot.beginTS)
 
 	return &tx{
@@ -95,7 +97,6 @@ func (m *Manager) Begin(ctx context.Context) (Tx, error) {
 		manager:  m,
 		slot:     slot,
 		readView: readView,
-		arena:    arena,
 	}, nil
 }
 

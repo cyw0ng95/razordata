@@ -30,11 +30,10 @@ type tx struct {
 	manager  *Manager
 	slot     *transactionSlot
 	readView *SN.ReadView
-	arena    *MV.Arena
-	// mu serializes the per-txn write set and arena against concurrent
-	// goroutines that might call Insert/Delete on the same transaction.
-	// The arena is per-txn and not safe for concurrent use; without this
-	// lock, two goroutines could race on t.arena.Alloc.
+	// arena lives on t.slot (R16-17..19); the slot manager owns its
+	// lifecycle. Reads/writes go through t.slot.arena. The per-txn
+	// mutex on t.mu serializes access so concurrent Insert/Delete on
+	// the same transaction cannot race on arena.Alloc.
 	mu       sync.Mutex
 	finished bool
 }
@@ -83,7 +82,7 @@ func (t *tx) Insert(ctx context.Context, key, value []byte) error {
 	if t.finished {
 		return ErrTxFinished
 	}
-	node := MV.NewVersionNode(t.arena, t.slot.txnID, t.slot.beginTS, key, value, false)
+	node := MV.NewVersionNode(t.slot.arena, t.slot.txnID, t.slot.beginTS, key, value, false)
 	if !t.mv.Insert(key, node) {
 		return ErrInsertFailed
 	}
@@ -100,7 +99,7 @@ func (t *tx) Delete(ctx context.Context, key []byte) error {
 	if t.finished {
 		return ErrTxFinished
 	}
-	node := MV.NewVersionNode(t.arena, t.slot.txnID, t.slot.beginTS, key, nil, true)
+	node := MV.NewVersionNode(t.slot.arena, t.slot.txnID, t.slot.beginTS, key, nil, true)
 	if !t.mv.Insert(key, node) {
 		return ErrDeleteFailed
 	}
@@ -167,16 +166,12 @@ func (t *tx) Abort(ctx context.Context) error {
 	return nil
 }
 
-// finalize marks the slot's terminal state, releases the slot back to
-// the pool, and returns the per-txn arena to the global pool. Must be
-// called with t.mu held.
+// finalize marks the slot's terminal state and releases the slot back
+// to the pool. The slot manager owns the arena lifecycle; ReleaseSlot
+// returns the arena to the global pool. Must be called with t.mu held.
 func (t *tx) finalize(status SlotStatus) {
 	t.slot.status.Store(int32(status))
 	t.sm.ReleaseSlot(t.slot)
-	if t.arena != nil {
-		MV.PutArena(t.arena)
-		t.arena = nil
-	}
 	t.finished = true
 }
 

@@ -61,6 +61,10 @@ func TestAllocateSlot(t *testing.T) {
 	if slot.status.Load() != int32(SlotActive) {
 		t.Errorf("expected status %d, got %d", SlotActive, slot.status.Load())
 	}
+
+	if slot.arena == nil {
+		t.Fatal("R16-18: AllocateSlot must populate arena on the slot")
+	}
 }
 
 func TestAllocateAllSlots(t *testing.T) {
@@ -89,15 +93,28 @@ func TestReleaseSlot(t *testing.T) {
 	slot := sm.AllocateSlot()
 	idx := slot.index
 
+	arenaBefore := slot.arena
+	if arenaBefore == nil {
+		t.Fatal("R16-18: AllocateSlot must populate arena")
+	}
+
 	sm.ReleaseSlot(slot)
 
 	if sm.NumFreeSlots() != MaxConcurrentTXNs {
 		t.Errorf("expected %d free slots, got %d", MaxConcurrentTXNs, sm.NumFreeSlots())
 	}
 
+	if slot.arena != nil {
+		t.Error("R16-18: ReleaseSlot must clear arena on slot")
+	}
+
 	slot2 := sm.AllocateSlot()
 	if slot2.index != idx {
 		t.Error("expected same slot to be reused")
+	}
+
+	if slot2.arena == nil {
+		t.Error("R16-18: reused slot must have a fresh arena from pool")
 	}
 }
 
@@ -364,4 +381,66 @@ func BenchmarkKeyRangesOverlap(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		KeyRangesOverlap(a, b2)
 	}
+}
+
+// TestSlotArenaRecycledOnRelease verifies that an arena pulled from the
+// pool via AllocateSlot is returned to the pool by ReleaseSlot. We
+// allocate, capture the pointer, release, allocate again, and verify
+// the slot has a fresh (possibly equal, after pool GC) arena. The key
+// invariant is: after ReleaseSlot the slot's arena pointer is nil, and
+// the next AllocateSlot for the same slot index produces a non-nil
+// arena again. (R16-18)
+func TestSlotArenaRecycledOnRelease(t *testing.T) {
+	sm := newSlotManager()
+
+	for round := 0; round < 5; round++ {
+		slot := sm.AllocateSlot()
+		if slot.arena == nil {
+			t.Fatalf("round %d: arena must be non-nil after Allocate", round)
+		}
+		// Use the arena to prove it is functional.
+		buf := slot.arena.Alloc(64)
+		if len(buf) != 64 {
+			t.Fatalf("round %d: arena.Alloc(64) returned %d bytes", round, len(buf))
+		}
+		sm.ReleaseSlot(slot)
+		if slot.arena != nil {
+			t.Fatalf("round %d: arena must be nil after Release", round)
+		}
+	}
+}
+
+// TestSlotArenaReusedAcrossRounds verifies that the arena acquired by
+// AllocateSlot is functionally usable (writes succeed, offset
+// advances) and that the same arena returned to the pool is reused by
+// the next Allocate (offset is reset). (R16-18)
+func TestSlotArenaReusedAcrossRounds(t *testing.T) {
+	sm := newSlotManager()
+
+	slot := sm.AllocateSlot()
+	a1 := slot.arena
+	buf := a1.Alloc(128)
+	if len(buf) != 128 {
+		t.Fatalf("first Alloc returned %d bytes", len(buf))
+	}
+	offAfterFirst := a1.Remaining()
+	if offAfterFirst >= a1.Size() {
+		t.Fatalf("arena not advanced: remaining=%d size=%d", offAfterFirst, a1.Size())
+	}
+
+	sm.ReleaseSlot(slot)
+	if slot.arena != nil {
+		t.Fatal("arena must be nil after Release")
+	}
+
+	slot2 := sm.AllocateSlot()
+	if slot2.arena == nil {
+		t.Fatal("reused slot must have a fresh arena")
+	}
+	// PutArena resets the offset, so remaining should equal full size.
+	if slot2.arena.Remaining() != slot2.arena.Size() {
+		t.Errorf("reused arena should be reset: remaining=%d size=%d",
+			slot2.arena.Remaining(), slot2.arena.Size())
+	}
+	sm.ReleaseSlot(slot2)
 }
