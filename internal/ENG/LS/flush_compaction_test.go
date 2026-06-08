@@ -11,7 +11,7 @@ func TestFlushJob_Run(t *testing.T) {
 	dir := t.TempDir()
 	dir = filepath.Join(dir, "test_flush_job")
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("failed to create dir: %v", err)
 	}
 
@@ -26,9 +26,12 @@ func TestFlushJob_Run(t *testing.T) {
 	mt.Insert([]byte("key2"), []byte("value2"))
 	mt.Freeze()
 
+	// R16-7: outputPath is now the SST subdirectory; the flush
+	// job writes a temp file there and renames to fileName(meta).
+	sstDir := filepath.Join(dir, "sst")
 	job := &flushJob{
 		memtable:   mt,
-		outputPath: filepath.Join(dir, "L0_1.sst"),
+		outputPath: sstDir,
 		manifest:   manifest,
 		fileID:     1,
 		level:      0,
@@ -38,8 +41,14 @@ func TestFlushJob_Run(t *testing.T) {
 		t.Fatalf("flushJob.Run failed: %v", err)
 	}
 
-	if _, err := os.Stat(job.outputPath); err != nil {
-		t.Fatalf("SST file not created: %v", err)
+	// After the fix, the SST lands at dir/sst/L0_<minkey>_<maxkey>_<id>.sst
+	v := manifest.Current()
+	if len(v.levels) == 0 || len(v.levels[0]) == 0 {
+		t.Fatalf("manifest has no L0 entries")
+	}
+	wantPath := filepath.Join(dir, fileName(&v.levels[0][0]))
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Fatalf("R16-7: SST not at fileName(meta) path: %v (want %s)", err, wantPath)
 	}
 }
 
@@ -106,7 +115,7 @@ func TestFlushJob_updateManifest(t *testing.T) {
 	dir := t.TempDir()
 	dir = filepath.Join(dir, "test_update_manifest")
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("failed to create dir: %v", err)
 	}
 
@@ -120,26 +129,31 @@ func TestFlushJob_updateManifest(t *testing.T) {
 	mt.Insert([]byte("key1"), []byte("value1"))
 	mt.Freeze()
 
-	sstPath := filepath.Join(dir, "L0_1.sst")
-	if err := os.WriteFile(sstPath, []byte("test"), 0644); err != nil {
+	// R16-7: write a temp SST in the sst/ subdir; updateManifest
+	// renames it to fileName(meta).
+	tmpPath := filepath.Join(dir, "sst", ".tmp_test.sst")
+	if err := os.MkdirAll(filepath.Dir(tmpPath), 0o755); err != nil {
+		t.Fatalf("mkdir sst: %v", err)
+	}
+	if err := os.WriteFile(tmpPath, []byte("test"), 0o644); err != nil {
 		t.Fatalf("failed to write SST file: %v", err)
 	}
 
 	job := &flushJob{
 		memtable:   mt,
-		outputPath: sstPath,
+		outputPath: tmpPath,
 		manifest:   manifest,
 		fileID:     1,
 		level:      0,
 	}
 
-	if err := job.updateManifest(); err != nil {
+	if err := job.updateManifest(tmpPath); err != nil {
 		t.Fatalf("updateManifest failed: %v", err)
 	}
 
 	v := manifest.Current()
 	if len(v.levels) != 1 || len(v.levels[0]) != 1 {
-		t.Fatalf("expected 1 level with 1 file")
+		t.Fatalf("expected1 level with1 file")
 	}
 }
 
@@ -503,8 +517,8 @@ func TestCompactionJob_RunWithOverlap(t *testing.T) {
 		t.Fatalf("failed to finish SST writer: %v", err)
 	}
 
-	sstPath1 := filepath.Join(dir, "sst", "L0_a_z_1.sst")
-	sstPath2 := filepath.Join(dir, "sst", "L0_b_y_2.sst")
+	sstPath1 := filepath.Join(dir, "sst", "L0_61_7a_1.sst")
+	sstPath2 := filepath.Join(dir, "sst", "L0_62_79_2.sst")
 	if err := os.WriteFile(sstPath1, sstData1, 0644); err != nil {
 		t.Fatalf("failed to write SST file: %v", err)
 	}

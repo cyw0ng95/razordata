@@ -29,20 +29,30 @@ func (fj *flushJob) Run() error {
 		return ErrMemtableNotFrozen
 	}
 
+	// R16-7: flush writes a temp file inside the SST dir, then renames
+	// it to the fileName(meta) path that compaction.fileName produces.
+	// Before the fix, flush wrote <dir>/L0_<id>.sst (flat), so the
+	// compaction reader (which uses sst/L<N>_<minkey>_<maxkey>_<id>.sst)
+	// could not find the freshly flushed SST. The two-step write
+	// (temp -> rename) is required because we need to scan the
+	// memtable to compute MinKey/MaxKey before we can construct
+	// fileName(meta).
+	sstDir := fj.outputPath
+	tmpPath := filepath.Join(sstDir, fmt.Sprintf(".tmp_%d_%d.sst", fj.fileID, time.Now().UnixNano()))
+	if err := os.MkdirAll(sstDir, 0o755); err != nil {
+		return err
+	}
 	sstData, err := fj.flushToSST()
 	if err != nil {
 		return err
 	}
-
-	tmpPath := fj.outputPath + ".tmp"
-	if err := os.WriteFile(tmpPath, sstData, 0644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, fj.outputPath); err != nil {
+	if err := os.WriteFile(tmpPath, sstData, 0o644); err != nil {
 		return err
 	}
 
-	if err := fj.updateManifest(); err != nil {
+	if err := fj.updateManifest(tmpPath); err != nil {
+		// Best-effort cleanup of the orphan temp file.
+		_ = os.Remove(tmpPath)
 		return err
 	}
 
@@ -65,8 +75,8 @@ func (fj *flushJob) flushToSST() ([]byte, error) {
 	return data, nil
 }
 
-func (fj *flushJob) updateManifest() error {
-	stat, err := os.Stat(fj.outputPath)
+func (fj *flushJob) updateManifest(tmpPath string) error {
+	stat, err := os.Stat(tmpPath)
 	if err != nil {
 		return err
 	}
@@ -83,17 +93,32 @@ func (fj *flushJob) updateManifest() error {
 	}
 
 	if keyCount == 0 {
+		// Nothing to flush; drop the temp file and skip manifest update.
+		_ = os.Remove(tmpPath)
 		return nil
 	}
 
-	files := []SSTFileMeta{{
+	meta := SSTFileMeta{
 		FileID:    fj.fileID,
 		Level:     fj.level,
 		MinKey:    minKey,
 		MaxKey:    maxKey,
 		Size:      stat.Size(),
 		BloomBits: 10,
-	}}
+	}
+
+	// R16-7: rename temp file to the fileName(meta) path so the
+	// compaction reader (which uses fileName) can locate it. The
+	// temp file lives in <engineDir>/sst/; the final path is
+	// <engineDir>/<fileName(meta)> where fileName returns a relative
+	// path that already starts with sst/.
+	engineDir := filepath.Dir(filepath.Dir(tmpPath))
+	finalPath := filepath.Join(engineDir, fileName(&meta))
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		return err
+	}
+
+	files := []SSTFileMeta{meta}
 
 	current := fj.manifest.Current()
 	newLevels := make([][]SSTFileMeta, len(current.levels)+1)
@@ -132,6 +157,16 @@ func newFlushManager(dir string, maxMemSize int64, manifest *manifest) *flushMan
 		flushQueue: make(chan *flushJob, 10),
 		done:       make(chan struct{}),
 		loopDone:   make(chan struct{}),
+	}
+
+	// R16-7: ensure the sst/ subdir exists. flush writes L0 SSTs to
+	// <dir>/sst/L0_<id>.sst to align with compaction.fileName, which
+	// also writes to <dir>/sst/... . MkdirAll is a no-op if the dir
+	// already exists.
+	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0o755); err != nil {
+		// Non-fatal: flushJob.Run will surface the failure on first
+		// rename if mkdir actually failed.
+		fmt.Fprintf(os.Stderr, "flush: mkdir sst: %v\n", err)
 	}
 
 	active := newMemtable(maxMemSize)
@@ -175,8 +210,14 @@ func (fm *flushManager) requestFlush(m *memtable) {
 	fm.pendingWGs.Add(1)
 	select {
 	case fm.flushQueue <- &flushJob{
-		memtable:   m,
-		outputPath: filepath.Join(fm.dir, fmt.Sprintf("L0_%d.sst", id)),
+		memtable: m,
+		// outputPath is the directory the flush writes temp files
+		// to. The final SST path is <dir>/<fileName(meta)> and is
+		// constructed by flushJob.Run via the manifest SSTFileMeta.
+		// Before the iter-16 fix, outputPath was the final flat path
+		// <dir>/L0_<id>.sst which the compaction reader could not
+		// locate. (R16-7)
+		outputPath: filepath.Join(fm.dir, "sst"),
 		manifest:   fm.manifest,
 		fileID:     id,
 		level:      0,
@@ -197,7 +238,7 @@ func (fm *flushManager) WaitForFlush() {
 // bounded by ctx. Idempotent: a second call returns nil immediately
 // if the loop has already exited.
 //
-// Stop is the graceful-shutdown entry point (Phase 4.1 of
+// Stop is the graceful-shutdown entry point (Phase4.1 of
 // SYS.md:245-251). It does NOT wait for in-flight flush jobs to
 // finish — call WaitForFlush for that. It only waits for the
 // dispatch loop to exit.
