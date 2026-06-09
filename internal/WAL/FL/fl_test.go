@@ -366,3 +366,35 @@ func TestFlusherLSNReturnsZeroOnNew(t *testing.T) {
 		t.Errorf("LSN on new flusher: got %d, want 0", got)
 	}
 }
+
+// BenchmarkBatchSyncGroupCommit measures group commit overhead
+// with 10 transactions per batch (REQ000176).
+func BenchmarkBatchSyncGroupCommit(b *testing.B) {
+	dir := b.TempDir()
+	sm, _ := lf.New(dir)
+	defer sm.Close()
+	fm, _ := fs.New(dir)
+	f, _ := New(dir, sm, fm, nil)
+	defer f.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		fl := f.(*flusher)
+		// Simulate 10 transactions per batch
+		for j := 0; j < 10; j++ {
+			fl.StartBatch()
+			fl.EndBatch(nil)
+		}
+		fl.BatchSync()
+	}
+}
+
+// BenchmarkWriteBufferAlloc measures write buffer allocation cost.
+func BenchmarkWriteBufferAlloc(b *testing.B) {
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wb := newWriteBuffer()
+		wb.Reset()
+		_ = wb.Available()
+	}
+}

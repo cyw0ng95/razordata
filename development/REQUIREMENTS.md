@@ -103,6 +103,8 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000169 | LOG | Debug-level allocation trade-off documentation (level check before allocation) | iter-17 |
 | REQ000170 | WAL | RTMerge record encoding implementation | iter-17 |
 | REQ000191 | WAL/RP | Coverage lift: WAL/RP is at75.2% (multi-segment truncate + ErrUnknownRecord added; shortfall now in resync-window edges) | iter-16 |
+| REQ000176 | WAL | Batch commit with sync.WaitGroup and write barrier | iter-18 |
+| REQ000184 | WAL | 256 KB pre-allocated writeBuffer for batched WAL writes | iter-18 |
 | REQ000001 | LOG | `Logger` wraps `log/slog` with atomic level control | iter-00 |
 | REQ000002 | LOG | Structured key-value output (JSON/text) | iter-00 |
 | REQ000003 | LOG | Log file rotation on size threshold | iter-00 |
