@@ -188,12 +188,12 @@ func TestRoundTripCheckpoint(t *testing.T) {
 // record types not yet known to the encoder (forward compatibility).
 func TestRoundTripUnknownType(t *testing.T) {
 	original := &LogRecord{
-		Type: RecordType(200),
-		TxnID:1,
+		Type:  RecordType(200),
+		TxnID: 1,
 		Value: []byte("future payload"),
 	}
 	enc := encodeRecord(original)
-	decoded, _, err := decodeRecord(enc,0)
+	decoded, _, err := decodeRecord(enc, 0)
 	if err != nil {
 		t.Fatalf("decodeRecord: %v", err)
 	}
@@ -213,41 +213,41 @@ func TestRoundTripUnknownType(t *testing.T) {
 // addedFiles in Value. The decoded record must equal the original.
 func TestRoundTripRTMerge(t *testing.T) {
 	cases := []struct {
-		name string
-		newVersion uint64
+		name         string
+		newVersion   uint64
 		deletedFiles []byte
-		addedFiles []byte
+		addedFiles   []byte
 	}{
 		{
-			name: "empty_lists",
-			newVersion:99,
+			name:         "empty_lists",
+			newVersion:   99,
 			deletedFiles: []byte{},
-			addedFiles: []byte{},
+			addedFiles:   []byte{},
 		},
 		{
-			name: "one_deleted_three_added",
-			newVersion:100,
+			name:         "one_deleted_three_added",
+			newVersion:   100,
 			deletedFiles: []byte{0x01},
-			addedFiles: []byte{0x0a,0x0b,0x0c},
+			addedFiles:   []byte{0x0a, 0x0b, 0x0c},
 		},
 		{
-			name: "varint_packed_ids",
-			newVersion:0xdeadbeef,
-			deletedFiles: []byte{0x80,0x01,0xff,0x01},
-			addedFiles: []byte{0x80,0x02,0x80,0x03,0x04},
+			name:         "varint_packed_ids",
+			newVersion:   0xdeadbeef,
+			deletedFiles: []byte{0x80, 0x01, 0xff, 0x01},
+			addedFiles:   []byte{0x80, 0x02, 0x80, 0x03, 0x04},
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			rec := &LogRecord{
-				Type: RTMerge,
-				TxnID:42,
+				Type:    RTMerge,
+				TxnID:   42,
 				BlockID: c.newVersion,
-				Key: c.deletedFiles,
-				Value: c.addedFiles,
+				Key:     c.deletedFiles,
+				Value:   c.addedFiles,
 			}
 			enc := encodeRecord(rec)
-			decoded, _, err := decodeRecord(enc,0)
+			decoded, _, err := decodeRecord(enc, 0)
 			if err != nil {
 				t.Fatalf("decodeRecord: %v", err)
 			}
