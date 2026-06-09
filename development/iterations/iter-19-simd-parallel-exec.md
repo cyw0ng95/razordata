@@ -1,12 +1,12 @@
 # Iteration19 — SQL SIMD + Parallel Execution Foundation
 
 **Subsystem:** `SQL/EX` (Executor)
-**Status:** planned
+**Status:** Phase 1 done; Phases 2-3 planned
 **Est. LOC:** ~3,500-4,500 (3 phases)
 **Requirements:** REQ000144, REQ000145, REQ000149, REQ000157
-**Target release:** v0.14.0 → v0.15.0 → v0.16.0 (phased)
-**Commit:** `<filled at completion>`
-**Tag:** v0.14.0 (Phase 1), v0.15.0 (Phase 2), v0.16.0 (Phase 3)
+**Target release:** v0.14.0 (Phase 1 done), v0.15.0 (Phase 2), v0.16.0 (Phase 3)
+**Commit (Phase 1):** 30cad70
+**Tag:** v0.14.0 (Phase 1)
 
 ## Overview
 
@@ -34,7 +34,56 @@ row-at-a-time baseline.
 
 ## Outcome
 
-(empty — to be filled at end of iteration)
+### Phase 1 (v0.14.0) — DONE
+
+Shipped 3 REQs (R19-1 to R19-7):
+
+- **REQ000149 (batch.go).** Columnar `Batch` struct with
+  `sync.Pool` allocator. `BatchSize=1024`, `MaxColumns=64`.
+  Pre-allocated `Cols` slice in the pool to avoid per-batch
+  slice re-allocation. API: `GetBatch(cols)`, `Put()`,
+  `AppendRow()`, `SetColumnName()`, `SetColMap()`.
+
+- **REQ000157 (eval_vec.go).** `EvalBatch()` with 4-wide
+  manual unrolling for int64/float64 column-literal and
+  column-column comparisons. Selection-vector output
+  (no data copying). Row-at-a-time fallback for complex
+  expressions via the existing `Eval()`.
+
+- **REQ000144 (operators_vec.go).** `VectorizedSeqScan`
+  projects row source into columnar batches with
+  pre-computed `colMap` for O(1) filter lookups.
+  `VectorizedFilter` applies `EvalBatch` and emits
+  batches with selection vectors.
+
+**Total Phase 1 LOC:** ~1,100 (batch: 230, eval_vec: 540,
+operators_vec: 220, tests: ~360)
+
+**Benchmarks (1024 rows):**
+- `BenchmarkBatchPool`: 0 allocs/op, 3837 ns/op
+- `BenchmarkEvalBatch_Int64GT`: 13,110 ns/op, 1 alloc/op
+- `BenchmarkEvalDirect_Int64GT`: 12,555 ns/op, 1 alloc/op
+  (pure SIMD path, 12.3 ns/row)
+- `BenchmarkVectorizedFilter` (1024 rows): 316,716 ns/op,
+  7 allocs/op vs. row fallback 387,473 ns/op, 2048 allocs/op
+  → **1.22x faster, 99.7% less allocation**
+- `BenchmarkVectorizedFilter_MultiBatch` (10K rows): 3.26 ms
+
+**Commits (Phase 1):**
+- `e1076ff` — Batch struct + pool
+- `572fb85` — EvalBatch with manual unrolling
+- `fcf7b2f` — Vectorized operators
+- `30cad70` — multi-batch benchmarks
+
+### Phase 2 (v0.15.0) — PLANNED
+
+Worker pool, parallel scan, pipeline parallelism.
+Target: 8-12x speedup on 4-core systems.
+
+### Phase 3 (v0.16.0) — PLANNED
+
+SIMD aggregates, parallel sort, TPC-H Q1-6 benchmarks.
+Target: 10x+ improvement on TPC-H queries.
 
 ## Dependencies
 
