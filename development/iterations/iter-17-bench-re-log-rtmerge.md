@@ -1,12 +1,12 @@
 # Iteration17 — ENG/LS Benchmarks + RE Normalization + Log Level Audit + RTMerge
 
-**Subsystem:** `ENG/LS`, `SQL/RE`, `LOG/LG`, `WAL/WR`
+**Subsystem:** `ENG/LS`, `SQL/RE`, `LOG/LG`, `WAL/WR`, `WAL/FL`
 **Status:** done
-**Est. LOC:** ~2000
-**Requirements:** REQ000044, REQ000138, REQ000163, REQ000169, REQ000170
-**Target release:** v0.13.0
-**Commit:** f8f0814
-**Tag:** v0.13.0
+**Est. LOC:** ~2200
+**Requirements:** REQ000044, REQ000138, REQ000163, REQ000169, REQ000170, REQ000176, REQ000184
+**Target release:** v0.13.1
+**Commit:** 780352c
+**Tag:** v0.13.1
 
 ## Overview
 
@@ -58,7 +58,7 @@ the encode+decode cycle for RTMerge. ~200 LOC.
 
 ## Outcome
 
-Shipped 5 REQs (R17-1 to R17-21):
+Shipped 7 REQs (R17-1 to R17-23):
 
 - **REQ000044 + REQ000138 (ENG/LS benchmarks).** Added
   `internal/ENG/LS/bench_test.go` with 6 benchmarks:
@@ -97,7 +97,17 @@ Shipped 5 REQs (R17-1 to R17-21):
   one-deleted/three-added, varint-packed IDs). Round-trip
   green, no compile errors.
 
-Total LOC: ~200 (bench) + ~80 (RE) + ~35 (LG) + ~120 (WR) ≈ 435 LOC.
+- **REQ000176 + REQ000184 (WAL/FL batch commit).** Implemented
+  group commit coordination with `sync.WaitGroup` write barrier
+  and 256 KB pre-allocated `writeBuffer`. Added `StartBatch`,
+  `EndBatch`, `BatchSync` (wait + error propagation), `Sync`
+  (TXN integration hook). Tests: `TestWriteBufferIntegration`,
+  `TestBatchSyncGroupCommit` (3 concurrent writers),
+  `TestBatchSyncErrorPropagation`. Benchmarks:
+  `BenchmarkBatchSyncGroupCommit` (10 tx/batch),
+  `BenchmarkWriteBufferAlloc`.
+
+Total LOC: ~200 (bench) + ~80 (RE) + ~35 (LG) + ~120 (WR) + ~155 (FL) ≈ 590 LOC.
 Variance from estimate due to RE coverage gap larger than
 initially scoped (simplify family requires expression tree
 fixtures).
@@ -108,6 +118,9 @@ Commits:
 - `2dc3b49` — LOG/LG debug audit test
 - `46a7703` — SQL/RE coverage uplift
 - `f8f0814` — gofmt cleanup
+- `89f7e43` — docs update (iter-17)
+- `780352c` — WAL/FL batch commit (REQ000176/184)
+- Tag: `v0.13.1`
 
 ## Dependencies
 
@@ -115,23 +128,29 @@ Commits:
 - Required: iter-07 (`SQL/RE` AST exists)
 - Required: iter-00 (`LOG/LG` debug path exists)
 - Required: iter-03 (`WAL/WR` RecordType exists)
+- Required: iter-15 (`WAL/FL` writeBuffer stub exists)
 - Touches:
- - `internal/ENG/LS/bench_test.go` (new) — skiplist
- insert/find/iterator benchmarks + SST write/read
- benchmarks + flush+compaction benchmark
- - `internal/SQL/RE/format.go` — `formatJoinClause` helper,
- fix FromAlias/Distinct/GroupBy/Having rendering paths
- - `internal/SQL/RE/re_test.go` and `rewrite_test.go` —
- table-driven coverage for empty select, distinct, joins,
- group by, having, type-name branches
- - `internal/LOG/LG/logger_test.go` — allocation-free Debug
- path test (the spec'd Debug allocation behavior is documented
- in LOG.md:59)
- - `internal/LOG/LG/logger_bench.go` — `BenchmarkLogDisabled`
- (no allocation when level above threshold)
- - `internal/WAL/WR/encode.go` — `appendPayload` RTMerge case,
- `decodePayload` RTMerge case
- - `internal/WAL/WR/encode_test.go` — RTMerge round-trip test
+  - `internal/ENG/LS/bench_test.go` (new) — skiplist
+    insert/find/seek benchmarks + SST write/read
+    benchmarks + flush+compaction benchmark
+  - `internal/SQL/RE/format.go` — `formatJoinClause` helper,
+    fix FromAlias/Distinct/GroupBy/Having rendering paths
+  - `internal/SQL/RE/re_test.go` and `rewrite_test.go` —
+    table-driven coverage for empty select, distinct, joins,
+    group by, having, type-name branches
+  - `internal/LOG/LG/logger_test.go` — allocation-free Debug
+    path test (the spec'd Debug allocation behavior is documented
+    in LOG.md:59)
+  - `internal/LOG/LG/logger_bench.go` — `BenchmarkLogDisabled`
+    (no allocation when level above threshold)
+  - `internal/WAL/WR/encode.go` — `appendPayload` RTMerge case,
+    `decodePayload` RTMerge case
+  - `internal/WAL/WR/encode_test.go` — RTMerge round-trip test
+  - `internal/WAL/FL/fl.go` — `writeBuffer` struct (REQ000184),
+    `batchCommit` WaitGroup (REQ000176), `StartBatch/EndBatch`,
+    `BatchSync` with error propagation
+  - `internal/WAL/FL/fl_integration_test.go` — group commit tests
+  - `internal/WAL/FL/fl_test.go` — benchmarks
 
 ## Current State (audit,2026-06-08)
 
@@ -489,6 +508,8 @@ lists, ≤N bytes for N varint-encoded IDs.
 | `SQL/RE` coverage ≥80% | partial (48.9% → 65.0%, see Gap Analysis) |
 | `LOG/LG` `Debug` at Warn level allocates ≤1.1/op | green (TestLogDisabled_ShortCircuit) |
 | `WAL/WR` RTMerge encode+decode round-trip works | green (TestRoundTripRTMerge) |
+| `WAL/FL` 256 KB writeBuffer pre-allocated | green (newWriteBuffer, TestWriteBufferIntegration) |
+| `WAL/FL` BatchSync group commit with WaitGroup | green (TestBatchSyncGroupCommit, TestBatchSyncErrorPropagation) |
 
 ## Gap Analysis
 
@@ -517,3 +538,7 @@ iteration (REQ000163-part2) should add:
   expression simplification subsystem. The added tests cover
   the "format" and "rewrite" entry points, which are the
   higher-value targets for a rewriter.
+- REQ000176/184 were discovered during v0.13.0 verification
+  as missing WAL infrastructure for TXN integration. Added
+  mid-iteration as "scope expansion" to complete the group
+  commit foundation before TXN wires it up.
