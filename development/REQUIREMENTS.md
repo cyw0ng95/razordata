@@ -29,11 +29,8 @@ Columns for selection:
 | REQ000160 | WAL | Batch commit with `sync.WaitGroup` and write barrier (design in FL cluster) | medium | M | iter-03 (WAL) | `WAL/FL/fl.go` — `BatchSync` implementation |
 | REQ000161 | MEM | Clock-sweep integration details (atomic hand, refKey update, eviction gating) | medium | S | iter-02 (buffer pool) | audit `MEM/BF/bf.go` — verify matches design |
 | REQ000162 | SQL | Plan memoization with SHA256(AST binary encoding) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — canonical AST serialization |
-| REQ000163 | SQL | Rewriter AST normalization (design mentions, verify completeness) | medium | S | iter-07 (RE) | audit `SQL/RE/` — constant fold, predicate pushdown, subquery flatten |
 | REQ000164 | TXN | Epoch manager background goroutine (100ms interval, drain coordination) | high | M | iter-05 (epoch) | `TXN/LC/epoch.go` — add background goroutine if missing |
 | REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | medium | M | iter-04 (compaction) | `ENG/LS/compaction.go` — size budget monitoring |
-| REQ000169 | LOG | Debug-level allocation trade-off documentation (design mentions, verify implementation) | low | S | iter-00 (LG) | audit `LOG/LG/logger.go` — level check before allocation |
-| REQ000170 | WAL | RTMerge record encoding implementation | medium | S | iter-03 (WAL) | `WAL/WR/encode.go` — add merge record encoding |
 | REQ000171 | TXN/VL | WAL integration in commit protocol (write RTCommit/RTData records, call WAL.Sync) | critical | L | iter-06 (VL) | `TXN/VL/protocol.go` — Commit/Insert/Delete must write WAL records per design TXN.md:203-226 |
 | REQ000172 | SYS/SY | Implement6-phase graceful shutdown (stop accept → wait tx → flush → stop goroutines → close subsystems → cleanup) | critical | XL | iter-09 (SY) | Replace `SYS/SY/shutdown.go` (36 lines) with full implementation per SYS.md:196-283 |
 | REQ000173 | SQL/EX | SIMD vectorized operators (columnar batch layout, selection vectors, manual unrolling) | critical | XL | iter-08 (operators) | Create `SQL/EX/operators_vec.go`, `SQL/EX/batch.go` per SQL.md:377-380 |
@@ -51,8 +48,6 @@ Columns for selection:
 | REQ000117 | SQL | `OUTER JOIN` (LEFT/RIGHT/FULL) | critical | M | iter-08 (NestedLoopJoin) | `SQL/EX/join.go` — add outer variants; `SQL/PS` |
 | REQ000126 | SQL | Foreign keys (REFERENCES, ON DELETE/UPDATE) | high | L | iter-11 (UNIQUE), iter-12 (catalog), iter-21 (FKEY index?) | `SQL/PS`, `SQL/EX/constraints.go`, new FK validation in writers |
 | REQ000102 | SYS | Admin CLI `razor-admin` (schema dump, vacuum, manual compact, integrity check) | high | M | iter-12 (catalog), iter-17 (bench coverage) | new `cmd/razor-admin/main.go`, reuse `SQL/EX` for SQL ops |
-| REQ000044 | ENG | `ENG/LS` benchmarks (skiplist insert/find, SST write/read, flush, compaction) | high | S | iter-04 (LSM tree) | `ENG/LS/*_test.go` — add `Benchmark*` per AGENTS.md |
-| REQ000138 | QUAL | `Benchmark*` for every storage component (catch any missing) | high | S | iter-44 (ENG/LS) | audit `ENG/MEM/WAL/FIL` for missing benchmarks |
 | REQ000143 | QUAL | `SQL/RE` coverage: 49% → 80%+ | high | M | iter-07 (RE implementation) | `SQL/RE/*_test.go` — fill error-path branches, subquery flatten cases |
 | REQ000074 | SQL | `IndexScan` real seek (replace prefix-scan fallback) | high | M | iter-08 (IndexScan op) | `SQL/EX/operators.go` — call into real `ENG/ID/` once iter-21 ships, or stub |
 | REQ000034 | WAL | WAL compression (lz4) | low | M | iter-03 (WAL writer) | `WAL/WR/encode.go` |
@@ -102,6 +97,11 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000179 | TXN/VL | Add arena field to transactionSlot struct for per-transaction tracking | iter-16 |
 | REQ000180 | ENG/LS | Dynamic BloomFilter sizing ((N *10 +7) /8 bytes) replace fixed4096 bytes | iter-16 |
 | REQ000186 | ENG/LS | Fix SST file path mismatch: compaction.fileName produces sst/L<N>_<minkey-hex>_<maxkey-hex>_<id>.sst while flush now emits the same shape | iter-16 |
+| REQ000044 | ENG | `ENG/LS` benchmarks (skiplist insert/find, SST write/read, flush, compaction) | iter-17 |
+| REQ000138 | QUAL | `Benchmark*` for every storage component (catch any missing) | iter-17 |
+| REQ000163 | SQL | Rewriter AST normalization (design mentions, verify completeness) | iter-17 (partial: 65.0%%) |
+| REQ000169 | LOG | Debug-level allocation trade-off documentation (level check before allocation) | iter-17 |
+| REQ000170 | WAL | RTMerge record encoding implementation | iter-17 |
 | REQ000191 | WAL/RP | Coverage lift: WAL/RP is at75.2% (multi-segment truncate + ErrUnknownRecord added; shortfall now in resync-window edges) | iter-16 |
 | REQ000001 | LOG | `Logger` wraps `log/slog` with atomic level control | iter-00 |
 | REQ000002 | LOG | Structured key-value output (JSON/text) | iter-00 |
