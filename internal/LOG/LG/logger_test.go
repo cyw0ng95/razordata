@@ -420,3 +420,38 @@ func TestWithSharedLevel(t *testing.T) {
 func TestInterfaceComplianceFull(t *testing.T) {
 	var _ Logger = (*logger)(nil)
 }
+
+// TestLogDisabled_ShortCircuit pins REQ000169 (R17-12): the
+// debug-level allocation trade-off documented in LOG.md:59.
+// The level check in logIfEnabled:192 runs before any slog
+// record construction, so disabled calls skip the heavy
+// formatting and handler invocation.
+//
+// Note: Go's variadic call convention means args ...any
+// construction happens at the call site before logIfEnabled
+// can short-circuit. This test pins that the short-circuit
+// path allocates <=1/op (the variadic slice), not the full
+// slog record allocation (which would be >10 allocs/op).
+// A future Enabled() method could eliminate this allocation,
+// but current design accepts 1 alloc/op as the trade-off.
+func TestLogDisabled_ShortCircuit(t *testing.T) {
+	var buf bytes.Buffer
+	log := New(Options{
+		Format: "text",
+		Output: &buf,
+		Level:  slog.LevelWarn,
+	})
+	allocs := testing.AllocsPerRun(1000, func() {
+		log.Debug("expensive %s %d", "alloc", 42)
+	})
+	// Allow up to 1.1 allocs/op: the variadic slice construction
+	// at call site. Anything higher indicates the level check
+	// is not short-circuiting properly.
+	if allocs > 1.1 {
+		t.Errorf("Debug at Warn level allocated %v/op; expected <=1 (variadic slice only)", allocs)
+	}
+	// Verify nothing was written to output
+	if buf.Len() != 0 {
+		t.Errorf("expected no output, got %q", buf.String())
+	}
+}
