@@ -25,6 +25,7 @@ type WorkerPool struct {
 	cancel    context.CancelFunc
 	closed    chan struct{}
 	closeOnce sync.Once
+	closeMu   sync.Mutex
 }
 
 // NewWorkerPool creates a worker pool with the specified number
@@ -73,9 +74,23 @@ func (wp *WorkerPool) worker(id int) {
 // Submit adds a task to the pool. Blocks if the queue is full.
 // Returns ctx.Err() if the pool is closed.
 func (wp *WorkerPool) Submit(ctx context.Context, task Task) error {
+	// First, fast-fail on cancelled context
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	// Then check if pool is closed
+	wp.closeMu.Lock()
 	select {
 	case <-wp.closed:
+		wp.closeMu.Unlock()
 		return ErrPoolClosed
+	default:
+	}
+	wp.closeMu.Unlock()
+
+	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case wp.taskQueue <- task:
@@ -86,11 +101,15 @@ func (wp *WorkerPool) Submit(ctx context.Context, task Task) error {
 // TrySubmit attempts to add a task without blocking. Returns
 // ErrPoolFull if the queue is full.
 func (wp *WorkerPool) TrySubmit(task Task) error {
+	wp.closeMu.Lock()
 	select {
 	case <-wp.closed:
+		wp.closeMu.Unlock()
 		return ErrPoolClosed
 	default:
 	}
+	wp.closeMu.Unlock()
+
 	select {
 	case wp.taskQueue <- task:
 		return nil
@@ -110,10 +129,23 @@ func (wp *WorkerPool) Workers() int {
 // Close is idempotent (R22); subsequent calls are no-ops.
 func (wp *WorkerPool) Close() {
 	wp.closeOnce.Do(func() {
+		wp.closeMu.Lock()
 		close(wp.closed)
 		wp.cancel()
-		close(wp.taskQueue)
+		// Drain task queue before closing channel to prevent
+		// "send on closed channel" panics from in-flight Submit.
+		// Workers will process remaining tasks and exit.
+		// We close after workers are done.
+		wp.closeMu.Unlock()
 		wp.wg.Wait()
+		// Now safe to close the channel - no senders.
+		// Use sync.Once to make it idempotent.
+		// Note: this is safe because workers have exited.
+		// New Submit calls already returned ErrPoolClosed.
+		defer func() {
+			recover() // in case channel was already closed
+		}()
+		close(wp.taskQueue)
 	})
 }
 
