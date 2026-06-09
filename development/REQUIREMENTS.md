@@ -105,6 +105,30 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000203 | QUAL | Missing benchmarks (FIL/LF, LOG/HK, SQL/PS, SQL/PL have 0) | medium | M | AGENTS.md | add Benchmark* per hot path |
 | REQ000204 | SQL | CREATE INDEX (no implementation, no parser support) | critical | XL | iter-12, iter-21 (ID) | new `SQL/PS`, `SQL/EX`, `ENG/ID/` |
 | REQ000205 | SQL | EXPLAIN SQL syntax (currently only cost calc, not SQL statement) | medium | M | iter-08 | `SQL/PS`, `SQL/EX/explain.go` — accept EXPLAIN/EXPLAIN ANALYZE |
+| REQ000206 | SQL/PS | Add NUMERIC, DATE, TIME, JSON type tokens (LX.token.go) | high | S | iter-07 (PS) | `SQL/LX/token.go` — add type constants, tokenName mapping, keywords |
+| REQ000207 | SQL/PS | Parse VARCHAR(N), DECIMAL(P,S), CHAR(N) parameterized types | high | M | REQ000206 | `SQL/PS/ps.go` — extend parseCastType and ColDef to consume (N) and (P,S) |
+| REQ000208 | SQL/EX | Type affinity system (SQLite-like coercion: TEXT/NUMERIC/INTEGER/REAL/NONE) | high | M | REQ000206 | `SQL/EX/coerce.go` (new) — affinity matrix, implicit coercion in Eval |
+| REQ000209 | SQL/PS | Parse DEFAULT clause values (DEFAULT 0, DEFAULT 'x', DEFAULT NULL) | high | S | iter-07 | `SQL/PS/ps.go` — ColDef.Default already in AST; wire it into CREATE TABLE parser |
+| REQ000210 | SQL/PS | Parse CHECK constraints (CHECK (col > 0)) | high | M | iter-07 | `SQL/PS/ps.go`, `SQL/LX/token.go` — add T_CHECK, parseCheckConstraint |
+| REQ000211 | SQL/EX | Enforce CHECK constraints on INSERT/UPDATE | high | S | REQ000210 | `SQL/EX/constraints.go` — extend CHECK validation in writers |
+| REQ000212 | SQL/PS | Parse ON CONFLICT clause (INSERT ... ON CONFLICT DO NOTHING/UPDATE) | medium | M | iter-07 | `SQL/PS/ps.go` — extend parseInsert with conflict clause |
+| REQ000213 | SQL/EX | UPSERT executor (INSERT...ON CONFLICT) | medium | M | REQ000212 | `SQL/EX/writers.go` — conflict resolution path |
+| REQ000214 | SQL/PS | Parse RETURNING clause (INSERT/UPDATE/DELETE ... RETURNING col) | medium | S | iter-07 | `SQL/PS/ps.go` — add to Insert, Update, Delete AST |
+| REQ000215 | SQL/EX | RETURNING executor | medium | M | REQ000214 | `SQL/EX/writers.go` — return rows from DML |
+| REQ000216 | SQL/PS | Parse WITH clause (CTE: WITH x AS (...) SELECT...) | medium | M | iter-07 | `SQL/PS/ps.go` — parseWith, add StmtWith AST |
+| REQ000217 | SQL/PL | CTE planner (CTE materialization vs inline expansion) | medium | M | REQ000216 | `SQL/PL/planner.go` — decide materialization based on usage count |
+| REQ000218 | SQL/EX | Enforce HAVING filter (currently GROUP BY+HAVING skipped) | high | S | iter-08 | `SQL/EX/planner.go:275` — wire Having filter (line exists but untested) |
+| REQ000219 | SQL/PS | Parse window functions (OVER, PARTITION BY, ROW_NUMBER, RANK) | medium | L | iter-07 | `SQL/PS/ps.go`, `SQL/PS/ast.go` — WindowFunc AST, parseWindowSpec |
+| REQ000220 | SQL/EX | Window function executor (ROW_NUMBER, RANK, SUM OVER, LAG, LEAD) | medium | L | REQ000219 | `SQL/EX/window.go` (new) — partition-based aggregation |
+| REQ000221 | SQL/PS | Parse SAVEPOINT / RELEASE / ROLLBACK TO | medium | M | iter-06 | `SQL/PS/ps.go` — extend transaction statements |
+| REQ000222 | TXN/VL | Savepoint implementation (nested transaction markers) | medium | M | REQ000221 | `TXN/VL/savepoint.go` (new) — savepoint stack, partial rollback |
+| REQ000223 | SQL/PS | Parse CREATE VIEW | medium | S | iter-07 | `SQL/PS/ps.go` — CreateView AST |
+| REQ000224 | SQL/PL | View resolution (rewrite SELECT to subquery) | medium | S | REQ000223 | `SQL/PL/planner.go` — view expansion |
+| REQ000225 | SYS | Pragmas (cache_size, journal_mode, synchronous) | medium | S | iter-12 | `SYS/SY/sy.go` — apply on Open |
+| REQ000226 | FIL | File locking (flock) for multi-process access | low | S | iter-01 | `FIL/FS/fs.go` — optional via Options |
+| REQ000227 | SQL/EX | Built-in aggregate extensions (group_concat, string_agg, percentile) | medium | M | iter-08 | `SQL/EX/aggregate.go` — extend Aggregate with string accumulation |
+| REQ000228 | SYS/SY | Network server (TCP/gRPC listener; SYS.Serve) | low | XL | iter-12 | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
+| REQ000229 | SQL/EX | DECIMAL type storage (precision/scale arithmetic) | medium | M | REQ000207 | `SQL/EX/eval.go`, type handling — big.Float or decimal library |
 | REQ000176 | WAL | Batch commit with sync.WaitGroup and write barrier | iter-17 |
 | REQ000184 | WAL | 256 KB pre-allocated writeBuffer for batched WAL writes | iter-17 |
 | REQ000144 | SQL | SIMD vectorized execution (batch + 4-wide unrolling + selection vectors) | iter-19 (Phase 1) |
