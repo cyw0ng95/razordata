@@ -92,6 +92,19 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000170 | WAL | RTMerge record encoding implementation | iter-17 |
 | REQ000191 | WAL/RP | Coverage lift: WAL/RP is at75.2% (multi-segment truncate + ErrUnknownRecord added; shortfall now in resync-window edges) | iter-16 |
 | REQ000192 | SQL/EX | Adaptive vectorization threshold (auto-fallback to row-at-a-time for tables <100K rows) | medium | M | iter-19 | SQL/EX/operators_vec.go — add row-count check, route to row path for small data (see iter-19 Phase 3 Outcome)
+| REQ000193 | LOG/HK | Implement MetricHook counters (queryCount, rowsReturned, bytesRead, bytesWritten) | high | M | iter-00 (HK), REQ000006 | LOG/HK/metric.go — wire OnLog to atomic counters; fields exist but never increment |
+| REQ000194 | LOG/HK | Implement TraceHook for SQL query tracing (start/end with timing) | high | M | iter-00 (HK), REQ000005 | LOG/HK/trace.go — emit structured trace records on SQL query boundaries |
+| REQ000195 | LOG/HK | Implement ProfileHook (pprof dump on Error events) | medium | M | iter-00 (HK), REQ000007 | LOG/HK/profile.go — call pprof.Lookup("heap").WriteTo on Error events |
+| REQ000196 | SQL/EX | Use HashAggregate in planner (currently NewHashAggregate is never called) | high | S | iter-08 | SQL/EX/planner.go:271 — switch to NewHashAggregate for >1000 row datasets |
+| REQ000197 | SQL/EX | OUTER JOIN executor (planner currently skips non-INNER joins at planner.go:234) | critical | M | iter-08 | SQL/EX/planner.go, join.go — implement LEFT JOIN with NULL-padded inner side |
+| REQ000198 | ENG/LS | Skiplist sync.Pool for scratch arrays (2 allocs/insert) | high | S | iter-04 | ENG/LS/skiplist.go:51-52 — replace make() with sync.Pool reusable slices |
+| REQ000199 | MEM/BF | Sharded buffer pool mutex (reduce hash table contention) | medium | M | iter-02 | MEM/BF/bf.go:160 — per-bucket or per-shard locks |
+| REQ000200 | WAL/WR | Per-segment locks (replace global write mutex) | medium | L | iter-03, iter-17 (group commit) | WAL/WR/wr.go:171 — shard by segment; depends on group commit being wired |
+| REQ000201 | QUAL | SQL/PL coverage 30.6% → 80% (cost model, index selection, plan caching tests) | high | M | iter-08 | SQL/PL/*_test.go — add cost/plan tests |
+| REQ000202 | SQL/PS | Parser tests for CASE/EXISTS (parseCaseExpr 0%, parseExists 0%) | medium | S | iter-07 | SQL/PS/ps_test.go — add table-driven tests |
+| REQ000203 | QUAL | Missing benchmarks (FIL/LF, LOG/HK, SQL/PS, SQL/PL have 0) | medium | M | AGENTS.md | add Benchmark* per hot path |
+| REQ000204 | SQL | CREATE INDEX (no implementation, no parser support) | critical | XL | iter-12, iter-21 (ID) | new `SQL/PS`, `SQL/EX`, `ENG/ID/` |
+| REQ000205 | SQL | EXPLAIN SQL syntax (currently only cost calc, not SQL statement) | medium | M | iter-08 | `SQL/PS`, `SQL/EX/explain.go` — accept EXPLAIN/EXPLAIN ANALYZE |
 | REQ000176 | WAL | Batch commit with sync.WaitGroup and write barrier | iter-17 |
 | REQ000184 | WAL | 256 KB pre-allocated writeBuffer for batched WAL writes | iter-17 |
 | REQ000144 | SQL | SIMD vectorized execution (batch + 4-wide unrolling + selection vectors) | iter-19 (Phase 1) |
