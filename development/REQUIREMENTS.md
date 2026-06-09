@@ -36,7 +36,6 @@ Columns for selection:
 | REQ000173 | SQL/EX | SIMD vectorized operators (columnar batch layout, selection vectors, manual unrolling) | critical | XL | iter-08 (operators) | Create `SQL/EX/operators_vec.go`, `SQL/EX/batch.go` per SQL.md:377-380 |
 | REQ000174 | ENG/LS | BloomFilter double-hash with FNV-1a (seeds0x811C9DC5,0x01000193) replace CRC32 | critical | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with ENG.md:93-98 |
 | REQ000175 | TXN/LC | Fix hazard pointer Publish (store to single slot, not all) and implement actual memory reclamation | high | L | iter-05 (hazard/epoch) | `TXN/LC/hazard.go` fix Publish, `TXN/LC/epoch.go` implement Reclaim wait+free per TXN.md:96-121 |
-| REQ000176 | WAL/FL | Implement batch commit with sync.WaitGroup and write barrier (group multiple fsync into one) | high | M | iter-03 (WAL) | Replace `WAL/FL/fl.go` Sync/BatchSync stubs with actual implementation per WAL.md:103-117 |
 | REQ000181 | TXN/LC | Fix goroutine ID tracking (use real goroutine identity, not atomic counter) | medium | M | iter-05 (epoch) | `TXN/LC/epoch.go` — proper goroutine tracking per TXN.md:113-121 |
 | REQ000182 | SQL/EX | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | medium | L | iter-08 (Sort) | Create `SQL/EX/sort_parallel.go` per SQL.md:367-372 |
 | REQ000183 | SQL/EX | Expression evaluation SIMD (batch predicate EvalBatch function) | medium | M | iter-08 (eval) | `SQL/EX/eval.go` — add vectorized EvalBatch per SQL.md:303-306 |
@@ -90,7 +89,6 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000154 | SYS | Background-goroutine coordination (compaction, flush, epoch, hook dispatcher) | iter-14 |
 | REQ000166 | SYS | Per-subsystem `Close()` ordering in Phase 5 of shutdown | iter-14 |
 | REQ000178 | SYS/SY | `validateOptions` (duplicate of REQ000152, same code) | iter-14 |
-| REQ000184 | WAL/FL | Implement WriteBuffer struct with 256 KB pre-allocated buffer | iter-15 |
 | REQ000155 | ENG | Catalog persistence across restarts | iter-12 (consolidated with REQ000127) |
 | REQ000009 | LOG | Log compression after rotation (gzip) | iter-16 |
 | REQ000167 | SQL | Parameter binding type coercion (Go int -> BIGINT, string -> INT error) | iter-16 |
@@ -103,8 +101,8 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000169 | LOG | Debug-level allocation trade-off documentation (level check before allocation) | iter-17 |
 | REQ000170 | WAL | RTMerge record encoding implementation | iter-17 |
 | REQ000191 | WAL/RP | Coverage lift: WAL/RP is at75.2% (multi-segment truncate + ErrUnknownRecord added; shortfall now in resync-window edges) | iter-16 |
-| REQ000176 | WAL | Batch commit with sync.WaitGroup and write barrier | iter-18 |
-| REQ000184 | WAL | 256 KB pre-allocated writeBuffer for batched WAL writes | iter-18 |
+| REQ000176 | WAL | Batch commit with sync.WaitGroup and write barrier | iter-17 |
+| REQ000184 | WAL | 256 KB pre-allocated writeBuffer for batched WAL writes | iter-17 |
 | REQ000001 | LOG | `Logger` wraps `log/slog` with atomic level control | iter-00 |
 | REQ000002 | LOG | Structured key-value output (JSON/text) | iter-00 |
 | REQ000003 | LOG | Log file rotation on size threshold | iter-00 |
