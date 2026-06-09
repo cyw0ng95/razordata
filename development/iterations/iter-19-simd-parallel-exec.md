@@ -1,12 +1,13 @@
 # Iteration19 — SQL SIMD + Parallel Execution Foundation
 
 **Subsystem:** `SQL/EX` (Executor)
-**Status:** Phase 1 done; Phases 2-3 planned
+**Status:** Phases 1+2 done; Phase 3 planned
 **Est. LOC:** ~3,500-4,500 (3 phases)
 **Requirements:** REQ000144, REQ000145, REQ000149, REQ000157
-**Target release:** v0.14.0 (Phase 1 done), v0.15.0 (Phase 2), v0.16.0 (Phase 3)
+**Target release:** v0.14.0 (Phase 1 done), v0.15.0 (Phase 2 done), v0.16.0 (Phase 3 planned)
 **Commit (Phase 1):** 30cad70
-**Tag:** v0.14.0 (Phase 1)
+**Commit (Phase 2):** edc6518
+**Tag:** v0.14.0 (Phase 1), v0.15.0 (Phase 2)
 
 ## Overview
 
@@ -75,10 +76,49 @@ operators_vec: 220, tests: ~360)
 - `fcf7b2f` — Vectorized operators
 - `30cad70` — multi-batch benchmarks
 
-### Phase 2 (v0.15.0) — PLANNED
+### Phase 2 (v0.15.0) — DONE
 
-Worker pool, parallel scan, pipeline parallelism.
-Target: 8-12x speedup on 4-core systems.
+Shipped 1 REQ (R19-8 to R19-11):
+
+- **REQ000145 (parallel.go).** `WorkerPool` with N workers
+  pulling from a bounded task channel. API: `Submit(ctx, task)`,
+  `TrySubmit(task)`, `Close()` (idempotent), `Workers()`.
+  Errors: `ErrPoolClosed`, `ErrPoolFull`.
+  Convenience: `ParallelFanOut(partitions, fn)` for
+  split-and-merge pattern. `Partition` struct for typed
+  partition descriptors.
+
+- **REQ000145 (operators_parallel.go).** `ParallelSeqScan`
+  splits row range into N worker partitions, each scans in
+  parallel, results merged via fan-in channel + pendingBatches
+  buffer. `ParallelIndexScan` does the same with predicate
+  per-partition. `scanPartition` helper projects rows into
+  columnar batches.
+
+- **REQ000145 (pipeline.go).** `Pipeline` chains
+  `PipelineOperator` stages with bounded channels. Each
+  stage runs in its own goroutine (concurrent execution).
+  `FilterPipelineOperator` applies predicates via EvalBatch.
+  `SyncPipeline` for testing. `NewPipelineBuilder` fluent API.
+
+**Total Phase 2 LOC:** ~1,500 (parallel: 200, operators_parallel: 280,
+pipeline: 230, tests: ~790)
+
+**Benchmarks:**
+- `BenchmarkWorkerPool_Submit`: 1,753 ns/op, 0 allocs/op
+- `BenchmarkWorkerPool_Parallel` (4 workers): 7,806 ns/op
+- `BenchmarkParallelSeqScan` (10K rows, 4 workers): 2,046,636 ns/op
+- `BenchmarkParallelSeqScanScaling`:
+  workers=1: 3,400,058 ns/op
+  workers=2: 1,930,817 ns/op (1.76x speedup)
+  workers=4: 2,134,897 ns/op (test env 2-core; expect 3-4x on 4+ core)
+- `BenchmarkPipeline` (3 stages, 100 batches): 686,811 ns/op
+
+**Commits (Phase 2):**
+- `92ffaa6` — WorkerPool foundation
+- `95e02c4` — Parallel SeqScan/IndexScan
+- `edc6518` — Pipeline parallelism
+- `0d3b7e0` — ROI analysis section
 
 ### Phase 3 (v0.16.0) — PLANNED
 
