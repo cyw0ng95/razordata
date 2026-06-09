@@ -9,9 +9,7 @@
 
 Columns for selection:
 - **Priority**: critical / high / medium / low
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 - **Effort**: rough size in person-days (S = ≤1, M = 1-3, L = 3-7, XL = 7+)
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 - **Deps**: prerequisite REQs that must ship first
 - **Touches**: packages / files that need to change
 
@@ -19,74 +17,46 @@ Columns for selection:
 |---|---|---|---|---|---|---|
 | REQ000147 | TXN | Complete commit protocol implementation (6 phases: Begin/Read/Write/Pre-commit/Commit/Post-commit, Abort flow) | critical | L | iter-06 (VL) | `TXN/VL/protocol.go` — add detailed CAS loops, validation scan, error handling |
 | REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with design spec |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000150 | SQL | Parallel Sort implementation (sample sort for top-k, external merge sort for large datasets) | medium | L | REQ000145 (parallel exec) | new `SQL/EX/sort_parallel.go` |
 | REQ000151 | SQL | Parallel HashJoin (sharded hash tables, parallel build and probe) | low | XL | REQ000145 (parallel exec) | `SQL/EX/join.go` — extend with parallel variants |
 | REQ000156 | SQL | Executor cost model integration (design mentions cost estimation, no operator selection based on cost) | medium | M | iter-08 (planner) | `SQL/EX/planner.go` — use cost for operator selection |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000158 | TXN | Hazard pointer publication/clear protocol in Read flow (design specifies, verify implementation) | high | S | iter-05 (hazard) | audit `TXN/LC/hazard.go` + `TXN/SN/snapshot.go` |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000159 | TXN | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | medium | M | iter-05 (arena) | `TXN/MV/arena.go` — add lazy init, exhaustion handling |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000160 | WAL | Batch commit with `sync.WaitGroup` and write barrier (design in FL cluster) | medium | M | iter-03 (WAL) | `WAL/FL/fl.go` — `BatchSync` implementation |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000161 | MEM | Clock-sweep integration details (atomic hand, refKey update, eviction gating) | medium | S | iter-02 (buffer pool) | audit `MEM/BF/bf.go` — verify matches design |
 | REQ000162 | SQL | Plan memoization with SHA256(AST binary encoding) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — canonical AST serialization |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000164 | TXN | Epoch manager background goroutine (100ms interval, drain coordination) | high | M | iter-05 (epoch) | `TXN/LC/epoch.go` — add background goroutine if missing |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | medium | M | iter-04 (compaction) | `ENG/LS/compaction.go` — size budget monitoring |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000171 | TXN/VL | WAL integration in commit protocol (write RTCommit/RTData records, call WAL.Sync) | critical | L | iter-06 (VL) | `TXN/VL/protocol.go` — Commit/Insert/Delete must write WAL records per design TXN.md:203-226 |
 | REQ000172 | SYS/SY | Implement6-phase graceful shutdown (stop accept → wait tx → flush → stop goroutines → close subsystems → cleanup) | critical | XL | iter-09 (SY) | Replace `SYS/SY/shutdown.go` (36 lines) with full implementation per SYS.md:196-283 |
 | REQ000174 | ENG/LS | BloomFilter double-hash with FNV-1a (seeds0x811C9DC5,0x01000193) replace CRC32 | critical | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with ENG.md:93-98 |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000175 | TXN/LC | Fix hazard pointer Publish (store to single slot, not all) and implement actual memory reclamation | high | L | iter-05 (hazard/epoch) | `TXN/LC/hazard.go` fix Publish, `TXN/LC/epoch.go` implement Reclaim wait+free per TXN.md:96-121 |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000181 | TXN/LC | Fix goroutine ID tracking (use real goroutine identity, not atomic counter) | medium | M | iter-05 (epoch) | `TXN/LC/epoch.go` — proper goroutine tracking per TXN.md:113-121 |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000182 | SQL/EX | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | medium | L | iter-08 (Sort) | Create `SQL/EX/sort_parallel.go` per SQL.md:367-372 |
 | REQ000183 | SQL/EX | Expression evaluation SIMD (batch predicate EvalBatch function) | medium | M | iter-08 (eval) | `SQL/EX/eval.go` — add vectorized EvalBatch per SQL.md:303-306 |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000185 | SQL/EX | Plan memoization with SHA256 canonical AST binary encoding (not JSON) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — implement binary serialization per SQL.md:215 |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
-| REQ000035 | WAL | Corruption recovery policy: detect torn write, skip vs. fail | critical | S | iter-13 (recovery) | **MOVED TO DONE** — segment file header + envelope CRC; tail tolerated, mid-segment fails loud, Stats counters |
 | REQ000061 | TXN | Read-committed isolation (default); upgrade from v1 read-uncommitted | critical | L | iter-05/06 (MVCC + VL) | `TXN/VL/protocol.go`, `TXN/SN/snapshot.go` — re-snapshot per statement |
 | REQ000062 | TXN | MVCC reads inside transactions (SELECT in tx sees own writes through Tx iterator) | critical | L | iter-09 (shadow writeSet) | `TXN/SN`, `SQL/EX` — switch session to Tx-aware iterator |
 | REQ000113 | SQL | `GROUP BY` (single + multi col; with/without aggregates) | critical | M | iter-08 (Aggregate) | `SQL/PS`, `SQL/EX/aggregate.go` (extend HashAggregate), `SQL/RE` (pushdown) |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000117 | SQL | `OUTER JOIN` (LEFT/RIGHT/FULL) | critical | M | iter-08 (NestedLoopJoin) | `SQL/EX/join.go` — add outer variants; `SQL/PS` |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000126 | SQL | Foreign keys (REFERENCES, ON DELETE/UPDATE) | high | L | iter-11 (UNIQUE), iter-12 (catalog), iter-21 (FKEY index?) | `SQL/PS`, `SQL/EX/constraints.go`, new FK validation in writers |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000102 | SYS | Admin CLI `razor-admin` (schema dump, vacuum, manual compact, integrity check) | high | M | iter-12 (catalog), iter-17 (bench coverage) | new `cmd/razor-admin/main.go`, reuse `SQL/EX` for SQL ops |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000143 | QUAL | `SQL/RE` coverage: 49% → 80%+ | high | M | iter-07 (RE implementation) | `SQL/RE/*_test.go` — fill error-path branches, subquery flatten cases |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000074 | SQL | `IndexScan` real seek (replace prefix-scan fallback) | high | M | iter-08 (IndexScan op) | `SQL/EX/operators.go` — call into real `ENG/ID/` once iter-21 ships, or stub |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000034 | WAL | WAL compression (lz4) | low | M | iter-03 (WAL writer) | `WAL/WR/encode.go` |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000045 | ENG | Secondary indexes (non-PK columns; lookup by `__idx__:<table>:<col>:<val>`) | low | XL | iter-12 (catalog), iter-21 (ID) | new `ENG/ID/` package, `SQL/PL` index selection |
 | REQ000047 | ENG | Prefix bloom filters for range scans | low | M | iter-04 (bloom) | `ENG/LS/sst_writer.go` |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000048 | ENG | Table registry persistence (`ENG/TB/`) | medium | L | iter-12 (catalog basic) | new `ENG/TB/tb.go` |
 | REQ000049 | ENG | Schema cluster (`ENG/SC/`) split from LS | low | M | iter-04 | new `ENG/SC/sc.go`; move `TableSchema` from LS |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000050 | ENG | Deparser cluster (`ENG/DP/`) split from LS | low | M | iter-04 | new `ENG/DP/dp.go`; move row/block encoding |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000064 | TXN | Generational arena (reduce GC pressure vs. single allocation) | low | L | iter-05 (arena) | `TXN/MV/arena.go` |
 | REQ000084 | SQL | `RE` subquery planning (not just flatten) | medium | M | iter-07 (RE), iter-08 (Subq op) | `SQL/RE/subq.go`, `SQL/PL/planner.go` |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000085 | SQL | Histogram-based selectivity (replace uniform distribution) | medium | M | iter-12 (catalog stats) | new stats storage, `SQL/PL/estimateCost` |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000086 | SQL | Parallel query execution (operators in goroutines, merge via channel) | low | XL | iter-08 (operators) | `SQL/EX/ex.go` — channel-based Next; cancellation hygiene |
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | low | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
 | REQ000101 | SYS | Prometheus metrics endpoint (`/metrics` HTTP) | medium | S | iter-00 (MetricHook), iter-100 (server) | `LOG/HK/metric.go` export, `SYS/SV/sv.go` |
 | REQ000123 | TXN-API | Configurable isolation levels (`READ COMMITTED` / `REPEATABLE READ` / `SERIALIZABLE` via `SET TRANSACTION`) | medium | M | iter-61 (RC implementation) | `SQL/PS`, `SQL/EX`, `TXN/SN/snapshot.go`, `AP.Options` |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
-| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | critical | XL | REQ000144 | SQL/EX: parallel.go, operators_parallel.go, pipeline.go (iter-19 Phase 2 v0.15.0) |
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
 
@@ -131,6 +101,7 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000149 | SQL | Columnar batch memory management (sync.Pool for 1024-row batches) | iter-19 (Phase 1) |
 | REQ000157 | SQL | Expression evaluation SIMD acceleration (batch predicate) | iter-19 (Phase 1) |
 | REQ000173 | SQL/EX | SIMD vectorized operators (consolidated into REQ000144) | iter-19 (Phase 1) |
+| REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | iter-19 (Phase 2) |
 | REQ000001 | LOG | `Logger` wraps `log/slog` with atomic level control | iter-00 |
 | REQ000002 | LOG | Structured key-value output (JSON/text) | iter-00 |
 | REQ000003 | LOG | Log file rotation on size threshold | iter-00 |
