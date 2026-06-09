@@ -18,7 +18,6 @@ Columns for selection:
 | REQ000147 | TXN | Complete commit protocol implementation (6 phases: Begin/Read/Write/Pre-commit/Commit/Post-commit, Abort flow) | critical | L | iter-06 (VL) | `TXN/VL/protocol.go` — add detailed CAS loops, validation scan, error handling |
 | REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with design spec |
 | REQ000156 | SQL | Executor cost model integration (design mentions cost estimation, no operator selection based on cost) | medium | M | iter-08 (planner) | `SQL/EX/planner.go` — use cost for operator selection |
-| REQ000158 | TXN | Hazard pointer publication/clear protocol in Read flow (design specifies, verify implementation) | high | S | iter-05 (hazard) | audit `TXN/LC/hazard.go` + `TXN/SN/snapshot.go` |
 | REQ000159 | TXN | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | medium | M | iter-05 (arena) | `TXN/MV/arena.go` — add lazy init, exhaustion handling |
 | REQ000160 | WAL | Batch commit with `sync.WaitGroup` and write barrier (design in FL cluster) | medium | M | iter-03 (WAL) | `WAL/FL/fl.go` — `BatchSync` implementation |
 | REQ000161 | MEM | Clock-sweep integration details (atomic hand, refKey update, eviction gating) | medium | S | iter-02 (buffer pool) | audit `MEM/BF/bf.go` — verify matches design |
@@ -26,7 +25,6 @@ Columns for selection:
 | REQ000164 | TXN | Epoch manager background goroutine (100ms interval, drain coordination) | high | M | iter-05 (epoch) | `TXN/LC/epoch.go` — add background goroutine if missing |
 | REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | medium | M | iter-04 (compaction) | `ENG/LS/compaction.go` — size budget monitoring |
 | REQ000171 | TXN/VL | WAL integration in commit protocol (write RTCommit/RTData records, call WAL.Sync) | critical | L | iter-06 (VL) | `TXN/VL/protocol.go` — Commit/Insert/Delete must write WAL records per design TXN.md:203-226 |
-| REQ000172 | SYS/SY | Implement6-phase graceful shutdown (stop accept → wait tx → flush → stop goroutines → close subsystems → cleanup) | critical | XL | iter-09 (SY) | Replace `SYS/SY/shutdown.go` (36 lines) with full implementation per SYS.md:196-283 |
 | REQ000174 | ENG/LS | BloomFilter double-hash with FNV-1a (seeds0x811C9DC5,0x01000193) replace CRC32 | critical | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with ENG.md:93-98 |
 | REQ000175 | TXN/LC | Fix hazard pointer Publish (store to single slot, not all) and implement actual memory reclamation | high | L | iter-05 (hazard/epoch) | `TXN/LC/hazard.go` fix Publish, `TXN/LC/epoch.go` implement Reclaim wait+free per TXN.md:96-121 |
 | REQ000181 | TXN/LC | Fix goroutine ID tracking (use real goroutine identity, not atomic counter) | medium | M | iter-05 (epoch) | `TXN/LC/epoch.go` — proper goroutine tracking per TXN.md:113-121 |
@@ -101,6 +99,8 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000157 | SQL | Expression evaluation SIMD acceleration (batch predicate) | iter-19 (Phase 1) |
 | REQ000173 | SQL/EX | SIMD vectorized operators (consolidated into REQ000144) | iter-19 (Phase 1) |
 | REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | iter-19 (Phase 2) |
+| REQ000158 | TXN | Hazard pointer publication/clear protocol (split into PublishCurrent/PublishNext) | iter-15 |
+| REQ000172 | SYS/SY | 6-phase graceful shutdown implementation per SYS.md:196-283 | iter-14 |
 | REQ000150 | SQL | Parallel Sort implementation (sample sort for top-k) | iter-19 (Phase 3) |
 | REQ000001 | LOG | `Logger` wraps `log/slog` with atomic level control | iter-00 |
 | REQ000002 | LOG | Structured key-value output (JSON/text) | iter-00 |
