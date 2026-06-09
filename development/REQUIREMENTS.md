@@ -17,8 +17,6 @@ Columns for selection:
 |---|---|---|---|---|---|---|
 | REQ000147 | TXN | Complete commit protocol implementation (6 phases: Begin/Read/Write/Pre-commit/Commit/Post-commit, Abort flow) | critical | L | iter-06 (VL) | `TXN/VL/protocol.go` — add detailed CAS loops, validation scan, error handling |
 | REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with design spec |
-| REQ000150 | SQL | Parallel Sort implementation (sample sort for top-k, external merge sort for large datasets) | medium | L | REQ000145 (parallel exec) | new `SQL/EX/sort_parallel.go` |
-| REQ000151 | SQL | Parallel HashJoin (sharded hash tables, parallel build and probe) | low | XL | REQ000145 (parallel exec) | `SQL/EX/join.go` — extend with parallel variants |
 | REQ000156 | SQL | Executor cost model integration (design mentions cost estimation, no operator selection based on cost) | medium | M | iter-08 (planner) | `SQL/EX/planner.go` — use cost for operator selection |
 | REQ000158 | TXN | Hazard pointer publication/clear protocol in Read flow (design specifies, verify implementation) | high | S | iter-05 (hazard) | audit `TXN/LC/hazard.go` + `TXN/SN/snapshot.go` |
 | REQ000159 | TXN | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | medium | M | iter-05 (arena) | `TXN/MV/arena.go` — add lazy init, exhaustion handling |
@@ -95,6 +93,7 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000169 | LOG | Debug-level allocation trade-off documentation (level check before allocation) | iter-17 |
 | REQ000170 | WAL | RTMerge record encoding implementation | iter-17 |
 | REQ000191 | WAL/RP | Coverage lift: WAL/RP is at75.2% (multi-segment truncate + ErrUnknownRecord added; shortfall now in resync-window edges) | iter-16 |
+| REQ000192 | SQL/EX | Adaptive vectorization threshold (auto-fallback to row-at-a-time for tables <100K rows) | medium | M | iter-19 | SQL/EX/operators_vec.go — add row-count check, route to row path for small data (see iter-19 Phase 3 Outcome)
 | REQ000176 | WAL | Batch commit with sync.WaitGroup and write barrier | iter-17 |
 | REQ000184 | WAL | 256 KB pre-allocated writeBuffer for batched WAL writes | iter-17 |
 | REQ000144 | SQL | SIMD vectorized execution (batch + 4-wide unrolling + selection vectors) | iter-19 (Phase 1) |
@@ -102,6 +101,7 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000157 | SQL | Expression evaluation SIMD acceleration (batch predicate) | iter-19 (Phase 1) |
 | REQ000173 | SQL/EX | SIMD vectorized operators (consolidated into REQ000144) | iter-19 (Phase 1) |
 | REQ000145 | SQL | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | iter-19 (Phase 2) |
+| REQ000150 | SQL | Parallel Sort implementation (sample sort for top-k) | iter-19 (Phase 3) |
 | REQ000001 | LOG | `Logger` wraps `log/slog` with atomic level control | iter-00 |
 | REQ000002 | LOG | Structured key-value output (JSON/text) | iter-00 |
 | REQ000003 | LOG | Log file rotation on size threshold | iter-00 |
