@@ -287,3 +287,60 @@ func BenchmarkRowFilter_Fallback(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkVectorizedFilter_MultiBatch measures the full
+// scan + filter pipeline across 10 batches (10K rows).
+// This shows the real-world speedup of vectorized execution
+// over the row-at-a-time fallback for the Eval-based path.
+func BenchmarkVectorizedFilter_MultiBatch(b *testing.B) {
+	const n = 10 * 1024
+	rows := make([]Row, n)
+	for i := 0; i < n; i++ {
+		rows[i] = Row{
+			Cols:  []string{"id"},
+			Types: []int{int(LX.T_INT_KW)},
+			Data:  []any{int64(i)},
+		}
+	}
+	schema := []string{"id"}
+	types := []LX.TokenType{LX.T_INT_KW}
+	pred := &PS.BinaryExpr{
+		Left:  &PS.Ident{Name: "id"},
+		Op:    int(LX.T_GE),
+		Right: &PS.NumberLiteral{Val: 5000},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		src := &rowSourceForTest{rows: rows}
+		scan := NewVectorizedSeqScan(src, schema, types)
+		filter := NewVectorizedFilter(scan, pred)
+		for {
+			batch, _ := filter.NextBatch(context.Background())
+			if batch == nil {
+				break
+			}
+			batch.Put()
+		}
+		filter.Close()
+	}
+}
+
+// BenchmarkEvalDirect_Int64GT measures the pure vectorized
+// fast path (compareInt64ColLit) on 1024 rows.
+// This is the "raw SIMD-like" path, free of scan/alloc overhead.
+func BenchmarkEvalDirect_Int64GT(b *testing.B) {
+	const n = 1024
+	batch := GetBatch(1)
+	defer batch.Put()
+	for i := 0; i < n; i++ {
+		batch.AppendRow(0, LX.T_INT_KW, int64(i), false)
+		batch.AdvanceSize()
+	}
+	col := batch.Cols[0]
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = compareInt64ColLit(col, 512, int(LX.T_GT), n)
+	}
+}
