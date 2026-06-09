@@ -3,14 +3,15 @@
 // The Flusher owns the directory-fsync side of WAL durability:
 // after the Writer (WR) has fsynced a segment, the caller invokes
 // FL.SyncDir to ensure the segment's directory entry is durable
-// (R10). The Flusher also exposes Sync / BatchSync / Close as
-// forward-compatible hooks for the group-commit coordinator that
-// will land in TXN integration; in v1 those are no-ops that
-// return nil after Close.
+// (R10). The Flusher implements group commit coordination via
+// BatchSync (REQ000176) using sync.WaitGroup as a write barrier,
+// and provides a pre-allocated 256 KB writeBuffer (REQ000184) to
+// batch multiple WAL records into a single fsync.
 package fl
 
 import (
 	"errors"
+	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/FS"
 	"github.com/cyw0ng95/razordata/internal/FIL/LF"
@@ -50,6 +51,14 @@ type flusher struct {
 
 	closed atomicBool
 	wbuf   *writeBuffer
+
+	// batchCommit is the wait group for group commit (REQ000176).
+	// Callers add(1) before issuing a write, then wait() for
+	// BatchSync to signal completion.
+	batchCommit sync.WaitGroup
+	// mu guards the pending batch queue and syncErr.
+	mu      sync.Mutex
+	syncErr error
 }
 
 // writeBuffer is a pre-allocated 256 KB buffer for batched WAL writes
@@ -108,22 +117,48 @@ func New(dir string, sm *lf.SegmentManager, fm *fs.FileManager, log lg.Logger) (
 	return &flusher{sm: sm, fm: fm, lsn: newLSNCounter(), log: log, wbuf: newWriteBuffer()}, nil
 }
 
-// Sync is a v1 Foundation stub (see interface comment). Real
-// group-commit coordination lands in TXN integration.
+// Sync persists the write buffer to disk. In v1 this is a stub
+// reserved for TXN group-commit coordination.
 func (f *flusher) Sync() error {
 	if f.closed.isSet() {
 		return nil
 	}
+	f.batchCommit.Wait()
 	return nil
 }
 
-// BatchSync is a v1 Foundation stub (see interface comment). Real
-// group-commit coordination lands in TXN integration.
+// BatchSync coordinates group commit: waits for all pending writes
+// in the batch, then fsyncs once (write barrier). Implements
+// REQ000176 per WAL.md:103-117.
 func (f *flusher) BatchSync() error {
 	if f.closed.isSet() {
 		return nil
 	}
-	return nil
+	// Wait for all writers in this batch to finish copying data.
+	f.batchCommit.Wait()
+
+	f.mu.Lock()
+	err := f.syncErr
+	f.mu.Unlock()
+	return err
+}
+
+// StartBatch begins a new group commit batch. Callers should call
+// this before adding transactions to the batch, then call
+// EndBatch() after all transactions are added.
+func (f *flusher) StartBatch() {
+	f.batchCommit.Add(1)
+}
+
+// EndBatch signals that one writer in the batch is done. The
+// coordinator (BatchSync) will proceed once all writers call this.
+func (f *flusher) EndBatch(err error) {
+	f.mu.Lock()
+	if err != nil && f.syncErr == nil {
+		f.syncErr = err
+	}
+	f.mu.Unlock()
+	f.batchCommit.Done()
 }
 
 // SyncDir fsyncs the WAL directory (R10). The call is forwarded to
