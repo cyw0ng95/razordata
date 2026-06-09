@@ -274,10 +274,10 @@ func decodePayload(body []byte, cur int, rec *LogRecord) int {
 			return cur
 		}
 		rec.BlockID = binary.LittleEndian.Uint64(body[cur : cur+8])
-		cur +=8
+		cur += 8
 		// deletedFiles: varint length + varint-packed bytes.
 		delLen, n := DecodeVarint(body, cur)
-		if n <0 {
+		if n < 0 {
 			return cur
 		}
 		cur += n
@@ -289,7 +289,7 @@ func decodePayload(body []byte, cur int, rec *LogRecord) int {
 		cur += int(delLen)
 		// addedFiles: varint length + varint-packed bytes.
 		addLen, n := DecodeVarint(body, cur)
-		if n <0 {
+		if n < 0 {
 			return cur
 		}
 		cur += n
