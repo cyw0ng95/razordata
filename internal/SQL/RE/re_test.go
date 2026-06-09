@@ -359,3 +359,81 @@ func TestRewriteUnaryNot(t *testing.T) {
 		t.Errorf("expected NOT a, got %q", sql)
 	}
 }
+
+// TestRewriteCoverageREQ000163 pins REQ000163 branches.
+func TestRewriteCoverageREQ000163(t *testing.T) {
+	// rewriteInsert
+	ins := &PS.Insert{Table: "t", Cols: []string{"a"}, Values: [][]PS.Expr{{&PS.NumberLiteral{Val: 1}}}}
+	_, err := Rewrite(ins)
+	if err != nil {
+		t.Errorf("Rewrite(Insert) failed: %v", err)
+	}
+	// rewriteUpdate
+	upd := &PS.Update{Table: "t", Set: []PS.Pair{{Col: "x", Val: &PS.NumberLiteral{Val: 1}}}}
+	_, err = Rewrite(upd)
+	if err != nil {
+		t.Errorf("Rewrite(Update) failed: %v", err)
+	}
+	// rewriteDelete
+	del := &PS.Delete{Table: "t"}
+	_, err = Rewrite(del)
+	if err != nil {
+		t.Errorf("Rewrite(Delete) failed: %v", err)
+	}
+	// rewriteCreateTable
+	ct := &PS.CreateTable{Name: "t", Cols: []PS.ColDef{{Name: "id", Type: int(LX.T_INT_KW)}}}
+	_, err = Rewrite(ct)
+	if err != nil {
+		t.Errorf("Rewrite(CreateTable) failed: %v", err)
+	}
+	// rewriteDropTable
+	dt := &PS.DropTable{Name: "t"}
+	_, err = Rewrite(dt)
+	if err != nil {
+		t.Errorf("Rewrite(DropTable) failed: %v", err)
+	}
+}
+
+func TestExprStringCoverageREQ000163(t *testing.T) {
+	tests := []struct {
+		name string
+		expr PS.Expr
+	}{
+		{"float", &PS.FloatLiteral{Val: 3.14}},
+		{"alias", &PS.AliasedExpr{Expr: &PS.Ident{Name: "x"}, Alias: "y"}},
+		{"star", &PS.StarExpr{}},
+		{"func", &PS.FunctionCall{Name: "ABS", Args: []PS.Expr{&PS.NumberLiteral{Val: 1}}}},
+		{"agg", &PS.AggregateFunc{Name: "COUNT", Arg: &PS.StarExpr{}}},
+		{"cast", &PS.CastExpr{Expr: &PS.Ident{Name: "x"}, Type: int(LX.T_INT_KW)}},
+		{"list", &PS.ListExpr{Items: []PS.Expr{&PS.NumberLiteral{Val: 1}}}},
+		{"between", &PS.BetweenExpr{Expr: &PS.Ident{Name: "x"}, Low: &PS.NumberLiteral{Val: 1}, High: &PS.NumberLiteral{Val: 10}}},
+		{"case", &PS.CaseExpr{WhenList: []PS.WhenClause{{Cond: &PS.NumberLiteral{Val: 1}, Then: &PS.StringLiteral{Val: "a"}}}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_ = exprString(tt.expr)
+		})
+	}
+}
+
+func TestFormatSelectCoverageREQ000163(t *testing.T) {
+	sel := &PS.Select{Distinct: true, From: "t", FromAlias: "a", OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "x"}, Desc: true}}, Limit: &PS.NumberLiteral{Val: 10}, Offset: &PS.NumberLiteral{Val: 5}}
+	_, err := Format(sel)
+	if err != nil {
+		t.Errorf("Format(Select) failed: %v", err)
+	}
+}
+
+func TestRewriteExprCoverageREQ000163(t *testing.T) {
+	_ = RewriteExpr(nil)
+	_ = RewriteExpr(&PS.FunctionCall{Name: "F", Args: []PS.Expr{&PS.NumberLiteral{Val: 1}}})
+	_ = RewriteExpr(&PS.CastExpr{Expr: &PS.NumberLiteral{Val: 1}, Type: int(LX.T_INT_KW)})
+}
+
+func TestSplitOrInferredType(t *testing.T) {
+	_ = SplitOr(&PS.BinaryExpr{Left: &PS.BinaryExpr{Left: &PS.Ident{Name: "a"}, Op: int(LX.T_OR), Right: &PS.Ident{Name: "b"}}, Op: int(LX.T_OR), Right: &PS.Ident{Name: "c"}})
+	_ = InferredType(&PS.NumberLiteral{Val: 1})
+	_ = InferredType(&PS.FloatLiteral{Val: 1.0})
+	_ = InferredType(&PS.StringLiteral{Val: "x"})
+	_ = InferredType(&PS.BoolLiteral{Val: true})
+}
