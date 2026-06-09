@@ -21,6 +21,7 @@ const MaxColumns = 64
 // []string, []bool) to avoid interface{} boxing in the hot
 // path. Use Type to switch on the concrete type.
 type Column struct {
+	Name  string
 	Type  LX.TokenType
 	Data  any
 	Nulls []bool
@@ -52,6 +53,10 @@ type Batch struct {
 	// and should be returned to it via Put(). Set to false if
 	// a batch is constructed directly (e.g., in tests).
 	Pooled bool
+
+	// colMap provides O(1) lookup from column name to index.
+	// Set by VectorizedSeqScan; nil for synthetic batches.
+	colMap map[string]int
 }
 
 // batchPool is the global pool of Batch structs.
@@ -169,6 +174,19 @@ func (b *Batch) AppendRow(colIdx int, typ LX.TokenType, val any, isNull bool) {
 			col.Data.([]string)[b.Size] = v
 		}
 	}
+}
+
+// SetColumnName sets the name of a column for O(1) lookup via colMap.
+func (b *Batch) SetColumnName(colIdx int, name string) {
+	if colIdx < len(b.Cols) {
+		b.Cols[colIdx].Name = name
+	}
+}
+
+// SetColMap installs a name-to-index map for O(1) column lookups.
+// Called by VectorizedSeqScan after setting column names.
+func (b *Batch) SetColMap(m map[string]int) {
+	b.colMap = m
 }
 
 // AdvanceSize increments the batch's row count. Call after

@@ -91,28 +91,32 @@ func evalUnaryBatch(e *PS.UnaryExpr, batch *Batch, params []any) []uint16 {
 // extractColumnRef attempts to extract a column from a column reference
 // expression (e.g., "x" -> batch.Cols[colIdx]). Returns the column and
 // true on success; false if expression is not a column reference.
+//
+// Uses the pre-computed column index from the batch's colMap
+// (set by VectorizedSeqScan), enabling O(1) lookup. Falls back
+// to a linear scan if the map is not available.
 func extractColumnRef(expr PS.Expr, batch *Batch) (Column, bool) {
 	ident, ok := expr.(*PS.Ident)
 	if !ok {
 		return Column{}, false
 	}
-	// Column name to index mapping. For now, use a simple lookup.
-	// In a production system, this would be precomputed in the
-	// operator's constructor for O(1) access.
-	idx := findColumnIndex(batch, ident.Name)
-	if idx < 0 {
+	// Use pre-computed index if available
+	if batch.colMap != nil {
+		if idx, found := batch.colMap[ident.Name]; found {
+			if idx < len(batch.Cols) {
+				return batch.Cols[idx], true
+			}
+		}
 		return Column{}, false
 	}
-	return batch.Cols[idx], true
-}
-
-// findColumnIndex returns the index of a column by name in the batch's
-// schema. Returns -1 if not found. In the current implementation, the
-// column index is not stored in the Batch (only in the calling operator).
-// This is a fallback that returns -1; the fast path uses pre-computed
-// indices via the operator's setup.
-func findColumnIndex(_ *Batch, _ string) int {
-	return -1
+	// Fallback: linear scan by column name from "c0", "c1", etc.
+	// (This handles synthetic batches in tests.)
+	for i := range batch.Cols {
+		if batch.Cols[i].Name == ident.Name {
+			return batch.Cols[i], true
+		}
+	}
+	return Column{}, false
 }
 
 // evalLiteral evaluates a literal expression. Returns the value and
