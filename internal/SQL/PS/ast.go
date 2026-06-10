@@ -215,6 +215,25 @@ type Insert struct {
 
 func (i *Insert) stmtNode() {}
 
+// CreateIndexStmt represents a CREATE INDEX statement.
+// REQ000251 — secondary indexes MVP.
+type CreateIndexStmt struct {
+	Name    string   // index name
+	Table   string   // target table name
+	Columns []string // indexed column names
+	Unique  bool     // UNIQUE modifier (reserved; not yet enforced)
+}
+
+func (c *CreateIndexStmt) stmtNode() {}
+
+// DropIndexStmt represents a DROP INDEX statement.
+// REQ000251 — secondary indexes MVP.
+type DropIndexStmt struct {
+	Name string // index name
+}
+
+func (d *DropIndexStmt) stmtNode() {}
+
 // CommonTableExpr represents a CTE (Common Table Expression) definition.
 type CommonTableExpr struct {
 	Name  string   // CTE name

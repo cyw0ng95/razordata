@@ -145,6 +145,26 @@ func (l *Lexer) Peek() Token {
 	return token
 }
 
+// Peek2 returns the second upcoming token without consuming the
+// first. It saves state, peeks (which leaves the lexer at the
+// same state), captures the result, advances one token, peeks
+// again, then restores.
+func (l *Lexer) Peek2() Token {
+	// Save full state.
+	savedPos, savedLine, savedCol := l.pos, l.line, l.col
+	first := l.Peek()
+	if first.Type == T_EOF {
+		return first
+	}
+	// The Peek() above already restored pos/line/col. Now advance
+	// one token and peek again.
+	_ = l.Next()
+	second := l.Peek()
+	// Restore.
+	l.pos, l.line, l.col = savedPos, savedLine, savedCol
+	return second
+}
+
 func (l *Lexer) Input() string {
 	return l.input
 }

@@ -411,9 +411,23 @@ func (p *Parser) Parse() (Stmt, error) {
 	case LX.T_DELETE:
 		stmt, err = p.parseDelete()
 	case LX.T_CREATE:
-		stmt, err = p.parseCreateTable()
+		// CREATE TABLE vs CREATE INDEX — disambiguate by looking
+		// ahead 1-2 tokens (CREATE [UNIQUE] INDEX vs CREATE TABLE).
+		next := p.lex.Peek().Type
+		if next == LX.T_INDEX {
+			stmt, err = p.parseCreateIndex()
+		} else if next == LX.T_UNIQUE && p.lex.Peek2().Type == LX.T_INDEX {
+			stmt, err = p.parseCreateIndex()
+		} else {
+			stmt, err = p.parseCreateTable()
+		}
 	case LX.T_DROP:
-		stmt, err = p.parseDropTable()
+		// DROP TABLE vs DROP INDEX — disambiguate by peeking.
+		if p.lex.Peek().Type == LX.T_INDEX {
+			stmt, err = p.parseDropIndex()
+		} else {
+			stmt, err = p.parseDropTable()
+		}
 	case LX.T_EXPLAIN:
 		stmt, err = p.parseExplain()
 	case LX.T_WITH:
@@ -1543,4 +1557,89 @@ func (p *Parser) parseRollbackTo() (*RollbackToStmt, error) {
 	p.advance()
 
 	return &RollbackToStmt{Name: name}, nil
+}
+
+// parseCreateIndex parses `CREATE [UNIQUE] INDEX <name> ON <table> (<cols>)`.
+// REQ000251 — secondary indexes MVP.
+// On entry, current token is CREATE.
+func (p *Parser) parseCreateIndex() (*CreateIndexStmt, error) {
+	unique := false
+	p.advance() // consume CREATE
+	// current is now INDEX, or UNIQUE if CREATE UNIQUE INDEX
+	if p.current.Type == LX.T_UNIQUE {
+		unique = true
+		p.advance() // consume UNIQUE
+	}
+	if err := p.expect(LX.T_INDEX); err != nil {
+		return nil, err
+	}
+	p.advance() // consume INDEX
+	// Read index name
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	name := p.current.Lexeme
+	p.advance()
+	if err := p.expect(LX.T_ON); err != nil {
+		return nil, err
+	}
+	p.advance()
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	table := p.current.Lexeme
+	p.advance()
+	if err := p.expect(LX.T_LPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	cols, err := p.parseIdentList()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(LX.T_RPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	return &CreateIndexStmt{
+		Name:    name,
+		Table:   table,
+		Columns: cols,
+		Unique:  unique,
+	}, nil
+}
+
+// parseIdentList parses a comma-separated list of identifiers
+// until the closing paren or end of statement.
+func (p *Parser) parseIdentList() ([]string, error) {
+	cols := []string{}
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	cols = append(cols, p.current.Lexeme)
+	p.advance()
+	for p.current.Type == LX.T_COMMA {
+		p.advance()
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		cols = append(cols, p.current.Lexeme)
+		p.advance()
+	}
+	return cols, nil
+}
+
+// parseDropIndex parses `DROP INDEX <name>`. REQ000251.
+func (p *Parser) parseDropIndex() (*DropIndexStmt, error) {
+	p.advance() // consume DROP
+	if err := p.expect(LX.T_INDEX); err != nil {
+		return nil, err
+	}
+	p.advance() // consume INDEX
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	name := p.current.Lexeme
+	p.advance()
+	return &DropIndexStmt{Name: name}, nil
 }
