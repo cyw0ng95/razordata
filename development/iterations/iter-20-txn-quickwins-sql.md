@@ -1,16 +1,16 @@
-# Iteration20 — TXN Correctness + Quick Wins + SQL Completeness (v0.17.0)
+# Iteration20 — TXN Correctness + Quick Wins + SQL Completeness + Type System (v0.17.0)
 
 **Subsystem:** `TXN/VL`, `TXN/LC`, `LOG/HK`, `ENG/LS`, `SQL/EX`, `SQL/PS`, `SQL/PL`
 **Status:** planned
-**Est. LOC:** ~2,080
-**Requirements:** REQ000171, REQ000147, REQ000193, REQ000198, REQ000196, REQ000202, REQ000174, REQ000197, REQ000201
+**Est. LOC:** ~2,500
+**Requirements:** REQ000171, REQ000147, REQ000193, REQ000198, REQ000196, REQ000202, REQ000174, REQ000197, REQ000201, REQ000206, REQ000207, REQ000208, REQ000209, REQ000218, REQ000229
 **Target release:** v0.17.0
 **Commit:** `<filled at completion>`
 **Tag:** v0.17.0
 
 ## Overview
 
-Comprehensive iteration addressing three categories of work:
+Comprehensive iteration addressing four categories of work:
 
 **Block A: TXN Correctness (Critical).** The current
 commit protocol is incomplete: `tx.Commit()` does not write
@@ -30,13 +30,23 @@ fields but never increment, eliminate skiplist insert allocations
 critical SQL feature gap: OUTER JOINs (LEFT/RIGHT/FULL) are
 parsed but the planner explicitly skips them (`planner.go:234`).
 Also lifts SQL/PL test coverage from 30.6% to 80%+ (REQ000201),
-the lowest in the codebase.
+the lowest in the codebase. Plus trivial fix for HAVING
+(REQ000218).
 
 **Block D: BloomFilter Alignment.** Replaces CRC32 with
 FNV-1a double-hashing (REQ000174) per the design spec
 (`ENG.md:93-98`). The implementation has drifted from design
 (CRC32 Koopman + Castagnoli) to the documented
 FNV-1a seeds (0x811C9DC5, 0x01000193).
+
+**Block E: Type System Foundation (Critical).** No matter
+LoC: type system completeness is foundational for SQL
+correctness. Adds NUMERIC/DATE/TIME/JSON/DECIMAL type tokens
+(REQ000206), parameterized types like VARCHAR(N) and DECIMAL(P,S)
+(REQ000207), SQLite-like 5-affinity type coercion (REQ000208),
+DEFAULT clause values (REQ000209), DECIMAL precision/scale
+arithmetic (REQ000229). Closes the gap between Razordata's
+8 type tokens and SQLite's full type system.
 
 ## Outcome
 
@@ -59,10 +69,13 @@ FNV-1a seeds (0x811C9DC5, 0x01000193).
   - `internal/ENG/LS/skiplist.go` — sync.Pool for scratch arrays
   - `internal/ENG/LS/sst_writer.go` — FNV-1a hash
   - `internal/ENG/LS/sst_reader.go` — FNV-1a hash verify
-  - `internal/SQL/EX/planner.go` — HashAggregate, OUTER JOIN
+  - `internal/SQL/EX/planner.go` — HashAggregate, OUTER JOIN, HAVING
   - `internal/SQL/EX/join.go` — OUTER JOIN executor
+  - `internal/SQL/EX/coerce.go` (new) — type affinity matrix
   - `internal/SQL/PS/ps_test.go` — CASE/EXISTS parser tests
   - `internal/SQL/PL/*_test.go` — cost model, index selection tests
+  - `internal/SQL/LX/token.go` — NUMERIC, DATE, TIME, JSON, DECIMAL tokens
+  - `internal/SQL/PS/ps.go` — VARCHAR(N), DECIMAL(P,S), DEFAULT parsing
 
 ## Current State (audit, 2026-06-09)
 
@@ -267,6 +280,114 @@ Add tests for cost model, index selection, plan caching.
 
 ---
 
+### Block E: Type System Foundation (Critical, ~420 LOC, 2-3 days)
+
+Closes the gap between Razordata's type tokens and the
+SQLite-like type system. Adds parameterized types, type
+affinity, and DECIMAL arithmetic. No matter LoC: this is
+a foundational capability.
+
+#### REQ000206: New Type Tokens (S, ~80 LOC)
+
+Add NUMERIC, DATE, TIME, JSON, DECIMAL type tokens to
+`SQL/LX/token.go`.
+
+**Steps:**
+1. Add `T_NUMERIC`, `T_DATE`, `T_TIME`, `T_JSON`, `T_DECIMAL`
+   constants in `LX.token.go`
+2. Add tokenName mapping (e.g., `T_NUMERIC: "NUMERIC"`)
+3. Add keyword matching in `PS` keyword map
+
+**Tests:**
+- `TestLex_NUMERIC_Token`
+- `TestLex_DATE_Token`
+- `TestLex_JSON_Token`
+
+#### REQ000207: Parameterized Types (M, ~120 LOC)
+
+Parse `VARCHAR(N)`, `CHAR(N)`, `DECIMAL(P,S)`, `NUMERIC(P,S)`.
+
+**Steps:**
+1. In `parseColumnDef`, after type token, check for `T_LPAREN`
+2. Consume integer literal for size (N) or precision (P)
+3. If `T_COMMA`, consume scale (S)
+4. Expect `T_RPAREN`
+5. Store in `ColDef.Size` and add `ColDef.Precision`/`Scale`
+   fields
+
+**Tests:**
+- `TestParse_VARCHAR_N`
+- `TestParse_DECIMAL_PS`
+- `TestParse_CHAR_N`
+
+#### REQ000208: Type Affinity (M, ~100 LOC)
+
+SQLite-like 5 affinities: TEXT, NUMERIC, INTEGER, REAL, NONE.
+
+**Steps:**
+1. New file `SQL/EX/coerce.go`
+2. Affinity matrix: column type → affinity
+3. Modify `Eval` to apply implicit coercion based on affinity
+4. When comparing values of different affinities, coerce
+   per SQLite rules (e.g., NUMERIC vs TEXT → try numeric,
+   fallback to text compare)
+5. Add `Options.StrictTypes` (default true) to disable
+   affinity for safety
+
+**Tests:**
+- `TestAffinity_IntVsText` — `'5' = 5` semantics
+- `TestAffinity_NumericPromotion` — `5 = 5.0` always true
+- `TestAffinity_StrictMode` — opt-in only
+
+#### REQ000209: DEFAULT Clause (S, ~60 LOC)
+
+Wire `ColDef.Default` (already in AST) into CREATE TABLE.
+
+**Steps:**
+1. In `parseColumnDef`, after optional NOT NULL, check for
+   `T_DEFAULT`
+2. Consume `T_DEFAULT` and parse expression via `parseExpr`
+3. Store in `ColDef.Default`
+4. EX executor: on INSERT, fill missing column with
+   `ColDef.Default` evaluated
+
+**Tests:**
+- `TestParse_DEFAULT_Literal`
+- `TestParse_DEFAULT_Null`
+- `TestInsert_UsesDefault`
+
+#### REQ000229: DECIMAL Storage (M, ~120 LOC)
+
+Precision/scale arithmetic for DECIMAL type.
+
+**Steps:**
+1. Choose `math/big.Float` (stdlib, no dependency) for v1
+2. Add `Decimal` type wrapping `*big.Float` with precision/scale
+3. In `Eval`, recognize DECIMAL columns, return Decimal value
+4. In `evalBinary`, dispatch DECIMAL arithmetic
+5. Comparison operators handle DECIMAL vs DECIMAL and
+   DECIMAL vs numeric
+
+**Tests:**
+- `TestDecimal_Addition_Precision`
+- `TestDecimal_Comparison`
+- `TestDecimal_OverflowBehavior`
+
+#### REQ000218: HAVING Filter (S, ~40 LOC, included for cohesion)
+
+Wire HAVING filter (currently broken at `planner.go:275`).
+
+**Steps:**
+1. In planner, after Aggregate, add Filter with `s.Having`
+2. Verify Filter can apply to grouped rows
+3. Test that HAVING works on aggregate results
+
+**Tests:**
+- `TestPlanner_HAVING_Filter`
+- `TestHAVING_NoMatchingGroups`
+
+---
+
 ## Deviations / Risks
 
 1. **WAL commit breaks existing tests.** Some tests use
@@ -290,6 +411,17 @@ Add tests for cost model, index selection, plan caching.
    characteristics than Aggregate.** Mitigation: keep both,
    choose based on row count (REQ000196 threshold: 1000 rows).
 
+6. **Type affinity may break implicit casts.** SQLite-like
+   affinity changes how comparisons coerce types (e.g.,
+   `'5' = 5` may become TRUE). Mitigation: opt-in via Option;
+   default to strict (no implicit coercion) for safety.
+
+7. **DECIMAL precision/scale requires decimal library.**
+   `big.Float` is stdlib but slower; `shopspring/decimal`
+   is faster but adds dependency. Mitigation: use `big.Float`
+   for v1; add `shopspring/decimal` later if performance
+   matters.
+
 ## Completion Criteria
 
 | Rule | State |
@@ -306,6 +438,12 @@ Add tests for cost model, index selection, plan caching.
 | SST writer uses FNV-1a per design | TBD (REQ000174) |
 | OUTER JOIN (LEFT/RIGHT/FULL) works | TBD (REQ000197) |
 | SQL/PL coverage 30% → 80% | TBD (REQ000201) |
+| HAVING filter wires (currently broken) | TBD (REQ000218) |
+| New type tokens: NUMERIC, DATE, TIME, JSON, DECIMAL | TBD (REQ000206) |
+| VARCHAR(N), DECIMAL(P,S) parameterized parsing | TBD (REQ000207) |
+| Type affinity system (5 affinities) | TBD (REQ000208) |
+| DEFAULT clause parsing and INSERT fill | TBD (REQ000209) |
+| DECIMAL precision/scale arithmetic | TBD (REQ000229) |
 
 ## Benchmarks
 
@@ -326,4 +464,5 @@ Target improvements:
 | B: Quick Wins | 480 | 200 | 80 | 760 | 2-3 |
 | C: SQL Completeness | 900 | 300 | 100 | 1,300 | 4-5 |
 | D: BloomFilter | 150 | 100 | 50 | 300 | 1 |
-| **Total** | **2,080** | **850** | **280** | **3,210** | **10-13** |
+| E: Type System | 420 | 180 | 50 | 650 | 2-3 |
+| **Total** | **2,500** | **1,030** | **330** | **3,860** | **12-16** |
