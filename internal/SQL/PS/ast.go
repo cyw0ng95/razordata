@@ -157,6 +157,7 @@ type ColDef struct {
 	Default  Expr
 	PK       bool
 	Unique   bool
+	Check    Expr
 }
 
 func NewColDef(name string, typ int) ColDef {

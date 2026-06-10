@@ -61,6 +61,7 @@ const (
 	T_KEY
 	T_NOTNULL
 	T_DEFAULT
+	T_CHECK
 	T_UNIQUE
 	T_INT_KW
 	T_BIGINT
@@ -170,6 +171,7 @@ var tokenTypeNames = [...]string{
 	T_KEY:       "KEY",
 	T_NOTNULL:   "NOTNULL",
 	T_DEFAULT:   "DEFAULT",
+	T_CHECK:     "CHECK",
 	T_UNIQUE:    "UNIQUE",
 	T_INT_KW:    "INT_KW",
 	T_BIGINT:    "BIGINT",

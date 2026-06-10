@@ -816,7 +816,7 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 
 		for p.current.Type == LX.T_NOTNULL || p.current.Type == LX.T_PRIMARY ||
 			p.current.Type == LX.T_DEFAULT || p.current.Type == LX.T_UNIQUE ||
-			p.current.Type == LX.T_NOT {
+			p.current.Type == LX.T_NOT || p.current.Type == LX.T_CHECK {
 			if p.current.Type == LX.T_PRIMARY {
 				peek := p.lex.Peek()
 				if peek.Type == LX.T_KEY {
@@ -853,6 +853,21 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 					return nil, err
 				}
 				col.Default = d
+			case LX.T_CHECK:
+				p.advance()
+				if err := p.expect(LX.T_LPAREN); err != nil {
+					return nil, err
+				}
+				p.advance()
+				checkExpr, err := p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				if err := p.expect(LX.T_RPAREN); err != nil {
+					return nil, err
+				}
+				p.advance()
+				col.Check = checkExpr
 			case LX.T_UNIQUE:
 				col.Unique = true
 				p.advance()
