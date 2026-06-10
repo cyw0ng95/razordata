@@ -73,6 +73,23 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000146 | SYS | 6-phase graceful shutdown sequence per SYS.md:215-282 | iter-14 |
 | REQ000152 | SYS | `validateOptions` with field-by-field checks per SYS.md:198-214 | iter-14 |
 | REQ000153 | SYS | Active-tx wait (30s timeout, force-abort on timeout) | iter-14 |
+| REQ000147 | TXN | Complete commit protocol (6 phases) | iter-20 |
+| REQ000171 | TXN/VL | WAL integration in commit protocol | iter-20 |
+| REQ000174 | ENG/LS | BloomFilter FNV-1a double-hash | iter-20 |
+| REQ000193 | LOG/HK | MetricHook counters wiring | iter-20 |
+| REQ000196 | SQL/EX | HashAggregate in planner (1000-row threshold) | iter-20 |
+| REQ000197 | SQL/EX | OUTER JOIN executor (LEFT/RIGHT/FULL) | iter-20 |
+| REQ000198 | ENG/LS | Skiplist sync.Pool for scratch arrays | iter-20 |
+| REQ000201 | QUAL | SQL/PL coverage 30.6% to 98.8% | iter-20 |
+| REQ000202 | SQL/PS | Parser CASE/EXISTS tests | iter-20 |
+| REQ000206 | SQL/PS | Type tokens (NUMERIC/DATE/TIME/JSON/DECIMAL) | iter-20 |
+| REQ000207 | SQL/PS | Parameterized types VARCHAR(N)/DECIMAL(P,S) | iter-20 |
+| REQ000208 | SQL/EX | Type affinity system (SQLite-like 5 affinities) | iter-20 |
+| REQ000209 | SQL/PS | DEFAULT clause parsing tests | iter-20 |
+| REQ000210 | SQL/PS | CHECK constraint parsing | iter-20 |
+| REQ000211 | SQL/EX | CHECK constraint enforcement | iter-20 |
+| REQ000218 | SQL/EX | HAVING filter (already implemented) | iter-20 |
+| REQ000229 | SQL/EX | DECIMAL type storage (big.Float) | iter-20 |
 | REQ000154 | SYS | Background-goroutine coordination (compaction, flush, epoch, hook dispatcher) | iter-14 |
 | REQ000166 | SYS | Per-subsystem `Close()` ordering in Phase 5 of shutdown | iter-14 |
 | REQ000178 | SYS/SY | `validateOptions` (duplicate of REQ000152, same code) | iter-14 |
@@ -93,7 +110,6 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000195 | LOG/HK | Implement ProfileHook (pprof dump on Error events) | medium | M | iter-00 (HK), REQ000007 | LOG/HK/profile.go — call pprof.Lookup("heap").WriteTo on Error events |
 | REQ000199 | MEM/BF | Sharded buffer pool mutex (reduce hash table contention) | medium | M | iter-02 | MEM/BF/bf.go:160 — per-bucket or per-shard locks |
 | REQ000200 | WAL/WR | Per-segment locks (replace global write mutex) | medium | L | iter-03, iter-17 (group commit) | WAL/WR/wr.go:171 — shard by segment; depends on group commit being wired |
-| REQ000201 | QUAL | SQL/PL coverage 30.6% → 80% (cost model, index selection, plan caching tests) | high | M | iter-08 | SQL/PL/*_test.go — add cost/plan tests |
 | REQ000203 | QUAL | Missing benchmarks (FIL/LF, LOG/HK, SQL/PS, SQL/PL have 0) | medium | M | AGENTS.md | add Benchmark* per hot path |
 | REQ000204 | SQL | CREATE INDEX (no implementation, no parser support) | critical | XL | iter-12, iter-21 (ID) | new `SQL/PS`, `SQL/EX`, `ENG/ID/` |
 | REQ000205 | SQL | EXPLAIN SQL syntax (currently only cost calc, not SQL statement) | medium | M | iter-08 | `SQL/PS`, `SQL/EX/explain.go` — accept EXPLAIN/EXPLAIN ANALYZE |
@@ -113,7 +129,6 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000226 | FIL | File locking (flock) for multi-process access | low | S | iter-01 | `FIL/FS/fs.go` — optional via Options |
 | REQ000227 | SQL/EX | Built-in aggregate extensions (group_concat, string_agg, percentile) | medium | M | iter-08 | `SQL/EX/aggregate.go` — extend Aggregate with string accumulation |
 | REQ000228 | SYS/SY | Network server (TCP/gRPC listener; SYS.Serve) | low | XL | iter-12 | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
-| REQ000229 | SQL/EX | DECIMAL type storage (precision/scale arithmetic) | medium | M | REQ000207 | `SQL/EX/eval.go`, type handling — big.Float or decimal library |
 | REQ000176 | WAL | Batch commit with sync.WaitGroup and write barrier | iter-17 |
 | REQ000184 | WAL | 256 KB pre-allocated writeBuffer for batched WAL writes | iter-17 |
 | REQ000144 | SQL | SIMD vectorized execution (batch + 4-wide unrolling + selection vectors) | iter-19 (Phase 1) |
