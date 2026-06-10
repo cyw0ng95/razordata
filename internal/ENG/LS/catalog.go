@@ -73,7 +73,8 @@ import (
 // Schema-version constants for the system catalog.
 const (
 	schemaVersionV1      uint8 = 1
-	schemaVersionCurrent       = schemaVersionV1
+	schemaVersionV2      uint8 = 2
+	schemaVersionCurrent       = schemaVersionV2
 )
 
 var (
@@ -123,11 +124,26 @@ type CatalogUnique struct {
 	Cols []int
 }
 
+// CatalogIndex is one secondary index, stored in the parent
+// CatalogEntry.Indexes. The index is realized as a separate
+// keyspace in the LSM engine (key prefix "__idx__:<tableID>:
+// <indexName>:<indexedValue>"); the catalog only persists the
+// metadata that lets the planner discover and reason about it.
+//
+// REQ000251 — secondary indexes MVP.
+type CatalogIndex struct {
+	IndexID   uint64
+	Name      string
+	Columns   []string // indexed column names
+	Unique    bool     // reserved; not yet enforced
+	CreateSQL string   // original CREATE INDEX statement
+}
+
 // CatalogEntry is the on-disk + in-memory representation of a
 // single table. CreateSQL is the original CREATE TABLE statement
 // (re-parseable canonical form) used for display and admin
-// tools; the structured Columns / PrimaryKey / Unique fields
-// are the source of truth for runtime query planning.
+// tools; the structured Columns / PrimaryKey / Unique / Indexes
+// fields are the source of truth for runtime query planning.
 type CatalogEntry struct {
 	Version    uint8
 	TableID    uint64
@@ -135,6 +151,7 @@ type CatalogEntry struct {
 	Columns    []CatalogColumn
 	PrimaryKey string
 	Unique     []CatalogUnique
+	Indexes    []CatalogIndex // iter-22 secondary indexes
 	CreateSQL  string
 }
 
@@ -324,6 +341,25 @@ func decodeCatalogEntry(data []byte, off int, e *CatalogEntry) (int, error) {
 		e.Unique[i] = CatalogUnique{Cols: idxs}
 	}
 
+	// Indexes (iter-22, V2 only). Pre-V2 files end here; we
+	// detect EOF by checking remaining bytes. A V1 file may have
+	// a stale CreateSQL field right after the Unique block, so
+	// we need to disambiguate. Strategy: try to decode indexes;
+	// if we run out of data, treat as V1 and back up to read
+	// CreateSQL from the saved offset.
+	indexOff := off
+	indexes, newOff, err := decodeCatalogIndexes(data, off)
+	if err == nil {
+		e.Indexes = indexes
+		off = newOff
+	} else if errors.Is(err, errTruncated) {
+		// V1 file — no indexes
+		e.Indexes = nil
+		off = indexOff
+	} else {
+		return off, err
+	}
+
 	sqlLen, n := binary.Uvarint(data[off:])
 	if n <= 0 {
 		return off, errors.New("bad sql len")
@@ -335,6 +371,96 @@ func decodeCatalogEntry(data []byte, off int, e *CatalogEntry) (int, error) {
 	e.CreateSQL = string(data[off : off+int(sqlLen)])
 	off += int(sqlLen)
 	return off, nil
+}
+
+// errTruncated signals EOF while decoding optional fields. Used to
+// distinguish "older schema" from "corrupt" during backward-compat
+// reads.
+var errTruncated = errors.New("catalog: truncated (older schema)")
+
+func decodeCatalogIndexes(data []byte, off int) ([]CatalogIndex, int, error) {
+	if off >= len(data) {
+		return nil, off, errTruncated
+	}
+	count, n := binary.Uvarint(data[off:])
+	if n <= 0 {
+		return nil, off, errTruncated
+	}
+	off += n
+	out := make([]CatalogIndex, 0, count)
+	for i := uint64(0); i < count; i++ {
+		if off >= len(data) {
+			return nil, off, errTruncated
+		}
+		id, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil, off, fmt.Errorf("bad index %d id", i)
+		}
+		off += n
+		if off >= len(data) {
+			return nil, off, errTruncated
+		}
+		nameLen, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil, off, fmt.Errorf("bad index %d name len", i)
+		}
+		off += n
+		if off+int(nameLen) > len(data) {
+			return nil, off, errTruncated
+		}
+		name := string(data[off : off+int(nameLen)])
+		off += int(nameLen)
+		if off >= len(data) {
+			return nil, off, errTruncated
+		}
+		colCount, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil, off, fmt.Errorf("bad index %d col count", i)
+		}
+		off += n
+		cols := make([]string, 0, colCount)
+		for j := uint64(0); j < colCount; j++ {
+			if off >= len(data) {
+				return nil, off, errTruncated
+			}
+			cn, n := binary.Uvarint(data[off:])
+			if n <= 0 {
+				return nil, off, fmt.Errorf("bad index %d col %d len", i, j)
+			}
+			off += n
+			if off+int(cn) > len(data) {
+				return nil, off, errTruncated
+			}
+			cols = append(cols, string(data[off:off+int(cn)]))
+			off += int(cn)
+		}
+		if off >= len(data) {
+			return nil, off, errTruncated
+		}
+		unique := data[off] != 0
+		off++
+		if off >= len(data) {
+			return nil, off, errTruncated
+		}
+		sqlLen, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil, off, fmt.Errorf("bad index %d sql len", i)
+		}
+		off += n
+		if off+int(sqlLen) > len(data) {
+			return nil, off, errTruncated
+		}
+		sql := string(data[off : off+int(sqlLen)])
+		off += int(sqlLen)
+		out = append(out, CatalogIndex{
+			IndexID:   id,
+			Name:      name,
+			Columns:   cols,
+			Unique:    unique,
+			CreateSQL: sql,
+		})
+	}
+	return out, off, nil
 }
 
 // NextID atomically reserves and returns the next free tableID.
@@ -408,6 +534,135 @@ func (c *Catalog) Delete(tableID uint64) error {
 		return fmt.Errorf("catalog: persist: %w", err)
 	}
 	return nil
+}
+
+// PutIndex adds a secondary index to an existing table. The full
+// catalog is rewritten atomically. Duplicate index names (within
+// the same table) return ErrCatalogExists. REQ000251.
+func (c *Catalog) PutIndex(tableID uint64, idx CatalogIndex) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return ErrCatalogClosed
+	}
+	entry, ok := c.cache[tableID]
+	if !ok {
+		return fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
+	}
+	if idx.Name == "" {
+		return fmt.Errorf("%w: index name is required", ErrCatalogCorrupt)
+	}
+	for _, existing := range entry.Indexes {
+		if existing.Name == idx.Name {
+			return fmt.Errorf("%w: index %q on table %q",
+				ErrCatalogExists, idx.Name, entry.Name)
+		}
+	}
+	if idx.IndexID == 0 {
+		// Reserve a new index ID using a monotonic counter.
+		// We don't persist nextIndexID across runs yet; on
+		// restart, IDs start at 1 again. Conflict on ID is
+		// detected on first use.
+		idx.IndexID = c.nextIndexIDLocked()
+	}
+	entry.Indexes = append(entry.Indexes, idx)
+	if err := c.flushLocked(); err != nil {
+		// Rollback: remove the index we just added.
+		entry.Indexes = entry.Indexes[:len(entry.Indexes)-1]
+		return fmt.Errorf("catalog: persist index: %w", err)
+	}
+	return nil
+}
+
+// DeleteIndex removes a secondary index by name. Returns
+// ErrCatalogNotFound if the table or index doesn't exist.
+func (c *Catalog) DeleteIndex(tableID uint64, name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return ErrCatalogClosed
+	}
+	entry, ok := c.cache[tableID]
+	if !ok {
+		return fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
+	}
+	for i, idx := range entry.Indexes {
+		if idx.Name == name {
+			entry.Indexes = append(entry.Indexes[:i], entry.Indexes[i+1:]...)
+			if err := c.flushLocked(); err != nil {
+				// Rollback: re-insert
+				entry.Indexes = append(entry.Indexes, idx)
+				return fmt.Errorf("catalog: persist delete index: %w", err)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: index %q on table id=%d",
+		ErrCatalogNotFound, name, tableID)
+}
+
+// GetIndexesByTable returns a copy of the index list for a table.
+// Returns nil with no error if the table has no indexes.
+func (c *Catalog) GetIndexesByTable(tableID uint64) ([]CatalogIndex, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed {
+		return nil, ErrCatalogClosed
+	}
+	entry, ok := c.cache[tableID]
+	if !ok {
+		return nil, fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
+	}
+	out := make([]CatalogIndex, len(entry.Indexes))
+	for i, idx := range entry.Indexes {
+		out[i] = CatalogIndex{
+			IndexID:   idx.IndexID,
+			Name:      idx.Name,
+			Columns:   append([]string(nil), idx.Columns...),
+			Unique:    idx.Unique,
+			CreateSQL: idx.CreateSQL,
+		}
+	}
+	return out, nil
+}
+
+// GetIndex returns the named index for a table.
+func (c *Catalog) GetIndex(tableID uint64, name string) (*CatalogIndex, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed {
+		return nil, ErrCatalogClosed
+	}
+	entry, ok := c.cache[tableID]
+	if !ok {
+		return nil, fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
+	}
+	for i := range entry.Indexes {
+		if entry.Indexes[i].Name == name {
+			cp := entry.Indexes[i]
+			cp.Columns = append([]string(nil), cp.Columns...)
+			return &cp, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: index %q on table id=%d",
+		ErrCatalogNotFound, name, tableID)
+}
+
+// nextIndexIDLocked returns the next free index ID. The caller
+// MUST hold c.mu in write mode. The counter is process-local;
+// on restart it resets to 1. The catalog does not persist the
+// index ID counter because index IDs are only used to namespace
+// the LSM key prefix; collisions are not catastrophic.
+func (c *Catalog) nextIndexIDLocked() uint64 {
+	maxID := uint64(0)
+	for _, e := range c.cache {
+		for _, idx := range e.Indexes {
+			if idx.IndexID > maxID {
+				maxID = idx.IndexID
+			}
+		}
+	}
+	return maxID + 1
 }
 
 // GetByID returns the entry for tableID or ErrCatalogNotFound.
@@ -545,7 +800,45 @@ func encodeCatalogEntry(e *CatalogEntry, buf []byte) []byte {
 			buf = binary.AppendUvarint(buf, uint64(idx))
 		}
 	}
+	// Indexes (iter-22; schema V2). Pre-V2 readers hit EOF here
+	// and treat the entry as having zero indexes.
+	buf = encodeCatalogIndexes(e.Indexes, buf)
 	buf = binary.AppendUvarint(buf, uint64(len(e.CreateSQL)))
 	buf = append(buf, e.CreateSQL...)
+	return buf
+}
+
+// encodeCatalogIndexes serializes the index list. Format:
+//   count: uvarint
+//   for each index:
+//     indexID: uvarint
+//     nameLen: uvarint
+//     name: bytes
+//     colCount: uvarint
+//     for each column:
+//       colNameLen: uvarint
+//       colName: bytes
+//     unique: 1 byte (0/1)
+//     sqlLen: uvarint
+//     sql: bytes
+func encodeCatalogIndexes(idxs []CatalogIndex, buf []byte) []byte {
+	buf = binary.AppendUvarint(buf, uint64(len(idxs)))
+	for _, idx := range idxs {
+		buf = binary.AppendUvarint(buf, idx.IndexID)
+		buf = binary.AppendUvarint(buf, uint64(len(idx.Name)))
+		buf = append(buf, idx.Name...)
+		buf = binary.AppendUvarint(buf, uint64(len(idx.Columns)))
+		for _, c := range idx.Columns {
+			buf = binary.AppendUvarint(buf, uint64(len(c)))
+			buf = append(buf, c...)
+		}
+		if idx.Unique {
+			buf = append(buf, 1)
+		} else {
+			buf = append(buf, 0)
+		}
+		buf = binary.AppendUvarint(buf, uint64(len(idx.CreateSQL)))
+		buf = append(buf, idx.CreateSQL...)
+	}
 	return buf
 }
