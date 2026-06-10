@@ -6,23 +6,37 @@ import (
 )
 
 // TestSkiplistInsert_PoolReuse verifies the sync.Pool
-// returns cached slices on subsequent calls (REQ000198).
+// returns valid slices with maxLevel capacity (REQ000198).
+// Note: sync.Pool does NOT guarantee LIFO ordering or pointer
+// identity, so we verify functional properties (non-nil, correct
+// capacity, reusable) rather than pointer equality.
 func TestSkiplistInsert_PoolReuse(t *testing.T) {
-	// Get 3 slices from the pool
+	// Get a slice from the pool
 	s1 := acquireSlice()
-	s2 := acquireSlice()
-	s3 := acquireSlice()
-	defer releaseSlice(s1)
-	defer releaseSlice(s2)
-	defer releaseSlice(s3)
-
-	// After releasing s1, the next Get should return the same pointer
-	releaseSlice(s1)
-	s4 := acquireSlice()
-	if s4 != s1 {
-		t.Errorf("pool should reuse released slice; got %p, want %p", s4, s1)
+	if s1 == nil {
+		t.Fatal("acquireSlice returned nil")
 	}
-	releaseSlice(s4)
+	if cap(*s1) < maxLevel {
+		t.Errorf("slice capacity = %d, want >= %d", cap(*s1), maxLevel)
+	}
+
+	// Release and re-acquire — the pool should return a usable slice.
+	// Manage lifecycle explicitly to avoid double-release.
+	releaseSlice(s1)
+	s2 := acquireSlice()
+	if s2 == nil {
+		t.Fatal("acquireSlice returned nil after release")
+	}
+	if cap(*s2) < maxLevel {
+		t.Errorf("re-acquired slice capacity = %d, want >= %d", cap(*s2), maxLevel)
+	}
+	// All entries should be nil after release
+	for i, v := range *s2 {
+		if v != nil {
+			t.Errorf("entry %d not cleared after release: %p", i, v)
+		}
+	}
+	releaseSlice(s2)
 }
 
 // TestSkiplistInsert_NoGrow verifies the pool's slice capacity
