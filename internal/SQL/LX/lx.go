@@ -44,6 +44,7 @@ var keywords = map[string]TokenType{
 	"KEY":       T_KEY,
 	"NOTNULL":   T_NOTNULL,
 	"DEFAULT":   T_DEFAULT,
+	"CHECK":     T_CHECK,
 	"UNIQUE":    T_UNIQUE,
 	"INTEGER":   T_INT_KW,
 	"INT":       T_INT_KW,
