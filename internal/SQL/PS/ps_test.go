@@ -269,7 +269,7 @@ func TestParseCast(t *testing.T) {
 		{"SELECT CAST(x AS FLOAT) FROM t", int(LX.T_FLOAT_KW)},
 		{"SELECT CAST(x AS TEXT) FROM t", int(LX.T_TEXT)},
 		{"SELECT CAST(x AS BOOLEAN) FROM t", int(LX.T_BOOL)},
-		{"SELECT CAST(x AS BIGINT) FROM t", int(LX.T_INT_KW)},
+		{"SELECT CAST(x AS BIGINT) FROM t", int(LX.T_BIGINT)},
 	}
 	for _, c := range cases {
 		t.Run(c.sql, func(t *testing.T) {

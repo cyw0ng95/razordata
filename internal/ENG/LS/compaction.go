@@ -282,6 +282,10 @@ func (cm *compactionManager) Stop(ctx context.Context) error {
 	cm.stopOnce.Do(func() {
 		close(cm.done)
 	})
+	// If context is already cancelled, return immediately.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case <-cm.loopDone:
 		return nil

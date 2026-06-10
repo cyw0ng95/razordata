@@ -1031,7 +1031,7 @@ func (p *Parser) parseCastType() (*TypeInfo, error) {
 	
 	switch p.current.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
-		info.Type = int(LX.T_INT_KW)
+		info.Type = int(p.current.Type)
 		p.advance()
 	case LX.T_FLOAT_KW:
 		info.Type = int(LX.T_FLOAT_KW)
