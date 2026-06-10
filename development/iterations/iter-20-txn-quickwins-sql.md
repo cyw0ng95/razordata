@@ -51,7 +51,7 @@ arithmetic (REQ000229). Closes the gap between Razordata's
 
 ## Outcome
 
-**Completed:** 17/19 REQs (89%)
+**Completed:** 19/19 REQs (100%)
 
 **Block A (TXN Correctness): 4/4 ✓**
 - REQ000171: WAL commit integration — `protocol.go:110` writes WAL record via `EncodeCommitRecord()`
@@ -65,32 +65,31 @@ arithmetic (REQ000229). Closes the gap between Razordata's
 - REQ000202: Parser CASE/EXISTS tests — 12 test cases
 - REQ000193: MetricHook wiring — `OnLog` parses "SQL query", "rows returned", "bytes read", "bytes written"
 
-**Block C (SQL Completeness): 2/4**
+**Block C (SQL Completeness): 3/3 ✓**
 - REQ000197: OUTER JOIN executor — `join.go` with LEFT/RIGHT/FULL, NULL padding
 - REQ000218: HAVING filter — already implemented at `planner.go:297`
-- ~~REQ000201: SQL/PL coverage 30%→80%~~ — DEFERRED to iter-21 (technical debt)
-- ~~Part of REQ000229~~ — see Block E
+- REQ000201: SQL/PL coverage 30.6%→98.8% — `pl_extended_test.go` (60+ test cases, 420 LOC)
 
 **Block D (BloomFilter): 1/1 ✓**
 - REQ000174: FNV-1a double-hash — seeds 0x811C9DC5, 0x01000193 (`fnv.go`)
 
-**Block E (Type System): 6/7**
+**Block E (Type System): 7/7 ✓**
 - REQ000206: Type tokens — NUMERIC, DATE, TIME, JSON, DECIMAL
 - REQ000207: Parameterized types — TypeInfo struct, VARCHAR(N), DECIMAL(P,S)
 - REQ000208: Type affinity system — 5 affinities (TEXT/INTEGER/REAL/NUMERIC/NONE), coercion matrix
 - REQ000209: DEFAULT parsing — tests added (already implemented)
 - REQ000210: CHECK constraint parsing — T_CHECK token, parseCheckConstraint
 - REQ000211: CHECK enforcement — validateCheck() in INSERT/UPDATE
-- ~~REQ000229: DECIMAL storage~~ — DEFERRED to iter-21 (medium priority, big.Float arithmetic)
+- REQ000229: DECIMAL storage — `decimal.go` with big.Float, precision/scale arithmetic, overflow detection
 
 **Deviations:**
 - HAVING (REQ000218) was already implemented, no code changes needed
-- REQ000201 (SQL/PL coverage)deferred due to scope creep — 2000 LOC already exceeds original 2500 LOC estimate
-- REQ000229 (DECIMAL storage) deferred as medium-priority follow-up
+- REQ000201 and REQ000229 were originally deferred but completed in a follow-up commit
 
 **Metrics:**
-- Total LOC: ~2,000
-- Commits: 17
+- Total LOC: ~2,800
+- Commits: 19
+- SQL/PL coverage: 30.6% → 98.8% (target: 80%)
 - Test regression: 3 pre-existing failures (skiplist, bloom) unchanged
 
 ## Dependencies
