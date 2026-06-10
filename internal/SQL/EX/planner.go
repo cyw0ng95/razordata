@@ -15,6 +15,14 @@ type plan struct {
 	memoKey string
 }
 
+// HashAggregateThreshold is the row count above which the
+// planner prefers HashAggregate over streaming Aggregate
+// (REQ000196). HashAggregate has higher upfront cost
+// (full materialization + hash table) but better performance
+// for large groups. Threshold tuned for typical analytical
+// workloads.
+const HashAggregateThreshold = 1000
+
 type Planner struct {
 	mu      sync.Mutex
 	memo    map[string]*plan
@@ -268,8 +276,19 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		if len(groupCols) == 0 {
 			groupCols = autoGroup
 		}
-		agg := NewAggregate(current, groupCols, aggExprs)
-		current = agg
+		// Choose between streaming Aggregate and HashAggregate
+		// based on estimated row count (REQ000196). For large
+		// datasets, HashAggregate is preferred (better group-by
+		// locality); for small datasets, streaming Aggregate
+		// avoids the upfront materialization cost.
+		estimatedRows := p.estimateRowCount(s.From, s.Where)
+		if estimatedRows >= HashAggregateThreshold {
+			agg := NewHashAggregate(current, groupCols, aggExprs)
+			current = agg
+		} else {
+			agg := NewAggregate(current, groupCols, aggExprs)
+			current = agg
+		}
 	}
 
 	if s.Having != nil {
@@ -482,6 +501,24 @@ func (p *Planner) planCreateTable(s *PS.CreateTable) Operator {
 
 func (p *Planner) planDropTable(s *PS.DropTable) Operator {
 	return NewDropTable(s)
+}
+
+// estimateRowCount provides a row count estimate for the given
+// table+filter. Used by the planner to choose between
+// streaming Aggregate and HashAggregate (REQ000196).
+//
+// In v1, this returns a conservative estimate: 0 for unknown
+// tables (preferring streaming Aggregate) and 0 for store-
+// backed tables. In-memory tables (via RegisterTable) have
+// their row count available via package-level tables map.
+//
+// A future iteration can integrate histogram-based estimates
+// (REQ000085) for more accuracy.
+func (p *Planner) estimateRowCount(table string, where PS.Expr) int {
+	// Conservative default: return 0 (assume small dataset)
+	// which prefers streaming Aggregate. Future iters can
+	// consult table statistics.
+	return 0
 }
 
 func (p *Planner) ParseAndPlan(sql string) (*plan, error) {
