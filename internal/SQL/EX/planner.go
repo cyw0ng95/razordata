@@ -464,12 +464,12 @@ func limitInt64(e PS.Expr) (int64, bool) {
 
 func (p *Planner) planInsert(s *PS.Insert) Operator {
 	if p.store != nil {
-		op, err := NewInsertWithStore(p.store, s.Table, s.Cols, s.Values, s.Returning)
+		op, err := NewInsertWithStore(p.store, s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
 		if err == nil {
 			return op
 		}
 	}
-	return NewInsert(s.Table, s.Cols, s.Values, s.Returning)
+	return NewInsert(s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
 }
 
 func (p *Planner) planUpdate(s *PS.Update) Operator {

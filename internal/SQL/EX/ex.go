@@ -508,13 +508,13 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	switch s := stmt.(type) {
 	case *PS.Insert:
 		if e.store != nil {
-			op, err := NewInsertWithStore(e.store, s.Table, s.Cols, s.Values, s.Returning)
+			op, err := NewInsertWithStore(e.store, s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
 			if err != nil {
 				return nil, err
 			}
 			return op, nil
 		}
-		return NewInsert(s.Table, s.Cols, s.Values, s.Returning), nil
+		return NewInsert(s.Table, s.Cols, s.Values, s.Returning, s.OnConflict), nil
 	case *PS.Update:
 		var scan Operator = NewSeqScan(s.Table)
 		if e.store != nil {

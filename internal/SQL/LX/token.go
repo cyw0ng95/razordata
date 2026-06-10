@@ -110,6 +110,10 @@ const (
 	T_QUERY
 	T_PLAN
 	T_RETURNING
+	T_CONFLICT
+	T_DO
+	T_NOTHING
+	T_EXCLUDED
 
 	T_ERROR TokenType = -1
 )
@@ -221,6 +225,10 @@ var tokenTypeNames = [...]string{
 	T_QUERY:     "QUERY",
 	T_PLAN:      "PLAN",
 	T_RETURNING: "RETURNING",
+	T_CONFLICT:  "CONFLICT",
+	T_DO:        "DO",
+	T_NOTHING:   "NOTHING",
+	T_EXCLUDED:  "EXCLUDED",
 }
 
 func (t Token) String() string {

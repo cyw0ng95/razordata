@@ -95,6 +95,10 @@ var keywords = map[string]TokenType{
 	"QUERY":     T_QUERY,
 	"PLAN":      T_PLAN,
 	"RETURNING": T_RETURNING,
+	"CONFLICT":  T_CONFLICT,
+	"DO":        T_DO,
+	"NOTHING":   T_NOTHING,
+	"EXCLUDED":  T_EXCLUDED,
 }
 
 type Lexer struct {
