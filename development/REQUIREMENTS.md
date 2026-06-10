@@ -52,22 +52,13 @@ Columns for selection:
 | REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
-| REQ000230 | SQL/PS | Parse WITH clause (CTE: `WITH x AS (...) SELECT...`) | medium | M | REQ000217 | `SQL/PS/ps.go` — `parseWith`, add `StmtWith` AST |
-| REQ000231 | SQL/PL | CTE planner (materialization vs inline expansion) | medium | M | REQ000230 | `SQL/PL/planner.go` — decide materialization based on usage count |
-| REQ000232 | SQL/PS | Parse ON CONFLICT clause (`INSERT ... ON CONFLICT DO NOTHING/UPDATE`) | medium | M | iter-07 | `SQL/PS/ps.go` — extend `parseInsert` with conflict clause |
-| REQ000233 | SQL/EX | UPSERT executor (`INSERT...ON CONFLICT`) | medium | M | REQ000232 | `SQL/EX/writers.go` — conflict resolution path |
-| REQ000234 | SQL/PS | Parse RETURNING clause (`INSERT/UPDATE/DELETE ... RETURNING col`) | medium | S | iter-07 | `SQL/PS/ps.go` — add to `Insert`, `Update`, `Delete` AST |
-| REQ000235 | SQL/EX | RETURNING executor (return rows from DML) | medium | M | REQ000234 | `SQL/EX/writers.go` — return rows from DML |
 | REQ000236 | SQL/PS | Parse window functions (`OVER`, `PARTITION BY`, `ROW_NUMBER`, `RANK`) | medium | L | iter-07 | `SQL/PS/ps.go`, `SQL/PS/ast.go` — `WindowFunc` AST, `parseWindowSpec` |
 | REQ000237 | SQL/EX | Window function executor (`ROW_NUMBER`, `RANK`, `SUM OVER`, `LAG`, `LEAD`) | medium | L | REQ000236 | `SQL/EX/window.go` (new) — partition-based aggregation |
-| REQ000238 | SQL/PS | Parse SAVEPOINT / RELEASE / ROLLBACK TO | medium | M | iter-06 | `SQL/PS/ps.go` — extend transaction statements |
-| REQ000239 | TXN/VL | Savepoint implementation (nested transaction markers) | medium | M | REQ000238 | `TXN/VL/savepoint.go` (new) — savepoint stack, partial rollback |
 | REQ000240 | SQL/PS | Parse CREATE VIEW | medium | S | iter-07 | `SQL/PS/ps.go` — `CreateView` AST |
 | REQ000241 | SQL/PL | View resolution (rewrite SELECT to subquery) | medium | S | REQ000240 | `SQL/PL/planner.go` — view expansion |
 | REQ000242 | SYS | Pragmas (`cache_size`, `journal_mode`, `synchronous`) | medium | S | iter-12 | `SYS/SY/sy.go` — apply on Open |
 | REQ000243 | SQL/PS | Parse ALTER TABLE (`ADD/DROP COLUMN`, `RENAME`) | medium | M | iter-12 | `SQL/PS/ps.go` — `AlterTable` AST, `parseAlterTable` |
 | REQ000244 | SQL/EX | ALTER TABLE executor (online schema migration) | medium | L | REQ000243 | `SQL/EX/alter.go` (new) — `ENG/LS` schema-aware readers |
-| REQ000245 | SQL/PS | Parse EXPLAIN / EXPLAIN QUERY PLAN | medium | S | iter-08 | `SQL/PS/ps.go` — `Explain` AST; SQL-level `EXPLAIN` syntax |
 | REQ000246 | SQL/PS | Parse TRIGGER (`CREATE TRIGGER`, `BEFORE/AFTER`, `FOR EACH ROW`) | low | L | iter-07 | `SQL/PS/ps.go` — `Trigger` AST, `parseTrigger` |
 | REQ000247 | SQL/EX | TRIGGER executor (fire on INSERT/UPDATE/DELETE) | low | L | REQ000246 | `SQL/EX/trigger.go` (new) — hook into writers |
 | REQ000248 | SQL/PS | Parse generated columns (`AS (expr) STORED/VIRTUAL`) | low | M | iter-12 | `SQL/PS/ps.go` — `ColDef.Generated` field |
@@ -95,16 +86,6 @@ Columns for selection:
 | REQ000270 | SQL/PS | Parse `LIMIT ... OFFSET ...` shorthand and `FETCH FIRST n ROWS` | low | S | iter-22 | `SQL/PS/ps.go` — `T_FETCH`, `T_ROWS` tokens |
 | REQ000271 | ENG/LS | Compression for SST blocks (snappy/lz4) | medium | M | iter-22 | `ENG/LS/sst_writer.go` — block-level codec |
 | REQ000272 | WAL | Checksum verification on WAL replay (detect corruption) | high | S | iter-22 | `WAL/RP/rp.go` — CRC32 verify per record |
-| REQ000273 | SQL/PS | Add `EXPLAIN` and `EXPLAIN QUERY PLAN` keyword tokens | medium | S | REQ000245 | `SQL/LX/token.go` — `T_EXPLAIN`, `T_QUERY`, `T_PLAN` |
-| REQ000274 | SQL/PS | Parse `EXPLAIN [QUERY PLAN] <stmt>` prefix syntax | medium | S | REQ000273 | `SQL/PS/ps.go` — `parseExplain`, wrap statement with `ExplainStmt` |
-| REQ000275 | SQL/PS | `ExplainStmt` AST (`Mode` enum, `Inner` statement) | medium | S | REQ000274 | `SQL/PS/ast.go` — `ExplainStmt{ Mode: ExplainNormal \| ExplainQueryPlan, Inner: Stmt }` |
-| REQ000276 | SQL/PL | `PlanNode` tree wrapper (type, cost, rows, children) | medium | M | REQ000274 | `SQL/PL/plan_node.go` (new) — `PlanNode{ Type, Cost, Rows, Width, Children }` |
-| REQ000277 | SQL/PL | Visitor pattern: emit PlanNodes during planner tree construction | medium | M | REQ000276 | `SQL/PL/planner.go` — wrap each operator with PlanNode metadata |
-| REQ000278 | SQL/PL | Per-operator cost annotation (`cost=N rows=N width=N`) | medium | M | REQ000277 | `SQL/PL/estimateCost` — populate cost from existing Plan.Cost |
-| REQ000279 | SQL/EX | `EXPLAIN` execution path: skip row execution, return plan as result-set | medium | M | REQ000277 | `SQL/EX/explain.go` (new) — schema `(id, parent, notused, detail)`, rows from PlanNode tree |
-| REQ000280 | SQL/EX | EXPLAIN on DML (INSERT/UPDATE/DELETE) returns execution plan | medium | S | REQ000279 | `SQL/EX/explain.go` — DML plans show scan + write path |
-| REQ000281 | SQL/EX | EXPLAIN QUERY PLAN formatter (tree-style, human-readable) | medium | S | REQ000279 | `SQL/EX/explain.go` — `formatPlanTree` with indent, `--SCAN TABLE`, `--SEARCH ...` |
-| REQ000282 | SQL/EX | EXPLAIN low-level opcode output (SQLite EXPLAIN parity) | low | M | REQ000279 | `SQL/EX/opcode.go` (new) — `OpCode` enum, `OpenRead`, `OpenWrite`, `IdxInsert` etc. |
 
 ## Unfixed Bugs (surfaces as requirements)
 
@@ -166,22 +147,6 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000203 | QUAL | Missing benchmarks (FIL/LF, LOG/HK, SQL/PS, SQL/PL have 0) | medium | M | AGENTS.md | add Benchmark* per hot path |
 | REQ000204 | SQL | CREATE INDEX (no implementation, no parser support) | critical | XL | iter-12, iter-21 (ID) | new `SQL/PS`, `SQL/EX`, `ENG/ID/` |
 | REQ000205 | SQL | EXPLAIN SQL syntax (currently only cost calc, not SQL statement) | medium | M | iter-08 | `SQL/PS`, `SQL/EX/explain.go` — accept EXPLAIN/EXPLAIN ANALYZE |
-| REQ000212 | SQL/PS | Parse ON CONFLICT clause (INSERT ... ON CONFLICT DO NOTHING/UPDATE) | medium | M | iter-07 | `SQL/PS/ps.go` — extend parseInsert with conflict clause |
-| REQ000213 | SQL/EX | UPSERT executor (INSERT...ON CONFLICT) | medium | M | REQ000212 | `SQL/EX/writers.go` — conflict resolution path |
-| REQ000214 | SQL/PS | Parse RETURNING clause (INSERT/UPDATE/DELETE ... RETURNING col) | medium | S | iter-07 | `SQL/PS/ps.go` — add to Insert, Update, Delete AST |
-| REQ000215 | SQL/EX | RETURNING executor | medium | M | REQ000214 | `SQL/EX/writers.go` — return rows from DML |
-| REQ000216 | SQL/PS | Parse WITH clause (CTE: WITH x AS (...) SELECT...) | medium | M | iter-07 | `SQL/PS/ps.go` — parseWith, add StmtWith AST |
-| REQ000217 | SQL/PL | CTE planner (CTE materialization vs inline expansion) | medium | M | REQ000216 | `SQL/PL/planner.go` — decide materialization based on usage count |
-| REQ000219 | SQL/PS | Parse window functions (OVER, PARTITION BY, ROW_NUMBER, RANK) | medium | L | iter-07 | `SQL/PS/ps.go`, `SQL/PS/ast.go` — WindowFunc AST, parseWindowSpec |
-| REQ000220 | SQL/EX | Window function executor (ROW_NUMBER, RANK, SUM OVER, LAG, LEAD) | medium | L | REQ000219 | `SQL/EX/window.go` (new) — partition-based aggregation |
-| REQ000221 | SQL/PS | Parse SAVEPOINT / RELEASE / ROLLBACK TO | medium | M | iter-06 | `SQL/PS/ps.go` — extend transaction statements |
-| REQ000222 | TXN/VL | Savepoint implementation (nested transaction markers) | medium | M | REQ000221 | `TXN/VL/savepoint.go` (new) — savepoint stack, partial rollback |
-| REQ000223 | SQL/PS | Parse CREATE VIEW | medium | S | iter-07 | `SQL/PS/ps.go` — CreateView AST |
-| REQ000224 | SQL/PL | View resolution (rewrite SELECT to subquery) | medium | S | REQ000223 | `SQL/PL/planner.go` — view expansion |
-| REQ000225 | SYS | Pragmas (cache_size, journal_mode, synchronous) | medium | S | iter-12 | `SYS/SY/sy.go` — apply on Open |
-| REQ000226 | FIL | File locking (flock) for multi-process access | low | S | iter-01 | `FIL/FS/fs.go` — optional via Options |
-| REQ000227 | SQL/EX | Built-in aggregate extensions (group_concat, string_agg, percentile) | medium | M | iter-08 | `SQL/EX/aggregate.go` — extend Aggregate with string accumulation |
-| REQ000228 | SYS/SY | Network server (TCP/gRPC listener; SYS.Serve) | low | XL | iter-12 | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
 | REQ000176 | WAL | Batch commit with sync.WaitGroup and write barrier | iter-17 |
 | REQ000184 | WAL | 256 KB pre-allocated writeBuffer for batched WAL writes | iter-17 |
 | REQ000144 | SQL | SIMD vectorized execution (batch + 4-wide unrolling + selection vectors) | iter-19 (Phase 1) |
@@ -302,3 +267,20 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000140 | QUAL | All public API methods goroutine-safe | iter-09 |
 | REQ000141 | QUAL | `log/slog` only — no `fmt.Printf` in library | all |
 | REQ000142 | QUAL | Error messages: lowercase, no trailing punctuation | all |
+| REQ000230 | SQL/PS | Parse WITH clause (CTE: `WITH x AS (...) SELECT...`) | iter-21 |
+| REQ000231 | SQL/PL | CTE planner (materialization vs inline expansion) | iter-21 |
+| REQ000232 | SQL/PS | Parse ON CONFLICT clause (`INSERT ... ON CONFLICT DO NOTHING/UPDATE`) | iter-21 |
+| REQ000233 | SQL/EX | UPSERT executor (`INSERT...ON CONFLICT`) | iter-21 |
+| REQ000234 | SQL/PS | Parse RETURNING clause (`INSERT/UPDATE/DELETE ... RETURNING col`) | iter-21 |
+| REQ000235 | SQL/EX | RETURNING executor (return rows from DML) | iter-21 |
+| REQ000238 | SQL/PS | Parse SAVEPOINT / RELEASE / ROLLBACK TO | iter-21 |
+| REQ000239 | TXN/VL | Savepoint implementation (nested transaction markers) | iter-21 |
+| REQ000273 | SQL/PS | Add `EXPLAIN` and `EXPLAIN QUERY PLAN` keyword tokens | iter-21 |
+| REQ000274 | SQL/PS | Parse `EXPLAIN [QUERY PLAN] <stmt>` prefix syntax | iter-21 |
+| REQ000275 | SQL/PS | `ExplainStmt` AST (`Mode` enum, `Inner` statement) | iter-21 |
+| REQ000276 | SQL/PL | `PlanNode` tree wrapper (type, cost, rows, children) | iter-21 |
+| REQ000277 | SQL/PL | Visitor pattern: emit PlanNodes during planner tree construction | iter-21 |
+| REQ000278 | SQL/PL | Per-operator cost annotation (`cost=N rows=N width=N`) | iter-21 |
+| REQ000279 | SQL/EX | `EXPLAIN` execution path: skip row execution, return plan as result-set | iter-21 |
+| REQ000280 | SQL/EX | EXPLAIN on DML (INSERT/UPDATE/DELETE) returns execution plan | iter-21 |
+| REQ000281 | SQL/EX | EXPLAIN QUERY PLAN formatter (tree-style, human-readable) | iter-21 |
