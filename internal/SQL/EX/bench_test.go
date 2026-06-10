@@ -171,7 +171,7 @@ func BenchmarkConstraintsInsert(b *testing.B) {
 		_, _ = ct.Next(context.Background())
 		ins, err := NewInsertWithStore(nil, "t", []string{"id", "name"}, [][]PS.Expr{
 			{&PS.NumberLiteral{Val: int64(i)}, &PS.StringLiteral{Val: "x"}},
-		})
+		}, nil, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -213,7 +213,7 @@ func BenchmarkUniqueInsert(b *testing.B) {
 		_, _ = ct.Next(context.Background())
 		ins, err := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
 			{&PS.NumberLiteral{Val: int64(i)}, &PS.StringLiteral{Val: "u@x"}},
-		})
+		}, nil, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -30,7 +30,7 @@ func TestConstraints_NotNull_InsertOK(t *testing.T) {
 	}
 	ins, err := NewInsertWithStore(nil, "t", []string{"id", "name"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "alice"}},
-	})
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("NewInsertWithStore: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestConstraints_NotNull_InsertMissingValue_Rejected(t *testing.T) {
 	// Omit the `name` column.
 	ins, err := NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}},
-	})
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("NewInsertWithStore: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestConstraints_NotNull_PrimaryKey_Implied(t *testing.T) {
 	// Omit the PK column entirely.
 	ins, err := NewInsertWithStore(nil, "t", []string{}, [][]PS.Expr{
 		{nil},
-	})
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("NewInsertWithStore: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestConstraints_Nullable_ColumnAcceptsNull(t *testing.T) {
 	}
 	ins, err := NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}},
-	})
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("NewInsertWithStore: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestConstraints_Update_NotNull(t *testing.T) {
 	// Seed a row.
 	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "name"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "a"}},
-	})
+	}, nil, nil)
 	if _, err := ins.Next(context.Background()); err != nil && err != ErrNoRows {
 		t.Fatalf("seed INSERT: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestConstraints_Update_NotNull(t *testing.T) {
 	scan := NewSeqScan("t")
 	upd := NewUpdate("t", []PS.Pair{
 		{Col: "name", Val: &PS.NullLiteral{}},
-	}, nil, scan)
+	}, nil, scan, nil)
 	_, err := upd.Next(context.Background())
 	if !errors.Is(err, ap.ErrConstraint) {
 		t.Errorf("UPDATE setting NOT NULL to NULL: got %v, want ErrConstraint", err)
@@ -330,7 +330,7 @@ func TestUnique_ColumnLevel_DuplicateRejected(t *testing.T) {
 	}
 	ins, err := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "a@x"}},
-	})
+	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +340,7 @@ func TestUnique_ColumnLevel_DuplicateRejected(t *testing.T) {
 	// Second insert with same email → ErrConstraint.
 	ins2, _ := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 2}, &PS.StringLiteral{Val: "a@x"}},
-	})
+	}, nil, nil)
 	_, err = ins2.Next(context.Background())
 	if !errors.Is(err, ap.ErrConstraint) {
 		t.Errorf("duplicate UNIQUE: got %v, want ErrConstraint", err)
@@ -366,7 +366,7 @@ func TestUnique_ColumnLevel_DistinctValuesOK(t *testing.T) {
 	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "a@x"}},
 		{&PS.NumberLiteral{Val: 2}, &PS.StringLiteral{Val: "b@x"}},
-	})
+	}, nil, nil)
 	if _, err := ins.Next(context.Background()); err != nil && err != ErrNoRows {
 		t.Errorf("distinct emails: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestUnique_Composite_FullMatchRejected(t *testing.T) {
 	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "a", "b"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "x"}},
 		{&PS.NumberLiteral{Val: 2}, &PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "x"}},
-	})
+	}, nil, nil)
 	_, err := ins.Next(context.Background())
 	if !errors.Is(err, ap.ErrConstraint) {
 		t.Errorf("composite duplicate: got %v, want ErrConstraint", err)
@@ -449,7 +449,7 @@ func TestUnique_WithinStatement(t *testing.T) {
 	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "a@x"}},
 		{&PS.NumberLiteral{Val: 2}, &PS.StringLiteral{Val: "a@x"}}, // dup within batch
-	})
+	}, nil, nil)
 	_, err := ins.Next(context.Background())
 	if !errors.Is(err, ap.ErrConstraint) {
 		t.Errorf("within-statement duplicate: got %v, want ErrConstraint", err)
@@ -474,7 +474,7 @@ func TestUnique_PrimaryKeyImplied(t *testing.T) {
 	ins, _ := NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}},
 		{&PS.NumberLiteral{Val: 1}}, // duplicate PK
-	})
+	}, nil, nil)
 	_, err := ins.Next(context.Background())
 	if !errors.Is(err, ap.ErrConstraint) {
 		t.Errorf("duplicate PK: got %v, want ErrConstraint", err)
@@ -500,7 +500,7 @@ func TestUnique_NullSkipped(t *testing.T) {
 	ins, _ := NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}}, // tag omitted → NULL
 		{&PS.NumberLiteral{Val: 2}}, // tag omitted → NULL (allowed)
-	})
+	}, nil, nil)
 	if _, err := ins.Next(context.Background()); err != nil && err != ErrNoRows {
 		t.Errorf("multiple NULLs on UNIQUE: %v", err)
 	}

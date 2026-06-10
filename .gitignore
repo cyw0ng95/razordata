@@ -58,3 +58,4 @@ wal.*          # WAL segment files (wal.000, wal.001, ...)
 # AI Coding tools
 .qwen
 .monkeycode
+.omo
