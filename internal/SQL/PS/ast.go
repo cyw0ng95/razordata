@@ -199,24 +199,27 @@ type DropTable struct {
 func (d *DropTable) stmtNode() {}
 
 type Insert struct {
-	Table  string
-	Cols   []string
-	Values [][]Expr
+	Table     string
+	Cols      []string
+	Values    [][]Expr
+	Returning []Expr
 }
 
 func (i *Insert) stmtNode() {}
 
 type Update struct {
-	Table string
-	Set   []Pair
-	Where Expr
+	Table     string
+	Set       []Pair
+	Where     Expr
+	Returning []Expr
 }
 
 func (u *Update) stmtNode() {}
 
 type Delete struct {
-	Table string
-	Where Expr
+	Table     string
+	Where     Expr
+	Returning []Expr
 }
 
 func (d *Delete) stmtNode() {}

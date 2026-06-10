@@ -109,6 +109,7 @@ const (
 	T_EXPLAIN
 	T_QUERY
 	T_PLAN
+	T_RETURNING
 
 	T_ERROR TokenType = -1
 )
@@ -219,6 +220,7 @@ var tokenTypeNames = [...]string{
 	T_EXPLAIN:   "EXPLAIN",
 	T_QUERY:     "QUERY",
 	T_PLAN:      "PLAN",
+	T_RETURNING: "RETURNING",
 }
 
 func (t Token) String() string {
