@@ -404,7 +404,7 @@ func TestExprStringCoverageREQ000163(t *testing.T) {
 		{"star", &PS.StarExpr{}},
 		{"func", &PS.FunctionCall{Name: "ABS", Args: []PS.Expr{&PS.NumberLiteral{Val: 1}}}},
 		{"agg", &PS.AggregateFunc{Name: "COUNT", Arg: &PS.StarExpr{}}},
-		{"cast", &PS.CastExpr{Expr: &PS.Ident{Name: "x"}, Type: int(LX.T_INT_KW)}},
+		{"cast", &PS.CastExpr{Expr: &PS.Ident{Name: "x"}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}}},
 		{"list", &PS.ListExpr{Items: []PS.Expr{&PS.NumberLiteral{Val: 1}}}},
 		{"between", &PS.BetweenExpr{Expr: &PS.Ident{Name: "x"}, Low: &PS.NumberLiteral{Val: 1}, High: &PS.NumberLiteral{Val: 10}}},
 		{"case", &PS.CaseExpr{WhenList: []PS.WhenClause{{Cond: &PS.NumberLiteral{Val: 1}, Then: &PS.StringLiteral{Val: "a"}}}}},
@@ -427,7 +427,7 @@ func TestFormatSelectCoverageREQ000163(t *testing.T) {
 func TestRewriteExprCoverageREQ000163(t *testing.T) {
 	_ = RewriteExpr(nil)
 	_ = RewriteExpr(&PS.FunctionCall{Name: "F", Args: []PS.Expr{&PS.NumberLiteral{Val: 1}}})
-	_ = RewriteExpr(&PS.CastExpr{Expr: &PS.NumberLiteral{Val: 1}, Type: int(LX.T_INT_KW)})
+	_ = RewriteExpr(&PS.CastExpr{Expr: &PS.NumberLiteral{Val: 1}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}})
 }
 
 func TestSplitOrInferredType(t *testing.T) {
