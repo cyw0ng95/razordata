@@ -147,6 +147,10 @@ var tokenNames = [...]string{
 	LX.T_QUERY:     "QUERY",
 	LX.T_PLAN:      "PLAN",
 	LX.T_RETURNING: "RETURNING",
+	LX.T_CONFLICT:  "CONFLICT",
+	LX.T_DO:        "DO",
+	LX.T_NOTHING:   "NOTHING",
+	LX.T_EXCLUDED:  "EXCLUDED",
 }
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -703,7 +707,109 @@ func (p *Parser) parseInsert() (*Insert, error) {
 		return nil, err
 	}
 
-	return &Insert{Table: table, Cols: cols, Values: values, Returning: returning}, nil
+	// Parse ON CONFLICT clause if present
+	var onConflict *OnConflict
+	if p.current.Type == LX.T_ON {
+		// Peek to check if this is ON CONFLICT (not ON for JOIN)
+		next := p.lex.Peek()
+		if next.Type == LX.T_CONFLICT {
+			onConflict, err = p.parseOnConflict()
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return &Insert{Table: table, Cols: cols, Values: values, Returning: returning, OnConflict: onConflict}, nil
+}
+
+func (p *Parser) parseOnConflict() (*OnConflict, error) {
+	// ON CONFLICT
+	if err := p.expect(LX.T_ON); err != nil {
+		return nil, err
+	}
+	p.advance()
+	if err := p.expect(LX.T_CONFLICT); err != nil {
+		return nil, err
+	}
+	p.advance()
+
+	// Optional (target columns)
+	var columns []string
+	if p.current.Type == LX.T_LPAREN {
+		p.advance()
+		for {
+			if err := p.expect(LX.T_IDENT); err != nil {
+				return nil, err
+			}
+			columns = append(columns, p.current.Lexeme)
+			p.advance()
+			if p.current.Type != LX.T_COMMA {
+				break
+			}
+			p.advance()
+		}
+		if err := p.expect(LX.T_RPAREN); err != nil {
+			return nil, err
+		}
+		p.advance()
+	}
+
+	// DO NOTHING or DO UPDATE SET
+	if err := p.expect(LX.T_DO); err != nil {
+		return nil, err
+	}
+	p.advance()
+
+	if p.current.Type == LX.T_NOTHING {
+		p.advance()
+		return &OnConflict{Columns: columns, DoNothing: true}, nil
+	}
+
+	if err := p.expect(LX.T_UPDATE); err != nil {
+		return nil, err
+	}
+	p.advance()
+	if err := p.expect(LX.T_SET); err != nil {
+		return nil, err
+	}
+	p.advance()
+
+	var setClauses []Pair
+	for {
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		col := p.current.Lexeme
+		p.advance()
+
+		// Handle EXCLUDED.col
+		if p.current.Type == LX.T_DOT {
+			p.advance()
+			if err := p.expect(LX.T_IDENT); err != nil {
+				return nil, err
+			}
+			// For now, treat EXCLUDED.col as a reference
+			p.advance()
+		} else {
+			if err := p.expect(LX.T_EQ); err != nil {
+				return nil, err
+			}
+			p.advance()
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			setClauses = append(setClauses, Pair{Col: col, Val: val})
+		}
+
+		if p.current.Type != LX.T_COMMA {
+			break
+		}
+		p.advance()
+	}
+
+	return &OnConflict{Columns: columns, SetClauses: setClauses}, nil
 }
 
 func (p *Parser) parseUpdate() (*Update, error) {

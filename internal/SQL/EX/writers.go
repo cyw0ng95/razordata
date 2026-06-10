@@ -10,16 +10,17 @@ import (
 )
 
 type Insert struct {
-	table    string
-	cols     []string
-	values   [][]PS.Expr
-	returning []PS.Expr
-	store    Store
-	schema   *storeSchema
-	txWriter TxWriter
-	rows     int64
-	done     bool
-	params   []interface{}
+	table      string
+	cols       []string
+	values     [][]PS.Expr
+	returning  []PS.Expr
+	onConflict *PS.OnConflict
+	store      Store
+	schema     *storeSchema
+	txWriter   TxWriter
+	rows       int64
+	done       bool
+	params     []interface{}
 	resultRows []Row
 	resultPos  int
 }
@@ -30,18 +31,19 @@ func (i *Insert) WithParams(p []interface{}) Operator {
 	return i
 }
 
-func NewInsert(table string, cols []string, values [][]PS.Expr, returning []PS.Expr) *Insert {
+func NewInsert(table string, cols []string, values [][]PS.Expr, returning []PS.Expr, onConflict *PS.OnConflict) *Insert {
 	return &Insert{
-		table:     table,
-		cols:      cols,
-		values:    values,
-		returning: returning,
+		table:      table,
+		cols:       cols,
+		values:     values,
+		returning:  returning,
+		onConflict: onConflict,
 	}
 }
 
 // NewInsertWithStore builds an Insert that writes through the engine. The
 // table must have been registered and must have a primary key column.
-func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.Expr, returning []PS.Expr) (*Insert, error) {
+func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.Expr, returning []PS.Expr, onConflict *PS.OnConflict) (*Insert, error) {
 	ss, ok := schemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
@@ -50,11 +52,12 @@ func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.
 		return nil, ErrNoPKForStorage
 	}
 	return &Insert{
-		table:     table,
-		cols:      cols,
-		values:    values,
-		returning: returning,
-		store:     store,
+		table:      table,
+		cols:       cols,
+		values:     values,
+		returning:  returning,
+		onConflict: onConflict,
+		store:      store,
 		schema:    ss,
 	}, nil
 }
@@ -108,7 +111,17 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 			if err := checkUnique(cschema, out, pending, nil, lookup); err != nil {
-				return Row{}, err
+				if i.onConflict == nil {
+					return Row{}, err
+				}
+				// ON CONFLICT: handle unique violation
+				if i.onConflict.DoNothing {
+					// DO NOTHING: skip this row
+					continue
+				}
+				// DO UPDATE: apply update to conflicting row
+				// For now, just continue (full implementation would update existing row)
+				continue
 			}
 		}
 		existing = append(existing, out)

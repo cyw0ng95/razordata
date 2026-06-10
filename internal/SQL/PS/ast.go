@@ -198,11 +198,19 @@ type DropTable struct {
 
 func (d *DropTable) stmtNode() {}
 
+// OnConflict represents an ON CONFLICT clause for UPSERT operations.
+type OnConflict struct {
+	Columns    []string  // target columns for conflict detection
+	DoNothing  bool      // true = DO NOTHING
+	SetClauses []Pair    // DO UPDATE SET clauses
+}
+
 type Insert struct {
-	Table     string
-	Cols      []string
-	Values    [][]Expr
-	Returning []Expr
+	Table      string
+	Cols       []string
+	Values     [][]Expr
+	Returning  []Expr
+	OnConflict *OnConflict // nil if no ON CONFLICT clause
 }
 
 func (i *Insert) stmtNode() {}
