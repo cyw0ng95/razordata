@@ -146,6 +146,7 @@ var tokenNames = [...]string{
 	LX.T_EXPLAIN:   "EXPLAIN",
 	LX.T_QUERY:     "QUERY",
 	LX.T_PLAN:      "PLAN",
+	LX.T_RETURNING: "RETURNING",
 }
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -697,7 +698,12 @@ func (p *Parser) parseInsert() (*Insert, error) {
 		p.advance()
 	}
 
-	return &Insert{Table: table, Cols: cols, Values: values}, nil
+	returning, err := p.parseReturning()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Insert{Table: table, Cols: cols, Values: values, Returning: returning}, nil
 }
 
 func (p *Parser) parseUpdate() (*Update, error) {
@@ -749,7 +755,12 @@ func (p *Parser) parseUpdate() (*Update, error) {
 		where = w
 	}
 
-	return &Update{Table: table, Set: set, Where: where}, nil
+	returning, err := p.parseReturning()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Update{Table: table, Set: set, Where: where, Returning: returning}, nil
 }
 
 func (p *Parser) parseDelete() (*Delete, error) {
@@ -776,7 +787,12 @@ func (p *Parser) parseDelete() (*Delete, error) {
 		where = w
 	}
 
-	return &Delete{Table: table, Where: where}, nil
+	returning, err := p.parseReturning()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Delete{Table: table, Where: where, Returning: returning}, nil
 }
 
 func (p *Parser) parseCreateTable() (*CreateTable, error) {
@@ -1016,6 +1032,27 @@ func (p *Parser) parseExplain() (*ExplainStmt, error) {
 	}
 
 	return &ExplainStmt{Mode: mode, Inner: inner}, nil
+}
+
+func (p *Parser) parseReturning() ([]Expr, error) {
+	if p.current.Type != LX.T_RETURNING {
+		return nil, nil
+	}
+	p.advance() // consume RETURNING
+
+	var cols []Expr
+	for {
+		expr, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		cols = append(cols, expr)
+		if p.current.Type != LX.T_COMMA {
+			break
+		}
+		p.advance()
+	}
+	return cols, nil
 }
 
 func (p *Parser) parseCast() (Expr, error) {

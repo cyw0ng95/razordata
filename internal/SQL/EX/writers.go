@@ -13,12 +13,15 @@ type Insert struct {
 	table    string
 	cols     []string
 	values   [][]PS.Expr
+	returning []PS.Expr
 	store    Store
 	schema   *storeSchema
 	txWriter TxWriter
 	rows     int64
 	done     bool
 	params   []interface{}
+	resultRows []Row
+	resultPos  int
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -27,17 +30,18 @@ func (i *Insert) WithParams(p []interface{}) Operator {
 	return i
 }
 
-func NewInsert(table string, cols []string, values [][]PS.Expr) *Insert {
+func NewInsert(table string, cols []string, values [][]PS.Expr, returning []PS.Expr) *Insert {
 	return &Insert{
-		table:  table,
-		cols:   cols,
-		values: values,
+		table:     table,
+		cols:      cols,
+		values:    values,
+		returning: returning,
 	}
 }
 
 // NewInsertWithStore builds an Insert that writes through the engine. The
 // table must have been registered and must have a primary key column.
-func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.Expr) (*Insert, error) {
+func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.Expr, returning []PS.Expr) (*Insert, error) {
 	ss, ok := schemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
@@ -46,15 +50,26 @@ func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.
 		return nil, ErrNoPKForStorage
 	}
 	return &Insert{
-		table:  table,
-		cols:   cols,
-		values: values,
-		store:  store,
-		schema: ss,
+		table:     table,
+		cols:      cols,
+		values:    values,
+		returning: returning,
+		store:     store,
+		schema:    ss,
 	}, nil
 }
 
 func (i *Insert) Next(ctx context.Context) (Row, error) {
+	// If we have RETURNING results, return them
+	if len(i.returning) > 0 {
+		if i.resultPos < len(i.resultRows) {
+			row := i.resultRows[i.resultPos]
+			i.resultPos++
+			return row, nil
+		}
+		return Row{}, ErrNoRows
+	}
+
 	if i.done {
 		return Row{}, ErrNoRows
 	}
@@ -98,12 +113,46 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		}
 		existing = append(existing, out)
 		i.rows++
+
+		// Evaluate RETURNING expressions
+		if len(i.returning) > 0 {
+			resultRow := Row{
+				Cols:  make([]string, len(i.returning)),
+				Types: make([]int, len(i.returning)),
+				Data:  make([]interface{}, len(i.returning)),
+			}
+			for j, expr := range i.returning {
+				val, err := Eval(expr, &out, i.params)
+				if err != nil {
+					return Row{}, err
+				}
+				resultRow.Data[j] = val
+			}
+			i.resultRows = append(i.resultRows, resultRow)
+		}
 	}
 	tables[i.table] = existing
+
+	// Return first RETURNING result if any
+	if len(i.resultRows) > 0 {
+		row := i.resultRows[0]
+		i.resultPos = 1
+		return row, nil
+	}
 	return Row{}, ErrNoRows
 }
 
 func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
+	// If we have RETURNING results, return them
+	if len(i.returning) > 0 {
+		if i.resultPos < len(i.resultRows) {
+			row := i.resultRows[i.resultPos]
+			i.resultPos++
+			return row, nil
+		}
+		return Row{}, ErrNoRows
+	}
+
 	prefix := tablePrefix(i.table)
 	pending := make(map[string]struct{}, len(i.values))
 	// In the engine path, unique lookups are best-effort: the LSM
@@ -145,8 +194,32 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			i.txWriter.RecordWrite(key, buf)
 		}
 		i.rows++
+
+		// Evaluate RETURNING expressions
+		if len(i.returning) > 0 {
+			resultRow := Row{
+				Cols:  make([]string, len(i.returning)),
+				Types: make([]int, len(i.returning)),
+				Data:  make([]interface{}, len(i.returning)),
+			}
+			for j, expr := range i.returning {
+				val, err := Eval(expr, &out, i.params)
+				if err != nil {
+					return Row{}, err
+				}
+				resultRow.Data[j] = val
+			}
+			i.resultRows = append(i.resultRows, resultRow)
+		}
 	}
 	_ = ctx
+
+	// Return first RETURNING result if any
+	if len(i.resultRows) > 0 {
+		row := i.resultRows[0]
+		i.resultPos = 1
+		return row, nil
+	}
 	return Row{}, ErrNoRows
 }
 
@@ -162,6 +235,7 @@ type Update struct {
 	table    string
 	set      []PS.Pair
 	where    PS.Expr
+	returning []PS.Expr
 	iter     Operator
 	store    Store
 	schema   *storeSchema
@@ -169,6 +243,8 @@ type Update struct {
 	rows     int64
 	done     bool
 	params   []interface{}
+	resultRows []Row
+	resultPos  int
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -182,13 +258,13 @@ func (u *Update) WithParams(p []interface{}) Operator {
 	return u
 }
 
-func NewUpdate(table string, set []PS.Pair, where PS.Expr, iter Operator) *Update {
-	return &Update{table: table, set: set, where: where, iter: iter}
+func NewUpdate(table string, set []PS.Pair, where PS.Expr, iter Operator, returning []PS.Expr) *Update {
+	return &Update{table: table, set: set, where: where, iter: iter, returning: returning}
 }
 
 // NewUpdateWithStore builds an Update that reads the old row via the engine
 // iterator and writes the new version through engine.Insert.
-func NewUpdateWithStore(store Store, table string, set []PS.Pair, where PS.Expr, iter Operator) (*Update, error) {
+func NewUpdateWithStore(store Store, table string, set []PS.Pair, where PS.Expr, iter Operator, returning []PS.Expr) (*Update, error) {
 	ss, ok := schemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
@@ -197,16 +273,27 @@ func NewUpdateWithStore(store Store, table string, set []PS.Pair, where PS.Expr,
 		return nil, ErrNoPKForStorage
 	}
 	return &Update{
-		table:  table,
-		set:    set,
-		where:  where,
-		iter:   iter,
-		store:  store,
-		schema: ss,
+		table:     table,
+		set:       set,
+		where:     where,
+		iter:      iter,
+		returning: returning,
+		store:     store,
+		schema:    ss,
 	}, nil
 }
 
 func (u *Update) Next(ctx context.Context) (Row, error) {
+	// If we have RETURNING results, return them
+	if len(u.returning) > 0 {
+		if u.resultPos < len(u.resultRows) {
+			row := u.resultRows[u.resultPos]
+			u.resultPos++
+			return row, nil
+		}
+		return Row{}, ErrNoRows
+	}
+
 	if u.done {
 		return Row{}, ErrNoRows
 	}
@@ -275,11 +362,45 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		u.rows++
+
+		// Evaluate RETURNING expressions
+		if len(u.returning) > 0 {
+			resultRow := Row{
+				Cols:  make([]string, len(u.returning)),
+				Types: make([]int, len(u.returning)),
+				Data:  make([]interface{}, len(u.returning)),
+			}
+			for j, expr := range u.returning {
+				val, err := Eval(expr, &row, u.params)
+				if err != nil {
+					return Row{}, err
+				}
+				resultRow.Data[j] = val
+			}
+			u.resultRows = append(u.resultRows, resultRow)
+		}
+	}
+
+	// Return first RETURNING result if any
+	if len(u.resultRows) > 0 {
+		row := u.resultRows[0]
+		u.resultPos = 1
+		return row, nil
 	}
 	return Row{}, ErrNoRows
 }
 
 func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
+	// If we have RETURNING results, return them
+	if len(u.returning) > 0 {
+		if u.resultPos < len(u.resultRows) {
+			row := u.resultRows[u.resultPos]
+			u.resultPos++
+			return row, nil
+		}
+		return Row{}, ErrNoRows
+	}
+
 	prefix := tablePrefix(u.table)
 	for {
 		row, err := u.iter.Next(ctx)
@@ -332,6 +453,30 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 			u.txWriter.RecordWrite(key, buf)
 		}
 		u.rows++
+
+		// Evaluate RETURNING expressions
+		if len(u.returning) > 0 {
+			resultRow := Row{
+				Cols:  make([]string, len(u.returning)),
+				Types: make([]int, len(u.returning)),
+				Data:  make([]interface{}, len(u.returning)),
+			}
+			for j, expr := range u.returning {
+				val, err := Eval(expr, &row, u.params)
+				if err != nil {
+					return Row{}, err
+				}
+				resultRow.Data[j] = val
+			}
+			u.resultRows = append(u.resultRows, resultRow)
+		}
+	}
+
+	// Return first RETURNING result if any
+	if len(u.resultRows) > 0 {
+		row := u.resultRows[0]
+		u.resultPos = 1
+		return row, nil
 	}
 	return Row{}, ErrNoRows
 }
@@ -347,6 +492,7 @@ func (u *Update) RowsAffected() int64 {
 type Delete struct {
 	table    string
 	where    PS.Expr
+	returning []PS.Expr
 	iter     Operator
 	store    Store
 	schema   *storeSchema
@@ -354,6 +500,8 @@ type Delete struct {
 	rows     int64
 	done     bool
 	params   []interface{}
+	resultRows []Row
+	resultPos  int
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -367,12 +515,12 @@ func (d *Delete) WithParams(p []interface{}) Operator {
 	return d
 }
 
-func NewDelete(table string, where PS.Expr, iter Operator) *Delete {
-	return &Delete{table: table, where: where, iter: iter}
+func NewDelete(table string, where PS.Expr, iter Operator, returning []PS.Expr) *Delete {
+	return &Delete{table: table, where: where, iter: iter, returning: returning}
 }
 
 // NewDeleteWithStore builds a Delete that removes rows through engine.Delete.
-func NewDeleteWithStore(store Store, table string, where PS.Expr, iter Operator) (*Delete, error) {
+func NewDeleteWithStore(store Store, table string, where PS.Expr, iter Operator, returning []PS.Expr) (*Delete, error) {
 	ss, ok := schemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
@@ -381,15 +529,26 @@ func NewDeleteWithStore(store Store, table string, where PS.Expr, iter Operator)
 		return nil, ErrNoPKForStorage
 	}
 	return &Delete{
-		table:  table,
-		where:  where,
-		iter:   iter,
-		store:  store,
-		schema: ss,
+		table:     table,
+		where:     where,
+		iter:      iter,
+		returning: returning,
+		store:     store,
+		schema:    ss,
 	}, nil
 }
 
 func (d *Delete) Next(ctx context.Context) (Row, error) {
+	// If we have RETURNING results, return them
+	if len(d.returning) > 0 {
+		if d.resultPos < len(d.resultRows) {
+			row := d.resultRows[d.resultPos]
+			d.resultPos++
+			return row, nil
+		}
+		return Row{}, ErrNoRows
+	}
+
 	if d.done {
 		return Row{}, ErrNoRows
 	}
@@ -418,6 +577,23 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		idx, ok := rowIndex(d.table, row)
 		if ok {
 			toDelete[idx] = true
+
+			// Evaluate RETURNING expressions before deleting
+			if len(d.returning) > 0 {
+				resultRow := Row{
+					Cols:  make([]string, len(d.returning)),
+					Types: make([]int, len(d.returning)),
+					Data:  make([]interface{}, len(d.returning)),
+				}
+				for j, expr := range d.returning {
+					val, err := Eval(expr, &row, d.params)
+					if err != nil {
+						return Row{}, err
+					}
+					resultRow.Data[j] = val
+				}
+				d.resultRows = append(d.resultRows, resultRow)
+			}
 		}
 	}
 	if len(toDelete) > 0 {
@@ -433,10 +609,27 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		tables[d.table] = out
 		d.rows = int64(len(toDelete))
 	}
+
+	// Return first RETURNING result if any
+	if len(d.resultRows) > 0 {
+		row := d.resultRows[0]
+		d.resultPos = 1
+		return row, nil
+	}
 	return Row{}, ErrNoRows
 }
 
 func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
+	// If we have RETURNING results, return them
+	if len(d.returning) > 0 {
+		if d.resultPos < len(d.resultRows) {
+			row := d.resultRows[d.resultPos]
+			d.resultPos++
+			return row, nil
+		}
+		return Row{}, ErrNoRows
+	}
+
 	prefix := tablePrefix(d.table)
 	for {
 		row, err := d.iter.Next(ctx)
@@ -455,6 +648,24 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 				continue
 			}
 		}
+
+		// Evaluate RETURNING expressions before deleting
+		if len(d.returning) > 0 {
+			resultRow := Row{
+				Cols:  make([]string, len(d.returning)),
+				Types: make([]int, len(d.returning)),
+				Data:  make([]interface{}, len(d.returning)),
+			}
+			for j, expr := range d.returning {
+				val, err := Eval(expr, &row, d.params)
+				if err != nil {
+					return Row{}, err
+				}
+				resultRow.Data[j] = val
+			}
+			d.resultRows = append(d.resultRows, resultRow)
+		}
+
 		pk, err := extractPK(d.schema, row)
 		if err != nil {
 			return Row{}, err
@@ -467,6 +678,13 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			d.txWriter.RecordWrite(key, nil)
 		}
 		d.rows++
+	}
+
+	// Return first RETURNING result if any
+	if len(d.resultRows) > 0 {
+		row := d.resultRows[0]
+		d.resultPos = 1
+		return row, nil
 	}
 	return Row{}, ErrNoRows
 }

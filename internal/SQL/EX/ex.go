@@ -317,6 +317,17 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	if err != nil {
 		return Result{}, err
 	}
+
+	// Check if this is a DML with RETURNING clause
+	if hasReturning(stmt) {
+		// Use Query path for RETURNING
+		_, err := e.Query(ctx, sql, args...)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{RowsAffected: 1}, nil
+	}
+
 	op, err := e.buildWriterOp(stmt)
 	if err != nil {
 		return Result{}, err
@@ -332,12 +343,52 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	return extractResult(op)
 }
 
+// hasReturning reports whether the statement has a RETURNING clause.
+func hasReturning(stmt PS.Stmt) bool {
+	switch s := stmt.(type) {
+	case *PS.Insert:
+		return len(s.Returning) > 0
+	case *PS.Update:
+		return len(s.Returning) > 0
+	case *PS.Delete:
+		return len(s.Returning) > 0
+	}
+	return false
+}
+
 func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, error) {
 	parser := PS.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil, err
 	}
+
+	// Check if this is a DML with RETURNING clause
+	if hasReturning(stmt) {
+		op, err := e.buildWriterOp(stmt)
+		if err != nil {
+			return nil, err
+		}
+		propagateParams(op, args)
+		defer op.Close()
+		// Collect all RETURNING rows
+		var out []Row
+		for {
+			row, err := op.Next(ctx)
+			if err != nil {
+				if err == ErrNoRows {
+					break
+				}
+				return nil, err
+			}
+			out = append(out, row)
+		}
+		if len(out) == 0 {
+			return &Rows{}, nil
+		}
+		return &Rows{Cols: append([]string(nil), out[0].Cols...), Types: append([]int(nil), out[0].Types...)}, nil
+	}
+
 	plan, err := e.planner.Plan(stmt)
 	if err != nil {
 		return nil, err
@@ -457,13 +508,13 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	switch s := stmt.(type) {
 	case *PS.Insert:
 		if e.store != nil {
-			op, err := NewInsertWithStore(e.store, s.Table, s.Cols, s.Values)
+			op, err := NewInsertWithStore(e.store, s.Table, s.Cols, s.Values, s.Returning)
 			if err != nil {
 				return nil, err
 			}
 			return op, nil
 		}
-		return NewInsert(s.Table, s.Cols, s.Values), nil
+		return NewInsert(s.Table, s.Cols, s.Values, s.Returning), nil
 	case *PS.Update:
 		var scan Operator = NewSeqScan(s.Table)
 		if e.store != nil {
@@ -475,13 +526,13 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		}
 		filter := NewFilter(scan, s.Where)
 		if e.store != nil {
-			op, err := NewUpdateWithStore(e.store, s.Table, s.Set, s.Where, filter)
+			op, err := NewUpdateWithStore(e.store, s.Table, s.Set, s.Where, filter, s.Returning)
 			if err != nil {
 				return nil, err
 			}
 			return op, nil
 		}
-		return NewUpdate(s.Table, s.Set, s.Where, filter), nil
+		return NewUpdate(s.Table, s.Set, s.Where, filter, s.Returning), nil
 	case *PS.Delete:
 		var scan Operator = NewSeqScan(s.Table)
 		if e.store != nil {
@@ -493,13 +544,13 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		}
 		filter := NewFilter(scan, s.Where)
 		if e.store != nil {
-			op, err := NewDeleteWithStore(e.store, s.Table, s.Where, filter)
+			op, err := NewDeleteWithStore(e.store, s.Table, s.Where, filter, s.Returning)
 			if err != nil {
 				return nil, err
 			}
 			return op, nil
 		}
-		return NewDelete(s.Table, s.Where, filter), nil
+		return NewDelete(s.Table, s.Where, filter, s.Returning), nil
 	case *PS.CreateTable:
 		return NewCreateTable(s), nil
 	case *PS.DropTable:
