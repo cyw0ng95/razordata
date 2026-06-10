@@ -169,7 +169,7 @@ func (e *enc) writeExpr(x PS.Expr) {
 	case *PS.CastExpr:
 		e.buf = append(e.buf, tagCast)
 		e.writeExpr(v.Expr)
-		e.writeUvarint(uint64(v.Type))
+		e.writeUvarint(uint64(v.Type.Type))
 	case *PS.ListExpr:
 		e.buf = append(e.buf, tagList)
 		e.writeUvarint(uint64(len(v.Items)))

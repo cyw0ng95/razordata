@@ -56,6 +56,28 @@ func validateRow(schema *storeSchema, row Row) error {
 // LSM key range iterator.
 type uniqueLookup func(cols []int, vals []interface{}) (bool, error)
 
+// validateCheck checks that row satisfies all CHECK constraints
+// defined on the table. Returns a wrapped ErrConstraint on violation.
+func validateCheck(schema *storeSchema, row Row) error {
+	for i, check := range schema.checks {
+		if check == nil {
+			continue
+		}
+		// Evaluate the CHECK expression against the row
+		val, err := Eval(check, &row, nil)
+		if err != nil {
+			return fmt.Errorf("%w: CHECK constraint %d: %v",
+				ErrConstraint, i, err)
+		}
+		// CHECK must evaluate to TRUE (not FALSE or NULL)
+		if !truthy(val) {
+			return fmt.Errorf("%w: CHECK constraint %d failed",
+				ErrConstraint, i)
+		}
+	}
+	return nil
+}
+
 // checkUnique verifies that row's values for each UNIQUE key do not
 // collide with existing rows. The pending set carries encoded unique
 // keys from earlier rows in the same statement (multi-row INSERT

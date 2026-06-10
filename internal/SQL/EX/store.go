@@ -37,6 +37,7 @@ type storeSchema struct {
 	nullable []bool      // parallel to cols; false means NOT NULL
 	defaults []PS.Expr   // parallel to cols; nil means no DEFAULT
 	unique   []UniqueKey // each entry is1+ columns
+	checks   []PS.Expr   // parallel to CHECK constraints
 	// colTypes parallel to cols; stores the LX.T_* int token
 	// that names the SQL column type. nil means types were not
 	// registered (the legacy in-memory mode).

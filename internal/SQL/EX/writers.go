@@ -89,6 +89,9 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			if err := validateRow(cschema, out); err != nil {
 				return Row{}, err
 			}
+			if err := validateCheck(cschema, out); err != nil {
+				return Row{}, err
+			}
 			if err := checkUnique(cschema, out, pending, nil, lookup); err != nil {
 				return Row{}, err
 			}
@@ -118,6 +121,9 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		if err := validateRow(i.schema, out); err != nil {
+			return Row{}, err
+		}
+		if err := validateCheck(i.schema, out); err != nil {
 			return Row{}, err
 		}
 		if err := checkUnique(i.schema, out, pending, nil, noopLookup); err != nil {
@@ -243,6 +249,9 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			if err := validateRow(cschema, row); err != nil {
 				return Row{}, err
 			}
+			if err := validateCheck(cschema, row); err != nil {
+				return Row{}, err
+			}
 			// Self-exclude: encode the pre-update row's unique key so
 			// a no-op update (same values) does not self-conflict.
 			var selfKey []byte
@@ -296,6 +305,9 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		if err := validateRow(u.schema, row); err != nil {
+			return Row{}, err
+		}
+		if err := validateCheck(u.schema, row); err != nil {
 			return Row{}, err
 		}
 		// Engine-path unique: best-effort no-op (correct UNIQUE in the

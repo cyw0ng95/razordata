@@ -176,16 +176,16 @@ func TestEvalCast(t *testing.T) {
 		want interface{}
 		err  bool
 	}{
-		{"int_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 42}, Type: int(LX.T_INT_KW)}, int64(42), false},
-		{"int_from_float", &PS.CastExpr{Expr: &PS.FloatLiteral{Val: 3.7}, Type: int(LX.T_INT_KW)}, int64(3), false},
-		{"int_from_string", &PS.CastExpr{Expr: &PS.StringLiteral{Val: "123"}, Type: int(LX.T_INT_KW)}, int64(123), false},
-		{"int_from_string_bad", &PS.CastExpr{Expr: &PS.StringLiteral{Val: "abc"}, Type: int(LX.T_INT_KW)}, nil, true},
-		{"float_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 5}, Type: int(LX.T_FLOAT_KW)}, float64(5), false},
-		{"text_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 5}, Type: int(LX.T_TEXT)}, "5", false},
-		{"text_from_float", &PS.CastExpr{Expr: &PS.FloatLiteral{Val: 1.5}, Type: int(LX.T_TEXT)}, "1.5", false},
-		{"bool_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 1}, Type: int(LX.T_BOOL)}, true, false},
-		{"bool_from_zero", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 0}, Type: int(LX.T_BOOL)}, false, false},
-		{"null_to_int", &PS.CastExpr{Expr: &PS.NullLiteral{}, Type: int(LX.T_INT_KW)}, nil, false},
+		{"int_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 42}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}}, int64(42), false},
+		{"int_from_float", &PS.CastExpr{Expr: &PS.FloatLiteral{Val: 3.7}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}}, int64(3), false},
+		{"int_from_string", &PS.CastExpr{Expr: &PS.StringLiteral{Val: "123"}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}}, int64(123), false},
+		{"int_from_string_bad", &PS.CastExpr{Expr: &PS.StringLiteral{Val: "abc"}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}}, nil, true},
+		{"float_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 5}, Type: &PS.TypeInfo{Type: int(LX.T_FLOAT_KW)}}, float64(5), false},
+		{"text_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 5}, Type: &PS.TypeInfo{Type: int(LX.T_TEXT)}}, "5", false},
+		{"text_from_float", &PS.CastExpr{Expr: &PS.FloatLiteral{Val: 1.5}, Type: &PS.TypeInfo{Type: int(LX.T_TEXT)}}, "1.5", false},
+		{"bool_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 1}, Type: &PS.TypeInfo{Type: int(LX.T_BOOL)}}, true, false},
+		{"bool_from_zero", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 0}, Type: &PS.TypeInfo{Type: int(LX.T_BOOL)}}, false, false},
+		{"null_to_int", &PS.CastExpr{Expr: &PS.NullLiteral{}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}}, nil, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
