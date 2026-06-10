@@ -270,7 +270,10 @@ func evalCast(e *PS.CastExpr, row *Row, params []interface{}) (interface{}, erro
 	if v == nil {
 		return nil, nil
 	}
-	switch LX.TokenType(e.Type) {
+	if e.Type == nil {
+		return v, nil
+	}
+	switch LX.TokenType(e.Type.Type) {
 	case LX.T_INT_KW, LX.T_BIGINT:
 		switch x := v.(type) {
 		case int64:
