@@ -52,6 +52,49 @@ Columns for selection:
 | REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
+| REQ000230 | SQL/PS | Parse WITH clause (CTE: `WITH x AS (...) SELECT...`) | medium | M | REQ000217 | `SQL/PS/ps.go` — `parseWith`, add `StmtWith` AST |
+| REQ000231 | SQL/PL | CTE planner (materialization vs inline expansion) | medium | M | REQ000230 | `SQL/PL/planner.go` — decide materialization based on usage count |
+| REQ000232 | SQL/PS | Parse ON CONFLICT clause (`INSERT ... ON CONFLICT DO NOTHING/UPDATE`) | medium | M | iter-07 | `SQL/PS/ps.go` — extend `parseInsert` with conflict clause |
+| REQ000233 | SQL/EX | UPSERT executor (`INSERT...ON CONFLICT`) | medium | M | REQ000232 | `SQL/EX/writers.go` — conflict resolution path |
+| REQ000234 | SQL/PS | Parse RETURNING clause (`INSERT/UPDATE/DELETE ... RETURNING col`) | medium | S | iter-07 | `SQL/PS/ps.go` — add to `Insert`, `Update`, `Delete` AST |
+| REQ000235 | SQL/EX | RETURNING executor (return rows from DML) | medium | M | REQ000234 | `SQL/EX/writers.go` — return rows from DML |
+| REQ000236 | SQL/PS | Parse window functions (`OVER`, `PARTITION BY`, `ROW_NUMBER`, `RANK`) | medium | L | iter-07 | `SQL/PS/ps.go`, `SQL/PS/ast.go` — `WindowFunc` AST, `parseWindowSpec` |
+| REQ000237 | SQL/EX | Window function executor (`ROW_NUMBER`, `RANK`, `SUM OVER`, `LAG`, `LEAD`) | medium | L | REQ000236 | `SQL/EX/window.go` (new) — partition-based aggregation |
+| REQ000238 | SQL/PS | Parse SAVEPOINT / RELEASE / ROLLBACK TO | medium | M | iter-06 | `SQL/PS/ps.go` — extend transaction statements |
+| REQ000239 | TXN/VL | Savepoint implementation (nested transaction markers) | medium | M | REQ000238 | `TXN/VL/savepoint.go` (new) — savepoint stack, partial rollback |
+| REQ000240 | SQL/PS | Parse CREATE VIEW | medium | S | iter-07 | `SQL/PS/ps.go` — `CreateView` AST |
+| REQ000241 | SQL/PL | View resolution (rewrite SELECT to subquery) | medium | S | REQ000240 | `SQL/PL/planner.go` — view expansion |
+| REQ000242 | SYS | Pragmas (`cache_size`, `journal_mode`, `synchronous`) | medium | S | iter-12 | `SYS/SY/sy.go` — apply on Open |
+| REQ000243 | SQL/PS | Parse ALTER TABLE (`ADD/DROP COLUMN`, `RENAME`) | medium | M | iter-12 | `SQL/PS/ps.go` — `AlterTable` AST, `parseAlterTable` |
+| REQ000244 | SQL/EX | ALTER TABLE executor (online schema migration) | medium | L | REQ000243 | `SQL/EX/alter.go` (new) — `ENG/LS` schema-aware readers |
+| REQ000245 | SQL/PS | Parse EXPLAIN / EXPLAIN QUERY PLAN | medium | S | iter-08 | `SQL/PS/ps.go` — `Explain` AST; SQL-level `EXPLAIN` syntax |
+| REQ000246 | SQL/PS | Parse TRIGGER (`CREATE TRIGGER`, `BEFORE/AFTER`, `FOR EACH ROW`) | low | L | iter-07 | `SQL/PS/ps.go` — `Trigger` AST, `parseTrigger` |
+| REQ000247 | SQL/EX | TRIGGER executor (fire on INSERT/UPDATE/DELETE) | low | L | REQ000246 | `SQL/EX/trigger.go` (new) — hook into writers |
+| REQ000248 | SQL/PS | Parse generated columns (`AS (expr) STORED/VIRTUAL`) | low | M | iter-12 | `SQL/PS/ps.go` — `ColDef.Generated` field |
+| REQ000249 | SQL/EX | Generated column materialization on INSERT/UPDATE | low | M | REQ000248 | `SQL/EX/writers.go` — compute and store generated values |
+| REQ000250 | ENG/ID | B-tree secondary index package (foundation) | critical | XL | iter-21 | new `ENG/ID/id.go` — B-tree, key encoding, page management |
+| REQ000251 | SQL/PS | Parse CREATE INDEX (`UNIQUE`, multi-column) | critical | M | REQ000250 | `SQL/PS/ps.go` — `CreateIndex` AST, `parseIndex` |
+| REQ000252 | SQL/EX | IndexScan operator (real seek, replace prefix-scan fallback) | critical | M | REQ000250, REQ000074 | `SQL/EX/operators.go` — call into `ENG/ID/` |
+| REQ000253 | SQL/PL | Index selection in planner (cost-based, pick best index) | critical | M | REQ000250, REQ000085 | `SQL/PL/estimateCost` — histogram + index stats |
+| REQ000254 | ENG | Histogram-based selectivity stats (per-column) | medium | M | iter-21 | `ENG/LS/stats.go` (new) — buckets, sample on flush |
+| REQ000255 | TXN | Read-committed isolation (per-statement snapshot) | critical | L | REQ000123 | `TXN/SN/snapshot.go` — re-snapshot per statement |
+| REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | medium | S | iter-21 | `SQL/PS/ps.go` — `Vacuum`, `Analyze` AST |
+| REQ000257 | SQL/EX | VACUUM executor (reclaim tombstone space, rebuild SST) | medium | L | REQ000256 | `SQL/EX/vacuum.go` (new) — SST rewrite |
+| REQ000258 | SQL/EX | ANALYZE executor (collect column statistics) | medium | M | REQ000254, REQ000256 | `SQL/EX/analyze.go` (new) — sample + bucket |
+| REQ000259 | SYS | Backup/restore API (snapshot engine dir to copy) | medium | M | iter-21 | `SYS/BK/bk.go` (new) — directory copy with WAL freeze |
+| REQ000260 | SYS | Admin CLI `razor-admin` (schema dump, vacuum, integrity check) | high | M | iter-12, REQ000102 | `cmd/razor-admin/main.go` — CLI front-end |
+| REQ000261 | SYS | Integrity check (`PRAGMA integrity_check`) | high | M | iter-21 | `SQL/EX/integrity.go` (new) — checksum verify, page traversal |
+| REQ000262 | SQL/PS | Add DATE / TIME / TIMESTAMP type tokens | medium | S | REQ000206 | `SQL/LX/token.go` — `T_DATE`, `T_TIME`, `T_TIMESTAMP` |
+| REQ000263 | SQL/EX | DATE / TIME / TIMESTAMP value storage and arithmetic | medium | M | REQ000262 | `SQL/EX/datetime.go` (new) — `time.Time` round-trip, `strftime` |
+| REQ000264 | SQL/PS | Add JSON type and parse `->`, `->>`, `json_extract` | low | M | REQ000206 | `SQL/PS/ps.go` — `T_JSON`, `JsonExpr` AST |
+| REQ000265 | SQL/EX | JSON value storage and `json_extract` executor | low | M | REQ000264 | `SQL/EX/json.go` (new) — encoded `[]byte` + path |
+| REQ000266 | ENG | Benchmarks vs SQLite (SELECT, INSERT, JOIN throughput) | high | M | iter-21 | `bench/sqlitecmp/` (new) — apples-to-apples micro-bench |
+| REQ000267 | SQL/PS | Parse `GROUPING SETS` / `ROLLUP` / `CUBE` | low | L | iter-22 | `SQL/PS/ps.go` — extended `GroupBy` AST |
+| REQ000268 | SQL/EX | `GROUPING SETS` executor (multi-level aggregation) | low | L | REQ000267 | `SQL/EX/aggregate.go` — multi-pass aggregation |
+| REQ000269 | SYS | Connection pooling (`sql.DB`-style, max conns) | medium | M | iter-22 | `SYS/AP/ap.go` — `SetMaxOpenConns`, wait queue |
+| REQ000270 | SQL/PS | Parse `LIMIT ... OFFSET ...` shorthand and `FETCH FIRST n ROWS` | low | S | iter-22 | `SQL/PS/ps.go` — `T_FETCH`, `T_ROWS` tokens |
+| REQ000271 | ENG/LS | Compression for SST blocks (snappy/lz4) | medium | M | iter-22 | `ENG/LS/sst_writer.go` — block-level codec |
+| REQ000272 | WAL | Checksum verification on WAL replay (detect corruption) | high | S | iter-22 | `WAL/RP/rp.go` — CRC32 verify per record |
 
 ## Unfixed Bugs (surfaces as requirements)
 
