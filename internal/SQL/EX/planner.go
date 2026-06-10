@@ -219,8 +219,27 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	var scan Operator
 	if p.store != nil {
 		// Try IndexScan first when the WHERE references an indexed column.
+		// iter-22: prefer NewIndexScanWithIndex (real seek) over the
+		// prefix-scan fallback when the predicate is an equality on
+		// the indexed column.
 		if s.Where != nil {
-			if col, ok := indexedColumn(s.Where); ok {
+			if col, val, ok := indexedColumnEq(s.Where); ok {
+				if idx, found := p.selectIndex(s.From, col); found {
+					tableID, _ := tableIDFor(s.From)
+					if isc, err := NewIndexScanWithIndex(p.store, tableID, s.From, idx, val, nil); err == nil {
+						// Wrap in a Filter to apply any remaining
+						// predicates (multi-column indexes, etc.)
+						if s.Where != nil {
+							scan = NewFilter(isc, s.Where)
+						} else {
+							scan = isc
+						}
+					}
+				}
+			} else if col, ok := indexedColumn(s.Where); ok {
+				// Range scan: column referenced but not
+				// equality. Fall back to the existing prefix-scan
+				// path for now; iter-23 will add range seek.
 				if idx, found := p.selectIndex(s.From, col); found {
 					if isc, err := NewIndexScanWithStore(p.store, s.From, idx); err == nil {
 						scan = isc
@@ -449,6 +468,64 @@ func indexedColumn(e PS.Expr) (string, bool) {
 		return indexedColumn(v.Left)
 	}
 	return "", false
+}
+
+// indexedColumnEq returns (columnName, encodedValue, true) if
+// `e` is an equality comparison between an identifier and a
+// literal (e.g. `col = 5` or `col = 'x'`). The encodedValue is
+// the index key bytes (int64 big-endian for integers, raw
+// string for strings).
+//
+// iter-22: used by the planner to enable real index seek via
+// NewIndexScanWithIndex. REQ000252.
+func indexedColumnEq(e PS.Expr) (string, []byte, bool) {
+	b, ok := e.(*PS.BinaryExpr)
+	if !ok {
+		return "", nil, false
+	}
+	if b.Op != int(LX.T_EQ) {
+		return "", nil, false
+	}
+	// Pattern: Ident = Literal
+	if l, ok := b.Left.(*PS.Ident); ok {
+		if v, ok := encodeIndexValue(b.Right); ok {
+			return l.Name, v, true
+		}
+	}
+	// Pattern: Literal = Ident
+	if r, ok := b.Right.(*PS.Ident); ok {
+		if v, ok := encodeIndexValue(b.Left); ok {
+			return r.Name, v, true
+		}
+	}
+	return "", nil, false
+}
+
+// encodeIndexValue converts a literal expression into the byte
+// form used by the index. Returns (value, true) on success.
+func encodeIndexValue(e PS.Expr) ([]byte, bool) {
+	switch v := e.(type) {
+	case *PS.NumberLiteral:
+		b := make([]byte, 8)
+		u := uint64(v.Val)
+		b[7] = byte(u)
+		b[6] = byte(u >> 8)
+		b[5] = byte(u >> 16)
+		b[4] = byte(u >> 24)
+		b[3] = byte(u >> 32)
+		b[2] = byte(u >> 40)
+		b[1] = byte(u >> 48)
+		b[0] = byte(u >> 56)
+		return b, true
+	case *PS.StringLiteral:
+		return []byte(v.Val), true
+	case *PS.BoolLiteral:
+		if v.Val {
+			return []byte{1}, true
+		}
+		return []byte{0}, true
+	}
+	return nil, false
 }
 
 func limitInt64(e PS.Expr) (int64, bool) {
