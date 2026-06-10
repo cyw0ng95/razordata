@@ -93,15 +93,20 @@ func TestWorkerPool_TrySubmitFull(t *testing.T) {
 
 	// Block the worker with a task
 	block := make(chan struct{})
+	workerStarted := make(chan struct{})
 	err := pool.TrySubmit(func() error {
+		close(workerStarted)
 		<-block
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("first TrySubmit: %v", err)
 	}
+	// Wait for the worker to actually start and pick up the task,
+	// so we know the queue is empty before we fill it.
+	<-workerStarted
 
-	// Fill the queue
+	// Fill the queue (capacity = workers * 2 = 2)
 	for i := 0; i < 2; i++ {
 		_ = pool.TrySubmit(func() error { return nil })
 	}
