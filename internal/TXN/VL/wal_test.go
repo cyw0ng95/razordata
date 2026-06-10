@@ -157,3 +157,87 @@ func TestCommit_WALSyncError(t *testing.T) {
 		t.Error("expected Commit to return error")
 	}
 }
+
+// TestCommit_Phases verifies the 6-phase progression (REQ000147):
+// Begin -> Read -> Write -> PreCommit -> Commit -> PostCommit
+func TestCommit_Phases(t *testing.T) {
+	m := NewManager()
+	defer m.Close()
+
+	txn, err := m.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	txi := txn.(*tx)
+
+	if got := txi.Phase(); got != PhaseBegin {
+		t.Errorf("initial phase: got %v, want PhaseBegin", got)
+	}
+
+	// Get -> PhaseRead
+	if _, err := txn.Get(context.Background(), []byte("k1")); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got := txi.Phase(); got != PhaseRead {
+		t.Errorf("after Get: got %v, want PhaseRead", got)
+	}
+
+	// Insert -> PhaseWrite
+	if err := txn.Insert(context.Background(), []byte("k1"), []byte("v1")); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if got := txi.Phase(); got != PhaseWrite {
+		t.Errorf("after Insert: got %v, want PhaseWrite", got)
+	}
+
+	// Commit -> PreCommit -> Commit -> PostCommit
+	if err := txn.Commit(context.Background()); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if got := txi.Phase(); got != PhasePostCommit {
+		t.Errorf("after Commit: got %v, want PhasePostCommit", got)
+	}
+}
+
+// TestAbortFlow verifies the Abort path goes to PhaseAborted.
+func TestAbortFlow(t *testing.T) {
+	m := NewManager()
+	defer m.Close()
+
+	txn, err := m.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if err := txn.Insert(context.Background(), []byte("k"), []byte("v")); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if err := txn.Abort(context.Background()); err != nil {
+		t.Fatalf("Abort: %v", err)
+	}
+	if got := txn.(*tx).Phase(); got != PhaseAborted {
+		t.Errorf("after Abort: got %v, want PhaseAborted", got)
+	}
+}
+
+// TestPhaseReadOnlyTx verifies a tx that only reads goes
+// Begin -> Read -> PreCommit (via Commit with no writes).
+func TestPhaseReadOnlyTx(t *testing.T) {
+	m := NewManager()
+	defer m.Close()
+
+	txn, err := m.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if _, err := txn.Get(context.Background(), []byte("k")); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	// Commit on a read-only tx skips PhaseWrite but goes
+	// through PreCommit -> Commit -> PostCommit
+	if err := txn.Commit(context.Background()); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if got := txn.(*tx).Phase(); got != PhasePostCommit {
+		t.Errorf("after read-only Commit: got %v, want PhasePostCommit", got)
+	}
+}
