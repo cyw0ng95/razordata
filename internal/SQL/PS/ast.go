@@ -259,3 +259,17 @@ func (c *CommitTX) stmtNode() {}
 type RollbackTX struct{}
 
 func (r *RollbackTX) stmtNode() {}
+
+type ExplainMode int
+
+const (
+	ExplainNormal ExplainMode = iota
+	ExplainQueryPlan
+)
+
+type ExplainStmt struct {
+	Mode  ExplainMode
+	Inner Stmt
+}
+
+func (e *ExplainStmt) stmtNode() {}
