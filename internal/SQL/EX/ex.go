@@ -555,6 +555,10 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		return NewCreateTable(s), nil
 	case *PS.DropTable:
 		return NewDropTable(s), nil
+	case *PS.CreateIndexStmt:
+		return NewCreateIndex(s), nil
+	case *PS.DropIndexStmt:
+		return NewDropIndex(s), nil
 	}
 	return nil, errors.New("ex: not a writable statement")
 }

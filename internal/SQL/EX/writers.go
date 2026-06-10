@@ -976,3 +976,112 @@ func (d *DropTable) Close() error {
 func (d *DropTable) RowsAffected() int64 {
 	return d.rows
 }
+
+// CreateIndex is the DDL operator for CREATE INDEX. iter-22.
+// It registers the index in the EX layer (for writer maintenance)
+// and persists the metadata to the catalog.
+type CreateIndex struct {
+	stmt    *PS.CreateIndexStmt
+	done    bool
+	rowsAff int64
+}
+
+func NewCreateIndex(stmt *PS.CreateIndexStmt) *CreateIndex {
+	return &CreateIndex{stmt: stmt}
+}
+
+func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
+	if c.done {
+		return Row{}, ErrNoRows
+	}
+	c.done = true
+	// Register for writer maintenance
+	RegisterIndexWithID(c.stmt.Table, RegisteredIndex{
+		Name:    c.stmt.Name,
+		Columns: c.stmt.Columns,
+		Unique:  c.stmt.Unique,
+	})
+	// Persist to catalog if available
+	if cat := Catalog(); cat != nil {
+		// Find the tableID
+		if tableID, ok := tableIDFor(c.stmt.Table); ok {
+			idx := ls.CatalogIndex{
+				Name:      c.stmt.Name,
+				Columns:   c.stmt.Columns,
+				Unique:    c.stmt.Unique,
+				CreateSQL: "CREATE INDEX " + c.stmt.Name + " ON " + c.stmt.Table + " (" + joinStrings(c.stmt.Columns, ", ") + ")",
+			}
+			if err := cat.PutIndex(tableID, idx); err != nil {
+				// Duplicate or other error — surface it.
+				return Row{}, err
+			}
+		}
+	}
+	c.rowsAff = 0
+	return Row{}, ErrNoRows
+}
+
+func (c *CreateIndex) Close() error { return nil }
+func (c *CreateIndex) RowsAffected() int64 { return c.rowsAff }
+
+// DropIndex is the DDL operator for DROP INDEX. iter-22.
+type DropIndex struct {
+	stmt    *PS.DropIndexStmt
+	done    bool
+	rowsAff int64
+}
+
+func NewDropIndex(stmt *PS.DropIndexStmt) *DropIndex {
+	return &DropIndex{stmt: stmt}
+}
+
+func (d *DropIndex) Next(ctx context.Context) (Row, error) {
+	if d.done {
+		return Row{}, ErrNoRows
+	}
+	d.done = true
+	// Remove from EX-layer writer registry
+	storeMu.Lock()
+	for table, idxs := range registeredIndexes {
+		filtered := idxs[:0]
+		for _, idx := range idxs {
+			if idx.Name != d.stmt.Name {
+				filtered = append(filtered, idx)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(registeredIndexes, table)
+		} else {
+			registeredIndexes[table] = filtered
+		}
+	}
+	storeMu.Unlock()
+	// Remove from catalog
+	if cat := Catalog(); cat != nil {
+		// Find the table that owns this index
+		for _, tableID := range tableIDs {
+			_ = tableID
+			// Try delete (ignore if not found)
+			if err := cat.DeleteIndex(tableID, d.stmt.Name); err == nil {
+				break
+			}
+		}
+	}
+	d.rowsAff = 0
+	return Row{}, ErrNoRows
+}
+
+func (d *DropIndex) Close() error { return nil }
+func (d *DropIndex) RowsAffected() int64 { return d.rowsAff }
+
+// joinStrings is a tiny helper for formatting column lists.
+func joinStrings(s []string, sep string) string {
+	if len(s) == 0 {
+		return ""
+	}
+	out := s[0]
+	for i := 1; i < len(s); i++ {
+		out += sep + s[i]
+	}
+	return out
+}

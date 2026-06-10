@@ -98,6 +98,10 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 		root = p.planCreateTable(s)
 	case *PS.DropTable:
 		root = p.planDropTable(s)
+	case *PS.CreateIndexStmt:
+		root = p.planCreateIndex(s)
+	case *PS.DropIndexStmt:
+		root = p.planDropIndex(s)
 	case *PS.ExplainStmt:
 		root = p.planExplain(s)
 	case *PS.WithStmt:
@@ -670,4 +674,14 @@ func hasWriterIndex(table, indexName string) bool {
 		}
 	}
 	return false
+}
+
+// planCreateIndex registers a secondary index. iter-22.
+func (p *Planner) planCreateIndex(s *PS.CreateIndexStmt) Operator {
+	return NewCreateIndex(s)
+}
+
+// planDropIndex removes a secondary index. iter-22.
+func (p *Planner) planDropIndex(s *PS.DropIndexStmt) Operator {
+	return NewDropIndex(s)
 }
