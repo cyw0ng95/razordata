@@ -6,7 +6,15 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/TXN/MV"
 	"github.com/cyw0ng95/razordata/internal/TXN/SN"
+	walwr "github.com/cyw0ng95/razordata/internal/WAL/WR"
 )
+
+// WALWriter is the minimal interface a transaction Commit needs
+// to persist a record. The concrete *walwr.writer implements it.
+type WALWriter interface {
+	Append(batch *walwr.WriteBatch) (uint64, error)
+	Sync() error
+}
 
 var globalSlotManager = newSlotManager()
 var globalMV = MV.NewMV()
@@ -36,6 +44,10 @@ type tx struct {
 	// the same transaction cannot race on arena.Alloc.
 	mu       sync.Mutex
 	finished bool
+	// wal is the optional WAL writer. When non-nil, Commit emits
+	// an RTCommit record via EncodeCommitRecord and calls Sync for
+	// durability. REQ000171. nil WAL skips the write (test mode).
+	wal WALWriter
 }
 
 func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
@@ -139,6 +151,24 @@ func (t *tx) Commit(ctx context.Context) error {
 		}
 	}
 
+	// Emit WAL record for durability (REQ000171). nil WAL skips
+	// the write (test mode, no WAL configured). The record contains
+	// the write set keys so recovery can replay or rollback.
+	if t.wal != nil {
+		keys := make([][]byte, 0, len(t.slot.writeSet))
+		for _, kr := range t.slot.writeSet {
+			keys = append(keys, kr.Start)
+		}
+		rec := EncodeCommitRecord(t.slot.txnID, commitTS, keys)
+		batch := &walwr.WriteBatch{Recs: []walwr.LogRecord{{Type: walwr.RTCommit, Value: rec}}}
+		if _, err := t.wal.Append(batch); err != nil {
+			return err
+		}
+		if err := t.wal.Sync(); err != nil {
+			return err
+		}
+	}
+
 	t.finalize(SlotCommitted)
 	if t.manager != nil {
 		t.manager.recordCommit()
@@ -180,4 +210,12 @@ func (t *tx) finalize(status SlotStatus) {
 // New code should call Manager.Begin on an explicit manager instance.
 func Begin(ctx context.Context) (Tx, error) {
 	return defaultManager.Begin(ctx)
+}
+
+// WithWAL attaches a WAL writer to the transaction. The Commit
+// path will emit an RTCommit record and call Sync. Passing nil
+// disables WAL emission (test mode). REQ000171.
+func (t *tx) WithWAL(w WALWriter) Tx {
+	t.wal = w
+	return t
 }
