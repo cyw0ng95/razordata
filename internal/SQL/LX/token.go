@@ -106,6 +106,10 @@ const (
 	T_FALSE
 	T_OUTER
 
+	T_EXPLAIN
+	T_QUERY
+	T_PLAN
+
 	T_ERROR TokenType = -1
 )
 
@@ -212,6 +216,9 @@ var tokenTypeNames = [...]string{
 	T_END:       "END",
 	T_CAST:      "CAST",
 	T_EXISTS:    "EXISTS",
+	T_EXPLAIN:   "EXPLAIN",
+	T_QUERY:     "QUERY",
+	T_PLAN:      "PLAN",
 }
 
 func (t Token) String() string {
