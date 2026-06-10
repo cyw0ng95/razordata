@@ -138,15 +138,15 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000163 | SQL | Rewriter AST normalization (design mentions, verify completeness) | iter-17 (partial: 65.0%%) |
 | REQ000169 | LOG | Debug-level allocation trade-off documentation (level check before allocation) | iter-17 |
 | REQ000170 | WAL | RTMerge record encoding implementation | iter-17 |
-| REQ000191 | WAL/RP | Coverage lift: WAL/RP is at75.2% (multi-segment truncate + ErrUnknownRecord added; shortfall now in resync-window edges) | iter-16 |
-| REQ000192 | SQL/EX | Adaptive vectorization threshold (auto-fallback to row-at-a-time for tables <100K rows) | medium | M | iter-19 | SQL/EX/operators_vec.go — add row-count check, route to row path for small data (see iter-19 Phase 3 Outcome)
-| REQ000194 | LOG/HK | Implement TraceHook for SQL query tracing (start/end with timing) | high | M | iter-00 (HK), REQ000005 | LOG/HK/trace.go — emit structured trace records on SQL query boundaries |
-| REQ000195 | LOG/HK | Implement ProfileHook (pprof dump on Error events) | medium | M | iter-00 (HK), REQ000007 | LOG/HK/profile.go — call pprof.Lookup("heap").WriteTo on Error events |
-| REQ000199 | MEM/BF | Sharded buffer pool mutex (reduce hash table contention) | medium | M | iter-02 | MEM/BF/bf.go:160 — per-bucket or per-shard locks |
-| REQ000200 | WAL/WR | Per-segment locks (replace global write mutex) | medium | L | iter-03, iter-17 (group commit) | WAL/WR/wr.go:171 — shard by segment; depends on group commit being wired |
-| REQ000203 | QUAL | Missing benchmarks (FIL/LF, LOG/HK, SQL/PS, SQL/PL have 0) | medium | M | AGENTS.md | add Benchmark* per hot path |
-| REQ000204 | SQL | CREATE INDEX (no implementation, no parser support) | critical | XL | iter-12, iter-21 (ID) | new `SQL/PS`, `SQL/EX`, `ENG/ID/` |
-| REQ000205 | SQL | EXPLAIN SQL syntax (currently only cost calc, not SQL statement) | medium | M | iter-08 | `SQL/PS`, `SQL/EX/explain.go` — accept EXPLAIN/EXPLAIN ANALYZE |
+| REQ000191 | WAL/RP | Coverage lift: WAL/RP is at 75.2% (multi-segment truncate + ErrUnknownRecord added; shortfall now in resync-window edges) | iter-16 |
+| REQ000192 | SQL/EX | Adaptive vectorization threshold (auto-fallback to row-at-a-time for tables <100K rows) | iter-19 |
+| REQ000194 | LOG/HK | Implement TraceHook for SQL query tracing (start/end with timing) | iter-00 |
+| REQ000195 | LOG/HK | Implement ProfileHook (pprof dump on Error events) | iter-00 |
+| REQ000199 | MEM/BF | Sharded buffer pool mutex (reduce hash table contention) | iter-02 |
+| REQ000200 | WAL/WR | Per-segment locks (replace global write mutex) | iter-03 |
+| REQ000203 | QUAL | Missing benchmarks (FIL/LF, LOG/HK, SQL/PS, SQL/PL have 0) | iter-17 |
+| REQ000204 | SQL | CREATE INDEX (no implementation, no parser support) | iter-21 |
+| REQ000205 | SQL | EXPLAIN SQL syntax (currently only cost calc, not SQL statement) | iter-21 |
 | REQ000176 | WAL | Batch commit with sync.WaitGroup and write barrier | iter-17 |
 | REQ000184 | WAL | 256 KB pre-allocated writeBuffer for batched WAL writes | iter-17 |
 | REQ000144 | SQL | SIMD vectorized execution (batch + 4-wide unrolling + selection vectors) | iter-19 (Phase 1) |
