@@ -70,6 +70,11 @@ const (
 	T_BLOB
 	T_VARCHAR
 	T_TIMESTAMP
+	T_NUMERIC
+	T_DATE
+	T_TIME
+	T_JSON
+	T_DECIMAL
 	T_VALUES
 	T_SET
 	T_INTO
@@ -174,6 +179,11 @@ var tokenTypeNames = [...]string{
 	T_BLOB:      "BLOB",
 	T_VARCHAR:   "VARCHAR",
 	T_TIMESTAMP: "TIMESTAMP",
+	T_NUMERIC:   "NUMERIC",
+	T_DATE:      "DATE",
+	T_TIME:      "TIME",
+	T_JSON:      "JSON",
+	T_DECIMAL:   "DECIMAL",
 	T_VALUES:    "VALUES",
 	T_SET:       "SET",
 	T_INTO:      "INTO",
