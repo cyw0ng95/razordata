@@ -143,6 +143,9 @@ var tokenNames = [...]string{
 	LX.T_EXISTS:    "EXISTS",
 	LX.T_TRUE:      "TRUE",
 	LX.T_FALSE:     "FALSE",
+	LX.T_EXPLAIN:   "EXPLAIN",
+	LX.T_QUERY:     "QUERY",
+	LX.T_PLAN:      "PLAN",
 }
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -402,6 +405,8 @@ func (p *Parser) Parse() (Stmt, error) {
 		stmt, err = p.parseCreateTable()
 	case LX.T_DROP:
 		stmt, err = p.parseDropTable()
+	case LX.T_EXPLAIN:
+		stmt, err = p.parseExplain()
 	default:
 		return nil, &SyntaxError{
 			Input:  p.lex.Input(),
@@ -979,6 +984,38 @@ func (p *Parser) parseDropTable() (*DropTable, error) {
 	p.advance()
 
 	return &DropTable{Name: name}, nil
+}
+
+func (p *Parser) parseExplain() (*ExplainStmt, error) {
+	p.advance() // consume EXPLAIN
+
+	mode := ExplainNormal
+	if p.current.Type == LX.T_QUERY {
+		// Use lexer Peek to check if QUERY is followed by PLAN
+		next := p.lex.Peek()
+		if next.Type == LX.T_PLAN {
+			mode = ExplainQueryPlan
+			p.advance() // consume QUERY
+			p.advance() // consume PLAN
+		} else {
+			// EXPLAIN QUERY without PLAN is invalid SQL
+			return nil, &SyntaxError{
+				Input:  p.lex.Input(),
+				Line:   p.current.Line,
+				Col:    p.current.Col,
+				Expected: "PLAN",
+				Got:    tokenName(p.current.Type),
+				Lexeme: p.current.Lexeme,
+			}
+		}
+	}
+
+	inner, err := p.Parse()
+	if err != nil {
+		return nil, err
+	}
+
+	return &ExplainStmt{Mode: mode, Inner: inner}, nil
 }
 
 func (p *Parser) parseCast() (Expr, error) {
