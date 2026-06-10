@@ -307,6 +307,8 @@ func evalCast(e *PS.CastExpr, row *Row, params []interface{}) (interface{}, erro
 		}
 	case LX.T_TEXT:
 		return fmt.Sprintf("%v", v), nil
+	case LX.T_DECIMAL, LX.T_NUMERIC:
+		return evalDecimalCast(v, e.Type.Precision, e.Type.Scale)
 	case LX.T_BOOL:
 		return truthy(v), nil
 	}
