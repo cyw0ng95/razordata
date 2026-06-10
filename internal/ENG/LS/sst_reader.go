@@ -89,12 +89,13 @@ func (r *sstReader) mayContain(key []byte) bool {
 		return true
 	}
 
-	hash1 := crc32.Checksum(key, crc32.MakeTable(crc32.Koopman))
-	hash2 := crc32.Checksum(key, crc32.MakeTable(crc32.Castagnoli))
+	// FNV-1a double hashing per ENG.md spec (REQ000174)
+	h1 := fnv1aHash(key, fnv1aOffset32)
+	h2 := fnv1aHash(key, fnv1aPrime32)
 
 	size := len(r.bloom) * 8
-	bucket1 := int(hash1) % size
-	bucket2 := int(hash2) % size
+	bucket1 := int(h1) % size
+	bucket2 := int(h2) % size
 
 	return (r.bloom[bucket1/8]&(1<<(bucket1%8)) != 0) &&
 		(r.bloom[bucket2/8]&(1<<(bucket2%8)) != 0)

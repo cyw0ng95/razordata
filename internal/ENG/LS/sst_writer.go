@@ -86,16 +86,15 @@ func (w *sstWriter) Add(key, value []byte) {
 }
 
 // setBloomBitForSize sets the two bloom bits for key against a
-// bloom filter of byte size size. The bucket positions are
-// computed from size, so the keys collected during Add are now
-// hashed into a bloom sized for the actual keyCount.
+// bloom filter of byte size size. Uses FNV-1a double hashing
+// per ENG.md spec (REQ000174).
 func (w *sstWriter) setBloomBitForSize(key []byte, size int) {
-	hash1 := crc32.Checksum(key, crc32.MakeTable(crc32.Koopman))
-	hash2 := crc32.Checksum(key, crc32.MakeTable(crc32.Castagnoli))
+	h1 := fnv1aHash(key, fnv1aOffset32)
+	h2 := fnv1aHash(key, fnv1aPrime32)
 
 	bitCount := size * 8
-	bucket1 := int(hash1) % bitCount
-	bucket2 := int(hash2) % bitCount
+	bucket1 := int(h1) % bitCount
+	bucket2 := int(h2) % bitCount
 
 	w.bloom[bucket1/8] |= 1 << (bucket1 % 8)
 	w.bloom[bucket2/8] |= 1 << (bucket2 % 8)
