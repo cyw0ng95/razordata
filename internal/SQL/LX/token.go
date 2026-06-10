@@ -114,6 +114,7 @@ const (
 	T_DO
 	T_NOTHING
 	T_EXCLUDED
+	T_WITH
 
 	T_ERROR TokenType = -1
 )
@@ -229,6 +230,7 @@ var tokenTypeNames = [...]string{
 	T_DO:        "DO",
 	T_NOTHING:   "NOTHING",
 	T_EXCLUDED:  "EXCLUDED",
+	T_WITH:      "WITH",
 }
 
 func (t Token) String() string {

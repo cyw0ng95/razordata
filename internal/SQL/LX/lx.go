@@ -99,6 +99,7 @@ var keywords = map[string]TokenType{
 	"DO":        T_DO,
 	"NOTHING":   T_NOTHING,
 	"EXCLUDED":  T_EXCLUDED,
+	"WITH":      T_WITH,
 }
 
 type Lexer struct {

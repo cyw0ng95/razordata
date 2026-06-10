@@ -151,6 +151,7 @@ var tokenNames = [...]string{
 	LX.T_DO:        "DO",
 	LX.T_NOTHING:   "NOTHING",
 	LX.T_EXCLUDED:  "EXCLUDED",
+	LX.T_WITH:      "WITH",
 }
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -412,6 +413,8 @@ func (p *Parser) Parse() (Stmt, error) {
 		stmt, err = p.parseDropTable()
 	case LX.T_EXPLAIN:
 		stmt, err = p.parseExplain()
+	case LX.T_WITH:
+		stmt, err = p.parseWith()
 	default:
 		return nil, &SyntaxError{
 			Input:  p.lex.Input(),
@@ -1406,4 +1409,79 @@ func parseFloat(s string) float64 {
 		}
 	}
 	return val
+}
+
+func (p *Parser) parseWith() (*WithStmt, error) {
+	p.advance() // consume WITH
+
+	var ctes []*CommonTableExpr
+	for {
+		// Parse CTE name
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		name := p.current.Lexeme
+		p.advance()
+
+		// Optional column aliases
+		var cols []string
+		if p.current.Type == LX.T_LPAREN {
+			p.advance()
+			for {
+				if err := p.expect(LX.T_IDENT); err != nil {
+					return nil, err
+				}
+				cols = append(cols, p.current.Lexeme)
+				p.advance()
+				if p.current.Type != LX.T_COMMA {
+					break
+				}
+				p.advance()
+			}
+			if err := p.expect(LX.T_RPAREN); err != nil {
+				return nil, err
+			}
+			p.advance()
+		}
+
+		// AS (query)
+		if err := p.expect(LX.T_AS); err != nil {
+			return nil, err
+		}
+		p.advance()
+		if err := p.expect(LX.T_LPAREN); err != nil {
+			return nil, err
+		}
+		p.advance()
+
+		query, err := p.Parse()
+		if err != nil {
+			return nil, err
+		}
+
+		if err := p.expect(LX.T_RPAREN); err != nil {
+			return nil, err
+		}
+		p.advance()
+
+		ctes = append(ctes, &CommonTableExpr{
+			Name:  name,
+			Cols:  cols,
+			Query: query,
+		})
+
+		// Check for more CTEs (comma-separated)
+		if p.current.Type != LX.T_COMMA {
+			break
+		}
+		p.advance()
+	}
+
+	// Parse the main query
+	inner, err := p.Parse()
+	if err != nil {
+		return nil, err
+	}
+
+	return &WithStmt{CTEs: ctes, Inner: inner}, nil
 }

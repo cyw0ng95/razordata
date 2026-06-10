@@ -215,6 +215,21 @@ type Insert struct {
 
 func (i *Insert) stmtNode() {}
 
+// CommonTableExpr represents a CTE (Common Table Expression) definition.
+type CommonTableExpr struct {
+	Name  string   // CTE name
+	Cols  []string // optional column aliases
+	Query Stmt     // SELECT statement
+}
+
+// WithStmt represents a WITH clause containing CTEs.
+type WithStmt struct {
+	CTEs  []*CommonTableExpr
+	Inner Stmt // the main query
+}
+
+func (w *WithStmt) stmtNode() {}
+
 type Update struct {
 	Table     string
 	Set       []Pair
