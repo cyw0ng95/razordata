@@ -17,6 +17,11 @@ import (
 type Store interface {
 	Insert(key, value []byte) error
 	Delete(key []byte) error
+	// Get returns the value for an exact key match, or (nil, false, nil)
+	// if the key is not present. Added in iter-22 to support secondary
+	// index seeks (the index yields a primary key, then the executor
+	// fetches the row via Get).
+	Get(key []byte) ([]byte, bool, error)
 	NewIterator(prefix []byte) ls.RangeIter
 }
 

@@ -16,6 +16,17 @@ type engineStore struct {
 
 func (s *engineStore) Insert(k, v []byte) error { return s.eng.Insert(k, v) }
 func (s *engineStore) Delete(k []byte) error    { return s.eng.Delete(k) }
+func (s *engineStore) Get(k []byte) ([]byte, bool, error) {
+	v, err := s.eng.Get(k)
+	if err != nil {
+		// Translate "not found" to (nil, false, nil)
+		if err.Error() == "key not found" || err.Error() == "not found" {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return v, true, nil
+}
 func (s *engineStore) NewIterator(prefix []byte) ls.RangeIter {
 	return s.eng.NewIterator(prefix)
 }

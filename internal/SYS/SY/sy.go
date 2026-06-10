@@ -431,6 +431,16 @@ type executorStoreAdapter struct {
 
 func (a *executorStoreAdapter) Insert(k, v []byte) error { return a.eng.Insert(k, v) }
 func (a *executorStoreAdapter) Delete(k []byte) error    { return a.eng.Delete(k) }
+func (a *executorStoreAdapter) Get(k []byte) ([]byte, bool, error) {
+	v, err := a.eng.Get(k)
+	if err != nil {
+		if err.Error() == "key not found" || err.Error() == "not found" {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return v, true, nil
+}
 func (a *executorStoreAdapter) NewIterator(prefix []byte) ls.RangeIter {
 	return a.eng.NewIterator(prefix)
 }

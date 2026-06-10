@@ -1,6 +1,7 @@
 package EX
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -143,6 +144,23 @@ type IndexScan struct {
 	rows   []Row
 	pos    int
 	params []interface{}
+
+	// iter-22 secondary-index fields. When indexMode is true,
+	// the scan uses a real index seek via the index keyspace
+	// (rather than a full table prefix scan with a code-side
+	// filter).
+	indexMode    bool
+	indexTableID uint64
+	indexName    string
+	indexSeek    []byte
+	indexRangeEnd []byte
+	indexIt      interface {
+		Next() bool
+		Key() []byte
+		Value() []byte
+		Err() error
+		Close() error
+	}
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -181,7 +199,40 @@ func NewIndexScanWithStore(store Store, table, idx string) (*IndexScan, error) {
 	}, nil
 }
 
+// NewIndexScanWithIndex builds an IndexScan that uses a real secondary
+// index seek (iter-22). The scan reads primary keys from the index
+// store, then fetches the corresponding rows via Store.Get.
+//
+// seekValue is the index value to look up (exact match); if empty,
+// the scan returns all rows in index order. rangeEnd, if non-nil,
+// limits the scan to entries strictly less than this value
+// (lexicographic).
+//
+// REQ000252 — secondary indexes MVP.
+func NewIndexScanWithIndex(store Store, tableID uint64, table, idx string, seekValue, rangeEnd []byte) (*IndexScan, error) {
+	ss, ok := schemaFor(table)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+	}
+	return &IndexScan{
+		table:         table,
+		idx:           idx,
+		store:         store,
+		schema:        ss,
+		prefix:        tablePrefix(table),
+		indexMode:     true,
+		indexTableID:  tableID,
+		indexName:     idx,
+		indexSeek:     append([]byte(nil), seekValue...),
+		indexRangeEnd: append([]byte(nil), rangeEnd...),
+	}, nil
+}
+
 func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
+	// Index-seek path (iter-22 secondary indexes).
+	if i.indexMode {
+		return i.nextFromIndex(ctx)
+	}
 	if i.it == nil {
 		i.it = i.store.NewIterator(i.prefix)
 	}
@@ -200,6 +251,64 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 		return Row{}, err
 	}
 	return Row{}, ErrNoRows
+}
+
+// nextFromIndex is the iter-22 secondary-index seek path. It reads
+// primary keys from the index iterator, then fetches the full row
+// via Store.Get.
+func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
+	if i.indexIt == nil {
+		// Lazy open: scan all entries in the index matching the
+		// seek prefix. For exact-match, the seek value is the
+		// index value. For range scans, the seek is the lower
+		// bound and rangeEnd is the exclusive upper bound.
+		i.indexIt = i.openIndexIter()
+	}
+	for i.indexIt.Next() {
+		if err := ctx.Err(); err != nil {
+			return Row{}, err
+		}
+		pk := i.indexIt.Value()
+		// Optional range-end cap
+		if len(i.indexRangeEnd) > 0 && bytes.Compare(pk, i.indexRangeEnd) >= 0 {
+			return Row{}, ErrNoRows
+		}
+		// Fetch the row by primary key
+		rowKey := rowKey(i.prefix, pk)
+		rowBytes, ok, err := i.store.Get(rowKey)
+		if err != nil {
+			return Row{}, err
+		}
+		if !ok {
+			// Stale index entry: row was deleted but index
+			// not yet cleaned up. Skip.
+			continue
+		}
+		row, err := decodeRow(rowBytes, i.schema)
+		if err != nil {
+			return Row{}, err
+		}
+		return row, nil
+	}
+	if err := i.indexIt.Err(); err != nil {
+		return Row{}, err
+	}
+	return Row{}, ErrNoRows
+}
+
+// openIndexIter returns the index iterator positioned at the
+// configured seek. It uses the prefix-iter interface on the
+// underlying store. For exact match, the prefix is the full
+// index value; for prefix-match, it's a truncated value.
+func (i *IndexScan) openIndexIter() interface {
+	Next() bool
+	Key() []byte
+	Value() []byte
+	Err() error
+	Close() error
+} {
+	prefix := buildIndexKey(i.indexTableID, i.indexName, i.indexSeek)
+	return i.store.NewIterator(prefix)
 }
 
 func (i *IndexScan) Next(ctx context.Context) (Row, error) {
@@ -232,9 +341,49 @@ func (i *IndexScan) Close() error {
 	if i.it != nil {
 		err := i.it.Close()
 		i.it = nil
-		return err
+		if err != nil {
+			return err
+		}
+	}
+	if i.indexIt != nil {
+		err := i.indexIt.Close()
+		i.indexIt = nil
+		if err != nil {
+			return err
+		}
 	}
 	i.pos = 0
 	i.rows = nil
 	return nil
+}
+
+// buildIndexKey synthesizes the index keyspace prefix for use with
+// Store.NewIterator. The full key is:
+//
+//	"__idx__:" + tableID(u64, BE) + ":" + indexName + ":" + indexValue
+//
+// iter-22 secondary indexes MVP.
+func buildIndexKey(tableID uint64, indexName string, indexValue []byte) []byte {
+	out := make([]byte, 0, 32+len(indexName)+len(indexValue))
+	out = append(out, "__idx__:"...)
+	encodeUint64BE(&out, tableID)
+	out = append(out, ':')
+	out = append(out, indexName...)
+	out = append(out, ':')
+	out = append(out, indexValue...)
+	return out
+}
+
+// encodeUint64BE writes v big-endian into *buf.
+func encodeUint64BE(buf *[]byte, v uint64) {
+	var b [8]byte
+	b[7] = byte(v)
+	b[6] = byte(v >> 8)
+	b[5] = byte(v >> 16)
+	b[4] = byte(v >> 24)
+	b[3] = byte(v >> 32)
+	b[2] = byte(v >> 40)
+	b[1] = byte(v >> 48)
+	b[0] = byte(v >> 56)
+	*buf = append(*buf, b[:]...)
 }
