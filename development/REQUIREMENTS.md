@@ -15,7 +15,6 @@ Columns for selection:
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-| REQ000147 | TXN | Complete commit protocol implementation (6 phases: Begin/Read/Write/Pre-commit/Commit/Post-commit, Abort flow) | critical | L | iter-06 (VL) | `TXN/VL/protocol.go` — add detailed CAS loops, validation scan, error handling |
 | REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with design spec |
 | REQ000156 | SQL | Executor cost model integration (design mentions cost estimation, no operator selection based on cost) | medium | M | iter-08 (planner) | `SQL/EX/planner.go` — use cost for operator selection |
 | REQ000159 | TXN | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | medium | M | iter-05 (arena) | `TXN/MV/arena.go` — add lazy init, exhaustion handling |
@@ -24,8 +23,6 @@ Columns for selection:
 | REQ000162 | SQL | Plan memoization with SHA256(AST binary encoding) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — canonical AST serialization |
 | REQ000164 | TXN | Epoch manager background goroutine (100ms interval, drain coordination) | high | M | iter-05 (epoch) | `TXN/LC/epoch.go` — add background goroutine if missing |
 | REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | medium | M | iter-04 (compaction) | `ENG/LS/compaction.go` — size budget monitoring |
-| REQ000171 | TXN/VL | WAL integration in commit protocol (write RTCommit/RTData records, call WAL.Sync) | critical | L | iter-06 (VL) | `TXN/VL/protocol.go` — Commit/Insert/Delete must write WAL records per design TXN.md:203-226 |
-| REQ000174 | ENG/LS | BloomFilter double-hash with FNV-1a (seeds0x811C9DC5,0x01000193) replace CRC32 | critical | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with ENG.md:93-98 |
 | REQ000175 | TXN/LC | Fix hazard pointer Publish (store to single slot, not all) and implement actual memory reclamation | high | L | iter-05 (hazard/epoch) | `TXN/LC/hazard.go` fix Publish, `TXN/LC/epoch.go` implement Reclaim wait+free per TXN.md:96-121 |
 | REQ000181 | TXN/LC | Fix goroutine ID tracking (use real goroutine identity, not atomic counter) | medium | M | iter-05 (epoch) | `TXN/LC/epoch.go` — proper goroutine tracking per TXN.md:113-121 |
 | REQ000182 | SQL/EX | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | medium | L | iter-08 (Sort) | Create `SQL/EX/sort_parallel.go` per SQL.md:367-372 |
@@ -92,32 +89,20 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000170 | WAL | RTMerge record encoding implementation | iter-17 |
 | REQ000191 | WAL/RP | Coverage lift: WAL/RP is at75.2% (multi-segment truncate + ErrUnknownRecord added; shortfall now in resync-window edges) | iter-16 |
 | REQ000192 | SQL/EX | Adaptive vectorization threshold (auto-fallback to row-at-a-time for tables <100K rows) | medium | M | iter-19 | SQL/EX/operators_vec.go — add row-count check, route to row path for small data (see iter-19 Phase 3 Outcome)
-| REQ000193 | LOG/HK | Implement MetricHook counters (queryCount, rowsReturned, bytesRead, bytesWritten) | high | M | iter-00 (HK), REQ000006 | LOG/HK/metric.go — wire OnLog to atomic counters; fields exist but never increment |
 | REQ000194 | LOG/HK | Implement TraceHook for SQL query tracing (start/end with timing) | high | M | iter-00 (HK), REQ000005 | LOG/HK/trace.go — emit structured trace records on SQL query boundaries |
 | REQ000195 | LOG/HK | Implement ProfileHook (pprof dump on Error events) | medium | M | iter-00 (HK), REQ000007 | LOG/HK/profile.go — call pprof.Lookup("heap").WriteTo on Error events |
-| REQ000196 | SQL/EX | Use HashAggregate in planner (currently NewHashAggregate is never called) | high | S | iter-08 | SQL/EX/planner.go:271 — switch to NewHashAggregate for >1000 row datasets |
-| REQ000197 | SQL/EX | OUTER JOIN executor (planner currently skips non-INNER joins at planner.go:234) | critical | M | iter-08 | SQL/EX/planner.go, join.go — implement LEFT JOIN with NULL-padded inner side |
-| REQ000198 | ENG/LS | Skiplist sync.Pool for scratch arrays (2 allocs/insert) | high | S | iter-04 | ENG/LS/skiplist.go:51-52 — replace make() with sync.Pool reusable slices |
 | REQ000199 | MEM/BF | Sharded buffer pool mutex (reduce hash table contention) | medium | M | iter-02 | MEM/BF/bf.go:160 — per-bucket or per-shard locks |
 | REQ000200 | WAL/WR | Per-segment locks (replace global write mutex) | medium | L | iter-03, iter-17 (group commit) | WAL/WR/wr.go:171 — shard by segment; depends on group commit being wired |
 | REQ000201 | QUAL | SQL/PL coverage 30.6% → 80% (cost model, index selection, plan caching tests) | high | M | iter-08 | SQL/PL/*_test.go — add cost/plan tests |
-| REQ000202 | SQL/PS | Parser tests for CASE/EXISTS (parseCaseExpr 0%, parseExists 0%) | medium | S | iter-07 | SQL/PS/ps_test.go — add table-driven tests |
 | REQ000203 | QUAL | Missing benchmarks (FIL/LF, LOG/HK, SQL/PS, SQL/PL have 0) | medium | M | AGENTS.md | add Benchmark* per hot path |
 | REQ000204 | SQL | CREATE INDEX (no implementation, no parser support) | critical | XL | iter-12, iter-21 (ID) | new `SQL/PS`, `SQL/EX`, `ENG/ID/` |
 | REQ000205 | SQL | EXPLAIN SQL syntax (currently only cost calc, not SQL statement) | medium | M | iter-08 | `SQL/PS`, `SQL/EX/explain.go` — accept EXPLAIN/EXPLAIN ANALYZE |
-| REQ000206 | SQL/PS | Add NUMERIC, DATE, TIME, JSON type tokens (LX.token.go) | high | S | iter-07 (PS) | `SQL/LX/token.go` — add type constants, tokenName mapping, keywords |
-| REQ000207 | SQL/PS | Parse VARCHAR(N), DECIMAL(P,S), CHAR(N) parameterized types | high | M | REQ000206 | `SQL/PS/ps.go` — extend parseCastType and ColDef to consume (N) and (P,S) |
-| REQ000208 | SQL/EX | Type affinity system (SQLite-like coercion: TEXT/NUMERIC/INTEGER/REAL/NONE) | high | M | REQ000206 | `SQL/EX/coerce.go` (new) — affinity matrix, implicit coercion in Eval |
-| REQ000209 | SQL/PS | Parse DEFAULT clause values (DEFAULT 0, DEFAULT 'x', DEFAULT NULL) | high | S | iter-07 | `SQL/PS/ps.go` — ColDef.Default already in AST; wire it into CREATE TABLE parser |
-| REQ000210 | SQL/PS | Parse CHECK constraints (CHECK (col > 0)) | high | M | iter-07 | `SQL/PS/ps.go`, `SQL/LX/token.go` — add T_CHECK, parseCheckConstraint |
-| REQ000211 | SQL/EX | Enforce CHECK constraints on INSERT/UPDATE | high | S | REQ000210 | `SQL/EX/constraints.go` — extend CHECK validation in writers |
 | REQ000212 | SQL/PS | Parse ON CONFLICT clause (INSERT ... ON CONFLICT DO NOTHING/UPDATE) | medium | M | iter-07 | `SQL/PS/ps.go` — extend parseInsert with conflict clause |
 | REQ000213 | SQL/EX | UPSERT executor (INSERT...ON CONFLICT) | medium | M | REQ000212 | `SQL/EX/writers.go` — conflict resolution path |
 | REQ000214 | SQL/PS | Parse RETURNING clause (INSERT/UPDATE/DELETE ... RETURNING col) | medium | S | iter-07 | `SQL/PS/ps.go` — add to Insert, Update, Delete AST |
 | REQ000215 | SQL/EX | RETURNING executor | medium | M | REQ000214 | `SQL/EX/writers.go` — return rows from DML |
 | REQ000216 | SQL/PS | Parse WITH clause (CTE: WITH x AS (...) SELECT...) | medium | M | iter-07 | `SQL/PS/ps.go` — parseWith, add StmtWith AST |
 | REQ000217 | SQL/PL | CTE planner (CTE materialization vs inline expansion) | medium | M | REQ000216 | `SQL/PL/planner.go` — decide materialization based on usage count |
-| REQ000218 | SQL/EX | Enforce HAVING filter (currently GROUP BY+HAVING skipped) | high | S | iter-08 | `SQL/EX/planner.go:275` — wire Having filter (line exists but untested) |
 | REQ000219 | SQL/PS | Parse window functions (OVER, PARTITION BY, ROW_NUMBER, RANK) | medium | L | iter-07 | `SQL/PS/ps.go`, `SQL/PS/ast.go` — WindowFunc AST, parseWindowSpec |
 | REQ000220 | SQL/EX | Window function executor (ROW_NUMBER, RANK, SUM OVER, LAG, LEAD) | medium | L | REQ000219 | `SQL/EX/window.go` (new) — partition-based aggregation |
 | REQ000221 | SQL/PS | Parse SAVEPOINT / RELEASE / ROLLBACK TO | medium | M | iter-06 | `SQL/PS/ps.go` — extend transaction statements |
