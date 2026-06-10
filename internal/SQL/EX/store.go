@@ -1,6 +1,7 @@
 package EX
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -60,7 +61,44 @@ var (
 	// in-memory mode (legacy behavior, used by unit tests that
 	// do not have a backing directory).
 	currentCatalog *ls.Catalog
+
+	// registeredIndexes is the EX-layer's view of secondary
+	// indexes declared via CREATE INDEX. Keyed by table name.
+	// iter-22 secondary indexes MVP.
+	registeredIndexes = map[string][]RegisteredIndex{}
 )
+
+// RegisteredIndex is one entry in the EX-layer's index registry.
+type RegisteredIndex struct {
+	Name    string
+	Columns []string
+	Unique  bool
+}
+
+// RegisterIndexWithID registers a secondary index for the given
+// table. Called from the CREATE INDEX executor path; for tests
+// that don't go through the SQL surface, use RegisterIndex.
+func RegisterIndexWithID(table string, idx RegisteredIndex) {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	registeredIndexes[table] = append(registeredIndexes[table], idx)
+}
+
+// GetRegisteredIndexes returns a copy of the index list for a table.
+func GetRegisteredIndexes(table string) []RegisteredIndex {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	src := registeredIndexes[table]
+	out := make([]RegisteredIndex, len(src))
+	for i, idx := range src {
+		out[i] = RegisteredIndex{
+			Name:    idx.Name,
+			Columns: append([]string(nil), idx.Columns...),
+			Unique:  idx.Unique,
+		}
+	}
+	return out
+}
 
 // nextTableID allocates a new table ID. The id is stable for the lifetime
 // of the process; restarting the process reassigns IDs and old data is
@@ -489,4 +527,171 @@ func extractPK(schema *storeSchema, row Row) (interface{}, error) {
 		}
 	}
 	return nil, fmt.Errorf("ex: pk column %q not in schema", schema.pk)
+}
+
+// maintainIndexesOnInsert populates secondary-index entries
+// for a newly-inserted row. iter-22 secondary indexes MVP.
+// Returns the first error encountered, or nil on success.
+func maintainIndexesOnInsert(store Store, table string, schema *storeSchema, row Row) error {
+	indexes := GetRegisteredIndexes(table)
+	if len(indexes) == 0 {
+		return nil
+	}
+	tableID, ok := tableIDFor(table)
+	if !ok {
+		return nil
+	}
+	pk, err := extractPK(schema, row)
+	if err != nil {
+		return err
+	}
+	pkBytes, err := pkToBytes(pk)
+	if err != nil {
+		return err
+	}
+	for _, idx := range indexes {
+		key := indexValueFor(schema, row, idx.Columns)
+		if key == nil {
+			continue
+		}
+		fullKey := buildIndexKey(tableID, idx.Name, key)
+		if err := store.Insert(fullKey, pkBytes); err != nil {
+			return fmt.Errorf("ex: index %q insert: %w", idx.Name, err)
+		}
+	}
+	return nil
+}
+
+// maintainIndexesOnDelete removes secondary-index entries for a
+// deleted row. iter-22.
+func maintainIndexesOnDelete(store Store, table string, schema *storeSchema, row Row) error {
+	indexes := GetRegisteredIndexes(table)
+	if len(indexes) == 0 {
+		return nil
+	}
+	tableID, ok := tableIDFor(table)
+	if !ok {
+		return nil
+	}
+	for _, idx := range indexes {
+		key := indexValueFor(schema, row, idx.Columns)
+		if key == nil {
+			continue
+		}
+		fullKey := buildIndexKey(tableID, idx.Name, key)
+		if err := store.Delete(fullKey); err != nil {
+			return fmt.Errorf("ex: index %q delete: %w", idx.Name, err)
+		}
+	}
+	return nil
+}
+
+// maintainIndexesOnUpdate updates secondary-index entries when
+// the indexed column value changes. iter-22.
+func maintainIndexesOnUpdate(store Store, table string, schema *storeSchema, oldRow, newRow Row) error {
+	indexes := GetRegisteredIndexes(table)
+	if len(indexes) == 0 {
+		return nil
+	}
+	tableID, ok := tableIDFor(table)
+	if !ok {
+		return nil
+	}
+	pk, err := extractPK(schema, newRow)
+	if err != nil {
+		return err
+	}
+	pkBytes, err := pkToBytes(pk)
+	if err != nil {
+		return err
+	}
+	for _, idx := range indexes {
+		oldKey := indexValueFor(schema, oldRow, idx.Columns)
+		newKey := indexValueFor(schema, newRow, idx.Columns)
+		if oldKey == nil || newKey == nil {
+			continue
+		}
+		oldFull := buildIndexKey(tableID, idx.Name, oldKey)
+		newFull := buildIndexKey(tableID, idx.Name, newKey)
+		// If the key didn't change, no-op.
+		if bytes.Equal(oldFull, newFull) {
+			continue
+		}
+		// Key changed: delete old, insert new.
+		if err := store.Delete(oldFull); err != nil {
+			return fmt.Errorf("ex: index %q update delete: %w", idx.Name, err)
+		}
+		if err := store.Insert(newFull, pkBytes); err != nil {
+			return fmt.Errorf("ex: index %q update insert: %w", idx.Name, err)
+		}
+	}
+	return nil
+}
+
+// pkToBytes encodes a primary-key value as bytes (big-endian
+// for int, raw for string/bytes). Used to populate the value
+// side of an index entry.
+func pkToBytes(pk interface{}) ([]byte, error) {
+	switch v := pk.(type) {
+	case int64:
+		return int64ToBytesBigEndian(v), nil
+	case int:
+		return int64ToBytesBigEndian(int64(v)), nil
+	case string:
+		return []byte(v), nil
+	case []byte:
+		return append([]byte(nil), v...), nil
+	default:
+		return nil, fmt.Errorf("ex: unsupported pk type %T", pk)
+	}
+}
+
+// int64ToBytesBigEndian encodes an int64 as 8 bytes big-endian.
+func int64ToBytesBigEndian(n int64) []byte {
+	b := make([]byte, 8)
+	u := uint64(n)
+	b[7] = byte(u)
+	b[6] = byte(u >> 8)
+	b[5] = byte(u >> 16)
+	b[4] = byte(u >> 24)
+	b[3] = byte(u >> 32)
+	b[2] = byte(u >> 40)
+	b[1] = byte(u >> 48)
+	b[0] = byte(u >> 56)
+	return b
+}
+
+// indexValueFor extracts the index key from a row. Multi-column
+// indexes concatenate each column's value with a 0x00 separator.
+// Returns nil if any referenced column is missing from the row.
+func indexValueFor(schema *storeSchema, row Row, cols []string) []byte {
+	if len(cols) == 0 {
+		return nil
+	}
+	out := []byte{}
+	for i, c := range cols {
+		var val interface{}
+		found := false
+		for j, sc := range schema.cols {
+			if sc == c {
+				if j < len(row.Data) {
+					val = row.Data[j]
+					found = true
+				}
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+		if i > 0 {
+			out = append(out, 0x00) // separator
+		}
+		b, err := pkToBytes(val)
+		if err != nil {
+			return nil
+		}
+		out = append(out, b...)
+	}
+	return out
 }
