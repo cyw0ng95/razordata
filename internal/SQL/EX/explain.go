@@ -5,9 +5,96 @@
 package EX
 
 import (
+	"context"
 	"fmt"
 	"strings"
+
+	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
+
+// ExplainStmtOp is an operator that produces EXPLAIN output.
+// It wraps a planned inner statement and renders its plan tree.
+type ExplainStmtOp struct {
+	mode     PS.ExplainMode
+	planNode *PlanNode
+	root     Operator
+	rows     []Row
+	pos      int
+	done     bool
+}
+
+func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
+	if e.done {
+		return Row{}, ErrNoRows
+	}
+
+	if e.rows == nil {
+		// Generate rows based on mode
+		switch e.mode {
+		case PS.ExplainQueryPlan:
+			e.rows = formatPlanTree(e.planNode)
+		default:
+			// EXPLAIN (normal mode) - return operator descriptions
+			e.rows = formatExplainNormal(e.planNode)
+		}
+	}
+
+	if e.pos >= len(e.rows) {
+		e.done = true
+		return Row{}, ErrNoRows
+	}
+
+	row := e.rows[e.pos]
+	e.pos++
+	return row, nil
+}
+
+func (e *ExplainStmtOp) Close() error {
+	e.rows = nil
+	e.pos = 0
+	e.done = false
+	return nil
+}
+
+// formatExplainNormal renders the plan tree in EXPLAIN (non-QUERY PLAN) mode.
+// This returns a simple list of operator descriptions.
+func formatExplainNormal(n *PlanNode) []Row {
+	if n == nil {
+		return nil
+	}
+
+	var rows []Row
+	var walk func(node *PlanNode, depth int)
+	walk = func(node *PlanNode, depth int) {
+		if node == nil {
+			return
+		}
+
+		detail := node.Type
+		if node.Table != "" {
+			detail += " " + node.Table
+		}
+		if node.Index != "" {
+			detail += " USING INDEX " + node.Index
+		}
+		if node.Detail != "" && node.Detail != detail {
+			detail += " (" + node.Detail + ")"
+		}
+
+		rows = append(rows, Row{
+			Cols:  []string{"id", "parent", "notused", "detail"},
+			Types: []int{1, 1, 1, 1},
+			Data:  []interface{}{int64(depth + 1), int64(depth), int64(0), detail},
+		})
+
+		for _, child := range node.Children {
+			walk(child, depth+1)
+		}
+	}
+
+	walk(n, 0)
+	return rows
+}
 
 func explainOperator(op Operator, depth int) string {
 	var b strings.Builder

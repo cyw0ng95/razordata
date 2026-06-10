@@ -98,6 +98,8 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 		root = p.planCreateTable(s)
 	case *PS.DropTable:
 		root = p.planDropTable(s)
+	case *PS.ExplainStmt:
+		root = p.planExplain(s)
 	}
 
 	result := &plan{
@@ -504,6 +506,25 @@ func (p *Planner) planCreateTable(s *PS.CreateTable) Operator {
 
 func (p *Planner) planDropTable(s *PS.DropTable) Operator {
 	return NewDropTable(s)
+}
+
+func (p *Planner) planExplain(s *PS.ExplainStmt) Operator {
+	// Plan the inner statement
+	innerPlan, err := p.Plan(s.Inner)
+	if err != nil || innerPlan == nil || innerPlan.root == nil {
+		// Return a placeholder operator that will produce empty output
+		return NewSeqScan("__explain_error__")
+	}
+
+	// Build the PlanNode tree for structured output
+	planNode := buildPlanNodeTree(innerPlan.root, p)
+
+	// Return an ExplainStmt operator that renders the plan
+	return &ExplainStmtOp{
+		mode:     s.Mode,
+		planNode: planNode,
+		root:     innerPlan.root,
+	}
 }
 
 // estimateRowCount provides a row count estimate for the given
