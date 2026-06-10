@@ -95,6 +95,16 @@ Columns for selection:
 | REQ000270 | SQL/PS | Parse `LIMIT ... OFFSET ...` shorthand and `FETCH FIRST n ROWS` | low | S | iter-22 | `SQL/PS/ps.go` — `T_FETCH`, `T_ROWS` tokens |
 | REQ000271 | ENG/LS | Compression for SST blocks (snappy/lz4) | medium | M | iter-22 | `ENG/LS/sst_writer.go` — block-level codec |
 | REQ000272 | WAL | Checksum verification on WAL replay (detect corruption) | high | S | iter-22 | `WAL/RP/rp.go` — CRC32 verify per record |
+| REQ000273 | SQL/PS | Add `EXPLAIN` and `EXPLAIN QUERY PLAN` keyword tokens | medium | S | REQ000245 | `SQL/LX/token.go` — `T_EXPLAIN`, `T_QUERY`, `T_PLAN` |
+| REQ000274 | SQL/PS | Parse `EXPLAIN [QUERY PLAN] <stmt>` prefix syntax | medium | S | REQ000273 | `SQL/PS/ps.go` — `parseExplain`, wrap statement with `ExplainStmt` |
+| REQ000275 | SQL/PS | `ExplainStmt` AST (`Mode` enum, `Inner` statement) | medium | S | REQ000274 | `SQL/PS/ast.go` — `ExplainStmt{ Mode: ExplainNormal \| ExplainQueryPlan, Inner: Stmt }` |
+| REQ000276 | SQL/PL | `PlanNode` tree wrapper (type, cost, rows, children) | medium | M | REQ000274 | `SQL/PL/plan_node.go` (new) — `PlanNode{ Type, Cost, Rows, Width, Children }` |
+| REQ000277 | SQL/PL | Visitor pattern: emit PlanNodes during planner tree construction | medium | M | REQ000276 | `SQL/PL/planner.go` — wrap each operator with PlanNode metadata |
+| REQ000278 | SQL/PL | Per-operator cost annotation (`cost=N rows=N width=N`) | medium | M | REQ000277 | `SQL/PL/estimateCost` — populate cost from existing Plan.Cost |
+| REQ000279 | SQL/EX | `EXPLAIN` execution path: skip row execution, return plan as result-set | medium | M | REQ000277 | `SQL/EX/explain.go` (new) — schema `(id, parent, notused, detail)`, rows from PlanNode tree |
+| REQ000280 | SQL/EX | EXPLAIN on DML (INSERT/UPDATE/DELETE) returns execution plan | medium | S | REQ000279 | `SQL/EX/explain.go` — DML plans show scan + write path |
+| REQ000281 | SQL/EX | EXPLAIN QUERY PLAN formatter (tree-style, human-readable) | medium | S | REQ000279 | `SQL/EX/explain.go` — `formatPlanTree` with indent, `--SCAN TABLE`, `--SEARCH ...` |
+| REQ000282 | SQL/EX | EXPLAIN low-level opcode output (SQLite EXPLAIN parity) | low | M | REQ000279 | `SQL/EX/opcode.go` (new) — `OpCode` enum, `OpenRead`, `OpenWrite`, `IdxInsert` etc. |
 
 ## Unfixed Bugs (surfaces as requirements)
 
