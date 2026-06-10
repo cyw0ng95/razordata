@@ -13,6 +13,7 @@ import (
 // directory creates a clean catalog. Mirrors the cold-start path
 // of a fresh user database.
 func TestCatalog_Bootstrap_FromEmpty(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "catalog")
 	c, err := NewCatalog(dir)
 	if err != nil {
@@ -32,6 +33,7 @@ func TestCatalog_Bootstrap_FromEmpty(t *testing.T) {
 // this, the second process would reuse IDs that the first
 // process already issued.
 func TestCatalog_Bootstrap_NextIDCounterSurvives(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "catalog")
 	c, err := NewCatalog(dir)
 	if err != nil {
@@ -66,6 +68,7 @@ func TestCatalog_Bootstrap_NextIDCounterSurvives(t *testing.T) {
 // TestCatalog_Bootstrap_RejectsBadMagic — a file with the wrong
 // magic must surface ErrCatalogCorrupt, not silently parse.
 func TestCatalog_Bootstrap_RejectsBadMagic(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "catalog")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -88,6 +91,7 @@ func TestCatalog_Bootstrap_RejectsBadMagic(t *testing.T) {
 // TestCatalog_Bootstrap_RejectsTruncatedFile — a file smaller
 // than the fixed header must surface ErrCatalogCorrupt.
 func TestCatalog_Bootstrap_RejectsTruncatedFile(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "catalog")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -111,6 +115,7 @@ func TestCatalog_Bootstrap_RejectsTruncatedFile(t *testing.T) {
 // version byte is greater than schemaVersionCurrent must
 // surface ErrUpgradeRequired.
 func TestCatalog_Bootstrap_RejectsFutureVersion(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "catalog")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -136,6 +141,7 @@ func TestCatalog_Bootstrap_RejectsFutureVersion(t *testing.T) {
 // header parses cleanly but whose entry body is truncated must
 // surface ErrCatalogCorrupt, not panic or silently ignore.
 func TestCatalog_Bootstrap_RejectsTruncatedEntry(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "catalog")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -169,6 +175,7 @@ func TestCatalog_Bootstrap_RejectsTruncatedEntry(t *testing.T) {
 // entries in ascending tableID order, regardless of insertion
 // order. Catches non-determinism in the cache iteration path.
 func TestCatalog_Bootstrap_PreservesOrder(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "catalog")
 	c, err := NewCatalog(dir)
 	if err != nil {
@@ -213,6 +220,7 @@ func TestCatalog_Bootstrap_PreservesOrder(t *testing.T) {
 // overflow / varint decoder bugs that would silently corrupt
 // large payloads.
 func TestCatalog_Bootstrap_LargeEntry(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "catalog")
 	c, err := NewCatalog(dir)
 	if err != nil {
@@ -252,6 +260,7 @@ func TestCatalog_Bootstrap_LargeEntry(t *testing.T) {
 // previous interrupted flush must not affect bootstrap. Atomic
 // rename guarantees only catalog.dat is read.
 func TestCatalog_Bootstrap_NoTmpLeftover(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "catalog")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)

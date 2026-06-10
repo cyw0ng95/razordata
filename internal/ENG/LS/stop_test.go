@@ -12,6 +12,7 @@ import (
 // the compaction loop exits promptly. No jobs are enqueued so the
 // loop is parked in the select; closing `done` unblocks it.
 func TestCompactionStop_Graceful(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mf, err := newManifest(filepath.Join(dir, "manifest"))
 	if err != nil {
@@ -32,6 +33,7 @@ func TestCompactionStop_Graceful(t *testing.T) {
 // TestCompactionStop_AlreadyCancelled verifies that Stop returns
 // ctx.Err() when the context is already done before Stop is called.
 func TestCompactionStop_AlreadyCancelled(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mf, err := newManifest(filepath.Join(dir, "manifest"))
 	if err != nil {
@@ -50,6 +52,7 @@ func TestCompactionStop_AlreadyCancelled(t *testing.T) {
 // loopDone channel is closed within a short window after Stop is
 // called. This is the actual shutdown-completion signal.
 func TestCompactionStop_GoroutineExits(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mf, err := newManifest(filepath.Join(dir, "manifest"))
 	if err != nil {
@@ -73,6 +76,7 @@ func TestCompactionStop_GoroutineExits(t *testing.T) {
 // flush loop is parked waiting for either a job or `done`; closing
 // `done` unblocks it.
 func TestFlushStop_Graceful(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mf, err := newManifest(filepath.Join(dir, "manifest"))
 	if err != nil {
@@ -91,6 +95,7 @@ func TestFlushStop_Graceful(t *testing.T) {
 
 // TestFlushStop_AlreadyCancelled exercises the timeout branch.
 func TestFlushStop_AlreadyCancelled(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mf, err := newManifest(filepath.Join(dir, "manifest"))
 	if err != nil {
