@@ -805,10 +805,14 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 		colName := p.current.Lexeme
 		p.advance()
 
-		colType := p.current.Type
-		p.advance()
+		// Parse type with optional size/precision (REQ000207)
+		typeInfo, err := p.parseCastType()
+		if err != nil {
+			return nil, err
+		}
 
-		col := NewColDef(colName, int(colType))
+		col := NewColDef(colName, typeInfo.Type)
+		col.Size = typeInfo.Size
 
 		for p.current.Type == LX.T_NOTNULL || p.current.Type == LX.T_PRIMARY ||
 			p.current.Type == LX.T_DEFAULT || p.current.Type == LX.T_UNIQUE ||
@@ -1004,21 +1008,62 @@ func (p *Parser) parseExists() (Expr, error) {
 	return &ExistsExpr{Subquery: sel}, nil
 }
 
-func (p *Parser) parseCastType() (int, error) {
-	var typ int
+// parseCastType parses a type reference optionally followed by
+// a size or precision/scale specifier (REQ000207).
+// Supports: VARCHAR(N), CHAR(N), DECIMAL(P,S), NUMERIC(P,S).
+func (p *Parser) parseCastType() (*TypeInfo, error) {
+	info := &TypeInfo{}
+	
 	switch p.current.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
-		typ = int(LX.T_INT_KW)
+		info.Type = int(LX.T_INT_KW)
+		p.advance()
 	case LX.T_FLOAT_KW:
-		typ = int(LX.T_FLOAT_KW)
+		info.Type = int(LX.T_FLOAT_KW)
+		p.advance()
 	case LX.T_BOOL:
-		typ = int(LX.T_BOOL)
-	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
-		typ = int(LX.T_TEXT)
+		info.Type = int(LX.T_BOOL)
+		p.advance()
+	case LX.T_TEXT:
+		info.Type = int(LX.T_TEXT)
+		p.advance()
+	case LX.T_BLOB:
+		info.Type = int(LX.T_BLOB)
+		p.advance()
 	case LX.T_TIMESTAMP:
-		typ = int(LX.T_TIMESTAMP)
+		info.Type = int(LX.T_TIMESTAMP)
+		p.advance()
+	case LX.T_VARCHAR:
+		info.Type = int(LX.T_VARCHAR)
+		p.advance()
+		if err := p.parseTypeSize(&info.Size); err != nil {
+			return nil, err
+		}
+	case LX.T_NUMERIC:
+		info.Type = int(LX.T_NUMERIC)
+		p.advance()
+		if err := p.parseTypePrecision(&info.Precision, &info.Scale); err != nil {
+			return nil, err
+		}
+		info.Size = info.Precision // use Size for ColDef compatibility
+	case LX.T_DECIMAL:
+		info.Type = int(LX.T_DECIMAL)
+		p.advance()
+		if err := p.parseTypePrecision(&info.Precision, &info.Scale); err != nil {
+			return nil, err
+		}
+		info.Size = info.Precision // use Size for ColDef compatibility
+	case LX.T_DATE:
+		info.Type = int(LX.T_DATE)
+		p.advance()
+	case LX.T_TIME:
+		info.Type = int(LX.T_TIME)
+		p.advance()
+	case LX.T_JSON:
+		info.Type = int(LX.T_JSON)
+		p.advance()
 	default:
-		return 0, &SyntaxError{
+		return nil, &SyntaxError{
 			Input:  p.lex.Input(),
 			Line:   p.current.Line,
 			Col:    p.current.Col,
@@ -1026,9 +1071,79 @@ func (p *Parser) parseCastType() (int, error) {
 			Lexeme: p.current.Lexeme,
 		}
 	}
-	p.advance()
-	return typ, nil
+	return info, nil
 }
+
+// parseTypeSize parses (N) for VARCHAR(N), CHAR(N).
+func (p *Parser) parseTypeSize(size *int) error {
+	if p.current.Type != LX.T_LPAREN {
+		return nil // optional
+	}
+	p.advance()
+	if p.current.Type != LX.T_INT {
+		return &SyntaxError{
+			Input:  p.lex.Input(),
+			Line:   p.current.Line,
+			Col:    p.current.Col,
+			Got:    "integer",
+			Lexeme: p.current.Lexeme,
+		}
+	}
+	n := 0
+	fmt.Sscanf(p.current.Lexeme, "%d", &n)
+	*size = n
+	p.advance()
+	if err := p.expect(LX.T_RPAREN); err != nil {
+		return err
+	}
+	p.advance() // consume the ')'
+	return nil
+}
+
+// parseTypePrecision parses (P,S) for DECIMAL(P,S), NUMERIC(P,S).
+func (p *Parser) parseTypePrecision(precision, scale *int) error {
+	if p.current.Type != LX.T_LPAREN {
+		return nil // optional
+	}
+	p.advance()
+	if p.current.Type != LX.T_INT {
+		return &SyntaxError{
+			Input:  p.lex.Input(),
+			Line:   p.current.Line,
+			Col:    p.current.Col,
+			Got:    "integer",
+			Lexeme: p.current.Lexeme,
+		}
+	}
+	n := 0
+	fmt.Sscanf(p.current.Lexeme, "%d", &n)
+	*precision = n
+	p.advance()
+	
+	if p.current.Type == LX.T_COMMA {
+		p.advance()
+		if p.current.Type != LX.T_INT {
+			return &SyntaxError{
+				Input:  p.lex.Input(),
+				Line:   p.current.Line,
+				Col:    p.current.Col,
+				Got:    "integer",
+				Lexeme: p.current.Lexeme,
+			}
+		}
+		m := 0
+		fmt.Sscanf(p.current.Lexeme, "%d", &m)
+		*scale = m
+		p.advance()
+	}
+	
+	if err := p.expect(LX.T_RPAREN); err != nil {
+		return err
+	}
+	p.advance() // consume the ')'
+	return nil
+}
+
 
 func (p *Parser) parseCaseExpr() (Expr, error) {
 	p.advance()
