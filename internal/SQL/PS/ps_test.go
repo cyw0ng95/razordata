@@ -283,8 +283,11 @@ func TestParseCast(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected CastExpr, got %T", sel.Cols[0])
 			}
-			if cast.Type != c.wantType {
-				t.Errorf("got type %d, want %d", cast.Type, c.wantType)
+			if cast.Type == nil {
+				t.Fatal("Type should not be nil")
+			}
+			if cast.Type.Type != c.wantType {
+				t.Errorf("got type %d, want %d", cast.Type.Type, c.wantType)
 			}
 		})
 	}

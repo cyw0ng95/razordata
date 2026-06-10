@@ -58,7 +58,7 @@ func (a *AliasedExpr) exprNode() {}
 
 type CastExpr struct {
 	Expr Expr
-	Type int
+	Type *TypeInfo
 }
 
 func (c *CastExpr) exprNode() {}
