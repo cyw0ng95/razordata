@@ -3,6 +3,7 @@ package VL
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cyw0ng95/razordata/internal/TXN/MV"
 	"github.com/cyw0ng95/razordata/internal/TXN/SN"
@@ -32,6 +33,33 @@ type Tx interface {
 	Abort(ctx context.Context) error
 }
 
+// CommitPhase tracks the 6-phase commit protocol state (REQ000147).
+// Each phase is a one-way progression; the protocol cannot go
+// backwards. Reading a phase externally is safe (atomic).
+type CommitPhase int32
+
+const (
+	// PhaseBegin is the initial state. Reads/writes allowed.
+	PhaseBegin CommitPhase = iota
+	// PhaseRead is set when the first Get/Iter is called. The
+	// read view is fixed for the rest of the transaction.
+	PhaseRead
+	// PhaseWrite is set on the first Insert/Delete. The write
+	// set is captured.
+	PhaseWrite
+	// PhasePreCommit is entered by Commit() after validation
+	// passes. No further writes allowed.
+	PhasePreCommit
+	// PhaseCommit is entered after the WAL record is durably
+	// persisted. Version chains are marked committed.
+	PhaseCommit
+	// PhasePostCommit is the terminal state. Slot released.
+	PhasePostCommit
+	// PhaseAborted is the alternative terminal state for the
+	// Abort flow.
+	PhaseAborted
+)
+
 type tx struct {
 	sm       *slotManager
 	mv       *MV.MV
@@ -48,6 +76,20 @@ type tx struct {
 	// an RTCommit record via EncodeCommitRecord and calls Sync for
 	// durability. REQ000171. nil WAL skips the write (test mode).
 	wal WALWriter
+	// phase tracks the 6-phase commit protocol progress (REQ000147).
+	// Set atomically so observers (debug, metrics) can read it
+	// without acquiring t.mu.
+	phase atomic.Int32
+}
+
+// Phase returns the current commit phase (REQ000147).
+func (t *tx) Phase() CommitPhase {
+	return CommitPhase(t.phase.Load())
+}
+
+// setPhase atomically advances the phase.
+func (t *tx) setPhase(p CommitPhase) {
+	t.phase.Store(int32(p))
 }
 
 func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
@@ -62,6 +104,10 @@ func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
 	// a defined error rather than undefined behaviour.
 	if t.finished {
 		return nil, ErrTxFinished
+	}
+	// PhaseRead: first read fixes the read view (REQ000147).
+	if t.Phase() == PhaseBegin {
+		t.setPhase(PhaseRead)
 	}
 	chain := t.mv.GetVersionChain(key)
 	if chain != nil {
@@ -94,6 +140,8 @@ func (t *tx) Insert(ctx context.Context, key, value []byte) error {
 	if t.finished {
 		return ErrTxFinished
 	}
+	// PhaseWrite: first write enters the write phase (REQ000147).
+	t.setPhase(PhaseWrite)
 	node := MV.NewVersionNode(t.slot.arena, t.slot.txnID, t.slot.beginTS, key, value, false)
 	if !t.mv.Insert(key, node) {
 		return ErrInsertFailed
@@ -111,6 +159,8 @@ func (t *tx) Delete(ctx context.Context, key []byte) error {
 	if t.finished {
 		return ErrTxFinished
 	}
+	// PhaseWrite: first write enters the write phase (REQ000147).
+	t.setPhase(PhaseWrite)
 	node := MV.NewVersionNode(t.slot.arena, t.slot.txnID, t.slot.beginTS, key, nil, true)
 	if !t.mv.Insert(key, node) {
 		return ErrDeleteFailed
@@ -128,7 +178,10 @@ func (t *tx) Commit(ctx context.Context) error {
 	if t.finished {
 		return ErrTxFinished
 	}
+	// PhasePreCommit: validate before committing (REQ000147).
+	t.setPhase(PhasePreCommit)
 	if !t.sm.Validate(t.slot) {
+		t.setPhase(PhaseAborted)
 		t.finalize(SlotAborted)
 		if t.manager != nil {
 			t.manager.recordAbort()
@@ -138,6 +191,8 @@ func (t *tx) Commit(ctx context.Context) error {
 
 	commitTS := NextTS()
 
+	// PhaseCommit: mark version chains committed.
+	t.setPhase(PhaseCommit)
 	for _, kr := range t.slot.writeSet {
 		chain := t.mv.GetVersionChain(kr.Start)
 		if chain == nil {
@@ -151,9 +206,8 @@ func (t *tx) Commit(ctx context.Context) error {
 		}
 	}
 
-	// Emit WAL record for durability (REQ000171). nil WAL skips
-	// the write (test mode, no WAL configured). The record contains
-	// the write set keys so recovery can replay or rollback.
+	// Persist WAL record for durability (REQ000171). nil WAL
+	// skips the write (test mode, no WAL configured).
 	if t.wal != nil {
 		keys := make([][]byte, 0, len(t.slot.writeSet))
 		for _, kr := range t.slot.writeSet {
@@ -162,13 +216,17 @@ func (t *tx) Commit(ctx context.Context) error {
 		rec := EncodeCommitRecord(t.slot.txnID, commitTS, keys)
 		batch := &walwr.WriteBatch{Recs: []walwr.LogRecord{{Type: walwr.RTCommit, Value: rec}}}
 		if _, err := t.wal.Append(batch); err != nil {
+			t.setPhase(PhaseAborted)
 			return err
 		}
 		if err := t.wal.Sync(); err != nil {
+			t.setPhase(PhaseAborted)
 			return err
 		}
 	}
 
+	// PhasePostCommit: terminal state. Slot released.
+	t.setPhase(PhasePostCommit)
 	t.finalize(SlotCommitted)
 	if t.manager != nil {
 		t.manager.recordCommit()
@@ -189,6 +247,8 @@ func (t *tx) Abort(ctx context.Context) error {
 		// bug; see the iter-05 audit notes.)
 		return nil
 	}
+	// PhaseAborted: terminal state for the Abort flow (REQ000147).
+	t.setPhase(PhaseAborted)
 	t.finalize(SlotAborted)
 	if t.manager != nil {
 		t.manager.recordAbort()
