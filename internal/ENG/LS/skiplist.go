@@ -22,6 +22,35 @@ type skipList struct {
 	len   atomic.Int64
 }
 
+// nodeSlicePool pools the predecessor/successor scratch slices
+// used during Insert. Slices are pre-allocated to maxLevel capacity
+// so they fit the largest possible insertion without re-allocation.
+// REQ000198.
+var nodeSlicePool = sync.Pool{
+	New: func() any {
+		s := make([]*node, maxLevel)
+		return &s
+	},
+}
+
+// acquireSlice fetches a scratch slice from the pool. The returned
+// pointer must be returned via releaseSlice after use.
+func acquireSlice() *[]*node {
+	return nodeSlicePool.Get().(*[]*node)
+}
+
+// releaseSlice returns a scratch slice to the pool.
+func releaseSlice(s *[]*node) {
+	if s == nil {
+		return
+	}
+	// Clear references so GC can reclaim referenced nodes.
+	for i := range *s {
+		(*s)[i] = nil
+	}
+	nodeSlicePool.Put(s)
+}
+
 func New() *skipList {
 	sl := &skipList{}
 	sl.level.Store(1)
@@ -44,12 +73,20 @@ func (sl *skipList) randomLevel() int {
 func (sl *skipList) Insert(key, value []byte) {
 	lvl := sl.randomLevel()
 
+	// Acquire scratch slices from the pool (REQ000198). Slice
+	// capacity is always maxLevel, so no re-allocation regardless
+	// of insertion level. The pool returns 0 allocations on
+	// steady-state operations.
+	predecessorsPtr := acquireSlice()
+	successorsPtr := acquireSlice()
+	defer releaseSlice(predecessorsPtr)
+	defer releaseSlice(successorsPtr)
+	predecessors := (*predecessorsPtr)[:lvl]
+	successors := (*successorsPtr)[:lvl]
+
 	for {
 		head := sl.head.Load()
 		currentLevel := sl.level.Load()
-
-		predecessors := make([]*node, lvl)
-		successors := make([]*node, lvl)
 
 		curr := head
 		for i := currentLevel - 1; i >= 0; i-- {
