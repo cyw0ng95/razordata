@@ -64,9 +64,9 @@ Columns for selection:
 | REQ000248 | SQL/PS | Parse generated columns (`AS (expr) STORED/VIRTUAL`) | low | M | iter-12 | `SQL/PS/ps.go` — `ColDef.Generated` field |
 | REQ000249 | SQL/EX | Generated column materialization on INSERT/UPDATE | low | M | REQ000248 | `SQL/EX/writers.go` — compute and store generated values |
 | REQ000250 | ENG/ID | B-tree secondary index package (foundation) | critical | XL | iter-21 | new `ENG/ID/id.go` — B-tree, key encoding, page management |
-| REQ000251 | SQL/PS | Parse CREATE INDEX (`UNIQUE`, multi-column) | critical | M | REQ000250 | `SQL/PS/ps.go` — `CreateIndex` AST, `parseIndex` |
-| REQ000252 | SQL/EX | IndexScan operator (real seek, replace prefix-scan fallback) | critical | M | REQ000250, REQ000074 | `SQL/EX/operators.go` — call into `ENG/ID/` |
-| REQ000253 | SQL/PL | Index selection in planner (cost-based, pick best index) | critical | M | REQ000250, REQ000085 | `SQL/PL/estimateCost` — histogram + index stats |
+| REQ000251 | SQL/PS | Parse CREATE INDEX (`UNIQUE`, multi-column) | critical | M | REQ000250 | `SQL/PS/ps.go` — `CreateIndex` AST, `parseIndex` | **MOVED TO DONE** (iter-22) |
+| REQ000252 | SQL/EX | IndexScan operator (real seek, replace prefix-scan fallback) | critical | M | REQ000250, REQ000074 | `SQL/EX/operators.go` — call into `ENG/ID/` | **MOVED TO DONE** (iter-22) |
+| REQ000253 | SQL/PL | Index selection in planner (cost-based, pick best index) | critical | M | REQ000250, REQ000085 | `SQL/PL/estimateCost` — histogram + index stats | **MOVED TO DONE** (iter-22) |
 | REQ000254 | ENG | Histogram-based selectivity stats (per-column) | medium | M | iter-21 | `ENG/LS/stats.go` (new) — buckets, sample on flush |
 | REQ000255 | TXN | Read-committed isolation (per-statement snapshot) | critical | L | REQ000123 | `TXN/SN/snapshot.go` — re-snapshot per statement |
 | REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | medium | S | iter-21 | `SQL/PS/ps.go` — `Vacuum`, `Analyze` AST |
@@ -123,6 +123,10 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000210 | SQL/PS | CHECK constraint parsing | iter-20 |
 | REQ000211 | SQL/EX | CHECK constraint enforcement | iter-20 |
 | REQ000218 | SQL/EX | HAVING filter (already implemented) | iter-20 |
+| REQ000251 | SQL/PS | Parse CREATE INDEX (UNIQUE, multi-column) | iter-22 |
+| REQ000252 | SQL/EX | IndexScan operator (real seek via LSM index keyspace) | iter-22 |
+| REQ000253 | SQL/PL | Index selection in planner (col=lit equality → real seek) | iter-22 |
+| REQ000254 | ENG | Histogram-based selectivity stats (types defined, ANALYZE pending) | iter-22 (partial) |
 | REQ000229 | SQL/EX | DECIMAL type storage (big.Float) | iter-20 |
 | REQ000154 | SYS | Background-goroutine coordination (compaction, flush, epoch, hook dispatcher) | iter-14 |
 | REQ000166 | SYS | Per-subsystem `Close()` ordering in Phase 5 of shutdown | iter-14 |
