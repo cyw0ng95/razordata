@@ -221,14 +221,14 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		// Try IndexScan first when the WHERE references an indexed column.
 		// iter-22: prefer NewIndexScanWithIndex (real seek) over the
 		// prefix-scan fallback when the predicate is an equality on
-		// the indexed column.
+		// the indexed column AND the index is registered for writer
+		// maintenance (i.e. the index keyspace is populated).
 		if s.Where != nil {
 			if col, val, ok := indexedColumnEq(s.Where); ok {
-				if idx, found := p.selectIndex(s.From, col); found {
+				idx, found := p.selectIndex(s.From, col)
+				if found && hasWriterIndex(s.From, idx) {
 					tableID, _ := tableIDFor(s.From)
 					if isc, err := NewIndexScanWithIndex(p.store, tableID, s.From, idx, val, nil); err == nil {
-						// Wrap in a Filter to apply any remaining
-						// predicates (multi-column indexes, etc.)
 						if s.Where != nil {
 							scan = NewFilter(isc, s.Where)
 						} else {
@@ -236,13 +236,13 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 						}
 					}
 				}
-			} else if col, ok := indexedColumn(s.Where); ok {
-				// Range scan: column referenced but not
-				// equality. Fall back to the existing prefix-scan
-				// path for now; iter-23 will add range seek.
-				if idx, found := p.selectIndex(s.From, col); found {
-					if isc, err := NewIndexScanWithStore(p.store, s.From, idx); err == nil {
-						scan = isc
+			}
+			if scan == nil {
+				if col, ok := indexedColumn(s.Where); ok {
+					if idx, found := p.selectIndex(s.From, col); found {
+						if isc, err := NewIndexScanWithStore(p.store, s.From, idx); err == nil {
+							scan = isc
+						}
 					}
 				}
 			}
@@ -657,4 +657,17 @@ func (p *Planner) ParseAndPlan(sql string) (*plan, error) {
 		return nil, fmt.Errorf("pl: parse error: %w", err)
 	}
 	return p.Plan(stmt)
+}
+
+// hasWriterIndex reports whether the given index name is
+// registered for writer maintenance (RegisterIndexWithID). The
+// planner uses this to decide between the real-seek path and
+// the prefix-scan fallback.
+func hasWriterIndex(table, indexName string) bool {
+	for _, idx := range GetRegisteredIndexes(table) {
+		if idx.Name == indexName {
+			return true
+		}
+	}
+	return false
 }

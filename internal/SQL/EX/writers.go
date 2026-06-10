@@ -206,6 +206,10 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		if i.txWriter != nil {
 			i.txWriter.RecordWrite(key, buf)
 		}
+		// Maintain secondary indexes (iter-22).
+		if err := maintainIndexesOnInsert(i.store, i.table, i.schema, out); err != nil {
+			return Row{}, err
+		}
 		i.rows++
 
 		// Evaluate RETURNING expressions
