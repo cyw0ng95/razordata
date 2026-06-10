@@ -152,6 +152,9 @@ var tokenNames = [...]string{
 	LX.T_NOTHING:   "NOTHING",
 	LX.T_EXCLUDED:  "EXCLUDED",
 	LX.T_WITH:      "WITH",
+	LX.T_SAVEPOINT: "SAVEPOINT",
+	LX.T_RELEASE:   "RELEASE",
+	LX.T_TO:        "TO",
 }
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -415,6 +418,15 @@ func (p *Parser) Parse() (Stmt, error) {
 		stmt, err = p.parseExplain()
 	case LX.T_WITH:
 		stmt, err = p.parseWith()
+	case LX.T_SAVEPOINT:
+		stmt, err = p.parseSavepoint()
+	case LX.T_RELEASE:
+		stmt, err = p.parseReleaseSavepoint()
+	case LX.T_ROLLBACK:
+		next := p.lex.Peek()
+		if next.Type == LX.T_TO {
+			stmt, err = p.parseRollbackTo()
+		}
 	default:
 		return nil, &SyntaxError{
 			Input:  p.lex.Input(),
@@ -1484,4 +1496,51 @@ func (p *Parser) parseWith() (*WithStmt, error) {
 	}
 
 	return &WithStmt{CTEs: ctes, Inner: inner}, nil
+}
+
+func (p *Parser) parseSavepoint() (*SavepointStmt, error) {
+	p.advance() // consume SAVEPOINT
+
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	name := p.current.Lexeme
+	p.advance()
+
+	return &SavepointStmt{Name: name}, nil
+}
+
+func (p *Parser) parseReleaseSavepoint() (*ReleaseSavepointStmt, error) {
+	p.advance() // consume RELEASE
+
+	// Optional SAVEPOINT keyword
+	if p.current.Type == LX.T_SAVEPOINT {
+		p.advance()
+	}
+
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	name := p.current.Lexeme
+	p.advance()
+
+	return &ReleaseSavepointStmt{Name: name}, nil
+}
+
+func (p *Parser) parseRollbackTo() (*RollbackToStmt, error) {
+	p.advance() // consume ROLLBACK
+	p.advance() // consume TO
+
+	// Optional SAVEPOINT keyword
+	if p.current.Type == LX.T_SAVEPOINT {
+		p.advance()
+	}
+
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	name := p.current.Lexeme
+	p.advance()
+
+	return &RollbackToStmt{Name: name}, nil
 }

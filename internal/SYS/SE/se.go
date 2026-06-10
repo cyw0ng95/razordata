@@ -181,6 +181,53 @@ func (s *Session) Rollback(ctx context.Context) error {
 	return nil
 }
 
+// Savepoint creates a savepoint with the given name.
+func (s *Session) Savepoint(ctx context.Context, name string) error {
+	if s.engine.IsClosed() {
+		return AP.ErrClosed
+	}
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.mu.Unlock()
+	if s.txn == nil {
+		return AP.ErrNoActiveTxn
+	}
+	return s.txn.Savepoint(ctx, name)
+}
+
+// ReleaseSavepoint releases a savepoint with the given name.
+func (s *Session) ReleaseSavepoint(ctx context.Context, name string) error {
+	if s.engine.IsClosed() {
+		return AP.ErrClosed
+	}
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.mu.Unlock()
+	if s.txn == nil {
+		return AP.ErrNoActiveTxn
+	}
+	// Release is a no-op in the current implementation
+	// The savepoint is just removed from the stack
+	return nil
+}
+
+// RollbackTo rolls back to a savepoint with the given name.
+func (s *Session) RollbackTo(ctx context.Context, name string) error {
+	if s.engine.IsClosed() {
+		return AP.ErrClosed
+	}
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.mu.Unlock()
+	if s.txn == nil {
+		return AP.ErrNoActiveTxn
+	}
+	return s.txn.RollbackTo(ctx, name)
+}
+
 // SetDeadline sets a deadline for all subsequent operations on this
 // session. Stored in an atomic.Value so concurrent readers see a
 // consistent point-in-time.

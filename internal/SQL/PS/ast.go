@@ -230,6 +230,27 @@ type WithStmt struct {
 
 func (w *WithStmt) stmtNode() {}
 
+// SavepointStmt represents a SAVEPOINT statement.
+type SavepointStmt struct {
+	Name string
+}
+
+func (s *SavepointStmt) stmtNode() {}
+
+// ReleaseSavepointStmt represents a RELEASE SAVEPOINT statement.
+type ReleaseSavepointStmt struct {
+	Name string
+}
+
+func (r *ReleaseSavepointStmt) stmtNode() {}
+
+// RollbackToStmt represents a ROLLBACK TO SAVEPOINT statement.
+type RollbackToStmt struct {
+	Name string
+}
+
+func (r *RollbackToStmt) stmtNode() {}
+
 type Update struct {
 	Table     string
 	Set       []Pair

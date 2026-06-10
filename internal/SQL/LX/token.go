@@ -115,6 +115,9 @@ const (
 	T_NOTHING
 	T_EXCLUDED
 	T_WITH
+	T_SAVEPOINT
+	T_RELEASE
+	T_TO
 
 	T_ERROR TokenType = -1
 )
@@ -231,6 +234,9 @@ var tokenTypeNames = [...]string{
 	T_NOTHING:   "NOTHING",
 	T_EXCLUDED:  "EXCLUDED",
 	T_WITH:      "WITH",
+	T_SAVEPOINT: "SAVEPOINT",
+	T_RELEASE:   "RELEASE",
+	T_TO:        "TO",
 }
 
 func (t Token) String() string {
