@@ -141,21 +141,21 @@ func TestIndexScan_WithStore_Fallback(t *testing.T) {
 	defer eng.Close()
 	store := &engineStoreWithGet{eng: eng}
 	ex := NewExecutorWithEngine(store)
-	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
-	ex.RegisterIndex("t", "idx_a", []string{"a"})
+	ex.RegisterTableWithPK("t_fallback", []string{"id", "a"}, "id")
+	ex.RegisterIndex("t_fallback", "idx_a", []string{"a"})
 
 	ctx := context.Background()
 	for _, s := range []string{
-		"INSERT INTO t VALUES (1, 'x')",
-		"INSERT INTO t VALUES (2, 'y')",
-		"INSERT INTO t VALUES (3, 'x')",
+		"INSERT INTO t_fallback VALUES (1, 'x')",
+		"INSERT INTO t_fallback VALUES (2, 'y')",
+		"INSERT INTO t_fallback VALUES (3, 'x')",
 	} {
 		if _, err := ex.Exec(ctx, s); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	rows, err := ex.QueryAll(ctx, "SELECT id FROM t WHERE a = 'x'")
+	rows, err := ex.QueryAll(ctx, "SELECT id FROM t_fallback WHERE a = 'x'")
 	if err != nil {
 		t.Fatal(err)
 	}
