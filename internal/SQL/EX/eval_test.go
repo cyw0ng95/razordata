@@ -360,7 +360,7 @@ func TestInsertAppendsRows(t *testing.T) {
 	insert := NewInsert("t", nil, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}},
 		{&PS.NumberLiteral{Val: 2}},
-	})
+	}, nil, nil)
 	_, err := insert.Next(context.Background())
 	if err != ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
@@ -383,7 +383,7 @@ func TestUpdateModifiesRows(t *testing.T) {
 		{Cols: []string{"a", "b"}, Data: []interface{}{int64(2), "y"}},
 	})
 	scan := NewSeqScan("t")
-	update := NewUpdate("t", []PS.Pair{{Col: "b", Val: &PS.StringLiteral{Val: "z"}}}, nil, scan)
+	update := NewUpdate("t", []PS.Pair{{Col: "b", Val: &PS.StringLiteral{Val: "z"}}}, nil, scan, nil)
 	_, err := update.Next(context.Background())
 	if err != ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
@@ -411,7 +411,7 @@ func TestDeleteRemovesMatching(t *testing.T) {
 	scan := NewSeqScan("t")
 	del := NewDelete("t", &PS.BinaryExpr{
 		Op: int(LX.T_GT), Left: &PS.Ident{Name: "a"}, Right: &PS.NumberLiteral{Val: 1},
-	}, scan)
+	}, scan, nil)
 	_, err := del.Next(context.Background())
 	if err != ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
