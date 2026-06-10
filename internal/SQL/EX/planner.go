@@ -239,7 +239,8 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	if len(s.Joins) > 0 {
 		leftTbl := s.From
 		for _, j := range s.Joins {
-			if j.Kind != "INNER" && j.Kind != "CROSS" {
+			// Support all join kinds (REQ000197: OUTER JOIN)
+			if j.Kind != "INNER" && j.Kind != "LEFT" && j.Kind != "RIGHT" && j.Kind != "FULL" && j.Kind != "CROSS" {
 				continue
 			}
 			var on func(outer, inner *Row) (bool, error)
@@ -253,7 +254,9 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 					return truthy(v), nil
 				}
 			}
-			joinOp := NewNestedLoopJoin(current, NewSeqScan(j.Right), leftTbl, j.Right, on)
+			// Convert string kind to JoinKind enum
+			kind := JoinKind(j.Kind)
+			joinOp := NewNestedLoopJoin(current, NewSeqScan(j.Right), leftTbl, j.Right, on, kind)
 			current = joinOp
 			leftTbl = j.Right
 		}

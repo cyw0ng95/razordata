@@ -7,19 +7,32 @@ import (
 	"context"
 )
 
+// JoinKind specifies the type of join.
+type JoinKind string
+
+const (
+	JoinKindInner JoinKind = "INNER"
+	JoinKindLeft  JoinKind = "LEFT"
+	JoinKindRight JoinKind = "RIGHT"
+	JoinKindFull  JoinKind = "FULL"
+	JoinKindCross JoinKind = "CROSS"
+)
+
 type NestedLoopJoin struct {
 	left      Operator
 	right     Operator
 	leftTbl   string
 	rightTbl  string
 	on        func(outer, inner *Row) (bool, error)
+	kind      JoinKind
 	leftRow   *Row
 	rightPos  int
 	rightRows []Row
+	matched   bool // for OUTER JOIN: track if left row found a match
 }
 
-func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error)) *NestedLoopJoin {
-	return &NestedLoopJoin{left: left, right: right, leftTbl: leftTable, rightTbl: rightTable, on: on}
+func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error), kind JoinKind) *NestedLoopJoin {
+	return &NestedLoopJoin{left: left, right: right, leftTbl: leftTable, rightTbl: rightTable, on: on, kind: kind}
 }
 
 func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
@@ -39,9 +52,20 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 			copy(j.rightRows, tables[j.rightTbl])
 			tablesMu.RUnlock()
 			j.rightPos = 0
+			j.matched = false
 			_ = j.right.Close()
 		}
 		if j.rightPos >= len(j.rightRows) {
+			// No more right rows
+			if j.kind == JoinKindLeft || j.kind == JoinKindFull {
+				// OUTER JOIN: emit left row with NULL-padded right
+				if !j.matched {
+					nullRow := j.nullRightRow()
+					result := joinRows(j.leftRow, &nullRow)
+					j.leftRow = nil
+					return result, nil
+				}
+			}
 			j.leftRow = nil
 			continue
 		}
@@ -58,8 +82,23 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 				continue
 			}
 		}
+		j.matched = true
 		return joinRows(j.leftRow, &inner), nil
 	}
+}
+
+// nullRightRow returns a row with all NULL values for the right table schema.
+func (j *NestedLoopJoin) nullRightRow() Row {
+	tablesMu.RLock()
+	rightSchema := tables[j.rightTbl]
+	tablesMu.RUnlock()
+	
+	nullRow := Row{
+		Cols:  prefixCols(schemaCols(rightSchema), j.rightTbl),
+		Types: schemaTypes(rightSchema),
+		Data:  make([]any, len(rightSchema)),
+	}
+	return nullRow
 }
 
 func (j *NestedLoopJoin) Close() error {
@@ -87,4 +126,20 @@ func prefixCols(cols []string, prefix string) []string {
 		out[i] = prefix + "." + c
 	}
 	return out
+}
+
+// schemaCols extracts column names from a schema.
+func schemaCols(rows []Row) []string {
+	if len(rows) == 0 {
+		return nil
+	}
+	return append([]string(nil), rows[0].Cols...)
+}
+
+// schemaTypes extracts column types from a schema.
+func schemaTypes(rows []Row) []int {
+	if len(rows) == 0 {
+		return nil
+	}
+	return append([]int(nil), rows[0].Types...)
 }
