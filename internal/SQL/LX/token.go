@@ -100,12 +100,9 @@ const (
 	T_THEN
 	T_ELSE
 	T_END
-	T_CAST
 	T_EXISTS
-	T_TRUE
-	T_FALSE
-	T_OUTER
-
+	T_ANALYZE
+	T_VACUUM
 	T_EXPLAIN
 	T_QUERY
 	T_PLAN
@@ -118,6 +115,11 @@ const (
 	T_SAVEPOINT
 	T_RELEASE
 	T_TO
+	T_CAST
+	T_TRUE
+	T_FALSE
+	T_OUTER
+	T_FULL
 
 	T_ERROR TokenType = -1
 )
@@ -225,6 +227,12 @@ var tokenTypeNames = [...]string{
 	T_END:       "END",
 	T_CAST:      "CAST",
 	T_EXISTS:    "EXISTS",
+	T_ANALYZE:   "ANALYZE",
+	T_VACUUM:    "VACUUM",
+	T_TRUE:      "TRUE",
+	T_FALSE:     "FALSE",
+	T_OUTER:     "OUTER",
+	T_FULL:      "FULL",
 	T_EXPLAIN:   "EXPLAIN",
 	T_QUERY:     "QUERY",
 	T_PLAN:      "PLAN",
