@@ -397,4 +397,12 @@ func (v *VacuumStmt) stmtNode() {}
 
 func (p *PragmaStmt) stmtNode() {}
 
+// SetTransactionStmt represents SET TRANSACTION ISOLATION LEVEL ...
+type SetTransactionStmt struct {
+	Level string // "READ UNCOMMITTED", "READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"
+}
+
+func (s *SetTransactionStmt) stmtNode() {}
+
+
 func (e *ExplainStmt) stmtNode() {}

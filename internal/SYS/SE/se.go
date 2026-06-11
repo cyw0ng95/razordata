@@ -26,11 +26,12 @@ var sessionPool = sync.Pool{
 
 // Session is the concrete AP.Session.
 type Session struct {
-	engine   *SY.Engine
-	id       uint64
-	txn      AP.Transaction
-	mu       sync.Mutex
-	deadline atomic.Value // time.Time
+	engine        *SY.Engine
+	id            uint64
+	txn           AP.Transaction
+	mu            sync.Mutex
+	deadline      atomic.Value // time.Time
+	isolationLevel AP.IsolationLevel // REQ000123
 
 	stats struct {
 		queryCount   atomic.Int64

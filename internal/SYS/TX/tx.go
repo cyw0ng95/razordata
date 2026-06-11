@@ -21,13 +21,14 @@ import (
 // the key existed before the tx its previous value is rewritten, if
 // it was absent it is removed. This satisfies ap.R22/R23.
 type Transaction struct {
-	session *sy.Engine
-	tx      vl.Tx
-	mu      sync.Mutex
+	session  *sy.Engine
+	tx       vl.Tx
+	mu       sync.Mutex
 
-	writeSet   map[string]writeEntry
-	finished   bool
-	savepoints []savepoint
+	writeSet      map[string]writeEntry
+	finished      bool
+	savepoints    []savepoint
+	isolationLevel ap.IsolationLevel // REQ000123
 }
 
 type writeEntry struct {
