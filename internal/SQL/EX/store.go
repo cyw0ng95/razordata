@@ -29,6 +29,12 @@ type Store interface {
 	ManualCompact() error
 }
 
+// StatsCatalog provides access to column statistics for
+// histogram-based selectivity estimation. REQ000085.
+type StatsCatalog interface {
+	GetStatsByName(tableName, colName string) *ls.ColumnStats
+}
+
 // ErrNoEngine is returned when a query requires a wired store but the
 // executor was constructed without one.
 var ErrNoEngine = errors.New("ex: no engine wired; use NewExecutorWithEngine")
