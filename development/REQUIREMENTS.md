@@ -28,8 +28,6 @@ Columns for selection:
 | REQ000182 | SQL/EX | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | medium | L | iter-08 (Sort) | Create `SQL/EX/sort_parallel.go` per SQL.md:367-372 |
 | REQ000183 | SQL/EX | Expression evaluation SIMD (batch predicate EvalBatch function) | medium | M | iter-08 (eval) | `SQL/EX/eval.go` — add vectorized EvalBatch per SQL.md:303-306 |
 | REQ000185 | SQL/EX | Plan memoization with SHA256 canonical AST binary encoding (not JSON) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — implement binary serialization per SQL.md:215 |
-| REQ000061 | TXN | Read-committed isolation (default); upgrade from v1 read-uncommitted | critical | L | iter-05/06 (MVCC + VL) | `TXN/VL/protocol.go`, `TXN/SN/snapshot.go` — re-snapshot per statement |
-| REQ000062 | TXN | MVCC reads inside transactions (SELECT in tx sees own writes through Tx iterator) | critical | L | iter-09 (shadow writeSet) | `TXN/SN`, `SQL/EX` — switch session to Tx-aware iterator |
 | REQ000126 | SQL | Foreign keys (REFERENCES, ON DELETE/UPDATE) | high | L | iter-11 (UNIQUE), iter-12 (catalog), iter-21 (FKEY index?) | `SQL/PS`, `SQL/EX/constraints.go`, new FK validation in writers |
 | REQ000143 | QUAL | `SQL/RE` coverage: 49% → 80%+ | high | M | iter-07 (RE implementation) | `SQL/RE/*_test.go` — fill error-path branches, subquery flatten cases |
 | REQ000074 | SQL | `IndexScan` real seek (replace prefix-scan fallback) | high | M | iter-08 (IndexScan op) | `SQL/EX/operators.go` — call into real `ENG/ID/` once iter-21 ships, or stub |
@@ -43,30 +41,19 @@ Columns for selection:
 | REQ000086 | SQL | Parallel query execution (operators in goroutines, merge via channel) | low | XL | iter-08 (operators) | `SQL/EX/ex.go` — channel-based Next; cancellation hygiene |
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | low | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
 | REQ000101 | SYS | Prometheus metrics endpoint (`/metrics` HTTP) | medium | S | iter-00 (MetricHook), iter-100 (server) | `LOG/HK/metric.go` export, `SYS/SV/sv.go` |
-| REQ000123 | TXN-API | Configurable isolation levels (`READ COMMITTED` / `REPEATABLE READ` / `SERIALIZABLE` via `SET TRANSACTION`) | medium | M | iter-61 (RC implementation) | `SQL/PS`, `SQL/EX`, `TXN/SN/snapshot.go`, `AP.Options` |
 | REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
-| REQ000240 | SQL/PS | Parse CREATE VIEW | medium | S | iter-07 | `SQL/PS/ps.go` — `CreateView` AST |
-| REQ000241 | SQL/PL | View resolution (rewrite SELECT to subquery) | medium | S | REQ000240 | `SQL/PL/planner.go` — view expansion |
-| REQ000242 | SYS | Pragmas (`cache_size`, `journal_mode`, `synchronous`) | medium | S | iter-12 | `SYS/SY/sy.go` — apply on Open |
-| REQ000243 | SQL/PS | Parse ALTER TABLE (`ADD/DROP COLUMN`, `RENAME`) | medium | M | iter-12 | `SQL/PS/ps.go` — `AlterTable` AST, `parseAlterTable` |
 | REQ000244 | SQL/EX | ALTER TABLE executor (online schema migration) | medium | L | REQ000243 | `SQL/EX/alter.go` (new) — `ENG/LS` schema-aware readers |
 | REQ000246 | SQL/PS | Parse TRIGGER (`CREATE TRIGGER`, `BEFORE/AFTER`, `FOR EACH ROW`) | low | L | iter-07 | `SQL/PS/ps.go` — `Trigger` AST, `parseTrigger` |
 | REQ000247 | SQL/EX | TRIGGER executor (fire on INSERT/UPDATE/DELETE) | low | L | REQ000246 | `SQL/EX/trigger.go` (new) — hook into writers |
 | REQ000248 | SQL/PS | Parse generated columns (`AS (expr) STORED/VIRTUAL`) | low | M | iter-12 | `SQL/PS/ps.go` — `ColDef.Generated` field |
 | REQ000249 | SQL/EX | Generated column materialization on INSERT/UPDATE | low | M | REQ000248 | `SQL/EX/writers.go` — compute and store generated values |
-| REQ000255 | TXN | Read-committed isolation (per-statement snapshot) | critical | L | REQ000123 | `TXN/SN/snapshot.go` — re-snapshot per statement |
 | REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | medium | S | iter-21 | `SQL/PS/ps.go` — `Vacuum`, `Analyze` AST |
-| REQ000270 | SQL/PS | Parse `LIMIT ... OFFSET ...` shorthand and `FETCH FIRST n ROWS` | low | S | iter-22 | `SQL/PS/ps.go` — `T_FETCH`, `T_ROWS` tokens |
 | REQ000284 | ENG/ID | BTree delete rebalancing — no merge/redistribute after delete, tree becomes sparse | high | M | iter-23 | `ENG/ID/id.go:414-437` |
 | REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
 | REQ000286 | SQL/EX | Window materialize context propagation — uses context.Background() instead of caller's ctx | medium | S | iter-23 | `SQL/EX/window.go:55-77` |
 | REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
-| REQ000288 | SQL/PS | parseInterval unit validation — accepts any identifier as unit (e.g. INTERVAL '7' FOO) | medium | S | iter-23 | `SQL/PS/ps.go:1331-1336` |
-| REQ000289 | SQL/EX | DateDiff YEAR/MONTH day-of-month accuracy — Dec 31 to Jan 1 gives year diff 1 | medium | S | iter-23 | `SQL/EX/datetime.go:183-186` |
-| REQ000290 | SQL/EX | LAG/LEAD arbitrary offset support — hardcoded to offset 1, ignores args[1] | low | S | iter-23 | `SQL/EX/window.go:183-207` |
-| REQ000291 | SQL/PS | EXCLUDED.col reference in ON CONFLICT DO UPDATE — silently dropped (pre-existing) | high | M | iter-21 | `SQL/PS/ps.go:848-854` |
 | REQ000292 | SQL/EX | numericArith int64 overflow check — multiplication wraps without check (pre-existing) | medium | S | iter-19 | `SQL/EX/eval.go:646-658` |
 
 ## Unfixed Bugs (surfaces as requirements)
@@ -290,3 +277,15 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000283 | ENG/ID | Fix Cursor.Next() leaf boundary traversal | iter-23 |
 | REQ000293 | QUAL | Window operator test coverage (window_test.go) | iter-23 |
 | REQ000294 | QUAL | Cross-leaf cursor test coverage | iter-23 |
+| REQ000123 | TXN-API | Configurable isolation levels (SET TRANSACTION) | iter-24 |
+| REQ000255 | TXN | Read-committed per-statement snapshot | iter-24 |
+| REQ000062 | TXN | MVCC own-writes visibility in transactions | iter-24 |
+| REQ000061 | TXN | Read-committed as default isolation level | iter-24 |
+| REQ000291 | SQL/PS | EXCLUDED.col reference in ON CONFLICT DO UPDATE | iter-24 |
+| REQ000240 | SQL/PS | Parse CREATE VIEW | iter-24 |
+| REQ000241 | SQL/PL | View resolution (inline expansion) | iter-24 |
+| REQ000243 | SQL/PS | Parse ALTER TABLE ADD/DROP COLUMN/RENAME | iter-24 |
+| REQ000288 | SQL/PS | parseInterval unit validation | iter-24 |
+| REQ000290 | SQL/EX | LAG/LEAD arbitrary offset support | iter-24 |
+| REQ000270 | SQL/PS | FETCH FIRST n ROWS ONLY | iter-24 |
+| REQ000242 | SYS | Pragmas (cache_size, journal_mode, synchronous) | iter-24 |
