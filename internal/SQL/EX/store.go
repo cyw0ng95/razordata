@@ -24,6 +24,9 @@ type Store interface {
 	// fetches the row via Get).
 	Get(key []byte) ([]byte, bool, error)
 	NewIterator(prefix []byte) ls.RangeIter
+	// ManualCompact triggers a full LSM compaction cycle. REQ000257.
+	// Returns ErrCompactionInProgress if already compacting.
+	ManualCompact() error
 }
 
 // ErrNoEngine is returned when a query requires a wired store but the

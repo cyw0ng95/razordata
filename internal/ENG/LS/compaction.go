@@ -313,6 +313,33 @@ func (cm *compactionManager) MaybeCompact() {
 	}
 }
 
+// ManualCompact forces a compaction across all levels. REQ000257.
+// Used by VACUUM to reclaim tombstone space immediately.
+func (cm *compactionManager) ManualCompact() error {
+	if cm.compacting.Load() {
+		return ErrCompactionInProgress
+	}
+
+	v := cm.manifest.Current()
+	
+	// Start from highest level (L5) and work down to L0
+	// This ensures we compact the most stable data first
+	for level := len(v.levels) - 2; level >= 0; level-- {
+		files := v.levels[level]
+		if len(files) == 0 {
+			continue
+		}
+		
+		// Queue compaction for this level
+		cm.requestCompaction(level)
+		
+		// Wait briefly for compaction to start
+		time.Sleep(10 * time.Millisecond)
+	}
+	
+	return nil
+}
+
 func (cm *compactionManager) requestCompaction(level int) {
 	cm.compactionMu.Lock()
 	defer cm.compactionMu.Unlock()

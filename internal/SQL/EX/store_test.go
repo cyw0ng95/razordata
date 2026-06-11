@@ -20,7 +20,7 @@ func (s *engineStore) Get(k []byte) ([]byte, bool, error) {
 	v, err := s.eng.Get(k)
 	if err != nil {
 		// Translate "not found" to (nil, false, nil)
-		if err.Error() == "key not found" || err.Error() == "not found" {
+		if err.Error() == "key not found" || err.Error() == "not found" || err.Error() == "eng: key not found" {
 			return nil, false, nil
 		}
 		return nil, false, err
@@ -29,6 +29,9 @@ func (s *engineStore) Get(k []byte) ([]byte, bool, error) {
 }
 func (s *engineStore) NewIterator(prefix []byte) ls.RangeIter {
 	return s.eng.NewIterator(prefix)
+}
+func (s *engineStore) ManualCompact() error {
+	return s.eng.ManualCompact()
 }
 
 func newEngineExecutor(t *testing.T) (*Executor, *ls.Engine) {
