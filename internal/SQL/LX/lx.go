@@ -117,6 +117,7 @@ var keywords = map[string]TokenType{
 	"UNCOMMITTED": T_UNCOMMITTED,
 	"REPEATABLE": T_REPEATABLE,
 	"SERIALIZABLE": T_SERIALIZABLE,
+	"VIEW":         T_VIEW,
 	"PRAGMA":      T_PRAGMA,
 	"CAST":        T_CAST,
 	"TRUE":        T_TRUE,

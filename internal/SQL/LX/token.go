@@ -148,6 +148,7 @@ const (
 	T_UNCOMMITTED
 	T_REPEATABLE
 	T_SERIALIZABLE
+	T_VIEW
 
 	T_ERROR TokenType = -1
 )
@@ -288,6 +289,7 @@ var tokenTypeNames = [...]string{
 	T_UNCOMMITTED: "UNCOMMITTED",
 	T_REPEATABLE: "REPEATABLE",
 	T_SERIALIZABLE: "SERIALIZABLE",
+	T_VIEW:         "VIEW",
 	T_EXPLAIN:     "EXPLAIN",
 	T_QUERY:       "QUERY",
 	T_PLAN:        "PLAN",

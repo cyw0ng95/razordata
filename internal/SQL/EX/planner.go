@@ -441,6 +441,11 @@ func (p *Planner) selectIndex(table, col string) (string, bool) {
 }
 
 func (p *Planner) planSelect(s *PS.Select) Operator {
+	// REQ000241: view resolution — expand view to underlying SELECT
+	if viewSel := LookupView(s.From); viewSel != nil {
+		return p.planSelect(viewSel)
+	}
+
 	var scan Operator
 	if p.store != nil {
 		// Try IndexScan first when the WHERE references an indexed column.
