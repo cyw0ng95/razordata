@@ -1330,7 +1330,7 @@ func (p *Parser) parseExists() (Expr, error) {
 	return &ExistsExpr{Subquery: sel}, nil
 }
 
-// parseInterval parses INTERVAL 'value' UNIT.
+// parseInterval parses INTERVAL 'value' UNIT. REQ000288: validates unit.
 func (p *Parser) parseInterval() (Expr, error) {
 	p.advance() // consume INTERVAL
 	if err := p.expect(LX.T_STRING); err != nil {
@@ -1340,6 +1340,23 @@ func (p *Parser) parseInterval() (Expr, error) {
 	p.advance()
 	if p.current.Type == LX.T_IDENT {
 		unit := strings.ToUpper(p.current.Lexeme)
+		validUnits := map[string]bool{
+			"YEAR": true, "YEARS": true,
+			"MONTH": true, "MONTHS": true,
+			"DAY": true, "DAYS": true,
+			"HOUR": true, "HOURS": true,
+			"MINUTE": true, "MINUTES": true,
+			"SECOND": true, "SECONDS": true,
+		}
+		if !validUnits[unit] {
+			return nil, &SyntaxError{
+				Input:  p.lex.Input(),
+				Line:   p.current.Line,
+				Col:    p.current.Col,
+				Got:    unit,
+				Lexeme: p.current.Lexeme,
+			}
+		}
 		p.advance()
 		return &IntervalLiteral{Value: val, Unit: unit}, nil
 	}
