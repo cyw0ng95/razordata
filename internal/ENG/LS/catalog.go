@@ -144,15 +144,17 @@ type CatalogIndex struct {
 // (re-parseable canonical form) used for display and admin
 // tools; the structured Columns / PrimaryKey / Unique / Indexes
 // fields are the source of truth for runtime query planning.
+// ColumnStats holds per-column selectivity statistics (REQ000258).
 type CatalogEntry struct {
-	Version    uint8
-	TableID    uint64
-	Name       string
-	Columns    []CatalogColumn
-	PrimaryKey string
-	Unique     []CatalogUnique
-	Indexes    []CatalogIndex // iter-22 secondary indexes
-	CreateSQL  string
+	Version     uint8
+	TableID     uint64
+	Name        string
+	Columns     []CatalogColumn
+	PrimaryKey  string
+	Unique      []CatalogUnique
+	Indexes     []CatalogIndex // iter-22 secondary indexes
+	ColumnStats []StatsEntry   // REQ000258: per-column statistics
+	CreateSQL   string
 }
 
 // Catalog is the persistent, on-disk system catalog. The catalog
@@ -360,6 +362,20 @@ func decodeCatalogEntry(data []byte, off int, e *CatalogEntry) (int, error) {
 		return off, err
 	}
 
+	// ColumnStats (iter-23, REQ000258). Optional, detect by EOF.
+	statsOff := off
+	stats, newOff, err := decodeCatalogStats(data, off)
+	if err == nil {
+		e.ColumnStats = stats
+		off = newOff
+	} else if errors.Is(err, errTruncated) {
+		// Pre-iter-23 catalog — no stats
+		e.ColumnStats = nil
+		off = statsOff
+	} else {
+		return off, err
+	}
+
 	sqlLen, n := binary.Uvarint(data[off:])
 	if n <= 0 {
 		return off, errors.New("bad sql len")
@@ -458,6 +474,122 @@ func decodeCatalogIndexes(data []byte, off int) ([]CatalogIndex, int, error) {
 			Columns:   cols,
 			Unique:    unique,
 			CreateSQL: sql,
+		})
+	}
+	return out, off, nil
+}
+
+// decodeCatalogStats reads optional column statistics (REQ000258).
+// Returns errTruncated if no stats are present (older catalog).
+func decodeCatalogStats(data []byte, off int) ([]StatsEntry, int, error) {
+	if off >= len(data) {
+		return nil, off, errTruncated
+	}
+	count, n := binary.Uvarint(data[off:])
+	if n <= 0 {
+		return nil, off, errTruncated
+	}
+	off += n
+	out := make([]StatsEntry, 0, count)
+	for i := uint64(0); i < count; i++ {
+		if off >= len(data) {
+			return nil, off, errTruncated
+		}
+		colLen, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil, off, fmt.Errorf("bad stats %d col len", i)
+		}
+		off += n
+		if off+int(colLen) > len(data) {
+			return nil, off, errTruncated
+		}
+		colName := string(data[off : off+int(colLen)])
+		off += int(colLen)
+		// Decode ColumnStats
+		if off+16 > len(data) {
+			return nil, off, errTruncated
+		}
+		distinctCount := int64(binary.BigEndian.Uint64(data[off : off+8]))
+		off += 8
+		nullCount := int64(binary.BigEndian.Uint64(data[off : off+8]))
+		off += 8
+		minLen, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil, off, errTruncated
+		}
+		off += n
+		if off+int(minLen) > len(data) {
+			return nil, off, errTruncated
+		}
+		minValue := make([]byte, minLen)
+		copy(minValue, data[off:off+int(minLen)])
+		off += int(minLen)
+		maxLen, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil, off, errTruncated
+		}
+		off += n
+		if off+int(maxLen) > len(data) {
+			return nil, off, errTruncated
+		}
+		maxValue := make([]byte, maxLen)
+		copy(maxValue, data[off:off+int(maxLen)])
+		off += int(maxLen)
+		bucketCount, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil, off, errTruncated
+		}
+		off += n
+		histogram := make([]HistogramBucket, 0, bucketCount)
+		for j := uint64(0); j < bucketCount; j++ {
+			if off+16 > len(data) {
+				return nil, off, errTruncated
+			}
+			lbLen, n := binary.Uvarint(data[off:])
+			if n <= 0 {
+				return nil, off, errTruncated
+			}
+			off += n
+			if off+int(lbLen) > len(data) {
+				return nil, off, errTruncated
+			}
+			lowerBound := make([]byte, lbLen)
+			copy(lowerBound, data[off:off+int(lbLen)])
+			off += int(lbLen)
+			ubLen, n := binary.Uvarint(data[off:])
+			if n <= 0 {
+				return nil, off, errTruncated
+			}
+			off += n
+			if off+int(ubLen) > len(data) {
+				return nil, off, errTruncated
+			}
+			upperBound := make([]byte, ubLen)
+			copy(upperBound, data[off:off+int(ubLen)])
+			off += int(ubLen)
+			count := int64(binary.BigEndian.Uint64(data[off : off+8]))
+			off += 8
+			histogram = append(histogram, HistogramBucket{
+				LowerBound: lowerBound,
+				UpperBound: upperBound,
+				Count:      count,
+			})
+		}
+		rowCount, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil, off, errTruncated
+		}
+		off += n
+		out = append(out, StatsEntry{
+			Column: colName,
+			Stats: ColumnStats{
+				DistinctCount: distinctCount,
+				NullCount:     nullCount,
+				MinValue:      minValue,
+				MaxValue:      maxValue,
+				Histogram:     histogram,
+				RowCount:      int64(rowCount),
+			},
 		})
 	}
 	return out, off, nil
@@ -803,6 +935,8 @@ func encodeCatalogEntry(e *CatalogEntry, buf []byte) []byte {
 	// Indexes (iter-22; schema V2). Pre-V2 readers hit EOF here
 	// and treat the entry as having zero indexes.
 	buf = encodeCatalogIndexes(e.Indexes, buf)
+	// ColumnStats (iter-23; REQ000258). Pre-iter-23 readers hit EOF here.
+	buf = encodeCatalogStats(e.ColumnStats, buf)
 	buf = binary.AppendUvarint(buf, uint64(len(e.CreateSQL)))
 	buf = append(buf, e.CreateSQL...)
 	return buf
@@ -841,4 +975,73 @@ func encodeCatalogIndexes(idxs []CatalogIndex, buf []byte) []byte {
 		buf = append(buf, idx.CreateSQL...)
 	}
 	return buf
+}
+
+// encodeCatalogStats serializes column statistics (REQ000258).
+// Format: count: uvarint + for each stat: colName + ColumnStats fields
+func encodeCatalogStats(stats []StatsEntry, buf []byte) []byte {
+	buf = binary.AppendUvarint(buf, uint64(len(stats)))
+	for _, s := range stats {
+		buf = binary.AppendUvarint(buf, uint64(len(s.Column)))
+		buf = append(buf, s.Column...)
+		// Encode ColumnStats
+		var tmp [8]byte
+		binary.BigEndian.PutUint64(tmp[:], uint64(s.Stats.DistinctCount))
+		buf = append(buf, tmp[:]...)
+		binary.BigEndian.PutUint64(tmp[:], uint64(s.Stats.NullCount))
+		buf = append(buf, tmp[:]...)
+		buf = binary.AppendUvarint(buf, uint64(len(s.Stats.MinValue)))
+		buf = append(buf, s.Stats.MinValue...)
+		buf = binary.AppendUvarint(buf, uint64(len(s.Stats.MaxValue)))
+		buf = append(buf, s.Stats.MaxValue...)
+		buf = binary.AppendUvarint(buf, uint64(len(s.Stats.Histogram)))
+		for _, bucket := range s.Stats.Histogram {
+			buf = binary.AppendUvarint(buf, uint64(len(bucket.LowerBound)))
+			buf = append(buf, bucket.LowerBound...)
+			buf = binary.AppendUvarint(buf, uint64(len(bucket.UpperBound)))
+			buf = append(buf, bucket.UpperBound...)
+			binary.BigEndian.PutUint64(tmp[:], uint64(bucket.Count))
+			buf = append(buf, tmp[:]...)
+		}
+		buf = binary.AppendUvarint(buf, uint64(s.Stats.RowCount))
+	}
+	return buf
+}
+
+// PutStats updates column statistics for a table. The full
+// catalog is rewritten atomically. REQ000258.
+func (c *Catalog) PutStats(tableID uint64, colName string, stats ColumnStats) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return ErrCatalogClosed
+	}
+	entry, ok := c.cache[tableID]
+	if !ok {
+		return fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
+	}
+	if colName == "" {
+		return fmt.Errorf("%w: column name is required", ErrCatalogCorrupt)
+	}
+	// Find or create stats entry
+	found := false
+	for i := range entry.ColumnStats {
+		if entry.ColumnStats[i].Column == colName {
+			entry.ColumnStats[i].Stats = stats
+			found = true
+			break
+		}
+	}
+	if !found {
+		entry.ColumnStats = append(entry.ColumnStats, StatsEntry{
+			TableID: tableID,
+			Column:  colName,
+			Stats:   stats,
+		})
+	}
+	// Rewrite catalog atomically
+	if err := c.flushLocked(); err != nil {
+		return fmt.Errorf("catalog: persist stats: %w", err)
+	}
+	return nil
 }
