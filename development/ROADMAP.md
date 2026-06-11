@@ -47,6 +47,8 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 19 | SIMD Vectorization + Parallel Query | Batch execution, columnar memory, SIMD predicates, parallel sort | `SQL/EX` | done (v0.15.0) |
 | 20 | SQL Completeness | CHECK constraints, type affinity, OUTER JOIN, HAVING, CASE/EXISTS, DECIMAL, parser tests | `SQL/PS`, `SQL/EX`, `SQL/PL` | done (v0.17.0) |
 | 21 | EXPLAIN + Advanced SQL | EXPLAIN support, UPSERT, RETURNING, CTE (WITH), SAVEPOINT | `SQL/LX`, `SQL/PS`, `SQL/PL`, `SQL/EX`, `SYS/SE` | done (v0.18.0) |
+| 22 | Secondary Indexes MVP | CREATE/DROP INDEX, IndexScan real seek (LSM), index selection, index maintenance | `ENG/LS`, `SQL/PS`, `SQL/PL`, `SQL/EX` | done (v0.19.0) |
+| 23 | Query Optimization & Storage Enhancement | ANALYZE, histogram selectivity, integrity_check, VACUUM, backup/restore, window functions, DATE/TIME/JSON types, B-tree index, SST compression | `SQL/EX`, `SQL/PL`, `SQL/PS`, `ENG/LS`, `ENG/ID`, `SYS`, `WAL` | pending (v0.20.0 → v0.22.0) |
 
 All iterations through iter-21 complete. Released as v0.9.0–v0.18.0. Coverage details: `go test ./... -cover`.
 
@@ -98,6 +100,9 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 | **v0.18.0** | **EXPLAIN + Advanced SQL** (iter-21). Full EXPLAIN + EXPLAIN QUERY PLAN (SQLite-compatible output: id, parent, notused, detail), PlanNode tree with cost estimation, RETURNING clause for INSERT/UPDATE/DELETE, ON CONFLICT (UPSERT) with DO NOTHING, CTE (WITH) via naive inlining, SAVEPOINT/RELEASE/ROLLBACK TO with stack-based nested savepoints. 18 REQs across 4 blocks, 8 commits, ~2,800 LOC. |
 | **v0.19.0** | **Secondary Indexes MVP** (iter-22). CREATE/DROP INDEX parsing, IndexScan real seek via LSM-backed index store, cost-based index selection in planner, index maintenance on INSERT/DELETE, column-level selectivity stats types. ~3,000 LOC, 8 commits, ~50 tests. |
 | **v0.19.1** | **Test stability & speed**. Fix TestConcurrentTransactions key conflict storm (distinct keys k0-k9), TXN/VL test parallelization (25s → 1.4s), pool corruption fix, worker pool timeout handling. 5 files changed, 47 insertions. |
+| **v0.20.0** | **Statistics & Data Integrity** (iter-23 phase 1). ANALYZE executor, histogram-based selectivity, PRAGMA integrity_check, VACUUM, backup/restore API, razor-admin CLI, WAL checksum verification. Target: ~4,000 LOC. |
+| **v0.21.0** | **SQL Expression Extensions** (iter-23 phase 2). Window functions (ROW_NUMBER, RANK, SUM OVER), DATE/TIME/TIMESTAMP types with arithmetic, JSON type with `->`/`->>` operators. Target: ~5,000 LOC. |
+| **v0.22.0** | **Storage Performance Upgrade** (iter-23 phase 3). B-tree secondary index package (full implementation), IndexScan B-tree integration, SST prefix bloom filters, SST block compression (snappy/lz4). Target: ~6,000 LOC. |
 
 ## Design Protection
 
