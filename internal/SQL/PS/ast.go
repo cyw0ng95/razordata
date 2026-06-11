@@ -393,6 +393,16 @@ type CreateViewStmt struct {
 
 func (c *CreateViewStmt) stmtNode() {}
 
+// AlterTableStmt represents ALTER TABLE ... (REQ000243)
+type AlterTableStmt struct {
+	Table  string
+	Action string // "ADD COLUMN", "DROP COLUMN", "RENAME"
+	Column string // column name for ADD/DROP
+	NewCol *ColDef // for ADD COLUMN
+}
+
+func (a *AlterTableStmt) stmtNode() {}
+
 // PragmaStmt represents PRAGMA name [= value]
 type PragmaStmt struct {
 	Name  string

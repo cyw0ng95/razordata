@@ -182,6 +182,10 @@ var tokenNames = [...]string{
 	LX.T_REPEATABLE: "REPEATABLE",
 	LX.T_SERIALIZABLE: "SERIALIZABLE",
 	LX.T_VIEW:         "VIEW",
+	LX.T_ALTER:        "ALTER",
+	LX.T_COLUMN:       "COLUMN",
+	LX.T_ADD:          "ADD",
+	LX.T_RENAME:       "RENAME",
 }
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -485,6 +489,8 @@ func (p *Parser) Parse() (Stmt, error) {
 		}
 	case LX.T_SET:
 		stmt, err = p.parseSet()
+	case LX.T_ALTER:
+		stmt, err = p.parseAlterTable()
 	default:
 		return nil, &SyntaxError{
 			Input:  p.lex.Input(),
@@ -2013,4 +2019,70 @@ func (p *Parser) parseCreateView() (*CreateViewStmt, error) {
 		return nil, err
 	}
 	return &CreateViewStmt{Name: name, As: sel}, nil
+}
+
+// parseAlterTable parses ALTER TABLE name ADD/DROP COLUMN col (REQ000243).
+func (p *Parser) parseAlterTable() (*AlterTableStmt, error) {
+	p.advance() // consume ALTER
+	if err := p.expect(LX.T_TABLE); err != nil {
+		return nil, err
+	}
+	p.advance() // consume TABLE
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	table := p.current.Lexeme
+	p.advance()
+
+	switch p.current.Type {
+	case LX.T_ADD:
+		p.advance() // consume ADD
+		if p.current.Type == LX.T_COLUMN {
+			p.advance() // consume COLUMN (optional)
+		}
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		col := p.current.Lexeme
+		p.advance()
+		// Skip type and DEFAULT clause (schema migration deferred)
+		for p.current.Type != LX.T_SEMICOLON && p.current.Type != LX.T_EOF &&
+			p.current.Type != LX.T_COMMA {
+			p.advance()
+		}
+		return &AlterTableStmt{Table: table, Action: "ADD COLUMN", Column: col}, nil
+
+	case LX.T_DROP:
+		p.advance() // consume DROP
+		if p.current.Type == LX.T_COLUMN {
+			p.advance() // consume COLUMN (optional)
+		}
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		col := p.current.Lexeme
+		p.advance()
+		return &AlterTableStmt{Table: table, Action: "DROP COLUMN", Column: col}, nil
+
+	case LX.T_RENAME:
+		p.advance() // consume RENAME
+		if p.current.Type == LX.T_TO {
+			p.advance() // consume TO (optional)
+		}
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		newName := p.current.Lexeme
+		p.advance()
+		return &AlterTableStmt{Table: table, Action: "RENAME", Column: newName}, nil
+
+	default:
+		return nil, &SyntaxError{
+			Input:  p.lex.Input(),
+			Line:   p.current.Line,
+			Col:    p.current.Col,
+			Got:    tokenName(p.current.Type),
+			Lexeme: p.current.Lexeme,
+		}
+	}
 }
