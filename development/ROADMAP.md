@@ -48,9 +48,9 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 20 | SQL Completeness | CHECK constraints, type affinity, OUTER JOIN, HAVING, CASE/EXISTS, DECIMAL, parser tests | `SQL/PS`, `SQL/EX`, `SQL/PL` | done (v0.17.0) |
 | 21 | EXPLAIN + Advanced SQL | EXPLAIN support, UPSERT, RETURNING, CTE (WITH), SAVEPOINT | `SQL/LX`, `SQL/PS`, `SQL/PL`, `SQL/EX`, `SYS/SE` | done (v0.18.0) |
 | 22 | Secondary Indexes MVP | CREATE/DROP INDEX, IndexScan real seek (LSM), index selection, index maintenance | `ENG/LS`, `SQL/PS`, `SQL/PL`, `SQL/EX` | done (v0.19.0) |
-| 23 | Query Optimization & Storage Enhancement | ANALYZE, histogram selectivity, integrity_check, VACUUM, backup/restore, window functions, DATE/TIME/JSON types, B-tree index, SST compression | `SQL/EX`, `SQL/PL`, `SQL/PS`, `ENG/LS`, `ENG/ID`, `SYS`, `WAL` | phase 1 done (v0.20.0); phase 2/3 pending (v0.21.0, v0.22.0) |
+| 23 | Query Optimization & Storage Enhancement | ANALYZE, histogram selectivity, integrity_check, VACUUM, backup/restore, window functions, DATE/TIME/JSON types, B-tree index, SST compression | `SQL/EX`, `SQL/PL`, `SQL/PS`, `ENG/LS`, `ENG/ID`, `SYS`, `WAL` | done (v0.20.0–v0.22.0) |
 
-All iterations through iter-21 complete. Released as v0.9.0–v0.18.0. Coverage details: `go test ./... -cover`.
+All iterations through iter-23 complete. Released as v0.9.0–v0.22.0. Coverage details: `go test ./... -cover`.
 
 ## Completion Criteria (All Iterations)
 
@@ -101,8 +101,8 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 | **v0.19.0** | **Secondary Indexes MVP** (iter-22). CREATE/DROP INDEX parsing, IndexScan real seek via LSM-backed index store, cost-based index selection in planner, index maintenance on INSERT/DELETE, column-level selectivity stats types. ~3,000 LOC, 8 commits, ~50 tests. |
 | **v0.19.1** | **Test stability & speed**. Fix TestConcurrentTransactions key conflict storm (distinct keys k0-k9), TXN/VL test parallelization (25s → 1.4s), pool corruption fix, worker pool timeout handling. 5 files changed, 47 insertions. |
 | **v0.20.0** | **Statistics & Data Integrity** (iter-23 phase 1). ANALYZE executor with reservoir sampling (10K samples, 256-bucket equi-depth histogram), histogram-based selectivity (1/DistinctCount uniform, bucket-fraction range, IS NULL via NullCount/RowCount), PRAGMA integrity_check (catalog + store iteration), VACUUM (ManualCompact across all LSM levels), Backup/Restore API (file-level copy with marker, refuses non-empty/live dirs), razor CLI (integrity-check, vacuum, analyze, backup, restore, schema-dump, version), StatsCatalog interface for planner. 7 REQs: REQ000258, REQ000085, REQ000261, REQ000272 (already in iter-13), REQ000257, REQ000259, REQ000260. ~3,000 LOC, 7 commits, all tests pass including race. |
-| **v0.21.0** | **SQL Expression Extensions** (iter-23 phase 2). Window functions (ROW_NUMBER, RANK, SUM OVER), DATE/TIME/TIMESTAMP types with arithmetic, JSON type with `->`/`->>` operators. Target: ~5,000 LOC. |
-| **v0.22.0** | **Storage Performance Upgrade** (iter-23 phase 3). B-tree secondary index package (full implementation), IndexScan B-tree integration, SST prefix bloom filters, SST block compression (snappy/lz4). Target: ~6,000 LOC. |
+| **v0.21.0** | **SQL Expression Extensions** (iter-23 phase 2). Window functions (ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD with PARTITION BY/ORDER BY/ROWS frame), DATE/TIME/TIMESTAMP types (ParseDateTime, DateAdd/Sub/Diff, julianDay, strftime, EXTRACT, INTERVAL arithmetic), JSON type (json_extract, json_type, json_valid, json_array, json_object, json_set, ->, ->> operators). 17 new lexer tokens, WindowFunc/WindowSpec AST nodes, IntervalLiteral AST, WindowOperator with index-based partitioning. ~2,500 LOC, ~35 tests. |
+| **v0.22.0** | **Storage Performance Upgrade** (iter-23 phase 3). B-tree secondary index package (ENG/ID: BTree with Insert/Get/Delete, 4KB page-based persistence, WAL-integrated, concurrent-safe; Cursor with Seek/Next crossing leaf boundaries), IndexScan B-tree integration (NewIndexScanWithBTree, nextFromBTree), SST prefix bloom filters (FNV-1a double-hash on 8-byte prefix, MayContainPrefix), SST block compression (compress/flate BestSpeed with smart fallback). Bug fixes: computeRank RANK for tied rows, Cursor.Next() leaf boundary traversal. ~3,000 LOC, ~15 tests. |
 
 ## Design Protection
 

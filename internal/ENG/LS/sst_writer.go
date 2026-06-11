@@ -2,8 +2,10 @@ package ls
 
 import (
 	"bytes"
+	"compress/flate"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 )
 
@@ -28,6 +30,7 @@ type sstWriter struct {
 	blocks             [][]byte
 	indexEntries       []indexEntry
 	bloom              []byte
+	prefixBloom        []byte
 	keys               [][]byte
 	keyCount           int
 	minKey             []byte
@@ -100,6 +103,20 @@ func (w *sstWriter) setBloomBitForSize(key []byte, size int) {
 	w.bloom[bucket2/8] |= 1 << (bucket2 % 8)
 }
 
+// setPrefixBloomBit sets two bits in the prefix bloom filter for a key prefix.
+func (w *sstWriter) setPrefixBloomBit(prefix []byte, size int) {
+	h1 := fnv1aHash(prefix, fnv1aOffset32)
+	h2 := fnv1aHash(prefix, fnv1aPrime32)
+	bucket1 := int(h1) % size
+	bucket2 := int(h2) % size
+	if bucket1/8 < len(w.prefixBloom) {
+		w.prefixBloom[bucket1/8] |= 1 << (bucket1 % 8)
+	}
+	if bucket2/8 < len(w.prefixBloom) {
+		w.prefixBloom[bucket2/8] |= 1 << (bucket2 % 8)
+	}
+}
+
 func (w *sstWriter) finishCurrentBlock() {
 	if len(w.blocks) == 0 {
 		return
@@ -141,10 +158,40 @@ func (w *sstWriter) Finish() ([]byte, error) {
 		w.setBloomBitForSize(k, bloomSize)
 	}
 
+	// REQ000047: prefix bloom filter for range scans
+	prefixBloomSize := bloomSizeFor(w.keyCount)
+	w.prefixBloom = make([]byte, prefixBloomSize)
+	for _, k := range w.keys {
+		prefix := k
+		if len(prefix) > 8 {
+			prefix = prefix[:8]
+		}
+		w.setPrefixBloomBit(prefix, prefixBloomSize)
+	}
+
 	var buf bytes.Buffer
 
-	for _, block := range w.blocks {
-		buf.Write(block)
+	// REQ000271: compress blocks and update index entries with compressed sizes
+	compressedOffsets := make([]int, len(w.blocks))
+	for i, block := range w.blocks {
+		compressedOffsets[i] = buf.Len()
+		compressed, err := compressBlock(block)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(compressed)
+	}
+	// Update index entries with compressed offsets and sizes
+	for i := range w.indexEntries {
+		start := compressedOffsets[i]
+		var end int
+		if i+1 < len(compressedOffsets) {
+			end = compressedOffsets[i+1]
+		} else {
+			end = buf.Len()
+		}
+		w.indexEntries[i].blockOffset = start
+		w.indexEntries[i].blockSize = end - start
 	}
 
 	indexOffset := buf.Len()
@@ -166,6 +213,8 @@ func (w *sstWriter) Finish() ([]byte, error) {
 	bloomOffset := buf.Len()
 	buf.Write(w.bloom)
 
+	buf.Write(w.prefixBloom)
+
 	footer := make([]byte, sstFooterSize)
 	binary.LittleEndian.PutUint64(footer[0:8], uint64(indexOffset))
 	binary.LittleEndian.PutUint32(footer[8:12], uint32(indexSize))
@@ -182,7 +231,54 @@ func (w *sstWriter) Reset() {
 	w.indexEntries = w.indexEntries[:0]
 	w.keys = w.keys[:0]
 	w.bloom = nil
+	w.prefixBloom = nil
 	w.keyCount = 0
 	w.minKey = w.minKey[:0]
 	w.maxKey = w.maxKey[:0]
+}
+
+// compressBlock compresses a data block using flate (REQ000271).
+// Format: [1B flag (0=uncompressed, 1=compressed)] [data]
+func compressBlock(block []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte(1) // compressed flag
+	w, err := flate.NewWriter(&buf, flate.BestSpeed)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := w.Write(block); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	// Only use compression if it actually saves space
+	compressed := buf.Bytes()
+	if len(compressed) < len(block)+1 {
+		return compressed, nil
+	}
+	// Store uncompressed with flag=0
+	out := make([]byte, 0, len(block)+1)
+	out = append(out, 0) // uncompressed flag
+	out = append(out, block...)
+	return out, nil
+}
+
+// decompressBlock decompresses a data block (exported for reader).
+func decompressBlock(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty block")
+	}
+	flag := data[0]
+	payload := data[1:]
+	if flag == 0 {
+		return payload, nil
+	}
+	r := flate.NewReader(bytes.NewReader(payload))
+	defer r.Close()
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

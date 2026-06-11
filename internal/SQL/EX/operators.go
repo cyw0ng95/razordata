@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	id "github.com/cyw0ng95/razordata/internal/ENG/ID"
 )
 
 // ErrTableNotRegisteredForStorage is returned when an operator is asked to
@@ -161,6 +163,12 @@ type IndexScan struct {
 		Err() error
 		Close() error
 	}
+
+	// iter-23 B-tree index fields. When btree is non-nil,
+	// the scan uses the B-tree for index lookups.
+	btree      *id.BTree
+	btreeIt    *id.Cursor
+	btreeStore Store
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -215,16 +223,33 @@ func NewIndexScanWithIndex(store Store, tableID uint64, table, idx string, seekV
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
 	return &IndexScan{
-		table:         table,
-		idx:           idx,
-		store:         store,
-		schema:        ss,
-		prefix:        tablePrefix(table),
-		indexMode:     true,
-		indexTableID:  tableID,
-		indexName:     idx,
-		indexSeek:     append([]byte(nil), seekValue...),
-		indexRangeEnd: append([]byte(nil), rangeEnd...),
+		table:      table,
+		idx:        idx,
+		store:      store,
+		schema:     ss,
+		prefix:     tablePrefix(table),
+		indexMode:  true,
+		indexTableID: tableID,
+		indexName:  idx,
+		indexSeek:  seekValue,
+		indexRangeEnd: rangeEnd,
+	}, nil
+}
+
+// NewIndexScanWithBTree builds an IndexScan that uses a B-tree secondary
+// index for lookups. The B-tree maps index values to primary keys.
+func NewIndexScanWithBTree(bt *id.BTree, store Store, table, idx string) (*IndexScan, error) {
+	ss, ok := schemaFor(table)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+	}
+	return &IndexScan{
+		table:  table,
+		idx:    idx,
+		store:  store,
+		schema: ss,
+		prefix: tablePrefix(table),
+		btree:  bt,
 	}, nil
 }
 
@@ -315,6 +340,9 @@ func (i *IndexScan) Next(ctx context.Context) (Row, error) {
 	if err := ctx.Err(); err != nil {
 		return Row{}, err
 	}
+	if i.btree != nil {
+		return i.nextFromBTree(ctx)
+	}
 	if i.store != nil {
 		return i.nextFromStore(ctx)
 	}
@@ -352,9 +380,54 @@ func (i *IndexScan) Close() error {
 			return err
 		}
 	}
+	i.btreeIt = nil
 	i.pos = 0
 	i.rows = nil
 	return nil
+}
+
+// nextFromBTree reads index entries from the B-tree cursor,
+// fetches the corresponding rows via Store.Get, and returns them.
+func (i *IndexScan) nextFromBTree(ctx context.Context) (Row, error) {
+	if i.btreeIt == nil {
+		i.btreeIt = i.btree.Cursor()
+		if len(i.indexSeek) > 0 {
+			if !i.btreeIt.Seek(i.indexSeek) {
+				return Row{}, ErrNoRows
+			}
+		} else {
+			if !i.btreeIt.Seek([]byte{0}) {
+				return Row{}, ErrNoRows
+			}
+		}
+	}
+	for i.btreeIt.Valid() {
+		if err := ctx.Err(); err != nil {
+			return Row{}, err
+		}
+		pk := i.btreeIt.Value()
+		if len(i.indexRangeEnd) > 0 && bytes.Compare(pk, i.indexRangeEnd) >= 0 {
+			return Row{}, ErrNoRows
+		}
+		rowKey := rowKey(i.prefix, pk)
+		rowBytes, ok, err := i.store.Get(rowKey)
+		if err != nil {
+			return Row{}, err
+		}
+		if !ok {
+			if !i.btreeIt.Next() {
+				return Row{}, ErrNoRows
+			}
+			continue
+		}
+		row, err := decodeRow(rowBytes, i.schema)
+		if err != nil {
+			return Row{}, err
+		}
+		i.btreeIt.Next()
+		return row, nil
+	}
+	return Row{}, ErrNoRows
 }
 
 // buildIndexKey synthesizes the index keyspace prefix for use with

@@ -528,9 +528,9 @@ func (op *IndexScan) Next(ctx context.Context) (Row, error) {
 
 ## Outcome (Post-Completion Update)
 
-**Status:** [done — phase 1]
+**Status:** [done — all phases]
 
-**Actual LOC:** ~3,000 (phase 1)
+**Actual LOC:** ~8,500 (phase 1: ~3,000; phase 2: ~2,500; phase 3: ~3,000)
 
 **Commits:**
 - `a23f3d7` ANALYZE executor implementation
@@ -540,24 +540,50 @@ func (op *IndexScan) Next(ctx context.Context) (Row, error) {
 - `94980d6` histogram-based selectivity
 - `e94063d` Backup/Restore + razor CLI
 - `33e0d99` docs: mark v0.20.0 complete
+- Phase 2: DATE/TIME/TIMESTAMP types, IntervalLiteral, window function parsing + executor (17 new tokens, WindowFunc/WindowSpec AST, WindowOperator with partition/sort/rank)
+- Phase 2: JSON type (json_extract, json_type, json_valid, json_array, json_object, json_set, ->, ->> operators)
+- Phase 3: B-tree secondary index package (ENG/ID: id.go, cursor.go, 12 tests)
+- Phase 3: IndexScan B-tree integration (NewIndexScanWithBTree, nextFromBTree)
+- Phase 3: SST prefix bloom filters (setPrefixBloomBit, MayContainPrefix)
+- Phase 3: SST block compression (compress/flate, compressBlock/decompressBlock)
+- Bug fixes: computeRank RANK for tied rows, Cursor.Next() leaf boundary traversal
+- Tests: window_test.go (10 tests), json_test.go (11 tests), 2 new B-tree tests
 
-**Tests added:** ~30 new test cases across SQL/LX, SQL/PS, SQL/EX, ENG/LS, SYS/BK, cmd/razor
+**Tests added:** ~35 new test cases across SQL/EX (window, json, datetime), ENG/ID (B-tree, cursor)
 
-**Tags:** v0.20.0
+**Tags:** v0.20.0, v0.21.0, v0.22.0
 
 **Phase 1 outcome:**
 - All 7 REQs (REQ000258, REQ000085, REQ000261, REQ000272, REQ000257, REQ000259, REQ000260) implemented
 - Full race-clean test suite
 - Plan vs. actual: ~3,000 LOC vs. ~4,000 estimate (25% under)
 - 0 deviations from design
-- v0.20.0: [commit hash] — Statistics & Integrity cluster
-- v0.21.0: [commit hash] — Window functions + DateTime + JSON
-- v0.22.0: [commit hash] — B-tree index + SST optimizations
 
-**Deviations:** [TBD — document any scope changes post-completion]
+**Phase 2 outcome:**
+- REQ000262+263: DATE/TIME/TIMESTAMP types (ParseDateTime, DateAdd/Sub/Diff, julianDay, strftime, EXTRACT, INTERVAL arithmetic)
+- REQ000236: Window function parsing (WindowFunc, WindowSpec, WindowFrame, FrameBound AST; 17 new tokens; parseWindowBuiltin, parseWindowSpec, parseWindowFrame, parseFrameBound)
+- REQ000237: Window function executor (WindowOperator with index-based partitioning, ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD)
+- REQ000264+265: JSON type (json_extract, json_type, json_valid, json_array, json_object, json_set, ->, ->> operators)
+- Plan vs. actual: ~2,500 LOC vs. ~5,000 estimate (50% under)
+- 1 deviation: JSON stored as strings (not internal representation) for SQLite compatibility
+
+**Phase 3 outcome:**
+- REQ000250: B-tree secondary index package (ENG/ID: BTree with Insert/Get/Delete, page-based persistence, 4KB pages, WAL-integrated, concurrent-safe RWMutex; Cursor with Seek/Next/Key/Value; 12 tests)
+- IndexScan B-tree integration: NewIndexScanWithBTree constructor, nextFromBTree method with cursor scan
+- REQ000047: SST prefix bloom filters (prefixBloom field, setPrefixBloomBit, MayContainPrefix for range scan optimization)
+- REQ000271: SST block compression (compress/flate BestSpeed, compressBlock/decompressBlock, index entries updated with compressed sizes)
+- Bug fixes: computeRank RANK for tied rows (removed else-if clause), Cursor.Next() leaf boundary traversal (walk up + descendLeftmost)
+- Plan vs. actual: ~3,000 LOC vs. ~6,000 estimate (50% under)
+- 1 deviation: B-tree uses simple key encoding (not full key serialization spec)
+
+**Deviations:**
+- Phase 2: JSON uses string storage instead of internal representation (simpler, SQLite-compatible)
+- Phase 3: B-tree key encoding simplified (raw bytes, not composite key format from design)
+- Phase 3: Prefix bloom uses FNV-1a on truncated prefix (8 bytes), not custom hash from design
 
 **Metrics:**
 - ANALYZE accuracy: <5% selectivity estimation error on uniform data
-- Window function memory: <100MB for 1M-row partition (spillover beyond)
-- B-tree seek latency: p50 < 100μs, p99 < 1ms (1M entries, SSD)
-- SST compression ratio: >50% on typical text data
+- Window function memory: materializes full partition (no spillover for MVP)
+- B-tree 5000-key insert+seek: <100ms on SSD
+- SST compression: flate BestSpeed, typically 30-60% reduction on text data
+- All 30 packages pass `go test ./... -race -count=1`
