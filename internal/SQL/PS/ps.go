@@ -214,7 +214,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 	case LX.T_STAR:
 		p.advance()
 		return &StarExpr{}, nil
-	case LX.T_IDENT:
+	case LX.T_IDENT, LX.T_EXCLUDED:
 		name := p.current.Lexeme
 		p.advance()
 		if p.current.Type == LX.T_DOT {
@@ -854,25 +854,17 @@ func (p *Parser) parseOnConflict() (*OnConflict, error) {
 		col := p.current.Lexeme
 		p.advance()
 
-		// Handle EXCLUDED.col
-		if p.current.Type == LX.T_DOT {
-			p.advance()
-			if err := p.expect(LX.T_IDENT); err != nil {
-				return nil, err
-			}
-			// For now, treat EXCLUDED.col as a reference
-			p.advance()
-		} else {
-			if err := p.expect(LX.T_EQ); err != nil {
-				return nil, err
-			}
-			p.advance()
-			val, err := p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-			setClauses = append(setClauses, Pair{Col: col, Val: val})
+		if err := p.expect(LX.T_EQ); err != nil {
+			return nil, err
 		}
+		p.advance()
+
+		// REQ000291: parseExpr handles EXCLUDED.col as QualifiedName
+		val, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		setClauses = append(setClauses, Pair{Col: col, Val: val})
 
 		if p.current.Type != LX.T_COMMA {
 			break
