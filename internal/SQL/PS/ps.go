@@ -173,6 +173,14 @@ var tokenNames = [...]string{
 	LX.T_LAST_VALUE:  "LAST_VALUE",
 	LX.T_NTH_VALUE: "NTH_VALUE",
 	LX.T_ROW:       "ROW",
+	LX.T_TRANSACTION: "TRANSACTION",
+	LX.T_ISOLATION:  "ISOLATION",
+	LX.T_LEVEL:      "LEVEL",
+	LX.T_READ:       "READ",
+	LX.T_COMMITTED:  "COMMITTED",
+	LX.T_UNCOMMITTED: "UNCOMMITTED",
+	LX.T_REPEATABLE: "REPEATABLE",
+	LX.T_SERIALIZABLE: "SERIALIZABLE",
 }
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -473,6 +481,8 @@ func (p *Parser) Parse() (Stmt, error) {
 		if next.Type == LX.T_TO {
 			stmt, err = p.parseRollbackTo()
 		}
+	case LX.T_SET:
+		stmt, err = p.parseSet()
 	default:
 		return nil, &SyntaxError{
 			Input:  p.lex.Input(),
@@ -1927,4 +1937,63 @@ func (p *Parser) parseDropIndex() (*DropIndexStmt, error) {
 	name := p.current.Lexeme
 	p.advance()
 	return &DropIndexStmt{Name: name}, nil
+}
+
+// parseSet parses SET TRANSACTION ISOLATION LEVEL ... (REQ000123).
+func (p *Parser) parseSet() (*SetTransactionStmt, error) {
+	p.advance() // consume SET
+	if err := p.expect(LX.T_TRANSACTION); err != nil {
+		return nil, err
+	}
+	p.advance() // consume TRANSACTION
+	if err := p.expect(LX.T_ISOLATION); err != nil {
+		return nil, err
+	}
+	p.advance() // consume ISOLATION
+	if err := p.expect(LX.T_LEVEL); err != nil {
+		return nil, err
+	}
+	p.advance() // consume LEVEL
+
+	// Parse isolation level
+	level := ""
+	switch p.current.Type {
+	case LX.T_READ:
+		p.advance()
+		switch p.current.Type {
+		case LX.T_UNCOMMITTED:
+			level = "READ UNCOMMITTED"
+			p.advance()
+		case LX.T_COMMITTED:
+			level = "READ COMMITTED"
+			p.advance()
+		default:
+			return nil, &SyntaxError{
+				Input:  p.lex.Input(),
+				Line:   p.current.Line,
+				Col:    p.current.Col,
+				Got:    tokenName(p.current.Type),
+				Lexeme: p.current.Lexeme,
+			}
+		}
+	case LX.T_REPEATABLE:
+		p.advance()
+		if err := p.expect(LX.T_READ); err != nil {
+			return nil, err
+		}
+		level = "REPEATABLE READ"
+		p.advance()
+	case LX.T_SERIALIZABLE:
+		level = "SERIALIZABLE"
+		p.advance()
+	default:
+		return nil, &SyntaxError{
+			Input:  p.lex.Input(),
+			Line:   p.current.Line,
+			Col:    p.current.Col,
+			Got:    tokenName(p.current.Type),
+			Lexeme: p.current.Lexeme,
+		}
+	}
+	return &SetTransactionStmt{Level: level}, nil
 }

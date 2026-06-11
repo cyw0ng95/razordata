@@ -63,6 +63,48 @@ const (
 	DefaultMaxLevel     = 7
 )
 
+// IsolationLevel represents a transaction isolation level (REQ000123).
+type IsolationLevel int
+
+const (
+	IsolationReadUncommitted IsolationLevel = iota
+	IsolationReadCommitted
+	IsolationRepeatableRead
+	IsolationSerializable
+)
+
+// String returns the SQL name of the isolation level.
+func (il IsolationLevel) String() string {
+	switch il {
+	case IsolationReadUncommitted:
+		return "READ UNCOMMITTED"
+	case IsolationReadCommitted:
+		return "READ COMMITTED"
+	case IsolationRepeatableRead:
+		return "REPEATABLE READ"
+	case IsolationSerializable:
+		return "SERIALIZABLE"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// ParseIsolationLevel converts a SQL isolation level string to the enum.
+func ParseIsolationLevel(s string) (IsolationLevel, bool) {
+	switch s {
+	case "READ UNCOMMITTED":
+		return IsolationReadUncommitted, true
+	case "READ COMMITTED":
+		return IsolationReadCommitted, true
+	case "REPEATABLE READ":
+		return IsolationRepeatableRead, true
+	case "SERIALIZABLE":
+		return IsolationSerializable, true
+	default:
+		return 0, false
+	}
+}
+
 // Engine is the top-level database handle. The zero value is not
 // usable; obtain one via Open.
 type Engine interface {
