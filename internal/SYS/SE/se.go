@@ -60,6 +60,7 @@ func (s *Session) reset(engine *SY.Engine) {
 	s.engine = engine
 	s.id = sessionIDSeq.Add(1)
 	s.txn = nil
+	s.isolationLevel = AP.IsolationReadCommitted // REQ000061: default to read-committed
 	s.deadline.Store(time.Time{})
 	s.stats.queryCount.Store(0)
 	s.stats.rowsReturned.Store(0)
@@ -135,6 +136,10 @@ func (s *Session) Begin(ctx context.Context) (AP.Transaction, error) {
 		return nil, err
 	}
 	s.txn = t
+	// REQ000061: propagate session isolation level to transaction
+	if tx, ok := t.(*TX.Transaction); ok {
+		tx.SetIsolationLevel(s.isolationLevel)
+	}
 	return t, nil
 }
 
