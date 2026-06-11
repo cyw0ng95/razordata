@@ -9,6 +9,8 @@ import (
 	"errors"
 	"log/slog"
 	"time"
+
+	"github.com/cyw0ng95/razordata/internal/SYS/BK"
 )
 
 // Version is the razordata release version, surfaced in EngineStats.
@@ -267,3 +269,26 @@ type Row struct {
 
 // Len returns the number of columns.
 func (r *Row) Len() int { return len(r.Cols) }
+
+// REQ000259: Public backup and restore API. The functions are
+// re-exported from the BK package so callers can use them via the
+// AP namespace without importing the internal BK package directly.
+
+// BackupOptions configures a backup run.
+type BackupOptions = BK.BackupOptions
+
+// BackupStats summarizes the outcome of a backup.
+type BackupStats = BK.BackupStats
+
+// RestoreStats summarizes the outcome of a restore.
+type RestoreStats = BK.RestoreStats
+
+// Backup copies srcDir to dstDir. See BK.Backup for details.
+func Backup(ctx context.Context, srcDir, dstDir string, options BackupOptions) (*BackupStats, error) {
+	return BK.Backup(ctx, srcDir, dstDir, options)
+}
+
+// Restore copies backupDir to restoreDir. See BK.Restore for details.
+func Restore(ctx context.Context, backupDir, restoreDir string) (*RestoreStats, error) {
+	return BK.Restore(ctx, backupDir, restoreDir)
+}
