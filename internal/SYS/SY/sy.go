@@ -253,6 +253,18 @@ func (e *Engine) open(ctx context.Context) (err error) {
 	return nil
 }
 
+// SetSnapshot sets the per-statement snapshot timestamp on the executor
+// and store adapter for read-committed isolation (REQ000255).
+func (e *Engine) SetSnapshot(ts uint64) {
+	e.exeAdapter.SetSnapshot(ts)
+	e.exe.SetSnapshot(ts)
+}
+
+// CurrentTS returns the current logical timestamp (REQ000255).
+func (e *Engine) CurrentTS() uint64 {
+	return vl.GetCurrentTS()
+}
+
 // Close flushes pending writes and tears down every subsystem in
 // reverse construction order. Safe to call multiple times.
 func (e *Engine) Close(ctx context.Context) error {
@@ -425,8 +437,10 @@ func (e *Engine) Stats() AP.EngineStats {
 }
 
 // executorStoreAdapter wraps an *ls.Engine to the EX.Store interface.
+// REQ000255: snapshot-aware reads for read-committed isolation.
 type executorStoreAdapter struct {
-	eng *ls.Engine
+	eng        *ls.Engine
+	snapshotTS uint64 // 0 = no snapshot filtering (default)
 }
 
 func (a *executorStoreAdapter) Insert(k, v []byte) error { return a.eng.Insert(k, v) }
@@ -446,6 +460,12 @@ func (a *executorStoreAdapter) NewIterator(prefix []byte) ls.RangeIter {
 }
 func (a *executorStoreAdapter) ManualCompact() error {
 	return a.eng.ManualCompact()
+}
+
+// SetSnapshot updates the snapshot timestamp for read-committed isolation.
+// REQ000255.
+func (a *executorStoreAdapter) SetSnapshot(ts uint64) {
+	a.snapshotTS = ts
 }
 
 // walStats surfaces the replayer's counters into AP.WALStats so

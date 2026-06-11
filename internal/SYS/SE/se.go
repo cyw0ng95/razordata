@@ -12,6 +12,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 	"github.com/cyw0ng95/razordata/internal/SYS/TX"
+	vl "github.com/cyw0ng95/razordata/internal/TXN/VL"
 )
 
 // sessionPool is a sync.Pool for Session objects to reduce GC
@@ -247,6 +248,17 @@ func (s *Session) Stats() AP.SessionStats {
 		BytesWritten: s.stats.bytesWritten.Load(),
 		ActiveTXN:    s.txn != nil,
 	}
+}
+
+// CurrentTS returns the current logical timestamp (REQ000255).
+func (s *Session) CurrentTS() uint64 {
+	return vl.GetCurrentTS()
+}
+
+// SetSnapshot sets the per-statement snapshot timestamp on the engine
+// and executor (REQ000255). Pass 0 to disable.
+func (s *Session) SetSnapshot(ts uint64) {
+	s.engine.SetSnapshot(ts)
 }
 
 // lock acquires the session mutex and, if a deadline is set, returns

@@ -58,13 +58,10 @@ type ColInfo struct {
 }
 
 type Executor struct {
-	planner *Planner
-	store   Store
-	// txWriter, when non-nil, is notified of every key the executor
-	// writes (Insert/Update/Delete) so a higher-level transaction
-	// layer can capture a shadow writeSet for ROLLBACK. SetTxWriter
-	// and ClearTxWriter toggle it; reads are unaffected.
-	txWriter TxWriter
+	planner    *Planner
+	store      Store
+	txWriter   TxWriter
+	snapshotTS uint64 // REQ000255: per-statement snapshot timestamp for read-committed
 }
 
 // TxWriter is the optional hook an Executor notifies on every key
@@ -81,6 +78,14 @@ func (e *Executor) SetTxWriter(w TxWriter) { e.txWriter = w }
 
 // ClearTxWriter resets the write hook to nil. Pair with SetTxWriter.
 func (e *Executor) ClearTxWriter() { e.txWriter = nil }
+
+// SetSnapshot sets the per-statement snapshot timestamp for read-committed
+// isolation (REQ000255). When non-zero, reads filter to versions visible at
+// this timestamp. Pass 0 to disable snapshot filtering.
+func (e *Executor) SetSnapshot(ts uint64) { e.snapshotTS = ts }
+
+// GetSnapshot returns the current snapshot timestamp.
+func (e *Executor) GetSnapshot() uint64 { return e.snapshotTS }
 
 func NewExecutor() *Executor {
 	return &Executor{planner: NewPlanner()}
