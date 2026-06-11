@@ -138,6 +138,16 @@ func (eng *Engine) Flush() *flushManager {
 	return eng.e.fm
 }
 
+// ManualCompact triggers a full compaction cycle across all levels.
+// Returns ErrCompactionInProgress if a compaction is already running.
+// REQ000257: Used by VACUUM to immediately reclaim tombstone space.
+func (eng *Engine) ManualCompact() error {
+	if eng == nil || eng.e == nil {
+		return errors.New("engine: closed")
+	}
+	return eng.e.cm.ManualCompact()
+}
+
 // RangeIter is the public iteration interface over a key range.
 type RangeIter interface {
 	Next() bool

@@ -710,5 +710,5 @@ func (p *Planner) planAnalyze(s *PS.AnalyzeStmt) Operator {
 
 // planVacuum reclaims storage. REQ000257.
 func (p *Planner) planVacuum(s *PS.VacuumStmt) Operator {
-	return NewVacuum(s)
+	return NewVacuumWithStore(s, p.store)
 }

@@ -328,3 +328,38 @@ func TestCloseIterators_Nil(t *testing.T) {
 func TestCloseIterators_Empty(t *testing.T) {
 	closeIterators([]*sstIterator{})
 }
+
+func TestCompactionManager_ManualCompact(t *testing.T) {
+	dir := t.TempDir()
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("newManifest failed: %v", err)
+	}
+	cm := newCompactionManager(dir, manifest)
+	defer cm.Close()
+
+	// ManualCompact should not panic when no files exist
+	err = cm.ManualCompact()
+	if err != nil && err != ErrNoFilesToCompact {
+		t.Fatalf("ManualCompact failed: %v", err)
+	}
+}
+
+func TestCompactionManager_ManualCompact_Concurrent(t *testing.T) {
+	dir := t.TempDir()
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("newManifest failed: %v", err)
+	}
+	cm := newCompactionManager(dir, manifest)
+	defer cm.Close()
+
+	// First call may start compaction
+	_ = cm.ManualCompact()
+
+	// Second call should return ErrCompactionInProgress (or succeed if first was no-op)
+	err = cm.ManualCompact()
+	if err != nil && err != ErrCompactionInProgress && err != ErrNoFilesToCompact {
+		t.Fatalf("ManualCompact concurrent failed: %v", err)
+	}
+}

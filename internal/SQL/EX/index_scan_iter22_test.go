@@ -20,7 +20,7 @@ func (s *engineStoreWithGet) Delete(k []byte) error    { return s.eng.Delete(k) 
 func (s *engineStoreWithGet) Get(k []byte) ([]byte, bool, error) {
 	v, err := s.eng.Get(k)
 	if err != nil {
-		if err.Error() == "key not found" || err.Error() == "not found" {
+		if err.Error() == "key not found" || err.Error() == "not found" || err.Error() == "eng: key not found" {
 			return nil, false, nil
 		}
 		return nil, false, err
@@ -29,6 +29,9 @@ func (s *engineStoreWithGet) Get(k []byte) ([]byte, bool, error) {
 }
 func (s *engineStoreWithGet) NewIterator(prefix []byte) ls.RangeIter {
 	return s.eng.NewIterator(prefix)
+}
+func (s *engineStoreWithGet) ManualCompact() error {
+	return s.eng.ManualCompact()
 }
 
 // TestIndexScan_WithIndexSeek exercises the iter-22 real index
