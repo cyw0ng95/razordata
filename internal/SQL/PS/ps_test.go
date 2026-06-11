@@ -941,3 +941,33 @@ func TestParseVacuum(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePragma(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  *PragmaStmt
+	}{
+		{"read", "PRAGMA integrity_check", &PragmaStmt{Name: "integrity_check", Value: ""}},
+		{"write", "PRAGMA cache_size = 1000", &PragmaStmt{Name: "cache_size", Value: "1000"}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := NewParser(c.input).Parse()
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", c.input, err)
+			}
+			stmt, ok := got.(*PragmaStmt)
+			if !ok {
+				t.Fatalf("expected *PragmaStmt, got %T", got)
+			}
+			if stmt.Name != c.want.Name {
+				t.Errorf("Name: got %q, want %q", stmt.Name, c.want.Name)
+			}
+			if stmt.Value != c.want.Value {
+				t.Errorf("Value: got %q, want %q", stmt.Value, c.want.Value)
+			}
+		})
+	}
+}

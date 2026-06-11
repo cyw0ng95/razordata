@@ -108,6 +108,8 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 		root = p.planAnalyze(s)
 	case *PS.VacuumStmt:
 		root = p.planVacuum(s)
+	case *PS.PragmaStmt:
+		root = p.planPragma(s)
 	case *PS.WithStmt:
 		root = p.planWith(s)
 	}
@@ -688,6 +690,17 @@ func (p *Planner) planCreateIndex(s *PS.CreateIndexStmt) Operator {
 // planDropIndex removes a secondary index. iter-22.
 func (p *Planner) planDropIndex(s *PS.DropIndexStmt) Operator {
 	return NewDropIndex(s)
+}
+
+// planPragma handles PRAGMA statements. REQ000261.
+func (p *Planner) planPragma(s *PS.PragmaStmt) Operator {
+	switch s.Name {
+	case "integrity_check":
+		return NewIntegrityCheckWithStore(p.store)
+	default:
+		// Unknown pragma - return placeholder that produces no output
+		return NewSeqScan("__pragma_unknown__")
+	}
 }
 
 // planAnalyze collects table statistics. REQ000258.

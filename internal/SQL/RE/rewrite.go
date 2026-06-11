@@ -24,6 +24,9 @@ func Rewrite(stmt PS.Stmt) (PS.Stmt, error) {
 		return rewriteCreateTable(s), nil
 	case *PS.DropTable:
 		return rewriteDropTable(s), nil
+	case *PS.AnalyzeStmt, *PS.VacuumStmt, *PS.PragmaStmt:
+		// DDL/admin statements pass through unchanged
+		return s, nil
 	}
 	return nil, fmt.Errorf("re: unknown statement type %T", stmt)
 }

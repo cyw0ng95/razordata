@@ -120,6 +120,7 @@ const (
 	T_FALSE
 	T_OUTER
 	T_FULL
+	T_PRAGMA
 
 	T_ERROR TokenType = -1
 )
@@ -233,6 +234,7 @@ var tokenTypeNames = [...]string{
 	T_FALSE:     "FALSE",
 	T_OUTER:     "OUTER",
 	T_FULL:      "FULL",
+	T_PRAGMA:    "PRAGMA",
 	T_EXPLAIN:   "EXPLAIN",
 	T_QUERY:     "QUERY",
 	T_PLAN:      "PLAN",
