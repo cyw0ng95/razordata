@@ -5,6 +5,7 @@ import (
 )
 
 func TestEncodeDecodeCommitRecord(t *testing.T) {
+	t.Parallel()
 	txnID := uint64(12345)
 	commitTS := uint64(67890)
 	keys := [][]byte{[]byte("key1"), []byte("key2")}
@@ -34,6 +35,7 @@ func TestEncodeDecodeCommitRecord(t *testing.T) {
 }
 
 func TestEncodeCommitRecordEmptyKeys(t *testing.T) {
+	t.Parallel()
 	txnID := uint64(100)
 	commitTS := uint64(200)
 
@@ -50,6 +52,7 @@ func TestEncodeCommitRecordEmptyKeys(t *testing.T) {
 }
 
 func TestDecodeCommitRecordTruncated(t *testing.T) {
+	t.Parallel()
 	_, err := DecodeCommitRecord([]byte{1})
 	if err != ErrInvalidWALRecord {
 		t.Errorf("expected ErrInvalidWALRecord, got %v", err)

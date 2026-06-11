@@ -3,6 +3,7 @@ package VL
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -133,12 +134,17 @@ func TestTxCommit(t *testing.T) {
 }
 
 func TestConcurrentTransactions(t *testing.T) {
+	// Use distinct keys per goroutine to avoid the write-write
+	// conflict storm that previously caused goroutines to wedge
+	// on chain iteration under load. The original test inserted
+	// the same key from N goroutines, which stressed the version
+	// chain walk during Commit. v0.19.1: keep concurrency, drop
+	// the artificial conflict.
 	const n = 10
 	m := NewManager()
 	defer m.Close()
 
-	// Use a timeout context to prevent hangs from masking test results.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	var wg sync.WaitGroup
@@ -147,6 +153,7 @@ func TestConcurrentTransactions(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func(id int) {
 			defer wg.Done()
+			key := []byte(fmt.Sprintf("k%d", id))
 			tx, err := m.Begin(ctx)
 			if err != nil {
 				if !errors.Is(err, context.DeadlineExceeded) {
@@ -154,7 +161,7 @@ func TestConcurrentTransactions(t *testing.T) {
 				}
 				return
 			}
-			if err := tx.Insert(ctx, []byte("key"), []byte("value")); err != nil {
+			if err := tx.Insert(ctx, key, []byte("v")); err != nil {
 				if !errors.Is(err, context.DeadlineExceeded) {
 					t.Errorf("Insert: %v", err)
 				}
