@@ -149,6 +149,10 @@ const (
 	T_REPEATABLE
 	T_SERIALIZABLE
 	T_VIEW
+	T_ALTER
+	T_COLUMN
+	T_ADD
+	T_RENAME
 
 	T_ERROR TokenType = -1
 )
@@ -290,6 +294,10 @@ var tokenTypeNames = [...]string{
 	T_REPEATABLE: "REPEATABLE",
 	T_SERIALIZABLE: "SERIALIZABLE",
 	T_VIEW:         "VIEW",
+	T_ALTER:        "ALTER",
+	T_COLUMN:       "COLUMN",
+	T_ADD:          "ADD",
+	T_RENAME:       "RENAME",
 	T_EXPLAIN:     "EXPLAIN",
 	T_QUERY:       "QUERY",
 	T_PLAN:        "PLAN",
