@@ -827,4 +827,9 @@ Unit tests per block, integration tests, edge cases.
 - Commits: 8
 - Test count added: ~50
 - All packages: race-clean
+
+**Post-iteration bug fixes (v0.19.1):**
+- TestConcurrentTransactions: use distinct keys (k0-k9) to avoid N-goroutine conflict storm
+- TXN/VL tests: parallelized 26 tests without shared state (25s → 1.4s)
+- Fixed pre-existing flaky tests in pool reuse and worker pool timeout handling
 - All existing tests: still passing
