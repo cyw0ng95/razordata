@@ -194,9 +194,22 @@ func (w *WindowOperator) computeRank(indices []int, dense bool) {
 	}
 }
 
-func (w *WindowOperator) computeLagLead(indices []int, offset int) {
+func (w *WindowOperator) computeLagLead(indices []int, defaultOffset int) {
 	n := len(w.args)
 	defaultVal := interface{}(nil)
+	offset := defaultOffset
+
+	// REQ000290: read offset from args[1] if provided
+	if n >= 2 {
+		if v, err := Eval(w.args[1], nil, nil); err == nil {
+			if ov, ok := toInt64(v); ok {
+				offset = int(ov)
+				if defaultOffset < 0 {
+					offset = -offset // LAG: negative offset
+				}
+			}
+		}
+	}
 	if n >= 3 {
 		var err error
 		defaultVal, err = Eval(w.args[2], nil, nil)
