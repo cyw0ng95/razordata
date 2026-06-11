@@ -96,6 +96,8 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 | **v0.15.0** | **SIMD Vectorization + Parallel Query** (iter-19). Batch execution (1024-row columnar), columnar memory management (sync.Pool), SIMD predicate evaluation (4-wide unrolling + selection vectors), parallel sort (sample sort for top-k), parallel query execution (worker pool + fan-out/fan-in + channel merge). |
 | **v0.17.0** | **SQL Completeness** (iter-20). CHECK constraint parsing + enforcement, type affinity system (SQLite-like 5 affinities), OUTER JOIN executor (LEFT/RIGHT/FULL), HAVING filter, CASE/EXISTS parser tests, DECIMAL type storage (big.Float), parameterized types VARCHAR(N)/DECIMAL(P,S), parser CASE/EXISTS tests, type tokens (NUMERIC/DATE/TIME/JSON/DECIMAL), SQL/PL coverage 30.6% → 98.8%. |
 | **v0.18.0** | **EXPLAIN + Advanced SQL** (iter-21). Full EXPLAIN + EXPLAIN QUERY PLAN (SQLite-compatible output: id, parent, notused, detail), PlanNode tree with cost estimation, RETURNING clause for INSERT/UPDATE/DELETE, ON CONFLICT (UPSERT) with DO NOTHING, CTE (WITH) via naive inlining, SAVEPOINT/RELEASE/ROLLBACK TO with stack-based nested savepoints. 18 REQs across 4 blocks, 8 commits, ~2,800 LOC. |
+| **v0.19.0** | **Secondary Indexes MVP** (iter-22). CREATE/DROP INDEX parsing, IndexScan real seek via LSM-backed index store, cost-based index selection in planner, index maintenance on INSERT/DELETE, column-level selectivity stats types. ~3,000 LOC, 8 commits, ~50 tests. |
+| **v0.19.1** | **Test stability & speed**. Fix TestConcurrentTransactions key conflict storm (distinct keys k0-k9), TXN/VL test parallelization (25s → 1.4s), pool corruption fix, worker pool timeout handling. 5 files changed, 47 insertions. |
 
 ## Design Protection
 
