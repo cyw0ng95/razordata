@@ -62,6 +62,11 @@ func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.R
 	}
 	t.mu.Unlock()
 	exe := t.session.Executor()
+	// REQ000255: set per-statement snapshot for read-committed
+	if t.isolationLevel == ap.IsolationReadCommitted {
+		t.session.SetSnapshot(t.session.CurrentTS())
+		defer t.session.SetSnapshot(0)
+	}
 	rs, err := exe.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -81,6 +86,11 @@ func (t *Transaction) Exec(ctx context.Context, sql string, args ...any) (ap.Res
 	t.mu.Unlock()
 
 	exe := t.session.Executor()
+	// REQ000255: set per-statement snapshot for read-committed
+	if t.isolationLevel == ap.IsolationReadCommitted {
+		t.session.SetSnapshot(t.session.CurrentTS())
+		defer t.session.SetSnapshot(0)
+	}
 	exe.SetTxWriter(t)
 	defer exe.ClearTxWriter()
 	res, err := exe.Exec(ctx, sql, args...)
