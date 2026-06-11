@@ -554,7 +554,21 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		}
 	}
 
-	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) {
+	needsWindow := hasAnyWindowFunc(s.Cols)
+	if needsWindow {
+		for _, col := range s.Cols {
+			if wf, ok := col.(*PS.WindowFunc); ok {
+				args := make([]PS.Expr, len(wf.Args))
+				copy(args, wf.Args)
+				cols := make([]string, 0)
+				cols = append(cols, "*")
+				winOp := NewWindowOperator(current, wf.Name, args, wf.Over, cols)
+				current = winOp
+			}
+		}
+	}
+
+	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) && !needsWindow {
 		project := NewProject(current, s.Cols)
 		current = project
 	}
@@ -639,6 +653,8 @@ func containsAggregate(e PS.Expr) bool {
 	switch v := e.(type) {
 	case *PS.AggregateFunc:
 		return true
+	case *PS.WindowFunc:
+		return false
 	case *PS.BinaryExpr:
 		return containsAggregate(v.Left) || containsAggregate(v.Right)
 	case *PS.UnaryExpr:
@@ -647,6 +663,34 @@ func containsAggregate(e PS.Expr) bool {
 		return containsAggregate(v.Expr)
 	case *PS.CastExpr:
 		return containsAggregate(v.Expr)
+	}
+	return false
+}
+
+func hasAnyWindowFunc(cols []PS.Expr) bool {
+	for _, c := range cols {
+		if containsWindowFunc(c) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsWindowFunc(e PS.Expr) bool {
+	if e == nil {
+		return false
+	}
+	switch v := e.(type) {
+	case *PS.WindowFunc:
+		return true
+	case *PS.BinaryExpr:
+		return containsWindowFunc(v.Left) || containsWindowFunc(v.Right)
+	case *PS.UnaryExpr:
+		return containsWindowFunc(v.Operand)
+	case *PS.AliasedExpr:
+		return containsWindowFunc(v.Expr)
+	case *PS.CastExpr:
+		return containsWindowFunc(v.Expr)
 	}
 	return false
 }

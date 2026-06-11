@@ -73,10 +73,14 @@ func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 		return evalExists(e, row, params)
 	case *PS.SubqueryExpr:
 		return evalScalarSubquery(e, row, params)
+	case *PS.IntervalLiteral:
+		return evalInterval(e)
 	case *PS.CaseExpr:
 		return evalCase(e, row, params)
 	case *PS.AggregateFunc:
 		return evalAggregate(e, row, params)
+	case *PS.WindowFunc:
+		return evalWindowFunc(e, row, params)
 	case *PS.FunctionCall:
 		return evalFunction(e, row, params)
 	case *PS.CastExpr:
@@ -134,8 +138,32 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []interface{}) (interface{}, 
 	case int(LX.T_GE):
 		return compare(left, right) >= 0, nil
 	case int(LX.T_PLUS):
+		if _, ok := right.(*IntervalValue); ok {
+			if ls, lok := left.(string); lok {
+				if _, lok2 := ParseDateTime(ls); lok2 {
+					return DateTimeArithmetic(left, right, "+")
+				}
+			}
+		}
+		if _, ok := left.(*IntervalValue); ok {
+			if rs, rok := right.(string); rok {
+				if _, rok2 := ParseDateTime(rs); rok2 {
+					return DateTimeArithmetic(right, left, "+")
+				}
+			}
+		}
 		return add(left, right)
 	case int(LX.T_MINUS):
+		if _, ok := right.(*IntervalValue); ok {
+			return DateTimeArithmetic(left, right, "-")
+		}
+		if ls, lok := left.(string); lok {
+			if _, lok2 := ParseDateTime(ls); lok2 {
+				if _, rok := toTime(right); rok {
+					return DateTimeArithmetic(left, right, "-")
+				}
+			}
+		}
 		return sub(left, right)
 	case int(LX.T_STAR):
 		return mul(left, right)
@@ -260,6 +288,14 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []interface{}) (i
 		return nil, nil
 	}
 	return rows[0].Data[0], nil
+}
+
+func evalInterval(e *PS.IntervalLiteral) (interface{}, error) {
+	n, unit, ok := ParseInterval(e.Value + " " + e.Unit)
+	if !ok {
+		return nil, fmt.Errorf("invalid interval: %s %s", e.Value, e.Unit)
+	}
+	return &IntervalValue{Amount: n, Unit: unit}, nil
 }
 
 func evalCast(e *PS.CastExpr, row *Row, params []interface{}) (interface{}, error) {
@@ -417,6 +453,29 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 		return time.Now().UTC().Format(time.RFC3339), nil
 	case "SUBSTR":
 		return evalSubstr(e.Args, row, params)
+	default:
+		if isDateTimeFunc(e.Name) {
+			args := make([]interface{}, len(e.Args))
+			for i, arg := range e.Args {
+				v, err := Eval(arg, row, params)
+				if err != nil {
+					return nil, err
+				}
+				args[i] = v
+			}
+			return evalDateTimeFunc(e.Name, args)
+		}
+		if isJSONFunc(e.Name) {
+			args := make([]interface{}, len(e.Args))
+			for i, arg := range e.Args {
+				v, err := Eval(arg, row, params)
+				if err != nil {
+					return nil, err
+				}
+				args[i] = v
+			}
+			return evalJSONFunc(e.Name, args)
+		}
 	}
 	return nil, ErrEval
 }

@@ -14,9 +14,10 @@ var (
 )
 
 type sstReader struct {
-	data       []byte
-	indexBlock []indexEntry
-	bloom      []byte
+	data        []byte
+	indexBlock  []indexEntry
+	bloom       []byte
+	prefixBloom []byte
 }
 
 func openSST(data []byte) (*sstReader, error) {
@@ -44,6 +45,14 @@ func openSST(data []byte) (*sstReader, error) {
 
 	if bloomOffset > 0 && bloomOffset < uint64(len(data)) {
 		r.bloom = data[bloomOffset : bloomOffset+uint64(bloomSize)]
+		// REQ000047: prefix bloom is stored right after the regular bloom
+		prefixBloomStart := bloomOffset + uint64(bloomSize)
+		if prefixBloomStart < uint64(len(data)) {
+			remaining := uint64(len(data)) - prefixBloomStart - 28 // subtract footer
+			if remaining > 0 && remaining < uint64(len(data)) {
+				r.prefixBloom = data[prefixBloomStart : prefixBloomStart+remaining]
+			}
+		}
 	}
 
 	return r, nil
@@ -99,6 +108,24 @@ func (r *sstReader) mayContain(key []byte) bool {
 
 	return (r.bloom[bucket1/8]&(1<<(bucket1%8)) != 0) &&
 		(r.bloom[bucket2/8]&(1<<(bucket2%8)) != 0)
+}
+
+// MayContainPrefix checks if the SST might contain a key with the given prefix.
+// REQ000047 — prefix bloom filters for range scans.
+func (r *sstReader) MayContainPrefix(prefix []byte) bool {
+	if len(r.prefixBloom) == 0 {
+		return true
+	}
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	size := len(r.prefixBloom) * 8
+	h1 := fnv1aHash(prefix, fnv1aOffset32)
+	h2 := fnv1aHash(prefix, fnv1aPrime32)
+	bucket1 := int(h1) % size
+	bucket2 := int(h2) % size
+	return (r.prefixBloom[bucket1/8]&(1<<(bucket1%8)) != 0) &&
+		(r.prefixBloom[bucket2/8]&(1<<(bucket2%8)) != 0)
 }
 
 func (r *sstReader) Find(key []byte) ([]byte, bool) {
@@ -172,7 +199,13 @@ func (r *sstReader) readBlock(offset, size int) []byte {
 		end = len(r.data)
 	}
 
-	return r.data[offset:end]
+	raw := r.data[offset:end]
+	// REQ000271: decompress block if needed
+	decompressed, err := decompressBlock(raw)
+	if err != nil {
+		return raw // fallback to raw data
+	}
+	return decompressed
 }
 
 type kvPair struct {

@@ -53,108 +53,126 @@ func tokenName(t LX.TokenType) string {
 }
 
 var tokenNames = [...]string{
-	LX.T_EOF:       "EOF",
-	LX.T_IDENT:     "identifier",
-	LX.T_STRING:    "string literal",
-	LX.T_INT:       "integer",
-	LX.T_FLOAT:     "float",
-	LX.T_BIND:      "?",
-	LX.T_EQ:        "=",
-	LX.T_NE:        "!=",
-	LX.T_LT:        "<",
-	LX.T_LE:        "<=",
-	LX.T_GT:        ">",
-	LX.T_GE:        ">=",
-	LX.T_PLUS:      "+",
-	LX.T_MINUS:     "-",
-	LX.T_STAR:      "*",
-	LX.T_SLASH:     "/",
-	LX.T_LPAREN:    "(",
-	LX.T_RPAREN:    ")",
-	LX.T_COMMA:     ",",
-	LX.T_DOT:       ".",
-	LX.T_SEMICOLON: ";",
-	LX.T_COLON:     ":",
-	LX.T_CREATE:    "CREATE",
-	LX.T_DROP:      "DROP",
-	LX.T_INSERT:    "INSERT",
-	LX.T_UPDATE:    "UPDATE",
-	LX.T_DELETE:    "DELETE",
-	LX.T_SELECT:    "SELECT",
-	LX.T_FROM:      "FROM",
-	LX.T_WHERE:     "WHERE",
-	LX.T_AND:       "AND",
-	LX.T_OR:        "OR",
-	LX.T_NOT:       "NOT",
-	LX.T_IN:        "IN",
-	LX.T_BETWEEN:   "BETWEEN",
-	LX.T_LIKE:      "LIKE",
-	LX.T_IS:        "IS",
-	LX.T_NULL:      "NULL",
-	LX.T_BEGIN:     "BEGIN",
-	LX.T_COMMIT:    "COMMIT",
-	LX.T_ROLLBACK:  "ROLLBACK",
-	LX.T_AS:        "AS",
-	LX.T_BY:        "BY",
-	LX.T_ASC:       "ASC",
-	LX.T_DESC:      "DESC",
-	LX.T_LIMIT:     "LIMIT",
-	LX.T_OFFSET:    "OFFSET",
-	LX.T_TABLE:     "TABLE",
-	LX.T_INDEX:     "INDEX",
-	LX.T_PRIMARY:   "PRIMARY",
-	LX.T_KEY:       "KEY",
-	LX.T_NOTNULL:   "NOTNULL",
-	LX.T_DEFAULT:   "DEFAULT",
-	LX.T_UNIQUE:    "UNIQUE",
-	LX.T_INT_KW:    "INTEGER",
-	LX.T_BIGINT:    "BIGINT",
-	LX.T_FLOAT_KW:  "FLOAT",
-	LX.T_BOOL:      "BOOLEAN",
-	LX.T_TEXT:      "TEXT",
-	LX.T_BLOB:      "BLOB",
-	LX.T_VARCHAR:   "VARCHAR",
-	LX.T_TIMESTAMP: "TIMESTAMP",
-	LX.T_VALUES:    "VALUES",
-	LX.T_SET:       "SET",
-	LX.T_INTO:      "INTO",
-	LX.T_ORDER:     "ORDER",
-	LX.T_JOIN:      "JOIN",
-	LX.T_LEFT:      "LEFT",
-	LX.T_RIGHT:     "RIGHT",
-	LX.T_INNER:     "INNER",
-	LX.T_CROSS:     "CROSS",
-	LX.T_ON:        "ON",
-	LX.T_USING:     "USING",
-	LX.T_GROUP:     "GROUP",
-	LX.T_HAVING:    "HAVING",
-	LX.T_COUNT:     "COUNT",
-	LX.T_SUM:       "SUM",
-	LX.T_AVG:       "AVG",
-	LX.T_MIN:       "MIN",
-	LX.T_MAX:       "MAX",
-	LX.T_DISTINCT:  "DISTINCT",
-	LX.T_CASE:      "CASE",
-	LX.T_WHEN:      "WHEN",
-	LX.T_THEN:      "THEN",
-	LX.T_ELSE:      "ELSE",
-	LX.T_END:       "END",
-	LX.T_CAST:      "CAST",
-	LX.T_EXISTS:    "EXISTS",
-	LX.T_TRUE:      "TRUE",
-	LX.T_FALSE:     "FALSE",
-	LX.T_EXPLAIN:   "EXPLAIN",
-	LX.T_QUERY:     "QUERY",
-	LX.T_PLAN:      "PLAN",
-	LX.T_RETURNING: "RETURNING",
-	LX.T_CONFLICT:  "CONFLICT",
-	LX.T_DO:        "DO",
-	LX.T_NOTHING:   "NOTHING",
-	LX.T_EXCLUDED:  "EXCLUDED",
-	LX.T_WITH:      "WITH",
-	LX.T_SAVEPOINT: "SAVEPOINT",
-	LX.T_RELEASE:   "RELEASE",
-	LX.T_TO:        "TO",
+	LX.T_EOF:         "EOF",
+	LX.T_IDENT:       "identifier",
+	LX.T_STRING:      "string literal",
+	LX.T_INT:         "integer",
+	LX.T_FLOAT:       "float",
+	LX.T_BIND:        "?",
+	LX.T_EQ:          "=",
+	LX.T_NE:          "!=",
+	LX.T_LT:          "<",
+	LX.T_LE:          "<=",
+	LX.T_GT:          ">",
+	LX.T_GE:          ">=",
+	LX.T_PLUS:        "+",
+	LX.T_MINUS:       "-",
+	LX.T_STAR:        "*",
+	LX.T_SLASH:       "/",
+	LX.T_LPAREN:      "(",
+	LX.T_RPAREN:      ")",
+	LX.T_COMMA:       ",",
+	LX.T_DOT:         ".",
+	LX.T_SEMICOLON:   ";",
+	LX.T_COLON:       ":",
+	LX.T_CREATE:      "CREATE",
+	LX.T_DROP:        "DROP",
+	LX.T_INSERT:      "INSERT",
+	LX.T_UPDATE:      "UPDATE",
+	LX.T_DELETE:      "DELETE",
+	LX.T_SELECT:      "SELECT",
+	LX.T_FROM:        "FROM",
+	LX.T_WHERE:       "WHERE",
+	LX.T_AND:         "AND",
+	LX.T_OR:          "OR",
+	LX.T_NOT:         "NOT",
+	LX.T_IN:          "IN",
+	LX.T_BETWEEN:     "BETWEEN",
+	LX.T_LIKE:        "LIKE",
+	LX.T_IS:          "IS",
+	LX.T_NULL:        "NULL",
+	LX.T_BEGIN:       "BEGIN",
+	LX.T_COMMIT:      "COMMIT",
+	LX.T_ROLLBACK:    "ROLLBACK",
+	LX.T_AS:          "AS",
+	LX.T_BY:          "BY",
+	LX.T_ASC:         "ASC",
+	LX.T_DESC:        "DESC",
+	LX.T_LIMIT:       "LIMIT",
+	LX.T_OFFSET:      "OFFSET",
+	LX.T_TABLE:       "TABLE",
+	LX.T_INDEX:       "INDEX",
+	LX.T_PRIMARY:     "PRIMARY",
+	LX.T_KEY:         "KEY",
+	LX.T_NOTNULL:     "NOTNULL",
+	LX.T_DEFAULT:     "DEFAULT",
+	LX.T_UNIQUE:      "UNIQUE",
+	LX.T_INT_KW:      "INTEGER",
+	LX.T_BIGINT:      "BIGINT",
+	LX.T_FLOAT_KW:    "FLOAT",
+	LX.T_BOOL:        "BOOLEAN",
+	LX.T_TEXT:        "TEXT",
+	LX.T_BLOB:        "BLOB",
+	LX.T_VARCHAR:     "VARCHAR",
+	LX.T_TIMESTAMP:   "TIMESTAMP",
+	LX.T_VALUES:      "VALUES",
+	LX.T_SET:         "SET",
+	LX.T_INTO:        "INTO",
+	LX.T_ORDER:       "ORDER",
+	LX.T_JOIN:        "JOIN",
+	LX.T_LEFT:        "LEFT",
+	LX.T_RIGHT:       "RIGHT",
+	LX.T_INNER:       "INNER",
+	LX.T_CROSS:       "CROSS",
+	LX.T_ON:          "ON",
+	LX.T_USING:       "USING",
+	LX.T_GROUP:       "GROUP",
+	LX.T_HAVING:      "HAVING",
+	LX.T_COUNT:       "COUNT",
+	LX.T_SUM:         "SUM",
+	LX.T_AVG:         "AVG",
+	LX.T_MIN:         "MIN",
+	LX.T_MAX:         "MAX",
+	LX.T_DISTINCT:    "DISTINCT",
+	LX.T_CASE:        "CASE",
+	LX.T_WHEN:        "WHEN",
+	LX.T_THEN:        "THEN",
+	LX.T_ELSE:        "ELSE",
+	LX.T_END:         "END",
+	LX.T_CAST:        "CAST",
+	LX.T_EXISTS:      "EXISTS",
+	LX.T_TRUE:        "TRUE",
+	LX.T_FALSE:       "FALSE",
+	LX.T_EXPLAIN:     "EXPLAIN",
+	LX.T_QUERY:       "QUERY",
+	LX.T_PLAN:        "PLAN",
+	LX.T_RETURNING:   "RETURNING",
+	LX.T_CONFLICT:    "CONFLICT",
+	LX.T_DO:          "DO",
+	LX.T_NOTHING:     "NOTHING",
+	LX.T_EXCLUDED:    "EXCLUDED",
+	LX.T_WITH:        "WITH",
+	LX.T_SAVEPOINT:   "SAVEPOINT",
+	LX.T_RELEASE:     "RELEASE",
+	LX.T_TO:          "TO",
+	LX.T_INTERVAL:    "INTERVAL",
+	LX.T_OVER:        "OVER",
+	LX.T_PARTITION:   "PARTITION",
+	LX.T_ROWS:        "ROWS",
+	LX.T_RANGE:       "RANGE",
+	LX.T_PRECEDING:   "PRECEDING",
+	LX.T_FOLLOWING:   "FOLLOWING",
+	LX.T_CURRENT:     "CURRENT",
+	LX.T_UNBOUNDED:   "UNBOUNDED",
+	LX.T_ROW_NUMBER:  "ROW_NUMBER",
+	LX.T_RANK:        "RANK",
+	LX.T_DENSE_RANK:  "DENSE_RANK",
+	LX.T_LAG:         "LAG",
+	LX.T_LEAD:        "LEAD",
+	LX.T_FIRST_VALUE: "FIRST_VALUE",
+	LX.T_LAST_VALUE:  "LAST_VALUE",
+	LX.T_NTH_VALUE: "NTH_VALUE",
+	LX.T_ROW:       "ROW",
 }
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -223,7 +241,13 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			return nil, err
 		}
 		p.advance()
-		return &AggregateFunc{Name: name, Arg: arg}, nil
+		agg := &AggregateFunc{Name: name, Arg: arg}
+		if p.current.Type == LX.T_OVER {
+			return p.parseWindowFunc(name, []Expr{arg})
+		}
+		return agg, nil
+	case LX.T_ROW_NUMBER, LX.T_RANK, LX.T_DENSE_RANK, LX.T_LAG, LX.T_LEAD, LX.T_FIRST_VALUE, LX.T_LAST_VALUE, LX.T_NTH_VALUE:
+		return p.parseWindowBuiltin()
 	case LX.T_LPAREN:
 		p.advance()
 		if p.current.Type == LX.T_SELECT {
@@ -252,6 +276,8 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		return p.parseCast()
 	case LX.T_EXISTS:
 		return p.parseExists()
+	case LX.T_INTERVAL:
+		return p.parseInterval()
 	}
 	return nil, &SyntaxError{
 		Input:  p.lex.Input(),
@@ -1157,12 +1183,12 @@ func (p *Parser) parseExplain() (*ExplainStmt, error) {
 		} else {
 			// EXPLAIN QUERY without PLAN is invalid SQL
 			return nil, &SyntaxError{
-				Input:  p.lex.Input(),
-				Line:   p.current.Line,
-				Col:    p.current.Col,
+				Input:    p.lex.Input(),
+				Line:     p.current.Line,
+				Col:      p.current.Col,
 				Expected: "PLAN",
-				Got:    tokenName(p.current.Type),
-				Lexeme: p.current.Lexeme,
+				Got:      tokenName(p.current.Type),
+				Lexeme:   p.current.Lexeme,
 			}
 		}
 	}
@@ -1294,12 +1320,210 @@ func (p *Parser) parseExists() (Expr, error) {
 	return &ExistsExpr{Subquery: sel}, nil
 }
 
+// parseInterval parses INTERVAL 'value' UNIT.
+func (p *Parser) parseInterval() (Expr, error) {
+	p.advance() // consume INTERVAL
+	if err := p.expect(LX.T_STRING); err != nil {
+		return nil, err
+	}
+	val := p.current.Literal.(string)
+	p.advance()
+	if p.current.Type == LX.T_IDENT {
+		unit := strings.ToUpper(p.current.Lexeme)
+		p.advance()
+		return &IntervalLiteral{Value: val, Unit: unit}, nil
+	}
+	return &IntervalLiteral{Value: val, Unit: "DAY"}, nil
+}
+
+// parseWindowBuiltin parses window built-in functions (ROW_NUMBER, RANK, etc.).
+func (p *Parser) parseWindowBuiltin() (Expr, error) {
+	name := strings.ToUpper(p.current.Lexeme)
+	p.advance()
+	if err := p.expect(LX.T_LPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	var args []Expr
+	if p.current.Type != LX.T_RPAREN {
+		for {
+			a, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, a)
+			if p.current.Type != LX.T_COMMA {
+				break
+			}
+			p.advance()
+		}
+	}
+	if err := p.expect(LX.T_RPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	return p.parseWindowFunc(name, args)
+}
+
+// parseWindowFunc parses the OVER clause after a function name.
+func (p *Parser) parseWindowFunc(name string, args []Expr) (Expr, error) {
+	if err := p.expect(LX.T_OVER); err != nil {
+		return nil, err
+	}
+	p.advance()
+	spec, err := p.parseWindowSpec()
+	if err != nil {
+		return nil, err
+	}
+	return &WindowFunc{Name: name, Args: args, Over: spec}, nil
+}
+
+// parseWindowSpec parses (PARTITION BY ... ORDER BY ... frame).
+func (p *Parser) parseWindowSpec() (*WindowSpec, error) {
+	spec := &WindowSpec{}
+	if err := p.expect(LX.T_LPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+
+	// PARTITION BY
+	if p.current.Type == LX.T_PARTITION {
+		p.advance()
+		if err := p.expect(LX.T_BY); err != nil {
+			return nil, err
+		}
+		p.advance()
+		for {
+			e, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			spec.PartitionBy = append(spec.PartitionBy, e)
+			if p.current.Type != LX.T_COMMA {
+				break
+			}
+			p.advance()
+		}
+	}
+
+	// ORDER BY
+	if p.current.Type == LX.T_ORDER {
+		p.advance()
+		if err := p.expect(LX.T_BY); err != nil {
+			return nil, err
+		}
+		p.advance()
+		for {
+			e, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			desc := false
+			if p.current.Type == LX.T_ASC {
+				p.advance()
+			} else if p.current.Type == LX.T_DESC {
+				desc = true
+				p.advance()
+			}
+			spec.OrderBy = append(spec.OrderBy, OrderItem{Expr: e, Desc: desc})
+			if p.current.Type != LX.T_COMMA {
+				break
+			}
+			p.advance()
+		}
+	}
+
+	// Frame clause (ROWS or RANGE)
+	if p.current.Type == LX.T_ROWS || p.current.Type == LX.T_RANGE {
+		frameType := p.current.Lexeme
+		p.advance()
+		frame, err := p.parseWindowFrame(frameType)
+		if err != nil {
+			return nil, err
+		}
+		spec.Frame = frame
+	}
+
+	if err := p.expect(LX.T_RPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	return spec, nil
+}
+
+// parseWindowFrame parses ROWS/RANGE BETWEEN start AND end.
+func (p *Parser) parseWindowFrame(frameType string) (*WindowFrame, error) {
+	frame := &WindowFrame{Type: strings.ToUpper(frameType)}
+	if err := p.expect(LX.T_BETWEEN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	start, err := p.parseFrameBound()
+	if err != nil {
+		return nil, err
+	}
+	frame.Start = start
+	if err := p.expect(LX.T_AND); err != nil {
+		return nil, err
+	}
+	p.advance()
+	end, err := p.parseFrameBound()
+	if err != nil {
+		return nil, err
+	}
+	frame.End = end
+	return frame, nil
+}
+
+// parseFrameBound parses a single frame boundary.
+func (p *Parser) parseFrameBound() (FrameBound, error) {
+	if p.current.Type == LX.T_UNBOUNDED {
+		p.advance()
+		if p.current.Type == LX.T_PRECEDING {
+			p.advance()
+			return FrameBound{Type: "UNBOUNDED_PRECEDING"}, nil
+		}
+		if p.current.Type == LX.T_FOLLOWING {
+			p.advance()
+			return FrameBound{Type: "UNBOUNDED_FOLLOWING"}, nil
+		}
+	}
+	if p.current.Type == LX.T_CURRENT {
+		p.advance()
+		if err := p.expect(LX.T_ROW); err != nil {
+			return FrameBound{}, err
+		}
+		p.advance()
+		return FrameBound{Type: "CURRENT_ROW"}, nil
+	}
+	// n PRECEDING or n FOLLOWING
+	expr, err := p.parseExpr()
+	if err != nil {
+		return FrameBound{}, err
+	}
+	if p.current.Type == LX.T_PRECEDING {
+		p.advance()
+		return FrameBound{Type: "PRECEDING", Offset: expr}, nil
+	}
+	if p.current.Type == LX.T_FOLLOWING {
+		p.advance()
+		return FrameBound{Type: "FOLLOWING", Offset: expr}, nil
+	}
+	return FrameBound{}, &SyntaxError{
+		Input:  p.lex.Input(),
+		Line:   p.current.Line,
+		Col:    p.current.Col,
+		Got:    tokenName(p.current.Type),
+		Lexeme: p.current.Lexeme,
+	}
+}
+
 // parseCastType parses a type reference optionally followed by
 // a size or precision/scale specifier (REQ000207).
 // Supports: VARCHAR(N), CHAR(N), DECIMAL(P,S), NUMERIC(P,S).
 func (p *Parser) parseCastType() (*TypeInfo, error) {
 	info := &TypeInfo{}
-	
+
 	switch p.current.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
 		info.Type = int(p.current.Type)
@@ -1405,7 +1629,7 @@ func (p *Parser) parseTypePrecision(precision, scale *int) error {
 	fmt.Sscanf(p.current.Lexeme, "%d", &n)
 	*precision = n
 	p.advance()
-	
+
 	if p.current.Type == LX.T_COMMA {
 		p.advance()
 		if p.current.Type != LX.T_INT {
@@ -1422,14 +1646,13 @@ func (p *Parser) parseTypePrecision(precision, scale *int) error {
 		*scale = m
 		p.advance()
 	}
-	
+
 	if err := p.expect(LX.T_RPAREN); err != nil {
 		return err
 	}
 	p.advance() // consume the ')'
 	return nil
 }
-
 
 func (p *Parser) parseCaseExpr() (Expr, error) {
 	p.advance()

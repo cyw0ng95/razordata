@@ -38,7 +38,6 @@ Columns for selection:
 | REQ000074 | SQL | `IndexScan` real seek (replace prefix-scan fallback) | high | M | iter-08 (IndexScan op) | `SQL/EX/operators.go` — call into real `ENG/ID/` once iter-21 ships, or stub |
 | REQ000034 | WAL | WAL compression (lz4) | low | M | iter-03 (WAL writer) | `WAL/WR/encode.go` |
 | REQ000045 | ENG | Secondary indexes (non-PK columns; lookup by `__idx__:<table>:<col>:<val>`) | low | XL | iter-12 (catalog), iter-21 (ID) | new `ENG/ID/` package, `SQL/PL` index selection |
-| REQ000047 | ENG | Prefix bloom filters for range scans | low | M | iter-04 (bloom) | `ENG/LS/sst_writer.go` |
 | REQ000048 | ENG | Table registry persistence (`ENG/TB/`) | medium | L | iter-12 (catalog basic) | new `ENG/TB/tb.go` |
 | REQ000049 | ENG | Schema cluster (`ENG/SC/`) split from LS | low | M | iter-04 | new `ENG/SC/sc.go`; move `TableSchema` from LS |
 | REQ000050 | ENG | Deparser cluster (`ENG/DP/`) split from LS | low | M | iter-04 | new `ENG/DP/dp.go`; move row/block encoding |
@@ -51,8 +50,6 @@ Columns for selection:
 | REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
-| REQ000236 | SQL/PS | Parse window functions (`OVER`, `PARTITION BY`, `ROW_NUMBER`, `RANK`) | medium | L | iter-07 | `SQL/PS/ps.go`, `SQL/PS/ast.go` — `WindowFunc` AST, `parseWindowSpec` |
-| REQ000237 | SQL/EX | Window function executor (`ROW_NUMBER`, `RANK`, `SUM OVER`, `LAG`, `LEAD`) | medium | L | REQ000236 | `SQL/EX/window.go` (new) — partition-based aggregation |
 | REQ000240 | SQL/PS | Parse CREATE VIEW | medium | S | iter-07 | `SQL/PS/ps.go` — `CreateView` AST |
 | REQ000241 | SQL/PL | View resolution (rewrite SELECT to subquery) | medium | S | REQ000240 | `SQL/PL/planner.go` — view expansion |
 | REQ000242 | SYS | Pragmas (`cache_size`, `journal_mode`, `synchronous`) | medium | S | iter-12 | `SYS/SY/sy.go` — apply on Open |
@@ -62,19 +59,18 @@ Columns for selection:
 | REQ000247 | SQL/EX | TRIGGER executor (fire on INSERT/UPDATE/DELETE) | low | L | REQ000246 | `SQL/EX/trigger.go` (new) — hook into writers |
 | REQ000248 | SQL/PS | Parse generated columns (`AS (expr) STORED/VIRTUAL`) | low | M | iter-12 | `SQL/PS/ps.go` — `ColDef.Generated` field |
 | REQ000249 | SQL/EX | Generated column materialization on INSERT/UPDATE | low | M | REQ000248 | `SQL/EX/writers.go` — compute and store generated values |
-| REQ000250 | ENG/ID | B-tree secondary index package (foundation) | critical | XL | iter-21 | new `ENG/ID/id.go` — B-tree, key encoding, page management |
 | REQ000255 | TXN | Read-committed isolation (per-statement snapshot) | critical | L | REQ000123 | `TXN/SN/snapshot.go` — re-snapshot per statement |
 | REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | medium | S | iter-21 | `SQL/PS/ps.go` — `Vacuum`, `Analyze` AST |
-| REQ000262 | SQL/PS | Add DATE / TIME / TIMESTAMP type tokens | medium | S | REQ000206 | `SQL/LX/token.go` — `T_DATE`, `T_TIME`, `T_TIMESTAMP` |
-| REQ000263 | SQL/EX | DATE / TIME / TIMESTAMP value storage and arithmetic | medium | M | REQ000262 | `SQL/EX/datetime.go` (new) — `time.Time` round-trip, `strftime` |
-| REQ000264 | SQL/PS | Add JSON type and parse `->`, `->>`, `json_extract` | low | M | REQ000206 | `SQL/PS/ps.go` — `T_JSON`, `JsonExpr` AST |
-| REQ000265 | SQL/EX | JSON value storage and `json_extract` executor | low | M | REQ000264 | `SQL/EX/json.go` (new) — encoded `[]byte` + path |
-| REQ000266 | ENG | Benchmarks vs SQLite (SELECT, INSERT, JOIN throughput) | high | M | iter-21 | `bench/sqlitecmp/` (new) — apples-to-apples micro-bench |
-| REQ000267 | SQL/PS | Parse `GROUPING SETS` / `ROLLUP` / `CUBE` | low | L | iter-22 | `SQL/PS/ps.go` — extended `GroupBy` AST |
-| REQ000268 | SQL/EX | `GROUPING SETS` executor (multi-level aggregation) | low | L | REQ000267 | `SQL/EX/aggregate.go` — multi-pass aggregation |
-| REQ000269 | SYS | Connection pooling (`sql.DB`-style, max conns) | medium | M | iter-22 | `SYS/AP/ap.go` — `SetMaxOpenConns`, wait queue |
 | REQ000270 | SQL/PS | Parse `LIMIT ... OFFSET ...` shorthand and `FETCH FIRST n ROWS` | low | S | iter-22 | `SQL/PS/ps.go` — `T_FETCH`, `T_ROWS` tokens |
-| REQ000271 | ENG/LS | Compression for SST blocks (snappy/lz4) | medium | M | iter-22 | `ENG/LS/sst_writer.go` — block-level codec |
+| REQ000284 | ENG/ID | BTree delete rebalancing — no merge/redistribute after delete, tree becomes sparse | high | M | iter-23 | `ENG/ID/id.go:414-437` |
+| REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
+| REQ000286 | SQL/EX | Window materialize context propagation — uses context.Background() instead of caller's ctx | medium | S | iter-23 | `SQL/EX/window.go:55-77` |
+| REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
+| REQ000288 | SQL/PS | parseInterval unit validation — accepts any identifier as unit (e.g. INTERVAL '7' FOO) | medium | S | iter-23 | `SQL/PS/ps.go:1331-1336` |
+| REQ000289 | SQL/EX | DateDiff YEAR/MONTH day-of-month accuracy — Dec 31 to Jan 1 gives year diff 1 | medium | S | iter-23 | `SQL/EX/datetime.go:183-186` |
+| REQ000290 | SQL/EX | LAG/LEAD arbitrary offset support — hardcoded to offset 1, ignores args[1] | low | S | iter-23 | `SQL/EX/window.go:183-207` |
+| REQ000291 | SQL/PS | EXCLUDED.col reference in ON CONFLICT DO UPDATE — silently dropped (pre-existing) | high | M | iter-21 | `SQL/PS/ps.go:848-854` |
+| REQ000292 | SQL/EX | numericArith int64 overflow check — multiplication wraps without check (pre-existing) | medium | S | iter-19 | `SQL/EX/eval.go:646-658` |
 
 ## Unfixed Bugs (surfaces as requirements)
 
@@ -284,3 +280,16 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000279 | SQL/EX | `EXPLAIN` execution path: skip row execution, return plan as result-set | iter-21 |
 | REQ000280 | SQL/EX | EXPLAIN on DML (INSERT/UPDATE/DELETE) returns execution plan | iter-21 |
 | REQ000281 | SQL/EX | EXPLAIN QUERY PLAN formatter (tree-style, human-readable) | iter-21 |
+| REQ000236 | SQL/PS | Parse window functions (`OVER`, `PARTITION BY`, `ROW_NUMBER`, `RANK`) | iter-23 |
+| REQ000237 | SQL/EX | Window function executor (`ROW_NUMBER`, `RANK`, `SUM OVER`, `LAG`, `LEAD`) | iter-23 |
+| REQ000262 | SQL/PS | Add DATE / TIME / TIMESTAMP type tokens | iter-23 |
+| REQ000263 | SQL/EX | DATE / TIME / TIMESTAMP value storage and arithmetic | iter-23 |
+| REQ000264 | SQL/PS | Add JSON type and parse `->`, `->>`, `json_extract` | iter-23 |
+| REQ000265 | SQL/EX | JSON value storage and `json_extract` executor | iter-23 |
+| REQ000250 | ENG/ID | B-tree secondary index package (foundation) | iter-23 |
+| REQ000047 | ENG | Prefix bloom filters for range scans | iter-23 |
+| REQ000271 | ENG/LS | Compression for SST blocks (flate) | iter-23 |
+| REQ000282 | SQL/EX | Fix computeRank RANK for tied rows | iter-23 |
+| REQ000283 | ENG/ID | Fix Cursor.Next() leaf boundary traversal | iter-23 |
+| REQ000293 | QUAL | Window operator test coverage (window_test.go) | iter-23 |
+| REQ000294 | QUAL | Cross-leaf cursor test coverage | iter-23 |

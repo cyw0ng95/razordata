@@ -98,6 +98,35 @@ type AggregateFunc struct {
 
 func (a *AggregateFunc) exprNode() {}
 
+// WindowSpec represents the OVER clause of a window function.
+type WindowSpec struct {
+	PartitionBy []Expr
+	OrderBy     []OrderItem
+	Frame       *WindowFrame
+}
+
+// WindowFrame represents ROWS/RANGE frame specification.
+type WindowFrame struct {
+	Type  string // "ROWS" or "RANGE"
+	Start FrameBound
+	End   FrameBound
+}
+
+// FrameBound represents a frame boundary.
+type FrameBound struct {
+	Type   string // "UNBOUNDED_PRECEDING", "PRECEDING", "CURRENT_ROW", "FOLLOWING", "UNBOUNDED_FOLLOWING"
+	Offset Expr   // offset for PRECEDING/FOLLOWING (nil for UNBOUNDED/CURRENT)
+}
+
+// WindowFunc represents a window function call with OVER clause.
+type WindowFunc struct {
+	Name string // ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, etc.
+	Args []Expr
+	Over *WindowSpec
+}
+
+func (w *WindowFunc) exprNode() {}
+
 type StarExpr struct{}
 
 func (s *StarExpr) exprNode() {}
@@ -148,6 +177,14 @@ type SubqueryExpr struct {
 }
 
 func (s *SubqueryExpr) exprNode() {}
+
+// IntervalLiteral represents an INTERVAL expression like INTERVAL '7' DAY.
+type IntervalLiteral struct {
+	Value string // the numeric part as string, e.g. "7"
+	Unit  string // YEAR, MONTH, DAY, HOUR, MINUTE, SECOND
+}
+
+func (i *IntervalLiteral) exprNode() {}
 
 type ColDef struct {
 	Name     string
@@ -200,9 +237,9 @@ func (d *DropTable) stmtNode() {}
 
 // OnConflict represents an ON CONFLICT clause for UPSERT operations.
 type OnConflict struct {
-	Columns    []string  // target columns for conflict detection
-	DoNothing  bool      // true = DO NOTHING
-	SetClauses []Pair    // DO UPDATE SET clauses
+	Columns    []string // target columns for conflict detection
+	DoNothing  bool     // true = DO NOTHING
+	SetClauses []Pair   // DO UPDATE SET clauses
 }
 
 type Insert struct {
@@ -334,8 +371,8 @@ const (
 )
 
 type ExplainStmt struct {
-	Mode    ExplainMode
-	Inner   Stmt
+	Mode  ExplainMode
+	Inner Stmt
 }
 
 // AnalyzeStmt represents ANALYZE [table_name]
@@ -359,6 +396,5 @@ func (a *AnalyzeStmt) stmtNode() {}
 func (v *VacuumStmt) stmtNode() {}
 
 func (p *PragmaStmt) stmtNode() {}
-
 
 func (e *ExplainStmt) stmtNode() {}
