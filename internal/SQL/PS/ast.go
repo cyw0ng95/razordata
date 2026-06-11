@@ -334,8 +334,23 @@ const (
 )
 
 type ExplainStmt struct {
-	Mode  ExplainMode
-	Inner Stmt
+	Mode    ExplainMode
+	Inner   Stmt
 }
+
+// AnalyzeStmt represents ANALYZE [table_name]
+type AnalyzeStmt struct {
+	Table string // empty = analyze all tables
+}
+
+// VacuumStmt represents VACUUM [table_name]
+type VacuumStmt struct {
+	Table string // empty = vacuum all tables
+}
+
+func (a *AnalyzeStmt) stmtNode() {}
+
+func (v *VacuumStmt) stmtNode() {}
+
 
 func (e *ExplainStmt) stmtNode() {}

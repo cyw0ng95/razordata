@@ -430,6 +430,10 @@ func (p *Parser) Parse() (Stmt, error) {
 		}
 	case LX.T_EXPLAIN:
 		stmt, err = p.parseExplain()
+	case LX.T_ANALYZE:
+		stmt, err = p.parseAnalyze()
+	case LX.T_VACUUM:
+		stmt, err = p.parseVacuum()
 	case LX.T_WITH:
 		stmt, err = p.parseWith()
 	case LX.T_SAVEPOINT:
@@ -1167,6 +1171,30 @@ func (p *Parser) parseExplain() (*ExplainStmt, error) {
 	}
 
 	return &ExplainStmt{Mode: mode, Inner: inner}, nil
+}
+
+func (p *Parser) parseAnalyze() (*AnalyzeStmt, error) {
+	p.advance() // consume ANALYZE
+
+	stmt := &AnalyzeStmt{}
+	if p.current.Type == LX.T_IDENT {
+		stmt.Table = p.current.Lexeme
+		p.advance()
+	}
+
+	return stmt, nil
+}
+
+func (p *Parser) parseVacuum() (*VacuumStmt, error) {
+	p.advance() // consume VACUUM
+
+	stmt := &VacuumStmt{}
+	if p.current.Type == LX.T_IDENT {
+		stmt.Table = p.current.Lexeme
+		p.advance()
+	}
+
+	return stmt, nil
 }
 
 func (p *Parser) parseReturning() ([]Expr, error) {

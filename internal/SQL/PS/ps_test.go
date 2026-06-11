@@ -887,3 +887,57 @@ func TestParseComplexExpression(t *testing.T) {
 		t.Errorf("expected MINUS at top level, got %d", bin.Op)
 	}
 }
+
+func TestParseAnalyze(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  *AnalyzeStmt
+	}{
+		{"no_table", "ANALYZE", &AnalyzeStmt{Table: ""}},
+		{"with_table", "ANALYZE users", &AnalyzeStmt{Table: "users"}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := NewParser(c.input).Parse()
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", c.input, err)
+			}
+			stmt, ok := got.(*AnalyzeStmt)
+			if !ok {
+				t.Fatalf("expected *AnalyzeStmt, got %T", got)
+			}
+			if stmt.Table != c.want.Table {
+				t.Errorf("Table: got %q, want %q", stmt.Table, c.want.Table)
+			}
+		})
+	}
+}
+
+func TestParseVacuum(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  *VacuumStmt
+	}{
+		{"no_table", "VACUUM", &VacuumStmt{Table: ""}},
+		{"with_table", "VACUUM users", &VacuumStmt{Table: "users"}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := NewParser(c.input).Parse()
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", c.input, err)
+			}
+			stmt, ok := got.(*VacuumStmt)
+			if !ok {
+				t.Fatalf("expected *VacuumStmt, got %T", got)
+			}
+			if stmt.Table != c.want.Table {
+				t.Errorf("Table: got %q, want %q", stmt.Table, c.want.Table)
+			}
+		})
+	}
+}
