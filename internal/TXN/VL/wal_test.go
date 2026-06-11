@@ -46,6 +46,7 @@ func (m *mockWALWriter) snapshot() (appends, syncs int) {
 // TestCommit_WritesWALRecord verifies that Commit emits an RTCommit
 // record when a WAL writer is attached. REQ000171.
 func TestCommit_WritesWALRecord(t *testing.T) {
+	t.Parallel()
 	m := NewManager()
 	defer m.Close()
 
@@ -101,6 +102,7 @@ func TestCommit_WritesWALRecord(t *testing.T) {
 
 // TestCommit_NoWAL_NilWriter verifies Commit works without WAL.
 func TestCommit_NoWAL_NilWriter(t *testing.T) {
+	t.Parallel()
 	m := NewManager()
 	defer m.Close()
 
@@ -118,6 +120,7 @@ func TestCommit_NoWAL_NilWriter(t *testing.T) {
 
 // TestCommit_WALAppendError verifies that Commit returns Append error.
 func TestCommit_WALAppendError(t *testing.T) {
+	t.Parallel()
 	m := NewManager()
 	defer m.Close()
 
@@ -141,6 +144,7 @@ func TestCommit_WALAppendError(t *testing.T) {
 
 // TestCommit_WALSyncError verifies Sync error propagates.
 func TestCommit_WALSyncError(t *testing.T) {
+	t.Parallel()
 	m := NewManager()
 	defer m.Close()
 
@@ -161,6 +165,7 @@ func TestCommit_WALSyncError(t *testing.T) {
 // TestCommit_Phases verifies the 6-phase progression (REQ000147):
 // Begin -> Read -> Write -> PreCommit -> Commit -> PostCommit
 func TestCommit_Phases(t *testing.T) {
+	t.Parallel()
 	m := NewManager()
 	defer m.Close()
 
@@ -201,6 +206,7 @@ func TestCommit_Phases(t *testing.T) {
 
 // TestAbortFlow verifies the Abort path goes to PhaseAborted.
 func TestAbortFlow(t *testing.T) {
+	t.Parallel()
 	m := NewManager()
 	defer m.Close()
 
@@ -222,6 +228,7 @@ func TestAbortFlow(t *testing.T) {
 // TestPhaseReadOnlyTx verifies a tx that only reads goes
 // Begin -> Read -> PreCommit (via Commit with no writes).
 func TestPhaseReadOnlyTx(t *testing.T) {
+	t.Parallel()
 	m := NewManager()
 	defer m.Close()
 

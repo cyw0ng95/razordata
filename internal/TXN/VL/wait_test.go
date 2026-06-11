@@ -12,6 +12,7 @@ import (
 // path: a fresh manager with no outstanding transactions returns
 // nil from WaitForActive without waiting for the timeout.
 func TestWaitForActive_NoActiveReturnsImmediately(t *testing.T) {
+	t.Parallel()
 	m := NewManager()
 	ctx := context.Background()
 	start := time.Now()
@@ -27,6 +28,7 @@ func TestWaitForActive_NoActiveReturnsImmediately(t *testing.T) {
 // WaitForActive in a goroutine, then commits the transaction. The
 // wait should return nil shortly after the commit.
 func TestWaitForActive_DrainsOnCommit(t *testing.T) {
+	t.Parallel()
 	m := NewManager()
 	tx, err := m.Begin(context.Background())
 	if err != nil {
@@ -57,6 +59,7 @@ func TestWaitForActive_DrainsOnCommit(t *testing.T) {
 // WaitForActive to return a timeout error wrapping the residual
 // active count.
 func TestWaitForActive_Timeout(t *testing.T) {
+	t.Parallel()
 	m := NewManager()
 	tx, err := m.Begin(context.Background())
 	if err != nil {
@@ -79,6 +82,7 @@ func TestWaitForActive_Timeout(t *testing.T) {
 // TestWaitForActive_ContextCancel verifies that a pre-cancelled
 // context returns ctx.Err() immediately.
 func TestWaitForActive_ContextCancel(t *testing.T) {
+	t.Parallel()
 	m := NewManager()
 	tx, err := m.Begin(context.Background())
 	if err != nil {
@@ -96,6 +100,7 @@ func TestWaitForActive_ContextCancel(t *testing.T) {
 // TestWaitForActive_ZeroTimeoutRejected covers the parameter
 // validation: a non-positive timeout is an error.
 func TestWaitForActive_ZeroTimeoutRejected(t *testing.T) {
+	t.Parallel()
 	m := NewManager()
 	if err := m.WaitForActive(context.Background(), 0); err == nil {
 		t.Errorf("WaitForActive(0): want error, got nil")
@@ -109,6 +114,7 @@ func TestWaitForActive_ZeroTimeoutRejected(t *testing.T) {
 // the wait does not return until ALL active transactions have
 // completed.
 func TestWaitForActive_MultipleTransactionsDrainsOnLast(t *testing.T) {
+	t.Parallel()
 	m := NewManager()
 	tx1, err := m.Begin(context.Background())
 	if err != nil {

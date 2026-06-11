@@ -6,6 +6,7 @@ import (
 )
 
 func TestKeyRangeOverlap(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		a, b     KeyRange
 		expected bool
@@ -25,6 +26,7 @@ func TestKeyRangeOverlap(t *testing.T) {
 }
 
 func TestKeyRangesOverlap(t *testing.T) {
+	t.Parallel()
 	a := []KeyRange{{Start: []byte("a"), End: []byte("c")}}
 	b := []KeyRange{{Start: []byte("b"), End: []byte("d")}}
 
@@ -39,6 +41,7 @@ func TestKeyRangesOverlap(t *testing.T) {
 }
 
 func TestNewSlotManager(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	if sm.NumFreeSlots() != MaxConcurrentTXNs {
@@ -47,6 +50,7 @@ func TestNewSlotManager(t *testing.T) {
 }
 
 func TestAllocateSlot(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	slot := sm.AllocateSlot()
@@ -68,6 +72,7 @@ func TestAllocateSlot(t *testing.T) {
 }
 
 func TestAllocateAllSlots(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	for i := 0; i < MaxConcurrentTXNs; i++ {
@@ -88,6 +93,7 @@ func TestAllocateAllSlots(t *testing.T) {
 }
 
 func TestReleaseSlot(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	slot := sm.AllocateSlot()
@@ -119,6 +125,7 @@ func TestReleaseSlot(t *testing.T) {
 }
 
 func TestSlotReuse(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	slot1 := sm.AllocateSlot()
@@ -136,6 +143,7 @@ func TestSlotReuse(t *testing.T) {
 }
 
 func TestConcurrentAllocateRelease(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	var wg sync.WaitGroup
@@ -163,6 +171,7 @@ func TestConcurrentAllocateRelease(t *testing.T) {
 }
 
 func TestSlotStatus(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	slot := sm.AllocateSlot()
@@ -184,6 +193,7 @@ func TestSlotStatus(t *testing.T) {
 }
 
 func TestSlotWriteSet(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	slot := sm.AllocateSlot()
@@ -201,6 +211,7 @@ func TestSlotWriteSet(t *testing.T) {
 }
 
 func TestValidateNoConflict(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	slot1 := sm.AllocateSlot()
@@ -219,6 +230,7 @@ func TestValidateNoConflict(t *testing.T) {
 }
 
 func TestValidateWithConflict(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	slot1 := sm.AllocateSlot()
@@ -237,6 +249,7 @@ func TestValidateWithConflict(t *testing.T) {
 }
 
 func TestValidateNoOverlapWhenNotCommitted(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	slot1 := sm.AllocateSlot()
@@ -255,6 +268,7 @@ func TestValidateNoOverlapWhenNotCommitted(t *testing.T) {
 }
 
 func TestAddKeyRange(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	slot := sm.AllocateSlot()
@@ -268,6 +282,7 @@ func TestAddKeyRange(t *testing.T) {
 }
 
 func TestNumActiveSlots(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	if sm.NumActiveSlots() != 0 {
@@ -286,6 +301,7 @@ func TestNumActiveSlots(t *testing.T) {
 }
 
 func TestGetSlotBeginTS(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	slot := sm.AllocateSlot()
@@ -298,6 +314,7 @@ func TestGetSlotBeginTS(t *testing.T) {
 }
 
 func TestGetSlotCommitTS(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	slot := sm.AllocateSlot()
@@ -310,6 +327,7 @@ func TestGetSlotCommitTS(t *testing.T) {
 }
 
 func TestNextTS(t *testing.T) {
+	t.Parallel()
 	ts1 := NextTS()
 	ts2 := NextTS()
 
@@ -319,6 +337,7 @@ func TestNextTS(t *testing.T) {
 }
 
 func TestGetCurrentTS(t *testing.T) {
+	t.Parallel()
 	ts := GetCurrentTS()
 	if ts == 0 {
 		t.Error("expected current TS > 0 after NextTS calls")
@@ -391,6 +410,7 @@ func BenchmarkKeyRangesOverlap(b *testing.B) {
 // the next AllocateSlot for the same slot index produces a non-nil
 // arena again. (R16-18)
 func TestSlotArenaRecycledOnRelease(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	for round := 0; round < 5; round++ {
@@ -415,6 +435,7 @@ func TestSlotArenaRecycledOnRelease(t *testing.T) {
 // advances) and that the same arena returned to the pool is reused by
 // the next Allocate (offset is reset). (R16-18)
 func TestSlotArenaReusedAcrossRounds(t *testing.T) {
+	t.Parallel()
 	sm := newSlotManager()
 
 	slot := sm.AllocateSlot()
