@@ -122,6 +122,8 @@ var keywords = map[string]TokenType{
 	"COLUMN":       T_COLUMN,
 	"ADD":          T_ADD,
 	"RENAME":       T_RENAME,
+	"FETCH":        T_FETCH,
+	"ONLY":         T_ONLY,
 	"PRAGMA":      T_PRAGMA,
 	"CAST":        T_CAST,
 	"TRUE":        T_TRUE,
