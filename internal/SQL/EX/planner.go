@@ -104,6 +104,10 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 		root = p.planDropIndex(s)
 	case *PS.ExplainStmt:
 		root = p.planExplain(s)
+	case *PS.AnalyzeStmt:
+		root = p.planAnalyze(s)
+	case *PS.VacuumStmt:
+		root = p.planVacuum(s)
 	case *PS.WithStmt:
 		root = p.planWith(s)
 	}
@@ -684,4 +688,14 @@ func (p *Planner) planCreateIndex(s *PS.CreateIndexStmt) Operator {
 // planDropIndex removes a secondary index. iter-22.
 func (p *Planner) planDropIndex(s *PS.DropIndexStmt) Operator {
 	return NewDropIndex(s)
+}
+
+// planAnalyze collects table statistics. REQ000258.
+func (p *Planner) planAnalyze(s *PS.AnalyzeStmt) Operator {
+	return NewAnalyze(s)
+}
+
+// planVacuum reclaims storage. REQ000257.
+func (p *Planner) planVacuum(s *PS.VacuumStmt) Operator {
+	return NewVacuum(s)
 }
