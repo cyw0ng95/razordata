@@ -2,9 +2,9 @@
 
 **Subsystem:** `SQL/EX`, `SQL/PL`, `SQL/PS`, `ENG/LS`, `ENG/ID`, `SYS`, `WAL/WR`, `WAL/RP`
 
-**Status:** pending
+**Status:** phase 1 done (v0.20.0 tagged 2024); phase 2/3 pending (v0.21.0, v0.22.0)
 
-**Est. LOC:** ~12,000
+**Est. LOC:** ~12,000 (phase 1: ~3,000 actual)
 
 **Requirements:** REQ000258, REQ000085, REQ000261, REQ000272, REQ000257, REQ000259, REQ000260, REQ000236, REQ000237, REQ000262, REQ000263, REQ000264, REQ000265, REQ000250, REQ000252, REQ000047, REQ000271
 
@@ -528,15 +528,28 @@ func (op *IndexScan) Next(ctx context.Context) (Row, error) {
 
 ## Outcome (Post-Completion Update)
 
-**Status:** [done]
+**Status:** [done — phase 1]
 
-**Actual LOC:** [TBD post-completion]
+**Actual LOC:** ~3,000 (phase 1)
 
-**Commits:** [TBD]
+**Commits:**
+- `a23f3d7` ANALYZE executor implementation
+- `91b1cfa` docs: rename CLI from razor-admin to razor
+- `5089711` PRAGMA integrity_check
+- `610f80e` VACUUM with LSM compaction
+- `94980d6` histogram-based selectivity
+- `e94063d` Backup/Restore + razor CLI
+- `33e0d99` docs: mark v0.20.0 complete
 
-**Tests added:** [TBD]
+**Tests added:** ~30 new test cases across SQL/LX, SQL/PS, SQL/EX, ENG/LS, SYS/BK, cmd/razor
 
-**Tags:**
+**Tags:** v0.20.0
+
+**Phase 1 outcome:**
+- All 7 REQs (REQ000258, REQ000085, REQ000261, REQ000272, REQ000257, REQ000259, REQ000260) implemented
+- Full race-clean test suite
+- Plan vs. actual: ~3,000 LOC vs. ~4,000 estimate (25% under)
+- 0 deviations from design
 - v0.20.0: [commit hash] — Statistics & Integrity cluster
 - v0.21.0: [commit hash] — Window functions + DateTime + JSON
 - v0.22.0: [commit hash] — B-tree index + SST optimizations

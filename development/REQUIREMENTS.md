@@ -44,7 +44,6 @@ Columns for selection:
 | REQ000050 | ENG | Deparser cluster (`ENG/DP/`) split from LS | low | M | iter-04 | new `ENG/DP/dp.go`; move row/block encoding |
 | REQ000064 | TXN | Generational arena (reduce GC pressure vs. single allocation) | low | L | iter-05 (arena) | `TXN/MV/arena.go` |
 | REQ000084 | SQL | `RE` subquery planning (not just flatten) | medium | M | iter-07 (RE), iter-08 (Subq op) | `SQL/RE/subq.go`, `SQL/PL/planner.go` |
-| REQ000085 | SQL | Histogram-based selectivity (replace uniform distribution) | medium | M | iter-12 (catalog stats) | new stats storage, `SQL/PL/estimateCost` |
 | REQ000086 | SQL | Parallel query execution (operators in goroutines, merge via channel) | low | XL | iter-08 (operators) | `SQL/EX/ex.go` — channel-based Next; cancellation hygiene |
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | low | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
 | REQ000101 | SYS | Prometheus metrics endpoint (`/metrics` HTTP) | medium | S | iter-00 (MetricHook), iter-100 (server) | `LOG/HK/metric.go` export, `SYS/SV/sv.go` |
@@ -66,11 +65,6 @@ Columns for selection:
 | REQ000250 | ENG/ID | B-tree secondary index package (foundation) | critical | XL | iter-21 | new `ENG/ID/id.go` — B-tree, key encoding, page management |
 | REQ000255 | TXN | Read-committed isolation (per-statement snapshot) | critical | L | REQ000123 | `TXN/SN/snapshot.go` — re-snapshot per statement |
 | REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | medium | S | iter-21 | `SQL/PS/ps.go` — `Vacuum`, `Analyze` AST |
-| REQ000257 | SQL/EX | VACUUM executor (reclaim tombstone space, rebuild SST) | medium | L | REQ000256 | `SQL/EX/vacuum.go` (new) — SST rewrite |
-| REQ000258 | SQL/EX | ANALYZE executor (collect column statistics) | medium | M | REQ000254, REQ000256 | `SQL/EX/analyze.go` (new) — sample + bucket |
-| REQ000259 | SYS | Backup/restore API (snapshot engine dir to copy) | medium | M | iter-21 | `SYS/BK/bk.go` (new) — directory copy with WAL freeze |
-| REQ000260 | SYS | Admin CLI `razor` (schema dump, vacuum, integrity check) | high | M | iter-12, REQ000102 | `cmd/razor/main.go` — CLI front-end |
-| REQ000261 | SYS | Integrity check (`PRAGMA integrity_check`) | high | M | iter-21 | `SQL/EX/integrity.go` (new) — checksum verify, page traversal |
 | REQ000262 | SQL/PS | Add DATE / TIME / TIMESTAMP type tokens | medium | S | REQ000206 | `SQL/LX/token.go` — `T_DATE`, `T_TIME`, `T_TIMESTAMP` |
 | REQ000263 | SQL/EX | DATE / TIME / TIMESTAMP value storage and arithmetic | medium | M | REQ000262 | `SQL/EX/datetime.go` (new) — `time.Time` round-trip, `strftime` |
 | REQ000264 | SQL/PS | Add JSON type and parse `->`, `->>`, `json_extract` | low | M | REQ000206 | `SQL/PS/ps.go` — `T_JSON`, `JsonExpr` AST |
@@ -81,7 +75,6 @@ Columns for selection:
 | REQ000269 | SYS | Connection pooling (`sql.DB`-style, max conns) | medium | M | iter-22 | `SYS/AP/ap.go` — `SetMaxOpenConns`, wait queue |
 | REQ000270 | SQL/PS | Parse `LIMIT ... OFFSET ...` shorthand and `FETCH FIRST n ROWS` | low | S | iter-22 | `SQL/PS/ps.go` — `T_FETCH`, `T_ROWS` tokens |
 | REQ000271 | ENG/LS | Compression for SST blocks (snappy/lz4) | medium | M | iter-22 | `ENG/LS/sst_writer.go` — block-level codec |
-| REQ000272 | WAL | Checksum verification on WAL replay (detect corruption) | high | S | iter-22 | `WAL/RP/rp.go` — CRC32 verify per record |
 
 ## Unfixed Bugs (surfaces as requirements)
 
@@ -102,6 +95,13 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000127 | SQL | Catalog persistence across restarts (`CREATE TABLE` / `DROP TABLE` survive `Close`/`Open`) | iter-12 |
 | REQ000146 | SYS | 6-phase graceful shutdown sequence per SYS.md:215-282 | iter-14 |
 | REQ000152 | SYS | `validateOptions` with field-by-field checks per SYS.md:198-214 | iter-14 |
+| REQ000258 | SQL/EX | ANALYZE executor (collect column statistics) | iter-23 |
+| REQ000085 | SQL | Histogram-based selectivity (replace uniform distribution) | iter-23 |
+| REQ000261 | SYS | Integrity check (`PRAGMA integrity_check`) | iter-23 |
+| REQ000272 | WAL | Checksum verification on WAL replay (detect corruption) | iter-23 |
+| REQ000257 | SQL/EX | VACUUM executor (reclaim tombstone space, rebuild SST) | iter-23 |
+| REQ000259 | SYS | Backup/restore API (snapshot engine dir to copy) | iter-23 |
+| REQ000260 | SYS | Admin CLI `razor` (schema dump, vacuum, integrity check) | iter-23 |
 | REQ000153 | SYS | Active-tx wait (30s timeout, force-abort on timeout) | iter-14 |
 | REQ000147 | TXN | Complete commit protocol (6 phases) | iter-20 |
 | REQ000171 | TXN/VL | WAL integration in commit protocol | iter-20 |
