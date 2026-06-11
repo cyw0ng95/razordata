@@ -75,6 +75,13 @@ var (
 	// indexes declared via CREATE INDEX. Keyed by table name.
 	// iter-22 secondary indexes MVP.
 	registeredIndexes = map[string][]RegisteredIndex{}
+
+	// viewRegistry stores view definitions (REQ000240). Keyed by
+	// view name. Values are the parsed SELECT statements.
+	viewRegistry = map[string]*PS.Select{}
+
+	// viewMu protects viewRegistry.
+	viewMu sync.RWMutex
 )
 
 // RegisteredIndex is one entry in the EX-layer's index registry.
@@ -82,6 +89,27 @@ type RegisteredIndex struct {
 	Name    string
 	Columns []string
 	Unique  bool
+}
+
+// RegisterView stores a view definition (REQ000240).
+func RegisterView(name string, sel *PS.Select) {
+	viewMu.Lock()
+	defer viewMu.Unlock()
+	viewRegistry[name] = sel
+}
+
+// LookupView returns the SELECT statement for a view, or nil.
+func LookupView(name string) *PS.Select {
+	viewMu.RLock()
+	defer viewMu.RUnlock()
+	return viewRegistry[name]
+}
+
+// UnregisterAllViews clears all views (for testing).
+func UnregisterAllViews() {
+	viewMu.Lock()
+	defer viewMu.Unlock()
+	viewRegistry = map[string]*PS.Select{}
 }
 
 // RegisterIndexWithID registers a secondary index for the given

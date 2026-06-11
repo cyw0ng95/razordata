@@ -181,6 +181,7 @@ var tokenNames = [...]string{
 	LX.T_UNCOMMITTED: "UNCOMMITTED",
 	LX.T_REPEATABLE: "REPEATABLE",
 	LX.T_SERIALIZABLE: "SERIALIZABLE",
+	LX.T_VIEW:         "VIEW",
 }
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -445,13 +446,14 @@ func (p *Parser) Parse() (Stmt, error) {
 	case LX.T_DELETE:
 		stmt, err = p.parseDelete()
 	case LX.T_CREATE:
-		// CREATE TABLE vs CREATE INDEX — disambiguate by looking
-		// ahead 1-2 tokens (CREATE [UNIQUE] INDEX vs CREATE TABLE).
+		// CREATE TABLE vs CREATE INDEX vs CREATE VIEW — disambiguate by peeking.
 		next := p.lex.Peek().Type
 		if next == LX.T_INDEX {
 			stmt, err = p.parseCreateIndex()
 		} else if next == LX.T_UNIQUE && p.lex.Peek2().Type == LX.T_INDEX {
 			stmt, err = p.parseCreateIndex()
+		} else if next == LX.T_VIEW {
+			stmt, err = p.parseCreateView()
 		} else {
 			stmt, err = p.parseCreateTable()
 		}
@@ -1988,4 +1990,27 @@ func (p *Parser) parseSet() (*SetTransactionStmt, error) {
 		}
 	}
 	return &SetTransactionStmt{Level: level}, nil
+}
+
+// parseCreateView parses CREATE VIEW name AS SELECT ... (REQ000240).
+func (p *Parser) parseCreateView() (*CreateViewStmt, error) {
+	p.advance() // consume CREATE
+	if err := p.expect(LX.T_VIEW); err != nil {
+		return nil, err
+	}
+	p.advance() // consume VIEW
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	name := p.current.Lexeme
+	p.advance()
+	if err := p.expect(LX.T_AS); err != nil {
+		return nil, err
+	}
+	p.advance() // consume AS
+	sel, err := p.parseSelect()
+	if err != nil {
+		return nil, err
+	}
+	return &CreateViewStmt{Name: name, As: sel}, nil
 }

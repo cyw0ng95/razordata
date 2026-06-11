@@ -385,6 +385,14 @@ type VacuumStmt struct {
 	Table string // empty = vacuum all tables
 }
 
+// CreateViewStmt represents CREATE VIEW name AS SELECT ... (REQ000240)
+type CreateViewStmt struct {
+	Name string
+	As   Stmt // the SELECT statement
+}
+
+func (c *CreateViewStmt) stmtNode() {}
+
 // PragmaStmt represents PRAGMA name [= value]
 type PragmaStmt struct {
 	Name  string
