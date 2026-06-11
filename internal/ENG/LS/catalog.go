@@ -827,6 +827,44 @@ func (c *Catalog) GetByName(name string) (*CatalogEntry, error) {
 	return &cp, nil
 }
 
+// GetStats returns the column statistics for the given table and
+// column. Returns nil if no stats exist. REQ000085.
+func (c *Catalog) GetStats(tableID uint64, colName string) *ColumnStats {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	entry, ok := c.cache[tableID]
+	if !ok {
+		return nil
+	}
+	for i := range entry.ColumnStats {
+		if entry.ColumnStats[i].Column == colName {
+			// Return a copy to prevent external mutation
+			stats := entry.ColumnStats[i].Stats
+			return &stats
+		}
+	}
+	return nil
+}
+
+// GetStatsByName returns column statistics for a table by table name.
+// Returns nil if the table or column has no stats. REQ000085.
+func (c *Catalog) GetStatsByName(tableName, colName string) *ColumnStats {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, entry := range c.cache {
+		if entry.Name == tableName {
+			for i := range entry.ColumnStats {
+				if entry.ColumnStats[i].Column == colName {
+					stats := entry.ColumnStats[i].Stats
+					return &stats
+				}
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 // List returns all entries sorted by tableID. The returned slice
 // is freshly allocated; mutating it does not affect the catalog.
 func (c *Catalog) List() []*CatalogEntry {

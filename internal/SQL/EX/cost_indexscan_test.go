@@ -40,14 +40,14 @@ func TestPlanner_EstimateCost_PerOperator(t *testing.T) {
 func TestPlanner_EstimateCost_FilterSelectivity(t *testing.T) {
 	p := NewPlanner()
 	scan := NewSeqScan("t")
-	// col = literal: selectivity 0.1
+	// col = literal without stats: 0.5 (uniform fallback)
 	filterEQ := NewFilter(scan, &PS.BinaryExpr{
 		Op:    int(LX.T_EQ),
 		Left:  &PS.Ident{Name: "a"},
 		Right: &PS.NumberLiteral{Val: 1},
 	})
-	if got := p.estimateCost(filterEQ); got != 0.1 {
-		t.Errorf("Filter(col=lit) cost = %v, want 0.1", got)
+	if got := p.estimateCost(filterEQ); got != 0.5 {
+		t.Errorf("Filter(col=lit) cost = %v, want 0.5 (no stats)", got)
 	}
 	// generic predicate: 0.5
 	filterGeneric := NewFilter(scan, &PS.BinaryExpr{

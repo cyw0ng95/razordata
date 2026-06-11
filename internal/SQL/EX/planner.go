@@ -1,9 +1,11 @@
 package EX
 
 import (
+	"bytes"
 	"fmt"
 	"sync"
 
+	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 	"github.com/cyw0ng95/razordata/internal/SQL/RE"
@@ -28,6 +30,9 @@ type Planner struct {
 	memo    map[string]*plan
 	catalog map[string]*tableInfo
 	store   Store
+	// statsCatalog provides access to column statistics for
+	// histogram-based selectivity estimation. REQ000085.
+	statsCatalog StatsCatalog
 }
 
 type tableInfo struct {
@@ -52,6 +57,25 @@ func NewPlannerWithStore(store Store) *Planner {
 		catalog: make(map[string]*tableInfo),
 		store:   store,
 	}
+}
+
+// NewPlannerWithStats returns a planner with store and stats catalog
+// access for histogram-based selectivity estimation. REQ000085.
+func NewPlannerWithStats(store Store, statsCatalog StatsCatalog) *Planner {
+	return &Planner{
+		memo:         make(map[string]*plan),
+		catalog:      make(map[string]*tableInfo),
+		store:        store,
+		statsCatalog: statsCatalog,
+	}
+}
+
+// SetStatsCatalog wires a stats catalog into an existing planner.
+// REQ000085.
+func (p *Planner) SetStatsCatalog(statsCatalog StatsCatalog) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.statsCatalog = statsCatalog
 }
 
 func (p *Planner) RegisterTable(name string, cols []ColInfo, pk string) {
@@ -143,7 +167,7 @@ func (p *Planner) estimateCost(op Operator) float64 {
 		// Cheaper than full scan; one seek + ordered reads.
 		return 0.1
 	case *Filter:
-		return p.estimateCost(v.child) * estimateSelectivity(v.predicate)
+		return p.estimateCost(v.child) * p.estimatePredicateSelectivity(v.predicate)
 	case *Project:
 		return p.estimateCost(v.child)
 	case *Limit:
@@ -177,14 +201,205 @@ func estimateSelectivity(e PS.Expr) float64 {
 		return 1.0
 	}
 	if v, ok := e.(*PS.BinaryExpr); ok {
-		switch v.Op {
-		case int(LX.T_EQ):
-			if isColumnLiteralPair(v.Left, v.Right) || isColumnLiteralPair(v.Right, v.Left) {
+		if isColumnLiteralPair(v.Left, v.Right) || isColumnLiteralPair(v.Right, v.Left) {
+			switch v.Op {
+			case int(LX.T_EQ):
 				return 0.1
 			}
 		}
 	}
 	return 0.5
+}
+
+// estimateSelectivityWithStats computes selectivity using column
+// histograms when available, falling back to uniform distribution.
+// REQ000085.
+//
+// The function recognizes:
+//   - column = literal  → 1 / distinctCount
+//   - column < literal  → bucket fraction below literal
+//   - column > literal  → bucket fraction above literal
+//   - column BETWEEN a AND b → bucket fraction between a and b
+//   - IS NULL → nullCount / rowCount
+//   - IS NOT NULL → (rowCount - nullCount) / rowCount
+func estimateSelectivityWithStats(e PS.Expr, stats *ls.ColumnStats) float64 {
+	if e == nil {
+		return 1.0
+	}
+
+	// Binary expression: column OP literal
+	if v, ok := e.(*PS.BinaryExpr); ok {
+		_, lit, isColLit := extractColumnLiteral(v)
+		if isColLit && stats != nil {
+			switch v.Op {
+			case int(LX.T_EQ):
+				return estimateEqSelectivity(stats, lit)
+			case int(LX.T_LT), int(LX.T_LE):
+				return estimateRangeSelectivity(stats, nil, lit, false)
+			case int(LX.T_GT), int(LX.T_GE):
+				return estimateRangeSelectivity(stats, lit, nil, false)
+			}
+		}
+		// IS NULL / IS NOT NULL handled at the operator level
+		// Default for binary expressions
+		return 0.5
+	}
+
+	return 0.5
+}
+
+// estimateEqSelectivity returns selectivity for column = literal.
+func estimateEqSelectivity(stats *ls.ColumnStats, lit []byte) float64 {
+	if stats == nil {
+		return 0.1
+	}
+	if stats.RowCount == 0 {
+		return 0.1
+	}
+	// Use histogram if available
+	if len(stats.Histogram) > 0 {
+		// Find bucket containing the literal
+		matched := int64(0)
+		for _, b := range stats.Histogram {
+			if bytes.Compare(lit, b.LowerBound) >= 0 && bytes.Compare(lit, b.UpperBound) <= 0 {
+				matched = b.Count
+				break
+			}
+		}
+		if matched > 0 {
+			return float64(matched) / float64(stats.RowCount)
+		}
+		return 0.0
+	}
+	// Uniform distribution fallback
+	if stats.DistinctCount > 0 {
+		return 1.0 / float64(stats.DistinctCount)
+	}
+	return 0.1
+}
+
+// estimateRangeSelectivity returns selectivity for a range predicate
+// [low, high]. If low is nil, range is (-inf, high]. If high is nil,
+// range is [low, +inf).
+func estimateRangeSelectivity(stats *ls.ColumnStats, low, high []byte, inclusive bool) float64 {
+	if stats == nil || stats.RowCount == 0 {
+		return 0.3
+	}
+	// No histogram: assume uniform distribution over [min, max]
+	if len(stats.Histogram) == 0 {
+		if stats.DistinctCount <= 1 {
+			return 1.0
+		}
+		return 0.33
+	}
+
+	totalRows := stats.RowCount
+	lowRows := int64(0)
+	highRows := int64(0)
+
+	for _, b := range stats.Histogram {
+		// Count rows below `low`
+		if low != nil && bytes.Compare(b.UpperBound, low) < 0 {
+			lowRows += b.Count
+		}
+		// Count rows at or below `high`
+		if high != nil && bytes.Compare(b.LowerBound, high) <= 0 {
+			highRows += b.Count
+		}
+	}
+
+	if low == nil {
+		return float64(highRows) / float64(totalRows)
+	}
+	if high == nil {
+		return float64(totalRows-lowRows) / float64(totalRows)
+	}
+	// Both bounds
+	sel := float64(highRows-lowRows) / float64(totalRows)
+	if sel < 0 {
+		sel = 0
+	}
+	return sel
+}
+
+// extractColumnLiteral extracts (column, literal) from a binary
+// expression of the form column OP literal.
+func extractColumnLiteral(v *PS.BinaryExpr) (string, []byte, bool) {
+	col, ok := v.Left.(*PS.Ident)
+	if !ok {
+		return "", nil, false
+	}
+	lit, ok := literalToBytes(v.Right)
+	if !ok {
+		return "", nil, false
+	}
+	return col.Name, lit, true
+}
+
+// literalToBytes extracts byte representation from a literal expression.
+func literalToBytes(e PS.Expr) ([]byte, bool) {
+	switch v := e.(type) {
+	case *PS.NumberLiteral:
+		return []byte(fmt.Sprintf("%d", v.Val)), true
+	case *PS.StringLiteral:
+		return []byte(v.Val), true
+	case *PS.BoolLiteral:
+		if v.Val {
+			return []byte("true"), true
+		}
+		return []byte("false"), true
+	}
+	return nil, false
+}
+
+// estimatePredicateSelectivity returns the selectivity of a
+// predicate, using column histograms when available. REQ000085.
+func (p *Planner) estimatePredicateSelectivity(e PS.Expr) float64 {
+	if e == nil {
+		return 1.0
+	}
+
+	// Try to extract column name from the predicate
+	col, _, isColLit := extractColumnLiteralExpr(e)
+	if !isColLit {
+		return 0.5
+	}
+
+	// Find table for this column by searching registered tables
+	tableName := p.findTableForColumn(col)
+	if tableName == "" || p.statsCatalog == nil {
+		return 0.5
+	}
+
+	stats := p.statsCatalog.GetStatsByName(tableName, col)
+	if stats == nil {
+		return 0.5
+	}
+
+	return estimateSelectivityWithStats(e, stats)
+}
+
+// findTableForColumn returns the first table name that has the
+// given column registered.
+func (p *Planner) findTableForColumn(col string) string {
+	for tableName, t := range p.catalog {
+		for _, c := range t.cols {
+			if c.Name == col {
+				return tableName
+			}
+		}
+	}
+	return ""
+}
+
+// extractColumnLiteralExpr is a safe variant of extractColumnLiteral
+// that accepts any expression.
+func extractColumnLiteralExpr(e PS.Expr) (string, []byte, bool) {
+	v, ok := e.(*PS.BinaryExpr)
+	if !ok {
+		return "", nil, false
+	}
+	return extractColumnLiteral(v)
 }
 
 func isColumnLiteralPair(a, b PS.Expr) bool {

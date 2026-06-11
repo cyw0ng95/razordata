@@ -444,6 +444,9 @@ func (a *executorStoreAdapter) Get(k []byte) ([]byte, bool, error) {
 func (a *executorStoreAdapter) NewIterator(prefix []byte) ls.RangeIter {
 	return a.eng.NewIterator(prefix)
 }
+func (a *executorStoreAdapter) ManualCompact() error {
+	return a.eng.ManualCompact()
+}
 
 // walStats surfaces the replayer's counters into AP.WALStats so
 // Engine.Stats() can show what the most recent Replay observed.
