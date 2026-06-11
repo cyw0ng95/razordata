@@ -45,10 +45,16 @@ type savepoint struct {
 // execution. writeSet is initialized lazily on first write.
 func NewTransaction(session *sy.Engine, tx vl.Tx) *Transaction {
 	return &Transaction{
-		session:  session,
-		tx:       tx,
-		writeSet: make(map[string]writeEntry),
+		session:       session,
+		tx:            tx,
+		writeSet:      make(map[string]writeEntry),
+		isolationLevel: ap.IsolationReadCommitted, // REQ000061: default RC
 	}
+}
+
+// SetIsolationLevel sets the transaction's isolation level (REQ000123).
+func (t *Transaction) SetIsolationLevel(level ap.IsolationLevel) {
+	t.isolationLevel = level
 }
 
 func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.Rows, error) {
