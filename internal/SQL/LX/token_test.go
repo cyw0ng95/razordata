@@ -119,6 +119,7 @@ func TestTokenTypesExist(t *testing.T) {
 		T_VACUUM,
 		T_OUTER,
 		T_FULL,
+		T_PRAGMA,
 	}
 
 	for i, typ := range types {

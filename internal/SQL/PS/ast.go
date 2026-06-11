@@ -348,9 +348,17 @@ type VacuumStmt struct {
 	Table string // empty = vacuum all tables
 }
 
+// PragmaStmt represents PRAGMA name [= value]
+type PragmaStmt struct {
+	Name  string
+	Value string // optional, empty for read-only pragmas
+}
+
 func (a *AnalyzeStmt) stmtNode() {}
 
 func (v *VacuumStmt) stmtNode() {}
+
+func (p *PragmaStmt) stmtNode() {}
 
 
 func (e *ExplainStmt) stmtNode() {}

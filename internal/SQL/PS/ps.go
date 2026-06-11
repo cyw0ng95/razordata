@@ -434,6 +434,8 @@ func (p *Parser) Parse() (Stmt, error) {
 		stmt, err = p.parseAnalyze()
 	case LX.T_VACUUM:
 		stmt, err = p.parseVacuum()
+	case LX.T_PRAGMA:
+		stmt, err = p.parsePragma()
 	case LX.T_WITH:
 		stmt, err = p.parseWith()
 	case LX.T_SAVEPOINT:
@@ -1192,6 +1194,38 @@ func (p *Parser) parseVacuum() (*VacuumStmt, error) {
 	if p.current.Type == LX.T_IDENT {
 		stmt.Table = p.current.Lexeme
 		p.advance()
+	}
+
+	return stmt, nil
+}
+
+func (p *Parser) parsePragma() (*PragmaStmt, error) {
+	p.advance() // consume PRAGMA
+
+	if p.current.Type != LX.T_IDENT {
+		return nil, &SyntaxError{
+			Input:    p.lex.Input(),
+			Line:     p.current.Line,
+			Col:      p.current.Col,
+			Expected: "identifier after PRAGMA",
+			Got:      tokenName(p.current.Type),
+			Lexeme:   p.current.Lexeme,
+		}
+	}
+
+	stmt := &PragmaStmt{Name: p.current.Lexeme}
+	p.advance()
+
+	// Optional: PRAGMA name = value
+	if p.current.Type == LX.T_EQ {
+		p.advance()
+		if p.current.Type == LX.T_IDENT || p.current.Type == LX.T_STRING {
+			stmt.Value = p.current.Lexeme
+			p.advance()
+		} else if p.current.Type == LX.T_INT {
+			stmt.Value = p.current.Lexeme
+			p.advance()
+		}
 	}
 
 	return stmt, nil

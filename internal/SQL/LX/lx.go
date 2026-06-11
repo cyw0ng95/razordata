@@ -91,6 +91,7 @@ var keywords = map[string]TokenType{
 	"VACUUM":    T_VACUUM,
 	"OUTER":     T_OUTER,
 	"FULL":      T_FULL,
+	"PRAGMA":    T_PRAGMA,
 	"CAST":      T_CAST,
 	"TRUE":      T_TRUE,
 	"FALSE":     T_FALSE,
