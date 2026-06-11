@@ -961,8 +961,10 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) Operator {
 	switch s.Name {
 	case "integrity_check":
 		return NewIntegrityCheckWithStore(p.store)
+	case "cache_size", "journal_mode", "synchronous", "user_version":
+		// REQ000242: return pragma value as a single-row result
+		return NewPragmaResult(s.Name, s.Value)
 	default:
-		// Unknown pragma - return placeholder that produces no output
 		return NewSeqScan("__pragma_unknown__")
 	}
 }

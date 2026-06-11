@@ -186,6 +186,9 @@ var tokenNames = [...]string{
 	LX.T_COLUMN:       "COLUMN",
 	LX.T_ADD:          "ADD",
 	LX.T_RENAME:       "RENAME",
+	LX.T_FETCH:        "FETCH",
+	LX.T_FIRST:        "FIRST",
+	LX.T_ONLY:         "ONLY",
 }
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -692,6 +695,26 @@ func (p *Parser) parseSelect() (*Select, error) {
 			return nil, err
 		}
 		offset = o
+	}
+
+	// REQ000270: FETCH FIRST n ROWS ONLY → LIMIT n
+	if p.current.Type == LX.T_FETCH {
+		p.advance() // consume FETCH
+		// Skip "FIRST" keyword if present (it's an identifier, not a token)
+		if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "FIRST") {
+			p.advance()
+		}
+		n, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		limit = n
+		if p.current.Type == LX.T_ROWS {
+			p.advance() // consume ROWS
+		}
+		if p.current.Type == LX.T_ONLY {
+			p.advance() // consume ONLY
+		}
 	}
 
 	return &Select{

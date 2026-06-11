@@ -153,6 +153,9 @@ const (
 	T_COLUMN
 	T_ADD
 	T_RENAME
+	T_FETCH
+	T_FIRST
+	T_ONLY
 
 	T_ERROR TokenType = -1
 )
@@ -298,6 +301,9 @@ var tokenTypeNames = [...]string{
 	T_COLUMN:       "COLUMN",
 	T_ADD:          "ADD",
 	T_RENAME:       "RENAME",
+	T_FETCH:        "FETCH",
+	T_FIRST:        "FIRST",
+	T_ONLY:         "ONLY",
 	T_EXPLAIN:     "EXPLAIN",
 	T_QUERY:       "QUERY",
 	T_PLAN:        "PLAN",
