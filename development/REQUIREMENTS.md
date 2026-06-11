@@ -33,7 +33,7 @@ Columns for selection:
 | REQ000113 | SQL | `GROUP BY` (single + multi col; with/without aggregates) | critical | M | iter-08 (Aggregate) | `SQL/PS`, `SQL/EX/aggregate.go` (extend HashAggregate), `SQL/RE` (pushdown) |
 | REQ000117 | SQL | `OUTER JOIN` (LEFT/RIGHT/FULL) | critical | M | iter-08 (NestedLoopJoin) | `SQL/EX/join.go` — add outer variants; `SQL/PS` |
 | REQ000126 | SQL | Foreign keys (REFERENCES, ON DELETE/UPDATE) | high | L | iter-11 (UNIQUE), iter-12 (catalog), iter-21 (FKEY index?) | `SQL/PS`, `SQL/EX/constraints.go`, new FK validation in writers |
-| REQ000102 | SYS | Admin CLI `razor-admin` (schema dump, vacuum, manual compact, integrity check) | high | M | iter-12 (catalog), iter-17 (bench coverage) | new `cmd/razor-admin/main.go`, reuse `SQL/EX` for SQL ops |
+| REQ000102 | SYS | Admin CLI `razor` (schema dump, vacuum, manual compact, integrity check) | high | M | iter-12 (catalog), iter-17 (bench coverage) | new `cmd/razor/main.go`, reuse `SQL/EX` for SQL ops |
 | REQ000143 | QUAL | `SQL/RE` coverage: 49% → 80%+ | high | M | iter-07 (RE implementation) | `SQL/RE/*_test.go` — fill error-path branches, subquery flatten cases |
 | REQ000074 | SQL | `IndexScan` real seek (replace prefix-scan fallback) | high | M | iter-08 (IndexScan op) | `SQL/EX/operators.go` — call into real `ENG/ID/` once iter-21 ships, or stub |
 | REQ000034 | WAL | WAL compression (lz4) | low | M | iter-03 (WAL writer) | `WAL/WR/encode.go` |
@@ -69,7 +69,7 @@ Columns for selection:
 | REQ000257 | SQL/EX | VACUUM executor (reclaim tombstone space, rebuild SST) | medium | L | REQ000256 | `SQL/EX/vacuum.go` (new) — SST rewrite |
 | REQ000258 | SQL/EX | ANALYZE executor (collect column statistics) | medium | M | REQ000254, REQ000256 | `SQL/EX/analyze.go` (new) — sample + bucket |
 | REQ000259 | SYS | Backup/restore API (snapshot engine dir to copy) | medium | M | iter-21 | `SYS/BK/bk.go` (new) — directory copy with WAL freeze |
-| REQ000260 | SYS | Admin CLI `razor-admin` (schema dump, vacuum, integrity check) | high | M | iter-12, REQ000102 | `cmd/razor-admin/main.go` — CLI front-end |
+| REQ000260 | SYS | Admin CLI `razor` (schema dump, vacuum, integrity check) | high | M | iter-12, REQ000102 | `cmd/razor/main.go` — CLI front-end |
 | REQ000261 | SYS | Integrity check (`PRAGMA integrity_check`) | high | M | iter-21 | `SQL/EX/integrity.go` (new) — checksum verify, page traversal |
 | REQ000262 | SQL/PS | Add DATE / TIME / TIMESTAMP type tokens | medium | S | REQ000206 | `SQL/LX/token.go` — `T_DATE`, `T_TIME`, `T_TIMESTAMP` |
 | REQ000263 | SQL/EX | DATE / TIME / TIMESTAMP value storage and arithmetic | medium | M | REQ000262 | `SQL/EX/datetime.go` (new) — `time.Time` round-trip, `strftime` |

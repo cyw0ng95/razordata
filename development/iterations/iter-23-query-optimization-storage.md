@@ -199,18 +199,18 @@ func Restore(ctx context.Context, backupDir, restoreDir string) error
 
 ---
 
-### REQ000260: Admin CLI razor-admin (~600 LOC)
+### REQ000260: Admin CLI razor (~600 LOC)
 
-**Files:** `cmd/razor-admin/main.go` (new)
+**Files:** `cmd/razor/main.go` (new)
 
 **Commands:**
 ```bash
-razor-admin integrity-check /path/to/db
-razor-admin vacuum /path/to/db
-razor-admin analyze /path/to/db
-razor-admin backup /path/to/db /backup/path
-razor-admin restore /backup/path /restore/path
-razor-admin schema-dump /path/to/db
+razor integrity-check /path/to/db
+razor vacuum /path/to/db
+razor analyze /path/to/db
+razor backup /path/to/db /backup/path
+razor restore /backup/path /restore/path
+razor schema-dump /path/to/db
 ```
 
 **Tests:**
