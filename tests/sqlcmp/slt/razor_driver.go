@@ -190,6 +190,30 @@ func rowsToResultSet(rows []EX.Row) *ResultSet {
 	return rs
 }
 
+// EngineAccessor returns the underlying *ls.Engine for tests
+// that need to invoke engine-level methods (e.g. Sync) not
+// exposed on the SLT Driver interface. The bool is false if
+// the driver has been closed or never connected.
+func (d *RazorDriver) EngineAccessor() (EngineSyncer, bool) {
+	if d == nil || d.engine == nil {
+		return nil, false
+	}
+	return d.engine.Engine(), true
+}
+
+// EngineSyncer is the subset of *ls.Engine used by edge
+// probes. Defined as an interface so the edge_probe tests do
+// not need to import internal/ENG/LS.
+type EngineSyncer interface {
+	Sync() error
+}
+
+// engineAccessor is the package-internal alias used by the
+// edge_probe test files. Returns false if no engine is wired.
+func (d *RazorDriver) engineAccessor() (EngineSyncer, bool) {
+	return d.EngineAccessor()
+}
+
 // valueFromAny normalizes the executor's interface{} cells to SLT
 // Value. Razordata returns int64, float64, string, bool, []byte,
 // time.Time, and nil directly; we map each to the closest SLT

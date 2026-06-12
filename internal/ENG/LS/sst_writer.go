@@ -73,10 +73,32 @@ func (w *sstWriter) Add(key, value []byte) {
 	buf.Write(value)
 
 	if len(w.blocks) == 0 {
+		// First key: allocate the first block and write into
+		// it directly. The previous implementation appended
+		// an empty block here, then on the first overflow
+		// (data larger than block size) finished the empty
+		// block (which is a no-op) and appended a second
+		// empty block. The result was a useless empty block
+		// in the output that the index did not record, with
+		// the actual data going into the second block. The
+		// mismatch between blocks and indexEntries made
+		// readBlock read the empty block instead of the
+		// data block. See REQ000347 (iter-26).
 		w.blocks = append(w.blocks, make([]byte, 0, sstBlockSize))
 	}
 
 	currentBlock := w.blocks[len(w.blocks)-1]
+	// If the current block is empty and the index has not
+	// recorded it yet, write into it directly. This avoids
+	// the "finish an empty block + append a new one" dance
+	// that creates the orphan empty block.
+	if len(currentBlock) == 0 {
+		w.blocks[len(w.blocks)-1] = append(currentBlock, buf.Bytes()...)
+		w.keyCount++
+		w.keys = append(w.keys, append([]byte(nil), key...))
+		w.lastKey = append(w.lastKey[:0], key...)
+		return
+	}
 	if len(currentBlock)+buf.Len() > sstBlockSize {
 		w.finishCurrentBlock()
 		w.blocks = append(w.blocks, make([]byte, 0, sstBlockSize))

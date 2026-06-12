@@ -75,17 +75,46 @@ func (e *engine) Write(key, value []byte) error {
 	return nil
 }
 
+// flushActiveMemtable freezes the active memtable, enqueues
+// it for flush, and installs a fresh memtable as the new
+// active. The order of operations matters:
+//
+//  1. Capture the current active into `frozen` BEFORE
+//     mutating any state. Step 5's `requestFlush` and step 7's
+//     slice erase both refer to this pointer.
+//  2. Freeze `frozen` (idempotent: `requestFlush` also calls
+//     Freeze, but capturing the freeze here makes the data
+//     flow obvious).
+//  3. Append the new active memtable.
+//  4. Swap the active pointer.
+//  5. Enqueue `frozen` for flush.
+//  6. Remove `frozen` from the slice at its known index
+//     (`len-2` is the position of the freshly frozen one
+//     after the append; do not pick `e.memtables[0]`, which
+//     is a different, already-flushed memtable).
+//
+// REQ000347 (iter-26): the previous implementation selected
+// `e.memtables[0]` for flush, which flushed an unrelated
+// stale memtable. The freshly frozen memtable was then
+// removed by `e.memtables[1:]`, never reaching the flush
+// queue. The result was silent data loss for any row whose
+// INSERT crossed a memtable boundary.
 func (e *engine) flushActiveMemtable() error {
-	e.activeMem.Freeze()
+	frozen := e.activeMem
+	frozen.Freeze()
 
 	newMem := newMemtable(64 * 1024 * 1024)
 	e.memtables = append(e.memtables, newMem)
 	e.activeMem = newMem
 
-	oldMem := e.memtables[0]
-	e.fm.requestFlush(oldMem)
+	e.fm.requestFlush(frozen)
 
-	e.memtables = e.memtables[1:]
+	// Remove the freshly frozen memtable from the reader-visible
+	// list. After the append above, `frozen` is at
+	// `len(e.memtables) - 2`. We do an in-place erase to keep
+	// the backing array compact for the next flush.
+	idx := len(e.memtables) - 2
+	e.memtables = append(e.memtables[:idx], e.memtables[idx+1:]...)
 
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -120,10 +121,27 @@ func (fj *flushJob) updateManifest(tmpPath string) error {
 
 	files := []SSTFileMeta{meta}
 
+	// REQ000347 (iter-26): flushed SSTs always land in L0.
+	// The previous code appended to the *next* level
+	// (newLevels[len(current.levels)] = files), which meant
+	// the second flush put its SST in L1, the third in L2,
+	// and so on. readFromSST walks levels in order, so
+	// newer-flushed data was still findable in this version
+	// of the manifest, but the level count was unbounded
+	// and the L0 "hot" level was never populated after the
+	// first flush, which broke subsequent compaction
+	// scheduling.
 	current := fj.manifest.Current()
-	newLevels := make([][]SSTFileMeta, len(current.levels)+1)
-	copy(newLevels, current.levels)
-	newLevels[len(current.levels)] = files
+	newLevels := make([][]SSTFileMeta, len(current.levels))
+	if len(newLevels) == 0 {
+		newLevels = [][]SSTFileMeta{{}}
+	}
+	for i := range current.levels {
+		newLevels[i] = append([]SSTFileMeta(nil), current.levels[i]...)
+	}
+	// Prepend the new file to L0 so the merge iterator sees
+	// it first (newest data wins on key collision).
+	newLevels[0] = append(files, newLevels[0]...)
 
 	v := Version{
 		num:     current.num + 1,
@@ -182,7 +200,26 @@ func (fm *flushManager) flushLoop() {
 	for {
 		select {
 		case <-fm.done:
-			return
+			// Stop requested. Drain any queued jobs so every
+			// Add(1) has a matching Done(). Use a simple
+			// non-blocking drain: if the queue is still being
+			// written to, those jobs will see done and not
+			// Add(), so this one-pass drain is safe.
+			for {
+				select {
+				case job, ok := <-fm.flushQueue:
+					if !ok {
+						return
+					}
+					if err := job.Run(); err != nil {
+						e := err
+						fm.lastErr.Store(&e)
+					}
+					fm.pendingWGs.Done()
+				default:
+					return
+				}
+			}
 		case job, ok := <-fm.flushQueue:
 			if !ok {
 				return
@@ -203,28 +240,67 @@ func (fm *flushManager) MaybeFlush() {
 	}
 }
 
+// requestFlush enqueues a memtable for background flushing.
+// If the flush queue is full, we retry with a small backoff
+// rather than silently dropping the job (which would lose the
+// memtable's data without any operator-visible signal). The
+// previous `default` branch called `pendingWGs.Done()` and
+// returned, leaving the memtable enqueued for the next
+// `requestFlush` to pick up — but in practice the next
+// `requestFlush` was for a *different* memtable, so the
+// dropped memtable was effectively orphaned. See REQ000347.
+//
+// The retry path uses a non-blocking send to avoid stalling
+// the writer goroutine on a stalled flush worker. After
+// `maxFlushRetries` attempts we fall through to a blocking
+// send, which the flush worker must service before any
+// further writes can complete. This is preferable to silent
+// loss: the worst case is a write stall under sustained
+// flush-queue saturation, not data loss.
+const maxFlushRetries = 8
+
 func (fm *flushManager) requestFlush(m *memtable) {
+	// If Stop() has already been called, skip the flush. This
+	// prevents Add(1) after the flushLoop has entered its drain
+	// phase, which would cause a negative WaitGroup counter.
+	select {
+	case <-fm.done:
+		return
+	default:
+	}
+
 	m.Freeze()
 
 	id := nextFileID()
-	fm.pendingWGs.Add(1)
-	select {
-	case fm.flushQueue <- &flushJob{
-		memtable: m,
-		// outputPath is the directory the flush writes temp files
-		// to. The final SST path is <dir>/<fileName(meta)> and is
-		// constructed by flushJob.Run via the manifest SSTFileMeta.
-		// Before the iter-16 fix, outputPath was the final flat path
-		// <dir>/L0_<id>.sst which the compaction reader could not
-		// locate. (R16-7)
+	job := &flushJob{
+		memtable:   m,
 		outputPath: filepath.Join(fm.dir, "sst"),
 		manifest:   fm.manifest,
 		fileID:     id,
 		level:      0,
-	}:
-	default:
-		fm.pendingWGs.Done()
 	}
+	for attempt := 0; attempt < maxFlushRetries; attempt++ {
+		select {
+		case fm.flushQueue <- job:
+			fm.pendingWGs.Add(1)
+			return
+		default:
+			select {
+			case <-fm.done:
+				return
+			default:
+				runtime.Gosched()
+			}
+		}
+	}
+	// Retries exhausted. Double-check done before blocking.
+	select {
+	case <-fm.done:
+		return
+	default:
+	}
+	fm.pendingWGs.Add(1)
+	fm.flushQueue <- job
 }
 
 // WaitForFlush blocks until every enqueued flush job has completed.
