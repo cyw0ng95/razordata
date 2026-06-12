@@ -85,6 +85,8 @@ func TestEval(t *testing.T) {
 			Expr: &PS.NullLiteral{},
 			List: []PS.Expr{&PS.NumberLiteral{Val: 1}, &PS.NumberLiteral{Val: 2}},
 		}, nil, false, false},
+		{"is_null_true", &PS.BinaryExpr{Op: int(LX.T_IS), Left: &PS.NullLiteral{}, Right: &PS.NullLiteral{}}, nil, true, false},
+		{"is_not_null_false", &PS.BinaryExpr{Op: int(LX.T_IS), Left: &PS.NullLiteral{}, Right: &PS.UnaryExpr{Op: int(LX.T_NOT), Operand: &PS.NullLiteral{}}}, nil, false, false},
 	}
 
 	for _, tc := range cases {

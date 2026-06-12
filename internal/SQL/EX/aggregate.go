@@ -8,6 +8,7 @@ package EX
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
@@ -287,6 +288,27 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 			}
 		}
 		return best, nil
+	case "GROUP_CONCAT":
+		sep := ","
+		var parts []string
+		for _, r := range rows {
+			v, err := Eval(agg.Arg, &r, params)
+			if err != nil {
+				return nil, err
+			}
+			if v == nil {
+				continue
+			}
+			parts = append(parts, fmt.Sprintf("%v", v))
+		}
+		if len(parts) == 0 {
+			return nil, nil
+		}
+		out := parts[0]
+		for _, p := range parts[1:] {
+			out += sep + p
+		}
+		return out, nil
 	}
 	return nil, nil
 }
