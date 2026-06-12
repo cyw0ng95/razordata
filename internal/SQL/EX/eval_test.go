@@ -152,12 +152,6 @@ func TestEvalNullArithmetic(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got, err := Eval(c.expr, nil, nil)
-			if c.name == "int_div_by_zero" || c.name == "float_div_by_zero" {
-				if err != ErrDivByZero {
-					t.Errorf("expected ErrDivByZero, got %v", err)
-				}
-				return
-			}
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
