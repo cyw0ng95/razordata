@@ -766,10 +766,19 @@ func numericArith(a, b interface{}, op rune) (interface{}, error) {
 			var ri int64
 			switch op {
 			case '+':
+				if (bi > 0 && ai > math.MaxInt64-bi) || (bi < 0 && ai < math.MinInt64-bi) {
+					return nil, nil
+				}
 				ri = ai + bi
 			case '-':
+				if (bi < 0 && ai > math.MaxInt64+bi) || (bi > 0 && ai < math.MinInt64+bi) {
+					return nil, nil
+				}
 				ri = ai - bi
 			case '*':
+				if ai != 0 && bi != 0 && (af*bf > math.MaxInt64 || af*bf < math.MinInt64) {
+					return nil, nil
+				}
 				ri = ai * bi
 			}
 			return ri, nil

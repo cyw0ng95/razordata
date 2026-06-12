@@ -18,6 +18,8 @@ type WindowOperator struct {
 	rows     []Row
 	results  []interface{}
 	idx      int
+	outCols  []string
+	outData  []interface{}
 }
 
 // NewWindowOperator creates a window operator.
@@ -34,7 +36,7 @@ func NewWindowOperator(input Operator, funcName string, args []PS.Expr, spec *PS
 
 func (w *WindowOperator) Next(ctx context.Context) (Row, error) {
 	if w.rows == nil {
-		if err := w.materialize(); err != nil {
+		if err := w.materialize(ctx); err != nil {
 			return Row{}, err
 		}
 	}
@@ -45,13 +47,20 @@ func (w *WindowOperator) Next(ctx context.Context) (Row, error) {
 	result := w.results[w.idx]
 	w.idx++
 
-	outCols := make([]string, len(w.cols)+1)
-	copy(outCols, w.cols)
-	outCols[len(w.cols)] = w.funcName
-	outData := make([]interface{}, len(w.cols)+1)
-	copy(outData, row.Data)
-	outData[len(w.cols)] = result
-	return Row{Cols: outCols, Data: outData}, nil
+	if w.outCols == nil {
+		w.outCols = make([]string, len(w.cols)+1)
+		copy(w.outCols, w.cols)
+		w.outCols[len(w.cols)] = w.funcName
+	}
+	w.outData = w.outData[:0]
+	if cap(w.outData) < len(w.cols)+1 {
+		w.outData = make([]interface{}, len(w.cols)+1)
+	} else {
+		w.outData = w.outData[:len(w.cols)+1]
+	}
+	copy(w.outData, row.Data)
+	w.outData[len(w.cols)] = result
+	return Row{Cols: w.outCols, Data: w.outData}, nil
 }
 
 func (w *WindowOperator) Close() error {
@@ -61,9 +70,9 @@ func (w *WindowOperator) Close() error {
 	return nil
 }
 
-func (w *WindowOperator) materialize() error {
+func (w *WindowOperator) materialize(ctx context.Context) error {
 	for {
-		row, err := w.input.Next(context.Background())
+		row, err := w.input.Next(ctx)
 		if err != nil {
 			if err == ErrNoRows {
 				break
