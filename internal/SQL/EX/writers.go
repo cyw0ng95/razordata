@@ -124,6 +124,12 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 				continue
 			}
 		}
+		// REQ000126: FK validation on INSERT
+		if cschema != nil && len(cschema.foreignKeys) > 0 {
+			if err := validateForeignKeyInsert(cschema, out.Data, i.store); err != nil {
+				return Row{}, err
+			}
+		}
 		existing = append(existing, out)
 		i.rows++
 
@@ -190,6 +196,12 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		}
 		if err := checkUnique(i.schema, out, pending, nil, noopLookup); err != nil {
 			return Row{}, err
+		}
+		// REQ000126: FK validation on INSERT (store path)
+		if len(i.schema.foreignKeys) > 0 {
+			if err := validateForeignKeyInsert(i.schema, out.Data, i.store); err != nil {
+				return Row{}, err
+			}
 		}
 		pk, err := extractPK(i.schema, out)
 		if err != nil {
@@ -788,7 +800,43 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 			unique = append(unique, UniqueKey{Cols: idxs})
 		}
 	}
-	id := registerStoreSchemaFull(c.stmt.Name, cols, nullable, defaults, unique, pk)
+	// REQ000126: extract FK constraints from column-level and table-level
+	var fks []ForeignKeyConstraint
+	for _, col := range c.stmt.Cols {
+		if col.ReferencesTable != "" {
+			fk := ForeignKeyConstraint{
+				Columns:    []string{col.Name},
+				RefTable:   col.ReferencesTable,
+				RefColumns: []string{col.ReferencesColumn},
+				OnDelete:   col.OnDelete,
+				OnUpdate:   col.OnUpdate,
+			}
+			if fk.OnDelete == "" {
+				fk.OnDelete = "NO ACTION"
+			}
+			if fk.OnUpdate == "" {
+				fk.OnUpdate = "NO ACTION"
+			}
+			fks = append(fks, fk)
+		}
+	}
+	for _, fkAST := range c.stmt.ForeignKeys {
+		fk := ForeignKeyConstraint{
+			Columns:    fkAST.Columns,
+			RefTable:   fkAST.RefTable,
+			RefColumns: fkAST.RefColumns,
+			OnDelete:   fkAST.OnDelete,
+			OnUpdate:   fkAST.OnUpdate,
+		}
+		if fk.OnDelete == "" {
+			fk.OnDelete = "NO ACTION"
+		}
+		if fk.OnUpdate == "" {
+			fk.OnUpdate = "NO ACTION"
+		}
+		fks = append(fks, fk)
+	}
+	id := registerStoreSchemaWithFK(c.stmt.Name, cols, nullable, defaults, unique, pk, fks)
 	// R16-3: record each column's SQL type token alongside the
 	// schema so ExtractParamTypes can resolve `column = ?`
 	// placeholders to their column type at Prepare time.
