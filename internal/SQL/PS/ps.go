@@ -302,6 +302,12 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		return p.parseCaseExpr()
 	case LX.T_CAST:
 		return p.parseCast()
+	case LX.T_COALESCE:
+		p.advance()
+		return p.parseCoalesce()
+	case LX.T_NULLIF:
+		p.advance()
+		return p.parseNullif()
 	case LX.T_EXISTS:
 		return p.parseExists()
 	case LX.T_INTERVAL:
@@ -1907,6 +1913,68 @@ func parseFloat(s string) float64 {
 		}
 	}
 	return val
+}
+
+
+// parseCoalesce parses: COALESCE(expr[,expr]...)
+// Returns the first non-NULL expression (left-to-right).
+func (p *Parser) parseCoalesce() (Expr, error) {
+	if err := p.expect(LX.T_LPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	
+	var args []Expr
+	for {
+		arg, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, arg)
+		
+		if p.current.Type != LX.T_COMMA {
+			break
+		}
+		p.advance()
+	}
+	
+	if err := p.expect(LX.T_RPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	
+	return &FunctionCall{Name: "COALESCE", Args: args}, nil
+}
+
+// parseNullif parses: NULLIF(expr1, expr2)
+// Returns NULL if expr1 = expr2, otherwise expr1.
+func (p *Parser) parseNullif() (Expr, error) {
+	if err := p.expect(LX.T_LPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	
+	arg1, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	
+	if err := p.expect(LX.T_COMMA); err != nil {
+		return nil, err
+	}
+	p.advance()
+	
+	arg2, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	
+	if err := p.expect(LX.T_RPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	
+	return &FunctionCall{Name: "NULLIF", Args: []Expr{arg1, arg2}}, nil
 }
 
 func (p *Parser) parseWith() (*WithStmt, error) {

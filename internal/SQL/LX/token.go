@@ -168,6 +168,8 @@ const (
 	T_BITNOT
 	T_MOD
 	T_CONCAT
+	T_COALESCE
+	T_NULLIF
 
 	T_ERROR TokenType = -1
 )
@@ -340,6 +342,8 @@ var tokenTypeNames = [...]string{
 	T_BITNOT:      "BITNOT",
 	T_MOD:         "MOD",
 	T_CONCAT:      "CONCAT",
+	T_COALESCE:    "COALESCE",
+	T_NULLIF:      "NULLIF",
 }
 
 func (t Token) String() string {

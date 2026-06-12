@@ -131,8 +131,15 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []interface{}) (interface{}, 
 
 	switch e.Op {
 	case int(LX.T_EQ):
+		// SQL semantics: NULL compared with anything = NULL
+		if left == nil || right == nil {
+			return nil, nil
+		}
 		return equalValue(left, right), nil
 	case int(LX.T_NE):
+		if left == nil || right == nil {
+			return nil, nil
+		}
 		return !equalValue(left, right), nil
 	case int(LX.T_LT):
 		return compare(left, right) < 0, nil
@@ -464,6 +471,17 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 				return v, nil
 			}
 		}
+		return nil, nil
+	case "NULLIF":
+		if len(e.Args) != 2 {
+			return nil, fmt.Errorf("nullif: expected 2 args")
+		}
+		a, _ := Eval(e.Args[0], row, params)
+		b, _ := Eval(e.Args[1], row, params)
+		if equalValue(a, b) == true {
+			return nil, nil
+		}
+		return a, nil
 	case "NOW":
 		return time.Now().UTC().Format(time.RFC3339), nil
 	case "SUBSTR":

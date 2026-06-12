@@ -446,6 +446,13 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		return p.planSelect(viewSel)
 	}
 
+	// REQ000357 (iter-27): SELECT without FROM clause (e.g. `SELECT 1+1`).
+	// Create a Values operator that evaluates expressions over a single
+	// virtual row and returns exactly one result row.
+	if s.From == "" {
+		return newValuesOp(s.Cols)
+	}
+
 	var scan Operator
 	if p.store != nil {
 		// Try IndexScan first when the WHERE references an indexed column.
