@@ -266,6 +266,13 @@ func (fm *flushManager) requestFlush(m *memtable) {
 	// close `done` between the channel send and Add(1), causing a
 	// negative WaitGroup counter when the drain phase calls Done()
 	// for an item that was never Add()ed. See REQ000364.
+	//
+	// We call Add(1) BEFORE the send (and undo with Add(-1) on
+	// failure) so that the flushLoop's Done() can never observe a
+	// pendingWGs count of zero for a job that was already delivered
+	// to the channel. The previous ordering — Add after send — was
+	// racy: the receive side could run Done before requestFlush's
+	// goroutine reached Add(1).
 	fm.enqueueMu.Lock()
 	defer fm.enqueueMu.Unlock()
 
@@ -291,11 +298,12 @@ func (fm *flushManager) requestFlush(m *memtable) {
 			return
 		default:
 		}
+		fm.pendingWGs.Add(1)
 		select {
 		case fm.flushQueue <- job:
-			fm.pendingWGs.Add(1)
 			return
 		default:
+			fm.pendingWGs.Add(-1)
 			runtime.Gosched()
 		}
 	}
@@ -305,8 +313,8 @@ func (fm *flushManager) requestFlush(m *memtable) {
 		return
 	default:
 	}
-	fm.flushQueue <- job
 	fm.pendingWGs.Add(1)
+	fm.flushQueue <- job
 }
 
 // WaitForFlush blocks until every enqueued flush job has completed.
