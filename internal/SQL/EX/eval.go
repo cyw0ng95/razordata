@@ -652,7 +652,7 @@ func div(a, b interface{}) (interface{}, error) {
 	if ai, ok := a.(int64); ok {
 		if bi, ok := b.(int64); ok {
 			if bi == 0 {
-				return nil, ErrDivByZero
+				return nil, nil
 			}
 			return ai / bi, nil
 		}
@@ -663,7 +663,7 @@ func div(a, b interface{}) (interface{}, error) {
 		return nil, nil
 	}
 	if bf == 0 {
-		return nil, ErrDivByZero
+		return nil, nil
 	}
 	return af / bf, nil
 }
@@ -675,7 +675,7 @@ func mod(a, b interface{}) (interface{}, error) {
 	if ai, ok := a.(int64); ok {
 		if bi, ok := b.(int64); ok {
 			if bi == 0 {
-				return nil, ErrDivByZero
+				return nil, nil
 			}
 			return ai % bi, nil
 		}
@@ -686,7 +686,7 @@ func mod(a, b interface{}) (interface{}, error) {
 		return nil, nil
 	}
 	if bf == 0 {
-		return nil, ErrDivByZero
+		return nil, nil
 	}
 	return math.Mod(af, bf), nil
 }
