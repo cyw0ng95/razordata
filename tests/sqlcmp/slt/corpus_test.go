@@ -75,6 +75,80 @@ func TestSQLLogicTest_CorpusSubset(t *testing.T) {
 	if rate < corpusSubsetThreshold {
 		t.Errorf("slt: pass rate %.2f%% below threshold %.2f%%", rate*100, corpusSubsetThreshold*100)
 	}
+
+	// Coverage snapshot (REQ000334). Always written so a
+	// future baseline promotion can diff against the latest
+	// data; the baseline itself is a checked-in file that
+	// gets re-baselined per release.
+	snapshotPath := filepath.Join("testdata", "coverage.json")
+	current := snapshotFrom(perFile, total, corpusSubsetThreshold)
+	if err := writeCoverageSnapshot(snapshotPath, perFile, total, corpusSubsetThreshold); err != nil {
+		t.Logf("slt: coverage snapshot write failed: %v", err)
+	} else {
+		baselinePath := filepath.Join("testdata", "coverage.baseline.json")
+		base, err := loadBaseline(baselinePath)
+		if err != nil {
+			t.Logf("slt: baseline load failed: %v", err)
+		} else if base != nil {
+			if drops := compareToBaseline(base, current); len(drops) > 0 {
+				t.Errorf("slt: pass count dropped below baseline in %d file(s): first few: %v",
+					len(drops), sampleFirst(drops, 5))
+			}
+		}
+	}
+
+	// JUnit output (REQ000333). Always emitted when the
+	// RAZOR_SLT_JUNIT env var is set; CI sets it.
+	if jpath := os.Getenv("RAZOR_SLT_JUNIT"); jpath != "" {
+		suite := NewJUnitSuite(perFile, total)
+		if err := writeJUnitToFile(jpath, suite); err != nil {
+			t.Logf("slt: junit write failed: %v", err)
+		}
+	}
+}
+
+// snapshotFrom builds a CoverageSnapshot from per-file stats
+// without going through writeCoverageSnapshot. Used by the
+// test harness so the baseline comparison is in-process.
+func snapshotFrom(files []fileStat, total Stats, threshold float64) *CoverageSnapshot {
+	c := &CoverageSnapshot{
+		Version:   "1",
+		Threshold: threshold,
+		Files:     make(map[string]CoverageEntry, len(files)),
+		Totals:    total,
+	}
+	for _, f := range files {
+		c.Files[f.path] = CoverageEntry{
+			Total:       f.stats.Total,
+			Passed:      f.stats.Passed,
+			Failed:      f.stats.Failed,
+			Skipped:     f.stats.Skipped,
+			ParseErrors: f.stats.ParseErrors,
+		}
+	}
+	return c
+}
+
+// sampleFirst returns at most n items from the front of s.
+func sampleFirst(s []string, n int) []string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+// writeJUnitToFile is a small adapter so the test code does
+// not have to manage file handles inline.
+func writeJUnitToFile(path string, suite JUnitTestSuite) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return WriteJUnit(f, suite)
 }
 
 // runFile parses one .test file and runs the driver through

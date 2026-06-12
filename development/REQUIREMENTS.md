@@ -83,21 +83,6 @@ Columns for selection:
 | REQ000320 | ENG | Configurable compaction style (`Options.CompactionStyle = leveled \| tiered \| hybrid`; tiered for time-series) | medium | M | iter-04 | `ENG/LS/compaction.go` — strategy interface; `Options.CompactionStyle` field |
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
 | REQ000322 | LOG | eBPF runtime tracing export (`ProfileHook` data consumed by eBPF programs for lock contention / I/O queue / GC pause maps) | medium | M | iter-00 (ProfileHook) | `LOG/HK/profile.go` — BPF map publishing; optional `cmd/razor-ebpf` tool |
-| REQ000323 | TEST | SQLLogicTest corpus mirror as git submodule (`tests/sqlcmp/corpus` from `MarvBeer/sqlite-test-suite`); build-tag-gated fetch | high | S | iter-25 plan | `.gitmodules` entry; build tag `slt_corpus` |
-| REQ000324 | TEST | SLT test file parser (`statement ok\|error`, `query <types> <sort> <label>`, `halt`, `hash-threshold`, `skipif`, `onlyif`; tolerant, line-oriented) | high | M | REQ000323 | new `tests/sqlcmp/slt/parser.go` + `types.go`; fixtures in `slt/testdata/*.test` |
-| REQ000325 | TEST | Driver interface (`Connect`/`Close`/`Exec`/`Query`; returns `ResultSet` with typed `Value` cells) | high | S | REQ000324 | new `tests/sqlcmp/slt/driver.go` |
-| REQ000326 | TEST | Razordata driver implementation wrapping public `internal/SYS.Engine` API; SQL errors classified as `skipped` not `failed` | high | M | REQ000325 | new `tests/sqlcmp/slt/razor_driver.go` |
-| REQ000327 | TEST | SLT runner + type-aware result diff (`T`/`I`/`R`/`NULL`; `nosort`/`rowsort`/`valuesort`; `label` grouping) | high | M | REQ000324, REQ000326 | new `tests/sqlcmp/slt/runner.go` + `diff.go` |
-| REQ000328 | TEST | Corpus subset default target (~200 `.test` files from `select1-4`, `index/`, `evidence/`, `minmax/`, `cast/`, `null/`, `decimal/`, `datetime/`); calibrated pass-rate threshold; full corpus gated by `slt_corpus_full` tag | high | S | REQ000327 | new `tests/sqlcmp/slt/sanygo_test.go` |
-| REQ000329 | TEST | Pure-Go reference oracle via `modernc.org/sqlite` dependency (test-only); fallback to hand-rolled `tests/sqlcmp/oracle/` if modernc fails to build in sandbox | high | M | iter-25 plan | `go.mod` entry; new `tests/sqlcmp/dual/` package |
-| REQ000330 | TEST | Dual runner: same SQL on Razordata + oracle; result-set diff after normalization | high | M | REQ000329 | new `tests/sqlcmp/dual/dual.go` + `dual_test.go` |
-| REQ000331 | TEST | Result-set normalization (int→int64, float round, strip whitespace, column-name sort, `''`/`NULL` config flag) | medium | M | REQ000330 | new `tests/sqlcmp/dual/normalize.go` |
-| REQ000332 | TEST | Dual case authoring convention (`dualCase` struct, table-driven; seed ~50 cases across DDL/DML/aggregates/joins) | medium | M | REQ000330 | new `tests/sqlcmp/dual/cases/*.go` (5 files) |
-| REQ000333 | TEST | JUnit XML output for CI consumption (pass/fail/skip per testcase) | medium | S | REQ000327 | new `tests/sqlcmp/slt/junit.go` |
-| REQ000334 | TEST | Coverage snapshot (`tests/sqlcmp/slt/coverage.json` per run; `coverage.baseline.json` committed; regression check) | medium | S | REQ000328 | new `tests/sqlcmp/slt/coverage.go` |
-| REQ000335 | TEST | CI workflow: PR + nightly; run subset; upload JUnit; post pass-rate PR comment vs `main` | medium | S | REQ000333, REQ000334 | new `.github/workflows/slt.yml` |
-| REQ000336 | TEST | Developer guide: how to run, add cases, re-baseline coverage | low | S | iter-25 plan | new `tests/sqlcmp/README.md` + `tests/sqlcmp/slt/README.md` |
-| REQ000337 | TEST | Architecture note lives in iteration doc (not `design/`); test harness is operational, not architectural | low | S | iter-25 plan | `development/iterations/iter-25-sqlite-testsuite.md` (this file) |
 
 ## Unfixed Bugs (surfaces as requirements)
 
@@ -333,3 +318,18 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000290 | SQL/EX | LAG/LEAD arbitrary offset support | iter-24 |
 | REQ000270 | SQL/PS | FETCH FIRST n ROWS ONLY | iter-24 |
 | REQ000242 | SYS | Pragmas (cache_size, journal_mode, synchronous) | iter-24 |
+| REQ000323 | TEST | SQLLogicTest corpus mirror as git submodule (`tests/sqlcmp/corpus` from `MarvBeer/sqlite-test-suite`); build-tag-gated fetch | iter-25 |
+| REQ000324 | TEST | SLT test file parser (`statement ok\|error`, `query <types> <sort> <label>`, `halt`, `hash-threshold`, `skipif`, `onlyif`; tolerant, line-oriented) | iter-25 |
+| REQ000325 | TEST | Driver interface (`Connect`/`Close`/`Exec`/`Query`; returns `ResultSet` with typed `Value` cells) | iter-25 |
+| REQ000326 | TEST | Razordata driver implementation wrapping public `internal/SYS.Engine` API; SQL errors classified as `skipped` not `failed` | iter-25 |
+| REQ000327 | TEST | SLT runner + type-aware result diff (`T`/`I`/`R`/`NULL`; `nosort`/`rowsort`/`valuesort`; `label` grouping) | iter-25 |
+| REQ000328 | TEST | Corpus subset default target (~200 `.test` files from `select1-4`, `index/`, `evidence/`, `minmax/`, `cast/`, `null/`, `decimal/`, `datetime/`); calibrated pass-rate threshold; full corpus gated by `slt_corpus_full` tag | iter-25 |
+| REQ000329 | TEST | Pure-Go reference oracle via `modernc.org/sqlite` dependency (test-only); fallback to hand-rolled `tests/sqlcmp/oracle/` if modernc fails to build in sandbox | iter-25 |
+| REQ000330 | TEST | Dual runner: same SQL on Razordata + oracle; result-set diff after normalization | iter-25 |
+| REQ000331 | TEST | Result-set normalization (int→int64, float round, strip whitespace, column-name sort, `''`/`NULL` config flag) | iter-25 |
+| REQ000332 | TEST | Dual case authoring convention (`dualCase` struct, table-driven; seed ~50 cases across DDL/DML/aggregates/joins) | iter-25 |
+| REQ000333 | TEST | JUnit XML output for CI consumption (pass/fail/skip per testcase) | iter-25 |
+| REQ000334 | TEST | Coverage snapshot (`tests/sqlcmp/slt/coverage.json` per run; `coverage.baseline.json` committed; regression check) | iter-25 |
+| REQ000335 | TEST | CI workflow: PR + nightly; run subset; upload JUnit; post pass-rate PR comment vs `main` | iter-25 (deferred — no `.github/` in repo) |
+| REQ000336 | TEST | Developer guide: how to run, add cases, re-baseline coverage | iter-25 |
+| REQ000337 | TEST | Architecture note lives in iteration doc (not `design/`); test harness is operational, not architectural | iter-25 |
