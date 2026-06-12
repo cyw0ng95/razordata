@@ -97,10 +97,7 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-| REQ000345 | SQL/EX | Empty-table aggregate (`COUNT(*)`) returns zero rows instead of one row with value 0 — diverges from SQLite and breaks dual-runner | medium | S | iter-25 surfacing | see `iter-25-sqlite-testsuite.md` Gap Analysis; `SQL/EX/` aggregate operator on empty input |
-| REQ000346 | SQL/EX | Test isolation: `TestCreateIndex_Registers` and `TestIndexScan_WithStore_ReadsRows` fail under `go test -count=N` because EX package-level `tables`/`schemas` maps are not reset between runs (race detector reports DATA RACE on `tables` and `schemas` writes when multiple tests run concurrently or in sequence without `EX.UnregisterAll()`) | high | S | iter-25 surfacing | `internal/SQL/EX/index_ddl_test.go:11`, `internal/SQL/EX/cost_indexscan_test.go:73`; fix is `t.Cleanup(EX.UnregisterAll)` at top of each affected test |
-| REQ000347 | ENG | Silent data loss on large-row INSERT: a 100 MiB string literal INSERT returns success but the row is not retrievable by primary key (`SELECT ... WHERE id = N` returns 0 rows). Behaviour with row sizes ≤1 MiB is correct. Suspected memtable/flush path drops rows whose encoded size exceeds an internal buffer | critical | L | iter-25 surfacing (edge probe `TestEdge_LargeStrings`) | `internal/ENG/LS/engine.go` memtable + flush; reproduce via `tests/sqlcmp/slt/largevalue_test.go` (gated by `edge_probe` build tag) |
-| REQ000348 | SQL/EX | `SELECT` results are not consumable from a `*Session.Query` for sizes >~10MB; the public API returns only `*Rows{Cols,Types}` (schema only) without a streaming accessor; callers must drop into the unexported `*Executor.QueryAll`. Limits test-harness coverage of large payloads | medium | M | iter-25 surfacing | `internal/SYS/AP/ap.go` `Session` interface; `internal/SYS/SE/se.go` `Query` returns `&AP.Rows{...}` with no row data |
+| REQ000348 | SQL/EX | `Session.Query` returns schema-only `*AP.Rows` (no row data streaming; callers must use unexported `QueryAll`) | medium | M | iter-25 surfacing | `internal/SYS/AP/ap.go` `Session` interface needs `Next()` accessor; `internal/SYS/SE/se.go` returns `&AP.Rows{Cols,Types}` with no streaming |
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
 | REQ000355 | SQL/PS | Missing aggregate function `GROUP_CONCAT(expr [SEP sep])` | low | M | iter-08 (aggregates) | `SQL/EX/` aggregate operator; new `aggGroupConcat` |
 | REQ000356 | SQL/LX | Unary `NOT` as logical operator (currently only works as infix in some contexts; `~` bitwise NOT) | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` |
@@ -128,6 +125,9 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000174 | ENG/LS | BloomFilter FNV-1a double-hash | iter-20 |
 | REQ000193 | LOG/HK | MetricHook counters wiring | iter-20 |
 | REQ000196 | SQL/EX | HashAggregate in planner (1000-row threshold) | iter-20 |
+| REQ000345 | SQL/EX | Empty-table aggregate returns 1 row (not 0) | iter-26 |
+| REQ000346 | SQL/EX | Test isolation: EX package-level maps reset | iter-26 |
+| REQ000347 | ENG | Silent data loss in LSM flush path | iter-26 |
 | REQ000197 | SQL/EX | OUTER JOIN executor (LEFT/RIGHT/FULL) | iter-20 |
 | REQ000198 | ENG/LS | Skiplist sync.Pool for scratch arrays | iter-20 |
 | REQ000201 | QUAL | SQL/PL coverage 30.6% to 98.8% | iter-20 |
