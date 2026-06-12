@@ -52,7 +52,7 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 24 | SQLite Compliance | Read-committed isolation, MVCC own-writes, foreign keys, ALTER TABLE, CREATE VIEW, Pragmas, FETCH FIRST | `TXN/VL`, `TXN/SN`, `SQL/EX`, `SQL/PS`, `SQL/PL`, `ENG/LS`, `SYS` | done (v0.23.0–v0.24.0) |
 | 25 | SQLite Compatibility Test Suite | Pure-Go SQLLogicTest driver (parser, runner, type-aware diff, RazorDriver wrapping internal/SYS), corpus subset gate, modernc.org/sqlite dual-runner, JUnit XML, coverage snapshot + baseline regression check | `tests/sqlcmp/slt/`, `tests/sqlcmp/dual/` | done (v0.25.0) |
 
-All iterations through iter-25 complete. Released as v0.9.0–v0.25.0. Coverage details: `go test ./... -cover`.
+All iterations through iter-25 complete. Released as v0.9.0–v0.25.1. Coverage details: `go test ./... -cover`.
 
 ## Completion Criteria (All Iterations)
 
@@ -106,6 +106,7 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 | **v0.21.0** | **SQL Expression Extensions** (iter-23 phase 2). Window functions (ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD with PARTITION BY/ORDER BY/ROWS frame), DATE/TIME/TIMESTAMP types (ParseDateTime, DateAdd/Sub/Diff, julianDay, strftime, EXTRACT, INTERVAL arithmetic), JSON type (json_extract, json_type, json_valid, json_array, json_object, json_set, ->, ->> operators). 17 new lexer tokens, WindowFunc/WindowSpec AST nodes, IntervalLiteral AST, WindowOperator with index-based partitioning. ~2,500 LOC, ~35 tests. |
 | **v0.22.0** | **Storage Performance Upgrade** (iter-23 phase 3). B-tree secondary index package (ENG/ID: BTree with Insert/Get/Delete, 4KB page-based persistence, WAL-integrated, concurrent-safe; Cursor with Seek/Next crossing leaf boundaries), IndexScan B-tree integration (NewIndexScanWithBTree, nextFromBTree), SST prefix bloom filters (FNV-1a double-hash on 8-byte prefix, MayContainPrefix), SST block compression (compress/flate BestSpeed with smart fallback). Bug fixes: computeRank RANK for tied rows, Cursor.Next() leaf boundary traversal. ~3,000 LOC, ~15 tests. |
 | **v0.25.0** | **SQLite Compatibility Test Suite** (iter-25). Pure-Go SQLLogicTest driver (parser + runner + type-aware result diff + hash-threshold + label cross-check + RazorDriver wrapping `internal/SYS`), corpus submodule skeleton (MarvBeer/sqlite-test-suite, build-tag gated fetch), curated PR subset (~200 files, 30% threshold), modernc.org/sqlite-backed dual runner (no binary dependency, no CGO) with type-aware normalization and 6 seeded cases, JUnit XML output for CI, coverage snapshot with baseline regression detection. REQ000345 logged: empty-table `COUNT(*)` returns zero rows on Razordata (engine bug, not driver). 15 REQs (REQ000323–REQ000337), ~3,560 LOC, 27 files. CI workflow (REQ000335) deferred — no `.github/` in repo. |
+| **v0.25.1** | **Bugfixes from edge_probe tests**. SeqScan/IndexScan nil iterator safety, RazorDriver concurrent access mutex, 5 feature gaps logged (bitwise, \|\|, %, COALESCE, NULLIF). |
 
 ## Design Protection
 
