@@ -2,7 +2,7 @@
 
 **Subsystem:** `tests/sqlcmp` (new clusters: `tests/sqlcmp/slt/`, `tests/sqlcmp/dual/`)
 
-**Status:** planning
+**Status:** done
 
 **Est. LOC:** ~3,500 (no cap)
 
@@ -557,3 +557,75 @@ AGENTS.md's Bug-To-Requirement Rule.
   orthogonal to this iteration.
 - **Property-based result-set checks** — `rapid.Check` on dual
   runner; defer until dual runner stabilizes.
+
+---
+
+## Outcome
+
+**Status:** done. Shipped in v0.25.0.
+
+### What Shipped
+
+| Cluster | Files | LOC | Status |
+|---|---|---|---|
+| A — SLT parser / driver | `slt/types.go`, `slt/parser.go`, `slt/driver.go`, `slt/razor_driver.go`, `slt/filestat.go`, `slt/hash.go` | ~1,200 | done |
+| A — Runner + diff | `slt/runner.go`, `slt/diff.go` | ~470 | done |
+| A — Corpus subset gate | `slt/subset.go`, `slt/corpus_test.go` | ~200 | done (skeleton; corpus not yet cloned) |
+| A — Coverage / JUnit | `slt/coverage.go`, `slt/junit.go` | ~190 | done |
+| A — Tests + sample | `slt/parser_test.go`, `slt/runner_test.go`, `slt/razor_driver_test.go`, `slt/junit_test.go`, `slt/coverage_test.go`, `slt/sample_test.go` | ~770 | done |
+| B — Dual runner | `dual/dual.go`, `dual/shim.go`, `dual/cases.go`, `dual/dual_test.go` | ~570 | done (modernc.org/sqlite oracle) |
+| D — Documentation | `tests/sqlcmp/README.md`, `corpus/README.md` | ~150 | done |
+| A — Submodule | `.gitmodules`, `corpus/.gitkeep` | n/a | done (submodule URL recorded; clone is human-gated) |
+| **Total** | 18 source + 6 test files | **~3,560** | |
+
+### Deviations from Plan
+
+- **REQ000329 (modernc.org/sqlite):** first-choice path worked
+  on the first try. The hand-rolled oracle fallback in
+  `tests/sqlcmp/oracle/` was not implemented. ~1,000 LOC of
+  spec-estimated work avoided.
+- **REQ000335 (CI workflow):** not implemented this iteration.
+  The spec assumed a `.github/workflows/slt.yml` file; the
+  repository has no `.github/` directory and CI integration is
+  a human-gated decision. The CI hook logic (env-driven JUnit
+  output, env-driven baseline diff) is in place and ready to
+  be wired up when the workflow file lands.
+- **Coverage baseline:** the v0.25.0 baseline
+  (`tests/sqlcmp/slt/testdata/coverage.baseline.json`) is
+  intentionally not committed — the corpus submodule is not
+  cloned in this development environment, so no real corpus
+  data is available. The first release to run the corpus
+  against a populated submodule will commit the baseline.
+
+### Bugs Surfaced
+
+- **REQ000345** — `SELECT COUNT(*) FROM t` on an empty `t`
+  returns zero rows instead of one row with `0`. Filed in
+  `REQUIREMENTS.md` Unfixed Bugs. Discovered by the dual
+  runner: the modernc oracle returns `[[0]]` and the
+  Razordata side returns `[]`. The bug is in the SQL/EX
+  aggregate operator's empty-input path, not in the
+  test driver.
+
+### Verification
+
+- `go test -race -count=1 ./tests/sqlcmp/...` — all green
+  (slt: 28 unit + 4 integration + 5 coverage; dual: 7; existing
+  5 case files unchanged).
+- `go test -race -count=1 -tags slt_corpus ./tests/sqlcmp/slt/...`
+  — all green; the corpus subset test correctly skips when
+  the corpus submodule is not initialised.
+- `go build ./...` — clean.
+- `go vet ./tests/...` — clean.
+- `gofmt -s -l tests/sqlcmp/` — no drift.
+
+### Open Items for Future Iterations
+
+- Clone the corpus submodule and commit the first real
+  coverage baseline.
+- Add `.github/workflows/slt.yml` (REQ000335) when CI is
+  configured.
+- Address REQ000345 (empty-table aggregate) to bring the
+  pass rate up.
+- Property-based fuzzing of the SLT parser
+  (deferred per spec, Out of Scope).
