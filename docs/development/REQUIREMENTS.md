@@ -101,6 +101,10 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
 | REQ000355 | SQL/PS | Missing aggregate function `GROUP_CONCAT(expr [SEP sep])` | low | M | iter-08 (aggregates) | `SQL/EX/` aggregate operator; new `aggGroupConcat` |
 | REQ000356 | SQL/LX | Unary `NOT` as logical operator (currently only works as infix in some contexts; `~` bitwise NOT) | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` |
+| REQ000363 | SQL/EX | GROUP_CONCAT empty result — empty table should return NULL (not 0 rows) | low | S | REQ000345 (aggregate empty) | `SQL/EX/aggregate.go:evalAggregateOver` — empty input → NULL |
+| REQ000366 | SQL/EX | Subquery planner uses `NewPlanner()` without store — correlated subqueries return wrong results; affects evalExists, evalInSubquery, evalScalarSubquery (eval.go:282, 300, 308). 862/3000 queries in select1.test fail with `got 0 cells` | critical | M | iter-23 (catalog) | `SQL/EX/eval.go` — thread store through eval context (Row struct, closure, or planner parameter) |
+| REQ000367 | SQL/EX | PRIMARY KEY constraint — RazorData requires PK on every table; SLT corpus tables like `CREATE TABLE t1(a INTEGER, b INTEGER, ...)` have no PK. All INSERTs fail, all queries return 0 rows | medium | M | iter-12 (catalog) | `SQL/EX/writers.go` — relax PK requirement (allow tables without PK, auto-add hidden PK) |
+| REQ000368 | SQL/PS | Parser doesn't support comma-join `FROM a, b` — `cross_join_basic` dual test case fails with `ps: syntax error at line 1 col 23: expected expression, got ,`. SLT corpus has many implicit cross joins. AST needs `Sources []string` instead of `From string` | medium | M | iter-08 (joins) | `SQL/PS/ast.go` Select.From → Select.Sources; `SQL/PS/ps.go` parseFrom; `SQL/EX/planner.go` planSelect |
 
 ## DONE
 
@@ -128,6 +132,13 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000345 | SQL/EX | Empty-table aggregate returns 1 row (not 0) | iter-26 |
 | REQ000346 | SQL/EX | Test isolation: EX package-level maps reset | iter-26 |
 | REQ000347 | ENG | Silent data loss in LSM flush path | iter-26 |
+| REQ000357 | SQL/EX | SELECT without FROM returns 0 rows — wrap in Values op when `s.From==""` | iter-26.1 (v0.26.3) |
+| REQ000359 | SQL/EX | String concat NULL semantics — `'a' \|\| NULL` returns NULL | iter-26.1 (v0.26.3) |
+| REQ000360 | SQL/EX | Arithmetic NULL semantics — `10 + NULL` returns NULL | iter-26.1 (v0.26.3) |
+| REQ000361 | SQL/EX | IS NULL / IS NOT NULL semantics — `NULL IS NULL` true, `NULL IS NOT NULL` false | iter-26.1 (v0.26.3) |
+| REQ000362 | SQL/EX | Comparison with NULL — `5 = NULL` returns NULL | iter-26.1 (v0.26.3) |
+| REQ000364 | ENG/LS | Negative WaitGroup counter panic in flushManager (REQ000347 followup) — Add(1) before send, enqueueMu serializes with Stop | iter-26.1 (v0.26.3) |
+| REQ000365 | tests/sqlcmp/dual | `allProbeCases` undeclared — register `probeCases` in `AllCases()` | iter-26.1 (v0.26.3) |
 | REQ000197 | SQL/EX | OUTER JOIN executor (LEFT/RIGHT/FULL) | iter-20 |
 | REQ000198 | ENG/LS | Skiplist sync.Pool for scratch arrays | iter-20 |
 | REQ000201 | QUAL | SQL/PL coverage 30.6% to 98.8% | iter-20 |
@@ -351,15 +362,17 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-| REQ000357 | SQL/EX | SELECT without FROM returns 0 rows (e.g. `SELECT 1+1` → [] vs `[[2]]`) — planner always creates scan op even with empty `s.From` | critical | S | none | `SQL/EX/planner.go:planSelect` — detect `s.From==""` and wrap expressions in `Values` operator |
 | REQ000358 | SQL/PS | XOR operator (`^`) parser gap — lexer emits `T_BITXOR` but parser doesn't recognize in precedence table | high | S | iter-07 (lexer) | `SQL/PS/ps.go` — add `T_BITXOR` to binary operator switch |
-| REQ000359 | SQL/EX | String concat NULL semantics — `'a' || NULL` returns `"a"` vs SQLite `NULL` | medium | S | iter-07 (eval) | `SQL/EX/eval.go:concat` — return nil if either operand nil |
-| REQ000360 | SQL/EX | Arithmetic NULL semantics — `10 + NULL` returns `10` vs SQLite `NULL` | medium | S | iter-07 (eval) | `SQL/EX/eval.go:add/sub/mul/div` — return nil if either operand nil |
-| REQ000361 | SQL/EX | IS NULL / IS NOT NULL semantics — `NULL IS NULL` returns false vs SQLite `true` | medium | S | iter-07 (eval) | `SQL/EX/eval.go` IS/IS NOT cases — fix NULL check logic |
-| REQ000362 | SQL/EX | Comparison with NULL — `5 = NULL` may return wrong value (should be NULL) | medium | S | iter-07 (eval) | `SQL/EX/eval.go:equalValue` — verify NULL handling |
-| REQ000363 | SQL/EX | GROUP_CONCAT empty result — empty table should return NULL (not 0 rows) | low | S | REQ000345 (aggregate empty) | `SQL/EX/aggregate.go:evalAggregateOver` — empty input → NULL |
-| REQ000364 | ENG/LS | Negative WaitGroup counter panic in flushManager — `requestFlush` and `flushLoop` race on `pendingWGs.Add(1)` / `pendingWGs.Done()`, causing `sync: negative WaitGroup counter` at `flush.go:231` and `flush.go:218` — REQ000347 (iter-26) fix was incomplete | critical | S | none | `ENG/LS/flush.go` — `pendingWGs` Add/Done asymmetry in flushLoop drain + retry path |
-| REQ000365 | tests/sqlcmp/dual | `allProbeCases` undeclared — `probe_cases.go:254` appends to `allProbeCases` in `init()` but the variable is never declared in any `.go` file in the package | high | S | none | `tests/sqlcmp/dual/probe_cases.go` — add `var allProbeCases = []dualCase{}` declaration |
+
+> The following bugs from the 2026-06-12 dual-runner pass were
+> resolved in iter-26.1 (v0.26.3): REQ000357 (SELECT no-FROM),
+> REQ000359 (concat NULL), REQ000360 (arith NULL), REQ000361
+> (IS NULL semantics), REQ000362 (= NULL), REQ000364 (flush
+> WaitGroup), REQ000365 (allProbeCases undeclared). They are
+> now in the DONE table. REQ000363 was promoted to TBD because
+> it is blocked by REQ000367 (no-PK tables) which is a larger
+> design change. REQ000366, REQ000367, REQ000368 from the
+> SLT corpus run are also still in TBD.
 
 ## Newly Discovered Bugs (2026-06-12, SLT corpus run)
 
@@ -368,8 +381,5 @@ Running `select1.test` (12K lines, ~3K query records) against the engine shows:
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-| REQ000366 | SQL/EX | Subquery planner uses `NewPlanner()` without store — correlated subqueries `(SELECT count(*) FROM t1 AS x WHERE x.c>t1.c)` return wrong results because the subquery planner can't see tables registered by the main planner. Affects `evalExists`, `evalInSubquery`, `evalScalarSubquery` (eval.go:282, 300, 308). 862/3000 queries in select1.test fail with `got 0 cells` for this reason | critical | M | iter-23 (catalog) | `SQL/EX/eval.go` — thread store through eval context (Row struct, closure, or planner parameter) |
-| REQ000367 | SQL/EX | PRIMARY KEY constraint — RazorData requires PK on every table; SLT corpus tables like `CREATE TABLE t1(a INTEGER, b INTEGER, ...)` have no PK. All INSERTs fail, all queries return 0 rows. This is a design difference, not a logic bug, but blocks running the full SLT corpus | medium | M | iter-12 (catalog) | `SQL/EX/writers.go` — relax PK requirement (allow tables without PK, auto-add hidden PK) |
-| REQ000368 | SQL/PS | Parser doesn't support comma-join `FROM a, b` — `cross_join_basic` dual test case fails with `ps: syntax error at line 1 col 23: expected expression, got ,`. SLT corpus has many implicit cross joins. AST needs `Sources []string` instead of `From string` | medium | M | iter-08 (joins) | `SQL/PS/ast.go` Select.From → Select.Sources; `SQL/PS/ps.go` parseFrom; `SQL/EX/planner.go` planSelect |
 
 ---
