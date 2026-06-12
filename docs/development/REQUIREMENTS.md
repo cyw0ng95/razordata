@@ -361,4 +361,15 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000364 | ENG/LS | Negative WaitGroup counter panic in flushManager — `requestFlush` and `flushLoop` race on `pendingWGs.Add(1)` / `pendingWGs.Done()`, causing `sync: negative WaitGroup counter` at `flush.go:231` and `flush.go:218` — REQ000347 (iter-26) fix was incomplete | critical | S | none | `ENG/LS/flush.go` — `pendingWGs` Add/Done asymmetry in flushLoop drain + retry path |
 | REQ000365 | tests/sqlcmp/dual | `allProbeCases` undeclared — `probe_cases.go:254` appends to `allProbeCases` in `init()` but the variable is never declared in any `.go` file in the package | high | S | none | `tests/sqlcmp/dual/probe_cases.go` — add `var allProbeCases = []dualCase{}` declaration |
 
+## Newly Discovered Bugs (2026-06-12, SLT corpus run)
+
+The SLT corpus from `jzombie/sqlite-sqllogictest-corpus` was copied to `tests/sqlcmp/corpus/test/`.
+Running `select1.test` (12K lines, ~3K query records) against the engine shows:
+
+| ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
+|---|---|---|---|---|---|---|
+| REQ000366 | SQL/EX | Subquery planner uses `NewPlanner()` without store — correlated subqueries `(SELECT count(*) FROM t1 AS x WHERE x.c>t1.c)` return wrong results because the subquery planner can't see tables registered by the main planner. Affects `evalExists`, `evalInSubquery`, `evalScalarSubquery` (eval.go:282, 300, 308). 862/3000 queries in select1.test fail with `got 0 cells` for this reason | critical | M | iter-23 (catalog) | `SQL/EX/eval.go` — thread store through eval context (Row struct, closure, or planner parameter) |
+| REQ000367 | SQL/EX | PRIMARY KEY constraint — RazorData requires PK on every table; SLT corpus tables like `CREATE TABLE t1(a INTEGER, b INTEGER, ...)` have no PK. All INSERTs fail, all queries return 0 rows. This is a design difference, not a logic bug, but blocks running the full SLT corpus | medium | M | iter-12 (catalog) | `SQL/EX/writers.go` — relax PK requirement (allow tables without PK, auto-add hidden PK) |
+| REQ000368 | SQL/PS | Parser doesn't support comma-join `FROM a, b` — `cross_join_basic` dual test case fails with `ps: syntax error at line 1 col 23: expected expression, got ,`. SLT corpus has many implicit cross joins. AST needs `Sources []string` instead of `From string` | medium | M | iter-08 (joins) | `SQL/PS/ast.go` Select.From → Select.Sources; `SQL/PS/ps.go` parseFrom; `SQL/EX/planner.go` planSelect |
+
 ---
