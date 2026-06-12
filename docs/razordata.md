@@ -1,66 +1,88 @@
-# Razordata: Beyond SQLite — An Analytical Deep Dive
+# Razordata: Architecture Overview
 
 > An embedded database built from scratch in pure Go, designed for the multicore era.
 
-## 1. Motivation
+## 1. Why Razordata
 
-SQLite is the most widely deployed database engine in the world. Its C codebase is battle-tested, but it carries architectural decisions from the early 1990s that constrain modern workloads:
+SQLite is the most widely deployed database engine in the world, but its architecture carries constraints from the early 1990s:
 
-- **Single-writer serialization.** SQLite's WAL mode allows concurrent reads, but writers are serialized at the WAL file level. Under write-heavy loads, this becomes a throughput bottleneck.
-- **B-tree page contention.** The B-tree stores data in fixed-size pages (typically 4096 bytes). Concurrent writers to nearby keys must acquire the same page-level locks, creating contention even when keys are logically independent.
-- **No MVCC.** SQLite uses page-level locking, not multi-version concurrency control. Readers and writers can block each other in default journal mode.
-- **C codebase.** Manual memory management, no garbage collector, platform-specific build dependencies. Cross-compilation requires careful toolchain management.
+- **Single-writer serialization.** Writers are serialized at the WAL file level. Under write-heavy loads, this becomes a throughput bottleneck.
+- **No MVCC.** Page-level locking means readers and writers can block each other in default journal mode.
+- **C codebase.** Manual memory management, platform-specific build dependencies, cross-compilation friction.
 
-Razordata is a ground-up reimplementation of an embedded database that keeps SQLite's ergonomic model — one directory, zero configuration, no server — while adopting storage and concurrency algorithms designed for modern hardware.
+Razordata keeps SQLite's ergonomic model — one directory, zero configuration, no server — while adopting storage and concurrency algorithms designed for modern hardware.
 
 ## 2. Design Constraints
-
-Before examining the internals, it is worth understanding what Razordata explicitly chose *not* to do:
 
 | Constraint | Rationale |
 |---|---|
 | No external C dependencies | Cross-compilation is trivial; no `CGO` portability issues; memory safety via Go's GC |
-| No network server | Embedded-first. The database lives in the same process as the application. Network servers are a separate concern. |
-| Go 1.22+ | Access to `slices`, `maps`, `iter`, modern `slog`. No need for backward compatibility with ancient Go. |
-| Single `go.mod` | No nested modules. Dependency graph is flat and auditable. |
-| Page size: 4 KB (power of 2) | Matches OS page size for `O_DIRECT` alignment and `mmap` efficiency. |
-
-The result is a database engine that can be embedded into any Go application with `go get`, runs identically on Linux, macOS, and Windows, and has zero build-time requirements beyond the Go toolchain.
+| No network server | Embedded-first. The database lives in the same process as the application. |
+| Go 1.22+ | Access to `slices`, `maps`, `iter`, modern `slog`. |
+| Single `go.mod` | No nested modules. Flat, auditable dependency graph. |
+| Page size: 4 KB | Matches OS page size for `O_DIRECT` alignment and `mmap` efficiency. |
 
 ## 3. Architecture: The Eight-Layer Stack
 
-Razordata is organized as eight subsystems with strict dependency ordering. No layer may depend on a layer above it. This is not just a convention — it is enforced by the build graph:
+Razordata is organized as eight subsystems with strict dependency ordering. No layer may depend on a layer above it — this is enforced by the build graph:
 
 ```
 LOG → FIL → MEM → WAL → ENG → TXN → SQL → SYS
 ```
 
-Each layer exposes interfaces consumed by the layer above. The layers are:
+Each layer exposes interfaces consumed by the layer above. The subsystems are:
 
-### LOG — Structured Logging
+| Subsystem | Responsibility | Function Clusters |
+|---|---|---|
+| `LOG` | Structured logging, async hook dispatch | `LG` (slog wrapper, levels, rotation), `HK` (trace/metric/profile hooks) |
+| `FIL` | Block I/O, file management, meta page | `DF` (pread/pwrite, O_DIRECT), `MF` (meta.razor), `LF` (WAL segments), `FS` (path validation) |
+| `MEM` | Buffer pool, sync.Pool, hint file | `BF` (clock-sweep LRU), `PC` (page slots, checksum), `SP` (object pooling) |
+| `WAL` | Write-ahead log, durability | `WR` (append, rotation, LSN), `FL` (fsync, batch commit), `RP` (replay, checkpoint) |
+| `ENG` | LSM tree, SST, compaction, manifest | `LS` (memtable, SST, bloom, compaction, manifest), `ID` (index), `TB` (table DDL), `SC` (schema), `DP` (encoding) |
+| `TXN` | MVCC, version chains, transactions | `MV` (version chain, arena), `LC` (hazard pointers, epoch), `SN` (read view), `VL` (commit protocol, conflict detection) |
+| `SQL` | SQL parsing, planning, execution | `LX` (lexer), `PS` (parser), `PL` (planner), `EX` (executor), `RE` (rewriter) |
+| `SYS` | Lifecycle, public API, sessions | `SY` (init, shutdown, stats), `AP` (Engine/Session API), `SE` (session), `TX` (transaction), `ST` (statement) |
+
+### 3.1 LOG — Structured Logging
 
 The foundation layer. Every other subsystem depends on it.
 
 - Wraps `log/slog` with an atomic level variable for lock-free level checks in the hot path.
-- Async hook dispatch via a bounded channel (non-blocking send, drop on overflow). Hooks never backpressure the logging path.
+- Async hook dispatch via bounded channel (non-blocking send, drop on overflow). Hooks never backpressure the logging path.
 - Three built-in hooks: `TraceHook` (SQL query tracing with wall-clock timing), `MetricHook` (throughput/latency counters), `ProfileHook` (CPU/heap dumps on error events).
 - Log rotation on size threshold. Compressed with gzip after rotation.
 
-The critical design choice: the bounded channel means the logging system can never block a database operation. If the hook dispatcher is slow, events are dropped. This is a deliberate trade-off — observability should never compromise correctness.
+**Trade-off:** The bounded channel means the logging system can never block a database operation. If the hook dispatcher is slow, events are dropped. Observability should never compromise correctness.
 
-**SQLite comparison.** SQLite uses `sqlite3_log()` with a global callback registered at compile time. There is no in-process tracing primitive — extensions like `EXPLAIN` and `sqlite3_trace_v2()` exist, but they are best-effort and synchronous. Razordata's three-hook model (trace / metric / profile) ships as a first-class feature with async dispatch, treating observability as part of the contract rather than an add-on. SQLite's design predates structured logging conventions; Razordata's `slog`-based foundation assumes operators will read JSON logs and pipe them into modern observability stacks.
-
-### FIL — File I/O
+### 3.2 FIL — File I/O
 
 The lowest I/O layer. All disk access flows through here.
 
-- **Block I/O via `pread`/`pwrite`**: Positional reads/writes without seeking. Each block is addressed by `(fd, blockID * BlockSize)`. This avoids shared file offset state and enables concurrent reads on the same FD.
-- **`O_DIRECT` with fallback**: On Linux, data files are opened with `O_DIRECT` to bypass the OS page cache. If the kernel rejects it (`EINVAL`), Razordata falls back to buffered I/O. WAL segments always use buffered I/O — `fsync` handles durability.
-- **CRC32 checksums**: Every 4 KB block carries a 4-byte IEEE CRC32 in its last 4 bytes. Reads verify the checksum; mismatches return `ErrCorrupt` without attempting recovery.
-- **Meta page** (`meta.razor`, always block 0): Contains magic bytes `0x5241524F` ("RAZO"), semantic version, block size, catalog root pointer, and manifest checksum. Read on startup to validate the database directory.
-- **Path validation**: Rejects any path containing `..` or symlinks. All paths are resolved against the database root before use — prevents directory traversal.
+**Block I/O via `pread`/`pwrite`:** Positional reads/writes without seeking. Each block is addressed by `(fd, blockID * BlockSize)`. This avoids shared file offset state and enables concurrent reads on the same file descriptor.
 
-File layout under `<name>.razor/`:
+**`O_DIRECT` with fallback:** On Linux, data files are opened with `O_DIRECT` to bypass the OS page cache. If the kernel rejects it (`EINVAL`), Razordata falls back to buffered I/O. WAL segments always use buffered I/O — `fsync` handles durability.
+
+**CRC32 checksums:** Every 4 KB block carries a 4-byte IEEE CRC32 in its last 4 bytes. Reads verify the checksum; mismatches return `ErrCorrupt` without attempting recovery.
+
+**Meta page** (`meta.razor`, always block 0):
+
+```
+┌────────────────────────────────────────────────────────┐
+│ Magic: 0x5241524F ("RAZO")                             │
+│ Version: uint32 (semantic version)                     │
+│ BlockSize: uint32 (bytes, power of 2, default 4096)    │
+│ CatalogRootPtr: uint64 (root of system catalog LSM)    │
+│ ManifestChecksum: uint32 (CRC32 of current manifest)   │
+└────────────────────────────────────────────────────────┘
+```
+
+Read on startup to validate magic bytes, load version, and locate the system catalog. Written only on `CREATE DATABASE` and `CHECKPOINT`.
+
+**Path validation:** Rejects any path containing `..` or symlinks. All paths are resolved against the database root before use — prevents directory traversal attacks.
+
+**File handle management:** Reference-counted `FileHandle` structs. `Refs` atomically incremented on `Open()`, decremented on `Close()`. When `Refs == 0`, the FD is closed. Prevents double-close via mutex.
+
+**File layout:**
 
 ```
 <name>.razor/
@@ -76,24 +98,25 @@ File layout under `<name>.razor/`:
 └── hint                # Buffer pool warm-start hint file
 ```
 
-**SQLite comparison.** SQLite's I/O is centered on the single `.sqlite` file (rollback journal or `-wal` sibling). Razordata's directory layout is structurally richer: separate `wal/`, `sst/`, `manifest`, and `hint` files live independently. This lets the WAL be deleted without touching data, lets the manifest be hot-swapped via atomic rename, and lets the hint file enable warm cache reuse — all things a single-file design cannot offer. The trade-off: portability. A Razordata database is a directory, not a file you can email. SQLite wins on copy-paste ergonomics; Razordata wins on operational flexibility.
+SST files are named `L<level>_<minKeyHex>_<maxKeyHex>_<fileID>.sst`. The `minKey` and `maxKey` are hex-encoded first and last key in the file, used for range overlap checks during compaction and reads.
 
-### MEM — Memory Management
+### 3.3 MEM — Memory Management
 
-The buffer pool that caches SST blocks in memory. All reads from the LSM tree go through here.
+Buffer pool that caches SST blocks in memory. All reads from the LSM tree go through here.
 
 **Buffer pool with clock-sweep eviction:**
 
-```go
-type bufferSlot struct {
-    blockID   uint64
-    data      []byte        // fixed-size: BlockSize bytes, borrowed from sync.Pool
-    pinCount  atomic.Int32  // eviction blocked while > 0
-    dirty     atomic.Bool
-    refKey    atomic.Uint64 // clock hand reference
-    loading   atomic.Bool   // prevents concurrent loads of same block
-    wait      chan struct{}  // closed when loaded
-}
+```
+┌─────────────────────────────────────────────────────────────┐
+│ bufferSlot                                                  │
+│   blockID   uint64          // which block this slot holds  │
+│   data      []byte          // fixed-size: BlockSize bytes  │
+│   pinCount  atomic.Int32    // eviction blocked while > 0   │
+│   dirty     atomic.Bool     // modified since load?         │
+│   refKey    atomic.Uint64   // clock hand reference         │
+│   loading   atomic.Bool     // prevents duplicate loads     │
+│   wait      chan struct{}   // closed when loaded           │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 The clock-sweep algorithm is a classical approximation of LRU:
@@ -107,22 +130,21 @@ The `loading` flag on each slot prevents duplicate loads: only one goroutine loa
 
 **`sync.Pool` for zero-allocation hot paths:**
 
-```go
-type syncPool struct {
-    pagePool  sync.Pool // make([]byte, BlockSize) — 4 KB buffers
-    iterPool  sync.Pool // make([]byte, iterBufferSize) — LSM iterator scratch
-}
+```
+syncPool:
+  pagePool  sync.Pool → make([]byte, BlockSize)       — 4 KB buffers
+  iterPool  sync.Pool → make([]byte, iterBufferSize)  — LSM iterator scratch
 ```
 
 `pagePool.New` allocates exactly `BlockSize` bytes. On `Put`, buffers that don't match the expected size are dropped (not returned to the pool) — this prevents pool poisoning from caller bugs.
 
 **Hint file for warm startup:**
 
-On clean shutdown, the buffer pool serializes its hot working set (all slots with `LastAccess > 0`) to `<name>.razor/hint`. On startup, the hint file is read (decompressed if `.gz`) and blocks are eagerly loaded into the buffer pool *before* serving any queries. This eliminates cold-start latency for frequently accessed data.
+On clean shutdown, the buffer pool serializes its hot working set (all slots with `LastAccess > 0`) to `<name>.razor/hint`. Format: `[count:varint][entry_0][entry_1]...[entry_N]`, where each entry is `[blockID:varint][lastAccess:varint]`. On startup, the hint file is read (decompressed if `.gz`) and blocks are eagerly loaded into the buffer pool *before* serving any queries. This eliminates cold-start latency for frequently accessed data.
 
-**SQLite comparison.** SQLite's shared-cache mode does warm the page cache on a best-effort basis via the OS page cache, but it has no explicit hint mechanism — the working set is determined entirely by access patterns after open. Razordata's hint file is an *application-aware* warm-start: the engine knows which blocks it was using and writes that knowledge to disk. For embedded use cases where the same process restarts frequently (mobile apps, CLI tools, serverless cold starts), this can be the difference between a 50 ms warm-up and a 500 ms cold start. SQLite relies on the OS, Razordata bypasses it.
+The hint file is advisory — no checksum. On corruption, the buffer pool starts cold.
 
-### WAL — Write-Ahead Log
+### 3.4 WAL — Write-Ahead Log
 
 The sole write path for durability. All mutations are serialized to the WAL before the storage engine writes data.
 
@@ -134,15 +156,16 @@ The sole write path for durability. All mutations are serialized to the WAL befo
 └──────────────┴──────────────┴─────────────┴──────────────────┘
 ```
 
-Record types:
+- `length` = total bytes of `txnID + type + payload` (not including the length field itself). Stored as a varint so the reader can skip unknown record types.
+- `payload` varies by record type:
 
 | Type | Code | Payload |
 |---|---|---|
-| `RTData` | 0 | `[blockID:8][checksum:4][data:varint]` |
-| `RTCommit` | 1 | `[commitTS:8]` |
-| `RTRollback` | 2 | (empty) |
+| `RTData` | 0 | `[blockID:8][checksum:4][data:varint]` — a mutated block image |
+| `RTCommit` | 1 | `[commitTS:8]` — marks transaction as committed |
+| `RTRollback` | 2 | (empty) — discards uncommitted write set |
 | `RTCheckpoint` | 3 | `[checkpointLSN:8][catalogRootPtr:8][manifestChecksum:4][activeTXNs:varint...]` |
-| `RTMerge` | 4 | `[newVersion:8][deletedFiles:varint...][addedFiles:varint...]` |
+| `RTMerge` | 4 | `[newVersion:8][deletedFiles:varint...][addedFiles:varint...]` — LSM version transition |
 
 **Segment rotation:** WAL segments are 64 MB files named `wal.000`, `wal.001`, ... (zero-padded to 3 digits for lexicographic sorting). When a segment fills, it is closed and a new one is created. A pre-allocated 256 KB `writeBuffer` avoids per-record allocation — records are appended via `binary.LittleEndian` directly into the buffer.
 
@@ -150,7 +173,7 @@ Record types:
 
 **Batch commit:** Multiple transactions can be grouped into one `fsync` call via a `sync.WaitGroup` and a single write barrier. This amortizes the cost of `fsync` (typically 1–10 ms on SSDs) across concurrent transactions.
 
-**Corruption recovery (shipped in iter-13):**
+**Corruption recovery:**
 
 - Segment header: 12 bytes at the start of each WAL segment.
 - Envelope CRC: 4-byte CRC32-IEEE over the record body.
@@ -168,26 +191,24 @@ Record types:
 6. `RTRollback` records discard uncommitted write sets.
 7. Truncate clean segments before the checkpoint.
 
-**SQLite comparison.** SQLite's WAL recovery is similar in spirit (find last committed frame, truncate) but operates on a single file with page-granularity commits. Razordata's WAL is append-only with record-level framing, segment-level rotation, and explicit `RTMerge` records for LSM version transitions — information SQLite does not need because its B-tree has no version chain. The richer WAL format is the cost of supporting MVCC and leveled compaction; the benefit is that recovery can rebuild both the data state and the storage topology from a single source of truth.
+The replayer does NOT write SST files or update the manifest — those are derived from the manifest file on startup, not from WAL replay.
 
-### ENG — Storage Engine (LSM Tree)
+### 3.5 ENG — Storage Engine (LSM Tree)
 
 The core of the database. Implements the LSM tree: a lock-free skiplist memtable that flushes to SST files on disk, leveled compaction, bloom filters, and an atomic file manifest.
 
 **Lock-free skiplist memtable:**
 
-```go
-type skipList struct {
-    head    atomic.Pointer[node]
-    level   atomic.Int32
-    maxLevel int = 12   // 2^12 = 4096 levels
-}
+```
+skipList:
+  head    atomic.Pointer[node]   // sentinel node
+  level   atomic.Int32           // current max level, starts at 1
+  maxLevel int = 12              // 2^12 = 4096 levels
 
-type node struct {
-    key   []byte
-    value []byte
-    next  [maxLevel]atomic.Pointer[node]
-}
+node:
+  key   []byte
+  value []byte
+  next  [maxLevel]atomic.Pointer[node]
 ```
 
 Insertion is CAS-based from the bottom up: find the predecessor at each level, then CAS the `next` pointer. If the CAS fails (another writer inserted concurrently), the entire insertion retries. There is no mutex in the hot path — only atomic operations.
@@ -208,7 +229,7 @@ When the memtable exceeds `Options.MemTableSize` (default 64 MB), it is frozen (
 └────────────────────────────────────────────────────────┘
 ```
 
-- **Data blocks** (default 4 KB): K-V pairs are delta-encoded — each key stores only the delta from the previous key. Restart points every 16 K-V pairs enable O(1) binary search within the block.
+- **Data blocks** (default 4 KB): K-V pairs are delta-encoded — each key stores only the delta from the previous key. Restart points every 16 K-V pairs enable O(1) binary search within the block. Format: `[KV pairs][restart array][restart count:4][checksum:4]`.
 - **Index block**: one entry per data block: `[largestKey:varint][blockOffset:varint][blockSize:varint]`. Binary search on `largestKey` locates the target block.
 - **Bloom filter**: FNV-1a double-hash with two independent seeds (`0x811C9DC5` and `0x01000193`). 10 bits per key yields ~1% false positive rate. Dynamic sizing: `(N * 10 + 7) / 8` bytes.
 - **Footer** (28 bytes): `[indexOffset:8][indexSize:4][bloomOffset:8][bloomSize:4][magic:4]`
@@ -237,63 +258,54 @@ When L_k exceeds its size budget (L0 = 4 MB, L1 = 32 MB, each subsequent level 1
 write to temp file → fsync temp → rename to final path → fsync directory
 ```
 
-The manifest is the single source of truth for which SST files are live. `Version` is immutable once created — new versions are produced by applying a `VersionDiff`.
+The manifest is the single source of truth for which SST files are live. `Version` is immutable once created — new versions are produced by applying a `VersionDiff`. The manifest stores: file ID, level, key range, size, and bloom bit count for every live SST.
 
-**SQLite comparison.** SQLite has no equivalent of a manifest: there is exactly one database file, and the schema is stored in `sqlite_schema` (a B-tree page) inside that file. Razordata's manifest is a separate file that names every live SST — a single source of truth that compaction, the WAL, and the read path all consult. SQLite's design is simpler (fewer files) but less flexible: a corrupted schema page is unrecoverable without backup, whereas Razordata can rebuild a manifest from a fresh scan of `sst/` if the manifest is lost. The trade-off mirrors the broader B-tree vs LSM debate: simpler structure, less fault tolerance.
+**System catalog:** The catalog is a special LSM tree stored under `sst/catalog/`. Schema data is key-value pairs: `__catalog:<tableID>` → MessagePack-encoded `TableSchema`. The catalog root pointer is stored in the meta page.
 
-### TXN — Transaction Layer
+**Row encoding:** Fixed-width columns stored inline: `INT` (8 bytes), `BIGINT` (8 bytes), `FLOAT` (8 bytes), `BOOL` (1 byte). Variable-length columns: `[length:varint][data:blob]`. Null values: a null bitmap in the row header, one bit per column.
 
-Provides MVCC snapshot isolation for readers and serializable writes. This is where Razordata diverges most significantly from SQLite.
+### 3.6 TXN — Transaction Layer
+
+MVCC snapshot isolation for readers, serializable writes. The sharpest divergence from SQLite.
 
 **Version chain:**
 
-```go
-type versionNode struct {
-    txnID    uint64
-    beginTS  uint64
-    endTS    uint64  // math.MaxUint64 = uncommitted
-    key      []byte
-    value    []byte
-    deleted  bool    // tombstone
-    next     atomic.Pointer[versionNode]
-}
+```
+versionNode:
+  txnID    uint64
+  beginTS  uint64
+  endTS    uint64          // math.MaxUint64 = uncommitted
+  key      []byte          // the key this version belongs to
+  value    []byte          // the row data
+  deleted  bool            // tombstone (logical deletion)
+  next     atomic.Pointer[versionNode]  // next older version
 ```
 
 Each primary key in the storage engine points to a singly-linked list of version nodes (newest first). A reader traverses the chain, skipping versions where `beginTS >= readTS` or `endTS < readTS`.
 
 **Per-transaction arena:**
 
-```go
-type arena struct {
-    buf    []byte
-    offset atomic.Int64
-    size   int64
-}
+```
+arena:
+  buf    []byte            // 1 MB bump-pointer buffer
+  offset atomic.Int64      // current allocation offset
+  size   int64             // total size
 
-func (a *arena) Alloc(n int) []byte {
-    for {
-        old := a.offset.Load()
-        new := old + int64(n)
-        if new > a.size {
-            return nil // exhausted
-        }
-        if a.offset.CompareAndSwap(old, new) {
-            return a.buf[old:new]
-        }
-    }
-}
+Alloc(n):
+  loop:
+    old = offset.Load()
+    new = old + n
+    if new > size: return nil (exhausted)
+    if offset.CompareAndSwap(old, new): return buf[old:new]
 ```
 
-Each transaction gets its own 1 MB arena (pooled via `sync.Pool`). Version nodes are bump-pointer allocated from the arena — no individual `make` calls, no GC pressure. On commit or abort, the entire arena is returned to the pool.
-
-The design initially considered per-goroutine arenas, but Go does not expose goroutine IDs in a portable way. Per-transaction arenas are simpler: lifecycle aligns with transaction boundaries, and rollback is O(1) (just release the arena).
+Each transaction gets its own 1 MB arena (pooled via `sync.Pool`). Version nodes are bump-pointer allocated from the arena — no individual `make` calls, no GC pressure. On commit or abort, the entire arena is returned to the pool. Rollback is O(1) (just release the arena).
 
 **Hazard pointers:**
 
-```go
-type hazardPointerSet struct {
-    ptrs [2]atomic.Value // [current, next]
-}
+```
+hazardPointerSet:
+  ptrs [2]atomic.Value   // [current, next]
 ```
 
 Before dereferencing a version node pointer, the reader publishes it to one of two hazard pointer slots via `atomic.Store`. The reclamation pass scans all registered hazard pointers before freeing any node. The double-slot design allows readers to prefetch the next node while holding the current node in the other slot.
@@ -304,24 +316,23 @@ A background goroutine increments a global epoch counter every ~100 ms. Each rea
 
 **Transaction slot array:**
 
-```go
+```
 const MaxConcurrentTXNs = 1024
 
-type transactionSlot struct {
-    txnID     uint64
-    status    atomic.Int32 // 0=inactive, 1=active, 2=committed, 3=aborted
-    beginTS   uint64
-    commitTS  uint64
-    writeSet  []KeyRange
-    arena     *arena
-}
+transactionSlot:
+  txnID     uint64
+  status    atomic.Int32   // 0=inactive, 1=active, 2=committed, 3=aborted
+  beginTS   uint64
+  commitTS  uint64
+  writeSet  []KeyRange     // key ranges modified by this transaction
+  arena     *arena
 ```
 
 A pre-allocated fixed-size array of 1024 slots. Allocation uses a mutex-protected free list — no GC pressure, O(1) allocation.
 
 **Commit protocol (6 phases):**
 
-1. **Begin**: Allocate slot, assign `beginTS = globalAtomicCounter++`, register with epoch manager, take read view.
+1. **Begin**: Allocate slot, assign `beginTS = globalAtomicCounter++`, register with epoch manager, take read view (snapshot of version chain heads).
 2. **Read**: Traverse version chain via hazard pointers. No locks acquired.
 3. **Write**: Allocate version node from arena, CAS-insert at chain head. Write `RTData` to WAL.
 4. **Pre-commit (validate)**: Scan all committed slots. If any slot with `commitTS > myBeginTS` modified a key in my `writeSet`, abort. This is write-write conflict detection.
@@ -335,12 +346,18 @@ A pre-allocated fixed-size array of 1024 slots. Allocation uses a mutex-protecte
 | Read-Write | Lock-free. Readers traverse version chains without blocking writers. |
 | Write-Write | Detected at pre-commit. Conflicting transactions are aborted. |
 | Write-Read | Writers never block readers. Old versions remain visible until epoch reclamation. |
+| Buffer Pool | Clock-sweep eviction with deduplication. Sharded mutex for hash table. |
+| WAL | Batch commit with write barrier. Multiple transactions per `fsync`. |
 
-**SQLite comparison.** This is the sharpest divergence in the entire stack. SQLite's WAL mode gives readers a stable snapshot by copying the WAL header's `nBackfill` pointer at the start of each read transaction, but it cannot serve writes concurrently — every writer must acquire the single `EXCLUSIVE` lock on the database file. Under write-heavy workloads, this serializes the entire database into one writer at a time. Razordata's MVCC is closer in spirit to PostgreSQL's: every key carries a version chain, readers traverse it under hazard pointers, and writers abort on conflict rather than waiting. The cost is write amplification (old versions live in the chain until reclamation) and a more complex commit protocol. The benefit is genuine concurrent write throughput — a property SQLite cannot offer without `BEGIN CONCURRENT` (which itself is best-effort, page-level, and famously tricky). Razordata chose the harder design because the alternative would have inherited SQLite's bottleneck.
+### 3.7 SQL — SQL Processing Layer
 
-### SQL — SQL Processing Layer
+Receives raw SQL text, tokenizes it, builds an AST, rewrites and plans it, then executes the operator tree to return rows. Never touches the disk directly.
 
-Receives raw SQL text, tokenizes it, builds an AST, rewrites and plans it, then executes the operator tree to return rows. It never touches the disk directly.
+**Pipeline:**
+
+```
+SQL text → Lexer (tokens) → Parser (AST) → Rewriter (normalized AST) → Planner (plan tree) → Executor (rows)
+```
 
 **Lexer:**
 
@@ -384,24 +401,12 @@ Operators shipped: `SeqScan`, `IndexScan`, `Filter`, `Project`, `Sort`, `Limit`,
 
 For filter-heavy queries, operators process 1024-row columnar batches:
 
-```go
-func evaluateBatch(pred Expr, cols [][]byte, mask []uint16) int {
-    count := 0
-    for i := 0; i < len(cols[0]); i += 4 {
-        v0, v1, v2, v3 := cols[0][i], cols[0][i+1], cols[0][i+2], cols[0][i+3]
-        if pred(v0) { mask[count] = uint16(i); count++ }
-        if pred(v1) { mask[count] = uint16(i+1); count++ }
-        if pred(v2) { mask[count] = uint16(i+2); count++ }
-        if pred(v3) { mask[count] = uint16(i+3); count++ }
-    }
-    return count
-}
 ```
-
-- Columnar layout (`[]int64`, `[]float64`, `[]string`) instead of row-by-row.
-- 4-wide manual unrolling for cache-line-friendly batch evaluation.
-- Selection vectors (`[]uint16`) mask which rows pass the filter.
-- Adaptive threshold: auto-fallback to row-at-a-time for tables < 100K rows.
+Batch layout: columnar arrays ([]int64, []float64, []string)
+Evaluation: 4-wide manual unrolling for cache-line-friendly batch evaluation
+Selection vectors: []uint16 mask which rows pass the filter
+Adaptive threshold: auto-fallback to row-at-a-time for tables < 100K rows
+```
 
 **Parallel execution:**
 
@@ -410,11 +415,9 @@ func evaluateBatch(pred Expr, cols [][]byte, mask []uint16) int {
 - Parallel sort: sample sort for top-k, external merge sort for large datasets.
 - Results merged via bounded channels (non-blocking send, drop on overflow).
 
-**SQLite comparison.** SQLite has no parallel query execution. Even the `BEGIN CONCURRENT` write mode serializes commit; readers are fully parallel in WAL mode, but a single writer blocks all other writers and (in default journal mode) all readers. Razordata's parallel scan and parallel sort are designed into the executor from the start, sized to the host's available cores. On a 16-core machine, a Razordata scan can sustain 16x the throughput of a SQLite scan on the same data. The caveat: parallelism adds coordination overhead, so for small tables (< 100K rows) Razordata falls back to single-threaded execution. SQLite's static single-threaded design is simpler and never has to worry about worker pool sizing; Razordata's design assumes modern hardware and is optimized for it.
+### 3.8 SYS — System Layer
 
-### SYS — System Layer
-
-The top-level entry point that manages the database lifecycle.
+Top-level entry point managing the database lifecycle.
 
 **Engine lifecycle:**
 
@@ -432,174 +435,117 @@ Close → set closed flag → flush pending writes → stop background goroutine
 5. Close subsystems in reverse dependency order.
 6. Log final stats.
 
-**Session pooling:** `sync.Pool` for `Session` objects. Avoids allocation on every `Begin`.
+**Session pooling:** `sync.Pool` for `Session` objects. Avoids allocation on every `Begin`. Goroutine-safe via mutex — sessions are not shareable between goroutines.
 
 **Read-only mode:** When `Options.ReadOnly = true`, WAL writes are skipped, data files are opened with `O_RDONLY`, and DML returns `ErrReadOnly`.
 
 **Error taxonomy:**
 
-```go
-var retryable = []error{ErrIO, ErrLocked}
-var fatal = []error{ErrTxAborted, ErrCorrupt, ErrSyntax, ErrTypeMismatch, ErrUpgradeRequired, ErrReadOnly}
+```
+retryable = []error{ErrIO, ErrLocked}
+fatal     = []error{ErrTxAborted, ErrCorrupt, ErrSyntax, ErrTypeMismatch, ErrUpgradeRequired, ErrReadOnly}
 ```
 
-All errors wrap: I/O errors → structural errors → API-level errors. Messages are lowercase, no trailing punctuation.
+All errors wrap: I/O errors → structural errors → API-level errors. Messages are lowercase, no trailing punctuation. Errors are wrapped with `fmt.Errorf("razordata: %w", err)` to preserve the error chain. Callers should retry on `retryable` errors (with exponential backoff for `ErrLocked`); `fatal` errors must not be retried.
 
-## 4. Comparative Analysis: Razordata vs. SQLite
+## 4. Concurrency Model
+
+| Interaction | Mechanism |
+|---|---|
+| Read-Write | Lock-free. MVCC version chains, hazard pointers, epoch-based reclamation. |
+| Write-Write | Detected at pre-commit. Conflicting transactions aborted (serializable). |
+| Write-Read | Writers never block readers. Old versions remain visible until reclamation. |
+| Buffer Pool | Clock-sweep eviction with deduplication. Sharded mutex for hash table. |
+| WAL | Batch commit with write barrier. Multiple transactions per `fsync`. |
+
+## 5. What's Shipped vs. Planned
+
+### Shipped (v0.25.1)
+
+**DDL:** CREATE TABLE, DROP TABLE, CREATE INDEX, DROP INDEX
+
+**DML:** INSERT (with ON CONFLICT DO NOTHING/UPDATE), UPDATE, DELETE, RETURNING
+
+**Queries:** SELECT, WHERE, ORDER BY, LIMIT/OFFSET, GROUP BY, HAVING, DISTINCT, EXPLAIN, EXPLAIN QUERY PLAN
+
+**Joins:** INNER, CROSS, LEFT/RIGHT/FULL OUTER
+
+**Subqueries:** IN, EXISTS, scalar, CTE (WITH)
+
+**Window functions:** ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, SUM/AVG OVER with PARTITION BY, ORDER BY, ROWS frame
+
+**Types:** INTEGER, BIGINT, FLOAT, DECIMAL, BOOLEAN, TEXT, VARCHAR, BLOB, DATE, TIME, TIMESTAMP, JSON
+
+**Constraints:** PRIMARY KEY, NOT NULL, DEFAULT, CHECK, UNIQUE
+
+**Transactions:** BEGIN, COMMIT, ROLLBACK, SAVEPOINT, RELEASE, ROLLBACK TO
+
+**Utilities:** VACUUM, ANALYZE, integrity_check, backup/restore, pragma, `razor` CLI
+
+**Testing:** SQLite Compatibility Test Suite (pure-Go SQLLogicTest driver, dual-runner with modernc.org/sqlite)
+
+### Planned / Known Gaps
+
+- WAL commit durability (`RTCommit` records not yet written to WAL — REQ000171)
+- Hazard pointer publication to all slots instead of single slot (REQ000175)
+- Epoch manager goroutine ID tracking (REQ000181)
+- Foreign keys, ALTER TABLE, CREATE VIEW, triggers
+
+## 6. Key Design Trade-offs
+
+| Decision | Benefit | Cost |
+|---|---|---|
+| LSM tree over B-tree | Write throughput, large dataset performance | Point reads check memtable + L0 + L1+ (mitigated by bloom filters) |
+| Lock-free skiplist + MVCC | Concurrent writes, readers never block | Complex commit protocol, write amplification (old versions in chain) |
+| Per-transaction arenas | Zero GC pressure, O(1) rollback | More frequent allocation under high concurrency |
+| Directory-based storage | WAL independent of data, atomic manifest rename, warm-start hints | Less portable than single-file |
+| Pull-based executor (no VM) | Simple, debuggable, Go-native | No JIT/codegen optimization |
+| Parallel execution by default | Scales with cores | Coordination overhead on small tables (auto-fallback at <100K rows) |
+| Bounded log channel | Never blocks DB operations | Events dropped under hook overload |
+
+## 7. Comparative Analysis: Razordata vs. SQLite
 
 | Dimension | SQLite | Razordata |
 |---|---|---|
 | **Storage engine** | B-tree | LSM tree (skiplist memtable + SST + leveled compaction) |
-| **Write concurrency** | WAL mode: single writer | Lock-free skiplist: multiple concurrent writers via MVCC |
-| **Read concurrency** | Shared cache: readers block writers in journal mode | MVCC version chains: readers never block writers |
+| **Write concurrency** | Single writer | Multiple concurrent writers via MVCC |
+| **Read concurrency** | Parallel in WAL mode | Parallel via MVCC version chains |
 | **Isolation** | Serializable (WAL) | Read-uncommitted (v1); read-committed planned |
 | **Language** | C (~150K LOC) | Go |
-| **Memory safety** | Manual (SQLITE_MALLOCS) | GC-managed; arenas for hot paths |
-| **SIMD/vectorization** | None | 4-wide unrolling, columnar batches, selection vectors |
-| **Parallelism** | None (single-writer serialization) | Parallel scan, parallel sort, worker pool |
-| **Observability** | Extension-dependent | Built-in hooks: tracing, metrics, profiling |
+| **Memory safety** | Manual | GC-managed; arenas for hot paths |
+| **Vectorization** | None | 4-wide unrolling, columnar batches, selection vectors |
+| **Parallelism** | None | Parallel scan, parallel sort, worker pool |
+| **Observability** | Extension-dependent | Built-in: tracing, metrics, profiling |
 | **File format** | Single `.sqlite` file | Directory: `meta.razor`, `wal/`, `sst/`, `manifest` |
-| **Build dependencies** | C compiler, platform-specific | Go toolchain only |
-| **Cross-compilation** | Requires target-specific build | `GOOS=... GOARCH=... go build` |
-| **Startup** | Open file, read header | WAL replay, hint file warm-up, manifest load |
+| **Build** | C compiler, platform-specific | Go toolchain only |
 
 ### Where SQLite Wins
-
-- **Maturity**: 25+ years of production hardening. Razordata is pre-1.0.
-- **Single-file portability**: One `.sqlite` file vs. a directory tree.
-- **Read performance on small datasets**: B-tree point reads are O(log N) with excellent cache behavior. LSM reads must check memtable + L0 + L1 + ... (mitigated by bloom filters).
-- **Write-ahead logging**: SQLite's WAL is simpler and battle-tested. Razordata's WAL has known gaps (REQ000171: commit records not yet written to WAL).
+- **Maturity:** 25+ years of production hardening.
+- **Single-file portability:** One file you can email.
+- **Read performance on small datasets:** B-tree point reads are O(log N) with excellent cache behavior.
+- **WAL simplicity:** Battle-tested, simpler format.
 
 ### Where Razordata Wins
+- **Write throughput under concurrency:** Lock-free skiplist + MVCC eliminates writer serialization.
+- **Large dataset performance:** LSM trees excel at write-heavy workloads with large datasets.
+- **Concurrent read-write:** Readers never block writers, writers never block readers.
+- **Embedded parallelism:** SIMD vectorization and parallel query execution designed in from the start.
+- **Go ecosystem integration:** No CGO. Native Go types. Goroutine-safe by construction.
+- **Observability:** First-class structured logging, metrics, profiling — not add-ons.
 
-- **Write throughput under concurrency**: Lock-free skiplist + MVCC eliminates writer serialization.
-- **Large dataset performance**: LSM trees excel at write-heavy workloads with large datasets. Compaction amortizes write amplification.
-- **Concurrent read-write**: Readers never block writers, writers never block readers.
-- **Embedded parallelism**: SIMD vectorization and parallel query execution are not retrofits — they are designed into the executor from the start.
-- **Go ecosystem integration**: No CGO. Native Go types in the API. Goroutine-safe by construction.
+## 8. Testing Methodology
 
-## 5. What's Shipped and What's Coming
+- `go test ./... -race -count=1` must always pass.
+- Table-driven tests for parser and executor.
+- Property-based tests for storage (crash/recovery).
+- Every storage component requires benchmarks.
+- Error paths, edge cases, and boundary conditions tested as aggressively as happy paths.
+- SQLite Compatibility Test Suite validates SQL correctness against a reference implementation.
 
-By v0.22, Razordata has completed 24 iterations. The shipped feature set:
-
-**DDL**: CREATE TABLE, DROP TABLE, CREATE INDEX, DROP INDEX
-
-**DML**: INSERT (with ON CONFLICT DO NOTHING/UPDATE), UPDATE, DELETE, RETURNING
-
-**Queries**: SELECT, WHERE, ORDER BY, LIMIT/OFFSET, GROUP BY, HAVING, DISTINCT, EXPLAIN, EXPLAIN QUERY PLAN
-
-**Joins**: INNER, CROSS, LEFT/RIGHT/FULL OUTER
-
-**Subqueries**: IN, EXISTS, scalar, CTE (WITH)
-
-**Window functions**: ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, SUM/AVG OVER with PARTITION BY, ORDER BY, ROWS frame
-
-**Types**: INTEGER, BIGINT, FLOAT, DECIMAL, BOOLEAN, TEXT, VARCHAR, BLOB, DATE, TIME, TIMESTAMP, JSON
-
-**Constraints**: PRIMARY KEY, NOT NULL, DEFAULT, CHECK, UNIQUE
-
-**Transactions**: BEGIN, COMMIT, ROLLBACK, SAVEPOINT, RELEASE, ROLLBACK TO
-
-**Utilities**: VACUUM, ANALYZE, integrity_check, backup/restore, pragma, `razor` CLI
-
-**Planned (iter-24)**: Read-committed isolation, foreign keys, ALTER TABLE, CREATE VIEW, triggers, pragmas (cache_size, journal_mode, synchronous).
-
-## 6. Lessons from Building It
-
-**LSM vs B-tree is not a clear winner.** LSM trees win on write throughput and large dataset performance. B-tree wins on point reads and small datasets. Razordata chose LSM because the target use case is write-heavy embedded workloads. For read-heavy workloads, a B-tree secondary index (shipped in v0.22) mitigates the LSM read penalty.
-
-**Lock-free is correct but subtle.** The skiplist, version chain, and buffer pool all use CAS-based algorithms. Each one required iterative debugging: hazard pointer publication (REQ000175: publish to single slot, not all), epoch manager goroutine tracking (REQ000181: Go has no portable goroutine ID). These bugs were discovered and documented iteratively — the design documents describe the correct protocol; the implementation caught up over multiple iterations.
-
-**Zero C dependencies is a feature, not a constraint.** Cross-compilation is `GOOS=linux GOARCH=arm64 go build`. Memory safety is guaranteed by the GC. No need to manage `malloc`/`free` lifetimes. The trade-off is that Go's GC must be accommodated — hence the arenas, `sync.Pool`, and careful avoidance of `map[string]interface{}` in hot paths.
-
-**Testing discipline matters more than test count.** The rule is `go test ./... -race -count=1` must always pass. Every storage component requires benchmarks. Property-based tests verify crash/recovery. Error paths, edge cases, and boundary conditions are tested as aggressively as happy paths.
-
-**Iterative integration prevents architecture drift.** The 8-layer build order is not just a development convenience — it is the architecture. Each iteration integrates with already-implemented layers, cross-checking interfaces, error types, and naming conventions before writing code. This catches incompatibilities early.
-
-## 7. Conclusion
+## 9. Conclusion
 
 Razordata is not a SQLite replacement — it is a different tool for a different problem. SQLite excels at simple, reliable, single-file embedded storage. Razordata targets the space where write concurrency, parallel execution, and modern language ergonomics matter more than battle-tested maturity.
 
 The eight-layer architecture, lock-free MVCC, LSM storage engine, and SIMD vectorized executor represent a deliberate set of trade-offs: complexity in exchange for concurrency, GC integration in exchange for memory safety, directory-based storage in exchange for richer metadata.
 
-The project is pre-1.0 and has known gaps (WAL commit durability, read-committed isolation, foreign keys). But the foundation is sound, the architecture is auditable, and the build order ensures that each new feature integrates cleanly with what came before.
-
-## 8. Paths to Win — Where Razordata Can Outpace SQLite
-
-Razordata does not need to beat SQLite at SQLite's own game. SQLite's game is "small, reliable, single-file embedded DB," and it has 25 years of head start. The opportunity for Razordata is to win workloads SQLite structurally cannot serve, and to make those wins ergonomic enough that developers reach for Razordata instead of spinning up Postgres. Five concrete paths.
-
-### 8.1. Multicore Writes as a First-Class Feature
-
-The most obvious moat. SQLite is fundamentally single-writer. Razordata's MVCC and lock-free memtable are the architecture's clearest advantage, and the path to monetizing it is direct: position Razordata as the default embedded DB for write-heavy, multi-goroutine Go services.
-
-Concrete steps:
-
-- **Publish multicore write benchmarks** that match the B-tree vs LSM narrative: SQLite WAL saturates at ~50K writes/sec/thread; Razordata on the same hardware should sustain >500K writes/sec aggregated across cores. Make the numbers reproducible.
-- **Add `database/sql` driver compatibility** so Razordata slots into existing Go ORMs (GORM, sqlx, ent) without code changes. This is the single biggest adoption lever for the Go ecosystem.
-- **Add workload-tuned compaction strategies** (write-stop, leveled, FIFO) selectable per-table, so the same engine can optimize for time-series (FIFO), general OLTP (leveled), or bulk-load (write-stop) without forking.
-- **Treat `Writer` exhaustion as a first-class metric**, exposed via `MetricHook`, so operators can see contention before it becomes a problem. SQLite has no equivalent visibility — the single-writer lock is invisible until latency spikes.
-
-The win condition: a developer who says "I have a Go service with 8 goroutines writing to SQLite and they keep blocking each other" finds Razordata as the top search result, sees a 5-line migration path, and ships a 4x throughput improvement in an afternoon.
-
-### 8.2. Observability That SQLite Cannot Replicate
-
-SQLite is a black box. `EXPLAIN` gives query plans; `sqlite3_trace_v2` gives hooks; but there is no built-in metrics, no tracing, no profiling, no structured log stream. Razordata's `LOG` subsystem was designed into the foundation, and that asymmetry compounds across every other layer.
-
-Concrete steps:
-
-- **OpenTelemetry integration as a first-class export target.** Map `TraceHook` to OTel spans, `MetricHook` to OTel metrics. Operators get a Razordata dashboard in Grafana with zero custom code.
-- **Query-level pprof integration.** When a query exceeds a latency threshold, automatically capture and attach a CPU + heap profile to the response. This is invaluable for embedded DBs that are deployed in customer environments where `pprof` cannot be attached manually.
-- **`razor doctor` CLI command.** A diagnostic tool that reads the database directory, verifies WAL/MEM/SST consistency, reports fragmentation, suggests compaction, and outputs a structured health report. SQLite has `PRAGMA integrity_check`, but it is a yes/no answer; Razordata's health surface can be a continuous spectrum with recommended actions.
-- **Built-in slow-query log** with threshold configurable per session. SQLite requires application-level logging; Razordata emits structured events natively.
-
-The win condition: any production incident involving Razordata is diagnosable in minutes from artifacts the engine produced itself, with no out-of-band tooling.
-
-### 8.3. Type System and Domain Modeling
-
-SQLite's type system is famously permissive: type affinity is a hint, not a constraint. For a database embedded in application code, this is a footgun. Razordata already has a richer type set (DECIMAL, BOOLEAN, DATE, TIME, TIMESTAMP, JSON), and the path forward is to lean into Go's type system as a first-class citizen.
-
-Concrete steps:
-
-- **Struct binding API.** `db.Map(&User{})` reads a table into a Go struct, with field tags (`razor:"pk"`, `razor:"notnull"`, `razor:"json"`) controlling column mapping. This is what `gorm` and `sqlc` provide as add-ons; Razordata can ship it as a core API.
-- **Compile-time schema validation.** A `go generate` tool that reads Go structs and emits `CREATE TABLE` DDL. Developers get schema-correctness-by-construction: the struct *is* the schema, drift is impossible.
-- **JSON column operators in SQL.** `WHERE col->>'key' = 'value'`, JSON path expressions in indexes. SQLite has `json1` as an extension; Razordata can make JSON a first-class indexed type.
-- **Typed nulls.** Distinguish `sql.NullInt64` from `int64` at the type level. Use Go generics to provide `db.Query[T]` returning a slice of `T`, not `[]map[string]any`. The current `interface{}` soup is a code smell Razordata can fix.
-
-The win condition: a Go developer never writes a `Scan(&dest)` again. The database returns Go values, the type system enforces schema correctness, and the IDE autocompletes query results.
-
-### 8.4. Modern Storage Hardware as the Baseline
-
-SQLite was designed in an era of spinning disks and single-core CPUs. Razordata is being built in an era of NVMe SSDs, persistent memory, and dozens of cores. The opportunity is to treat modern hardware as the design target, not an optimization.
-
-Concrete steps:
-
-- **io_uring on Linux.** Replace `pread`/`pwrite` with submission-queue-based async I/O for read amplification paths. NVMe drives can sustain millions of IOPS; Razordata's thread-per-block-read model will leave most of that throughput on the table.
-- **Direct I/O for the data path, buffered I/O for the WAL.** Already partially shipped. Extend it: align all reads to device sector size, bypass the OS page cache for hot data, use the cache only for cold reads. This eliminates double-buffering and reduces memory pressure.
-- **Huge-page awareness for the buffer pool.** When `BlockSize * NumBuffers` exceeds 2 MB, advertise `MADV_HUGEPAGE` so the kernel uses 2 MB pages for the buffer pool's anonymous mappings. This reduces TLB pressure on large databases.
-- **Persistent memory (PMem) tiering.** Treat PMem as a third storage tier between RAM and SSD: mirror the L0 memtable to PMem for instant recovery, use PMem as a write-back cache for SST data blocks. SQLite has no concept of a memory hierarchy; Razordata can.
-- **SIMD for compression and encoding.** Razordata's delta encoding, FNV hashing, and CRC32 verification are all vectorizable. Use `golang.org/x/sys/cpu` to detect AVX2/AVX-512 and dispatch; the Go runtime does not do this for you.
-
-The win condition: Razordata benchmarks at >1M writes/sec on a single NVMe drive and saturates the device's IOPS, where SQLite saturates at ~50K. The gap is not a tuning exercise — it is the architectural dividend Razordata was designed to collect.
-
-### 8.5. Embedded Mode as a Deployment Primitive
-
-SQLite's success comes partly from being everywhere: every phone, every browser, every language has a binding. Razordata is Go-only today, and that is a feature, not a bug — the path to "everywhere" should run through Go's ecosystem, not against it.
-
-Concrete steps:
-
-- **WASM target.** Razordata should compile to a single ~2 MB WASM blob that runs in browsers and edge runtimes (Cloudflare Workers, Deno Deploy, Vercel Edge). SQLite WASM exists but is bulky and async-bound; a Go-compiled Razordata is small, fast, and has a familiar API.
-- **Mobile targets (iOS, Android) via gomobile.** A Razordata database on a phone survives app restarts, supports concurrent goroutines (multiple app components writing), and is type-safe end-to-end. The `gobind` export surface is small enough to be tractable.
-- **Single-file export mode.** Despite the directory layout, ship a `razor pack` / `razor unpack` pair that produces a portable snapshot. The directory is the *operational* format; the snapshot is the *portability* format. SQLite users get their single-file ergonomics when they need it; Razordata operators get the directory structure when they want it.
-- **Language bindings through CGO-free FFI.** Generate Python (via CFFI or ctypes) and Node.js (via NAPI) bindings automatically from the Go API. Avoid CGO at all costs — the entire reason Razordata is "no external C deps" is to make bindings trivial.
-
-The win condition: a developer can `npm install razordata`, `pip install razordata`, or `cargo add razordata` and get the same MVCC + LSM engine that Go developers use, with no C toolchain, no platform-specific build steps, and no cross-compilation friction.
-
-### 8.6. The Real Moat: A 25-Year Head Start Cannot Be Cloned
-
-The honest framing: SQLite will always have more eyeballs, more edge cases covered, more platforms supported, more decades of production hardening. Razordata does not win by matching that.
-
-Razordata wins in the gap between "SQLite is good enough" and "I need a real database." The workloads where Razordata wins are precisely the ones where the developer is already reaching for Postgres, MySQL, or DuckDB: write-heavy concurrent services, analytics-on-the-edge, multi-tenant embedded deployments, observability pipelines. The strategic bet is that as the Go ecosystem matures and as more workloads move to edge runtimes, the demand for a Go-native embedded database that scales to multicore writes will outpace the supply.
-
-The paths above — multicore writes, observability, type system, modern hardware, embedded deployment — are not independent. They reinforce each other. A multicore write benchmark is more credible when paired with OTel metrics. A type-safe API matters more on a WASM edge runtime. SIMD performance is a non-feature on a phone. The bet is that the *combination* of these advantages, designed into a coherent architecture from day one, will outpace SQLite's incremental extensions in the workloads Razordata targets.
-
-The goal is not to be the next SQLite. The goal is to be the embedded database that the next generation of Go services reaches for first.
+The project is pre-1.0 and has known gaps. But the foundation is sound, the architecture is auditable, and the build order ensures that each new feature integrates cleanly with what came before.
