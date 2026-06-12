@@ -445,6 +445,20 @@ func (l *Lexer) scanOperator() Token {
 		return Token{Type: T_COLON, Lexeme: ":", Line: startLine, Col: startCol}
 	case '?':
 		return Token{Type: T_BIND, Lexeme: "?", Line: startLine, Col: startCol}
+	case '&':
+		return Token{Type: T_BITAND, Lexeme: "&", Line: startLine, Col: startCol}
+	case '|':
+		if l.peek() == '|' {
+			l.advance()
+			return Token{Type: T_CONCAT, Lexeme: "||", Line: startLine, Col: startCol}
+		}
+		return Token{Type: T_BITOR, Lexeme: "|", Line: startLine, Col: startCol}
+	case '^':
+		return Token{Type: T_BITXOR, Lexeme: "^", Line: startLine, Col: startCol}
+	case '~':
+		return Token{Type: T_BITNOT, Lexeme: "~", Line: startLine, Col: startCol}
+	case '%':
+		return Token{Type: T_MOD, Lexeme: "%", Line: startLine, Col: startCol}
 	}
 
 	return Token{Type: T_ERROR, Lexeme: "", Literal: ErrUnexpectedChar, Line: startLine, Col: startCol}

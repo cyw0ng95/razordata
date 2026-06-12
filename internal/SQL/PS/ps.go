@@ -195,6 +195,12 @@ var tokenNames = [...]string{
 	LX.T_RESTRICT:     "RESTRICT",
 	LX.T_NO:           "NO",
 	LX.T_ACTION:       "ACTION",
+	LX.T_BITAND:       "&",
+	LX.T_BITOR:        "|",
+	LX.T_BITXOR:       "^",
+	LX.T_BITNOT:       "~",
+	LX.T_MOD:          "%",
+	LX.T_CONCAT:       "||",
 }
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -311,7 +317,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 }
 
 func (p *Parser) parseUnary() (Expr, error) {
-	if p.current.Type == LX.T_NOT || p.current.Type == LX.T_MINUS || p.current.Type == LX.T_PLUS {
+	if p.current.Type == LX.T_NOT || p.current.Type == LX.T_MINUS || p.current.Type == LX.T_PLUS || p.current.Type == LX.T_BITNOT {
 		op := int(p.current.Type)
 		p.advance()
 		operand, err := p.parseUnary()
@@ -421,7 +427,9 @@ func isBinaryOp(typ LX.TokenType) bool {
 	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE,
 		LX.T_AND, LX.T_OR,
 		LX.T_PLUS, LX.T_MINUS, LX.T_STAR, LX.T_SLASH,
-		LX.T_LIKE, LX.T_IS:
+		LX.T_LIKE, LX.T_IS,
+		LX.T_BITAND, LX.T_BITOR, LX.T_BITXOR,
+		LX.T_MOD, LX.T_CONCAT:
 		return true
 	}
 	return false
@@ -433,12 +441,20 @@ func precedence(typ LX.TokenType) int {
 		return 1
 	case LX.T_AND:
 		return 2
-	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE, LX.T_LIKE, LX.T_IS:
+	case LX.T_BITOR:
 		return 3
-	case LX.T_PLUS, LX.T_MINUS:
+	case LX.T_BITXOR:
 		return 4
-	case LX.T_STAR, LX.T_SLASH:
+	case LX.T_BITAND:
 		return 5
+	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE, LX.T_LIKE, LX.T_IS:
+		return 6
+	case LX.T_CONCAT:
+		return 7
+	case LX.T_PLUS, LX.T_MINUS:
+		return 8
+	case LX.T_STAR, LX.T_SLASH, LX.T_MOD:
+		return 9
 	}
 	return 0
 }
