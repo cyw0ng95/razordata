@@ -165,6 +165,7 @@ type flushManager struct {
 	loopDone        chan struct{}
 	stopOnce        sync.Once
 	lastErr         atomic.Pointer[error]
+	enqueueMu       sync.Mutex
 }
 
 func newFlushManager(dir string, maxMemSize int64, manifest *manifest) *flushManager {
@@ -260,9 +261,14 @@ func (fm *flushManager) MaybeFlush() {
 const maxFlushRetries = 8
 
 func (fm *flushManager) requestFlush(m *memtable) {
-	// If Stop() has already been called, skip the flush. This
-	// prevents Add(1) after the flushLoop has entered its drain
-	// phase, which would cause a negative WaitGroup counter.
+	// Hold enqueueMu so the enqueue + pendingWGs.Add pair is atomic
+	// relative to Stop(). Without this, a concurrent Stop() could
+	// close `done` between the channel send and Add(1), causing a
+	// negative WaitGroup counter when the drain phase calls Done()
+	// for an item that was never Add()ed. See REQ000364.
+	fm.enqueueMu.Lock()
+	defer fm.enqueueMu.Unlock()
+
 	select {
 	case <-fm.done:
 		return
@@ -280,17 +286,17 @@ func (fm *flushManager) requestFlush(m *memtable) {
 		level:      0,
 	}
 	for attempt := 0; attempt < maxFlushRetries; attempt++ {
-		fm.pendingWGs.Add(1)
 		select {
-		case fm.flushQueue <- job:
+		case <-fm.done:
 			return
 		default:
-			select {
-			case <-fm.done:
-				return
-			default:
-				runtime.Gosched()
-			}
+		}
+		select {
+		case fm.flushQueue <- job:
+			fm.pendingWGs.Add(1)
+			return
+		default:
+			runtime.Gosched()
 		}
 	}
 	// Retries exhausted. Double-check done before blocking.
@@ -300,6 +306,7 @@ func (fm *flushManager) requestFlush(m *memtable) {
 	default:
 	}
 	fm.flushQueue <- job
+	fm.pendingWGs.Add(1)
 }
 
 // WaitForFlush blocks until every enqueued flush job has completed.
@@ -318,9 +325,17 @@ func (fm *flushManager) WaitForFlush() {
 // finish — call WaitForFlush for that. It only waits for the
 // dispatch loop to exit.
 func (fm *flushManager) Stop(ctx context.Context) error {
+	// Hold enqueueMu so we serialize against any in-flight
+	// requestFlush that is about to call pendingWGs.Add(1).
+	// Without this, Stop() could close `done` between the
+	// channel send and Add(1), and the drain phase would then
+	// call Done() for a job that was never Add()ed, panicking
+	// with "negative WaitGroup counter". See REQ000364.
+	fm.enqueueMu.Lock()
 	fm.stopOnce.Do(func() {
 		close(fm.done)
 	})
+	fm.enqueueMu.Unlock()
 	select {
 	case <-fm.loopDone:
 		return nil
