@@ -2,11 +2,11 @@
 
 **Subsystem:** `TXN/VL`, `TXN/SN`, `SQL/EX`, `SQL/PS`, `SQL/PL`, `ENG/LS`, `SYS`
 
-**Status:** planning
+**Status:** done
 
-**Est. LOC:** ~10,000 (no cap)
+**Est. LOC:** ~3,500
 
-**Target releases:** v0.23.0 (transaction correctness + schema), v0.24.0 (SQL completeness)
+**Target releases:** v0.23.0 (transaction correctness + schema), v0.24.0 (FK enforcement)
 
 ---
 
@@ -307,3 +307,55 @@ REQ000290 (LAG/LEAD offset) — independent
 - `go test ./... -race -count=1` — all green
 - `go test ./internal/TXN/VL/ -race -count=3` — stability check
 - Coverage: >80% for new files
+
+---
+
+## Outcome (Post-Completion Update)
+
+**Status:** done
+
+**Actual LOC:** ~3,500
+
+**Tags:** v0.23.0, v0.24.0
+
+**Commits:**
+- `aa5c8b3` REQ000123: configurable isolation levels
+- `bffd0db` REQ000255: read-committed per-statement snapshot
+- `3e8dc70` REQ000062: MVCC own-writes visibility
+- `f20b5ae` REQ000061: read-committed as default
+- `cc36606` REQ000291: EXCLUDED.col fix
+- `29b8d0f` REQ000240+241: CREATE VIEW
+- `62cc29d` REQ000243: ALTER TABLE parsing
+- `c38b0db` REQ000126: FK parsing
+- `994ebf0` REQ000270+REQ000242: FETCH FIRST + Pragmas
+- `d752876` REQ000288+REQ000290: parseInterval + LAG/LEAD
+- `f2591d6` REQ000126: FK enforcement on INSERT
+
+**Phase 1 outcome (v0.23.0):**
+- REQ000123: SET TRANSACTION ISOLATION LEVEL syntax + IsolationLevel enum
+- REQ000255: Snapshot infrastructure (snapshotTS on Executor, SetSnapshot on adapter/engine)
+- REQ000062: Own-writes verified (SQL reads/writes directly to LSM)
+- REQ000061: Read-committed as default isolation
+- REQ000291: EXCLUDED.col in ON CONFLICT fixed
+- REQ000240+241: CREATE VIEW parsing + planner resolution (inline expansion)
+- REQ000243: ALTER TABLE ADD/DROP COLUMN/RENAME parsing
+- REQ000126: FK parsing (inline REFERENCES + table-level FOREIGN KEY)
+- REQ000270: FETCH FIRST n ROWS ONLY
+- REQ000242: Pragmas (cache_size, journal_mode, synchronous, user_version)
+- REQ000288: parseInterval unit validation
+- REQ000290: LAG/LEAD arbitrary offset
+
+**Phase 2 outcome (v0.24.0):**
+- REQ000126 enforcement: FK INSERT validation (referenced row exists)
+- FK metadata in storeSchema, validateForeignKeyInsert/validateForeignKeyDelete
+- NULL FK values skip check (SQL standard)
+- CASCADE/SET NULL/SET DEFAULT on DELETE stubbed
+
+**Deviations:**
+- Phase 2 was originally planned for FETCH FIRST/Pragmas/etc but these shipped in v0.23.0
+- v0.24.0 focused on FK enforcement instead
+- ALTER TABLE executor (REQ000244) deferred — complex schema migration
+- FK CASCADE/SET NULL/SET DEFAULT on DELETE stubbed — returns error for now
+- FK enforcement on UPDATE deferred
+
+**Tests added:** ~15 new test cases (SET TRANSACTION, EXCLUDED.col, CREATE VIEW, ALTER TABLE, FK parsing, parseInterval)
