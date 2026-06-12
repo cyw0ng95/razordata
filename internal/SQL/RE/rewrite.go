@@ -225,12 +225,25 @@ func simplifyUnary(v *PS.UnaryExpr) PS.Expr {
 	case int(LX.T_PLUS):
 		folded = operand
 	case int(LX.T_NOT):
+		// Do NOT fold `NOT NULL` to `NULL`: the resulting
+		// UnaryExpr must survive rewriting so that
+		// `x IS NOT NULL` (parsed as T_IS between x and
+		// UnaryExpr{T_NOT, NULL}) keeps its structure.
+		// The constant fold would collapse it to a
+		// NullLiteral, which then makes `is(x, NULL)`
+		// return the wrong result. See REQ000361.
+		if _, isNull := operand.(*PS.NullLiteral); isNull {
+			if operand != v.Operand {
+				cp := *v
+				cp.Operand = operand
+				return &cp
+			}
+			return v
+		}
 		folded = constantFoldNot(operand)
 		if folded == nil {
 			if b, ok := operand.(*PS.BoolLiteral); ok {
 				folded = &PS.BoolLiteral{Val: !b.Val}
-			} else if _, ok := operand.(*PS.NullLiteral); ok {
-				folded = &PS.NullLiteral{}
 			} else if u, ok := operand.(*PS.UnaryExpr); ok && u.Op == int(LX.T_NOT) {
 				return u.Operand
 			}

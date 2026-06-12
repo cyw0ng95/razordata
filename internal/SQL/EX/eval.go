@@ -111,6 +111,9 @@ func evalUnary(e *PS.UnaryExpr, row *Row, params []interface{}) (interface{}, er
 	case int(LX.T_PLUS):
 		return operand, nil
 	case int(LX.T_NOT):
+		if operand == nil {
+			return nil, nil
+		}
 		return !truthy(operand), nil
 	case int(LX.T_BITNOT):
 		if v, ok := toInt64(operand); ok {
@@ -199,6 +202,18 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []interface{}) (interface{}, 
 	case int(LX.T_LIKE):
 		return like(left, right)
 	case int(LX.T_IS):
+		// `x IS NOT NULL` parses as BinaryExpr{T_IS, x, UnaryExpr{T_NOT, NULL}}.
+		// Detect this and return the IS NOT NULL predicate semantics
+		// directly so the rewriter's fold of `NOT NULL` does not break
+		// the predicate. See REQ000361.
+		if u, ok := e.Right.(*PS.UnaryExpr); ok && u.Op == int(LX.T_NOT) {
+			if _, isNull := u.Operand.(*PS.NullLiteral); isNull {
+				if left == nil {
+					return false, nil
+				}
+				return true, nil
+			}
+		}
 		return is(left, right)
 	}
 	return nil, ErrEval
