@@ -107,6 +107,9 @@ func (bt *BTree) Close() error {
 }
 
 func (bt *BTree) allocPageID() uint32 {
+	if bt.nextID == 0 {
+		bt.nextID = 1
+	}
 	id := bt.nextID
 	bt.nextID++
 	return id
