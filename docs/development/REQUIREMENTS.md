@@ -344,3 +344,19 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000335 | TEST | CI workflow: PR + nightly; run subset; upload JUnit; post pass-rate PR comment vs `main` | iter-25 (deferred — no `.github/` in repo) |
 | REQ000336 | TEST | Developer guide: how to run, add cases, re-baseline coverage | iter-25 |
 | REQ000337 | TEST | Architecture note lives in iteration doc (not `design/`); test harness is operational, not architectural | iter-25 |
+
+---
+
+## Newly Discovered Bugs (2026-06-12, dual-runner expansion)
+
+| ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
+|---|---|---|---|---|---|---|
+| REQ000357 | SQL/EX | SELECT without FROM returns 0 rows (e.g. `SELECT 1+1` → [] vs `[[2]]`) — planner always creates scan op even with empty `s.From` | critical | S | none | `SQL/EX/planner.go:planSelect` — detect `s.From==""` and wrap expressions in `Values` operator |
+| REQ000358 | SQL/PS | XOR operator (`^`) parser gap — lexer emits `T_BITXOR` but parser doesn't recognize in precedence table | high | S | iter-07 (lexer) | `SQL/PS/ps.go` — add `T_BITXOR` to binary operator switch |
+| REQ000359 | SQL/EX | String concat NULL semantics — `'a' || NULL` returns `"a"` vs SQLite `NULL` | medium | S | iter-07 (eval) | `SQL/EX/eval.go:concat` — return nil if either operand nil |
+| REQ000360 | SQL/EX | Arithmetic NULL semantics — `10 + NULL` returns `10` vs SQLite `NULL` | medium | S | iter-07 (eval) | `SQL/EX/eval.go:add/sub/mul/div` — return nil if either operand nil |
+| REQ000361 | SQL/EX | IS NULL / IS NOT NULL semantics — `NULL IS NULL` returns false vs SQLite `true` | medium | S | iter-07 (eval) | `SQL/EX/eval.go` IS/IS NOT cases — fix NULL check logic |
+| REQ000362 | SQL/EX | Comparison with NULL — `5 = NULL` may return wrong value (should be NULL) | medium | S | iter-07 (eval) | `SQL/EX/eval.go:equalValue` — verify NULL handling |
+| REQ000363 | SQL/EX | GROUP_CONCAT empty result — empty table should return NULL (not 0 rows) | low | S | REQ000345 (aggregate empty) | `SQL/EX/aggregate.go:evalAggregateOver` — empty input → NULL |
+
+---

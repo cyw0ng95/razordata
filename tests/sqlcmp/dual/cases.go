@@ -86,5 +86,166 @@ func AllCases() []dualCase {
 	var out []dualCase
 	out = append(out, ddlCases...)
 	out = append(out, aggregateCases...)
+	out = append(out, operatorCases...)
+	out = append(out, functionCases...)
+	out = append(out, edgeCases...)
 	return out
+}
+
+// operatorCases verify bitwise, concat, modulo operators.
+var operatorCases = []dualCase{
+	{
+		Name:  "bitwise_and",
+		Setup: []string{},
+		Query: "SELECT 10 & 6",
+		Want:  [][]any{{int64(2)}},
+	},
+	{
+		Name:  "bitwise_or",
+		Setup: []string{},
+		Query: "SELECT 10 | 6",
+		Want:  [][]any{{int64(14)}},
+	},
+	{
+		Name:  "bitwise_xor",
+		Setup: []string{},
+		Query: "SELECT 10 ^ 6",
+		Want:  [][]any{{int64(12)}},
+	},
+	{
+		Name:  "bitwise_not",
+		Setup: []string{},
+		Query: "SELECT ~10",
+		Want:  [][]any{{int64(-11)}},
+	},
+	{
+		Name:  "string_concat",
+		Setup: []string{},
+		Query: "SELECT 'Hello' || ' ' || 'World'",
+		Want:  [][]any{{"Hello World"}},
+	},
+	{
+		Name:  "modulo_positive",
+		Setup: []string{},
+		Query: "SELECT 17 % 5",
+		Want:  [][]any{{int64(2)}},
+	},
+	{
+		Name:  "modulo_zero",
+		Setup: []string{},
+		Query: "SELECT 20 % 3",
+		Want:  [][]any{{int64(2)}},
+	},
+}
+
+// functionCases verify builtin scalar functions.
+var functionCases = []dualCase{
+	{
+		Name:  "coalesce_first_nonnull",
+		Setup: []string{},
+		Query: "SELECT COALESCE(NULL, NULL, 42, 100)",
+		Want:  [][]any{{int64(42)}},
+	},
+	{
+		Name:  "coalesce_all_null",
+		Setup: []string{},
+		Query: "SELECT COALESCE(NULL, NULL)",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name:  "nullif_equal",
+		Setup: []string{},
+		Query: "SELECT NULLIF(5, 5)",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name:  "nullif_notequal",
+		Setup: []string{},
+		Query: "SELECT NULLIF(5, 3)",
+		Want:  [][]any{{int64(5)}},
+	},
+	{
+		Name:  "group_concat_three_rows",
+		Setup: []string{
+			"CREATE TABLE t (v TEXT)",
+			"INSERT INTO t VALUES ('a'), ('b'), ('c')",
+		},
+		Query: "SELECT GROUP_CONCAT(v) FROM t",
+		Want:  [][]any{{"a,b,c"}},
+	},
+	{
+		Name:  "group_concat_single",
+		Setup: []string{
+			"CREATE TABLE t (v TEXT)",
+			"INSERT INTO t VALUES ('only')",
+		},
+		Query: "SELECT GROUP_CONCAT(v) FROM t",
+		Want:  [][]any{{"only"}},
+	},
+	{
+		Name:  "group_concat_empty",
+		Setup: []string{
+			"CREATE TABLE t (v TEXT)",
+		},
+		Query: "SELECT GROUP_CONCAT(v) FROM t",
+		Want:  [][]any{{nil}},
+	},
+}
+
+// edgeCases verify boundary conditions and NULL handling.
+var edgeCases = []dualCase{
+	{
+		Name:  "empty_table_count",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER)",
+		},
+		Query: "SELECT COUNT(*) FROM t",
+		Want:  [][]any{{int64(0)}},
+	},
+	{
+		Name:  "empty_table_sum",
+		Setup: []string{
+			"CREATE TABLE t (v INTEGER)",
+		},
+		Query: "SELECT SUM(v) FROM t",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name:  "empty_table_avg",
+		Setup: []string{
+			"CREATE TABLE t (v INTEGER)",
+		},
+		Query: "SELECT AVG(v) FROM t",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name:  "null_in_concat",
+		Setup: []string{},
+		Query: "SELECT 'a' || NULL || 'b'",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name:  "arithmetic_with_null",
+		Setup: []string{},
+		Query: "SELECT 10 + NULL",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name:  "comparison_with_null",
+		Setup: []string{},
+		Query: "SELECT NULL = NULL",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name:  "is_null_true",
+		Setup: []string{},
+		Query: "SELECT NULL IS NULL",
+		Want:  [][]any{{true}},
+	},
+	{
+		Name:  "is_not_null_false",
+		Setup: []string{},
+		Query: "SELECT NULL IS NOT NULL",
+		Want:  [][]any{{false}},
+	},
 }
