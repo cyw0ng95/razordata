@@ -107,6 +107,7 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
+| REQ000345 | SQL/EX | Empty-table aggregate (`COUNT(*)`) returns zero rows instead of one row with value 0 — diverges from SQLite and breaks dual-runner | medium | S | iter-25 surfacing | see `iter-25-sqlite-testsuite.md` Gap Analysis; `SQL/EX/` aggregate operator on empty input |
 
 ## DONE
 
