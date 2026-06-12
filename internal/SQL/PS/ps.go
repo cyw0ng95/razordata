@@ -246,6 +246,30 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			p.advance()
 			return &QualifiedName{Table: name, Name: col}, nil
 		}
+		if p.current.Type == LX.T_LPAREN {
+			p.advance()
+			var args []Expr
+			if p.current.Type != LX.T_RPAREN {
+				a, err := p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, a)
+				for p.current.Type == LX.T_COMMA {
+					p.advance()
+					a, err := p.parseExpr()
+					if err != nil {
+						return nil, err
+					}
+					args = append(args, a)
+				}
+			}
+			if err := p.expect(LX.T_RPAREN); err != nil {
+				return nil, err
+			}
+			p.advance()
+			return &FunctionCall{Name: name, Args: args}, nil
+		}
 		return &Ident{Name: name}, nil
 	case LX.T_COUNT, LX.T_SUM, LX.T_AVG, LX.T_MIN, LX.T_MAX:
 		name := p.current.Lexeme

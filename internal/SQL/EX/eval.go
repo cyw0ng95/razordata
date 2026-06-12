@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
@@ -452,8 +453,23 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 	switch e.Name {
 	case "LENGTH":
 		if len(e.Args) > 0 {
-			if s, ok := e.Args[0].(*PS.StringLiteral); ok {
-				return int64(len(s.Val)), nil
+			v, _ := Eval(e.Args[0], row, params)
+			if s, ok := v.(string); ok {
+				return int64(len(s)), nil
+			}
+		}
+	case "UPPER":
+		if len(e.Args) > 0 {
+			v, _ := Eval(e.Args[0], row, params)
+			if s, ok := v.(string); ok {
+				return strings.ToUpper(s), nil
+			}
+		}
+	case "LOWER":
+		if len(e.Args) > 0 {
+			v, _ := Eval(e.Args[0], row, params)
+			if s, ok := v.(string); ok {
+				return strings.ToLower(s), nil
 			}
 		}
 	case "IFNULL":
