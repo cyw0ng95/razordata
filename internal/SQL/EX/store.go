@@ -53,10 +53,17 @@ type storeSchema struct {
 	defaults []PS.Expr   // parallel to cols; nil means no DEFAULT
 	unique   []UniqueKey // each entry is1+ columns
 	checks   []PS.Expr   // parallel to CHECK constraints
-	// colTypes parallel to cols; stores the LX.T_* int token
-	// that names the SQL column type. nil means types were not
-	// registered (the legacy in-memory mode).
 	colTypes []int
+	foreignKeys []ForeignKeyConstraint // REQ000126: FK constraints
+}
+
+// ForeignKeyConstraint describes a single FK constraint (REQ000126).
+type ForeignKeyConstraint struct {
+	Columns    []string // local column names
+	RefTable   string   // referenced table
+	RefColumns []string // referenced columns
+	OnDelete   string   // CASCADE, RESTRICT, SET NULL, SET DEFAULT, NO ACTION
+	OnUpdate   string   // same set
 }
 
 var (
@@ -255,6 +262,12 @@ func registerStoreSchemaWithConstraints(name string, cols []string, nullable []b
 // UNIQUE. unique may be nil. Safe to call multiple times for the
 // same name (idempotent).
 func registerStoreSchemaFull(name string, cols []string, nullable []bool, defaults []PS.Expr, unique []UniqueKey, pk string) uint64 {
+	return registerStoreSchemaWithFK(name, cols, nullable, defaults, unique, pk, nil)
+}
+
+// registerStoreSchemaWithFK stores the full constraint set including
+// UNIQUE and FOREIGN KEY constraints. REQ000126.
+func registerStoreSchemaWithFK(name string, cols []string, nullable []bool, defaults []PS.Expr, unique []UniqueKey, pk string, fks []ForeignKeyConstraint) uint64 {
 	storeMu.Lock()
 	defer storeMu.Unlock()
 	cpCols := append([]string(nil), cols...)
@@ -277,12 +290,15 @@ func registerStoreSchemaFull(name string, cols []string, nullable []bool, defaul
 			ss.nullable = cpNullable
 			ss.defaults = cpDefaults
 			ss.unique = cpUnique
+			if fks != nil {
+				ss.foreignKeys = fks
+			}
 			return id
 		}
 	}
 	id := nextTableIDLocked()
 	tableIDs[name] = id
-	storeSchemas[id] = &storeSchema{cols: cpCols, pk: pk, nullable: cpNullable, defaults: cpDefaults, unique: cpUnique}
+	storeSchemas[id] = &storeSchema{cols: cpCols, pk: pk, nullable: cpNullable, defaults: cpDefaults, unique: cpUnique, foreignKeys: fks}
 	return id
 }
 
