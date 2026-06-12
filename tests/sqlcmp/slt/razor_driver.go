@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
@@ -17,16 +18,14 @@ import (
 // Each Connect creates a fresh on-disk database in a temp
 // directory and opens a session. Close removes the temp dir.
 //
-// The driver holds one AP.Session at a time; concurrent Exec /
-// Query on a single driver is not supported. The runner is
-// sequential by construction.
+// The driver holds one AP.Session at a time. Concurrent Exec /
+// Query calls are serialized via mu to prevent race conditions
+// in the underlying engine's merge iterator.
 type RazorDriver struct {
-	dir     string
-	engine  *v1.Engine
-	session AP.Session
-	// classifier marks Razordata's "syntax error" / "unsupported"
-	// errors as Skipped so the pass-rate metric reflects only
-	// real regressions.
+	mu        sync.Mutex
+	dir       string
+	engine    *v1.Engine
+	session   AP.Session
 	classifier *RazorClassifier
 }
 
@@ -142,6 +141,8 @@ func (d *RazorDriver) Close(ctx context.Context) error {
 // Exec runs a DDL/DML statement. Errors are returned verbatim; the
 // runner routes them through the classifier.
 func (d *RazorDriver) Exec(ctx context.Context, sql string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if d.session == nil {
 		return errors.New("slt: razor: not connected")
 	}
@@ -153,6 +154,8 @@ func (d *RazorDriver) Exec(ctx context.Context, sql string) error {
 // returns the schema via *ex.Rows; row data is pulled through
 // QueryAll and converted to SLT Value cells.
 func (d *RazorDriver) Query(ctx context.Context, sql string) (*ResultSet, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if d.session == nil {
 		return nil, errors.New("slt: razor: not connected")
 	}

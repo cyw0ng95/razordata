@@ -83,6 +83,11 @@ Columns for selection:
 | REQ000320 | ENG | Configurable compaction style (`Options.CompactionStyle = leveled \| tiered \| hybrid`; tiered for time-series) | medium | M | iter-04 | `ENG/LS/compaction.go` — strategy interface; `Options.CompactionStyle` field |
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
 | REQ000322 | LOG | eBPF runtime tracing export (`ProfileHook` data consumed by eBPF programs for lock contention / I/O queue / GC pause maps) | medium | M | iter-00 (ProfileHook) | `LOG/HK/profile.go` — BPF map publishing; optional `cmd/razor-ebpf` tool |
+| REQ000323 | SQL/LX | Bitwise operators (`&`, `|`, `^`, `~`) — not in lexer/parser | medium | M | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/LX/lx.go`, `SQL/PS/ps.go` — add tokens + precedence |
+| REQ000324 | SQL/LX | String concatenation operator (`\|\|`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/PS/ps.go` — add token + binary op |
+| REQ000325 | SQL/LX | Modulo operator (`%`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` — add token + eval |
+| REQ000326 | SQL/EX | COALESCE as special form (currently only works as function call) | low | S | iter-08 (eval) | `SQL/EX/eval.go` — add COALESCE case in evalFunction |
+| REQ000327 | SQL/EX | NULLIF as special form (currently only works as function call) | low | S | iter-08 (eval) | `SQL/EX/eval.go` — add NULLIF case in evalFunction |
 
 ## Unfixed Bugs (surfaces as requirements)
 
