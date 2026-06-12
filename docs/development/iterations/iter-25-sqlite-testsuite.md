@@ -399,7 +399,7 @@ A new GitHub Actions workflow:
 - Upload `junit.xml` as a workflow artifact.
 - Post a PR comment with the pass-rate delta vs `main` branch.
 
-**Note:** this file lives in `.github/`, not `design/`. It is
+**Note:** this file lives in `.github/`, not `docs/design/`. It is
 operational, not architectural.
 
 ---
@@ -426,7 +426,7 @@ Explains:
 Captures the architectural intent: why pure-Go oracle, why
 submodule, why dual-runner. Lives in the iteration doc so it
 ships with the iteration that implements it. Not promoted to
-`design/` because it is a test harness, not a database
+`docs/design/` because it is a test harness, not a database
 subsystem.
 
 ---

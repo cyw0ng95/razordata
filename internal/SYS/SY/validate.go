@@ -9,7 +9,7 @@ import (
 )
 
 // validateOptions enforces the bounds and invariants declared in
-// design/subsystems/SYS.md:198-214. It is called by Open before any
+// docs/design/subsystems/SYS.md:198-214. It is called by Open before any
 // subsystem is constructed; a non-nil return aborts Open and leaves
 // no on-disk state.
 //

@@ -11,7 +11,7 @@
 
 ## Outcome
 
-The 6-phase graceful-shutdown sequence from `design/subsystems/SYS.md:215-282` is
+The 6-phase graceful-shutdown sequence from `docs/design/subsystems/SYS.md:215-282` is
 now wired into the engine. The previous best-effort teardown has been folded
 into Phase 5 of the new sequence; the other phases add the missing coordination
 around it.
@@ -106,7 +106,7 @@ The implementation landed as 6 commits, each a stable checkpoint:
 
 ## Overview
 
-The current `internal/SYS/SY/shutdown.go` is 36 lines and contains only the SIGINT/SIGTERM signal handler. The 6-phase shutdown sequence specified in `design/subsystems/SYS.md:215-282` is not implemented — `Engine.Close()` calls each subsystem's `Close()` in reverse construction order but skips all the coordination around it: it does not stop accepting new requests, does not wait for active transactions, does not explicitly `Flush` + `WAL.Sync` + `FIL.SyncDir`, does not stop background goroutines, and does not log the final stats.
+The current `internal/SYS/SY/shutdown.go` is 36 lines and contains only the SIGINT/SIGTERM signal handler. The 6-phase shutdown sequence specified in `docs/design/subsystems/SYS.md:215-282` is not implemented — `Engine.Close()` calls each subsystem's `Close()` in reverse construction order but skips all the coordination around it: it does not stop accepting new requests, does not wait for active transactions, does not explicitly `Flush` + `WAL.Sync` + `FIL.SyncDir`, does not stop background goroutines, and does not log the final stats.
 
 This iteration builds the 6-phase sequence end-to-end and makes the existing `validate()` function match the design spec (full per-field checks, not just "is non-empty"). It also surfaces the per-subsystem `Close()` ordering (REQ000166) as explicit teardown contracts so future iterations have a clear, testable invariant.
 

@@ -477,7 +477,7 @@ func TestRP_ResyncWindowIsBounded(t *testing.T) {
 - [ ] `go test ./internal/WAL/... -run "TestRP_RecoveryPolicy" -count=5` green (5 consecutive runs to catch flakiness)
 - [ ] Coverage for `WAL/RP` ≥ 85%
 - [ ] `WAL.Stats` is surfaced via `Engine.Stats().WAL` (next iteration can wire this; for iter-13, the stats exist on the replayer)
-- [ ] Documentation: `development/REQUIREMENTS.md` (REQ000035 → DONE), `design/subsystems/WAL.md` (open question resolved)
+- [ ] Documentation: `development/REQUIREMENTS.md` (REQ000035 → DONE), `docs/design/subsystems/WAL.md` (open question resolved)
 - [ ] Release tag: `v0.10.0`
 
 ## Post-Iteration

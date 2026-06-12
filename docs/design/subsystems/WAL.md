@@ -202,4 +202,4 @@ type replayer struct {
 ## Open Issues
 
 - Should we support WAL compression (lz4) to reduce I/O, at the cost of CPU?
-- (Resolved in iter-13) How to handle WAL corruption (partial record at end of segment)? Answered: tail-of-last-segment is tolerated (torn write, expected after a crash); mid-segment corruption fails loud with `ErrCorrupt`. Wire format bumped to carry a 12-byte segment header and a 4-byte envelope CRC. See `development/iterations/iter-13-wal-recovery.md`.
+- (Resolved in iter-13) How to handle WAL corruption (partial record at end of segment)? Answered: tail-of-last-segment is tolerated (torn write, expected after a crash); mid-segment corruption fails loud with `ErrCorrupt`. Wire format bumped to carry a 12-byte segment header and a 4-byte envelope CRC. See `docs/development/iterations/iter-13-wal-recovery.md`.

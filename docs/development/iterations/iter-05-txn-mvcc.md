@@ -16,7 +16,7 @@ MVCC snapshot isolation for readers and serializable writes. Built on `ENG` — 
 
 ## Design Alignment
 
-Directory structure matches `design/subsystems/TXN.md`:
+Directory structure matches `docs/design/subsystems/TXN.md`:
 ```
 internal/TXN/
 ├── MV/               # MVCC: version chain, CAS insertion, per-txn arena

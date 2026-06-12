@@ -23,7 +23,7 @@ Public API and end-to-end integration. Top-level engine, session, transaction, s
 ## Test Organization (v0.6.3)
 
 Tests are organized into function-domain subdirectories matching
-`design/ARCH.md`:
+`docs/design/ARCH.md`:
 
 ```
 internal/SYS/
@@ -44,7 +44,7 @@ initialization registers Session constructor.
 
 ## Design Alignment
 
-Directory structure matches `design/subsystems/SYS.md`:
+Directory structure matches `docs/design/subsystems/SYS.md`:
 ```
 internal/SYS/
 ├── AP/               # API cluster

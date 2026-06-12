@@ -15,7 +15,7 @@ Foundation logging layer. Thin wrapper over `log/slog`. No business logic — pu
 
 ## Design Alignment
 
-Directory structure matches `design/subsystems/LOG.md`:
+Directory structure matches `docs/design/subsystems/LOG.md`:
 ```
 internal/LOG/
 ├── LG/               # Logger cluster

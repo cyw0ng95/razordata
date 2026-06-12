@@ -15,7 +15,7 @@ Block-level disk I/O abstraction. Only depends on LOG. Provides file management,
 
 ## Design Alignment
 
-Directory structure matches `design/subsystems/FIL.md`:
+Directory structure matches `docs/design/subsystems/FIL.md`:
 ```
 internal/FIL/
 ├── FS/               # FileSystem cluster

@@ -18,7 +18,7 @@ iter-09 both shipped as fully-tested milestones.
 Joins, subqueries, foreign keys, network server, external C dependencies.
 (The SQL/EX executor already ships the join/subquery/aggregate/distinct
 operators as v1.1+ code — they pass tests but are not v1 MVP per
-`design/ARCH.md`.)
+`docs/design/ARCH.md`.)
 
 ## Iterations Overview
 
@@ -70,7 +70,7 @@ All eight iterations are now in `done` state.
 
 ## Directory Structure
 
-See `design/ARCH.md` for full structure. As of v0.6.3, SYS subsystem tests
+See `docs/design/ARCH.md` for full structure. As of v0.6.3, SYS subsystem tests
 are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 
 ## Release Tags
@@ -109,4 +109,4 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 
 ## Design Protection
 
-Design documents in `design/subsystems/*.md` are authoritative. Human-only edits.
+Design documents in `docs/design/subsystems/*.md` are authoritative. Human-only edits.

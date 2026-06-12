@@ -41,7 +41,7 @@ SQL parsing. Tokenization, recursive-descent parser, AST normalization. Depends 
 
 ## Design Alignment
 
-Directory structure matches `design/subsystems/SQL.md`:
+Directory structure matches `docs/design/subsystems/SQL.md`:
 ```
 internal/SQL/
 ├── LX/               # Lexer cluster

@@ -15,7 +15,7 @@ In-memory cache for SST blocks. Hash table + clock-sweep LRU. Depends on FIL.
 
 ## Design Alignment
 
-Directory structure matches `design/subsystems/MEM.md`:
+Directory structure matches `docs/design/subsystems/MEM.md`:
 ```
 internal/MEM/
 ├── SP/                 # SyncPool cluster
@@ -34,7 +34,7 @@ internal/MEM/
 
 ### Resolved: `BlockDevice` is concrete
 
-`design/subsystems/MEM.md` says "consumed interfaces: `BlockDevice`". However, `FIL/DF` does not define a `BlockDevice` interface — it is a concrete `struct`. MEM depends on `*df.BlockDevice` directly. No interface needed for v1.
+`docs/design/subsystems/MEM.md` says "consumed interfaces: `BlockDevice`". However, `FIL/DF` does not define a `BlockDevice` interface — it is a concrete `struct`. MEM depends on `*df.BlockDevice` directly. No interface needed for v1.
 
 ### Resolved: `ErrCorrupt` collision
 
@@ -48,7 +48,7 @@ Current `df.BlockDevice.ReadBlock(ctx, blockID, n, buf)` requires knowing `n` �
 
 ### Resolved: `FileManager` interface gap
 
-`design/subsystems/MEM.md` says MEM "consumes `FileManager` interface". But `FIL/FS` exposes no interface type — only concrete `*fs.FileManager`. MEM does not need an interface; it uses the concrete type directly.
+`docs/design/subsystems/MEM.md` says MEM "consumes `FileManager` interface". But `FIL/FS` exposes no interface type — only concrete `*fs.FileManager`. MEM does not need an interface; it uses the concrete type directly.
 
 ### Unresolved: `SetCapacity` semantics
 
