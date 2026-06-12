@@ -3,6 +3,7 @@ package EX
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -110,6 +111,10 @@ func evalUnary(e *PS.UnaryExpr, row *Row, params []interface{}) (interface{}, er
 		return operand, nil
 	case int(LX.T_NOT):
 		return !truthy(operand), nil
+	case int(LX.T_BITNOT):
+		if v, ok := toInt64(operand); ok {
+			return ^v, nil
+		}
 	}
 	return nil, ErrEval
 }
@@ -169,6 +174,16 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []interface{}) (interface{}, 
 		return mul(left, right)
 	case int(LX.T_SLASH):
 		return div(left, right)
+	case int(LX.T_MOD):
+		return mod(left, right)
+	case int(LX.T_BITAND):
+		return bitand(left, right)
+	case int(LX.T_BITOR):
+		return bitor(left, right)
+	case int(LX.T_BITXOR):
+		return bitxor(left, right)
+	case int(LX.T_CONCAT):
+		return concat(left, right)
 	case int(LX.T_AND):
 		return band(left, right)
 	case int(LX.T_OR):
@@ -633,6 +648,63 @@ func div(a, b interface{}) (interface{}, error) {
 		return nil, ErrDivByZero
 	}
 	return af / bf, nil
+}
+
+func mod(a, b interface{}) (interface{}, error) {
+	if a == nil || b == nil {
+		return nil, nil
+	}
+	if ai, ok := a.(int64); ok {
+		if bi, ok := b.(int64); ok {
+			if bi == 0 {
+				return nil, ErrDivByZero
+			}
+			return ai % bi, nil
+		}
+	}
+	af, aok := numericFloat(a)
+	bf, bok := numericFloat(b)
+	if !aok || !bok {
+		return nil, nil
+	}
+	if bf == 0 {
+		return nil, ErrDivByZero
+	}
+	return math.Mod(af, bf), nil
+}
+
+func bitand(a, b interface{}) (interface{}, error) {
+	ai, aok := toInt64(a)
+	bi, bok := toInt64(b)
+	if !aok || !bok {
+		return nil, nil
+	}
+	return ai & bi, nil
+}
+
+func bitor(a, b interface{}) (interface{}, error) {
+	ai, aok := toInt64(a)
+	bi, bok := toInt64(b)
+	if !aok || !bok {
+		return nil, nil
+	}
+	return ai | bi, nil
+}
+
+func bitxor(a, b interface{}) (interface{}, error) {
+	ai, aok := toInt64(a)
+	bi, bok := toInt64(b)
+	if !aok || !bok {
+		return nil, nil
+	}
+	return ai ^ bi, nil
+}
+
+func concat(a, b interface{}) (interface{}, error) {
+	if a == nil || b == nil {
+		return nil, nil
+	}
+	return fmt.Sprintf("%v%v", a, b), nil
 }
 
 func numericArith(a, b interface{}, op rune) (interface{}, error) {

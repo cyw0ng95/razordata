@@ -162,6 +162,12 @@ const (
 	T_RESTRICT
 	T_NO
 	T_ACTION
+	T_BITAND
+	T_BITOR
+	T_BITXOR
+	T_BITNOT
+	T_MOD
+	T_CONCAT
 
 	T_ERROR TokenType = -1
 )
@@ -328,6 +334,12 @@ var tokenTypeNames = [...]string{
 	T_RESTRICT:    "RESTRICT",
 	T_NO:          "NO",
 	T_ACTION:      "ACTION",
+	T_BITAND:      "BITAND",
+	T_BITOR:       "BITOR",
+	T_BITXOR:      "BITXOR",
+	T_BITNOT:      "BITNOT",
+	T_MOD:         "MOD",
+	T_CONCAT:      "CONCAT",
 }
 
 func (t Token) String() string {
