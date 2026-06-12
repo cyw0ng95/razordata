@@ -280,9 +280,9 @@ func (fm *flushManager) requestFlush(m *memtable) {
 		level:      0,
 	}
 	for attempt := 0; attempt < maxFlushRetries; attempt++ {
+		fm.pendingWGs.Add(1)
 		select {
 		case fm.flushQueue <- job:
-			fm.pendingWGs.Add(1)
 			return
 		default:
 			select {
@@ -299,7 +299,6 @@ func (fm *flushManager) requestFlush(m *memtable) {
 		return
 	default:
 	}
-	fm.pendingWGs.Add(1)
 	fm.flushQueue <- job
 }
 

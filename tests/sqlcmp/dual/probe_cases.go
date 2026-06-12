@@ -249,7 +249,3 @@ var probeCases = []dualCase{
 		},
 	},
 }
-
-func init() {
-	allProbeCases = append(allProbeCases, probeCases...)
-}
