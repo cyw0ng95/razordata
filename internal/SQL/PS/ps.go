@@ -189,6 +189,12 @@ var tokenNames = [...]string{
 	LX.T_FETCH:        "FETCH",
 	LX.T_FIRST:        "FIRST",
 	LX.T_ONLY:         "ONLY",
+	LX.T_REFERENCES:   "REFERENCES",
+	LX.T_FOREIGN:      "FOREIGN",
+	LX.T_CASCADE:      "CASCADE",
+	LX.T_RESTRICT:     "RESTRICT",
+	LX.T_NO:           "NO",
+	LX.T_ACTION:       "ACTION",
 }
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -1017,7 +1023,7 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 	var cols []ColDef
 	var pk *string
 	for {
-		if p.current.Type == LX.T_PRIMARY || p.current.Type == LX.T_UNIQUE {
+		if p.current.Type == LX.T_PRIMARY || p.current.Type == LX.T_UNIQUE || p.current.Type == LX.T_FOREIGN {
 			break
 		}
 		if err := p.expect(LX.T_IDENT); err != nil {
@@ -1098,13 +1104,45 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 			}
 		}
 
+		// REQ000126: column-level REFERENCES clause (after other constraints)
+		if p.current.Type == LX.T_REFERENCES {
+			p.advance()
+			if err := p.expect(LX.T_IDENT); err != nil {
+				return nil, err
+			}
+			col.ReferencesTable = p.current.Lexeme
+			p.advance()
+			if p.current.Type == LX.T_LPAREN {
+				p.advance()
+				if err := p.expect(LX.T_IDENT); err != nil {
+					return nil, err
+				}
+				col.ReferencesColumn = p.current.Lexeme
+				p.advance()
+				if err := p.expect(LX.T_RPAREN); err != nil {
+					return nil, err
+				}
+				p.advance()
+			}
+			for p.current.Type == LX.T_ON {
+				p.advance()
+				if p.current.Type == LX.T_DELETE {
+					p.advance()
+					col.OnDelete = p.parseFKAction()
+				} else if p.current.Type == LX.T_UPDATE {
+					p.advance()
+					col.OnUpdate = p.parseFKAction()
+				}
+			}
+		}
+
 		cols = append(cols, col)
 
 		if p.current.Type == LX.T_COMMA {
 			p.advance()
 			continue
 		}
-		if p.current.Type == LX.T_PRIMARY || p.current.Type == LX.T_UNIQUE {
+		if p.current.Type == LX.T_PRIMARY || p.current.Type == LX.T_UNIQUE || p.current.Type == LX.T_FOREIGN {
 			break
 		}
 		if p.current.Type == LX.T_RPAREN {
@@ -1114,10 +1152,17 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 	}
 
 	var uniqueConstraints []UniqueKey
-	for p.current.Type == LX.T_PRIMARY || p.current.Type == LX.T_UNIQUE {
+	var foreignKeys []ForeignKeyConstraint
+	for p.current.Type == LX.T_PRIMARY || p.current.Type == LX.T_UNIQUE || p.current.Type == LX.T_FOREIGN {
 		isPK := p.current.Type == LX.T_PRIMARY
+		isFK := p.current.Type == LX.T_FOREIGN
 		p.advance()
 		if isPK {
+			if err := p.expect(LX.T_KEY); err != nil {
+				return nil, err
+			}
+			p.advance()
+		} else if isFK {
 			if err := p.expect(LX.T_KEY); err != nil {
 				return nil, err
 			}
@@ -1148,7 +1193,51 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 			return nil, err
 		}
 		p.advance()
-		if isPK {
+		if isFK {
+			// FOREIGN KEY (cols) REFERENCES table(refCols) [ON DELETE/UPDATE action]
+			if err := p.expect(LX.T_REFERENCES); err != nil {
+				return nil, err
+			}
+			p.advance()
+			if err := p.expect(LX.T_IDENT); err != nil {
+				return nil, err
+			}
+			refTable := p.current.Lexeme
+			p.advance()
+			var refCols []string
+			if p.current.Type == LX.T_LPAREN {
+				p.advance()
+				if err := p.expect(LX.T_IDENT); err != nil {
+					return nil, err
+				}
+				refCols = append(refCols, p.current.Lexeme)
+				p.advance()
+				for p.current.Type == LX.T_COMMA {
+					p.advance()
+					if err := p.expect(LX.T_IDENT); err != nil {
+						return nil, err
+					}
+					refCols = append(refCols, p.current.Lexeme)
+					p.advance()
+				}
+				if err := p.expect(LX.T_RPAREN); err != nil {
+					return nil, err
+				}
+				p.advance()
+			}
+			fk := ForeignKeyConstraint{Columns: names, RefTable: refTable, RefColumns: refCols}
+			for p.current.Type == LX.T_ON {
+				p.advance()
+				if p.current.Type == LX.T_DELETE {
+					p.advance()
+					fk.OnDelete = p.parseFKAction()
+				} else if p.current.Type == LX.T_UPDATE {
+					p.advance()
+					fk.OnUpdate = p.parseFKAction()
+				}
+			}
+			foreignKeys = append(foreignKeys, fk)
+		} else if isPK {
 			if len(names) != 1 {
 				return nil, fmt.Errorf("ps: composite PRIMARY KEY (a, b) not supported, got %d columns", len(names))
 			}
@@ -1175,7 +1264,39 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 		}
 	}
 
-	return &CreateTable{Name: name, Cols: cols, PK: pk, UniqueConstraints: uniqueConstraints}, nil
+	return &CreateTable{Name: name, Cols: cols, PK: pk, UniqueConstraints: uniqueConstraints, ForeignKeys: foreignKeys}, nil
+}
+
+// parseFKAction parses CASCADE / RESTRICT / SET NULL / SET DEFAULT / NO ACTION.
+func (p *Parser) parseFKAction() string {
+	switch p.current.Type {
+	case LX.T_CASCADE:
+		p.advance()
+		return "CASCADE"
+	case LX.T_RESTRICT:
+		p.advance()
+		return "RESTRICT"
+	case LX.T_SET:
+		p.advance()
+		if p.current.Type == LX.T_NULL {
+			p.advance()
+			return "SET NULL"
+		}
+		if p.current.Type == LX.T_DEFAULT {
+			p.advance()
+			return "SET DEFAULT"
+		}
+		return "SET"
+	case LX.T_NO:
+		p.advance()
+		if p.current.Type == LX.T_ACTION {
+			p.advance()
+			return "NO ACTION"
+		}
+		return "NO"
+	default:
+		return "NO ACTION"
+	}
 }
 
 func (p *Parser) parseDropTable() (*DropTable, error) {

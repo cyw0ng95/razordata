@@ -156,6 +156,12 @@ const (
 	T_FETCH
 	T_FIRST
 	T_ONLY
+	T_REFERENCES
+	T_FOREIGN
+	T_CASCADE
+	T_RESTRICT
+	T_NO
+	T_ACTION
 
 	T_ERROR TokenType = -1
 )
@@ -316,6 +322,12 @@ var tokenTypeNames = [...]string{
 	T_SAVEPOINT:   "SAVEPOINT",
 	T_RELEASE:     "RELEASE",
 	T_TO:          "TO",
+	T_REFERENCES:  "REFERENCES",
+	T_FOREIGN:     "FOREIGN",
+	T_CASCADE:     "CASCADE",
+	T_RESTRICT:    "RESTRICT",
+	T_NO:          "NO",
+	T_ACTION:      "ACTION",
 }
 
 func (t Token) String() string {

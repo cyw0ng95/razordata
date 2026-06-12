@@ -187,14 +187,18 @@ type IntervalLiteral struct {
 func (i *IntervalLiteral) exprNode() {}
 
 type ColDef struct {
-	Name     string
-	Type     int
-	Size     int
-	Nullable bool
-	Default  Expr
-	PK       bool
-	Unique   bool
-	Check    Expr
+	Name             string
+	Type             int
+	Size             int
+	Nullable         bool
+	Default          Expr
+	PK               bool
+	Unique           bool
+	Check            Expr
+	ReferencesTable  string   // REQ000126: FOREIGN KEY REFERENCES table
+	ReferencesColumn string   // REQ000126: referenced column
+	OnDelete         string   // CASCADE, RESTRICT, SET NULL, SET DEFAULT, NO ACTION
+	OnUpdate         string   // same set
 }
 
 func NewColDef(name string, typ int) ColDef {
@@ -211,6 +215,16 @@ type CreateTable struct {
 	Cols              []ColDef
 	PK                *string
 	UniqueConstraints []UniqueKey
+	ForeignKeys       []ForeignKeyConstraint // REQ000126
+}
+
+// ForeignKeyConstraint represents a table-level FOREIGN KEY constraint.
+type ForeignKeyConstraint struct {
+	Columns    []string // local column names
+	RefTable   string   // referenced table
+	RefColumns []string // referenced columns
+	OnDelete   string   // CASCADE, RESTRICT, SET NULL, SET DEFAULT, NO ACTION
+	OnUpdate   string   // same set
 }
 
 // UniqueKey represents a UNIQUE constraint over one or more columns.
