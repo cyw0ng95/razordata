@@ -83,11 +83,11 @@ Columns for selection:
 | REQ000320 | ENG | Configurable compaction style (`Options.CompactionStyle = leveled \| tiered \| hybrid`; tiered for time-series) | medium | M | iter-04 | `ENG/LS/compaction.go` — strategy interface; `Options.CompactionStyle` field |
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
 | REQ000322 | LOG | eBPF runtime tracing export (`ProfileHook` data consumed by eBPF programs for lock contention / I/O queue / GC pause maps) | medium | M | iter-00 (ProfileHook) | `LOG/HK/profile.go` — BPF map publishing; optional `cmd/razor-ebpf` tool |
-| REQ000323 | SQL/LX | Bitwise operators (`&`, `|`, `^`, `~`) — not in lexer/parser | medium | M | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/LX/lx.go`, `SQL/PS/ps.go` — add tokens + precedence |
-| REQ000324 | SQL/LX | String concatenation operator (`\|\|`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/PS/ps.go` — add token + binary op |
-| REQ000325 | SQL/LX | Modulo operator (`%`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` — add token + eval |
-| REQ000326 | SQL/EX | COALESCE as special form (currently only works as function call) | low | S | iter-08 (eval) | `SQL/EX/eval.go` — add COALESCE case in evalFunction |
-| REQ000327 | SQL/EX | NULLIF as special form (currently only works as function call) | low | S | iter-08 (eval) | `SQL/EX/eval.go` — add NULLIF case in evalFunction |
+| REQ000350 | SQL/LX | Bitwise operators (`&`, `|`, `^`, `~`) — not in lexer/parser | medium | M | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/LX/lx.go`, `SQL/PS/ps.go` — add tokens + precedence |
+| REQ000351 | SQL/LX | String concatenation operator (`\|\|`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/PS/ps.go` — add token + binary op |
+| REQ000352 | SQL/LX | Modulo operator (`%`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` — add token + eval |
+| REQ000353 | SQL/EX | COALESCE as special form (currently only works as function call) | low | S | iter-08 (eval) | `SQL/EX/eval.go` — add COALESCE case in evalFunction |
+| REQ000354 | SQL/EX | NULLIF as special form (currently only works as function call) | low | S | iter-08 (eval) | `SQL/EX/eval.go` — add NULLIF case in evalFunction |
 
 ## Unfixed Bugs (surfaces as requirements)
 
@@ -101,7 +101,9 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000346 | SQL/EX | Test isolation: `TestCreateIndex_Registers` and `TestIndexScan_WithStore_ReadsRows` fail under `go test -count=N` because EX package-level `tables`/`schemas` maps are not reset between runs (race detector reports DATA RACE on `tables` and `schemas` writes when multiple tests run concurrently or in sequence without `EX.UnregisterAll()`) | high | S | iter-25 surfacing | `internal/SQL/EX/index_ddl_test.go:11`, `internal/SQL/EX/cost_indexscan_test.go:73`; fix is `t.Cleanup(EX.UnregisterAll)` at top of each affected test |
 | REQ000347 | ENG | Silent data loss on large-row INSERT: a 100 MiB string literal INSERT returns success but the row is not retrievable by primary key (`SELECT ... WHERE id = N` returns 0 rows). Behaviour with row sizes ≤1 MiB is correct. Suspected memtable/flush path drops rows whose encoded size exceeds an internal buffer | critical | L | iter-25 surfacing (edge probe `TestEdge_LargeStrings`) | `internal/ENG/LS/engine.go` memtable + flush; reproduce via `tests/sqlcmp/slt/largevalue_test.go` (gated by `edge_probe` build tag) |
 | REQ000348 | SQL/EX | `SELECT` results are not consumable from a `*Session.Query` for sizes >~10MB; the public API returns only `*Rows{Cols,Types}` (schema only) without a streaming accessor; callers must drop into the unexported `*Executor.QueryAll`. Limits test-harness coverage of large payloads | medium | M | iter-25 surfacing | `internal/SYS/AP/ap.go` `Session` interface; `internal/SYS/SE/se.go` `Query` returns `&AP.Rows{...}` with no row data |
-| REQ000349 | SQL/PS | Missing SQLite builtin expression operators: bitwise `&`, `|`, `^`, unary `~`; logical `NOT`; string concat `\|\|`; builtin functions `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`, `GROUP_CONCAT`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `internal/SQL/PS/ps.go` operator table; `SQL/EX/eval.go` function dispatch |
+| REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
+| REQ000355 | SQL/PS | Missing aggregate function `GROUP_CONCAT(expr [SEP sep])` | low | M | iter-08 (aggregates) | `SQL/EX/` aggregate operator; new `aggGroupConcat` |
+| REQ000356 | SQL/LX | Unary `NOT` as logical operator (currently only works as infix in some contexts; `~` bitwise NOT) | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` |
 
 ## DONE
 

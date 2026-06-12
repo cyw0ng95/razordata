@@ -93,6 +93,16 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 			groups[idx].rows = append(groups[idx].rows, row)
 		}
 	}
+	// REQ000345: no GROUP BY + empty input = single row with
+	// NULL aggregates. With GROUP BY + empty input = 0 rows.
+	if len(groups) == 0 && len(a.groupCols) > 0 {
+		a.buf = []Row{}
+		return nil
+	}
+	if len(groups) == 0 {
+		// scalar aggregate: one group with zero rows
+		groups = []groupBucket{{key: nil, rows: nil}}
+	}
 	sort.SliceStable(groups, func(i, j int) bool {
 		return keysLess(groups[i].key, groups[j].key)
 	})

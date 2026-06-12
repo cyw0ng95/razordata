@@ -71,6 +71,7 @@ func TestPlanner_EstimateCost_Sort(t *testing.T) {
 }
 
 func TestIndexScan_WithStore_ReadsRows(t *testing.T) {
+	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
 	defer eng.Close()
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")

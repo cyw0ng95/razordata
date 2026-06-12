@@ -55,11 +55,17 @@ func UnregisterAll() {
 	storeSchemas = map[uint64]*storeSchema{}
 	tableIDs = map[string]uint64{}
 	tableIDSeq = 0
-	// Note: currentCatalog is NOT cleared here. The catalog is
-	// a persistent, externally-owned resource (the SYS layer
-	// sets it at Open). UnregisterAll is used by tests to wipe
-	// in-memory state without disturbing the catalog, so that
-	// the next test sees the same persisted tables.
+	// REQ000346 (iter-26): the pre-fix UnregisterAll missed
+	// the EX-level secondary-index and view registries. Both
+	// are declared in store.go as package-level maps and
+	// are mutated by every CREATE INDEX / CREATE VIEW. The
+	// unreset registry caused TestCreateIndex_Registers and
+	// TestIndexScan_WithStore_ReadsRows to fail under
+	// `go test -count=N`. The catalog is intentionally NOT
+	// cleared here (it is a persistent, externally-owned
+	// resource the SYS layer sets at Open).
+	registeredIndexes = map[string][]RegisteredIndex{}
+	viewRegistry = map[string]*PS.Select{}
 	storeMu.Unlock()
 }
 
