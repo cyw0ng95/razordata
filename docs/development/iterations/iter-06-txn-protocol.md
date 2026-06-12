@@ -16,7 +16,7 @@ Transaction commit protocol with write-write conflict detection, transaction slo
 
 ## Design Alignment
 
-Directory structure matches `design/subsystems/TXN.md`:
+Directory structure matches `docs/design/subsystems/TXN.md`:
 ```
 internal/TXN/
 ├── VL/               # Validation: commit protocol, write-write conflict detection
@@ -32,7 +32,7 @@ internal/TXN/
 
 ## Design Corrections Applied
 
-Per `design/subsystems/TXN.md` §TransactionSlot and §Commit Protocol:
+Per `docs/design/subsystems/TXN.md` §TransactionSlot and §Commit Protocol:
 
 1. `transactionSlot.status` MUST be `atomic.Int32` (not plain `int32`)
 2. `transactionSlot` MUST have `arena *arena` field

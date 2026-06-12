@@ -1,6 +1,6 @@
 # Razordata Architecture
 
-> This document is the index. Full design details are in `design/subsystems/*.md`.
+> This document is the index. Full design details are in `docs/design/subsystems/*.md`.
 
 ## Modules Overview
 
@@ -65,4 +65,4 @@ internal/
 
 ## Detailed Design
 
-Full design documents: `design/subsystems/LOG.md` · `FIL.md` · `MEM.md` · `WAL.md` · `ENG.md` · `TXN.md` · `SQL.md` · `SYS.md`
+Full design documents: `docs/design/subsystems/LOG.md` · `FIL.md` · `MEM.md` · `WAL.md` · `ENG.md` · `TXN.md` · `SQL.md` · `SYS.md`

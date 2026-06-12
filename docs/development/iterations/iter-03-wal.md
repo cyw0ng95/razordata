@@ -19,7 +19,7 @@ Sequential durability path. Append-only segments (64 MB). fsync on commit. Repla
 
 ## Design Alignment
 
-Directory structure matches `design/subsystems/WAL.md`:
+Directory structure matches `docs/design/subsystems/WAL.md`:
 ```
 internal/WAL/
 ├── WR/               # Writer cluster
@@ -50,7 +50,7 @@ internal/WAL/
 
 #### Resolved: No interface wrappers needed
 
-`design/subsystems/WAL.md` says "consumed interfaces: `FileManager`, `BlockDevice`". Neither interface type exists in the codebase. WAL uses concrete types directly: `*lf.SegmentManager`, `*df.BlockDevice`, `sp.SyncPool` (the unexported `*sp.syncPool` implementation is held via the interface). No interface wrappers needed for v1.
+`docs/design/subsystems/WAL.md` says "consumed interfaces: `FileManager`, `BlockDevice`". Neither interface type exists in the codebase. WAL uses concrete types directly: `*lf.SegmentManager`, `*df.BlockDevice`, `sp.SyncPool` (the unexported `*sp.syncPool` implementation is held via the interface). No interface wrappers needed for v1.
 
 #### Resolved: SyncDir with subdirectory path
 

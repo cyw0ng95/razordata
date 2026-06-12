@@ -62,7 +62,7 @@ func defaultShutdownTimeouts() ShutdownTimeouts {
 }
 
 // Shutdown runs the 6-phase graceful shutdown sequence per
-// design/subsystems/SYS.md:215-282. It is the single entry point
+// docs/design/subsystems/SYS.md:215-282. It is the single entry point
 // called by Engine.Close — the previous best-effort teardown has
 // been folded into Phase 5 of this sequence.
 //

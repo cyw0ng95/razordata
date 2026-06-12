@@ -17,7 +17,7 @@ Query planning and execution. Operator tree, streaming executor, expression eval
 
 ## Design Alignment
 
-Directory structure matches `design/subsystems/SQL.md`:
+Directory structure matches `docs/design/subsystems/SQL.md`:
 ```
 internal/SQL/
 ├── PL/               # Planner cluster (STUB — see Divergence below)
@@ -47,10 +47,10 @@ internal/SQL/
 
 ## Divergence from Design (read this before planning the next session)
 
-The iter-08 spec was written against `design/subsystems/SQL.md`, which assigns the **Planner** cluster to `internal/SQL/PL/`. The actual code has deviated:
+The iter-08 spec was written against `docs/design/subsystems/SQL.md`, which assigns the **Planner** cluster to `internal/SQL/PL/`. The actual code has deviated:
 
 1. **Planner files live in EX, not PL.** `EX/planner.go` (331 LoC) and `EX/memo.go` (272 LoC) hold `Planner`, `Plan`, `estimateCost`, `selectIndex`, memoization, and the SHA256(AST) serializer. `PL/pl.go` is a stub of 11 lines holding forward-declared `Stmt` / `Rows` / `Result` types only.
-2. **EX has operators the spec did not plan for.** `aggregate.go` (263 LoC), `hashagg.go` (106 LoC), `join.go` (87 LoC — NestedLoopJoin), `subq.go` (83 LoC), `distinct.go` (114 LoC), `explain.go` (106 LoC) all go beyond the MVP spec's `SeqScan, IndexScan, Filter, Project, Sort, Limit, Insert, Update, Delete`. They work end-to-end against the in-memory table registry, but they are not part of the v1 MVP per `design/ARCH.md`'s "Out of Scope (v1)" list (which excludes joins, aggregates, subqueries, DISTINCT).
+2. **EX has operators the spec did not plan for.** `aggregate.go` (263 LoC), `hashagg.go` (106 LoC), `join.go` (87 LoC — NestedLoopJoin), `subq.go` (83 LoC), `distinct.go` (114 LoC), `explain.go` (106 LoC) all go beyond the MVP spec's `SeqScan, IndexScan, Filter, Project, Sort, Limit, Insert, Update, Delete`. They work end-to-end against the in-memory table registry, but they are not part of the v1 MVP per `docs/design/ARCH.md`'s "Out of Scope (v1)" list (which excludes joins, aggregates, subqueries, DISTINCT).
 3. **In-memory table registry, not real storage.** `EX/operators.go::SeqScan` reads from a package-level `tables` map (set up by `RegisterTable` / `RegisterTableSchema`), not from `ENG.Store` via `NewIterator`. The iter-08 spec says `SeqScan: call store.NewIterator(table)`; the actual code does not. The writers (`Insert`/`Update`/`Delete`) similarly mutate the in-memory map and do NOT call `txn.Insert` per the spec.
 4. **`IndexScan` is a stub.** `EX/operators.go::IndexScan.Next` returns `ErrNotImplemented` immediately. R10 is **not** done.
 5. **`OFFSET` is parsed/memoized but not executed.** R21's OFFSET clause is not implemented; `LIMIT` is.
@@ -59,7 +59,7 @@ The iter-08 spec was written against `design/subsystems/SQL.md`, which assigns t
 These divergences mean iter-08 is **partial**: the operator framework, evaluator, planner, and memoization are all in and exercised by tests; the gap is real storage integration (ENG/TXN), the `IndexScan`/`OFFSET`/`pushdown` pieces, and the PL/ cluster being mostly empty.
 
 To close iter-08, the next session must:
-- Decide whether to **move** `EX/planner.go` and `EX/memo.go` to `PL/` (matches design, requires updating `ex.go::Executor` to import `PL`), or **amend the design** to keep them in `EX/` (requires a human editing `design/subsystems/SQL.md`).
+- Decide whether to **move** `EX/planner.go` and `EX/memo.go` to `PL/` (matches design, requires updating `ex.go::Executor` to import `PL`), or **amend the design** to keep them in `EX/` (requires a human editing `docs/design/subsystems/SQL.md`).
 - Wire `EX` operators to the real `ENG.Store` / `TXN.Tx` (replace the in-memory `tables` map and `RegisterTable` API).
 - Implement `IndexScan.Next` against `ENG.Index` (R10).
 - Implement `OFFSET` in the planner (currently parsed but dropped).
@@ -104,10 +104,10 @@ To close iter-08, the next session must:
 
 ### Phase 0: Reconcile PL/ vs EX/ (file layout)
 
-Two paths, requires human decision on `design/subsystems/SQL.md`:
+Two paths, requires human decision on `docs/design/subsystems/SQL.md`:
 
 - **Path A (move code)**: relocate `EX/planner.go` and `EX/memo.go` to `PL/planner.go` and `PL/memo.go`. Update `EX/Executor` to import `PL`. Update `EX/planner_test.go` to import from `PL`. Update the design's Implementation Plan section (lines 330-333) to drop the PL step and the EX planner steps. **Larger diff, matches design intent.**
-- **Path B (amend design)**: keep planner in `EX/`, edit `design/subsystems/SQL.md` to remove the PL cluster from the SQL subsystem table and add a note. **Smaller diff, requires human edit of design doc.**
+- **Path B (amend design)**: keep planner in `EX/`, edit `docs/design/subsystems/SQL.md` to remove the PL cluster from the SQL subsystem table and add a note. **Smaller diff, requires human edit of design doc.**
 
 ### Phase 1: Wire to real storage (R09, R15, R16, R17)
 
@@ -123,7 +123,7 @@ This is the bulk of remaining work and is on the iter-09 critical path (`SYS/TX.
 
 ### Phase 2: IndexScan (R10)
 
-Implement `EX/operators.go::IndexScan.Next` against the index subsystem (likely `ENG/ID/`, per `design/ARCH.md` directory layout — note this cluster is itself `pending` in the ROADMAP, so the IndexScan work is a chain blocker).
+Implement `EX/operators.go::IndexScan.Next` against the index subsystem (likely `ENG/ID/`, per `docs/design/ARCH.md` directory layout — note this cluster is itself `pending` in the ROADMAP, so the IndexScan work is a chain blocker).
 
 - Until `ENG/ID/` exists, `IndexScan` cannot be implemented; this is a pre-iter-08 or iter-08 Phase 2 prerequisite.
 

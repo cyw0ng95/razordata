@@ -16,7 +16,7 @@ Complete LSM tree implementation with lock-free skiplist memtable, SST storage, 
 
 ## Design Alignment
 
-Directory structure matches `design/subsystems/ENG.md`:
+Directory structure matches `docs/design/subsystems/ENG.md`:
 ```
 internal/ENG/
 └── LS/               # LSM tree cluster
