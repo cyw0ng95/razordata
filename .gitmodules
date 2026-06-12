@@ -1,0 +1,5 @@
+[submodule "tests/sqlcmp/corpus"]
+	path = tests/sqlcmp/corpus
+	url = https://github.com/MarvBeer/sqlite-test-suite.git
+	branch = main
+	shallow = true
