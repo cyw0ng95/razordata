@@ -358,5 +358,7 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000361 | SQL/EX | IS NULL / IS NOT NULL semantics — `NULL IS NULL` returns false vs SQLite `true` | medium | S | iter-07 (eval) | `SQL/EX/eval.go` IS/IS NOT cases — fix NULL check logic |
 | REQ000362 | SQL/EX | Comparison with NULL — `5 = NULL` may return wrong value (should be NULL) | medium | S | iter-07 (eval) | `SQL/EX/eval.go:equalValue` — verify NULL handling |
 | REQ000363 | SQL/EX | GROUP_CONCAT empty result — empty table should return NULL (not 0 rows) | low | S | REQ000345 (aggregate empty) | `SQL/EX/aggregate.go:evalAggregateOver` — empty input → NULL |
+| REQ000364 | ENG/LS | Negative WaitGroup counter panic in flushManager — `requestFlush` and `flushLoop` race on `pendingWGs.Add(1)` / `pendingWGs.Done()`, causing `sync: negative WaitGroup counter` at `flush.go:231` and `flush.go:218` — REQ000347 (iter-26) fix was incomplete | critical | S | none | `ENG/LS/flush.go` — `pendingWGs` Add/Done asymmetry in flushLoop drain + retry path |
+| REQ000365 | tests/sqlcmp/dual | `allProbeCases` undeclared — `probe_cases.go:254` appends to `allProbeCases` in `init()` but the variable is never declared in any `.go` file in the package | high | S | none | `tests/sqlcmp/dual/probe_cases.go` — add `var allProbeCases = []dualCase{}` declaration |
 
 ---

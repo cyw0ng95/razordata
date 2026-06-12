@@ -1,0 +1,255 @@
+package dual
+
+// probeCases surfaces bugs discovered through edge-case probing.
+// All tables include PRIMARY KEY (RazorData requirement).
+var probeCases = []dualCase{
+	// JOIN probes
+	{
+		Name: "cross_join_basic",
+		Setup: []string{
+			"CREATE TABLE a (x INTEGER PRIMARY KEY)",
+			"INSERT INTO a VALUES (1), (2)",
+			"CREATE TABLE b (y INTEGER PRIMARY KEY)",
+			"INSERT INTO b VALUES (10), (20)",
+		},
+		Query: "SELECT a.x, b.y FROM a, b ORDER BY a.x, b.y",
+		Want: [][]any{
+			{int64(1), int64(10)},
+			{int64(1), int64(20)},
+			{int64(2), int64(10)},
+			{int64(2), int64(20)},
+		},
+	},
+	// NULL in arithmetic inside column
+	{
+		Name: "null_arithmetic_in_column",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 10), (2, NULL), (3, 20)",
+		},
+		Query: "SELECT v + 5 FROM t ORDER BY id",
+		Want: [][]any{
+			{int64(15)},
+			{nil},
+			{int64(25)},
+		},
+	},
+	// String comparison
+	{
+		Name: "string_lt",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, s TEXT)",
+			"INSERT INTO t VALUES (1, 'apple'), (2, 'banana'), (3, 'cherry')",
+		},
+		Query: "SELECT s FROM t WHERE s < 'c' ORDER BY s",
+		Want: [][]any{
+			{"apple"},
+			{"banana"},
+		},
+	},
+	// BETWEEN
+	{
+		Name: "between_inclusive",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)",
+		},
+		Query: "SELECT v FROM t WHERE v BETWEEN 2 AND 4 ORDER BY v",
+		Want: [][]any{
+			{int64(2)},
+			{int64(3)},
+			{int64(4)},
+		},
+	},
+	// LIKE pattern
+	{
+		Name: "like_prefix",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, s TEXT)",
+			"INSERT INTO t VALUES (1, 'hello'), (2, 'help'), (3, 'world')",
+		},
+		Query: "SELECT s FROM t WHERE s LIKE 'hel%' ORDER BY s",
+		Want: [][]any{
+			{"hello"},
+			{"help"},
+		},
+	},
+	// ORDER BY DESC
+	{
+		Name: "order_by_desc",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 1), (2, 3), (3, 2)",
+		},
+		Query: "SELECT v FROM t ORDER BY v DESC",
+		Want: [][]any{
+			{int64(3)},
+			{int64(2)},
+			{int64(1)},
+		},
+	},
+	// Subquery in WHERE
+	{
+		Name: "subquery_in_where",
+		Setup: []string{
+			"CREATE TABLE t (v INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1), (2), (3)",
+			"CREATE TABLE s (v INTEGER PRIMARY KEY)",
+			"INSERT INTO s VALUES (2), (3)",
+		},
+		Query: "SELECT v FROM t WHERE v IN (SELECT v FROM s) ORDER BY v",
+		Want: [][]any{
+			{int64(2)},
+			{int64(3)},
+		},
+	},
+	// CASE WHEN
+	{
+		Name: "case_when_basic",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 1), (2, 2), (3, 3), (4, NULL)",
+		},
+		Query: "SELECT CASE WHEN v IS NULL THEN 'null' WHEN v < 2 THEN 'small' ELSE 'big' END FROM t ORDER BY id",
+		Want: [][]any{
+			{"small"},
+			{"big"},
+			{"big"},
+			{"null"},
+		},
+	},
+	// DISTINCT
+	{
+		Name: "distinct_basic",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 1), (2, 1), (3, 2), (4, 2), (5, 3)",
+		},
+		Query: "SELECT DISTINCT v FROM t ORDER BY v",
+		Want: [][]any{
+			{int64(1)},
+			{int64(2)},
+			{int64(3)},
+		},
+	},
+	// LIMIT
+	{
+		Name: "limit_basic",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)",
+		},
+		Query: "SELECT v FROM t ORDER BY v LIMIT 2",
+		Want: [][]any{
+			{int64(1)},
+			{int64(2)},
+		},
+	},
+	// CAST
+	{
+		Name: "cast_int_to_text",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 42)",
+		},
+		Query: "SELECT CAST(v AS TEXT) FROM t",
+		Want: [][]any{
+			{"42"},
+		},
+	},
+	// EXISTS
+	{
+		Name: "exists_subquery",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 1), (2, 2)",
+			"CREATE TABLE s (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO s VALUES (1, 2)",
+		},
+		Query: "SELECT EXISTS(SELECT 1 FROM s WHERE v = 2)",
+		Want: [][]any{
+			{int64(1)},
+		},
+	},
+	// Negative numbers
+	{
+		Name: "negative_arithmetic",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, -5), (2, 0), (3, 5)",
+		},
+		Query: "SELECT v * 2 FROM t ORDER BY id",
+		Want: [][]any{
+			{int64(-10)},
+			{int64(0)},
+			{int64(10)},
+		},
+	},
+	// Division by zero
+	{
+		Name: "division_by_zero",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 10)",
+		},
+		Query: "SELECT v / 0 FROM t",
+		Want: [][]any{
+			{nil},
+		},
+	},
+	// Multiple columns in WHERE
+	{
+		Name: "where_and",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER)",
+			"INSERT INTO t VALUES (1, 1, 10), (2, 2, 20), (3, 1, 30)",
+		},
+		Query: "SELECT b FROM t WHERE a = 1 AND b > 15 ORDER BY b",
+		Want: [][]any{
+			{int64(20)},
+			{int64(30)},
+		},
+	},
+	// GROUP BY with HAVING
+	{
+		Name: "groupby_having",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, g TEXT, v INTEGER)",
+			"INSERT INTO t VALUES (1, 'a', 1), (2, 'a', 2), (3, 'b', 3)",
+		},
+		Query: "SELECT g, SUM(v) FROM t GROUP BY g HAVING SUM(v) > 2 ORDER BY g",
+		Want: [][]any{
+			{"a", int64(3)},
+			{"b", int64(3)},
+		},
+	},
+	// IN with literal list
+	{
+		Name: "in_list",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 1), (2, 2), (3, 3), (4, 4)",
+		},
+		Query: "SELECT v FROM t WHERE v IN (1, 3) ORDER BY v",
+		Want: [][]any{
+			{int64(1)},
+			{int64(3)},
+		},
+	},
+	// String functions
+	{
+		Name: "upper_function",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, s TEXT)",
+			"INSERT INTO t VALUES (1, 'hello')",
+		},
+		Query: "SELECT UPPER(s) FROM t",
+		Want: [][]any{
+			{"HELLO"},
+		},
+	},
+}
+
+func init() {
+	allProbeCases = append(allProbeCases, probeCases...)
+}
