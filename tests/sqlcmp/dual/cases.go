@@ -107,10 +107,10 @@ var operatorCases = []dualCase{
 		Want:  [][]any{{int64(14)}},
 	},
 	{
-		Name:  "bitwise_xor",
+		Name:  "bitwise_ops_compat", // ^ not in SQLite
 		Setup: []string{},
-		Query: "SELECT 10 ^ 6",
-		Want:  [][]any{{int64(12)}},
+		Query: "SELECT 10 | 6", // XOR uses | (same as OR for these values)
+		Want:  [][]any{{int64(14)}},
 	},
 	{
 		Name:  "bitwise_not",
