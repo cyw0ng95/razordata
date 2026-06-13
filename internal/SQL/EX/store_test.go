@@ -2,7 +2,6 @@ package EX
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"testing"
 
@@ -196,17 +195,26 @@ func TestExecutor_Filter_AgainstStore(t *testing.T) {
 	}
 }
 
-func TestNoPK_InsertReturnsError(t *testing.T) {
+func TestNoPK_InsertSucceedsWithHiddenRowid(t *testing.T) {
+	// REQ000367: tables without a PRIMARY KEY declaration are
+	// writable via a synthetic int64 rowid. The user-visible
+	// schema is unchanged; the rowid is not exposed.
 	ex, eng := newEngineExecutor(t)
 	defer eng.Close()
 
 	ex.RegisterTable("t", []string{"a", "b"}) // no PK
 	ctx := context.Background()
-	_, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 'x')")
-	if err == nil {
-		t.Fatal("expected error for table without PK")
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 'x')"); err != nil {
+		t.Fatal(err)
 	}
-	if !errors.Is(err, ErrNoPKForStorage) {
-		t.Errorf("expected ErrNoPKForStorage, got %v", err)
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (2, 'y')"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ex.QueryAll(ctx, "SELECT a, b FROM t ORDER BY a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(rows))
 	}
 }

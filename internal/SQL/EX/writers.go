@@ -42,14 +42,12 @@ func NewInsert(table string, cols []string, values [][]PS.Expr, returning []PS.E
 }
 
 // NewInsertWithStore builds an Insert that writes through the engine. The
-// table must have been registered and must have a primary key column.
+// table must have been registered. REQ000367: tables without a declared
+// PRIMARY KEY get a synthetic int64 rowid and remain writable.
 func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.Expr, returning []PS.Expr, onConflict *PS.OnConflict) (*Insert, error) {
 	ss, ok := schemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
-	}
-	if ss.pk == "" {
-		return nil, ErrNoPKForStorage
 	}
 	return &Insert{
 		table:      table,
@@ -58,7 +56,7 @@ func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.
 		returning:  returning,
 		onConflict: onConflict,
 		store:      store,
-		schema:    ss,
+		schema:     ss,
 	}, nil
 }
 
@@ -292,14 +290,12 @@ func NewUpdate(table string, set []PS.Pair, where PS.Expr, iter Operator, return
 }
 
 // NewUpdateWithStore builds an Update that reads the old row via the engine
-// iterator and writes the new version through engine.Insert.
+// iterator and writes the new version through engine.Insert. REQ000367:
+// tables without a declared PRIMARY KEY are writable via synthetic rowid.
 func NewUpdateWithStore(store Store, table string, set []PS.Pair, where PS.Expr, iter Operator, returning []PS.Expr) (*Update, error) {
 	ss, ok := schemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
-	}
-	if ss.pk == "" {
-		return nil, ErrNoPKForStorage
 	}
 	return &Update{
 		table:     table,
@@ -549,13 +545,12 @@ func NewDelete(table string, where PS.Expr, iter Operator, returning []PS.Expr) 
 }
 
 // NewDeleteWithStore builds a Delete that removes rows through engine.Delete.
+// REQ000367: tables without a declared PRIMARY KEY are deletable via
+// the synthetic rowid.
 func NewDeleteWithStore(store Store, table string, where PS.Expr, iter Operator, returning []PS.Expr) (*Delete, error) {
 	ss, ok := schemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
-	}
-	if ss.pk == "" {
-		return nil, ErrNoPKForStorage
 	}
 	return &Delete{
 		table:     table,
@@ -843,6 +838,13 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	storeMu.Lock()
 	if ss, ok := storeSchemas[id]; ok {
 		ss.colTypes = append([]int(nil), colTypes...)
+		// REQ000367: tables without a PRIMARY KEY that are
+		// registered for storage get a synthetic int64 rowid.
+		// This makes them writable to the engine store while
+		// keeping the user-visible schema unchanged.
+		if pk == "" {
+			ss.hiddenPK = true
+		}
 	}
 	storeMu.Unlock()
 

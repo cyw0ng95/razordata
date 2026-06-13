@@ -203,6 +203,18 @@ var tokenNames = [...]string{
 	LX.T_CONCAT:       "||",
 }
 
+// isAggregateName reports whether a bare identifier name is a
+// SQL aggregate function. REQ000355: GROUP_CONCAT is included
+// so SELECT GROUP_CONCAT(col) FROM t routes through the
+// AggregateFunc path instead of the function-call path.
+func isAggregateName(name string) bool {
+	switch name {
+	case "COUNT", "SUM", "AVG", "MIN", "MAX", "GROUP_CONCAT":
+		return true
+	}
+	return false
+}
+
 func (p *Parser) parsePrimary() (Expr, error) {
 	switch p.current.Type {
 	case LX.T_INT:
@@ -268,6 +280,17 @@ func (p *Parser) parsePrimary() (Expr, error) {
 				return nil, err
 			}
 			p.advance()
+			// REQ000355: aggregate functions like GROUP_CONCAT are
+			// spelled as plain identifiers in SQL. Route them
+			// through AggregateFunc so the executor's aggregate
+			// path handles them.
+			if isAggregateName(name) {
+				var arg Expr
+				if len(args) > 0 {
+					arg = args[0]
+				}
+				return &AggregateFunc{Name: name, Arg: arg}, nil
+			}
 			return &FunctionCall{Name: name, Args: args}, nil
 		}
 		return &Ident{Name: name}, nil

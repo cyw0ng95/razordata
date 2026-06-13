@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
@@ -55,6 +56,13 @@ type storeSchema struct {
 	checks   []PS.Expr   // parallel to CHECK constraints
 	colTypes []int
 	foreignKeys []ForeignKeyConstraint // REQ000126: FK constraints
+	// REQ000367: hiddenPK is set when the table was created
+	// without a PRIMARY KEY declaration but is registered for
+	// storage. The engine synthesizes an int64 rowid per insert
+	// and uses it as the LSM key suffix; the user-visible schema
+	// is unchanged (no rowid column appears in SELECT *).
+	hiddenPK  bool
+	nextRowID int64
 }
 
 // ForeignKeyConstraint describes a single FK constraint (REQ000126).
@@ -570,9 +578,18 @@ func rowKey(prefix []byte, pkValue interface{}) []byte {
 }
 
 // extractPK returns the value of the primary-key column from a row.
+// For REQ000367 (hidden-PK tables, no PRIMARY KEY declared at
+// CREATE TABLE time), this allocates and returns a synthetic int64
+// rowid that is unique within the table.
 func extractPK(schema *storeSchema, row Row) (interface{}, error) {
 	if schema.pk == "" {
-		return nil, errors.New("ex: table has no primary key")
+		if !schema.hiddenPK {
+			return nil, errors.New("ex: table has no primary key")
+		}
+		// REQ000367: synthetic rowid. Atomic increment so concurrent
+		// inserts from different goroutines get distinct IDs.
+		id := atomic.AddInt64(&schema.nextRowID, 1)
+		return id, nil
 	}
 	for i, c := range schema.cols {
 		if c == schema.pk {
