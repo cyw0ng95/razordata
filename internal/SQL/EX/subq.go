@@ -32,6 +32,19 @@ func injectOuter(op Operator, outer *Row) Operator {
 	if outer == nil {
 		return op
 	}
+	// REQ000366: the planner memoizes subquery plans. The same
+	// plan tree can be re-walked by injectOuter on each
+	// subquery eval call (one per outer row). If we left a
+	// previous outerInjector in place, the second call would
+	// see the stale outer and the correlated WHERE would
+	// evaluate against the first outer row.
+	//
+	// Update an existing outerInjector's outer field in place
+	// so the memoized plan is reused correctly.
+	if inj, ok := op.(*outerInjector); ok {
+		inj.outer = outer
+		return inj
+	}
 	switch v := op.(type) {
 	case *SeqScan:
 		return &outerInjector{child: v, outer: outer}

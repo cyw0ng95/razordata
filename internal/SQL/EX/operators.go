@@ -38,12 +38,24 @@ type SeqScan struct {
 	// can propagate it down through the tree at executor
 	// construction time.
 	params []interface{}
+	// planner is set by the executor's main plan so the rows
+	// produced by SeqScan carry it through to the Filter,
+	// Project, and (importantly) subquery eval sites.
+	// See REQ000366.
+	planner *Planner
 }
 
 // WithParams propagates the bound `?` placeholders to this
 // operator (R16-1..2). Returns the receiver for chaining.
 func (s *SeqScan) WithParams(p []interface{}) Operator {
 	s.params = p
+	return s
+}
+
+// WithPlanner attaches the main-plan planner to rows produced by
+// this SeqScan. REQ000366.
+func (s *SeqScan) WithPlanner(p *Planner) Operator {
+	s.planner = p
 	return s
 }
 
@@ -93,6 +105,9 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 	}
 	r := s.rows[s.pos]
 	s.pos++
+	if s.planner != nil {
+		r.planner = s.planner
+	}
 	return r, nil
 }
 
@@ -111,6 +126,11 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		row, err := decodeRow(v, s.schema)
 		if err != nil {
 			return Row{}, err
+		}
+		// REQ000366: thread the planner so subquery evals see
+		// the same store/catalog.
+		if s.planner != nil {
+			row.planner = s.planner
 		}
 		return row, nil
 	}

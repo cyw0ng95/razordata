@@ -265,7 +265,7 @@ func evalInSubquery(target interface{}, subq PS.Stmt, outer *Row, params []inter
 	if !ok {
 		return nil, ErrSubquery
 	}
-	pl, err := NewPlanner().Plan(sel)
+	pl, err := newSubqueryPlanner(outer).Plan(sel)
 	if err != nil {
 		return nil, err
 	}
@@ -290,12 +290,46 @@ func EvalForTest(e PS.Expr, row *Row, params []interface{}) (interface{}, error)
 	return Eval(e, row, params)
 }
 
+// currentSubqueryPlanner is set by the executor before evaluating
+// a query and read by newSubqueryPlanner when no outer row
+// carries a planner. Used to support top-level non-correlated
+// subqueries (`SELECT EXISTS(SELECT 1 FROM s WHERE v = 2)`)
+// which have no outer row but still need the executor's
+// store-backed planner. See REQ000366.
+//
+// Not goroutine-safe: only the executor's owning goroutine
+// should set/clear this for the duration of a single query.
+// Concurrent queries on the same engine are serialized by the
+// executor's own locking (see SYS/SY).
+var currentSubqueryPlanner *Planner
+
+// newSubqueryPlanner returns a planner for evaluating a subquery
+// inside Eval. If the outer row carries a planner (set by the
+// executor's main plan), it is reused so the subquery sees the
+// same store, catalog, and stats catalog. Otherwise the
+// current-query planner is used, falling back to a fresh
+// in-memory planner for tests that don't set one.
+//
+// REQ000366: correlated subqueries used to evaluate with a
+// store-less planner, so engine-backed tables were invisible
+// to the inner SELECT and queries like `SELECT v FROM t WHERE
+// v IN (SELECT v FROM s)` returned 0 rows.
+func newSubqueryPlanner(outer *Row) *Planner {
+	if p := outer.Planner(); p != nil {
+		return p
+	}
+	if currentSubqueryPlanner != nil {
+		return currentSubqueryPlanner
+	}
+	return NewPlanner()
+}
+
 func evalExists(e *PS.ExistsExpr, outer *Row, params []interface{}) (interface{}, error) {
 	sel, ok := e.Subquery.(*PS.Select)
 	if !ok {
 		return nil, ErrSubquery
 	}
-	pl, err := NewPlanner().Plan(sel)
+	pl, err := newSubqueryPlanner(outer).Plan(sel)
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +345,7 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []interface{}) (i
 	if !ok {
 		return nil, ErrSubquery
 	}
-	pl, err := NewPlanner().Plan(sel)
+	pl, err := newSubqueryPlanner(outer).Plan(sel)
 	if err != nil {
 		return nil, err
 	}
