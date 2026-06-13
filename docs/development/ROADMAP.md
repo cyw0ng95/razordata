@@ -51,8 +51,12 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 23 | Query Optimization & Storage Enhancement | ANALYZE, histogram selectivity, integrity_check, VACUUM, backup/restore, window functions, DATE/TIME/JSON types, B-tree index, SST compression | `SQL/EX`, `SQL/PL`, `SQL/PS`, `ENG/LS`, `ENG/ID`, `SYS`, `WAL` | done (v0.20.0–v0.22.0) |
 | 24 | SQLite Compliance | Read-committed isolation, MVCC own-writes, foreign keys, ALTER TABLE, CREATE VIEW, Pragmas, FETCH FIRST | `TXN/VL`, `TXN/SN`, `SQL/EX`, `SQL/PS`, `SQL/PL`, `ENG/LS`, `SYS` | done (v0.23.0–v0.24.0) |
 | 25 | SQLite Compatibility Test Suite | Pure-Go SQLLogicTest driver (parser, runner, type-aware diff, RazorDriver wrapping internal/SYS), corpus subset gate, modernc.org/sqlite dual-runner, JUnit XML, coverage snapshot + baseline regression check | `tests/sqlcmp/slt/`, `tests/sqlcmp/dual/` | done (v0.25.0) |
+| 26 | Quality Hardening | 3 critical bug fixes (REQ000345/346/347), sync boundary tests, EX test helpers | `ENG/LS`, `SQL/EX`, `SYS/AP`, `SQL/PS`, `SQL/LX` | done (v0.26.0) |
+| 26.1 | Bugfix sweep v1 | 7 bugfixes (REQ000357, 359-362, 364, 365) | `SQL/EX`, `SQL/PS`, `ENG/LS` | done (v0.26.3) |
+| 26.2 | Bugfix sweep v2 | 5 bugfixes (REQ000355, 363, 366, 367, 368) | `SQL/EX`, `SQL/PS` | done (v0.26.4) |
+| 26.3 | Bugfix sweep v3 | 5 bugfixes (REQ000378-382), 12 new dual-runner probes, 19 new unit tests | `SQL/EX`, `SQL/PS` | done (v0.26.5) |
 
-All iterations through iter-25 complete. Released as v0.9.0–v0.25.1. Coverage details: `go test ./... -cover`.
+All iterations through iter-26.3 complete. Released as v0.9.0–v0.26.5. Coverage details: `go test ./... -cover`.
 
 ## Completion Criteria (All Iterations)
 
@@ -108,6 +112,11 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 | **v0.25.0** | **SQLite Compatibility Test Suite** (iter-25). Pure-Go SQLLogicTest driver (parser + runner + type-aware result diff + hash-threshold + label cross-check + RazorDriver wrapping `internal/SYS`), corpus submodule skeleton (MarvBeer/sqlite-test-suite, build-tag gated fetch), curated PR subset (~200 files, 30% threshold), modernc.org/sqlite-backed dual runner (no binary dependency, no CGO) with type-aware normalization and 6 seeded cases, JUnit XML output for CI, coverage snapshot with baseline regression detection. REQ000345 logged: empty-table `COUNT(*)` returns zero rows on Razordata (engine bug, not driver). 15 REQs (REQ000323–REQ000337), ~3,560 LOC, 27 files. CI workflow (REQ000335) deferred — no `.github/` in repo. |
 | **v0.25.1** | **Bugfixes from edge_probe tests**. SeqScan/IndexScan nil iterator safety, RazorDriver concurrent access mutex, 5 feature gaps logged (bitwise, \|\|, %, COALESCE, NULLIF). |
 | **v0.26.0** | **Quality Hardening** (iter-26). 3 critical bug fixes: REQ000347 (silent data loss on large INSERT — wrong memtable selection in flush, L0 manifest bug, SST writer orphan block), REQ000346 (test isolation bleed — UnregisterAll missed registeredIndexes/views), REQ000345 (empty-table aggregate returns 0 rows vs 1). Added sync boundary tests (0B-10GB roundtrip), EX test helpers. 3 REQs, ~1,200 LOC. |
+| **v0.26.1** | **WalBatch + epoch ack ordering** (post-iter-26 hotfix). WAL write→fsync ack races resolved via per-slot cond var. |
+| **v0.26.2** | **INT64 overflow + division-by-zero semantics**. `numericArith` returns NULL on overflow/divide-by-zero to match SQLite. |
+| **v0.26.3** | **Bugfix sweep v1** (iter-26.1). 7 REQs: REQ000357 (SELECT no-FROM), REQ000359-362 (NULL semantics in concat/arith/IS NULL/= NULL), REQ000364 (flush WaitGroup race), REQ000365 (allProbeCases undeclared). 7 dual-runner probe cases. |
+| **v0.26.4** | **Bugfix sweep v2** (iter-26.2). 5 REQs: REQ000355 (GROUP_CONCAT dispatch), REQ000363 (GROUP_CONCAT empty→NULL), REQ000366 (subquery planner store threading), REQ000367 (hidden rowid for no-PK tables), REQ000368 (comma-join → CROSS JOIN). 5 dual-runner probe cases. |
+| **v0.26.5** | **Bugfix sweep v3** (iter-26.3). 5 REQs: REQ000378 (HAVING COUNT(*)), REQ000379 (chained unary minus regression), REQ000380+381 (`NOT LIKE` / `NOT IN` parser), REQ000382 (`ABS` / `HEX` / `ROUND` scalar functions). 12 new dual-runner probe cases; 19 new unit tests in `corefunc_test.go`. 4 commits, ~250 LOC. Dual-runner: 60/60/0. |
 
 ## Design Protection
 
