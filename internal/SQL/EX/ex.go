@@ -23,6 +23,23 @@ type Row struct {
 	Types []int
 	Data  []interface{}
 	Outer *Row
+	// planner is set by the executor when materializing a row
+	// from the main plan. Subquery eval functions read it to
+	// plan their nested queries with the same store, catalog,
+	// and stats catalog. See REQ000366.
+	planner *Planner
+}
+
+// Planner returns the planner associated with this row (or any
+// of its outer parents). Returns nil if no planner was threaded
+// through. REQ000366.
+func (r *Row) Planner() *Planner {
+	for cur := r; cur != nil; cur = cur.Outer {
+		if cur.planner != nil {
+			return cur.planner
+		}
+	}
+	return nil
 }
 
 func (r *Row) Lookup(name string) (interface{}, bool) {
@@ -439,6 +456,15 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 		return nil, errors.New("ex: plan produced no root")
 	}
 	propagateParams(plan.root, args)
+	// REQ000366: thread the main-plan planner so SeqScan rows
+	// carry it into subquery evals. propagatePlanner is a
+	// depth-first walk that calls WithPlanner on every node
+	// that supports it.
+	propagatePlanner(plan.root, e.planner)
+	// Also expose the planner to subqueries that have no
+	// outer row (e.g. top-level `SELECT EXISTS(...)`).
+	currentSubqueryPlanner = e.planner
+	defer func() { currentSubqueryPlanner = nil }()
 	defer plan.root.Close()
 	var out []Row
 	for {
@@ -452,6 +478,24 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+// propagatePlanner walks the operator tree rooted at root and
+// calls WithPlanner(p) on every node that supports it. See
+// REQ000366.
+func propagatePlanner(root Operator, p *Planner) {
+	if root == nil {
+		return
+	}
+	if w, ok := root.(interface{ WithPlanner(*Planner) Operator }); ok {
+		w.WithPlanner(p)
+	}
+	type childer interface {
+		Child() Operator
+	}
+	if c, ok := root.(childer); ok {
+		propagatePlanner(c.Child(), p)
+	}
 }
 
 // propagateParams walks the operator tree rooted at root and
