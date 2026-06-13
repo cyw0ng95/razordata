@@ -3,6 +3,7 @@ package EX
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -82,7 +83,7 @@ func (r *Row) Planner() *Planner {
 func (r *Row) Lookup(name string) (interface{}, bool) {
 	for cur := r; cur != nil; cur = cur.Outer {
 		for i, c := range cur.Cols {
-			if c == name {
+			if strings.EqualFold(c, name) {
 				if i < len(cur.Data) {
 					return cur.Data[i], true
 				}

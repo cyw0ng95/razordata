@@ -99,6 +99,10 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 			if name == "" {
 				name = e.Alias
 			}
+		case *PS.UnaryExpr:
+			if inner, ok := e.Operand.(*PS.Ident); ok {
+				name = inner.Name
+			}
 		}
 		v, err := Eval(c, &row, p.params)
 		if err != nil {

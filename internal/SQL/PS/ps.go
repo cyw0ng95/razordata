@@ -253,7 +253,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		p.advance()
 		return &StarExpr{}, nil
 	case LX.T_IDENT, LX.T_EXCLUDED:
-		name := strings.ToUpper(p.current.Lexeme)
+		name := p.current.Lexeme
 		p.advance()
 		if p.current.Type == LX.T_DOT {
 			p.advance()
