@@ -8,9 +8,10 @@ import (
 )
 
 type Parser struct {
-	lex        *LX.Lexer
-	current    LX.Token
-	paramIndex int
+	lex          *LX.Lexer
+	current      LX.Token
+	paramIndex   int
+	pendingJoins []string // REQ000368: comma-separated tables awaiting CROSS-join synthesis
 }
 
 func NewParser(input string) *Parser {
@@ -22,6 +23,7 @@ func NewParser(input string) *Parser {
 
 func (p *Parser) reset() {
 	p.paramIndex = 0
+	p.pendingJoins = nil
 }
 
 func (p *Parser) advance() {
@@ -638,6 +640,23 @@ func (p *Parser) parseSelect() (*Select, error) {
 		p.advance()
 	}
 
+	// REQ000368: implicit comma-join. `FROM a, b, c` is parsed
+	// as `FROM a CROSS JOIN b CROSS JOIN c`. The first table
+	// stays as `from`; each subsequent comma-separated identifier
+	// becomes a CROSS join entry.
+	for p.current.Type == LX.T_COMMA {
+		p.advance()
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		// Defer the join: we need to finish parsing the alias
+		// for the first table before collecting joins. Stash
+		// the right-table name in a local and append after
+		// alias parsing.
+		p.pendingJoins = append(p.pendingJoins, p.current.Lexeme)
+		p.advance()
+	}
+
 	var fromAlias string
 	if p.current.Type == LX.T_AS {
 		p.advance()
@@ -648,7 +667,14 @@ func (p *Parser) parseSelect() (*Select, error) {
 		p.advance()
 	}
 
+	// REQ000368: promote any pending comma-separated tables
+	// (collected above) into CROSS joins.
 	var joins []JoinClause
+	for _, right := range p.pendingJoins {
+		joins = append(joins, JoinClause{Kind: "CROSS", Right: right})
+	}
+	p.pendingJoins = nil
+
 	for p.current.Type == LX.T_JOIN || p.current.Type == LX.T_LEFT ||
 		p.current.Type == LX.T_RIGHT || p.current.Type == LX.T_INNER ||
 		p.current.Type == LX.T_CROSS {

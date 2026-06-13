@@ -516,15 +516,29 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			}
 			// Convert string kind to JoinKind enum
 			kind := JoinKind(j.Kind)
-			joinOp := NewNestedLoopJoin(current, NewSeqScan(j.Right), leftTbl, j.Right, on, kind)
+			// REQ000368: prefer the store-backed SeqScan for
+			// the right side so joins over engine tables
+			// actually see the rows. Falls back to the
+			// in-memory SeqScan if the right table isn't
+			// registered for storage.
+			var rightScan Operator = NewSeqScan(j.Right)
+			if ssc, err := NewSeqScanWithStore(p.store, j.Right); err == nil {
+				rightScan = ssc
+			}
+			joinOp := NewNestedLoopJoin(current, rightScan, leftTbl, j.Right, on, kind)
 			current = joinOp
 			leftTbl = j.Right
 		}
 	}
 
 	if s.Where != nil {
+		// REQ000368: apply the WHERE on top of the (possibly
+		// joined) operator, not on the bare scan. The previous
+		// code used `NewFilter(scan, ...)` which discarded any
+		// joins and produced wrong results for `FROM a JOIN b
+		// WHERE ...`.
 		conjuncts := RE.SplitAnd(s.Where)
-		current = NewFilter(scan, conjuncts[0])
+		current = NewFilter(current, conjuncts[0])
 		for _, c := range conjuncts[1:] {
 			current = NewFilter(current, c)
 		}
