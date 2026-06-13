@@ -248,4 +248,58 @@ var probeCases = []dualCase{
 			{"HELLO"},
 		},
 	},
+	// REQ000379: chained unary minus. SQLite treats `--` as a
+	// line comment unconditionally (even after a value token), so
+	// `SELECT 5--5` returns 5. Chained unary minus requires an
+	// explicit space: `SELECT 5- -5` = 10. The parser must
+	// accept the explicit-space form; the no-space form is
+	// always a comment.
+	{
+		Name: "chained_unary_minus_with_space",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT 5- -5",
+		Want: [][]any{
+			{int64(10)},
+		},
+	},
+	{
+		Name: "chained_unary_minus_three_with_space",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT 5- - -5",
+		Want: [][]any{
+			{int64(10)},
+		},
+	},
+	{
+		Name: "minus_minus_value_is_comment",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT 5-- this is a comment",
+		Want: [][]any{
+			{int64(5)},
+		},
+	},
+	// REQ000378: HAVING with COUNT(*). The aggregate column
+	// emitted by the Aggregate operator is named `COUNT(*)` (with
+	// the star literal), not `COUNT(col)`. evalAggregate must
+	// look up the StarExpr form, not just the Ident form.
+	{
+		Name: "having_count_star",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, g TEXT)",
+			"INSERT INTO t VALUES (1, 'a'), (2, 'a'), (3, 'b')",
+		},
+		Query: "SELECT g, COUNT(*) FROM t GROUP BY g HAVING COUNT(*) > 1 ORDER BY g",
+		Want: [][]any{
+			{"a", int64(2)},
+		},
+	},
 }
