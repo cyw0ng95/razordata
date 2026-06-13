@@ -99,12 +99,7 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 |---|---|---|---|---|---|---|
 | REQ000348 | SQL/EX | `Session.Query` returns schema-only `*AP.Rows` (no row data streaming; callers must use unexported `QueryAll`) | medium | M | iter-25 surfacing | `internal/SYS/AP/ap.go` `Session` interface needs `Next()` accessor; `internal/SYS/SE/se.go` returns `&AP.Rows{Cols,Types}` with no streaming |
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
-| REQ000355 | SQL/PS | Missing aggregate function `GROUP_CONCAT(expr [SEP sep])` | low | M | iter-08 (aggregates) | `SQL/EX/` aggregate operator; new `aggGroupConcat` |
 | REQ000356 | SQL/LX | Unary `NOT` as logical operator (currently only works as infix in some contexts; `~` bitwise NOT) | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` |
-| REQ000363 | SQL/EX | GROUP_CONCAT empty result — empty table should return NULL (not 0 rows) | low | S | REQ000345 (aggregate empty) | `SQL/EX/aggregate.go:evalAggregateOver` — empty input → NULL |
-| REQ000366 | SQL/EX | Subquery planner uses `NewPlanner()` without store — correlated subqueries return wrong results; affects evalExists, evalInSubquery, evalScalarSubquery (eval.go:282, 300, 308). 862/3000 queries in select1.test fail with `got 0 cells` | critical | M | iter-23 (catalog) | `SQL/EX/eval.go` — thread store through eval context (Row struct, closure, or planner parameter) |
-| REQ000367 | SQL/EX | PRIMARY KEY constraint — RazorData requires PK on every table; SLT corpus tables like `CREATE TABLE t1(a INTEGER, b INTEGER, ...)` have no PK. All INSERTs fail, all queries return 0 rows | medium | M | iter-12 (catalog) | `SQL/EX/writers.go` — relax PK requirement (allow tables without PK, auto-add hidden PK) |
-| REQ000368 | SQL/PS | Parser doesn't support comma-join `FROM a, b` — `cross_join_basic` dual test case fails with `ps: syntax error at line 1 col 23: expected expression, got ,`. SLT corpus has many implicit cross joins. AST needs `Sources []string` instead of `From string` | medium | M | iter-08 (joins) | `SQL/PS/ast.go` Select.From → Select.Sources; `SQL/PS/ps.go` parseFrom; `SQL/EX/planner.go` planSelect |
 
 ## DONE
 
@@ -139,6 +134,11 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000362 | SQL/EX | Comparison with NULL — `5 = NULL` returns NULL | iter-26.1 (v0.26.3) |
 | REQ000364 | ENG/LS | Negative WaitGroup counter panic in flushManager (REQ000347 followup) — Add(1) before send, enqueueMu serializes with Stop | iter-26.1 (v0.26.3) |
 | REQ000365 | tests/sqlcmp/dual | `allProbeCases` undeclared — register `probeCases` in `AllCases()` | iter-26.1 (v0.26.3) |
+| REQ000355 | SQL/PS | Aggregate function `GROUP_CONCAT(expr)` — route through AggregateFunc when name is a known aggregate | iter-26.2 (v0.26.4) |
+| REQ000363 | SQL/EX | GROUP_CONCAT empty result — empty table returns NULL (after REQ000367 hidden-PK) | iter-26.2 (v0.26.4) |
+| REQ000366 | SQL/EX | Subquery planner store threading — `Row.planner` + `currentSubqueryPlanner`; `outerInjector` updates `outer` in place for memoized plans | iter-26.2 (v0.26.4) |
+| REQ000367 | SQL/EX | Hidden rowid for tables without PRIMARY KEY — `hiddenPK` flag, atomic `nextRowID` | iter-26.2 (v0.26.4) |
+| REQ000368 | SQL/PS | Parser comma-join `FROM a, b` — synthesize CROSS joins for trailing comma-separated tables | iter-26.2 (v0.26.4) |
 | REQ000197 | SQL/EX | OUTER JOIN executor (LEFT/RIGHT/FULL) | iter-20 |
 | REQ000198 | ENG/LS | Skiplist sync.Pool for scratch arrays | iter-20 |
 | REQ000201 | QUAL | SQL/PL coverage 30.6% to 98.8% | iter-20 |
@@ -369,10 +369,14 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 > REQ000359 (concat NULL), REQ000360 (arith NULL), REQ000361
 > (IS NULL semantics), REQ000362 (= NULL), REQ000364 (flush
 > WaitGroup), REQ000365 (allProbeCases undeclared). They are
-> now in the DONE table. REQ000363 was promoted to TBD because
-> it is blocked by REQ000367 (no-PK tables) which is a larger
-> design change. REQ000366, REQ000367, REQ000368 from the
-> SLT corpus run are also still in TBD.
+> now in the DONE table.
+>
+> The following bugs from the SLT corpus / dual-runner
+> expansion were resolved in iter-26.2 (v0.26.4):
+> REQ000355 (GROUP_CONCAT dispatch), REQ000363 (GROUP_CONCAT
+> empty → NULL), REQ000366 (subquery store threading),
+> REQ000367 (hidden PK for no-PK tables), REQ000368 (comma-
+> join). They are now in the DONE table.
 
 ## Newly Discovered Bugs (2026-06-12, SLT corpus run)
 
