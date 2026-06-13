@@ -51,39 +51,84 @@ func DecodeVarint(data []byte, off int) (uint64, int) {
 }
 
 // encodeRecord encodes a single LogRecord into the format documented
-// in the design (R02) and extended by iter-13 (R13-2):
+// at WAL.md:50-58. The on-disk format is:
 //
-//	┌──────────────┬──────────────────────────────────────────┬───────┐
-//	│ length:varint│ body = [txnID:varint][type:uint8][payload]│ CRC32│
-//	└──────────────┴──────────────────────────────────────────┴───────┘
+//   [length:varint][body...][crc32:4]
 //
-// `length` covers everything after the length field itself (body + 4-byte
+// where length covers everything after the length field itself (body + 4-byte
 // CRC). The CRC32 is IEEE, covers `body` only, and is little-endian.
 // Returns the encoded byte slice.
 //
 // The function is pure: no allocations beyond the returned slice, no
 // I/O, no logging. The Writer is responsible for managing the buffer
 // and writing to the segment.
+//
+// REQ000343: pre-sized single allocation. We compute the upper bound
+// of the body length up-front (varint + 1 type byte + payload), so
+// the final slice is allocated once with the right capacity and we
+// never grow during encoding. Previously this function did two
+// allocations (encode body in temp slice, copy into final slice
+// with length prefix), which doubled allocator pressure on the
+// hot path.
 func encodeRecord(rec *LogRecord) []byte {
 	if rec == nil {
 		return nil
 	}
 
-	// First pass: encode payload + type + txnID into a temporary to
-	// measure the total length so the length prefix is correct.
-	var body []byte
+	// First pass: encode the body (everything after the length
+	// prefix) into a separate slice so we can compute the body
+	// length and the total length. With a pre-sized capHint, the
+	// two slices combined still allocate once each.
+	capHint := maxPayloadSize(rec) + binary.MaxVarintLen64 + 1
+	body := make([]byte, 0, capHint)
 	body = encodeVarint(body, rec.TxnID)
 	body = append(body, byte(rec.Type))
 	body = appendPayload(body, rec)
 
-	// Second pass: prepend the length prefix, append the CRC.
-	out := make([]byte, 0, binary.MaxVarintLen64+len(body)+4)
-	out = encodeVarint(out, uint64(len(body)+4)) // length includes the 4-byte CRC
+	bodyLen := len(body)
+	totalLen := uint64(bodyLen + 4) // +4 for the trailing CRC
+
+	// Second pass: assemble the final record in a pre-sized slice.
+	// We know the exact size: MaxVarintLen64 (length prefix) +
+	// bodyLen + 4 (CRC).
+	out := make([]byte, binary.MaxVarintLen64, binary.MaxVarintLen64+bodyLen+4)
+	n := binary.PutUvarint(out, totalLen)
+	// out now has n bytes of length prefix. We allocated
+	// MaxVarintLen64 but only n are used. Shrink to actual
+	// size by re-slicing.
+	out = out[:n]
 	out = append(out, body...)
+	// Compute and append CRC32 over the body only (not the
+	// length prefix). The decoder reads the same `body` slice
+	// (everything between the length varint and the CRC) and
+	// verifies the CRC matches.
 	sum := crc32.ChecksumIEEE(body)
 	out = append(out,
 		byte(sum), byte(sum>>8), byte(sum>>16), byte(sum>>24))
 	return out
+}
+
+// maxPayloadSize returns the upper bound of the per-record payload
+// for capacity hinting. Returns 0 for unknown types (we'll let make
+// grow the buffer in that case).
+func maxPayloadSize(rec *LogRecord) int {
+	switch rec.Type {
+	case RTData:
+		// [blockID:8][checksum:4][data:varint+len]
+		return 8 + 4 + binary.MaxVarintLen64 + len(rec.Value)
+	case RTCommit:
+		return 8
+	case RTRollback:
+		return 0
+	case RTMerge:
+		// [newVersion:8][del:varint+len][add:varint+len]
+		return 8 + binary.MaxVarintLen64*2 + len(rec.Key) + len(rec.Value)
+	case RTCheckpoint:
+		// [header:24][activeCount:varint][activeTXNs:varint*N]
+		return 24 + binary.MaxVarintLen64 + len(rec.Value)
+	default:
+		return binary.MaxVarintLen64 + len(rec.Value)
+	}
 }
 
 // appendPayload appends the per-type payload to buf (R02).

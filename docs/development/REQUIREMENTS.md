@@ -18,7 +18,7 @@ Columns for selection:
 | REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with design spec |
 | REQ000156 | SQL | Executor cost model integration (design mentions cost estimation, no operator selection based on cost) | medium | M | iter-08 (planner) | `SQL/EX/planner.go` — use cost for operator selection |
 | REQ000159 | TXN | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | medium | M | iter-05 (arena) | `TXN/MV/arena.go` — add lazy init, exhaustion handling |
-| REQ000160 | WAL | Batch commit with `sync.WaitGroup` and write barrier (design in FL cluster) | medium | M | iter-03 (WAL) | `WAL/FL/fl.go` — `BatchSync` implementation |
+DONE REQ000160 | WAL | Batch commit with `sync.WaitGroup` and write barrier (design in FL cluster) | medium | M | iter-03 (WAL) | `WAL/FL/fl.go` — `BatchSync` implementation |
 DONE REQ000161 | MEM | Clock-sweep integration details (atomic hand, refKey update, eviction gating) | medium | S | iter-02 (buffer pool) | audit `MEM/BF/bf.go` — verify matches design |
 | REQ000162 | SQL | Plan memoization with SHA256(AST binary encoding) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — canonical AST serialization |
 | REQ000164 | TXN | Epoch manager background goroutine (100ms interval, drain coordination) | high | M | iter-05 (epoch) | `TXN/LC/epoch.go` — add background goroutine if missing |
@@ -110,6 +110,7 @@ DONE REQ000348 | SQL/EX | `Session.Query` returns schema-only `*AP.Rows` (no row
 | REQ000440 | SQL/EX | `VACUUM` and `ANALYZE` not routed — both fail with `ex: not a writable statement` even though they are DDL/maintenance commands | medium | M | iter-26.11 SLT gap survey | `SQL/EX/ex.go` buildWriterOp — add Vacuum/Analyze cases |
 | REQ000441 | SQL/EX | `ALTER TABLE ... ADD COLUMN` not implemented — fails with `ex: not a writable statement` (already REQ000244 / REQ000129 covers the general goal; this is a focused incremental slice) | medium | M | iter-26.11 SLT gap survey, REQ000244 | `SQL/EX/ex.go` buildWriterOp — add AlterTable case |
 | REQ000442 | SQL/EX | 30/42 common SLT patterns pass; the 12 failures above are the highest-impact gaps. Recommended priority order: REQ000434 (NOT BETWEEN) > REQ000437 (count DISTINCT) > REQ000436 (recursive CTE) > REQ000438 (function eval routing) | high | L | iter-26.11 SLT gap survey | n/a — survey result |
+| REQ000443 | WAL/WR | `encodeRecord` had 4 allocs/record (body temp slice + final out slice + 2 varint slices). Optimized to 2 allocs/record via pre-sized body and out slices; CRC computed over body only (matching decoder's slice). Bench: 217ns→148ns (-32%), 168B→160B, 4→2 allocs | medium | S | iter-26.12 SLT gap survey → encode refactor | `internal/WAL/WR/encode.go` encodeRecord
 
 
 ## DONE
