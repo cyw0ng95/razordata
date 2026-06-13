@@ -112,6 +112,8 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 	switch s := rewritten.(type) {
 	case *PS.Select:
 		root = p.planSelect(s)
+	case *PS.CompoundStmt:
+		root = p.planCompound(s)
 	case *PS.Insert:
 		root = p.planInsert(s)
 	case *PS.Update:
@@ -998,4 +1000,25 @@ func (p *Planner) planAnalyze(s *PS.AnalyzeStmt) Operator {
 // planVacuum reclaims storage. REQ000257.
 func (p *Planner) planVacuum(s *PS.VacuumStmt) Operator {
 	return NewVacuumWithStore(s, p.store)
+}
+
+// planCompound dispatches a UNION/UNION ALL/INTERSECT/EXCEPT
+// statement. REQ000383.
+func (p *Planner) planCompound(s *PS.CompoundStmt) Operator {
+	left := p.planSubStmt(s.Left)
+	right := p.planSubStmt(s.Right)
+	op := NewCompoundOp(left, right, s.Op, s.OrderBy, s.Limit, s.Offset)
+	return op
+}
+
+// planSubStmt is a sub-dispatcher for the inner Stmt of a
+// CompoundStmt. REQ000383.
+func (p *Planner) planSubStmt(stmt PS.Stmt) Operator {
+	switch s := stmt.(type) {
+	case *PS.Select:
+		return p.planSelect(s)
+	case *PS.CompoundStmt:
+		return p.planCompound(s)
+	}
+	return nil
 }

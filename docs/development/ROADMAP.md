@@ -55,8 +55,9 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 26.1 | Bugfix sweep v1 | 7 bugfixes (REQ000357, 359-362, 364, 365) | `SQL/EX`, `SQL/PS`, `ENG/LS` | done (v0.26.3) |
 | 26.2 | Bugfix sweep v2 | 5 bugfixes (REQ000355, 363, 366, 367, 368) | `SQL/EX`, `SQL/PS` | done (v0.26.4) |
 | 26.3 | Bugfix sweep v3 | 5 bugfixes (REQ000378-382), 12 new dual-runner probes, 19 new unit tests | `SQL/EX`, `SQL/PS` | done (v0.26.5) |
+| 26.4 | Compound SELECT | UNION/INTERSECT/EXCEPT parser+executor, correct precedence, trailing ORDER BY/LIMIT/OFFSET apply to compound, RE rewrite/format, 6 new dual-runner probes | `SQL/LX`, `SQL/PS`, `SQL/EX`, `SQL/RE` | done (v0.26.6) |
 
-All iterations through iter-26.3 complete. Released as v0.9.0–v0.26.5. Coverage details: `go test ./... -cover`.
+All iterations through iter-26.4 complete. Released as v0.9.0–v0.26.6. Coverage details: `go test ./... -cover`.
 
 ## Completion Criteria (All Iterations)
 
@@ -117,6 +118,7 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 | **v0.26.3** | **Bugfix sweep v1** (iter-26.1). 7 REQs: REQ000357 (SELECT no-FROM), REQ000359-362 (NULL semantics in concat/arith/IS NULL/= NULL), REQ000364 (flush WaitGroup race), REQ000365 (allProbeCases undeclared). 7 dual-runner probe cases. |
 | **v0.26.4** | **Bugfix sweep v2** (iter-26.2). 5 REQs: REQ000355 (GROUP_CONCAT dispatch), REQ000363 (GROUP_CONCAT empty→NULL), REQ000366 (subquery planner store threading), REQ000367 (hidden rowid for no-PK tables), REQ000368 (comma-join → CROSS JOIN). 5 dual-runner probe cases. |
 | **v0.26.5** | **Bugfix sweep v3** (iter-26.3). 5 REQs: REQ000378 (HAVING COUNT(*)), REQ000379 (chained unary minus regression), REQ000380+381 (`NOT LIKE` / `NOT IN` parser), REQ000382 (`ABS` / `HEX` / `ROUND` scalar functions). 12 new dual-runner probe cases; 19 new unit tests in `corefunc_test.go`. 4 commits, ~250 LOC. Dual-runner: 60/60/0. |
+| **v0.26.6** | **Compound SELECT** (iter-26.4). REQ000383: UNION/INTERSECT/EXCEPT parser + executor with correct precedence (INTERSECT binds tighter), trailing ORDER BY/LIMIT/OFFSET apply to compound result; RE rewrite/format support; 6 new dual-runner probe cases. 3 commits, ~300 LOC. Dual-runner: 67/67/0. |
 
 ## Design Protection
 

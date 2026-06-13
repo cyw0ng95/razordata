@@ -1,0 +1,70 @@
+{
+  "version": "1",
+  "threshold": 0.3,
+  "files": {
+    "../corpus/test/evidence/slt_lang_aggfunc.test": {
+      "total": 82,
+      "passed": 8,
+      "failed": 22,
+      "skipped": 51,
+      "parse_errors": 0
+    },
+    "../corpus/test/evidence/slt_lang_createtrigger.test": {
+      "total": 28,
+      "passed": 1,
+      "failed": 2,
+      "skipped": 24,
+      "parse_errors": 0
+    },
+    "../corpus/test/evidence/slt_lang_createview.test": {
+      "total": 37,
+      "passed": 4,
+      "failed": 5,
+      "skipped": 16,
+      "parse_errors": 0
+    },
+    "../corpus/test/evidence/slt_lang_dropview.test": {
+      "total": 13,
+      "passed": 4,
+      "failed": 4,
+      "skipped": 5,
+      "parse_errors": 0
+    },
+    "../corpus/test/evidence/slt_lang_update.test": {
+      "total": 31,
+      "passed": 2,
+      "failed": 8,
+      "skipped": 17,
+      "parse_errors": 0
+    },
+    "../corpus/test/select1.test": {
+      "total": 1031,
+      "passed": 24,
+      "failed": 863,
+      "skipped": 144,
+      "parse_errors": 0
+    },
+    "../corpus/test/select2.test": {
+      "total": 1031,
+      "passed": 35,
+      "failed": 768,
+      "skipped": 228,
+      "parse_errors": 0
+    },
+    "../corpus/test/select4.test": {
+      "total": 3857,
+      "passed": 22,
+      "failed": 20,
+      "skipped": 3815,
+      "parse_errors": 0
+    }
+  },
+  "totals": {
+    "Total": 6110,
+    "Passed": 100,
+    "Failed": 1692,
+    "Skipped": 4300,
+    "ParseErrors": 0,
+    "Duration": 25
+  }
+}
