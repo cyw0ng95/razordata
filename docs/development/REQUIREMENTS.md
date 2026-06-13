@@ -100,11 +100,6 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000348 | SQL/EX | `Session.Query` returns schema-only `*AP.Rows` (no row data streaming; callers must use unexported `QueryAll`) | medium | M | iter-25 surfacing | `internal/SYS/AP/ap.go` `Session` interface needs `Next()` accessor; `internal/SYS/SE/se.go` returns `&AP.Rows{Cols,Types}` with no streaming |
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
 | REQ000356 | SQL/LX | Unary `NOT` as logical operator (currently only works as infix in some contexts; `~` bitwise NOT) | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` |
-| REQ000378 | SQL/EX | HAVING with `COUNT(*)` returns 0 rows — evalAggregate doesn't resolve `COUNT(*)` to the precomputed column emitted by Aggregate (`COUNT(*)` name, not `COUNT(col)`) | high | S | none | `SQL/EX/eval.go` evalAggregate — try `StarExpr` arg, look up by `name(*)` |
-| REQ000379 | SQL/PS | Chained unary minus: `SELECT 5- -5` must equal 10 (parser accepts two unary minuses separated by whitespace) | low | S | none (already works) | covered by `chained_unary_minus_with_space` probe; SQLite standard treats `--` as line comment unconditionally |
-| REQ000380 | SQL/PS | `NOT LIKE` parser error — binary operator combination not recognized in parseBinary; same pattern as REQ000356 un-NOT | medium | S | iter-07 (lexer) | `SQL/PS/ps.go` parseBinary — recognize T_NOT followed by T_LIKE as combined `NOT LIKE` op |
-| REQ000381 | SQL/PS | `NOT IN (subquery)` parser error — same pattern as REQ000380 | medium | S | iter-07 (lexer) | `SQL/PS/ps.go` parseBinary — T_NOT followed by T_IN as combined `NOT IN` op |
-| REQ000382 | SQL/EX | Missing scalar functions `ABS`, `ROUND`, `HEX` — emit `ex: eval error` | low | S | none | `SQL/EX/eval.go` evalFunction — add cases for ABS, ROUND, HEX |
 | REQ000383 | SQL/PS | `UNION` (and `UNION ALL`, `INTERSECT`, `EXCEPT`) not parsed — compound SELECT not supported | medium | M | iter-08 (operators) | `SQL/PS/ps.go` parseSelect — after first SELECT, look for compound op then parse next SELECT |
 
 ## DONE
@@ -145,6 +140,11 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000366 | SQL/EX | Subquery planner store threading — `Row.planner` + `currentSubqueryPlanner`; `outerInjector` updates `outer` in place for memoized plans | iter-26.2 (v0.26.4) |
 | REQ000367 | SQL/EX | Hidden rowid for tables without PRIMARY KEY — `hiddenPK` flag, atomic `nextRowID` | iter-26.2 (v0.26.4) |
 | REQ000368 | SQL/PS | Parser comma-join `FROM a, b` — synthesize CROSS joins for trailing comma-separated tables | iter-26.2 (v0.26.4) |
+| REQ000378 | SQL/EX | HAVING with `COUNT(*)` returns 0 rows — evalAggregate resolves `COUNT(*)` (StarExpr arg) to the precomputed column | iter-26.3 (v0.26.5) |
+| REQ000379 | SQL/PS | Chained unary minus: `SELECT 5- -5` must equal 10 — regression test for SQLite-compatible `--` comment behavior | iter-26.3 (v0.26.5) |
+| REQ000380 | SQL/PS | `NOT LIKE` parser error — parsePostfix now peeks `T_NOT T_LIKE` and dispatches to parseNotLike | iter-26.3 (v0.26.5) |
+| REQ000381 | SQL/PS | `NOT IN (subquery)` parser error — same pattern, dispatches to parseNotIn; parseIn refactored to use parseInBody helper | iter-26.3 (v0.26.5) |
+| REQ000382 | SQL/EX | Add `ABS`, `HEX`, `ROUND` scalar functions to evalFunction | iter-26.3 (v0.26.5) |
 | REQ000197 | SQL/EX | OUTER JOIN executor (LEFT/RIGHT/FULL) | iter-20 |
 | REQ000198 | ENG/LS | Skiplist sync.Pool for scratch arrays | iter-20 |
 | REQ000201 | QUAL | SQL/PL coverage 30.6% to 98.8% | iter-20 |
