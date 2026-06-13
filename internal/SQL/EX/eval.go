@@ -49,7 +49,7 @@ func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 			key := e.Table + "." + e.Name
 			for cur := row; cur != nil; cur = cur.Outer {
 				for i, c := range cur.Cols {
-					if c == key {
+					if strings.EqualFold(c, key) {
 						if i < len(cur.Data) {
 							return cur.Data[i], nil
 						}
@@ -501,7 +501,7 @@ func evalAggregate(e *PS.AggregateFunc, row *Row, params []interface{}) (interfa
 			}
 		}
 	}
-	switch e.Name {
+	switch strings.ToUpper(e.Name) {
 	case "COUNT":
 		return int64(0), nil
 	case "SUM":
@@ -517,7 +517,7 @@ func evalAggregate(e *PS.AggregateFunc, row *Row, params []interface{}) (interfa
 }
 
 func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface{}, error) {
-	switch e.Name {
+	switch strings.ToUpper(e.Name) {
 	case "LENGTH":
 		if len(e.Args) > 0 {
 			v, _ := Eval(e.Args[0], row, params)
