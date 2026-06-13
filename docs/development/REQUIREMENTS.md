@@ -101,7 +101,7 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
 | REQ000356 | SQL/LX | Unary `NOT` as logical operator (currently only works as infix in some contexts; `~` bitwise NOT) | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` |
 | REQ000378 | SQL/EX | HAVING with `COUNT(*)` returns 0 rows — evalAggregate doesn't resolve `COUNT(*)` to the precomputed column emitted by Aggregate (`COUNT(*)` name, not `COUNT(col)`) | high | S | none | `SQL/EX/eval.go` evalAggregate — try `StarExpr` arg, look up by `name(*)` |
-| REQ000379 | SQL/PS | Double unary minus `--5` parser error — parseUnary doesn't handle `--` correctly (it allows chained unary) | low | S | iter-07 (lexer) | `SQL/PS/ps.go` parseUnary — allow back-to-back unary minus |
+| REQ000379 | SQL/PS | Chained unary minus: `SELECT 5- -5` must equal 10 (parser accepts two unary minuses separated by whitespace) | low | S | none (already works) | covered by `chained_unary_minus_with_space` probe; SQLite standard treats `--` as line comment unconditionally |
 | REQ000380 | SQL/PS | `NOT LIKE` parser error — binary operator combination not recognized in parseBinary; same pattern as REQ000356 un-NOT | medium | S | iter-07 (lexer) | `SQL/PS/ps.go` parseBinary — recognize T_NOT followed by T_LIKE as combined `NOT LIKE` op |
 | REQ000381 | SQL/PS | `NOT IN (subquery)` parser error — same pattern as REQ000380 | medium | S | iter-07 (lexer) | `SQL/PS/ps.go` parseBinary — T_NOT followed by T_IN as combined `NOT IN` op |
 | REQ000382 | SQL/EX | Missing scalar functions `ABS`, `ROUND`, `HEX` — emit `ex: eval error` | low | S | none | `SQL/EX/eval.go` evalFunction — add cases for ABS, ROUND, HEX |
@@ -417,28 +417,28 @@ Status column tracks the implementation state.
 | `abs(X)` | REQ000384 | returns absolute value, NULL→NULL, string→0.0, MIN_INT64→error |
 | `changes()` | REQ000385 | last INSERT/UPDATE/DELETE row count; not yet wired to session state |
 | `char(X1,...,XN)` | REQ000386 | Unicode code point → character; accepts variadic int args |
-| `coalesce(X,Y,...)` | DONE | iter-26 already implemented |
+| `coalesce(X,Y,...)` | REQ000418 (DONE) | iter-26 already implemented |
 | `concat(X,...)` | REQ000387 | concatenate non-NULL args; all-NULL → "" (note: current `\|\|` returns NULL on NULL) |
 | `concat_ws(SEP,X,...)` | REQ000388 | concat with separator; SEP=NULL → NULL |
 | `format(FORMAT,...)` | REQ000389 | printf-style formatting (subset of fmt verbs) |
 | `glob(X,Y)` | REQ000390 | filename glob match (X=pattern, Y=string) |
 | `hex(X)` | REQ000391 | BLOB/text → uppercase hex; integer is converted via text first |
-| `ifnull(X,Y)` | DONE | iter-26 |
+| `ifnull(X,Y)` | REQ000419 (DONE) | iter-26 |
 | `iif(B1,V1,...)` | REQ000392 | short-circuit CASE; `if()` alias |
 | `instr(X,Y)` | REQ000393 | position of Y in X (1-based), 0 if not found |
 | `last_insert_rowid()` | REQ000394 | engine-level rowid; engine must expose per-session counter |
-| `length(X)` | DONE | iter-26 — returns code-point count (not bytes); close to SQLite's semantics |
-| `like(X,Y[,Z])` | DONE | iter-26 — two-arg form; ESCAPE clause not yet supported |
+| `length(X)` | REQ000420 (DONE) | iter-26 — returns code-point count (not bytes); close to SQLite's semantics |
+| `like(X,Y[,Z])` | REQ000421 (DONE) | iter-26 — two-arg form; ESCAPE clause not yet supported |
 | `likelihood(X,Y)` | REQ000395 | no-op pass-through; hint to planner |
 | `likely(X)` | REQ000396 | no-op pass-through |
-| `load_extension(X[,Y])` | SKIP | not in v1 scope; would require CGO bridge |
-| `lower(X)` | DONE | iter-26 |
+| `load_extension(X[,Y])` | REQ000428 (SKIP) | not in v1 scope; would require CGO bridge |
+| `lower(X)` | REQ000422 (DONE) | iter-26 |
 | `ltrim(X[,Y])` | REQ000397 | trim left; default Y=" " |
 | `max(X,Y,...)` | REQ000398 | multi-arg scalar max; uses first collating function |
 | `min(X,Y,...)` | REQ000399 | multi-arg scalar min |
-| `nullif(X,Y)` | DONE | iter-26 |
+| `nullif(X,Y)` | REQ000423 (DONE) | iter-26 |
 | `octet_length(X)` | REQ000400 | byte length; differs from `length` for UTF-8 |
-| `printf(FORMAT,...)` | DONE | alias for `format`; merge with REQ000389 |
+| `printf(FORMAT,...)` | REQ000424 (DONE) | alias for `format`; merge with REQ000389 |
 | `quote(X)` | REQ000401 | SQL literal rendering; strings single-quoted with escape, BLOBs as X'hex' |
 | `random()` | REQ000402 | pseudo-random int64; exclude MIN_INT64 |
 | `randomblob(N)` | REQ000403 | N-byte random BLOB |
@@ -447,25 +447,25 @@ Status column tracks the implementation state.
 | `rtrim(X[,Y])` | REQ000406 | trim right; default Y=" " |
 | `sign(X)` | REQ000407 | -1/0/+1 or NULL for non-numeric |
 | `soundex(X)` | REQ000408 | soundex encoding; "?000" for non-ASCII / NULL |
-| `sqlite_compileoption_get(N)` | SKIP | engine-internal, returns NULL for v1 |
-| `sqlite_compileoption_used(X)` | SKIP | engine-internal, returns 0 for v1 |
-| `sqlite_offset(X)` | SKIP | requires SQLITE_ENABLE_OFFSET_SQL_FUNC compile flag |
+| `sqlite_compileoption_get(N)` | REQ000429 (SKIP) | engine-internal, returns NULL for v1 |
+| `sqlite_compileoption_used(X)` | REQ000430 (SKIP) | engine-internal, returns 0 for v1 |
+| `sqlite_offset(X)` | REQ000431 (SKIP) | requires SQLITE_ENABLE_OFFSET_SQL_FUNC compile flag |
 | `sqlite_source_id()` | REQ000409 | fixed string for v1 ("razordata-v0.26.x") |
 | `sqlite_version()` | REQ000410 | fixed string for v1 ("0.26.x") |
-| `substr(X,Y[,Z])` | DONE | iter-26 — 1-based, negative start counts from right |
-| `substring(X,Y[,Z])` | DONE | alias for `substr` |
+| `substr(X,Y[,Z])` | REQ000425 (DONE) | iter-26 — 1-based, negative start counts from right |
+| `substring(X,Y[,Z])` | REQ000426 (DONE) | alias for `substr` |
 | `total_changes()` | REQ000411 | cumulative row-change count since connection open |
-| `trim(X[,Y])` | DONE | iter-26 — both sides; default Y=" " |
+| `trim(X[,Y])` | REQ000427 (DONE) | iter-26 — both sides; default Y=" " |
 | `typeof(X)` | REQ000412 | returns "null" / "integer" / "real" / "text" / "blob" |
 | `unhex(X[,Y])` | REQ000413 | hex → BLOB; X invalid → NULL; Y is ignored-char set |
 | `unicode(X)` | REQ000414 | code point of first char; NULL → NULL |
 | `unistr(X)` | REQ000415 | backslash-escape decoder (\uXXXX, \+XXXXXX, \UXXXXXXXX) |
-| `unistr_quote(X)` | SKIP | low-value, complex |
+| `unistr_quote(X)` | REQ000432 (SKIP) | low-value, complex |
 | `unlikely(X)` | REQ000416 | no-op pass-through |
-| `upper(X)` | DONE | iter-26 |
+| `upper(X)` | REQ000433 (DONE) | iter-26 |
 | `zeroblob(N)` | REQ000417 | N-byte BLOB of 0x00 |
 
-### Sub-bundle REQs (one per missing function)
+### Sub-bundle REQs (to-implement functions only)
 
 | ID | Function | Effort |
 |---|---|---|
@@ -504,16 +504,33 @@ Status column tracks the implementation state.
 | REQ000416 | unlikely | S (no-op) |
 | REQ000417 | zeroblob | S |
 
+### Already implemented (iter-26)
+
+These 10 functions were implemented in iter-26 before the REQ matrix was created:
+
+| REQ ID | Function | Notes |
+|---|---|---|
+| REQ000418 | coalesce | variadic NULL-skipping |
+| REQ000419 | ifnull | 2-arg NULL coalesce |
+| REQ000420 | length | code-point count |
+| REQ000421 | like | 2-arg pattern match |
+| REQ000422 | lower | ASCII lower-case |
+| REQ000423 | nullif | NULL-on-equal |
+| REQ000424 | printf | alias for format |
+| REQ000425 | substr | 1-based, negative start |
+| REQ000426 | substring | substr alias |
+| REQ000427 | trim | both-sides, default space |
+| REQ000433 | upper | ASCII upper-case |
+
 ### Out of scope (SKIP)
 
-- `load_extension` — CGO bridge, out of v1 scope (single-binary,
-  no C deps per `AGENTS.md`).
-- `sqlite_compileoption_get/used` — engine-internal debug helpers,
-  not user-facing.
-- `sqlite_offset` — requires compile-time flag, no benefit in
-  v1.
-- `unistr_quote` — low value, complex escape rules; revisit
-  if users request.
+| REQ ID | Function | Reason |
+|---|---|---|
+| REQ000428 | load_extension | CGO bridge, out of v1 scope |
+| REQ000429 | sqlite_compileoption_get | engine-internal debug helper |
+| REQ000430 | sqlite_compileoption_used | engine-internal debug helper |
+| REQ000431 | sqlite_offset | requires compile-time flag |
+| REQ000432 | unistr_quote | low value, complex escape rules |
 
 ### Acceptance
 

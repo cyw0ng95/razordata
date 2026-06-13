@@ -476,6 +476,17 @@ func truthy(v interface{}) bool {
 
 func evalAggregate(e *PS.AggregateFunc, row *Row, params []interface{}) (interface{}, error) {
 	if row != nil {
+		// REQ000378: HAVING and post-aggregate references to
+		// aggregates must resolve to the precomputed value in
+		// the row emitted by the Aggregate operator. Try all
+		// aggregate column name shapes (COUNT(*), COUNT(col),
+		// SUM(col), ...).
+		if _, ok := e.Arg.(*PS.StarExpr); ok {
+			name := e.Name + "(*)"
+			if v, found := row.Lookup(name); found {
+				return v, nil
+			}
+		}
 		if ident, ok := e.Arg.(*PS.Ident); ok {
 			name := e.Name + "(" + ident.Name + ")"
 			if v, found := row.Lookup(name); found {
