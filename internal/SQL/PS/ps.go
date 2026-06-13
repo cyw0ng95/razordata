@@ -439,11 +439,20 @@ func (p *Parser) parseNotIn(expr Expr) (Expr, error) {
 
 // REQ000434: `NOT BETWEEN` — parse x NOT BETWEEN low AND high as NOT(x BETWEEN low AND high).
 func (p *Parser) parseNotBetween(expr Expr) (Expr, error) {
-	p.advance()
-	between, err := p.parseBetween(expr)
+	p.advance() // consume BETWEEN
+	low, err := p.parseBinary(3)
 	if err != nil {
 		return nil, err
 	}
+	if err := p.expect(LX.T_AND); err != nil {
+		return nil, err
+	}
+	p.advance() // consume AND
+	high, err := p.parseBinary(3)
+	if err != nil {
+		return nil, err
+	}
+	between := &BetweenExpr{Expr: expr, Low: low, High: high}
 	return &UnaryExpr{Op: int(LX.T_NOT), Operand: between}, nil
 }
 
@@ -1576,9 +1585,54 @@ func (p *Parser) parseExplain() (*ExplainStmt, error) {
 		}
 	}
 
-	inner, err := p.Parse()
-	if err != nil {
-		return nil, err
+	// Parse the inner statement without resetting the parser state.
+	// We use the same dispatch logic as Parse() but without reset().
+	var inner Stmt
+	var innerErr error
+	switch p.current.Type {
+	case LX.T_SELECT:
+		inner, innerErr = p.parseSelect()
+	case LX.T_INSERT:
+		inner, innerErr = p.parseInsert()
+	case LX.T_UPDATE:
+		inner, innerErr = p.parseUpdate()
+	case LX.T_DELETE:
+		inner, innerErr = p.parseDelete()
+	case LX.T_CREATE:
+		next := p.lex.Peek().Type
+		if next == LX.T_INDEX {
+			inner, innerErr = p.parseCreateIndex()
+		} else if next == LX.T_UNIQUE && p.lex.Peek2().Type == LX.T_INDEX {
+			inner, innerErr = p.parseCreateIndex()
+		} else if next == LX.T_VIEW {
+			inner, innerErr = p.parseCreateView()
+		} else {
+			inner, innerErr = p.parseCreateTable()
+		}
+	case LX.T_DROP:
+		if p.lex.Peek().Type == LX.T_INDEX {
+			inner, innerErr = p.parseDropIndex()
+		} else {
+			inner, innerErr = p.parseDropTable()
+		}
+	case LX.T_EXPLAIN:
+		inner, innerErr = p.parseExplain()
+	case LX.T_ANALYZE:
+		inner, innerErr = p.parseAnalyze()
+	case LX.T_VACUUM:
+		inner, innerErr = p.parseVacuum()
+	default:
+		innerErr = &SyntaxError{
+			Input:    p.lex.Input(),
+			Line:     p.current.Line,
+			Col:      p.current.Col,
+			Expected: "statement",
+			Got:      tokenName(p.current.Type),
+			Lexeme:   p.current.Lexeme,
+		}
+	}
+	if innerErr != nil {
+		return nil, innerErr
 	}
 
 	return &ExplainStmt{Mode: mode, Inner: inner}, nil

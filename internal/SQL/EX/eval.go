@@ -584,6 +584,8 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 		return evalLtrim(e.Args, row, params)
 	case "RTRIM":
 		return evalRtrim(e.Args, row, params)
+	case "TRIM":
+		return evalTrim(e.Args, row, params)
 	case "REPLACE":
 		return evalReplace(e.Args, row, params)
 	case "QUOTE":
@@ -994,6 +996,32 @@ func evalRtrim(args []PS.Expr, row *Row, params []interface{}) (interface{}, err
 		}
 	}
 	return strings.TrimRight(s, " "), nil
+}
+
+// evalTrim trims leading and trailing characters. Default trim chars are spaces.
+// REQ000438.
+func evalTrim(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) < 1 {
+		return nil, ErrEval
+	}
+	v, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, nil
+	}
+	s := fmt.Sprint(v)
+	if len(args) >= 2 {
+		trimV, err := Eval(args[1], row, params)
+		if err != nil {
+			return nil, err
+		}
+		if trimV != nil {
+			return strings.Trim(s, fmt.Sprint(trimV)), nil
+		}
+	}
+	return strings.Trim(s, " "), nil
 }
 
 // evalReplace replaces all occurrences of Y in X with Z.
