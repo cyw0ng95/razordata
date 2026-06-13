@@ -57,7 +57,7 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 26.3 | Bugfix sweep v3 | 5 bugfixes (REQ000378-382), 12 new dual-runner probes, 19 new unit tests | `SQL/EX`, `SQL/PS` | done (v0.26.5) |
 | 26.4 | Compound SELECT | UNION/INTERSECT/EXCEPT parser+executor, correct precedence, trailing ORDER BY/LIMIT/OFFSET apply to compound, RE rewrite/format, 6 new dual-runner probes | `SQL/LX`, `SQL/PS`, `SQL/EX`, `SQL/RE` | done (v0.26.6) |
 
-All iterations through iter-26.5 complete. Released as v0.9.0–v0.26.6. Coverage details: `go test ./... -cover`.
+All iterations through iter-26.6 complete. Released as v0.9.0–v0.26.6. Coverage details: `go test ./... -cover`.
 
 ## Completion Criteria (All Iterations)
 
@@ -120,6 +120,7 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 | **v0.26.5** | **Bugfix sweep v3** (iter-26.3). 5 REQs: REQ000378 (HAVING COUNT(*)), REQ000379 (chained unary minus regression), REQ000380+381 (`NOT LIKE` / `NOT IN` parser), REQ000382 (`ABS` / `HEX` / `ROUND` scalar functions). 12 new dual-runner probe cases; 19 new unit tests in `corefunc_test.go`. 4 commits, ~250 LOC. Dual-runner: 60/60/0. |
 | **v0.26.6** | **Compound SELECT** (iter-26.4). REQ000383: UNION/INTERSECT/EXCEPT parser + executor with correct precedence (INTERSECT binds tighter), trailing ORDER BY/LIMIT/OFFSET apply to compound result; RE rewrite/format support; 6 new dual-runner probe cases. 3 commits, ~300 LOC. Dual-runner: 67/67/0. |
 | **v0.26.7** | **Core functions batch 1** (iter-26.5). REQ000384-404/407-412/414/417: session counter infrastructure (CHANGES/LAST_INSERT_ROWID/TOTAL_CHANGES); string functions (CHAR/CONCAT/CONCAT_WS/FORMAT/LTRIM/RTRIM/REPLACE/QUOTE); type/info functions (TYPEOF/OCTET_LENGTH/UNICODE/SQLITE_VERSION/SOURCE_ID); conditional (IIF); search (INSTR); numeric (SIGN/MAX/MIN/RANDOM/RANDOMBLOB/ZEROBLOB). 28 REQs closed, 21 new functions + session state. 7 commits, ~1200 LOC. Dual-runner: +27 probe cases; 90/90/0. |
+| **v0.26.8** | **Core functions batch 2** (iter-26.6). REQ000390/395/396/408/413/415/416: 7 remaining core scalar functions — GLOB (pattern matching), SOUNDEX (phonetic encoding), UNHEX (hex→BLOB), UNISTR (escape decoder), LIKELIHOOD/LIKELY/UNLIKELY (no-op planner hints). 7 REQs closed, ~500 LOC. Dual-runner: +10 probe cases; 100/100/0.
 
 
 ## Design Protection
