@@ -403,3 +403,129 @@ Running `select1.test` (12K lines, ~3K query records) against the engine shows:
 |---|---|---|---|---|---|---|
 
 ---
+
+## SQLite Core Function Coverage (https://sqlite.org/lang_corefunc.html)
+
+Goal: full coverage of the 60 functions on SQLite's core scalar
+function page, each with a positive test case in
+`internal/SQL/EX/corefunc_test.go` (table-driven, named cases so
+the dual-runner and SLT harness can pinpoint the missing one).
+Status column tracks the implementation state.
+
+| Function | Status | Notes |
+|---|---|---|
+| `abs(X)` | REQ000384 | returns absolute value, NULL→NULL, string→0.0, MIN_INT64→error |
+| `changes()` | REQ000385 | last INSERT/UPDATE/DELETE row count; not yet wired to session state |
+| `char(X1,...,XN)` | REQ000386 | Unicode code point → character; accepts variadic int args |
+| `coalesce(X,Y,...)` | DONE | iter-26 already implemented |
+| `concat(X,...)` | REQ000387 | concatenate non-NULL args; all-NULL → "" (note: current `\|\|` returns NULL on NULL) |
+| `concat_ws(SEP,X,...)` | REQ000388 | concat with separator; SEP=NULL → NULL |
+| `format(FORMAT,...)` | REQ000389 | printf-style formatting (subset of fmt verbs) |
+| `glob(X,Y)` | REQ000390 | filename glob match (X=pattern, Y=string) |
+| `hex(X)` | REQ000391 | BLOB/text → uppercase hex; integer is converted via text first |
+| `ifnull(X,Y)` | DONE | iter-26 |
+| `iif(B1,V1,...)` | REQ000392 | short-circuit CASE; `if()` alias |
+| `instr(X,Y)` | REQ000393 | position of Y in X (1-based), 0 if not found |
+| `last_insert_rowid()` | REQ000394 | engine-level rowid; engine must expose per-session counter |
+| `length(X)` | DONE | iter-26 — returns code-point count (not bytes); close to SQLite's semantics |
+| `like(X,Y[,Z])` | DONE | iter-26 — two-arg form; ESCAPE clause not yet supported |
+| `likelihood(X,Y)` | REQ000395 | no-op pass-through; hint to planner |
+| `likely(X)` | REQ000396 | no-op pass-through |
+| `load_extension(X[,Y])` | SKIP | not in v1 scope; would require CGO bridge |
+| `lower(X)` | DONE | iter-26 |
+| `ltrim(X[,Y])` | REQ000397 | trim left; default Y=" " |
+| `max(X,Y,...)` | REQ000398 | multi-arg scalar max; uses first collating function |
+| `min(X,Y,...)` | REQ000399 | multi-arg scalar min |
+| `nullif(X,Y)` | DONE | iter-26 |
+| `octet_length(X)` | REQ000400 | byte length; differs from `length` for UTF-8 |
+| `printf(FORMAT,...)` | DONE | alias for `format`; merge with REQ000389 |
+| `quote(X)` | REQ000401 | SQL literal rendering; strings single-quoted with escape, BLOBs as X'hex' |
+| `random()` | REQ000402 | pseudo-random int64; exclude MIN_INT64 |
+| `randomblob(N)` | REQ000403 | N-byte random BLOB |
+| `replace(X,Y,Z)` | REQ000404 | string substitution; Y="" returns X unchanged |
+| `round(X[,Y])` | REQ000405 | round to Y decimal places; Y default 0; Y<0 → 0 |
+| `rtrim(X[,Y])` | REQ000406 | trim right; default Y=" " |
+| `sign(X)` | REQ000407 | -1/0/+1 or NULL for non-numeric |
+| `soundex(X)` | REQ000408 | soundex encoding; "?000" for non-ASCII / NULL |
+| `sqlite_compileoption_get(N)` | SKIP | engine-internal, returns NULL for v1 |
+| `sqlite_compileoption_used(X)` | SKIP | engine-internal, returns 0 for v1 |
+| `sqlite_offset(X)` | SKIP | requires SQLITE_ENABLE_OFFSET_SQL_FUNC compile flag |
+| `sqlite_source_id()` | REQ000409 | fixed string for v1 ("razordata-v0.26.x") |
+| `sqlite_version()` | REQ000410 | fixed string for v1 ("0.26.x") |
+| `substr(X,Y[,Z])` | DONE | iter-26 — 1-based, negative start counts from right |
+| `substring(X,Y[,Z])` | DONE | alias for `substr` |
+| `total_changes()` | REQ000411 | cumulative row-change count since connection open |
+| `trim(X[,Y])` | DONE | iter-26 — both sides; default Y=" " |
+| `typeof(X)` | REQ000412 | returns "null" / "integer" / "real" / "text" / "blob" |
+| `unhex(X[,Y])` | REQ000413 | hex → BLOB; X invalid → NULL; Y is ignored-char set |
+| `unicode(X)` | REQ000414 | code point of first char; NULL → NULL |
+| `unistr(X)` | REQ000415 | backslash-escape decoder (\uXXXX, \+XXXXXX, \UXXXXXXXX) |
+| `unistr_quote(X)` | SKIP | low-value, complex |
+| `unlikely(X)` | REQ000416 | no-op pass-through |
+| `upper(X)` | DONE | iter-26 |
+| `zeroblob(N)` | REQ000417 | N-byte BLOB of 0x00 |
+
+### Sub-bundle REQs (one per missing function)
+
+| ID | Function | Effort |
+|---|---|---|
+| REQ000384 | abs | S |
+| REQ000385 | changes | M (engine state plumbing) |
+| REQ000386 | char | S |
+| REQ000387 | concat | S |
+| REQ000388 | concat_ws | S |
+| REQ000389 | format | M (printf subset) |
+| REQ000390 | glob | S |
+| REQ000391 | hex | S |
+| REQ000392 | iif / if | S |
+| REQ000393 | instr | S |
+| REQ000394 | last_insert_rowid | M (engine counter) |
+| REQ000395 | likelihood | S (no-op) |
+| REQ000396 | likely | S (no-op) |
+| REQ000397 | ltrim | S |
+| REQ000398 | max (scalar, multi-arg) | S |
+| REQ000399 | min (scalar, multi-arg) | S |
+| REQ000400 | octet_length | S |
+| REQ000401 | quote | S |
+| REQ000402 | random | S |
+| REQ000403 | randomblob | S |
+| REQ000404 | replace | S |
+| REQ000405 | round | S |
+| REQ000406 | rtrim | S |
+| REQ000407 | sign | S |
+| REQ000408 | soundex | S |
+| REQ000409 | sqlite_source_id | S (return constant) |
+| REQ000410 | sqlite_version | S (return constant) |
+| REQ000411 | total_changes | M (engine state plumbing) |
+| REQ000412 | typeof | S |
+| REQ000413 | unhex | S |
+| REQ000414 | unicode | S |
+| REQ000415 | unistr | S |
+| REQ000416 | unlikely | S (no-op) |
+| REQ000417 | zeroblob | S |
+
+### Out of scope (SKIP)
+
+- `load_extension` — CGO bridge, out of v1 scope (single-binary,
+  no C deps per `AGENTS.md`).
+- `sqlite_compileoption_get/used` — engine-internal debug helpers,
+  not user-facing.
+- `sqlite_offset` — requires compile-time flag, no benefit in
+  v1.
+- `unistr_quote` — low value, complex escape rules; revisit
+  if users request.
+
+### Acceptance
+
+- `internal/SQL/EX/corefunc_test.go` is a single table-driven
+  test with one named subtest per function above. Each subtest
+  asserts the SQLite-canonical return for a representative
+  input. Functions marked DONE already have an existing test;
+  the new file should still cover them under a uniform shape.
+- Coverage of the new functions must hit 100% via the
+  test table (positive and edge cases: NULL in/out, empty
+  string, default args, integer overflow for `abs`).
+- The dual-runner probe set in `tests/sqlcmp/dual/probe_cases.go`
+  should add a representative `corefunc_*` case for each
+  newly added function, mirroring the modernc oracle output.
+
