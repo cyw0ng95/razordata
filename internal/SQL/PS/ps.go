@@ -214,7 +214,7 @@ var tokenNames = [...]string{
 // so SELECT GROUP_CONCAT(col) FROM t routes through the
 // AggregateFunc path instead of the function-call path.
 func isAggregateName(name string) bool {
-	switch name {
+	switch strings.ToUpper(name) {
 	case "COUNT", "SUM", "AVG", "MIN", "MAX", "GROUP_CONCAT":
 		return true
 	}
@@ -301,7 +301,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		}
 		return &Ident{Name: name}, nil
 	case LX.T_COUNT, LX.T_SUM, LX.T_AVG, LX.T_MIN, LX.T_MAX:
-		name := p.current.Lexeme
+		name := strings.ToUpper(p.current.Lexeme)
 		p.advance()
 		if err := p.expect(LX.T_LPAREN); err != nil {
 			return nil, err
