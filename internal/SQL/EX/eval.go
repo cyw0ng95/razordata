@@ -1,6 +1,7 @@
 package EX
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -562,6 +563,12 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 		return time.Now().UTC().Format(time.RFC3339), nil
 	case "SUBSTR":
 		return evalSubstr(e.Args, row, params)
+	case "ABS":
+		return evalAbs(e.Args, row, params)
+	case "HEX":
+		return evalHex(e.Args, row, params)
+	case "ROUND":
+		return evalRound(e.Args, row, params)
 	default:
 		if isDateTimeFunc(e.Name) {
 			args := make([]interface{}, len(e.Args))
@@ -587,6 +594,116 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 		}
 	}
 	return nil, ErrEval
+}
+
+// REQ000382: ABS, HEX, ROUND scalar functions.
+//
+// evalAbs returns the absolute value of a numeric argument. NULL
+// in → NULL out; string/non-numeric in → 0.0 (SQLite standard).
+// For int64, MIN_INT64 cannot be negated without overflow; we
+// surface that as ErrEval per the SQLite error message.
+//
+// evalHex returns the uppercase hex encoding of its argument.
+// Integers are first converted to text (decimal) then hex-encoded;
+// strings/BLOBs are encoded byte-for-byte. NULL → NULL.
+//
+// evalRound rounds the first argument to the second (default 0)
+// decimal places. Negative second argument is treated as 0 per
+// SQLite; Y < 0 also surfaces a warning in SQLite but we treat it
+// as 0 for v1.
+
+func evalAbs(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, ErrEval
+	}
+	v, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, nil
+	}
+	switch x := v.(type) {
+	case int64:
+		if x == math.MinInt64 {
+			return nil, fmt.Errorf("abs: integer overflow")
+		}
+		if x < 0 {
+			return -x, nil
+		}
+		return x, nil
+	case float64:
+		if x < 0 {
+			return -x, nil
+		}
+		return x, nil
+	}
+	return 0.0, nil
+}
+
+func evalHex(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, ErrEval
+	}
+	v, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, nil
+	}
+	var s string
+	switch x := v.(type) {
+	case int64:
+		// SQLite converts the integer to its text form first,
+		// then hex-encodes that text. HEX(255) → "323535"
+		// (the hex of the three ASCII digits).
+		s = hex.EncodeToString([]byte(strconv.FormatInt(x, 10)))
+	case float64:
+		s = hex.EncodeToString([]byte(strconv.FormatFloat(x, 'g', -1, 64)))
+	case []byte:
+		s = hex.EncodeToString(x)
+	case string:
+		s = hex.EncodeToString([]byte(x))
+	default:
+		s = hex.EncodeToString([]byte(fmt.Sprint(x)))
+	}
+	return strings.ToUpper(s), nil
+}
+
+func evalRound(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) < 1 || len(args) > 2 {
+		return nil, ErrEval
+	}
+	v, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, nil
+	}
+	x, ok := numericFloat(v)
+	if !ok {
+		return 0.0, nil
+	}
+	places := int64(0)
+	if len(args) == 2 {
+		pv, err := Eval(args[1], row, params)
+		if err != nil {
+			return nil, err
+		}
+		if pv != nil {
+			if p, ok := toInt64(pv); ok {
+				if p < 0 {
+					places = 0
+				} else {
+					places = p
+				}
+			}
+		}
+	}
+	mult := math.Pow(10, float64(places))
+	return math.Round(x*mult) / mult, nil
 }
 
 // evalSubstr implements SUBSTR(str, start[, length]).

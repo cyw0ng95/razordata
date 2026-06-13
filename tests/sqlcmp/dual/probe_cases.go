@@ -352,4 +352,82 @@ var probeCases = []dualCase{
 			{int64(1)},
 		},
 	},
+	// REQ000382: ABS, HEX, ROUND scalar functions.
+	{
+		Name: "abs_negative",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT ABS(-7)",
+		Want: [][]any{
+			{int64(7)},
+		},
+	},
+	{
+		Name: "abs_positive",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT ABS(7)",
+		Want: [][]any{
+			{int64(7)},
+		},
+	},
+	{
+		Name: "abs_null",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT ABS(NULL)",
+		Want: [][]any{
+			{nil},
+		},
+	},
+	{
+		Name: "hex_string",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT HEX('abc')",
+		Want: [][]any{
+			{"616263"},
+		},
+	},
+	{
+		Name: "hex_integer",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT HEX(255)",
+		Want: [][]any{
+			{"323535"},
+		},
+	},
+	{
+		Name: "round_no_places",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT ROUND(3.5)",
+		Want: [][]any{
+			{float64(4)},
+		},
+	},
+	{
+		Name: "round_with_places",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT ROUND(3.14159, 2)",
+		Want: [][]any{
+			{float64(3.14)},
+		},
+	},
 }
