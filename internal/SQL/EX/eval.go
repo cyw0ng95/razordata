@@ -106,6 +106,9 @@ func evalUnary(e *PS.UnaryExpr, row *Row, params []interface{}) (interface{}, er
 
 	switch e.Op {
 	case int(LX.T_MINUS):
+		if operand == nil {
+			return nil, nil
+		}
 		switch v := operand.(type) {
 		case int64:
 			return -v, nil
