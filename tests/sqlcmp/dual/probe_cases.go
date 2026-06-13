@@ -700,4 +700,43 @@ var probeCases = []dualCase{
 		Query: "SELECT UNLIKELY('text')",
 		Want:  [][]any{{"text"}},
 	},
+	// Bitwise operators (REQ000350)
+	{
+		Name:  "bitwise_and",
+		Query: "SELECT 5 & 3",
+		Want:  [][]any{{int64(1)}},
+	},
+	{
+		Name:  "bitwise_or",
+		Query: "SELECT 5 | 3",
+		Want:  [][]any{{int64(7)}},
+	},
+	{
+		Name:  "bitwise_not",
+		Query: "SELECT ~5",
+		Want:  [][]any{{int64(-6)}},
+	},
+	// Modulo operator (REQ000352)
+	{
+		Name:  "modulo_operator",
+		Query: "SELECT 10 % 3",
+		Want:  [][]any{{int64(1)}},
+	},
+	// String concat operator (REQ000351)
+	{
+		Name:  "concat_operator",
+		Query: "SELECT 'Hello' || ' ' || 'World'",
+		Want:  [][]any{{"Hello World"}},
+	},
+	// Special forms (REQ000353/354)
+	{
+		Name:  "coalesce_function_form",
+		Query: "SELECT COALESCE(NULL, 42)",
+		Want:  [][]any{{int64(42)}},
+	},
+	{
+		Name:  "nullif_function_form",
+		Query: "SELECT NULLIF(5, 5)",
+		Want:  [][]any{{nil}},
+	},
 }
