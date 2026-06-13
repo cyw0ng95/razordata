@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -613,6 +614,20 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 		return evalRandomBlob(e.Args, row, params)
 	case "ZEROBLOB":
 		return evalZeroblob(e.Args, row, params)
+	case "GLOB":
+		return evalGlob(e.Args, row, params)
+	case "LIKELIHOOD":
+		return evalLikelihood(e.Args, row, params)
+	case "LIKELY":
+		return evalLikely(e.Args, row, params)
+	case "SOUNDEX":
+		return evalSoundex(e.Args, row, params)
+	case "UNHEX":
+		return evalUnhex(e.Args, row, params)
+	case "UNISTR":
+		return evalUnistr(e.Args, row, params)
+	case "UNLIKELY":
+		return evalUnlikely(e.Args, row, params)
 	case "CHANGES":
 		// REQ000385: changes() returns the number of rows modified
 		// by the most recent INSERT, UPDATE, or DELETE. Takes no args.
@@ -1608,4 +1623,359 @@ func equalValue(a, b interface{}) bool {
 		}
 	}
 	return a == b
+}
+
+// evalGlob implements glob(X,Y) — pattern matching with *, ?, [...].
+// REQ000390.
+func evalGlob(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("glob requires 2 args")
+	}
+	pattern, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if pattern == nil {
+		return nil, nil
+	}
+	str, err := Eval(args[1], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if str == nil {
+		return nil, nil
+	}
+	p, ok := pattern.(string)
+	if !ok {
+		return nil, nil
+	}
+	s, ok := str.(string)
+	if !ok {
+		return nil, nil
+	}
+	if globMatch(p, s) {
+		return int64(1), nil
+	}
+	return int64(0), nil
+}
+
+// globMatch implements SQL GLOB pattern matching.
+func globMatch(pattern, s string) bool {
+	// Convert GLOB pattern to regex
+	var re strings.Builder
+	re.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		switch c {
+		case '*':
+			re.WriteString(".*")
+		case '?':
+			re.WriteString(".")
+		case '[':
+			re.WriteString("[")
+			// Handle [...] character classes
+			for i++; i < len(pattern) && pattern[i] != ']'; i++ {
+				if pattern[i] == '\\' && i+1 < len(pattern) {
+					i++
+					re.WriteString(regexp.QuoteMeta(string(pattern[i])))
+				} else {
+					switch pattern[i] {
+					case '^':
+						if i == 0 || pattern[i-1] == '[' {
+							re.WriteString("^")
+						} else {
+							re.WriteString("\\^")
+						}
+					case '-':
+						if i > 0 && i < len(pattern)-1 && pattern[i-1] != '[' && pattern[i+1] != ']' {
+							re.WriteString("-")
+						} else {
+							re.WriteString("\\-")
+						}
+					default:
+						re.WriteString(regexp.QuoteMeta(string(pattern[i])))
+					}
+				}
+			}
+			re.WriteString("]")
+		case '\\':
+			if i+1 < len(pattern) {
+				i++
+				re.WriteString(regexp.QuoteMeta(string(pattern[i])))
+			}
+		default:
+			re.WriteString(regexp.QuoteMeta(string(c)))
+		}
+	}
+	re.WriteString("$")
+	r := regexp.MustCompile(re.String())
+	return r.MatchString(s)
+}
+
+// evalLikelihood implements likelihood(X,Y) — no-op pass-through.
+// REQ000395.
+func evalLikelihood(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) < 1 {
+		return nil, nil
+	}
+	return Eval(args[0], row, params)
+}
+
+// evalLikely implements likely(X) — no-op pass-through.
+// REQ000396.
+func evalLikely(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) < 1 {
+		return nil, nil
+	}
+	return Eval(args[0], row, params)
+}
+
+// evalSoundex implements soundex(X) — 4-char phonetic encoding.
+// REQ000408.
+// evalSoundex implements soundex(X) — 4-char phonetic encoding.
+// REQ000408.
+func evalSoundex(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) < 1 {
+		return nil, nil
+	}
+	val, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if val == nil {
+		return nil, nil
+	}
+	s, ok := val.(string)
+	if !ok {
+		return "?000", nil
+	}
+	if s == "" {
+		return "?000", nil
+	}
+
+	// Convert to uppercase, keep only letters
+	var letters []byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'a' && c <= 'z' {
+			letters = append(letters, c-32) // to upper
+		} else if c >= 'A' && c <= 'Z' {
+			letters = append(letters, c)
+		}
+	}
+
+	if len(letters) == 0 {
+		return "?000", nil
+	}
+
+	codes := map[byte]byte{
+		'B': '1', 'F': '1', 'P': '1', 'V': '1',
+		'C': '2', 'G': '2', 'J': '2', 'K': '2', 'Q': '2', 'S': '2', 'X': '2', 'Z': '2',
+		'D': '3', 'T': '3',
+		'L': '4',
+		'M': '5', 'N': '5',
+		'R': '6',
+	}
+
+	result := make([]byte, 0, 4)
+	result = append(result, letters[0])
+
+	prevCode := codes[letters[0]]
+
+	for i := 1; i < len(letters) && len(result) < 4; i++ {
+		code := codes[letters[i]]
+
+		if code != 0 && code != prevCode {
+			result = append(result, code)
+		}
+
+		// Vowels (and H, W) don't separate same-code consonants
+		isVowel := letters[i] == 'A' || letters[i] == 'E' || letters[i] == 'I' ||
+			letters[i] == 'O' || letters[i] == 'U' || letters[i] == 'Y' ||
+			letters[i] == 'H' || letters[i] == 'W'
+
+		if !isVowel {
+			prevCode = code
+		}
+	}
+
+	for len(result) < 4 {
+		result = append(result, '0')
+	}
+
+	return string(result), nil
+}
+
+// REQ000413.
+func evalUnhex(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) < 1 {
+		return nil, nil
+	}
+	val, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if val == nil {
+		return nil, nil
+	}
+	s, ok := val.(string)
+	if !ok {
+		return nil, nil
+	}
+
+	// Decode hex string
+	s = strings.TrimSpace(s)
+	if len(s)%2 != 0 {
+		return nil, nil
+	}
+
+	result := make([]byte, 0, len(s)/2)
+	for i := 0; i < len(s); i += 2 {
+		h1 := hexDigit(s[i])
+		h2 := hexDigit(s[i+1])
+		if h1 == 0xff || h2 == 0xff {
+			return nil, nil
+		}
+		result = append(result, h1<<4|h2)
+	}
+
+	return result, nil
+}
+
+func hexDigit(c byte) byte {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0'
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10
+	default:
+		return 0xff
+	}
+}
+
+// evalUnistr implements unistr(X) — backslash-escape decoder.
+// REQ000415.
+func evalUnistr(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) < 1 {
+		return nil, nil
+	}
+	val, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if val == nil {
+		return nil, nil
+	}
+	s, ok := val.(string)
+	if !ok {
+		return nil, nil
+	}
+
+	var result strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			result.WriteByte(s[i])
+			continue
+		}
+
+		i++
+		switch s[i] {
+		case 'u':
+			if i+4 >= len(s) {
+				result.WriteByte('\\')
+				result.WriteByte('u')
+				break
+			}
+			hexStr := s[i+1 : i+5]
+			if r, ok := parseHex4(hexStr); ok {
+				result.WriteRune(r)
+				i += 4
+			} else {
+				result.WriteByte('\\')
+				result.WriteByte('u')
+				result.WriteString(hexStr)
+				i += 4
+			}
+		case 'U':
+			if i+8 >= len(s) {
+				result.WriteByte('\\')
+				result.WriteByte('U')
+				break
+			}
+			hexStr := s[i+1 : i+9]
+			if r, ok := parseHex8(hexStr); ok {
+				result.WriteRune(r)
+				i += 8
+			} else {
+				result.WriteByte('\\')
+				result.WriteByte('U')
+				result.WriteString(hexStr)
+				i += 8
+			}
+		case '+':
+			if i+6 >= len(s) {
+				result.WriteByte('\\')
+				result.WriteByte('+')
+				break
+			}
+			hexStr := s[i+1 : i+7]
+			if r, ok := parseHex6(hexStr); ok {
+				result.WriteRune(r)
+				i += 6
+			} else {
+				result.WriteByte('\\')
+				result.WriteByte('+')
+				result.WriteString(hexStr)
+				i += 6
+			}
+		case 'n':
+			result.WriteByte('\n')
+		case 'r':
+			result.WriteByte('\r')
+		case 't':
+			result.WriteByte('\t')
+		case '\\':
+			result.WriteByte('\\')
+		default:
+			result.WriteByte('\\')
+			result.WriteByte(s[i])
+		}
+	}
+
+	return result.String(), nil
+}
+
+func parseHex4(s string) (rune, bool) {
+	v, err := strconv.ParseUint(s, 16, 16)
+	if err != nil {
+		return 0, false
+	}
+	return rune(v), true
+}
+
+func parseHex6(s string) (rune, bool) {
+	v, err := strconv.ParseUint(s, 16, 32)
+	if err != nil {
+		return 0, false
+	}
+	return rune(v), true
+}
+
+func parseHex8(s string) (rune, bool) {
+	v, err := strconv.ParseUint(s, 16, 64)
+	if err != nil {
+		return 0, false
+	}
+	return rune(v), true
+}
+
+// evalUnlikely implements unlikely(X) — no-op pass-through.
+// REQ000416.
+func evalUnlikely(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) < 1 {
+		return nil, nil
+	}
+	return Eval(args[0], row, params)
 }

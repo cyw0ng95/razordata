@@ -649,4 +649,55 @@ var probeCases = []dualCase{
 		Query: "SELECT ZEROBLOB(8)",
 		Want:  [][]any{{[]byte{0, 0, 0, 0, 0, 0, 0, 0}}},
 	},
+	// Core scalar functions batch 2 (REQ000390/395/396/408/413/415/416)
+	{
+		Name:  "glob_wildcard_star",
+		Query: "SELECT GLOB('*.txt', 'hello.txt')",
+		Want:  [][]any{{int64(1)}},
+	},
+	{
+		Name:  "glob_no_match",
+		Query: "SELECT GLOB('*.txt', 'hello.doc')",
+		Want:  [][]any{{int64(0)}},
+	},
+	{
+		Name:  "glob_question",
+		Query: "SELECT GLOB('file?.txt', 'file1.txt')",
+		Want:  [][]any{{int64(1)}},
+	},
+	{
+		Name:  "soundex_robert",
+		Query: "SELECT SOUNDEX('Robert')",
+		Want:  [][]any{{"R163"}},
+	},
+	{
+		Name:  "soundex_rupert",
+		Query: "SELECT SOUNDEX('Rupert')",
+		Want:  [][]any{{"R163"}},
+	},
+	{
+		Name:  "unhex_hello",
+		Query: "SELECT UNHEX('48656c6c6f')",
+		Want:  [][]any{{[]byte("Hello")}},
+	},
+	{
+		Name:  "unistr_unicode",
+		Query: "SELECT UNISTR('\\u0041\\u0042')",
+		Want:  [][]any{{"AB"}},
+	},
+	{
+		Name:  "likelihood_nop",
+		Query: "SELECT LIKELIHOOD(42, 0.5)",
+		Want:  [][]any{{int64(42)}},
+	},
+	{
+		Name:  "likely_nop",
+		Query: "SELECT LIKELY(100)",
+		Want:  [][]any{{int64(100)}},
+	},
+	{
+		Name:  "unlikely_nop",
+		Query: "SELECT UNLIKELY('text')",
+		Want:  [][]any{{"text"}},
+	},
 }

@@ -421,16 +421,16 @@ Status column tracks the implementation state.
 | `concat(X,...)` DONE REQ000387 | concatenate non-NULL args; all-NULL → "" (note: current `\|\|` returns NULL on NULL) |
 | `concat_ws(SEP,X,...)` DONE REQ000388 | concat with separator; SEP=NULL → NULL |
 | `format(FORMAT,...)` DONE REQ000389 | printf-style formatting (subset of fmt verbs) |
-| `glob(X,Y)` | REQ000390 | filename glob match (X=pattern, Y=string) |
-| `hex(X)` | REQ000391 | BLOB/text → uppercase hex; integer is converted via text first |
+| `glob(X,Y)` DONE REQ000390 | filename glob match (X=pattern, Y=string) |
+| `hex(X)` DONE REQ000391 | BLOB/text → uppercase hex; integer is converted via text first |
 | `ifnull(X,Y)` | REQ000419 (DONE) | iter-26 |
 | `iif(B1,V1,...)` DONE REQ000392 | short-circuit CASE; `if()` alias |
 | `instr(X,Y)` DONE REQ000393 | position of Y in X (1-based), 0 if not found |
 | `last_insert_rowid()` DONE REQ000394 | engine-level rowid; engine must expose per-session counter |
 | `length(X)` | REQ000420 (DONE) | iter-26 — returns code-point count (not bytes); close to SQLite's semantics |
 | `like(X,Y[,Z])` | REQ000421 (DONE) | iter-26 — two-arg form; ESCAPE clause not yet supported |
-| `likelihood(X,Y)` | REQ000395 | no-op pass-through; hint to planner |
-| `likely(X)` | REQ000396 | no-op pass-through |
+| `likelihood(X,Y)` DONE REQ000395 | no-op pass-through; hint to planner |
+| `likely(X)` DONE REQ000396 | no-op pass-through |
 | `load_extension(X[,Y])` | REQ000428 (SKIP) | not in v1 scope; would require CGO bridge |
 | `lower(X)` | REQ000422 (DONE) | iter-26 |
 | `ltrim(X[,Y])` DONE REQ000397 | trim left; default Y=" " |
@@ -443,10 +443,10 @@ Status column tracks the implementation state.
 | `random()` DONE REQ000402 | pseudo-random int64; exclude MIN_INT64 |
 | `randomblob(N)` DONE REQ000403 | N-byte random BLOB |
 | `replace(X,Y,Z)` DONE REQ000404 | string substitution; Y="" returns X unchanged |
-| `round(X[,Y])` | REQ000405 | round to Y decimal places; Y default 0; Y<0 → 0 |
-| `rtrim(X[,Y])` | REQ000406 | trim right; default Y=" " |
+| `round(X[,Y])` DONE REQ000405 | round to Y decimal places; Y default 0; Y<0 → 0 |
+| `rtrim(X[,Y])` DONE REQ000406 | trim right; default Y=" " |
 | `sign(X)` DONE REQ000407 | -1/0/+1 or NULL for non-numeric |
-| `soundex(X)` | REQ000408 | soundex encoding; "?000" for non-ASCII / NULL |
+| `soundex(X)` DONE REQ000408 | soundex encoding; "?000" for non-ASCII / NULL |
 | `sqlite_compileoption_get(N)` | REQ000429 (SKIP) | engine-internal, returns NULL for v1 |
 | `sqlite_compileoption_used(X)` | REQ000430 (SKIP) | engine-internal, returns 0 for v1 |
 | `sqlite_offset(X)` | REQ000431 (SKIP) | requires SQLITE_ENABLE_OFFSET_SQL_FUNC compile flag |
@@ -457,11 +457,11 @@ Status column tracks the implementation state.
 | `total_changes()` DONE REQ000411 | cumulative row-change count since connection open |
 | `trim(X[,Y])` | REQ000427 (DONE) | iter-26 — both sides; default Y=" " |
 | `typeof(X)` DONE REQ000412 | returns "null" / "integer" / "real" / "text" / "blob" |
-| `unhex(X[,Y])` | REQ000413 | hex → BLOB; X invalid → NULL; Y is ignored-char set |
+| `unhex(X[,Y])` DONE REQ000413 | hex → BLOB; X invalid → NULL; Y is ignored-char set |
 | `unicode(X)` DONE REQ000414 | code point of first char; NULL → NULL |
-| `unistr(X)` | REQ000415 | backslash-escape decoder (\uXXXX, \+XXXXXX, \UXXXXXXXX) |
+| `unistr(X)` DONE REQ000415 | backslash-escape decoder (\uXXXX, \+XXXXXX, \UXXXXXXXX) |
 | `unistr_quote(X)` | REQ000432 (SKIP) | low-value, complex |
-| `unlikely(X)` | REQ000416 | no-op pass-through |
+| `unlikely(X)` DONE REQ000416 | no-op pass-through |
 | `upper(X)` | REQ000433 (DONE) | iter-26 |
 | `zeroblob(N)` DONE REQ000417 | N-byte BLOB of 0x00 |
 
@@ -469,16 +469,23 @@ Status column tracks the implementation state.
 
 | ID | Function | Effort |
 |---|---|---|
-| REQ000390 | glob | S |
-| REQ000391 | hex | S |
-| REQ000395 | likelihood | S (no-op) |
-| REQ000396 | likely | S (no-op) |
-| REQ000405 | round | S |
-| REQ000406 | rtrim | S |
-| REQ000408 | soundex | S |
-| REQ000413 | unhex | S |
-| REQ000415 | unistr | S |
-| REQ000416 | unlikely | S (no-op) |
+### Already implemented (iter-26.8)
+
+This iteration completes 7 additional core scalar functions:
+
+| REQ ID | Function | Notes |
+|---|---|---|
+| REQ000390 | glob | pattern matching with *, ?, [...] |
+| REQ000391 | hex | string to uppercase hex (iter-26) |
+| REQ000395 | likelihood | no-op planner hint |
+| REQ000396 | likely | no-op planner hint |
+| REQ000405 | round | round to decimal places (iter-26) |
+| REQ000406 | rtrim | right trim (iter-26/26.7) |
+| REQ000408 | soundex | 4-char phonetic encoding |
+| REQ000413 | unhex | hex string to BLOB |
+| REQ000415 | unistr | backslash-escape decoder |
+| REQ000416 | unlikely | no-op planner hint |
+
 ### Already implemented (iter-26.7)
 
 This iteration implements 21 core scalar functions plus session state infrastructure:
@@ -893,16 +900,16 @@ Status column tracks the implementation state.
 | `concat(X,...)` DONE REQ000387 | concatenate non-NULL args; all-NULL → "" (note: current `\|\|` returns NULL on NULL) |
 | `concat_ws(SEP,X,...)` DONE REQ000388 | concat with separator; SEP=NULL → NULL |
 | `format(FORMAT,...)` DONE REQ000389 | printf-style formatting (subset of fmt verbs) |
-| `glob(X,Y)` | REQ000390 | filename glob match (X=pattern, Y=string) |
-| `hex(X)` | REQ000391 | BLOB/text → uppercase hex; integer is converted via text first |
+| `glob(X,Y)` DONE REQ000390 | filename glob match (X=pattern, Y=string) |
+| `hex(X)` DONE REQ000391 | BLOB/text → uppercase hex; integer is converted via text first |
 | `ifnull(X,Y)` | REQ000419 (DONE) | iter-26 |
 | `iif(B1,V1,...)` DONE REQ000392 | short-circuit CASE; `if()` alias |
 | `instr(X,Y)` DONE REQ000393 | position of Y in X (1-based), 0 if not found |
 | `last_insert_rowid()` DONE REQ000394 | engine-level rowid; engine must expose per-session counter |
 | `length(X)` | REQ000420 (DONE) | iter-26 — returns code-point count (not bytes); close to SQLite's semantics |
 | `like(X,Y[,Z])` | REQ000421 (DONE) | iter-26 — two-arg form; ESCAPE clause not yet supported |
-| `likelihood(X,Y)` | REQ000395 | no-op pass-through; hint to planner |
-| `likely(X)` | REQ000396 | no-op pass-through |
+| `likelihood(X,Y)` DONE REQ000395 | no-op pass-through; hint to planner |
+| `likely(X)` DONE REQ000396 | no-op pass-through |
 | `load_extension(X[,Y])` | REQ000428 (SKIP) | not in v1 scope; would require CGO bridge |
 | `lower(X)` | REQ000422 (DONE) | iter-26 |
 | `ltrim(X[,Y])` DONE REQ000397 | trim left; default Y=" " |
@@ -915,10 +922,10 @@ Status column tracks the implementation state.
 | `random()` DONE REQ000402 | pseudo-random int64; exclude MIN_INT64 |
 | `randomblob(N)` DONE REQ000403 | N-byte random BLOB |
 | `replace(X,Y,Z)` DONE REQ000404 | string substitution; Y="" returns X unchanged |
-| `round(X[,Y])` | REQ000405 | round to Y decimal places; Y default 0; Y<0 → 0 |
-| `rtrim(X[,Y])` | REQ000406 | trim right; default Y=" " |
+| `round(X[,Y])` DONE REQ000405 | round to Y decimal places; Y default 0; Y<0 → 0 |
+| `rtrim(X[,Y])` DONE REQ000406 | trim right; default Y=" " |
 | `sign(X)` DONE REQ000407 | -1/0/+1 or NULL for non-numeric |
-| `soundex(X)` | REQ000408 | soundex encoding; "?000" for non-ASCII / NULL |
+| `soundex(X)` DONE REQ000408 | soundex encoding; "?000" for non-ASCII / NULL |
 | `sqlite_compileoption_get(N)` | REQ000429 (SKIP) | engine-internal, returns NULL for v1 |
 | `sqlite_compileoption_used(X)` | REQ000430 (SKIP) | engine-internal, returns 0 for v1 |
 | `sqlite_offset(X)` | REQ000431 (SKIP) | requires SQLITE_ENABLE_OFFSET_SQL_FUNC compile flag |
@@ -929,11 +936,11 @@ Status column tracks the implementation state.
 | `total_changes()` DONE REQ000411 | cumulative row-change count since connection open |
 | `trim(X[,Y])` | REQ000427 (DONE) | iter-26 — both sides; default Y=" " |
 | `typeof(X)` DONE REQ000412 | returns "null" / "integer" / "real" / "text" / "blob" |
-| `unhex(X[,Y])` | REQ000413 | hex → BLOB; X invalid → NULL; Y is ignored-char set |
+| `unhex(X[,Y])` DONE REQ000413 | hex → BLOB; X invalid → NULL; Y is ignored-char set |
 | `unicode(X)` DONE REQ000414 | code point of first char; NULL → NULL |
-| `unistr(X)` | REQ000415 | backslash-escape decoder (\uXXXX, \+XXXXXX, \UXXXXXXXX) |
+| `unistr(X)` DONE REQ000415 | backslash-escape decoder (\uXXXX, \+XXXXXX, \UXXXXXXXX) |
 | `unistr_quote(X)` | REQ000432 (SKIP) | low-value, complex |
-| `unlikely(X)` | REQ000416 | no-op pass-through |
+| `unlikely(X)` DONE REQ000416 | no-op pass-through |
 | `upper(X)` | REQ000433 (DONE) | iter-26 |
 | `zeroblob(N)` DONE REQ000417 | N-byte BLOB of 0x00 |
 
@@ -941,16 +948,6 @@ Status column tracks the implementation state.
 
 | ID | Function | Effort |
 |---|---|---|
-| REQ000390 | glob | S |
-| REQ000391 | hex | S |
-| REQ000395 | likelihood | S (no-op) |
-| REQ000396 | likely | S (no-op) |
-| REQ000405 | round | S |
-| REQ000406 | rtrim | S |
-| REQ000408 | soundex | S |
-| REQ000413 | unhex | S |
-| REQ000415 | unistr | S |
-| REQ000416 | unlikely | S (no-op) |
 
 ### Already implemented (iter-26)
 

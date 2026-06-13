@@ -95,3 +95,76 @@ func TestZeroblob_Eval(t *testing.T) {
 		}
 	}
 }
+
+func TestCoreFunctions_Batch2(t *testing.T) {
+	tests := []struct {
+		sql  string
+		want interface{}
+	}{
+		// glob
+		{"SELECT GLOB('*.txt', 'hello.txt')", int64(1)},
+		{"SELECT GLOB('*.txt', 'hello.doc')", int64(0)},
+		{"SELECT GLOB('file?.txt', 'file1.txt')", int64(1)},
+		// soundex
+		{"SELECT SOUNDEX('Robert')", "R163"},
+		{"SELECT SOUNDEX('Rupert')", "R163"},
+		{"SELECT SOUNDEX('Andrew')", "A536"},
+		{"SELECT SOUNDEX(NULL)", nil},
+		// unhex
+		{"SELECT UNHEX('48656c6c6f')", []byte("Hello")},
+		{"SELECT UNHEX('')", []byte{}},
+		{"SELECT UNHEX(NULL)", nil},
+		// unistr
+		{"SELECT UNISTR('\\u0041\\u0042')", "AB"},
+		{"SELECT UNISTR('\\n')", "\n"},
+		{"SELECT UNISTR('\\\\')", "\\"},
+		// likelihood/likely/unlikely (no-op)
+		{"SELECT LIKELIHOOD(42, 0.5)", int64(42)},
+		{"SELECT LIKELY(100)", int64(100)},
+		{"SELECT UNLIKELY('text')", "text"},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.sql, func(t *testing.T) {
+			parser := PS.NewParser(tt.sql)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			
+			sel, ok := stmt.(*PS.Select)
+			if !ok {
+				t.Fatalf("Not a SELECT: %T", stmt)
+			}
+			if len(sel.Cols) != 1 {
+				t.Fatalf("Expected 1 column, got %d", len(sel.Cols))
+			}
+			
+			got, err := Eval(sel.Cols[0], nil, nil)
+			if err != nil {
+				t.Fatalf("Eval error: %v", err)
+			}
+			
+			switch want := tt.want.(type) {
+			case int64:
+				if gb, ok := got.(int64); !ok || gb != want {
+					t.Fatalf("Got %v (%T), want %v", got, got, want)
+				}
+			case string:
+				if gb, ok := got.(string); !ok || gb != want {
+					t.Fatalf("Got %v (%T), want %v", got, got, want)
+				}
+			case []byte:
+				if gb, ok := got.([]byte); !ok {
+					t.Fatalf("Got %T, want []byte", got)
+				} else if string(gb) != string(want) {
+					t.Fatalf("Got %v, want %v", gb, want)
+				}
+			default:
+				if got != want {
+					t.Fatalf("Got %v (%T), want %v (%T)", got, got, want, want)
+				}
+			}
+		})
+	}
+}
