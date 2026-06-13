@@ -518,4 +518,135 @@ var probeCases = []dualCase{
 			{int64(2)},
 		},
 	},
+	// Core scalar functions: session counters (REQ000385/394/411)
+	{
+		Name: "changes_function",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)",
+			"INSERT INTO t VALUES (1, 'a')",
+		},
+		Query: "SELECT CHANGES()",
+		Want:  [][]any{{int64(1)}},
+	},
+	{
+		Name: "total_changes_function",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)",
+			"INSERT INTO t VALUES (1, 'a')",
+			"UPDATE t SET val = 'b' WHERE id = 1",
+			"DELETE FROM t WHERE id = 1",
+		},
+		Query: "SELECT TOTAL_CHANGES()",
+		Want:  [][]any{{int64(3)}},
+	},
+	// Core scalar functions: string (REQ000386-392)
+	{
+		Name:  "char_function",
+		Query: "SELECT CHAR(65, 66, 67)",
+		Want:  [][]any{{"ABC"}},
+	},
+	{
+		Name:  "concat_function",
+		Query: "SELECT CONCAT('Hello', ' ', 'World')",
+		Want:  [][]any{{"Hello World"}},
+	},
+	{
+		Name:  "concat_ws_function",
+		Query: "SELECT CONCAT_WS(',', 'a', 'b', 'c')",
+		Want:  [][]any{{"a,b,c"}},
+	},
+	{
+		Name:  "format_function",
+		Query: "SELECT FORMAT('%s %s', 'Hello', 'World')",
+		Want:  [][]any{{"Hello World"}},
+	},
+	{
+		Name:  "ltrim_function",
+		Query: "SELECT LTRIM('  hello  ')",
+		Want:  [][]any{{"hello  "}},
+	},
+	{
+		Name:  "rtrim_function",
+		Query: "SELECT RTRIM('  hello  ')",
+		Want:  [][]any{{"  hello"}},
+	},
+	{
+		Name:  "replace_function",
+		Query: "SELECT REPLACE('aaa', 'a', 'b')",
+		Want:  [][]any{{"bbb"}},
+	},
+	{
+		Name:  "quote_function",
+		Query: "SELECT QUOTE('it''s')",
+		Want:  [][]any{{"'it''s'"}},
+	},
+	// Core scalar functions: type/info (REQ000395-400)
+	{
+		Name:  "typeof_integer",
+		Query: "SELECT TYPEOF(42)",
+		Want:  [][]any{{"integer"}},
+	},
+	{
+		Name:  "typeof_text",
+		Query: "SELECT TYPEOF('text')",
+		Want:  [][]any{{"text"}},
+	},
+	{
+		Name:  "typeof_null",
+		Query: "SELECT TYPEOF(NULL)",
+		Want:  [][]any{{"null"}},
+	},
+	{
+		Name:  "octet_length_utf8",
+		Query: "SELECT OCTET_LENGTH('café')",
+		Want:  [][]any{{int64(5)}},
+	},
+	{
+		Name:  "unicode_function",
+		Query: "SELECT UNICODE('A')",
+		Want:  [][]any{{int64(65)}},
+	},
+	// Core scalar functions: conditional (REQ000401)
+	{
+		Name:  "iif_true",
+		Query: "SELECT IIF(1 > 0, 'yes', 'no')",
+		Want:  [][]any{{"yes"}},
+	},
+	{
+		Name:  "iif_false",
+		Query: "SELECT IIF(0, 'yes', 'no')",
+		Want:  [][]any{{"no"}},
+	},
+	// Core scalar functions: search (REQ000412)
+	{
+		Name:  "instr_found",
+		Query: "SELECT INSTR('hello world', 'world')",
+		Want:  [][]any{{int64(7)}},
+	},
+	{
+		Name:  "instr_not_found",
+		Query: "SELECT INSTR('hello', 'x')",
+		Want:  [][]any{{int64(0)}},
+	},
+	// Core scalar functions: numeric (REQ000402-404,407-408)
+	{
+		Name:  "sign_negative",
+		Query: "SELECT SIGN(-5)",
+		Want:  [][]any{{int64(-1)}},
+	},
+	{
+		Name:  "sign_zero",
+		Query: "SELECT SIGN(0)",
+		Want:  [][]any{{int64(0)}},
+	},
+	{
+		Name:  "sign_positive",
+		Query: "SELECT SIGN(42)",
+		Want:  [][]any{{int64(1)}},
+	},
+	{
+		Name:  "zeroblob_content",
+		Query: "SELECT ZEROBLOB(8)",
+		Want:  [][]any{{[]byte{0, 0, 0, 0, 0, 0, 0, 0}}},
+	},
 }

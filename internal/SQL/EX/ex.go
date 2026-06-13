@@ -3,11 +3,48 @@ package EX
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	LX "github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
+
+// sessionCountersProvider is an optional callback set by SYS/SE to
+// provide per-session counter accessors for changes(), last_insert_rowid(),
+// and total_changes() eval functions. This avoids an import cycle between
+// EX and SE packages. REQ000385/394/411.
+type SessionCounterAccessor interface {
+	GetChangesCount(sessionID uint64) int64
+	GetLastInsertRowID(sessionID uint64) int64
+	GetTotalChangesCount(sessionID uint64) int64
+}
+
+var (
+	sessionCounterMu       sync.RWMutex
+	sessionCounterAccessor SessionCounterAccessor
+)
+
+// currentSessionID is the package-level current session ID for evalFunction.
+// It's stored atomically to avoid races with concurrent sessions.
+var currentSessionID atomic.Uint64
+
+// SetSessionCounterAccessor sets the callback for reading per-session
+// counters. Called once during SYS initialization.
+func SetSessionCounterAccessor(acc SessionCounterAccessor) {
+	sessionCounterMu.Lock()
+	defer sessionCounterMu.Unlock()
+	sessionCounterAccessor = acc
+}
+
+// getSessionCounterAccessor returns the current accessor (may be nil).
+func getSessionCounterAccessor() SessionCounterAccessor {
+	sessionCounterMu.RLock()
+	defer sessionCounterMu.RUnlock()
+	return sessionCounterAccessor
+}
+
 
 var ErrNotImplemented = errors.New("ex: not implemented")
 var ErrNoRows = errors.New("ex: no rows")
@@ -79,6 +116,7 @@ type Executor struct {
 	store      Store
 	txWriter   TxWriter
 	snapshotTS uint64 // REQ000255: per-statement snapshot timestamp for read-committed
+	sessionID  uint64 // REQ000385/394/411: current session ID for counter access
 }
 
 // TxWriter is the optional hook an Executor notifies on every key
@@ -103,6 +141,23 @@ func (e *Executor) SetSnapshot(ts uint64) { e.snapshotTS = ts }
 
 // GetSnapshot returns the current snapshot timestamp.
 func (e *Executor) GetSnapshot() uint64 { return e.snapshotTS }
+
+// SetSessionID sets the current session ID for counter access.
+// REQ000385/394/411. Uses atomic store for the global currentSessionID
+// to avoid races with concurrent sessions sharing one Executor.
+func (e *Executor) SetSessionID(id uint64) {
+	// Don't write e.sessionID - the Executor is shared across sessions.
+	// Only update the atomic global that eval functions read.
+	currentSessionID.Store(id)
+}
+
+// GetSessionID returns the current session ID.
+func (e *Executor) GetSessionID() uint64 { return e.sessionID }
+
+// getCurrentSessionID returns the package-level session ID for eval.
+func getCurrentSessionID() uint64 {
+	return currentSessionID.Load()
+}
 
 func NewExecutor() *Executor {
 	return &Executor{planner: NewPlanner()}
