@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
@@ -569,6 +571,72 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 		return evalHex(e.Args, row, params)
 	case "ROUND":
 		return evalRound(e.Args, row, params)
+	case "CHAR":
+		return evalChar(e.Args, row, params)
+	case "CONCAT":
+		return evalConcat(e.Args, row, params)
+	case "CONCAT_WS":
+		return evalConcatWS(e.Args, row, params)
+	case "FORMAT":
+		return evalFormat(e.Args, row, params)
+	case "LTRIM":
+		return evalLtrim(e.Args, row, params)
+	case "RTRIM":
+		return evalRtrim(e.Args, row, params)
+	case "REPLACE":
+		return evalReplace(e.Args, row, params)
+	case "QUOTE":
+		return evalQuote(e.Args, row, params)
+	case "TYPEOF":
+		return evalTypeof(e.Args, row, params)
+	case "OCTET_LENGTH":
+		return evalOctetLength(e.Args, row, params)
+	case "UNICODE":
+		return evalUnicode(e.Args, row, params)
+	case "SQLITE_VERSION":
+		return evalSqliteVersion(e.Args, row, params)
+	case "SQLITE_SOURCE_ID":
+		return evalSqliteSourceID(e.Args, row, params)
+	case "IIF":
+		return evalIIF(e.Args, row, params)
+	case "INSTR":
+		return evalInstr(e.Args, row, params)
+	case "SIGN":
+		return evalSign(e.Args, row, params)
+	case "MAX":
+		return evalMaxScalar(e.Args, row, params)
+	case "MIN":
+		return evalMinScalar(e.Args, row, params)
+	case "RANDOM":
+		return evalRandom(e.Args, row, params)
+	case "RANDOMBLOB":
+		return evalRandomBlob(e.Args, row, params)
+	case "ZEROBLOB":
+		return evalZeroblob(e.Args, row, params)
+	case "CHANGES":
+		// REQ000385: changes() returns the number of rows modified
+		// by the most recent INSERT, UPDATE, or DELETE. Takes no args.
+		acc := getSessionCounterAccessor()
+		if acc == nil {
+			return int64(0), nil
+		}
+		return acc.GetChangesCount(getCurrentSessionID()), nil
+	case "LAST_INSERT_ROWID":
+		// REQ000394: last_insert_rowid() returns the rowid of the
+		// last successful INSERT. Takes no args.
+		acc := getSessionCounterAccessor()
+		if acc == nil {
+			return int64(0), nil
+		}
+		return acc.GetLastInsertRowID(getCurrentSessionID()), nil
+	case "TOTAL_CHANGES":
+		// REQ000411: total_changes() returns cumulative rows modified
+		// since connection open. Takes no args.
+		acc := getSessionCounterAccessor()
+		if acc == nil {
+			return int64(0), nil
+		}
+		return acc.GetTotalChangesCount(getCurrentSessionID()), nil
 	default:
 		if isDateTimeFunc(e.Name) {
 			args := make([]interface{}, len(e.Args))
@@ -754,6 +822,478 @@ func evalSubstr(args []PS.Expr, row *Row, params []interface{}) (interface{}, er
 		return s[offset:end], nil
 	}
 	return s[offset:], nil
+}
+
+// evalChar converts integer Unicode code points to a UTF-8 string.
+// REQ000386.
+func evalChar(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) == 0 {
+		return "", nil
+	}
+	var sb strings.Builder
+	for _, arg := range args {
+		v, err := Eval(arg, row, params)
+		if err != nil {
+			return nil, err
+		}
+		if v == nil {
+			continue // Skip NULL args
+		}
+		n, ok := toInt64(v)
+		if !ok {
+			continue
+		}
+		if n < 0 || n > unicode.MaxRune {
+			continue // Out of range
+		}
+		sb.WriteRune(rune(n))
+	}
+	return sb.String(), nil
+}
+
+// evalConcat concatenates all non-NULL arguments into a single string.
+// All-NULL returns empty string (not NULL). REQ000387.
+func evalConcat(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	var sb strings.Builder
+	for _, arg := range args {
+		v, err := Eval(arg, row, params)
+		if err != nil {
+			return nil, err
+		}
+		if v == nil {
+			continue // Skip NULL
+		}
+		sb.WriteString(fmt.Sprint(v))
+	}
+	return sb.String(), nil
+}
+
+// evalConcatWS concatenates with separator. First arg is separator.
+// SEP=NULL → NULL. Skips NULL values. REQ000388.
+func evalConcatWS(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) < 2 {
+		return nil, ErrEval
+	}
+	sep, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if sep == nil {
+		return nil, nil // NULL separator → NULL result
+	}
+	sepStr := fmt.Sprint(sep)
+	var sb strings.Builder
+	first := true
+	for i := 1; i < len(args); i++ {
+		v, err := Eval(args[i], row, params)
+		if err != nil {
+			return nil, err
+		}
+		if v == nil {
+			continue // Skip NULL values
+		}
+		if !first {
+			sb.WriteString(sepStr)
+		}
+		sb.WriteString(fmt.Sprint(v))
+		first = false
+	}
+	return sb.String(), nil
+}
+
+// evalFormat implements printf-style formatting. REQ000389.
+func evalFormat(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) < 1 {
+		return nil, ErrEval
+	}
+	fmtV, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if fmtV == nil {
+		return nil, nil
+	}
+	fmtStr, ok := fmtV.(string)
+	if !ok {
+		fmtStr = fmt.Sprint(fmtV)
+	}
+	// Convert remaining args to interface{} for fmt.Sprintf
+	fmtArgs := make([]interface{}, len(args)-1)
+	for i := 1; i < len(args); i++ {
+		v, err := Eval(args[i], row, params)
+		if err != nil {
+			return nil, err
+		}
+		fmtArgs[i-1] = v
+	}
+	return fmt.Sprintf(fmtStr, fmtArgs...), nil
+}
+
+// evalLtrim trims leading characters. Default trim chars are spaces.
+// REQ000397.
+func evalLtrim(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) < 1 {
+		return nil, ErrEval
+	}
+	v, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, nil
+	}
+	s := fmt.Sprint(v)
+	if len(args) >= 2 {
+		trimV, err := Eval(args[1], row, params)
+		if err != nil {
+			return nil, err
+		}
+		if trimV != nil {
+			return strings.TrimLeft(s, fmt.Sprint(trimV)), nil
+		}
+	}
+	return strings.TrimLeft(s, " "), nil
+}
+
+// evalRtrim trims trailing characters. Default trim chars are spaces.
+// REQ000406.
+func evalRtrim(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) < 1 {
+		return nil, ErrEval
+	}
+	v, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, nil
+	}
+	s := fmt.Sprint(v)
+	if len(args) >= 2 {
+		trimV, err := Eval(args[1], row, params)
+		if err != nil {
+			return nil, err
+		}
+		if trimV != nil {
+			return strings.TrimRight(s, fmt.Sprint(trimV)), nil
+		}
+	}
+	return strings.TrimRight(s, " "), nil
+}
+
+// evalReplace replaces all occurrences of Y in X with Z.
+// REQ000404.
+func evalReplace(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) != 3 {
+		return nil, ErrEval
+	}
+	x, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if x == nil {
+		return nil, nil
+	}
+	y, err := Eval(args[1], row, params)
+	if err != nil {
+		return nil, err
+	}
+	z, err := Eval(args[2], row, params)
+	if err != nil {
+		return nil, err
+	}
+	xs := fmt.Sprint(x)
+	if y == nil {
+		return xs, nil // NULL pattern → return X unchanged
+	}
+	ys := fmt.Sprint(y)
+	zs := ""
+	if z != nil {
+		zs = fmt.Sprint(z)
+	}
+	return strings.ReplaceAll(xs, ys, zs), nil
+}
+
+// evalQuote renders X as an SQL literal. Strings are single-quoted
+// with escaped quotes. BLOBs as X'hex'. NULL as unquoted NULL.
+// REQ000401.
+func evalQuote(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, ErrEval
+	}
+	v, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return "NULL", nil
+	}
+	switch x := v.(type) {
+	case string:
+		// Escape single quotes by doubling
+		escaped := strings.ReplaceAll(x, "'", "''")
+		return "'" + escaped + "'", nil
+	case int64, float64, int, bool:
+		// Numbers and booleans are not quoted
+		return fmt.Sprint(x), nil
+	case []byte:
+		// BLOB as X'hex'
+		return "X'" + hex.EncodeToString(x) + "'", nil
+	default:
+		return "'" + strings.ReplaceAll(fmt.Sprint(x), "'", "''") + "'", nil
+	}
+}
+
+// evalTypeof returns the type name of X: "null", "integer", "real",
+// "text", or "blob". REQ000412.
+func evalTypeof(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, ErrEval
+	}
+	v, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return "null", nil
+	}
+	switch v.(type) {
+	case int64, int, float64:
+		if _, ok := v.(float64); ok {
+			return "real", nil
+		}
+		return "integer", nil
+	case string:
+		return "text", nil
+	case []byte:
+		return "blob", nil
+	case bool:
+		return "integer", nil // Booleans are stored as integers
+	default:
+		return "text", nil
+	}
+}
+
+// evalOctetLength returns the byte length of X (not code points).
+// REQ000400.
+func evalOctetLength(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, ErrEval
+	}
+	v, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, nil
+	}
+	s := fmt.Sprint(v)
+	return int64(len(s)), nil
+}
+
+// evalUnicode returns the Unicode code point of the first character.
+// REQ000414.
+func evalUnicode(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, ErrEval
+	}
+	v, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, nil
+	}
+	s := fmt.Sprint(v)
+	if len(s) == 0 {
+		return int64(0), nil
+	}
+	return int64([]rune(s)[0]), nil
+}
+
+// evalSqliteVersion returns the version string "0.26.7".
+// REQ000410.
+func evalSqliteVersion(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	return "0.26.7", nil
+}
+
+// evalSqliteSourceID returns "razordata-v0.26.7".
+// REQ000409.
+func evalSqliteSourceID(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	return "razordata-v0.26.7", nil
+}
+
+// evalIIF implements the iif(B, X, Y) conditional function.
+// Short-circuits: only evaluates chosen branch. REQ000392.
+func evalIIF(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) != 3 {
+		return nil, ErrEval
+	}
+	cond, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if truthy(cond) {
+		return Eval(args[1], row, params)
+	}
+	return Eval(args[2], row, params)
+}
+
+// evalInstr returns the 1-based position of Y in X, or 0 if not found.
+// REQ000393.
+func evalInstr(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) != 2 {
+		return nil, ErrEval
+	}
+	x, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if x == nil {
+		return int64(0), nil
+	}
+	y, err := Eval(args[1], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if y == nil {
+		return int64(0), nil
+	}
+	xs := fmt.Sprint(x)
+	ys := fmt.Sprint(y)
+	if ys == "" {
+		return int64(1), nil
+	}
+	pos := strings.Index(xs, ys)
+	if pos < 0 {
+		return int64(0), nil
+	}
+	return int64(pos + 1), nil // 1-based
+}
+
+// evalSign returns -1, 0, or +1 based on the sign of X.
+// REQ000407.
+func evalSign(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, ErrEval
+	}
+	v, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return int64(0), nil
+	}
+	n, ok := numericFloat(v)
+	if !ok {
+		return int64(0), nil
+	}
+	if n < 0 {
+		return int64(-1), nil
+	} else if n > 0 {
+		return int64(1), nil
+	}
+	return int64(0), nil
+}
+
+// evalMaxScalar returns the maximum of multiple scalar arguments.
+// NULLs are skipped. REQ000398.
+func evalMaxScalar(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) == 0 {
+		return nil, nil
+	}
+	var maxV interface{}
+	for _, arg := range args {
+		v, err := Eval(arg, row, params)
+		if err != nil {
+			return nil, err
+		}
+		if v == nil {
+			continue
+		}
+		if maxV == nil {
+			maxV = v
+			continue
+		}
+		// Compare with current max
+		if compare(v, maxV) > 0 {
+			maxV = v
+		}
+	}
+	return maxV, nil
+}
+
+// evalMinScalar returns the minimum of multiple scalar arguments.
+// REQ000399.
+func evalMinScalar(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) == 0 {
+		return nil, nil
+	}
+	var minV interface{}
+	for _, arg := range args {
+		v, err := Eval(arg, row, params)
+		if err != nil {
+			return nil, err
+		}
+		if v == nil {
+			continue
+		}
+		if minV == nil {
+			minV = v
+			continue
+		}
+		if compare(v, minV) < 0 {
+			minV = v
+		}
+	}
+	return minV, nil
+}
+
+// evalRandom returns a pseudo-random int64. REQ000402.
+func evalRandom(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	// Use global rand source - Int63() returns non-negative, use Sign
+	sign := 1
+	if rand.Intn(2) == 1 {
+		sign = -1
+	}
+	return int64(sign * int(rand.Int63())), nil
+}
+
+// evalRandomBlob returns N bytes of random data. REQ000403.
+func evalRandomBlob(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, ErrEval
+	}
+	nV, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	n, ok := toInt64(nV)
+	if !ok || n < 0 {
+		return nil, nil
+	}
+	buf := make([]byte, n)
+	// Use rand.Read from math/rand package
+	for i := range buf {
+		buf[i] = byte(rand.Intn(256))
+	}
+	return buf, nil
+}
+
+// evalZeroblob returns N bytes of 0x00. REQ000417.
+func evalZeroblob(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, ErrEval
+	}
+	nV, err := Eval(args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	n, ok := toInt64(nV)
+	if !ok || n < 0 {
+		return nil, nil
+	}
+	return make([]byte, n), nil
 }
 
 func toInt64(v interface{}) (int64, bool) {

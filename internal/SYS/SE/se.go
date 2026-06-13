@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 	"github.com/cyw0ng95/razordata/internal/SYS/TX"
@@ -45,6 +46,44 @@ type Session struct {
 // sessionIDSeq is a process-wide counter; real production code would
 // pull this from the engine for tracing.
 var sessionIDSeq atomic.Uint64
+
+// sessionStateMu guards the sessionState map. Each key is a session ID
+// (from sessionIDSeq), and each value holds atomic counters that are
+// read by evalFunction for changes(), last_insert_rowid(), and
+// total_changes().
+type sessionState struct {
+	changesCount    int64
+	lastInsertRowID int64
+	totalChanges    int64
+}
+
+var sessionStateMu sync.RWMutex
+var sessionStateMap = make(map[uint64]*sessionState)
+
+// getOrCreateSessionState returns the per-session atomic counter block
+// for the given session ID, creating it on first access.
+func getOrCreateSessionState(id uint64) *sessionState {
+	// Fast path: read without lock
+	if s, ok := getExistingSessionState(id); ok {
+		return s
+	}
+	// Slow path: create under lock
+	sessionStateMu.Lock()
+	defer sessionStateMu.Unlock()
+	if s, ok := sessionStateMap[id]; ok {
+		return s
+	}
+	s := &sessionState{}
+	sessionStateMap[id] = s
+	return s
+}
+
+func getExistingSessionState(id uint64) (*sessionState, bool) {
+	sessionStateMu.RLock()
+	defer sessionStateMu.RUnlock()
+	s, ok := sessionStateMap[id]
+	return s, ok
+}
 
 // NewSession returns a fresh Session bound to engine. Sessions are
 // pool-allocated from sessionPool to reduce GC pressure (iter-15
@@ -85,6 +124,7 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 	s.stats.queryCount.Add(1)
 
 	exe := s.engine.Executor()
+	exe.SetSessionID(s.id)
 	rs, err := exe.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -108,9 +148,22 @@ func (s *Session) Exec(ctx context.Context, sql string, args ...any) (AP.Result,
 	s.stats.queryCount.Add(1)
 
 	exe := s.engine.Executor()
+	exe.SetSessionID(s.id)
 	res, err := exe.Exec(ctx, sql, args...)
 	if err != nil {
 		return AP.Result{}, err
+	}
+	// REQ000385/394/411: update per-session change counters from
+	// the exec result.  ChangesCount is the rows affected by the
+	// last DML; totalChangesCount is cumulative; LastInsertRowID
+	// is the rowid of the most recent INSERT (or 0 for UPDATE/DELETE).
+	st := getOrCreateSessionState(s.id)
+	if res.RowsAffected > 0 {
+		st.changesCount = res.RowsAffected
+		st.totalChanges += res.RowsAffected
+	}
+	if res.LastInsertID > 0 {
+		st.lastInsertRowID = int64(res.LastInsertID)
 	}
 	return AP.Result{
 		RowsAffected: res.RowsAffected,
@@ -255,6 +308,36 @@ func (s *Session) Stats() AP.SessionStats {
 	}
 }
 
+// ChangesCount returns the number of rows modified by the last
+// INSERT/UPDATE/DELETE executed on this session. REQ000385.
+func (s *Session) ChangesCount() int64 {
+	st, ok := getExistingSessionState(s.id)
+	if !ok || st == nil {
+		return 0
+	}
+	return st.changesCount
+}
+
+// LastInsertRowID returns the rowid of the most recently inserted row
+// on this session. REQ000394.
+func (s *Session) LastInsertRowID() int64 {
+	st, ok := getExistingSessionState(s.id)
+	if !ok || st == nil {
+		return 0
+	}
+	return st.lastInsertRowID
+}
+
+// TotalChangesCount returns the cumulative number of rows modified
+// since this session was created. REQ000411.
+func (s *Session) TotalChangesCount() int64 {
+	st, ok := getExistingSessionState(s.id)
+	if !ok || st == nil {
+		return 0
+	}
+	return st.totalChanges
+}
+
 // CurrentTS returns the current logical timestamp (REQ000255).
 func (s *Session) CurrentTS() uint64 {
 	return vl.GetCurrentTS()
@@ -291,9 +374,43 @@ func (s *Session) lock(ctx context.Context) error {
 var _ = (*TX.Transaction)(nil)
 
 // init registers the Session constructor with SY, breaking the
-// SY↔SE import cycle.
+// SY↔SE import cycle. It also wires the session counter accessor
+// into the EX package for evalFunction to call changes(),
+// last_insert_rowid(), and total_changes().
 func init() {
 	SY.RegisterSession(func(e *SY.Engine) AP.Session {
 		return NewSession(e)
 	})
+	// Wire the session counter accessor for REQ000385/394/411.
+	// This is a no-op closure since getOrCreateSessionState is
+	// accessible from this package.
+	EX.SetSessionCounterAccessor(&sessionStateAccessor{})
+}
+
+// sessionStateAccessor implements EX.SessionCounterAccessor by
+// delegating to the session state map.
+type sessionStateAccessor struct{}
+
+func (s *sessionStateAccessor) GetChangesCount(sessionID uint64) int64 {
+	st, _ := getExistingSessionState(sessionID)
+	if st == nil {
+		return 0
+	}
+	return st.changesCount
+}
+
+func (s *sessionStateAccessor) GetLastInsertRowID(sessionID uint64) int64 {
+	st, _ := getExistingSessionState(sessionID)
+	if st == nil {
+		return 0
+	}
+	return st.lastInsertRowID
+}
+
+func (s *sessionStateAccessor) GetTotalChangesCount(sessionID uint64) int64 {
+	st, _ := getExistingSessionState(sessionID)
+	if st == nil {
+		return 0
+	}
+	return st.totalChanges
 }
