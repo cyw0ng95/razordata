@@ -32,6 +32,22 @@ func fillDefaults(schema *storeSchema, row Row) (Row, error) {
 			row.Data[i] = v
 		}
 	}
+	// REQ000249: materialize STORED generated columns. The
+	// expression is evaluated against the row so it can reference
+	// any earlier column. Virtual columns are skipped (deferred).
+	if schema.generated != nil {
+		for i, gen := range schema.generated {
+			if gen == nil {
+				continue
+			}
+			v, err := Eval(gen, &row, nil)
+			if err != nil {
+				return row, fmt.Errorf("%w: generated column %q: %v",
+					ErrConstraint, schema.cols[i], err)
+			}
+			row.Data[i] = v
+		}
+	}
 	return row, nil
 }
 
