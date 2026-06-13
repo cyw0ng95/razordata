@@ -302,4 +302,54 @@ var probeCases = []dualCase{
 			{"a", int64(2)},
 		},
 	},
+	// REQ000380: `NOT LIKE` — parse as NOT (x LIKE y); eval
+	// negates the LIKE result.
+	{
+		Name: "not_like_true",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, s TEXT)",
+			"INSERT INTO t VALUES (1, 'abc'), (2, 'xyz')",
+		},
+		Query: "SELECT s FROM t WHERE s NOT LIKE 'a%' ORDER BY s",
+		Want: [][]any{
+			{"xyz"},
+		},
+	},
+	{
+		Name: "not_like_false",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, s TEXT)",
+			"INSERT INTO t VALUES (1, 'abc'), (2, 'xyz')",
+		},
+		Query: "SELECT s FROM t WHERE s NOT LIKE 'x%' ORDER BY s",
+		Want: [][]any{
+			{"abc"},
+		},
+	},
+	// REQ000381: `NOT IN` — list and subquery forms.
+	{
+		Name: "not_in_list",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 1), (2, 2), (3, 3), (4, 4)",
+		},
+		Query: "SELECT v FROM t WHERE v NOT IN (1, 3) ORDER BY v",
+		Want: [][]any{
+			{int64(2)},
+			{int64(4)},
+		},
+	},
+	{
+		Name: "not_in_subquery",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 1), (2, 2), (3, 3)",
+			"CREATE TABLE s (v INTEGER PRIMARY KEY)",
+			"INSERT INTO s VALUES (2), (3)",
+		},
+		Query: "SELECT v FROM t WHERE v NOT IN (SELECT v FROM s) ORDER BY v",
+		Want: [][]any{
+			{int64(1)},
+		},
+	},
 }
