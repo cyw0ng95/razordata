@@ -860,6 +860,14 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 		}
 		fks = append(fks, fk)
 	}
+	// REQ000248/249: capture generated column expressions so the
+	// INSERT/UPDATE path can materialize them.
+	generated := make([]PS.Expr, len(c.stmt.Cols))
+	for i, col := range c.stmt.Cols {
+		if !col.Virtual && col.Generated != nil {
+			generated[i] = col.Generated
+		}
+	}
 	id := registerStoreSchemaWithFK(c.stmt.Name, cols, nullable, defaults, unique, pk, fks)
 	// R16-3: record each column's SQL type token alongside the
 	// schema so ExtractParamTypes can resolve `column = ?`
@@ -867,6 +875,7 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	storeMu.Lock()
 	if ss, ok := storeSchemas[id]; ok {
 		ss.colTypes = append([]int(nil), colTypes...)
+		ss.generated = generated
 		// REQ000367: tables without a PRIMARY KEY that are
 		// registered for storage get a synthetic int64 rowid.
 		// This makes them writable to the engine store while

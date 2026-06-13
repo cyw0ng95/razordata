@@ -55,6 +55,11 @@ type storeSchema struct {
 	unique   []UniqueKey // each entry is1+ columns
 	checks   []PS.Expr   // parallel to CHECK constraints
 	colTypes []int
+	// REQ000248/249: parallel to cols; non-nil means column is a
+	// STORED generated column. The expression is evaluated on
+	// INSERT/UPDATE and the result is stored as the cell value.
+	// VIRTUAL generated columns are stored as nil here (deferred).
+	generated []PS.Expr
 	foreignKeys []ForeignKeyConstraint // REQ000126: FK constraints
 	// REQ000367: hiddenPK is set when the table was created
 	// without a PRIMARY KEY declaration but is registered for

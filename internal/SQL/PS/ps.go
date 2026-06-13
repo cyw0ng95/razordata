@@ -1350,6 +1350,40 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 			}
 		}
 
+		// REQ000248: generated column syntax `AS (expr) STORED` or
+		// `AS (expr) VIRTUAL`. We support STORED only in v0.27.0
+		// (materialized on write). VIRTUAL is accepted in the
+		// parser and the column is treated like a normal column at
+		// the storage layer (deferred materialization).
+		if p.current.Type == LX.T_AS {
+			p.advance()
+			if err := p.expect(LX.T_LPAREN); err != nil {
+				return nil, err
+			}
+			p.advance()
+			genExpr, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			if err := p.expect(LX.T_RPAREN); err != nil {
+				return nil, err
+			}
+			p.advance()
+			col.Generated = genExpr
+			col.Virtual = false
+			// STORED and VIRTUAL are not reserved keywords; we
+			// accept them as identifiers after the expression.
+			if p.current.Type == LX.T_IDENT {
+				switch strings.ToUpper(p.current.Lexeme) {
+				case "VIRTUAL":
+					col.Virtual = true
+					p.advance()
+				case "STORED":
+					p.advance()
+				}
+			}
+		}
+
 		// REQ000126: column-level REFERENCES clause (after other constraints)
 		if p.current.Type == LX.T_REFERENCES {
 			p.advance()
