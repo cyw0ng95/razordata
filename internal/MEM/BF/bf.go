@@ -236,6 +236,9 @@ func (b *bp) Get(ctx context.Context, blockID uint64) (*Page, bool, error) {
 	// At capacity? Evict one old slot before inserting.
 	if b.used.Load() >= b.capacity {
 		hand := b.hand.Add(1)
+		// REQ000161: first pass — evict slots whose refKey is
+		// older than (hand - clockInterval). These are LRU
+		// candidates by the clock-sweep design.
 		for blockID, slot := range b.ht.slots {
 			if slot.refKey.Load() < hand-uint64(clockInterval) {
 				if slot.pinCount.Load() == 0 {
@@ -249,17 +252,31 @@ func (b *bp) Get(ctx context.Context, blockID uint64) (*Page, bool, error) {
 				}
 			}
 		}
+		// REQ000161: second pass — find the slot with the lowest
+		// refKey (least-recently-used) among unpinned slots.
+		var victimID uint64
+		var victimRefKey uint64 = ^uint64(0) // max uint64
+		var found bool
 		for blockID, slot := range b.ht.slots {
 			if slot.pinCount.Load() == 0 {
-				delete(b.ht.slots, blockID)
-				b.used.Add(-1)
-				b.evicts.Add(1)
-				if len(slot.data) == BlockSize {
-					madviseDontNeed(slot.data)
-					b.sp.Put(slot.data)
+				rk := slot.refKey.Load()
+				if rk < victimRefKey {
+					victimRefKey = rk
+					victimID = blockID
+					found = true
 				}
-				goto allocated
 			}
+		}
+		if found {
+			slot := b.ht.slots[victimID]
+			delete(b.ht.slots, victimID)
+			b.used.Add(-1)
+			b.evicts.Add(1)
+			if len(slot.data) == BlockSize {
+				madviseDontNeed(slot.data)
+				b.sp.Put(slot.data)
+			}
+			goto allocated
 		}
 	}
 allocated:
@@ -359,6 +376,9 @@ func (b *bp) Upsert(page *Page) error {
 	// Not in cache. At capacity? Evict one slot before inserting.
 	if b.used.Load() >= b.capacity {
 		hand := b.hand.Add(1)
+		// REQ000161: first pass — evict slots whose refKey is
+		// older than (hand - clockInterval). These are LRU
+		// candidates by the clock-sweep design.
 		for blockID, slot := range b.ht.slots {
 			if slot.refKey.Load() < hand-uint64(clockInterval) {
 				if slot.pinCount.Load() == 0 {
@@ -372,20 +392,37 @@ func (b *bp) Upsert(page *Page) error {
 				}
 			}
 		}
+		// REQ000161: second pass — find the slot with the lowest
+		// refKey (least-recently-used) among unpinned slots.
+		// This guarantees LRU eviction even when the first pass
+		// fails (e.g., recently-accessed slots are still within
+		// the clockInterval window).
+		var victimID uint64
+		var victimRefKey uint64 = ^uint64(0) // max uint64
+		var found bool
 		for blockID, slot := range b.ht.slots {
 			if slot.pinCount.Load() == 0 {
-				delete(b.ht.slots, blockID)
-				b.used.Add(-1)
-				b.evicts.Add(1)
-				if len(slot.data) == BlockSize {
-					madviseDontNeed(slot.data)
-					b.sp.Put(slot.data)
+				rk := slot.refKey.Load()
+				if rk < victimRefKey {
+					victimRefKey = rk
+					victimID = blockID
+					found = true
 				}
-				goto insert
 			}
 		}
-		// Both passes failed (all slots pinned). Insert over capacity
-		// to match Get's behavior — the next Get will evict instead.
+		if found {
+			slot := b.ht.slots[victimID]
+			delete(b.ht.slots, victimID)
+			b.used.Add(-1)
+			b.evicts.Add(1)
+			if len(slot.data) == BlockSize {
+				madviseDontNeed(slot.data)
+				b.sp.Put(slot.data)
+			}
+			goto insert
+		}
+		// All slots pinned. Insert over capacity to match
+		// Get's behavior — the next Get will evict instead.
 	}
 insert:
 	slot := &bufferSlot{

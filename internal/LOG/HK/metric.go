@@ -2,6 +2,8 @@ package hk
 
 import (
 	"log/slog"
+	"strconv"
+	"strings"
 	"sync/atomic"
 )
 
@@ -81,3 +83,68 @@ func (m *metricHook) BytesRead() int64 {
 func (m *metricHook) BytesWritten() int64 {
 	return m.bytesWritten.Load()
 }
+
+// PrometheusMetrics returns the metric counters in Prometheus text
+// exposition format (https://prometheus.io/docs/instrumenting/exposition_formats/).
+// REQ000101.
+func (m *metricHook) PrometheusMetrics() string {
+	var b strings.Builder
+	b.WriteString("# HELP razor_queries_total Total number of SQL queries.\n")
+	b.WriteString("# TYPE razor_queries_total counter\n")
+	b.WriteString("razor_queries_total ")
+	b.WriteString(strconv.FormatInt(m.queryCount.Load(), 10))
+	b.WriteString("\n")
+
+	b.WriteString("# HELP razor_rows_returned_total Total rows returned by queries.\n")
+	b.WriteString("# TYPE razor_rows_returned_total counter\n")
+	b.WriteString("razor_rows_returned_total ")
+	b.WriteString(strconv.FormatInt(m.rowsReturned.Load(), 10))
+	b.WriteString("\n")
+
+	b.WriteString("# HELP razor_bytes_read_total Total bytes read from storage.\n")
+	b.WriteString("# TYPE razor_bytes_read_total counter\n")
+	b.WriteString("razor_bytes_read_total ")
+	b.WriteString(strconv.FormatInt(m.bytesRead.Load(), 10))
+	b.WriteString("\n")
+
+	b.WriteString("# HELP razor_bytes_written_total Total bytes written to storage.\n")
+	b.WriteString("# TYPE razor_bytes_written_total counter\n")
+	b.WriteString("razor_bytes_written_total ")
+	b.WriteString(strconv.FormatInt(m.bytesWritten.Load(), 10))
+	b.WriteString("\n")
+	return b.String()
+}
+
+// MetricHook returns the singleton metricHook. If no metric hook is
+// registered, returns a no-op stub for safe access.
+// REQ000101.
+func MetricHook() interface {
+	PrometheusMetrics() string
+	QueryCount() int64
+	RowsReturned() int64
+	BytesRead() int64
+	BytesWritten() int64
+} {
+	if h := GetMetricHook(); h != nil {
+		return h
+	}
+	return &noopMetric{}
+}
+
+type noopMetric struct{}
+
+func (n *noopMetric) PrometheusMetrics() string { return "" }
+func (n *noopMetric) QueryCount() int64          { return 0 }
+func (n *noopMetric) RowsReturned() int64        { return 0 }
+func (n *noopMetric) BytesRead() int64           { return 0 }
+func (n *noopMetric) BytesWritten() int64        { return 0 }
+
+var globalMetricHook *metricHook
+
+// SetMetricHook sets the global metricHook. Called once at startup
+// to wire the hook into the manager.
+// REQ000101.
+func SetMetricHook(h *metricHook) { globalMetricHook = h }
+
+// GetMetricHook returns the global metricHook or nil if not set.
+func GetMetricHook() *metricHook { return globalMetricHook }

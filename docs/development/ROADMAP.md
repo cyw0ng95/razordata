@@ -57,7 +57,7 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 26.3 | Bugfix sweep v3 | 5 bugfixes (REQ000378-382), 12 new dual-runner probes, 19 new unit tests | `SQL/EX`, `SQL/PS` | done (v0.26.5) |
 | 26.4 | Compound SELECT | UNION/INTERSECT/EXCEPT parser+executor, correct precedence, trailing ORDER BY/LIMIT/OFFSET apply to compound, RE rewrite/format, 6 new dual-runner probes | `SQL/LX`, `SQL/PS`, `SQL/EX`, `SQL/RE` | done (v0.26.6) |
 
-All iterations through iter-26.8 complete. Released as v0.9.0–v0.26.6. Coverage details: `go test ./... -cover`.
+All iterations through iter-26.9 complete. Released as v0.9.0–v0.26.6. Coverage details: `go test ./... -cover`.
 
 ## Completion Criteria (All Iterations)
 
@@ -123,6 +123,7 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 | **v0.26.8** | **Core functions batch 2** (iter-26.6). REQ000390/395/396/408/413/415/416: 7 remaining core scalar functions — GLOB (pattern matching), SOUNDEX (phonetic encoding), UNHEX (hex→BLOB), UNISTR (escape decoder), LIKELIHOOD/LIKELY/UNLIKELY (no-op planner hints). 7 REQs closed, ~500 LOC. Dual-runner: +10 probe cases; 100/100/0.
 | **v0.26.9** | **Lexer/parser small additions** (iter-26.7). REQ000350/351/352/353/354: bitwise operators (&,|,^,~) and concat (||) and modulo (%) were already in lexer/parser/eval; added parens-less special forms for COALESCE and NULLIF. 5 REQs closed, ~200 LOC. Dual-runner: +7 probe cases; 107/107/0.
 | **v0.26.10** | **Bug sweep v4** (iter-26.8). REQ000348/292: Session.Query now streams rows via Next/Close on AP.Rows (previously returned schema-only); EX.QueryStream returns streaming iterator; int64 multiplication overflow now correctly handles MIN_INT64 × -1 and large values via int64 (not float64) checks. 2 REQs closed, ~250 LOC. New: TestQueryStreaming, TestNumericOverflow.
+| **v0.26.11** | **Logger v2** (iter-26.9). REQ000161/322/101: clock-sweep LRU fix (second-pass eviction now picks lowest refKey, not first in map order); ProfileHook dumps heap profile on Error events (rate-limited 1/5s, optional CPU); metricHook exports Prometheus text format. 3 REQs closed, ~250 LOC. New: TestClockSweep, TestProfileHook, TestPrometheusMetrics.
 
 
 ## Design Protection

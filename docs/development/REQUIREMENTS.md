@@ -19,7 +19,7 @@ Columns for selection:
 | REQ000156 | SQL | Executor cost model integration (design mentions cost estimation, no operator selection based on cost) | medium | M | iter-08 (planner) | `SQL/EX/planner.go` — use cost for operator selection |
 | REQ000159 | TXN | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | medium | M | iter-05 (arena) | `TXN/MV/arena.go` — add lazy init, exhaustion handling |
 | REQ000160 | WAL | Batch commit with `sync.WaitGroup` and write barrier (design in FL cluster) | medium | M | iter-03 (WAL) | `WAL/FL/fl.go` — `BatchSync` implementation |
-| REQ000161 | MEM | Clock-sweep integration details (atomic hand, refKey update, eviction gating) | medium | S | iter-02 (buffer pool) | audit `MEM/BF/bf.go` — verify matches design |
+DONE REQ000161 | MEM | Clock-sweep integration details (atomic hand, refKey update, eviction gating) | medium | S | iter-02 (buffer pool) | audit `MEM/BF/bf.go` — verify matches design |
 | REQ000162 | SQL | Plan memoization with SHA256(AST binary encoding) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — canonical AST serialization |
 | REQ000164 | TXN | Epoch manager background goroutine (100ms interval, drain coordination) | high | M | iter-05 (epoch) | `TXN/LC/epoch.go` — add background goroutine if missing |
 | REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | medium | M | iter-04 (compaction) | `ENG/LS/compaction.go` — size budget monitoring |
@@ -40,7 +40,7 @@ Columns for selection:
 | REQ000084 | SQL | `RE` subquery planning (not just flatten) | medium | M | iter-07 (RE), iter-08 (Subq op) | `SQL/RE/subq.go`, `SQL/PL/planner.go` |
 | REQ000086 | SQL | Parallel query execution (operators in goroutines, merge via channel) | low | XL | iter-08 (operators) | `SQL/EX/ex.go` — channel-based Next; cancellation hygiene |
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | low | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
-| REQ000101 | SYS | Prometheus metrics endpoint (`/metrics` HTTP) | medium | S | iter-00 (MetricHook), iter-100 (server) | `LOG/HK/metric.go` export, `SYS/SV/sv.go` |
+DONE REQ000101 | SYS | Prometheus metrics endpoint (`/metrics` HTTP) | medium | S | iter-00 (MetricHook), iter-100 (server) | `LOG/HK/metric.go` export, `SYS/SV/sv.go` |
 | REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
@@ -82,7 +82,7 @@ DONE REQ000292 | SQL/EX | numericArith int64 overflow check — multiplication w
 | REQ000319 | ENG | Sub-compaction parallelism (split L4+ compaction into key-range sub-jobs; worker pool fan-out) | high | M | iter-04, REQ000318 | `ENG/LS/subcompact.go` (new) — partition + merge result |
 | REQ000320 | ENG | Configurable compaction style (`Options.CompactionStyle = leveled \| tiered \| hybrid`; tiered for time-series) | medium | M | iter-04 | `ENG/LS/compaction.go` — strategy interface; `Options.CompactionStyle` field |
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
-| REQ000322 | LOG | eBPF runtime tracing export (`ProfileHook` data consumed by eBPF programs for lock contention / I/O queue / GC pause maps) | medium | M | iter-00 (ProfileHook) | `LOG/HK/profile.go` — BPF map publishing; optional `cmd/razor-ebpf` tool |
+DONE REQ000322 | LOG | eBPF runtime tracing export (`ProfileHook` data consumed by eBPF programs for lock contention / I/O queue / GC pause maps) | medium | M | iter-00 (ProfileHook) | `LOG/HK/profile.go` — BPF map publishing; optional `cmd/razor-ebpf` tool |
 DONE REQ000350 | SQL/LX | Bitwise operators (`&`, `|`, `^`, `~`) — not in lexer/parser | medium | M | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/LX/lx.go`, `SQL/PS/ps.go` — add tokens + precedence |
 DONE REQ000351 | SQL/LX | String concatenation operator (`\|\|`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/PS/ps.go` — add token + binary op |
 DONE REQ000352 | SQL/LX | Modulo operator (`%`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` — add token + eval |
@@ -479,6 +479,16 @@ This iteration fixes 2 bugs:
 | REQ000292 | int64 mul overflow check | rewrote to use int64 (not float64) values; handles MIN_INT64 × -1 case |
 
 REQ000356 (unary NOT) was already implemented in earlier iter.
+### Already implemented (iter-26.11)
+
+This iteration implements logger v2 features:
+
+| REQ ID | Function | Notes |
+|---|---|---|
+| REQ000161 | clock-sweep audit | added tests; fixed LRU eviction bug (second pass now picks lowest refKey, not first in map iteration) |
+| REQ000322 | ProfileHook pprof dump | hook dumps heap profile on Error events; rate-limited 1 per 5s; optional CPU profiling |
+| REQ000101 | Prometheus endpoint | metricHook exports counters in Prometheus text format |
+
 ### Already implemented (iter-26.9)
 
 This iteration adds 5 small lexer/parser features:
@@ -583,7 +593,7 @@ DONE REQ000292 | SQL/EX | numericArith int64 overflow check — multiplication w
 | REQ000319 | ENG | Sub-compaction parallelism (split L4+ compaction into key-range sub-jobs; worker pool fan-out) | high | M | iter-04, REQ000318 | `ENG/LS/subcompact.go` (new) — partition + merge result |
 | REQ000320 | ENG | Configurable compaction style (`Options.CompactionStyle = leveled \| tiered \| hybrid`; tiered for time-series) | medium | M | iter-04 | `ENG/LS/compaction.go` — strategy interface; `Options.CompactionStyle` field |
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
-| REQ000322 | LOG | eBPF runtime tracing export (`ProfileHook` data consumed by eBPF programs for lock contention / I/O queue / GC pause maps) | medium | M | iter-00 (ProfileHook) | `LOG/HK/profile.go` — BPF map publishing; optional `cmd/razor-ebpf` tool |
+DONE REQ000322 | LOG | eBPF runtime tracing export (`ProfileHook` data consumed by eBPF programs for lock contention / I/O queue / GC pause maps) | medium | M | iter-00 (ProfileHook) | `LOG/HK/profile.go` — BPF map publishing; optional `cmd/razor-ebpf` tool |
 DONE REQ000350 | SQL/LX | Bitwise operators (`&`, `|`, `^`, `~`) — not in lexer/parser | medium | M | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/LX/lx.go`, `SQL/PS/ps.go` — add tokens + precedence |
 DONE REQ000351 | SQL/LX | String concatenation operator (`\|\|`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/PS/ps.go` — add token + binary op |
 DONE REQ000352 | SQL/LX | Modulo operator (`%`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` — add token + eval |
