@@ -253,7 +253,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		p.advance()
 		return &StarExpr{}, nil
 	case LX.T_IDENT, LX.T_EXCLUDED:
-		name := p.current.Lexeme
+		name := strings.ToUpper(p.current.Lexeme)
 		p.advance()
 		if p.current.Type == LX.T_DOT {
 			p.advance()
@@ -406,6 +406,9 @@ func (p *Parser) parsePostfix() (Expr, error) {
 		case LX.T_IN:
 			p.advance()
 			return p.parseNotIn(expr)
+		case LX.T_BETWEEN:
+			p.advance()
+			return p.parseNotBetween(expr)
 		}
 	}
 	return expr, nil
@@ -432,6 +435,16 @@ func (p *Parser) parseNotIn(expr Expr) (Expr, error) {
 		return nil, err
 	}
 	return &UnaryExpr{Op: int(LX.T_NOT), Operand: in}, nil
+}
+
+// REQ000434: `NOT BETWEEN` — parse x NOT BETWEEN low AND high as NOT(x BETWEEN low AND high).
+func (p *Parser) parseNotBetween(expr Expr) (Expr, error) {
+	p.advance()
+	between, err := p.parseBetween(expr)
+	if err != nil {
+		return nil, err
+	}
+	return &UnaryExpr{Op: int(LX.T_NOT), Operand: between}, nil
 }
 
 func (p *Parser) parseBetween(expr Expr) (Expr, error) {
