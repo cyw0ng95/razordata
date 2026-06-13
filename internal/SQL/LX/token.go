@@ -170,6 +170,10 @@ const (
 	T_CONCAT
 	T_COALESCE
 	T_NULLIF
+	T_UNION
+	T_INTERSECT
+	T_EXCEPT
+	T_ALL
 
 	T_ERROR TokenType = -1
 )
@@ -344,6 +348,10 @@ var tokenTypeNames = [...]string{
 	T_CONCAT:      "CONCAT",
 	T_COALESCE:    "COALESCE",
 	T_NULLIF:      "NULLIF",
+	T_UNION:       "UNION",
+	T_INTERSECT:   "INTERSECT",
+	T_EXCEPT:      "EXCEPT",
+	T_ALL:         "ALL",
 }
 
 func (t Token) String() string {
