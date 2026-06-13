@@ -365,6 +365,43 @@ type Select struct {
 
 func (s *Select) stmtNode() {}
 
+// CompoundOp encodes the SQL compound-select operator. REQ000383.
+type CompoundOp int
+
+const (
+	CompoundUnion CompoundOp = iota
+	CompoundUnionAll
+	CompoundIntersect
+	CompoundExcept
+)
+
+func (c CompoundOp) String() string {
+	switch c {
+	case CompoundUnionAll:
+		return "UNION ALL"
+	case CompoundIntersect:
+		return "INTERSECT"
+	case CompoundExcept:
+		return "EXCEPT"
+	}
+	return "UNION"
+}
+
+// CompoundStmt is a `SELECT ... <op> SELECT ...` chain. Left
+// and Right may themselves be CompoundStmt (left-associative
+// chain), or a plain *Select at the leaves. REQ000383.
+type CompoundStmt struct {
+	Left  Stmt
+	Op    CompoundOp
+	Right Stmt
+	// OrderBy / Limit / Offset apply to the entire compound result.
+	OrderBy []OrderItem
+	Limit   Expr
+	Offset  Expr
+}
+
+func (c *CompoundStmt) stmtNode() {}
+
 type BeginTX struct{}
 
 func (b *BeginTX) stmtNode() {}

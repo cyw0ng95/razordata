@@ -203,6 +203,10 @@ var tokenNames = [...]string{
 	LX.T_BITNOT:       "~",
 	LX.T_MOD:          "%",
 	LX.T_CONCAT:       "||",
+	LX.T_UNION:        "UNION",
+	LX.T_INTERSECT:    "INTERSECT",
+	LX.T_EXCEPT:       "EXCEPT",
+	LX.T_ALL:          "ALL",
 }
 
 // isAggregateName reports whether a bare identifier name is a
@@ -636,7 +640,138 @@ func (p *Parser) Parse() (Stmt, error) {
 	return stmt, nil
 }
 
-func (p *Parser) parseSelect() (*Select, error) {
+// parseSelect parses a SELECT statement, possibly followed by a
+// chain of compound operators (UNION, UNION ALL, INTERSECT,
+// EXCEPT). REQ000383.
+//
+// Precedence: INTERSECT binds tighter than UNION/EXCEPT (per
+// SQLite). The chain is built left-associatively.
+//
+//   a UNION b INTERSECT c  →  a UNION (b INTERSECT c)
+//   a INTERSECT b UNION c  →  (a INTERSECT b) UNION c
+//
+// We implement a single precedence level for the v1 (UNION, EXCEPT)
+// and a higher one for INTERSECT.
+func (p *Parser) parseSelect() (Stmt, error) {
+	left, err := p.parseIntersectChain()
+	if err != nil {
+		return nil, err
+	}
+	for p.current.Type == LX.T_UNION || p.current.Type == LX.T_EXCEPT {
+		op := CompoundUnion
+		if p.current.Type == LX.T_EXCEPT {
+			op = CompoundExcept
+		}
+		p.advance()
+		// EXCEPT ALL is not in SQLite; only UNION supports
+		// the ALL suffix. Reject EXCEPT ALL with a syntax
+		// error.
+		if p.current.Type == LX.T_ALL {
+			if op == CompoundExcept {
+				return nil, &SyntaxError{
+					Input:    p.lex.Input(),
+					Line:     p.current.Line,
+					Col:      p.current.Col,
+					Expected: "EXCEPT (no ALL suffix)",
+					Got:      tokenName(p.current.Type),
+					Lexeme:   p.current.Lexeme,
+				}
+			}
+			op = CompoundUnionAll
+			p.advance()
+		}
+		right, err := p.parseIntersectChain()
+		if err != nil {
+			return nil, err
+		}
+		left = &CompoundStmt{Left: left, Op: op, Right: right}
+	}
+	// REQ000383: ORDER BY / LIMIT / OFFSET at the end of a
+	// compound chain apply to the entire result.
+	if cs, ok := left.(*CompoundStmt); ok {
+		ob, lim, off, err := p.parseTrailingClauses()
+		if err != nil {
+			return nil, err
+		}
+		cs.OrderBy = ob
+		cs.Limit = lim
+		cs.Offset = off
+	}
+	return left, nil
+}
+
+// parseTrailingClauses parses optional ORDER BY / LIMIT / OFFSET.
+// REQ000383.
+func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, error) {
+	var orderBy []OrderItem
+	if p.current.Type == LX.T_ORDER {
+		p.advance()
+		if err := p.expect(LX.T_BY); err != nil {
+			return nil, nil, nil, err
+		}
+		p.advance()
+		for {
+			expr, err := p.parseExpr()
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			desc := false
+			if p.current.Type == LX.T_ASC {
+				p.advance()
+			} else if p.current.Type == LX.T_DESC {
+				desc = true
+				p.advance()
+			}
+			orderBy = append(orderBy, OrderItem{Expr: expr, Desc: desc})
+			if p.current.Type != LX.T_COMMA {
+				break
+			}
+			p.advance()
+		}
+	}
+	var limit Expr
+	if p.current.Type == LX.T_LIMIT {
+		p.advance()
+		l, err := p.parseExpr()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		limit = l
+	}
+	var offset Expr
+	if p.current.Type == LX.T_OFFSET {
+		p.advance()
+		o, err := p.parseExpr()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		offset = o
+	}
+	return orderBy, limit, offset, nil
+}
+
+// parseIntersectChain parses `INTERSECT` (or chain thereof) and
+// returns either a plain *Select or a *CompoundStmt. REQ000383.
+func (p *Parser) parseIntersectChain() (Stmt, error) {
+	first, err := p.parseOneSelect()
+	if err != nil {
+		return nil, err
+	}
+	var left Stmt = first
+	for p.current.Type == LX.T_INTERSECT {
+		p.advance()
+		right, err := p.parseOneSelect()
+		if err != nil {
+			return nil, err
+		}
+		left = &CompoundStmt{Left: left, Op: CompoundIntersect, Right: right}
+	}
+	return left, nil
+}
+
+// parseOneSelect parses a single SELECT statement (no compound
+// chain). REQ000383: split out from parseSelect.
+func (p *Parser) parseOneSelect() (*Select, error) {
 	p.advance()
 
 	var distinct bool
