@@ -296,7 +296,16 @@ func (e *Executor) RegisterTable(name string, schema []string) {
 	e.planner.RegisterTable(name, cols, "")
 	RegisterTableSchema(name, schema)
 	if e.store != nil {
-		registerStoreSchema(name, schema, "")
+		// REQ000367: API-level registration without a PK
+		// also enables hidden-PK mode so the table can be
+		// written to the engine store.
+		if id := registerStoreSchema(name, schema, ""); id != 0 {
+			storeMu.Lock()
+			if ss, ok := storeSchemas[id]; ok {
+				ss.hiddenPK = true
+			}
+			storeMu.Unlock()
+		}
 	}
 }
 
