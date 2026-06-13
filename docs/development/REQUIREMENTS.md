@@ -54,7 +54,7 @@ Columns for selection:
 | REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
 | REQ000286 | SQL/EX | Window materialize context propagation — uses context.Background() instead of caller's ctx | medium | S | iter-23 | `SQL/EX/window.go:55-77` |
 | REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
-| REQ000292 | SQL/EX | numericArith int64 overflow check — multiplication wraps without check (pre-existing) | medium | S | iter-19 | `SQL/EX/eval.go:646-658` |
+DONE REQ000292 | SQL/EX | numericArith int64 overflow check — multiplication wraps without check (pre-existing) | medium | S | iter-19 | `SQL/EX/eval.go:646-658` |
 | REQ000295 | FIL | io_uring async I/O wrapper (SQ/CQ submission, SQPOLL mode, Linux-only with IOCP/kqueue fallback) | critical | L | iter-01 (FIL), `golang.org/x/sys/unix` available | new `FIL/IO/uring.go`; cross-platform dispatch in `FIL/FS/fs.go` |
 | REQ000296 | FIL | Direct I/O + io_uring fixed-file descriptor (bypass OS page cache, reduce fd table lookups) | high | M | REQ000295, iter-01 (O_DIRECT) | `FIL/FS/fs.go` — `IOSQE_FIXED_FILE` flags; integration with `O_DIRECT` fallback |
 | REQ000297 | ENG | SST block-level dictionary compression (ZSTD with per-block trained dict, 4KB blocks: 1.5x→3x ratio) | high | M | iter-23 (flate baseline) | `ENG/LS/sst_writer.go` — `dictTrain` per block; `ENG/LS/sst_reader.go` — dict lookup |
@@ -97,7 +97,7 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-| REQ000348 | SQL/EX | `Session.Query` returns schema-only `*AP.Rows` (no row data streaming; callers must use unexported `QueryAll`) | medium | M | iter-25 surfacing | `internal/SYS/AP/ap.go` `Session` interface needs `Next()` accessor; `internal/SYS/SE/se.go` returns `&AP.Rows{Cols,Types}` with no streaming |
+DONE REQ000348 | SQL/EX | `Session.Query` returns schema-only `*AP.Rows` (no row data streaming; callers must use unexported `QueryAll`) | medium | M | iter-25 surfacing | `internal/SYS/AP/ap.go` `Session` interface needs `Next()` accessor; `internal/SYS/SE/se.go` returns `&AP.Rows{Cols,Types}` with no streaming |
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
 | REQ000356 | SQL/LX | Unary `NOT` as logical operator (currently only works as infix in some contexts; `~` bitwise NOT) | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` |
 
@@ -469,6 +469,16 @@ Status column tracks the implementation state.
 
 | ID | Function | Effort |
 |---|---|---|
+### Already implemented (iter-26.10)
+
+This iteration fixes 2 bugs:
+
+| REQ ID | Function | Notes |
+|---|---|---|
+| REQ000348 | Session.Query streaming | added Next/Close to AP.Rows; EX.QueryStream returns streaming iterator; Session/Transaction/Stmt.Query now stream rows |
+| REQ000292 | int64 mul overflow check | rewrote to use int64 (not float64) values; handles MIN_INT64 × -1 case |
+
+REQ000356 (unary NOT) was already implemented in earlier iter.
 ### Already implemented (iter-26.9)
 
 This iteration adds 5 small lexer/parser features:
@@ -545,7 +555,7 @@ These 10 functions were implemented in iter-26 before the REQ matrix was created
 | REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
 | REQ000286 | SQL/EX | Window materialize context propagation — uses context.Background() instead of caller's ctx | medium | S | iter-23 | `SQL/EX/window.go:55-77` |
 | REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
-| REQ000292 | SQL/EX | numericArith int64 overflow check — multiplication wraps without check (pre-existing) | medium | S | iter-19 | `SQL/EX/eval.go:646-658` |
+DONE REQ000292 | SQL/EX | numericArith int64 overflow check — multiplication wraps without check (pre-existing) | medium | S | iter-19 | `SQL/EX/eval.go:646-658` |
 | REQ000295 | FIL | io_uring async I/O wrapper (SQ/CQ submission, SQPOLL mode, Linux-only with IOCP/kqueue fallback) | critical | L | iter-01 (FIL), `golang.org/x/sys/unix` available | new `FIL/IO/uring.go`; cross-platform dispatch in `FIL/FS/fs.go` |
 | REQ000296 | FIL | Direct I/O + io_uring fixed-file descriptor (bypass OS page cache, reduce fd table lookups) | high | M | REQ000295, iter-01 (O_DIRECT) | `FIL/FS/fs.go` — `IOSQE_FIXED_FILE` flags; integration with `O_DIRECT` fallback |
 | REQ000297 | ENG | SST block-level dictionary compression (ZSTD with per-block trained dict, 4KB blocks: 1.5x→3x ratio) | high | M | iter-23 (flate baseline) | `ENG/LS/sst_writer.go` — `dictTrain` per block; `ENG/LS/sst_reader.go` — dict lookup |
@@ -588,7 +598,7 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-| REQ000348 | SQL/EX | `Session.Query` returns schema-only `*AP.Rows` (no row data streaming; callers must use unexported `QueryAll`) | medium | M | iter-25 surfacing | `internal/SYS/AP/ap.go` `Session` interface needs `Next()` accessor; `internal/SYS/SE/se.go` returns `&AP.Rows{Cols,Types}` with no streaming |
+DONE REQ000348 | SQL/EX | `Session.Query` returns schema-only `*AP.Rows` (no row data streaming; callers must use unexported `QueryAll`) | medium | M | iter-25 surfacing | `internal/SYS/AP/ap.go` `Session` interface needs `Next()` accessor; `internal/SYS/SE/se.go` returns `&AP.Rows{Cols,Types}` with no streaming |
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
 | REQ000356 | SQL/LX | Unary `NOT` as logical operator (currently only works as infix in some contexts; `~` bitwise NOT) | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` |
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"sync"
 
+	ex "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
 	sy "github.com/cyw0ng95/razordata/internal/SYS/SY"
 	vl "github.com/cyw0ng95/razordata/internal/TXN/VL"
@@ -73,11 +74,22 @@ func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.R
 		t.session.SetSnapshot(t.session.CurrentTS())
 		defer t.session.SetSnapshot(0)
 	}
-	rs, err := exe.Query(ctx, sql, args...)
+	stream, err := exe.QueryStream(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
-	return &ap.Rows{Cols: rs.Cols, Types: rs.Types}, nil
+	next := func() (ap.Row, error) {
+		row, err := stream.Next()
+		if err != nil {
+			if err == ex.ErrNoRows {
+				return ap.Row{}, ap.ErrNoRows
+			}
+			return ap.Row{}, err
+		}
+		return ap.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
+	}
+	closer := func() error { return stream.Close() }
+	return ap.NewRows(stream.Cols(), stream.Types(), next, closer), nil
 }
 
 func (t *Transaction) Exec(ctx context.Context, sql string, args ...any) (ap.Result, error) {

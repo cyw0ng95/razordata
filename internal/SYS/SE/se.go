@@ -110,9 +110,11 @@ func (s *Session) reset(engine *SY.Engine) {
 // ID returns the session's unique identifier (used for tracing).
 func (s *Session) ID() uint64 { return s.id }
 
-// Query runs a SELECT and returns its column metadata. Streaming the
-// rows back to the caller is left to the engine's own iterator in v1;
-// for the AP contract we expose a *AP.Rows that names the columns.
+// Query runs a SELECT and returns a streaming row iterator. The
+// caller MUST call Close on the returned *AP.Rows to release
+// underlying plan resources. After Next returns ErrNoRows the
+// iterator is auto-closed.
+// REQ000348.
 func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows, error) {
 	if s.engine.IsClosed() {
 		return nil, AP.ErrClosed
@@ -125,11 +127,22 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 
 	exe := s.engine.Executor()
 	exe.SetSessionID(s.id)
-	rs, err := exe.Query(ctx, sql, args...)
+	stream, err := exe.QueryStream(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
-	return &AP.Rows{Cols: rs.Cols, Types: rs.Types}, nil
+	next := func() (AP.Row, error) {
+		row, err := stream.Next()
+		if err != nil {
+			if err == EX.ErrNoRows {
+				return AP.Row{}, AP.ErrNoRows
+			}
+			return AP.Row{}, err
+		}
+		return AP.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
+	}
+	closer := func() error { return stream.Close() }
+	return AP.NewRows(stream.Cols(), stream.Types(), next, closer), nil
 }
 
 // Exec runs a DML or DDL statement and returns its result. In read-only

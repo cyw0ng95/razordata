@@ -1508,10 +1508,28 @@ func numericArith(a, b interface{}, op rune) (interface{}, error) {
 				}
 				ri = ai - bi
 			case '*':
-				if ai != 0 && bi != 0 && (af*bf > math.MaxInt64 || af*bf < math.MinInt64) {
+				// REQ000292: int64 multiplication overflow check.
+				// Detect overflow using the exact int64 values
+				// (not the float64 approximation, which loses
+				// precision around 2^53).
+				if ai == 0 || bi == 0 {
+					ri = 0
+				} else if ai == -1 && bi == math.MinInt64 {
+					// (-1) * MIN_INT64 overflows to MAX_INT64+1
 					return nil, nil
+				} else if bi == -1 && ai == math.MinInt64 {
+					// MIN_INT64 * (-1) overflows
+					return nil, nil
+				} else if ai > 0 && bi > 0 && ai > math.MaxInt64/bi {
+					return nil, nil
+				} else if ai < 0 && bi < 0 && ai < math.MaxInt64/bi {
+					return nil, nil
+				} else if (ai > 0 && bi < 0 && bi < math.MinInt64/ai) ||
+					(ai < 0 && bi > 0 && ai < math.MinInt64/bi) {
+					return nil, nil
+				} else {
+					ri = ai * bi
 				}
-				ri = ai * bi
 			}
 			return ri, nil
 		}
