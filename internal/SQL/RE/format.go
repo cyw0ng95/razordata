@@ -17,6 +17,8 @@ func Format(stmt PS.Stmt) (string, error) {
 	switch s := stmt.(type) {
 	case *PS.Select:
 		return formatSelect(s), nil
+	case *PS.CompoundStmt:
+		return formatCompound(s)
 	case *PS.Insert:
 		return formatInsertStmt(s), nil
 	case *PS.Update:
@@ -328,4 +330,46 @@ func opString(op int) string {
 	default:
 		return "?"
 	}
+}
+
+// formatCompound formats a UNION/INTERSECT/EXCEPT chain. REQ000383.
+func formatCompound(s *PS.CompoundStmt) (string, error) {
+	left, err := Format(s.Left)
+	if err != nil {
+		return "", err
+	}
+	right, err := Format(s.Right)
+	if err != nil {
+		return "", err
+	}
+	var op string
+	switch s.Op {
+	case PS.CompoundUnion:
+		op = " UNION "
+	case PS.CompoundUnionAll:
+		op = " UNION ALL "
+	case PS.CompoundIntersect:
+		op = " INTERSECT "
+	case PS.CompoundExcept:
+		op = " EXCEPT "
+	}
+	out := left + op + right
+	if len(s.OrderBy) > 0 {
+		parts := make([]string, 0, len(s.OrderBy))
+		for _, o := range s.OrderBy {
+			dir := "ASC"
+			if o.Desc {
+				dir = "DESC"
+			}
+			parts = append(parts, fmt.Sprintf("%s %s", exprString(o.Expr), dir))
+		}
+		out += " ORDER BY " + strings.Join(parts, ", ")
+	}
+	if s.Limit != nil {
+		out += " LIMIT " + exprString(s.Limit)
+	}
+	if s.Offset != nil {
+		out += " OFFSET " + exprString(s.Offset)
+	}
+	return out, nil
 }

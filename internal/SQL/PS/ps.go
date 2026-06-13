@@ -687,15 +687,21 @@ func (p *Parser) parseSelect() (Stmt, error) {
 		left = &CompoundStmt{Left: left, Op: op, Right: right}
 	}
 	// REQ000383: ORDER BY / LIMIT / OFFSET at the end of a
-	// compound chain apply to the entire result.
-	if cs, ok := left.(*CompoundStmt); ok {
-		ob, lim, off, err := p.parseTrailingClauses()
-		if err != nil {
-			return nil, err
-		}
-		cs.OrderBy = ob
-		cs.Limit = lim
-		cs.Offset = off
+	// compound chain (or standalone SELECT) apply to the entire
+	// result, not individual leaf SELECTs.
+	ob, lim, off, err := p.parseTrailingClauses()
+	if err != nil {
+		return nil, err
+	}
+	switch s := left.(type) {
+	case *CompoundStmt:
+		s.OrderBy = ob
+		s.Limit = lim
+		s.Offset = off
+	case *Select:
+		s.OrderBy = ob
+		s.Limit = lim
+		s.Offset = off
 	}
 	return left, nil
 }
@@ -752,6 +758,10 @@ func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, error) {
 
 // parseIntersectChain parses `INTERSECT` (or chain thereof) and
 // returns either a plain *Select or a *CompoundStmt. REQ000383.
+//
+// Trailing ORDER BY/LIMIT/OFFSET are always parsed by the outer
+// caller (parseSelect), so that they apply to the entire compound
+// chain rather than individual leaf SELECTs.
 func (p *Parser) parseIntersectChain() (Stmt, error) {
 	first, err := p.parseOneSelect()
 	if err != nil {
@@ -766,6 +776,8 @@ func (p *Parser) parseIntersectChain() (Stmt, error) {
 		}
 		left = &CompoundStmt{Left: left, Op: CompoundIntersect, Right: right}
 	}
+	// Never parse trailing clauses here — let parseSelect handle
+	// them so they apply to the entire chain.
 	return left, nil
 }
 
@@ -927,72 +939,10 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 		having = h
 	}
 
-	var orderBy []OrderItem
-	if p.current.Type == LX.T_ORDER {
-		p.advance()
-		if err := p.expect(LX.T_BY); err != nil {
-			return nil, err
-		}
-		p.advance()
-		for {
-			expr, err := p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-			desc := false
-			if p.current.Type == LX.T_ASC {
-				p.advance()
-			} else if p.current.Type == LX.T_DESC {
-				desc = true
-				p.advance()
-			}
-			orderBy = append(orderBy, OrderItem{Expr: expr, Desc: desc})
-			if p.current.Type != LX.T_COMMA {
-				break
-			}
-			p.advance()
-		}
-	}
-
-	var limit Expr
-	if p.current.Type == LX.T_LIMIT {
-		p.advance()
-		l, err := p.parseExpr()
-		if err != nil {
-			return nil, err
-		}
-		limit = l
-	}
-
-	var offset Expr
-	if p.current.Type == LX.T_OFFSET {
-		p.advance()
-		o, err := p.parseExpr()
-		if err != nil {
-			return nil, err
-		}
-		offset = o
-	}
-
-	// REQ000270: FETCH FIRST n ROWS ONLY → LIMIT n
-	if p.current.Type == LX.T_FETCH {
-		p.advance() // consume FETCH
-		// Skip "FIRST" keyword if present (it's an identifier, not a token)
-		if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "FIRST") {
-			p.advance()
-		}
-		n, err := p.parseExpr()
-		if err != nil {
-			return nil, err
-		}
-		limit = n
-		if p.current.Type == LX.T_ROWS {
-			p.advance() // consume ROWS
-		}
-		if p.current.Type == LX.T_ONLY {
-			p.advance() // consume ONLY
-		}
-	}
+	// REQ000383: trailing ORDER BY / LIMIT / OFFSET / FETCH are
+	// parsed by the caller (parseIntersectChain or parseSelect),
+	// not here, so that compound chains can attach them to the
+	// whole result rather than the leaf Select.
 
 	return &Select{
 		Cols:      cols,
@@ -1002,9 +952,6 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 		Where:     where,
 		GroupBy:   groupBy,
 		Having:    having,
-		OrderBy:   orderBy,
-		Limit:     limit,
-		Offset:    offset,
 		Distinct:  distinct,
 	}, nil
 }

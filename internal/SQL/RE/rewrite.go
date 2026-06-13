@@ -14,6 +14,8 @@ func Rewrite(stmt PS.Stmt) (PS.Stmt, error) {
 	switch s := stmt.(type) {
 	case *PS.Select:
 		return rewriteSelect(s), nil
+	case *PS.CompoundStmt:
+		return rewriteCompound(s), nil
 	case *PS.Insert:
 		return rewriteInsert(s), nil
 	case *PS.Update:
@@ -35,6 +37,25 @@ func rewriteSelect(s *PS.Select) *PS.Select {
 	out := *s
 	out.Cols = cloneExprSlice(s.Cols)
 	out.Where = RewriteExpr(s.Where)
+	out.OrderBy = cloneOrderBy(s.OrderBy)
+	out.Limit = RewriteExpr(s.Limit)
+	out.Offset = RewriteExpr(s.Offset)
+	return &out
+}
+
+// rewriteCompound recursively rewrites a UNION/INTERSECT/EXCEPT
+// chain. REQ000383: each leaf SELECT and the trailing clauses
+// are normalized. Since the rewriter itself never errors, this
+// does not return an error — but it calls Rewrite recursively
+// which does. The caller handles errors.
+func rewriteCompound(s *PS.CompoundStmt) PS.Stmt {
+	out := *s
+	if left, err := Rewrite(s.Left); err == nil {
+		out.Left = left
+	}
+	if right, err := Rewrite(s.Right); err == nil {
+		out.Right = right
+	}
 	out.OrderBy = cloneOrderBy(s.OrderBy)
 	out.Limit = RewriteExpr(s.Limit)
 	out.Offset = RewriteExpr(s.Offset)

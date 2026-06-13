@@ -100,7 +100,6 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000348 | SQL/EX | `Session.Query` returns schema-only `*AP.Rows` (no row data streaming; callers must use unexported `QueryAll`) | medium | M | iter-25 surfacing | `internal/SYS/AP/ap.go` `Session` interface needs `Next()` accessor; `internal/SYS/SE/se.go` returns `&AP.Rows{Cols,Types}` with no streaming |
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
 | REQ000356 | SQL/LX | Unary `NOT` as logical operator (currently only works as infix in some contexts; `~` bitwise NOT) | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` |
-| REQ000383 | SQL/PS | `UNION` (and `UNION ALL`, `INTERSECT`, `EXCEPT`) not parsed — compound SELECT not supported | medium | M | iter-08 (operators) | `SQL/PS/ps.go` parseSelect — after first SELECT, look for compound op then parse next SELECT |
 
 ## DONE
 
@@ -145,6 +144,7 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | REQ000380 | SQL/PS | `NOT LIKE` parser error — parsePostfix now peeks `T_NOT T_LIKE` and dispatches to parseNotLike | iter-26.3 (v0.26.5) |
 | REQ000381 | SQL/PS | `NOT IN (subquery)` parser error — same pattern, dispatches to parseNotIn; parseIn refactored to use parseInBody helper | iter-26.3 (v0.26.5) |
 | REQ000382 | SQL/EX | Add `ABS`, `HEX`, `ROUND` scalar functions to evalFunction | iter-26.3 (v0.26.5) |
+| REQ000383 | SQL/PS/EX | Compound SELECT: UNION, INTERSECT, EXCEPT with correct precedence (INTERSECT binds tighter), trailing ORDER BY/LIMIT/OFFSET apply to compound result; RE rewrite/format support | iter-26.4 (v0.26.6) |
 | REQ000197 | SQL/EX | OUTER JOIN executor (LEFT/RIGHT/FULL) | iter-20 |
 | REQ000198 | ENG/LS | Skiplist sync.Pool for scratch arrays | iter-20 |
 | REQ000201 | QUAL | SQL/PL coverage 30.6% to 98.8% | iter-20 |

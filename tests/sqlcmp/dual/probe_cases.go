@@ -430,4 +430,92 @@ var probeCases = []dualCase{
 			{float64(3.14)},
 		},
 	},
+	// REQ000383: compound SELECT (UNION, UNION ALL, INTERSECT,
+	// EXCEPT). All four operators with dedup semantics matching
+	// SQLite standard.
+	{
+		Name: "union_dedup",
+		Setup: []string{
+			"CREATE TABLE a (x INTEGER PRIMARY KEY)",
+			"INSERT INTO a VALUES (1), (2)",
+			"CREATE TABLE b (x INTEGER PRIMARY KEY)",
+			"INSERT INTO b VALUES (2), (3)",
+		},
+		Query: "SELECT x FROM a UNION SELECT x FROM b ORDER BY x",
+		Want: [][]any{
+			{int64(1)},
+			{int64(2)},
+			{int64(3)},
+		},
+	},
+	{
+		Name: "union_all_no_dedup",
+		Setup: []string{
+			"CREATE TABLE a (x INTEGER PRIMARY KEY)",
+			"INSERT INTO a VALUES (1), (2)",
+			"CREATE TABLE b (x INTEGER PRIMARY KEY)",
+			"INSERT INTO b VALUES (2), (3)",
+		},
+		Query: "SELECT x FROM a UNION ALL SELECT x FROM b ORDER BY x",
+		Want: [][]any{
+			{int64(1)},
+			{int64(2)},
+			{int64(2)},
+			{int64(3)},
+		},
+	},
+	{
+		Name: "intersect",
+		Setup: []string{
+			"CREATE TABLE a (x INTEGER PRIMARY KEY)",
+			"INSERT INTO a VALUES (1), (2), (3)",
+			"CREATE TABLE b (x INTEGER PRIMARY KEY)",
+			"INSERT INTO b VALUES (2), (3), (4)",
+		},
+		Query: "SELECT x FROM a INTERSECT SELECT x FROM b ORDER BY x",
+		Want: [][]any{
+			{int64(2)},
+			{int64(3)},
+		},
+	},
+	{
+		Name: "except",
+		Setup: []string{
+			"CREATE TABLE a (x INTEGER PRIMARY KEY)",
+			"INSERT INTO a VALUES (1), (2), (3)",
+			"CREATE TABLE b (x INTEGER PRIMARY KEY)",
+			"INSERT INTO b VALUES (2), (3), (4)",
+		},
+		Query: "SELECT x FROM a EXCEPT SELECT x FROM b ORDER BY x",
+		Want: [][]any{
+			{int64(1)},
+		},
+	},
+	{
+		Name: "union_empty_left",
+		Setup: []string{
+			"CREATE TABLE a (x INTEGER PRIMARY KEY)",
+			"CREATE TABLE b (x INTEGER PRIMARY KEY)",
+			"INSERT INTO b VALUES (1), (2)",
+		},
+		Query: "SELECT x FROM a UNION SELECT x FROM b ORDER BY x",
+		Want: [][]any{
+			{int64(1)},
+			{int64(2)},
+		},
+	},
+	{
+		Name: "union_with_limit",
+		Setup: []string{
+			"CREATE TABLE a (x INTEGER PRIMARY KEY)",
+			"INSERT INTO a VALUES (1), (2)",
+			"CREATE TABLE b (x INTEGER PRIMARY KEY)",
+			"INSERT INTO b VALUES (3), (4)",
+		},
+		Query: "SELECT x FROM a UNION ALL SELECT x FROM b ORDER BY x LIMIT 2",
+		Want: [][]any{
+			{int64(1)},
+			{int64(2)},
+		},
+	},
 }
