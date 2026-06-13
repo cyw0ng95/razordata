@@ -395,7 +395,41 @@ func (p *Parser) parsePostfix() (Expr, error) {
 	case LX.T_IN:
 		return p.parseIn(expr)
 	}
+	if p.current.Type == LX.T_NOT {
+		next := p.lex.Peek().Type
+		switch next {
+		case LX.T_LIKE:
+			p.advance()
+			return p.parseNotLike(expr)
+		case LX.T_IN:
+			p.advance()
+			return p.parseNotIn(expr)
+		}
+	}
 	return expr, nil
+}
+
+// REQ000380: `NOT LIKE` — parse x NOT LIKE y as NOT(x LIKE y).
+func (p *Parser) parseNotLike(expr Expr) (Expr, error) {
+	p.advance()
+	right, err := p.parseBinary(7)
+	if err != nil {
+		return nil, err
+	}
+	like := &BinaryExpr{Op: int(LX.T_LIKE), Left: expr, Right: right}
+	return &UnaryExpr{Op: int(LX.T_NOT), Operand: like}, nil
+}
+
+// REQ000381: `NOT IN` — parse x NOT IN (...) as NOT(x IN (...)).
+func (p *Parser) parseNotIn(expr Expr) (Expr, error) {
+	// parsePostfix already consumed T_NOT; we still need to
+	// consume T_IN and the ( ... ).
+	p.advance()
+	in, err := p.parseInBody(expr)
+	if err != nil {
+		return nil, err
+	}
+	return &UnaryExpr{Op: int(LX.T_NOT), Operand: in}, nil
 }
 
 func (p *Parser) parseBetween(expr Expr) (Expr, error) {
@@ -417,6 +451,13 @@ func (p *Parser) parseBetween(expr Expr) (Expr, error) {
 
 func (p *Parser) parseIn(expr Expr) (Expr, error) {
 	p.advance()
+	return p.parseInBody(expr)
+}
+
+// parseInBody parses the (...) part of an IN expression. Caller
+// must have already advanced past the T_IN token. Used by
+// parseIn and parseNotIn (REQ000381).
+func (p *Parser) parseInBody(expr Expr) (Expr, error) {
 	if err := p.expect(LX.T_LPAREN); err != nil {
 		return nil, err
 	}
