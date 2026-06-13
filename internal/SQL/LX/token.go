@@ -40,6 +40,8 @@ const (
 	T_WHERE
 	T_AND
 	T_OR
+	T_BEFORE
+	T_AFTER
 	T_NOT
 	T_IN
 	T_BETWEEN
@@ -101,6 +103,10 @@ const (
 	T_ELSE
 	T_END
 	T_EXISTS
+	T_INSTEAD
+	T_OF
+	T_FOR
+	T_EACH
 	T_ANALYZE
 	T_VACUUM
 	T_EXPLAIN
@@ -149,6 +155,7 @@ const (
 	T_REPEATABLE
 	T_SERIALIZABLE
 	T_VIEW
+	T_TRIGGER
 	T_ALTER
 	T_COLUMN
 	T_ADD
@@ -219,6 +226,8 @@ var tokenTypeNames = [...]string{
 	T_WHERE:       "WHERE",
 	T_AND:         "AND",
 	T_OR:          "OR",
+	T_BEFORE:      "BEFORE",
+	T_AFTER:       "AFTER",
 	T_NOT:         "NOT",
 	T_IN:          "IN",
 	T_BETWEEN:     "BETWEEN",
@@ -315,6 +324,7 @@ var tokenTypeNames = [...]string{
 	T_REPEATABLE: "REPEATABLE",
 	T_SERIALIZABLE: "SERIALIZABLE",
 	T_VIEW:         "VIEW",
+	T_TRIGGER:      "TRIGGER",
 	T_ALTER:        "ALTER",
 	T_COLUMN:       "COLUMN",
 	T_ADD:          "ADD",

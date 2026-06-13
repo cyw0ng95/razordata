@@ -15,6 +15,28 @@ var (
 	schemas  = map[string][]string{}
 )
 
+// triggerMu guards the package-level trigger registry. REQ000435.
+var (
+	triggerMu   sync.RWMutex
+	triggerReg  = map[string]*PS.TriggerStmt{} // by trigger name
+	tableTriggers = map[string][]*PS.TriggerStmt{} // by table name
+)
+
+func registerTrigger(t *PS.TriggerStmt) {
+	triggerMu.Lock()
+	defer triggerMu.Unlock()
+	triggerReg[t.Name] = t
+	tableTriggers[t.OnTable] = append(tableTriggers[t.OnTable], t)
+}
+
+func triggersForTable(table string) []*PS.TriggerStmt {
+	triggerMu.RLock()
+	defer triggerMu.RUnlock()
+	out := make([]*PS.TriggerStmt, len(tableTriggers[table]))
+	copy(out, tableTriggers[table])
+	return out
+}
+
 func RegisterTable(name string, rows []Row) {
 	tablesMu.Lock()
 	defer tablesMu.Unlock()
