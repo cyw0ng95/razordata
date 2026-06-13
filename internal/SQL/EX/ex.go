@@ -674,6 +674,10 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		return NewDropIndex(s), nil
 	case *PS.CreateViewStmt:
 		return NewCreateView(s), nil
+	case *PS.VacuumStmt:
+		return NewVacuum(s), nil
+	case *PS.AnalyzeStmt:
+		return NewAnalyze(s), nil
 	}
 	return nil, errors.New("ex: not a writable statement")
 }

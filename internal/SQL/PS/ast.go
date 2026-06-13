@@ -92,8 +92,9 @@ type FunctionCall struct {
 func (f *FunctionCall) exprNode() {}
 
 type AggregateFunc struct {
-	Name string
-	Arg  Expr
+	Name     string
+	Arg      Expr
+	Distinct bool
 }
 
 func (a *AggregateFunc) exprNode() {}

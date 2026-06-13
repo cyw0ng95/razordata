@@ -205,6 +205,17 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 	}
 	switch agg.Name {
 	case "COUNT":
+		if agg.Distinct {
+			seen := make(map[interface{}]bool)
+			for _, r := range rows {
+				v, err := Eval(agg.Arg, &r, params)
+				if err != nil {
+					return nil, err
+				}
+				seen[v] = true
+			}
+			return int64(len(seen)), nil
+		}
 		return int64(len(rows)), nil
 	case "SUM":
 		var sumI int64

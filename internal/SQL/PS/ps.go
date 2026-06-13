@@ -307,6 +307,12 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			return nil, err
 		}
 		p.advance()
+		// Handle DISTINCT keyword in aggregate functions
+		distinct := false
+		if p.current.Type == LX.T_DISTINCT {
+			distinct = true
+			p.advance()
+		}
 		var arg Expr
 		if p.current.Type == LX.T_STAR {
 			arg = &StarExpr{}
@@ -322,7 +328,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			return nil, err
 		}
 		p.advance()
-		agg := &AggregateFunc{Name: name, Arg: arg}
+		agg := &AggregateFunc{Name: name, Arg: arg, Distinct: distinct}
 		if p.current.Type == LX.T_OVER {
 			return p.parseWindowFunc(name, []Expr{arg})
 		}
