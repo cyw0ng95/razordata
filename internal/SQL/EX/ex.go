@@ -678,6 +678,8 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		return NewVacuum(s), nil
 	case *PS.AnalyzeStmt:
 		return NewAnalyze(s), nil
+	case *PS.AlterTableStmt:
+		return NewAlterTable(s), nil
 	}
 	return nil, errors.New("ex: not a writable statement")
 }
