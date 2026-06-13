@@ -295,11 +295,35 @@ type CommonTableExpr struct {
 
 // WithStmt represents a WITH clause containing CTEs.
 type WithStmt struct {
-	CTEs  []*CommonTableExpr
-	Inner Stmt // the main query
+	Recursive bool
+	CTEs      []*CommonTableExpr
+	Inner     Stmt // the main query
 }
 
 func (w *WithStmt) stmtNode() {}
+
+// TriggerEvent is the time and action that fires a trigger.
+type TriggerEvent struct {
+	Time  string // "BEFORE" or "AFTER"
+	Event string // "INSERT", "UPDATE", or "DELETE"
+	Cols  []string // optional column list for UPDATE OF
+}
+
+// TriggerStmt represents a CREATE TRIGGER statement.
+// REQ000435.
+type TriggerStmt struct {
+	Name        string
+	Time        string // "BEFORE", "AFTER", or "INSTEAD OF"
+	Event       string // "INSERT", "UPDATE", or "DELETE"
+	OnTable     string
+	ForEach     string // "ROW" or "STATEMENT"
+	Body        []Stmt // trigger body statements (BEGIN ... END)
+	IfNotExists bool
+	When        string // optional WHEN expression (raw text)
+	OfCols      []string // optional column list for UPDATE OF
+}
+
+func (t *TriggerStmt) stmtNode() {}
 
 // SavepointStmt represents a SAVEPOINT statement.
 type SavepointStmt struct {

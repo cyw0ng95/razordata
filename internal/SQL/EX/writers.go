@@ -721,6 +721,35 @@ func (d *Delete) RowsAffected() int64 {
 	return d.rows
 }
 
+// Trigger is a stub operator for CREATE TRIGGER. REQ000435.
+// The body is parsed and stored; executor surface is a no-op that
+// returns ErrNoRows after one iteration (similar to AlterTable).
+// The trigger is registered in the package-level trigger registry
+// so future INSERT/UPDATE/DELETE statements can fire it.
+type Trigger struct {
+	stmt *PS.TriggerStmt
+	done bool
+}
+
+func NewTrigger(stmt *PS.TriggerStmt) *Trigger {
+	if stmt != nil {
+		registerTrigger(stmt)
+	}
+	return &Trigger{stmt: stmt}
+}
+
+func (t *Trigger) Next(ctx context.Context) (Row, error) {
+	if t.done {
+		return Row{}, ErrNoRows
+	}
+	t.done = true
+	return Row{}, ErrNoRows
+}
+
+func (t *Trigger) Close() error              { return nil }
+func (t *Trigger) WithParams(p []interface{}) Operator { return t }
+func (t *Trigger) RowsAffected() int64        { return 0 }
+
 type CreateTable struct {
 	stmt *PS.CreateTable
 	done bool

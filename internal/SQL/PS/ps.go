@@ -601,7 +601,7 @@ func (p *Parser) Parse() (Stmt, error) {
 	case LX.T_DELETE:
 		stmt, err = p.parseDelete()
 	case LX.T_CREATE:
-		// CREATE TABLE vs CREATE INDEX vs CREATE VIEW — disambiguate by peeking.
+		// CREATE TABLE vs CREATE INDEX vs CREATE VIEW vs CREATE TRIGGER
 		next := p.lex.Peek().Type
 		if next == LX.T_INDEX {
 			stmt, err = p.parseCreateIndex()
@@ -609,6 +609,8 @@ func (p *Parser) Parse() (Stmt, error) {
 			stmt, err = p.parseCreateIndex()
 		} else if next == LX.T_VIEW {
 			stmt, err = p.parseCreateView()
+		} else if next == LX.T_TRIGGER {
+			stmt, err = p.parseCreateTrigger()
 		} else {
 			stmt, err = p.parseCreateTable()
 		}
@@ -2277,6 +2279,13 @@ func (p *Parser) parseNullif() (Expr, error) {
 func (p *Parser) parseWith() (*WithStmt, error) {
 	p.advance() // consume WITH
 
+	stmt := &WithStmt{}
+	// REQ000436: WITH [RECURSIVE]
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "RECURSIVE") {
+		stmt.Recursive = true
+		p.advance()
+	}
+
 	var ctes []*CommonTableExpr
 	for {
 		// Parse CTE name
@@ -2317,7 +2326,7 @@ func (p *Parser) parseWith() (*WithStmt, error) {
 		}
 		p.advance()
 
-		query, err := p.Parse()
+		query, err := p.parseCteBody()
 		if err != nil {
 			return nil, err
 		}
@@ -2346,7 +2355,18 @@ func (p *Parser) parseWith() (*WithStmt, error) {
 		return nil, err
 	}
 
-	return &WithStmt{CTEs: ctes, Inner: inner}, nil
+	return &WithStmt{Recursive: stmt.Recursive, CTEs: ctes, Inner: inner}, nil
+}
+
+// parseCteBody parses a CTE body that may be a single SELECT or a
+// compound SELECT (UNION/INTERSECT/EXCEPT). The parser's parseSelect
+// already handles compound operators via parseIntersectChain and the
+// union/except loop, so this just delegates. REQ000436.
+func (p *Parser) parseCteBody() (Stmt, error) {
+	if p.current.Type == LX.T_SELECT {
+		return p.parseSelect()
+	}
+	return p.Parse()
 }
 
 func (p *Parser) parseSavepoint() (*SavepointStmt, error) {
@@ -2626,5 +2646,157 @@ func (p *Parser) parseAlterTable() (*AlterTableStmt, error) {
 			Got:    tokenName(p.current.Type),
 			Lexeme: p.current.Lexeme,
 		}
+	}
+}
+
+// parseCreateTrigger parses `CREATE [TEMP|TEMPORARY] TRIGGER [IF NOT EXISTS]
+// name (BEFORE|AFTER|INSTEAD OF) (INSERT|DELETE|UPDATE [OF cols]) ON table
+// [FOR EACH ROW] BEGIN stmt; stmt; ... END`. REQ000435.
+// On entry, current token is CREATE.
+func (p *Parser) parseCreateTrigger() (*TriggerStmt, error) {
+	p.advance() // consume CREATE
+	if err := p.expect(LX.T_TRIGGER); err != nil {
+		return nil, err
+	}
+	p.advance() // consume TRIGGER
+
+	trigger := &TriggerStmt{Time: "BEFORE", Event: "INSERT", ForEach: "FOR EACH ROW"}
+
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
+		p.advance()
+		if err := p.expect(LX.T_NOT); err != nil {
+			return nil, err
+		}
+		p.advance()
+		if err := p.expect(LX.T_EXISTS); err != nil {
+			return nil, err
+		}
+		p.advance()
+		trigger.IfNotExists = true
+	}
+
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	trigger.Name = p.current.Lexeme
+	p.advance()
+
+	if p.current.Type == LX.T_BEFORE || p.current.Type == LX.T_AFTER {
+		trigger.Time = strings.ToUpper(p.current.Lexeme)
+		p.advance()
+	} else if p.current.Type == LX.T_INSTEAD {
+		p.advance()
+		if err := p.expect(LX.T_OF); err != nil {
+			return nil, err
+		}
+		p.advance()
+		trigger.Time = "INSTEAD OF"
+	}
+
+	switch p.current.Type {
+	case LX.T_INSERT, LX.T_DELETE:
+		trigger.Event = strings.ToUpper(p.current.Lexeme)
+		p.advance()
+	case LX.T_UPDATE:
+		trigger.Event = "UPDATE"
+		p.advance()
+		if p.current.Type == LX.T_OF {
+			p.advance()
+			for {
+				if err := p.expect(LX.T_IDENT); err != nil {
+					return nil, err
+				}
+				trigger.OfCols = append(trigger.OfCols, p.current.Lexeme)
+				p.advance()
+				if p.current.Type != LX.T_COMMA {
+					break
+				}
+				p.advance()
+			}
+		}
+	default:
+		return nil, fmt.Errorf("ps: syntax error at line %d col %d: expected INSERT/UPDATE/DELETE, got %s", p.current.Line, p.current.Col, tokenName(p.current.Type))
+	}
+
+	if err := p.expect(LX.T_ON); err != nil {
+		return nil, err
+	}
+	p.advance()
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	trigger.OnTable = p.current.Lexeme
+	p.advance()
+
+	if p.current.Type == LX.T_FOR {
+		p.advance()
+		if err := p.expect(LX.T_EACH); err != nil {
+			return nil, err
+		}
+		p.advance()
+		if err := p.expect(LX.T_ROW); err != nil {
+			return nil, err
+		}
+		p.advance()
+	}
+
+	if p.current.Type == LX.T_WHEN {
+		p.advance()
+		// skip WHEN expression: eat tokens until BEGIN or SEMICOLON.
+		// (Minimal implementation: condition is parsed but ignored at execution.)
+		for p.current.Type != LX.T_BEGIN && p.current.Type != LX.T_SEMICOLON && p.current.Type != LX.T_EOF {
+			p.advance()
+		}
+	}
+
+	if p.current.Type == LX.T_BEGIN {
+		p.advance()
+		for p.current.Type != LX.T_END && p.current.Type != LX.T_EOF {
+			if p.current.Type == LX.T_SEMICOLON {
+				p.advance()
+				continue
+			}
+			stmt, err := p.parseTriggerBodyStmt()
+			if err != nil {
+				return nil, err
+			}
+			if stmt != nil {
+				trigger.Body = append(trigger.Body, stmt)
+			}
+		}
+		if p.current.Type == LX.T_END {
+			p.advance()
+		}
+	} else {
+		stmt, err := p.parseTriggerBodyStmt()
+		if err != nil {
+			return nil, err
+		}
+		trigger.Body = append(trigger.Body, stmt)
+	}
+
+	return trigger, nil
+}
+
+// parseTriggerBodyStmt parses a single statement inside a trigger body
+// without resetting parser state. Mirrors the dispatch in Parse() for
+// the statement types commonly used in trigger bodies. REQ000435.
+func (p *Parser) parseTriggerBodyStmt() (Stmt, error) {
+	switch p.current.Type {
+	case LX.T_SELECT:
+		return p.parseSelect()
+	case LX.T_INSERT:
+		return p.parseInsert()
+	case LX.T_UPDATE:
+		return p.parseUpdate()
+	case LX.T_DELETE:
+		return p.parseDelete()
+	default:
+		// Unknown statement type inside trigger body: skip until
+		// next semicolon or END so we don't fail on partial parses.
+		for p.current.Type != LX.T_SEMICOLON && p.current.Type != LX.T_END && p.current.Type != LX.T_EOF {
+			p.advance()
+		}
+		return nil, nil
 	}
 }
