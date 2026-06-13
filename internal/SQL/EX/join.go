@@ -5,6 +5,7 @@ package EX
 
 import (
 	"context"
+	"errors"
 )
 
 // JoinKind specifies the type of join.
@@ -47,30 +48,34 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 			}
 			prefixed := Row{Cols: prefixCols(row.Cols, j.leftTbl), Types: row.Types, Data: row.Data}
 			j.leftRow = &prefixed
-			tablesMu.RLock()
-			j.rightRows = make([]Row, len(tables[j.rightTbl]))
-			copy(j.rightRows, tables[j.rightTbl])
-			tablesMu.RUnlock()
-			j.rightPos = 0
+			// REQ000368: drive the right side through its own
+			// operator rather than the in-memory `tables` map.
+			// The in-memory map is empty for store-backed
+			// tables, which caused CROSS JOIN (and any JOIN
+			// of store-backed tables) to return zero rows.
+			j.rightPos = -1
 			j.matched = false
-			_ = j.right.Close()
 		}
-		if j.rightPos >= len(j.rightRows) {
-			// No more right rows
-			if j.kind == JoinKindLeft || j.kind == JoinKindFull {
-				// OUTER JOIN: emit left row with NULL-padded right
-				if !j.matched {
-					nullRow := j.nullRightRow()
-					result := joinRows(j.leftRow, &nullRow)
-					j.leftRow = nil
-					return result, nil
+		// Advance the right side. Each call to j.right.Next()
+		// yields the next row; we re-init when we've exhausted
+		// the right side and need to move to the next left row.
+		inner, err := j.advanceRight(ctx)
+		if err != nil {
+			if err == errRightExhausted {
+				// No more right rows for this left row
+				if j.kind == JoinKindLeft || j.kind == JoinKindFull {
+					if !j.matched {
+						nullRow := j.nullRightRow()
+						result := joinRows(j.leftRow, &nullRow)
+						j.leftRow = nil
+						return result, nil
+					}
 				}
+				j.leftRow = nil
+				continue
 			}
-			j.leftRow = nil
-			continue
+			return Row{}, err
 		}
-		inner := cloneRow(j.rightRows[j.rightPos])
-		j.rightPos++
 		inner.Cols = prefixCols(inner.Cols, j.rightTbl)
 		inner.Outer = j.leftRow
 		if j.on != nil {
@@ -85,6 +90,34 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 		j.matched = true
 		return joinRows(j.leftRow, &inner), nil
 	}
+}
+
+// errRightExhausted is the sentinel returned by advanceRight when
+// the right-side operator has no more rows for the current left row.
+var errRightExhausted = errors.New("ex: right side exhausted")
+
+// advanceRight returns the next row from the right-side operator.
+// When the right side is exhausted (ErrNoRows), it returns
+// errRightExhausted so the outer loop can move to the next left
+// row. The right side is reset (Close + re-Next) on each new left
+// row so the right's iterator state is rewound.
+func (j *NestedLoopJoin) advanceRight(ctx context.Context) (Row, error) {
+	if j.rightPos == -1 {
+		// First call for this left row: close + reopen the
+		// right side so its iterator state is fresh.
+		_ = j.right.Close()
+		j.rightPos = 0
+	}
+	row, err := j.right.Next(ctx)
+	if err != nil {
+		if err == ErrNoRows {
+			// Mark so the next call resets the iterator.
+			j.rightPos = -1
+			return Row{}, errRightExhausted
+		}
+		return Row{}, err
+	}
+	return row, nil
 }
 
 // nullRightRow returns a row with all NULL values for the right table schema.
