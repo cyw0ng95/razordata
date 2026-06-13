@@ -739,4 +739,8 @@ var probeCases = []dualCase{
 		Query: "SELECT NULLIF(5, 5)",
 		Want:  [][]any{{nil}},
 	},
+	// Session.Query streaming (REQ000348)
+	// Skipped: dual runner doesn't exercise the Session API directly
+	// (it uses Executor.Query). The streaming API is verified by
+	// TestQueryStreaming in the SY package.
 }

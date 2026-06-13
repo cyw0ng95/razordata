@@ -158,12 +158,94 @@ type Result struct {
 	LastInsertID uint64
 }
 
-// Rows describes the schema of a query result. The actual rows are
-// streamed to the caller through a separate type returned by Query.
+// Row is a single result row from a query. The Data slice holds the
+// column values; Cols and Types describe the schema.
+// REQ000348.
+type Row struct {
+	Cols  []string
+	Types []int
+	Data  []any
+}
+
+// Rows is a row iterator returned by Session.Query, Transaction.Query,
+// and Stmt.Query. Callers must call Close when done to release
+// underlying resources. After Next returns ErrNoRows, the iterator is
+// auto-closed and the caller should NOT call Close.
+// REQ000348.
 type Rows struct {
 	Cols  []string
 	Types []int
+	// next is the streaming callback. It returns the next row or
+	// ErrNoRows to signal end-of-stream. It may also be nil for
+	// stubs that have no real data (e.g. AP.Rows in some test paths).
+	next func() (Row, error)
+	// closer releases plan/executor resources.
+	closer func() error
+	// closed tracks whether Close has been called or the iterator
+	// has been auto-closed via ErrNoRows.
+	closed bool
 }
+
+// NewRows constructs a Rows with the given schema. The next and
+// closer callbacks are optional.
+func NewRows(cols []string, types []int, next func() (Row, error), closer func() error) *Rows {
+	return &Rows{
+		Cols:  cols,
+		Types: types,
+		next:  next,
+		closer: closer,
+	}
+}
+
+// GetCols returns the column names of the result set.
+func (r *Rows) GetCols() []string { return r.Cols }
+
+// GetTypes returns the column type codes of the result set.
+func (r *Rows) GetTypes() []int { return r.Types }
+
+// Next returns the next row, or ErrNoRows when the result set is
+// exhausted. The returned row's Cols and Types match the schema.
+// REQ000348.
+func (r *Rows) Next() (Row, error) {
+	if r == nil {
+		return Row{}, ErrNoRows
+	}
+	if r.closed {
+		return Row{}, ErrNoRows
+	}
+	if r.next == nil {
+		// Schema-only stub. Auto-close on first call.
+		r.closed = true
+		return Row{}, ErrNoRows
+	}
+	row, err := r.next()
+	if err != nil {
+		if err == ErrNoRows {
+			r.closed = true
+		}
+		return Row{}, err
+	}
+	return row, nil
+}
+
+// Close releases the underlying plan resources. Safe to call multiple
+// times. After Next returns ErrNoRows the iterator is auto-closed and
+// this is a no-op.
+// REQ000348.
+func (r *Rows) Close() error {
+	if r == nil || r.closed {
+		return nil
+	}
+	r.closed = true
+	if r.closer != nil {
+		return r.closer()
+	}
+	return nil
+}
+
+// ErrNoRows is returned by Rows.Next when the result set is exhausted.
+// The iterator is automatically closed at that point.
+var ErrNoRows = errors.New("ap: no more rows")
 
 // EngineStats is an aggregate of per-subsystem statistics.
 type EngineStats struct {
@@ -299,14 +381,6 @@ func IsFatal(err error) bool {
 		}
 	}
 	return false
-}
-
-// Row is a materialized query row. Cols and Types are aligned with
-// Data. Use Len() to know the column count.
-type Row struct {
-	Cols  []string
-	Types []int
-	Data  []any
 }
 
 // Len returns the number of columns.

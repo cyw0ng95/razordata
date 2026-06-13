@@ -199,11 +199,22 @@ func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 	}
 
 	exe := s.engine.Executor()
-	rs, err := exe.Query(ctx, s.sql, args...)
+	stream, err := exe.QueryStream(ctx, s.sql, args...)
 	if err != nil {
 		return nil, err
 	}
-	return &AP.Rows{Cols: rs.Cols, Types: rs.Types}, nil
+	next := func() (AP.Row, error) {
+		row, err := stream.Next()
+		if err != nil {
+			if err == executor.ErrNoRows {
+				return AP.Row{}, AP.ErrNoRows
+			}
+			return AP.Row{}, err
+		}
+		return AP.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
+	}
+	closer := func() error { return stream.Close() }
+	return AP.NewRows(stream.Cols(), stream.Types(), next, closer), nil
 }
 
 // Exec executes the prepared statement as a DML/DDL.

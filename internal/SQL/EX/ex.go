@@ -687,3 +687,187 @@ func extractResult(op Operator) (Result, error) {
 	}
 	return Result{}, nil
 }
+
+// QueryStream runs a SELECT and returns a streaming iterator that
+// yields rows one at a time. The caller MUST call Close on the
+// returned iterator to release the underlying plan resources.
+// REQ000348.
+func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*streamIterator, error) {
+	parser := PS.NewParser(sql)
+	stmt, err := parser.Parse()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if this is a DML with RETURNING clause
+	if hasReturning(stmt) {
+		op, err := e.buildWriterOp(stmt)
+		if err != nil {
+			return nil, err
+		}
+		propagateParams(op, args)
+		// Collect first row to discover schema
+		firstRow, firstErr := op.Next(ctx)
+		if firstErr != nil && firstErr != ErrNoRows {
+			op.Close()
+			return nil, firstErr
+		}
+		if firstErr == ErrNoRows {
+			// No RETURNING rows; return empty iterator
+			op.Close()
+			return &streamIterator{
+				cols:  nil,
+				types: nil,
+				rowCh: nil,
+				done:  true,
+			}, nil
+		}
+		// Wrap in a buffered channel so the caller can pull rows
+		// sequentially after the first.
+		rowCh := make(chan Row, 16)
+		rowCh <- firstRow
+		closed := false
+		var closeOnce sync.Once
+		closer := func() error {
+			closeOnce.Do(func() {
+				closed = true
+			})
+			return op.Close()
+		}
+		go func() {
+			defer close(rowCh)
+			for {
+				if closed {
+					return
+				}
+				row, err := op.Next(ctx)
+				if err != nil {
+					return
+				}
+				select {
+				case rowCh <- row:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+		return &streamIterator{
+			cols:   append([]string(nil), firstRow.Cols...),
+			types:  append([]int(nil), firstRow.Types...),
+			rowCh:  rowCh,
+			closer: closer,
+		}, nil
+	}
+
+	plan, err := e.planner.Plan(stmt)
+	if err != nil {
+		return nil, err
+	}
+	if plan == nil || plan.root == nil {
+		return nil, errors.New("ex: plan produced no root")
+	}
+	propagateParams(plan.root, args)
+	propagatePlanner(plan.root, e.planner)
+	currentSubqueryPlanner = e.planner
+	// Note: currentSubqueryPlanner is process-global so we cannot
+	// clear it here without race risk; the goroutine-spawning version
+	// below is responsible for managing its lifetime.
+
+	// Read first row to discover schema
+	row, err := plan.root.Next(ctx)
+	if err != nil {
+		if err == ErrNoRows {
+			plan.root.Close()
+			currentSubqueryPlanner = nil
+			return &streamIterator{
+				cols:  nil,
+				types: nil,
+				rowCh: nil,
+				done:  true,
+			}, nil
+		}
+		plan.root.Close()
+		currentSubqueryPlanner = nil
+		return nil, err
+	}
+	cols := append([]string(nil), row.Cols...)
+	types := append([]int(nil), row.Types...)
+
+	rowCh := make(chan Row, 16)
+	rowCh <- row
+	closed := false
+	var closeMu sync.Mutex
+	closer := func() error {
+		closeMu.Lock()
+		defer closeMu.Unlock()
+		if closed {
+			return nil
+		}
+		closed = true
+		currentSubqueryPlanner = nil
+		return plan.root.Close()
+	}
+	go func() {
+		defer close(rowCh)
+		for {
+			closeMu.Lock()
+			if closed {
+				closeMu.Unlock()
+				return
+			}
+			closeMu.Unlock()
+			r, err := plan.root.Next(ctx)
+			if err != nil {
+				return
+			}
+			select {
+			case rowCh <- r:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return &streamIterator{
+		cols:   cols,
+		types:  types,
+		rowCh:  rowCh,
+		closer: closer,
+	}, nil
+}
+
+// streamIterator is the streaming row iterator returned by
+// Executor.QueryStream. It buffers one row at a time so the caller can
+// discover the schema before draining the rest.
+// REQ000348.
+type streamIterator struct {
+	cols   []string
+	types  []int
+	rowCh  chan Row
+	closer func() error
+	done   bool
+	mu     sync.Mutex
+}
+
+func (s *streamIterator) Cols() []string  { return s.cols }
+func (s *streamIterator) Types() []int    { return s.types }
+func (s *streamIterator) Next() (Row, error) {
+	if s == nil || s.done || s.rowCh == nil {
+		return Row{}, ErrNoRows
+	}
+	r, ok := <-s.rowCh
+	if !ok {
+		s.done = true
+		return Row{}, ErrNoRows
+	}
+	return r, nil
+}
+func (s *streamIterator) Close() error {
+	if s == nil || s.done {
+		return nil
+	}
+	if s.closer != nil {
+		return s.closer()
+	}
+	s.done = true
+	return nil
+}
