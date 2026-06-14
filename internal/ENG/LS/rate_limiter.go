@@ -105,3 +105,15 @@ func (cm *compactionManager) SetCompactionStyle(s CompactionStyle) {
 func (cm *compactionManager) CompactionStyle() CompactionStyle {
 	return CompactionStyle(cm.style.Load())
 }
+
+// SetPlacementPolicy installs the tier-aware placement policy.
+// Pass nil to use a single device for all levels. REQ000300.
+func (cm *compactionManager) SetPlacementPolicy(pp PlacementPolicy) {
+	cm.placementPolicy = pp
+}
+
+// PlacementPolicy returns the active placement policy, or nil.
+// REQ000300.
+func (cm *compactionManager) PlacementPolicy() PlacementPolicy {
+	return cm.placementPolicy
+}

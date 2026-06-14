@@ -2,7 +2,8 @@
 
 package bf
 
-// madviseDontNeed is a no-op on non-Linux platforms. Tests use the
-// package-level madviseFn var on Linux; this stub keeps the build
-// matrix clean.
+// madviseDontNeed is a no-op on non-Linux platforms.
 func madviseDontNeed(buf []byte) {}
+
+// madviseHugePage is a no-op on non-Linux platforms. REQ000302.
+func madviseHugePage(buf []byte) {}

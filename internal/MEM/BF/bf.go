@@ -87,6 +87,10 @@ type BufferPool interface {
 	Close() error
 	// Warm reads the hint file and eagerly loads blocks into the cache.
 	Warm(ctx context.Context) error
+	// SetPMemFile attaches a PMem file for cold-page spill. Pass nil
+	// to detach. REQ000302. Returns ErrNotLoaded if the pool is
+	// already closed.
+	SetPMemFile(pm *PMemFile) error
 }
 
 // bufferSlot holds an in-memory block with eviction metadata.
@@ -101,6 +105,9 @@ type bufferSlot struct {
 	// nodeID is the NUMA node where the slot's data was first
 	// touched (REQ000309, iter-27). 0 on non-NUMA hosts.
 	nodeID atomic.Int32
+	// REQ000302: tier where slot data currently lives.
+	// 0 = DRAM (default), 1 = PMem (cold spill).
+	tier atomic.Uint32
 }
 
 // bufferHashTable provides O(1) lookup by blockID.
@@ -128,6 +135,10 @@ type bp struct {
 
 	closeOnce sync.Once
 	closeErr  error
+
+	// REQ000302: optional PMem file for cold-page spill. When nil,
+	// all pages are cached in DRAM only.
+	pmem *PMemFile
 }
 
 var _ BufferPool = (*bp)(nil)
@@ -290,6 +301,9 @@ allocated:
 	if data == nil {
 		data = make([]byte, BlockSize)
 	}
+	// REQ000302: hint the kernel to use transparent huge pages for
+	// this buffer, reducing TLB misses on large sequential scans.
+	madviseHugePage(data)
 
 	// Insert loading slot, then release lock immediately.
 	// We do NOT hold the lock during disk I/O.
@@ -655,6 +669,16 @@ func appendVarint(buf []byte, v uint64) []byte {
 	}
 	buf = append(buf, byte(v))
 	return buf
+}
+
+// SetPMemFile implements BufferPool. REQ000302.
+func (b *bp) SetPMemFile(pm *PMemFile) error {
+	b.closeOnce.Do(func() {})
+	if b.closeErr != nil {
+		return b.closeErr
+	}
+	b.pmem = pm
+	return nil
 }
 
 // ChecksumVerify verifies data against a stored CRC32 checksum.

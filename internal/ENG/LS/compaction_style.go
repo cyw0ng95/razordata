@@ -58,6 +58,50 @@ func (s CompactionStyle) IsTiered(level int) bool {
 // tiered compaction fires. REQ000320.
 const tierRunThreshold = 4
 
+// StoragePolicy selects the device-tier strategy for placing SST files.
+// REQ000300.
+type StoragePolicy int
+
+const (
+	// StoragePolicyUniform places all levels on the same device (default).
+	StoragePolicyUniform StoragePolicy = iota
+	// StoragePolicyTiered places levels on devices according to
+	// PlacementPolicy: lower levels (hot) on fast devices, higher
+	// levels (cold) on slower/cheaper devices.
+	StoragePolicyTiered
+)
+
+// String returns the lowercase name of the storage policy.
+func (p StoragePolicy) String() string {
+	switch p {
+	case StoragePolicyUniform:
+		return "uniform"
+	case StoragePolicyTiered:
+		return "tiered"
+	}
+	return "uniform"
+}
+
+// PlacementPolicy maps a compaction output level to a device base path.
+// An empty map or a missing level uses the engine directory. If tiered
+// placement is active, output SST files for level N are written to the
+// mapped path (with an sst/ subdirectory). A symlink is created in the
+// engine dir so the merge iterator finds the file transparently.
+// REQ000300.
+type PlacementPolicy map[int]string
+
+// DeviceDir returns the device path for level, or the fallback dir if
+// no policy entry exists.
+func (pp PlacementPolicy) DeviceDir(level int, fallback string) string {
+	if pp == nil {
+		return fallback
+	}
+	if d, ok := pp[level]; ok && d != "" {
+		return d
+	}
+	return fallback
+}
+
 // shouldCompact reports whether a compaction is needed at the given
 // level, given the style and the number of files at that level plus
 // the cumulative size in bytes.
