@@ -8,7 +8,6 @@
 | REQ000162 | SQL | Plan memoization with SHA256(AST binary encoding) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — canonical AST serialization |
 | REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | medium | M | iter-04 (compaction) | `ENG/LS/compaction.go` — size budget monitoring |
 | REQ000185 | SQL/EX | Plan memoization with SHA256 canonical AST binary encoding (not JSON) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — implement binary serialization per SQL.md:215 |
-| REQ000074 | SQL | `IndexScan` real seek (replace prefix-scan fallback) | high | M | iter-08 (IndexScan op) | `SQL/EX/operators.go` — call into real `ENG/ID/` once iter-21 ships, or stub |
 | REQ000034 | WAL | WAL compression (lz4) | low | M | iter-03 (WAL writer) | `WAL/WR/encode.go` |
 | REQ000045 | ENG | Secondary indexes (non-PK columns; lookup by `__idx__:<table>:<col>:<val>`) | low | XL | iter-12 (catalog), iter-21 (ID) | new `ENG/ID/` package, `SQL/PL` index selection |
 | REQ000048 | ENG | Table registry persistence (`ENG/TB/`) | medium | L | iter-12 (catalog basic) | new `ENG/TB/tb.go` |
@@ -21,14 +20,10 @@
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
 | REQ000244 | SQL/EX | ALTER TABLE executor (online schema migration) | medium | L | REQ000243 | `SQL/EX/alter.go` (new) — `ENG/LS` schema-aware readers |
-| REQ000295 | FIL | io_uring async I/O wrapper (SQ/CQ submission, SQPOLL mode, Linux-only with IOCP/kqueue fallback) | critical | L | iter-01 (FIL), `golang.org/x/sys/unix` available | new `FIL/IO/uring.go`; cross-platform dispatch in `FIL/FS/fs.go` |
-| REQ000296 | FIL | Direct I/O + io_uring fixed-file descriptor (bypass OS page cache, reduce fd table lookups) | high | M | REQ000295, iter-01 (O_DIRECT) | `FIL/FS/fs.go` — `IOSQE_FIXED_FILE` flags; integration with `O_DIRECT` fallback |
 | REQ000300 | ENG | Tier-aware storage scheduler (`Options.StoragePolicy`: hot=NVMe, cold=HDD/S3, hybrid; per-level device hint) | medium | L | iter-04 (LSM), iter-12 (catalog) | `ENG/LS/compaction.go` — `PlacementPolicy` per level; `Options.StoragePolicy` field |
-| REQ000301 | WAL | Async fsync + io_uring linked submit (write→fsync chained via `IOSQE_IO_LINK`, lower batch-commit latency) | high | S | REQ000295, iter-17 (BatchSync) | `WAL/WR/fl.go` — `BatchSyncWithUring` |
 | REQ000302 | MEM | PMem-aware buffer pool (DRAM hot slots + mmap'd PMem cold slots; `MADV_HUGEPAGE` for 2MB pages) | medium | L | iter-02 (buffer pool) | `MEM/BF/bf.go` — tier selection on `Pin`; `MEM/BF/pmem.go` (new) |
 | REQ000305 | TXN | Generational arena with Young/Old split (young bump-allocate, old epoch-reclaim; reduces epoch manager pressure) | medium | L | iter-05 (arena), `REQ000064` | `TXN/MV/arena.go` — generation promotion policy |
 | REQ000307 | TXN | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | critical | XL | iter-20 (commit protocol), `REQ000175` | `TXN/MV/occ.go` (new) — `Validation` phase rewritten; conflict-free reorder |
-| REQ000309 | ENG | NUMA-aware data placement (buffer pool slot node id, worker CPU pin, first-touch arena allocation) | high | M | iter-04 (LSM), iter-02 (buffer pool) | `ENG/LS/memtable.go` — `numactl` API integration; `MEM/BF/bf.go` NUMA hint field |
 | REQ000311 | SQL | Operator codegen (`go generate` template → specialized Go funcs; inline caches eliminate virtual dispatch) | medium | XL | REQ000310, iter-08 (operators) | `SQL/EX/codegen/` (new) — templated operator skeletons; build tag for codegen |
 | REQ000313 | SQL | Adaptive query compilation (first 2 invocations interpreted, hot path swaps to JIT via `go generate` template; 2-5x OLAP speedup) | medium | XL | REQ000311 | `SQL/EX/adqc.go` (new) — hot-path detector + plan swap |
 | REQ000315 | SQL | Learned cardinality estimation (CardinalityNet/MSCN; bootstraps from existing histograms) | medium | L | REQ000085 (histogram), iter-23 (ANALYZE) | `SQL/PL/learned.go` (new) — ONNX runtime or pure-Go MLP; training data from ANALYZE |
@@ -171,14 +166,10 @@ These 10 functions were implemented in iter-26 before the REQ matrix was created
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
 | REQ000244 | SQL/EX | ALTER TABLE executor (online schema migration) | medium | L | REQ000243 | `SQL/EX/alter.go` (new) — `ENG/LS` schema-aware readers |
-| REQ000295 | FIL | io_uring async I/O wrapper (SQ/CQ submission, SQPOLL mode, Linux-only with IOCP/kqueue fallback) | critical | L | iter-01 (FIL), `golang.org/x/sys/unix` available | new `FIL/IO/uring.go`; cross-platform dispatch in `FIL/FS/fs.go` |
-| REQ000296 | FIL | Direct I/O + io_uring fixed-file descriptor (bypass OS page cache, reduce fd table lookups) | high | M | REQ000295, iter-01 (O_DIRECT) | `FIL/FS/fs.go` — `IOSQE_FIXED_FILE` flags; integration with `O_DIRECT` fallback |
 | REQ000300 | ENG | Tier-aware storage scheduler (`Options.StoragePolicy`: hot=NVMe, cold=HDD/S3, hybrid; per-level device hint) | medium | L | iter-04 (LSM), iter-12 (catalog) | `ENG/LS/compaction.go` — `PlacementPolicy` per level; `Options.StoragePolicy` field |
-| REQ000301 | WAL | Async fsync + io_uring linked submit (write→fsync chained via `IOSQE_IO_LINK`, lower batch-commit latency) | high | S | REQ000295, iter-17 (BatchSync) | `WAL/WR/fl.go` — `BatchSyncWithUring` |
 | REQ000302 | MEM | PMem-aware buffer pool (DRAM hot slots + mmap'd PMem cold slots; `MADV_HUGEPAGE` for 2MB pages) | medium | L | iter-02 (buffer pool) | `MEM/BF/bf.go` — tier selection on `Pin`; `MEM/BF/pmem.go` (new) |
 | REQ000305 | TXN | Generational arena with Young/Old split (young bump-allocate, old epoch-reclaim; reduces epoch manager pressure) | medium | L | iter-05 (arena), `REQ000064` | `TXN/MV/arena.go` — generation promotion policy |
 | REQ000307 | TXN | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | critical | XL | iter-20 (commit protocol), `REQ000175` | `TXN/MV/occ.go` (new) — `Validation` phase rewritten; conflict-free reorder |
-| REQ000309 | ENG | NUMA-aware data placement (buffer pool slot node id, worker CPU pin, first-touch arena allocation) | high | M | iter-04 (LSM), iter-02 (buffer pool) | `ENG/LS/memtable.go` — `numactl` API integration; `MEM/BF/bf.go` NUMA hint field |
 | REQ000311 | SQL | Operator codegen (`go generate` template → specialized Go funcs; inline caches eliminate virtual dispatch) | medium | XL | REQ000310, iter-08 (operators) | `SQL/EX/codegen/` (new) — templated operator skeletons; build tag for codegen |
 | REQ000313 | SQL | Adaptive query compilation (first 2 invocations interpreted, hot path swaps to JIT via `go generate` template; 2-5x OLAP speedup) | medium | XL | REQ000311 | `SQL/EX/adqc.go` (new) — hot-path detector + plan swap |
 | REQ000315 | SQL | Learned cardinality estimation (CardinalityNet/MSCN; bootstraps from existing histograms) | medium | L | REQ000085 (histogram), iter-23 (ANALYZE) | `SQL/PL/learned.go` (new) — ONNX runtime or pure-Go MLP; training data from ANALYZE |
@@ -501,4 +492,9 @@ REQ000439 | SQL/PS | `EXPLAIN` statement not implemented — `EXPLAIN SELECT * F
 | REQ000335 | TEST | CI workflow: PR + nightly; run subset; upload JUnit; post pass-rate PR comment vs `main` | iter-25 (deferred — no `.github/` in repo) |
 | REQ000336 | TEST | Developer guide: how to run, add cases, re-baseline coverage | iter-25 |
 | REQ000337 | TEST | Architecture note lives in iteration doc (not `design/`); test harness is operational, not architectural | iter-25 |
+| REQ000074 | SQL/EX | IndexScan real seek (replace prefix-scan fallback; range bounds `>`, `>=`, `BETWEEN`, inclusive/exclusive) | iter-27 (Phase 6) |
+| REQ000295 | FIL | io_uring async I/O wrapper (raw syscall shim Linux-only with `uring_other.go` fallback; `IORING_ENTER_GETEVENTS` constant) | iter-27 (Phase 6) |
+| REQ000296 | FIL | Direct I/O + fixed-fd (`IOSQE_FIXED_FILE` constant, `Ring.RegisterFixedFile()`, `Ring.UnregisterFixedFile()`) | iter-27 (Phase 6) |
+| REQ000301 | WAL | Async fsync (buffered channel with `AsyncSyncResult`, `inflightFsyncs` WaitGroup, `Close` blocks on in-flight fsyncs) | iter-27 (Phase 6) |
+| REQ000309 | ENG | NUMA-aware placement (`NodeCount`, `IsAvailable`, `CurrentNode`, `PinWorker`, `bufferSlot.nodeID`, subcompaction worker `LockOSThread`) | iter-27 (Phase 6) |
 ---
