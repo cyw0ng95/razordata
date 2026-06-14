@@ -22,26 +22,26 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 
 ## Iterations Overview
 
-| # | Name | Subsystem | Clusters | Tests | Status |
+| # | Name | Subsystem | Clusters | Status |
 |---|---|---|---|---|---|
-| 0 | LOG | Structured logging | `LG`, `HK` | 108 | done |
-| 1 | FIL | File I/O | `DF`, `MF`, `LF`, `FS` | 187 | done |
-| 2 | MEM | Buffer pool | `BF`, `SP` | 82 | done |
-| 3 | WAL | Write-Ahead Log | `WR`, `FL`, `RP` | 132 | done |
-| 4 | ENG/Memtable+SST | Lock-free skiplist + memtable + SST | `LS` | 203 | done |
-| 5 | TXN/MVCC | Version chain + per-thread arena | `MV`, `LC`, `SN` | 66 | done |
-| 6 | TXN/Protocol | Transaction slot + commit + WAL | `VL` | 93 | done |
-| 7 | SQL/Core | Lexer + parser + rewriter | `LX`, `PS`, `RE` | 102 | done |
-| 8 | SQL/Execute | Planner + executor | `PL`, `EX` | 67 | done |
-| 9 | SYS+Integration | Public API + end-to-end | `AP`, `SY`, `SE`, `TX`, `ST` | 57 | done (v0.6.3) |
-| 10 | NOT NULL / DEFAULT | Column constraints end-to-end | `PS`, `EX` | 16 | done (v0.7.0) |
-| 11 | UNIQUE Constraint | Single + composite + multi-clause UNIQUE | `PS`, `EX` | 11 | done (v0.8.0); I/O refinements pending v0.8.1 |
-| 11b | I/O refinements | MADV_DONTNEED + mmap BlockDevice | `MEM/BF`, `FIL/DF` | 4 | done (v0.8.1) |
-| 12 | Catalog Persistence | System catalog (single-file, atomic rename, schema versioning) | `LS`, `EX`, `SY` | done (v0.9.0); 4 pre-existing LS bugs (REQ000186–189) deferred to iter-12b |
-| 13 | WAL Corruption Recovery | Segment header + envelope CRC + bounded resync + Stats | `WAL/WR`, `WAL/RP` | done (v0.10.0); coverage 72.5% (target 85%) — see REQ000191 |
+| 0 | LOG | Structured logging | `LG`, `HK` | done |
+| 1 | FIL | File I/O | `DF`, `MF`, `LF`, `FS` | done |
+| 2 | MEM | Buffer pool | `BF`, `SP` | done |
+| 3 | WAL | Write-Ahead Log | `WR`, `FL`, `RP` | done |
+| 4 | ENG/Memtable+SST | Lock-free skiplist + memtable + SST | `LS` | done |
+| 5 | TXN/MVCC | Version chain + per-thread arena | `MV`, `LC`, `SN` | done |
+| 6 | TXN/Protocol | Transaction slot + commit + WAL | `VL` | done |
+| 7 | SQL/Core | Lexer + parser + rewriter | `LX`, `PS`, `RE` | done |
+| 8 | SQL/Execute | Planner + executor | `PL`, `EX` | done |
+| 9 | SYS+Integration | Public API + end-to-end | `AP`, `SY`, `SE`, `TX`, `ST` | done (v0.6.3) |
+| 10 | NOT NULL / DEFAULT | Column constraints end-to-end | `PS`, `EX` | done (v0.7.0) |
+| 11 | UNIQUE Constraint | Single + composite + multi-clause UNIQUE | `PS`, `EX` | done (v0.8.0) |
+| 11b | I/O refinements | MADV_DONTNEED + mmap BlockDevice | `MEM/BF`, `FIL/DF` | done (v0.8.1) |
+| 12 | Catalog Persistence | System catalog (single-file, atomic rename, schema versioning) | `LS`, `EX`, `SY` | done (v0.9.0) |
+| 13 | WAL Corruption Recovery | Segment header + envelope CRC + bounded resync + Stats | `WAL/WR`, `WAL/RP` | done (v0.10.0) |
 | 14 | Graceful Shutdown Completion | 6-phase sequence + per-subsystem Close + active-tx wait + config validation | `SYS/SY`, `SYS/AP`, `TXN/VL`, `ENG/LS`, `LOG/HK` | done (v0.10.1) |
 | 15 | Finish-Line + iter-12b Quick Bugs | Session pooling, read-only mode, WriteBuffer, hazard pointer fix, iter-12b bug fixes (sstIterator, nextFileID), WAL stats surfacing | `SYS/SE`, `SYS/SY`, `WAL/FL`, `WAL/WR`, `TXN/LC`, `ENG/LS` | done (v0.11.0) |
-|16 | ParamBinding + iter-12b Path Fix + Quick Wins | binding + type coercion, SST path unification, bloom dynamic sizing, arena-on-slot, gzip log rotation, WAL/RP coverage | `SQL/EX`, `SYS/ST`, `ENG/LS`, `LOG/LG`, `TXN/VL`, `WAL/RP` | done (v0.12.0) |
+| 16 | ParamBinding + iter-12b Path Fix + Quick Wins | binding + type coercion, SST path unification, bloom dynamic sizing, arena-on-slot, gzip log rotation, WAL/RP coverage | `SQL/EX`, `SYS/ST`, `ENG/LS`, `LOG/LG`, `TXN/VL`, `WAL/RP` | done (v0.12.0) |
 | 17 | Storage Benchmarks + Quick Wins | ENG/LS benchmarks, WAL encoding, LOG docs, SQL/RE coverage lift | `ENG/LS`, `WAL/WR`, `LOG/HK`, `SQL/RE` | done (v0.13.0) |
 | 18 | Storage Quality | BloomFilter alignment, per-thread arena init, batch commit, clock-sweep audit, plan memoization | `ENG/LS`, `TXN/MV`, `WAL/FL`, `MEM/BF`, `SQL/PL` | done (v0.14.0) |
 | 19 | SIMD Vectorization + Parallel Query | Batch execution, columnar memory, SIMD predicates, parallel sort | `SQL/EX` | done (v0.15.0) |
