@@ -39,9 +39,9 @@ DONE REQ000126 | SQL | Foreign keys (REFERENCES, ON DELETE/UPDATE) | high | L | 
 DONE REQ000246 | SQL/PS | Parse TRIGGER (`CREATE TRIGGER`, `BEFORE/AFTER`, `FOR EACH ROW`) | low | L | iter-07 | `SQL/PS/ps.go` — `Trigger` AST, `parseTrigger` |
 DONE REQ000247 | SQL/EX | TRIGGER executor (fire on INSERT/UPDATE/DELETE) | low | L | REQ000246 | `SQL/EX/trigger.go` (new) — hook into writers |
 DONE REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | medium | S | iter-21 | `SQL/PS/ps.go` — `Vacuum`, `Analyze` AST |
-| REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
+DONE REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
 DONE REQ000286 | SQL/EX | Window materialize context propagation — uses context.Background() instead of caller's ctx | medium | S | iter-23 | `SQL/EX/window.go:55-77` |
-| REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
+DONE REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
 | REQ000295 | FIL | io_uring async I/O wrapper (SQ/CQ submission, SQPOLL mode, Linux-only with IOCP/kqueue fallback) | critical | L | iter-01 (FIL), `golang.org/x/sys/unix` available | new `FIL/IO/uring.go`; cross-platform dispatch in `FIL/FS/fs.go` |
 | REQ000296 | FIL | Direct I/O + io_uring fixed-file descriptor (bypass OS page cache, reduce fd table lookups) | high | M | REQ000295, iter-01 (O_DIRECT) | `FIL/FS/fs.go` — `IOSQE_FIXED_FILE` flags; integration with `O_DIRECT` fallback |
 DONE REQ000298 | ENG | LSM-aware cross-block shared dictionary (multiple data blocks in one SST share a trained dict) | medium | M | REQ000297 | `ENG/LS/sst_writer.go` — write dict in SST meta block; reader caches per-SST dict |
@@ -66,10 +66,10 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
-| REQ000434 | SQL/PS | `NOT BETWEEN` syntax error — `SELECT * FROM t1 WHERE d NOT BETWEEN 110 AND 150` emits `ps: syntax error at line 1 col 26: expected expression, got NOT` | high | S | iter-26.11 SLT gap survey (`TestSLT_GapSurvey`) | `SQL/PS/ps.go` parseBetween |
+DONE REQ000434 | SQL/PS | `NOT BETWEEN` syntax error — `SELECT * FROM t1 WHERE d NOT BETWEEN 110 AND 150` emits `ps: syntax error at line 1 col 26: expected expression, got NOT` | high | S | iter-26.11 SLT gap survey (`TestSLT_GapSurvey`) | `SQL/PS/ps.go` parseBetween |
 | REQ000437 | SQL/EX | `count(DISTINCT col)` not supported — `SELECT count(DISTINCT a) FROM t1` fails with `expected expression, got DISTINCT` (parser error) | high | M | iter-26.11 SLT gap survey | `SQL/PS/ps.go` parseAggregateFunc, `SQL/EX/aggregate.go` |
-| REQ000438 | SQL/EX | Scalar functions emit `ex: eval error` instead of useful error — `substr('hello',1,3)`, `trim('  x  ')`, `abs(-5)`, `typeof(42)` all fail with generic "ex: eval error" when called via Query path | medium | S | iter-26.11 SLT gap survey | `SQL/EX/eval.go` — verify substr/trim/abs/typeof dispatches correctly when called via Query() not Exec() |
-| REQ000439 | SQL/PS | `EXPLAIN` statement not implemented — `EXPLAIN SELECT * FROM t1` fails with `syntax error at col 16: expected expression, got *` | medium | S | iter-26.11 SLT gap survey | `SQL/PS/ps.go` — add EXPLAIN SELECT support |
+DONE REQ000438 | SQL/EX | Scalar functions emit `ex: eval error` instead of useful error — `substr('hello',1,3)`, `trim('  x  ')`, `abs(-5)`, `typeof(42)` all fail with generic "ex: eval error" when called via Query path | medium | S | iter-26.11 SLT gap survey | `SQL/EX/eval.go` — verify substr/trim/abs/typeof dispatches correctly when called via Query() not Exec() |
+DONE REQ000439 | SQL/PS | `EXPLAIN` statement not implemented — `EXPLAIN SELECT * FROM t1` fails with `syntax error at col 16: expected expression, got *` | medium | S | iter-26.11 SLT gap survey | `SQL/PS/ps.go` — add EXPLAIN SELECT support |
 | REQ000442 | SQL/EX | 30/42 common SLT patterns pass; the 12 failures above are the highest-impact gaps. Recommended priority order: REQ000434 (NOT BETWEEN) > REQ000437 (count DISTINCT) > REQ000436 (recursive CTE) > REQ000438 (function eval routing) | high | L | iter-26.11 SLT gap survey | n/a — survey result |
 | REQ000443 | WAL/WR | `encodeRecord` had 4 allocs/record (body temp slice + final out slice + 2 varint slices). Optimized to 2 allocs/record via pre-sized body and out slices; CRC computed over body only (matching decoder's slice). Bench: 217ns→148ns (-32%), 168B→160B, 4→2 allocs | medium | S | iter-26.12 SLT gap survey → encode refactor | `internal/WAL/WR/encode.go` encodeRecord
 
@@ -560,8 +560,8 @@ These 10 functions were implemented in iter-26 before the REQ matrix was created
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
 | REQ000244 | SQL/EX | ALTER TABLE executor (online schema migration) | medium | L | REQ000243 | `SQL/EX/alter.go` (new) — `ENG/LS` schema-aware readers |
-| REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
-| REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
+DONE REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
+DONE REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
 | REQ000295 | FIL | io_uring async I/O wrapper (SQ/CQ submission, SQPOLL mode, Linux-only with IOCP/kqueue fallback) | critical | L | iter-01 (FIL), `golang.org/x/sys/unix` available | new `FIL/IO/uring.go`; cross-platform dispatch in `FIL/FS/fs.go` |
 | REQ000296 | FIL | Direct I/O + io_uring fixed-file descriptor (bypass OS page cache, reduce fd table lookups) | high | M | REQ000295, iter-01 (O_DIRECT) | `FIL/FS/fs.go` — `IOSQE_FIXED_FILE` flags; integration with `O_DIRECT` fallback |
 | REQ000300 | ENG | Tier-aware storage scheduler (`Options.StoragePolicy`: hot=NVMe, cold=HDD/S3, hybrid; per-level device hint) | medium | L | iter-04 (LSM), iter-12 (catalog) | `ENG/LS/compaction.go` — `PlacementPolicy` per level; `Options.StoragePolicy` field |
