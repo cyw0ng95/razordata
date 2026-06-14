@@ -92,6 +92,17 @@ type Checkpoint struct {
 	ActiveTXNs       []uint64
 }
 
+// AsyncSyncResult is the value delivered on the channel returned
+// by SyncAsync. REQ000301 (iter-27): async fsync decouples the
+// fsync latency from the caller's commit path.
+type AsyncSyncResult struct {
+	// Err is the fsync error (or nil).
+	Err error
+	// SyncedLSN is the highest LSN that is now durable. 0 if
+	// nothing was fsynced.
+	SyncedLSN uint64
+}
+
 // Writer appends records to the WAL (R03).
 type Writer interface {
 	// Append encodes and writes a batch of records, returning the LSN
@@ -103,6 +114,14 @@ type Writer interface {
 	// (R22) and safe to call concurrently from multiple goroutines
 	// (R21).
 	Sync() error
+	// SyncAsync issues the fsync on a background goroutine and
+	// returns a channel that delivers the result. The caller may
+	// proceed with the next batch's append while the previous
+	// fsync is still in flight. REQ000301 (iter-27).
+	//
+	// Multiple in-flight SyncAsync calls are tracked via an
+	// internal WaitGroup; Close blocks until they all complete.
+	SyncAsync() (<-chan AsyncSyncResult, error)
 	// Close flushes pending writes, fsyncs, and releases resources.
 	// Idempotent (R22).
 	Close() error
@@ -130,6 +149,11 @@ type writer struct {
 	seg    *logSegment
 	closed atomicBool
 	synced atomic.Uint64 // highest LSN that has been fsynced
+	// inflightFsyncs is a WaitGroup tracked by inflightFsyncsCnt.
+	// REQ000301 (iter-27): Close blocks on this group to ensure
+	// no async fsync is using the segment FD after Close returns.
+	inflightFsyncs    sync.WaitGroup
+	inflightFsyncsCnt atomic.Int64
 	// maxRecordSize is the per-record-size cap used by Append. Zero
 	// means "use SegSize" (the default for production writers). Tests
 	// that need to exercise the "record too large" code path override
@@ -294,6 +318,80 @@ func (w *writer) syncLocked() error {
 	return nil
 }
 
+// SyncAsync issues the fsync on a background goroutine and
+// returns a channel that delivers the result when the fsync
+// completes. REQ000301 (iter-27): the caller's commit path
+// can proceed with the next batch's append while the previous
+// fsync is still in flight, reducing per-commit latency.
+//
+// The returned channel is closed by the goroutine after delivery
+// (it has buffer size 1; the goroutine does not block).
+//
+// Multiple in-flight SyncAsync calls are supported. The internal
+// WaitGroup is incremented before the goroutine starts and
+// decremented after fsync completes; Close waits on this group
+// to ensure the segment FD is not reused while a goroutine is
+// still fsyncing it.
+func (w *writer) SyncAsync() (<-chan AsyncSyncResult, error) {
+	ch := make(chan AsyncSyncResult, 1)
+	w.mu.Lock()
+	if w.closed.isSet() {
+		w.mu.Unlock()
+		// Closed: deliver a no-op result synchronously.
+		ch <- AsyncSyncResult{}
+		close(ch)
+		return ch, nil
+	}
+	// Snapshot what needs to be fsynced under the lock: segment
+	// number, the high-water mark, and a reference to the FH.
+	if w.seg == nil {
+		w.mu.Unlock()
+		ch <- AsyncSyncResult{}
+		close(ch)
+		return ch, nil
+	}
+	if len(w.seg.buf) == 0 {
+		// Nothing to fsync; deliver cached synced LSN.
+		ch <- AsyncSyncResult{SyncedLSN: w.synced.Load()}
+		w.mu.Unlock()
+		close(ch)
+		return ch, nil
+	}
+	pendingEnd := w.seg.writeOff
+	segNumber := w.seg.number
+	fd := w.seg.fh.FD
+	// Flush the buffer to the FD before releasing the lock, so
+	// the goroutine sees a stable view of the FD's state.
+	if err := w.flushBufferLocked(); err != nil {
+		w.mu.Unlock()
+		ch <- AsyncSyncResult{Err: err}
+		close(ch)
+		return ch, nil
+	}
+	w.inflightFsyncs.Add(1)
+	w.inflightFsyncsCnt.Add(1)
+	w.mu.Unlock()
+
+	go func() {
+		defer w.inflightFsyncs.Done()
+		defer w.inflightFsyncsCnt.Add(-1)
+		err := unix.Fsync(fd)
+		if err != nil && w.log != nil {
+			w.log.Error("wr.sync_async", "seg", segNumber, "err", err)
+		}
+		syncedLSN := uint64(0)
+		if err == nil {
+			syncedLSN = LSNFor(segNumber, uint64(pendingEnd))
+			if syncedLSN > w.synced.Load() {
+				w.synced.Store(syncedLSN)
+			}
+		}
+		ch <- AsyncSyncResult{Err: err, SyncedLSN: syncedLSN}
+		close(ch)
+	}()
+	return ch, nil
+}
+
 // Close flushes any buffered writes, fsyncs the active segment,
 // returns the buffer to the pool, and releases the segment FD
 // (R22). After Close returns, Append returns an error and Sync is
@@ -343,6 +441,20 @@ func (w *writer) closeLocked() error {
 		if firstErr == nil {
 			firstErr = err
 		}
+	}
+	// 0. REQ000301 (iter-27): wait for any in-flight async
+	// fsyncs to complete before tearing down the segment FD.
+	// Without this, a goroutine could call unix.Fsync on a
+	// stale FD after we've released it to the SegmentManager.
+	// inflightFsyncsCnt is incremented under w.mu (in
+	// SyncAsync); since we hold w.mu here, no new SyncAsync
+	// can start, so the counter is stable.
+	if w.inflightFsyncsCnt.Load() > 0 {
+		// Release the lock while waiting so the async
+		// fsyncs can finish (they don't take w.mu).
+		w.mu.Unlock()
+		w.inflightFsyncs.Wait()
+		w.mu.Lock()
 	}
 	// 1. Flush any in-memory buffer to the segment FD. If the
 	// buffer is empty, this is a no-op (R37). Capture writeOff
