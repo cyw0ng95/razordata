@@ -18,18 +18,11 @@ Columns for selection:
 | REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with design spec |
 | REQ000156 | SQL | Executor cost model integration (design mentions cost estimation, no operator selection based on cost) | medium | M | iter-08 (planner) | `SQL/EX/planner.go` — use cost for operator selection |
 | REQ000159 | TXN | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | medium | M | iter-05 (arena) | `TXN/MV/arena.go` — add lazy init, exhaustion handling |
-DONE REQ000160 | WAL | Batch commit with `sync.WaitGroup` and write barrier (design in FL cluster) | medium | M | iter-03 (WAL) | `WAL/FL/fl.go` — `BatchSync` implementation |
-DONE REQ000161 | MEM | Clock-sweep integration details (atomic hand, refKey update, eviction gating) | medium | S | iter-02 (buffer pool) | audit `MEM/BF/bf.go` — verify matches design |
 | REQ000162 | SQL | Plan memoization with SHA256(AST binary encoding) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — canonical AST serialization |
-DONE REQ000164 | TXN | Epoch manager background goroutine (100ms interval, drain coordination) | high | M | iter-05 (epoch) | `TXN/LC/epoch.go` — add background goroutine if missing |
 | REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | medium | M | iter-04 (compaction) | `ENG/LS/compaction.go` — size budget monitoring |
-DONE REQ000175 | TXN/LC | Fix hazard pointer Publish (store to single slot, not all) and implement actual memory reclamation | high | L | iter-05 (hazard/epoch) | `TXN/LC/hazard.go` fix Publish, `TXN/LC/epoch.go` implement Reclaim wait+free per TXN.md:96-121 |
-DONE REQ000181 | TXN/LC | Fix goroutine ID tracking (use real goroutine identity, not atomic counter) | medium | M | iter-05 (epoch) | `TXN/LC/epoch.go` — proper goroutine tracking per TXN.md:113-121 |
 | REQ000182 | SQL/EX | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | medium | L | iter-08 (Sort) | Create `SQL/EX/sort_parallel.go` per SQL.md:367-372 |
-DONE REQ000183 | SQL/EX | Expression evaluation SIMD (batch predicate EvalBatch function) | medium | M | iter-08 (eval) | `SQL/EX/eval.go` — add vectorized EvalBatch per SQL.md:303-306 |
 | REQ000185 | SQL/EX | Plan memoization with SHA256 canonical AST binary encoding (not JSON) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — implement binary serialization per SQL.md:215 |
 | REQ000126 | SQL | Foreign keys (REFERENCES, ON DELETE/UPDATE) | high | L | iter-11 (UNIQUE), iter-12 (catalog), iter-21 (FKEY index?) | `SQL/PS`, `SQL/EX/constraints.go`, new FK validation in writers |
-DONE REQ000143 | QUAL | `SQL/RE` coverage: 49% → 80%+ | high | M | iter-07 (RE implementation) | `SQL/RE/*_test.go` — fill error-path branches, subquery flatten cases |
 | REQ000074 | SQL | `IndexScan` real seek (replace prefix-scan fallback) | high | M | iter-08 (IndexScan op) | `SQL/EX/operators.go` — call into real `ENG/ID/` once iter-21 ships, or stub |
 | REQ000034 | WAL | WAL compression (lz4) | low | M | iter-03 (WAL writer) | `WAL/WR/encode.go` |
 | REQ000045 | ENG | Secondary indexes (non-PK columns; lookup by `__idx__:<table>:<col>:<val>`) | low | XL | iter-12 (catalog), iter-21 (ID) | new `ENG/ID/` package, `SQL/PL` index selection |
@@ -37,57 +30,32 @@ DONE REQ000143 | QUAL | `SQL/RE` coverage: 49% → 80%+ | high | M | iter-07 (RE
 | REQ000049 | ENG | Schema cluster (`ENG/SC/`) split from LS | low | M | iter-04 | new `ENG/SC/sc.go`; move `TableSchema` from LS |
 | REQ000050 | ENG | Deparser cluster (`ENG/DP/`) split from LS | low | M | iter-04 | new `ENG/DP/dp.go`; move row/block encoding |
 | REQ000064 | TXN | Generational arena (reduce GC pressure vs. single allocation) | low | L | iter-05 (arena) | `TXN/MV/arena.go` |
-DONE REQ000084 | SQL | `RE` subquery planning (not just flatten) | medium | M | iter-07 (RE), iter-08 (Subq op) | `SQL/RE/subq.go`, `SQL/PL/planner.go` |
 | REQ000086 | SQL | Parallel query execution (operators in goroutines, merge via channel) | low | XL | iter-08 (operators) | `SQL/EX/ex.go` — channel-based Next; cancellation hygiene |
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | low | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
-DONE REQ000101 | SYS | Prometheus metrics endpoint (`/metrics` HTTP) | medium | S | iter-00 (MetricHook), iter-100 (server) | `LOG/HK/metric.go` export, `SYS/SV/sv.go` |
 | REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
 | REQ000244 | SQL/EX | ALTER TABLE executor (online schema migration) | medium | L | REQ000243 | `SQL/EX/alter.go` (new) — `ENG/LS` schema-aware readers |
 | REQ000246 | SQL/PS | Parse TRIGGER (`CREATE TRIGGER`, `BEFORE/AFTER`, `FOR EACH ROW`) | low | L | iter-07 | `SQL/PS/ps.go` — `Trigger` AST, `parseTrigger` |
 | REQ000247 | SQL/EX | TRIGGER executor (fire on INSERT/UPDATE/DELETE) | low | L | REQ000246 | `SQL/EX/trigger.go` (new) — hook into writers |
-DONE REQ000248 | SQL/PS | Parse generated columns (`AS (expr) STORED/VIRTUAL`) | low | M | iter-12 | `SQL/PS/ps.go` — `ColDef.Generated` field |
-DONE REQ000249 | SQL/EX | Generated column materialization on INSERT/UPDATE | low | M | REQ000248 | `SQL/EX/writers.go` — compute and store generated values |
 | REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | medium | S | iter-21 | `SQL/PS/ps.go` — `Vacuum`, `Analyze` AST |
-DONE REQ000284 | ENG/ID | BTree delete rebalancing — no merge/redistribute after delete, tree becomes sparse | high | M | iter-23 | `ENG/ID/id.go:414-437` |
 | REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
 | REQ000286 | SQL/EX | Window materialize context propagation — uses context.Background() instead of caller's ctx | medium | S | iter-23 | `SQL/EX/window.go:55-77` |
 | REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
-DONE REQ000292 | SQL/EX | numericArith int64 overflow check — multiplication wraps without check (pre-existing) | medium | S | iter-19 | `SQL/EX/eval.go:646-658` |
 | REQ000295 | FIL | io_uring async I/O wrapper (SQ/CQ submission, SQPOLL mode, Linux-only with IOCP/kqueue fallback) | critical | L | iter-01 (FIL), `golang.org/x/sys/unix` available | new `FIL/IO/uring.go`; cross-platform dispatch in `FIL/FS/fs.go` |
 | REQ000296 | FIL | Direct I/O + io_uring fixed-file descriptor (bypass OS page cache, reduce fd table lookups) | high | M | REQ000295, iter-01 (O_DIRECT) | `FIL/FS/fs.go` — `IOSQE_FIXED_FILE` flags; integration with `O_DIRECT` fallback |
-DONE REQ000297 | ENG | SST block-level dictionary compression (ZSTD with per-block trained dict, 4KB blocks: 1.5x→3x ratio) | high | M | iter-23 (flate baseline) | `ENG/LS/sst_writer.go` — `dictTrain` per block; `ENG/LS/sst_reader.go` — dict lookup |
 | REQ000298 | ENG | LSM-aware cross-block shared dictionary (multiple data blocks in one SST share a trained dict) | medium | M | REQ000297 | `ENG/LS/sst_writer.go` — write dict in SST meta block; reader caches per-SST dict |
-DONE REQ000299 | WAL | WAL columnar encoding (key delta-of-delta + bit-packing, `commitTS` varint; payload volume -60%+) | high | M | iter-03 (WAL) | `WAL/WR/encode.go` — columnar batch encode/decode |
 | REQ000300 | ENG | Tier-aware storage scheduler (`Options.StoragePolicy`: hot=NVMe, cold=HDD/S3, hybrid; per-level device hint) | medium | L | iter-04 (LSM), iter-12 (catalog) | `ENG/LS/compaction.go` — `PlacementPolicy` per level; `Options.StoragePolicy` field |
 | REQ000301 | WAL | Async fsync + io_uring linked submit (write→fsync chained via `IOSQE_IO_LINK`, lower batch-commit latency) | high | S | REQ000295, iter-17 (BatchSync) | `WAL/WR/fl.go` — `BatchSyncWithUring` |
 | REQ000302 | MEM | PMem-aware buffer pool (DRAM hot slots + mmap'd PMem cold slots; `MADV_HUGEPAGE` for 2MB pages) | medium | L | iter-02 (buffer pool) | `MEM/BF/bf.go` — tier selection on `Pin`; `MEM/BF/pmem.go` (new) |
-DONE REQ000303 | MEM | W-TinyLFU admission + SLRU (replaces clock-sweep; +30% hit rate vs LRU; Redis 8 default) | high | M | iter-02 (clock-sweep) | `MEM/BF/wtinylfu.go` (new) — frequency sketch + admission; configurable |
-DONE REQ000304 | MEM | Off-heap large object pool (mimalloc-style size-class bins; bypasses GC for >64KB SST buffers) | medium | L | iter-02, iter-11 (mmap) | `MEM/OF/of.go` (new) — `mmap` + atomic free lists |
 | REQ000305 | TXN | Generational arena with Young/Old split (young bump-allocate, old epoch-reclaim; reduces epoch manager pressure) | medium | L | iter-05 (arena), `REQ000064` | `TXN/MV/arena.go` — generation promotion policy |
-DONE REQ000306 | TXN | Stack-allocate version nodes via escape analysis hints (`//go:nosplit` + `noescape()`; zero-GC hot path) | medium | M | iter-05 (arena) | `TXN/MV/node.go` — escape hint annotations; benchmark zero-allocation claim |
 | REQ000307 | TXN | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | critical | XL | iter-20 (commit protocol), `REQ000175` | `TXN/MV/occ.go` (new) — `Validation` phase rewritten; conflict-free reorder |
-DONE REQ000308 | TXN | QSBR read path (Quiescent-State-Based Reclamation; readers set flag only, zero atomic load; near-RCU latency) | high | L | iter-05 (epoch) | `TXN/LC/qsbr.go` (new) — replaces `TXN/LC/epoch.go`; quiescent state callbacks |
 | REQ000309 | ENG | NUMA-aware data placement (buffer pool slot node id, worker CPU pin, first-touch arena allocation) | high | M | iter-04 (LSM), iter-02 (buffer pool) | `ENG/LS/memtable.go` — `numactl` API integration; `MEM/BF/bf.go` NUMA hint field |
-DONE REQ000310 | SQL | Real SIMD intrinsics for filter/projection (AVX2/AVX-512 `_mm256_cmpgt_epi64`, `_mm256_maskload_epi64`; `golang.org/x/sys/cpu` dispatch) | high | L | REQ000144 (vectorization 1.0) | `SQL/EX/eval.go` — SIMD path with CPUID dispatch; fallback to scalar |
 | REQ000311 | SQL | Operator codegen (`go generate` template → specialized Go funcs; inline caches eliminate virtual dispatch) | medium | XL | REQ000310, iter-08 (operators) | `SQL/EX/codegen/` (new) — templated operator skeletons; build tag for codegen |
-DONE REQ000312 | SQL | Vector-aware hash join (Radix partition; SIMD probe of multiple hash buckets in parallel) | high | L | REQ000310, iter-08 (NestedLoopJoin) | `SQL/EX/hashjoin.go` (new) — radix partition + SIMD probe |
 | REQ000313 | SQL | Adaptive query compilation (first 2 invocations interpreted, hot path swaps to JIT via `go generate` template; 2-5x OLAP speedup) | medium | XL | REQ000311 | `SQL/EX/adqc.go` (new) — hot-path detector + plan swap |
-DONE REQ000314 | ENG | Columnar SST layout (PAX / hybrid row-columnar; only queried columns decompressed; 75% I/O saving for narrow queries) | medium | XL | REQ000310, iter-04 (SST) | `ENG/LS/sst_writer.go` — PAX block layout; `ENG/LS/sst_reader.go` — column-selective decode |
 | REQ000315 | SQL | Learned cardinality estimation (CardinalityNet/MSCN; bootstraps from existing histograms) | medium | L | REQ000085 (histogram), iter-23 (ANALYZE) | `SQL/PL/learned.go` (new) — ONNX runtime or pure-Go MLP; training data from ANALYZE |
 | REQ000316 | SQL | Incremental materialized views (auto-maintained aggregation views with query routing) | medium | L | iter-08 (operators), iter-12 (catalog) | `SQL/EX/matview.go` (new); `ENG/LS` triggers on view base tables |
-DONE REQ000317 | WAL | Parallel WAL replay by key-range partition (worker pool; manifest serial; 100GB replay 30s→8s) | high | M | iter-13 (replay) | `WAL/RP/parallel.go` (new) — partition dispatch; ordered manifest apply |
-DONE REQ000318 | ENG | Write-rate-limited compactor (RocksDB-style `rate_limiter`; prevents compaction starvation under write bursts) | high | M | iter-04 (compaction) | `ENG/LS/compaction.go` — `RateLimiter` (token bucket); exposed via `Options` |
-DONE REQ000319 | ENG | Sub-compaction parallelism (split L4+ compaction into key-range sub-jobs; worker pool fan-out) | high | M | iter-04, REQ000318 | `ENG/LS/subcompact.go` (new) — partition + merge result |
-DONE REQ000320 | ENG | Configurable compaction style (`Options.CompactionStyle = leveled \| tiered \| hybrid`; tiered for time-series) | medium | M | iter-04 | `ENG/LS/compaction.go` — strategy interface; `Options.CompactionStyle` field |
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
-DONE REQ000322 | LOG | eBPF runtime tracing export (`ProfileHook` data consumed by eBPF programs for lock contention / I/O queue / GC pause maps) | medium | M | iter-00 (ProfileHook) | `LOG/HK/profile.go` — BPF map publishing; optional `cmd/razor-ebpf` tool |
-DONE REQ000350 | SQL/LX | Bitwise operators (`&`, `|`, `^`, `~`) — not in lexer/parser | medium | M | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/LX/lx.go`, `SQL/PS/ps.go` — add tokens + precedence |
-DONE REQ000351 | SQL/LX | String concatenation operator (`\|\|`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/PS/ps.go` — add token + binary op |
-DONE REQ000352 | SQL/LX | Modulo operator (`%`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` — add token + eval |
-DONE REQ000353 | SQL/EX | COALESCE as special form (currently only works as function call) | low | S | iter-08 (eval) | `SQL/EX/eval.go` — add COALESCE case in evalFunction |
-DONE REQ000354 | SQL/EX | NULLIF as special form (currently only works as function call) | low | S | iter-08 (eval) | `SQL/EX/eval.go` — add NULLIF case in evalFunction |
 
 ## Unfixed Bugs (surfaces as requirements)
 
@@ -97,18 +65,11 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-DONE REQ000348 | SQL/EX | `Session.Query` returns schema-only `*AP.Rows` (no row data streaming; callers must use unexported `QueryAll`) | medium | M | iter-25 surfacing | `internal/SYS/AP/ap.go` `Session` interface needs `Next()` accessor; `internal/SYS/SE/se.go` returns `&AP.Rows{Cols,Types}` with no streaming |
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
-DONE REQ000356 | SQL/LX | Unary `NOT` as logical operator (currently only works as infix in some contexts; `~` bitwise NOT) | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` |
-DONE REQ000369 | SQL/EX | **All aggregate functions (COUNT/SUM/AVG/MIN/MAX) return NULL** — `SELECT count(*) FROM t1` returns NULL instead of the row count. Verified: `count(*)`, `count(a)`, `sum(a)` all return Kind=TypeNull. The `evalAggregateOver` code at `aggregate.go:207` returns `int64(len(rows))` which is correct, but the value never reaches the driver. The `Aggregate.materialize()` or `splitSelectCols` is likely dropping the agg values. Breaks ~500 queries in select1.test | critical | M | none | `internal/SQL/EX/aggregate.go:207`, `internal/SQL/EX/planner.go:549-571` |
 | REQ000434 | SQL/PS | `NOT BETWEEN` syntax error — `SELECT * FROM t1 WHERE d NOT BETWEEN 110 AND 150` emits `ps: syntax error at line 1 col 26: expected expression, got NOT` | high | S | iter-26.11 SLT gap survey (`TestSLT_GapSurvey`) | `SQL/PS/ps.go` parseBetween |
-DONE REQ000435 | SQL/PS | `CREATE TRIGGER` parser not implemented — `CREATE TRIGGER t AFTER INSERT ON t1 BEGIN ... END` fails with `expected TABLE, got TRIGGER` | medium | M | iter-26.11 SLT gap survey | `SQL/PS/ps.go` — add Trigger AST, parseTrigger |
-DONE REQ000436 | SQL/PS | Recursive CTE not supported — `WITH RECURSIVE cnt(x) AS (...)` fails with `expected AS, got cnt` | high | L | iter-26.11 SLT gap survey | `SQL/PS/ps.go` parseWith — add RECURSIVE flag |
 | REQ000437 | SQL/EX | `count(DISTINCT col)` not supported — `SELECT count(DISTINCT a) FROM t1` fails with `expected expression, got DISTINCT` (parser error) | high | M | iter-26.11 SLT gap survey | `SQL/PS/ps.go` parseAggregateFunc, `SQL/EX/aggregate.go` |
 | REQ000438 | SQL/EX | Scalar functions emit `ex: eval error` instead of useful error — `substr('hello',1,3)`, `trim('  x  ')`, `abs(-5)`, `typeof(42)` all fail with generic "ex: eval error" when called via Query path | medium | S | iter-26.11 SLT gap survey | `SQL/EX/eval.go` — verify substr/trim/abs/typeof dispatches correctly when called via Query() not Exec() |
 | REQ000439 | SQL/PS | `EXPLAIN` statement not implemented — `EXPLAIN SELECT * FROM t1` fails with `syntax error at col 16: expected expression, got *` | medium | S | iter-26.11 SLT gap survey | `SQL/PS/ps.go` — add EXPLAIN SELECT support |
-DONE REQ000440 | SQL/EX | `VACUUM` and `ANALYZE` not routed — both fail with `ex: not a writable statement` even though they are DDL/maintenance commands | medium | M | iter-26.11 SLT gap survey | `SQL/EX/ex.go` buildWriterOp — add Vacuum/Analyze cases |
-DONE REQ000441 | SQL/EX | `ALTER TABLE ... ADD COLUMN` not implemented — fails with `ex: not a writable statement` (already REQ000244 / REQ000129 covers the general goal; this is a focused incremental slice) | medium | M | iter-26.11 SLT gap survey, REQ000244 | `SQL/EX/ex.go` buildWriterOp — add AlterTable case |
 | REQ000442 | SQL/EX | 30/42 common SLT patterns pass; the 12 failures above are the highest-impact gaps. Recommended priority order: REQ000434 (NOT BETWEEN) > REQ000437 (count DISTINCT) > REQ000436 (recursive CTE) > REQ000438 (function eval routing) | high | L | iter-26.11 SLT gap survey | n/a — survey result |
 | REQ000443 | WAL/WR | `encodeRecord` had 4 allocs/record (body temp slice + final out slice + 2 varint slices). Optimized to 2 allocs/record via pre-sized body and out slices; CRC computed over body only (matching decoder's slice). Bench: 217ns→148ns (-32%), 168B→160B, 4→2 allocs | medium | S | iter-26.12 SLT gap survey → encode refactor | `internal/WAL/WR/encode.go` encodeRecord
 
@@ -117,6 +78,21 @@ DONE REQ000441 | SQL/EX | `ALTER TABLE ... ADD COLUMN` not implemented — fails
 
 | ID | Subsystem | Requirement | Iteration |
 |---|---|---|---|
+| REQ000160 | WAL | Batch commit with sync.WaitGroup and write barrier | iter-03 |
+| REQ000161 | MEM | Clock-sweep integration details (atomic hand, refKey update, eviction gating) | iter-02 |
+| REQ000164 | TXN | Epoch manager background goroutine (100ms interval, drain coordination) | iter-27 |
+| REQ000175 | TXN/LC | Fix hazard pointer Publish (store to single slot, not all) and implement actual memory reclamation | iter-27 |
+| REQ000181 | TXN/LC | Fix goroutine ID tracking (use real goroutine identity, not atomic counter) | iter-27 |
+| REQ000183 | SQL/EX | Expression evaluation SIMD (batch predicate EvalBatch function) | iter-27 |
+| REQ000143 | QUAL | SQL/RE coverage: 49% → 80%+ | iter-27 |
+| REQ000284 | ENG/ID | BTree delete rebalancing — no merge/redistribute after delete, tree becomes sparse | iter-27 |
+| REQ000310 | SQL | Real SIMD intrinsics for filter/projection (AVX2/AVX-512) | iter-27 |
+| REQ000312 | SQL | Vector-aware hash join (Radix partition; SIMD probe) | iter-27 |
+| REQ000314 | ENG | Columnar SST layout (PAX / hybrid row-columnar) | iter-27 |
+| REQ000317 | WAL | Parallel WAL replay by key-range partition | iter-27 |
+| REQ000369 | SQL/EX | All aggregate functions (COUNT/SUM/AVG/MIN/MAX) return NULL — verified working | iter-27 |
+| REQ000440 | SQL/EX | VACUUM and ANALYZE not routed — fixed in buildWriterOp | iter-26 |
+| REQ000441 | SQL/EX | ALTER TABLE ADD COLUMN not implemented — fixed in buildWriterOp | iter-26 |
 | REQ000443b | SQL/EX | Fix negative_literal eval pipeline bug (case-sensitive Lookup, UnaryExpr column extraction) | iter-27 |
 | REQ000435 | SQL/PS | CREATE TRIGGER parser (BEFORE/AFTER, FOR EACH ROW, BEGIN...END body) | iter-27 |
 | REQ000436 | SQL/PS+PL+EX | Recursive CTE (WITH RECURSIVE flag, FROM-subquery parser fix, inner query dispatch) | iter-27 |
@@ -397,7 +373,6 @@ DONE REQ000441 | SQL/EX | `ALTER TABLE ... ADD COLUMN` not implemented — fails
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-DONE REQ000358 | SQL/PS | XOR operator (`^`) parser gap — lexer emits `T_BITXOR` but parser doesn't recognize in precedence table | high | S | iter-07 (lexer) | `SQL/PS/ps.go` — add `T_BITXOR` to binary operator switch |
 
 > The following bugs from the 2026-06-12 dual-runner pass were
 > resolved in iter-26.1 (v0.26.3): REQ000357 (SELECT no-FROM),
@@ -587,47 +562,24 @@ These 10 functions were implemented in iter-26 before the REQ matrix was created
 | REQ000244 | SQL/EX | ALTER TABLE executor (online schema migration) | medium | L | REQ000243 | `SQL/EX/alter.go` (new) — `ENG/LS` schema-aware readers |
 | REQ000246 | SQL/PS | Parse TRIGGER (`CREATE TRIGGER`, `BEFORE/AFTER`, `FOR EACH ROW`) | low | L | iter-07 | `SQL/PS/ps.go` — `Trigger` AST, `parseTrigger` |
 | REQ000247 | SQL/EX | TRIGGER executor (fire on INSERT/UPDATE/DELETE) | low | L | REQ000246 | `SQL/EX/trigger.go` (new) — hook into writers |
-DONE REQ000248 | SQL/PS | Parse generated columns (`AS (expr) STORED/VIRTUAL`) | low | M | iter-12 | `SQL/PS/ps.go` — `ColDef.Generated` field |
-DONE REQ000249 | SQL/EX | Generated column materialization on INSERT/UPDATE | low | M | REQ000248 | `SQL/EX/writers.go` — compute and store generated values |
 | REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | medium | S | iter-21 | `SQL/PS/ps.go` — `Vacuum`, `Analyze` AST |
-DONE REQ000284 | ENG/ID | BTree delete rebalancing — no merge/redistribute after delete, tree becomes sparse | high | M | iter-23 | `ENG/ID/id.go:414-437` |
 | REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
 | REQ000286 | SQL/EX | Window materialize context propagation — uses context.Background() instead of caller's ctx | medium | S | iter-23 | `SQL/EX/window.go:55-77` |
 | REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
-DONE REQ000292 | SQL/EX | numericArith int64 overflow check — multiplication wraps without check (pre-existing) | medium | S | iter-19 | `SQL/EX/eval.go:646-658` |
 | REQ000295 | FIL | io_uring async I/O wrapper (SQ/CQ submission, SQPOLL mode, Linux-only with IOCP/kqueue fallback) | critical | L | iter-01 (FIL), `golang.org/x/sys/unix` available | new `FIL/IO/uring.go`; cross-platform dispatch in `FIL/FS/fs.go` |
 | REQ000296 | FIL | Direct I/O + io_uring fixed-file descriptor (bypass OS page cache, reduce fd table lookups) | high | M | REQ000295, iter-01 (O_DIRECT) | `FIL/FS/fs.go` — `IOSQE_FIXED_FILE` flags; integration with `O_DIRECT` fallback |
-DONE REQ000297 | ENG | SST block-level dictionary compression (ZSTD with per-block trained dict, 4KB blocks: 1.5x→3x ratio) | high | M | iter-23 (flate baseline) | `ENG/LS/sst_writer.go` — `dictTrain` per block; `ENG/LS/sst_reader.go` — dict lookup |
 | REQ000298 | ENG | LSM-aware cross-block shared dictionary (multiple data blocks in one SST share a trained dict) | medium | M | REQ000297 | `ENG/LS/sst_writer.go` — write dict in SST meta block; reader caches per-SST dict |
-DONE REQ000299 | WAL | WAL columnar encoding (key delta-of-delta + bit-packing, `commitTS` varint; payload volume -60%+) | high | M | iter-03 (WAL) | `WAL/WR/encode.go` — columnar batch encode/decode |
 | REQ000300 | ENG | Tier-aware storage scheduler (`Options.StoragePolicy`: hot=NVMe, cold=HDD/S3, hybrid; per-level device hint) | medium | L | iter-04 (LSM), iter-12 (catalog) | `ENG/LS/compaction.go` — `PlacementPolicy` per level; `Options.StoragePolicy` field |
 | REQ000301 | WAL | Async fsync + io_uring linked submit (write→fsync chained via `IOSQE_IO_LINK`, lower batch-commit latency) | high | S | REQ000295, iter-17 (BatchSync) | `WAL/WR/fl.go` — `BatchSyncWithUring` |
 | REQ000302 | MEM | PMem-aware buffer pool (DRAM hot slots + mmap'd PMem cold slots; `MADV_HUGEPAGE` for 2MB pages) | medium | L | iter-02 (buffer pool) | `MEM/BF/bf.go` — tier selection on `Pin`; `MEM/BF/pmem.go` (new) |
-DONE REQ000303 | MEM | W-TinyLFU admission + SLRU (replaces clock-sweep; +30% hit rate vs LRU; Redis 8 default) | high | M | iter-02 (clock-sweep) | `MEM/BF/wtinylfu.go` (new) — frequency sketch + admission; configurable |
-DONE REQ000304 | MEM | Off-heap large object pool (mimalloc-style size-class bins; bypasses GC for >64KB SST buffers) | medium | L | iter-02, iter-11 (mmap) | `MEM/OF/of.go` (new) — `mmap` + atomic free lists |
 | REQ000305 | TXN | Generational arena with Young/Old split (young bump-allocate, old epoch-reclaim; reduces epoch manager pressure) | medium | L | iter-05 (arena), `REQ000064` | `TXN/MV/arena.go` — generation promotion policy |
-DONE REQ000306 | TXN | Stack-allocate version nodes via escape analysis hints (`//go:nosplit` + `noescape()`; zero-GC hot path) | medium | M | iter-05 (arena) | `TXN/MV/node.go` — escape hint annotations; benchmark zero-allocation claim |
 | REQ000307 | TXN | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | critical | XL | iter-20 (commit protocol), `REQ000175` | `TXN/MV/occ.go` (new) — `Validation` phase rewritten; conflict-free reorder |
-DONE REQ000308 | TXN | QSBR read path (Quiescent-State-Based Reclamation; readers set flag only, zero atomic load; near-RCU latency) | high | L | iter-05 (epoch) | `TXN/LC/qsbr.go` (new) — replaces `TXN/LC/epoch.go`; quiescent state callbacks |
 | REQ000309 | ENG | NUMA-aware data placement (buffer pool slot node id, worker CPU pin, first-touch arena allocation) | high | M | iter-04 (LSM), iter-02 (buffer pool) | `ENG/LS/memtable.go` — `numactl` API integration; `MEM/BF/bf.go` NUMA hint field |
-DONE REQ000310 | SQL | Real SIMD intrinsics for filter/projection (AVX2/AVX-512 `_mm256_cmpgt_epi64`, `_mm256_maskload_epi64`; `golang.org/x/sys/cpu` dispatch) | high | L | REQ000144 (vectorization 1.0) | `SQL/EX/eval.go` — SIMD path with CPUID dispatch; fallback to scalar |
 | REQ000311 | SQL | Operator codegen (`go generate` template → specialized Go funcs; inline caches eliminate virtual dispatch) | medium | XL | REQ000310, iter-08 (operators) | `SQL/EX/codegen/` (new) — templated operator skeletons; build tag for codegen |
-DONE REQ000312 | SQL | Vector-aware hash join (Radix partition; SIMD probe of multiple hash buckets in parallel) | high | L | REQ000310, iter-08 (NestedLoopJoin) | `SQL/EX/hashjoin.go` (new) — radix partition + SIMD probe |
 | REQ000313 | SQL | Adaptive query compilation (first 2 invocations interpreted, hot path swaps to JIT via `go generate` template; 2-5x OLAP speedup) | medium | XL | REQ000311 | `SQL/EX/adqc.go` (new) — hot-path detector + plan swap |
-DONE REQ000314 | ENG | Columnar SST layout (PAX / hybrid row-columnar; only queried columns decompressed; 75% I/O saving for narrow queries) | medium | XL | REQ000310, iter-04 (SST) | `ENG/LS/sst_writer.go` — PAX block layout; `ENG/LS/sst_reader.go` — column-selective decode |
 | REQ000315 | SQL | Learned cardinality estimation (CardinalityNet/MSCN; bootstraps from existing histograms) | medium | L | REQ000085 (histogram), iter-23 (ANALYZE) | `SQL/PL/learned.go` (new) — ONNX runtime or pure-Go MLP; training data from ANALYZE |
 | REQ000316 | SQL | Incremental materialized views (auto-maintained aggregation views with query routing) | medium | L | iter-08 (operators), iter-12 (catalog) | `SQL/EX/matview.go` (new); `ENG/LS` triggers on view base tables |
-DONE REQ000317 | WAL | Parallel WAL replay by key-range partition (worker pool; manifest serial; 100GB replay 30s→8s) | high | M | iter-13 (replay) | `WAL/RP/parallel.go` (new) — partition dispatch; ordered manifest apply |
-DONE REQ000318 | ENG | Write-rate-limited compactor (RocksDB-style `rate_limiter`; prevents compaction starvation under write bursts) | high | M | iter-04 (compaction) | `ENG/LS/compaction.go` — `RateLimiter` (token bucket); exposed via `Options` |
-DONE REQ000319 | ENG | Sub-compaction parallelism (split L4+ compaction into key-range sub-jobs; worker pool fan-out) | high | M | iter-04, REQ000318 | `ENG/LS/subcompact.go` (new) — partition + merge result |
-DONE REQ000320 | ENG | Configurable compaction style (`Options.CompactionStyle = leveled \| tiered \| hybrid`; tiered for time-series) | medium | M | iter-04 | `ENG/LS/compaction.go` — strategy interface; `Options.CompactionStyle` field |
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
-DONE REQ000322 | LOG | eBPF runtime tracing export (`ProfileHook` data consumed by eBPF programs for lock contention / I/O queue / GC pause maps) | medium | M | iter-00 (ProfileHook) | `LOG/HK/profile.go` — BPF map publishing; optional `cmd/razor-ebpf` tool |
-DONE REQ000350 | SQL/LX | Bitwise operators (`&`, `|`, `^`, `~`) — not in lexer/parser | medium | M | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/LX/lx.go`, `SQL/PS/ps.go` — add tokens + precedence |
-DONE REQ000351 | SQL/LX | String concatenation operator (`\|\|`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/PS/ps.go` — add token + binary op |
-DONE REQ000352 | SQL/LX | Modulo operator (`%`) — not in lexer/parser | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` — add token + eval |
-DONE REQ000353 | SQL/EX | COALESCE as special form (currently only works as function call) | low | S | iter-08 (eval) | `SQL/EX/eval.go` — add COALESCE case in evalFunction |
-DONE REQ000354 | SQL/EX | NULLIF as special form (currently only works as function call) | low | S | iter-08 (eval) | `SQL/EX/eval.go` — add NULLIF case in evalFunction |
 
 ## Unfixed Bugs (surfaces as requirements)
 
@@ -637,9 +589,7 @@ the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-DONE REQ000348 | SQL/EX | `Session.Query` returns schema-only `*AP.Rows` (no row data streaming; callers must use unexported `QueryAll`) | medium | M | iter-25 surfacing | `internal/SYS/AP/ap.go` `Session` interface needs `Next()` accessor; `internal/SYS/SE/se.go` returns `&AP.Rows{Cols,Types}` with no streaming |
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
-DONE REQ000356 | SQL/LX | Unary `NOT` as logical operator (currently only works as infix in some contexts; `~` bitwise NOT) | low | S | iter-07 (lexer) | `SQL/LX/token.go`, `SQL/EX/eval.go` |
 
 ## DONE
 
@@ -908,7 +858,6 @@ DONE REQ000356 | SQL/LX | Unary `NOT` as logical operator (currently only works 
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-DONE REQ000358 | SQL/PS | XOR operator (`^`) parser gap — lexer emits `T_BITXOR` but parser doesn't recognize in precedence table | high | S | iter-07 (lexer) | `SQL/PS/ps.go` — add `T_BITXOR` to binary operator switch |
 
 > The following bugs from the 2026-06-12 dual-runner pass were
 > resolved in iter-26.1 (v0.26.3): REQ000357 (SELECT no-FROM),
