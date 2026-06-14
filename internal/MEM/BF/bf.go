@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/cyw0ng95/razordata/internal/ENG/NM"
 	"github.com/cyw0ng95/razordata/internal/FIL/DF"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 )
@@ -97,6 +98,9 @@ type bufferSlot struct {
 	refKey   atomic.Uint64 // clock hand value when last accessed
 	loading  atomic.Bool   // true while loading from disk
 	wait     chan struct{} // closed when data is ready
+	// nodeID is the NUMA node where the slot's data was first
+	// touched (REQ000309, iter-27). 0 on non-NUMA hosts.
+	nodeID atomic.Int32
 }
 
 // bufferHashTable provides O(1) lookup by blockID.
@@ -296,6 +300,10 @@ allocated:
 		wait:    make(chan struct{}),
 	}
 	slot.loading.Store(true)
+	// REQ000309 (iter-27): tag the slot with the current
+	// NUMA node so the engine can later report placement
+	// statistics. On non-NUMA hosts, this is always 0.
+	slot.nodeID.Store(int32(nm.CurrentNode()))
 	b.ht.slots[blockID] = slot
 	b.used.Add(1)
 	b.ht.mu.Unlock()

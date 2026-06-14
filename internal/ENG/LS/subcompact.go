@@ -10,6 +10,8 @@ import (
 	"sync"
 
 	"container/heap"
+
+	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
 )
 
 // SubCompactor partitions a key range into N sub-jobs and runs them
@@ -110,6 +112,14 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 		go func(idx int) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// REQ000309 (iter-27): pin the subcompaction worker
+			// to its OS thread so first-touch allocations land
+			// on the local NUMA node. On non-NUMA hosts this is
+			// a no-op (just a LockOSThread/UnlockOSThread pair).
+			if nm.IsAvailable() {
+				release := nm.PinWorker()
+				defer release()
+			}
 			if err := subs[idx].job.Run(sc.manifest, sc.dir); err != nil {
 				errs[idx] = err
 			}
