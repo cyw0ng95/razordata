@@ -29,7 +29,7 @@ DONE REQ000181 | TXN/LC | Fix goroutine ID tracking (use real goroutine identity
 DONE REQ000183 | SQL/EX | Expression evaluation SIMD (batch predicate EvalBatch function) | medium | M | iter-08 (eval) | `SQL/EX/eval.go` — add vectorized EvalBatch per SQL.md:303-306 |
 | REQ000185 | SQL/EX | Plan memoization with SHA256 canonical AST binary encoding (not JSON) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — implement binary serialization per SQL.md:215 |
 | REQ000126 | SQL | Foreign keys (REFERENCES, ON DELETE/UPDATE) | high | L | iter-11 (UNIQUE), iter-12 (catalog), iter-21 (FKEY index?) | `SQL/PS`, `SQL/EX/constraints.go`, new FK validation in writers |
-| REQ000143 | QUAL | `SQL/RE` coverage: 49% → 80%+ | high | M | iter-07 (RE implementation) | `SQL/RE/*_test.go` — fill error-path branches, subquery flatten cases |
+DONE REQ000143 | QUAL | `SQL/RE` coverage: 49% → 80%+ | high | M | iter-07 (RE implementation) | `SQL/RE/*_test.go` — fill error-path branches, subquery flatten cases |
 | REQ000074 | SQL | `IndexScan` real seek (replace prefix-scan fallback) | high | M | iter-08 (IndexScan op) | `SQL/EX/operators.go` — call into real `ENG/ID/` once iter-21 ships, or stub |
 | REQ000034 | WAL | WAL compression (lz4) | low | M | iter-03 (WAL writer) | `WAL/WR/encode.go` |
 | REQ000045 | ENG | Secondary indexes (non-PK columns; lookup by `__idx__:<table>:<col>:<val>`) | low | XL | iter-12 (catalog), iter-21 (ID) | new `ENG/ID/` package, `SQL/PL` index selection |
@@ -50,7 +50,7 @@ DONE REQ000101 | SYS | Prometheus metrics endpoint (`/metrics` HTTP) | medium | 
 DONE REQ000248 | SQL/PS | Parse generated columns (`AS (expr) STORED/VIRTUAL`) | low | M | iter-12 | `SQL/PS/ps.go` — `ColDef.Generated` field |
 DONE REQ000249 | SQL/EX | Generated column materialization on INSERT/UPDATE | low | M | REQ000248 | `SQL/EX/writers.go` — compute and store generated values |
 | REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | medium | S | iter-21 | `SQL/PS/ps.go` — `Vacuum`, `Analyze` AST |
-| REQ000284 | ENG/ID | BTree delete rebalancing — no merge/redistribute after delete, tree becomes sparse | high | M | iter-23 | `ENG/ID/id.go:414-437` |
+DONE REQ000284 | ENG/ID | BTree delete rebalancing — no merge/redistribute after delete, tree becomes sparse | high | M | iter-23 | `ENG/ID/id.go:414-437` |
 | REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
 | REQ000286 | SQL/EX | Window materialize context propagation — uses context.Background() instead of caller's ctx | medium | S | iter-23 | `SQL/EX/window.go:55-77` |
 | REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
@@ -590,7 +590,7 @@ These 10 functions were implemented in iter-26 before the REQ matrix was created
 DONE REQ000248 | SQL/PS | Parse generated columns (`AS (expr) STORED/VIRTUAL`) | low | M | iter-12 | `SQL/PS/ps.go` — `ColDef.Generated` field |
 DONE REQ000249 | SQL/EX | Generated column materialization on INSERT/UPDATE | low | M | REQ000248 | `SQL/EX/writers.go` — compute and store generated values |
 | REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | medium | S | iter-21 | `SQL/PS/ps.go` — `Vacuum`, `Analyze` AST |
-| REQ000284 | ENG/ID | BTree delete rebalancing — no merge/redistribute after delete, tree becomes sparse | high | M | iter-23 | `ENG/ID/id.go:414-437` |
+DONE REQ000284 | ENG/ID | BTree delete rebalancing — no merge/redistribute after delete, tree becomes sparse | high | M | iter-23 | `ENG/ID/id.go:414-437` |
 | REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
 | REQ000286 | SQL/EX | Window materialize context propagation — uses context.Background() instead of caller's ctx | medium | S | iter-23 | `SQL/EX/window.go:55-77` |
 | REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
