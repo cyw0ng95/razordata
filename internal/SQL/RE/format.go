@@ -29,6 +29,12 @@ func Format(stmt PS.Stmt) (string, error) {
 		return formatCreateTableStmt(s), nil
 	case *PS.DropTable:
 		return formatDropTableStmt(s), nil
+	case *PS.TriggerStmt:
+		return formatTriggerStmt(s), nil
+	case *PS.WithStmt:
+		return formatWithStmt(s), nil
+	case *PS.AlterTableStmt:
+		return formatAlterTableStmt(s), nil
 	}
 	return "", fmt.Errorf("re: unknown statement type %T", stmt)
 }
@@ -372,4 +378,60 @@ func formatCompound(s *PS.CompoundStmt) (string, error) {
 		out += " OFFSET " + exprString(s.Offset)
 	}
 	return out, nil
+}
+
+func formatTriggerStmt(t *PS.TriggerStmt) string {
+	var b strings.Builder
+	b.WriteString("CREATE TRIGGER ")
+	b.WriteString(t.Name)
+	b.WriteString(" ")
+	b.WriteString(t.Time)
+	b.WriteString(" ")
+	b.WriteString(t.Event)
+	b.WriteString(" ON ")
+	b.WriteString(t.OnTable)
+	b.WriteString(" BEGIN\n")
+	for _, s := range t.Body {
+		out, _ := Format(s)
+		b.WriteString(out)
+		b.WriteString(";\n")
+	}
+	b.WriteString("END")
+	return b.String()
+}
+
+func formatWithStmt(w *PS.WithStmt) string {
+	var b strings.Builder
+	b.WriteString("WITH ")
+	if w.Recursive {
+		b.WriteString("RECURSIVE ")
+	}
+	for i, cte := range w.CTEs {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(cte.Name)
+		if len(cte.Cols) > 0 {
+			b.WriteString("(")
+			for j, c := range cte.Cols {
+				if j > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(c)
+			}
+			b.WriteString(")")
+		}
+		b.WriteString(" AS (")
+		out, _ := Format(cte.Query)
+		b.WriteString(out)
+		b.WriteString(")")
+	}
+	b.WriteString(" ")
+	out, _ := Format(w.Inner)
+	b.WriteString(out)
+	return b.String()
+}
+
+func formatAlterTableStmt(a *PS.AlterTableStmt) string {
+	return "ALTER TABLE " + a.Table + " " + a.Action
 }
