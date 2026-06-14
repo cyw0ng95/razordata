@@ -56,6 +56,7 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 26.2 | Bugfix sweep v2 | 5 bugfixes (REQ000355, 363, 366, 367, 368) | `SQL/EX`, `SQL/PS` | done (v0.26.4) |
 | 26.3 | Bugfix sweep v3 | 5 bugfixes (REQ000378-382), 12 new dual-runner probes, 19 new unit tests | `SQL/EX`, `SQL/PS` | done (v0.26.5) |
 | 26.4 | Compound SELECT | UNION/INTERSECT/EXCEPT parser+executor, correct precedence, trailing ORDER BY/LIMIT/OFFSET apply to compound, RE rewrite/format, 6 new dual-runner probes | `SQL/LX`, `SQL/PS`, `SQL/EX`, `SQL/RE` | done (v0.26.6) |
+| 27 | Maturity Push | SLT 42/42, trigger parser, generated cols, SST dict compression, WAL columnar, rate-limited compactor, sub-compaction, compaction style, W-TinyLFU, off-heap pool, escape hints, QSBR, FROM-subquery parser fix | `SQL/PS`, `SQL/EX`, `ENG/LS`, `WAL/WR`, `MEM/BF`, `MEM/OF`, `TXN/MV`, `TXN/LC` | done (v0.27.0) |
 
 All iterations through iter-26.10 complete. Released as v0.9.0–v0.26.6. Coverage details: `go test ./... -cover`.
 
@@ -125,6 +126,7 @@ are organized by function domain (AP/, SE/, ST/, SY/, TX/).
 | **v0.26.10** | **Bug sweep v4** (iter-26.8). REQ000348/292: Session.Query now streams rows via Next/Close on AP.Rows (previously returned schema-only); EX.QueryStream returns streaming iterator; int64 multiplication overflow now correctly handles MIN_INT64 × -1 and large values via int64 (not float64) checks. 2 REQs closed, ~250 LOC. New: TestQueryStreaming, TestNumericOverflow.
 | **v0.26.11** | **Logger v2** (iter-26.9). REQ000161/322/101: clock-sweep LRU fix (second-pass eviction now picks lowest refKey, not first in map order); ProfileHook dumps heap profile on Error events (rate-limited 1/5s, optional CPU); metricHook exports Prometheus text format. 3 REQs closed, ~250 LOC. New: TestClockSweep, TestProfileHook, TestPrometheusMetrics.
 | **v0.26.12** | **WAL batch sync + encode optimization** (iter-26.10). REQ000160 (already done in iter-13 as REQ000176) + REQ000443: encodeRecord reduced from 4 allocs to 2 allocs (-50%), 217ns→148ns (-32%); pre-sized body and out slices eliminate growth; CRC now correctly computed over body only. New TestEncodeRecord_OnePassCorrectness (8 round-trip cases) and BenchmarkEncodeRecord.
+| **v0.27.0** | **Maturity Push** (iter-27). 17 REQs, 13 commits, ~21.5K LOC. SLT 42/42 (was 39/42): negative_literal fix, CREATE TRIGGER parser, WITH RECURSIVE flag, FROM-subquery parser fix. Storage: SST dict compression (frequency-based, no C deps), WAL columnar batch encoding, rate-limited compactor (token bucket), sub-compaction parallelism, configurable compaction style (leveled/tiered/hybrid). Memory: W-TinyLFU admission (Count-Min Sketch, 32KB), off-heap large object pool (16 size classes, sync.Pool). TXN: escape analysis hints for version nodes (0 allocs/op), QSBR read path (64-shard quiescent reclamation). Generated columns (STORED materialized on INSERT). All 35 packages pass `go test ./... -race -count=1`.
 
 
 ## Design Protection
