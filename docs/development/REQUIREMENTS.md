@@ -17,8 +17,6 @@
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | low | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
 | REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
-| REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
-| REQ000244 | SQL/EX | ALTER TABLE executor (online schema migration) | medium | L | REQ000243 | `SQL/EX/alter.go` (new) — `ENG/LS` schema-aware readers |
 | REQ000300 | ENG | Tier-aware storage scheduler (`Options.StoragePolicy`: hot=NVMe, cold=HDD/S3, hybrid; per-level device hint) | medium | L | iter-04 (LSM), iter-12 (catalog) | `ENG/LS/compaction.go` — `PlacementPolicy` per level; `Options.StoragePolicy` field |
 | REQ000302 | MEM | PMem-aware buffer pool (DRAM hot slots + mmap'd PMem cold slots; `MADV_HUGEPAGE` for 2MB pages) | medium | L | iter-02 (buffer pool) | `MEM/BF/bf.go` — tier selection on `Pin`; `MEM/BF/pmem.go` (new) |
 | REQ000305 | TXN | Generational arena with Young/Old split (young bump-allocate, old epoch-reclaim; reduces epoch manager pressure) | medium | L | iter-05 (arena), `REQ000064` | `TXN/MV/arena.go` — generation promotion policy |
@@ -30,7 +28,6 @@
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
 | REQ000442 | SQL/EX | 30/42 common SLT patterns pass; the 12 failures above are the highest-impact gaps. Recommended priority order: REQ000434 (NOT BETWEEN) > REQ000437 (count DISTINCT) > REQ000436 (recursive CTE) > REQ000438 (function eval routing) | high | L | iter-26.11 SLT gap survey | n/a — survey result |
-| REQ000443 | WAL/WR | `encodeRecord` had 4 allocs/record (body temp slice + final out slice + 2 varint slices). Optimized to 2 allocs/record via pre-sized body and out slices; CRC computed over body only (matching decoder's slice). Bench: 217ns→148ns (-32%), 168B→160B, 4→2 allocs | medium | S | iter-26.12 SLT gap survey → encode refactor | `internal/WAL/WR/encode.go` encodeRecord
 > The following bugs from the 2026-06-12 dual-runner pass were
 > resolved in iter-26.1 (v0.26.3): REQ000357 (SELECT no-FROM),
 > REQ000359 (concat NULL), REQ000360 (arith NULL), REQ000361
@@ -162,8 +159,6 @@ This iteration implements 21 core scalar functions plus session state infrastruc
 These 10 functions were implemented in iter-26 before the REQ matrix was created:
 | REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
-| REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
-| REQ000244 | SQL/EX | ALTER TABLE executor (online schema migration) | medium | L | REQ000243 | `SQL/EX/alter.go` (new) — `ENG/LS` schema-aware readers |
 | REQ000300 | ENG | Tier-aware storage scheduler (`Options.StoragePolicy`: hot=NVMe, cold=HDD/S3, hybrid; per-level device hint) | medium | L | iter-04 (LSM), iter-12 (catalog) | `ENG/LS/compaction.go` — `PlacementPolicy` per level; `Options.StoragePolicy` field |
 | REQ000302 | MEM | PMem-aware buffer pool (DRAM hot slots + mmap'd PMem cold slots; `MADV_HUGEPAGE` for 2MB pages) | medium | L | iter-02 (buffer pool) | `MEM/BF/bf.go` — tier selection on `Pin`; `MEM/BF/pmem.go` (new) |
 | REQ000305 | TXN | Generational arena with Young/Old split (young bump-allocate, old epoch-reclaim; reduces epoch manager pressure) | medium | L | iter-05 (arena), `REQ000064` | `TXN/MV/arena.go` — generation promotion policy |
@@ -178,31 +173,11 @@ These 10 functions were implemented in iter-26 before the REQ matrix was created
 
 | ID | Subsystem | Requirement | Iteration |
 |---|---|---|---|
-| REQ000182 | SQL/EX | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | medium | L | iter-08 (Sort) | Create `SQL/EX/sort_parallel.go` per SQL.md:367-372 |
-| REQ000126 | SQL | Foreign keys (REFERENCES, ON DELETE/UPDATE) | high | L | iter-11 (UNIQUE), iter-12 (catalog), iter-21 (FKEY index?) | `SQL/PS`, `SQL/EX/constraints.go`, new FK validation in writers |
-| REQ000246 | SQL/PS | Parse TRIGGER (`CREATE TRIGGER`, `BEFORE/AFTER`, `FOR EACH ROW`) | low | L | iter-07 | `SQL/PS/ps.go` — `Trigger` AST, `parseTrigger` |
-| REQ000247 | SQL/EX | TRIGGER executor (fire on INSERT/UPDATE/DELETE) | low | L | REQ000246 | `SQL/EX/trigger.go` (new) — hook into writers |
-| REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | medium | S | iter-21 | `SQL/PS/ps.go` — `Vacuum`, `Analyze` AST |
-| REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for 'no page') | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
-| REQ000286 | SQL/EX | Window materialize context propagation — uses context.Background() instead of caller's ctx | medium | S | iter-23 | `SQL/EX/window.go:55-77` |
-| REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
-| REQ000298 | ENG | LSM-aware cross-block shared dictionary (multiple data blocks in one SST share a trained dict) | medium | M | REQ000297 | `ENG/LS/sst_writer.go` — write dict in SST meta block; reader caches per-SST dict |
-| REQ000434 | SQL/PS | `NOT BETWEEN` syntax error — `SELECT * FROM t1 WHERE d NOT BETWEEN 110 AND 150` emits `ps: syntax error at line 1 col 26: expected expression, got NOT` | high | S | iter-26.11 SLT gap survey (`TestSLT_GapSurvey`) | `SQL/PS/ps.go` parseBetween |
-| REQ000438 | SQL/EX | Scalar functions emit `ex: eval error` instead of useful error — `substr('hello',1,3)`, `trim('  x  ')`, `abs(-5)`, `typeof(42)` all fail with generic 'ex: eval error' when called via Query path | medium | S | iter-26.11 SLT gap survey | `SQL/EX/eval.go` — verify substr/trim/abs/typeof dispatches correctly when called via Query() not Exec() |
-| REQ000439 | SQL/PS | `EXPLAIN` statement not implemented — `EXPLAIN SELECT * FROM t1` fails with `syntax error at col 16: expected expression, got *` | medium | S | iter-26.11 SLT gap survey | `SQL/PS/ps.go` — add EXPLAIN SELECT support |
-REQ000182 | SQL/EX | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | medium | L | iter-08 (Sort) | Create `SQL/EX/sort_parallel.go` per SQL.md:367-372 |
-REQ000126 | SQL | Foreign keys (REFERENCES, ON DELETE/UPDATE) | high | L | iter-11 (UNIQUE), iter-12 (catalog), iter-21 (FKEY index?) | `SQL/PS`, `SQL/EX/constraints.go`, new FK validation in writers |
-REQ000246 | SQL/PS | Parse TRIGGER (`CREATE TRIGGER`, `BEFORE/AFTER`, `FOR EACH ROW`) | low | L | iter-07 | `SQL/PS/ps.go` — `Trigger` AST, `parseTrigger` |
-REQ000247 | SQL/EX | TRIGGER executor (fire on INSERT/UPDATE/DELETE) | low | L | REQ000246 | `SQL/EX/trigger.go` (new) — hook into writers |
-REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | medium | S | iter-21 | `SQL/PS/ps.go` — `Vacuum`, `Analyze` AST |
-REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | medium | S | iter-23 | `ENG/ID/id.go:109-113` |
-REQ000286 | SQL/EX | Window materialize context propagation — uses context.Background() instead of caller's ctx | medium | S | iter-23 | `SQL/EX/window.go:55-77` |
-REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | medium | S | iter-23 | `SQL/EX/window.go:209-218` |
-REQ000298 | ENG | LSM-aware cross-block shared dictionary (multiple data blocks in one SST share a trained dict) | medium | M | REQ000297 | `ENG/LS/sst_writer.go` — write dict in SST meta block; reader caches per-SST dict |
-REQ000434 | SQL/PS | `NOT BETWEEN` syntax error — `SELECT * FROM t1 WHERE d NOT BETWEEN 110 AND 150` emits `ps: syntax error at line 1 col 26: expected expression, got NOT` | high | S | iter-26.11 SLT gap survey (`TestSLT_GapSurvey`) | `SQL/PS/ps.go` parseBetween |
-REQ000438 | SQL/EX | Scalar functions emit `ex: eval error` instead of useful error — `substr('hello',1,3)`, `trim('  x  ')`, `abs(-5)`, `typeof(42)` all fail with generic "ex: eval error" when called via Query path | medium | S | iter-26.11 SLT gap survey | `SQL/EX/eval.go` — verify substr/trim/abs/typeof dispatches correctly when called via Query() not Exec() |
-REQ000439 | SQL/PS | `EXPLAIN` statement not implemented — `EXPLAIN SELECT * FROM t1` fails with `syntax error at col 16: expected expression, got *` | medium | S | iter-26.11 SLT gap survey | `SQL/PS/ps.go` — add EXPLAIN SELECT support |
+| REQ000018 | FIL | File locking (`flock`) for multi-process access | iter-27 |
+| REQ000126 | SQL | Foreign keys (REFERENCES, ON DELETE/UPDATE) | iter-27 |
 | REQ000160 | WAL | Batch commit with sync.WaitGroup and write barrier | iter-03 |
+| REQ000244 | SQL/EX | ALTER TABLE executor (online schema migration) | iter-27 |
+| REQ000443 | WAL/WR | `encodeRecord` allocation reduction (4→2 allocs/record, 217ns→148ns, 168B→160B) | iter-27 |
 | REQ000161 | MEM | Clock-sweep integration details (atomic hand, refKey update, eviction gating) | iter-02 |
 | REQ000164 | TXN | Epoch manager background goroutine (100ms interval, drain coordination) | iter-27 |
 | REQ000175 | TXN/LC | Fix hazard pointer Publish (store to single slot, not all) and implement actual memory reclamation | iter-27 |
