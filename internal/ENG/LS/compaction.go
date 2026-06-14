@@ -48,6 +48,10 @@ type compactionJob struct {
 	inputs  []SSTFileMeta
 	outputs []SSTFileMeta
 	overlap []SSTFileMeta
+	// REQ000318: optional rate limiter (token-bucket, bytes/sec).
+	// When nil, no throttling. Captured at job creation time so a
+	// concurrent SetRateLimiter call does not race the merge.
+	rateLimiter *RateLimiter
 }
 
 func (cj *compactionJob) Run(manifest *manifest, dir string) error {
@@ -99,19 +103,41 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	h := &keyHeap{items: iters}
 	heap.Init(h)
 
+	// REQ000318: read the rate limiter captured when the job was
+	// created. nil means no throttle.
+	rl := cj.rateLimiter
+
+	var lastKey, lastVal []byte
 	for h.Len() > 0 {
 		minItem := heap.Pop(h).(*sstIterator)
-		w.Add(minItem.Key(), minItem.Value())
+		k := minItem.Key()
+		v := minItem.Value()
+		// Throttle on the input bytes (key + value) to keep the
+		// compactor from saturating the disk under write bursts.
+		// This also caps the final sstData size proportionally.
+		if rl != nil {
+			rl.Wait(int64(len(k) + len(v)))
+		}
+		w.Add(k, v)
+		lastKey = k
+		lastVal = v
 		if minItem.Next() {
 			heap.Push(h, minItem)
 		}
 	}
+	_ = lastKey
+	_ = lastVal
 
 	closeIterators(iters)
 
 	sstData, err := w.Finish()
 	if err != nil {
 		return err
+	}
+
+	// Throttle the final write too.
+	if rl != nil {
+		rl.Wait(int64(len(sstData)))
 	}
 
 	if _, err := tmpFile.Write(sstData); err != nil {
@@ -240,6 +266,11 @@ type compactionManager struct {
 	loopDone        chan struct{}
 	wg              sync.WaitGroup
 	stopOnce        sync.Once
+	// REQ000318: optional write rate limiter (bytes/sec). When
+	// nil or zero, no throttling. Token-bucket implementation
+	// keeps the merge loop from saturating the disk under write
+	// bursts and starving foreground writes.
+	rateLimiter     atomic.Pointer[RateLimiter]
 }
 
 func newCompactionManager(dir string, manifest *manifest) *compactionManager {
@@ -364,10 +395,11 @@ func (cm *compactionManager) requestCompaction(level int) {
 	}
 
 	job := &compactionJob{
-		level:   level,
-		inputs:  inputs,
-		outputs: nil,
-		overlap: overlap,
+		level:       level,
+		inputs:      inputs,
+		outputs:     nil,
+		overlap:     overlap,
+		rateLimiter: cm.rateLimiter.Load(),
 	}
 
 	cm.compacting.Store(true)
