@@ -392,6 +392,12 @@ type Select struct {
 	Distinct  bool
 	GroupBy   []Expr
 	Having    Expr
+	// REQ000436 + REQ000084: when FROM is a subquery (e.g. `FROM
+	// (SELECT ...)`), SubqueryFrom holds the parsed SELECT and
+	// From is set to the alias (or "$$subquery$$" if unnamed).
+	// The planner uses this to build a materialized subplan
+	// instead of looking up a table by name.
+	SubqueryFrom Stmt
 }
 
 func (s *Select) stmtNode() {}

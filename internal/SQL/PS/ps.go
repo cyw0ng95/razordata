@@ -8,10 +8,12 @@ import (
 )
 
 type Parser struct {
-	lex          *LX.Lexer
-	current      LX.Token
-	paramIndex   int
-	pendingJoins []string // REQ000368: comma-separated tables awaiting CROSS-join synthesis
+	lex                    *LX.Lexer
+	current                LX.Token
+	paramIndex             int
+	pendingJoins           []string // REQ000368: comma-separated tables awaiting CROSS-join synthesis
+	pendingSubquery        Stmt     // REQ000436: subquery from FROM clause
+	pendingSubqueryAlias   string
 }
 
 func NewParser(input string) *Parser {
@@ -24,6 +26,7 @@ func NewParser(input string) *Parser {
 func (p *Parser) reset() {
 	p.paramIndex = 0
 	p.pendingJoins = nil
+	p.pendingSubquery = nil
 }
 
 func (p *Parser) advance() {
@@ -812,6 +815,7 @@ func (p *Parser) parseIntersectChain() (Stmt, error) {
 // parseOneSelect parses a single SELECT statement (no compound
 // chain). REQ000383: split out from parseSelect.
 func (p *Parser) parseOneSelect() (*Select, error) {
+	p.pendingSubquery = nil
 	p.advance()
 
 	var distinct bool
@@ -849,13 +853,60 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 	var from string
 	if p.current.Type == LX.T_FROM {
 		p.advance()
-		if err := p.expect(LX.T_IDENT); err != nil {
-			return nil, err
+		// REQ000436 + REQ000084: support subqueries in FROM.
+		// `FROM (SELECT ...)` is a subquery source; the SELECT is
+		// parsed inline (not delegated to Parse which would reset
+		// parser state) and the result is stored in SubqueryFrom.
+		if p.current.Type == LX.T_LPAREN {
+			p.advance()
+			if p.current.Type == LX.T_SELECT {
+				sub, err := p.parseSelect()
+				if err != nil {
+					return nil, err
+				}
+				if err := p.expect(LX.T_RPAREN); err != nil {
+					return nil, err
+				}
+				p.advance()
+				// Optional alias
+				var subAlias string
+				if p.current.Type == LX.T_AS || p.current.Type == LX.T_IDENT {
+					if p.current.Type == LX.T_AS {
+						p.advance()
+					}
+					if p.current.Type == LX.T_IDENT {
+						subAlias = p.current.Lexeme
+						p.advance()
+					}
+				}
+				if subAlias != "" {
+					from = subAlias
+				} else {
+					from = "$$subquery$$"
+				}
+				// Stash for later: the Select we're building will
+				// have SubqueryFrom set after we return from this
+				// function. We store it in a package-level slot
+				// since we don't have a Select pointer yet.
+				p.pendingSubquery = sub
+			} else {
+				return nil, &SyntaxError{
+					Input:    p.lex.Input(),
+					Line:     p.current.Line,
+					Col:      p.current.Col,
+					Expected: "SELECT",
+					Got:      tokenName(p.current.Type),
+					Lexeme:   p.current.Lexeme,
+				}
+			}
+		} else {
+			if err := p.expect(LX.T_IDENT); err != nil {
+				return nil, err
+			}
+			from = p.current.Lexeme
+			p.advance()
 		}
-		from = p.current.Lexeme
-		p.advance()
 	}
-
 	// REQ000368: implicit comma-join. `FROM a, b, c` is parsed
 	// as `FROM a CROSS JOIN b CROSS JOIN c`. The first table
 	// stays as `from`; each subsequent comma-separated identifier
@@ -973,14 +1024,15 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 	// whole result rather than the leaf Select.
 
 	return &Select{
-		Cols:      cols,
-		From:      from,
-		FromAlias: fromAlias,
-		Joins:     joins,
-		Where:     where,
-		GroupBy:   groupBy,
-		Having:    having,
-		Distinct:  distinct,
+		Cols:         cols,
+		From:         from,
+		FromAlias:    fromAlias,
+		Joins:        joins,
+		Where:        where,
+		GroupBy:      groupBy,
+		Having:       having,
+		Distinct:     distinct,
+		SubqueryFrom: p.pendingSubquery,
 	}, nil
 }
 
@@ -2383,8 +2435,10 @@ func (p *Parser) parseWith() (*WithStmt, error) {
 		p.advance()
 	}
 
-	// Parse the main query
-	inner, err := p.Parse()
+	// Parse the main query. We call parseSelect() directly rather
+	// than Parse() because Parse() calls reset()+advance() which
+	// would skip the current token (SELECT) and reset parser state.
+	inner, err := p.parseSelect()
 	if err != nil {
 		return nil, err
 	}
