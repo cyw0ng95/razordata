@@ -66,7 +66,7 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 				if j.kind == JoinKindLeft || j.kind == JoinKindFull {
 					if !j.matched {
 						nullRow := j.nullRightRow()
-						result := joinRows(j.leftRow, &nullRow)
+						result := joinRowsLL(j.leftRow, &nullRow)
 						j.leftRow = nil
 						return result, nil
 					}
@@ -88,7 +88,7 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 			}
 		}
 		j.matched = true
-		return joinRows(j.leftRow, &inner), nil
+		return joinRowsLL(j.leftRow, &inner), nil
 	}
 }
 
@@ -142,7 +142,7 @@ func (j *NestedLoopJoin) Close() error {
 	return j.right.Close()
 }
 
-func joinRows(a, b *Row) Row {
+func joinRowsLL(a, b *Row) Row {
 	out := Row{}
 	out.Cols = append(out.Cols, a.Cols...)
 	out.Cols = append(out.Cols, b.Cols...)
