@@ -271,6 +271,8 @@ type compactionManager struct {
 	// keeps the merge loop from saturating the disk under write
 	// bursts and starving foreground writes.
 	rateLimiter     atomic.Pointer[RateLimiter]
+	// REQ000320: compaction strategy. Default is leveled.
+	style           atomic.Int32
 }
 
 func newCompactionManager(dir string, manifest *manifest) *compactionManager {
@@ -330,14 +332,19 @@ func (cm *compactionManager) MaybeCompact() {
 		return
 	}
 
+	style := CompactionStyle(cm.style.Load())
 	v := cm.manifest.Current()
 	for level := 0; level < len(v.levels)-1; level++ {
+		files := v.levels[level]
 		totalSize := int64(0)
-		for _, f := range v.levels[level] {
+		for _, f := range files {
 			totalSize += f.Size
 		}
 
-		if totalSize > cm.budget.budgetFor(level) {
+		// REQ000320: consult the active compaction style to
+		// decide whether to trigger. Leveled and Hybrid (L1+)
+		// use size budgets; Tiered and Hybrid (L0) use run count.
+		if style.shouldCompact(level, len(files), totalSize) {
 			cm.requestCompaction(level)
 			return
 		}
