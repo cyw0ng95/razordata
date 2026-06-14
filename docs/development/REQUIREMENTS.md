@@ -1,11 +1,5 @@
 ## TBD
 
-Columns for selection:
-- **Priority**: critical / high / medium / low
-- **Effort**: rough size in person-days (S = ≤1, M = 1-3, L = 3-7, XL = 7+)
-- **Deps**: prerequisite REQs that must ship first
-- **Touches**: packages / files that need to change
-
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
 | REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with design spec |
@@ -40,20 +34,156 @@ Columns for selection:
 | REQ000315 | SQL | Learned cardinality estimation (CardinalityNet/MSCN; bootstraps from existing histograms) | medium | L | REQ000085 (histogram), iter-23 (ANALYZE) | `SQL/PL/learned.go` (new) — ONNX runtime or pure-Go MLP; training data from ANALYZE |
 | REQ000316 | SQL | Incremental materialized views (auto-maintained aggregation views with query routing) | medium | L | iter-08 (operators), iter-12 (catalog) | `SQL/EX/matview.go` (new); `ENG/LS` triggers on view base tables |
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
-
-## Unfixed Bugs (surfaces as requirements)
-
-These rows are bugs that were discovered during a prior iteration but
-not fixed in that iteration's scope. The "Touches" column points to
-the discovery context. See `AGENTS.md` Bug-To-Requirement Rule.
-
-| ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
-|---|---|---|---|---|---|---|
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
 | REQ000437 | SQL/EX | `count(DISTINCT col)` not supported — `SELECT count(DISTINCT a) FROM t1` fails with `expected expression, got DISTINCT` (parser error) | high | M | iter-26.11 SLT gap survey | `SQL/PS/ps.go` parseAggregateFunc, `SQL/EX/aggregate.go` |
 | REQ000442 | SQL/EX | 30/42 common SLT patterns pass; the 12 failures above are the highest-impact gaps. Recommended priority order: REQ000434 (NOT BETWEEN) > REQ000437 (count DISTINCT) > REQ000436 (recursive CTE) > REQ000438 (function eval routing) | high | L | iter-26.11 SLT gap survey | n/a — survey result |
 | REQ000443 | WAL/WR | `encodeRecord` had 4 allocs/record (body temp slice + final out slice + 2 varint slices). Optimized to 2 allocs/record via pre-sized body and out slices; CRC computed over body only (matching decoder's slice). Bench: 217ns→148ns (-32%), 168B→160B, 4→2 allocs | medium | S | iter-26.12 SLT gap survey → encode refactor | `internal/WAL/WR/encode.go` encodeRecord
-
+> The following bugs from the 2026-06-12 dual-runner pass were
+> resolved in iter-26.1 (v0.26.3): REQ000357 (SELECT no-FROM),
+> REQ000359 (concat NULL), REQ000360 (arith NULL), REQ000361
+> (IS NULL semantics), REQ000362 (= NULL), REQ000364 (flush
+> WaitGroup), REQ000365 (allProbeCases undeclared). They are
+> now in the DONE table.
+>
+> The following bugs from the SLT corpus / dual-runner
+> expansion were resolved in iter-26.2 (v0.26.4):
+> REQ000355 (GROUP_CONCAT dispatch), REQ000363 (GROUP_CONCAT
+> empty → NULL), REQ000366 (subquery store threading),
+> REQ000367 (hidden PK for no-PK tables), REQ000368 (comma-
+> join). They are now in the DONE table.
+---
+| Function | Status | Notes |
+| `abs(X)` | REQ000384 | returns absolute value, NULL→NULL, string→0.0, MIN_INT64→error |
+| `changes()` | REQ000385 | last INSERT/UPDATE/DELETE row count; not yet wired to session state |
+| `char(X1,...,XN)` | REQ000386 | Unicode code point → character; accepts variadic int args |
+| `coalesce(X,Y,...)` | REQ000418 (DONE) | iter-26 already implemented |
+| `concat(X,...)` | REQ000387 | concatenate non-NULL args; all-NULL → "" (note: current `\|\|` returns NULL on NULL) |
+| `concat_ws(SEP,X,...)` | REQ000388 | concat with separator; SEP=NULL → NULL |
+| `format(FORMAT,...)` | REQ000389 | printf-style formatting (subset of fmt verbs) |
+| `glob(X,Y)` | REQ000390 | filename glob match (X=pattern, Y=string) |
+| `hex(X)` | REQ000391 | BLOB/text → uppercase hex; integer is converted via text first |
+| `ifnull(X,Y)` | REQ000419 (DONE) | iter-26 |
+| `iif(B1,V1,...)` | REQ000392 | short-circuit CASE; `if()` alias |
+| `instr(X,Y)` | REQ000393 | position of Y in X (1-based), 0 if not found |
+| `last_insert_rowid()` | REQ000394 | engine-level rowid; engine must expose per-session counter |
+| `length(X)` | REQ000420 (DONE) | iter-26 — returns code-point count (not bytes); close to SQLite's semantics |
+| `like(X,Y[,Z])` | REQ000421 (DONE) | iter-26 — two-arg form; ESCAPE clause not yet supported |
+| `likelihood(X,Y)` | REQ000395 | no-op pass-through; hint to planner |
+| `likely(X)` | REQ000396 | no-op pass-through |
+| `load_extension(X[,Y])` | REQ000428 (SKIP) | not in v1 scope; would require CGO bridge |
+| `lower(X)` | REQ000422 (DONE) | iter-26 |
+| `ltrim(X[,Y])` | REQ000397 | trim left; default Y=" " |
+| `max(X,Y,...)` | REQ000398 | multi-arg scalar max; uses first collating function |
+| `min(X,Y,...)` | REQ000399 | multi-arg scalar min |
+| `nullif(X,Y)` | REQ000423 (DONE) | iter-26 |
+| `octet_length(X)` | REQ000400 | byte length; differs from `length` for UTF-8 |
+| `printf(FORMAT,...)` | REQ000424 (DONE) | alias for `format`; merge with REQ000389 |
+| `quote(X)` | REQ000401 | SQL literal rendering; strings single-quoted with escape, BLOBs as X'hex' |
+| `random()` | REQ000402 | pseudo-random int64; exclude MIN_INT64 |
+| `randomblob(N)` | REQ000403 | N-byte random BLOB |
+| `replace(X,Y,Z)` | REQ000404 | string substitution; Y="" returns X unchanged |
+| `round(X[,Y])` | REQ000405 | round to Y decimal places; Y default 0; Y<0 → 0 |
+| `rtrim(X[,Y])` | REQ000406 | trim right; default Y=" " |
+| `sign(X)` | REQ000407 | -1/0/+1 or NULL for non-numeric |
+| `soundex(X)` | REQ000408 | soundex encoding; "?000" for non-ASCII / NULL |
+| `sqlite_compileoption_get(N)` | REQ000429 (SKIP) | engine-internal, returns NULL for v1 |
+| `sqlite_compileoption_used(X)` | REQ000430 (SKIP) | engine-internal, returns 0 for v1 |
+| `sqlite_offset(X)` | REQ000431 (SKIP) | requires SQLITE_ENABLE_OFFSET_SQL_FUNC compile flag |
+| `sqlite_source_id()` | REQ000409 | fixed string for v1 ("razordata-v0.26.x") |
+| `sqlite_version()` | REQ000410 | fixed string for v1 ("0.26.x") |
+| `substr(X,Y[,Z])` | REQ000425 (DONE) | iter-26 — 1-based, negative start counts from right |
+| `substring(X,Y[,Z])` | REQ000426 (DONE) | alias for `substr` |
+| `total_changes()` | REQ000411 | cumulative row-change count since connection open |
+| `trim(X[,Y])` | REQ000427 (DONE) | iter-26 — both sides; default Y=" " |
+| `typeof(X)` | REQ000412 | returns "null" / "integer" / "real" / "text" / "blob" |
+| `unhex(X[,Y])` | REQ000413 | hex → BLOB; X invalid → NULL; Y is ignored-char set |
+| `unicode(X)` | REQ000414 | code point of first char; NULL → NULL |
+| `unistr(X)` | REQ000415 | backslash-escape decoder (\uXXXX, \+XXXXXX, \UXXXXXXXX) |
+| `unistr_quote(X)` | REQ000432 (SKIP) | low-value, complex |
+| `unlikely(X)` | REQ000416 | no-op pass-through |
+| `upper(X)` | REQ000433 (DONE) | iter-26 |
+| `zeroblob(N)` | REQ000417 | N-byte BLOB of 0x00 |
+### Sub-bundle REQs (to-implement functions only)
+| ID | Function | Effort |
+### Already implemented (iter-26.10)
+This iteration fixes 2 bugs:
+| REQ ID | Function | Notes |
+| REQ000348 | Session.Query streaming | added Next/Close to AP.Rows; EX.QueryStream returns streaming iterator; Session/Transaction/Stmt.Query now stream rows |
+| REQ000292 | int64 mul overflow check | rewrote to use int64 (not float64) values; handles MIN_INT64 × -1 case |
+REQ000356 (unary NOT) was already implemented in earlier iter.
+### Already implemented (iter-26.11)
+This iteration implements logger v2 features:
+| REQ ID | Function | Notes |
+| REQ000161 | clock-sweep audit | added tests; fixed LRU eviction bug (second pass now picks lowest refKey, not first in map iteration) |
+| REQ000322 | ProfileHook pprof dump | hook dumps heap profile on Error events; rate-limited 1 per 5s; optional CPU profiling |
+| REQ000101 | Prometheus endpoint | metricHook exports counters in Prometheus text format |
+### Already implemented (iter-26.9)
+This iteration adds 5 small lexer/parser features:
+| REQ ID | Function | Notes |
+| REQ000350 | bitwise operators | &, \|, ^, ~ (already in lexer/parser/eval) |
+| REQ000351 | concat operator | \|\| (already in lexer/parser/eval) |
+| REQ000352 | modulo operator | % (already in lexer/parser/eval) |
+| REQ000353 | COALESCE special form | now works without parens |
+| REQ000354 | NULLIF special form | now works without parens |
+### Already implemented (iter-26.8)
+This iteration completes 7 additional core scalar functions:
+| REQ ID | Function | Notes |
+| REQ000390 | glob | pattern matching with *, ?, [...] |
+| REQ000391 | hex | string to uppercase hex (iter-26) |
+| REQ000395 | likelihood | no-op planner hint |
+| REQ000396 | likely | no-op planner hint |
+| REQ000405 | round | round to decimal places (iter-26) |
+| REQ000406 | rtrim | right trim (iter-26/26.7) |
+| REQ000408 | soundex | 4-char phonetic encoding |
+| REQ000413 | unhex | hex string to BLOB |
+| REQ000415 | unistr | backslash-escape decoder |
+| REQ000416 | unlikely | no-op planner hint |
+### Already implemented (iter-26.7)
+This iteration implements 21 core scalar functions plus session state infrastructure:
+| REQ ID | Function | Notes |
+| REQ000384 | abs | absolute value (existing, confirmed working) |
+| REQ000385 | changes | session counter for last DML row count |
+| REQ000386 | char | Unicode code points to UTF-8 string |
+| REQ000387 | concat | string concatenation |
+| REQ000388 | concat_ws | concat with separator |
+| REQ000389 | format | printf-style formatting |
+| REQ000392 | iif | short-circuit conditional |
+| REQ000393 | instr | substring position |
+| REQ000394 | last_insert_rowid | session counter for last INSERT rowid |
+| REQ000397 | ltrim | left trim |
+| REQ000398 | max | scalar multi-arg max |
+| REQ000399 | min | scalar multi-arg min |
+| REQ000400 | octet_length | byte length |
+| REQ000401 | quote | SQL literal quoting |
+| REQ000402 | random | pseudo-random int64 |
+| REQ000403 | randomblob | random bytes |
+| REQ000404 | replace | string substitution |
+| REQ000407 | sign | signum function |
+| REQ000409 | sqlite_source_id | build identifier |
+| REQ000410 | sqlite_version | version string |
+| REQ000411 | total_changes | cumulative DML count |
+| REQ000412 | typeof | type name string |
+| REQ000414 | unicode | first code point |
+| REQ000417 | zeroblob | zero-filled BLOB |
+### Already implemented (iter-26)
+These 10 functions were implemented in iter-26 before the REQ matrix was created:
+| REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
+| REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
+| REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
+| REQ000244 | SQL/EX | ALTER TABLE executor (online schema migration) | medium | L | REQ000243 | `SQL/EX/alter.go` (new) — `ENG/LS` schema-aware readers |
+| REQ000295 | FIL | io_uring async I/O wrapper (SQ/CQ submission, SQPOLL mode, Linux-only with IOCP/kqueue fallback) | critical | L | iter-01 (FIL), `golang.org/x/sys/unix` available | new `FIL/IO/uring.go`; cross-platform dispatch in `FIL/FS/fs.go` |
+| REQ000296 | FIL | Direct I/O + io_uring fixed-file descriptor (bypass OS page cache, reduce fd table lookups) | high | M | REQ000295, iter-01 (O_DIRECT) | `FIL/FS/fs.go` — `IOSQE_FIXED_FILE` flags; integration with `O_DIRECT` fallback |
+| REQ000300 | ENG | Tier-aware storage scheduler (`Options.StoragePolicy`: hot=NVMe, cold=HDD/S3, hybrid; per-level device hint) | medium | L | iter-04 (LSM), iter-12 (catalog) | `ENG/LS/compaction.go` — `PlacementPolicy` per level; `Options.StoragePolicy` field |
+| REQ000301 | WAL | Async fsync + io_uring linked submit (write→fsync chained via `IOSQE_IO_LINK`, lower batch-commit latency) | high | S | REQ000295, iter-17 (BatchSync) | `WAL/WR/fl.go` — `BatchSyncWithUring` |
+| REQ000302 | MEM | PMem-aware buffer pool (DRAM hot slots + mmap'd PMem cold slots; `MADV_HUGEPAGE` for 2MB pages) | medium | L | iter-02 (buffer pool) | `MEM/BF/bf.go` — tier selection on `Pin`; `MEM/BF/pmem.go` (new) |
+| REQ000305 | TXN | Generational arena with Young/Old split (young bump-allocate, old epoch-reclaim; reduces epoch manager pressure) | medium | L | iter-05 (arena), `REQ000064` | `TXN/MV/arena.go` — generation promotion policy |
+| REQ000307 | TXN | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | critical | XL | iter-20 (commit protocol), `REQ000175` | `TXN/MV/occ.go` (new) — `Validation` phase rewritten; conflict-free reorder |
+| REQ000309 | ENG | NUMA-aware data placement (buffer pool slot node id, worker CPU pin, first-touch arena allocation) | high | M | iter-04 (LSM), iter-02 (buffer pool) | `ENG/LS/memtable.go` — `numactl` API integration; `MEM/BF/bf.go` NUMA hint field |
+| REQ000311 | SQL | Operator codegen (`go generate` template → specialized Go funcs; inline caches eliminate virtual dispatch) | medium | XL | REQ000310, iter-08 (operators) | `SQL/EX/codegen/` (new) — templated operator skeletons; build tag for codegen |
+| REQ000313 | SQL | Adaptive query compilation (first 2 invocations interpreted, hot path swaps to JIT via `go generate` template; 2-5x OLAP speedup) | medium | XL | REQ000311 | `SQL/EX/adqc.go` (new) — hot-path detector + plan swap |
+| REQ000315 | SQL | Learned cardinality estimation (CardinalityNet/MSCN; bootstraps from existing histograms) | medium | L | REQ000085 (histogram), iter-23 (ANALYZE) | `SQL/PL/learned.go` (new) — ONNX runtime or pure-Go MLP; training data from ANALYZE |
+| REQ000316 | SQL | Incremental materialized views (auto-maintained aggregation views with query routing) | medium | L | iter-08 (operators), iter-12 (catalog) | `SQL/EX/matview.go` (new); `ENG/LS` triggers on view base tables |
+| REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
 
 ## DONE
 
@@ -371,210 +501,4 @@ REQ000439 | SQL/PS | `EXPLAIN` statement not implemented — `EXPLAIN SELECT * F
 | REQ000335 | TEST | CI workflow: PR + nightly; run subset; upload JUnit; post pass-rate PR comment vs `main` | iter-25 (deferred — no `.github/` in repo) |
 | REQ000336 | TEST | Developer guide: how to run, add cases, re-baseline coverage | iter-25 |
 | REQ000337 | TEST | Architecture note lives in iteration doc (not `design/`); test harness is operational, not architectural | iter-25 |
-
 ---
-
-## Newly Discovered Bugs (2026-06-12, dual-runner expansion)
-
-| ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
-|---|---|---|---|---|---|---|
-
-> The following bugs from the 2026-06-12 dual-runner pass were
-> resolved in iter-26.1 (v0.26.3): REQ000357 (SELECT no-FROM),
-> REQ000359 (concat NULL), REQ000360 (arith NULL), REQ000361
-> (IS NULL semantics), REQ000362 (= NULL), REQ000364 (flush
-> WaitGroup), REQ000365 (allProbeCases undeclared). They are
-> now in the DONE table.
->
-> The following bugs from the SLT corpus / dual-runner
-> expansion were resolved in iter-26.2 (v0.26.4):
-> REQ000355 (GROUP_CONCAT dispatch), REQ000363 (GROUP_CONCAT
-> empty → NULL), REQ000366 (subquery store threading),
-> REQ000367 (hidden PK for no-PK tables), REQ000368 (comma-
-> join). They are now in the DONE table.
-
-## Newly Discovered Bugs (2026-06-13, v0.26.5 candidate pool)
-
-Probing a wider SLT-style test set surfaced the following bugs.
-Severity and effort are estimated; final scope for v0.26.5 is
-decided per release. See iter-26.3 planning doc (when written)
-for the chosen subset.
-
-| ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
-|---|---|---|---|---|---|---|
-
-## Newly Discovered Bugs (2026-06-12, SLT corpus run)
-
-The SLT corpus from `jzombie/sqlite-sqllogictest-corpus` was copied to `tests/sqlcmp/corpus/test/`.
-Running `select1.test` (12K lines, ~3K query records) against the engine shows:
-
-| ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
-|---|---|---|---|---|---|---|
-
----
-
-## SQLite Core Function Coverage (https://sqlite.org/lang_corefunc.html)
-
-Goal: full coverage of the 60 functions on SQLite's core scalar
-function page, each with a positive test case in
-`internal/SQL/EX/corefunc_test.go` (table-driven, named cases so
-the dual-runner and SLT harness can pinpoint the missing one).
-Status column tracks the implementation state.
-
-| Function | Status | Notes |
-|---|---|---|
-| `abs(X)` | REQ000384 | returns absolute value, NULL→NULL, string→0.0, MIN_INT64→error |
-| `changes()` | REQ000385 | last INSERT/UPDATE/DELETE row count; not yet wired to session state |
-| `char(X1,...,XN)` | REQ000386 | Unicode code point → character; accepts variadic int args |
-| `coalesce(X,Y,...)` | REQ000418 (DONE) | iter-26 already implemented |
-| `concat(X,...)` | REQ000387 | concatenate non-NULL args; all-NULL → "" (note: current `\|\|` returns NULL on NULL) |
-| `concat_ws(SEP,X,...)` | REQ000388 | concat with separator; SEP=NULL → NULL |
-| `format(FORMAT,...)` | REQ000389 | printf-style formatting (subset of fmt verbs) |
-| `glob(X,Y)` | REQ000390 | filename glob match (X=pattern, Y=string) |
-| `hex(X)` | REQ000391 | BLOB/text → uppercase hex; integer is converted via text first |
-| `ifnull(X,Y)` | REQ000419 (DONE) | iter-26 |
-| `iif(B1,V1,...)` | REQ000392 | short-circuit CASE; `if()` alias |
-| `instr(X,Y)` | REQ000393 | position of Y in X (1-based), 0 if not found |
-| `last_insert_rowid()` | REQ000394 | engine-level rowid; engine must expose per-session counter |
-| `length(X)` | REQ000420 (DONE) | iter-26 — returns code-point count (not bytes); close to SQLite's semantics |
-| `like(X,Y[,Z])` | REQ000421 (DONE) | iter-26 — two-arg form; ESCAPE clause not yet supported |
-| `likelihood(X,Y)` | REQ000395 | no-op pass-through; hint to planner |
-| `likely(X)` | REQ000396 | no-op pass-through |
-| `load_extension(X[,Y])` | REQ000428 (SKIP) | not in v1 scope; would require CGO bridge |
-| `lower(X)` | REQ000422 (DONE) | iter-26 |
-| `ltrim(X[,Y])` | REQ000397 | trim left; default Y=" " |
-| `max(X,Y,...)` | REQ000398 | multi-arg scalar max; uses first collating function |
-| `min(X,Y,...)` | REQ000399 | multi-arg scalar min |
-| `nullif(X,Y)` | REQ000423 (DONE) | iter-26 |
-| `octet_length(X)` | REQ000400 | byte length; differs from `length` for UTF-8 |
-| `printf(FORMAT,...)` | REQ000424 (DONE) | alias for `format`; merge with REQ000389 |
-| `quote(X)` | REQ000401 | SQL literal rendering; strings single-quoted with escape, BLOBs as X'hex' |
-| `random()` | REQ000402 | pseudo-random int64; exclude MIN_INT64 |
-| `randomblob(N)` | REQ000403 | N-byte random BLOB |
-| `replace(X,Y,Z)` | REQ000404 | string substitution; Y="" returns X unchanged |
-| `round(X[,Y])` | REQ000405 | round to Y decimal places; Y default 0; Y<0 → 0 |
-| `rtrim(X[,Y])` | REQ000406 | trim right; default Y=" " |
-| `sign(X)` | REQ000407 | -1/0/+1 or NULL for non-numeric |
-| `soundex(X)` | REQ000408 | soundex encoding; "?000" for non-ASCII / NULL |
-| `sqlite_compileoption_get(N)` | REQ000429 (SKIP) | engine-internal, returns NULL for v1 |
-| `sqlite_compileoption_used(X)` | REQ000430 (SKIP) | engine-internal, returns 0 for v1 |
-| `sqlite_offset(X)` | REQ000431 (SKIP) | requires SQLITE_ENABLE_OFFSET_SQL_FUNC compile flag |
-| `sqlite_source_id()` | REQ000409 | fixed string for v1 ("razordata-v0.26.x") |
-| `sqlite_version()` | REQ000410 | fixed string for v1 ("0.26.x") |
-| `substr(X,Y[,Z])` | REQ000425 (DONE) | iter-26 — 1-based, negative start counts from right |
-| `substring(X,Y[,Z])` | REQ000426 (DONE) | alias for `substr` |
-| `total_changes()` | REQ000411 | cumulative row-change count since connection open |
-| `trim(X[,Y])` | REQ000427 (DONE) | iter-26 — both sides; default Y=" " |
-| `typeof(X)` | REQ000412 | returns "null" / "integer" / "real" / "text" / "blob" |
-| `unhex(X[,Y])` | REQ000413 | hex → BLOB; X invalid → NULL; Y is ignored-char set |
-| `unicode(X)` | REQ000414 | code point of first char; NULL → NULL |
-| `unistr(X)` | REQ000415 | backslash-escape decoder (\uXXXX, \+XXXXXX, \UXXXXXXXX) |
-| `unistr_quote(X)` | REQ000432 (SKIP) | low-value, complex |
-| `unlikely(X)` | REQ000416 | no-op pass-through |
-| `upper(X)` | REQ000433 (DONE) | iter-26 |
-| `zeroblob(N)` | REQ000417 | N-byte BLOB of 0x00 |
-
-### Sub-bundle REQs (to-implement functions only)
-
-| ID | Function | Effort |
-|---|---|---|
-### Already implemented (iter-26.10)
-
-This iteration fixes 2 bugs:
-
-| REQ ID | Function | Notes |
-|---|---|---|
-| REQ000348 | Session.Query streaming | added Next/Close to AP.Rows; EX.QueryStream returns streaming iterator; Session/Transaction/Stmt.Query now stream rows |
-| REQ000292 | int64 mul overflow check | rewrote to use int64 (not float64) values; handles MIN_INT64 × -1 case |
-
-REQ000356 (unary NOT) was already implemented in earlier iter.
-### Already implemented (iter-26.11)
-
-This iteration implements logger v2 features:
-
-| REQ ID | Function | Notes |
-|---|---|---|
-| REQ000161 | clock-sweep audit | added tests; fixed LRU eviction bug (second pass now picks lowest refKey, not first in map iteration) |
-| REQ000322 | ProfileHook pprof dump | hook dumps heap profile on Error events; rate-limited 1 per 5s; optional CPU profiling |
-| REQ000101 | Prometheus endpoint | metricHook exports counters in Prometheus text format |
-
-### Already implemented (iter-26.9)
-
-This iteration adds 5 small lexer/parser features:
-
-| REQ ID | Function | Notes |
-|---|---|---|
-| REQ000350 | bitwise operators | &, \|, ^, ~ (already in lexer/parser/eval) |
-| REQ000351 | concat operator | \|\| (already in lexer/parser/eval) |
-| REQ000352 | modulo operator | % (already in lexer/parser/eval) |
-| REQ000353 | COALESCE special form | now works without parens |
-| REQ000354 | NULLIF special form | now works without parens |
-
-### Already implemented (iter-26.8)
-
-This iteration completes 7 additional core scalar functions:
-
-| REQ ID | Function | Notes |
-|---|---|---|
-| REQ000390 | glob | pattern matching with *, ?, [...] |
-| REQ000391 | hex | string to uppercase hex (iter-26) |
-| REQ000395 | likelihood | no-op planner hint |
-| REQ000396 | likely | no-op planner hint |
-| REQ000405 | round | round to decimal places (iter-26) |
-| REQ000406 | rtrim | right trim (iter-26/26.7) |
-| REQ000408 | soundex | 4-char phonetic encoding |
-| REQ000413 | unhex | hex string to BLOB |
-| REQ000415 | unistr | backslash-escape decoder |
-| REQ000416 | unlikely | no-op planner hint |
-
-### Already implemented (iter-26.7)
-
-This iteration implements 21 core scalar functions plus session state infrastructure:
-
-| REQ ID | Function | Notes |
-|---|---|---|
-| REQ000384 | abs | absolute value (existing, confirmed working) |
-| REQ000385 | changes | session counter for last DML row count |
-| REQ000386 | char | Unicode code points to UTF-8 string |
-| REQ000387 | concat | string concatenation |
-| REQ000388 | concat_ws | concat with separator |
-| REQ000389 | format | printf-style formatting |
-| REQ000392 | iif | short-circuit conditional |
-| REQ000393 | instr | substring position |
-| REQ000394 | last_insert_rowid | session counter for last INSERT rowid |
-| REQ000397 | ltrim | left trim |
-| REQ000398 | max | scalar multi-arg max |
-| REQ000399 | min | scalar multi-arg min |
-| REQ000400 | octet_length | byte length |
-| REQ000401 | quote | SQL literal quoting |
-| REQ000402 | random | pseudo-random int64 |
-| REQ000403 | randomblob | random bytes |
-| REQ000404 | replace | string substitution |
-| REQ000407 | sign | signum function |
-| REQ000409 | sqlite_source_id | build identifier |
-| REQ000410 | sqlite_version | version string |
-| REQ000411 | total_changes | cumulative DML count |
-| REQ000412 | typeof | type name string |
-| REQ000414 | unicode | first code point |
-| REQ000417 | zeroblob | zero-filled BLOB |
-
-### Already implemented (iter-26)
-
-These 10 functions were implemented in iter-26 before the REQ matrix was created:
-| REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
-| REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
-| REQ000018 | FIL | File locking (`flock`) for multi-process access | low | S | iter-01 (FIL) | `FIL/FS/fs.go` — optional via `Options`; out of v1 scope (single-process) |
-| REQ000244 | SQL/EX | ALTER TABLE executor (online schema migration) | medium | L | REQ000243 | `SQL/EX/alter.go` (new) — `ENG/LS` schema-aware readers |
-| REQ000295 | FIL | io_uring async I/O wrapper (SQ/CQ submission, SQPOLL mode, Linux-only with IOCP/kqueue fallback) | critical | L | iter-01 (FIL), `golang.org/x/sys/unix` available | new `FIL/IO/uring.go`; cross-platform dispatch in `FIL/FS/fs.go` |
-| REQ000296 | FIL | Direct I/O + io_uring fixed-file descriptor (bypass OS page cache, reduce fd table lookups) | high | M | REQ000295, iter-01 (O_DIRECT) | `FIL/FS/fs.go` — `IOSQE_FIXED_FILE` flags; integration with `O_DIRECT` fallback |
-| REQ000300 | ENG | Tier-aware storage scheduler (`Options.StoragePolicy`: hot=NVMe, cold=HDD/S3, hybrid; per-level device hint) | medium | L | iter-04 (LSM), iter-12 (catalog) | `ENG/LS/compaction.go` — `PlacementPolicy` per level; `Options.StoragePolicy` field |
-| REQ000301 | WAL | Async fsync + io_uring linked submit (write→fsync chained via `IOSQE_IO_LINK`, lower batch-commit latency) | high | S | REQ000295, iter-17 (BatchSync) | `WAL/WR/fl.go` — `BatchSyncWithUring` |
-| REQ000302 | MEM | PMem-aware buffer pool (DRAM hot slots + mmap'd PMem cold slots; `MADV_HUGEPAGE` for 2MB pages) | medium | L | iter-02 (buffer pool) | `MEM/BF/bf.go` — tier selection on `Pin`; `MEM/BF/pmem.go` (new) |
-| REQ000305 | TXN | Generational arena with Young/Old split (young bump-allocate, old epoch-reclaim; reduces epoch manager pressure) | medium | L | iter-05 (arena), `REQ000064` | `TXN/MV/arena.go` — generation promotion policy |
-| REQ000307 | TXN | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | critical | XL | iter-20 (commit protocol), `REQ000175` | `TXN/MV/occ.go` (new) — `Validation` phase rewritten; conflict-free reorder |
-| REQ000309 | ENG | NUMA-aware data placement (buffer pool slot node id, worker CPU pin, first-touch arena allocation) | high | M | iter-04 (LSM), iter-02 (buffer pool) | `ENG/LS/memtable.go` — `numactl` API integration; `MEM/BF/bf.go` NUMA hint field |
-| REQ000311 | SQL | Operator codegen (`go generate` template → specialized Go funcs; inline caches eliminate virtual dispatch) | medium | XL | REQ000310, iter-08 (operators) | `SQL/EX/codegen/` (new) — templated operator skeletons; build tag for codegen |
-| REQ000313 | SQL | Adaptive query compilation (first 2 invocations interpreted, hot path swaps to JIT via `go generate` template; 2-5x OLAP speedup) | medium | XL | REQ000311 | `SQL/EX/adqc.go` (new) — hot-path detector + plan swap |
-| REQ000315 | SQL | Learned cardinality estimation (CardinalityNet/MSCN; bootstraps from existing histograms) | medium | L | REQ000085 (histogram), iter-23 (ANALYZE) | `SQL/PL/learned.go` (new) — ONNX runtime or pure-Go MLP; training data from ANALYZE |
-| REQ000316 | SQL | Incremental materialized views (auto-maintained aggregation views with query routing) | medium | L | iter-08 (operators), iter-12 (catalog) | `SQL/EX/matview.go` (new); `ENG/LS` triggers on view base tables |
-| REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
