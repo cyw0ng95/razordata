@@ -269,8 +269,20 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		}
 		if p.current.Type == LX.T_LPAREN {
 			p.advance()
+			// REQ000437: aggregate names like GROUP_CONCAT accept
+			// the DISTINCT keyword before their argument.
+			// Handle it here (before the arg loop) so the loop
+			// does not try to parse DISTINCT as an expression.
+			var distinct bool
+			if isAggregateName(name) && p.current.Type == LX.T_DISTINCT {
+				distinct = true
+				p.advance()
+			}
 			var args []Expr
 			if p.current.Type != LX.T_RPAREN {
+				if distinct && p.current.Type == LX.T_STAR {
+					return nil, fmt.Errorf("ps: syntax error: DISTINCT not allowed with COUNT(*)")
+				}
 				a, err := p.parseExpr()
 				if err != nil {
 					return nil, err
@@ -298,7 +310,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 				if len(args) > 0 {
 					arg = args[0]
 				}
-				return &AggregateFunc{Name: name, Arg: arg}, nil
+				return &AggregateFunc{Name: name, Arg: arg, Distinct: distinct}, nil
 			}
 			return &FunctionCall{Name: name, Args: args}, nil
 		}

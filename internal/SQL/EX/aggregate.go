@@ -212,12 +212,18 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 				if err != nil {
 					return nil, err
 				}
+				if v == nil {
+					continue
+				}
 				seen[v] = true
 			}
 			return int64(len(seen)), nil
 		}
 		return int64(len(rows)), nil
 	case "SUM":
+		if agg.Distinct {
+			return sumDistinct(agg, rows, params)
+		}
 		var sumI int64
 		var sumF float64
 		var seenI, seenF bool
@@ -247,6 +253,9 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 		}
 		return nil, nil
 	case "AVG":
+		if agg.Distinct {
+			return avgDistinct(agg, rows, params)
+		}
 		var sumF float64
 		var n int64
 		for _, r := range rows {
@@ -270,6 +279,9 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 		}
 		return sumF / float64(n), nil
 	case "MIN":
+		if agg.Distinct {
+			return minDistinct(agg, rows, params)
+		}
 		var best interface{}
 		for _, r := range rows {
 			v, err := Eval(agg.Arg, &r, params)
@@ -285,6 +297,9 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 		}
 		return best, nil
 	case "MAX":
+		if agg.Distinct {
+			return maxDistinct(agg, rows, params)
+		}
 		var best interface{}
 		for _, r := range rows {
 			v, err := Eval(agg.Arg, &r, params)
@@ -302,6 +317,7 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 	case "GROUP_CONCAT":
 		sep := ","
 		var parts []string
+		seen := make(map[interface{}]bool)
 		for _, r := range rows {
 			v, err := Eval(agg.Arg, &r, params)
 			if err != nil {
@@ -309,6 +325,12 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 			}
 			if v == nil {
 				continue
+			}
+			if agg.Distinct {
+				if seen[v] {
+					continue
+				}
+				seen[v] = true
 			}
 			parts = append(parts, fmt.Sprintf("%v", v))
 		}
@@ -322,4 +344,122 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 		return out, nil
 	}
 	return nil, nil
+}
+
+// sumDistinct computes SUM(DISTINCT col). NULL values are skipped;
+// non-NULL values are deduplicated before summing. REQ000437 (iter-27).
+func sumDistinct(agg *PS.AggregateFunc, rows []Row, params []interface{}) (interface{}, error) {
+	seen := make(map[interface{}]bool)
+	var sumI int64
+	var sumF float64
+	var seenI, seenF bool
+	for _, r := range rows {
+		v, err := Eval(agg.Arg, &r, params)
+		if err != nil {
+			return nil, err
+		}
+		if v == nil {
+			continue
+		}
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		if f, ok := v.(float64); ok {
+			sumF += f
+			seenF = true
+			continue
+		}
+		if i, ok := v.(int64); ok {
+			sumI += i
+			seenI = true
+		}
+	}
+	if seenF {
+		return sumF + float64(sumI), nil
+	}
+	if seenI {
+		return sumI, nil
+	}
+	return nil, nil
+}
+
+// avgDistinct computes AVG(DISTINCT col). NULL values are skipped;
+// non-NULL values are deduplicated before averaging. REQ000437 (iter-27).
+func avgDistinct(agg *PS.AggregateFunc, rows []Row, params []interface{}) (interface{}, error) {
+	seen := make(map[interface{}]bool)
+	var sumF float64
+	var n int64
+	for _, r := range rows {
+		v, err := Eval(agg.Arg, &r, params)
+		if err != nil {
+			return nil, err
+		}
+		if v == nil {
+			continue
+		}
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		if f, ok := v.(float64); ok {
+			sumF += f
+			n++
+		} else if i, ok := v.(int64); ok {
+			sumF += float64(i)
+			n++
+		}
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	return sumF / float64(n), nil
+}
+
+// minDistinct computes MIN(DISTINCT col). NULL values are skipped;
+// the minimum of deduplicated non-NULL values is returned. REQ000437 (iter-27).
+func minDistinct(agg *PS.AggregateFunc, rows []Row, params []interface{}) (interface{}, error) {
+	seen := make(map[interface{}]bool)
+	var best interface{}
+	for _, r := range rows {
+		v, err := Eval(agg.Arg, &r, params)
+		if err != nil {
+			return nil, err
+		}
+		if v == nil {
+			continue
+		}
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		if best == nil || compare(v, best) < 0 {
+			best = v
+		}
+	}
+	return best, nil
+}
+
+// maxDistinct computes MAX(DISTINCT col). NULL values are skipped;
+// the maximum of deduplicated non-NULL values is returned. REQ000437 (iter-27).
+func maxDistinct(agg *PS.AggregateFunc, rows []Row, params []interface{}) (interface{}, error) {
+	seen := make(map[interface{}]bool)
+	var best interface{}
+	for _, r := range rows {
+		v, err := Eval(agg.Arg, &r, params)
+		if err != nil {
+			return nil, err
+		}
+		if v == nil {
+			continue
+		}
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		if best == nil || compare(v, best) > 0 {
+			best = v
+		}
+	}
+	return best, nil
 }
