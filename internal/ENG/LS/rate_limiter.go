@@ -94,3 +94,14 @@ func (rl *RateLimiter) Wait(n int64) {
 func (cm *compactionManager) SetRateLimiter(rl *RateLimiter) {
 	cm.rateLimiter.Store(rl)
 }
+
+// SetCompactionStyle installs the compaction strategy. REQ000320.
+func (cm *compactionManager) SetCompactionStyle(s CompactionStyle) {
+	cm.style.Store(int32(s))
+}
+
+// CompactionStyle returns the active compaction strategy.
+// REQ000320.
+func (cm *compactionManager) CompactionStyle() CompactionStyle {
+	return CompactionStyle(cm.style.Load())
+}
