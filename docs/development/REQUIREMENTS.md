@@ -28,19 +28,6 @@
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
 | REQ000442 | SQL/EX | 30/42 common SLT patterns pass; the 12 failures above are the highest-impact gaps. Recommended priority order: REQ000434 (NOT BETWEEN) > REQ000437 (count DISTINCT) > REQ000436 (recursive CTE) > REQ000438 (function eval routing) | high | L | iter-26.11 SLT gap survey | n/a — survey result |
-> The following bugs from the 2026-06-12 dual-runner pass were
-> resolved in iter-26.1 (v0.26.3): REQ000357 (SELECT no-FROM),
-> REQ000359 (concat NULL), REQ000360 (arith NULL), REQ000361
-> (IS NULL semantics), REQ000362 (= NULL), REQ000364 (flush
-> WaitGroup), REQ000365 (allProbeCases undeclared). They are
-> now in the DONE table.
->
-> The following bugs from the SLT corpus / dual-runner
-> expansion were resolved in iter-26.2 (v0.26.4):
-> REQ000355 (GROUP_CONCAT dispatch), REQ000363 (GROUP_CONCAT
-> empty → NULL), REQ000366 (subquery store threading),
-> REQ000367 (hidden PK for no-PK tables), REQ000368 (comma-
-> join). They are now in the DONE table.
 ---
 | Function | Status | Notes |
 | `abs(X)` | REQ000384 | returns absolute value, NULL→NULL, string→0.0, MIN_INT64→error |
