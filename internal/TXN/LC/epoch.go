@@ -9,7 +9,13 @@ import (
 
 var goroutineID atomic.Uint64
 
+// getGoroutineID returns the real goroutine ID. REQ000181:
+// the old atomic counter is preserved as a fallback when
+// runtime.Stack parsing fails (pre-runtime bootstrap).
 func getGoroutineID() uint64 {
+	if id := GoID(); id != 0 {
+		return id
+	}
 	return goroutineID.Add(1)
 }
 
