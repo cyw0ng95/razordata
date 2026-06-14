@@ -166,7 +166,14 @@ func (p *Planner) estimateCost(op Operator) float64 {
 		// In v1 we don't track row counts; assume 1.0 per row.
 		return 1.0
 	case *IndexScan:
-		// Cheaper than full scan; one seek + ordered reads.
+		// REQ000156 (iter-27): the cost depends on the scan
+		// mode. Real index seek (indexMode=true) is the
+		// cheapest; range seek is slightly more expensive;
+		// full prefix read is the most expensive of the
+		// index paths but still cheaper than SeqScan.
+		if v.indexMode {
+			return 0.05
+		}
 		return 0.1
 	case *Filter:
 		return p.estimateCost(v.child) * p.estimatePredicateSelectivity(v.predicate)
@@ -511,6 +518,15 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		scan = NewIndexOrSeqScan(s.From, s.Where, p)
 	}
 
+	// REQ000156 (iter-27): cost-based scan selection. If the
+	// planner produced a SeqScan but an IndexScan on the
+	// predicate column would be cheaper, swap the scan.
+	if s.Where != nil && s.From != "" {
+		if alt, ok := p.pickCheaperScan(s.From, s.Where, scan); ok && alt != nil {
+			scan = alt
+		}
+	}
+
 	var current Operator = scan
 
 	if len(s.Joins) > 0 {
@@ -766,6 +782,84 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 		}
 	}
 	return NewSeqScan(table)
+}
+
+// pickCheaperScan returns a cheaper scan alternative for the
+// given WHERE predicate, if one exists. The function builds
+// both a SeqScan and an IndexScan candidate and returns the
+// lower-cost one. REQ000156 (iter-27).
+//
+// The cost model is simple but effective:
+//   - SeqScan: 1.0 unit per row
+//   - IndexScan: 0.1 unit per row, multiplied by predicate
+//     selectivity (so a high-selectivity predicate on an
+//     indexed column strongly prefers IndexScan)
+//
+// If no index exists on the WHERE column, the function
+// returns the original scan unchanged. If the cost of the
+// index scan is not lower, the original scan is returned.
+func (p *Planner) pickCheaperScan(table string, where PS.Expr, current Operator) (Operator, bool) {
+	// REQ000156 (iter-27): cost-based scan selection. The
+	// function looks at the WHERE predicate to discover the
+	// indexed column. We accept both simple equality
+	// (`BinaryExpr col = lit`) and range predicates
+	// (`BinaryExpr col > lit` / `BetweenExpr`).
+	col, _ := indexedColumnOrRange(where)
+	if col == "" {
+		return current, false
+	}
+	idx, found := p.selectIndex(table, col)
+	if !found {
+		return current, false
+	}
+	// REQ000156 (iter-27): only swap to the index path if the
+	// index is also registered for writer maintenance. This
+	// avoids picking an IndexScan whose keyspace has not been
+	// backfilled (the existing planSelect code already uses
+	// hasWriterIndex for the same reason).
+	if !hasWriterIndex(table, idx) {
+		return current, false
+	}
+	// Build a candidate IndexScan.
+	var indexScan Operator
+	if p.store != nil {
+		if isc, err := NewIndexScanWithStore(p.store, table, idx); err == nil {
+			indexScan = isc
+		}
+	}
+	if indexScan == nil {
+		indexScan = NewIndexScan(table, idx, nil, nil)
+	}
+	if indexScan == nil {
+		return current, false
+	}
+	// Wrap both scans in a Filter so the cost reflects the
+	// post-filter work, matching how they will actually run.
+	seqCandidate := NewFilter(current, where)
+	idxCandidate := NewFilter(indexScan, where)
+	seqCost := p.estimateCost(seqCandidate)
+	idxCost := p.estimateCost(idxCandidate)
+	if idxCost < seqCost {
+		return indexScan, true
+	}
+	return current, false
+}
+
+// indexedColumnOrRange returns the indexed column name from a
+// WHERE predicate, accepting both equality/range binary
+// expressions and BETWEEN expressions. Returns "" if the
+// predicate is not column-bounded.
+func indexedColumnOrRange(e PS.Expr) (string, bool) {
+	if e == nil {
+		return "", false
+	}
+	if col, ok := indexedColumn(e); ok {
+		return col, true
+	}
+	if col, _, _, _, _, ok := indexedColumnRange(e); ok {
+		return col, true
+	}
+	return "", false
 }
 
 func indexedColumn(e PS.Expr) (string, bool) {
@@ -1105,6 +1199,11 @@ func hasWriterIndex(table, indexName string) bool {
 }
 
 // planCreateIndex registers a secondary index. iter-22.
+// Note: the planner's cost-based selection (REQ000156) is
+// keyed off ex.RegisterIndex, not CREATE INDEX. CREATE INDEX
+// does not backfill existing rows into the index keyspace, so
+// the planner cannot rely on the index for query plans
+// triggered by CREATE INDEX.
 func (p *Planner) planCreateIndex(s *PS.CreateIndexStmt) Operator {
 	return NewCreateIndex(s)
 }

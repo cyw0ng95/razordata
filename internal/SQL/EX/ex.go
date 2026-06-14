@@ -670,6 +670,12 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	case *PS.DropTable:
 		return NewDropTable(s), nil
 	case *PS.CreateIndexStmt:
+		// Note: the planner's cost-based selection (REQ000156)
+		// is keyed off ex.RegisterIndex, not CREATE INDEX.
+		// CREATE INDEX only registers the index for writer
+		// maintenance; it does not backfill existing rows into
+		// the index keyspace. Tests that want cost-based
+		// selection should call ex.RegisterIndex explicitly.
 		return NewCreateIndex(s), nil
 	case *PS.DropIndexStmt:
 		return NewDropIndex(s), nil
