@@ -193,11 +193,16 @@ func (w *sstWriter) Finish() ([]byte, error) {
 
 	var buf bytes.Buffer
 
-	// REQ000271: compress blocks and update index entries with compressed sizes
+	// REQ000271 + REQ000297: compress blocks. We try the
+	// per-block dictionary first; if it produces a smaller
+	// output, use it; otherwise fall back to plain flate.
+	// compressBlockDict handles the fallback internally and
+	// always returns a self-describing output (flag byte
+	// prefix).
 	compressedOffsets := make([]int, len(w.blocks))
 	for i, block := range w.blocks {
 		compressedOffsets[i] = buf.Len()
-		compressed, err := compressBlock(block)
+		compressed, err := compressBlockDict(block)
 		if err != nil {
 			return nil, err
 		}

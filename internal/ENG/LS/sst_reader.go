@@ -200,9 +200,15 @@ func (r *sstReader) readBlock(offset, size int) []byte {
 	}
 
 	raw := r.data[offset:end]
-	// REQ000271: decompress block if needed
-	decompressed, err := decompressBlock(raw)
+	// REQ000271 + REQ000297: decompress block. The flag byte
+	// indicates plain (0/1) or dictionary-compressed (2) — see
+	// compressBlockDict / decompressBlockDict.
+	decompressed, err := decompressBlockDict(raw)
 	if err != nil {
+		// Backward compat: try the old plain decompress.
+		if d2, err2 := decompressBlock(raw); err2 == nil {
+			return d2
+		}
 		return raw // fallback to raw data
 	}
 	return decompressed
