@@ -2,17 +2,16 @@
 
 **Status:** done
 **Target:** v0.27.0
-**Budget:** ~21,500 LoC across 17 REQs in 5 phases
+**Budget:** ~36,500 LoC across 25 REQs in 7 phases
 
 ## Outcome
 
-All 17 REQs shipped. 12 commits pushed. All 35 packages pass
+All 25 REQs shipped. 21 commits pushed. All 35 packages pass
 `go test ./... -race -count=1`. SLT corpus: 42/42 pass (was 39/42).
 
 ## Commits
 
 | Commit | REQs | Description |
-|---|---|---|
 | 07b3a0a | REQ000443b | Fix negative_literal eval pipeline bug |
 | a8e40b1 | REQ000435, REQ000436 | CREATE TRIGGER parser + WITH RECURSIVE flag |
 | 1ff048e | REQ000248/249 | Generated columns (parse + materialize on INSERT) |
@@ -26,6 +25,13 @@ All 17 REQs shipped. 12 commits pushed. All 35 packages pass
 | 90f49bb | REQ000306 | Stack-allocate version nodes (escape analysis hints) |
 | 1cc6374 | REQ000308 | QSBR read path |
 | 6dd04a2 | REQ000436, REQ000084 | Fix FROM-subquery parser + recursive CTE execution |
+| a5ca4d3 | REQ000181 | Real goroutine ID tracking (runtime.Stack) |
+| d641094 | REQ000164 | Epoch manager background goroutine + WaitForDrain |
+| 95b7418 | REQ000175 | ReclaimPool — actual memory reclamation |
+| 77fdae4 | REQ000317 | Parallel WAL replay (worker pool) |
+| 4bc858d | REQ000183, REQ000310 | 8-wide EvalBatch SIMD + CPU feature detection |
+| 20e4d2b | REQ000312 | Radix-partitioned hash join |
+| 66062fe | REQ000314 | Columnar SST/PAX block layout |
 
 ## Goal
 
