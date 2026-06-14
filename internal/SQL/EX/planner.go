@@ -476,6 +476,21 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 					}
 				}
 			}
+			// REQ000074 (iter-27): range seek for non-equality
+			// predicates on an indexed column. Replaces the
+			// prefix-scan fallback that the planner used before
+			// for `col > X`, `col BETWEEN X AND Y`, etc.
+			if scan == nil {
+				if col, lo, loIncl, up, upIncl, ok := indexedColumnRange(s.Where); ok {
+					idx, found := p.selectIndex(s.From, col)
+					if found && hasWriterIndex(s.From, idx) {
+						tableID, _ := tableIDFor(s.From)
+						if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
+							scan = isc
+						}
+					}
+				}
+			}
 			if scan == nil {
 				if col, ok := indexedColumn(s.Where); ok {
 					if idx, found := p.selectIndex(s.From, col); found {
@@ -798,6 +813,126 @@ func indexedColumnEq(e PS.Expr) (string, []byte, bool) {
 	return "", nil, false
 }
 
+// indexedColumnRange returns (columnName, lower, lowerInclusive,
+// upper, upperInclusive, true) if `e` is a comparison on a single
+// column with one or two literal bounds. Recognized shapes:
+//
+//	col > X   (lower exclusive, no upper)
+//	col >= X  (lower inclusive, no upper)
+//	col < X   (no lower, upper exclusive)
+//	col <= X  (no lower, upper inclusive)
+//	col BETWEEN X AND Y
+//	  (lower inclusive, upper inclusive; both literals)
+//
+// REQ000074 (iter-27): used by the planner to enable real range
+// seek via NewIndexScanWithRange. Replaces the prefix-scan
+// fallback for non-equality predicates on indexed columns.
+func indexedColumnRange(e PS.Expr) (string, []byte, bool, []byte, bool, bool) {
+	switch v := e.(type) {
+	case *PS.BetweenExpr:
+		col, ok := v.Expr.(*PS.Ident)
+		if !ok {
+			return "", nil, false, nil, false, false
+		}
+		low, ok := encodeIndexValue(v.Low)
+		if !ok {
+			return "", nil, false, nil, false, false
+		}
+		high, ok := encodeIndexValue(v.High)
+		if !ok {
+			return "", nil, false, nil, false, false
+		}
+		return col.Name, low, true, high, true, true
+	case *PS.BinaryExpr:
+		// Recognize the comparison op
+		lower, lowerIncl, upper, upperIncl, hasBounds, isCol := rangeBounds(v)
+		if !isCol {
+			return "", nil, false, nil, false, false
+		}
+		if !hasBounds {
+			return "", nil, false, nil, false, false
+		}
+		colName := columnName(v)
+		if colName == "" {
+			return "", nil, false, nil, false, false
+		}
+		return colName, lower, lowerIncl, upper, upperIncl, true
+	}
+	return "", nil, false, nil, false, false
+}
+
+// rangeBounds pulls (lower, lowerInclusive, upper, upperInclusive)
+// out of a single comparison. Returns isCol=true if a column is
+// involved, and hasBounds=true if at least one bound is present.
+func rangeBounds(b *PS.BinaryExpr) (lower []byte, lowerIncl bool, upper []byte, upperIncl bool, hasBounds bool, isCol bool) {
+	// Pattern: Ident op Literal
+	if l, ok := b.Left.(*PS.Ident); ok {
+		if v, ok := encodeIndexValue(b.Right); ok {
+			_ = l
+			l, i, u, ii, h := rangeFromOp(b.Op, v)
+			return l, i, u, ii, h, true
+		}
+		return nil, false, nil, false, false, true
+	}
+	// Pattern: Literal op Ident
+	if r, ok := b.Right.(*PS.Ident); ok {
+		if v, ok := encodeIndexValue(b.Left); ok {
+			_ = r
+			// Flip op direction
+			flipped := flipOp(b.Op)
+			l, i, u, ii, h := rangeFromOp(flipped, v)
+			return l, i, u, ii, h, true
+		}
+		return nil, false, nil, false, false, true
+	}
+	return nil, false, nil, false, false, false
+}
+
+// rangeFromOp converts (op, literalValue) to (lower, lowerIncl,
+// upper, upperIncl, hasBounds).
+func rangeFromOp(op int, v []byte) (lower []byte, lowerIncl bool, upper []byte, upperIncl bool, hasBounds bool) {
+	switch op {
+	case int(LX.T_GT):
+		return v, false, nil, false, true
+	case int(LX.T_GE):
+		return v, true, nil, false, true
+	case int(LX.T_LT):
+		return nil, false, v, false, true
+	case int(LX.T_LE):
+		return nil, false, v, true, true
+	}
+	return nil, false, nil, false, false
+}
+
+// flipOp mirrors a comparison: `5 < col` becomes `col > 5`.
+// The token table uses distinct constants for each op, so we map
+// each one explicitly.
+func flipOp(op int) int {
+	switch op {
+	case int(LX.T_LT):
+		return int(LX.T_GT)
+	case int(LX.T_LE):
+		return int(LX.T_GE)
+	case int(LX.T_GT):
+		return int(LX.T_LT)
+	case int(LX.T_GE):
+		return int(LX.T_LE)
+	}
+	return op
+}
+
+// columnName returns the column name from a comparison's column
+// side, or "" if neither side is an Ident.
+func columnName(b *PS.BinaryExpr) string {
+	if l, ok := b.Left.(*PS.Ident); ok {
+		return l.Name
+	}
+	if r, ok := b.Right.(*PS.Ident); ok {
+		return r.Name
+	}
+	return ""
+}
+
 // encodeIndexValue converts a literal expression into the byte
 // form used by the index. Returns (value, true) on success.
 func encodeIndexValue(e PS.Expr) ([]byte, bool) {
@@ -906,7 +1041,7 @@ func (p *Planner) planExplain(s *PS.ExplainStmt) Operator {
 func (p *Planner) planWith(w *PS.WithStmt) Operator {
 	// For now, implement a simple CTE that inlines the CTE definitions
 	// into the main query. Full materialization decision can be added later.
-	
+
 	// Register CTEs as temporary tables in the catalog
 	for _, cte := range w.CTEs {
 		// Plan the CTE query to get its schema
@@ -914,18 +1049,18 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 		if err != nil || ctePlan == nil || ctePlan.root == nil {
 			continue
 		}
-		
+
 		// For simplicity, we'll execute the CTE and store results in a temp table
 		// This is a naive implementation; proper materialization would be more efficient
 		_ = ctePlan
 	}
-	
+
 	// Plan the inner query
 	innerPlan, err := p.Plan(w.Inner)
 	if err != nil || innerPlan == nil || innerPlan.root == nil {
 		return NewSeqScan("__cte_error__")
 	}
-	
+
 	return innerPlan.root
 }
 

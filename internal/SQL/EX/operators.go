@@ -174,12 +174,12 @@ type IndexScan struct {
 	// the scan uses a real index seek via the index keyspace
 	// (rather than a full table prefix scan with a code-side
 	// filter).
-	indexMode    bool
-	indexTableID uint64
-	indexName    string
-	indexSeek    []byte
+	indexMode     bool
+	indexTableID  uint64
+	indexName     string
+	indexSeek     []byte
 	indexRangeEnd []byte
-	indexIt      interface {
+	indexIt       interface {
 		Next() bool
 		Key() []byte
 		Value() []byte
@@ -192,6 +192,18 @@ type IndexScan struct {
 	btree      *id.BTree
 	btreeIt    *id.Cursor
 	btreeStore Store
+
+	// iter-27 (REQ000074) range-seek fields. When indexLower is
+	// non-nil, the scan positions the index iterator at the
+	// encoded lower bound. The iterator's seek is inclusive by
+	// default; indexLowerExclusive makes it strictly greater
+	// than the bound. indexUpper (when non-nil) caps the
+	// indexed column value; indexUpperInclusive determines
+	// whether the cap is exclusive (default) or inclusive.
+	indexLower          []byte
+	indexLowerExclusive bool
+	indexUpper          []byte
+	indexUpperInclusive bool
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -246,15 +258,15 @@ func NewIndexScanWithIndex(store Store, tableID uint64, table, idx string, seekV
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
 	return &IndexScan{
-		table:      table,
-		idx:        idx,
-		store:      store,
-		schema:     ss,
-		prefix:     tablePrefix(table),
-		indexMode:  true,
-		indexTableID: tableID,
-		indexName:  idx,
-		indexSeek:  seekValue,
+		table:         table,
+		idx:           idx,
+		store:         store,
+		schema:        ss,
+		prefix:        tablePrefix(table),
+		indexMode:     true,
+		indexTableID:  tableID,
+		indexName:     idx,
+		indexSeek:     seekValue,
 		indexRangeEnd: rangeEnd,
 	}, nil
 }
@@ -273,6 +285,63 @@ func NewIndexScanWithBTree(bt *id.BTree, store Store, table, idx string) (*Index
 		schema: ss,
 		prefix: tablePrefix(table),
 		btree:  bt,
+	}, nil
+}
+
+// NewIndexScanWithRange builds an IndexScan that uses the secondary
+// index keyspace for a real range seek. The lower bound is
+// indexLower; lowerInclusive controls whether the bound is
+// included. indexUpper is the (exclusive) upper bound; pass nil
+// for an unbounded upper scan.
+//
+// REQ000074 (iter-27): real seek for `col > X`, `col >= X`,
+// `col BETWEEN X AND Y`, etc. Replaces the prefix-scan fallback
+// that the planner previously used for non-equality predicates.
+//
+// Implementation note: the iterator is opened with the BROAD
+// index prefix (`__idx__:<tableID>:<idxName>:`) so it walks all
+// index entries; the lower/upper bounds are enforced in
+// `nextFromIndex` by inspecting the iterator's key. This avoids
+// the problem of trying to express an exclusive lower bound as
+// a byte prefix (which would require knowing the value's
+// successor, impossible for variable-length strings).
+func NewIndexScanWithRange(store Store, tableID uint64, table, idx string, lower []byte, lowerInclusive bool, upper []byte, upperInclusive bool) (*IndexScan, error) {
+	ss, ok := schemaFor(table)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+	}
+	if len(lower) == 0 {
+		return nil, fmt.Errorf("ex: IndexScan range requires non-empty lower bound")
+	}
+	// Convert the inclusive upper bound into the exclusive form
+	// the iterator naturally understands. We append a 0x00 byte
+	// so the lex comparison treats the original value as the
+	// last entry to include. For `BETWEEN 3 AND 7` (inclusive),
+	// this gives upper = 7 + "\x00", so `Compare(7, upper) = -1`
+	// (still include) and `Compare(8, upper) = -1` (still
+	// include) — wait, that's wrong because 8 > 7 but 8 < "7\x00".
+	// Instead, the iterator comparison must happen in two steps:
+	// include the bound when equal, stop when strictly greater.
+	// That's exactly what `nextFromIndex` does:
+	//   `bytes.Compare(idxValue, i.indexUpper) >= 0` returns NoRows.
+	// So we need i.indexUpper to be the EXCLUSIVE upper bound, and
+	// the inclusivity flag is encoded by adjusting the comparison.
+	upperBound := upper
+	_ = upperBound
+	return &IndexScan{
+		table:               table,
+		idx:                 idx,
+		store:               store,
+		schema:              ss,
+		prefix:              tablePrefix(table),
+		indexMode:           true,
+		indexTableID:        tableID,
+		indexName:           idx,
+		indexSeek:           lower,
+		indexLower:          lower,
+		indexLowerExclusive: !lowerInclusive,
+		indexUpper:          upper,
+		indexUpperInclusive: upperInclusive,
 	}, nil
 }
 
@@ -311,16 +380,52 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 	if i.indexIt == nil {
 		// Lazy open: scan all entries in the index matching the
 		// seek prefix. For exact-match, the seek value is the
-		// index value. For range scans, the seek is the lower
-		// bound and rangeEnd is the exclusive upper bound.
+		// full index value. For prefix-match, it's a truncated
+		// value.
 		i.indexIt = i.openIndexIter()
 	}
 	for i.indexIt.Next() {
 		if err := ctx.Err(); err != nil {
 			return Row{}, err
 		}
+		// REQ000074 (iter-27): range-seek bounds on the indexed
+		// column value. The iterator is opened with the broad
+		// index prefix (tableID + idxName) when range seek is in
+		// use, so we filter the key here.
+		if i.indexLower != nil || i.indexUpper != nil {
+			k := i.indexIt.Key()
+			idxValue := indexValueFromKey(k, i.indexTableID, i.indexName)
+			if idxValue == nil {
+				// Key is not part of this index; skip.
+				continue
+			}
+			if i.indexLower != nil {
+				cmp := bytes.Compare(idxValue, i.indexLower)
+				if i.indexLowerExclusive {
+					if cmp <= 0 {
+						continue
+					}
+				} else {
+					if cmp < 0 {
+						continue
+					}
+				}
+			}
+			if i.indexUpper != nil {
+				cmp := bytes.Compare(idxValue, i.indexUpper)
+				if i.indexUpperInclusive {
+					if cmp > 0 {
+						return Row{}, ErrNoRows
+					}
+				} else {
+					if cmp >= 0 {
+						return Row{}, ErrNoRows
+					}
+				}
+			}
+		}
 		pk := i.indexIt.Value()
-		// Optional range-end cap
+		// Optional range-end cap on PK (existing behavior)
 		if len(i.indexRangeEnd) > 0 && bytes.Compare(pk, i.indexRangeEnd) >= 0 {
 			return Row{}, ErrNoRows
 		}
@@ -347,10 +452,32 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
+// indexValueFromKey strips the index prefix
+// `__idx__:<tableID>:<idxName>:` from the key and returns the
+// remaining bytes (the indexed column value). Returns nil if the
+// key does not start with the expected prefix.
+func indexValueFromKey(key []byte, tableID uint64, idxName string) []byte {
+	expected := buildIndexKey(tableID, idxName, nil)
+	if len(key) < len(expected) {
+		return nil
+	}
+	if !bytes.Equal(key[:len(expected)], expected) {
+		return nil
+	}
+	return key[len(expected):]
+}
+
 // openIndexIter returns the index iterator positioned at the
 // configured seek. It uses the prefix-iter interface on the
 // underlying store. For exact match, the prefix is the full
 // index value; for prefix-match, it's a truncated value.
+//
+// REQ000074 (iter-27): for range seek (when indexLower or
+// indexUpper is set), the iterator is opened with the BROAD
+// index prefix (tableID + idxName only) and the bounds are
+// enforced in nextFromIndex by inspecting the iterator's key.
+// This is necessary because expressing an exclusive lower bound
+// as a byte prefix is not generally possible.
 func (i *IndexScan) openIndexIter() interface {
 	Next() bool
 	Key() []byte
@@ -358,7 +485,15 @@ func (i *IndexScan) openIndexIter() interface {
 	Err() error
 	Close() error
 } {
-	prefix := buildIndexKey(i.indexTableID, i.indexName, i.indexSeek)
+	var prefix []byte
+	if i.indexLower != nil || i.indexUpper != nil {
+		// Range seek: open with the broad index prefix so the
+		// iterator walks all index entries; the lower/upper
+		// bounds are enforced in nextFromIndex.
+		prefix = buildIndexKey(i.indexTableID, i.indexName, nil)
+	} else {
+		prefix = buildIndexKey(i.indexTableID, i.indexName, i.indexSeek)
+	}
 	return i.store.NewIterator(prefix)
 }
 
