@@ -23,7 +23,7 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 ## Iterations Overview
 
 | # | Name | Subsystem | Clusters | Status |
-|---|---|---|---|---|---|
+|---|---|---|---|
 | 0 | LOG | Structured logging | `LG`, `HK` | done |
 | 1 | FIL | File I/O | `DF`, `MF`, `LF`, `FS` | done |
 | 2 | MEM | Buffer pool | `BF`, `SP` | done |
