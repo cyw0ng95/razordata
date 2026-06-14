@@ -1,25 +1,5 @@
 # Razordata Development Roadmap
 
-## MVP Feature Scope (v1 — complete)
-
-- **DDL:** CREATE TABLE, DROP TABLE
-- **DML:** INSERT, UPDATE, DELETE, SELECT
-- **Clauses:** WHERE, ORDER BY, LIMIT, OFFSET
-- **Constraints:** PRIMARY KEY, NOT NULL, DEFAULT (PK exercised; NOT NULL/DEFAULT deferred to v1.1)
-- **Types:** INTEGER, TEXT, BOOLEAN
-- **Transactions:** BEGIN, COMMIT, ROLLBACK
-
-The v1 dependency chain **LOG → FIL → MEM → WAL → ENG → TXN → SQL → SYS** is
-complete as of v0.6.0. All eight iterations (0-9) are done; iter-08 and
-iter-09 both shipped as fully-tested milestones.
-
-## Out of Scope (v1)
-
-Joins, subqueries, foreign keys, network server, external C dependencies.
-(The SQL/EX executor already ships the join/subquery/aggregate/distinct
-operators as v1.1+ code — they pass tests but are not v1 MVP per
-`docs/design/ARCH.md`.)
-
 ## Iterations Overview
 
 | # | Name | Subsystem | Clusters | Status |
@@ -36,7 +16,7 @@ operators as v1.1+ code — they pass tests but are not v1 MVP per
 | 9 | SYS+Integration | Public API + end-to-end | `AP`, `SY`, `SE`, `TX`, `ST` | done (v0.6.3) |
 | 10 | NOT NULL / DEFAULT | Column constraints end-to-end | `PS`, `EX` | done (v0.7.0) |
 | 11 | UNIQUE Constraint | Single + composite + multi-clause UNIQUE | `PS`, `EX` | done (v0.8.0) |
-| 11b | I/O refinements | MADV_DONTNEED + mmap BlockDevice | `MEM/BF`, `FIL/DF` | done (v0.8.1) |
+| 11.1 | I/O refinements | MADV_DONTNEED + mmap BlockDevice | `MEM/BF`, `FIL/DF` | done (v0.8.1) |
 | 12 | Catalog Persistence | System catalog (single-file, atomic rename, schema versioning) | `LS`, `EX`, `SY` | done (v0.9.0) |
 | 13 | WAL Corruption Recovery | Segment header + envelope CRC + bounded resync + Stats | `WAL/WR`, `WAL/RP` | done (v0.10.0) |
 | 14 | Graceful Shutdown Completion | 6-phase sequence + per-subsystem Close + active-tx wait + config validation | `SYS/SY`, `SYS/AP`, `TXN/VL`, `ENG/LS`, `LOG/HK` | done (v0.10.1) |
