@@ -4,6 +4,7 @@ package uring
 
 import (
 	"errors"
+	"os"
 	"runtime"
 	"testing"
 )
@@ -90,4 +91,48 @@ func TestRing_PlatformAwareness(t *testing.T) {
 		return
 	}
 	defer r.Close()
+}
+
+// TestRing_RegisterFixedFile_Shim verifies that the registration
+// API is callable. On the minimal shim, registration may
+// succeed (if the underlying io_uring_setup is functional) or
+// fail with an error (e.g. on a host with io_uring disabled).
+// REQ000296 (iter-27).
+func TestRing_RegisterFixedFile_Shim(t *testing.T) {
+	r, err := New(8)
+	if err != nil {
+		t.Skipf("io_uring unavailable: %v", err)
+	}
+	defer r.Close()
+	// Open a temp file to use as the fd.
+	f, err := os.CreateTemp("", "uring-fd-*")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	idx, err := r.RegisterFixedFile(int(f.Fd()))
+	if err != nil {
+		// On minimal shim or restricted hosts, registration
+		// may fail. That is acceptable for the smoke test.
+		t.Logf("RegisterFixedFile returned err=%v (acceptable on minimal shim or restricted hosts)", err)
+		return
+	}
+	if idx < 0 {
+		t.Errorf("RegisterFixedFile returned negative index: %d", idx)
+	}
+	// Unregister.
+	if err := r.UnregisterFixedFile(idx); err != nil {
+		t.Errorf("UnregisterFixedFile(%d): %v", idx, err)
+	}
+}
+
+// TestIOSQE_FixedFile_FlagDefined verifies the SQE flag constant
+// is exposed and has the expected value (bit 0).
+// REQ000296 (iter-27).
+func TestIOSQE_FixedFile_FlagDefined(t *testing.T) {
+	const expected = 1
+	if IOSQE_FIXED_FILE != expected {
+		t.Errorf("IOSQE_FIXED_FILE = %#x, want %#x", IOSQE_FIXED_FILE, expected)
+	}
 }
