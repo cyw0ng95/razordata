@@ -31,6 +31,16 @@ import (
 // REQ000295 (iter-27).
 const IORING_ENTER_GETEVENTS = 1
 
+// IOSQE_FIXED_FILE is the SQE flag that tells the kernel to
+// look up the file descriptor in the registered fixed-file
+// table instead of the process's fd table. REQ000296 (iter-27).
+const IOSQE_FIXED_FILE = 1 << 0
+
+// SYS_IO_URING_REGISTER is the syscall number for
+// IORING_REGISTER_FIXED_FILE. The full register API is exposed
+// in REQ000296 (iter-27).
+const sysIoUringRegister = 427
+
 // iosqring_params mirrors the C `struct io_uring_params` layout.
 // The kernel ABI is stable on Linux 5.6+. REQ000295 (iter-27).
 type uringParams struct {
@@ -145,6 +155,59 @@ func (r *Ring) SubmitWait(want int) (int, error) {
 		return 0, errors.New("uring: ring is closed")
 	}
 	return 0, ErrShimUnsupported
+}
+
+// RegisterFixedFile registers a process file descriptor with
+// the io_uring instance so subsequent SQEs can reference it
+// via the IOSQE_FIXED_FILE flag. Returns the assigned slot
+// index, or an error if the registration fails.
+//
+// REQ000296 (iter-27): Direct I/O + io_uring fixed-fd. Bypasses
+// the OS page cache (when combined with O_DIRECT) and reduces
+// fd table lookups per SQE.
+func (r *Ring) RegisterFixedFile(fd int) (int, error) {
+	if r.closed.Load() {
+		return -1, errors.New("uring: ring is closed")
+	}
+	// IORING_REGISTER_FIXED_FILE = 4
+	const IORING_REGISTER_FIXED_FILE = 4
+	var index uint32
+	_, _, errno := syscall.Syscall6(
+		sysIoUringRegister,
+		uintptr(r.fd),
+		uintptr(IORING_REGISTER_FIXED_FILE),
+		uintptr(unsafe.Pointer(&fd)),
+		uintptr(1),
+		uintptr(unsafe.Pointer(&index)),
+		0,
+	)
+	if errno != 0 {
+		return -1, fmt.Errorf("uring: register fixed file: %w", errno)
+	}
+	return int(index), nil
+}
+
+// UnregisterFixedFile removes a previously-registered fixed
+// file descriptor. REQ000296 (iter-27).
+func (r *Ring) UnregisterFixedFile(index int) error {
+	if r.closed.Load() {
+		return errors.New("uring: ring is closed")
+	}
+	const IORING_UNREGISTER_FIXED_FILE = 5
+	var idx uint32 = uint32(index)
+	_, _, errno := syscall.Syscall6(
+		sysIoUringRegister,
+		uintptr(r.fd),
+		uintptr(IORING_UNREGISTER_FIXED_FILE),
+		uintptr(unsafe.Pointer(&idx)),
+		uintptr(1),
+		0,
+		0,
+	)
+	if errno != 0 {
+		return fmt.Errorf("uring: unregister fixed file: %w", errno)
+	}
+	return nil
 }
 
 // ErrShimUnsupported is returned by Ring methods when the

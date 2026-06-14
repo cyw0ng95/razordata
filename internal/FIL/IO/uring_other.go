@@ -39,3 +39,13 @@ func (r *Ring) Fd() int { return -1 }
 func (r *Ring) SubmitWait(want int) (int, error) {
 	return 0, ErrUnsupported
 }
+
+// RegisterFixedFile returns ErrUnsupported on non-Linux. REQ000296.
+func (r *Ring) RegisterFixedFile(fd int) (int, error) {
+	return -1, ErrUnsupported
+}
+
+// UnregisterFixedFile returns ErrUnsupported on non-Linux. REQ000296.
+func (r *Ring) UnregisterFixedFile(index int) error {
+	return ErrUnsupported
+}
