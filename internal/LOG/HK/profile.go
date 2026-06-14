@@ -28,6 +28,7 @@ type profileHook struct {
 	mu        sync.Mutex
 	lastDump  time.Time
 	dumpCount atomic.Int64
+	rateLimit time.Duration // minimum interval between dumps
 	// cpuProfile holds an active CPU profile between start/stop.
 	// Only used if WithCPU(true) was specified.
 	cpuActive atomic.Bool
@@ -42,6 +43,12 @@ func WithCPU(enable bool) ProfileHookOpt {
 	return func(p *profileHook) { p.cpuActive.Store(enable) }
 }
 
+// WithRateLimit sets the minimum interval between profile dumps.
+// Default: 5 seconds.
+func WithRateLimit(d time.Duration) ProfileHookOpt {
+	return func(p *profileHook) { p.rateLimit = d }
+}
+
 // NewProfileHook creates a profile hook that dumps profiles to dir.
 // If dir is empty, defaults to "profiles/" relative to working dir.
 // The hook is registered with the hook manager and runs alongside
@@ -52,7 +59,7 @@ func NewProfileHook(dir string, opts ...ProfileHookOpt) Hook {
 		dir = "profiles"
 	}
 	_ = os.MkdirAll(dir, 0755)
-	p := &profileHook{dir: dir}
+	p := &profileHook{dir: dir, rateLimit: 5 * time.Second}
 	for _, opt := range opts {
 		opt(p)
 	}
@@ -75,8 +82,8 @@ func (p *profileHook) OnLog(level slog.Level, msg string, args []any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Rate limit: at most one dump per 5s
-	if time.Since(p.lastDump) < 5*time.Second {
+	// Rate limit: at most one dump per rateLimit interval
+	if time.Since(p.lastDump) < p.rateLimit {
 		return
 	}
 	p.lastDump = time.Now()

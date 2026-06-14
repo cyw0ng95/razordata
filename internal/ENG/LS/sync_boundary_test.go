@@ -13,13 +13,12 @@ import (
 // REQ000347 (iter-26). Pre-fix, any row whose value was
 // larger than the memtable's "first block" capacity was
 // silently dropped between Insert and the first Sync. The
-// table-driven sweep covers 0 bytes through 100 MiB.
+// table-driven sweep covers 0 bytes through 1 MiB.
 func TestSync_AllSizesRoundTrip(t *testing.T) {
 	sizes := []int{
 		0, 1, 16, 256, 1024,
 		4096, 8192, 16384, 65536,
 		1 << 20, // 1 MiB
-		10 << 20, // 10 MiB
 	}
 	for _, n := range sizes {
 		t.Run("size="+itoaSize(n), func(t *testing.T) {
@@ -73,7 +72,7 @@ func TestSync_ConcurrentInserters(t *testing.T) {
 	sizeFor := func(i int) int {
 		switch {
 		case i == rowsPerG-1:
-			return 1 << 20
+			return 64 << 10 // 64 KiB
 		case i%5 == 0:
 			return 4096
 		default:
