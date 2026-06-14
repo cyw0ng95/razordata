@@ -2,15 +2,17 @@
 
 **Status:** done (Phase 1-5); Phase 6 in progress
 **Target:** v0.27.0 + .1 patch releases
-**Budget:** ~36,500 LoC (Phases 1-5) + ~9,000 LoC (Phase 6) = ~45,500 LoC across 31 REQs
+**Budget:** ~36,500 LoC (Phases 1-5) + ~5,000 LoC (Phase 6) = ~41,500 LoC across 30 REQs
 
 ## Outcome
 
 Phases 1-5: all 25 REQs shipped. 21 commits pushed. All 35 packages pass
 `go test ./... -race -count=1`. SLT corpus: 42/42 pass (was 39/42).
 
-Phase 6: 6 additional critical/high-priority REQs added after the v0.27.0
-release. Tracked as v0.27.x patch series on the same iteration.
+Phase 6: 5 additional critical/high-priority REQs added after the v0.27.0
+release. Tracked as v0.27.x patch series on the same iteration. (REQ000307
+MV-OCC was originally planned for Phase 6 but deferred to a later
+iteration — the protocol change risk is too high to ship in a patch.)
 
 ## Commits
 
@@ -111,11 +113,12 @@ Version node stack allocation, QSBR read path, configurable compaction.
 
 **Phase 5 gate:** `go test ./TXN/... ./ENG/... -race -count=1` green. QSBR replaces epoch reclamation without regression. Benchmark: version node allocation shows zero-alloc claim.
 
-## Phase 6 — Linux I/O and Concurrency Maturity (~9,000 LoC)
+## Phase 6 — Linux I/O and Concurrency Maturity (~5,000 LoC)
 
-Six high-priority REQs added after v0.27.0 release. Linux I/O
+Five high-priority REQs added after v0.27.0 release. Linux I/O
 optimizations (io_uring, O_DIRECT, async fsync), NUMA placement,
-MV-OCC commit validation, and IndexScan real seek.
+and IndexScan real seek. (REQ000307 MV-OCC deferred to a later
+iteration — the protocol-change risk is too high for a patch.)
 
 | # | REQ | Subsystem | Description | Effort | LoC | Touches |
 |---|---|---|---|---|---|---|
@@ -124,10 +127,9 @@ MV-OCC commit validation, and IndexScan real seek.
 | 22 | REQ000309 | ENG/LS + MEM/BF | NUMA-aware placement: first-touch arena allocation in `TXN/MV`; buffer pool slot node id; worker CPU pin via `runtime.GOMAXPROCS` + affinity hint | M | ~1,200 | `TXN/MV/arena.go`, `MEM/BF/bf.go` — slot node id; `ENG/LS/compaction.go` — worker pool pin |
 | 23 | REQ000295 | FIL | io_uring async I/O wrapper (SQ/CQ submission, SQPOLL mode, Linux-only; IOCP/kqueue fallback via existing `FIL/FS`) | L | ~2,000 | new `FIL/IO/uring.go`; `FIL/FS/fs.go` — cross-platform dispatch (`buildlinux` / non-linux) |
 | 24 | REQ000296 | FIL | Direct I/O + io_uring fixed-file descriptor (bypass OS page cache, reduce fd table lookups) | M | ~600 | `FIL/FS/fs.go` — `IOSQE_FIXED_FILE` flags; integration with existing O_DIRECT |
-| 25 | REQ000307 | TXN/MV | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | XL | ~4,000 | new `TXN/MV/occ.go`; `TXN/MV/validation.go` rewritten; `TXN/VL` commit path adapted |
 
 **Phase 6 gate:** `go test ./... -race -count=1` green. New `Benchmark*` for
-index seek latency, async fsync latency, and OCC validation. NUMA path
+index seek latency, async fsync latency, and uring paths. NUMA path
 verified by CPU-pin smoke test. `go vet ./...` and `gofmt -s -l .` clean.
 
 **Dependency graph within Phase 6:**
@@ -139,7 +141,6 @@ REQ000309 (NUMA)                    ───┤── Phase 6a (parallel)
 REQ000295 (FIL io_uring)            ───┘
         │
         └── REQ000296 (Direct I/O + uring) — Phase 6b
-REQ000307 (TXN MV-OCC)              ── independent (largest)
 ```
 
 **Cross-platform note (REQ000295/296/301):** the io_uring path is gated
@@ -165,9 +166,11 @@ Phase 6 (independent; can parallelize)
 ```
 
 Phases 3, 4, and 5 can run in parallel after Phase 2 completes. Phase 6
-runs after Phase 5 ships v0.27.0; its 6 REQs land as v0.27.1 / v0.27.2
+runs after Phase 5 ships v0.27.0; its 5 REQs land as v0.27.1 / v0.27.2
 patches (or as a v0.28.0 minor if a Phase 6 REQ requires a catalog
-migration).
+migration). REQ000307 (MV-OCC) is intentionally NOT in Phase 6 — the
+Silo-style rewrite of the commit protocol is risky enough to warrant
+its own dedicated iteration.
 
 ## Test Speed Optimization
 
@@ -188,10 +191,12 @@ Actions:
 ## Release
 
 - v0.27.0: tag cut when all Phase 1-5 REQs are done and `go test ./... -race -count=1` passes.
-- v0.27.1 (or v0.28.0): tag cut when all Phase 6 REQs are done; same CI gate.
+- v0.27.1 (or v0.28.0): tag cut when all Phase 6 REQs (5 REQs) are done; same CI gate.
   Decision criterion: if any Phase 6 REQ adds a new public API or `Options`
   field that changes the catalog on-disk format, bump to v0.28.0. Otherwise
-  v0.27.1.
+  v0.27.1. The current Phase 6 REQs (074, 295, 296, 301, 309) only add new
+  optional APIs (the io_uring shim is opt-in via build tag, the NUMA node
+  id is an internal field); v0.27.1 is the right tag.
 
 ## Gap Analysis
 
@@ -204,7 +209,7 @@ Actions:
 ## Phase 6 Gap Analysis
 
 - **io_uring kernel version floor:** REQ000295 needs Linux 5.6+ for `IOSQE_IO_LINK` (used by REQ000301) and 5.11+ for `IOSQE_FIXED_FILE` (used by REQ000296). On older kernels fall back to plain pread/pwrite; the new path is opt-in via `-tags linux_uring`. CI must run on a 5.11+ runner.
-- **MV-OCC and QSBR coexistence:** REQ000307 replaces the `validation.go` two-phase protocol with Silo-style timestamp ordering. Must not break the QSBR read path shipped in Phase 5 (REQ000308). Strategy: keep QSBR; rewrite only the commit-time validation; readers continue to use the same fence.
+- **io_uring shim scope:** the Phase 6 implementation is a minimal viable shim. The full SQ/CQ memory management and SQE encoding for PREAD/PWRITE/FSYNC is a follow-up; the Phase 6 commits provide the interface and a constructor that returns `ErrShimUnsupported` from `SubmitWait`. The FIL subsystem continues to use pread/pwrite until the full implementation lands.
 - **NUMA on non-NUMA hosts:** REQ000309's first-touch policy is a no-op on single-socket hosts. Detect via `/sys/devices/system/node/has_normal_memory` at engine open; if absent, skip node-id tracking.
 - **IndexScan real seek (REQ000074) and secondary indexes (REQ000045):** real seek is over the primary key index only. Cross-column secondary indexes remain TBD. The hook should be `IndexScan -> ENG/ID.Seek(pk)` not `ENG/ID.Seek(col)`.
 
@@ -218,10 +223,23 @@ Actions:
 
 ### Phase 6 add-on
 
-- I/O: io_uring async path on Linux; O_DIRECT + fixed-fd; async fsync latency target ≤ 200µs p99 on 5.11+ kernel
-- SQL: real seek for `IndexScan` (no more prefix-scan fallback on PK lookups)
-- TXN: OCC validation target 1M+ txn/s on 16 cores; QSBR read path unchanged
-- NUMA: per-slot node id; first-touch arena allocation; worker affinity hint
-- Cross-platform: macOS and Windows builds use existing pread/pwrite; no behavior change
+- I/O: io_uring shim on Linux (interface in place; full SQ/CQ
+  ring management is a follow-up); O_DIRECT + fixed-fd
+  registration API exposed; async fsync decouples fsync
+  latency from commit path
+- SQL: real seek for `IndexScan` (no more prefix-scan fallback
+  on PK lookups; range predicates use B-tree seek)
+- NUMA: per-slot node id in buffer pool; worker OS-thread
+  pinning in subcompaction
+- Cross-platform: macOS and Windows builds use existing
+  pread/pwrite; no behavior change
+
+### Deferred from Phase 6
+
+- **REQ000307 (MV-OCC timestamp ordering):** the Silo-style
+  rewrite of the commit validation protocol was deemed too
+  risky for a patch release. Will ship as part of a dedicated
+  iter-28 (or later) that focuses on transaction layer
+  improvements.
 
 
