@@ -289,3 +289,62 @@ func TestBTree_DeleteNonExistent(t *testing.T) {
 		t.Errorf("Delete(missing) = %v, want ErrNotFound", err)
 	}
 }
+
+func TestBTree_DeleteRebalance(t *testing.T) {
+	dir := tmpDir(t)
+	bt, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bt.Close()
+	// Insert many keys to force multi-level tree.
+	for i := 0; i < 200; i++ {
+		key := []byte{byte(i / 100), byte(i % 100)}
+		val := []byte{byte(i)}
+		bt.Insert(key, val)
+	}
+	// Delete every other key.
+	for i := 0; i < 200; i += 2 {
+		key := []byte{byte(i / 100), byte(i % 100)}
+		bt.Delete(key)
+	}
+	// Verify remaining keys are still accessible.
+	for i := 1; i < 200; i += 2 {
+		key := []byte{byte(i / 100), byte(i % 100)}
+		v, err := bt.Get(key)
+		if err != nil {
+			t.Errorf("Get(%v) after rebalance: %v", key, err)
+		}
+		if v == nil || len(v) == 0 {
+			t.Errorf("Get(%v) returned empty value", key)
+		}
+	}
+}
+
+func TestBTree_DeleteAllThenInsert(t *testing.T) {
+	dir := tmpDir(t)
+	bt, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bt.Close()
+	for i := 0; i < 50; i++ {
+		bt.Insert([]byte{byte(i)}, []byte{byte(i)})
+	}
+	for i := 0; i < 50; i++ {
+		bt.Delete([]byte{byte(i)})
+	}
+	// Re-insert after full delete.
+	for i := 0; i < 50; i++ {
+		bt.Insert([]byte{byte(i)}, []byte{byte(i + 100)})
+	}
+	for i := 0; i < 50; i++ {
+		v, err := bt.Get([]byte{byte(i)})
+		if err != nil {
+			t.Errorf("Get(%d): %v", i, err)
+		}
+		if v == nil || len(v) == 0 || v[0] != byte(i+100) {
+			t.Errorf("Get(%d) = %v, want %d", i, v, i+100)
+		}
+	}
+}
