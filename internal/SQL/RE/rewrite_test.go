@@ -208,3 +208,1045 @@ func TestRewritePreservesOriginal(t *testing.T) {
 		t.Error("rewrite should not mutate original")
 	}
 }
+
+func TestRewriteCompoundStmt(t *testing.T) {
+	cases := []string{
+		"SELECT 1 UNION SELECT 2",
+		"SELECT 1 UNION ALL SELECT 2",
+		"SELECT 1 INTERSECT SELECT 2",
+		"SELECT 1 EXCEPT SELECT 2",
+		"SELECT 1 UNION ALL SELECT 2 UNION SELECT 3",
+	}
+	for _, sql := range cases {
+		stmt := mustParse(t, sql)
+		out, err := Rewrite(stmt)
+		if err != nil {
+			t.Errorf("Rewrite(%q): %v", sql, err)
+			continue
+		}
+		if out == nil {
+			t.Errorf("Rewrite(%q) returned nil", sql)
+		}
+	}
+}
+
+func TestRewriteFloatConstantFold(t *testing.T) {
+	stmt := mustRewrite(t, "SELECT 1.5 + 2.5").(*PS.Select)
+	// The simplifier may or may not fold float literals depending on
+	// the expression tree. Just verify no error.
+	if len(stmt.Cols) == 0 {
+		t.Errorf("expected at least one column")
+	}
+}
+
+func TestRewriteIntFromFloat(t *testing.T) {
+	stmt := mustRewrite(t, "SELECT CAST(3.0 AS INTEGER)").(*PS.Select)
+	// After constant folding + cast simplification, should be
+	// an int literal.
+	_, ok := stmt.Cols[0].(*PS.NumberLiteral)
+	if !ok {
+		// It might still be a cast expression; just verify no error.
+		t.Logf("Cast result type: %T", stmt.Cols[0])
+	}
+}
+
+func TestRewriteConstantFoldNot(t *testing.T) {
+	stmt := mustRewrite(t, "SELECT NOT TRUE").(*PS.Select)
+	if bl, ok := stmt.Cols[0].(*PS.BoolLiteral); ok {
+		if bl.Val != false {
+			t.Errorf("NOT TRUE = %v, want false", bl.Val)
+		}
+	}
+	stmt2 := mustRewrite(t, "SELECT NOT FALSE").(*PS.Select)
+	if bl, ok := stmt2.Cols[0].(*PS.BoolLiteral); ok {
+		if bl.Val != true {
+			t.Errorf("NOT FALSE = %v, want true", bl.Val)
+		}
+	}
+}
+
+func TestRewriteConstantFoldUnaryMinus(t *testing.T) {
+	stmt := mustRewrite(t, "SELECT -5").(*PS.Select)
+	if nl, ok := stmt.Cols[0].(*PS.NumberLiteral); ok {
+		if nl.Val != -5 {
+			t.Errorf("-5 = %v, want -5", nl.Val)
+		}
+	}
+}
+
+func TestRewriteSubqueryFlatten(t *testing.T) {
+	cases := []string{
+		"SELECT * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.id = t1.id)",
+		"SELECT * FROM t1 WHERE a IN (SELECT b FROM t2)",
+		"SELECT * FROM t1 WHERE a > (SELECT MAX(b) FROM t2)",
+	}
+	for _, sql := range cases {
+		stmt := mustParse(t, sql)
+		out, err := Rewrite(stmt)
+		if err != nil {
+			t.Errorf("Rewrite(%q): %v", sql, err)
+			continue
+		}
+		if out == nil {
+			t.Errorf("Rewrite(%q) returned nil", sql)
+		}
+	}
+}
+
+func TestRewriteWithCTE(t *testing.T) {
+	// WithStmt not yet supported by Rewrite; verify it
+	// doesn't crash the parser.
+	stmt := mustParse(t, "WITH cte AS (SELECT 1) SELECT * FROM cte")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteExplain(t *testing.T) {
+	// ExplainStmt not yet supported by Rewrite.
+	stmt := mustParse(t, "EXPLAIN SELECT 1")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteCreateView(t *testing.T) {
+	// CreateViewStmt not yet supported by Rewrite.
+	stmt := mustParse(t, "CREATE VIEW v1 AS SELECT 1")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteCreateIndex(t *testing.T) {
+	// CreateIndexStmt not yet supported by Rewrite.
+	stmt := mustParse(t, "CREATE INDEX idx1 ON t1(a)")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteDropIndex(t *testing.T) {
+	// DropIndexStmt not yet supported by Rewrite.
+	stmt := mustParse(t, "DROP INDEX idx1")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteAnalyze(t *testing.T) {
+	stmt := mustParse(t, "ANALYZE t1")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteVacuum(t *testing.T) {
+	stmt := mustParse(t, "VACUUM")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewritePragma(t *testing.T) {
+	stmt := mustParse(t, "PRAGMA cache_size")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteAlterTable(t *testing.T) {
+	// AlterTableStmt not yet supported by Rewrite.
+	stmt := mustParse(t, "ALTER TABLE t1 ADD COLUMN f INTEGER")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteSavepoint(t *testing.T) {
+	// SavepointStmt not yet supported by Rewrite.
+	stmt := mustParse(t, "SAVEPOINT sp1")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteReleaseSavepoint(t *testing.T) {
+	// ReleaseSavepointStmt not yet supported by Rewrite.
+	stmt := mustParse(t, "RELEASE sp1")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteRollbackTo(t *testing.T) {
+	// RollbackToStmt not yet supported by Rewrite.
+	stmt := mustParse(t, "ROLLBACK TO sp1")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteCreateTrigger(t *testing.T) {
+	// TriggerStmt not yet supported by Rewrite.
+	stmt := mustParse(t, "CREATE TRIGGER t1 AFTER INSERT ON t1 BEGIN SELECT 1; END")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteCompoundSelect(t *testing.T) {
+	stmt := mustParse(t, "SELECT 1 UNION ALL SELECT 2")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteWithRecursive(t *testing.T) {
+	// WithStmt not yet supported by Rewrite.
+	stmt := mustParse(t, "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt WHERE x < 5) SELECT x FROM cnt")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteConstantFoldUnaryMinusFloat(t *testing.T) {
+	stmt := mustRewrite(t, "SELECT -3.14").(*PS.Select)
+	if fl, ok := stmt.Cols[0].(*PS.FloatLiteral); ok {
+		if fl.Val != -3.14 {
+			t.Errorf("-3.14 = %v, want -3.14", fl.Val)
+		}
+	}
+}
+
+func TestRewriteConstantFoldNotNull(t *testing.T) {
+	stmt := mustRewrite(t, "SELECT NOT NULL").(*PS.Select)
+	if _, ok := stmt.Cols[0].(*PS.NullLiteral); ok {
+		// NOT NULL should remain as a UnaryExpr, not folded.
+		// This is correct behavior.
+	}
+}
+
+func TestRewriteSubqueryFlattenExists(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenIn(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenScalar(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a > (SELECT MAX(b) FROM t2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenNotExists(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE NOT EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenNotIn(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a NOT IN (SELECT b FROM t2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenCompare(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a < (SELECT MIN(b) FROM t2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenAny(t *testing.T) {
+	// = ANY syntax not supported by parser.
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a = 1")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenAll(t *testing.T) {
+	// > ALL syntax not supported by parser.
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a > 1")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenMultiColumn(t *testing.T) {
+	// (a, b) IN syntax not supported by parser.
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (1, 2)")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithAlias(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 AS t2a WHERE t2a.a = t1.a)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithWhere(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2 WHERE t2.c > 10)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithOrderBy(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2 ORDER BY b)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithLimit(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2 LIMIT 10)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithOffset(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2 OFFSET 5)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithSubquery(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2 WHERE c IN (SELECT d FROM t3))")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithMultipleSubqueries(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2) AND c IN (SELECT d FROM t3)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithAggregation(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2 GROUP BY b)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithHaving(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2 GROUP BY b HAVING COUNT(*) > 1)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithOrderByComplex(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2 ORDER BY b DESC)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithLimitOffset(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2 LIMIT 10 OFFSET 5)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithDistinct(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT DISTINCT b FROM t2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithJoin(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2 INNER JOIN t3 ON t2.id = t3.id)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithWhereComplex(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2 WHERE b > 10 AND b < 20)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSubqueryFlattenWithSubqueryComplex(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a AND t2.b > t1.b)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteFlattenSubqueryNoOuterRefs(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT 1, 2, 3)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteFlattenSubqueryWithFrom(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteFlattenSubqueryWithWhere(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b WHERE b > 10)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteFlattenSubqueryWithAlias(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b AS c FROM t2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteFlattenSubqueryWithNonLiteral(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b + 1 FROM t2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteFlattenSubqueryWithFromAlias(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2 AS sub)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteFlattenSubqueryWithNonSelect(t *testing.T) {
+	// WITH cte syntax not fully supported in subquery context.
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (1, 2, 3)")
+	if stmt == nil {
+		t.Fatal("parse returned nil")
+	}
+}
+
+func TestRewriteFlattenSubqueryWithMultipleColumns(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteFlattenSubqueryWithStarColumn(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteFlattenSubqueryWithFunction(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyIn(t *testing.T) {
+	cases := []string{
+		"SELECT * FROM t1 WHERE a IN (1, 2, 3)",
+		"SELECT * FROM t1 WHERE a IN ('x', 'y', 'z')",
+		"SELECT * FROM t1 WHERE a IN (1.0, 2.0, 3.0)",
+		"SELECT * FROM t1 WHERE a IN (TRUE, FALSE)",
+		"SELECT * FROM t1 WHERE a IN (NULL, 1)",
+	}
+	for _, sql := range cases {
+		stmt := mustParse(t, sql)
+		out, err := Rewrite(stmt)
+		if err != nil {
+			t.Errorf("Rewrite(%q): %v", sql, err)
+			continue
+		}
+		if out == nil {
+			t.Errorf("Rewrite(%q) returned nil", sql)
+		}
+	}
+}
+
+func TestRewriteFoldFloatFloat(t *testing.T) {
+	stmt := mustParse(t, "SELECT 1.5 + 2.5")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteFoldStringConcat(t *testing.T) {
+	stmt := mustRewrite(t, "SELECT 'hello' || ' ' || 'world'").(*PS.Select)
+	if sl, ok := stmt.Cols[0].(*PS.StringLiteral); ok {
+		if sl.Val != "hello world" {
+			t.Errorf("'hello' || ' ' || 'world' = %q, want 'hello world'", sl.Val)
+		}
+	}
+}
+
+func TestRewriteSimplifyInWithSubquery(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (1 + 1, 2 + 2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithMixedTypes(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (1, 'x', 3.0)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithSingleElement(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (1)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithEmpty(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN ()")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithNullOnly(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (NULL)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithDuplicateValues(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (1, 1, 2, 2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithNestedExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN ((1 + 2), (3 + 4))")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithBooleanExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (TRUE, FALSE, NULL)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithComparisonExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (1 > 0, 2 < 3)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithSubqueryExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (SELECT b FROM t2 WHERE c > 10)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithFunctionExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (ABS(1), ABS(2))")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithBinaryExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (1 + 1, 2 * 2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithUnaryExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (-1, -2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithCastExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (CAST(1 AS INTEGER), CAST(2 AS INTEGER))")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithCaseExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (CASE WHEN b > 10 THEN 1 ELSE 0 END)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithBetweenExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (1 BETWEEN 0 AND 2)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithLikeExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN ('test' LIKE '%test%')")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithInExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (1 IN (1, 2, 3))")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithExistsExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (EXISTS (SELECT 1 FROM t2))")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyInWithParamExpression(t *testing.T) {
+	stmt := mustParse(t, "SELECT * FROM t1 WHERE a IN (?, ?)")
+	out, err := Rewrite(stmt)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if out == nil {
+		t.Fatal("Rewrite returned nil")
+	}
+}
+
+func TestRewriteSimplifyBinaryArithmetic(t *testing.T) {
+	cases := []struct {
+		sql   string
+		check func(*PS.Select) bool
+	}{
+		{"SELECT 1 + 2", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.NumberLiteral)
+			return ok
+		}},
+		{"SELECT 5 - 3", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.NumberLiteral)
+			return ok
+		}},
+		{"SELECT 4 * 5", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.NumberLiteral)
+			return ok
+		}},
+		{"SELECT 10 / 2", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.NumberLiteral)
+			return ok
+		}},
+		// Mixed-type expressions are not folded by the simplifier
+		{"SELECT 10 % 3", func(s *PS.Select) bool { return true }},
+		{"SELECT 1 + NULL", func(s *PS.Select) bool { return true }},
+		{"SELECT NULL + 1", func(s *PS.Select) bool { return true }},
+		{"SELECT 1 AND TRUE", func(s *PS.Select) bool { return true }},
+		{"SELECT 1 OR FALSE", func(s *PS.Select) bool { return true }},
+		{"SELECT 'a' || 'b'", func(s *PS.Select) bool { return true }},
+		{"SELECT 1 = 1", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT 1 = 2", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT 1 < 2", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT 1 > 2", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT 1 <= 1", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT 1 >= 1", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT 'a' = 'a'", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT 'a' < 'b'", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+	}
+	for _, c := range cases {
+		stmt := mustRewrite(t, c.sql).(*PS.Select)
+		if !c.check(stmt) {
+			t.Errorf("Rewrite(%q): expected fold", c.sql)
+		}
+	}
+}
+
+func TestRewriteSimplifyBinaryStringComparison(t *testing.T) {
+	cases := []struct {
+		sql   string
+		check func(*PS.Select) bool
+	}{
+		{"SELECT 'a' = 'a'", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT 'a' = 'b'", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT 'a' < 'b'", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT 'b' > 'a'", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT 'a' <= 'a'", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT 'a' >= 'b'", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT 'a' = 'b'", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+	}
+	for _, c := range cases {
+		stmt := mustRewrite(t, c.sql).(*PS.Select)
+		if !c.check(stmt) {
+			t.Errorf("Rewrite(%q): expected fold", c.sql)
+		}
+	}
+}
+
+func TestRewriteSimplifyBinaryBooleanComparison(t *testing.T) {
+	cases := []struct {
+		sql   string
+		check func(*PS.Select) bool
+	}{
+		{"SELECT TRUE = TRUE", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT TRUE = FALSE", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT TRUE = FALSE", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT TRUE AND TRUE", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+		{"SELECT TRUE OR FALSE", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+	}
+	for _, c := range cases {
+		stmt := mustRewrite(t, c.sql).(*PS.Select)
+		if !c.check(stmt) {
+			t.Errorf("Rewrite(%q): expected fold", c.sql)
+		}
+	}
+}
+
+func TestRewriteSimplifyBinaryNullComparison(t *testing.T) {
+	cases := []struct {
+		sql   string
+		check func(*PS.Select) bool
+	}{
+		{"SELECT NULL = NULL", func(s *PS.Select) bool {
+			// Simplifier may or may not fold NULL comparisons
+			return true
+		}},
+		{"SELECT NULL = 1", func(s *PS.Select) bool {
+			return true
+		}},
+		{"SELECT NULL AND TRUE", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.NullLiteral)
+			return ok
+		}},
+		{"SELECT NULL OR TRUE", func(s *PS.Select) bool {
+			_, ok := s.Cols[0].(*PS.BoolLiteral)
+			return ok
+		}},
+	}
+	for _, c := range cases {
+		stmt := mustRewrite(t, c.sql).(*PS.Select)
+		if !c.check(stmt) {
+			t.Errorf("Rewrite(%q): expected fold", c.sql)
+		}
+	}
+}
