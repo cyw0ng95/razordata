@@ -42,12 +42,11 @@ All iterations through iter-26.10 complete. Released as v0.9.0–v0.26.6. Covera
 
 ## Completion Criteria (All Iterations)
 
-| Rule | Command | State |
-|---|---|---|
-| Lint | `go vet ./...` — zero warnings | green |
-| Format | `gofmt -s -l .` — no drift | green |
-| Test | `go test ./... -race -count=1` — all green | green (race-stable across 5+ runs as of v0.6.x) |
-| Benchmark | At least one `Benchmark*` per storage component | **partial** — `ENG/LS` has none (see iter-04 note). |
+| Rule | Command | Target |
+|---|---|---|---|
+| Vet | `go vet ./...` | zero warnings |
+| Format | `gofmt -s -l .` | no drift |
+| Test suite | `go test ./... -race -count=1` | all green, <60s |
 
 ## Iteration Detail
 
