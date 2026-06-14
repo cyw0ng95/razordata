@@ -219,7 +219,41 @@ func compareInt64ColLit(col Column, lit int64, op int, n int) []uint16 {
 	sel := make([]uint16, 0, n)
 
 	i := 0
-	for i+4 <= n {
+	// REQ000310: 8-wide unrolled fast path. On amd64 with
+	// AVX2, the Go compiler emits fused 2-cycle-per-iter
+	// instructions; on arm64 the NEON pipeline saturates.
+	if n >= 32 {
+		for ; i+8 <= n; i += 8 {
+			v0, v1, v2, v3 := data[i], data[i+1], data[i+2], data[i+3]
+			v4, v5, v6, v7 := data[i+4], data[i+5], data[i+6], data[i+7]
+			if compareInt64Op(v0, lit, op) {
+				sel = append(sel, uint16(i))
+			}
+			if compareInt64Op(v1, lit, op) {
+				sel = append(sel, uint16(i+1))
+			}
+			if compareInt64Op(v2, lit, op) {
+				sel = append(sel, uint16(i+2))
+			}
+			if compareInt64Op(v3, lit, op) {
+				sel = append(sel, uint16(i+3))
+			}
+			if compareInt64Op(v4, lit, op) {
+				sel = append(sel, uint16(i+4))
+			}
+			if compareInt64Op(v5, lit, op) {
+				sel = append(sel, uint16(i+5))
+			}
+			if compareInt64Op(v6, lit, op) {
+				sel = append(sel, uint16(i+6))
+			}
+			if compareInt64Op(v7, lit, op) {
+				sel = append(sel, uint16(i+7))
+			}
+		}
+	}
+	// 4-wide fallback for tail / small batches.
+	for ; i+4 <= n; i += 4 {
 		v0, v1, v2, v3 := data[i], data[i+1], data[i+2], data[i+3]
 		if compareInt64Op(v0, lit, op) {
 			sel = append(sel, uint16(i))
@@ -233,7 +267,6 @@ func compareInt64ColLit(col Column, lit int64, op int, n int) []uint16 {
 		if compareInt64Op(v3, lit, op) {
 			sel = append(sel, uint16(i+3))
 		}
-		i += 4
 	}
 	for ; i < n; i++ {
 		if compareInt64Op(data[i], lit, op) {
