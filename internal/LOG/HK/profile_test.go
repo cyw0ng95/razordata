@@ -65,7 +65,7 @@ func TestProfileHook_NoDumpOnInfo(t *testing.T) {
 // REQ000322.
 func TestProfileHook_RateLimit(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "profiles")
-	h := NewProfileHook(dir)
+	h := NewProfileHook(dir, WithRateLimit(100*time.Millisecond))
 	defer h.Close()
 
 	ph := h.(*profileHook)
@@ -78,7 +78,7 @@ func TestProfileHook_RateLimit(t *testing.T) {
 	}
 
 	// Wait for rate limit to expire
-	time.Sleep(5*time.Second + 100*time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 	ph.OnLog(slog.LevelError, "err 3 (after wait)", nil)
 	if ph.DumpCount() < 1 {
 		t.Errorf("expected dump after rate limit expired")
