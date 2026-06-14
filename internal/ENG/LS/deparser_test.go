@@ -307,15 +307,15 @@ func TestDecodeBlock_Empty(t *testing.T) {
 }
 
 func TestEncodeUint64_Small(t *testing.T) {
-	result := encodeUint64(100)
+	result := EncodeUint64(100)
 	if len(result) == 0 {
 		t.Fatal("expected non-empty result")
 	}
 }
 
 func TestDecodeUint64_Small(t *testing.T) {
-	encoded := encodeUint64(100)
-	val, n := decodeUint64(encoded)
+	encoded := EncodeUint64(100)
+	val, n := DecodeUint64(encoded)
 	if val != 100 {
 		t.Fatalf("expected 100, got %d", val)
 	}
@@ -325,15 +325,15 @@ func TestDecodeUint64_Small(t *testing.T) {
 }
 
 func TestEncodeUint64_Large(t *testing.T) {
-	result := encodeUint64(1 << 62)
+	result := EncodeUint64(1 << 62)
 	if len(result) == 0 {
 		t.Fatal("expected non-empty result")
 	}
 }
 
 func TestDecodeUint64_Large(t *testing.T) {
-	encoded := encodeUint64(1 << 62)
-	val, n := decodeUint64(encoded)
+	encoded := EncodeUint64(1 << 62)
+	val, n := DecodeUint64(encoded)
 	if val != 1<<62 {
 		t.Fatalf("expected %d, got %d", 1<<62, val)
 	}

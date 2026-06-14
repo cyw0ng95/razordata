@@ -10,8 +10,6 @@
 | REQ000034 | WAL | WAL compression (lz4) | low | M | iter-03 (WAL writer) | `WAL/WR/encode.go` |
 | REQ000045 | ENG | Secondary indexes (non-PK columns; lookup by `__idx__:<table>:<col>:<val>`) | low | XL | iter-12 (catalog), iter-21 (ID) | new `ENG/ID/` package, `SQL/PL` index selection |
 | REQ000048 | ENG | Table registry persistence (`ENG/TB/`) | medium | L | iter-12 (catalog basic) | new `ENG/TB/tb.go` |
-| REQ000049 | ENG | Schema cluster (`ENG/SC/`) split from LS | low | M | iter-04 | new `ENG/SC/sc.go`; move `TableSchema` from LS |
-| REQ000050 | ENG | Deparser cluster (`ENG/DP/`) split from LS | low | M | iter-04 | new `ENG/DP/dp.go`; move row/block encoding |
 | REQ000064 | TXN | Generational arena (reduce GC pressure vs. single allocation) | low | L | iter-05 (arena) | `TXN/MV/arena.go` |
 | REQ000086 | SQL | Parallel query execution (operators in goroutines, merge via channel) | low | XL | iter-08 (operators) | `SQL/EX/ex.go` — channel-based Next; cancellation hygiene |
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | low | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
@@ -400,4 +398,6 @@
 | REQ000434 | SQL/PS | NOT BETWEEN syntax error fix | iter-26 |
 | REQ000438 | SQL/EX | Scalar function eval error routing fix | iter-26 |
 | REQ000439 | SQL/PS | EXPLAIN statement support | iter-26 |
+| REQ000049 | ENG/SC | Schema cluster split from LS (TableSchema, ColumnDef, ColumnType, Row, Validator) | iter-28 |
+| REQ000050 | ENG/DP | Deparser cluster split from LS (EncodeRow/DecodeRow, EncodeBlock/DecodeBlock) | iter-28 |
 ---

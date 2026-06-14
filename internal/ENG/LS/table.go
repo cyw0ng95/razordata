@@ -2,64 +2,37 @@ package ls
 
 import (
 	"encoding/binary"
-	"errors"
 	"sync"
+
+	"github.com/cyw0ng95/razordata/internal/ENG/SC"
 )
 
 var (
-	ErrTableNotFound  = errors.New("table not found")
-	ErrTableExists    = errors.New("table already exists")
-	ErrInvalidTableID = errors.New("invalid table ID")
-)
-
-type TableSchema struct {
-	TableID    uint64
-	Name       string
-	Columns    []ColumnDef
-	PrimaryKey []int
-}
-
-type ColumnDef struct {
-	Name       string
-	Type       ColumnType
-	Nullable   bool
-	Default    []byte
-	PrimaryKey bool
-}
-
-type ColumnType uint8
-
-const (
-	CTInt       ColumnType = 0
-	CTBigInt    ColumnType = 1
-	CTVarchar   ColumnType = 2
-	CTFloat     ColumnType = 3
-	CTBool      ColumnType = 4
-	CTText      ColumnType = 5
-	CTBlob      ColumnType = 6
-	CTTimestamp ColumnType = 7
+	ErrTableNotFound  = sc.ErrTableNotFound
+	ErrTableExists    = sc.ErrTableExists
+	ErrInvalidTableID = sc.ErrInvalidTableID
 )
 
 type tableRegistry struct {
 	mu     sync.RWMutex
-	tables map[uint64]*TableSchema
+	tables map[uint64]*sc.TableSchema
 	nextID uint64
 }
 
 func newTableRegistry() *tableRegistry {
 	return &tableRegistry{
-		tables: make(map[uint64]*TableSchema),
+		tables: make(map[uint64]*sc.TableSchema),
 		nextID: 1,
 	}
 }
 
-func (tr *tableRegistry) Create(schema *TableSchema) error {
+func (tr *tableRegistry) Create(schema *sc.TableSchema) error {
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
 
 	for _, existing := range tr.tables {
 		if existing.Name == schema.Name {
-			return ErrTableExists
+			return sc.ErrTableExists
 		}
 	}
 
@@ -70,13 +43,13 @@ func (tr *tableRegistry) Create(schema *TableSchema) error {
 	return nil
 }
 
-func (tr *tableRegistry) Get(tableID uint64) (*TableSchema, error) {
+func (tr *tableRegistry) Get(tableID uint64) (*sc.TableSchema, error) {
 	tr.mu.RLock()
 	defer tr.mu.RUnlock()
 
 	schema, ok := tr.tables[tableID]
 	if !ok {
-		return nil, ErrTableNotFound
+		return nil, sc.ErrTableNotFound
 	}
 	return schema, nil
 }
@@ -86,18 +59,18 @@ func (tr *tableRegistry) Drop(tableID uint64) error {
 	defer tr.mu.Unlock()
 
 	if _, ok := tr.tables[tableID]; !ok {
-		return ErrTableNotFound
+		return sc.ErrTableNotFound
 	}
 
 	delete(tr.tables, tableID)
 	return nil
 }
 
-func (tr *tableRegistry) List() []*TableSchema {
+func (tr *tableRegistry) List() []*sc.TableSchema {
 	tr.mu.RLock()
 	defer tr.mu.RUnlock()
 
-	result := make([]*TableSchema, 0, len(tr.tables))
+	result := make([]*sc.TableSchema, 0, len(tr.tables))
 	for _, schema := range tr.tables {
 		result = append(result, schema)
 	}
@@ -122,8 +95,8 @@ func newCatalog() *catalog {
 	}
 }
 
-func (c *catalog) CreateTable(name string, columns []ColumnDef, primaryKey []int) (*TableSchema, error) {
-	schema := &TableSchema{
+func (c *catalog) CreateTable(name string, columns []sc.ColumnDef, primaryKey []int) (*sc.TableSchema, error) {
+	schema := &sc.TableSchema{
 		Name:       name,
 		Columns:    columns,
 		PrimaryKey: primaryKey,
@@ -153,7 +126,7 @@ func (c *catalog) DropTable(tableID uint64) error {
 	return nil
 }
 
-func (c *catalog) GetTable(tableID uint64) (*TableSchema, error) {
+func (c *catalog) GetTable(tableID uint64) (*sc.TableSchema, error) {
 	return c.registry.Get(tableID)
 }
 
@@ -161,7 +134,7 @@ func (c *catalog) GetTableByName(name string) ([]byte, bool) {
 	return c.index.Find([]byte(name))
 }
 
-func (c *catalog) ListTables() []*TableSchema {
+func (c *catalog) ListTables() []*sc.TableSchema {
 	return c.registry.List()
 }
 
