@@ -1,13 +1,16 @@
 # Iteration 27 — Maturity Push (v0.27.0)
 
-**Status:** done
-**Target:** v0.27.0
-**Budget:** ~36,500 LoC across 25 REQs in 7 phases
+**Status:** done (Phase 1-5); Phase 6 in progress
+**Target:** v0.27.0 + .1 patch releases
+**Budget:** ~36,500 LoC (Phases 1-5) + ~9,000 LoC (Phase 6) = ~45,500 LoC across 31 REQs
 
 ## Outcome
 
-All 25 REQs shipped. 21 commits pushed. All 35 packages pass
+Phases 1-5: all 25 REQs shipped. 21 commits pushed. All 35 packages pass
 `go test ./... -race -count=1`. SLT corpus: 42/42 pass (was 39/42).
+
+Phase 6: 6 additional critical/high-priority REQs added after the v0.27.0
+release. Tracked as v0.27.x patch series on the same iteration.
 
 ## Commits
 
@@ -108,6 +111,43 @@ Version node stack allocation, QSBR read path, configurable compaction.
 
 **Phase 5 gate:** `go test ./TXN/... ./ENG/... -race -count=1` green. QSBR replaces epoch reclamation without regression. Benchmark: version node allocation shows zero-alloc claim.
 
+## Phase 6 — Linux I/O and Concurrency Maturity (~9,000 LoC)
+
+Six high-priority REQs added after v0.27.0 release. Linux I/O
+optimizations (io_uring, O_DIRECT, async fsync), NUMA placement,
+MV-OCC commit validation, and IndexScan real seek.
+
+| # | REQ | Subsystem | Description | Effort | LoC | Touches |
+|---|---|---|---|---|---|---|
+| 20 | REQ000074 | SQL/EX | IndexScan real seek — replace prefix-scan fallback with `ENG/ID` B-tree seek (single-key + range) | M | ~800 | `SQL/EX/operators.go` — call into `ENG/ID/id.go` Seek/Range; `SQL/PL/planner.go` — index selection |
+| 21 | REQ000301 | WAL/WR | Async fsync + io_uring linked submit (write→fsync chained via `IOSQE_IO_LINK`; lowers batch-commit latency) | S | ~400 | `WAL/WR/fl.go` — `BatchSyncWithUring`; stub when uring unavailable |
+| 22 | REQ000309 | ENG/LS + MEM/BF | NUMA-aware placement: first-touch arena allocation in `TXN/MV`; buffer pool slot node id; worker CPU pin via `runtime.GOMAXPROCS` + affinity hint | M | ~1,200 | `TXN/MV/arena.go`, `MEM/BF/bf.go` — slot node id; `ENG/LS/compaction.go` — worker pool pin |
+| 23 | REQ000295 | FIL | io_uring async I/O wrapper (SQ/CQ submission, SQPOLL mode, Linux-only; IOCP/kqueue fallback via existing `FIL/FS`) | L | ~2,000 | new `FIL/IO/uring.go`; `FIL/FS/fs.go` — cross-platform dispatch (`buildlinux` / non-linux) |
+| 24 | REQ000296 | FIL | Direct I/O + io_uring fixed-file descriptor (bypass OS page cache, reduce fd table lookups) | M | ~600 | `FIL/FS/fs.go` — `IOSQE_FIXED_FILE` flags; integration with existing O_DIRECT |
+| 25 | REQ000307 | TXN/MV | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | XL | ~4,000 | new `TXN/MV/occ.go`; `TXN/MV/validation.go` rewritten; `TXN/VL` commit path adapted |
+
+**Phase 6 gate:** `go test ./... -race -count=1` green. New `Benchmark*` for
+index seek latency, async fsync latency, and OCC validation. NUMA path
+verified by CPU-pin smoke test. `go vet ./...` and `gofmt -s -l .` clean.
+
+**Dependency graph within Phase 6:**
+
+```
+REQ000074 (SQL IndexScan)         ── independent
+REQ000301 (WAL async fsync)        ───┐
+REQ000309 (NUMA)                    ───┤── Phase 6a (parallel)
+REQ000295 (FIL io_uring)            ───┘
+        │
+        └── REQ000296 (Direct I/O + uring) — Phase 6b
+REQ000307 (TXN MV-OCC)              ── independent (largest)
+```
+
+**Cross-platform note (REQ000295/296/301):** the io_uring path is gated
+on `linux/amd64` and `linux/arm64` via build tags. The default `darwin`
+and `windows` builds use the existing pread/pwrite implementation.
+`go test ./...` runs on the developer's host; a CI matrix runs the
+Linux build with `-tags linux_uring` to exercise the new path.
+
 ## Dependency Graph
 
 ```
@@ -118,9 +158,16 @@ Phase 2 (Phase 1 parser fixes prerequisite)
 Phase 3 (independent of Phase 2; can parallelize)
 Phase 4 (independent; can parallelize)
 Phase 5 (REQ000319 depends on REQ000318 from Phase 3)
+    ↓
+Phase 6 (independent; can parallelize)
+    - REQ000295 → REQ000296 (within Phase 6)
+    - REQ000295 → REQ000301 (within Phase 6)
 ```
 
-Phases 3, 4, and 5 can run in parallel after Phase 2 completes.
+Phases 3, 4, and 5 can run in parallel after Phase 2 completes. Phase 6
+runs after Phase 5 ships v0.27.0; its 6 REQs land as v0.27.1 / v0.27.2
+patches (or as a v0.28.0 minor if a Phase 6 REQ requires a catalog
+migration).
 
 ## Test Speed Optimization
 
@@ -140,7 +187,11 @@ Actions:
 
 ## Release
 
-Single tag `v0.27.0` cut when all 17 REQs are done and `go test ./... -race -count=1` passes.
+- v0.27.0: tag cut when all Phase 1-5 REQs are done and `go test ./... -race -count=1` passes.
+- v0.27.1 (or v0.28.0): tag cut when all Phase 6 REQs are done; same CI gate.
+  Decision criterion: if any Phase 6 REQ adds a new public API or `Options`
+  field that changes the catalog on-disk format, bump to v0.28.0. Otherwise
+  v0.27.1.
 
 ## Gap Analysis
 
@@ -150,6 +201,13 @@ Single tag `v0.27.0` cut when all 17 REQs are done and `go test ./... -race -cou
 - **Recursive CTE cycle detection:** Must detect cycles to prevent infinite loops. Use visited-set with configurable max-depth (default 1000).
 - **Generated columns VIRTUAL vs STORED:** Start with STORED only (materialized on write). VIRTUAL (computed on read) deferred to v0.28.
 
+## Phase 6 Gap Analysis
+
+- **io_uring kernel version floor:** REQ000295 needs Linux 5.6+ for `IOSQE_IO_LINK` (used by REQ000301) and 5.11+ for `IOSQE_FIXED_FILE` (used by REQ000296). On older kernels fall back to plain pread/pwrite; the new path is opt-in via `-tags linux_uring`. CI must run on a 5.11+ runner.
+- **MV-OCC and QSBR coexistence:** REQ000307 replaces the `validation.go` two-phase protocol with Silo-style timestamp ordering. Must not break the QSBR read path shipped in Phase 5 (REQ000308). Strategy: keep QSBR; rewrite only the commit-time validation; readers continue to use the same fence.
+- **NUMA on non-NUMA hosts:** REQ000309's first-touch policy is a no-op on single-socket hosts. Detect via `/sys/devices/system/node/has_normal_memory` at engine open; if absent, skip node-id tracking.
+- **IndexScan real seek (REQ000074) and secondary indexes (REQ000045):** real seek is over the primary key index only. Cross-column secondary indexes remain TBD. The hook should be `IndexScan -> ENG/ID.Seek(pk)` not `ENG/ID.Seek(col)`.
+
 ## Expected Outcome
 
 - SLT corpus pass rate: 42/42 (100% of surveyed patterns)
@@ -157,5 +215,13 @@ Single tag `v0.27.0` cut when all 17 REQs are done and `go test ./... -race -cou
 - Memory: +30% cache hit rate (W-TinyLFU), GC pressure reduced (off-heap pool)
 - Transaction: zero-alloc version nodes, near-RCU read latency (QSBR)
 - Compaction: rate-limited, parallel sub-compaction, configurable style
+
+### Phase 6 add-on
+
+- I/O: io_uring async path on Linux; O_DIRECT + fixed-fd; async fsync latency target ≤ 200µs p99 on 5.11+ kernel
+- SQL: real seek for `IndexScan` (no more prefix-scan fallback on PK lookups)
+- TXN: OCC validation target 1M+ txn/s on 16 cores; QSBR read path unchanged
+- NUMA: per-slot node id; first-touch arena allocation; worker affinity hint
+- Cross-platform: macOS and Windows builds use existing pread/pwrite; no behavior change
 
 
