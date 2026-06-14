@@ -46,7 +46,7 @@ All iterations through iter-26.10 complete. Released as v0.9.0–v0.26.6. Covera
 |---|---|---|---|
 | Vet | `go vet ./...` | zero warnings |
 | Format | `gofmt -s -l .` | no drift |
-| Test suite | `go test ./... -race -count=1` | all green, <60s |
+| Test suite | `go test ./... -race -count=1` | all green, <30s |
 
 ## Iteration Detail
 
