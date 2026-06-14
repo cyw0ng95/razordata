@@ -113,12 +113,14 @@ Version node stack allocation, QSBR read path, configurable compaction.
 
 **Phase 5 gate:** `go test ./TXN/... ./ENG/... -race -count=1` green. QSBR replaces epoch reclamation without regression. Benchmark: version node allocation shows zero-alloc claim.
 
-## Phase 6 — Linux I/O and Concurrency Maturity (~5,000 LoC)
+## Phase 6 — Linux I/O and Concurrency Maturity (~6,000 LoC)
 
-Five high-priority REQs added after v0.27.0 release. Linux I/O
+Seven REQs added after the v0.27.0 release. Linux I/O
 optimizations (io_uring, O_DIRECT, async fsync), NUMA placement,
-and IndexScan real seek. (REQ000307 MV-OCC deferred to a later
-iteration — the protocol-change risk is too high for a patch.)
+IndexScan real seek, plus two SQL features: cost-based scan
+selection and full SQL aggregate DISTINCT coverage.
+(REQ000307 MV-OCC remains deferred to a later iteration — the
+protocol-change risk is too high for a patch release.)
 
 | # | REQ | Subsystem | Description | Effort | LoC | Touches |
 |---|---|---|---|---|---|---|
@@ -127,6 +129,8 @@ iteration — the protocol-change risk is too high for a patch.)
 | 22 | REQ000309 | ENG/LS + MEM/BF | NUMA-aware placement: first-touch arena allocation in `TXN/MV`; buffer pool slot node id; worker CPU pin via `runtime.GOMAXPROCS` + affinity hint | M | ~1,200 | `TXN/MV/arena.go`, `MEM/BF/bf.go` — slot node id; `ENG/LS/compaction.go` — worker pool pin |
 | 23 | REQ000295 | FIL | io_uring async I/O wrapper (SQ/CQ submission, SQPOLL mode, Linux-only; IOCP/kqueue fallback via existing `FIL/FS`) | L | ~2,000 | new `FIL/IO/uring.go`; `FIL/FS/fs.go` — cross-platform dispatch (`buildlinux` / non-linux) |
 | 24 | REQ000296 | FIL | Direct I/O + io_uring fixed-file descriptor (bypass OS page cache, reduce fd table lookups) | M | ~600 | `FIL/FS/fs.go` — `IOSQE_FIXED_FILE` flags; integration with existing O_DIRECT |
+| 25 | REQ000156 | SQL/EX+PL | Cost-based scan selection: `pickCheaperScan` compares `estimateCost` for SeqScan vs IndexScan candidates and swaps to the cheaper one when the WHERE column has a writer-registered index; extends the cost model with `indexMode` to differentiate real-seek (0.05) from prefix-scan (0.1) | M | ~400 | `SQL/EX/planner.go` — `pickCheaperScan` + `indexedColumnOrRange` helper; `SQL/EX/estimateCost` IndexScan mode |
+| 26 | REQ000437 | SQL/PS+EX | Full SQL aggregate DISTINCT support: SUM/AVG/MIN/MAX/GROUP_CONCAT(DISTINCT col) dedup before aggregating; NULLs excluded from the distinct set per SQLite semantics; parser routes DISTINCT through the IDENT aggregate path for `GROUP_CONCAT` | M | ~500 | `SQL/PS/ps.go` — DISTINCT routing for IDENT aggregate names; `SQL/EX/aggregate.go` — `sumDistinct/avgDistinct/minDistinct/maxDistinct` helpers + GROUP_CONCAT DISTINCT |
 
 **Phase 6 gate:** `go test ./... -race -count=1` green. New `Benchmark*` for
 index seek latency, async fsync latency, and uring paths. NUMA path

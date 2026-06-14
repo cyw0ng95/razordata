@@ -3,7 +3,6 @@
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
 | REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with design spec |
-| REQ000156 | SQL | Executor cost model integration (design mentions cost estimation, no operator selection based on cost) | medium | M | iter-08 (planner) | `SQL/EX/planner.go` — use cost for operator selection |
 | REQ000159 | TXN | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | medium | M | iter-05 (arena) | `TXN/MV/arena.go` — add lazy init, exhaustion handling |
 | REQ000162 | SQL | Plan memoization with SHA256(AST binary encoding) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — canonical AST serialization |
 | REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | medium | M | iter-04 (compaction) | `ENG/LS/compaction.go` — size budget monitoring |
@@ -30,7 +29,6 @@
 | REQ000316 | SQL | Incremental materialized views (auto-maintained aggregation views with query routing) | medium | L | iter-08 (operators), iter-12 (catalog) | `SQL/EX/matview.go` (new); `ENG/LS` triggers on view base tables |
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
-| REQ000437 | SQL/EX | `count(DISTINCT col)` not supported — `SELECT count(DISTINCT a) FROM t1` fails with `expected expression, got DISTINCT` (parser error) | high | M | iter-26.11 SLT gap survey | `SQL/PS/ps.go` parseAggregateFunc, `SQL/EX/aggregate.go` |
 | REQ000442 | SQL/EX | 30/42 common SLT patterns pass; the 12 failures above are the highest-impact gaps. Recommended priority order: REQ000434 (NOT BETWEEN) > REQ000437 (count DISTINCT) > REQ000436 (recursive CTE) > REQ000438 (function eval routing) | high | L | iter-26.11 SLT gap survey | n/a — survey result |
 | REQ000443 | WAL/WR | `encodeRecord` had 4 allocs/record (body temp slice + final out slice + 2 varint slices). Optimized to 2 allocs/record via pre-sized body and out slices; CRC computed over body only (matching decoder's slice). Bench: 217ns→148ns (-32%), 168B→160B, 4→2 allocs | medium | S | iter-26.12 SLT gap survey → encode refactor | `internal/WAL/WR/encode.go` encodeRecord
 > The following bugs from the 2026-06-12 dual-runner pass were
@@ -497,4 +495,6 @@ REQ000439 | SQL/PS | `EXPLAIN` statement not implemented — `EXPLAIN SELECT * F
 | REQ000296 | FIL | Direct I/O + fixed-fd (`IOSQE_FIXED_FILE` constant, `Ring.RegisterFixedFile()`, `Ring.UnregisterFixedFile()`) | iter-27 (Phase 6) |
 | REQ000301 | WAL | Async fsync (buffered channel with `AsyncSyncResult`, `inflightFsyncs` WaitGroup, `Close` blocks on in-flight fsyncs) | iter-27 (Phase 6) |
 | REQ000309 | ENG | NUMA-aware placement (`NodeCount`, `IsAvailable`, `CurrentNode`, `PinWorker`, `bufferSlot.nodeID`, subcompaction worker `LockOSThread`) | iter-27 (Phase 6) |
+| REQ000156 | SQL | Cost-based scan selection in planner — `pickCheaperScan` compares `estimateCost` for SeqScan vs IndexScan candidates and swaps to the cheaper one when the WHERE column has a writer-registered index | iter-27 |
+| REQ000437 | SQL/EX | Full SQL aggregate DISTINCT support — `SUM/AVG/MIN/MAX/GROUP_CONCAT(DISTINCT col)` now dedup before aggregating (parity with `COUNT(DISTINCT col)`); NULLs are excluded from the distinct set per SQLite semantics; parser routes DISTINCT through the IDENT aggregate path for `GROUP_CONCAT` | iter-27 |
 ---
