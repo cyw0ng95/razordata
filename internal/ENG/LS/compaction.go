@@ -52,6 +52,10 @@ type compactionJob struct {
 	// When nil, no throttling. Captured at job creation time so a
 	// concurrent SetRateLimiter call does not race the merge.
 	rateLimiter *RateLimiter
+	// REQ000300: tier-aware placement policy. When nil, output goes
+	// to the engine base dir. Copied from the manager at job creation
+	// time so a concurrent SetPlacementPolicy call does not race.
+	placementPolicy PlacementPolicy
 }
 
 func (cj *compactionJob) Run(manifest *manifest, dir string) error {
@@ -59,7 +63,13 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 		return ErrNoFilesToCompact
 	}
 
-	outputPath := filepath.Join(dir, "compaction.tmp")
+	// REQ000300: determine output directory from placement policy.
+	outputDir := cj.placementPolicy.DeviceDir(cj.level+1, dir)
+	if err := os.MkdirAll(filepath.Join(outputDir, "sst"), 0755); err != nil {
+		return err
+	}
+
+	outputPath := filepath.Join(outputDir, "compaction.tmp")
 	tmpFile, err := os.Create(outputPath)
 	if err != nil {
 		return err
@@ -159,9 +169,22 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 		Size:      int64(len(sstData)),
 		BloomBits: 10,
 	})
-	newPath := filepath.Join(dir, newFileName)
-	if err := os.Rename(outputPath, newPath); err != nil {
-		return err
+	newPath := filepath.Join(outputDir, newFileName)
+	if outputDir == dir {
+		if err := os.Rename(outputPath, newPath); err != nil {
+			return err
+		}
+	} else {
+		// Cross-device: copy instead of rename, then create symlink.
+		if err := copyFile(outputPath, newPath); err != nil {
+			return err
+		}
+		os.Remove(outputPath)
+		enginePath := filepath.Join(dir, newFileName)
+		os.Remove(enginePath)
+		if err := os.Symlink(newPath, enginePath); err != nil {
+			return err
+		}
 	}
 
 	newLevels := make([][]SSTFileMeta, len(manifest.Current().levels))
@@ -189,6 +212,16 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	}
 
 	return manifest.Apply(v)
+}
+
+// copyFile copies src to dst by reading the source into memory and writing
+// it to the destination. Used for cross-device compaction output placement.
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0644)
 }
 
 func fileName(meta *SSTFileMeta) string {
@@ -273,6 +306,9 @@ type compactionManager struct {
 	rateLimiter     atomic.Pointer[RateLimiter]
 	// REQ000320: compaction strategy. Default is leveled.
 	style           atomic.Int32
+	// REQ000300: tier-aware placement policy. When nil, all levels
+	// share the same device (engine dir).
+	placementPolicy PlacementPolicy
 }
 
 func newCompactionManager(dir string, manifest *manifest) *compactionManager {
@@ -402,11 +438,12 @@ func (cm *compactionManager) requestCompaction(level int) {
 	}
 
 	job := &compactionJob{
-		level:       level,
-		inputs:      inputs,
-		outputs:     nil,
-		overlap:     overlap,
-		rateLimiter: cm.rateLimiter.Load(),
+		level:           level,
+		inputs:          inputs,
+		outputs:         nil,
+		overlap:         overlap,
+		rateLimiter:     cm.rateLimiter.Load(),
+		placementPolicy: cm.placementPolicy,
 	}
 
 	cm.compacting.Store(true)

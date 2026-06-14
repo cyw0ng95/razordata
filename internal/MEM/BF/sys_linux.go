@@ -19,7 +19,16 @@ func madviseDontNeed(buf []byte) {
 	if len(buf) == 0 {
 		return
 	}
-	// Best-effort: ignore errors. The kernel may return EINVAL on
-	// non-page-aligned regions, which is acceptable.
 	_ = madviseFn(buf, syscall.MADV_DONTNEED)
+}
+
+// madviseHugePage hints the kernel to use transparent huge pages
+// (MADV_HUGEPAGE) for the given buffer, reducing TLB misses on
+// large, frequently-accessed regions. No-op on non-Linux or if buf
+// is empty. REQ000302.
+func madviseHugePage(buf []byte) {
+	if len(buf) == 0 {
+		return
+	}
+	_ = madviseFn(buf, syscall.MADV_HUGEPAGE)
 }
