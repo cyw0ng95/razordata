@@ -2705,14 +2705,48 @@ func (p *Parser) parseAlterTable() (*AlterTableStmt, error) {
 		if err := p.expect(LX.T_IDENT); err != nil {
 			return nil, err
 		}
-		col := p.current.Lexeme
+		colName := p.current.Lexeme
 		p.advance()
-		// Skip type and DEFAULT clause (schema migration deferred)
-		for p.current.Type != LX.T_SEMICOLON && p.current.Type != LX.T_EOF &&
-			p.current.Type != LX.T_COMMA {
-			p.advance()
+
+		// Parse type with optional size/precision
+		typeInfo, err := p.parseCastType()
+		if err != nil {
+			return nil, err
 		}
-		return &AlterTableStmt{Table: table, Action: "ADD COLUMN", Column: col}, nil
+		col := NewColDef(colName, typeInfo.Type)
+		col.Size = typeInfo.Size
+
+		// Parse column constraints (NOT NULL, DEFAULT, etc.)
+		for p.current.Type == LX.T_NOTNULL || p.current.Type == LX.T_DEFAULT ||
+			p.current.Type == LX.T_NOT {
+			if p.current.Type == LX.T_NOT {
+				p.advance()
+				if p.current.Type == LX.T_NULL {
+					col.Nullable = false
+					p.advance()
+				} else {
+					return nil, &SyntaxError{
+						Input:  p.lex.Input(),
+						Line:   p.current.Line,
+						Col:    p.current.Col,
+						Got:    tokenName(p.current.Type),
+						Lexeme: p.current.Lexeme,
+					}
+				}
+			} else if p.current.Type == LX.T_NOTNULL {
+				col.Nullable = false
+				p.advance()
+			} else if p.current.Type == LX.T_DEFAULT {
+				p.advance()
+				d, err := p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				col.Default = d
+			}
+		}
+
+		return &AlterTableStmt{Table: table, Action: "ADD COLUMN", Column: colName, NewCol: &col}, nil
 
 	case LX.T_DROP:
 		p.advance() // consume DROP
