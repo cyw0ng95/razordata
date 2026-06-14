@@ -1,8 +1,31 @@
 # Iteration 27 — Maturity Push (v0.27.0)
 
-**Status:** planning
+**Status:** done
 **Target:** v0.27.0
 **Budget:** ~21,500 LoC across 17 REQs in 5 phases
+
+## Outcome
+
+All 17 REQs shipped. 12 commits pushed. All 35 packages pass
+`go test ./... -race -count=1`. SLT corpus: 42/42 pass (was 39/42).
+
+## Commits
+
+| Commit | REQs | Description |
+|---|---|---|
+| 07b3a0a | REQ000443b | Fix negative_literal eval pipeline bug |
+| a8e40b1 | REQ000435, REQ000436 | CREATE TRIGGER parser + WITH RECURSIVE flag |
+| 1ff048e | REQ000248/249 | Generated columns (parse + materialize on INSERT) |
+| 258d947 | REQ000318 | Write rate-limited compactor (token bucket) |
+| b66ba79 | REQ000319 | Sub-compaction parallelism (key-range sub-jobs) |
+| d3377f8 | REQ000320 | Configurable compaction style (leveled/tiered/hybrid) |
+| e623c34 | REQ000299 | WAL columnar batch encoding |
+| e312dbf | REQ000297 | SST block-level dictionary compression |
+| 073cb23 | REQ000303 | W-TinyLFU admission policy |
+| d4268c3 | REQ000304 | Off-heap large object pool |
+| 90f49bb | REQ000306 | Stack-allocate version nodes (escape analysis hints) |
+| 1cc6374 | REQ000308 | QSBR read path |
+| 6dd04a2 | REQ000436, REQ000084 | Fix FROM-subquery parser + recursive CTE execution |
 
 ## Goal
 
