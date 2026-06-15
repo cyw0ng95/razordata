@@ -746,3 +746,92 @@ func TestBugfix_FillDefaults_TypeCoercion(t *testing.T) {
 		t.Errorf("expected \"1\", got %q", got)
 	}
 }
+
+// TestBugfix_ReturningStar covers REQ000518: RETURNING * expands
+// StarExpr into all columns of the inserted/updated/deleted row.
+func TestBugfix_ReturningStar(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ex.RegisterTableWithPK("t", []string{"id", "name", "val"}, "id")
+	ctx := context.Background()
+
+	// INSERT RETURNING *
+	rows, err := ex.QueryAll(ctx, "INSERT INTO t VALUES (1, 'alice', 100) RETURNING *")
+	if err != nil {
+		t.Fatalf("INSERT RETURNING *: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if len(rows[0].Cols) != 3 {
+		t.Errorf("expected 3 cols, got %d (%v)", len(rows[0].Cols), rows[0].Cols)
+	}
+	if rows[0].Data[0] != int64(1) || rows[0].Data[1] != "alice" || rows[0].Data[2] != int64(100) {
+		t.Errorf("unexpected data: %v", rows[0].Data)
+	}
+
+	// INSERT RETURNING id, name (specific columns)
+	rows, err = ex.QueryAll(ctx, "INSERT INTO t VALUES (2, 'bob', 200) RETURNING id, name")
+	if err != nil {
+		t.Fatalf("INSERT RETURNING id,name: %v", err)
+	}
+	if len(rows[0].Cols) != 2 || rows[0].Cols[0] != "id" || rows[0].Cols[1] != "name" {
+		t.Errorf("expected [id name], got %v", rows[0].Cols)
+	}
+
+	// UPDATE RETURNING *
+	rows, err = ex.QueryAll(ctx, "UPDATE t SET val = 999 WHERE id = 1 RETURNING *")
+	if err != nil {
+		t.Fatalf("UPDATE RETURNING *: %v", err)
+	}
+	if len(rows) != 1 || len(rows[0].Cols) != 3 {
+		t.Errorf("UPDATE RETURNING *: %d rows, %d cols", len(rows), len(rows[0].Cols))
+	}
+
+	// DELETE RETURNING *
+	rows, err = ex.QueryAll(ctx, "DELETE FROM t WHERE id = 2 RETURNING *")
+	if err != nil {
+		t.Fatalf("DELETE RETURNING *: %v", err)
+	}
+	if len(rows) != 1 || len(rows[0].Cols) != 3 {
+		t.Errorf("DELETE RETURNING *: %d rows, %d cols", len(rows), len(rows[0].Cols))
+	}
+}
+
+// TestBugfix_CountEmptySet covers REQ000524: COUNT(*) returns 0 for
+// empty set, not nil.
+func TestBugfix_CountEmptySet(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+
+	// No inserts — empty table
+	rows, err := ex.QueryAll(ctx, "SELECT COUNT(*) FROM t")
+	if err != nil {
+		t.Fatalf("COUNT(*) empty: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	val, ok := rows[0].Data[0].(int64)
+	if !ok {
+		t.Fatalf("expected int64, got %T (%v)", rows[0].Data[0], rows[0].Data[0])
+	}
+	if val != 0 {
+		t.Errorf("COUNT(*) on empty set = %d, want 0", val)
+	}
+
+	// COUNT(*) with WHERE that matches nothing
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
+	rows, err = ex.QueryAll(ctx, "SELECT COUNT(*) FROM t WHERE v > 100")
+	if err != nil {
+		t.Fatalf("COUNT(*) no-match: %v", err)
+	}
+	val, _ = rows[0].Data[0].(int64)
+	if val != 0 {
+		t.Errorf("COUNT(*) no-match = %d, want 0", val)
+	}
+}
