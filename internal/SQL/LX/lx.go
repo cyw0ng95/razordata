@@ -126,6 +126,7 @@ var keywords = map[string]TokenType{
 	"INTERSECT":    T_INTERSECT,
 	"EXCEPT":       T_EXCEPT,
 	"ALL":          T_ALL,
+	"AUTOINCREMENT": T_AUTOINCREMENT,
 	"READ":         T_READ,
 	"COMMITTED":    T_COMMITTED,
 	"UNCOMMITTED":  T_UNCOMMITTED,

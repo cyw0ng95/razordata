@@ -282,13 +282,13 @@ references specific code locations in the implementation.
   - [x] 3.1 Add `parsePragma` — `PRAGMA name [= value]` (already existed)
   - [x] 3.2 Wire into main `Parse()` switch (already existed)
 
-- [ ] 4. Parser: AUTOINCREMENT keyword
-  - [ ] 4.1 In `parseCreateTable`, accept AUTOINCREMENT after PRIMARY KEY
-  - [ ] 4.2 Add `Autoincrement bool` to `ColDef` or `CreateTable`
+- [x] 4. Parser: AUTOINCREMENT keyword
+  - [x] 4.1 In `parseCreateTable`, accept AUTOINCREMENT after PRIMARY KEY (T_AUTOINCREMENT token + lx.go keyword map)
+  - [x] 4.2 Add `Autoincrement bool` to `ColDef` (ast.go)
 
-- [ ] 5. Parser: LAG/LEAD offset
-  - [ ] 5.1 In window function parsing, accept optional 3rd argument for offset
-  - [ ] 5.2 Store offset in window function AST
+- [x] 5. Parser: LAG/LEAD offset
+  - [x] 5.1 In window function parsing, accept optional 3rd argument for offset (parseWindowBuiltin already loops over args)
+  - [x] 5.2 Store offset in window function AST (WindowFunc.Args already carries all args)
 
 - [x] 6. Verify all parser changes
   - [x] 6.1 Table-driven tests for each new parser path

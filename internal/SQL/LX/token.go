@@ -185,6 +185,7 @@ const (
 	T_INTERSECT
 	T_EXCEPT
 	T_ALL
+	T_AUTOINCREMENT // REQ000482
 
 	T_ERROR TokenType = -1
 )
@@ -370,6 +371,7 @@ var tokenTypeNames = [...]string{
 	T_INTERSECT:    "INTERSECT",
 	T_EXCEPT:       "EXCEPT",
 	T_ALL:          "ALL",
+	T_AUTOINCREMENT: "AUTOINCREMENT",
 }
 
 func (t Token) String() string {

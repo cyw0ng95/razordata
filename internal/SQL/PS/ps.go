@@ -1529,6 +1529,11 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 						break
 					}
 					col.PK = true
+					// REQ000482: accept AUTOINCREMENT after PRIMARY KEY
+					if p.current.Type == LX.T_AUTOINCREMENT {
+						col.Autoincrement = true
+						p.advance()
+					}
 					continue
 				}
 			}
@@ -1547,6 +1552,11 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 				col.Nullable = false
 				p.advance()
 				if p.current.Type == LX.T_KEY {
+					p.advance()
+				}
+				// REQ000482: accept AUTOINCREMENT after PRIMARY KEY
+				if p.current.Type == LX.T_AUTOINCREMENT {
+					col.Autoincrement = true
 					p.advance()
 				}
 			case LX.T_DEFAULT:
