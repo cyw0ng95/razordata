@@ -829,7 +829,7 @@ func (p *Parser) parseSelect() (Stmt, error) {
 	// REQ000383: ORDER BY / LIMIT / OFFSET at the end of a
 	// compound chain (or standalone SELECT) apply to the entire
 	// result, not individual leaf SELECTs.
-	ob, lim, off, err := p.parseTrailingClauses()
+	ob, lim, off, offFirst, err := p.parseTrailingClauses()
 	if err != nil {
 		return nil, err
 	}
@@ -838,28 +838,31 @@ func (p *Parser) parseSelect() (Stmt, error) {
 		s.OrderBy = ob
 		s.Limit = lim
 		s.Offset = off
+		s.OffsetFirst = offFirst
 	case *Select:
 		s.OrderBy = ob
 		s.Limit = lim
 		s.Offset = off
+		s.OffsetFirst = offFirst
 	}
 	return left, nil
 }
 
 // parseTrailingClauses parses optional ORDER BY / LIMIT / OFFSET.
-// REQ000383.
-func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, error) {
+// REQ000383. Returns offsetFirst=true when OFFSET appears before
+// LIMIT in the SQL (REQ000521).
+func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, bool, error) {
 	var orderBy []OrderItem
 	if p.current.Type == LX.T_ORDER {
 		p.advance()
 		if err := p.expect(LX.T_BY); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, false, err
 		}
 		p.advance()
 		for {
 			expr, err := p.parseExpr()
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, false, err
 			}
 			desc := false
 			if p.current.Type == LX.T_ASC {
@@ -875,25 +878,39 @@ func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, error) {
 			p.advance()
 		}
 	}
+	offsetFirst := false
 	var limit Expr
+	var offset Expr
+	// Handle two forms:
+	//   (1) LIMIT n OFFSET m  (standard)
+	//   (2) OFFSET m LIMIT n  (reversed)
+	if p.current.Type == LX.T_OFFSET {
+		offsetFirst = true
+		p.advance()
+		o, err := p.parseExpr()
+		if err != nil {
+			return nil, nil, nil, false, err
+		}
+		offset = o
+	}
 	if p.current.Type == LX.T_LIMIT {
 		p.advance()
 		l, err := p.parseExpr()
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, false, err
 		}
 		limit = l
 	}
-	var offset Expr
-	if p.current.Type == LX.T_OFFSET {
+	// In form (1), OFFSET may follow LIMIT
+	if !offsetFirst && p.current.Type == LX.T_OFFSET {
 		p.advance()
 		o, err := p.parseExpr()
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, false, err
 		}
 		offset = o
 	}
-	return orderBy, limit, offset, nil
+	return orderBy, limit, offset, offsetFirst, nil
 }
 
 // parseIntersectChain parses `INTERSECT` (or chain thereof) and

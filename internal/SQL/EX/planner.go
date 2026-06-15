@@ -636,20 +636,39 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		current = NewDistinct(current)
 	}
 
-	if s.Offset != nil {
-		n, ok := limitInt64(s.Offset)
-		if ok && n > 0 {
-			current = NewOffset(current, n)
+	// REQ000521: LIMIT/OFFSET wrapping order depends on which
+	// keyword appeared first in the SQL. The parser tracks this
+	// in s.OffsetFirst.
+	if s.OffsetFirst {
+		// OFFSET m LIMIT n → Limit wraps scan, then Offset wraps that
+		if s.Limit != nil {
+			n, ok := limitInt64(s.Limit)
+			if !ok {
+				return nil
+			}
+			current = NewLimit(current, n)
 		}
-	}
-
-	if s.Limit != nil {
-		n, ok := limitInt64(s.Limit)
-		if !ok {
-			return nil
+		if s.Offset != nil {
+			n, ok := limitInt64(s.Offset)
+			if ok && n > 0 {
+				current = NewOffset(current, n)
+			}
 		}
-		limit := NewLimit(current, n)
-		current = limit
+	} else {
+		// LIMIT n OFFSET m (standard) → Offset wraps scan, then Limit wraps that
+		if s.Offset != nil {
+			n, ok := limitInt64(s.Offset)
+			if ok && n > 0 {
+				current = NewOffset(current, n)
+			}
+		}
+		if s.Limit != nil {
+			n, ok := limitInt64(s.Limit)
+			if !ok {
+				return nil
+			}
+			current = NewLimit(current, n)
+		}
 	}
 
 	return current
