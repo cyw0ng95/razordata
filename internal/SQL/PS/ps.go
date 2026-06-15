@@ -1820,11 +1820,14 @@ func (p *Parser) parseDropTable() (*DropTable, error) {
 	}
 	p.advance()
 
+	// REQ000497: DROP TABLE IF EXISTS
+	ifExists := false
 	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
 		p.advance()
-	}
-	if p.current.Type == LX.T_EXISTS {
-		p.advance()
+		if p.current.Type == LX.T_EXISTS {
+			ifExists = true
+			p.advance()
+		}
 	}
 
 	if err := p.expect(LX.T_IDENT); err != nil {
@@ -1833,7 +1836,7 @@ func (p *Parser) parseDropTable() (*DropTable, error) {
 	name := p.current.Lexeme
 	p.advance()
 
-	return &DropTable{Name: name}, nil
+	return &DropTable{Name: name, IfExists: ifExists}, nil
 }
 
 func (p *Parser) parseExplain() (*ExplainStmt, error) {
@@ -2705,6 +2708,18 @@ func (p *Parser) parseCreateIndex() (*CreateIndexStmt, error) {
 		return nil, err
 	}
 	p.advance() // consume INDEX
+	// REQ000479: CREATE INDEX IF NOT EXISTS
+	ifExists := false
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
+		p.advance()
+		if p.current.Type == LX.T_NOT {
+			p.advance()
+			if p.current.Type == LX.T_EXISTS {
+				ifExists = true
+				p.advance()
+			}
+		}
+	}
 	// Read index name
 	if err := p.expect(LX.T_IDENT); err != nil {
 		return nil, err
@@ -2733,10 +2748,11 @@ func (p *Parser) parseCreateIndex() (*CreateIndexStmt, error) {
 	}
 	p.advance()
 	return &CreateIndexStmt{
-		Name:    name,
-		Table:   table,
-		Columns: cols,
-		Unique:  unique,
+		Name:     name,
+		Table:    table,
+		Columns:  cols,
+		Unique:   unique,
+		IfExists: ifExists,
 	}, nil
 }
 
@@ -2767,12 +2783,21 @@ func (p *Parser) parseDropIndex() (*DropIndexStmt, error) {
 		return nil, err
 	}
 	p.advance() // consume INDEX
+	// REQ000480: DROP INDEX IF EXISTS
+	ifExists := false
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
+		p.advance()
+		if p.current.Type == LX.T_EXISTS {
+			ifExists = true
+			p.advance()
+		}
+	}
 	if err := p.expect(LX.T_IDENT); err != nil {
 		return nil, err
 	}
 	name := p.current.Lexeme
 	p.advance()
-	return &DropIndexStmt{Name: name}, nil
+	return &DropIndexStmt{Name: name, IfExists: ifExists}, nil
 }
 
 // parseSet parses SET TRANSACTION ISOLATION LEVEL ... (REQ000123).
@@ -2941,6 +2966,26 @@ func (p *Parser) parseAlterTable() (*AlterTableStmt, error) {
 
 	case LX.T_RENAME:
 		p.advance() // consume RENAME
+		// REQ000498: ALTER TABLE t RENAME COLUMN old TO new
+		if p.current.Type == LX.T_COLUMN {
+			p.advance() // consume COLUMN
+			if err := p.expect(LX.T_IDENT); err != nil {
+				return nil, err
+			}
+			oldCol := p.current.Lexeme
+			p.advance()
+			if err := p.expect(LX.T_TO); err != nil {
+				return nil, err
+			}
+			p.advance() // consume TO
+			if err := p.expect(LX.T_IDENT); err != nil {
+				return nil, err
+			}
+			newCol := p.current.Lexeme
+			p.advance()
+			return &AlterTableStmt{Table: table, Action: "RENAME COLUMN", Column: oldCol, NewName: newCol}, nil
+		}
+		// ALTER TABLE t RENAME TO new_name (table rename)
 		if p.current.Type == LX.T_TO {
 			p.advance() // consume TO (optional)
 		}

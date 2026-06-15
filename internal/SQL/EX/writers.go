@@ -1189,6 +1189,26 @@ func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
 		return Row{}, ErrNoRows
 	}
 	c.done = true
+	// REQ000479: IF NOT EXISTS — skip if index already exists
+	if c.stmt.IfExists {
+		exists := false
+		storeMu.Lock()
+		for _, idxs := range registeredIndexes {
+			for _, idx := range idxs {
+				if idx.Name == c.stmt.Name {
+					exists = true
+					break
+				}
+			}
+			if exists {
+				break
+			}
+		}
+		storeMu.Unlock()
+		if exists {
+			return Row{}, ErrNoRows
+		}
+	}
 	// Register for writer maintenance
 	RegisterIndexWithID(c.stmt.Table, RegisteredIndex{
 		Name:    c.stmt.Name,

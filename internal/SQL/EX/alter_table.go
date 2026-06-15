@@ -31,6 +31,8 @@ func (a *AlterTable) Next(ctx context.Context) (Row, error) {
 		return Row{}, a.execDropColumn()
 	case "RENAME":
 		return Row{}, a.execRename()
+	case "RENAME COLUMN":
+		return Row{}, a.execRenameColumn()
 	default:
 		return Row{}, fmt.Errorf("ex: unknown ALTER TABLE action: %s", a.stmt.Action)
 	}
@@ -480,5 +482,62 @@ func newUniqueForCatalog(unique []UniqueKey, cols []string) []ls.CatalogUnique {
 		result = append(result, cu)
 	}
 	return result
+}
+
+// execRenameColumn handles ALTER TABLE t RENAME COLUMN old TO new.
+// REQ000498: renames a column in the in-memory schema and store schema.
+func (a *AlterTable) execRenameColumn() error {
+	oldCol := a.stmt.Column
+	newCol := a.stmt.NewName
+	if oldCol == "" || newCol == "" {
+		return fmt.Errorf("ex: RENAME COLUMN requires old and new column names")
+	}
+
+	tablesMu.Lock()
+	defer tablesMu.Unlock()
+
+	cols, ok := schemas[a.stmt.Table]
+	if !ok {
+		return fmt.Errorf("ex: table %q not found", a.stmt.Table)
+	}
+
+	// Find the column
+	idx := -1
+	for i, c := range cols {
+		if c == oldCol {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("ex: column %q not found in table %q", oldCol, a.stmt.Table)
+	}
+
+	// Check new name doesn't already exist
+	for _, c := range cols {
+		if c == newCol {
+			return fmt.Errorf("ex: column %q already exists in table %q", newCol, a.stmt.Table)
+		}
+	}
+
+	// Rename in schema
+	newCols := make([]string, len(cols))
+	copy(newCols, cols)
+	newCols[idx] = newCol
+	schemas[a.stmt.Table] = newCols
+
+	// Also update store schemas
+	storeMu.Lock()
+	if id, ok := tableIDs[a.stmt.Table]; ok {
+		if ss, ok := storeSchemas[id]; ok {
+			newStoreCols := make([]string, len(ss.cols))
+			copy(newStoreCols, ss.cols)
+			newStoreCols[idx] = newCol
+			ss.cols = newStoreCols
+		}
+	}
+	storeMu.Unlock()
+
+	return nil
 }
 
