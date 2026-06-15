@@ -70,10 +70,6 @@
 | ID | Subsystem | Requirement | Iteration |
 |---|---|---|---|
 | REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | iter-04 (bloom) |
-
-| ID | Subsystem | Requirement | Iteration |
-|---|---|---|---|
-| REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | iter-04 (bloom) |
 | REQ000159 | TXN | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | iter-05 (arena) |
 | REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | iter-04 (compaction) |
 | REQ000045 | ENG | Secondary indexes (non-PK columns; lookup by `__idx__:<table>:<col>:<val>`) | iter-12 (catalog), iter-21 (ID) |
