@@ -62,7 +62,7 @@ func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.
 
 func (i *Insert) Next(ctx context.Context) (Row, error) {
 	// If we have RETURNING results, return them
-	if len(i.returning) > 0 {
+	if len(i.resultRows) > 0 {
 		if i.resultPos < len(i.resultRows) {
 			row := i.resultRows[i.resultPos]
 			i.resultPos++
@@ -177,7 +177,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 
 func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 	// If we have RETURNING results, return them
-	if len(i.returning) > 0 {
+	if len(i.resultRows) > 0 {
 		if i.resultPos < len(i.resultRows) {
 			row := i.resultRows[i.resultPos]
 			i.resultPos++
@@ -326,7 +326,7 @@ func NewUpdateWithStore(store Store, table string, set []PS.Pair, where PS.Expr,
 
 func (u *Update) Next(ctx context.Context) (Row, error) {
 	// If we have RETURNING results, return them
-	if len(u.returning) > 0 {
+	if len(u.resultRows) > 0 {
 		if u.resultPos < len(u.resultRows) {
 			row := u.resultRows[u.resultPos]
 			u.resultPos++
@@ -437,7 +437,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 
 func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 	// If we have RETURNING results, return them
-	if len(u.returning) > 0 {
+	if len(u.resultRows) > 0 {
 		if u.resultPos < len(u.resultRows) {
 			row := u.resultRows[u.resultPos]
 			u.resultPos++
@@ -588,7 +588,7 @@ func NewDeleteWithStore(store Store, table string, where PS.Expr, iter Operator,
 
 func (d *Delete) Next(ctx context.Context) (Row, error) {
 	// If we have RETURNING results, return them
-	if len(d.returning) > 0 {
+	if len(d.resultRows) > 0 {
 		if d.resultPos < len(d.resultRows) {
 			row := d.resultRows[d.resultPos]
 			d.resultPos++
@@ -685,7 +685,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 
 func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 	// If we have RETURNING results, return them
-	if len(d.returning) > 0 {
+	if len(d.resultRows) > 0 {
 		if d.resultPos < len(d.resultRows) {
 			row := d.resultRows[d.resultPos]
 			d.resultPos++
