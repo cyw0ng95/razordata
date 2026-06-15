@@ -872,22 +872,22 @@ func evalChar(args []PS.Expr, row *Row, params []interface{}) (interface{}, erro
 			return nil, err
 		}
 		if v == nil {
-			continue // Skip NULL args
+			return nil, nil // Any NULL arg → NULL result
 		}
 		n, ok := toInt64(v)
 		if !ok {
 			continue
 		}
 		if n < 0 || n > unicode.MaxRune {
-			continue // Out of range
+			continue
 		}
 		sb.WriteRune(rune(n))
 	}
 	return sb.String(), nil
 }
 
-// evalConcat concatenates all non-NULL arguments into a single string.
-// All-NULL returns empty string (not NULL). REQ000387.
+// evalConcat concatenates all arguments into a single string.
+// If any argument is NULL, the result is NULL. REQ000387.
 func evalConcat(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 	var sb strings.Builder
 	for _, arg := range args {
@@ -896,7 +896,7 @@ func evalConcat(args []PS.Expr, row *Row, params []interface{}) (interface{}, er
 			return nil, err
 		}
 		if v == nil {
-			continue // Skip NULL
+			return nil, nil // Any NULL → NULL result
 		}
 		sb.WriteString(fmt.Sprint(v))
 	}
