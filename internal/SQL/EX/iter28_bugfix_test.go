@@ -350,3 +350,95 @@ func TestBugfix_ConstraintNotPresent(t *testing.T) {
 		t.Errorf("err = %v, want wrap of ErrConstraint", err)
 	}
 }
+
+// TestBugfix_FKOnUpdate covers REQ000513: when an UPDATE changes a FK
+// column to a value that doesn't exist in the referenced table, the
+// UPDATE must fail with a wrapped ErrConstraint. The in-memory path
+// is exercised via validateForeignKeyUpdateInMemory.
+func TestBugfix_FKOnUpdate(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	// Build parent + child schemas.
+	parent := &storeSchema{cols: []string{"id"}, pk: "id"}
+	child := &storeSchema{
+		cols:        []string{"id", "pid"},
+		pk:          "id",
+		foreignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+	}
+	storeSchemas[1] = parent
+	storeSchemas[2] = child
+	tableIDs["p"] = 1
+	tableIDs["c"] = 2
+
+	// Seed in-memory table for parent: id=1, id=2.
+	tables["p"] = []Row{
+		{Cols: []string{"id"}, Data: []interface{}{int64(1)}},
+	}
+	tables["c"] = []Row{
+		{Cols: []string{"id", "pid"}, Data: []interface{}{int64(10), int64(1)}},
+	}
+
+	// Update child's pid from 1 to 99 — should fail since parent
+	// has no row with id=99.
+	err := validateForeignKeyUpdateInMemory(child,
+		[]interface{}{int64(10), int64(1)}, // old
+		[]interface{}{int64(10), int64(99)}, // new
+	)
+	if err == nil {
+		t.Fatal("expected FK violation, got nil")
+	}
+	if !errors.Is(err, ap.ErrConstraint) {
+		t.Errorf("err = %v, want wrap of ErrConstraint", err)
+	}
+
+	// Same-value update (no FK change) must NOT trigger re-check.
+	if err := validateForeignKeyUpdateInMemory(child,
+		[]interface{}{int64(10), int64(1)},
+		[]interface{}{int64(10), int64(1)},
+	); err != nil {
+		t.Errorf("same-value update should be a no-op for FK: %v", err)
+	}
+
+	// Update child's pid to 2 (which doesn't exist as a parent row
+	// either). Should still fail.
+	err = validateForeignKeyUpdateInMemory(child,
+		[]interface{}{int64(10), int64(1)},
+		[]interface{}{int64(10), int64(2)},
+	)
+	if err == nil {
+		t.Error("expected FK violation for new value, got nil")
+	}
+}
+
+// TestBugfix_FKOnDelete covers REQ000514: DELETE on a parent row
+// that has referencing child rows must fail with a wrapped
+// ErrConstraint (default RESTRICT action).
+func TestBugfix_FKOnDelete(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	parent := &storeSchema{cols: []string{"id"}, pk: "id"}
+	child := &storeSchema{
+		cols:        []string{"id", "pid"},
+		pk:          "id",
+		foreignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+	}
+	storeSchemas[10] = parent
+	storeSchemas[11] = child
+	tableIDs["p"] = 10
+	tableIDs["c"] = 11
+
+	tables["p"] = []Row{{Cols: []string{"id"}, Data: []interface{}{int64(1)}}}
+	tables["c"] = []Row{{Cols: []string{"id", "pid"}, Data: []interface{}{int64(100), int64(1)}}}
+
+	// Deleting parent id=1 must fail because child (100, 1) references it.
+	err := validateForeignKeyDeleteInMemory("p",
+		[]interface{}{int64(1)}, parent)
+	if err == nil {
+		t.Fatal("expected FK violation, got nil")
+	}
+	if !errors.Is(err, ap.ErrConstraint) {
+		t.Errorf("err = %v, want wrap of ErrConstraint", err)
+	}
+}

@@ -194,3 +194,179 @@ func encodeFKLookup(table, col string, val interface{}) []byte {
 	_ = val
 	return nil
 }
+
+// validateForeignKeyUpdateInMemory is the in-memory analogue of
+// validateForeignKeyInsert. When an UPDATE changes the values of FK
+// columns, the new values must still point at a valid referenced row.
+// REQ000513.
+func validateForeignKeyUpdateInMemory(schema *storeSchema, oldRow, newRow []interface{}) error {
+	if schema == nil || len(schema.foreignKeys) == 0 {
+		return nil
+	}
+	for _, fk := range schema.foreignKeys {
+		// Build old and new local-col value slices.
+		oldVals := make([]interface{}, len(fk.Columns))
+		newVals := make([]interface{}, len(fk.Columns))
+		_, newAllNull := true, true
+		for i, col := range fk.Columns {
+			idx := -1
+			for j, c := range schema.cols {
+				if c == col {
+					idx = j
+					break
+				}
+			}
+			if idx < 0 {
+				continue
+			}
+			if idx < len(oldRow) {
+				oldVals[i] = oldRow[idx]
+			}
+			if idx < len(newRow) {
+				newVals[i] = newRow[idx]
+				if newVals[i] != nil {
+					newAllNull = false
+				}
+			}
+		}
+		// If the FK columns are unchanged, the row was already valid
+		// at INSERT time, so no re-check is needed.
+		if equalValue(oldVals[0], newVals[0]) && len(fk.Columns) == 1 {
+			continue
+		}
+		// If new values are all NULL, the constraint is satisfied
+		// (SQL standard: NULL in any FK column relaxes the constraint).
+		if newAllNull {
+			continue
+		}
+		// Verify the new values reference an existing row in the
+		// referenced table.
+		if !rowExistsInMemory(fk.RefTable, fk.RefColumns, newVals) {
+			return fmt.Errorf("%w: foreign key update on table referencing %s",
+				ap.ErrConstraint, fk.RefTable)
+		}
+	}
+	return nil
+}
+
+// validateForeignKeyDeleteInMemory is the in-memory analogue of
+// validateForeignKeyDelete. REQ000514.
+func validateForeignKeyDeleteInMemory(table string, row []interface{}, schema *storeSchema) error {
+	if schema == nil {
+		return nil
+	}
+	tablesMu.Lock()
+	defer tablesMu.Unlock()
+	for _, ss := range storeSchemas {
+		for _, fk := range ss.foreignKeys {
+			if fk.RefTable != table {
+				continue
+			}
+			// Extract referenced column values from the deleted row.
+			refVals := make([]interface{}, len(fk.RefColumns))
+			for i, refCol := range fk.RefColumns {
+				idx := -1
+				for j, c := range schema.cols {
+					if c == refCol {
+						idx = j
+						break
+					}
+				}
+				if idx < 0 || idx >= len(row) {
+					continue
+				}
+				refVals[i] = row[idx]
+			}
+			// Check if any child row in `ss` has the FK columns
+			// matching these values.
+			childExists := rowInTableMatches(ss, fk.Columns, refVals)
+			if childExists {
+				switch fk.OnDelete {
+				case "CASCADE", "SET NULL", "SET DEFAULT":
+					// v1: refuse rather than silently do the wrong thing
+					return fmt.Errorf("%w: %s on delete not yet implemented", ap.ErrConstraint, fk.OnDelete)
+				default:
+					return fmt.Errorf("%w: foreign key delete: child rows exist in %s", ap.ErrConstraint, ss.cols[0])
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// rowExistsInMemory checks whether the referenced table has a row
+// whose FK-target columns equal the given values.
+func rowExistsInMemory(tableName string, cols []string, vals []interface{}) bool {
+	tablesMu.RLock()
+	defer tablesMu.RUnlock()
+	rows := tables[tableName]
+	for _, r := range rows {
+		match := true
+		for i, col := range cols {
+			idx := -1
+			for j, c := range Schema(tableName) {
+				if c == col {
+					idx = j
+					break
+				}
+			}
+			if idx < 0 || idx >= len(r.Data) {
+				match = false
+				break
+			}
+			if !equalValue(r.Data[idx], vals[i]) {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+// rowInTableMatches returns true if any row in the given schema's
+// table has values matching the supplied values in the given columns.
+// Caller must hold tablesMu.
+func rowInTableMatches(ss *storeSchema, cols []string, vals []interface{}) bool {
+	rows := tables[tableNameFor(ss)]
+	for _, r := range rows {
+		match := true
+		for i, col := range cols {
+			idx := -1
+			for j, c := range ss.cols {
+				if c == col {
+					idx = j
+					break
+				}
+			}
+			if idx < 0 || idx >= len(r.Data) {
+				match = false
+				break
+			}
+			if !equalValue(r.Data[idx], vals[i]) {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+// tableNameFor returns the registered name for a storeSchema. The
+// schema store doesn't store the name, so we reverse-lookup via
+// tableIDs. REQ000513.
+func tableNameFor(ss *storeSchema) string {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	for name, id := range tableIDs {
+		if storeSchemas[id] == ss {
+			return name
+		}
+	}
+	return ""
+}
