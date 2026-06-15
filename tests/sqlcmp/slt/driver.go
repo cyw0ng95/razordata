@@ -59,3 +59,10 @@ func (v Verdict) String() string {
 		return "SKIP"
 	}
 }
+
+// RazorEngineName is the identifier the SLT runner matches
+// against skipif/onlyif directives. REQ000448: any directive
+// that does not equal this string is treated as "not our engine"
+// and is honored (skipif X for X != razor is a no-op; onlyif X
+// for X != razor skips the next record).
+const RazorEngineName = "razor"

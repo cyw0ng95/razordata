@@ -101,7 +101,7 @@ SELECT a, b FROM t
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	r := NewRunner(d, d.classifier)
+	r := NewRunner(d, d.classifier, RazorEngineName)
 	stats := r.Run(ctx, recs)
 	if stats.Failed != 0 {
 		t.Errorf("end-to-end run failed: %+v", stats)

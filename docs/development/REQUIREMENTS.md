@@ -30,64 +30,11 @@
 | REQ000431 | SQL/EX | sqlite_offset — requires SQLITE_ENABLE_OFFSET_SQL_FUNC compile flag | skip | XL | iter-25 | `SQL/EX/eval.go` |
 | REQ000432 | SQL/EX | unistr_quote — low-value, complex | skip | XL | iter-25 | `SQL/EX/eval.go` |
 | REQ000444 | SQL/EX | UPDATE deadlock / lock leak — second UPDATE on the same table hangs until ctx deadline; first UPDATE returns quickly (repro: in `evidence/slt_lang_update.test` and any direct `UPDATE ... ; UPDATE ...` sequence). Likely a write lock or MVCC version-chain issue. Discovered via `TestSLT_Each/slt_lang_update.test` (15 fails) | high | M | iter-26 (EX lock chain) | `SQL/EX/` — UPDATE executor / lock acquisition path; check row-level write lock release after first UPDATE completes |
-| REQ000445 | SQL/EX | NULL three-valued logic in WHERE — `SELECT x FROM t WHERE x<0` returns the row with x=NULL, but SQL requires NULL to evaluate to UNKNOWN in `<` and be excluded. Same bug class for `<=`, `>`, `>=`, `=`, `!=`. Discovered via `TestSLT_Each/slt_lang_createview.test` (L29) | high | M | iter-26 (EX predicate eval) | `SQL/EX/eval.go` and `SQL/EX/expr.go` — comparison operators must yield UNKNOWN (not FALSE) when either operand is NULL; the predicate layer must drop UNKNOWN rows from WHERE output |
 | REQ000446 | SQL/EX | Scalar `IN (literal-list)` returns 0 rows — `SELECT 1 IN (2)` and `SELECT 1 IN (2,3,4)` both return zero rows; SQLite returns one row containing 0/1. Discovered via `TestSLT_Each/in1.test` and `in2.test` | medium | M | iter-26 (EX IN) | `SQL/EX/expr.go` — `expr IN (list)` should evaluate to a single boolean result row, not an empty set; also affects `NOT IN` |
 | REQ000447 | SQL/EX | `count(DISTINCT x)`, `avg(DISTINCT x)`, `sum(DISTINCT x)` return wrong values — `count(DISTINCT x)` over {1, 0, NULL} returns 4 instead of 2 (distinct non-null values). Discovered via `TestSLT_Each/slt_lang_aggfunc.test` (L28) | medium | M | iter-26 (agg DISTINCT) | `SQL/EX/aggregate.go` — DISTINCT should de-dup the input rows per group, ignoring NULLs the same way non-DISTINCT aggregates already do |
-| REQ000448 | SQL/EX | Test isolation — `EX.UnregisterAll()` clears the in-memory `tables`/`schemas`/`storeSchemas` maps but NOT the `Catalog` (table definitions, indexes, views). A second test that opens a fresh engine and runs `CREATE TABLE t1` fails with "table already exists" because the previous test's `t1` lingers in the catalog. Discovered via `TestSLT_Each/in2.test` (after `in1.test` ran first) | high | S | iter-26 (test isolation), `REQ000346` | `SQL/EX/source.go` `UnregisterAll()` — must also clear `Catalog` (or the catalog must be re-bound per engine instead of process-global) |
 | REQ000449 | SQL/PS | `INSERT OR REPLACE` and standalone `REPLACE INTO` not supported in the parser — fails with "expected INTO, got OR". Discovered via `TestSLT_Each/slt_lang_replace.test` (L38) | low | S | iter-26 (UPSERT) | `SQL/PS/ps.go` — extend `parseInsert` to accept `OR REPLACE` / `OR ABORT` / etc. conflict resolution clauses; or add a `parseReplace` for the `REPLACE INTO` form |
 | REQ000450 | SQL/PS | `CREATE TEMP VIEW` not supported — parser expects `CREATE TABLE` after `CREATE TEMP` and fails with "expected TABLE, got identifier". Discovered via `TestSLT_Each/slt_lang_createview.test` (L48) | low | S | iter-26 | `SQL/PS/ps.go` `parseCreateView` — accept optional `TEMP`/`TEMPORARY` keyword between `CREATE` and `VIEW`; semantics: same as `CREATE VIEW` for v1 |
----
-| Function | Status | Notes |
-| `abs(X)` | REQ000384 | returns absolute value, NULL→NULL, string→0.0, MIN_INT64→error |
-| `changes()` | REQ000385 | last INSERT/UPDATE/DELETE row count; not yet wired to session state |
-| `char(X1,...,XN)` | REQ000386 | Unicode code point → character; accepts variadic int args |
-| `coalesce(X,Y,...)` | REQ000418 (DONE) | iter-26 already implemented |
-| `concat(X,...)` | REQ000387 | concatenate non-NULL args; all-NULL → "" (note: current `\|\|` returns NULL on NULL) |
-| `concat_ws(SEP,X,...)` | REQ000388 | concat with separator; SEP=NULL → NULL |
-| `format(FORMAT,...)` | REQ000389 | printf-style formatting (subset of fmt verbs) |
-| `glob(X,Y)` | REQ000390 | filename glob match (X=pattern, Y=string) |
-| `hex(X)` | REQ000391 | BLOB/text → uppercase hex; integer is converted via text first |
-| `ifnull(X,Y)` | REQ000419 (DONE) | iter-26 |
-| `iif(B1,V1,...)` | REQ000392 | short-circuit CASE; `if()` alias |
-| `instr(X,Y)` | REQ000393 | position of Y in X (1-based), 0 if not found |
-| `last_insert_rowid()` | REQ000394 | engine-level rowid; engine must expose per-session counter |
-| `length(X)` | REQ000420 (DONE) | iter-26 — returns code-point count (not bytes); close to SQLite's semantics |
-| `like(X,Y[,Z])` | REQ000421 (DONE) | iter-26 — two-arg form; ESCAPE clause not yet supported |
-| `likelihood(X,Y)` | REQ000395 | no-op pass-through; hint to planner |
-| `likely(X)` | REQ000396 | no-op pass-through |
-| `load_extension(X[,Y])` | REQ000428 (SKIP) | not in v1 scope; would require CGO bridge |
-| `lower(X)` | REQ000422 (DONE) | iter-26 |
-| `ltrim(X[,Y])` | REQ000397 | trim left; default Y=" " |
-| `max(X,Y,...)` | REQ000398 | multi-arg scalar max; uses first collating function |
-| `min(X,Y,...)` | REQ000399 | multi-arg scalar min |
-| `nullif(X,Y)` | REQ000423 (DONE) | iter-26 |
-| `octet_length(X)` | REQ000400 | byte length; differs from `length` for UTF-8 |
-| `printf(FORMAT,...)` | REQ000424 (DONE) | alias for `format`; merge with REQ000389 |
-| `quote(X)` | REQ000401 | SQL literal rendering; strings single-quoted with escape, BLOBs as X'hex' |
-| `random()` | REQ000402 | pseudo-random int64; exclude MIN_INT64 |
-| `randomblob(N)` | REQ000403 | N-byte random BLOB |
-| `replace(X,Y,Z)` | REQ000404 | string substitution; Y="" returns X unchanged |
-| `round(X[,Y])` | REQ000405 | round to Y decimal places; Y default 0; Y<0 → 0 |
-| `rtrim(X[,Y])` | REQ000406 | trim right; default Y=" " |
-| `sign(X)` | REQ000407 | -1/0/+1 or NULL for non-numeric |
-| `soundex(X)` | REQ000408 | soundex encoding; "?000" for non-ASCII / NULL |
-| `sqlite_compileoption_get(N)` | REQ000429 (SKIP) | engine-internal, returns NULL for v1 |
-| `sqlite_compileoption_used(X)` | REQ000430 (SKIP) | engine-internal, returns 0 for v1 |
-| `sqlite_offset(X)` | REQ000431 (SKIP) | requires SQLITE_ENABLE_OFFSET_SQL_FUNC compile flag |
-| `sqlite_source_id()` | REQ000409 | fixed string for v1 ("razordata-v0.26.x") |
-| `sqlite_version()` | REQ000410 | fixed string for v1 ("0.26.x") |
-| `substr(X,Y[,Z])` | REQ000425 (DONE) | iter-26 — 1-based, negative start counts from right |
-| `substring(X,Y[,Z])` | REQ000426 (DONE) | alias for `substr` |
-| `total_changes()` | REQ000411 | cumulative row-change count since connection open |
-| `trim(X[,Y])` | REQ000427 (DONE) | iter-26 — both sides; default Y=" " |
-| `typeof(X)` | REQ000412 | returns "null" / "integer" / "real" / "text" / "blob" |
-| `unhex(X[,Y])` | REQ000413 | hex → BLOB; X invalid → NULL; Y is ignored-char set |
-| `unicode(X)` | REQ000414 | code point of first char; NULL → NULL |
-| `unistr(X)` | REQ000415 | backslash-escape decoder (\uXXXX, \+XXXXXX, \UXXXXXXXX) |
-| `unistr_quote(X)` | REQ000432 (SKIP) | low-value, complex |
-| `unlikely(X)` | REQ000416 | no-op pass-through |
-| `upper(X)` | REQ000433 (DONE) | iter-26 |
-| `zeroblob(N)` | REQ000417 | N-byte BLOB of 0x00 |
+
 
 ## DONE
 
@@ -407,4 +354,6 @@
 | REQ000050 | ENG/DP | Deparser cluster split from LS (EncodeRow/DecodeRow, EncodeBlock/DecodeBlock) | iter-28 |
 | REQ000300 | ENG/LS | Tier-aware storage scheduler (PlacementPolicy, StoragePolicy, per-level device routing) | iter-28 |
 | REQ000302 | MEM/BF | PMem-aware buffer pool (MADV_HUGEPAGE, PMemFile, slot tier field) | iter-28 |
+| REQ000445 | SQL/EX | NULL three-valued logic: `<`, `<=`, `>`, `>=`, `=`, `!=` comparisons with NULL operand → return NULL (UNKNOWN), not a boolean | iter-26 |
+| REQ000448 | SQL/EX | SLT runner `skipif`/`onlyif` engine-name gating — `NewRunner(drv, cls, "razor")` evaluates directives against engine name; `onlyif sqlite` skips on Razor, `onlyif razor` executes | iter-26 |
 ---

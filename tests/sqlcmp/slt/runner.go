@@ -23,15 +23,15 @@ import (
 type Runner struct {
 	driver     Driver
 	classifier Classifier
+	engineName string
 	stats      Stats
 	startTime  time.Time
 
-	// skipDB is the engine name currently filtered out by a
-	// skipif record. Empty means "do not skip".
-	skipDB string
-	// onlyDB is the engine name required by an onlyif record.
-	// Empty means "no restriction".
-	onlyDB string
+	// pendingSkip is set by a preceding skipif/onlyif directive
+	// to gate the next executable record. REQ000448: the runner
+	// must evaluate the directive against the bound engine name
+	// at the directive, not just flip a flag.
+	pendingSkip bool
 	// hashThreshold is the current max-result-set size before
 	// values are stored as a hash. The corpus uses this to keep
 	// full scripts small.
@@ -45,13 +45,18 @@ type Runner struct {
 
 // NewRunner constructs a runner bound to a driver. The classifier
 // is optional; if nil, all errors are treated as failures.
-func NewRunner(driver Driver, classifier Classifier) *Runner {
+//
+// The engineName is the identifier the runner matches against
+// skipif/onlyif directives. An empty engineName disables
+// conditional skipping: every record runs. REQ000448.
+func NewRunner(driver Driver, classifier Classifier, engineName string) *Runner {
 	if classifier == nil {
 		classifier = defaultClassifier{}
 	}
 	return &Runner{
 		driver:        driver,
 		classifier:    classifier,
+		engineName:    engineName,
 		labelMap:      make(map[string]string),
 		hashThreshold: 0,
 	}
@@ -82,18 +87,17 @@ func (r *Runner) Run(ctx context.Context, records []Record) Stats {
 			continue
 		}
 		// Conditional prefixes gate the next executable record.
-		// We apply them in source order: a skipif cancels the
-		// current executable; an onlyif restricts it. The
-		// prefix records themselves are not counted in stats
-		// (they are configuration).
-		if r.skipDB != "" || r.onlyDB != "" {
-			// The prefix still needs to be classified: a
-			// skipif that filters us out is a skip, not a
-			// failure.
+		// REQ000448: evaluate skipif/onlyif against the bound
+		// engine name. pendingSkip is the unified gate: set by
+		// a matching skipif or a non-matching onlyif. A gated
+		// Halt is a no-op (the canonical "onlyif X halt" pattern
+		// means "halt the run if engine is X").
+		if r.pendingSkip {
 			r.stats.Skipped++
-			// Clear the filter for the next record.
-			r.skipDB = ""
-			r.onlyDB = ""
+			r.pendingSkip = false
+			// Any gated record is consumed: do not run it,
+			// and do not let it cascade (a gated skipif must
+			// not set the next pendingSkip).
 			continue
 		}
 		switch rec.Kind {
@@ -115,12 +119,25 @@ func (r *Runner) Run(ctx context.Context, records []Record) Stats {
 			// Total so the pass rate is not skewed.
 			r.stats.Total--
 		case RecordSkipIf:
-			r.skipDB = rec.DBName
+			// Skip the next executable if engine matches.
+			r.pendingSkip = r.engineName != "" && r.engineName == rec.DBName
 		case RecordOnlyIf:
-			r.onlyDB = rec.DBName
+			// Skip the next executable if engine does NOT match.
+			r.pendingSkip = r.engineName != "" && r.engineName != rec.DBName
 		}
 	}
 	return r.finalize()
+}
+
+// isExecutable reports whether a record kind is the body of a
+// statement/query test (i.e. consumes the pending skip gate).
+// Hash-threshold, skipif, onlyif, halt are not executable.
+func isExecutable(k RecordKind) bool {
+	switch k {
+	case RecordStatementOK, RecordStatementError, RecordQuery:
+		return true
+	}
+	return false
 }
 
 // runStatementOK dispatches a "statement ok" record.

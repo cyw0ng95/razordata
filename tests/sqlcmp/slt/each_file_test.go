@@ -127,7 +127,7 @@ func runSLTFile(t *testing.T, path string, perFile time.Duration) (Stats, string
 	if err != nil {
 		t.Fatalf("parse %s: %v", path, err)
 	}
-	runner := NewRunner(driver, driver.classifier)
+	runner := NewRunner(driver, driver.classifier, RazorEngineName)
 	stats := runner.Run(ctx, recs)
 
 	diag := ""

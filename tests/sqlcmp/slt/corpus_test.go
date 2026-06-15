@@ -165,7 +165,7 @@ func runFile(ctx context.Context, driver *RazorDriver, path string) fileStat {
 	if err != nil {
 		return fileStat{path: path, stats: Stats{ParseErrors: 1, Total: 1}}
 	}
-	runner := NewRunner(driver, driver.classifier)
+	runner := NewRunner(driver, driver.classifier, RazorEngineName)
 	stats := runner.Run(ctx, recs)
 	return fileStat{path: path, stats: stats}
 }
