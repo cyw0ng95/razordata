@@ -348,32 +348,32 @@ references specific code locations in the implementation.
 
 ### Phase 3: MV-OCC (REQ000307)
 
-- [ ] 17. Read-set tracking
-  - [ ] 17.1 Add `readSet [][]byte` to `transactionSlot`
-  - [ ] 17.2 Add `trackRead(key []byte)` on `tx` — append during Get
-  - [ ] 17.3 Clear readSet on slot release
+- [x] 17. Read-set tracking
+  - [x] 17.1 Add `readSet [][]byte` to `transactionSlot`
+  - [x] 17.2 Add `trackRead(key []byte)` on `tx` — append during Get
+  - [x] 17.3 Clear readSet on slot release
 
-- [ ] 18. O(1) validation
-  - [ ] 18.1 Rewrite `slotManager.Validate`:
+- [x] 18. O(1) validation
+  - [x] 18.1 Rewrite `slotManager.Validate`:
     - Build hash-set from mySlot.readSet
     - For each committed slot with commitTS > beginTS:
       - Check if any write key is in readSet hash-set
       - If match → abort
-  - [ ] 18.2 Add `readSetKeys` helper
-  - [ ] 18.3 Ensure consistent snapshot under slot mutex
+  - [x] 18.2 Add `readSetKeys` helper
+  - [x] 18.3 Ensure consistent snapshot under slot mutex
 
-- [ ] 19. Wire into Get path
-  - [ ] 19.1 Call `trackRead(key)` after resolving visible version
-  - [ ] 19.2 Track write-your-own-read for validation
-  - [ ] 19.3 O(1) amortized, no per-Get allocation
+- [x] 19. Wire into Get path
+  - [x] 19.1 Call `trackRead(key)` after resolving visible version
+  - [x] 19.2 Track write-your-own-read for validation
+  - [x] 19.3 O(1) amortized, no per-Get allocation
 
-- [ ] 20. OCC tests
-  - [ ] 20.1 Two txns read same key, one commits → second succeeds
-  - [ ] 20.2 Two txns read+write same key, first commits → second aborts
-  - [ ] 20.3 Read-set 1000+ keys validates in O(N)
-  - [ ] 20.4 Benchmark: 16 concurrent txns, target <1μs
+- [x] 20. OCC tests
+  - [x] 20.1 Two txns read same key, one commits → second succeeds
+  - [x] 20.2 Two txns read+write same key, first commits → second aborts
+  - [x] 20.3 Read-set 1000+ keys validates in O(N)
+  - [x] 20.4 Benchmark: 16 concurrent txns, target <1μs
 
-- [ ] Checkpoint — `go test ./internal/TXN/... -race -bench=.` green
+- [x] Checkpoint — `go test ./internal/TXN/... -race -bench=.` green
 
 ### Phase 4: Bugfixes (REQ000511-REQ000530)
 

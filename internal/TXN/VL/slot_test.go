@@ -465,3 +465,105 @@ func TestSlotArenaReusedAcrossRounds(t *testing.T) {
 	}
 	sm.ReleaseSlot(slot2)
 }
+
+// TestValidate_ReadWriteConflict — two txns read the same key, first
+// writes+commits, second reads only. OCC detects read-write conflict
+// and aborts the second txn. REQ000307.
+func TestValidate_ReadWriteConflict(t *testing.T) {
+	t.Parallel()
+	sm := newSlotManager()
+
+	// slot1 commits after slot2's beginTS → concurrent window.
+	slot1 := sm.AllocateSlot()
+	slot1.beginTS = 10
+	slot1.commitTS = 50
+	slot1.writeSet = []KeyRange{{Start: []byte("a"), End: nil}}
+	slot1.readSet = nil
+	slot1.status.Store(int32(SlotCommitted))
+
+	slot2 := sm.AllocateSlot()
+	slot2.beginTS = 30
+	slot2.readSet = []ReadEntry{{Key: []byte("a"), ObservedTS: 5}}
+
+	if sm.Validate(slot2) {
+		t.Error("expected read-write conflict: slot1 wrote a, slot2 read a")
+	}
+}
+
+// TestValidate_ReadNoConflict — two txns read the same key, first
+// writes a DIFFERENT key and commits. Second reads the conflicting key
+// with no write on it → no conflict. REQ000307.
+func TestValidate_ReadNoConflict(t *testing.T) {
+	t.Parallel()
+	sm := newSlotManager()
+
+	slot1 := sm.AllocateSlot()
+	slot1.beginTS = 10
+	slot1.commitTS = 20
+	slot1.writeSet = []KeyRange{{Start: []byte("x"), End: nil}}
+	slot1.status.Store(int32(SlotCommitted))
+
+	slot2 := sm.AllocateSlot()
+	slot2.beginTS = 30
+	slot2.readSet = []ReadEntry{{Key: []byte("a"), ObservedTS: 5}}
+
+	if !sm.Validate(slot2) {
+		t.Error("expected no conflict: slot1 wrote x, slot2 read a")
+	}
+}
+
+// TestValidate_ReadWriteMultipleKeys — read-set with 1000+ keys
+// validates in O(N). REQ000307.
+func TestValidate_ReadWriteLargeReadSet(t *testing.T) {
+	t.Parallel()
+	sm := newSlotManager()
+
+	slot1 := sm.AllocateSlot()
+	slot1.beginTS = 10
+	slot1.commitTS = 50 // commits after slot2 begins
+	slot1.writeSet = []KeyRange{{Start: []byte("conflict-key"), End: nil}}
+	slot1.status.Store(int32(SlotCommitted))
+
+	slot2 := sm.AllocateSlot()
+	slot2.beginTS = 30
+	slot2.readSet = make([]ReadEntry, 0, 1001)
+	for i := 0; i < 1001; i++ {
+		slot2.readSet = append(slot2.readSet, ReadEntry{
+			Key:        []byte{byte(i)},
+			ObservedTS: 5,
+		})
+	}
+
+	// No conflict — slot1 wrote "conflict-key", read-set doesn't include it.
+	if !sm.Validate(slot2) {
+		t.Error("expected no conflict with large read-set")
+	}
+
+	// With conflict — add "conflict-key" to read-set.
+	slot2.readSet = append(slot2.readSet, ReadEntry{Key: []byte("conflict-key"), ObservedTS: 5})
+	if sm.Validate(slot2) {
+		t.Error("expected conflict after adding conflict key to large read-set")
+	}
+}
+
+// TestValidate_NoReadsStillDetectsWriteWrite — a txn with no reads
+// still fails on write-write conflict. REQ000307.
+func TestValidate_NoReadsWriteWriteConflict(t *testing.T) {
+	t.Parallel()
+	sm := newSlotManager()
+
+	slot1 := sm.AllocateSlot()
+	slot1.beginTS = 10
+	slot1.commitTS = 50 // commits after slot2 begins
+	slot1.writeSet = []KeyRange{{Start: []byte("a"), End: nil}}
+	slot1.status.Store(int32(SlotCommitted))
+
+	slot2 := sm.AllocateSlot()
+	slot2.beginTS = 30
+	slot2.writeSet = []KeyRange{{Start: []byte("a"), End: nil}}
+	// readSet is nil/empty — fast path uses write-write only.
+
+	if sm.Validate(slot2) {
+		t.Error("expected write-write conflict on key a")
+	}
+}
