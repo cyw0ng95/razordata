@@ -263,12 +263,25 @@ type OnConflict struct {
 	SetClauses []Pair   // DO UPDATE SET clauses
 }
 
+// ConflictAction represents INSERT OR <action> / REPLACE conflict resolution.
+type ConflictAction int
+
+const (
+	ConflictActionUnspecified ConflictAction = iota
+	ConflictActionRollback
+	ConflictActionAbort
+	ConflictActionFail
+	ConflictActionIgnore
+	ConflictActionReplace
+)
+
 type Insert struct {
-	Table      string
-	Cols       []string
-	Values     [][]Expr
-	Returning  []Expr
-	OnConflict *OnConflict // nil if no ON CONFLICT clause
+	Table          string
+	Cols           []string
+	Values         [][]Expr
+	Returning      []Expr
+	OnConflict     *OnConflict    // nil if no ON CONFLICT clause
+	ConflictAction ConflictAction // INSERT OR ROLLBACK/ABORT/FAIL/IGNORE/REPLACE
 }
 
 func (i *Insert) stmtNode() {}
@@ -310,8 +323,8 @@ func (w *WithStmt) stmtNode() {}
 
 // TriggerEvent is the time and action that fires a trigger.
 type TriggerEvent struct {
-	Time  string // "BEFORE" or "AFTER"
-	Event string // "INSERT", "UPDATE", or "DELETE"
+	Time  string   // "BEFORE" or "AFTER"
+	Event string   // "INSERT", "UPDATE", or "DELETE"
 	Cols  []string // optional column list for UPDATE OF
 }
 
@@ -325,7 +338,7 @@ type TriggerStmt struct {
 	ForEach     string // "ROW" or "STATEMENT"
 	Body        []Stmt // trigger body statements (BEGIN ... END)
 	IfNotExists bool
-	When        string // optional WHEN expression (raw text)
+	When        string   // optional WHEN expression (raw text)
 	OfCols      []string // optional column list for UPDATE OF
 }
 
@@ -473,10 +486,11 @@ type VacuumStmt struct {
 	Table string // empty = vacuum all tables
 }
 
-// CreateViewStmt represents CREATE VIEW name AS SELECT ... (REQ000240)
+// CreateViewStmt represents CREATE [TEMP|TEMPORARY] VIEW name AS SELECT ... (REQ000240)
 type CreateViewStmt struct {
-	Name string
-	As   Stmt // the SELECT statement
+	Name      string
+	As        Stmt // the SELECT statement
+	Temporary bool // true if CREATE TEMP/TEMPORARY VIEW
 }
 
 func (c *CreateViewStmt) stmtNode() {}
@@ -484,8 +498,8 @@ func (c *CreateViewStmt) stmtNode() {}
 // AlterTableStmt represents ALTER TABLE ... (REQ000243)
 type AlterTableStmt struct {
 	Table  string
-	Action string // "ADD COLUMN", "DROP COLUMN", "RENAME"
-	Column string // column name for ADD/DROP
+	Action string  // "ADD COLUMN", "DROP COLUMN", "RENAME"
+	Column string  // column name for ADD/DROP
 	NewCol *ColDef // for ADD COLUMN
 }
 
@@ -509,6 +523,5 @@ type SetTransactionStmt struct {
 }
 
 func (s *SetTransactionStmt) stmtNode() {}
-
 
 func (e *ExplainStmt) stmtNode() {}
