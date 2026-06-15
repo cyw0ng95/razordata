@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"github.com/cyw0ng95/razordata/internal/TXN/MV"
 )
 
 var goroutineID atomic.Uint64
@@ -130,6 +132,13 @@ func (em *epochManager) Start() {
 				case em.drainCh <- struct{}{}:
 				default:
 				}
+				// REQ000305: drain old-generation buffers
+				// that have been returned to the pending
+				// list by PutArena. This batches version-
+				// node reclamation at generation granularity
+				// and reduces GC pressure from 1 MB buffer
+				// churn.
+				MV.ReclaimOldGenerations()
 			case <-em.stopCh:
 				return
 			}

@@ -60,7 +60,7 @@ func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 		return e.Table + "." + e.Name, nil
 	case *PS.Param:
 		if e.Index < len(params) {
-			return params[e.Index], nil
+			return normalizeInt(params[e.Index]), nil
 		}
 		return nil, nil
 	case *PS.StarExpr:
@@ -1589,6 +1589,10 @@ func numericFloat(v interface{}) (float64, bool) {
 		return float64(x), true
 	case float64:
 		return x, true
+	case int:
+		return float64(x), true
+	case uint64:
+		return float64(x), true
 	}
 	return 0, false
 }
@@ -1670,6 +1674,9 @@ func equalValue(a, b interface{}) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
+	// Normalize int/int64 for comparison.
+	a = normalizeInt(a)
+	b = normalizeInt(b)
 	if ai, ok := a.(int64); ok {
 		switch v := b.(type) {
 		case int64:
@@ -1687,6 +1694,15 @@ func equalValue(a, b interface{}) bool {
 		}
 	}
 	return a == b
+}
+
+// normalizeInt converts Go int to int64 for consistent comparison.
+func normalizeInt(v interface{}) interface{} {
+	switch x := v.(type) {
+	case int:
+		return int64(x)
+	}
+	return v
 }
 
 // evalGlob implements glob(X,Y) — pattern matching with *, ?, [...].
