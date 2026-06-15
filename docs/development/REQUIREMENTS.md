@@ -15,7 +15,6 @@
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
 | REQ000444 | SQL/EX | UPDATE deadlock / lock leak — second UPDATE on the same table hangs until ctx deadline; first UPDATE returns quickly (repro: in `evidence/slt_lang_update.test` and any direct `UPDATE ... ; UPDATE ...` sequence). Likely a write lock or MVCC version-chain issue. Discovered via `TestSLT_Each/slt_lang_update.test` (15 fails) | high | M | iter-26 (EX lock chain) | `SQL/EX/` — UPDATE executor / lock acquisition path; check row-level write lock release after first UPDATE completes |
 | REQ000446 | SQL/EX | Scalar `IN (literal-list)` returns 0 rows — `SELECT 1 IN (2)` and `SELECT 1 IN (2,3,4)` both return zero rows; SQLite returns one row containing 0/1. Discovered via `TestSLT_Each/in1.test` and `in2.test` | medium | M | iter-26 (EX IN) | `SQL/EX/expr.go` — `expr IN (list)` should evaluate to a single boolean result row, not an empty set; also affects `NOT IN` |
-| REQ000447 | SQL/EX | `count(DISTINCT x)`, `avg(DISTINCT x)`, `sum(DISTINCT x)` return wrong values — `count(DISTINCT x)` over {1, 0, NULL} returns 4 instead of 2 (distinct non-null values). Discovered via `TestSLT_Each/slt_lang_aggfunc.test` (L28) | medium | M | iter-26 (agg DISTINCT) | `SQL/EX/aggregate.go` — DISTINCT should de-dup the input rows per group, ignoring NULLs the same way non-DISTINCT aggregates already do |
 | REQ000449 | SQL/PS | `INSERT OR REPLACE` and standalone `REPLACE INTO` not supported in the parser — fails with "expected INTO, got OR". Discovered via `TestSLT_Each/slt_lang_replace.test` (L38) | low | S | iter-26 (UPSERT) | `SQL/PS/ps.go` — extend `parseInsert` to accept `OR REPLACE` / `OR ABORT` / etc. conflict resolution clauses; or add a `parseReplace` for the `REPLACE INTO` form |
 | REQ000450 | SQL/PS | `CREATE TEMP VIEW` not supported — parser expects `CREATE TABLE` after `CREATE TEMP` and fails with "expected TABLE, got identifier". Discovered via `TestSLT_Each/slt_lang_createview.test` (L48) | low | S | iter-26 | `SQL/PS/ps.go` `parseCreateView` — accept optional `TEMP`/`TEMPORARY` keyword between `CREATE` and `VIEW`; semantics: same as `CREATE VIEW` for v1 |
 
@@ -68,6 +67,7 @@
 | REQ000397 | SQL/EX | Scalar function `ltrim(X[,Y])` — trim left whitespace or chars in Y | iter-26 |
 | REQ000400 | SQL/EX | Scalar function `octet_length(X)` — byte length (not code-point count) | iter-26 |
 | REQ000442 | SQL/EX | SLT gap survey — 30/42 common patterns identified; gaps tracked in individual REQs | iter-26 |
+| REQ000447 | SQL/EX | `count(DISTINCT x)`, `avg(DISTINCT x)`, `sum(DISTINCT x)` — DISTINCT aggregate semantics verified; NULLs skipped, dedup works | iter-26 |
 | REQ000419 | SQL/EX | Scalar function `ifnull(X,Y)` — 2-arg NULL coalesce | iter-26 |
 | REQ000420 | SQL/EX | Scalar function `length(X)` — code-point count | iter-26 |
 | REQ000421 | SQL/EX | Scalar function `like(X,Y[,Z])` — 2-arg pattern match | iter-26 |
