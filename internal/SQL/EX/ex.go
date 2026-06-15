@@ -689,6 +689,18 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		return NewAlterTable(s), nil
 	case *PS.TriggerStmt:
 		return NewTrigger(s), nil
+	case *PS.DropViewStmt:
+		return NewDropView(s), nil
+	case *PS.DropTriggerStmt:
+		return NewDropTrigger(s), nil
+	case *PS.PragmaStmt:
+		return NewPragma(s), nil
+	case *PS.ExplainStmt:
+		return NewExplain(s), nil
+	case *PS.TruncateStmt:
+		return NewTruncate(s), nil
+	case *PS.ReindexStmt:
+		return NewReindex(s), nil
 	}
 	return nil, errors.New("ex: not a writable statement")
 }

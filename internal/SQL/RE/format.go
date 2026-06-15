@@ -35,6 +35,10 @@ func Format(stmt PS.Stmt) (string, error) {
 		return formatWithStmt(s), nil
 	case *PS.AlterTableStmt:
 		return formatAlterTableStmt(s), nil
+	case *PS.AnalyzeStmt, *PS.VacuumStmt, *PS.PragmaStmt, *PS.ExplainStmt, *PS.TruncateStmt, *PS.ReindexStmt, *PS.DropViewStmt, *PS.DropTriggerStmt, *PS.DropIndexStmt, *PS.CreateIndexStmt, *PS.CreateViewStmt:
+		// For format purposes, DDL/admin pass-through; full
+		// pretty-printing is out of scope.
+		return "", nil
 	}
 	return "", fmt.Errorf("re: unknown statement type %T", stmt)
 }

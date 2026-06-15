@@ -109,6 +109,8 @@ const (
 	T_EACH
 	T_ANALYZE
 	T_VACUUM
+	T_TRUNCATE
+	T_REINDEX
 	T_EXPLAIN
 	T_QUERY
 	T_PLAN
@@ -294,6 +296,8 @@ var tokenTypeNames = [...]string{
 	T_EXISTS:       "EXISTS",
 	T_ANALYZE:      "ANALYZE",
 	T_VACUUM:       "VACUUM",
+	T_TRUNCATE:     "TRUNCATE",
+	T_REINDEX:      "REINDEX",
 	T_TRUE:         "TRUE",
 	T_FALSE:        "FALSE",
 	T_OUTER:        "OUTER",
