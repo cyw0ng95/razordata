@@ -4,16 +4,12 @@
 |---|---|---|---|---|---|---|
 | REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with design spec |
 | REQ000159 | TXN | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | medium | M | iter-05 (arena) | `TXN/MV/arena.go` — add lazy init, exhaustion handling |
-DONE REQ000162 | SQL | Plan memoization with SHA256(AST binary encoding) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — canonical AST serialization |
 | REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | medium | M | iter-04 (compaction) | `ENG/LS/compaction.go` — size budget monitoring |
-DONE REQ000185 | SQL/EX | Plan memoization with SHA256 canonical AST binary encoding (not JSON) | low | M | iter-08 (planner) | `SQL/PL/memo.go` — implement binary serialization per SQL.md:215 |
 | REQ000034 | WAL | WAL compression (lz4) | low | M | iter-03 (WAL writer) | `WAL/WR/encode.go` |
 | REQ000045 | ENG | Secondary indexes (non-PK columns; lookup by `__idx__:<table>:<col>:<val>`) | low | XL | iter-12 (catalog), iter-21 (ID) | new `ENG/ID/` package, `SQL/PL` index selection |
 | REQ000048 | ENG | Table registry persistence (`ENG/TB/`) | medium | L | iter-12 (catalog basic) | new `ENG/TB/tb.go` |
 | REQ000064 | TXN | Generational arena (reduce GC pressure vs. single allocation) | low | L | iter-05 (arena) | `TXN/MV/arena.go` |
-DONE REQ000086 | SQL | Parallel query execution (operators in goroutines, merge via channel) | low | XL | iter-08 (operators) | `SQL/EX/ex.go` — channel-based Next; cancellation hygiene |
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | low | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
-DONE REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000305 | TXN | Generational arena with Young/Old split (young bump-allocate, old epoch-reclaim; reduces epoch manager pressure) | medium | L | iter-05 (arena), `REQ000064` | `TXN/MV/arena.go` — generation promotion policy |
 | REQ000307 | TXN | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | critical | XL | iter-20 (commit protocol), `REQ000175` | `TXN/MV/occ.go` (new) — `Validation` phase rewritten; conflict-free reorder |
@@ -23,12 +19,6 @@ DONE REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, rest
 | REQ000316 | SQL | Incremental materialized views (auto-maintained aggregation views with query routing) | medium | L | iter-08 (operators), iter-12 (catalog) | `SQL/EX/matview.go` (new); `ENG/LS` triggers on view base tables |
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
 | REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
-| REQ000442 | SQL/EX | 30/42 common SLT patterns pass; the 12 failures above are the highest-impact gaps. Recommended priority order: REQ000434 (NOT BETWEEN) > REQ000437 (count DISTINCT) > REQ000436 (recursive CTE) > REQ000438 (function eval routing) | high | L | iter-26.11 SLT gap survey | n/a — survey result |
-| REQ000428 | SQL/EX | load_extension — not in v1 scope; requires CGO bridge | skip | XL | iter-25 | `SQL/EX/eval.go` |
-| REQ000429 | SQL/EX | sqlite_compileoption_get — engine-internal; returns NULL for v1 | skip | XL | iter-25 | `SQL/EX/eval.go` |
-| REQ000430 | SQL/EX | sqlite_compileoption_used — engine-internal; returns 0 for v1 | skip | XL | iter-25 | `SQL/EX/eval.go` |
-| REQ000431 | SQL/EX | sqlite_offset — requires SQLITE_ENABLE_OFFSET_SQL_FUNC compile flag | skip | XL | iter-25 | `SQL/EX/eval.go` |
-| REQ000432 | SQL/EX | unistr_quote — low-value, complex | skip | XL | iter-25 | `SQL/EX/eval.go` |
 | REQ000444 | SQL/EX | UPDATE deadlock / lock leak — second UPDATE on the same table hangs until ctx deadline; first UPDATE returns quickly (repro: in `evidence/slt_lang_update.test` and any direct `UPDATE ... ; UPDATE ...` sequence). Likely a write lock or MVCC version-chain issue. Discovered via `TestSLT_Each/slt_lang_update.test` (15 fails) | high | M | iter-26 (EX lock chain) | `SQL/EX/` — UPDATE executor / lock acquisition path; check row-level write lock release after first UPDATE completes |
 | REQ000446 | SQL/EX | Scalar `IN (literal-list)` returns 0 rows — `SELECT 1 IN (2)` and `SELECT 1 IN (2,3,4)` both return zero rows; SQLite returns one row containing 0/1. Discovered via `TestSLT_Each/in1.test` and `in2.test` | medium | M | iter-26 (EX IN) | `SQL/EX/expr.go` — `expr IN (list)` should evaluate to a single boolean result row, not an empty set; also affects `NOT IN` |
 | REQ000447 | SQL/EX | `count(DISTINCT x)`, `avg(DISTINCT x)`, `sum(DISTINCT x)` return wrong values — `count(DISTINCT x)` over {1, 0, NULL} returns 4 instead of 2 (distinct non-null values). Discovered via `TestSLT_Each/slt_lang_aggfunc.test` (L28) | medium | M | iter-26 (agg DISTINCT) | `SQL/EX/aggregate.go` — DISTINCT should de-dup the input rows per group, ignoring NULLs the same way non-DISTINCT aggregates already do |
@@ -36,17 +26,6 @@ DONE REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, rest
 | REQ000450 | SQL/PS | `CREATE TEMP VIEW` not supported — parser expects `CREATE TABLE` after `CREATE TEMP` and fails with "expected TABLE, got identifier". Discovered via `TestSLT_Each/slt_lang_createview.test` (L48) | low | S | iter-26 | `SQL/PS/ps.go` `parseCreateView` — accept optional `TEMP`/`TEMPORARY` keyword between `CREATE` and `VIEW`; semantics: same as `CREATE VIEW` for v1 |
 | REQ000384 | SQL/EX | Scalar function `abs(X)` — returns absolute value, NULL→NULL, string→0.0, MIN_INT64→error | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000385 | SQL/EX | Scalar function `changes()` — last INSERT/UPDATE/DELETE row count; not yet wired to session state | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000386 | SQL/EX | Scalar function `char(X1,...,XN)` — Unicode code point → character; accepts variadic int args | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000387 | SQL/EX | Scalar function `concat(X,...)` — concatenate non-NULL args; all-NULL → "" | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000388 | SQL/EX | Scalar function `concat_ws(SEP,X,...)` — concat with separator; SEP=NULL → NULL | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000389 | SQL/EX | Scalar function `format(FORMAT,...)` — printf-style formatting (subset of fmt verbs) | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000390 | SQL/EX | Scalar function `glob(X,Y)` — filename glob match (X=pattern, Y=string) | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000393 | SQL/EX | Scalar function `instr(X,Y)` — position of Y in X (1-based), 0 if not found | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000394 | SQL/EX | Scalar function `last_insert_rowid()` — engine-level rowid; engine must expose per-session counter | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000395 | SQL/EX | Scalar function `likelihood(X,Y)` — no-op pass-through; hint to planner | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000396 | SQL/EX | Scalar function `likely(X)` — no-op pass-through | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000397 | SQL/EX | Scalar function `ltrim(X[,Y])` — trim left; default Y=" " | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000400 | SQL/EX | Scalar function `octet_length(X)` — byte length; differs from `length` for UTF-8 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000401 | SQL/EX | Scalar function `quote(X)` — SQL literal rendering; strings single-quoted with escape, BLOBs as X'hex' | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000402 | SQL/EX | Scalar function `random()` — pseudo-random int64; exclude MIN_INT64 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000403 | SQL/EX | Scalar function `randomblob(N)` — N-byte random BLOB | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
@@ -58,14 +37,15 @@ DONE REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, rest
 | REQ000409 | SQL/EX | Scalar function `sqlite_source_id()` — fixed string for v1 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000410 | SQL/EX | Scalar function `sqlite_version()` — fixed string for v1 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000411 | SQL/EX | Scalar function `total_changes()` — cumulative row-change count since connection open | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
- | REQ000412 | SQL/EX | Scalar function `typeof(X)` — returns "null" / "integer" / "real" / "text" / "blob" | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-
-
 
 ## DONE
 
 | ID | Subsystem | Requirement | Iteration |
 |---|---|---|---|
+| REQ000162 | SQL | Plan memoization with SHA256(AST binary encoding) | iter-08 |
+| REQ000185 | SQL/EX | Plan memoization with SHA256 canonical AST binary encoding (not JSON) | iter-08 |
+| REQ000086 | SQL | Parallel query execution (operators in goroutines, merge via channel) | iter-08 |
+| REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | iter-08 |
 | REQ000418 | SQL/EX | Scalar function `coalesce(X,Y,...)` — variadic NULL-skipping | iter-26 |
 | REQ000391 | SQL/EX | Scalar function `hex(X)` — BLOB/text → uppercase hex; integer is converted via text first | iter-26 |
 | REQ000392 | SQL/EX | Scalar function `iif(B,V,...)` / `if()` alias — short-circuit CASE; NULL condition → false branch | iter-26 |
@@ -76,6 +56,18 @@ DONE REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, rest
 | REQ000415 | SQL/EX | Scalar function `unistr(X)` — backslash-escape decoder | iter-26 |
 | REQ000416 | SQL/EX | Scalar function `unlikely(X)` — no-op pass-through | iter-26 |
 | REQ000417 | SQL/EX | Scalar function `zeroblob(N)` — N-byte BLOB of 0x00 | iter-26 |
+| REQ000386 | SQL/EX | Scalar function `char(X1,...,XN)` — Unicode code point → character; variadic int args; any NULL → NULL | iter-26 |
+| REQ000387 | SQL/EX | Scalar function `concat(X,...)` — concatenate all args; any NULL → NULL (SQLite semantics) | iter-26 |
+| REQ000388 | SQL/EX | Scalar function `concat_ws(SEP,X,...)` — concat with separator; SEP=NULL → NULL, skips NULL values | iter-26 |
+| REQ000389 | SQL/EX | Scalar function `format(FORMAT,...)` — printf-style formatting via fmt.Sprintf | iter-26 |
+| REQ000390 | SQL/EX | Scalar function `glob(X,Y)` — filename glob match with * and ? wildcards | iter-26 |
+| REQ000393 | SQL/EX | Scalar function `instr(X,Y)` — 1-based position of Y in X, 0 if not found; NULL → 0 | iter-26 |
+| REQ000394 | SQL/EX | Scalar function `last_insert_rowid()` — last successful INSERT rowid | iter-26 |
+| REQ000395 | SQL/EX | Scalar function `likelihood(X,Y)` — no-op pass-through; planner hint | iter-26 |
+| REQ000396 | SQL/EX | Scalar function `likely(X)` — no-op pass-through; planner hint | iter-26 |
+| REQ000397 | SQL/EX | Scalar function `ltrim(X[,Y])` — trim left whitespace or chars in Y | iter-26 |
+| REQ000400 | SQL/EX | Scalar function `octet_length(X)` — byte length (not code-point count) | iter-26 |
+| REQ000442 | SQL/EX | SLT gap survey — 30/42 common patterns identified; gaps tracked in individual REQs | iter-26 |
 | REQ000419 | SQL/EX | Scalar function `ifnull(X,Y)` — 2-arg NULL coalesce | iter-26 |
 | REQ000420 | SQL/EX | Scalar function `length(X)` — code-point count | iter-26 |
 | REQ000421 | SQL/EX | Scalar function `like(X,Y[,Z])` — 2-arg pattern match | iter-26 |
@@ -385,17 +377,17 @@ DONE REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, rest
 | REQ000309 | ENG | NUMA-aware placement (`NodeCount`, `IsAvailable`, `CurrentNode`, `PinWorker`, `bufferSlot.nodeID`, subcompaction worker `LockOSThread`) | iter-27 (Phase 6) |
 | REQ000156 | SQL | Cost-based scan selection in planner — `pickCheaperScan` compares `estimateCost` for SeqScan vs IndexScan candidates and swaps to the cheaper one when the WHERE column has a writer-registered index | iter-27 |
 | REQ000437 | SQL/EX | Full SQL aggregate DISTINCT support — `SUM/AVG/MIN/MAX/GROUP_CONCAT(DISTINCT col)` now dedup before aggregating (parity with `COUNT(DISTINCT col)`); NULLs are excluded from the distinct set per SQLite semantics; parser routes DISTINCT through the IDENT aggregate path for `GROUP_CONCAT` | iter-27 |
-DONE REQ000182 | SQL/EX | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | iter-08 |
-DONE REQ000246 | SQL/PS | Parse TRIGGER (CREATE TRIGGER, BEFORE/AFTER, FOR EACH ROW) | iter-07 |
+| REQ000182 | SQL/EX | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | iter-08 |
+| REQ000246 | SQL/PS | Parse TRIGGER (CREATE TRIGGER, BEFORE/AFTER, FOR EACH ROW) | iter-07 |
 | REQ000247 | SQL/EX | TRIGGER executor (fire on INSERT/UPDATE/DELETE) | iter-07 |
-DONE REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | iter-21 |
-DONE REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | iter-23 |
+| REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | iter-21 |
+| REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | iter-23 |
 | REQ000286 | SQL/EX | Window materialize context propagation — uses context.Background() instead of caller's ctx | iter-23 |
 | REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | iter-23 |
-DONE REQ000298 | ENG | LSM-aware cross-block shared dictionary (multiple data blocks in one SST share a trained dict) | iter-27 |
-DONE REQ000434 | SQL/PS | NOT BETWEEN syntax error fix | iter-26 |
-DONE REQ000438 | SQL/EX | Scalar function eval error routing fix | iter-26 |
-DONE REQ000439 | SQL/PS | EXPLAIN statement support | iter-26 |
+| REQ000298 | ENG | LSM-aware cross-block shared dictionary (multiple data blocks in one SST share a trained dict) | iter-27 |
+| REQ000434 | SQL/PS | NOT BETWEEN syntax error fix | iter-26 |
+| REQ000438 | SQL/EX | Scalar function eval error routing fix | iter-26 |
+| REQ000439 | SQL/PS | EXPLAIN statement support | iter-26 |
 | REQ000049 | ENG/SC | Schema cluster split from LS (TableSchema, ColumnDef, ColumnType, Row, Validator) | iter-28 |
 | REQ000050 | ENG/DP | Deparser cluster split from LS (EncodeRow/DecodeRow, EncodeBlock/DecodeBlock) | iter-28 |
 | REQ000300 | ENG/LS | Tier-aware storage scheduler (PlacementPolicy, StoragePolicy, per-level device routing) | iter-28 |
