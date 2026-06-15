@@ -8,12 +8,12 @@ import (
 )
 
 type Parser struct {
-	lex                    *LX.Lexer
-	current                LX.Token
-	paramIndex             int
-	pendingJoins           []string // REQ000368: comma-separated tables awaiting CROSS-join synthesis
-	pendingSubquery        Stmt     // REQ000436: subquery from FROM clause
-	pendingSubqueryAlias   string
+	lex                  *LX.Lexer
+	current              LX.Token
+	paramIndex           int
+	pendingJoins         []string // REQ000368: comma-separated tables awaiting CROSS-join synthesis
+	pendingSubquery      Stmt     // REQ000436: subquery from FROM clause
+	pendingSubqueryAlias string
 }
 
 func NewParser(input string) *Parser {
@@ -313,17 +313,17 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			// spelled as plain identifiers in SQL. Route them
 			// through AggregateFunc so the executor's aggregate
 			// path handles them.
-		if isAggregateName(name) {
-			// MIN/MAX with multiple args → scalar function
-			if len(args) > 1 && isMinMaxName(name) {
-				return &FunctionCall{Name: name, Args: args}, nil
+			if isAggregateName(name) {
+				// MIN/MAX with multiple args → scalar function
+				if len(args) > 1 && isMinMaxName(name) {
+					return &FunctionCall{Name: name, Args: args}, nil
+				}
+				var arg Expr
+				if len(args) > 0 {
+					arg = args[0]
+				}
+				return &AggregateFunc{Name: name, Arg: arg, Distinct: distinct}, nil
 			}
-			var arg Expr
-			if len(args) > 0 {
-				arg = args[0]
-			}
-			return &AggregateFunc{Name: name, Arg: arg, Distinct: distinct}, nil
-		}
 			return &FunctionCall{Name: name, Args: args}, nil
 		}
 		return &Ident{Name: name}, nil
@@ -674,7 +674,7 @@ func (p *Parser) Parse() (Stmt, error) {
 	case LX.T_DELETE:
 		stmt, err = p.parseDelete()
 	case LX.T_CREATE:
-		// CREATE TABLE vs CREATE INDEX vs CREATE VIEW vs CREATE TRIGGER
+		// CREATE TABLE vs CREATE INDEX vs CREATE VIEW vs CREATE TRIGGER vs CREATE [TEMP] VIEW
 		next := p.lex.Peek().Type
 		if next == LX.T_INDEX {
 			stmt, err = p.parseCreateIndex()
@@ -684,6 +684,12 @@ func (p *Parser) Parse() (Stmt, error) {
 			stmt, err = p.parseCreateView()
 		} else if next == LX.T_TRIGGER {
 			stmt, err = p.parseCreateTrigger()
+		} else if next == LX.T_TEMP || next == LX.T_TEMPORARY {
+			if p.lex.Peek2().Type == LX.T_VIEW {
+				stmt, err = p.parseCreateView()
+			} else {
+				stmt, err = p.parseCreateTable()
+			}
 		} else {
 			stmt, err = p.parseCreateTable()
 		}
@@ -717,6 +723,22 @@ func (p *Parser) Parse() (Stmt, error) {
 		stmt, err = p.parseSet()
 	case LX.T_ALTER:
 		stmt, err = p.parseAlterTable()
+	case LX.T_IDENT:
+		// REPLACE INTO — REPLACE is not a hard keyword, detect via lexeme.
+		if strings.EqualFold(p.current.Lexeme, "REPLACE") {
+			next := p.lex.Peek()
+			if next.Type == LX.T_INTO {
+				stmt, err = p.parseReplace()
+				break
+			}
+		}
+		return nil, &SyntaxError{
+			Input:  p.lex.Input(),
+			Line:   p.current.Line,
+			Col:    p.current.Col,
+			Got:    tokenName(p.current.Type),
+			Lexeme: p.current.Lexeme,
+		}
 	default:
 		return nil, &SyntaxError{
 			Input:  p.lex.Input(),
@@ -1107,12 +1129,50 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 }
 
 func (p *Parser) parseInsert() (*Insert, error) {
-	p.advance()
+	p.advance() // consume INSERT
+
+	var action ConflictAction
+	if p.current.Type == LX.T_OR {
+		p.advance() // consume OR
+		// INSERT OR ROLLBACK/ABORT/FAIL/IGNORE/REPLACE
+		// These are not hard keywords; compare lexeme strings.
+		switch strings.ToUpper(p.current.Lexeme) {
+		case "ROLLBACK":
+			action = ConflictActionRollback
+		case "ABORT":
+			action = ConflictActionAbort
+		case "FAIL":
+			action = ConflictActionFail
+		case "IGNORE":
+			action = ConflictActionIgnore
+		case "REPLACE":
+			action = ConflictActionReplace
+		default:
+			return nil, fmt.Errorf("expected ROLLBACK/ABORT/FAIL/IGNORE/REPLACE after INSERT OR, got %s", p.current.Lexeme)
+		}
+		p.advance() // consume action keyword
+	}
 
 	if err := p.expect(LX.T_INTO); err != nil {
 		return nil, err
 	}
-	p.advance()
+	p.advance() // consume INTO
+
+	return p.parseInsertTail(action)
+}
+
+// parseReplace parses REPLACE INTO ..., equivalent to INSERT OR REPLACE INTO ...
+func (p *Parser) parseReplace() (*Insert, error) {
+	p.advance() // consume REPLACE, p.current should be INTO
+	if err := p.expect(LX.T_INTO); err != nil {
+		return nil, err
+	}
+	p.advance() // consume INTO
+	return p.parseInsertTail(ConflictActionReplace)
+}
+
+// parseInsertTail parses the common body of INSERT and REPLACE after INTO is consumed.
+func (p *Parser) parseInsertTail(action ConflictAction) (*Insert, error) {
 
 	if err := p.expect(LX.T_IDENT); err != nil {
 		return nil, err
@@ -1196,7 +1256,7 @@ func (p *Parser) parseInsert() (*Insert, error) {
 		}
 	}
 
-	return &Insert{Table: table, Cols: cols, Values: values, Returning: returning, OnConflict: onConflict}, nil
+	return &Insert{Table: table, Cols: cols, Values: values, Returning: returning, OnConflict: onConflict, ConflictAction: action}, nil
 }
 
 func (p *Parser) parseOnConflict() (*OnConflict, error) {
@@ -2718,9 +2778,14 @@ func (p *Parser) parseSet() (*SetTransactionStmt, error) {
 	return &SetTransactionStmt{Level: level}, nil
 }
 
-// parseCreateView parses CREATE VIEW name AS SELECT ... (REQ000240).
+// parseCreateView parses CREATE [TEMP|TEMPORARY] VIEW name AS SELECT ... (REQ000240).
 func (p *Parser) parseCreateView() (*CreateViewStmt, error) {
 	p.advance() // consume CREATE
+	var temporary bool
+	if p.current.Type == LX.T_TEMP || p.current.Type == LX.T_TEMPORARY {
+		temporary = true
+		p.advance() // consume TEMP/TEMPORARY
+	}
 	if err := p.expect(LX.T_VIEW); err != nil {
 		return nil, err
 	}
@@ -2738,7 +2803,7 @@ func (p *Parser) parseCreateView() (*CreateViewStmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &CreateViewStmt{Name: name, As: sel}, nil
+	return &CreateViewStmt{Name: name, As: sel, Temporary: temporary}, nil
 }
 
 // parseAlterTable parses ALTER TABLE name ADD/DROP COLUMN col (REQ000243).
