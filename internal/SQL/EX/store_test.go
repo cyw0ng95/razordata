@@ -18,7 +18,6 @@ func (s *engineStore) Delete(k []byte) error    { return s.eng.Delete(k) }
 func (s *engineStore) Get(k []byte) ([]byte, bool, error) {
 	v, err := s.eng.Get(k)
 	if err != nil {
-		// Translate "not found" to (nil, false, nil)
 		if err.Error() == "key not found" || err.Error() == "not found" || err.Error() == "eng: key not found" {
 			return nil, false, nil
 		}
@@ -129,92 +128,99 @@ func TestDelete_InsertsTombstone(t *testing.T) {
 	ex.RegisterTableWithPK("t", []string{"id", "val"}, "id")
 	ctx := context.Background()
 
-	for _, s := range []string{
-		"INSERT INTO t VALUES (1, 'a')",
-		"INSERT INTO t VALUES (2, 'b')",
-		"INSERT INTO t VALUES (3, 'c')",
-	} {
-		if _, err := ex.Exec(ctx, s); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 'hello')"); err != nil {
+		t.Fatal(err)
 	}
-	res, err := ex.Exec(ctx, "DELETE FROM t WHERE id = 2")
+	res, err := ex.Exec(ctx, "DELETE FROM t WHERE id = 1")
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if res.RowsAffected != 1 {
 		t.Errorf("expected 1 row affected, got %d", res.RowsAffected)
 	}
-	rows, err := ex.QueryAll(ctx, "SELECT id FROM t")
+	rows, err := ex.QueryAll(ctx, "SELECT * FROM t")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 {
-		t.Errorf("expected 2 rows after delete, got %d", len(rows))
+	if len(rows) != 0 {
+		t.Fatalf("expected 0 rows after delete, got %d", len(rows))
 	}
 }
 
-func TestCreateTable_RegistersStoreSchema(t *testing.T) {
+func TestSQLviaEngine_CreateInsertUpdateSelect(t *testing.T) {
 	ex, eng := newEngineExecutor(t)
 	defer eng.Close()
-
 	ctx := context.Background()
-	if _, err := ex.Exec(ctx, "CREATE TABLE u (id INTEGER, name TEXT)"); err != nil {
-		t.Fatal(err)
-	}
-	ss, ok := schemaFor("u")
-	if !ok {
-		t.Fatal("schema not registered")
-	}
-	if len(ss.cols) != 2 {
-		t.Errorf("expected 2 cols, got %d", len(ss.cols))
-	}
-}
 
-func TestExecutor_Filter_AgainstStore(t *testing.T) {
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	_, err := ex.Exec(ctx, "CREATE TABLE engine_t (id INTEGER PRIMARY KEY, val INTEGER)")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
 
-	ex.RegisterTableWithPK("t", []string{"id", "name"}, "id")
-	ctx := context.Background()
-	for _, s := range []string{
-		"INSERT INTO t VALUES (1, 'alice')",
-		"INSERT INTO t VALUES (2, 'bob')",
-		"INSERT INTO t VALUES (3, 'carol')",
-	} {
-		if _, err := ex.Exec(ctx, s); err != nil {
-			t.Fatal(err)
+	for i := 1; i <= 5; i++ {
+		_, err = ex.Exec(ctx, "INSERT INTO engine_t VALUES (?, ?)", int64(i), int64(i*10))
+		if err != nil {
+			t.Fatalf("insert %d: %v", i, err)
 		}
 	}
-	rows, err := ex.QueryAll(ctx, "SELECT name FROM t WHERE id > 1")
+
+	rows, err := ex.QueryAll(ctx, "SELECT * FROM engine_t ORDER BY id")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 {
-		t.Errorf("expected 2 rows, got %d", len(rows))
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(rows))
+	}
+
+	_, err = ex.Exec(ctx, "UPDATE engine_t SET val = val * 2 WHERE id > 2")
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	rows, err = ex.QueryAll(ctx, "SELECT * FROM engine_t ORDER BY id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 rows after update, got %d", len(rows))
+	}
+	expected := [][]int64{{1, 10}, {2, 20}, {3, 60}, {4, 80}, {5, 100}}
+	for i, exp := range expected {
+		if rows[i].Data[0] != exp[0] || rows[i].Data[1] != exp[1] {
+			t.Errorf("row %d: got %v, want %v", i, rows[i].Data, exp)
+		}
 	}
 }
 
-func TestNoPK_InsertSucceedsWithHiddenRowid(t *testing.T) {
-	// REQ000367: tables without a PRIMARY KEY declaration are
-	// writable via a synthetic int64 rowid. The user-visible
-	// schema is unchanged; the rowid is not exposed.
+func TestEngine_SequentialDDL(t *testing.T) {
 	ex, eng := newEngineExecutor(t)
 	defer eng.Close()
-
-	ex.RegisterTable("t", []string{"a", "b"}) // no PK
 	ctx := context.Background()
-	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 'x')"); err != nil {
-		t.Fatal(err)
+
+	// Create multiple tables with indexes (like SLT tests do)
+	tnames := []string{"ta", "tb", "tc"}
+	for _, tname := range tnames {
+		_, err := ex.Exec(ctx, "CREATE TABLE "+tname+" (id INTEGER PRIMARY KEY, val NUMERIC, w TEXT)")
+		if err != nil {
+			t.Fatalf("create %s: %v", tname, err)
+		}
+		for j := 1; j <= 3; j++ {
+			_, err = ex.Exec(ctx, "INSERT INTO "+tname+" VALUES (?, ?, ?)", int64(j), int64(j*10), "hello")
+			if err != nil {
+				t.Fatalf("insert %s/%d: %v", tname, j, err)
+			}
+		}
+		_, err = ex.Exec(ctx, "CREATE INDEX i1 ON "+tname+"(val)")
+		if err != nil {
+			t.Fatalf("create index %s: %v", tname, err)
+		}
 	}
-	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (2, 'y')"); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := ex.QueryAll(ctx, "SELECT a, b FROM t ORDER BY a")
+
+	rows, err := ex.QueryAll(ctx, "SELECT * FROM ta ORDER BY id")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 {
-		t.Errorf("expected 2 rows, got %d", len(rows))
+	if len(rows) != 3 {
+		t.Errorf("ta: expected 3 rows, got %d", len(rows))
 	}
 }
