@@ -147,8 +147,10 @@ func TestMVVersionNodeCommit(t *testing.T) {
 func TestArenaSize(t *testing.T) {
 	a := newArena()
 
-	if a.Size() != arenaSize {
-		t.Errorf("expected size %d, got %d", arenaSize, a.Size())
+	// REQ000064: total size is now young + old.
+	expected := a.YoungSize() + a.OldSize()
+	if a.Size() != expected {
+		t.Errorf("expected size %d, got %d", expected, a.Size())
 	}
 }
 

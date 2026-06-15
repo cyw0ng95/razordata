@@ -107,6 +107,12 @@ type replayer struct {
 	bp    bf.BufferPool
 	cb    Callbacks
 	log   lg.Logger
+	// compressed is the compression flag read from the most
+	// recently scanned segment header. REQ000034: the replayer
+	// detects lz4-compressed segments via the FlagCompressionLZ4
+	// bit in the segment header flags byte and decompresses
+	// record bodies accordingly.
+	compressed bool
 
 	closed atomicBool
 }
@@ -272,6 +278,11 @@ func (r *replayer) forEachRecord(segNum uint64, fn func(rec *wr.LogRecord, recLS
 		return fmt.Errorf("rp: segment %d header: %w", segNum, err)
 	}
 
+	// REQ000034: read the compression flag from the segment
+	// header. The flags byte is at offset 5. Bit 0
+	// (FlagCompressionLZ4) indicates lz4-compressed records.
+	r.compressed = headerBuf[5]&wr.FlagCompressionLZ4 != 0
+
 	// Skip the header for record iteration.
 	offset := int64(wr.WALHeaderSize)
 	remaining := fileSize - offset
@@ -300,7 +311,11 @@ func (r *replayer) forEachRecord(segNum uint64, fn func(rec *wr.LogRecord, recLS
 
 		off := 0
 		for off < n {
-			rec, consumed, err := wr.DecodeRecord(buf[:n], off)
+			// REQ000034: use the compressed decoder when the
+			// segment header indicates lz4 compression. The
+			// decoder verifies the CRC against the on-disk
+			// (compressed) body before decompressing.
+			rec, consumed, err := wr.DecodeRecordCompressed(buf[:n], off, r.compressed)
 			if err != nil {
 				if errors.Is(err, wr.ErrTruncatedRecord) {
 					// End of segment reached. Tolerate.

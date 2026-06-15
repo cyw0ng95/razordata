@@ -3,7 +3,10 @@ package wr
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
+
+	"github.com/cyw0ng95/razordata/internal/WAL/WR/lz4"
 )
 
 // ErrTruncatedRecord is returned when a record header would read past
@@ -70,7 +73,18 @@ func DecodeVarint(data []byte, off int) (uint64, int) {
 // allocations (encode body in temp slice, copy into final slice
 // with length prefix), which doubled allocator pressure on the
 // hot path.
+//
+// REQ000034: when compress is true, the body is lz4-compressed
+// before the CRC is computed. The length prefix covers the
+// compressed body length. The decompressor detects compression
+// by reading the segment header flags (FlagCompressionLZ4).
 func encodeRecord(rec *LogRecord) []byte {
+	return encodeRecordCompressed(rec, false)
+}
+
+// encodeRecordCompressed is like encodeRecord but optionally
+// lz4-compresses the body. REQ000034.
+func encodeRecordCompressed(rec *LogRecord, compress bool) []byte {
 	if rec == nil {
 		return nil
 	}
@@ -85,7 +99,14 @@ func encodeRecord(rec *LogRecord) []byte {
 	body = append(body, byte(rec.Type))
 	body = appendPayload(body, rec)
 
-	bodyLen := len(body)
+	// REQ000034: optionally compress the body. The CRC is
+	// computed over the compressed body (what's on disk).
+	diskBody := body
+	if compress && len(body) > 0 {
+		diskBody = lz4.Compress(body)
+	}
+
+	bodyLen := len(diskBody)
 	totalLen := uint64(bodyLen + 4) // +4 for the trailing CRC
 
 	// Second pass: assemble the final record in a pre-sized slice.
@@ -97,12 +118,12 @@ func encodeRecord(rec *LogRecord) []byte {
 	// MaxVarintLen64 but only n are used. Shrink to actual
 	// size by re-slicing.
 	out = out[:n]
-	out = append(out, body...)
+	out = append(out, diskBody...)
 	// Compute and append CRC32 over the body only (not the
 	// length prefix). The decoder reads the same `body` slice
 	// (everything between the length varint and the CRC) and
 	// verifies the CRC matches.
-	sum := crc32.ChecksumIEEE(body)
+	sum := crc32.ChecksumIEEE(diskBody)
 	out = append(out,
 		byte(sum), byte(sum>>8), byte(sum>>16), byte(sum>>24))
 	return out
@@ -205,6 +226,18 @@ func DecodeRecord(data []byte, off int) (*LogRecord, int, error) {
 	return decodeRecord(data, off)
 }
 
+// DecodeRecordCompressed is like DecodeRecord but optionally
+// lz4-decompresses the body before parsing. REQ000034.
+//
+// If compressed is true, the body between the length varint and
+// the CRC is lz4-decompressed before the CRC is verified and the
+// payload is parsed. The CRC is computed over the on-disk
+// (compressed) body, so the decompressor must verify the CRC
+// against the compressed bytes, then decompress.
+func DecodeRecordCompressed(data []byte, off int, compressed bool) (*LogRecord, int, error) {
+	return decodeRecordCompressed(data, off, compressed)
+}
+
 // off. Returns the decoded LogRecord, the number of bytes consumed
 // (length prefix + body + CRC), and an error if the record is
 // malformed.
@@ -216,6 +249,16 @@ func DecodeRecord(data []byte, off int) (*LogRecord, int, error) {
 // If the 4-byte envelope CRC does not match, returns ErrCorrupt
 // with consumed=-1. R13-7: mid-segment corruption, fail loud.
 func decodeRecord(data []byte, off int) (*LogRecord, int, error) {
+	return decodeRecordCompressed(data, off, false)
+}
+
+// decodeRecordCompressed decodes a single LogRecord at offset off
+// in data, optionally lz4-decompressing the body. REQ000034.
+//
+// The CRC is verified against the on-disk (compressed) body
+// before decompression. This ensures corruption is detected
+// before any decompression bomb could be triggered.
+func decodeRecordCompressed(data []byte, off int, compressed bool) (*LogRecord, int, error) {
 	if off < 0 || off >= len(data) {
 		return nil, -1, ErrTruncatedRecord
 	}
@@ -241,11 +284,23 @@ func decodeRecord(data []byte, off int) (*LogRecord, int, error) {
 	if crcEnd > len(data) {
 		return nil, -1, ErrTruncatedRecord
 	}
-	body := data[bodyStart:bodyEnd]
+	diskBody := data[bodyStart:bodyEnd]
 	storedCRC := binary.LittleEndian.Uint32(data[crcStart:crcEnd])
-	computed := crc32.ChecksumIEEE(body)
+	computed := crc32.ChecksumIEEE(diskBody)
 	if storedCRC != computed {
 		return nil, -1, ErrCorrupt
+	}
+
+	// REQ000034: decompress the body if the segment is
+	// compressed. The CRC was verified against the on-disk
+	// (compressed) body, so we can safely decompress now.
+	body := diskBody
+	if compressed && len(diskBody) > 0 {
+		decompressed, err := lz4.Decompress(diskBody)
+		if err != nil {
+			return nil, -1, fmt.Errorf("%w: decompress: %v", ErrCorrupt, err)
+		}
+		body = decompressed
 	}
 
 	// 2. Read txnID varint. Use a separate cursor position variable

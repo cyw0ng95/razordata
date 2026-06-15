@@ -32,8 +32,14 @@ func pwriteAt(fd int, buf []byte, off int64) (int, error) {
 //	┌──────────────────────────────────────────────┐
 //	│ magic     :4   = "WLOG" (0x57 0x4C 0x4F 0x47) │
 //	│ version   :1   = 0x01                          │
-//	│ reserved  :7   = 0x00 (forward compat)         │
+//	│ flags     :1   = compression bit (REQ000034)   │
+//	│ reserved  :6   = 0x00 (forward compat)         │
 //	└──────────────────────────────────────────────┘
+//
+// The flags byte (offset 5) is a bitfield. Bit 0 (0x01) indicates
+// that record bodies in this segment are lz4-compressed. A
+// segment with the flag clear contains uncompressed records
+// (the default for backward compatibility).
 const (
 	// WALMagic is the four-byte segment-file magic. v0.10.0+.
 	WALMagic = "WLOG"
@@ -46,19 +52,41 @@ const (
 	WALHeaderSize = 12
 )
 
+// Segment header flags.
+const (
+	// FlagCompressionLZ4 indicates that record bodies in this
+	// segment are lz4-compressed. The envelope format
+	// (length:varint + body + crc32:4) is unchanged; only the
+	// body bytes are lz4-compressed before the CRC is computed.
+	// REQ000034.
+	FlagCompressionLZ4 uint8 = 0x01
+)
+
 // maxSupportedVersion is the highest version this binary will
 // accept on read. Bump this in lockstep with the version byte
 // the writer emits.
 const maxSupportedVersion = WALVersionV1
 
-// headerEncode is the pre-built 12-byte header. Computed once
-// at package init so the writer does not re-serialize the
-// constant bytes on every segment creation.
+// headerEncode is the pre-built 12-byte header for an
+// uncompressed segment. Computed once at package init so the
+// writer does not re-serialize the constant bytes on every
+// segment creation.
 var headerEncode = func() []byte {
 	b := make([]byte, WALHeaderSize)
 	copy(b[0:4], WALMagic)
 	b[4] = WALVersionV1
-	// bytes 5..12 are zero (reserved for future use)
+	// bytes 5..12 are zero (flags + reserved)
+	return b
+}()
+
+// headerEncodeCompressed is the pre-built 12-byte header for a
+// lz4-compressed segment. REQ000034.
+var headerEncodeCompressed = func() []byte {
+	b := make([]byte, WALHeaderSize)
+	copy(b[0:4], WALMagic)
+	b[4] = WALVersionV1
+	b[5] = FlagCompressionLZ4
+	// bytes 6..12 are zero (reserved)
 	return b
 }()
 
@@ -67,7 +95,20 @@ var headerEncode = func() []byte {
 // offset 0 to avoid clobbering the buffered path. fd must be a
 // fresh, empty file.
 func writeSegmentHeader(fd int) error {
-	n, err := pwriteHeader(fd, headerEncode)
+	return writeSegmentHeaderWithFlags(fd, 0)
+}
+
+// writeSegmentHeaderWithFlags writes the 12-byte header to fd
+// with the specified flags byte. REQ000034: flags byte carries
+// the compression bit.
+func writeSegmentHeaderWithFlags(fd int, flags uint8) error {
+	var buf []byte
+	if flags&FlagCompressionLZ4 != 0 {
+		buf = headerEncodeCompressed
+	} else {
+		buf = headerEncode
+	}
+	n, err := pwriteHeader(fd, buf)
 	if err != nil {
 		return fmt.Errorf("wr: write header: %w", err)
 	}
