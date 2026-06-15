@@ -396,17 +396,18 @@ type JoinClause struct {
 }
 
 type Select struct {
-	Cols      []Expr
-	From      string
-	FromAlias string
-	Joins     []JoinClause
-	Where     Expr
-	OrderBy   []OrderItem
-	Limit     Expr
-	Offset    Expr
-	Distinct  bool
-	GroupBy   []Expr
-	Having    Expr
+	Cols       []Expr
+	From       string
+	FromAlias  string
+	Joins      []JoinClause
+	Where      Expr
+	OrderBy    []OrderItem
+	Limit      Expr
+	Offset     Expr
+	Distinct   bool
+	GroupBy    []Expr
+	Having     Expr
+	OffsetFirst bool // REQ000521: true when OFFSET appears before LIMIT in the SQL
 	// REQ000436 + REQ000084: when FROM is a subquery (e.g. `FROM
 	// (SELECT ...)`), SubqueryFrom holds the parsed SELECT and
 	// From is set to the alias (or "$$subquery$$" if unnamed).
@@ -447,9 +448,10 @@ type CompoundStmt struct {
 	Op    CompoundOp
 	Right Stmt
 	// OrderBy / Limit / Offset apply to the entire compound result.
-	OrderBy []OrderItem
-	Limit   Expr
-	Offset  Expr
+	OrderBy     []OrderItem
+	Limit       Expr
+	Offset      Expr
+	OffsetFirst bool // REQ000521: true when OFFSET appears before LIMIT in the SQL
 }
 
 func (c *CompoundStmt) stmtNode() {}
