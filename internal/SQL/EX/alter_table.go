@@ -46,13 +46,14 @@ func (a *AlterTable) execAddColumn() error {
 	}
 
 	storeMu.Lock()
-	defer storeMu.Unlock()
-
 	tableID, ok := tableIDs[a.stmt.Table]
 	if !ok {
-		// In-memory mode: update source.go tables/schemas
+		// In-memory mode: release storeMu first; the in-memory
+		// helper re-acquires it (sync.Mutex is not reentrant).
+		storeMu.Unlock()
 		return a.execAddColumnInMemory()
 	}
+	defer storeMu.Unlock()
 
 	ss, ok := storeSchemas[tableID]
 	if !ok {
@@ -159,9 +160,8 @@ func (a *AlterTable) execAddColumnInMemory() error {
 	newCols := append(append([]string(nil), cols...), a.stmt.NewCol.Name)
 	schemas[a.stmt.Table] = newCols
 
-	// Also register in store schemas if not already present
-	storeMu.Lock()
-	defer storeMu.Unlock()
+	// registerStoreSchema takes storeMu internally; the helper
+	// must not be called with storeMu already held.
 	registerStoreSchema(a.stmt.Table, newCols, "")
 
 	return nil
@@ -169,12 +169,12 @@ func (a *AlterTable) execAddColumnInMemory() error {
 
 func (a *AlterTable) execDropColumn() error {
 	storeMu.Lock()
-	defer storeMu.Unlock()
-
 	tableID, ok := tableIDs[a.stmt.Table]
 	if !ok {
+		storeMu.Unlock()
 		return a.execDropColumnInMemory()
 	}
+	defer storeMu.Unlock()
 
 	ss, ok := storeSchemas[tableID]
 	if !ok {
@@ -335,9 +335,8 @@ func (a *AlterTable) execDropColumnInMemory() error {
 	}
 	schemas[a.stmt.Table] = newCols
 
-	// Also update store schemas
-	storeMu.Lock()
-	defer storeMu.Unlock()
+	// registerStoreSchema takes storeMu internally; the helper
+	// must not be called with storeMu already held.
 	registerStoreSchema(a.stmt.Table, newCols, "")
 
 	return nil
@@ -348,12 +347,12 @@ func (a *AlterTable) execRename() error {
 	newName := a.stmt.Column
 
 	storeMu.Lock()
-	defer storeMu.Unlock()
-
 	tableID, ok := tableIDs[oldName]
 	if !ok {
+		storeMu.Unlock()
 		return a.execRenameInMemory(oldName, newName)
 	}
+	defer storeMu.Unlock()
 
 	if _, exists := tableIDs[newName]; exists {
 		return fmt.Errorf("ex: table %q already exists", newName)
@@ -459,9 +458,8 @@ func (a *AlterTable) execRenameInMemory(oldName, newName string) error {
 	schemas[newName] = append([]string(nil), cols...)
 	delete(schemas, oldName)
 
-	// Also update store schemas
-	storeMu.Lock()
-	defer storeMu.Unlock()
+	// registerStoreSchema takes storeMu internally; the helper
+	// must not be called with storeMu already held.
 	registerStoreSchema(newName, cols, "")
 	if _, ok := tableIDs[oldName]; ok {
 		delete(tableIDs, oldName)
