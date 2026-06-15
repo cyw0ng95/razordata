@@ -111,11 +111,11 @@ func validateCheck(schema *storeSchema, row Row) error {
 // The primary key is implicitly unique — if the table has a PK, it
 // is also checked via the same lookup.
 //
-// selfKey is the encoded unique key of the row being updated (only
-// relevant for UPDATE; pass nil for INSERT). When non-nil, an exact
-// match against selfKey is treated as a no-op (no violation) so
-// `UPDATE t SET a = a` does not self-conflict.
-func checkUnique(schema *storeSchema, row Row, pending map[string]struct{}, selfKey []byte, lookup uniqueLookup) error {
+// snapshot is the pre-update row for UPDATE (nil for INSERT). When
+// non-nil, each unique key's old value is compared: if the old value
+// equals the new value, the check is skipped (no-op self-match) so
+// `UPDATE t SET a = a` does not self-conflict. REQ000516.
+func checkUnique(schema *storeSchema, row Row, pending map[string]struct{}, snapshot Row, lookup uniqueLookup) error {
 	if lookup == nil {
 		return nil
 	}
@@ -158,9 +158,20 @@ func checkUnique(schema *storeSchema, row Row, pending map[string]struct{}, self
 				return fmt.Errorf("%w: duplicate of (%v) within statement", ErrConstraint, vals)
 			}
 		}
-		// Self-match for UPDATE no-ops.
-		if selfKey != nil && string(selfKey) == keyStr {
-			continue
+		// Self-match for UPDATE no-ops: if the old value (from
+		// snapshot) equals the new value for every column in this
+		// unique key, skip the lookup.
+		if len(snapshot.Data) > 0 {
+			same := true
+			for i, idx := range uk.Cols {
+				if idx >= len(snapshot.Data) || !equalValue(snapshot.Data[idx], vals[i]) {
+					same = false
+					break
+				}
+			}
+			if same {
+				continue
+			}
 		}
 		exists, err := lookup(uk.Cols, vals)
 		if err != nil {

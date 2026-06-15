@@ -108,7 +108,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			if err := validateCheck(cschema, out); err != nil {
 				return Row{}, err
 			}
-			if err := checkUnique(cschema, out, pending, nil, asUniqueLookup(lookup)); err != nil {
+			if err := checkUnique(cschema, out, pending, Row{}, asUniqueLookup(lookup)); err != nil {
 				if i.onConflict == nil {
 					return Row{}, err
 				}
@@ -208,7 +208,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		if err := validateCheck(i.schema, out); err != nil {
 			return Row{}, err
 		}
-		if err := checkUnique(i.schema, out, pending, nil, noopLookup); err != nil {
+		if err := checkUnique(i.schema, out, pending, Row{}, noopLookup); err != nil {
 			return Row{}, err
 		}
 		// REQ000126: FK validation on INSERT (store path)
@@ -348,7 +348,6 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 	if ss, ok := schemaFor(u.table); ok {
 		cschema = ss
 	}
-	noopLookup := func(cols []int, vals []interface{}) (bool, error) { return false, nil }
 	for {
 		row, err := u.iter.Next(ctx)
 		if err != nil {
@@ -384,23 +383,17 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			if err := validateForeignKeyUpdateInMemory(cschema, snapshot.Data, row.Data); err != nil {
 				return Row{}, err
 			}
-			// Self-exclude: encode the pre-update row's unique key so
-			// a no-op update (same values) does not self-conflict.
-			var selfKey []byte
-			if cschema.pk != "" {
-				pkIdx := -1
-				for i, n := range cschema.cols {
-					if n == cschema.pk {
-						pkIdx = i
-						break
-					}
-				}
-				if pkIdx >= 0 && len(snapshot.Data) > pkIdx {
-					selfKey = encodeUniqueKey([]int{pkIdx}, []interface{}{snapshot.Data[pkIdx]})
-				}
-			}
-			if err := checkUnique(cschema, row, nil, selfKey, noopLookup); err != nil {
-				return Row{}, err
+			// REQ000516: UNIQUE enforcement on UPDATE. Use a real
+			// in-memory lookup instead of noopLookup so that
+			// updating a row to a value that collides with another
+			// row's UNIQUE key is caught.  The snapshot is passed
+			// to checkUnique for self-exclusion.
+			tablesMu.RLock()
+			ul := inMemoryLookup(u.table).Lookup
+			uidErr := checkUnique(cschema, row, nil, snapshot, ul)
+			tablesMu.RUnlock()
+			if uidErr != nil {
+				return Row{}, uidErr
 			}
 		}
 		if err := replaceBySnapshot(u.table, snapshot, row); err != nil {
@@ -480,7 +473,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 		// Engine-path unique: best-effort no-op (correct UNIQUE in the
 		// engine path requires a real index, deferred to REQ000045).
 		noopLookup := func(cols []int, vals []interface{}) (bool, error) { return false, nil }
-		if err := checkUnique(u.schema, row, nil, nil, noopLookup); err != nil {
+		if err := checkUnique(u.schema, row, nil, Row{}, noopLookup); err != nil {
 			return Row{}, err
 		}
 		pk, err := extractPK(u.schema, row)
