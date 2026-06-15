@@ -407,12 +407,24 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 
 	// Check if this is a DML with RETURNING clause
 	if hasReturning(stmt) {
-		// Use Query path for RETURNING
-		_, err := e.Query(ctx, sql, args...)
+		op, err := e.buildWriterOp(stmt)
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{RowsAffected: 1}, nil
+		propagateParams(op, args)
+		defer op.Close()
+		var count int64
+		for {
+			_, err := op.Next(ctx)
+			if err != nil {
+				if err == ErrNoRows {
+					break
+				}
+				return Result{}, err
+			}
+			count++
+		}
+		return Result{RowsAffected: count}, nil
 	}
 
 	op, err := e.buildWriterOp(stmt)

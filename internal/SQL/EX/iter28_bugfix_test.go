@@ -442,3 +442,64 @@ func TestBugfix_FKOnDelete(t *testing.T) {
 		t.Errorf("err = %v, want wrap of ErrConstraint", err)
 	}
 }
+
+// TestBugfix_ExecReturningCount covers REQ000512: Exec with a
+// RETURNING clause must return the correct RowsAffected count for
+// multi-row DML, instead of hardcoded 1.
+func TestBugfix_ExecReturningCount(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	registerStoreSchema("t", []string{"id", "v"}, "id")
+	// REQ000512: registerStoreSchema only populates storeSchemas and
+	// tableIDs, not the schemas map that Schema() reads. The in-memory
+	// Insert path uses Schema() to set row Cols; without it rows have
+	// nil Cols and UPDATE/DELETE column lookups fail silently.
+	RegisterTableSchema("t", []string{"id", "v"})
+	ctx := context.Background()
+
+	// Single-row INSERT with RETURNING
+	res, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 10) RETURNING *")
+	if err != nil {
+		t.Fatalf("single insert returning: %v", err)
+	}
+	if res.RowsAffected != 1 {
+		t.Errorf("single insert: RowsAffected = %d, want 1", res.RowsAffected)
+	}
+
+	// Multi-row INSERT with RETURNING
+	res, err = ex.Exec(ctx, "INSERT INTO t VALUES (2, 20), (3, 30) RETURNING *")
+	if err != nil {
+		t.Fatalf("multi insert returning: %v", err)
+	}
+	if res.RowsAffected != 2 {
+		t.Errorf("multi insert: RowsAffected = %d, want 2", res.RowsAffected)
+	}
+
+	// UPDATE with RETURNING
+	res, err = ex.Exec(ctx, "UPDATE t SET v = v + 1 WHERE id > 0 RETURNING id, v")
+	if err != nil {
+		t.Fatalf("update returning: %v", err)
+	}
+	if res.RowsAffected != 3 {
+		t.Errorf("update returning: RowsAffected = %d, want 3", res.RowsAffected)
+	}
+
+	// DELETE with RETURNING
+	res, err = ex.Exec(ctx, "DELETE FROM t WHERE id = 1 RETURNING id")
+	if err != nil {
+		t.Fatalf("delete returning: %v", err)
+	}
+	if res.RowsAffected != 1 {
+		t.Errorf("delete returning: RowsAffected = %d, want 1", res.RowsAffected)
+	}
+
+	// DML without RETURNING should still report correct RowsAffected
+	res, err = ex.Exec(ctx, "UPDATE t SET v = 99 WHERE id > 0")
+	if err != nil {
+		t.Fatalf("update no returning: %v", err)
+	}
+	if res.RowsAffected != 2 {
+		t.Errorf("update no returning: RowsAffected = %d, want 2", res.RowsAffected)
+	}
+}
