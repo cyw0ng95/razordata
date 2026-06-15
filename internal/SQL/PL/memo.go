@@ -254,6 +254,18 @@ func (e *enc) writeStmt(s PS.Stmt) {
 			e.writeExpr(o.Expr)
 			e.writeBool(o.Desc)
 		}
+		e.writeUvarint(uint64(len(v.Joins)))
+		for _, j := range v.Joins {
+			e.writeString(j.Kind)
+			e.writeString(j.Right)
+			e.writeExpr(j.On)
+		}
+		e.writeUvarint(uint64(len(v.GroupBy)))
+		for _, g := range v.GroupBy {
+			e.writeExpr(g)
+		}
+		e.writeExpr(v.Having)
+		e.writeStmt(v.SubqueryFrom)
 		e.writeExpr(v.Limit)
 		e.writeExpr(v.Offset)
 	case *PS.Insert:
