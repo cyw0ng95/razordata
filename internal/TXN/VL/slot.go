@@ -12,6 +12,14 @@ type KeyRange struct {
 	End   []byte
 }
 
+// ReadEntry records a key and the beginTS of the version we observed
+// during a Get. The OCC validation uses this to detect read-write
+// conflicts with concurrently committed transactions. REQ000307.
+type ReadEntry struct {
+	Key          []byte
+	ObservedTS   uint64
+}
+
 const MaxConcurrentTXNs = 1024
 
 type SlotStatus int32
@@ -36,6 +44,7 @@ type transactionSlot struct {
 	beginTS  uint64
 	commitTS uint64
 	writeSet []KeyRange
+	readSet  []ReadEntry // REQ000307: keys read + observed version beginTS
 	arena    *MV.Arena
 	index    int
 }
@@ -78,6 +87,7 @@ func (sm *slotManager) AllocateSlot() *transactionSlot {
 	slot.beginTS = 0
 	slot.commitTS = 0
 	slot.writeSet = nil
+	slot.readSet = nil
 	slot.arena = MV.GetArena()
 
 	return slot
@@ -98,6 +108,7 @@ func (sm *slotManager) ReleaseSlot(slot *transactionSlot) {
 	slot.beginTS = 0
 	slot.commitTS = 0
 	slot.writeSet = nil
+	slot.readSet = nil
 	if slot.arena != nil {
 		MV.PutArena(slot.arena)
 		slot.arena = nil

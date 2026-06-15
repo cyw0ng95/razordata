@@ -98,14 +98,9 @@ func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	// Once the tx is finished, its arena has been released back to
-	// the pool and the slot reused. Walking the MV chain would read
-	// recycled memory; refuse the operation explicitly so callers get
-	// a defined error rather than undefined behaviour.
 	if t.finished {
 		return nil, ErrTxFinished
 	}
-	// PhaseRead: first read fixes the read view (REQ000147).
 	if t.Phase() == PhaseBegin {
 		t.setPhase(PhaseRead)
 	}
@@ -113,6 +108,7 @@ func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
 	if chain != nil {
 		for node := chain.GetHead(); node != nil; node = node.Next() {
 			if node.TxnID() == t.slot.txnID && node.BeginTS() == t.slot.beginTS {
+				t.trackRead(key, node.BeginTS())
 				if node.Deleted() {
 					return nil, nil
 				}
@@ -123,12 +119,24 @@ func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
 
 	node := t.mv.FindVisible(key, t.slot.beginTS)
 	if node == nil {
+		t.trackRead(key, 0)
 		return nil, nil
 	}
+	t.trackRead(key, node.BeginTS())
 	if node.Deleted() {
 		return nil, nil
 	}
 	return node.Value(), nil
+}
+
+// trackRead records a key read into the transaction's readSet for OCC
+// validation. REQ000307. observedTS is the beginTS of the version we
+// observed (0 if no version exists). Must be called with t.mu held.
+func (t *tx) trackRead(key []byte, observedTS uint64) {
+	t.slot.readSet = append(t.slot.readSet, ReadEntry{
+		Key:        append([]byte(nil), key...),
+		ObservedTS: observedTS,
+	})
 }
 
 func (t *tx) Insert(ctx context.Context, key, value []byte) error {
