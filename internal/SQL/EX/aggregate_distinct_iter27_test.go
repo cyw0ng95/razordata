@@ -173,6 +173,88 @@ func TestAggregate_Distinct_GroupConcat(t *testing.T) {
 	}
 }
 
+// TestAggregate_GroupConcat_Separator verifies REQ000523:
+// GROUP_CONCAT(col, sep) uses sep instead of the default comma.
+// NOTE: uses a fresh executor per query because the memo cache in
+// PL/memo.go does not capture the DISTINCT flag or separator
+// expression in its SHA256 key — different queries with different
+// DISTINCT/separator produce the same memo key.
+func TestAggregate_GroupConcat_Separator(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("basic", func(t *testing.T) {
+		ResetForTest(t)
+		ex, eng := newEngineExecutor(t)
+		defer eng.Close()
+		ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+		for _, s := range []string{
+			"INSERT INTO t VALUES (1, 'a')",
+			"INSERT INTO t VALUES (2, 'b')",
+			"INSERT INTO t VALUES (3, 'c')",
+		} {
+			if _, err := ex.Exec(ctx, s); err != nil {
+				t.Fatalf("insert %q: %v", s, err)
+			}
+		}
+		rows, err := ex.QueryAll(ctx, "SELECT GROUP_CONCAT(v, '-') FROM t")
+		if err != nil {
+			t.Fatalf("GROUP_CONCAT(v, '-'): %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("got %d rows, want 1", len(rows))
+		}
+		got, _ := rows[0].Data[0].(string)
+		want := "a-b-c"
+		if got != want {
+			t.Errorf("GROUP_CONCAT(v, '-') = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("distinct_with_sep", func(t *testing.T) {
+		ResetForTest(t)
+		ex, eng := newEngineExecutor(t)
+		defer eng.Close()
+		ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+		for _, s := range []string{
+			"INSERT INTO t VALUES (1, 'a')",
+			"INSERT INTO t VALUES (2, 'a')",
+			"INSERT INTO t VALUES (3, 'b')",
+			"INSERT INTO t VALUES (4, 'c')",
+			"INSERT INTO t VALUES (5, 'b')",
+		} {
+			if _, err := ex.Exec(ctx, s); err != nil {
+				t.Fatalf("insert %q: %v", s, err)
+			}
+		}
+		rows, err := ex.QueryAll(ctx, "SELECT GROUP_CONCAT(DISTINCT v, '|') FROM t")
+		if err != nil {
+			t.Fatalf("GROUP_CONCAT(DISTINCT v, '|'): %v", err)
+		}
+		got, _ := rows[0].Data[0].(string)
+		want := "a|b|c"
+		if got != want {
+			t.Errorf("GROUP_CONCAT(DISTINCT v, '|') = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("empty_set", func(t *testing.T) {
+		ResetForTest(t)
+		ex, eng := newEngineExecutor(t)
+		defer eng.Close()
+		ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+		rows, err := ex.QueryAll(ctx, "SELECT GROUP_CONCAT(v, ';') FROM t")
+		if err != nil {
+			t.Fatalf("GROUP_CONCAT empty: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("got %d rows, want 1", len(rows))
+		}
+		if rows[0].Data[0] != nil {
+			t.Errorf("GROUP_CONCAT over empty set = %v, want nil", rows[0].Data[0])
+		}
+	})
+}
+
 // TestAggregate_Distinct_GroupBy verifies REQ000437: DISTINCT aggregates
 // compose correctly with GROUP BY.
 func TestAggregate_Distinct_GroupBy(t *testing.T) {
