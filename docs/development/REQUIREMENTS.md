@@ -58,12 +58,8 @@ DONE REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, rest
 | REQ000409 | SQL/EX | Scalar function `sqlite_source_id()` — fixed string for v1 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000410 | SQL/EX | Scalar function `sqlite_version()` — fixed string for v1 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000411 | SQL/EX | Scalar function `total_changes()` — cumulative row-change count since connection open | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000412 | SQL/EX | Scalar function `typeof(X)` — returns "null" / "integer" / "real" / "text" / "blob" | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000413 | SQL/EX | Scalar function `unhex(X[,Y])` — hex → BLOB; X invalid → NULL; Y is ignored-char set | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000414 | SQL/EX | Scalar function `unicode(X)` — code point of first char; NULL → NULL | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000415 | SQL/EX | Scalar function `unistr(X)` — backslash-escape decoder | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000416 | SQL/EX | Scalar function `unlikely(X)` — no-op pass-through | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000417 | SQL/EX | Scalar function `zeroblob(N)` — N-byte BLOB of 0x00 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+ | REQ000412 | SQL/EX | Scalar function `typeof(X)` — returns "null" / "integer" / "real" / "text" / "blob" | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+
 
 
 ## DONE
@@ -75,6 +71,11 @@ DONE REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, rest
 | REQ000392 | SQL/EX | Scalar function `iif(B,V,...)` / `if()` alias — short-circuit CASE; NULL condition → false branch | iter-26 |
 | REQ000398 | SQL/EX | Scalar function `max(X,Y,...)` — multi-arg scalar max, NULLs skipped, all-NULL → NULL | iter-26 |
 | REQ000399 | SQL/EX | Scalar function `min(X,Y,...)` — multi-arg scalar min, NULLs skipped, all-NULL → NULL | iter-26 |
+| REQ000413 | SQL/EX | Scalar function `unhex(X[,Y])` — hex → BLOB; X invalid → NULL; Y ignored | iter-26 |
+| REQ000414 | SQL/EX | Scalar function `unicode(X)` — code point of first char; NULL → NULL | iter-26 |
+| REQ000415 | SQL/EX | Scalar function `unistr(X)` — backslash-escape decoder | iter-26 |
+| REQ000416 | SQL/EX | Scalar function `unlikely(X)` — no-op pass-through | iter-26 |
+| REQ000417 | SQL/EX | Scalar function `zeroblob(N)` — N-byte BLOB of 0x00 | iter-26 |
 | REQ000419 | SQL/EX | Scalar function `ifnull(X,Y)` — 2-arg NULL coalesce | iter-26 |
 | REQ000420 | SQL/EX | Scalar function `length(X)` — code-point count | iter-26 |
 | REQ000421 | SQL/EX | Scalar function `like(X,Y[,Z])` — 2-arg pattern match | iter-26 |
