@@ -548,3 +548,46 @@ func TestBugfix_CorrelatedSubqueryWithIndex(t *testing.T) {
 		t.Errorf("unexpected: %v", got)
 	}
 }
+
+// TestBugfix_UniqueOnUpdate covers REQ000516: when an UPDATE changes a
+// row's value to one that collides with another row's UNIQUE key, the
+// UPDATE must fail with ErrConstraint.
+func TestBugfix_UniqueOnUpdate(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	RegisterTableSchema("t", []string{"id", "email"})
+	registerStoreSchemaFull("t",
+		[]string{"id", "email"},
+		[]bool{false, false},
+		nil,
+		[]UniqueKey{{Cols: []int{1}}}, // UNIQUE on email
+		"id",
+	)
+	ctx := context.Background()
+
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 'a@x')"); err != nil {
+		t.Fatalf("insert alice: %v", err)
+	}
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (2, 'b@x')"); err != nil {
+		t.Fatalf("insert bob: %v", err)
+	}
+
+	// Updating id=2's email to alice's email must fail.
+	_, err := ex.Exec(ctx, "UPDATE t SET email = 'a@x' WHERE id = 2")
+	if err == nil {
+		t.Fatal("expected unique violation on update, got nil")
+	}
+	if !errors.Is(err, ap.ErrConstraint) {
+		t.Errorf("err = %v, want wrap of ErrConstraint", err)
+	}
+
+	// No-op update (same email) must NOT fail.
+	res, err := ex.Exec(ctx, "UPDATE t SET email = 'b@x' WHERE id = 2")
+	if err != nil {
+		t.Fatalf("no-op update should not fail: %v", err)
+	}
+	if res.RowsAffected != 1 {
+		t.Errorf("RowsAffected = %d, want 1", res.RowsAffected)
+	}
+}

@@ -4,14 +4,18 @@ Status: **planned**
 
 ## Scope
 
-62 REQs across SQL parser/executor, DDL routing, and TXN subsystems. Five
-categories: (A) parser DDL fixes — IF [NOT] EXISTS, RENAME COLUMN, REINDEX,
-TRUNCATE, PRAGMA, AUTOINCREMENT; (B) executor routing + SQL compliance —
-buildWriterOp routes, LIMIT/OFFSET, CAST, COALESCE, CASE, ORDER BY, HAVING,
-DISTINCT, constraints, window functions, scalar IN; (C) MV-OCC — Silo-style
-O(1) read-set validation rewrite; (D) executor DDL edge cases — idempotent
-indexes, view cleanup, ALTER edge cases; (E) bugfixes — concrete bugs from
-SLT corpus runs and code audit with file:line references.
+64 REQs across SQL parser/executor, DDL routing, TXN, and codegen
+subsystems. Six categories: (A) parser DDL fixes — IF [NOT] EXISTS, RENAME
+COLUMN, REINDEX, TRUNCATE, PRAGMA, AUTOINCREMENT; (B) executor routing +
+SQL compliance — buildWriterOp routes, LIMIT/OFFSET, CAST, COALESCE, CASE,
+ORDER BY, HAVING, DISTINCT, constraints, window functions, scalar IN;
+(C) MV-OCC — Silo-style O(1) read-set validation rewrite; (D) executor
+DDL edge cases — idempotent indexes, view cleanup, ALTER edge cases;
+(E) bugfixes — concrete bugs from SLT corpus runs and code audit with
+file:line references; (F) operator codegen + adaptive compilation — REQ
+311 (`go generate` templated operator specialization, ~2,870 LoC) and REQ
+313 (adaptive hot-path swap from interpreted to JIT, ~1,790 LoC), follow-on
+from REQ 310 (SIMD `EvalBatch` shipped in iter-27).
 
 ## Requirements
 
@@ -20,6 +24,84 @@ SLT corpus runs and code audit with file:line references.
 | ID | Subsystem | Summary | Priority | Effort |
 |----|-----------|---------|----------|--------|
 | REQ000307 | TXN/MV | MV-OCC timestamp ordering — Silo-style O(1) read-set validation | critical | XL |
+
+### Operator Codegen + Adaptive Compilation (2 REQs)
+
+Follow-on from REQ000310 (SIMD `EvalBatch` + `simd_dispatch.go`, shipped in
+iter-27) — that work created the 4-wide/8-wide unrolled fast path that
+codegen will plug into. New directory `internal/SQL/EX/codegen/` (does not
+exist) and new file `internal/SQL/EX/adqc.go` (does not exist).
+
+**Operator surface to specialize (REQ 311)** — 15 `Next(ctx) (Row, error)`
+implementations of the `Operator` interface (`ex.go:54`):
+
+| Operator | Location | Next() line |
+|----------|----------|-------------|
+| `SeqScan` | operators.go:20 | 92 |
+| `IndexScan` | operators.go (around 460) | 500 |
+| `NestedLoopJoin` | join.go:39 | 39 |
+| `HashJoin` | hashjoin.go:77 | 77 |
+| `HashAggregate` | hashagg.go:41 | 41 |
+| `Aggregate` | aggregate.go:42 | 42 |
+| `Distinct` | distinct.go:21 | 21 |
+| `CompoundOp` | compound.go:25 | 57 |
+| `WindowOperator` | window.go:12 | 37 |
+| `Filter` | intermediate.go:10 | — |
+| `Project` | intermediate.go:59 | — |
+| `Sort` | intermediate.go:132 | — |
+| `Limit` | intermediate.go:200 | — |
+| `ExplainStmtOp` | explain.go:17 | — |
+| `CreateViewOperator` | view.go:10 | — |
+
+| ID | Subsystem | Summary | Priority | Effort | LoC est. |
+|----|-----------|---------|----------|--------|---------|
+| REQ000311 | SQL/EX | Operator codegen — `go generate` template → specialized Go funcs; inline caches eliminate virtual dispatch | medium | XL | ~2,870 |
+| REQ000313 | SQL/EX | Adaptive query compilation — first 2 invocations interpreted, hot path swaps to JIT via `go generate` template; 2-5x OLAP speedup | medium | XL | ~1,790 |
+
+**REQ 311 LoC breakdown:**
+
+| Component | LoC | Notes |
+|---|---|---|
+| `codegen/gen.go` (template driver + main) | ~250 | `go generate` driver, walks planner plan tree, emits per-shape `.gen.go` |
+| `codegen/skeletons/*.go.tmpl` (per operator) | ~600 | One template per `Next()`-bearing op; ~40 LoC × 15 ops |
+| `codegen/expr_codegen.go` + template | ~350 | Specialize common expression patterns (col=lit, col=col, int64/float64/text), emit inline `EvalBatch` calls |
+| Inline-cache helper (`icache.go`) | ~150 | Type-dispatch cache for parameter/column lookups to avoid `interface{}` in hot path |
+| Generated `*_gen.go` files (build tag `codegen`) | ~900 | Pure output, checked in for reproducibility; ~equal to manual `Next()` bodies of 15 ops |
+| Build wiring (`//go:generate` directives, `gen_test.go`) | ~120 | Round-trip test: generated output must match committed file |
+| Tests: codegen unit + SQL plan shape coverage | ~500 | Ensure every plan shape compiles, runs, and matches interpreted output bit-for-bit |
+
+**REQ 313 LoC breakdown** (depends on REQ 311):
+
+| Component | LoC | Notes |
+|---|---|---|
+| `adqc.go` (hot-path detector + plan swap) | ~300 | `InvocationCounter` per plan signature (SHA256 of AST, already in place from REQ162/185), threshold=2, mutex-guarded atomic swap from interpreted `Operator` to specialized function pointer |
+| `adqc_cache.go` (specialized-plan cache) | ~200 | Map[planHash]→`*SpecializedPlan{ fn, fastState }`; LRU bounded (~256 entries) |
+| `adqc_fallback.go` (interpreted interpreter) | ~150 | Wraps the existing `Operator` for the first 2 invocations and as the safety net if specialization fails |
+| Hook into `planner.go` + `pipeline.go` exec path | ~120 | New wrapper op `AdaptiveOp` that sits at the plan root and counts/swaps |
+| Cost/benefit accounting + telemetry | ~120 | Emit `slog.Debug`: "specialized plan X (2.3x speedup, 4800→1120 ns/row)"; optional `MetricHook` counter |
+| Tests: cold=interpreted, hot=specialized, swap correctness, threshold tuning, fallback on shape change | ~600 | Table-driven: 10 plan shapes × {cold, warm, hot, fallback} |
+| Benchmarks (TPC-H SF1 subqueries) | ~300 | Verify the documented 2-5x OLAP speedup claim against current `*_bench_test.go` baseline |
+
+**Combined total: ~4,660 LoC** (REQ 311: ~2,870; REQ 313: ~1,790). Landing
+zone 4,500–5,200 LoC with risk buffers. The XL labels on both REQs are
+accurate. Recommended split: REQ 311 as its own iteration (or dedicated
+phase inside iter-28), REQ 313 as a follow-on once the codegen surface
+stabilizes.
+
+**Risk buffers that can blow the estimate:**
+
+- **Templating recursion limits** — Go's `text/template` has no recursion
+  control; deeply nested expression ASTs may need a code-walking helper
+  (~+200 LoC).
+- **Generated code is checked in** — any future change to `Operator` or
+  `Expr` signatures forces a codegen re-run; CI must run
+  `go generate ./...` as a pre-commit check (~+80 LoC workflow YAML).
+- **Inline-cache invalidation** when schemas mutate (`ALTER TABLE` adds a
+  column) — the cache must key on schema version too, not just plan hash
+  (~+100 LoC).
+- **Interpreted-vs-specialized semantic drift** is the single largest test
+  surface; expect ~+300 LoC of differential tests if a real divergence
+  surfaces.
 
 ### Parser DDL (9 REQs)
 
@@ -360,26 +442,103 @@ references specific code locations in the implementation.
 
 - [ ] Checkpoint — all bugfix tests green
 
-### Phase 5: Integration & polish
+### Phase 5: Operator codegen + adaptive compilation (REQ000311, REQ000313)
 
-- [ ] 35. End-to-end verification
-  - [ ] 35.1 `go test ./... -race -count=1`
-  - [ ] 35.2 SLT corpus subset
-  - [ ] 35.3 `go vet ./...` and `gofmt -s -l .`
+Phase 5 wires `go generate`-emitted specializations into every
+hot-path subsystem that iter-27 stood up. It is intentionally deep, not
+bolt-on: codegen must speak the same vocabulary as `EvalBatch`, the
+`Batch` columnar pool, the `Planner` memo, the parallel fan-out
+machinery, the `Session`/`Stmt` cache, and the cost model — otherwise
+the "2-5x OLAP speedup" claim in REQ000313 will not materialize.
 
-- [ ] 36. Update docs
-  - [ ] 36.1 Move all 62 REQs from TBD to DONE in REQUIREMENTS.md
-  - [ ] 36.2 Add iter-28 row to ROADMAP.md
+#### REQ 311 — Operator codegen foundation (~2,870 LoC)
+
+- [ ] 35. Codegen framework skeleton (`internal/SQL/EX/codegen/`)
+  - [ ] 35.1 `codegen/gen.go` (~250 LoC) — `go generate` driver; walks planner plan tree; emits per-shape `.gen.go`. Imports `internal/SQL/PL/pl.go` plan types and `internal/SQL/PS` AST node types directly — no duplicate definitions
+  - [ ] 35.2 `codegen/plan_visitor.go` (~200 LoC) — typed visitor over the planner memo; produces a `CodegenPlan{ Operators []CodegenOp, Exprs []CodegenExpr, SchemaVersion uint64 }` intermediate representation that templates consume
+  - [ ] 35.3 `codegen/expr_codegen.go` (~350 LoC) — specialize the expression patterns that `evalBinary`/`evalUnary`/`evalFunction`/`EvalBatch` already cover. Emits inline calls to `EvalBatch` (REQ 310's 4-wide/8-wide path) rather than re-implementing SIMD
+  - [ ] 35.4 `codegen/skeletons/*.go.tmpl` (~600 LoC) — one template per `Next()`-bearing op (15 ops: SeqScan, IndexScan, NestedLoopJoin, HashJoin, HashAggregate, Aggregate, Distinct, CompoundOp, WindowOperator, Filter, Project, Sort, Limit, ExplainStmtOp, CreateViewOperator). Templates import `internal/SQL/EX/batch.go` types and `internal/SQL/EX/simd_dispatch.go` build tags, not redeclare them
+  - [ ] 35.5 `codegen/icache.go` (~150 LoC) — type-dispatch cache (`map[CallSiteSig]CompiledFn`); keyed on `(OpType, ChildOpType, ExprShape, ColTypes)` so each monomorphic call site gets its own generated function
+  - [ ] 35.6 Generated `*_gen.go` files (build tag `//go:build codegen`, ~900 LoC) — checked in for reproducibility; **also** include non-`_gen.go` stubs so the package compiles without running `go generate` first (a generator must never break `go build`)
+  - [ ] 35.7 `codegen/gen_test.go` (~120 LoC) — round-trip test: feeds each saved planner snapshot into the driver, asserts generated output is byte-identical to the checked-in `.gen.go`; fails CI if a template change alters output without a corresponding check-in
+  - [ ] 35.8 `codegen/plan_visitor_test.go` (~200 LoC) — table-driven visitor test: 10 plan shapes (SeqScan, IndexScan, Filter, Project, HashJoin, HashAggregate, NestedLoopJoin, Sort, Limit, Window) with `{1, 2, 3}`-column variants; verifies the IR is stable across runs
+  - [ ] 35.9 `codegen/expr_codegen_test.go` (~300 LoC) — round-trip every expression pattern in `eval.go` (BinaryExpr × 6 ops × {int64, float64, text}; UnaryExpr × 4; FunctionCall × ~30 builtin scalar fns from iter-26/27) into the templated form
+
+- [ ] 36. In-depth integration into existing subsystems
+  - [ ] 36.1 `internal/SQL/EX/eval_vec.go` — extend `EvalBatch` (the REQ 310 hot path) with a `CodegenTag` field on `Batch`; the codegen-emitted loop reads this tag to pick the 4-wide vs 8-wide unrolled branch. This makes codegen a *caller* of `EvalBatch`, not a competitor
+  - [ ] 36.2 `internal/SQL/EX/batch.go` — extend `Batch.Alloc()` to honor a `PoolHint` from the codegen template: specialized Scan→Filter→Project pipelines reserve a `sync.Pool` slot for their columnar shape so the specialized path skips the pool get/put overhead
+  - [ ] 36.3 `internal/SQL/PL/memo.go` — `Memo` entries gain a `CodegenHash` field. When the planner memoizes a plan (REQ 162/185), the SHA256 used for memo lookup is **the same** hash the codegen driver will see, so the codegen cache key and the memo key are unified. One source of truth, no double-hashing
+  - [ ] 36.4 `internal/SQL/EX/operators_vec.go` — codegen templates emit calls to `compareInt64Cols`/`compareInt64ColLit`/`compareFloat64Cols`/`compareFloat64ColLit` (the 4-wide/8-wide functions added in REQ 310) when the predicate is a column-vs-literal or column-vs-column comparison. No new SIMD code; re-uses the proven 8-wide path
+  - [ ] 36.5 `internal/SQL/EX/operators_parallel.go` — codegen templates for `HashJoin`/`HashAggregate`/`Sort` emit a `// parallel:` directive marker that `sort_parallel.go:397` and the parallel operator scaffolding already understand; the generated function gains the same `WorkerPool` invocation pattern as the hand-written parallel operators
+  - [ ] 36.6 `internal/SQL/EX/source.go` — `Row.Planner()` (REQ 366) is reused by codegen-emitted ops to thread the planner pointer into subquery evaluation; codegen emits `r.Planner().SubqueryEval(...)` calls when the IR marks an expression as a subquery
+  - [ ] 36.7 `internal/SQL/EX/intermediate.go` — `Filter`/`Project`/`Sort`/`Limit` op types get a `WithCodegen(*CodegenState) Operator` method that swaps the interpreted `Next()` for a specialized function pointer; the interpreted method stays as the fallback path
+  - [ ] 36.8 `internal/SQL/EX/window.go` — `WindowOperator` templates emit the frame-spec switch (REQ 530's `RANGE` work) inline rather than calling `computeRank`; LAG/LEAD offset (REQ 461) becomes a template parameter
+  - [ ] 36.9 `internal/SQL/EX/hashjoin.go` — `HashJoin` templates special-case the build/probe phases; emit a per-shape probe loop that bypasses the generic `keyFunc`/`matchFunc` dispatch
+  - [ ] 36.10 `internal/SQL/EX/hashagg.go` — `HashAggregate` templates special-case the GROUP BY key extractor; for single-column int64/text GROUP BYs the key is a direct column load with no hash function call
+
+- [ ] 37. Codegen unit + plan-shape coverage tests
+  - [ ] 37.1 Per-op template golden test: feed 3 representative plan snapshots per op, assert generated `.gen.go` matches golden
+  - [ ] 37.2 Differential test harness (`internal/SQL/EX/codegen/diff_test.go`): for each generated plan shape, run **both** the interpreted and the specialized `Next()` over the same input, assert row-by-row equality (covers REQ 313's "specialized path must agree with interpreted" guarantee)
+  - [ ] 37.3 Property test: random `SELECT` against a seeded table, compare interpreted vs specialized over 1000 iterations; any divergence fails the test (catches semantic drift across future template edits)
+
+#### REQ 313 — Adaptive compilation wrapper (~1,790 LoC, depends on REQ 311)
+
+- [ ] 38. Hot-path detector + plan cache
+  - [ ] 38.1 `internal/SQL/EX/adqc.go` (~300 LoC) — `InvocationCounter` keyed on plan signature (SHA256 of the canonicalized AST, reusing REQ 162/185's memo key). Threshold = 2 (per the REQ 313 spec: "first 2 invocations interpreted, hot path swaps to JIT"). Counter is per-`Stmt`, not per-`Session` — statement isolation is required
+  - [ ] 38.2 `internal/SQL/EX/adqc_cache.go` (~200 LoC) — `Map[planHash]→*SpecializedPlan{ fn func(ctx) (Row, error), fastState *FastState }`; LRU bounded (~256 entries); **composite key** = `planHash ∥ schemaVersion` so `ALTER TABLE` (REQ 129, iter-12) automatically invalidates the cache
+  - [ ] 38.3 `internal/SQL/EX/adqc_fallback.go` (~150 LoC) — wraps the existing interpreted `Operator` for the first 2 invocations and as the safety net if specialization fails (panic during codegen, type mismatch, unsupported expression shape). Fallback is **silent and total** — the user must never see a "specialization failed" error
+
+- [ ] 39. In-depth integration into existing subsystems
+  - [ ] 39.1 `internal/SQL/PL/planner.go` — `Planner.Build()` returns a wrapped root: `&AdaptiveOp{ inner: originalRoot, counter: newInvocationCounter(pl.MemoKey) }`. The `AdaptiveOp` implements `Operator` and is the **only** op that the executor sees; children remain the interpreted ops until swap
+  - [ ] 39.2 `internal/SQL/EX/pipeline.go` — `PipelineOperator` interface is extended with a `CodegenHint()` accessor; `AdaptiveOp` returns its current state (`"interpreted" | "compiling" | "compiled"`); pipelines can log/regress-test based on the hint
+  - [ ] 39.3 `internal/SYS/session.go` — `Session.Query`/`Session.Exec` own the per-`Stmt` `AdaptiveOp` lifetime. `Stmt.Close` calls `AdaptiveOp.Release()`, which decrements the cache refcount and may evict the entry. **No global mutation of the cache from a worker goroutine** — Session is the single owner
+  - [ ] 39.4 `internal/SQL/EX/cost.go` (or wherever `estimateCost` lives) — `estimateCost` is taught that a "compiled" plan's per-row cost is the codegen-measured cost (cached from the last benchmark tick) rather than the analytical estimate. This closes the loop: the cost model now reflects actual specialized performance, and ANALYZE (REQ 258) updates feed back into the cache invalidation
+  - [ ] 39.5 `internal/SQL/EX/stats.go` — on `ANALYZE t1` (REQ 527 follow-up), emit a `InvalidateAdqc(t1)` event that drops any cached specialized plan whose `schemaVersion` references `t1`. Hook is a callback registered in `stats.go`
+  - [ ] 39.6 `internal/SQL/EX/source.go` — correlated-subquery outer-row threading (REQ 525) integrates with `AdaptiveOp`: when the inner plan is a subquery (`SubqOp` on the plan tree), the counter increments on the outer plan, not the inner — so a query with a hot outer loop and a cold subquery still benefits from specialization
+  - [ ] 39.7 `internal/SQL/EX/parallel.go` — `AdaptiveOp.Next` checks the per-statement counter **without** holding the parallel operator's `sync.Mutex`; uses `atomic.AddInt64` for the count and `atomic.CompareAndSwap` for the swap. Parallel path stays lock-free
+
+- [ ] 40. Telemetry + cost/benefit accounting
+  - [ ] 40.1 `internal/SQL/EX/adqc_telemetry.go` (~120 LoC) — `slog.Debug` events: `"adqc: plan specialized" (planHash, schemaVersion, compileDurationNs, savedNsPerRow)`; `"adqc: fallback" (planHash, reason)`; `"adqc: invalidation" (planHash, trigger)`. Optional `MetricHook` counter for `"adqc.specialized_total"` / `"adqc.fallback_total"`
+  - [ ] 40.2 Cost-model hook: codegen records the per-row nanosecond cost of the specialized function on the first invocation after swap; subsequent `estimateCost` calls return this number instead of the analytical estimate. Number is per-statement, cached in `*SpecializedPlan.fastState.measuredCostNs`
+
+- [ ] 41. Tests + benchmarks
+  - [ ] 41.1 `internal/SQL/EX/adqc_test.go` (~600 LoC) — table-driven: 10 plan shapes × {cold, warm, hot, fallback, invalidation}. Asserts: (1) first 2 invocations run interpreted; (2) 3rd invocation runs specialized; (3) row output is bit-identical between interpreted and specialized; (4) `ALTER TABLE` invalidation drops the cache; (5) `Stmt.Close` releases the cache entry; (6) parallel subquery doesn't deadlock the counter
+  - [ ] 41.2 `internal/SQL/EX/adqc_bench_test.go` (~300 LoC) — TPC-H SF=1 subqueries (Q1, Q3, Q7) with and without ADQC. Asserts the documented 2-5x OLAP speedup claim. Includes a micro-bench for the per-invocation counter overhead (target: <50 ns)
+  - [ ] 41.3 Concurrency test: 16 goroutines hammer the same `Stmt` 1000 times; verify counter increments are race-free and the swap happens exactly once
+
+#### Phase 5 risk buffers (apply as discovered)
+
+- [ ] 42. Discovered-need items
+  - [ ] 42.1 If `text/template` recursion limits hit on deep expression ASTs: add code-walking helper (~+200 LoC)
+  - [ ] 42.2 If `ALTER TABLE` invalidation gap surfaces despite the composite key: add an explicit `InvalidateAdqc(table)` callback in the catalog (~+100 LoC)
+  - [ ] 42.3 If interpreted-vs-specialized semantic drift appears: expand `diff_test.go` with mutation-based differential tests (~+300 LoC)
+  - [ ] 42.4 If the codegen output is hard to review: add a `go generate -tags=codegen ./...` Makefile target + a `git diff` friendly output format (no `replaceAll`, stable ordering) (~+150 LoC)
+
+- [ ] Checkpoint — `go test ./... -race -count=1` green, TPC-H SF1 speedup ≥2x on hot path, counter overhead <50 ns, ALTER TABLE invalidation verified end-to-end
+
+### Phase 6: Integration & polish
+
+- [ ] 38. End-to-end verification
+  - [ ] 38.1 `go test ./... -race -count=1`
+  - [ ] 38.2 SLT corpus subset
+  - [ ] 38.3 `go vet ./...` and `gofmt -s -l .`
+
+- [ ] 39. Update docs
+  - [ ] 39.1 Move all 64 REQs from TBD to DONE in REQUIREMENTS.md
+  - [ ] 39.2 Add iter-28 row to ROADMAP.md
 
 ## Execution Order
 
 ```
-Phase 0 (Routing) → Phase 1 (Parser) → Phase 2 (Executor) → Phase 3 (MV-OCC) → Phase 4 (Bugfixes) → Phase 5 (Integration)
+Phase 0 (Routing) → Phase 1 (Parser) → Phase 2 (Executor) → Phase 3 (MV-OCC) → Phase 4 (Bugfixes) → Phase 5 (Codegen+AdQC) → Phase 6 (Integration)
 ```
 
 Phases 0-2 are independent of Phase 3. Can be parallelized.
 Phase 4 depends on all prior phases.
-Phase 5 depends on all prior phases.
+Phase 5 (REQ 311) depends only on REQ 310 (shipped in iter-27); REQ 313 within
+Phase 5 depends on REQ 311 — can be split across two iterations if scope
+exceeds budget.
+Phase 6 depends on all prior phases.
 
 ## Files to modify
 
@@ -407,3 +566,9 @@ Phase 5 depends on all prior phases.
 | `internal/SQL/EX/analyze.go` | Update stats.go row count on ANALYZE |
 | `internal/SQL/EX/stats.go` | Row count tracking for cost estimation |
 | `internal/SQL/EX/source.go` | Correlated subquery outer row context threading |
+| `internal/SQL/EX/codegen/` (new) | REQ 311 codegen — `gen.go`, `expr_codegen.go`, `icache.go`, `skeletons/*.go.tmpl`, generated `*_gen.go` (build tag `codegen`), `gen_test.go` |
+| `internal/SQL/EX/adqc.go` (new) | REQ 313 hot-path detector + plan swap |
+| `internal/SQL/EX/adqc_cache.go` (new) | REQ 313 specialized-plan LRU cache |
+| `internal/SQL/EX/adqc_fallback.go` (new) | REQ 313 interpreted fallback wrapper |
+| `internal/SQL/EX/planner.go` | REQ 313 — inject `AdaptiveOp` at plan root |
+| `internal/SQL/EX/pipeline.go` | REQ 313 — wire `AdaptiveOp` into exec path |
