@@ -259,17 +259,17 @@ func (i *Insert) RowsAffected() int64 {
 }
 
 type Update struct {
-	table    string
-	set      []PS.Pair
-	where    PS.Expr
-	returning []PS.Expr
-	iter     Operator
-	store    Store
-	schema   *storeSchema
-	txWriter TxWriter
-	rows     int64
-	done     bool
-	params   []interface{}
+	table      string
+	set        []PS.Pair
+	where      PS.Expr
+	returning  []PS.Expr
+	iter       Operator
+	store      Store
+	schema     *storeSchema
+	txWriter   TxWriter
+	rows       int64
+	done       bool
+	params     []interface{}
 	resultRows []Row
 	resultPos  int
 }
@@ -444,6 +444,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 				continue
 			}
 		}
+		oldRow := cloneRow(row)
 		if err := applyUpdate(&row, u.set, u.params); err != nil {
 			return Row{}, err
 		}
@@ -476,6 +477,9 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 		}
 		if u.txWriter != nil {
 			u.txWriter.RecordWrite(key, buf)
+		}
+		if err := maintainIndexesOnUpdate(u.store, u.table, u.schema, oldRow, row); err != nil {
+			return Row{}, err
 		}
 		u.rows++
 
@@ -515,16 +519,16 @@ func (u *Update) RowsAffected() int64 {
 }
 
 type Delete struct {
-	table    string
-	where    PS.Expr
-	returning []PS.Expr
-	iter     Operator
-	store    Store
-	schema   *storeSchema
-	txWriter TxWriter
-	rows     int64
-	done     bool
-	params   []interface{}
+	table      string
+	where      PS.Expr
+	returning  []PS.Expr
+	iter       Operator
+	store      Store
+	schema     *storeSchema
+	txWriter   TxWriter
+	rows       int64
+	done       bool
+	params     []interface{}
 	resultRows []Row
 	resultPos  int
 }
@@ -746,9 +750,9 @@ func (t *Trigger) Next(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-func (t *Trigger) Close() error              { return nil }
+func (t *Trigger) Close() error                        { return nil }
 func (t *Trigger) WithParams(p []interface{}) Operator { return t }
-func (t *Trigger) RowsAffected() int64        { return 0 }
+func (t *Trigger) RowsAffected() int64                 { return 0 }
 
 type CreateTable struct {
 	stmt *PS.CreateTable
@@ -1109,7 +1113,7 @@ func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-func (c *CreateIndex) Close() error { return nil }
+func (c *CreateIndex) Close() error        { return nil }
 func (c *CreateIndex) RowsAffected() int64 { return c.rowsAff }
 
 // DropIndex is the DDL operator for DROP INDEX. iter-22.
@@ -1159,7 +1163,7 @@ func (d *DropIndex) Next(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-func (d *DropIndex) Close() error { return nil }
+func (d *DropIndex) Close() error        { return nil }
 func (d *DropIndex) RowsAffected() int64 { return d.rowsAff }
 
 // joinStrings is a tiny helper for formatting column lists.

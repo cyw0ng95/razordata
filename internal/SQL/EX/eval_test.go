@@ -425,6 +425,90 @@ func TestDeleteRemovesMatching(t *testing.T) {
 	}
 }
 
+func TestUpdate_BackToBackSameTable(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"x"})
+	ctx := context.Background()
+
+	for i := 1; i <= 5; i++ {
+		_, err := ex.Exec(ctx, "INSERT INTO t VALUES (?)", i)
+		if err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+
+	res, err := ex.Exec(ctx, "UPDATE t SET x = x + 1")
+	if err != nil {
+		t.Fatalf("first update: %v", err)
+	}
+	if res.RowsAffected != 5 {
+		t.Fatalf("first update: expected 5 rows, got %d", res.RowsAffected)
+	}
+
+	res, err = ex.Exec(ctx, "UPDATE t SET x = x + 1")
+	if err != nil {
+		t.Fatalf("second update: %v", err)
+	}
+	if res.RowsAffected != 5 {
+		t.Fatalf("second update: expected 5 rows, got %d", res.RowsAffected)
+	}
+
+	rows, err := ex.QueryAll(ctx, "SELECT x FROM t ORDER BY x")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(rows))
+	}
+	for i, r := range rows {
+		want := int64(i + 3)
+		got, ok := r.Data[0].(int64)
+		if !ok {
+			t.Fatalf("row %d: expected int64, got %T", i, r.Data[0])
+		}
+		if got != want {
+			t.Errorf("row %d: got %d, want %d", i, got, want)
+		}
+	}
+}
+
+func TestUpdate_BackToBackMatchingRows(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"x", "y"})
+	ctx := context.Background()
+
+	for _, v := range []string{
+		"INSERT INTO t VALUES (1, 1)",
+		"INSERT INTO t VALUES (1, 2)",
+		"INSERT INTO t VALUES (2, 1)",
+		"INSERT INTO t VALUES (2, 2)",
+	} {
+		if _, err := ex.Exec(ctx, v); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	res, err := ex.Exec(ctx, "UPDATE t SET x = 10 WHERE y = 1")
+	if err != nil {
+		t.Fatalf("first update: %v", err)
+	}
+	if res.RowsAffected != 2 {
+		t.Fatalf("first update: expected 2 rows, got %d", res.RowsAffected)
+	}
+
+	res, err = ex.Exec(ctx, "UPDATE t SET y = 10 WHERE y = 2")
+	if err != nil {
+		t.Fatalf("second update: %v", err)
+	}
+	if res.RowsAffected != 2 {
+		t.Fatalf("second update: expected 2 rows, got %d", res.RowsAffected)
+	}
+}
+
 func TestCreateAndDropTable(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
