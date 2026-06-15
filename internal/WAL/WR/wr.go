@@ -144,6 +144,10 @@ type writer struct {
 	sp       sp.SyncPool
 	log      lg.Logger
 	readOnly bool
+	// compress enables lz4 compression of record bodies. REQ000034.
+	// When true, each new segment is created with the
+	// FlagCompressionLZ4 flag in its header.
+	compress bool
 
 	mu     sync.Mutex // serializes Append/Sync/Close on the active segment
 	seg    *logSegment
@@ -161,12 +165,27 @@ type writer struct {
 	maxRecordSize int64
 }
 
+// Options configures optional Writer behavior. REQ000034.
+type Options struct {
+	// Compress enables lz4 compression of record bodies. When
+	// true, each segment is created with the FlagCompressionLZ4
+	// flag in its header, and the replayer will decompress
+	// bodies automatically. Compression is transparent to
+	// callers of Append/Sync/Close.
+	Compress bool
+}
+
 // New constructs a Writer rooted at dir. The Writer owns its
 // dependencies (sm, sp, log) and is safe to use from a single writer
 // goroutine; concurrent Append/Sync is serialized by an internal mutex
 // (R21). Pass readOnly=true to open the WAL in read-only mode (no
 // appends allowed; used for Engine.Open with Options.ReadOnly).
 func New(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log lg.Logger, readOnly bool) (Writer, error) {
+	return NewWithOptions(dir, sm, spPool, log, readOnly, Options{})
+}
+
+// NewWithOptions is like New but applies the given Options. REQ000034.
+func NewWithOptions(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log lg.Logger, readOnly bool, opts Options) (Writer, error) {
 	if dir == "" {
 		return nil, errors.New("wr: dir is required")
 	}
@@ -176,7 +195,7 @@ func New(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log lg.Logger, r
 	if spPool == nil {
 		return nil, errors.New("wr: SyncPool is required")
 	}
-	return &writer{dir: dir, sm: sm, sp: spPool, log: log, readOnly: readOnly}, nil
+	return &writer{dir: dir, sm: sm, sp: spPool, log: log, readOnly: readOnly, compress: opts.Compress}, nil
 }
 
 // Append encodes and appends every record in batch, returning the LSN
@@ -220,7 +239,7 @@ func (w *writer) Append(batch *WriteBatch) (uint64, error) {
 		// per-record value in case the caller left it zero.
 		rec.TxnID = batch.TxnID
 
-		encoded := encodeRecord(rec)
+		encoded := encodeRecordCompressed(rec, w.compress)
 		recLen := int64(len(encoded))
 
 		// If a single record would not fit in the remaining segment
@@ -521,7 +540,14 @@ func (w *writer) openSegmentLocked(n uint64) error {
 	// batching. writeOff starts at WALHeaderSize so the LSN
 	// math (segNum * SegSize + writeOff) correctly accounts for
 	// the header bytes.
-	if err := writeSegmentHeader(fh.FD); err != nil {
+	//
+	// REQ000034: if compression is enabled, set the
+	// FlagCompressionLZ4 bit in the header flags byte.
+	headerFlags := uint8(0)
+	if w.compress {
+		headerFlags = FlagCompressionLZ4
+	}
+	if err := writeSegmentHeaderWithFlags(fh.FD, headerFlags); err != nil {
 		_ = fh.Close()
 		return err
 	}

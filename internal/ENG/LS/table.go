@@ -2,9 +2,9 @@ package ls
 
 import (
 	"encoding/binary"
-	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/ENG/SC"
+	tb "github.com/cyw0ng95/razordata/internal/ENG/TB"
 )
 
 var (
@@ -13,74 +13,38 @@ var (
 	ErrInvalidTableID = sc.ErrInvalidTableID
 )
 
+// tableRegistry is a thin wrapper around tb.Registry that
+// preserves the existing ENG/LS API surface. REQ000048: the
+// actual table registry logic now lives in ENG/TB.
+//
+// The wrapper is kept for backward compatibility with existing
+// callers (e.g., the catalog layer in LS/catalog.go).
 type tableRegistry struct {
-	mu     sync.RWMutex
-	tables map[uint64]*sc.TableSchema
-	nextID uint64
+	inner *tb.Registry
 }
 
 func newTableRegistry() *tableRegistry {
-	return &tableRegistry{
-		tables: make(map[uint64]*sc.TableSchema),
-		nextID: 1,
-	}
+	return &tableRegistry{inner: tb.NewRegistry()}
 }
 
 func (tr *tableRegistry) Create(schema *sc.TableSchema) error {
-	tr.mu.Lock()
-	defer tr.mu.Unlock()
-
-	for _, existing := range tr.tables {
-		if existing.Name == schema.Name {
-			return sc.ErrTableExists
-		}
-	}
-
-	schema.TableID = tr.nextID
-	tr.nextID++
-	tr.tables[schema.TableID] = schema
-
-	return nil
+	return tr.inner.Create(schema)
 }
 
 func (tr *tableRegistry) Get(tableID uint64) (*sc.TableSchema, error) {
-	tr.mu.RLock()
-	defer tr.mu.RUnlock()
-
-	schema, ok := tr.tables[tableID]
-	if !ok {
-		return nil, sc.ErrTableNotFound
-	}
-	return schema, nil
+	return tr.inner.Get(tableID)
 }
 
 func (tr *tableRegistry) Drop(tableID uint64) error {
-	tr.mu.Lock()
-	defer tr.mu.Unlock()
-
-	if _, ok := tr.tables[tableID]; !ok {
-		return sc.ErrTableNotFound
-	}
-
-	delete(tr.tables, tableID)
-	return nil
+	return tr.inner.Drop(tableID)
 }
 
 func (tr *tableRegistry) List() []*sc.TableSchema {
-	tr.mu.RLock()
-	defer tr.mu.RUnlock()
-
-	result := make([]*sc.TableSchema, 0, len(tr.tables))
-	for _, schema := range tr.tables {
-		result = append(result, schema)
-	}
-	return result
+	return tr.inner.List()
 }
 
 func (tr *tableRegistry) Len() int {
-	tr.mu.RLock()
-	defer tr.mu.RUnlock()
-	return len(tr.tables)
+	return tr.inner.Len()
 }
 
 type catalog struct {

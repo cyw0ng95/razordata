@@ -2,9 +2,6 @@
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-| REQ000034 | WAL | WAL compression (lz4) | low | M | iter-03 (WAL writer) | `WAL/WR/encode.go` |
-| REQ000048 | ENG | Table registry persistence (`ENG/TB/`) | medium | L | iter-12 (catalog basic) | new `ENG/TB/tb.go` |
-| REQ000064 | TXN | Generational arena (reduce GC pressure vs. single allocation) | low | L | iter-05 (arena) | `TXN/MV/arena.go` |
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | skipped | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
 | REQ000305 | TXN | Generational arena with Young/Old split (young bump-allocate, old epoch-reclaim; reduces epoch manager pressure) | medium | L | iter-05 (arena), `REQ000064` | `TXN/MV/arena.go` — generation promotion policy |
 | REQ000307 | TXN | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | critical | XL | iter-20 (commit protocol), `REQ000175` | `TXN/MV/occ.go` (new) — `Validation` phase rewritten; conflict-free reorder |
@@ -394,3 +391,6 @@
 | REQ000302 | MEM/BF | PMem-aware buffer pool (MADV_HUGEPAGE, PMemFile, slot tier field) | iter-28 |
 | REQ000445 | SQL/EX | NULL three-valued logic: `<`, `<=`, `>`, `>=`, `=`, `!=` comparisons with NULL operand → return NULL (UNKNOWN), not a boolean | iter-26 |
 | REQ000448 | SQL/EX | SLT runner `skipif`/`onlyif` engine-name gating — `NewRunner(drv, cls, "razor")` evaluates directives against engine name; `onlyif sqlite` skips on Razor, `onlyif razor` executes | iter-26 |
+| REQ000034 | WAL | WAL compression (lz4) — pure-Go LZ4 block codec (`WAL/WR/lz4/`); segment header gains `FlagCompressionLZ4` (bit 0 of flags byte); writer optionally lz4-compresses record bodies before CRC; replayer reads flag and decompresses; CRC verified against on-disk (compressed) body to prevent decompression bombs; mixed compressed/uncompressed segments supported | iter-28 |
+| REQ000048 | ENG | Table registry persistence (`ENG/TB/`) — new `internal/ENG/TB/` package with `Registry` (in-memory table registry) and `Catalog` (persistent on-disk catalog.dat); atomic temp-file rename for crash safety; `ENG/LS/table.go` now delegates to `ENG/TB` | iter-28 |
+| REQ000064 | TXN | Generational arena — `TXN/MV/arena.go` now has two tiers: young generation (16 KB) for fresh allocations, old generation (1 MB) for promoted data; when young fills, contents are copied to old and young is reset; after promotion, all allocations go to old; both generations reset on pool return; reduces GC pressure when transactions abort after only using the young generation | iter-28 |
