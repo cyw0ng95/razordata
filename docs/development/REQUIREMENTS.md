@@ -84,6 +84,7 @@
 | REQ000528 | SQL/EX | `VACUUM` no-op — `writers.go` has stub that doesn't actually rebuild or compact; SLT `vacuum.test` expects free pages returned | low | S | iter-28 | `SQL/EX/writers.go` `Vacuum` — at minimum log "VACUUM: no-op" rather than error; full impl in future iter |
 | REQ000529 | SQL/PS | `INDEXED BY` / `NOT INDEXED` clauses in SELECT not supported — `parseFrom` doesn't accept `INDEXED BY name` after table ref. SQLite-compatible hint syntax | low | S | iter-28 | `SQL/PS/ps.go` `parseFrom` — accept `INDEXED BY name` / `NOT INDEXED` |
 | REQ000530 | SQL/EX | Window function `RANGE` frame spec not supported — only `ROWS` frame works. `window.go:38-44` checks `spec.Frame` but `RANGE BETWEEN ...` not implemented | low | M | iter-28 | `SQL/EX/window.go` — implement `RANGE BETWEEN ...` frame spec |
+| REQ000531 | SQL/EX | `ALTER TABLE` self-deadlock — `execAddColumn` / `execDropColumn` / `execRename` acquire `storeMu` then early-return into `*InMemory` helpers which re-acquire `storeMu` (non-reentrant `sync.Mutex`). Blocks `TestAlterTable_AddColumn` and all sibling ALTER TABLE tests indefinitely when `NewExecutor()` is used (no engine store → `tableIDs` empty → in-memory path). Stack: `alter_table.go:163` `sync.Mutex.Lock` while caller still holds `storeMu` from `alter_table.go:48` | critical | S | iter-28 (audit) | `SQL/EX/alter_table.go` — move `storeMu` acquisition past the `tableIDs` lookup, or release before delegating to in-memory helpers |
 
 ## DONE
 
