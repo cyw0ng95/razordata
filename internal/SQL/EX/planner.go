@@ -1106,6 +1106,14 @@ func (p *Planner) planDelete(s *PS.Delete) Operator {
 }
 
 func (p *Planner) planCreateTable(s *PS.CreateTable) Operator {
+	if s.Select != nil {
+		// CREATE TABLE AS SELECT: plan the inner SELECT and
+		// wrap both in a CreateTable operator. REQ000520.
+		innerPlan, innerErr := p.Plan(s.Select)
+		if innerErr == nil && innerPlan != nil && innerPlan.root != nil {
+			return NewCreateTableAs(s, innerPlan.root)
+		}
+	}
 	return NewCreateTable(s)
 }
 

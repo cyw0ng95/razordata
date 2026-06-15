@@ -678,6 +678,18 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		}
 		return NewDelete(s.Table, s.Where, filter, s.Returning), nil
 	case *PS.CreateTable:
+		if s.Select != nil {
+			// CREATE TABLE AS SELECT needs the planner to
+			// build the inner SELECT plan. REQ000520.
+			op, err := e.planner.Plan(s)
+			if err != nil {
+				return nil, err
+			}
+			if op == nil || op.root == nil {
+				return nil, errors.New("ex: plan produced no root for CTAS")
+			}
+			return op.root, nil
+		}
 		return NewCreateTable(s), nil
 	case *PS.DropTable:
 		return NewDropTable(s), nil

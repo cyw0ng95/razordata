@@ -1453,6 +1453,20 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 	name := p.current.Lexeme
 	p.advance()
 
+	// CREATE TABLE <name> AS SELECT ... (REQ000520)
+	if p.current.Type == LX.T_AS {
+		p.advance()
+		raw, err := p.parseSelect()
+		if err != nil {
+			return nil, err
+		}
+		sel, ok := raw.(*Select)
+		if !ok {
+			return nil, fmt.Errorf("expected SELECT after AS, got %T", raw)
+		}
+		return &CreateTable{Name: name, Select: sel}, nil
+	}
+
 	if err := p.expect(LX.T_LPAREN); err != nil {
 		return nil, err
 	}
