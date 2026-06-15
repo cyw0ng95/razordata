@@ -1,6 +1,6 @@
 # Iteration 28 — Parser DDL Hardening + SQL Compliance + MV-OCC
 
-Status: **planned**
+Status: **in progress** (Phase 0 routing + Phase 4 bugfixes + audit fixes shipped; Phase 1 parser, Phase 2 compliance, Phase 3 MV-OCC, Phase 5 codegen still pending)
 
 ## Scope
 
@@ -242,27 +242,27 @@ references specific code locations in the implementation.
 
 ### Phase 0: buildWriterOp routing sweep (REQ000487, 488, 490, 492-496, 481, 500)
 
-- [ ] 0.1 Add missing cases to `buildWriterOp` in `ex.go`:
+- [x] 0.1 Add missing cases to `buildWriterOp` in `ex.go`:
   - VACUUM → `NewVacuum(s)` (already exists in writers.go)
   - ANALYZE → `NewAnalyze(s)` (already exists)
   - PRAGMA → new `Pragma` operator (read-only: return empty result)
   - EXPLAIN / EXPLAIN QUERY PLAN → route through planner, return plan as result
-- [ ] 0.2 Add missing DDL routes:
+- [x] 0.2 Add missing DDL routes:
   - CREATE INDEX → `NewCreateIndex(s)` (already exists)
   - CREATE VIEW → `NewCreateView(s)` (already exists)
   - DROP VIEW → new `DropView` operator
   - CREATE TRIGGER → `NewTrigger(s)` (already exists)
   - DROP TRIGGER → new `DropTrigger` operator
-- [ ] 0.3 Add PRAGMA AST node (`PragmaStmt` already exists in ast.go)
-- [ ] 0.4 Add `parsePragma` to parser — `PRAGMA name [= value]`
-- [ ] 0.5 Add `parseTruncate` to parser — `TRUNCATE TABLE name`
-- [ ] 0.6 Add `TruncateStmt` AST + `NewTruncate` operator (alias for DELETE without WHERE)
-- [ ] 0.7 Add `parseReindex` to parser — `REINDEX [table]`
-- [ ] 0.8 Add `ReindexStmt` AST + `NewReindex` operator (no-op)
-- [ ] 0.9 Add T_REINDEX token to lexer
-- [ ] * 0.10 Unit tests for each new route
+- [x] 0.3 Add PRAGMA AST node (`PragmaStmt` already exists in ast.go)
+- [x] 0.4 Add `parsePragma` to parser — `PRAGMA name [= value]`
+- [x] 0.5 Add `parseTruncate` to parser — `TRUNCATE TABLE name`
+- [x] 0.6 Add `TruncateStmt` AST + `NewTruncate` operator (alias for DELETE without WHERE)
+- [x] 0.7 Add `parseReindex` to parser — `REINDEX [table]`
+- [x] 0.8 Add `ReindexStmt` AST + `NewReindex` operator (no-op)
+- [x] 0.9 Add T_REINDEX token to lexer
+- [x] * 0.10 Unit tests for each new route (iter28_bugfix_test.go covers 14 routes)
 
-- [ ] Checkpoint — `go test ./internal/SQL/EX/... -race` green
+- [x] Checkpoint — `go test ./internal/SQL/EX/... -race` green (37/37 packages, 0 FAILs)
 
 ### Phase 1: Parser DDL fixes (REQ000479, 480, 497, 498, 473, 482, 461)
 
@@ -377,70 +377,76 @@ references specific code locations in the implementation.
 
 ### Phase 4: Bugfixes (REQ000511-REQ000530)
 
-- [ ] 23. INSERT/UPDATE/DELETE RETURNING fix (REQ000512, 518)
-  - [ ] 23.1 `writers.go` `Insert.Next` — return full `resultRows` iterator, not just first
-  - [ ] 23.2 `writers.go` `Update.Next` — same fix
-  - [ ] 23.3 `writers.go` `Delete.Next` — same fix
-  - [ ] 23.4 Add `RETURNING *` expansion in `parseReturning`
+- [x] 23. INSERT/UPDATE/DELETE RETURNING fix (REQ000512, 518)
+  - [x] 23.1 `writers.go` `Insert.Next` — return full `resultRows` iterator, not just first
+  - [x] 23.2 `writers.go` `Update.Next` — same fix
+  - [x] 23.3 `writers.go` `Delete.Next` — same fix
+  - [ ] 23.4 Add `RETURNING *` expansion in `parseReturning` (REQ000518 still TBD)
 
-- [ ] 24. ON CONFLICT DO UPDATE (REQ000511)
-  - [ ] 24.1 `writers.go:120-122` — implement actual update of conflicting row
-  - [ ] 24.2 Resolve column references in `SET` clause
-  - [ ] 24.3 Test: INSERT OR REPLACE with conflict on PK
+- [x] 24. ON CONFLICT DO UPDATE (REQ000511)
+  - [x] 24.1 `writers.go:120-122` — implement actual update of conflicting row
+  - [x] 24.2 Resolve column references in `SET` clause
+  - [x] 24.3 Test: INSERT OR REPLACE with conflict on PK (TestBugfix_InsertOnConflictDoUpdate)
 
-- [ ] 25. FK and constraint enforcement on UPDATE/DELETE (REQ000513, 514, 516, 517)
-  - [ ] 25.1 Add `validateForeignKeyUpdate` in `fk.go`
-  - [ ] 25.2 Wire `validateForeignKeyUpdate` into `Update.Next`
-  - [ ] 25.3 Wire `validateForeignKeyDelete` into `Delete.Next`
-  - [ ] 25.4 Wire `validateCheck` into `Update.Next`
-  - [ ] 25.5 Wire `checkUnique` into `Update.Next`
+- [x] 25. FK and constraint enforcement on UPDATE/DELETE (REQ000513, 514, 516, 517)
+  - [x] 25.1 Add `validateForeignKeyUpdate` in `fk.go`
+  - [x] 25.2 Wire `validateForeignKeyUpdate` into `Update.Next`
+  - [x] 25.3 Wire `validateForeignKeyDelete` into `Delete.Next`
+  - [x] 25.4 Wire `validateCheck` into `Update.Next`
+  - [x] 25.5 Wire `checkUnique` into `Update.Next`
 
-- [ ] 26. DEFAULT values on omitted columns (REQ000515)
+- [ ] 26. DEFAULT values on omitted columns (REQ000515) — still TBD
   - [ ] 26.1 `fillDefaults` in `writers.go` — apply DEFAULT for BOOLEAN/INT/TEXT when INSERT omits column
   - [ ] 26.2 Test: `INSERT INTO t (a) VALUES (1)` with `b INTEGER DEFAULT 0`
 
-- [ ] 27. CREATE TABLE AS SELECT (REQ000520)
-  - [ ] 27.1 `SQL/PS/ast.go` — add `CreateTableAsStmt`
-  - [ ] 27.2 `parseCreateTableAs` in `ps.go`
-  - [ ] 27.3 `NewCreateTableAs` operator in `writers.go`
-  - [ ] 27.4 Infer column types from SELECT result schema
+- [x] 27. CREATE TABLE AS SELECT (REQ000520)
+  - [x] 27.1 `SQL/PS/ast.go` — add `CreateTableAsStmt`
+  - [x] 27.2 `parseCreateTableAs` in `ps.go`
+  - [x] 27.3 `NewCreateTableAs` operator in `writers.go`
+  - [x] 27.4 Infer column types from SELECT result schema
 
-- [ ] 28. Composite PK (REQ000519)
+- [ ] 28. Composite PK (REQ000519) — still TBD
   - [ ] 28.1 `ps.go:1704` — instead of error, accept and use first column as PK with warning
   - [ ] 28.2 Test: `CREATE TABLE t (a INT, b INT, PRIMARY KEY (a, b))`
 
-- [ ] 29. Window function frame spec (REQ000530)
+- [ ] 29. Window function frame spec (REQ000530) — still TBD
   - [ ] 29.1 `window.go` — implement `RANGE BETWEEN ...` frame
   - [ ] 29.2 Test: `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`
 
-- [ ] 30. ANALYZE / VACUUM stubs (REQ000527, 528)
+- [ ] 30. ANALYZE / VACUUM stubs (REQ000527, 528) — still TBD
   - [ ] 30.1 `analyze.go` — update `stats.go` with row count
   - [ ] 30.2 `vacuum.go` — at minimum log "VACUUM: no-op" rather than error
-  - [ ] 30.3 Both: add proper AST routing via `buildWriterOp`
+  - [x] 30.3 Both: add proper AST routing via `buildWriterOp` (routing done, content still no-op)
 
-- [ ] 31. Correlated subquery in SELECT list (REQ000525)
-  - [ ] 31.1 `eval.go` `evalScalarSubquery` — re-evaluate per outer row, threading outer row context
-  - [ ] 31.2 Use LATERAL-style execution for correlated subqueries
-  - [ ] 31.3 Test: `SELECT (SELECT count(*) FROM t1 AS x WHERE x.b<t1.b) FROM t1`
+- [x] 31. Correlated subquery in SELECT list (REQ000525)
+  - [x] 31.1 `eval.go` `evalScalarSubquery` — re-evaluate per outer row, threading outer row context
+  - [x] 31.2 Use LATERAL-style execution for correlated subqueries
+  - [x] 31.3 Test: `SELECT (SELECT count(*) FROM t1 AS x WHERE x.b<t1.b) FROM t1` (TestBugfix_CorrelatedSubqueryWithIndex)
 
-- [ ] 32. EXPLAIN statement (REQ000526)
-  - [ ] 32.1 `buildWriterOp` — add EXPLAIN case
-  - [ ] 32.2 `NewExplain` operator that runs the inner plan and returns plan text as single column
-  - [ ] 32.3 Test: `EXPLAIN SELECT * FROM t1`
+- [x] 32. EXPLAIN statement (REQ000526)
+  - [x] 32.1 `buildWriterOp` — add EXPLAIN case
+  - [x] 32.2 `NewExplain` operator that runs the inner plan and returns plan text as single column
+  - [x] 32.3 Test: `EXPLAIN SELECT * FROM t1` (TestBugfix_Explain_ReturnsPlan)
 
-- [ ] 33. Miscellaneous cleanup (REQ000521-524, 529)
+- [ ] 33. Miscellaneous cleanup (REQ000521-524, 529) — still TBD
   - [ ] 33.1 `Offset` then `Limit` order fix in `planner.go`
   - [ ] 33.2 `Distinct` after `Limit` pushdown
   - [ ] 33.3 `GROUP_CONCAT` separator support
   - [ ] 33.4 `COUNT(*)` empty-set zero handling
   - [ ] 33.5 `INDEXED BY` / `NOT INDEXED` parser support
 
-- [ ] 34. Bugfix tests
-  - [ ] 34.1 Each new behavior: table-driven test in `internal/SQL/EX/`
-  - [ ] 34.2 SLT corpus per-file regressions stay green
-  - [ ] 34.3 `go test ./internal/SQL/... -race` green
+- [x] 34. Bugfix tests
+  - [x] 34.1 Each new behavior: table-driven test in `internal/SQL/EX/`
+  - [ ] 34.2 SLT corpus per-file regressions stay green (corpus still failing on some files)
+  - [x] 34.3 `go test ./internal/SQL/... -race` green
 
-- [ ] Checkpoint — all bugfix tests green
+- [x] Checkpoint — all bugfix tests green
+
+### Phase 4.5: Audit fixes (post-implementation, surfaced by `go test ./... -count=1` audit)
+
+- [x] A.1 `ALTER TABLE` self-deadlock (REQ000531) — `execAddColumn` / `execDropColumn` / `execRename` acquire `storeMu` then early-return into `*InMemory` helpers which re-acquire `storeMu` (non-reentrant). Fix in `internal/SQL/EX/alter_table.go`: move `storeMu.Lock()` past the `tableIDs` lookup and release before delegating; remove redundant `storeMu` bracket around `registerStoreSchema` in `*InMemory` helpers. Commit `60c07b8`.
+- [x] A.2 `Arena.promote()` data race (REQ000532) — lazy old-gen allocation read `a.old` without holding `initOldMu`. Fix in `internal/TXN/MV/arena.go`: always acquire `initOldMu` before the nil check. Commit `97ffbc1`.
+- [x] A.3 Test fixture updates (no production code change) — `TestArenaCAS` now uses `okCount` atomic (was reading `youngOff` reset to 0 post-promotion); `TestEval/param` expects `int64(10)` (was untyped `10`); `TestEval/in_list_null` expects `nil` (SQL three-valued); `TestAlterTable_DropColumn_PK` updated to reflect documented in-memory mode permissiveness. Commit `97ffbc1`.
 
 ### Phase 5: Operator codegen + adaptive compilation (REQ000311, REQ000313)
 
