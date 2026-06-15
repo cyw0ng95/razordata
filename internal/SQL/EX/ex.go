@@ -51,6 +51,23 @@ var ErrNotImplemented = errors.New("ex: not implemented")
 var ErrNoRows = errors.New("ex: no rows")
 var ErrClosed = errors.New("ex: operator closed")
 
+// CodegenFn is a specialized batch-execution function produced by codegen.
+type CodegenFn func(ctx context.Context, batch *Batch, params []any) (*Batch, error)
+
+// codegenRegistry maps operator type names to their batch-execution functions.
+var codegenRegistry = map[string]CodegenFn{}
+
+// registerCodegenOp registers a codegen-generated batch function.
+func registerCodegenOp(opType string, fn CodegenFn) {
+	codegenRegistry[opType] = fn
+}
+
+// LookupCodegenOp returns a registered codegen function for the given type.
+func LookupCodegenOp(opType string) (CodegenFn, bool) {
+	fn, ok := codegenRegistry[opType]
+	return fn, ok
+}
+
 type Operator interface {
 	Next(ctx context.Context) (Row, error)
 	Close() error

@@ -200,6 +200,45 @@ func (b *Batch) IsFull() bool {
 	return b.Size >= BatchSize
 }
 
+// ColMap returns the name-to-index map for O(1) column lookups.
+func (b *Batch) ColMap() map[string]int {
+	return b.colMap
+}
+
+// Value returns the value at column colIdx and row rowIdx.
+// Returns nil if the value is null or out of range.
+func (b *Batch) Value(colIdx, rowIdx int) any {
+	if colIdx < 0 || colIdx >= len(b.Cols) || rowIdx < 0 || rowIdx >= b.Size {
+		return nil
+	}
+	col := &b.Cols[colIdx]
+	if col.Nulls != nil && rowIdx < len(col.Nulls) && col.Nulls[rowIdx] {
+		return nil
+	}
+	if col.Data == nil {
+		return nil
+	}
+	switch d := col.Data.(type) {
+	case []int64:
+		if rowIdx < len(d) {
+			return d[rowIdx]
+		}
+	case []float64:
+		if rowIdx < len(d) {
+			return d[rowIdx]
+		}
+	case []string:
+		if rowIdx < len(d) {
+			return d[rowIdx]
+		}
+	case []bool:
+		if rowIdx < len(d) {
+			return d[rowIdx]
+		}
+	}
+	return nil
+}
+
 // LogicalSize returns the number of valid rows in the batch,
 // accounting for the selection vector. If Sel is nil, returns
 // Size. Otherwise returns len(Sel).
