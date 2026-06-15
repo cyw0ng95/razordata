@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/crc32"
 
+	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
@@ -15,6 +16,7 @@ var ErrConstraint = ap.ErrConstraint
 // DEFAULT expression for that column. Columns without a DEFAULT keep
 // their nil. The row is returned with the same Data slice length.
 // Returns a wrapped ErrConstraint on DEFAULT evaluation failure.
+// REQ000515: type coercion applied to match the column's declared type.
 func fillDefaults(schema *storeSchema, row Row) (Row, error) {
 	if schema.defaults == nil {
 		return row, nil
@@ -28,6 +30,12 @@ func fillDefaults(schema *storeSchema, row Row) (Row, error) {
 			if err != nil {
 				return row, fmt.Errorf("%w: default for column %q: %v",
 					ErrConstraint, schema.cols[i], err)
+			}
+			// REQ000515: coerce the default value to the column's
+			// declared type. Without this, a DEFAULT 1 for a TEXT
+			// column stays int64 instead of becoming "1".
+			if schema.colTypes != nil && i < len(schema.colTypes) {
+				v = coerceDefault(v, schema.colTypes[i])
 			}
 			row.Data[i] = v
 		}
@@ -49,6 +57,64 @@ func fillDefaults(schema *storeSchema, row Row) (Row, error) {
 		}
 	}
 	return row, nil
+}
+
+// coerceDefault coerces v to the Go type matching the column's
+// token type. Unrecognised types pass through unchanged. REQ000515.
+func coerceDefault(v interface{}, colType int) interface{} {
+	if v == nil {
+		return nil
+	}
+	switch LX.TokenType(colType) {
+	case LX.T_INT_KW, LX.T_BIGINT, LX.T_NUMERIC, LX.T_DATE, LX.T_TIME:
+		switch n := v.(type) {
+		case int64:
+			return n
+		case int:
+			return int64(n)
+		case float64:
+			return int64(n)
+		case string:
+			return int64(0)
+		case bool:
+			if n {
+				return int64(1)
+			}
+			return int64(0)
+		}
+	case LX.T_FLOAT_KW:
+		switch n := v.(type) {
+		case float64:
+			return n
+		case int64:
+			return float64(n)
+		case int:
+			return float64(n)
+		case string:
+			return float64(0)
+		case bool:
+			if n {
+				return float64(1)
+			}
+			return float64(0)
+		}
+	case LX.T_TEXT, LX.T_VARCHAR, LX.T_TIMESTAMP, LX.T_JSON:
+		return fmt.Sprintf("%v", v)
+	case LX.T_BOOL:
+		switch b := v.(type) {
+		case bool:
+			return b
+		case int64:
+			return b != 0
+		case int:
+			return b != 0
+		case float64:
+			return b != 0
+		case string:
+			return b == "true" || b == "1" || b == "yes"
+		}
+	}
+	return v
 }
 
 // validateRow checks that every non-nullable column has a non-nil value

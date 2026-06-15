@@ -1748,11 +1748,14 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 			}
 			foreignKeys = append(foreignKeys, fk)
 		} else if isPK {
-			if len(names) != 1 {
-				return nil, fmt.Errorf("ps: composite PRIMARY KEY (a, b) not supported, got %d columns", len(names))
-			}
+			// REQ000519: composite PRIMARY KEY. Use the first
+			// column as the primary key; remaining columns are
+			// treated as part of a UNIQUE constraint.
 			pkName := names[0]
 			pk = &pkName
+			if len(names) > 1 {
+				uniqueConstraints = append(uniqueConstraints, UniqueKey{Cols: names})
+			}
 		} else {
 			uniqueConstraints = append(uniqueConstraints, UniqueKey{Cols: names})
 		}

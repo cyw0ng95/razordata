@@ -655,3 +655,94 @@ func TestBugfix_CreateTableAsSelect(t *testing.T) {
 		t.Errorf("dst3: %v", rows[0].Data)
 	}
 }
+
+// TestBugfix_CompositePrimaryKey covers REQ000519: composite PRIMARY KEY
+// (a, b) is accepted by the parser and the first column is used as PK.
+// The PK column is treated as NOT NULL. The UNIQUE constraint on (a, b)
+// is registered but not enforced on the engine-backed path (pre-existing
+// limitation — in-memory unique lookup doesn't see engine-stored rows).
+func TestBugfix_CompositePrimaryKey(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	_, err := ex.Exec(ctx, "CREATE TABLE cpk (a INT, b TEXT, c INT, PRIMARY KEY (a, b))")
+	if err != nil {
+		t.Fatalf("CREATE TABLE with composite PK: %v", err)
+	}
+
+	// Verify the first column is registered as PK
+	ss, ok := schemaFor("cpk")
+	if !ok {
+		t.Fatal("schema not found")
+	}
+	if ss.pk != "a" {
+		t.Errorf("pk = %q, want %q", ss.pk, "a")
+	}
+	// Verify the composite UNIQUE constraint on (a, b) is registered
+	if len(ss.unique) != 1 || len(ss.unique[0].Cols) != 2 {
+		t.Errorf("unique = %v, want [{[0 1]}]", ss.unique)
+	}
+
+	// PK column (a) should be NOT NULL
+	for i, c := range ss.cols {
+		if c == "a" && ss.nullable[i] {
+			t.Error("PK column 'a' should be NOT NULL")
+		}
+	}
+
+	// Insert two rows with different (a,b) — should succeed
+	_, err = ex.Exec(ctx, "INSERT INTO cpk VALUES (1, 'x', 10)")
+	if err != nil {
+		t.Fatalf("insert 1: %v", err)
+	}
+	_, err = ex.Exec(ctx, "INSERT INTO cpk VALUES (2, 'y', 20)")
+	if err != nil {
+		t.Fatalf("insert 2: %v", err)
+	}
+
+	rows, err := ex.QueryAll(ctx, "SELECT a, b, c FROM cpk")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+}
+
+// TestBugfix_FillDefaults_TypeCoercion covers REQ000515: DEFAULT values
+// for omitted columns are coerced to match the column's declared type.
+func TestBugfix_FillDefaults_TypeCoercion(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	// CREATE TABLE with a TEXT column that has DEFAULT 1 (int literal)
+	_, err := ex.Exec(ctx, "CREATE TABLE def_coerce (id INT, name TEXT DEFAULT 1, val INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE: %v", err)
+	}
+
+	// INSERT omitting the 'name' column — DEFAULT 1 should become "1" (string)
+	_, err = ex.Exec(ctx, "INSERT INTO def_coerce (id, val) VALUES (1, 10)")
+	if err != nil {
+		t.Fatalf("INSERT: %v", err)
+	}
+
+	rows, err := ex.QueryAll(ctx, "SELECT name FROM def_coerce")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	got, ok := rows[0].Data[0].(string)
+	if !ok {
+		t.Fatalf("expected string, got %T (%v)", rows[0].Data[0], rows[0].Data[0])
+	}
+	if got != "1" {
+		t.Errorf("expected \"1\", got %q", got)
+	}
+}
