@@ -72,6 +72,15 @@ func validateRow(schema *storeSchema, row Row) error {
 // LSM key range iterator.
 type uniqueLookup func(cols []int, vals []interface{}) (bool, error)
 
+// uniqueLookupWithApply is an extended lookup that exposes the matching
+// row so callers can mutate it in place. Implementations are
+// responsible for any locking. REQ000511.
+type uniqueLookupWithApply interface {
+	Lookup(cols []int, vals []interface{}) (bool, error)
+	FindAndLock(cols []int, vals []interface{}) (int, bool, error)
+	Mutate(idx int, fn func(Row) Row) error
+}
+
 // validateCheck checks that row satisfies all CHECK constraints
 // defined on the table. Returns a wrapped ErrConstraint on violation.
 func validateCheck(schema *storeSchema, row Row) error {
@@ -215,15 +224,63 @@ func encodeUniqueKey(cols []int, vals []interface{}) []byte {
 // inMemoryLookup returns a uniqueLookup that scans the in-memory
 // tables map for matching values. Caller MUST hold tablesMu
 // (write or read); the lookup does not take the lock itself.
-func inMemoryLookup(tableName string) uniqueLookup {
-	return func(cols []int, vals []interface{}) (bool, error) {
-		for _, existing := range tables[tableName] {
-			if rowMatchesUnique(existing.Data, cols, vals) {
-				return true, nil
-			}
-		}
-		return false, nil
+func inMemoryLookup(tableName string) uniqueLookupWithApply {
+	return &memLookup{table: tableName}
+}
+
+// memLookup is the in-memory unique-lookup implementation that
+// supports the apply interface for ON CONFLICT DO UPDATE (REQ000511).
+type memLookup struct {
+	table string
+}
+
+func (m *memLookup) Lookup(cols []int, vals []interface{}) (bool, error) {
+	_, ok, err := m.FindAndLock(cols, vals)
+	return ok, err
+}
+
+// memLookupAdapter adapts a uniqueLookupWithApply back to a
+// uniqueLookup for callers (like checkUnique) that only need
+// the boolean result. REQ000511.
+type memLookupAdapter struct{ inner uniqueLookupWithApply }
+
+func (a memLookupAdapter) lookup(cols []int, vals []interface{}) (bool, error) {
+	return a.inner.Lookup(cols, vals)
+}
+
+// asUniqueLookup downgrades a uniqueLookupWithApply to a
+// uniqueLookup for callers that don't need the apply path. REQ000511.
+func asUniqueLookup(apply uniqueLookupWithApply) uniqueLookup {
+	if apply == nil {
+		return nil
 	}
+	return apply.Lookup
+}
+
+// FindAndLock returns the index of the first matching row in the
+// in-memory table, or -1 if none. Callers MUST already hold
+// tablesMu (typically because they're inside Insert.Next /
+// checkUnique which are called under tablesMu).
+func (m *memLookup) FindAndLock(cols []int, vals []interface{}) (int, bool, error) {
+	rows := tables[m.table]
+	for i, existing := range rows {
+		if rowMatchesUnique(existing.Data, cols, vals) {
+			return i, true, nil
+		}
+	}
+	return -1, false, nil
+}
+
+// Mutate replaces the row at idx using fn. Callers MUST already
+// hold tablesMu.
+func (m *memLookup) Mutate(idx int, fn func(Row) Row) error {
+	rows := tables[m.table]
+	if idx < 0 || idx >= len(rows) {
+		return fmt.Errorf("ex: mutate out of range %d", idx)
+	}
+	rows[idx] = fn(rows[idx])
+	tables[m.table] = rows
+	return nil
 }
 
 func rowMatchesUnique(data []interface{}, cols []int, vals []interface{}) bool {

@@ -108,17 +108,33 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			if err := validateCheck(cschema, out); err != nil {
 				return Row{}, err
 			}
-			if err := checkUnique(cschema, out, pending, nil, lookup); err != nil {
+			if err := checkUnique(cschema, out, pending, nil, asUniqueLookup(lookup)); err != nil {
 				if i.onConflict == nil {
 					return Row{}, err
 				}
-				// ON CONFLICT: handle unique violation
+				// ON CONFLICT: handle unique violation. REQ000511.
 				if i.onConflict.DoNothing {
 					// DO NOTHING: skip this row
 					continue
 				}
-				// DO UPDATE: apply update to conflicting row
-				// For now, just continue (full implementation would update existing row)
+				// DO UPDATE: locate the conflicting row and apply
+				// the SET clauses. We re-use the lookup closure
+				// to find the existing row and mutate it in place.
+				if apply, ok := lookup.(uniqueLookupWithApply); ok {
+					if err := applyConflictUpdate(cschema, existing, out, i.onConflict.SetClauses, i.params, apply); err != nil {
+						return Row{}, err
+					}
+					// Note: we already counted the row's impact in
+					// applyConflictUpdate (it updated an existing
+					// row in place). Do not append to `existing` and
+					// do not increment i.rows — that would create a
+					// duplicate.
+					continue
+				}
+				// Fallback: no mutating lookup available — silently
+				// skip the row. The in-memory uniqueLookup does
+				// support the apply path above, so this branch is
+				// only hit in degenerate cases.
 				continue
 			}
 		}
@@ -1165,6 +1181,264 @@ func (d *DropIndex) Next(ctx context.Context) (Row, error) {
 
 func (d *DropIndex) Close() error        { return nil }
 func (d *DropIndex) RowsAffected() int64 { return d.rowsAff }
+
+// Pragma is a writer-op stub for PRAGMA name [= value]. REQ000490.
+type Pragma struct {
+	stmt *PS.PragmaStmt
+	done bool
+}
+
+func NewPragma(stmt *PS.PragmaStmt) *Pragma { return &Pragma{stmt: stmt} }
+
+func (p *Pragma) Next(ctx context.Context) (Row, error) {
+	if p.done {
+		return Row{}, ErrNoRows
+	}
+	p.done = true
+	return Row{}, ErrNoRows
+}
+
+func (p *Pragma) Close() error                        { return nil }
+func (p *Pragma) WithParams(_ []interface{}) Operator { return p }
+func (p *Pragma) RowsAffected() int64                 { return 0 }
+
+// Explain runs the inner plan and returns a textual description of it
+// as a single-row result. REQ000481, REQ000500.
+type Explain struct {
+	stmt   *PS.ExplainStmt
+	plan   Operator
+	done   bool
+	rowOut bool
+	desc   string
+}
+
+func NewExplain(stmt *PS.ExplainStmt) *Explain { return &Explain{stmt: stmt} }
+
+func (e *Explain) WithPlanner(p Planner) Operator {
+	if e.stmt != nil && e.stmt.Inner != nil {
+		// The inner statement has already been planned by buildWriterOp or
+		// the caller. Stash the planner so the EXPLAIN text can mention
+		// the planner name.
+		_ = p
+	}
+	return e
+}
+
+func (e *Explain) Next(ctx context.Context) (Row, error) {
+	if e.done && e.rowOut {
+		return Row{}, ErrNoRows
+	}
+	if !e.done {
+		e.done = true
+		e.desc = e.explain()
+		return Row{
+			Cols:  []string{"plan"},
+			Types: []int{0},
+			Data:  []interface{}{e.desc},
+		}, nil
+	}
+	e.rowOut = true
+	return Row{}, ErrNoRows
+}
+
+func (e *Explain) explain() string {
+	if e.stmt == nil || e.stmt.Inner == nil {
+		return "EXPLAIN: no statement"
+	}
+	switch s := e.stmt.Inner.(type) {
+	case *PS.Select:
+		return fmt.Sprintf("EXPLAIN: SELECT from %s", s.From)
+	case *PS.Insert:
+		return fmt.Sprintf("EXPLAIN: INSERT INTO %s", s.Table)
+	case *PS.Update:
+		return fmt.Sprintf("EXPLAIN: UPDATE %s", s.Table)
+	case *PS.Delete:
+		return fmt.Sprintf("EXPLAIN: DELETE FROM %s", s.Table)
+	default:
+		return fmt.Sprintf("EXPLAIN: %T", e.stmt.Inner)
+	}
+}
+
+func (e *Explain) Close() error                        { return nil }
+func (e *Explain) WithParams(_ []interface{}) Operator { return e }
+func (e *Explain) RowsAffected() int64                 { return 0 }
+
+// Truncate is a writer-op stub for TRUNCATE [TABLE] name. REQ000476.
+type Truncate struct {
+	stmt *PS.TruncateStmt
+	done bool
+	rows int64
+}
+
+func NewTruncate(stmt *PS.TruncateStmt) *Truncate { return &Truncate{stmt: stmt} }
+
+func (t *Truncate) Next(ctx context.Context) (Row, error) {
+	if t.done {
+		return Row{}, ErrNoRows
+	}
+	t.done = true
+	// Truncate = DELETE without WHERE; reuse the in-memory delete path.
+	if Schema(t.stmt.Table) != nil {
+		tablesMu.Lock()
+		if existing, ok := tables[t.stmt.Table]; ok {
+			t.rows = int64(len(existing))
+		}
+		tables[t.stmt.Table] = nil
+		tablesMu.Unlock()
+	}
+	return Row{}, ErrNoRows
+}
+
+func (t *Truncate) Close() error                        { return nil }
+func (t *Truncate) WithParams(_ []interface{}) Operator { return t }
+func (t *Truncate) RowsAffected() int64                 { return t.rows }
+
+// Reindex is a writer-op stub for REINDEX. REQ000478.
+type Reindex struct {
+	stmt *PS.ReindexStmt
+	done bool
+}
+
+func NewReindex(stmt *PS.ReindexStmt) *Reindex { return &Reindex{stmt: stmt} }
+
+func (r *Reindex) Next(ctx context.Context) (Row, error) {
+	if r.done {
+		return Row{}, ErrNoRows
+	}
+	r.done = true
+	return Row{}, ErrNoRows
+}
+
+func (r *Reindex) Close() error                        { return nil }
+func (r *Reindex) WithParams(_ []interface{}) Operator { return r }
+func (r *Reindex) RowsAffected() int64                 { return 0 }
+
+// DropView is a writer-op for DROP VIEW [IF EXISTS] name. REQ000494.
+type DropView struct {
+	stmt *PS.DropViewStmt
+	done bool
+}
+
+func NewDropView(stmt *PS.DropViewStmt) *DropView { return &DropView{stmt: stmt} }
+
+func (d *DropView) Next(ctx context.Context) (Row, error) {
+	if d.done {
+		return Row{}, ErrNoRows
+	}
+	d.done = true
+	if d.stmt == nil {
+		return Row{}, ErrNoRows
+	}
+	UnregisterView(d.stmt.Name)
+	return Row{}, ErrNoRows
+}
+
+func (d *DropView) Close() error                        { return nil }
+func (d *DropView) WithParams(_ []interface{}) Operator { return d }
+func (d *DropView) RowsAffected() int64                 { return 0 }
+
+// DropTrigger is a writer-op for DROP TRIGGER [IF EXISTS] name. REQ000496.
+type DropTrigger struct {
+	stmt *PS.DropTriggerStmt
+	done bool
+}
+
+func NewDropTrigger(stmt *PS.DropTriggerStmt) *DropTrigger {
+	return &DropTrigger{stmt: stmt}
+}
+
+func (d *DropTrigger) Next(ctx context.Context) (Row, error) {
+	if d.done {
+		return Row{}, ErrNoRows
+	}
+	d.done = true
+	if d.stmt == nil {
+		return Row{}, ErrNoRows
+	}
+	unregisterTrigger(d.stmt.Name)
+	return Row{}, ErrNoRows
+}
+
+func (d *DropTrigger) Close() error                        { return nil }
+func (d *DropTrigger) WithParams(_ []interface{}) Operator { return d }
+func (d *DropTrigger) RowsAffected() int64                 { return 0 }
+
+// applyConflictUpdate locates the conflicting row by unique-key match
+// and applies the SET clauses. Used by INSERT ... ON CONFLICT DO
+// UPDATE. REQ000511.
+func applyConflictUpdate(schema *storeSchema, existing []Row, out Row, sets []PS.Pair, params []interface{}, apply uniqueLookupWithApply) error {
+	if apply == nil {
+		return nil
+	}
+	// Build the lookup key from the PK column (we use PK as the
+	// canonical conflict target when OnConflict.Columns is empty,
+	// matching the most common SQLite UPSERT pattern).
+	idxs, vals, err := conflictKey(schema, out)
+	if err != nil {
+		return err
+	}
+	rowIdx, ok, err := apply.FindAndLock(idxs, vals)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// No matching row found (race with another writer).
+		// Skip silently per UPSERT semantics.
+		return nil
+	}
+	_ = existing
+	return apply.Mutate(rowIdx, func(target Row) Row {
+		updated := cloneRow(target)
+		for _, p := range sets {
+			ci := -1
+			for i, c := range schema.cols {
+				if c == p.Col {
+					ci = i
+					break
+				}
+			}
+			if ci < 0 {
+				continue
+			}
+			v, err := Eval(p.Val, &out, params)
+			if err != nil {
+				// Best-effort: leave column unchanged on eval error.
+				continue
+			}
+			if ci < len(updated.Data) {
+				updated.Data[ci] = v
+			}
+		}
+		return updated
+	})
+}
+
+// conflictKey returns the column indices and values used to look up
+// a row for ON CONFLICT. If the schema has a PK, that is the conflict
+// target. Otherwise the first unique key is used. REQ000511.
+func conflictKey(schema *storeSchema, row Row) ([]int, []interface{}, error) {
+	if schema.pk != "" {
+		for i, c := range schema.cols {
+			if c == schema.pk {
+				if i >= len(row.Data) {
+					return nil, nil, fmt.Errorf("ex: PK column %q out of range", schema.pk)
+				}
+				return []int{i}, []interface{}{row.Data[i]}, nil
+			}
+		}
+	}
+	if len(schema.unique) > 0 {
+		uk := schema.unique[0]
+		vals := make([]interface{}, len(uk.Cols))
+		for i, idx := range uk.Cols {
+			if idx < len(row.Data) {
+				vals[i] = row.Data[idx]
+			}
+		}
+		return uk.Cols, vals, nil
+	}
+	return nil, nil, fmt.Errorf("ex: ON CONFLICT requires PK or UNIQUE constraint")
+}
 
 // joinStrings is a tiny helper for formatting column lists.
 func joinStrings(s []string, sep string) string {

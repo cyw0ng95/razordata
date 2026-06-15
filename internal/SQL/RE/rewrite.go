@@ -26,7 +26,7 @@ func Rewrite(stmt PS.Stmt) (PS.Stmt, error) {
 		return rewriteCreateTable(s), nil
 	case *PS.DropTable:
 		return rewriteDropTable(s), nil
-	case *PS.AnalyzeStmt, *PS.VacuumStmt, *PS.PragmaStmt:
+	case *PS.AnalyzeStmt, *PS.VacuumStmt, *PS.PragmaStmt, *PS.ExplainStmt, *PS.TruncateStmt, *PS.ReindexStmt, *PS.DropViewStmt, *PS.DropTriggerStmt, *PS.DropIndexStmt, *PS.CreateIndexStmt, *PS.CreateViewStmt, *PS.TriggerStmt, *PS.AlterTableStmt:
 		// DDL/admin statements pass through unchanged
 		return s, nil
 	}

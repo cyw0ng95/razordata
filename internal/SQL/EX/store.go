@@ -132,6 +132,13 @@ func UnregisterAllViews() {
 	viewRegistry = map[string]*PS.Select{}
 }
 
+// UnregisterView removes a single view by name. REQ000494.
+func UnregisterView(name string) {
+	viewMu.Lock()
+	defer viewMu.Unlock()
+	delete(viewRegistry, name)
+}
+
 // RegisterIndexWithID registers a secondary index for the given
 // table. Called from the CREATE INDEX executor path; for tests
 // that don't go through the SQL surface, use RegisterIndex.

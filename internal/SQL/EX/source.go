@@ -29,6 +29,30 @@ func registerTrigger(t *PS.TriggerStmt) {
 	tableTriggers[t.OnTable] = append(tableTriggers[t.OnTable], t)
 }
 
+// unregisterTrigger removes a single trigger by name. REQ000496.
+func unregisterTrigger(name string) {
+	triggerMu.Lock()
+	defer triggerMu.Unlock()
+	t, ok := triggerReg[name]
+	if !ok {
+		return
+	}
+	delete(triggerReg, name)
+	if list, ok := tableTriggers[t.OnTable]; ok {
+		filtered := list[:0]
+		for _, x := range list {
+			if x.Name != name {
+				filtered = append(filtered, x)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(tableTriggers, t.OnTable)
+		} else {
+			tableTriggers[t.OnTable] = filtered
+		}
+	}
+}
+
 func triggersForTable(table string) []*PS.TriggerStmt {
 	triggerMu.RLock()
 	defer triggerMu.RUnlock()

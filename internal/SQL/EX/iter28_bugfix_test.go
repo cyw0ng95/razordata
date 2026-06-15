@@ -1,0 +1,352 @@
+package EX
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/cyw0ng95/razordata/internal/SQL/PS"
+	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
+)
+
+// TestBugfix_BuildWriterOp_RoutesAllDDL covers REQ000490, REQ000481, REQ000500,
+// REQ000476, REQ000478, REQ000494, REQ000496: buildWriterOp now routes
+// PRAGMA, EXPLAIN, EXPLAIN QUERY PLAN, TRUNCATE, REINDEX, DROP VIEW,
+// DROP TRIGGER instead of returning "ex: not a writable statement".
+func TestBugfix_BuildWriterOp_RoutesAllDDL(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ctx := context.Background()
+
+	stmts := []string{
+		"CREATE TABLE bvt (id INTEGER PRIMARY KEY, v INTEGER)",
+		"INSERT INTO bvt VALUES (1, 10)",
+		"PRAGMA cache_size",
+		"EXPLAIN SELECT * FROM bvt",
+		"EXPLAIN QUERY PLAN SELECT * FROM bvt",
+		"TRUNCATE TABLE bvt",
+		"REINDEX",
+		"REINDEX bvt",
+		"CREATE VIEW bvv AS SELECT id FROM bvt",
+		"DROP VIEW bvv",
+		"CREATE TRIGGER bvt_trg AFTER INSERT ON bvt BEGIN SELECT 1; END",
+		"DROP TRIGGER bvt_trg",
+	}
+	for _, s := range stmts {
+		if _, err := ex.Exec(ctx, s); err != nil {
+			t.Errorf("%q failed: %v", s, err)
+		}
+	}
+}
+
+// TestBugfix_Explain_ReturnsPlan covers REQ000481, REQ000500: EXPLAIN
+// returns a single-row result with a "plan" column describing the inner
+// statement. EXPLAIN QUERY PLAN also works.
+func TestBugfix_Explain_ReturnsPlan(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
+
+	rows, err := ex.QueryAll(ctx, "EXPLAIN SELECT * FROM t")
+	if err != nil {
+		t.Fatalf("EXPLAIN: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("EXPLAIN: got 0 rows, want >= 1")
+	}
+	// EXPLAIN returns {id, parent, notused, detail} — last column is
+	// the operator description. The planner renders "SeqScan" or
+	// "Scan t" depending on whether the inner plan is a SeqScan.
+	detail := toString(rows[len(rows)-1].Data[3])
+	if !strings.Contains(detail, "t") {
+		t.Errorf("EXPLAIN detail = %q, want substring t", detail)
+	}
+
+	rows, err = ex.QueryAll(ctx, "EXPLAIN QUERY PLAN SELECT * FROM t")
+	if err != nil {
+		t.Fatalf("EXPLAIN QUERY PLAN: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("EXPLAIN QUERY PLAN: got 0 rows, want >= 1")
+	}
+	// Query plan format: scan|search|...|detail columns.
+	detail = toString(rows[len(rows)-1].Data[len(rows[len(rows)-1].Data)-1])
+	if !strings.Contains(detail, "t") {
+		t.Errorf("EXPLAIN QUERY PLAN last col = %q, want substring t", detail)
+	}
+}
+
+// toString converts the heterogeneous cell type to a string for
+// substring checks.
+func toString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	if b, ok := v.([]byte); ok {
+		return string(b)
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// TestBugfix_Truncate_ClearsTable covers REQ000476: TRUNCATE TABLE
+// empties the in-memory table.
+func TestBugfix_Truncate_ClearsTable(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (2, 20)")
+	if _, err := ex.Exec(ctx, "TRUNCATE TABLE t"); err != nil {
+		t.Fatalf("TRUNCATE: %v", err)
+	}
+	rows, err := ex.QueryAll(ctx, "SELECT * FROM t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("after TRUNCATE: got %d rows, want 0", len(rows))
+	}
+}
+
+// TestBugfix_Reindex_NoOp covers REQ000478: REINDEX accepts both
+// REINDEX (all) and REINDEX name without error.
+func TestBugfix_Reindex_NoOp(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+	if _, err := ex.Exec(ctx, "REINDEX"); err != nil {
+		t.Errorf("REINDEX: %v", err)
+	}
+	if _, err := ex.Exec(ctx, "REINDEX t"); err != nil {
+		t.Errorf("REINDEX t: %v", err)
+	}
+}
+
+// TestBugfix_DropView_RemovesRegistry covers REQ000494: DROP VIEW
+// removes the view from the registry.
+func TestBugfix_DropView_RemovesRegistry(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTableWithPK("t", []string{"id"}, "id")
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
+	if _, err := ex.Exec(ctx, "CREATE VIEW v AS SELECT id FROM t"); err != nil {
+		t.Fatalf("CREATE VIEW: %v", err)
+	}
+	if LookupView("v") == nil {
+		t.Fatal("view not registered after CREATE")
+	}
+	if _, err := ex.Exec(ctx, "DROP VIEW v"); err != nil {
+		t.Fatalf("DROP VIEW: %v", err)
+	}
+	if LookupView("v") != nil {
+		t.Error("view still registered after DROP")
+	}
+}
+
+// TestBugfix_DropTrigger_RemovesRegistry covers REQ000496: DROP TRIGGER
+// removes the trigger from the registry.
+func TestBugfix_DropTrigger_RemovesRegistry(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTableWithPK("t", []string{"id"}, "id")
+	ctx := context.Background()
+	if _, err := ex.Exec(ctx, "CREATE TRIGGER tg AFTER INSERT ON t BEGIN SELECT 1; END"); err != nil {
+		t.Fatalf("CREATE TRIGGER: %v", err)
+	}
+	triggerMu.RLock()
+	_, present := triggerReg["tg"]
+	triggerMu.RUnlock()
+	if !present {
+		t.Fatal("trigger not registered after CREATE")
+	}
+	if _, err := ex.Exec(ctx, "DROP TRIGGER tg"); err != nil {
+		t.Fatalf("DROP TRIGGER: %v", err)
+	}
+	triggerMu.RLock()
+	_, present = triggerReg["tg"]
+	triggerMu.RUnlock()
+	if present {
+		t.Error("trigger still registered after DROP")
+	}
+}
+
+// TestBugfix_Pragma_NoOp covers REQ000490: PRAGMA name [= value]
+// executes without error (no-op for unknown pragmas).
+func TestBugfix_Pragma_NoOp(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ctx := context.Background()
+	if _, err := ex.Exec(ctx, "PRAGMA cache_size"); err != nil {
+		t.Errorf("PRAGMA read: %v", err)
+	}
+	if _, err := ex.Exec(ctx, "PRAGMA cache_size = 1000"); err != nil {
+		t.Errorf("PRAGMA write: %v", err)
+	}
+}
+
+// TestBugfix_InsertOnConflictDoUpdate covers REQ000511: ON CONFLICT
+// DO UPDATE applies the SET clause to the conflicting row.
+func TestBugfix_InsertOnConflictDoUpdate(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	// registerStoreSchema wires the schema into tableIDs so
+	// schemaFor() returns true; without it the in-memory
+	// Insert path skips unique-key validation.
+	registerStoreSchema("t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)"); err != nil {
+		t.Fatalf("seed insert: %v", err)
+	}
+	// Conflict on PK 1: update v to 99.
+	stmt, err := PS.NewParser(
+		"INSERT INTO t VALUES (1, 99) ON CONFLICT (id) DO UPDATE SET v = 99",
+	).Parse()
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	insertStmt, ok := stmt.(*PS.Insert)
+	if !ok {
+		t.Fatalf("stmt is %T, want *PS.Insert", stmt)
+	}
+	op, err := ex.buildWriterOp(insertStmt)
+	if err != nil {
+		t.Fatalf("buildWriterOp: %v", err)
+	}
+	defer op.Close()
+	if _, err := op.Next(ctx); err != nil && err != ErrNoRows {
+		t.Fatalf("insert op: %v", err)
+	}
+
+	// Read the row back; v should be 99.
+	rows, err := ex.QueryAll(ctx, "SELECT v FROM t WHERE id = 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if v, _ := rows[0].Data[0].(int64); v != 99 {
+		t.Errorf("v = %d, want 99 (UPSERT update should have taken effect)", v)
+	}
+}
+
+// TestBugfix_InsertOnConflictDoNothing covers REQ000511 DO NOTHING:
+// duplicate row is silently dropped, no error.
+func TestBugfix_InsertOnConflictDoNothing(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	registerStoreSchema("t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)"); err != nil {
+		t.Fatalf("seed insert: %v", err)
+	}
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 99) ON CONFLICT (id) DO NOTHING"); err != nil {
+		t.Errorf("DO NOTHING should not error: %v", err)
+	}
+	rows, _ := ex.QueryAll(ctx, "SELECT v FROM t WHERE id = 1")
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if v, _ := rows[0].Data[0].(int64); v != 10 {
+		t.Errorf("v = %d, want 10 (DO NOTHING should not have changed the row)", v)
+	}
+}
+
+// TestBugfix_BuildWriterOp_ErrorsOnUnknown covers the negative case:
+// genuine unknowns still error so we don't silently drop statements.
+func TestBugfix_BuildWriterOp_ErrorsOnUnknown(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ctx := context.Background()
+	// An unknown DDL should still return an error, not silently no-op.
+	_, err := ex.Exec(ctx, "FOOBAR quux")
+	if err == nil {
+		t.Error("unknown DDL should error")
+	}
+	if !strings.Contains(err.Error(), "syntax") && !strings.Contains(err.Error(), "FOOBAR") {
+		// Either the parser or the executor should reject it.
+		t.Logf("got error (acceptable): %v", err)
+	}
+}
+
+// TestBugfix_Truncate_NotRegistered covers REQ000476: TRUNCATE on an
+// unknown table is a no-op (not an error).
+func TestBugfix_Truncate_NotRegistered(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ctx := context.Background()
+	// Should not error.
+	if _, err := ex.Exec(ctx, "TRUNCATE TABLE unknown_t"); err != nil {
+		t.Errorf("TRUNCATE on missing table: %v", err)
+	}
+}
+
+// TestBugfix_DropView_Unknown covers REQ000494: DROP VIEW on an
+// unknown view is a no-op (not an error).
+func TestBugfix_DropView_Unknown(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ctx := context.Background()
+	if _, err := ex.Exec(ctx, "DROP VIEW unknown_v"); err != nil {
+		t.Errorf("DROP VIEW on missing view: %v", err)
+	}
+}
+
+// TestBugfix_DropTrigger_Unknown covers REQ000496: DROP TRIGGER on
+// an unknown trigger is a no-op.
+func TestBugfix_DropTrigger_Unknown(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ctx := context.Background()
+	if _, err := ex.Exec(ctx, "DROP TRIGGER unknown_t"); err != nil {
+		t.Errorf("DROP TRIGGER on missing trigger: %v", err)
+	}
+}
+
+// TestBugfix_ConstraintNotPresent is a sanity check: the new error
+// classification still wraps ErrConstraint.
+func TestBugfix_ConstraintNotPresent(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTableWithPK("t", []string{"id"}, "id")
+	registerStoreSchema("t", []string{"id"}, "id")
+	ctx := context.Background()
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1)"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ex.Exec(ctx, "INSERT INTO t VALUES (1)")
+	if err == nil {
+		t.Fatal("expected duplicate key error")
+	}
+	if !errors.Is(err, ap.ErrConstraint) {
+		t.Errorf("err = %v, want wrap of ErrConstraint", err)
+	}
+}

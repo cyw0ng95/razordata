@@ -694,10 +694,16 @@ func (p *Parser) Parse() (Stmt, error) {
 			stmt, err = p.parseCreateTable()
 		}
 	case LX.T_DROP:
-		// DROP TABLE vs DROP INDEX — disambiguate by peeking.
-		if p.lex.Peek().Type == LX.T_INDEX {
+		// DROP TABLE vs DROP INDEX vs DROP VIEW vs DROP TRIGGER —
+		// disambiguate by peeking.
+		switch p.lex.Peek().Type {
+		case LX.T_INDEX:
 			stmt, err = p.parseDropIndex()
-		} else {
+		case LX.T_VIEW:
+			stmt, err = p.parseDropView()
+		case LX.T_TRIGGER:
+			stmt, err = p.parseDropTrigger()
+		default:
 			stmt, err = p.parseDropTable()
 		}
 	case LX.T_EXPLAIN:
@@ -706,6 +712,10 @@ func (p *Parser) Parse() (Stmt, error) {
 		stmt, err = p.parseAnalyze()
 	case LX.T_VACUUM:
 		stmt, err = p.parseVacuum()
+	case LX.T_TRUNCATE:
+		stmt, err = p.parseTruncate()
+	case LX.T_REINDEX:
+		stmt, err = p.parseReindex()
 	case LX.T_PRAGMA:
 		stmt, err = p.parsePragma()
 	case LX.T_WITH:
@@ -1834,9 +1844,14 @@ func (p *Parser) parseExplain() (*ExplainStmt, error) {
 			inner, innerErr = p.parseCreateTable()
 		}
 	case LX.T_DROP:
-		if p.lex.Peek().Type == LX.T_INDEX {
+		switch p.lex.Peek().Type {
+		case LX.T_INDEX:
 			inner, innerErr = p.parseDropIndex()
-		} else {
+		case LX.T_VIEW:
+			inner, innerErr = p.parseDropView()
+		case LX.T_TRIGGER:
+			inner, innerErr = p.parseDropTrigger()
+		default:
 			inner, innerErr = p.parseDropTable()
 		}
 	case LX.T_EXPLAIN:
@@ -3056,4 +3071,102 @@ func (p *Parser) parseTriggerBodyStmt() (Stmt, error) {
 		}
 		return nil, nil
 	}
+}
+
+// parseTruncate parses TRUNCATE [TABLE] name. REQ000476 (iter-28).
+func (p *Parser) parseTruncate() (*TruncateStmt, error) {
+	p.advance() // consume TRUNCATE
+
+	if p.current.Type == LX.T_TABLE {
+		p.advance()
+	}
+
+	if p.current.Type != LX.T_IDENT {
+		return nil, &SyntaxError{
+			Input:    p.lex.Input(),
+			Line:     p.current.Line,
+			Col:      p.current.Col,
+			Expected: "table name after TRUNCATE",
+			Got:      tokenName(p.current.Type),
+			Lexeme:   p.current.Lexeme,
+		}
+	}
+
+	name := p.current.Lexeme
+	p.advance()
+
+	return &TruncateStmt{Table: name}, nil
+}
+
+// parseReindex parses REINDEX [name]. REQ000478 (iter-28).
+func (p *Parser) parseReindex() (*ReindexStmt, error) {
+	p.advance() // consume REINDEX
+
+	stmt := &ReindexStmt{}
+	if p.current.Type == LX.T_IDENT {
+		stmt.Target = p.current.Lexeme
+		p.advance()
+	}
+
+	return stmt, nil
+}
+
+// parseDropView parses DROP VIEW [IF EXISTS] name. REQ000494 (iter-28).
+func (p *Parser) parseDropView() (*DropViewStmt, error) {
+	p.advance() // consume DROP
+	p.advance() // consume VIEW
+
+	stmt := &DropViewStmt{}
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
+		p.advance()
+		if p.current.Type == LX.T_EXISTS {
+			p.advance()
+			stmt.IfExists = true
+		}
+	}
+
+	if p.current.Type != LX.T_IDENT {
+		return nil, &SyntaxError{
+			Input:    p.lex.Input(),
+			Line:     p.current.Line,
+			Col:      p.current.Col,
+			Expected: "view name after DROP VIEW",
+			Got:      tokenName(p.current.Type),
+			Lexeme:   p.current.Lexeme,
+		}
+	}
+	stmt.Name = p.current.Lexeme
+	p.advance()
+
+	return stmt, nil
+}
+
+// parseDropTrigger parses DROP TRIGGER [IF EXISTS] name. REQ000496 (iter-28).
+func (p *Parser) parseDropTrigger() (*DropTriggerStmt, error) {
+	p.advance() // consume DROP
+	p.advance() // consume TRIGGER
+
+	stmt := &DropTriggerStmt{}
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
+		p.advance()
+		if p.current.Type == LX.T_EXISTS {
+			p.advance()
+			stmt.IfExists = true
+		}
+	}
+
+	if p.current.Type != LX.T_IDENT {
+		return nil, &SyntaxError{
+			Input:    p.lex.Input(),
+			Line:     p.current.Line,
+			Col:      p.current.Col,
+			Expected: "trigger name after DROP TRIGGER",
+			Got:      tokenName(p.current.Type),
+			Lexeme:   p.current.Lexeme,
+		}
+	}
+	stmt.Name = p.current.Lexeme
+	p.advance()
+
+	return stmt, nil
 }

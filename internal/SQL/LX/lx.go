@@ -89,6 +89,8 @@ var keywords = map[string]TokenType{
 	"EXISTS":       T_EXISTS,
 	"ANALYZE":      T_ANALYZE,
 	"VACUUM":       T_VACUUM,
+	"TRUNCATE":     T_TRUNCATE,
+	"REINDEX":      T_REINDEX,
 	"BEFORE":       T_BEFORE,
 	"AFTER":        T_AFTER,
 	"INSTEAD":      T_INSTEAD,

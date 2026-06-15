@@ -517,6 +517,36 @@ func (v *VacuumStmt) stmtNode() {}
 
 func (p *PragmaStmt) stmtNode() {}
 
+// TruncateStmt represents TRUNCATE [TABLE] name (iter-28 REQ000476)
+type TruncateStmt struct {
+	Table string
+}
+
+func (t *TruncateStmt) stmtNode() {}
+
+// ReindexStmt represents REINDEX [name] (iter-28 REQ000478)
+type ReindexStmt struct {
+	Target string // empty = reindex all
+}
+
+func (r *ReindexStmt) stmtNode() {}
+
+// DropViewStmt represents DROP VIEW [IF EXISTS] name (iter-28 REQ000494)
+type DropViewStmt struct {
+	Name    string
+	IfExists bool
+}
+
+func (d *DropViewStmt) stmtNode() {}
+
+// DropTriggerStmt represents DROP TRIGGER [IF EXISTS] name (iter-28 REQ000496)
+type DropTriggerStmt struct {
+	Name     string
+	IfExists bool
+}
+
+func (d *DropTriggerStmt) stmtNode() {}
+
 // SetTransactionStmt represents SET TRANSACTION ISOLATION LEVEL ...
 type SetTransactionStmt struct {
 	Level string // "READ UNCOMMITTED", "READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"
