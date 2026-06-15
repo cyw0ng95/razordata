@@ -380,6 +380,10 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			if err := validateCheck(cschema, row); err != nil {
 				return Row{}, err
 			}
+			// REQ000513: FK re-validation when FK columns are updated.
+			if err := validateForeignKeyUpdateInMemory(cschema, snapshot.Data, row.Data); err != nil {
+				return Row{}, err
+			}
 			// Self-exclude: encode the pre-update row's unique key so
 			// a no-op update (same values) does not self-conflict.
 			var selfKey []byte
@@ -600,7 +604,14 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 	if d.store != nil {
 		return d.nextFromStore(ctx)
 	}
+	// REQ000514: resolve the schema for FK validation, then
+	// collect to-be-deleted row indices and run FK checks.
+	var dschema *storeSchema
+	if ss, ok := schemaFor(d.table); ok {
+		dschema = ss
+	}
 	toDelete := map[int]bool{}
+	var fkRows [][]interface{}
 	for {
 		row, err := d.iter.Next(ctx)
 		if err != nil {
@@ -621,6 +632,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		idx, ok := rowIndex(d.table, row)
 		if ok {
 			toDelete[idx] = true
+			fkRows = append(fkRows, append([]interface{}(nil), row.Data...))
 
 			// Evaluate RETURNING expressions before deleting
 			if len(d.returning) > 0 {
@@ -641,6 +653,14 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		}
 	}
 	if len(toDelete) > 0 {
+		// REQ000514: FK checks must run before mutating the table.
+		if dschema != nil {
+			for _, rowData := range fkRows {
+				if err := validateForeignKeyDeleteInMemory(d.table, rowData, dschema); err != nil {
+					return Row{}, err
+				}
+			}
+		}
 		tablesMu.Lock()
 		defer tablesMu.Unlock()
 		existing := tables[d.table]
