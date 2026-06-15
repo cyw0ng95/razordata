@@ -227,50 +227,65 @@ func decodeBlock(data []byte) ([]KV, []int, error) // KVs, restart positions
 
 | Cluster | Responsibility |
 |---|---|
-| `LS` | LSM tree: memtable, SST writer, SST reader, bloom filter, compaction, manifest |
-| `ID` | Index: primary key index (v1: primary key is the table key) |
-| `TB` | Table: create table, drop table, schema management |
-| `SC` | Schema: column types, constraints, table definitions |
-| `DP` | Deparser: row serialization, SST block encoding, value encoding |
+| `LS` | LSM tree: memtable, SST writer, SST reader, bloom filter, leveled/tiered/hybrid compaction (REQ000320), rate-limited compaction (REQ000318), columnar SST block layout (REQ000314), per-block dictionary compression (REQ000297), subcompaction for L4+ (REQ000319), storage policy with tiered device placement (REQ000300), index store (sst_dict), index reader, catalog bootstrap |
+| `ID` | Index: persistent B-tree for secondary indexes (btree.razor), cursor-based scan, page-level CRC |
+| `TB` | Table: create/drop/alter table, schema catalog, foreign key enforcement, views, triggers |
+| `SC` | Schema: column types, constraints (NOT NULL, DEFAULT, PRIMARY KEY, UNIQUE, CHECK, FOREIGN KEY), table definitions, integrity checks (REQ000124), columnar table support |
+| `DP` | Deparser: row serialization, SST block encoding, value encoding, delta-key encoding in blocks |
+| `NM` | NUMA: topology detection via `/sys/devices/system/node`, worker pinning via `runtime.LockOSThread` for first-touch allocation (REQ000309) |
 
 ## Clusters
 
 ### LS — LSM Tree
 
-**Responsibility:** Memtable, SST flush, leveled compaction, bloom filter, file manifest.
+**Responsibility:** Memtable, SST flush, leveled/tiered/hybrid compaction, bloom filter, file manifest, columnar SST, rate limiter, subcompaction, storage policy.
 
 **Key behaviors:**
 - `Insert`: write to active memtable. If memtable is frozen, create a new active memtable and write there.
 - `Get`: check active memtable → frozen memtables (newest first) → L0 (newest first) → L1+ (binary search via index + bloom).
 - `NewIterator`: merge iterators from all sources (memtable + all SST files) in sorted key order using a min-heap.
 - `Flush`: freeze active memtable, write it as an SST to L0, update manifest.
-- `Compact`: trigger background compaction goroutine. Runs in a separate goroutine, rate-limited.
+- `Compact`: trigger background compaction goroutine. Runs in a separate goroutine, rate-limited via `RateLimiter`.
+- **Compaction styles (REQ000320):** `CompactionStyleLeveled` (default), `CompactionStyleTiered` (write-heavy), `CompactionStyleHybrid` (tiered L0 + leveled L1+). `SetCompactionStyle()` changes at runtime.
+- **Rate limiter (REQ000318):** Token-bucket throttling on compaction write throughput. `SetRateLimiter()` configures bytes/sec and burst.
+- **Subcompaction (REQ000319):** For L4+, `SubCompactor` partitions input key ranges into N sub-jobs, runs them in parallel via a worker pool, then merges the output SSTs.
+- **Columnar SST (REQ000314):** `columnar.go` writes SST blocks in column-major layout (all keys packed, then all values). Block layout is detected by first byte (0=row-major, 1=columnar). Saves 50%+ I/O for key-only scans.
+- **Dictionary compression (REQ000297):** `sst_dict.go` trains a per-block frequency-based dictionary (4-8 byte substrings, max 4 KB) and uses `flate.NewWriterDict` for compression. Falls back to plain flate if dictionary is empty or not effective.
+- **Storage policy (REQ000300):** `StoragePolicyUniform` (default) vs `StoragePolicyTiered` — maps output levels to device paths via `PlacementPolicy` symlinks.
 
 ### ID — Index
 
-**Responsibility:** Primary key index. In v1, the primary key IS the table key in the LSM tree. Secondary indexes are future work.
+**Responsibility:** Persistent B-tree for secondary indexes.
 
 **Key behaviors:**
-- `__primary__:<tableID>:<pk>` → row data (the table key itself).
-- No separate index structure needed for v1.
-- Future: secondary index via `__idx__:<tableID>:<idxName>:<col>` → list of primary keys.
+- `btree.razor` file in the database directory stores a page-oriented B-tree with CRC32 integrity on each page.
+- `Insert(key, value)`, `Get(key)`, `Delete(key)` with page cache in memory.
+- `Cursor()` provides seek and forward scan over the B-tree.
+- Page size: 4096 bytes; max 200 keys per page.
+- Unlike the original design (primary key = table key), this is a dedicated secondary index structure using a separate B-tree.
 
 ### TB — Table
 
-**Responsibility:** Table metadata operations: `CREATE TABLE`, `DROP TABLE`, schema management.
+**Responsibility:** Table metadata operations: `CREATE TABLE`, `DROP TABLE`, `ALTER TABLE`, schema management, foreign key enforcement, views, triggers.
 
 **Key behaviors:**
 - `CREATE TABLE`: allocate `tableID`, serialize `TableSchema`, insert into system catalog LSM.
 - `DROP TABLE`: mark the table's key range as deleted (tombstone) in the system catalog, remove schema from registry.
+- `ALTER TABLE`: `ADD COLUMN`, `DROP COLUMN`, `RENAME` — online schema migration.
 - `GetSchema(tableID)`: look up from in-memory `map[tableID]*TableSchema`, or load from catalog if not cached.
+- Foreign key validation is delegated to `SQL/EX/fk.go`.
+- Views are materialized as stored `SELECT` queries resolved at query planning time.
+- Triggers are stored as named action definitions (BEFORE/AFTER INSERT/UPDATE/DELETE) and fired by the executor.
 
 ### SC — Schema
 
-**Responsibility:** Column types, constraints, table definitions.
+**Responsibility:** Column types, constraints, table definitions, integrity checks, columnar table support.
 
 **Key behaviors:**
 - `ValidateRow(row, schema)`: check that all non-nullable columns have values, types match, constraints satisfied.
 - `Compare(a, b ColumnDef) bool`: compare two column definitions for equality (used in schema versioning).
+- Constraints supported: NOT NULL, DEFAULT, PRIMARY KEY, UNIQUE, CHECK, FOREIGN KEY (REQ000124).
+- Integrity checks: `IntegrityTable` verifies catalog consistency, row counts, and data corruption.
 
 ### DP — Deparser
 
@@ -281,6 +296,17 @@ func decodeBlock(data []byte) ([]KV, []int, error) // KVs, restart positions
 - `DecodeValue(data []byte, t ColumnType) (Value, error)`: decode bytes to a scalar value.
 - `EncodeRow/DecodeRow`: apply the per-column encoding based on schema.
 - `EncodeBlock/DecodeBlock`: SST block delta encoding with restart points.
+
+### NM — NUMA
+
+**Responsibility:** NUMA topology detection and worker affinity for first-touch allocation.
+
+**Key behaviors:**
+- `detect()` reads `/sys/devices/system/node` to count NUMA nodes.
+- `NodeCount()` returns the count (cached), or 1 on non-NUMA hosts.
+- `CurrentNode()` returns a heuristic NUMA node ID for the calling goroutine.
+- `PinWorker()` calls `runtime.LockOSThread` to pin a goroutine to an OS thread, ensuring first-touch memory allocations land on the correct NUMA node.
+- On non-NUMA hosts, all functions return 0/1 and behave identically to the pre-NUMA code path.
 
 ## Implementation Plan
 

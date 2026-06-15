@@ -125,15 +125,16 @@ type hintEntry struct {
 
 | Cluster | Responsibility |
 |---|---|
-| `BF` | Buffer pool: LRU eviction (clock-sweep), pin/unpin, hash table lookup, miss handling |
+| `BF` | Buffer pool: LRU eviction (clock-sweep), pin/unpin, hash table lookup, bloomtinyllfu hybrid cache (REQ000303), NUMA-aware pmem (REQ000309) |
 | `PC` | Page cache: block slot management, checksum verification on read, hint file |
 | `SP` | Sync pool: goroutine-safe object pooling for pages and iterators |
+| `OF` | Overflow: handling values that exceed page size via overflow blocks chained in the WAL (REQ000308) |
 
 ## Clusters
 
 ### BF — Buffer Pool
 
-**Responsibility:** LRU eviction, clock-sweep, pin/unpin, hash table lookup.
+**Responsibility:** LRU eviction, clock-sweep, pin/unpin, hash table lookup, bloomtinyllfu hybrid cache, NUMA awareness.
 
 **Key behaviors:**
 - `Get`: look up in hash table. If found and not loading, return immediately. If not found, load from `FIL/DF` (via `BlockDevice.ReadBlock`), insert into hash table, return.
@@ -141,10 +142,17 @@ type hintEntry struct {
 - `Unpin`: decrement `pinCount`. Eviction may proceed once `pinCount == 0`.
 - `SetCapacity`: resize the slot ring. If shrinking, evict oldest clean slots.
 - `Stats`: `Hits` / `Misses` ratio, `Pins`, `Evicts`, capacity, used.
+- **bloomtinyllfu (REQ000303):** Hybrid cache combining a Cuckoo filter (fast membership test) with TinyLFU (approximate frequency tracking) for admission control. Pages that fail the bloom filter admission are not inserted into the buffer pool, reducing eviction pressure.
+- **pmem / NUMA (REQ000309):** On Linux, `pmem.go` uses `mmap` with `MAP_POPULATE` for persistent memory; `sys_linux.go` / `sys_other.go` provide platform-specific NUMA node detection and first-touch policies.
 
-### PC — Page Cache
+### OF — Overflow
 
-**Responsibility:** In-memory block slots, checksum verification on read, hint file warm-up.
+**Responsibility:** Large value handling when values exceed the page size.
+
+**Key behaviors:**
+- Values larger than `PageSize` (4 KB) are split into overflow blocks.
+- The primary row stores a pointer to the first overflow block; subsequent blocks are chained via the WAL.
+- `of.go` manages overflow block allocation, chain traversal, and cleanup on delete.
 
 **Key behaviors:**
 - When a block is loaded from disk, its checksum is verified against the stored CRC32.
