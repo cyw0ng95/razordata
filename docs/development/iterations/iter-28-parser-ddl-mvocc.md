@@ -266,21 +266,21 @@ references specific code locations in the implementation.
 
 ### Phase 1: Parser DDL fixes (REQ000479, 480, 497, 498, 473, 482, 461)
 
-- [ ] 1. Add `IfExists` field to AST nodes
-  - [ ] 1.1 `DropTable` — add `IfExists bool`
-  - [ ] 1.2 `CreateIndexStmt` — add `IfExists bool`
-  - [ ] 1.3 `DropIndexStmt` — add `IfExists bool`
-  - [ ] 1.4 `AlterTableStmt` — add `NewName string` for RENAME COLUMN
+- [x] 1. Add `IfExists` field to AST nodes
+  - [x] 1.1 `DropTable` — add `IfExists bool`
+  - [x] 1.2 `CreateIndexStmt` — add `IfExists bool`
+  - [x] 1.3 `DropIndexStmt` — add `IfExists bool`
+  - [x] 1.4 `AlterTableStmt` — add `NewName string` for RENAME COLUMN
 
-- [ ] 2. Update parser for IF [NOT] EXISTS
-  - [ ] 2.1 `parseDropTable` — record `IfExists` flag
-  - [ ] 2.2 `parseCreateIndex` — add IF NOT EXISTS before index name
-  - [ ] 2.3 `parseDropIndex` — add IF EXISTS after INDEX
-  - [ ] 2.4 `parseAlterTable` RENAME — add COLUMN path: `RENAME COLUMN old TO new`
+- [x] 2. Update parser for IF [NOT] EXISTS
+  - [x] 2.1 `parseDropTable` — record `IfExists` flag
+  - [x] 2.2 `parseCreateIndex` — add IF NOT EXISTS before index name
+  - [x] 2.3 `parseDropIndex` — add IF EXISTS after INDEX
+  - [x] 2.4 `parseAlterTable` RENAME — add COLUMN path: `RENAME COLUMN old TO new`
 
-- [ ] 3. Parser: PRAGMA support
-  - [ ] 3.1 Add `parsePragma` — `PRAGMA name [= value]`
-  - [ ] 3.2 Wire into main `Parse()` switch
+- [x] 3. Parser: PRAGMA support
+  - [x] 3.1 Add `parsePragma` — `PRAGMA name [= value]` (already existed)
+  - [x] 3.2 Wire into main `Parse()` switch (already existed)
 
 - [ ] 4. Parser: AUTOINCREMENT keyword
   - [ ] 4.1 In `parseCreateTable`, accept AUTOINCREMENT after PRIMARY KEY
@@ -290,11 +290,11 @@ references specific code locations in the implementation.
   - [ ] 5.1 In window function parsing, accept optional 3rd argument for offset
   - [ ] 5.2 Store offset in window function AST
 
-- [ ] 6. Verify all parser changes
-  - [ ] 6.1 Table-driven tests for each new parser path
-  - [ ] 6.2 `go test ./internal/SQL/PS/...` green
+- [x] 6. Verify all parser changes
+  - [x] 6.1 Table-driven tests for each new parser path
+  - [x] 6.2 `go test ./internal/SQL/PS/...` green
 
-- [ ] Checkpoint — all parser tests green
+- [x] Checkpoint — all parser tests green
 
 ### Phase 2: Executor SQL compliance (17 REQs)
 
