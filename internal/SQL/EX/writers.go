@@ -147,18 +147,20 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		existing = append(existing, out)
 		i.rows++
 
-		// Evaluate RETURNING expressions
+		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(i.returning) > 0 {
+			expanded := expandReturningStar(i.returning, out.Cols)
 			resultRow := Row{
-				Cols:  make([]string, len(i.returning)),
-				Types: make([]int, len(i.returning)),
-				Data:  make([]interface{}, len(i.returning)),
+				Cols:  make([]string, len(expanded)),
+				Types: make([]int, len(expanded)),
+				Data:  make([]interface{}, len(expanded)),
 			}
-			for j, expr := range i.returning {
+			for j, expr := range expanded {
 				val, err := Eval(expr, &out, i.params)
 				if err != nil {
 					return Row{}, err
 				}
+				resultRow.Cols[j] = colNameForReturning(expr, out.Cols, j)
 				resultRow.Data[j] = val
 			}
 			i.resultRows = append(i.resultRows, resultRow)
@@ -238,18 +240,20 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		}
 		i.rows++
 
-		// Evaluate RETURNING expressions
+		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(i.returning) > 0 {
+			expanded := expandReturningStar(i.returning, out.Cols)
 			resultRow := Row{
-				Cols:  make([]string, len(i.returning)),
-				Types: make([]int, len(i.returning)),
-				Data:  make([]interface{}, len(i.returning)),
+				Cols:  make([]string, len(expanded)),
+				Types: make([]int, len(expanded)),
+				Data:  make([]interface{}, len(expanded)),
 			}
-			for j, expr := range i.returning {
+			for j, expr := range expanded {
 				val, err := Eval(expr, &out, i.params)
 				if err != nil {
 					return Row{}, err
 				}
+				resultRow.Cols[j] = colNameForReturning(expr, out.Cols, j)
 				resultRow.Data[j] = val
 			}
 			i.resultRows = append(i.resultRows, resultRow)
@@ -401,18 +405,20 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 		}
 		u.rows++
 
-		// Evaluate RETURNING expressions
+		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(u.returning) > 0 {
+			expanded := expandReturningStar(u.returning, row.Cols)
 			resultRow := Row{
-				Cols:  make([]string, len(u.returning)),
-				Types: make([]int, len(u.returning)),
-				Data:  make([]interface{}, len(u.returning)),
+				Cols:  make([]string, len(expanded)),
+				Types: make([]int, len(expanded)),
+				Data:  make([]interface{}, len(expanded)),
 			}
-			for j, expr := range u.returning {
+			for j, expr := range expanded {
 				val, err := Eval(expr, &row, u.params)
 				if err != nil {
 					return Row{}, err
 				}
+				resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
 				resultRow.Data[j] = val
 			}
 			u.resultRows = append(u.resultRows, resultRow)
@@ -496,18 +502,20 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 		}
 		u.rows++
 
-		// Evaluate RETURNING expressions
+		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(u.returning) > 0 {
+			expanded := expandReturningStar(u.returning, row.Cols)
 			resultRow := Row{
-				Cols:  make([]string, len(u.returning)),
-				Types: make([]int, len(u.returning)),
-				Data:  make([]interface{}, len(u.returning)),
+				Cols:  make([]string, len(expanded)),
+				Types: make([]int, len(expanded)),
+				Data:  make([]interface{}, len(expanded)),
 			}
-			for j, expr := range u.returning {
+			for j, expr := range expanded {
 				val, err := Eval(expr, &row, u.params)
 				if err != nil {
 					return Row{}, err
 				}
+				resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
 				resultRow.Data[j] = val
 			}
 			u.resultRows = append(u.resultRows, resultRow)
@@ -627,18 +635,20 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 			toDelete[idx] = true
 			fkRows = append(fkRows, append([]interface{}(nil), row.Data...))
 
-			// Evaluate RETURNING expressions before deleting
+			// Evaluate RETURNING expressions before deleting (REQ000518: expand *)
 			if len(d.returning) > 0 {
+				expanded := expandReturningStar(d.returning, row.Cols)
 				resultRow := Row{
-					Cols:  make([]string, len(d.returning)),
-					Types: make([]int, len(d.returning)),
-					Data:  make([]interface{}, len(d.returning)),
+					Cols:  make([]string, len(expanded)),
+					Types: make([]int, len(expanded)),
+					Data:  make([]interface{}, len(expanded)),
 				}
-				for j, expr := range d.returning {
+				for j, expr := range expanded {
 					val, err := Eval(expr, &row, d.params)
 					if err != nil {
 						return Row{}, err
 					}
+					resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
 					resultRow.Data[j] = val
 				}
 				d.resultRows = append(d.resultRows, resultRow)
@@ -706,18 +716,20 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			}
 		}
 
-		// Evaluate RETURNING expressions before deleting
+		// Evaluate RETURNING expressions before deleting (REQ000518: expand *)
 		if len(d.returning) > 0 {
+			expanded := expandReturningStar(d.returning, row.Cols)
 			resultRow := Row{
-				Cols:  make([]string, len(d.returning)),
-				Types: make([]int, len(d.returning)),
-				Data:  make([]interface{}, len(d.returning)),
+				Cols:  make([]string, len(expanded)),
+				Types: make([]int, len(expanded)),
+				Data:  make([]interface{}, len(expanded)),
 			}
-			for j, expr := range d.returning {
+			for j, expr := range expanded {
 				val, err := Eval(expr, &row, d.params)
 				if err != nil {
 					return Row{}, err
 				}
+				resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
 				resultRow.Data[j] = val
 			}
 			d.resultRows = append(d.resultRows, resultRow)
@@ -1524,4 +1536,34 @@ func joinStrings(s []string, sep string) string {
 		out += sep + s[i]
 	}
 	return out
+}
+
+// expandReturningStar expands StarExpr entries in the RETURNING list
+// into individual column references. REQ000518: RETURNING * returns
+// all columns of the inserted/updated/deleted row.
+func expandReturningStar(exprs []PS.Expr, colNames []string) []PS.Expr {
+	var out []PS.Expr
+	for _, e := range exprs {
+		if _, ok := e.(*PS.StarExpr); ok {
+			for _, name := range colNames {
+				out = append(out, &PS.Ident{Name: name})
+			}
+		} else {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// colNameForReturning returns the column name for a RETURNING expression.
+// For expanded star expressions, it uses the column name. For other
+// expressions, it uses the alias or a positional label.
+func colNameForReturning(expr PS.Expr, colNames []string, idx int) string {
+	if ident, ok := expr.(*PS.Ident); ok {
+		return ident.Name
+	}
+	if idx < len(colNames) {
+		return colNames[idx]
+	}
+	return fmt.Sprintf("col%d", idx)
 }
