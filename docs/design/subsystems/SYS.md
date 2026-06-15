@@ -186,6 +186,7 @@ type SessionStats struct {
 | `SE` | Session: session creation, lifecycle, goroutine-safety, deadline, session stats |
 | `TX` | Transaction: transaction context, commit/rollback, savepoints |
 | `ST` | Statement: preparation, parameter binding, type coercion, close |
+| `BK` | Backup/Restore (REQ000259): online backup with read lock, file copy, LSN marker, integrity check, restore to fresh directory |
 
 ## Clusters
 
@@ -351,7 +352,13 @@ Phase 6: Cleanup and logging
 - `Close()`: release the plan (if not shared), return to `sync.Pool`.
 - Type coercion: if a Go `int` is passed but the column is `BIGINT`, cast. If a Go `string` is passed but the column is `INT`, return `ErrTypeMismatch`.
 
-## Implementation Plan
+### BK — Backup/Restore
+
+**Responsibility:** Online backup and restore with read lock, file copy, and integrity check.
+
+**Key behaviors:**
+- `Backup(ctx, dest, opts)`: acquires read lock to block writers, copies all database files (engine data, WAL, catalog) to destination directory, releases lock. `BackupOptions` supports compression flag and LSN marker for consistency tracking.
+- `Restore(ctx, source, dest)`: verifies backup integrity (checks LSN marker, directory structure), copies files to a fresh directory for a clean database instance.
 
 1. **`internal/SYS/AP/ap.go`** — `Engine` interface, `Options` struct, all error types, `EngineStats`.
 2. **`internal/SYS/SY/sy.go`** — `engine` struct, `Open` (config validation, subsystem construction), `Stats`, version constant.
@@ -360,7 +367,8 @@ Phase 6: Cleanup and logging
 5. **`internal/SYS/SE/se.go`** — `session` struct, `NewSession`, `Query`, `Exec`, `Begin`, `Commit`, `Rollback`, `SetDeadline`, `Stats`. Session pooling via `sync.Pool`.
 6. **`internal/SYS/TX/tx.go`** — `transaction` struct, `Query`, `Exec`, `Commit`, `Rollback`, `Savepoint`, `RollbackTo`.
 7. **`internal/SYS/ST/st.go`** — `stmt` struct, `Prepare`, `Bind`, `Query`, `Exec`, `Close`. Plan memoization, type coercion.
-8. **Integration tests:**
+8. **`internal/SYS/BK/bk.go`** — online backup and restore: read lock, file copy, LSN marker, integrity verification.
+9. **Integration tests:**
    - `engine_test.go` — `Open`/`Close`, concurrent sessions, graceful shutdown, error types.
    - `shutdown_test.go` — simulate SIGTERM, verify 6-phase close sequence, test timeout handling.
    - `validate_test.go` — invalid options (page size not power of 2, negative sizes), verify rejection.
@@ -368,10 +376,11 @@ Phase 6: Cleanup and logging
 
 ## Open Issues
 
-- Should sessions be pooled (reuse inactive sessions)? Yes, via `sync.Pool`.
-- Should we support read-only mode (`ReadOnly = true`)? Yes, skip WAL writes, open files read-only.
-- How to handle `SetDeadline` cancellation? Use `context.WithDeadline` internally.
+- ~~Should sessions be pooled (reuse inactive sessions)?~~ Resolved: yes, via `sync.Pool`.
+- ~~Should we support read-only mode~~ Resolved: yes, `ReadOnly` option implemented.
+- ~~How to handle `SetDeadline` cancellation~~ Resolved: uses `context.WithDeadline` internally.
 - Should the engine support a metrics endpoint (Prometheus)? Future work — add an admin interface.
 - What is the optimal timeout for waiting active transactions during shutdown? 30s is the default; may need tuning based on workload.
-- Should force-aborted transactions during shutdown be rolled back to a savepoint instead of full abort? (preserves partial work)
+- Should force-aborted transactions during shutdown be rolled back to a savepoint instead of full abort?
 - Should the shutdown sequence be configurable (e.g., skip waiting for transactions in emergency shutdown)?
+- Should backup support incremental backups or only full backup?

@@ -338,10 +338,10 @@ const MaxConcurrentTXNs = 1024
 
 | Cluster | Responsibility |
 |---|---|
-| `MV` | MVCC: version chain, CAS insertion, version format, per-thread arena |
-| `LC` | Lock: hazard pointers, epoch-based reclamation, read coordination |
-| `SN` | Snapshot: read view management per session, epoch registration |
-| `VL` | Validation: commit protocol, write-write conflict detection, transaction slot management |
+| `MV` | MVCC: version chain, CAS insertion, version format, per-transaction arena, GC of obsolete versions (gc.go) |
+| `LC` | Lock: hazard pointers, epoch-based reclamation (REQ000175), QSBR protocol (REQ000302), reclaim pool for deferred cleanup (reclaim_pool.go), goid tracking via atomic counter (REQ000181, goid.go), epoch gosched for cooperative yielding (epoch_gosched.go) |
+| `SN` | Snapshot: read view management per session, epoch registration, thread-local arena, version stack for multi-key reads (version_stack.go) |
+| `VL` | Validation: commit protocol, write-write conflict detection, transaction slot management, savepoint support |
 
 ## Clusters
 
@@ -355,24 +355,40 @@ const MaxConcurrentTXNs = 1024
 - `CommitVersion(node, commitTS)`: CAS-update `endTS` from `MaxUint64` to `commitTS`.
 - `GCVersionChain(key)`: compact old versions (all active transactions have `endTS < oldestReadTS`).
 
-### LC — Lock (Hazard)
+### MV — MVCC
 
-**Responsibility:** Hazard pointer management, epoch-based reclamation, lock-free read coordination.
+**Responsibility:** Version chain management, CAS insertion, version format, per-transaction arena, GC of obsolete versions.
+
+**Key behaviors:**
+- `GetVersionChain(key)`: return the head of the version chain for a given key.
+- `InsertVersion(key, node)`: CAS-insert a new version node at the head of the chain.
+- `CommitVersion(node, commitTS)`: CAS-update `endTS` from `MaxUint64` to `commitTS`.
+- `GCVersionChain(key)`: compact old versions (all active transactions have `endTS < oldestReadTS`). `gc.go` implements background GC.
+- Arena allocation: `arena.go` — per-transaction arena with CAS-based `Alloc()`. Arenas pooled via `sync.Pool`.
+
+### LC — Lock (Hazard / QSBR)
+
+**Responsibility:** Hazard pointer management, epoch-based reclamation, QSBR protocol, reclaim pool, goid tracking.
 
 **Key behaviors:**
 - `Publish(ptr *versionNode)`: store the pointer in the thread's hazard set.
 - `Clear()`: clear the hazard set (called when the read is done).
 - `Reclaim(batch)`: called by the epoch manager to free old version nodes.
 - `RegisterThread()` / `UnregisterThread()`: epoch registration.
+- **QSBR (REQ000302):** `qsbr.go` implements Quiescent State-Based Reclamation — a lighter-weight alternative to hazard pointers. Threads signal quiescence, and the QSBR manager reclaims when all threads have passed a quiescent barrier.
+- **Reclaim pool (REQ000301):** `reclaim_pool.go` provides a deferred cleanup pool for nodes that cannot be freed immediately (e.g., still referenced by in-flight readers).
+- **Goid tracking (REQ000181):** `goid.go` uses an atomic counter as a goroutine ID substitute (acknowledged limitation: possible collisions under extreme concurrency).
+- **Epoch gosched (REQ000182):** `epoch_gosched.go` allows the epoch manager goroutine to yield via `runtime.Gosched()` to avoid blocking the Go scheduler.
 
 ### SN — Snapshot
 
-**Responsibility:** Read view management per session, epoch registration, per-thread arena.
+**Responsibility:** Read view management per session, epoch registration, per-thread arena, version stack for multi-key reads.
 
 **Key behaviors:**
 - `NewReadView()`: create a new read view with the current `readTS` and a snapshot of version chain heads.
 - `Get(key)`: traverse the version chain for this key, find visible version.
 - `Close()`: release the read view's resources.
+- **Version stack (REQ000304):** `version_stack.go` maintains a stack of version nodes for a key, supporting multi-key reads with consistent snapshot semantics. The stack allows rolling back individual keys without traversing the full chain.
 
 ### VL — Validation
 

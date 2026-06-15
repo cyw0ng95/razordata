@@ -139,6 +139,7 @@ All files follow these conventions under the database root `<name>.razor/`:
 | `MF` | MetaFile: meta.razor read/write, magic validation |
 | `LF` | LogFile: WAL segment creation, rotation, handle pool |
 | `FS` | FileSystem: directory management, path validation, SyncDir |
+| `IO` | io_uring: Linux async I/O with poll-based completion queue, batched submissions, overlapped read/write for data files |
 
 ## Clusters
 
@@ -181,6 +182,16 @@ All files follow these conventions under the database root `<name>.razor/`:
 - `SyncDir` uses a cached directory FD from `dirFDs` map. On first call for a directory, opens the FD and caches it. On `fileManager.Close()`, all cached directory FDs are closed.
 - Path validation (via embedded `pathValidator`): reject any path containing `..` or symlinks. All paths resolved against the database root before use.
 - `Remove` unlinks a file; `List` uses `os.ReadDir` with glob pattern matching.
+
+### IO — io_uring
+
+**Responsibility:** Linux async I/O for data files using io_uring.
+
+**Key behaviors:**
+- `uring_linux.go` — registers an `io_uring` instance, submits batched `READ`/`WRITE`/`SYNC_FILE_RANGE` ops, polls CQEs for completion.
+- `uring_other.go` — stubs for non-Linux platforms (falls back to pread/pwrite).
+- Uses `syscall.IoringRegister` and `syscall.IoringSubmit` / `IoringWaitCqes` for low-latency AIO.
+- Designed to overlay on `DF` for data file reads — the block device can optionally use the io_uring path when available, providing overlapped I/O for parallel SST reads during compaction.
 
 ## Implementation Plan
 

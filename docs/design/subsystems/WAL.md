@@ -156,20 +156,23 @@ type replayer struct {
 
 | Cluster | Responsibility |
 |---|---|
-| `WR` | Writer: sequential append, log record encoding, segment rotation, LSN allocation |
+| `WR` | Writer: sequential append, log record encoding, segment rotation, LSN allocation, columnar WAL encoding (REQ000314), LZ4 compression (REQ000315), async write with callback |
 | `FL` | Flusher: fsync on commit, batch flush, write barrier coordination, LSN counter |
-| `RP` | Replay: WAL replay on startup, checkpoint detection, segment truncation |
+| `RP` | Replay: WAL replay on startup, checkpoint detection, segment truncation, parallel replay (REQ000316) |
 
 ## Clusters
 
 ### WR — Writer
 
-**Responsibility:** Sequential append, log record encoding, segment rotation, LSN allocation.
+**Responsibility:** Sequential append, log record encoding, segment rotation, LSN allocation, columnar WAL encoding, LZ4 compression.
 
 **Key behaviors:**
 - `Append(batch *WriteBatch)`: assign LSN, encode each record into `buf`, update `writeOff`.
 - When `writeOff >= SegmentSize`, close current segment, create new segment, update `seg`.
 - `Close()`: final `fsync`, close FD, clean up.
+- **Columnar WAL (REQ000314):** `columnar.go` / `columnar_decode.go` encode WAL records in a column-major format for faster replay of key-only scans.
+- **LZ4 compression (REQ000315):** `lz4/lz4.go` provides fast hardware-accelerated compression for WAL records. `header.go` stores a version + compression type byte in the segment header.
+- **Async write (REQ000317):** `wr.go` supports `AppendAsync()` with a completion callback for non-blocking writer callers.
 
 ### FL — Flusher
 
@@ -182,12 +185,13 @@ type replayer struct {
 
 ### RP — Replay
 
-**Responsibility:** WAL replay on startup, checkpoint detection, segment truncation.
+**Responsibility:** WAL replay on startup, checkpoint detection, segment truncation, parallel replay.
 
 **Key behaviors:**
 - `Replay()`: find last checkpoint, scan from checkpoint LSN, apply records in LSN order.
 - After replay: truncate clean segments before the checkpoint. Do not update the manifest — manifest state comes from the manifest file on startup.
 - If no checkpoint found (new database), initialize empty state.
+- **Parallel replay (REQ000316):** `parallel.go` splits WAL segments into key-range partitions and replays them in parallel via a worker pool. The replay result is merged into the in-memory state atomically.
 
 ## Implementation Plan
 
