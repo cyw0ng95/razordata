@@ -395,9 +395,9 @@ references specific code locations in the implementation.
   - [x] 25.4 Wire `validateCheck` into `Update.Next`
   - [x] 25.5 Wire `checkUnique` into `Update.Next`
 
-- [ ] 26. DEFAULT values on omitted columns (REQ000515) — still TBD
-  - [ ] 26.1 `fillDefaults` in `writers.go` — apply DEFAULT for BOOLEAN/INT/TEXT when INSERT omits column
-  - [ ] 26.2 Test: `INSERT INTO t (a) VALUES (1)` with `b INTEGER DEFAULT 0`
+- [x] 26. DEFAULT values on omitted columns (REQ000515)
+  - [x] 26.1 `fillDefaults` in `constraints.go` — `coerceDefault` coerces DEFAULT values to match column's token type
+  - [x] 26.2 Test: `TestBugfix_FillDefaults_TypeCoercion` — TEXT column with DEFAULT 1 gets "1"
 
 - [x] 27. CREATE TABLE AS SELECT (REQ000520)
   - [x] 27.1 `SQL/PS/ast.go` — add `CreateTableAsStmt`
@@ -405,9 +405,9 @@ references specific code locations in the implementation.
   - [x] 27.3 `NewCreateTableAs` operator in `writers.go`
   - [x] 27.4 Infer column types from SELECT result schema
 
-- [ ] 28. Composite PK (REQ000519) — still TBD
-  - [ ] 28.1 `ps.go:1704` — instead of error, accept and use first column as PK with warning
-  - [ ] 28.2 Test: `CREATE TABLE t (a INT, b INT, PRIMARY KEY (a, b))`
+- [x] 28. Composite PK (REQ000519)
+  - [x] 28.1 `ps.go:1750` — accept composite PK, use first column as PK, register remaining as UNIQUE
+  - [x] 28.2 Test: `TestBugfix_CompositePrimaryKey` — schema registration + NOT NULL on PK column
 
 - [ ] 29. Window function frame spec (REQ000530) — still TBD
   - [ ] 29.1 `window.go` — implement `RANGE BETWEEN ...` frame
