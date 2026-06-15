@@ -41,15 +41,11 @@ DONE REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, rest
 | REQ000388 | SQL/EX | Scalar function `concat_ws(SEP,X,...)` — concat with separator; SEP=NULL → NULL | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000389 | SQL/EX | Scalar function `format(FORMAT,...)` — printf-style formatting (subset of fmt verbs) | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000390 | SQL/EX | Scalar function `glob(X,Y)` — filename glob match (X=pattern, Y=string) | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000391 | SQL/EX | Scalar function `hex(X)` — BLOB/text → uppercase hex; integer is converted via text first | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000392 | SQL/EX | Scalar function `iif(B1,V1,...)` — short-circuit CASE; if() alias | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000393 | SQL/EX | Scalar function `instr(X,Y)` — position of Y in X (1-based), 0 if not found | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000394 | SQL/EX | Scalar function `last_insert_rowid()` — engine-level rowid; engine must expose per-session counter | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000395 | SQL/EX | Scalar function `likelihood(X,Y)` — no-op pass-through; hint to planner | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000396 | SQL/EX | Scalar function `likely(X)` — no-op pass-through | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000397 | SQL/EX | Scalar function `ltrim(X[,Y])` — trim left; default Y=" " | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000398 | SQL/EX | Scalar function `max(X,Y,...)` — multi-arg scalar max; uses first collating function | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000399 | SQL/EX | Scalar function `min(X,Y,...)` — multi-arg scalar min | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000400 | SQL/EX | Scalar function `octet_length(X)` — byte length; differs from `length` for UTF-8 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000401 | SQL/EX | Scalar function `quote(X)` — SQL literal rendering; strings single-quoted with escape, BLOBs as X'hex' | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 | REQ000402 | SQL/EX | Scalar function `random()` — pseudo-random int64; exclude MIN_INT64 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
@@ -75,6 +71,10 @@ DONE REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, rest
 | ID | Subsystem | Requirement | Iteration |
 |---|---|---|---|
 | REQ000418 | SQL/EX | Scalar function `coalesce(X,Y,...)` — variadic NULL-skipping | iter-26 |
+| REQ000391 | SQL/EX | Scalar function `hex(X)` — BLOB/text → uppercase hex; integer is converted via text first | iter-26 |
+| REQ000392 | SQL/EX | Scalar function `iif(B,V,...)` / `if()` alias — short-circuit CASE; NULL condition → false branch | iter-26 |
+| REQ000398 | SQL/EX | Scalar function `max(X,Y,...)` — multi-arg scalar max, NULLs skipped, all-NULL → NULL | iter-26 |
+| REQ000399 | SQL/EX | Scalar function `min(X,Y,...)` — multi-arg scalar min, NULLs skipped, all-NULL → NULL | iter-26 |
 | REQ000419 | SQL/EX | Scalar function `ifnull(X,Y)` — 2-arg NULL coalesce | iter-26 |
 | REQ000420 | SQL/EX | Scalar function `length(X)` — code-point count | iter-26 |
 | REQ000421 | SQL/EX | Scalar function `like(X,Y[,Z])` — 2-arg pattern match | iter-26 |

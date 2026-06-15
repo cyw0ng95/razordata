@@ -224,6 +224,14 @@ func isAggregateName(name string) bool {
 	return false
 }
 
+func isMinMaxName(name string) bool {
+	switch strings.ToUpper(name) {
+	case "MIN", "MAX":
+		return true
+	}
+	return false
+}
+
 func (p *Parser) parsePrimary() (Expr, error) {
 	switch p.current.Type {
 	case LX.T_INT:
@@ -305,17 +313,21 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			// spelled as plain identifiers in SQL. Route them
 			// through AggregateFunc so the executor's aggregate
 			// path handles them.
-			if isAggregateName(name) {
-				var arg Expr
-				if len(args) > 0 {
-					arg = args[0]
-				}
-				return &AggregateFunc{Name: name, Arg: arg, Distinct: distinct}, nil
+		if isAggregateName(name) {
+			// MIN/MAX with multiple args → scalar function
+			if len(args) > 1 && isMinMaxName(name) {
+				return &FunctionCall{Name: name, Args: args}, nil
 			}
+			var arg Expr
+			if len(args) > 0 {
+				arg = args[0]
+			}
+			return &AggregateFunc{Name: name, Arg: arg, Distinct: distinct}, nil
+		}
 			return &FunctionCall{Name: name, Args: args}, nil
 		}
 		return &Ident{Name: name}, nil
-	case LX.T_COUNT, LX.T_SUM, LX.T_AVG, LX.T_MIN, LX.T_MAX:
+	case LX.T_COUNT, LX.T_SUM, LX.T_AVG:
 		name := strings.ToUpper(p.current.Lexeme)
 		p.advance()
 		if err := p.expect(LX.T_LPAREN); err != nil {
@@ -346,6 +358,52 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		agg := &AggregateFunc{Name: name, Arg: arg, Distinct: distinct}
 		if p.current.Type == LX.T_OVER {
 			return p.parseWindowFunc(name, []Expr{arg})
+		}
+		return agg, nil
+	case LX.T_MIN, LX.T_MAX:
+		name := strings.ToUpper(p.current.Lexeme)
+		p.advance()
+		if err := p.expect(LX.T_LPAREN); err != nil {
+			return nil, err
+		}
+		p.advance()
+		// Handle DISTINCT keyword in aggregate functions
+		distinct := false
+		if p.current.Type == LX.T_DISTINCT {
+			distinct = true
+			p.advance()
+		}
+		var args []Expr
+		if p.current.Type == LX.T_STAR {
+			args = append(args, &StarExpr{})
+			p.advance()
+		} else if p.current.Type != LX.T_RPAREN {
+			a, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, a)
+			for p.current.Type == LX.T_COMMA {
+				p.advance()
+				a, err := p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, a)
+			}
+		}
+		if err := p.expect(LX.T_RPAREN); err != nil {
+			return nil, err
+		}
+		p.advance()
+		// MIN/MAX with multiple args → scalar function (e.g. max(a, b, c))
+		if len(args) > 1 {
+			return &FunctionCall{Name: name, Args: args}, nil
+		}
+		// Single arg → aggregate function
+		agg := &AggregateFunc{Name: name, Arg: args[0], Distinct: distinct}
+		if p.current.Type == LX.T_OVER {
+			return p.parseWindowFunc(name, args)
 		}
 		return agg, nil
 	case LX.T_ROW_NUMBER, LX.T_RANK, LX.T_DENSE_RANK, LX.T_LAG, LX.T_LEAD, LX.T_FIRST_VALUE, LX.T_LAST_VALUE, LX.T_NTH_VALUE:
