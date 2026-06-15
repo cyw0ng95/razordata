@@ -89,6 +89,10 @@ func UnregisterAll() {
 	registeredIndexes = map[string][]RegisteredIndex{}
 	viewRegistry = map[string]*PS.Select{}
 	storeMu.Unlock()
+	triggerMu.Lock()
+	triggerReg = map[string]*PS.TriggerStmt{}
+	tableTriggers = map[string][]*PS.TriggerStmt{}
+	triggerMu.Unlock()
 }
 
 func cloneRow(r Row) Row {
