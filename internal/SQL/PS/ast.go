@@ -223,6 +223,7 @@ type CreateTable struct {
 	PK                *string
 	UniqueConstraints []UniqueKey
 	ForeignKeys       []ForeignKeyConstraint // REQ000126
+	Select            *Select                // non-nil for CREATE TABLE AS SELECT (REQ000520)
 }
 
 // ForeignKeyConstraint represents a table-level FOREIGN KEY constraint.

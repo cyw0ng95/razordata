@@ -784,12 +784,20 @@ func (t *Trigger) WithParams(p []interface{}) Operator { return t }
 func (t *Trigger) RowsAffected() int64                 { return 0 }
 
 type CreateTable struct {
-	stmt *PS.CreateTable
-	done bool
+	stmt       *PS.CreateTable
+	done       bool
+	selectPlan Operator // non-nil for CREATE TABLE AS SELECT (REQ000520)
 }
 
 func NewCreateTable(stmt *PS.CreateTable) *CreateTable {
 	return &CreateTable{stmt: stmt}
+}
+
+// NewCreateTableAs builds a CREATE TABLE AS SELECT operator. The
+// selectPlan is the planned SELECT tree that produces the rows to
+// insert into the new table. REQ000520.
+func NewCreateTableAs(stmt *PS.CreateTable, selectPlan Operator) *CreateTable {
+	return &CreateTable{stmt: stmt, selectPlan: selectPlan}
 }
 
 func (c *CreateTable) Next(ctx context.Context) (Row, error) {
@@ -797,6 +805,14 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 		return Row{}, ErrNoRows
 	}
 	c.done = true
+
+	// CREATE TABLE AS SELECT (REQ000520): the schema comes from
+	// the SELECT output. Register the table, run the SELECT, and
+	// insert rows.
+	if c.stmt.Select != nil && c.selectPlan != nil {
+		return c.nextAsSelect(ctx)
+	}
+
 	tablesMu.Lock()
 	if _, ok := tables[c.stmt.Name]; ok {
 		tablesMu.Unlock()
@@ -950,7 +966,52 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 }
 
 func (c *CreateTable) Close() error {
+	if c.selectPlan != nil {
+		return c.selectPlan.Close()
+	}
 	return nil
+}
+
+// nextAsSelect implements CREATE TABLE AS SELECT: register the
+// table using the SELECT's output schema, then iterate the SELECT
+// plan and insert each row. REQ000520.
+func (c *CreateTable) nextAsSelect(ctx context.Context) (Row, error) {
+	// Read first row to discover schema.
+	firstRow, err := c.selectPlan.Next(ctx)
+	if err != nil {
+		if err == ErrNoRows {
+			// Empty SELECT: register table with no columns.
+			tablesMu.Lock()
+			tables[c.stmt.Name] = []Row{}
+			schemas[c.stmt.Name] = nil
+			tablesMu.Unlock()
+			return Row{}, ErrNoRows
+		}
+		return Row{}, err
+	}
+	cols := append([]string(nil), firstRow.Cols...)
+	tablesMu.Lock()
+	if _, ok := tables[c.stmt.Name]; ok {
+		tablesMu.Unlock()
+		return Row{}, errTableExists
+	}
+	tables[c.stmt.Name] = []Row{firstRow}
+	schemas[c.stmt.Name] = cols
+	tablesMu.Unlock()
+	// Drain remaining rows.
+	for {
+		row, err := c.selectPlan.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return Row{}, err
+		}
+		tablesMu.Lock()
+		tables[c.stmt.Name] = append(tables[c.stmt.Name], row)
+		tablesMu.Unlock()
+	}
+	return Row{}, ErrNoRows
 }
 
 type DropTable struct {

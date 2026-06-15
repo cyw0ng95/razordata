@@ -591,3 +591,67 @@ func TestBugfix_UniqueOnUpdate(t *testing.T) {
 		t.Errorf("RowsAffected = %d, want 1", res.RowsAffected)
 	}
 }
+
+// TestBugfix_CreateTableAsSelect covers REQ000520: CREATE TABLE AS
+// SELECT creates a new table populated with the SELECT query results.
+func TestBugfix_CreateTableAsSelect(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("src", []string{"id", "name"})
+	ctx := context.Background()
+
+	if _, err := ex.Exec(ctx, "INSERT INTO src VALUES (1, 'alice')"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := ex.Exec(ctx, "INSERT INTO src VALUES (2, 'bob')"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// CTAS: copy all rows from src into a new table.
+	_, err := ex.Exec(ctx, "CREATE TABLE dst AS SELECT * FROM src")
+	if err != nil {
+		t.Fatalf("ctas: %v", err)
+	}
+
+	// Verify dst has the same rows.
+	rows, err := ex.QueryAll(ctx, "SELECT id, name FROM dst ORDER BY id")
+	if err != nil {
+		t.Fatalf("query dst: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows in dst, got %d", len(rows))
+	}
+	if rows[0].Data[0].(int64) != 1 || rows[0].Data[1].(string) != "alice" {
+		t.Errorf("row 0: %v", rows[0].Data)
+	}
+	if rows[1].Data[0].(int64) != 2 || rows[1].Data[1].(string) != "bob" {
+		t.Errorf("row 1: %v", rows[1].Data)
+	}
+
+	// CTAS with WHERE filter.
+	_, err = ex.Exec(ctx, "CREATE TABLE dst2 AS SELECT * FROM src WHERE id = 1")
+	if err != nil {
+		t.Fatalf("ctas filtered: %v", err)
+	}
+	rows, err = ex.QueryAll(ctx, "SELECT id, name FROM dst2")
+	if err != nil {
+		t.Fatalf("query dst2: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row in dst2, got %d", len(rows))
+	}
+
+	// CTAS with specific columns.
+	_, err = ex.Exec(ctx, "CREATE TABLE dst3 AS SELECT name FROM src WHERE id = 2")
+	if err != nil {
+		t.Fatalf("ctas cols: %v", err)
+	}
+	rows, err = ex.QueryAll(ctx, "SELECT name FROM dst3")
+	if err != nil {
+		t.Fatalf("query dst3: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Data[0].(string) != "bob" {
+		t.Errorf("dst3: %v", rows[0].Data)
+	}
+}
