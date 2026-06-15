@@ -2,15 +2,10 @@
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 |---|---|---|---|---|---|---|
-| REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | medium | M | iter-04 (bloom) | `ENG/LS/sst_writer.go`, `ENG/LS/sst_reader.go` — align with design spec |
-| REQ000159 | TXN | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | medium | M | iter-05 (arena) | `TXN/MV/arena.go` — add lazy init, exhaustion handling |
-| REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | medium | M | iter-04 (compaction) | `ENG/LS/compaction.go` — size budget monitoring |
 | REQ000034 | WAL | WAL compression (lz4) | low | M | iter-03 (WAL writer) | `WAL/WR/encode.go` |
-| REQ000045 | ENG | Secondary indexes (non-PK columns; lookup by `__idx__:<table>:<col>:<val>`) | low | XL | iter-12 (catalog), iter-21 (ID) | new `ENG/ID/` package, `SQL/PL` index selection |
 | REQ000048 | ENG | Table registry persistence (`ENG/TB/`) | medium | L | iter-12 (catalog basic) | new `ENG/TB/tb.go` |
 | REQ000064 | TXN | Generational arena (reduce GC pressure vs. single allocation) | low | L | iter-05 (arena) | `TXN/MV/arena.go` |
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | low | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
-| REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000305 | TXN | Generational arena with Young/Old split (young bump-allocate, old epoch-reclaim; reduces epoch manager pressure) | medium | L | iter-05 (arena), `REQ000064` | `TXN/MV/arena.go` — generation promotion policy |
 | REQ000307 | TXN | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | critical | XL | iter-20 (commit protocol), `REQ000175` | `TXN/MV/occ.go` (new) — `Validation` phase rewritten; conflict-free reorder |
 | REQ000311 | SQL | Operator codegen (`go generate` template → specialized Go funcs; inline caches eliminate virtual dispatch) | medium | XL | REQ000310, iter-08 (operators) | `SQL/EX/codegen/` (new) — templated operator skeletons; build tag for codegen |
@@ -18,30 +13,35 @@
 | REQ000315 | SQL | Learned cardinality estimation (CardinalityNet/MSCN; bootstraps from existing histograms) | medium | L | REQ000085 (histogram), iter-23 (ANALYZE) | `SQL/PL/learned.go` (new) — ONNX runtime or pure-Go MLP; training data from ANALYZE |
 | REQ000316 | SQL | Incremental materialized views (auto-maintained aggregation views with query routing) | medium | L | iter-08 (operators), iter-12 (catalog) | `SQL/EX/matview.go` (new); `ENG/LS` triggers on view base tables |
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
-| REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | low | XL | iter-25 surfacing (edge probe `TestEdge_Expressions`) | `SQL/EX/eval.go` function dispatch table |
 | REQ000444 | SQL/EX | UPDATE deadlock / lock leak — second UPDATE on the same table hangs until ctx deadline; first UPDATE returns quickly (repro: in `evidence/slt_lang_update.test` and any direct `UPDATE ... ; UPDATE ...` sequence). Likely a write lock or MVCC version-chain issue. Discovered via `TestSLT_Each/slt_lang_update.test` (15 fails) | high | M | iter-26 (EX lock chain) | `SQL/EX/` — UPDATE executor / lock acquisition path; check row-level write lock release after first UPDATE completes |
 | REQ000446 | SQL/EX | Scalar `IN (literal-list)` returns 0 rows — `SELECT 1 IN (2)` and `SELECT 1 IN (2,3,4)` both return zero rows; SQLite returns one row containing 0/1. Discovered via `TestSLT_Each/in1.test` and `in2.test` | medium | M | iter-26 (EX IN) | `SQL/EX/expr.go` — `expr IN (list)` should evaluate to a single boolean result row, not an empty set; also affects `NOT IN` |
 | REQ000447 | SQL/EX | `count(DISTINCT x)`, `avg(DISTINCT x)`, `sum(DISTINCT x)` return wrong values — `count(DISTINCT x)` over {1, 0, NULL} returns 4 instead of 2 (distinct non-null values). Discovered via `TestSLT_Each/slt_lang_aggfunc.test` (L28) | medium | M | iter-26 (agg DISTINCT) | `SQL/EX/aggregate.go` — DISTINCT should de-dup the input rows per group, ignoring NULLs the same way non-DISTINCT aggregates already do |
 | REQ000449 | SQL/PS | `INSERT OR REPLACE` and standalone `REPLACE INTO` not supported in the parser — fails with "expected INTO, got OR". Discovered via `TestSLT_Each/slt_lang_replace.test` (L38) | low | S | iter-26 (UPSERT) | `SQL/PS/ps.go` — extend `parseInsert` to accept `OR REPLACE` / `OR ABORT` / etc. conflict resolution clauses; or add a `parseReplace` for the `REPLACE INTO` form |
 | REQ000450 | SQL/PS | `CREATE TEMP VIEW` not supported — parser expects `CREATE TABLE` after `CREATE TEMP` and fails with "expected TABLE, got identifier". Discovered via `TestSLT_Each/slt_lang_createview.test` (L48) | low | S | iter-26 | `SQL/PS/ps.go` `parseCreateView` — accept optional `TEMP`/`TEMPORARY` keyword between `CREATE` and `VIEW`; semantics: same as `CREATE VIEW` for v1 |
-| REQ000384 | SQL/EX | Scalar function `abs(X)` — returns absolute value, NULL→NULL, string→0.0, MIN_INT64→error | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000385 | SQL/EX | Scalar function `changes()` — last INSERT/UPDATE/DELETE row count; not yet wired to session state | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000401 | SQL/EX | Scalar function `quote(X)` — SQL literal rendering; strings single-quoted with escape, BLOBs as X'hex' | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000402 | SQL/EX | Scalar function `random()` — pseudo-random int64; exclude MIN_INT64 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000403 | SQL/EX | Scalar function `randomblob(N)` — N-byte random BLOB | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000404 | SQL/EX | Scalar function `replace(X,Y,Z)` — string substitution; Y="" returns X unchanged | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000405 | SQL/EX | Scalar function `round(X[,Y])` — round to Y decimal places; Y default 0; Y<0 → 0 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000406 | SQL/EX | Scalar function `rtrim(X[,Y])` — trim right; default Y=" " | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000407 | SQL/EX | Scalar function `sign(X)` — -1/0/+1 or NULL for non-numeric | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000408 | SQL/EX | Scalar function `soundex(X)` — soundex encoding; "?000" for non-ASCII / NULL | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000409 | SQL/EX | Scalar function `sqlite_source_id()` — fixed string for v1 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000410 | SQL/EX | Scalar function `sqlite_version()` — fixed string for v1 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
-| REQ000411 | SQL/EX | Scalar function `total_changes()` — cumulative row-change count since connection open | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 
 ## DONE
 
 | ID | Subsystem | Requirement | Iteration |
 |---|---|---|---|
+| REQ000148 | ENG | BloomFilter double-hashing with FNV-1a seeds (documented in design but implementation uses different hash) | iter-04 (bloom) |
+| REQ000159 | TXN | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | iter-05 (arena) |
+| REQ000165 | ENG | Compaction job scheduling based on level size budget (design mentions, verify trigger logic) | iter-04 (compaction) |
+| REQ000045 | ENG | Secondary indexes (non-PK columns; lookup by `__idx__:<table>:<col>:<val>`) | iter-12 (catalog), iter-21 (ID) |
+| REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | iter-12 (catalog) |
+| REQ000349 | SQL/PS | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | iter-25 surfacing (edge probe `TestEdge_Expressions`) |
+| REQ000384 | SQL/EX | Scalar function `abs(X)` — returns absolute value, NULL→NULL, string→0.0, MIN_INT64→error | iter-26 |
+| REQ000385 | SQL/EX | Scalar function `changes()` — last INSERT/UPDATE/DELETE row count; not yet wired to session state | iter-26 |
+| REQ000401 | SQL/EX | Scalar function `quote(X)` — SQL literal rendering; strings single-quoted with escape, BLOBs as X'hex' | iter-26 |
+| REQ000402 | SQL/EX | Scalar function `random()` — pseudo-random int64; exclude MIN_INT64 | iter-26 |
+| REQ000403 | SQL/EX | Scalar function `randomblob(N)` — N-byte random BLOB | iter-26 |
+| REQ000404 | SQL/EX | Scalar function `replace(X,Y,Z)` — string substitution; Y="" returns X unchanged | iter-26 |
+| REQ000405 | SQL/EX | Scalar function `round(X[,Y])` — round to Y decimal places; Y default 0; Y<0 → 0 | iter-26 |
+| REQ000406 | SQL/EX | Scalar function `rtrim(X[,Y])` — trim right; default Y=" " | iter-26 |
+| REQ000407 | SQL/EX | Scalar function `sign(X)` — -1/0/+1 or NULL for non-numeric | iter-26 |
+| REQ000408 | SQL/EX | Scalar function `soundex(X)` — soundex encoding; "?000" for non-ASCII / NULL | iter-26 |
+| REQ000409 | SQL/EX | Scalar function `sqlite_source_id()` — fixed string for v1 | iter-26 |
+| REQ000410 | SQL/EX | Scalar function `sqlite_version()` — fixed string for v1 | iter-26 |
+| REQ000411 | SQL/EX | Scalar function `total_changes()` — cumulative row-change count since connection open | iter-26 |
 | REQ000162 | SQL | Plan memoization with SHA256(AST binary encoding) | iter-08 |
 | REQ000185 | SQL/EX | Plan memoization with SHA256 canonical AST binary encoding (not JSON) | iter-08 |
 | REQ000086 | SQL | Parallel query execution (operators in goroutines, merge via channel) | iter-08 |
@@ -137,7 +137,7 @@
 | REQ000346 | SQL/EX | Test isolation: EX package-level maps reset | iter-26 |
 | REQ000347 | ENG | Silent data loss in LSM flush path | iter-26 |
 | REQ000357 | SQL/EX | SELECT without FROM returns 0 rows — wrap in Values op when `s.From==""` | iter-26.1 (v0.26.3) |
-| REQ000359 | SQL/EX | String concat NULL semantics — `'a' \|\| NULL` returns NULL | iter-26.1 (v0.26.3) |
+| REQ000359 | SQL/EX | String concat NULL semantics — `'a' \ | iter-26.1 (v0.26.3) |
 | REQ000360 | SQL/EX | Arithmetic NULL semantics — `10 + NULL` returns NULL | iter-26.1 (v0.26.3) |
 | REQ000361 | SQL/EX | IS NULL / IS NOT NULL semantics — `NULL IS NULL` true, `NULL IS NOT NULL` false | iter-26.1 (v0.26.3) |
 | REQ000362 | SQL/EX | Comparison with NULL — `5 = NULL` returns NULL | iter-26.1 (v0.26.3) |
@@ -356,7 +356,7 @@
 | REQ000270 | SQL/PS | FETCH FIRST n ROWS ONLY | iter-24 |
 | REQ000242 | SYS | Pragmas (cache_size, journal_mode, synchronous) | iter-24 |
 | REQ000323 | TEST | SQLLogicTest corpus mirror as git submodule (`tests/sqlcmp/corpus` from `MarvBeer/sqlite-test-suite`); build-tag-gated fetch | iter-25 |
-| REQ000324 | TEST | SLT test file parser (`statement ok\|error`, `query <types> <sort> <label>`, `halt`, `hash-threshold`, `skipif`, `onlyif`; tolerant, line-oriented) | iter-25 |
+| REQ000324 | TEST | SLT test file parser (`statement ok\ | iter-25 |
 | REQ000325 | TEST | Driver interface (`Connect`/`Close`/`Exec`/`Query`; returns `ResultSet` with typed `Value` cells) | iter-25 |
 | REQ000326 | TEST | Razordata driver implementation wrapping public `internal/SYS.Engine` API; SQL errors classified as `skipped` not `failed` | iter-25 |
 | REQ000327 | TEST | SLT runner + type-aware result diff (`T`/`I`/`R`/`NULL`; `nosort`/`rowsort`/`valuesort`; `label` grouping) | iter-25 |
