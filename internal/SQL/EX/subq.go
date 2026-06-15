@@ -25,9 +25,9 @@ func (o *outerInjector) Close() error {
 }
 
 // injectOuter walks the operator tree and wraps every SeqScan
-// so that rows produced inside the subquery have Outer set
-// before any Filter/Project sees them. Returns the (possibly
-// new) root.
+// and IndexScan so that rows produced inside the subquery have
+// Outer set before any Filter/Project sees them. Returns the
+// (possibly new) root.
 func injectOuter(op Operator, outer *Row) Operator {
 	if outer == nil {
 		return op
@@ -48,6 +48,8 @@ func injectOuter(op Operator, outer *Row) Operator {
 	switch v := op.(type) {
 	case *SeqScan:
 		return &outerInjector{child: v, outer: outer}
+	case *IndexScan:
+		return &outerInjector{child: v, outer: outer}
 	case *Filter:
 		v.child = injectOuter(v.child, outer)
 		return v
@@ -65,6 +67,14 @@ func injectOuter(op Operator, outer *Row) Operator {
 		return v
 	case *Aggregate:
 		v.child = injectOuter(v.child, outer)
+		return v
+	case *NestedLoopJoin:
+		v.left = injectOuter(v.left, outer)
+		v.right = injectOuter(v.right, outer)
+		return v
+	case *HashJoin:
+		v.left = injectOuter(v.left, outer)
+		v.right = injectOuter(v.right, outer)
 		return v
 	}
 	return op

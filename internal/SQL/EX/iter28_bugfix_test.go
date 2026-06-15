@@ -503,3 +503,48 @@ func TestBugfix_ExecReturningCount(t *testing.T) {
 		t.Errorf("update no returning: RowsAffected = %d, want 2", res.RowsAffected)
 	}
 }
+
+// TestBugfix_CorrelatedSubqueryWithIndex covers REQ000525: when the
+// inner table of a correlated subquery has a registered index, the
+// planner may choose IndexScan. injectOuter must handle IndexScan to
+// inject the outer row reference.
+func TestBugfix_CorrelatedSubqueryWithIndex(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t1", []string{"id", "val"})
+	ex.RegisterTable("t2", []string{"ref"})
+	ex.RegisterIndex("t2", "idx_ref", []string{"ref"})
+	ctx := context.Background()
+
+	for _, sql := range []string{
+		"INSERT INTO t1 VALUES (1, 'a')",
+		"INSERT INTO t1 VALUES (2, 'b')",
+		"INSERT INTO t1 VALUES (3, 'c')",
+		"INSERT INTO t2 VALUES (1)",
+		"INSERT INTO t2 VALUES (3)",
+	} {
+		if _, err := ex.Exec(ctx, sql); err != nil {
+			t.Fatalf("seed: %s: %v", sql, err)
+		}
+	}
+
+	// Use unqualified column references so the existing Eval
+	// lookup works (table.qualified names need outer row columns
+	// stored with table prefix, which rows don't carry).
+	rows, err := ex.QueryAll(ctx,
+		"SELECT val FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE ref = id)")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+	got := map[string]bool{}
+	for _, r := range rows {
+		got[r.Data[0].(string)] = true
+	}
+	if !got["a"] || !got["c"] {
+		t.Errorf("unexpected: %v", got)
+	}
+}
