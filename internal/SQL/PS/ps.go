@@ -322,10 +322,17 @@ func (p *Parser) parsePrimary() (Expr, error) {
 				if len(args) > 0 {
 					arg = args[0]
 				}
-				return &AggregateFunc{Name: name, Arg: arg, Distinct: distinct}, nil
+			// REQ000523: GROUP_CONCAT with optional separator
+			// GROUP_CONCAT(col, sep) stores the second arg as
+			// the separator expression.
+			var sep Expr
+			if name == "GROUP_CONCAT" && len(args) > 1 {
+				sep = args[1]
 			}
-			return &FunctionCall{Name: name, Args: args}, nil
+			return &AggregateFunc{Name: name, Arg: arg, Distinct: distinct, Separator: sep}, nil
 		}
+		return &FunctionCall{Name: name, Args: args}, nil
+	}
 		return &Ident{Name: name}, nil
 	case LX.T_COUNT, LX.T_SUM, LX.T_AVG:
 		name := strings.ToUpper(p.current.Lexeme)

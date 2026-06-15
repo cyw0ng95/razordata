@@ -315,7 +315,19 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 		}
 		return best, nil
 	case "GROUP_CONCAT":
+		// REQ000523: GROUP_CONCAT optional separator. If the
+		// parser provided a separator expression, evaluate it
+		// once; otherwise default to ",".
 		sep := ","
+		if agg.Separator != nil {
+			sv, err := Eval(agg.Separator, nil, params)
+			if err != nil {
+				return nil, err
+			}
+			if sv != nil {
+				sep = fmt.Sprintf("%v", sv)
+			}
+		}
 		var parts []string
 		seen := make(map[interface{}]bool)
 		for _, r := range rows {

@@ -92,9 +92,10 @@ type FunctionCall struct {
 func (f *FunctionCall) exprNode() {}
 
 type AggregateFunc struct {
-	Name     string
-	Arg      Expr
-	Distinct bool
+	Name      string
+	Arg       Expr
+	Distinct  bool
+	Separator Expr // REQ000523: GROUP_CONCAT optional separator
 }
 
 func (a *AggregateFunc) exprNode() {}

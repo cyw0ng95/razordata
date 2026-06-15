@@ -428,12 +428,12 @@ references specific code locations in the implementation.
   - [x] 32.2 `NewExplain` operator that runs the inner plan and returns plan text as single column
   - [x] 32.3 Test: `EXPLAIN SELECT * FROM t1` (TestBugfix_Explain_ReturnsPlan)
 
-- [ ] 33. Miscellaneous cleanup (REQ000521-524, 529) — still TBD
-  - [ ] 33.1 `Offset` then `Limit` order fix in `planner.go`
-  - [ ] 33.2 `Distinct` after `Limit` pushdown
-  - [ ] 33.3 `GROUP_CONCAT` separator support
-  - [ ] 33.4 `COUNT(*)` empty-set zero handling
-  - [ ] 33.5 `INDEXED BY` / `NOT INDEXED` parser support
+- [ ] 33. Miscellaneous cleanup (REQ000521-524, 529) — partially done
+  - [ ] 33.1 `Offset` then `Limit` order fix in `planner.go` (REQ000521)
+  - [ ] 33.2 `Distinct` after `Limit` pushdown (REQ000522)
+  - [x] 33.3 `GROUP_CONCAT` separator support (REQ000523) — `AggregateFunc.Separator` field + parser passes 2nd arg
+  - [ ] 33.4 `COUNT(*)` empty-set zero handling (REQ000524)
+  - [ ] 33.5 `INDEXED BY` / `NOT INDEXED` parser support (REQ000529)
 
 - [x] 34. Bugfix tests
   - [x] 34.1 Each new behavior: table-driven test in `internal/SQL/EX/`

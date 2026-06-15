@@ -56,7 +56,6 @@
 | REQ000519 | SQL/PS | Composite PRIMARY KEY in CREATE TABLE error message is the only handling — `ps.go:1704` returns error "composite PRIMARY KEY not supported". Should at least accept and treat the first column as the primary key | low | S | iter-28 | `SQL/PS/ps.go:1704` — accept composite PK, use first column as PK with warning |
 | REQ000521 | SQL/EX | `Offset` then `Limit` order bug — `planner.go:639-653` applies Offset before Limit; if Offset is larger than remaining rows the LIMIT yields nothing rather than just stopping at limit | low | S | iter-28 | `SQL/EX/planner.go:639-653` — review Offset/Limit ordering |
 | REQ000522 | SQL/EX | `Distinct` operator after `Limit` doesn't push down — `planner.go:635-637` applies Distinct only when there's no aggregate; combined with LIMIT pushdown this can give wrong counts when LIMIT < distinct count | low | S | iter-28 | `SQL/EX/planner.go:635-637` — push Distinct before Limit when applicable |
-| REQ000523 | SQL/EX | `GROUP_CONCAT` separator not configurable — hard-coded `,`; SQLite allows `GROUP_CONCAT(x, sep)` with custom separator | low | S | iter-28 | `SQL/EX/eval.go` `evalAggregate` — accept 2nd arg for separator |
 | REQ000524 | SQL/EX | `COUNT(*)` returns nil for empty set instead of 0 — three-valued logic edge case in `evalAggregate` | medium | S | iter-28 | `SQL/EX/eval.go` `evalAggregate` — return 0 for empty set on `COUNT(*)` |
 | REQ000526 | SQL/EX | `EXPLAIN` returns empty result — `buildWriterOp` lacks EXPLAIN case; falls through to default error. SLT `slt_lang_explain.test` extensively uses EXPLAIN | medium | S | iter-28 | `SQL/EX/ex.go` `buildWriterOp` — add EXPLAIN case; `NewExplain` operator |
 | REQ000527 | SQL/EX | `ANALYZE t1` no-op — `analyze.go` exists but doesn't update `stats.go` row count; subsequent `estimateCost` uses stale statistics | low | S | iter-28 | `SQL/EX/analyze.go` + `SQL/EX/stats.go` — update row count on ANALYZE |
@@ -450,7 +449,9 @@
 | REQ000457 | SQL/EX | Package-level EX state complete cleanup — `UnregisterAll()` clears `triggerReg` and `tableTriggers` maps | iter-28 |
 | REQ000459 | SQL/EX | NULL three-valued logic in IN/NOT IN — `evalIn` returns nil (UNKNOWN) when target is NULL; tracks NULL list elements and returns nil instead of false when no match found and any list element was NULL; `evalInSubquery` same NULL tracking for subquery results | iter-27 |
 | REQ000454 | SQL/PL | JOIN duplicate rows — `PL/memo.go` `writeStmt` missing `Joins`, `GroupBy`, `Having`, `SubqueryFrom` fields in `Select` serialization; caused different join queries (INNER ON vs CROSS) to share the same plan memo key, reusing stale ON-filtered plan; added missing field serialization | iter-27 |
+| REQ000462 | SQL/EX | Scalar function `typeof(X)` — returns type name string | iter-28 |
 | REQ000476 | SQL/EX | TRUNCATE TABLE parsing + execution routed | iter-28 |
+| REQ000523 | SQL/EX | `GROUP_CONCAT(x, sep)` configurable separator — 2nd arg parsed as separator expression in `AggregateFunc.Separator`; `evalAggregateOver` evaluates it once; default `,` when nil | iter-28 |
 | REQ000478 | SQL/EX | REINDEX routed (no-op stub) | iter-28 |
 | REQ000481 | SQL/EX | EXPLAIN statement execution path | iter-28 |
 | REQ000487 | SQL/EX | VACUUM routed in buildWriterOp | iter-28 |
