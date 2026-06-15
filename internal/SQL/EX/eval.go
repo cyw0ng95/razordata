@@ -153,12 +153,27 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []interface{}) (interface{}, 
 		}
 		return !equalValue(left, right), nil
 	case int(LX.T_LT):
+		// REQ000445: SQL three-valued logic — comparison
+		// with NULL yields UNKNOWN, not FALSE. Returning
+		// nil makes the WHERE filter drop the row.
+		if left == nil || right == nil {
+			return nil, nil
+		}
 		return compare(left, right) < 0, nil
 	case int(LX.T_LE):
+		if left == nil || right == nil {
+			return nil, nil
+		}
 		return compare(left, right) <= 0, nil
 	case int(LX.T_GT):
+		if left == nil || right == nil {
+			return nil, nil
+		}
 		return compare(left, right) > 0, nil
 	case int(LX.T_GE):
+		if left == nil || right == nil {
+			return nil, nil
+		}
 		return compare(left, right) >= 0, nil
 	case int(LX.T_PLUS):
 		if _, ok := right.(*IntervalValue); ok {

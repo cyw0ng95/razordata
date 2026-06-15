@@ -10,7 +10,7 @@ import (
 
 func TestRunner_StatementOK(t *testing.T) {
 	d := &mockDriver{execErr: nil, queryOut: &ResultSet{}}
-	r := NewRunner(d, nil)
+	r := NewRunner(d, nil, "")
 	recs, _ := Parse(strings.NewReader("statement ok\nCREATE TABLE t (a INT)\n"))
 	stats := r.Run(context.Background(), recs)
 	if stats.Passed != 1 || stats.Failed != 0 {
@@ -20,7 +20,7 @@ func TestRunner_StatementOK(t *testing.T) {
 
 func TestRunner_StatementError(t *testing.T) {
 	d := &mockDriver{execErr: errTest}
-	r := NewRunner(d, nil)
+	r := NewRunner(d, nil, "")
 	recs, _ := Parse(strings.NewReader("statement error\nGARBAGE\n"))
 	stats := r.Run(context.Background(), recs)
 	if stats.Passed != 1 {
@@ -30,7 +30,7 @@ func TestRunner_StatementError(t *testing.T) {
 
 func TestRunner_StatementOK_EngineRejects(t *testing.T) {
 	d := &mockDriver{execErr: errTest}
-	r := NewRunner(d, nil)
+	r := NewRunner(d, nil, "")
 	recs, _ := Parse(strings.NewReader("statement ok\nCREATE TABLE t (a INT)\n"))
 	stats := r.Run(context.Background(), recs)
 	if stats.Failed != 1 {
@@ -41,7 +41,7 @@ func TestRunner_StatementOK_EngineRejects(t *testing.T) {
 func TestRunner_ClassifierSkips(t *testing.T) {
 	d := &mockDriver{execErr: errUnsupported}
 	c := fixedClassifier{verdict: VerdictSkipped}
-	r := NewRunner(d, c)
+	r := NewRunner(d, c, "")
 	recs, _ := Parse(strings.NewReader("statement ok\nSELECT * FROM nope\n"))
 	stats := r.Run(context.Background(), recs)
 	if stats.Skipped != 1 || stats.Failed != 0 {
@@ -56,7 +56,7 @@ func TestRunner_QueryPass(t *testing.T) {
 			Rows:    [][]Value{{Value{Kind: TypeInteger, Int: 42}}},
 		},
 	}
-	r := NewRunner(d, nil)
+	r := NewRunner(d, nil, "")
 	recs, _ := Parse(strings.NewReader("query I\nSELECT 42\n----\n42\n"))
 	stats := r.Run(context.Background(), recs)
 	if stats.Passed != 1 {
@@ -71,7 +71,7 @@ func TestRunner_QueryFail(t *testing.T) {
 			Rows:    [][]Value{{Value{Kind: TypeInteger, Int: 99}}},
 		},
 	}
-	r := NewRunner(d, nil)
+	r := NewRunner(d, nil, "")
 	recs, _ := Parse(strings.NewReader("query I\nSELECT 42\n----\n42\n"))
 	stats := r.Run(context.Background(), recs)
 	if stats.Failed != 1 {
@@ -96,7 +96,7 @@ func TestRunner_LabelEnforced(t *testing.T) {
 			}, nil
 		},
 	}
-	r := NewRunner(d, nil)
+	r := NewRunner(d, nil, "")
 	src := `query I label-xy
 SELECT 1
 ----
@@ -119,7 +119,7 @@ func TestRunner_HaltShortCircuits(t *testing.T) {
 		Columns: []string{"x"},
 		Rows:    [][]Value{{Value{Kind: TypeInteger, Int: 1}}},
 	}}
-	r := NewRunner(d, nil)
+	r := NewRunner(d, nil, "")
 	src := `query I
 SELECT 1
 ----
@@ -147,7 +147,7 @@ func TestDiff_ExactMatch(t *testing.T) {
 			{Value{Kind: TypeInteger, Int: 2}},
 		},
 	}}
-	r := NewRunner(d, nil)
+	r := NewRunner(d, nil, "")
 	src := "query I rowsort\nSELECT x\n----\n1\n2\n"
 	recs, _ := Parse(strings.NewReader(src))
 	stats := r.Run(context.Background(), recs)
@@ -166,7 +166,7 @@ func TestDiff_HashedMatch(t *testing.T) {
 			{Value{Kind: TypeInteger, Int: 3}},
 		},
 	}}
-	r := NewRunner(d, nil)
+	r := NewRunner(d, nil, "")
 	// Build the expected hash the same way diffHashed does.
 	var flat []Value
 	for _, row := range d.queryOut.Rows {
