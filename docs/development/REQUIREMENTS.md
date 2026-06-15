@@ -11,9 +11,9 @@ DONE REQ000185 | SQL/EX | Plan memoization with SHA256 canonical AST binary enco
 | REQ000045 | ENG | Secondary indexes (non-PK columns; lookup by `__idx__:<table>:<col>:<val>`) | low | XL | iter-12 (catalog), iter-21 (ID) | new `ENG/ID/` package, `SQL/PL` index selection |
 | REQ000048 | ENG | Table registry persistence (`ENG/TB/`) | medium | L | iter-12 (catalog basic) | new `ENG/TB/tb.go` |
 | REQ000064 | TXN | Generational arena (reduce GC pressure vs. single allocation) | low | L | iter-05 (arena) | `TXN/MV/arena.go` |
-| REQ000086 | SQL | Parallel query execution (operators in goroutines, merge via channel) | low | XL | iter-08 (operators) | `SQL/EX/ex.go` — channel-based Next; cancellation hygiene |
+DONE REQ000086 | SQL | Parallel query execution (operators in goroutines, merge via channel) | low | XL | iter-08 (operators) | `SQL/EX/ex.go` — channel-based Next; cancellation hygiene |
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | low | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
-| REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
+DONE REQ000128 | OPS | Point-in-time backup / restore (snapshot engine dir, restore to a copy) | medium | M | iter-03 (WAL), iter-04 (manifest) | new `SYS/BK/bk.go`; document procedure |
 | REQ000129 | OPS | Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | low | XL | iter-12 (catalog) | new `SQL/EX/alter.go`, `ENG/LS` schema-aware readers |
 | REQ000305 | TXN | Generational arena with Young/Old split (young bump-allocate, old epoch-reclaim; reduces epoch manager pressure) | medium | L | iter-05 (arena), `REQ000064` | `TXN/MV/arena.go` — generation promotion policy |
 | REQ000307 | TXN | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | critical | XL | iter-20 (commit protocol), `REQ000175` | `TXN/MV/occ.go` (new) — `Validation` phase rewritten; conflict-free reorder |
@@ -384,17 +384,17 @@ DONE REQ000185 | SQL/EX | Plan memoization with SHA256 canonical AST binary enco
 | REQ000309 | ENG | NUMA-aware placement (`NodeCount`, `IsAvailable`, `CurrentNode`, `PinWorker`, `bufferSlot.nodeID`, subcompaction worker `LockOSThread`) | iter-27 (Phase 6) |
 | REQ000156 | SQL | Cost-based scan selection in planner — `pickCheaperScan` compares `estimateCost` for SeqScan vs IndexScan candidates and swaps to the cheaper one when the WHERE column has a writer-registered index | iter-27 |
 | REQ000437 | SQL/EX | Full SQL aggregate DISTINCT support — `SUM/AVG/MIN/MAX/GROUP_CONCAT(DISTINCT col)` now dedup before aggregating (parity with `COUNT(DISTINCT col)`); NULLs are excluded from the distinct set per SQLite semantics; parser routes DISTINCT through the IDENT aggregate path for `GROUP_CONCAT` | iter-27 |
-| REQ000182 | SQL/EX | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | iter-08 |
-| REQ000246 | SQL/PS | Parse TRIGGER (CREATE TRIGGER, BEFORE/AFTER, FOR EACH ROW) | iter-07 |
+DONE REQ000182 | SQL/EX | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | iter-08 |
+DONE REQ000246 | SQL/PS | Parse TRIGGER (CREATE TRIGGER, BEFORE/AFTER, FOR EACH ROW) | iter-07 |
 | REQ000247 | SQL/EX | TRIGGER executor (fire on INSERT/UPDATE/DELETE) | iter-07 |
-| REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | iter-21 |
-| REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | iter-23 |
+DONE REQ000256 | SQL/PS | Parse VACUUM / ANALYZE | iter-21 |
+DONE REQ000285 | ENG/ID | uint32 page ID overflow protection — wraps to 0 (sentinel for "no page") | iter-23 |
 | REQ000286 | SQL/EX | Window materialize context propagation — uses context.Background() instead of caller's ctx | iter-23 |
 | REQ000287 | SQL/EX | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | iter-23 |
-| REQ000298 | ENG | LSM-aware cross-block shared dictionary (multiple data blocks in one SST share a trained dict) | iter-27 |
-| REQ000434 | SQL/PS | NOT BETWEEN syntax error fix | iter-26 |
-| REQ000438 | SQL/EX | Scalar function eval error routing fix | iter-26 |
-| REQ000439 | SQL/PS | EXPLAIN statement support | iter-26 |
+DONE REQ000298 | ENG | LSM-aware cross-block shared dictionary (multiple data blocks in one SST share a trained dict) | iter-27 |
+DONE REQ000434 | SQL/PS | NOT BETWEEN syntax error fix | iter-26 |
+DONE REQ000438 | SQL/EX | Scalar function eval error routing fix | iter-26 |
+DONE REQ000439 | SQL/PS | EXPLAIN statement support | iter-26 |
 | REQ000049 | ENG/SC | Schema cluster split from LS (TableSchema, ColumnDef, ColumnType, Row, Validator) | iter-28 |
 | REQ000050 | ENG/DP | Deparser cluster split from LS (EncodeRow/DecodeRow, EncodeBlock/DecodeBlock) | iter-28 |
 | REQ000300 | ENG/LS | Tier-aware storage scheduler (PlacementPolicy, StoragePolicy, per-level device routing) | iter-28 |
