@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/cyw0ng95/razordata/internal/ENG/NM"
 	"github.com/cyw0ng95/razordata/internal/FIL/DF"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 )
@@ -70,6 +71,14 @@ type BufferPool interface {
 	// Unpin decrements the pin count on the page. Eviction may proceed once
 	// the pin count reaches zero.
 	Unpin(page *Page)
+	// Upsert injects a page directly into the hash table without disk I/O.
+	// Used by the WAL replayer (R16) to populate the cache with recovered
+	// page images. page.Data must have len == BlockSize. If a slot for the
+	// same blockID already exists, its data is overwritten in place (the
+	// caller's previous buffer is not returned to the pool). Does not pin
+	// the page, does not verify the checksum, and counts against capacity
+	// (evicting one slot first if at capacity).
+	Upsert(page *Page) error
 	// SetCapacity resizes the buffer pool. Deferred to v2 — returns ErrCapacityExceeded.
 	SetCapacity(n int64) error
 	// Stats returns current buffer pool statistics.
@@ -78,6 +87,10 @@ type BufferPool interface {
 	Close() error
 	// Warm reads the hint file and eagerly loads blocks into the cache.
 	Warm(ctx context.Context) error
+	// SetPMemFile attaches a PMem file for cold-page spill. Pass nil
+	// to detach. REQ000302. Returns ErrNotLoaded if the pool is
+	// already closed.
+	SetPMemFile(pm *PMemFile) error
 }
 
 // bufferSlot holds an in-memory block with eviction metadata.
@@ -89,6 +102,12 @@ type bufferSlot struct {
 	refKey   atomic.Uint64 // clock hand value when last accessed
 	loading  atomic.Bool   // true while loading from disk
 	wait     chan struct{} // closed when data is ready
+	// nodeID is the NUMA node where the slot's data was first
+	// touched (REQ000309, iter-27). 0 on non-NUMA hosts.
+	nodeID atomic.Int32
+	// REQ000302: tier where slot data currently lives.
+	// 0 = DRAM (default), 1 = PMem (cold spill).
+	tier atomic.Uint32
 }
 
 // bufferHashTable provides O(1) lookup by blockID.
@@ -116,6 +135,10 @@ type bp struct {
 
 	closeOnce sync.Once
 	closeErr  error
+
+	// REQ000302: optional PMem file for cold-page spill. When nil,
+	// all pages are cached in DRAM only.
+	pmem *PMemFile
 }
 
 var _ BufferPool = (*bp)(nil)
@@ -128,7 +151,7 @@ func New(capacity int64, hintPath string, bd *df.BlockDevice, sp SyncPool, log .
 		capacity = 256 // default capacity
 	}
 
-	l := firstLogger(log)
+	l := lg.FirstLogger(log)
 
 	b := &bp{
 		bd:       bd,
@@ -140,13 +163,6 @@ func New(capacity int64, hintPath string, bd *df.BlockDevice, sp SyncPool, log .
 	b.ht.slots = make(map[uint64]*bufferSlot)
 
 	return b, nil
-}
-
-func firstLogger(logs []lg.Logger) lg.Logger {
-	if len(logs) > 0 {
-		return logs[0]
-	}
-	return nil
 }
 
 // Get implements BufferPool.
@@ -235,6 +251,9 @@ func (b *bp) Get(ctx context.Context, blockID uint64) (*Page, bool, error) {
 	// At capacity? Evict one old slot before inserting.
 	if b.used.Load() >= b.capacity {
 		hand := b.hand.Add(1)
+		// REQ000161: first pass — evict slots whose refKey is
+		// older than (hand - clockInterval). These are LRU
+		// candidates by the clock-sweep design.
 		for blockID, slot := range b.ht.slots {
 			if slot.refKey.Load() < hand-uint64(clockInterval) {
 				if slot.pinCount.Load() == 0 {
@@ -248,16 +267,31 @@ func (b *bp) Get(ctx context.Context, blockID uint64) (*Page, bool, error) {
 				}
 			}
 		}
+		// REQ000161: second pass — find the slot with the lowest
+		// refKey (least-recently-used) among unpinned slots.
+		var victimID uint64
+		var victimRefKey uint64 = ^uint64(0) // max uint64
+		var found bool
 		for blockID, slot := range b.ht.slots {
 			if slot.pinCount.Load() == 0 {
-				delete(b.ht.slots, blockID)
-				b.used.Add(-1)
-				b.evicts.Add(1)
-				if len(slot.data) == BlockSize {
-					b.sp.Put(slot.data)
+				rk := slot.refKey.Load()
+				if rk < victimRefKey {
+					victimRefKey = rk
+					victimID = blockID
+					found = true
 				}
-				goto allocated
 			}
+		}
+		if found {
+			slot := b.ht.slots[victimID]
+			delete(b.ht.slots, victimID)
+			b.used.Add(-1)
+			b.evicts.Add(1)
+			if len(slot.data) == BlockSize {
+				madviseDontNeed(slot.data)
+				b.sp.Put(slot.data)
+			}
+			goto allocated
 		}
 	}
 allocated:
@@ -267,6 +301,9 @@ allocated:
 	if data == nil {
 		data = make([]byte, BlockSize)
 	}
+	// REQ000302: hint the kernel to use transparent huge pages for
+	// this buffer, reducing TLB misses on large sequential scans.
+	madviseHugePage(data)
 
 	// Insert loading slot, then release lock immediately.
 	// We do NOT hold the lock during disk I/O.
@@ -277,6 +314,10 @@ allocated:
 		wait:    make(chan struct{}),
 	}
 	slot.loading.Store(true)
+	// REQ000309 (iter-27): tag the slot with the current
+	// NUMA node so the engine can later report placement
+	// statistics. On non-NUMA hosts, this is always 0.
+	slot.nodeID.Store(int32(nm.CurrentNode()))
 	b.ht.slots[blockID] = slot
 	b.used.Add(1)
 	b.ht.mu.Unlock()
@@ -326,6 +367,96 @@ func (b *bp) Unpin(page *Page) {
 		return
 	}
 	slot.pinCount.Add(-1)
+}
+
+// Upsert implements BufferPool. See the interface comment for the
+// 6-point contract (R34). Used by the WAL replayer to inject recovered
+// page images without disk I/O.
+func (b *bp) Upsert(page *Page) error {
+	if page == nil {
+		return ErrInvalidBlockID
+	}
+	if page.ID == 0 {
+		return ErrInvalidBlockID
+	}
+	if len(page.Data) != BlockSize {
+		return ErrInvalidBlockID
+	}
+
+	b.ht.mu.Lock()
+	defer b.ht.mu.Unlock()
+
+	// Existing slot: overwrite in place. The previous data buffer is
+	// the caller's responsibility — we do not return it to the pool.
+	if existing, ok := b.ht.slots[page.ID]; ok {
+		existing.data = page.Data
+		existing.loading.Store(false)
+		// Pin count is intentionally untouched (Upsert does not pin).
+		return nil
+	}
+
+	// Not in cache. At capacity? Evict one slot before inserting.
+	if b.used.Load() >= b.capacity {
+		hand := b.hand.Add(1)
+		// REQ000161: first pass — evict slots whose refKey is
+		// older than (hand - clockInterval). These are LRU
+		// candidates by the clock-sweep design.
+		for blockID, slot := range b.ht.slots {
+			if slot.refKey.Load() < hand-uint64(clockInterval) {
+				if slot.pinCount.Load() == 0 {
+					delete(b.ht.slots, blockID)
+					b.used.Add(-1)
+					b.evicts.Add(1)
+					if len(slot.data) == BlockSize {
+						b.sp.Put(slot.data)
+					}
+					goto insert
+				}
+			}
+		}
+		// REQ000161: second pass — find the slot with the lowest
+		// refKey (least-recently-used) among unpinned slots.
+		// This guarantees LRU eviction even when the first pass
+		// fails (e.g., recently-accessed slots are still within
+		// the clockInterval window).
+		var victimID uint64
+		var victimRefKey uint64 = ^uint64(0) // max uint64
+		var found bool
+		for blockID, slot := range b.ht.slots {
+			if slot.pinCount.Load() == 0 {
+				rk := slot.refKey.Load()
+				if rk < victimRefKey {
+					victimRefKey = rk
+					victimID = blockID
+					found = true
+				}
+			}
+		}
+		if found {
+			slot := b.ht.slots[victimID]
+			delete(b.ht.slots, victimID)
+			b.used.Add(-1)
+			b.evicts.Add(1)
+			if len(slot.data) == BlockSize {
+				madviseDontNeed(slot.data)
+				b.sp.Put(slot.data)
+			}
+			goto insert
+		}
+		// All slots pinned. Insert over capacity to match
+		// Get's behavior — the next Get will evict instead.
+	}
+insert:
+	slot := &bufferSlot{
+		blockID: page.ID,
+		data:    page.Data,
+		loading: atomic.Bool{},
+	}
+	slot.loading.Store(false)
+	slot.refKey.Store(b.hand.Add(1))
+	b.ht.slots[page.ID] = slot
+	b.used.Add(1)
+	return nil
 }
 
 // SetCapacity implements BufferPool. Deferred to v2.
@@ -433,13 +564,20 @@ type hintEntry struct {
 	LastAccess int64
 }
 
-// writeHintFile serializes a list of hint entries to path.
+// writeHintFile serializes a list of hint entries to path. Writes go
+// through a temp file + rename so a crash mid-write cannot leave a
+// half-written hint file that would be loaded as garbage on the next
+// Warm.
 func writeHintFile(entries []hintEntry, path string) error {
 	data, err := encodeHintEntries(entries)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // readHintFile deserializes hint entries from path.
@@ -531,6 +669,16 @@ func appendVarint(buf []byte, v uint64) []byte {
 	}
 	buf = append(buf, byte(v))
 	return buf
+}
+
+// SetPMemFile implements BufferPool. REQ000302.
+func (b *bp) SetPMemFile(pm *PMemFile) error {
+	b.closeOnce.Do(func() {})
+	if b.closeErr != nil {
+		return b.closeErr
+	}
+	b.pmem = pm
+	return nil
 }
 
 // ChecksumVerify verifies data against a stored CRC32 checksum.

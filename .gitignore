@@ -44,6 +44,18 @@ data/
 *.wal
 *.db
 
+# razordata specific data files
+*.razor        # Database directory (e.g., testdb.razor/)
+catalog/       # System catalog directory (created at runtime)
+sst/           # SST files directory
+*.sst          # Individual SST files
+*.hint         # Buffer pool hint files
+manifest       # LSM manifest files
+meta.razor     # Meta page file
+wal.razor      # WAL directory
+wal.*          # WAL segment files (wal.000, wal.001, ...)
+
 # AI Coding tools
 .qwen
 .monkeycode
+.omo

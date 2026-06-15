@@ -4,11 +4,11 @@
 
 ## Directory Structure
 
-See `design/ARCH.md` for the full directory layout (subsystem → cluster → code).
+See `docs/design/ARCH.md` for the full directory layout (subsystem → cluster → code).
 
 ## Build Order
 
-See `design/ARCH.md` for the full build order (8 steps: LOG → FIL → MEM → WAL → ENG → TXN → SQL → SYS).
+See `docs/design/ARCH.md` for the full build order (8 steps: LOG → FIL → MEM → WAL → ENG → TXN → SQL → SYS).
 
 ## Integration
 
@@ -19,7 +19,7 @@ Each iteration must integrate with already implemented parts. Before implementin
 
 ## SQL Surface (MVP)
 
-See `design/ARCH.md` for the full SQL surface and API shape.
+See `docs/design/ARCH.md` for the full SQL surface and API shape.
 
 ## Performance Rules
 
@@ -70,6 +70,64 @@ See `design/ARCH.md` for the full SQL surface and API shape.
   commit immediately. Do not batch multiple requirements into one commit.
   Each commit is a stable checkpoint.**
 
+## Iteration Lifecycle
+
+When an iteration is complete, update the tracking docs in this order:
+
+1. **`docs/development/iterations/iter-XX-*.md`** — mark status `done`, add an
+   "Outcome" section summarizing what shipped, actual LoC, any deviations
+   from the plan, and the final commit/tag.
+2. **`docs/development/ROADMAP.md`** — move the iteration from "Phase 1/2" /
+   "Remaining Work" into the completed `Iterations Overview` table; add a
+   release tag row in `Release Tags` if a new tag was cut.
+3. **`docs/development/REQUIREMENTS.md`** — for every `REQ` the iteration
+   satisfied, **delete the row from `TBD` entirely** and add a new row
+   to `DONE` with the `Iteration` column set to the iter number. A
+   `REQ` lives in exactly one of the two tables: `TBD` (pipeline) or
+   `DONE` (shipped). Never both. Never annotate a `TBD` row with
+   "MOVED TO DONE" and leave it in place — that is a copy-paste
+   duplicate and the file will drift.
+
+Do this as a single commit at the end of the iteration (after the final
+implementation commit, before the release tag). Do not defer doc updates
+to a later session — the docs must reflect reality at the same commit
+that cuts the tag.
+
+## Bug-To-Requirement Rule
+
+When an iteration discovers a concrete bug that it does **not** fix in
+its own scope (pre-existing latent defects, deferred items, follow-ups
+called out in the "Gap Analysis" / "Deviations" section), the bug
+**must be encoded as a `REQ` row and added to
+`docs/development/REQUIREMENTS.md`** in the same commit that closes the
+iteration. A bug that lives only in an iteration doc's narrative
+section is invisible to the planning workflow and will be forgotten.
+
+Encoding rules:
+
+- One `REQ` per atomic bug. Do not bundle multiple distinct defects
+  into a single row — they have different fix surfaces, different
+  effort estimates, and different test plans.
+- Use the next free `REQ` number (the file is append-only; never reuse
+  a number even if a row was deleted).
+- Set `Priority` based on the bug's blast radius: `critical` if it
+  can lose data / corrupt state, `high` if it can crash a process,
+  `medium` if it produces wrong output silently, `low` if it is
+  cosmetic or only affects non-default code paths.
+- Set `Deps` to the iteration that surfaced the bug (so the next
+  planner can sequence the fix correctly) and any code packages the
+  fix will touch.
+- Reference the source doc in the `Touches` column: e.g. "see
+  iter-12-catalog.md Gap Analysis Bug 1" so the bug is traceable
+  back to its discovery context.
+- The `TBD` row is the working-state. `DONE` is only for bugs that
+  have actually been fixed and moved by a subsequent iteration.
+
+The "current unfixed bugs" backlog lives in the `TBD` section of
+`docs/development/REQUIREMENTS.md` and is the source of truth for future
+iteration planning. A bare prose mention in an iteration doc is no
+longer acceptable.
+
 ## CI / Linting
 
 ```bash
@@ -81,12 +139,12 @@ go test ./... -race -count=1
 
 ## Design Protection
 
-All files under `design/` are the authoritative source of truth for the database. They define the formal subsystem/function-cluster system, architecture, data structures, and implementation plans.
+All files under `docs/design/` are the authoritative source of truth for the database. They define the formal subsystem/function-cluster system, architecture, data structures, and implementation plans.
 
-**Any edit to any file in `design/` must be triggered by a human only.** AI agents must not generate, propose, or auto-edit content in any file under `design/`. This includes:
+**Any edit to any file in `docs/design/` must be triggered by a human only.** AI agents must not generate, propose, or auto-edit content in any file under `docs/design/`. This includes:
 
-- `design/ARCH.md` — top-level architecture, subsystems, interfaces, build order
-- `design/subsystems/*.md` — per-subsystem detailed design documents
+- `docs/design/ARCH.md` — top-level architecture, subsystems, interfaces, build order
+- `docs/design/subsystems/*.md` — per-subsystem detailed design documents
 
 When the user requests a design change, the AI should describe the change in full detail and let the human apply it, or ask the human to edit the file directly.
 

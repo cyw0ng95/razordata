@@ -17,7 +17,8 @@ type benchSyncPool struct {
 func newBenchSP() *benchSyncPool {
 	sp := &benchSyncPool{}
 	sp.pagePool.New = func() any {
-		return make([]byte, BlockSize)
+		b := make([]byte, BlockSize)
+		return &b
 	}
 	return sp
 }
@@ -25,7 +26,7 @@ func newBenchSP() *benchSyncPool {
 func (sp *benchSyncPool) Get(size int) []byte {
 	if size == BlockSize {
 		if p := sp.pagePool.Get(); p != nil {
-			return p.([]byte)
+			return *p.(*[]byte)
 		}
 	}
 	return make([]byte, size)
@@ -33,7 +34,8 @@ func (sp *benchSyncPool) Get(size int) []byte {
 
 func (sp *benchSyncPool) Put(buf []byte) {
 	if cap(buf) == BlockSize {
-		sp.pagePool.Put(buf[:BlockSize])
+		b := buf[:BlockSize]
+		sp.pagePool.Put(&b)
 	}
 }
 

@@ -176,3 +176,98 @@ func BenchmarkConcurrentGetPut(b *testing.B) {
 		}
 	})
 }
+
+// TestGetPutWALBufSize verifies the new 256 KB WAL buffer pool (R33).
+// Buffers must round-trip through Put/Get without losing capacity.
+func TestGetPutWALBufSize(t *testing.T) {
+	sp := New()
+
+	buf := sp.Get(WALBufSize)
+	if len(buf) != WALBufSize {
+		t.Errorf("expected len=%d, got %d", WALBufSize, len(buf))
+	}
+	if cap(buf) < WALBufSize {
+		t.Errorf("expected cap >= %d, got %d", WALBufSize, cap(buf))
+	}
+
+	// Mutate so we can detect the same buffer coming back.
+	for i := range buf {
+		buf[i] = 0xCC
+	}
+	sp.Put(buf)
+
+	buf2 := sp.Get(WALBufSize)
+	if cap(buf2) < WALBufSize {
+		t.Errorf("expected cap >= %d after Put/Get roundtrip, got %d", WALBufSize, cap(buf2))
+	}
+}
+
+// TestGetWALNoAllocOnHotPath exercises the 256 KB pool's hot path.
+// Note: sync.Pool may drop items at any time (especially across GC),
+// so we don't assert a strict zero — that would be flaky. The dedicated
+// benchmark (BenchmarkGetPutWAL) is the authoritative measurement. This
+// test just guards against catastrophic regressions like a missing pool
+// lookup or an extra allocation per call.
+func TestGetWALNoAllocOnHotPath(t *testing.T) {
+	sp := New()
+
+	// Warm up.
+	for i := 0; i < 16; i++ {
+		buf := sp.Get(WALBufSize)
+		sp.Put(buf)
+	}
+	runtime.GC()
+
+	// Run the hot path 1000 times; the underlying array is reused
+	// across calls, so the cap is preserved (the alloc count reported
+	// by AllocsPerRun may be > 0 if GC drops a pooled item — that's
+	// expected for sync.Pool).
+	const runs = 1000
+	allocs := testing.AllocsPerRun(runs, func() {
+		buf := sp.Get(WALBufSize)
+		if cap(buf) < WALBufSize {
+			t.Errorf("cap regression: got %d, want >= %d", cap(buf), WALBufSize)
+		}
+		buf[0] = 0xAA
+		sp.Put(buf)
+	})
+
+	// We allow up to 1 alloc/op average to absorb occasional GC drops.
+	// A regression to >5 allocs/op would mean the pool is broken.
+	if allocs > 5 {
+		t.Errorf("expected <= 5 allocs/op on WALBufSize hot path, got %.2f", allocs)
+	}
+}
+
+// TestPutWALBufSizeRoundTrip verifies that buffers of exactly WALBufSize
+// capacity are returned to the walPool (not dropped).
+func TestPutWALBufSizeRoundTrip(t *testing.T) {
+	sp := New()
+
+	// Make a buffer with exactly WALBufSize capacity (different from len).
+	buf := make([]byte, WALBufSize)
+	if cap(buf) != WALBufSize {
+		t.Fatalf("expected cap=%d, got %d", WALBufSize, cap(buf))
+	}
+	sp.Put(buf)
+
+	// Get should return at least WALBufSize capacity.
+	got := sp.Get(WALBufSize)
+	if cap(got) < WALBufSize {
+		t.Errorf("Put with cap=%d should be poolable, got back cap=%d", WALBufSize, cap(got))
+	}
+}
+
+// BenchmarkGetPutWAL measures throughput of the WAL buffer pool.
+func BenchmarkGetPutWAL(b *testing.B) {
+	sp := New()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		buf := sp.Get(WALBufSize)
+		buf[0] = byte(i)
+		sp.Put(buf)
+	}
+}

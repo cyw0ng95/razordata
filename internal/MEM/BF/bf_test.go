@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/DF"
+	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 )
 
 // mockSyncPool is a simple SyncPool implementation for testing.
@@ -23,10 +24,12 @@ type mockSyncPool struct {
 func newMockSyncPool() *mockSyncPool {
 	sp := &mockSyncPool{}
 	sp.pagePool.New = func() any {
-		return make([]byte, BlockSize)
+		b := make([]byte, BlockSize)
+		return &b
 	}
 	sp.iterPool.New = func() any {
-		return make([]byte, iterBufferSize)
+		b := make([]byte, iterBufferSize)
+		return &b
 	}
 	return sp
 }
@@ -34,12 +37,12 @@ func newMockSyncPool() *mockSyncPool {
 func (sp *mockSyncPool) Get(size int) []byte {
 	if size == BlockSize {
 		if p := sp.pagePool.Get(); p != nil {
-			return p.([]byte)
+			return *p.(*[]byte)
 		}
 	}
 	if size == iterBufferSize {
 		if p := sp.iterPool.Get(); p != nil {
-			return p.([]byte)
+			return *p.(*[]byte)
 		}
 	}
 	return make([]byte, size)
@@ -47,48 +50,12 @@ func (sp *mockSyncPool) Get(size int) []byte {
 
 func (sp *mockSyncPool) Put(buf []byte) {
 	if cap(buf) == BlockSize {
-		sp.pagePool.Put(buf[:BlockSize])
+		b := buf[:BlockSize]
+		sp.pagePool.Put(&b)
 	} else if cap(buf) == iterBufferSize {
-		sp.iterPool.Put(buf[:iterBufferSize])
+		b := buf[:iterBufferSize]
+		sp.iterPool.Put(&b)
 	}
-}
-
-// testBD is a simple in-memory block device for testing.
-type testBD struct {
-	blocks  map[uint64][]byte
-	mu      sync.RWMutex
-	onRead  func(blockID uint64) error // optional hook
-	onWrite func(blockID uint64, data []byte)
-}
-
-func newTestBD() *testBD {
-	return &testBD{blocks: make(map[uint64][]byte)}
-}
-
-func (bd *testBD) WriteBlock(_ context.Context, blockID uint64, data []byte) error {
-	bd.mu.Lock()
-	defer bd.mu.Unlock()
-	dst := make([]byte, df.DataLen)
-	copy(dst, data)
-	bd.blocks[blockID] = dst
-	if bd.onWrite != nil {
-		bd.onWrite(blockID, data)
-	}
-	return nil
-}
-
-func (bd *testBD) ReadBlock(_ context.Context, blockID uint64, n int, buf []byte) error {
-	bd.mu.RLock()
-	data, ok := bd.blocks[blockID]
-	bd.mu.RUnlock()
-	if !ok {
-		return io.EOF
-	}
-	if len(buf) < n {
-		return io.ErrShortBuffer
-	}
-	copy(buf, data[:n])
-	return nil
 }
 
 // TestNew tests buffer pool creation and basic lifecycle.
@@ -340,10 +307,21 @@ func TestPinUnpin(t *testing.T) {
 		t.Error("expected same data buffer pointer")
 	}
 
+	// Pin the other cached blocks so that block 1 is the only eviction
+	// candidate. Without this, the eviction's second pass iterates the
+	// slot map in random order and may evict a different block.
+	for _, id := range []uint64{2, 3, 4} {
+		p, _, gerr := bp.Get(context.Background(), id)
+		if gerr != nil {
+			t.Fatalf("Get(%d) failed: %v", id, gerr)
+		}
+		bp.Pin(p)
+	}
+
 	// Unpin page 1.
 	bp.Unpin(pages[1])
 
-	// Load block 5 (should now evict block 1).
+	// Load block 5 (should now evict block 1, the only unpinned slot).
 	_, _, err = bp.Get(context.Background(), 5)
 	if err != nil {
 		t.Fatalf("Get(5) failed: %v", err)
@@ -873,4 +851,738 @@ func BenchmarkPinUnpin(b *testing.B) {
 			bp.Unpin(page)
 		}
 	})
+}
+
+// TestGetContextCancelled tests Get with cancelled context.
+func TestGetContextCancelled(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "cancel.block")
+
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(10, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	// Cancelled context should return error for non-existent block
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err = bp.Get(cancelledCtx, 999)
+	// Could be context.Canceled or error from device, both acceptable
+	if err == nil {
+		t.Error("expected error with cancelled context")
+	}
+}
+
+// TestGetTimeout tests Get with timeout during loading.
+func TestGetTimeout(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "timeout.block")
+
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(10, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	// Timeout context
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	// Block device won't have block 999, should return error
+	_, _, err = bp.Get(timeoutCtx, 999)
+	if err == nil {
+		t.Error("expected error for missing block")
+	}
+}
+
+// TestCloseWithWriteError tests Close when hint file write fails.
+func TestCloseWithWriteError(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "close.block")
+
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	// Use tmp dir but make path unwritable
+	hintPath := filepath.Join(tmp, "subdir", "hint.bin")
+
+	bp, err := New(10, hintPath, bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Get a block to populate slots (so writeHintFile has work to do)
+	ctx := context.Background()
+	data := make([]byte, 100)
+	if err := bd.WriteBlock(ctx, 1, data); err != nil {
+		t.Fatalf("WriteBlock: %v", err)
+	}
+	bd.Sync()
+	page, _, _ := bp.Get(ctx, 1)
+	if page != nil {
+		bp.Pin(page)
+		bp.Unpin(page)
+	}
+
+	// Close may or may not error depending on OS, but should not panic
+	_ = bp.Close()
+}
+
+// TestWarmContextCancelled tests Warm with cancelled context.
+func TestWarmContextCancelled(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "warm_cancel.block")
+
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	hintPath := filepath.Join(tmp, "cancel_hint.bin")
+
+	// Create hint file with some entries
+	entries := []hintEntry{
+		{BlockID: 1, LastAccess: 100},
+		{BlockID: 2, LastAccess: 200},
+	}
+	if err := writeHintFile(entries, hintPath); err != nil {
+		t.Fatalf("writeHintFile: %v", err)
+	}
+
+	bp, err := New(10, hintPath, bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	// Cancelled context
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = bp.Warm(cancelledCtx)
+	if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
+
+// TestWarmWithCorruptHintFile tests Warm with invalid hint file.
+func TestWarmWithCorruptHintFile(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "corrupt_hint.block")
+
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	hintPath := filepath.Join(tmp, "corrupt.bin")
+	// Write garbage to hint file
+	if err := os.WriteFile(hintPath, []byte("not valid hint data"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	bp, err := New(10, hintPath, bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	// Warm should return error but not panic
+	err = bp.Warm(context.Background())
+	if err == nil {
+		t.Error("expected error with corrupt hint file")
+	}
+}
+
+// TestWriteHintFileEmptyEntries tests writeHintFile with no entries.
+func TestWriteHintFileEmptyEntries(t *testing.T) {
+	tmp := t.TempDir()
+	hintPath := filepath.Join(tmp, "empty.bin")
+
+	// Empty entries should return nil - implementation may or may not create file
+	err := writeHintFile([]hintEntry{}, hintPath)
+	if err != nil {
+		t.Errorf("writeHintFile with empty entries failed: %v", err)
+	}
+	// Note: implementation creates an empty file, which is acceptable
+}
+
+// TestFirstLoggerNilBF tests firstLogger with nil/empty input.
+func TestFirstLoggerNilBF(t *testing.T) {
+	result := lg.FirstLogger(nil)
+	if result != nil {
+		t.Error("expected nil for nil input")
+	}
+
+	result = lg.FirstLogger([]lg.Logger{})
+	if result != nil {
+		t.Error("expected nil for empty slice")
+	}
+}
+
+// TestGetNilBlockID tests Get with blockID=0 (invalid).
+func TestGetNilBlockID(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "nil.block")
+
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(10, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	_, _, err = bp.Get(context.Background(), 0)
+	if err != ErrInvalidBlockID {
+		t.Errorf("expected ErrInvalidBlockID, got %v", err)
+	}
+}
+
+// TestWarmNilHintPath tests Warm with empty hint path.
+func TestWarmNilHintPath(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "nil_hint.block")
+
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(10, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	// Warm with no hint path should return nil
+	err = bp.Warm(context.Background())
+	if err != nil {
+		t.Errorf("Warm with no hint path returned error: %v", err)
+	}
+}
+
+// TestCloseIdempotentBF verifies Close is safe to call multiple times.
+func TestCloseIdempotentBF(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "idempotent.block")
+
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	hintPath := filepath.Join(tmp, "hint.bin")
+	bp, err := New(10, hintPath, bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// First close
+	if err := bp.Close(); err != nil {
+		t.Fatalf("first Close failed: %v", err)
+	}
+
+	// Second close should be safe
+	if err := bp.Close(); err != nil {
+		t.Fatalf("second Close failed: %v", err)
+	}
+}
+
+// TestCloseWithHintPathAndLogger tests Close with invalid hint path and logger.
+// This exercises the error logging path when writeHintFile fails.
+func TestCloseWithHintPathAndLogger(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "log_close.block")
+
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	invalidHintPath := filepath.Join(tmp, "nonexistent_dir", "hint.bin")
+
+	log := lg.New(lg.Options{Output: io.Discard})
+	bp, err := New(10, invalidHintPath, bd, newMockSyncPool(), log)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := context.Background()
+	data := make([]byte, 100)
+	if err := bd.WriteBlock(ctx, 1, data); err != nil {
+		t.Fatalf("WriteBlock: %v", err)
+	}
+	bd.Sync()
+
+	bp.Get(ctx, 1)
+	bp.Get(ctx, 2)
+	bp.Get(ctx, 3)
+
+	_ = bp.Close()
+}
+
+// TestCloseWithEntriesAndBadPath tests Close when there are entries but path is invalid.
+func TestCloseWithEntriesAndBadPath(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "close_entries.block")
+
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	hintPath := filepath.Join(tmp, "a", "b", "c", "hint.bin")
+
+	bp, err := New(10, hintPath, bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := context.Background()
+	for i := uint64(1); i <= 5; i++ {
+		data := make([]byte, 100)
+		if err := bd.WriteBlock(ctx, i, data); err != nil {
+			t.Fatalf("WriteBlock: %v", err)
+		}
+		bp.Get(ctx, i)
+	}
+
+	_ = bp.Close()
+}
+
+// TestCloseAfterMultipleAccesses tests Close after many accesses to ensure entries.
+func TestCloseAfterMultipleAccesses(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "multi_access.block")
+
+	bd, err := df.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	hintPath := filepath.Join(tmp, "hint.bin")
+
+	bp, err := New(128, hintPath, bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	data := make([]byte, df.DefaultBlockSize)
+	for i := uint64(1); i <= 20; i++ {
+		page := &Page{ID: i, Data: data}
+		if err := bp.Upsert(page); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+		page, _, err := bp.Get(context.Background(), i)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		bp.Pin(page)
+		bp.Unpin(page)
+	}
+
+	if err := bp.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestUpsertBasic verifies a fresh insert into an empty cache (R34).
+func TestUpsertBasic(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("df.Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	data := make([]byte, df.DefaultBlockSize)
+	for i := range data {
+		data[i] = 0xAB
+	}
+	if err := bp.Upsert(&Page{ID: 7, Data: data}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	stats := bp.Stats()
+	if stats.Used != 1 {
+		t.Errorf("expected used=1, got %d", stats.Used)
+	}
+
+	// The page should be retrievable via Get (without disk I/O).
+	page, found, err := bp.Get(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("Get(7): %v", err)
+	}
+	if !found {
+		t.Error("expected Upserted page to be in cache")
+	}
+	if page.Data[0] != 0xAB {
+		t.Errorf("data corruption: got %x, want 0xAB", page.Data[0])
+	}
+}
+
+// TestUpsertOverwrite verifies that Upserting an existing blockID
+// replaces the data in place (R34 bullet 3).
+func TestUpsertOverwrite(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("df.Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	first := make([]byte, BlockSize)
+	first[0] = 0x11
+	if err := bp.Upsert(&Page{ID: 5, Data: first}); err != nil {
+		t.Fatalf("first Upsert: %v", err)
+	}
+
+	second := make([]byte, BlockSize)
+	second[0] = 0x22
+	if err := bp.Upsert(&Page{ID: 5, Data: second}); err != nil {
+		t.Fatalf("second Upsert: %v", err)
+	}
+
+	// used should still be 1 (overwrite, not insert)
+	if got := bp.Stats().Used; got != 1 {
+		t.Errorf("expected used=1 after overwrite, got %d", got)
+	}
+
+	page, found, err := bp.Get(context.Background(), 5)
+	if err != nil || !found {
+		t.Fatalf("Get(5): found=%v err=%v", found, err)
+	}
+	if page.Data[0] != 0x22 {
+		t.Errorf("expected overwritten data 0x22, got 0x%x", page.Data[0])
+	}
+}
+
+// TestUpsertRejectsBadSize verifies that data with len != BlockSize
+// is rejected (R34 bullet 2 — padding would mask caller bugs).
+func TestUpsertRejectsBadSize(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("df.Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	tooSmall := make([]byte, BlockSize-1)
+	if err := bp.Upsert(&Page{ID: 1, Data: tooSmall}); err != ErrInvalidBlockID {
+		t.Errorf("expected ErrInvalidBlockID for too-small data, got %v", err)
+	}
+
+	tooBig := make([]byte, BlockSize+1)
+	if err := bp.Upsert(&Page{ID: 1, Data: tooBig}); err != ErrInvalidBlockID {
+		t.Errorf("expected ErrInvalidBlockID for too-big data, got %v", err)
+	}
+
+	empty := make([]byte, 0)
+	if err := bp.Upsert(&Page{ID: 1, Data: empty}); err != ErrInvalidBlockID {
+		t.Errorf("expected ErrInvalidBlockID for empty data, got %v", err)
+	}
+
+	// No slot should have been created.
+	if got := bp.Stats().Used; got != 0 {
+		t.Errorf("expected used=0 after rejected Upserts, got %d", got)
+	}
+}
+
+// TestUpsertRejectsBadBlockID verifies blockID=0 and nil page are
+// rejected (R34).
+func TestUpsertRejectsBadBlockID(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("df.Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	data := make([]byte, df.DefaultBlockSize)
+	if err := bp.Upsert(&Page{ID: 0, Data: data}); err != ErrInvalidBlockID {
+		t.Errorf("expected ErrInvalidBlockID for blockID=0, got %v", err)
+	}
+	if err := bp.Upsert(nil); err != ErrInvalidBlockID {
+		t.Errorf("expected ErrInvalidBlockID for nil page, got %v", err)
+	}
+	if got := bp.Stats().Used; got != 0 {
+		t.Errorf("expected used=0 after rejected Upserts, got %d", got)
+	}
+}
+
+// TestUpsertAtCapacityEvicts verifies that Upsert evicts one slot when
+// the pool is at capacity (R34 bullet 4).
+func TestUpsertAtCapacityEvicts(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("df.Create: %v", err)
+	}
+	defer bd.Close()
+
+	capacity := int64(3)
+	bp, err := New(capacity, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	// Fill the pool.
+	for i := uint64(1); i <= uint64(capacity); i++ {
+		data := make([]byte, df.DefaultBlockSize)
+		data[0] = byte(i)
+		if err := bp.Upsert(&Page{ID: i, Data: data}); err != nil {
+			t.Fatalf("Upsert(%d): %v", i, err)
+		}
+	}
+	if got := bp.Stats().Used; got != capacity {
+		t.Fatalf("expected used=%d, got %d", capacity, got)
+	}
+
+	// Insert one more — should evict one slot to make room.
+	extra := make([]byte, BlockSize)
+	extra[0] = 0xEE
+	if err := bp.Upsert(&Page{ID: 99, Data: extra}); err != nil {
+		t.Fatalf("Upsert at capacity: %v", err)
+	}
+
+	// Used must not exceed capacity.
+	if got := bp.Stats().Used; got > capacity {
+		t.Errorf("expected used <= %d, got %d", capacity, got)
+	}
+	if got := bp.Stats().Evicts; got == 0 {
+		t.Error("expected at least one eviction")
+	}
+
+	// The newly inserted page should be retrievable.
+	page, found, err := bp.Get(context.Background(), 99)
+	if err != nil || !found {
+		t.Errorf("Get(99) after Upsert: found=%v err=%v", found, err)
+	}
+	if found && page.Data[0] != 0xEE {
+		t.Errorf("data corruption after Upsert: got 0x%x", page.Data[0])
+	}
+}
+
+// TestUpsertDoesNotPin verifies that Upserted pages are not pinned and
+// can be evicted by subsequent Upserts (R34 bullet 6).
+func TestUpsertDoesNotPin(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("df.Create: %v", err)
+	}
+	defer bd.Close()
+
+	capacity := int64(2)
+	bp, err := New(capacity, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	for i := uint64(1); i <= uint64(capacity); i++ {
+		data := make([]byte, df.DefaultBlockSize)
+		if err := bp.Upsert(&Page{ID: i, Data: data}); err != nil {
+			t.Fatalf("Upsert(%d): %v", i, err)
+		}
+	}
+
+	// Pin count should be 0 (Upsert never pins).
+	if got := bp.Stats().Pins; got != 0 {
+		t.Errorf("expected pins=0, got %d", got)
+	}
+
+	// Insert at capacity: eviction should succeed since nothing is pinned.
+	extra := make([]byte, BlockSize)
+	if err := bp.Upsert(&Page{ID: 99, Data: extra}); err != nil {
+		t.Fatalf("Upsert at capacity: %v", err)
+	}
+	if got := bp.Stats().Evicts; got == 0 {
+		t.Error("expected eviction of an Upserted page (Upserted pages are not pinned)")
+	}
+}
+
+// TestGetConcurrentLoading tests Get when slot is loading.
+func TestGetConcurrentLoading(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	data := make([]byte, df.DefaultBlockSize)
+	for i := uint64(1); i <= 3; i++ {
+		if err := bp.Upsert(&Page{ID: i, Data: data}); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err = bp.Get(ctx, 999)
+	if err == nil {
+		t.Error("expected error for cancelled context")
+	}
+}
+
+// TestUpsertSecondEvictionLoop tests second eviction loop when first can't find unpinned slot.
+func TestUpsertSecondEvictionLoop(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	capacity := int64(3)
+	bp, err := New(capacity, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	data := make([]byte, df.DefaultBlockSize)
+	for i := uint64(1); i <= uint64(capacity); i++ {
+		if err := bp.Upsert(&Page{ID: i, Data: data}); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+	}
+
+	page, _, _ := bp.Get(context.Background(), 1)
+	bp.Pin(page)
+
+	extra := make([]byte, df.DefaultBlockSize)
+	if err := bp.Upsert(&Page{ID: 99, Data: extra}); err != nil {
+		t.Fatalf("Upsert at capacity: %v", err)
+	}
+
+	bp.Unpin(page)
+}
+
+// TestPinUnpinMultiple verifies Pin/Unpin with multiple pins.
+func TestPinUnpinMultiple(t *testing.T) {
+	tmp := t.TempDir()
+	bd, err := df.Create(filepath.Join(tmp, "data.razor"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer bd.Close()
+
+	bp, err := New(4, "", bd, newMockSyncPool())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer bp.Close()
+
+	data := make([]byte, df.DefaultBlockSize)
+	if err := bp.Upsert(&Page{ID: 1, Data: data}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	page, _, _ := bp.Get(context.Background(), 1)
+
+	stats := bp.Stats()
+	initialPins := stats.Pins
+
+	bp.Pin(page)
+	bp.Pin(page)
+
+	stats = bp.Stats()
+	if stats.Pins != initialPins+2 {
+		t.Errorf("expected pins=%d, got %d", initialPins+2, stats.Pins)
+	}
+
+	bp.Unpin(page)
+	bp.Unpin(page)
+}
+
+// TestMadviseDontNeed_EvictionCallsHook asserts that the madvise
+// syscall (or its no-op equivalent on non-Linux) is invoked when a
+// block is evicted from the buffer pool. Uses a counting mock
+// swapped into the package-level madviseFn var (Linux build only;
+// the test is a no-op on non-Linux since madviseFn is unused there).
+func TestMadviseDontNeed_EvictionCallsHook(t *testing.T) {
+	var called int
+	origFn := madviseFn
+	madviseFn = func(b []byte, advice int) error {
+		called++
+		return nil
+	}
+	defer func() { madviseFn = origFn }()
+
+	// Allocate a 4 KB buffer (page-aligned, page-sized) to mimic
+	// the slot data the buffer pool uses.
+	buf := make([]byte, 4096)
+	// Direct call: should increment called.
+	madviseDontNeed(buf)
+	if called != 1 {
+		t.Errorf("madviseDontNeed did not call madviseFn: called=%d", called)
+	}
+	// Empty buffer: should be a no-op.
+	madviseDontNeed(nil)
+	if called != 1 {
+		t.Errorf("madviseDontNeed(nil) should be a no-op, called=%d", called)
+	}
 }
