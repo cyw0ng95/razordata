@@ -4,12 +4,14 @@ Status: **planned**
 
 ## Scope
 
-42 REQs across SQL parser/executor, DDL routing, and TXN subsystems. Three
+62 REQs across SQL parser/executor, DDL routing, and TXN subsystems. Five
 categories: (A) parser DDL fixes — IF [NOT] EXISTS, RENAME COLUMN, REINDEX,
 TRUNCATE, PRAGMA, AUTOINCREMENT; (B) executor routing + SQL compliance —
 buildWriterOp routes, LIMIT/OFFSET, CAST, COALESCE, CASE, ORDER BY, HAVING,
 DISTINCT, constraints, window functions, scalar IN; (C) MV-OCC — Silo-style
-O(1) read-set validation rewrite.
+O(1) read-set validation rewrite; (D) executor DDL edge cases — idempotent
+indexes, view cleanup, ALTER edge cases; (E) bugfixes — concrete bugs from
+SLT corpus runs and code audit with file:line references.
 
 ## Requirements
 
@@ -81,6 +83,34 @@ O(1) read-set validation rewrite.
 | REQ000505 | SQL/PS | CREATE INDEX duplicate — idempotent index creation | low | S |
 | REQ000509 | SQL/EX | DELETE on VIEW — view not removed from registry on DROP | medium | S |
 | REQ000499 | SQL/EX | ALTER TABLE DROP COLUMN — verify with IF EXISTS edge cases | low | S |
+
+### Bugfixes (20 REQs)
+
+Concrete bugs discovered during SLT corpus runs and code audit. Each REQ
+references specific code locations in the implementation.
+
+| ID | Subsystem | Summary | Priority | Effort |
+|----|-----------|---------|----------|--------|
+| REQ000511 | SQL/EX | `INSERT ... ON CONFLICT DO UPDATE` not implemented — falls through `continue`, never updates existing row. `writers.go:120-122` comment confirms "For now, just continue (full implementation would update existing row)" | high | M |
+| REQ000512 | SQL/EX | INSERT/UPDATE/DELETE RETURNING returns only first row — `writers.go:154-158` returns `i.resultRows[0]` and sets `i.resultPos = 1` but `Query` callers see only one row. Multi-row RETURNING results are silently dropped | high | S |
+| REQ000513 | SQL/EX | FK validation missing on UPDATE — `validateForeignKeyInsert` called on INSERT but no `validateForeignKeyUpdate` on UPDATE path. `writers.go:486-504` (Update path) doesn't check FK constraints | high | M |
+| REQ000514 | SQL/EX | FK validation missing on DELETE — `validateForeignKeyDelete` exists but is not wired into the DELETE executor path. `writers.go:609-641` calls no FK validator | high | M |
+| REQ000515 | SQL/EX | `fillDefaults` may not apply DEFAULT for BOOLEAN/INT/TEXT columns when INSERT omits them — only `cschema.defaults[i]` is checked; the column type coercion path is missing for omitted columns | medium | S |
+| REQ000516 | SQL/EX | `validateCheck` not applied to UPDATE — CHECK constraints enforced on INSERT (`writers.go:108`) but missing on UPDATE write path (`writers.go:486-504`) | medium | S |
+| REQ000517 | SQL/EX | `checkUnique` not applied on UPDATE — UNIQUE constraints enforced on INSERT (`writers.go:111`) but missing from UPDATE | medium | M |
+| REQ000518 | SQL/EX | `RETURNING *` (all columns) not supported — `parseReturning` only accepts explicit column list, no `*` expansion. SLT corpus `select4.test` uses `INSERT ... RETURNING *` | medium | S |
+| REQ000519 | SQL/PS | Composite PRIMARY KEY in CREATE TABLE error message is the only handling — `ps.go:1704` returns error "composite PRIMARY KEY not supported". Should at least accept and treat the first column as the primary key | low | S |
+| REQ000520 | SQL/PS | `CREATE TABLE AS SELECT` not supported — no parser path, no `CreateTableAsStmt` AST node. SLT corpus extensively uses `CREATE TABLE ... AS SELECT ...` | medium | M |
+| REQ000521 | SQL/EX | Nested `NewOffset` then `NewLimit` order bug — `planner.go:639-653` applies Offset before Limit; if Offset is larger than remaining rows the LIMIT yields nothing rather than just stopping at limit | low | S |
+| REQ000522 | SQL/EX | `Distinct` operator after `Limit` doesn't push down — `planner.go:635-637` applies Distinct only when there's no aggregate; combined with LIMIT pushdown this can give wrong counts when LIMIT < distinct count | low | S |
+| REQ000523 | SQL/EX | `GROUP_CONCAT` separator not configurable — hard-coded `,`; SQLite allows `GROUP_CONCAT(x, sep)` with custom separator | low | S |
+| REQ000524 | SQL/EX | `COUNT(*)` returns int64 but `count(*)` inside expression returns nil for empty set instead of 0 — three-valued logic edge case in `evalAggregate` | medium | S |
+| REQ000525 | SQL/EX | Correlated subquery in SELECT list returns 0 rows — `slt_gap_test.go:30-33` `correlated_subquery` probe. `(SELECT count(*) FROM t1 AS x WHERE x.b<t1.b)` not re-evaluated per outer row | critical | L |
+| REQ000526 | SQL/EX | `EXPLAIN` returns empty result — `buildWriterOp` lacks EXPLAIN case; falls through to default error. SLT `slt_lang_explain.test` extensively uses EXPLAIN | medium | S |
+| REQ000527 | SQL/EX | `ANALYZE t1` no-op — `analyze.go` exists but doesn't update `stats.go` row count; subsequent `estimateCost` uses stale statistics | low | S |
+| REQ000528 | SQL/EX | `VACUUM` no-op — `writers.go` has stub that doesn't actually rebuild or compact; SLT `vacuum.test` expects free pages returned | low | S |
+| REQ000529 | SQL/PS | `INDEXED BY` / `NOT INDEXED` clauses in SELECT not supported — `parseFrom` doesn't accept `INDEXED BY name` after table ref. SQLite-compatible hint syntax | low | S |
+| REQ000530 | SQL/EX | Window function `RANGE` frame spec not supported — only `ROWS` frame works. `window.go:38-44` checks `spec.Frame` but `RANGE BETWEEN ...` not implemented | low | M |
 
 ## Gap Analysis
 
@@ -263,25 +293,93 @@ O(1) read-set validation rewrite.
 
 - [ ] Checkpoint — `go test ./internal/TXN/... -race -bench=.` green
 
-### Phase 4: Integration & polish
+### Phase 4: Bugfixes (REQ000511-REQ000530)
 
-- [ ] 21. End-to-end verification
-  - [ ] 21.1 `go test ./... -race -count=1`
-  - [ ] 21.2 SLT corpus subset
-  - [ ] 21.3 `go vet ./...` and `gofmt -s -l .`
+- [ ] 23. INSERT/UPDATE/DELETE RETURNING fix (REQ000512, 518)
+  - [ ] 23.1 `writers.go` `Insert.Next` — return full `resultRows` iterator, not just first
+  - [ ] 23.2 `writers.go` `Update.Next` — same fix
+  - [ ] 23.3 `writers.go` `Delete.Next` — same fix
+  - [ ] 23.4 Add `RETURNING *` expansion in `parseReturning`
 
-- [ ] 22. Update docs
-  - [ ] 22.1 Move all 38 REQs from TBD to DONE in REQUIREMENTS.md
-  - [ ] 22.2 Add iter-28 row to ROADMAP.md
+- [ ] 24. ON CONFLICT DO UPDATE (REQ000511)
+  - [ ] 24.1 `writers.go:120-122` — implement actual update of conflicting row
+  - [ ] 24.2 Resolve column references in `SET` clause
+  - [ ] 24.3 Test: INSERT OR REPLACE with conflict on PK
+
+- [ ] 25. FK and constraint enforcement on UPDATE/DELETE (REQ000513, 514, 516, 517)
+  - [ ] 25.1 Add `validateForeignKeyUpdate` in `fk.go`
+  - [ ] 25.2 Wire `validateForeignKeyUpdate` into `Update.Next`
+  - [ ] 25.3 Wire `validateForeignKeyDelete` into `Delete.Next`
+  - [ ] 25.4 Wire `validateCheck` into `Update.Next`
+  - [ ] 25.5 Wire `checkUnique` into `Update.Next`
+
+- [ ] 26. DEFAULT values on omitted columns (REQ000515)
+  - [ ] 26.1 `fillDefaults` in `writers.go` — apply DEFAULT for BOOLEAN/INT/TEXT when INSERT omits column
+  - [ ] 26.2 Test: `INSERT INTO t (a) VALUES (1)` with `b INTEGER DEFAULT 0`
+
+- [ ] 27. CREATE TABLE AS SELECT (REQ000520)
+  - [ ] 27.1 `SQL/PS/ast.go` — add `CreateTableAsStmt`
+  - [ ] 27.2 `parseCreateTableAs` in `ps.go`
+  - [ ] 27.3 `NewCreateTableAs` operator in `writers.go`
+  - [ ] 27.4 Infer column types from SELECT result schema
+
+- [ ] 28. Composite PK (REQ000519)
+  - [ ] 28.1 `ps.go:1704` — instead of error, accept and use first column as PK with warning
+  - [ ] 28.2 Test: `CREATE TABLE t (a INT, b INT, PRIMARY KEY (a, b))`
+
+- [ ] 29. Window function frame spec (REQ000530)
+  - [ ] 29.1 `window.go` — implement `RANGE BETWEEN ...` frame
+  - [ ] 29.2 Test: `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`
+
+- [ ] 30. ANALYZE / VACUUM stubs (REQ000527, 528)
+  - [ ] 30.1 `analyze.go` — update `stats.go` with row count
+  - [ ] 30.2 `vacuum.go` — at minimum log "VACUUM: no-op" rather than error
+  - [ ] 30.3 Both: add proper AST routing via `buildWriterOp`
+
+- [ ] 31. Correlated subquery in SELECT list (REQ000525)
+  - [ ] 31.1 `eval.go` `evalScalarSubquery` — re-evaluate per outer row, threading outer row context
+  - [ ] 31.2 Use LATERAL-style execution for correlated subqueries
+  - [ ] 31.3 Test: `SELECT (SELECT count(*) FROM t1 AS x WHERE x.b<t1.b) FROM t1`
+
+- [ ] 32. EXPLAIN statement (REQ000526)
+  - [ ] 32.1 `buildWriterOp` — add EXPLAIN case
+  - [ ] 32.2 `NewExplain` operator that runs the inner plan and returns plan text as single column
+  - [ ] 32.3 Test: `EXPLAIN SELECT * FROM t1`
+
+- [ ] 33. Miscellaneous cleanup (REQ000521-524, 529)
+  - [ ] 33.1 `Offset` then `Limit` order fix in `planner.go`
+  - [ ] 33.2 `Distinct` after `Limit` pushdown
+  - [ ] 33.3 `GROUP_CONCAT` separator support
+  - [ ] 33.4 `COUNT(*)` empty-set zero handling
+  - [ ] 33.5 `INDEXED BY` / `NOT INDEXED` parser support
+
+- [ ] 34. Bugfix tests
+  - [ ] 34.1 Each new behavior: table-driven test in `internal/SQL/EX/`
+  - [ ] 34.2 SLT corpus per-file regressions stay green
+  - [ ] 34.3 `go test ./internal/SQL/... -race` green
+
+- [ ] Checkpoint — all bugfix tests green
+
+### Phase 5: Integration & polish
+
+- [ ] 35. End-to-end verification
+  - [ ] 35.1 `go test ./... -race -count=1`
+  - [ ] 35.2 SLT corpus subset
+  - [ ] 35.3 `go vet ./...` and `gofmt -s -l .`
+
+- [ ] 36. Update docs
+  - [ ] 36.1 Move all 62 REQs from TBD to DONE in REQUIREMENTS.md
+  - [ ] 36.2 Add iter-28 row to ROADMAP.md
 
 ## Execution Order
 
 ```
-Phase 0 (Routing) → Phase 1 (Parser) → Phase 2 (Executor) → Phase 3 (MV-OCC) → Phase 4 (Integration)
+Phase 0 (Routing) → Phase 1 (Parser) → Phase 2 (Executor) → Phase 3 (MV-OCC) → Phase 4 (Bugfixes) → Phase 5 (Integration)
 ```
 
 Phases 0-2 are independent of Phase 3. Can be parallelized.
 Phase 4 depends on all prior phases.
+Phase 5 depends on all prior phases.
 
 ## Files to modify
 
@@ -304,3 +402,8 @@ Phase 4 depends on all prior phases.
 | `internal/SQL/PS/*_test.go` | Parser tests |
 | `internal/SQL/EX/*_test.go` | Executor tests |
 | `internal/TXN/VL/*_test.go` | OCC tests |
+| `internal/SQL/EX/fk.go` | validateForeignKeyUpdate, wire into Update.Next |
+| `internal/SQL/EX/constraints.go` | validateCheck on UPDATE, checkUnique on UPDATE |
+| `internal/SQL/EX/analyze.go` | Update stats.go row count on ANALYZE |
+| `internal/SQL/EX/stats.go` | Row count tracking for cost estimation |
+| `internal/SQL/EX/source.go` | Correlated subquery outer row context threading |
