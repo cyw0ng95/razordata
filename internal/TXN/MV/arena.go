@@ -207,14 +207,12 @@ func (a *Arena) promote() {
 	// initOldMu serializes concurrent promote calls from the
 	// same arena (which should not happen in normal use, but
 	// the MV concurrency test shares arenas across goroutines).
+	a.initOldMu.Lock()
 	if a.old == nil {
-		a.initOldMu.Lock()
-		if a.old == nil {
-			a.old = make([]byte, oldSize)
-			a.oldOff.Store(0)
-		}
-		a.initOldMu.Unlock()
+		a.old = make([]byte, oldSize)
+		a.oldOff.Store(0)
 	}
+	a.initOldMu.Unlock()
 	// Try to reserve space in the old generation.
 	for {
 		oldOff := a.oldOff.Load()

@@ -79,14 +79,14 @@ func TestArenaCAS(t *testing.T) {
 	a := newArena()
 
 	done := make(chan bool)
-	var lastOffset int64
+	var okCount int64
 
 	for i := 0; i < runtime.NumCPU()*2; i++ {
 		go func() {
 			for j := 0; j < 100; j++ {
 				ptr := a.Alloc(16)
 				if ptr != nil {
-					atomic.StoreInt64(&lastOffset, a.youngOff.Load())
+					atomic.AddInt64(&okCount, 1)
 				}
 			}
 			done <- true
@@ -97,8 +97,15 @@ func TestArenaCAS(t *testing.T) {
 		<-done
 	}
 
-	if lastOffset == 0 {
+	if okCount == 0 {
 		t.Fatal("expected some allocations to succeed")
+	}
+	// Either the young or the old generation must have been
+	// written to. After promotion, youngOff is reset to 0, so
+	// only oldOff is non-zero.
+	if a.oldOff.Load() == 0 && a.YoungRemaining() == int64(youngSize) {
+		t.Fatalf("expected arena state to reflect allocations: okCount=%d oldOff=%d youngRemaining=%d promoted=%v",
+			okCount, a.oldOff.Load(), a.YoungRemaining(), a.promoted.Load())
 	}
 }
 

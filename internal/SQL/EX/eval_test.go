@@ -23,7 +23,7 @@ func TestEval(t *testing.T) {
 		{"bool_false", &PS.BoolLiteral{Val: false}, nil, false, false},
 		{"null", &PS.NullLiteral{}, nil, nil, false},
 		{"ident", &PS.Ident{Name: "x"}, nil, "x", false},
-		{"param", &PS.Param{Index: 0}, []interface{}{10}, 10, false},
+		{"param", &PS.Param{Index: 0}, []interface{}{10}, int64(10), false},
 		{"star", &PS.StarExpr{}, nil, "*", false},
 		{"unary_minus", &PS.UnaryExpr{Op: int(LX.T_MINUS), Operand: &PS.NumberLiteral{Val: 5}}, nil, int64(-5), false},
 		{"unary_plus", &PS.UnaryExpr{Op: int(LX.T_PLUS), Operand: &PS.NumberLiteral{Val: 5}}, nil, int64(5), false},
@@ -84,7 +84,7 @@ func TestEval(t *testing.T) {
 		{"in_list_null", &PS.InExpr{
 			Expr: &PS.NullLiteral{},
 			List: []PS.Expr{&PS.NumberLiteral{Val: 1}, &PS.NumberLiteral{Val: 2}},
-		}, nil, false, false},
+		}, nil, nil, false},
 		{"is_null_true", &PS.BinaryExpr{Op: int(LX.T_IS), Left: &PS.NullLiteral{}, Right: &PS.NullLiteral{}}, nil, true, false},
 		{"is_not_null_false", &PS.BinaryExpr{Op: int(LX.T_IS), Left: &PS.NullLiteral{}, Right: &PS.UnaryExpr{Op: int(LX.T_NOT), Operand: &PS.NullLiteral{}}}, nil, false, false},
 	}
