@@ -34,12 +34,57 @@
 | REQ000447 | SQL/EX | `count(DISTINCT x)`, `avg(DISTINCT x)`, `sum(DISTINCT x)` return wrong values — `count(DISTINCT x)` over {1, 0, NULL} returns 4 instead of 2 (distinct non-null values). Discovered via `TestSLT_Each/slt_lang_aggfunc.test` (L28) | medium | M | iter-26 (agg DISTINCT) | `SQL/EX/aggregate.go` — DISTINCT should de-dup the input rows per group, ignoring NULLs the same way non-DISTINCT aggregates already do |
 | REQ000449 | SQL/PS | `INSERT OR REPLACE` and standalone `REPLACE INTO` not supported in the parser — fails with "expected INTO, got OR". Discovered via `TestSLT_Each/slt_lang_replace.test` (L38) | low | S | iter-26 (UPSERT) | `SQL/PS/ps.go` — extend `parseInsert` to accept `OR REPLACE` / `OR ABORT` / etc. conflict resolution clauses; or add a `parseReplace` for the `REPLACE INTO` form |
 | REQ000450 | SQL/PS | `CREATE TEMP VIEW` not supported — parser expects `CREATE TABLE` after `CREATE TEMP` and fails with "expected TABLE, got identifier". Discovered via `TestSLT_Each/slt_lang_createview.test` (L48) | low | S | iter-26 | `SQL/PS/ps.go` `parseCreateView` — accept optional `TEMP`/`TEMPORARY` keyword between `CREATE` and `VIEW`; semantics: same as `CREATE VIEW` for v1 |
+| REQ000384 | SQL/EX | Scalar function `abs(X)` — returns absolute value, NULL→NULL, string→0.0, MIN_INT64→error | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000385 | SQL/EX | Scalar function `changes()` — last INSERT/UPDATE/DELETE row count; not yet wired to session state | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000386 | SQL/EX | Scalar function `char(X1,...,XN)` — Unicode code point → character; accepts variadic int args | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000387 | SQL/EX | Scalar function `concat(X,...)` — concatenate non-NULL args; all-NULL → "" | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000388 | SQL/EX | Scalar function `concat_ws(SEP,X,...)` — concat with separator; SEP=NULL → NULL | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000389 | SQL/EX | Scalar function `format(FORMAT,...)` — printf-style formatting (subset of fmt verbs) | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000390 | SQL/EX | Scalar function `glob(X,Y)` — filename glob match (X=pattern, Y=string) | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000391 | SQL/EX | Scalar function `hex(X)` — BLOB/text → uppercase hex; integer is converted via text first | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000392 | SQL/EX | Scalar function `iif(B1,V1,...)` — short-circuit CASE; if() alias | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000393 | SQL/EX | Scalar function `instr(X,Y)` — position of Y in X (1-based), 0 if not found | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000394 | SQL/EX | Scalar function `last_insert_rowid()` — engine-level rowid; engine must expose per-session counter | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000395 | SQL/EX | Scalar function `likelihood(X,Y)` — no-op pass-through; hint to planner | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000396 | SQL/EX | Scalar function `likely(X)` — no-op pass-through | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000397 | SQL/EX | Scalar function `ltrim(X[,Y])` — trim left; default Y=" " | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000398 | SQL/EX | Scalar function `max(X,Y,...)` — multi-arg scalar max; uses first collating function | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000399 | SQL/EX | Scalar function `min(X,Y,...)` — multi-arg scalar min | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000400 | SQL/EX | Scalar function `octet_length(X)` — byte length; differs from `length` for UTF-8 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000401 | SQL/EX | Scalar function `quote(X)` — SQL literal rendering; strings single-quoted with escape, BLOBs as X'hex' | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000402 | SQL/EX | Scalar function `random()` — pseudo-random int64; exclude MIN_INT64 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000403 | SQL/EX | Scalar function `randomblob(N)` — N-byte random BLOB | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000404 | SQL/EX | Scalar function `replace(X,Y,Z)` — string substitution; Y="" returns X unchanged | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000405 | SQL/EX | Scalar function `round(X[,Y])` — round to Y decimal places; Y default 0; Y<0 → 0 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000406 | SQL/EX | Scalar function `rtrim(X[,Y])` — trim right; default Y=" " | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000407 | SQL/EX | Scalar function `sign(X)` — -1/0/+1 or NULL for non-numeric | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000408 | SQL/EX | Scalar function `soundex(X)` — soundex encoding; "?000" for non-ASCII / NULL | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000409 | SQL/EX | Scalar function `sqlite_source_id()` — fixed string for v1 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000410 | SQL/EX | Scalar function `sqlite_version()` — fixed string for v1 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000411 | SQL/EX | Scalar function `total_changes()` — cumulative row-change count since connection open | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000412 | SQL/EX | Scalar function `typeof(X)` — returns "null" / "integer" / "real" / "text" / "blob" | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000413 | SQL/EX | Scalar function `unhex(X[,Y])` — hex → BLOB; X invalid → NULL; Y is ignored-char set | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000414 | SQL/EX | Scalar function `unicode(X)` — code point of first char; NULL → NULL | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000415 | SQL/EX | Scalar function `unistr(X)` — backslash-escape decoder | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000416 | SQL/EX | Scalar function `unlikely(X)` — no-op pass-through | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
+| REQ000417 | SQL/EX | Scalar function `zeroblob(N)` — N-byte BLOB of 0x00 | medium | M | iter-26 | `SQL/EX/eval.go` — scalar function dispatch table |
 
 
 ## DONE
 
 | ID | Subsystem | Requirement | Iteration |
 |---|---|---|---|
+| REQ000418 | SQL/EX | Scalar function `coalesce(X,Y,...)` — variadic NULL-skipping | iter-26 |
+| REQ000419 | SQL/EX | Scalar function `ifnull(X,Y)` — 2-arg NULL coalesce | iter-26 |
+| REQ000420 | SQL/EX | Scalar function `length(X)` — code-point count | iter-26 |
+| REQ000421 | SQL/EX | Scalar function `like(X,Y[,Z])` — 2-arg pattern match | iter-26 |
+| REQ000422 | SQL/EX | Scalar function `lower(X)` — ASCII lower-case | iter-26 |
+| REQ000423 | SQL/EX | Scalar function `nullif(X,Y)` — NULL-on-equal | iter-26 |
+| REQ000424 | SQL/EX | Scalar function `printf(FORMAT,...)` — alias for format | iter-26 |
+| REQ000425 | SQL/EX | Scalar function `substr(X,Y[,Z])` — 1-based, negative start | iter-26 |
+| REQ000426 | SQL/EX | Scalar function `substring(X,Y[,Z])` — substr alias | iter-26 |
+| REQ000427 | SQL/EX | Scalar function `trim(X[,Y])` — both-sides, default space | iter-26 |
+| REQ000433 | SQL/EX | Scalar function `upper(X)` — ASCII upper-case | iter-26 |
 | REQ000018 | FIL | File locking (`flock`) for multi-process access | iter-27 |
 | REQ000126 | SQL | Foreign keys (REFERENCES, ON DELETE/UPDATE) | iter-27 |
 | REQ000160 | WAL | Batch commit with sync.WaitGroup and write barrier | iter-03 |
@@ -356,4 +401,3 @@
 | REQ000302 | MEM/BF | PMem-aware buffer pool (MADV_HUGEPAGE, PMemFile, slot tier field) | iter-28 |
 | REQ000445 | SQL/EX | NULL three-valued logic: `<`, `<=`, `>`, `>=`, `=`, `!=` comparisons with NULL operand → return NULL (UNKNOWN), not a boolean | iter-26 |
 | REQ000448 | SQL/EX | SLT runner `skipif`/`onlyif` engine-name gating — `NewRunner(drv, cls, "razor")` evaluates directives against engine name; `onlyif sqlite` skips on Razor, `onlyif razor` executes | iter-26 |
----
