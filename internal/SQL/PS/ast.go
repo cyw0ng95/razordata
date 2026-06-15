@@ -253,7 +253,8 @@ func UniqueKeyFromName(name string) UniqueKey {
 func (c *CreateTable) stmtNode() {}
 
 type DropTable struct {
-	Name string
+	Name     string
+	IfExists bool // REQ000497: DROP TABLE IF EXISTS
 }
 
 func (d *DropTable) stmtNode() {}
@@ -291,10 +292,11 @@ func (i *Insert) stmtNode() {}
 // CreateIndexStmt represents a CREATE INDEX statement.
 // REQ000251 — secondary indexes MVP.
 type CreateIndexStmt struct {
-	Name    string   // index name
-	Table   string   // target table name
-	Columns []string // indexed column names
-	Unique  bool     // UNIQUE modifier (reserved; not yet enforced)
+	Name     string   // index name
+	Table    string   // target table name
+	Columns  []string // indexed column names
+	Unique   bool     // UNIQUE modifier (reserved; not yet enforced)
+	IfExists bool     // REQ000479: CREATE INDEX IF NOT EXISTS
 }
 
 func (c *CreateIndexStmt) stmtNode() {}
@@ -302,7 +304,8 @@ func (c *CreateIndexStmt) stmtNode() {}
 // DropIndexStmt represents a DROP INDEX statement.
 // REQ000251 — secondary indexes MVP.
 type DropIndexStmt struct {
-	Name string // index name
+	Name     string // index name
+	IfExists bool   // REQ000480: DROP INDEX IF EXISTS
 }
 
 func (d *DropIndexStmt) stmtNode() {}
@@ -501,10 +504,12 @@ func (c *CreateViewStmt) stmtNode() {}
 
 // AlterTableStmt represents ALTER TABLE ... (REQ000243)
 type AlterTableStmt struct {
-	Table  string
-	Action string  // "ADD COLUMN", "DROP COLUMN", "RENAME"
-	Column string  // column name for ADD/DROP
-	NewCol *ColDef // for ADD COLUMN
+	Table     string
+	Action    string  // "ADD COLUMN", "DROP COLUMN", "RENAME", "RENAME COLUMN"
+	Column    string  // column name for ADD/DROP/RENAME COLUMN
+	NewCol    *ColDef // for ADD COLUMN
+	NewName   string  // REQ000498: new name for RENAME COLUMN
+	IfExists  bool    // for DROP TABLE IF EXISTS (stored for executor)
 }
 
 func (a *AlterTableStmt) stmtNode() {}
