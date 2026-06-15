@@ -1,0 +1,1175 @@
+package EX
+
+import (
+	"context"
+	"fmt"
+
+	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	LX "github.com/cyw0ng95/razordata/internal/SQL/LX"
+	"github.com/cyw0ng95/razordata/internal/SQL/PS"
+)
+
+type Insert struct {
+	table      string
+	cols       []string
+	values     [][]PS.Expr
+	returning  []PS.Expr
+	onConflict *PS.OnConflict
+	store      Store
+	schema     *storeSchema
+	txWriter   TxWriter
+	rows       int64
+	done       bool
+	params     []interface{}
+	resultRows []Row
+	resultPos  int
+}
+
+// WithParams propagates the bound `?` placeholders (R16-1..2).
+func (i *Insert) WithParams(p []interface{}) Operator {
+	i.params = p
+	return i
+}
+
+func NewInsert(table string, cols []string, values [][]PS.Expr, returning []PS.Expr, onConflict *PS.OnConflict) *Insert {
+	return &Insert{
+		table:      table,
+		cols:       cols,
+		values:     values,
+		returning:  returning,
+		onConflict: onConflict,
+	}
+}
+
+// NewInsertWithStore builds an Insert that writes through the engine. The
+// table must have been registered. REQ000367: tables without a declared
+// PRIMARY KEY get a synthetic int64 rowid and remain writable.
+func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.Expr, returning []PS.Expr, onConflict *PS.OnConflict) (*Insert, error) {
+	ss, ok := schemaFor(table)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+	}
+	return &Insert{
+		table:      table,
+		cols:       cols,
+		values:     values,
+		returning:  returning,
+		onConflict: onConflict,
+		store:      store,
+		schema:     ss,
+	}, nil
+}
+
+func (i *Insert) Next(ctx context.Context) (Row, error) {
+	// If we have RETURNING results, return them
+	if len(i.returning) > 0 {
+		if i.resultPos < len(i.resultRows) {
+			row := i.resultRows[i.resultPos]
+			i.resultPos++
+			return row, nil
+		}
+		return Row{}, ErrNoRows
+	}
+
+	if i.done {
+		return Row{}, ErrNoRows
+	}
+	i.done = true
+	if i.store != nil {
+		return i.nextFromStore(ctx)
+	}
+	schema := Schema(i.table)
+	if schema == nil && len(i.cols) > 0 {
+		schema = i.cols
+	}
+	// Resolve the constraint-aware schema for NOT NULL / DEFAULT
+	// enforcement. Falls back to nil for ad-hoc schemas.
+	var cschema *storeSchema
+	if ss, ok := schemaFor(i.table); ok {
+		cschema = ss
+	}
+	tablesMu.Lock()
+	defer tablesMu.Unlock()
+	existing := tables[i.table]
+	pending := make(map[string]struct{}, len(i.values))
+	lookup := inMemoryLookup(i.table)
+	for _, row := range i.values {
+		out, err := buildInsertRow(schema, i.cols, row, i.params)
+		if err != nil {
+			return Row{}, err
+		}
+		if cschema != nil {
+			if out, err = fillDefaults(cschema, out); err != nil {
+				return Row{}, err
+			}
+			if err := validateRow(cschema, out); err != nil {
+				return Row{}, err
+			}
+			if err := validateCheck(cschema, out); err != nil {
+				return Row{}, err
+			}
+			if err := checkUnique(cschema, out, pending, nil, lookup); err != nil {
+				if i.onConflict == nil {
+					return Row{}, err
+				}
+				// ON CONFLICT: handle unique violation
+				if i.onConflict.DoNothing {
+					// DO NOTHING: skip this row
+					continue
+				}
+				// DO UPDATE: apply update to conflicting row
+				// For now, just continue (full implementation would update existing row)
+				continue
+			}
+		}
+		// REQ000126: FK validation on INSERT
+		if cschema != nil && len(cschema.foreignKeys) > 0 {
+			if err := validateForeignKeyInsert(cschema, out.Data, i.store); err != nil {
+				return Row{}, err
+			}
+		}
+		existing = append(existing, out)
+		i.rows++
+
+		// Evaluate RETURNING expressions
+		if len(i.returning) > 0 {
+			resultRow := Row{
+				Cols:  make([]string, len(i.returning)),
+				Types: make([]int, len(i.returning)),
+				Data:  make([]interface{}, len(i.returning)),
+			}
+			for j, expr := range i.returning {
+				val, err := Eval(expr, &out, i.params)
+				if err != nil {
+					return Row{}, err
+				}
+				resultRow.Data[j] = val
+			}
+			i.resultRows = append(i.resultRows, resultRow)
+		}
+	}
+	tables[i.table] = existing
+
+	// Return first RETURNING result if any
+	if len(i.resultRows) > 0 {
+		row := i.resultRows[0]
+		i.resultPos = 1
+		return row, nil
+	}
+	return Row{}, ErrNoRows
+}
+
+func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
+	// If we have RETURNING results, return them
+	if len(i.returning) > 0 {
+		if i.resultPos < len(i.resultRows) {
+			row := i.resultRows[i.resultPos]
+			i.resultPos++
+			return row, nil
+		}
+		return Row{}, ErrNoRows
+	}
+
+	prefix := tablePrefix(i.table)
+	pending := make(map[string]struct{}, len(i.values))
+	// In the engine path, unique lookups are best-effort: the LSM
+	// iterator would need a composite-key range scan. For v1, we
+	// check pending-batch duplicates only and skip the in-store
+	// lookup (correctness note: true cross-row UNIQUE in the engine
+	// path is deferred until REQ000045 / index work).
+	noopLookup := func(cols []int, vals []interface{}) (bool, error) { return false, nil }
+	for _, row := range i.values {
+		out, err := buildInsertRow(i.schema.cols, i.cols, row, i.params)
+		if err != nil {
+			return Row{}, err
+		}
+		if out, err = fillDefaults(i.schema, out); err != nil {
+			return Row{}, err
+		}
+		if err := validateRow(i.schema, out); err != nil {
+			return Row{}, err
+		}
+		if err := validateCheck(i.schema, out); err != nil {
+			return Row{}, err
+		}
+		if err := checkUnique(i.schema, out, pending, nil, noopLookup); err != nil {
+			return Row{}, err
+		}
+		// REQ000126: FK validation on INSERT (store path)
+		if len(i.schema.foreignKeys) > 0 {
+			if err := validateForeignKeyInsert(i.schema, out.Data, i.store); err != nil {
+				return Row{}, err
+			}
+		}
+		pk, err := extractPK(i.schema, out)
+		if err != nil {
+			return Row{}, err
+		}
+		buf, err := encodeRow(i.schema, out)
+		if err != nil {
+			return Row{}, err
+		}
+		key := rowKey(prefix, pk)
+		if err := i.store.Insert(key, buf); err != nil {
+			return Row{}, err
+		}
+		if i.txWriter != nil {
+			i.txWriter.RecordWrite(key, buf)
+		}
+		// Maintain secondary indexes (iter-22).
+		if err := maintainIndexesOnInsert(i.store, i.table, i.schema, out); err != nil {
+			return Row{}, err
+		}
+		i.rows++
+
+		// Evaluate RETURNING expressions
+		if len(i.returning) > 0 {
+			resultRow := Row{
+				Cols:  make([]string, len(i.returning)),
+				Types: make([]int, len(i.returning)),
+				Data:  make([]interface{}, len(i.returning)),
+			}
+			for j, expr := range i.returning {
+				val, err := Eval(expr, &out, i.params)
+				if err != nil {
+					return Row{}, err
+				}
+				resultRow.Data[j] = val
+			}
+			i.resultRows = append(i.resultRows, resultRow)
+		}
+	}
+	_ = ctx
+
+	// Return first RETURNING result if any
+	if len(i.resultRows) > 0 {
+		row := i.resultRows[0]
+		i.resultPos = 1
+		return row, nil
+	}
+	return Row{}, ErrNoRows
+}
+
+func (i *Insert) Close() error {
+	return nil
+}
+
+func (i *Insert) RowsAffected() int64 {
+	return i.rows
+}
+
+type Update struct {
+	table    string
+	set      []PS.Pair
+	where    PS.Expr
+	returning []PS.Expr
+	iter     Operator
+	store    Store
+	schema   *storeSchema
+	txWriter TxWriter
+	rows     int64
+	done     bool
+	params   []interface{}
+	resultRows []Row
+	resultPos  int
+}
+
+// WithParams propagates the bound `?` placeholders (R16-1..2).
+func (u *Update) WithParams(p []interface{}) Operator {
+	u.params = p
+	if u.iter != nil {
+		if w, ok := u.iter.(interface{ WithParams([]interface{}) Operator }); ok {
+			w.WithParams(p)
+		}
+	}
+	return u
+}
+
+func NewUpdate(table string, set []PS.Pair, where PS.Expr, iter Operator, returning []PS.Expr) *Update {
+	return &Update{table: table, set: set, where: where, iter: iter, returning: returning}
+}
+
+// NewUpdateWithStore builds an Update that reads the old row via the engine
+// iterator and writes the new version through engine.Insert. REQ000367:
+// tables without a declared PRIMARY KEY are writable via synthetic rowid.
+func NewUpdateWithStore(store Store, table string, set []PS.Pair, where PS.Expr, iter Operator, returning []PS.Expr) (*Update, error) {
+	ss, ok := schemaFor(table)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+	}
+	return &Update{
+		table:     table,
+		set:       set,
+		where:     where,
+		iter:      iter,
+		returning: returning,
+		store:     store,
+		schema:    ss,
+	}, nil
+}
+
+func (u *Update) Next(ctx context.Context) (Row, error) {
+	// If we have RETURNING results, return them
+	if len(u.returning) > 0 {
+		if u.resultPos < len(u.resultRows) {
+			row := u.resultRows[u.resultPos]
+			u.resultPos++
+			return row, nil
+		}
+		return Row{}, ErrNoRows
+	}
+
+	if u.done {
+		return Row{}, ErrNoRows
+	}
+	u.done = true
+	if u.store != nil {
+		return u.nextFromStore(ctx)
+	}
+	// Resolve the constraint-aware schema for NOT NULL / DEFAULT
+	// enforcement on the new row.
+	var cschema *storeSchema
+	if ss, ok := schemaFor(u.table); ok {
+		cschema = ss
+	}
+	noopLookup := func(cols []int, vals []interface{}) (bool, error) { return false, nil }
+	for {
+		row, err := u.iter.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return Row{}, err
+		}
+		if u.where != nil {
+			ok, err := Eval(u.where, &row, nil)
+			if err != nil {
+				return Row{}, err
+			}
+			if !truthy(ok) {
+				continue
+			}
+		}
+		snapshot := cloneRow(row)
+		if err := applyUpdate(&row, u.set, u.params); err != nil {
+			return Row{}, err
+		}
+		if cschema != nil {
+			if row, err = fillDefaults(cschema, row); err != nil {
+				return Row{}, err
+			}
+			if err := validateRow(cschema, row); err != nil {
+				return Row{}, err
+			}
+			if err := validateCheck(cschema, row); err != nil {
+				return Row{}, err
+			}
+			// Self-exclude: encode the pre-update row's unique key so
+			// a no-op update (same values) does not self-conflict.
+			var selfKey []byte
+			if cschema.pk != "" {
+				pkIdx := -1
+				for i, n := range cschema.cols {
+					if n == cschema.pk {
+						pkIdx = i
+						break
+					}
+				}
+				if pkIdx >= 0 && len(snapshot.Data) > pkIdx {
+					selfKey = encodeUniqueKey([]int{pkIdx}, []interface{}{snapshot.Data[pkIdx]})
+				}
+			}
+			if err := checkUnique(cschema, row, nil, selfKey, noopLookup); err != nil {
+				return Row{}, err
+			}
+		}
+		if err := replaceBySnapshot(u.table, snapshot, row); err != nil {
+			return Row{}, err
+		}
+		u.rows++
+
+		// Evaluate RETURNING expressions
+		if len(u.returning) > 0 {
+			resultRow := Row{
+				Cols:  make([]string, len(u.returning)),
+				Types: make([]int, len(u.returning)),
+				Data:  make([]interface{}, len(u.returning)),
+			}
+			for j, expr := range u.returning {
+				val, err := Eval(expr, &row, u.params)
+				if err != nil {
+					return Row{}, err
+				}
+				resultRow.Data[j] = val
+			}
+			u.resultRows = append(u.resultRows, resultRow)
+		}
+	}
+
+	// Return first RETURNING result if any
+	if len(u.resultRows) > 0 {
+		row := u.resultRows[0]
+		u.resultPos = 1
+		return row, nil
+	}
+	return Row{}, ErrNoRows
+}
+
+func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
+	// If we have RETURNING results, return them
+	if len(u.returning) > 0 {
+		if u.resultPos < len(u.resultRows) {
+			row := u.resultRows[u.resultPos]
+			u.resultPos++
+			return row, nil
+		}
+		return Row{}, ErrNoRows
+	}
+
+	prefix := tablePrefix(u.table)
+	for {
+		row, err := u.iter.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return Row{}, err
+		}
+		if u.where != nil {
+			ok, err := Eval(u.where, &row, nil)
+			if err != nil {
+				return Row{}, err
+			}
+			if !truthy(ok) {
+				continue
+			}
+		}
+		if err := applyUpdate(&row, u.set, u.params); err != nil {
+			return Row{}, err
+		}
+		if row, err = fillDefaults(u.schema, row); err != nil {
+			return Row{}, err
+		}
+		if err := validateRow(u.schema, row); err != nil {
+			return Row{}, err
+		}
+		if err := validateCheck(u.schema, row); err != nil {
+			return Row{}, err
+		}
+		// Engine-path unique: best-effort no-op (correct UNIQUE in the
+		// engine path requires a real index, deferred to REQ000045).
+		noopLookup := func(cols []int, vals []interface{}) (bool, error) { return false, nil }
+		if err := checkUnique(u.schema, row, nil, nil, noopLookup); err != nil {
+			return Row{}, err
+		}
+		pk, err := extractPK(u.schema, row)
+		if err != nil {
+			return Row{}, err
+		}
+		buf, err := encodeRow(u.schema, row)
+		if err != nil {
+			return Row{}, err
+		}
+		key := rowKey(prefix, pk)
+		if err := u.store.Insert(key, buf); err != nil {
+			return Row{}, err
+		}
+		if u.txWriter != nil {
+			u.txWriter.RecordWrite(key, buf)
+		}
+		u.rows++
+
+		// Evaluate RETURNING expressions
+		if len(u.returning) > 0 {
+			resultRow := Row{
+				Cols:  make([]string, len(u.returning)),
+				Types: make([]int, len(u.returning)),
+				Data:  make([]interface{}, len(u.returning)),
+			}
+			for j, expr := range u.returning {
+				val, err := Eval(expr, &row, u.params)
+				if err != nil {
+					return Row{}, err
+				}
+				resultRow.Data[j] = val
+			}
+			u.resultRows = append(u.resultRows, resultRow)
+		}
+	}
+
+	// Return first RETURNING result if any
+	if len(u.resultRows) > 0 {
+		row := u.resultRows[0]
+		u.resultPos = 1
+		return row, nil
+	}
+	return Row{}, ErrNoRows
+}
+
+func (u *Update) Close() error {
+	return u.iter.Close()
+}
+
+func (u *Update) RowsAffected() int64 {
+	return u.rows
+}
+
+type Delete struct {
+	table    string
+	where    PS.Expr
+	returning []PS.Expr
+	iter     Operator
+	store    Store
+	schema   *storeSchema
+	txWriter TxWriter
+	rows     int64
+	done     bool
+	params   []interface{}
+	resultRows []Row
+	resultPos  int
+}
+
+// WithParams propagates the bound `?` placeholders (R16-1..2).
+func (d *Delete) WithParams(p []interface{}) Operator {
+	d.params = p
+	if d.iter != nil {
+		if w, ok := d.iter.(interface{ WithParams([]interface{}) Operator }); ok {
+			w.WithParams(p)
+		}
+	}
+	return d
+}
+
+func NewDelete(table string, where PS.Expr, iter Operator, returning []PS.Expr) *Delete {
+	return &Delete{table: table, where: where, iter: iter, returning: returning}
+}
+
+// NewDeleteWithStore builds a Delete that removes rows through engine.Delete.
+// REQ000367: tables without a declared PRIMARY KEY are deletable via
+// the synthetic rowid.
+func NewDeleteWithStore(store Store, table string, where PS.Expr, iter Operator, returning []PS.Expr) (*Delete, error) {
+	ss, ok := schemaFor(table)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+	}
+	return &Delete{
+		table:     table,
+		where:     where,
+		iter:      iter,
+		returning: returning,
+		store:     store,
+		schema:    ss,
+	}, nil
+}
+
+func (d *Delete) Next(ctx context.Context) (Row, error) {
+	// If we have RETURNING results, return them
+	if len(d.returning) > 0 {
+		if d.resultPos < len(d.resultRows) {
+			row := d.resultRows[d.resultPos]
+			d.resultPos++
+			return row, nil
+		}
+		return Row{}, ErrNoRows
+	}
+
+	if d.done {
+		return Row{}, ErrNoRows
+	}
+	d.done = true
+	if d.store != nil {
+		return d.nextFromStore(ctx)
+	}
+	toDelete := map[int]bool{}
+	for {
+		row, err := d.iter.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return Row{}, err
+		}
+		if d.where != nil {
+			ok, err := Eval(d.where, &row, nil)
+			if err != nil {
+				return Row{}, err
+			}
+			if !truthy(ok) {
+				continue
+			}
+		}
+		idx, ok := rowIndex(d.table, row)
+		if ok {
+			toDelete[idx] = true
+
+			// Evaluate RETURNING expressions before deleting
+			if len(d.returning) > 0 {
+				resultRow := Row{
+					Cols:  make([]string, len(d.returning)),
+					Types: make([]int, len(d.returning)),
+					Data:  make([]interface{}, len(d.returning)),
+				}
+				for j, expr := range d.returning {
+					val, err := Eval(expr, &row, d.params)
+					if err != nil {
+						return Row{}, err
+					}
+					resultRow.Data[j] = val
+				}
+				d.resultRows = append(d.resultRows, resultRow)
+			}
+		}
+	}
+	if len(toDelete) > 0 {
+		tablesMu.Lock()
+		defer tablesMu.Unlock()
+		existing := tables[d.table]
+		out := existing[:0]
+		for i, r := range existing {
+			if !toDelete[i] {
+				out = append(out, r)
+			}
+		}
+		tables[d.table] = out
+		d.rows = int64(len(toDelete))
+	}
+
+	// Return first RETURNING result if any
+	if len(d.resultRows) > 0 {
+		row := d.resultRows[0]
+		d.resultPos = 1
+		return row, nil
+	}
+	return Row{}, ErrNoRows
+}
+
+func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
+	// If we have RETURNING results, return them
+	if len(d.returning) > 0 {
+		if d.resultPos < len(d.resultRows) {
+			row := d.resultRows[d.resultPos]
+			d.resultPos++
+			return row, nil
+		}
+		return Row{}, ErrNoRows
+	}
+
+	prefix := tablePrefix(d.table)
+	for {
+		row, err := d.iter.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return Row{}, err
+		}
+		if d.where != nil {
+			ok, err := Eval(d.where, &row, nil)
+			if err != nil {
+				return Row{}, err
+			}
+			if !truthy(ok) {
+				continue
+			}
+		}
+
+		// Evaluate RETURNING expressions before deleting
+		if len(d.returning) > 0 {
+			resultRow := Row{
+				Cols:  make([]string, len(d.returning)),
+				Types: make([]int, len(d.returning)),
+				Data:  make([]interface{}, len(d.returning)),
+			}
+			for j, expr := range d.returning {
+				val, err := Eval(expr, &row, d.params)
+				if err != nil {
+					return Row{}, err
+				}
+				resultRow.Data[j] = val
+			}
+			d.resultRows = append(d.resultRows, resultRow)
+		}
+
+		pk, err := extractPK(d.schema, row)
+		if err != nil {
+			return Row{}, err
+		}
+		key := rowKey(prefix, pk)
+		if err := d.store.Delete(key); err != nil {
+			return Row{}, err
+		}
+		if d.txWriter != nil {
+			d.txWriter.RecordWrite(key, nil)
+		}
+		d.rows++
+	}
+
+	// Return first RETURNING result if any
+	if len(d.resultRows) > 0 {
+		row := d.resultRows[0]
+		d.resultPos = 1
+		return row, nil
+	}
+	return Row{}, ErrNoRows
+}
+
+func (d *Delete) Close() error {
+	return d.iter.Close()
+}
+
+func (d *Delete) RowsAffected() int64 {
+	return d.rows
+}
+
+// Trigger is a stub operator for CREATE TRIGGER. REQ000435.
+// The body is parsed and stored; executor surface is a no-op that
+// returns ErrNoRows after one iteration (similar to AlterTable).
+// The trigger is registered in the package-level trigger registry
+// so future INSERT/UPDATE/DELETE statements can fire it.
+type Trigger struct {
+	stmt *PS.TriggerStmt
+	done bool
+}
+
+func NewTrigger(stmt *PS.TriggerStmt) *Trigger {
+	if stmt != nil {
+		registerTrigger(stmt)
+	}
+	return &Trigger{stmt: stmt}
+}
+
+func (t *Trigger) Next(ctx context.Context) (Row, error) {
+	if t.done {
+		return Row{}, ErrNoRows
+	}
+	t.done = true
+	return Row{}, ErrNoRows
+}
+
+func (t *Trigger) Close() error              { return nil }
+func (t *Trigger) WithParams(p []interface{}) Operator { return t }
+func (t *Trigger) RowsAffected() int64        { return 0 }
+
+type CreateTable struct {
+	stmt *PS.CreateTable
+	done bool
+}
+
+func NewCreateTable(stmt *PS.CreateTable) *CreateTable {
+	return &CreateTable{stmt: stmt}
+}
+
+func (c *CreateTable) Next(ctx context.Context) (Row, error) {
+	if c.done {
+		return Row{}, ErrNoRows
+	}
+	c.done = true
+	tablesMu.Lock()
+	if _, ok := tables[c.stmt.Name]; ok {
+		tablesMu.Unlock()
+		return Row{}, errTableExists
+	}
+	cols := make([]string, len(c.stmt.Cols))
+	nullable := make([]bool, len(c.stmt.Cols))
+	defaults := make([]PS.Expr, len(c.stmt.Cols))
+	colTypes := make([]int, len(c.stmt.Cols))
+	for i, col := range c.stmt.Cols {
+		cols[i] = col.Name
+		nullable[i] = col.Nullable
+		defaults[i] = col.Default
+		colTypes[i] = col.Type
+	}
+	tables[c.stmt.Name] = []Row{}
+	schemas[c.stmt.Name] = cols
+	tablesMu.Unlock()
+	var pk string
+	if c.stmt.PK != nil {
+		pk = *c.stmt.PK
+	}
+	// PRIMARY KEY implies NOT NULL. If PK is one of the cols, flip its
+	// nullable bit so validateRow rejects NULL PK inserts.
+	if pk != "" {
+		for i, n := range cols {
+			if n == pk {
+				nullable[i] = false
+			}
+		}
+	}
+	// Build unique constraints: column-level ColDef.Unique + table-level
+	// UniqueConstraints from the AST. Resolve names to indices.
+	var unique []UniqueKey
+	colIndex := make(map[string]int, len(cols))
+	for i, n := range cols {
+		colIndex[n] = i
+	}
+	for _, col := range c.stmt.Cols {
+		if col.Unique {
+			if idx, ok := colIndex[col.Name]; ok {
+				unique = append(unique, UniqueKey{Cols: []int{idx}})
+			}
+		}
+	}
+	for _, uk := range c.stmt.UniqueConstraints {
+		idxs := make([]int, 0, len(uk.Cols))
+		allFound := true
+		for _, name := range uk.Cols {
+			idx, ok := colIndex[name]
+			if !ok {
+				allFound = false
+				break
+			}
+			idxs = append(idxs, idx)
+		}
+		if allFound && len(idxs) > 0 {
+			unique = append(unique, UniqueKey{Cols: idxs})
+		}
+	}
+	// REQ000126: extract FK constraints from column-level and table-level
+	var fks []ForeignKeyConstraint
+	for _, col := range c.stmt.Cols {
+		if col.ReferencesTable != "" {
+			fk := ForeignKeyConstraint{
+				Columns:    []string{col.Name},
+				RefTable:   col.ReferencesTable,
+				RefColumns: []string{col.ReferencesColumn},
+				OnDelete:   col.OnDelete,
+				OnUpdate:   col.OnUpdate,
+			}
+			if fk.OnDelete == "" {
+				fk.OnDelete = "NO ACTION"
+			}
+			if fk.OnUpdate == "" {
+				fk.OnUpdate = "NO ACTION"
+			}
+			fks = append(fks, fk)
+		}
+	}
+	for _, fkAST := range c.stmt.ForeignKeys {
+		fk := ForeignKeyConstraint{
+			Columns:    fkAST.Columns,
+			RefTable:   fkAST.RefTable,
+			RefColumns: fkAST.RefColumns,
+			OnDelete:   fkAST.OnDelete,
+			OnUpdate:   fkAST.OnUpdate,
+		}
+		if fk.OnDelete == "" {
+			fk.OnDelete = "NO ACTION"
+		}
+		if fk.OnUpdate == "" {
+			fk.OnUpdate = "NO ACTION"
+		}
+		fks = append(fks, fk)
+	}
+	// REQ000248/249: capture generated column expressions so the
+	// INSERT/UPDATE path can materialize them.
+	generated := make([]PS.Expr, len(c.stmt.Cols))
+	for i, col := range c.stmt.Cols {
+		if !col.Virtual && col.Generated != nil {
+			generated[i] = col.Generated
+		}
+	}
+	id := registerStoreSchemaWithFK(c.stmt.Name, cols, nullable, defaults, unique, pk, fks)
+	// R16-3: record each column's SQL type token alongside the
+	// schema so ExtractParamTypes can resolve `column = ?`
+	// placeholders to their column type at Prepare time.
+	storeMu.Lock()
+	if ss, ok := storeSchemas[id]; ok {
+		ss.colTypes = append([]int(nil), colTypes...)
+		ss.generated = generated
+		// REQ000367: tables without a PRIMARY KEY that are
+		// registered for storage get a synthetic int64 rowid.
+		// This makes them writable to the engine store while
+		// keeping the user-visible schema unchanged.
+		if pk == "" {
+			ss.hiddenPK = true
+		}
+	}
+	storeMu.Unlock()
+
+	// Persist to the system catalog if one is wired in (iter-12).
+	// The catalog write is best-effort: a failure does not roll
+	// back the in-memory registration because the user-visible
+	// operation has already succeeded. A subsequent Open will
+	// re-replay the catalog and re-register the schema.
+	if cat := Catalog(); cat != nil {
+		catCols := make([]ls.CatalogColumn, len(cols))
+		for i, n := range cols {
+			catCols[i] = ls.CatalogColumn{Name: n, Type: colTypes[i], Nullable: nullable[i]}
+		}
+		catUnique := make([]ls.CatalogUnique, len(unique))
+		for i, u := range unique {
+			catUnique[i] = ls.CatalogUnique{Cols: append([]int(nil), u.Cols...)}
+		}
+		id, _ := tableIDFor(c.stmt.Name)
+		if id == 0 {
+			id, _ = cat.NextID()
+		}
+		_ = cat.Put(ls.CatalogEntry{
+			TableID:    id,
+			Name:       c.stmt.Name,
+			Columns:    catCols,
+			PrimaryKey: pk,
+			Unique:     catUnique,
+			CreateSQL:  buildCreateSQL(c.stmt),
+		})
+	}
+	return Row{}, ErrNoRows
+}
+
+func (c *CreateTable) Close() error {
+	return nil
+}
+
+type DropTable struct {
+	stmt *PS.DropTable
+	done bool
+	rows int64
+}
+
+func NewDropTable(stmt *PS.DropTable) *DropTable {
+	return &DropTable{stmt: stmt}
+}
+
+func (d *DropTable) Next(ctx context.Context) (Row, error) {
+	if d.done {
+		return Row{}, ErrNoRows
+	}
+	d.done = true
+	tablesMu.Lock()
+	if existing, ok := tables[d.stmt.Name]; ok {
+		d.rows = int64(len(existing))
+		delete(tables, d.stmt.Name)
+	}
+	tablesMu.Unlock()
+	// Drop the store schema mapping; actual data is left in the engine and
+	// unreachable until the same tableID is reused.
+	storeMu.Lock()
+	id, ok := tableIDs[d.stmt.Name]
+	if ok {
+		delete(storeSchemas, id)
+		delete(tableIDs, d.stmt.Name)
+	}
+	storeMu.Unlock()
+	// Persist the drop to the system catalog (iter-12). The
+	// catalog write is best-effort; a failure leaves the
+	// in-memory state already gone, so the table is no longer
+	// queryable in this process.
+	if ok {
+		if cat := Catalog(); cat != nil {
+			_ = cat.Delete(id)
+		}
+	}
+	return Row{}, ErrNoRows
+}
+
+// buildCreateSQL reconstructs a canonical CREATE TABLE statement
+// from a parsed PS.CreateTable. The output is best-effort — it is
+// used for catalog persistence (display + admin dumps), not for
+// re-parsing.
+func buildCreateSQL(stmt *PS.CreateTable) string {
+	b := []byte("CREATE TABLE ")
+	b = append(b, stmt.Name...)
+	b = append(b, []byte(" (")...)
+	for i, col := range stmt.Cols {
+		if i > 0 {
+			b = append(b, []byte(", ")...)
+		}
+		b = append(b, col.Name...)
+		if tok := typeToken(col.Type); tok != "" {
+			b = append(b, ' ')
+			b = append(b, []byte(tok)...)
+		}
+		if !col.Nullable {
+			b = append(b, []byte(" NOT NULL")...)
+		}
+		if col.Unique {
+			b = append(b, []byte(" UNIQUE")...)
+		}
+		if col.Default != nil {
+			b = append(b, []byte(" DEFAULT ")...)
+			b = append(b, []byte(defaultLiteral(col.Default))...)
+		}
+	}
+	if stmt.PK != nil {
+		b = append(b, []byte(", PRIMARY KEY (")...)
+		b = append(b, *stmt.PK...)
+		b = append(b, ')')
+	}
+	for _, uk := range stmt.UniqueConstraints {
+		b = append(b, []byte(", UNIQUE (")...)
+		for i, c := range uk.Cols {
+			if i > 0 {
+				b = append(b, []byte(", ")...)
+			}
+			b = append(b, c...)
+		}
+		b = append(b, ')')
+	}
+	b = append(b, ')')
+	return string(b)
+}
+
+// typeToken maps a parser column-type token to its SQL spelling.
+// The token IDs are the LX.T_* constants stored as int on the
+// ColDef. Returns "" if the type is unknown.
+func typeToken(t int) string {
+	switch t {
+	case int(LX.T_INT_KW):
+		return "INTEGER"
+	case int(LX.T_BIGINT):
+		return "BIGINT"
+	case int(LX.T_TEXT):
+		return "TEXT"
+	case int(LX.T_VARCHAR):
+		return "VARCHAR"
+	case int(LX.T_BOOL):
+		return "BOOLEAN"
+	case int(LX.T_FLOAT_KW):
+		return "FLOAT"
+	case int(LX.T_BLOB):
+		return "BLOB"
+	case int(LX.T_TIMESTAMP):
+		return "TIMESTAMP"
+	default:
+		return ""
+	}
+}
+
+// defaultLiteral renders a parser Expr as a SQL literal. The
+// catalog only needs a faithful display string; for expressions
+// other than the four built-in literal kinds we fall back to "?"
+// rather than risking a wrong rendering.
+func defaultLiteral(e PS.Expr) string {
+	switch v := e.(type) {
+	case *PS.NumberLiteral:
+		return fmt.Sprintf("%d", v.Val)
+	case *PS.FloatLiteral:
+		return fmt.Sprintf("%v", v.Val)
+	case *PS.StringLiteral:
+		return "'" + v.Val + "'"
+	case *PS.BoolLiteral:
+		if v.Val {
+			return "TRUE"
+		}
+		return "FALSE"
+	default:
+		return "?"
+	}
+}
+
+func (d *DropTable) Close() error {
+	return nil
+}
+
+func (d *DropTable) RowsAffected() int64 {
+	return d.rows
+}
+
+// CreateIndex is the DDL operator for CREATE INDEX. iter-22.
+// It registers the index in the EX layer (for writer maintenance)
+// and persists the metadata to the catalog.
+type CreateIndex struct {
+	stmt    *PS.CreateIndexStmt
+	done    bool
+	rowsAff int64
+}
+
+func NewCreateIndex(stmt *PS.CreateIndexStmt) *CreateIndex {
+	return &CreateIndex{stmt: stmt}
+}
+
+func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
+	if c.done {
+		return Row{}, ErrNoRows
+	}
+	c.done = true
+	// Register for writer maintenance
+	RegisterIndexWithID(c.stmt.Table, RegisteredIndex{
+		Name:    c.stmt.Name,
+		Columns: c.stmt.Columns,
+		Unique:  c.stmt.Unique,
+	})
+	// Persist to catalog if available
+	if cat := Catalog(); cat != nil {
+		// Find the tableID
+		if tableID, ok := tableIDFor(c.stmt.Table); ok {
+			idx := ls.CatalogIndex{
+				Name:      c.stmt.Name,
+				Columns:   c.stmt.Columns,
+				Unique:    c.stmt.Unique,
+				CreateSQL: "CREATE INDEX " + c.stmt.Name + " ON " + c.stmt.Table + " (" + joinStrings(c.stmt.Columns, ", ") + ")",
+			}
+			if err := cat.PutIndex(tableID, idx); err != nil {
+				// Duplicate or other error — surface it.
+				return Row{}, err
+			}
+		}
+	}
+	c.rowsAff = 0
+	return Row{}, ErrNoRows
+}
+
+func (c *CreateIndex) Close() error { return nil }
+func (c *CreateIndex) RowsAffected() int64 { return c.rowsAff }
+
+// DropIndex is the DDL operator for DROP INDEX. iter-22.
+type DropIndex struct {
+	stmt    *PS.DropIndexStmt
+	done    bool
+	rowsAff int64
+}
+
+func NewDropIndex(stmt *PS.DropIndexStmt) *DropIndex {
+	return &DropIndex{stmt: stmt}
+}
+
+func (d *DropIndex) Next(ctx context.Context) (Row, error) {
+	if d.done {
+		return Row{}, ErrNoRows
+	}
+	d.done = true
+	// Remove from EX-layer writer registry
+	storeMu.Lock()
+	for table, idxs := range registeredIndexes {
+		filtered := idxs[:0]
+		for _, idx := range idxs {
+			if idx.Name != d.stmt.Name {
+				filtered = append(filtered, idx)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(registeredIndexes, table)
+		} else {
+			registeredIndexes[table] = filtered
+		}
+	}
+	storeMu.Unlock()
+	// Remove from catalog
+	if cat := Catalog(); cat != nil {
+		// Find the table that owns this index
+		for _, tableID := range tableIDs {
+			_ = tableID
+			// Try delete (ignore if not found)
+			if err := cat.DeleteIndex(tableID, d.stmt.Name); err == nil {
+				break
+			}
+		}
+	}
+	d.rowsAff = 0
+	return Row{}, ErrNoRows
+}
+
+func (d *DropIndex) Close() error { return nil }
+func (d *DropIndex) RowsAffected() int64 { return d.rowsAff }
+
+// joinStrings is a tiny helper for formatting column lists.
+func joinStrings(s []string, sep string) string {
+	if len(s) == 0 {
+		return ""
+	}
+	out := s[0]
+	for i := 1; i < len(s); i++ {
+		out += sep + s[i]
+	}
+	return out
+}

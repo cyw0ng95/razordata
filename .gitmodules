@@ -1,0 +1,5 @@
+[submodule "tests/sqlcmp/corpus"]
+	path = tests/sqlcmp/corpus
+	url = https://github.com/jzombie/sqlite-sqllogictest-corpus.git
+	branch = main
+	shallow = true

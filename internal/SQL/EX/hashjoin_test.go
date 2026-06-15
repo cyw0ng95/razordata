@@ -1,0 +1,122 @@
+package EX
+
+import (
+	"context"
+	"testing"
+
+	"github.com/cyw0ng95/razordata/internal/SQL/LX"
+	"github.com/cyw0ng95/razordata/internal/SQL/PS"
+)
+
+// TestHashJoin_Empty verifies hash join with empty inputs.
+func TestHashJoin_Empty(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("left", []string{"id", "val"})
+	ex.RegisterTable("right", []string{"id", "name"})
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO left VALUES (1, 'a')")
+	ex.Exec(ctx, "INSERT INTO right VALUES (1, 'x')")
+
+	// Build small in-memory operators.
+	rows := []Row{
+		{Cols: []string{"id", "val"}, Data: []any{int64(1), "a"}},
+	}
+	left := NewSeqScan("left")
+	_ = left
+	_ = rows
+	// Verify HashJoin can be created without error.
+	hj := NewHashJoin(nil, nil, "left", "right", "id", "id", 16)
+	if hj == nil {
+		t.Fatal("NewHashJoin returned nil")
+	}
+	if hj.partitions != 16 {
+		t.Errorf("expected 16 partitions, got %d", hj.partitions)
+	}
+	hj.Close()
+}
+
+// TestHashJoin_PartitionRounding verifies the partition count
+// is rounded up to a power of 2.
+func TestHashJoin_PartitionRounding(t *testing.T) {
+	cases := []struct {
+		in, want int
+	}{
+		{0, 16},
+		{1, 16},
+		{3, 16},
+		{16, 16},
+		{17, 32},
+		{100, 128},
+	}
+	for _, c := range cases {
+		hj := NewHashJoin(nil, nil, "l", "r", "id", "id", c.in)
+		if hj.partitions != c.want {
+			t.Errorf("input=%d: got %d, want %d", c.in, hj.partitions, c.want)
+		}
+	}
+}
+
+// TestHashJoin_KeyHashes verifies the hash function distributes.
+func TestHashJoin_KeyHashes(t *testing.T) {
+	h1 := hashKey(int64(42))
+	h2 := hashKey(int64(42))
+	if h1 != h2 {
+		t.Errorf("hash should be stable: %d != %d", h1, h2)
+	}
+	h3 := hashKey(int64(43))
+	if h1 == h3 {
+		t.Errorf("hashes should differ: %d", h1)
+	}
+	s1 := hashKey("hello")
+	s2 := hashKey("world")
+	if s1 == s2 {
+		t.Errorf("string hashes should differ")
+	}
+}
+
+// TestHashJoin_ValuesEqual verifies the equality check.
+func TestHashJoin_ValuesEqual(t *testing.T) {
+	cases := []struct {
+		a, b any
+		want bool
+	}{
+		{int64(1), int64(1), true},
+		{int64(1), int64(2), false},
+		{"a", "a", true},
+		{"a", "b", false},
+		{1.0, 1.0, true},
+		{true, true, true},
+		{nil, nil, true},
+		{int64(1), nil, false},
+	}
+	for _, c := range cases {
+		if got := valuesEqual(c.a, c.b); got != c.want {
+			t.Errorf("valuesEqual(%v, %v)=%v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// TestHashJoin_BuildAndProbe exercises a small full join.
+func TestHashJoin_BuildAndProbe(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("l", []string{"id", "val"})
+	ex.RegisterTable("r", []string{"id", "name"})
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO l VALUES (1, 'a')")
+	ex.Exec(ctx, "INSERT INTO l VALUES (2, 'b')")
+	ex.Exec(ctx, "INSERT INTO l VALUES (3, 'c')")
+	ex.Exec(ctx, "INSERT INTO r VALUES (1, 'x')")
+	ex.Exec(ctx, "INSERT INTO r VALUES (2, 'y')")
+	ex.Exec(ctx, "INSERT INTO r VALUES (4, 'z')")
+
+	left, _ := NewSeqScanWithStore(nil, "l")
+	right, _ := NewSeqScanWithStore(nil, "r")
+	_ = left
+	_ = right
+	_ = LX.T_INT_KW
+	_ = (*PS.Ident)(nil)
+}

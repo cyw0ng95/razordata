@@ -9,6 +9,11 @@ const (
 	BlockSize = 4096
 	// IterBufferSize is the pre-allocated size for LSM tree iterator buffers.
 	IterBufferSize = 64 * 1024 // 64 KB
+	// WALBufSize is the pre-allocated size for WAL write buffers (R33).
+	// Each WAL segment holds one 256 KB buffer for batched record encoding;
+	// pooling it avoids the per-segment make() that would otherwise dominate
+	// the no-allocation budget on the writer hot path.
+	WALBufSize = 256 * 1024 // 256 KB
 )
 
 // SyncPool provides reusable buffers to avoid allocations on hot paths.
@@ -21,6 +26,7 @@ type SyncPool interface {
 type syncPool struct {
 	pagePool sync.Pool
 	iterPool sync.Pool
+	walPool  sync.Pool
 }
 
 var _ SyncPool = (*syncPool)(nil)
@@ -30,10 +36,16 @@ var _ SyncPool = (*syncPool)(nil)
 func New() *syncPool {
 	sp := &syncPool{}
 	sp.pagePool.New = func() any {
-		return make([]byte, BlockSize)
+		b := make([]byte, BlockSize)
+		return &b
 	}
 	sp.iterPool.New = func() any {
-		return make([]byte, IterBufferSize)
+		b := make([]byte, IterBufferSize)
+		return &b
+	}
+	sp.walPool.New = func() any {
+		b := make([]byte, WALBufSize)
+		return &b
 	}
 	return sp
 }
@@ -44,23 +56,35 @@ func New() *syncPool {
 func (sp *syncPool) Get(size int) []byte {
 	if size <= BlockSize {
 		if p := sp.pagePool.Get(); p != nil {
-			return p.([]byte)[:size]
+			return (*p.(*[]byte))[:size]
 		}
 	}
 	if size <= IterBufferSize {
 		if p := sp.iterPool.Get(); p != nil {
-			return p.([]byte)[:size]
+			return (*p.(*[]byte))[:size]
+		}
+	}
+	if size <= WALBufSize {
+		if p := sp.walPool.Get(); p != nil {
+			return (*p.(*[]byte))[:size]
 		}
 	}
 	return make([]byte, size)
 }
 
-// Put returns buf to the pool. Only buffers with capacity BlockSize or
-// IterBufferSize are returned to the pool; others are dropped.
+// Put returns buf to the pool. Only buffers with capacity BlockSize,
+// IterBufferSize, or WALBufSize are returned to the pool; others are
+// dropped.
 func (sp *syncPool) Put(buf []byte) {
-	if cap(buf) == BlockSize {
-		sp.pagePool.Put(buf[:BlockSize])
-	} else if cap(buf) == IterBufferSize {
-		sp.iterPool.Put(buf[:IterBufferSize])
+	switch cap(buf) {
+	case BlockSize:
+		b := buf[:BlockSize]
+		sp.pagePool.Put(&b)
+	case IterBufferSize:
+		b := buf[:IterBufferSize]
+		sp.iterPool.Put(&b)
+	case WALBufSize:
+		b := buf[:WALBufSize]
+		sp.walPool.Put(&b)
 	}
 }

@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -20,13 +23,12 @@ var (
 type SegmentManager struct {
 	root string
 	pool sync.Map // map[uint64]*FileHandle keyed by segment number
-	mu   sync.Mutex
 	log  lg.Logger
 }
 
 // New creates a SegmentManager under root (the database directory).
 func New(root string, log ...lg.Logger) (*SegmentManager, error) {
-	sm := &SegmentManager{root: root, log: firstLogger(log)}
+	sm := &SegmentManager{root: root, log: lg.FirstLogger(log)}
 	if err := os.MkdirAll(filepath.Join(root, "wal"), 0700); err != nil {
 		if sm.log != nil {
 			sm.log.Error("lf.new", "root", root, "err", err)
@@ -34,13 +36,6 @@ func New(root string, log ...lg.Logger) (*SegmentManager, error) {
 		return nil, err
 	}
 	return sm, nil
-}
-
-func firstLogger(logs []lg.Logger) lg.Logger {
-	if len(logs) > 0 {
-		return logs[0]
-	}
-	return nil
 }
 
 func (sm *SegmentManager) segmentPath(n uint64) string {
@@ -131,6 +126,57 @@ func (sm *SegmentManager) Truncate(n uint64, newSize int64) error {
 		return err
 	}
 	return nil
+}
+
+// ListSegments enumerates WAL segment files in the root/wal directory and
+// returns their numeric suffixes in ascending order. Returns an empty slice
+// (no error) if the wal directory does not exist. Non-segment files (anything
+// not matching wal.<digits>) are ignored.
+func (sm *SegmentManager) ListSegments() ([]uint64, error) {
+	walDir := filepath.Join(sm.root, "wal")
+	entries, err := os.ReadDir(walDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		if sm.log != nil {
+			sm.log.Error("lf.list_segments", "dir", walDir, "err", err)
+		}
+		return nil, err
+	}
+
+	var nums []uint64
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "wal.") {
+			continue
+		}
+		suffix := strings.TrimPrefix(name, "wal.")
+		if suffix == "" {
+			continue
+		}
+		allDigits := true
+		for _, c := range suffix {
+			if c < '0' || c > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if !allDigits {
+			continue
+		}
+		n, perr := strconv.ParseUint(suffix, 10, 64)
+		if perr != nil {
+			continue
+		}
+		nums = append(nums, n)
+	}
+
+	sort.Slice(nums, func(i, j int) bool { return nums[i] < nums[j] })
+	return nums, nil
 }
 
 func (sm *SegmentManager) Close() error {

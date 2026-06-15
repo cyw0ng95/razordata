@@ -99,11 +99,26 @@ type FileManager struct {
 	dirFDs   sync.Map // map[string]int, cached directory FDs for SyncDir
 	validate *pathValidator
 	log      lg.Logger
+	locking  bool
+}
+
+// Option configures a FileManager.
+type Option func(*FileManager)
+
+// WithLocking enables advisory flock(LOCK_EX) on Open/Create to
+// prevent concurrent multi-process access.
+func WithLocking(v bool) Option {
+	return func(fm *FileManager) { fm.locking = v }
 }
 
 // New creates a new FileManager rooted at root.
 // Returns ErrDoesNotExist if root is not an existing directory.
 func New(root string, log ...lg.Logger) (*FileManager, error) {
+	return NewOptions(root, nil, log...)
+}
+
+// NewOptions creates a FileManager with additional configuration options.
+func NewOptions(root string, opts []Option, log ...lg.Logger) (*FileManager, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -122,11 +137,20 @@ func New(root string, log ...lg.Logger) (*FileManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileManager{root: abs, validate: pv, log: firstLogger(log)}, nil
+	fm := &FileManager{root: abs, validate: pv, log: lg.FirstLogger(log)}
+	for _, opt := range opts {
+		opt(fm)
+	}
+	return fm, nil
 }
 
 // NewOrCreate creates a new FileManager, creating root and any parents if needed.
 func NewOrCreate(root string, log ...lg.Logger) (*FileManager, error) {
+	return NewOptionsOrCreate(root, nil, log...)
+}
+
+// NewOptionsOrCreate creates a FileManager with options, creating directory if needed.
+func NewOptionsOrCreate(root string, opts []Option, log ...lg.Logger) (*FileManager, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -138,17 +162,15 @@ func NewOrCreate(root string, log ...lg.Logger) (*FileManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileManager{root: abs, validate: pv, log: firstLogger(log)}, nil
-}
-
-func firstLogger(logs []lg.Logger) lg.Logger {
-	if len(logs) > 0 {
-		return logs[0]
+	fm := &FileManager{root: abs, validate: pv, log: lg.FirstLogger(log)}
+	for _, opt := range opts {
+		opt(fm)
 	}
-	return nil
+	return fm, nil
 }
 
 // Open opens an existing file. Returns ErrDoesNotExist if absent.
+// When locking is enabled, acquires an advisory flock(LOCK_EX).
 func (fm *FileManager) Open(name string) (*FileHandle, error) {
 	abs, err := fm.validate.Resolve(name)
 	if err != nil {
@@ -159,7 +181,9 @@ func (fm *FileManager) Open(name string) (*FileHandle, error) {
 		fh := h.(*FileHandle)
 		fh.mu.Lock()
 		if fh.FD != -1 {
-			unix.Close(fh.FD)
+			if err := unix.Close(fh.FD); err != nil && fm.log != nil {
+				fm.log.Warn("fs.open.close", "path", abs, "err", err)
+			}
 		}
 		fd, err := unix.Open(abs, unix.O_RDWR, 0)
 		fh.mu.Unlock()
@@ -174,6 +198,13 @@ func (fm *FileManager) Open(name string) (*FileHandle, error) {
 		}
 		fh.mu.Lock()
 		fh.FD = fd
+		if fm.locking {
+			if err := unix.Flock(fd, unix.LOCK_EX); err != nil {
+				fh.mu.Unlock()
+				unix.Close(fd)
+				return nil, err
+			}
+		}
 		fh.mu.Unlock()
 		return fh, nil
 	}
@@ -188,6 +219,12 @@ func (fm *FileManager) Open(name string) (*FileHandle, error) {
 		}
 		return nil, err
 	}
+	if fm.locking {
+		if err := unix.Flock(fd, unix.LOCK_EX); err != nil {
+			unix.Close(fd)
+			return nil, err
+		}
+	}
 
 	h := &FileHandle{Path: abs, FD: fd}
 	fm.handles.Store(abs, h)
@@ -196,6 +233,7 @@ func (fm *FileManager) Open(name string) (*FileHandle, error) {
 
 // Create creates a new file exclusively (O_CREAT|O_EXCL).
 // Returns ErrAlreadyExists if the file already exists.
+// When locking is enabled, acquires an advisory flock(LOCK_EX).
 func (fm *FileManager) Create(name string) (*FileHandle, error) {
 	abs, err := fm.validate.Resolve(name)
 	if err != nil {
@@ -211,6 +249,12 @@ func (fm *FileManager) Create(name string) (*FileHandle, error) {
 			fm.log.Error("fs.create", "path", abs, "err", err)
 		}
 		return nil, err
+	}
+	if fm.locking {
+		if err := unix.Flock(fd, unix.LOCK_EX); err != nil {
+			unix.Close(fd)
+			return nil, err
+		}
 	}
 
 	h := &FileHandle{Path: abs, FD: fd}
@@ -314,7 +358,9 @@ func (fm *FileManager) Close() error {
 	var last error
 
 	fm.dirFDs.Range(func(key, value any) bool {
-		unix.Close(value.(int))
+		if err := unix.Close(value.(int)); err != nil && last == nil {
+			last = err
+		}
 		return true
 	})
 	fm.dirFDs = sync.Map{}
