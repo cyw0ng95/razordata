@@ -206,7 +206,8 @@ type ColDef struct {
 	// STORED (materialized on write) from VIRTUAL (computed on read).
 	// Only STORED is supported in v0.27.0.
 	Generated Expr
-	Virtual   bool
+	Virtual      bool
+	Autoincrement bool // REQ000482: INTEGER PRIMARY KEY AUTOINCREMENT
 }
 
 func NewColDef(name string, typ int) ColDef {
