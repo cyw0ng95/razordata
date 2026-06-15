@@ -618,7 +618,7 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 		return evalSqliteVersion(e.Args, row, params)
 	case "SQLITE_SOURCE_ID":
 		return evalSqliteSourceID(e.Args, row, params)
-	case "IIF":
+	case "IIF", "IF":
 		return evalIIF(e.Args, row, params)
 	case "INSTR":
 		return evalInstr(e.Args, row, params)
