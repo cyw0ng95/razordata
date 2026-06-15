@@ -9,6 +9,14 @@ import (
 // generations — a small "young" generation for short-lived
 // allocations and a larger "old" generation for long-lived ones.
 //
+// REQ000305: the old generation is epoch-reclaimed. When a
+// transaction returns its arena via PutArena, the old-generation
+// buffer is moved to a pending-reclaim list instead of being kept
+// in the arena pool. The epoch manager periodically drains the
+// list from its background goroutine, freeing the memory in bulk.
+// This reduces GC pressure from large (1 MB) buffers and batches
+// version-node reclamation at generation granularity.
+//
 // Per the iter-05/iter-06 design, the arena is *per-transaction*,
 // not per-goroutine. The previous per-goroutine allocation path
 // (getGoroutineID + arenaPoolSlice + allocFromThreadArena) was
@@ -31,6 +39,14 @@ const (
 	// triggered. This avoids promoting trivially-small young
 	// generations.
 	promotionThreshold = youngSize / 2
+)
+
+// Global pending-reclaim list for old-generation buffers.
+// REQ000305: buffers are moved here by PutArena and drained by
+// the epoch manager's background goroutine.
+var (
+	reclaimMu   sync.Mutex
+	pendingOlds [][]byte
 )
 
 // Arena is a per-transaction bump allocator for VersionNode storage.
@@ -67,6 +83,7 @@ type Arena struct {
 
 	// old is the old generation. When the young generation fills,
 	// it is promoted to the old generation.
+	// REQ000305: allocated lazily on first promotion; nil until then.
 	old []byte
 
 	// oldOff is the bump pointer for the old generation.
@@ -77,14 +94,19 @@ type Arena struct {
 	// double-promotion if Alloc is called after promotion but
 	// before a new young generation is allocated.
 	promoted atomic.Bool
+
+	// initOldMu serializes lazy old allocation. Only hit once per
+	// arena lifecycle (on first promotion); negligible contention.
+	initOldMu sync.Mutex
 }
 
 // NewArena constructs a fresh, non-pooled Arena. Used by Manager.Begin
 // to give each transaction a private arena.
+// REQ000305: the old generation is no longer pre-allocated. It is
+// allocated lazily on first promotion and epoch-reclaimed on PutArena.
 func NewArena() *Arena {
 	return &Arena{
 		young: make([]byte, youngSize),
-		old:   make([]byte, oldSize),
 	}
 }
 
@@ -170,6 +192,9 @@ func (a *Arena) tryAllocOld(n int) int64 {
 // the young generation, promotion fails silently — the arena is
 // effectively exhausted. The caller will see nil from the
 // subsequent Alloc call.
+//
+// REQ000305: old is allocated lazily on first promotion and may
+// be nil. If nil, a fresh buffer is allocated.
 func (a *Arena) promote() {
 	// Get the current young offset (the amount of live data).
 	youngUsed := a.youngOff.Load()
@@ -177,6 +202,18 @@ func (a *Arena) promote() {
 		// Nothing to promote.
 		a.promoted.Store(true)
 		return
+	}
+	// Lazily allocate old generation on first promotion.
+	// initOldMu serializes concurrent promote calls from the
+	// same arena (which should not happen in normal use, but
+	// the MV concurrency test shares arenas across goroutines).
+	if a.old == nil {
+		a.initOldMu.Lock()
+		if a.old == nil {
+			a.old = make([]byte, oldSize)
+			a.oldOff.Store(0)
+		}
+		a.initOldMu.Unlock()
 	}
 	// Try to reserve space in the old generation.
 	for {
@@ -251,11 +288,35 @@ func GetArena() *Arena {
 	return arenaPool.Get().(*Arena)
 }
 
-// PutArena returns an Arena to the pool. Both generations are reset
-// so the next GetArena hands out a clean allocation buffer.
+// PutArena returns an Arena to the pool. REQ000305: if the arena
+// was promoted to the old generation, the old generation buffer is
+// moved to a pending-reclaim list instead of being kept in the pool.
+// The epoch manager periodically drains this list.
+// The young generation is always reset and returned to the pool.
 func PutArena(a *Arena) {
 	a.youngOff.Store(0)
+	// If the old generation was used, move it to the pending-reclaim
+	// list so the epoch manager can bulk-free it.
+	if a.promoted.Load() && a.old != nil {
+		reclaimMu.Lock()
+		pendingOlds = append(pendingOlds, a.old)
+		reclaimMu.Unlock()
+		a.old = nil
+	}
 	a.oldOff.Store(0)
 	a.promoted.Store(false)
 	arenaPool.Put(a)
+}
+
+// ReclaimOldGenerations drains the pending old-generation buffer
+// list. Called by the epoch manager's background goroutine to
+// release old arena memory. REQ000305.
+func ReclaimOldGenerations() {
+	reclaimMu.Lock()
+	// Clear the pending list. Go's GC collects the backing arrays.
+	for i := range pendingOlds {
+		pendingOlds[i] = nil
+	}
+	pendingOlds = pendingOlds[:0]
+	reclaimMu.Unlock()
 }

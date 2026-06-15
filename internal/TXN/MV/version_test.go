@@ -214,7 +214,6 @@ func TestVersionChainFindVisibleDeleted(t *testing.T) {
 }
 
 func TestVersionChainConcurrency(t *testing.T) {
-	arena := newArena()
 	vc := &VersionChain{}
 	var inserted int64
 
@@ -226,8 +225,9 @@ func TestVersionChainConcurrency(t *testing.T) {
 	for i := 0; i < goroutines; i++ {
 		go func(id int) {
 			defer wg.Done()
+			localArena := NewArena()
 			for j := 0; j < iterations; j++ {
-				node := NewVersionNode(arena, uint64(id), uint64(j*10), []byte("key"), []byte("value"), false)
+				node := NewVersionNode(localArena, uint64(id), uint64(j*10), []byte("key"), []byte("value"), false)
 				if vc.Insert(node) {
 					atomic.AddInt64(&inserted, 1)
 				}

@@ -398,6 +398,116 @@ func TestParseInsertWithColumns(t *testing.T) {
 	}
 }
 
+func TestParseInsertOrReplace(t *testing.T) {
+	p := NewParser("INSERT OR REPLACE INTO t VALUES (1, 'hello')")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ins, ok := stmt.(*Insert)
+	if !ok {
+		t.Fatalf("expected *Insert, got %T", stmt)
+	}
+	if ins.Table != "t" {
+		t.Errorf("expected Table='t', got %q", ins.Table)
+	}
+	if ins.ConflictAction != ConflictActionReplace {
+		t.Errorf("expected ConflictAction=Replace, got %d", ins.ConflictAction)
+	}
+}
+
+func TestParseInsertOrIgnore(t *testing.T) {
+	p := NewParser("INSERT OR IGNORE INTO t VALUES (1)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ins := stmt.(*Insert)
+	if ins.ConflictAction != ConflictActionIgnore {
+		t.Errorf("expected ConflictAction=Ignore, got %d", ins.ConflictAction)
+	}
+}
+
+func TestParseInsertOrAbort(t *testing.T) {
+	p := NewParser("INSERT OR ABORT INTO t VALUES (1)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ins := stmt.(*Insert)
+	if ins.ConflictAction != ConflictActionAbort {
+		t.Errorf("expected ConflictAction=Abort, got %d", ins.ConflictAction)
+	}
+}
+
+func TestParseInsertOrRollback(t *testing.T) {
+	p := NewParser("INSERT OR ROLLBACK INTO t VALUES (1)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ins := stmt.(*Insert)
+	if ins.ConflictAction != ConflictActionRollback {
+		t.Errorf("expected ConflictAction=Rollback, got %d", ins.ConflictAction)
+	}
+}
+
+func TestParseInsertOrFail(t *testing.T) {
+	p := NewParser("INSERT OR FAIL INTO t VALUES (1)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ins := stmt.(*Insert)
+	if ins.ConflictAction != ConflictActionFail {
+		t.Errorf("expected ConflictAction=Fail, got %d", ins.ConflictAction)
+	}
+}
+
+func TestParseInsertOrInvalidAction(t *testing.T) {
+	p := NewParser("INSERT OR INVALID INTO t VALUES (1)")
+	_, err := p.Parse()
+	if err == nil {
+		t.Fatal("expected error for invalid INSERT OR action")
+	}
+}
+
+func TestParseReplaceInto(t *testing.T) {
+	p := NewParser("REPLACE INTO t VALUES (1, 'hello')")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ins, ok := stmt.(*Insert)
+	if !ok {
+		t.Fatalf("expected *Insert, got %T", stmt)
+	}
+	if ins.Table != "t" {
+		t.Errorf("expected Table='t', got %q", ins.Table)
+	}
+	if ins.ConflictAction != ConflictActionReplace {
+		t.Errorf("expected ConflictAction=Replace, got %d", ins.ConflictAction)
+	}
+	if len(ins.Values) != 1 {
+		t.Errorf("expected 1 row, got %d", len(ins.Values))
+	}
+}
+
+func TestParseReplaceIntoWithCols(t *testing.T) {
+	p := NewParser("REPLACE INTO t (a, b) VALUES (1, 'hello')")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ins := stmt.(*Insert)
+	if len(ins.Cols) != 2 {
+		t.Errorf("expected 2 cols, got %d", len(ins.Cols))
+	}
+	if ins.ConflictAction != ConflictActionReplace {
+		t.Errorf("expected ConflictAction=Replace, got %d", ins.ConflictAction)
+	}
+}
+
 func TestParseUpdate(t *testing.T) {
 	p := NewParser("UPDATE t SET a = 1")
 	stmt, err := p.Parse()
