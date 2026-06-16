@@ -203,6 +203,32 @@ type replayer struct {
 6. **`internal/WAL/RP/checkpoint.go`** — checkpoint encoding/decoding, manifest update.
 7. **Integration test:** simulate crash — write some data, kill process, restart. Verify all committed data is present, uncommitted data is rolled back.
 
+## Shipped Requirements
+
+The following requirements have been implemented and shipped; they are now part of the design baseline.
+
+| ID | Requirement | Iteration |
+|---|---|---|
+| REQ000027 | Sequential append with LSN allocation | iter-03 |
+| REQ000028 | 64 MB segment rotation | iter-03 |
+| REQ000029 | `fsync` on commit | iter-03 |
+| REQ000030 | Batch flush / write barrier | iter-03 |
+| REQ000031 | WAL replay on startup | iter-03 |
+| REQ000032 | Checkpoint detection and segment truncation | iter-03 |
+| REQ000033 | `RTCheckpoint` record with catalog root | iter-03 |
+| REQ000034 | WAL compression (lz4) — pure-Go LZ4 block codec (`WAL/WR/lz4/`); segment header gains `FlagCompressionLZ4` (bit 0 of flags byte); writer optionally lz4-compresses record bodies before CRC; replayer reads flag and decompresses; CRC verified against on-disk (compressed) body to prevent decompression bombs; mixed compressed/uncompressed segments supported | iter-27 |
+| REQ000035 | Corruption recovery policy: detect torn write, skip vs. fail | iter-13 |
+| REQ000160 | Batch commit with sync.WaitGroup and write barrier | iter-03 |
+| REQ000170 | RTMerge record encoding implementation | iter-17 |
+| REQ000176 | Batch commit with sync.WaitGroup and write barrier | iter-17 |
+| REQ000184 | 256 KB pre-allocated writeBuffer for batched WAL writes | iter-17 |
+| REQ000191 | WAL/RP coverage lift: WAL/RP is at 75.2% (multi-segment truncate + ErrUnknownRecord added; shortfall now in resync-window edges) | iter-16 |
+| REQ000200 | Per-segment locks (replace global write mutex) | iter-03 |
+| REQ000272 | Checksum verification on WAL replay (detect corruption) | iter-23 |
+| REQ000299 | WAL columnar batch encoding (column-major, single envelope CRC) | iter-27 |
+| REQ000301 | Async fsync (buffered channel with `AsyncSyncResult`, `inflightFsyncs` WaitGroup, `Close` blocks on in-flight fsyncs) | iter-27 (Phase 6) |
+| REQ000317 | Parallel WAL replay by key-range partition | iter-27 |
+
 ## Open Issues
 
 - Should we support WAL compression (lz4) to reduce I/O, at the cost of CPU?

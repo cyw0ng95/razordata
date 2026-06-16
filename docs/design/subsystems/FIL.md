@@ -201,8 +201,29 @@ All files follow these conventions under the database root `<name>.razor/`:
 4. **`internal/FIL/LF/lf.go`** — WAL segment file management, `CreateSegment`, `Truncate`, handle pool.
 5. **Tests:** `fs_test.go` (path traversal blocking, directory creation), `df_test.go` (checksum, O_DIRECT), `mf_test.go` (round-trip read/write), `lf_test.go` (segment rotation).
 
+## Shipped Requirements
+
+The following requirements have been implemented and shipped; they are now part of the design baseline.
+
+### DF / MF / LF / FS / IO — File I/O Layer
+
+| ID | Requirement | Iteration |
+|---|---|---|
+| REQ000010 | Block I/O via `pread`/`pwrite` | iter-01 |
+| REQ000011 | `O_DIRECT` support with fallback | iter-01 |
+| REQ000012 | CRC32 checksum per block | iter-01 |
+| REQ000013 | `MetaPage` with magic/version/catalog root | iter-01 |
+| REQ000014 | Path validation (reject `..`, symlinks) | iter-01 |
+| REQ000015 | Cached directory FDs for `SyncDir` | iter-01 |
+| REQ000016 | WAL segment handle pool | iter-01 |
+| REQ000017 | `ftruncate` for replay segment shrinking | iter-01 |
+| REQ000018 | File locking (`flock`) for multi-process access | iter-27 |
+| REQ000026 | `mmap` BlockDevice for SST reads | iter-11 |
+| REQ000295 | io_uring async I/O wrapper (raw syscall shim Linux-only with `uring_other.go` fallback; `IORING_ENTER_GETEVENTS` constant) | iter-27 (Phase 6) |
+| REQ000296 | Direct I/O + fixed-fd (`IOSQE_FIXED_FILE` constant, `Ring.RegisterFixedFile()`, `Ring.UnregisterFixedFile()`) | iter-27 (Phase 6) |
+
 ## Open Issues
 
 - Should we use `MADV_DONTNEED` or `madvise` for buffer eviction hints?
 - How to handle disk full gracefully? Retry with backoff or propagate `ErrIO`?
-- Should `FileManager` support file locking (flock) to prevent concurrent access from multiple processes? (multi-process access is out of scope for v1 — single-process embedding is the primary use case).
+- ~~Should `FileManager` support file locking (flock) to prevent concurrent access from multiple processes?~~ **(Resolved — see REQ000018)**

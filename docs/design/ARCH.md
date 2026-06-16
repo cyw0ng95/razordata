@@ -66,3 +66,86 @@ internal/
 ## Detailed Design
 
 Full design documents: `docs/design/subsystems/LOG.md` · `FIL.md` · `MEM.md` · `WAL.md` · `ENG.md` · `TXN.md` · `SQL.md` · `SYS.md`
+
+## Shipped Requirements (Cross-Cutting)
+
+The following cross-cutting requirements have been implemented and shipped; they are part of the design baseline. Per-subsystem requirements are documented in each subsystem design file under `## Shipped Requirements`.
+
+### DDL — Data Definition Language
+
+| ID | Requirement | Iteration |
+|---|---|---|
+| REQ000103 | `CREATE TABLE` with column types and `PRIMARY KEY` | iter-08 |
+| REQ000104 | `DROP TABLE` | iter-08 |
+| REQ000105 | `NOT NULL` constraint enforcement | iter-10 |
+| REQ000106 | `DEFAULT` value substitution | iter-10 |
+| REQ000129 | OPS — Online schema migration (`ALTER TABLE ADD/DROP COLUMN` without copy) | iter-12 (catalog) |
+
+### DML — Data Manipulation Language
+
+| ID | Requirement | Iteration |
+|---|---|---|
+| REQ000108 | `INSERT` with column list | iter-08 |
+| REQ000109 | `UPDATE` with `WHERE` | iter-08 |
+| REQ000110 | `DELETE` with `WHERE` | iter-08 |
+| REQ000111 | `SELECT` with `WHERE` / `ORDER BY` / `LIMIT` / `OFFSET` | iter-08 |
+| REQ000112 | `COUNT(*)` / `SUM` / `AVG` / `MIN` / `MAX` aggregates | iter-08 |
+| REQ000114 | `DISTINCT` | iter-08 |
+| REQ000115 | `IN` / `EXISTS` / scalar subqueries | iter-08 |
+| REQ000116 | `JOIN` (INNER, CROSS) | iter-08 |
+
+### API — Public API
+
+| ID | Requirement | Iteration |
+|---|---|---|
+| REQ000124 | Parameter binding via `?` placeholders | iter-08 |
+| REQ000125 | `EXPLAIN <query>` | iter-08 |
+
+### OBS — Observability
+
+| ID | Requirement | Iteration |
+|---|---|---|
+| REQ000130 | Query tracing via `TraceHook` | iter-00 |
+| REQ000131 | Latency histograms via `MetricHook` | iter-00 |
+| REQ000132 | CPU/heap profiling on error | iter-00 |
+| REQ000133 | Structured stats aggregation (`Engine.Stats`) | iter-09 |
+
+### QUAL — Quality Gates
+
+| ID | Requirement | Iteration |
+|---|---|---|
+| REQ000134 | `go vet ./...` zero warnings | all |
+| REQ000135 | `gofmt -s -l .` no drift | all |
+| REQ000136 | `go test ./... -race -count=1` all green | all |
+| REQ000137 | Property-based tests for storage (crash/recovery) | all |
+| REQ000138 | `Benchmark*` for every storage component (catch any missing) | iter-17 |
+| REQ000139 | No allocations in hot paths | all |
+| REQ000140 | All public API methods goroutine-safe | iter-09 |
+| REQ000141 | `log/slog` only — no `fmt.Printf` in library | all |
+| REQ000142 | Error messages: lowercase, no trailing punctuation | all |
+| REQ000143 | SQL/RE coverage: 49% → 80%+ | iter-27 |
+| REQ000201 | SQL/PL coverage 30.6% to 98.8% | iter-20 |
+| REQ000203 | Missing benchmarks (FIL/LF, LOG/HK, SQL/PS, SQL/PL have 0) | iter-17 |
+| REQ000293 | Window operator test coverage (window_test.go) | iter-23 |
+| REQ000294 | Cross-leaf cursor test coverage | iter-23 |
+
+### TEST — SQLLogicTest Corpus Integration
+
+| ID | Requirement | Iteration |
+|---|---|---|
+| REQ000323 | SQLLogicTest corpus mirror as git submodule (`tests/sqlcmp/corpus` from `MarvBeer/sqlite-test-suite`); build-tag-gated fetch | iter-25 |
+| REQ000324 | SLT test file parser (`statement ok`, etc.) | iter-25 |
+| REQ000325 | Driver interface (`Connect`/`Close`/`Exec`/`Query`; returns `ResultSet` with typed `Value` cells) | iter-25 |
+| REQ000326 | Razordata driver implementation wrapping public `internal/SYS.Engine` API; SQL errors classified as `skipped` not `failed` | iter-25 |
+| REQ000327 | SLT runner + type-aware result diff (`T`/`I`/`R`/`NULL`; `nosort`/`rowsort`/`valuesort`; `label` grouping) | iter-25 |
+| REQ000328 | Corpus subset default target (~200 `.test` files from `select1-4`, `index/`, `evidence/`, `minmax/`, `cast/`, `null/`, `decimal/`, `datetime/`); calibrated pass-rate threshold; full corpus gated by `slt_corpus_full` tag | iter-25 |
+| REQ000329 | Pure-Go reference oracle via `modernc.org/sqlite` dependency (test-only); fallback to hand-rolled `tests/sqlcmp/oracle/` if modernc fails to build in sandbox | iter-25 |
+| REQ000330 | Dual runner: same SQL on Razordata + oracle; result-set diff after normalization | iter-25 |
+| REQ000331 | Result-set normalization (int→int64, float round, strip whitespace, column-name sort, `''`/`NULL` config flag) | iter-25 |
+| REQ000332 | Dual case authoring convention (`dualCase` struct, table-driven; seed ~50 cases across DDL/DML/aggregates/joins) | iter-25 |
+| REQ000333 | JUnit XML output for CI consumption (pass/fail/skip per testcase) | iter-25 |
+| REQ000334 | Coverage snapshot (`tests/sqlcmp/slt/coverage.json` per run; `coverage.baseline.json` committed; regression check) | iter-25 |
+| REQ000335 | CI workflow: PR + nightly; run subset; upload JUnit; post pass-rate PR comment vs `main` | iter-25 (deferred — no `.github/` in repo) |
+| REQ000336 | Developer guide: how to run, add cases, re-baseline coverage | iter-25 |
+| REQ000337 | Architecture note lives in iteration doc (not `design/`); test harness is operational, not architectural | iter-25 |
+| REQ000365 | `allProbeCases` undeclared — register `probeCases` in `AllCases()` | iter-26.1 (v0.26.3) |
