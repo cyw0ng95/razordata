@@ -135,8 +135,30 @@ type logEvent struct {
 6. **`internal/LOG/HK/profile.go`** — implement `ProfileHook`: `pprof.Lookup("heap").WriteTo` on `Error` events.
 7. **Tests:** `logger_test.go` (concurrent logging, level filtering, rotation), `hook_test.go` (hook registration, event delivery, drop-on-overflow).
 
+## Shipped Requirements
+
+The following requirements have been implemented and shipped; they are now part of the design baseline.
+
+### LG / HK — Logging Layer
+
+| ID | Requirement | Iteration |
+|---|---|---|
+| REQ000001 | `Logger` wraps `log/slog` with atomic level control | iter-00 |
+| REQ000002 | Structured key-value output (JSON/text) | iter-00 |
+| REQ000003 | Log file rotation on size threshold | iter-00 |
+| REQ000004 | Hook registry with async dispatch | iter-00 |
+| REQ000005 | `TraceHook` for SQL query tracing | iter-00 |
+| REQ000006 | `MetricHook` for throughput/latency counters | iter-00 |
+| REQ000007 | `ProfileHook` for CPU/heap dump on error | iter-00 |
+| REQ000008 | Bounded channel: drop on overflow, never block log path | iter-00 |
+| REQ000009 | Log compression after rotation (gzip) | iter-16 |
+| REQ000169 | Debug-level allocation trade-off documentation (level check before allocation) | iter-17 |
+| REQ000193 | MetricHook counters wiring | iter-20 |
+| REQ000194 | Implement TraceHook for SQL query tracing (start/end with timing) | iter-00 |
+| REQ000195 | Implement ProfileHook (pprof dump on Error events) | iter-00 |
+
 ## Open Issues
 
 - Should `ProfileHook` be enabled by default or opt-in?
-- Should log files be compressed after rotation?
+- ~~Should log files be compressed after rotation?~~ **(Resolved — see REQ000009)**
 - How to expose hook metrics (e.g., drop count) via an admin endpoint?

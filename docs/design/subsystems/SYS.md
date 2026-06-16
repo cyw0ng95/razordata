@@ -374,13 +374,51 @@ Phase 6: Cleanup and logging
    - `validate_test.go` — invalid options (page size not power of 2, negative sizes), verify rejection.
 9. **Benchmark tests:** `engine_bench.go` — throughput benchmark: `go test -bench=BenchmarkEngine -benchtime=10s`.
 
+## Shipped Requirements
+
+The following requirements have been implemented and shipped; they are now part of the design baseline.
+
+### SY / AP / SE / TX / ST / BK — System Layer
+
+| ID | Requirement | Iteration |
+|---|---|---|
+| REQ000087 | `Engine.Open` with `Options` validation | iter-09 |
+| REQ000088 | `Engine.Close` with graceful shutdown | iter-09 |
+| REQ000089 | `Engine.Begin` → `Session` | iter-09 |
+| REQ000090 | `Engine.Stats` aggregation | iter-09 |
+| REQ000091 | Error type taxonomy (retryable vs fatal) | iter-09 |
+| REQ000092 | `Session.Query` / `Session.Exec` | iter-09 |
+| REQ000093 | `Session.SetDeadline` with `atomic.Value` | iter-09 |
+| REQ000094 | `Transaction.Commit` / `Rollback` | iter-09 |
+| REQ000095 | `Transaction.Savepoint` / `RollbackTo` | iter-09 |
+| REQ000096 | `Stmt.Prepare` / `Query` / `Exec` / `Close` | iter-09 |
+| REQ000097 | SIGTERM/SIGINT graceful shutdown handler | iter-09 |
+| REQ000098 | Session pooling (`sync.Pool`) | iter-15 |
+| REQ000099 | `ReadOnly` mode in `Options` (skip WAL writes, O_RDONLY opens) | iter-15 |
+| REQ000128 | OPS — Point-in-time backup / restore (snapshot engine dir, restore to a copy) | iter-08 |
+| REQ000130 | OBS — Query tracing via `TraceHook` | iter-00 |
+| REQ000131 | OBS — Latency histograms via `MetricHook` | iter-00 |
+| REQ000132 | OBS — CPU/heap profiling on error | iter-00 |
+| REQ000133 | OBS — Structured stats aggregation (`Engine.Stats`) | iter-09 |
+| REQ000146 | 6-phase graceful shutdown sequence per SYS.md:215-282 | iter-14 |
+| REQ000152 | `validateOptions` with field-by-field checks per SYS.md:198-214 | iter-14 |
+| REQ000153 | Active-tx wait (30s timeout, force-abort on timeout) | iter-14 |
+| REQ000154 | Background-goroutine coordination (compaction, flush, epoch, hook dispatcher) | iter-14 |
+| REQ000166 | Per-subsystem `Close()` ordering in Phase 5 of shutdown | iter-14 |
+| REQ000172 | 6-phase graceful shutdown implementation per SYS.md:196-283 | iter-14 |
+| REQ000178 | `validateOptions` (duplicate of REQ000152, same code) | iter-14 |
+| REQ000242 | Pragmas (cache_size, journal_mode, synchronous) | iter-24 |
+| REQ000259 | Backup/restore API (snapshot engine dir to copy) | iter-23 |
+| REQ000260 | Admin CLI `razor` (schema dump, vacuum, integrity check) | iter-23 |
+| REQ000261 | Integrity check (`PRAGMA integrity_check`) | iter-23 |
+
 ## Open Issues
 
-- ~~Should sessions be pooled (reuse inactive sessions)?~~ Resolved: yes, via `sync.Pool`.
-- ~~Should we support read-only mode~~ Resolved: yes, `ReadOnly` option implemented.
-- ~~How to handle `SetDeadline` cancellation~~ Resolved: uses `context.WithDeadline` internally.
+- ~~Should sessions be pooled (reuse inactive sessions)?~~ Resolved: yes, via `sync.Pool`. **(REQ000098)**
+- ~~Should we support read-only mode~~ Resolved: yes, `ReadOnly` option implemented. **(REQ000099)**
+- ~~How to handle `SetDeadline` cancellation~~ Resolved: uses `context.WithDeadline` internally. **(REQ000093)**
 - Should the engine support a metrics endpoint (Prometheus)? Future work — add an admin interface.
-- What is the optimal timeout for waiting active transactions during shutdown? 30s is the default; may need tuning based on workload.
+- What is the optimal timeout for waiting active transactions during shutdown? 30s is the default; may need tuning based on workload. **(REQ000153)**
 - Should force-aborted transactions during shutdown be rolled back to a savepoint instead of full abort?
 - Should the shutdown sequence be configurable (e.g., skip waiting for transactions in emergency shutdown)?
-- Should backup support incremental backups or only full backup?
+- ~~Should backup support incremental backups or only full backup?~~ **(REQ000259 ships full backup; incremental is future work)**

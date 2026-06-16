@@ -413,7 +413,48 @@ const MaxConcurrentTXNs = 1024
 9. **`internal/TXN/VL/gc.go`** — garbage collection of obsolete version nodes.
 10. **Tests:** `version_test.go` (concurrent insert/commit), `hazard_test.go` (hazard pointer correctness), `epoch_test.go` (reclamation), `commit_test.go` (full protocol, write-write conflict), `snapshot_test.go` (MVCC read correctness).
 
+## Shipped Requirements
+
+The following requirements have been implemented and shipped; they are now part of the design baseline.
+
+### MV / LC / SN / VL — Transaction Layer
+
+| ID | Requirement | Iteration |
+|---|---|---|
+| REQ000051 | MVCC version chain (lock-free, CAS insertion) | iter-05 |
+| REQ000052 | Per-thread arena allocation | iter-05 |
+| REQ000053 | Hazard pointer coordination | iter-05 |
+| REQ000054 | Epoch-based reclamation | iter-05 |
+| REQ000055 | Read view per transaction | iter-05 |
+| REQ000056 | Commit protocol: validate → assign `commitTS` → CAS `endTS` | iter-06 |
+| REQ000057 | Write-write conflict detection | iter-06 |
+| REQ000058 | Transaction slots (max 1024 concurrent) | iter-06 |
+| REQ000059 | Shadow writeSet for ROLLBACK | iter-06 |
+| REQ000060 | Read-uncommitted isolation (v1) | iter-09 |
+| REQ000061 | Read-committed as default isolation level | iter-24 |
+| REQ000062 | MVCC own-writes visibility in transactions | iter-24 |
+| REQ000063 | Savepoint support | iter-09 |
+| REQ000064 | Generational arena — `TXN/MV/arena.go` now has two tiers: young generation (16 KB) for fresh allocations, old generation (1 MB) for promoted data; when young fills, contents are copied to old and young is reset; after promotion, all allocations go to old; both generations reset on pool return; reduces GC pressure when transactions abort after only using the young generation | iter-27 |
+| REQ000123 | TXN-API — Configurable isolation levels (SET TRANSACTION) | iter-24 |
+| REQ000147 | Complete commit protocol (6 phases) | iter-20 |
+| REQ000158 | Hazard pointer publication/clear protocol (split into PublishCurrent/PublishNext) | iter-15 |
+| REQ000159 | Per-thread arena lazy initialization via `sync.Pool` (design specifies, verify implementation) | iter-05 (arena) |
+| REQ000164 | Epoch manager background goroutine (100ms interval, drain coordination) | iter-27 |
+| REQ000171 | TXN/VL — WAL integration in commit protocol | iter-20 |
+| REQ000174 | ENG/LS — BloomFilter FNV-1a double-hash | iter-20 |
+| REQ000175 | TXN/LC — Fix hazard pointer Publish (store to single slot, not all) and implement actual memory reclamation | iter-27 |
+| REQ000179 | TXN/VL — Add arena field to transactionSlot struct for per-transaction tracking | iter-16 |
+| REQ000181 | TXN/LC — Fix goroutine ID tracking (use real goroutine identity, not atomic counter) | iter-27 |
+| REQ000239 | TXN/VL — Savepoint implementation (nested transaction markers) | iter-21 |
+| REQ000255 | Read-committed per-statement snapshot | iter-24 |
+| REQ000305 | TXN/MV — Generational arena with old generation epoch-reclaim — lazy old allocation on first promotion (1 MB, guarded by `initOldMu`); `PutArena` moves promoted old to global `pendingOlds` list instead of retaining in arena pool; `ReclaimOldGenerations()` drains list, called by LC epoch manager on each 100ms tick; reduces epoch manager pressure by reclaiming old generations asynchronously | iter-27 |
+| REQ000306 | TXN/MV — Stack-allocate version nodes (escape analysis hints, 0 allocs/op) | iter-27 |
+| REQ000308 | TXN/LC — QSBR read path (64-shard quiescent reclamation) | iter-27 |
+| REQ000532 | TXN/MV — Arena.promote() initOldMu taken before nil check | iter-28 (audit) |
+| REQ000307 | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | iter-28 |
+| REQ000121 | TXN-API — `BEGIN` / `COMMIT` / `ROLLBACK` | iter-08 |
+
 ## Open Issues
 
-- Should we use a generational arena instead of a single large allocation? Generational arenas reduce GC pressure but add complexity.
+- Should we use a generational arena instead of a single large allocation? Generational arenas reduce GC pressure but add complexity. **(Resolved — see REQ000064)**
 - How to handle very long-running read transactions? They may prevent GC of many versions. Consider periodic refresh of the read view.
