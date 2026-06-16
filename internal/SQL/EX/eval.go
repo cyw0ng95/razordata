@@ -56,6 +56,26 @@ func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 					}
 				}
 			}
+			// Fallback: try without table prefix in the Outer chain
+			// first, then the current row. This ensures a QualifiedName
+			// like t.id resolves to the outer row's "id" column rather
+			// than a same-named column in the current subquery row.
+			for cur := row.Outer; cur != nil; cur = cur.Outer {
+				for i, c := range cur.Cols {
+					if strings.EqualFold(c, e.Name) {
+						if i < len(cur.Data) {
+							return cur.Data[i], nil
+						}
+					}
+				}
+			}
+			for i, c := range row.Cols {
+				if strings.EqualFold(c, e.Name) {
+					if i < len(row.Data) {
+						return row.Data[i], nil
+					}
+				}
+			}
 		}
 		return e.Table + "." + e.Name, nil
 	case *PS.Param:
