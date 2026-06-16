@@ -581,6 +581,14 @@ func propagatePlanner(root Operator, p *Planner) {
 	if c, ok := root.(childer); ok {
 		propagatePlanner(c.Child(), p)
 	}
+	type leftRighter interface {
+		LeftChild() Operator
+		RightChild() Operator
+	}
+	if lr, ok := root.(leftRighter); ok {
+		propagatePlanner(lr.LeftChild(), p)
+		propagatePlanner(lr.RightChild(), p)
+	}
 }
 
 // propagateParams walks the operator tree rooted at root and

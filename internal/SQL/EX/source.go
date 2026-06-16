@@ -121,7 +121,7 @@ func UnregisterAll() {
 }
 
 func cloneRow(r Row) Row {
-	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]int(nil), r.Types...)}
+	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]int(nil), r.Types...), Outer: r.Outer, planner: r.planner}
 	if r.Data != nil {
 		out.Data = append([]interface{}(nil), r.Data...)
 	}
