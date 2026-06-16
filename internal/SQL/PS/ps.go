@@ -1455,12 +1455,26 @@ func (p *Parser) parseDelete() (*Delete, error) {
 		where = w
 	}
 
+	// REQ000475: parse optional ORDER BY / LIMIT / OFFSET
+	orderBy, limit, offset, offsetFirst, err := p.parseTrailingClauses()
+	if err != nil {
+		return nil, err
+	}
+
 	returning, err := p.parseReturning()
 	if err != nil {
 		return nil, err
 	}
 
-	return &Delete{Table: table, Where: where, Returning: returning}, nil
+	return &Delete{
+		Table:       table,
+		Where:       where,
+		Returning:   returning,
+		OrderBy:     orderBy,
+		Limit:       limit,
+		Offset:      offset,
+		OffsetFirst: offsetFirst,
+	}, nil
 }
 
 func (p *Parser) parseCreateTable() (*CreateTable, error) {

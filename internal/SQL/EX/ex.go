@@ -713,14 +713,43 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 			scan = ssc
 		}
 		filter := NewFilter(scan, s.Where)
+		// REQ000475: apply ORDER BY / LIMIT / OFFSET to the row
+		// selection before deleting.
+		var current Operator = filter
+		if len(s.OrderBy) > 0 {
+			current = NewSort(current, s.OrderBy)
+		}
+		if s.OffsetFirst {
+			if s.Limit != nil {
+				if n, ok := limitInt64(s.Limit); ok {
+					current = NewLimit(current, n)
+				}
+			}
+			if s.Offset != nil {
+				if n, ok := limitInt64(s.Offset); ok && n > 0 {
+					current = NewOffset(current, n)
+				}
+			}
+		} else {
+			if s.Offset != nil {
+				if n, ok := limitInt64(s.Offset); ok && n > 0 {
+					current = NewOffset(current, n)
+				}
+			}
+			if s.Limit != nil {
+				if n, ok := limitInt64(s.Limit); ok {
+					current = NewLimit(current, n)
+				}
+			}
+		}
 		if e.store != nil {
-			op, err := NewDeleteWithStore(e.store, s.Table, s.Where, filter, s.Returning)
+			op, err := NewDeleteWithStore(e.store, s.Table, s.Where, current, s.Returning)
 			if err != nil {
 				return nil, err
 			}
 			return op, nil
 		}
-		return NewDelete(s.Table, s.Where, filter, s.Returning), nil
+		return NewDelete(s.Table, s.Where, current, s.Returning), nil
 	case *PS.CreateTable:
 		if s.Select != nil {
 			// CREATE TABLE AS SELECT needs the planner to
