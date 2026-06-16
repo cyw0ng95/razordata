@@ -72,9 +72,38 @@ func (a *AlterTable) execAddColumn() error {
 	// Re-register the complete updated schema (idempotent)
 	newCols := append(append([]string(nil), ss.cols...), a.stmt.NewCol.Name)
 	newNullable := append(append([]bool(nil), ss.nullable...), a.stmt.NewCol.Nullable)
-	newDefaults := append(append([]PS.Expr(nil), ss.defaults...), a.stmt.NewCol.Default)
-	newTypes := append(append([]int(nil), ss.colTypes...), a.stmt.NewCol.Type)
-	newGenerated := append(append([]PS.Expr(nil), ss.generated...), a.stmt.NewCol.Generated)
+
+	// Pad parallel slices that may be nil or shorter than ss.cols.
+	// The loop produces slices aligned to the new schema length.
+	var newDefaults []PS.Expr
+	for i := range ss.cols {
+		if ss.defaults != nil && i < len(ss.defaults) {
+			newDefaults = append(newDefaults, ss.defaults[i])
+		} else {
+			newDefaults = append(newDefaults, nil)
+		}
+	}
+	newDefaults = append(newDefaults, a.stmt.NewCol.Default)
+
+	var newTypes []int
+	for i := range ss.cols {
+		if ss.colTypes != nil && i < len(ss.colTypes) {
+			newTypes = append(newTypes, ss.colTypes[i])
+		} else {
+			newTypes = append(newTypes, 0)
+		}
+	}
+	newTypes = append(newTypes, a.stmt.NewCol.Type)
+
+	var newGenerated []PS.Expr
+	for i := range ss.cols {
+		if ss.generated != nil && i < len(ss.generated) {
+			newGenerated = append(newGenerated, ss.generated[i])
+		} else {
+			newGenerated = append(newGenerated, nil)
+		}
+	}
+	newGenerated = append(newGenerated, a.stmt.NewCol.Generated)
 
 	// Rebuild unique keys with updated column indices
 	newUnique := make([]UniqueKey, len(ss.unique))
@@ -97,7 +126,7 @@ func (a *AlterTable) execAddColumn() error {
 		}
 	}
 
-	registerStoreSchemaWithFK(a.stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.pk, newFKs)
+	registerStoreSchemaWithFKLocked(a.stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.pk, newFKs)
 
 	// Update colTypes and generated inline (registerStoreSchemaWithFK doesn't store these)
 	ss.colTypes = newTypes
@@ -203,18 +232,33 @@ func (a *AlterTable) execDropColumn() error {
 	// Rebuild without the dropped column
 	newCols := make([]string, 0, len(ss.cols)-1)
 	newNullable := make([]bool, 0, len(ss.nullable)-1)
-	newDefaults := make([]PS.Expr, 0, len(ss.defaults)-1)
-	newTypes := make([]int, 0, len(ss.colTypes)-1)
-	newGenerated := make([]PS.Expr, 0, len(ss.generated)-1)
+	var newDefaults []PS.Expr
+	if ss.defaults != nil {
+		newDefaults = make([]PS.Expr, 0, len(ss.defaults)-1)
+	}
+	var newTypes []int
+	if ss.colTypes != nil {
+		newTypes = make([]int, 0, len(ss.colTypes)-1)
+	}
+	var newGenerated []PS.Expr
+	if ss.generated != nil {
+		newGenerated = make([]PS.Expr, 0, len(ss.generated)-1)
+	}
 	for i := range ss.cols {
 		if i == idx {
 			continue
 		}
 		newCols = append(newCols, ss.cols[i])
 		newNullable = append(newNullable, ss.nullable[i])
-		newDefaults = append(newDefaults, ss.defaults[i])
-		newTypes = append(newTypes, ss.colTypes[i])
-		newGenerated = append(newGenerated, ss.generated[i])
+		if ss.defaults != nil {
+			newDefaults = append(newDefaults, ss.defaults[i])
+		}
+		if ss.colTypes != nil {
+			newTypes = append(newTypes, ss.colTypes[i])
+		}
+		if ss.generated != nil {
+			newGenerated = append(newGenerated, ss.generated[i])
+		}
 	}
 
 	// Rebuild unique keys: remove any UNIQUE constraint that includes the dropped column
@@ -264,7 +308,7 @@ func (a *AlterTable) execDropColumn() error {
 		})
 	}
 
-	registerStoreSchemaWithFK(a.stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.pk, newFKs)
+	registerStoreSchemaWithFKLocked(a.stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.pk, newFKs)
 
 	// Update colTypes and generated inline
 	ss.colTypes = newTypes
@@ -392,7 +436,7 @@ func (a *AlterTable) execRename() error {
 	delete(tableIDs, oldName)
 	delete(storeSchemas, tableID)
 
-	registerStoreSchemaWithFK(newName, newCols, newNullable, newDefaults, newUnique, ss.pk, newFKs)
+	registerStoreSchemaWithFKLocked(newName, newCols, newNullable, newDefaults, newUnique, ss.pk, newFKs)
 
 	// Copy colTypes and generated to the new schema entry
 	newTableID, ok := tableIDs[newName]

@@ -500,9 +500,14 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 
 	// REQ000357 (iter-27): SELECT without FROM clause (e.g. `SELECT 1+1`).
 	// Create a Values operator that evaluates expressions over a single
-	// virtual row and returns exactly one result row.
+	// virtual row and returns exactly one result row. Also apply the WHERE
+	// filter when present (REQ000458).
 	if s.From == "" {
-		return newValuesOp(s.Cols)
+		op := Operator(newValuesOp(s.Cols))
+		if s.Where != nil {
+			op = NewFilter(op, s.Where)
+		}
+		return op
 	}
 
 	var scan Operator
