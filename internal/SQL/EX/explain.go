@@ -99,6 +99,10 @@ func formatExplainNormal(n *PlanNode) []Row {
 func explainOperator(op Operator, depth int) string {
 	var b strings.Builder
 	b.WriteString(strings.Repeat("  ", depth))
+	// Unwrap AdaptiveOp to show inner operator.
+	if aop, ok := op.(*AdaptiveOp); ok {
+		return explainOperator(aop.inner, depth)
+	}
 	b.WriteString(describeOp(op))
 	if c, ok := op.(interface{ Child() Operator }); ok {
 		child := c.Child()
@@ -163,6 +167,9 @@ func explainOperator(op Operator, depth int) string {
 }
 
 func describeOp(op Operator) string {
+	if aop, ok := op.(*AdaptiveOp); ok {
+		return describeOp(aop.inner)
+	}
 	switch v := op.(type) {
 	case *SeqScan:
 		return fmt.Sprintf("SeqScan(table=%s)", v.table)

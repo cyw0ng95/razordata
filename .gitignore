@@ -55,6 +55,18 @@ meta.razor     # Meta page file
 wal.razor      # WAL directory
 wal.*          # WAL segment files (wal.000, wal.001, ...)
 
+# Profiling
+*.prof
+cpu.pprof
+mem.pprof
+
+# Temp
+tmp/
+/tmp/
+
+# Codegen build artifacts
+/internal/SQL/EX/codegen/gen_main
+
 # AI Coding tools
 .qwen
 .monkeycode

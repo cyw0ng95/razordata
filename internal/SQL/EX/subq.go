@@ -46,6 +46,9 @@ func injectOuter(op Operator, outer *Row) Operator {
 		return inj
 	}
 	switch v := op.(type) {
+	case *AdaptiveOp:
+		v.inner = injectOuter(v.inner, outer)
+		return v
 	case *SeqScan:
 		return &outerInjector{child: v, outer: outer}
 	case *IndexScan:

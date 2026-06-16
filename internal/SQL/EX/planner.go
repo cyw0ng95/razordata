@@ -140,6 +140,16 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 		root = p.planWith(s)
 	}
 
+		// Wrap query plans in AdaptiveOp for hot-path specialization.
+	// DDL/DML operators (Insert/Update/Delete/CreateTable/DropTable)
+	// are typically one-shot and don't benefit from ADQC.
+	switch root.(type) {
+	case *Insert, *Update, *Delete, *CreateTable, *DropTable:
+		// no adaptive wrapper for DDL/DML
+	default:
+		root = NewAdaptiveOp(root, key)
+	}
+
 	result := &plan{
 		root:    root,
 		cost:    p.estimateCost(root),
@@ -160,6 +170,10 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 func (p *Planner) estimateCost(op Operator) float64 {
 	if op == nil {
 		return 0
+	}
+	// Unwrap AdaptiveOp to estimate cost of the inner operator.
+	if aop, ok := op.(*AdaptiveOp); ok {
+		return p.estimateCost(aop.inner)
 	}
 	switch v := op.(type) {
 	case *SeqScan:
