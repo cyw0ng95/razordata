@@ -120,3 +120,123 @@ func TestHashJoin_BuildAndProbe(t *testing.T) {
 	_ = LX.T_INT_KW
 	_ = (*PS.Ident)(nil)
 }
+
+// TestHashJoin_MultiMatch verifies a left row matching multiple
+// right rows produces all pairs (REQ000458 regression test).
+func TestHashJoin_MultiMatch(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	leftRows := []Row{
+		{Cols: []string{"id", "val"}, Data: []any{int64(1), "a"}},
+		{Cols: []string{"id", "val"}, Data: []any{int64(2), "b"}},
+	}
+	rightRows := []Row{
+		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "x"}},
+		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "y"}},
+		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "z"}},
+		{Cols: []string{"ref", "name"}, Data: []any{int64(2), "w"}},
+	}
+	RegisterTable("l", leftRows)
+	RegisterTable("r", rightRows)
+	leftScan := NewSeqScan("l")
+	rightScan := NewSeqScan("r")
+	hj := NewHashJoin(leftScan, rightScan, "l", "r", "id", "ref", 4)
+
+	ctx := context.Background()
+	var got [][]any
+	for {
+		row, err := hj.Next(ctx)
+		if err == ErrNoRows {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		got = append(got, row.Data)
+	}
+	// left row 1 (id=1) matches 3 right rows (ref=1): 3 pairs
+	// left row 2 (id=2) matches 1 right row (ref=2): 1 pair
+	// total = 4 pairs
+	if len(got) != 4 {
+		t.Errorf("got %d rows, want 4; data=%v", len(got), got)
+	}
+	if len(got) > 0 && len(got[0]) >= 4 {
+		if got[0][3] != "x" {
+			t.Errorf("first match name = %v, want x", got[0][3])
+		}
+	}
+}
+
+// TestHashJoin_NoMatch verifies left rows with no matching right
+// rows are not emitted (INNER JOIN semantics).
+func TestHashJoin_NoMatch(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	leftRows := []Row{
+		{Cols: []string{"id", "val"}, Data: []any{int64(1), "a"}},
+		{Cols: []string{"id", "val"}, Data: []any{int64(2), "b"}},
+	}
+	rightRows := []Row{
+		{Cols: []string{"ref", "name"}, Data: []any{int64(3), "x"}},
+		{Cols: []string{"ref", "name"}, Data: []any{int64(4), "y"}},
+	}
+	RegisterTable("l", leftRows)
+	RegisterTable("r", rightRows)
+	leftScan := NewSeqScan("l")
+	rightScan := NewSeqScan("r")
+	hj := NewHashJoin(leftScan, rightScan, "l", "r", "id", "ref", 4)
+
+	ctx := context.Background()
+	var got [][]any
+	for {
+		row, err := hj.Next(ctx)
+		if err == ErrNoRows {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		got = append(got, row.Data)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d rows, want 0", len(got))
+	}
+}
+
+// TestHashJoin_AllMatch verifies when every left row matches
+// every right row.
+func TestHashJoin_AllMatch(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	leftRows := []Row{
+		{Cols: []string{"id", "val"}, Data: []any{int64(1), "a"}},
+		{Cols: []string{"id", "val"}, Data: []any{int64(1), "b"}},
+	}
+	rightRows := []Row{
+		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "x"}},
+		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "y"}},
+		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "z"}},
+	}
+	RegisterTable("l", leftRows)
+	RegisterTable("r", rightRows)
+	leftScan := NewSeqScan("l")
+	rightScan := NewSeqScan("r")
+	hj := NewHashJoin(leftScan, rightScan, "l", "r", "id", "ref", 4)
+
+	ctx := context.Background()
+	var got [][]any
+	for {
+		row, err := hj.Next(ctx)
+		if err == ErrNoRows {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		got = append(got, row.Data)
+	}
+	// 2 left rows * 3 right rows = 6 pairs
+	if len(got) != 6 {
+		t.Errorf("got %d rows, want 6; data=%v", len(got), got)
+	}
+}

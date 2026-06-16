@@ -1,7 +1,7 @@
 ## TBD
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
-|---|---|---|---|---|---|---|---|
+|---|---|---|---|---|---|---|
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | skipped | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
 | REQ000315 | SQL | Learned cardinality estimation (CardinalityNet/MSCN; bootstraps from existing histograms) | medium | L | REQ000085 (histogram), iter-23 (ANALYZE) | `SQL/PL/learned.go` (new) — ONNX runtime or pure-Go MLP; training data from ANALYZE |
 | REQ000316 | SQL | Incremental materialized views (auto-maintained aggregation views with query routing) | medium | L | iter-08 (operators), iter-12 (catalog) | `SQL/EX/matview.go` (new); `ENG/LS` triggers on view base tables |
