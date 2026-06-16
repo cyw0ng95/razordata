@@ -434,6 +434,10 @@ func (l *Lexer) scanOperator() Token {
 			l.advance()
 			return Token{Type: T_LE, Lexeme: "<=", Line: startLine, Col: startCol}
 		}
+		if l.peek() == '>' {
+			l.advance()
+			return Token{Type: T_NE, Lexeme: "<>", Line: startLine, Col: startCol}
+		}
 		return Token{Type: T_LT, Lexeme: "<", Line: startLine, Col: startCol}
 	case '>':
 		if l.peek() == '=' {

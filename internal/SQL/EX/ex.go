@@ -406,6 +406,9 @@ func (e *Executor) RegisterTableWithPK(name string, schema []string, pk string) 
 	}
 	e.planner.RegisterTable(name, cols, pk)
 	RegisterTableSchema(name, schema)
+	tablesMu.Lock()
+	tablePKs[name] = pk
+	tablesMu.Unlock()
 	if e.store != nil {
 		registerStoreSchema(name, schema, pk)
 	}
@@ -658,14 +661,17 @@ func (e *Executor) Explain(sql string) (string, error) {
 func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	switch s := stmt.(type) {
 	case *PS.Insert:
-		if e.store != nil {
-			op, err := NewInsertWithStore(e.store, s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
-			if err != nil {
-				return nil, err
+		op, iErr := func() (*Insert, error) {
+			if e.store != nil {
+				return NewInsertWithStore(e.store, s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
 			}
-			return op, nil
+			return NewInsert(s.Table, s.Cols, s.Values, s.Returning, s.OnConflict), nil
+		}()
+		if iErr != nil {
+			return nil, iErr
 		}
-		return NewInsert(s.Table, s.Cols, s.Values, s.Returning, s.OnConflict), nil
+		op.conflictAction = s.ConflictAction
+		return op, nil
 	case *PS.Update:
 		var scan Operator = NewSeqScan(s.Table)
 		if e.store != nil {
