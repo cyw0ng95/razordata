@@ -6,6 +6,7 @@ import (
 	"time"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	"github.com/cyw0ng95/razordata/internal/SQL/PL"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
@@ -178,6 +179,33 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 			return err
 		}
 	}
+
+	// Bootstrap learned cardinality model from histogram data
+	lm := PL.Learned()
+	buckets := make([]struct {
+		Count         int64
+		Lower, Upper  []byte
+		TotalRows     int64
+		DistinctCount int64
+		NullCount     int64
+	}, len(histogram))
+	for i, b := range histogram {
+		buckets[i] = struct {
+			Count         int64
+			Lower, Upper  []byte
+			TotalRows     int64
+			DistinctCount int64
+			NullCount     int64
+		}{
+			Count:         b.Count,
+			Lower:         b.LowerBound,
+			Upper:         b.UpperBound,
+			TotalRows:     rowCount,
+			DistinctCount: stats.DistinctCount,
+			NullCount:     stats.NullCount,
+		}
+	}
+	lm.BootstrapFromHistograms(buckets)
 
 	return nil
 }
