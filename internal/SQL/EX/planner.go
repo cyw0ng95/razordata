@@ -495,7 +495,29 @@ func (p *Planner) selectIndex(table, col string) (string, bool) {
 func (p *Planner) planSelect(s *PS.Select) Operator {
 	// REQ000241: view resolution — expand view to underlying SELECT
 	if viewSel := LookupView(s.From); viewSel != nil {
-		return p.planSelect(viewSel)
+		merged := *viewSel
+		if s.Where != nil {
+			if merged.Where != nil {
+				merged.Where = &PS.BinaryExpr{
+					Op:    int(LX.T_AND),
+					Left:  merged.Where,
+					Right: s.Where,
+				}
+			} else {
+				merged.Where = s.Where
+			}
+		}
+		if len(s.Cols) > 0 {
+			merged.Cols = s.Cols
+		}
+		merged.OrderBy = s.OrderBy
+		merged.Limit = s.Limit
+		merged.Offset = s.Offset
+		merged.Distinct = s.Distinct
+		merged.GroupBy = s.GroupBy
+		merged.Having = s.Having
+		merged.OffsetFirst = s.OffsetFirst
+		return p.planSelect(&merged)
 	}
 
 	// REQ000357 (iter-27): SELECT without FROM clause (e.g. `SELECT 1+1`).

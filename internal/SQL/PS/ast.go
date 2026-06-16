@@ -381,9 +381,13 @@ type Update struct {
 func (u *Update) stmtNode() {}
 
 type Delete struct {
-	Table     string
-	Where     Expr
-	Returning []Expr
+	Table       string
+	Where       Expr
+	Returning   []Expr
+	OrderBy     []OrderItem
+	Limit       Expr
+	Offset      Expr
+	OffsetFirst bool
 }
 
 func (d *Delete) stmtNode() {}
