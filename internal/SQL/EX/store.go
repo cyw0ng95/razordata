@@ -90,7 +90,7 @@ var (
 	// by SYS at Open time. nil means the EX layer is in
 	// in-memory mode (legacy behavior, used by unit tests that
 	// do not have a backing directory).
-	currentCatalog *ls.Catalog
+	currentCatalog atomic.Pointer[ls.Catalog]
 
 	// registeredIndexes is the EX-layer's view of secondary
 	// indexes declared via CREATE INDEX. Keyed by table name.
@@ -223,8 +223,9 @@ func GetRegisteredIndexes(table string) []RegisteredIndex {
 // When a persistent catalog is wired in (iter-12), the table ID is
 // sourced from the catalog's NextID counter so it survives Close/Open.
 func nextTableID() uint64 {
-	if currentCatalog != nil {
-		id, err := currentCatalog.NextID()
+	cat := currentCatalog.Load()
+	if cat != nil {
+		id, err := cat.NextID()
 		if err == nil {
 			return id
 		}
@@ -248,17 +249,13 @@ func tableIDFor(name string) (uint64, bool) {
 // through the catalog for persistence. Pass nil to revert to
 // in-memory mode (legacy behavior).
 func SetCatalog(c *ls.Catalog) {
-	storeMu.Lock()
-	defer storeMu.Unlock()
-	currentCatalog = c
+	currentCatalog.Store(c)
 }
 
 // Catalog returns the currently bound catalog, or nil if the EX
 // layer is in in-memory mode.
 func Catalog() *ls.Catalog {
-	storeMu.Lock()
-	defer storeMu.Unlock()
-	return currentCatalog
+	return currentCatalog.Load()
 }
 
 // registerStoreSchema assigns a table ID to a name and stores its schema.
@@ -347,6 +344,12 @@ func registerStoreSchemaFull(name string, cols []string, nullable []bool, defaul
 func registerStoreSchemaWithFK(name string, cols []string, nullable []bool, defaults []PS.Expr, unique []UniqueKey, pk string, fks []ForeignKeyConstraint) uint64 {
 	storeMu.Lock()
 	defer storeMu.Unlock()
+	return registerStoreSchemaWithFKLocked(name, cols, nullable, defaults, unique, pk, fks)
+}
+
+// registerStoreSchemaWithFKLocked is the locked variant of
+// registerStoreSchemaWithFK. The caller MUST already hold storeMu.
+func registerStoreSchemaWithFKLocked(name string, cols []string, nullable []bool, defaults []PS.Expr, unique []UniqueKey, pk string, fks []ForeignKeyConstraint) uint64 {
 	cpCols := append([]string(nil), cols...)
 	cpNullable := append([]bool(nil), nullable...)
 	var cpDefaults []PS.Expr
@@ -382,8 +385,9 @@ func registerStoreSchemaWithFK(name string, cols []string, nullable []bool, defa
 // nextTableIDLocked is the locked variant of nextTableID. The
 // caller MUST already hold storeMu.
 func nextTableIDLocked() uint64 {
-	if currentCatalog != nil {
-		id, err := currentCatalog.NextID()
+	cat := currentCatalog.Load()
+	if cat != nil {
+		id, err := cat.NextID()
 		if err == nil {
 			return id
 		}

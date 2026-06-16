@@ -274,6 +274,9 @@ func evalBetween(e *PS.BetweenExpr, row *Row, params []interface{}) (interface{}
 	if err != nil {
 		return nil, err
 	}
+	if expr == nil || low == nil || high == nil {
+		return nil, nil
+	}
 	cmpLow := compare(expr, low)
 	cmpHigh := compare(expr, high)
 	return cmpLow >= 0 && cmpHigh <= 0, nil
