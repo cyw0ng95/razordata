@@ -477,6 +477,15 @@ func evalCast(e *PS.CastExpr, row *Row, params []interface{}) (interface{}, erro
 		return evalDecimalCast(v, e.Type.Precision, e.Type.Scale)
 	case LX.T_BOOL:
 		return truthy(v), nil
+	case LX.T_BLOB:
+		switch x := v.(type) {
+		case string:
+			return []byte(x), nil
+		case []byte:
+			return x, nil
+		default:
+			return []byte(fmt.Sprintf("%v", v)), nil
+		}
 	}
 	return nil, ErrEval
 }
