@@ -102,6 +102,13 @@ var (
 
 	// viewMu protects viewRegistry.
 	viewMu sync.RWMutex
+
+	// matViewRegistry stores materialized view definitions (REQ000316).
+	// Keyed by view name. Values are the parsed SELECT statements.
+	matViewRegistry = map[string]*PS.Select{}
+
+	// matViewMu protects matViewRegistry.
+	matViewMu sync.RWMutex
 )
 
 // RegisteredIndex is one entry in the EX-layer's index registry.
@@ -137,6 +144,34 @@ func UnregisterView(name string) {
 	viewMu.Lock()
 	defer viewMu.Unlock()
 	delete(viewRegistry, name)
+}
+
+// RegisterMatView stores a materialized view definition (REQ000316).
+func RegisterMatView(name string, sel *PS.Select) {
+	matViewMu.Lock()
+	defer matViewMu.Unlock()
+	matViewRegistry[name] = sel
+}
+
+// LookupMatView returns the SELECT for a materialized view, or nil.
+func LookupMatView(name string) *PS.Select {
+	matViewMu.RLock()
+	defer matViewMu.RUnlock()
+	return matViewRegistry[name]
+}
+
+// UnregisterMatView removes a single materialized view by name.
+func UnregisterMatView(name string) {
+	matViewMu.Lock()
+	defer matViewMu.Unlock()
+	delete(matViewRegistry, name)
+}
+
+// UnregisterAllMatViews clears all materialized views (for testing).
+func UnregisterAllMatViews() {
+	matViewMu.Lock()
+	defer matViewMu.Unlock()
+	matViewRegistry = map[string]*PS.Select{}
 }
 
 // RegisterIndexWithID registers a secondary index for the given
