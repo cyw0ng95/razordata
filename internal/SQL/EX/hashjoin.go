@@ -37,6 +37,7 @@ type HashJoin struct {
 	leftRows   []Row
 	rightRows  []Row
 	emitIdx    int
+	bucketPos  int // position within current bucket's hash/rightRows for multi-match
 	emitRow    Row
 	done       bool
 }
@@ -71,7 +72,8 @@ func (j *HashJoin) RightChild() Operator { return j.right }
 
 // Next produces the next matching pair. First call performs
 // the full Build + Probe. Subsequent calls iterate over
-// matches from the current probe. ErrNoRows when done.
+// all matches from the current bucket position before advancing
+// to the next left row. ErrNoRows when done.
 func (j *HashJoin) Next(ctx context.Context) (Row, error) {
 	if j.done {
 		return Row{}, ErrNoRows
@@ -86,23 +88,25 @@ func (j *HashJoin) Next(ctx context.Context) (Row, error) {
 	}
 	for j.emitIdx < len(j.leftRows) {
 		left := j.leftRows[j.emitIdx]
-		j.emitIdx++
 		lk, _ := left.Lookup(j.leftKey)
 		hash := hashKey(lk)
 		idx := int(hash & uint64(j.partitions-1))
 		bucket := j.buckets[idx]
-		// Linear scan of the bucket (small after radix
-		// partition).
-		for k, rh := range bucket.hashes {
-			if rh == hash {
+		// Continue scanning from the saved position within the
+		// bucket to find the next matching right row.
+		for k := j.bucketPos; k < len(bucket.hashes); k++ {
+			if bucket.hashes[k] == hash {
 				right := bucket.rightRows[k]
 				lk2, _ := right.Lookup(j.rightKey)
 				if valuesEqual(lk, lk2) {
-					// Emit the joined row.
+					j.bucketPos = k + 1
 					return joinRows(left, right, j.leftTbl, j.rightTbl), nil
 				}
 			}
 		}
+		// No more matches for this left row; advance to next.
+		j.emitIdx++
+		j.bucketPos = 0
 	}
 	j.done = true
 	return Row{}, ErrNoRows
