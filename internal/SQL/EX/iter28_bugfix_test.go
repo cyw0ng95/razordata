@@ -835,3 +835,61 @@ func TestBugfix_CountEmptySet(t *testing.T) {
 		t.Errorf("COUNT(*) no-match = %d, want 0", val)
 	}
 }
+
+// TestBugfix_CorrelatedSubquery_Reexecutes verifies that a correlated
+// subquery (e.g. EXISTS referencing outer columns) produces correct
+// results for every outer row, not just the first one.
+func TestBugfix_CorrelatedSubquery_Reexecutes(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	ex.RegisterTableWithPK("s", []string{"id", "tid"}, "id")
+	ctx := context.Background()
+	// t has 3 rows
+	for i := 1; i <= 3; i++ {
+		ex.Exec(ctx, "INSERT INTO t VALUES (?, ?)", int64(i), int64(i*10))
+	}
+	// s has 2 rows, matching t.id 1 and 2
+	ex.Exec(ctx, "INSERT INTO s VALUES (1, 1)")
+	ex.Exec(ctx, "INSERT INTO s VALUES (2, 2)")
+
+	// EXISTS correlated subquery: should return t.id 1 and 2 only
+	rows, err := ex.QueryAll(ctx, "SELECT id FROM t WHERE EXISTS (SELECT 1 FROM s WHERE s.tid = t.id) ORDER BY id")
+	if err != nil {
+		t.Fatalf("EXISTS: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("EXISTS: got %d rows, want 2; data=%v", len(rows), rows)
+	}
+
+	// IN correlated subquery
+	rows, err = ex.QueryAll(ctx, "SELECT id FROM t WHERE id IN (SELECT tid FROM s) ORDER BY id")
+	if err != nil {
+		t.Fatalf("IN subquery: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("IN subquery: got %d rows, want 2; data=%v", len(rows), rows)
+	}
+
+	// Scalar correlated subquery
+	rows, err = ex.QueryAll(ctx, "SELECT (SELECT COUNT(*) FROM s WHERE s.tid = t.id) FROM t ORDER BY id")
+	if err != nil {
+		t.Fatalf("scalar subquery: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Errorf("scalar subquery: got %d rows, want 3; data=%v", len(rows), rows)
+	}
+	if len(rows) >= 3 {
+		// t.id=1 has 1 match in s, t.id=2 has 1 match, t.id=3 has 0
+		if rows[0].Data[0] != int64(1) {
+			t.Errorf("row 0 val = %v, want 1", rows[0].Data[0])
+		}
+		if rows[1].Data[0] != int64(1) {
+			t.Errorf("row 1 val = %v, want 1", rows[1].Data[0])
+		}
+		if rows[2].Data[0] != int64(0) {
+			t.Errorf("row 2 val = %v, want 0", rows[2].Data[0])
+		}
+	}
+}
