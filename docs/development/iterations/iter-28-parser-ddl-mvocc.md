@@ -602,3 +602,4 @@ Phase 6 depends on all prior phases.
 - **Codegen tests**: 42 existing + 35 plan_visitor + 42 expr_codegen = ~119 total codegen tests
 - **Pre-existing warnings**: `go vet` shows uring_linux.go unsafe.Pointer, writers.go lock copy, version.go unsafe.Pointer — unchanged from prior iterations
 - **Release tag**: N/A (no tag cut; deferred to iter-29 when SLT corpus fix iteration ships)
+- **Correlated subquery re-execution fix**: `evalQualifiedName` fallback now searches the outer chain first, then the current row, so a table‑qualified reference like `t.id` resolves to the parent row's `id` column rather than a same‑named column in the inner subquery row. Engine‑backed SeqScan re‑iteration is guaranteed by `defer pl.root.Close()` in `runSubqueryPlan` (already present). All three correlated subquery shapes (EXISTS, IN, scalar) tested with the engine‑backed store path via `TestBugfix_CorrelatedSubquery_Reexecutes`.
