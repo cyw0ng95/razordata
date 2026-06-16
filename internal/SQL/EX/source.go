@@ -112,6 +112,7 @@ func UnregisterAll() {
 	// resource the SYS layer sets at Open).
 	registeredIndexes = map[string][]RegisteredIndex{}
 	viewRegistry = map[string]*PS.Select{}
+	matViewRegistry = map[string]*PS.Select{}
 	storeMu.Unlock()
 	triggerMu.Lock()
 	triggerReg = map[string]*PS.TriggerStmt{}
