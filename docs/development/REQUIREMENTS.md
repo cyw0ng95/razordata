@@ -1,9 +1,8 @@
 ## TBD
 
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
-|---|---|---|---|---|---|---|
+|---|---|---|---|---|---|---|---|
 | REQ000100 | SYS | Network server (TCP/gRPC listener; `SYS.Serve()`) | skipped | XL | iter-12 (catalog) | new `SYS/SV/sv.go`, protocol buffer or simple line protocol |
-| REQ000307 | TXN | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | critical | XL | iter-20 (commit protocol), `REQ000175` | `TXN/MV/occ.go` (new) — `Validation` phase rewritten; conflict-free reorder |
 | REQ000315 | SQL | Learned cardinality estimation (CardinalityNet/MSCN; bootstraps from existing histograms) | medium | L | REQ000085 (histogram), iter-23 (ANALYZE) | `SQL/PL/learned.go` (new) — ONNX runtime or pure-Go MLP; training data from ANALYZE |
 | REQ000316 | SQL | Incremental materialized views (auto-maintained aggregation views with query routing) | medium | L | iter-08 (operators), iter-12 (catalog) | `SQL/EX/matview.go` (new); `ENG/LS` triggers on view base tables |
 | REQ000321 | TXN | Deterministic Simulation Testing framework (FoundationDB-style scheduled threads + simulated clock + simulated disk; millions of random schedules) | high | XL | iter-17 (chaos), iter-13 (recovery) | new `tests/dst/` framework; subsystem-aware simulated drivers |
@@ -470,3 +469,4 @@
 | REQ000311 | SQL/EX | Operator codegen framework — `go generate` template driver (gen.go), PlanVisitor IR with 15 op types, ExprCompiler emitting Go source from PS expression trees, InlineCache (type-dispatch, LRU 256-entry), generated codegen_ops.go with all 15 registered stubs (SeqScan, IndexScan, Filter, Project, Sort, Limit, NestedLoopJoin, HashJoin, HashAggregate, Aggregate, Distinct, CompoundOp, WindowOperator, ExplainStmtOp, CreateViewOperator). plan_visitor_test.go (35 tests), expr_codegen_test.go (42 tests). Deferred: per-shape SIMD specialization, hash join probe loop templates, parallel operator markers | iter-28 |
 | REQ000313 | SQL/EX | Adaptive query compilation — AdaptiveOp wrapper with InvocationCounter (threshold=2, atomic), composite-key LRU cache (planHash@schemaVersion, 256-entry), FallbackOp + trySpecialized panic recovery, adqc_telemetry.go (slog.Debug events, AdqcMetrics counters), planner.go wraps SELECT/query roots. adqc_test.go (49 tests). All 15 codegen stubs registered in init() | iter-28 |
 | REQ000536 | SQL/EX | Correlated subquery re-execution for store-backed SeqScan — `evalQualifiedName` fallback searches the outer chain first, then the current row so `t.id` resolves to the parent row's `id` column; `runSubqueryPlan`'s `defer pl.root.Close()` ensures the store-backed SeqScan creates a fresh iterator per outer-row evaluation. Covers EXISTS, IN, scalar correlated subqueries with engine-backed store path | iter-28 |
+| REQ000307 | TXN | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | iter-28 |
