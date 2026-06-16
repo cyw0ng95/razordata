@@ -400,3 +400,74 @@ func valueEqual(a, b interface{}) bool {
 	}
 	return false
 }
+
+// removeConflicting removes rows from existing that conflict with out
+// on any unique key (including implicit PK). Returns the filtered slice.
+func removeConflicting(existing []Row, schema *storeSchema, out Row) []Row {
+	keys := schema.unique
+	if schema.pk != "" {
+		pkIdx := -1
+		for i, c := range schema.cols {
+			if c == schema.pk {
+				pkIdx = i
+				break
+			}
+		}
+		if pkIdx >= 0 {
+			keys = append([]UniqueKey(nil), keys...)
+			keys = append(keys, UniqueKey{Cols: []int{pkIdx}})
+		}
+	}
+	filtered := make([]Row, 0, len(existing))
+	for _, row := range existing {
+		conflict := false
+		for _, uk := range keys {
+			match := true
+			for _, idx := range uk.Cols {
+				if idx >= len(row.Data) || idx >= len(out.Data) {
+					match = false
+					break
+				}
+				if !equalValue(row.Data[idx], out.Data[idx]) {
+					match = false
+					break
+				}
+			}
+			if match {
+				conflict = true
+				break
+			}
+		}
+		if !conflict {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+// removeConflictingInMemory removes rows from existing that match out on
+// the PK column (in-memory path without storeSchema). Returns filtered slice.
+// pkName is the table's primary key column name (empty = no PK conflict detection).
+func removeConflictingInMemory(existing []Row, schema []string, pkName string, out Row) []Row {
+	if pkName == "" {
+		return existing
+	}
+	pkIdx := -1
+	for i, c := range schema {
+		if c == pkName {
+			pkIdx = i
+			break
+		}
+	}
+	if pkIdx < 0 || pkIdx >= len(out.Data) {
+		return existing
+	}
+	filtered := make([]Row, 0, len(existing))
+	for _, row := range existing {
+		if pkIdx < len(row.Data) && equalValue(row.Data[pkIdx], out.Data[pkIdx]) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	return filtered
+}

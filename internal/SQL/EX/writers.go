@@ -10,19 +10,20 @@ import (
 )
 
 type Insert struct {
-	table      string
-	cols       []string
-	values     [][]PS.Expr
-	returning  []PS.Expr
-	onConflict *PS.OnConflict
-	store      Store
-	schema     *storeSchema
-	txWriter   TxWriter
-	rows       int64
-	done       bool
-	params     []interface{}
-	resultRows []Row
-	resultPos  int
+	table          string
+	cols           []string
+	values         [][]PS.Expr
+	returning      []PS.Expr
+	onConflict     *PS.OnConflict
+	conflictAction PS.ConflictAction
+	store          Store
+	schema         *storeSchema
+	txWriter       TxWriter
+	rows           int64
+	done           bool
+	params         []interface{}
+	resultRows     []Row
+	resultPos      int
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -109,6 +110,11 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 			if err := checkUnique(cschema, out, pending, Row{}, asUniqueLookup(lookup)); err != nil {
+				if i.conflictAction == PS.ConflictActionReplace {
+					existing = removeConflicting(existing, cschema, out)
+					pending = make(map[string]struct{}, len(i.values))
+					goto doInsertReplace
+				}
 				if i.onConflict == nil {
 					return Row{}, err
 				}
@@ -137,6 +143,13 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 				// only hit in degenerate cases.
 				continue
 			}
+		doInsertReplace:
+		}
+		// REPLACE handling for in-memory path without constraint enforcement
+		if i.conflictAction == PS.ConflictActionReplace && cschema == nil {
+			pkName := tablePKs[i.table]
+			existing = removeConflictingInMemory(existing, schema, pkName, out)
+			pending = make(map[string]struct{}, len(i.values))
 		}
 		// REQ000126: FK validation on INSERT
 		if cschema != nil && len(cschema.foreignKeys) > 0 {

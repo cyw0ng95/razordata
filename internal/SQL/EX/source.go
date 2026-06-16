@@ -13,6 +13,7 @@ var (
 	tablesMu sync.RWMutex
 	tables   = map[string][]Row{}
 	schemas  = map[string][]string{}
+	tablePKs = map[string]string{} // in-memory table primary key column name
 )
 
 // triggerMu guards the package-level trigger registry. REQ000435.
