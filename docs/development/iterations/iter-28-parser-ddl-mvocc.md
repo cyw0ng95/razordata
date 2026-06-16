@@ -592,14 +592,16 @@ Phase 6 depends on all prior phases.
 
 4. **Phase 4 deferred items** — REQ000529 (INDEXED BY parser), REQ000530 (RANGE frame), and deeper ANALYZE cost estimation (REQ000527 `estimateCost` from stats) remain TBD. REQ000522 (Distinct pushdown) confirmed correct in current code.
 
-5. **SLT corpus failures** — The 49+ TBD rows in REQUIREMENTS.md (REQ000453–REQ000535) are deferred to iter-29 or a dedicated SLT bugfix iteration. These include critical subquery visibility (455), mergeIterator hang (501), duplicate rows (502), and other SLT corpus issues.
+5. **SLT corpus failures** — The remaining 46 TBD rows in REQUIREMENTS.md (REQ000316–REQ000570) are deferred to iter-29 or a dedicated SLT bugfix iteration. The original SLT sweep (REQ000453–REQ000535) was reduced from 49 to 46 by fixing REQ000533 (`<>` lexer), REQ000535 (REPLACE INTO), REQ000503 (scalar IN), REQ000486 (INSERT OR IGNORE), and REQ000544 (O(1) Row.Lookup).
 
 ## Outcome
 
-- **LoC added**: ~3,200 (Phase 5 codegen + ADQC tests + telemetry + gen_test.go fixes)
+- **LoC added**: ~3,260 (Phase 5 codegen + ADQC tests + telemetry + gen_test.go fixes + bugfix sweep)
 - **39/39 packages pass** `go test ./... -race -count=1` (up from 37/37 in prior session)
+- **Bugfix sweep**: REQ000533 (`<>` operator), REQ000535 (REPLACE INTO), REQ000503 (scalar IN verified), REQ000486 (INSERT OR IGNORE), REQ000544 (O(1) Row.Lookup with colIndex map); all with e2e tests
 - **ADQC**: `LookupCodegenOp` returns non-nil for all 15 registered ops (was 2). `GlobalAdqcCache` is process-wide with 256-entry LRU. `emitAdqcSpecialized`/`emitAdqcFallback` telemetry events fire on swap.
 - **Codegen tests**: 42 existing + 35 plan_visitor + 42 expr_codegen = ~119 total codegen tests
 - **Pre-existing warnings**: `go vet` shows uring_linux.go unsafe.Pointer, writers.go lock copy, version.go unsafe.Pointer — unchanged from prior iterations
 - **Release tag**: N/A (no tag cut; deferred to iter-29 when SLT corpus fix iteration ships)
+- **Final commit**: `5dc83be`
 - **Correlated subquery re-execution fix**: `evalQualifiedName` fallback now searches the outer chain first, then the current row, so a table‑qualified reference like `t.id` resolves to the parent row's `id` column rather than a same‑named column in the inner subquery row. Engine‑backed SeqScan re‑iteration is guaranteed by `defer pl.root.Close()` in `runSubqueryPlan` (already present). All three correlated subquery shapes (EXISTS, IN, scalar) tested with the engine‑backed store path via `TestBugfix_CorrelatedSubquery_Reexecutes`.
