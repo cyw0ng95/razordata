@@ -31,6 +31,11 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		return nil
 	}
 
+	// Unwrap AdaptiveOp to show inner operator in EXPLAIN output.
+	if aop, ok := op.(*AdaptiveOp); ok {
+		return buildPlanNodeTree(aop.inner, planner)
+	}
+
 	node := &PlanNode{
 		Type: operatorType(op),
 	}
@@ -139,6 +144,9 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 
 // operatorType returns a human-readable type name for an operator.
 func operatorType(op Operator) string {
+	if aop, ok := op.(*AdaptiveOp); ok {
+		return operatorType(aop.inner)
+	}
 	switch op.(type) {
 	case *SeqScan:
 		return "Scan"

@@ -11,11 +11,15 @@ type Filter struct {
 	child     Operator
 	predicate PS.Expr
 	params    []interface{}
+	cs        *CodegenState
 }
 
 // Child returns the filter's child operator. Used by
 // propagateParams to walk the operator tree.
 func (f *Filter) Child() Operator { return f.child }
+
+// Predicate returns the filter's predicate expression.
+func (f *Filter) Predicate() PS.Expr { return f.predicate }
 
 func NewFilter(child Operator, predicate PS.Expr) *Filter {
 	return &Filter{
@@ -60,6 +64,7 @@ type Project struct {
 	child  Operator
 	cols   []PS.Expr
 	params []interface{}
+	cs     *CodegenState
 }
 
 // Child returns the project's child operator.
@@ -136,6 +141,7 @@ type Sort struct {
 	pos          int
 	materialized bool
 	params       []interface{}
+	cs           *CodegenState
 }
 
 // Child returns the sort's child operator.
@@ -202,10 +208,14 @@ type Limit struct {
 	limit  int64
 	seen   int64
 	params []interface{}
+	cs     *CodegenState
 }
 
 // Child returns the limit's child operator.
 func (l *Limit) Child() Operator { return l.child }
+
+// LimitValue returns the limit value.
+func (l *Limit) LimitValue() int64 { return l.limit }
 
 func NewLimit(child Operator, n int64) *Limit {
 	return &Limit{child: child, limit: n}
