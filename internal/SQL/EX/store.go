@@ -84,6 +84,7 @@ var (
 	tableIDSeq   uint64
 	tableIDs     = map[string]uint64{}
 	storeSchemas = map[uint64]*storeSchema{}
+	inMemSchemas = map[string]*storeSchema{} // in-memory fallback, keyed by table name
 
 	// currentCatalog is the persistent system catalog wired in
 	// by SYS at Open time. nil means the EX layer is in
@@ -116,6 +117,22 @@ type RegisteredIndex struct {
 	Name    string
 	Columns []string
 	Unique  bool
+}
+
+// schemaFor looks up a storeSchema by table name, first in the store-backed
+// registry (tableIDs → storeSchemas), then in the in-memory fallback.
+func schemaFor(name string) (*storeSchema, bool) {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	if id, ok := tableIDs[name]; ok {
+		if ss, ok := storeSchemas[id]; ok {
+			return ss, ok
+		}
+	}
+	if ss, ok := inMemSchemas[name]; ok {
+		return ss, ok
+	}
+	return nil, false
 }
 
 // RegisterView stores a view definition (REQ000240).
@@ -219,17 +236,6 @@ func nextTableID() uint64 {
 	return tableIDSeq
 }
 
-func schemaFor(name string) (*storeSchema, bool) {
-	storeMu.Lock()
-	defer storeMu.Unlock()
-	id, ok := tableIDs[name]
-	if !ok {
-		return nil, false
-	}
-	ss, ok := storeSchemas[id]
-	return ss, ok
-}
-
 func tableIDFor(name string) (uint64, bool) {
 	storeMu.Lock()
 	defer storeMu.Unlock()
@@ -281,6 +287,22 @@ func registerStoreSchema(name string, cols []string, pk string) uint64 {
 	tableIDs[name] = id
 	storeSchemas[id] = &storeSchema{cols: append([]string(nil), cols...), pk: pk, nullable: nullable}
 	return id
+}
+
+// registerInMemorySchema registers a storeSchema in the in-memory fallback
+// registry, enabling constraint enforcement for tables without a Store.
+func registerInMemorySchema(name string, cols []string, pk string) {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	nullable := make([]bool, len(cols))
+	for i := range nullable {
+		nullable[i] = true
+	}
+	inMemSchemas[name] = &storeSchema{
+		cols:     append([]string(nil), cols...),
+		pk:       pk,
+		nullable: nullable,
+	}
 }
 
 // registerStoreSchemaWithConstraints stores schema with NOT NULL and DEFAULT

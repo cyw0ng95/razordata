@@ -101,6 +101,7 @@ func UnregisterAll() {
 	storeMu.Lock()
 	storeSchemas = map[uint64]*storeSchema{}
 	tableIDs = map[string]uint64{}
+	inMemSchemas = map[string]*storeSchema{}
 	tableIDSeq = 0
 	// REQ000346 (iter-26): the pre-fix UnregisterAll missed
 	// the EX-level secondary-index and view registries. Both

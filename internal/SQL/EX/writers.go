@@ -115,6 +115,9 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 					pending = make(map[string]struct{}, len(i.values))
 					goto doInsertReplace
 				}
+				if i.conflictAction == PS.ConflictActionIgnore {
+					continue
+				}
 				if i.onConflict == nil {
 					return Row{}, err
 				}

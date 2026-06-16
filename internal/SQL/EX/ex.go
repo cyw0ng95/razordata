@@ -83,6 +83,9 @@ type Row struct {
 	// plan their nested queries with the same store, catalog,
 	// and stats catalog. See REQ000366.
 	planner *Planner
+	// colIndex is a pre-built O(1) lookup from column name to
+	// column index, built lazily on first Lookup call. REQ000544.
+	colIndex map[string]int
 }
 
 // Planner returns the planner associated with this row (or any
@@ -99,16 +102,25 @@ func (r *Row) Planner() *Planner {
 
 func (r *Row) Lookup(name string) (interface{}, bool) {
 	for cur := r; cur != nil; cur = cur.Outer {
-		for i, c := range cur.Cols {
-			if strings.EqualFold(c, name) {
-				if i < len(cur.Data) {
-					return cur.Data[i], true
-				}
-				return nil, false
+		if cur.colIndex == nil {
+			cur.buildColIndex()
+		}
+		if idx, ok := cur.colIndex[strings.ToLower(name)]; ok {
+			if idx < len(cur.Data) {
+				return cur.Data[idx], true
 			}
+			return nil, false
 		}
 	}
 	return nil, false
+}
+
+// buildColIndex builds the O(1) column name → index map. REQ000544.
+func (r *Row) buildColIndex() {
+	r.colIndex = make(map[string]int, len(r.Cols))
+	for i, c := range r.Cols {
+		r.colIndex[strings.ToLower(c)] = i
+	}
 }
 
 type Result struct {
@@ -409,6 +421,7 @@ func (e *Executor) RegisterTableWithPK(name string, schema []string, pk string) 
 	tablesMu.Lock()
 	tablePKs[name] = pk
 	tablesMu.Unlock()
+	registerInMemorySchema(name, schema, pk)
 	if e.store != nil {
 		registerStoreSchema(name, schema, pk)
 	}
