@@ -7,6 +7,7 @@ import (
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
+	"github.com/cyw0ng95/razordata/internal/SQL/PL"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 	"github.com/cyw0ng95/razordata/internal/SQL/RE"
 )
@@ -399,7 +400,35 @@ func (p *Planner) estimatePredicateSelectivity(e PS.Expr) float64 {
 		return 0.5
 	}
 
-	return estimateSelectivityWithStats(e, stats)
+	histSel := estimateSelectivityWithStats(e, stats)
+
+	lm := PL.Learned()
+	if lm.IsTrained() {
+		predType := 0
+		if v, ok := e.(*PS.BinaryExpr); ok {
+			switch v.Op {
+			case int(LX.T_EQ):
+				predType = 0
+			case int(LX.T_LT), int(LX.T_LE), int(LX.T_GT), int(LX.T_GE):
+				predType = 1
+			}
+		}
+		features := lm.PredicateFeatures(
+			predType,
+			histSel,
+			float64(stats.RowCount),
+			float64(stats.DistinctCount),
+			float64(stats.NullCount),
+		)
+		learnedSel := lm.Predict(features)
+		alpha := float64(lm.TrainingCount()) / float64(lm.TrainingCount()+100)
+		if alpha > 0.8 {
+			alpha = 0.8
+		}
+		return alpha*learnedSel + (1-alpha)*histSel
+	}
+
+	return histSel
 }
 
 // findTableForColumn returns the first table name that has the
