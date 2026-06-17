@@ -945,6 +945,14 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 			generated[i] = col.Generated
 		}
 	}
+
+	// REQ000484: capture CHECK constraint expressions so
+	// validateCheck can enforce them on INSERT/UPDATE.
+	checks := make([]PS.Expr, 0, len(c.stmt.Cols))
+	for _, col := range c.stmt.Cols {
+		checks = append(checks, col.Check)
+	}
+
 	id := registerStoreSchemaWithFK(c.stmt.Name, cols, nullable, defaults, unique, pk, fks)
 	// R16-3: record each column's SQL type token alongside the
 	// schema so ExtractParamTypes can resolve `column = ?`
@@ -953,6 +961,7 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	if ss, ok := storeSchemas[id]; ok {
 		ss.colTypes = append([]int(nil), colTypes...)
 		ss.generated = generated
+		ss.checks = append([]PS.Expr(nil), checks...)
 		// REQ000367: tables without a PRIMARY KEY that are
 		// registered for storage get a synthetic int64 rowid.
 		// This makes them writable to the engine store while
