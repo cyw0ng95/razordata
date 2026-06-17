@@ -347,6 +347,25 @@ func (a *AlterTable) execDropColumn() error {
 	defer tablesMu.Unlock()
 	schemas[a.stmt.Table] = newCols
 
+	// Update existing row data to remove the dropped column
+	if existing, ok := tables[a.stmt.Table]; ok {
+		updated := make([]Row, len(existing))
+		for i, row := range existing {
+			newData := make([]interface{}, 0, len(row.Data)-1)
+			newRowCols := make([]string, 0, len(row.Cols)-1)
+			for j := range row.Data {
+				if j != idx {
+					newData = append(newData, row.Data[j])
+					if j < len(row.Cols) {
+						newRowCols = append(newRowCols, row.Cols[j])
+					}
+				}
+			}
+			updated[i] = Row{Cols: newRowCols, Types: row.Types, Data: newData, Outer: row.Outer}
+		}
+		tables[a.stmt.Table] = updated
+	}
+
 	return nil
 }
 
@@ -370,9 +389,6 @@ func (a *AlterTable) execDropColumnInMemory() error {
 		return fmt.Errorf("ex: column %q not found in table %q", a.stmt.Column, a.stmt.Table)
 	}
 
-	// Cannot drop PK column
-	// (in in-memory mode we don't know which is PK, so allow it)
-
 	newCols := make([]string, 0, len(cols)-1)
 	for i, c := range cols {
 		if i != idx {
@@ -381,8 +397,25 @@ func (a *AlterTable) execDropColumnInMemory() error {
 	}
 	schemas[a.stmt.Table] = newCols
 
-	// registerStoreSchema takes storeMu internally; the helper
-	// must not be called with storeMu already held.
+	// Update existing row data to remove the dropped column
+	if existing, ok := tables[a.stmt.Table]; ok {
+		updated := make([]Row, len(existing))
+		for i, row := range existing {
+			newData := make([]interface{}, 0, len(row.Data)-1)
+			newRowCols := make([]string, 0, len(row.Cols)-1)
+			for j := range row.Data {
+				if j != idx {
+					newData = append(newData, row.Data[j])
+					if j < len(row.Cols) {
+						newRowCols = append(newRowCols, row.Cols[j])
+					}
+				}
+			}
+			updated[i] = Row{Cols: newRowCols, Types: row.Types, Data: newData, Outer: row.Outer}
+		}
+		tables[a.stmt.Table] = updated
+	}
+
 	registerStoreSchema(a.stmt.Table, newCols, "")
 
 	return nil
