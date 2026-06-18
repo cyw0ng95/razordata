@@ -334,6 +334,32 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		return &FunctionCall{Name: name, Args: args}, nil
 	}
 		return &Ident{Name: name}, nil
+	case LX.T_RAISE:
+		// RAISE(ABORT, 'message') or RAISE(IGNORE) (REQ000560)
+		p.advance()
+		if err := p.expect(LX.T_LPAREN); err != nil {
+			return nil, err
+		}
+		p.advance()
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		action := p.current.Lexeme
+		p.advance()
+		rf := &RaiseFunc{Action: action}
+		if p.current.Type == LX.T_COMMA {
+			p.advance()
+			msg, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			rf.Message = msg
+		}
+		if err := p.expect(LX.T_RPAREN); err != nil {
+			return nil, err
+		}
+		p.advance()
+		return rf, nil
 	case LX.T_COUNT, LX.T_SUM, LX.T_AVG:
 		name := strings.ToUpper(p.current.Lexeme)
 		p.advance()
@@ -723,6 +749,8 @@ func (p *Parser) Parse() (Stmt, error) {
 		stmt, err = p.parseTruncate()
 	case LX.T_REINDEX:
 		stmt, err = p.parseReindex()
+	case LX.T_VALUES:
+		stmt, err = p.parseValues()
 	case LX.T_PRAGMA:
 		stmt, err = p.parsePragma()
 	case LX.T_WITH:
@@ -736,6 +764,8 @@ func (p *Parser) Parse() (Stmt, error) {
 		if next.Type == LX.T_TO {
 			stmt, err = p.parseRollbackTo()
 		}
+	case LX.T_BEGIN:
+		stmt, err = p.parseBegin()
 	case LX.T_SET:
 		stmt, err = p.parseSet()
 	case LX.T_ALTER:
@@ -1423,12 +1453,71 @@ func (p *Parser) parseUpdate() (*Update, error) {
 		where = w
 	}
 
+	// REQ000558: parse optional ORDER BY / LIMIT / OFFSET
+	orderBy, limit, offset, offsetFirst, err := p.parseTrailingClauses()
+	if err != nil {
+		return nil, err
+	}
+
 	returning, err := p.parseReturning()
 	if err != nil {
 		return nil, err
 	}
 
-	return &Update{Table: table, Set: set, Where: where, Returning: returning}, nil
+	return &Update{Table: table, Set: set, Where: where, Returning: returning,
+		OrderBy: orderBy, Limit: limit, Offset: offset, OffsetFirst: offsetFirst}, nil
+}
+
+// REQ000559: parseBegin parses BEGIN [DEFERRED|IMMEDIATE|EXCLUSIVE]
+// [TRANSACTION].
+func (p *Parser) parseBegin() (*BeginTX, error) {
+	p.advance()
+	bt := &BeginTX{}
+	// Optional transaction mode
+	if p.current.Type == LX.T_DEFERRED || p.current.Type == LX.T_IMMEDIATE || p.current.Type == LX.T_EXCLUSIVE {
+		bt.Mode = p.current.Lexeme
+		p.advance()
+	}
+	// Optional TRANSACTION keyword
+	if p.current.Type == LX.T_TRANSACTION {
+		p.advance()
+	}
+	return bt, nil
+}
+
+// REQ000564: parseValues parses a standalone VALUES statement.
+// VALUES (row1), (row2), ...
+func (p *Parser) parseValues() (*ValuesStmt, error) {
+	p.advance()
+	var rows [][]Expr
+	for {
+		if err := p.expect(LX.T_LPAREN); err != nil {
+			return nil, err
+		}
+		p.advance()
+		var row []Expr
+		for {
+			expr, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			row = append(row, expr)
+			if p.current.Type != LX.T_COMMA {
+				break
+			}
+			p.advance()
+		}
+		if err := p.expect(LX.T_RPAREN); err != nil {
+			return nil, err
+		}
+		p.advance()
+		rows = append(rows, row)
+		if p.current.Type != LX.T_COMMA {
+			break
+		}
+		p.advance()
+	}
+	return &ValuesStmt{Rows: rows}, nil
 }
 
 func (p *Parser) parseDelete() (*Delete, error) {

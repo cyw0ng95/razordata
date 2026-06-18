@@ -372,10 +372,14 @@ type RollbackToStmt struct {
 func (r *RollbackToStmt) stmtNode() {}
 
 type Update struct {
-	Table     string
-	Set       []Pair
-	Where     Expr
-	Returning []Expr
+	Table       string
+	Set         []Pair
+	Where       Expr
+	Returning   []Expr
+	OrderBy     []OrderItem // REQ000558
+	Limit       Expr        // REQ000558
+	Offset      Expr        // REQ000558
+	OffsetFirst bool        // REQ000558
 }
 
 func (u *Update) stmtNode() {}
@@ -464,7 +468,9 @@ type CompoundStmt struct {
 
 func (c *CompoundStmt) stmtNode() {}
 
-type BeginTX struct{}
+type BeginTX struct {
+	Mode string // "" for bare BEGIN, "DEFERRED", "IMMEDIATE", "EXCLUSIVE" (REQ000559)
+}
 
 func (b *BeginTX) stmtNode() {}
 
@@ -569,3 +575,22 @@ type SetTransactionStmt struct {
 func (s *SetTransactionStmt) stmtNode() {}
 
 func (e *ExplainStmt) stmtNode() {}
+
+// RaiseFunc represents the RAISE() function in triggers (REQ000560).
+// RAISE(ABORT, 'error message') causes the trigger to abort with
+// the given error message. The single-argument form RAISE(IGNORE)
+// suppresses the trigger action.
+type RaiseFunc struct {
+	Action  string // "ABORT", "IGNORE"
+	Message Expr   // nil for RAISE(IGNORE)
+}
+
+func (r *RaiseFunc) exprNode() {}
+
+// ValuesStmt represents a standalone VALUES statement (REQ000564).
+// Each element of Rows is a row of scalar expressions.
+type ValuesStmt struct {
+	Rows [][]Expr
+}
+
+func (v *ValuesStmt) stmtNode() {}

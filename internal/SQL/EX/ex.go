@@ -695,14 +695,43 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 			scan = ssc
 		}
 		filter := NewFilter(scan, s.Where)
+		// REQ000558: apply ORDER BY / LIMIT / OFFSET to the row
+		// selection before updating.
+		var current Operator = filter
+		if len(s.OrderBy) > 0 {
+			current = NewSort(current, s.OrderBy)
+		}
+		if s.OffsetFirst {
+			if s.Limit != nil {
+				if n, ok := limitInt64(s.Limit); ok {
+					current = NewLimit(current, n)
+				}
+			}
+			if s.Offset != nil {
+				if n, ok := limitInt64(s.Offset); ok && n > 0 {
+					current = NewOffset(current, n)
+				}
+			}
+		} else {
+			if s.Offset != nil {
+				if n, ok := limitInt64(s.Offset); ok && n > 0 {
+					current = NewOffset(current, n)
+				}
+			}
+			if s.Limit != nil {
+				if n, ok := limitInt64(s.Limit); ok {
+					current = NewLimit(current, n)
+				}
+			}
+		}
 		if e.store != nil {
-			op, err := NewUpdateWithStore(e.store, s.Table, s.Set, s.Where, filter, s.Returning)
+			op, err := NewUpdateWithStore(e.store, s.Table, s.Set, s.Where, current, s.Returning)
 			if err != nil {
 				return nil, err
 			}
 			return op, nil
 		}
-		return NewUpdate(s.Table, s.Set, s.Where, filter, s.Returning), nil
+		return NewUpdate(s.Table, s.Set, s.Where, current, s.Returning), nil
 	case *PS.Delete:
 		var scan Operator = NewSeqScan(s.Table)
 		if e.store != nil {
@@ -798,6 +827,10 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		return NewTruncate(s), nil
 	case *PS.ReindexStmt:
 		return NewReindex(s), nil
+	case *PS.BeginTX:
+		return NewNoop(), nil
+	case *PS.ValuesStmt:
+		return newValuesRowsOp(s.Rows), nil
 	}
 	return nil, errors.New("ex: not a writable statement")
 }
@@ -994,4 +1027,26 @@ func (s *streamIterator) Close() error {
 	}
 	s.done = true
 	return nil
+}
+
+// Noop is a no-op operator that returns ErrNoRows on Next.
+// Used for statements like BEGIN that affect state but produce no results.
+type Noop struct{}
+
+var _ Operator = (*Noop)(nil)
+
+func NewNoop() *Noop {
+	return &Noop{}
+}
+
+func (n *Noop) Next(ctx context.Context) (Row, error) {
+	return Row{}, ErrNoRows
+}
+
+func (n *Noop) Close() error {
+	return nil
+}
+
+func (n *Noop) WithParams(p []interface{}) Operator {
+	return n
 }

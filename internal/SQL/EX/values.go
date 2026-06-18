@@ -140,3 +140,56 @@ func inferType(v interface{}) int {
 		return int(ls.CTText)
 	}
 }
+
+// ValuesRows implements a multi-row operator for standalone VALUES
+// statements (REQ000564). Each row is a list of scalar expressions.
+type ValuesRows struct {
+	rows    [][]PS.Expr
+	pos     int
+	colExpr []PS.Expr // cached from first row for column metadata
+	schema  []string
+}
+
+var _ Operator = (*ValuesRows)(nil)
+
+func newValuesRowsOp(rows [][]PS.Expr) *ValuesRows {
+	colExpr := rows[0]
+	names := make([]string, len(colExpr))
+	for i := range colExpr {
+		names[i] = exprString(colExpr[i])
+	}
+	return &ValuesRows{rows: rows, colExpr: colExpr, schema: names}
+}
+
+func (v *ValuesRows) Next(ctx context.Context) (Row, error) {
+	if v.pos >= len(v.rows) {
+		return Row{}, ErrNoRows
+	}
+	rowExprs := v.rows[v.pos]
+	v.pos++
+	cols := make([]string, len(rowExprs))
+	data := make([]interface{}, len(rowExprs))
+	types := make([]int, len(rowExprs))
+	for i, e := range rowExprs {
+		val, err := Eval(e, nil, nil)
+		if err != nil {
+			return Row{}, err
+		}
+		if v.pos == 1 && i < len(v.schema) {
+			cols[i] = v.schema[i]
+		} else {
+			cols[i] = exprString(e)
+		}
+		data[i] = val
+		types[i] = inferType(val)
+	}
+	return Row{Cols: cols, Types: types, Data: data}, nil
+}
+
+func (v *ValuesRows) Close() error {
+	return nil
+}
+
+func (v *ValuesRows) WithParams(p []interface{}) Operator {
+	return v
+}

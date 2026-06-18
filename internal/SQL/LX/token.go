@@ -187,6 +187,11 @@ const (
 	T_ALL
 	T_AUTOINCREMENT // REQ000482
 
+	T_DEFERRED  // REQ000559
+	T_IMMEDIATE // REQ000559
+	T_EXCLUSIVE // REQ000559
+	T_RAISE     // REQ000560
+
 	T_ERROR TokenType = -1
 )
 
@@ -372,6 +377,10 @@ var tokenTypeNames = [...]string{
 	T_EXCEPT:       "EXCEPT",
 	T_ALL:          "ALL",
 	T_AUTOINCREMENT: "AUTOINCREMENT",
+	T_DEFERRED:       "DEFERRED",
+	T_IMMEDIATE:      "IMMEDIATE",
+	T_EXCLUSIVE:      "EXCLUSIVE",
+	T_RAISE:          "RAISE",
 }
 
 func (t Token) String() string {
