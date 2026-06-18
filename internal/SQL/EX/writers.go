@@ -498,7 +498,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 		if err := checkUnique(u.schema, row, nil, Row{}, noopLookup); err != nil {
 			return Row{}, err
 		}
-		pk, err := extractPK(u.schema, row)
+		pk, err := extractPKForUpdate(u.schema, oldRow, prefix)
 		if err != nil {
 			return Row{}, err
 		}
@@ -513,7 +513,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 		if u.txWriter != nil {
 			u.txWriter.RecordWrite(key, buf)
 		}
-		if err := maintainIndexesOnUpdate(u.store, u.table, u.schema, oldRow, row); err != nil {
+		if err := maintainIndexesOnUpdate(u.store, u.table, u.schema, oldRow, row, pk); err != nil {
 			return Row{}, err
 		}
 		u.rows++
@@ -751,7 +751,7 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			d.resultRows = append(d.resultRows, resultRow)
 		}
 
-		pk, err := extractPK(d.schema, row)
+		pk, err := extractPKForUpdate(d.schema, row, prefix)
 		if err != nil {
 			return Row{}, err
 		}

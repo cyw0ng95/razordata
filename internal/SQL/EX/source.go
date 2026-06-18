@@ -18,8 +18,8 @@ var (
 
 // triggerMu guards the package-level trigger registry. REQ000435.
 var (
-	triggerMu   sync.RWMutex
-	triggerReg  = map[string]*PS.TriggerStmt{} // by trigger name
+	triggerMu     sync.RWMutex
+	triggerReg    = map[string]*PS.TriggerStmt{}   // by trigger name
 	tableTriggers = map[string][]*PS.TriggerStmt{} // by table name
 )
 
@@ -123,7 +123,7 @@ func UnregisterAll() {
 }
 
 func cloneRow(r Row) Row {
-	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]int(nil), r.Types...), Outer: r.Outer, planner: r.planner}
+	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]int(nil), r.Types...), Outer: r.Outer, planner: r.planner, storeKey: r.storeKey}
 	if r.Data != nil {
 		out.Data = append([]interface{}(nil), r.Data...)
 	}

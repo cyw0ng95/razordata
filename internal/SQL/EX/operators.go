@@ -43,6 +43,10 @@ type SeqScan struct {
 	// Project, and (importantly) subquery eval sites.
 	// See REQ000366.
 	planner *Planner
+	// currentKey is the raw key from the LSM iterator for the
+	// most recently decoded row. Preserved so Update/Delete
+	// can reuse the original row key for hidden-PK tables.
+	currentKey []byte
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -122,11 +126,15 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		if err := ctx.Err(); err != nil {
 			return Row{}, err
 		}
+		// REQ000501: save the raw key so Update/Delete can
+		// preserve the original row key for hidden-PK tables.
+		s.currentKey = s.it.Key()
 		v := s.it.Value()
 		row, err := decodeRow(v, s.schema)
 		if err != nil {
 			return Row{}, err
 		}
+		row.storeKey = s.currentKey
 		// REQ000366: thread the planner so subquery evals see
 		// the same store/catalog.
 		if s.planner != nil {
