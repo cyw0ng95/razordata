@@ -1,6 +1,6 @@
 # Iteration 28 — Parser DDL Hardening + SQL Compliance + MV-OCC
 
-Status: **done** — All phases complete. 39/39 test packages green with `-race`. 49 TBD / 419 DONE.
+Status: **done** — All phases complete. 39/39 test packages green with `-race`. 44 TBD / 421 DONE.
 
 ## Scope
 
@@ -592,7 +592,7 @@ Phase 6 depends on all prior phases.
 
 4. **Phase 4 deferred items** — REQ000529 (INDEXED BY parser), REQ000530 (RANGE frame), and deeper ANALYZE cost estimation (REQ000527 `estimateCost` from stats) remain TBD. REQ000522 (Distinct pushdown) confirmed correct in current code.
 
-5. **SLT corpus failures** — The remaining 46 TBD rows in REQUIREMENTS.md (REQ000316–REQ000570) are deferred to iter-29 or a dedicated SLT bugfix iteration. The original SLT sweep (REQ000453–REQ000535) was reduced from 49 to 46 by fixing REQ000533 (`<>` lexer), REQ000535 (REPLACE INTO), REQ000503 (scalar IN), REQ000486 (INSERT OR IGNORE), and REQ000544 (O(1) Row.Lookup).
+5. **SLT corpus failures** — The remaining 44 TBD rows in REQUIREMENTS.md (REQ000316–REQ000570) are deferred to iter-29 or a dedicated SLT bugfix iteration. The original SLT sweep (REQ000453–REQ000535) was reduced from 49 to 44 by fixing REQ000533 (`<>` lexer), REQ000535 (REPLACE INTO), REQ000503 (scalar IN), REQ000486 (INSERT OR IGNORE), REQ000544 (O(1) Row.Lookup), REQ000501 (hidden-PK UPDATE rowid accumulation), and REQ000502 (scalar subquery duplicate rows).
 
 ## Outcome
 
@@ -605,3 +605,4 @@ Phase 6 depends on all prior phases.
 - **Release tag**: N/A (no tag cut; deferred to iter-29 when SLT corpus fix iteration ships)
 - **Final commit**: `5dc83be`
 - **Correlated subquery re-execution fix**: `evalQualifiedName` fallback now searches the outer chain first, then the current row, so a table‑qualified reference like `t.id` resolves to the parent row's `id` column rather than a same‑named column in the inner subquery row. Engine‑backed SeqScan re‑iteration is guaranteed by `defer pl.root.Close()` in `runSubqueryPlan` (already present). All three correlated subquery shapes (EXISTS, IN, scalar) tested with the engine‑backed store path via `TestBugfix_CorrelatedSubquery_Reexecutes`.
+- **REQ000501 fix** (hidden-PK UPDATE rowid accumulation): `extractPKForUpdate()` reuses the original storeKey suffix for hidden-PK tables instead of allocating a new synthetic rowid on every UPDATE/Delete. Fixes unbounded row accumulation and iterator exhaustion. `slt_lang_update.test` now completes in 4ms (was hanging indefinitely), `select4.test` processes 1055/3857 records within 30s timeout (was hanging on first INSERT). Files: `ex.go` (storeKey field), `operators.go` (currentKey field), `source.go` (cloneRow copies storeKey), `store.go` (extractPKForUpdate), `writers.go` (callers).
