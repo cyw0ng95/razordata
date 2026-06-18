@@ -192,6 +192,7 @@ const (
 	T_EXCLUSIVE // REQ000559
 	T_RAISE          // REQ000560
 	T_ESCAPE         // REQ000567: LIKE ... ESCAPE
+	T_INDEXED        // REQ000529/569: INDEXED BY / NOT INDEXED
 
 	T_ERROR TokenType = -1
 )
@@ -383,6 +384,7 @@ var tokenTypeNames = [...]string{
 	T_EXCLUSIVE:      "EXCLUSIVE",
 	T_RAISE:          "RAISE",
 	T_ESCAPE:         "ESCAPE",
+	T_INDEXED:        "INDEXED",
 }
 
 func (t Token) String() string {

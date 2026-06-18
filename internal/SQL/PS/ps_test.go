@@ -1176,3 +1176,122 @@ func TestParseLikeEscapeNot(t *testing.T) {
 		t.Fatal("expected Escape expr")
 	}
 }
+
+// REQ000570: COMMIT / END [TRANSACTION] parser
+func TestParseCommit(t *testing.T) {
+	p := NewParser("COMMIT")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	if _, ok := stmt.(*CommitTX); !ok {
+		t.Fatalf("expected *CommitTX, got %T", stmt)
+	}
+}
+
+func TestParseCommitTransaction(t *testing.T) {
+	p := NewParser("COMMIT TRANSACTION")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	if _, ok := stmt.(*CommitTX); !ok {
+		t.Fatalf("expected *CommitTX, got %T", stmt)
+	}
+}
+
+func TestParseEndAsCommit(t *testing.T) {
+	p := NewParser("END")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	if _, ok := stmt.(*CommitTX); !ok {
+		t.Fatalf("expected *CommitTX, got %T", stmt)
+	}
+}
+
+func TestParseEndTransactionAsCommit(t *testing.T) {
+	p := NewParser("END TRANSACTION")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	if _, ok := stmt.(*CommitTX); !ok {
+		t.Fatalf("expected *CommitTX, got %T", stmt)
+	}
+}
+
+// REQ000529: INDEXED BY / NOT INDEXED in SELECT
+func TestParseSelectIndexedBy(t *testing.T) {
+	p := NewParser("SELECT * FROM t INDEXED BY idx1")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sel, ok := stmt.(*Select)
+	if !ok {
+		t.Fatalf("expected *Select, got %T", stmt)
+	}
+	if sel.IndexHint == nil {
+		t.Fatal("expected IndexHint")
+	}
+	if sel.IndexHint.IndexedBy != "idx1" {
+		t.Errorf("expected IndexedBy='idx1', got %q", sel.IndexHint.IndexedBy)
+	}
+}
+
+func TestParseSelectNotIndexed(t *testing.T) {
+	p := NewParser("SELECT * FROM t NOT INDEXED")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sel, ok := stmt.(*Select)
+	if !ok {
+		t.Fatalf("expected *Select, got %T", stmt)
+	}
+	if sel.IndexHint == nil {
+		t.Fatal("expected IndexHint")
+	}
+	if sel.IndexHint.IndexedBy != "" {
+		t.Errorf("expected empty IndexedBy for NOT INDEXED, got %q", sel.IndexHint.IndexedBy)
+	}
+}
+
+// REQ000569: INDEXED BY in UPDATE/DELETE
+func TestParseUpdateIndexedBy(t *testing.T) {
+	p := NewParser("UPDATE t INDEXED BY idx1 SET v = 1")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	upd, ok := stmt.(*Update)
+	if !ok {
+		t.Fatalf("expected *Update, got %T", stmt)
+	}
+	if upd.IndexHint == nil {
+		t.Fatal("expected IndexHint on Update")
+	}
+	if upd.IndexHint.IndexedBy != "idx1" {
+		t.Errorf("expected IndexedBy='idx1', got %q", upd.IndexHint.IndexedBy)
+	}
+}
+
+func TestParseDeleteNotIndexed(t *testing.T) {
+	p := NewParser("DELETE FROM t NOT INDEXED WHERE id = 1")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	del, ok := stmt.(*Delete)
+	if !ok {
+		t.Fatalf("expected *Delete, got %T", stmt)
+	}
+	if del.IndexHint == nil {
+		t.Fatal("expected IndexHint on Delete")
+	}
+	if del.IndexHint.IndexedBy != "" {
+		t.Errorf("expected empty IndexedBy for NOT INDEXED, got %q", del.IndexHint.IndexedBy)
+	}
+}
