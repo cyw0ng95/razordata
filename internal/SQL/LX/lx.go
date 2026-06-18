@@ -164,6 +164,10 @@ var keywords = map[string]TokenType{
 	"SAVEPOINT":    T_SAVEPOINT,
 	"RELEASE":      T_RELEASE,
 	"TO":           T_TO,
+	"DEFERRED":     T_DEFERRED,
+	"IMMEDIATE":    T_IMMEDIATE,
+	"EXCLUSIVE":    T_EXCLUSIVE,
+	"RAISE":        T_RAISE,
 }
 
 type Lexer struct {

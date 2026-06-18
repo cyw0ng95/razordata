@@ -164,6 +164,10 @@ func (r *HookRegistry) Stop(ctx context.Context) error {
 	r.stopOnce.Do(func() {
 		close(r.done)
 	})
+	// If the context is already cancelled, return immediately.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case <-r.loopDone:
 		return nil

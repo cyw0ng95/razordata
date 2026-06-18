@@ -20,6 +20,7 @@ var ErrEval = errors.New("ex: eval error")
 var ErrDivByZero = errors.New("ex: division by zero")
 var ErrTypeMismatch = errors.New("ex: type mismatch")
 var ErrSubquery = errors.New("ex: subquery not supported here")
+var ErrIgnoreRow = errors.New("ex: ignore row")
 
 func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 	if expr == nil {
@@ -109,6 +110,8 @@ func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 		return evalWindowFunc(e, row, params)
 	case *PS.FunctionCall:
 		return evalFunction(e, row, params)
+	case *PS.RaiseFunc:
+		return evalRaise(e, row, params)
 	case *PS.CastExpr:
 		return evalCast(e, row, params)
 	case *PS.AliasedExpr:
@@ -745,6 +748,33 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 		}
 	}
 	return nil, ErrEval
+}
+
+// ErrTriggerAbort is returned by RAISE(ABORT, ...) evaluation to
+// signal that the trigger action should abort with an error message.
+// REQ000560.
+var ErrTriggerAbort = errors.New("ex: trigger abort")
+
+func evalRaise(e *PS.RaiseFunc, row *Row, params []interface{}) (interface{}, error) {
+	action := strings.ToUpper(e.Action)
+	if action == "IGNORE" {
+		// RAISE(IGNORE) suppresses the trigger action.
+		// Return a sentinel value; the trigger executor
+		// checks for this and skips the rest of the action.
+		return nil, ErrIgnoreRow
+	}
+	// RAISE(ABORT, 'message') or RAISE(ROLLBACK, 'message') etc.
+	var msg string
+	if e.Message != nil {
+		v, err := Eval(e.Message, row, params)
+		if err != nil {
+			return nil, err
+		}
+		if s, ok := v.(string); ok {
+			msg = s
+		}
+	}
+	return nil, fmt.Errorf("%w: %s", ErrTriggerAbort, msg)
 }
 
 // REQ000382: ABS, HEX, ROUND scalar functions.

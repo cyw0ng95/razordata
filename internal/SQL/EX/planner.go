@@ -139,6 +139,8 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 		root = p.planPragma(s)
 	case *PS.WithStmt:
 		root = p.planWith(s)
+	case *PS.ValuesStmt:
+		root = newValuesRowsOp(s.Rows)
 	}
 
 		// Wrap query plans in AdaptiveOp for hot-path specialization.
