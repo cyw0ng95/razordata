@@ -59,7 +59,7 @@ type storeSchema struct {
 	// STORED generated column. The expression is evaluated on
 	// INSERT/UPDATE and the result is stored as the cell value.
 	// VIRTUAL generated columns are stored as nil here (deferred).
-	generated []PS.Expr
+	generated   []PS.Expr
 	foreignKeys []ForeignKeyConstraint // REQ000126: FK constraints
 	// REQ000367: hiddenPK is set when the table was created
 	// without a PRIMARY KEY declaration but is registered for
@@ -672,6 +672,19 @@ func extractPK(schema *storeSchema, row Row) (interface{}, error) {
 	return nil, fmt.Errorf("ex: pk column %q not in schema", schema.pk)
 }
 
+// extractPKForUpdate returns the primary key to use when writing
+// the updated row. For regular PK tables, delegates to extractPK.
+// For hidden-PK tables, reuses the original row's key suffix from
+// storeKey so the update overwrites the same engine row instead of
+// allocating a new synthetic rowid on every UPDATE (REQ000501).
+func extractPKForUpdate(schema *storeSchema, oldRow Row, prefix []byte) (interface{}, error) {
+	if schema.pk == "" && schema.hiddenPK && len(oldRow.storeKey) > len(prefix) {
+		suffix := oldRow.storeKey[len(prefix):]
+		return int64(binary.BigEndian.Uint64(suffix)), nil
+	}
+	return extractPK(schema, oldRow)
+}
+
 // maintainIndexesOnInsert populates secondary-index entries
 // for a newly-inserted row. iter-22 secondary indexes MVP.
 // Returns the first error encountered, or nil on success.
@@ -730,8 +743,10 @@ func maintainIndexesOnDelete(store Store, table string, schema *storeSchema, row
 }
 
 // maintainIndexesOnUpdate updates secondary-index entries when
-// the indexed column value changes. iter-22.
-func maintainIndexesOnUpdate(store Store, table string, schema *storeSchema, oldRow, newRow Row) error {
+// the indexed column value changes. The pk parameter is the primary
+// key of the row being updated (extracted from oldRow to preserve
+// the original key for hidden-PK tables). iter-22 secondary indexes.
+func maintainIndexesOnUpdate(store Store, table string, schema *storeSchema, oldRow, newRow Row, pk interface{}) error {
 	indexes := GetRegisteredIndexes(table)
 	if len(indexes) == 0 {
 		return nil
@@ -739,10 +754,6 @@ func maintainIndexesOnUpdate(store Store, table string, schema *storeSchema, old
 	tableID, ok := tableIDFor(table)
 	if !ok {
 		return nil
-	}
-	pk, err := extractPK(schema, newRow)
-	if err != nil {
-		return err
 	}
 	pkBytes, err := pkToBytes(pk)
 	if err != nil {

@@ -46,7 +46,6 @@ func getSessionCounterAccessor() SessionCounterAccessor {
 	return sessionCounterAccessor
 }
 
-
 var ErrNotImplemented = errors.New("ex: not implemented")
 var ErrNoRows = errors.New("ex: no rows")
 var ErrClosed = errors.New("ex: operator closed")
@@ -86,6 +85,10 @@ type Row struct {
 	// colIndex is a pre-built O(1) lookup from column name to
 	// column index, built lazily on first Lookup call. REQ000544.
 	colIndex map[string]int
+	// storeKey holds the raw key from the LSM iterator when this
+	// row was read from the engine store. Populated by SeqScan
+	// and used by Update/Delete to preserve the original key.
+	storeKey []byte
 }
 
 // Planner returns the planner associated with this row (or any
@@ -1005,8 +1008,8 @@ type streamIterator struct {
 	mu     sync.Mutex
 }
 
-func (s *streamIterator) Cols() []string  { return s.cols }
-func (s *streamIterator) Types() []int    { return s.types }
+func (s *streamIterator) Cols() []string { return s.cols }
+func (s *streamIterator) Types() []int   { return s.types }
 func (s *streamIterator) Next() (Row, error) {
 	if s == nil || s.done || s.rowCh == nil {
 		return Row{}, ErrNoRows
