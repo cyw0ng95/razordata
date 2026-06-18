@@ -244,8 +244,23 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []interface{}) (interface{}, 
 		return band(left, right)
 	case int(LX.T_OR):
 		return bor(left, right)
-	case int(LX.T_LIKE):
-		return like(left, right)
+	case int(LX.T_LIKE): {
+		var esc string
+		if e.Escape != nil {
+			v, err := Eval(e.Escape, row, params)
+			if err != nil {
+				return nil, err
+			}
+			if v != nil {
+				s, ok := v.(string)
+				if !ok || len(s) != 1 {
+					return nil, ErrEval
+				}
+				esc = s
+			}
+		}
+		return like(left, right, esc)
+	}
 	case int(LX.T_IS):
 		// `x IS NOT NULL` parses as BinaryExpr{T_IS, x, UnaryExpr{T_NOT, NULL}}.
 		// Detect this and return the IS NOT NULL predicate semantics
@@ -1689,7 +1704,7 @@ func bor(a, b interface{}) (interface{}, error) {
 	return false, nil
 }
 
-func like(a, b interface{}) (bool, error) {
+func like(a, b interface{}, escape string) (bool, error) {
 	s, ok := a.(string)
 	if !ok {
 		return false, nil
@@ -1698,25 +1713,42 @@ func like(a, b interface{}) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	return matchLike(pattern, s), nil
+	return matchLike(pattern, s, escape), nil
 }
 
-func matchLike(pattern, s string) bool {
+func matchLike(pattern, s, escape string) bool {
 	pi, si := 0, 0
 	starPI, starSI := -1, -1
+	escByte := byte(0)
+	if len(escape) == 1 {
+		escByte = escape[0]
+	}
 	for si < len(s) {
 		if pi < len(pattern) {
 			c := pattern[pi]
-			switch c {
-			case '%':
-				starPI = pi
-				starSI = si
+			// If escape char is set and the current pattern char is the escape,
+			// treat the next pattern char as a literal.
+			if escByte != 0 && c == escByte && pi+1 < len(pattern) {
 				pi++
-				continue
-			case '_':
-				pi++
-				si++
-				continue
+				c = pattern[pi]
+				if c == s[si] {
+					pi++
+					si++
+					continue
+				}
+				// If the escaped char doesn't match, fall through to star logic
+			} else {
+				switch c {
+				case '%':
+					starPI = pi
+					starSI = si
+					pi++
+					continue
+				case '_':
+					pi++
+					si++
+					continue
+				}
 			}
 			if c == s[si] {
 				pi++
@@ -1732,8 +1764,18 @@ func matchLike(pattern, s string) bool {
 		}
 		return false
 	}
-	for pi < len(pattern) && pattern[pi] == '%' {
-		pi++
+	// Consume trailing % and escaped trailing escape char
+	for pi < len(pattern) {
+		c := pattern[pi]
+		if escByte != 0 && c == escByte && pi+1 < len(pattern) {
+			pi += 2 // skip escaped char at end (it's a literal that must match)
+			continue
+		}
+		if c == '%' {
+			pi++
+		} else {
+			break
+		}
 	}
 	return pi == len(pattern)
 }

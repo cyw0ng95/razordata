@@ -1159,13 +1159,18 @@ func limitInt64(e PS.Expr) (int64, bool) {
 }
 
 func (p *Planner) planInsert(s *PS.Insert) Operator {
+	var op *Insert
 	if p.store != nil {
-		op, err := NewInsertWithStore(p.store, s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
+		var err error
+		op, err = NewInsertWithStore(p.store, s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
 		if err == nil {
+			op.defaultValues = s.DefaultValues
 			return op
 		}
 	}
-	return NewInsert(s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
+	op = NewInsert(s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
+	op.defaultValues = s.DefaultValues
+	return op
 }
 
 func (p *Planner) planUpdate(s *PS.Update) Operator {

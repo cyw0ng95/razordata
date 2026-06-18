@@ -596,6 +596,65 @@ func TestCoverage_like(t *testing.T) {
 	}
 }
 
+// REQ000567: LIKE ... ESCAPE
+func TestCoverage_likeEscape(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, '100%')")
+	ex.Exec(ctx, "INSERT INTO t VALUES (2, '100_')")
+	ex.Exec(ctx, "INSERT INTO t VALUES (3, '200%')")
+	ex.Exec(ctx, "INSERT INTO t VALUES (4, 'plain')")
+	// ESCAPE '\\' — treat % as literal
+	rows, err := ex.QueryAll(ctx, "SELECT v FROM t WHERE v LIKE '100\\%' ESCAPE '\\'")
+	if err != nil {
+		t.Fatalf("LIKE ESCAPE: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].Data[0] != "100%" {
+		t.Errorf("expected '100%%', got %v", rows[0].Data[0])
+	}
+	// ESCAPE '\' — treat _ as literal
+	rows, err = ex.QueryAll(ctx, "SELECT v FROM t WHERE v LIKE '100\\_' ESCAPE '\\'")
+	if err != nil {
+		t.Fatalf("LIKE ESCAPE underscore: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].Data[0] != "100_" {
+		t.Errorf("expected '100_', got %v", rows[0].Data[0])
+	}
+	// ESCAPE without special chars — no match
+	rows, err = ex.QueryAll(ctx, "SELECT v FROM t WHERE v LIKE 'hello' ESCAPE '\\'")
+	if err != nil {
+		t.Fatalf("LIKE ESCAPE no special: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("expected 0 rows, got %d", len(rows))
+	}
+	// NOT LIKE with ESCAPE — should match rows 2, 3, 4
+	rows, err = ex.QueryAll(ctx, "SELECT v FROM t WHERE v NOT LIKE '100\\%' ESCAPE '\\'")
+	if err != nil {
+		t.Fatalf("NOT LIKE ESCAPE: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(rows))
+	}
+	// LIKE with wildcard % after escaped character
+	rows, err = ex.QueryAll(ctx, "SELECT v FROM t WHERE v LIKE '100\\%%' ESCAPE '\\'")
+	if err != nil {
+		t.Fatalf("LIKE ESCAPE wildcard after: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+}
+
 // === BETWEEN ===
 
 func TestCoverage_between(t *testing.T) {

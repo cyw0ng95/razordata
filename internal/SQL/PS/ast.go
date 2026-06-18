@@ -70,9 +70,10 @@ type Param struct {
 func (p *Param) exprNode() {}
 
 type BinaryExpr struct {
-	Op    int
-	Left  Expr
-	Right Expr
+	Op     int
+	Left   Expr
+	Right  Expr
+	Escape Expr // REQ000567: LIKE ... ESCAPE expr
 }
 
 func (b *BinaryExpr) exprNode() {}
@@ -286,6 +287,7 @@ type Insert struct {
 	Returning      []Expr
 	OnConflict     *OnConflict    // nil if no ON CONFLICT clause
 	ConflictAction ConflictAction // INSERT OR ROLLBACK/ABORT/FAIL/IGNORE/REPLACE
+	DefaultValues  bool           // REQ000563: INSERT INTO t DEFAULT VALUES
 }
 
 func (i *Insert) stmtNode() {}

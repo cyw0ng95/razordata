@@ -129,9 +129,36 @@ func TestEvalLike(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := matchLike(c.pattern, c.s)
+			got := matchLike(c.pattern, c.s, "")
 			if got != c.want {
 				t.Errorf("matchLike(%q, %q) = %v, want %v", c.pattern, c.s, got, c.want)
+			}
+		})
+	}
+}
+
+func TestEvalLikeEscape(t *testing.T) {
+	cases := []struct {
+		name    string
+		pattern string
+		s       string
+		escape  string
+		want    bool
+	}{
+{"escape_pct", "100%", "100%", `\`, true},
+	{"escape_underscore", "100_", "100_", `\`, true},
+	{"escape_literal_pct", "100%%", "100% complete", `\`, true},
+	{"pct_after_escape", "100%x", "100%x", `\`, true},
+	{"no_escape_empty", "100%", "100%", "", true},
+	{"escape_char_in_escape", `100\\%`, `100\`, `\`, true},
+	{"escaped_pct_not_wildcard", `100\%`, "100%", `\`, true},
+	{"escaped_underscore_not_wildcard", `100\_`, "100_", `\`, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := matchLike(c.pattern, c.s, c.escape)
+			if got != c.want {
+				t.Errorf("matchLike(%q, %q, %q) = %v, want %v", c.pattern, c.s, c.escape, got, c.want)
 			}
 		})
 	}
