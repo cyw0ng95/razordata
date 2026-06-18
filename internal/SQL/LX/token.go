@@ -190,7 +190,8 @@ const (
 	T_DEFERRED  // REQ000559
 	T_IMMEDIATE // REQ000559
 	T_EXCLUSIVE // REQ000559
-	T_RAISE     // REQ000560
+	T_RAISE          // REQ000560
+	T_ESCAPE         // REQ000567: LIKE ... ESCAPE
 
 	T_ERROR TokenType = -1
 )
@@ -381,6 +382,7 @@ var tokenTypeNames = [...]string{
 	T_IMMEDIATE:      "IMMEDIATE",
 	T_EXCLUSIVE:      "EXCLUSIVE",
 	T_RAISE:          "RAISE",
+	T_ESCAPE:         "ESCAPE",
 }
 
 func (t Token) String() string {

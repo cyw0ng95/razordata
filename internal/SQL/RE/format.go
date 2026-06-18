@@ -233,7 +233,11 @@ func exprString(e PS.Expr) string {
 	case *PS.StarExpr:
 		return "*"
 	case *PS.BinaryExpr:
-		return fmt.Sprintf("(%s %s %s)", exprString(expr.Left), opString(expr.Op), exprString(expr.Right))
+		s := fmt.Sprintf("(%s %s %s)", exprString(expr.Left), opString(expr.Op), exprString(expr.Right))
+		if expr.Escape != nil {
+			s += fmt.Sprintf(" ESCAPE %s", exprString(expr.Escape))
+		}
+		return s
 	case *PS.UnaryExpr:
 		op := opString(expr.Op)
 		operand := exprString(expr.Operand)

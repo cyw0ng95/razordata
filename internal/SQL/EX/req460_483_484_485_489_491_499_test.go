@@ -309,3 +309,37 @@ func cleanupTest(table string) {
 	ctx := context.Background()
 	exec.Exec(ctx, "DROP TABLE IF EXISTS "+table)
 }
+
+func TestReq563_InsertDefaultValues(t *testing.T) {
+	exec := NewExecutor()
+	ctx := context.Background()
+
+	mustExec(t, exec, ctx, "CREATE TABLE t_dv (a INTEGER, b INTEGER DEFAULT 42, c TEXT DEFAULT 'x')")
+	defer cleanupTest("t_dv")
+
+	mustExec(t, exec, ctx, "INSERT INTO t_dv DEFAULT VALUES")
+	rows := mustQueryAll(t, exec, ctx, "SELECT a, b, c FROM t_dv")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].Data[0] != nil {
+		t.Errorf("a should be nil (no default), got %v", rows[0].Data[0])
+	}
+	if rows[0].Data[1] != int64(42) {
+		t.Errorf("b should be 42, got %v", rows[0].Data[1])
+	}
+	if rows[0].Data[2] != "x" {
+		t.Errorf("c should be 'x', got %v", rows[0].Data[2])
+	}
+
+	// DEFAULT VALUES with RETURNING
+	mustExec(t, exec, ctx, "INSERT INTO t_dv DEFAULT VALUES")
+	mustExec(t, exec, ctx, "INSERT INTO t_dv DEFAULT VALUES")
+	rows, err := exec.QueryAll(ctx, "SELECT COUNT(*) FROM t_dv")
+	if err != nil {
+		t.Fatalf("count query: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Data[0] != int64(3) {
+		t.Fatalf("expected 3 rows total, got %v", rows[0].Data)
+	}
+}

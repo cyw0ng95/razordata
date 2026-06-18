@@ -534,6 +534,15 @@ func (p *Parser) parseNotLike(expr Expr) (Expr, error) {
 		return nil, err
 	}
 	like := &BinaryExpr{Op: int(LX.T_LIKE), Left: expr, Right: right}
+	// REQ000567: LIKE ... ESCAPE expr
+	if p.current.Type == LX.T_ESCAPE {
+		p.advance()
+		escape, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		like.Escape = escape
+	}
 	return &UnaryExpr{Op: int(LX.T_NOT), Operand: like}, nil
 }
 
@@ -645,6 +654,15 @@ func (p *Parser) parseBinary(minPrec int) (Expr, error) {
 			return nil, err
 		}
 		left = &BinaryExpr{Op: op, Left: left, Right: right}
+		// REQ000567: LIKE ... ESCAPE expr
+		if op == int(LX.T_LIKE) && p.current.Type == LX.T_ESCAPE {
+			p.advance()
+			escape, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			left.(*BinaryExpr).Escape = escape
+		}
 	}
 
 	return left, nil
@@ -1262,6 +1280,20 @@ func (p *Parser) parseInsertTail(action ConflictAction) (*Insert, error) {
 			return nil, err
 		}
 		p.advance()
+	}
+
+	// REQ000563: INSERT INTO t DEFAULT VALUES
+	if p.current.Type == LX.T_DEFAULT {
+		p.advance()
+		if err := p.expect(LX.T_VALUES); err != nil {
+			return nil, err
+		}
+		p.advance()
+		returning, err := p.parseReturning()
+		if err != nil {
+			return nil, err
+		}
+		return &Insert{Table: table, Cols: cols, DefaultValues: true, Returning: returning, ConflictAction: action}, nil
 	}
 
 	if err := p.expect(LX.T_VALUES); err != nil {

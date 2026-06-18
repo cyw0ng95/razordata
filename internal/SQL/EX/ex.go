@@ -687,6 +687,7 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 			return nil, iErr
 		}
 		op.conflictAction = s.ConflictAction
+		op.defaultValues = s.DefaultValues
 		return op, nil
 	case *PS.Update:
 		var scan Operator = NewSeqScan(s.Table)

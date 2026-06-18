@@ -16,6 +16,7 @@ type Insert struct {
 	returning      []PS.Expr
 	onConflict     *PS.OnConflict
 	conflictAction PS.ConflictAction
+	defaultValues  bool // REQ000563: INSERT INTO t DEFAULT VALUES
 	store          Store
 	schema         *storeSchema
 	txWriter       TxWriter
@@ -92,12 +93,27 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 	tablesMu.Lock()
 	defer tablesMu.Unlock()
 	existing := tables[i.table]
-	pending := make(map[string]struct{}, len(i.values))
+	var pending map[string]struct{}
+	var iterValues [][]PS.Expr
+	if i.defaultValues {
+		pending = make(map[string]struct{}, 1)
+		iterValues = [][]PS.Expr{nil}
+	} else {
+		pending = make(map[string]struct{}, len(i.values))
+		iterValues = i.values
+	}
 	lookup := inMemoryLookup(i.table)
-	for _, row := range i.values {
-		out, err := buildInsertRow(schema, i.cols, row, i.params)
-		if err != nil {
-			return Row{}, err
+	for _, row := range iterValues {
+		var out Row
+		var err error
+		if row == nil && i.defaultValues {
+			out = Row{Cols: append([]string(nil), schema...)}
+			out.Data = make([]interface{}, len(schema))
+		} else {
+			out, err = buildInsertRow(schema, i.cols, row, i.params)
+			if err != nil {
+				return Row{}, err
+			}
 		}
 		if cschema != nil {
 			if out, err = fillDefaults(cschema, out); err != nil {
@@ -205,17 +221,32 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 	}
 
 	prefix := tablePrefix(i.table)
-	pending := make(map[string]struct{}, len(i.values))
+	var pending map[string]struct{}
+	var iterValues [][]PS.Expr
+	if i.defaultValues {
+		pending = make(map[string]struct{}, 1)
+		iterValues = [][]PS.Expr{nil}
+	} else {
+		pending = make(map[string]struct{}, len(i.values))
+		iterValues = i.values
+	}
 	// In the engine path, unique lookups are best-effort: the LSM
 	// iterator would need a composite-key range scan. For v1, we
 	// check pending-batch duplicates only and skip the in-store
 	// lookup (correctness note: true cross-row UNIQUE in the engine
 	// path is deferred until REQ000045 / index work).
 	noopLookup := func(cols []int, vals []interface{}) (bool, error) { return false, nil }
-	for _, row := range i.values {
-		out, err := buildInsertRow(i.schema.cols, i.cols, row, i.params)
-		if err != nil {
-			return Row{}, err
+	for _, row := range iterValues {
+		var out Row
+		var err error
+		if row == nil && i.defaultValues {
+			out = Row{Cols: append([]string(nil), i.schema.cols...)}
+			out.Data = make([]interface{}, len(i.schema.cols))
+		} else {
+			out, err = buildInsertRow(i.schema.cols, i.cols, row, i.params)
+			if err != nil {
+				return Row{}, err
+			}
 		}
 		if out, err = fillDefaults(i.schema, out); err != nil {
 			return Row{}, err

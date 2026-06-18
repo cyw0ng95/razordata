@@ -1081,3 +1081,98 @@ func TestParsePragma(t *testing.T) {
 		})
 	}
 }
+
+func TestParseInsertDefaultValues(t *testing.T) {
+	p := NewParser("INSERT INTO t DEFAULT VALUES")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ins, ok := stmt.(*Insert)
+	if !ok {
+		t.Fatalf("expected *Insert, got %T", stmt)
+	}
+	if ins.Table != "t" {
+		t.Errorf("expected Table='t', got %q", ins.Table)
+	}
+	if !ins.DefaultValues {
+		t.Error("expected DefaultValues=true")
+	}
+	if len(ins.Values) != 0 {
+		t.Errorf("expected 0 rows, got %d", len(ins.Values))
+	}
+}
+
+func TestParseInsertDefaultValuesReturning(t *testing.T) {
+	p := NewParser("INSERT INTO t DEFAULT VALUES RETURNING *")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ins, ok := stmt.(*Insert)
+	if !ok {
+		t.Fatalf("expected *Insert, got %T", stmt)
+	}
+	if !ins.DefaultValues {
+		t.Error("expected DefaultValues=true")
+	}
+	if len(ins.Returning) == 0 {
+		t.Error("expected RETURNING clauses")
+	}
+}
+
+// REQ000567: LIKE ... ESCAPE
+func TestParseLikeEscape(t *testing.T) {
+	p := NewParser("SELECT * FROM t WHERE v LIKE '100%' ESCAPE '\\'")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sel, ok := stmt.(*Select)
+	if !ok {
+		t.Fatalf("expected *Select, got %T", stmt)
+	}
+	be, ok := sel.Where.(*BinaryExpr)
+	if !ok {
+		t.Fatalf("expected *BinaryExpr, got %T", sel.Where)
+	}
+	if be.Op != int(LX.T_LIKE) {
+		t.Errorf("expected LIKE op, got %d", be.Op)
+	}
+	if be.Escape == nil {
+		t.Fatal("expected Escape expr")
+	}
+	lit, ok := be.Escape.(*StringLiteral)
+	if !ok {
+		t.Fatalf("expected *StringLiteral, got %T", be.Escape)
+	}
+	if lit.Val != "\\" {
+		t.Errorf("expected escape char '\\', got %q", lit.Val)
+	}
+}
+
+func TestParseLikeEscapeNot(t *testing.T) {
+	p := NewParser("SELECT * FROM t WHERE v NOT LIKE '100%' ESCAPE '\\'")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sel, ok := stmt.(*Select)
+	if !ok {
+		t.Fatalf("expected *Select, got %T", stmt)
+	}
+	ue, ok := sel.Where.(*UnaryExpr)
+	if !ok {
+		t.Fatalf("expected *UnaryExpr, got %T", sel.Where)
+	}
+	be, ok := ue.Operand.(*BinaryExpr)
+	if !ok {
+		t.Fatalf("expected *BinaryExpr, got %T", ue.Operand)
+	}
+	if be.Op != int(LX.T_LIKE) {
+		t.Errorf("expected LIKE op, got %d", be.Op)
+	}
+	if be.Escape == nil {
+		t.Fatal("expected Escape expr")
+	}
+}
