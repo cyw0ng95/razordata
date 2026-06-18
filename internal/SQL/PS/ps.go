@@ -784,6 +784,12 @@ func (p *Parser) Parse() (Stmt, error) {
 		}
 	case LX.T_BEGIN:
 		stmt, err = p.parseBegin()
+	case LX.T_COMMIT:
+		stmt, err = p.parseCommit()
+	case LX.T_END:
+		// REQ000570: bare END outside trigger/CASE context is COMMIT synonym.
+		// At top-level Parse() dispatch, T_END is unambiguous.
+		stmt, err = p.parseCommit()
 	case LX.T_SET:
 		stmt, err = p.parseSet()
 	case LX.T_ALTER:
@@ -1107,6 +1113,8 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 		fromAlias = p.current.Lexeme
 		p.advance()
 	}
+	// REQ000529: INDEXED BY / NOT INDEXED after table reference
+	indexHint := p.parseIndexHint()
 
 	// REQ000368: promote any pending comma-separated tables
 	// (collected above) into CROSS joins.
@@ -1207,6 +1215,7 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 		Having:       having,
 		Distinct:     distinct,
 		SubqueryFrom: p.pendingSubquery,
+		IndexHint:    indexHint,
 	}, nil
 }
 
@@ -1445,6 +1454,9 @@ func (p *Parser) parseUpdate() (*Update, error) {
 	table := p.current.Lexeme
 	p.advance()
 
+	// REQ000569: INDEXED BY / NOT INDEXED after table reference
+	indexHint := p.parseIndexHint()
+
 	if err := p.expect(LX.T_SET); err != nil {
 		return nil, err
 	}
@@ -1497,7 +1509,7 @@ func (p *Parser) parseUpdate() (*Update, error) {
 	}
 
 	return &Update{Table: table, Set: set, Where: where, Returning: returning,
-		OrderBy: orderBy, Limit: limit, Offset: offset, OffsetFirst: offsetFirst}, nil
+		OrderBy: orderBy, Limit: limit, Offset: offset, OffsetFirst: offsetFirst, IndexHint: indexHint}, nil
 }
 
 // REQ000559: parseBegin parses BEGIN [DEFERRED|IMMEDIATE|EXCLUSIVE]
@@ -1515,6 +1527,16 @@ func (p *Parser) parseBegin() (*BeginTX, error) {
 		p.advance()
 	}
 	return bt, nil
+}
+
+// REQ000570: COMMIT / END [TRANSACTION] — COMMIT and END are synonyms.
+func (p *Parser) parseCommit() (*CommitTX, error) {
+	p.advance()
+	// Optional TRANSACTION keyword
+	if p.current.Type == LX.T_TRANSACTION {
+		p.advance()
+	}
+	return &CommitTX{}, nil
 }
 
 // REQ000564: parseValues parses a standalone VALUES statement.
@@ -1566,6 +1588,9 @@ func (p *Parser) parseDelete() (*Delete, error) {
 	table := p.current.Lexeme
 	p.advance()
 
+	// REQ000569: INDEXED BY / NOT INDEXED after table reference
+	indexHint := p.parseIndexHint()
+
 	var where Expr
 	if p.current.Type == LX.T_WHERE {
 		p.advance()
@@ -1595,6 +1620,7 @@ func (p *Parser) parseDelete() (*Delete, error) {
 		Limit:       limit,
 		Offset:      offset,
 		OffsetFirst: offsetFirst,
+		IndexHint:   indexHint,
 	}, nil
 }
 
@@ -2943,6 +2969,31 @@ func (p *Parser) parseDropIndex() (*DropIndexStmt, error) {
 	name := p.current.Lexeme
 	p.advance()
 	return &DropIndexStmt{Name: name, IfExists: ifExists}, nil
+}
+
+// REQ000529/569: parseIndexHint parses INDEXED BY name or NOT INDEXED.
+// Returns nil if neither clause is present.
+func (p *Parser) parseIndexHint() *IndexHint {
+	if p.current.Type != LX.T_INDEXED && !(p.current.Type == LX.T_NOT && p.lex.Peek().Type == LX.T_INDEXED) {
+		return nil
+	}
+	if p.current.Type == LX.T_NOT {
+		p.advance() // consume NOT
+		p.advance() // consume INDEXED
+		return &IndexHint{}
+	}
+	// INDEXED BY name
+	p.advance() // consume INDEXED
+	if p.current.Type != LX.T_BY {
+		return nil
+	}
+	p.advance() // consume BY
+	if p.current.Type != LX.T_IDENT {
+		return nil
+	}
+	hint := &IndexHint{IndexedBy: p.current.Lexeme}
+	p.advance()
+	return hint
 }
 
 // parseSet parses SET TRANSACTION ISOLATION LEVEL ... (REQ000123).

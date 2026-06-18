@@ -833,6 +833,8 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		return NewReindex(s), nil
 	case *PS.BeginTX:
 		return NewNoop(), nil
+	case *PS.CommitTX:
+		return NewNoop(), nil
 	case *PS.ValuesStmt:
 		return newValuesRowsOp(s.Rows), nil
 	}

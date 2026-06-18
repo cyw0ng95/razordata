@@ -169,6 +169,7 @@ var keywords = map[string]TokenType{
 	"EXCLUSIVE":    T_EXCLUSIVE,
 	"RAISE":        T_RAISE,
 	"ESCAPE":       T_ESCAPE, // REQ000567: LIKE ... ESCAPE
+	"INDEXED":      T_INDEXED, // REQ000529/569: INDEXED BY / NOT INDEXED
 }
 
 type Lexer struct {

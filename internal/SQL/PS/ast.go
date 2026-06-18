@@ -373,6 +373,11 @@ type RollbackToStmt struct {
 
 func (r *RollbackToStmt) stmtNode() {}
 
+// REQ000529/569: IndexHint represents an INDEXED BY name or NOT INDEXED hint.
+type IndexHint struct {
+	IndexedBy string // non-empty = INDEXED BY name; empty = NOT INDEXED
+}
+
 type Update struct {
 	Table       string
 	Set         []Pair
@@ -382,6 +387,7 @@ type Update struct {
 	Limit       Expr        // REQ000558
 	Offset      Expr        // REQ000558
 	OffsetFirst bool        // REQ000558
+	IndexHint   *IndexHint  // REQ000569
 }
 
 func (u *Update) stmtNode() {}
@@ -394,6 +400,7 @@ type Delete struct {
 	Limit       Expr
 	Offset      Expr
 	OffsetFirst bool
+	IndexHint   *IndexHint // REQ000569
 }
 
 func (d *Delete) stmtNode() {}
@@ -428,6 +435,7 @@ type Select struct {
 	// The planner uses this to build a materialized subplan
 	// instead of looking up a table by name.
 	SubqueryFrom Stmt
+	IndexHint    *IndexHint // REQ000529
 }
 
 func (s *Select) stmtNode() {}
