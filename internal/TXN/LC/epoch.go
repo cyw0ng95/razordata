@@ -72,22 +72,12 @@ func (em *epochManager) ExitEpoch(goroutineID uint64) {
 func (em *epochManager) Reclaim(batch []unsafe.Pointer) {
 	currentEpoch := em.epoch.Load()
 
-	safeEpoch := currentEpoch - 2
-	em.threads.Range(func(key, value any) bool {
-		record := value.(*threadRecord)
-		enteredAt := record.enteredAt.Load()
-		if enteredAt != 0 && enteredAt > safeEpoch {
-			return true
-		}
-		return true
-	})
+	// Drain pending old-generation buffers from the arena.
+	// This integrates with TXN/MV/arena.go's generation reclamation
+	// (REQ000589).
+	MV.ReclaimOldGenerations()
 
-	for _, ptr := range batch {
-		if ptr == nil {
-			continue
-		}
-		_ = ptr
-	}
+	// Nullify batch pointers to prevent use-after-free.
 	for i := range batch {
 		batch[i] = nil
 	}
