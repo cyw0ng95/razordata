@@ -620,3 +620,22 @@ type ValuesStmt struct {
 }
 
 func (v *ValuesStmt) stmtNode() {}
+
+// AttachStmt represents `ATTACH DATABASE expr AS name` (REQ000557).
+// In v1 the executor rejects this statement at runtime with
+// "multi-database not supported in v1"; the parser still
+// accepts it so applications using SQLite-style multi-db
+// idioms get a parse-time success.
+type AttachStmt struct {
+	Expr Expr   // path expression (typically a string literal)
+	Name string // schema alias
+}
+
+func (a *AttachStmt) stmtNode() {}
+
+// DetachStmt represents `DETACH DATABASE name` (REQ000557).
+type DetachStmt struct {
+	Name string // schema alias
+}
+
+func (d *DetachStmt) stmtNode() {}

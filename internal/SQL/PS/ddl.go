@@ -1014,3 +1014,66 @@ func (p *Parser) parseDropTrigger() (*DropTriggerStmt, error) {
 
 	return stmt, nil
 }
+
+// parseAttach parses `ATTACH DATABASE expr AS name`. REQ000557.
+// On entry the current token is T_ATTACH.
+func (p *Parser) parseAttach() (*AttachStmt, error) {
+	p.advance() // consume ATTACH
+	// DATABASE is not a hard keyword; accept either T_DATABASE
+	// or an identifier whose lexeme (case-insensitive) is
+	// "DATABASE".
+	if !(p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "DATABASE")) {
+		return nil, &SyntaxError{
+			Input:    p.lex.Input(),
+			Line:     p.current.Line,
+			Col:      p.current.Col,
+			Expected: "DATABASE keyword after ATTACH",
+			Got:      tokenName(p.current.Type),
+			Lexeme:   p.current.Lexeme,
+		}
+	}
+	p.advance() // consume DATABASE
+
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := p.expect(LX.T_AS); err != nil {
+		return nil, err
+	}
+	p.advance() // consume AS
+
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	name := p.current.Lexeme
+	p.advance()
+
+	return &AttachStmt{Expr: expr, Name: name}, nil
+}
+
+// parseDetach parses `DETACH DATABASE name`. REQ000557.
+// On entry the current token is T_DETACH.
+func (p *Parser) parseDetach() (*DetachStmt, error) {
+	p.advance() // consume DETACH
+	if !(p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "DATABASE")) {
+		return nil, &SyntaxError{
+			Input:    p.lex.Input(),
+			Line:     p.current.Line,
+			Col:      p.current.Col,
+			Expected: "DATABASE keyword after DETACH",
+			Got:      tokenName(p.current.Type),
+			Lexeme:   p.current.Lexeme,
+		}
+	}
+	p.advance() // consume DATABASE
+
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	name := p.current.Lexeme
+	p.advance()
+
+	return &DetachStmt{Name: name}, nil
+}

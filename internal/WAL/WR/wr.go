@@ -163,6 +163,12 @@ type writer struct {
 	// that need to exercise the "record too large" code path override
 	// this to a small value to avoid allocating a 64 MB slice.
 	maxRecordSize int64
+	// lsn is the optional batched LSN counter. REQ000541. When
+	// non-nil, Append claims a single range per batch via Reserve
+	// and increments locally for per-record LSNs. nil disables
+	// the integration (the writer's LSNs are still authoritative
+	// from segment+offset — the counter is a publication cache).
+	lsn LSNCounter
 }
 
 // Options configures optional Writer behavior. REQ000034.
@@ -173,6 +179,22 @@ type Options struct {
 	// bodies automatically. Compression is transparent to
 	// callers of Append/Sync/Close.
 	Compress bool
+	// LSNCounter is an optional atomic LSN counter. REQ000541:
+	// when set, the writer claims a batch-sized range from the
+	// counter once per Append call (instead of N times), reducing
+	// atomic contention with other consumers of the counter. May
+	// be nil; nil means the counter is unused.
+	LSNCounter LSNCounter
+}
+
+// LSNCounter is the minimal interface the writer needs from an LSN
+// counter. REQ000541: exposing this as an interface avoids a direct
+// import of internal/WAL/FL, which would create an import cycle (FL
+// already imports LF; the writer sits in a different cluster and must
+// stay decoupled from the FL counter's concrete type).
+type LSNCounter interface {
+	// Reserve claims n sequential LSNs and returns the start.
+	Reserve(n int) LSN
 }
 
 // New constructs a Writer rooted at dir. The Writer owns its
@@ -195,7 +217,7 @@ func NewWithOptions(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log l
 	if spPool == nil {
 		return nil, errors.New("wr: SyncPool is required")
 	}
-	return &writer{dir: dir, sm: sm, sp: spPool, log: log, readOnly: readOnly, compress: opts.Compress}, nil
+	return &writer{dir: dir, sm: sm, sp: spPool, log: log, readOnly: readOnly, compress: opts.Compress, lsn: opts.LSNCounter}, nil
 }
 
 // Append encodes and appends every record in batch, returning the LSN
@@ -206,6 +228,12 @@ func NewWithOptions(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log l
 // segmentNumber * SegSize + writeOff before encoding. The LSN is the
 // byte offset within the WAL, so segment ordering and LSN ordering
 // are aligned.
+//
+// REQ000541: a single Reserve(len) call on the FL LSN counter
+// publishes the writer's progress to the stale-read cache with one
+// atomic op per batch instead of one per record, reducing contention
+// when the writer is shared with other atomic consumers. The counter
+// is only invoked when it has been wired in (w.lsn != nil).
 func (w *writer) Append(batch *WriteBatch) (uint64, error) {
 	if batch == nil || len(batch.Recs) == 0 {
 		return 0, nil
@@ -230,6 +258,16 @@ func (w *writer) Append(batch *WriteBatch) (uint64, error) {
 		if err := w.openSegmentLocked(0); err != nil {
 			return 0, err
 		}
+	}
+
+	// REQ000541: claim a single batch-sized range from the LSN
+	// counter. The returned LSN itself is unused — segment+offset
+	// remains the authoritative per-record source — but the side
+	// effect (counter advanced by len(Recs)) publishes the writer's
+	// progress to FL's stale-read cache with one atomic op per batch
+	// instead of one per record.
+	if w.lsn != nil {
+		w.lsn.Reserve(len(batch.Recs))
 	}
 
 	var lastLSN uint64

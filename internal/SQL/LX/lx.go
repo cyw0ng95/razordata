@@ -174,6 +174,8 @@ var keywords = map[string]TokenType{
 	"DEFERRABLE":   T_DEFERRABLE, // REQ000561
 	"INITIALLY":    T_INITIALLY, // REQ000561
 	"COLLATE":      T_COLLATE, // REQ000565
+	"ATTACH":       T_ATTACH,  // REQ000557
+	"DETACH":       T_DETACH,  // REQ000557
 }
 
 type Lexer struct {

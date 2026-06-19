@@ -356,6 +356,136 @@ func TestLSNCounterSetSegment(t *testing.T) {
 	}
 }
 
+// TestLSNCounterReserveSingleClaim verifies Reserve(1) returns
+// monotonic LSNs equivalent to Next() and advances Current() by 1.
+// REQ000541: the batched path is equivalent to the single-record
+// path for n=1.
+func TestLSNCounterReserveSingleClaim(t *testing.T) {
+	c := newLSNCounter()
+	if got := c.Reserve(1); got != 1 {
+		t.Errorf("Reserve(1) first: got %d, want 1", got)
+	}
+	if got := c.Current(); got != 1 {
+		t.Errorf("Current after Reserve(1): got %d, want 1", got)
+	}
+	if got := c.Reserve(1); got != 2 {
+		t.Errorf("Reserve(1) second: got %d, want 2", got)
+	}
+	if got := c.Current(); got != 2 {
+		t.Errorf("Current after second Reserve(1): got %d, want 2", got)
+	}
+}
+
+// TestLSNCounterReserveRange verifies Reserve(n) claims the inclusive
+// range [start, start+n-1] and a subsequent Reserve picks up at
+// start+n. REQ000541.
+func TestLSNCounterReserveRange(t *testing.T) {
+	c := newLSNCounter()
+	start := c.Reserve(10)
+	if start != 1 {
+		t.Errorf("first Reserve(10) start: got %d, want 1", start)
+	}
+	if got := c.Current(); got != 10 {
+		t.Errorf("Current after Reserve(10): got %d, want 10", got)
+	}
+	next := c.Reserve(5)
+	if next != 11 {
+		t.Errorf("subsequent Reserve(5) start: got %d, want 11", next)
+	}
+	if got := c.Current(); got != 15 {
+		t.Errorf("Current after Reserve(10)+Reserve(5): got %d, want 15", got)
+	}
+}
+
+// TestLSNCounterReserveInterleavedWithNext verifies that Reserve and
+// Next can be mixed freely — both consume from the same atomic
+// counter and never overlap. REQ000541.
+func TestLSNCounterReserveInterleavedWithNext(t *testing.T) {
+	c := newLSNCounter()
+	if got := c.Next(); got != 1 {
+		t.Errorf("Next first: got %d, want 1", got)
+	}
+	if got := c.Reserve(3); got != 2 {
+		t.Errorf("Reserve(3): got %d, want 2", got)
+	}
+	if got := c.Next(); got != 5 {
+		t.Errorf("Next after Reserve(3): got %d, want 5", got)
+	}
+	if got := c.Reserve(1); got != 6 {
+		t.Errorf("Reserve(1) last: got %d, want 6", got)
+	}
+	if got := c.Current(); got != 6 {
+		t.Errorf("Current final: got %d, want 6", got)
+	}
+}
+
+// TestLSNCounterReserveZeroAndNegativePanics verifies the
+// contract that Reserve must be called with n > 0. Both 0 and
+// negative values are programming errors and must panic rather
+// than silently regress the counter. REQ000541.
+func TestLSNCounterReserveZeroAndNegativePanics(t *testing.T) {
+	c := newLSNCounter()
+	c.Next() // advance to 1 so we can confirm the counter does not regress
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("Reserve(0) must panic")
+		}
+	}()
+	c.Reserve(0)
+}
+
+// TestLSNCounterReserveNegativePanics is the negative-input branch
+// of the contract check. REQ000541.
+func TestLSNCounterReserveNegativePanics(t *testing.T) {
+	c := newLSNCounter()
+	c.Next()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("Reserve(-1) must panic")
+		}
+	}()
+	c.Reserve(-1)
+}
+
+// TestLSNCounterReserveConcurrentNoOverlap stress-tests the
+// atomicity guarantee: 100 goroutines each call Reserve(10); the
+// union of returned ranges must be a strict partition of [1, 1000]
+// with no overlap and no gaps. REQ000541.
+func TestLSNCounterReserveConcurrentNoOverlap(t *testing.T) {
+	c := newLSNCounter()
+	const goroutines = 100
+	const perClaim = 10
+	starts := make([]uint64, goroutines)
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			starts[idx] = c.Reserve(perClaim)
+		}(i)
+	}
+	wg.Wait()
+	if got := c.Current(); got != uint64(goroutines*perClaim) {
+		t.Errorf("Current: got %d, want %d", got, goroutines*perClaim)
+	}
+	seen := make(map[uint64]struct{}, goroutines*perClaim)
+	for i, s := range starts {
+		for k := uint64(0); k < perClaim; k++ {
+			lsn := s + k
+			if lsn < 1 || lsn > uint64(goroutines*perClaim) {
+				t.Errorf("goroutine %d: LSN %d out of expected range", i, lsn)
+			}
+			if _, dup := seen[lsn]; dup {
+				t.Errorf("goroutine %d: LSN %d claimed twice", i, lsn)
+			}
+			seen[lsn] = struct{}{}
+		}
+	}
+	if len(seen) != goroutines*perClaim {
+		t.Errorf("unique LSNs: got %d, want %d", len(seen), goroutines*perClaim)
+	}
+}
+
 // TestFlusherLSNReturnsZeroOnNew verifies the Flusher's LSN()
 // method returns zero on a fresh flusher (R14 stale-read baseline).
 func TestFlusherLSNReturnsZeroOnNew(t *testing.T) {

@@ -39,8 +39,31 @@ func (c *lsnCounter) Current() LSN {
 
 // Next atomically advances the counter and returns the new value. This
 // is the LSN the caller should stamp on the next record.
+//
+// Equivalent to Reserve(1) — the single-record hot path stays lock-free
+// and contention-free for the common case.
 func (c *lsnCounter) Next() LSN {
-	return c.value.Add(1)
+	return c.Reserve(1)
+}
+
+// Reserve atomically claims n sequential LSNs and returns the
+// inclusive starting LSN. The claimed range is
+// [start, start+n-1]; the next call (Next or Reserve) returns
+// start+n, so callers can stamp records start, start+1, …, start+n-1
+// without further atomic operations.
+//
+// REQ000541: reduces contention on the LSN counter when a batch of
+// records is appended in one call — the writer takes the range once
+// and increments locally, instead of taking the atomic on every record.
+//
+// Panics if n <= 0: a non-positive reservation would silently regress
+// the counter and is always a programming error.
+func (c *lsnCounter) Reserve(n int) LSN {
+	if n <= 0 {
+		panic("lsn: Reserve requires n > 0")
+	}
+	end := c.value.Add(uint64(n))
+	return end - uint64(n) + 1
 }
 
 // SetSegment updates the current segment number. The next Next() call

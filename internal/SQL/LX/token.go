@@ -198,6 +198,9 @@ const (
 	T_INITIALLY      // REQ000561: INITIALLY DEFERRED/IMMEDIATE
 	T_COLLATE        // REQ000565: COLLATE on indexed columns / ordering terms
 
+	T_ATTACH // REQ000557: ATTACH DATABASE
+	T_DETACH // REQ000557: DETACH DATABASE
+
 	T_ERROR TokenType = -1
 )
 
@@ -393,6 +396,8 @@ var tokenTypeNames = [...]string{
 	T_DEFERRABLE:     "DEFERRABLE",
 	T_INITIALLY:      "INITIALLY",
 	T_COLLATE:        "COLLATE",
+	T_ATTACH:         "ATTACH",
+	T_DETACH:         "DETACH",
 }
 
 func (t Token) String() string {

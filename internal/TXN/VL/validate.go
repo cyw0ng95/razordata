@@ -46,9 +46,6 @@ func RangesOverlap(a, b KeyRange) bool {
 // commitTS > beginTS and R = readSet size. In practice C is small
 // (slot pool of 1024, only committed slots in the window).
 func (sm *slotManager) Validate(mySlot *transactionSlot) bool {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	// Fast path: no reads → write-write conflict detection only.
 	if len(mySlot.readSet) == 0 {
 		return validateWriteWrite(sm, mySlot)

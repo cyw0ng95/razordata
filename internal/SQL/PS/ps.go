@@ -208,6 +208,8 @@ var tokenNames = [...]string{
 	LX.T_INTERSECT:    "INTERSECT",
 	LX.T_EXCEPT:       "EXCEPT",
 	LX.T_ALL:          "ALL",
+	LX.T_ATTACH:       "ATTACH",
+	LX.T_DETACH:       "DETACH",
 }
 
 // isAggregateName reports whether a bare identifier name is a
@@ -359,6 +361,10 @@ func (p *Parser) Parse() (Stmt, error) {
 		stmt, err = p.parseSet()
 	case LX.T_ALTER:
 		stmt, err = p.parseAlterTable()
+	case LX.T_ATTACH:
+		stmt, err = p.parseAttach()
+	case LX.T_DETACH:
+		stmt, err = p.parseDetach()
 	case LX.T_IDENT:
 		// REPLACE INTO — REPLACE is not a hard keyword, detect via lexeme.
 		if strings.EqualFold(p.current.Lexeme, "REPLACE") {

@@ -848,6 +848,13 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		return NewNoop(), nil
 	case *PS.ValuesStmt:
 		return newValuesRowsOp(s.Rows), nil
+	case *PS.AttachStmt:
+		// REQ000557: ATTACH DATABASE — parser accepts the
+		// syntax but the v1 executor refuses to run it.
+		return NewUnsupportedOp(s, ErrMultiDatabaseNotSupported.Error()), nil
+	case *PS.DetachStmt:
+		// REQ000557: DETACH DATABASE — same as ATTACH.
+		return NewUnsupportedOp(s, ErrMultiDatabaseNotSupported.Error()), nil
 	}
 	return nil, errors.New("ex: not a writable statement")
 }

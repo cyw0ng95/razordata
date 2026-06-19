@@ -2,6 +2,7 @@ package EX
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
@@ -1632,3 +1633,33 @@ func colNameForReturning(expr PS.Expr, colNames []string, idx int) string {
 	}
 	return fmt.Sprintf("col%d", idx)
 }
+
+// UnsupportedOp is a writer-op stub for statement types that the
+// parser accepts but the v1 executor cannot run. It defers the
+// rejection until Next() so the planner/executor pipeline surfaces
+// the error in a uniform location.
+type UnsupportedOp struct {
+	err  error
+	done bool
+	stmt PS.Stmt
+}
+
+func NewUnsupportedOp(stmt PS.Stmt, msg string) *UnsupportedOp {
+	return &UnsupportedOp{err: errors.New(msg), stmt: stmt}
+}
+
+func (u *UnsupportedOp) Next(ctx context.Context) (Row, error) {
+	if u.done {
+		return Row{}, ErrNoRows
+	}
+	u.done = true
+	return Row{}, u.err
+}
+
+func (u *UnsupportedOp) Close() error                        { return nil }
+func (u *UnsupportedOp) WithParams(_ []interface{}) Operator { return u }
+func (u *UnsupportedOp) RowsAffected() int64                 { return 0 }
+
+// ErrMultiDatabaseNotSupported is returned by ATTACH / DETACH DATABASE
+// at execution time. REQ000557.
+var ErrMultiDatabaseNotSupported = errors.New("multi-database not supported in v1")
