@@ -257,3 +257,50 @@ func TestEngineConcurrentWriteRead(t *testing.T) {
 
 	wg.Wait()
 }
+
+// TestConcurrentReadFlushActive exercises the race that REQ000574
+// fixed: a goroutine iterating e.memtables via Read racing with
+// flushActiveMemtable which mutates the slice and activeMem pointer.
+// Without the RWMutex the race detector reports a data race. With
+// it, the test passes cleanly under -race.
+func TestConcurrentReadFlushActive(t *testing.T) {
+	dir := t.TempDir()
+	engineDir := filepath.Join(dir, "test_concurrent_read_flush")
+
+	e, err := newEngine(engineDir)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+	defer e.Close()
+
+	// Pre-populate so the first flush has data to push.
+	for i := 0; i < 100; i++ {
+		key := []byte(string(rune('a' + i%26)))
+		e.Write(key, []byte("seed"))
+	}
+
+	var wg sync.WaitGroup
+
+	// Writer that drives flushActiveMemtable via manual calls.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			_ = e.flushActiveMemtable()
+		}
+	}()
+
+	// Readers that iterate e.memtables.
+	for r := 0; r < 4; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				key := []byte(string(rune('a' + i%26)))
+				_, _ = e.Read(key)
+			}
+		}()
+	}
+
+	wg.Wait()
+}

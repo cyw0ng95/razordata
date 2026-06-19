@@ -27,6 +27,15 @@ type engine struct {
 	fm        *flushManager
 	stats     ReadStats
 	statsMu   sync.RWMutex
+	// REQ000574: protects the memtables slice and activeMem
+	// pointer. Read takes RLock; Write takes no lock (it only
+	// touches activeMem, which is set once at construction and
+	// atomically swapped during flush under writeLock);
+	// flushActiveMemtable takes the write lock for the
+	// mutation. Without this guard a concurrent Read iterating
+	// e.memtables while flushActiveMemtable slice-erases can
+	// observe a half-applied state.
+	mu sync.RWMutex
 }
 
 func newEngine(dir string) (*engine, error) {
@@ -100,6 +109,11 @@ func (e *engine) Write(key, value []byte) error {
 // queue. The result was silent data loss for any row whose
 // INSERT crossed a memtable boundary.
 func (e *engine) flushActiveMemtable() error {
+	// REQ000574: take the write lock for the mutation of
+	// memtables/activeMem. Concurrent Read calls hold RLock.
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	frozen := e.activeMem
 	frozen.Freeze()
 
@@ -141,6 +155,12 @@ func (e *engine) Sync() error {
 func (e *engine) Read(key []byte) ([]byte, error) {
 	e.statsMu.Lock()
 	defer e.statsMu.Unlock()
+
+	// REQ000574: hold the read lock while iterating e.memtables
+	// so concurrent flushActiveMemtable cannot mutate the slice
+	// out from under us.
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
 	for i := len(e.memtables) - 1; i >= 0; i-- {
 		mt := e.memtables[i]

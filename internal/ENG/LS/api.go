@@ -223,12 +223,20 @@ func newMergeIterator(eng *engine, prefix []byte) *mergeIterator {
 }
 
 func (mi *mergeIterator) init() {
+	// REQ000574: hold the read lock while snapshotting the
+	// memtable references so a concurrent flushActiveMemtable
+	// cannot mutate the slice or activeMem pointer mid-init.
+	mi.eng.mu.RLock()
+	activeMem := mi.eng.activeMem
+	memtables := append([]*memtable(nil), mi.eng.memtables...)
+	mi.eng.mu.RUnlock()
+
 	// Source 0: active memtable (all uncommitted writes).
-	mi.sources = append(mi.sources, &memtableIter{it: mi.eng.activeMem.Iterator()})
+	mi.sources = append(mi.sources, &memtableIter{it: activeMem.Iterator()})
 	// Source 1+: frozen memtables (newest first).
-	for i := len(mi.eng.memtables) - 1; i >= 0; i-- {
-		mt := mi.eng.memtables[i]
-		if mt == mi.eng.activeMem {
+	for i := len(memtables) - 1; i >= 0; i-- {
+		mt := memtables[i]
+		if mt == activeMem {
 			continue
 		}
 		mi.sources = append(mi.sources, &memtableIter{it: mt.Iterator()})
