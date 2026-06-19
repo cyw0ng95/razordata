@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1556,6 +1557,17 @@ func TestPinUnpinMultiple(t *testing.T) {
 
 	bp.Unpin(page)
 	bp.Unpin(page)
+}
+
+// REQ000632: madviseHugePage on mmap'd region, verify no error.
+func TestMadviseHugePage(t *testing.T) {
+	b, err := syscall.Mmap(-1, 0, 4096, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
+	if err != nil {
+		t.Fatalf("Mmap failed: %v", err)
+	}
+	defer syscall.Munmap(b)
+	madviseHugePage(b)
+	madviseHugePage(nil)
 }
 
 // TestMadviseDontNeed_EvictionCallsHook asserts that the madvise

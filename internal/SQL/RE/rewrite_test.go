@@ -3,6 +3,7 @@ package RE
 import (
 	"testing"
 
+	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
@@ -1222,7 +1223,56 @@ func TestRewriteSimplifyBinaryBooleanComparison(t *testing.T) {
 	}
 }
 
-func TestRewriteSimplifyBinaryNullComparison(t *testing.T) {
+// REQ000637: rewriteInsert folds constants.
+func TestRewriteInsertFoldsConstants(t *testing.T) {
+	ins := &PS.Insert{
+		Table: "t",
+		Values: [][]PS.Expr{
+			{&PS.BinaryExpr{
+				Op:    int(LX.T_PLUS),
+				Left:  &PS.NumberLiteral{Val: 1},
+				Right: &PS.NumberLiteral{Val: 2},
+			}},
+		},
+	}
+	out := rewriteInsert(ins)
+	if len(out.Values) != 1 || len(out.Values[0]) != 1 {
+		t.Fatal("unexpected value shape")
+	}
+	n, ok := out.Values[0][0].(*PS.NumberLiteral)
+	if !ok {
+		t.Fatalf("expected folded NumberLiteral, got %T", out.Values[0][0])
+	}
+	if n.Val != 3 {
+		t.Errorf("got %d, want 3", n.Val)
+	}
+}
+
+// REQ000637: cloneExprSlice(nil) returns nil.
+func TestCloneExprSliceNil(t *testing.T) {
+	if got := cloneExprSlice(nil); got != nil {
+		t.Errorf("expected nil, got %v", got)
+	}
+}
+
+// REQ000637: constantFoldBinary with NULL operand returns nil.
+func TestConstantFoldBinaryNullOperand(t *testing.T) {
+	null := &PS.NullLiteral{}
+	num := &PS.NumberLiteral{Val: 1}
+	if got := constantFoldBinary(int(LX.T_PLUS), null, num); got != nil {
+		t.Errorf("expected nil for NULL + 1, got %v", got)
+	}
+	if got := constantFoldBinary(int(LX.T_PLUS), num, null); got != nil {
+		t.Errorf("expected nil for 1 + NULL, got %v", got)
+	}
+}
+
+// REQ000637: foldIntInt(1, 0, T_SLASH) returns nil (division by zero).
+func TestFoldIntIntDivideByZero(t *testing.T) {
+	if got := foldIntInt(int(LX.T_SLASH), 1, 0); got != nil {
+		t.Errorf("expected nil for 1/0, got %v", got)
+	}
+}
 	cases := []struct {
 		sql   string
 		check func(*PS.Select) bool

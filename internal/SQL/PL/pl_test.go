@@ -48,7 +48,70 @@ func TestMemo_PutGet(t *testing.T) {
 	}
 }
 
-func TestPlanner_Memoizes(t *testing.T) {
+// REQ000636: NewMemoWithCapacity(-1) uses default.
+func TestNewMemoWithCapacity_Negative(t *testing.T) {
+	m := NewMemoWithCapacity(-1)
+	if m.MaxEntries() != DefaultMaxMemoEntries {
+		t.Errorf("MaxEntries: got %d, want %d", m.MaxEntries(), DefaultMaxMemoEntries)
+	}
+}
+
+// REQ000636: Clear removes all entries.
+func TestMemoClear(t *testing.T) {
+	m := NewMemo()
+	m.Put("k", Plan{Cost: 1})
+	if m.Len() != 1 {
+		t.Fatal("expected 1 entry after Put")
+	}
+	m.Clear()
+	if m.Len() != 0 {
+		t.Errorf("Len after Clear: got %d, want 0", m.Len())
+	}
+	if _, ok := m.Get("k"); ok {
+		t.Error("Get after Clear returned ok=true")
+	}
+}
+
+// REQ000636: BumpSchemaVersion increments and Get sees new version.
+func TestMemoBumpSchemaVersion(t *testing.T) {
+	m := NewMemo()
+	v1 := m.SchemaVersion()
+	v2 := m.BumpSchemaVersion()
+	if v2 != v1+1 {
+		t.Errorf("BumpSchemaVersion: got %d, want %d", v2, v1+1)
+	}
+	if got := m.SchemaVersion(); got != v1+1 {
+		t.Errorf("SchemaVersion after bump: got %d, want %d", got, v1+1)
+	}
+}
+
+// REQ000636: LearnedModel.Predict untrained returns fallback (features[1]).
+func TestLearnedModelPredictUntrained(t *testing.T) {
+	lm := &LearnedModel{correlations: make(map[pairKey]float64)}
+	features := [6]float64{0, 0.42, 0, 0, 0, 0}
+	got := lm.Predict(features)
+	if got != 0.42 {
+		t.Errorf("untrained Predict: want 0.42, got %f", got)
+	}
+}
+
+// REQ000636: PredicateCache LRU eviction.
+func TestPredicateCacheLRUEviction(t *testing.T) {
+	c := NewPredicateCache(2)
+	c.Put("a", 1)
+	c.Put("b", 2)
+	c.Put("c", 3) // should evict "a"
+
+	if _, ok := c.Get("a"); ok {
+		t.Error("expected 'a' to be evicted")
+	}
+	if _, ok := c.Get("b"); !ok {
+		t.Error("expected 'b' to be present")
+	}
+	if _, ok := c.Get("c"); !ok {
+		t.Error("expected 'c' to be present")
+	}
+}
 	calls := 0
 	pl := NewPlannerWith(PlanOptions{
 		BuildTree: func(PS.Stmt) (float64, error) {

@@ -2,6 +2,7 @@ package ls
 
 import (
 	"bytes"
+	"container/heap"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -234,4 +235,147 @@ func equalStringSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestMergeIterator_MemtableOnly(t *testing.T) {
+	mt := newMemtable(1 << 20)
+	mt.Insert([]byte("a"), []byte("1"))
+	mt.Insert([]byte("b"), []byte("2"))
+	mt.Insert([]byte("c"), []byte("3"))
+
+	dir := t.TempDir()
+	m, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("newManifest: %v", err)
+	}
+
+	mi := newMergeIterator([]*memtable{mt}, m, dir, nil)
+	defer mi.Close()
+
+	var got []string
+	for mi.Next() {
+		got = append(got, string(mi.Key())+"="+string(mi.Value()))
+	}
+	if err := mi.Err(); err != nil {
+		t.Fatalf("Err: %v", err)
+	}
+	want := []string{"a=1", "b=2", "c=3"}
+	if !equalStringSlices(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestMergeIterator_SkipsTombstones(t *testing.T) {
+	mt := newMemtable(1 << 20)
+	mt.Insert([]byte("a"), []byte("1"))
+	mt.Insert([]byte("b"), tombstoneValue)
+	mt.Insert([]byte("c"), []byte("3"))
+
+	dir := t.TempDir()
+	m, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("newManifest: %v", err)
+	}
+
+	mi := newMergeIterator([]*memtable{mt}, m, dir, nil)
+	defer mi.Close()
+
+	var got []string
+	for mi.Next() {
+		got = append(got, string(mi.Key()))
+	}
+	want := []string{"a", "c"}
+	if !equalStringSlices(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestMergeIterator_Dedup(t *testing.T) {
+	mt1 := newMemtable(1 << 20)
+	mt1.Insert([]byte("a"), []byte("1"))
+	mt1.Insert([]byte("b"), []byte("2_from_mt1"))
+	mt1.Freeze()
+
+	mt2 := newMemtable(1 << 20)
+	mt2.Insert([]byte("b"), []byte("2_from_mt2"))
+	mt2.Insert([]byte("c"), []byte("3"))
+
+	dir := t.TempDir()
+	m, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("newManifest: %v", err)
+	}
+
+	// mt2 is "active" (last in slice → sources[0]) and wins dedup
+	mi := newMergeIterator([]*memtable{mt1, mt2}, m, dir, nil)
+	defer mi.Close()
+
+	var got []string
+	for mi.Next() {
+		got = append(got, string(mi.Key())+"="+string(mi.Value()))
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 entries after dedup, got %d: %v", len(got), got)
+	}
+	if string(got[0]) != "a=1" {
+		t.Errorf("got %q, want \"a=1\"", got[0])
+	}
+	// Key "b" must appear exactly once, with the active (mt2) value
+	if string(got[1]) != "b=2_from_mt2" {
+		t.Errorf("got %q, want \"b=2_from_mt2\"", got[1])
+	}
+	if string(got[2]) != "c=3" {
+		t.Errorf("got %q, want \"c=3\"", got[2])
+	}
+}
+
+func TestIsTombstoneNil(t *testing.T) {
+	if isTombstone(nil) {
+		t.Error("isTombstone(nil) = true, want false")
+	}
+}
+
+func TestIterHeapPushPop(t *testing.T) {
+	h := &iterHeap{}
+	heap.Init(h)
+
+	items := []iterHeapItem{
+		{key: []byte("c"), value: []byte("3"), src: 2},
+		{key: []byte("a"), value: []byte("1"), src: 0},
+		{key: []byte("b"), value: []byte("2"), src: 1},
+	}
+	for _, it := range items {
+		heap.Push(h, it)
+	}
+
+	if h.Len() != 3 {
+		t.Fatalf("Len = %d, want 3", h.Len())
+	}
+
+	var keys []string
+	for h.Len() > 0 {
+		item := heap.Pop(h).(iterHeapItem)
+		keys = append(keys, string(item.key))
+	}
+	want := []string{"a", "b", "c"}
+	if !equalStringSlices(keys, want) {
+		t.Errorf("pop order got %v, want %v", keys, want)
+	}
+}
+
+func TestMergeIterator_NextAfterClose(t *testing.T) {
+	mt := newMemtable(1 << 20)
+	mt.Insert([]byte("a"), []byte("1"))
+
+	dir := t.TempDir()
+	m, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("newManifest: %v", err)
+	}
+
+	mi := newMergeIterator([]*memtable{mt}, m, dir, nil)
+	mi.Close()
+	if mi.Next() {
+		t.Error("Next() after Close returned true, want false")
+	}
 }

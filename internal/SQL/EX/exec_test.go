@@ -264,7 +264,46 @@ func drain(t *testing.T, op Operator) [][]interface{} {
 	return out
 }
 
-func rowsEqual(got [][]interface{}, want [][]interface{}) bool {
+// REQ000638: ExtractParamTypes on SQL without ? returns empty.
+func TestExtractParamTypes_NoParams(t *testing.T) {
+	e := NewExecutor()
+	got := e.ExtractParamTypes("SELECT 1")
+	if len(got) != 0 {
+		t.Errorf("expected empty, got %v", got)
+	}
+}
+
+// REQ000638: ShallowCopy is independent (mutable state not shared).
+func TestShallowCopy_Independent(t *testing.T) {
+	e := NewExecutor()
+	e.SetSnapshot(42)
+	c := e.ShallowCopy()
+	if c.GetSnapshot() != 0 {
+		t.Errorf("ShallowCopy snapshot: got %d, want 0", c.GetSnapshot())
+	}
+	c.SetSnapshot(99)
+	if e.GetSnapshot() != 42 {
+		t.Errorf("original snapshot changed after copy: got %d, want 42", e.GetSnapshot())
+	}
+}
+
+// REQ000638: SeqScan.Close on uninitialized scan does not panic or error.
+func TestSeqScan_CloseUninitialized(t *testing.T) {
+	s := NewSeqScan("test")
+	if err := s.Close(); err != nil {
+		t.Errorf("Close on uninitialized SeqScan: %v", err)
+	}
+}
+
+// REQ000638: SeqScan double-close is idempotent.
+func TestSeqScan_CloseDouble(t *testing.T) {
+	s := NewSeqScan("test")
+	err1 := s.Close()
+	err2 := s.Close()
+	if err1 != nil || err2 != nil {
+		t.Errorf("double Close errors: %v, %v", err1, err2)
+	}
+}
 	if len(got) != len(want) {
 		return false
 	}

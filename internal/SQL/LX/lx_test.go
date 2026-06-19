@@ -385,7 +385,62 @@ func TestNewLexer(t *testing.T) {
 	}
 }
 
-func TestErrors(t *testing.T) {
+// REQ000634: Peek2 on empty input returns double-EOF.
+func TestLexerPeek2_Empty(t *testing.T) {
+	l := NewLexer("")
+	tok := l.Peek2()
+	if tok.Type != T_EOF {
+		t.Errorf("Peek2 on empty: expected T_EOF, got %v", tok.Type)
+	}
+}
+
+// REQ000634: Peek2 after single token returns EOF for second.
+func TestLexerPeek2_AfterSingleToken(t *testing.T) {
+	l := NewLexer("SELECT")
+	tok := l.Peek2()
+	if tok.Type != T_EOF {
+		t.Errorf("Peek2 after single token: expected T_EOF, got %v", tok.Type)
+	}
+}
+
+// REQ000634: Peek2 does not advance the lexer position.
+func TestLexerPeek2_DoesNotAdvance(t *testing.T) {
+	l := NewLexer("SELECT *")
+	tok2 := l.Peek2()
+	_ = tok2
+	tok := l.Next()
+	if tok.Type != T_SELECT {
+		t.Errorf("after Peek2, Next() = %v, want T_SELECT", tok.Type)
+	}
+}
+
+// REQ000634: ParseIntLiteral empty string returns error.
+func TestParseIntLiteral_Empty(t *testing.T) {
+	_, err := ParseIntLiteral("")
+	if err != ErrInvalidInt {
+		t.Errorf("ParseIntLiteral(''): want ErrInvalidInt, got %v", err)
+	}
+}
+
+// REQ000634: ParseIntLiteral overflow returns error.
+func TestParseIntLiteral_Overflow(t *testing.T) {
+	_, err := ParseIntLiteral("99999999999999999999")
+	if err != ErrIntOverflow {
+		t.Errorf("ParseIntLiteral(overflow): want ErrIntOverflow, got %v", err)
+	}
+}
+
+// REQ000634: ParseIntLiteral max int64 succeeds.
+func TestParseIntLiteral_MaxInt64(t *testing.T) {
+	const max = 9223372036854775807
+	v, err := ParseIntLiteral("9223372036854775807")
+	if err != nil {
+		t.Fatalf("ParseIntLiteral(max): %v", err)
+	}
+	if v != max {
+		t.Errorf("got %d, want %d", v, max)
+	}
+}
 	if ErrUnexpectedChar.Error() != "lx: unexpected character" {
 		t.Error("unexpected ErrUnexpectedChar message")
 	}

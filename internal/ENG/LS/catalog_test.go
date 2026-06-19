@@ -348,3 +348,144 @@ func TestCatalog_PutStatsRollbackNewEntry(t *testing.T) {
 		t.Fatal("GetStats('b') should be nil after rollback")
 	}
 }
+
+func TestCatalog_PutRollbackAfterFlushFailure(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "catalog")
+	c, err := NewCatalog(dir)
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	entry := CatalogEntry{TableID: 1, Name: "t1", CreateSQL: "CREATE TABLE t1 (a INT)"}
+	if err := c.Put(entry); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if c.Len() != 1 {
+		t.Fatalf("Len = %d, want 1", c.Len())
+	}
+
+	if err := os.Remove(c.path); err != nil {
+		t.Fatalf("Remove catalog.dat: %v", err)
+	}
+	if err := os.Mkdir(c.path, 0o755); err != nil {
+		t.Fatalf("Mkdir over catalog.dat: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(c.path) })
+
+	entry2 := CatalogEntry{TableID: 2, Name: "t2", CreateSQL: "CREATE TABLE t2 (b INT)"}
+	err = c.Put(entry2)
+	if err == nil {
+		t.Fatal("Put: expected error, got nil")
+	}
+
+	if c.Len() != 1 {
+		t.Fatalf("Len = %d, want 1 after rollback", c.Len())
+	}
+	if _, err := c.GetByID(2); !errors.Is(err, ErrCatalogNotFound) {
+		t.Errorf("GetByID(2) = %v, want ErrCatalogNotFound", err)
+	}
+	if _, err := c.GetByName("t2"); !errors.Is(err, ErrCatalogNotFound) {
+		t.Errorf("GetByName(t2) = %v, want ErrCatalogNotFound", err)
+	}
+	got, err := c.GetByID(1)
+	if err != nil {
+		t.Fatalf("GetByID(1) after rollback: %v", err)
+	}
+	if got.Name != "t1" {
+		t.Errorf("Name = %q, want %q", got.Name, "t1")
+	}
+}
+
+func TestCatalog_NextIDRollbackAfterFlushFailure(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "catalog")
+	c, err := NewCatalog(dir)
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	beforeFirst := c.nextID // should be 1
+	first, err := c.NextID()
+	if err != nil {
+		t.Fatalf("NextID: %v", err)
+	}
+	if first != beforeFirst {
+		t.Fatalf("first NextID returned %d, expected %d", first, beforeFirst)
+	}
+
+	if err := os.Remove(c.path); err != nil {
+		t.Fatalf("Remove catalog.dat: %v", err)
+	}
+	if err := os.Mkdir(c.path, 0o755); err != nil {
+		t.Fatalf("Mkdir over catalog.dat: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(c.path) })
+
+	after := c.nextID // NextID incremented it; currently nextID is 2
+	_, err = c.NextID()
+	if err == nil {
+		t.Fatal("NextID: expected error, got nil")
+	}
+
+	// nextID must be rolled back to what it was before the failed call
+	if c.nextID != after {
+		t.Errorf("nextID = %d, want %d (should have rolled back)", c.nextID, after)
+	}
+}
+
+func TestCatalog_GetIndexNotFound(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "catalog")
+	c, err := NewCatalog(dir)
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	entry := CatalogEntry{TableID: 1, Name: "t", CreateSQL: "CREATE TABLE t (a INT)"}
+	if err := c.Put(entry); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if _, err := c.GetIndex(1, "nonexistent"); !errors.Is(err, ErrCatalogNotFound) {
+		t.Errorf("GetIndex(nonexistent name) = %v, want ErrCatalogNotFound", err)
+	}
+	if _, err := c.GetIndex(999, "any"); !errors.Is(err, ErrCatalogNotFound) {
+		t.Errorf("GetIndex(non-existent table) = %v, want ErrCatalogNotFound", err)
+	}
+}
+
+func TestCatalog_GetByNameClosed(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "catalog")
+	c, err := NewCatalog(dir)
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+
+	entry := CatalogEntry{TableID: 1, Name: "t", CreateSQL: "CREATE TABLE t (a INT)"}
+	if err := c.Put(entry); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	_, err = c.GetByName("t")
+	if !errors.Is(err, ErrCatalogClosed) {
+		t.Errorf("GetByName after Close: got %v, want ErrCatalogClosed", err)
+	}
+}
+
+func TestCatalog_PathOnNil(t *testing.T) {
+	var c *Catalog
+	if c.Path() != "" {
+		t.Errorf("Path on nil = %q, want empty string", c.Path())
+	}
+}
+
+func TestCatalog_CloseNil(t *testing.T) {
+	var c *Catalog
+	if err := c.Close(); err != nil {
+		t.Errorf("Close on nil: got %v, want nil", err)
+	}
+}

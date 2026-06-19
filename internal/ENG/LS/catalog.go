@@ -785,7 +785,12 @@ func (c *Catalog) Close() error {
 	return nil
 }
 
-func (c *Catalog) Path() string { return c.path }
+func (c *Catalog) Path() string {
+	if c == nil {
+		return ""
+	}
+	return c.path
+}
 
 func (c *Catalog) flushLocked() error {
 	var buf []byte

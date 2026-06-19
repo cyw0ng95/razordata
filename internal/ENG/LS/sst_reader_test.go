@@ -304,3 +304,81 @@ func TestSSTReader_MayContainPrefix_NoFalseNegatives(t *testing.T) {
 		t.Errorf("MayContainPrefix returned false for %d/%d inserted prefixes (REQ000599: prefix bloom modulus mismatch)", falseNegatives, keyCount)
 	}
 }
+
+func TestReadBlock_DictCompressed(t *testing.T) {
+	w := newSSTWriter()
+	w.Add([]byte("k1"), []byte("v1"))
+	w.Add([]byte("k2"), []byte("v2"))
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	reader, err := openSST(sstData)
+	if err != nil {
+		t.Fatalf("openSST: %v", err)
+	}
+	defer reader.Close()
+
+	if len(reader.indexBlock) == 0 {
+		t.Fatal("no index entries")
+	}
+	block := reader.readBlock(reader.indexBlock[0].blockOffset, reader.indexBlock[0].blockSize)
+	if block == nil {
+		t.Fatal("readBlock returned nil")
+	}
+	pairs, err := decodeBlock(block)
+	if err != nil {
+		t.Fatalf("decodeBlock: %v", err)
+	}
+	if len(pairs) != 2 {
+		t.Errorf("expected 2 kv pairs, got %d", len(pairs))
+	}
+	if string(pairs[0].key) != "k1" || string(pairs[0].value) != "v1" {
+		t.Errorf("first pair = (%q, %q), want (k1, v1)", pairs[0].key, pairs[0].value)
+	}
+}
+
+func TestSSTReader_Find_NotFoundByBloom(t *testing.T) {
+	w := newSSTWriter()
+	w.Add([]byte("a"), []byte("1"))
+	w.Add([]byte("b"), []byte("2"))
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	reader, err := openSST(sstData)
+	if err != nil {
+		t.Fatalf("openSST: %v", err)
+	}
+	defer reader.Close()
+
+	inserted := []string{"a", "b"}
+	// All inserted keys must be found
+	for _, key := range inserted {
+		v, found := reader.Find([]byte(key))
+		if !found {
+			t.Errorf("Find(%q) = false, want true", key)
+		}
+		if v == nil {
+			t.Errorf("Find(%q) value is nil", key)
+		}
+	}
+	// Try many candidates to find one the bloom filter rejects
+	foundBloomFalse := false
+	for _, key := range []string{"zzz", "none", "xxxx", "test", "key99", "hello", "world", "abcd", "efgh", "ijkl", "mnop", "qrst", "uvwx", "y123", "z890", "foo", "bar", "baz"} {
+		if !reader.mayContain([]byte(key)) {
+			foundBloomFalse = true
+			v, found := reader.Find([]byte(key))
+			if found {
+				t.Errorf("Find(%q) = (_, true) when bloom rejects; want (nil, false)", key)
+			}
+			if v != nil {
+				t.Errorf("Find(%q) value = %q, want nil", key, v)
+			}
+			break
+		}
+	}
+	if !foundBloomFalse {
+		t.Log("no candidate key was rejected by bloom filter (all false positives)")
+	}
+}

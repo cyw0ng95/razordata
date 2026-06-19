@@ -3,6 +3,7 @@ package ls
 import (
 	"bytes"
 	"encoding/binary"
+	"hash/crc32"
 	"testing"
 )
 
@@ -242,5 +243,90 @@ func TestSSTWriterBloomFalsePositivesReasonable(t *testing.T) {
 	}
 	if hits > 100 {
 		t.Errorf("false positive rate too high: %d/1000", hits)
+	}
+}
+
+func TestCompressBlockUncompressible(t *testing.T) {
+	data := make([]byte, 100)
+	for i := range data {
+		data[i] = byte(i*73 + 31)
+	}
+	result, err := compressBlock(data)
+	if err != nil {
+		t.Fatalf("compressBlock: %v", err)
+	}
+	if result[0] != 0 {
+		t.Errorf("flag = %d, want 0 (uncompressed) for incompressible data", result[0])
+	}
+	got, err := decompressBlock(result)
+	if err != nil {
+		t.Fatalf("decompressBlock: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Error("round-trip mismatch")
+	}
+}
+
+func TestDecompressBlockCorruptFlate(t *testing.T) {
+	data := []byte{1, 0xde, 0xad, 0xbe, 0xef}
+	_, err := decompressBlock(data)
+	if err == nil {
+		t.Error("expected error for corrupt flate data, got nil")
+	}
+}
+
+func TestFinish_CorrectCRC(t *testing.T) {
+	w := newSSTWriter()
+	w.Add([]byte("k1"), []byte("v1"))
+	w.Add([]byte("k2"), []byte("v2"))
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	if len(sstData) < sstFooterSize {
+		t.Fatal("SST data too small")
+	}
+	footerStart := len(sstData) - sstFooterSize
+	indexOffset := int(binary.LittleEndian.Uint64(sstData[footerStart:]))
+	// indexSize is not needed here
+	bloomOffset := binary.LittleEndian.Uint64(sstData[footerStart+12:])
+	// Find blocks before index
+	blockEnd := indexOffset
+	if bloomOffset > 0 && int(bloomOffset) < blockEnd {
+		blockEnd = int(bloomOffset)
+	}
+	if blockEnd == 0 {
+		t.Fatal("no blocks found")
+	}
+	reader, err := openSST(sstData)
+	if err != nil {
+		t.Fatalf("openSST: %v", err)
+	}
+	defer reader.Close()
+
+	for i, entry := range reader.indexBlock {
+		compressedBlock := sstData[entry.blockOffset : entry.blockOffset+entry.blockSize]
+		// Decompress the block to get the full block data including checksum footer
+		decompressed, err := decompressBlockDict(compressedBlock)
+		if err != nil {
+			decompressed, err = decompressBlock(compressedBlock)
+			if err != nil {
+				t.Fatalf("block %d: cannot decompress", i)
+			}
+		}
+		// Verify CRC: stored checksum = last 4 bytes
+		if len(decompressed) < 8 {
+			t.Fatalf("block %d: too short (%d bytes)", i, len(decompressed))
+		}
+		storedCRC := binary.LittleEndian.Uint32(decompressed[len(decompressed)-4:])
+		blockData := decompressed[:len(decompressed)-8]
+		computedCRC := crc32.Checksum(blockData, crc32Koopman)
+		if computedCRC != storedCRC {
+			t.Errorf("block %d: CRC mismatch: stored=%08x computed=%08x", i, storedCRC, computedCRC)
+		}
+		// Also verify decodeBlock succeeds
+		if _, err := decodeBlock(decompressed); err != nil {
+			t.Errorf("block %d: decodeBlock: %v", i, err)
+		}
 	}
 }

@@ -1420,7 +1420,268 @@ func TestParseFKColumnLevelDeferrable(t *testing.T) {
 	}
 }
 
-func TestParseFKMatchSimple(t *testing.T) {
+// REQ000635: isAggregateName
+func TestIsAggregateName(t *testing.T) {
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{"COUNT", true}, {"SUM", true}, {"AVG", true}, {"MIN", true}, {"MAX", true},
+		{"GROUP_CONCAT", true}, {"count", true}, {"group_concat", true},
+		{"FOO", false}, {"", false},
+	}
+	for _, c := range cases {
+		if got := isAggregateName(c.name); got != c.want {
+			t.Errorf("isAggregateName(%q) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// REQ000635: isMinMaxName
+func TestIsMinMaxName(t *testing.T) {
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{"MIN", true}, {"MAX", true}, {"min", true}, {"max", true},
+		{"COUNT", false}, {"SUM", false}, {"FOO", false},
+	}
+	for _, c := range cases {
+		if got := isMinMaxName(c.name); got != c.want {
+			t.Errorf("isMinMaxName(%q) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// REQ000635: isBinaryOp
+func TestIsBinaryOp(t *testing.T) {
+	cases := []struct {
+		typ  LX.TokenType
+		want bool
+	}{
+		{	LX.T_EQ, true}, {LX.T_NE, true}, {LX.T_LT, true}, {LX.T_LE, true},
+		{LX.T_GT, true}, {LX.T_GE, true}, {LX.T_AND, true}, {LX.T_OR, true},
+		{LX.T_PLUS, true}, {LX.T_MINUS, true}, {LX.T_STAR, true}, {LX.T_SLASH, true},
+		{LX.T_LIKE, true}, {LX.T_IS, true}, {LX.T_BITAND, true}, {LX.T_BITOR, true},
+		{LX.T_BITXOR, true}, {LX.T_MOD, true}, {LX.T_CONCAT, true},
+		{LX.T_IDENT, false}, {LX.T_INT, false}, {LX.T_EOF, false},
+	}
+	for _, c := range cases {
+		if got := isBinaryOp(c.typ); got != c.want {
+			t.Errorf("isBinaryOp(%v) = %v, want %v", c.typ, got, c.want)
+		}
+	}
+}
+
+// REQ000635: precedence
+func TestPrecedence(t *testing.T) {
+	cases := []struct {
+		typ  LX.TokenType
+		want int
+	}{
+		{LX.T_OR, 1}, {LX.T_AND, 2}, {LX.T_BITOR, 3}, {LX.T_BITXOR, 4},
+		{LX.T_BITAND, 5}, {LX.T_EQ, 6}, {LX.T_LT, 6}, {LX.T_GT, 6},
+		{LX.T_LIKE, 6}, {LX.T_IS, 6}, {LX.T_CONCAT, 7},
+		{LX.T_PLUS, 8}, {LX.T_MINUS, 8}, {LX.T_STAR, 9}, {LX.T_SLASH, 9},
+		{LX.T_MOD, 9}, {LX.T_IDENT, 0},
+	}
+	for _, c := range cases {
+		if got := precedence(c.typ); got != c.want {
+			t.Errorf("precedence(%v) = %d, want %d", c.typ, got, c.want)
+		}
+	}
+}
+
+// REQ000635: tokenName
+func TestTokenName(t *testing.T) {
+	if n := tokenName(LX.T_EOF); n != "EOF" {
+		t.Errorf("tokenName(T_EOF) = %q, want %q", n, "EOF")
+	}
+	if n := tokenName(LX.T_SELECT); n != "SELECT" {
+		t.Errorf("tokenName(T_SELECT) = %q, want %q", n, "SELECT")
+	}
+	if n := tokenName(LX.T_IDENT); n != "identifier" {
+		t.Errorf("tokenName(T_IDENT) = %q, want %q", n, "identifier")
+	}
+	if n := tokenName(LX.TokenType(-1)); n != "<error>" {
+		t.Errorf("tokenName(-1) = %q, want %q", n, "<error>")
+	}
+	if n := tokenName(LX.TokenType(9999)); n != "<unknown>" {
+		t.Errorf("tokenName(9999) = %q, want %q", n, "<unknown>")
+	}
+}
+
+// REQ000635: parseFloat
+func TestParseFloat(t *testing.T) {
+	cases := []struct {
+		input string
+		want  float64
+	}{
+		{"3.14", 3.14}, {"0.5", 0.5}, {"123", 123}, {"0.001", 0.001},
+		{"10.0", 10.0}, {"0.0", 0},
+	}
+	for _, c := range cases {
+		if got := parseFloat(c.input); got != c.want {
+			t.Errorf("parseFloat(%q) = %f, want %f", c.input, got, c.want)
+		}
+	}
+}
+
+// REQ000635: parseCoalesce
+func TestParseCoalesce(t *testing.T) {
+	p := NewParser("COALESCE(1, 2, 3)")
+	p.advance()
+	expr, err := p.parseCoalesce()
+	if err != nil {
+		t.Fatalf("parseCoalesce: %v", err)
+	}
+	fc, ok := expr.(*FunctionCall)
+	if !ok {
+		t.Fatalf("expected *FunctionCall, got %T", expr)
+	}
+	if fc.Name != "COALESCE" {
+		t.Errorf("name: got %s, want COALESCE", fc.Name)
+	}
+	if len(fc.Args) != 3 {
+		t.Errorf("args: got %d, want 3", len(fc.Args))
+	}
+}
+
+// REQ000635: parseNullif
+func TestParseNullif(t *testing.T) {
+	p := NewParser("NULLIF(1, 2)")
+	p.advance()
+	expr, err := p.parseNullif()
+	if err != nil {
+		t.Fatalf("parseNullif: %v", err)
+	}
+	fc, ok := expr.(*FunctionCall)
+	if !ok {
+		t.Fatalf("expected *FunctionCall, got %T", expr)
+	}
+	if fc.Name != "NULLIF" {
+		t.Errorf("name: got %s, want NULLIF", fc.Name)
+	}
+	if len(fc.Args) != 2 {
+		t.Errorf("args: got %d, want 2", len(fc.Args))
+	}
+}
+
+// REQ000635: parseTypeSize
+func TestParseTypeSize(t *testing.T) {
+	p := NewParser("(100)")
+	p.advance()
+	var size int
+	if err := p.parseTypeSize(&size); err != nil {
+		t.Fatalf("parseTypeSize: %v", err)
+	}
+	if size != 100 {
+		t.Errorf("size: got %d, want 100", size)
+	}
+}
+
+// REQ000635: parseTypePrecision
+func TestParseTypePrecision(t *testing.T) {
+	p := NewParser("(10, 2)")
+	p.advance()
+	var prec, scale int
+	if err := p.parseTypePrecision(&prec, &scale); err != nil {
+		t.Fatalf("parseTypePrecision: %v", err)
+	}
+	if prec != 10 {
+		t.Errorf("precision: got %d, want 10", prec)
+	}
+	if scale != 2 {
+		t.Errorf("scale: got %d, want 2", scale)
+	}
+}
+
+// REQ000635: parseIndexHint — INDEXED BY
+func TestParseIndexHint_IndexedBy(t *testing.T) {
+	p := NewParser("INDEXED BY idx1")
+	p.advance()
+	hint := p.parseIndexHint()
+	if hint == nil {
+		t.Fatal("expected non-nil hint")
+	}
+	if hint.IndexedBy != "idx1" {
+		t.Errorf("IndexedBy: got %q, want %q", hint.IndexedBy, "idx1")
+	}
+}
+
+// REQ000635: parseIndexHint — NOT INDEXED
+func TestParseIndexHint_NotIndexed(t *testing.T) {
+	p := NewParser("NOT INDEXED")
+	p.advance()
+	hint := p.parseIndexHint()
+	if hint == nil {
+		t.Fatal("expected non-nil hint")
+	}
+	if hint.IndexedBy != "" {
+		t.Errorf("IndexedBy for NOT INDEXED: got %q, want empty", hint.IndexedBy)
+	}
+}
+
+// REQ000635: parseFKAction — CASCADE
+func TestParseFKAction_Cascade(t *testing.T) {
+	p := NewParser("CASCADE")
+	p.advance()
+	action := p.parseFKAction()
+	if action != "CASCADE" {
+		t.Errorf("got %q, want %q", action, "CASCADE")
+	}
+}
+
+// REQ000635: parseFKAction — SET NULL
+func TestParseFKAction_SetNull(t *testing.T) {
+	p := NewParser("SET NULL")
+	p.advance()
+	action := p.parseFKAction()
+	if action != "SET NULL" {
+		t.Errorf("got %q, want %q", action, "SET NULL")
+	}
+}
+
+// REQ000635: parseFKAction — NO ACTION
+func TestParseFKAction_NoAction(t *testing.T) {
+	// default case
+	p := NewParser("FOO")
+	p.advance()
+	action := p.parseFKAction()
+	if action != "NO ACTION" {
+		t.Errorf("got %q, want %q", action, "NO ACTION")
+	}
+}
+
+// REQ000635: parseFKAction — RESTRICT
+func TestParseFKAction_Restrict(t *testing.T) {
+	p := NewParser("RESTRICT")
+	p.advance()
+	action := p.parseFKAction()
+	if action != "RESTRICT" {
+		t.Errorf("got %q, want %q", action, "RESTRICT")
+	}
+}
+
+// REQ000635: parseFKAction — SET DEFAULT
+func TestParseFKAction_SetDefault(t *testing.T) {
+	p := NewParser("SET DEFAULT")
+	p.advance()
+	action := p.parseFKAction()
+	if action != "SET DEFAULT" {
+		t.Errorf("got %q, want %q", action, "SET DEFAULT")
+	}
+}
+
+// REQ000635: parseFKAction — NO with non-ACTION returns "NO"
+func TestParseFKAction_NoWithoutAction(t *testing.T) {
+	p := NewParser("NO CASCADE")
+	p.advance()
+	action := p.parseFKAction()
+	if action != "NO" {
+		t.Errorf("got %q, want %q", action, "NO")
+	}
+}
 	p := NewParser("CREATE TABLE t (a INT, FOREIGN KEY (a) REFERENCES r (b) MATCH SIMPLE ON DELETE CASCADE)")
 	stmt, err := p.Parse()
 	if err != nil {

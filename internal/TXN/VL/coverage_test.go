@@ -963,11 +963,86 @@ func TestManager_Begin_NoSlots(t *testing.T) {
 	}
 }
 
-// TestTx_Commit_NoChainInWriteSet covers the Commit path where
-// the write set contains a key whose chain is nil at commit time
-// (the `if chain == nil { continue }` branch). The function must
-// skip such keys without panicking.
-func TestTx_Commit_NoChainInWriteSet(t *testing.T) {
+// REQ000633: ForceAbortAll — 0 active txns returns 0.
+func TestForceAbortAll_ZeroActive(t *testing.T) {
+	m := NewManager()
+	defer m.Close()
+	if got := m.ForceAbortAll(); got != 0 {
+		t.Errorf("ForceAbortAll with 0 active: want 0, got %d", got)
+	}
+}
+
+// REQ000633: ForceAbortAll — N active returns N.
+func TestForceAbortAll_WithActive(t *testing.T) {
+	m := NewManager()
+	defer m.Close()
+
+	tx1, err := m.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx2, err := m.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tx1
+	_ = tx2
+
+	if got := m.ForceAbortAll(); got != 2 {
+		t.Errorf("ForceAbortAll with 2 active: want 2, got %d", got)
+	}
+	if got := m.Stats().Aborted; got != 2 {
+		t.Errorf("Aborted counter: want 2, got %d", got)
+	}
+}
+
+// REQ000633: ForceAbortAll — idempotent (second call returns 0).
+func TestForceAbortAll_Idempotent(t *testing.T) {
+	m := NewManager()
+	defer m.Close()
+
+	tx, err := m.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tx
+
+	if got := m.ForceAbortAll(); got != 1 {
+		t.Fatalf("first call: want 1, got %d", got)
+	}
+	if got := m.ForceAbortAll(); got != 0 {
+		t.Errorf("second call: want 0, got %d", got)
+	}
+}
+
+// REQ000633: StopGCWithCtx with background context returns nil.
+func TestStopGCWithCtx_Background(t *testing.T) {
+	StartGC()
+	err := StopGCWithCtx(context.Background())
+	// After this the GC is stopped; no need to call StopGC again.
+	if err != nil {
+		t.Errorf("StopGCWithCtx with background ctx: want nil, got %v", err)
+	}
+}
+
+// REQ000633: StopGCWithCtx with cancelled context returns error.
+func TestStopGCWithCtx_Cancelled(t *testing.T) {
+	StartGC()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := StopGCWithCtx(ctx)
+	if err != context.Canceled {
+		t.Errorf("StopGCWithCtx with cancelled ctx: want context.Canceled, got %v", err)
+	}
+}
+
+// REQ000633: StopGCWithCtx before StartGC returns nil.
+func TestStopGCWithCtx_BeforeStart(t *testing.T) {
+	err := StopGCWithCtx(context.Background())
+	if err != nil {
+		t.Errorf("StopGCWithCtx before StartGC: want nil, got %v", err)
+	}
+}
 	m := NewManager()
 	defer m.Close()
 
