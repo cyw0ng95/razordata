@@ -256,3 +256,50 @@ func TestFindAfterConcurrentInsert(t *testing.T) {
 		}
 	}
 }
+
+// TestSkiplist_HigherLevelLinking verifies REQ000600: the pre-fix
+// Insert only CAS-linked level 0, so even when sl.level was elevated
+// to 3+, head.next[1] and head.next[2] remained nil. Find started
+// at the highest level, found nil immediately, and fell to a full
+// linear scan at level 0 (degenerate O(n) instead of O(log n)).
+// The fix CAS-links levels 1..lvl-1 inside Insert. This test
+// inserts many keys (so randomLevel produces lvl > 1 with high
+// probability) and walks head.next[1..maxLevel] verifying that
+// each upper level points to a real node (not just nil).
+func TestSkiplist_HigherLevelLinking(t *testing.T) {
+	sl := New()
+	const N = 5000
+	// Use 4-byte keys so prefix/suffix comparisons are stable.
+	for i := 0; i < N; i++ {
+		key := []byte{
+			byte(i >> 24), byte(i >> 16), byte(i >> 8), byte(i),
+		}
+		sl.Insert(key, []byte{byte(i)})
+	}
+
+	// Walk each level from head and verify it's non-nil (some
+	// level should have at least one node linked). If higher-level
+	// CAS-linking is broken, all levels past 0 will be nil.
+	nonEmptyLevels := 0
+	for lvl := 1; lvl < maxLevel; lvl++ {
+		c := sl.head.Load()
+		if c.next[lvl].Load() != nil {
+			nonEmptyLevels++
+		}
+	}
+	if nonEmptyLevels == 0 {
+		t.Errorf("REQ000600: no higher levels linked after %d inserts (sl.level=%d); skiplist degenerates to O(n)",
+			N, sl.level.Load())
+	}
+
+	// Also verify Find is still correct.
+	for i := 0; i < N; i++ {
+		key := []byte{
+			byte(i >> 24), byte(i >> 16), byte(i >> 8), byte(i),
+		}
+		if _, found := sl.Find(key); !found {
+			t.Errorf("Find key %d not found", i)
+			break
+		}
+	}
+}

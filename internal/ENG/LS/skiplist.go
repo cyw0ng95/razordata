@@ -122,9 +122,29 @@ func (sl *skipList) Insert(key, value []byte) {
 			newNode.next[i].Store(successors[i])
 		}
 
+		// REQ000600: CAS-link level 0 first. Once that succeeds
+		// the node is reachable, so subsequent CAS failures on
+		// higher levels only mean the upper-level topology has
+		// changed; we re-walk that single level from the head to
+		// find the new predecessor/successor and retry.
 		inserted := predecessors[0].next[0].CompareAndSwap(next, newNode)
 		if !inserted {
 			continue
+		}
+
+		// Link each higher level with the same retry-per-level
+		// pattern. Re-reading sl.level inside the loop handles the
+		// race where another inserter raises the level past us.
+		for i := 1; i < lvl; i++ {
+			for {
+				curLevel := sl.level.Load()
+				pred, succ := findPredSucc(head, curLevel, i, key)
+				predecessors[i] = pred
+				successors[i] = succ
+				if pred.next[i].CompareAndSwap(succ, newNode) {
+					break
+				}
+			}
 		}
 
 		if lvl > int(currentLevel) {
@@ -134,6 +154,20 @@ func (sl *skipList) Insert(key, value []byte) {
 		sl.len.Add(1)
 		return
 	}
+}
+
+// findPredSucc walks a single level i from head and returns the
+// predecessor (last node with key < search) and successor (first
+// node with key >= search). Used by Insert's higher-level retry
+// loop (REQ000600) to recover from a CAS failure on level i.
+func findPredSucc(head *node, level int32, i int, key []byte) (*node, *node) {
+	c := head
+	n := c.next[i].Load()
+	for n != nil && bytes.Compare(n.key, key) < 0 {
+		c = n
+		n = c.next[i].Load()
+	}
+	return c, n
 }
 
 func (sl *skipList) Find(key []byte) ([]byte, bool) {
