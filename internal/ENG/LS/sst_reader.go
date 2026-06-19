@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"hash/crc32"
 	"io"
+	"unsafe"
 )
 
 type sstReader struct {
@@ -216,8 +217,25 @@ func (r *sstReader) readBlock(offset, size int) []byte {
 }
 
 type kvPair struct {
+	// key and value are borrowed pointers into the SST data
+	// They point directly into r.data without copying
 	key   []byte
 	value []byte
+}
+
+// kvPairFromData creates a kvPair with borrowed pointers.
+// The key and value slices point directly into the data buffer.
+func kvPairFromData(data []byte, keyOffset, keyLen int, valOffset, valLen int) kvPair {
+	if keyLen < 0 || valLen < 0 {
+		return kvPair{}
+	}
+	// Use unsafe.Pointer arithmetic to create slices without copying
+	keyPtr := unsafe.Pointer(&data[keyOffset])
+	valPtr := unsafe.Pointer(&data[valOffset])
+	return kvPair{
+		key:   unsafe.Slice((*byte)(keyPtr), keyLen),
+		value: unsafe.Slice((*byte)(valPtr), valLen),
+	}
 }
 
 func decodeBlock(data []byte) ([]kvPair, error) {
@@ -265,25 +283,28 @@ func decodeBlock(data []byte) ([]kvPair, error) {
 			if pos >= len(blockData) {
 				break
 			}
-			keyLen, n := decodeVarint(blockData[pos:])
-			pos += n
+			keyLen, keyVarintLen := decodeVarint(blockData[pos:])
+			pos += keyVarintLen
 
 			if pos+int(keyLen) > len(blockData) {
 				break
 			}
-			key := blockData[pos : pos+int(keyLen)]
-			pos += int(keyLen)
 
-			valueLen, n := decodeVarint(blockData[pos:])
-			pos += n
+			valueLen, valVarintLen := decodeVarint(blockData[pos+int(keyLen):])
 
-			if pos+int(valueLen) > len(blockData) {
-				break
-			}
-			value := blockData[pos : pos+int(valueLen)]
-			pos += int(valueLen)
+			// Borrow pointers directly into blockData (zero-copy)
+			// key starts at pos (after keyLen varint)
+			// value starts after key and valueLen varint
+			keyOffset := pos
+			valOffset := pos + int(keyLen) + valVarintLen
+			pairs = append(pairs, kvPairFromData(
+				blockData,
+				keyOffset, int(keyLen),
+				valOffset, int(valueLen),
+			))
 
-			pairs = append(pairs, kvPair{key: append([]byte(nil), key...), value: append([]byte(nil), value...)})
+			// Advance past key, valueLen varint, and value
+			pos = valOffset + int(valueLen)
 		}
 	}
 

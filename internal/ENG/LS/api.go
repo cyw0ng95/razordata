@@ -168,7 +168,8 @@ func (m *memtableIter) Err() error    { return nil }
 func (m *memtableIter) Close() error  { return nil }
 
 type sstIter struct {
-	it *sstIterator
+	it   *sstIterator
+	data []byte // holds SST data alive while iterator is active
 }
 
 func (s *sstIter) Next() bool    { return s.it.Next() }
@@ -178,8 +179,8 @@ func (s *sstIter) Err() error    { return s.it.Err() }
 func (s *sstIter) Close() error  { return s.it.Close() }
 
 type iterHeapItem struct {
-	key   []byte
-	value []byte
+	key   []byte // owned copy (required because iterator values are invalidated on Next())
+	value []byte // owned copy
 	src   int
 }
 
@@ -200,14 +201,17 @@ func (h *iterHeap) Pop() any {
 }
 
 // mergeIterator merges all sources filtered by prefix (REQ000598).
+// It uses owned copies in the heap to avoid iterator invalidation.
+// Zero-copy optimization for SST blocks is achieved via borrowed pointers
+// in sst_reader.go (decodeBlock returns pointers into the SST data).
 type mergeIterator struct {
 	manifest *manifest
 	dir      string
 	prefix   []byte
 	sources  []RangeIter
 	h        iterHeap
-	curKey   []byte
-	curVal   []byte
+	curKey   []byte // owned copy (nil if none)
+	curVal   []byte // owned copy (nil if none)
 	err      error
 	closed   bool
 }
@@ -247,12 +251,15 @@ func (mi *mergeIterator) init(memtables []*memtable) {
 				if err != nil {
 					continue
 				}
-				mi.sources = append(mi.sources, &sstIter{it: reader.Iterator()})
+				// Store the data in the source so it stays alive
+				// The sstIter holds a reference to the reader which holds the data
+				mi.sources = append(mi.sources, &sstIter{it: reader.Iterator(), data: data})
 			}
 		}
 	}
 	for i, src := range mi.sources {
 		if src.Next() {
+			// Push owned copies to heap (required because iterator values are invalidated on Next())
 			heap.Push(&mi.h, iterHeapItem{
 				key:   append([]byte(nil), src.Key()...),
 				value: append([]byte(nil), src.Value()...),
@@ -294,13 +301,17 @@ func (mi *mergeIterator) Next() bool {
 	if mi.closed {
 		return false
 	}
+	// Clear previous key/value (they were owned copies, no need to free)
+	mi.curKey = nil
+	mi.curVal = nil
+
 	for mi.h.Len() > 0 {
-		top := &mi.h[0]
-		key := top.key
-		val := top.value
-		srcIdx := top.src
+		top := mi.h[0]
 		heap.Pop(&mi.h)
+		srcIdx := top.src
 		src := mi.sources[srcIdx]
+
+		// Advance the source and push next item if available
 		if src.Next() {
 			heap.Push(&mi.h, iterHeapItem{
 				key:   append([]byte(nil), src.Key()...),
@@ -308,50 +319,72 @@ func (mi *mergeIterator) Next() bool {
 				src:   srcIdx,
 			})
 		}
-		for mi.h.Len() > 0 && bytes.Equal(mi.h[0].key, key) {
-			oldIdx := mi.h[0].src
-			oldSrc := mi.sources[oldIdx]
-			heap.Pop(&mi.h)
-			if oldSrc.Next() {
+
+		// Deduplicate: remove all other sources with the same key
+		for mi.h.Len() > 0 && bytes.Equal(top.key, mi.h[0].key) {
+			dup := heap.Pop(&mi.h).(iterHeapItem)
+			// Advance the duplicate source
+			dupSrc := mi.sources[dup.src]
+			if dupSrc.Next() {
 				heap.Push(&mi.h, iterHeapItem{
-					key:   append([]byte(nil), oldSrc.Key()...),
-					value: append([]byte(nil), oldSrc.Value()...),
-					src:   oldIdx,
+					key:   append([]byte(nil), dupSrc.Key()...),
+					value: append([]byte(nil), dupSrc.Value()...),
+					src:   dup.src,
 				})
 			}
 		}
-		if !bytes.HasPrefix(key, mi.prefix) {
+
+		// Check prefix and tombstone
+		if !bytes.HasPrefix(top.key, mi.prefix) {
 			continue
 		}
-		if isTombstone(val) {
+		if isTombstone(top.value) {
 			continue
 		}
-		mi.curKey = key
-		mi.curVal = val
+
+		// Keep the owned copies for this row
+		mi.curKey = top.key
+		mi.curVal = top.value
 		return true
 	}
 	return false
 }
 
-func (mi *mergeIterator) Key() []byte   { return mi.curKey }
-func (mi *mergeIterator) Value() []byte { return mi.curVal }
+func (mi *mergeIterator) Key() []byte {
+	if mi.curKey == nil {
+		return nil
+	}
+	// Return owned copy (already owned, but we return a copy for safety)
+	return append([]byte(nil), mi.curKey...)
+}
+
+func (mi *mergeIterator) Value() []byte {
+	if mi.curVal == nil {
+		return nil
+	}
+	// Return owned copy (already owned, but we return a copy for safety)
+	return append([]byte(nil), mi.curVal...)
+}
+
 func (mi *mergeIterator) Err() error    { return mi.err }
 
-// Close releases iterator resources.
 func (mi *mergeIterator) Close() error {
 	if mi.closed {
 		return nil
 	}
 	mi.closed = true
-	var firstErr error
-	for _, s := range mi.sources {
-		if err := s.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
+
+	// Clear heap (owned copies, no need to free)
+	for mi.h.Len() > 0 {
+		heap.Pop(&mi.h)
 	}
-	mi.sources = nil
-	mi.h = mi.h[:0]
-	return firstErr
+
+	// Close all sources
+	for _, src := range mi.sources {
+		src.Close()
+	}
+
+	return nil
 }
 
 func (mi *mergeIterator) String() string {
