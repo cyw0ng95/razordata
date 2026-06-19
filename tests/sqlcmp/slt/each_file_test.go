@@ -141,6 +141,9 @@ func runSLTFile(t *testing.T, path string, perFile time.Duration) (Stats, string
 // failed ones. The runner is sequential and tolerant; a single
 // failure does not abort the run, so we re-iterate the records
 // ourselves to surface the failing SQL alongside its verdict.
+// Only RecordQuery records are re-run — RecordStatementOK records
+// are skipped to avoid side effects (e.g., duplicate INSERTs,
+// "table already exists" errors) that would corrupt the diagnosis.
 func diagnoseFailures(ctx context.Context, driver Driver, recs []Record, n int) string {
 	if n <= 0 {
 		return ""
@@ -152,22 +155,17 @@ func diagnoseFailures(ctx context.Context, driver Driver, recs []Record, n int) 
 			break
 		}
 		rec := &recs[i]
-		if rec.Kind != RecordStatementOK && rec.Kind != RecordQuery {
+		if rec.Kind != RecordQuery {
 			continue
 		}
 		var err error
-		switch rec.Kind {
-		case RecordStatementOK:
-			err = driver.Exec(ctx, rec.SQL)
-		case RecordQuery:
-			rs, qerr := driver.Query(ctx, rec.SQL)
-			if qerr == nil {
-				if diff := DiffResultSets(rs, rec); diff != "" {
-					err = fmt.Errorf("result mismatch:\n%s", diff)
-				}
-			} else {
-				err = qerr
+		rs, qerr := driver.Query(ctx, rec.SQL)
+		if qerr == nil {
+			if diff := DiffResultSets(rs, rec); diff != "" {
+				err = fmt.Errorf("result mismatch:\n%s", diff)
 			}
+		} else {
+			err = qerr
 		}
 		if err == nil {
 			continue

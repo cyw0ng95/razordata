@@ -200,6 +200,27 @@ All files under `docs/design/` are the authoritative source of truth for the dat
 
 When the user requests a design change, the AI should describe the change in full detail and let the human apply it, or ask the human to edit the file directly.
 
+## SLT Corpus Protection
+
+**AI agents must NOT update, modify, or delete the SLT (SQLLogicTest) corpus.** The corpus at `corpus/test/` is a read-only reference dataset used for testing. Agents may read and run tests against it, but must never:
+
+- Add new `.test` files to the corpus
+- Modify existing `.test` files
+- Delete any files from the corpus
+- Update the git submodule beyond initialization
+
+The corpus is maintained by humans only. If test coverage is insufficient, create new tests in `tests/sqlcmp/` instead of modifying the corpus.
+
+## SLT Result Verification
+
+Agents **are allowed** to use `sqlite3` to verify and research SLT test results. This is useful for:
+- Debugging failing test cases
+- Understanding expected behavior
+- Validating query results independently
+- Investigating edge cases in the test corpus
+
+Use sqlite3 as a reference implementation to compare against razor-data's output when troubleshooting test failures.
+
 ## Compatibility
 
 - Go 1.22+ (use `slices`, `maps`, `iter`).

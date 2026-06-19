@@ -27,7 +27,7 @@ func DiffResultSets(actual *ResultSet, rec *Record) string {
 	// "N values hashing to HEX" row, validate the actual cell
 	// count and MD5 match.
 	if len(expected) == 1 && len(expected[0]) == 1 && strings.Contains(expected[0][0].Text, "values hashing to") {
-		return diffHashed(actual, expected[0][0].Text)
+		return diffHashed(actual, expected[0][0].Text, rec.Sort)
 	}
 	// Otherwise copy and (optionally) sort the actual result.
 	got := append([][]Value(nil), actual.Rows...)
@@ -62,7 +62,10 @@ func DiffResultSets(actual *ResultSet, rec *Record) string {
 // tab-separated cell strings lexicographically), then hashes each
 // cell followed by newline. Sorting individual cells (flatten-then-sort)
 // would produce a different hash for multi-column queries.
-func diffHashed(actual *ResultSet, marker string) string {
+//
+// When sortMode is NoSort, the rows are hashed in their original order
+// without sorting, respecting the nosort directive in the test file.
+func diffHashed(actual *ResultSet, marker string, sortMode SortMode) string {
 	var n int
 	var want string
 	if _, err := fmt.Sscanf(marker, "%d values hashing to %s", &n, &want); err != nil {
@@ -71,17 +74,31 @@ func diffHashed(actual *ResultSet, marker string) string {
 		}
 		return "hashed: unparseable marker " + marker
 	}
-	// Sort rows as tab-separated strings (SQLite sqllogictest convention).
-	sorted := make([][]Value, len(actual.Rows))
-	copy(sorted, actual.Rows)
-	sort.Slice(sorted, func(i, j int) bool {
-		ai := rowString(sorted[i])
-		aj := rowString(sorted[j])
-		return ai < aj
-	})
-	var flat []Value
-	for _, row := range sorted {
-		flat = append(flat, row...)
+	// Handle empty result set
+	if len(actual.Rows) == 0 {
+		if n == 0 {
+			return ""
+		}
+		return fmt.Sprintf("hashed: got 0 cells, want %d", n)
+	}
+	flat := make([]Value, 0, len(actual.Rows)*len(actual.Rows[0]))
+	if sortMode == NoSort {
+		// Respect nosort: hash in original order without sorting.
+		for _, row := range actual.Rows {
+			flat = append(flat, row...)
+		}
+	} else {
+		// Sort rows as tab-separated strings (SQLite sqllogictest convention).
+		sorted := make([][]Value, len(actual.Rows))
+		copy(sorted, actual.Rows)
+		sort.Slice(sorted, func(i, j int) bool {
+			ai := rowString(sorted[i])
+			aj := rowString(sorted[j])
+			return ai < aj
+		})
+		for _, row := range sorted {
+			flat = append(flat, row...)
+		}
 	}
 	if len(flat) != n {
 		return fmt.Sprintf("hashed: got %d cells, want %d", len(flat), n)
