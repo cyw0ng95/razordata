@@ -819,7 +819,10 @@ func (c *Catalog) flushLocked() error {
 		if err != nil {
 			return err
 		}
-		_ = f.Sync()
+		if err := f.Sync(); err != nil {
+			f.Close()
+			return err
+		}
 		f.Close()
 	}
 	if err := os.Rename(tmpPath, c.path); err != nil {
