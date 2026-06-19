@@ -2,6 +2,7 @@ package ls
 
 import (
 	"encoding/binary"
+	"log/slog"
 
 	"github.com/cyw0ng95/razordata/internal/ENG/SC"
 	tb "github.com/cyw0ng95/razordata/internal/ENG/TB"
@@ -84,7 +85,9 @@ func (c *catalog) DropTable(tableID uint64) error {
 		return err
 	}
 
-	c.index.Delete([]byte(schema.Name))
+	if !c.index.Delete([]byte(schema.Name)) {
+		slog.Warn("index delete failed for dropped table", "table", schema.Name)
+	}
 
 	return nil
 }
