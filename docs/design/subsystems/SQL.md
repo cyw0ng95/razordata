@@ -432,6 +432,14 @@ The following requirements have been implemented and shipped; they are now part 
 | REQ000561 | Foreign key `MATCH name` + `[NOT] DEFERRABLE` — parser tokens + AST fields | iter-28 |
 | REQ000565 | `COLLATE collation_name` on indexed columns and ordering terms | iter-28 |
 | REQ000566 | `CREATE INDEX ... WHERE expr` (partial index) | iter-28 |
+| REQ000453 | Scalar `IN (literal-list)` — `SELECT 1 IN (2)`, `SELECT 1 NOT IN (2)` return 1 row with correct boolean via `Values` operator + `evalIn` path | iter-28 |
+| REQ000454 | JOIN duplicate rows fix — `PL/memo.go` `writeStmt` missing `Joins`/`GroupBy`/`Having`/`SubqueryFrom` fields in `Select` serialization, causing different join queries to share stale memo keys; added missing field serialization | iter-27 |
+| REQ000523 | `GROUP_CONCAT(x, sep)` configurable separator — 2nd arg parsed as separator expression in `AggregateFunc.Separator`; `evalAggregateOver` evaluates it once; default `,` when nil | iter-28 |
+| REQ000562 | `CREATE TABLE WITHOUT ROWID` parser — `WithoutRowID` flag on `CreateTableStmt` | iter-28.2 |
+| REQ000557 | `ATTACH`/`DETACH DATABASE` parser + executor stub returning `ErrMultiDatabaseNotSupported` | iter-28.2 |
+| REQ000545 | Selection vector runs — `SelRange{Start,End}` inclusive-end compact representation; `selToRanges`/`rangesToSel` helpers | iter-28.2 |
+| REQ000550 | Predicate cache — LRU keyed by predicate string, plan as `interface{}` | iter-28.2 |
+| REQ000554 | Parallel IN-list evaluation — `evalInListBatch` with int64 sort+binsearch or string hash set | iter-28.2 |
 
 ### PL — Planner
 

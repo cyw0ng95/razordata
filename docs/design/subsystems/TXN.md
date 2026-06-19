@@ -452,6 +452,8 @@ The following requirements have been implemented and shipped; they are now part 
 | REQ000308 | TXN/LC — QSBR read path (64-shard quiescent reclamation) | iter-27 |
 | REQ000532 | TXN/MV — Arena.promote() initOldMu taken before nil check | iter-28 (audit) |
 | REQ000307 | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | iter-28 |
+| REQ000551 | Time-traveling snapshot pruning — `GCVersionChain`/`GCAllChains` return prune candidates below `oldestActiveReadTS` | iter-28.2 |
+| REQ000555 | Lock-free transaction slot recycling — Treiber stack (`atomic.Pointer` CAS) replaces mutex-guarded freeList | iter-28.2 |
 | REQ000121 | TXN-API — `BEGIN` / `COMMIT` / `ROLLBACK` | iter-08 |
 
 ## Open Issues

@@ -228,6 +228,7 @@ The following requirements have been implemented and shipped; they are now part 
 | REQ000299 | WAL columnar batch encoding (column-major, single envelope CRC) | iter-27 |
 | REQ000301 | Async fsync (buffered channel with `AsyncSyncResult`, `inflightFsyncs` WaitGroup, `Close` blocks on in-flight fsyncs) | iter-27 (Phase 6) |
 | REQ000317 | Parallel WAL replay by key-range partition | iter-27 |
+| REQ000541 | Batched LSN reservation — `Reserve(n)` atomically claims `[start,start+n)` | iter-28.2 |
 
 ## Open Issues
 

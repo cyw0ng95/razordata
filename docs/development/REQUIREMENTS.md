@@ -31,25 +31,6 @@
 
 | ID | Subsystem | Requirement | Iteration |
 |---|---|---|---|
-| REQ000530 | SQL/EX | Window function RANGE frame spec — implement `RANGE BETWEEN ...` frame + peer-group + `aggOverFrame` | iter-28.2 |
-| REQ000553 | FIL/DF | Read-ahead/prefetch — `posix_fadvise(WILLNEED\|SEQUENTIAL)` on sequential SST scan; Linux-only, no-op fallback | iter-28.2 |
-| REQ000585 | SQL/EX | Remove duplicate WHERE evaluation in DML — Update.Next/Delete.Next no longer re-evaluate WHERE after Filter | iter-28.2 |
-| REQ000589 | ENG/LS | Remove dead code — subFileName, IncRef/DecRef, dead suppressors, duplicate flushManager fields | iter-28.2 |
-| REQ000592 | ENG/LS | Unify error sentinels — single `ErrNotFound` in errors.go; `errors.Is` replaces string-match `isNotFound` | iter-28.2 |
-| REQ000595 | MEM/BF | Close must flush dirty pages — iterate dirty slots, WriteBlock before clearing flags | iter-28.2 |
-| REQ000596 | MEM/BF | Fix Pin/Unpin TOCTOU race — hold RLock through Pin operation | iter-28.2 |
-| REQ000597 | ENG/LS | Remove unused flushManager duplicate tracking — removed `activeMemtable`, `frozenMemtables`, `Get`, `Insert` | iter-28.2 |
-| REQ000598 | ENG/LS | Make MergeIterator accept explicit dependencies — takes `[]*memtable`, `*manifest`, `string dir` | iter-28.2 |
-| REQ000608 | SQL/EX | Fix vectorized comparisons ignoring NULL bitmap — `isNull` guard on all 6 compare functions | iter-28.2 |
-| REQ000611 | SYS/SY | Fix shared Executor race — per-call executor `ShallowCopy()` with own `txWriter`/`snapshotTS`/`sessionID` | iter-28.2 |
-| REQ000614 | ENG/LS | Fix `PutStats` no rollback on disk failure — snapshot `ColumnStats`, restore on flush failure | iter-28.2 |
-| REQ000616 | ENG/LS | Fix frozen memtable iteration order — already fixed in iter-28.1 (verified, no change needed) | iter-28.2 |
-| REQ000617 | TXN/VL | Fix Rollback bypassing WAL — route rollback writes through WAL writer, write `RTRollback` record | iter-28.2 |
-| REQ000618 | SYS/SE | Fix `ReleaseSavepoint` no-op — remove named savepoint from stack | iter-28.2 |
-| REQ000630 | BK | Fix backup not acquiring engine lock — added `LockFn` hook in BackupOptions | iter-28.2 |
-| REQ000632 | ENG/LS | Fix flush orphans SST on manifest failure — already fixed in iter-28.1 (verified, no change needed) | iter-28.2 |
-| REQ000633 | ENG/LS | Fix `pkIterator` unsafe against concurrent deletes — snapshot linked list under `RLock` | iter-28.2 |
-| REQ000635 | FIL/FS | Validate error message: path must be relative — shipped in iter-28.1 | iter-28.2 |
 | REQ000401 | SQL/EX | Scalar function `quote(X)` — SQL literal rendering; strings single-quoted with escape, BLOBs as X'hex' | iter-26 |
 | REQ000402 | SQL/EX | Scalar function `random()` — pseudo-random int64; exclude MIN_INT64 | iter-26 |
 | REQ000403 | SQL/EX | Scalar function `randomblob(N)` — N-byte random BLOB | iter-26 |
@@ -77,7 +58,6 @@
 | REQ000426 | SQL/EX | Scalar function `substring(X,Y[,Z])` — substr alias | iter-26 |
 | REQ000427 | SQL/EX | Scalar function `trim(X[,Y])` — both-sides, default space | iter-26 |
 | REQ000433 | SQL/EX | Scalar function `upper(X)` — ASCII upper-case | iter-26 |
-| REQ000434 | SQL/PS | NOT BETWEEN syntax error fix | iter-26 |
 | REQ000435 | SQL/PS | CREATE TRIGGER parser (BEFORE/AFTER, FOR EACH ROW, BEGIN...END body) | iter-27 |
 | REQ000436 | SQL/PS+PL+EX | Recursive CTE (WITH RECURSIVE flag, FROM-subquery parser fix, inner query dispatch) | iter-27 |
 | REQ000437 | SQL/EX | Full SQL aggregate DISTINCT support — `SUM/AVG/MIN/MAX/GROUP_CONCAT(DISTINCT col)` now dedup before aggregating (parity with `COUNT(DISTINCT col)`); NULLs are excluded from the distinct set per SQLite semantics; parser routes DISTINCT through the IDENT aggregate path for `GROUP_CONCAT` | iter-27 |
@@ -91,7 +71,6 @@
 | REQ000444 | SQL/EX | UPDATE deadlock fix — `numericFloat` in `eval.go` didn't handle Go `int` type from `?` placeholders, causing UPDATE expressions (like `x + 1`) to return nil; `equalValue` and `Eval(*PS.Param)` normalized to return `int64`; store UPDATE path now captures `oldRow` via `cloneRow` before `applyUpdate` and calls `maintainIndexesOnUpdate` after store insert | iter-27 |
 | REQ000445 | SQL/EX | NULL three-valued logic: `<`, `<=`, `>`, `>=`, `=`, `!=` comparisons with NULL operand → return NULL (UNKNOWN), not a boolean | iter-26 |
 | REQ000447 | SQL/EX | `count(DISTINCT x)`, `avg(DISTINCT x)`, `sum(DISTINCT x)` — DISTINCT aggregate semantics verified; NULLs skipped, dedup works | iter-26 |
-| REQ000448 | SQL/EX | SLT runner `skipif`/`onlyif` engine-name gating — `NewRunner(drv, cls, "razor")` evaluates directives against engine name; `onlyif sqlite` skips on Razor, `onlyif razor` executes | iter-26 |
 | REQ000451 | SQL/PS | `CREATE TEMP VIEW` parser — `parseCreateView` now accepts optional `TEMP`/`TEMPORARY` keyword between `CREATE` and `VIEW`; `CreateViewStmt.Temporary` field set accordingly; added `T_TEMP`/`T_TEMPORARY` tokens | iter-27 |
 | REQ000452 | SQL/PS | `INSERT OR REPLACE` / `REPLACE INTO` parser — `parseInsert` handles `INSERT OR ROLLBACK/ABORT/FAIL/IGNORE/REPLACE` via lexeme comparison (not hard keywords); `parseReplace` handles standalone `REPLACE INTO`; added `ConflictAction` type and field to `Insert` AST | iter-27 |
 | REQ000453 | SQL/EX | Scalar `IN (literal-list)` — `SELECT 1 IN (2)`, `SELECT 1 NOT IN (2)` return 1 row with correct boolean. Same fix as REQ000503 (Values operator + `evalIn` path) | iter-28 |
@@ -102,8 +81,6 @@
 | REQ000458 | SQL/EX | BETWEEN NULL semantics — `evalBetween` returns nil (UNKNOWN) when any operand is NULL, matching SQL standard. Also fixed: SELECT without FROM now applies WHERE filter. Verified via `TestReq458_BetweenNullSemantics` | iter-28 |
 | REQ000459 | SQL/EX | NULL three-valued logic in IN/NOT IN — `evalIn` returns nil (UNKNOWN) when target is NULL; tracks NULL list elements and returns nil instead of false when no match found and any list element was NULL; `evalInSubquery` same NULL tracking for subquery results | iter-27 |
 | REQ000460 | SQL/EX | UPDATE executor wrong results — basic UPDATE patterns verified: simple SET, expression SET, multi-column SET, WHERE filtering, full-table UPDATE, no-match no-error. Verified via `TestReq460_UpdateCorrectResults` | iter-28 |
-| REQ000461 | SQL/PS | LAG/LEAD offset — parser's `parseWindowBuiltin` already loops over comma-separated args; `computeLagLead` reads offset from `args[1]`; structurally complete | iter-28 |
-| REQ000462 | SQL/EX | Scalar function `typeof(X)` — returns type name string | iter-28 |
 | REQ000463 | SQL/EX | `PRAGMA` statements — `PRAGMA journal_mode`, `PRAGMA synchronous`, `PRAGMA cache_size` routed via `buildWriterOp` → `NewPragma` (no-op stub); planner `planPragma` handles `integrity_check`, `cache_size`, `journal_mode`, `synchronous`, `user_version`. `TestCoverage_pragma` and `TestCoverage_pragmaWithValue` pass | iter-28 |
 | REQ000464 | SQL/EX | `LIMIT` / `OFFSET` — `Limit` and `Offset` operators in `intermediate.go`; planner supports both `LIMIT n OFFSET m` and `OFFSET m LIMIT n` syntax orders. `TestCoverage_limitOffset`, `TestTBD_RemainingBugfixes/REQ000464*` pass | iter-28 |
 | REQ000465 | SQL/EX | `EXISTS` subquery — `evalExists` uses `newSubqueryPlanner(outer)` (not bare `NewPlanner()`); correlated EXISTS with store-backed tables works via `SetSubqueryPlanner`. `TestCoverage_existsSubquery`, `TestTBD_RemainingBugfixes/REQ000465` pass | iter-28 |
@@ -116,27 +93,16 @@
 | REQ000472 | SQL/EX | `COALESCE` with many arguments — variadic implementation iterates `e.Args` returning first non-NULL; supports 2+ args. `TestCoverage_coalesce`, `TestSpecialForms/COALESCE`, `TestTBD_RemainingBugfixes/REQ000472` pass | iter-28 |
 | REQ000473 | SQL/PS | PRAGMA parser support — `PragmaStmt` AST + parser already existed; PRAGMA is a no-op in executor; TestPhase1_PragmaNoOp passes | iter-28 |
 | REQ000475 | SQL/EX | `DELETE` with `ORDER BY` / `LIMIT` — parser accepts trailing ORDER BY/LIMIT/OFFSET after WHERE; `buildWriterOp` wraps scan with Sort/Limit/Offset before Delete operator. Verified via `TestReq475_DeleteOrderByLimit` | iter-28 |
-| REQ000476 | SQL/EX | TRUNCATE TABLE parsing + execution routed | iter-28 |
 | REQ000477 | SQL/EX | `INSERT` with `RETURNING` clause — INSERT already implemented RETURNING in both in-memory and store paths (accumulates resultRows, returns via Next()). `Exec` RETURNING path counts Next() calls. Verified via `TestReq477_InsertReturning` | iter-28 |
-| REQ000478 | SQL/EX | REINDEX routed (no-op stub) | iter-28 |
 | REQ000479 | SQL/PS | `CREATE INDEX IF NOT EXISTS` — parser accepts `IF NOT EXISTS` clause; executor skips registration if index already exists; `CreateIndexStmt.IfExists` field added | iter-28 |
 | REQ000480 | SQL/EX | `DROP INDEX IF EXISTS` — parser accepts `IF EXISTS` clause; executor no-ops if missing; `DropIndexStmt.IfExists` field added; buildWriterOp routing from Phase 0 | iter-28 |
-| REQ000481 | SQL/EX | EXPLAIN statement execution path | iter-28 |
 | REQ000482 | SQL/PS | `AUTOINCREMENT` keyword accepted — `T_AUTOINCREMENT` token added to lexer + keyword map; `ColDef.Autoincrement bool` field added; parser accepts after PRIMARY KEY | iter-28 |
 | REQ000483 | SQL/EX | `DEFAULT` values on omitted INSERT columns — `fillDefaults` already applied in both Insert paths (in-memory and store). Verified via `TestReq483_DefaultOnInsertOmittedColumns` | iter-28 |
 | REQ000484 | SQL/EX | `CHECK` constraint enforcement — `CreateTable.Next` now extracts `ColDef.Check` expressions and stores them in `storeSchema.checks`; `validateCheck` enforces on INSERT/UPDATE. Verified via `TestReq484_CheckConstraintEnforcement` | iter-28 |
 | REQ000485 | SQL/EX | `UNIQUE` constraint enforcement on INSERT — single-column UNIQUE enforced; NULLs allowed per SQL standard. Verified via `TestReq485_UniqueConstraintEnforcement` | iter-28 |
 | REQ000486 | SQL/EX | `ON CONFLICT` conflict resolution — `INSERT OR IGNORE` conflict handling added in `writers.go` `checkUnique` error path with `ConflictActionIgnore → continue` skip. In-memory storeSchema registration via `registerInMemorySchema` enables constraint enforcement without backing store | iter-28 |
-| REQ000487 | SQL/EX | VACUUM routed in buildWriterOp | iter-28 |
-| REQ000488 | SQL/EX | ANALYZE routed in buildWriterOp | iter-28 |
 | REQ000489 | SQL/EX | `REINDEX` routed to executor — `buildWriterOp` already routes `*PS.ReindexStmt` → `NewReindex`. Verified via `TestReq489_ReindexRouting` | iter-28 |
-| REQ000490 | SQL/EX | PRAGMA routed in buildWriterOp | iter-28 |
 | REQ000491 | SQL/EX | `DROP INDEX` routed to executor — `buildWriterOp` already routes `*PS.DropIndexStmt` → `NewDropIndex`. Verified via `TestReq491_DropIndexRouting` | iter-28 |
-| REQ000492 | SQL/EX | CREATE INDEX routed in buildWriterOp | iter-28 |
-| REQ000493 | SQL/EX | CREATE VIEW routed in buildWriterOp | iter-28 |
-| REQ000494 | SQL/EX | DROP VIEW routed + cleans EX registry | iter-28 |
-| REQ000495 | SQL/EX | CREATE TRIGGER routed in buildWriterOp | iter-28 |
-| REQ000496 | SQL/EX | DROP TRIGGER routed + cleans EX registry | iter-28 |
 | REQ000497 | SQL/EX | DROP TABLE IF EXISTS accepted by parser | iter-28 |
 | REQ000498 | SQL/EX | `ALTER TABLE RENAME COLUMN old TO new` — parser adds `RENAME COLUMN` path; executor renames column in schemas map; `AlterTableStmt.NewName` field added | iter-28 |
 | REQ000499 | SQL/EX | `ALTER TABLE DROP COLUMN` — `execDropColumn` and `execDropColumnInMemory` now update existing row data in `tables` to remove the dropped column; schema updates correctly. Verified via `TestReq499_AlterTableDropColumn` | iter-28 |
@@ -194,46 +160,3 @@
 | REQ000568 | SQL/EX | `DECIMAL(P,S)` precision and scale semantics — `ColDef.{Precision,Scale}` fields; `storeSchema.{precision,scale}` arrays populated in CREATE TABLE and ALTER TABLE; `validateDecimal()` called in all INSERT/UPDATE write paths; `FormatDecimal` clamps/validates. Verified via PS test suite | iter-28 |
 | REQ000569 | SQL/PS | `INDEXED BY index_name` / `NOT INDEXED` on UPDATE and DELETE — `Update.IndexHint` and `Delete.IndexHint` fields; `parseUpdate` and `parseDelete` accept trailing INDEXED BY/NOT INDEXED. Verified via parser tests | iter-28 |
 | REQ000570 | SQL/PS+TXN | `COMMIT` / `END [TRANSACTION]` — `parseCommit()` function; `T_COMMIT`/`T_END` dispatch in `Parse()`; `CommitTX.NewNoop` in `buildWriterOp`. Verified via 4 parser tests | iter-28 |
-| REQ000572 | WAL/RP | Fix WAL replay double-counting segment offset — single Pread for entire segment payload, added >64KB regression test | iter-28.1 |
-| REQ000573 | TXN/VL | Fix commit ordering: WAL write before version chain commit — reorder steps, failure-injection test | iter-28.1 |
-| REQ000574 | ENG/LS | Add RWMutex for engine.memtables/activeMem — concurrent read+flush race fixed | iter-28.1 |
-| REQ000576 | SQL/EX | Fix codegen batch functions no-ops — removed no-op registrations (option b) | iter-28.1 |
-| REQ000577 | SQL/EX | Fix VectorizedFilter.WithParams returning nil — returns the receiver | iter-28.1 |
-| REQ000578 | SQL/EX | Fix nil params in UPDATE/DELETE WHERE — pass u.params/d.params instead of nil | iter-28.1 |
-| REQ000579 | SQL/EX | AND/OR short-circuit evaluation — false AND * and true OR * short-circuit | iter-28.1 |
-| REQ000580 | SQL/EX | Pre-extract sort keys before sorting — O(N*K) eval + O(N log N) instead of O(N log N * K) | iter-28.1 |
-| REQ000581 | SQL/EX | GLOB byte-matcher — recursive walk, no regexp.MustCompile per call | iter-28.1 |
-| REQ000584 | SQL/PL | Memo eviction + xxhash + schema version — LRU 1024 entries, schema-aware invalidation | iter-28.2 |
-| REQ000587 | ENG/LS | Per-SST dictionary training — trainSSTDict samples blocks, shared via compressBlockDictShared | iter-28.2 |
-| REQ000588 | ENG/LS | Package-level crc32.MakeTable — 5 call sites, no per-checksum alloc | iter-28.1 |
-| REQ000590 | ENG/LS | Compaction error swallowing — log with slog.Error | iter-28.1 |
-| REQ000591 | SQL/EX | Package-level soundexCodes map — no per-call allocation | iter-28.1 |
-| REQ000593 | SQL/PS | Bare ROLLBACK returns RollbackTX node — accept ROLLBACK [TRANSACTION] | iter-28.1 |
-| REQ000594 | WAL/FL | Sync() returns f.syncErr (was always nil) | iter-28.1 |
-| REQ000599 | ENG/LS | Prefix bloom modulus mismatch — reader now uses byte count | iter-28.1 |
-| REQ000600 | ENG/LS | Skiplist higher-level CAS linking — O(log n), bounded retries | iter-28.1 |
-| REQ000601 | ENG/LS | Compaction overlap removal — filter by key range + disk cleanup | iter-28.1 |
-| REQ000602 | ENG/LS | readFromSST uses Find() instead of full scan | iter-28.1 |
-| REQ000603 | ENG/LS | openSST bounds checks — return ErrInvalidSSTFormat instead of panic | iter-28.1 |
-| REQ000604 | ENG/LS | primaryIndex.Insert dedup — update existing entry, no duplicate | iter-28.1 |
-| REQ000605 | SQL/EX | band/bor three-valued logic — SQL NULL AND semantics | iter-28.1 |
-| REQ000606 | SQL/EX | evalSubstr NULL handling — return nil for nil input | iter-28.1 |
-| REQ000607 | SQL/EX | CAST AS BOOLEAN — parse string semantically ("false" = false) | iter-28.1 |
-| REQ000609 | SQL/EX | batchToRow uses batch.Cols[c].Name instead of "" | iter-28.1 |
-| REQ000610 | SYS/SE | sessionStateMap atomic.Int64 fields + removeSessionState helper | iter-28.1 |
-| REQ000612 | ENG/LS | catalog flushLocked fsync before rename (crash-safe) | iter-28.1 |
-| REQ000613 | ENG/LS | GetByID/GetByName deep-copy slice fields | iter-28.1 |
-| REQ000615 | ENG/LS | Bloom filter modulo-before-cast for 32-bit safety | iter-28.1 |
-| REQ000619 | SQL/EX | SIGN(NULL) returns NULL (was 0) | iter-28.1 |
-| REQ000620 | SQL/EX | INSTR(NULL, ...) returns NULL on either side (was 0) | iter-28.1 |
-| REQ000621 | SQL/EX | OCTET_LENGTH handles []byte directly (raw len, not fmt.Sprint) | iter-28.1 |
-| REQ000622 | SQL/EX | DropIndex snapshots tableIDs under storeMu | iter-28.1 |
-| REQ000623 | FIL/DF | Fix `bufPool` alignment waste — aligned buffer allocation via unsafe.Pointer math at pool creation time | iter-28.1 |
-| REQ000624 | FIL/DF | Fix `WriteBlock` unnecessary zeroing — zero only `poolBuf[len(data):DataLen-ChecksumLen]` | iter-28.1 |
-| REQ000625 | LOG/HK | Fix goroutine-per-hook-per-event — sequential dispatch in dispatch loop | iter-28.1 |
-| REQ000626 | LOG/LG | Optimize rotation check frequency — throttled via callCount counter (every 4 calls) | iter-28.1 |
-| REQ000627 | SYS/SE | lock() checks deadline before acquiring mutex | iter-28.1 |
-| REQ000628 | SYS/SY | Fix `Engine.Open` dead code — removed frozen-memtable loops + unreachable return | iter-28.1 |
-| REQ000629 | SYS/SY | Fix `closeBestEffort` skipping executor — added nil receiver check | iter-28.1 |
-| REQ000631 | SQL/EX | Propagate Eval errors in function evaluators (7 sites) | iter-28.1 |
-| REQ000634 | ENG/LS | ManualCompact channel-based sync (was 10ms sleep) | iter-28.1 |

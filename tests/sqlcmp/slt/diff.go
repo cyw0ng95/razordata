@@ -86,11 +86,9 @@ func diffHashed(actual *ResultSet, marker string) string {
 
 func hashValues(vs []Value) string {
 	var b strings.Builder
-	for i, v := range vs {
-		if i > 0 {
-			b.WriteByte('\t')
-		}
+	for _, v := range vs {
 		b.WriteString(v.String())
+		b.WriteByte('\n')
 	}
 	return md5hex(b.String())
 }

@@ -411,6 +411,7 @@ The following requirements have been implemented and shipped; they are now part 
 | REQ000259 | Backup/restore API (snapshot engine dir to copy) | iter-23 |
 | REQ000260 | Admin CLI `razor` (schema dump, vacuum, integrity check) | iter-23 |
 | REQ000261 | Integrity check (`PRAGMA integrity_check`) | iter-23 |
+| REQ000548 | Engine-level prepared statement cache — LRU + ref-counted, `Get`/`Put`/`Release`/`Clear`/`Size` | iter-28.2 |
 
 ## Open Issues
 

@@ -360,6 +360,8 @@ The following requirements have been implemented and shipped; they are now part 
 | REQ000320 | Configurable compaction style (leveled/tiered/hybrid) | iter-27 |
 | REQ000347 | Silent data loss in LSM flush path — fixed | iter-26 |
 | REQ000364 | Negative WaitGroup counter panic in `flushManager` (REQ000347 followup) — `Add(1)` before send, `enqueueMu` serializes with `Stop` | iter-26.1 (v0.26.3) |
+| REQ000540 | L0 buffer cache — `l0Cache` LRU keyed by blockID; API ready for engine wiring | iter-28.2 |
+| REQ000552 | Adaptive memtable size — `targetSize` atomic.Int64 + `SetTargetSize`/`TargetSize` plumbing | iter-28.2 |
 
 ### ID — Index
 
