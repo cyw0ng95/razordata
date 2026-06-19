@@ -136,17 +136,14 @@ func (c *Cursor) descendLeftmost(id uint32) {
 	c.descendLeftmost(p.childs[0])
 }
 
-// Key returns the current key.
 func (c *Cursor) Key() []byte {
 	return c.key
 }
 
-// Value returns the current value.
 func (c *Cursor) Value() []byte {
 	return c.value
 }
 
-// Valid reports whether the cursor points to a valid entry.
 func (c *Cursor) Valid() bool {
 	return c.valid
 }
