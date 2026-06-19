@@ -2077,6 +2077,17 @@ func evalLikely(args []PS.Expr, row *Row, params []interface{}) (interface{}, er
 // REQ000408.
 // evalSoundex implements soundex(X) — 4-char phonetic encoding.
 // REQ000408.
+// REQ000591: pre-allocated soundex encoding map. Kept at package
+// level to avoid re-allocation on every evalSoundex call.
+var soundexCodes = map[byte]byte{
+	'B': '1', 'F': '1', 'P': '1', 'V': '1',
+	'C': '2', 'G': '2', 'J': '2', 'K': '2', 'Q': '2', 'S': '2', 'X': '2', 'Z': '2',
+	'D': '3', 'T': '3',
+	'L': '4',
+	'M': '5', 'N': '5',
+	'R': '6',
+}
+
 func evalSoundex(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 	if len(args) < 1 {
 		return nil, nil
@@ -2111,14 +2122,7 @@ func evalSoundex(args []PS.Expr, row *Row, params []interface{}) (interface{}, e
 		return "?000", nil
 	}
 
-	codes := map[byte]byte{
-		'B': '1', 'F': '1', 'P': '1', 'V': '1',
-		'C': '2', 'G': '2', 'J': '2', 'K': '2', 'Q': '2', 'S': '2', 'X': '2', 'Z': '2',
-		'D': '3', 'T': '3',
-		'L': '4',
-		'M': '5', 'N': '5',
-		'R': '6',
-	}
+	codes := soundexCodes
 
 	result := make([]byte, 0, 4)
 	result = append(result, letters[0])

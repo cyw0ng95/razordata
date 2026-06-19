@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -363,6 +364,7 @@ func (cm *compactionManager) compactionLoop() {
 			return
 		case job := <-cm.compactionQueue:
 			if err := job.Run(cm.manifest, cm.dir); err != nil {
+				slog.Error("compaction failed", "level", job.level, "inputs", len(job.inputs), "overlap", len(job.overlap), "err", err)
 			}
 			cm.compacting.Store(false)
 		}

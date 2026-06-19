@@ -9,6 +9,11 @@ import (
 	"hash/crc32"
 )
 
+// REQ000588: pre-allocated CRC-32/Koopman table. crc32.MakeTable
+// allocates, so calling it on every checksum computation wastes
+// memory and CPU. The table is immutable and goroutine-safe.
+var crc32Koopman = crc32.MakeTable(crc32.Koopman)
+
 const (
 	sstBlockSize  = 4 * 1024
 	sstFooterSize = 28
@@ -117,9 +122,12 @@ func (w *sstWriter) setBloomBitForSize(key []byte, size int) {
 	h1 := fnv1aHash(key, fnv1aOffset32)
 	h2 := fnv1aHash(key, fnv1aPrime32)
 
-	bitCount := size * 8
-	bucket1 := int(h1) % bitCount
-	bucket2 := int(h2) % bitCount
+	// REQ000615: modulo before cast to int so h1/h2 stay in
+	// unsigned range on 32-bit platforms. int(h1) with
+	// h1 > 0x7FFFFFFF produces negative on GOARCH=386.
+	bitCount := uint32(size * 8)
+	bucket1 := int(h1 % bitCount)
+	bucket2 := int(h2 % bitCount)
 
 	w.bloom[bucket1/8] |= 1 << (bucket1 % 8)
 	w.bloom[bucket2/8] |= 1 << (bucket2 % 8)
@@ -129,8 +137,10 @@ func (w *sstWriter) setBloomBitForSize(key []byte, size int) {
 func (w *sstWriter) setPrefixBloomBit(prefix []byte, size int) {
 	h1 := fnv1aHash(prefix, fnv1aOffset32)
 	h2 := fnv1aHash(prefix, fnv1aPrime32)
-	bucket1 := int(h1) % size
-	bucket2 := int(h2) % size
+	// REQ000615: modulo before cast.
+	sizeU := uint32(size)
+	bucket1 := int(h1 % sizeU)
+	bucket2 := int(h2 % sizeU)
 	if bucket1/8 < len(w.prefixBloom) {
 		w.prefixBloom[bucket1/8] |= 1 << (bucket1 % 8)
 	}
@@ -149,7 +159,7 @@ func (w *sstWriter) finishCurrentBlock() {
 		return
 	}
 
-	checksum := crc32.Checksum(block, crc32.MakeTable(crc32.Koopman))
+	checksum := crc32.Checksum(block, crc32Koopman)
 	block = append(block, 0, 0, 0, 0)
 	block = append(block, byte(checksum), byte(checksum>>8), byte(checksum>>16), byte(checksum>>24))
 

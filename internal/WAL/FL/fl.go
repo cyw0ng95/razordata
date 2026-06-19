@@ -119,12 +119,16 @@ func New(dir string, sm *lf.SegmentManager, fm *fs.FileManager, log lg.Logger) (
 
 // Sync persists the write buffer to disk. In v1 this is a stub
 // reserved for TXN group-commit coordination.
+// REQ000594: the pre-fix implementation always returned nil,
+// ignoring f.syncErr. If the batch sync failed (disk full, fsync
+// error), Sync() would report success even though the WAL was not
+// durably persisted.
 func (f *flusher) Sync() error {
 	if f.closed.isSet() {
 		return nil
 	}
 	f.batchCommit.Wait()
-	return nil
+	return f.syncErr
 }
 
 // BatchSync coordinates group commit: waits for all pending writes

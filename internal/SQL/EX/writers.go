@@ -1330,7 +1330,9 @@ func (d *DropIndex) Next(ctx context.Context) (Row, error) {
 		return Row{}, ErrNoRows
 	}
 	d.done = true
-	// Remove from EX-layer writer registry
+	// REQ000622: snapshot tableIDs under storeMu to avoid
+	// concurrent modification by CREATE TABLE/DROP TABLE.
+	var snapshot []uint64
 	storeMu.Lock()
 	for table, idxs := range registeredIndexes {
 		filtered := idxs[:0]
@@ -1345,11 +1347,15 @@ func (d *DropIndex) Next(ctx context.Context) (Row, error) {
 			registeredIndexes[table] = filtered
 		}
 	}
+	snapshot = make([]uint64, 0, len(tableIDs))
+	for _, tid := range tableIDs {
+		snapshot = append(snapshot, tid)
+	}
 	storeMu.Unlock()
 	// Remove from catalog
 	if cat := Catalog(); cat != nil {
 		// Find the table that owns this index
-		for _, tableID := range tableIDs {
+		for _, tableID := range snapshot {
 			_ = tableID
 			// Try delete (ignore if not found)
 			if err := cat.DeleteIndex(tableID, d.stmt.Name); err == nil {

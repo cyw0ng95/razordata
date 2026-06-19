@@ -118,9 +118,11 @@ func (r *sstReader) mayContain(key []byte) bool {
 	h1 := fnv1aHash(key, fnv1aOffset32)
 	h2 := fnv1aHash(key, fnv1aPrime32)
 
-	size := len(r.bloom) * 8
-	bucket1 := int(h1) % size
-	bucket2 := int(h2) % size
+	// REQ000615: modulo before cast to avoid negative indices on
+	// 32-bit platforms where int is 32 bits.
+	size := uint32(len(r.bloom) * 8)
+	bucket1 := int(h1 % size)
+	bucket2 := int(h2 % size)
 
 	return (r.bloom[bucket1/8]&(1<<(bucket1%8)) != 0) &&
 		(r.bloom[bucket2/8]&(1<<(bucket2%8)) != 0)
@@ -145,11 +147,12 @@ func (r *sstReader) MayContainPrefix(prefix []byte) bool {
 		prefix = prefix[:8]
 	}
 	// Match the writer's modulus: byte count, not bit count.
-	size := len(r.prefixBloom)
+	size := uint32(len(r.prefixBloom))
 	h1 := fnv1aHash(prefix, fnv1aOffset32)
 	h2 := fnv1aHash(prefix, fnv1aPrime32)
-	bucket1 := int(h1) % size
-	bucket2 := int(h2) % size
+	// REQ000615: modulo before cast.
+	bucket1 := int(h1 % size)
+	bucket2 := int(h2 % size)
 	return (r.prefixBloom[bucket1/8]&(1<<(bucket1%8)) != 0) &&
 		(r.prefixBloom[bucket2/8]&(1<<(bucket2%8)) != 0)
 }
@@ -253,7 +256,7 @@ func decodeBlock(data []byte) ([]kvPair, error) {
 	checksum := binary.LittleEndian.Uint32(data[len(data)-4:])
 	blockData := data[:len(data)-8]
 
-	computedChecksum := crc32.Checksum(blockData, crc32.MakeTable(crc32.Koopman))
+	computedChecksum := crc32.Checksum(blockData, crc32Koopman)
 	if computedChecksum != checksum {
 		return nil, ErrInvalidSSTFormat
 	}
