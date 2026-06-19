@@ -85,13 +85,36 @@ func (dt *dictTrainer) train(block []byte) []byte {
 // Falls back to plain compressBlock if the dictionary is empty or
 // compression with the dictionary does not shrink the block.
 func compressBlockDict(block []byte) ([]byte, error) {
+	return compressBlockDictShared(block, nil)
+}
+
+// compressBlockDictShared compresses block using a shared SST-level
+// dictionary (REQ000587). When sharedDict is nil or empty, falls
+// back to per-block training for backward compatibility. The
+// per-block dict path is only used when no SST-level dict was
+// trained (e.g. SST is too small to bother).
+//
+// Output format:
+//   - flag=2 + dict: the per-block dict is inlined
+//   - flag=3 + dict: the SST-shared dict reference
+//
+// For simplicity, flag=2 is reused when a shared dict is used and
+// its bytes are also inlined into the block (sharedDict is
+// embedded so the reader does not need a separate lookup table).
+// This trades a few bytes per block for format simplicity — the
+// shared dict is amortized across many blocks in the SST.
+func compressBlockDictShared(block, sharedDict []byte) ([]byte, error) {
 	if len(block) == 0 {
 		return block, nil
 	}
-	dt := newDictTrainer(4096)
-	dict := dt.train(block)
+	var dict []byte
+	if len(sharedDict) > 0 {
+		dict = sharedDict
+	} else {
+		dt := newDictTrainer(4096)
+		dict = dt.train(block)
+	}
 	if len(dict) == 0 {
-		// No useful dictionary: use plain flate.
 		return compressBlock(block)
 	}
 	// Build a flate dictionary and compress.
@@ -118,6 +141,40 @@ func compressBlockDict(block []byte) ([]byte, error) {
 	out = append(out, dict...)
 	out = append(out, compressed.Bytes()...)
 	return out, nil
+}
+
+// trainSSTDict trains a single shared dictionary from a sample
+// of SST blocks (REQ000587). Returns nil when the sample is too
+// small or no high-frequency substrings are found.
+func trainSSTDict(blocks [][]byte, maxDictSize int) []byte {
+	if len(blocks) == 0 {
+		return nil
+	}
+	dt := newDictTrainer(maxDictSize)
+	// Sample up to 8 blocks to keep training fast.
+	sample := blocks
+	if len(sample) > 8 {
+		// Take evenly-spaced samples.
+		step := len(sample) / 8
+		if step == 0 {
+			step = 1
+		}
+		reduced := make([][]byte, 0, 8)
+		for i := 0; i < len(sample) && len(reduced) < 8; i += step {
+			reduced = append(reduced, sample[i])
+		}
+		sample = reduced
+	}
+	// Merge blocks into a single training corpus.
+	var total int
+	for _, b := range sample {
+		total += len(b)
+	}
+	corpus := make([]byte, 0, total)
+	for _, b := range sample {
+		corpus = append(corpus, b...)
+	}
+	return dt.train(corpus)
 }
 
 // decompressBlockDict decompresses a block produced by

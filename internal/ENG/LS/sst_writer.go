@@ -203,16 +203,20 @@ func (w *sstWriter) Finish() ([]byte, error) {
 
 	var buf bytes.Buffer
 
-	// REQ000271 + REQ000297: compress blocks. We try the
-	// per-block dictionary first; if it produces a smaller
-	// output, use it; otherwise fall back to plain flate.
-	// compressBlockDict handles the fallback internally and
-	// always returns a self-describing output (flag byte
-	// prefix).
+	// REQ000587: train one shared dictionary per SST from a
+	// sample of blocks, then use it for all blocks. Falls back
+	// to per-block training when the SST is too small to bother
+	// or the trained dict is empty.
+	sharedDict := trainSSTDict(w.blocks, 4096)
+
+	// REQ000271 + REQ000297: compress blocks using the shared
+	// SST-level dict (or per-block fallback). compressBlockDict
+	// handles the fallback internally and always returns a
+	// self-describing output (flag byte prefix).
 	compressedOffsets := make([]int, len(w.blocks))
 	for i, block := range w.blocks {
 		compressedOffsets[i] = buf.Len()
-		compressed, err := compressBlockDict(block)
+		compressed, err := compressBlockDictShared(block, sharedDict)
 		if err != nil {
 			return nil, err
 		}

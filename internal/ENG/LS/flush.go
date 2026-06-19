@@ -148,6 +148,7 @@ type flushManager struct {
 	manifest       *manifest
 	dir            string
 	maxMemSize     int64
+	targetSize     atomic.Int64 // REQ000552: adaptive memtable size (sampled under load)
 	flushQueue     chan *flushJob
 	pendingWGs     sync.WaitGroup
 	done            chan struct{}
@@ -167,6 +168,7 @@ func newFlushManager(dir string, maxMemSize int64, manifest *manifest) *flushMan
 		done:       make(chan struct{}),
 		loopDone:   make(chan struct{}),
 	}
+	fm.targetSize.Store(maxMemSize) // REQ000552: initialize adaptive target
 
 	// R16-7: ensure the sst/ subdir exists. flush writes L0 SSTs to
 	// <dir>/sst/L0_<id>.sst to align with compaction.fileName, which
@@ -344,6 +346,22 @@ func (fm *flushManager) Stop(ctx context.Context) error {
 
 func (fm *flushManager) ActiveMemtable() *memtable {
 	return fm.activeMemtable.Load()
+}
+
+// SetTargetSize updates the adaptive memtable target size (REQ000552).
+// The active memtable's flush threshold will use this value until the
+// next flush completes.
+func (fm *flushManager) SetTargetSize(size int64) {
+	if size < 0 {
+		size = 0
+	}
+	fm.targetSize.Store(size)
+}
+
+// TargetSize returns the current adaptive memtable target size (REQ000552).
+// Defaults to the constructor's maxMemSize.
+func (fm *flushManager) TargetSize() int64 {
+	return fm.targetSize.Load()
 }
 
 func (fm *flushManager) Close() error {
