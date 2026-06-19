@@ -124,7 +124,6 @@ func (p *ParallelSeqScan) NextBatch(ctx context.Context) (*Batch, error) {
 	wg.Wait()
 	close(resultCh)
 
-	// Collect all results into pendingBatches
 	for res := range resultCh {
 		if res.err != nil {
 			return nil, res.err
