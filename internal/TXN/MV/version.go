@@ -1,11 +1,10 @@
 package MV
 
 import (
+	"math"
 	"sync/atomic"
 	"unsafe"
 )
-
-const maxUint64 = ^uint64(0)
 
 // VersionNode is a single version entry in a version chain.
 type VersionNode struct {
@@ -35,7 +34,7 @@ func NewVersionNode(arena *Arena, txnID, beginTS uint64, key, value []byte, dele
 		node := &n
 		node.txnID = txnID
 		node.beginTS = beginTS
-		node.endTS.Store(maxUint64)
+		node.endTS.Store(math.MaxUint64)
 		node.key = key
 		node.value = value
 		node.deleted = deleted
@@ -44,7 +43,7 @@ func NewVersionNode(arena *Arena, txnID, beginTS uint64, key, value []byte, dele
 	node := (*VersionNode)(unsafe.Pointer(&mem[0]))
 	node.txnID = txnID
 	node.beginTS = beginTS
-	node.endTS.Store(maxUint64)
+	node.endTS.Store(math.MaxUint64)
 	node.key = key
 	node.value = value
 	node.deleted = deleted
@@ -52,7 +51,7 @@ func NewVersionNode(arena *Arena, txnID, beginTS uint64, key, value []byte, dele
 }
 
 func (n *VersionNode) IsUncommitted() bool {
-	return n.endTS.Load() == maxUint64
+	return n.endTS.Load() == math.MaxUint64
 }
 
 // NewVersionNodeStack allocates a VersionNode on the caller's stack (REQ000306).
@@ -60,7 +59,7 @@ func NewVersionNodeStack(txnID, beginTS uint64, key, value []byte, deleted bool)
 	var n VersionNode
 	n.txnID = txnID
 	n.beginTS = beginTS
-	n.endTS.Store(maxUint64)
+	n.endTS.Store(math.MaxUint64)
 	n.key = key
 	n.value = value
 	n.deleted = deleted
@@ -118,7 +117,7 @@ func (vc *VersionChain) Insert(node *VersionNode) bool {
 }
 
 func (n *VersionNode) Commit(commitTS uint64) bool {
-	return n.endTS.CompareAndSwap(maxUint64, commitTS)
+	return n.endTS.CompareAndSwap(math.MaxUint64, commitTS)
 }
 
 func (vc *VersionChain) Commit(node *VersionNode, commitTS uint64) bool {
