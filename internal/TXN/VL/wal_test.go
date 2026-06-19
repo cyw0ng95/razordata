@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cyw0ng95/razordata/internal/TXN/MV"
 	walwr "github.com/cyw0ng95/razordata/internal/WAL/WR"
 )
 
@@ -160,6 +161,86 @@ func TestCommit_WALSyncError(t *testing.T) {
 	if err := txn.Commit(context.Background()); err == nil {
 		t.Error("expected Commit to return error")
 	}
+}
+
+// TestCommit_WALFailure_LeavesVersionChainUncommitted verifies REQ000573:
+// when the WAL write/sync fails, the version chain for the tx's writes
+// must remain uncommitted (endTS == MaxUint64). The pre-fix ordering
+// marked chains committed BEFORE writing the WAL RTCommit record, so a
+// WAL failure left the chains committed in memory with no durable
+// record. New ordering: write WAL → sync → mark chains committed.
+func TestCommit_WALFailure_LeavesVersionChainUncommitted(t *testing.T) {
+	t.Parallel()
+	mv := MV.NewMV()
+	sm := newSlotManager()
+	mgr := NewManagerShared(sm, mv)
+	defer mgr.Close()
+
+	t.Run("append failure", func(t *testing.T) {
+		wal := &mockWALWriter{appendErr: errors.New("disk full")}
+		txn, err := mgr.Begin(context.Background())
+		if err != nil {
+			t.Fatalf("Begin: %v", err)
+		}
+		txi := txn.(*tx)
+		txi.WithWAL(wal)
+		if err := txn.Insert(context.Background(), []byte("k1"), []byte("v1")); err != nil {
+			t.Fatalf("Insert: %v", err)
+		}
+		// Save the version node so we can inspect its EndTS after the failure.
+		var node *MV.VersionNode
+		chain := mv.GetVersionChain([]byte("k1"))
+		if chain != nil {
+			for n := chain.GetHead(); n != nil; n = n.Next() {
+				if n.TxnID() == txi.slot.txnID {
+					node = n
+					break
+				}
+			}
+		}
+		if node == nil {
+			t.Fatal("expected to find version node for uncommitted tx")
+		}
+		if err := txn.Commit(context.Background()); err == nil {
+			t.Fatal("expected Commit to return error")
+		}
+		// Version chain must still be uncommitted.
+		if got := node.EndTS(); got != ^uint64(0) {
+			t.Errorf("after Append failure: EndTS=%d, want MaxUint64 (uncommitted)", got)
+		}
+	})
+
+	t.Run("sync failure", func(t *testing.T) {
+		wal := &mockWALWriter{syncErr: errors.New("fsync failed")}
+		txn, err := mgr.Begin(context.Background())
+		if err != nil {
+			t.Fatalf("Begin: %v", err)
+		}
+		txi := txn.(*tx)
+		txi.WithWAL(wal)
+		if err := txn.Insert(context.Background(), []byte("k2"), []byte("v2")); err != nil {
+			t.Fatalf("Insert: %v", err)
+		}
+		var node *MV.VersionNode
+		chain := mv.GetVersionChain([]byte("k2"))
+		if chain != nil {
+			for n := chain.GetHead(); n != nil; n = n.Next() {
+				if n.TxnID() == txi.slot.txnID {
+					node = n
+					break
+				}
+			}
+		}
+		if node == nil {
+			t.Fatal("expected to find version node for uncommitted tx")
+		}
+		if err := txn.Commit(context.Background()); err == nil {
+			t.Fatal("expected Commit to return error")
+		}
+		if got := node.EndTS(); got != ^uint64(0) {
+			t.Errorf("after Sync failure: EndTS=%d, want MaxUint64 (uncommitted)", got)
+		}
+	})
 }
 
 // TestCommit_Phases verifies the 6-phase progression (REQ000147):

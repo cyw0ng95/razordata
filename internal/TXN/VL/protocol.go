@@ -199,23 +199,16 @@ func (t *tx) Commit(ctx context.Context) error {
 
 	commitTS := NextTS()
 
-	// PhaseCommit: mark version chains committed.
+	// REQ000573: persist the WAL commit record BEFORE marking
+	// version chains committed. The previous ordering marked
+	// chains committed first; if the WAL write then failed,
+	// the in-memory version chains were committed but the
+	// WAL had no record. After a crash the replayer would
+	// never see the commit and the data was effectively lost.
+	// New ordering: (1) write WAL RTCommit, (2) sync, (3) only
+	// then mark version chains committed. A WAL failure leaves
+	// the version chains untouched (correct).
 	t.setPhase(PhaseCommit)
-	for _, kr := range t.slot.writeSet {
-		chain := t.mv.GetVersionChain(kr.Start)
-		if chain == nil {
-			continue
-		}
-		for node := chain.GetHead(); node != nil; node = node.Next() {
-			if node.TxnID() == t.slot.txnID {
-				node.Commit(commitTS)
-				break
-			}
-		}
-	}
-
-	// Persist WAL record for durability (REQ000171). nil WAL
-	// skips the write (test mode, no WAL configured).
 	if t.wal != nil {
 		keys := make([][]byte, 0, len(t.slot.writeSet))
 		for _, kr := range t.slot.writeSet {
@@ -230,6 +223,21 @@ func (t *tx) Commit(ctx context.Context) error {
 		if err := t.wal.Sync(); err != nil {
 			t.setPhase(PhaseAborted)
 			return err
+		}
+	}
+
+	// Mark version chains committed only after WAL durability
+	// is guaranteed.
+	for _, kr := range t.slot.writeSet {
+		chain := t.mv.GetVersionChain(kr.Start)
+		if chain == nil {
+			continue
+		}
+		for node := chain.GetHead(); node != nil; node = node.Next() {
+			if node.TxnID() == t.slot.txnID {
+				node.Commit(commitTS)
+				break
+			}
 		}
 	}
 
