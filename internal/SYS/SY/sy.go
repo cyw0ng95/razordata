@@ -71,7 +71,7 @@ type Engine struct {
 // order, and returns a ready Engine. Subsequent calls return
 // AP.ErrAlreadyOpen.
 func Open(ctx context.Context, dir string, opts AP.Options) (*Engine, error) {
-	if dir == "" {
+	if !opts.InMemory && dir == "" {
 		return nil, fmt.Errorf("%w: dir is required", AP.ErrInvalidOptions)
 	}
 	opts.Dir = dir
@@ -126,6 +126,14 @@ func (e *Engine) open(ctx context.Context) (err error) {
 	defer e.mu.Unlock()
 	if e.opened.Load() {
 		return AP.ErrAlreadyOpen
+	}
+	// Clear EX package-level state so each engine starts with a
+	// clean table/schema registry regardless of in-memory or
+	// on-disk mode. The catalog replay that follows (for on-disk)
+	// re-populates the registry from persistent state.
+	executor.UnregisterAll()
+	if e.opts.InMemory {
+		return e.openInMemory()
 	}
 
 	// Create the database directory if missing.
@@ -245,6 +253,38 @@ func (e *Engine) open(ctx context.Context) (err error) {
 	if err := e.openCatalog(); err != nil {
 		return err
 	}
+
+	e.started = time.Now()
+	e.opened.Store(true)
+	success = true
+	return nil
+}
+
+// openInMemory constructs the engine in pure memory mode. No
+// filesystem, no WAL, no LS engine, no VL manager, no catalog. The
+// SQL executor operates on package-level tables/schemas maps; all
+// DDL/DML is ephemeral and lost on Engine.Close. Called from open()
+// when Options.InMemory is true.
+func (e *Engine) openInMemory() (err error) {
+	e.log = lg.New(lg.Options{
+		Format: "text",
+		Level:  e.opts.LogLevel,
+		Output: os.Stderr,
+	})
+	// InMemory cannot be ReadOnly at the SYS layer — the executor
+	// itself does not enforce read-only.
+	success := false
+	defer func() {
+		if !success {
+			e.closeBestEffort()
+		}
+	}()
+
+	// Sync pool is harmless and lightweight; keep it for EX.
+	e.sp = sp.New()
+	// No exeAdapter (no store). The executor uses its package-level
+	// tables/schemas maps, freshly cleared by open() above.
+	e.exe = executor.NewExecutor()
 
 	e.started = time.Now()
 	e.opened.Store(true)
@@ -377,6 +417,7 @@ func (e *Engine) Begin(ctx context.Context) (AP.Session, error) {
 	}
 	return sessionConstructor(e), nil
 }
+// debugOnlyBeginLog is a debug log to trace engine state during tests.
 
 // IsClosed reports whether Close has been called on this engine. It
 // is the post-Close guard for Session/Transaction/Stmt methods and
@@ -400,7 +441,9 @@ func (e *Engine) Open(ctx context.Context, dir string, opts AP.Options) error {
 	return AP.ErrNotOpen
 }
 
-// Stats aggregates metrics from every subsystem.
+// Stats aggregates metrics from every subsystem. In in-memory mode
+// the disk subsystems (e.eng, e.bp, e.txn) are nil; their
+// counters are returned as zero.
 func (e *Engine) Stats() AP.EngineStats {
 	lastShutdownMu.Lock()
 	snap := e.lastShutdown
@@ -408,34 +451,43 @@ func (e *Engine) Stats() AP.EngineStats {
 	if !e.opened.Load() {
 		return AP.EngineStats{Version: AP.Version, LastShutdown: snap}
 	}
-	lsm := e.eng.Stats()
-	bp := e.bp.Stats()
-	tx := e.txn.Stats()
 	uptime := time.Duration(0)
 	if !e.started.IsZero() {
 		uptime = time.Since(e.started)
 	}
-	return AP.EngineStats{
-		Version: AP.Version,
-		Uptime:  uptime,
-		LSMTree: AP.LSMTreeStats{
+	out := AP.EngineStats{
+		Version:      AP.Version,
+		Uptime:       uptime,
+		LastShutdown: snap,
+	}
+	if e.eng != nil {
+		lsm := e.eng.Stats()
+		out.LSMTree = AP.LSMTreeStats{
 			MemtableHits: int64(lsm.MemtableHits),
 			SSTHits:      int64(lsm.SSTHits),
 			DiskReads:    int64(lsm.DiskReads),
-		},
-		BufferPool: AP.BufferPoolStats{
+		}
+	}
+	if e.bp != nil {
+		bp := e.bp.Stats()
+		out.BufferPool = AP.BufferPoolStats{
 			Hits:      bp.Hits,
 			Misses:    bp.Misses,
 			Evictions: bp.Evicts,
-		},
-		WAL: e.walStats(),
-		Tx: AP.TxnStats{
+		}
+	}
+	if e.txn != nil {
+		tx := e.txn.Stats()
+		out.Tx = AP.TxnStats{
 			Active:    tx.Active,
 			Committed: tx.Committed,
 			Aborted:   tx.Aborted,
-		},
-		LastShutdown: snap,
+		}
 	}
+	if !e.opts.InMemory {
+		out.WAL = e.walStats()
+	}
+	return out
 }
 
 // executorStoreAdapter wraps an *ls.Engine to the EX.Store interface.

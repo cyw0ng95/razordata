@@ -51,6 +51,13 @@ type Options struct {
 	// defaulting.
 	CreateIfMissing    bool
 	CreateIfMissingSet bool
+	// InMemory creates a purely in-memory database with no
+	// persistent storage. When true, Dir is ignored (or must
+	// be ":memory:"). All DDL/DML state lives in the EX
+	// package's tables/schemas maps and is lost on Engine.Close.
+	// WAL, SST, catalog, and filesystem I/O are all bypassed.
+	// Default false.
+	InMemory bool
 }
 
 // Default values applied by SY.Open when Options leaves a field at its
