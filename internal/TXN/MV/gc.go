@@ -1,5 +1,7 @@
 package MV
 
+import "math"
+
 // GCVersionChain walks a single version chain and returns the
 // version nodes whose endTS is below oldestActiveReadTS — those
 // versions are no longer visible to any in-flight transaction
@@ -45,7 +47,7 @@ func collectGC(vc *VersionChain, threshold uint64) []*VersionNode {
 	var out []*VersionNode
 	for cur := vc.GetHead(); cur != nil; cur = cur.next.Load() {
 		endTS := cur.endTS.Load()
-		if endTS != maxUint64 && endTS < threshold {
+		if endTS != math.MaxUint64 && endTS < threshold {
 			out = append(out, cur)
 		}
 	}
