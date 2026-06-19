@@ -38,18 +38,34 @@ func openSST(data []byte) (*sstReader, error) {
 		return nil, ErrInvalidSSTFormat
 	}
 
-	if indexOffset > 0 && indexOffset < uint64(len(data)) {
+	// REQ000603: bounds-check every footer-derived slice before
+	// indexing into data. A truncated or corrupt SST with an
+	// out-of-range offset/size would otherwise panic with
+	// index-out-of-range. Also enforce the layout invariant
+	// that the index block precedes the bloom block.
+	dataLen := uint64(len(data))
+	if indexOffset > 0 {
+		if indexOffset >= dataLen || indexOffset+uint64(indexSize) > dataLen {
+			return nil, ErrInvalidSSTFormat
+		}
 		indexData := data[indexOffset : indexOffset+uint64(indexSize)]
 		r.indexBlock = parseIndexBlock(indexData)
 	}
 
-	if bloomOffset > 0 && bloomOffset < uint64(len(data)) {
+	if bloomOffset > 0 {
+		if bloomOffset >= dataLen || bloomOffset+uint64(bloomSize) > dataLen {
+			return nil, ErrInvalidSSTFormat
+		}
+		if indexOffset > 0 && indexOffset+uint64(indexSize) > bloomOffset {
+			// index must come before bloom in the file
+			return nil, ErrInvalidSSTFormat
+		}
 		r.bloom = data[bloomOffset : bloomOffset+uint64(bloomSize)]
 		// REQ000047: prefix bloom is stored right after the regular bloom
 		prefixBloomStart := bloomOffset + uint64(bloomSize)
-		if prefixBloomStart < uint64(len(data)) {
-			remaining := uint64(len(data)) - prefixBloomStart - 28 // subtract footer
-			if remaining > 0 && remaining < uint64(len(data)) {
+		if prefixBloomStart < dataLen {
+			remaining := dataLen - prefixBloomStart - 28 // subtract footer
+			if remaining > 0 && remaining < dataLen && prefixBloomStart+remaining <= dataLen {
 				r.prefixBloom = data[prefixBloomStart : prefixBloomStart+remaining]
 			}
 		}

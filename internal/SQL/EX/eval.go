@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -241,9 +240,30 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []interface{}) (interface{}, 
 	case int(LX.T_CONCAT):
 		return concat(left, right)
 	case int(LX.T_AND):
-		return band(left, right)
+		// REQ000579: short-circuit evaluation. false AND right
+		// = false regardless of right (even if right has side
+		// effects or division-by-zero). true/NULL AND right must
+		// evaluate right and use band's three-valued logic.
+		if b, ok := left.(bool); ok && !b {
+			return false, nil
+		}
+		rval, err := Eval(e.Right, row, params)
+		if err != nil {
+			return nil, err
+		}
+		return band(left, rval)
 	case int(LX.T_OR):
-		return bor(left, right)
+		// REQ000579: short-circuit evaluation. true OR right
+		// = true regardless of right. false/NULL OR right must
+		// evaluate right and use bor's three-valued logic.
+		if b, ok := left.(bool); ok && b {
+			return true, nil
+		}
+		rval, err := Eval(e.Right, row, params)
+		if err != nil {
+			return nil, err
+		}
+		return bor(left, rval)
 	case int(LX.T_LIKE): {
 		var esc string
 		if e.Escape != nil {
@@ -1925,57 +1945,93 @@ func evalGlob(args []PS.Expr, row *Row, params []interface{}) (interface{}, erro
 	return int64(0), nil
 }
 
-// globMatch implements SQL GLOB pattern matching.
+// globMatch implements SQL GLOB pattern matching as a direct
+// byte-matcher. REQ000581: the previous implementation called
+// regexp.MustCompile on every invocation, allocating a new
+// regex per row. For "WHERE name GLOB '*.txt'" over 10K rows
+// that was 10K identical compiles. SQL GLOB supports only three
+// wildcard forms (*, ?, [...]) which are easy to match without
+// a regex engine.
 func globMatch(pattern, s string) bool {
-	// Convert GLOB pattern to regex
-	var re strings.Builder
-	re.WriteString("^")
-	for i := 0; i < len(pattern); i++ {
-		c := pattern[i]
+	return globMatchFrom(pattern, 0, s, 0)
+}
+
+// globMatchFrom is the recursive worker. Returns true if the
+// remainder of pattern starting at pi matches the remainder of
+// s starting at si.
+func globMatchFrom(pattern string, pi int, s string, si int) bool {
+	for pi < len(pattern) {
+		c := pattern[pi]
 		switch c {
 		case '*':
-			re.WriteString(".*")
+			// * matches any number of characters. Try matching
+			// the rest of the pattern against every suffix of s.
+			for skip := si; skip <= len(s); skip++ {
+				if globMatchFrom(pattern, pi+1, s, skip) {
+					return true
+				}
+			}
+			return false
 		case '?':
-			re.WriteString(".")
+			if si >= len(s) {
+				return false
+			}
+			pi++
+			si++
 		case '[':
-			re.WriteString("[")
-			// Handle [...] character classes
-			for i++; i < len(pattern) && pattern[i] != ']'; i++ {
-				if pattern[i] == '\\' && i+1 < len(pattern) {
-					i++
-					re.WriteString(regexp.QuoteMeta(string(pattern[i])))
+			// Character class: [abc], [a-z], [^abc]. We support
+			// single chars and ranges; negation with leading ^.
+			if si >= len(s) {
+				return false
+			}
+			pi++
+			negate := false
+			if pi < len(pattern) && pattern[pi] == '^' {
+				negate = true
+				pi++
+			}
+			matched := false
+			for pi < len(pattern) && pattern[pi] != ']' {
+				lo := pattern[pi]
+				pi++
+				if pi+1 < len(pattern) && pattern[pi] == '-' && pattern[pi+1] != ']' {
+					hi := pattern[pi+1]
+					pi += 2
+					if lo <= s[si] && s[si] <= hi {
+						matched = true
+					}
 				} else {
-					switch pattern[i] {
-					case '^':
-						if i == 0 || pattern[i-1] == '[' {
-							re.WriteString("^")
-						} else {
-							re.WriteString("\\^")
-						}
-					case '-':
-						if i > 0 && i < len(pattern)-1 && pattern[i-1] != '[' && pattern[i+1] != ']' {
-							re.WriteString("-")
-						} else {
-							re.WriteString("\\-")
-						}
-					default:
-						re.WriteString(regexp.QuoteMeta(string(pattern[i])))
+					if lo == s[si] {
+						matched = true
 					}
 				}
 			}
-			re.WriteString("]")
-		case '\\':
-			if i+1 < len(pattern) {
-				i++
-				re.WriteString(regexp.QuoteMeta(string(pattern[i])))
+			if pi < len(pattern) {
+				pi++ // skip ']'
 			}
+			if matched == negate {
+				return false
+			}
+			si++
+		case '\\':
+			if pi+1 >= len(pattern) {
+				return false
+			}
+			pi++
+			if si >= len(s) || pattern[pi] != s[si] {
+				return false
+			}
+			pi++
+			si++
 		default:
-			re.WriteString(regexp.QuoteMeta(string(c)))
+			if si >= len(s) || c != s[si] {
+				return false
+			}
+			pi++
+			si++
 		}
 	}
-	re.WriteString("$")
-	r := regexp.MustCompile(re.String())
-	return r.MatchString(s)
+	return si == len(s)
 }
 
 // evalLikelihood implements likelihood(X,Y) — no-op pass-through.

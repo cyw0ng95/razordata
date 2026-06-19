@@ -1,6 +1,7 @@
 package ls
 
 import (
+	"bytes"
 	"sync"
 	"sync/atomic"
 )
@@ -65,23 +66,52 @@ func (idx *primaryIndex) Insert(key, primary []byte) {
 	defer idx.mu.Unlock()
 
 	head := idx.head.Load()
-	newEntry := &pkEntry{
-		key:     key,
-		primary: primary,
-	}
-
+	// REQ000604: walk the list looking for an existing entry
+	// with the same key. If found, atomically update its primary
+	// pointer rather than appending a duplicate. The previous
+	// implementation always appended, causing Find to return the
+	// stale entry (oldest first) and Len() to inflate.
 	curr := head
 	for {
 		next := curr.next.Load()
 		if next == nil {
-			newEntry.next.Store(nil)
-			if curr.next.CompareAndSwap(nil, newEntry) {
-				idx.len.Add(1)
-				return
-			}
-			continue
+			break
+		}
+		if bytes.Equal(next.key, key) {
+			next.primary = primary
+			return
 		}
 		curr = next
+	}
+
+	newEntry := &pkEntry{
+		key:     key,
+		primary: primary,
+	}
+	newEntry.next.Store(nil)
+	if head.next.CompareAndSwap(nil, newEntry) {
+		idx.len.Add(1)
+		return
+	}
+	// Concurrent insert raced us; fall through to walk-and-retry.
+	for {
+		curr := head
+		for {
+			next := curr.next.Load()
+			if next == nil {
+				newEntry.next.Store(nil)
+				if curr.next.CompareAndSwap(nil, newEntry) {
+					idx.len.Add(1)
+					return
+				}
+				continue
+			}
+			if bytes.Equal(next.key, key) {
+				next.primary = primary
+				return
+			}
+			curr = next
+		}
 	}
 }
 

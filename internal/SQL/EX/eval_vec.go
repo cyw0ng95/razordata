@@ -483,7 +483,7 @@ func batchToRow(batch *Batch, idx int) *Row {
 		if batch.Cols[c].Data == nil {
 			continue
 		}
-		row.Cols = append(row.Cols, "")
+		row.Cols = append(row.Cols, batch.Cols[c].Name)
 		row.Data = append(row.Data, batchValueAt(batch.Cols[c], idx))
 	}
 	return row

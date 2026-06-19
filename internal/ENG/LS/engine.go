@@ -224,11 +224,13 @@ func (e *engine) readFromSST(key []byte) ([]byte, error) {
 				continue
 			}
 
-			iter := reader.Iterator()
-			for iter.Next() {
-				if bytes.Equal(iter.Key(), key) {
-					return iter.Value(), nil
-				}
+			// REQ000602: use the existing Find() method
+			// (bloom filter + block index binary search + linear
+			// block scan) instead of opening a full iterator and
+			// walking every key from the start. Find is O(log
+			// blocks + block scan) vs O(file size).
+			if val, found := reader.Find(key); found {
+				return val, nil
 			}
 		}
 	}
