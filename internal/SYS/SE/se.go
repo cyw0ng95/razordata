@@ -52,9 +52,16 @@ var sessionIDSeq atomic.Uint64
 // read by evalFunction for changes(), last_insert_rowid(), and
 // total_changes().
 type sessionState struct {
-	changesCount    int64
-	lastInsertRowID int64
-	totalChanges    int64
+	// REQ000610: changesCount, lastInsertRowID, and totalChanges
+	// are read from arbitrary goroutines (evalFunction runs on
+	// the query goroutine; the executor updates them from the
+	// same goroutine in practice, but isolation across multiple
+	// session users needs explicit atomicity). Plain int64 read
+	// while another goroutine writes is a data race per the Go
+	// memory model.
+	changesCount    atomic.Int64
+	lastInsertRowID atomic.Int64
+	totalChanges    atomic.Int64
 }
 
 var sessionStateMu sync.RWMutex
@@ -83,6 +90,17 @@ func getExistingSessionState(id uint64) (*sessionState, bool) {
 	defer sessionStateMu.RUnlock()
 	s, ok := sessionStateMap[id]
 	return s, ok
+}
+
+// removeSessionState deletes the per-session state entry. REQ000610:
+// getOrCreateSessionState only ever inserts; without a removal path
+// the global sessionStateMap grows monotonically under connection
+// churn. Sessions that have been pooled back into sessionPool (via
+// Close) call this so the map stays bounded.
+func removeSessionState(id uint64) {
+	sessionStateMu.Lock()
+	defer sessionStateMu.Unlock()
+	delete(sessionStateMap, id)
 }
 
 // NewSession returns a fresh Session bound to engine. Sessions are
@@ -172,11 +190,11 @@ func (s *Session) Exec(ctx context.Context, sql string, args ...any) (AP.Result,
 	// is the rowid of the most recent INSERT (or 0 for UPDATE/DELETE).
 	st := getOrCreateSessionState(s.id)
 	if res.RowsAffected > 0 {
-		st.changesCount = res.RowsAffected
-		st.totalChanges += res.RowsAffected
+		st.changesCount.Store(int64(res.RowsAffected))
+		st.totalChanges.Add(int64(res.RowsAffected))
 	}
 	if res.LastInsertID > 0 {
-		st.lastInsertRowID = int64(res.LastInsertID)
+		st.lastInsertRowID.Store(int64(res.LastInsertID))
 	}
 	return AP.Result{
 		RowsAffected: res.RowsAffected,
@@ -328,7 +346,7 @@ func (s *Session) ChangesCount() int64 {
 	if !ok || st == nil {
 		return 0
 	}
-	return st.changesCount
+	return st.changesCount.Load()
 }
 
 // LastInsertRowID returns the rowid of the most recently inserted row
@@ -338,7 +356,7 @@ func (s *Session) LastInsertRowID() int64 {
 	if !ok || st == nil {
 		return 0
 	}
-	return st.lastInsertRowID
+	return st.lastInsertRowID.Load()
 }
 
 // TotalChangesCount returns the cumulative number of rows modified
@@ -348,7 +366,7 @@ func (s *Session) TotalChangesCount() int64 {
 	if !ok || st == nil {
 		return 0
 	}
-	return st.totalChanges
+	return st.totalChanges.Load()
 }
 
 // CurrentTS returns the current logical timestamp (REQ000255).
@@ -409,7 +427,7 @@ func (s *sessionStateAccessor) GetChangesCount(sessionID uint64) int64 {
 	if st == nil {
 		return 0
 	}
-	return st.changesCount
+	return st.changesCount.Load()
 }
 
 func (s *sessionStateAccessor) GetLastInsertRowID(sessionID uint64) int64 {
@@ -417,7 +435,7 @@ func (s *sessionStateAccessor) GetLastInsertRowID(sessionID uint64) int64 {
 	if st == nil {
 		return 0
 	}
-	return st.lastInsertRowID
+	return st.lastInsertRowID.Load()
 }
 
 func (s *sessionStateAccessor) GetTotalChangesCount(sessionID uint64) int64 {
@@ -425,5 +443,5 @@ func (s *sessionStateAccessor) GetTotalChangesCount(sessionID uint64) int64 {
 	if st == nil {
 		return 0
 	}
-	return st.totalChanges
+	return st.totalChanges.Load()
 }

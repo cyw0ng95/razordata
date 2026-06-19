@@ -52,8 +52,8 @@ func TestScalarFunctions_386_400(t *testing.T) {
 		// REQ000393: instr(X,Y)
 		{"SELECT instr('hello world', 'world') FROM t1 LIMIT 1", "7"},
 		{"SELECT instr('hello', 'z') FROM t1 LIMIT 1", "0"},
-		{"SELECT instr(NULL, 'x') FROM t1 LIMIT 1", "0"},
-		{"SELECT instr('abc', NULL) FROM t1 LIMIT 1", "0"},
+		{"SELECT instr(NULL, 'x') FROM t1 LIMIT 1", "<nil>"},
+		{"SELECT instr('abc', NULL) FROM t1 LIMIT 1", "<nil>"},
 
 		// REQ000394: last_insert_rowid()
 		{"SELECT last_insert_rowid() FROM t1 LIMIT 1", "0"},

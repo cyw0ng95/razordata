@@ -120,9 +120,17 @@ func NewVectorizedFilter(child *VectorizedSeqScan, pred PS.Expr) *VectorizedFilt
 }
 
 // WithParams propagates bound ? placeholders to the filter.
-func (f *VectorizedFilter) WithParams(p []any) Operator {
+// REQ000577: the previous implementation returned nil which
+// caused nil-pointer panics in any caller that dereferenced
+// the result. We now return the receiver typed as *VectorizedFilter
+// so the result is always non-nil and usable. Note: this method
+// does NOT return the Operator interface because VectorizedFilter
+// only implements NextBatch (the columnar vectorized path), not
+// Next. Callers that need Operator dispatch should use the
+// vectorized batch pipeline directly via NextBatch.
+func (f *VectorizedFilter) WithParams(p []any) *VectorizedFilter {
 	f.params = p
-	return nil // TODO: return concrete type once interface aligned
+	return f
 }
 
 // NextBatch produces the next filtered batch.

@@ -414,7 +414,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		if u.where != nil {
-			ok, err := Eval(u.where, &row, nil)
+			ok, err := Eval(u.where, &row, u.params)
 			if err != nil {
 				return Row{}, err
 			}
@@ -511,7 +511,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		if u.where != nil {
-			ok, err := Eval(u.where, &row, nil)
+			ok, err := Eval(u.where, &row, u.params)
 			if err != nil {
 				return Row{}, err
 			}
@@ -678,7 +678,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		if d.where != nil {
-			ok, err := Eval(d.where, &row, nil)
+			ok, err := Eval(d.where, &row, d.params)
 			if err != nil {
 				return Row{}, err
 			}
@@ -763,7 +763,7 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		if d.where != nil {
-			ok, err := Eval(d.where, &row, nil)
+			ok, err := Eval(d.where, &row, d.params)
 			if err != nil {
 				return Row{}, err
 			}

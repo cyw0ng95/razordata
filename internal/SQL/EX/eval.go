@@ -497,7 +497,7 @@ func evalCast(e *PS.CastExpr, row *Row, params []interface{}) (interface{}, erro
 	case LX.T_DECIMAL, LX.T_NUMERIC:
 		return evalDecimalCast(v, e.Type.Precision, e.Type.Scale)
 	case LX.T_BOOL:
-		return truthy(v), nil
+		return castToBool(v), nil
 	case LX.T_BLOB:
 		switch x := v.(type) {
 		case string:
@@ -558,6 +558,37 @@ func truthy(v interface{}) bool {
 	}
 	if s, ok := v.(string); ok {
 		return s != ""
+	}
+	return true
+}
+
+// castToBool implements SQLite-compatible CAST AS BOOLEAN semantics
+// (REQ000607). Unlike truthy() — which returns true for any
+// non-empty string ("false", "abc", "0", …) — castToBool parses the
+// string content: "0", "false", "FALSE", and "" are false; every
+// other non-empty string is true. []byte is checked by its first
+// byte (0x00 = false). Numbers follow the standard 0 = false rule.
+func castToBool(v interface{}) bool {
+	if v == nil {
+		return false
+	}
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	if i, ok := v.(int64); ok {
+		return i != 0
+	}
+	if f, ok := v.(float64); ok {
+		return f != 0
+	}
+	if s, ok := v.(string); ok {
+		if s == "" || s == "0" || s == "false" || s == "FALSE" {
+			return false
+		}
+		return true
+	}
+	if b, ok := v.([]byte); ok && len(b) > 0 {
+		return b[0] != 0
 	}
 	return true
 }
@@ -914,10 +945,18 @@ func evalSubstr(args []PS.Expr, row *Row, params []interface{}) (interface{}, er
 	if err != nil {
 		return nil, err
 	}
+	// REQ000606: SUBSTR(NULL, ...) and SUBSTR(s, NULL, ...) must
+	// return NULL, not "<nil>" (the fmt.Sprint result).
+	if rawStr == nil {
+		return nil, nil
+	}
 	s := fmt.Sprint(rawStr)
 	startV, err := Eval(args[1], row, params)
 	if err != nil {
 		return nil, err
+	}
+	if startV == nil {
+		return nil, nil
 	}
 	start, ok := toInt64(startV)
 	if !ok {
@@ -1241,8 +1280,17 @@ func evalOctetLength(args []PS.Expr, row *Row, params []interface{}) (interface{
 	if v == nil {
 		return nil, nil
 	}
-	s := fmt.Sprint(v)
-	return int64(len(s)), nil
+	// REQ000621: for []byte return the raw byte length, not the
+	// fmt.Sprint representation (which yields "[104 101 ...]" for
+	// "Hello"). For strings, return the byte length directly too
+	// rather than going through fmt.Sprint.
+	if b, ok := v.([]byte); ok {
+		return int64(len(b)), nil
+	}
+	if s, ok := v.(string); ok {
+		return int64(len(s)), nil
+	}
+	return int64(len(fmt.Sprint(v))), nil
 }
 
 // evalUnicode returns the Unicode code point of the first character.
@@ -1303,15 +1351,16 @@ func evalInstr(args []PS.Expr, row *Row, params []interface{}) (interface{}, err
 	if err != nil {
 		return nil, err
 	}
+	// REQ000620: NULL on either side must return NULL, not 0.
 	if x == nil {
-		return int64(0), nil
+		return nil, nil
 	}
 	y, err := Eval(args[1], row, params)
 	if err != nil {
 		return nil, err
 	}
 	if y == nil {
-		return int64(0), nil
+		return nil, nil
 	}
 	xs := fmt.Sprint(x)
 	ys := fmt.Sprint(y)
@@ -1335,8 +1384,9 @@ func evalSign(args []PS.Expr, row *Row, params []interface{}) (interface{}, erro
 	if err != nil {
 		return nil, err
 	}
+	// REQ000619: SIGN(NULL) must return NULL, not 0.
 	if v == nil {
-		return int64(0), nil
+		return nil, nil
 	}
 	n, ok := numericFloat(v)
 	if !ok {
@@ -1690,16 +1740,32 @@ func numericFloat(v interface{}) (float64, bool) {
 	return 0, false
 }
 
+// band implements three-valued SQL AND semantics (REQ000605):
+//   - false AND *       = false (NULL operand can never make AND true)
+//   - true  AND NULL    = NULL
+//   - true  AND true    = true
+//   - NULL  AND NULL    = NULL
 func band(a, b interface{}) (interface{}, error) {
-	if a == true && b == true {
-		return true, nil
+	if a == false || b == false {
+		return false, nil
 	}
-	return false, nil
+	if a == nil || b == nil {
+		return nil, nil
+	}
+	return true, nil
 }
 
+// bor implements three-valued SQL OR semantics (REQ000605):
+//   - true OR *       = true (NULL operand can never make OR false)
+//   - false OR NULL   = NULL
+//   - false OR false  = false
+//   - NULL OR NULL    = NULL
 func bor(a, b interface{}) (interface{}, error) {
 	if a == true || b == true {
 		return true, nil
+	}
+	if a == nil || b == nil {
+		return nil, nil
 	}
 	return false, nil
 }
