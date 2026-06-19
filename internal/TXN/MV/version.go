@@ -168,6 +168,9 @@ func (vc *VersionChain) Commit(node *VersionNode, commitTS uint64) bool {
 
 func (vc *VersionChain) FindVisible(readTS uint64) *VersionNode {
 	for node := vc.GetHead(); node != nil; node = node.next.Load() {
+		if node.IsUncommitted() {
+			continue
+		}
 		if node.IsVisible(readTS) {
 			return node
 		}

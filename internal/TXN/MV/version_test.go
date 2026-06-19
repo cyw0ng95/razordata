@@ -179,8 +179,50 @@ func TestVersionChainFindVisible(t *testing.T) {
 	}
 
 	visible = vc.FindVisible(35)
-	if visible != node3 {
-		t.Errorf("at readTS 35, expected node3 (beginTS 30 < 35 && uncommitted), got %v", visible)
+	if visible != nil {
+		t.Errorf("at readTS 35, expected nil (node3 is uncommitted), got %v", visible)
+	}
+}
+
+func TestVersionChainFindVisibleCommittedOnly(t *testing.T) {
+	arena := newArena()
+	vc := &VersionChain{}
+
+	node1 := NewVersionNode(arena, 1, 10, []byte("key"), []byte("v1"), false)
+	node2 := NewVersionNode(arena, 2, 20, []byte("key"), []byte("v2"), false)
+
+	vc.Insert(node1)
+	vc.Insert(node2)
+
+	// Only commit node1, leave node2 uncommitted
+	vc.Commit(node1, 15)
+
+	// At readTS 12: node1 is visible (committed, beginTS 10 < 12, endTS 15 >= 12)
+	visible := vc.FindVisible(12)
+	if visible != node1 {
+		t.Errorf("at readTS 12, expected node1, got %v", visible)
+	}
+
+	// At readTS 25: node1 has endTS 15 < 25 (not visible); node2 is uncommitted (not visible)
+	visible = vc.FindVisible(25)
+	if visible != nil {
+		t.Errorf("at readTS 25, expected nil (node2 is uncommitted, node1 is too old), got %v", visible)
+	}
+
+	// Commit node2 at timestamp 30
+	vc.Commit(node2, 30)
+
+	// At readTS 35: both are committed; node2 has endTS 30 < 35 (not visible);
+	// node1 has endTS 15 < 35 (not visible)
+	visible = vc.FindVisible(35)
+	if visible != nil {
+		t.Errorf("at readTS 35, expected nil (both committed but endTS < 35), got %v", visible)
+	}
+
+	// At readTS 25: node2 has endTS 30 >= 25, beginTS 20 < 25 → visible
+	visible = vc.FindVisible(25)
+	if visible != node2 {
+		t.Errorf("at readTS 25, expected node2 (committed, beginTS 20 < 25, endTS 30 >= 25), got %v", visible)
 	}
 }
 
@@ -308,8 +350,8 @@ func TestVersionChainFindVisibleMultipleVersions(t *testing.T) {
 	}
 
 	visible = vc.FindVisible(25)
-	if visible != node2 {
-		t.Errorf("at readTS 25, expected node2 (beginTS 20 < 25 && uncommitted), got %v", visible)
+	if visible != nil {
+		t.Errorf("at readTS 25, expected nil (node2 is uncommitted, node1 endTS 15 < 25), got %v", visible)
 	}
 }
 
