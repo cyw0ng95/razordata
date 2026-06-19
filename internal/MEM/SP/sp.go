@@ -5,15 +5,9 @@ import (
 )
 
 const (
-	// BlockSize is the fixed block size (4096 bytes).
-	BlockSize = 4096
-	// IterBufferSize is the pre-allocated size for LSM tree iterator buffers.
-	IterBufferSize = 64 * 1024 // 64 KB
-	// WALBufSize is the pre-allocated size for WAL write buffers (R33).
-	// Each WAL segment holds one 256 KB buffer for batched record encoding;
-	// pooling it avoids the per-segment make() that would otherwise dominate
-	// the no-allocation budget on the writer hot path.
-	WALBufSize = 256 * 1024 // 256 KB
+	BlockSize      = 4096
+	IterBufferSize = 64 * 1024  // 64 KB
+	WALBufSize     = 256 * 1024 // 256 KB
 )
 
 // SyncPool provides reusable buffers to avoid allocations on hot paths.
@@ -22,7 +16,6 @@ type SyncPool interface {
 	Put(buf []byte)
 }
 
-// syncPool implements SyncPool using sync.Pool.
 type syncPool struct {
 	pagePool sync.Pool
 	iterPool sync.Pool
@@ -31,8 +24,7 @@ type syncPool struct {
 
 var _ SyncPool = (*syncPool)(nil)
 
-// New creates a new SyncPool. Callers may pass SyncPool(nil) to get a
-// default implementation that allocates via make when the pool is empty.
+// New creates a new SyncPool.
 func New() *syncPool {
 	sp := &syncPool{}
 	sp.pagePool.New = func() any {
@@ -51,8 +43,6 @@ func New() *syncPool {
 }
 
 // Get returns a buffer of at least size bytes.
-// If a pooled buffer of sufficient size is available, it is returned.
-// Otherwise, a new buffer is allocated with make([]byte, size).
 func (sp *syncPool) Get(size int) []byte {
 	if size <= BlockSize {
 		if p := sp.pagePool.Get(); p != nil {
@@ -72,9 +62,7 @@ func (sp *syncPool) Get(size int) []byte {
 	return make([]byte, size)
 }
 
-// Put returns buf to the pool. Only buffers with capacity BlockSize,
-// IterBufferSize, or WALBufSize are returned to the pool; others are
-// dropped.
+// Put returns buf to the pool.
 func (sp *syncPool) Put(buf []byte) {
 	switch cap(buf) {
 	case BlockSize:

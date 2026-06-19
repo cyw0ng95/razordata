@@ -13,7 +13,6 @@ import (
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 )
 
-// Errors for the BF cluster.
 var (
 	ErrCorrupt          = errors.New("block checksum mismatch")
 	ErrNotLoaded        = errors.New("block not yet loaded")
@@ -21,28 +20,20 @@ var (
 	ErrInvalidBlockID   = errors.New("invalid block ID")
 )
 
-// BlockSize is the fixed block size (matches FIL's DefaultBlockSize).
-const BlockSize = df.DefaultBlockSize
+const (
+	BlockSize      = df.DefaultBlockSize
+	DataLen        = df.DataLen
+	iterBufferSize = 64 * 1024 // 64 KB
+	clockInterval  = 8
+)
 
-// DataLen is the usable data length per block (block size minus checksum).
-const DataLen = df.DataLen
-
-// iterBufferSize is the pre-allocated size for iterator buffers.
-const iterBufferSize = 64 * 1024 // 64 KB
-
-// clockInterval is the number of hand increments before a slot is a candidate
-// for eviction. A slot is evictable when refKey < hand - clockInterval.
-const clockInterval = 8
-
-// Page is a cached block. Data is borrowed from the sync pool and must not
-// be copied by callers.
 type Page struct {
 	ID    uint64
 	Data  []byte // borrowed, never copied
 	Dirty bool   // true if modified since load from disk
 }
 
-// BufferStats reports buffer pool state. Values are snapshot-at-read.
+// BufferStats reports buffer pool state.
 type BufferStats struct {
 	Hits     int64
 	Misses   int64
@@ -53,43 +44,21 @@ type BufferStats struct {
 }
 
 // SyncPool provides reusable page-sized and iterator-sized buffers.
-// It avoids allocations on the hot path by pre-allocating via sync.Pool.
 type SyncPool interface {
 	Get(size int) []byte
 	Put(buf []byte)
 }
 
-// BufferPool manages in-memory block caching with O(1) hash lookup and
-// clock-sweep LRU eviction.
+// BufferPool manages in-memory block caching.
 type BufferPool interface {
-	// Get returns the page for blockID. If found==true, the page was already
-	// cached. If found==false, the page was loaded from disk. The wasCached
-	// return value is true if the page was in the cache on entry.
 	Get(ctx context.Context, blockID uint64) (*Page, bool, error)
-	// Pin increments the pin count on the page. A pinned page cannot be evicted.
 	Pin(page *Page)
-	// Unpin decrements the pin count on the page. Eviction may proceed once
-	// the pin count reaches zero.
 	Unpin(page *Page)
-	// Upsert injects a page directly into the hash table without disk I/O.
-	// Used by the WAL replayer (R16) to populate the cache with recovered
-	// page images. page.Data must have len == BlockSize. If a slot for the
-	// same blockID already exists, its data is overwritten in place (the
-	// caller's previous buffer is not returned to the pool). Does not pin
-	// the page, does not verify the checksum, and counts against capacity
-	// (evicting one slot first if at capacity).
 	Upsert(page *Page) error
-	// SetCapacity resizes the buffer pool. Deferred to v2 — returns ErrCapacityExceeded.
 	SetCapacity(n int64) error
-	// Stats returns current buffer pool statistics.
 	Stats() BufferStats
-	// Close flushes dirty pages and writes the hint file.
 	Close() error
-	// Warm reads the hint file and eagerly loads blocks into the cache.
 	Warm(ctx context.Context) error
-	// SetPMemFile attaches a PMem file for cold-page spill. Pass nil
-	// to detach. REQ000302. Returns ErrNotLoaded if the pool is
-	// already closed.
 	SetPMemFile(pm *PMemFile) error
 }
 

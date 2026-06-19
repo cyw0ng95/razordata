@@ -5,32 +5,13 @@ import (
 	"sync/atomic"
 )
 
-// OffHeap is a large-object pool backed by size-class bins
-// and atomic free lists. REQ000304.
-// Bypasses the Go GC for objects >= 64KB (the threshold for
-// GC scanning pressure per allocation). Size classes follow
-// mimalloc-style geometric progression: 64KB, 96KB, 128KB,
-// 192KB, ..., doubling up to 4MB. Each size class has its own
-// free list; allocations round up to the nearest class.
-// The pool is goroutine-safe. The interface is intentionally
-// minimal: Get returns a zero-initialized byte slice of at
-// least `n` bytes; Put returns a slice for reuse.
-// NOTE: This implementation uses Go-managed []byte slices
-// (not mmap) to keep cross-platform portability and stay
-// within the project's "no external C deps" rule. The
-// off-heap benefit comes from amortizing allocation cost
-// across many Get/Put cycles, not from literal mmap.
-// A future iteration can swap []byte for mmap'd arenas.
+// OffHeap is a large-object pool backed by size-class bins (REQ000304).
 const (
 	minClass   = 64 * 1024       // 64KB
 	maxClass   = 4 * 1024 * 1024 // 4MB
 	classCount = 16
 )
 
-// sizeClass returns the size class for a request of n bytes.
-// Returns 0 if n > maxClass (caller must allocate directly).
-// Classes (16 total): 64K, 96K, 128K, 192K, 256K, 384K, 512K,
-// 768K, 1M, 1.5M, 2M, 3M, 4M.
 func sizeClass(n int) int {
 	if n < minClass {
 		return minClass
@@ -119,7 +100,6 @@ func (oh *OffHeap) Get(n int) []byte {
 	oh.gets.Add(1)
 	c := sizeClass(n)
 	if c == 0 {
-		// Too large for the pool; one-off allocation.
 		oh.misses.Add(1)
 		return make([]byte, n)
 	}
@@ -128,7 +108,6 @@ func (oh *OffHeap) Get(n int) []byte {
 		idx = classCount - 1
 	}
 	b := oh.pools[idx].Get().([]byte)
-	// Zero first n bytes; rest is stale (caller's responsibility).
 	for i := 0; i < n && i < len(b); i++ {
 		b[i] = 0
 	}
@@ -150,11 +129,10 @@ func (oh *OffHeap) Put(b []byte) {
 	if idx < 0 || idx >= classCount {
 		return
 	}
-	// Truncate to cap so the pool stores the full slice.
 	oh.pools[idx].Put(b[:cap(b)])
 }
 
-// Stats returns a snapshot of pool metrics.
+// Stats is a snapshot of pool metrics.
 type Stats struct {
 	Gets   uint64
 	Puts   uint64
