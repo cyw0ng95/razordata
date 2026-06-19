@@ -71,7 +71,6 @@ func readColumnarBlock(buf []byte) ([][]byte, [][]byte, error) {
 	}
 	keyCount := binary.LittleEndian.Uint32(buf[1:5])
 	keysLen := binary.LittleEndian.Uint32(buf[5:9])
-	_ = keysLen
 	valsLen := binary.LittleEndian.Uint32(buf[9:13])
 	checksum := binary.LittleEndian.Uint32(buf[13:17])
 	actualSum := crc32Sum(buf[columnarHeaderSize:])
@@ -97,6 +96,9 @@ func readColumnarBlock(buf []byte) ([][]byte, [][]byte, error) {
 		keys = append(keys, buf[cur:cur+l])
 		cur += l
 	}
+	if uint32(cur-columnarHeaderSize) != keysLen {
+		return nil, nil, ErrInvalidSSTFormat
+	}
 	valLens := make([]uint64, keyCount)
 	for i := uint32(0); i < keyCount; i++ {
 		l, n := binary.Uvarint(buf[cur:])
@@ -115,6 +117,8 @@ func readColumnarBlock(buf []byte) ([][]byte, [][]byte, error) {
 		values = append(values, buf[cur:cur+l])
 		cur += l
 	}
-	_ = valsLen
+	if uint32(cur-(columnarHeaderSize+int(keysLen))) != valsLen {
+		return nil, nil, ErrInvalidSSTFormat
+	}
 	return keys, values, nil
 }
