@@ -127,7 +127,6 @@ func (p *Parser) parsePragma() (*PragmaStmt, error) {
 	stmt := &PragmaStmt{Name: p.current.Lexeme}
 	p.advance()
 
-	// Optional: PRAGMA name = value
 	if p.current.Type == LX.T_EQ {
 		p.advance()
 		if p.current.Type == LX.T_IDENT || p.current.Type == LX.T_STRING {

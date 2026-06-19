@@ -215,7 +215,6 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 					return nil, err
 				}
 				p.advance()
-				// Optional alias
 				var subAlias string
 				if p.current.Type == LX.T_AS || p.current.Type == LX.T_IDENT {
 					if p.current.Type == LX.T_AS {

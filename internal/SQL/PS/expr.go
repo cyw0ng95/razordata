@@ -761,7 +761,6 @@ func (p *Parser) parseCoalesce() (Expr, error) {
 
 	var args []Expr
 
-	// Optional parens
 	if p.current.Type == LX.T_LPAREN {
 		p.advance()
 		for {

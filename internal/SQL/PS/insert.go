@@ -162,7 +162,6 @@ func (p *Parser) parseOnConflict() (*OnConflict, error) {
 	}
 	p.advance()
 
-	// Optional (target columns)
 	var columns []string
 	if p.current.Type == LX.T_LPAREN {
 		p.advance()

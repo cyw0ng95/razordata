@@ -7,7 +7,6 @@ import (
 func (p *Parser) parseBegin() (*BeginTX, error) {
 	p.advance()
 	bt := &BeginTX{}
-	// Optional transaction mode
 	if p.current.Type == LX.T_DEFERRED || p.current.Type == LX.T_IMMEDIATE || p.current.Type == LX.T_EXCLUSIVE {
 		bt.Mode = p.current.Lexeme
 		p.advance()
@@ -22,7 +21,6 @@ func (p *Parser) parseBegin() (*BeginTX, error) {
 // REQ000570: COMMIT / END [TRANSACTION] — COMMIT and END are synonyms.
 func (p *Parser) parseCommit() (*CommitTX, error) {
 	p.advance()
-	// Optional TRANSACTION keyword
 	if p.current.Type == LX.T_TRANSACTION {
 		p.advance()
 	}
@@ -46,7 +44,6 @@ func (p *Parser) parseSavepoint() (*SavepointStmt, error) {
 func (p *Parser) parseReleaseSavepoint() (*ReleaseSavepointStmt, error) {
 	p.advance() // consume RELEASE
 
-	// Optional SAVEPOINT keyword
 	if p.current.Type == LX.T_SAVEPOINT {
 		p.advance()
 	}
@@ -64,7 +61,6 @@ func (p *Parser) parseRollbackTo() (*RollbackToStmt, error) {
 	p.advance() // consume ROLLBACK
 	p.advance() // consume TO
 
-	// Optional SAVEPOINT keyword
 	if p.current.Type == LX.T_SAVEPOINT {
 		p.advance()
 	}

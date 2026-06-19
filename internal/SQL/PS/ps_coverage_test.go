@@ -17,7 +17,6 @@ func mustParse(t *testing.T, sql string) Stmt {
 	return stmt
 }
 
-// === Window functions ===
 
 func TestParse_WindowFunc_ROW_NUMBER(t *testing.T) {
 	mustParse(t, "SELECT ROW_NUMBER() OVER (ORDER BY id) FROM t")
@@ -83,7 +82,6 @@ func TestParse_WindowFunc_partition_only(t *testing.T) {
 	mustParse(t, "SELECT COUNT(*) OVER (PARTITION BY x) FROM t")
 }
 
-// === SAVEPOINT / RELEASE / ROLLBACK TO ===
 
 func TestParse_Savepoint(t *testing.T) {
 	stmt := mustParse(t, "SAVEPOINT sp1")
@@ -113,7 +111,6 @@ func TestParse_RollbackTo_savepoint(t *testing.T) {
 	}
 }
 
-// === EXPLAIN ===
 
 func TestParse_Explain(t *testing.T) {
 	stmt := mustParse(t, "EXPLAIN SELECT 1")
@@ -129,7 +126,6 @@ func TestParse_ExplainQueryPlan(t *testing.T) {
 	}
 }
 
-// === TRUNCATE ===
 
 func TestParse_Truncate(t *testing.T) {
 	stmt := mustParse(t, "TRUNCATE TABLE t")
@@ -145,7 +141,6 @@ func TestParse_Truncate_no_table(t *testing.T) {
 	}
 }
 
-// === REINDEX ===
 
 func TestParse_Reindex(t *testing.T) {
 	stmt := mustParse(t, "REINDEX")
@@ -161,7 +156,6 @@ func TestParse_Reindex_table(t *testing.T) {
 	}
 }
 
-// === NOT LIKE / NOT IN / NOT BETWEEN ===
 
 func TestParse_NotLike(t *testing.T) {
 	stmt := mustParse(t, "SELECT * FROM t WHERE a NOT LIKE '%x%'")
@@ -187,7 +181,6 @@ func TestParse_NotBetween(t *testing.T) {
 	}
 }
 
-// === COALESCE / NULLIF ===
 
 func TestParse_Coalesce(t *testing.T) {
 	mustParse(t, "SELECT COALESCE(a, b, c, 0) FROM t")
@@ -197,7 +190,6 @@ func TestParse_Nullif(t *testing.T) {
 	mustParse(t, "SELECT NULLIF(a, b) FROM t")
 }
 
-// === DROP TABLE IF EXISTS ===
 
 func TestParse_DropTable_IfExists(t *testing.T) {
 	stmt := mustParse(t, "DROP TABLE IF EXISTS t")
@@ -215,7 +207,6 @@ func TestParse_DropTable(t *testing.T) {
 	}
 }
 
-// === CREATE INDEX IF NOT EXISTS ===
 
 func TestParse_CreateIndex_IfNotExists(t *testing.T) {
 	stmt := mustParse(t, "CREATE INDEX IF NOT EXISTS idx ON t (a)")
@@ -241,7 +232,6 @@ func TestParse_CreateUniqueIndex(t *testing.T) {
 	}
 }
 
-// === DROP INDEX IF EXISTS ===
 
 func TestParse_DropIndex_IfExists(t *testing.T) {
 	stmt := mustParse(t, "DROP INDEX IF EXISTS idx")
@@ -259,7 +249,6 @@ func TestParse_DropIndex(t *testing.T) {
 	}
 }
 
-// === ALTER TABLE RENAME COLUMN ===
 
 func TestParse_AlterTable_RenameColumn(t *testing.T) {
 	stmt := mustParse(t, "ALTER TABLE t RENAME COLUMN a TO b")
@@ -283,7 +272,6 @@ func TestParse_AlterTable_RenameTable(t *testing.T) {
 	}
 }
 
-// === AUTOINCREMENT ===
 
 func TestParse_CreateTable_Autoincrement(t *testing.T) {
 	stmt := mustParse(t, "CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT)")
@@ -307,7 +295,6 @@ func TestParse_CreateTable_CompositePK(t *testing.T) {
 	}
 }
 
-// === UNION / INTERSECT / EXCEPT ===
 
 func TestParse_Union(t *testing.T) {
 	mustParse(t, "SELECT 1 UNION SELECT 2")
@@ -325,7 +312,6 @@ func TestParse_Except(t *testing.T) {
 	mustParse(t, "SELECT 1 EXCEPT SELECT 2")
 }
 
-// === Subquery in FROM ===
 
 func TestParse_FromSubquery(t *testing.T) {
 	mustParse(t, "SELECT a FROM (SELECT 1 AS a) sub")
@@ -335,7 +321,6 @@ func TestParse_FromSubqueryAliased(t *testing.T) {
 	mustParse(t, "SELECT sub.a FROM (SELECT 1 AS a) AS sub")
 }
 
-// === CASE expression ===
 
 func TestParse_CaseSimple(t *testing.T) {
 	mustParse(t, "SELECT CASE a WHEN 1 THEN 'x' WHEN 2 THEN 'y' ELSE 'z' END FROM t")
@@ -349,7 +334,6 @@ func TestParse_CaseNoElse(t *testing.T) {
 	mustParse(t, "SELECT CASE a WHEN 1 THEN 'x' END FROM t")
 }
 
-// === CAST ===
 
 func TestParse_Cast(t *testing.T) {
 	mustParse(t, "SELECT CAST(a AS INTEGER) FROM t")
@@ -367,7 +351,6 @@ func TestParse_CastReal(t *testing.T) {
 	mustParse(t, "SELECT CAST(a AS REAL) FROM t")
 }
 
-// === LIMIT / OFFSET ===
 
 func TestParse_LimitOffset(t *testing.T) {
 	mustParse(t, "SELECT * FROM t LIMIT 10 OFFSET 5")
@@ -381,7 +364,6 @@ func TestParse_OffsetOnly(t *testing.T) {
 	mustParse(t, "SELECT * FROM t OFFSET 5")
 }
 
-// === IS NULL / IS NOT NULL ===
 
 func TestParse_IsNull(t *testing.T) {
 	mustParse(t, "SELECT * FROM t WHERE a IS NULL")
@@ -391,25 +373,21 @@ func TestParse_IsNotNull(t *testing.T) {
 	mustParse(t, "SELECT * FROM t WHERE a IS NOT NULL")
 }
 
-// === BETWEEN ===
 
 func TestParse_Between(t *testing.T) {
 	mustParse(t, "SELECT * FROM t WHERE a BETWEEN 1 AND 10")
 }
 
-// === IN with subquery ===
 
 func TestParse_InSubquery(t *testing.T) {
 	mustParse(t, "SELECT * FROM t WHERE a IN (SELECT b FROM s)")
 }
 
-// === EXISTS subquery ===
 
 func TestParse_ExistsSubquery(t *testing.T) {
 	mustParse(t, "SELECT * FROM t WHERE EXISTS (SELECT 1 FROM s)")
 }
 
-// === CTE (WITH) ===
 
 func TestParse_WithCTE(t *testing.T) {
 	mustParse(t, "WITH cte AS (SELECT 1) SELECT * FROM cte")
@@ -423,9 +401,7 @@ func TestParse_MultipleCTE(t *testing.T) {
 	mustParse(t, "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a, b")
 }
 
-// === VALUES ===
 
-// === ORDER BY expression ===
 
 func TestParse_OrderByExpression(t *testing.T) {
 	mustParse(t, "SELECT * FROM t ORDER BY a + b")
@@ -443,19 +419,16 @@ func TestParse_OrderByMultiple(t *testing.T) {
 	mustParse(t, "SELECT * FROM t ORDER BY a, b DESC, c ASC")
 }
 
-// === HAVING ===
 
 func TestParse_Having(t *testing.T) {
 	mustParse(t, "SELECT a, COUNT(*) FROM t GROUP BY a HAVING COUNT(*) > 1")
 }
 
-// === DISTINCT ===
 
 func TestParse_Distinct(t *testing.T) {
 	mustParse(t, "SELECT DISTINCT a FROM t")
 }
 
-// === Aggregate functions ===
 
 func TestParse_CountStar(t *testing.T) {
 	mustParse(t, "SELECT COUNT(*) FROM t")
@@ -489,7 +462,6 @@ func TestParse_GroupConcatDistinct(t *testing.T) {
 	mustParse(t, "SELECT GROUP_CONCAT(DISTINCT a) FROM t")
 }
 
-// === INSERT variations ===
 
 func TestParse_InsertOrIgnore(t *testing.T) {
 	stmt := mustParse(t, "INSERT OR IGNORE INTO t (a) VALUES (1)")
@@ -569,14 +541,12 @@ func TestParse_InsertReturningCols(t *testing.T) {
 	}
 }
 
-// === UPDATE variations ===
 
 func TestParse_UpdateReturning(t *testing.T) {
 	stmt := mustParse(t, "UPDATE t SET a = 1 RETURNING *")
 	_ = stmt
 }
 
-// === DELETE variations ===
 
 func TestParse_DeleteReturning(t *testing.T) {
 	mustParse(t, "DELETE FROM t WHERE a = 1 RETURNING *")
@@ -586,7 +556,6 @@ func TestParse_DeleteReturningCols(t *testing.T) {
 	mustParse(t, "DELETE FROM t WHERE a = 1 RETURNING a")
 }
 
-// === CREATE VIEW ===
 
 func TestParse_CreateViewFull(t *testing.T) {
 	mustParse(t, "CREATE VIEW v AS SELECT 1")
@@ -604,7 +573,6 @@ func TestParse_DropViewIfExists(t *testing.T) {
 	}
 }
 
-// === CREATE TRIGGER ===
 
 func TestParse_CreateTrigger(t *testing.T) {
 	mustParse(t, "CREATE TRIGGER trg AFTER INSERT ON t BEGIN SELECT 1; END")
@@ -630,7 +598,6 @@ func TestParse_DropTriggerIfExists(t *testing.T) {
 	}
 }
 
-// === CREATE TABLE AS SELECT ===
 
 func TestParse_CreateTableAsSelect(t *testing.T) {
 	mustParse(t, "CREATE TABLE t AS SELECT 1 AS a, 2 AS b")
@@ -640,7 +607,6 @@ func TestParse_CreateTableAsSelectWhere(t *testing.T) {
 	mustParse(t, "CREATE TABLE t AS SELECT * FROM s WHERE a > 1")
 }
 
-// === Nested subqueries ===
 
 func TestParse_ScalarSubquery(t *testing.T) {
 	mustParse(t, "SELECT (SELECT COUNT(*) FROM s) FROM t")
@@ -650,7 +616,6 @@ func TestParse_ExistsInWhere(t *testing.T) {
 	mustParse(t, "SELECT * FROM t WHERE EXISTS (SELECT 1 FROM s WHERE s.id = t.id)")
 }
 
-// === Error cases ===
 
 func TestParse_ErrorOnEmpty(t *testing.T) {
 	_, err := parse("")
@@ -680,9 +645,7 @@ func TestParse_ErrorOnUnclosedParen(t *testing.T) {
 	}
 }
 
-// === Multiple statements ===
 
-// === Pragma ===
 
 func TestParse_Pragma(t *testing.T) {
 	stmt := mustParse(t, "PRAGMA cache_size")
@@ -699,7 +662,6 @@ func TestParse_PragmaWithValue(t *testing.T) {
 	}
 }
 
-// === EXPLAIN ===
 
 func TestParse_ExplainDetailed(t *testing.T) {
 	stmt := mustParse(t, "EXPLAIN SELECT * FROM t WHERE a > 1")
