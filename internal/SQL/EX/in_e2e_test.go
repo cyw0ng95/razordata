@@ -23,6 +23,8 @@ func TestScalarIN_ReturnsOneRow(t *testing.T) {
 		{"SELECT 1 NOT IN (NULL)", 1, nil},
 		{"SELECT NULL NOT IN (1)", 1, nil},
 		{"SELECT NULL IN (NULL)", 1, nil},
+		{"SELECT NULL IN ()", 1, false},
+		{"SELECT 1 IN ()", 1, false},
 	}
 	for _, tc := range cases {
 		rows, err := e.QueryAll(ctx, tc.sql)

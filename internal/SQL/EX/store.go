@@ -663,13 +663,18 @@ func extractPK(schema *storeSchema, row Row) (interface{}, error) {
 		if !schema.hiddenPK {
 			return nil, errors.New("ex: table has no primary key")
 		}
-		// REQ000367: synthetic rowid. Atomic increment so concurrent
-		// inserts from different goroutines get distinct IDs.
 		id := atomic.AddInt64(&schema.nextRowID, 1)
 		return id, nil
 	}
 	for i, c := range schema.cols {
 		if c == schema.pk {
+			if row.Data[i] == nil {
+				if !schema.hiddenPK {
+					schema.hiddenPK = true
+				}
+				id := atomic.AddInt64(&schema.nextRowID, 1)
+				return id, nil
+			}
 			return row.Data[i], nil
 		}
 	}

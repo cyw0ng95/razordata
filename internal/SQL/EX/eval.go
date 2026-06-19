@@ -325,11 +325,17 @@ func evalIn(e *PS.InExpr, row *Row, params []interface{}) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	if e.Subquery != nil {
+		if target == nil {
+			return nil, nil
+		}
+		return evalInSubquery(target, e.Subquery, row, params)
+	}
+	if len(e.List) == 0 {
+		return false, nil
+	}
 	if target == nil {
 		return nil, nil
-	}
-	if e.Subquery != nil {
-		return evalInSubquery(target, e.Subquery, row, params)
 	}
 	hadNull := false
 	for _, item := range e.List {
