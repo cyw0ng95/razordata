@@ -1,6 +1,7 @@
 package ls
 
 import (
+	"log/slog"
 	"bytes"
 	"errors"
 	"os"
@@ -75,6 +76,7 @@ type engine struct {
 	statsMu   sync.RWMutex
 	mu        sync.RWMutex // REQ000574: guards memtables/activeMem
 	closed    atomic.Bool
+	log       *slog.Logger
 }
 
 func newEngine(dir string) (*engine, error) {
@@ -106,6 +108,7 @@ func newEngineWithOptions(dir string, opts Options) (*engine, error) {
 		activeMem: activeMem,
 		manifest:  manifest,
 		opts:      opts,
+		log:       slog.Default(),
 	}
 
 	e.cm = newCompactionManager(dir, manifest)
@@ -234,11 +237,13 @@ func (e *engine) readFromSST(key []byte) ([]byte, error) {
 			sstPath := filepath.Join(e.dir, fileName(&file))
 			data, err := os.ReadFile(sstPath)
 			if err != nil {
+				e.log.Warn("readFromSST: failed to read SST file", "path", sstPath, "err", err)
 				continue
 			}
 
 			reader, err := openSST(data)
 			if err != nil {
+				e.log.Warn("readFromSST: failed to open SST file", "path", sstPath, "err", err)
 				continue
 			}
 
@@ -283,10 +288,12 @@ func (e *engine) MayContain(key []byte) bool {
 			sstPath := filepath.Join(e.dir, fileName(file))
 			data, err := os.ReadFile(sstPath)
 			if err != nil {
+				e.log.Warn("MayContain: failed to read SST file", "path", sstPath, "err", err)
 				continue
 			}
 			reader, err := openSST(data)
 			if err != nil {
+				e.log.Warn("MayContain: failed to open SST file", "path", sstPath, "err", err)
 				continue
 			}
 			if reader.mayContain(key) {
