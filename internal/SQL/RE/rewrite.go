@@ -15,7 +15,7 @@ func Rewrite(stmt PS.Stmt) (PS.Stmt, error) {
 	case *PS.Select:
 		return rewriteSelect(s), nil
 	case *PS.CompoundStmt:
-		return rewriteCompound(s), nil
+		return rewriteCompound(s)
 	case *PS.Insert:
 		return rewriteInsert(s), nil
 	case *PS.Update:
@@ -48,18 +48,22 @@ func rewriteSelect(s *PS.Select) *PS.Select {
 // are normalized. Since the rewriter itself never errors, this
 // does not return an error — but it calls Rewrite recursively
 // which does. The caller handles errors.
-func rewriteCompound(s *PS.CompoundStmt) PS.Stmt {
+func rewriteCompound(s *PS.CompoundStmt) (PS.Stmt, error) {
 	out := *s
-	if left, err := Rewrite(s.Left); err == nil {
-		out.Left = left
+	left, err := Rewrite(s.Left)
+	if err != nil {
+		return nil, err
 	}
-	if right, err := Rewrite(s.Right); err == nil {
-		out.Right = right
+	out.Left = left
+	right, err := Rewrite(s.Right)
+	if err != nil {
+		return nil, err
 	}
+	out.Right = right
 	out.OrderBy = cloneOrderBy(s.OrderBy)
 	out.Limit = RewriteExpr(s.Limit)
 	out.Offset = RewriteExpr(s.Offset)
-	return &out
+	return &out, nil
 }
 
 func rewriteInsert(s *PS.Insert) *PS.Insert {
