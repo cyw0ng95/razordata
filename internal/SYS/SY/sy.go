@@ -501,7 +501,7 @@ func (a *executorStoreAdapter) Delete(k []byte) error    { return a.eng.Delete(k
 func (a *executorStoreAdapter) Get(k []byte) ([]byte, bool, error) {
 	v, err := a.eng.Get(k)
 	if err != nil {
-		if err.Error() == "key not found" || err.Error() == "not found" {
+		if errors.Is(err, ls.ErrNotFound) {
 			return nil, false, nil
 		}
 		return nil, false, err

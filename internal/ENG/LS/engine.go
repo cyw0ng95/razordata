@@ -13,6 +13,7 @@ import (
 var (
 	ErrNoActiveMemtable = errors.New("no active memtable")
 	ErrClosed           = errors.New("engine is closed")
+	ErrNotFound         = errors.New("key not found")
 )
 
 // memtableAdapter wraps *memtable to satisfy memtableIface.
