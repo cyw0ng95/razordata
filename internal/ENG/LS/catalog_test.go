@@ -2,6 +2,7 @@ package ls
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -241,5 +242,109 @@ func TestCatalog_ConcurrentPuts(t *testing.T) {
 func TestCatalog_NewEmptyDir(t *testing.T) {
 	if _, err := NewCatalog(""); !errors.Is(err, ErrCatalogCorrupt) {
 		t.Fatalf("empty dir: got %v, want ErrCatalogCorrupt", err)
+	}
+}
+
+// TestCatalog_PutStatsRollback — when flushLocked fails, PutStats
+// must restore the original ColumnStats on the in-memory entry.
+func TestCatalog_PutStatsRollback(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "catalog")
+	c, err := NewCatalog(dir)
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	entry := CatalogEntry{TableID: 1, Name: "t", CreateSQL: "CREATE TABLE t (a INT)"}
+	if err := c.Put(entry); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	// Inject stats before the rollback scenario
+	originalStats := ColumnStats{DistinctCount: 10, NullCount: 2, RowCount: 100}
+	if err := c.PutStats(1, "a", originalStats); err != nil {
+		t.Fatalf("PutStats initial: %v", err)
+	}
+
+	// Replace catalog.dat with a directory to make subsequent
+	// flushLocked fail on os.WriteFile (EISDIR / permission error).
+	if err := os.Remove(c.path); err != nil {
+		t.Fatalf("Remove catalog.dat: %v", err)
+	}
+	if err := os.Mkdir(c.path, 0o755); err != nil {
+		t.Fatalf("Mkdir over catalog.dat: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(c.path) })
+
+	newStats := ColumnStats{DistinctCount: 99, NullCount: 0, RowCount: 200}
+	err = c.PutStats(1, "a", newStats)
+	if err == nil {
+		t.Fatal("PutStats: expected error, got nil")
+	}
+
+	// Verify in-memory stats are unchanged
+	got := c.GetStats(1, "a")
+	if got == nil {
+		t.Fatal("GetStats returned nil after rollback")
+	}
+	if got.DistinctCount != originalStats.DistinctCount {
+		t.Fatalf("DistinctCount = %d, want %d", got.DistinctCount, originalStats.DistinctCount)
+	}
+	if got.NullCount != originalStats.NullCount {
+		t.Fatalf("NullCount = %d, want %d", got.NullCount, originalStats.NullCount)
+	}
+	if got.RowCount != originalStats.RowCount {
+		t.Fatalf("RowCount = %d, want %d", got.RowCount, originalStats.RowCount)
+	}
+}
+
+// TestCatalog_PutStatsRollbackNewEntry — same rollback test for the
+// case where PutStats creates a brand-new stats entry (not found).
+func TestCatalog_PutStatsRollbackNewEntry(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "catalog")
+	c, err := NewCatalog(dir)
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	entry := CatalogEntry{TableID: 1, Name: "t", CreateSQL: "CREATE TABLE t (a INT, b INT)"}
+	if err := c.Put(entry); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	// Put one stat so we can verify it survives the rollback of a different column
+	if err := c.PutStats(1, "a", ColumnStats{DistinctCount: 10, RowCount: 100}); err != nil {
+		t.Fatalf("PutStats a: %v", err)
+	}
+
+	// Break the file
+	if err := os.Remove(c.path); err != nil {
+		t.Fatalf("Remove catalog.dat: %v", err)
+	}
+	if err := os.Mkdir(c.path, 0o755); err != nil {
+		t.Fatalf("Mkdir over catalog.dat: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(c.path) })
+
+	// PutStats for column "b" — will fail after appending
+	err = c.PutStats(1, "b", ColumnStats{DistinctCount: 5, RowCount: 50})
+	if err == nil {
+		t.Fatal("PutStats: expected error, got nil")
+	}
+
+	// Column "a" stats must survive
+	got := c.GetStats(1, "a")
+	if got == nil {
+		t.Fatal("GetStats('a') returned nil after rollback")
+	}
+	if got.DistinctCount != 10 {
+		t.Fatalf("DistinctCount = %d, want 10", got.DistinctCount)
+	}
+
+	// Column "b" must not exist in stats
+	gotB := c.GetStats(1, "b")
+	if gotB != nil {
+		t.Fatal("GetStats('b') should be nil after rollback")
 	}
 }

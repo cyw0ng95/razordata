@@ -1177,28 +1177,32 @@ func (p *Planner) planUpdate(s *PS.Update) Operator {
 	if p.store != nil {
 		scan, err := NewSeqScanWithStore(p.store, s.Table)
 		if err == nil {
-			op, err := NewUpdateWithStore(p.store, s.Table, s.Set, s.Where, scan, s.Returning)
+			filter := NewFilter(scan, s.Where)
+			op, err := NewUpdateWithStore(p.store, s.Table, s.Set, s.Where, filter, s.Returning)
 			if err == nil {
 				return op
 			}
 		}
 	}
 	scan := NewSeqScan(s.Table)
-	return NewUpdate(s.Table, s.Set, s.Where, scan, s.Returning)
+	filter := NewFilter(scan, s.Where)
+	return NewUpdate(s.Table, s.Set, s.Where, filter, s.Returning)
 }
 
 func (p *Planner) planDelete(s *PS.Delete) Operator {
 	if p.store != nil {
 		scan, err := NewSeqScanWithStore(p.store, s.Table)
 		if err == nil {
-			op, err := NewDeleteWithStore(p.store, s.Table, s.Where, scan, s.Returning)
+			filter := NewFilter(scan, s.Where)
+			op, err := NewDeleteWithStore(p.store, s.Table, s.Where, filter, s.Returning)
 			if err == nil {
 				return op
 			}
 		}
 	}
 	scan := NewSeqScan(s.Table)
-	return NewDelete(s.Table, s.Where, scan, s.Returning)
+	filter := NewFilter(scan, s.Where)
+	return NewDelete(s.Table, s.Where, filter, s.Returning)
 }
 
 func (p *Planner) planCreateTable(s *PS.CreateTable) Operator {

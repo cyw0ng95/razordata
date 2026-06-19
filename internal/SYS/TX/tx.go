@@ -22,13 +22,13 @@ import (
 // the key existed before the tx its previous value is rewritten, if
 // it was absent it is removed. This satisfies ap.R22/R23.
 type Transaction struct {
-	session  *sy.Engine
-	tx       vl.Tx
-	mu       sync.Mutex
+	session *sy.Engine
+	tx      vl.Tx
+	mu      sync.Mutex
 
-	writeSet      map[string]writeEntry
-	finished      bool
-	savepoints    []savepoint
+	writeSet       map[string]writeEntry
+	finished       bool
+	savepoints     []savepoint
 	isolationLevel ap.IsolationLevel // REQ000123
 }
 
@@ -46,9 +46,9 @@ type savepoint struct {
 // execution. writeSet is initialized lazily on first write.
 func NewTransaction(session *sy.Engine, tx vl.Tx) *Transaction {
 	return &Transaction{
-		session:       session,
-		tx:            tx,
-		writeSet:      make(map[string]writeEntry),
+		session:        session,
+		tx:             tx,
+		writeSet:       make(map[string]writeEntry),
 		isolationLevel: ap.IsolationReadCommitted, // REQ000061: default RC
 	}
 }
@@ -215,6 +215,32 @@ func (t *Transaction) Savepoint(ctx context.Context, name string) error {
 		snap[k] = v
 	}
 	t.savepoints = append(t.savepoints, savepoint{name: name, writeSet: snap})
+	return nil
+}
+
+func (t *Transaction) ReleaseSavepoint(ctx context.Context, name string) error {
+	if t.session.IsClosed() {
+		return ap.ErrClosed
+	}
+	if name == "" {
+		return ap.ErrUnknownSavepoint
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.finished {
+		return ap.ErrTxAborted
+	}
+	idx := -1
+	for i := len(t.savepoints) - 1; i >= 0; i-- {
+		if t.savepoints[i].name == name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return ap.ErrUnknownSavepoint
+	}
+	t.savepoints = t.savepoints[:idx]
 	return nil
 }
 

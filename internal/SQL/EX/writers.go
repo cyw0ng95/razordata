@@ -413,15 +413,6 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			}
 			return Row{}, err
 		}
-		if u.where != nil {
-			ok, err := Eval(u.where, &row, u.params)
-			if err != nil {
-				return Row{}, err
-			}
-			if !truthy(ok) {
-				continue
-			}
-		}
 		snapshot := cloneRow(row)
 		if err := applyUpdate(&row, u.set, u.params); err != nil {
 			return Row{}, err
@@ -509,15 +500,6 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 				break
 			}
 			return Row{}, err
-		}
-		if u.where != nil {
-			ok, err := Eval(u.where, &row, u.params)
-			if err != nil {
-				return Row{}, err
-			}
-			if !truthy(ok) {
-				continue
-			}
 		}
 		oldRow := cloneRow(row)
 		if err := applyUpdate(&row, u.set, u.params); err != nil {
@@ -677,15 +659,6 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 			}
 			return Row{}, err
 		}
-		if d.where != nil {
-			ok, err := Eval(d.where, &row, d.params)
-			if err != nil {
-				return Row{}, err
-			}
-			if !truthy(ok) {
-				continue
-			}
-		}
 		idx, ok := rowIndex(d.table, row)
 		if ok {
 			toDelete[idx] = true
@@ -762,16 +735,6 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			}
 			return Row{}, err
 		}
-		if d.where != nil {
-			ok, err := Eval(d.where, &row, d.params)
-			if err != nil {
-				return Row{}, err
-			}
-			if !truthy(ok) {
-				continue
-			}
-		}
-
 		// Evaluate RETURNING expressions before deleting (REQ000518: expand *)
 		if len(d.returning) > 0 {
 			expanded := expandReturningStar(d.returning, row.Cols)

@@ -432,9 +432,10 @@ func TestDeleteRemovesMatching(t *testing.T) {
 		{Cols: []string{"a"}, Data: []interface{}{int64(3)}},
 	})
 	scan := NewSeqScan("t")
-	del := NewDelete("t", &PS.BinaryExpr{
+	filter := NewFilter(scan, &PS.BinaryExpr{
 		Op: int(LX.T_GT), Left: &PS.Ident{Name: "a"}, Right: &PS.NumberLiteral{Val: 1},
-	}, scan, nil)
+	})
+	del := NewDelete("t", nil, filter, nil)
 	_, err := del.Next(context.Background())
 	if err != ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)

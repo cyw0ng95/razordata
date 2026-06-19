@@ -1086,6 +1086,8 @@ func (c *Catalog) PutStats(tableID uint64, colName string, stats ColumnStats) er
 	if colName == "" {
 		return fmt.Errorf("%w: column name is required", ErrCatalogCorrupt)
 	}
+	// Snapshot old stats for rollback on flush failure
+	oldStats := append([]StatsEntry(nil), entry.ColumnStats...)
 	// Find or create stats entry
 	found := false
 	for i := range entry.ColumnStats {
@@ -1104,6 +1106,7 @@ func (c *Catalog) PutStats(tableID uint64, colName string, stats ColumnStats) er
 	}
 	// Rewrite catalog atomically
 	if err := c.flushLocked(); err != nil {
+		entry.ColumnStats = oldStats
 		return fmt.Errorf("catalog: persist stats: %w", err)
 	}
 	return nil

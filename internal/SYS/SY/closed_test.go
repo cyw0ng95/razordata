@@ -176,6 +176,7 @@ func TestTransactionMethodsAfterClose(t *testing.T) {
 		{"Commit", func() error { return tx.Commit(context.Background()) }},
 		{"Rollback", func() error { return tx.Rollback(context.Background()) }},
 		{"Savepoint", func() error { return tx.Savepoint(context.Background(), "sp1") }},
+		{"ReleaseSavepoint", func() error { return tx.ReleaseSavepoint(context.Background(), "sp1") }},
 		{"RollbackTo", func() error { return tx.RollbackTo(context.Background(), "sp1") }},
 	}
 	for _, tc := range cases {

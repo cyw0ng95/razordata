@@ -141,6 +141,7 @@ type Transaction interface {
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error
 	Savepoint(ctx context.Context, name string) error
+	ReleaseSavepoint(ctx context.Context, name string) error
 	RollbackTo(ctx context.Context, name string) error
 }
 
@@ -190,9 +191,9 @@ type Rows struct {
 // closer callbacks are optional.
 func NewRows(cols []string, types []int, next func() (Row, error), closer func() error) *Rows {
 	return &Rows{
-		Cols:  cols,
-		Types: types,
-		next:  next,
+		Cols:   cols,
+		Types:  types,
+		next:   next,
 		closer: closer,
 	}
 }
