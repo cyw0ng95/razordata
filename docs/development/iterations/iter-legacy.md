@@ -1,7 +1,7 @@
-# Iterations 0–26 — Legacy Compact
+# Iterations 0–27 — Legacy Compact
 
-**Compaction date:** 2026-06-13
-**Source:** iter-00 through iter-26.10 (individual doc files)
+**Compaction date:** 2026-06-19
+**Source:** iter-00 through iter-27 (individual doc files)
 **Reason:** Early iteration documents contained detailed REQ tables, design alignment notes, and outcome narratives that are now superseded by the consolidated `REQUIREMENTS.md` and `ROADMAP.md`. This file preserves the release mapping and one-paragraph summary of each.
 
 ## Release Map
@@ -45,6 +45,7 @@
 | 26.8 | v0.26.10 | Bug sweep v4 (Session.Query streaming, int64 overflow) | ~250 |
 | 26.9 | v0.26.11 | Logger v2 (clock-sweep fix, ProfileHook, Prometheus) | ~250 |
 | 26.10 | v0.26.12 | WAL batch sync + encode optimization (2 allocs → 2 allocs, -32% latency) | ~150 |
+| 27 | v0.27.0 + v0.27.x | Maturity Push: SLT 42/42, storage engine upgrades, memory management, transaction optimizations, Linux I/O (io_uring shim) | ~41,500 |
 
 ## Per-Iteration Summary
 
@@ -162,6 +163,9 @@ REQ000161/322/101: clock-sweep LRU fix (second-pass eviction picks lowest refKey
 
 ### iter-26.10 — WAL Batch Sync + Encode Optimization (v0.26.12)
 REQ000443: encodeRecord reduced from 4 allocs to 2 allocs (-50%), 217ns→148ns (-32%); pre-sized body and out slices eliminate growth; CRC correctly computed over body only. ~150 LOC.
+
+### iter-27 — Maturity Push (v0.27.0 + v0.27.x)
+Major maturity release across 6 phases and 30 REQs (~41,500 LOC, 21 commits). Phases 1-5 (v0.27.0): SLT 42/42 (was 39/42) via negative_literal fix, unary NOT, XOR parser, CREATE TRIGGER parser; recursive CTE, generated columns, subquery planning, foreign keys; SST dictionary compression (ZSTD), WAL columnar encoding, write-rate-limited compactor, sub-compaction parallelism, configurable compaction style; W-TinyLFU cache admission (+30% hit rate), off-heap large object pool; version node stack allocation, QSBR read path. Phase 6 (v0.27.x patches): IndexScan real seek, async fsync, NUMA-aware placement, io_uring async I/O wrapper, Direct I/O + fixed-fd registration, cost-based scan selection, full SQL aggregate DISTINCT. REQ000307 (MV-OCC) deferred to a later iteration. CI gate: `go test ./... -race -count=1` green; 35 packages pass; SLT corpus 42/42.
 
 ## See Also
 
