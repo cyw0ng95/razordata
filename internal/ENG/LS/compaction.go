@@ -195,7 +195,22 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 		os.Remove(sstPath)
 	}
 
+	// REQ000601: also delete overlap files from disk. The merge
+	// has folded their contents into the new output; leaving the
+	// files in place wastes disk and re-merges the same data on
+	// the next compaction.
+	for _, ov := range cj.overlap {
+		sstPath := filepath.Join(dir, fileName(&ov))
+		os.Remove(sstPath)
+	}
+
 	newLevels[cj.level] = removeFiles(newLevels[cj.level], cj.inputs)
+	// REQ000601: remove overlap files from level+1 too. The
+	// overlap data has been merged into the new output; leaving
+	// the overlap files in place causes unbounded disk growth
+	// because every subsequent compaction re-merges the same
+	// data again.
+	newLevels[cj.level+1] = removeFiles(newLevels[cj.level+1], cj.overlap)
 	newLevels[cj.level+1] = append(newLevels[cj.level+1], SSTFileMeta{
 		FileID:    newFileID,
 		Level:     cj.level + 1,
@@ -238,6 +253,20 @@ func fileName(meta *SSTFileMeta) string {
 	// compaction output to this same shape (REQ000186).
 	return filepath.Join("sst",
 		"L"+string(rune('0'+meta.Level))+"_"+hex.EncodeToString(meta.MinKey)+"_"+hex.EncodeToString(meta.MaxKey)+"_"+u64toa(meta.FileID)+".sst")
+}
+
+// keyRangeOverlap reports whether the closed range [lo, hi] overlaps
+// [flo, fhi]. Empty (nil) bounds are treated as -infinity / +infinity
+// respectively, matching the LSM convention that empty-min-key or
+// empty-max-key files span the whole keyspace. REQ000601.
+func keyRangeOverlap(lo, hi, flo, fhi []byte) bool {
+	if len(hi) > 0 && len(flo) > 0 && bytes.Compare(hi, flo) < 0 {
+		return false
+	}
+	if len(lo) > 0 && len(fhi) > 0 && bytes.Compare(lo, fhi) > 0 {
+		return false
+	}
+	return true
 }
 
 func u64toa(n uint64) string {
@@ -434,7 +463,19 @@ func (cm *compactionManager) requestCompaction(level int) {
 
 	var overlap []SSTFileMeta
 	if level+1 < len(v.levels) {
-		overlap = v.levels[level+1]
+		// REQ000601: only include files at level+1 whose key
+		// range overlaps with the inputs. Without this filter,
+		// every compaction merges ALL files at level+1, even
+		// ones whose keys don't overlap, causing unbounded
+		// duplication (input + every level+1 file + new merged
+		// output all coexist).
+		lo := inputs[0].MinKey
+		hi := inputs[len(inputs)-1].MaxKey
+		for _, f := range v.levels[level+1] {
+			if keyRangeOverlap(lo, hi, f.MinKey, f.MaxKey) {
+				overlap = append(overlap, f)
+			}
+		}
 	}
 
 	job := &compactionJob{

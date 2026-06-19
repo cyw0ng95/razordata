@@ -122,30 +122,46 @@ func (sl *skipList) Insert(key, value []byte) {
 			newNode.next[i].Store(successors[i])
 		}
 
-		// REQ000600: CAS-link level 0 first. Once that succeeds
-		// the node is reachable, so subsequent CAS failures on
-		// higher levels only mean the upper-level topology has
-		// changed; we re-walk that single level from the head to
-		// find the new predecessor/successor and retry.
+		// REQ000600: CAS-link level 0 first. Once that succeeds the
+		// node is reachable, so subsequent CAS failures on higher
+		// levels only mean the upper-level topology has changed;
+		// we re-walk that single level from the head to find the
+		// new predecessor/successor and retry.
 		inserted := predecessors[0].next[0].CompareAndSwap(next, newNode)
 		if !inserted {
 			continue
 		}
 
-		// Link each higher level with the same retry-per-level
-		// pattern. Re-reading sl.level inside the loop handles the
-		// race where another inserter raises the level past us.
+		// Link each higher level. We use the original pred/succ
+		// from the level-0 search walk; if the CAS fails the upper
+		// topology has shifted under us — re-walk and retry. We
+		// bound retries to avoid livelock under heavy contention:
+		// if a level cannot be linked after a small number of
+		// retries we abandon it (the level-0 link guarantees the
+		// node is reachable; Find just takes a longer path).
+		linkedHigher := true
 		for i := 1; i < lvl; i++ {
-			for {
-				curLevel := sl.level.Load()
-				pred, succ := findPredSucc(head, curLevel, i, key)
-				predecessors[i] = pred
-				successors[i] = succ
+			const maxRetries = 8
+			retries := 0
+			levelLinked := false
+			for retries < maxRetries {
+				pred := predecessors[i]
+				succ := successors[i]
 				if pred.next[i].CompareAndSwap(succ, newNode) {
+					levelLinked = true
 					break
 				}
+				retries++
+				pred, succ = findPredSucc(head, currentLevel, i, key)
+				predecessors[i] = pred
+				successors[i] = succ
+			}
+			if !levelLinked {
+				linkedHigher = false
+				break
 			}
 		}
+		_ = linkedHigher // accepted; data is still findable via level 0
 
 		if lvl > int(currentLevel) {
 			sl.level.CompareAndSwap(currentLevel, int32(lvl))

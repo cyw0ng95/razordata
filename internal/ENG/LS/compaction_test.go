@@ -363,3 +363,90 @@ func TestCompactionManager_ManualCompact_Concurrent(t *testing.T) {
 		t.Fatalf("ManualCompact concurrent failed: %v", err)
 	}
 }
+
+// TestCompactionJob_RunRemovesOverlapFiles verifies REQ000601: when a
+// compaction job merges input + overlap into a single output file,
+// the overlap files must be removed from level+1 in the new manifest
+// version. Without this, the overlap data exists twice (in the old
+// overlap file and in the new output), and every subsequent
+// compaction re-merges the same data — unbounded disk growth.
+func TestCompactionJob_RunRemovesOverlapFiles(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_compaction_overlap")
+	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0755); err != nil {
+		t.Fatalf("failed to create sst dir: %v", err)
+	}
+
+	mfst, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("newManifest: %v", err)
+	}
+	defer mfst.Close()
+
+	v := mfst.Current()
+	v.levels = make([][]SSTFileMeta, 3)
+	mfst.Apply(*v)
+
+	// Build two SSTs: input (L0) and overlap (L1) with overlapping
+	// key ranges so the merge actually consumes the overlap data.
+	w := newSSTWriter()
+	w.Add([]byte("key1"), []byte("value1"))
+	w.Add([]byte("key5"), []byte("value5"))
+	inputData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("input Finish: %v", err)
+	}
+	w = newSSTWriter()
+	w.Add([]byte("key3"), []byte("value3"))
+	w.Add([]byte("key7"), []byte("value7"))
+	overlapData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("overlap Finish: %v", err)
+	}
+
+	// Use high FileIDs (9001+) to avoid colliding with nextFileID()
+	// which is a package-level atomic counter that other tests in
+	// the same package may have already advanced.
+	input := SSTFileMeta{FileID: 9001, Level: 0, MinKey: []byte("key1"), MaxKey: []byte("key5"), Size: int64(len(inputData)), BloomBits: 10}
+	overlap := SSTFileMeta{FileID: 9002, Level: 1, MinKey: []byte("key3"), MaxKey: []byte("key7"), Size: int64(len(overlapData)), BloomBits: 10}
+	inputPath := filepath.Join(dir, fileName(&input))
+	overlapPath := filepath.Join(dir, fileName(&overlap))
+	if err := os.WriteFile(inputPath, inputData, 0644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+	if err := os.WriteFile(overlapPath, overlapData, 0644); err != nil {
+		t.Fatalf("write overlap: %v", err)
+	}
+
+	job := &compactionJob{
+		level:   0,
+		inputs:  []SSTFileMeta{input},
+		outputs: nil,
+		overlap: []SSTFileMeta{overlap},
+	}
+
+	if err := job.Run(mfst, dir); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	newV := mfst.Current()
+	// L0 must be empty (input removed).
+	if got := len(newV.levels[0]); got != 0 {
+		t.Errorf("expected L0 empty after compaction, got %d files", got)
+	}
+	// L1 must contain only the new merged output, NOT the old
+	// overlap file. The overlap file is identified by its
+	// pre-assigned FileID (9002); this is stable across runs.
+	if got := len(newV.levels[1]); got != 1 {
+		t.Errorf("expected L1 to contain 1 file (merged output), got %d", got)
+	}
+	for _, f := range newV.levels[1] {
+		if f.FileID == overlap.FileID {
+			t.Errorf("REQ000601: overlap file %d still present at L1 after compaction; should have been removed", f.FileID)
+		}
+	}
+	// The overlap file's on-disk bytes should be gone too.
+	if _, err := os.Stat(overlapPath); !os.IsNotExist(err) {
+		t.Errorf("REQ000601: overlap file %s still on disk after compaction", overlapPath)
+	}
+}
