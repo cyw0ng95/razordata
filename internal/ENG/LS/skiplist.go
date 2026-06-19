@@ -60,7 +60,7 @@ func New() *skipList {
 
 func (sl *skipList) randomLevel() int {
 	lvl := 1
-	for lvl < maxLevel && sl.rng.Intn(2) == 0 {
+	for lvl < maxLevel && sl.rng.IntN(2) == 0 {
 		lvl++
 	}
 	return lvl
