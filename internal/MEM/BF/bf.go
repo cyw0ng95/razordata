@@ -69,7 +69,7 @@ type bufferSlot struct {
 	pinCount atomic.Int32
 	dirty    atomic.Bool
 	refKey   atomic.Uint64 // clock hand value when last accessed
-	loading  atomic.Bool   // true while loading from disk
+	loading  atomic.Bool
 	wait     chan struct{} // closed when data is ready
 	// nodeID is the NUMA node where the slot's data was first
 	// touched (REQ000309, iter-27). 0 on non-NUMA hosts.
@@ -89,7 +89,7 @@ type bufferHashTable struct {
 type bp struct {
 	bd       *df.BlockDevice // FIL block device (concrete, not interface)
 	sp       SyncPool        // sync pool for page/iterator buffers
-	hintPath string          // path to hint file
+	hintPath string
 	log      lg.Logger
 
 	ht       bufferHashTable
@@ -265,7 +265,6 @@ func (b *bp) Get(ctx context.Context, blockID uint64) (*Page, bool, error) {
 	}
 allocated:
 
-	// Allocate buffer from sync pool.
 	data := b.sp.Get(BlockSize)
 	if data == nil {
 		data = make([]byte, BlockSize)
@@ -291,7 +290,6 @@ allocated:
 	b.used.Add(1)
 	b.ht.mu.Unlock()
 
-	// Load from disk.
 	err := b.bd.ReadBlockFull(blockID, data)
 	if err != nil {
 		b.ht.mu.Lock()

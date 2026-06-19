@@ -84,7 +84,6 @@ func (w *wtinyLFU) admit(newKey, candidateKey uint64) bool {
 	w.increment(newKey)
 	newFreq := w.estimate(newKey)
 	candFreq := w.estimate(candidateKey)
-	// Track the recent window of admissions.
 	w.window[w.winHead%w.winSize] = newKey
 	w.winHead++
 	if newFreq > candFreq {

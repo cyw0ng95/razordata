@@ -49,7 +49,6 @@ func sizeClass(n int) int {
 type OffHeap struct {
 	// Per-class free lists. Indexed by class index (0..classCount-1).
 	pools [classCount]sync.Pool
-	// Stats.
 	gets   atomic.Uint64
 	puts   atomic.Uint64
 	misses atomic.Uint64 // gets that had to allocate
