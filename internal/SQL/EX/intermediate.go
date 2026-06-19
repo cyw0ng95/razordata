@@ -169,23 +169,48 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 			}
 			s.buf = append(s.buf, row)
 		}
-		sort.SliceStable(s.buf, func(i, j int) bool {
-			a := s.buf[i]
-			b := s.buf[j]
-			for _, k := range s.keys {
-				av, _ := Eval(k.Expr, &a, s.params)
-				bv, _ := Eval(k.Expr, &b, s.params)
-				c := compare(av, bv)
+
+		// REQ000580: pre-extract sort keys so each expression is
+		// evaluated exactly once per row (O(N*K)) rather than
+		// inside the comparator which does O(N log N * K).
+		type sortRow struct {
+			row  Row
+			keys []interface{}
+		}
+		sorted := make([]sortRow, len(s.buf))
+		for i, r := range s.buf {
+			sk := make([]interface{}, len(s.keys))
+			for j, k := range s.keys {
+				v, err := Eval(k.Expr, &r, s.params)
+				if err != nil {
+					return Row{}, err
+				}
+				sk[j] = v
+			}
+			sorted[i] = sortRow{row: r, keys: sk}
+		}
+
+		sort.SliceStable(sorted, func(i, j int) bool {
+			a := sorted[i].keys
+			b := sorted[j].keys
+			for ki := range a {
+				c := compare(a[ki], b[ki])
 				if c == 0 {
 					continue
 				}
-				if k.Desc {
+				if s.keys[ki].Desc {
 					return c > 0
 				}
 				return c < 0
 			}
 			return false
 		})
+
+		s.buf = make([]Row, len(sorted))
+		for i, sr := range sorted {
+			s.buf[i] = sr.row
+		}
+		sorted = nil // allow GC
 		s.materialized = true
 	}
 	if s.pos >= len(s.buf) {

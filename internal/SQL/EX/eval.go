@@ -652,28 +652,40 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 	switch strings.ToUpper(e.Name) {
 	case "LENGTH":
 		if len(e.Args) > 0 {
-			v, _ := Eval(e.Args[0], row, params)
+			v, err := Eval(e.Args[0], row, params)
+			if err != nil {
+				return nil, err
+			}
 			if s, ok := v.(string); ok {
 				return int64(len(s)), nil
 			}
 		}
 	case "UPPER":
 		if len(e.Args) > 0 {
-			v, _ := Eval(e.Args[0], row, params)
+			v, err := Eval(e.Args[0], row, params)
+			if err != nil {
+				return nil, err
+			}
 			if s, ok := v.(string); ok {
 				return strings.ToUpper(s), nil
 			}
 		}
 	case "LOWER":
 		if len(e.Args) > 0 {
-			v, _ := Eval(e.Args[0], row, params)
+			v, err := Eval(e.Args[0], row, params)
+			if err != nil {
+				return nil, err
+			}
 			if s, ok := v.(string); ok {
 				return strings.ToLower(s), nil
 			}
 		}
 	case "IFNULL":
 		if len(e.Args) == 2 {
-			v1, _ := Eval(e.Args[0], row, params)
+			v1, err := Eval(e.Args[0], row, params)
+			if err != nil {
+				return nil, err
+			}
 			if v1 == nil {
 				return Eval(e.Args[1], row, params)
 			}
@@ -681,7 +693,10 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 		}
 	case "COALESCE":
 		for _, arg := range e.Args {
-			v, _ := Eval(arg, row, params)
+			v, err := Eval(arg, row, params)
+			if err != nil {
+				return nil, err
+			}
 			if v != nil {
 				return v, nil
 			}
@@ -691,8 +706,14 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 		if len(e.Args) != 2 {
 			return nil, fmt.Errorf("nullif: expected 2 args")
 		}
-		a, _ := Eval(e.Args[0], row, params)
-		b, _ := Eval(e.Args[1], row, params)
+		a, err := Eval(e.Args[0], row, params)
+		if err != nil {
+			return nil, err
+		}
+		b, err := Eval(e.Args[1], row, params)
+		if err != nil {
+			return nil, err
+		}
 		if equalValue(a, b) == true {
 			return nil, nil
 		}
