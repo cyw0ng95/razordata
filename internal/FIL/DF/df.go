@@ -44,6 +44,7 @@ type BlockDevice struct {
 	mmapSz  int
 	mmapBuf []byte
 	log     lg.Logger
+	mu      sync.RWMutex // protects fd: concurrent-close protection (REQ000600)
 }
 
 func Open(path string, log ...lg.Logger) (*BlockDevice, error) {
@@ -138,6 +139,10 @@ func (d *BlockDevice) ReadBlock(_ context.Context, blockID uint64, n int, buf []
 	tmp := borrowTempBuf()
 	defer returnTempBuf(tmp)
 
+	d.mu.RLock()
+	fd := d.fd
+	d.mu.RUnlock()
+
 	if d.mmap && d.mmapBuf != nil {
 		off := int64(offset)
 		if off+int64(len(tmp)) > int64(d.mmapSz) {
@@ -145,7 +150,7 @@ func (d *BlockDevice) ReadBlock(_ context.Context, blockID uint64, n int, buf []
 		}
 		copy(tmp, d.mmapBuf[off:off+int64(len(tmp))])
 	} else {
-		_, err := unix.Pread(d.fd, tmp, int64(offset))
+		_, err := unix.Pread(fd, tmp, int64(offset))
 		if err != nil {
 			if d.log != nil {
 				d.log.Error("df.read_block", "blockID", blockID, "err", err)
@@ -173,6 +178,10 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 
 	offset := blockID * uint64(DefaultBlockSize)
 
+	d.mu.RLock()
+	fd := d.fd
+	d.mu.RUnlock()
+
 	if d.direct {
 		poolBuf := *bufPool.Get().(*[]byte)
 		defer bufPool.Put(&poolBuf)
@@ -184,7 +193,7 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 		sum := crc32.ChecksumIEEE(poolBuf[:n])
 		binary.LittleEndian.PutUint32(poolBuf[DataLen-ChecksumLen:DataLen], sum)
 
-		_, err := unix.Pwrite(d.fd, poolBuf[:], int64(offset))
+		_, err := unix.Pwrite(fd, poolBuf[:], int64(offset))
 		if err != nil && d.log != nil {
 			d.log.Error("df.write_block", "blockID", blockID, "err", err)
 		}
@@ -201,7 +210,7 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 	sum := crc32.ChecksumIEEE(tmp[:n])
 	binary.LittleEndian.PutUint32(tmp[DataLen-ChecksumLen:DataLen], sum)
 
-	_, err := unix.Pwrite(d.fd, tmp[:], int64(offset))
+	_, err := unix.Pwrite(fd, tmp[:], int64(offset))
 	if err != nil && d.log != nil {
 		d.log.Error("df.write_block", "blockID", blockID, "err", err)
 	}
@@ -216,10 +225,14 @@ func (d *BlockDevice) ReadBlockFull(blockID uint64, buf []byte) error {
 
 	offset := blockID * uint64(DefaultBlockSize)
 
+	d.mu.RLock()
+	fd := d.fd
+	d.mu.RUnlock()
+
 	tmp := borrowTempBuf()
 	defer returnTempBuf(tmp)
 
-	_, err := unix.Pread(d.fd, tmp, int64(offset))
+	_, err := unix.Pread(fd, tmp, int64(offset))
 	if err != nil {
 		if d.log != nil {
 			d.log.Error("df.read_block_full", "blockID", blockID, "err", err)
@@ -238,10 +251,14 @@ func (d *BlockDevice) ReadBlockFull(blockID uint64, buf []byte) error {
 }
 
 func (d *BlockDevice) Sync() error {
-	if d.fd == -1 {
+	d.mu.RLock()
+	fd := d.fd
+	d.mu.RUnlock()
+
+	if fd == -1 {
 		return nil
 	}
-	err := unix.Fsync(d.fd)
+	err := unix.Fsync(fd)
 	if err != nil && d.log != nil {
 		d.log.Error("df.sync", "err", err)
 	}
@@ -249,6 +266,9 @@ func (d *BlockDevice) Sync() error {
 }
 
 func (d *BlockDevice) Close() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	if d.mmapBuf != nil {
 		_ = munmapBlock(d.mmapBuf)
 		d.mmapBuf = nil
@@ -265,8 +285,16 @@ func (d *BlockDevice) Close() error {
 }
 
 func (d *BlockDevice) Size() (int64, error) {
+	d.mu.RLock()
+	fd := d.fd
+	d.mu.RUnlock()
+
+	if fd == -1 {
+		return 0, ErrClosed
+	}
+
 	var stat unix.Stat_t
-	if err := unix.Fstat(d.fd, &stat); err != nil {
+	if err := unix.Fstat(fd, &stat); err != nil {
 		if d.log != nil {
 			d.log.Error("df.size", "err", err)
 		}
