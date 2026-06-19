@@ -170,6 +170,9 @@ var keywords = map[string]TokenType{
 	"RAISE":        T_RAISE,
 	"ESCAPE":       T_ESCAPE, // REQ000567: LIKE ... ESCAPE
 	"INDEXED":      T_INDEXED, // REQ000529/569: INDEXED BY / NOT INDEXED
+	"MATCH":        T_MATCH, // REQ000561
+	"DEFERRABLE":   T_DEFERRABLE, // REQ000561
+	"INITIALLY":    T_INITIALLY, // REQ000561
 }
 
 type Lexer struct {

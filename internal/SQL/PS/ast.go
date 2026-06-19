@@ -209,6 +209,9 @@ type ColDef struct {
 	Generated Expr
 	Virtual      bool
 	Autoincrement bool // REQ000482: INTEGER PRIMARY KEY AUTOINCREMENT
+	Match          string // REQ000561: MATCH FULL/PARTIAL/SIMPLE
+	Deferrable     string // REQ000561: DEFERRABLE / NOT DEFERRABLE
+	Initially      string // REQ000561: INITIALLY DEFERRED / IMMEDIATE
 }
 
 func NewColDef(name string, typ int) ColDef {
@@ -236,6 +239,9 @@ type ForeignKeyConstraint struct {
 	RefColumns []string // referenced columns
 	OnDelete   string   // CASCADE, RESTRICT, SET NULL, SET DEFAULT, NO ACTION
 	OnUpdate   string   // same set
+	Match      string   // REQ000561: PARTIAL, FULL, SIMPLE
+	Deferrable string   // REQ000561: "DEFERRABLE" or "NOT DEFERRABLE"
+	Initially  string   // REQ000561: "DEFERRED" or "IMMEDIATE"
 }
 
 // UniqueKey represents a UNIQUE constraint over one or more columns.

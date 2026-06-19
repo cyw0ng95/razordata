@@ -193,6 +193,9 @@ const (
 	T_RAISE          // REQ000560
 	T_ESCAPE         // REQ000567: LIKE ... ESCAPE
 	T_INDEXED        // REQ000529/569: INDEXED BY / NOT INDEXED
+	T_MATCH          // REQ000561: MATCH PARTIAL/FULL/SIMPLE
+	T_DEFERRABLE     // REQ000561: [NOT] DEFERRABLE
+	T_INITIALLY      // REQ000561: INITIALLY DEFERRED/IMMEDIATE
 
 	T_ERROR TokenType = -1
 )
@@ -385,6 +388,9 @@ var tokenTypeNames = [...]string{
 	T_RAISE:          "RAISE",
 	T_ESCAPE:         "ESCAPE",
 	T_INDEXED:        "INDEXED",
+	T_MATCH:          "MATCH",
+	T_DEFERRABLE:     "DEFERRABLE",
+	T_INITIALLY:      "INITIALLY",
 }
 
 func (t Token) String() string {
