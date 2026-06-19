@@ -52,9 +52,13 @@ type storeSchema struct {
 	pk       string
 	nullable []bool      // parallel to cols; false means NOT NULL
 	defaults []PS.Expr   // parallel to cols; nil means no DEFAULT
-	unique   []UniqueKey // each entry is1+ columns
+	unique   []UniqueKey // each entry is 1+ columns
 	checks   []PS.Expr   // parallel to CHECK constraints
 	colTypes []int
+	// REQ000568: DECIMAL(P,S) precision and scale per column.
+	// Only meaningful when colTypes[i] is T_DECIMAL or T_NUMERIC.
+	precision   []int
+	scale       []int
 	// REQ000248/249: parallel to cols; non-nil means column is a
 	// STORED generated column. The expression is evaluated on
 	// INSERT/UPDATE and the result is stored as the cell value.

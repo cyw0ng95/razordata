@@ -132,6 +132,32 @@ func validateRow(schema *storeSchema, row Row) error {
 	return nil
 }
 
+// validateDecimal checks that values in DECIMAL/NUMERIC columns respect
+// the column's precision and scale. REQ000568.
+func validateDecimal(schema *storeSchema, row Row) error {
+	if schema.precision == nil || schema.scale == nil {
+		return nil
+	}
+	for i, typ := range schema.colTypes {
+		if typ != int(LX.T_DECIMAL) && typ != int(LX.T_NUMERIC) {
+			continue
+		}
+		v := row.Data[i]
+		if v == nil {
+			continue
+		}
+		prec := schema.precision[i]
+		sc := schema.scale[i]
+		if prec == 0 && sc == 0 {
+			continue
+		}
+		if _, err := FormatDecimal(v, prec, sc); err != nil {
+			return fmt.Errorf("%w: column %q: %v", ErrConstraint, schema.cols[i], err)
+		}
+	}
+	return nil
+}
+
 // uniqueLookup returns (true, nil) if the (cols, vals) combination
 // already exists in another row of the table, (false, nil) if no
 // match, or an error. Implementations may scan an in-memory map or an

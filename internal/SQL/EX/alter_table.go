@@ -95,6 +95,26 @@ func (a *AlterTable) execAddColumn() error {
 	}
 	newTypes = append(newTypes, a.stmt.NewCol.Type)
 
+	var newPrecision []int
+	for i := range ss.cols {
+		if ss.precision != nil && i < len(ss.precision) {
+			newPrecision = append(newPrecision, ss.precision[i])
+		} else {
+			newPrecision = append(newPrecision, 0)
+		}
+	}
+	newPrecision = append(newPrecision, a.stmt.NewCol.Precision)
+
+	var newScale []int
+	for i := range ss.cols {
+		if ss.scale != nil && i < len(ss.scale) {
+			newScale = append(newScale, ss.scale[i])
+		} else {
+			newScale = append(newScale, 0)
+		}
+	}
+	newScale = append(newScale, a.stmt.NewCol.Scale)
+
 	var newGenerated []PS.Expr
 	for i := range ss.cols {
 		if ss.generated != nil && i < len(ss.generated) {
@@ -128,8 +148,10 @@ func (a *AlterTable) execAddColumn() error {
 
 	registerStoreSchemaWithFKLocked(a.stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.pk, newFKs)
 
-	// Update colTypes and generated inline (registerStoreSchemaWithFK doesn't store these)
+	// Update colTypes, precision, scale and generated inline
 	ss.colTypes = newTypes
+	ss.precision = newPrecision
+	ss.scale = newScale
 	ss.generated = newGenerated
 
 	// Update persistent catalog
@@ -244,6 +266,14 @@ func (a *AlterTable) execDropColumn() error {
 	if ss.generated != nil {
 		newGenerated = make([]PS.Expr, 0, len(ss.generated)-1)
 	}
+	var newPrecision []int
+	if ss.precision != nil {
+		newPrecision = make([]int, 0, len(ss.precision)-1)
+	}
+	var newScale []int
+	if ss.scale != nil {
+		newScale = make([]int, 0, len(ss.scale)-1)
+	}
 	for i := range ss.cols {
 		if i == idx {
 			continue
@@ -258,6 +288,12 @@ func (a *AlterTable) execDropColumn() error {
 		}
 		if ss.generated != nil {
 			newGenerated = append(newGenerated, ss.generated[i])
+		}
+		if ss.precision != nil {
+			newPrecision = append(newPrecision, ss.precision[i])
+		}
+		if ss.scale != nil {
+			newScale = append(newScale, ss.scale[i])
 		}
 	}
 
@@ -310,8 +346,10 @@ func (a *AlterTable) execDropColumn() error {
 
 	registerStoreSchemaWithFKLocked(a.stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.pk, newFKs)
 
-	// Update colTypes and generated inline
+	// Update colTypes, precision, scale and generated inline
 	ss.colTypes = newTypes
+	ss.precision = newPrecision
+	ss.scale = newScale
 	ss.generated = newGenerated
 
 	// Update persistent catalog
@@ -476,6 +514,8 @@ func (a *AlterTable) execRename() error {
 	if ok {
 		if newSS, exists := storeSchemas[newTableID]; exists {
 			newSS.colTypes = append([]int(nil), ss.colTypes...)
+			newSS.precision = append([]int(nil), ss.precision...)
+			newSS.scale = append([]int(nil), ss.scale...)
 			newSS.generated = append([]PS.Expr(nil), ss.generated...)
 		}
 	}

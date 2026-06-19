@@ -193,6 +193,8 @@ type ColDef struct {
 	Name             string
 	Type             int
 	Size             int
+	Precision        int // REQ000568: DECIMAL(P,S) precision
+	Scale            int // REQ000568: DECIMAL(P,S) scale
 	Nullable         bool
 	Default          Expr
 	PK               bool

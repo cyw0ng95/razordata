@@ -122,6 +122,9 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			if err := validateRow(cschema, out); err != nil {
 				return Row{}, err
 			}
+			if err := validateDecimal(cschema, out); err != nil {
+				return Row{}, err
+			}
 			if err := validateCheck(cschema, out); err != nil {
 				return Row{}, err
 			}
@@ -252,6 +255,9 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		if err := validateRow(i.schema, out); err != nil {
+			return Row{}, err
+		}
+		if err := validateDecimal(i.schema, out); err != nil {
 			return Row{}, err
 		}
 		if err := validateCheck(i.schema, out); err != nil {
@@ -425,6 +431,9 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 			if err := validateRow(cschema, row); err != nil {
+				return Row{}, err
+			}
+			if err := validateDecimal(cschema, row); err != nil {
 				return Row{}, err
 			}
 			if err := validateCheck(cschema, row); err != nil {
@@ -881,11 +890,15 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	nullable := make([]bool, len(c.stmt.Cols))
 	defaults := make([]PS.Expr, len(c.stmt.Cols))
 	colTypes := make([]int, len(c.stmt.Cols))
+	precisions := make([]int, len(c.stmt.Cols))
+	scales := make([]int, len(c.stmt.Cols))
 	for i, col := range c.stmt.Cols {
 		cols[i] = col.Name
 		nullable[i] = col.Nullable
 		defaults[i] = col.Default
 		colTypes[i] = col.Type
+		precisions[i] = col.Precision
+		scales[i] = col.Scale
 	}
 	tables[c.stmt.Name] = []Row{}
 	schemas[c.stmt.Name] = cols
@@ -991,6 +1004,8 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	storeMu.Lock()
 	if ss, ok := storeSchemas[id]; ok {
 		ss.colTypes = append([]int(nil), colTypes...)
+		ss.precision = append([]int(nil), precisions...)
+		ss.scale = append([]int(nil), scales...)
 		ss.generated = generated
 		ss.checks = append([]PS.Expr(nil), checks...)
 		// REQ000367: tables without a PRIMARY KEY that are
