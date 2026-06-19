@@ -6,11 +6,56 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 )
 
 var (
 	ErrNoActiveMemtable = errors.New("no active memtable")
+	ErrClosed           = errors.New("engine is closed")
 )
+
+// memtableAdapter wraps *memtable to satisfy memtableIface.
+type memtableAdapter struct {
+	*memtable
+}
+
+func (m memtableAdapter) Iterator() RangeIter {
+	return &iteratorAdapter{it: m.memtable.Iterator()}
+}
+
+// memtableIface abstracts both single memtable and sharded memtable.
+// This allows the engine to treat them uniformly for read/iteration.
+type memtableIface interface {
+	Get(key []byte) ([]byte, bool)
+	Size() int64
+	Len() int64
+	ShouldFlush() bool
+	Freeze()
+	IsFrozen() bool
+	IncRef()
+	DecRef()
+	RefCount() int64
+	Iterator() RangeIter
+}
+
+// Options configures the LSM engine. REQ000537.
+type Options struct {
+	// MemTableShards is the number of shards for the active memtable.
+	// Default is 1 (single-shard mode, equivalent to legacy behavior).
+	// Use powers of 2 (e.g., 4, 8, 16) for efficient modulo via bit masking.
+	MemTableShards int
+	// MemTableSize is the total size threshold that triggers a flush.
+	// Default is 64MB.
+	MemTableSize int64
+}
+
+// DefaultOptions returns the default configuration.
+func DefaultOptions() Options {
+	return Options{
+		MemTableShards: 1, // legacy single-shard mode by default
+		MemTableSize:   64 * 1024 * 1024,
+	}
+}
 
 type ReadStats struct {
 	MemtableHits int
@@ -20,17 +65,24 @@ type ReadStats struct {
 
 type engine struct {
 	dir       string
-	memtables []*memtable
-	activeMem *memtable
+	memtables []memtableIface // frozen memtables + active shardedMemtable
+	activeMem *shardedMemtable
 	manifest  *manifest
 	cm        *compactionManager
 	fm        *flushManager
+	opts      Options
 	stats     ReadStats
 	statsMu   sync.RWMutex
 	mu        sync.RWMutex // REQ000574: guards memtables/activeMem
+	closed    atomic.Bool
 }
 
 func newEngine(dir string) (*engine, error) {
+	return newEngineWithOptions(dir, DefaultOptions())
+}
+
+// newEngineWithOptions creates an engine with the given options. REQ000537.
+func newEngineWithOptions(dir string, opts Options) (*engine, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
@@ -45,17 +97,19 @@ func newEngine(dir string) (*engine, error) {
 		return nil, err
 	}
 
-	activeMem := newMemtable(64 * 1024 * 1024)
+	// Create sharded memtable (or single-shard for legacy mode)
+	activeMem := newShardedMemtable(opts.MemTableSize, opts.MemTableShards)
 
 	e := &engine{
 		dir:       dir,
-		memtables: []*memtable{activeMem},
+		memtables: make([]memtableIface, 0),
 		activeMem: activeMem,
 		manifest:  manifest,
+		opts:      opts,
 	}
 
 	e.cm = newCompactionManager(dir, manifest)
-	e.fm = newFlushManager(dir, 64*1024*1024, manifest)
+	e.fm = newFlushManager(dir, opts.MemTableSize, manifest)
 
 	return e, nil
 }
@@ -64,12 +118,15 @@ func (e *engine) Write(key, value []byte) error {
 	if e.activeMem == nil {
 		return ErrNoActiveMemtable
 	}
+	if e.closed.Load() {
+		return ErrClosed
+	}
 
 	if err := e.activeMem.Insert(key, value); err != nil {
 		return err
 	}
 
-	if e.activeMem.Size() >= e.activeMem.maxSize {
+	if e.activeMem.ShouldFlush() {
 		return e.flushActiveMemtable()
 	}
 
@@ -80,17 +137,27 @@ func (e *engine) flushActiveMemtable() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	if e.activeMem == nil {
+		return ErrNoActiveMemtable
+	}
+
 	frozen := e.activeMem
 	frozen.Freeze()
 
-	newMem := newMemtable(64 * 1024 * 1024)
-	e.memtables = append(e.memtables, newMem)
-	e.activeMem = newMem
+	// Add frozen shards to memtables list for reading
+	for _, shard := range frozen.shards() {
+		e.memtables = append(e.memtables, memtableAdapter{shard})
+		// Request flush for each shard individually
+		e.fm.requestFlush(shard)
+	}
 
-	e.fm.requestFlush(frozen)
+	// Create new active sharded memtable
+	e.activeMem = newShardedMemtable(e.opts.MemTableSize, e.opts.MemTableShards)
 
-	idx := len(e.memtables) - 2
-	e.memtables = append(e.memtables[:idx], e.memtables[idx+1:]...)
+	// Request async flush for each shard
+	for _, shard := range frozen.shards() {
+		e.fm.requestFlush(shard)
+	}
 
 	return nil
 }
@@ -114,12 +181,25 @@ func (e *engine) Sync() error {
 }
 
 func (e *engine) Read(key []byte) ([]byte, error) {
+	if e.closed.Load() {
+		return nil, ErrClosed
+	}
+
 	e.statsMu.Lock()
 	defer e.statsMu.Unlock()
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
+	// Check active memtable shards first
+	if e.activeMem != nil {
+		if val, found := e.activeMem.Get(key); found {
+			e.stats.MemtableHits++
+			return val, nil
+		}
+	}
+
+	// Check frozen memtables
 	for i := len(e.memtables) - 1; i >= 0; i-- {
 		mt := e.memtables[i]
 		if val, found := mt.Get(key); found {
@@ -176,13 +256,25 @@ func (e *engine) readFromSST(key []byte) ([]byte, error) {
 }
 
 func (e *engine) MayContain(key []byte) bool {
-	v := e.manifest.Current()
+	if e.closed.Load() {
+		return false
+	}
 
+	// Check active memtable shards
+	if e.activeMem != nil {
+		if _, found := e.activeMem.Get(key); found {
+			return true
+		}
+	}
+
+	// Check frozen memtables
 	for _, mt := range e.memtables {
 		if _, found := mt.Get(key); found {
 			return true
 		}
 	}
+
+	v := e.manifest.Current()
 
 	for level := 0; level < len(v.levels); level++ {
 		files := v.levels[level]
@@ -213,19 +305,27 @@ func (e *engine) GetStats() ReadStats {
 }
 
 func (e *engine) Close() error {
-	if e.cm == nil {
-		return nil
+	if e.closed.Swap(true) {
+		return nil // already closed
 	}
-	if err := e.cm.Close(); err != nil {
-		return err
+
+	if e.cm != nil {
+		if err := e.cm.Close(); err != nil {
+			return err
+		}
 	}
-	if err := e.fm.Close(); err != nil {
-		return err
+	if e.fm != nil {
+		if err := e.fm.Close(); err != nil {
+			return err
+		}
 	}
 	e.cm = nil
 	e.fm = nil
-	if err := e.manifest.Close(); err != nil {
-		return err
+	if e.manifest != nil {
+		if err := e.manifest.Close(); err != nil {
+			return err
+		}
 	}
+	e.manifest = nil
 	return nil
 }

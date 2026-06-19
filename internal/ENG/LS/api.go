@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 )
 
-var ErrClosed = errors.New("eng: engine closed")
-
 var tombstoneValue = []byte{0xDE, 0xAD, 0xBE, 0xEF}
 
 func isTombstone(v []byte) bool {
@@ -25,6 +23,15 @@ type Engine struct {
 // Open creates or opens a database stored in dir.
 func Open(dir string) (*Engine, error) {
 	e, err := newEngine(dir)
+	if err != nil {
+		return nil, err
+	}
+	return &Engine{e: e}, nil
+}
+
+// OpenWithOptions creates or opens a database with the given options. REQ000537.
+func OpenWithOptions(dir string, opts Options) (*Engine, error) {
+	e, err := newEngineWithOptions(dir, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +72,27 @@ func (eng *Engine) Delete(key []byte) error {
 func (eng *Engine) NewIterator(prefix []byte) RangeIter {
 	e := eng.e
 	e.mu.RLock()
-	memtables := append([]*memtable(nil), e.memtables...)
+	
+	// Build list of memtables to iterate over
+	var memtables []*memtable
+	
+	// Add active memtable shards
+	if e.activeMem != nil {
+		for _, shard := range e.activeMem.shards() {
+			if !shard.IsFrozen() {
+				memtables = append(memtables, shard)
+			}
+		}
+	}
+	
+	// Add frozen memtables
+	for _, mt := range e.memtables {
+		// frozen memtables are stored as memtableAdapter in the slice
+		if adapter, ok := mt.(memtableAdapter); ok {
+			memtables = append(memtables, adapter.memtable)
+		}
+	}
+	
 	manifest := e.manifest
 	dir := e.dir
 	e.mu.RUnlock()

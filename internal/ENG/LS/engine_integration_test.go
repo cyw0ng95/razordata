@@ -197,18 +197,19 @@ func TestEngineReadFromSSTFile(t *testing.T) {
 
 	e.Write([]byte("key1"), []byte("value1"))
 
-	mt := e.activeMem
-	mt.Freeze()
-
-	job := &flushJob{
-		memtable:   mt,
-		outputPath: filepath.Join(dir, "sst"),
-		manifest:   e.manifest,
-		fileID:     1,
-		level:      0,
-	}
-	if err := job.Run(); err != nil {
-		t.Fatalf("flushJob.Run: %v", err)
+	// Freeze all shards and flush them individually
+	e.activeMem.Freeze()
+	for _, shard := range e.activeMem.shards() {
+		job := &flushJob{
+			memtable:   shard,
+			outputPath: filepath.Join(dir, "sst"),
+			manifest:   e.manifest,
+			fileID:     1,
+			level:      0,
+		}
+		if err := job.Run(); err != nil {
+			t.Fatalf("flushJob.Run: %v", err)
+		}
 	}
 
 	val, err := e.Read([]byte("key1"))
@@ -284,8 +285,8 @@ func TestEngineWriteTriggersFlushOnSize(t *testing.T) {
 	}
 	defer e.Close()
 
-	smallMem := newMemtable(200)
-	e.activeMem = smallMem
+	// Use a sharded memtable with small size per shard
+	e.activeMem = newShardedMemtable(200, 1) // single shard for simplicity
 
 	for i := 0; i < 10; i++ {
 		e.Write([]byte(string(rune('a'+i))), []byte("value"))
@@ -294,7 +295,7 @@ func TestEngineWriteTriggersFlushOnSize(t *testing.T) {
 
 func TestEngineMayContainNoMemtables(t *testing.T) {
 	e, _ := newEngine(t.TempDir())
-	e.memtables = []*memtable{}
+	e.memtables = []memtableIface{}
 
 	if e.MayContain([]byte("key1")) {
 		t.Error("expected false for empty engine")
@@ -313,18 +314,19 @@ func TestEngineMayContainInSST(t *testing.T) {
 
 	e.Write([]byte("sstkey"), []byte("sstvalue"))
 
-	mt := e.activeMem
-	mt.Freeze()
-
-	job := &flushJob{
-		memtable:   mt,
-		outputPath: filepath.Join(dir, "sst"),
-		manifest:   e.manifest,
-		fileID:     1,
-		level:      0,
-	}
-	if err := job.Run(); err != nil {
-		t.Fatalf("flushJob.Run: %v", err)
+	// Freeze all shards and flush them individually
+	e.activeMem.Freeze()
+	for _, shard := range e.activeMem.shards() {
+		job := &flushJob{
+			memtable:   shard,
+			outputPath: filepath.Join(dir, "sst"),
+			manifest:   e.manifest,
+			fileID:     1,
+			level:      0,
+		}
+		if err := job.Run(); err != nil {
+			t.Fatalf("flushJob.Run: %v", err)
+		}
 	}
 
 	if !e.MayContain([]byte("sstkey")) {
@@ -350,18 +352,19 @@ func TestEngineReadFromSSTFull(t *testing.T) {
 	e.Write([]byte("key1"), []byte("value1"))
 	e.Write([]byte("key2"), []byte("value2"))
 
-	mt := e.activeMem
-	mt.Freeze()
-
-	job := &flushJob{
-		memtable:   mt,
-		outputPath: filepath.Join(dir, "sst"),
-		manifest:   e.manifest,
-		fileID:     1,
-		level:      0,
-	}
-	if err := job.Run(); err != nil {
-		t.Fatalf("flushJob.Run: %v", err)
+	// Freeze all shards and flush them individually
+	e.activeMem.Freeze()
+	for _, shard := range e.activeMem.shards() {
+		job := &flushJob{
+			memtable:   shard,
+			outputPath: filepath.Join(dir, "sst"),
+			manifest:   e.manifest,
+			fileID:     1,
+			level:      0,
+		}
+		if err := job.Run(); err != nil {
+			t.Fatalf("flushJob.Run: %v", err)
+		}
 	}
 
 	val1, err := e.Read([]byte("key1"))
