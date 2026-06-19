@@ -1,28 +1,7 @@
 package PS
 
 import (
-	"fmt"
 	"strings"
-
-	"github.com/cyw0ng95/razordata/internal/SQL/LX"
-)
-
-type Parser struct {
-	lex                  *LX.Lexer
-	current              LX.Token
-	paramIndex           int
-	pendingJoins         []string // REQ000368: comma-separated tables awaiting CROSS-join synthesis
-	pendingSubquery      Stmt     // REQ000436: subquery from FROM clause
-	pendingSubqueryAlias string
-}
-
-func NewParser(input string) *Parser {
-package PS
-
-import (
-	"fmt"
-	"strings"
-
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 )
 
@@ -225,3 +204,210 @@ var tokenNames = [...]string{
 	LX.T_BITNOT:       "~",
 	LX.T_MOD:          "%",
 	LX.T_CONCAT:       "||",
+	LX.T_UNION:        "UNION",
+	LX.T_INTERSECT:    "INTERSECT",
+	LX.T_EXCEPT:       "EXCEPT",
+	LX.T_ALL:          "ALL",
+}
+
+// isAggregateName reports whether a bare identifier name is a
+// SQL aggregate function. REQ000355: GROUP_CONCAT is included
+// so SELECT GROUP_CONCAT(col) FROM t routes through the
+// AggregateFunc path instead of the function-call path.
+func isAggregateName(name string) bool {
+	switch strings.ToUpper(name) {
+	case "COUNT", "SUM", "AVG", "MIN", "MAX", "GROUP_CONCAT":
+		return true
+	}
+	return false
+}
+
+func isMinMaxName(name string) bool {
+	switch strings.ToUpper(name) {
+	case "MIN", "MAX":
+		return true
+	}
+	return false
+}
+
+func isBinaryOp(typ LX.TokenType) bool {
+	switch typ {
+	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE,
+		LX.T_AND, LX.T_OR,
+		LX.T_PLUS, LX.T_MINUS, LX.T_STAR, LX.T_SLASH,
+		LX.T_LIKE, LX.T_IS,
+		LX.T_BITAND, LX.T_BITOR, LX.T_BITXOR,
+		LX.T_MOD, LX.T_CONCAT:
+		return true
+	}
+	return false
+}
+
+func precedence(typ LX.TokenType) int {
+	switch typ {
+	case LX.T_OR:
+		return 1
+	case LX.T_AND:
+		return 2
+	case LX.T_BITOR:
+		return 3
+	case LX.T_BITXOR:
+		return 4
+	case LX.T_BITAND:
+		return 5
+	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE, LX.T_LIKE, LX.T_IS:
+		return 6
+	case LX.T_CONCAT:
+		return 7
+	case LX.T_PLUS, LX.T_MINUS:
+		return 8
+	case LX.T_STAR, LX.T_SLASH, LX.T_MOD:
+		return 9
+	}
+	return 0
+}
+
+func (p *Parser) Parse() (Stmt, error) {
+	p.reset()
+	p.advance()
+
+	var stmt Stmt
+	var err error
+	switch p.current.Type {
+	case LX.T_SELECT:
+		stmt, err = p.parseSelect()
+	case LX.T_INSERT:
+		stmt, err = p.parseInsert()
+	case LX.T_UPDATE:
+		stmt, err = p.parseUpdate()
+	case LX.T_DELETE:
+		stmt, err = p.parseDelete()
+	case LX.T_CREATE:
+		// CREATE TABLE vs CREATE INDEX vs CREATE VIEW vs CREATE TRIGGER vs CREATE [TEMP] VIEW
+		next := p.lex.Peek().Type
+		if next == LX.T_INDEX {
+			stmt, err = p.parseCreateIndex()
+		} else if next == LX.T_UNIQUE && p.lex.Peek2().Type == LX.T_INDEX {
+			stmt, err = p.parseCreateIndex()
+		} else if next == LX.T_VIEW {
+			stmt, err = p.parseCreateView()
+		} else if next == LX.T_TRIGGER {
+			stmt, err = p.parseCreateTrigger()
+		} else if next == LX.T_TEMP || next == LX.T_TEMPORARY {
+			if p.lex.Peek2().Type == LX.T_VIEW {
+				stmt, err = p.parseCreateView()
+			} else {
+				stmt, err = p.parseCreateTable()
+			}
+		} else {
+			stmt, err = p.parseCreateTable()
+		}
+	case LX.T_DROP:
+		// DROP TABLE vs DROP INDEX vs DROP VIEW vs DROP TRIGGER —
+		// disambiguate by peeking.
+		switch p.lex.Peek().Type {
+		case LX.T_INDEX:
+			stmt, err = p.parseDropIndex()
+		case LX.T_VIEW:
+			stmt, err = p.parseDropView()
+		case LX.T_TRIGGER:
+			stmt, err = p.parseDropTrigger()
+		default:
+			stmt, err = p.parseDropTable()
+		}
+	case LX.T_EXPLAIN:
+		stmt, err = p.parseExplain()
+	case LX.T_ANALYZE:
+		stmt, err = p.parseAnalyze()
+	case LX.T_VACUUM:
+		stmt, err = p.parseVacuum()
+	case LX.T_TRUNCATE:
+		stmt, err = p.parseTruncate()
+	case LX.T_REINDEX:
+		stmt, err = p.parseReindex()
+	case LX.T_VALUES:
+		stmt, err = p.parseValues()
+	case LX.T_PRAGMA:
+		stmt, err = p.parsePragma()
+	case LX.T_WITH:
+		stmt, err = p.parseWith()
+	case LX.T_SAVEPOINT:
+		stmt, err = p.parseSavepoint()
+	case LX.T_RELEASE:
+		stmt, err = p.parseReleaseSavepoint()
+	case LX.T_ROLLBACK:
+		next := p.lex.Peek()
+		if next.Type == LX.T_TO {
+			stmt, err = p.parseRollbackTo()
+		} else {
+			// REQ000593: bare ROLLBACK without TO SAVEPOINT.
+			p.advance() // consume ROLLBACK
+			if p.lex.Peek().Type == LX.T_TRANSACTION {
+				p.advance()
+			}
+			stmt = &RollbackTX{}
+		}
+	case LX.T_BEGIN:
+		stmt, err = p.parseBegin()
+	case LX.T_COMMIT:
+		stmt, err = p.parseCommit()
+	case LX.T_END:
+		// REQ000570: bare END outside trigger/CASE context is COMMIT synonym.
+		// At top-level Parse() dispatch, T_END is unambiguous.
+		stmt, err = p.parseCommit()
+	case LX.T_SET:
+		stmt, err = p.parseSet()
+	case LX.T_ALTER:
+		stmt, err = p.parseAlterTable()
+	case LX.T_IDENT:
+		// REPLACE INTO — REPLACE is not a hard keyword, detect via lexeme.
+		if strings.EqualFold(p.current.Lexeme, "REPLACE") {
+			next := p.lex.Peek()
+			if next.Type == LX.T_INTO {
+				stmt, err = p.parseReplace()
+				break
+			}
+		}
+		return nil, &SyntaxError{
+			Input:  p.lex.Input(),
+			Line:   p.current.Line,
+			Col:    p.current.Col,
+			Got:    tokenName(p.current.Type),
+			Lexeme: p.current.Lexeme,
+		}
+	default:
+		return nil, &SyntaxError{
+			Input:  p.lex.Input(),
+			Line:   p.current.Line,
+			Col:    p.current.Col,
+			Got:    tokenName(p.current.Type),
+			Lexeme: p.current.Lexeme,
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if p.current.Type != LX.T_EOF {
+		return nil, &SyntaxError{
+			Input:  p.lex.Input(),
+			Line:   p.current.Line,
+			Col:    p.current.Col,
+			Got:    tokenName(p.current.Type),
+			Lexeme: p.current.Lexeme,
+		}
+	}
+	return stmt, nil
+}
+
+// parseSelect parses a SELECT statement, possibly followed by a
+// chain of compound operators (UNION, UNION ALL, INTERSECT,
+// EXCEPT). REQ000383.
+//
+// Precedence: INTERSECT binds tighter than UNION/EXCEPT (per
+// SQLite). The chain is built left-associatively.
+//
+//	a UNION b INTERSECT c  →  a UNION (b INTERSECT c)
+//	a INTERSECT b UNION c  →  (a INTERSECT b) UNION c
+//
+// We implement a single precedence level for the v1 (UNION, EXCEPT)
+// and a higher one for INTERSECT.

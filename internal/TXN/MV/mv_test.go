@@ -61,10 +61,19 @@ func TestMVFindVisible(t *testing.T) {
 
 	node := NewVersionNode(arena, 1, 10, []byte("key"), []byte("value"), false)
 	mv.Insert([]byte("key"), node)
+	chain := mv.GetVersionChain([]byte("key"))
+	chain.Commit(node, 15)
 
-	found := mv.FindVisible([]byte("key"), 100)
+	// At readTS 12: beginTS=10 < 12, endTS=15 >= 12 → visible
+	found := mv.FindVisible([]byte("key"), 12)
 	if found != node {
-		t.Error("expected to find node at readTS 100")
+		t.Error("expected to find node at readTS 12")
+	}
+
+	// At readTS 100: endTS=15 < 100 → NOT visible
+	found = mv.FindVisible([]byte("key"), 100)
+	if found != nil {
+		t.Error("expected nil at readTS 100 (endTS 15 < 100)")
 	}
 
 	found = mv.FindVisible([]byte("nonexistent"), 100)
@@ -83,12 +92,17 @@ func TestMVMultipleKeys(t *testing.T) {
 	mv.Insert([]byte("key1"), node1)
 	mv.Insert([]byte("key2"), node2)
 
-	found := mv.FindVisible([]byte("key1"), 100)
+	chain1 := mv.GetVersionChain([]byte("key1"))
+	chain2 := mv.GetVersionChain([]byte("key2"))
+	chain1.Commit(node1, 15)
+	chain2.Commit(node2, 25)
+
+	found := mv.FindVisible([]byte("key1"), 12)
 	if found != node1 {
 		t.Error("expected to find key1")
 	}
 
-	found = mv.FindVisible([]byte("key2"), 100)
+	found = mv.FindVisible([]byte("key2"), 22)
 	if found != node2 {
 		t.Error("expected to find key2")
 	}
