@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"strings"
+	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/ST"
@@ -26,8 +27,12 @@ import (
 	_ "github.com/cyw0ng95/razordata/internal/SYS/SE"
 )
 
+var registerDriver sync.Once
+
 func init() {
-	sql.Register("razor", &Driver{})
+	registerDriver.Do(func() {
+		sql.Register("razor", &Driver{})
+	})
 }
 
 // Config is the parsed DSN.
