@@ -49,6 +49,11 @@ type SyncPool interface {
 	Put(buf []byte)
 }
 
+// Options configures the buffer pool.
+type Options struct {
+	ShardCount int // number of shards; default 32
+}
+
 // BufferPool manages in-memory block caching.
 type BufferPool interface {
 	Get(ctx context.Context, blockID uint64) (*Page, bool, error)
@@ -92,10 +97,8 @@ type bp struct {
 	hintPath string
 	log      lg.Logger
 
-	ht       bufferHashTable
-	hand     atomic.Uint64 // clock sweep hand
+	sbp *shardedBufferPool // sharded buffer pool (REQ000539)
 	capacity int64
-	used     atomic.Int64
 
 	hits   atomic.Int64
 	misses atomic.Int64
@@ -116,20 +119,27 @@ var _ BufferPool = (*bp)(nil)
 // sp is the sync pool for allocating page buffers. bd is the FIL block device.
 // The hint file is written on Close() and read on Warm().
 func New(capacity int64, hintPath string, bd *df.BlockDevice, sp SyncPool, log ...lg.Logger) (BufferPool, error) {
+	return NewWithOptions(capacity, hintPath, bd, sp, Options{}, log...)
+}
+
+// NewWithOptions creates a new BufferPool with the given options.
+func NewWithOptions(capacity int64, hintPath string, bd *df.BlockDevice, sp SyncPool, opts Options, log ...lg.Logger) (BufferPool, error) {
 	if capacity <= 0 {
 		capacity = 256 // default capacity
 	}
 
 	l := lg.FirstLogger(log)
 
+	sbp := newShardedBufferPool(opts.ShardCount)
+
 	b := &bp{
 		bd:       bd,
 		sp:       sp,
 		hintPath: hintPath,
 		log:      l,
+		sbp:      sbp,
 		capacity: capacity,
 	}
-	b.ht.slots = make(map[uint64]*bufferSlot)
 
 	return b, nil
 }
@@ -140,125 +150,83 @@ func (b *bp) Get(ctx context.Context, blockID uint64) (*Page, bool, error) {
 		return nil, false, ErrInvalidBlockID
 	}
 
-	// Fast path: read-lock lookup.
-	b.ht.mu.RLock()
-	slot, ok := b.ht.slots[blockID]
-	if ok && !slot.loading.Load() {
-		refKey := b.hand.Add(1)
+	// Fast path: sharded R-lock lookup.
+	slot := b.sbp.GetSlot(blockID)
+	if slot != nil && !slot.loading.Load() {
+		shard := b.sbp.shards[b.sbp.shardFor(blockID)]
+		refKey := shard.hand.Add(1)
 		slot.refKey.Store(refKey)
 		dirty := slot.dirty.Load()
-		b.ht.mu.RUnlock()
 		b.hits.Add(1)
 		return &Page{ID: slot.blockID, Data: slot.data, Dirty: dirty}, true, nil
 	}
-	if ok {
+	if slot != nil {
 		// Block exists but is loading; wait for it.
-		loading := true
 		waitCh := slot.wait
-		b.ht.mu.RUnlock()
-
-		for loading {
+		for {
 			select {
 			case <-waitCh:
 			case <-ctx.Done():
 				return nil, false, ctx.Err()
 			}
-			b.ht.mu.RLock()
-			slot, ok = b.ht.slots[blockID]
-			if !ok || !slot.loading.Load() {
-				if ok {
+			slot = b.sbp.GetSlot(blockID)
+			if slot == nil || !slot.loading.Load() {
+				if slot != nil {
 					dirty := slot.dirty.Load()
-					refKey := b.hand.Add(1)
+					shard := b.sbp.shards[b.sbp.shardFor(blockID)]
+					refKey := shard.hand.Add(1)
 					slot.refKey.Store(refKey)
-					b.ht.mu.RUnlock()
 					b.hits.Add(1)
 					return &Page{ID: slot.blockID, Data: slot.data, Dirty: dirty}, true, nil
 				}
-				b.ht.mu.RUnlock()
 				break
 			}
 			waitCh = slot.wait
-			b.ht.mu.RUnlock()
 		}
-	} else {
-		b.ht.mu.RUnlock()
 	}
 
-	// Not in cache. Acquire write lock and insert loading slot.
-	b.ht.mu.Lock()
-	slot, ok = b.ht.slots[blockID]
+	// Not in cache. Acquire write lock on the shard and insert loading slot.
+	idx := b.sbp.shardFor(blockID)
+	shard := b.sbp.shards[idx]
+	shard.mu.Lock()
+
+	// Double-check after acquiring write lock.
+	slot, ok := shard.slots[blockID]
 	if ok {
 		if slot.loading.Load() {
 			waitCh := slot.wait
-			b.ht.mu.Unlock()
+			shard.mu.Unlock()
 			select {
 			case <-waitCh:
 			case <-ctx.Done():
 				return nil, false, ctx.Err()
 			}
-			b.ht.mu.RLock()
-			slot, ok = b.ht.slots[blockID]
-			if ok {
+			slot = b.sbp.GetSlot(blockID)
+			if slot != nil {
 				dirty := slot.dirty.Load()
-				refKey := b.hand.Add(1)
+				refKey := shard.hand.Add(1)
 				slot.refKey.Store(refKey)
-				b.ht.mu.RUnlock()
 				b.hits.Add(1)
 				return &Page{ID: slot.blockID, Data: slot.data, Dirty: dirty}, true, nil
 			}
-			b.ht.mu.RUnlock()
+			shard.mu.Unlock()
 		} else {
 			dirty := slot.dirty.Load()
-			refKey := b.hand.Add(1)
+			refKey := shard.hand.Add(1)
 			slot.refKey.Store(refKey)
-			b.ht.mu.Unlock()
+			shard.mu.Unlock()
 			b.hits.Add(1)
 			return &Page{ID: slot.blockID, Data: slot.data, Dirty: dirty}, true, nil
 		}
 	}
 
-	// At capacity? Evict one old slot before inserting.
-	if b.used.Load() >= b.capacity {
-		hand := b.hand.Add(1)
-		// REQ000161: first pass — evict slots whose refKey is
-		// older than (hand - clockInterval). These are LRU
-		// candidates by the clock-sweep design.
-		for blockID, slot := range b.ht.slots {
-			if slot.refKey.Load() < hand-uint64(clockInterval) {
-				if slot.pinCount.Load() == 0 {
-					delete(b.ht.slots, blockID)
-					b.used.Add(-1)
-					b.evicts.Add(1)
-					if len(slot.data) == BlockSize {
-						b.sp.Put(slot.data)
-					}
-					goto allocated
-				}
-			}
-		}
-		// REQ000161: second pass — find the slot with the lowest
-		// refKey (least-recently-used) among unpinned slots.
-		var victimID uint64
-		var victimRefKey uint64 = ^uint64(0) // max uint64
-		var found bool
-		for blockID, slot := range b.ht.slots {
-			if slot.pinCount.Load() == 0 {
-				rk := slot.refKey.Load()
-				if rk < victimRefKey {
-					victimRefKey = rk
-					victimID = blockID
-					found = true
-				}
-			}
-		}
-		if found {
-			slot := b.ht.slots[victimID]
-			delete(b.ht.slots, victimID)
-			b.used.Add(-1)
+	// At capacity? Evict one old slot from this shard before inserting.
+	if b.sbp.totalUsed.Load() >= b.capacity {
+		evictedData, ok := b.sbp.evictOne(0, shard, idx)
+		if ok {
 			b.evicts.Add(1)
-			if len(slot.data) == BlockSize {
-				madviseDontNeed(slot.data)
-				b.sp.Put(slot.data)
+			if len(evictedData) == BlockSize {
+				b.sp.Put(evictedData)
 			}
 			goto allocated
 		}
@@ -286,16 +254,16 @@ allocated:
 	// NUMA node so the engine can later report placement
 	// statistics. On non-NUMA hosts, this is always 0.
 	slot.nodeID.Store(int32(nm.CurrentNode()))
-	b.ht.slots[blockID] = slot
-	b.used.Add(1)
-	b.ht.mu.Unlock()
+	shard.slots[blockID] = slot
+	b.sbp.totalUsed.Add(1)
+	shard.mu.Unlock()
 
 	err := b.bd.ReadBlockFull(blockID, data)
 	if err != nil {
-		b.ht.mu.Lock()
-		delete(b.ht.slots, blockID)
-		b.used.Add(-1)
-		b.ht.mu.Unlock()
+		shard.mu.Lock()
+		delete(shard.slots, blockID)
+		b.sbp.totalUsed.Add(-1)
+		shard.mu.Unlock()
 
 		b.sp.Put(data)
 
@@ -306,7 +274,7 @@ allocated:
 	}
 
 	slot.loading.Store(false)
-	slot.refKey.Store(b.hand.Add(1))
+	slot.refKey.Store(shard.hand.Add(1))
 	close(slot.wait)
 
 	b.misses.Add(1)
@@ -315,23 +283,19 @@ allocated:
 
 // Pin implements BufferPool.
 func (b *bp) Pin(page *Page) {
-	b.ht.mu.RLock()
-	slot, ok := b.ht.slots[page.ID]
-	if ok {
+	slot := b.sbp.GetSlot(page.ID)
+	if slot != nil {
 		slot.pinCount.Add(1)
 		b.pins.Add(1)
 	}
-	b.ht.mu.RUnlock()
 }
 
 // Unpin implements BufferPool.
 func (b *bp) Unpin(page *Page) {
-	b.ht.mu.RLock()
-	slot, ok := b.ht.slots[page.ID]
-	if ok {
+	slot := b.sbp.GetSlot(page.ID)
+	if slot != nil {
 		slot.pinCount.Add(-1)
 	}
-	b.ht.mu.RUnlock()
 }
 
 // Upsert implements BufferPool. See the interface comment for the
@@ -348,12 +312,14 @@ func (b *bp) Upsert(page *Page) error {
 		return ErrInvalidBlockID
 	}
 
-	b.ht.mu.Lock()
-	defer b.ht.mu.Unlock()
+	idx := b.sbp.shardFor(page.ID)
+	shard := b.sbp.shards[idx]
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
 
 	// Existing slot: overwrite in place. The previous data buffer is
 	// the caller's responsibility — we do not return it to the pool.
-	if existing, ok := b.ht.slots[page.ID]; ok {
+	if existing, ok := shard.slots[page.ID]; ok {
 		existing.data = page.Data
 		existing.loading.Store(false)
 		// Pin count is intentionally untouched (Upsert does not pin).
@@ -361,55 +327,15 @@ func (b *bp) Upsert(page *Page) error {
 	}
 
 	// Not in cache. At capacity? Evict one slot before inserting.
-	if b.used.Load() >= b.capacity {
-		hand := b.hand.Add(1)
-		// REQ000161: first pass — evict slots whose refKey is
-		// older than (hand - clockInterval). These are LRU
-		// candidates by the clock-sweep design.
-		for blockID, slot := range b.ht.slots {
-			if slot.refKey.Load() < hand-uint64(clockInterval) {
-				if slot.pinCount.Load() == 0 {
-					delete(b.ht.slots, blockID)
-					b.used.Add(-1)
-					b.evicts.Add(1)
-					if len(slot.data) == BlockSize {
-						b.sp.Put(slot.data)
-					}
-					goto insert
-				}
-			}
-		}
-		// REQ000161: second pass — find the slot with the lowest
-		// refKey (least-recently-used) among unpinned slots.
-		// This guarantees LRU eviction even when the first pass
-		// fails (e.g., recently-accessed slots are still within
-		// the clockInterval window).
-		var victimID uint64
-		var victimRefKey uint64 = ^uint64(0) // max uint64
-		var found bool
-		for blockID, slot := range b.ht.slots {
-			if slot.pinCount.Load() == 0 {
-				rk := slot.refKey.Load()
-				if rk < victimRefKey {
-					victimRefKey = rk
-					victimID = blockID
-					found = true
-				}
-			}
-		}
-		if found {
-			slot := b.ht.slots[victimID]
-			delete(b.ht.slots, victimID)
-			b.used.Add(-1)
+	if b.sbp.totalUsed.Load() >= b.capacity {
+		evictedData, ok := b.sbp.evictOne(0, shard, idx)
+		if ok {
 			b.evicts.Add(1)
-			if len(slot.data) == BlockSize {
-				madviseDontNeed(slot.data)
-				b.sp.Put(slot.data)
+			if len(evictedData) == BlockSize {
+				b.sp.Put(evictedData)
 			}
 			goto insert
 		}
-		// All slots pinned. Insert over capacity to match
-		// Get's behavior — the next Get will evict instead.
 	}
 insert:
 	slot := &bufferSlot{
@@ -418,9 +344,9 @@ insert:
 		loading: atomic.Bool{},
 	}
 	slot.loading.Store(false)
-	slot.refKey.Store(b.hand.Add(1))
-	b.ht.slots[page.ID] = slot
-	b.used.Add(1)
+	slot.refKey.Store(shard.hand.Add(1))
+	shard.slots[page.ID] = slot
+	b.sbp.totalUsed.Add(1)
 	return nil
 }
 
@@ -437,7 +363,7 @@ func (b *bp) Stats() BufferStats {
 		Pins:     b.pins.Load(),
 		Evicts:   b.evicts.Load(),
 		Capacity: b.capacity,
-		Used:     b.used.Load(),
+		Used:     b.sbp.totalUsed.Load(),
 	}
 }
 
@@ -445,18 +371,27 @@ func (b *bp) Stats() BufferStats {
 func (b *bp) Close() error {
 	b.closeOnce.Do(func() {
 		// Flush dirty pages: write each dirty block to disk, then clear flag.
-		b.ht.mu.Lock()
-		for _, slot := range b.ht.slots {
-			if slot.dirty.Load() {
-				if err := b.bd.WriteBlock(context.Background(), slot.blockID, slot.data); err != nil {
-					b.closeErr = err
-					b.ht.mu.Unlock()
-					return
+		// Lock all shards for consistency.
+		for _, shard := range b.sbp.shards {
+			shard.mu.Lock()
+		}
+		for _, shard := range b.sbp.shards {
+			for _, slot := range shard.slots {
+				if slot.dirty.Load() {
+					if err := b.bd.WriteBlock(context.Background(), slot.blockID, slot.data); err != nil {
+						b.closeErr = err
+						for _, s := range b.sbp.shards {
+							s.mu.Unlock()
+						}
+						return
+					}
+					slot.dirty.Store(false)
 				}
-				slot.dirty.Store(false)
 			}
 		}
-		b.ht.mu.Unlock()
+		for _, shard := range b.sbp.shards {
+			shard.mu.Unlock()
+		}
 
 		// Write hint file.
 		if b.hintPath != "" {
@@ -508,18 +443,25 @@ func (b *bp) Warm(ctx context.Context) error {
 
 // writeHintFile serializes the current cache state to the hint file.
 func (b *bp) writeHintFile() error {
-	b.ht.mu.Lock()
+	// Lock all shards.
+	for _, shard := range b.sbp.shards {
+		shard.mu.Lock()
+	}
 	var entries []hintEntry
-	for _, slot := range b.ht.slots {
-		// Only include slots that have been accessed (refKey > 0).
-		if slot.refKey.Load() > 0 {
-			entries = append(entries, hintEntry{
-				BlockID:    slot.blockID,
-				LastAccess: int64(slot.refKey.Load()),
-			})
+	for _, shard := range b.sbp.shards {
+		for _, slot := range shard.slots {
+			// Only include slots that have been accessed (refKey > 0).
+			if slot.refKey.Load() > 0 {
+				entries = append(entries, hintEntry{
+					BlockID:    slot.blockID,
+					LastAccess: int64(slot.refKey.Load()),
+				})
+			}
 		}
 	}
-	b.ht.mu.Unlock()
+	for _, shard := range b.sbp.shards {
+		shard.mu.Unlock()
+	}
 
 	if len(entries) == 0 {
 		return nil
