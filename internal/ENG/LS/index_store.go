@@ -3,8 +3,8 @@ package ls
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
-	"strings"
 )
 
 // IndexStore is a thin wrapper over the LSM Engine that stores
@@ -175,17 +175,10 @@ func (s *IndexStore) StripPrefix(key []byte) []byte {
 // and to avoid collisions with user-defined identifiers.
 var indexMagic = []byte("__idx__:")
 
-// isNotFound reports whether err is the engine's "not found"
-// sentinel. We compare by string suffix to avoid an import cycle.
+// isNotFound reports whether err is the engine's "not found" sentinel
+// (REQ000592). Uses errors.Is for clean sentinel matching.
 func isNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return msg == "not found" ||
-		msg == "ls: not found" ||
-		strings.HasSuffix(msg, "not found") ||
-		strings.HasSuffix(msg, "key not found")
+	return errors.Is(err, ErrNotFound)
 }
 
 // String returns a debug representation of the index.

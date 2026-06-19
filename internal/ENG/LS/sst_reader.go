@@ -3,14 +3,8 @@ package ls
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"hash/crc32"
 	"io"
-)
-
-var (
-	ErrKeyNotFound = errors.New("key not found")
-	ErrBloomMiss   = errors.New("bloom filter miss")
 )
 
 type sstReader struct {

@@ -175,7 +175,7 @@ func (e *engine) Read(key []byte) ([]byte, error) {
 		e.stats.SSTHits++
 		return val, nil
 	}
-	return nil, ErrKeyNotFound
+	return nil, ErrNotFound
 }
 
 func (e *engine) readFromSST(key []byte) ([]byte, error) {
@@ -219,7 +219,7 @@ func (e *engine) readFromSST(key []byte) ([]byte, error) {
 		}
 	}
 
-	return nil, ErrKeyNotFound
+	return nil, ErrNotFound
 }
 
 func (e *engine) MayContain(key []byte) bool {

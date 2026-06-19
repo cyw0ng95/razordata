@@ -518,7 +518,7 @@ func TestMemtable_NotFound(t *testing.T) {
 	e.Write([]byte("key1"), []byte("value1"))
 
 	_, err = e.Read([]byte("nonexistent"))
-	if err != ErrKeyNotFound {
-		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	if err != ErrNotFound {
+		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }

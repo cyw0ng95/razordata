@@ -3,13 +3,10 @@ package ls
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
-
-	"container/heap"
 
 	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
 )
@@ -179,14 +176,6 @@ func pivotKeys(inputs []SSTFileMeta, n int) [][]byte {
 	return deduped
 }
 
-// fileName is duplicated from compaction.go to avoid exposing it.
-// This is a thin wrapper for the sub-compactor's file path needs.
-// Kept in sync with compaction.fileName.
-func subFileName(meta *SSTFileMeta) string {
-	return filepath.Join("sst",
-		"L"+string(rune('0'+meta.Level))+"_"+hex.EncodeToString(meta.MinKey)+"_"+hex.EncodeToString(meta.MaxKey)+"_"+u64toa(meta.FileID)+".sst")
-}
-
 // ensureUniqueTmp returns a unique temp filename for the sub-compactor.
 func subTempPath(dir string) string {
 	f, err := os.CreateTemp(dir, "subcompact-*.tmp")
@@ -197,9 +186,4 @@ func subTempPath(dir string) string {
 	return filepath.Join(dir, "subcompact.tmp")
 }
 
-// suppress unused warnings for helper symbols
-var (
-	_ = heap.Push
-	_ = subFileName
-	_ = subTempPath
-)
+

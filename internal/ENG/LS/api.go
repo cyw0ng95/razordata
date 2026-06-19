@@ -9,9 +9,6 @@ import (
 	"path/filepath"
 )
 
-// ErrNotFound is the public error returned by Engine.Get when a key is absent.
-var ErrNotFound = errors.New("eng: key not found")
-
 // ErrClosed is returned by Engine methods after Close has been called.
 var ErrClosed = errors.New("eng: engine closed")
 

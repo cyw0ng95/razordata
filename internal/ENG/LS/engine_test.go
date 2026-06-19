@@ -40,8 +40,8 @@ func TestEngineReadNotFound(t *testing.T) {
 	defer e.Close()
 
 	_, err = e.Read([]byte("nonexistent"))
-	if err != ErrKeyNotFound {
-		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	if err != ErrNotFound {
+		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
 
