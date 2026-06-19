@@ -140,6 +140,37 @@ golangci-lint run      # or staticcheck
 go test ./... -race -count=1
 ```
 
+## Running SQLLogicTest
+
+Prerequisite: the corpus submodule must be initialized.
+
+```bash
+git submodule update --init --recursive --depth 1
+```
+
+Run the curated set of .test files (build-gated to `slt_corpus`):
+
+```bash
+cd tests/sqlcmp && RAZOR_SLT_ROOT=../corpus/test \
+  go test -tags slt_corpus -run TestSLT_Each -v ./slt/
+```
+
+Run a single file (e.g. select1.test):
+
+```bash
+cd tests/sqlcmp && RAZOR_SLT_ROOT=../corpus/test \
+  go test -tags slt_corpus -run 'TestSLT_Each/select1' -v ./slt/
+```
+
+Auto-discover all `.test` files (slow — runs the full corpus):
+
+```bash
+cd tests/sqlcmp && RAZOR_SLT_ROOT=../corpus/test \
+  go test -tags slt_corpus -run TestSLT_PerFile -v ./slt/
+```
+
+The runner reports pass/fail per file. Logged `first failure context` in the verbose output shows the first 5 failing records and their diagnostics. A test always passes even when records fail — the pass/fail counts are informational until a threshold is enforced.
+
 ## Design Protection
 
 All files under `docs/design/` are the authoritative source of truth for the database. They define the formal subsystem/function-cluster system, architecture, data structures, and implementation plans.
