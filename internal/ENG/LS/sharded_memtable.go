@@ -84,9 +84,7 @@ func (sm *shardedMemtable) shard(key []byte) int {
 func (sm *shardedMemtable) Insert(key, value []byte) error {
 	idx := sm.shard(key)
 	shard := sm.shards_[idx]
-	if err := shard.Insert(key, value); err != nil {
-		return err
-	}
+	shard.Insert(key, value)
 	sm.totalSize.Add(int64(len(key) + len(value)))
 	return nil
 }
