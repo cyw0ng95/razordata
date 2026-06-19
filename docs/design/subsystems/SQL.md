@@ -405,6 +405,33 @@ The following requirements have been implemented and shipped; they are now part 
 | REQ000379 | Chained unary minus: `SELECT 5- -5` must equal 10 — regression test for SQLite-compatible `--` comment behavior | iter-26.3 (v0.26.5) |
 | REQ000380 | `NOT LIKE` parser error — parsePostfix now peeks `T_NOT T_LIKE` and dispatches to parseNotLike | iter-26.3 (v0.26.5) |
 | REQ000381 | `NOT IN (subquery)` parser error — same pattern, dispatches to parseNotIn; parseIn refactored to use parseInBody helper | iter-26.3 (v0.26.5) |
+| REQ000435 | CREATE TRIGGER parser (BEFORE/AFTER, FOR EACH ROW, BEGIN...END body) | iter-27 |
+| REQ000436 | Recursive CTE (`WITH RECURSIVE ... AS (anchor UNION ALL recursive)`) — parser flag, cycle detection | iter-27 |
+| REQ000451 | `CREATE TEMP VIEW` parser — accepts optional `TEMP`/`TEMPORARY` keyword | iter-27 |
+| REQ000452 | `INSERT OR REPLACE` / `REPLACE INTO` parser — conflict action parsing; `ConflictAction` type | iter-27 |
+| REQ000473 | PRAGMA parser support — `PragmaStmt` AST + parser | iter-28 |
+| REQ000479 | `CREATE INDEX IF NOT EXISTS` — parser accepts `IF NOT EXISTS` clause | iter-28 |
+| REQ000480 | `DROP INDEX IF EXISTS` — parser accepts `IF EXISTS` clause | iter-28 |
+| REQ000482 | `AUTOINCREMENT` keyword accepted — `ColDef.Autoincrement` field | iter-28 |
+| REQ000497 | `DROP TABLE IF EXISTS` accepted by parser | iter-28 |
+| REQ000498 | `ALTER TABLE RENAME COLUMN old TO new` — parser adds `RENAME COLUMN` path | iter-28 |
+| REQ000500 | `EXPLAIN QUERY PLAN` parsing + execution | iter-28 |
+| REQ000520 | `CREATE TABLE AS SELECT` parser + executor | iter-28 |
+| REQ000521 | `OFFSET m LIMIT n` reversed syntax fixed — parser tracks `OffsetFirst` flag | iter-28 |
+| REQ000529 | `INDEXED BY index_name` / `NOT INDEXED` in SELECT | iter-28 |
+| REQ000533 | `<>` (not-equal) operator — lexer now recognizes `<>` as `T_NE` token | iter-28 |
+| REQ000558 | `UPDATE ... ORDER BY ... LIMIT ...` — parser handles trailing clauses | iter-28 |
+| REQ000559 | `BEGIN [DEFERRED|IMMEDIATE|EXCLUSIVE] [TRANSACTION]` — mode tokens + parser | iter-28 |
+| REQ000560 | `RAISE(IGNORE|ABORT|ROLLBACK|FAIL, 'msg')` — `T_RAISE` token + `RaiseFunc` AST | iter-28 |
+| REQ000563 | `INSERT INTO t DEFAULT VALUES` — parser accepts alternative syntax | iter-28 |
+| REQ000564 | Top-level `VALUES (1,'a'),(2,'b')` — `ValuesStmt` AST + `parseValues` | iter-28 |
+| REQ000567 | `LIKE ... ESCAPE expr` — `BinaryExpr.Escape Expr` AST field + `T_ESCAPE` token | iter-28 |
+| REQ000568 | `DECIMAL(P,S)` precision and scale — `ColDef.{Precision,Scale}` fields | iter-28 |
+| REQ000569 | `INDEXED BY index_name` / `NOT INDEXED` on UPDATE and DELETE | iter-28 |
+| REQ000570 | `COMMIT` / `END [TRANSACTION]` — `parseCommit()` + `T_COMMIT`/`T_END` dispatch | iter-28 |
+| REQ000561 | Foreign key `MATCH name` + `[NOT] DEFERRABLE` — parser tokens + AST fields | iter-28 |
+| REQ000565 | `COLLATE collation_name` on indexed columns and ordering terms | iter-28 |
+| REQ000566 | `CREATE INDEX ... WHERE expr` (partial index) | iter-28 |
 
 ### PL — Planner
 
@@ -530,6 +557,54 @@ The following requirements have been implemented and shipped; they are now part 
 | REQ000363 | GROUP_CONCAT empty result — empty table returns NULL (after REQ000367 hidden-PK) | iter-26.2 (v0.26.4) |
 | REQ000366 | Subquery planner store threading — `Row.planner` + `currentSubqueryPlanner`; `outerInjector` updates `outer` in place for memoized plans | iter-26.2 (v0.26.4) |
 | REQ000367 | Hidden rowid for tables without PRIMARY KEY — `hiddenPK` flag, atomic `nextRowID` | iter-26.2 (v0.26.4) |
+| REQ000455 | Subquery planner store propagation — `evalExists`/`evalScalarSubquery`/`evalInSubquery` use `newSubqueryPlanner(outer)` | iter-28 |
+| REQ000456 | ALTER TABLE self-deadlock — `currentCatalog` changed to `atomic.Pointer[ls.Catalog]`; `registerStoreSchemaWithFKLocked` | iter-28 |
+| REQ000458 | BETWEEN NULL semantics — `evalBetween` returns nil (UNKNOWN) when any operand is NULL | iter-28 |
+| REQ000460 | UPDATE executor correctness — verified: simple SET, expression SET, multi-column SET, WHERE filtering | iter-28 |
+| REQ000463 | `PRAGMA` statements — `PRAGMA journal_mode/synchronous/cache_size` routed via `buildWriterOp`; planner `planPragma` | iter-28 |
+| REQ000464 | `LIMIT` / `OFFSET` — `Limit` and `Offset` operators in `intermediate.go` | iter-28 |
+| REQ000465 | `EXISTS` subquery — `evalExists` uses `newSubqueryPlanner(outer)`; correlated EXISTS with store-backed tables | iter-28 |
+| REQ000466 | `CASE WHEN` complex expressions — both simple CASE and searched CASE via `Eval()` | iter-28 |
+| REQ000467 | `GROUP_CONCAT` with DISTINCT and ORDER BY — DISTINCT dedup; custom separator; empty group returns NULL | iter-28 |
+| REQ000468 | `HAVING` clause — `Filter` operator applied after aggregation in planner | iter-28 |
+| REQ000469 | `DISTINCT` on non-primary-key columns — `Distinct` operator dedup via stored row key | iter-28 |
+| REQ000470 | `ORDER BY` with expressions — `Sort` evaluates each `OrderItem.Expr` via `Eval()` | iter-28 |
+| REQ000471 | `CAST` to various types — `evalCast` supports INTEGER, BIGINT, FLOAT/REAL, TEXT, DECIMAL/NUMERIC, BOOL, BLOB | iter-28 |
+| REQ000472 | `COALESCE` with many arguments — variadic implementation iterates `e.Args` returning first non-NULL | iter-28 |
+| REQ000475 | `DELETE` with `ORDER BY` / `LIMIT` — parser accepts trailing ORDER BY/LIMIT/OFFSET after WHERE | iter-28 |
+| REQ000477 | `INSERT` with `RETURNING` clause — accumulates resultRows, returns via Next() | iter-28 |
+| REQ000483 | `DEFAULT` values on omitted INSERT columns — `fillDefaults` applied in both Insert paths | iter-28 |
+| REQ000484 | `CHECK` constraint enforcement — `validateCheck` enforces on INSERT/UPDATE | iter-28 |
+| REQ000485 | `UNIQUE` constraint enforcement on INSERT — single-column UNIQUE; NULLs allowed per SQL standard | iter-28 |
+| REQ000486 | `ON CONFLICT` conflict resolution — `INSERT OR IGNORE` conflict handling in `checkUnique` | iter-28 |
+| REQ000489 | `REINDEX` routed to executor — `buildWriterOp` routes `*PS.ReindexStmt` | iter-28 |
+| REQ000491 | `DROP INDEX` routed to executor — `buildWriterOp` routes `*PS.DropIndexStmt` | iter-28 |
+| REQ000499 | `ALTER TABLE DROP COLUMN` — `execDropColumn` updates row data to remove dropped column | iter-28 |
+| REQ000501 | Hidden-PK UPDATE/Delete no longer allocates new rowid on every mutation | iter-28 |
+| REQ000502 | SELECT scalar subquery no extra rows — subquery in CASE no duplicate rows | iter-28 |
+| REQ000503 | Scalar `IN (literal-list)` — `SELECT 1 IN (2)` returns correct boolean via Values + evalIn | iter-28 |
+| REQ000504 | DELETE executor row count — correctly tracks `d.rows` and returns via `RowsAffected()` | iter-28 |
+| REQ000511 | INSERT ... ON CONFLICT DO UPDATE implemented | iter-28 |
+| REQ000512 | INSERT/UPDATE/DELETE RETURNING returns full resultRows | iter-28 |
+| REQ000513 | FK validation wired into Update.Next | iter-28 |
+| REQ000514 | FK validation wired into Delete.Next | iter-28 |
+| REQ000515 | `fillDefaults` type coercion — `coerceDefault` coerces DEFAULT values to match column type | iter-28 |
+| REQ000516 | `validateCheck` called from Update.Next | iter-28 |
+| REQ000517 | `checkUnique` called from Update.Next | iter-28 |
+| REQ000518 | `RETURNING *` expanded — `expandReturningStar` converts StarExpr to all columns | iter-28 |
+| REQ000519 | Composite PRIMARY KEY — parser uses first column as PK, remaining as UNIQUE | iter-28 |
+| REQ000522 | `Distinct` operator after `Limit` pushdown — Distinct before Limit in plan tree | iter-28 |
+| REQ000524 | `COUNT(*)` on empty set returns 0 — aggregate returns `int64(0)` for 0-row group | iter-28 |
+| REQ000525 | Correlated subquery IndexScan injection | iter-28 |
+| REQ000526 | `EXPLAIN` returns plan tree — `ExplainStmtOp` renders operator tree | iter-28 |
+| REQ000527 | `ANALYZE t1` updates row count — `analyzeTable` scans, counts, stores via `cat.PutStats` | iter-28 |
+| REQ000528 | `VACUUM` implemented — `ManualCompact` via store | iter-28 |
+| REQ000531 | ALTER TABLE self-deadlock fixed in in-memory helpers | iter-28 |
+| REQ000534 | VIEW WHERE clause merge — `planSelect` merges outer WHERE with view WHERE using AND | iter-28 |
+| REQ000535 | `REPLACE INTO` — `Insert` operator removes conflicting rows before inserting replacement | iter-28 |
+| REQ000536 | Correlated subquery re-execution for store-backed SeqScan — `evalQualifiedName` fallback chain | iter-28 |
+| REQ000544 | O(1) `Row.Lookup` via lazy-built `colIndex map[string]int` | iter-28 |
+| REQ000558 | `UPDATE ... ORDER BY ... LIMIT ...` — Update AST extended with trailing clauses | iter-28 |
 
 ### Top-level SQL (cross-cluster)
 
@@ -568,6 +643,10 @@ The following requirements have been implemented and shipped; they are now part 
 | REQ000310 | Real SIMD intrinsics for filter/projection (AVX2/AVX-512) | iter-27 |
 | REQ000312 | Vector-aware hash join (Radix partition; SIMD probe) | iter-27 |
 | REQ000442 | SLT gap survey — 30/42 common patterns identified | iter-26 |
+| REQ000457 | Package-level EX state complete cleanup — `UnregisterAll()` clears `triggerReg` and `tableTriggers` maps | iter-28 |
+| REQ000443 | WAL `encodeRecord` allocation reduction (4→2 allocs/record, -32% latency) | iter-27 |
+| REQ000443b | Fix negative_literal eval pipeline bug (case-sensitive Lookup, UnaryExpr column extraction) | iter-27 |
+| REQ000444 | UPDATE deadlock fix — numericFloat Go int handling; equalValue/Eval(*PS.Param) normalization | iter-27 |
 
 ## Open Issues
 
