@@ -34,6 +34,9 @@ type CompactionJobResult struct {
 
 // RunSubCompaction splits inputs into parallel sub-range compaction jobs.
 func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, inputs []SSTFileMeta) (*CompactionJobResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(inputs) == 0 {
 		return nil, ErrNoFilesToCompact
 	}

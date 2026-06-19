@@ -2,6 +2,8 @@ package ls
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"testing"
 )
 
@@ -54,5 +56,80 @@ func TestNewSubCompactor_Defaults(t *testing.T) {
 	sc2 := NewSubCompactor("/tmp", &manifest{}, 8)
 	if sc2.concurrency != 8 {
 		t.Errorf("expected concurrency=8, got %d", sc2.concurrency)
+	}
+}
+
+// REQ000631: RunSubCompaction with nil/empty inputs returns
+// ErrNoFilesToCompact.
+func TestRunSubCompactionEmpty(t *testing.T) {
+	dir := t.TempDir()
+	m, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("newManifest: %v", err)
+	}
+	defer m.Close()
+
+	sc := NewSubCompactor(dir, m, 2)
+	_, err = sc.RunSubCompaction(context.Background(), 0, nil)
+	if err != ErrNoFilesToCompact {
+		t.Fatalf("expected ErrNoFilesToCompact for nil, got %v", err)
+	}
+
+	_, err = sc.RunSubCompaction(context.Background(), 0, []SSTFileMeta{})
+	if err != ErrNoFilesToCompact {
+		t.Fatalf("expected ErrNoFilesToCompact for empty, got %v", err)
+	}
+}
+
+// REQ000631: RunSubCompaction with a cancelled context returns
+// ctx.Err() immediately.
+func TestRunSubCompactionCancelledContext(t *testing.T) {
+	dir := t.TempDir()
+	m, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("newManifest: %v", err)
+	}
+	defer m.Close()
+
+	sc := NewSubCompactor(dir, m, 2)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = sc.RunSubCompaction(ctx, 0, []SSTFileMeta{
+		{FileID: 1, MinKey: []byte("a"), MaxKey: []byte("z")},
+	})
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+// REQ000631: pivotKeys with n=0 returns nil.
+func TestPivotKeysNZero(t *testing.T) {
+	inputs := []SSTFileMeta{
+		{MinKey: []byte("a"), MaxKey: []byte("z")},
+	}
+	pivots := pivotKeys(inputs, 0)
+	if pivots != nil {
+		t.Fatal("expected nil for n=0")
+	}
+}
+
+// REQ000631: pivotKeys with all identical keys deduplicates correctly
+// to a single pivot.
+func TestPivotKeysAllIdentical(t *testing.T) {
+	inputs := []SSTFileMeta{
+		{MinKey: []byte("a"), MaxKey: []byte("a")},
+		{MinKey: []byte("a"), MaxKey: []byte("a")},
+		{MinKey: []byte("a"), MaxKey: []byte("a")},
+	}
+	pivots := pivotKeys(inputs, 3)
+	if len(pivots) != 1 {
+		t.Fatalf("expected 1 pivot (all deduped), got %d", len(pivots))
+	}
+	if string(pivots[0]) != "a" {
+		t.Fatalf("expected pivot 'a', got %q", string(pivots[0]))
 	}
 }
