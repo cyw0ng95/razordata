@@ -1,6 +1,8 @@
 package ls
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -100,5 +102,54 @@ func TestPrimaryIndexIterator(t *testing.T) {
 	}
 	if count != 3 {
 		t.Fatalf("expected 3 iterations, got %d", count)
+	}
+}
+
+// REQ000630: Concurrent inserts of the same key via CAS retry produce
+// exactly one entry and a valid primary value.
+func TestPrimaryIndexInsertCASRetry(t *testing.T) {
+	idx := newPrimaryIndex(1, 1)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(val int) {
+			defer wg.Done()
+			idx.Insert([]byte("key1"), []byte(fmt.Sprintf("primary%d", val)))
+		}(i)
+	}
+	wg.Wait()
+
+	if idx.Len() != 1 {
+		t.Fatalf("expected Len() == 1 after concurrent inserts of same key, got %d", idx.Len())
+	}
+
+	primary, found := idx.Find([]byte("key1"))
+	if !found {
+		t.Fatal("expected to find key1")
+	}
+	if len(primary) == 0 {
+		t.Fatal("expected non-empty primary")
+	}
+}
+
+// REQ000630: Iterator on an empty index returns false immediately.
+func TestPrimaryIndexIteratorEmpty(t *testing.T) {
+	idx := newPrimaryIndex(1, 1)
+	it := idx.Iterator()
+	if it.Next() {
+		t.Fatal("expected Next() to return false on empty index")
+	}
+}
+
+// REQ000630: Seek with nil key returns false (no panic).
+func TestPrimaryIndexSeekNil(t *testing.T) {
+	idx := newPrimaryIndex(1, 1)
+	idx.Insert([]byte("key1"), []byte("primary1"))
+	it := idx.Iterator()
+
+	result := it.Seek(nil)
+	if result {
+		t.Fatal("expected Seek(nil) to return false")
 	}
 }
