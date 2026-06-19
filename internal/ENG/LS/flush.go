@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -158,7 +159,7 @@ func newFlushManager(dir string, maxMemSize int64, manifest *manifest) *flushMan
 	fm.targetSize.Store(maxMemSize) // REQ000552: initialize adaptive target
 
 	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "flush: mkdir sst: %v\n", err)
+		slog.Warn("flush: mkdir sst", "err", err)
 	}
 
 	active := newMemtable(maxMemSize)
