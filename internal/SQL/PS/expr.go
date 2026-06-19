@@ -636,7 +636,15 @@ func (p *Parser) parseTypeSize(size *int) error {
 		}
 	}
 	n := 0
-	fmt.Sscanf(p.current.Lexeme, "%d", &n)
+	if _, err := fmt.Sscanf(p.current.Lexeme, "%d", &n); err != nil {
+		return &SyntaxError{
+			Input:  p.lex.Input(),
+			Line:   p.current.Line,
+			Col:    p.current.Col,
+			Got:    "integer",
+			Lexeme: p.current.Lexeme,
+		}
+	}
 	*size = n
 	p.advance()
 	if err := p.expect(LX.T_RPAREN); err != nil {
@@ -662,7 +670,15 @@ func (p *Parser) parseTypePrecision(precision, scale *int) error {
 		}
 	}
 	n := 0
-	fmt.Sscanf(p.current.Lexeme, "%d", &n)
+	if _, err := fmt.Sscanf(p.current.Lexeme, "%d", &n); err != nil {
+		return &SyntaxError{
+			Input:  p.lex.Input(),
+			Line:   p.current.Line,
+			Col:    p.current.Col,
+			Got:    "integer",
+			Lexeme: p.current.Lexeme,
+		}
+	}
 	*precision = n
 	p.advance()
 
@@ -677,9 +693,17 @@ func (p *Parser) parseTypePrecision(precision, scale *int) error {
 				Lexeme: p.current.Lexeme,
 			}
 		}
-		m := 0
-		fmt.Sscanf(p.current.Lexeme, "%d", &m)
-		*scale = m
+	m := 0
+	if _, err := fmt.Sscanf(p.current.Lexeme, "%d", &m); err != nil {
+		return &SyntaxError{
+			Input:  p.lex.Input(),
+			Line:   p.current.Line,
+			Col:    p.current.Col,
+			Got:    "integer",
+			Lexeme: p.current.Lexeme,
+		}
+	}
+	*scale = m
 		p.advance()
 	}
 
