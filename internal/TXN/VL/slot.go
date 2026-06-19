@@ -11,9 +11,7 @@ type KeyRange struct {
 	End   []byte
 }
 
-// ReadEntry records a key and the beginTS of the version we observed
-// during a Get. The OCC validation uses this to detect read-write
-// conflicts with concurrently committed transactions. REQ000307.
+// ReadEntry records a key read and observed version TS (REQ000307).
 type ReadEntry struct {
 	Key        []byte
 	ObservedTS uint64
@@ -30,21 +28,17 @@ const (
 	SlotAborted   SlotStatus = 3
 )
 
-// slotNode is a single link in the Treiber stack used for the slot free
-// list. REQ000555: lock-free recycling via CAS.
+// slotNode is a single link in the Treiber stack free list (REQ000555).
 type slotNode struct {
 	idx  int
 	next *slotNode
 }
 
-// slotStack is a Treiber stack — a lock-free LIFO used to track free
-// transaction slots. Push and Pop are CAS-based and wait-free under
-// bounded contention. REQ000555.
+// slotStack is a lock-free LIFO for free transaction slots (REQ000555).
 type slotStack struct {
 	head atomic.Pointer[slotNode]
 }
 
-// Push prepends idx to the stack in LIFO order.
 func (s *slotStack) Push(idx int) {
 	n := &slotNode{idx: idx}
 	for {
@@ -56,7 +50,6 @@ func (s *slotStack) Push(idx int) {
 	}
 }
 
-// Pop returns the most recently pushed index, or -1 if empty.
 func (s *slotStack) Pop() int {
 	for {
 		n := s.head.Load()
@@ -69,20 +62,14 @@ func (s *slotStack) Pop() int {
 	}
 }
 
-// transactionSlot holds the per-transaction state for one slot in the
-// fixed-size pool (R16-17). The arena lives on the slot itself so its
-// lifecycle is locked to the slot: AllocateSlot pulls a fresh arena from
-// the pool, ReleaseSlot returns it. This guarantees the arena is
-// reclaimed even when a transaction is leaked without reaching
-// Commit/Abort (e.g., on panic) — the slot's next allocate will surface
-// the leaked arena through PutArena as part of slot reset.
+// transactionSlot holds per-transaction state for one slot in the pool.
 type transactionSlot struct {
 	txnID    uint64
 	status   atomic.Int32
 	beginTS  uint64
 	commitTS uint64
 	writeSet []KeyRange
-	readSet  []ReadEntry // REQ000307: keys read + observed version beginTS
+	readSet  []ReadEntry
 	arena    *MV.Arena
 	index    int
 }
@@ -103,13 +90,7 @@ func newSlotManager() *slotManager {
 	return sm
 }
 
-// AllocateSlot pops a free slot, resets its per-txn state, and pulls a
-// fresh arena from the global pool (R16-18). The slot's arena is the
-// only memory the tx needs that is not garbage-collected; by tying its
-// acquisition to AllocateSlot and its release to ReleaseSlot we ensure
-// arena reuse is bounded by slot churn, not by tx lifecycle correctness.
-// REQ000555: the free-list is now a lock-free Treiber stack, so burst
-// Begin no longer serializes on a mutex.
+// AllocateSlot pops a free slot, resets its state, and pulls a fresh arena (REQ000555).
 func (sm *slotManager) AllocateSlot() *transactionSlot {
 	idx := sm.freeStack.Pop()
 	if idx < 0 {
@@ -129,10 +110,7 @@ func (sm *slotManager) AllocateSlot() *transactionSlot {
 	return slot
 }
 
-// ReleaseSlot marks the slot inactive, zeroes its fields, returns the
-// arena to the pool, and pushes the slot index back onto the free stack
-// (R16-18). All arena lifecycle is owned here; tx.finalize no longer
-// touches the arena directly. REQ000555: push is lock-free.
+// ReleaseSlot marks the slot inactive, returns the arena, and pushes back to free stack (REQ000555).
 func (sm *slotManager) ReleaseSlot(slot *transactionSlot) {
 	idx := slot.index
 
@@ -169,16 +147,12 @@ func (sm *slotManager) GetSlotWriteSet(idx int) []KeyRange {
 	return sm.slots[idx].writeSet
 }
 
-// NumFreeSlots reports the current free count from the lock-free
-// counter. The value is eventually consistent with concurrent
-// Allocate/Release, which is sufficient for observability callers
-// (Stats, cond, tests). REQ000555.
+// NumFreeSlots reports the current free count (REQ000555).
 func (sm *slotManager) NumFreeSlots() int {
 	return int(sm.freeCount.Load())
 }
 
-// NumActiveSlots reports Capacity minus the free count. See
-// NumFreeSlots for consistency caveats. REQ000555.
+// NumActiveSlots reports Capacity minus the free count (REQ000555).
 func (sm *slotManager) NumActiveSlots() int {
 	return MaxConcurrentTXNs - int(sm.freeCount.Load())
 }
@@ -187,9 +161,7 @@ func (sm *slotManager) GetSlot(index int) *transactionSlot {
 	return &sm.slots[index]
 }
 
-// ScanSlots walks every slot. With the lock-free stack this no longer
-// needs the free-list mutex; the slot array itself is never mutated in
-// place after construction.
+// ScanSlots walks every slot.
 func (sm *slotManager) ScanSlots(fn func(int, *transactionSlot) bool) {
 	for i := 0; i < MaxConcurrentTXNs; i++ {
 		slot := &sm.slots[i]

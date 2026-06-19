@@ -9,7 +9,6 @@ import (
 )
 
 // TxnStats is a point-in-time snapshot of a TxnManager's resource usage.
-// All fields are advisory; values can change immediately after being read.
 type TxnStats struct {
 	Capacity     int   `json:"capacity"`
 	Active       int   `json:"active"`
@@ -20,17 +19,14 @@ type TxnStats struct {
 	CurrentEpoch int64 `json:"current_epoch"`
 }
 
-// TxnManager is the entry point for transaction creation and observability.
-// It owns a slot pool and an MV instance, and is goroutine-safe.
+// TxnManager is the entry point for transaction creation.
 type TxnManager interface {
 	Begin(ctx context.Context) (Tx, error)
 	Stats() TxnStats
 	Close() error
 }
 
-// Manager is the default TxnManager implementation. It composes a slot
-// pool, an MV instance, and a timestamp source.
-// A Manager is goroutine-safe; all methods may be called concurrently.
+// Manager is the default TxnManager implementation.
 type Manager struct {
 	sm        *slotManager
 	mv        *MV.MV
@@ -39,10 +35,7 @@ type Manager struct {
 	closed    atomic.Bool
 }
 
-// NewManager constructs a Manager with its own private slot pool and MV
-// instance. Transactions created by this manager do not share state with
-// the package-level global state, which makes this constructor ideal for
-// tests and for embedding the manager in larger subsystems (e.g., SYS/AP).
+// NewManager constructs a Manager with its own private slot pool and MV.
 func NewManager() *Manager {
 	return &Manager{
 		sm: newSlotManager(),
@@ -50,10 +43,7 @@ func NewManager() *Manager {
 	}
 }
 
-// NewManagerShared constructs a Manager that wraps an existing slot pool
-// and MV. This is the form used internally by the package-level Begin
-// function to preserve backward compatibility with code that relied on
-// the global slot manager.
+// NewManagerShared constructs a Manager wrapping an existing slot pool and MV.
 func NewManagerShared(sm *slotManager, mv *MV.MV) *Manager {
 	return &Manager{
 		sm: sm,
@@ -61,13 +51,7 @@ func NewManagerShared(sm *slotManager, mv *MV.MV) *Manager {
 	}
 }
 
-// Begin allocates a transaction slot from this manager's pool, assigns a
-// begin timestamp, and returns a Tx bound to this manager. The returned
-// tx's Commit/Abort release the slot back to *this* manager's pool, not
-// the global pool.
-// The slot's arena is acquired inside AllocateSlot (R16-18); the tx
-// struct no longer owns its own arena — it borrows from t.slot.arena.
-// Returns ErrNoSlotsAvailable if the pool is exhausted.
+// Begin allocates a transaction slot and returns a Tx.
 func (m *Manager) Begin(ctx context.Context) (Tx, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -97,7 +81,6 @@ func (m *Manager) Begin(ctx context.Context) (Tx, error) {
 	}, nil
 }
 
-// Stats returns a snapshot of the manager's current state.
 func (m *Manager) Stats() TxnStats {
 	return TxnStats{
 		Capacity:     MaxConcurrentTXNs,
@@ -110,21 +93,16 @@ func (m *Manager) Stats() TxnStats {
 	}
 }
 
-// Close marks the manager as closed. After Close, Begin returns
-// ErrManagerClosed. Outstanding transactions are not interrupted; they
-// continue to operate against the manager's private state.
-// Close is idempotent and safe to call from multiple goroutines.
+// Close marks the manager as closed.
 func (m *Manager) Close() error {
 	m.closed.Store(true)
 	return nil
 }
 
-// recordCommit is called by tx.Commit on success. Atomic accounting only.
 func (m *Manager) recordCommit() {
 	m.committed.Add(1)
 }
 
-// recordAbort is called by tx.Abort. Atomic accounting only.
 func (m *Manager) recordAbort() {
 	m.aborted.Add(1)
 }
