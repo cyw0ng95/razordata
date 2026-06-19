@@ -797,7 +797,11 @@ func (c *Catalog) nextIndexIDLocked() uint64 {
 	return maxID + 1
 }
 
-// GetByID returns the entry for tableID or ErrCatalogNotFound.
+// GetByID returns a deep copy of the entry for tableID or ErrCatalogNotFound.
+// REQ000613: the pre-fix implementation returned `cp := *entry` which shared
+// Columns/Unique/Indexes/ColumnStats slices with the cache entry. A caller
+// mutating cp.Columns directly corrupted the in-memory catalog. Deep-copy
+// every slice field so the returned copy is independent.
 func (c *Catalog) GetByID(tableID uint64) (*CatalogEntry, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -809,10 +813,14 @@ func (c *Catalog) GetByID(tableID uint64) (*CatalogEntry, error) {
 		return nil, fmt.Errorf("%w: id=%d", ErrCatalogNotFound, tableID)
 	}
 	cp := *entry
+	cp.Columns = append([]CatalogColumn(nil), entry.Columns...)
+	cp.Unique = append([]CatalogUnique(nil), entry.Unique...)
+	cp.Indexes = append([]CatalogIndex(nil), entry.Indexes...)
+	cp.ColumnStats = append([]StatsEntry(nil), entry.ColumnStats...)
 	return &cp, nil
 }
 
-// GetByName returns the entry for name or ErrCatalogNotFound.
+// GetByName returns a deep copy of the entry for name or ErrCatalogNotFound.
 func (c *Catalog) GetByName(name string) (*CatalogEntry, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -928,6 +936,20 @@ func (c *Catalog) flushLocked() error {
 	tmpPath := c.path + catalogTmpSuffix
 	if err := os.WriteFile(tmpPath, buf, 0o644); err != nil {
 		return err
+	}
+	// REQ000612: fsync the temp file before renaming so the data
+	// is on stable storage when the rename becomes visible. A
+	// crash after Rename returns but before the OS flushes the
+	// page cache loses the write — even though the file is
+	// already at its final path. We open the written file just
+	// for Sync.
+	{
+		f, err := os.Open(tmpPath)
+		if err != nil {
+			return err
+		}
+		_ = f.Sync()
+		f.Close()
 	}
 	if err := os.Rename(tmpPath, c.path); err != nil {
 		return err

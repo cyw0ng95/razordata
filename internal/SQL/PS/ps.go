@@ -781,6 +781,13 @@ func (p *Parser) Parse() (Stmt, error) {
 		next := p.lex.Peek()
 		if next.Type == LX.T_TO {
 			stmt, err = p.parseRollbackTo()
+		} else {
+			// REQ000593: bare ROLLBACK without TO SAVEPOINT.
+			p.advance() // consume ROLLBACK
+			if p.lex.Peek().Type == LX.T_TRANSACTION {
+				p.advance()
+			}
+			stmt = &RollbackTX{}
 		}
 	case LX.T_BEGIN:
 		stmt, err = p.parseBegin()
