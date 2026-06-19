@@ -41,8 +41,8 @@ type BlockDevice struct {
 	fd      int
 	direct  bool
 	mmap    bool   // true: reads via mmap; writes still pwrite
-	mmapSz  int    // size of the mapped region
-	mmapBuf []byte // mapped region (mmap path)
+	mmapSz  int
+	mmapBuf []byte
 	log     lg.Logger
 }
 
