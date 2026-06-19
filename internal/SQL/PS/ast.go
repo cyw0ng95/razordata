@@ -298,14 +298,20 @@ type Insert struct {
 
 func (i *Insert) stmtNode() {}
 
+// IndexedColumn represents a column in a CREATE INDEX with optional COLLATE.
+type IndexedColumn struct {
+	Name      string
+	Collation string // REQ000565: COLLATE name
+}
+
 // CreateIndexStmt represents a CREATE INDEX statement.
 // REQ000251 — secondary indexes MVP.
 type CreateIndexStmt struct {
-	Name     string   // index name
-	Table    string   // target table name
-	Columns  []string // indexed column names
-	Unique   bool     // UNIQUE modifier (reserved; not yet enforced)
-	IfExists bool     // REQ000479: CREATE INDEX IF NOT EXISTS
+	Name           string          // index name
+	Table          string          // target table name
+	IndexedColumns []IndexedColumn // REQ000565: columns with optional COLLATE
+	Unique         bool            // UNIQUE modifier (reserved; not yet enforced)
+	IfExists       bool            // REQ000479: CREATE INDEX IF NOT EXISTS
 }
 
 func (c *CreateIndexStmt) stmtNode() {}
@@ -412,8 +418,9 @@ type Delete struct {
 func (d *Delete) stmtNode() {}
 
 type OrderItem struct {
-	Expr Expr
-	Desc bool
+	Expr      Expr
+	Desc      bool
+	Collation string // REQ000565: COLLATE name
 }
 
 type JoinClause struct {

@@ -350,6 +350,39 @@ func TestParseSelectOrderByMultiKey(t *testing.T) {
 	}
 }
 
+func TestParseSelectOrderByCollate(t *testing.T) {
+	p := NewParser("SELECT * FROM t ORDER BY a COLLATE nocase")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sel := stmt.(*Select)
+	if len(sel.OrderBy) != 1 {
+		t.Fatalf("expected 1 order item, got %d", len(sel.OrderBy))
+	}
+	if sel.OrderBy[0].Collation != "nocase" {
+		t.Errorf("expected Collation='nocase', got %q", sel.OrderBy[0].Collation)
+	}
+}
+
+func TestParseSelectOrderByDescCollate(t *testing.T) {
+	p := NewParser("SELECT * FROM t ORDER BY a DESC COLLATE binary")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	sel := stmt.(*Select)
+	if len(sel.OrderBy) != 1 {
+		t.Fatalf("expected 1 order item, got %d", len(sel.OrderBy))
+	}
+	if !sel.OrderBy[0].Desc {
+		t.Error("expected DESC flag")
+	}
+	if sel.OrderBy[0].Collation != "binary" {
+		t.Errorf("expected Collation='binary', got %q", sel.OrderBy[0].Collation)
+	}
+}
+
 func TestParseSelectLimitOffset(t *testing.T) {
 	p := NewParser("SELECT * FROM t LIMIT 10 OFFSET 5")
 	stmt, err := p.Parse()

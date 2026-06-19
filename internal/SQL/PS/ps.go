@@ -925,7 +925,16 @@ func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, bool, error) {
 				desc = true
 				p.advance()
 			}
-			orderBy = append(orderBy, OrderItem{Expr: expr, Desc: desc})
+			var collation string
+			if p.current.Type == LX.T_COLLATE {
+				p.advance()
+				if err := p.expect(LX.T_IDENT); err != nil {
+					return nil, nil, nil, false, err
+				}
+				collation = p.current.Lexeme
+				p.advance()
+			}
+			orderBy = append(orderBy, OrderItem{Expr: expr, Desc: desc, Collation: collation})
 			if p.current.Type != LX.T_COMMA {
 				break
 			}
@@ -2400,7 +2409,16 @@ func (p *Parser) parseWindowSpec() (*WindowSpec, error) {
 				desc = true
 				p.advance()
 			}
-			spec.OrderBy = append(spec.OrderBy, OrderItem{Expr: e, Desc: desc})
+			var collation string
+			if p.current.Type == LX.T_COLLATE {
+				p.advance()
+				if err := p.expect(LX.T_IDENT); err != nil {
+					return nil, err
+				}
+				collation = p.current.Lexeme
+				p.advance()
+			}
+			spec.OrderBy = append(spec.OrderBy, OrderItem{Expr: e, Desc: desc, Collation: collation})
 			if p.current.Type != LX.T_COMMA {
 				break
 			}
@@ -2977,7 +2995,7 @@ func (p *Parser) parseCreateIndex() (*CreateIndexStmt, error) {
 		return nil, err
 	}
 	p.advance()
-	cols, err := p.parseIdentList()
+	cols, err := p.parseIndexColumnList()
 	if err != nil {
 		return nil, err
 	}
@@ -2988,10 +3006,48 @@ func (p *Parser) parseCreateIndex() (*CreateIndexStmt, error) {
 	return &CreateIndexStmt{
 		Name:     name,
 		Table:    table,
-		Columns:  cols,
+		IndexedColumns:  cols,
 		Unique:   unique,
 		IfExists: ifExists,
 	}, nil
+}
+
+// parseIndexColumnList parses a comma-separated list of identifiers with optional COLLATE.
+func (p *Parser) parseIndexColumnList() ([]IndexedColumn, error) {
+	var cols []IndexedColumn
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	col := IndexedColumn{Name: p.current.Lexeme}
+	p.advance()
+	// optional COLLATE name
+	if p.current.Type == LX.T_COLLATE {
+		p.advance()
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		col.Collation = p.current.Lexeme
+		p.advance()
+	}
+	cols = append(cols, col)
+	for p.current.Type == LX.T_COMMA {
+		p.advance()
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		c := IndexedColumn{Name: p.current.Lexeme}
+		p.advance()
+		if p.current.Type == LX.T_COLLATE {
+			p.advance()
+			if err := p.expect(LX.T_IDENT); err != nil {
+				return nil, err
+			}
+			c.Collation = p.current.Lexeme
+			p.advance()
+		}
+		cols = append(cols, c)
+	}
+	return cols, nil
 }
 
 // parseIdentList parses a comma-separated list of identifiers

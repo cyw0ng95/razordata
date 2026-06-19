@@ -4,6 +4,14 @@ import (
 	"testing"
 )
 
+func colNames(cols []IndexedColumn) []string {
+	names := make([]string, len(cols))
+	for i, c := range cols {
+		names[i] = c.Name
+	}
+	return names
+}
+
 // TestParseCreateIndex_Basic covers the simplest CREATE INDEX.
 func TestParseCreateIndex_Basic(t *testing.T) {
 	p := NewParser("CREATE INDEX idx_email ON users (email)")
@@ -21,8 +29,8 @@ func TestParseCreateIndex_Basic(t *testing.T) {
 	if ci.Table != "users" {
 		t.Errorf("Table = %q, want users", ci.Table)
 	}
-	if len(ci.Columns) != 1 || ci.Columns[0] != "email" {
-		t.Errorf("Columns = %v, want [email]", ci.Columns)
+	if len(ci.IndexedColumns) != 1 || ci.IndexedColumns[0].Name != "email" {
+		t.Errorf("IndexedColumns = %v, want [email]", colNames(ci.IndexedColumns))
 	}
 	if ci.Unique {
 		t.Errorf("Unique should be false")
@@ -56,13 +64,13 @@ func TestParseCreateIndex_MultiColumn(t *testing.T) {
 	if !ok {
 		t.Fatalf("got %T, want *CreateIndexStmt", stmt)
 	}
-	if len(ci.Columns) != 3 {
-		t.Errorf("Columns = %v, want 3 entries", ci.Columns)
+	if len(ci.IndexedColumns) != 3 {
+		t.Errorf("IndexedColumns = %v, want 3 entries", colNames(ci.IndexedColumns))
 	}
 	want := []string{"last", "first", "middle"}
-	for i, c := range ci.Columns {
-		if c != want[i] {
-			t.Errorf("Columns[%d] = %q, want %q", i, c, want[i])
+	for i, ic := range ci.IndexedColumns {
+		if ic.Name != want[i] {
+			t.Errorf("IndexedColumns[%d].Name = %q, want %q", i, ic.Name, want[i])
 		}
 	}
 }
@@ -132,5 +140,46 @@ func TestParseDropTable_StillWorks(t *testing.T) {
 	}
 	if _, ok := stmt.(*DropTable); !ok {
 		t.Errorf("got %T, want *DropTable", stmt)
+	}
+}
+
+// TestParseCreateIndex_Collate covers CREATE INDEX with COLLATE.
+func TestParseCreateIndex_Collate(t *testing.T) {
+	p := NewParser("CREATE INDEX idx ON t (a COLLATE nocase, b COLLATE binary)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	ci, ok := stmt.(*CreateIndexStmt)
+	if !ok {
+		t.Fatalf("got %T, want *CreateIndexStmt", stmt)
+	}
+	if len(ci.IndexedColumns) != 2 {
+		t.Fatalf("got %d cols, want 2", len(ci.IndexedColumns))
+	}
+	if ci.IndexedColumns[0].Collation != "nocase" {
+		t.Errorf("col 0 Collation = %q, want nocase", ci.IndexedColumns[0].Collation)
+	}
+	if ci.IndexedColumns[1].Collation != "binary" {
+		t.Errorf("col 1 Collation = %q, want binary", ci.IndexedColumns[1].Collation)
+	}
+}
+
+// TestParseCreateIndex_CollateFirstOnly covers COLLATE on only the first column.
+func TestParseCreateIndex_CollateFirstOnly(t *testing.T) {
+	p := NewParser("CREATE INDEX idx ON t (a COLLATE nocase, b)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	ci, ok := stmt.(*CreateIndexStmt)
+	if !ok {
+		t.Fatalf("got %T, want *CreateIndexStmt", stmt)
+	}
+	if ci.IndexedColumns[0].Collation != "nocase" {
+		t.Errorf("col 0 Collation = %q, want nocase", ci.IndexedColumns[0].Collation)
+	}
+	if ci.IndexedColumns[1].Collation != "" {
+		t.Errorf("col 1 Collation = %q, want empty", ci.IndexedColumns[1].Collation)
 	}
 }
