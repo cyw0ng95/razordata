@@ -350,23 +350,21 @@ allocated:
 func (b *bp) Pin(page *Page) {
 	b.ht.mu.RLock()
 	slot, ok := b.ht.slots[page.ID]
-	b.ht.mu.RUnlock()
-	if !ok {
-		return
+	if ok {
+		slot.pinCount.Add(1)
+		b.pins.Add(1)
 	}
-	slot.pinCount.Add(1)
-	b.pins.Add(1)
+	b.ht.mu.RUnlock()
 }
 
 // Unpin implements BufferPool.
 func (b *bp) Unpin(page *Page) {
 	b.ht.mu.RLock()
 	slot, ok := b.ht.slots[page.ID]
-	b.ht.mu.RUnlock()
-	if !ok {
-		return
+	if ok {
+		slot.pinCount.Add(-1)
 	}
-	slot.pinCount.Add(-1)
+	b.ht.mu.RUnlock()
 }
 
 // Upsert implements BufferPool. See the interface comment for the
@@ -479,10 +477,15 @@ func (b *bp) Stats() BufferStats {
 // Close implements BufferPool. Flushes dirty pages and writes hint file.
 func (b *bp) Close() error {
 	b.closeOnce.Do(func() {
-		// Flush dirty pages.
+		// Flush dirty pages: write each dirty block to disk, then clear flag.
 		b.ht.mu.Lock()
 		for _, slot := range b.ht.slots {
 			if slot.dirty.Load() {
+				if err := b.bd.WriteBlock(context.Background(), slot.blockID, slot.data); err != nil {
+					b.closeErr = err
+					b.ht.mu.Unlock()
+					return
+				}
 				slot.dirty.Store(false)
 			}
 		}

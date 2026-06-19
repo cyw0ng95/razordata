@@ -157,5 +157,7 @@ func (idx *primaryIndex) Len() int64 {
 }
 
 func (idx *primaryIndex) Iterator() *pkIterator {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
 	return &pkIterator{current: nil, head: idx.head.Load()}
 }

@@ -157,6 +157,24 @@ func (w *WindowOperator) sortPartition(indices []int) {
 }
 
 func (w *WindowOperator) computeWindowFunc(indices []int) {
+	// Precompute peer-group boundaries for RANGE frames (REQ000530).
+	// peerEnd[i] = last index (within indices) that has the same ORDER BY
+	// value as the row at position i. Zero-valued when no ORDER BY.
+	var peerEnd []int
+	if w.spec.Frame != nil && w.spec.Frame.Type == "RANGE" && len(w.spec.OrderBy) > 0 {
+		peerEnd = make([]int, len(indices))
+		for i := range indices {
+			peerEnd[i] = i
+			for j := i + 1; j < len(indices); j++ {
+				if w.sameOrderByGroup(indices[i], indices[j]) {
+					peerEnd[i] = j
+				} else {
+					break
+				}
+			}
+		}
+	}
+
 	switch w.funcName {
 	case "ROW_NUMBER":
 		for rank, idx := range indices {
@@ -171,9 +189,194 @@ func (w *WindowOperator) computeWindowFunc(indices []int) {
 	case "LEAD":
 		w.computeLagLead(indices, 1)
 	default:
-		for _, idx := range indices {
-			w.results[idx] = nil
+		// Aggregate window functions: apply frame bounds (REQ000530).
+		for pos, idx := range indices {
+			lo, hi := 0, len(indices)-1
+			if w.spec.Frame != nil {
+				lo, hi = w.frameBounds(pos, indices, peerEnd)
+			}
+			if peerEnd != nil {
+				hi = peerEnd[pos] // override: always include full peer group at upper bound
+			}
+			w.results[idx] = w.aggOverFrame(w.funcName, indices[lo:hi+1])
 		}
+	}
+}
+
+// sameOrderByGroup reports whether two rows have equal ORDER BY values.
+func (w *WindowOperator) sameOrderByGroup(i, j int) bool {
+	for _, item := range w.spec.OrderBy {
+		vi, _ := Eval(item.Expr, &w.rows[i], nil)
+		vj, _ := Eval(item.Expr, &w.rows[j], nil)
+		if compare(vi, vj) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// frameBounds returns the [lo, hi] index range (within the sorted indices
+// slice) for the row at position pos, according to the ROWS/RANGE frame spec.
+func (w *WindowOperator) frameBounds(pos int, indices []int, peerEnd []int) (int, int) {
+	frame := w.spec.Frame
+	if frame == nil {
+		return 0, len(indices) - 1
+	}
+	n := len(indices)
+	lo := frameStart(frame.Start, pos, n)
+	hi := frameEnd(frame.End, pos, n)
+	if frame.Type == "RANGE" {
+		if frame.Start.Type == "CURRENT_ROW" {
+			// Extend to first peer
+			for lo > 0 && w.sameOrderByGroup(indices[lo-1], indices[pos]) {
+				lo--
+			}
+		}
+		if frame.End.Type == "CURRENT_ROW" && peerEnd != nil {
+			hi = peerEnd[pos]
+		}
+	}
+	return lo, hi
+}
+
+func frameStart(bound PS.FrameBound, pos, n int) int {
+	switch bound.Type {
+	case "UNBOUNDED_PRECEDING":
+		return 0
+	case "CURRENT_ROW":
+		return pos
+	case "PRECEDING":
+		off := evalBoundOffset(bound.Offset)
+		if off > pos {
+			return 0
+		}
+		return pos - off
+	case "FOLLOWING":
+		off := evalBoundOffset(bound.Offset)
+		end := pos + off
+		if end >= n {
+			return n - 1
+		}
+		return end
+	default:
+		return 0
+	}
+}
+
+func frameEnd(bound PS.FrameBound, pos, n int) int {
+	switch bound.Type {
+	case "UNBOUNDED_FOLLOWING":
+		return n - 1
+	case "CURRENT_ROW":
+		return pos
+	case "PRECEDING":
+		off := evalBoundOffset(bound.Offset)
+		end := pos - off
+		if end < 0 {
+			return 0
+		}
+		return end
+	case "FOLLOWING":
+		off := evalBoundOffset(bound.Offset)
+		end := pos + off
+		if end >= n {
+			return n - 1
+		}
+		return end
+	default:
+		return n - 1
+	}
+}
+
+// evalBoundOffset evaluates a FrameBound offset expression to an int.
+func evalBoundOffset(offset PS.Expr) int {
+	if offset == nil {
+		return 0
+	}
+	v, err := Eval(offset, nil, nil)
+	if err != nil {
+		return 0
+	}
+	switch val := v.(type) {
+	case int64:
+		return int(val)
+	case float64:
+		return int(val)
+	case int:
+		return val
+	default:
+		return 0
+	}
+}
+
+// aggOverFrame computes an aggregate over the given rows.
+func (w *WindowOperator) aggOverFrame(funcName string, frameRows []int) interface{} {
+	if len(frameRows) == 0 {
+		return nil
+	}
+	n := len(w.args)
+	if n == 0 {
+		return nil
+	}
+	var count int64
+	var sum float64
+	var min, max float64
+	var hasVal bool
+	for _, ri := range frameRows {
+		val, err := Eval(w.args[0], &w.rows[ri], nil)
+		if err != nil || val == nil {
+			continue
+		}
+		var fv float64
+		switch v := val.(type) {
+		case int64:
+			fv = float64(v)
+		case float64:
+			fv = v
+		case int:
+			fv = float64(v)
+		default:
+			continue
+		}
+		count++
+		sum += fv
+		if !hasVal {
+			min, max = fv, fv
+			hasVal = true
+		} else {
+			if fv < min {
+				min = fv
+			}
+			if fv > max {
+				max = fv
+			}
+		}
+	}
+	switch funcName {
+	case "SUM":
+		if count == 0 {
+			return nil
+		}
+		return sum
+	case "AVG":
+		if count == 0 {
+			return nil
+		}
+		return sum / float64(count)
+	case "MIN":
+		if !hasVal {
+			return nil
+		}
+		return min
+	case "MAX":
+		if !hasVal {
+			return nil
+		}
+		return max
+	case "COUNT":
+		return count
+	default:
+		return nil
 	}
 }
 

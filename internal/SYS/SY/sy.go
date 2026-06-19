@@ -545,6 +545,13 @@ func (e *Engine) BeginTxn(ctx context.Context) (AP.Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
+	// REQ000617: wire up the WAL writer so both Commit and Abort
+	// write durable WAL records.
+	if !e.opts.ReadOnly && e.wr != nil {
+		if w, ok := tx.(interface{ WithWAL(vl.WALWriter) vl.Tx }); ok {
+			tx = w.WithWAL(e.wr)
+		}
+	}
 	return txwrap(e, tx), nil
 }
 

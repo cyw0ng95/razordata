@@ -263,6 +263,23 @@ func (t *tx) Abort(ctx context.Context) error {
 		// bug; see the iter-05 audit notes.)
 		return nil
 	}
+	// REQ000617: persist RTRollback before marking aborted so a crash
+	// during rollback is recoverable.
+	t.setPhase(PhasePreCommit)
+	if t.wal != nil {
+		batch := &walwr.WriteBatch{
+			TxnID: t.slot.txnID,
+			Recs:  []walwr.LogRecord{{Type: walwr.RTRollback}},
+		}
+		if _, err := t.wal.Append(batch); err != nil {
+			t.setPhase(PhaseAborted)
+			return err
+		}
+		if err := t.wal.Sync(); err != nil {
+			t.setPhase(PhaseAborted)
+			return err
+		}
+	}
 	// PhaseAborted: terminal state for the Abort flow (REQ000147).
 	t.setPhase(PhaseAborted)
 	t.finalize(SlotAborted)

@@ -172,6 +172,11 @@ func (t *Transaction) Rollback(ctx context.Context) error {
 	if t.finished {
 		return ap.ErrTxAborted
 	}
+	// REQ000617: persist the abort WAL record (RTRollback) first so a
+	// crash during engine state restoration is recoverable.
+	if err := t.tx.Abort(ctx); err != nil {
+		return err
+	}
 	eng := t.session.Engine()
 	keys := make([]string, 0, len(t.writeSet))
 	for k := range t.writeSet {
@@ -188,9 +193,6 @@ func (t *Transaction) Rollback(ctx context.Context) error {
 				return err
 			}
 		}
-	}
-	if err := t.tx.Abort(ctx); err != nil {
-		return err
 	}
 	t.finished = true
 	t.writeSet = nil
