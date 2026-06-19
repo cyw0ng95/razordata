@@ -2,9 +2,10 @@ package ls
 
 import (
 	"bytes"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const maxLevel = 12
@@ -20,6 +21,7 @@ type skipList struct {
 	head  atomic.Pointer[node]
 	level atomic.Int32
 	len   atomic.Int64
+	rng   *rand.Rand
 }
 
 var nodeSlicePool = sync.Pool{
@@ -51,12 +53,14 @@ func New() *skipList {
 		head.next[i].Store(nil)
 	}
 	sl.head.Store(head)
+	seed := uint64(time.Now().UnixNano())
+	sl.rng = rand.New(rand.NewPCG(seed, seed))
 	return sl
 }
 
 func (sl *skipList) randomLevel() int {
 	lvl := 1
-	for lvl < maxLevel && rand.Intn(2) == 0 {
+	for lvl < maxLevel && sl.rng.Intn(2) == 0 {
 		lvl++
 	}
 	return lvl
