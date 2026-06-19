@@ -193,14 +193,14 @@ func (w *sstWriter) Finish() ([]byte, error) {
 
 	indexOffset := buf.Len()
 
+	offsetBuf := make([]byte, 8)
+	sizeBuf := make([]byte, 8)
 	for _, entry := range w.indexEntries {
 		keyLen := encodeVarint(int64(len(entry.largestKey)))
 		buf.Write(keyLen)
 		buf.Write(entry.largestKey)
-		offsetBuf := make([]byte, 8)
 		binary.LittleEndian.PutUint64(offsetBuf, uint64(entry.blockOffset))
 		buf.Write(offsetBuf)
-		sizeBuf := make([]byte, 8)
 		binary.LittleEndian.PutUint64(sizeBuf, uint64(entry.blockSize))
 		buf.Write(sizeBuf)
 	}
