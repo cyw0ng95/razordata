@@ -173,9 +173,7 @@ func (sl *skipList) Find(key []byte) ([]byte, bool) {
 		return nil, false
 	}
 	if bytes.Equal(curr.key, key) {
-		curr.mu.Lock()
 		val := curr.value.Load().([]byte)
-		curr.mu.Unlock()
 		return val, true
 	}
 	return nil, false
@@ -214,8 +212,6 @@ func (it *Iterator) Value() []byte {
 	if it.current == nil {
 		return nil
 	}
-	it.current.mu.Lock()
 	val := it.current.value.Load().([]byte)
-	it.current.mu.Unlock()
 	return val
 }
