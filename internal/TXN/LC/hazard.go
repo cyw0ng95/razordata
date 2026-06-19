@@ -19,7 +19,6 @@ func newHazardPointerSet() *hazardPointerSet {
 // pointer). Per TXN.md:96-121, the double-slot design lets a
 // reader hold the current node in slot 0 while prefetching
 // the next node into slot 1 — see PublishNext.
-//
 // Before iter-15 (REQ000158) this function was called
 // 'Publish' and wrote to ALL slots, which defeats the
 // double-slot design (slot 1 would hold the wrong pointer

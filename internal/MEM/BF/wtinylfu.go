@@ -7,7 +7,6 @@ import (
 
 // W-TinyLFU is a frequency-based admission policy used in front of
 // an LRU/SLRU cache. REQ000303.
-//
 // The algorithm:
 //  1. Every Pin records the key in a small Count-Min Sketch
 //     (frequency estimate, 4 hashes, 4-bit counters).
@@ -18,7 +17,6 @@ import (
 //
 // This is dramatically more effective than LRU for skewed
 // access patterns and avoids cache pollution by one-hit wonders.
-//
 // The sketch is a fixed 4-row x 16K-column Count-Min with
 // 4-bit saturating counters (capacity: 15). Memory footprint
 // is ~32 KB.
@@ -100,7 +98,6 @@ func (w *wtinyLFU) recordHit(key uint64) bool {
 
 // admit runs the admission test: should the new key be admitted
 // over the candidate key being evicted?
-//
 // Returns true (admit) if new key's frequency is at least as high
 // as the candidate's. Otherwise false (reject).
 func (w *wtinyLFU) admit(newKey, candidateKey uint64) bool {

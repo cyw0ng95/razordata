@@ -36,4 +36,3 @@ func (p *Parser) parseValues() (*ValuesStmt, error) {
 	}
 	return &ValuesStmt{Rows: rows}, nil
 }
-

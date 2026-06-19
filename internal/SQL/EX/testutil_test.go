@@ -12,12 +12,10 @@ import (
 // or RegisterTableWithPK MUST call ResetForTest at the top
 // of their Test* function to remain safe under
 // `go test -count=N`. See REQ000346 (iter-26).
-//
 // The pre-iter-26 code relied on package init order and
 // distinct test names to avoid bleed-through; under -count=N
 // the maps accumulated entries from previous invocations and
 // assertions like `len(idxs) == 1` saw the running total.
-//
 // Calling ResetForTest twice in the same test is safe (it
 // runs the cleanup on test exit but the second Cleanup is a
 // no-op against an already-empty map).

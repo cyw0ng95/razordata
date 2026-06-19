@@ -20,9 +20,9 @@ func TestSubqueryPlanner_SeesStoreTables(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		sql    string
-		want   int
-		label  string
+		sql   string
+		want  int
+		label string
 	}{
 		{"SELECT * FROM t1 WHERE id > (SELECT avg(id) FROM t1)", 1, "scalar subquery with tables (avg=2, id>2 → id=3)"},
 		{"SELECT EXISTS(SELECT 1 FROM t1 WHERE id = 3)", 1, "exists subquery with tables"},

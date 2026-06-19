@@ -253,12 +253,10 @@ func NewIndexScanWithStore(store Store, table, idx string) (*IndexScan, error) {
 // NewIndexScanWithIndex builds an IndexScan that uses a real secondary
 // index seek (iter-22). The scan reads primary keys from the index
 // store, then fetches the corresponding rows via Store.Get.
-//
 // seekValue is the index value to look up (exact match); if empty,
 // the scan returns all rows in index order. rangeEnd, if non-nil,
 // limits the scan to entries strictly less than this value
 // (lexicographic).
-//
 // REQ000252 — secondary indexes MVP.
 func NewIndexScanWithIndex(store Store, tableID uint64, table, idx string, seekValue, rangeEnd []byte) (*IndexScan, error) {
 	ss, ok := schemaFor(table)
@@ -301,11 +299,9 @@ func NewIndexScanWithBTree(bt *id.BTree, store Store, table, idx string) (*Index
 // indexLower; lowerInclusive controls whether the bound is
 // included. indexUpper is the (exclusive) upper bound; pass nil
 // for an unbounded upper scan.
-//
 // REQ000074 (iter-27): real seek for `col > X`, `col >= X`,
 // `col BETWEEN X AND Y`, etc. Replaces the prefix-scan fallback
 // that the planner previously used for non-equality predicates.
-//
 // Implementation note: the iterator is opened with the BROAD
 // index prefix (`__idx__:<tableID>:<idxName>:`) so it walks all
 // index entries; the lower/upper bounds are enforced in
@@ -479,7 +475,6 @@ func indexValueFromKey(key []byte, tableID uint64, idxName string) []byte {
 // configured seek. It uses the prefix-iter interface on the
 // underlying store. For exact match, the prefix is the full
 // index value; for prefix-match, it's a truncated value.
-//
 // REQ000074 (iter-27): for range seek (when indexLower or
 // indexUpper is set), the iterator is opened with the BROAD
 // index prefix (tableID + idxName only) and the bounds are

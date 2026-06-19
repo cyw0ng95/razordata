@@ -1,5 +1,4 @@
 // Package fl implements the WAL Flusher cluster.
-//
 // The Flusher owns the directory-fsync side of WAL durability:
 // after the Writer (WR) has fsynced a segment, the caller invokes
 // FL.SyncDir to ensure the segment's directory entry is durable
@@ -169,7 +168,6 @@ func (f *flusher) EndBatch(err error) {
 // the FileManager so the same path-validator and FD cache are used
 // across the database; segment directory entries are only durable
 // once the directory itself is fsynced.
-//
 // Idempotent and safe to call after Close (R22).
 func (f *flusher) SyncDir() error {
 	if f.closed.isSet() {

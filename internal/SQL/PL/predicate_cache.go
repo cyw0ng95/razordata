@@ -6,14 +6,12 @@ import (
 )
 
 // REQ000550: per-Stmt predicate cache.
-//
 // When a prepared statement is executed repeatedly with the same
 // parameter tuple (e.g. a hot SELECT inside a loop), the resolved
 // plan does not depend on the parameter values and can be reused.
 // This cache keys on a caller-built string (typically the
 // sorted-and-joined tuple of parameter encodings) and stores the
 // already-resolved plan object.
-//
 // The cache is scoped to a single Stmt instance — it is not a
 // session- or engine-level structure. Each Stmt owns its own
 // PredicateCache so eviction in one statement does not affect

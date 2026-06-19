@@ -41,7 +41,6 @@ func RangesOverlap(a, b KeyRange) bool {
 // It detects read-write conflicts: if any slot that committed after our
 // beginTS wrote to a key we read, we must abort. This ensures
 // serializable snapshot isolation without key-level locking.
-//
 // The algorithm is O(C × R) where C = number of committed slots with
 // commitTS > beginTS and R = readSet size. In practice C is small
 // (slot pool of 1024, only committed slots in the window).

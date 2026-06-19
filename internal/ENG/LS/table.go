@@ -16,7 +16,6 @@ var (
 // tableRegistry is a thin wrapper around tb.Registry that
 // preserves the existing ENG/LS API surface. REQ000048: the
 // actual table registry logic now lives in ENG/TB.
-//
 // The wrapper is kept for backward compatibility with existing
 // callers (e.g., the catalog layer in LS/catalog.go).
 type tableRegistry struct {

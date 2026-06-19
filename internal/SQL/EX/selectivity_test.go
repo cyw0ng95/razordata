@@ -105,9 +105,9 @@ func TestExtractColumnLiteral(t *testing.T) {
 
 func TestLiteralToBytes(t *testing.T) {
 	cases := []struct {
-		expr    PS.Expr
-		want    string
-		wantOk  bool
+		expr   PS.Expr
+		want   string
+		wantOk bool
 	}{
 		{&PS.NumberLiteral{Val: 42}, "42", true},
 		{&PS.StringLiteral{Val: "hello"}, "hello", true},

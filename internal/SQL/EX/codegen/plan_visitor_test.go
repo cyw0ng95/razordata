@@ -10,18 +10,18 @@ import (
 )
 
 type mockOp struct {
-	typ      string
-	child    EX.Operator
-	left     EX.Operator
-	right    EX.Operator
-	pred     PS.Expr
+	typ   string
+	child EX.Operator
+	left  EX.Operator
+	right EX.Operator
+	pred  PS.Expr
 }
 
 func (m *mockOp) Next(_ context.Context) (EX.Row, error) {
 	return EX.Row{}, nil
 }
-func (m *mockOp) Close() error { return nil }
-func (m *mockOp) Child() EX.Operator   { return m.child }
+func (m *mockOp) Close() error            { return nil }
+func (m *mockOp) Child() EX.Operator      { return m.child }
 func (m *mockOp) LeftChild() EX.Operator  { return m.left }
 func (m *mockOp) RightChild() EX.Operator { return m.right }
 func (m *mockOp) Predicate() PS.Expr      { return m.pred }
@@ -86,7 +86,7 @@ func TestPlanVisitor_HashJoin(t *testing.T) {
 func TestPlanVisitor_FilterNotNullable(t *testing.T) {
 	v := NewPlanVisitor()
 	filter := &mockOp{
-		typ: "Filter",
+		typ:   "Filter",
 		child: &mockOp{typ: "SeqScan"},
 		pred: &PS.BinaryExpr{
 			Left:  &PS.Ident{Name: "id"},
@@ -192,9 +192,9 @@ func TestPlanVisitor_ExprCollect(t *testing.T) {
 		Op:    int(LX.T_LE),
 	}
 	filter := &mockOp{
-		typ: "Filter",
+		typ:   "Filter",
 		child: &mockOp{typ: "SeqScan"},
-		pred: pred,
+		pred:  pred,
 	}
 	plan := v.Visit(filter)
 	if plan.NumOps < 1 {
@@ -225,7 +225,7 @@ func TestPlanVisit_NilOp(t *testing.T) {
 func TestPlanVisit_NilExprNotPanics(t *testing.T) {
 	v := NewPlanVisitor()
 	filter := &mockOp{
-		typ: "Filter",
+		typ:   "Filter",
 		child: &mockOp{typ: "SeqScan"},
 	}
 	plan := v.Visit(filter)
@@ -318,7 +318,7 @@ func TestVisitExpr_Ident(t *testing.T) {
 func TestVisitExpr_Unary(t *testing.T) {
 	v := NewPlanVisitor()
 	unary := &PS.UnaryExpr{
-		Op:      int(LX.T_NOT),
+		Op: int(LX.T_NOT),
 		Operand: &PS.BinaryExpr{
 			Left:  &PS.Ident{Name: "a"},
 			Right: &PS.NumberLiteral{Val: 0},

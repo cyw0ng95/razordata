@@ -2,8 +2,8 @@ package PS
 
 import (
 	"fmt"
-	"strings"
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
+	"strings"
 )
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -96,17 +96,17 @@ func (p *Parser) parsePrimary() (Expr, error) {
 				if len(args) > 0 {
 					arg = args[0]
 				}
-			// REQ000523: GROUP_CONCAT with optional separator
-			// GROUP_CONCAT(col, sep) stores the second arg as
-			// the separator expression.
-			var sep Expr
-			if name == "GROUP_CONCAT" && len(args) > 1 {
-				sep = args[1]
+				// REQ000523: GROUP_CONCAT with optional separator
+				// GROUP_CONCAT(col, sep) stores the second arg as
+				// the separator expression.
+				var sep Expr
+				if name == "GROUP_CONCAT" && len(args) > 1 {
+					sep = args[1]
+				}
+				return &AggregateFunc{Name: name, Arg: arg, Distinct: distinct, Separator: sep}, nil
 			}
-			return &AggregateFunc{Name: name, Arg: arg, Distinct: distinct, Separator: sep}, nil
+			return &FunctionCall{Name: name, Args: args}, nil
 		}
-		return &FunctionCall{Name: name, Args: args}, nil
-	}
 		return &Ident{Name: name}, nil
 	case LX.T_RAISE:
 		// RAISE(ABORT, 'message') or RAISE(IGNORE) (REQ000560)

@@ -54,7 +54,6 @@ func (em *epochManager) Start() {
 
 // Stop signals the epoch manager's background goroutine to exit and
 // waits for it, bounded by ctx. Idempotent.
-//
 // Stop is the graceful-shutdown entry point (Phase 4.2 of
 // SYS.md:253-256). The wg.Wait runs in a side goroutine so that
 // ctx.Done can preempt it; the side goroutine exits on its own once

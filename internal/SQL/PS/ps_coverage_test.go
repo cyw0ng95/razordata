@@ -307,7 +307,6 @@ func TestParse_CreateTable_CompositePK(t *testing.T) {
 	}
 }
 
-
 // === UNION / INTERSECT / EXCEPT ===
 
 func TestParse_Union(t *testing.T) {
@@ -425,7 +424,6 @@ func TestParse_MultipleCTE(t *testing.T) {
 }
 
 // === VALUES ===
-
 
 // === ORDER BY expression ===
 
@@ -578,7 +576,6 @@ func TestParse_UpdateReturning(t *testing.T) {
 	_ = stmt
 }
 
-
 // === DELETE variations ===
 
 func TestParse_DeleteReturning(t *testing.T) {
@@ -594,7 +591,6 @@ func TestParse_DeleteReturningCols(t *testing.T) {
 func TestParse_CreateViewFull(t *testing.T) {
 	mustParse(t, "CREATE VIEW v AS SELECT 1")
 }
-
 
 func TestParse_DropView(t *testing.T) {
 	mustParse(t, "DROP VIEW v")
@@ -684,9 +680,7 @@ func TestParse_ErrorOnUnclosedParen(t *testing.T) {
 	}
 }
 
-
 // === Multiple statements ===
-
 
 // === Pragma ===
 

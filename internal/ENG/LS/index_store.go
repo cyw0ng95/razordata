@@ -12,15 +12,13 @@ import (
 // (so index entries don't collide with table data) and a seek
 // helper that returns a stream of primary keys matching a given
 // index value or range.
-//
 // Key format: "__idx__:" + tableID(u64, big-endian) + ":" +
 // indexName + ":" + indexValue
-//
 // The leading "__idx__:" prefix guarantees namespace separation
 // from regular table data (which uses the primary-key prefix).
 // REQ000252 — secondary indexes MVP.
 type IndexStore struct {
-	eng    *Engine
+	eng     *Engine
 	tableID uint64
 	name    string
 }
@@ -156,10 +154,10 @@ func (r *rangeIndexIter) Next() bool {
 	return false
 }
 
-func (r *rangeIndexIter) Key() []byte { return r.raw.Key() }
+func (r *rangeIndexIter) Key() []byte   { return r.raw.Key() }
 func (r *rangeIndexIter) Value() []byte { return r.raw.Value() }
-func (r *rangeIndexIter) Err() error { return r.raw.Err() }
-func (r *rangeIndexIter) Close() error { return r.raw.Close() }
+func (r *rangeIndexIter) Err() error    { return r.raw.Err() }
+func (r *rangeIndexIter) Close() error  { return r.raw.Close() }
 
 // StripPrefix returns the key with the index prefix removed.
 // Convenience for callers that only care about the index value.

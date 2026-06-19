@@ -240,7 +240,6 @@ func fileName(meta *SSTFileMeta) string {
 	// R16-7: returns the relative path WITHIN the engine dir, e.g.
 	// "sst/L0_<minkey-hex>_<maxkey-hex>_<id>.sst". Callers join
 	// with the engine dir to get the absolute path.
-	//
 	// MinKey/MaxKey are hex-encoded so the on-disk filename is
 	// filesystem-safe (no null bytes, slashes, or other
 	// path-traversal hazards from raw user-supplied bytes).
@@ -329,9 +328,9 @@ type compactionManager struct {
 	// nil or zero, no throttling. Token-bucket implementation
 	// keeps the merge loop from saturating the disk under write
 	// bursts and starving foreground writes.
-	rateLimiter     atomic.Pointer[RateLimiter]
+	rateLimiter atomic.Pointer[RateLimiter]
 	// REQ000320: compaction strategy. Default is leveled.
-	style           atomic.Int32
+	style atomic.Int32
 	// REQ000300: tier-aware placement policy. When nil, all levels
 	// share the same device (engine dir).
 	placementPolicy PlacementPolicy
@@ -378,7 +377,6 @@ func (cm *compactionManager) compactionLoop() {
 // Stop signals the compaction goroutine to exit and waits for it,
 // bounded by ctx. Idempotent: a second call with the same ctx
 // returns nil immediately if the loop has already exited.
-//
 // Stop is distinct from Close: Stop is the graceful-shutdown entry
 // point (Phase 4.1 of SYS.md:245-251) and respects a timeout; Close
 // is the destructor and uses an infinite wait.

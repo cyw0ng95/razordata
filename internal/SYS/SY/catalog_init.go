@@ -10,7 +10,6 @@ import (
 // openCatalog opens the system catalog and rehydrates the EX
 // layer's in-memory schema registry from it. Called from
 // Engine.open after the SQL executor is constructed.
-//
 // The catalog lives at <db-root>/catalog/ and owns a single
 // catalog.dat file. Bootstrap is fail-fast: a corrupt or
 // future-versioned file propagates the error and Open returns it

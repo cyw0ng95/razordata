@@ -14,7 +14,6 @@ import (
 // TestShutdown_5RunStability pins R14-19: the full Open -> 100 inserts
 // -> Close loop runs cleanly 5 times consecutively with no leaks and
 // no flakes. A failure here signals a race in the shutdown sequence.
-//
 // Note: a concurrent-readers variant is not included because it
 // exposes a pre-existing data race in the ENG/LS engine
 // (activeMem is written by flushActiveMemtable without locking

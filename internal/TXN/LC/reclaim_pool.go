@@ -13,15 +13,14 @@ import (
 // accumulates freed pointers and the runtime can reclaim them
 // on the next GC cycle, or callers can drain the pool to
 // release memory eagerly.
-//
 // The pool is bounded; if it exceeds maxPoolSize, the oldest
 // entries are dropped (the underlying objects become garbage
 // and the runtime will collect them).
 type ReclaimPool struct {
-	mu         sync.Mutex
-	ptrs       []unsafe.Pointer
-	gen        atomic.Uint64
-	reclaimed  atomic.Uint64
+	mu          sync.Mutex
+	ptrs        []unsafe.Pointer
+	gen         atomic.Uint64
+	reclaimed   atomic.Uint64
 	maxPoolSize int
 }
 

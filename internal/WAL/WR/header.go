@@ -26,7 +26,6 @@ func pwriteAt(fd int, buf []byte, off int64) (int, error) {
 // format version so the replayer can detect a v0.9.x segment
 // (no header) and reject it, and so a future v0.11.x binary's
 // segment can be rejected by an older replayer.
-//
 // Wire layout:
 //
 //	┌──────────────────────────────────────────────┐
@@ -121,7 +120,6 @@ func writeSegmentHeaderWithFlags(fd int, flags uint8) error {
 // readSegmentHeader reads and validates the 12-byte header from
 // r. Returns a typed error if the header is missing, the magic
 // is wrong, or the version is newer than this binary supports.
-//
 // The replayer calls this exactly once per segment. The returned
 // error is wrapped at the call site with segment context (which
 // segment file, which byte offset).

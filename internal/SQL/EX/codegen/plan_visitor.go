@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cyw0ng95/razordata/internal/SQL/EX"
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
-	"github.com/cyw0ng95/razordata/internal/SQL/EX"
 )
 
 type CodegenOp struct {
@@ -43,8 +43,8 @@ type CodegenPlan struct {
 }
 
 type PlanVisitor struct {
-	hashSeed    string
-	schemaVer   uint64
+	hashSeed  string
+	schemaVer uint64
 }
 
 func NewPlanVisitor() *PlanVisitor {

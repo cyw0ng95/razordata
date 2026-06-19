@@ -1,12 +1,9 @@
 // Package tb — Catalog (persistent table registry)
-//
 // The Catalog is the persistent, on-disk equivalent of the
 // in-memory Registry. The catalog owns a single catalog.dat file
 // under dir and exposes Get/Put/Delete/List for the system to
 // call on CREATE TABLE / DROP TABLE.
-//
 // # On-disk format (catalog.dat)
-//
 // The file is a packed sequence of header + entries. All multi-byte
 // integers are big-endian; all lengths are varint-encoded so a 256 KB
 // CREATE TABLE SQL is fine without inflating the file size.
@@ -36,18 +33,14 @@
 //	└────────────────────────────────────────────────────────┘
 //
 // # Atomicity
-//
 // Writes go to a `.tmp` file first, then `rename(2)` to the final
 // path. The rename is atomic on POSIX file systems, so a crash
 // never leaves the file in a half-written state. The next Open
 // either sees the old file or the new file — never a mix.
-//
 // # Schema versioning
-//
 // Future migrations (CHECK constraints, foreign keys, ...)
 // bump `schemaVersionCurrent`. Reads of a higher version fail
 // with `ErrUpgradeRequired`.
-//
 // REQ000048: the persistent catalog was previously in
 // internal/ENG/LS/catalog.go. This file in internal/ENG/TB/
 // provides the same on-disk format and semantics, owned by the
@@ -74,9 +67,9 @@ const (
 )
 
 var (
-	catalogMagic     = [4]byte{'R', 'C', 'A', 'T'}
-	catalogFileName  = "catalog.dat"
-	catalogTmpSuffix = ".tmp"
+	catalogMagic      = [4]byte{'R', 'C', 'A', 'T'}
+	catalogFileName   = "catalog.dat"
+	catalogTmpSuffix  = ".tmp"
 	catalogHeaderSize = 17 // magic(4) + version(1) + reserved(4) + nextID(8)
 )
 

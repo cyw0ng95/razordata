@@ -1,5 +1,4 @@
 // Package tb implements the Table cluster of the ENG subsystem.
-//
 // TB owns table metadata operations:
 //   - CREATE TABLE: allocate a tableID, build a TableSchema, persist to catalog
 //   - DROP TABLE: remove the schema from the in-memory registry, persist
@@ -9,7 +8,6 @@
 // The on-disk catalog (catalog.dat) is also owned by this package
 // (see catalog.go). The catalog provides crash-safe persistence:
 // every Put/Delete writes to a temp file and atomically renames.
-//
 // REQ000048: the table registry is a persistent, on-disk
 // structure. Before this REQ, the registry lived in ENG/LS
 // (table.go, catalog.go) and was only in-memory. Now it lives
@@ -31,10 +29,8 @@ var (
 
 // Registry is the in-memory table registry. It maps tableID to
 // TableSchema and enforces unique table names.
-//
 // A Registry is safe for concurrent use. It is typically owned by
 // an Engine and accessed via the engine's table operations.
-//
 // The Registry is the write-through cache for the persistent
 // Catalog: every mutation is also persisted to disk via the
 // Catalog.

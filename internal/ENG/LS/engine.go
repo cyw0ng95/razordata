@@ -87,7 +87,6 @@ func (e *engine) Write(key, value []byte) error {
 // flushActiveMemtable freezes the active memtable, enqueues
 // it for flush, and installs a fresh memtable as the new
 // active. The order of operations matters:
-//
 //  1. Capture the current active into `frozen` BEFORE
 //     mutating any state. Step 5's `requestFlush` and step 7's
 //     slice erase both refer to this pointer.

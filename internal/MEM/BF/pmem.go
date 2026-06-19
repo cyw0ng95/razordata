@@ -9,7 +9,6 @@ import (
 // spill in a two-tier buffer pool. The file is served from a
 // DAX-mounted filesystem or a regular disk; the abstraction is
 // identical. REQ000302.
-//
 // All public methods are goroutine-safe.
 type PMemFile struct {
 	file *os.File

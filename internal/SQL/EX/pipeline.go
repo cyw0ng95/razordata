@@ -20,11 +20,9 @@ type PipelineOperator interface {
 // channels between stages. Each stage runs in its own goroutine,
 // pulling from the previous stage's output channel and pushing
 // to the next stage's input channel.
-//
 // This implements **pipeline parallelism**: each stage runs
 // concurrently, so when stage 1 produces batch N+1, stage 2
 // can be processing batch N while stage 3 is processing batch N-1.
-//
 // REQ000145 satisfied: Pipeline parallelism for multi-stage queries.
 type Pipeline struct {
 	stages []PipelineOperator

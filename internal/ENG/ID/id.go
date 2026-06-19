@@ -458,7 +458,6 @@ func (bt *BTree) rebalanceLeaf(id uint32) {
 	// parent's childs array. Then either merge the leaf into
 	// the sibling (if combined <= maxKeys) or redistribute
 	// keys between them.
-	//
 	// Implementation: we walk the tree from root to find the
 	// parent of this leaf. This is O(h) but acceptable for
 	// the current tree depth.
@@ -651,8 +650,8 @@ func (bt *BTree) findParent(rootID, targetID uint32) (*page, int) {
 
 // maxKeys returns the maximum number of keys for a page.
 func (bt *BTree) maxKeys(p *page) int {
-	const minKeyLen = 8  // minimum key size (uint64 blockID prefix)
-	const minValLen = 1  // minimum value size (empty)
+	const minKeyLen = 8 // minimum key size (uint64 blockID prefix)
+	const minValLen = 1 // minimum value size (empty)
 	if p.header.pType == nodeLeaf {
 		return (pageSize - headerSize) / (minKeyLen + minValLen)
 	}

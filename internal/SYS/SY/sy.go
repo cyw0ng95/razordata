@@ -1,7 +1,6 @@
 // Package SY implements the razordata engine: it owns every subsystem
 // instance, runs Open/Close lifecycle, exposes Stats aggregation, and
 // dispatches SIGTERM/SIGINT to graceful shutdown.
-//
 // The Engine is constructed by the package-level Open function (see
 // also the AP.Engine interface for the public contract).
 package SY

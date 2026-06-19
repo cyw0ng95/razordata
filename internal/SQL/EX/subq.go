@@ -38,7 +38,6 @@ func injectOuter(op Operator, outer *Row) Operator {
 	// previous outerInjector in place, the second call would
 	// see the stale outer and the correlated WHERE would
 	// evaluate against the first outer row.
-	//
 	// Update an existing outerInjector's outer field in place
 	// so the memoized plan is reused correctly.
 	if inj, ok := op.(*outerInjector); ok {

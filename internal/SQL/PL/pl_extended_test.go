@@ -9,9 +9,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
-// =====================================================================
 // Cost model tests
-// =====================================================================
 
 func TestPlan_CostModel_BasicSelect(t *testing.T) {
 	// Simulate cost estimation: scan(100) + filter(0.1 * 100) = 110
@@ -85,9 +83,7 @@ func TestPlan_CostModel_Limit(t *testing.T) {
 	}
 }
 
-// =====================================================================
 // Index selection tests
-// =====================================================================
 
 func TestPlan_IndexSelection_EqualityPredicate(t *testing.T) {
 	// Simulate: equality on indexed col -> cost 5 (index seek)
@@ -164,9 +160,7 @@ func TestPlan_IndexSelection_Composite(t *testing.T) {
 	}
 }
 
-// =====================================================================
 // Plan caching tests
-// =====================================================================
 
 func TestPlan_Cache_HitReturnsSame(t *testing.T) {
 	pl := NewPlannerWith(PlanOptions{
@@ -220,9 +214,7 @@ func TestPlan_Cache_NotStaleOnReinsert(t *testing.T) {
 	}
 }
 
-// =====================================================================
 // Memo edge cases
-// =====================================================================
 
 func TestMemo_OverwriteValue(t *testing.T) {
 	m := NewMemo()
@@ -257,9 +249,7 @@ func TestMemo_DistinctKeys(t *testing.T) {
 	}
 }
 
-// =====================================================================
 // Serialization coverage for all AST node types
-// =====================================================================
 
 func TestSerializeKey_AllExprNodes(t *testing.T) {
 	stmts := []struct {
@@ -423,9 +413,7 @@ func TestSerializeKey_InExprNoSubquery(t *testing.T) {
 	}
 }
 
-// =====================================================================
 // Planner lifecycle
-// =====================================================================
 
 func TestPlanner_NewPlanner_DefaultNoop(t *testing.T) {
 	pl := NewPlanner()
@@ -456,9 +444,7 @@ func TestPlanner_MemoReturnsUnderlying(t *testing.T) {
 	}
 }
 
-// =====================================================================
 // Helper predicates simulating index/cost decisions
-// =====================================================================
 
 func isEqualityOnIndexedCol(e PS.Expr) bool {
 	b, ok := e.(*PS.BinaryExpr)

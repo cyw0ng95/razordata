@@ -42,11 +42,11 @@ func (c *CreateMatViewOperator) Next(ctx context.Context) (Row, error) {
 func (c *CreateMatViewOperator) Close() error { return nil }
 
 type RefreshMatViewOperator struct {
-	Name  string
-	Query *PS.Select
-	Store Store
+	Name    string
+	Query   *PS.Select
+	Store   Store
 	Planner *Planner
-	done  bool
+	done    bool
 }
 
 func NewRefreshMatView(name string, query *PS.Select, store Store, planner *Planner) *RefreshMatViewOperator {

@@ -9,9 +9,7 @@ import (
 // mmapBlock maps the file at offset for size bytes. Returns the
 // mapped slice and a munmap function. Caller must call munmap when
 // done.
-//
 // On error, returns nil and a non-nil error.
-//
 // Implementation note: uses syscall.Mmap directly to avoid pulling
 // in golang.org/x/sys/unix (which is already imported by the main
 // df.go file).

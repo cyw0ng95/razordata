@@ -1,8 +1,8 @@
 package PS
 
 import (
-	"strings"
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
+	"strings"
 )
 
 func (p *Parser) parseWindowFunc(name string, args []Expr) (Expr, error) {

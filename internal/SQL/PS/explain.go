@@ -141,4 +141,3 @@ func (p *Parser) parsePragma() (*PragmaStmt, error) {
 
 	return stmt, nil
 }
-

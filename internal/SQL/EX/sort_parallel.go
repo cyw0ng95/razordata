@@ -29,17 +29,15 @@ type SortKey struct {
 // 2. Partition the data by splitter ranges
 // 3. Each worker sorts its partition in parallel
 // 4. Merge the sorted partitions into the output
-//
 // For small datasets (≤1024 rows), uses sequential sort to
 // avoid partition overhead.
-//
 // REQ000145 satisfied (partial): Parallel sort via sample sort.
 type ParallelSort struct {
-	source  *VectorizedSeqScan
-	keys    []SortKey
-	pool    *WorkerPool
-	rows    []Row
-	done    bool
+	source *VectorizedSeqScan
+	keys   []SortKey
+	pool   *WorkerPool
+	rows   []Row
+	done   bool
 }
 
 // NewParallelSort creates a parallel sort. If pool is nil,

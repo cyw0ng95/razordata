@@ -9,11 +9,9 @@ import (
 // REQ000318: when the compactor is producing output bytes, it must
 // call Wait(n) before writing n bytes. If the bucket is empty,
 // Wait blocks until tokens refill at the configured rate.
-//
 // rate is bytes per second. burst is the maximum instantaneous
 // burst size (bytes). Both must be > 0 to be effective; a nil
 // RateLimiter (or SetRateLimiter(nil)) disables throttling.
-//
 // The implementation is intentionally lock-free on the hot path:
 // the token count is stored atomically and the wait uses a
 // channel-based timer for parking.

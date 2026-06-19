@@ -7,8 +7,8 @@ import (
 
 // AdqcMetrics holds optional telemetry counters for adaptive compilation.
 type AdqcMetrics struct {
-	SpecializedTotal atomic.Int64
-	FallbackTotal    atomic.Int64
+	SpecializedTotal  atomic.Int64
+	FallbackTotal     atomic.Int64
 	InvalidationTotal atomic.Int64
 }
 

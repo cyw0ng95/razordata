@@ -8,7 +8,6 @@ import (
 // Arena size constants. REQ000064: the arena now has two
 // generations — a small "young" generation for short-lived
 // allocations and a larger "old" generation for long-lived ones.
-//
 // REQ000305: the old generation is epoch-reclaimed. When a
 // transaction returns its arena via PutArena, the old-generation
 // buffer is moved to a pending-reclaim list instead of being kept
@@ -16,7 +15,6 @@ import (
 // list from its background goroutine, freeing the memory in bulk.
 // This reduces GC pressure from large (1 MB) buffers and batches
 // version-node reclamation at generation granularity.
-//
 // Per the iter-05/iter-06 design, the arena is *per-transaction*,
 // not per-goroutine. The previous per-goroutine allocation path
 // (getGoroutineID + arenaPoolSlice + allocFromThreadArena) was
@@ -52,11 +50,9 @@ var (
 // Arena is a per-transaction bump allocator for VersionNode storage.
 // REQ000064: the arena now uses a generational design with two
 // tiers:
-//
 //   - Young generation: small (16 KB), used for fresh allocations.
 //     When it fills, the surviving data is promoted to the old
 //     generation and a new young generation is allocated.
-//
 //   - Old generation: large (1 MB), accumulates promoted data over
 //     the transaction's lifetime. Reset only when the arena is
 //     returned to the pool.
@@ -66,7 +62,6 @@ var (
 // what serializes Insert/Delete calls and therefore serializes Arena.Alloc.
 // Arenas are returned to the sync.Pool via PutArena once the transaction
 // is committed or aborted.
-//
 // The generational design reduces GC pressure by separating
 // short-lived and long-lived allocations. In the original
 // single-allocation design, the entire 1 MB arena was kept alive
@@ -117,7 +112,6 @@ var newArena = NewArena
 
 // Alloc allocates n bytes from the arena. Returns nil if the
 // allocation cannot be satisfied (arena exhausted).
-//
 // The allocation strategy (REQ000064):
 //  1. If the arena has been promoted, all allocations go to the
 //     old generation (the young is "retired" after promotion).
@@ -187,12 +181,10 @@ func (a *Arena) tryAllocOld(n int) int64 {
 // generation's free space, resets the young offset, and marks
 // the arena as promoted. After promotion, subsequent Alloc
 // calls go to the old generation.
-//
 // If the old generation does not have enough free space to hold
 // the young generation, promotion fails silently — the arena is
 // effectively exhausted. The caller will see nil from the
 // subsequent Alloc call.
-//
 // REQ000305: old is allocated lazily on first promotion and may
 // be nil. If nil, a fresh buffer is allocated.
 func (a *Arena) promote() {

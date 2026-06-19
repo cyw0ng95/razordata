@@ -14,7 +14,6 @@ type Task func() error
 // WorkerPool coordinates parallel task execution across N workers.
 // Tasks are submitted via Submit() and executed by worker goroutines
 // in a FIFO order. The pool provides graceful shutdown via Close().
-//
 // REQ000145 satisfied (partial): Worker pool foundation for
 // parallel query execution.
 type WorkerPool struct {
@@ -125,7 +124,6 @@ func (wp *WorkerPool) Workers() int {
 
 // Close shuts down the pool gracefully. After Close, all Submit
 // calls return ErrPoolClosed. Pending tasks are drained.
-//
 // Close is idempotent (R22); subsequent calls are no-ops.
 func (wp *WorkerPool) Close() {
 	wp.closeOnce.Do(func() {
@@ -166,10 +164,8 @@ func (e *WorkerPoolError) Error() string { return e.Msg }
 // Each worker processes partitions[partitionIdx] in parallel.
 // The result of each partition is delivered to the results
 // channel in the order partitions are submitted.
-//
 // This is a convenience helper for the common "split-and-merge"
 // pattern used in parallel scans.
-//
 // REQ000145 satisfied: Fan-out/Fan-in pattern for parallel scans.
 type Partition struct {
 	ID    int
@@ -180,7 +176,6 @@ type Partition struct {
 // ParallelFanOut submits a task for each partition to the pool
 // and waits for all to complete. Returns the first error (if any)
 // via the errCh; nil if all partitions succeeded.
-//
 // Callers should use a buffered errCh of size len(partitions) to
 // avoid blocking.
 func (wp *WorkerPool) ParallelFanOut(ctx context.Context, partitions []Partition, fn func(p Partition) error) error {

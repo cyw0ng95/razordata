@@ -288,7 +288,6 @@ func walkPlaceholderTypes(stmt PS.Stmt, out *[]int) {
 // *PS.Param it finds. If the placeholder is part of a
 // `column = ?` (or `? = column`) binary comparison, we record
 // the column's SQL type. Otherwise the entry is -1 (skip).
-//
 // The walker must NOT double-count a Param: each placeholder
 // is appended exactly once even when it appears in a
 // comparison that is itself walked recursively.

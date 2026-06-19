@@ -10,9 +10,9 @@ func TestScalarIN_ReturnsOneRow(t *testing.T) {
 	ctx := context.Background()
 
 	cases := []struct {
-		sql    string
-		want   int
-		val    interface{}
+		sql  string
+		want int
+		val  interface{}
 	}{
 		{"SELECT 1 IN (2)", 1, false},
 		{"SELECT 1 NOT IN (2)", 1, true},

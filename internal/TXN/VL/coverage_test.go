@@ -562,7 +562,6 @@ func TestTx_Get_OwnWriteDeleted(t *testing.T) {
 // TestTx_Get_FindVisibleDeleted covers the Get branch where the
 // chain has no own-write match AND FindVisible returns a node
 // with Deleted() == true — returns nil (snapshot read).
-//
 // NOTE: This test exercises the code path but the actual return
 // value depends on iter-04's MV visibility semantics. There is a
 // known pre-existing bug where IsVisible(commitTS) is false for a
@@ -608,7 +607,6 @@ func TestTx_Get_FindVisibleDeleted(t *testing.T) {
 // TestTx_Get_ChainNoMatch_FindVisible covers the Get branch where
 // the chain exists but has no own-write match — fall through to
 // FindVisible, which returns a live node.
-//
 // NOTE: Same caveat as TestTx_Get_FindVisibleDeleted: due to the
 // pre-existing iter-04 IsVisible bug, FindVisible returns nil
 // even when a valid committed version exists. The test pins the
@@ -837,7 +835,6 @@ func TestDecodeCommitRecord_KeyCountExceedsData(t *testing.T) {
 // inserted twice in the same transaction. The second insert adds a
 // new version node to the chain head (MV.Insert always succeeds via
 // CAS); the write set records both entries.
-//
 // NOTE: ErrInsertFailed is returned only when MV.Insert returns
 // false, which in iter-04's implementation never happens —
 // VersionChain.Insert is a CAS loop that always succeeds. The

@@ -152,7 +152,6 @@ func (r *HookRegistry) Close() error {
 
 // Stop signals the dispatch goroutine to exit and waits for it,
 // bounded by ctx. Idempotent.
-//
 // Stop is the graceful-shutdown entry point (Phase 4.3 of
 // SYS.md:258-261). It does not close the event channel nor any
 // hooks; Close does both. Splitting the two lets a shutdown caller

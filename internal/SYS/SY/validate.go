@@ -12,11 +12,9 @@ import (
 // docs/design/subsystems/SYS.md:198-214. It is called by Open before any
 // subsystem is constructed; a non-nil return aborts Open and leaves
 // no on-disk state.
-//
 // All error returns wrap AP.ErrInvalidOptions with the offending
 // field name and value so the caller can map the failure to a UX
 // message without re-parsing strings.
-//
 // Side effect: a relative Dir is resolved to an absolute path and
 // stored back into o.Dir. Callers should not rely on o.Dir being
 // exactly the string they passed; the Engine.dir field is set from

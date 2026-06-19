@@ -30,7 +30,6 @@ type TxnManager interface {
 
 // Manager is the default TxnManager implementation. It composes a slot
 // pool, an MV instance, and a timestamp source.
-//
 // A Manager is goroutine-safe; all methods may be called concurrently.
 type Manager struct {
 	sm        *slotManager
@@ -66,10 +65,8 @@ func NewManagerShared(sm *slotManager, mv *MV.MV) *Manager {
 // begin timestamp, and returns a Tx bound to this manager. The returned
 // tx's Commit/Abort release the slot back to *this* manager's pool, not
 // the global pool.
-//
 // The slot's arena is acquired inside AllocateSlot (R16-18); the tx
 // struct no longer owns its own arena — it borrows from t.slot.arena.
-//
 // Returns ErrNoSlotsAvailable if the pool is exhausted.
 func (m *Manager) Begin(ctx context.Context) (Tx, error) {
 	if err := ctx.Err(); err != nil {
@@ -116,7 +113,6 @@ func (m *Manager) Stats() TxnStats {
 // Close marks the manager as closed. After Close, Begin returns
 // ErrManagerClosed. Outstanding transactions are not interrupted; they
 // continue to operate against the manager's private state.
-//
 // Close is idempotent and safe to call from multiple goroutines.
 func (m *Manager) Close() error {
 	m.closed.Store(true)

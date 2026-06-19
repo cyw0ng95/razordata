@@ -1,8 +1,8 @@
 package PS
 
 import (
-	"strings"
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
+	"strings"
 )
 
 func (p *Parser) parseSelect() (Stmt, error) {
@@ -137,7 +137,6 @@ func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, bool, error) {
 
 // parseIntersectChain parses `INTERSECT` (or chain thereof) and
 // returns either a plain *Select or a *CompoundStmt. REQ000383.
-//
 // Trailing ORDER BY/LIMIT/OFFSET are always parsed by the outer
 // caller (parseSelect), so that they apply to the entire compound
 // chain rather than individual leaf SELECTs.
@@ -481,4 +480,3 @@ func (p *Parser) parseCteBody() (Stmt, error) {
 	}
 	return p.Parse()
 }
-

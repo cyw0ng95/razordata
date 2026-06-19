@@ -1,8 +1,8 @@
 package EX
 
 import (
-	"testing"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
+	"testing"
 )
 
 func TestNumericOverflow(t *testing.T) {
@@ -23,7 +23,7 @@ func TestNumericOverflow(t *testing.T) {
 		{"SELECT 1000000 * 1000000", int64(1000000000000)},
 		{"SELECT 46341 * 46341", int64(2147488281)},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.sql, func(t *testing.T) {
 			parser := PS.NewParser(tt.sql)

@@ -2,12 +2,10 @@
 
 // Package uring provides a Linux io_uring wrapper for the FIL
 // subsystem. REQ000295 (iter-27).
-//
 // The wrapper exposes a Ring that manages the SQ/CQ rings via
 // mmap and supports pread/pwrite/fsync SQE preparation with
 // submit-and-wait. Linked submission (write→fsync via
 // IOSQE_IO_LINK) is exposed for REQ000301.
-//
 // The package is gated on linux + a build tag (negated by
 // `no_uring` for non-Linux CI).
 package uring
@@ -61,20 +59,20 @@ const cqeSize = 16
 
 // uring_sqe mirrors `struct io_uring_sqe` (64 bytes).
 type uring_sqe struct {
-	opcode   uint8     // 0
-	flags    uint8     // 1
-	ioprio   uint16    // 2-3
-	fd       int32     // 4-7
-	off      uint64    // 8-15
-	addr     uint64    // 16-23
-	len      uint32    // 24-27
-	rwFlags  uint32    // 28-31
-	userData uint64    // 32-39
-	bufIndex uint16    // 40-41
-	_        uint16    // 42-43
-	_        int32     // 44-47
-	_        uint64    // 48-55
-	_        uint64    // 56-63
+	opcode   uint8  // 0
+	flags    uint8  // 1
+	ioprio   uint16 // 2-3
+	fd       int32  // 4-7
+	off      uint64 // 8-15
+	addr     uint64 // 16-23
+	len      uint32 // 24-27
+	rwFlags  uint32 // 28-31
+	userData uint64 // 32-39
+	bufIndex uint16 // 40-41
+	_        uint16 // 42-43
+	_        int32  // 44-47
+	_        uint64 // 48-55
+	_        uint64 // 56-63
 }
 
 // uring_cqe mirrors `struct io_uring_cqe` (16 bytes).
@@ -86,17 +84,17 @@ type uring_cqe struct {
 
 // uring_params mirrors `struct io_uring_params` (120 bytes).
 type uring_params struct {
-	sqEntries    uint32     // 0-3
-	cqEntries    uint32     // 4-7
-	flags        uint32     // 8-11
-	sqThreadIdle uint32     // 12-15
-	sqThreadCpu  uint32     // 16-19
-	features     uint32     // 20-23
-	wqFd         uint32     // 24-27
-	resv         [4]uint32  // 28-43
-	sqOff        [8]uint32  // 44-75
-	cqOff        [8]uint32  // 76-107
-	resv2        [3]uint32  // 108-119
+	sqEntries    uint32    // 0-3
+	cqEntries    uint32    // 4-7
+	flags        uint32    // 8-11
+	sqThreadIdle uint32    // 12-15
+	sqThreadCpu  uint32    // 16-19
+	features     uint32    // 20-23
+	wqFd         uint32    // 24-27
+	resv         [4]uint32 // 28-43
+	sqOff        [8]uint32 // 44-75
+	cqOff        [8]uint32 // 76-107
+	resv2        [3]uint32 // 108-119
 }
 
 const sizeofParams = 120

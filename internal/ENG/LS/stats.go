@@ -2,7 +2,6 @@ package ls
 
 // ColumnStats captures per-column selectivity statistics used by
 // the planner for cost-based index selection. REQ000254.
-//
 // The stats are stored in the catalog alongside the table entry.
 // They are populated by ANALYZE (manual in iter-22, auto on flush
 // in a future iteration) and queried by the planner's

@@ -57,8 +57,8 @@ type storeSchema struct {
 	colTypes []int
 	// REQ000568: DECIMAL(P,S) precision and scale per column.
 	// Only meaningful when colTypes[i] is T_DECIMAL or T_NUMERIC.
-	precision   []int
-	scale       []int
+	precision []int
+	scale     []int
 	// REQ000248/249: parallel to cols; non-nil means column is a
 	// STORED generated column. The expression is evaluated on
 	// INSERT/UPDATE and the result is stored as the cell value.
@@ -223,7 +223,6 @@ func GetRegisteredIndexes(table string) []RegisteredIndex {
 // nextTableID allocates a new table ID. The id is stable for the lifetime
 // of the process; restarting the process reassigns IDs and old data is
 // unreachable (consistent with the existing in-memory catalog behavior).
-//
 // When a persistent catalog is wired in (iter-12), the table ID is
 // sourced from the catalog's NextID counter so it survives Close/Open.
 func nextTableID() uint64 {

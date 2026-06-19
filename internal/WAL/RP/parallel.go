@@ -7,9 +7,7 @@ import (
 
 // ParallelReplayer partitions the WAL by key range and replays
 // each partition concurrently via a worker pool. REQ000317.
-//
 // Goals: 100GB replay 30s -> 8s.
-//
 // Algorithm:
 //  1. Replay walks each segment serially to extract records
 //     (manifest data must be applied in LSN order, so we
@@ -46,31 +44,30 @@ func NewParallelReplayer(maxWorkers int) *ParallelReplayer {
 
 // PartitionResult holds the records in one partition.
 type partitionResult struct {
-	id     int
-	data   []parsedRecord
+	id   int
+	data []parsedRecord
 }
 
 // parsedRecord is a small POD for in-flight replay.
 type parsedRecord struct {
-	kind   byte
+	kind    byte
 	blockID uint64
-	key    []byte
-	value  []byte
-	txnID  uint64
+	key     []byte
+	value   []byte
+	txnID   uint64
 }
 
 // parallelStats is the result of a parallel replay.
 type parallelStats struct {
-	Total     int
-	Applied   int
-	Skipped   int
-	Duration  int64 // nanoseconds
+	Total    int
+	Applied  int
+	Skipped  int
+	Duration int64 // nanoseconds
 }
 
 // RunParallel executes `work` across N workers. Each worker
 // receives its own partition and processes the records in
 // order. The function returns the number of records applied.
-//
 // `work` is called for each record; it must be goroutine-safe
 // with respect to the partition (one partition per worker, so
 // per-partition state is safe; cross-partition state must use

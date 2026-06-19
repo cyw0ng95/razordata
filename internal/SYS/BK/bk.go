@@ -1,6 +1,5 @@
 // Package BK provides online backup and restore functionality.
 // REQ000259.
-//
 // Backup acquires a read lock to block writes, copies all files
 // (engine data, WAL, catalog) to the destination directory, then
 // releases the lock. Restore verifies the backup integrity and
@@ -48,10 +47,8 @@ type BackupStats struct {
 // Backup copies the source database directory to dstDir while the
 // engine continues to serve reads. Writers are blocked during the
 // copy to ensure point-in-time consistency.
-//
 // srcDir is the engine's database directory (containing meta.razor,
 // wal.razor, data/, etc.). dstDir must not exist or be empty.
-//
 // REQ000259.
 func Backup(ctx context.Context, srcDir, dstDir string, options BackupOptions) (*BackupStats, error) {
 	if srcDir == "" {
@@ -160,7 +157,6 @@ type RestoreStats struct {
 // any existing files. The destination directory must exist; the
 // function refuses to write into a directory containing a live
 // engine (it checks for meta.razor).
-//
 // REQ000259.
 func Restore(ctx context.Context, backupDir, restoreDir string) (*RestoreStats, error) {
 	if backupDir == "" {

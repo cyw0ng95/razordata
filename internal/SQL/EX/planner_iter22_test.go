@@ -135,9 +135,9 @@ func TestPlanner_PlanSelect_PrefersIndexSeek(t *testing.T) {
 
 func TestEncodeIndexValue(t *testing.T) {
 	tests := []struct {
-		name string
-		expr PS.Expr
-		wantLen int
+		name       string
+		expr       PS.Expr
+		wantLen    int
 		wantSuffix byte
 	}{
 		{"int-42", &PS.NumberLiteral{Val: 42}, 8, 42},

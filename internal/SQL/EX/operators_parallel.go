@@ -12,28 +12,25 @@ import (
 // the row range into N partitions and processing each in
 // parallel using a WorkerPool. Results are merged via a
 // channel-based fan-in pattern.
-//
 // The split is static: the row range [startKey, endKey) is
 // divided evenly among workers. For skewed data, this may
 // lead to load imbalance (a v2 improvement would use
 // morsel-driven work stealing).
-//
 // Internal: pending batches are buffered in pendingBatches
 // to support multiple NextBatch calls (one batch per call).
-//
 // REQ000145 satisfied: Parallel SeqScan using fan-out/fan-in.
 type ParallelSeqScan struct {
-	source        Operator
-	schema        []string
-	types         []LX.TokenType
-	colMap        map[string]int
-	pool          *WorkerPool
-	rows          []Row
-	startID       int
-	endID         int
-	done          bool
+	source         Operator
+	schema         []string
+	types          []LX.TokenType
+	colMap         map[string]int
+	pool           *WorkerPool
+	rows           []Row
+	startID        int
+	endID          int
+	done           bool
 	pendingBatches []*Batch // batches from previous partition scans
-	pendingIdx    int
+	pendingIdx     int
 }
 
 // NewParallelSeqScan creates a parallel scan. The source operator
@@ -210,7 +207,6 @@ func (p *ParallelSeqScan) Close() error {
 // ParallelIndexScan performs a parallel index scan by splitting
 // the key range into partitions. Each worker scans its partition
 // in parallel.
-//
 // In the current in-memory implementation, the "index" is a
 // pre-sorted slice of Row with the index column as the key.
 type ParallelIndexScan struct {

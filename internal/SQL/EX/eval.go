@@ -264,23 +264,24 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []interface{}) (interface{}, 
 			return nil, err
 		}
 		return bor(left, rval)
-	case int(LX.T_LIKE): {
-		var esc string
-		if e.Escape != nil {
-			v, err := Eval(e.Escape, row, params)
-			if err != nil {
-				return nil, err
-			}
-			if v != nil {
-				s, ok := v.(string)
-				if !ok || len(s) != 1 {
-					return nil, ErrEval
+	case int(LX.T_LIKE):
+		{
+			var esc string
+			if e.Escape != nil {
+				v, err := Eval(e.Escape, row, params)
+				if err != nil {
+					return nil, err
 				}
-				esc = s
+				if v != nil {
+					s, ok := v.(string)
+					if !ok || len(s) != 1 {
+						return nil, ErrEval
+					}
+					esc = s
+				}
 			}
+			return like(left, right, esc)
 		}
-		return like(left, right, esc)
-	}
 	case int(LX.T_IS):
 		// `x IS NOT NULL` parses as BinaryExpr{T_IS, x, UnaryExpr{T_NOT, NULL}}.
 		// Detect this and return the IS NOT NULL predicate semantics
@@ -401,7 +402,6 @@ func EvalForTest(e PS.Expr, row *Row, params []interface{}) (interface{}, error)
 // subqueries (`SELECT EXISTS(SELECT 1 FROM s WHERE v = 2)`)
 // which have no outer row but still need the executor's
 // store-backed planner. See REQ000366.
-//
 // Not goroutine-safe: only the executor's owning goroutine
 // should set/clear this for the duration of a single query.
 // Concurrent queries on the same engine are serialized by the
@@ -414,7 +414,6 @@ var currentSubqueryPlanner *Planner
 // same store, catalog, and stats catalog. Otherwise the
 // current-query planner is used, falling back to a fresh
 // in-memory planner for tests that don't set one.
-//
 // REQ000366: correlated subqueries used to evaluate with a
 // store-less planner, so engine-backed tables were invisible
 // to the inner SELECT and queries like `SELECT v FROM t WHERE
@@ -871,16 +870,13 @@ func evalRaise(e *PS.RaiseFunc, row *Row, params []interface{}) (interface{}, er
 }
 
 // REQ000382: ABS, HEX, ROUND scalar functions.
-//
 // evalAbs returns the absolute value of a numeric argument. NULL
 // in → NULL out; string/non-numeric in → 0.0 (SQLite standard).
 // For int64, MIN_INT64 cannot be negated without overflow; we
 // surface that as ErrEval per the SQLite error message.
-//
 // evalHex returns the uppercase hex encoding of its argument.
 // Integers are first converted to text (decimal) then hex-encoded;
 // strings/BLOBs are encoded byte-for-byte. NULL → NULL.
-//
 // evalRound rounds the first argument to the second (default 0)
 // decimal places. Negative second argument is treated as 0 per
 // SQLite; Y < 0 also surfaces a warning in SQLite but we treat it

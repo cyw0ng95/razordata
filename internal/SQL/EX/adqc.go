@@ -60,11 +60,9 @@ func (ic *InvocationCounter) PlanHash() string {
 // AdaptiveOp is a wrapper Operator that adaptively switches from
 // interpreted row-at-a-time execution to specialized batch execution
 // after a configurable invocation threshold.
-//
 // The first N invocations (default 2) use the interpreted inner operator.
 // After N, the hot path swaps to the codegen-specialized batch function.
 // If the swap fails, the interpreted path continues as a fallback.
-//
 // REQ000313 satisfied.
 type AdaptiveOp struct {
 	inner      Operator

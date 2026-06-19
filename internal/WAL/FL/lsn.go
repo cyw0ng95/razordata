@@ -15,7 +15,6 @@ type LSN = uint64
 // lsnCounter allocates LSNs atomically. The counter is global per WAL
 // instance and protected by an atomic.Uint64 so concurrent writers do
 // not need to take a mutex on the hot path.
-//
 // In v1 the writer derives LSNs from the active segment number and
 // writeOff directly (see wr.Append), so this counter is currently
 // used only as a monotonic "last-allocated LSN" cache for stale-read
@@ -39,7 +38,6 @@ func (c *lsnCounter) Current() LSN {
 
 // Next atomically advances the counter and returns the new value. This
 // is the LSN the caller should stamp on the next record.
-//
 // Equivalent to Reserve(1) — the single-record hot path stays lock-free
 // and contention-free for the common case.
 func (c *lsnCounter) Next() LSN {
@@ -51,11 +49,9 @@ func (c *lsnCounter) Next() LSN {
 // [start, start+n-1]; the next call (Next or Reserve) returns
 // start+n, so callers can stamp records start, start+1, …, start+n-1
 // without further atomic operations.
-//
 // REQ000541: reduces contention on the LSN counter when a batch of
 // records is appended in one call — the writer takes the range once
 // and increments locally, instead of taking the atomic on every record.
-//
 // Panics if n <= 0: a non-positive reservation would silently regress
 // the counter and is always a programming error.
 func (c *lsnCounter) Reserve(n int) LSN {

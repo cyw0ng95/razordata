@@ -12,11 +12,11 @@ import (
 type Affinity int
 
 const (
-	AffinityNone Affinity = iota // No affinity, keep original type
-	AffinityText                  // TEXT affinity: convert to string
-	AffinityNumeric               // NUMERIC affinity: try REAL, then INTEGER
-	AffinityInteger               // INTEGER affinity: always INTEGER
-	AffinityReal                  // REAL affinity: always floating point
+	AffinityNone    Affinity = iota // No affinity, keep original type
+	AffinityText                    // TEXT affinity: convert to string
+	AffinityNumeric                 // NUMERIC affinity: try REAL, then INTEGER
+	AffinityInteger                 // INTEGER affinity: always INTEGER
+	AffinityReal                    // REAL affinity: always floating point
 )
 
 // affinityNames for debugging

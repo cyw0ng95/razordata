@@ -3,16 +3,16 @@ package SY
 import (
 	"context"
 	"errors"
-	"path/filepath"
-	"testing"
 	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
+	"path/filepath"
+	"testing"
 )
 
 func TestQueryStreaming(t *testing.T) {
 	executor.UnregisterAll()
 	t.Cleanup(executor.UnregisterAll)
-	
+
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "stream1.db.razor")
 	eng, err := Open(ctx, dir, AP.Options{
@@ -27,12 +27,12 @@ func TestQueryStreaming(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer eng.Close(ctx)
-	
+
 	sess, err := eng.Begin(ctx)
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
-	
+
 	_, err = sess.Exec(ctx, "CREATE TABLE qs1 (id INTEGER PRIMARY KEY, name TEXT)")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -50,18 +50,18 @@ func TestQueryStreaming(t *testing.T) {
 			t.Fatalf("Insert: %v", err)
 		}
 	}
-	
+
 	rows, err := sess.Query(ctx, "SELECT id, name FROM qs1 ORDER BY id")
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
 	defer rows.Close()
-	
+
 	cols := rows.GetCols()
 	if len(cols) != 2 || cols[0] != "id" || cols[1] != "name" {
 		t.Fatalf("Cols = %v, want [id name]", cols)
 	}
-	
+
 	count := 0
 	for {
 		row, err := rows.Next()

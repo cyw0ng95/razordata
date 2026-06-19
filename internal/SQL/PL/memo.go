@@ -67,7 +67,6 @@ type lruNode struct {
 
 // Memo caches plans keyed by AST fingerprint with bounded LRU
 // eviction and schema-version-aware invalidation. REQ000584.
-//
 // Schema invalidation: SchemaVersion() returns the current version,
 // and BumpSchemaVersion() increments it. SerializeKey() mixes the
 // version into the memo key, so DDL (which calls

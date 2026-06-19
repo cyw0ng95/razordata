@@ -382,7 +382,7 @@ func TestBugfix_FKOnUpdate(t *testing.T) {
 	// Update child's pid from 1 to 99 — should fail since parent
 	// has no row with id=99.
 	err := validateForeignKeyUpdateInMemory(child,
-		[]interface{}{int64(10), int64(1)}, // old
+		[]interface{}{int64(10), int64(1)},  // old
 		[]interface{}{int64(10), int64(99)}, // new
 	)
 	if err == nil {

@@ -59,15 +59,15 @@ type sharedLogger struct {
 	mu     sync.RWMutex
 
 	// Rotation fields
-	dir             string       // log directory, empty = no rotation
-	baseName        string       // base filename
-	maxSize         int64        // rotation threshold in bytes
-	maxFiles        int          // max rotated files to retain
-	compressRotated bool         // gzip rotated files (R16-15)
-	curSize         atomic.Int64 // current file size
+	dir             string        // log directory, empty = no rotation
+	baseName        string        // base filename
+	maxSize         int64         // rotation threshold in bytes
+	maxFiles        int           // max rotated files to retain
+	compressRotated bool          // gzip rotated files (R16-15)
+	curSize         atomic.Int64  // current file size
 	callCount       atomic.Uint64 // log call counter for throttled rotation check
-	rotationFn      func() error // called when rotation needed
-	rotMu           sync.Mutex   // mutex just for rotation
+	rotationFn      func() error  // called when rotation needed
+	rotMu           sync.Mutex    // mutex just for rotation
 }
 
 const rotationCheckInterval = 4 // check rotation every 4 log calls

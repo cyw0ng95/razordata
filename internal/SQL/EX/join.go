@@ -131,7 +131,7 @@ func (j *NestedLoopJoin) nullRightRow() Row {
 	tablesMu.RLock()
 	rightSchema := tables[j.rightTbl]
 	tablesMu.RUnlock()
-	
+
 	nullRow := Row{
 		Cols:  prefixCols(schemaCols(rightSchema), j.rightTbl),
 		Types: schemaTypes(rightSchema),

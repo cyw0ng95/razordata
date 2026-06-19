@@ -22,7 +22,6 @@ import (
 // end-to-end. We exercise three linear paths with a single
 // segment and verify the function's LSN→file-size math at a few
 // offsets.
-//
 // The test pre-creates segment files (with size 0 — empty, since
 // the writer writes the 12-byte header), then writes a real
 // checkpoint via the writer. The replayer reads it back and the
@@ -34,7 +33,6 @@ func TestRP_TruncateBeforeCheckpoint_Cases(t *testing.T) {
 	// (12 bytes). For one segment (seg 0), the writer's LSN is
 	// always 12; we set the in-record LSN to match so the
 	// replayer reads back the test's intended value.
-	//
 	// To exercise higher LSNs (truncate-before-checkpoint in
 	// the middle of a non-zero byte range within a segment) we
 	// need a checkpoint at offset > 12. We get that by writing
@@ -261,7 +259,6 @@ func segName(n uint64) string {
 // - checkpoint LSN at exact segment boundary (whole seg1 removed)
 // - all segments strictly before checkpoint (every segment
 // truncated to size0)
-//
 // We use the real segment manager and file system; the segments
 // are seeded by the wal writer. segSize is64 MiB but the LSN
 // arithmetic uses multiples of segSize + small offsets, which
@@ -402,7 +399,6 @@ func TestRP_TruncateBeforeCheckpoint_MultiSegment(t *testing.T) {
 // that exceeds MaxRecordLen. The decoder returns ErrUnknownRecord
 // and forEachRecord must surface it as a tolerated tail
 // (TruncatedSegments++) without surfacing ErrCorrupt.
-//
 // The mutation is delicate: we write a valid record first
 // (so the decoder consumes it cleanly), then append
 // [varint(MaxRecordLen+1)] which DecodeRecord reads as a valid

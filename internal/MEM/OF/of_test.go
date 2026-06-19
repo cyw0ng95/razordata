@@ -67,7 +67,7 @@ func TestOffHeap_NilSafe(t *testing.T) {
 	if oh.Get(0) != nil {
 		t.Errorf("Get(0) should be nil")
 	}
-	oh.Put(nil) // should not panic
+	oh.Put(nil)      // should not panic
 	oh.Put([]byte{}) // should not panic
 }
 

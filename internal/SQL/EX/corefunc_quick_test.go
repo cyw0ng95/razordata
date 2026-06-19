@@ -1,8 +1,8 @@
 package EX
 
 import (
-	"testing"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
+	"testing"
 )
 
 func TestCoreFunctions_Eval(t *testing.T) {
@@ -31,7 +31,7 @@ func TestCoreFunctions_Eval(t *testing.T) {
 		{"SELECT SIGN(0)", int64(0)},
 		{"SELECT SIGN(5)", int64(1)},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.sql, func(t *testing.T) {
 			parser := PS.NewParser(tt.sql)
@@ -39,7 +39,7 @@ func TestCoreFunctions_Eval(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
 			}
-			
+
 			sel, ok := stmt.(*PS.Select)
 			if !ok {
 				t.Fatalf("Not a SELECT: %T", stmt)
@@ -47,12 +47,12 @@ func TestCoreFunctions_Eval(t *testing.T) {
 			if len(sel.Cols) != 1 {
 				t.Fatalf("Expected 1 column, got %d", len(sel.Cols))
 			}
-			
+
 			got, err := Eval(sel.Cols[0], nil, nil)
 			if err != nil {
 				t.Fatalf("Eval error: %v", err)
 			}
-			
+
 			switch want := tt.want.(type) {
 			case int64:
 				if gb, ok := got.(int64); !ok || gb != want {
@@ -123,7 +123,7 @@ func TestCoreFunctions_Batch2(t *testing.T) {
 		{"SELECT LIKELY(100)", int64(100)},
 		{"SELECT UNLIKELY('text')", "text"},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.sql, func(t *testing.T) {
 			parser := PS.NewParser(tt.sql)
@@ -131,7 +131,7 @@ func TestCoreFunctions_Batch2(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
 			}
-			
+
 			sel, ok := stmt.(*PS.Select)
 			if !ok {
 				t.Fatalf("Not a SELECT: %T", stmt)
@@ -139,12 +139,12 @@ func TestCoreFunctions_Batch2(t *testing.T) {
 			if len(sel.Cols) != 1 {
 				t.Fatalf("Expected 1 column, got %d", len(sel.Cols))
 			}
-			
+
 			got, err := Eval(sel.Cols[0], nil, nil)
 			if err != nil {
 				t.Fatalf("Eval error: %v", err)
 			}
-			
+
 			switch want := tt.want.(type) {
 			case int64:
 				if gb, ok := got.(int64); !ok || gb != want {

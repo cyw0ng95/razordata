@@ -1,13 +1,11 @@
 // Package nm implements NUMA topology detection and worker
 // affinity hints for the razordata engine.
-//
 // REQ000309 (iter-27): NUMA-aware data placement. On NUMA
 // hosts, the first-touch allocation policy automatically
 // places memory on the local node when a goroutine touches a
 // page. This package exposes the topology so the engine can
 // (a) tag allocations with a node id and (b) pin long-running
 // workers to specific cores.
-//
 // On non-NUMA hosts (single-socket, or NUMA disabled in
 // firmware), all functions return 1 or 0 and the engine
 // behaves identically to the pre-NUMA code path. Detection is
@@ -76,14 +74,12 @@ func IsAvailable() bool {
 
 // CurrentNode returns the NUMA node id of the calling goroutine's
 // last-running CPU. On non-NUMA hosts, this is always 0.
-//
 // Note: Go does not expose the current CPU's NUMA node directly.
 // The most accurate approach is to query the OS via a syscall,
 // but the kernel does not always expose this (the task's CPU
 // affinity can change at any time). For our purposes, a
 // best-effort heuristic is sufficient: round-robin modulo
 // NodeCount, based on goroutine-local state.
-//
 // REQ000309 (iter-27): callers that need strict placement
 // should pin goroutines to specific cores via runtime.LockOSThread
 // + a CPU affinity syscall, then call CurrentNode.

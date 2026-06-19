@@ -134,10 +134,10 @@ func MetricHook() interface {
 type noopMetric struct{}
 
 func (n *noopMetric) PrometheusMetrics() string { return "" }
-func (n *noopMetric) QueryCount() int64          { return 0 }
-func (n *noopMetric) RowsReturned() int64        { return 0 }
-func (n *noopMetric) BytesRead() int64           { return 0 }
-func (n *noopMetric) BytesWritten() int64        { return 0 }
+func (n *noopMetric) QueryCount() int64         { return 0 }
+func (n *noopMetric) RowsReturned() int64       { return 0 }
+func (n *noopMetric) BytesRead() int64          { return 0 }
+func (n *noopMetric) BytesWritten() int64       { return 0 }
 
 var globalMetricHook *metricHook
 

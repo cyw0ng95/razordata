@@ -24,7 +24,6 @@ type VersionNode struct {
 }
 
 // noescape hides a pointer from escape analysis. REQ000306.
-//
 // Implementation note: we use the standard `//go:nosplit` +
 // uintptr round-trip idiom that has been the recommended way
 // to suppress escape analysis in Go since 1.x. The uintptr
@@ -50,7 +49,6 @@ func noescape(p unsafe.Pointer) unsafe.Pointer {
 // initializes it. The arena is expected to be the per-transaction arena
 // owned by the calling transaction; the node lives as long as the arena
 // backs its memory and any live version chain references it.
-//
 // The arena's bump pointer is CAS-safe on its own, but the arena itself
 // is NOT safe for concurrent use by multiple goroutines — the caller
 // (the *tx* type in VL/protocol.go) holds a per-txn mutex that
@@ -90,7 +88,6 @@ func (n *VersionNode) IsUncommitted() bool {
 // NewVersionNodeStack allocates a VersionNode on the caller's
 // stack. The returned pointer is valid only as long as the
 // caller's stack frame is alive. REQ000306.
-//
 // Use this for transient nodes (e.g. during a single insert
 // that immediately publishes the pointer into an arena-backed
 // version chain). The arena-allocated NewVersionNode is the

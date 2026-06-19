@@ -8,7 +8,6 @@ import (
 // FallbackOp is a safety-net wrapper that catches panics during
 // specialized execution and falls back to the interpreted path.
 // The user must never see a "specialization failed" error.
-//
 // REQ000313: fallback is silent and total.
 type FallbackOp struct {
 	inner     Operator

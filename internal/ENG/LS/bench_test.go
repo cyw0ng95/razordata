@@ -39,7 +39,6 @@ func makeBenchKeys(n, keyLen int) [][]byte {
 // on a single goroutine. Each iteration inserts the next key
 // modulo the bench set; the bench set is generated once
 // outside the timer.
-//
 // Workload (R17-1): the write path is the dominant cost
 // for memtable ingest; insert ns/op is the regression
 // signal we want to expose.
@@ -57,7 +56,6 @@ func BenchmarkSkiplistInsert(b *testing.B) {
 // of the full-table iterator. We build the skiplist first
 // (outside the timer), then drive the iterator to completion
 // per iteration.
-//
 // Workload (R17-3): the iterator path is the hot path for
 // memtable scan and the prefix-scan fallback for IndexScan
 // in SQL/EX; a regression in Next/Key/Value would surface
@@ -106,7 +104,6 @@ func BenchmarkSkiplistMixed(b *testing.B) {
 // BenchmarkSSTWriterAddFinish measures the SST write path:
 // add N keys, finish the block, return the encoded bytes.
 // This is the work the flushManager does on every flush.
-//
 // Workload (R17-4): flush latency is dominated by SST
 // encoding; the writer's allocation profile is a strong
 // signal for memory pressure during heavy write load.
@@ -131,7 +128,6 @@ func BenchmarkSSTWriterAddFinish(b *testing.B) {
 // path: open an encoded SST (from outside the timer), then
 // per-iteration open + iterate. Reports the cost of the
 // per-read parse setup plus the per-element walk.
-//
 // Workload (R17-5): the reader is hit on every compaction
 // input read, every SeqScan over an SST, and every
 // nextFileID() scan during manifest recovery.
@@ -169,12 +165,10 @@ func BenchmarkSSTReaderOpenAndIterate(b *testing.B) {
 // path: build a memtable with N keys, drive requestFlush +
 // WaitForFlush. This is what a real writer hits when
 // the memtable hits its size threshold.
-//
 // Workload (R17-6): flush latency dominates the write
 // path under sustained load; ns/op here is the per-flush
 // cost that the user-visible INSERT throughput budget
 // must absorb.
-//
 // The benchmark uses a tempdir-managed manifest so
 // updateManifest's atomic-rename write happens off the
 // critical path; this matches production behavior.

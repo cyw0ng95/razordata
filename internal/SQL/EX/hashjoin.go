@@ -7,7 +7,6 @@ import (
 
 // HashJoin is a radix-partitioned hash join for INNER joins
 // on equi-keys. REQ000312.
-//
 // Algorithm (classic radix hash join):
 //  1. Build phase: hash the right relation's join key into
 //     N radix partitions (one per high bit of the hash).
@@ -20,7 +19,6 @@ import (
 // The implementation uses maphash.Hash for the partition key.
 // A future iteration can add SIMD probe (4 hashes at once)
 // once the AVX2 build-tagged cgo path lands.
-//
 // Current limits:
 //   - Single join key column (multi-column keys deferred)
 //   - INNER JOIN only (LEFT/RIGHT/FULL deferred to NestedLoopJoin)

@@ -1,5 +1,4 @@
 // REQ000383: UNION / UNION ALL / INTERSECT / EXCEPT executor.
-//
 // CompoundStmt is a left-associative chain of two child
 // statements. The compound operator materializes both children
 // (which is required for INTERSECT / EXCEPT / UNION, since the
@@ -23,13 +22,13 @@ import (
 )
 
 type CompoundOp struct {
-	left     Operator
-	right    Operator
-	op       PS.CompoundOp
-	params   []interface{}
+	left         Operator
+	right        Operator
+	op           PS.CompoundOp
+	params       []interface{}
 	materialized bool
-	buf      []Row
-	pos      int
+	buf          []Row
+	pos          int
 	// post-process
 	orderBy []PS.OrderItem
 	limit   PS.Expr

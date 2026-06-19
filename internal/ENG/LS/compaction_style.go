@@ -1,16 +1,13 @@
 package ls
 
 // CompactionStyle selects the compaction strategy. REQ000320.
-//
 // Leveled is the default: each level is a sorted run, L(n+1) is
 // ~10x the size of L(n), and compaction picks one level at a time
 // when its size budget is exceeded. Best for point lookups and
 // range scans.
-//
 // Tiered groups multiple sorted runs at the same level and only
 // merges when the run count exceeds a threshold. Best for
 // write-heavy workloads (time-series, ingest).
-//
 // Hybrid combines both: tiered for L0 (write amplification),
 // leveled for L1+.
 type CompactionStyle int

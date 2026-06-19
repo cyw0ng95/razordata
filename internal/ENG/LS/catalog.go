@@ -1,12 +1,9 @@
 // Package ls — Catalog (iter-12)
-//
 // The Catalog is the persistent, on-disk equivalent of the
 // in-memory `tableRegistry`. The catalog owns a single
 // `catalog.dat` file under dir and exposes Get/Put/Delete/List
 // for the system to call on CREATE TABLE / DROP TABLE.
-//
 // # On-disk format (catalog.dat)
-//
 // The file is a packed sequence of header + entries. All multi-byte
 // integers are big-endian; all lengths are varint-encoded so a 256 KB
 // CREATE TABLE SQL is fine without inflating the file size.
@@ -36,20 +33,15 @@
 //	└────────────────────────────────────────────────────────┘
 //
 // # Atomicity
-//
 // Writes go to a `.tmp` file first, then `rename(2)` to the final
 // path. The rename is atomic on POSIX file systems, so a crash
 // never leaves the file in a half-written state. The next Open
 // either sees the old file or the new file — never a mix.
-//
 // # Schema versioning
-//
 // Future migrations (CHECK constraints, foreign keys, ...)
 // bump `schemaVersionCurrent`. Reads of a higher version fail
 // with `ErrUpgradeRequired`.
-//
 // # Why not reuse the LS engine?
-//
 // The LS engine's flush → SST path is currently broken in three
 // places (path mismatch, sstIterator state machine, block checksum
 // layout — see iter-12 gap analysis for full details). A future
@@ -129,7 +121,6 @@ type CatalogUnique struct {
 // keyspace in the LSM engine (key prefix "__idx__:<tableID>:
 // <indexName>:<indexedValue>"); the catalog only persists the
 // metadata that lets the planner discover and reason about it.
-//
 // REQ000251 — secondary indexes MVP.
 type CatalogIndex struct {
 	IndexID   uint64
@@ -161,7 +152,6 @@ type CatalogEntry struct {
 // owns a single file at <dir>/catalog.dat and serializes every
 // write to disk before returning, so a crash after Put returns
 // never leaves the table in a half-registered state.
-//
 // All public methods are goroutine-safe. The cache map is the
 // read path; the file is the source of truth and is rewritten
 // (atomically) on every Put/Delete.
@@ -1006,18 +996,19 @@ func encodeCatalogEntry(e *CatalogEntry, buf []byte) []byte {
 }
 
 // encodeCatalogIndexes serializes the index list. Format:
-//   count: uvarint
-//   for each index:
-//     indexID: uvarint
-//     nameLen: uvarint
-//     name: bytes
-//     colCount: uvarint
-//     for each column:
-//       colNameLen: uvarint
-//       colName: bytes
-//     unique: 1 byte (0/1)
-//     sqlLen: uvarint
-//     sql: bytes
+//
+//	count: uvarint
+//	for each index:
+//	  indexID: uvarint
+//	  nameLen: uvarint
+//	  name: bytes
+//	  colCount: uvarint
+//	  for each column:
+//	    colNameLen: uvarint
+//	    colName: bytes
+//	  unique: 1 byte (0/1)
+//	  sqlLen: uvarint
+//	  sql: bytes
 func encodeCatalogIndexes(idxs []CatalogIndex, buf []byte) []byte {
 	buf = binary.AppendUvarint(buf, uint64(len(idxs)))
 	for _, idx := range idxs {

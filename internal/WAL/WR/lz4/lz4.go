@@ -1,6 +1,5 @@
 // Package lz4 provides a minimal pure-Go LZ4 block-format codec
 // for WAL record compression (REQ000034).
-//
 // LZ4 block format
 // (https://github.com/lz4/lz4/blob/dev/doc/lz4_Block_format.md):
 //   - The output is a sequence of "sequences"
@@ -67,7 +66,6 @@ func CompressBound(n int) int {
 
 // Compress compresses src and returns the compressed bytes as a
 // valid LZ4 block (no frame header, no checksum).
-//
 // The output is always a valid LZ4 block that Decompress can
 // round-trip. For inputs where compression doesn't help, the
 // output may be slightly larger than the input (the overhead is
@@ -134,7 +132,6 @@ func compressBlock(src, dst []byte) []byte {
 }
 
 // emitSequence appends one LZ4 sequence to dst: [token][literals...][offset][match].
-//
 // Per the LZ4 spec, the match length stored in the stream is the
 // actual match length MINUS minMatch (since every match is at least
 // minMatch bytes long, this saves 2 bits per sequence). The
@@ -205,13 +202,12 @@ func emitFinalLiterals(dst, src []byte, literalStart, literalLen int) []byte {
 // Caller must ensure at least 4 bytes are available at i.
 func hash4(src []byte, i int) int {
 	v := uint32(src[i]) | uint32(src[i+1])<<8 | uint32(src[i+2])<<16 | uint32(src[i+3])<<24
-	return int((v * 2654435761) >> (32 - hashLog)) & hashMask
+	return int((v*2654435761)>>(32-hashLog)) & hashMask
 }
 
 // findMatch looks for the longest match starting at src[i] in the
 // preceding src[0..i-1]. Returns (matchLength, offset) or
 // (0, 0) if no match of at least minMatch is found.
-//
 // table is updated in place with position i so that future positions
 // can match against it. The update happens even when no match is
 // found (or when the position is too close to the start to have a
@@ -258,7 +254,6 @@ func bytesEqual4(a, b []byte) bool {
 
 // Decompress decompresses src (a valid LZ4 block) and returns the
 // decompressed bytes. Returns an error if src is malformed.
-//
 // The function does not validate a checksum — the WAL CRC32 on
 // the outer record envelope provides integrity.
 func Decompress(src []byte) ([]byte, error) {

@@ -14,7 +14,6 @@ import (
 // SubCompactor partitions a key range into N sub-jobs and runs them
 // in parallel via a worker pool, then merges the per-sub-range SST
 // outputs back into the level. REQ000319.
-//
 // Algorithm:
 //  1. Pick pivot keys from the input SSTs (sample-and-bucket).
 //  2. For each [pivot_i, pivot_i+1) range, build a sub-job that
@@ -51,7 +50,6 @@ type CompactionJobResult struct {
 // RunSubCompaction splits the given input files into n sub-ranges
 // and runs each sub-range as a parallel compaction job. Returns
 // the union of all output files.
-//
 // The caller is responsible for applying the result to the manifest.
 func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, inputs []SSTFileMeta) (*CompactionJobResult, error) {
 	if len(inputs) == 0 {
@@ -185,5 +183,3 @@ func subTempPath(dir string) string {
 	}
 	return filepath.Join(dir, "subcompact.tmp")
 }
-
-

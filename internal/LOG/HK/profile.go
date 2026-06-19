@@ -1,7 +1,6 @@
 // Package hk: profile.go implements ProfileHook, which dumps CPU and
 // heap profiles when Error-level log events fire. This is the runtime
 // tracing export target for the LOG subsystem (REQ000322).
-//
 // Real eBPF integration requires Linux with CAP_BPF and libbpf headers.
 // Until then, this implementation uses Go's pprof runtime package to
 // capture CPU and heap profiles on Error events.

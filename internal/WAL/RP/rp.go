@@ -1,5 +1,4 @@
 // Package rp implements the WAL Replayer cluster.
-//
 // The Replayer scans segments, finds the last checkpoint, and replays
 // records in LSN order to rebuild in-memory state (memtable, active
 // transaction set). Foundation declares the interface, the Callbacks
@@ -216,7 +215,6 @@ func (r *replayer) replaySegment(segNum uint64, minLSN uint64) error {
 // record's location in the segment (used by replaySegment to filter
 // below minLSN). fn returning an error short-circuits the iteration
 // and surfaces that error to the caller.
-//
 // Recovery policy (R13):
 //   - Tail truncated (last record's CRC is incomplete or length
 //     varint would overflow segment): tolerated, no error.

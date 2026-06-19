@@ -143,7 +143,7 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 		root = newValuesRowsOp(s.Rows)
 	}
 
-		// Wrap query plans in AdaptiveOp for hot-path specialization.
+	// Wrap query plans in AdaptiveOp for hot-path specialization.
 	// DDL/DML operators (Insert/Update/Delete/CreateTable/DropTable)
 	// are typically one-shot and don't benefit from ADQC.
 	switch root.(type) {
@@ -240,7 +240,6 @@ func estimateSelectivity(e PS.Expr) float64 {
 // estimateSelectivityWithStats computes selectivity using column
 // histograms when available, falling back to uniform distribution.
 // REQ000085.
-//
 // The function recognizes:
 //   - column = literal  → 1 / distinctCount
 //   - column < literal  → bucket fraction below literal
@@ -879,7 +878,6 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 // given WHERE predicate, if one exists. The function builds
 // both a SeqScan and an IndexScan candidate and returns the
 // lower-cost one. REQ000156 (iter-27).
-//
 // The cost model is simple but effective:
 //   - SeqScan: 1.0 unit per row
 //   - IndexScan: 0.1 unit per row, multiplied by predicate
@@ -972,7 +970,6 @@ func indexedColumn(e PS.Expr) (string, bool) {
 // literal (e.g. `col = 5` or `col = 'x'`). The encodedValue is
 // the index key bytes (int64 big-endian for integers, raw
 // string for strings).
-//
 // iter-22: used by the planner to enable real index seek via
 // NewIndexScanWithIndex. REQ000252.
 func indexedColumnEq(e PS.Expr) (string, []byte, bool) {
@@ -1269,12 +1266,10 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 // estimateRowCount provides a row count estimate for the given
 // table+filter. Used by the planner to choose between
 // streaming Aggregate and HashAggregate (REQ000196).
-//
 // In v1, this returns a conservative estimate: 0 for unknown
 // tables (preferring streaming Aggregate) and 0 for store-
 // backed tables. In-memory tables (via RegisterTable) have
 // their row count available via package-level tables map.
-//
 // A future iteration can integrate histogram-based estimates
 // (REQ000085) for more accuracy.
 func (p *Planner) estimateRowCount(table string, where PS.Expr) int {

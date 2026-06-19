@@ -9,7 +9,6 @@ import (
 
 // dictTrainer builds a frequency-based dictionary for SST block
 // compression. REQ000297.
-//
 // Unlike ZSTD's RDD-style dictionary trainer (which uses large
 // sample corpora and statistical heuristics), this trainer is
 // simple and self-contained: it scans one block's bytes, picks
@@ -19,7 +18,6 @@ import (
 // a per-block dictionary is up to 3x better than flate alone
 // for highly repetitive block content (e.g. JSON-like or
 // URL-like keys).
-//
 // The dictionary is at most 4 KB so it fits in a single L1 cache
 // line, keeping the flate decompressor fast.
 type dictTrainer struct {
@@ -81,7 +79,6 @@ func (dt *dictTrainer) train(block []byte) []byte {
 // trained dictionary. The output is a self-contained
 // [dictLen:varint][dictBytes...][compressedBytes...] blob.
 // REQ000297.
-//
 // Falls back to plain compressBlock if the dictionary is empty or
 // compression with the dictionary does not shrink the block.
 func compressBlockDict(block []byte) ([]byte, error) {
@@ -93,7 +90,6 @@ func compressBlockDict(block []byte) ([]byte, error) {
 // back to per-block training for backward compatibility. The
 // per-block dict path is only used when no SST-level dict was
 // trained (e.g. SST is too small to bother).
-//
 // Output format:
 //   - flag=2 + dict: the per-block dict is inlined
 //   - flag=3 + dict: the SST-shared dict reference

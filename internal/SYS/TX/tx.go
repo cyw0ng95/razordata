@@ -14,7 +14,6 @@ import (
 )
 
 // Transaction is the concrete ap.Transaction.
-//
 // Shadow write semantics: every Exec that goes through Transaction
 // lands in the engine (so reads within the same session see the
 // data) and is recorded in writeSet[key] = pre-tx value. On Commit,

@@ -9,7 +9,6 @@ import (
 // QSBR (Quiescent-State-Based Reclamation) is an alternative
 // memory reclamation scheme to epoch-based reclamation.
 // REQ000308.
-//
 // In QSBR, readers set a per-CPU "active" flag when entering a
 // critical section and clear it on exit. The writer waits for
 // all flags to be cleared (all readers have passed a
@@ -18,7 +17,6 @@ import (
 //  1. Readers perform a single atomic store (no per-read load)
 //  2. The writer only waits for "all idle" instead of "all
 //     past the current epoch"
-//
 // Trade-offs vs epoch-based:
 //   - QSBR requires the OS to support CPU pinning or
 //     thread-local storage. On Go (which has goroutines), we
@@ -28,7 +26,6 @@ import (
 //     migrate CPUs often.
 //   - The writer is more synchronous: it spins waiting for
 //     all readers to reach quiescence before reclaiming.
-//
 // The implementation lives alongside epoch.go so callers can
 // pick the policy that fits their access pattern.
 
@@ -61,8 +58,8 @@ type qsbrManager struct {
 	// can reclaim once the current generation is past
 	// (maxObserved + 1) by all readers.
 	generation atomic.Uint64
-	stopCh    chan struct{}
-	wg        sync.WaitGroup
+	stopCh     chan struct{}
+	wg         sync.WaitGroup
 }
 
 // newQSBRManager creates a fresh QSBR manager.
@@ -154,9 +151,9 @@ func (q *qsbrManager) Stop() {
 
 // qsbrStats is a snapshot of QSBR counters.
 type qsbrStats struct {
-	Epoch    uint64
-	Active   int // number of currently-active shards
-	Shards   int
+	Epoch  uint64
+	Active int // number of currently-active shards
+	Shards int
 }
 
 func (q *qsbrManager) Stats() qsbrStats {

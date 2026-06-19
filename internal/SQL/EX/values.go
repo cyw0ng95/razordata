@@ -15,9 +15,9 @@ import (
 // Values implements a single-row operator that evaluates scalar
 // expressions without a FROM source. Used for `SELECT expr[,expr...]`.
 type Values struct {
-	cols     []PS.Expr
+	cols      []PS.Expr
 	evaluated bool
-	row      Row
+	row       Row
 }
 
 // newValuesOp creates a Values operator for the given column expressions.

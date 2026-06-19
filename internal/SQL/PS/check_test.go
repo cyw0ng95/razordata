@@ -2,7 +2,7 @@ package PS
 
 import (
 	"testing"
-	
+
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 )
 
@@ -15,7 +15,7 @@ func TestParseCheckConstraint(t *testing.T) {
 		{"CREATE TABLE t (c INT CHECK (c >= 1 AND c <= 100))"},
 		{"CREATE TABLE t (score INT CHECK (score BETWEEN 0 AND 100))"},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			p := NewParser(tt.input)
@@ -58,7 +58,7 @@ func TestParseCheckMixedConstraints(t *testing.T) {
 		{"CREATE TABLE t (c INT PRIMARY KEY CHECK (c > 0))", true, true, false},
 		{"CREATE TABLE t (c INT UNIQUE CHECK (c > 0))", true, false, true},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			p := NewParser(tt.input)

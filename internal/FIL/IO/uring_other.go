@@ -3,20 +3,19 @@
 // Package uring provides a non-Linux fallback that exposes the
 // same interface as the Linux io_uring wrapper. On non-Linux
 // platforms, the methods return ErrUnsupported.
-//
 // REQ000295 (iter-27).
 package uring
 
 import "errors"
 
 const (
-	IORING_OP_NOP          = 0
-	IORING_OP_READV        = 1
-	IORING_OP_WRITEV       = 2
-	IORING_OP_FSYNC        = 3
-	IORING_OP_READ_FIXED   = 7
-	IORING_OP_WRITE_FIXED  = 8
-	IORING_FSYNC_DATASYNC  = 1
+	IORING_OP_NOP         = 0
+	IORING_OP_READV       = 1
+	IORING_OP_WRITEV      = 2
+	IORING_OP_FSYNC       = 3
+	IORING_OP_READ_FIXED  = 7
+	IORING_OP_WRITE_FIXED = 8
+	IORING_FSYNC_DATASYNC = 1
 )
 
 const (

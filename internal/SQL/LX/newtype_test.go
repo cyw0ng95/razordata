@@ -15,7 +15,7 @@ func TestNewTypeTokens(t *testing.T) {
 		{"JSON", T_JSON, "JSON"},
 		{"DECIMAL", T_DECIMAL, "DECIMAL"},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tok := Token{Type: tt.token}
@@ -44,7 +44,7 @@ func TestNewTypeKeywords(t *testing.T) {
 		{"json", T_JSON},
 		{"decimal", T_DECIMAL},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			l := NewLexer(tt.input)

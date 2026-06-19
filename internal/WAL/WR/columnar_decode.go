@@ -16,7 +16,6 @@ var ErrColumnarTruncated = errors.New("wr: truncated columnar batch")
 // `data` to read from. Returns the records, the number of bytes
 // consumed (length prefix + body + CRC), and an error if the
 // batch is malformed.
-//
 // Format:
 //
 //	[batchLen:varint][recordCount:varint][recordType:1]

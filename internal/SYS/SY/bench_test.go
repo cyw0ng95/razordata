@@ -75,7 +75,6 @@ func BenchmarkEngineSelect(b *testing.B) {
 // shutdown sequence on a fresh engine with no workload. This is
 // the lower-bound number — the production cost includes the time
 // to drain pending memtable + WAL + force-abort any hung txs.
-//
 // Run with `go test -bench=BenchmarkEngineClose -run=^$ ./internal/SYS/SY/`.
 func BenchmarkEngineClose(b *testing.B) {
 	for i := 0; i < b.N; i++ {

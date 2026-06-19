@@ -2,7 +2,7 @@ package PS
 
 import (
 	"testing"
-	
+
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 )
 
@@ -17,7 +17,7 @@ func TestParseVarcharSize(t *testing.T) {
 		{"CREATE TABLE t (c VARCHAR(255))", 255},
 		{"CREATE TABLE t (c VARCHAR(1))", 1},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			p := NewParser(tt.input)
@@ -54,7 +54,7 @@ func TestParseDecimalPrecisionScale(t *testing.T) {
 		{"CREATE TABLE t (c DECIMAL(38,18))", 38, 18},
 		{"CREATE TABLE t (c DECIMAL(5))", 5, 0},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			p := NewParser(tt.input)

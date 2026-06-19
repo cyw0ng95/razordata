@@ -1,10 +1,8 @@
 // Package ST — engine-level prepared statement cache (REQ000548).
-//
 // Caches parsed + planned statements keyed by SQL text. Entries are
 // reference-counted so callers can hand out a cached stmt without
 // worrying about eviction. When the count hits zero, the entry is
 // removable by the LRU policy.
-//
 // This is distinct from the per-Session Stmt (which is one stmt per
 // session) and from planMemo (which is keyed by AST hash and still
 // requires parse). Here we cache the fully prepared *Stmt (parse +
@@ -19,11 +17,11 @@ import (
 
 // StmtCache is an engine-level prepared-statement cache.
 type StmtCache struct {
-	mu       sync.Mutex
-	entries  map[string]*cacheEntry
-	lru      *list.List
-	maxSize  int
-	hitCount atomic.Int64
+	mu        sync.Mutex
+	entries   map[string]*cacheEntry
+	lru       *list.List
+	maxSize   int
+	hitCount  atomic.Int64
 	missCount atomic.Int64
 }
 

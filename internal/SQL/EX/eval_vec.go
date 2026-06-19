@@ -9,7 +9,6 @@ import (
 
 // EvalBatch evaluates a predicate expression over an entire batch,
 // producing a selection vector of matching rows.
-//
 // Returns:
 //   - nil: all rows match (no filter applied)
 //   - empty []uint16: no rows match
@@ -18,7 +17,6 @@ import (
 // EvalBatch uses 4-wide manual unrolling for L1 cache efficiency
 // (REQ000157, REQ000144). Complex expressions fall back to
 // row-at-a-time evaluation via rowEval.
-//
 // REQ000157 satisfied: Expression evaluation SIMD acceleration
 // (batch predicate evaluation).
 func EvalBatch(expr PS.Expr, batch *Batch, params []any) []uint16 {
@@ -93,7 +91,6 @@ func evalUnaryBatch(e *PS.UnaryExpr, batch *Batch, params []any) []uint16 {
 // extractColumnRef attempts to extract a column from a column reference
 // expression (e.g., "x" -> batch.Cols[colIdx]). Returns the column and
 // true on success; false if expression is not a column reference.
-//
 // Uses the pre-computed column index from the batch's colMap
 // (set by VectorizedSeqScan), enabling O(1) lookup. Falls back
 // to a linear scan if the map is not available.

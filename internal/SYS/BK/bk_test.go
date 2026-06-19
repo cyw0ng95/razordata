@@ -170,8 +170,8 @@ func TestRestore_MissingMarker(t *testing.T) {
 func TestBackupRestore_RoundTrip(t *testing.T) {
 	srcDir := t.TempDir()
 	files := map[string]string{
-		"meta.razor":     "metadata content",
-		"wal.razor":      "wal content",
+		"meta.razor":      "metadata content",
+		"wal.razor":       "wal content",
 		"data/sst1.razor": "sst file 1",
 		"data/sst2.razor": "sst file 2",
 	}

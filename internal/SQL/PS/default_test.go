@@ -2,7 +2,7 @@ package PS
 
 import (
 	"testing"
-	
+
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 )
 
@@ -18,7 +18,7 @@ func TestParseDefaultClause(t *testing.T) {
 		{"CREATE TABLE t (c INT DEFAULT NULL)", true, LX.T_INT_KW},
 		{"CREATE TABLE t (c INT)", false, LX.T_INT_KW},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			p := NewParser(tt.input)
@@ -61,7 +61,7 @@ func TestParseDefaultExpressions(t *testing.T) {
 		{"CREATE TABLE t (c BOOL DEFAULT TRUE)", "BoolLit"},
 		{"CREATE TABLE t (c INT DEFAULT CURRENT_TIMESTAMP)", "Ident"},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			p := NewParser(tt.input)

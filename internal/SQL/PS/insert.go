@@ -1,9 +1,9 @@
 package PS
 
 import (
-	"strings"
 	"fmt"
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
+	"strings"
 )
 
 func (p *Parser) parseInsert() (*Insert, error) {
@@ -252,4 +252,3 @@ func (p *Parser) parseReturning() ([]Expr, error) {
 	}
 	return cols, nil
 }
-

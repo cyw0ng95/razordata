@@ -11,7 +11,6 @@ import (
 // goroutine identity. Readers entering the same goroutine at
 // different times got different IDs, which broke epoch-based
 // reclamation (each goroutine was treated as a fresh thread).
-//
 // Implementation note: Go's runtime does not expose the
 // goroutine ID via public API. We use runtime.Stack to parse
 // the textual stack frame ("goroutine N [..."), which is

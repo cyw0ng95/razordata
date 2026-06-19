@@ -151,12 +151,12 @@ type flushManager struct {
 	targetSize     atomic.Int64 // REQ000552: adaptive memtable size (sampled under load)
 	flushQueue     chan *flushJob
 	pendingWGs     sync.WaitGroup
-	done            chan struct{}
-	closed          atomic.Bool
-	loopDone        chan struct{}
-	stopOnce        sync.Once
-	lastErr         atomic.Pointer[error]
-	enqueueMu       sync.Mutex
+	done           chan struct{}
+	closed         atomic.Bool
+	loopDone       chan struct{}
+	stopOnce       sync.Once
+	lastErr        atomic.Pointer[error]
+	enqueueMu      sync.Mutex
 }
 
 func newFlushManager(dir string, maxMemSize int64, manifest *manifest) *flushManager {
@@ -242,7 +242,6 @@ func (fm *flushManager) MaybeFlush() {
 // `requestFlush` to pick up — but in practice the next
 // `requestFlush` was for a *different* memtable, so the
 // dropped memtable was effectively orphaned. See REQ000347.
-//
 // The retry path uses a non-blocking send to avoid stalling
 // the writer goroutine on a stalled flush worker. After
 // `maxFlushRetries` attempts we fall through to a blocking
@@ -258,7 +257,6 @@ func (fm *flushManager) requestFlush(m *memtable) {
 	// close `done` between the channel send and Add(1), causing a
 	// negative WaitGroup counter when the drain phase calls Done()
 	// for an item that was never Add()ed. See REQ000364.
-	//
 	// We call Add(1) BEFORE the send (and undo with Add(-1) on
 	// failure) so that the flushLoop's Done() can never observe a
 	// pendingWGs count of zero for a job that was already delivered
@@ -319,7 +317,6 @@ func (fm *flushManager) WaitForFlush() {
 // Stop signals the flush goroutine to exit and waits for it,
 // bounded by ctx. Idempotent: a second call returns nil immediately
 // if the loop has already exited.
-//
 // Stop is the graceful-shutdown entry point (Phase4.1 of
 // SYS.md:245-251). It does NOT wait for in-flight flush jobs to
 // finish — call WaitForFlush for that. It only waits for the

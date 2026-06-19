@@ -5,7 +5,6 @@ package MV
 // versions are no longer visible to any in-flight transaction
 // (REQ000551). Returns nil when the chain is empty or all nodes
 // are still visible.
-//
 // Note: this function does NOT unlink nodes; it returns the
 // candidates. The caller decides whether to unlink (e.g. only
 // after pinning the chain).

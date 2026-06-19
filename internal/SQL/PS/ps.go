@@ -1,8 +1,8 @@
 package PS
 
 import (
-	"strings"
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
+	"strings"
 )
 
 type Parser struct {
@@ -408,12 +408,9 @@ func (p *Parser) Parse() (Stmt, error) {
 // parseSelect parses a SELECT statement, possibly followed by a
 // chain of compound operators (UNION, UNION ALL, INTERSECT,
 // EXCEPT). REQ000383.
-//
 // Precedence: INTERSECT binds tighter than UNION/EXCEPT (per
 // SQLite). The chain is built left-associatively.
-//
 //	a UNION b INTERSECT c  →  a UNION (b INTERSECT c)
 //	a INTERSECT b UNION c  →  (a INTERSECT b) UNION c
-//
 // We implement a single precedence level for the v1 (UNION, EXCEPT)
 // and a higher one for INTERSECT.

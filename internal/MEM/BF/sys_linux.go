@@ -12,7 +12,6 @@ var madviseFn = syscall.Madvise
 // madviseDontNeed tells the kernel it can reclaim the pages backing
 // buf immediately (MADV_DONTNEED). The syscall is advisory; the
 // kernel may ignore it. No-op if buf is empty.
-//
 // The buf is assumed to be a multiple of the page size, aligned to
 // the page size. Mismatches fall back to no-op.
 func madviseDontNeed(buf []byte) {

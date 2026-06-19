@@ -199,10 +199,8 @@ func validateCheck(schema *storeSchema, row Row) error {
 // collide with existing rows. The pending set carries encoded unique
 // keys from earlier rows in the same statement (multi-row INSERT
 // support). Returns a wrapped ErrConstraint on duplicate.
-//
 // The primary key is implicitly unique — if the table has a PK, it
 // is also checked via the same lookup.
-//
 // snapshot is the pre-update row for UPDATE (nil for INSERT). When
 // non-nil, each unique key's old value is compared: if the old value
 // equals the new value, the check is skipped (no-op self-match) so

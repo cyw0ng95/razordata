@@ -22,7 +22,6 @@ func isTombstone(v []byte) bool {
 }
 
 // Engine is the public storage handle returned by Open.
-//
 // It wraps the internal LSM engine and exposes the minimal surface needed by
 // the SQL executor: Insert / Get / Delete / NewIterator / Close. All operations
 // are goroutine-safe.
@@ -208,7 +207,6 @@ func (h *iterHeap) Pop() any {
 // mergeIterator is a streaming merge of all relevant sources, filtered by
 // prefix. Sources are: the active memtable (covers all unflushed writes) and
 // every SST file whose MinKey/MaxKey range overlaps [prefix, prefix+1).
-//
 // REQ000598: accepts explicit dependencies instead of *engine for testability.
 type mergeIterator struct {
 	manifest *manifest
@@ -315,7 +313,6 @@ func prefixUpperBound(prefix []byte) []byte {
 
 // Next advances the iterator. It returns true if a row is available, false
 // when the stream is exhausted or an error occurred (consult Err).
-//
 // Tombstoned keys are skipped. Duplicate keys keep the value from the source
 // with the lowest index (memtable first, then frozen memtables newest first,
 // then SSTs in manifest order).

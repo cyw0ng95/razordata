@@ -53,4 +53,3 @@ func (p *Parser) parseDelete() (*Delete, error) {
 		IndexHint:   indexHint,
 	}, nil
 }
-

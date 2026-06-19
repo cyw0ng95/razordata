@@ -208,12 +208,12 @@ type ColDef struct {
 	// Expr holds the generation expression; Virtual distinguishes
 	// STORED (materialized on write) from VIRTUAL (computed on read).
 	// Only STORED is supported in v0.27.0.
-	Generated Expr
-	Virtual      bool
-	Autoincrement bool // REQ000482: INTEGER PRIMARY KEY AUTOINCREMENT
-	Match          string // REQ000561: MATCH FULL/PARTIAL/SIMPLE
-	Deferrable     string // REQ000561: DEFERRABLE / NOT DEFERRABLE
-	Initially      string // REQ000561: INITIALLY DEFERRED / IMMEDIATE
+	Generated     Expr
+	Virtual       bool
+	Autoincrement bool   // REQ000482: INTEGER PRIMARY KEY AUTOINCREMENT
+	Match         string // REQ000561: MATCH FULL/PARTIAL/SIMPLE
+	Deferrable    string // REQ000561: DEFERRABLE / NOT DEFERRABLE
+	Initially     string // REQ000561: INITIALLY DEFERRED / IMMEDIATE
 }
 
 func NewColDef(name string, typ int) ColDef {
@@ -433,17 +433,17 @@ type JoinClause struct {
 }
 
 type Select struct {
-	Cols       []Expr
-	From       string
-	FromAlias  string
-	Joins      []JoinClause
-	Where      Expr
-	OrderBy    []OrderItem
-	Limit      Expr
-	Offset     Expr
-	Distinct   bool
-	GroupBy    []Expr
-	Having     Expr
+	Cols        []Expr
+	From        string
+	FromAlias   string
+	Joins       []JoinClause
+	Where       Expr
+	OrderBy     []OrderItem
+	Limit       Expr
+	Offset      Expr
+	Distinct    bool
+	GroupBy     []Expr
+	Having      Expr
 	OffsetFirst bool // REQ000521: true when OFFSET appears before LIMIT in the SQL
 	// REQ000436 + REQ000084: when FROM is a subquery (e.g. `FROM
 	// (SELECT ...)`), SubqueryFrom holds the parsed SELECT and
@@ -541,12 +541,12 @@ func (c *CreateViewStmt) stmtNode() {}
 
 // AlterTableStmt represents ALTER TABLE ... (REQ000243)
 type AlterTableStmt struct {
-	Table     string
-	Action    string  // "ADD COLUMN", "DROP COLUMN", "RENAME", "RENAME COLUMN"
-	Column    string  // column name for ADD/DROP/RENAME COLUMN
-	NewCol    *ColDef // for ADD COLUMN
-	NewName   string  // REQ000498: new name for RENAME COLUMN
-	IfExists  bool    // for DROP TABLE IF EXISTS (stored for executor)
+	Table    string
+	Action   string  // "ADD COLUMN", "DROP COLUMN", "RENAME", "RENAME COLUMN"
+	Column   string  // column name for ADD/DROP/RENAME COLUMN
+	NewCol   *ColDef // for ADD COLUMN
+	NewName  string  // REQ000498: new name for RENAME COLUMN
+	IfExists bool    // for DROP TABLE IF EXISTS (stored for executor)
 }
 
 func (a *AlterTableStmt) stmtNode() {}
@@ -579,7 +579,7 @@ func (r *ReindexStmt) stmtNode() {}
 
 // DropViewStmt represents DROP VIEW [IF EXISTS] name (iter-28 REQ000494)
 type DropViewStmt struct {
-	Name    string
+	Name     string
 	IfExists bool
 }
 

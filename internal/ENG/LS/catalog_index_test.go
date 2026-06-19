@@ -15,9 +15,9 @@ func TestCatalog_PutIndex(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 
 	if err := c.Put(CatalogEntry{
-		TableID:   1,
-		Name:      "users",
-		Columns:   []CatalogColumn{{Name: "id"}, {Name: "email"}},
+		TableID:    1,
+		Name:       "users",
+		Columns:    []CatalogColumn{{Name: "id"}, {Name: "email"}},
 		PrimaryKey: "id",
 		CreateSQL:  "CREATE TABLE users (id INT, email TEXT)",
 	}); err != nil {
@@ -60,7 +60,7 @@ func TestCatalog_PutIndex_Duplicate(t *testing.T) {
 
 	_ = c.Put(CatalogEntry{
 		TableID: 1, Name: "t",
-		Columns:   []CatalogColumn{{Name: "id"}, {Name: "v"}},
+		Columns:    []CatalogColumn{{Name: "id"}, {Name: "v"}},
 		PrimaryKey: "id",
 		CreateSQL:  "CREATE TABLE t (id INT, v TEXT)",
 	})
@@ -93,7 +93,7 @@ func TestCatalog_PutIndex_EmptyName(t *testing.T) {
 
 	_ = c.Put(CatalogEntry{
 		TableID: 1, Name: "t",
-		Columns:   []CatalogColumn{{Name: "id"}},
+		Columns:    []CatalogColumn{{Name: "id"}},
 		PrimaryKey: "id",
 		CreateSQL:  "CREATE TABLE t (id INT)",
 	})
@@ -112,7 +112,7 @@ func TestCatalog_DeleteIndex(t *testing.T) {
 
 	_ = c.Put(CatalogEntry{
 		TableID: 1, Name: "t",
-		Columns:   []CatalogColumn{{Name: "id"}, {Name: "v"}},
+		Columns:    []CatalogColumn{{Name: "id"}, {Name: "v"}},
 		PrimaryKey: "id",
 		CreateSQL:  "CREATE TABLE t (id INT, v TEXT)",
 	})
@@ -135,7 +135,7 @@ func TestCatalog_DeleteIndex_Missing(t *testing.T) {
 
 	_ = c.Put(CatalogEntry{
 		TableID: 1, Name: "t",
-		Columns:   []CatalogColumn{{Name: "id"}},
+		Columns:    []CatalogColumn{{Name: "id"}},
 		PrimaryKey: "id",
 		CreateSQL:  "CREATE TABLE t (id INT)",
 	})
@@ -154,7 +154,7 @@ func TestCatalog_GetIndex(t *testing.T) {
 
 	_ = c.Put(CatalogEntry{
 		TableID: 1, Name: "t",
-		Columns:   []CatalogColumn{{Name: "id"}, {Name: "v"}},
+		Columns:    []CatalogColumn{{Name: "id"}, {Name: "v"}},
 		PrimaryKey: "id",
 		CreateSQL:  "CREATE TABLE t (id INT, v TEXT)",
 	})
@@ -184,7 +184,7 @@ func TestCatalog_IndexPersistence(t *testing.T) {
 
 	_ = c.Put(CatalogEntry{
 		TableID: 1, Name: "t",
-		Columns:   []CatalogColumn{{Name: "id"}, {Name: "v"}},
+		Columns:    []CatalogColumn{{Name: "id"}, {Name: "v"}},
 		PrimaryKey: "id",
 		CreateSQL:  "CREATE TABLE t (id INT, v TEXT)",
 	})

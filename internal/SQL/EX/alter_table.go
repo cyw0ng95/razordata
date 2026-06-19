@@ -657,4 +657,3 @@ func (a *AlterTable) execRenameColumn() error {
 
 	return nil
 }
-

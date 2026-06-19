@@ -6,7 +6,6 @@ import (
 
 // TestNewVersionNodeStack verifies the stack-allocated constructor
 // returns a usable node. REQ000306.
-//
 // Important: the node is stack-local to the caller of
 // NewVersionNodeStack. We capture the pointer in a local and
 // immediately read it. Storing the pointer beyond the caller's
@@ -48,7 +47,6 @@ func TestNewVersionNodeStack(t *testing.T) {
 
 // BenchmarkNewVersionNodeStack_NoSink verifies the stack path
 // truly avoids heap allocations. REQ000306.
-//
 // The benchmark does not capture the returned pointer (no sink),
 // so the compiler is free to keep it on the stack frame of
 // NewVersionNodeStack and the b.Run loop. We expect 0 allocs/op

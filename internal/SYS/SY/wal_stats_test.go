@@ -12,7 +12,6 @@ import (
 // R15-2) at the surface: the three new fields exist on
 // AP.WALStats, are populated from the replayer's counters, and
 // are zero on a fresh engine that has not yet called Replay.
-//
 // The deeper end-to-end path (write a torn segment → reopen →
 // observe non-zero TruncatedSegments) is already covered by
 // internal/WAL/RP/rp_corrupt_test.go. Here we only assert the

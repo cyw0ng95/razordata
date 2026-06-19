@@ -56,16 +56,14 @@ func DecodeVarint(data []byte, off int) (uint64, int) {
 // encodeRecord encodes a single LogRecord into the format documented
 // at WAL.md:50-58. The on-disk format is:
 //
-//   [length:varint][body...][crc32:4]
+//	[length:varint][body...][crc32:4]
 //
 // where length covers everything after the length field itself (body + 4-byte
 // CRC). The CRC32 is IEEE, covers `body` only, and is little-endian.
 // Returns the encoded byte slice.
-//
 // The function is pure: no allocations beyond the returned slice, no
 // I/O, no logging. The Writer is responsible for managing the buffer
 // and writing to the segment.
-//
 // REQ000343: pre-sized single allocation. We compute the upper bound
 // of the body length up-front (varint + 1 type byte + payload), so
 // the final slice is allocated once with the right capacity and we
@@ -73,7 +71,6 @@ func DecodeVarint(data []byte, off int) (uint64, int) {
 // allocations (encode body in temp slice, copy into final slice
 // with length prefix), which doubled allocator pressure on the
 // hot path.
-//
 // REQ000034: when compress is true, the body is lz4-compressed
 // before the CRC is computed. The length prefix covers the
 // compressed body length. The decompressor detects compression
@@ -228,7 +225,6 @@ func DecodeRecord(data []byte, off int) (*LogRecord, int, error) {
 
 // DecodeRecordCompressed is like DecodeRecord but optionally
 // lz4-decompresses the body before parsing. REQ000034.
-//
 // If compressed is true, the body between the length varint and
 // the CRC is lz4-decompressed before the CRC is verified and the
 // payload is parsed. The CRC is computed over the on-disk
@@ -241,11 +237,9 @@ func DecodeRecordCompressed(data []byte, off int, compressed bool) (*LogRecord, 
 // off. Returns the decoded LogRecord, the number of bytes consumed
 // (length prefix + body + CRC), and an error if the record is
 // malformed.
-//
 // If the length varint or record body would extend past the end of
 // data, returns ErrTruncatedRecord with consumed=-1. This is the
 // R26 graceful-EOF case.
-//
 // If the 4-byte envelope CRC does not match, returns ErrCorrupt
 // with consumed=-1. R13-7: mid-segment corruption, fail loud.
 func decodeRecord(data []byte, off int) (*LogRecord, int, error) {
@@ -254,7 +248,6 @@ func decodeRecord(data []byte, off int) (*LogRecord, int, error) {
 
 // decodeRecordCompressed decodes a single LogRecord at offset off
 // in data, optionally lz4-decompressing the body. REQ000034.
-//
 // The CRC is verified against the on-disk (compressed) body
 // before decompression. This ensures corruption is detected
 // before any decompression bomb could be triggered.

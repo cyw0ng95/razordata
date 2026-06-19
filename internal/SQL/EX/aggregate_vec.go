@@ -9,12 +9,11 @@ import (
 // VectorizedCount accumulates the count of matching rows across
 // all batches from a child source. Uses 4-wide unrolled counter
 // increment for L1 cache efficiency.
-//
 // REQ000157 satisfied (partial): SIMD-accelerated COUNT aggregate.
 type VectorizedCount struct {
-	child  BatchProducer
-	total  int64
-	done   bool
+	child BatchProducer
+	total int64
+	done  bool
 }
 
 // BatchProducer is the interface for any operator that can
@@ -83,7 +82,6 @@ func (a *VectorizedCount) Close() error {
 
 // VectorizedSum computes the sum of an int64 or float64 column
 // across all batches. Uses 4-wide unrolled accumulation.
-//
 // REQ000157 satisfied (partial): SIMD-accelerated SUM aggregate.
 type VectorizedSum struct {
 	child    BatchProducer
@@ -300,13 +298,13 @@ func (a *VectorizedAvg) Close() error {
 // VectorizedMin finds the minimum value of a column. 4-wide
 // unrolled min reduction.
 type VectorizedMin struct {
-	child  BatchProducer
-	colIdx int
-	intMin int64
+	child    BatchProducer
+	colIdx   int
+	intMin   int64
 	floatMin float64
-	isFloat bool
+	isFloat  bool
 	hasValue bool
-	done bool
+	done     bool
 }
 
 // NewVectorizedMin creates a vectorized MIN aggregate.
@@ -466,13 +464,13 @@ func (a *VectorizedMin) Close() error {
 
 // VectorizedMax is the same as Min but for maximum values.
 type VectorizedMax struct {
-	child  BatchProducer
-	colIdx int
-	intMax int64
+	child    BatchProducer
+	colIdx   int
+	intMax   int64
 	floatMax float64
-	isFloat bool
+	isFloat  bool
 	hasValue bool
-	done bool
+	done     bool
 }
 
 // NewVectorizedMax creates a vectorized MAX aggregate.

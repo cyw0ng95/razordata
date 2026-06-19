@@ -6,14 +6,12 @@ import (
 )
 
 // REQ000540: dedicated LRU for recently-read L0 SST blocks.
-//
 // The L0 merge step in NewIterator walks every L0 file in order and
 // seeks into each one. Without a block cache, every seek re-reads the
 // block from disk (and every block re-fetches the index page). This
 // cache sits between the SST reader and the OS page cache and pins
 // recently-touched blocks in memory so a back-to-back merge of the
 // same L0 set hits the cache instead of the disk.
-//
 // The cache is deliberately tiny and self-contained: it is not wired
 // into the engine yet (REQ000540 ships the type only; integration
 // lands in a follow-up). Block identity is the raw blockID the SST

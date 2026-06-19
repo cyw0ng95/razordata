@@ -2,7 +2,6 @@ package ls
 
 // columnar.go adds a column-major block layout to the SST
 // format. REQ000314.
-//
 // Traditional SST (row-major): each block contains
 //   [key1][value1][key2][value2]...
 // PAX (column-major): each block contains
@@ -11,11 +10,9 @@ package ls
 // i.e. all keys packed together, then all values. This lets
 // the reader fetch only the keys (or only the values) when
 // the query is a key-only or value-only scan.
-//
 // Format detection: the first byte of a block is 0 for row-
 // major (legacy) and 1 for column-major. This keeps the
 // legacy format readable while letting new SSTs opt in.
-//
 // For a single-column projection (e.g. `SELECT k FROM t WHERE
 // v = ?`), the columnar format saves 50%+ I/O because the
 // values column can be skipped entirely.
@@ -34,27 +31,27 @@ func crc32Sum(data []byte) uint32 {
 type blockLayout uint8
 
 const (
-	layoutRowMajor   blockLayout = 0
-	layoutColumnar  blockLayout = 1
+	layoutRowMajor blockLayout = 0
+	layoutColumnar blockLayout = 1
 )
 
 // columnarBlockHeader is the prefix of every columnar block.
 type columnarBlockHeader struct {
-	layout    blockLayout
-	keysLen   uint32 // total bytes of keys region
-	valsLen   uint32 // total bytes of values region
-	keyCount  uint32
-	checksum  uint32 // CRC32 of keys+vals regions
+	layout   blockLayout
+	keysLen  uint32 // total bytes of keys region
+	valsLen  uint32 // total bytes of values region
+	keyCount uint32
+	checksum uint32 // CRC32 of keys+vals regions
 }
 
 // writeColumnarBlock serializes (keys, values) into the
 // columnar layout. Returns the block bytes (with header
 // prefix).
-//
 // Layout:
-//   [layout:1][keyCount:4][keysLen:4][valsLen:4][checksum:4]
-//   [keyLens:varint*N][keys:bytes]
-//   [valLens:varint*N][values:bytes]
+//
+//	[layout:1][keyCount:4][keysLen:4][valsLen:4][checksum:4]
+//	[keyLens:varint*N][keys:bytes]
+//	[valLens:varint*N][values:bytes]
 const columnarHeaderSize = 1 + 4 + 4 + 4 + 4
 
 func writeColumnarBlock(keys, values [][]byte) []byte {

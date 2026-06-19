@@ -11,11 +11,9 @@ import (
 // VectorizedSeqScan produces columnar batches of up to BatchSize
 // rows from an underlying row source. Uses the sync.Pool-backed
 // Batch allocator to avoid per-batch GC pressure.
-//
 // The schema (column names and types) must be pre-computed and
 // passed in. The operator reads from `source` (a row iterator)
 // and re-projects each row into columnar layout.
-//
 // REQ000144 satisfied (partial): Vectorized SeqScan that
 // produces columnar batches for downstream operators.
 type VectorizedSeqScan struct {
@@ -105,7 +103,6 @@ func (v *VectorizedSeqScan) Close() error {
 // VectorizedFilter applies a predicate to batches from a child
 // vectorized source, producing filtered batches with selection
 // vectors. Uses EvalBatch for batch-level predicate evaluation.
-//
 // REQ000144 satisfied: Vectorized Filter that processes batches
 // using selection vectors (no data copying).
 type VectorizedFilter struct {

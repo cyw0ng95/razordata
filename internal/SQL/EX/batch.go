@@ -11,12 +11,10 @@ import (
 // represent filtered batches where the surviving rows happen to
 // form consecutive runs (typical of BETWEEN, range predicates,
 // and time-range filters).
-//
 // A SelRange of {0, 1024} covers every row in a full batch and
 // costs 4 bytes instead of 2 KiB for an equivalent []uint16.
 // Multi-range selections (e.g. WHERE col IN (1,2,5,6)) become a
 // slice of SelRange rather than a single flat index list.
-//
 // The trade-off: operators that consume a SelRange must iterate
 // `for r := range ranges { for i := r.Start; i < r.End; i++ {} }`
 // rather than `for _, idx := range sel`. That nested form is a
@@ -39,13 +37,10 @@ type SelRange struct {
 // next element equals previous + 1 are coalesced into a single
 // SelRange. A gap (next != prev+1) terminates the current run
 // and starts a new one.
-//
 // End is inclusive (so a single-row range has Start == End), which
 // keeps End representable in uint16 without overflow at row 65535.
-//
 // The returned slice aliases no memory; callers may mutate it
 // freely. Empty input yields a nil slice.
-//
 // Complexity: O(len(sel)) with a single forward pass and at most
 // one SelRange emitted per run.
 func selToRanges(sel []uint16) []SelRange {
@@ -72,11 +67,9 @@ func selToRanges(sel []uint16) []SelRange {
 // rangesToSel expands a sequence of inclusive-end runs back into
 // a flat []uint16 selection vector. Each range {Start, End}
 // contributes Start, Start+1, ..., End to the output.
-//
 // The returned slice is freshly allocated; callers may mutate
 // or hand it to the existing Sel-based code paths. Empty input
 // yields a nil slice.
-//
 // Complexity: O(sum of range widths) — caller should prefer
 // the range form when contiguity is high.
 func rangesToSel(ranges []SelRange) []uint16 {
@@ -169,7 +162,6 @@ var batchPool = sync.Pool{
 // the specified number of columns. The returned batch has
 // Size=0, Sel=nil, and all column Data reset to nil. Caller
 // must call Put() to return the batch when done.
-//
 // If cols > MaxColumns, a new batch is allocated directly
 // (without pooling) and Pooled is set to false.
 func GetBatch(cols int) *Batch {

@@ -17,7 +17,6 @@ import (
 // signal aborts the wait and returns immediately. Returns a stop
 // function that the caller invokes to unsubscribe and release the
 // internal goroutine.
-//
 // The handler is best-effort: a test that doesn't want OS-level
 // signals can call Engine.Close directly.
 func InstallSignalHandler(ctx context.Context, e *Engine) (stop func()) {
@@ -65,7 +64,6 @@ func defaultShutdownTimeouts() ShutdownTimeouts {
 // docs/design/subsystems/SYS.md:215-282. It is the single entry point
 // called by Engine.Close — the previous best-effort teardown has
 // been folded into Phase 5 of this sequence.
-//
 // Phases:
 //  1. Stop accept — flip `closed` (already done by the caller
 //     before invoking Shutdown), log the phase.

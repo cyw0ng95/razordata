@@ -426,7 +426,6 @@ func TestInterfaceComplianceFull(t *testing.T) {
 // The level check in logIfEnabled:192 runs before any slog
 // record construction, so disabled calls skip the heavy
 // formatting and handler invocation.
-//
 // Note: Go's variadic call convention means args ...any
 // construction happens at the call site before logIfEnabled
 // can short-circuit. This test pins that the short-circuit

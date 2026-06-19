@@ -22,7 +22,7 @@ func TestScalarFunctions_413_417(t *testing.T) {
 		// REQ000413: unhex(X[,Y])
 		{"SELECT unhex('414243') FROM t1 LIMIT 1", "[65 66 67]"}, // "ABC"
 		{"SELECT unhex(NULL) FROM t1 LIMIT 1", "<nil>"},
-		{"SELECT unhex('ZZ') FROM t1 LIMIT 1", "<nil>"},   // invalid hex
+		{"SELECT unhex('ZZ') FROM t1 LIMIT 1", "<nil>"}, // invalid hex
 
 		// REQ000414: unicode(X)
 		{"SELECT unicode('A') FROM t1 LIMIT 1", "65"},
@@ -32,8 +32,8 @@ func TestScalarFunctions_413_417(t *testing.T) {
 		{"SELECT unicode('AB') FROM t1 LIMIT 1", "65"}, // first char only
 
 		// REQ000415: unistr(X)
-		{"SELECT unistr('\\u0048\\u0065\\u006C\\u006C\\u006F') FROM t1 LIMIT 1", "Hello"},   // backslash-escaped unicode
-		{"SELECT unistr('Hello') FROM t1 LIMIT 1", "Hello"},                                   // no backslash, pass through
+		{"SELECT unistr('\\u0048\\u0065\\u006C\\u006C\\u006F') FROM t1 LIMIT 1", "Hello"}, // backslash-escaped unicode
+		{"SELECT unistr('Hello') FROM t1 LIMIT 1", "Hello"},                               // no backslash, pass through
 		{"SELECT unistr(NULL) FROM t1 LIMIT 1", "<nil>"},
 
 		// REQ000416: unlikely(X)

@@ -8,7 +8,7 @@ import (
 const pairCorrelationBuckets = 100
 
 type pairKey struct {
-	table string
+	table  string
 	c1, c2 string
 }
 

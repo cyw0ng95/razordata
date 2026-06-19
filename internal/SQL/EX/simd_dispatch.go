@@ -4,7 +4,6 @@ import "runtime"
 
 // simd_dispatch.go provides CPU feature detection and a wider
 // 8-wide EvalBatch fast path. REQ000310 (real SIMD intrinsics).
-//
 // We do NOT call any x86/ARM intrinsics directly because Go's
 // standard library does not expose AVX2/AVX-512. Instead we
 // use 8-wide manual unrolling: the Go compiler emits
@@ -13,7 +12,6 @@ import "runtime"
 // 1-cycle AVX2 ceiling for these operations). On non-x86
 // architectures the 8-wide path is also a net win because
 // the unrolled loop has fewer branch overheads.
-//
 // A future iteration can use `golang.org/x/sys/cpu` for
 // runtime feature detection and a build-tag-gated
 // implementation that calls cgo asm stubs (off by default

@@ -1,5 +1,4 @@
 // Package wr implements the WAL Writer cluster.
-//
 // The Writer owns the active WAL segment, an in-memory write buffer,
 // and the LSN counter. Append is the sole write path: it assigns LSNs,
 // encodes records, and either batches them in the 256 KB write buffer
@@ -118,7 +117,6 @@ type Writer interface {
 	// returns a channel that delivers the result. The caller may
 	// proceed with the next batch's append while the previous
 	// fsync is still in flight. REQ000301 (iter-27).
-	//
 	// Multiple in-flight SyncAsync calls are tracked via an
 	// internal WaitGroup; Close blocks until they all complete.
 	SyncAsync() (<-chan AsyncSyncResult, error)
@@ -223,12 +221,10 @@ func NewWithOptions(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log l
 // Append encodes and appends every record in batch, returning the LSN
 // of the last record. An empty batch returns (0, nil) without I/O
 // (R07: no reads in the hot path; the writer is append-only).
-//
 // LSN assignment (R04): each record receives the LSN
 // segmentNumber * SegSize + writeOff before encoding. The LSN is the
 // byte offset within the WAL, so segment ordering and LSN ordering
 // are aligned.
-//
 // REQ000541: a single Reserve(len) call on the FL LSN counter
 // publishes the writer's progress to the stale-read cache with one
 // atomic op per batch instead of one per record, reducing contention
@@ -326,7 +322,6 @@ func (w *writer) Append(batch *WriteBatch) (uint64, error) {
 // fsyncs the segment, and updates the synced LSN (R09). Returns
 // the fsync error directly (R23) — the caller decides whether
 // to retry or surface it.
-//
 // Idempotent: calling Sync on an empty buffer is a no-op. Calling
 // Sync after Close is a no-op (R22). Safe for concurrent callers
 // (R21) — serialized on w.mu.
@@ -380,10 +375,8 @@ func (w *writer) syncLocked() error {
 // completes. REQ000301 (iter-27): the caller's commit path
 // can proceed with the next batch's append while the previous
 // fsync is still in flight, reducing per-commit latency.
-//
 // The returned channel is closed by the goroutine after delivery
 // (it has buffer size 1; the goroutine does not block).
-//
 // Multiple in-flight SyncAsync calls are supported. The internal
 // WaitGroup is incremented before the goroutine starts and
 // decremented after fsync completes; Close waits on this group
@@ -453,12 +446,10 @@ func (w *writer) SyncAsync() (<-chan AsyncSyncResult, error) {
 // returns the buffer to the pool, and releases the segment FD
 // (R22). After Close returns, Append returns an error and Sync is
 // a no-op.
-//
 // Close is idempotent — concurrent and repeat callers all return
 // the cached first-call error (or nil). The atomic closed flag
 // is the gate: only the first caller performs the teardown;
 // others short-circuit.
-//
 // Errors during teardown are best-effort: a flush or fsync error
 // does NOT prevent the FD from being released. The first such
 // error is logged and returned to the caller; later Close calls
@@ -478,7 +469,6 @@ func (w *writer) Close() error {
 // closeLocked performs the actual teardown under w.mu. Caller
 // must hold w.mu AND have already set w.closed. (Idempotency
 // for the no-op short-circuit is handled by the caller.)
-//
 // Returns the first error encountered (or nil). All steps are
 // best-effort: a failed flush or fsync is logged but does not
 // prevent the FD from being closed.
@@ -578,7 +568,6 @@ func (w *writer) openSegmentLocked(n uint64) error {
 	// batching. writeOff starts at WALHeaderSize so the LSN
 	// math (segNum * SegSize + writeOff) correctly accounts for
 	// the header bytes.
-	//
 	// REQ000034: if compression is enabled, set the
 	// FlagCompressionLZ4 bit in the header flags byte.
 	headerFlags := uint8(0)

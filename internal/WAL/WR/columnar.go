@@ -7,11 +7,9 @@ import (
 
 // ColumnarBatch is a collection of LogRecords of the same Type
 // encoded in column-major order. REQ000299.
-//
 // Row-oriented format: [length:varint][body...][crc32:4] where body
 // is a sequence of fully-encoded records. Large batches of small
 // records waste bytes on per-record length prefixes and CRC trailers.
-//
 // Columnar format packs all values for a given field together:
 // keys for record N are at the same offset within the keys column
 // as values are within the values column. This shrinks varint
@@ -19,7 +17,6 @@ import (
 // encoding is cheap) and allows the single batch envelope CRC to
 // amortize across N records (~32x CRC savings for a 32-record
 // batch).
-//
 // The on-disk format is:
 //
 //	[batchLen:varint][recordCount:varint][recordType:1]
@@ -44,7 +41,6 @@ func NewColumnarBatch(typ RecordType, recs []*LogRecord) *ColumnarBatch {
 
 // EncodeColumnar serializes a batch of RTData records into the
 // columnar format. REQ000299.
-//
 // For batches with < 4 records, returns nil so the caller can
 // fall back to the row-oriented encoder. Below this threshold the
 // columnar overhead (extra length prefixes per column) exceeds
