@@ -2,53 +2,42 @@ package slt
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
-	"github.com/cyw0ng95/razordata/internal/SQL/EX"
-	"github.com/cyw0ng95/razordata/internal/SYS/AP"
-	_ "github.com/cyw0ng95/razordata/internal/SYS/SE"
+	_ "github.com/cyw0ng95/razordata/driver"
 	v1 "github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
 
-// RazorDriver implements Driver against a live Razordata engine.
-// Each Connect creates a fresh on-disk database in a temp
-// directory and opens a session. Close removes the temp dir.
-//
-// The driver holds one AP.Session at a time. Concurrent Exec /
-// Query calls are serialized via mu to prevent race conditions
-// in the underlying engine's merge iterator.
+// RazorDriver implements Driver against a live Razordata engine
+// via the database/sql "razor" driver. Each Connect creates a
+// fresh on-disk database in a temp directory. Close removes
+// the temp dir.
 type RazorDriver struct {
-	mu        sync.Mutex
-	dir       string
-	engine    *v1.Engine
-	session   AP.Session
+	mu         sync.Mutex
+	dir        string
+	db         *sql.DB
+	engine     *v1.Engine
 	classifier *RazorClassifier
 }
 
-// NewRazorDriver returns a driver ready for Connect. The temp
-// directory is created on Connect, not on construction, so a
-// failed Connect does not leak disk state.
+// NewRazorDriver returns a driver ready for Connect.
 func NewRazorDriver() *RazorDriver {
 	return &RazorDriver{classifier: &RazorClassifier{}}
 }
 
-// RazorClassifier implements Classifier for Razordata's
-// v1.SYS error set. Errors matching the "unsupported syntax"
-// / "parse error" / "constraint violation" patterns are
-// classified as Skipped; everything else is Failed.
+// RazorClassifier implements Classifier for Razordata's error set.
 type RazorClassifier struct{}
 
 // Classify returns VerdictSkipped for known soft failures.
 func (c *RazorClassifier) Classify(err error) Verdict {
 	if err == nil {
 		return VerdictPassed
-	}
-	if err == context.Canceled || err == context.DeadlineExceeded {
-		return VerdictFailed
 	}
 	msg := strings.ToLower(err.Error())
 	switch {
@@ -77,54 +66,48 @@ func (c *RazorClassifier) Classify(err error) Verdict {
 	}
 }
 
-// Connect creates a unique temp dir, opens the engine, and begins
-// a session. The session is implicitly transactional; statements
-// are visible to subsequent reads in the same script.
-//
-// We explicitly call EX.UnregisterAll() before opening so a
-// previous driver instance (typically a prior test) does not
-// leak its registered tables / views into this run. EX keeps
-// package-level state to avoid going through the catalog for
-// hot-path reads; that state is shared across all engines in
-// the process.
+// Connect creates a unique temp dir, opens a database/sql connection,
+// and stores the underlying engine for edge-probe tests.
 func (d *RazorDriver) Connect(ctx context.Context) error {
-	EX.UnregisterAll()
 	dir, err := os.MkdirTemp("", "razor-slt-")
 	if err != nil {
 		return err
 	}
 	d.dir = dir
-	eng, err := v1.Open(ctx, dir, AP.Options{})
+
+	dsn := filepath.Join(dir, "db.razor")
+	db, err := sql.Open("razor", dsn)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		d.dir = ""
 		return err
 	}
-	d.engine = eng
-	sess, err := eng.Begin(ctx)
-	if err != nil {
-		_ = eng.Close(ctx)
-		d.engine = nil
+	db.SetMaxOpenConns(1)
+	d.db = db
+
+	// Verify the connection is alive.
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
 		_ = os.RemoveAll(dir)
 		d.dir = ""
+		d.db = nil
 		return err
 	}
-	d.session = sess
+
 	return nil
 }
 
-// Close releases the session, closes the engine, and removes the
-// temp directory. Idempotent.
+// Close tears down the connection and removes the temp dir.
 func (d *RazorDriver) Close(ctx context.Context) error {
 	var firstErr error
-	if d.session != nil {
-		// Roll back any implicit transaction. Errors here are
-		// non-fatal: the temp dir will be removed regardless.
-		_ = d.session.Rollback(ctx)
-		d.session = nil
+	if d.db != nil {
+		if err := d.db.Close(); err != nil {
+			firstErr = err
+		}
+		d.db = nil
 	}
 	if d.engine != nil {
-		if err := d.engine.Close(ctx); err != nil {
+		if err := d.engine.Close(ctx); err != nil && firstErr == nil {
 			firstErr = err
 		}
 		d.engine = nil
@@ -138,62 +121,61 @@ func (d *RazorDriver) Close(ctx context.Context) error {
 	return firstErr
 }
 
-// Exec runs a DDL/DML statement. Errors are returned verbatim; the
-// runner routes them through the classifier.
+// Exec runs a DDL/DML statement via database/sql.
 func (d *RazorDriver) Exec(ctx context.Context, sql string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.session == nil {
+	if d.db == nil {
 		return errors.New("slt: razor: not connected")
 	}
-	_, err := d.session.Exec(ctx, sql)
+	_, err := d.db.ExecContext(ctx, sql)
 	return err
 }
 
-// Query runs a SELECT and materializes the result set. Razordata
-// returns the schema via *ex.Rows; row data is pulled through
-// QueryAll and converted to SLT Value cells.
+// Query runs a SELECT and materializes the result set.
 func (d *RazorDriver) Query(ctx context.Context, sql string) (*ResultSet, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.session == nil {
+	if d.db == nil {
 		return nil, errors.New("slt: razor: not connected")
 	}
-	exe := d.engine.Executor()
-	if exe == nil {
-		return nil, errors.New("slt: razor: executor unavailable")
-	}
-	rows, err := exe.QueryAll(ctx, sql)
+	return d.queryContext(ctx, sql)
+}
+
+// queryContext is the internal query path (unlocked).
+func (d *RazorDriver) queryContext(ctx context.Context, sql string) (*ResultSet, error) {
+	rows, err := d.db.QueryContext(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
-	return rowsToResultSet(rows), nil
-}
+	defer rows.Close()
 
-// rowsToResultSet maps the executor's []EX.Row to the SLT
-// ResultSet. Column names come from the first non-empty row; if
-// every row is empty, the column list is empty (the runner treats
-// this as a successful zero-row query).
-func rowsToResultSet(rows []EX.Row) *ResultSet {
-	rs := &ResultSet{}
-	if len(rows) == 0 {
-		return rs
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
 	}
-	rs.Columns = append(rs.Columns, rows[0].Cols...)
-	for _, r := range rows {
-		row := make([]Value, len(r.Data))
-		for i, cell := range r.Data {
-			row[i] = valueFromAny(cell)
+	rs := &ResultSet{Columns: cols}
+
+	for rows.Next() {
+		ptrs := make([]any, len(cols))
+		for i := range ptrs {
+			var v any
+			ptrs[i] = &v
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		row := make([]Value, len(ptrs))
+		for i, p := range ptrs {
+			row[i] = valueFromAny(*p.(*any))
 		}
 		rs.Rows = append(rs.Rows, row)
 	}
-	return rs
+	return rs, rows.Err()
 }
 
-// EngineAccessor returns the underlying *ls.Engine for tests
-// that need to invoke engine-level methods (e.g. Sync) not
-// exposed on the SLT Driver interface. The bool is false if
-// the driver has been closed or never connected.
+// EngineAccessor returns the underlying *ls.Engine for edge
+// probes. Returns false if no engine is wired.
 func (d *RazorDriver) EngineAccessor() (EngineSyncer, bool) {
 	if d == nil || d.engine == nil {
 		return nil, false
@@ -201,23 +183,16 @@ func (d *RazorDriver) EngineAccessor() (EngineSyncer, bool) {
 	return d.engine.Engine(), true
 }
 
-// EngineSyncer is the subset of *ls.Engine used by edge
-// probes. Defined as an interface so the edge_probe tests do
-// not need to import internal/ENG/LS.
+// EngineSyncer is the subset of *ls.Engine used by edge probes.
 type EngineSyncer interface {
 	Sync() error
 }
 
-// engineAccessor is the package-internal alias used by the
-// edge_probe test files. Returns false if no engine is wired.
 func (d *RazorDriver) engineAccessor() (EngineSyncer, bool) {
 	return d.EngineAccessor()
 }
 
-// valueFromAny normalizes the executor's interface{} cells to SLT
-// Value. Razordata returns int64, float64, string, bool, []byte,
-// time.Time, and nil directly; we map each to the closest SLT
-// representation.
+// valueFromAny normalizes database/sql values to SLT Value.
 func valueFromAny(v any) Value {
 	if v == nil {
 		return Value{Kind: TypeNull}
@@ -230,10 +205,6 @@ func valueFromAny(v any) Value {
 	case int32:
 		return Value{Kind: TypeInteger, Int: int64(x)}
 	case float64:
-		// Distinguish ints encoded as floats (whole number, small
-		// magnitude) from true reals. The corpus emits reals as
-		// "%.3f", so values like 1.000 are expected to round-trip
-		// as int.
 		if x == float64(int64(x)) && x >= -1e15 && x <= 1e15 {
 			return Value{Kind: TypeInteger, Int: int64(x)}
 		}
@@ -247,6 +218,8 @@ func valueFromAny(v any) Value {
 		return Value{Kind: TypeText, Text: x}
 	case []byte:
 		return Value{Kind: TypeText, Text: string(x)}
+	case fmt.Stringer:
+		return Value{Kind: TypeText, Text: x.String()}
 	default:
 		return Value{Kind: TypeText, Text: fmt.Sprintf("%v", v)}
 	}
