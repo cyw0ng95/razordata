@@ -82,30 +82,44 @@ func (a *Arena) tryAllocOld(n int) int64 {
 }
 
 func (a *Arena) promote() {
-	youngUsed := a.youngOff.Load()
-	if youngUsed == 0 {
-		a.promoted.Store(true)
-		return
-	}
 	a.initOldMu.Lock()
 	if a.old == nil {
 		a.old = make([]byte, oldSize)
 		a.oldOff.Store(0)
 	}
 	a.initOldMu.Unlock()
+
+	// Loop: incrementally promote deltas. We CAS youngOff to 0 to seal;
+	// if it fails a concurrent tryAllocYoung bumped it, we loop back
+	// and promote the new delta. This closes the TOCTOU window between
+	// the youngOff load and the Store(0) (REQ000588).
+	var promotedYoung int64
 	for {
+		currentYoungOff := a.youngOff.Load()
+		if currentYoungOff == 0 {
+			// Another promote() sealed young. Nothing to do.
+			a.promoted.Store(true)
+			return
+		}
+		youngDelta := currentYoungOff - promotedYoung
+		if youngDelta == 0 {
+			if a.youngOff.CompareAndSwap(currentYoungOff, 0) {
+				a.promoted.Store(true)
+				return
+			}
+			continue
+		}
 		oldOff := a.oldOff.Load()
-		new := oldOff + youngUsed
+		new := oldOff + youngDelta
 		if new > oldSize {
 			a.promoted.Store(true)
 			return
 		}
-		if a.oldOff.CompareAndSwap(oldOff, new) {
-			copy(a.old[oldOff:new], a.young[:youngUsed])
-			a.youngOff.Store(0)
-			a.promoted.Store(true)
-			return
+		if !a.oldOff.CompareAndSwap(oldOff, new) {
+			continue
 		}
+		copy(a.old[oldOff:new], a.young[promotedYoung:currentYoungOff])
+		promotedYoung = currentYoungOff
 	}
 }
 

@@ -304,6 +304,60 @@ func TestArena_OldReclaim(t *testing.T) {
 // TestArena_OldNotReclaimedWithoutPromotion verifies that an arena
 // that does not promote does not have its old buffer added to the
 // reclaim list. REQ000305.
+func TestArena_PromoteTOCTOU(t *testing.T) {
+	a := newArena()
+
+	// Fill young with byte-offset markers so we can verify after promote.
+	for i := range a.young {
+		a.young[i] = byte(i)
+	}
+	a.youngOff.Store(promotionThreshold)
+
+	var (
+		wg   sync.WaitGroup
+		done atomic.Bool
+		ok   atomic.Int64
+	)
+
+	// Concurrent tryAllocYoung CAS-loop races with promote(). This
+	// tests that promote() correctly accounts for all concurrent
+	// young allocations (REQ000588 TOCTOU fix).
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for !done.Load() {
+				off := a.tryAllocYoung(8)
+				if off < 0 {
+					return
+				}
+				ok.Add(1)
+				_ = off
+			}
+		}()
+	}
+
+	runtime.Gosched()
+	a.promote()
+	done.Store(true)
+	wg.Wait()
+
+	oldOff := a.oldOff.Load()
+	if oldOff < promotionThreshold {
+		t.Errorf("old has %d bytes, expected at least %d (data lost)", oldOff, promotionThreshold)
+	}
+	if oldOff > int64(oldSize) {
+		t.Fatalf("old overrun: %d > %d", oldOff, oldSize)
+	}
+	// Verify pre-filled marker bytes were promoted correctly.
+	for i := int64(0); i < promotionThreshold && i < oldOff; i++ {
+		if a.old[i] != byte(i) {
+			t.Errorf("old[%d] = %d, want %d — data corruption", i, a.old[i], byte(i))
+			break
+		}
+	}
+	t.Logf("concurrent tryAllocYoung calls: %d", ok.Load())
+}
 func TestArena_OldNotReclaimedWithoutPromotion(t *testing.T) {
 	ReclaimOldGenerations()
 
