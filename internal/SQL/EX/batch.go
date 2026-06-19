@@ -6,6 +6,98 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 )
 
+// SelRange represents a half-open run of contiguous row indices
+// in a selection vector: [Start, End). It is used to compactly
+// represent filtered batches where the surviving rows happen to
+// form consecutive runs (typical of BETWEEN, range predicates,
+// and time-range filters).
+//
+// A SelRange of {0, 1024} covers every row in a full batch and
+// costs 4 bytes instead of 2 KiB for an equivalent []uint16.
+// Multi-range selections (e.g. WHERE col IN (1,2,5,6)) become a
+// slice of SelRange rather than a single flat index list.
+//
+// The trade-off: operators that consume a SelRange must iterate
+// `for r := range ranges { for i := r.Start; i < r.End; i++ {} }`
+// rather than `for _, idx := range sel`. That nested form is a
+// SelRange is a contiguous inclusive-end run of row indices
+// selected by a vectorized predicate. End is inclusive (so a
+// single-row range has Start == End). The pair {Start, End} is
+// a compact representation of the contiguous uint16 sequence
+// Start, Start+1, ..., End — better fit for SIMD and for
+// columnar kernels that already want contiguous row spans. For
+// now the helpers exist alongside the existing []uint16 Sel
+// field — adoption is downstream
+// (see REQ000545 in REQUIREMENTS.md).
+type SelRange struct {
+	Start uint16
+	End   uint16
+}
+
+// selToRanges compacts a flat selection vector into a sequence of
+// contiguous inclusive-end runs. Consecutive indices where each
+// next element equals previous + 1 are coalesced into a single
+// SelRange. A gap (next != prev+1) terminates the current run
+// and starts a new one.
+//
+// End is inclusive (so a single-row range has Start == End), which
+// keeps End representable in uint16 without overflow at row 65535.
+//
+// The returned slice aliases no memory; callers may mutate it
+// freely. Empty input yields a nil slice.
+//
+// Complexity: O(len(sel)) with a single forward pass and at most
+// one SelRange emitted per run.
+func selToRanges(sel []uint16) []SelRange {
+	if len(sel) == 0 {
+		return nil
+	}
+	out := make([]SelRange, 0, len(sel))
+	runStart := sel[0]
+	runEnd := sel[0]
+	for i := 1; i < len(sel); i++ {
+		v := sel[i]
+		if v == runEnd+1 {
+			runEnd = v
+			continue
+		}
+		out = append(out, SelRange{Start: runStart, End: runEnd})
+		runStart = v
+		runEnd = v
+	}
+	out = append(out, SelRange{Start: runStart, End: runEnd})
+	return out
+}
+
+// rangesToSel expands a sequence of inclusive-end runs back into
+// a flat []uint16 selection vector. Each range {Start, End}
+// contributes Start, Start+1, ..., End to the output.
+//
+// The returned slice is freshly allocated; callers may mutate
+// or hand it to the existing Sel-based code paths. Empty input
+// yields a nil slice.
+//
+// Complexity: O(sum of range widths) — caller should prefer
+// the range form when contiguity is high.
+func rangesToSel(ranges []SelRange) []uint16 {
+	if len(ranges) == 0 {
+		return nil
+	}
+	var total uint32
+	for _, r := range ranges {
+		total += uint32(r.End) - uint32(r.Start) + 1
+	}
+	out := make([]uint16, 0, total)
+	for _, r := range ranges {
+		// Use uint32 for the loop counter to avoid uint16 overflow
+		// when End is uint16 max (65535).
+		for v := uint32(r.Start); v <= uint32(r.End); v++ {
+			out = append(out, uint16(v))
+		}
+	}
+	return out
+}
+
 // BatchSize is the default number of rows per columnar batch.
 // 1024 balances cache locality (fits in L1/L2) with per-batch
 // overhead (allocation, function call). Tuned per SQL.md:412.

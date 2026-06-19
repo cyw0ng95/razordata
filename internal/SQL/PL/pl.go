@@ -59,7 +59,7 @@ func (p *Planner) Memo() *Memo { return p.memo }
 // Plan runs the planner: compute a key, hit the memo, otherwise call
 // the BuildTree hook and cache the result.
 func (p *Planner) Plan(stmt PS.Stmt) (Plan, error) {
-	key := SerializeKey(stmt)
+	key := SerializeKeyWithSchema(stmt, p.memo.SchemaVersion())
 	if cached, ok := p.memo.Get(key); ok {
 		return cached, nil
 	}

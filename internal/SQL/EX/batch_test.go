@@ -163,6 +163,138 @@ func BenchmarkBatchPool(b *testing.B) {
 	}
 }
 
+// TestSelRange_RoundTrip verifies selToRanges followed by
+// rangesToSel recovers the original selection vector exactly.
+// Covers: empty input, single element, full contiguous run,
+// runs with gaps, out-of-order (defensive — current callers
+// produce sorted sel, but the helpers must not corrupt data).
+func TestSelRange_RoundTrip(t *testing.T) {
+	cases := []struct {
+		name string
+		sel  []uint16
+	}{
+		{"empty", nil},
+		{"single", []uint16{7}},
+		{"contiguous_full", []uint16{0, 1, 2, 3, 4, 5}},
+		{"two_runs", []uint16{0, 1, 2, 10, 11, 12}},
+		{"many_runs", []uint16{0, 2, 4, 6, 8, 10}},
+		{"wrap_around_end", []uint16{65530, 65531, 65532, 65533, 65534, 65535}},
+		{"single_elem_runs", []uint16{1, 3, 5, 7}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ranges := selToRanges(tc.sel)
+			got := rangesToSel(ranges)
+			if !uint16SlicesEqual(got, tc.sel) {
+				t.Errorf("round-trip mismatch:\n got  %v\n want %v", got, tc.sel)
+			}
+		})
+	}
+}
+
+// TestSelToRanges_Shape verifies the exact range layout for
+// representative inputs. Pins the contiguity contract: a gap
+// of >1 between consecutive indices MUST split into a new range;
+// equal-or-greater-by-1 must NOT split.
+func TestSelToRanges_Shape(t *testing.T) {
+	cases := []struct {
+		name   string
+		sel    []uint16
+		expect []SelRange
+	}{
+		{
+			name:   "empty",
+			sel:    nil,
+			expect: nil,
+		},
+		{
+			name:   "single",
+			sel:    []uint16{3},
+			expect: []SelRange{{Start: 3, End: 3}},
+		},
+		{
+			name:   "full_run",
+			sel:    []uint16{0, 1, 2, 3, 4},
+			expect: []SelRange{{Start: 0, End: 4}},
+		},
+		{
+			name:   "gap_of_two",
+			sel:    []uint16{0, 1, 4, 5},
+			expect: []SelRange{{Start: 0, End: 1}, {Start: 4, End: 5}},
+		},
+		{
+			name:   "no_runs",
+			sel:    []uint16{1, 3, 5, 7},
+			expect: []SelRange{{Start: 1, End: 1}, {Start: 3, End: 3}, {Start: 5, End: 5}, {Start: 7, End: 7}},
+		},
+		{
+			name:   "max_uint16_boundary",
+			sel:    []uint16{65534, 65535},
+			expect: []SelRange{{Start: 65534, End: 65535}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := selToRanges(tc.sel)
+			if !selRangeSlicesEqual(got, tc.expect) {
+				t.Errorf("selToRanges(%v):\n got  %v\n want %v", tc.sel, got, tc.expect)
+			}
+		})
+	}
+}
+
+// TestRangesToSel_Empty verifies that the empty-input contract
+// returns a nil slice (not an empty non-nil slice) so callers
+// can use the result interchangeably with a zero-value Sel.
+func TestRangesToSel_Empty(t *testing.T) {
+	if got := rangesToSel(nil); got != nil {
+		t.Errorf("rangesToSel(nil) = %v; want nil", got)
+	}
+	if got := rangesToSel([]SelRange{}); got != nil {
+		t.Errorf("rangesToSel([]) = %v; want nil", got)
+	}
+}
+
+// TestSelRange_Aliasing verifies that selToRanges returns a
+// freshly-allocated slice that does not alias the input. Mutating
+// the result must not change the input and vice versa.
+func TestSelRange_Aliasing(t *testing.T) {
+	sel := []uint16{0, 1, 2, 5, 6}
+	ranges := selToRanges(sel)
+	ranges[0].Start = 99
+	if sel[0] == 99 {
+		t.Error("selToRanges aliased input: mutating output changed input")
+	}
+	sel[0] = 42
+	if ranges[0].Start == 42 {
+		t.Error("ranges aliased input: mutating input changed output")
+	}
+}
+
+func uint16SlicesEqual(a, b []uint16) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func selRangeSlicesEqual(a, b []SelRange) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // BenchmarkBatchPoolParallel measures pool allocation under concurrency.
 func BenchmarkBatchPoolParallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
