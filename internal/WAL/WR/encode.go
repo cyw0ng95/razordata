@@ -231,7 +231,6 @@ func decodePayload(body []byte, cur int, rec *LogRecord) int {
 		rec.BlockID = binary.LittleEndian.Uint64(body[cur : cur+8])
 		cur += 8
 	case RTRollback:
-		// empty
 	case RTMerge:
 		if cur+8 > len(body) {
 			return cur

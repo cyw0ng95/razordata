@@ -210,7 +210,6 @@ func (r *replayer) forEachRecord(segNum uint64, fn func(rec *wr.LogRecord, recLS
 		return nil
 	}
 	if int64(n) < remaining {
-		// Short read: trim buf to the actual read length.
 		buf = buf[:n]
 	}
 
