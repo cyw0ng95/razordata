@@ -1265,10 +1265,15 @@ func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
 			return Row{}, ErrNoRows
 		}
 	}
+	// extract column name strings from IndexedColumns
+	indexCols := make([]string, len(c.stmt.IndexedColumns))
+	for i, ic := range c.stmt.IndexedColumns {
+		indexCols[i] = ic.Name
+	}
 	// Register for writer maintenance
 	RegisterIndexWithID(c.stmt.Table, RegisteredIndex{
 		Name:    c.stmt.Name,
-		Columns: c.stmt.Columns,
+		Columns: indexCols,
 		Unique:  c.stmt.Unique,
 	})
 	// Persist to catalog if available
@@ -1277,9 +1282,9 @@ func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
 		if tableID, ok := tableIDFor(c.stmt.Table); ok {
 			idx := ls.CatalogIndex{
 				Name:      c.stmt.Name,
-				Columns:   c.stmt.Columns,
+				Columns:   indexCols,
 				Unique:    c.stmt.Unique,
-				CreateSQL: "CREATE INDEX " + c.stmt.Name + " ON " + c.stmt.Table + " (" + joinStrings(c.stmt.Columns, ", ") + ")",
+				CreateSQL: "CREATE INDEX " + c.stmt.Name + " ON " + c.stmt.Table + " (" + joinStrings(indexCols, ", ") + ")",
 			}
 			if err := cat.PutIndex(tableID, idx); err != nil {
 				// Duplicate or other error — surface it.

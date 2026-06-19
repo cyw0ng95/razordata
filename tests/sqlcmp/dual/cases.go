@@ -90,6 +90,7 @@ func AllCases() []dualCase {
 	out = append(out, functionCases...)
 	out = append(out, edgeCases...)
 	out = append(out, probeCases...)
+	out = append(out, probeCasesV2...)
 	return out
 }
 

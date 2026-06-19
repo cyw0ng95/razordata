@@ -173,6 +173,7 @@ var keywords = map[string]TokenType{
 	"MATCH":        T_MATCH, // REQ000561
 	"DEFERRABLE":   T_DEFERRABLE, // REQ000561
 	"INITIALLY":    T_INITIALLY, // REQ000561
+	"COLLATE":      T_COLLATE, // REQ000565
 }
 
 type Lexer struct {

@@ -196,6 +196,7 @@ const (
 	T_MATCH          // REQ000561: MATCH PARTIAL/FULL/SIMPLE
 	T_DEFERRABLE     // REQ000561: [NOT] DEFERRABLE
 	T_INITIALLY      // REQ000561: INITIALLY DEFERRED/IMMEDIATE
+	T_COLLATE        // REQ000565: COLLATE on indexed columns / ordering terms
 
 	T_ERROR TokenType = -1
 )
@@ -391,6 +392,7 @@ var tokenTypeNames = [...]string{
 	T_MATCH:          "MATCH",
 	T_DEFERRABLE:     "DEFERRABLE",
 	T_INITIALLY:      "INITIALLY",
+	T_COLLATE:        "COLLATE",
 }
 
 func (t Token) String() string {
