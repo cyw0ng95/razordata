@@ -52,13 +52,13 @@ type sharedLogger struct {
 
 	// Rotation fields
 	dir             string        // log directory, empty = no rotation
-	baseName        string        // base filename
+	baseName        string
 	maxSize         int64         // rotation threshold in bytes
 	maxFiles        int           // max rotated files to retain
 	compressRotated bool          // gzip rotated files (R16-15)
-	curSize         atomic.Int64  // current file size
+	curSize         atomic.Int64
 	callCount       atomic.Uint64 // log call counter for throttled rotation check
-	rotationFn      func() error  // called when rotation needed
+	rotationFn      func() error
 	rotMu           sync.Mutex    // mutex just for rotation
 }
 
