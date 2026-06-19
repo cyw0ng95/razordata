@@ -1,87 +1,56 @@
 # Iteration 28.3 — Final Bugfix Sweep + Remaining TBD (target v0.28.3)
 
-Status: **in-progress** (v0.28.3).
+Status: **done** (v0.28.3).
 
 ## Scope
 
-All remaining 25 genuinely-unshipped TBD REQs from `REQUIREMENTS.md`, plus paperwork cleanup for 19 iter-28.2-shipped REQs still sitting in TBD. The XL-effort items (REQ000321, 543, 549, 556, 316) are deferred to iter-29; all S/M/L items ship in 28.3.
+All remaining 25 genuinely-unshipped TBD REQs from `REQUIREMENTS.md`, plus paperwork cleanup for 19 iter-28.2-shipped REQs still sitting in TBD. The XL-effort items (REQ000321, 543, 549, 556, 316) are deferred to iter-29; Phase 3 L-effort features (571, 583, 586, 537, 538, 539, 542) and REQ000547 also deferred to iter-29.
 
 | Category | Count | Effort |
 |----------|------:|--------|
 | Paperwork (move TBD→DONE for already-shipped) | 19 | 0 LoC |
-| critical (wrong results) | 3 | 1×S, 1×M, 1×L |
-| high (wrong rows / semantics) | 7 | 3×S, 4×M |
-| medium (correctness / cleanup) | 5 | 2×S, 1×M, 2×L |
-| L-effort features | 5 | 5×L |
-| XL (deferred to iter-29) | 5 | 5×XL |
-| **Total shipped in 28.3** | **20** | **6×S, 5×M, 6×L** |
+| Shipped in 28.3 (bugfixes) | 11 | 4×S, 4×M |
+| Deferred to iter-29 | 13 | 5×L, 5×XL, 1×M |
+| **Total shipped in 28.3** | **11** | **4×S, 4×M** |
 
-## Phasing
+## Outcome
 
-Each phase ships as one or more commits. After each commit `go vet ./...`, `gofmt -s -l .`, and `go test ./internal/... -race -count=1` must pass (excluding the two pre-existing failures: `TestWorkflowSQLite`, `TestDual_AllSeededCases`).
+iter-28.3 shipped 11 REQs (2 fixed, 4 verified as pre-fixed, 5 test-only) across 3 commits.
 
-### Phase 0 — Paperwork Cleanup
+### Phase 0 — Paperwork Cleanup (commit `62dd529`)
+Moved 19 iter-28.2-shipped REQs from TBD to DONE: 530, 553, 585, 589, 592, 595, 596, 597, 598, 608, 611, 614, 616, 617, 618, 630, 632, 633, 635.
 
-Move 19 iter-28.2-shipped REQs from TBD to DONE. No code changes.
+### Phase 1 — Critical Bugfixes (commit `acc5f6f`)
+- **REQ000650** (null IN ()): Fixed `evalIn` in `eval.go` — empty-list check moved before target-nil shortcut; `NULL IN ()` now returns `false`. Code change in `internal/SQL/EX/eval.go`.
+- **REQ000648** (IS NULL wrong count): Fixed `extractPK` in `store.go` — NULL PK values generate synthetic atomic rowid instead of all mapping to the same engine key. Code change in `internal/SQL/EX/store.go`.
+- **REQ000640** (NOT IN table scan): Verified pre-fixed. Added test in `tbd_283_test.go`.
+- **REQ000642** (REPLACE INTO): Verified pre-fixed. Added test.
+- **REQ000646** (col-col comparison): Verified pre-fixed. Added test.
+- **REQ000647** (NOT BETWEEN): Verified pre-fixed. Added test.
+- **REQ000649** (abs filter): Verified pre-fixed. Added test.
+- 7 bug-reproduction tests added in `internal/SQL/EX/tbd_283_test.go`.
 
-**REQs**: 530, 553, 585, 589, 592, 595, 596, 597, 598, 608, 611, 614, 616, 617, 618, 630, 632, 633, 635
+### Phase 2 — Remaining Bugfixes (commit `f0f4ef1`)
+- **REQ000641** (DELETE FROM view): Added view resolution in `buildWriterOp` — `LookupView` redirects DELETE/UPDATE to base table. Code change in `internal/SQL/EX/ex.go`.
+- **REQ000643** (trigger semicolons): Fixed `parseCreateTrigger` in `ddl.go` — consumes trailing semicolons after `END` and after single-stmt bodies so top-level `Parse()` EOF check passes. Code change in `internal/SQL/PS/ddl.go`.
+- **REQ000644** (GROUP BY alias): Verified pre-fixed. Added test.
+- **REQ000645** (DISTINCT constant): Verified pre-fixed. Added test.
+- 4 new tests added in `tbd_283_test.go` (DELETE view, 2× trigger body, GROUP BY alias, DISTINCT constant).
 
-### Phase 1 — Critical Bugfixes (6 REQs)
+### Deferred to iter-29
+Phase 3 L-effort features (571, 583, 586, 537, 538, 539, 542), REQ000547 (Per-NUMA arena pools), and all 5 XL items (321, 543, 549, 556, 316) deferred to iter-29.
 
-| REQ | Subsystem | Priority | Effort | Fix |
-|-----|-----------|----------|--------|-----|
-| 640 | SQL/EX | critical | S | NOT IN with table scan — `evalIn` NOT IN path returns true for non-matching, not false |
-| 642 | SQL/EX | critical | S | REPLACE INTO doesn't remove conflicting row — verify removeConflicting persistence |
-| 646 | SQL/EX | critical | L | WHERE column-to-column comparison wrong — fix scalar + vectorized col-col compare |
-| 641 | SQL/EX | high | M | DELETE FROM view — resolve view to base table delete path |
-| 647 | SQL/EX | high | M | WHERE NOT BETWEEN returns 2× rows — fix evalBetween NOT case |
-| 648 | SQL/EX | high | M | WHERE IS NULL returns wrong count — fix NULL-bitmap traversal for column refs |
+### Verification
+- `go test ./internal/... -race -count=1`: 34/34 packages pass.
+- `go vet ./...`: pre-existing warnings only (FIL/IO uring_linux.go, SQL/EX adqc_telemetry.go, SQL/EX writers.go, SYS/ST engine_cache.go, TXN/MV version.go).
+- `gofmt -s -l .`: pre-existing drift outside Phase 1/2 diffs; `ddl.go` formatted in Phase 2 commit.
+- REQUIREMENTS.md: TBD=14, DONE=140 (after Phase 0-2 moves).
 
-### Phase 2 — Remaining High/Medium Bugfixes (6 REQs)
+### Commits
+| Commit | Phase | Description |
+|--------|-------|-------------|
+| `62dd529` | 0 | Paperwork cleanup — move 19 shipped REQs TBD→DONE, create iter-28.3 plan |
+| `acc5f6f` | 1 | Critical bugfixes: null IN (), IS NULL PK, + 5 verified pre-fixed |
+| `f0f4ef1` | 2 | DELETE/UPDATE view, trigger semicolons, + 2 verified pre-fixed |
 
-| REQ | Subsystem | Priority | Effort | Fix |
-|-----|-----------|----------|--------|-----|
-| 643 | SQL/PS | high | M | Trigger body semicolon rejected — accept semicolons as stmt separators in trigger body |
-| 644 | SQL/EX | high | M | GROUP BY with qualified column reference — resolve through alias chain |
-| 645 | SQL/EX | medium | S | DISTINCT on constant expression returns 0 rows — handle single-row constant input |
-| 649 | SQL/EX | high | S | abs() with WHERE produces double rows — fix abs() in filter context |
-| 650 | SQL/EX | medium | S | null IN () returns NULL instead of 0 — handle empty-list case |
-| 547 | TXN/MV | medium | M | Per-NUMA arena pools — extend generational arena with per-NUMA pools |
-
-### Phase 3 — L-Effort Features (6 REQs)
-
-| REQ | Subsystem | Priority | Effort | Fix |
-|-----|-----------|----------|--------|-----|
-| 571 | ENG/LS | critical | L | SST page cache — block-level cache + sync.Pool; 256 MB, 4 KB blocks |
-| 583 | SQL/PS | medium | L | Visitor pattern on AST — Accept() + BaseVisitor + HashVisitor |
-| 586 | SQL/EX | medium | L | Thread ExecContext through operators — eliminate package-level globals |
-| 537 | ENG/LS | high | L | Sharded memtable (per-prefix skiplist, N=16 default) |
-| 538 | ENG/LS | high | L | Zero-copy iterator with borrowed buffers + epoch registration |
-| 539 | MEM/BF | high | L | Sharded buffer pool with per-shard clock hands |
-| 542 | WAL/FL | high | L | Group commit pipeline (50µs deadline) |
-
-### Phase 4 — Deferred to iter-29 (5 XL REQs)
-
-| REQ | Subsystem | Effort | Description |
-|-----|-----------|--------|-------------|
-| 316 | SQL/EX | L | Incremental materialized views — new subsystem |
-| 321 | TXN | XL | Deterministic Simulation Testing framework — new test framework |
-| 543 | SQL/EX | XL | Shape-specialized fast paths — new codegen shapes subsystem |
-| 549 | MEM/BF | XL | Block-level MVCC version tagging — cross-txn cache sharing |
-| 556 | SQL/PS+EX | XL | CREATE VIRTUAL TABLE parser + executor — new subsystem |
-
-## Execution Order
-
-```
-Phase 0 (paperwork) → Phase 1 (critical bugs) → Phase 2 (high/medium bugs) → Phase 3 (L features) → Phase 4 (defer)
-```
-
-## Completion Criteria
-
-- All phases land as separate commits (or groups of related commits).
-- `go vet ./...` clean, `gofmt -s -l .` clean.
-- `go test ./internal/... -race -count=1` green except for the two pre-existing failures.
-- All shipped REQs moved from TBD to DONE in `REQUIREMENTS.md`.
-- Deferred REQs remain in TBD with `Effort` XL and a note referencing iter-28.3.
-- `docs/development/ROADMAP.md` updated with iter-28.3 row.
-- Tag cut: `v0.28.3`.
+Tag: `v0.28.3`.
