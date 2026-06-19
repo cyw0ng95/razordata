@@ -239,6 +239,9 @@ func keyRangeOverlap(lo, hi, flo, fhi []byte) bool {
 }
 
 func u64toa(n uint64) string {
+	if n == 0 {
+		return "0"
+	}
 	var buf [20]byte
 	i := 20
 	for n > 0 {
