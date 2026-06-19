@@ -73,3 +73,6 @@ tmp/
 .monkeycode-tmp-files
 .mimocode
 .omo
+
+# Home directory artifacts
+${HOME}/

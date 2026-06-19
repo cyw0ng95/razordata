@@ -151,6 +151,24 @@ git submodule update --init --recursive --depth 1
 Run the curated set of .test files (build-gated to `slt_corpus`):
 
 ```bash
+cd tests/sqlcmp && go test -tags slt_corpus -run TestSLT_Each -v ./slt/
+```
+
+Run a single file (e.g. select1.test):
+
+```bash
+cd tests/sqlcmp && go test -tags slt_corpus -run 'TestSLT_Each/select1' -v ./slt/
+```
+
+Auto-discover all `.test` files (slow — runs the full corpus):
+
+```bash
+cd tests/sqlcmp && go test -tags slt_corpus -run TestSLT_PerFile -v ./slt/
+```
+
+Run the curated set of .test files (build-gated to `slt_corpus`):
+
+```bash
 cd tests/sqlcmp && RAZOR_SLT_ROOT=../corpus/test \
   go test -tags slt_corpus -run TestSLT_Each -v ./slt/
 ```

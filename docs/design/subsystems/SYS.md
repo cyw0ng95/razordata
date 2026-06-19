@@ -198,6 +198,7 @@ type SessionStats struct {
 
 #### Open (Initialization)
 - `Open`: validate `Options` (dir exists or `CreateIfMissing`, page size is power of 2, sizes are positive). Construct all subsystems in order: `LOG` → `FIL` → `MEM` → `WAL` → `ENG` → `TXN`. Call `WAL/RP.Replay()` to recover from crash.
+- **InMemory mode:** when `Options.InMemory` is true, bypass all disk subsystems. Construct only logger, sync pool, and a raw `EX.NewExecutor()` (no store, no catalog). All state is ephemeral.
 - **Version:** `Version = "0.1.0"` (semantic versioning).
 - **Config validation:** Before any subsystem is constructed, validate all fields:
   - `Dir`: must be non-empty, absolute path or relative to cwd.
@@ -317,6 +318,7 @@ Phase 6: Cleanup and logging
 - `Open` returns `*Engine`. All subsequent operations are through the returned interface.
 - Error types are exported (`ErrNotFound`, etc.) so callers can use `errors.Is`.
 - `Options` is validated in `SY/Open` — invalid options return an error before any subsystem is constructed.
+- `Options.InMemory` enables pure in-memory mode. When true, `Dir` is ignored (must be `:memory:`). No WAL, SST, catalog, or filesystem I/O. State is lost on Close.
 
 ### SE — Session
 
@@ -360,6 +362,25 @@ Phase 6: Cleanup and logging
 - `Backup(ctx, dest, opts)`: acquires read lock to block writers, copies all database files (engine data, WAL, catalog) to destination directory, releases lock. `BackupOptions` supports compression flag and LSN marker for consistency tracking.
 - `Restore(ctx, source, dest)`: verifies backup integrity (checks LSN marker, directory structure), copies files to a fresh directory for a clean database instance.
 
+### DS — database/sql Driver
+
+**Responsibility:** Go `database/sql/driver` implementation. Registered via `init()` as `sql.Register("razor", &Driver{})`.
+
+**Key behaviors:**
+- 5 files under `internal/SYS/DS/`: `ds.go`, `conn.go`, `stmt.go`, `rows.go`, `tx.go`.
+- DSN parsing: `:memory:` → in-memory mode; file path → on-disk database via `v1.Open`.
+- `OpenConnector` implements `driver.DriverContext` (Go 1.10+) for context-aware connections.
+- Value conversion: `int64`, `float64`, `string`, `[]byte`, `bool` → `driver.Value`; `nil` → `nil`.
+- Rows are materialized on `Query` (collected into `[]AP.Row`), then served via `Next`/`Close`.
+
+```go
+import (
+    "database/sql"
+    _ "github.com/cyw0ng95/razordata/internal/SYS/DS"
+)
+db, _ := sql.Open("razor", ":memory:")
+```
+
 1. **`internal/SYS/AP/ap.go`** — `Engine` interface, `Options` struct, all error types, `EngineStats`.
 2. **`internal/SYS/SY/sy.go`** — `engine` struct, `Open` (config validation, subsystem construction), `Stats`, version constant.
 3. **`internal/SYS/SY/shutdown.go`** — graceful shutdown: 6-phase close sequence, signal handling (`os/signal`), active transaction wait, background goroutine stop, subsystem close order, error handling.
@@ -368,7 +389,12 @@ Phase 6: Cleanup and logging
 6. **`internal/SYS/TX/tx.go`** — `transaction` struct, `Query`, `Exec`, `Commit`, `Rollback`, `Savepoint`, `RollbackTo`.
 7. **`internal/SYS/ST/st.go`** — `stmt` struct, `Prepare`, `Bind`, `Query`, `Exec`, `Close`. Plan memoization, type coercion.
 8. **`internal/SYS/BK/bk.go`** — online backup and restore: read lock, file copy, LSN marker, integrity verification.
-9. **Integration tests:**
+9. **`internal/SYS/DS/ds.go`** — driver registration, DSN parse, Connector.
+10. **`internal/SYS/DS/conn.go`** — driver.Conn, driver.Result.
+11. **`internal/SYS/DS/stmt.go`** — driver.Stmt, value conversion.
+12. **`internal/SYS/DS/rows.go`** — driver.Rows (materialized).
+13. **`internal/SYS/DS/tx.go`** — driver.Tx.
+14. **Integration tests:**
    - `engine_test.go` — `Open`/`Close`, concurrent sessions, graceful shutdown, error types.
    - `shutdown_test.go` — simulate SIGTERM, verify 6-phase close sequence, test timeout handling.
    - `validate_test.go` — invalid options (page size not power of 2, negative sizes), verify rejection.
