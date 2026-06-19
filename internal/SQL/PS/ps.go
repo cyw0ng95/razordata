@@ -1815,6 +1815,34 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 					col.OnUpdate = p.parseFKAction()
 				}
 			}
+			// REQ000561: optional MATCH name at column level
+			if p.current.Type == LX.T_MATCH {
+				p.advance()
+				if p.current.Type != LX.T_RPAREN && p.current.Type != LX.T_COMMA &&
+					p.current.Type != LX.T_ON && p.current.Type != LX.T_NOT &&
+					p.current.Type != LX.T_DEFERRABLE && p.current.Type != LX.T_INITIALLY {
+					col.Match = p.current.Lexeme
+					p.advance()
+				}
+			}
+			// REQ000561: optional [NOT] DEFERRABLE at column level
+			if p.current.Type == LX.T_NOT {
+				if p.lex.Peek().Type == LX.T_DEFERRABLE {
+					p.advance()
+					p.advance()
+					col.Deferrable = "NOT DEFERRABLE"
+				}
+			} else if p.current.Type == LX.T_DEFERRABLE {
+				p.advance()
+				col.Deferrable = "DEFERRABLE"
+			}
+			if p.current.Type == LX.T_INITIALLY {
+				p.advance()
+				if p.current.Type == LX.T_DEFERRED || p.current.Type == LX.T_IMMEDIATE {
+					col.Initially = p.current.Lexeme
+					p.advance()
+				}
+			}
 		}
 
 		cols = append(cols, col)
@@ -1906,7 +1934,7 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 				}
 				p.advance()
 			}
-			fk := ForeignKeyConstraint{Columns: names, RefTable: refTable, RefColumns: refCols}
+fk := ForeignKeyConstraint{Columns: names, RefTable: refTable, RefColumns: refCols}
 			for p.current.Type == LX.T_ON {
 				p.advance()
 				if p.current.Type == LX.T_DELETE {
@@ -1915,6 +1943,45 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 				} else if p.current.Type == LX.T_UPDATE {
 					p.advance()
 					fk.OnUpdate = p.parseFKAction()
+				}
+			}
+			// REQ000561: optional MATCH name (can appear before or after ON)
+			if p.current.Type == LX.T_MATCH {
+				p.advance()
+				if p.current.Type != LX.T_RPAREN && p.current.Type != LX.T_COMMA &&
+					p.current.Type != LX.T_ON && p.current.Type != LX.T_NOT &&
+					p.current.Type != LX.T_DEFERRABLE && p.current.Type != LX.T_INITIALLY {
+					fk.Match = p.current.Lexeme
+					p.advance()
+				}
+			}
+			// Re-check for ON clause after MATCH (loop for multiple ON actions)
+			for p.current.Type == LX.T_ON {
+				p.advance()
+				if p.current.Type == LX.T_DELETE {
+					p.advance()
+					fk.OnDelete = p.parseFKAction()
+				} else if p.current.Type == LX.T_UPDATE {
+					p.advance()
+					fk.OnUpdate = p.parseFKAction()
+				}
+			}
+			// REQ000561: optional [NOT] DEFERRABLE [INITIALLY DEFERRED|IMMEDIATE]
+			if p.current.Type == LX.T_NOT {
+				if p.lex.Peek().Type == LX.T_DEFERRABLE {
+					p.advance() // consume NOT
+					p.advance() // consume DEFERRABLE
+					fk.Deferrable = "NOT DEFERRABLE"
+				}
+			} else if p.current.Type == LX.T_DEFERRABLE {
+				p.advance()
+				fk.Deferrable = "DEFERRABLE"
+			}
+			if p.current.Type == LX.T_INITIALLY {
+				p.advance()
+				if p.current.Type == LX.T_DEFERRED || p.current.Type == LX.T_IMMEDIATE {
+					fk.Initially = p.current.Lexeme
+					p.advance()
 				}
 			}
 			foreignKeys = append(foreignKeys, fk)

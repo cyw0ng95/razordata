@@ -1295,3 +1295,112 @@ func TestParseDeleteNotIndexed(t *testing.T) {
 		t.Errorf("expected empty IndexedBy for NOT INDEXED, got %q", del.IndexHint.IndexedBy)
 	}
 }
+
+// REQ000561: FK MATCH / DEFERRABLE parser tests
+func TestParseFKMatch(t *testing.T) {
+	p := NewParser("CREATE TABLE t (a INT, FOREIGN KEY (a) REFERENCES r (b) MATCH FULL)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct, ok := stmt.(*CreateTable)
+	if !ok {
+		t.Fatalf("expected *CreateTable, got %T", stmt)
+	}
+	if len(ct.ForeignKeys) != 1 {
+		t.Fatalf("expected 1 FK, got %d", len(ct.ForeignKeys))
+	}
+	if ct.ForeignKeys[0].Match != "FULL" {
+		t.Errorf("expected Match='FULL', got %q", ct.ForeignKeys[0].Match)
+	}
+}
+
+func TestParseFKDeferrable(t *testing.T) {
+	p := NewParser("CREATE TABLE t (a INT, FOREIGN KEY (a) REFERENCES r (b) DEFERRABLE INITIALLY DEFERRED)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct, ok := stmt.(*CreateTable)
+	if !ok {
+		t.Fatalf("expected *CreateTable, got %T", stmt)
+	}
+	if len(ct.ForeignKeys) != 1 {
+		t.Fatalf("expected 1 FK, got %d", len(ct.ForeignKeys))
+	}
+	if ct.ForeignKeys[0].Deferrable != "DEFERRABLE" {
+		t.Errorf("expected Deferrable='DEFERRABLE', got %q", ct.ForeignKeys[0].Deferrable)
+	}
+	if ct.ForeignKeys[0].Initially != "DEFERRED" {
+		t.Errorf("expected Initially='DEFERRED', got %q", ct.ForeignKeys[0].Initially)
+	}
+}
+
+func TestParseFKNotDeferrable(t *testing.T) {
+	p := NewParser("CREATE TABLE t (a INT, FOREIGN KEY (a) REFERENCES r (b) NOT DEFERRABLE)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct, ok := stmt.(*CreateTable)
+	if !ok {
+		t.Fatalf("expected *CreateTable, got %T", stmt)
+	}
+	if ct.ForeignKeys[0].Deferrable != "NOT DEFERRABLE" {
+		t.Errorf("expected Deferrable='NOT DEFERRABLE', got %q", ct.ForeignKeys[0].Deferrable)
+	}
+}
+
+func TestParseFKColumnLevelMatch(t *testing.T) {
+	p := NewParser("CREATE TABLE t (a INT REFERENCES r (b) MATCH PARTIAL)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct, ok := stmt.(*CreateTable)
+	if !ok {
+		t.Fatalf("expected *CreateTable, got %T", stmt)
+	}
+	if len(ct.Cols) != 1 {
+		t.Fatalf("expected 1 col, got %d", len(ct.Cols))
+	}
+	if ct.Cols[0].Match != "PARTIAL" {
+		t.Errorf("expected Match='PARTIAL', got %q", ct.Cols[0].Match)
+	}
+}
+
+func TestParseFKColumnLevelDeferrable(t *testing.T) {
+	p := NewParser("CREATE TABLE t (a INT REFERENCES r (b) DEFERRABLE INITIALLY IMMEDIATE)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct, ok := stmt.(*CreateTable)
+	if !ok {
+		t.Fatalf("expected *CreateTable, got %T", stmt)
+	}
+	if ct.Cols[0].Deferrable != "DEFERRABLE" {
+		t.Errorf("expected Deferrable='DEFERRABLE', got %q", ct.Cols[0].Deferrable)
+	}
+	if ct.Cols[0].Initially != "IMMEDIATE" {
+		t.Errorf("expected Initially='IMMEDIATE', got %q", ct.Cols[0].Initially)
+	}
+}
+
+func TestParseFKMatchSimple(t *testing.T) {
+	p := NewParser("CREATE TABLE t (a INT, FOREIGN KEY (a) REFERENCES r (b) MATCH SIMPLE ON DELETE CASCADE)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct, ok := stmt.(*CreateTable)
+	if !ok {
+		t.Fatalf("expected *CreateTable, got %T", stmt)
+	}
+	if ct.ForeignKeys[0].Match != "SIMPLE" {
+		t.Errorf("expected Match='SIMPLE', got %q", ct.ForeignKeys[0].Match)
+	}
+	if ct.ForeignKeys[0].OnDelete != "CASCADE" {
+		t.Errorf("expected OnDelete='CASCADE', got %q", ct.ForeignKeys[0].OnDelete)
+	}
+}
