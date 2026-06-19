@@ -23,6 +23,9 @@ type groupCommit struct {
 	closed   atomic.Bool
 	closedCh chan struct{}
 
+	// fsyncFn performs the actual disk sync (injected by flusher).
+	fsyncFn func() error
+
 	// stats
 	groupsFlushed atomic.Int64
 	batchSizeHist atomic.Int64 // histogram bucket counter
@@ -111,12 +114,20 @@ func (gc *groupCommit) flush(pending []*groupCommitReq) {
 	gc.groupsFlushed.Add(1)
 	gc.batchSizeHist.Add(int64(len(pending)))
 
-	// In the full implementation, this would call the actual fsync.
-	// The flusher passes a callback that performs the disk sync.
+	var syncErr error
+	if gc.fsyncFn != nil {
+		syncErr = gc.fsyncFn()
+	}
+
 	for _, req := range pending {
-		// req.lsn is already assigned by the caller.
+		req.err = syncErr
 		close(req.done)
 	}
+}
+
+// SetFsyncFn sets the fsync callback used during batch flush.
+func (gc *groupCommit) SetFsyncFn(fn func() error) {
+	gc.fsyncFn = fn
 }
 
 // Submit submits a Sync request to the group commit pipeline.

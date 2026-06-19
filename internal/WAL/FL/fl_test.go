@@ -524,3 +524,166 @@ func BenchmarkWriteBufferAlloc(b *testing.B) {
 		_ = wb.Available()
 	}
 }
+
+// ---- Group Commit Pipeline (REQ000542) ---------------------------------
+
+// TestGroupCommitBasic verifies the happy path: a single Sync request
+// triggers an immediate flush and the caller is unblocked.
+func TestGroupCommitBasic(t *testing.T) {
+	fsyncCalled := 0
+	gc := newGroupCommit(groupCommitOptions{Timeout: 50 * time.Microsecond})
+	gc.SetFsyncFn(func() error {
+		fsyncCalled++
+		return nil
+	})
+
+	req := &groupCommitReq{
+		done: make(chan struct{}),
+		lsn:  1,
+	}
+	gc.Submit(req)
+	<-req.done
+
+	if req.err != nil {
+		t.Errorf("req.err: got %v, want nil", req.err)
+	}
+	if fsyncCalled != 1 {
+		t.Errorf("fsync called: got %d, want 1", fsyncCalled)
+	}
+}
+
+// TestGroupCommitBatch verifies multiple concurrent Sync requests are
+// batched into a single fsync.
+func TestGroupCommitBatch(t *testing.T) {
+	fsyncCount := 0
+	var mu sync.Mutex
+	gc := newGroupCommit(groupCommitOptions{Timeout: 100 * time.Millisecond})
+	gc.SetFsyncFn(func() error {
+		mu.Lock()
+		fsyncCount++
+		mu.Unlock()
+		return nil
+	})
+
+	const n = 10
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			req := &groupCommitReq{
+				done: make(chan struct{}),
+				lsn:  uint64(idx + 1),
+			}
+			gc.Submit(req)
+			<-req.done
+			errs[idx] = req.err
+		}(i)
+	}
+	wg.Wait()
+
+	// All requests should succeed.
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("req[%d].err: got %v, want nil", i, err)
+		}
+	}
+
+	// Exactly one fsync should have been called (batched).
+	if fsyncCount != 1 {
+		t.Errorf("fsync called: got %d, want 1", fsyncCount)
+	}
+}
+
+// TestGroupCommitTimeout verifies the deadline fires and unblocks
+// all waiters even with few requests.
+func TestGroupCommitTimeout(t *testing.T) {
+	fsyncCount := 0
+	gc := newGroupCommit(groupCommitOptions{Timeout: 1 * time.Millisecond})
+	gc.SetFsyncFn(func() error {
+		fsyncCount++
+		return nil
+	})
+
+	// Submit one request and wait for timeout-driven flush.
+	req := &groupCommitReq{
+		done: make(chan struct{}),
+		lsn:  1,
+	}
+	gc.Submit(req)
+	<-req.done
+
+	if req.err != nil {
+		t.Errorf("req.err: got %v, want nil", req.err)
+	}
+	if fsyncCount != 1 {
+		t.Errorf("fsync called: got %d, want 1", fsyncCount)
+	}
+}
+
+// TestGroupCommitErrorPropagation verifies that an fsync error is
+// propagated to all waiters in the batch.
+func TestGroupCommitErrorPropagation(t *testing.T) {
+	testErr := &testError{"fsync failed"}
+	gc := newGroupCommit(groupCommitOptions{Timeout: 100 * time.Millisecond})
+	gc.SetFsyncFn(func() error { return testErr })
+
+	const n = 5
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			req := &groupCommitReq{done: make(chan struct{}), lsn: uint64(idx + 1)}
+			gc.Submit(req)
+			<-req.done
+			errs[idx] = req.err
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != testErr {
+			t.Errorf("req[%d].err: got %v, want %v", i, err, testErr)
+		}
+	}
+}
+
+// TestGroupCommitClose verifies that Close unblocks waiters with
+// ErrFlusherClosed.
+func TestGroupCommitClose(t *testing.T) {
+	gc := newGroupCommit(groupCommitOptions{Timeout: 100 * time.Millisecond})
+
+	// Submit a request but don't wait — close before it's processed.
+	req := &groupCommitReq{done: make(chan struct{}), lsn: 1}
+	gc.Submit(req)
+	gc.Close()
+	<-req.done
+
+	if req.err != ErrFlusherClosed {
+		t.Errorf("req.err: got %v, want ErrFlusherClosed", req.err)
+	}
+}
+
+// TestGroupCommitStats verifies statistics are tracked correctly.
+func TestGroupCommitStats(t *testing.T) {
+	gc := newGroupCommit(groupCommitOptions{Timeout: 100 * time.Millisecond})
+	gc.SetFsyncFn(func() error { return nil })
+
+	// Single request.
+	req1 := &groupCommitReq{done: make(chan struct{}), lsn: 1}
+	gc.Submit(req1)
+	<-req1.done
+
+	stats := gc.Stats()
+	if stats.GroupsFlushed != 1 {
+		t.Errorf("GroupsFlushed: got %d, want 1", stats.GroupsFlushed)
+	}
+}
+
+// testError is a simple error type for test assertions.
+type testError struct{ msg string }
+
+func (e *testError) Error() string { return e.msg }
