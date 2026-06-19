@@ -173,10 +173,18 @@ func (t *tx) Commit(ctx context.Context) error {
 		batch := &walwr.WriteBatch{Recs: []walwr.LogRecord{{Type: walwr.RTCommit, Value: rec}}}
 		if _, err := t.wal.Append(batch); err != nil {
 			t.setPhase(PhaseAborted)
+			t.finalize(SlotAborted)
+			if t.manager != nil {
+				t.manager.recordAbort()
+			}
 			return err
 		}
 		if err := t.wal.Sync(); err != nil {
 			t.setPhase(PhaseAborted)
+			t.finalize(SlotAborted)
+			if t.manager != nil {
+				t.manager.recordAbort()
+			}
 			return err
 		}
 	}
