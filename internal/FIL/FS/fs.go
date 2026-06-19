@@ -174,14 +174,21 @@ func (fm *FileManager) Open(name string) (*FileHandle, error) {
 	if h, ok := fm.handles.Load(abs); ok {
 		fh := h.(*FileHandle)
 		fh.mu.Lock()
+		// Reuse the existing FD directly. No need to close+reopen
+		// unless the FD is -1 (closed) or the file was deleted and
+		// recreated (stale handle). This eliminates the TOCTOU
+		// window where another goroutine could use a closed FD
+		// (REQ000599).
 		if fh.FD != -1 {
-			if err := unix.Close(fh.FD); err != nil && fm.log != nil {
-				fm.log.Warn("fs.open.close", "path", abs, "err", err)
-			}
+			// FD is valid, reuse it. Increment ref count and return.
+			fh.Refs.Add(1)
+			fh.mu.Unlock()
+			return fh, nil
 		}
+		// FD is -1 (closed). Reopen while holding the lock.
 		fd, err := unix.Open(abs, unix.O_RDWR, 0)
-		fh.mu.Unlock()
 		if err != nil {
+			fh.mu.Unlock()
 			if errors.Is(err, unix.ENOENT) {
 				return nil, ErrDoesNotExist
 			}
@@ -190,7 +197,6 @@ func (fm *FileManager) Open(name string) (*FileHandle, error) {
 			}
 			return nil, err
 		}
-		fh.mu.Lock()
 		fh.FD = fd
 		if fm.locking {
 			if err := unix.Flock(fd, unix.LOCK_EX); err != nil {
