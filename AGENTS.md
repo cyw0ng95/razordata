@@ -81,12 +81,15 @@ When an iteration is complete, update the tracking docs in this order:
    "Remaining Work" into the completed `Iterations Overview` table; add a
    release tag row in `Release Tags` if a new tag was cut.
 3. **`docs/development/REQUIREMENTS.md`** — for every `REQ` the iteration
-   satisfied, **delete the row from `TBD` entirely** and add a new row
-   to `DONE` with the `Iteration` column set to the iter number. A
-   `REQ` lives in exactly one of the two tables: `TBD` (pipeline) or
-   `DONE` (shipped). Never both. Never annotate a `TBD` row with
-   "MOVED TO DONE" and leave it in place — that is a copy-paste
-   duplicate and the file will drift.
+   satisfied:
+   a. **Check design relevance first**: if the REQ describes a design
+      decision, interface contract, data structure, or architectural
+      invariant that belongs in `docs/design/`, flag it to the human —
+      design docs are human-only edits (see Design Protection below).
+   b. **Delete the row from `TBD`** entirely. There is no `DONE` table;
+      the `TBD` table is the sole working backlog. Once a REQ is
+      shipped, it leaves the file — the commit history and iteration
+      plan serve as the permanent record.
 
 Do this as a single commit at the end of the iteration (after the final
 implementation commit, before the release tag). Do not defer doc updates
@@ -120,8 +123,8 @@ Encoding rules:
 - Reference the source doc in the `Touches` column: e.g. "see
   iter-12-catalog.md Gap Analysis Bug 1" so the bug is traceable
   back to its discovery context.
-- The `TBD` row is the working-state. `DONE` is only for bugs that
-  have actually been fixed and moved by a subsequent iteration.
+- The `TBD` row is the working-state. Once fixed, it is deleted
+  entirely — there is no `DONE` table.
 
 The "current unfixed bugs" backlog lives in the `TBD` section of
 `docs/development/REQUIREMENTS.md` and is the source of truth for future
