@@ -2,6 +2,8 @@ package PS
 
 import (
 	"testing"
+
+	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 )
 
 func colNames(cols []IndexedColumn) []string {
@@ -181,5 +183,43 @@ func TestParseCreateIndex_CollateFirstOnly(t *testing.T) {
 	}
 	if ci.IndexedColumns[1].Collation != "" {
 		t.Errorf("col 1 Collation = %q, want empty", ci.IndexedColumns[1].Collation)
+	}
+}
+
+// TestParseCreateIndex_Where covers partial index with WHERE clause.
+func TestParseCreateIndex_Where(t *testing.T) {
+	p := NewParser("CREATE INDEX idx ON t (a) WHERE a > 0")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	ci, ok := stmt.(*CreateIndexStmt)
+	if !ok {
+		t.Fatalf("got %T, want *CreateIndexStmt", stmt)
+	}
+	if ci.Where == nil {
+		t.Fatal("expected non-nil Where")
+	}
+	bin, ok := ci.Where.(*BinaryExpr)
+	if !ok {
+		t.Fatalf("expected BinaryExpr, got %T", ci.Where)
+	}
+	if bin.Op != int(LX.T_GT) {
+		t.Errorf("expected GT op, got %d", bin.Op)
+	}
+}
+
+func TestParseCreateIndex_WhereNoParen(t *testing.T) {
+	p := NewParser("CREATE INDEX idx ON t (a) WHERE active = 1")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	ci, ok := stmt.(*CreateIndexStmt)
+	if !ok {
+		t.Fatalf("got %T, want *CreateIndexStmt", stmt)
+	}
+	if ci.Where == nil {
+		t.Fatal("expected non-nil Where")
 	}
 }

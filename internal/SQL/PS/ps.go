@@ -3003,12 +3003,22 @@ func (p *Parser) parseCreateIndex() (*CreateIndexStmt, error) {
 		return nil, err
 	}
 	p.advance()
+	// REQ000566: optional WHERE clause for partial index
+	var where Expr
+	if p.current.Type == LX.T_WHERE {
+		p.advance()
+		where, err = p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &CreateIndexStmt{
 		Name:     name,
 		Table:    table,
 		IndexedColumns:  cols,
 		Unique:   unique,
 		IfExists: ifExists,
+		Where:    where,
 	}, nil
 }
 

@@ -312,6 +312,7 @@ type CreateIndexStmt struct {
 	IndexedColumns []IndexedColumn // REQ000565: columns with optional COLLATE
 	Unique         bool            // UNIQUE modifier (reserved; not yet enforced)
 	IfExists       bool            // REQ000479: CREATE INDEX IF NOT EXISTS
+	Where          Expr            // REQ000566: partial index predicate
 }
 
 func (c *CreateIndexStmt) stmtNode() {}
