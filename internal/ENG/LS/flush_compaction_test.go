@@ -157,59 +157,6 @@ func TestFlushJob_updateManifest(t *testing.T) {
 	}
 }
 
-func TestFlushManager_Get_v2(t *testing.T) {
-	dir := t.TempDir()
-	dir = filepath.Join(dir, "test_fm_get")
-
-	manifest, err := newManifest(dir)
-	if err != nil {
-		t.Fatalf("failed to create manifest: %v", err)
-	}
-	defer manifest.Close()
-
-	fm := newFlushManager(dir, 1024*1024, manifest)
-	defer fm.Close()
-
-	fm.Insert([]byte("key1"), []byte("value1"))
-
-	val, found := fm.Get([]byte("key1"))
-	if !found {
-		t.Fatal("expected to find key1")
-	}
-	if string(val) != "value1" {
-		t.Fatalf("expected value1, got %s", string(val))
-	}
-
-	_, found = fm.Get([]byte("nonexistent"))
-	if found {
-		t.Fatal("expected not to find nonexistent key")
-	}
-}
-
-func TestFlushManager_Insert_v2(t *testing.T) {
-	dir := t.TempDir()
-	dir = filepath.Join(dir, "test_fm_insert")
-
-	manifest, err := newManifest(dir)
-	if err != nil {
-		t.Fatalf("failed to create manifest: %v", err)
-	}
-	defer manifest.Close()
-
-	fm := newFlushManager(dir, 1024*1024, manifest)
-	defer fm.Close()
-
-	err = fm.Insert([]byte("key1"), []byte("value1"))
-	if err != nil {
-		t.Fatalf("Insert failed: %v", err)
-	}
-
-	_, found := fm.Get([]byte("key1"))
-	if !found {
-		t.Fatal("expected to find key1 after insert")
-	}
-}
-
 func TestFlushManager_ActiveMemtable_v2(t *testing.T) {
 	dir := t.TempDir()
 	dir = filepath.Join(dir, "test_fm_active")

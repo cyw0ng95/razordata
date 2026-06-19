@@ -144,13 +144,12 @@ func (fj *flushJob) updateManifest(tmpPath string) error {
 }
 
 type flushManager struct {
-	activeMemtable  atomic.Pointer[memtable]
-	frozenMemtables []*memtable
-	manifest        *manifest
-	dir             string
-	maxMemSize      int64
-	flushQueue      chan *flushJob
-	pendingWGs      sync.WaitGroup
+	activeMemtable atomic.Pointer[memtable]
+	manifest       *manifest
+	dir            string
+	maxMemSize     int64
+	flushQueue     chan *flushJob
+	pendingWGs     sync.WaitGroup
 	done            chan struct{}
 	closed          atomic.Bool
 	loopDone        chan struct{}
@@ -345,34 +344,6 @@ func (fm *flushManager) Stop(ctx context.Context) error {
 
 func (fm *flushManager) ActiveMemtable() *memtable {
 	return fm.activeMemtable.Load()
-}
-
-func (fm *flushManager) Get(key []byte) ([]byte, bool) {
-	active := fm.activeMemtable.Load()
-	if val, found := active.Get(key); found {
-		return val, found
-	}
-
-	for _, m := range fm.frozenMemtables {
-		if val, found := m.Get(key); found {
-			return val, found
-		}
-	}
-
-	return nil, false
-}
-
-func (fm *flushManager) Insert(key, value []byte) error {
-	active := fm.activeMemtable.Load()
-	if err := active.Insert(key, value); err != nil {
-		return err
-	}
-
-	if active.ShouldFlush() {
-		fm.MaybeFlush()
-	}
-
-	return nil
 }
 
 func (fm *flushManager) Close() error {

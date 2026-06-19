@@ -77,7 +77,13 @@ func (eng *Engine) Delete(key []byte) error {
 // starts with prefix. Tombstoned keys are skipped. The returned iterator must
 // be Close()'d.
 func (eng *Engine) NewIterator(prefix []byte) RangeIter {
-	return newMergeIterator(eng.e, prefix)
+	e := eng.e
+	e.mu.RLock()
+	memtables := append([]*memtable(nil), e.memtables...)
+	manifest := e.manifest
+	dir := e.dir
+	e.mu.RUnlock()
+	return newMergeIterator(memtables, manifest, dir, prefix)
 }
 
 // Close releases engine resources. Calling Close twice is a no-op.
@@ -202,44 +208,45 @@ func (h *iterHeap) Pop() any {
 // mergeIterator is a streaming merge of all relevant sources, filtered by
 // prefix. Sources are: the active memtable (covers all unflushed writes) and
 // every SST file whose MinKey/MaxKey range overlaps [prefix, prefix+1).
+//
+// REQ000598: accepts explicit dependencies instead of *engine for testability.
 type mergeIterator struct {
-	eng     *engine
-	prefix  []byte
-	sources []RangeIter
-	h       iterHeap
-	curKey  []byte
-	curVal  []byte
-	err     error
-	closed  bool
+	manifest *manifest
+	dir      string
+	prefix   []byte
+	sources  []RangeIter
+	h        iterHeap
+	curKey   []byte
+	curVal   []byte
+	err      error
+	closed   bool
 }
 
-func newMergeIterator(eng *engine, prefix []byte) *mergeIterator {
-	mi := &mergeIterator{eng: eng, prefix: append([]byte(nil), prefix...)}
-	mi.init()
+// newMergeIterator constructs a merge iterator from explicit dependencies.
+// The caller must hold a reference to the active memtable and frozen
+// memtables snapshot (under the lock) before calling.
+func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, prefix []byte) *mergeIterator {
+	mi := &mergeIterator{
+		manifest: manifest,
+		dir:      dir,
+		prefix:   append([]byte(nil), prefix...),
+	}
+	mi.init(memtables)
 	return mi
 }
 
-func (mi *mergeIterator) init() {
-	// REQ000574: hold the read lock while snapshotting the
-	// memtable references so a concurrent flushActiveMemtable
-	// cannot mutate the slice or activeMem pointer mid-init.
-	mi.eng.mu.RLock()
-	activeMem := mi.eng.activeMem
-	memtables := append([]*memtable(nil), mi.eng.memtables...)
-	mi.eng.mu.RUnlock()
+func (mi *mergeIterator) init(memtables []*memtable) {
+	activeMem := memtables[len(memtables)-1]
 
 	// Source 0: active memtable (all uncommitted writes).
 	mi.sources = append(mi.sources, &memtableIter{it: activeMem.Iterator()})
 	// Source 1+: frozen memtables (newest first).
-	for i := len(memtables) - 1; i >= 0; i-- {
+	for i := len(memtables) - 2; i >= 0; i-- {
 		mt := memtables[i]
-		if mt == activeMem {
-			continue
-		}
 		mi.sources = append(mi.sources, &memtableIter{it: mt.Iterator()})
 	}
 	// Source N+: SST files whose range overlaps [prefix, prefix_upper).
-	v := mi.eng.manifest.Current()
+	v := mi.manifest.Current()
 	if v != nil {
 		upper := prefixUpperBound(mi.prefix)
 		for _, level := range v.levels {
@@ -247,7 +254,7 @@ func (mi *mergeIterator) init() {
 				if !fileOverlapsPrefix(f.MinKey, f.MaxKey, mi.prefix, upper) {
 					continue
 				}
-				sstPath := filepath.Join(mi.eng.dir, fileName(&f))
+				sstPath := filepath.Join(mi.dir, fileName(&f))
 				data, err := os.ReadFile(sstPath)
 				if err != nil {
 					continue
