@@ -242,3 +242,65 @@ func TestSSTIterator_FirstBlockRead(t *testing.T) {
 		t.Errorf("second Next() returned true; expected end-of-iteration")
 	}
 }
+
+// TestSSTReader_MayContainPrefix_NoFalseNegatives verifies REQ000599:
+// the writer (setPrefixBloomBit) uses byte count as the modulus,
+// while the reader used bit count, causing 7/8 of prefix queries to
+// produce false negatives (the filter reported "not present" for
+// prefixes that actually existed in the SST). This test inserts
+// keys and verifies MayContainPrefix returns true for every
+// inserted prefix — never false negative.
+func TestSSTReader_MayContainPrefix_NoFalseNegatives(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_sst_prefix_bloom")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+
+	w := newSSTWriter()
+	// Insert 100 keys with distinct 4-byte prefixes; the prefix
+	// bloom is small but the test exercises the modulus match.
+	const keyCount = 100
+	keys := make([][]byte, keyCount)
+	for i := 0; i < keyCount; i++ {
+		// prefix varies in first 4 bytes, suffix in last 4
+		k := []byte{
+			byte(i >> 24), byte(i >> 16), byte(i >> 8), byte(i),
+			's', 'u', 'f', 'x',
+		}
+		keys[i] = k
+		w.Add(k, []byte{byte(i)})
+	}
+
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	reader, err := openSST(sstData)
+	if err != nil {
+		t.Fatalf("openSST: %v", err)
+	}
+	defer reader.Close()
+
+	// Sanity: prefix bloom should be non-empty.
+	if len(reader.prefixBloom) == 0 {
+		t.Fatal("prefix bloom is empty; test setup is invalid")
+	}
+
+	// Every inserted key's 8-byte prefix (truncated from key)
+	// must be reported as "may contain". False negatives are
+	// forbidden.
+	falseNegatives := 0
+	for _, k := range keys {
+		prefix := k
+		if len(prefix) > 8 {
+			prefix = prefix[:8]
+		}
+		if !reader.MayContainPrefix(prefix) {
+			falseNegatives++
+		}
+	}
+	if falseNegatives > 0 {
+		t.Errorf("MayContainPrefix returned false for %d/%d inserted prefixes (REQ000599: prefix bloom modulus mismatch)", falseNegatives, keyCount)
+	}
+}

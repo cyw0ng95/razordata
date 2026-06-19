@@ -112,6 +112,15 @@ func (r *sstReader) mayContain(key []byte) bool {
 
 // MayContainPrefix checks if the SST might contain a key with the given prefix.
 // REQ000047 — prefix bloom filters for range scans.
+// REQ000599: the modulus is the byte count, NOT the bit count.
+// The writer (setPrefixBloomBit) does \`int(h1) % size\` where size
+// is the bloom's byte length, so bits are set at indices [0, size*8).
+// A reader using bit count (\`len(r.prefixBloom) * 8\`) would compute
+// the same bit indices, but the writer caps at byte-count buckets
+// effectively reducing the bit address space to size*8 - (size*8 % 8)
+// = size*8 with collisions on every 8th bit. More importantly the
+// mismatch caused 7/8 of prefix queries to produce false negatives
+// (filter reports "not present" for prefixes that exist).
 func (r *sstReader) MayContainPrefix(prefix []byte) bool {
 	if len(r.prefixBloom) == 0 {
 		return true
@@ -119,7 +128,8 @@ func (r *sstReader) MayContainPrefix(prefix []byte) bool {
 	if len(prefix) > 8 {
 		prefix = prefix[:8]
 	}
-	size := len(r.prefixBloom) * 8
+	// Match the writer's modulus: byte count, not bit count.
+	size := len(r.prefixBloom)
 	h1 := fnv1aHash(prefix, fnv1aOffset32)
 	h2 := fnv1aHash(prefix, fnv1aPrime32)
 	bucket1 := int(h1) % size
