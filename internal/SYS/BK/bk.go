@@ -244,7 +244,6 @@ func copyFile(src, dst string) (int64, error) {
 	}
 	defer srcFile.Close()
 
-	// Get source permissions
 	info, err := srcFile.Stat()
 	if err != nil {
 		return 0, err

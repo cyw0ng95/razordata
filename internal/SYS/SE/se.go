@@ -227,13 +227,6 @@ func (s *Session) Begin(ctx context.Context) (AP.Transaction, error) {
 	return t, nil
 }
 
-// SetTxWriter is a no-op on the session; transactions install the
-// writer themselves.
-
-// SetTxWriter wires the executor's transaction-write hook. The
-// session does not use this directly; the Transaction owns the hook
-// during Exec.
-
 // Commit finalizes the current transaction.
 func (s *Session) Commit(ctx context.Context) error {
 	if s.engine.IsClosed() {

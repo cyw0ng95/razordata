@@ -417,7 +417,6 @@ func (e *Engine) Begin(ctx context.Context) (AP.Session, error) {
 	}
 	return sessionConstructor(e), nil
 }
-// debugOnlyBeginLog is a debug log to trace engine state during tests.
 
 // IsClosed reports whether Close has been called on this engine. It
 // is the post-Close guard for Session/Transaction/Stmt methods and
