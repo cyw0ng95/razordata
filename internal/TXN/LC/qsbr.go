@@ -38,8 +38,12 @@ func (q *qsbrManager) shardFor(gid uint64) int {
 func (q *qsbrManager) Enter() (uint64, int) {
 	gid := getGoroutineID()
 	shard := q.shardFor(gid)
-	q.perShard[shard].flag.Store(1)
+	// Load globalEpoch BEFORE setting the flag to prevent
+	// Store-Load reordering on weakly-ordered architectures
+	// (ARM/POWER). This ensures the epoch is visible before
+	// the flag signals critical section entry (REQ000597).
 	ep := q.globalEpoch.Load()
+	q.perShard[shard].flag.Store(1)
 	q.generation.Add(0) // touch
 	return ep, shard
 }
