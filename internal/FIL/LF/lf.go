@@ -68,15 +68,17 @@ func (sm *SegmentManager) GetSegment(n uint64) (*FileHandle, error) {
 			fh.mu.Unlock()
 			return fh, nil
 		}
+		// FD is -1 (closed). Reopen while holding the lock to
+		// prevent TOCTOU race: another goroutine cannot close
+		// the FD between our check and the open (REQ000598).
 		fd, err := unix.Open(fh.Path, unix.O_RDWR, 0)
-		fh.mu.Unlock()
 		if err != nil {
+			fh.mu.Unlock()
 			if sm.log != nil {
 				sm.log.Error("lf.get_segment", "n", n, "path", fh.Path, "err", err)
 			}
 			return nil, err
 		}
-		fh.mu.Lock()
 		fh.FD = fd
 		fh.Refs.Add(1)
 		fh.mu.Unlock()
