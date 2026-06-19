@@ -339,6 +339,10 @@ type compactionManager struct {
 	// REQ000300: tier-aware placement policy. When nil, all levels
 	// share the same device (engine dir).
 	placementPolicy PlacementPolicy
+	// REQ000634: non-nil when ManualCompact is waiting for completion.
+	// The compaction loop closes this channel after running each
+	// manual-triggered job, signalling the waiter.
+	manualDone chan struct{}
 }
 
 func newCompactionManager(dir string, manifest *manifest) *compactionManager {
@@ -365,6 +369,10 @@ func (cm *compactionManager) compactionLoop() {
 		case job := <-cm.compactionQueue:
 			if err := job.Run(cm.manifest, cm.dir); err != nil {
 				slog.Error("compaction failed", "level", job.level, "inputs", len(job.inputs), "overlap", len(job.overlap), "err", err)
+			}
+			if cm.manualDone != nil {
+				close(cm.manualDone)
+				cm.manualDone = nil
 			}
 			cm.compacting.Store(false)
 		}
@@ -420,57 +428,55 @@ func (cm *compactionManager) MaybeCompact() {
 
 // ManualCompact forces a compaction across all levels. REQ000257.
 // Used by VACUUM to reclaim tombstone space immediately.
+// REQ000634: replaced the 10ms sleep-based synchronization with
+// a wait channel that blocks until the compaction job finishes.
 func (cm *compactionManager) ManualCompact() error {
 	if cm.compacting.Load() {
 		return ErrCompactionInProgress
 	}
 
 	v := cm.manifest.Current()
-	
-	// Start from highest level (L5) and work down to L0
-	// This ensures we compact the most stable data first
+
 	for level := len(v.levels) - 2; level >= 0; level-- {
 		files := v.levels[level]
 		if len(files) == 0 {
 			continue
 		}
-		
-		// Queue compaction for this level
-		cm.requestCompaction(level)
-		
-		// Wait briefly for compaction to start
-		time.Sleep(10 * time.Millisecond)
+
+		done := make(chan struct{}, 1)
+		if cm.requestCompaction(level) {
+			cm.manualDone = done
+		} else {
+			close(done)
+		}
+		<-done
 	}
-	
+
 	return nil
 }
 
-func (cm *compactionManager) requestCompaction(level int) {
+// requestCompaction queues a compaction job for the given level.
+// Returns true if a job was enqueued, false otherwise.
+func (cm *compactionManager) requestCompaction(level int) bool {
 	cm.compactionMu.Lock()
 	defer cm.compactionMu.Unlock()
 
 	if cm.compacting.Load() {
-		return
+		return false
 	}
 
 	v := cm.manifest.Current()
 	if level >= len(v.levels) {
-		return
+		return false
 	}
 
 	inputs := v.levels[level]
 	if len(inputs) == 0 {
-		return
+		return false
 	}
 
 	var overlap []SSTFileMeta
 	if level+1 < len(v.levels) {
-		// REQ000601: only include files at level+1 whose key
-		// range overlaps with the inputs. Without this filter,
-		// every compaction merges ALL files at level+1, even
-		// ones whose keys don't overlap, causing unbounded
-		// duplication (input + every level+1 file + new merged
-		// output all coexist).
 		lo := inputs[0].MinKey
 		hi := inputs[len(inputs)-1].MaxKey
 		for _, f := range v.levels[level+1] {
@@ -492,8 +498,10 @@ func (cm *compactionManager) requestCompaction(level int) {
 	cm.compacting.Store(true)
 	select {
 	case cm.compactionQueue <- job:
+		return true
 	default:
 		cm.compacting.Store(false)
+		return false
 	}
 }
 

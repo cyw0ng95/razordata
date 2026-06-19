@@ -14,7 +14,7 @@ import (
 var (
 	ErrPathTraversal = errors.New("path traversal escape attempt")
 	ErrSymlink       = errors.New("symlink not allowed")
-	ErrNotAbsolute   = errors.New("path must be absolute")
+	ErrNotAbsolute   = errors.New("path must be relative, not absolute")
 	ErrAlreadyExists = errors.New("file already exists")
 	ErrDoesNotExist  = errors.New("file does not exist")
 )

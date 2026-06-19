@@ -384,6 +384,11 @@ func (s *Session) SetSnapshot(ts uint64) {
 // AP.ErrDeadlineExceeded when the deadline has passed. The mutex is
 // released by the caller via Unlock.
 func (s *Session) lock(ctx context.Context) error {
+	// REQ000627: check deadline BEFORE blocking on s.mu.Lock() so
+	// an already-expired session does not contend for the mutex.
+	if dl, _ := s.deadline.Load().(time.Time); !dl.IsZero() && time.Now().After(dl) {
+		return AP.ErrDeadlineExceeded
+	}
 	s.mu.Lock()
 	if dl, _ := s.deadline.Load().(time.Time); !dl.IsZero() && time.Now().After(dl) {
 		s.mu.Unlock()
