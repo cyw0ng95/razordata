@@ -1,8 +1,16 @@
 package MV
 
 import (
-	"sync"
+	"unsafe"
 )
+
+// bytesToString converts []byte to string without allocation.
+// The []byte must not be modified after conversion (the string
+// borrows the underlying bytes). Used for MVCC chain lookup
+// on the hot read path (REQ000605).
+func bytesToString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
+}
 
 type MV struct {
 	chains sync.Map
@@ -13,7 +21,7 @@ func NewMV() *MV {
 }
 
 func (m *MV) GetVersionChain(key []byte) *VersionChain {
-	chain, ok := m.chains.Load(string(key))
+	chain, ok := m.chains.Load(bytesToString(key))
 	if !ok {
 		return nil
 	}
@@ -21,7 +29,7 @@ func (m *MV) GetVersionChain(key []byte) *VersionChain {
 }
 
 func (m *MV) GetOrCreateVersionChain(key []byte) *VersionChain {
-	chainI, _ := m.chains.LoadOrStore(string(key), &VersionChain{})
+	chainI, _ := m.chains.LoadOrStore(bytesToString(key), &VersionChain{})
 	return chainI.(*VersionChain)
 }
 

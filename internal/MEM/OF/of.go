@@ -12,6 +12,27 @@ const (
 	classCount = 16
 )
 
+// sizeClasses is the shared size-class boundaries array (REQ000606).
+// Extracted to avoid declaring the same array three times.
+var sizeClasses = [classCount]int{
+	64 * 1024,
+	96 * 1024,
+	128 * 1024,
+	192 * 1024,
+	256 * 1024,
+	384 * 1024,
+	512 * 1024,
+	768 * 1024,
+	1 * 1024 * 1024,
+	1536 * 1024,
+	2 * 1024 * 1024,
+	3 * 1024 * 1024,
+	4 * 1024 * 1024,
+	4 * 1024 * 1024,
+	4 * 1024 * 1024,
+	4 * 1024 * 1024,
+}
+
 func sizeClass(n int) int {
 	if n < minClass {
 		return minClass
@@ -19,25 +40,7 @@ func sizeClass(n int) int {
 	if n > maxClass {
 		return 0
 	}
-	classes := [classCount]int{
-		64 * 1024,
-		96 * 1024,
-		128 * 1024,
-		192 * 1024,
-		256 * 1024,
-		384 * 1024,
-		512 * 1024,
-		768 * 1024,
-		1 * 1024 * 1024,
-		1536 * 1024,
-		2 * 1024 * 1024,
-		3 * 1024 * 1024,
-		4 * 1024 * 1024,
-		4 * 1024 * 1024, // padding for index 13-15
-		4 * 1024 * 1024,
-		4 * 1024 * 1024,
-	}
-	for _, c := range classes {
+	for _, c := range sizeClasses {
 		if n <= c {
 			return c
 		}
@@ -56,13 +59,7 @@ type OffHeap struct {
 
 // classIndex returns the pool index for a size-class value.
 func classIndex(c int) int {
-	classes := [classCount]int{
-		64 * 1024, 96 * 1024, 128 * 1024, 192 * 1024,
-		256 * 1024, 384 * 1024, 512 * 1024, 768 * 1024,
-		1 * 1024 * 1024, 1536 * 1024, 2 * 1024 * 1024, 3 * 1024 * 1024,
-		4 * 1024 * 1024, 4 * 1024 * 1024, 4 * 1024 * 1024, 4 * 1024 * 1024,
-	}
-	for i, cl := range classes {
+	for i, cl := range sizeClasses {
 		if cl == c {
 			return i
 		}
@@ -73,14 +70,8 @@ func classIndex(c int) int {
 // NewOffHeap returns a fresh pool.
 func NewOffHeap() *OffHeap {
 	oh := &OffHeap{}
-	classes := [classCount]int{
-		64 * 1024, 96 * 1024, 128 * 1024, 192 * 1024,
-		256 * 1024, 384 * 1024, 512 * 1024, 768 * 1024,
-		1 * 1024 * 1024, 1536 * 1024, 2 * 1024 * 1024, 3 * 1024 * 1024,
-		4 * 1024 * 1024, 4 * 1024 * 1024, 4 * 1024 * 1024, 4 * 1024 * 1024,
-	}
 	for i := 0; i < classCount; i++ {
-		size := classes[i]
+		size := sizeClasses[i]
 		oh.pools[i].New = func() interface{} {
 			oh.misses.Add(1)
 			return make([]byte, size)

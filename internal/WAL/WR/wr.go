@@ -220,8 +220,15 @@ func (w *writer) syncLocked() error {
 		return err
 	}
 	syncedLSN := LSNFor(w.seg.number, uint64(pendingEnd))
-	if syncedLSN > w.synced.Load() {
-		w.synced.Store(syncedLSN)
+	// Use CAS loop to avoid lost update from read-then-write race.
+	for {
+		old := w.synced.Load()
+		if syncedLSN <= old {
+			break
+		}
+		if w.synced.CompareAndSwap(old, syncedLSN) {
+			break
+		}
 	}
 	return nil
 }
