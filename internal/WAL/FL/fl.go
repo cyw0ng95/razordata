@@ -146,9 +146,19 @@ func (f *flusher) SyncDir() error {
 }
 
 func (f *flusher) Close() error {
+	// Flush any remaining buffered data before closing (REQ000591).
+	// We flush BEFORE marking closed so that Sync() can still operate.
+	f.mu.Lock()
+	hasData := f.wbuf.off > 0
+	f.mu.Unlock()
+	if hasData {
+		_ = f.Sync() // best-effort flush; pending (non-sync'd) writes may still be lost
+	}
+
 	if !f.closed.set() {
 		return nil
 	}
+
 	f.gc.Close()
 	return nil
 }
