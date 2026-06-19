@@ -701,9 +701,13 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		op.defaultValues = s.DefaultValues
 		return op, nil
 	case *PS.Update:
-		var scan Operator = NewSeqScan(s.Table)
+		targetTable := s.Table
+		if viewSel := LookupView(targetTable); viewSel != nil {
+			targetTable = viewSel.From
+		}
+		var scan Operator = NewSeqScan(targetTable)
 		if e.store != nil {
-			ssc, err := NewSeqScanWithStore(e.store, s.Table)
+			ssc, err := NewSeqScanWithStore(e.store, targetTable)
 			if err != nil {
 				return nil, err
 			}
@@ -740,17 +744,21 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 			}
 		}
 		if e.store != nil {
-			op, err := NewUpdateWithStore(e.store, s.Table, s.Set, s.Where, current, s.Returning)
+			op, err := NewUpdateWithStore(e.store, targetTable, s.Set, s.Where, current, s.Returning)
 			if err != nil {
 				return nil, err
 			}
 			return op, nil
 		}
-		return NewUpdate(s.Table, s.Set, s.Where, current, s.Returning), nil
+		return NewUpdate(targetTable, s.Set, s.Where, current, s.Returning), nil
 	case *PS.Delete:
-		var scan Operator = NewSeqScan(s.Table)
+		tableName := s.Table
+		if viewSel := LookupView(tableName); viewSel != nil {
+			tableName = viewSel.From
+		}
+		var scan Operator = NewSeqScan(tableName)
 		if e.store != nil {
-			ssc, err := NewSeqScanWithStore(e.store, s.Table)
+			ssc, err := NewSeqScanWithStore(e.store, tableName)
 			if err != nil {
 				return nil, err
 			}
@@ -787,13 +795,13 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 			}
 		}
 		if e.store != nil {
-			op, err := NewDeleteWithStore(e.store, s.Table, s.Where, current, s.Returning)
+			op, err := NewDeleteWithStore(e.store, tableName, s.Where, current, s.Returning)
 			if err != nil {
 				return nil, err
 			}
 			return op, nil
 		}
-		return NewDelete(s.Table, s.Where, current, s.Returning), nil
+		return NewDelete(tableName, s.Where, current, s.Returning), nil
 	case *PS.CreateTable:
 		if s.Select != nil {
 			// CREATE TABLE AS SELECT needs the planner to

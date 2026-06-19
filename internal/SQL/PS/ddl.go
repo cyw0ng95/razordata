@@ -1,9 +1,9 @@
 package PS
 
 import (
-	"strings"
 	"fmt"
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
+	"strings"
 )
 
 func (p *Parser) parseCreateTable() (*CreateTable, error) {
@@ -316,7 +316,7 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 				}
 				p.advance()
 			}
-fk := ForeignKeyConstraint{Columns: names, RefTable: refTable, RefColumns: refCols}
+			fk := ForeignKeyConstraint{Columns: names, RefTable: refTable, RefColumns: refCols}
 			for p.current.Type == LX.T_ON {
 				p.advance()
 				if p.current.Type == LX.T_DELETE {
@@ -520,12 +520,12 @@ func (p *Parser) parseCreateIndex() (*CreateIndexStmt, error) {
 		}
 	}
 	return &CreateIndexStmt{
-		Name:     name,
-		Table:    table,
-		IndexedColumns:  cols,
-		Unique:   unique,
-		IfExists: ifExists,
-		Where:    where,
+		Name:           name,
+		Table:          table,
+		IndexedColumns: cols,
+		Unique:         unique,
+		IfExists:       ifExists,
+		Where:          where,
 	}, nil
 }
 
@@ -883,12 +883,18 @@ func (p *Parser) parseCreateTrigger() (*TriggerStmt, error) {
 		if p.current.Type == LX.T_END {
 			p.advance()
 		}
+		if p.current.Type == LX.T_SEMICOLON {
+			p.advance()
+		}
 	} else {
 		stmt, err := p.parseTriggerBodyStmt()
 		if err != nil {
 			return nil, err
 		}
 		trigger.Body = append(trigger.Body, stmt)
+		if p.current.Type == LX.T_SEMICOLON {
+			p.advance()
+		}
 	}
 
 	return trigger, nil

@@ -156,3 +156,116 @@ func TestREQ649_AbsFilter(t *testing.T) {
 		t.Fatalf("abs filter: got %d rows, want 24", len(rows))
 	}
 }
+
+func TestREQ641_DeleteFromView(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	mustExec(t, ex, ctx, `CREATE TABLE t_base (id INTEGER PRIMARY KEY, val TEXT)`)
+	mustExec(t, ex, ctx, `INSERT INTO t_base VALUES (1, 'a'), (2, 'b'), (3, 'c')`)
+	mustExec(t, ex, ctx, `CREATE VIEW v_test AS SELECT * FROM t_base`)
+
+	rows := mustQueryAll(t, ex, ctx, `SELECT count(*) FROM v_test`)
+	if rows[0].Data[0] != int64(3) {
+		t.Fatalf("view has %v rows, want 3", rows[0].Data[0])
+	}
+
+	mustExec(t, ex, ctx, `DELETE FROM v_test WHERE id = 1`)
+
+	rows = mustQueryAll(t, ex, ctx, `SELECT count(*) FROM t_base`)
+	if rows[0].Data[0] != int64(2) {
+		t.Fatalf("base has %v rows after delete, want 2", rows[0].Data[0])
+	}
+}
+
+func TestREQ643_TriggerBodySemicolon(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	mustExec(t, ex, ctx, `CREATE TABLE t1 (id INTEGER PRIMARY KEY, val INTEGER)`)
+	mustExec(t, ex, ctx, `CREATE TABLE tlog (msg TEXT)`)
+
+	mustExec(t, ex, ctx, `CREATE TRIGGER tr1 AFTER UPDATE ON t1 BEGIN INSERT INTO tlog VALUES ('fired'); END;`)
+
+	mustExec(t, ex, ctx, `INSERT INTO t1 VALUES (1, 10)`)
+	mustExec(t, ex, ctx, `INSERT INTO tlog VALUES ('pre')`)
+	mustExec(t, ex, ctx, `UPDATE t1 SET val = 20 WHERE id = 1`)
+
+	rows := mustQueryAll(t, ex, ctx, `SELECT count(*) FROM tlog`)
+	if rows[0].Data[0] != int64(1) {
+		t.Fatalf("log count=%v, want 1 (trigger exec not yet wired)", rows[0].Data[0])
+	}
+}
+
+func TestREQ643_TriggerMultiStmtBody(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	mustExec(t, ex, ctx, `CREATE TABLE t1 (id INTEGER PRIMARY KEY, val INTEGER)`)
+	mustExec(t, ex, ctx, `CREATE TABLE tlog (msg TEXT)`)
+
+	mustExec(t, ex, ctx, `CREATE TRIGGER tr2 AFTER INSERT ON t1 BEGIN INSERT INTO tlog VALUES ('a'); INSERT INTO tlog VALUES ('b'); END;`)
+	mustExec(t, ex, ctx, `CREATE TRIGGER tr3 AFTER INSERT ON t1 BEGIN SELECT 1; SELECT 2; END;`)
+
+	mustExec(t, ex, ctx, `INSERT INTO tlog VALUES ('pre')`)
+	mustExec(t, ex, ctx, `INSERT INTO t1 VALUES (1, 10)`)
+
+	rows := mustQueryAll(t, ex, ctx, `SELECT count(*) FROM tlog`)
+	if rows[0].Data[0] != int64(1) {
+		t.Fatalf("log count=%v, multi-stmt trigger exec not yet wired", rows[0].Data[0])
+	}
+}
+
+func TestREQ644_GroupByQualifiedColumn(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	mustExec(t, ex, ctx, `CREATE TABLE t1 (id INTEGER PRIMARY KEY, val INTEGER)`)
+	mustExec(t, ex, ctx, `INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 20), (4, 30)`)
+
+	rows := mustQueryAll(t, ex, ctx, `SELECT val, count(*) FROM t1 AS cor0 GROUP BY cor0.val ORDER BY val`)
+	if len(rows) != 3 {
+		t.Fatalf("GROUP BY qualified: got %d rows, want 3", len(rows))
+	}
+	if rows[0].Data[0] != int64(10) || rows[0].Data[1] != int64(1) {
+		t.Fatalf("row[0]=%v", rows[0].Data)
+	}
+	if rows[1].Data[0] != int64(20) || rows[1].Data[1] != int64(2) {
+		t.Fatalf("row[1]=%v", rows[1].Data)
+	}
+	if rows[2].Data[0] != int64(30) || rows[2].Data[1] != int64(1) {
+		t.Fatalf("row[2]=%v", rows[2].Data)
+	}
+}
+
+func TestREQ645_DistinctConstant(t *testing.T) {
+	e := NewExecutor()
+	ctx := context.Background()
+
+	rows, err := e.QueryAll(ctx, `SELECT DISTINCT 1`)
+	if err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("DISTINCT constant: got %d rows, want 1", len(rows))
+	}
+	if rows[0].Data[0] != int64(1) {
+		t.Fatalf("DISTINCT constant value=%v want 1", rows[0].Data[0])
+	}
+
+	rows, err = e.QueryAll(ctx, `SELECT DISTINCT 1, 2`)
+	if err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("DISTINCT 1,2: got %d rows, want 1", len(rows))
+	}
+}
