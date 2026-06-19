@@ -126,9 +126,7 @@ func (e *engine) Write(key, value []byte) error {
 		return ErrClosed
 	}
 
-	if err := e.activeMem.Insert(key, value); err != nil {
-		return err
-	}
+	e.activeMem.Insert(key, value)
 
 	if e.activeMem.ShouldFlush() {
 		return e.flushActiveMemtable()

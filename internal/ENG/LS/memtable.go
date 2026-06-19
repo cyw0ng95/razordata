@@ -19,10 +19,9 @@ func newMemtable(maxSize int64) *memtable {
 	}
 }
 
-func (m *memtable) Insert(key, value []byte) error {
+func (m *memtable) Insert(key, value []byte) {
 	m.skiplist.Insert(key, value)
 	m.size.Add(int64(len(key) + len(value)))
-	return nil
 }
 
 func (m *memtable) Get(key []byte) ([]byte, bool) {
@@ -67,17 +66,19 @@ func (m *memtable) RefCount() int64 {
 
 func encodeVarint(val int64) []byte {
 	var buf [10]byte
+	uv := uint64(val)
 	n := 0
 	for {
-		if n >= len(buf) {
-			return buf[:n]
-		}
-		buf[n] = byte(val & 0x7f)
-		if val >>= 7; val == 0 {
+		buf[n] = byte(uv & 0x7f)
+		uv >>= 7
+		if uv == 0 {
 			break
 		}
 		buf[n] |= 0x80
 		n++
+		if n >= len(buf) {
+			return buf[:n]
+		}
 	}
 	return buf[:n+1]
 }
