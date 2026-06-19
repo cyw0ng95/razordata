@@ -58,30 +58,52 @@ func DiffResultSets(actual *ResultSet, rec *Record) string {
 }
 
 // diffHashed validates an MD5-hashed expected row.
+// SQLite's sqllogictest reference implementation sorts ROWS (as
+// tab-separated cell strings lexicographically), then hashes each
+// cell followed by newline. Sorting individual cells (flatten-then-sort)
+// would produce a different hash for multi-column queries.
 func diffHashed(actual *ResultSet, marker string) string {
 	var n int
 	var want string
 	if _, err := fmt.Sscanf(marker, "%d values hashing to %s", &n, &want); err != nil {
-		// Some corpora use different phrasing; fall back to
-		// literal text comparison and let the caller decide.
 		if len(actual.Rows) == 1 && len(actual.Rows[0]) == 1 && actual.Rows[0][0].Text == marker {
 			return ""
 		}
 		return "hashed: unparseable marker " + marker
 	}
+	// Sort rows as tab-separated strings (SQLite sqllogictest convention).
+	sorted := make([][]Value, len(actual.Rows))
+	copy(sorted, actual.Rows)
+	sort.Slice(sorted, func(i, j int) bool {
+		ai := rowString(sorted[i])
+		aj := rowString(sorted[j])
+		return ai < aj
+	})
 	var flat []Value
-	for _, row := range actual.Rows {
+	for _, row := range sorted {
 		flat = append(flat, row...)
 	}
 	if len(flat) != n {
 		return fmt.Sprintf("hashed: got %d cells, want %d", len(flat), n)
 	}
-	sort.Slice(flat, func(i, j int) bool { return valueLess(flat[i], flat[j]) < 0 })
 	h := hashValues(flat)
 	if h != want {
 		return fmt.Sprintf("hashed: got %s, want %s", h, want)
 	}
 	return ""
+}
+
+// rowString renders a row as a tab-separated string for lexicographic
+// sorting, matching SQLite's sqllogictest row-comparison convention.
+func rowString(row []Value) string {
+	var b strings.Builder
+	for i, v := range row {
+		if i > 0 {
+			b.WriteByte('\t')
+		}
+		b.WriteString(v.String())
+	}
+	return b.String()
 }
 
 func hashValues(vs []Value) string {
