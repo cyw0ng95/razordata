@@ -81,7 +81,6 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 		return ErrTableNotRegisteredForStorage
 	}
 
-	// Initialize reservoir sampling
 	const sampleSize = 10000
 	reservoir := make([][]byte, 0, sampleSize)
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))

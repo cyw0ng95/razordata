@@ -12,6 +12,77 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQL/RE"
 )
 
+// cloneExpr creates a deep copy of an expression to avoid
+// mutating the original AST when resolving ORDER BY position references.
+func cloneExpr(e PS.Expr) PS.Expr {
+	if e == nil {
+		return nil
+	}
+	switch x := e.(type) {
+	case *PS.Ident:
+		return &PS.Ident{Name: x.Name}
+	case *PS.QualifiedName:
+		return &PS.QualifiedName{Table: x.Table, Name: x.Name}
+	case *PS.NumberLiteral:
+		return &PS.NumberLiteral{Val: x.Val}
+	case *PS.FloatLiteral:
+		return &PS.FloatLiteral{Val: x.Val}
+	case *PS.StringLiteral:
+		return &PS.StringLiteral{Val: x.Val}
+	case *PS.BoolLiteral:
+		return &PS.BoolLiteral{Val: x.Val}
+	case *PS.NullLiteral:
+		return &PS.NullLiteral{}
+	case *PS.Param:
+		return &PS.Param{Index: x.Index}
+	case *PS.AliasedExpr:
+		return &PS.AliasedExpr{Expr: cloneExpr(x.Expr), Alias: x.Alias}
+	case *PS.BinaryExpr:
+		return &PS.BinaryExpr{
+			Left:  cloneExpr(x.Left),
+			Op:    x.Op,
+			Right: cloneExpr(x.Right),
+		}
+	case *PS.UnaryExpr:
+		return &PS.UnaryExpr{
+			Op:     x.Op,
+			Operand: cloneExpr(x.Operand),
+		}
+	case *PS.AggregateFunc:
+		return &PS.AggregateFunc{
+			Name:     x.Name,
+			Arg:      cloneExpr(x.Arg),
+			Distinct: x.Distinct,
+			Separator: cloneExpr(x.Separator),
+		}
+	case *PS.CaseExpr:
+		whenList := make([]PS.WhenClause, len(x.WhenList))
+		for i, w := range x.WhenList {
+			whenList[i] = PS.WhenClause{
+				Cond: cloneExpr(w.Cond),
+				Then: cloneExpr(w.Then),
+			}
+		}
+		var elseExpr PS.Expr
+		if x.Else != nil {
+			elseExpr = cloneExpr(x.Else)
+		}
+		return &PS.CaseExpr{
+			Expr:     cloneExpr(x.Expr),
+			WhenList: whenList,
+			Else:     elseExpr,
+		}
+	case *PS.SubqueryExpr:
+		return &PS.SubqueryExpr{
+			Subquery: x.Subquery,
+		}
+	default:
+		// For unknown types, return as-is (shallow copy).
+		// This covers most simple cases; complex expressions may need more work.
+		return e
+	}
+}
+
 type plan struct {
 	root    Operator
 	cost    float64
@@ -675,6 +746,30 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	if s.Having != nil {
 		filter := NewFilter(current, s.Having)
 		current = filter
+	}
+
+	// Resolve ORDER BY position references (e.g., "ORDER BY 1" means first SELECT column).
+	// This must happen before pkOrderMatches check and sort creation.
+	if len(s.OrderBy) > 0 {
+		// Build a list of SELECT column expressions for position resolution.
+		selectExprs := make([]PS.Expr, 0, len(s.Cols))
+		for _, col := range s.Cols {
+			if ae, ok := col.(*PS.AliasedExpr); ok {
+				selectExprs = append(selectExprs, ae.Expr)
+			} else {
+				selectExprs = append(selectExprs, col)
+			}
+		}
+		// Replace integer literal position references with the corresponding SELECT expression.
+		for i := range s.OrderBy {
+			if nl, ok := s.OrderBy[i].Expr.(*PS.NumberLiteral); ok {
+				pos := int(nl.Val)
+				if pos >= 1 && pos <= len(selectExprs) {
+					// Clone the expression to avoid mutating the original AST.
+					s.OrderBy[i].Expr = cloneExpr(selectExprs[pos-1])
+				}
+			}
+		}
 	}
 
 	if len(s.OrderBy) > 0 {

@@ -196,7 +196,6 @@ func (p *ParallelSeqScan) scanPartition(start, end int) *Batch {
 	return batch
 }
 
-// Close releases resources.
 func (p *ParallelSeqScan) Close() error {
 	if p.source != nil {
 		return p.source.Close()
@@ -363,7 +362,6 @@ func (p *ParallelIndexScan) scanIndexRange(start, end int) *Batch {
 	return batch
 }
 
-// Close releases resources.
 func (p *ParallelIndexScan) Close() error {
 	return nil
 }

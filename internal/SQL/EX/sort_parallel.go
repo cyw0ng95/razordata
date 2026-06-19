@@ -12,9 +12,7 @@ import (
 type SortOrder int
 
 const (
-	// AscOrder sorts in ascending order.
 	AscOrder SortOrder = iota
-	// DescOrder sorts in descending order.
 	DescOrder
 )
 
@@ -160,7 +158,6 @@ func (s *ParallelSort) sequentialSort() {
 }
 
 // firstBatch returns the first batch from the sorted rows.
-// Multiple batches can be retrieved by subsequent calls (TODO).
 func (s *ParallelSort) firstBatch() (*Batch, error) {
 	schema := make([]string, 0)
 	types := make([]LX.TokenType, 0)
@@ -236,7 +233,6 @@ func truncateColumnData(data any, size int) any {
 	return data
 }
 
-// Close releases resources.
 func (s *ParallelSort) Close() error {
 	if s.source != nil {
 		return s.source.Close()

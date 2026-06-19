@@ -516,7 +516,6 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 		}
 		propagateParams(op, args)
 		defer op.Close()
-		// Collect all RETURNING rows
 		var out []Row
 		for {
 			row, err := op.Next(ctx)
@@ -894,7 +893,6 @@ func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*s
 			return nil, err
 		}
 		propagateParams(op, args)
-		// Collect first row to discover schema
 		firstRow, firstErr := op.Next(ctx)
 		if firstErr != nil && firstErr != ErrNoRows {
 			op.Close()

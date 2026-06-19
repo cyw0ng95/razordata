@@ -12,7 +12,6 @@ type PipelineOperator interface {
 	// Process consumes one batch and produces output.
 	// Returns (nil, nil) to signal end-of-stream.
 	Process(ctx context.Context, batch *Batch) (*Batch, error)
-	// Close releases resources.
 	Close() error
 }
 

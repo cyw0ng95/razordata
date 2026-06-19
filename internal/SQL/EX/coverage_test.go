@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// === Aggregate WithParams ===
 
 func TestCoverage_Aggregate_WithParams(t *testing.T) {
 	ResetForTest(t)
@@ -21,7 +20,6 @@ func TestCoverage_Aggregate_WithParams(t *testing.T) {
 	agg.WithParams(nil)
 }
 
-// === NewAnalyzeWithStore ===
 
 func TestCoverage_AnalyzeWithStore(t *testing.T) {
 	ex, eng := newEngineExecutor(t)
@@ -35,7 +33,6 @@ func TestCoverage_AnalyzeWithStore(t *testing.T) {
 	}
 }
 
-// === Analyze WithParams ===
 
 func TestCoverage_Analyze_WithParams(t *testing.T) {
 	a := NewAnalyze(nil)
@@ -45,7 +42,6 @@ func TestCoverage_Analyze_WithParams(t *testing.T) {
 	}
 }
 
-// === Vacuum WithParams ===
 
 func TestCoverage_Vacuum_WithParams(t *testing.T) {
 	v := NewVacuum(nil)
@@ -55,7 +51,6 @@ func TestCoverage_Vacuum_WithParams(t *testing.T) {
 	}
 }
 
-// === newUniqueForCatalog ===
 
 func TestCoverage_newUniqueForCatalog(t *testing.T) {
 	unique := []UniqueKey{
@@ -75,7 +70,6 @@ func TestCoverage_newUniqueForCatalogEmpty(t *testing.T) {
 	}
 }
 
-// === Compound UNION / INTERSECT / EXCEPT ===
 
 func TestCoverage_Compound_Intersect(t *testing.T) {
 	ResetForTest(t)
@@ -163,7 +157,6 @@ func TestCoverage_Compound_UnionLimit(t *testing.T) {
 	}
 }
 
-// === sumDistinct ===
 
 func TestCoverage_sumDistinct(t *testing.T) {
 	ResetForTest(t)
@@ -289,7 +282,6 @@ func TestCoverage_groupConcatDistinctSep(t *testing.T) {
 	}
 }
 
-// === Aggregate with GROUP BY ===
 
 func TestCoverage_aggGroupBy(t *testing.T) {
 	ResetForTest(t)
@@ -321,7 +313,6 @@ func TestCoverage_aggGroupByHaving(t *testing.T) {
 	}
 }
 
-// === Scalar IN ===
 
 func TestCoverage_scalarIn(t *testing.T) {
 	ResetForTest(t)
@@ -352,7 +343,6 @@ func TestCoverage_scalarInMiss(t *testing.T) {
 	}
 }
 
-// === DELETE with WHERE ===
 
 func TestCoverage_deleteWhere(t *testing.T) {
 	ResetForTest(t)
@@ -383,7 +373,6 @@ func TestCoverage_deleteAll(t *testing.T) {
 	}
 }
 
-// === UPDATE with WHERE ===
 
 func TestCoverage_updateWhere(t *testing.T) {
 	ResetForTest(t)
@@ -399,7 +388,6 @@ func TestCoverage_updateWhere(t *testing.T) {
 	}
 }
 
-// === DISTINCT ===
 
 func TestCoverage_distinct(t *testing.T) {
 	ResetForTest(t)
@@ -419,7 +407,6 @@ func TestCoverage_distinct(t *testing.T) {
 	}
 }
 
-// === ORDER BY expression ===
 
 func TestCoverage_orderByExpr(t *testing.T) {
 	ResetForTest(t)
@@ -439,7 +426,6 @@ func TestCoverage_orderByExpr(t *testing.T) {
 	}
 }
 
-// === CASE WHEN ===
 
 func TestCoverage_caseWhen(t *testing.T) {
 	ResetForTest(t)
@@ -455,7 +441,6 @@ func TestCoverage_caseWhen(t *testing.T) {
 	}
 }
 
-// === CAST ===
 
 func TestCoverage_castIntToText(t *testing.T) {
 	ResetForTest(t)
@@ -470,7 +455,6 @@ func TestCoverage_castIntToText(t *testing.T) {
 	}
 }
 
-// === LIMIT / OFFSET ===
 
 func TestCoverage_limitOffset(t *testing.T) {
 	ResetForTest(t)
@@ -490,7 +474,6 @@ func TestCoverage_limitOffset(t *testing.T) {
 	}
 }
 
-// === NULL handling ===
 
 func TestCoverage_nullComparison(t *testing.T) {
 	ResetForTest(t)
@@ -534,7 +517,6 @@ func TestCoverage_isNotNullWhere(t *testing.T) {
 	}
 }
 
-// === NOT IN / NOT LIKE / NOT BETWEEN ===
 
 func TestCoverage_notIn(t *testing.T) {
 	ResetForTest(t)
@@ -580,7 +562,6 @@ func TestCoverage_notBetween(t *testing.T) {
 	}
 }
 
-// === LIKE ===
 
 func TestCoverage_like(t *testing.T) {
 	ResetForTest(t)
@@ -655,7 +636,6 @@ func TestCoverage_likeEscape(t *testing.T) {
 	}
 }
 
-// === BETWEEN ===
 
 func TestCoverage_between(t *testing.T) {
 	ResetForTest(t)
@@ -672,7 +652,6 @@ func TestCoverage_between(t *testing.T) {
 	}
 }
 
-// === COALESCE ===
 
 func TestCoverage_coalesce(t *testing.T) {
 	ResetForTest(t)
@@ -689,7 +668,6 @@ func TestCoverage_coalesce(t *testing.T) {
 	}
 }
 
-// === NULLIF ===
 
 func TestCoverage_nullif(t *testing.T) {
 	ResetForTest(t)
@@ -706,7 +684,6 @@ func TestCoverage_nullif(t *testing.T) {
 	}
 }
 
-// === Nested subquery ===
 
 func TestCoverage_scalarSubquery(t *testing.T) {
 	ResetForTest(t)
@@ -758,7 +735,6 @@ func TestCoverage_inSubquery(t *testing.T) {
 	}
 }
 
-// === Window functions ===
 
 func TestCoverage_windowRowNumber(t *testing.T) {
 	ResetForTest(t)
@@ -820,7 +796,6 @@ func TestCoverage_windowSum(t *testing.T) {
 	}
 }
 
-// === DDL operations ===
 
 func TestCoverage_createTrigger(t *testing.T) {
 	ResetForTest(t)
@@ -908,7 +883,6 @@ func TestCoverage_ctas(t *testing.T) {
 	}
 }
 
-// === EXPLAIN / PRAGMA / REINDEX / TRUNCATE ===
 
 func TestCoverage_explain(t *testing.T) {
 	ResetForTest(t)
@@ -973,9 +947,7 @@ func TestCoverage_truncate(t *testing.T) {
 	}
 }
 
-// === Transaction control ===
 
-// === Multiple aggregate functions ===
 
 func TestCoverage_multiAggregate(t *testing.T) {
 	ResetForTest(t)

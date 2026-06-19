@@ -62,10 +62,8 @@ func NewHashJoin(left, right Operator, leftTbl, rightTbl, leftKey, rightKey stri
 	return &HashJoin{left: left, right: right, leftKey: leftKey, rightKey: rightKey, leftTbl: leftTbl, rightTbl: rightTbl, partitions: p}
 }
 
-// LeftChild returns the left child operator.
 func (j *HashJoin) LeftChild() Operator { return j.left }
 
-// RightChild returns the right child operator.
 func (j *HashJoin) RightChild() Operator { return j.right }
 
 // Next produces the next matching pair. First call performs

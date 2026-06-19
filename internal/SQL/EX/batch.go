@@ -6,7 +6,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 )
 
-// SelRange represents a half-open run of contiguous row indices
+// SelRange is a contiguous inclusive-end run of row indices
 // in a selection vector: [Start, End). It is used to compactly
 // represent filtered batches where the surviving rows happen to
 // form consecutive runs (typical of BETWEEN, range predicates,
@@ -118,9 +118,6 @@ type Column struct {
 // slices when possible. Caller must call Put() to return the
 // batch when done.
 type Batch struct {
-	// Cols holds column data in columnar layout.
-	// Slice is pre-allocated in the pool; entries are
-	// type-switched on the underlying Data field.
 	Cols []Column
 
 	// Sel is the selection vector (rows that passed filter).
@@ -131,7 +128,6 @@ type Batch struct {
 	Sel []uint16
 
 	// Size is the physical number of rows in this batch.
-	// Logical size is Size if Sel is nil, else len(Sel).
 	Size int
 
 	// Pooled indicates whether this batch came from the pool

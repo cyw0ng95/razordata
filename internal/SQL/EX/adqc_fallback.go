@@ -25,13 +25,11 @@ func NewFallbackOp(inner Operator, planHash, reason string) *FallbackOp {
 	}
 }
 
-// Next implements Operator. It always delegates to the interpreted
-// inner operator, serving as the guaranteed-safe code path.
+// Next implements Operator.
 func (f *FallbackOp) Next(ctx context.Context) (Row, error) {
 	return f.inner.Next(ctx)
 }
 
-// Close implements Operator.
 func (f *FallbackOp) Close() error {
 	return f.inner.Close()
 }

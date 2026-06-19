@@ -88,7 +88,6 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*Batch, error) {
 	return batch, nil
 }
 
-// Close releases the underlying source operator.
 func (v *VectorizedSeqScan) Close() error {
 	if v.current != nil {
 		v.current.Put()

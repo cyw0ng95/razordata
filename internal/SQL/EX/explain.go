@@ -29,12 +29,10 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
 	}
 
 	if e.rows == nil {
-		// Generate rows based on mode
 		switch e.mode {
 		case PS.ExplainQueryPlan:
 			e.rows = formatPlanTree(e.planNode)
 		default:
-			// EXPLAIN (normal mode) - return operator descriptions
 			e.rows = formatExplainNormal(e.planNode)
 		}
 	}

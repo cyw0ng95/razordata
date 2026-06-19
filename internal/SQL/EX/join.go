@@ -36,10 +36,8 @@ func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on fu
 	return &NestedLoopJoin{left: left, right: right, leftTbl: leftTable, rightTbl: rightTable, on: on, kind: kind}
 }
 
-// LeftChild returns the left child operator.
 func (j *NestedLoopJoin) LeftChild() Operator { return j.left }
 
-// RightChild returns the right child operator.
 func (j *NestedLoopJoin) RightChild() Operator { return j.right }
 
 func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
