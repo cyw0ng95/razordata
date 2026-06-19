@@ -295,9 +295,9 @@ func walkPlaceholderTypes(stmt PS.Stmt, out *[]int) {
 func walkExprTypes(table string, expr PS.Expr, out *[]int) {
 	switch e := expr.(type) {
 	case *PS.Param:
-		// The BinaryExpr handler matched this Param against its
-		// peer column and already appended the column's type.
-		// Do not double-append.
+		// Standalone placeholder (e.g. INSERT VALUES(?, ?)).
+		// No column context to resolve, so mark as unknown (-1).
+		*out = append(*out, -1)
 		return
 	case *PS.BinaryExpr:
 		// If one side is an Ident and the other is a Param,

@@ -11,7 +11,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 	case LX.T_INT:
 		val, ok := p.current.Literal.(int64)
 		if !ok {
-			return nil, &SyntaxError{Msg: fmt.Sprintf("expected int64 literal, got %T", p.current.Literal)}
+			return nil, &SyntaxError{Expected: "int64 literal", Got: fmt.Sprintf("%T", p.current.Literal)}
 		}
 		p.advance()
 		return &NumberLiteral{Val: val}, nil
@@ -22,7 +22,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 	case LX.T_STRING:
 		val, ok := p.current.Literal.(string)
 		if !ok {
-			return nil, &SyntaxError{Msg: fmt.Sprintf("expected string literal, got %T", p.current.Literal)}
+			return nil, &SyntaxError{Expected: "string literal", Got: fmt.Sprintf("%T", p.current.Literal)}
 		}
 		p.advance()
 		return &StringLiteral{Val: val}, nil

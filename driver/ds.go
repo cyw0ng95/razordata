@@ -109,9 +109,16 @@ func getOrCreateEngine(ctx context.Context, cfg Config) (*v1.Engine, string, err
 	// For file-backed databases, reuse the existing engine.
 	if key != ":memory:" {
 		if eng, ok := engines[key]; ok {
-			return eng, dirByDSN[key], nil
+			// If the cached engine was closed, discard it and recreate.
+			if eng.IsClosed() {
+				delete(engines, key)
+				delete(dirByDSN, key)
+			} else {
+				return eng, dirByDSN[key], nil
+			}
 		}
 	}
+	// For :memory:, always create a fresh engine (no caching).
 
 	// Clear EX state before opening a new engine.
 	EX.UnregisterAll()

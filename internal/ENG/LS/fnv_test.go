@@ -14,7 +14,7 @@ func TestFNV1a_EmptyInput(t *testing.T) {
 
 func TestFNV1a_Hello(t *testing.T) {
 	h := fnv1aHash([]byte("hello"), fnv1aOffset32)
-	const want uint32 = 0x4b9f1f24
+	const want uint32 = 0x4f9f2cab
 	if h != want {
 		t.Errorf("hash of \"hello\" = 0x%x, want 0x%x", h, want)
 	}

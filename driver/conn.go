@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
+	"github.com/cyw0ng95/razordata/internal/SYS/SE"
 	v1 "github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
 
@@ -38,6 +39,59 @@ func (c *Conn) Close() error {
 	return nil
 }
 
+// ExecContext executes a query that doesn't return rows (INSERT, UPDATE, DELETE, DDL).
+// Auto-commits if not in an explicit transaction.
+func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Value) (driver.Result, error) {
+	if c == nil || c.session == nil {
+		return nil, AP.ErrNotOpen
+	}
+
+	// Auto-commit: if no explicit transaction is active, wrap execution in one.
+	sess, ok := c.session.(*SE.Session)
+	if !ok || !sess.HasActiveTxn() {
+		// Begin an auto-commit transaction.
+		tx, err := c.session.Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		stmt, err := Prepare(c, query)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, err
+		}
+		res, err := stmt.Exec(args)
+		if err != nil {
+			_ = stmt.Close()
+			_ = tx.Rollback(ctx)
+			return nil, err
+		}
+		if err := stmt.Close(); err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		// Clear the session's txn reference after auto-commit.
+		sess.ClearTxn()
+		return res, nil
+	}
+
+	// In an explicit transaction: prepare and execute normally.
+	stmt, err := Prepare(c, query)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+	return stmt.Exec(args)
+}
+
+// Exec executes a query that doesn't return rows (INSERT, UPDATE, DELETE, DDL).
+// Auto-commits if not in an explicit transaction.
+func (c *Conn) Exec(query string, args []driver.Value) (driver.Result, error) {
+	return c.ExecContext(context.Background(), query, args)
+}
+
 // Begin starts a transaction.
 func (c *Conn) Begin() (driver.Tx, error) {
 	if c == nil || c.session == nil {
@@ -47,7 +101,8 @@ func (c *Conn) Begin() (driver.Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Tx{tx: tx}, nil
+	sess, _ := c.session.(*SE.Session)
+	return &Tx{tx: tx, session: sess}, nil
 }
 
 // Result implements driver.Result for non-RETURNING Exec results.

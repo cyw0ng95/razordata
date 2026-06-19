@@ -1682,6 +1682,9 @@ func TestParseFKAction_NoWithoutAction(t *testing.T) {
 		t.Errorf("got %q, want %q", action, "NO")
 	}
 }
+
+// REQ000635: foreign key MATCH SIMPLE parsed correctly.
+func TestParseCreateTable_ForeignKeyMatch(t *testing.T) {
 	p := NewParser("CREATE TABLE t (a INT, FOREIGN KEY (a) REFERENCES r (b) MATCH SIMPLE ON DELETE CASCADE)")
 	stmt, err := p.Parse()
 	if err != nil {

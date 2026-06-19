@@ -227,6 +227,14 @@ func (s *Session) Begin(ctx context.Context) (AP.Transaction, error) {
 	return t, nil
 }
 
+// HasActiveTxn reports whether the session currently has an active transaction.
+// Thread-safe.
+func (s *Session) HasActiveTxn() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.txn != nil
+}
+
 // Commit finalizes the current transaction.
 func (s *Session) Commit(ctx context.Context) error {
 	if s.engine.IsClosed() {
@@ -263,6 +271,14 @@ func (s *Session) Rollback(ctx context.Context) error {
 	}
 	s.txn = nil
 	return nil
+}
+
+// ClearTxn clears the session's active transaction reference.
+// Called by the SQL driver when a tx Commit/Rollback completes.
+func (s *Session) ClearTxn() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.txn = nil
 }
 
 // Savepoint creates a savepoint with the given name.

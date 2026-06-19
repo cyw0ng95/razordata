@@ -441,6 +441,9 @@ func TestParseIntLiteral_MaxInt64(t *testing.T) {
 		t.Errorf("got %d, want %d", v, max)
 	}
 }
+
+// REQ000634: error sentinel messages.
+func TestErrorSentinelMessages(t *testing.T) {
 	if ErrUnexpectedChar.Error() != "lx: unexpected character" {
 		t.Error("unexpected ErrUnexpectedChar message")
 	}

@@ -1043,6 +1043,9 @@ func TestStopGCWithCtx_BeforeStart(t *testing.T) {
 		t.Errorf("StopGCWithCtx before StartGC: want nil, got %v", err)
 	}
 }
+
+// REQ000633: Commit with nil key chain does not panic.
+func TestCommit_NilKeyChain(t *testing.T) {
 	m := NewManager()
 	defer m.Close()
 

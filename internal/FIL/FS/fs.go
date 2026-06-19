@@ -181,7 +181,7 @@ func (fm *FileManager) Open(name string) (*FileHandle, error) {
 		// (REQ000599).
 		if fh.FD != -1 {
 			// FD is valid, reuse it. Increment ref count and return.
-			fh.Refs.Add(1)
+			fh.Refs++
 			fh.mu.Unlock()
 			return fh, nil
 		}

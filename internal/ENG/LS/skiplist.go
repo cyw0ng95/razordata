@@ -22,6 +22,7 @@ type skipList struct {
 	level atomic.Int32
 	len   atomic.Int64
 	rng   *rand.Rand
+	rmu   sync.Mutex // protects rng for concurrent shared-list access
 }
 
 var nodeSlicePool = sync.Pool{
@@ -59,10 +60,12 @@ func New() *skipList {
 }
 
 func (sl *skipList) randomLevel() int {
+	sl.rmu.Lock()
 	lvl := 1
 	for lvl < maxLevel && sl.rng.IntN(2) == 0 {
 		lvl++
 	}
+	sl.rmu.Unlock()
 	return lvl
 }
 

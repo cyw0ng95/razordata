@@ -286,6 +286,9 @@ func (e *Engine) openInMemory() (err error) {
 	// tables/schemas maps, freshly cleared by open() above.
 	e.exe = executor.NewExecutor()
 
+	// In-memory mode still needs a txn manager for MVCC timestamps.
+	e.txn = vl.NewManager()
+
 	e.started = time.Now()
 	e.opened.Store(true)
 	success = true
@@ -590,6 +593,9 @@ func (e *Engine) Logger() lg.Logger { return e.log }
 func (e *Engine) BeginTxn(ctx context.Context) (AP.Transaction, error) {
 	if e.closed.Load() {
 		return nil, AP.ErrClosed
+	}
+	if e.txn == nil {
+		return nil, fmt.Errorf("txn manager not initialized")
 	}
 	tx, err := e.txn.Begin(ctx)
 	if err != nil {

@@ -70,7 +70,7 @@ func (em *epochManager) ExitEpoch(goroutineID uint64) {
 }
 
 func (em *epochManager) Reclaim(batch []unsafe.Pointer) {
-	currentEpoch := em.epoch.Load()
+	_ = em.epoch.Load()
 
 	// Drain pending old-generation buffers from the arena.
 	// This integrates with TXN/MV/arena.go's generation reclamation

@@ -23,6 +23,7 @@ var (
 	ErrCorrupt         = errors.New("block checksum mismatch: data corrupted")
 	ErrIO              = errors.New("I/O error")
 	ErrBigBlock        = errors.New("data exceeds block capacity")
+	ErrClosed          = errors.New("block device is closed")
 	errMmapUnsupported = errors.New("mmap not supported on this platform")
 )
 

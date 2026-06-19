@@ -1273,6 +1273,9 @@ func TestFoldIntIntDivideByZero(t *testing.T) {
 		t.Errorf("expected nil for 1/0, got %v", got)
 	}
 }
+
+// REQ000637: NULL propagation in constant folding.
+func TestConstantFoldBinary_NullPropagation(t *testing.T) {
 	cases := []struct {
 		sql   string
 		check func(*PS.Select) bool

@@ -112,6 +112,9 @@ func TestPredicateCacheLRUEviction(t *testing.T) {
 		t.Error("expected 'c' to be present")
 	}
 }
+
+// REQ000636: BuildTree is memoized — repeated Plan calls don't re-execute.
+func TestPlanner_BuildTreeMemoized(t *testing.T) {
 	calls := 0
 	pl := NewPlannerWith(PlanOptions{
 		BuildTree: func(PS.Stmt) (float64, error) {

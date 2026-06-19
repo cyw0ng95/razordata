@@ -304,6 +304,9 @@ func TestSeqScan_CloseDouble(t *testing.T) {
 		t.Errorf("double Close errors: %v, %v", err1, err2)
 	}
 }
+
+// REQ000638: helper — compare result rows (both [][]interface{}).
+func rowsEqual(got, want [][]interface{}) bool {
 	if len(got) != len(want) {
 		return false
 	}
