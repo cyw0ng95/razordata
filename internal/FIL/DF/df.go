@@ -28,11 +28,19 @@ var (
 
 var bufPool = sync.Pool{
 	New: func() any {
+		// Allocate extra padding bytes for alignment.
 		data := make([]byte, DefaultBlockSize+4096)
-		for uintptr(unsafe.Pointer(&data[0]))%4096 != 0 {
-			data = data[1:]
+		// O(1) alignment: compute the offset to the first 4096-aligned
+		// address within the slice. This replaces the O(n) byte-scan
+		// loop (REQ000604).
+		base := uintptr(unsafe.Pointer(&data[0]))
+		alignMask := ^uintptr(4095)
+		alignOffset := (uintptr(4096) - (base & 4095)) & 4095
+		alignOffset = alignOffset & alignMask // handle base already aligned
+		if base&4095 != 0 {
+			alignOffset = 4096 - (base & 4095)
 		}
-		buf := data[:DefaultBlockSize]
+		buf := data[alignOffset : alignOffset+DefaultBlockSize]
 		return &buf
 	},
 }
