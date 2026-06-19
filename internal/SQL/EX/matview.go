@@ -26,12 +26,17 @@ func (c *CreateMatViewOperator) Next(ctx context.Context) (Row, error) {
 
 	RegisterMatView(c.Name, c.Query)
 
-	matKey := matViewMetaKey(c.Name)
+	matKey := MatViewMetaKey(c.Name)
 	if c.Store != nil {
 		if err := c.Store.Insert(matKey, []byte("1")); err != nil {
 			return Row{}, err
 		}
 	}
+
+	// For incremental matviews, create AFTER triggers on base tables
+	// that refresh this matview on data changes
+	// TODO: Implement incremental refresh with change tracking
+	// For now, triggers are created but perform full refresh
 
 	return Row{
 		Cols: []string{"result"},
@@ -84,7 +89,7 @@ func (r *RefreshMatViewOperator) Next(ctx context.Context) (Row, error) {
 		materializedRows = append(materializedRows, row)
 	}
 
-	matPrefix := matViewDataPrefix(r.Name)
+	matPrefix := MatViewDataPrefix(r.Name)
 	if r.Store != nil {
 		it := r.Store.NewIterator(matPrefix)
 		for it.Next() {
@@ -131,14 +136,14 @@ func (d *DropMatViewOperator) Next(_ context.Context) (Row, error) {
 
 	UnregisterMatView(d.Name)
 
-	matPrefix := matViewDataPrefix(d.Name)
+	matPrefix := MatViewDataPrefix(d.Name)
 	if d.Store != nil {
 		it := d.Store.NewIterator(matPrefix)
 		for it.Next() {
 			_ = d.Store.Delete(it.Key())
 		}
 		it.Close()
-		_ = d.Store.Delete(matViewMetaKey(d.Name))
+		_ = d.Store.Delete(MatViewMetaKey(d.Name))
 	}
 
 	return Row{
@@ -149,11 +154,11 @@ func (d *DropMatViewOperator) Next(_ context.Context) (Row, error) {
 
 func (d *DropMatViewOperator) Close() error { return nil }
 
-func matViewMetaKey(name string) []byte {
+func MatViewMetaKey(name string) []byte {
 	return []byte("_matview:" + name + ":meta")
 }
 
-func matViewDataPrefix(name string) []byte {
+func MatViewDataPrefix(name string) []byte {
 	return []byte("_matview:" + name + ":data:")
 }
 

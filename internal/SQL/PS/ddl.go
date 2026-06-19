@@ -991,6 +991,46 @@ func (p *Parser) parseDropView() (*DropViewStmt, error) {
 	return stmt, nil
 }
 
+// parseDropMaterializedView parses DROP MATERIALIZED VIEW [IF EXISTS] name
+func (p *Parser) parseDropMaterializedView() (*DropMatViewStmt, error) {
+	p.advance() // consume DROP
+	if err := p.expect(LX.T_MATERIALIZED); err != nil {
+		return nil, err
+	}
+	p.advance() // consume MATERIALIZED
+	if err := p.expect(LX.T_VIEW); err != nil {
+		return nil, err
+	}
+	p.advance() // consume VIEW
+
+	stmt := &DropMatViewStmt{}
+
+	// Optional IF EXISTS
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
+		p.advance()
+		if err := p.expect(LX.T_EXISTS); err != nil {
+			return nil, err
+		}
+		p.advance()
+		stmt.IfExists = true
+	}
+
+	if p.current.Type != LX.T_IDENT {
+		return nil, &SyntaxError{
+			Input:    p.lex.Input(),
+			Line:     p.current.Line,
+			Col:      p.current.Col,
+			Expected: "materialized view name after DROP MATERIALIZED VIEW",
+			Got:      tokenName(p.current.Type),
+			Lexeme:   p.current.Lexeme,
+		}
+	}
+	stmt.Name = p.current.Lexeme
+	p.advance()
+
+	return stmt, nil
+}
+
 // parseDropTrigger parses DROP TRIGGER [IF EXISTS] name. REQ000496 (iter-28).
 func (p *Parser) parseDropTrigger() (*DropTriggerStmt, error) {
 	p.advance() // consume DROP
@@ -1019,6 +1059,106 @@ func (p *Parser) parseDropTrigger() (*DropTriggerStmt, error) {
 	p.advance()
 
 	return stmt, nil
+}
+
+// parseCreateMaterializedView parses CREATE MATERIALIZED VIEW [IF NOT EXISTS]
+// name [INCREMENTAL] AS SELECT ... REQ000316.
+// On entry, current token is CREATE.
+func (p *Parser) parseCreateMaterializedView() (*CreateMatViewStmt, error) {
+	p.advance() // consume CREATE
+
+	if err := p.expect(LX.T_MATERIALIZED); err != nil {
+		return nil, err
+	}
+	p.advance() // consume MATERIALIZED
+
+	if err := p.expect(LX.T_VIEW); err != nil {
+		return nil, err
+	}
+	p.advance() // consume VIEW
+
+	// Optional IF NOT EXISTS
+	ifNotExists := false
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
+		p.advance()
+		if err := p.expect(LX.T_NOT); err != nil {
+			return nil, err
+		}
+		p.advance()
+		if err := p.expect(LX.T_EXISTS); err != nil {
+			return nil, err
+		}
+		p.advance()
+		ifNotExists = true
+	}
+
+	// Optional INCREMENTAL keyword (default: manual refresh)
+	incremental := false
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "INCREMENTAL") {
+		p.advance()
+		incremental = true
+	}
+
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	name := p.current.Lexeme
+	p.advance()
+
+	if err := p.expect(LX.T_AS); err != nil {
+		return nil, err
+	}
+	p.advance() // consume AS
+
+	sel, err := p.parseSelect()
+	if err != nil {
+		return nil, err
+	}
+	createSel, ok := sel.(*Select)
+	if !ok {
+		return nil, fmt.Errorf("expected SELECT after AS, got %T", sel)
+	}
+
+	return &CreateMatViewStmt{
+		Name:        name,
+		As:          createSel,
+		IfNotExists: ifNotExists,
+		Incremental: incremental,
+	}, nil
+}
+
+// parseRefreshMatView parses REFRESH MATERIALIZED VIEW [CONCURRENTLY] name.
+// On entry, current token is REFRESH.
+func (p *Parser) parseRefreshMatView() (*RefreshMatViewStmt, error) {
+	p.advance() // consume REFRESH
+
+	if err := p.expect(LX.T_MATERIALIZED); err != nil {
+		return nil, err
+	}
+	p.advance() // consume MATERIALIZED
+
+	if err := p.expect(LX.T_VIEW); err != nil {
+		return nil, err
+	}
+	p.advance() // consume VIEW
+
+	// Optional CONCURRENTLY (accepted but not yet implemented)
+	concurrently := false
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "CONCURRENTLY") {
+		p.advance()
+		concurrently = true
+	}
+
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	name := p.current.Lexeme
+	p.advance()
+
+	return &RefreshMatViewStmt{
+		Name:       name,
+		Concurrently: concurrently,
+	}, nil
 }
 
 // parseAttach parses `ATTACH DATABASE expr AS name`. REQ000557.

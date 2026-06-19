@@ -2,6 +2,7 @@ package EX
 
 import (
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
@@ -222,4 +223,81 @@ func rowEqual(a, b Row) bool {
 		}
 	}
 	return true
+}
+
+// TriggerContext provides the runtime context for trigger execution.
+// It holds the old/new row values and the executor for running trigger body statements.
+type TriggerContext struct {
+	OldRow *Row // nil for INSERT
+	NewRow *Row // nil for DELETE
+	Params []interface{}
+	Exec   func(sql string) error // callback to execute SQL (for matview refresh)
+}
+
+// fireTriggers executes all triggers for the given table, time, and event.
+// Returns an error if any trigger fails. For AFTER triggers, oldRow and newRow
+// represent the state before and after the DML operation.
+// REQ000316: AFTER triggers are used for incremental matview refresh.
+func fireTriggers(table string, time string, event string, oldRow *Row, newRow *Row, params []interface{}, exec func(sql string) error) error {
+	triggerMu.RLock()
+	triggers := make([]*PS.TriggerStmt, 0, len(tableTriggers[table]))
+	for _, t := range tableTriggers[table] {
+		if strings.EqualFold(t.OnTable, table) && strings.EqualFold(t.Event, event) && strings.EqualFold(t.Time, time) {
+			triggers = append(triggers, t)
+		}
+	}
+	triggerMu.RUnlock()
+
+	if len(triggers) == 0 {
+		return nil
+	}
+
+	ctx := &TriggerContext{
+		OldRow: oldRow,
+		NewRow: newRow,
+		Params: params,
+		Exec:   exec,
+	}
+
+	for _, trigger := range triggers {
+		if err := executeTrigger(trigger, ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// executeTrigger runs a single trigger's body statements.
+func executeTrigger(trigger *PS.TriggerStmt, ctx *TriggerContext) error {
+	for _, stmt := range trigger.Body {
+		if err := executeTriggerStmt(stmt, ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// executeTriggerStmt executes a single statement within a trigger body.
+// For incremental matviews (REQ000316), the trigger body typically contains
+// REFRESH MATERIALIZED VIEW to refresh the view on base table changes.
+// Other trigger statements are not yet fully supported (existing no-op behavior).
+func executeTriggerStmt(stmt PS.Stmt, ctx *TriggerContext) error {
+	if ctx.Exec == nil {
+		return errors.New("ex: trigger execution requires an executor")
+	}
+
+	// Only REFRESH MATERIALIZED VIEW is supported in trigger bodies for now
+	if refresh, ok := stmt.(*PS.RefreshMatViewStmt); ok {
+		return executeRefreshMatViewStmt(refresh, ctx)
+	}
+
+	// Other trigger body statements (INSERT/UPDATE/DELETE/SELECT) are no-ops
+	// This maintains existing behavior; full trigger execution is deferred.
+	return nil
+}
+
+// executeRefreshMatViewStmt executes a REFRESH MATERIALIZED VIEW statement.
+func executeRefreshMatViewStmt(s *PS.RefreshMatViewStmt, ctx *TriggerContext) error {
+	sql := "REFRESH MATERIALIZED VIEW " + s.Name
+	return ctx.Exec(sql)
 }

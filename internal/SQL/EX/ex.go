@@ -3,6 +3,7 @@ package EX
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -828,6 +829,17 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		return NewDropIndex(s), nil
 	case *PS.CreateViewStmt:
 		return NewCreateView(s), nil
+	case *PS.CreateMatViewStmt:
+		return NewCreateMatView(s.Name, s.As, e.store), nil
+	case *PS.DropMatViewStmt:
+		return NewDropMatView(s.Name, e.store), nil
+	case *PS.RefreshMatViewStmt:
+		// Lookup the matview definition from registry
+		sel := LookupMatView(s.Name)
+		if sel == nil {
+			return nil, fmt.Errorf("ex: materialized view %q not found", s.Name)
+		}
+		return NewRefreshMatView(s.Name, sel, e.store, e.planner), nil
 	case *PS.VacuumStmt:
 		return NewVacuum(s), nil
 	case *PS.AnalyzeStmt:

@@ -116,14 +116,14 @@ func TestRefreshMatView_NotFound(t *testing.T) {
 }
 
 func TestMatViewMetaKey(t *testing.T) {
-	key := matViewMetaKey("test")
+	key := MatViewMetaKey("test")
 	if string(key) != "_matview:test:meta" {
 		t.Errorf("unexpected meta key: %s", key)
 	}
 }
 
 func TestMatViewDataPrefix(t *testing.T) {
-	prefix := matViewDataPrefix("test")
+	prefix := MatViewDataPrefix("test")
 	if string(prefix) != "_matview:test:data:" {
 		t.Errorf("unexpected data prefix: %s", prefix)
 	}
@@ -154,7 +154,7 @@ func TestCreateMatView_WithStore(t *testing.T) {
 		t.Fatalf("Next: %v", err)
 	}
 
-	metaKey := matViewMetaKey("mv_store")
+	metaKey := MatViewMetaKey("mv_store")
 	val, found, err := store.Get(metaKey)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -177,8 +177,8 @@ func TestDropMatView_WithStore(t *testing.T) {
 
 	store := newMemStore()
 	RegisterMatView("mv_drop_store", &PS.Select{From: "t1"})
-	_ = store.Insert(matViewMetaKey("mv_drop_store"), []byte("1"))
-	_ = store.Insert(matViewDataPrefix("mv_drop_store"), []byte("data"))
+	_ = store.Insert(MatViewMetaKey("mv_drop_store"), []byte("1"))
+	_ = store.Insert(MatViewDataPrefix("mv_drop_store"), []byte("data"))
 
 	op := NewDropMatView("mv_drop_store", store)
 	_, err := op.Next(context.Background())
@@ -190,7 +190,7 @@ func TestDropMatView_WithStore(t *testing.T) {
 		t.Error("mat view should be unregistered")
 	}
 
-	_, found, err := store.Get(matViewMetaKey("mv_drop_store"))
+	_, found, err := store.Get(MatViewMetaKey("mv_drop_store"))
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}

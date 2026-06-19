@@ -285,7 +285,7 @@ func (p *Parser) Parse() (Stmt, error) {
 	case LX.T_DELETE:
 		stmt, err = p.parseDelete()
 	case LX.T_CREATE:
-		// CREATE TABLE vs CREATE INDEX vs CREATE VIEW vs CREATE TRIGGER vs CREATE [TEMP] VIEW
+		// CREATE TABLE vs CREATE INDEX vs CREATE VIEW vs CREATE TRIGGER vs CREATE MATERIALIZED VIEW
 		next := p.lex.Peek().Type
 		if next == LX.T_INDEX {
 			stmt, err = p.parseCreateIndex()
@@ -295,6 +295,8 @@ func (p *Parser) Parse() (Stmt, error) {
 			stmt, err = p.parseCreateView()
 		} else if next == LX.T_TRIGGER {
 			stmt, err = p.parseCreateTrigger()
+		} else if next == LX.T_MATERIALIZED {
+			stmt, err = p.parseCreateMaterializedView()
 		} else if next == LX.T_TEMP || next == LX.T_TEMPORARY {
 			if p.lex.Peek2().Type == LX.T_VIEW {
 				stmt, err = p.parseCreateView()
@@ -305,17 +307,28 @@ func (p *Parser) Parse() (Stmt, error) {
 			stmt, err = p.parseCreateTable()
 		}
 	case LX.T_DROP:
-		// DROP TABLE vs DROP INDEX vs DROP VIEW vs DROP TRIGGER —
+		// DROP TABLE vs DROP INDEX vs DROP VIEW vs DROP TRIGGER vs DROP MATERIALIZED VIEW —
 		// disambiguate by peeking.
-		switch p.lex.Peek().Type {
-		case LX.T_INDEX:
-			stmt, err = p.parseDropIndex()
-		case LX.T_VIEW:
-			stmt, err = p.parseDropView()
-		case LX.T_TRIGGER:
-			stmt, err = p.parseDropTrigger()
-		default:
-			stmt, err = p.parseDropTable()
+		next := p.lex.Peek().Type
+		if next == LX.T_MATERIALIZED {
+			p.advance() // consume MATERIALIZED
+			if p.lex.Peek().Type == LX.T_VIEW {
+				p.advance() // consume VIEW
+				stmt, err = p.parseDropMaterializedView()
+			} else {
+				stmt, err = p.parseDropTable()
+			}
+		} else {
+			switch next {
+			case LX.T_INDEX:
+				stmt, err = p.parseDropIndex()
+			case LX.T_VIEW:
+				stmt, err = p.parseDropView()
+			case LX.T_TRIGGER:
+				stmt, err = p.parseDropTrigger()
+			default:
+				stmt, err = p.parseDropTable()
+			}
 		}
 	case LX.T_EXPLAIN:
 		stmt, err = p.parseExplain()
@@ -365,6 +378,8 @@ func (p *Parser) Parse() (Stmt, error) {
 		stmt, err = p.parseAttach()
 	case LX.T_DETACH:
 		stmt, err = p.parseDetach()
+	case LX.T_REFRESH:
+		stmt, err = p.parseRefreshMatView()
 	case LX.T_IDENT:
 		// REPLACE INTO — REPLACE is not a hard keyword, detect via lexeme.
 		if strings.EqualFold(p.current.Lexeme, "REPLACE") {

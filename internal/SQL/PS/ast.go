@@ -593,6 +593,34 @@ type DropTriggerStmt struct {
 
 func (d *DropTriggerStmt) stmtNode() {}
 
+// CreateMatViewStmt represents CREATE MATERIALIZED VIEW name AS SELECT ...
+// For incremental matviews, base tables are tracked and triggers fire on changes.
+type CreateMatViewStmt struct {
+	Name        string
+	As          *Select
+	IfNotExists bool
+	Incremental bool   // true = auto-maintained via triggers; false = manual REFRESH
+	BaseTables  []string // tables referenced in the SELECT (populated at exec)
+}
+
+func (c *CreateMatViewStmt) stmtNode() {}
+
+// DropMatViewStmt represents DROP MATERIALIZED VIEW [IF EXISTS] name.
+type DropMatViewStmt struct {
+	Name     string
+	IfExists bool
+}
+
+func (d *DropMatViewStmt) stmtNode() {}
+
+// RefreshMatViewStmt represents REFRESH MATERIALIZED VIEW [CONCURRENTLY] name.
+type RefreshMatViewStmt struct {
+	Name         string
+	Concurrently bool // not yet implemented; accepted for syntax compatibility
+}
+
+func (r *RefreshMatViewStmt) stmtNode() {}
+
 // SetTransactionStmt represents SET TRANSACTION ISOLATION LEVEL ...
 type SetTransactionStmt struct {
 	Level string // "READ UNCOMMITTED", "READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"
