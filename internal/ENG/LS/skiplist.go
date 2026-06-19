@@ -22,10 +22,6 @@ type skipList struct {
 	len   atomic.Int64
 }
 
-// nodeSlicePool pools the predecessor/successor scratch slices
-// used during Insert. Slices are pre-allocated to maxLevel capacity
-// so they fit the largest possible insertion without re-allocation.
-// REQ000198.
 var nodeSlicePool = sync.Pool{
 	New: func() any {
 		s := make([]*node, maxLevel)
@@ -33,18 +29,14 @@ var nodeSlicePool = sync.Pool{
 	},
 }
 
-// acquireSlice fetches a scratch slice from the pool. The returned
-// pointer must be returned via releaseSlice after use.
 func acquireSlice() *[]*node {
 	return nodeSlicePool.Get().(*[]*node)
 }
 
-// releaseSlice returns a scratch slice to the pool.
 func releaseSlice(s *[]*node) {
 	if s == nil {
 		return
 	}
-	// Clear references so GC can reclaim referenced nodes.
 	for i := range *s {
 		(*s)[i] = nil
 	}
@@ -73,10 +65,6 @@ func (sl *skipList) randomLevel() int {
 func (sl *skipList) Insert(key, value []byte) {
 	lvl := sl.randomLevel()
 
-	// Acquire scratch slices from the pool (REQ000198). Slice
-	// capacity is always maxLevel, so no re-allocation regardless
-	// of insertion level. The pool returns 0 allocations on
-	// steady-state operations.
 	predecessorsPtr := acquireSlice()
 	successorsPtr := acquireSlice()
 	defer releaseSlice(predecessorsPtr)
@@ -122,23 +110,11 @@ func (sl *skipList) Insert(key, value []byte) {
 			newNode.next[i].Store(successors[i])
 		}
 
-		// REQ000600: CAS-link level 0 first. Once that succeeds the
-		// node is reachable, so subsequent CAS failures on higher
-		// levels only mean the upper-level topology has changed;
-		// we re-walk that single level from the head to find the
-		// new predecessor/successor and retry.
 		inserted := predecessors[0].next[0].CompareAndSwap(next, newNode)
 		if !inserted {
 			continue
 		}
 
-		// Link each higher level. We use the original pred/succ
-		// from the level-0 search walk; if the CAS fails the upper
-		// topology has shifted under us — re-walk and retry. We
-		// bound retries to avoid livelock under heavy contention:
-		// if a level cannot be linked after a small number of
-		// retries we abandon it (the level-0 link guarantees the
-		// node is reachable; Find just takes a longer path).
 		linkedHigher := true
 		for i := 1; i < lvl; i++ {
 			const maxRetries = 8
@@ -161,7 +137,7 @@ func (sl *skipList) Insert(key, value []byte) {
 				break
 			}
 		}
-		_ = linkedHigher // accepted; data is still findable via level 0
+		_ = linkedHigher
 
 		if lvl > int(currentLevel) {
 			sl.level.CompareAndSwap(currentLevel, int32(lvl))
@@ -172,10 +148,7 @@ func (sl *skipList) Insert(key, value []byte) {
 	}
 }
 
-// findPredSucc walks a single level i from head and returns the
-// predecessor (last node with key < search) and successor (first
-// node with key >= search). Used by Insert's higher-level retry
-// loop (REQ000600) to recover from a CAS failure on level i.
+// findPredSucc walks a single level and returns pred/succ for key.
 func findPredSucc(head *node, level int32, i int, key []byte) (*node, *node) {
 	c := head
 	n := c.next[i].Load()

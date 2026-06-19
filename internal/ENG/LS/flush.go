@@ -30,14 +30,6 @@ func (fj *flushJob) Run() error {
 		return ErrMemtableNotFrozen
 	}
 
-	// R16-7: flush writes a temp file inside the SST dir, then renames
-	// it to the fileName(meta) path that compaction.fileName produces.
-	// Before the fix, flush wrote <dir>/L0_<id>.sst (flat), so the
-	// compaction reader (which uses sst/L<N>_<minkey>_<maxkey>_<id>.sst)
-	// could not find the freshly flushed SST. The two-step write
-	// (temp -> rename) is required because we need to scan the
-	// memtable to compute MinKey/MaxKey before we can construct
-	// fileName(meta).
 	sstDir := fj.outputPath
 	tmpPath := filepath.Join(sstDir, fmt.Sprintf(".tmp_%d_%d.sst", fj.fileID, time.Now().UnixNano()))
 	if err := os.MkdirAll(sstDir, 0o755); err != nil {
@@ -107,11 +99,6 @@ func (fj *flushJob) updateManifest(tmpPath string) error {
 		BloomBits: 10,
 	}
 
-	// R16-7: rename temp file to the fileName(meta) path so the
-	// compaction reader (which uses fileName) can locate it. The
-	// temp file lives in <engineDir>/sst/; the final path is
-	// <engineDir>/<fileName(meta)> where fileName returns a relative
-	// path that already starts with sst/.
 	engineDir := filepath.Dir(filepath.Dir(tmpPath))
 	finalPath := filepath.Join(engineDir, fileName(&meta))
 	if err := os.Rename(tmpPath, finalPath); err != nil {
@@ -170,13 +157,7 @@ func newFlushManager(dir string, maxMemSize int64, manifest *manifest) *flushMan
 	}
 	fm.targetSize.Store(maxMemSize) // REQ000552: initialize adaptive target
 
-	// R16-7: ensure the sst/ subdir exists. flush writes L0 SSTs to
-	// <dir>/sst/L0_<id>.sst to align with compaction.fileName, which
-	// also writes to <dir>/sst/... . MkdirAll is a no-op if the dir
-	// already exists.
 	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0o755); err != nil {
-		// Non-fatal: flushJob.Run will surface the failure on first
-		// rename if mkdir actually failed.
 		fmt.Fprintf(os.Stderr, "flush: mkdir sst: %v\n", err)
 	}
 
@@ -193,11 +174,6 @@ func (fm *flushManager) flushLoop() {
 	for {
 		select {
 		case <-fm.done:
-			// Stop requested. Drain any queued jobs so every
-			// Add(1) has a matching Done(). Use a simple
-			// non-blocking drain: if the queue is still being
-			// written to, those jobs will see done and not
-			// Add(), so this one-pass drain is safe.
 			for {
 				select {
 				case job, ok := <-fm.flushQueue:
@@ -233,22 +209,6 @@ func (fm *flushManager) MaybeFlush() {
 	}
 }
 
-// requestFlush enqueues a memtable for background flushing.
-// If the flush queue is full, we retry with a small backoff
-// rather than silently dropping the job (which would lose the
-// memtable's data without any operator-visible signal). The
-// previous `default` branch called `pendingWGs.Done()` and
-// returned, leaving the memtable enqueued for the next
-// `requestFlush` to pick up — but in practice the next
-// `requestFlush` was for a *different* memtable, so the
-// dropped memtable was effectively orphaned. See REQ000347.
-// The retry path uses a non-blocking send to avoid stalling
-// the writer goroutine on a stalled flush worker. After
-// `maxFlushRetries` attempts we fall through to a blocking
-// send, which the flush worker must service before any
-// further writes can complete. This is preferable to silent
-// loss: the worst case is a write stall under sustained
-// flush-queue saturation, not data loss.
 const maxFlushRetries = 8
 
 func (fm *flushManager) requestFlush(m *memtable) {
@@ -297,7 +257,6 @@ func (fm *flushManager) requestFlush(m *memtable) {
 			runtime.Gosched()
 		}
 	}
-	// Retries exhausted. Double-check done before blocking.
 	select {
 	case <-fm.done:
 		return
@@ -307,27 +266,13 @@ func (fm *flushManager) requestFlush(m *memtable) {
 	fm.flushQueue <- job
 }
 
-// WaitForFlush blocks until every enqueued flush job has completed.
-// Used by Engine.Sync to ensure active memtable data is durable in
-// an SST before the caller proceeds.
+// WaitForFlush blocks until all enqueued flush jobs complete.
 func (fm *flushManager) WaitForFlush() {
 	fm.pendingWGs.Wait()
 }
 
-// Stop signals the flush goroutine to exit and waits for it,
-// bounded by ctx. Idempotent: a second call returns nil immediately
-// if the loop has already exited.
-// Stop is the graceful-shutdown entry point (Phase4.1 of
-// SYS.md:245-251). It does NOT wait for in-flight flush jobs to
-// finish — call WaitForFlush for that. It only waits for the
-// dispatch loop to exit.
+// Stop signals the flush goroutine to exit and waits for it (REQ000364).
 func (fm *flushManager) Stop(ctx context.Context) error {
-	// Hold enqueueMu so we serialize against any in-flight
-	// requestFlush that is about to call pendingWGs.Add(1).
-	// Without this, Stop() could close `done` between the
-	// channel send and Add(1), and the drain phase would then
-	// call Done() for a job that was never Add()ed, panicking
-	// with "negative WaitGroup counter". See REQ000364.
 	fm.enqueueMu.Lock()
 	fm.stopOnce.Do(func() {
 		close(fm.done)
@@ -346,8 +291,6 @@ func (fm *flushManager) ActiveMemtable() *memtable {
 }
 
 // SetTargetSize updates the adaptive memtable target size (REQ000552).
-// The active memtable's flush threshold will use this value until the
-// next flush completes.
 func (fm *flushManager) SetTargetSize(size int64) {
 	if size < 0 {
 		size = 0
@@ -356,7 +299,6 @@ func (fm *flushManager) SetTargetSize(size int64) {
 }
 
 // TargetSize returns the current adaptive memtable target size (REQ000552).
-// Defaults to the constructor's maxMemSize.
 func (fm *flushManager) TargetSize() int64 {
 	return fm.targetSize.Load()
 }
@@ -365,10 +307,6 @@ func (fm *flushManager) Close() error {
 	if !fm.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	// Wait for the flushLoop goroutine to finish processing
-	// pending jobs. Without this, the engine's manifest.Close
-	// can race with a flush job's updateManifest call, causing a
-	// "send on closed channel" panic.
 	if err := fm.Stop(context.Background()); err != nil {
 		return err
 	}

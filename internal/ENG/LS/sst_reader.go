@@ -32,11 +32,6 @@ func openSST(data []byte) (*sstReader, error) {
 		return nil, ErrInvalidSSTFormat
 	}
 
-	// REQ000603: bounds-check every footer-derived slice before
-	// indexing into data. A truncated or corrupt SST with an
-	// out-of-range offset/size would otherwise panic with
-	// index-out-of-range. Also enforce the layout invariant
-	// that the index block precedes the bloom block.
 	dataLen := uint64(len(data))
 	if indexOffset > 0 {
 		if indexOffset >= dataLen || indexOffset+uint64(indexSize) > dataLen {
@@ -108,12 +103,9 @@ func (r *sstReader) mayContain(key []byte) bool {
 		return true
 	}
 
-	// FNV-1a double hashing per ENG.md spec (REQ000174)
 	h1 := fnv1aHash(key, fnv1aOffset32)
 	h2 := fnv1aHash(key, fnv1aPrime32)
 
-	// REQ000615: modulo before cast to avoid negative indices on
-	// 32-bit platforms where int is 32 bits.
 	size := uint32(len(r.bloom) * 8)
 	bucket1 := int(h1 % size)
 	bucket2 := int(h2 % size)
@@ -123,16 +115,7 @@ func (r *sstReader) mayContain(key []byte) bool {
 }
 
 // MayContainPrefix checks if the SST might contain a key with the given prefix.
-// REQ000047 — prefix bloom filters for range scans.
-// REQ000599: the modulus is the byte count, NOT the bit count.
-// The writer (setPrefixBloomBit) does \`int(h1) % size\` where size
-// is the bloom's byte length, so bits are set at indices [0, size*8).
-// A reader using bit count (\`len(r.prefixBloom) * 8\`) would compute
-// the same bit indices, but the writer caps at byte-count buckets
-// effectively reducing the bit address space to size*8 - (size*8 % 8)
-// = size*8 with collisions on every 8th bit. More importantly the
-// mismatch caused 7/8 of prefix queries to produce false negatives
-// (filter reports "not present" for prefixes that exist).
+// REQ000047, REQ000599: modulus is byte count, not bit count.
 func (r *sstReader) MayContainPrefix(prefix []byte) bool {
 	if len(r.prefixBloom) == 0 {
 		return true
@@ -140,7 +123,6 @@ func (r *sstReader) MayContainPrefix(prefix []byte) bool {
 	if len(prefix) > 8 {
 		prefix = prefix[:8]
 	}
-	// Match the writer's modulus: byte count, not bit count.
 	size := uint32(len(r.prefixBloom))
 	h1 := fnv1aHash(prefix, fnv1aOffset32)
 	h2 := fnv1aHash(prefix, fnv1aPrime32)
@@ -223,12 +205,8 @@ func (r *sstReader) readBlock(offset, size int) []byte {
 	}
 
 	raw := r.data[offset:end]
-	// REQ000271 + REQ000297: decompress block. The flag byte
-	// indicates plain (0/1) or dictionary-compressed (2) — see
-	// compressBlockDict / decompressBlockDict.
 	decompressed, err := decompressBlockDict(raw)
 	if err != nil {
-		// Backward compat: try the old plain decompress.
 		if d2, err2 := decompressBlock(raw); err2 == nil {
 			return d2
 		}
@@ -270,9 +248,6 @@ func decodeBlock(data []byte) ([]kvPair, error) {
 		}
 	}
 
-	// R188-2: when restartCount=0, the block has no restart
-	// points; treat the whole blockData as a single segment
-	// so the entry-decode loop runs at least once.
 	if restartCount == 0 {
 		restartPoints = append(restartPoints, 0)
 	}
@@ -290,13 +265,6 @@ func decodeBlock(data []byte) ([]kvPair, error) {
 			if pos >= len(blockData) {
 				break
 			}
-			// Entry format (R188-3): [keyLen:varint]
-			// [key:keyLen bytes] [valueLen:varint]
-			// [value:valueLen bytes]. The decoder must
-			// read the key BYTES between the two
-			// varints — earlier versions of the decoder
-			// read valueLen immediately after keyLen,
-			// which corrupted every entry.
 			keyLen, n := decodeVarint(blockData[pos:])
 			pos += n
 
@@ -338,8 +306,6 @@ func (r *sstReader) Iterator() *sstIterator {
 	}
 }
 
-// loadBlock reads reader.indexBlock[blockIdx] and decodes its
-// kvPairs. Returns false if blockIdx is out of range.
 func (it *sstIterator) loadBlock(blockIdx int) bool {
 	if it.reader == nil || blockIdx < 0 || blockIdx >= len(it.reader.indexBlock) {
 		return false
@@ -358,19 +324,16 @@ func (it *sstIterator) loadBlock(blockIdx int) bool {
 }
 
 func (it *sstIterator) Next() bool {
-	// First call: pairs is nil, blockIdx is -1. Load block 0.
 	if it.pairs == nil {
 		if !it.loadBlock(0) {
 			return false
 		}
 		return it.pairIdx < len(it.pairs)
 	}
-	// Advance within the current block.
 	if it.pairIdx+1 < len(it.pairs) {
 		it.pairIdx++
 		return true
 	}
-	// Current block exhausted; advance to next block.
 	if !it.loadBlock(it.blockIdx + 1) {
 		return false
 	}

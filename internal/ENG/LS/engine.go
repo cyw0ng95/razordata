@@ -27,15 +27,7 @@ type engine struct {
 	fm        *flushManager
 	stats     ReadStats
 	statsMu   sync.RWMutex
-	// REQ000574: protects the memtables slice and activeMem
-	// pointer. Read takes RLock; Write takes no lock (it only
-	// touches activeMem, which is set once at construction and
-	// atomically swapped during flush under writeLock);
-	// flushActiveMemtable takes the write lock for the
-	// mutation. Without this guard a concurrent Read iterating
-	// e.memtables while flushActiveMemtable slice-erases can
-	// observe a half-applied state.
-	mu sync.RWMutex
+	mu        sync.RWMutex // REQ000574: guards memtables/activeMem
 }
 
 func newEngine(dir string) (*engine, error) {
@@ -84,32 +76,7 @@ func (e *engine) Write(key, value []byte) error {
 	return nil
 }
 
-// flushActiveMemtable freezes the active memtable, enqueues
-// it for flush, and installs a fresh memtable as the new
-// active. The order of operations matters:
-//  1. Capture the current active into `frozen` BEFORE
-//     mutating any state. Step 5's `requestFlush` and step 7's
-//     slice erase both refer to this pointer.
-//  2. Freeze `frozen` (idempotent: `requestFlush` also calls
-//     Freeze, but capturing the freeze here makes the data
-//     flow obvious).
-//  3. Append the new active memtable.
-//  4. Swap the active pointer.
-//  5. Enqueue `frozen` for flush.
-//  6. Remove `frozen` from the slice at its known index
-//     (`len-2` is the position of the freshly frozen one
-//     after the append; do not pick `e.memtables[0]`, which
-//     is a different, already-flushed memtable).
-//
-// REQ000347 (iter-26): the previous implementation selected
-// `e.memtables[0]` for flush, which flushed an unrelated
-// stale memtable. The freshly frozen memtable was then
-// removed by `e.memtables[1:]`, never reaching the flush
-// queue. The result was silent data loss for any row whose
-// INSERT crossed a memtable boundary.
 func (e *engine) flushActiveMemtable() error {
-	// REQ000574: take the write lock for the mutation of
-	// memtables/activeMem. Concurrent Read calls hold RLock.
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -122,18 +89,13 @@ func (e *engine) flushActiveMemtable() error {
 
 	e.fm.requestFlush(frozen)
 
-	// Remove the freshly frozen memtable from the reader-visible
-	// list. After the append above, `frozen` is at
-	// `len(e.memtables) - 2`. We do an in-place erase to keep
-	// the backing array compact for the next flush.
 	idx := len(e.memtables) - 2
 	e.memtables = append(e.memtables[:idx], e.memtables[idx+1:]...)
 
 	return nil
 }
 
-// Sync flushes the active memtable to SST and blocks until the flush
-// job completes. Idempotent. Returns ErrNoActiveMemtable after Close.
+// Sync flushes the active memtable to SST and blocks until complete.
 func (e *engine) Sync() error {
 	if e.activeMem == nil {
 		return ErrNoActiveMemtable
@@ -155,9 +117,6 @@ func (e *engine) Read(key []byte) ([]byte, error) {
 	e.statsMu.Lock()
 	defer e.statsMu.Unlock()
 
-	// REQ000574: hold the read lock while iterating e.memtables
-	// so concurrent flushActiveMemtable cannot mutate the slice
-	// out from under us.
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -207,11 +166,6 @@ func (e *engine) readFromSST(key []byte) ([]byte, error) {
 				continue
 			}
 
-			// REQ000602: use the existing Find() method
-			// (bloom filter + block index binary search + linear
-			// block scan) instead of opening a full iterator and
-			// walking every key from the start. Find is O(log
-			// blocks + block scan) vs O(file size).
 			if val, found := reader.Find(key); found {
 				return val, nil
 			}

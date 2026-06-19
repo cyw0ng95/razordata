@@ -7,24 +7,11 @@ import (
 	"sort"
 )
 
-// dictTrainer builds a frequency-based dictionary for SST block
-// compression. REQ000297.
-// Unlike ZSTD's RDD-style dictionary trainer (which uses large
-// sample corpora and statistical heuristics), this trainer is
-// simple and self-contained: it scans one block's bytes, picks
-// the most frequent substrings of length 4-8, and emits them as
-// the dictionary. The trade-off is lower compression ratio than
-// ZSTD on adversarial inputs, but the same flate backend with
-// a per-block dictionary is up to 3x better than flate alone
-// for highly repetitive block content (e.g. JSON-like or
-// URL-like keys).
-// The dictionary is at most 4 KB so it fits in a single L1 cache
-// line, keeping the flate decompressor fast.
+// dictTrainer builds a frequency-based dictionary for SST compression (REQ000297).
 type dictTrainer struct {
 	maxDictSize int
 }
 
-// newDictTrainer creates a trainer capped at maxDictSize bytes.
 func newDictTrainer(maxDictSize int) *dictTrainer {
 	if maxDictSize <= 0 {
 		maxDictSize = 4096
@@ -32,13 +19,10 @@ func newDictTrainer(maxDictSize int) *dictTrainer {
 	return &dictTrainer{maxDictSize: maxDictSize}
 }
 
-// train samples substrings from block and returns the highest-
-// frequency ones, packed into a single dictionary byte slice.
 func (dt *dictTrainer) train(block []byte) []byte {
 	if len(block) < 8 {
 		return nil
 	}
-	// Count substrings of length 4-8.
 	type pair struct {
 		s string
 		n int
@@ -54,7 +38,6 @@ func (dt *dictTrainer) train(block []byte) []byte {
 			counts[s]++
 		}
 	}
-	// Sort by frequency descending.
 	pairs := make([]pair, 0, len(counts))
 	for s, n := range counts {
 		if n < 2 {
@@ -63,8 +46,6 @@ func (dt *dictTrainer) train(block []byte) []byte {
 		pairs = append(pairs, pair{s, n})
 	}
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i].n > pairs[j].n })
-	// Greedily pack into the dictionary. Stop when adding the
-	// next substring would exceed maxDictSize.
 	var dict bytes.Buffer
 	for _, p := range pairs {
 		if dict.Len()+len(p.s) > dt.maxDictSize {
@@ -75,30 +56,13 @@ func (dt *dictTrainer) train(block []byte) []byte {
 	return dict.Bytes()
 }
 
-// compressBlockDict compresses block using flate with a per-block
-// trained dictionary. The output is a self-contained
-// [dictLen:varint][dictBytes...][compressedBytes...] blob.
-// REQ000297.
-// Falls back to plain compressBlock if the dictionary is empty or
-// compression with the dictionary does not shrink the block.
 func compressBlockDict(block []byte) ([]byte, error) {
 	return compressBlockDictShared(block, nil)
 }
 
 // compressBlockDictShared compresses block using a shared SST-level
-// dictionary (REQ000587). When sharedDict is nil or empty, falls
-// back to per-block training for backward compatibility. The
-// per-block dict path is only used when no SST-level dict was
-// trained (e.g. SST is too small to bother).
-// Output format:
-//   - flag=2 + dict: the per-block dict is inlined
-//   - flag=3 + dict: the SST-shared dict reference
-//
-// For simplicity, flag=2 is reused when a shared dict is used and
-// its bytes are also inlined into the block (sharedDict is
-// embedded so the reader does not need a separate lookup table).
-// This trades a few bytes per block for format simplicity — the
-// shared dict is amortized across many blocks in the SST.
+// dictionary (REQ000587). Falls back to per-block training when
+// sharedDict is nil or empty.
 func compressBlockDictShared(block, sharedDict []byte) ([]byte, error) {
 	if len(block) == 0 {
 		return block, nil
@@ -113,7 +77,6 @@ func compressBlockDictShared(block, sharedDict []byte) ([]byte, error) {
 	if len(dict) == 0 {
 		return compressBlock(block)
 	}
-	// Build a flate dictionary and compress.
 	var compressed bytes.Buffer
 	w, err := flate.NewWriterDict(&compressed, flate.BestSpeed, dict)
 	if err != nil {
@@ -127,10 +90,8 @@ func compressBlockDictShared(block, sharedDict []byte) ([]byte, error) {
 		return compressBlock(block)
 	}
 	if compressed.Len() >= len(block) {
-		// Dictionary did not help; fall back.
 		return compressBlock(block)
 	}
-	// Wrap: [1B flag=2 (dict)][dictLen:varint][dict...][compressed...]
 	var out []byte
 	out = append(out, 2)
 	out = encodeVarintHelper(out, uint64(len(dict)))
@@ -139,18 +100,14 @@ func compressBlockDictShared(block, sharedDict []byte) ([]byte, error) {
 	return out, nil
 }
 
-// trainSSTDict trains a single shared dictionary from a sample
-// of SST blocks (REQ000587). Returns nil when the sample is too
-// small or no high-frequency substrings are found.
+// trainSSTDict trains a shared dictionary from SST blocks (REQ000587).
 func trainSSTDict(blocks [][]byte, maxDictSize int) []byte {
 	if len(blocks) == 0 {
 		return nil
 	}
 	dt := newDictTrainer(maxDictSize)
-	// Sample up to 8 blocks to keep training fast.
 	sample := blocks
 	if len(sample) > 8 {
-		// Take evenly-spaced samples.
 		step := len(sample) / 8
 		if step == 0 {
 			step = 1
@@ -161,7 +118,6 @@ func trainSSTDict(blocks [][]byte, maxDictSize int) []byte {
 		}
 		sample = reduced
 	}
-	// Merge blocks into a single training corpus.
 	var total int
 	for _, b := range sample {
 		total += len(b)
@@ -173,26 +129,21 @@ func trainSSTDict(blocks [][]byte, maxDictSize int) []byte {
 	return dt.train(corpus)
 }
 
-// decompressBlockDict decompresses a block produced by
-// compressBlockDict. REQ000297.
+// decompressBlockDict decompresses a block produced by compressBlockDict.
 func decompressBlockDict(data []byte) ([]byte, error) {
 	if len(data) < 2 {
 		return nil, ErrInvalidSSTFormat
 	}
-	// First byte: flag.
 	flag := data[0]
 	if flag == 0 {
-		// Uncompressed: skip 1-byte flag, return rest.
 		return data[1:], nil
 	}
 	if flag == 1 {
-		// Plain flate-compressed: skip 1-byte flag, decompress.
 		return decompressFlateOnly(data[1:])
 	}
 	if flag != 2 {
 		return nil, ErrInvalidSSTFormat
 	}
-	// Dict-compressed: [flag=2][dictLen:varint][dict][compressed]
 	rest := data[1:]
 	dictLen, n := binary.Uvarint(rest)
 	if n <= 0 {
@@ -227,13 +178,9 @@ func decompressFlateWithDict(data, dict []byte) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// ensure binary import is used (Go unused-import check)
 var _ = binary.MaxVarintLen64
-
-// keep the import alive
 var _ = encodeVarintHelper
 
-// encodeVarintHelper avoids the int64 vs uint64 mismatch.
 func encodeVarintHelper(dst []byte, v uint64) []byte {
 	var tmp [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(tmp[:], v)

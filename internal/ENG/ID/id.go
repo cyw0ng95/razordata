@@ -241,7 +241,6 @@ func (bt *BTree) loadPage(id uint32) *page {
 		}
 	}
 	if hdr.pType == nodeInternal {
-		// child pointers follow after all keys in internal nodes
 		for i := 0; i < int(hdr.numKeys)+1; i++ {
 			if off+4 > pageSize {
 				break
@@ -288,7 +287,6 @@ func (bt *BTree) loadRoot() error {
 	}
 	bt.root = 1
 	bt.nextID = 2
-	// Count pages
 	numPages := stat.Size() / int64(pageSize)
 	if numPages > 1 {
 		bt.nextID = uint32(numPages) + 1
@@ -427,8 +425,6 @@ func (bt *BTree) delete(id uint32, key []byte) bool {
 				p.header.numKeys = uint16(len(p.keys))
 				p.dirty = true
 				bt.dirty[id] = true
-				// REQ000284: rebalance after delete if leaf
-				// is underflowing (below half capacity).
 				bt.rebalanceLeaf(id)
 				return true
 			}
@@ -440,8 +436,6 @@ func (bt *BTree) delete(id uint32, key []byte) bool {
 		i++
 	}
 	if bt.delete(p.childs[i], key) {
-		// REQ000284: after child delete, check if child
-		// underflowed and needs rebalancing.
 		child := bt.getPage(p.childs[i])
 		if child != nil && int(child.header.numKeys) < (bt.maxKeys(p)+1)/2 {
 			bt.rebalanceNode(p, i)
@@ -451,16 +445,8 @@ func (bt *BTree) delete(id uint32, key []byte) bool {
 	return false
 }
 
-// rebalanceLeaf attempts to merge or redistribute a leaf
-// node that has underflowed after deletion. REQ000284.
+// rebalanceLeaf merges or redistributes a leaf after deletion (REQ000284).
 func (bt *BTree) rebalanceLeaf(id uint32) {
-	// For leaf nodes, find the parent and sibling via the
-	// parent's childs array. Then either merge the leaf into
-	// the sibling (if combined <= maxKeys) or redistribute
-	// keys between them.
-	// Implementation: we walk the tree from root to find the
-	// parent of this leaf. This is O(h) but acceptable for
-	// the current tree depth.
 	leaf := bt.getPage(id)
 	if leaf == nil || leaf.header.pType != nodeLeaf {
 		return
@@ -468,14 +454,12 @@ func (bt *BTree) rebalanceLeaf(id uint32) {
 	// Find parent by scanning root-to-leaf.
 	parent, idx := bt.findParent(0, id)
 	if parent == nil {
-		return // root leaf, no rebalancing needed
+		return
 	}
-	// Try to borrow from left sibling.
 	if idx > 0 {
 		sibling := bt.getPage(parent.childs[idx-1])
 		if sibling != nil && sibling.header.pType == nodeLeaf {
 			if len(leaf.keys) > 0 && len(sibling.keys) > (bt.maxKeys(sibling)+1)/2 {
-				// Redistribute: move first key from sibling to leaf.
 				leaf.keys = append([][]byte{sibling.keys[len(sibling.keys)-1]}, leaf.keys...)
 				leaf.vals = append([][]byte{sibling.vals[len(sibling.vals)-1]}, leaf.vals...)
 				sibling.keys = sibling.keys[:len(sibling.keys)-1]
@@ -490,12 +474,10 @@ func (bt *BTree) rebalanceLeaf(id uint32) {
 			}
 		}
 	}
-	// Try to borrow from right sibling.
 	if idx < len(parent.childs)-1 {
 		sibling := bt.getPage(parent.childs[idx+1])
 		if sibling != nil && sibling.header.pType == nodeLeaf {
 			if len(sibling.keys) > (bt.maxKeys(sibling)+1)/2 {
-				// Redistribute: move last key from sibling to leaf.
 				leaf.keys = append(leaf.keys, copyBytes(sibling.keys[0]))
 				leaf.vals = append(leaf.vals, copyBytes(sibling.vals[0]))
 				sibling.keys = sibling.keys[1:]
@@ -510,11 +492,9 @@ func (bt *BTree) rebalanceLeaf(id uint32) {
 			}
 		}
 	}
-	// Cannot borrow: merge with left sibling if possible.
 	if idx > 0 {
 		sibling := bt.getPage(parent.childs[idx-1])
 		if sibling != nil && sibling.header.pType == nodeLeaf {
-			// Merge leaf into sibling.
 			sibling.keys = append(sibling.keys, leaf.keys...)
 			sibling.vals = append(sibling.vals, leaf.vals...)
 			sibling.header.numKeys = uint16(len(sibling.keys))
@@ -527,7 +507,6 @@ func (bt *BTree) rebalanceLeaf(id uint32) {
 			return
 		}
 	}
-	// Cannot borrow from left: merge with right sibling.
 	if idx < len(parent.childs)-1 {
 		sibling := bt.getPage(parent.childs[idx+1])
 		if sibling != nil && sibling.header.pType == nodeLeaf {
@@ -544,19 +523,16 @@ func (bt *BTree) rebalanceLeaf(id uint32) {
 	}
 }
 
-// rebalanceNode rebalances an internal node after child
-// underflow. REQ000284.
+// rebalanceNode rebalances an internal node after child underflow (REQ000284).
 func (bt *BTree) rebalanceNode(parent *page, childIdx int) {
 	child := bt.getPage(parent.childs[childIdx])
 	if child == nil {
 		return
 	}
-	// Try to borrow from left sibling.
 	if childIdx > 0 {
 		sibling := bt.getPage(parent.childs[childIdx-1])
 		if sibling != nil {
 			if len(sibling.keys) > (bt.maxKeys(sibling)+1)/2 {
-				// Borrow last key from sibling.
 				child.keys = append([][]byte{parent.keys[childIdx-1]}, child.keys...)
 				child.childs = append([]uint32{sibling.childs[len(sibling.childs)-1]}, child.childs...)
 				parent.keys[childIdx-1] = copyBytes(sibling.keys[len(sibling.keys)-1])
@@ -571,12 +547,10 @@ func (bt *BTree) rebalanceNode(parent *page, childIdx int) {
 			}
 		}
 	}
-	// Try to borrow from right sibling.
 	if childIdx < len(parent.childs)-1 {
 		sibling := bt.getPage(parent.childs[childIdx+1])
 		if sibling != nil {
 			if len(sibling.keys) > (bt.maxKeys(sibling)+1)/2 {
-				// Borrow first key from sibling.
 				child.keys = append(child.keys, parent.keys[childIdx])
 				child.childs = append(child.childs, sibling.childs[0])
 				parent.keys[childIdx] = copyBytes(sibling.keys[0])
@@ -591,7 +565,6 @@ func (bt *BTree) rebalanceNode(parent *page, childIdx int) {
 			}
 		}
 	}
-	// Cannot borrow: merge with left sibling.
 	if childIdx > 0 {
 		sibling := bt.getPage(parent.childs[childIdx-1])
 		if sibling != nil {
@@ -607,7 +580,6 @@ func (bt *BTree) rebalanceNode(parent *page, childIdx int) {
 			return
 		}
 	}
-	// Cannot borrow from left: merge with right sibling.
 	if childIdx < len(parent.childs)-1 {
 		sibling := bt.getPage(parent.childs[childIdx+1])
 		if sibling != nil {
@@ -625,8 +597,7 @@ func (bt *BTree) rebalanceNode(parent *page, childIdx int) {
 	}
 }
 
-// findParent walks from root to find the parent of the given
-// node ID. Returns (parent, childIdx). REQ000284.
+// findParent walks from root to find the parent of targetID (REQ000284).
 func (bt *BTree) findParent(rootID, targetID uint32) (*page, int) {
 	p := bt.getPage(rootID)
 	if p == nil || p.header.pType == nodeLeaf {
@@ -648,14 +619,13 @@ func (bt *BTree) findParent(rootID, targetID uint32) (*page, int) {
 	return nil, -1
 }
 
-// maxKeys returns the maximum number of keys for a page.
 func (bt *BTree) maxKeys(p *page) int {
-	const minKeyLen = 8 // minimum key size (uint64 blockID prefix)
-	const minValLen = 1 // minimum value size (empty)
+	const minKeyLen = 8
+	const minValLen = 1
 	if p.header.pType == nodeLeaf {
 		return (pageSize - headerSize) / (minKeyLen + minValLen)
 	}
-	return (pageSize - headerSize) / (minKeyLen + 4) // 4 bytes for child pointer
+	return (pageSize - headerSize) / (minKeyLen + 4)
 }
 
 func encodePage(p *page) []byte {

@@ -45,18 +45,12 @@ func (lb levelBudget) budgetFor(level int) int64 {
 }
 
 type compactionJob struct {
-	level   int
-	inputs  []SSTFileMeta
-	outputs []SSTFileMeta
-	overlap []SSTFileMeta
-	// REQ000318: optional rate limiter (token-bucket, bytes/sec).
-	// When nil, no throttling. Captured at job creation time so a
-	// concurrent SetRateLimiter call does not race the merge.
-	rateLimiter *RateLimiter
-	// REQ000300: tier-aware placement policy. When nil, output goes
-	// to the engine base dir. Copied from the manager at job creation
-	// time so a concurrent SetPlacementPolicy call does not race.
-	placementPolicy PlacementPolicy
+	level           int
+	inputs          []SSTFileMeta
+	outputs         []SSTFileMeta
+	overlap         []SSTFileMeta
+	rateLimiter     *RateLimiter    // REQ000318: optional bytes/sec throttle
+	placementPolicy PlacementPolicy // REQ000300: tier-aware output placement
 }
 
 func (cj *compactionJob) Run(manifest *manifest, dir string) error {
@@ -64,7 +58,6 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 		return ErrNoFilesToCompact
 	}
 
-	// REQ000300: determine output directory from placement policy.
 	outputDir := cj.placementPolicy.DeviceDir(cj.level+1, dir)
 	if err := os.MkdirAll(filepath.Join(outputDir, "sst"), 0755); err != nil {
 		return err
@@ -114,8 +107,6 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	h := &keyHeap{items: iters}
 	heap.Init(h)
 
-	// REQ000318: read the rate limiter captured when the job was
-	// created. nil means no throttle.
 	rl := cj.rateLimiter
 
 	var lastKey, lastVal []byte
@@ -123,9 +114,6 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 		minItem := heap.Pop(h).(*sstIterator)
 		k := minItem.Key()
 		v := minItem.Value()
-		// Throttle on the input bytes (key + value) to keep the
-		// compactor from saturating the disk under write bursts.
-		// This also caps the final sstData size proportionally.
 		if rl != nil {
 			rl.Wait(int64(len(k) + len(v)))
 		}
@@ -146,7 +134,6 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 		return err
 	}
 
-	// Throttle the final write too.
 	if rl != nil {
 		rl.Wait(int64(len(sstData)))
 	}
@@ -226,8 +213,6 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	return nil
 }
 
-// copyFile copies src to dst by reading the source into memory and writing
-// it to the destination. Used for cross-device compaction output placement.
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
@@ -237,24 +222,11 @@ func copyFile(src, dst string) error {
 }
 
 func fileName(meta *SSTFileMeta) string {
-	// R16-7: returns the relative path WITHIN the engine dir, e.g.
-	// "sst/L0_<minkey-hex>_<maxkey-hex>_<id>.sst". Callers join
-	// with the engine dir to get the absolute path.
-	// MinKey/MaxKey are hex-encoded so the on-disk filename is
-	// filesystem-safe (no null bytes, slashes, or other
-	// path-traversal hazards from raw user-supplied bytes).
-	// The pre-iter-16 shape used string(meta.MinKey) directly,
-	// which broke on integer primary keys (8-byte int64 LE
-	// contains null bytes). Iter-16 also unifies flush and
-	// compaction output to this same shape (REQ000186).
 	return filepath.Join("sst",
 		"L"+string(rune('0'+meta.Level))+"_"+hex.EncodeToString(meta.MinKey)+"_"+hex.EncodeToString(meta.MaxKey)+"_"+u64toa(meta.FileID)+".sst")
 }
 
-// keyRangeOverlap reports whether the closed range [lo, hi] overlaps
-// [flo, fhi]. Empty (nil) bounds are treated as -infinity / +infinity
-// respectively, matching the LSM convention that empty-min-key or
-// empty-max-key files span the whole keyspace. REQ000601.
+// keyRangeOverlap reports whether [lo, hi] overlaps [flo, fhi] (REQ000601).
 func keyRangeOverlap(lo, hi, flo, fhi []byte) bool {
 	if len(hi) > 0 && len(flo) > 0 && bytes.Compare(hi, flo) < 0 {
 		return false
@@ -324,20 +296,10 @@ type compactionManager struct {
 	loopDone        chan struct{}
 	wg              sync.WaitGroup
 	stopOnce        sync.Once
-	// REQ000318: optional write rate limiter (bytes/sec). When
-	// nil or zero, no throttling. Token-bucket implementation
-	// keeps the merge loop from saturating the disk under write
-	// bursts and starving foreground writes.
-	rateLimiter atomic.Pointer[RateLimiter]
-	// REQ000320: compaction strategy. Default is leveled.
-	style atomic.Int32
-	// REQ000300: tier-aware placement policy. When nil, all levels
-	// share the same device (engine dir).
-	placementPolicy PlacementPolicy
-	// REQ000634: non-nil when ManualCompact is waiting for completion.
-	// The compaction loop closes this channel after running each
-	// manual-triggered job, signalling the waiter.
-	manualDone chan struct{}
+	rateLimiter     atomic.Pointer[RateLimiter] // REQ000318: bytes/sec throttle
+	style           atomic.Int32                // REQ000320: compaction strategy
+	placementPolicy PlacementPolicy             // REQ000300: tier-aware output placement
+	manualDone      chan struct{}               // REQ000634: ManualCompact completion signal
 }
 
 func newCompactionManager(dir string, manifest *manifest) *compactionManager {
@@ -374,12 +336,7 @@ func (cm *compactionManager) compactionLoop() {
 	}
 }
 
-// Stop signals the compaction goroutine to exit and waits for it,
-// bounded by ctx. Idempotent: a second call with the same ctx
-// returns nil immediately if the loop has already exited.
-// Stop is distinct from Close: Stop is the graceful-shutdown entry
-// point (Phase 4.1 of SYS.md:245-251) and respects a timeout; Close
-// is the destructor and uses an infinite wait.
+// Stop signals the compaction goroutine to exit and waits for it.
 func (cm *compactionManager) Stop(ctx context.Context) error {
 	cm.stopOnce.Do(func() {
 		close(cm.done)
@@ -410,9 +367,6 @@ func (cm *compactionManager) MaybeCompact() {
 			totalSize += f.Size
 		}
 
-		// REQ000320: consult the active compaction style to
-		// decide whether to trigger. Leveled and Hybrid (L1+)
-		// use size budgets; Tiered and Hybrid (L0) use run count.
 		if style.shouldCompact(level, len(files), totalSize) {
 			cm.requestCompaction(level)
 			return
@@ -420,10 +374,7 @@ func (cm *compactionManager) MaybeCompact() {
 	}
 }
 
-// ManualCompact forces a compaction across all levels. REQ000257.
-// Used by VACUUM to reclaim tombstone space immediately.
-// REQ000634: replaced the 10ms sleep-based synchronization with
-// a wait channel that blocks until the compaction job finishes.
+// ManualCompact forces a compaction across all levels (REQ000257, REQ000634).
 func (cm *compactionManager) ManualCompact() error {
 	if cm.compacting.Load() {
 		return ErrCompactionInProgress
@@ -449,8 +400,6 @@ func (cm *compactionManager) ManualCompact() error {
 	return nil
 }
 
-// requestCompaction queues a compaction job for the given level.
-// Returns true if a job was enqueued, false otherwise.
 func (cm *compactionManager) requestCompaction(level int) bool {
 	cm.compactionMu.Lock()
 	defer cm.compactionMu.Unlock()

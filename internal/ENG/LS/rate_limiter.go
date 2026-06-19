@@ -5,16 +5,7 @@ import (
 	"time"
 )
 
-// RateLimiter implements a simple token-bucket write throttle.
-// REQ000318: when the compactor is producing output bytes, it must
-// call Wait(n) before writing n bytes. If the bucket is empty,
-// Wait blocks until tokens refill at the configured rate.
-// rate is bytes per second. burst is the maximum instantaneous
-// burst size (bytes). Both must be > 0 to be effective; a nil
-// RateLimiter (or SetRateLimiter(nil)) disables throttling.
-// The implementation is intentionally lock-free on the hot path:
-// the token count is stored atomically and the wait uses a
-// channel-based timer for parking.
+// RateLimiter is a token-bucket write throttle (REQ000318).
 type RateLimiter struct {
 	mu     sync.Mutex
 	rate   int64 // bytes per second
@@ -23,9 +14,7 @@ type RateLimiter struct {
 	last   time.Time
 }
 
-// NewRateLimiter creates a rate limiter with the given sustained
-// rate and burst size. rate and burst are in bytes per second and
-// bytes respectively.
+// NewRateLimiter creates a rate limiter with the given rate and burst size.
 func NewRateLimiter(rate, burst int64) *RateLimiter {
 	if rate <= 0 {
 		return nil
@@ -44,8 +33,7 @@ func NewRateLimiter(rate, burst int64) *RateLimiter {
 	}
 }
 
-// SetRate updates the rate and burst. Existing tokens are scaled
-// proportionally to avoid a sudden jump or starvation.
+// SetRate updates the rate and burst.
 func (rl *RateLimiter) SetRate(rate, burst int64) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -55,9 +43,7 @@ func (rl *RateLimiter) SetRate(rate, burst int64) {
 	rl.last = time.Now()
 }
 
-// Wait blocks until n bytes worth of tokens are available, then
-// deducts n from the bucket. n must be <= burst (caller's
-// responsibility). Wait returns immediately if n is 0.
+// Wait blocks until n bytes worth of tokens are available.
 func (rl *RateLimiter) Wait(n int64) {
 	if rl == nil || n <= 0 {
 		return
@@ -77,7 +63,6 @@ func (rl *RateLimiter) Wait(n int64) {
 			rl.mu.Unlock()
 			return
 		}
-		// Need (n - tokens) more. Compute wait time.
 		need := n - rl.tokens
 		wait := time.Duration(float64(need) / float64(rl.rate) * float64(time.Second))
 		rl.mu.Unlock()
@@ -87,31 +72,27 @@ func (rl *RateLimiter) Wait(n int64) {
 	}
 }
 
-// SetRateLimiter installs a rate limiter on the compaction manager.
-// Pass nil to disable throttling. REQ000318.
+// SetRateLimiter installs a rate limiter on the compaction manager (REQ000318).
 func (cm *compactionManager) SetRateLimiter(rl *RateLimiter) {
 	cm.rateLimiter.Store(rl)
 }
 
-// SetCompactionStyle installs the compaction strategy. REQ000320.
+// SetCompactionStyle installs the compaction strategy (REQ000320).
 func (cm *compactionManager) SetCompactionStyle(s CompactionStyle) {
 	cm.style.Store(int32(s))
 }
 
-// CompactionStyle returns the active compaction strategy.
-// REQ000320.
+// CompactionStyle returns the active compaction strategy (REQ000320).
 func (cm *compactionManager) CompactionStyle() CompactionStyle {
 	return CompactionStyle(cm.style.Load())
 }
 
-// SetPlacementPolicy installs the tier-aware placement policy.
-// Pass nil to use a single device for all levels. REQ000300.
+// SetPlacementPolicy installs the tier-aware placement policy (REQ000300).
 func (cm *compactionManager) SetPlacementPolicy(pp PlacementPolicy) {
 	cm.placementPolicy = pp
 }
 
-// PlacementPolicy returns the active placement policy, or nil.
-// REQ000300.
+// PlacementPolicy returns the active placement policy (REQ000300).
 func (cm *compactionManager) PlacementPolicy() PlacementPolicy {
 	return cm.placementPolicy
 }

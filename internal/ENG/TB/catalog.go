@@ -1,50 +1,6 @@
-// Package tb — Catalog (persistent table registry)
-// The Catalog is the persistent, on-disk equivalent of the
-// in-memory Registry. The catalog owns a single catalog.dat file
-// under dir and exposes Get/Put/Delete/List for the system to
-// call on CREATE TABLE / DROP TABLE.
-// # On-disk format (catalog.dat)
-// The file is a packed sequence of header + entries. All multi-byte
-// integers are big-endian; all lengths are varint-encoded so a 256 KB
-// CREATE TABLE SQL is fine without inflating the file size.
-//
-//	┌────────────────────────────────────────────────────────┐
-//	│  magic    :4   = "RCAT"  (0x52 0x43 0x41 0x54)         │
-//	│  version  :1   = SchemaVersionV1 (0x01)                │
-//	│  reserved :4   = 0 (future use; readers MUST skip)     │
-//	│  nextID   :8   (counter, big-endian)                   │
-//	│  count    :varint    (number of entries that follow)   │
-//	├────────────────────────────────────────────────────────┤
-//	│  entry[i]:                                             │
-//	│    tableID   :8                                        │
-//	│    nameLen   :varint                                   │
-//	│    name      :nameLen bytes                            │
-//	│    primaryKey:varint (0 = no PK; otherwise length &    │
-//	│              string)                                   │
-//	│    colCount  :varint                                   │
-//	│    colNameLen:varint                                   │
-//	│    colName   :bytes  (repeated colCount times)         │
-//	│    nullable  :colCount bytes (0x00 false, 0x01 true)   │
-//	│    uniqueCount:varint                                  │
-//	│    uniqueKey :{nCols:varint, nCols col-idx varints}    │
-//	│              (repeated uniqueCount times)              │
-//	│    sqlLen    :varint                                   │
-//	│    sql       :sqlLen bytes (original CREATE TABLE)     │
-//	└────────────────────────────────────────────────────────┘
-//
-// # Atomicity
-// Writes go to a `.tmp` file first, then `rename(2)` to the final
-// path. The rename is atomic on POSIX file systems, so a crash
-// never leaves the file in a half-written state. The next Open
-// either sees the old file or the new file — never a mix.
-// # Schema versioning
-// Future migrations (CHECK constraints, foreign keys, ...)
-// bump `schemaVersionCurrent`. Reads of a higher version fail
-// with `ErrUpgradeRequired`.
-// REQ000048: the persistent catalog was previously in
-// internal/ENG/LS/catalog.go. This file in internal/ENG/TB/
-// provides the same on-disk format and semantics, owned by the
-// Table cluster per the design spec.
+// Package tb implements the persistent system catalog (REQ000048).
+// catalog.dat is a packed binary file with header + entries, atomic
+// via rename(2). See docs/design/subsystems/ENG.md for format details.
 package tb
 
 import (
@@ -59,7 +15,6 @@ import (
 	"github.com/cyw0ng95/razordata/internal/ENG/SC"
 )
 
-// Schema-version constants for the system catalog.
 const (
 	schemaVersionV1      uint8 = 1
 	schemaVersionV2      uint8 = 2
@@ -73,39 +28,24 @@ var (
 	catalogHeaderSize = 17 // magic(4) + version(1) + reserved(4) + nextID(8)
 )
 
-// Catalog-specific errors.
 var (
-	// ErrCatalogCorrupt marks a value whose length or structure
-	// does not match the wire format.
-	ErrCatalogCorrupt = errors.New("catalog: data corrupt")
-	// ErrUpgradeRequired marks a file written by a future binary
-	// (file.Version > schemaVersionCurrent). Open refuses to
-	// proceed; the user must upgrade the engine.
+	ErrCatalogCorrupt  = errors.New("catalog: data corrupt")
 	ErrUpgradeRequired = errors.New("catalog: schema version newer than supported")
-	// ErrCatalogNotFound is returned by GetByID / GetByName when
-	// no matching entry exists.
 	ErrCatalogNotFound = errors.New("catalog: table not found")
-	// ErrCatalogExists is returned by Put when the supplied name
-	// or ID is already in use.
-	ErrCatalogExists = errors.New("catalog: table already exists")
-	// ErrCatalogClosed is returned by Get/Put/Delete/List after
-	// Close.
-	ErrCatalogClosed = errors.New("catalog: closed")
+	ErrCatalogExists   = errors.New("catalog: table already exists")
+	ErrCatalogClosed   = errors.New("catalog: closed")
 )
 
-// Column is the on-disk + in-memory representation of one column.
 type Column struct {
 	Name     string
 	Type     uint8
 	Nullable bool
 }
 
-// Unique is one UNIQUE constraint, resolved to column indices.
 type Unique struct {
 	Cols []int
 }
 
-// Index is one secondary index.
 type Index struct {
 	IndexID   uint64
 	Name      string
@@ -114,7 +54,6 @@ type Index struct {
 	CreateSQL string
 }
 
-// Entry is the on-disk + in-memory representation of a table.
 type Entry struct {
 	Version    uint8
 	TableID    uint64
@@ -126,7 +65,7 @@ type Entry struct {
 	CreateSQL  string
 }
 
-// Catalog is the persistent, on-disk system catalog.
+// Catalog is the persistent system catalog backed by catalog.dat.
 type Catalog struct {
 	path   string
 	mu     sync.RWMutex
@@ -136,8 +75,7 @@ type Catalog struct {
 	closed bool
 }
 
-// NewCatalog opens (or creates) a catalog rooted at dir. The
-// returned Catalog is safe for concurrent use.
+// NewCatalog opens or creates a catalog rooted at dir.
 func NewCatalog(dir string) (*Catalog, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("%w: dir is required", ErrCatalogCorrupt)
@@ -153,7 +91,6 @@ func NewCatalog(dir string) (*Catalog, error) {
 	return c, nil
 }
 
-// bootstrap reads the on-disk file into the in-memory cache.
 func (c *Catalog) bootstrap() error {
 	data, err := os.ReadFile(c.path)
 	if err != nil {
@@ -172,7 +109,6 @@ func (c *Catalog) bootstrap() error {
 	if version > schemaVersionCurrent {
 		return fmt.Errorf("%w: file version %d > current %d", ErrUpgradeRequired, version, schemaVersionCurrent)
 	}
-	// Skip reserved (4 bytes at offset 5)
 	c.nextID = binary.BigEndian.Uint64(data[9:17])
 	off := 17
 	count, n := binary.Uvarint(data[off:])
@@ -278,7 +214,6 @@ func decodeCatalogEntry(data []byte, off int, e *Entry) (int, error) {
 		}
 		e.Unique[i] = u
 	}
-	// sqlLen + sql (always present)
 	sqlLen, n := binary.Uvarint(data[off:])
 	if n <= 0 {
 		return off, fmt.Errorf("bad sqlLen")
@@ -292,7 +227,7 @@ func decodeCatalogEntry(data []byte, off int, e *Entry) (int, error) {
 	return off, nil
 }
 
-// NextID atomically reserves and returns the next free tableID.
+// NextID reserves and returns the next free tableID.
 func (c *Catalog) NextID() (uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -308,8 +243,7 @@ func (c *Catalog) NextID() (uint64, error) {
 	return id, nil
 }
 
-// Put registers a new table. The full catalog is rewritten
-// atomically.
+// Put registers a new table. The catalog is rewritten atomically.
 func (c *Catalog) Put(entry Entry) error {
 	if entry.Name == "" {
 		return fmt.Errorf("%w: name is required", ErrCatalogCorrupt)
@@ -361,7 +295,7 @@ func (c *Catalog) Delete(tableID uint64) error {
 	return nil
 }
 
-// GetByID returns the entry for tableID or ErrCatalogNotFound.
+// GetByID returns the entry for tableID.
 func (c *Catalog) GetByID(tableID uint64) (*Entry, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -376,7 +310,7 @@ func (c *Catalog) GetByID(tableID uint64) (*Entry, error) {
 	return &cp, nil
 }
 
-// GetByName returns the entry for name or ErrCatalogNotFound.
+// GetByName returns the entry for name.
 func (c *Catalog) GetByName(name string) (*Entry, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -411,14 +345,12 @@ func (c *Catalog) List() []*Entry {
 	return out
 }
 
-// Len returns the number of registered tables.
 func (c *Catalog) Len() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.cache)
 }
 
-// Close releases the catalog. Idempotent.
 func (c *Catalog) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -426,12 +358,8 @@ func (c *Catalog) Close() error {
 	return nil
 }
 
-// Path returns the on-disk path of catalog.dat.
 func (c *Catalog) Path() string { return c.path }
 
-// flushLocked serializes the full catalog to a temp file and
-// renames it over catalog.dat. The caller MUST hold c.mu in
-// write mode.
 func (c *Catalog) flushLocked() error {
 	var buf []byte
 	buf = append(buf, catalogMagic[:]...)
@@ -496,7 +424,6 @@ func encodeCatalogEntry(e *Entry, buf []byte) []byte {
 	return buf
 }
 
-// LoadFromSC converts an SC.TableSchema to a catalog Entry.
 func entryFromSC(schema *sc.TableSchema, createSQL string) Entry {
 	e := Entry{
 		TableID:    schema.TableID,

@@ -5,18 +5,7 @@ import (
 	"sync"
 )
 
-// REQ000540: dedicated LRU for recently-read L0 SST blocks.
-// The L0 merge step in NewIterator walks every L0 file in order and
-// seeks into each one. Without a block cache, every seek re-reads the
-// block from disk (and every block re-fetches the index page). This
-// cache sits between the SST reader and the OS page cache and pins
-// recently-touched blocks in memory so a back-to-back merge of the
-// same L0 set hits the cache instead of the disk.
-// The cache is deliberately tiny and self-contained: it is not wired
-// into the engine yet (REQ000540 ships the type only; integration
-// lands in a follow-up). Block identity is the raw blockID the SST
-// layer assigns (offset/crc pair), which is stable for the lifetime
-// of the file.
+// l0Cache is a dedicated LRU for recently-read L0 SST blocks (REQ000540).
 type l0Cache struct {
 	mu       sync.Mutex
 	capacity int
@@ -29,9 +18,7 @@ type cacheEntry struct {
 	data    []byte
 }
 
-// newL0Cache creates an L0 block cache with the given capacity
-// (number of blocks). A capacity <= 0 is clamped to 1 so the cache
-// is always usable but never silently accepts everything.
+// newL0Cache creates an L0 block cache with the given capacity.
 func newL0Cache(capacity int) *l0Cache {
 	if capacity <= 0 {
 		capacity = 1
@@ -43,10 +30,7 @@ func newL0Cache(capacity int) *l0Cache {
 	}
 }
 
-// Get returns the cached block for blockID. On hit the entry is
-// promoted to the front of the LRU; on miss the returned bool is
-// false and the slice is nil. The returned slice aliases the cache's
-// backing buffer — callers that need to mutate must copy.
+// Get returns the cached block for blockID.
 func (c *l0Cache) Get(blockID uint64) ([]byte, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -58,11 +42,7 @@ func (c *l0Cache) Get(blockID uint64) ([]byte, bool) {
 	return elem.Value.(*cacheEntry).data, true
 }
 
-// Put inserts (or refreshes) a block. If the blockID is already
-// present the data slice is replaced and the entry is promoted. If
-// the cache is at capacity the least-recently-used entry is evicted.
-// The cache does not copy the data slice — the caller transfers
-// ownership.
+// Put inserts or refreshes a block in the cache.
 func (c *l0Cache) Put(blockID uint64, data []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -80,14 +60,12 @@ func (c *l0Cache) Put(blockID uint64, data []byte) {
 	}
 }
 
-// Size returns the number of blocks currently cached.
 func (c *l0Cache) Size() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.items)
 }
 
-// evictBack removes the least-recently-used entry. Caller must hold mu.
 func (c *l0Cache) evictBack() {
 	elem := c.lru.Back()
 	if elem == nil {
