@@ -22,8 +22,6 @@ var (
 )
 
 // MetaPage occupies block 0 of meta.razor.
-// It holds the database format version, block size, catalog root pointer,
-// and manifest checksum.
 type MetaPage struct {
 	Magic            uint32
 	Version          uint32
@@ -34,7 +32,6 @@ type MetaPage struct {
 
 const metaPageSize = 4 + 4 + 4 + 8 + 4 // Magic + Version + BlockSize + CatalogRootPtr + ManifestChecksum = 24 bytes
 
-// metaPageRaw is the on-disk layout of MetaPage (little-endian, no padding).
 type metaPageRaw [metaPageSize]byte
 
 func (p *MetaPage) MarshalBinary() ([]byte, error) {
@@ -59,7 +56,6 @@ func (p *MetaPage) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
-// DefaultMetaPage returns a MetaPage with default values.
 func DefaultMetaPage() *MetaPage {
 	return &MetaPage{
 		Magic:     MagicValue,
@@ -75,15 +71,11 @@ type MetaReader struct {
 }
 
 // NewMetaReader returns a MetaReader for the given meta.razor path.
-// log is optional; pass nil to disable logging.
 func NewMetaReader(path string, log ...lg.Logger) *MetaReader {
 	return &MetaReader{path: path, log: lg.FirstLogger(log)}
 }
 
-// Read opens meta.razor, reads block 0, validates magic and version.
-// Creates meta.razor with default values if it does not exist.
-// Returns ErrBadMagic if magic bytes are invalid.
-// Returns ErrUpgradeRequired if version is newer than CurrentVersion.
+// Read opens meta.razor and validates magic and version.
 func (r *MetaReader) Read() (*MetaPage, error) {
 	fd, err := unix.Open(r.path, unix.O_RDWR|unix.O_CREAT, 0600)
 	if err != nil {
@@ -97,7 +89,6 @@ func (r *MetaReader) Read() (*MetaPage, error) {
 		return nil, err
 	}
 
-	// Empty or short file: initialize with defaults.
 	if n == 0 || len(raw[:n]) < metaPageSize {
 		mp := DefaultMetaPage()
 		if err := writeMeta(fd, mp); err != nil {
@@ -142,12 +133,12 @@ type MetaWriter struct {
 	log  lg.Logger
 }
 
-// NewMetaWriter returns a MetaWriter for the given meta.razor path.
+// NewMetaWriter returns a MetaWriter for the given path.
 func NewMetaWriter(path string, log ...lg.Logger) *MetaWriter {
 	return &MetaWriter{path: path, log: lg.FirstLogger(log)}
 }
 
-// Write writes the MetaPage to block 0 of meta.razor.
+// Write writes the MetaPage to block 0.
 func (w *MetaWriter) Write(p *MetaPage) error {
 	fd, err := unix.Open(w.path, unix.O_RDWR|unix.O_CREAT, 0600)
 	if err != nil {
@@ -168,7 +159,6 @@ func (w *MetaWriter) Write(p *MetaPage) error {
 }
 
 func writeMeta(fd int, p *MetaPage) error {
-	// Compute checksum over everything except the checksum field itself (last 4 bytes).
 	data, err := p.MarshalBinary()
 	if err != nil {
 		return err

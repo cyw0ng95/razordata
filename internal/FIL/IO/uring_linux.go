@@ -1,13 +1,6 @@
 //go:build linux && !no_uring
 
-// Package uring provides a Linux io_uring wrapper for the FIL
-// subsystem. REQ000295 (iter-27).
-// The wrapper exposes a Ring that manages the SQ/CQ rings via
-// mmap and supports pread/pwrite/fsync SQE preparation with
-// submit-and-wait. Linked submission (write→fsync via
-// IOSQE_IO_LINK) is exposed for REQ000301.
-// The package is gated on linux + a build tag (negated by
-// `no_uring` for non-Linux CI).
+// Package uring provides a Linux io_uring wrapper (REQ000295).
 package uring
 
 import (
@@ -18,7 +11,6 @@ import (
 	"unsafe"
 )
 
-// SQE opcodes.
 const (
 	IORING_OP_NOP         = 0
 	IORING_OP_READV       = 1
@@ -28,7 +20,6 @@ const (
 	IORING_OP_WRITE_FIXED = 8
 )
 
-// SQE flags.
 const (
 	IOSQE_FIXED_FILE  = 1 << 0
 	IOSQE_IO_DRAIN    = 1 << 1
@@ -36,10 +27,8 @@ const (
 	IOSQE_IO_HARDLINK = 1 << 3
 )
 
-// Fsync flags.
 const IORING_FSYNC_DATASYNC = 1
 
-// Register/enter flags.
 const (
 	IORING_ENTER_GETEVENTS       = 1
 	IORING_REGISTER_FIXED_FILE   = 4
@@ -47,7 +36,6 @@ const (
 	IORING_UNREGISTER_FILES      = 11
 )
 
-// Syscall numbers (x86_64 / aarch64).
 const (
 	sysIoUringSetup    = 425
 	sysIoUringEnter    = 426
@@ -57,7 +45,6 @@ const (
 const sqeSize = 64
 const cqeSize = 16
 
-// uring_sqe mirrors `struct io_uring_sqe` (64 bytes).
 type uring_sqe struct {
 	opcode   uint8  // 0
 	flags    uint8  // 1
@@ -75,14 +62,12 @@ type uring_sqe struct {
 	_        uint64 // 56-63
 }
 
-// uring_cqe mirrors `struct io_uring_cqe` (16 bytes).
 type uring_cqe struct {
 	userData uint64
 	res      int32
 	flags    uint32
 }
 
-// uring_params mirrors `struct io_uring_params` (120 bytes).
 type uring_params struct {
 	sqEntries    uint32    // 0-3
 	cqEntries    uint32    // 4-7
@@ -99,7 +84,7 @@ type uring_params struct {
 
 const sizeofParams = 120
 
-// Ring wraps a Linux io_uring instance. REQ000295 (iter-27).
+// Ring wraps a Linux io_uring instance (REQ000295).
 type Ring struct {
 	fd         int
 	closed     atomic.Bool
@@ -118,7 +103,6 @@ type Ring struct {
 	mmapCq     []byte
 }
 
-// mmap calls syscall.Mmap and returns the slice and errno.
 func mmap(fd int, offset int64, length int) ([]byte, syscall.Errno) {
 	area, err := syscall.Mmap(fd, offset, length,
 		syscall.PROT_READ|syscall.PROT_WRITE,
@@ -150,9 +134,6 @@ func New(entries int) (*Ring, error) {
 		cqMask:   params.cqEntries - 1,
 	}
 
-	// mmap SQ ring (head, tail, ringMask, entries, flags, dropped, array).
-	// The kernel maps all SQ ring structures at offset 0, with the SQ
-	// array immediately after the ring fields.
 	sqRingSize := int(params.sqOff[6]) + int(params.sqEntries)*4
 	sqArea, sqErrno := mmap(int(fd), 0, sqRingSize)
 	if sqErrno != 0 {
@@ -161,7 +142,6 @@ func New(entries int) (*Ring, error) {
 	}
 	r.mmapSq = sqArea
 
-	// mmap the SQE array (may be at a different offset).
 	sqeOff := params.sqOff[7]
 	sqeBytes := int(params.sqEntries) * sqeSize
 	r.sqeRing, errno = mmap(int(fd), int64(sqeOff), sqeBytes)
@@ -171,7 +151,6 @@ func New(entries int) (*Ring, error) {
 		return nil, fmt.Errorf("uring: mmap sqe: %w", errno)
 	}
 
-	// mmap CQ ring (may share with SQ ring).
 	if params.cqOff[0] != params.sqOff[0] {
 		cqRingSize := int(params.cqOff[4]) + int(params.cqEntries)*cqeSize
 		r.mmapCq, errno = mmap(int(fd), 0, cqRingSize)
@@ -187,7 +166,6 @@ func New(entries int) (*Ring, error) {
 		r.mmapCq = r.mmapSq
 	}
 
-	// Pointers into mmap'd regions.
 	r.sqHead = (*uint32)(unsafe.Pointer(&r.mmapSq[params.sqOff[0]]))
 	r.sqTail = (*uint32)(unsafe.Pointer(&r.mmapSq[params.sqOff[1]]))
 	r.sqArray = (*uint32)(unsafe.Pointer(&r.mmapSq[params.sqOff[6]]))
@@ -200,7 +178,6 @@ func New(entries int) (*Ring, error) {
 	return r, nil
 }
 
-// Close releases the io_uring resources.
 func (r *Ring) Close() error {
 	if !r.closed.CompareAndSwap(false, true) {
 		return nil
@@ -227,11 +204,9 @@ func (r *Ring) Close() error {
 	return firstErr
 }
 
-// Fd returns the underlying io_uring fd.
 func (r *Ring) Fd() int { return r.fd }
 
-// SubmitWait submits pending SQEs and waits for at least
-// `want` completions. Returns the number of completions reaped.
+// SubmitWait submits pending SQEs and waits for completions.
 func (r *Ring) SubmitWait(want int) (int, error) {
 	if r.closed.Load() {
 		return 0, errors.New("uring: ring is closed")
@@ -257,8 +232,7 @@ func (r *Ring) SubmitWait(want int) (int, error) {
 	return r.cqAvailable(), nil
 }
 
-// Sqe returns a pointer to an SQE slot. Populate it then call
-// SubmitWait.
+// Sqe returns a pointer to an SQE slot.
 func (r *Ring) Sqe() (*uring_sqe, error) {
 	if r.closed.Load() {
 		return nil, errors.New("uring: ring is closed")
@@ -282,7 +256,6 @@ func (r *Ring) Sqe() (*uring_sqe, error) {
 	}
 }
 
-// PrepRead prepares a pread SQE.
 func (s *uring_sqe) PrepRead(fd int, buf []byte, offset int64) {
 	s.opcode = IORING_OP_READV
 	s.fd = int32(fd)
@@ -291,7 +264,6 @@ func (s *uring_sqe) PrepRead(fd int, buf []byte, offset int64) {
 	s.len = uint32(len(buf))
 }
 
-// PrepWrite prepares a pwrite SQE.
 func (s *uring_sqe) PrepWrite(fd int, buf []byte, offset int64) {
 	s.opcode = IORING_OP_WRITEV
 	s.fd = int32(fd)
@@ -300,17 +272,14 @@ func (s *uring_sqe) PrepWrite(fd int, buf []byte, offset int64) {
 	s.len = uint32(len(buf))
 }
 
-// PrepFsync prepares an fsync SQE.
 func (s *uring_sqe) PrepFsync(fd int) {
 	s.opcode = IORING_OP_FSYNC
 	s.fd = int32(fd)
 	s.len = IORING_FSYNC_DATASYNC
 }
 
-// SetUserData sets the user data for the SQE.
 func (s *uring_sqe) SetUserData(n uint64) { s.userData = n }
 
-// SetFlags sets SQE flags (e.g. IOSQE_IO_LINK).
 func (s *uring_sqe) SetFlags(f uint8) { s.flags = f }
 
 // Cqe is a single completion entry.
@@ -320,7 +289,6 @@ type Cqe struct {
 	Flags    uint32
 }
 
-// CqeCount returns the number of pending completions.
 func (r *Ring) CqeCount() int {
 	return int(atomic.LoadUint32(r.cqTail)) - int(atomic.LoadUint32(r.cqHead))
 }
@@ -342,13 +310,11 @@ func (r *Ring) PeekCqe() (Cqe, bool) {
 	}, true
 }
 
-// ConsumeCqe advances the CQ head by one.
 func (r *Ring) ConsumeCqe() {
 	atomic.AddUint32(r.cqHead, 1)
 }
 
-// RegisterFixedFile registers a process fd with the io_uring
-// instance. Returns the assigned slot index.
+// RegisterFixedFile registers a process fd with the io_uring instance.
 func (r *Ring) RegisterFixedFile(fd int) (int, error) {
 	if r.closed.Load() {
 		return -1, errors.New("uring: ring is closed")
@@ -393,6 +359,4 @@ func (r *Ring) cqAvailable() int {
 	return int(t - h)
 }
 
-// ErrUnsupported is returned by Ring methods on non-Linux
-// platforms.
 var ErrUnsupported = errors.New("uring: io_uring not supported on this platform")

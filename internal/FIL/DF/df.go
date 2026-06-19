@@ -53,35 +53,26 @@ func Create(path string, log ...lg.Logger) (*BlockDevice, error) {
 	return openFile(path, false, true, log)
 }
 
-// OpenReadOnly opens an existing block device in read-only mode
-// (O_RDONLY). Write operations will fail. Added in iter-15
-// (REQ000099).
 func OpenReadOnly(path string, log ...lg.Logger) (*BlockDevice, error) {
 	return openFile(path, true, false, log)
 }
 
-// OpenMmap opens a file with the file's full contents mmap'd. Reads
-// are served from the mapped region (zero-copy via the kernel page
-// cache); writes still go through pwrite. The mmap is unmapped in
-// Close. On non-Linux platforms, falls back to Open (pread).
+// OpenMmap opens a file with mmap'd reads and pwrite writes.
 func OpenMmap(path string, log ...lg.Logger) (*BlockDevice, error) {
 	bd, err := Open(path, log...)
 	if err != nil {
 		return nil, err
 	}
-	// Determine file size.
 	var st syscall.Stat_t
 	if err := syscall.Fstat(bd.fd, &st); err != nil {
 		bd.Close()
 		return nil, err
 	}
 	if st.Size == 0 {
-		// Empty file — nothing to map. Fall back to pread.
 		return bd, nil
 	}
 	mapped, err := mmapBlock(bd.fd, 0, int(st.Size))
 	if err != nil {
-		// mmap failed (e.g., on non-Linux). Fall back silently.
 		return bd, nil
 	}
 	bd.mmap = true
@@ -134,8 +125,6 @@ func supportsODirect() bool {
 }
 
 // ReadBlock reads block blockID into buf.
-// n is the number of actual data bytes written (must match what was passed to WriteBlock).
-// buf must be at least DataLen bytes.
 func (d *BlockDevice) ReadBlock(_ context.Context, blockID uint64, n int, buf []byte) error {
 	if len(buf) < DataLen {
 		return ErrBigBlock
@@ -150,7 +139,6 @@ func (d *BlockDevice) ReadBlock(_ context.Context, blockID uint64, n int, buf []
 	defer returnTempBuf(tmp)
 
 	if d.mmap && d.mmapBuf != nil {
-		// mmap path: zero-copy read from the mapped region.
 		off := int64(offset)
 		if off+int64(len(tmp)) > int64(d.mmapSz) {
 			return ErrIO
@@ -177,8 +165,6 @@ func (d *BlockDevice) ReadBlock(_ context.Context, blockID uint64, n int, buf []
 }
 
 // WriteBlock writes data as block blockID.
-// data must be <= DataLen - ChecksumLen (4092 bytes).
-// The checksum covers the first len(data) bytes; remaining data bytes are zeros.
 func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte) error {
 	n := len(data)
 	if n > DataLen-ChecksumLen {
@@ -222,9 +208,7 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 	return err
 }
 
-// ReadBlockFull reads a full block (DataLen bytes) with checksum verification.
-// Does not need the data length as a parameter — reads the full checksummed data.
-// buf must be at least DataLen bytes. Returns ErrCorrupt on checksum mismatch.
+// ReadBlockFull reads a full block with checksum verification.
 func (d *BlockDevice) ReadBlockFull(blockID uint64, buf []byte) error {
 	if len(buf) < DataLen {
 		return ErrBigBlock
@@ -264,7 +248,6 @@ func (d *BlockDevice) Sync() error {
 	return err
 }
 
-// Close closes the block device. Safe to call multiple times.
 func (d *BlockDevice) Close() error {
 	if d.mmapBuf != nil {
 		_ = munmapBlock(d.mmapBuf)

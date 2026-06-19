@@ -26,7 +26,7 @@ type SegmentManager struct {
 	log  lg.Logger
 }
 
-// New creates a SegmentManager under root (the database directory).
+// New creates a SegmentManager under root.
 func New(root string, log ...lg.Logger) (*SegmentManager, error) {
 	sm := &SegmentManager{root: root, log: lg.FirstLogger(log)}
 	if err := os.MkdirAll(filepath.Join(root, "wal"), 0700); err != nil {
@@ -128,10 +128,7 @@ func (sm *SegmentManager) Truncate(n uint64, newSize int64) error {
 	return nil
 }
 
-// ListSegments enumerates WAL segment files in the root/wal directory and
-// returns their numeric suffixes in ascending order. Returns an empty slice
-// (no error) if the wal directory does not exist. Non-segment files (anything
-// not matching wal.<digits>) are ignored.
+// ListSegments enumerates WAL segment files in ascending order.
 func (sm *SegmentManager) ListSegments() ([]uint64, error) {
 	walDir := filepath.Join(sm.root, "wal")
 	entries, err := os.ReadDir(walDir)

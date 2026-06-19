@@ -68,7 +68,6 @@ func (v *pathValidator) Resolve(path string) (string, error) {
 }
 
 // FileHandle is an open file with reference counting.
-// mu guards FD against concurrent access and prevents double-close.
 type FileHandle struct {
 	Path string
 	FD   int
@@ -76,7 +75,6 @@ type FileHandle struct {
 	mu   sync.Mutex
 }
 
-// Close closes the underlying FD. Safe to call multiple times.
 func (h *FileHandle) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -102,22 +100,19 @@ type FileManager struct {
 	locking  bool
 }
 
-// Option configures a FileManager.
 type Option func(*FileManager)
 
-// WithLocking enables advisory flock(LOCK_EX) on Open/Create to
-// prevent concurrent multi-process access.
+// WithLocking enables advisory flock(LOCK_EX) on Open/Create.
 func WithLocking(v bool) Option {
 	return func(fm *FileManager) { fm.locking = v }
 }
 
 // New creates a new FileManager rooted at root.
-// Returns ErrDoesNotExist if root is not an existing directory.
 func New(root string, log ...lg.Logger) (*FileManager, error) {
 	return NewOptions(root, nil, log...)
 }
 
-// NewOptions creates a FileManager with additional configuration options.
+// NewOptions creates a FileManager with additional options.
 func NewOptions(root string, opts []Option, log ...lg.Logger) (*FileManager, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -144,7 +139,7 @@ func NewOptions(root string, opts []Option, log ...lg.Logger) (*FileManager, err
 	return fm, nil
 }
 
-// NewOrCreate creates a new FileManager, creating root and any parents if needed.
+// NewOrCreate creates a new FileManager, creating root if needed.
 func NewOrCreate(root string, log ...lg.Logger) (*FileManager, error) {
 	return NewOptionsOrCreate(root, nil, log...)
 }
@@ -169,8 +164,7 @@ func NewOptionsOrCreate(root string, opts []Option, log ...lg.Logger) (*FileMana
 	return fm, nil
 }
 
-// Open opens an existing file. Returns ErrDoesNotExist if absent.
-// When locking is enabled, acquires an advisory flock(LOCK_EX).
+// Open opens an existing file.
 func (fm *FileManager) Open(name string) (*FileHandle, error) {
 	abs, err := fm.validate.Resolve(name)
 	if err != nil {
@@ -231,9 +225,7 @@ func (fm *FileManager) Open(name string) (*FileHandle, error) {
 	return h, nil
 }
 
-// Create creates a new file exclusively (O_CREAT|O_EXCL).
-// Returns ErrAlreadyExists if the file already exists.
-// When locking is enabled, acquires an advisory flock(LOCK_EX).
+// Create creates a new file exclusively.
 func (fm *FileManager) Create(name string) (*FileHandle, error) {
 	abs, err := fm.validate.Resolve(name)
 	if err != nil {
@@ -262,7 +254,7 @@ func (fm *FileManager) Create(name string) (*FileHandle, error) {
 	return h, nil
 }
 
-// Remove removes a file. Cached handle is evicted from the map.
+// Remove removes a file.
 func (fm *FileManager) Remove(name string) error {
 	abs, err := fm.validate.Resolve(name)
 	if err != nil {
@@ -283,7 +275,7 @@ func (fm *FileManager) Remove(name string) error {
 	return nil
 }
 
-// List returns file names matching the glob pattern relative to the database root.
+// List returns file names matching the glob pattern.
 func (fm *FileManager) List(pattern string) ([]string, error) {
 	abs, err := fm.validate.Resolve(pattern)
 	if err != nil {
@@ -310,7 +302,6 @@ func (fm *FileManager) List(pattern string) ([]string, error) {
 	return result, nil
 }
 
-// MkdirAll creates directories with permission 0700.
 func (fm *FileManager) MkdirAll(name string) error {
 	abs, err := fm.validate.Resolve(name)
 	if err != nil {
@@ -319,7 +310,7 @@ func (fm *FileManager) MkdirAll(name string) error {
 	return os.MkdirAll(abs, 0700)
 }
 
-// SyncDir syncs the directory containing name to durable storage.
+// SyncDir fsyncs the directory containing name.
 func (fm *FileManager) SyncDir(name string) error {
 	abs, err := fm.validate.Resolve(name)
 	if err != nil {
