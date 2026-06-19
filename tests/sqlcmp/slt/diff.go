@@ -33,18 +33,26 @@ func DiffResultSets(actual *ResultSet, rec *Record) string {
 	got := append([][]Value(nil), actual.Rows...)
 	if rec.Sort == RowSort {
 		sortRows(got, false)
-	} else if rec.Sort == ValueSort {
-		sortRows(got, true)
+	}
+	// ValueSort: sort rows as tab-separated strings (SQLite convention).
+	// Do NOT use sortRows(got, true) — it flattens all cells into a
+	// single row, destroying row structure and breaking comparisons.
+	if rec.Sort == ValueSort {
+		sort.Slice(got, func(i, j int) bool {
+			return rowString(got[i]) < rowString(got[j])
+		})
 	}
 	// "Expected" is already in source order. The corpus emits
 	// expected rows in the order the test author intended; for
-	// RowSort, we also sort the expected side so the diff is
-	// order-independent.
+	// RowSort/ValueSort, we also sort the expected side so the
+	// diff is order-independent.
 	want := append([][]Value(nil), expected...)
 	if rec.Sort == RowSort {
 		sortRows(want, false)
 	} else if rec.Sort == ValueSort {
-		sortRows(want, true)
+		sort.Slice(want, func(i, j int) bool {
+			return rowString(want[i]) < rowString(want[j])
+		})
 	}
 	if len(got) != len(want) {
 		return fmt.Sprintf("row count: got %d, want %d", len(got), len(want))
