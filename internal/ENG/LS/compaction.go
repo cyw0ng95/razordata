@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -223,7 +224,7 @@ func copyFile(src, dst string) error {
 
 func fileName(meta *SSTFileMeta) string {
 	return filepath.Join("sst",
-		"L"+string(rune('0'+meta.Level))+"_"+hex.EncodeToString(meta.MinKey)+"_"+hex.EncodeToString(meta.MaxKey)+"_"+u64toa(meta.FileID)+".sst")
+		"L"+strconv.Itoa(int(meta.Level))+"_"+hex.EncodeToString(meta.MinKey)+"_"+hex.EncodeToString(meta.MaxKey)+"_"+u64toa(meta.FileID)+".sst")
 }
 
 // keyRangeOverlap reports whether [lo, hi] overlaps [flo, fhi] (REQ000601).
