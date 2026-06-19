@@ -509,13 +509,9 @@ func BenchmarkBatchSyncGroupCommit(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		fl := f.(*flusher)
-		// Simulate 10 transactions per batch
-		for j := 0; j < 10; j++ {
-			fl.StartBatch()
-			fl.EndBatch(nil)
+		if err := f.Sync(); err != nil {
+			b.Fatal(err)
 		}
-		fl.BatchSync()
 	}
 }
 

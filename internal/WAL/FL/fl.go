@@ -4,13 +4,23 @@ package fl
 import (
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/FS"
 	"github.com/cyw0ng95/razordata/internal/FIL/LF"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 )
 
+var (
+	ErrFlusherClosed       = errors.New("flusher closed")
+	ErrGroupCommitTimeout  = errors.New("group commit timeout")
+)
+
 const walDirName = "wal"
+
+type FlusherOptions struct {
+	GroupCommitTimeout time.Duration // default 50µs
+}
 
 // Flusher batches and persists WAL records to disk (R08).
 type Flusher interface {
@@ -28,7 +38,8 @@ type flusher struct {
 
 	closed      atomicBool
 	wbuf        *writeBuffer
-	batchCommit sync.WaitGroup // REQ000176: group commit barrier
+	gc          *groupCommit       // REQ000542: group commit pipeline
+	gcOpts      FlusherOptions     // group commit options
 	mu          sync.Mutex
 	syncErr     error
 }
@@ -68,6 +79,11 @@ func (wb *writeBuffer) Bytes() []byte {
 
 // New constructs a Flusher.
 func New(dir string, sm *lf.SegmentManager, fm *fs.FileManager, log lg.Logger) (Flusher, error) {
+	return NewWithOptions(dir, sm, fm, FlusherOptions{}, log)
+}
+
+// NewWithOptions constructs a Flusher with the given options.
+func NewWithOptions(dir string, sm *lf.SegmentManager, fm *fs.FileManager, opts FlusherOptions, log lg.Logger) (Flusher, error) {
 	if dir == "" {
 		return nil, errors.New("fl: dir is required")
 	}
@@ -77,44 +93,42 @@ func New(dir string, sm *lf.SegmentManager, fm *fs.FileManager, log lg.Logger) (
 	if fm == nil {
 		return nil, errors.New("fl: FileManager is required")
 	}
-	return &flusher{sm: sm, fm: fm, lsn: newLSNCounter(), log: log, wbuf: newWriteBuffer()}, nil
+	gc := newGroupCommit(groupCommitOptions{Timeout: opts.GroupCommitTimeout})
+	return &flusher{sm: sm, fm: fm, lsn: newLSNCounter(), log: log, wbuf: newWriteBuffer(), gc: gc, gcOpts: opts}, nil
 }
 
 // Sync persists the write buffer to disk (REQ000594).
+// The caller joins the group commit pipeline and is unblocked when the
+// batch fsync completes. Returns nil after Close (no-op contract).
 func (f *flusher) Sync() error {
 	if f.closed.isSet() {
 		return nil
 	}
-	f.batchCommit.Wait()
-	return f.syncErr
+
+	req := &groupCommitReq{
+		done: make(chan struct{}),
+		lsn:  f.lsn.Current(),
+	}
+
+	// Submit to group commit pipeline.
+	f.gc.Submit(req)
+
+	// Wait for the batch to complete.
+	<-req.done
+
+	if req.timeout {
+		return ErrGroupCommitTimeout
+	}
+	if req.err != nil {
+		return req.err
+	}
+	return nil
 }
 
-// BatchSync coordinates group commit (REQ000176).
+// BatchSync coordinates group commit (REQ000542).
+// It submits a sync request and waits for the batch to complete.
 func (f *flusher) BatchSync() error {
-	if f.closed.isSet() {
-		return nil
-	}
-	f.batchCommit.Wait()
-
-	f.mu.Lock()
-	err := f.syncErr
-	f.mu.Unlock()
-	return err
-}
-
-// StartBatch begins a new group commit batch.
-func (f *flusher) StartBatch() {
-	f.batchCommit.Add(1)
-}
-
-// EndBatch signals that one writer in the batch is done.
-func (f *flusher) EndBatch(err error) {
-	f.mu.Lock()
-	if err != nil && f.syncErr == nil {
-		f.syncErr = err
-	}
-	f.mu.Unlock()
-	f.batchCommit.Done()
+	return f.Sync()
 }
 
 // SyncDir fsyncs the WAL directory (R10).
@@ -135,6 +149,7 @@ func (f *flusher) Close() error {
 	if !f.closed.set() {
 		return nil
 	}
+	f.gc.Close()
 	return nil
 }
 
