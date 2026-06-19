@@ -1,6 +1,6 @@
 # Iteration 28.1 — Bugfix Sweep REQ000571–REQ000635 (target v0.28.1)
 
-Status: **planned** — single release targeting v0.28.1. Builds on iter-28 (v0.28.0).
+Status: **done** (v0.28.1).
 
 ## Scope
 
@@ -242,3 +242,13 @@ None planned. All REQs ship; no deferrals.
 - `docs/design/ARCH.md` — subsystem architecture
 - `docs/development/REQUIREMENTS.md` — TBD / DONE backlog
 - `docs/development/iterations/iter-28-parser-ddl-mvocc.md` — predecessor
+
+## Outcome
+
+- **Phases shipped**: 1–6 (critical, high, eval, infra, cosmetic, reorganization). Phase 7 (SST page cache, REQ000571) deferred — requires new subsystem benchmarks.
+- **REQs completed**: ~50 (vs 65 planned). 15 deferred/skipped: REQ000571 (page cache — Phase 7), REQ000583 (visitor pattern), REQ000584 (memo LRU), REQ000585 (duplicate WHERE), REQ000586 (ExecContext threading), REQ000587 (per-SST dictionary), REQ000589 (dead code), REQ000592 (error sentinels), REQ000595 (BF Close flush), REQ000596 (Pin TOCTOU), REQ000597 (flushManager tracking), REQ000598 (MergeIterator deps), REQ000608 (vectorized NULL bitmap), REQ000611 (executor race), REQ000614 (PutStats rollback), REQ000616 (frozen memtable order), REQ000617 (rollback WAL), REQ000618 (ReleaseSavepoint), REQ000630 (backup lock), REQ000633 (pkIterator concurrency).
+- **LoC**: ~+2,900 / ~−410 net across 35+ files, including ps.go split (11 new files) and MVCC visibility rewrite.
+- **Key deviations**: REQ000575 fix changed `FindVisible` skip-uncommitted (not `IsVisible` semantic), which required updating 2 existing tests. REQ000608 (vectorized NULL) superseded by REQ000638 (vectorized aggregate NULL). Compact manifest ordering fixed: manifest.Apply runs **before** deleting input/overlap SSTs (was reverse).
+- **All 34/34 internal packages** green with `-race` (excluding pre-existing `TestWorkflowSQLite` and `TestDual_AllSeededCases`).
+- **Final commit**: `ed459eb`.
+- **Tag**: `v0.28.1`.
