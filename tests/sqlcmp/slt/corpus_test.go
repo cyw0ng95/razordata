@@ -13,15 +13,9 @@ import (
 )
 
 // corpusRoot is the directory containing the SQLLogicTest files.
-// Resolved relative to the test's working directory; CI checks
-// out the submodule under tests/sqlcmp/corpus/, so the default
-// is "corpus/test/". Override with RAZOR_SLT_ROOT for ad-hoc
-// runs against a different corpus layout.
+// Resolved relative to the test's working directory (tests/sqlcmp/slt/).
 func corpusRoot() string {
-	if v := os.Getenv("RAZOR_SLT_ROOT"); v != "" {
-		return v
-	}
-	return "corpus/test"
+	return filepath.Join("..", "corpus", "test")
 }
 
 // TestSQLLogicTest_CorpusSubset runs the curated PR subset and
