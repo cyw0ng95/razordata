@@ -9,7 +9,10 @@ import (
 func (p *Parser) parsePrimary() (Expr, error) {
 	switch p.current.Type {
 	case LX.T_INT:
-		val := p.current.Literal.(int64)
+		val, ok := p.current.Literal.(int64)
+		if !ok {
+			return nil, &SyntaxError{Msg: fmt.Sprintf("expected int64 literal, got %T", p.current.Literal)}
+		}
 		p.advance()
 		return &NumberLiteral{Val: val}, nil
 	case LX.T_FLOAT:
@@ -17,7 +20,10 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		p.advance()
 		return &FloatLiteral{Val: parseFloat(val)}, nil
 	case LX.T_STRING:
-		val := p.current.Literal.(string)
+		val, ok := p.current.Literal.(string)
+		if !ok {
+			return nil, &SyntaxError{Msg: fmt.Sprintf("expected string literal, got %T", p.current.Literal)}
+		}
 		p.advance()
 		return &StringLiteral{Val: val}, nil
 	case LX.T_NULL:
