@@ -52,7 +52,6 @@ func (fj *flushJob) Run() error {
 	}
 
 	if err := fj.updateManifest(tmpPath); err != nil {
-		// Best-effort cleanup of the orphan temp file.
 		_ = os.Remove(tmpPath)
 		return err
 	}
@@ -121,16 +120,6 @@ func (fj *flushJob) updateManifest(tmpPath string) error {
 
 	files := []SSTFileMeta{meta}
 
-	// REQ000347 (iter-26): flushed SSTs always land in L0.
-	// The previous code appended to the *next* level
-	// (newLevels[len(current.levels)] = files), which meant
-	// the second flush put its SST in L1, the third in L2,
-	// and so on. readFromSST walks levels in order, so
-	// newer-flushed data was still findable in this version
-	// of the manifest, but the level count was unbounded
-	// and the L0 "hot" level was never populated after the
-	// first flush, which broke subsequent compaction
-	// scheduling.
 	current := fj.manifest.Current()
 	newLevels := make([][]SSTFileMeta, len(current.levels))
 	if len(newLevels) == 0 {
@@ -139,8 +128,6 @@ func (fj *flushJob) updateManifest(tmpPath string) error {
 	for i := range current.levels {
 		newLevels[i] = append([]SSTFileMeta(nil), current.levels[i]...)
 	}
-	// Prepend the new file to L0 so the merge iterator sees
-	// it first (newest data wins on key collision).
 	newLevels[0] = append(files, newLevels[0]...)
 
 	v := Version{
@@ -149,7 +136,11 @@ func (fj *flushJob) updateManifest(tmpPath string) error {
 		created: time.Now(),
 	}
 
-	return fj.manifest.Apply(v)
+	if err := fj.manifest.Apply(v); err != nil {
+		_ = os.Remove(finalPath)
+		return err
+	}
+	return nil
 }
 
 type flushManager struct {

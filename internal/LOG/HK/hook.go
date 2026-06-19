@@ -73,10 +73,8 @@ func (r *HookRegistry) dispatch() {
 			}
 			r.dispatched.Add(1)
 			r.mu.RLock()
-			for name, hook := range r.hooks {
-				go func(name string, hook Hook) {
-					hook.OnLog(event.Level, event.Msg, event.Args)
-				}(name, hook)
+			for _, hook := range r.hooks {
+				hook.OnLog(event.Level, event.Msg, event.Args)
 			}
 			r.mu.RUnlock()
 		case <-r.done:

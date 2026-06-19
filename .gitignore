@@ -70,4 +70,6 @@ tmp/
 # AI Coding tools
 .qwen
 .monkeycode
+.monkeycode-tmp-files
+.mimocode
 .omo

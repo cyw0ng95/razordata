@@ -65,9 +65,12 @@ type sharedLogger struct {
 	maxFiles        int          // max rotated files to retain
 	compressRotated bool         // gzip rotated files (R16-15)
 	curSize         atomic.Int64 // current file size
+	callCount       atomic.Uint64 // log call counter for throttled rotation check
 	rotationFn      func() error // called when rotation needed
 	rotMu           sync.Mutex   // mutex just for rotation
 }
+
+const rotationCheckInterval = 4 // check rotation every 4 log calls
 
 // atomicLevel implements slog.Leveler using a atomic int32.
 type atomicLevel struct {
@@ -195,20 +198,13 @@ func (l *logger) logIfEnabled(lvl slog.Level, msg string, args ...any) {
 		return
 	}
 
-	// Check rotation - no lock needed for reading rotationFn
+	// Check rotation - throttled to every rotationCheckInterval calls
 	rotationFn := l.shared.rotationFn
-	rotationNeeded := false
 	if rotationFn != nil {
-		size := l.shared.curSize.Load()
-		if size >= l.shared.maxSize {
-			rotationNeeded = true
+		c := l.shared.callCount.Add(1)
+		if c%rotationCheckInterval == 0 && l.shared.curSize.Load() >= l.shared.maxSize {
+			l.shared.rotationFn()
 		}
-	}
-
-	// Perform rotation. rotateFile acquires rotMu itself; the double-check
-	// after locking prevents redundant rotations from concurrent goroutines.
-	if rotationNeeded {
-		l.shared.rotationFn()
 	}
 
 	l.impl.Log(context.Background(), lvl, msg, args...)

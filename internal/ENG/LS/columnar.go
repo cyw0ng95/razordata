@@ -27,7 +27,7 @@ import (
 
 // crc32Sum is a small wrapper over hash/crc32.
 func crc32Sum(data []byte) uint32 {
-	return crc32.Checksum(data, crc32.MakeTable(crc32.Koopman))
+	return crc32.Checksum(data, crc32Koopman)
 }
 
 // blockLayout identifies the block layout.

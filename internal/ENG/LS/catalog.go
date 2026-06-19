@@ -903,6 +903,9 @@ func (c *Catalog) Len() int {
 
 // Close releases the catalog. Idempotent.
 func (c *Catalog) Close() error {
+	if c == nil {
+		return nil
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = true

@@ -191,7 +191,7 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 		poolBuf := *bufPool.Get().(*[]byte)
 		defer bufPool.Put(&poolBuf)
 
-		for i := range poolBuf[:DataLen-ChecksumLen] {
+		for i := n; i < DataLen-ChecksumLen; i++ {
 			poolBuf[i] = 0
 		}
 		copy(poolBuf, data)

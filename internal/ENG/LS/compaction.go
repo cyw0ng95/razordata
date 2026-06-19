@@ -191,26 +191,7 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	newLevels := make([][]SSTFileMeta, len(manifest.Current().levels))
 	copy(newLevels, manifest.Current().levels)
 
-	for _, input := range cj.inputs {
-		sstPath := filepath.Join(dir, fileName(&input))
-		os.Remove(sstPath)
-	}
-
-	// REQ000601: also delete overlap files from disk. The merge
-	// has folded their contents into the new output; leaving the
-	// files in place wastes disk and re-merges the same data on
-	// the next compaction.
-	for _, ov := range cj.overlap {
-		sstPath := filepath.Join(dir, fileName(&ov))
-		os.Remove(sstPath)
-	}
-
 	newLevels[cj.level] = removeFiles(newLevels[cj.level], cj.inputs)
-	// REQ000601: remove overlap files from level+1 too. The
-	// overlap data has been merged into the new output; leaving
-	// the overlap files in place causes unbounded disk growth
-	// because every subsequent compaction re-merges the same
-	// data again.
 	newLevels[cj.level+1] = removeFiles(newLevels[cj.level+1], cj.overlap)
 	newLevels[cj.level+1] = append(newLevels[cj.level+1], SSTFileMeta{
 		FileID:    newFileID,
@@ -227,7 +208,22 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 		created: time.Now(),
 	}
 
-	return manifest.Apply(v)
+	if err := manifest.Apply(v); err != nil {
+		_ = os.Remove(newPath)
+		return err
+	}
+
+	for _, input := range cj.inputs {
+		sstPath := filepath.Join(dir, fileName(&input))
+		os.Remove(sstPath)
+	}
+
+	for _, ov := range cj.overlap {
+		sstPath := filepath.Join(dir, fileName(&ov))
+		os.Remove(sstPath)
+	}
+
+	return nil
 }
 
 // copyFile copies src to dst by reading the source into memory and writing

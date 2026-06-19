@@ -148,7 +148,7 @@ func encodeManifest(v *Version) ([]byte, error) {
 		_ = i
 	}
 
-	checksum := crc32.Checksum(buf.Bytes(), crc32.MakeTable(crc32.Koopman))
+	checksum := crc32.Checksum(buf.Bytes(), crc32Koopman)
 	binary.Write(&buf, binary.LittleEndian, checksum)
 
 	return buf.Bytes(), nil
@@ -219,7 +219,7 @@ func parseManifest(data []byte) (*Version, error) {
 	}
 
 	storedChecksum := binary.LittleEndian.Uint32(data[len(data)-4:])
-	computedChecksum := crc32.Checksum(data[:len(data)-4], crc32.MakeTable(crc32.Koopman))
+	computedChecksum := crc32.Checksum(data[:len(data)-4], crc32Koopman)
 	if storedChecksum != computedChecksum {
 		return nil, ErrInvalidManifest
 	}

@@ -164,19 +164,6 @@ func (e *engine) Read(key []byte) ([]byte, error) {
 
 	for i := len(e.memtables) - 1; i >= 0; i-- {
 		mt := e.memtables[i]
-		if mt.IsFrozen() {
-			continue
-		}
-		if val, found := mt.Get(key); found {
-			e.stats.MemtableHits++
-			return val, nil
-		}
-	}
-
-	for _, mt := range e.memtables {
-		if !mt.IsFrozen() {
-			continue
-		}
 		if val, found := mt.Get(key); found {
 			e.stats.MemtableHits++
 			return val, nil
@@ -188,10 +175,7 @@ func (e *engine) Read(key []byte) ([]byte, error) {
 		e.stats.SSTHits++
 		return val, nil
 	}
-	if errors.Is(err, ErrKeyNotFound) {
-		return nil, ErrKeyNotFound
-	}
-	return nil, err
+	return nil, ErrKeyNotFound
 }
 
 func (e *engine) readFromSST(key []byte) ([]byte, error) {

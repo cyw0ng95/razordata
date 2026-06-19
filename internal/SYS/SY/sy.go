@@ -272,6 +272,9 @@ func (e *Engine) Close(ctx context.Context) error {
 }
 
 func (e *Engine) closeBestEffort() error {
+	if e == nil {
+		return nil
+	}
 	var firstErr error
 	// Errors are collected and logged; closing continues regardless
 	// so a failure in one subsystem does not strand later ones.

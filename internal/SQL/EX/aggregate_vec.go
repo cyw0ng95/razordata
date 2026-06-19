@@ -86,12 +86,13 @@ func (a *VectorizedCount) Close() error {
 //
 // REQ000157 satisfied (partial): SIMD-accelerated SUM aggregate.
 type VectorizedSum struct {
-	child  BatchProducer
-	colIdx int
-	isFloat bool
-	intSum int64
+	child    BatchProducer
+	colIdx   int
+	isFloat  bool
+	intSum   int64
 	floatSum float64
-	done   bool
+	hasValue bool
+	done     bool
 }
 
 // NewVectorizedSum creates a vectorized SUM aggregate for the
@@ -140,6 +141,7 @@ func (a *VectorizedSum) accumulateColumn(col Column, batch *Batch) {
 			return
 		}
 		a.isFloat = false
+		a.hasValue = true
 		// Use selection vector if present
 		if batch.Sel != nil {
 			for _, idx := range batch.Sel {
@@ -169,6 +171,7 @@ func (a *VectorizedSum) accumulateColumn(col Column, batch *Batch) {
 			return
 		}
 		a.isFloat = true
+		a.hasValue = true
 		if batch.Sel != nil {
 			for _, idx := range batch.Sel {
 				if int(idx) < len(data) {
@@ -193,6 +196,13 @@ func (a *VectorizedSum) accumulateColumn(col Column, batch *Batch) {
 }
 
 func (a *VectorizedSum) finalBatch() (*Batch, error) {
+	if !a.hasValue {
+		batch := GetBatch(1)
+		batch.AppendRow(0, LX.T_INT_KW, nil, true)
+		batch.AdvanceSize()
+		batch.SetColumnName(0, "sum")
+		return batch, nil
+	}
 	batch := GetBatch(1)
 	if a.isFloat {
 		batch.AppendRow(0, LX.T_FLOAT_KW, a.floatSum, false)
@@ -258,13 +268,18 @@ func (a *VectorizedAvg) NextBatch(ctx context.Context) (*Batch, error) {
 	a.done = true
 
 	// Compute average
+	if a.cnt.total == 0 {
+		batch := GetBatch(1)
+		batch.AppendRow(0, LX.T_INT_KW, nil, true)
+		batch.AdvanceSize()
+		batch.SetColumnName(0, "avg")
+		return batch, nil
+	}
 	var avg float64
-	if a.cnt.total > 0 {
-		if a.sum.isFloat {
-			avg = a.sum.floatSum / float64(a.cnt.total)
-		} else {
-			avg = float64(a.sum.intSum) / float64(a.cnt.total)
-		}
+	if a.sum.isFloat {
+		avg = a.sum.floatSum / float64(a.cnt.total)
+	} else {
+		avg = float64(a.sum.intSum) / float64(a.cnt.total)
 	}
 
 	batch := GetBatch(1)
@@ -423,6 +438,13 @@ func (a *VectorizedMin) reduceColumn(col Column, batch *Batch) {
 }
 
 func (a *VectorizedMin) finalBatch() (*Batch, error) {
+	if !a.hasValue {
+		batch := GetBatch(1)
+		batch.AppendRow(0, LX.T_INT_KW, nil, true)
+		batch.AdvanceSize()
+		batch.SetColumnName(0, "min")
+		return batch, nil
+	}
 	batch := GetBatch(1)
 	if a.isFloat {
 		batch.AppendRow(0, LX.T_FLOAT_KW, a.floatMin, false)
@@ -582,6 +604,13 @@ func (a *VectorizedMax) reduceColumn(col Column, batch *Batch) {
 }
 
 func (a *VectorizedMax) finalBatch() (*Batch, error) {
+	if !a.hasValue {
+		batch := GetBatch(1)
+		batch.AppendRow(0, LX.T_INT_KW, nil, true)
+		batch.AdvanceSize()
+		batch.SetColumnName(0, "max")
+		return batch, nil
+	}
 	batch := GetBatch(1)
 	if a.isFloat {
 		batch.AppendRow(0, LX.T_FLOAT_KW, a.floatMax, false)
