@@ -17,22 +17,17 @@ import (
 
 // Options configures the logger.
 type Options struct {
-	Level    slog.Level // minimum log level, default Info
-	Format   string     // "json" or "text", default "text"
-	Output   io.Writer  // destination, default os.Stderr
-	Dir      string     // log directory for rotation, empty = no rotation
-	BaseName string     // base filename, default "razordata.log"
-	MaxSize  int64      // max file size before rotation in bytes, default100MB
-	MaxFiles int        // max rotated files to retain, default10
-	// CompressRotated, when true (default), gzips the rotated file
-	// and writes <base>.YYYYMMDD_HHMMSS.log.gz. The uncompressed
-	// intermediate is removed on success. Set false to keep plain
-	// .log rotated files. (R16-15)
-	CompressRotated bool
+	Level           slog.Level // minimum log level, default Info
+	Format          string     // "json" or "text", default "text"
+	Output          io.Writer  // destination, default os.Stderr
+	Dir             string     // log directory for rotation, empty = no rotation
+	BaseName        string     // base filename, default "razordata.log"
+	MaxSize         int64      // max file size before rotation in bytes, default100MB
+	MaxFiles        int        // max rotated files to retain, default10
+	CompressRotated bool       // gzip rotated files (R16-15)
 }
 
-// Logger is the main logging interface exposed to other subsystems.
-// All methods are safe for concurrent use.
+// Logger is the main logging interface.
 type Logger interface {
 	Debug(msg string, args ...any)
 	Info(msg string, args ...any)
@@ -44,11 +39,8 @@ type Logger interface {
 	Sync() error
 }
 
-// logger is the concrete implementation of Logger.
 type logger struct {
-	impl *slog.Logger
-	// shared holds the shared state between parent and child loggers.
-	// Both parent and child use the same pointer, so SetLevel affects both.
+	impl   *slog.Logger
 	shared *sharedLogger
 }
 
@@ -72,7 +64,6 @@ type sharedLogger struct {
 
 const rotationCheckInterval = 4 // check rotation every 4 log calls
 
-// atomicLevel implements slog.Leveler using a atomic int32.
 type atomicLevel struct {
 	level *atomic.Int32
 }
@@ -82,9 +73,6 @@ func (a atomicLevel) Level() slog.Level {
 }
 
 // New creates a Logger from Options.
-// If Output is nil, defaults to os.Stderr.
-// If Format is not "json", defaults to "text".
-// If Dir is set, enables file rotation with default100MB max size.
 func New(opts Options) Logger {
 	if opts.Output == nil {
 		opts.Output = os.Stderr
@@ -113,16 +101,8 @@ func New(opts Options) Logger {
 	if s.maxFiles <= 0 {
 		s.maxFiles = 10
 	}
-	// R16-15: default CompressRotated to true unless the caller
-	// explicitly set it to false. We can't distinguish "set to
-	// false" from "not set" with a bool alone, so the default is
-	// the conservative plain-text behavior; callers who want
-	// gzip set CompressRotated: true explicitly. To preserve the
-	// backward-compatible plain-text default, the default here is
-	// false. Production users opt in via Options.
-	_ = s.compressRotated // explicit field; no auto-default to keep zero-value semantics.
+	_ = s.compressRotated
 
-	// If Dir is set, enable file rotation
 	if s.dir != "" {
 		if err := os.MkdirAll(s.dir, 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "log rotation: failed to create directory %s: %v\n", s.dir, err)
@@ -132,12 +112,10 @@ func New(opts Options) Logger {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "log rotation: failed to open file %s: %v\n", path, err)
 			} else {
-				// Wrap file with rotation writer
 				rw := &rotationWriter{shared: s}
 				rw.setFile(f)
 				s.output = rw
 
-				// Get current file size
 				info, err := f.Stat()
 				if err == nil {
 					s.curSize.Store(info.Size())
@@ -147,7 +125,6 @@ func New(opts Options) Logger {
 		}
 	}
 
-	// Use atomicLevel wrapper that implements slog.Leveler
 	al := atomicLevel{level: &s.level}
 
 	var handler slog.Handler
@@ -160,12 +137,10 @@ func New(opts Options) Logger {
 	return &logger{impl: slog.New(handler), shared: s}
 }
 
-// SetLevel updates the minimum log level.
 func (l *logger) SetLevel(level slog.Level) {
 	l.shared.level.Store(int32(level))
 }
 
-// SetOutput changes the destination writer.
 func (l *logger) SetOutput(w io.Writer) {
 	if w == nil {
 		w = os.Stderr
@@ -174,7 +149,6 @@ func (l *logger) SetOutput(w io.Writer) {
 	defer l.shared.mu.Unlock()
 	l.shared.output = w
 
-	// Create atomicLevel for the new handler
 	al := atomicLevel{level: &l.shared.level}
 
 	var handler slog.Handler
@@ -185,20 +159,16 @@ func (l *logger) SetOutput(w io.Writer) {
 	}
 	l.impl = slog.New(handler)
 
-	// Disable rotation when output is manually set
 	l.shared.rotationFn = nil
 }
 
-// logIfEnabled checks the level before constructing the log record.
 func (l *logger) logIfEnabled(lvl slog.Level, msg string, args ...any) {
-	// Check level atomically - no lock needed
 	enabled := lvl >= slog.Level(l.shared.level.Load())
 
 	if !enabled {
 		return
 	}
 
-	// Check rotation - throttled to every rotationCheckInterval calls
 	rotationFn := l.shared.rotationFn
 	if rotationFn != nil {
 		c := l.shared.callCount.Add(1)
@@ -210,35 +180,27 @@ func (l *logger) logIfEnabled(lvl slog.Level, msg string, args ...any) {
 	l.impl.Log(context.Background(), lvl, msg, args...)
 }
 
-// Debug logs at Debug level.
 func (l *logger) Debug(msg string, args ...any) {
 	l.logIfEnabled(slog.LevelDebug, msg, args...)
 }
 
-// Info logs at Info level.
 func (l *logger) Info(msg string, args ...any) {
 	l.logIfEnabled(slog.LevelInfo, msg, args...)
 }
 
-// Warn logs at Warn level.
 func (l *logger) Warn(msg string, args ...any) {
 	l.logIfEnabled(slog.LevelWarn, msg, args...)
 }
 
-// Error logs at Error level.
 func (l *logger) Error(msg string, args ...any) {
 	l.logIfEnabled(slog.LevelError, msg, args...)
 }
 
-// With returns a new Logger with the given args merged into the underlying slog logger.
-// The new logger shares the same shared state as the original —
-// SetLevel on either affects both. This is intentional: the level is a global
-// property of the logging system.
+// With returns a new Logger with the given args merged.
 func (l *logger) With(args ...any) Logger {
 	return &logger{impl: l.impl.With(args...), shared: l.shared}
 }
 
-// Sync flushes the underlying slog handler.
 func (l *logger) Sync() error {
 	if h, ok := l.impl.Handler().(interface{ Sync() error }); ok {
 		return h.Sync()
@@ -246,7 +208,6 @@ func (l *logger) Sync() error {
 	return nil
 }
 
-// rotationWriter wraps the log file to track size accurately.
 type rotationWriter struct {
 	file   atomic.Pointer[os.File]
 	shared *sharedLogger
@@ -282,30 +243,20 @@ func (w *rotationWriter) setFile(f *os.File) {
 	w.file.Store(f)
 }
 
-// rotateFile performs log rotation:
-// 1. Close current file
-// 2. Rename to <baseName>.YYYYMMDD_HHMMSS.log
-// 3. (R16-15) gzip the rotated file to <baseName>.YYYYMMDD_HHMMSS.log.gz
-// 4. Open new file with original name
-// 5. Update curSize to0
-// 6. Delete oldest file if exceeding maxFiles
+// rotateFile performs log rotation.
 func (s *sharedLogger) rotateFile() error {
-	// Use rotMu instead of s.mu to avoid deadlock with slog handler
 	s.rotMu.Lock()
 	defer s.rotMu.Unlock()
 
-	// Double-check under lock: another goroutine may have rotated already
 	if s.curSize.Load() < s.maxSize {
 		return nil
 	}
 
-	// Get current file from output
 	rw, ok := s.output.(*rotationWriter)
 	if !ok {
 		return nil // rotation not active
 	}
 
-	// Close current file
 	if err := rw.Sync(); err != nil {
 		fmt.Fprintf(os.Stderr, "log rotation: failed to sync file: %v\n", err)
 	}
@@ -313,7 +264,6 @@ func (s *sharedLogger) rotateFile() error {
 		fmt.Fprintf(os.Stderr, "log rotation: failed to close file: %v\n", err)
 	}
 
-	// Generate rotated filename: <baseName>.YYYYMMDD_HHMMSS.log
 	timestamp := time.Now().Format("20060102_150405")
 	ext := filepath.Ext(s.baseName)
 	base := strings.TrimSuffix(s.baseName, ext)
@@ -321,10 +271,8 @@ func (s *sharedLogger) rotateFile() error {
 	rotatedPath := filepath.Join(s.dir, rotatedName)
 	currentPath := filepath.Join(s.dir, s.baseName)
 
-	// Rename current file to rotated name
 	if err := os.Rename(currentPath, rotatedPath); err != nil {
 		fmt.Fprintf(os.Stderr, "log rotation: failed to rename file: %v\n", err)
-		// Try to reopen original file on failure
 		f, openErr := os.OpenFile(currentPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if openErr == nil {
 			rw.setFile(f)
@@ -333,9 +281,6 @@ func (s *sharedLogger) rotateFile() error {
 		return err
 	}
 
-	// R16-15: gzip the rotated file in place. On success, delete the
-	// uncompressed intermediate. On failure, leave the uncompressed
-	// file in place — rotation succeeded even if compression failed.
 	if s.compressRotated {
 		gzPath := rotatedPath + ".gz"
 		if err := gzipFile(rotatedPath, gzPath); err != nil {
@@ -345,11 +290,9 @@ func (s *sharedLogger) rotateFile() error {
 		}
 	}
 
-	// Open new file with original name
 	f, err := os.OpenFile(currentPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "log rotation: failed to open new file: %v\n", err)
-		// Reopen rotated file as fallback
 		f, openErr := os.OpenFile(rotatedPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if openErr != nil {
 			return fmt.Errorf("failed to open any log file: %w", err)
@@ -362,7 +305,6 @@ func (s *sharedLogger) rotateFile() error {
 	rw.setFile(f)
 	s.curSize.Store(0)
 
-	// Cleanup old files if exceeding maxFiles
 	if err := s.cleanupOldLogs(); err != nil {
 		fmt.Fprintf(os.Stderr, "log rotation: failed to cleanup old logs: %v\n", err)
 	}
@@ -370,8 +312,7 @@ func (s *sharedLogger) rotateFile() error {
 	return nil
 }
 
-// gzipFile reads src and writes a gzip-compressed copy to dst. The
-// caller is responsible for removing src on success. (R16-15)
+// gzipFile reads src and writes a gzip-compressed copy to dst.
 func gzipFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -391,15 +332,12 @@ func gzipFile(src, dst string) error {
 	return gz.Close()
 }
 
-// cleanupOldLogs removes the oldest rotated log files if exceeding maxFiles.
 func (s *sharedLogger) cleanupOldLogs() error {
 	files, err := s.listRotatedFiles()
 	if err != nil {
 		return err
 	}
 
-	// Delete oldest files if exceeding maxFiles
-	// files is sorted oldest first, so delete from the beginning
 	toDelete := len(files) - s.maxFiles
 	for i := 0; i < toDelete; i++ {
 		if err := os.Remove(files[i]); err != nil {
@@ -409,9 +347,7 @@ func (s *sharedLogger) cleanupOldLogs() error {
 	return nil
 }
 
-// listRotatedFiles returns sorted list of rotated log files (oldest first).
-// Recognizes both <baseName>.YYYYMMDD_HHMMSS.log and
-// <baseName>.YYYYMMDD_HHMMSS.log.gz (R16-16).
+// listRotatedFiles returns sorted list of rotated log files.
 func (s *sharedLogger) listRotatedFiles() ([]string, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -429,8 +365,6 @@ func (s *sharedLogger) listRotatedFiles() ([]string, error) {
 			continue
 		}
 		name := entry.Name()
-		// Check if matches rotation pattern: <base>.YYYYMMDD_HHMMSS<ext>
-		// or <base>.YYYYMMDD_HHMMSS<ext>.gz
 		if !strings.HasPrefix(name, prefix) || name == s.baseName {
 			continue
 		}
@@ -452,15 +386,11 @@ func (s *sharedLogger) listRotatedFiles() ([]string, error) {
 		rotated = append(rotated, filepath.Join(s.dir, name))
 	}
 
-	// Sort by filename (which includes timestamp), oldest first
 	sort.Strings(rotated)
 	return rotated, nil
 }
 
-// FirstLogger returns the first logger in logs, or nil if logs is empty.
-// Many subsystems accept an optional logger via variadic arguments; this
-// helper consolidates the "first-or-nil" pick so each subsystem does
-// not re-implement it.
+// FirstLogger returns the first logger in logs, or nil.
 func FirstLogger(logs []Logger) Logger {
 	if len(logs) > 0 {
 		return logs[0]

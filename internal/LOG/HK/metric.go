@@ -7,12 +7,7 @@ import (
 	"sync/atomic"
 )
 
-// metricHook is a stub implementation of Hook for collecting metrics.
-// Real implementation will collect counters (queries, rows, bytes) and
-// histograms (latency) in a lock-free way using sync/atomic.
-// For now, it does nothing.
 type metricHook struct {
-	// counters (lock-free via atomic)
 	queryCount   atomic.Int64
 	rowsReturned atomic.Int64
 	bytesRead    atomic.Int64
@@ -21,13 +16,7 @@ type metricHook struct {
 
 var _ Hook = (*metricHook)(nil)
 
-// OnLog implements Hook.
-// Parses log events and updates metrics (REQ000193).
-// Expected events:
-// - "SQL query": increment queryCount
-// - "rows returned": add N to rowsReturned (args: "rows", N)
-// - "bytes read": add N to bytesRead (args: "bytes", N)
-// - "bytes written": add N to bytesWritten (args: "bytes", N)
+// OnLog implements Hook (REQ000193).
 func (m *metricHook) OnLog(level slog.Level, msg string, args []any) {
 	switch msg {
 	case "SQL query":
@@ -41,8 +30,6 @@ func (m *metricHook) OnLog(level slog.Level, msg string, args []any) {
 	}
 }
 
-// extractInt64 extracts an int64 value from args by key.
-// Returns 0 if not found or wrong type.
 func extractInt64(args []any, key string) int64 {
 	for i := 0; i < len(args)-1; i += 2 {
 		if k, ok := args[i].(string); ok && k == key {
@@ -59,34 +46,27 @@ func extractInt64(args []any, key string) int64 {
 	return 0
 }
 
-// Close implements Hook.
 func (m *metricHook) Close() error {
 	return nil
 }
 
-// QueryCount returns the total number of queries.
 func (m *metricHook) QueryCount() int64 {
 	return m.queryCount.Load()
 }
 
-// RowsReturned returns the total number of rows returned.
 func (m *metricHook) RowsReturned() int64 {
 	return m.rowsReturned.Load()
 }
 
-// BytesRead returns the total bytes read.
 func (m *metricHook) BytesRead() int64 {
 	return m.bytesRead.Load()
 }
 
-// BytesWritten returns the total bytes written.
 func (m *metricHook) BytesWritten() int64 {
 	return m.bytesWritten.Load()
 }
 
-// PrometheusMetrics returns the metric counters in Prometheus text
-// exposition format (https://prometheus.io/docs/instrumenting/exposition_formats/).
-// REQ000101.
+// PrometheusMetrics returns the metric counters in Prometheus text format (REQ000101).
 func (m *metricHook) PrometheusMetrics() string {
 	var b strings.Builder
 	b.WriteString("# HELP razor_queries_total Total number of SQL queries.\n")
@@ -115,9 +95,7 @@ func (m *metricHook) PrometheusMetrics() string {
 	return b.String()
 }
 
-// MetricHook returns the singleton metricHook. If no metric hook is
-// registered, returns a no-op stub for safe access.
-// REQ000101.
+// MetricHook returns the singleton metricHook (REQ000101).
 func MetricHook() interface {
 	PrometheusMetrics() string
 	QueryCount() int64
@@ -141,10 +119,7 @@ func (n *noopMetric) BytesWritten() int64       { return 0 }
 
 var globalMetricHook *metricHook
 
-// SetMetricHook sets the global metricHook. Called once at startup
-// to wire the hook into the manager.
-// REQ000101.
+// SetMetricHook sets the global metricHook (REQ000101).
 func SetMetricHook(h *metricHook) { globalMetricHook = h }
 
-// GetMetricHook returns the global metricHook or nil if not set.
 func GetMetricHook() *metricHook { return globalMetricHook }
