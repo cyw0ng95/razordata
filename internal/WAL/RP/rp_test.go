@@ -541,3 +541,94 @@ func TestReplayWithCheckpointTruncation(t *testing.T) {
 		t.Error("expected some blocks to be replayed")
 	}
 }
+
+// TestReplayLargeSegmentSpansChunks verifies that records spanning
+// multiple read chunks (>64KB total) are all recovered during replay.
+// REQ000572 — the inner-loop `offset += int64(consumed)` was double-
+// counting the chunk-relative advance that `off += consumed` already
+// tracks, so the next chunk read skipped records (the file position
+// jumped past them). The outer `offset += int64(off)` after the loop
+// was the correct advance.
+func TestReplayLargeSegmentSpansChunks(t *testing.T) {
+	tmp := t.TempDir()
+
+	sm, err := setupSegmentManager(tmp)
+	if err != nil {
+		t.Fatalf("setupSegmentManager: %v", err)
+	}
+	defer sm.Close()
+
+	bp, err := setupBufferPool(tmp)
+	if err != nil {
+		t.Fatalf("setupBufferPool: %v", err)
+	}
+	defer bp.Close()
+
+	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
+	if err != nil {
+		t.Fatalf("wr.New: %v", err)
+	}
+
+	const recordCount = 4000
+	const payloadSize = 64
+	batch := &wr.WriteBatch{
+		TxnID: 1,
+		Recs:  make([]wr.LogRecord, 0, recordCount*2+1),
+	}
+	for i := uint64(0); i < recordCount; i++ {
+		val := make([]byte, payloadSize)
+		for j := range val {
+			val[j] = byte(i + uint64(j))
+		}
+		batch.Recs = append(batch.Recs, wr.LogRecord{
+			Type:    wr.RTData,
+			BlockID: i + 1,
+			Value:   val,
+		})
+	}
+	batch.Recs = append(batch.Recs, wr.LogRecord{Type: wr.RTCommit, TxnID: 1})
+
+	if _, err = w.Append(batch); err != nil {
+		t.Fatalf("wr.Append: %v", err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatalf("wr.Sync: %v", err)
+	}
+	w.Close()
+
+	var seenDataBlocks []uint64
+	var seenCommitTxnID uint64
+	cb := Callbacks{
+		OnData: func(blockID uint64, data []byte) error {
+			seenDataBlocks = append(seenDataBlocks, blockID)
+			return nil
+		},
+		OnCommit: func(txnID uint64, commitTS uint64) error {
+			seenCommitTxnID = txnID
+			return nil
+		},
+	}
+
+	r, err := New(tmp, sm, bp, cb, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Close()
+
+	if err := r.Replay(); err != nil {
+		t.Errorf("Replay: %v", err)
+	}
+
+	if len(seenDataBlocks) != recordCount {
+		t.Errorf("replayed %d RTData records, want %d", len(seenDataBlocks), recordCount)
+	}
+	for i, blk := range seenDataBlocks {
+		if blk != uint64(i+1) {
+			t.Errorf("record %d: blockID=%d, want %d", i, blk, i+1)
+			break
+		}
+	}
+	if seenCommitTxnID != 1 {
+		t.Errorf("commit txnID=%d, want 1", seenCommitTxnID)
+	}
+}

@@ -290,121 +290,114 @@ func (r *replayer) forEachRecord(segNum uint64, fn func(rec *wr.LogRecord, recLS
 		return nil
 	}
 
-	buf := make([]byte, 64*1024)
-
-	for offset < fileSize {
-		readN := int64(len(buf))
-		if offset+readN > fileSize {
-			readN = fileSize - offset
+	// REQ000572: Read the entire segment payload in one Pread so
+	// that records spanning the previous 64KB chunk boundary are
+	// fully visible to the decoder. The previous implementation
+	// chunked reads at 64KB which truncated mid-record scans
+	// once the data exceeded a chunk. Replay is not on a hot
+	// path; the per-segment memory cost (up to 64MB) is bounded
+	// by SegSize.
+	buf := make([]byte, remaining)
+	n, err := unix.Pread(fd, buf, offset)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
 		}
+		return fmt.Errorf("rp: read segment %d offset %d: %w", segNum, offset, err)
+	}
+	if n == 0 {
+		return nil
+	}
+	if int64(n) < remaining {
+		// Short read: trim buf to the actual read length.
+		buf = buf[:n]
+	}
 
-		n, err := unix.Pread(fd, buf[:readN], offset)
+	off := 0
+	for off < len(buf) {
+		// REQ000034: use the compressed decoder when the
+		// segment header indicates lz4 compression. The
+		// decoder verifies the CRC against the on-disk
+		// (compressed) body before decompressing.
+		rec, consumed, err := wr.DecodeRecordCompressed(buf, off, r.compressed)
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
+			if errors.Is(err, wr.ErrTruncatedRecord) {
+				// End of segment reached. Tolerate.
+				r.stats.TruncatedSegments++
+				return nil
 			}
-			return fmt.Errorf("rp: read segment %d offset %d: %w", segNum, offset, err)
-		}
-		if n == 0 {
-			break
-		}
-
-		off := 0
-		for off < n {
-			// REQ000034: use the compressed decoder when the
-			// segment header indicates lz4 compression. The
-			// decoder verifies the CRC against the on-disk
-			// (compressed) body before decompressing.
-			rec, consumed, err := wr.DecodeRecordCompressed(buf[:n], off, r.compressed)
-			if err != nil {
-				if errors.Is(err, wr.ErrTruncatedRecord) {
-					// End of segment reached. Tolerate.
-					r.stats.TruncatedSegments++
-					return nil
-				}
-				if errors.Is(err, wr.ErrUnknownRecord) {
-					// Forward-compat skip. The length
-					// varint was valid but the record's
-					// declared size would exceed
-					// MaxRecordLen — treat as tail,
-					// stop iterating.
-					r.stats.TruncatedSegments++
-					return nil
-				}
-				if errors.Is(err, wr.ErrCorrupt) {
-					// R13-7: mid-segment corruption,
-					// fail loud. The resync window
-					// is bounded to MaxRecordLen
-					// bytes from the corruption site.
-					// Beyond that, ErrCorrupt.
-					r.stats.CorruptionFailures++
-					return fmt.Errorf("rp: segment %d offset %d: %w",
-						segNum, offset+int64(off), ErrCorrupt)
-				}
-				// R13-6: bounded resync. Scan forward
-				// up to MaxRecordLen bytes looking
-				// for a valid record boundary.
-				if rec.PayCRCFail {
-					// Per-RTData inner CRC mismatch
-					// was already flagged by the
-					// decoder; surface as corruption
-					// since the envelope CRC passed
-					// but the body didn't match.
-					r.stats.CorruptionFailures++
-					return fmt.Errorf("rp: segment %d inner RTData CRC: %w",
-						segNum, ErrCorrupt)
-				}
-				_ = rec
-				// Bounded resync: at most
-				// MaxRecordLen bytes from the
-				// current offset, then ErrCorrupt.
-				resyncWindow := int64(wr.MaxRecordLen)
-				if resyncWindow > int64(n-off) {
-					resyncWindow = int64(n - off)
-				}
-				if off+int(resyncWindow) >= n {
-					// No room to resync within this
-					// chunk; advance to next chunk
-					// and retry there.
-					break
-				}
-				off++
-				continue
+			if errors.Is(err, wr.ErrUnknownRecord) {
+				// Forward-compat skip. The length
+				// varint was valid but the record's
+				// declared size would exceed
+				// MaxRecordLen — treat as tail,
+				// stop iterating.
+				r.stats.TruncatedSegments++
+				return nil
 			}
+			if errors.Is(err, wr.ErrCorrupt) {
+				// R13-7: mid-segment corruption,
+				// fail loud. The replayer does not
+				// attempt to recover past the
+				// first corruption site.
+				r.stats.CorruptionFailures++
+				return fmt.Errorf("rp: segment %d offset %d: %w",
+					segNum, offset+int64(off), ErrCorrupt)
+			}
+			// R13-6: bounded resync. Scan forward
+			// up to MaxRecordLen bytes looking
+			// for a valid record boundary.
 			if rec.PayCRCFail {
-				// Inner CRC mismatch even though
-				// the envelope passed — corrupt
-				// content.
+				// Per-RTData inner CRC mismatch
+				// was already flagged by the
+				// decoder; surface as corruption
+				// since the envelope CRC passed
+				// but the body didn't match.
 				r.stats.CorruptionFailures++
 				return fmt.Errorf("rp: segment %d inner RTData CRC: %w",
 					segNum, ErrCorrupt)
 			}
-			if rec.Type == 0xFF {
-				// Forward-compat: unknown type
-				// (the type byte was 0xFF, not
-				// a real RecordType). Skip and
-				// continue.
-				r.stats.UnknownRecords++
-				off += consumed
-				offset += int64(consumed)
-				continue
+			_ = rec
+			// Bounded resync: at most
+			// MaxRecordLen bytes from the
+			// current offset, then ErrCorrupt.
+			resyncWindow := int64(wr.MaxRecordLen)
+			if resyncWindow > int64(len(buf)-off) {
+				resyncWindow = int64(len(buf) - off)
 			}
-
-			recLSN := segNum*uint64(rpSegSize) + uint64(offset) + uint64(consumed)
-			if err := fn(rec, recLSN); err != nil {
-				return err
+			if off+int(resyncWindow) >= len(buf) {
+				// No room to resync within this
+				// segment; bail.
+				return fmt.Errorf("rp: segment %d offset %d: %w",
+					segNum, offset+int64(off), ErrCorrupt)
 			}
-
+			off++
+			continue
+		}
+		if rec.PayCRCFail {
+			// Inner CRC mismatch even though
+			// the envelope passed — corrupt
+			// content.
+			r.stats.CorruptionFailures++
+			return fmt.Errorf("rp: segment %d inner RTData CRC: %w",
+				segNum, ErrCorrupt)
+		}
+		if rec.Type == 0xFF {
+			// Forward-compat: unknown type
+			// (the type byte was 0xFF, not
+			// a real RecordType). Skip and
+			// continue.
+			r.stats.UnknownRecords++
 			off += consumed
-			offset += int64(consumed)
+			continue
 		}
 
-		if off > 0 {
-			offset += int64(off)
+		recLSN := segNum*uint64(rpSegSize) + uint64(offset) + uint64(off)
+		if err := fn(rec, recLSN); err != nil {
+			return err
 		}
-		if offset >= fileSize {
-			break
-		}
+
+		off += consumed
 	}
 
 	return nil
