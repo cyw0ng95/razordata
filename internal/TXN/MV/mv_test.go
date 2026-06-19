@@ -1,6 +1,7 @@
 package MV
 
 import (
+	"math"
 	"testing"
 )
 
@@ -118,8 +119,8 @@ func TestMVVersionNodeAccessors(t *testing.T) {
 	if node.BeginTS() != 10 {
 		t.Errorf("expected BeginTS 10, got %d", node.BeginTS())
 	}
-	if node.EndTS() != maxUint64 {
-		t.Errorf("expected EndTS maxUint64, got %d", node.EndTS())
+	if node.EndTS() != math.MaxUint64 {
+		t.Errorf("expected EndTS math.MaxUint64, got %d", node.EndTS())
 	}
 	if string(node.Key()) != "key" {
 		t.Errorf("expected Key 'key', got %s", string(node.Key()))

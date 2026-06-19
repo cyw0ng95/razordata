@@ -1,6 +1,7 @@
 package MV
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,8 +17,8 @@ func TestVersionNodeFields(t *testing.T) {
 	if node.beginTS != 100 {
 		t.Errorf("expected beginTS 100, got %d", node.beginTS)
 	}
-	if node.endTS.Load() != maxUint64 {
-		t.Errorf("expected endTS maxUint64, got %d", node.endTS.Load())
+	if node.endTS.Load() != math.MaxUint64 {
+		t.Errorf("expected endTS math.MaxUint64, got %d", node.endTS.Load())
 	}
 	if string(node.key) != "key" {
 		t.Errorf("expected key 'key', got %s", string(node.key))
@@ -44,7 +45,7 @@ func TestVersionNodeIsVisible(t *testing.T) {
 	node := NewVersionNode(arena, 1, 50, []byte("key"), []byte("value"), false)
 
 	if !node.IsVisible(100) {
-		t.Error("node should be visible at readTS 100 (beginTS 50 < 100 && endTS=maxUint64 >= 100)")
+		t.Error("node should be visible at readTS 100 (beginTS 50 < 100 && endTS=math.MaxUint64 >= 100)")
 	}
 
 	if node.IsVisible(30) {
