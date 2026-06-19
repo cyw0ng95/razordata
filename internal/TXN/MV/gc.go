@@ -1,60 +1,54 @@
 package MV
 
-import "unsafe"
-
-// GCVersionChain walks the version chain for key and returns pointers to
-// version nodes whose endTS is strictly less than oldestReadTS. A version
-// with endTS < oldestReadTS cannot be visible to any reader with
-// readTS > oldestReadTS, since visibility requires endTS >= readTS and
-// readTS > oldestReadTS > endTS is a contradiction.
+// GCVersionChain walks a single version chain and returns the
+// version nodes whose endTS is below oldestActiveReadTS — those
+// versions are no longer visible to any in-flight transaction
+// (REQ000551). Returns nil when the chain is empty or all nodes
+// are still visible.
 //
-// The chain itself is not modified — the caller is responsible for handing
-// the returned pointers to a reclamation mechanism (e.g., hazard pointers
-// in TXN/LC) so that readers still traversing the chain remain safe. Only
-// once no reader holds a hazard on a node should its memory actually be
-// released.
-//
-// Returns nil if the key has no chain or no candidates are found.
-func (m *MV) GCVersionChain(key []byte, oldestReadTS uint64) []unsafe.Pointer {
+// Note: this function does NOT unlink nodes; it returns the
+// candidates. The caller decides whether to unlink (e.g. only
+// after pinning the chain).
+func (m *MV) GCVersionChain(key []byte, oldestActiveReadTS uint64) []*VersionNode {
 	chain := m.GetVersionChain(key)
 	if chain == nil {
 		return nil
 	}
-	var candidates []unsafe.Pointer
-	for node := chain.GetHead(); node != nil; node = node.Next() {
-		if node.EndTS() < oldestReadTS {
-			candidates = append(candidates, unsafe.Pointer(node))
-		}
-	}
-	return candidates
+	return collectGC(chain, oldestActiveReadTS)
 }
 
-// GCAllChains sweeps every chain in the MV and returns all version nodes
-// whose endTS is strictly less than oldestReadTS. Useful for background
-// reclamation sweeps.
-//
-// The chain is not modified; see GCVersionChain for reclamation contract.
-func (m *MV) GCAllChains(oldestReadTS uint64) []unsafe.Pointer {
-	var all []unsafe.Pointer
+// GCAllChains walks every version chain and returns all nodes
+// eligible for pruning (REQ000551).
+func (m *MV) GCAllChains(oldestActiveReadTS uint64) []*VersionNode {
+	var out []*VersionNode
 	m.chains.Range(func(_, value any) bool {
 		chain := value.(*VersionChain)
-		for node := chain.GetHead(); node != nil; node = node.Next() {
-			if node.EndTS() < oldestReadTS {
-				all = append(all, unsafe.Pointer(node))
-			}
-		}
+		out = append(out, collectGC(chain, oldestActiveReadTS)...)
 		return true
 	})
-	return all
+	return out
 }
 
-// NumChains returns the number of distinct keys currently tracked by the MV.
-// Intended for tests and observability.
+// NumChains returns the number of distinct version chains tracked
+// by this MV (REQ000551). Useful for GC statistics and tests.
 func (m *MV) NumChains() int {
-	n := 0
+	count := 0
 	m.chains.Range(func(_, _ any) bool {
-		n++
+		count++
 		return true
 	})
-	return n
+	return count
+}
+
+// collectGC walks a chain and appends pruned nodes (including the
+// head) to the result. The caller decides whether to unlink.
+func collectGC(vc *VersionChain, threshold uint64) []*VersionNode {
+	var out []*VersionNode
+	for cur := vc.GetHead(); cur != nil; cur = cur.next.Load() {
+		endTS := cur.endTS.Load()
+		if endTS != maxUint64 && endTS < threshold {
+			out = append(out, cur)
+		}
+	}
+	return out
 }

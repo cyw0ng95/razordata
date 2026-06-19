@@ -1,6 +1,8 @@
 package EX
 
 import (
+	"sort"
+
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
@@ -431,6 +433,83 @@ func batchValueAt(col Column, i int) any {
 		if d, ok := col.Data.([]string); ok && i < len(d) {
 			return d[i]
 		}
+	}
+	return nil
+}
+
+// evalInListBatch runs a vectorized IN-list membership test (REQ000554).
+// The list is materialized once and reused across all rows. For int64
+// columns + int64 list: sort the list and binary search. For string
+// columns + string list: build a hash set. Returns selection of rows
+// where the column value is in the list. Empty/missing list returns
+// nil (no rows match). Empty column returns nil. NULL columns skip
+// the row per standard SQL semantics.
+func evalInListBatch(col Column, list []interface{}, n int) []uint16 {
+	if n == 0 || len(list) == 0 {
+		return nil
+	}
+	// Int64 path: sort + binary search.
+	if d, ok := col.Data.([]int64); ok {
+		ints := make([]int64, 0, len(list))
+		for _, v := range list {
+			switch x := v.(type) {
+			case int64:
+				ints = append(ints, x)
+			case int:
+				ints = append(ints, int64(x))
+			case float64:
+				ints = append(ints, int64(x))
+			default:
+				continue
+			}
+		}
+		if len(ints) == 0 {
+			return nil
+		}
+		sort.Slice(ints, func(i, j int) bool { return ints[i] < ints[j] })
+		sel := make([]uint16, 0, n)
+		for i := 0; i < n; i++ {
+			if isNull(col, i) {
+				continue
+			}
+			// Binary search.
+			v := d[i]
+			lo, hi := 0, len(ints)
+			for lo < hi {
+				mid := (lo + hi) / 2
+				if ints[mid] < v {
+					lo = mid + 1
+				} else {
+					hi = mid
+				}
+			}
+			if lo < len(ints) && ints[lo] == v {
+				sel = append(sel, uint16(i))
+			}
+		}
+		return sel
+	}
+	// String path: hash set.
+	if d, ok := col.Data.([]string); ok {
+		set := make(map[string]struct{}, len(list))
+		for _, v := range list {
+			if s, ok := v.(string); ok {
+				set[s] = struct{}{}
+			}
+		}
+		if len(set) == 0 {
+			return nil
+		}
+		sel := make([]uint16, 0, n)
+		for i := 0; i < n; i++ {
+			if isNull(col, i) {
+				continue
+			}
+			if _, found := set[d[i]]; found {
+				sel = append(sel, uint16(i))
+			}
+		}
+		return sel
 	}
 	return nil
 }
