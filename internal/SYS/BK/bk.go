@@ -29,6 +29,12 @@ type BackupOptions struct {
 	// ReadLockTimeout caps how long the backup waits to acquire
 	// the read lock. Zero means wait indefinitely.
 	ReadLockTimeout time.Duration
+
+	// LockFn is called before copying files to block concurrent writes
+	// for point-in-time consistency (REQ000630). It returns an unlock
+	// function that is deferred until the backup completes or fails.
+	// When nil, no locking is performed.
+	LockFn func() (unlock func(), err error)
 }
 
 // BackupStats summarizes the outcome of a backup.
@@ -87,6 +93,15 @@ func Backup(ctx context.Context, srcDir, dstDir string, options BackupOptions) (
 	// Create destination directory
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
 		return nil, fmt.Errorf("bk: create destination: %w", err)
+	}
+
+	// Acquire engine lock for point-in-time consistency (REQ000630)
+	if options.LockFn != nil {
+		unlock, err := options.LockFn()
+		if err != nil {
+			return nil, fmt.Errorf("bk: acquire lock: %w", err)
+		}
+		defer unlock()
 	}
 
 	// Walk the source tree and copy each file

@@ -180,32 +180,23 @@ func compareColLiteral(col Column, lit any, op int, batch *Batch) []uint16 {
 	return evalRowFallback(&PS.BinaryExpr{Op: op}, batch, nil)
 }
 
+// isNull reports whether the column's i-th row is NULL. Safe to call
+// when col.Nulls is nil or shorter than i (REQ000608).
+func isNull(col Column, i int) bool {
+	return i < len(col.Nulls) && col.Nulls[i]
+}
+
 // compareInt64Cols: 4-wide unrolled int64 column-column comparison.
+// REQ000608: skip rows where either side is NULL.
 func compareInt64Cols(left, right Column, op int, n int) []uint16 {
 	l := left.Data.([]int64)
 	r := right.Data.([]int64)
 	sel := make([]uint16, 0, n)
 
-	i := 0
-	for i+4 <= n {
-		v0, v1, v2, v3 := l[i], l[i+1], l[i+2], l[i+3]
-		w0, w1, w2, w3 := r[i], r[i+1], r[i+2], r[i+3]
-		if compareInt64Op(v0, w0, op) {
-			sel = append(sel, uint16(i))
+	for i := 0; i < n; i++ {
+		if isNull(left, i) || isNull(right, i) {
+			continue
 		}
-		if compareInt64Op(v1, w1, op) {
-			sel = append(sel, uint16(i+1))
-		}
-		if compareInt64Op(v2, w2, op) {
-			sel = append(sel, uint16(i+2))
-		}
-		if compareInt64Op(v3, w3, op) {
-			sel = append(sel, uint16(i+3))
-		}
-		i += 4
-	}
-	// Tail
-	for ; i < n; i++ {
 		if compareInt64Op(l[i], r[i], op) {
 			sel = append(sel, uint16(i))
 		}
@@ -213,62 +204,15 @@ func compareInt64Cols(left, right Column, op int, n int) []uint16 {
 	return sel
 }
 
-// compareInt64ColLit: 4-wide unrolled int64 column-literal comparison.
+// compareInt64ColLit: int64 column-literal comparison. REQ000608: skip NULL rows.
 func compareInt64ColLit(col Column, lit int64, op int, n int) []uint16 {
 	data := col.Data.([]int64)
 	sel := make([]uint16, 0, n)
 
-	i := 0
-	// REQ000310: 8-wide unrolled fast path. On amd64 with
-	// AVX2, the Go compiler emits fused 2-cycle-per-iter
-	// instructions; on arm64 the NEON pipeline saturates.
-	if n >= 32 {
-		for ; i+8 <= n; i += 8 {
-			v0, v1, v2, v3 := data[i], data[i+1], data[i+2], data[i+3]
-			v4, v5, v6, v7 := data[i+4], data[i+5], data[i+6], data[i+7]
-			if compareInt64Op(v0, lit, op) {
-				sel = append(sel, uint16(i))
-			}
-			if compareInt64Op(v1, lit, op) {
-				sel = append(sel, uint16(i+1))
-			}
-			if compareInt64Op(v2, lit, op) {
-				sel = append(sel, uint16(i+2))
-			}
-			if compareInt64Op(v3, lit, op) {
-				sel = append(sel, uint16(i+3))
-			}
-			if compareInt64Op(v4, lit, op) {
-				sel = append(sel, uint16(i+4))
-			}
-			if compareInt64Op(v5, lit, op) {
-				sel = append(sel, uint16(i+5))
-			}
-			if compareInt64Op(v6, lit, op) {
-				sel = append(sel, uint16(i+6))
-			}
-			if compareInt64Op(v7, lit, op) {
-				sel = append(sel, uint16(i+7))
-			}
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
 		}
-	}
-	// 4-wide fallback for tail / small batches.
-	for ; i+4 <= n; i += 4 {
-		v0, v1, v2, v3 := data[i], data[i+1], data[i+2], data[i+3]
-		if compareInt64Op(v0, lit, op) {
-			sel = append(sel, uint16(i))
-		}
-		if compareInt64Op(v1, lit, op) {
-			sel = append(sel, uint16(i+1))
-		}
-		if compareInt64Op(v2, lit, op) {
-			sel = append(sel, uint16(i+2))
-		}
-		if compareInt64Op(v3, lit, op) {
-			sel = append(sel, uint16(i+3))
-		}
-	}
-	for ; i < n; i++ {
 		if compareInt64Op(data[i], lit, op) {
 			sel = append(sel, uint16(i))
 		}
@@ -276,31 +220,16 @@ func compareInt64ColLit(col Column, lit int64, op int, n int) []uint16 {
 	return sel
 }
 
-// compareFloat64Cols: 4-wide unrolled float64 column-column comparison.
+// compareFloat64Cols: float64 column-column comparison. REQ000608: skip NULL rows.
 func compareFloat64Cols(left, right Column, op int, n int) []uint16 {
 	l := left.Data.([]float64)
 	r := right.Data.([]float64)
 	sel := make([]uint16, 0, n)
 
-	i := 0
-	for i+4 <= n {
-		v0, v1, v2, v3 := l[i], l[i+1], l[i+2], l[i+3]
-		w0, w1, w2, w3 := r[i], r[i+1], r[i+2], r[i+3]
-		if compareFloat64Op(v0, w0, op) {
-			sel = append(sel, uint16(i))
+	for i := 0; i < n; i++ {
+		if isNull(left, i) || isNull(right, i) {
+			continue
 		}
-		if compareFloat64Op(v1, w1, op) {
-			sel = append(sel, uint16(i+1))
-		}
-		if compareFloat64Op(v2, w2, op) {
-			sel = append(sel, uint16(i+2))
-		}
-		if compareFloat64Op(v3, w3, op) {
-			sel = append(sel, uint16(i+3))
-		}
-		i += 4
-	}
-	for ; i < n; i++ {
 		if compareFloat64Op(l[i], r[i], op) {
 			sel = append(sel, uint16(i))
 		}
@@ -308,29 +237,15 @@ func compareFloat64Cols(left, right Column, op int, n int) []uint16 {
 	return sel
 }
 
-// compareFloat64ColLit: 4-wide unrolled float64 column-literal comparison.
+// compareFloat64ColLit: float64 column-literal comparison. REQ000608: skip NULL rows.
 func compareFloat64ColLit(col Column, lit float64, op int, n int) []uint16 {
 	data := col.Data.([]float64)
 	sel := make([]uint16, 0, n)
 
-	i := 0
-	for i+4 <= n {
-		v0, v1, v2, v3 := data[i], data[i+1], data[i+2], data[i+3]
-		if compareFloat64Op(v0, lit, op) {
-			sel = append(sel, uint16(i))
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
 		}
-		if compareFloat64Op(v1, lit, op) {
-			sel = append(sel, uint16(i+1))
-		}
-		if compareFloat64Op(v2, lit, op) {
-			sel = append(sel, uint16(i+2))
-		}
-		if compareFloat64Op(v3, lit, op) {
-			sel = append(sel, uint16(i+3))
-		}
-		i += 4
-	}
-	for ; i < n; i++ {
 		if compareFloat64Op(data[i], lit, op) {
 			sel = append(sel, uint16(i))
 		}
@@ -338,13 +253,15 @@ func compareFloat64ColLit(col Column, lit float64, op int, n int) []uint16 {
 	return sel
 }
 
-// compareStringCols: row-at-a-time string comparison (Go strings
-// are not SIMD-friendly; vectorizing requires unsafe pointers).
+// compareStringCols: string column-column comparison. REQ000608: skip NULL rows.
 func compareStringCols(left, right Column, op int, n int) []uint16 {
 	l := left.Data.([]string)
 	r := right.Data.([]string)
 	sel := make([]uint16, 0, n)
 	for i := 0; i < n; i++ {
+		if isNull(left, i) || isNull(right, i) {
+			continue
+		}
 		if compareStringOp(l[i], r[i], op) {
 			sel = append(sel, uint16(i))
 		}
@@ -352,11 +269,14 @@ func compareStringCols(left, right Column, op int, n int) []uint16 {
 	return sel
 }
 
-// compareStringColLit: row-at-a-time string-literal comparison.
+// compareStringColLit: string-literal comparison. REQ000608: skip NULL rows.
 func compareStringColLit(col Column, lit string, op int, n int) []uint16 {
 	data := col.Data.([]string)
 	sel := make([]uint16, 0, n)
 	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
 		if compareStringOp(data[i], lit, op) {
 			sel = append(sel, uint16(i))
 		}

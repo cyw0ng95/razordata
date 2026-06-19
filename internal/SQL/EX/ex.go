@@ -167,6 +167,17 @@ func (e *Executor) SetTxWriter(w TxWriter) { e.txWriter = w }
 // ClearTxWriter resets the write hook to nil. Pair with SetTxWriter.
 func (e *Executor) ClearTxWriter() { e.txWriter = nil }
 
+// ShallowCopy returns a new Executor that shares Planner and Store with the
+// original but has its own per-request mutable state (txWriter, snapshotTS,
+// sessionID). Callers use this to avoid races when the shared Executor is
+// used concurrently by multiple sessions (REQ000611).
+func (e *Executor) ShallowCopy() *Executor {
+	return &Executor{
+		planner: e.planner,
+		store:   e.store,
+	}
+}
+
 // SetSnapshot sets the per-statement snapshot timestamp for read-committed
 // isolation (REQ000255). When non-zero, reads filter to versions visible at
 // this timestamp. Pass 0 to disable snapshot filtering.

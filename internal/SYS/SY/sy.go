@@ -487,9 +487,14 @@ func (e *Engine) walStats() AP.WALStats {
 	}
 }
 
-// Executor returns the SQL executor bound to this engine. Used by
-// Session/Transaction/Stmt to dispatch Query/Exec.
-func (e *Engine) Executor() *executor.Executor { return e.exe }
+// Executor returns a per-call executor copy with its own mutable state
+// (snapshotTS, txWriter, sessionID) so concurrent transactions don't
+// clobber each other's fields (REQ000611). The shared Planner and Store
+// are safe for concurrent reads after the copy.
+func (e *Engine) Executor() *executor.Executor {
+	exe := e.exe.ShallowCopy()
+	return exe
+}
 
 // ExtractParamTypes parses sql and returns the SQL column type
 // of each `?` placeholder, in left-to-right order. Entries are
