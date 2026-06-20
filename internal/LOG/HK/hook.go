@@ -30,7 +30,7 @@ type HookRegistry struct {
 	done     chan struct{}
 	loopDone chan struct{}
 	stopOnce sync.Once
-	closed   bool
+	closed   atomic.Bool
 	muClose  sync.Mutex // protects closing
 
 	dropped    atomic.Int64
@@ -109,10 +109,10 @@ func (r *HookRegistry) Close() error {
 	r.muClose.Lock()
 	defer r.muClose.Unlock()
 
-	if r.closed {
+	if r.closed.Load() {
 		return nil
 	}
-	r.closed = true
+	r.closed.Store(true)
 
 	if err := r.Stop(context.Background()); err != nil {
 		return err

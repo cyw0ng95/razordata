@@ -4,6 +4,7 @@
 package ls
 
 import (
+	"sync/atomic"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -80,7 +81,7 @@ type Catalog struct {
 	cache  map[uint64]*CatalogEntry
 	byName map[string]uint64
 	nextID uint64
-	closed bool
+	closed atomic.Bool
 }
 
 // NewCatalog opens or creates a catalog rooted at dir.
@@ -498,7 +499,7 @@ func decodeCatalogStats(data []byte, off int) ([]StatsEntry, int, error) {
 func (c *Catalog) NextID() (uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed.Load() {
 		return 0, ErrCatalogClosed
 	}
 	id := c.nextID
@@ -522,7 +523,7 @@ func (c *Catalog) Put(entry CatalogEntry) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed.Load() {
 		return ErrCatalogClosed
 	}
 	if _, ok := c.byName[entry.Name]; ok {
@@ -545,7 +546,7 @@ func (c *Catalog) Put(entry CatalogEntry) error {
 func (c *Catalog) Delete(tableID uint64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed.Load() {
 		return ErrCatalogClosed
 	}
 	entry, ok := c.cache[tableID]
@@ -566,7 +567,7 @@ func (c *Catalog) Delete(tableID uint64) error {
 func (c *Catalog) PutIndex(tableID uint64, idx CatalogIndex) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed.Load() {
 		return ErrCatalogClosed
 	}
 	entry, ok := c.cache[tableID]
@@ -602,7 +603,7 @@ func (c *Catalog) PutIndex(tableID uint64, idx CatalogIndex) error {
 func (c *Catalog) DeleteIndex(tableID uint64, name string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed.Load() {
 		return ErrCatalogClosed
 	}
 	entry, ok := c.cache[tableID]
@@ -628,7 +629,7 @@ func (c *Catalog) DeleteIndex(tableID uint64, name string) error {
 func (c *Catalog) IndexesByTable(tableID uint64) ([]CatalogIndex, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.closed {
+	if c.closed.Load() {
 		return nil, ErrCatalogClosed
 	}
 	entry, ok := c.cache[tableID]
@@ -652,7 +653,7 @@ func (c *Catalog) IndexesByTable(tableID uint64) ([]CatalogIndex, error) {
 func (c *Catalog) Index(tableID uint64, name string) (*CatalogIndex, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.closed {
+	if c.closed.Load() {
 		return nil, ErrCatalogClosed
 	}
 	entry, ok := c.cache[tableID]
@@ -686,7 +687,7 @@ func (c *Catalog) nextIndexIDLocked() uint64 {
 func (c *Catalog) GetByID(tableID uint64) (*CatalogEntry, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.closed {
+	if c.closed.Load() {
 		return nil, ErrCatalogClosed
 	}
 	entry, ok := c.cache[tableID]
@@ -705,7 +706,7 @@ func (c *Catalog) GetByID(tableID uint64) (*CatalogEntry, error) {
 func (c *Catalog) ByName(name string) (*CatalogEntry, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.closed {
+	if c.closed.Load() {
 		return nil, ErrCatalogClosed
 	}
 	id, ok := c.byName[name]
@@ -784,7 +785,7 @@ func (c *Catalog) Close() error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.closed = true
+	c.closed.Store(true)
 	return nil
 }
 
@@ -939,7 +940,7 @@ func encodeCatalogStats(stats []StatsEntry, buf []byte) []byte {
 func (c *Catalog) PutStats(tableID uint64, colName string, stats ColumnStats) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed.Load() {
 		return ErrCatalogClosed
 	}
 	entry, ok := c.cache[tableID]

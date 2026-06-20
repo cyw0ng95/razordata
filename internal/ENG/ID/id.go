@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	df "github.com/cyw0ng95/razordata/internal/FIL/DF"
 )
@@ -33,7 +34,7 @@ type BTree struct {
 	pages  map[uint32]*page
 	dirty  map[uint32]bool
 	nextID uint32
-	closed bool
+	closed atomic.Bool
 }
 
 type pageType byte
@@ -98,13 +99,13 @@ func Open(dir string) (*BTree, error) {
 func (bt *BTree) Close() error {
 	bt.mu.Lock()
 	defer bt.mu.Unlock()
-	if bt.closed {
+	if bt.closed.Load() {
 		return ErrClosed
 	}
 	if err := bt.flush(); err != nil {
 		return err
 	}
-	bt.closed = true
+	bt.closed.Store(true)
 	return bt.file.Close()
 }
 
@@ -121,7 +122,7 @@ func (bt *BTree) allocPageID() uint32 {
 func (bt *BTree) Insert(key, value []byte) error {
 	bt.mu.Lock()
 	defer bt.mu.Unlock()
-	if bt.closed {
+	if bt.closed.Load() {
 		return ErrClosed
 	}
 	if bt.root == 0 {
@@ -153,7 +154,7 @@ func (bt *BTree) Insert(key, value []byte) error {
 func (bt *BTree) Get(key []byte) ([]byte, error) {
 	bt.mu.RLock()
 	defer bt.mu.RUnlock()
-	if bt.closed {
+	if bt.closed.Load() {
 		return nil, ErrClosed
 	}
 	if bt.root == 0 {
@@ -166,7 +167,7 @@ func (bt *BTree) Get(key []byte) ([]byte, error) {
 func (bt *BTree) Delete(key []byte) error {
 	bt.mu.Lock()
 	defer bt.mu.Unlock()
-	if bt.closed {
+	if bt.closed.Load() {
 		return ErrClosed
 	}
 	if bt.root == 0 {

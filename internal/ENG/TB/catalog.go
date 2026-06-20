@@ -4,6 +4,7 @@
 package tb
 
 import (
+	"sync/atomic"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -72,7 +73,7 @@ type Catalog struct {
 	cache  map[uint64]*Entry
 	byName map[string]uint64
 	nextID uint64
-	closed bool
+	closed atomic.Bool
 }
 
 // NewCatalog opens or creates a catalog rooted at dir.
@@ -231,7 +232,7 @@ func decodeCatalogEntry(data []byte, off int, e *Entry) (int, error) {
 func (c *Catalog) NextID() (uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed.Load() {
 		return 0, ErrCatalogClosed
 	}
 	id := c.nextID
@@ -255,7 +256,7 @@ func (c *Catalog) Put(entry Entry) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed.Load() {
 		return ErrCatalogClosed
 	}
 	if _, ok := c.byName[entry.Name]; ok {
@@ -278,7 +279,7 @@ func (c *Catalog) Put(entry Entry) error {
 func (c *Catalog) Delete(tableID uint64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed.Load() {
 		return ErrCatalogClosed
 	}
 	entry, ok := c.cache[tableID]
@@ -299,7 +300,7 @@ func (c *Catalog) Delete(tableID uint64) error {
 func (c *Catalog) GetByID(tableID uint64) (*Entry, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.closed {
+	if c.closed.Load() {
 		return nil, ErrCatalogClosed
 	}
 	entry, ok := c.cache[tableID]
@@ -314,7 +315,7 @@ func (c *Catalog) GetByID(tableID uint64) (*Entry, error) {
 func (c *Catalog) ByName(name string) (*Entry, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.closed {
+	if c.closed.Load() {
 		return nil, ErrCatalogClosed
 	}
 	id, ok := c.byName[name]
@@ -354,7 +355,7 @@ func (c *Catalog) Len() int {
 func (c *Catalog) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.closed = true
+	c.closed.Store(true)
 	return nil
 }
 

@@ -5,6 +5,7 @@
 package AP
 
 import (
+	"sync/atomic"
 	"context"
 	"errors"
 	"log/slog"
@@ -191,7 +192,7 @@ type Rows struct {
 	closer func() error
 	// closed tracks whether Close has been called or the iterator
 	// has been auto-closed via ErrNoRows.
-	closed bool
+	closed atomic.Bool
 }
 
 // NewRows constructs a Rows with the given schema. The next and
@@ -218,18 +219,18 @@ func (r *Rows) Next() (Row, error) {
 	if r == nil {
 		return Row{}, ErrNoRows
 	}
-	if r.closed {
+	if r.closed.Load() {
 		return Row{}, ErrNoRows
 	}
 	if r.next == nil {
 		// Schema-only stub. Auto-close on first call.
-		r.closed = true
+		r.closed.Store(true)
 		return Row{}, ErrNoRows
 	}
 	row, err := r.next()
 	if err != nil {
 		if err == ErrNoRows {
-			r.closed = true
+			r.closed.Store(true)
 		}
 		return Row{}, err
 	}
@@ -247,7 +248,7 @@ func (r *Rows) Close() error {
 	if r.closer != nil {
 		_ = r.closer()
 	}
-	r.closed = true
+	r.closed.Store(true)
 	return nil
 }
 

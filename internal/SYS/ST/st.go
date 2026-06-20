@@ -3,6 +3,7 @@
 package ST
 
 import (
+	"sync/atomic"
 	"context"
 	"errors"
 	"fmt"
@@ -20,7 +21,7 @@ type Stmt struct {
 	engine *SY.Engine
 	sql    string
 	mu     sync.Mutex
-	closed bool
+	closed atomic.Bool
 	// paramTypes caches the SQL column types of each `?`
 	// placeholder, extracted once at Prepare time from the parsed
 	// AST. The slice is parallel to the placeholders in
@@ -189,7 +190,7 @@ func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 		return nil, AP.ErrClosed
 	}
 	s.mu.Lock()
-	if s.closed {
+	if s.closed.Load() {
 		s.mu.Unlock()
 		return nil, AP.ErrClosed
 	}
@@ -227,7 +228,7 @@ func (s *Stmt) Exec(ctx context.Context, args ...any) (AP.Result, error) {
 		return AP.Result{}, AP.ErrClosed
 	}
 	s.mu.Lock()
-	if s.closed {
+	if s.closed.Load() {
 		s.mu.Unlock()
 		return AP.Result{}, AP.ErrClosed
 	}
@@ -253,10 +254,10 @@ func (s *Stmt) Exec(ctx context.Context, args ...any) (AP.Result, error) {
 func (s *Stmt) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
+	if s.closed.Load() {
 		return nil
 	}
-	s.closed = true
+	s.closed.Store(true)
 	return nil
 }
 

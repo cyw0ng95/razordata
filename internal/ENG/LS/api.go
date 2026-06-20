@@ -1,6 +1,7 @@
 package ls
 
 import (
+	"sync/atomic"
 	"bytes"
 	"container/heap"
 	"fmt"
@@ -212,7 +213,7 @@ type mergeIterator struct {
 	curKey   []byte // owned copy (nil if none)
 	curVal   []byte // owned copy (nil if none)
 	err      error
-	closed   bool
+	closed   atomic.Bool
 }
 
 func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, prefix []byte) *mergeIterator {
@@ -297,7 +298,7 @@ func prefixUpperBound(prefix []byte) []byte {
 
 // Next advances the iterator. Tombstoned keys are skipped.
 func (mi *mergeIterator) Next() bool {
-	if mi.closed {
+	if mi.closed.Load() {
 		return false
 	}
 	// Clear previous key/value (they were owned copies, no need to free)
@@ -368,10 +369,10 @@ func (mi *mergeIterator) Value() []byte {
 func (mi *mergeIterator) Err() error    { return mi.err }
 
 func (mi *mergeIterator) Close() error {
-	if mi.closed {
+	if mi.closed.Load() {
 		return nil
 	}
-	mi.closed = true
+	mi.closed.Store(true)
 
 	// Clear heap (owned copies, no need to free)
 	for mi.h.Len() > 0 {
