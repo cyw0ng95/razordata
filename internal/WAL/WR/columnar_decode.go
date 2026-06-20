@@ -121,8 +121,7 @@ func DecodeColumnar(data []byte, off int) ([]*LogRecord, int, error) {
 		if offPay+int(dataLen) > len(payCol) {
 			return nil, -1, ErrColumnarTruncated
 		}
-		val := make([]byte, dataLen)
-		copy(val, payCol[offPay:offPay+int(dataLen)])
+		val := payCol[offPay : offPay+int(dataLen)]
 		offPay += int(dataLen)
 		out = append(out, &LogRecord{
 			Type:    recType,
