@@ -1925,3 +1925,38 @@ func TestParseExpr_ShiftOperators(t *testing.T) {
 		})
 	}
 }
+
+// REQ000717: Implicit column alias without AS.
+func TestParseSelect_ImplicitColumnAlias(t *testing.T) {
+	cases := []struct {
+		name  string
+		sql   string
+		alias string
+	}{
+		{"unary_minus", "SELECT - 87 col0 FROM t", "col0"},
+		{"expression", "SELECT col1 * 3 alias FROM t", "alias"},
+		{"mixed", "SELECT a AS x, b y FROM t", "y"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewParser(tc.sql)
+			stmt, err := p.Parse()
+			if err != nil {
+				t.Fatalf("Parse() failed: %v", err)
+			}
+			sel := stmt.(*Select)
+			// Find the column with the implicit alias
+			found := false
+			for _, col := range sel.Cols {
+				if ae, ok := col.(*AliasedExpr); ok && ae.Alias == tc.alias {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected alias %q not found in columns", tc.alias)
+			}
+		})
+	}
+}

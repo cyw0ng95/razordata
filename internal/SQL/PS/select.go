@@ -191,6 +191,11 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 				}
 				expr = &AliasedExpr{Expr: expr, Alias: p.current.Lexeme}
 				p.advance()
+			} else if p.current.Type == LX.T_IDENT {
+				// REQ000717: implicit alias without AS keyword
+				// e.g., SELECT - 87 col0, SELECT col1 * 3 alias
+				expr = &AliasedExpr{Expr: expr, Alias: p.current.Lexeme}
+				p.advance()
 			}
 			cols = append(cols, expr)
 			if p.current.Type != LX.T_COMMA {
