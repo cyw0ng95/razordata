@@ -3,7 +3,9 @@ package mf
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
+	"syscall"
 
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"golang.org/x/sys/unix"
@@ -19,7 +21,22 @@ var (
 	ErrUpgradeRequired = errors.New("database version is newer than this software")
 	ErrBadVersion      = errors.New("meta page version mismatch")
 	ErrCorrupt         = errors.New("meta page checksum mismatch")
+	ErrIO              = errors.New("I/O error")
+	ErrDiskFull        = errors.New("disk full (ENOSPC)")
 )
+
+// wrapWriteError checks for ENOSPC and returns ErrDiskFull; otherwise
+// wraps the error as ErrIO.
+func wrapWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) && errno == unix.ENOSPC {
+		return fmt.Errorf("%w: %v", ErrDiskFull, err)
+	}
+	return fmt.Errorf("%w: %v", ErrIO, err)
+}
 
 // MetaPage occupies block 0 of meta.razor.
 type MetaPage struct {
@@ -167,5 +184,8 @@ func writeMeta(fd int, p *MetaPage) error {
 	binary.LittleEndian.PutUint32(data[metaPageSize-4:metaPageSize], sum)
 
 	_, err = unix.Pwrite(fd, data[:metaPageSize], 0)
-	return err
+	if err != nil {
+		return wrapWriteError(err)
+	}
+	return nil
 }

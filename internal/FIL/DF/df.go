@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"sync"
 	"syscall"
@@ -24,8 +25,22 @@ var (
 	ErrIO              = errors.New("I/O error")
 	ErrBigBlock        = errors.New("data exceeds block capacity")
 	ErrClosed          = errors.New("block device is closed")
+	ErrDiskFull        = errors.New("disk full (ENOSPC)")
 	errMmapUnsupported = errors.New("mmap not supported on this platform")
 )
+
+// wrapWriteError checks for ENOSPC and returns ErrDiskFull; otherwise
+// wraps the error as ErrIO.
+func wrapWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) && errno == unix.ENOSPC {
+		return fmt.Errorf("%w: %v", ErrDiskFull, err)
+	}
+	return fmt.Errorf("%w: %v", ErrIO, err)
+}
 
 var bufPool = sync.Pool{
 	New: func() any {
@@ -206,10 +221,13 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 		binary.LittleEndian.PutUint32(poolBuf[DataLen-ChecksumLen:DataLen], sum)
 
 		_, err := unix.Pwrite(fd, poolBuf[:], int64(offset))
-		if err != nil && d.log != nil {
-			d.log.Error("df.write_block", "blockID", blockID, "err", err)
+		if err != nil {
+			if d.log != nil {
+				d.log.Error("df.write_block", "blockID", blockID, "err", err)
+			}
+			return wrapWriteError(err)
 		}
-		return err
+		return nil
 	}
 
 	tmp := borrowTempBuf()
@@ -223,10 +241,13 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 	binary.LittleEndian.PutUint32(tmp[DataLen-ChecksumLen:DataLen], sum)
 
 	_, err := unix.Pwrite(fd, tmp[:], int64(offset))
-	if err != nil && d.log != nil {
-		d.log.Error("df.write_block", "blockID", blockID, "err", err)
+	if err != nil {
+		if d.log != nil {
+			d.log.Error("df.write_block", "blockID", blockID, "err", err)
+		}
+		return wrapWriteError(err)
 	}
-	return err
+	return nil
 }
 
 // ReadBlockFull reads a full block with checksum verification.
