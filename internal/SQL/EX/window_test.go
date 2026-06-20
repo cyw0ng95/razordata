@@ -213,3 +213,63 @@ func TestWindow_EmptyInput(t *testing.T) {
 		t.Errorf("expected ErrNoRows, got %v", err)
 	}
 }
+
+// TestWindow_RangeFrame verifies RANGE window frame with peer-group
+// detection (REQ000686). RANGE frames include all rows that have the
+// same ORDER BY value as the current row (peer group).
+func TestWindow_RangeFrame(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	// Input: 5 rows with ORDER BY val: [1, 1, 2, 3, 3]
+	rows := []Row{
+		{Cols: []string{"id", "val"}, Data: []any{int64(1), int64(1)}},
+		{Cols: []string{"id", "val"}, Data: []any{int64(2), int64(1)}},
+		{Cols: []string{"id", "val"}, Data: []any{int64(3), int64(2)}},
+		{Cols: []string{"id", "val"}, Data: []any{int64(4), int64(3)}},
+		{Cols: []string{"id", "val"}, Data: []any{int64(5), int64(3)}},
+	}
+	input := &staticOperator{rows: rows}
+
+	spec := &PS.WindowSpec{
+		PartitionBy: []PS.Expr{},
+		OrderBy: []PS.OrderItem{
+			{Expr: &PS.Ident{Name: "val"}, Desc: false},
+		},
+		Frame: &PS.WindowFrame{
+			Type:  "RANGE",
+			Start: PS.FrameBound{Type: "UNBOUNDED_PRECEDING"},
+			End:   PS.FrameBound{Type: "CURRENT_ROW"},
+		},
+	}
+
+	op := NewWindowOperator(input, "SUM", []PS.Expr{&PS.Ident{Name: "val"}}, spec, []string{"id", "val"})
+
+	// RANGE UNBOUNDED PRECEDING to CURRENT ROW:
+	// Row 1 (val=1): peers=[1,1], SUM=2
+	// Row 2 (val=1): peers=[1,1], SUM=2
+	// Row 3 (val=2): peers=[1,1,2], SUM=4
+	// Row 4 (val=3): peers=[1,1,2,3,3], SUM=10
+	// Row 5 (val=3): peers=[1,1,2,3,3], SUM=10
+	// Note: WindowOperator.Next() reuses outData buffer, so we must
+	// check values during iteration, not after collecting all rows.
+	// SUM returns float64.
+	expected := []float64{2, 2, 4, 10, 10}
+	for i, want := range expected {
+		row, err := op.Next(context.Background())
+		if err != nil {
+			t.Fatalf("row %d: %v", i, err)
+		}
+		got, ok := row.Data[len(row.Data)-1].(float64)
+		if !ok {
+			t.Fatalf("row %d: expected float64, got %T", i, row.Data[len(row.Data)-1])
+		}
+		if got != want {
+			t.Errorf("row %d: got %v, want %v", i, got, want)
+		}
+	}
+	_, err := op.Next(context.Background())
+	if err != ErrNoRows {
+		t.Errorf("expected ErrNoRows, got %v", err)
+	}
+}
