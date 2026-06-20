@@ -1447,6 +1447,20 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 		return row, nil
 	}
 
+	// Handle PRAGMA table_list (REQ000732)
+	if p.stmt.Name == "table_list" {
+		if !p.done {
+			p.done = true
+			p.loadTableList()
+		}
+		if p.idx >= len(p.rows) {
+			return Row{}, ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
 	// Default: return empty result for unknown pragmas
 	if !p.done {
 		p.done = true
@@ -1517,6 +1531,18 @@ func (p *Pragma) loadIndexList() {
 	// For now, only the primary key index exists
 	// Secondary indexes will be added when the index catalog is extended
 	return
+}
+
+// loadTableList populates rows for PRAGMA table_list (REQ000732).
+// Returns columns: type, name, tbl_name, rootpage, sql
+func (p *Pragma) loadTableList() {
+	names := allTableNames()
+	for _, name := range names {
+		p.rows = append(p.rows, Row{
+			Cols: []string{"type", "name", "tbl_name", "rootpage", "sql"},
+			Data: []any{"table", name, name, int64(0), nil},
+		})
+	}
 }
 
 func (p *Pragma) Close() error                { return nil }

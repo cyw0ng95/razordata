@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -137,6 +138,29 @@ func schemaFor(name string) (*storeSchema, bool) {
 		return ss, ok
 	}
 	return nil, false
+}
+
+// allTableNames returns a sorted list of all registered table names.
+// Used by PRAGMA table_list (REQ000732).
+func allTableNames() []string {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	seen := map[string]bool{}
+	var names []string
+	for name := range tableIDs {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	for name := range inMemSchemas {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 // RegisterView stores a view definition (REQ000240).
