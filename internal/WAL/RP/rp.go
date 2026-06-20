@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/LF"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
@@ -158,11 +157,7 @@ func (r *replayer) forEachRecord(segNum uint64, fn func(rec *wr.LogRecord, recLS
 	}
 	defer fh.Close()
 
-	fd, err := unix.Open(fh.Path, os.O_RDONLY, 0)
-	if err != nil {
-		return fmt.Errorf("rp: open segment %d: %w", segNum, err)
-	}
-	defer unix.Close(fd)
+	fd := fh.FD
 
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
