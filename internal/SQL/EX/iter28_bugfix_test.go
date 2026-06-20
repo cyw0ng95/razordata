@@ -1360,3 +1360,36 @@ func TestBugfix_IntPrimaryKeyNull(t *testing.T) {
 		t.Errorf("got %d rows, want 2", len(rows))
 	}
 }
+
+// REQ000726: VIEW WHERE clause not applied when querying the view.
+func TestBugfix_ViewWhereClause(t *testing.T) {
+	ResetForTest(t)
+	ex := NewExecutor()
+	defer UnregisterAll()
+	ctx := context.Background()
+
+	ex.RegisterTableWithPK("t", []string{"x", "y"}, "x")
+	for i := int64(1); i <= 5; i++ {
+		ex.Exec(ctx, "INSERT INTO t VALUES (?, ?)", i, i*10)
+	}
+
+	// Create view with WHERE clause
+	_, err := ex.Exec(ctx, "CREATE VIEW v AS SELECT x, y FROM t WHERE x > 2")
+	if err != nil {
+		t.Fatalf("CREATE VIEW: %v", err)
+	}
+
+	// Query the view
+	rows, err := ex.QueryAll(ctx, "SELECT * FROM v ORDER BY x")
+	if err != nil {
+		t.Fatalf("SELECT * FROM v: %v", err)
+	}
+
+	// Should only return rows with x > 2 (3, 4, 5)
+	if len(rows) != 3 {
+		t.Errorf("got %d rows, want 3; data=%v", len(rows), rows)
+	}
+	if len(rows) >= 1 && rows[0].Data[0] != int64(3) {
+		t.Errorf("first row x = %v, want 3", rows[0].Data[0])
+	}
+}
