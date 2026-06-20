@@ -3,6 +3,8 @@ package MV
 import (
 	"sync"
 	"sync/atomic"
+
+	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
 )
 
 const (
@@ -150,18 +152,43 @@ func (a *Arena) OldSize() int64 {
 	return int64(oldSize)
 }
 
-var arenaPool = sync.Pool{
-	New: func() any {
-		return NewArena()
-	},
+// numaArenaPool holds per-NUMA-node arena pools to eliminate
+// contention on a single global pool under high transaction
+// throughput on multi-socket hosts (REQ000547).
+type numaArenaPool struct {
+	pools []sync.Pool
 }
 
-// GetArena acquires an Arena from the pool.
+var numaPool = newNumaArenaPool()
+
+func newNumaArenaPool() *numaArenaPool {
+	nodeCount := nm.NodeCount()
+	if nodeCount < 1 {
+		nodeCount = 1
+	}
+	p := &numaArenaPool{
+		pools: make([]sync.Pool, nodeCount),
+	}
+	for i := range p.pools {
+		p.pools[i].New = func() any {
+			return NewArena()
+		}
+	}
+	return p
+}
+
+// GetArena acquires an Arena from the per-NUMA-node pool.
+// Uses first-touch policy: the arena is allocated on the NUMA
+// node of the calling goroutine (REQ000547).
 func GetArena() *Arena {
-	return arenaPool.Get().(*Arena)
+	node := nm.CurrentNode()
+	if node < 0 || node >= len(numaPool.pools) {
+		node = 0
+	}
+	return numaPool.pools[node].Get().(*Arena)
 }
 
-// PutArena returns an Arena to the pool (REQ000305).
+// PutArena returns an Arena to its originating NUMA-node pool (REQ000547).
 func PutArena(a *Arena) {
 	a.youngOff.Store(0)
 	if a.promoted.Load() && a.old != nil {
@@ -172,7 +199,11 @@ func PutArena(a *Arena) {
 	}
 	a.oldOff.Store(0)
 	a.promoted.Store(false)
-	arenaPool.Put(a)
+	node := nm.CurrentNode()
+	if node < 0 || node >= len(numaPool.pools) {
+		node = 0
+	}
+	numaPool.pools[node].Put(a)
 }
 
 // ReclaimOldGenerations drains the pending old-generation buffer list (REQ000305).
