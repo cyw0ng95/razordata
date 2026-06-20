@@ -49,6 +49,28 @@ type Operator interface {
 }
 ```
 
+## Error Contract
+
+All user-facing errors are classified by `AP.Kind` and wrapped into `AP.Error` at subsystem boundaries. Lower layers define their own sentinels for internal use but must wrap into `AP.Error` when propagating to higher layers.
+
+**Cross-layer wrapping rule:** When an error crosses a subsystem boundary (e.g., ENG → SYS, WAL → SQL), the receiving layer wraps it:
+```go
+// In SYS/SY when ENG returns an error:
+if err != nil {
+    return AP.Wrap(AP.KindCorrupt, err) // preserves chain via Unwrap()
+}
+```
+
+**Classification:** `AP.IsKind(err, kind)` uses `errors.As` to traverse the chain, matching errors from any layer. This replaces per-sentinel `errors.Is` checks for classification purposes.
+
+**Per-package sentinels** (internal use, not exposed to callers):
+- `ENG/LS`: `ErrNotFound`, `ErrClosed`, `ErrBloomMiss`, `ErrCatalogCorrupt`, etc.
+- `WAL/WR`: `ErrTruncatedRecord`, `ErrCorrupt`, etc.
+- `TXN/MV`: `ErrNotFound`, `ErrDuplicateKey`, `ErrArenaExhausted`, etc.
+- `SQL/EX`: `ErrNotImplemented`, `ErrNoRows`, `ErrEval`, etc.
+
+Each package uses a consistent prefix (`"ls: "`, `"wr: "`, `"txn: "`, `"ex: "`) for debuggability.
+
 ## Directory Structure
 
 ```

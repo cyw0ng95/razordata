@@ -129,26 +129,88 @@ type transaction struct {
 
 ### Error Types
 
+The error system uses a `Kind`-based classification for programmatic error handling. All user-facing errors should be wrappable into `AP.Error` with an appropriate `Kind`.
+
+```go
+// Kind classifies errors for programmatic handling.
+type Kind int
+
+const (
+    KindNotFound Kind = iota + 1
+    KindDuplicateKey
+    KindLocked
+    KindCorrupt
+    KindSyntax
+    KindTypeMismatch
+    KindTxAborted
+    KindIO
+    KindUpgradeRequired
+    KindReadOnly
+    KindDeadlineExceeded
+    KindConstraint
+    KindClosed
+    KindInvalidOptions
+)
+
+// Error is the structured error type for all user-facing errors.
+type Error struct {
+    Kind    Kind
+    Message string
+    Err     error // underlying error, if any
+}
+
+func (e *Error) Error() string { return e.Message }
+func (e *Error) Unwrap() error { return e.Err }
+
+func New(kind Kind, msg string) *Error { ... }
+func Wrap(kind Kind, err error) *Error { ... }
+
+// IsKind checks whether err (or any error in its chain) is an *Error with the given Kind.
+func IsKind(err error, kind Kind) bool {
+    var e *Error
+    if errors.As(err, &e) {
+        return e.Kind == kind
+    }
+    return false
+}
+```
+
+Backward-compatible sentinel variables are retained for `errors.Is` during migration:
 ```go
 var (
-    ErrNotFound         = errors.New("razordata: key not found")
-    ErrDuplicateKey     = errors.New("razordata: duplicate key")
-    ErrLocked           = errors.New("razordata: resource locked")
-    ErrCorrupt          = errors.New("razordata: data corrupt")
-    ErrSyntax           = errors.New("razordata: syntax error")
-    ErrTypeMismatch     = errors.New("razordata: type mismatch")
-    ErrTxAborted        = errors.New("razordata: transaction aborted")
-    ErrIO               = errors.New("razordata: I/O error")
-    ErrUpgradeRequired  = errors.New("razordata: upgrade required")
-    ErrReadOnly         = errors.New("razordata: read-only")
-    ErrDeadlineExceeded = errors.New("razordata: deadline exceeded")
+    ErrNotFound         = New(KindNotFound, "razordata: key not found")
+    ErrDuplicateKey     = New(KindDuplicateKey, "razordata: duplicate key")
+    ErrLocked           = New(KindLocked, "razordata: resource locked")
+    ErrCorrupt          = New(KindCorrupt, "razordata: data corrupt")
+    ErrSyntax           = New(KindSyntax, "razordata: syntax error")
+    ErrTypeMismatch     = New(KindTypeMismatch, "razordata: type mismatch")
+    ErrTxAborted        = New(KindTxAborted, "razordata: transaction aborted")
+    ErrIO               = New(KindIO, "razordata: I/O error")
+    ErrUpgradeRequired  = New(KindUpgradeRequired, "razordata: upgrade required")
+    ErrReadOnly         = New(KindReadOnly, "razordata: read-only")
+    ErrDeadlineExceeded = New(KindDeadlineExceeded, "razordata: deadline exceeded")
+    ErrAlreadyOpen      = New(KindInvalidOptions, "razordata: engine already open")
+    ErrNotOpen          = New(KindClosed, "razordata: engine not open")
+    ErrClosed           = New(KindClosed, "razordata: engine closed")
+    ErrInvalidOptions   = New(KindInvalidOptions, "razordata: invalid options")
+    ErrNoActiveTxn      = New(KindTxAborted, "razordata: no active transaction")
+    ErrUnknownSavepoint = New(KindNotFound, "razordata: unknown savepoint")
+    ErrConstraint       = New(KindConstraint, "razordata: constraint violation")
 )
 ```
 
-- All errors wrap: I/O errors → structural errors → API-level errors.
-- Error messages are lowercase, no trailing punctuation.
-- Errors are wrapped with `fmt.Errorf("razordata: %w", err)` to preserve the error chain.
-- **Retry classification:** callers should retry on `retryable` errors (with exponential backoff for `ErrLocked`); `fatal` errors must not be retried — they indicate application-level bugs or unrecoverable state.
+**Error classification:**
+- `RetryableErrors`: errors where callers should retry with exponential backoff (`KindIO`, `KindLocked`).
+- `FatalErrors`: errors that must not be retried — they indicate application-level bugs or unrecoverable state (all other kinds).
+
+**Cross-layer error contract:**
+- Lower layers (ENG, FIL, WAL, TXN) define their own sentinels for internal use.
+- At subsystem boundaries (SYS/SY, SYS/SE, SQL/EX), lower-layer errors must be wrapped into `AP.Error` with the appropriate `Kind` using `AP.Wrap(kind, err)`.
+- This ensures `AP.IsKind(err, KindCorrupt)` matches errors from any layer, not just AP-level sentinels.
+
+**Prefix convention:**
+- All AP-level errors use `"razordata: "` prefix.
+- Package-internal errors use shorter prefixes for debugging (`"ls: "`, `"wr: "`, `"ex: "`, etc.).
 
 ### EngineStats
 
