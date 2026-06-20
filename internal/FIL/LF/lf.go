@@ -2,7 +2,6 @@ package lf
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -39,7 +38,15 @@ func New(root string, log ...lg.Logger) (*SegmentManager, error) {
 }
 
 func (sm *SegmentManager) segmentPath(n uint64) string {
-	return filepath.Join(sm.root, "wal", fmt.Sprintf("wal.%03d", n))
+	var b strings.Builder
+	b.WriteString(sm.root)
+	b.WriteString("/wal/wal.")
+	s := strconv.FormatUint(n, 10)
+	for i := len(s); i < 3; i++ {
+		b.WriteByte('0')
+	}
+	b.WriteString(s)
+	return b.String()
 }
 
 func (sm *SegmentManager) CreateSegment(n uint64) (*FileHandle, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	LX "github.com/cyw0ng95/razordata/internal/SQL/LX"
@@ -855,9 +856,9 @@ func (t *Trigger) Next(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-func (t *Trigger) Close() error                        { return nil }
+func (t *Trigger) Close() error                { return nil }
 func (t *Trigger) WithParams(p []any) Operator { return t }
-func (t *Trigger) RowsAffected() int64                 { return 0 }
+func (t *Trigger) RowsAffected() int64         { return 0 }
 
 type CreateTable struct {
 	stmt       *PS.CreateTable
@@ -1227,9 +1228,9 @@ func typeToken(t int) string {
 func defaultLiteral(e PS.Expr) string {
 	switch v := e.(type) {
 	case *PS.NumberLiteral:
-		return fmt.Sprintf("%d", v.Val)
+		return strconv.FormatInt(v.Val, 10)
 	case *PS.FloatLiteral:
-		return fmt.Sprintf("%v", v.Val)
+		return strconv.FormatFloat(v.Val, 'f', -1, 64)
 	case *PS.StringLiteral:
 		return "'" + v.Val + "'"
 	case *PS.BoolLiteral:
@@ -1394,9 +1395,9 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-func (p *Pragma) Close() error                        { return nil }
+func (p *Pragma) Close() error                { return nil }
 func (p *Pragma) WithParams(_ []any) Operator { return p }
-func (p *Pragma) RowsAffected() int64                 { return 0 }
+func (p *Pragma) RowsAffected() int64         { return 0 }
 
 // Explain runs the inner plan and returns a textual description of it
 // as a single-row result. REQ000481, REQ000500.
@@ -1455,9 +1456,9 @@ func (e *Explain) explain() string {
 	}
 }
 
-func (e *Explain) Close() error                        { return nil }
+func (e *Explain) Close() error                { return nil }
 func (e *Explain) WithParams(_ []any) Operator { return e }
-func (e *Explain) RowsAffected() int64                 { return 0 }
+func (e *Explain) RowsAffected() int64         { return 0 }
 
 // Truncate is a writer-op stub for TRUNCATE [TABLE] name. REQ000476.
 type Truncate struct {
@@ -1485,9 +1486,9 @@ func (t *Truncate) Next(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-func (t *Truncate) Close() error                        { return nil }
+func (t *Truncate) Close() error                { return nil }
 func (t *Truncate) WithParams(_ []any) Operator { return t }
-func (t *Truncate) RowsAffected() int64                 { return t.rows }
+func (t *Truncate) RowsAffected() int64         { return t.rows }
 
 // Reindex is a writer-op stub for REINDEX. REQ000478.
 type Reindex struct {
@@ -1505,9 +1506,9 @@ func (r *Reindex) Next(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-func (r *Reindex) Close() error                        { return nil }
+func (r *Reindex) Close() error                { return nil }
 func (r *Reindex) WithParams(_ []any) Operator { return r }
-func (r *Reindex) RowsAffected() int64                 { return 0 }
+func (r *Reindex) RowsAffected() int64         { return 0 }
 
 // DropView is a writer-op for DROP VIEW [IF EXISTS] name. REQ000494.
 type DropView struct {
@@ -1529,9 +1530,9 @@ func (d *DropView) Next(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-func (d *DropView) Close() error                        { return nil }
+func (d *DropView) Close() error                { return nil }
 func (d *DropView) WithParams(_ []any) Operator { return d }
-func (d *DropView) RowsAffected() int64                 { return 0 }
+func (d *DropView) RowsAffected() int64         { return 0 }
 
 // DropTrigger is a writer-op for DROP TRIGGER [IF EXISTS] name. REQ000496.
 type DropTrigger struct {
@@ -1555,9 +1556,9 @@ func (d *DropTrigger) Next(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-func (d *DropTrigger) Close() error                        { return nil }
+func (d *DropTrigger) Close() error                { return nil }
 func (d *DropTrigger) WithParams(_ []any) Operator { return d }
-func (d *DropTrigger) RowsAffected() int64                 { return 0 }
+func (d *DropTrigger) RowsAffected() int64         { return 0 }
 
 // applyConflictUpdate locates the conflicting row by unique-key match
 // and applies the SET clauses. Used by INSERT ... ON CONFLICT DO
@@ -1700,9 +1701,9 @@ func (u *UnsupportedOp) Next(ctx context.Context) (Row, error) {
 	return Row{}, u.err
 }
 
-func (u *UnsupportedOp) Close() error                        { return nil }
+func (u *UnsupportedOp) Close() error                { return nil }
 func (u *UnsupportedOp) WithParams(_ []any) Operator { return u }
-func (u *UnsupportedOp) RowsAffected() int64                 { return 0 }
+func (u *UnsupportedOp) RowsAffected() int64         { return 0 }
 
 // ErrMultiDatabaseNotSupported is returned by ATTACH / DETACH DATABASE
 // at execution time. REQ000557.

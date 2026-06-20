@@ -6,7 +6,7 @@ package EX
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
@@ -168,13 +168,24 @@ func describeOp(op Operator) string {
 	if aop, ok := op.(*AdaptiveOp); ok {
 		return describeOp(aop.inner)
 	}
+	var b strings.Builder
 	switch v := op.(type) {
 	case *SeqScan:
-		return fmt.Sprintf("SeqScan(table=%s)", v.table)
+		b.WriteString("SeqScan(table=")
+		b.WriteString(v.table)
+		b.WriteByte(')')
 	case *IndexScan:
-		return fmt.Sprintf("IndexScan(table=%s idx=%s)", v.table, v.idx)
+		b.WriteString("IndexScan(table=")
+		b.WriteString(v.table)
+		b.WriteString(" idx=")
+		b.WriteString(v.idx)
+		b.WriteByte(')')
 	case *NestedLoopJoin:
-		return fmt.Sprintf("NestedLoopJoin(left=%s right=%s)", v.leftTbl, v.rightTbl)
+		b.WriteString("NestedLoopJoin(left=")
+		b.WriteString(v.leftTbl)
+		b.WriteString(" right=")
+		b.WriteString(v.rightTbl)
+		b.WriteByte(')')
 	case *Filter:
 		return "Filter"
 	case *Project:
@@ -188,15 +199,29 @@ func describeOp(op Operator) string {
 	case *Aggregate:
 		return "Aggregate"
 	case *Insert:
-		return fmt.Sprintf("Insert(table=%s rows=%d)", v.table, len(v.values))
+		b.WriteString("Insert(table=")
+		b.WriteString(v.table)
+		b.WriteString(" rows=")
+		b.WriteString(strconv.Itoa(len(v.values)))
+		b.WriteByte(')')
 	case *Update:
-		return fmt.Sprintf("Update(table=%s)", v.table)
+		b.WriteString("Update(table=")
+		b.WriteString(v.table)
+		b.WriteByte(')')
 	case *Delete:
-		return fmt.Sprintf("Delete(table=%s)", v.table)
+		b.WriteString("Delete(table=")
+		b.WriteString(v.table)
+		b.WriteByte(')')
 	case *CreateTable:
-		return fmt.Sprintf("CreateTable(name=%s)", v.stmt.Name)
+		b.WriteString("CreateTable(name=")
+		b.WriteString(v.stmt.Name)
+		b.WriteByte(')')
 	case *DropTable:
-		return fmt.Sprintf("DropTable(name=%s)", v.stmt.Name)
+		b.WriteString("DropTable(name=")
+		b.WriteString(v.stmt.Name)
+		b.WriteByte(')')
+	default:
+		return "Unknown"
 	}
-	return "Unknown"
+	return b.String()
 }

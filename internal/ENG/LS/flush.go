@@ -3,11 +3,12 @@ package ls
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,7 +33,14 @@ func (fj *flushJob) Run() error {
 	}
 
 	sstDir := fj.outputPath
-	tmpPath := filepath.Join(sstDir, fmt.Sprintf(".tmp_%d_%d.sst", fj.fileID, time.Now().UnixNano()))
+	var tmpName strings.Builder
+	tmpName.Grow(32)
+	tmpName.WriteString(".tmp_")
+	tmpName.WriteString(strconv.FormatUint(fj.fileID, 10))
+	tmpName.WriteByte('_')
+	tmpName.WriteString(strconv.FormatInt(time.Now().UnixNano(), 10))
+	tmpName.WriteString(".sst")
+	tmpPath := filepath.Join(sstDir, tmpName.String())
 	if err := os.MkdirAll(sstDir, 0o755); err != nil {
 		return err
 	}
