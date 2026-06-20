@@ -1,6 +1,7 @@
 package SN
 
 import (
+	"bytes"
 	"sync"
 	"sync/atomic"
 
@@ -44,12 +45,15 @@ func (rv *ReadView) Get(key []byte) ([]byte, error) {
 	}
 
 	rv.mu.Lock()
-	for _, snap := range rv.snapshot {
-		if string(snap.Key) == string(key) {
-			node := snap.Head
+	snap := make([]VersionChainSnapshot, len(rv.snapshot))
+	copy(snap, rv.snapshot)
+	rv.mu.Unlock()
+
+	for i := range snap {
+		if bytes.Equal(snap[i].Key, key) {
+			node := snap[i].Head
 			for node != nil {
 				if node.IsVisible(rv.readTS) {
-					rv.mu.Unlock()
 					if node.Deleted() {
 						return nil, MV.ErrNotFound
 					}
@@ -57,11 +61,9 @@ func (rv *ReadView) Get(key []byte) ([]byte, error) {
 				}
 				node = node.Next()
 			}
-			rv.mu.Unlock()
 			return nil, MV.ErrNotFound
 		}
 	}
-	rv.mu.Unlock()
 
 	chain := rv.mv.VersionChain(key)
 	if chain == nil {
