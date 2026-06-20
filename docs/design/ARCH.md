@@ -92,6 +92,9 @@ Several constants and utilities are duplicated across packages. The following ru
 ## Directory Structure
 
 ```
+cmd/
+└── razor/           # CLI entry point (thin, no DB logic)
+
 internal/
 ├── LOG/   # Logging (LG, HK)
 ├── FIL/   # File I/O (DF, MF, LF, FS, IO/io_uring)
@@ -105,7 +108,7 @@ internal/
 
 ## Detailed Design
 
-Full design documents: `docs/design/subsystems/LOG.md` · `FIL.md` · `MEM.md` · `WAL.md` · `ENG.md` · `TXN.md` · `SQL.md` · `SYS.md`
+Full design documents: `docs/design/subsystems/LOG.md` · `FIL.md` · `MEM.md` · `WAL.md` · `ENG.md` · `TXN.md` · `SQL.md` · `SYS.md` · `docs/design/CLI.md`
 
 ## SQL Surface
 
