@@ -5,9 +5,10 @@ package tb
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"os"
+
+	eng "github.com/cyw0ng95/razordata/internal/ENG"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -28,12 +29,13 @@ var (
 	catalogHeaderSize = 17 // magic(4) + version(1) + reserved(4) + nextID(8)
 )
 
+// Catalog error sentinels — shared with LS via ENG package.
 var (
-	ErrCatalogCorrupt  = errors.New("catalog: data corrupt")
-	ErrUpgradeRequired = errors.New("catalog: schema version newer than supported")
-	ErrCatalogNotFound = errors.New("catalog: table not found")
-	ErrCatalogExists   = errors.New("catalog: table already exists")
-	ErrCatalogClosed   = errors.New("catalog: closed")
+	ErrCatalogCorrupt  = eng.ErrCatalogCorrupt
+	ErrUpgradeRequired = eng.ErrUpgradeRequired
+	ErrCatalogNotFound = eng.ErrCatalogNotFound
+	ErrCatalogExists   = eng.ErrCatalogExists
+	ErrCatalogClosed   = eng.ErrCatalogClosed
 )
 
 type Column struct {
