@@ -1381,18 +1381,98 @@ func (d *DropIndex) RowsAffected() int64 { return d.rowsAff }
 
 // Pragma is a writer-op stub for PRAGMA name [= value]. REQ000490.
 type Pragma struct {
-	stmt *PS.PragmaStmt
-	done bool
+	stmt   *PS.PragmaStmt
+	store  Store
+	done   bool
+	rows   []Row
+	idx    int
 }
 
 func NewPragma(stmt *PS.PragmaStmt) *Pragma { return &Pragma{stmt: stmt} }
 
+func (p *Pragma) WithStore(s Store) Operator {
+	p.store = s
+	return p
+}
+
 func (p *Pragma) Next(ctx context.Context) (Row, error) {
-	if p.done {
+	if p.done && p.idx >= len(p.rows) {
 		return Row{}, ErrNoRows
 	}
-	p.done = true
+
+	// Handle PRAGMA table_info(table_name)
+	if p.stmt.Name == "table_info" && p.stmt.Value != "" {
+		if !p.done {
+			p.done = true
+			if err := p.loadTableInfo(); err != nil {
+				return Row{}, err
+			}
+		}
+		if p.idx >= len(p.rows) {
+			return Row{}, ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
+	// Default: return empty result for unknown pragmas
+	if !p.done {
+		p.done = true
+		return Row{}, ErrNoRows
+	}
 	return Row{}, ErrNoRows
+}
+
+func (p *Pragma) loadTableInfo() error {
+	tableName := p.stmt.Value
+	ss, ok := schemaFor(tableName)
+	if !ok {
+		return nil
+	}
+	pkIdx := -1
+	if ss.pk != "" {
+		for i, c := range ss.cols {
+			if c == ss.pk {
+				pkIdx = i
+				break
+			}
+		}
+	}
+	for i, colName := range ss.cols {
+		notNull := int64(0)
+		if i < len(ss.nullable) && !ss.nullable[i] {
+			notNull = int64(1)
+		}
+		pk := int64(0)
+		if i == pkIdx {
+			pk = int64(1)
+		}
+		colType := 0
+		if i < len(ss.colTypes) {
+			colType = ss.colTypes[i]
+		}
+		p.rows = append(p.rows, Row{
+			Cols: []string{"cid", "name", "type", "notnull", "dflt_value", "pk"},
+			Data: []any{int64(i), colName, colTypeName(colType), notNull, nil, pk},
+		})
+	}
+	return nil
+}
+
+func colTypeName(t int) string {
+	switch t {
+	case 1: // LX.T_INT_KW
+		return "INTEGER"
+	case 2: // LX.T_TEXT_KW
+		return "TEXT"
+	case 3: // LX.T_REAL_KW
+		return "REAL"
+	case 4: // LX.T_BLOB_KW
+		return "BLOB"
+	default:
+		return "ANY"
+	}
 }
 
 func (p *Pragma) Close() error                { return nil }

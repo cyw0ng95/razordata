@@ -127,6 +127,22 @@ func (p *Parser) parsePragma() (*PragmaStmt, error) {
 	stmt := &PragmaStmt{Name: p.current.Lexeme}
 	p.advance()
 
+	// Support PRAGMA name(value) syntax (e.g., PRAGMA table_info(users))
+	if p.current.Type == LX.T_LPAREN {
+		p.advance() // consume (
+		if p.current.Type == LX.T_IDENT || p.current.Type == LX.T_STRING {
+			stmt.Value = p.current.Lexeme
+			p.advance()
+		} else if p.current.Type == LX.T_INT {
+			stmt.Value = p.current.Lexeme
+			p.advance()
+		}
+		if p.current.Type == LX.T_RPAREN {
+			p.advance() // consume )
+		}
+		return stmt, nil
+	}
+
 	if p.current.Type == LX.T_EQ {
 		p.advance()
 		if p.current.Type == LX.T_IDENT || p.current.Type == LX.T_STRING {
