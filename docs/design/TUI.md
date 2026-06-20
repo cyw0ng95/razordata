@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `razor tui` command launches an interactive terminal experience for human users. Rich REPL with syntax highlighting, auto-completion, multi-line editing, and beautiful output formatting.
+The `rdtui` command launches an interactive terminal experience for human users. Rich REPL with syntax highlighting, auto-completion, multi-line editing, and beautiful output formatting.
 
 **Design goals:**
 - Beautiful, modern terminal experience
@@ -16,7 +16,7 @@ The `razor tui` command launches an interactive terminal experience for human us
 ## Architecture
 
 ```
-cmd/razor-tui/                 # TUI package (separate binary, package main)
+cmd/rdtui/                 # TUI package (separate binary, package main)
 ├── main.go                    # Entry point
 ├── repl.go                    # bubbletea REPL model
 ├── input.go                   # Multi-line input with syntax highlighting
@@ -32,13 +32,13 @@ cmd/razor-tui/                 # TUI package (separate binary, package main)
 ## Dependency Rule
 
 ```
-cmd/razor-tui/ ──imports──► SYS/AP (public API)
-cmd/razor-tui/ ──imports──► SYS/SY (engine lifecycle)
-cmd/razor-tui/ ──imports──► bubbletea (TUI framework)
-cmd/razor-tui/ ──imports──► bubbles (TUI components)
-cmd/razor-tui/ ──imports──► lipgloss (styling)
-cmd/razor-tui/ ──imports──► chroma (syntax highlighting)
-cmd/razor-tui/ ──DOES NOT──► SQL/EX, SQL/PS, ENG/*, TXN/*, WAL/*, MEM/*
+cmd/rdtui/ ──imports──► SYS/AP (public API)
+cmd/rdtui/ ──imports──► SYS/SY (engine lifecycle)
+cmd/rdtui/ ──imports──► bubbletea (TUI framework)
+cmd/rdtui/ ──imports──► bubbles (TUI components)
+cmd/rdtui/ ──imports──► lipgloss (styling)
+cmd/rdtui/ ──imports──► chroma (syntax highlighting)
+cmd/rdtui/ ──DOES NOT──► SQL/EX, SQL/PS, ENG/*, TXN/*, WAL/*, MEM/*
 ```
 
 ## External Dependencies
@@ -54,22 +54,22 @@ cmd/razor-tui/ ──DOES NOT──► SQL/EX, SQL/PS, ENG/*, TXN/*, WAL/*, MEM/
 
 ```bash
 # Launch TUI
-$ razor tui mydb.razor
+$ rdtui mydb.razor
 
 # Launch TUI with initial query
-$ razor tui mydb.razor --query "SELECT * FROM users LIMIT 10"
+$ rdtui mydb.razor --query "SELECT * FROM users LIMIT 10"
 
 # Launch TUI in read-only mode
-$ razor tui mydb.razor --readonly
+$ rdtui mydb.razor --readonly
 ```
 
 ## REPL Interface
 
 ```
-razor v0.28.0 — razordata interactive shell
+rdtui v0.28.0 — razordata interactive shell
 Connected to: mydb.razor (3 tables, 1,234 rows)
 
-razor> SELECT u.name, COUNT(o.id) AS order_count
+rdtui> SELECT u.name, COUNT(o.id) AS order_count
      > FROM users u
      > LEFT JOIN orders o ON u.id = o.user_id
      > GROUP BY u.name
@@ -84,7 +84,7 @@ razor> SELECT u.name, COUNT(o.id) AS order_count
 └──────────┴─────────────┘
 (4 rows, 5ms)
 
-razor> _
+rdtui> _
 ```
 
 ## Features
@@ -102,7 +102,7 @@ WHERE   → blue bold
 =       → red
 ```
 
-Uses `chroma` SQL lexer. Theme configurable via `~/.config/razor/theme.toml`.
+Uses `chroma` SQL lexer. Theme configurable via `~/.config/rdtui/theme.toml`.
 
 ### 2. Auto-Completion
 
@@ -199,7 +199,7 @@ Uses `bubbles/treeview` or custom implementation.
 
 ### 6. Query History
 
-- Stored in `~/.config/razor/history`
+- Stored in `~/.config/rdtui/history`
 - Maximum 10,000 entries
 - Search with Ctrl+R (fuzzy match)
 - Persist across sessions
@@ -207,7 +207,7 @@ Uses `bubbles/treeview` or custom implementation.
 
 ### 7. Theme Configuration
 
-`~/.config/razor/theme.toml`:
+`~/.config/rdtui/theme.toml`:
 
 ```toml
 [colors]
@@ -229,7 +229,7 @@ family = "monospace"
 When a query takes > 1s, show hints:
 
 ```
-razor> SELECT * FROM orders WHERE user_id = 1;
+rdtui> SELECT * FROM orders WHERE user_id = 1;
 ┌────┬─────────┬────────┬────────────────────┐
 │ id │ user_id │ amount │ created_at         │
 ├────┼─────────┼────────┼────────────────────┤
@@ -310,10 +310,10 @@ columns, _ := sess.Query(ctx, "PRAGMA table_info("+table+")")
 
 ```bash
 # Build CLI (minimal deps)
-go build -o razor ./cmd/razor/
+go build -o rdcli ./cmd/rdcli/
 
 # Build TUI (with charm deps)
-go build -o razor-tui ./cmd/razor-tui/
+go build -o rdtui ./cmd/rdtui/
 
 # Build both
 go build ./cmd/...
@@ -323,9 +323,9 @@ Separate binaries. TUI is optional — users who don't need the interactive expe
 
 ## Relationship to CLI
 
-| Aspect | CLI (`razor`) | TUI (`razor tui`) |
+| Aspect | CLI (`rdtui`) | TUI (`rdtui`) |
 |--------|--------------|-------------------|
-| Binary | `razor` | `razor` (subcommand) or `razor-tui` |
+| Binary | `rdtui` | `rdtui` |
 | Dependencies | cobra only | cobra + bubbletea + bubbles + lipgloss + chroma |
 | Startup | < 50ms | < 200ms |
 | Memory | < 10 MB | < 50 MB |

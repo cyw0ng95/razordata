@@ -93,7 +93,7 @@ Several constants and utilities are duplicated across packages. The following ru
 
 ```
 cmd/
-└── razor/           # CLI entry point (thin, no DB logic)
+└── razor/           # rdcli entry point (thin, no DB logic)
 
 internal/
 ├── LOG/   # Logging (LG, HK)

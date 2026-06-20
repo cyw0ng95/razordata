@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `razor` CLI is a lightweight, scriptable interface over the `SYS/AP` public API. Designed for automation, CI/CD pipelines, scripting, and environments where resource usage matters. Zero external Go dependencies beyond `cobra`.
+The `rdcli` CLI is a lightweight, scriptable interface over the `SYS/AP` public API. Designed for automation, CI/CD pipelines, scripting, and environments where resource usage matters. Zero external Go dependencies beyond `cobra`.
 
 **Design goals:**
 - Fast startup (< 50ms)
@@ -14,31 +14,31 @@ The `razor` CLI is a lightweight, scriptable interface over the `SYS/AP` public 
 ## Architecture
 
 ```
-cmd/razor/                    # CLI package (package main)
+cmd/rdcli/                    # CLI package (package main)
 ├── main.go                   # Entry point
 ├── root.go                   # cobra root command, global flags
-├── query.go                  # razor query <dbdir> <sql>
-├── exec.go                   # razor exec <dbdir> <sql>
-├── schema.go                 # razor schema <dbdir> [table]
-├── dump.go                   # razor dump <dbdir>
-├── import_cmd.go             # razor import <dbdir> <file> <table>
-├── export.go                 # razor export <dbdir> <table>
+├── query.go                  # rdcli query <dbdir> <sql>
+├── exec.go                   # rdcli exec <dbdir> <sql>
+├── schema.go                 # rdcli schema <dbdir> [table]
+├── dump.go                   # rdcli dump <dbdir>
+├── import_cmd.go             # rdcli import <dbdir> <file> <table>
+├── export.go                 # rdcli export <dbdir> <table>
 ├── admin.go                  # integrity-check / vacuum / analyze
 ├── backup.go                 # backup / restore
-├── info.go                   # razor info <dbdir>
+├── info.go                   # rdcli info <dbdir>
 ├── output.go                 # Output formatting (table/json/csv/ndjson)
-└── config.go                 # Config file (~/.config/razor/config.toml)
+└── config.go                 # Config file (~/.config/rdcli/config.toml)
 ```
 
 ## Dependency Rule
 
 ```
-cmd/razor/ ──imports──► SYS/AP (public API)
-cmd/razor/ ──imports──► SYS/SY (engine lifecycle)
-cmd/razor/ ──imports──► cobra (CLI framework)
-cmd/razor/ ──imports──► encoding/json, encoding/csv (stdlib)
-cmd/razor/ ──DOES NOT──► SQL/EX, SQL/PS, ENG/*, TXN/*, WAL/*, MEM/*
-cmd/razor/ ──DOES NOT──► bubbletea, lipgloss, chroma (TUI deps)
+cmd/rdcli/ ──imports──► SYS/AP (public API)
+cmd/rdcli/ ──imports──► SYS/SY (engine lifecycle)
+cmd/rdcli/ ──imports──► cobra (CLI framework)
+cmd/rdcli/ ──imports──► encoding/json, encoding/csv (stdlib)
+cmd/rdcli/ ──DOES NOT──► SQL/EX, SQL/PS, ENG/*, TXN/*, WAL/*, MEM/*
+cmd/rdcli/ ──DOES NOT──► bubbletea, lipgloss, chroma (TUI deps)
 ```
 
 ## External Dependencies
@@ -52,46 +52,46 @@ That's it. One external dependency. Everything else is stdlib.
 ## Command Structure
 
 ```
-razor <command> [args] [flags]
+rdcli <command> [args] [flags]
 
 # Query
-razor query <dbdir> <sql> [--format json|csv|table|ndjson|line]
+rdcli query <dbdir> <sql> [--format json|csv|table|ndjson|line]
 
 # Execute
-razor exec <dbdir> <sql>
+rdcli exec <dbdir> <sql>
 
 # Schema
-razor schema <dbdir> [table]
-razor diff <dbdir1> <dbdir2>
+rdcli schema <dbdir> [table]
+rdcli diff <dbdir1> <dbdir2>
 
 # Data
-razor import <dbdir> <file> <table> [--format csv|json|tsv]
-razor export <dbdir> <table> [--format csv|json] [--output file]
-razor dump <dbdir> [--tables pattern] [--output file]
+rdcli import <dbdir> <file> <table> [--format csv|json|tsv]
+rdcli export <dbdir> <table> [--format csv|json] [--output file]
+rdcli dump <dbdir> [--tables pattern] [--output file]
 
 # Admin
-razor integrity-check <dbdir>
-razor vacuum <dbdir>
-razor analyze <dbdir>
-razor backup <src> <dst>
-razor restore <backup> <dst>
+rdcli integrity-check <dbdir>
+rdcli vacuum <dbdir>
+rdcli analyze <dbdir>
+rdcli backup <src> <dst>
+rdcli restore <backup> <dst>
 
 # Info
-razor info <dbdir>
-razor version
+rdcli info <dbdir>
+rdcli version
 ```
 
-No `razor open` — that's the TUI's job.
+No `rdcli open` — that's the TUI's job.
 
 ## Command Details
 
-### `razor query <dbdir> <sql>`
+### `rdcli query <dbdir> <sql>`
 
 One-shot query. Pipe-friendly.
 
 ```bash
 # Table output (default in terminal)
-$ razor query mydb.razor "SELECT * FROM users LIMIT 3"
+$ rdcli query mydb.razor "SELECT * FROM users LIMIT 3"
 ┌────┬──────────┬─────┐
 │ id │ name     │ age │
 ├────┼──────────┼─────┤
@@ -102,20 +102,20 @@ $ razor query mydb.razor "SELECT * FROM users LIMIT 3"
 (3 rows, 2ms)
 
 # JSON output
-$ razor query mydb.razor "SELECT * FROM users" --format json
+$ rdcli query mydb.razor "SELECT * FROM users" --format json
 [{"id":1,"name":"Alice","age":30},{"id":2,"name":"Bob","age":25}]
 
 # CSV output (auto-detected when piped)
-$ razor query mydb.razor "SELECT * FROM users" | head -2
+$ rdcli query mydb.razor "SELECT * FROM users" | head -2
 id,name,age
 1,Alice,30
 
 # Raw output (no headers, no formatting)
-$ razor query mydb.razor "SELECT count(*) FROM users" --raw --quiet
+$ rdcli query mydb.razor "SELECT count(*) FROM users" --raw --quiet
 42
 
 # Pipe into another command
-$ razor query mydb.razor "SELECT name FROM users" --format csv --noheader | sort
+$ rdcli query mydb.razor "SELECT name FROM users" --format csv --noheader | sort
 Alice
 Bob
 Charlie
@@ -145,32 +145,32 @@ Charlie
 
 **Auto-detection:** When stdout is not a terminal (piped), default format is `csv` with no headers.
 
-### `razor exec <dbdir> <sql>`
+### `rdcli exec <dbdir> <sql>`
 
 Execute DDL/DML. No row output.
 
 ```bash
-$ razor exec mydb.razor "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)"
+$ rdcli exec mydb.razor "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)"
 OK (0 rows affected, 1ms)
 
-$ razor exec mydb.razor "INSERT INTO users VALUES (1, 'Alice')"
+$ rdcli exec mydb.razor "INSERT INTO users VALUES (1, 'Alice')"
 OK (1 row affected, 0ms)
 ```
 
-### `razor schema <dbdir> [table]`
+### `rdcli schema <dbdir> [table]`
 
 List tables or show table schema.
 
 ```bash
 # List all tables
-$ razor schema mydb.razor
+$ rdcli schema mydb.razor
 Tables (3):
   users         1,234 rows
   orders          567 rows
   products         89 rows
 
 # Show table schema
-$ razor schema mydb.razor users
+$ rdcli schema mydb.razor users
 CREATE TABLE users (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -184,43 +184,43 @@ Indexes:
 Rows: 1,234
 ```
 
-### `razor dump <dbdir>`
+### `rdcli dump <dbdir>`
 
-SQL export. Compatible with `razor import`.
+SQL export. Compatible with `rdcli import`.
 
 ```bash
 # Dump to stdout
-$ razor dump mydb.razor
+$ rdcli dump mydb.razor
 CREATE TABLE users (...);
 INSERT INTO users VALUES (1, 'Alice', 30);
 INSERT INTO users VALUES (2, 'Bob', 25);
 
 # Dump to file
-$ razor dump mydb.razor --output backup.sql
+$ rdcli dump mydb.razor --output backup.sql
 
 # Dump specific tables
-$ razor dump mydb.razor --tables "users,orders"
+$ rdcli dump mydb.razor --tables "users,orders"
 ```
 
-### `razor import <dbdir> <file> <table>`
+### `rdcli import <dbdir> <file> <table>`
 
 Import data from file.
 
 ```bash
 # Import CSV
-$ razor import mydb.razor users.csv users
+$ rdcli import mydb.razor users.csv users
 Imported 1,234 rows in 0.5s
 
 # Import JSON
-$ razor import mydb.razor users.json users --format json
+$ rdcli import mydb.razor users.json users --format json
 ```
 
-### `razor info <dbdir>`
+### `rdcli info <dbdir>`
 
 Database statistics.
 
 ```bash
-$ razor info mydb.razor
+$ rdcli info mydb.razor
 Database: mydb.razor
 Tables: 3
 Total rows: 1,890
@@ -296,7 +296,7 @@ func detectFormat() string {
 
 ## Config File
 
-Location: `~/.config/razor/config.toml`
+Location: `~/.config/rdcli/config.toml`
 
 ```toml
 [output]
