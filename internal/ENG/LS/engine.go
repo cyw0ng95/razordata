@@ -72,6 +72,7 @@ type engine struct {
 	manifest  *manifest
 	cm        *compactionManager
 	fm        *flushManager
+	pageCache *PageCache // REQ000571: block-level SST cache
 	opts      Options
 	stats     ReadStats
 	statsMu   sync.RWMutex
@@ -108,6 +109,7 @@ func newEngineWithOptions(dir string, opts Options) (*engine, error) {
 		memtables: make([]memtableIface, 0),
 		activeMem: activeMem,
 		manifest:  manifest,
+		pageCache: NewPageCache(DefaultPageCacheSize), // REQ000571
 		opts:      opts,
 		log:       slog.Default(),
 	}
@@ -234,7 +236,7 @@ func (e *engine) readFromSST(key []byte) ([]byte, error) {
 			e.stats.DiskReads++
 
 			sstPath := filepath.Join(e.dir, fileName(&file))
-			data, err := os.ReadFile(sstPath)
+			data, err := e.readSSTFile(file.FileID, sstPath)
 			if err != nil {
 				e.log.Warn("readFromSST: failed to read SST file", "path", sstPath, "err", err)
 				continue
@@ -257,6 +259,27 @@ func (e *engine) readFromSST(key []byte) ([]byte, error) {
 	}
 
 	return nil, ErrNotFound
+}
+
+// readSSTFile reads an SST file, consulting the page cache first (REQ000571).
+func (e *engine) readSSTFile(fileID uint64, path string) ([]byte, error) {
+	// Try cache first (block-level).
+	if cached, ok := e.pageCache.Get(fileID, 0); ok {
+		return cached, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	// Cache in 4KB blocks.
+	for off := 0; off < len(data); off += PageSize {
+		end := off + PageSize
+		if end > len(data) {
+			end = len(data)
+		}
+		e.pageCache.Put(fileID, uint32(off), data[off:end])
+	}
+	return data, nil
 }
 
 func (e *engine) MayContain(key []byte) bool {
@@ -285,7 +308,7 @@ func (e *engine) MayContain(key []byte) bool {
 		for i := range files {
 			file := &files[i]
 			sstPath := filepath.Join(e.dir, fileName(file))
-			data, err := os.ReadFile(sstPath)
+			data, err := e.readSSTFile(file.FileID, sstPath)
 			if err != nil {
 				e.log.Warn("MayContain: failed to read SST file", "path", sstPath, "err", err)
 				continue
