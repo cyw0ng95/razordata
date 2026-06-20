@@ -71,6 +71,24 @@ if err != nil {
 
 Each package uses a consistent prefix (`"ls: "`, `"wr: "`, `"txn: "`, `"ex: "`) for debuggability.
 
+## Shared Constants & Platform Packages
+
+Several constants and utilities are duplicated across packages. The following rules define what must be centralized:
+
+**Block/page size:** Single source of truth is `FIL/DF.DefaultBlockSize` (4096). All other packages (`MEM/SP`, `ENG/ID`, `FIL/MF`) reference it; none define independent copies.
+
+**WAL segment size:** Single source of truth is `WAL/WR.SegSize` (64 MiB). `WAL/RP` references it; no private copies.
+
+**Memtable/buffer pool defaults:** Single source of truth is `SYS/AP.Options` defaults (`DefaultPageSize`, `DefaultMemTableSize`, `DefaultBufferPoolMB`, etc.). Subsystem `Options` structs are populated from `AP.Options` at construction time, not from independent defaults.
+
+**Catalog logic:** `ENG/LS` and `ENG/TB` share identical catalog magic bytes, header size, schema versions, bootstrap, and encode/decode logic. Shared code lives in `ENG/catalog/`; LS adds index/stats extensions on top.
+
+**Lifecycle guards:** All `closed` guards use `atomic.Bool` (Go 1.22+). No custom `atomicBool` wrappers, no plain `bool` for goroutine-shared state.
+
+**Stats types:** `SYS/AP` embeds subsystem stats types (`ls.ReadStats`, `bf.BufferStats`, `rp.Stats`, `vl.TxnStats`) rather than re-declaring subset structs. This prevents field drift.
+
+**CRC32 polynomial:** `ENG/LS` uses Koopman (better error detection for SST blocks); all other packages use IEEE. This is intentional and documented.
+
 ## Directory Structure
 
 ```
