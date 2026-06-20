@@ -1475,9 +1475,13 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 		return row, nil
 	}
 
-	// Default: return empty result for unknown pragmas
+	// Default: handle PRAGMA name = value (write) and notify listeners
 	if !p.done {
 		p.done = true
+		// If value is set, this is a write pragma — notify listeners
+		if p.stmt.Value != "" {
+			notifyPragmaChange(p.stmt.Name, p.stmt.Value)
+		}
 		return Row{}, ErrNoRows
 	}
 	return Row{}, ErrNoRows
