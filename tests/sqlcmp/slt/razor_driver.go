@@ -53,7 +53,7 @@ func (c *RazorClassifier) Classify(err error) Verdict {
 		strings.Contains(msg, "pragma not supported"),
 		strings.Contains(msg, "feature not supported"),
 		strings.Contains(msg, "not implemented"),
-		strings.Contains(msg, "primary key"),
+		strings.Contains(msg, "primary key constraint not supported"),
 		strings.Contains(msg, "razordata: syntax"),
 		strings.Contains(msg, "razordata: type mismatch"),
 		strings.Contains(msg, "razordata: no active txn"),
