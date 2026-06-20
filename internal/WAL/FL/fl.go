@@ -3,7 +3,9 @@ package fl
 
 import (
 	"errors"
+	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/FS"
@@ -15,8 +17,6 @@ var (
 	ErrFlusherClosed       = errors.New("flusher closed")
 	ErrGroupCommitTimeout  = errors.New("group commit timeout")
 )
-
-const walDirName = "wal"
 
 type FlusherOptions struct {
 	GroupCommitTimeout time.Duration // default 50µs
@@ -31,10 +31,11 @@ type Flusher interface {
 }
 
 type flusher struct {
-	sm  *lf.SegmentManager
-	fm  *fs.FileManager
-	lsn *lsnCounter
-	log lg.Logger
+	sm    *lf.SegmentManager
+	fm    *fs.FileManager
+	dir   string // absolute WAL directory (used by SyncDir)
+	lsn   *lsnCounter
+	log   lg.Logger
 
 	closed      atomicBool
 	wbuf        *writeBuffer
@@ -94,8 +95,13 @@ func NewWithOptions(dir string, sm *lf.SegmentManager, fm *fs.FileManager, opts 
 		return nil, errors.New("fl: FileManager is required")
 	}
 	gc := newGroupCommit(groupCommitOptions{Timeout: opts.GroupCommitTimeout})
-	gc.SetFsyncFn(func() error { return fm.SyncDir(walDirName) })
-	return &flusher{sm: sm, fm: fm, lsn: newLSNCounter(), log: log, wbuf: newWriteBuffer(), gc: gc, gcOpts: opts}, nil
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	fl := &flusher{sm: sm, fm: fm, dir: abs, lsn: newLSNCounter(), log: log, wbuf: newWriteBuffer(), gc: gc, gcOpts: opts}
+	gc.SetFsyncFn(fl.syncDir)
+	return fl, nil
 }
 
 // Sync persists the write buffer to disk (REQ000594).
@@ -145,13 +151,24 @@ func (f *flusher) SyncDir() error {
 	if f.closed.isSet() {
 		return nil
 	}
-	if err := f.fm.SyncDir(walDirName); err != nil {
+	if err := f.syncDir(); err != nil {
 		if f.log != nil {
 			f.log.Error("fl.syncdir", "err", err)
 		}
 		return err
 	}
 	return nil
+}
+
+// syncDir fsyncs the absolute WAL directory using a direct syscall,
+// bypassing the FileManager (which may be rooted at a different path).
+func (f *flusher) syncDir() error {
+	fd, err := syscall.Open(f.dir, syscall.O_RDONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer syscall.Close(fd)
+	return syscall.Fsync(fd)
 }
 
 func (f *flusher) Close() error {

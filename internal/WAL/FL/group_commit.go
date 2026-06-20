@@ -50,46 +50,40 @@ func newGroupCommit(opts groupCommitOptions) *groupCommit {
 }
 
 // run is the background group commit loop. It collects pending Sync
-// requests and dispatches a single fsync when either:
-//   - the first request arrives (immediate flush), or
-//   - the deadline (default 50µs) fires.
+// requests and dispatches a single fsync when the deadline fires.
+// All requests that arrive during the batching window share one fsync.
 func (gc *groupCommit) run(timeout time.Duration) {
 	var pending []*groupCommitReq
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
-	// Start with the timer running so the first request triggers immediate flush.
-	// We'll stop it before each dispatch.
-
 	for {
 		select {
 		case req := <-gc.reqCh:
 			pending = append(pending, req)
-			// If this is the first request in the batch, trigger immediate flush.
-			if len(pending) == 1 {
-				// Stop the timer if it's running (from previous iteration).
-				if !timer.Stop() {
-					<-timer.C
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
 				}
-				gc.flush(pending)
-				pending = pending[:0]
-				// Reset timer for next batch.
-				timer.Reset(timeout)
 			}
+			timer.Reset(timeout)
 		case <-timer.C:
-			// Deadline fired — flush whatever we have.
 			if len(pending) > 0 {
 				gc.flush(pending)
 				pending = pending[:0]
 			}
-			// Reset timer for next batch.
 			timer.Reset(timeout)
 		case <-gc.closedCh:
-			// Drain any remaining pending requests.
-			if len(pending) > 0 {
-				gc.flush(pending)
+			// Pending requests that have not yet been dispatched
+			// are drained with ErrFlusherClosed. Do not flush —
+			// the flusher is being torn down and fsync would race
+			// with the close.
+			for _, req := range pending {
+				req.err = ErrFlusherClosed
+				close(req.done)
 			}
-			// Drain reqCh.
+			pending = nil
 			for {
 				select {
 				case req := <-gc.reqCh:

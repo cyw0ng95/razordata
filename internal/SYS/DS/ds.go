@@ -8,6 +8,11 @@
 //
 // The driver implements driver.Driver, driver.Connector, and the
 // Conn/Stmt/Rows/Tx interfaces required by database/sql.
+//
+// All connections for the same DSN share a single underlying SY
+// engine (see engineCache). Without this sharing, database/sql's
+// connection pool would create a fresh engine per Conn and state
+// would not be visible across pooled connections.
 package DS
 
 import (
@@ -33,6 +38,62 @@ func init() {
 	registerDriver.Do(func() {
 		sql.Register("razor", &Driver{})
 	})
+}
+
+// engineCache is the per-DSN engine cache. database/sql calls
+// Open once per connection but expects state (tables, data) to be
+// shared across all connections to the same DSN. Each cached engine
+// is opened lazily on the first connection and re-closed when the
+// driver is no longer reachable (finalizers or explicit Close).
+type engineCache struct {
+	mu    sync.Mutex
+	engs  map[string]*v1.Engine
+	refs  map[string]int
+	paths map[string]string
+}
+
+var globalCache = &engineCache{
+	engs:  make(map[string]*v1.Engine),
+	refs:  make(map[string]int),
+	paths: make(map[string]string),
+}
+
+// acquire returns the engine for the given DSN, opening it on the
+// first call. The returned engine must be paired with a release.
+func (c *engineCache) acquire(ctx context.Context, cfg Config) (*v1.Engine, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if eng, ok := c.engs[cfg.Path]; ok {
+		c.refs[cfg.Path]++
+		return eng, nil
+	}
+	opts := AP.Options{InMemory: cfg.Path == ":memory:"}
+	eng, err := v1.Open(ctx, cfg.Path, opts)
+	if err != nil {
+		return nil, err
+	}
+	c.engs[cfg.Path] = eng
+	c.paths[cfg.Path] = cfg.Path
+	c.refs[cfg.Path] = 1
+	return eng, nil
+}
+
+// release decrements the refcount for the DSN. The engine is closed
+// when no more connections reference it.
+func (c *engineCache) release(cfg Config) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.refs[cfg.Path] > 0 {
+		c.refs[cfg.Path]--
+	}
+	if c.refs[cfg.Path] == 0 {
+		if eng, ok := c.engs[cfg.Path]; ok {
+			_ = eng.Close(context.Background())
+			delete(c.engs, cfg.Path)
+			delete(c.refs, cfg.Path)
+			delete(c.paths, cfg.Path)
+		}
+	}
 }
 
 // Config is the parsed DSN.
@@ -63,7 +124,7 @@ func (d *Driver) openConn(ctx context.Context, cfg Config) (driver.Conn, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &Conn{eng: eng, session: sess}, nil
+	return &Conn{eng: eng, session: sess, cfg: cfg}, nil
 }
 
 // Connector implements driver.Connector.
@@ -75,7 +136,7 @@ func (c *Connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Conn{eng: eng, session: sess}, nil
+	return &Conn{eng: eng, session: sess, cfg: c.cfg}, nil
 }
 
 // Driver returns the underlying driver.
@@ -93,21 +154,24 @@ func parseDSN(name string) Config {
 	return Config{Path: name}
 }
 
-// openEngine constructs a new SY engine and returns it together
-// with an active session. Caller is responsible for closing the
-// engine.
+// openEngine acquires a cached engine for the DSN and opens a new
+// session on it. The caller must call releaseEngine on Close.
 func openEngine(ctx context.Context, cfg Config) (*v1.Engine, AP.Session, error) {
-	opts := AP.Options{InMemory: cfg.Path == ":memory:"}
-	eng, err := v1.Open(ctx, cfg.Path, opts)
+	eng, err := globalCache.acquire(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
 	sess, err := eng.Begin(ctx)
 	if err != nil {
-		eng.Close(ctx)
+		globalCache.release(cfg)
 		return nil, nil, err
 	}
 	return eng, sess, nil
+}
+
+// releaseEngine releases the cached engine for the DSN.
+func releaseEngine(cfg Config) {
+	globalCache.release(cfg)
 }
 
 // toDriverValue converts a Go value from the executor to a
