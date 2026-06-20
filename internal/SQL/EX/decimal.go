@@ -228,7 +228,7 @@ func (d *Decimal) ToFloat64() float64 {
 }
 
 // FormatDecimal formats a value for DECIMAL(P,S) cast results.
-func FormatDecimal(v interface{}, precision, scale int) (string, error) {
+func FormatDecimal(v any, precision, scale int) (string, error) {
 	switch x := v.(type) {
 	case string:
 		d, err := NewDecimal(x, precision, scale)
@@ -253,7 +253,7 @@ func FormatDecimal(v interface{}, precision, scale int) (string, error) {
 }
 
 // evalDecimalCast handles CAST(... AS DECIMAL(P,S)) with precision/scale semantics.
-func evalDecimalCast(v interface{}, precision, scale int) (interface{}, error) {
+func evalDecimalCast(v any, precision, scale int) (any, error) {
 	if v == nil {
 		return nil, nil
 	}

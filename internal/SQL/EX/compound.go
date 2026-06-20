@@ -25,7 +25,7 @@ type CompoundOp struct {
 	left         Operator
 	right        Operator
 	op           PS.CompoundOp
-	params       []interface{}
+	params       []any
 	materialized bool
 	buf          []Row
 	pos          int
@@ -48,7 +48,7 @@ func NewCompoundOp(left, right Operator, op PS.CompoundOp, orderBy []PS.OrderIte
 	}
 }
 
-func (c *CompoundOp) WithParams(p []interface{}) Operator {
+func (c *CompoundOp) WithParams(p []any) Operator {
 	c.params = p
 	return c
 }

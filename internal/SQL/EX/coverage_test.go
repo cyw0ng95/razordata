@@ -36,7 +36,7 @@ func TestCoverage_AnalyzeWithStore(t *testing.T) {
 
 func TestCoverage_Analyze_WithParams(t *testing.T) {
 	a := NewAnalyze(nil)
-	a2 := a.WithParams([]interface{}{42})
+	a2 := a.WithParams([]any{42})
 	if a2 == nil {
 		t.Fatal("WithParams returned nil")
 	}
@@ -45,7 +45,7 @@ func TestCoverage_Analyze_WithParams(t *testing.T) {
 
 func TestCoverage_Vacuum_WithParams(t *testing.T) {
 	v := NewVacuum(nil)
-	v2 := v.WithParams([]interface{}{42})
+	v2 := v.WithParams([]any{42})
 	if v2 == nil {
 		t.Fatal("WithParams returned nil")
 	}

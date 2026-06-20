@@ -69,7 +69,7 @@ func TypeToAffinity(typeInfo *PS.TypeInfo) Affinity {
 //   - REAL: convert to float64, or keep original if fails
 //   - NUMERIC: try REAL first, then INTEGER, keep original if both fail
 //   - NONE: no conversion (BLOB)
-func ApplyAffinity(v interface{}, affinity Affinity) (interface{}, error) {
+func ApplyAffinity(v any, affinity Affinity) (any, error) {
 	if v == nil {
 		return nil, nil
 	}
@@ -95,7 +95,7 @@ func ApplyAffinity(v interface{}, affinity Affinity) (interface{}, error) {
 	}
 }
 
-func applyTextAffinity(v interface{}) (string, error) {
+func applyTextAffinity(v any) (string, error) {
 	switch x := v.(type) {
 	case string:
 		return x, nil
@@ -113,7 +113,7 @@ func applyTextAffinity(v interface{}) (string, error) {
 	}
 }
 
-func applyIntegerAffinity(v interface{}) (interface{}, error) {
+func applyIntegerAffinity(v any) (any, error) {
 	switch x := v.(type) {
 	case int64:
 		return x, nil
@@ -141,7 +141,7 @@ func applyIntegerAffinity(v interface{}) (interface{}, error) {
 	}
 }
 
-func applyRealAffinity(v interface{}) (interface{}, error) {
+func applyRealAffinity(v any) (any, error) {
 	switch x := v.(type) {
 	case float64:
 		return x, nil
@@ -158,7 +158,7 @@ func applyRealAffinity(v interface{}) (interface{}, error) {
 	}
 }
 
-func applyNumericAffinity(v interface{}) (interface{}, error) {
+func applyNumericAffinity(v any) (any, error) {
 	switch x := v.(type) {
 	case int64, float64:
 		return x, nil
@@ -185,7 +185,7 @@ func applyNumericAffinity(v interface{}) (interface{}, error) {
 
 // CompareWithAffinity compares two values using affinity rules
 // Returns -1, 0, or 1 like cmp.Compare
-func CompareWithAffinity(a, b interface{}, affinity Affinity) (int, error) {
+func CompareWithAffinity(a, b any, affinity Affinity) (int, error) {
 	// Apply affinity to both values
 	av, err := ApplyAffinity(a, affinity)
 	if err != nil {
@@ -200,7 +200,7 @@ func CompareWithAffinity(a, b interface{}, affinity Affinity) (int, error) {
 }
 
 // compareValuesInternal returns -1, 0, or 1 for a vs b.
-func compareValuesInternal(a, b interface{}) (int, error) {
+func compareValuesInternal(a, b any) (int, error) {
 	// Handle nil
 	if a == nil && b == nil {
 		return 0, nil

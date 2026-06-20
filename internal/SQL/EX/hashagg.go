@@ -15,12 +15,12 @@ type HashAggregate struct {
 	child     Operator
 	groupCols []PS.Expr
 	aggs      []PS.Expr
-	keys      [][]interface{}
+	keys      [][]any
 	buckets   map[string][]Row
 	order     []string
 	buf       []Row
 	pos       int
-	params    []interface{}
+	params    []any
 }
 
 func NewHashAggregate(child Operator, groupCols, aggs []PS.Expr) *HashAggregate {
@@ -28,10 +28,10 @@ func NewHashAggregate(child Operator, groupCols, aggs []PS.Expr) *HashAggregate 
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
-func (a *HashAggregate) WithParams(p []interface{}) Operator {
+func (a *HashAggregate) WithParams(p []any) Operator {
 	a.params = p
 	if a.child != nil {
-		if w, ok := a.child.(interface{ WithParams([]interface{}) Operator }); ok {
+		if w, ok := a.child.(interface{ WithParams([]any) Operator }); ok {
 			w.WithParams(p)
 		}
 	}

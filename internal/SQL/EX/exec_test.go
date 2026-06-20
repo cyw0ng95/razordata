@@ -10,7 +10,7 @@ import (
 type runCase struct {
 	name string
 	sql  string
-	want [][]interface{}
+	want [][]any
 }
 
 func TestExecutorEndToEnd(t *testing.T) {
@@ -18,16 +18,16 @@ func TestExecutorEndToEnd(t *testing.T) {
 	defer UnregisterAll()
 
 	RegisterTable("users", []Row{
-		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []interface{}{int64(1), "alice", int64(30)}},
-		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []interface{}{int64(2), "bob", int64(25)}},
-		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []interface{}{int64(3), "carol", int64(40)}},
+		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []any{int64(1), "alice", int64(30)}},
+		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []any{int64(2), "bob", int64(25)}},
+		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []any{int64(3), "carol", int64(40)}},
 	})
 
 	cases := []runCase{
 		{
 			name: "select_star",
 			sql:  "SELECT * FROM users",
-			want: [][]interface{}{
+			want: [][]any{
 				{int64(1), "alice", int64(30)},
 				{int64(2), "bob", int64(25)},
 				{int64(3), "carol", int64(40)},
@@ -36,14 +36,14 @@ func TestExecutorEndToEnd(t *testing.T) {
 		{
 			name: "select_with_filter",
 			sql:  "SELECT name FROM users WHERE age > 30",
-			want: [][]interface{}{
+			want: [][]any{
 				{"carol"},
 			},
 		},
 		{
 			name: "select_with_and",
 			sql:  "SELECT name FROM users WHERE age >= 25 AND age < 35",
-			want: [][]interface{}{
+			want: [][]any{
 				{"alice"},
 				{"bob"},
 			},
@@ -51,7 +51,7 @@ func TestExecutorEndToEnd(t *testing.T) {
 		{
 			name: "select_with_in",
 			sql:  "SELECT name FROM users WHERE id IN (1, 3)",
-			want: [][]interface{}{
+			want: [][]any{
 				{"alice"},
 				{"carol"},
 			},
@@ -59,7 +59,7 @@ func TestExecutorEndToEnd(t *testing.T) {
 		{
 			name: "select_with_between",
 			sql:  "SELECT name FROM users WHERE age BETWEEN 25 AND 35",
-			want: [][]interface{}{
+			want: [][]any{
 				{"alice"},
 				{"bob"},
 			},
@@ -67,14 +67,14 @@ func TestExecutorEndToEnd(t *testing.T) {
 		{
 			name: "select_with_like",
 			sql:  "SELECT name FROM users WHERE name LIKE 'a%'",
-			want: [][]interface{}{
+			want: [][]any{
 				{"alice"},
 			},
 		},
 		{
 			name: "select_with_limit",
 			sql:  "SELECT name FROM users LIMIT 2",
-			want: [][]interface{}{
+			want: [][]any{
 				{"alice"},
 				{"bob"},
 			},
@@ -82,7 +82,7 @@ func TestExecutorEndToEnd(t *testing.T) {
 		{
 			name: "select_with_order_asc",
 			sql:  "SELECT name FROM users ORDER BY age",
-			want: [][]interface{}{
+			want: [][]any{
 				{"bob"},
 				{"alice"},
 				{"carol"},
@@ -91,7 +91,7 @@ func TestExecutorEndToEnd(t *testing.T) {
 		{
 			name: "select_with_order_desc",
 			sql:  "SELECT name FROM users ORDER BY age DESC",
-			want: [][]interface{}{
+			want: [][]any{
 				{"carol"},
 				{"alice"},
 				{"bob"},
@@ -100,7 +100,7 @@ func TestExecutorEndToEnd(t *testing.T) {
 		{
 			name: "select_with_alias",
 			sql:  "SELECT name AS n FROM users WHERE age > 25",
-			want: [][]interface{}{
+			want: [][]any{
 				{"alice"},
 				{"carol"},
 			},
@@ -108,49 +108,49 @@ func TestExecutorEndToEnd(t *testing.T) {
 		{
 			name: "select_with_expr_col",
 			sql:  "SELECT age + 1 AS next FROM users WHERE id = 1",
-			want: [][]interface{}{
+			want: [][]any{
 				{int64(31)},
 			},
 		},
 		{
 			name: "select_count_star",
 			sql:  "SELECT COUNT(*) FROM users",
-			want: [][]interface{}{
+			want: [][]any{
 				{int64(3)},
 			},
 		},
 		{
 			name: "select_sum_age",
 			sql:  "SELECT SUM(age) FROM users",
-			want: [][]interface{}{
+			want: [][]any{
 				{int64(95)},
 			},
 		},
 		{
 			name: "select_avg_age",
 			sql:  "SELECT AVG(age) FROM users",
-			want: [][]interface{}{
+			want: [][]any{
 				{float64(95) / float64(3)},
 			},
 		},
 		{
 			name: "select_min_age",
 			sql:  "SELECT MIN(age) FROM users",
-			want: [][]interface{}{
+			want: [][]any{
 				{int64(25)},
 			},
 		},
 		{
 			name: "select_max_age",
 			sql:  "SELECT MAX(age) FROM users",
-			want: [][]interface{}{
+			want: [][]any{
 				{int64(40)},
 			},
 		},
 		{
 			name: "select_count_with_filter",
 			sql:  "SELECT COUNT(*) FROM users WHERE age > 25",
-			want: [][]interface{}{
+			want: [][]any{
 				{int64(2)},
 			},
 		},
@@ -244,10 +244,10 @@ func limitInt64Public(e PS.Expr) (int64, bool) {
 	return 0, false
 }
 
-func drain(t *testing.T, op Operator) [][]interface{} {
+func drain(t *testing.T, op Operator) [][]any {
 	t.Helper()
 	ctx := context.Background()
-	var out [][]interface{}
+	var out [][]any
 	for {
 		row, err := op.Next(ctx)
 		if err == ErrNoRows {
@@ -256,7 +256,7 @@ func drain(t *testing.T, op Operator) [][]interface{} {
 		if err != nil {
 			t.Fatalf("Next: %v", err)
 		}
-		cp := make([]interface{}, len(row.Data))
+		cp := make([]any, len(row.Data))
 		copy(cp, row.Data)
 		out = append(out, cp)
 	}
@@ -305,8 +305,8 @@ func TestSeqScan_CloseDouble(t *testing.T) {
 	}
 }
 
-// REQ000638: helper — compare result rows (both [][]interface{}).
-func rowsEqual(got, want [][]interface{}) bool {
+// REQ000638: helper — compare result rows (both [][]any).
+func rowsEqual(got, want [][]any) bool {
 	if len(got) != len(want) {
 		return false
 	}

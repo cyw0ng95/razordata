@@ -38,7 +38,7 @@ type SeqScan struct {
 	// (Filter/Project) need access. Stored here so WithParams
 	// can propagate it down through the tree at executor
 	// construction time.
-	params []interface{}
+	params []any
 	// planner is set by the executor's main plan so the rows
 	// produced by SeqScan carry it through to the Filter,
 	// Project, and (importantly) subquery eval sites.
@@ -56,7 +56,7 @@ type SeqScan struct {
 
 // WithParams propagates the bound `?` placeholders to this
 // operator (R16-1..2). Returns the receiver for chaining.
-func (s *SeqScan) WithParams(p []interface{}) Operator {
+func (s *SeqScan) WithParams(p []any) Operator {
 	s.params = p
 	return s
 }
@@ -215,7 +215,7 @@ type IndexScan struct {
 	}
 	rows   []Row
 	pos    int
-	params []interface{}
+	params []any
 
 	// iter-22 secondary-index fields. When indexMode is true,
 	// the scan uses a real index seek via the index keyspace
@@ -255,7 +255,7 @@ type IndexScan struct {
 
 // WithParams propagates the bound `?` placeholders to this
 // operator (R16-1..2).
-func (i *IndexScan) WithParams(p []interface{}) Operator {
+func (i *IndexScan) WithParams(p []any) Operator {
 	i.params = p
 	return i
 }

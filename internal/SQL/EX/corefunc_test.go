@@ -12,7 +12,7 @@ func TestEvalAbs(t *testing.T) {
 	cases := []struct {
 		name string
 		args []PS.Expr
-		want interface{}
+		want any
 	}{
 		{"neg_int", []PS.Expr{&PS.NumberLiteral{Val: int64(-5)}}, int64(5)},
 		{"pos_int", []PS.Expr{&PS.NumberLiteral{Val: int64(5)}}, int64(5)},

@@ -84,7 +84,7 @@ func TestBugfix_Explain_ReturnsPlan(t *testing.T) {
 
 // toString converts the heterogeneous cell type to a string for
 // substring checks.
-func toString(v interface{}) string {
+func toString(v any) string {
 	if v == nil {
 		return ""
 	}
@@ -373,17 +373,17 @@ func TestBugfix_FKOnUpdate(t *testing.T) {
 
 	// Seed in-memory table for parent: id=1, id=2.
 	tables["p"] = []Row{
-		{Cols: []string{"id"}, Data: []interface{}{int64(1)}},
+		{Cols: []string{"id"}, Data: []any{int64(1)}},
 	}
 	tables["c"] = []Row{
-		{Cols: []string{"id", "pid"}, Data: []interface{}{int64(10), int64(1)}},
+		{Cols: []string{"id", "pid"}, Data: []any{int64(10), int64(1)}},
 	}
 
 	// Update child's pid from 1 to 99 — should fail since parent
 	// has no row with id=99.
 	err := validateForeignKeyUpdateInMemory(child,
-		[]interface{}{int64(10), int64(1)},  // old
-		[]interface{}{int64(10), int64(99)}, // new
+		[]any{int64(10), int64(1)},  // old
+		[]any{int64(10), int64(99)}, // new
 	)
 	if err == nil {
 		t.Fatal("expected FK violation, got nil")
@@ -394,8 +394,8 @@ func TestBugfix_FKOnUpdate(t *testing.T) {
 
 	// Same-value update (no FK change) must NOT trigger re-check.
 	if err := validateForeignKeyUpdateInMemory(child,
-		[]interface{}{int64(10), int64(1)},
-		[]interface{}{int64(10), int64(1)},
+		[]any{int64(10), int64(1)},
+		[]any{int64(10), int64(1)},
 	); err != nil {
 		t.Errorf("same-value update should be a no-op for FK: %v", err)
 	}
@@ -403,8 +403,8 @@ func TestBugfix_FKOnUpdate(t *testing.T) {
 	// Update child's pid to 2 (which doesn't exist as a parent row
 	// either). Should still fail.
 	err = validateForeignKeyUpdateInMemory(child,
-		[]interface{}{int64(10), int64(1)},
-		[]interface{}{int64(10), int64(2)},
+		[]any{int64(10), int64(1)},
+		[]any{int64(10), int64(2)},
 	)
 	if err == nil {
 		t.Error("expected FK violation for new value, got nil")
@@ -429,12 +429,12 @@ func TestBugfix_FKOnDelete(t *testing.T) {
 	tableIDs["p"] = 10
 	tableIDs["c"] = 11
 
-	tables["p"] = []Row{{Cols: []string{"id"}, Data: []interface{}{int64(1)}}}
-	tables["c"] = []Row{{Cols: []string{"id", "pid"}, Data: []interface{}{int64(100), int64(1)}}}
+	tables["p"] = []Row{{Cols: []string{"id"}, Data: []any{int64(1)}}}
+	tables["c"] = []Row{{Cols: []string{"id", "pid"}, Data: []any{int64(100), int64(1)}}}
 
 	// Deleting parent id=1 must fail because child (100, 1) references it.
 	err := validateForeignKeyDeleteInMemory("p",
-		[]interface{}{int64(1)}, parent)
+		[]any{int64(1)}, parent)
 	if err == nil {
 		t.Fatal("expected FK violation, got nil")
 	}

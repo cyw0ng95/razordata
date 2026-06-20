@@ -97,7 +97,7 @@ func (c *ExprCompiler) compileBinary(e *PS.BinaryExpr, rowVar, paramsVar string)
 		c.compileExpr(e.Right, rowVar, paramsVar)
 		fmt.Fprintf(&c.buf, ", %d)", e.Op)
 	} else {
-		c.buf.WriteString("func() interface{} { ")
+		c.buf.WriteString("func() any { ")
 		c.buf.WriteString("l := ")
 		c.compileExpr(e.Left, rowVar, paramsVar)
 		c.buf.WriteString("; r := ")
@@ -117,7 +117,7 @@ func (c *ExprCompiler) compileUnary(e *PS.UnaryExpr, rowVar, paramsVar string) {
 
 func (c *ExprCompiler) compileFuncCall(e *PS.FunctionCall, rowVar, paramsVar string) {
 	fmt.Fprintf(&c.buf, "callFn(%q, ", e.Name)
-	c.buf.WriteString("[]interface{}{")
+	c.buf.WriteString("[]any{")
 	for i, arg := range e.Args {
 		if i > 0 {
 			c.buf.WriteString(", ")

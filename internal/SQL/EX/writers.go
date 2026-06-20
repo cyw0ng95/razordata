@@ -23,13 +23,13 @@ type Insert struct {
 	txWriter       TxWriter
 	rows           int64
 	done           bool
-	params         []interface{}
+	params         []any
 	resultRows     []Row
 	resultPos      int
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
-func (i *Insert) WithParams(p []interface{}) Operator {
+func (i *Insert) WithParams(p []any) Operator {
 	i.params = p
 	return i
 }
@@ -113,7 +113,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		var err error
 		if row == nil && i.defaultValues {
 			out = Row{Cols: append([]string(nil), schema...)}
-			out.Data = make([]interface{}, len(schema))
+			out.Data = make([]any, len(schema))
 		} else {
 			out, err = buildInsertRow(schema, i.cols, row, i.params)
 			if err != nil {
@@ -193,7 +193,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			resultRow := Row{
 				Cols:  make([]string, len(expanded)),
 				Types: make([]int, len(expanded)),
-				Data:  make([]interface{}, len(expanded)),
+				Data:  make([]any, len(expanded)),
 			}
 			for j, expr := range expanded {
 				val, err := Eval(expr, &out, i.params)
@@ -243,13 +243,13 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 	// check pending-batch duplicates only and skip the in-store
 	// lookup (correctness note: true cross-row UNIQUE in the engine
 	// path is deferred until REQ000045 / index work).
-	noopLookup := func(cols []int, vals []interface{}) (bool, error) { return false, nil }
+	noopLookup := func(cols []int, vals []any) (bool, error) { return false, nil }
 	for _, row := range iterValues {
 		var out Row
 		var err error
 		if row == nil && i.defaultValues {
 			out = Row{Cols: append([]string(nil), i.schema.cols...)}
-			out.Data = make([]interface{}, len(i.schema.cols))
+			out.Data = make([]any, len(i.schema.cols))
 		} else {
 			out, err = buildInsertRow(i.schema.cols, i.cols, row, i.params)
 			if err != nil {
@@ -309,7 +309,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			resultRow := Row{
 				Cols:  make([]string, len(expanded)),
 				Types: make([]int, len(expanded)),
-				Data:  make([]interface{}, len(expanded)),
+				Data:  make([]any, len(expanded)),
 			}
 			for j, expr := range expanded {
 				val, err := Eval(expr, &out, i.params)
@@ -352,16 +352,16 @@ type Update struct {
 	txWriter   TxWriter
 	rows       int64
 	done       bool
-	params     []interface{}
+	params     []any
 	resultRows []Row
 	resultPos  int
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
-func (u *Update) WithParams(p []interface{}) Operator {
+func (u *Update) WithParams(p []any) Operator {
 	u.params = p
 	if u.iter != nil {
-		if w, ok := u.iter.(interface{ WithParams([]interface{}) Operator }); ok {
+		if w, ok := u.iter.(interface{ WithParams([]any) Operator }); ok {
 			w.WithParams(p)
 		}
 	}
@@ -479,7 +479,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			resultRow := Row{
 				Cols:  make([]string, len(expanded)),
 				Types: make([]int, len(expanded)),
-				Data:  make([]interface{}, len(expanded)),
+				Data:  make([]any, len(expanded)),
 			}
 			for j, expr := range expanded {
 				val, err := Eval(expr, &row, u.params)
@@ -537,7 +537,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 		}
 		// Engine-path unique: best-effort no-op (correct UNIQUE in the
 		// engine path requires a real index, deferred to REQ000045).
-		noopLookup := func(cols []int, vals []interface{}) (bool, error) { return false, nil }
+		noopLookup := func(cols []int, vals []any) (bool, error) { return false, nil }
 		if err := checkUnique(u.schema, row, nil, Row{}, noopLookup); err != nil {
 			return Row{}, err
 		}
@@ -572,7 +572,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 			resultRow := Row{
 				Cols:  make([]string, len(expanded)),
 				Types: make([]int, len(expanded)),
-				Data:  make([]interface{}, len(expanded)),
+				Data:  make([]any, len(expanded)),
 			}
 			for j, expr := range expanded {
 				val, err := Eval(expr, &row, u.params)
@@ -613,16 +613,16 @@ type Delete struct {
 	txWriter   TxWriter
 	rows       int64
 	done       bool
-	params     []interface{}
+	params     []any
 	resultRows []Row
 	resultPos  int
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
-func (d *Delete) WithParams(p []interface{}) Operator {
+func (d *Delete) WithParams(p []any) Operator {
 	d.params = p
 	if d.iter != nil {
-		if w, ok := d.iter.(interface{ WithParams([]interface{}) Operator }); ok {
+		if w, ok := d.iter.(interface{ WithParams([]any) Operator }); ok {
 			w.WithParams(p)
 		}
 	}
@@ -676,7 +676,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		dschema = ss
 	}
 	toDelete := map[int]bool{}
-	var fkRows [][]interface{}
+	var fkRows [][]any
 	for {
 		row, err := d.iter.Next(ctx)
 		if err != nil {
@@ -688,7 +688,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		idx, ok := rowIndex(d.table, row)
 		if ok {
 			toDelete[idx] = true
-			fkRows = append(fkRows, append([]interface{}(nil), row.Data...))
+			fkRows = append(fkRows, append([]any(nil), row.Data...))
 
 			// Evaluate RETURNING expressions before deleting (REQ000518: expand *)
 			if len(d.returning) > 0 {
@@ -696,7 +696,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 				resultRow := Row{
 					Cols:  make([]string, len(expanded)),
 					Types: make([]int, len(expanded)),
-					Data:  make([]interface{}, len(expanded)),
+					Data:  make([]any, len(expanded)),
 				}
 				for j, expr := range expanded {
 					val, err := Eval(expr, &row, d.params)
@@ -781,7 +781,7 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			resultRow := Row{
 				Cols:  make([]string, len(expanded)),
 				Types: make([]int, len(expanded)),
-				Data:  make([]interface{}, len(expanded)),
+				Data:  make([]any, len(expanded)),
 			}
 			for j, expr := range expanded {
 				val, err := Eval(expr, &row, d.params)
@@ -856,7 +856,7 @@ func (t *Trigger) Next(ctx context.Context) (Row, error) {
 }
 
 func (t *Trigger) Close() error                        { return nil }
-func (t *Trigger) WithParams(p []interface{}) Operator { return t }
+func (t *Trigger) WithParams(p []any) Operator { return t }
 func (t *Trigger) RowsAffected() int64                 { return 0 }
 
 type CreateTable struct {
@@ -1395,7 +1395,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 }
 
 func (p *Pragma) Close() error                        { return nil }
-func (p *Pragma) WithParams(_ []interface{}) Operator { return p }
+func (p *Pragma) WithParams(_ []any) Operator { return p }
 func (p *Pragma) RowsAffected() int64                 { return 0 }
 
 // Explain runs the inner plan and returns a textual description of it
@@ -1430,7 +1430,7 @@ func (e *Explain) Next(ctx context.Context) (Row, error) {
 		return Row{
 			Cols:  []string{"plan"},
 			Types: []int{0},
-			Data:  []interface{}{e.desc},
+			Data:  []any{e.desc},
 		}, nil
 	}
 	e.rowOut = true
@@ -1456,7 +1456,7 @@ func (e *Explain) explain() string {
 }
 
 func (e *Explain) Close() error                        { return nil }
-func (e *Explain) WithParams(_ []interface{}) Operator { return e }
+func (e *Explain) WithParams(_ []any) Operator { return e }
 func (e *Explain) RowsAffected() int64                 { return 0 }
 
 // Truncate is a writer-op stub for TRUNCATE [TABLE] name. REQ000476.
@@ -1486,7 +1486,7 @@ func (t *Truncate) Next(ctx context.Context) (Row, error) {
 }
 
 func (t *Truncate) Close() error                        { return nil }
-func (t *Truncate) WithParams(_ []interface{}) Operator { return t }
+func (t *Truncate) WithParams(_ []any) Operator { return t }
 func (t *Truncate) RowsAffected() int64                 { return t.rows }
 
 // Reindex is a writer-op stub for REINDEX. REQ000478.
@@ -1506,7 +1506,7 @@ func (r *Reindex) Next(ctx context.Context) (Row, error) {
 }
 
 func (r *Reindex) Close() error                        { return nil }
-func (r *Reindex) WithParams(_ []interface{}) Operator { return r }
+func (r *Reindex) WithParams(_ []any) Operator { return r }
 func (r *Reindex) RowsAffected() int64                 { return 0 }
 
 // DropView is a writer-op for DROP VIEW [IF EXISTS] name. REQ000494.
@@ -1530,7 +1530,7 @@ func (d *DropView) Next(ctx context.Context) (Row, error) {
 }
 
 func (d *DropView) Close() error                        { return nil }
-func (d *DropView) WithParams(_ []interface{}) Operator { return d }
+func (d *DropView) WithParams(_ []any) Operator { return d }
 func (d *DropView) RowsAffected() int64                 { return 0 }
 
 // DropTrigger is a writer-op for DROP TRIGGER [IF EXISTS] name. REQ000496.
@@ -1556,13 +1556,13 @@ func (d *DropTrigger) Next(ctx context.Context) (Row, error) {
 }
 
 func (d *DropTrigger) Close() error                        { return nil }
-func (d *DropTrigger) WithParams(_ []interface{}) Operator { return d }
+func (d *DropTrigger) WithParams(_ []any) Operator { return d }
 func (d *DropTrigger) RowsAffected() int64                 { return 0 }
 
 // applyConflictUpdate locates the conflicting row by unique-key match
 // and applies the SET clauses. Used by INSERT ... ON CONFLICT DO
 // UPDATE. REQ000511.
-func applyConflictUpdate(schema *storeSchema, existing []Row, out Row, sets []PS.Pair, params []interface{}, apply uniqueLookupWithApply) error {
+func applyConflictUpdate(schema *storeSchema, existing []Row, out Row, sets []PS.Pair, params []any, apply uniqueLookupWithApply) error {
 	if apply == nil {
 		return nil
 	}
@@ -1612,20 +1612,20 @@ func applyConflictUpdate(schema *storeSchema, existing []Row, out Row, sets []PS
 // conflictKey returns the column indices and values used to look up
 // a row for ON CONFLICT. If the schema has a PK, that is the conflict
 // target. Otherwise the first unique key is used. REQ000511.
-func conflictKey(schema *storeSchema, row Row) ([]int, []interface{}, error) {
+func conflictKey(schema *storeSchema, row Row) ([]int, []any, error) {
 	if schema.pk != "" {
 		for i, c := range schema.cols {
 			if c == schema.pk {
 				if i >= len(row.Data) {
 					return nil, nil, fmt.Errorf("ex: PK column %q out of range", schema.pk)
 				}
-				return []int{i}, []interface{}{row.Data[i]}, nil
+				return []int{i}, []any{row.Data[i]}, nil
 			}
 		}
 	}
 	if len(schema.unique) > 0 {
 		uk := schema.unique[0]
-		vals := make([]interface{}, len(uk.Cols))
+		vals := make([]any, len(uk.Cols))
 		for i, idx := range uk.Cols {
 			if idx < len(row.Data) {
 				vals[i] = row.Data[idx]
@@ -1701,7 +1701,7 @@ func (u *UnsupportedOp) Next(ctx context.Context) (Row, error) {
 }
 
 func (u *UnsupportedOp) Close() error                        { return nil }
-func (u *UnsupportedOp) WithParams(_ []interface{}) Operator { return u }
+func (u *UnsupportedOp) WithParams(_ []any) Operator { return u }
 func (u *UnsupportedOp) RowsAffected() int64                 { return 0 }
 
 // ErrMultiDatabaseNotSupported is returned by ATTACH / DETACH DATABASE
@@ -1710,7 +1710,7 @@ var ErrMultiDatabaseNotSupported = errors.New("ex: multi-database not supported 
 
 // fireInsertTriggers fires all AFTER INSERT triggers for the given table.
 // The new row is passed as the context for trigger execution.
-func fireInsertTriggers(table string, newRow *Row, params []interface{}, store Store) error {
+func fireInsertTriggers(table string, newRow *Row, params []any, store Store) error {
 	// Build a minimal executor callback for trigger SQL execution
 	exec := func(sql string) error {
 		parser := PS.NewParser(sql)
@@ -1775,7 +1775,7 @@ func refreshMatViewData(name string, sel *PS.Select, store Store) error {
 }
 
 // fireUpdateTriggers fires all AFTER UPDATE triggers for the given table.
-func fireUpdateTriggers(table string, oldRow *Row, newRow *Row, params []interface{}, store Store) error {
+func fireUpdateTriggers(table string, oldRow *Row, newRow *Row, params []any, store Store) error {
 	exec := func(sql string) error {
 		parser := PS.NewParser(sql)
 		stmt, err := parser.Parse()
@@ -1792,7 +1792,7 @@ func fireUpdateTriggers(table string, oldRow *Row, newRow *Row, params []interfa
 }
 
 // fireDeleteTriggers fires all AFTER DELETE triggers for the given table.
-func fireDeleteTriggers(table string, oldRow *Row, params []interface{}, store Store) error {
+func fireDeleteTriggers(table string, oldRow *Row, params []any, store Store) error {
 	exec := func(sql string) error {
 		parser := PS.NewParser(sql)
 		stmt, err := parser.Parse()

@@ -21,7 +21,7 @@ var ErrTypeMismatch = errors.New("ex: type mismatch")
 var ErrSubquery = errors.New("ex: subquery not supported here")
 var ErrIgnoreRow = errors.New("ex: ignore row")
 
-func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 	if expr == nil {
 		return nil, nil
 	}
@@ -120,7 +120,7 @@ func Eval(expr PS.Expr, row *Row, params []interface{}) (interface{}, error) {
 	}
 }
 
-func evalUnary(e *PS.UnaryExpr, row *Row, params []interface{}) (interface{}, error) {
+func evalUnary(e *PS.UnaryExpr, row *Row, params []any) (any, error) {
 	operand, err := Eval(e.Operand, row, params)
 	if err != nil {
 		return nil, err
@@ -152,7 +152,7 @@ func evalUnary(e *PS.UnaryExpr, row *Row, params []interface{}) (interface{}, er
 	return nil, ErrEval
 }
 
-func evalBinary(e *PS.BinaryExpr, row *Row, params []interface{}) (interface{}, error) {
+func evalBinary(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
 	left, err := Eval(e.Left, row, params)
 	if err != nil {
 		return nil, err
@@ -300,7 +300,7 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []interface{}) (interface{}, 
 	return nil, ErrEval
 }
 
-func evalBetween(e *PS.BetweenExpr, row *Row, params []interface{}) (interface{}, error) {
+func evalBetween(e *PS.BetweenExpr, row *Row, params []any) (any, error) {
 	expr, err := Eval(e.Expr, row, params)
 	if err != nil {
 		return nil, err
@@ -321,7 +321,7 @@ func evalBetween(e *PS.BetweenExpr, row *Row, params []interface{}) (interface{}
 	return cmpLow >= 0 && cmpHigh <= 0, nil
 }
 
-func evalIn(e *PS.InExpr, row *Row, params []interface{}) (interface{}, error) {
+func evalIn(e *PS.InExpr, row *Row, params []any) (any, error) {
 	target, err := Eval(e.Expr, row, params)
 	if err != nil {
 		return nil, err
@@ -358,7 +358,7 @@ func evalIn(e *PS.InExpr, row *Row, params []interface{}) (interface{}, error) {
 	return false, nil
 }
 
-func evalInSubquery(target interface{}, subq PS.Stmt, outer *Row, params []interface{}) (interface{}, error) {
+func evalInSubquery(target any, subq PS.Stmt, outer *Row, params []any) (any, error) {
 	sel, ok := subq.(*PS.Select)
 	if !ok {
 		return nil, ErrSubquery
@@ -392,7 +392,7 @@ func evalInSubquery(target interface{}, subq PS.Stmt, outer *Row, params []inter
 
 // EvalForTest exposes Eval for tests; do not use in production
 // code paths where the row may not be valid.
-func EvalForTest(e PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func EvalForTest(e PS.Expr, row *Row, params []any) (any, error) {
 	return Eval(e, row, params)
 }
 
@@ -428,7 +428,7 @@ func newSubqueryPlanner(outer *Row) *Planner {
 	return NewPlanner()
 }
 
-func evalExists(e *PS.ExistsExpr, outer *Row, params []interface{}) (interface{}, error) {
+func evalExists(e *PS.ExistsExpr, outer *Row, params []any) (any, error) {
 	sel, ok := e.Subquery.(*PS.Select)
 	if !ok {
 		return nil, ErrSubquery
@@ -444,7 +444,7 @@ func evalExists(e *PS.ExistsExpr, outer *Row, params []interface{}) (interface{}
 	return len(rows) > 0, nil
 }
 
-func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []interface{}) (interface{}, error) {
+func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (any, error) {
 	sel, ok := e.Subquery.(*PS.Select)
 	if !ok {
 		return nil, ErrSubquery
@@ -466,7 +466,7 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []interface{}) (i
 	return rows[0].Data[0], nil
 }
 
-func evalInterval(e *PS.IntervalLiteral) (interface{}, error) {
+func evalInterval(e *PS.IntervalLiteral) (any, error) {
 	n, unit, ok := ParseInterval(e.Value + " " + e.Unit)
 	if !ok {
 		return nil, fmt.Errorf("invalid interval: %s %s", e.Value, e.Unit)
@@ -474,7 +474,7 @@ func evalInterval(e *PS.IntervalLiteral) (interface{}, error) {
 	return &IntervalValue{Amount: n, Unit: unit}, nil
 }
 
-func evalCast(e *PS.CastExpr, row *Row, params []interface{}) (interface{}, error) {
+func evalCast(e *PS.CastExpr, row *Row, params []any) (any, error) {
 	v, err := Eval(e.Expr, row, params)
 	if err != nil {
 		return nil, err
@@ -536,7 +536,7 @@ func evalCast(e *PS.CastExpr, row *Row, params []interface{}) (interface{}, erro
 	return nil, ErrEval
 }
 
-func evalCase(e *PS.CaseExpr, row *Row, params []interface{}) (interface{}, error) {
+func evalCase(e *PS.CaseExpr, row *Row, params []any) (any, error) {
 	if e.Expr != nil {
 		target, err := Eval(e.Expr, row, params)
 		if err != nil {
@@ -568,7 +568,7 @@ func evalCase(e *PS.CaseExpr, row *Row, params []interface{}) (interface{}, erro
 	return nil, nil
 }
 
-func truthy(v interface{}) bool {
+func truthy(v any) bool {
 	if v == nil {
 		return false
 	}
@@ -593,7 +593,7 @@ func truthy(v interface{}) bool {
 // string content: "0", "false", "FALSE", and "" are false; every
 // other non-empty string is true. []byte is checked by its first
 // byte (0x00 = false). Numbers follow the standard 0 = false rule.
-func castToBool(v interface{}) bool {
+func castToBool(v any) bool {
 	if v == nil {
 		return false
 	}
@@ -618,7 +618,7 @@ func castToBool(v interface{}) bool {
 	return true
 }
 
-func evalAggregate(e *PS.AggregateFunc, row *Row, params []interface{}) (interface{}, error) {
+func evalAggregate(e *PS.AggregateFunc, row *Row, params []any) (any, error) {
 	if row != nil {
 		// REQ000378: HAVING and post-aggregate references to
 		// aggregates must resolve to the precomputed value in
@@ -653,7 +653,7 @@ func evalAggregate(e *PS.AggregateFunc, row *Row, params []interface{}) (interfa
 	return nil, ErrEval
 }
 
-func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface{}, error) {
+func evalFunction(e *PS.FunctionCall, row *Row, params []any) (any, error) {
 	switch strings.ToUpper(e.Name) {
 	case "LENGTH":
 		if len(e.Args) > 0 {
@@ -817,7 +817,7 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 		return acc.GetTotalChangesCount(getCurrentSessionID()), nil
 	default:
 		if isDateTimeFunc(e.Name) {
-			args := make([]interface{}, len(e.Args))
+			args := make([]any, len(e.Args))
 			for i, arg := range e.Args {
 				v, err := Eval(arg, row, params)
 				if err != nil {
@@ -828,7 +828,7 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 			return evalDateTimeFunc(e.Name, args)
 		}
 		if isJSONFunc(e.Name) {
-			args := make([]interface{}, len(e.Args))
+			args := make([]any, len(e.Args))
 			for i, arg := range e.Args {
 				v, err := Eval(arg, row, params)
 				if err != nil {
@@ -847,7 +847,7 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []interface{}) (interface
 // REQ000560.
 var ErrTriggerAbort = errors.New("ex: trigger abort")
 
-func evalRaise(e *PS.RaiseFunc, row *Row, params []interface{}) (interface{}, error) {
+func evalRaise(e *PS.RaiseFunc, row *Row, params []any) (any, error) {
 	action := strings.ToUpper(e.Action)
 	if action == "IGNORE" {
 		// RAISE(IGNORE) suppresses the trigger action.
@@ -882,7 +882,7 @@ func evalRaise(e *PS.RaiseFunc, row *Row, params []interface{}) (interface{}, er
 // SQLite; Y < 0 also surfaces a warning in SQLite but we treat it
 // as 0 for v1.
 
-func evalAbs(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalAbs(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
@@ -911,7 +911,7 @@ func evalAbs(args []PS.Expr, row *Row, params []interface{}) (interface{}, error
 	return 0.0, nil
 }
 
-func evalHex(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalHex(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
@@ -941,7 +941,7 @@ func evalHex(args []PS.Expr, row *Row, params []interface{}) (interface{}, error
 	return strings.ToUpper(s), nil
 }
 
-func evalRound(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalRound(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 || len(args) > 2 {
 		return nil, ErrEval
 	}
@@ -980,7 +980,7 @@ func evalRound(args []PS.Expr, row *Row, params []interface{}) (interface{}, err
 //   - start is 1-based per SQL convention; values <= 0 are clamped to 1.
 //   - length is optional; when omitted the substring runs to the end of str.
 //   - non-string inputs are coerced via fmt.Sprint.
-func evalSubstr(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalSubstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 2 {
 		return nil, ErrEval
 	}
@@ -1036,7 +1036,7 @@ func evalSubstr(args []PS.Expr, row *Row, params []interface{}) (interface{}, er
 
 // evalChar converts integer Unicode code points to a UTF-8 string.
 // REQ000386.
-func evalChar(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalChar(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) == 0 {
 		return "", nil
 	}
@@ -1063,7 +1063,7 @@ func evalChar(args []PS.Expr, row *Row, params []interface{}) (interface{}, erro
 
 // evalConcat concatenates all arguments into a single string.
 // If any argument is NULL, the result is NULL. REQ000387.
-func evalConcat(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalConcat(args []PS.Expr, row *Row, params []any) (any, error) {
 	var sb strings.Builder
 	for _, arg := range args {
 		v, err := Eval(arg, row, params)
@@ -1080,7 +1080,7 @@ func evalConcat(args []PS.Expr, row *Row, params []interface{}) (interface{}, er
 
 // evalConcatWS concatenates with separator. First arg is separator.
 // SEP=NULL → NULL. Skips NULL values. REQ000388.
-func evalConcatWS(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalConcatWS(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 2 {
 		return nil, ErrEval
 	}
@@ -1112,7 +1112,7 @@ func evalConcatWS(args []PS.Expr, row *Row, params []interface{}) (interface{}, 
 }
 
 // evalFormat implements printf-style formatting. REQ000389.
-func evalFormat(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalFormat(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, ErrEval
 	}
@@ -1127,8 +1127,8 @@ func evalFormat(args []PS.Expr, row *Row, params []interface{}) (interface{}, er
 	if !ok {
 		fmtStr = fmt.Sprint(fmtV)
 	}
-	// Convert remaining args to interface{} for fmt.Sprintf
-	fmtArgs := make([]interface{}, len(args)-1)
+	// Convert remaining args to any for fmt.Sprintf
+	fmtArgs := make([]any, len(args)-1)
 	for i := 1; i < len(args); i++ {
 		v, err := Eval(args[i], row, params)
 		if err != nil {
@@ -1141,7 +1141,7 @@ func evalFormat(args []PS.Expr, row *Row, params []interface{}) (interface{}, er
 
 // evalLtrim trims leading characters. Default trim chars are spaces.
 // REQ000397.
-func evalLtrim(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalLtrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, ErrEval
 	}
@@ -1167,7 +1167,7 @@ func evalLtrim(args []PS.Expr, row *Row, params []interface{}) (interface{}, err
 
 // evalRtrim trims trailing characters. Default trim chars are spaces.
 // REQ000406.
-func evalRtrim(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalRtrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, ErrEval
 	}
@@ -1193,7 +1193,7 @@ func evalRtrim(args []PS.Expr, row *Row, params []interface{}) (interface{}, err
 
 // evalTrim trims leading and trailing characters. Default trim chars are spaces.
 // REQ000438.
-func evalTrim(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalTrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, ErrEval
 	}
@@ -1219,7 +1219,7 @@ func evalTrim(args []PS.Expr, row *Row, params []interface{}) (interface{}, erro
 
 // evalReplace replaces all occurrences of Y in X with Z.
 // REQ000404.
-func evalReplace(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalReplace(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 3 {
 		return nil, ErrEval
 	}
@@ -1253,7 +1253,7 @@ func evalReplace(args []PS.Expr, row *Row, params []interface{}) (interface{}, e
 // evalQuote renders X as an SQL literal. Strings are single-quoted
 // with escaped quotes. BLOBs as X'hex'. NULL as unquoted NULL.
 // REQ000401.
-func evalQuote(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalQuote(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
@@ -1282,7 +1282,7 @@ func evalQuote(args []PS.Expr, row *Row, params []interface{}) (interface{}, err
 
 // evalTypeof returns the type name of X: "null", "integer", "real",
 // "text", or "blob". REQ000412.
-func evalTypeof(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalTypeof(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
@@ -1312,7 +1312,7 @@ func evalTypeof(args []PS.Expr, row *Row, params []interface{}) (interface{}, er
 
 // evalOctetLength returns the byte length of X (not code points).
 // REQ000400.
-func evalOctetLength(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalOctetLength(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
@@ -1338,7 +1338,7 @@ func evalOctetLength(args []PS.Expr, row *Row, params []interface{}) (interface{
 
 // evalUnicode returns the Unicode code point of the first character.
 // REQ000414.
-func evalUnicode(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalUnicode(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
@@ -1358,19 +1358,19 @@ func evalUnicode(args []PS.Expr, row *Row, params []interface{}) (interface{}, e
 
 // evalSqliteVersion returns the version string "0.26.7".
 // REQ000410.
-func evalSqliteVersion(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalSqliteVersion(args []PS.Expr, row *Row, params []any) (any, error) {
 	return "0.26.7", nil
 }
 
 // evalSqliteSourceID returns "razordata-v0.26.7".
 // REQ000409.
-func evalSqliteSourceID(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalSqliteSourceID(args []PS.Expr, row *Row, params []any) (any, error) {
 	return "razordata-v0.26.7", nil
 }
 
 // evalIIF implements the iif(B, X, Y) conditional function.
 // Short-circuits: only evaluates chosen branch. REQ000392.
-func evalIIF(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalIIF(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 3 {
 		return nil, ErrEval
 	}
@@ -1386,7 +1386,7 @@ func evalIIF(args []PS.Expr, row *Row, params []interface{}) (interface{}, error
 
 // evalInstr returns the 1-based position of Y in X, or 0 if not found.
 // REQ000393.
-func evalInstr(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalInstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 2 {
 		return nil, ErrEval
 	}
@@ -1419,7 +1419,7 @@ func evalInstr(args []PS.Expr, row *Row, params []interface{}) (interface{}, err
 
 // evalSign returns -1, 0, or +1 based on the sign of X.
 // REQ000407.
-func evalSign(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalSign(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
@@ -1445,11 +1445,11 @@ func evalSign(args []PS.Expr, row *Row, params []interface{}) (interface{}, erro
 
 // evalMaxScalar returns the maximum of multiple scalar arguments.
 // NULLs are skipped. REQ000398.
-func evalMaxScalar(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalMaxScalar(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) == 0 {
 		return nil, nil
 	}
-	var maxV interface{}
+	var maxV any
 	for _, arg := range args {
 		v, err := Eval(arg, row, params)
 		if err != nil {
@@ -1472,11 +1472,11 @@ func evalMaxScalar(args []PS.Expr, row *Row, params []interface{}) (interface{},
 
 // evalMinScalar returns the minimum of multiple scalar arguments.
 // REQ000399.
-func evalMinScalar(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalMinScalar(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) == 0 {
 		return nil, nil
 	}
-	var minV interface{}
+	var minV any
 	for _, arg := range args {
 		v, err := Eval(arg, row, params)
 		if err != nil {
@@ -1497,7 +1497,7 @@ func evalMinScalar(args []PS.Expr, row *Row, params []interface{}) (interface{},
 }
 
 // evalRandom returns a pseudo-random int64. REQ000402.
-func evalRandom(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalRandom(args []PS.Expr, row *Row, params []any) (any, error) {
 	// Use global rand source - Int63() returns non-negative, use Sign
 	sign := 1
 	if rand.Intn(2) == 1 {
@@ -1507,7 +1507,7 @@ func evalRandom(args []PS.Expr, row *Row, params []interface{}) (interface{}, er
 }
 
 // evalRandomBlob returns N bytes of random data. REQ000403.
-func evalRandomBlob(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalRandomBlob(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
@@ -1528,7 +1528,7 @@ func evalRandomBlob(args []PS.Expr, row *Row, params []interface{}) (interface{}
 }
 
 // evalZeroblob returns N bytes of 0x00. REQ000417.
-func evalZeroblob(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalZeroblob(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
@@ -1543,7 +1543,7 @@ func evalZeroblob(args []PS.Expr, row *Row, params []interface{}) (interface{}, 
 	return make([]byte, n), nil
 }
 
-func toInt64(v interface{}) (int64, bool) {
+func toInt64(v any) (int64, bool) {
 	switch x := v.(type) {
 	case int64:
 		return x, true
@@ -1555,7 +1555,7 @@ func toInt64(v interface{}) (int64, bool) {
 	return 0, false
 }
 
-func compare(a, b interface{}) int {
+func compare(a, b any) int {
 	if a == nil && b == nil {
 		return 0
 	}
@@ -1613,19 +1613,19 @@ func cmpBool(a, b bool) int {
 	return -1
 }
 
-func add(a, b interface{}) (interface{}, error) {
+func add(a, b any) (any, error) {
 	return numericArith(a, b, '+')
 }
 
-func sub(a, b interface{}) (interface{}, error) {
+func sub(a, b any) (any, error) {
 	return numericArith(a, b, '-')
 }
 
-func mul(a, b interface{}) (interface{}, error) {
+func mul(a, b any) (any, error) {
 	return numericArith(a, b, '*')
 }
 
-func div(a, b interface{}) (interface{}, error) {
+func div(a, b any) (any, error) {
 	if a == nil || b == nil {
 		return nil, nil
 	}
@@ -1648,7 +1648,7 @@ func div(a, b interface{}) (interface{}, error) {
 	return af / bf, nil
 }
 
-func mod(a, b interface{}) (interface{}, error) {
+func mod(a, b any) (any, error) {
 	if a == nil || b == nil {
 		return nil, nil
 	}
@@ -1671,7 +1671,7 @@ func mod(a, b interface{}) (interface{}, error) {
 	return math.Mod(af, bf), nil
 }
 
-func bitand(a, b interface{}) (interface{}, error) {
+func bitand(a, b any) (any, error) {
 	ai, aok := toInt64(a)
 	bi, bok := toInt64(b)
 	if !aok || !bok {
@@ -1680,7 +1680,7 @@ func bitand(a, b interface{}) (interface{}, error) {
 	return ai & bi, nil
 }
 
-func bitor(a, b interface{}) (interface{}, error) {
+func bitor(a, b any) (any, error) {
 	ai, aok := toInt64(a)
 	bi, bok := toInt64(b)
 	if !aok || !bok {
@@ -1689,7 +1689,7 @@ func bitor(a, b interface{}) (interface{}, error) {
 	return ai | bi, nil
 }
 
-func bitxor(a, b interface{}) (interface{}, error) {
+func bitxor(a, b any) (any, error) {
 	ai, aok := toInt64(a)
 	bi, bok := toInt64(b)
 	if !aok || !bok {
@@ -1698,14 +1698,14 @@ func bitxor(a, b interface{}) (interface{}, error) {
 	return ai ^ bi, nil
 }
 
-func concat(a, b interface{}) (interface{}, error) {
+func concat(a, b any) (any, error) {
 	if a == nil || b == nil {
 		return nil, nil
 	}
 	return fmt.Sprintf("%v%v", a, b), nil
 }
 
-func numericArith(a, b interface{}, op rune) (interface{}, error) {
+func numericArith(a, b any, op rune) (any, error) {
 	if a == nil || b == nil {
 		return nil, nil
 	}
@@ -1769,7 +1769,7 @@ func numericArith(a, b interface{}, op rune) (interface{}, error) {
 	return r, nil
 }
 
-func numericFloat(v interface{}) (float64, bool) {
+func numericFloat(v any) (float64, bool) {
 	switch x := v.(type) {
 	case int64:
 		return float64(x), true
@@ -1788,7 +1788,7 @@ func numericFloat(v interface{}) (float64, bool) {
 //   - true  AND NULL    = NULL
 //   - true  AND true    = true
 //   - NULL  AND NULL    = NULL
-func band(a, b interface{}) (interface{}, error) {
+func band(a, b any) (any, error) {
 	if a == false || b == false {
 		return false, nil
 	}
@@ -1803,7 +1803,7 @@ func band(a, b interface{}) (interface{}, error) {
 //   - false OR NULL   = NULL
 //   - false OR false  = false
 //   - NULL OR NULL    = NULL
-func bor(a, b interface{}) (interface{}, error) {
+func bor(a, b any) (any, error) {
 	if a == true || b == true {
 		return true, nil
 	}
@@ -1813,7 +1813,7 @@ func bor(a, b interface{}) (interface{}, error) {
 	return false, nil
 }
 
-func like(a, b interface{}, escape string) (bool, error) {
+func like(a, b any, escape string) (bool, error) {
 	s, ok := a.(string)
 	if !ok {
 		return false, nil
@@ -1889,7 +1889,7 @@ func matchLike(pattern, s, escape string) bool {
 	return pi == len(pattern)
 }
 
-func is(a, b interface{}) (bool, error) {
+func is(a, b any) (bool, error) {
 	if a == nil && b == nil {
 		return true, nil
 	}
@@ -1899,7 +1899,7 @@ func is(a, b interface{}) (bool, error) {
 	return a == b, nil
 }
 
-func equalValue(a, b interface{}) bool {
+func equalValue(a, b any) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
@@ -1926,7 +1926,7 @@ func equalValue(a, b interface{}) bool {
 }
 
 // normalizeInt converts Go int to int64 for consistent comparison.
-func normalizeInt(v interface{}) interface{} {
+func normalizeInt(v any) any {
 	switch x := v.(type) {
 	case int:
 		return int64(x)
@@ -1936,7 +1936,7 @@ func normalizeInt(v interface{}) interface{} {
 
 // evalGlob implements glob(X,Y) — pattern matching with *, ?, [...].
 // REQ000390.
-func evalGlob(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalGlob(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("glob requires 2 args")
 	}
@@ -2059,7 +2059,7 @@ func globMatchFrom(pattern string, pi int, s string, si int) bool {
 
 // evalLikelihood implements likelihood(X,Y) — no-op pass-through.
 // REQ000395.
-func evalLikelihood(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalLikelihood(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
@@ -2068,7 +2068,7 @@ func evalLikelihood(args []PS.Expr, row *Row, params []interface{}) (interface{}
 
 // evalLikely implements likely(X) — no-op pass-through.
 // REQ000396.
-func evalLikely(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalLikely(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
@@ -2090,7 +2090,7 @@ var soundexCodes = map[byte]byte{
 	'R': '6',
 }
 
-func evalSoundex(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalSoundex(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
@@ -2156,7 +2156,7 @@ func evalSoundex(args []PS.Expr, row *Row, params []interface{}) (interface{}, e
 }
 
 // REQ000413.
-func evalUnhex(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalUnhex(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
@@ -2206,7 +2206,7 @@ func hexDigit(c byte) byte {
 
 // evalUnistr implements unistr(X) — backslash-escape decoder.
 // REQ000415.
-func evalUnistr(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalUnistr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
@@ -2322,7 +2322,7 @@ func parseHex8(s string) (rune, bool) {
 
 // evalUnlikely implements unlikely(X) — no-op pass-through.
 // REQ000416.
-func evalUnlikely(args []PS.Expr, row *Row, params []interface{}) (interface{}, error) {
+func evalUnlikely(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}

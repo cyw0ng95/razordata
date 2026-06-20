@@ -155,7 +155,7 @@ func TestDecimal_FromFloat(t *testing.T) {
 func TestFormatDecimal(t *testing.T) {
 	tests := []struct {
 		name      string
-		in        interface{}
+		in        any
 		precision int
 		scale     int
 		want      string

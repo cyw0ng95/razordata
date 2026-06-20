@@ -99,7 +99,7 @@ type Operator interface {
 type Row struct {
 	Cols  []string
 	Types []int
-	Data  []interface{}
+	Data  []any
 	Outer *Row
 	// planner is set by the executor when materializing a row
 	// from the main plan. Subquery eval functions read it to
@@ -130,7 +130,7 @@ func (r *Row) Planner() *Planner {
 	return nil
 }
 
-func (r *Row) Lookup(name string) (interface{}, bool) {
+func (r *Row) Lookup(name string) (any, bool) {
 	for cur := r; cur != nil; cur = cur.Outer {
 		if cur.colIndex == nil {
 			cur.buildColIndex()
@@ -677,7 +677,7 @@ func propagateParams(root Operator, args []any) {
 		return
 	}
 	p := asAnySlice(args)
-	if w, ok := root.(interface{ WithParams([]interface{}) Operator }); ok {
+	if w, ok := root.(interface{ WithParams([]any) Operator }); ok {
 		w.WithParams(p)
 	}
 	// Walk children via the Child() convention used elsewhere
@@ -694,14 +694,14 @@ func propagateParams(root Operator, args []any) {
 	// their own WithParams and walk internally.
 }
 
-// asAnySlice converts []any to []interface{} for type-stability
+// asAnySlice converts []any to []any for type-stability
 // across the WithParams interface boundary. Avoids an allocation
 // when the slice is already nil.
-func asAnySlice(args []any) []interface{} {
+func asAnySlice(args []any) []any {
 	if args == nil {
 		return nil
 	}
-	out := make([]interface{}, len(args))
+	out := make([]any, len(args))
 	for i, a := range args {
 		out[i] = a
 	}
@@ -1129,6 +1129,6 @@ func (n *Noop) Close() error {
 	return nil
 }
 
-func (n *Noop) WithParams(p []interface{}) Operator {
+func (n *Noop) WithParams(p []any) Operator {
 	return n
 }

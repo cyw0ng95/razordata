@@ -77,10 +77,10 @@ func (ic *IntegrityCheck) Close() error { return nil }
 
 func (ic *IntegrityCheck) RowsAffected() int64 { return int64(len(ic.rows)) }
 
-func (ic *IntegrityCheck) WithParams(p []interface{}) Operator { return ic }
+func (ic *IntegrityCheck) WithParams(p []any) Operator { return ic }
 
 // checkCatalog verifies catalog consistency. REQ000261.
-func (ic *IntegrityCheck) checkCatalog(cat interface{}) error {
+func (ic *IntegrityCheck) checkCatalog(cat any) error {
 	// Type assert to *ls.Catalog if possible
 	catalog, ok := cat.(*ls.Catalog)
 	if !ok {

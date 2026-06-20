@@ -10,9 +10,9 @@ import (
 // JSON values are stored as UTF-8 encoded strings. Functions parse
 // on demand rather than maintaining a parsed representation.
 
-// parseJSON parses a JSON string into an interface{}.
-func parseJSON(s string) (interface{}, error) {
-	var v interface{}
+// parseJSON parses a JSON string into an any.
+func parseJSON(s string) (any, error) {
+	var v any
 	if err := json.Unmarshal([]byte(s), &v); err != nil {
 		return nil, fmt.Errorf("json: invalid JSON: %w", err)
 	}
@@ -20,7 +20,7 @@ func parseJSON(s string) (interface{}, error) {
 }
 
 // toJSON serializes a value to JSON string.
-func toJSON(v interface{}) (string, error) {
+func toJSON(v any) (string, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return "", err
@@ -30,7 +30,7 @@ func toJSON(v interface{}) (string, error) {
 
 // jsonExtract implements json_extract(json, path).
 // Path is a simple dot-separated key path like "a.b.c" or "a.0.b".
-func jsonExtract(v interface{}, path string) (interface{}, error) {
+func jsonExtract(v any, path string) (any, error) {
 	if path == "" {
 		return v, nil
 	}
@@ -38,13 +38,13 @@ func jsonExtract(v interface{}, path string) (interface{}, error) {
 	current := v
 	for _, part := range parts {
 		switch obj := current.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			val, ok := obj[part]
 			if !ok {
 				return nil, nil
 			}
 			current = val
-		case []interface{}:
+		case []any:
 			idx := 0
 			if _, err := fmt.Sscanf(part, "%d", &idx); err != nil {
 				return nil, nil
@@ -61,7 +61,7 @@ func jsonExtract(v interface{}, path string) (interface{}, error) {
 }
 
 // jsonType returns the type of a JSON value.
-func jsonType(v interface{}) string {
+func jsonType(v any) string {
 	switch v.(type) {
 	case nil:
 		return "null"
@@ -71,9 +71,9 @@ func jsonType(v interface{}) string {
 		return "real"
 	case string:
 		return "text"
-	case []interface{}:
+	case []any:
 		return "array"
-	case map[string]interface{}:
+	case map[string]any:
 		return "object"
 	default:
 		return "null"
@@ -82,12 +82,12 @@ func jsonType(v interface{}) string {
 
 // jsonValid checks if a string is valid JSON.
 func jsonValid(s string) bool {
-	var v interface{}
+	var v any
 	return json.Unmarshal([]byte(s), &v) == nil
 }
 
 // jsonArray builds a JSON array from arguments.
-func jsonArray(args []interface{}) (string, error) {
+func jsonArray(args []any) (string, error) {
 	b, err := json.Marshal(args)
 	if err != nil {
 		return "", err
@@ -96,11 +96,11 @@ func jsonArray(args []interface{}) (string, error) {
 }
 
 // jsonObject builds a JSON object from key-value pairs.
-func jsonObject(args []interface{}) (string, error) {
+func jsonObject(args []any) (string, error) {
 	if len(args)%2 != 0 {
 		return "", fmt.Errorf("json_object(): odd number of arguments")
 	}
-	m := make(map[string]interface{}, len(args)/2)
+	m := make(map[string]any, len(args)/2)
 	for i := 0; i < len(args); i += 2 {
 		key, ok := args[i].(string)
 		if !ok {
@@ -116,8 +116,8 @@ func jsonObject(args []interface{}) (string, error) {
 }
 
 // jsonSet implements json_set(json, path, value).
-func jsonSet(jsonStr string, path string, value interface{}) (string, error) {
-	var v interface{}
+func jsonSet(jsonStr string, path string, value any) (string, error) {
+	var v any
 	if err := json.Unmarshal([]byte(jsonStr), &v); err != nil {
 		return "", fmt.Errorf("json_set: invalid JSON: %w", err)
 	}
@@ -132,7 +132,7 @@ func jsonSet(jsonStr string, path string, value interface{}) (string, error) {
 	return string(b), nil
 }
 
-func jsonSetPath(v interface{}, parts []string, value interface{}) error {
+func jsonSetPath(v any, parts []string, value any) error {
 	if len(parts) == 0 {
 		return fmt.Errorf("json_set: empty path")
 	}
@@ -140,18 +140,18 @@ func jsonSetPath(v interface{}, parts []string, value interface{}) error {
 	rest := parts[1:]
 
 	switch obj := v.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		if len(rest) == 0 {
 			obj[part] = value
 			return nil
 		}
 		child, ok := obj[part]
 		if !ok {
-			child = make(map[string]interface{})
+			child = make(map[string]any)
 			obj[part] = child
 		}
 		return jsonSetPath(child, rest, value)
-	case []interface{}:
+	case []any:
 		idx := 0
 		if _, err := fmt.Sscanf(part, "%d", &idx); err != nil {
 			return fmt.Errorf("json_set: invalid array index: %s", part)
@@ -170,7 +170,7 @@ func jsonSetPath(v interface{}, parts []string, value interface{}) error {
 }
 
 // evalJSONFunc evaluates JSON functions.
-func evalJSONFunc(name string, args []interface{}) (interface{}, error) {
+func evalJSONFunc(name string, args []any) (any, error) {
 	switch strings.ToUpper(name) {
 	case "JSON_EXTRACT":
 		if len(args) < 2 {
@@ -270,7 +270,7 @@ func isJSONFunc(name string) bool {
 }
 
 // jsonArrowOperator implements the -> operator (extract as JSON).
-func jsonArrowOperator(jsonStr string, key string) (interface{}, error) {
+func jsonArrowOperator(jsonStr string, key string) (any, error) {
 	v, err := parseJSON(jsonStr)
 	if err != nil {
 		return nil, err
@@ -287,7 +287,7 @@ func jsonArrowOperator(jsonStr string, key string) (interface{}, error) {
 }
 
 // jsonArrowTextOperator implements the ->> operator (extract as text).
-func jsonArrowTextOperator(jsonStr string, key string) (interface{}, error) {
+func jsonArrowTextOperator(jsonStr string, key string) (any, error) {
 	v, err := parseJSON(jsonStr)
 	if err != nil {
 		return nil, err

@@ -46,9 +46,9 @@ func FormatDateTimeValue(t time.Time, typ int) string {
 	}
 }
 
-// toTime converts an interface{} to time.Time.
+// toTime converts an any to time.Time.
 // Supports string (parsed), time.Time (direct), int64/float64 (unix timestamp).
-func toTime(v interface{}) (time.Time, bool) {
+func toTime(v any) (time.Time, bool) {
 	switch val := v.(type) {
 	case time.Time:
 		return val, true
@@ -198,7 +198,7 @@ func DateDiff(a, b time.Time, unit string) int64 {
 }
 
 // evalDateTimeFunc evaluates SQL date/time functions.
-func evalDateTimeFunc(name string, args []interface{}) (interface{}, error) {
+func evalDateTimeFunc(name string, args []any) (any, error) {
 	switch strings.ToUpper(name) {
 	case "DATE":
 		if len(args) == 0 {
@@ -319,7 +319,7 @@ func isDateTimeFunc(name string) bool {
 }
 
 // DateTimeArithmetic handles date +/- interval and date - date operations.
-func DateTimeArithmetic(left interface{}, right interface{}, op string) (interface{}, error) {
+func DateTimeArithmetic(left any, right any, op string) (any, error) {
 	switch op {
 	case "+":
 		return dateTimeAdd(left, right)
@@ -329,7 +329,7 @@ func DateTimeArithmetic(left interface{}, right interface{}, op string) (interfa
 	return nil, fmt.Errorf("unsupported datetime operation: %s", op)
 }
 
-func dateTimeAdd(left interface{}, right interface{}) (interface{}, error) {
+func dateTimeAdd(left any, right any) (any, error) {
 	lt, lok := toTime(left)
 	if !lok {
 		return nil, nil
@@ -342,7 +342,7 @@ func dateTimeAdd(left interface{}, right interface{}) (interface{}, error) {
 	return nil, nil
 }
 
-func dateTimeSub(left interface{}, right interface{}) (interface{}, error) {
+func dateTimeSub(left any, right any) (any, error) {
 	lt, lok := toTime(left)
 	if !lok {
 		return nil, nil

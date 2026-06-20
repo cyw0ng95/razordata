@@ -8,7 +8,7 @@ import (
 func TestSpecialForms(t *testing.T) {
 	tests := []struct {
 		sql  string
-		want interface{}
+		want any
 	}{
 		{"SELECT COALESCE(NULL, NULL, 3, 'x')", int64(3)},
 		{"SELECT COALESCE(NULL, 42)", int64(42)},

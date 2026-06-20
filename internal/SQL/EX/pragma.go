@@ -27,7 +27,7 @@ func (p *PrAGMAResult) Next(_ context.Context) (Row, error) {
 	}
 	return Row{
 		Cols: []string{p.name},
-		Data: []interface{}{val},
+		Data: []any{val},
 	}, nil
 }
 

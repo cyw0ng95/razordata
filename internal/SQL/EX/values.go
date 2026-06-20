@@ -35,7 +35,7 @@ func (v *Values) Next(ctx context.Context) (Row, error) {
 
 	// Evaluate each expression with a nil row (no table context)
 	cols := make([]string, len(v.cols))
-	data := make([]interface{}, len(v.cols))
+	data := make([]any, len(v.cols))
 	types := make([]int, len(v.cols))
 
 	for i, e := range v.cols {
@@ -57,7 +57,7 @@ func (v *Values) Close() error {
 	return nil
 }
 
-func (v *Values) WithParams(p []interface{}) Operator {
+func (v *Values) WithParams(p []any) Operator {
 	if v == nil {
 		return nil
 	}
@@ -122,7 +122,7 @@ func unaryOpString(u *PS.UnaryExpr) string {
 }
 
 // inferType maps a Go value to an LS column type.
-func inferType(v interface{}) int {
+func inferType(v any) int {
 	if v == nil {
 		return -1
 	}
@@ -169,7 +169,7 @@ func (v *ValuesRows) Next(ctx context.Context) (Row, error) {
 	rowExprs := v.rows[v.pos]
 	v.pos++
 	cols := make([]string, len(rowExprs))
-	data := make([]interface{}, len(rowExprs))
+	data := make([]any, len(rowExprs))
 	types := make([]int, len(rowExprs))
 	for i, e := range rowExprs {
 		val, err := Eval(e, nil, nil)
@@ -192,6 +192,6 @@ func (v *ValuesRows) Close() error {
 	return nil
 }
 
-func (v *ValuesRows) WithParams(p []interface{}) Operator {
+func (v *ValuesRows) WithParams(p []any) Operator {
 	return v
 }

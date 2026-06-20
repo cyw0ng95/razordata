@@ -61,7 +61,7 @@ func fillDefaults(schema *storeSchema, row Row) (Row, error) {
 
 // coerceDefault coerces v to the Go type matching the column's
 // token type. Unrecognised types pass through unchanged. REQ000515.
-func coerceDefault(v interface{}, colType int) interface{} {
+func coerceDefault(v any, colType int) any {
 	if v == nil {
 		return nil
 	}
@@ -162,14 +162,14 @@ func validateDecimal(schema *storeSchema, row Row) error {
 // already exists in another row of the table, (false, nil) if no
 // match, or an error. Implementations may scan an in-memory map or an
 // LSM key range iterator.
-type uniqueLookup func(cols []int, vals []interface{}) (bool, error)
+type uniqueLookup func(cols []int, vals []any) (bool, error)
 
 // uniqueLookupWithApply is an extended lookup that exposes the matching
 // row so callers can mutate it in place. Implementations are
 // responsible for any locking. REQ000511.
 type uniqueLookupWithApply interface {
-	Lookup(cols []int, vals []interface{}) (bool, error)
-	FindAndLock(cols []int, vals []interface{}) (int, bool, error)
+	Lookup(cols []int, vals []any) (bool, error)
+	FindAndLock(cols []int, vals []any) (int, bool, error)
 	Mutate(idx int, fn func(Row) Row) error
 }
 
@@ -225,7 +225,7 @@ func checkUnique(schema *storeSchema, row Row, pending map[string]struct{}, snap
 		}
 	}
 	for _, uk := range keys {
-		vals := make([]interface{}, len(uk.Cols))
+		vals := make([]any, len(uk.Cols))
 		anyNil := false
 		for i, idx := range uk.Cols {
 			vals[i] = row.Data[idx]
@@ -286,7 +286,7 @@ func checkUnique(schema *storeSchema, row Row, pending map[string]struct{}, snap
 // use in the pending set or composite comparison. Columns are
 // CRC32-hashed individually (8 bytes each), then concatenated. Order
 // matters — (a, b) and (b, a) are different keys.
-func encodeUniqueKey(cols []int, vals []interface{}) []byte {
+func encodeUniqueKey(cols []int, vals []any) []byte {
 	h := crc32.NewIEEE()
 	for _, v := range vals {
 		switch x := v.(type) {
@@ -335,7 +335,7 @@ type memLookup struct {
 	table string
 }
 
-func (m *memLookup) Lookup(cols []int, vals []interface{}) (bool, error) {
+func (m *memLookup) Lookup(cols []int, vals []any) (bool, error) {
 	_, ok, err := m.FindAndLock(cols, vals)
 	return ok, err
 }
@@ -345,7 +345,7 @@ func (m *memLookup) Lookup(cols []int, vals []interface{}) (bool, error) {
 // the boolean result. REQ000511.
 type memLookupAdapter struct{ inner uniqueLookupWithApply }
 
-func (a memLookupAdapter) lookup(cols []int, vals []interface{}) (bool, error) {
+func (a memLookupAdapter) lookup(cols []int, vals []any) (bool, error) {
 	return a.inner.Lookup(cols, vals)
 }
 
@@ -362,7 +362,7 @@ func asUniqueLookup(apply uniqueLookupWithApply) uniqueLookup {
 // in-memory table, or -1 if none. Callers MUST already hold
 // tablesMu (typically because they're inside Insert.Next /
 // checkUnique which are called under tablesMu).
-func (m *memLookup) FindAndLock(cols []int, vals []interface{}) (int, bool, error) {
+func (m *memLookup) FindAndLock(cols []int, vals []any) (int, bool, error) {
 	rows := tables[m.table]
 	for i, existing := range rows {
 		if rowMatchesUnique(existing.Data, cols, vals) {
@@ -384,7 +384,7 @@ func (m *memLookup) Mutate(idx int, fn func(Row) Row) error {
 	return nil
 }
 
-func rowMatchesUnique(data []interface{}, cols []int, vals []interface{}) bool {
+func rowMatchesUnique(data []any, cols []int, vals []any) bool {
 	for i, idx := range cols {
 		if idx >= len(data) {
 			return false
@@ -396,7 +396,7 @@ func rowMatchesUnique(data []interface{}, cols []int, vals []interface{}) bool {
 	return true
 }
 
-func valueEqual(a, b interface{}) bool {
+func valueEqual(a, b any) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}

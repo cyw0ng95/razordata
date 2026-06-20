@@ -441,7 +441,7 @@ func batchValueAt(col Column, i int) any {
 // where the column value is in the list. Empty/missing list returns
 // nil (no rows match). Empty column returns nil. NULL columns skip
 // the row per standard SQL semantics.
-func evalInListBatch(col Column, list []interface{}, n int) []uint16 {
+func evalInListBatch(col Column, list []any, n int) []uint16 {
 	if n == 0 || len(list) == 0 {
 		return nil
 	}

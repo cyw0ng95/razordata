@@ -568,7 +568,7 @@ func decodeRow(data []byte, schema *storeSchema) (Row, error) {
 	}
 	row := Row{
 		Cols: append([]string(nil), schema.cols...),
-		Data: make([]interface{}, len(schema.cols)),
+		Data: make([]any, len(schema.cols)),
 	}
 	for i := 0; i < int(n); i++ {
 		if off >= len(data) {
@@ -625,7 +625,7 @@ func decodeRow(data []byte, schema *storeSchema) (Row, error) {
 }
 
 // rowKey builds a storage key for a row: <tablePrefix><pk-bytes>.
-func rowKey(prefix []byte, pkValue interface{}) []byte {
+func rowKey(prefix []byte, pkValue any) []byte {
 	out := make([]byte, 0, len(prefix)+16)
 	out = append(out, prefix...)
 	switch v := pkValue.(type) {
@@ -657,7 +657,7 @@ func rowKey(prefix []byte, pkValue interface{}) []byte {
 // For REQ000367 (hidden-PK tables, no PRIMARY KEY declared at
 // CREATE TABLE time), this allocates and returns a synthetic int64
 // rowid that is unique within the table.
-func extractPK(schema *storeSchema, row Row) (interface{}, error) {
+func extractPK(schema *storeSchema, row Row) (any, error) {
 	if schema.pk == "" {
 		if !schema.hiddenPK {
 			return nil, errors.New("ex: table has no primary key")
@@ -685,7 +685,7 @@ func extractPK(schema *storeSchema, row Row) (interface{}, error) {
 // For hidden-PK tables, reuses the original row's key suffix from
 // storeKey so the update overwrites the same engine row instead of
 // allocating a new synthetic rowid on every UPDATE (REQ000501).
-func extractPKForUpdate(schema *storeSchema, oldRow Row, prefix []byte) (interface{}, error) {
+func extractPKForUpdate(schema *storeSchema, oldRow Row, prefix []byte) (any, error) {
 	if schema.pk == "" && schema.hiddenPK && len(oldRow.storeKey) > len(prefix) {
 		suffix := oldRow.storeKey[len(prefix):]
 		return int64(binary.BigEndian.Uint64(suffix)), nil
@@ -754,7 +754,7 @@ func maintainIndexesOnDelete(store Store, table string, schema *storeSchema, row
 // the indexed column value changes. The pk parameter is the primary
 // key of the row being updated (extracted from oldRow to preserve
 // the original key for hidden-PK tables). iter-22 secondary indexes.
-func maintainIndexesOnUpdate(store Store, table string, schema *storeSchema, oldRow, newRow Row, pk interface{}) error {
+func maintainIndexesOnUpdate(store Store, table string, schema *storeSchema, oldRow, newRow Row, pk any) error {
 	indexes := GetRegisteredIndexes(table)
 	if len(indexes) == 0 {
 		return nil
@@ -793,7 +793,7 @@ func maintainIndexesOnUpdate(store Store, table string, schema *storeSchema, old
 // pkToBytes encodes a primary-key value as bytes (big-endian
 // for int, raw for string/bytes). Used to populate the value
 // side of an index entry.
-func pkToBytes(pk interface{}) ([]byte, error) {
+func pkToBytes(pk any) ([]byte, error) {
 	switch v := pk.(type) {
 	case int64:
 		return int64ToBytesBigEndian(v), nil
@@ -832,7 +832,7 @@ func indexValueFor(schema *storeSchema, row Row, cols []string) []byte {
 	}
 	out := []byte{}
 	for i, c := range cols {
-		var val interface{}
+		var val any
 		found := false
 		for j, sc := range schema.cols {
 			if sc == c {

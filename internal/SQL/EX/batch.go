@@ -103,7 +103,7 @@ const MaxColumns = 64
 
 // Column is a typed container for batch column data.
 // Data is stored as a concrete slice ([]int64, []float64,
-// []string, []bool) to avoid interface{} boxing in the hot
+// []string, []bool) to avoid any boxing in the hot
 // path. Use Type to switch on the concrete type.
 type Column struct {
 	Name  string

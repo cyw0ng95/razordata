@@ -12,8 +12,8 @@ func TestEval(t *testing.T) {
 	cases := []struct {
 		name   string
 		expr   PS.Expr
-		params []interface{}
-		want   interface{}
+		params []any
+		want   any
 		err    bool
 	}{
 		{"number", &PS.NumberLiteral{Val: 42}, nil, int64(42), false},
@@ -23,7 +23,7 @@ func TestEval(t *testing.T) {
 		{"bool_false", &PS.BoolLiteral{Val: false}, nil, false, false},
 		{"null", &PS.NullLiteral{}, nil, nil, false},
 		{"ident", &PS.Ident{Name: "x"}, nil, "x", false},
-		{"param", &PS.Param{Index: 0}, []interface{}{10}, int64(10), false},
+		{"param", &PS.Param{Index: 0}, []any{10}, int64(10), false},
 		{"star", &PS.StarExpr{}, nil, "*", false},
 		{"unary_minus", &PS.UnaryExpr{Op: int(LX.T_MINUS), Operand: &PS.NumberLiteral{Val: 5}}, nil, int64(-5), false},
 		{"unary_plus", &PS.UnaryExpr{Op: int(LX.T_PLUS), Operand: &PS.NumberLiteral{Val: 5}}, nil, int64(5), false},
@@ -168,7 +168,7 @@ func TestEvalNullArithmetic(t *testing.T) {
 	cases := []struct {
 		name string
 		expr PS.Expr
-		want interface{}
+		want any
 	}{
 		{"null_plus_int", &PS.BinaryExpr{Op: int(LX.T_PLUS), Left: &PS.NullLiteral{}, Right: &PS.NumberLiteral{Val: 5}}, nil},
 		{"int_plus_null", &PS.BinaryExpr{Op: int(LX.T_PLUS), Left: &PS.NumberLiteral{Val: 5}, Right: &PS.NullLiteral{}}, nil},
@@ -196,7 +196,7 @@ func TestEvalCast(t *testing.T) {
 	cases := []struct {
 		name string
 		expr PS.Expr
-		want interface{}
+		want any
 		err  bool
 	}{
 		{"int_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 42}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}}, int64(42), false},
@@ -233,7 +233,7 @@ func TestEvalCast(t *testing.T) {
 func TestEvalCrossTypeEq(t *testing.T) {
 	cases := []struct {
 		name string
-		a, b interface{}
+		a, b any
 		want bool
 	}{
 		{"int_eq_int", int64(1), int64(1), true},
@@ -294,8 +294,8 @@ func TestFilterPassesThrough(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	RegisterTable("t", []Row{
-		{Cols: []string{"x"}, Data: []interface{}{int64(1)}},
-		{Cols: []string{"x"}, Data: []interface{}{int64(2)}},
+		{Cols: []string{"x"}, Data: []any{int64(1)}},
+		{Cols: []string{"x"}, Data: []any{int64(2)}},
 	})
 	scan := NewSeqScan("t")
 	filter := NewFilter(scan, &PS.NumberLiteral{Val: 1})
@@ -312,7 +312,7 @@ func TestProjectStarPassesThrough(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	RegisterTable("t", []Row{
-		{Cols: []string{"x"}, Data: []interface{}{int64(7)}},
+		{Cols: []string{"x"}, Data: []any{int64(7)}},
 	})
 	scan := NewSeqScan("t")
 	project := NewProject(scan, []PS.Expr{&PS.StarExpr{}})
@@ -329,9 +329,9 @@ func TestSortThenIterate(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	RegisterTable("t", []Row{
-		{Cols: []string{"x"}, Data: []interface{}{int64(3)}},
-		{Cols: []string{"x"}, Data: []interface{}{int64(1)}},
-		{Cols: []string{"x"}, Data: []interface{}{int64(2)}},
+		{Cols: []string{"x"}, Data: []any{int64(3)}},
+		{Cols: []string{"x"}, Data: []any{int64(1)}},
+		{Cols: []string{"x"}, Data: []any{int64(2)}},
 	})
 	scan := NewSeqScan("t")
 	s := NewSort(scan, []PS.OrderItem{{Expr: &PS.Ident{Name: "x"}, Desc: false}})
@@ -354,9 +354,9 @@ func TestLimitStops(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	RegisterTable("t", []Row{
-		{Cols: []string{"x"}, Data: []interface{}{int64(1)}},
-		{Cols: []string{"x"}, Data: []interface{}{int64(2)}},
-		{Cols: []string{"x"}, Data: []interface{}{int64(3)}},
+		{Cols: []string{"x"}, Data: []any{int64(1)}},
+		{Cols: []string{"x"}, Data: []any{int64(2)}},
+		{Cols: []string{"x"}, Data: []any{int64(3)}},
 	})
 	scan := NewSeqScan("t")
 	l := NewLimit(scan, 2)
@@ -379,7 +379,7 @@ func TestLimitStops(t *testing.T) {
 func TestInsertAppendsRows(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	RegisterTable("t", []Row{{Cols: []string{"a"}, Data: []interface{}{int64(0)}}})
+	RegisterTable("t", []Row{{Cols: []string{"a"}, Data: []any{int64(0)}}})
 	insert := NewInsert("t", nil, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}},
 		{&PS.NumberLiteral{Val: 2}},
@@ -402,8 +402,8 @@ func TestUpdateModifiesRows(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	RegisterTable("t", []Row{
-		{Cols: []string{"a", "b"}, Data: []interface{}{int64(1), "x"}},
-		{Cols: []string{"a", "b"}, Data: []interface{}{int64(2), "y"}},
+		{Cols: []string{"a", "b"}, Data: []any{int64(1), "x"}},
+		{Cols: []string{"a", "b"}, Data: []any{int64(2), "y"}},
 	})
 	scan := NewSeqScan("t")
 	update := NewUpdate("t", []PS.Pair{{Col: "b", Val: &PS.StringLiteral{Val: "z"}}}, nil, scan, nil)
@@ -427,9 +427,9 @@ func TestDeleteRemovesMatching(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	RegisterTable("t", []Row{
-		{Cols: []string{"a"}, Data: []interface{}{int64(1)}},
-		{Cols: []string{"a"}, Data: []interface{}{int64(2)}},
-		{Cols: []string{"a"}, Data: []interface{}{int64(3)}},
+		{Cols: []string{"a"}, Data: []any{int64(1)}},
+		{Cols: []string{"a"}, Data: []any{int64(2)}},
+		{Cols: []string{"a"}, Data: []any{int64(3)}},
 	})
 	scan := NewSeqScan("t")
 	filter := NewFilter(scan, &PS.BinaryExpr{

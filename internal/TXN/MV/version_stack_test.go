@@ -58,11 +58,11 @@ func BenchmarkNewVersionNodeStack_NoSink(b *testing.B) {
 }
 
 // BenchmarkNewVersionNodeStack_WithSink captures the pointer to
-// an interface{}, forcing a heap allocation. The allocation
+// an any, forcing a heap allocation. The allocation
 // count is the baseline cost of the VersionNode struct on
 // the heap. REQ000306.
 func BenchmarkNewVersionNodeStack_WithSink(b *testing.B) {
-	var sink interface{}
+	var sink any
 	for i := 0; i < b.N; i++ {
 		sink = NewVersionNodeStack(uint64(i), uint64(i), nil, nil, false)
 	}

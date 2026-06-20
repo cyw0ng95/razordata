@@ -146,7 +146,7 @@ func UnregisterAll() {
 func cloneRow(r Row) Row {
 	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]int(nil), r.Types...), Outer: r.Outer, planner: r.planner, storeKey: r.storeKey}
 	if r.Data != nil {
-		out.Data = append([]interface{}(nil), r.Data...)
+		out.Data = append([]any(nil), r.Data...)
 	}
 	return out
 }
@@ -156,10 +156,10 @@ func cloneRow(r Row) Row {
 // resolution (R16-1..2). When params is nil the slice is a
 // no-op and `?` placeholders resolve to nil (preserving the
 // pre-iter-16 behavior for callers that do not bind args).
-func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []interface{}) (Row, error) {
+func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []any) (Row, error) {
 	out := Row{Cols: append([]string(nil), schema...)}
 	if len(cols) == 0 {
-		out.Data = make([]interface{}, len(values))
+		out.Data = make([]any, len(values))
 		for i, v := range values {
 			val, err := Eval(v, nil, params)
 			if err != nil {
@@ -169,7 +169,7 @@ func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []i
 		}
 		return out, nil
 	}
-	byName := make(map[string]interface{}, len(cols))
+	byName := make(map[string]any, len(cols))
 	for i, name := range cols {
 		val, err := Eval(values[i], nil, params)
 		if err != nil {
@@ -177,7 +177,7 @@ func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []i
 		}
 		byName[name] = val
 	}
-	out.Data = make([]interface{}, len(schema))
+	out.Data = make([]any, len(schema))
 	for i, name := range schema {
 		if v, ok := byName[name]; ok {
 			out.Data[i] = v
@@ -191,7 +191,7 @@ func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []i
 // applyUpdate evaluates SET expressions against the current
 // row, forwarding params for `?` placeholder resolution
 // (R16-1..2).
-func applyUpdate(row *Row, set []PS.Pair, params []interface{}) error {
+func applyUpdate(row *Row, set []PS.Pair, params []any) error {
 	for _, p := range set {
 		val, err := Eval(p.Val, row, params)
 		if err != nil {
@@ -257,7 +257,7 @@ func rowEqual(a, b Row) bool {
 type TriggerContext struct {
 	OldRow *Row // nil for INSERT
 	NewRow *Row // nil for DELETE
-	Params []interface{}
+	Params []any
 	Exec   func(sql string) error // callback to execute SQL (for matview refresh)
 }
 
@@ -265,7 +265,7 @@ type TriggerContext struct {
 // Returns an error if any trigger fails. For AFTER triggers, oldRow and newRow
 // represent the state before and after the DML operation.
 // REQ000316: AFTER triggers are used for incremental matview refresh.
-func fireTriggers(table string, time string, event string, oldRow *Row, newRow *Row, params []interface{}, exec func(sql string) error) error {
+func fireTriggers(table string, time string, event string, oldRow *Row, newRow *Row, params []any, exec func(sql string) error) error {
 	triggerMu.RLock()
 	triggers := make([]*PS.TriggerStmt, 0, len(tableTriggers[table]))
 	for _, t := range tableTriggers[table] {

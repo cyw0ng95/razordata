@@ -82,7 +82,7 @@ func injectOuter(op Operator, outer *Row) Operator {
 	return op
 }
 
-func runSubqueryPlan(pl *plan, outer *Row, params []interface{}) ([]Row, error) {
+func runSubqueryPlan(pl *plan, outer *Row, params []any) ([]Row, error) {
 	if pl == nil || pl.root == nil {
 		return nil, ErrSubquery
 	}

@@ -198,7 +198,7 @@ func TestConstraints_FillDefaults_LiteralInt(t *testing.T) {
 		nullable: []bool{true, true},
 		defaults: []PS.Expr{nil, &PS.NumberLiteral{Val: 99}},
 	}
-	row := Row{Data: []interface{}{int64(1), nil}}
+	row := Row{Data: []any{int64(1), nil}}
 	out, err := fillDefaults(ss, row)
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
@@ -220,7 +220,7 @@ func TestConstraints_FillDefaults_NullLiteral(t *testing.T) {
 		nullable: []bool{true},
 		defaults: []PS.Expr{&PS.NullLiteral{}},
 	}
-	row := Row{Data: []interface{}{nil}}
+	row := Row{Data: []any{nil}}
 	out, err := fillDefaults(ss, row)
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
@@ -236,7 +236,7 @@ func TestConstraints_FillDefaults_NilSchema(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	ss := &storeSchema{cols: []string{"a"}, nullable: []bool{true}}
-	row := Row{Data: []interface{}{int64(1)}}
+	row := Row{Data: []any{int64(1)}}
 	out, err := fillDefaults(ss, row)
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
@@ -257,7 +257,7 @@ func TestConstraints_ValidateRow_RejectsNullNotNull(t *testing.T) {
 		nullable: []bool{false, true},
 		defaults: nil,
 	}
-	row := Row{Data: []interface{}{nil, int64(2)}}
+	row := Row{Data: []any{nil, int64(2)}}
 	err := validateRow(ss, row)
 	if !errors.Is(err, ap.ErrConstraint) {
 		t.Errorf("validateRow: got %v, want ErrConstraint", err)
@@ -277,7 +277,7 @@ func TestConstraints_ValidateRow_AcceptsNullNullable(t *testing.T) {
 		pk:       "",
 		nullable: []bool{true, true},
 	}
-	row := Row{Data: []interface{}{nil, int64(2)}}
+	row := Row{Data: []any{nil, int64(2)}}
 	if err := validateRow(ss, row); err != nil {
 		t.Errorf("validateRow: %v", err)
 	}
@@ -509,18 +509,18 @@ func TestUnique_NullSkipped(t *testing.T) {
 // TestUnique_EncodeKey_Stable: encoding the same values produces the
 // same key; different values produce different keys.
 func TestUnique_EncodeKey_Stable(t *testing.T) {
-	k1 := encodeUniqueKey([]int{0}, []interface{}{int64(42)})
-	k2 := encodeUniqueKey([]int{0}, []interface{}{int64(42)})
+	k1 := encodeUniqueKey([]int{0}, []any{int64(42)})
+	k2 := encodeUniqueKey([]int{0}, []any{int64(42)})
 	if string(k1) != string(k2) {
 		t.Errorf("same values produced different keys: %x vs %x", k1, k2)
 	}
-	k3 := encodeUniqueKey([]int{0}, []interface{}{int64(99)})
+	k3 := encodeUniqueKey([]int{0}, []any{int64(99)})
 	if string(k1) == string(k3) {
 		t.Errorf("different values produced same key: %x", k1)
 	}
 	// Composite: (a=1, b='x') vs (a=1, b='y') should differ.
-	k4 := encodeUniqueKey([]int{0, 1}, []interface{}{int64(1), "x"})
-	k5 := encodeUniqueKey([]int{0, 1}, []interface{}{int64(1), "y"})
+	k4 := encodeUniqueKey([]int{0, 1}, []any{int64(1), "x"})
+	k5 := encodeUniqueKey([]int{0, 1}, []any{int64(1), "y"})
 	if string(k4) == string(k5) {
 		t.Errorf("composite with different second col produced same key")
 	}

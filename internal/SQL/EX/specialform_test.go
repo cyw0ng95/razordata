@@ -8,7 +8,7 @@ import (
 func TestSpecialForms_NoParens(t *testing.T) {
 	tests := []struct {
 		sql  string
-		want interface{}
+		want any
 	}{
 		// COALESCE without parens (special form)
 		{"SELECT COALESCE NULL, 42", int64(42)},

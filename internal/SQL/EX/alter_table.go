@@ -389,7 +389,7 @@ func (a *AlterTable) execDropColumn() error {
 	if existing, ok := tables[a.stmt.Table]; ok {
 		updated := make([]Row, len(existing))
 		for i, row := range existing {
-			newData := make([]interface{}, 0, len(row.Data)-1)
+			newData := make([]any, 0, len(row.Data)-1)
 			newRowCols := make([]string, 0, len(row.Cols)-1)
 			for j := range row.Data {
 				if j != idx {
@@ -439,7 +439,7 @@ func (a *AlterTable) execDropColumnInMemory() error {
 	if existing, ok := tables[a.stmt.Table]; ok {
 		updated := make([]Row, len(existing))
 		for i, row := range existing {
-			newData := make([]interface{}, 0, len(row.Data)-1)
+			newData := make([]any, 0, len(row.Data)-1)
 			newRowCols := make([]string, 0, len(row.Cols)-1)
 			for j := range row.Data {
 				if j != idx {

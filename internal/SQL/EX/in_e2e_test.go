@@ -12,7 +12,7 @@ func TestScalarIN_ReturnsOneRow(t *testing.T) {
 	cases := []struct {
 		sql  string
 		want int
-		val  interface{}
+		val  any
 	}{
 		{"SELECT 1 IN (2)", 1, false},
 		{"SELECT 1 NOT IN (2)", 1, true},

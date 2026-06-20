@@ -15,7 +15,7 @@ import (
 // The cache is scoped to a single Stmt instance — it is not a
 // session- or engine-level structure. Each Stmt owns its own
 // PredicateCache so eviction in one statement does not affect
-// another. The plan value is stored as interface{} so this cache
+// another. The plan value is stored as any so this cache
 // has no compile-time dependency on the concrete plan type and can
 // ship ahead of planner integration.
 type PredicateCache struct {
@@ -27,7 +27,7 @@ type PredicateCache struct {
 
 type predEntry struct {
 	key  string
-	plan interface{}
+	plan any
 }
 
 // NewPredicateCache creates a per-Stmt plan cache with the given
@@ -47,7 +47,7 @@ func NewPredicateCache(maxSize int) *PredicateCache {
 // Get returns the cached plan for key and promotes the entry to
 // the front of the LRU. On miss the returned plan is nil and ok is
 // false.
-func (c *PredicateCache) Get(key string) (interface{}, bool) {
+func (c *PredicateCache) Get(key string) (any, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	elem, ok := c.entries[key]
@@ -63,7 +63,7 @@ func (c *PredicateCache) Get(key string) (interface{}, bool) {
 // If the cache is at capacity the least-recently-used entry is
 // evicted. Put does not copy the plan value — the caller transfers
 // ownership.
-func (c *PredicateCache) Put(key string, plan interface{}) {
+func (c *PredicateCache) Put(key string, plan any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if elem, ok := c.entries[key]; ok {

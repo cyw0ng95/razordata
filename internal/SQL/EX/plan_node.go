@@ -212,7 +212,7 @@ func formatPlanTree(n *PlanNode) []Row {
 		rows = append(rows, Row{
 			Cols:  []string{"id", "parent", "notused", "detail"},
 			Types: []int{1, 1, 1, 1},
-			Data:  []interface{}{int64(id), int64(parent), int64(0), detail},
+			Data:  []any{int64(id), int64(parent), int64(0), detail},
 		})
 
 		currentID := id

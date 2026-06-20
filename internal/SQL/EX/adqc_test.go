@@ -537,7 +537,7 @@ type testOp struct {
 }
 
 func (t *testOp) Next(_ context.Context) (Row, error) {
-	return Row{Cols: []string{}, Data: []interface{}{}}, nil
+	return Row{Cols: []string{}, Data: []any{}}, nil
 }
 
 func (t *testOp) Close() error {
@@ -555,7 +555,7 @@ func (p *paramTestOp) Next(_ context.Context) (Row, error) {
 
 func (p *paramTestOp) Close() error { return nil }
 
-func (p *paramTestOp) WithParams(args []interface{}) Operator {
+func (p *paramTestOp) WithParams(args []any) Operator {
 	p.paramsReceived = true
 	return p
 }

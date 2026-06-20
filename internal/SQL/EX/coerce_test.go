@@ -50,7 +50,7 @@ func TestTypeToAffinity(t *testing.T) {
 func TestApplyAffinity_Text(t *testing.T) {
 	tests := []struct {
 		name string
-		in   interface{}
+		in   any
 		want string
 	}{
 		{"string", "hello", "hello"},
@@ -76,8 +76,8 @@ func TestApplyAffinity_Text(t *testing.T) {
 func TestApplyAffinity_Integer(t *testing.T) {
 	tests := []struct {
 		name string
-		in   interface{}
-		want interface{}
+		in   any
+		want any
 	}{
 		{"int64", int64(123), int64(123)},
 		{"float64-trunc", float64(3.14), int64(3)},
@@ -105,8 +105,8 @@ func TestApplyAffinity_Integer(t *testing.T) {
 func TestApplyAffinity_Real(t *testing.T) {
 	tests := []struct {
 		name string
-		in   interface{}
-		want interface{}
+		in   any
+		want any
 	}{
 		{"float64", float64(3.14), float64(3.14)},
 		{"int64", int64(123), float64(123)},
@@ -130,8 +130,8 @@ func TestApplyAffinity_Real(t *testing.T) {
 func TestApplyAffinity_Numeric(t *testing.T) {
 	tests := []struct {
 		name string
-		in   interface{}
-		want interface{}
+		in   any
+		want any
 	}{
 		{"int64", int64(123), int64(123)},
 		{"float64", float64(3.14), float64(3.14)},
@@ -178,8 +178,8 @@ func TestApplyAffinity_Nil(t *testing.T) {
 func TestCompareWithAffinity(t *testing.T) {
 	tests := []struct {
 		name string
-		a    interface{}
-		b    interface{}
+		a    any
+		b    any
 		aff  Affinity
 		want int
 	}{

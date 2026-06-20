@@ -20,7 +20,7 @@ type Aggregate struct {
 	aggs      []PS.Expr
 	buf       []Row
 	pos       int
-	params    []interface{}
+	params    []any
 }
 
 func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
@@ -29,10 +29,10 @@ func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
 
 // WithParams propagates the bound `?` placeholders to this
 // operator and its child (R16-1..2).
-func (a *Aggregate) WithParams(p []interface{}) Operator {
+func (a *Aggregate) WithParams(p []any) Operator {
 	a.params = p
 	if a.child != nil {
-		if w, ok := a.child.(interface{ WithParams([]interface{}) Operator }); ok {
+		if w, ok := a.child.(interface{ WithParams([]any) Operator }); ok {
 			w.WithParams(p)
 		}
 	}
@@ -60,7 +60,7 @@ func (a *Aggregate) Close() error {
 }
 
 type groupBucket struct {
-	key  []interface{}
+	key  []any
 	rows []Row
 }
 
@@ -128,11 +128,11 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 	return nil
 }
 
-func evalGroupKey(cols []PS.Expr, row *Row, params []interface{}) ([]interface{}, error) {
+func evalGroupKey(cols []PS.Expr, row *Row, params []any) ([]any, error) {
 	if len(cols) == 0 {
 		return nil, nil
 	}
-	out := make([]interface{}, len(cols))
+	out := make([]any, len(cols))
 	for i, c := range cols {
 		v, err := Eval(c, row, params)
 		if err != nil {
@@ -143,7 +143,7 @@ func evalGroupKey(cols []PS.Expr, row *Row, params []interface{}) ([]interface{}
 	return out, nil
 }
 
-func keysEqual(a, b []interface{}) bool {
+func keysEqual(a, b []any) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -155,7 +155,7 @@ func keysEqual(a, b []interface{}) bool {
 	return true
 }
 
-func keysLess(a, b []interface{}) bool {
+func keysLess(a, b []any) bool {
 	for i := range a {
 		if i >= len(b) {
 			return false
@@ -198,7 +198,7 @@ func aggregateColName(e PS.Expr) string {
 	return agg.Name
 }
 
-func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}, error) {
+func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 	agg, ok := e.(*PS.AggregateFunc)
 	if !ok {
 		return nil, nil
@@ -206,7 +206,7 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 	switch agg.Name {
 	case "COUNT":
 		if agg.Distinct {
-			seen := make(map[interface{}]bool)
+			seen := make(map[any]bool)
 			for _, r := range rows {
 				v, err := Eval(agg.Arg, &r, params)
 				if err != nil {
@@ -282,7 +282,7 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 		if agg.Distinct {
 			return minDistinct(agg, rows, params)
 		}
-		var best interface{}
+		var best any
 		for _, r := range rows {
 			v, err := Eval(agg.Arg, &r, params)
 			if err != nil {
@@ -300,7 +300,7 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 		if agg.Distinct {
 			return maxDistinct(agg, rows, params)
 		}
-		var best interface{}
+		var best any
 		for _, r := range rows {
 			v, err := Eval(agg.Arg, &r, params)
 			if err != nil {
@@ -329,7 +329,7 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 			}
 		}
 		var parts []string
-		seen := make(map[interface{}]bool)
+		seen := make(map[any]bool)
 		for _, r := range rows {
 			v, err := Eval(agg.Arg, &r, params)
 			if err != nil {
@@ -360,8 +360,8 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []interface{}) (interface{}
 
 // sumDistinct computes SUM(DISTINCT col). NULL values are skipped;
 // non-NULL values are deduplicated before summing. REQ000437 (iter-27).
-func sumDistinct(agg *PS.AggregateFunc, rows []Row, params []interface{}) (interface{}, error) {
-	seen := make(map[interface{}]bool)
+func sumDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
+	seen := make(map[any]bool)
 	var sumI int64
 	var sumF float64
 	var seenI, seenF bool
@@ -398,8 +398,8 @@ func sumDistinct(agg *PS.AggregateFunc, rows []Row, params []interface{}) (inter
 
 // avgDistinct computes AVG(DISTINCT col). NULL values are skipped;
 // non-NULL values are deduplicated before averaging. REQ000437 (iter-27).
-func avgDistinct(agg *PS.AggregateFunc, rows []Row, params []interface{}) (interface{}, error) {
-	seen := make(map[interface{}]bool)
+func avgDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
+	seen := make(map[any]bool)
 	var sumF float64
 	var n int64
 	for _, r := range rows {
@@ -430,9 +430,9 @@ func avgDistinct(agg *PS.AggregateFunc, rows []Row, params []interface{}) (inter
 
 // minDistinct computes MIN(DISTINCT col). NULL values are skipped;
 // the minimum of deduplicated non-NULL values is returned. REQ000437 (iter-27).
-func minDistinct(agg *PS.AggregateFunc, rows []Row, params []interface{}) (interface{}, error) {
-	seen := make(map[interface{}]bool)
-	var best interface{}
+func minDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
+	seen := make(map[any]bool)
+	var best any
 	for _, r := range rows {
 		v, err := Eval(agg.Arg, &r, params)
 		if err != nil {
@@ -454,9 +454,9 @@ func minDistinct(agg *PS.AggregateFunc, rows []Row, params []interface{}) (inter
 
 // maxDistinct computes MAX(DISTINCT col). NULL values are skipped;
 // the maximum of deduplicated non-NULL values is returned. REQ000437 (iter-27).
-func maxDistinct(agg *PS.AggregateFunc, rows []Row, params []interface{}) (interface{}, error) {
-	seen := make(map[interface{}]bool)
-	var best interface{}
+func maxDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
+	seen := make(map[any]bool)
+	var best any
 	for _, r := range rows {
 		v, err := Eval(agg.Arg, &r, params)
 		if err != nil {

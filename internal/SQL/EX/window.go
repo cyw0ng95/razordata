@@ -16,10 +16,10 @@ type WindowOperator struct {
 	args     []PS.Expr
 	cols     []string
 	rows     []Row
-	results  []interface{}
+	results  []any
 	idx      int
 	outCols  []string
-	outData  []interface{}
+	outData  []any
 }
 
 // NewWindowOperator creates a window operator.
@@ -54,7 +54,7 @@ func (w *WindowOperator) Next(ctx context.Context) (Row, error) {
 	}
 	w.outData = w.outData[:0]
 	if cap(w.outData) < len(w.cols)+1 {
-		w.outData = make([]interface{}, len(w.cols)+1)
+		w.outData = make([]any, len(w.cols)+1)
 	} else {
 		w.outData = w.outData[:len(w.cols)+1]
 	}
@@ -86,7 +86,7 @@ func (w *WindowOperator) materialize(ctx context.Context) error {
 		return nil
 	}
 
-	w.results = make([]interface{}, len(w.rows))
+	w.results = make([]any, len(w.rows))
 	partitions := w.partitionRows()
 	for _, part := range partitions {
 		w.sortPartition(part)
@@ -310,7 +310,7 @@ func evalBoundOffset(offset PS.Expr) int {
 }
 
 // aggOverFrame computes an aggregate over the given rows.
-func (w *WindowOperator) aggOverFrame(funcName string, frameRows []int) interface{} {
+func (w *WindowOperator) aggOverFrame(funcName string, frameRows []int) any {
 	if len(frameRows) == 0 {
 		return nil
 	}
@@ -408,7 +408,7 @@ func (w *WindowOperator) computeRank(indices []int, dense bool) {
 
 func (w *WindowOperator) computeLagLead(indices []int, defaultOffset int) {
 	n := len(w.args)
-	defaultVal := interface{}(nil)
+	defaultVal := any(nil)
 	offset := defaultOffset
 
 	// REQ000290: read offset from args[1] if provided
@@ -447,6 +447,6 @@ func (w *WindowOperator) computeLagLead(indices []int, defaultOffset int) {
 }
 
 // evalWindowFunc evaluates a WindowFunc expression.
-func evalWindowFunc(e *PS.WindowFunc, row *Row, params []interface{}) (interface{}, error) {
+func evalWindowFunc(e *PS.WindowFunc, row *Row, params []any) (any, error) {
 	return nil, fmt.Errorf("window function %s requires WindowOperator execution", e.Name)
 }

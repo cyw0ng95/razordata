@@ -8,7 +8,7 @@ func TestJSON_Extract(t *testing.T) {
 	tests := []struct {
 		jsonStr string
 		path    string
-		want    interface{}
+		want    any
 	}{
 		{`{"a": 1, "b": "hello"}`, "a", float64(1)},
 		{`{"a": 1, "b": "hello"}`, "b", "hello"},
@@ -78,7 +78,7 @@ func TestJSON_Valid(t *testing.T) {
 }
 
 func TestJSON_Array(t *testing.T) {
-	got, err := jsonArray([]interface{}{int64(1), "two", float64(3.0)})
+	got, err := jsonArray([]any{int64(1), "two", float64(3.0)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestJSON_Array(t *testing.T) {
 }
 
 func TestJSON_Object(t *testing.T) {
-	got, err := jsonObject([]interface{}{"a", int64(1), "b", "two"})
+	got, err := jsonObject([]any{"a", int64(1), "b", "two"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,13 +150,13 @@ func TestJSON_NestedExtract(t *testing.T) {
 func TestJSON_EvalFunc(t *testing.T) {
 	tests := []struct {
 		name string
-		args []interface{}
-		want interface{}
+		args []any
+		want any
 	}{
-		{"JSON_VALID", []interface{}{`{"a":1}`}, int64(1)},
-		{"JSON_VALID", []interface{}{`bad`}, int64(0)},
-		{"JSON_TYPE", []interface{}{`"hi"`}, "text"},
-		{"JSON_TYPE", []interface{}{`[1]`}, "array"},
+		{"JSON_VALID", []any{`{"a":1}`}, int64(1)},
+		{"JSON_VALID", []any{`bad`}, int64(0)},
+		{"JSON_TYPE", []any{`"hi"`}, "text"},
+		{"JSON_TYPE", []any{`[1]`}, "array"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

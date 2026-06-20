@@ -8,10 +8,10 @@ import (
 
 func TestOffset_Operator(t *testing.T) {
 	src := &sliceOp{rows: []Row{
-		{Cols: []string{"a"}, Data: []interface{}{int64(1)}},
-		{Cols: []string{"a"}, Data: []interface{}{int64(2)}},
-		{Cols: []string{"a"}, Data: []interface{}{int64(3)}},
-		{Cols: []string{"a"}, Data: []interface{}{int64(4)}},
+		{Cols: []string{"a"}, Data: []any{int64(1)}},
+		{Cols: []string{"a"}, Data: []any{int64(2)}},
+		{Cols: []string{"a"}, Data: []any{int64(3)}},
+		{Cols: []string{"a"}, Data: []any{int64(4)}},
 	}}
 	off := NewOffset(src, 2)
 	defer off.Close()
@@ -40,7 +40,7 @@ func TestOffset_Operator(t *testing.T) {
 
 func TestOffset_ExceedingRows(t *testing.T) {
 	src := &sliceOp{rows: []Row{
-		{Cols: []string{"a"}, Data: []interface{}{int64(1)}},
+		{Cols: []string{"a"}, Data: []any{int64(1)}},
 	}}
 	off := NewOffset(src, 5)
 	defer off.Close()

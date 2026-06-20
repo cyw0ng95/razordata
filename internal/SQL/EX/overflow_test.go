@@ -8,7 +8,7 @@ import (
 func TestNumericOverflow(t *testing.T) {
 	tests := []struct {
 		sql  string
-		want interface{}
+		want any
 	}{
 		// Normal cases
 		{"SELECT 5 * 3", int64(15)},

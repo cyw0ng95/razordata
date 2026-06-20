@@ -8,7 +8,7 @@ import (
 func TestCoreFunctions_Eval(t *testing.T) {
 	tests := []struct {
 		sql  string
-		want interface{}
+		want any
 	}{
 		{"SELECT CHAR(65, 66, 67)", "ABC"},
 		{"SELECT CONCAT('Hello', ' ', 'World')", "Hello World"},
@@ -99,7 +99,7 @@ func TestZeroblob_Eval(t *testing.T) {
 func TestCoreFunctions_Batch2(t *testing.T) {
 	tests := []struct {
 		sql  string
-		want interface{}
+		want any
 	}{
 		// glob
 		{"SELECT GLOB('*.txt', 'hello.txt')", int64(1)},

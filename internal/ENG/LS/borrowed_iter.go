@@ -64,7 +64,7 @@ func (bb *borrowedBuffer) Deregister() {
 
 // borrowedPagePool provides reusable borrowedBuffer instances.
 var borrowedPagePool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return &borrowedBuffer{}
 	},
 }

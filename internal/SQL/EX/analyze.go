@@ -64,7 +64,7 @@ func (a *Analyze) Close() error { return nil }
 
 func (a *Analyze) RowsAffected() int64 { return a.rowsAff }
 
-func (a *Analyze) WithParams(p []interface{}) Operator { return a }
+func (a *Analyze) WithParams(p []any) Operator { return a }
 
 // analyzeTable performs reservoir sampling on a single table
 // and builds column statistics. REQ000258.
@@ -299,4 +299,4 @@ func (v *Vacuum) Close() error { return nil }
 
 func (v *Vacuum) RowsAffected() int64 { return v.rowsAff }
 
-func (v *Vacuum) WithParams(p []interface{}) Operator { return v }
+func (v *Vacuum) WithParams(p []any) Operator { return v }

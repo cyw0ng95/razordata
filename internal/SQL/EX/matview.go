@@ -40,7 +40,7 @@ func (c *CreateMatViewOperator) Next(ctx context.Context) (Row, error) {
 
 	return Row{
 		Cols: []string{"result"},
-		Data: []interface{}{"materialized view created"},
+		Data: []any{"materialized view created"},
 	}, nil
 }
 
@@ -108,7 +108,7 @@ func (r *RefreshMatViewOperator) Next(ctx context.Context) (Row, error) {
 
 	return Row{
 		Cols: []string{"result"},
-		Data: []interface{}{fmt.Sprintf("refreshed, %d rows", len(materializedRows))},
+		Data: []any{fmt.Sprintf("refreshed, %d rows", len(materializedRows))},
 	}, nil
 }
 
@@ -148,7 +148,7 @@ func (d *DropMatViewOperator) Next(_ context.Context) (Row, error) {
 
 	return Row{
 		Cols: []string{"result"},
-		Data: []interface{}{"materialized view dropped"},
+		Data: []any{"materialized view dropped"},
 	}, nil
 }
 

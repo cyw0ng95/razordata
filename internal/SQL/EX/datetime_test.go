@@ -100,14 +100,14 @@ func TestDateDiff(t *testing.T) {
 func TestDateTimeFuncs(t *testing.T) {
 	tests := []struct {
 		name string
-		args []interface{}
+		args []any
 		want string
 	}{
-		{"DATE", []interface{}{"2024-06-15 14:30:00"}, "2024-06-15"},
-		{"TIME", []interface{}{"2024-06-15 14:30:00"}, "14:30:00"},
-		{"DATETIME", []interface{}{"2024-06-15"}, "2024-06-15 00:00:00"},
-		{"STRFTIME", []interface{}{"%Y-%m", "2024-06-15 14:30:00"}, "2024-06"},
-		{"STRFTIME", []interface{}{"%H:%M", "2024-06-15 14:30:00"}, "14:30"},
+		{"DATE", []any{"2024-06-15 14:30:00"}, "2024-06-15"},
+		{"TIME", []any{"2024-06-15 14:30:00"}, "14:30:00"},
+		{"DATETIME", []any{"2024-06-15"}, "2024-06-15 00:00:00"},
+		{"STRFTIME", []any{"%Y-%m", "2024-06-15 14:30:00"}, "2024-06"},
+		{"STRFTIME", []any{"%H:%M", "2024-06-15 14:30:00"}, "14:30"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -137,7 +137,7 @@ func TestExtractFunc(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.field, func(t *testing.T) {
-			got, err := evalDateTimeFunc("EXTRACT", []interface{}{tt.field, ts})
+			got, err := evalDateTimeFunc("EXTRACT", []any{tt.field, ts})
 			if err != nil {
 				t.Fatalf("EXTRACT(%s) error: %v", tt.field, err)
 			}
@@ -201,7 +201,7 @@ func TestDateTimeArithmetic(t *testing.T) {
 
 func TestToTime(t *testing.T) {
 	tests := []struct {
-		input interface{}
+		input any
 		want  bool
 	}{
 		{"2024-06-15", true},

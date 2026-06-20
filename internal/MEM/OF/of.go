@@ -72,7 +72,7 @@ func NewOffHeap() *OffHeap {
 	oh := &OffHeap{}
 	for i := 0; i < classCount; i++ {
 		size := sizeClasses[i]
-		oh.pools[i].New = func() interface{} {
+		oh.pools[i].New = func() any {
 			oh.misses.Add(1)
 			return make([]byte, size)
 		}

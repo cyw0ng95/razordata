@@ -8,7 +8,7 @@ import (
 func TestOperators_Bitwise(t *testing.T) {
 	tests := []struct {
 		sql  string
-		want interface{}
+		want any
 	}{
 		{"SELECT 5 & 3", int64(1)},
 		{"SELECT 5 | 3", int64(7)},

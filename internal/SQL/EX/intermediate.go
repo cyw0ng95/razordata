@@ -10,7 +10,7 @@ import (
 type Filter struct {
 	child     Operator
 	predicate PS.Expr
-	params    []interface{}
+	params    []any
 	cs        *CodegenState
 }
 
@@ -29,7 +29,7 @@ func NewFilter(child Operator, predicate PS.Expr) *Filter {
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
-func (f *Filter) WithParams(p []interface{}) Operator {
+func (f *Filter) WithParams(p []any) Operator {
 	f.params = p
 	return f
 }
@@ -63,7 +63,7 @@ func (f *Filter) Close() error {
 type Project struct {
 	child  Operator
 	cols   []PS.Expr
-	params []interface{}
+	params []any
 	cs     *CodegenState
 }
 
@@ -78,7 +78,7 @@ func NewProject(child Operator, cols []PS.Expr) *Project {
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
-func (p *Project) WithParams(p2 []interface{}) Operator {
+func (p *Project) WithParams(p2 []any) Operator {
 	p.params = p2
 	return p
 }
@@ -140,7 +140,7 @@ type Sort struct {
 	buf          []Row
 	pos          int
 	materialized bool
-	params       []interface{}
+	params       []any
 	cs           *CodegenState
 }
 
@@ -152,7 +152,7 @@ func NewSort(child Operator, keys []PS.OrderItem) *Sort {
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
-func (s *Sort) WithParams(p []interface{}) Operator {
+func (s *Sort) WithParams(p []any) Operator {
 	s.params = p
 	return s
 }
@@ -175,11 +175,11 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 		// inside the comparator which does O(N log N * K).
 		type sortRow struct {
 			row  Row
-			keys []interface{}
+			keys []any
 		}
 		sorted := make([]sortRow, len(s.buf))
 		for i, r := range s.buf {
-			sk := make([]interface{}, len(s.keys))
+			sk := make([]any, len(s.keys))
 			for j, k := range s.keys {
 				v, err := Eval(k.Expr, &r, s.params)
 				if err != nil {
@@ -232,7 +232,7 @@ type Limit struct {
 	child  Operator
 	limit  int64
 	seen   int64
-	params []interface{}
+	params []any
 	cs     *CodegenState
 }
 
@@ -247,7 +247,7 @@ func NewLimit(child Operator, n int64) *Limit {
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
-func (l *Limit) WithParams(p []interface{}) Operator {
+func (l *Limit) WithParams(p []any) Operator {
 	l.params = p
 	return l
 }
@@ -276,7 +276,7 @@ type Offset struct {
 	child   Operator
 	offset  int64
 	skipped int64
-	params  []interface{}
+	params  []any
 }
 
 // Child returns the offset's child operator.
@@ -290,7 +290,7 @@ func NewOffset(child Operator, n int64) *Offset {
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
-func (o *Offset) WithParams(p []interface{}) Operator {
+func (o *Offset) WithParams(p []any) Operator {
 	o.params = p
 	return o
 }

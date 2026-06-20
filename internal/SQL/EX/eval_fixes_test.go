@@ -240,7 +240,7 @@ func TestEval_OctetLength(t *testing.T) {
 // formatValue renders a row value as a string for comparison in
 // tests. nil becomes "<nil>", booleans become "true"/"false",
 // numerics use their default formatting.
-func formatValue(v interface{}) string {
+func formatValue(v any) string {
 	if v == nil {
 		return "<nil>"
 	}
@@ -253,7 +253,7 @@ func formatValue(v interface{}) string {
 	return fmtSprint(v)
 }
 
-func fmtSprint(v interface{}) string {
+func fmtSprint(v any) string {
 	if s, ok := v.(string); ok {
 		return s
 	}

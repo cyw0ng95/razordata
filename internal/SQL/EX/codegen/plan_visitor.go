@@ -30,7 +30,7 @@ type CodegenExpr struct {
 	Op        int
 	LeftCol   string
 	RightCol  string
-	LitVal    interface{}
+	LitVal    any
 	LitType   LX.TokenType
 	IsLiteral bool
 }

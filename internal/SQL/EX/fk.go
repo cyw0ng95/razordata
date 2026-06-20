@@ -8,13 +8,13 @@ import (
 
 // validateForeignKeyInsert checks that all FK-referenced rows exist
 // in the referenced table. REQ000126.
-func validateForeignKeyInsert(schema *storeSchema, row []interface{}, store Store) error {
+func validateForeignKeyInsert(schema *storeSchema, row []any, store Store) error {
 	if store == nil || schema == nil {
 		return nil
 	}
 	for _, fk := range schema.foreignKeys {
 		// Extract local column values
-		localVals := make([]interface{}, len(fk.Columns))
+		localVals := make([]any, len(fk.Columns))
 		allNull := true
 		for i, col := range fk.Columns {
 			idx := -1
@@ -46,7 +46,7 @@ func validateForeignKeyInsert(schema *storeSchema, row []interface{}, store Stor
 
 // validateForeignKeyDelete checks if any child rows reference the
 // row being deleted. For CASCADE, it deletes child rows. REQ000126.
-func validateForeignKeyDelete(table string, row []interface{}, schema *storeSchema, store Store) error {
+func validateForeignKeyDelete(table string, row []any, schema *storeSchema, store Store) error {
 	if store == nil || schema == nil {
 		return nil
 	}
@@ -58,7 +58,7 @@ func validateForeignKeyDelete(table string, row []interface{}, schema *storeSche
 				continue
 			}
 			// Extract the referenced column values from the deleted row
-			refVals := make([]interface{}, len(fk.RefColumns))
+			refVals := make([]any, len(fk.RefColumns))
 			for i, refCol := range fk.RefColumns {
 				idx := -1
 				for j, c := range schema.cols {
@@ -97,7 +97,7 @@ func validateForeignKeyDelete(table string, row []interface{}, schema *storeSche
 
 // checkReferencedRowExists checks if a row with the given values exists
 // in the referenced table.
-func checkReferencedRowExists(refTable string, refCols []string, values []interface{}, store Store) error {
+func checkReferencedRowExists(refTable string, refCols []string, values []any, store Store) error {
 	refSchema, _ := schemaFor(refTable)
 	if refSchema == nil {
 		return nil // table not registered, skip check
@@ -121,7 +121,7 @@ func checkReferencedRowExists(refTable string, refCols []string, values []interf
 
 // checkChildRowExists checks if any row in the child table references
 // the given values.
-func checkChildRowExists(childCols []string, refVals []interface{}, childSchema *storeSchema, store Store) (bool, error) {
+func checkChildRowExists(childCols []string, refVals []any, childSchema *storeSchema, store Store) (bool, error) {
 	if store == nil {
 		return false, nil
 	}
@@ -142,7 +142,7 @@ func checkChildRowExists(childCols []string, refVals []interface{}, childSchema 
 }
 
 // checkMultiColumnFK checks a multi-column FK by scanning the referenced table.
-func checkMultiColumnFK(refTable string, refCols []string, values []interface{}, store Store) error {
+func checkMultiColumnFK(refTable string, refCols []string, values []any, store Store) error {
 	refSchema, _ := schemaFor(refTable)
 	if refSchema == nil {
 		return nil
@@ -186,7 +186,7 @@ func checkMultiColumnFK(refTable string, refCols []string, values []interface{},
 }
 
 // encodeFKLookup builds a key for FK validation lookups.
-func encodeFKLookup(table, col string, val interface{}) []byte {
+func encodeFKLookup(table, col string, val any) []byte {
 	prefix := tablePrefix(table)
 	// For now, use a simple encoding
 	_ = prefix
@@ -199,14 +199,14 @@ func encodeFKLookup(table, col string, val interface{}) []byte {
 // validateForeignKeyInsert. When an UPDATE changes the values of FK
 // columns, the new values must still point at a valid referenced row.
 // REQ000513.
-func validateForeignKeyUpdateInMemory(schema *storeSchema, oldRow, newRow []interface{}) error {
+func validateForeignKeyUpdateInMemory(schema *storeSchema, oldRow, newRow []any) error {
 	if schema == nil || len(schema.foreignKeys) == 0 {
 		return nil
 	}
 	for _, fk := range schema.foreignKeys {
 		// Build old and new local-col value slices.
-		oldVals := make([]interface{}, len(fk.Columns))
-		newVals := make([]interface{}, len(fk.Columns))
+		oldVals := make([]any, len(fk.Columns))
+		newVals := make([]any, len(fk.Columns))
 		_, newAllNull := true, true
 		for i, col := range fk.Columns {
 			idx := -1
@@ -251,7 +251,7 @@ func validateForeignKeyUpdateInMemory(schema *storeSchema, oldRow, newRow []inte
 
 // validateForeignKeyDeleteInMemory is the in-memory analogue of
 // validateForeignKeyDelete. REQ000514.
-func validateForeignKeyDeleteInMemory(table string, row []interface{}, schema *storeSchema) error {
+func validateForeignKeyDeleteInMemory(table string, row []any, schema *storeSchema) error {
 	if schema == nil {
 		return nil
 	}
@@ -263,7 +263,7 @@ func validateForeignKeyDeleteInMemory(table string, row []interface{}, schema *s
 				continue
 			}
 			// Extract referenced column values from the deleted row.
-			refVals := make([]interface{}, len(fk.RefColumns))
+			refVals := make([]any, len(fk.RefColumns))
 			for i, refCol := range fk.RefColumns {
 				idx := -1
 				for j, c := range schema.cols {
@@ -296,7 +296,7 @@ func validateForeignKeyDeleteInMemory(table string, row []interface{}, schema *s
 
 // rowExistsInMemory checks whether the referenced table has a row
 // whose FK-target columns equal the given values.
-func rowExistsInMemory(tableName string, cols []string, vals []interface{}) bool {
+func rowExistsInMemory(tableName string, cols []string, vals []any) bool {
 	tablesMu.RLock()
 	defer tablesMu.RUnlock()
 	rows := tables[tableName]
@@ -329,7 +329,7 @@ func rowExistsInMemory(tableName string, cols []string, vals []interface{}) bool
 // rowInTableMatches returns true if any row in the given schema's
 // table has values matching the supplied values in the given columns.
 // Caller must hold tablesMu.
-func rowInTableMatches(ss *storeSchema, cols []string, vals []interface{}) bool {
+func rowInTableMatches(ss *storeSchema, cols []string, vals []any) bool {
 	rows := tables[tableNameFor(ss)]
 	for _, r := range rows {
 		match := true
