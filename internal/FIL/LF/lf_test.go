@@ -62,7 +62,7 @@ func TestSegmentNaming(t *testing.T) {
 	}
 }
 
-func TestGetSegment(t *testing.T) {
+func TestSegment(t *testing.T) {
 	tmp := t.TempDir()
 	sm, err := New(tmp)
 	if err != nil {
@@ -77,15 +77,15 @@ func TestGetSegment(t *testing.T) {
 	}
 	h1.Close()
 
-	// GetSegment should find it.
-	h2, err := sm.GetSegment(5)
+	// Segment should find it.
+	h2, err := sm.Segment(5)
 	if err != nil {
-		t.Fatalf("GetSegment: %v", err)
+		t.Fatalf("Segment: %v", err)
 	}
 	h2.Close()
 }
 
-func TestGetSegmentNotFound(t *testing.T) {
+func TestSegmentNotFound(t *testing.T) {
 	tmp := t.TempDir()
 	sm, err := New(tmp)
 	if err != nil {
@@ -93,7 +93,7 @@ func TestGetSegmentNotFound(t *testing.T) {
 	}
 	defer sm.Close()
 
-	_, err = sm.GetSegment(99)
+	_, err = sm.Segment(99)
 	if err != ErrSegmentNotFound {
 		t.Fatalf("expected ErrSegmentNotFound, got %v", err)
 	}
@@ -165,12 +165,12 @@ func TestRefcount(t *testing.T) {
 		t.Fatalf("expected refs=1 after CreateSegment, got %d", h1.Refs.Load())
 	}
 
-	h2, err := sm.GetSegment(7)
+	h2, err := sm.Segment(7)
 	if err != nil {
-		t.Fatalf("GetSegment: %v", err)
+		t.Fatalf("Segment: %v", err)
 	}
 	if h2.Refs.Load() != 2 {
-		t.Fatalf("expected refs=2 after GetSegment, got %d", h2.Refs.Load())
+		t.Fatalf("expected refs=2 after Segment, got %d", h2.Refs.Load())
 	}
 
 	h2.Close()
@@ -254,7 +254,7 @@ func TestCloseWithStaleFD(t *testing.T) {
 	}
 }
 
-func TestGetSegmentReopenStale(t *testing.T) {
+func TestSegmentReopenStale(t *testing.T) {
 	tmp := t.TempDir()
 	sm, err := New(tmp)
 	if err != nil {
@@ -268,9 +268,9 @@ func TestGetSegmentReopenStale(t *testing.T) {
 	}
 	h1.Close()
 
-	h2, err := sm.GetSegment(6)
+	h2, err := sm.Segment(6)
 	if err != nil {
-		t.Fatalf("GetSegment after stale close: %v", err)
+		t.Fatalf("Segment after stale close: %v", err)
 	}
 	if h2.FD < 0 {
 		t.Fatalf("FD should be reopened, got %d", h2.FD)
@@ -278,7 +278,7 @@ func TestGetSegmentReopenStale(t *testing.T) {
 	h2.Close()
 }
 
-func TestGetSegmentCorruptDir(t *testing.T) {
+func TestSegmentCorruptDir(t *testing.T) {
 	tmp := t.TempDir()
 	sm, err := New(tmp)
 	if err != nil {
@@ -295,7 +295,7 @@ func TestGetSegmentCorruptDir(t *testing.T) {
 		t.Fatalf("MkdirAll corrupt: %v", err)
 	}
 
-	_, err = sm.GetSegment(999)
+	_, err = sm.Segment(999)
 	if err != ErrCorruptSegment {
 		t.Fatalf("expected ErrCorruptSegment, got %v", err)
 	}
@@ -449,8 +449,8 @@ func TestCreateSegmentWithLogger(t *testing.T) {
 	fh2.Close()
 }
 
-// TestGetSegmentFromPool tests GetSegment when segment is in pool.
-func TestGetSegmentFromPool(t *testing.T) {
+// TestSegmentFromPool tests Segment when segment is in pool.
+func TestSegmentFromPool(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
 
@@ -467,9 +467,9 @@ func TestGetSegmentFromPool(t *testing.T) {
 	}
 
 	// Get same segment - should come from pool
-	fh2, err := sm.GetSegment(5)
+	fh2, err := sm.Segment(5)
 	if err != nil {
-		t.Fatalf("GetSegment: %v", err)
+		t.Fatalf("Segment: %v", err)
 	}
 
 	if fh != fh2 {
@@ -480,8 +480,8 @@ func TestGetSegmentFromPool(t *testing.T) {
 	fh.Close()
 }
 
-// TestGetSegmentReopenClosed tests GetSegment reopens a closed file.
-func TestGetSegmentReopenClosed(t *testing.T) {
+// TestSegmentReopenClosed tests Segment reopens a closed file.
+func TestSegmentReopenClosed(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
 
@@ -498,16 +498,16 @@ func TestGetSegmentReopenClosed(t *testing.T) {
 	}
 	fh.Close()
 
-	// GetSegment should reopen it
-	fh2, err := sm.GetSegment(10)
+	// Segment should reopen it
+	fh2, err := sm.Segment(10)
 	if err != nil {
-		t.Fatalf("GetSegment after close: %v", err)
+		t.Fatalf("Segment after close: %v", err)
 	}
 	fh2.Close()
 }
 
-// TestGetSegmentNotExist tests GetSegment for non-existent segment.
-func TestGetSegmentNotExist(t *testing.T) {
+// TestSegmentNotExist tests Segment for non-existent segment.
+func TestSegmentNotExist(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "lf")
 
@@ -517,7 +517,7 @@ func TestGetSegmentNotExist(t *testing.T) {
 	}
 	defer sm.Close()
 
-	_, err = sm.GetSegment(999)
+	_, err = sm.Segment(999)
 	if err != ErrSegmentNotFound {
 		t.Errorf("expected ErrSegmentNotFound, got %v", err)
 	}

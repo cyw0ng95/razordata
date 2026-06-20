@@ -467,7 +467,7 @@ func (p *Planner) estimatePredicateSelectivity(e PS.Expr) float64 {
 		return 0.5
 	}
 
-	stats := p.statsCatalog.GetStatsByName(tableName, col)
+	stats := p.statsCatalog.ColumnStatsByName(tableName, col)
 	if stats == nil {
 		return 0.5
 	}

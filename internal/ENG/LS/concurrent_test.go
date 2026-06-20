@@ -29,7 +29,7 @@ func TestConcurrentWrite_SingleKey(t *testing.T) {
 
 	e.Read([]byte("key1"))
 
-	stats := e.GetStats()
+	stats := e.Stats()
 	if stats.MemtableHits == 0 {
 		t.Fatalf("expected memtable hits after concurrent writes")
 	}
@@ -156,7 +156,7 @@ func TestConcurrentWrite_Stats(t *testing.T) {
 
 	e.Read([]byte("a"))
 
-	stats := e.GetStats()
+	stats := e.Stats()
 	if stats.MemtableHits == 0 {
 		t.Fatal("expected memtable hits")
 	}

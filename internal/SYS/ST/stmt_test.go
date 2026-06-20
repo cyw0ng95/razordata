@@ -132,8 +132,8 @@ func TestStmt_QueryReturnsCols(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows.Cols) != 2 || rows.Cols[0] != "id" || rows.Cols[1] != "name" {
-		t.Errorf("cols = %v, want [id name]", rows.Cols)
+	if len(rows.Cols()) != 2 || rows.Cols()[0] != "id" || rows.Cols()[1] != "name" {
+		t.Errorf("cols = %v, want [id name]", rows.Cols())
 	}
 }
 
@@ -226,11 +226,11 @@ func TestStmt_ParamBinding_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One row expected; the engine returns column metadata in
-	// rows.Cols. We exercise the type-validation pass by binding
+	// rows.Cols(). We exercise the type-validation pass by binding
 	// int64 (which the catalog expects for INTEGER); a string
 	// binding would surface *argTypeError (verified separately).
-	if len(rows.Cols) != 1 || rows.Cols[0] != "name" {
-		t.Errorf("cols = %v, want [name]", rows.Cols)
+	if len(rows.Cols()) != 1 || rows.Cols()[0] != "name" {
+		t.Errorf("cols = %v, want [name]", rows.Cols())
 	}
 }
 

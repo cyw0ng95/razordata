@@ -152,9 +152,9 @@ func (r *replayer) replaySegment(segNum uint64, minLSN uint64) error {
 }
 
 func (r *replayer) forEachRecord(segNum uint64, fn func(rec *wr.LogRecord, recLSN uint64) error) error {
-	fh, err := r.sm.GetSegment(segNum)
+	fh, err := r.sm.Segment(segNum)
 	if err != nil {
-		return fmt.Errorf("rp: GetSegment(%d): %w", segNum, err)
+		return fmt.Errorf("rp: Segment(%d): %w", segNum, err)
 	}
 	defer fh.Close()
 

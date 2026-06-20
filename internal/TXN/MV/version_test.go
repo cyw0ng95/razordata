@@ -98,7 +98,7 @@ func TestVersionChainInsert(t *testing.T) {
 		t.Error("second insert should succeed")
 	}
 
-	head := vc.GetHead()
+	head := vc.Head()
 	if head != node2 {
 		t.Error("head should be node2 (newest)")
 	}
@@ -118,7 +118,7 @@ func TestVersionChainInsertSameKey(t *testing.T) {
 	vc.Insert(node1)
 	vc.Insert(node2)
 
-	head := vc.GetHead()
+	head := vc.Head()
 	if head != node2 {
 		t.Error("head should be node2")
 	}
@@ -280,7 +280,7 @@ func TestVersionChainConcurrency(t *testing.T) {
 
 	wg.Wait()
 
-	head := vc.GetHead()
+	head := vc.Head()
 	if head == nil {
 		t.Fatal("chain head should not be nil")
 	}
@@ -307,7 +307,7 @@ func TestVersionNodeDeleted(t *testing.T) {
 func TestVersionChainEmpty(t *testing.T) {
 	vc := &VersionChain{}
 
-	if vc.GetHead() != nil {
+	if vc.Head() != nil {
 		t.Error("empty chain should have nil head")
 	}
 
@@ -317,18 +317,18 @@ func TestVersionChainEmpty(t *testing.T) {
 	}
 }
 
-func TestVersionChainGetHead(t *testing.T) {
+func TestVersionChainHead(t *testing.T) {
 	arena := newArena()
 	vc := &VersionChain{}
 
-	if vc.GetHead() != nil {
+	if vc.Head() != nil {
 		t.Error("empty chain head should be nil")
 	}
 
 	node := NewVersionNode(arena, 1, 10, []byte("key"), []byte("value"), false)
 	vc.Insert(node)
 
-	if vc.GetHead() != node {
+	if vc.Head() != node {
 		t.Error("head should be the inserted node")
 	}
 }

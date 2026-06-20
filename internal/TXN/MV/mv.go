@@ -21,7 +21,7 @@ func NewMV() *MV {
 	return &MV{}
 }
 
-func (m *MV) GetVersionChain(key []byte) *VersionChain {
+func (m *MV) VersionChain(key []byte) *VersionChain {
 	chain, ok := m.chains.Load(bytesToString(key))
 	if !ok {
 		return nil
@@ -29,18 +29,18 @@ func (m *MV) GetVersionChain(key []byte) *VersionChain {
 	return chain.(*VersionChain)
 }
 
-func (m *MV) GetOrCreateVersionChain(key []byte) *VersionChain {
+func (m *MV) EnsureVersionChain(key []byte) *VersionChain {
 	chainI, _ := m.chains.LoadOrStore(bytesToString(key), &VersionChain{})
 	return chainI.(*VersionChain)
 }
 
 func (m *MV) Insert(key []byte, node *VersionNode) bool {
-	chain := m.GetOrCreateVersionChain(key)
+	chain := m.EnsureVersionChain(key)
 	return chain.Insert(node)
 }
 
 func (m *MV) FindVisible(key []byte, readTS uint64) *VersionNode {
-	chain := m.GetVersionChain(key)
+	chain := m.VersionChain(key)
 	if chain == nil {
 		return nil
 	}

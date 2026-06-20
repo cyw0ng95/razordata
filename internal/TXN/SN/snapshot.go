@@ -63,14 +63,14 @@ func (rv *ReadView) Get(key []byte) ([]byte, error) {
 	}
 	rv.mu.Unlock()
 
-	chain := rv.mv.GetVersionChain(key)
+	chain := rv.mv.VersionChain(key)
 	if chain == nil {
 		return nil, MV.ErrNotFound
 	}
 
-	for node := chain.GetHead(); node != nil; node = node.Next() {
+	for node := chain.Head(); node != nil; node = node.Next() {
 		if node.IsVisible(rv.readTS) {
-			rv.addSnapshot(key, chain.GetHead())
+			rv.addSnapshot(key, chain.Head())
 			if node.Deleted() {
 				return nil, MV.ErrNotFound
 			}

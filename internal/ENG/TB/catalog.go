@@ -310,8 +310,8 @@ func (c *Catalog) GetByID(tableID uint64) (*Entry, error) {
 	return &cp, nil
 }
 
-// GetByName returns the entry for name.
-func (c *Catalog) GetByName(name string) (*Entry, error) {
+// ByName returns the entry for name.
+func (c *Catalog) ByName(name string) (*Entry, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.closed {

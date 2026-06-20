@@ -20,7 +20,7 @@ type Rows struct {
 
 // newRows drains an AP.Rows into a fully materialized slice.
 func newRows(apRows *AP.Rows) *Rows {
-	r := &Rows{columns: apRows.GetCols()}
+	r := &Rows{columns: apRows.Cols()}
 	if apRows == nil {
 		return r
 	}

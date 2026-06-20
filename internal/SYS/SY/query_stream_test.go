@@ -57,7 +57,7 @@ func TestQueryStreaming(t *testing.T) {
 	}
 	defer rows.Close()
 
-	cols := rows.GetCols()
+	cols := rows.Cols()
 	if len(cols) != 2 || cols[0] != "id" || cols[1] != "name" {
 		t.Fatalf("Cols = %v, want [id name]", cols)
 	}

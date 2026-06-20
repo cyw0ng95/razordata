@@ -92,8 +92,8 @@ func (sbp *shardedBufferPool) GetOrInsert(blockID uint64) (*bufferSlot, bool) {
 	return slot, true
 }
 
-// GetSlot returns the slot for the given blockID, or nil if not found.
-func (sbp *shardedBufferPool) GetSlot(blockID uint64) *bufferSlot {
+// Slot returns the slot for the given blockID, or nil if not found.
+func (sbp *shardedBufferPool) Slot(blockID uint64) *bufferSlot {
 	idx := sbp.shardFor(blockID)
 	shard := sbp.shards[idx]
 

@@ -184,8 +184,8 @@ func TestSession_Begin_TxQuery_TxExec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows.Cols) != 1 || rows.Cols[0] != "name" {
-		t.Errorf("tx Query cols = %v", rows.Cols)
+	if len(rows.Cols()) != 1 || rows.Cols()[0] != "name" {
+		t.Errorf("tx Query cols = %v", rows.Cols())
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)

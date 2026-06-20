@@ -126,17 +126,17 @@ func TestArenaRemaining(t *testing.T) {
 }
 
 func TestArenaPool(t *testing.T) {
-	a1 := GetArena()
-	a2 := GetArena()
+	a1 := AcquireArena()
+	a2 := AcquireArena()
 
 	if a1 == nil || a2 == nil {
-		t.Fatal("GetArena should return non-nil arena")
+		t.Fatal("AcquireArena should return non-nil arena")
 	}
 
 	PutArena(a1)
 	PutArena(a2)
 
-	a3 := GetArena()
+	a3 := AcquireArena()
 	if a3 == nil {
 		t.Fatal("should get arena from pool")
 	}
@@ -229,7 +229,7 @@ func TestArena_GCReduction(t *testing.T) {
 // TestArena_ResetOnPoolReturn verifies that PutArena resets
 // both generations. REQ000064.
 func TestArena_ResetOnPoolReturn(t *testing.T) {
-	a := GetArena()
+	a := AcquireArena()
 	// Fill young.
 	a.Alloc(youngSize)
 	// Force promotion.
@@ -240,7 +240,7 @@ func TestArena_ResetOnPoolReturn(t *testing.T) {
 	PutArena(a)
 
 	// Get a new arena from the pool.
-	a2 := GetArena()
+	a2 := AcquireArena()
 	if a2.YoungRemaining() != a2.YoungSize() {
 		t.Error("young should be reset")
 	}
@@ -259,7 +259,7 @@ func TestArena_OldReclaim(t *testing.T) {
 	// Start clean.
 	ReclaimOldGenerations()
 
-	a := GetArena()
+	a := AcquireArena()
 	// Fill young to force promotion.
 	a.Alloc(youngSize)
 	a.Alloc(1)
@@ -361,7 +361,7 @@ func TestArena_PromoteTOCTOU(t *testing.T) {
 func TestArena_OldNotReclaimedWithoutPromotion(t *testing.T) {
 	ReclaimOldGenerations()
 
-	a := GetArena()
+	a := AcquireArena()
 	// Use only young generation — no promotion.
 	mem := a.Alloc(100)
 	if mem == nil {

@@ -99,8 +99,8 @@ func TestTransaction_SavepointAndRollbackTo(t *testing.T) {
 	}
 	// After commit, only id=1 should exist.
 	rows, _ := s.Query(ctx, "SELECT id FROM users ORDER BY id")
-	if len(rows.Cols) != 1 {
-		t.Errorf("cols = %v", rows.Cols)
+	if len(rows.Cols()) != 1 {
+		t.Errorf("cols = %v", rows.Cols())
 	}
 }
 
@@ -154,8 +154,8 @@ func TestTransaction_NestedSavepoint_InnerRollback(t *testing.T) {
 	}
 	// After rollback to sp1: id=1 remains; id=2, id=3 undone.
 	rows, _ := s.Query(ctx, "SELECT id FROM users")
-	if len(rows.Cols) != 1 {
-		t.Errorf("cols = %v", rows.Cols)
+	if len(rows.Cols()) != 1 {
+		t.Errorf("cols = %v", rows.Cols())
 	}
 }
 
@@ -236,7 +236,7 @@ func TestTransaction_OwnWritesVisible(t *testing.T) {
 	if rs == nil {
 		t.Fatal("expected non-nil Rows from own-write SELECT")
 	}
-	if len(rs.Cols) == 0 {
+	if len(rs.Cols()) == 0 {
 		t.Error("expected column metadata from own-write SELECT")
 	}
 	if err := tx.Commit(ctx); err != nil {

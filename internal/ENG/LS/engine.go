@@ -327,7 +327,7 @@ func (e *engine) MayContain(key []byte) bool {
 	return false
 }
 
-func (e *engine) GetStats() ReadStats {
+func (e *engine) Stats() ReadStats {
 	e.statsMu.RLock()
 	defer e.statsMu.RUnlock()
 	return e.stats

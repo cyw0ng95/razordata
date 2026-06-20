@@ -72,8 +72,8 @@ func TestCatalog_Crash_DeleteSurvivesClose(t *testing.T) {
 	if _, err := c2.GetByID(1); !errors.Is(err, ErrCatalogNotFound) {
 		t.Fatalf("GetByID(deleted) = %v, want ErrCatalogNotFound", err)
 	}
-	if _, err := c2.GetByName("a"); !errors.Is(err, ErrCatalogNotFound) {
-		t.Fatalf("GetByName(a) = %v, want ErrCatalogNotFound", err)
+	if _, err := c2.ByName("a"); !errors.Is(err, ErrCatalogNotFound) {
+		t.Fatalf("ByName(a) = %v, want ErrCatalogNotFound", err)
 	}
 	if got, err := c2.GetByID(2); err != nil || got.Name != "b" {
 		t.Fatalf("GetByID(2) = %+v err=%v, want {Name:b} nil", got, err)
@@ -149,12 +149,12 @@ func TestCatalog_Crash_RandomSequence(t *testing.T) {
 		t.Fatalf("Len mismatch: got %d, want %d", c2.Len(), wantCount)
 	}
 	for name, id := range wantNames {
-		got, err := c2.GetByName(name)
+		got, err := c2.ByName(name)
 		if err != nil {
-			t.Fatalf("GetByName(%s) after reopen: %v", name, err)
+			t.Fatalf("ByName(%s) after reopen: %v", name, err)
 		}
 		if got.TableID != id {
-			t.Fatalf("GetByName(%s) = id=%d, want %d", name, got.TableID, id)
+			t.Fatalf("ByName(%s) = id=%d, want %d", name, got.TableID, id)
 		}
 	}
 }

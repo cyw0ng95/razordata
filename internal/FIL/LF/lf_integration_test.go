@@ -32,9 +32,9 @@ func TestSegmentManager_CreateAndGet(t *testing.T) {
 		t.Fatalf("expected %d bytes written, got %d", len(data), n)
 	}
 
-	seg2, err := sm.GetSegment(1)
+	seg2, err := sm.Segment(1)
 	if err != nil {
-		t.Fatalf("GetSegment failed: %v", err)
+		t.Fatalf("Segment failed: %v", err)
 	}
 	defer seg2.Close()
 
@@ -128,15 +128,15 @@ func TestSegmentManager_MultipleSegments(t *testing.T) {
 		t.Fatalf("Pwrite seg2 failed: %v", err)
 	}
 
-	seg1Read, err := sm.GetSegment(1)
+	seg1Read, err := sm.Segment(1)
 	if err != nil {
-		t.Fatalf("GetSegment 1 failed: %v", err)
+		t.Fatalf("Segment 1 failed: %v", err)
 	}
 	defer seg1Read.Close()
 
-	seg2Read, err := sm.GetSegment(2)
+	seg2Read, err := sm.Segment(2)
 	if err != nil {
-		t.Fatalf("GetSegment 2 failed: %v", err)
+		t.Fatalf("Segment 2 failed: %v", err)
 	}
 	defer seg2Read.Close()
 
@@ -186,7 +186,7 @@ func TestSegmentManager_GetNonExistent(t *testing.T) {
 	}
 	defer sm.Close()
 
-	_, err = sm.GetSegment(999)
+	_, err = sm.Segment(999)
 	if err == nil {
 		t.Fatalf("expected error for non-existent segment, got nil")
 	}

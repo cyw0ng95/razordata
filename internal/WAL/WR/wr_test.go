@@ -929,9 +929,9 @@ func TestLSNForEncoding(t *testing.T) {
 // contents. Used by tests to verify Append actually wrote the bytes.
 func mustReadSegment(t *testing.T, sm *lf.SegmentManager, n uint64) []byte {
 	t.Helper()
-	h, err := sm.GetSegment(n)
+	h, err := sm.Segment(n)
 	if err != nil {
-		t.Fatalf("GetSegment(%d): %v", n, err)
+		t.Fatalf("Segment(%d): %v", n, err)
 	}
 	t.Cleanup(func() { _ = h.Close() })
 	var stat unix.Stat_t

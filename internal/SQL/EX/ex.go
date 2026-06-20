@@ -18,9 +18,9 @@ import (
 // and total_changes() eval functions. This avoids an import cycle between
 // EX and SE packages. REQ000385/394/411.
 type SessionCounterAccessor interface {
-	GetChangesCount(sessionID uint64) int64
-	GetLastInsertRowID(sessionID uint64) int64
-	GetTotalChangesCount(sessionID uint64) int64
+	ChangesCount(sessionID uint64) int64
+	LastInsertRowID(sessionID uint64) int64
+	TotalChangesCount(sessionID uint64) int64
 }
 
 var (
@@ -228,8 +228,8 @@ func (e *Executor) ShallowCopy() *Executor {
 // this timestamp. Pass 0 to disable snapshot filtering.
 func (e *Executor) SetSnapshot(ts uint64) { e.snapshotTS = ts }
 
-// GetSnapshot returns the current snapshot timestamp.
-func (e *Executor) GetSnapshot() uint64 { return e.snapshotTS }
+// Snapshot returns the current snapshot timestamp.
+func (e *Executor) Snapshot() uint64 { return e.snapshotTS }
 
 // SetSessionID sets the current session ID for counter access.
 // REQ000385/394/411. Uses atomic store for the global currentSessionID
@@ -240,8 +240,8 @@ func (e *Executor) SetSessionID(id uint64) {
 	currentSessionID.Store(id)
 }
 
-// GetSessionID returns the current session ID.
-func (e *Executor) GetSessionID() uint64 { return e.sessionID }
+// SessionID returns the current session ID.
+func (e *Executor) SessionID() uint64 { return e.sessionID }
 
 // getCurrentSessionID returns the package-level session ID for eval.
 func getCurrentSessionID() uint64 {

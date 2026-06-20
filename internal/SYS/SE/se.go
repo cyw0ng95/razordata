@@ -521,7 +521,7 @@ func init() {
 // delegating to the session state map.
 type sessionStateAccessor struct{}
 
-func (s *sessionStateAccessor) GetChangesCount(sessionID uint64) int64 {
+func (s *sessionStateAccessor) ChangesCount(sessionID uint64) int64 {
 	st, _ := getExistingSessionState(sessionID)
 	if st == nil {
 		return 0
@@ -529,7 +529,7 @@ func (s *sessionStateAccessor) GetChangesCount(sessionID uint64) int64 {
 	return st.changesCount.Load()
 }
 
-func (s *sessionStateAccessor) GetLastInsertRowID(sessionID uint64) int64 {
+func (s *sessionStateAccessor) LastInsertRowID(sessionID uint64) int64 {
 	st, _ := getExistingSessionState(sessionID)
 	if st == nil {
 		return 0
@@ -537,7 +537,7 @@ func (s *sessionStateAccessor) GetLastInsertRowID(sessionID uint64) int64 {
 	return st.lastInsertRowID.Load()
 }
 
-func (s *sessionStateAccessor) GetTotalChangesCount(sessionID uint64) int64 {
+func (s *sessionStateAccessor) TotalChangesCount(sessionID uint64) int64 {
 	st, _ := getExistingSessionState(sessionID)
 	if st == nil {
 		return 0

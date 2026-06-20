@@ -798,7 +798,7 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []any) (any, error) {
 		if acc == nil {
 			return int64(0), nil
 		}
-		return acc.GetChangesCount(getCurrentSessionID()), nil
+		return acc.ChangesCount(getCurrentSessionID()), nil
 	case "LAST_INSERT_ROWID":
 		// REQ000394: last_insert_rowid() returns the rowid of the
 		// last successful INSERT. Takes no args.
@@ -806,7 +806,7 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []any) (any, error) {
 		if acc == nil {
 			return int64(0), nil
 		}
-		return acc.GetLastInsertRowID(getCurrentSessionID()), nil
+		return acc.LastInsertRowID(getCurrentSessionID()), nil
 	case "TOTAL_CHANGES":
 		// REQ000411: total_changes() returns cumulative rows modified
 		// since connection open. Takes no args.
@@ -814,7 +814,7 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []any) (any, error) {
 		if acc == nil {
 			return int64(0), nil
 		}
-		return acc.GetTotalChangesCount(getCurrentSessionID()), nil
+		return acc.TotalChangesCount(getCurrentSessionID()), nil
 	default:
 		if isDateTimeFunc(e.Name) {
 			args := make([]any, len(e.Args))

@@ -12,24 +12,24 @@ func TestNewMV(t *testing.T) {
 	}
 }
 
-func TestMVGetVersionChain(t *testing.T) {
+func TestMVVersionChain(t *testing.T) {
 	mv := NewMV()
 
-	chain := mv.GetVersionChain([]byte("nonexistent"))
+	chain := mv.VersionChain([]byte("nonexistent"))
 	if chain != nil {
 		t.Error("expected nil for nonexistent key")
 	}
 }
 
-func TestMVGetOrCreateVersionChain(t *testing.T) {
+func TestMVEnsureVersionChain(t *testing.T) {
 	mv := NewMV()
 
-	chain1 := mv.GetOrCreateVersionChain([]byte("key1"))
+	chain1 := mv.EnsureVersionChain([]byte("key1"))
 	if chain1 == nil {
 		t.Fatal("expected non-nil chain")
 	}
 
-	chain2 := mv.GetOrCreateVersionChain([]byte("key1"))
+	chain2 := mv.EnsureVersionChain([]byte("key1"))
 	if chain2 != chain1 {
 		t.Error("expected same chain for same key")
 	}
@@ -45,12 +45,12 @@ func TestMVInsert(t *testing.T) {
 		t.Error("expected insert to succeed")
 	}
 
-	chain := mv.GetVersionChain([]byte("key"))
+	chain := mv.VersionChain([]byte("key"))
 	if chain == nil {
 		t.Fatal("expected chain after insert")
 	}
 
-	head := chain.GetHead()
+	head := chain.Head()
 	if head != node {
 		t.Error("expected head to be inserted node")
 	}
@@ -62,7 +62,7 @@ func TestMVFindVisible(t *testing.T) {
 
 	node := NewVersionNode(arena, 1, 10, []byte("key"), []byte("value"), false)
 	mv.Insert([]byte("key"), node)
-	chain := mv.GetVersionChain([]byte("key"))
+	chain := mv.VersionChain([]byte("key"))
 	chain.Commit(node, 15)
 
 	// At readTS 12: beginTS=10 < 12, endTS=15 >= 12 → visible
@@ -93,8 +93,8 @@ func TestMVMultipleKeys(t *testing.T) {
 	mv.Insert([]byte("key1"), node1)
 	mv.Insert([]byte("key2"), node2)
 
-	chain1 := mv.GetVersionChain([]byte("key1"))
-	chain2 := mv.GetVersionChain([]byte("key2"))
+	chain1 := mv.VersionChain([]byte("key1"))
+	chain2 := mv.VersionChain([]byte("key2"))
 	chain1.Commit(node1, 15)
 	chain2.Commit(node2, 25)
 
@@ -149,7 +149,7 @@ func TestMVVersionNodeCommit(t *testing.T) {
 	node := NewVersionNode(arena, 1, 10, []byte("key"), []byte("value"), false)
 	mv.Insert([]byte("key"), node)
 
-	chain := mv.GetVersionChain([]byte("key"))
+	chain := mv.VersionChain([]byte("key"))
 	if !chain.Commit(node, 100) {
 		t.Error("expected commit to succeed")
 	}

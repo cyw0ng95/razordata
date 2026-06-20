@@ -92,11 +92,11 @@ func (c *catalog) DropTable(tableID uint64) error {
 	return nil
 }
 
-func (c *catalog) GetTable(tableID uint64) (*sc.TableSchema, error) {
+func (c *catalog) Table(tableID uint64) (*sc.TableSchema, error) {
 	return c.registry.Get(tableID)
 }
 
-func (c *catalog) GetTableByName(name string) ([]byte, bool) {
+func (c *catalog) TableByName(name string) ([]byte, bool) {
 	return c.index.Find([]byte(name))
 }
 

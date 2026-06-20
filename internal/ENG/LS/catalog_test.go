@@ -59,12 +59,12 @@ func TestCatalog_PutGetDelete(t *testing.T) {
 		if got.Name != e.Name || got.CreateSQL != e.CreateSQL {
 			t.Fatalf("GetByID(%d) = %+v, want %+v", e.TableID, *got, e)
 		}
-		gotByName, err := c.GetByName(e.Name)
+		gotByName, err := c.ByName(e.Name)
 		if err != nil {
-			t.Fatalf("GetByName(%q): %v", e.Name, err)
+			t.Fatalf("ByName(%q): %v", e.Name, err)
 		}
 		if gotByName.TableID != e.TableID {
-			t.Fatalf("GetByName(%q) = id=%d, want %d", e.Name, gotByName.TableID, e.TableID)
+			t.Fatalf("ByName(%q) = id=%d, want %d", e.Name, gotByName.TableID, e.TableID)
 		}
 	}
 	if err := c.Delete(want[1].TableID); err != nil {
@@ -76,8 +76,8 @@ func TestCatalog_PutGetDelete(t *testing.T) {
 	if _, err := c.GetByID(want[1].TableID); !errors.Is(err, ErrCatalogNotFound) {
 		t.Fatalf("GetByID(deleted) = %v, want ErrCatalogNotFound", err)
 	}
-	if _, err := c.GetByName(want[1].Name); !errors.Is(err, ErrCatalogNotFound) {
-		t.Fatalf("GetByName(deleted) = %v, want ErrCatalogNotFound", err)
+	if _, err := c.ByName(want[1].Name); !errors.Is(err, ErrCatalogNotFound) {
+		t.Fatalf("ByName(deleted) = %v, want ErrCatalogNotFound", err)
 	}
 }
 
@@ -283,9 +283,9 @@ func TestCatalog_PutStatsRollback(t *testing.T) {
 	}
 
 	// Verify in-memory stats are unchanged
-	got := c.GetStats(1, "a")
+	got := c.ColumnStats(1, "a")
 	if got == nil {
-		t.Fatal("GetStats returned nil after rollback")
+		t.Fatal("ColumnStats returned nil after rollback")
 	}
 	if got.DistinctCount != originalStats.DistinctCount {
 		t.Fatalf("DistinctCount = %d, want %d", got.DistinctCount, originalStats.DistinctCount)
@@ -334,18 +334,18 @@ func TestCatalog_PutStatsRollbackNewEntry(t *testing.T) {
 	}
 
 	// Column "a" stats must survive
-	got := c.GetStats(1, "a")
+	got := c.ColumnStats(1, "a")
 	if got == nil {
-		t.Fatal("GetStats('a') returned nil after rollback")
+		t.Fatal("ColumnStats('a') returned nil after rollback")
 	}
 	if got.DistinctCount != 10 {
 		t.Fatalf("DistinctCount = %d, want 10", got.DistinctCount)
 	}
 
 	// Column "b" must not exist in stats
-	gotB := c.GetStats(1, "b")
+	gotB := c.ColumnStats(1, "b")
 	if gotB != nil {
-		t.Fatal("GetStats('b') should be nil after rollback")
+		t.Fatal("ColumnStats('b') should be nil after rollback")
 	}
 }
 
@@ -385,8 +385,8 @@ func TestCatalog_PutRollbackAfterFlushFailure(t *testing.T) {
 	if _, err := c.GetByID(2); !errors.Is(err, ErrCatalogNotFound) {
 		t.Errorf("GetByID(2) = %v, want ErrCatalogNotFound", err)
 	}
-	if _, err := c.GetByName("t2"); !errors.Is(err, ErrCatalogNotFound) {
-		t.Errorf("GetByName(t2) = %v, want ErrCatalogNotFound", err)
+	if _, err := c.ByName("t2"); !errors.Is(err, ErrCatalogNotFound) {
+		t.Errorf("ByName(t2) = %v, want ErrCatalogNotFound", err)
 	}
 	got, err := c.GetByID(1)
 	if err != nil {
@@ -447,15 +447,15 @@ func TestCatalog_GetIndexNotFound(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	if _, err := c.GetIndex(1, "nonexistent"); !errors.Is(err, ErrCatalogNotFound) {
-		t.Errorf("GetIndex(nonexistent name) = %v, want ErrCatalogNotFound", err)
+	if _, err := c.Index(1, "nonexistent"); !errors.Is(err, ErrCatalogNotFound) {
+		t.Errorf("Index(nonexistent name) = %v, want ErrCatalogNotFound", err)
 	}
-	if _, err := c.GetIndex(999, "any"); !errors.Is(err, ErrCatalogNotFound) {
-		t.Errorf("GetIndex(non-existent table) = %v, want ErrCatalogNotFound", err)
+	if _, err := c.Index(999, "any"); !errors.Is(err, ErrCatalogNotFound) {
+		t.Errorf("Index(non-existent table) = %v, want ErrCatalogNotFound", err)
 	}
 }
 
-func TestCatalog_GetByNameClosed(t *testing.T) {
+func TestCatalog_ByNameClosed(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "catalog")
 	c, err := NewCatalog(dir)
 	if err != nil {
@@ -470,9 +470,9 @@ func TestCatalog_GetByNameClosed(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	_, err = c.GetByName("t")
+	_, err = c.ByName("t")
 	if !errors.Is(err, ErrCatalogClosed) {
-		t.Errorf("GetByName after Close: got %v, want ErrCatalogClosed", err)
+		t.Errorf("ByName after Close: got %v, want ErrCatalogClosed", err)
 	}
 }
 

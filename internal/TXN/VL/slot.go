@@ -105,7 +105,7 @@ func (sm *slotManager) AllocateSlot() *transactionSlot {
 	slot.commitTS = 0
 	slot.writeSet = nil
 	slot.readSet = nil
-	slot.arena = MV.GetArena()
+	slot.arena = MV.AcquireArena()
 
 	return slot
 }
@@ -131,19 +131,19 @@ func (sm *slotManager) ReleaseSlot(slot *transactionSlot) {
 	}
 }
 
-func (sm *slotManager) GetSlotStatus(idx int) SlotStatus {
+func (sm *slotManager) SlotStatus(idx int) SlotStatus {
 	return SlotStatus(sm.slots[idx].status.Load())
 }
 
-func (sm *slotManager) GetSlotBeginTS(idx int) uint64 {
+func (sm *slotManager) SlotBeginTS(idx int) uint64 {
 	return sm.slots[idx].beginTS
 }
 
-func (sm *slotManager) GetSlotCommitTS(idx int) uint64 {
+func (sm *slotManager) SlotCommitTS(idx int) uint64 {
 	return sm.slots[idx].commitTS
 }
 
-func (sm *slotManager) GetSlotWriteSet(idx int) []KeyRange {
+func (sm *slotManager) SlotWriteSet(idx int) []KeyRange {
 	return sm.slots[idx].writeSet
 }
 
@@ -157,7 +157,7 @@ func (sm *slotManager) NumActiveSlots() int {
 	return MaxConcurrentTXNs - int(sm.freeCount.Load())
 }
 
-func (sm *slotManager) GetSlot(index int) *transactionSlot {
+func (sm *slotManager) Slot(index int) *transactionSlot {
 	return &sm.slots[index]
 }
 

@@ -624,8 +624,8 @@ func (c *Catalog) DeleteIndex(tableID uint64, name string) error {
 		ErrCatalogNotFound, name, tableID)
 }
 
-// GetIndexesByTable returns a copy of the index list for a table.
-func (c *Catalog) GetIndexesByTable(tableID uint64) ([]CatalogIndex, error) {
+// IndexesByTable returns a copy of the index list for a table.
+func (c *Catalog) IndexesByTable(tableID uint64) ([]CatalogIndex, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.closed {
@@ -648,8 +648,8 @@ func (c *Catalog) GetIndexesByTable(tableID uint64) ([]CatalogIndex, error) {
 	return out, nil
 }
 
-// GetIndex returns the named index for a table.
-func (c *Catalog) GetIndex(tableID uint64, name string) (*CatalogIndex, error) {
+// Index returns the named index for a table.
+func (c *Catalog) Index(tableID uint64, name string) (*CatalogIndex, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.closed {
@@ -701,8 +701,8 @@ func (c *Catalog) GetByID(tableID uint64) (*CatalogEntry, error) {
 	return &cp, nil
 }
 
-// GetByName returns a deep copy of the entry for name.
-func (c *Catalog) GetByName(name string) (*CatalogEntry, error) {
+// ByName returns a deep copy of the entry for name.
+func (c *Catalog) ByName(name string) (*CatalogEntry, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.closed {
@@ -716,8 +716,8 @@ func (c *Catalog) GetByName(name string) (*CatalogEntry, error) {
 	return &cp, nil
 }
 
-// GetStats returns column statistics for a table column (REQ000085).
-func (c *Catalog) GetStats(tableID uint64, colName string) *ColumnStats {
+// ColumnStats returns column statistics for a table column (REQ000085).
+func (c *Catalog) ColumnStats(tableID uint64, colName string) *ColumnStats {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	entry, ok := c.cache[tableID]
@@ -734,8 +734,8 @@ func (c *Catalog) GetStats(tableID uint64, colName string) *ColumnStats {
 	return nil
 }
 
-// GetStatsByName returns column statistics by table name (REQ000085).
-func (c *Catalog) GetStatsByName(tableName, colName string) *ColumnStats {
+// ColumnStatsByName returns column statistics by table name (REQ000085).
+func (c *Catalog) ColumnStatsByName(tableName, colName string) *ColumnStats {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	for _, entry := range c.cache {

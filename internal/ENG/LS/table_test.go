@@ -92,7 +92,7 @@ func TestCatalogCreateTable(t *testing.T) {
 		t.Fatal("expected TableID to be set")
 	}
 
-	retrieved, err := c.GetTable(schema.TableID)
+	retrieved, err := c.Table(schema.TableID)
 	if err != nil {
 		t.Fatalf("failed to get table: %v", err)
 	}
@@ -115,20 +115,20 @@ func TestCatalogDropTable(t *testing.T) {
 		t.Fatalf("failed to drop table: %v", err)
 	}
 
-	_, err := c.GetTable(tableID)
+	_, err := c.Table(tableID)
 	if err != ErrTableNotFound {
 		t.Fatalf("expected ErrTableNotFound, got %v", err)
 	}
 }
 
-func TestCatalogGetTableByName(t *testing.T) {
+func TestCatalogTableByName(t *testing.T) {
 	c := newCatalog()
 
 	schema, _ := c.CreateTable("users", []ColumnDef{
 		{Name: "id", Type: CTInt},
 	}, []int{0})
 
-	tableID, found := c.GetTableByName("users")
+	tableID, found := c.TableByName("users")
 	if !found {
 		t.Fatal("expected to find table by name")
 	}

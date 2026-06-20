@@ -33,9 +33,9 @@ func TestCatalog_PutIndex(t *testing.T) {
 		t.Fatalf("PutIndex: %v", err)
 	}
 
-	got, err := c.GetIndexesByTable(1)
+	got, err := c.IndexesByTable(1)
 	if err != nil {
-		t.Fatalf("GetIndexesByTable: %v", err)
+		t.Fatalf("IndexesByTable: %v", err)
 	}
 	if len(got) != 1 {
 		t.Fatalf("got %d indexes, want 1", len(got))
@@ -121,7 +121,7 @@ func TestCatalog_DeleteIndex(t *testing.T) {
 	if err := c.DeleteIndex(1, "idx_v"); err != nil {
 		t.Fatalf("DeleteIndex: %v", err)
 	}
-	got, _ := c.GetIndexesByTable(1)
+	got, _ := c.IndexesByTable(1)
 	if len(got) != 0 {
 		t.Errorf("after delete, got %d indexes, want 0", len(got))
 	}
@@ -146,8 +146,8 @@ func TestCatalog_DeleteIndex_Missing(t *testing.T) {
 	}
 }
 
-// TestCatalog_GetIndex returns a single index by name.
-func TestCatalog_GetIndex(t *testing.T) {
+// TestCatalog_Index returns a single index by name.
+func TestCatalog_Index(t *testing.T) {
 	dir := t.TempDir()
 	c, _ := NewCatalog(dir)
 	t.Cleanup(func() { _ = c.Close() })
@@ -164,9 +164,9 @@ func TestCatalog_GetIndex(t *testing.T) {
 		Unique:  true,
 	})
 
-	idx, err := c.GetIndex(1, "idx_v")
+	idx, err := c.Index(1, "idx_v")
 	if err != nil {
-		t.Fatalf("GetIndex: %v", err)
+		t.Fatalf("Index: %v", err)
 	}
 	if !idx.Unique {
 		t.Errorf("Unique should be true")
@@ -201,9 +201,9 @@ func TestCatalog_IndexPersistence(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c2.Close() })
 
-	got, err := c2.GetIndexesByTable(1)
+	got, err := c2.IndexesByTable(1)
 	if err != nil {
-		t.Fatalf("GetIndexesByTable after reopen: %v", err)
+		t.Fatalf("IndexesByTable after reopen: %v", err)
 	}
 	if len(got) != 1 {
 		t.Fatalf("after reopen, got %d indexes, want 1", len(got))

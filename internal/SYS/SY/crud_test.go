@@ -25,8 +25,8 @@ func TestCRUD_WhereFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows.Cols) != 1 || rows.Cols[0] != "name" {
-		t.Errorf("cols = %v, want [name]", rows.Cols)
+	if len(rows.Cols()) != 1 || rows.Cols()[0] != "name" {
+		t.Errorf("cols = %v, want [name]", rows.Cols())
 	}
 }
 
@@ -43,8 +43,8 @@ func TestCRUD_OrderByLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows.Cols) != 1 || rows.Cols[0] != "v" {
-		t.Errorf("cols = %v, want [v]", rows.Cols)
+	if len(rows.Cols()) != 1 || rows.Cols()[0] != "v" {
+		t.Errorf("cols = %v, want [v]", rows.Cols())
 	}
 }
 
@@ -61,8 +61,8 @@ func TestCRUD_AggregateCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows.Cols) != 1 {
-		t.Errorf("cols = %v, want 1", rows.Cols)
+	if len(rows.Cols()) != 1 {
+		t.Errorf("cols = %v, want 1", rows.Cols())
 	}
 }
 
@@ -79,8 +79,8 @@ func TestCRUD_AggregateSum(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows.Cols) != 1 {
-		t.Errorf("cols = %v", rows.Cols)
+	if len(rows.Cols()) != 1 {
+		t.Errorf("cols = %v", rows.Cols())
 	}
 }
 

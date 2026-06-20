@@ -98,8 +98,8 @@ func TestAP_ResultAndRows(t *testing.T) {
 	if r.RowsAffected != 5 || r.LastInsertID != 42 {
 		t.Errorf("Result fields lost: %+v", r)
 	}
-	rows := Rows{Cols: []string{"a", "b"}, Types: []int{1, 2}}
-	if len(rows.Cols) != 2 || len(rows.Types) != 2 {
+	rows := Rows{cols: []string{"a", "b"}, types: []int{1, 2}}
+	if len(rows.Cols()) != 2 || len(rows.Types()) != 2 {
 		t.Errorf("Rows fields lost: %+v", rows)
 	}
 }

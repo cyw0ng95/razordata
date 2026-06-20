@@ -33,7 +33,7 @@ func (m *Manager) WaitForActive(ctx context.Context, timeout time.Duration) erro
 func (m *Manager) ForceAbortAll() int {
 	count := 0
 	for i := 0; i < MaxConcurrentTXNs; i++ {
-		s := m.sm.GetSlot(i)
+		s := m.sm.Slot(i)
 		if s == nil {
 			continue
 		}

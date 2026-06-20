@@ -33,7 +33,7 @@ type Store interface {
 // StatsCatalog provides access to column statistics for
 // histogram-based selectivity estimation. REQ000085.
 type StatsCatalog interface {
-	GetStatsByName(tableName, colName string) *ls.ColumnStats
+	ColumnStatsByName(tableName, colName string) *ls.ColumnStats
 }
 
 // ErrNoEngine is returned when a query requires a wired store but the

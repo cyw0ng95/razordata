@@ -156,9 +156,9 @@ func TestCatalog_PutGet(t *testing.T) {
 	if got.Name != "users" {
 		t.Errorf("Name=%q, want %q", got.Name, "users")
 	}
-	got2, err := c.GetByName("users")
+	got2, err := c.ByName("users")
 	if err != nil {
-		t.Fatalf("GetByName: %v", err)
+		t.Fatalf("ByName: %v", err)
 	}
 	if got2.TableID != id {
 		t.Errorf("TableID=%d, want %d", got2.TableID, id)

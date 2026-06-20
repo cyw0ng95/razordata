@@ -42,7 +42,7 @@ func TestEngine_GetStats(t *testing.T) {
 	e.Read([]byte("key1"))
 	e.Read([]byte("nonexistent"))
 
-	stats := e.GetStats()
+	stats := e.Stats()
 	if stats.MemtableHits != 1 {
 		t.Fatalf("expected 1 memtable hit, got %d", stats.MemtableHits)
 	}
@@ -414,7 +414,7 @@ func TestEngine_MultipleMemtableHits(t *testing.T) {
 	e.Read([]byte("key2"))
 	e.Read([]byte("key1"))
 
-	stats := e.GetStats()
+	stats := e.Stats()
 	if stats.MemtableHits != 3 {
 		t.Fatalf("expected 3 memtable hits, got %d", stats.MemtableHits)
 	}
@@ -433,7 +433,7 @@ func TestEngine_SSTHits(t *testing.T) {
 	e.Write([]byte("key1"), []byte("value1"))
 	e.Read([]byte("key1"))
 
-	stats := e.GetStats()
+	stats := e.Stats()
 	if stats.SSTHits != 0 {
 		t.Fatalf("expected 0 SST hits for memtable only, got %d", stats.SSTHits)
 	}
@@ -453,7 +453,7 @@ func TestEngine_DiskReads(t *testing.T) {
 
 	e.Read([]byte("nonexistent"))
 
-	stats := e.GetStats()
+	stats := e.Stats()
 	if stats.DiskReads < 0 {
 		t.Fatalf("expected non-negative disk reads, got %d", stats.DiskReads)
 	}

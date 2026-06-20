@@ -181,8 +181,8 @@ type Row struct {
 // auto-closed and the caller should NOT call Close.
 // REQ000348.
 type Rows struct {
-	Cols  []string
-	Types []int
+	cols  []string
+	types []int
 	// next is the streaming callback. It returns the next row or
 	// ErrNoRows to signal end-of-stream. It may also be nil for
 	// stubs that have no real data (e.g. AP.Rows in some test paths).
@@ -198,18 +198,18 @@ type Rows struct {
 // closer callbacks are optional.
 func NewRows(cols []string, types []int, next func() (Row, error), closer func() error) *Rows {
 	return &Rows{
-		Cols:   cols,
-		Types:  types,
+		cols:   cols,
+		types:  types,
 		next:   next,
 		closer: closer,
 	}
 }
 
-// GetCols returns the column names of the result set.
-func (r *Rows) GetCols() []string { return r.Cols }
+// Cols returns the column names of the result set.
+func (r *Rows) Cols() []string { return r.cols }
 
-// GetTypes returns the column type codes of the result set.
-func (r *Rows) GetTypes() []int { return r.Types }
+// Types returns the column type codes of the result set.
+func (r *Rows) Types() []int { return r.types }
 
 // Next returns the next row, or ErrNoRows when the result set is
 // exhausted. The returned row's Cols and Types match the schema.

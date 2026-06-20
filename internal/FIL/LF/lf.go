@@ -59,7 +59,7 @@ func (sm *SegmentManager) CreateSegment(n uint64) (*FileHandle, error) {
 	return h, nil
 }
 
-func (sm *SegmentManager) GetSegment(n uint64) (*FileHandle, error) {
+func (sm *SegmentManager) Segment(n uint64) (*FileHandle, error) {
 	if h, ok := sm.pool.Load(n); ok {
 		fh := h.(*FileHandle)
 		fh.mu.Lock()
@@ -115,7 +115,7 @@ func (sm *SegmentManager) GetSegment(n uint64) (*FileHandle, error) {
 }
 
 func (sm *SegmentManager) Truncate(n uint64, newSize int64) error {
-	h, err := sm.GetSegment(n)
+	h, err := sm.Segment(n)
 	if err != nil {
 		return err
 	}

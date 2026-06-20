@@ -11,7 +11,7 @@ import "math"
 // candidates. The caller decides whether to unlink (e.g. only
 // after pinning the chain).
 func (m *MV) GCVersionChain(key []byte, oldestActiveReadTS uint64) []*VersionNode {
-	chain := m.GetVersionChain(key)
+	chain := m.VersionChain(key)
 	if chain == nil {
 		return nil
 	}
@@ -45,7 +45,7 @@ func (m *MV) NumChains() int {
 // head) to the result. The caller decides whether to unlink.
 func collectGC(vc *VersionChain, threshold uint64) []*VersionNode {
 	var out []*VersionNode
-	for cur := vc.GetHead(); cur != nil; cur = cur.next.Load() {
+	for cur := vc.Head(); cur != nil; cur = cur.next.Load() {
 		endTS := cur.endTS.Load()
 		if endTS != math.MaxUint64 && endTS < threshold {
 			out = append(out, cur)

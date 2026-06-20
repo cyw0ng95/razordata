@@ -74,9 +74,9 @@ func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
 	if t.Phase() == PhaseBegin {
 		t.setPhase(PhaseRead)
 	}
-	chain := t.mv.GetVersionChain(key)
+	chain := t.mv.VersionChain(key)
 	if chain != nil {
-		for node := chain.GetHead(); node != nil; node = node.Next() {
+		for node := chain.Head(); node != nil; node = node.Next() {
 			if node.TxnID() == t.slot.txnID && node.BeginTS() == t.slot.beginTS {
 				t.trackRead(key, node.BeginTS())
 				if node.Deleted() {
@@ -190,11 +190,11 @@ func (t *tx) Commit(ctx context.Context) error {
 	}
 
 	for _, kr := range t.slot.writeSet {
-		chain := t.mv.GetVersionChain(kr.Start)
+		chain := t.mv.VersionChain(kr.Start)
 		if chain == nil {
 			continue
 		}
-		for node := chain.GetHead(); node != nil; node = node.Next() {
+		for node := chain.Head(); node != nil; node = node.Next() {
 			if node.TxnID() == t.slot.txnID {
 				node.Commit(commitTS)
 				break

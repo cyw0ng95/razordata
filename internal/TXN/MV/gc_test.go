@@ -111,11 +111,11 @@ func TestGCVersionChain_ChainUnchanged(t *testing.T) {
 
 	// GC must not mutate the chain
 	_ = mv.GCVersionChain(key, 100)
-	chain := mv.GetVersionChain(key)
+	chain := mv.VersionChain(key)
 	if chain == nil {
 		t.Fatal("chain disappeared after GC")
 	}
-	if chain.GetHead() != v1 {
+	if chain.Head() != v1 {
 		t.Error("head pointer changed after GC")
 	}
 	// v1 is visible at any readTS in [10,20]

@@ -60,11 +60,11 @@ func TestRegisterGCThread(t *testing.T) {
 	UnregisterGCThread(123)
 }
 
-func TestGetSlot(t *testing.T) {
+func TestSlot(t *testing.T) {
 	sm := newSlotManager()
 	slot := sm.AllocateSlot()
 
-	got := sm.GetSlot(slot.index)
+	got := sm.Slot(slot.index)
 	if got != slot {
 		t.Error("expected same slot")
 	}

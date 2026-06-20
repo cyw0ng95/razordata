@@ -189,9 +189,9 @@ func TestCommit_WALFailure_LeavesVersionChainUncommitted(t *testing.T) {
 		}
 		// Save the version node so we can inspect its EndTS after the failure.
 		var node *MV.VersionNode
-		chain := mv.GetVersionChain([]byte("k1"))
+		chain := mv.VersionChain([]byte("k1"))
 		if chain != nil {
-			for n := chain.GetHead(); n != nil; n = n.Next() {
+			for n := chain.Head(); n != nil; n = n.Next() {
 				if n.TxnID() == txi.slot.txnID {
 					node = n
 					break
@@ -222,9 +222,9 @@ func TestCommit_WALFailure_LeavesVersionChainUncommitted(t *testing.T) {
 			t.Fatalf("Insert: %v", err)
 		}
 		var node *MV.VersionNode
-		chain := mv.GetVersionChain([]byte("k2"))
+		chain := mv.VersionChain([]byte("k2"))
 		if chain != nil {
-			for n := chain.GetHead(); n != nil; n = n.Next() {
+			for n := chain.Head(); n != nil; n = n.Next() {
 				if n.TxnID() == txi.slot.txnID {
 					node = n
 					break

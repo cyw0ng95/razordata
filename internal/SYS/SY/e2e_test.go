@@ -83,8 +83,8 @@ func TestR21_EndToEndCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
-	if len(rows.Cols) != 2 || rows.Cols[0] != "id" || rows.Cols[1] != "name" {
-		t.Errorf("cols = %v, want [id name]", rows.Cols)
+	if len(rows.Cols()) != 2 || rows.Cols()[0] != "id" || rows.Cols()[1] != "name" {
+		t.Errorf("cols = %v, want [id name]", rows.Cols())
 	}
 	res, err := s.Exec(ctx, "UPDATE users SET name = 'alice2' WHERE id = 1")
 	if err != nil {
@@ -129,8 +129,8 @@ func TestR22_TransactionCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows.Cols) != 1 {
-		t.Errorf("cols = %v", rows.Cols)
+	if len(rows.Cols()) != 1 {
+		t.Errorf("cols = %v", rows.Cols())
 	}
 }
 
@@ -161,12 +161,12 @@ func TestR23_TransactionRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Cols[0] should be empty (zero inserted rows). The data being
+	// Cols()[0] should be empty (zero inserted rows). The data being
 	// absent is asserted by the absence of any 20-id row, which a
 	// SELECT cannot directly verify without iteration. Use a
 	// follow-up INSERT to check id 20 is now free.
-	if len(rows.Cols) != 1 {
-		t.Errorf("cols = %v", rows.Cols)
+	if len(rows.Cols()) != 1 {
+		t.Errorf("cols = %v", rows.Cols())
 	}
 }
 
@@ -202,8 +202,8 @@ func TestR23b_RollbackRestoresPreTxValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows.Cols) != 1 || rows.Cols[0] != "name" {
-		t.Errorf("unexpected cols: %v", rows.Cols)
+	if len(rows.Cols()) != 1 || rows.Cols()[0] != "name" {
+		t.Errorf("unexpected cols: %v", rows.Cols())
 	}
 }
 

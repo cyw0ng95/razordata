@@ -177,10 +177,10 @@ func newNumaArenaPool() *numaArenaPool {
 	return p
 }
 
-// GetArena acquires an Arena from the per-NUMA-node pool.
+// AcquireArena acquires an Arena from the per-NUMA-node pool.
 // Uses first-touch policy: the arena is allocated on the NUMA
 // node of the calling goroutine (REQ000547).
-func GetArena() *Arena {
+func AcquireArena() *Arena {
 	node := nm.CurrentNode()
 	if node < 0 || node >= len(numaPool.pools) {
 		node = 0

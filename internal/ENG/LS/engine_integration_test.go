@@ -98,7 +98,7 @@ func TestEngineStats(t *testing.T) {
 	e.Read([]byte("key1"))
 	e.Read([]byte("nonexistent"))
 
-	stats := e.GetStats()
+	stats := e.Stats()
 	if stats.MemtableHits != 2 {
 		t.Fatalf("expected 2 memtable hits, got %d", stats.MemtableHits)
 	}

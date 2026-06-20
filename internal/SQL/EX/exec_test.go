@@ -278,12 +278,12 @@ func TestShallowCopy_Independent(t *testing.T) {
 	e := NewExecutor()
 	e.SetSnapshot(42)
 	c := e.ShallowCopy()
-	if c.GetSnapshot() != 0 {
-		t.Errorf("ShallowCopy snapshot: got %d, want 0", c.GetSnapshot())
+	if c.Snapshot() != 0 {
+		t.Errorf("ShallowCopy snapshot: got %d, want 0", c.Snapshot())
 	}
 	c.SetSnapshot(99)
-	if e.GetSnapshot() != 42 {
-		t.Errorf("original snapshot changed after copy: got %d, want 42", e.GetSnapshot())
+	if e.Snapshot() != 42 {
+		t.Errorf("original snapshot changed after copy: got %d, want 42", e.Snapshot())
 	}
 }
 

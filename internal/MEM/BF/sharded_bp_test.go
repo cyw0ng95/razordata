@@ -83,18 +83,18 @@ func TestShardedBufferPoolGetOrInsert(t *testing.T) {
 	}
 }
 
-// TestShardedBufferPoolGetSlot tests slot lookup.
-func TestShardedBufferPoolGetSlot(t *testing.T) {
+// TestShardedBufferPoolSlot tests slot lookup.
+func TestShardedBufferPoolSlot(t *testing.T) {
 	sbp := newShardedBufferPool(4)
 
 	// Non-existent slot.
-	if sbp.GetSlot(999) != nil {
+	if sbp.Slot(999) != nil {
 		t.Error("expected nil for non-existent slot")
 	}
 
 	// Insert then lookup.
 	sbp.GetOrInsert(42)
-	slot := sbp.GetSlot(42)
+	slot := sbp.Slot(42)
 	if slot == nil {
 		t.Error("expected non-nil slot")
 	}
@@ -119,7 +119,7 @@ func TestShardedBufferPoolDelete(t *testing.T) {
 		t.Errorf("expected totalUsed=2 after delete, got %d", sbp.TotalUsed())
 	}
 
-	if sbp.GetSlot(2) != nil {
+	if sbp.Slot(2) != nil {
 		t.Error("expected deleted slot to be nil")
 	}
 
@@ -148,7 +148,7 @@ func TestShardedBufferPoolConcurrent(t *testing.T) {
 				if created {
 					slot.blockID = blockID
 				}
-				_ = sbp.GetSlot(blockID)
+				_ = sbp.Slot(blockID)
 				if r.Intn(10) == 0 {
 					sbp.Delete(blockID)
 				}
@@ -232,7 +232,7 @@ func TestShardedBufferPoolContention(t *testing.T) {
 			r := rand.New(rand.NewSource(int64(id)))
 			for j := 0; j < nOps; j++ {
 				blockID := uint64(r.Intn(1000))
-				slot := sbp.GetSlot(blockID)
+				slot := sbp.Slot(blockID)
 				if slot == nil {
 					misses.Add(1)
 					sbp.GetOrInsert(blockID)

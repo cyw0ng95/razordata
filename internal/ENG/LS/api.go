@@ -121,7 +121,7 @@ func (eng *Engine) Stats() ReadStats {
 	if eng == nil || eng.e == nil {
 		return ReadStats{}
 	}
-	return eng.e.GetStats()
+	return eng.e.Stats()
 }
 
 // Compaction returns the underlying compaction manager.

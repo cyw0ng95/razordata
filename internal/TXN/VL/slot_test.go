@@ -177,18 +177,18 @@ func TestSlotStatus(t *testing.T) {
 	slot := sm.AllocateSlot()
 	idx := slot.index
 
-	if sm.GetSlotStatus(idx) != SlotActive {
-		t.Errorf("expected status %d, got %d", SlotActive, sm.GetSlotStatus(idx))
+	if sm.SlotStatus(idx) != SlotActive {
+		t.Errorf("expected status %d, got %d", SlotActive, sm.SlotStatus(idx))
 	}
 
 	slot.status.Store(int32(SlotCommitted))
-	if sm.GetSlotStatus(idx) != SlotCommitted {
-		t.Errorf("expected status %d, got %d", SlotCommitted, sm.GetSlotStatus(idx))
+	if sm.SlotStatus(idx) != SlotCommitted {
+		t.Errorf("expected status %d, got %d", SlotCommitted, sm.SlotStatus(idx))
 	}
 
 	slot.status.Store(int32(SlotAborted))
-	if sm.GetSlotStatus(idx) != SlotAborted {
-		t.Errorf("expected status %d, got %d", SlotAborted, sm.GetSlotStatus(idx))
+	if sm.SlotStatus(idx) != SlotAborted {
+		t.Errorf("expected status %d, got %d", SlotAborted, sm.SlotStatus(idx))
 	}
 }
 
@@ -204,7 +204,7 @@ func TestSlotWriteSet(t *testing.T) {
 		{Start: []byte("x"), End: []byte("z")},
 	}
 
-	ws := sm.GetSlotWriteSet(idx)
+	ws := sm.SlotWriteSet(idx)
 	if len(ws) != 2 {
 		t.Errorf("expected 2 key ranges, got %d", len(ws))
 	}
@@ -300,7 +300,7 @@ func TestNumActiveSlots(t *testing.T) {
 	}
 }
 
-func TestGetSlotBeginTS(t *testing.T) {
+func TestSlotBeginTS(t *testing.T) {
 	t.Parallel()
 	sm := newSlotManager()
 
@@ -308,12 +308,12 @@ func TestGetSlotBeginTS(t *testing.T) {
 	slot.beginTS = 12345
 	idx := slot.index
 
-	if sm.GetSlotBeginTS(idx) != 12345 {
-		t.Errorf("expected beginTS 12345, got %d", sm.GetSlotBeginTS(idx))
+	if sm.SlotBeginTS(idx) != 12345 {
+		t.Errorf("expected beginTS 12345, got %d", sm.SlotBeginTS(idx))
 	}
 }
 
-func TestGetSlotCommitTS(t *testing.T) {
+func TestSlotCommitTS(t *testing.T) {
 	t.Parallel()
 	sm := newSlotManager()
 
@@ -321,8 +321,8 @@ func TestGetSlotCommitTS(t *testing.T) {
 	slot.commitTS = 67890
 	idx := slot.index
 
-	if sm.GetSlotCommitTS(idx) != 67890 {
-		t.Errorf("expected commitTS 67890, got %d", sm.GetSlotCommitTS(idx))
+	if sm.SlotCommitTS(idx) != 67890 {
+		t.Errorf("expected commitTS 67890, got %d", sm.SlotCommitTS(idx))
 	}
 }
 

@@ -151,7 +151,7 @@ func (b *bp) Get(ctx context.Context, blockID uint64) (*Page, bool, error) {
 	}
 
 	// Fast path: sharded R-lock lookup.
-	slot := b.sbp.GetSlot(blockID)
+	slot := b.sbp.Slot(blockID)
 	if slot != nil && !slot.loading.Load() {
 		shard := b.sbp.shards[b.sbp.shardFor(blockID)]
 		refKey := shard.hand.Add(1)
@@ -169,7 +169,7 @@ func (b *bp) Get(ctx context.Context, blockID uint64) (*Page, bool, error) {
 			case <-ctx.Done():
 				return nil, false, ctx.Err()
 			}
-			slot = b.sbp.GetSlot(blockID)
+			slot = b.sbp.Slot(blockID)
 			if slot == nil || !slot.loading.Load() {
 				if slot != nil {
 					dirty := slot.dirty.Load()
@@ -201,7 +201,7 @@ func (b *bp) Get(ctx context.Context, blockID uint64) (*Page, bool, error) {
 			case <-ctx.Done():
 				return nil, false, ctx.Err()
 			}
-			slot = b.sbp.GetSlot(blockID)
+			slot = b.sbp.Slot(blockID)
 			if slot != nil {
 				dirty := slot.dirty.Load()
 				refKey := shard.hand.Add(1)
@@ -283,7 +283,7 @@ allocated:
 
 // Pin implements BufferPool.
 func (b *bp) Pin(page *Page) {
-	slot := b.sbp.GetSlot(page.ID)
+	slot := b.sbp.Slot(page.ID)
 	if slot != nil {
 		slot.pinCount.Add(1)
 		b.pins.Add(1)
@@ -292,7 +292,7 @@ func (b *bp) Pin(page *Page) {
 
 // Unpin implements BufferPool.
 func (b *bp) Unpin(page *Page) {
-	slot := b.sbp.GetSlot(page.ID)
+	slot := b.sbp.Slot(page.ID)
 	if slot != nil {
 		slot.pinCount.Add(-1)
 	}
