@@ -74,11 +74,14 @@ type engine struct {
 	fm        *flushManager
 	pageCache *PageCache // REQ000571: block-level SST cache
 	opts      Options
-	stats     ReadStats
-	statsMu   sync.RWMutex
-	mu        sync.RWMutex // REQ000574: guards memtables/activeMem
-	closed    atomic.Bool
-	log       *slog.Logger
+	stats     struct {
+		MemtableHits atomic.Int64
+		SSTHits      atomic.Int64
+		DiskReads    atomic.Int64
+	}
+	mu     sync.RWMutex // REQ000574: guards memtables/activeMem
+	closed atomic.Bool
+	log    *slog.Logger
 }
 
 func newEngine(dir string) (*engine, error) {
@@ -158,11 +161,6 @@ func (e *engine) flushActiveMemtable() error {
 	// Create new active sharded memtable
 	e.activeMem = newShardedMemtable(e.opts.MemTableSize, e.opts.MemTableShards)
 
-	// Request async flush for each shard
-	for _, shard := range frozen.shards() {
-		e.fm.requestFlush(shard)
-	}
-
 	return nil
 }
 
@@ -189,16 +187,13 @@ func (e *engine) Read(key []byte) ([]byte, error) {
 		return nil, ErrClosed
 	}
 
-	e.statsMu.Lock()
-	defer e.statsMu.Unlock()
-
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	// Check active memtable shards first
 	if e.activeMem != nil {
 		if val, found := e.activeMem.Get(key); found {
-			e.stats.MemtableHits++
+			e.stats.MemtableHits.Add(1)
 			return val, nil
 		}
 	}
@@ -207,14 +202,14 @@ func (e *engine) Read(key []byte) ([]byte, error) {
 	for i := len(e.memtables) - 1; i >= 0; i-- {
 		mt := e.memtables[i]
 		if val, found := mt.Get(key); found {
-			e.stats.MemtableHits++
+			e.stats.MemtableHits.Add(1)
 			return val, nil
 		}
 	}
 
 	val, err := e.readFromSST(key)
 	if err == nil {
-		e.stats.SSTHits++
+		e.stats.SSTHits.Add(1)
 		return val, nil
 	}
 	return nil, ErrNotFound
@@ -233,7 +228,7 @@ func (e *engine) readFromSST(key []byte) ([]byte, error) {
 				continue
 			}
 
-			e.stats.DiskReads++
+			e.stats.DiskReads.Add(1)
 
 			sstPath := filepath.Join(e.dir, fileName(&file))
 			data, err := e.readSSTFile(file.FileID, sstPath)
@@ -328,9 +323,11 @@ func (e *engine) MayContain(key []byte) bool {
 }
 
 func (e *engine) Stats() ReadStats {
-	e.statsMu.RLock()
-	defer e.statsMu.RUnlock()
-	return e.stats
+	return ReadStats{
+		MemtableHits: int(e.stats.MemtableHits.Load()),
+		SSTHits:      int(e.stats.SSTHits.Load()),
+		DiskReads:    int(e.stats.DiskReads.Load()),
+	}
 }
 
 func (e *engine) Close() error {
