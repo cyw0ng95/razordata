@@ -334,62 +334,28 @@ type SessionStats struct {
 	ActiveTXN    bool
 }
 
-// Error sentinels. Callers use errors.Is to map low-level failures to
-// retry strategy: ErrIO and ErrLocked are retryable; the rest are
-// fatal.
+// Error sentinels. Each is an *Error with the appropriate Kind,
+// preserving backward-compatible errors.Is matching.
 var (
-	ErrNotFound         = errors.New("razordata: key not found")
-	ErrDuplicateKey     = errors.New("razordata: duplicate key")
-	ErrLocked           = errors.New("razordata: resource locked")
-	ErrCorrupt          = errors.New("razordata: data corrupt")
-	ErrSyntax           = errors.New("razordata: syntax error")
-	ErrTypeMismatch     = errors.New("razordata: type mismatch")
-	ErrTxAborted        = errors.New("razordata: transaction aborted")
-	ErrIO               = errors.New("razordata: I/O error")
-	ErrUpgradeRequired  = errors.New("razordata: upgrade required")
-	ErrReadOnly         = errors.New("razordata: read-only")
-	ErrDeadlineExceeded = errors.New("razordata: deadline exceeded")
-	ErrAlreadyOpen      = errors.New("razordata: engine already open")
-	ErrNotOpen          = errors.New("razordata: engine not open")
-	ErrClosed           = errors.New("razordata: engine closed")
-	ErrInvalidOptions   = errors.New("razordata: invalid options")
-	ErrNoActiveTxn      = errors.New("razordata: no active transaction")
-	ErrUnknownSavepoint = errors.New("razordata: unknown savepoint")
-	ErrConstraint       = errors.New("razordata: constraint violation")
+	ErrNotFound         = New(KindNotFound, "key not found")
+	ErrDuplicateKey     = New(KindDuplicateKey, "duplicate key")
+	ErrLocked           = New(KindLocked, "resource locked")
+	ErrCorrupt          = New(KindCorrupt, "data corrupt")
+	ErrSyntax           = New(KindSyntax, "syntax error")
+	ErrTypeMismatch     = New(KindTypeMismatch, "type mismatch")
+	ErrTxAborted        = New(KindTxAborted, "transaction aborted")
+	ErrIO               = New(KindIO, "I/O error")
+	ErrUpgradeRequired  = New(KindUpgradeRequired, "upgrade required")
+	ErrReadOnly         = New(KindReadOnly, "read-only")
+	ErrDeadlineExceeded = New(KindDeadlineExceeded, "deadline exceeded")
+	ErrAlreadyOpen      = New(KindInvalidOptions, "engine already open")
+	ErrNotOpen          = New(KindClosed, "engine not open")
+	ErrClosed           = New(KindClosed, "engine closed")
+	ErrInvalidOptions   = New(KindInvalidOptions, "invalid options")
+	ErrNoActiveTxn      = New(KindConstraint, "no active transaction")
+	ErrUnknownSavepoint = New(KindConstraint, "unknown savepoint")
+	ErrConstraint       = New(KindConstraint, "constraint violation")
 )
-
-// RetryableErrors is the set of sentinels callers should treat as
-// retryable. ErrLocked retries should use exponential backoff.
-var RetryableErrors = []error{ErrIO, ErrLocked}
-
-// FatalErrors is the set of sentinels that must not be retried.
-var FatalErrors = []error{
-	ErrTxAborted, ErrCorrupt, ErrSyntax, ErrTypeMismatch,
-	ErrUpgradeRequired, ErrReadOnly, ErrAlreadyOpen, ErrNotOpen,
-	ErrClosed, ErrInvalidOptions, ErrNoActiveTxn, ErrUnknownSavepoint,
-	ErrNotFound, ErrDuplicateKey, ErrDeadlineExceeded, ErrConstraint,
-}
-
-// IsRetryable reports whether err is one of the retryable sentinels
-// (wrapped errors are unwrapped via errors.Is).
-func IsRetryable(err error) bool {
-	for _, target := range RetryableErrors {
-		if errors.Is(err, target) {
-			return true
-		}
-	}
-	return false
-}
-
-// IsFatal reports whether err is one of the fatal sentinels.
-func IsFatal(err error) bool {
-	for _, target := range FatalErrors {
-		if errors.Is(err, target) {
-			return true
-		}
-	}
-	return false
-}
 
 // Len returns the number of columns.
 func (r *Row) Len() int { return len(r.Cols) }
