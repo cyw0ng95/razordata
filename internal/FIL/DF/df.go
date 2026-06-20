@@ -159,12 +159,15 @@ func (d *BlockDevice) ReadBlock(_ context.Context, blockID uint64, n int, buf []
 		}
 		copy(tmp, d.mmapBuf[off:off+int64(len(tmp))])
 	} else {
-		_, err := unix.Pread(fd, tmp, int64(offset))
+		nn, err := unix.Pread(fd, tmp, int64(offset))
 		if err != nil {
 			if d.log != nil {
 				d.log.Error("df.read_block", "blockID", blockID, "err", err)
 			}
 			return err
+		}
+		if nn < DefaultBlockSize {
+			return ErrIO
 		}
 	}
 
@@ -241,12 +244,15 @@ func (d *BlockDevice) ReadBlockFull(blockID uint64, buf []byte) error {
 	tmp := borrowTempBuf()
 	defer returnTempBuf(tmp)
 
-	_, err := unix.Pread(fd, tmp, int64(offset))
+	nn, err := unix.Pread(fd, tmp, int64(offset))
 	if err != nil {
 		if d.log != nil {
 			d.log.Error("df.read_block_full", "blockID", blockID, "err", err)
 		}
 		return err
+	}
+	if nn < DefaultBlockSize {
+		return ErrIO
 	}
 
 	storedSum := binary.LittleEndian.Uint32(tmp[DataLen-ChecksumLen:])
@@ -321,8 +327,5 @@ var tempBufPool = sync.Pool{
 
 func borrowTempBuf() []byte { return *tempBufPool.Get().(*[]byte) }
 func returnTempBuf(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 	tempBufPool.Put(&b)
 }
