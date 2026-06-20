@@ -1294,3 +1294,36 @@ func TestBugfix_GLOB_Operator(t *testing.T) {
 	}
 	// TODO: fix GLOB via WHERE clause (column resolution in Filter)
 }
+
+// REQ000731: Bitwise shift operators << and >>.
+func TestBugfix_ShiftOperators(t *testing.T) {
+	ResetForTest(t)
+	ex := NewExecutor()
+	defer UnregisterAll()
+	ctx := context.Background()
+
+	ex.RegisterTable("t", []string{"v"})
+	ex.Exec(ctx, "INSERT INTO t VALUES (10)")
+
+	rows, err := ex.QueryAll(ctx, "SELECT v << 2 FROM t")
+	if err != nil {
+		t.Fatalf("LSHIFT: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0].Data[0] != int64(40) {
+		t.Errorf("10 << 2: got %v, want 40", rows[0].Data[0])
+	}
+
+	rows, err = ex.QueryAll(ctx, "SELECT v >> 1 FROM t")
+	if err != nil {
+		t.Fatalf("RSHIFT: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0].Data[0] != int64(5) {
+		t.Errorf("10 >> 1: got %v, want 5", rows[0].Data[0])
+	}
+}

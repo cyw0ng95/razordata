@@ -266,6 +266,10 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
 		return bitor(left, right)
 	case int(LX.T_BITXOR):
 		return bitxor(left, right)
+	case int(LX.T_LSHIFT):
+		return lshift(left, right)
+	case int(LX.T_RSHIFT):
+		return rshift(left, right)
 	case int(LX.T_CONCAT):
 		return concat(left, right)
 	case int(LX.T_LIKE):
@@ -1707,6 +1711,30 @@ func bitxor(a, b any) (any, error) {
 		return nil, nil
 	}
 	return ai ^ bi, nil
+}
+
+func lshift(a, b any) (any, error) {
+	ai, aok := toInt64(a)
+	bi, bok := toInt64(b)
+	if !aok || !bok {
+		return nil, nil
+	}
+	if bi < 0 || bi > 63 {
+		return nil, nil
+	}
+	return ai << bi, nil
+}
+
+func rshift(a, b any) (any, error) {
+	ai, aok := toInt64(a)
+	bi, bok := toInt64(b)
+	if !aok || !bok {
+		return nil, nil
+	}
+	if bi < 0 || bi > 63 {
+		return nil, nil
+	}
+	return ai >> bi, nil
 }
 
 func concat(a, b any) (any, error) {

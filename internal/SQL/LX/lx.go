@@ -454,11 +454,19 @@ func (l *Lexer) scanOperator() Token {
 			l.advance()
 			return Token{Type: T_NE, Lexeme: "<>", Line: startLine, Col: startCol}
 		}
+		if l.peek() == '<' {
+			l.advance()
+			return Token{Type: T_LSHIFT, Lexeme: "<<", Line: startLine, Col: startCol}
+		}
 		return Token{Type: T_LT, Lexeme: "<", Line: startLine, Col: startCol}
 	case '>':
 		if l.peek() == '=' {
 			l.advance()
 			return Token{Type: T_GE, Lexeme: ">=", Line: startLine, Col: startCol}
+		}
+		if l.peek() == '>' {
+			l.advance()
+			return Token{Type: T_RSHIFT, Lexeme: ">>", Line: startLine, Col: startCol}
 		}
 		return Token{Type: T_GT, Lexeme: ">", Line: startLine, Col: startCol}
 	case '+':

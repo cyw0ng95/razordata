@@ -1895,3 +1895,33 @@ func TestParseExpr_GLOB(t *testing.T) {
 		t.Errorf("expected T_GLOB, got %d", bin.Op)
 	}
 }
+
+// REQ000731: Bitwise shift operators << and >>.
+func TestParseExpr_ShiftOperators(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+		op   LX.TokenType
+	}{
+		{"lshift", "SELECT col0 << 2 FROM t", LX.T_LSHIFT},
+		{"rshift", "SELECT col0 >> 1 FROM t", LX.T_RSHIFT},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewParser(tc.sql)
+			stmt, err := p.Parse()
+			if err != nil {
+				t.Fatalf("Parse() failed: %v", err)
+			}
+			sel := stmt.(*Select)
+			bin, ok := sel.Cols[0].(*BinaryExpr)
+			if !ok {
+				t.Fatalf("expected BinaryExpr, got %T", sel.Cols[0])
+			}
+			if bin.Op != int(tc.op) {
+				t.Errorf("expected %v, got %v", tc.op, bin.Op)
+			}
+		})
+	}
+}

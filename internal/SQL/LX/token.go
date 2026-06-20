@@ -179,6 +179,8 @@ const (
 	T_BITOR
 	T_BITXOR
 	T_BITNOT
+	T_LSHIFT
+	T_RSHIFT
 	T_MOD
 	T_CONCAT
 	T_COALESCE
@@ -383,6 +385,8 @@ var tokenTypeNames = [...]string{
 	T_BITOR:         "BITOR",
 	T_BITXOR:        "BITXOR",
 	T_BITNOT:        "BITNOT",
+	T_LSHIFT:        "LSHIFT",
+	T_RSHIFT:        "RSHIFT",
 	T_MOD:           "MOD",
 	T_CONCAT:        "CONCAT",
 	T_COALESCE:      "COALESCE",
