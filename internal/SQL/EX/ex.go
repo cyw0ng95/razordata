@@ -32,6 +32,29 @@ var (
 // It's stored atomically to avoid races with concurrent sessions.
 var currentSessionID atomic.Uint64
 
+// currentTxWriter is the package-level current TxWriter. Set by
+// Executor.SetTxWriter and read by Insert/Update/Delete operators
+// (both in-memory and store-backed) so that transactions can
+// capture pre-write state for rollback. REQ000588.
+var currentTxWriter atomic.Pointer[TxWriter]
+
+// SetCurrentTxWriter stores w in the package-level slot.
+func SetCurrentTxWriter(w TxWriter) {
+	var boxed *TxWriter
+	if w != nil {
+		boxed = &w
+	}
+	currentTxWriter.Store(boxed)
+}
+
+// CurrentTxWriter returns the package-level current TxWriter.
+func CurrentTxWriter() TxWriter {
+	if p := currentTxWriter.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
 // SetSessionCounterAccessor sets the callback for reading per-session
 // counters. Called once during SYS initialization.
 func SetSessionCounterAccessor(acc SessionCounterAccessor) {
@@ -163,10 +186,16 @@ type TxWriter interface {
 // SetTxWriter installs w as the current transaction's write hook. Pass
 // nil to disable. Not safe to call concurrently with Exec; the
 // caller (a Session) is responsible for serialization.
-func (e *Executor) SetTxWriter(w TxWriter) { e.txWriter = w }
+func (e *Executor) SetTxWriter(w TxWriter) {
+	e.txWriter = w
+	SetCurrentTxWriter(w)
+}
 
 // ClearTxWriter resets the write hook to nil. Pair with SetTxWriter.
-func (e *Executor) ClearTxWriter() { e.txWriter = nil }
+func (e *Executor) ClearTxWriter() {
+	e.txWriter = nil
+	SetCurrentTxWriter(nil)
+}
 
 // ShallowCopy returns a new Executor that shares Planner and Store with the
 // original but has its own per-request mutable state (txWriter, snapshotTS,
