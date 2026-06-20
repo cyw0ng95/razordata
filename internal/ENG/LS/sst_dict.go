@@ -47,6 +47,7 @@ func (dt *dictTrainer) train(block []byte) []byte {
 	}
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i].n > pairs[j].n })
 	var dict bytes.Buffer
+	dict.Grow(dt.maxDictSize)
 	for _, p := range pairs {
 		if dict.Len()+len(p.s) > dt.maxDictSize {
 			break
@@ -78,6 +79,7 @@ func compressBlockDictShared(block, sharedDict []byte) ([]byte, error) {
 		return compressBlock(block)
 	}
 	var compressed bytes.Buffer
+	compressed.Grow(len(block))
 	w, err := flate.NewWriterDict(&compressed, flate.BestSpeed, dict)
 	if err != nil {
 		return compressBlock(block)
@@ -162,6 +164,7 @@ func decompressFlateOnly(data []byte) ([]byte, error) {
 	r := flate.NewReader(bytes.NewReader(data))
 	defer r.Close()
 	var out bytes.Buffer
+	out.Grow(len(data))
 	if _, err := out.ReadFrom(r); err != nil {
 		return nil, err
 	}
@@ -172,6 +175,7 @@ func decompressFlateWithDict(data, dict []byte) ([]byte, error) {
 	r := flate.NewReaderDict(bytes.NewReader(data), dict)
 	defer r.Close()
 	var out bytes.Buffer
+	out.Grow(len(data))
 	if _, err := out.ReadFrom(r); err != nil {
 		return nil, err
 	}
