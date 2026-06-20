@@ -157,12 +157,22 @@ func EncodeVarchar(v string) []byte {
 	return []byte(v)
 }
 
+// EncodeVarcharBytes returns v directly without copying (zero-copy identity).
+func EncodeVarcharBytes(v []byte) []byte {
+	return v
+}
+
 func DecodeVarchar(data []byte) (string, error) {
 	return string(data), nil
 }
 
 func EncodeText(v string) []byte {
 	return []byte(v)
+}
+
+// EncodeTextBytes returns v directly without copying (zero-copy identity).
+func EncodeTextBytes(v []byte) []byte {
+	return v
 }
 
 func DecodeText(data []byte) (string, error) {
