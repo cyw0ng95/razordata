@@ -86,26 +86,32 @@ func (sm *SegmentManager) Segment(n uint64) (*FileHandle, error) {
 	}
 
 	path := sm.segmentPath(n)
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrSegmentNotFound
-		}
-		if sm.log != nil {
-			sm.log.Error("lf.get_segment", "path", path, "err", err)
-		}
-		return nil, err
-	}
-	if info.IsDir() {
-		return nil, ErrCorruptSegment
-	}
 
 	fd, err := unix.Open(path, unix.O_RDWR, 0)
 	if err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil, ErrSegmentNotFound
+		}
+		if errors.Is(err, unix.EISDIR) {
+			return nil, ErrCorruptSegment
+		}
 		if sm.log != nil {
 			sm.log.Error("lf.get_segment", "path", path, "err", err)
 		}
 		return nil, err
+	}
+
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		unix.Close(fd)
+		if sm.log != nil {
+			sm.log.Error("lf.get_segment", "path", path, "err", err)
+		}
+		return nil, err
+	}
+	if stat.Mode&unix.S_IFDIR != 0 {
+		unix.Close(fd)
+		return nil, ErrCorruptSegment
 	}
 
 	h := &FileHandle{Path: path, FD: fd}
