@@ -181,13 +181,12 @@ func (w *sstWriter) Finish() ([]byte, error) {
 
 	bloomSize := bloomSizeForPow2(w.keyCount)
 	w.bloom = make([]byte, bloomSize)
-	for _, k := range w.keys {
-		w.setBloomBitForSize(k, bloomSize)
-	}
 
 	prefixBloomSize := bloomSizeForPow2(w.keyCount)
 	w.prefixBloom = make([]byte, prefixBloomSize)
+
 	for _, k := range w.keys {
+		w.setBloomBitForSize(k, bloomSize)
 		prefix := k
 		if len(prefix) > 8 {
 			prefix = prefix[:8]
