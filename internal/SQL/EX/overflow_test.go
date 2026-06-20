@@ -17,7 +17,7 @@ func TestNumericOverflow(t *testing.T) {
 		// Overflow cases — must return nil, not panic/wrap
 		{"SELECT 9223372036854775807 * 2", nil},
 		{"SELECT 1000000000 * 10000000000", nil},
-		{"SELECT (-9223372036854775807) * -1", nil},
+		{"SELECT (-9223372036854775807) * -1", int64(9223372036854775807)}, // -MaxInt64 * -1 = MaxInt64, no overflow
 		{"SELECT 9999999999 * 9999999999", nil},
 		// Large but representable products
 		{"SELECT 1000000 * 1000000", int64(1000000000000)},

@@ -1580,6 +1580,25 @@ func compare(a, b any) int {
 	if b == nil {
 		return 1
 	}
+	// REQ000753: int64-int64 fast path — avoid float64 conversion.
+	if ai, aok := a.(int64); aok {
+		if bi, bok := b.(int64); bok {
+			if ai < bi {
+				return -1
+			}
+			if ai > bi {
+				return 1
+			}
+			return 0
+		}
+	}
+	// float64-float64 fast path.
+	if af, aok := a.(float64); aok {
+		if bf, bok := b.(float64); bok {
+			return cmpFloat(af, bf)
+		}
+	}
+	// Fallback: convert to float64.
 	if af, aok := numericFloat(a); aok {
 		if bf, bok := numericFloat(b); bok {
 			return cmpFloat(af, bf)
@@ -1748,6 +1767,46 @@ func numericArith(a, b any, op rune) (any, error) {
 	if a == nil || b == nil {
 		return nil, nil
 	}
+	// REQ000752: int64-int64 fast path — avoid float64 conversion.
+	// This is the most common case (integer columns).
+	if ai, aok := a.(int64); aok {
+		if bi, bok := b.(int64); bok {
+			switch op {
+			case '+':
+				if (bi > 0 && ai > math.MaxInt64-bi) || (bi < 0 && ai < math.MinInt64-bi) {
+					return nil, nil
+				}
+				return ai + bi, nil
+			case '-':
+				if (bi < 0 && ai > math.MaxInt64+bi) || (bi > 0 && ai < math.MinInt64+bi) {
+					return nil, nil
+				}
+				return ai - bi, nil
+			case '*':
+				if ai == 0 || bi == 0 {
+					return int64(0), nil
+				}
+				if ai == -1 && bi == math.MinInt64 {
+					return nil, nil
+				}
+				if bi == -1 && ai == math.MinInt64 {
+					return nil, nil
+				}
+				if ai > 0 && bi > 0 && ai > math.MaxInt64/bi {
+					return nil, nil
+				}
+				if ai < 0 && bi < 0 && ai < math.MaxInt64/bi {
+					return nil, nil
+				}
+				if (ai > 0 && bi < 0 && bi < math.MinInt64/ai) ||
+					(ai < 0 && bi > 0 && ai < math.MinInt64/bi) {
+					return nil, nil
+				}
+				return ai * bi, nil
+			}
+		}
+	}
+	// Fallback: float64 path for mixed int/float or float/float.
 	af, aok := numericFloat(a)
 	bf, bok := numericFloat(b)
 	if !aok || !bok {
@@ -1761,49 +1820,6 @@ func numericArith(a, b any, op rune) (any, error) {
 		r = af - bf
 	case '*':
 		r = af * bf
-	}
-	if _, aok := a.(int64); aok {
-		if _, bok := b.(int64); bok {
-			ai := int64(af)
-			bi := int64(bf)
-			var ri int64
-			switch op {
-			case '+':
-				if (bi > 0 && ai > math.MaxInt64-bi) || (bi < 0 && ai < math.MinInt64-bi) {
-					return nil, nil
-				}
-				ri = ai + bi
-			case '-':
-				if (bi < 0 && ai > math.MaxInt64+bi) || (bi > 0 && ai < math.MinInt64+bi) {
-					return nil, nil
-				}
-				ri = ai - bi
-			case '*':
-				// REQ000292: int64 multiplication overflow check.
-				// Detect overflow using the exact int64 values
-				// (not the float64 approximation, which loses
-				// precision around 2^53).
-				if ai == 0 || bi == 0 {
-					ri = 0
-				} else if ai == -1 && bi == math.MinInt64 {
-					// (-1) * MIN_INT64 overflows to MAX_INT64+1
-					return nil, nil
-				} else if bi == -1 && ai == math.MinInt64 {
-					// MIN_INT64 * (-1) overflows
-					return nil, nil
-				} else if ai > 0 && bi > 0 && ai > math.MaxInt64/bi {
-					return nil, nil
-				} else if ai < 0 && bi < 0 && ai < math.MaxInt64/bi {
-					return nil, nil
-				} else if (ai > 0 && bi < 0 && bi < math.MinInt64/ai) ||
-					(ai < 0 && bi > 0 && ai < math.MinInt64/bi) {
-					return nil, nil
-				} else {
-					ri = ai * bi
-				}
-			}
-			return ri, nil
-		}
 	}
 	return r, nil
 }
@@ -1942,25 +1958,40 @@ func equalValue(a, b any) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	// Normalize int/int64 for comparison.
-	a = normalizeInt(a)
-	b = normalizeInt(b)
-	if ai, ok := a.(int64); ok {
-		switch v := b.(type) {
-		case int64:
-			return ai == v
-		case float64:
-			return float64(ai) == v
+	// REQ000754: int64-int64 fast path — avoid normalizeInt re-boxing.
+	if ai, aok := a.(int64); aok {
+		if bi, bok := b.(int64); bok {
+			return ai == bi
 		}
-	}
-	if af, ok := a.(float64); ok {
-		switch v := b.(type) {
-		case int64:
-			return af == float64(v)
-		case float64:
-			return af == v
+		if bf, bok := b.(float64); bok {
+			return float64(ai) == bf
 		}
+		if bi, bok := b.(int); bok {
+			return ai == int64(bi)
+		}
+		return false
 	}
+	// float64 fast path.
+	if af, aok := a.(float64); aok {
+		if bf, bok := b.(float64); bok {
+			return af == bf
+		}
+		if bi, bok := b.(int64); bok {
+			return af == float64(bi)
+		}
+		return false
+	}
+	// int type (Go's non-64-bit int).
+	if ai, aok := a.(int); aok {
+		if bi, bok := b.(int); bok {
+			return ai == bi
+		}
+		if bi, bok := b.(int64); bok {
+			return int64(ai) == bi
+		}
+		return false
+	}
+	// string and other types.
 	return a == b
 }
 
