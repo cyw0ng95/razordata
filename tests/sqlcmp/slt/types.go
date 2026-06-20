@@ -96,6 +96,7 @@ const (
 	TypeInteger
 	TypeReal
 	TypeNull
+	TypeBlob // REQ000703: B type code for blob
 )
 
 // Value is a typed result cell. Only one of Text/Int/Real is
@@ -118,6 +119,8 @@ func (v Value) String() string {
 		return strconv.FormatInt(v.Int, 10)
 	case TypeReal:
 		return strconv.FormatFloat(v.Real, 'f', 3, 64)
+	case TypeBlob: // REQ000703: blob rendered as hex string
+		return v.Text
 	default:
 		return escapeText(v.Text)
 	}
@@ -170,6 +173,8 @@ func ParseValue(tok, typeCode string) (Value, error) {
 			return Value{}, &ParseError{Msg: "expected real: " + tok}
 		}
 		return Value{Kind: TypeReal, Real: f}, nil
+	case "B": // REQ000703: blob type — stored as text (hex-encoded)
+		return Value{Kind: TypeBlob, Text: tok}, nil
 	default:
 		return Value{}, &ParseError{Msg: "unknown type code: " + typeCode}
 	}
