@@ -344,7 +344,80 @@ type HashJoin    struct{ left, right Operator; keys []string }
 27. **`internal/SQL/EX/coerce.go`** — type coercion for prepared statement parameters.
 28. **`internal/SQL/EX/decimal.go`** — DECIMAL type support.
 29. **`internal/SQL/EX/writers.go`** — in-memory and store-backed INSERT/UPDATE/DELETE with constraint enforcement.
-30. **Tests:** table-driven tests throughout, covering all operators and functions.
+30. **`internal/SQL/EX/pragma_config.go`** — PRAGMA runtime configuration store and notification.
+31. **Tests:** table-driven tests throughout, covering all operators and functions.
+
+## PRAGMA Support
+
+PRAGMAs are SQL-layer configuration that modifies engine behavior at runtime. No new subsystem is added — configuration lives in `SQL/EX/pragma_config.go` and is applied to subsystems via interfaces.
+
+### Architecture
+
+```
+SQL Parser → planPragma() → PragmaConfig.Set(key, value)
+                                    │
+                                    ▼
+                            PragmaConfig notifies
+                            subsystem listeners
+                                    │
+                    ┌───────────────┼───────────────┐
+                    ▼               ▼               ▼
+                ENG/LS          WAL/WR           MEM/BF
+            (cache size)    (sync mode)      (buffer pool)
+```
+
+### PragmaConfig
+
+```go
+// SQL/EX/pragma_config.go
+type PragmaConfig struct {
+    mu          sync.RWMutex
+    journalMode string // "delete", "wal", "memory"
+    syncMode    string // "off", "normal", "full", "extra"
+    cacheSize   int    // pages
+    foreignKeys bool
+    userVersion int
+    // ...
+    listeners   []PragmaListener
+}
+
+type PragmaListener interface {
+    OnPragmaChange(key string, value any) error
+}
+```
+
+### PRAGMA Categories
+
+**Persistent** (stored in database header, survive restart):
+- `journal_mode`, `user_version`, `application_id`, `auto_vacuum`, `encoding`
+
+**Runtime** (reset on restart, affect engine behavior):
+- `synchronous`, `cache_size`, `foreign_keys`, `busy_timeout`, `locking_mode`, `query_only`
+
+**Introspection** (read-only, return engine state):
+- `table_info`, `index_list`, `index_info`, `table_list`, `foreign_key_list`, `foreign_key_check`, `integrity_check`, `quick_check`, `database_list`, `collation_list`
+
+**Debug** (development/testing):
+- `parser_trace`, `vdbe_*`, `stats`
+
+### Notification Flow
+
+1. User executes `PRAGMA journal_mode = WAL`
+2. Parser creates `PragmaStmt{Name: "journal_mode", Value: "WAL"}`
+3. Planner routes to `planPragma()` → `PragmaConfig.Set("journal_mode", "wal")`
+4. `PragmaConfig` stores value and notifies listeners
+5. WAL listener applies mode change to WAL writer
+6. Returns previous value to user
+
+### SQLite PRAGMA Coverage
+
+Implemented: `integrity_check` (full), `cache_size`/`journal_mode`/`synchronous`/`user_version` (stubs).
+
+Critical missing: `table_info`, `foreign_keys`, `index_list`, `index_info`.
+
+High missing: `table_list`, `foreign_key_check`, `foreign_key_list`, `wal_checkpoint`, `wal_autocheckpoint`.
+
+Medium missing: `busy_timeout`, `collation_list`, `database_list`, `encoding`, `page_size`, `query_only`, `quick_check`, `optimize`.
 
 ## Open Issues
 
