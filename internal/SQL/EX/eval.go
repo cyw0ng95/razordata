@@ -409,16 +409,16 @@ func EvalForTest(e PS.Expr, row *Row, params []interface{}) (interface{}, error)
 var currentSubqueryPlanner *Planner
 
 // newSubqueryPlanner returns a planner for evaluating a subquery
-// inside Eval. If the outer row carries a planner (set by the
-// executor's main plan), it is reused so the subquery sees the
-// same store, catalog, and stats catalog. Otherwise the
-// current-query planner is used, falling back to a fresh
-// in-memory planner for tests that don't set one.
-// REQ000366: correlated subqueries used to evaluate with a
-// store-less planner, so engine-backed tables were invisible
-// to the inner SELECT and queries like `SELECT v FROM t WHERE
-// v IN (SELECT v FROM s)` returned 0 rows.
+// inside Eval. Priority order:
+//  1. Row's ExecContext (REQ000586 — eliminates global)
+//  2. Row's outer-chain planner (REQ000366)
+//  3. Package-level currentSubqueryPlanner (legacy fallback)
+//  4. Fresh in-memory planner (tests without a store)
 func newSubqueryPlanner(outer *Row) *Planner {
+	// Check ExecContext first (REQ000586).
+	if ec := ExecContextFromRow(outer); ec != nil && ec.Planner != nil {
+		return ec.Planner
+	}
 	if p := outer.Planner(); p != nil {
 		return p
 	}

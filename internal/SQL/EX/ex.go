@@ -113,6 +113,9 @@ type Row struct {
 	// row was read from the engine store. Populated by SeqScan
 	// and used by Update/Delete to preserve the original key.
 	storeKey []byte
+	// execCtx carries per-execution state (planner, session ID,
+	// tx writer) through the operator tree. REQ000586.
+	execCtx *ExecContext
 }
 
 // Planner returns the planner associated with this row (or any
@@ -604,10 +607,9 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 	// depth-first walk that calls WithPlanner on every node
 	// that supports it.
 	propagatePlanner(plan.root, e.planner)
-	// Also expose the planner to subqueries that have no
-	// outer row (e.g. top-level `SELECT EXISTS(...)`).
-	currentSubqueryPlanner = e.planner
-	defer func() { currentSubqueryPlanner = nil }()
+	// REQ000586: thread ExecContext through rows to eliminate
+	// the global currentSubqueryPlanner.
+	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
 	defer plan.root.Close()
 	var out []Row
 	for {
@@ -618,6 +620,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 			}
 			return nil, err
 		}
+		WithExecContext(&row, execCtx)
 		out = append(out, row)
 	}
 	return out, nil
@@ -995,17 +998,14 @@ func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*s
 	}
 	propagateParams(plan.root, args)
 	propagatePlanner(plan.root, e.planner)
-	currentSubqueryPlanner = e.planner
-	// Note: currentSubqueryPlanner is process-global so we cannot
-	// clear it here without race risk; the goroutine-spawning version
-	// below is responsible for managing its lifetime.
+	// REQ000586: thread ExecContext to eliminate global.
+	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
 
 	// Read first row to discover schema
 	row, err := plan.root.Next(ctx)
 	if err != nil {
 		if err == ErrNoRows {
 			plan.root.Close()
-			currentSubqueryPlanner = nil
 			return &streamIterator{
 				cols:  nil,
 				types: nil,
@@ -1014,9 +1014,9 @@ func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*s
 			}, nil
 		}
 		plan.root.Close()
-		currentSubqueryPlanner = nil
 		return nil, err
 	}
+	WithExecContext(&row, execCtx)
 	cols := append([]string(nil), row.Cols...)
 	types := append([]int(nil), row.Types...)
 
@@ -1031,7 +1031,6 @@ func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*s
 			return nil
 		}
 		closed = true
-		currentSubqueryPlanner = nil
 		return plan.root.Close()
 	}
 	go func() {
@@ -1047,6 +1046,7 @@ func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*s
 			if err != nil {
 				return
 			}
+			WithExecContext(&r, execCtx)
 			select {
 			case rowCh <- r:
 			case <-ctx.Done():
