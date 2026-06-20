@@ -185,159 +185,601 @@ func isNull(col Column, i int) bool {
 	return i < len(col.Nulls) && col.Nulls[i]
 }
 
-// compareInt64Cols: 4-wide unrolled int64 column-column comparison.
+// compareInt64Cols: hoisted-operator int64 column-column comparison.
 // REQ000608: skip rows where either side is NULL.
 func compareInt64Cols(left, right Column, op int, n int) []uint16 {
 	l := left.Data.([]int64)
 	r := right.Data.([]int64)
-	sel := make([]uint16, 0, n)
+	switch op {
+	case int(LX.T_EQ):
+		return cmpInt64ColsEQ(l, r, left, right, n)
+	case int(LX.T_NE):
+		return cmpInt64ColsNE(l, r, left, right, n)
+	case int(LX.T_LT):
+		return cmpInt64ColsLT(l, r, left, right, n)
+	case int(LX.T_LE):
+		return cmpInt64ColsLE(l, r, left, right, n)
+	case int(LX.T_GT):
+		return cmpInt64ColsGT(l, r, left, right, n)
+	case int(LX.T_GE):
+		return cmpInt64ColsGE(l, r, left, right, n)
+	}
+	return nil
+}
 
+func cmpInt64ColsEQ(l, r []int64, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
 	for i := 0; i < n; i++ {
-		if isNull(left, i) || isNull(right, i) {
+		if isNull(lc, i) || isNull(rc, i) {
 			continue
 		}
-		if compareInt64Op(l[i], r[i], op) {
+		if l[i] == r[i] {
 			sel = append(sel, uint16(i))
 		}
 	}
 	return sel
 }
 
-// compareInt64ColLit: int64 column-literal comparison. REQ000608: skip NULL rows.
+func cmpInt64ColsNE(l, r []int64, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] != r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpInt64ColsLT(l, r []int64, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] < r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpInt64ColsLE(l, r []int64, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] <= r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpInt64ColsGT(l, r []int64, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] > r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpInt64ColsGE(l, r []int64, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] >= r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+// compareInt64ColLit: hoisted-operator int64 column-literal comparison.
+// REQ000608: skip NULL rows.
 func compareInt64ColLit(col Column, lit int64, op int, n int) []uint16 {
 	data := col.Data.([]int64)
-	sel := make([]uint16, 0, n)
+	switch op {
+	case int(LX.T_EQ):
+		return cmpInt64LitEQ(data, lit, col, n)
+	case int(LX.T_NE):
+		return cmpInt64LitNE(data, lit, col, n)
+	case int(LX.T_LT):
+		return cmpInt64LitLT(data, lit, col, n)
+	case int(LX.T_LE):
+		return cmpInt64LitLE(data, lit, col, n)
+	case int(LX.T_GT):
+		return cmpInt64LitGT(data, lit, col, n)
+	case int(LX.T_GE):
+		return cmpInt64LitGE(data, lit, col, n)
+	}
+	return nil
+}
 
+func cmpInt64LitEQ(data []int64, lit int64, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
 		}
-		if compareInt64Op(data[i], lit, op) {
+		if data[i] == lit {
 			sel = append(sel, uint16(i))
 		}
 	}
 	return sel
 }
 
-// compareFloat64Cols: float64 column-column comparison. REQ000608: skip NULL rows.
+func cmpInt64LitNE(data []int64, lit int64, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] != lit {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpInt64LitLT(data []int64, lit int64, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] < lit {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpInt64LitLE(data []int64, lit int64, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] <= lit {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpInt64LitGT(data []int64, lit int64, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] > lit {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpInt64LitGE(data []int64, lit int64, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] >= lit {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+// compareFloat64Cols: hoisted-operator float64 column-column comparison.
+// REQ000608: skip NULL rows.
 func compareFloat64Cols(left, right Column, op int, n int) []uint16 {
 	l := left.Data.([]float64)
 	r := right.Data.([]float64)
-	sel := make([]uint16, 0, n)
+	switch op {
+	case int(LX.T_EQ):
+		return cmpFloat64ColsEQ(l, r, left, right, n)
+	case int(LX.T_NE):
+		return cmpFloat64ColsNE(l, r, left, right, n)
+	case int(LX.T_LT):
+		return cmpFloat64ColsLT(l, r, left, right, n)
+	case int(LX.T_LE):
+		return cmpFloat64ColsLE(l, r, left, right, n)
+	case int(LX.T_GT):
+		return cmpFloat64ColsGT(l, r, left, right, n)
+	case int(LX.T_GE):
+		return cmpFloat64ColsGE(l, r, left, right, n)
+	}
+	return nil
+}
 
+func cmpFloat64ColsEQ(l, r []float64, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
 	for i := 0; i < n; i++ {
-		if isNull(left, i) || isNull(right, i) {
+		if isNull(lc, i) || isNull(rc, i) {
 			continue
 		}
-		if compareFloat64Op(l[i], r[i], op) {
+		if l[i] == r[i] {
 			sel = append(sel, uint16(i))
 		}
 	}
 	return sel
 }
 
-// compareFloat64ColLit: float64 column-literal comparison. REQ000608: skip NULL rows.
+func cmpFloat64ColsNE(l, r []float64, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] != r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpFloat64ColsLT(l, r []float64, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] < r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpFloat64ColsLE(l, r []float64, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] <= r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpFloat64ColsGT(l, r []float64, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] > r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpFloat64ColsGE(l, r []float64, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] >= r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+// compareFloat64ColLit: hoisted-operator float64 column-literal comparison.
+// REQ000608: skip NULL rows.
 func compareFloat64ColLit(col Column, lit float64, op int, n int) []uint16 {
 	data := col.Data.([]float64)
-	sel := make([]uint16, 0, n)
+	switch op {
+	case int(LX.T_EQ):
+		return cmpFloat64LitEQ(data, lit, col, n)
+	case int(LX.T_NE):
+		return cmpFloat64LitNE(data, lit, col, n)
+	case int(LX.T_LT):
+		return cmpFloat64LitLT(data, lit, col, n)
+	case int(LX.T_LE):
+		return cmpFloat64LitLE(data, lit, col, n)
+	case int(LX.T_GT):
+		return cmpFloat64LitGT(data, lit, col, n)
+	case int(LX.T_GE):
+		return cmpFloat64LitGE(data, lit, col, n)
+	}
+	return nil
+}
 
+func cmpFloat64LitEQ(data []float64, lit float64, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
 		}
-		if compareFloat64Op(data[i], lit, op) {
+		if data[i] == lit {
 			sel = append(sel, uint16(i))
 		}
 	}
 	return sel
 }
 
-// compareStringCols: string column-column comparison. REQ000608: skip NULL rows.
+func cmpFloat64LitNE(data []float64, lit float64, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] != lit {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpFloat64LitLT(data []float64, lit float64, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] < lit {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpFloat64LitLE(data []float64, lit float64, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] <= lit {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpFloat64LitGT(data []float64, lit float64, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] > lit {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpFloat64LitGE(data []float64, lit float64, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] >= lit {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+// compareStringCols: hoisted-operator string column-column comparison.
+// REQ000608: skip NULL rows.
 func compareStringCols(left, right Column, op int, n int) []uint16 {
 	l := left.Data.([]string)
 	r := right.Data.([]string)
+	switch op {
+	case int(LX.T_EQ):
+		return cmpStringColsEQ(l, r, left, right, n)
+	case int(LX.T_NE):
+		return cmpStringColsNE(l, r, left, right, n)
+	case int(LX.T_LT):
+		return cmpStringColsLT(l, r, left, right, n)
+	case int(LX.T_LE):
+		return cmpStringColsLE(l, r, left, right, n)
+	case int(LX.T_GT):
+		return cmpStringColsGT(l, r, left, right, n)
+	case int(LX.T_GE):
+		return cmpStringColsGE(l, r, left, right, n)
+	}
+	return nil
+}
+
+func cmpStringColsEQ(l, r []string, lc, rc Column, n int) []uint16 {
 	sel := make([]uint16, 0, n)
 	for i := 0; i < n; i++ {
-		if isNull(left, i) || isNull(right, i) {
+		if isNull(lc, i) || isNull(rc, i) {
 			continue
 		}
-		if compareStringOp(l[i], r[i], op) {
+		if l[i] == r[i] {
 			sel = append(sel, uint16(i))
 		}
 	}
 	return sel
 }
 
-// compareStringColLit: string-literal comparison. REQ000608: skip NULL rows.
+func cmpStringColsNE(l, r []string, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] != r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpStringColsLT(l, r []string, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] < r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpStringColsLE(l, r []string, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] <= r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpStringColsGT(l, r []string, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] > r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpStringColsGE(l, r []string, lc, rc Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(lc, i) || isNull(rc, i) {
+			continue
+		}
+		if l[i] >= r[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+// compareStringColLit: hoisted-operator string column-literal comparison.
+// REQ000608: skip NULL rows.
 func compareStringColLit(col Column, lit string, op int, n int) []uint16 {
 	data := col.Data.([]string)
+	switch op {
+	case int(LX.T_EQ):
+		return cmpStringLitEQ(data, lit, col, n)
+	case int(LX.T_NE):
+		return cmpStringLitNE(data, lit, col, n)
+	case int(LX.T_LT):
+		return cmpStringLitLT(data, lit, col, n)
+	case int(LX.T_LE):
+		return cmpStringLitLE(data, lit, col, n)
+	case int(LX.T_GT):
+		return cmpStringLitGT(data, lit, col, n)
+	case int(LX.T_GE):
+		return cmpStringLitGE(data, lit, col, n)
+	}
+	return nil
+}
+
+func cmpStringLitEQ(data []string, lit string, col Column, n int) []uint16 {
 	sel := make([]uint16, 0, n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
 		}
-		if compareStringOp(data[i], lit, op) {
+		if data[i] == lit {
 			sel = append(sel, uint16(i))
 		}
 	}
 	return sel
 }
 
-// compareInt64Op applies a comparison operator to two int64 values.
-func compareInt64Op(a, b int64, op int) bool {
-	switch op {
-	case int(LX.T_EQ):
-		return a == b
-	case int(LX.T_NE):
-		return a != b
-	case int(LX.T_LT):
-		return a < b
-	case int(LX.T_LE):
-		return a <= b
-	case int(LX.T_GT):
-		return a > b
-	case int(LX.T_GE):
-		return a >= b
+func cmpStringLitNE(data []string, lit string, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] != lit {
+			sel = append(sel, uint16(i))
+		}
 	}
-	return false
+	return sel
 }
 
-// compareFloat64Op applies a comparison operator to two float64 values.
-func compareFloat64Op(a, b float64, op int) bool {
-	switch op {
-	case int(LX.T_EQ):
-		return a == b
-	case int(LX.T_NE):
-		return a != b
-	case int(LX.T_LT):
-		return a < b
-	case int(LX.T_LE):
-		return a <= b
-	case int(LX.T_GT):
-		return a > b
-	case int(LX.T_GE):
-		return a >= b
+func cmpStringLitLT(data []string, lit string, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] < lit {
+			sel = append(sel, uint16(i))
+		}
 	}
-	return false
+	return sel
 }
 
-// compareStringOp applies a comparison operator to two string values.
-func compareStringOp(a, b string, op int) bool {
-	switch op {
-	case int(LX.T_EQ):
-		return a == b
-	case int(LX.T_NE):
-		return a != b
-	case int(LX.T_LT):
-		return a < b
-	case int(LX.T_LE):
-		return a <= b
-	case int(LX.T_GT):
-		return a > b
-	case int(LX.T_GE):
-		return a >= b
+func cmpStringLitLE(data []string, lit string, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] <= lit {
+			sel = append(sel, uint16(i))
+		}
 	}
-	return false
+	return sel
+}
+
+func cmpStringLitGT(data []string, lit string, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] > lit {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+func cmpStringLitGE(data []string, lit string, col Column, n int) []uint16 {
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(col, i) {
+			continue
+		}
+		if data[i] >= lit {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
 }
 
 // swapOp swaps the operator for column-literal evaluation.
