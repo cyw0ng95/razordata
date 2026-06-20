@@ -947,3 +947,221 @@ func TestBugfix_CorrelatedExists_SameColumnName(t *testing.T) {
 		}
 	})
 }
+
+// SLT PL-1 investigation: WHERE with comparison on store-backed
+// tables populated via INSERT INTO ... SELECT.
+func TestBugfix_SLT_IndexWhereFilter(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.RegisterTableWithPK("tab0", []string{"pk", "col0", "col1"}, "pk")
+	ex.RegisterTableWithPK("tab1", []string{"pk", "col0", "col1"}, "pk")
+
+	// Insert 5 rows into both tables
+	for i := int64(0); i < 5; i++ {
+		ex.Exec(ctx, "INSERT INTO tab0 VALUES (?, ?, ?)", i, i*100, float64(i)*1.5)
+		ex.Exec(ctx, "INSERT INTO tab1 VALUES (?, ?, ?)", i, i*100, float64(i)*1.5)
+	}
+
+	t.Run("select_all_tab0", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT pk FROM tab0")
+		if err != nil {
+			t.Fatalf("tab0 all: %v", err)
+		}
+		if len(rows) != 5 {
+			t.Errorf("tab0 all: got %d, want 5", len(rows))
+		}
+	})
+
+	t.Run("select_all_tab1", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT pk FROM tab1")
+		if err != nil {
+			t.Fatalf("tab1 all: %v", err)
+		}
+		if len(rows) != 5 {
+			t.Errorf("tab1 all: got %d, want 5", len(rows))
+		}
+	})
+
+	t.Run("where_tab0", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT pk FROM tab0 WHERE col0 <= 250")
+		if err != nil {
+			t.Fatalf("tab0 where: %v", err)
+		}
+		// pk 0 (col0=0), 1 (col0=100), 2 (col0=200) => 3 rows
+		if len(rows) != 3 {
+			t.Errorf("tab0 where col0<=250: got %d, want 3; data=%v", len(rows), rows)
+		}
+	})
+
+	t.Run("where_tab1", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT pk FROM tab1 WHERE col0 <= 250")
+		if err != nil {
+			t.Fatalf("tab1 where: %v", err)
+		}
+		if len(rows) != 3 {
+			t.Errorf("tab1 where col0<=250: got %d, want 3; data=%v", len(rows), rows)
+		}
+	})
+
+	t.Run("where_ordered_tab0", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT pk FROM tab0 WHERE col0 <= 250 ORDER BY pk DESC")
+		if err != nil {
+			t.Fatalf("tab0 where ordered: %v", err)
+		}
+		if len(rows) != 3 {
+			t.Errorf("tab0 where ordered: got %d, want 3", len(rows))
+		}
+		if len(rows) >= 3 {
+			if rows[0].Data[0] != int64(2) || rows[2].Data[0] != int64(0) {
+				t.Errorf("order wrong: %v", rows)
+			}
+		}
+	})
+}
+
+// SLT EX-1: Unary +/- before column reference causes eval error.
+func TestBugfix_SLT_UnaryPlusMinusColumn(t *testing.T) {
+	ResetForTest(t)
+	ex := NewExecutor()
+	defer UnregisterAll()
+	ctx := context.Background()
+	ex.RegisterTable("tab1", []string{"col0", "col1", "col2"})
+	ex.Exec(ctx, "INSERT INTO tab1 VALUES (10, 20, 30)")
+
+	tests := []struct {
+		name string
+		sql  string
+		want any
+	}{
+		{"unary_minus_col", "SELECT - col0 FROM tab1", int64(-10)},
+		{"unary_plus_col", "SELECT + col0 FROM tab1", int64(10)},
+		{"double_unary", "SELECT + - col0 FROM tab1", int64(-10)},
+		{"unary_in_expr", "SELECT col0 - - col1 FROM tab1", int64(30)},
+		{"unary_minus_literal", "SELECT - 87 FROM tab1", int64(-87)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows, err := ex.QueryAll(ctx, tt.sql)
+			if err != nil {
+				t.Fatalf("%s: %v", tt.name, err)
+			}
+			if len(rows) != 1 {
+				t.Fatalf("%s: got %d rows, want 1", tt.name, len(rows))
+			}
+			if rows[0].Data[0] != tt.want {
+				t.Errorf("%s: got %v, want %v", tt.name, rows[0].Data[0], tt.want)
+			}
+		})
+	}
+}
+
+// REQ000702: View expansion must preserve column aliases when the
+// outer query references them. The bug was that merged.Cols = s.Cols
+// replaced the view's column expressions with the outer query's
+// column references, which don't exist in the underlying table.
+func TestBugfix_ViewColumnAlias(t *testing.T) {
+	ResetForTest(t)
+	ex := NewExecutor()
+	defer UnregisterAll()
+	ctx := context.Background()
+
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	for i := int64(1); i <= 5; i++ {
+		ex.Exec(ctx, "INSERT INTO t VALUES (?, ?)", i, i*10)
+	}
+
+	t.Run("view_with_alias", func(t *testing.T) {
+		_, err := ex.Exec(ctx, "CREATE VIEW v AS SELECT id, v * 2 AS doubled FROM t")
+		if err != nil {
+			t.Fatalf("CREATE VIEW: %v", err)
+		}
+
+		rows, err := ex.QueryAll(ctx, "SELECT doubled FROM v ORDER BY doubled")
+		if err != nil {
+			t.Fatalf("SELECT from view: %v", err)
+		}
+		if len(rows) != 5 {
+			t.Errorf("got %d rows, want 5; data=%v", len(rows), rows)
+		}
+		if len(rows) >= 5 {
+			// v*2: 20, 40, 60, 80, 100
+			if rows[0].Data[0] != int64(20) {
+				t.Errorf("row 0 = %v, want 20", rows[0].Data[0])
+			}
+			if rows[4].Data[0] != int64(100) {
+				t.Errorf("row 4 = %v, want 100", rows[4].Data[0])
+			}
+		}
+	})
+
+	t.Run("view_star", func(t *testing.T) {
+		_, err := ex.Exec(ctx, "CREATE VIEW v2 AS SELECT id, v FROM t WHERE v > 20")
+		if err != nil {
+			t.Fatalf("CREATE VIEW: %v", err)
+		}
+
+		rows, err := ex.QueryAll(ctx, "SELECT * FROM v2 ORDER BY id")
+		if err != nil {
+			t.Fatalf("SELECT * from view: %v", err)
+		}
+		if len(rows) != 3 {
+			t.Errorf("got %d rows, want 3; data=%v", len(rows), rows)
+		}
+	})
+
+	t.Run("view_with_where", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT doubled FROM v WHERE id > 3 ORDER BY doubled")
+		if err != nil {
+			t.Fatalf("SELECT from view with WHERE: %v", err)
+		}
+		if len(rows) != 2 {
+			t.Errorf("got %d rows, want 2; data=%v", len(rows), rows)
+		}
+		if len(rows) >= 2 {
+			// id=4,v=40 -> doubled=80; id=5,v=50 -> doubled=100
+			if rows[0].Data[0] != int64(80) {
+				t.Errorf("row 0 = %v, want 80", rows[0].Data[0])
+			}
+		}
+	})
+}
+
+// SLT EX-3: Unary minus on aggregate result.
+func TestBugfix_SLT_NegateAggregate(t *testing.T) {
+	ResetForTest(t)
+	ex := NewExecutor()
+	defer UnregisterAll()
+	ctx := context.Background()
+	ex.RegisterTable("tab0", []string{"col0", "col1"})
+	ex.Exec(ctx, "INSERT INTO tab0 VALUES (10, 20)")
+	ex.Exec(ctx, "INSERT INTO tab0 VALUES (30, 40)")
+
+	t.Run("neg_count", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT - COUNT(*) FROM tab0")
+		if err != nil {
+			t.Fatalf("neg count: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("got %d rows, want 1", len(rows))
+		}
+		if rows[0].Data[0] != int64(-2) {
+			t.Errorf("got %v, want -2", rows[0].Data[0])
+		}
+	})
+
+	t.Run("neg_sum", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT - SUM(col0) FROM tab0")
+		if err != nil {
+			t.Fatalf("neg sum: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("got %d rows, want 1", len(rows))
+		}
+		if rows[0].Data[0] != int64(-40) {
+			t.Errorf("got %v, want -40", rows[0].Data[0])
+		}
+	})
+}

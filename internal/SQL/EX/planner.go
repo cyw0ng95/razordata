@@ -759,9 +759,54 @@ func (p *Planner) selectIndex(table, col string) (string, bool) {
 	return "", false
 }
 
+// extractViewAliases returns a set of column alias names from a
+// view's SELECT columns. Used to detect when the outer query
+// references view column aliases (REQ000702).
+func extractViewAliases(cols []PS.Expr) map[string]bool {
+	aliases := make(map[string]bool)
+	for _, col := range cols {
+		switch c := col.(type) {
+		case *PS.AliasedExpr:
+			if c.Alias != "" {
+				aliases[c.Alias] = true
+			}
+		case *PS.Ident:
+			aliases[c.Name] = true
+		}
+	}
+	return aliases
+}
+
 func (p *Planner) planSelect(s *PS.Select) Operator {
 	// REQ000241: view resolution — expand view to underlying SELECT
 	if viewSel := LookupView(s.From); viewSel != nil {
+		// REQ000702: When the outer query references view column
+		// aliases (e.g., SELECT doubled FROM v), we must wrap the
+		// view as a subquery so the outer query projects over the
+		// view's output columns.
+		if len(s.Cols) > 0 {
+			viewAliases := extractViewAliases(viewSel.Cols)
+			needsWrap := false
+			for _, col := range s.Cols {
+				if id, ok := col.(*PS.Ident); ok {
+					if viewAliases[id.Name] {
+						needsWrap = true
+						break
+					}
+				}
+			}
+			if needsWrap {
+				// Plan the view's SELECT to get the underlying scan
+				innerOp := p.planSelect(viewSel)
+				// Apply the outer query's WHERE clause if present
+				if s.Where != nil {
+					innerOp = NewFilter(innerOp, s.Where)
+				}
+				// Project the outer query's columns over the view's output
+				return NewProject(innerOp, s.Cols)
+			}
+		}
+
 		merged := *viewSel
 		if s.Where != nil {
 			if merged.Where != nil {

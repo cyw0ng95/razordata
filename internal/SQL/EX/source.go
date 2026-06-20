@@ -145,6 +145,16 @@ func UnregisterAll() {
 	codegenMu.Unlock()
 }
 
+// UnregisterTable removes a single table from the in-memory
+// tables and schemas maps. Used by CTE cleanup to remove
+// temporary CTE tables after query execution.
+func UnregisterTable(name string) {
+	tablesMu.Lock()
+	defer tablesMu.Unlock()
+	delete(tables, name)
+	delete(schemas, name)
+}
+
 func cloneRow(r Row) Row {
 	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]int(nil), r.Types...), Outer: r.Outer, planner: r.planner, storeKey: r.storeKey, tableName: r.tableName}
 	if r.Data != nil {
