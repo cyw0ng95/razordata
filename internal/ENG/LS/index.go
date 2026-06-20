@@ -126,7 +126,7 @@ func (idx *primaryIndex) Find(key []byte) ([]byte, bool) {
 			return nil, false
 		}
 		curr = next
-		if string(curr.key) == string(key) {
+		if bytes.Equal(curr.key, key) {
 			return curr.primary, true
 		}
 	}
@@ -140,7 +140,7 @@ func (idx *primaryIndex) Delete(key []byte) bool {
 	curr := prev.next.Load()
 
 	for curr != nil {
-		if string(curr.key) == string(key) {
+		if bytes.Equal(curr.key, key) {
 			prev.next.Store(curr.next.Load())
 			idx.len.Add(-1)
 			return true
