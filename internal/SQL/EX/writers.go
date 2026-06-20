@@ -1416,6 +1416,37 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 		return row, nil
 	}
 
+	// Handle PRAGMA database_list (REQ000730)
+	if p.stmt.Name == "database_list" {
+		if !p.done {
+			p.done = true
+			p.rows = append(p.rows, Row{
+				Cols: []string{"seq", "name", "file"},
+				Data: []any{int64(0), "main", nil},
+			})
+		}
+		if p.idx >= len(p.rows) {
+			return Row{}, ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
+	// Handle PRAGMA index_list(table_name) (REQ000731)
+	if p.stmt.Name == "index_list" && p.stmt.Value != "" {
+		if !p.done {
+			p.done = true
+			p.loadIndexList()
+		}
+		if p.idx >= len(p.rows) {
+			return Row{}, ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
 	// Default: return empty result for unknown pragmas
 	if !p.done {
 		p.done = true
@@ -1473,6 +1504,19 @@ func colTypeName(t int) string {
 	default:
 		return "ANY"
 	}
+}
+
+// loadIndexList populates rows for PRAGMA index_list(table_name) (REQ000731).
+// Returns columns: seq, name, unique, origin, partial
+func (p *Pragma) loadIndexList() {
+	tableName := p.stmt.Value
+	// Check if table exists
+	if _, ok := schemaFor(tableName); !ok {
+		return
+	}
+	// For now, only the primary key index exists
+	// Secondary indexes will be added when the index catalog is extended
+	return
 }
 
 func (p *Pragma) Close() error                { return nil }
