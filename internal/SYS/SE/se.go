@@ -128,6 +128,51 @@ func (s *Session) reset(engine *SY.Engine) {
 // ID returns the session's unique identifier (used for tracing).
 func (s *Session) ID() uint64 { return s.id }
 
+// wrapEXError maps EX-layer errors to AP.Error with the appropriate
+// Kind. This ensures callers using AP.IsKind see errors from any
+// layer. REQ000652.
+func wrapEXError(err error) error {
+	if err == nil {
+		return nil
+	}
+	// Already an AP.Error — pass through.
+	var apErr *AP.Error
+	if errors.As(err, &apErr) {
+		return err
+	}
+	// Map known EX sentinels.
+	switch {
+	case errors.Is(err, EX.ErrNoRows):
+		return AP.ErrNoRows
+	case errors.Is(err, EX.ErrEval):
+		return AP.Wrap(AP.KindSyntax, err)
+	case errors.Is(err, EX.ErrDivByZero):
+		return AP.Wrap(AP.KindTypeMismatch, err)
+	case errors.Is(err, EX.ErrTypeMismatch):
+		return AP.Wrap(AP.KindTypeMismatch, err)
+	case errors.Is(err, EX.ErrClosed):
+		return AP.Wrap(AP.KindClosed, err)
+	case errors.Is(err, EX.ErrTableNotRegisteredForStorage):
+		return AP.Wrap(AP.KindNotFound, err)
+	case errors.Is(err, EX.ErrNoPKForStorage):
+		return AP.Wrap(AP.KindConstraint, err)
+	case errors.Is(err, EX.ErrSubquery):
+		return AP.Wrap(AP.KindSyntax, err)
+	case errors.Is(err, EX.ErrTriggerAbort):
+		return AP.Wrap(AP.KindConstraint, err)
+	case errors.Is(err, EX.ErrMultiDatabaseNotSupported):
+		return AP.Wrap(AP.KindInvalidOptions, err)
+	case errors.Is(err, EX.ErrNoEngine):
+		return AP.Wrap(AP.KindClosed, err)
+	case errors.Is(err, EX.ErrDecimalOverflow):
+		return AP.Wrap(AP.KindTypeMismatch, err)
+	case errors.Is(err, EX.ErrDecimalScale):
+		return AP.Wrap(AP.KindTypeMismatch, err)
+	default:
+		return AP.Wrap(AP.KindIO, err)
+	}
+}
+
 // Query runs a SELECT and returns a streaming row iterator. The
 // caller MUST call Close on the returned *AP.Rows to release
 // underlying plan resources. After Next returns ErrNoRows the
@@ -147,7 +192,7 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 	exe.SetSessionID(s.id)
 	stream, err := exe.QueryStream(ctx, sql, args...)
 	if err != nil {
-		return nil, err
+		return nil, wrapEXError(err)
 	}
 	next := func() (AP.Row, error) {
 		row, err := stream.Next()
@@ -155,7 +200,7 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 			if err == EX.ErrNoRows {
 				return AP.Row{}, AP.ErrNoRows
 			}
-			return AP.Row{}, err
+			return AP.Row{}, wrapEXError(err)
 		}
 		return AP.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
 	}
@@ -182,7 +227,7 @@ func (s *Session) Exec(ctx context.Context, sql string, args ...any) (AP.Result,
 	exe.SetSessionID(s.id)
 	res, err := exe.Exec(ctx, sql, args...)
 	if err != nil {
-		return AP.Result{}, err
+		return AP.Result{}, wrapEXError(err)
 	}
 	// REQ000385/394/411: update per-session change counters from
 	// the exec result.  ChangesCount is the rows affected by the
@@ -217,7 +262,7 @@ func (s *Session) Begin(ctx context.Context) (AP.Transaction, error) {
 	}
 	t, err := s.engine.BeginTxn(ctx)
 	if err != nil {
-		return nil, err
+		return nil, wrapEXError(err)
 	}
 	s.txn = t
 	// REQ000061: propagate session isolation level to transaction
@@ -255,7 +300,7 @@ func (s *Session) Commit(ctx context.Context) error {
 		return AP.ErrNoActiveTxn
 	}
 	if err := s.txn.Commit(ctx); err != nil {
-		return err
+		return wrapEXError(err)
 	}
 	s.txn = nil
 	return nil
@@ -274,7 +319,7 @@ func (s *Session) Rollback(ctx context.Context) error {
 		return AP.ErrNoActiveTxn
 	}
 	if err := s.txn.Rollback(ctx); err != nil {
-		return err
+		return wrapEXError(err)
 	}
 	s.txn = nil
 	return nil
@@ -311,7 +356,7 @@ func (s *Session) Savepoint(ctx context.Context, name string) error {
 	if s.txn == nil {
 		return AP.ErrNoActiveTxn
 	}
-	return s.txn.Savepoint(ctx, name)
+	return wrapEXError(s.txn.Savepoint(ctx, name))
 }
 
 // ReleaseSavepoint releases a savepoint with the given name.
@@ -326,7 +371,7 @@ func (s *Session) ReleaseSavepoint(ctx context.Context, name string) error {
 	if s.txn == nil {
 		return AP.ErrNoActiveTxn
 	}
-	return s.txn.ReleaseSavepoint(ctx, name)
+	return wrapEXError(s.txn.ReleaseSavepoint(ctx, name))
 }
 
 // RollbackTo rolls back to a savepoint with the given name.
@@ -341,7 +386,7 @@ func (s *Session) RollbackTo(ctx context.Context, name string) error {
 	if s.txn == nil {
 		return AP.ErrNoActiveTxn
 	}
-	return s.txn.RollbackTo(ctx, name)
+	return wrapEXError(s.txn.RollbackTo(ctx, name))
 }
 
 // SetDeadline sets a deadline for all subsequent operations on this
@@ -424,7 +469,10 @@ func (s *Session) lock(ctx context.Context) error {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return AP.ErrDeadlineExceeded
 		}
-		return err
+		if errors.Is(err, context.Canceled) {
+			return AP.Wrap(AP.KindIO, err)
+		}
+		return wrapEXError(err)
 	}
 	return nil
 }
