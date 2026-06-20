@@ -71,7 +71,7 @@ type storeSchema struct {
 	// and uses it as the LSM key suffix; the user-visible schema
 	// is unchanged (no rowid column appears in SELECT *).
 	hiddenPK  bool
-	nextRowID int64
+	nextRowID atomic.Int64
 }
 
 // ForeignKeyConstraint describes a single FK constraint (REQ000126).
@@ -662,7 +662,7 @@ func extractPK(schema *storeSchema, row Row) (any, error) {
 		if !schema.hiddenPK {
 			return nil, errors.New("ex: table has no primary key")
 		}
-		id := atomic.AddInt64(&schema.nextRowID, 1)
+		id := schema.nextRowID.Add(1)
 		return id, nil
 	}
 	for i, c := range schema.cols {
@@ -671,7 +671,7 @@ func extractPK(schema *storeSchema, row Row) (any, error) {
 				if !schema.hiddenPK {
 					schema.hiddenPK = true
 				}
-				id := atomic.AddInt64(&schema.nextRowID, 1)
+				id := schema.nextRowID.Add(1)
 				return id, nil
 			}
 			return row.Data[i], nil

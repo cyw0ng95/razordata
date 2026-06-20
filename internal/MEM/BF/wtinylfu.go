@@ -13,8 +13,8 @@ type wtinyLFU struct {
 	window   []uint64 // small LRU of recent admissions; size = windowSize
 	winHead  int
 	winSize  int
-	admitted uint64
-	rejected uint64
+	admitted atomic.Uint64
+	rejected atomic.Uint64
 }
 
 const (
@@ -87,10 +87,10 @@ func (w *wtinyLFU) admit(newKey, candidateKey uint64) bool {
 	w.window[w.winHead%w.winSize] = newKey
 	w.winHead++
 	if newFreq > candFreq {
-		atomic.AddUint64(&w.admitted, 1)
+		w.admitted.Add(1)
 		return true
 	}
-	atomic.AddUint64(&w.rejected, 1)
+	w.rejected.Add(1)
 	return false
 }
 
@@ -102,8 +102,8 @@ type wtinyLFUStats struct {
 
 func (w *wtinyLFU) stats() wtinyLFUStats {
 	return wtinyLFUStats{
-		Admitted: atomic.LoadUint64(&w.admitted),
-		Rejected: atomic.LoadUint64(&w.rejected),
+		Admitted: w.admitted.Load(),
+		Rejected: w.rejected.Load(),
 	}
 }
 

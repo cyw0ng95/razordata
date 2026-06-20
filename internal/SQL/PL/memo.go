@@ -508,17 +508,17 @@ func SerializeKeyBytes(buf []byte, schemaVersion uint64) string {
 // instance. Tests and callers that need fine-grained control
 // should use SerializeKeyWithSchema or hold a *Memo and call
 // SerializeKeyWithSchema explicitly.
-var defaultMemoSchemaVersion uint64
+var defaultMemoSchemaVersion atomic.Uint64
 
 // BumpDefaultSchemaVersion increments the package-level schema
 // version. Use this from DDL entry points that do not own a
 // *Memo. REQ000584.
 func BumpDefaultSchemaVersion() uint64 {
-	return atomic.AddUint64(&defaultMemoSchemaVersion, 1)
+	return defaultMemoSchemaVersion.Add(1)
 }
 
 // SchemaVersion returns the package-level schema version mixed
 // into SerializeKey output. REQ000584.
 func SchemaVersion() uint64 {
-	return atomic.LoadUint64(&defaultMemoSchemaVersion)
+	return defaultMemoSchemaVersion.Load()
 }

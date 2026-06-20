@@ -326,8 +326,8 @@ func (fm *flushManager) Close() error {
 	return nil
 }
 
-var fileIDCounter uint64
+var fileIDCounter atomic.Uint64
 
 func nextFileID() uint64 {
-	return atomic.AddUint64(&fileIDCounter, 1)
+	return fileIDCounter.Add(1)
 }

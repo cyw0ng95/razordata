@@ -3,7 +3,6 @@ package PL
 import (
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
@@ -118,8 +117,8 @@ func TestMemo_ClearDropsAll(t *testing.T) {
 func TestMemo_SchemaVersionInvalidation(t *testing.T) {
 	stmt := &PS.Select{From: "t", Cols: []PS.Expr{&PS.Ident{Name: "x"}}}
 	prev := SchemaVersion()
-	defer atomic.StoreUint64(&defaultMemoSchemaVersion, prev)
-	atomic.StoreUint64(&defaultMemoSchemaVersion, 0)
+	defer defaultMemoSchemaVersion.Store(prev)
+	defaultMemoSchemaVersion.Store(0)
 	v1 := SerializeKey(stmt)
 	BumpDefaultSchemaVersion()
 	v2 := SerializeKey(stmt)
@@ -132,7 +131,7 @@ func TestMemo_SchemaVersionInvalidation(t *testing.T) {
 // insert plan, bump schema, re-Plan, expect BuildTree to be
 // called again because the key no longer matches. REQ000584.
 func TestMemo_BumpInvalidatesCachedPlan(t *testing.T) {
-	atomic.StoreUint64(&defaultMemoSchemaVersion, 0)
+	defaultMemoSchemaVersion.Store(0)
 	calls := 0
 	pl := NewPlannerWith(PlanOptions{
 		BuildTree: func(PS.Stmt) (float64, error) {
@@ -193,7 +192,7 @@ func TestSerializeKey_StableAcrossCalls(t *testing.T) {
 // TestSerializeKey_DifferentForDifferentASTs is a basic
 // anti-collision check. REQ000584.
 func TestSerializeKey_DifferentForDifferentASTs(t *testing.T) {
-	atomic.StoreUint64(&defaultMemoSchemaVersion, 0)
+	defaultMemoSchemaVersion.Store(0)
 	a := SerializeKey(&PS.Select{From: "t", Cols: []PS.Expr{&PS.Ident{Name: "x"}}})
 	b := SerializeKey(&PS.Select{From: "t", Cols: []PS.Expr{&PS.Ident{Name: "y"}}})
 	if a == b {
