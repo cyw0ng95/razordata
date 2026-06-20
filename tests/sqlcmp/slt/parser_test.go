@@ -223,3 +223,45 @@ func TestParseValue(t *testing.T) {
 		}
 	}
 }
+
+// TestParse_MultiRowQuery verifies parsing of queries with multiple result rows.
+func TestParse_MultiRowQuery(t *testing.T) {
+	in := `query I rowsort
+SELECT 1 UNION ALL SELECT 2
+----
+1
+2
+`
+	recs, err := Parse(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("got %d records, want 1", len(recs))
+	}
+	if recs[0].Kind != RecordQuery {
+		t.Errorf("kind = %v, want Query", recs[0].Kind)
+	}
+	if len(recs[0].Expected) != 2 {
+		t.Errorf("expected rows = %d, want 2", len(recs[0].Expected))
+	}
+}
+
+// TestParse_HashThreshold verifies hash-threshold parsing.
+func TestParse_HashThreshold(t *testing.T) {
+	in := `hash-threshold 10
+`
+	recs, err := Parse(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("got %d records, want 1", len(recs))
+	}
+	if recs[0].Kind != RecordHashThreshold {
+		t.Errorf("kind = %v, want HashThreshold", recs[0].Kind)
+	}
+	if recs[0].HashThreshold != 10 {
+		t.Errorf("threshold = %d, want 10", recs[0].HashThreshold)
+	}
+}
