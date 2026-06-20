@@ -237,7 +237,8 @@ type PageCache struct {
 |---|---|
 | `LS` | LSM tree: memtable, SST writer, SST reader, bloom filter, leveled/tiered/hybrid compaction, rate-limited compaction, columnar SST block layout, per-block dictionary compression, subcompaction for L4+, storage policy with tiered device placement, SST page cache |
 | `ID` | Index: persistent B-tree for secondary indexes (btree.razor), cursor-based scan, page-level CRC |
-| `TB` | Table: create/drop/alter table, schema catalog, foreign key enforcement, views, triggers |
+| `TB` | Table: create/drop/alter table, foreign key enforcement, views, triggers. Delegates catalog persistence to CT. |
+| `CT` | Catalog: persistent table metadata storage, schema versioning, bootstrap, encode/decode. Shared by TB and LS. |
 | `SC` | Schema: column types, constraints (NOT NULL, DEFAULT, PRIMARY KEY, UNIQUE, CHECK, FOREIGN KEY), table definitions, integrity checks |
 | `DP` | Deparser: row serialization, SST block encoding, value encoding, delta-key encoding in blocks |
 | `NM` | NUMA: topology detection via `/sys/devices/system/node`, worker pinning via `runtime.LockOSThread` for first-touch allocation |
