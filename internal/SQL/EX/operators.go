@@ -98,9 +98,27 @@ func (s *SeqScan) snapshot() []Row {
 	tablesMu.RLock()
 	defer tablesMu.RUnlock()
 	src := tables[s.table]
+	if len(src) == 0 {
+		return nil
+	}
+	// REQ000758: share Cols slice across all rows from the same table.
+	// Only deep-copy Data (which varies per row).
+	sharedCols := append([]string(nil), src[0].Cols...)
+	var sharedTypes []int
+	if len(src[0].Types) > 0 {
+		sharedTypes = append([]int(nil), src[0].Types...)
+	}
 	out := make([]Row, len(src))
 	for i, r := range src {
-		out[i] = cloneRow(r)
+		out[i] = Row{
+			Cols:      sharedCols,
+			Types:     sharedTypes,
+			Data:      append([]any(nil), r.Data...),
+			Outer:     r.Outer,
+			planner:   r.planner,
+			storeKey:  r.storeKey,
+			tableName: r.tableName,
+		}
 	}
 	return out
 }
