@@ -4,32 +4,29 @@
 package ls
 
 import (
-	"cmp"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"os"
-	"sync/atomic"
+	"sync"
 
 	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
-	"path/filepath"
-	"slices"
-	"sync"
+	ct "github.com/cyw0ng95/razordata/internal/ENG/CT"
 
 	LX "github.com/cyw0ng95/razordata/internal/SQL/LX"
 )
 
+// Constants re-exported from the shared catalog package.
 const (
-	schemaVersionV1      uint8 = 1
-	schemaVersionV2      uint8 = 2
-	schemaVersionCurrent       = schemaVersionV2
+	schemaVersionV1      = ct.SchemaVersionV1
+	schemaVersionV2      = ct.SchemaVersionV2
+	schemaVersionCurrent = ct.SchemaVersionCurrent
 )
 
 var (
-	catalogMagic      = [4]byte{'R', 'C', 'A', 'T'}
-	catalogFileName   = "catalog.dat"
-	catalogTmpSuffix  = ".tmp"
-	catalogHeaderSize = 17
+	catalogMagic      = ct.CatalogMagic
+	catalogFileName   = ct.CatalogFileName
+	catalogTmpSuffix  = ct.CatalogTmpSuffix
+	catalogHeaderSize = ct.CatalogHeaderSize
 )
 
 // Catalog error sentinels — shared with TB via SC package.
@@ -77,87 +74,541 @@ type CatalogEntry struct {
 
 // Catalog is the persistent system catalog backed by catalog.dat.
 type Catalog struct {
-	mu     sync.RWMutex
+	inner  *ct.Catalog
 	path   string
-	cache  map[uint64]*CatalogEntry
-	byName map[string]uint64
-	nextID uint64
-	closed atomic.Bool
+	mu     sync.RWMutex // protects LS-specific operations (indexes, stats)
+	nextID uint64       // cached copy of inner's nextID for test access
 }
 
 // NewCatalog opens or creates a catalog rooted at dir.
 func NewCatalog(dir string) (*Catalog, error) {
-	if dir == "" {
-		return nil, fmt.Errorf("%w: dir is required", ErrCatalogCorrupt)
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("catalog: mkdir %s: %w", dir, err)
-	}
-	c := &Catalog{
-		path:   filepath.Join(dir, catalogFileName),
-		cache:  make(map[uint64]*CatalogEntry),
-		byName: make(map[string]uint64),
-	}
-	if err := c.bootstrap(); err != nil {
+	inner, err := ct.NewCatalog(dir, lsEncodeEntry, lsDecodeEntry)
+	if err != nil {
 		return nil, err
 	}
-	return c, nil
+	return &Catalog{
+		inner:  inner,
+		path:   inner.Path(),
+		nextID: inner.NextIDVal(),
+	}, nil
 }
 
-func (c *Catalog) bootstrap() error {
-	data, err := os.ReadFile(c.path)
+// NextID reserves and returns the next free tableID.
+func (c *Catalog) NextID() (uint64, error) {
+	id, err := c.inner.NextID()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			c.nextID = 1
-			return nil
-		}
-		return fmt.Errorf("catalog: read %s: %w", c.path, err)
+		return 0, err
 	}
-	if len(data) < catalogHeaderSize {
-		return fmt.Errorf("%w: file too short (%d bytes)", ErrCatalogCorrupt, len(data))
+	c.nextID = c.inner.NextIDVal()
+	return id, nil
+}
+
+// Put registers a new table. The catalog is rewritten atomically.
+func (c *Catalog) Put(entry CatalogEntry) error {
+	raw := lsEntryToRaw(&entry)
+	return c.inner.PutRaw(raw)
+}
+
+// Delete removes a table by ID.
+func (c *Catalog) Delete(tableID uint64) error {
+	return c.inner.Delete(tableID)
+}
+
+// PutIndex adds a secondary index to a table (REQ000251).
+func (c *Catalog) PutIndex(tableID uint64, idx CatalogIndex) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.inner == nil {
+		return ErrCatalogClosed
 	}
-	if [4]byte{data[0], data[1], data[2], data[3]} != catalogMagic {
-		return fmt.Errorf("%w: bad magic %x", ErrCatalogCorrupt, data[:4])
+	raw, err := c.inner.GetByIDRef(tableID)
+	if err != nil {
+		return fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
 	}
-	version := data[4]
-	if version > schemaVersionCurrent {
-		return fmt.Errorf("%w: file=%d, current=%d",
-			ErrUpgradeRequired, version, schemaVersionCurrent)
+	if idx.Name == "" {
+		return fmt.Errorf("%w: index name is required", ErrCatalogCorrupt)
 	}
-	off := 5
-	off += 4 // reserved
-	if off+8 > len(data) {
-		return fmt.Errorf("%w: header truncated at nextID", ErrCatalogCorrupt)
-	}
-	c.nextID = binary.BigEndian.Uint64(data[off : off+8])
-	off += 8
-	count, n := binary.Uvarint(data[off:])
-	if n <= 0 {
-		return fmt.Errorf("%w: bad count", ErrCatalogCorrupt)
-	}
-	off += n
-	for i := uint64(0); i < count; i++ {
-		e := &CatalogEntry{Version: version}
-		if off, err = decodeCatalogEntry(data, off, e); err != nil {
-			return fmt.Errorf("%w: entry %d: %v", ErrCatalogCorrupt, i, err)
-		}
-		c.cache[e.TableID] = e
-		c.byName[e.Name] = e.TableID
-		if e.TableID >= c.nextID {
-			c.nextID = e.TableID + 1
+	for _, existing := range raw.Indexes {
+		if existing.Name == idx.Name {
+			return fmt.Errorf("%w: index %q on table %q",
+				ErrCatalogExists, idx.Name, raw.Name)
 		}
 	}
-	if c.nextID == 0 {
-		c.nextID = 1
+	if idx.IndexID == 0 {
+		idx.IndexID = c.nextIndexIDLocked()
+	}
+	raw.Indexes = append(raw.Indexes, ct.RawIndex{
+		IndexID:   idx.IndexID,
+		Name:      idx.Name,
+		Columns:   append([]string(nil), idx.Columns...),
+		Unique:    idx.Unique,
+		CreateSQL: idx.CreateSQL,
+	})
+	if err := c.inner.FlushLocked(); err != nil {
+		raw.Indexes = raw.Indexes[:len(raw.Indexes)-1]
+		return fmt.Errorf("catalog: persist index: %w", err)
 	}
 	return nil
 }
 
-func decodeCatalogEntry(data []byte, off int, e *CatalogEntry) (int, error) {
+// DeleteIndex removes a secondary index by name.
+func (c *Catalog) DeleteIndex(tableID uint64, name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.inner == nil {
+		return ErrCatalogClosed
+	}
+	raw, err := c.inner.GetByIDRef(tableID)
+	if err != nil {
+		return fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
+	}
+	for i, idx := range raw.Indexes {
+		if idx.Name == name {
+			removed := raw.Indexes[i]
+			raw.Indexes = append(raw.Indexes[:i], raw.Indexes[i+1:]...)
+			if err := c.inner.FlushLocked(); err != nil {
+				raw.Indexes = append(raw.Indexes, removed)
+				return fmt.Errorf("catalog: persist delete index: %w", err)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: index %q on table id=%d",
+		ErrCatalogNotFound, name, tableID)
+}
+
+// IndexesByTable returns a copy of the index list for a table.
+func (c *Catalog) IndexesByTable(tableID uint64) ([]CatalogIndex, error) {
+	raw, err := c.inner.GetByID(tableID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
+	}
+	out := make([]CatalogIndex, len(raw.Indexes))
+	for i, idx := range raw.Indexes {
+		out[i] = CatalogIndex{
+			IndexID:   idx.IndexID,
+			Name:      idx.Name,
+			Columns:   append([]string(nil), idx.Columns...),
+			Unique:    idx.Unique,
+			CreateSQL: idx.CreateSQL,
+		}
+	}
+	return out, nil
+}
+
+// Index returns the named index for a table.
+func (c *Catalog) Index(tableID uint64, name string) (*CatalogIndex, error) {
+	raw, err := c.inner.GetByID(tableID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
+	}
+	for i := range raw.Indexes {
+		if raw.Indexes[i].Name == name {
+			cp := CatalogIndex{
+				IndexID:   raw.Indexes[i].IndexID,
+				Name:      raw.Indexes[i].Name,
+				Columns:   append([]string(nil), raw.Indexes[i].Columns...),
+				Unique:    raw.Indexes[i].Unique,
+				CreateSQL: raw.Indexes[i].CreateSQL,
+			}
+			return &cp, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: index %q on table id=%d",
+		ErrCatalogNotFound, name, tableID)
+}
+
+func (c *Catalog) nextIndexIDLocked() uint64 {
+	maxID := uint64(0)
+	for _, e := range c.inner.Cache() {
+		for _, idx := range e.Indexes {
+			if idx.IndexID > maxID {
+				maxID = idx.IndexID
+			}
+		}
+	}
+	return maxID + 1
+}
+
+// GetByID returns a deep copy of the entry for tableID (REQ000613).
+func (c *Catalog) GetByID(tableID uint64) (*CatalogEntry, error) {
+	raw, err := c.inner.GetByID(tableID)
+	if err != nil {
+		return nil, err
+	}
+	return lsRawToEntry(raw), nil
+}
+
+// ByName returns a deep copy of the entry for name.
+func (c *Catalog) ByName(name string) (*CatalogEntry, error) {
+	raw, err := c.inner.ByName(name)
+	if err != nil {
+		return nil, err
+	}
+	return lsRawToEntry(raw), nil
+}
+
+// ColumnStats returns column statistics for a table column (REQ000085).
+func (c *Catalog) ColumnStats(tableID uint64, colName string) *ColumnStats {
+	raw, err := c.inner.GetByID(tableID)
+	if err != nil {
+		return nil
+	}
+	stats := decodeStatsBlob(raw.Stats)
+	for i := range stats {
+		if stats[i].Column == colName {
+			s := stats[i].Stats
+			return &s
+		}
+	}
+	return nil
+}
+
+// ColumnStatsByName returns column statistics by table name (REQ000085).
+func (c *Catalog) ColumnStatsByName(tableName, colName string) *ColumnStats {
+	for _, raw := range c.inner.Cache() {
+		if raw.Name == tableName {
+			stats := decodeStatsBlob(raw.Stats)
+			for i := range stats {
+				if stats[i].Column == colName {
+					s := stats[i].Stats
+					return &s
+				}
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+// List returns all entries sorted by tableID.
+func (c *Catalog) List() []*CatalogEntry {
+	raws := c.inner.List()
+	out := make([]*CatalogEntry, len(raws))
+	for i, r := range raws {
+		out[i] = lsRawToEntry(r)
+	}
+	return out
+}
+
+func (c *Catalog) Len() int {
+	return c.inner.Len()
+}
+
+func (c *Catalog) Close() error {
+	if c == nil {
+		return nil
+	}
+	return c.inner.Close()
+}
+
+func (c *Catalog) Path() string {
+	if c == nil {
+		return ""
+	}
+	return c.path
+}
+
+// PutStats updates column statistics for a table (REQ000258).
+func (c *Catalog) PutStats(tableID uint64, colName string, stats ColumnStats) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	raw, err := c.inner.GetByID(tableID)
+	if err != nil {
+		return fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
+	}
+	if colName == "" {
+		return fmt.Errorf("%w: column name is required", ErrCatalogCorrupt)
+	}
+	oldBlob := append([]byte(nil), raw.Stats...)
+	existing := decodeStatsBlob(raw.Stats)
+	found := false
+	for i := range existing {
+		if existing[i].Column == colName {
+			existing[i].Stats = stats
+			found = true
+			break
+		}
+	}
+	if !found {
+		existing = append(existing, StatsEntry{
+			TableID: tableID,
+			Column:  colName,
+			Stats:   stats,
+		})
+	}
+	raw.Stats = encodeStatsBlob(existing)
+	if err := c.inner.FlushLocked(); err != nil {
+		raw.Stats = oldBlob
+		return fmt.Errorf("catalog: persist stats: %w", err)
+	}
+	return nil
+}
+
+// --- conversion helpers ---
+
+func lsEntryToRaw(e *CatalogEntry) *ct.RawEntry {
+	raw := &ct.RawEntry{
+		TableID:    e.TableID,
+		Name:       e.Name,
+		PrimaryKey: e.PrimaryKey,
+		Version:    e.Version,
+		CreateSQL:  e.CreateSQL,
+	}
+	for _, c := range e.Columns {
+		raw.Columns = append(raw.Columns, ct.RawColumn{
+			Name:     c.Name,
+			Type:     c.Type,
+			Nullable: c.Nullable,
+		})
+	}
+	for _, u := range e.Unique {
+		raw.Unique = append(raw.Unique, ct.RawUnique{Cols: append([]int(nil), u.Cols...)})
+	}
+	for _, idx := range e.Indexes {
+		raw.Indexes = append(raw.Indexes, ct.RawIndex{
+			IndexID:   idx.IndexID,
+			Name:      idx.Name,
+			Columns:   append([]string(nil), idx.Columns...),
+			Unique:    idx.Unique,
+			CreateSQL: idx.CreateSQL,
+		})
+	}
+	raw.Stats = encodeStatsBlob(e.ColumnStats)
+	return raw
+}
+
+func lsRawToEntry(raw *ct.RawEntry) *CatalogEntry {
+	e := &CatalogEntry{
+		TableID:     raw.TableID,
+		Name:        raw.Name,
+		PrimaryKey:  raw.PrimaryKey,
+		CreateSQL:   raw.CreateSQL,
+		Version:     raw.Version,
+		ColumnStats: decodeStatsBlob(raw.Stats),
+	}
+	for _, c := range raw.Columns {
+		e.Columns = append(e.Columns, CatalogColumn{
+			Name:     c.Name,
+			Type:     c.Type,
+			Nullable: c.Nullable,
+		})
+	}
+	for _, u := range raw.Unique {
+		e.Unique = append(e.Unique, CatalogUnique{Cols: append([]int(nil), u.Cols...)})
+	}
+	for _, idx := range raw.Indexes {
+		e.Indexes = append(e.Indexes, CatalogIndex{
+			IndexID:   idx.IndexID,
+			Name:      idx.Name,
+			Columns:   append([]string(nil), idx.Columns...),
+			Unique:    idx.Unique,
+			CreateSQL: idx.CreateSQL,
+		})
+	}
+	return e
+}
+
+// --- stats blob encode/decode ---
+
+func encodeStatsBlob(stats []StatsEntry) []byte {
+	if len(stats) == 0 {
+		return nil
+	}
+	var buf []byte
+	buf = binary.AppendUvarint(buf, uint64(len(stats)))
+	for _, s := range stats {
+		buf = binary.AppendUvarint(buf, uint64(len(s.Column)))
+		buf = append(buf, s.Column...)
+		var tmp [8]byte
+		binary.BigEndian.PutUint64(tmp[:], uint64(s.Stats.DistinctCount))
+		buf = append(buf, tmp[:]...)
+		binary.BigEndian.PutUint64(tmp[:], uint64(s.Stats.NullCount))
+		buf = append(buf, tmp[:]...)
+		buf = binary.AppendUvarint(buf, uint64(len(s.Stats.MinValue)))
+		buf = append(buf, s.Stats.MinValue...)
+		buf = binary.AppendUvarint(buf, uint64(len(s.Stats.MaxValue)))
+		buf = append(buf, s.Stats.MaxValue...)
+		buf = binary.AppendUvarint(buf, uint64(len(s.Stats.Histogram)))
+		for _, bucket := range s.Stats.Histogram {
+			buf = binary.AppendUvarint(buf, uint64(len(bucket.LowerBound)))
+			buf = append(buf, bucket.LowerBound...)
+			buf = binary.AppendUvarint(buf, uint64(len(bucket.UpperBound)))
+			buf = append(buf, bucket.UpperBound...)
+			binary.BigEndian.PutUint64(tmp[:], uint64(bucket.Count))
+			buf = append(buf, tmp[:]...)
+		}
+		buf = binary.AppendUvarint(buf, uint64(s.Stats.RowCount))
+	}
+	return buf
+}
+
+func decodeStatsBlob(data []byte) []StatsEntry {
+	if len(data) == 0 {
+		return nil
+	}
+	off := 0
+	count, n := binary.Uvarint(data[off:])
+	if n <= 0 {
+		return nil
+	}
+	off += n
+	out := make([]StatsEntry, 0, count)
+	for i := uint64(0); i < count; i++ {
+		if off >= len(data) {
+			return nil
+		}
+		colLen, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil
+		}
+		off += n
+		if off+int(colLen) > len(data) {
+			return nil
+		}
+		colName := string(data[off : off+int(colLen)])
+		off += int(colLen)
+		if off+16 > len(data) {
+			return nil
+		}
+		distinctCount := int64(binary.BigEndian.Uint64(data[off : off+8]))
+		off += 8
+		nullCount := int64(binary.BigEndian.Uint64(data[off : off+8]))
+		off += 8
+		minLen, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil
+		}
+		off += n
+		if off+int(minLen) > len(data) {
+			return nil
+		}
+		minValue := make([]byte, minLen)
+		copy(minValue, data[off:off+int(minLen)])
+		off += int(minLen)
+		maxLen, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil
+		}
+		off += n
+		if off+int(maxLen) > len(data) {
+			return nil
+		}
+		maxValue := make([]byte, maxLen)
+		copy(maxValue, data[off:off+int(maxLen)])
+		off += int(maxLen)
+		bucketCount, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil
+		}
+		off += n
+		histogram := make([]HistogramBucket, 0, bucketCount)
+		for j := uint64(0); j < bucketCount; j++ {
+			if off+16 > len(data) {
+				return nil
+			}
+			lbLen, n := binary.Uvarint(data[off:])
+			if n <= 0 {
+				return nil
+			}
+			off += n
+			if off+int(lbLen) > len(data) {
+				return nil
+			}
+			lowerBound := make([]byte, lbLen)
+			copy(lowerBound, data[off:off+int(lbLen)])
+			off += int(lbLen)
+			ubLen, n := binary.Uvarint(data[off:])
+			if n <= 0 {
+				return nil
+			}
+			off += n
+			if off+int(ubLen) > len(data) {
+				return nil
+			}
+			upperBound := make([]byte, ubLen)
+			copy(upperBound, data[off:off+int(ubLen)])
+			off += int(ubLen)
+			count := int64(binary.BigEndian.Uint64(data[off : off+8]))
+			off += 8
+			histogram = append(histogram, HistogramBucket{
+				LowerBound: lowerBound,
+				UpperBound: upperBound,
+				Count:      count,
+			})
+		}
+		rowCount, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil
+		}
+		off += n
+		out = append(out, StatsEntry{
+			Column: colName,
+			Stats: ColumnStats{
+				DistinctCount: distinctCount,
+				NullCount:     nullCount,
+				MinValue:      minValue,
+				MaxValue:      maxValue,
+				Histogram:     histogram,
+				RowCount:      int64(rowCount),
+			},
+		})
+	}
+	return out
+}
+
+// --- encode/decode callbacks ---
+
+func lsEncodeEntry(re *ct.RawEntry, buf []byte) []byte {
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], re.TableID)
+	buf = append(buf, b[:]...)
+	buf = binary.AppendUvarint(buf, uint64(len(re.Name)))
+	buf = append(buf, re.Name...)
+	buf = binary.AppendUvarint(buf, uint64(len(re.PrimaryKey)))
+	buf = append(buf, re.PrimaryKey...)
+	buf = binary.AppendUvarint(buf, uint64(len(re.Columns)))
+	for _, c := range re.Columns {
+		buf = binary.AppendUvarint(buf, uint64(len(c.Name)))
+		buf = append(buf, c.Name...)
+		if c.Type > 0 && c.Type < 256 {
+			buf = append(buf, byte(c.Type))
+		} else {
+			buf = append(buf, 0)
+		}
+		if c.Nullable {
+			buf = append(buf, 0x01)
+		} else {
+			buf = append(buf, 0x00)
+		}
+	}
+	buf = binary.AppendUvarint(buf, uint64(len(re.Unique)))
+	for _, u := range re.Unique {
+		buf = binary.AppendUvarint(buf, uint64(len(u.Cols)))
+		for _, idx := range u.Cols {
+			buf = binary.AppendUvarint(buf, uint64(idx))
+		}
+	}
+	buf = encodeCatalogIndexes(re.Indexes, buf)
+	// Stats blob is already in inline format (uvarint count + entries).
+	// Write it directly for backward compatibility with pre-REQ000660 catalogs.
+	if len(re.Stats) > 0 {
+		buf = append(buf, re.Stats...)
+	} else {
+		buf = binary.AppendUvarint(buf, 0) // zero entries
+	}
+	buf = binary.AppendUvarint(buf, uint64(len(re.CreateSQL)))
+	buf = append(buf, re.CreateSQL...)
+	return buf
+}
+
+var errTruncated = errors.New("catalog: truncated (older schema)")
+
+func lsDecodeEntry(data []byte, off int, re *ct.RawEntry) (int, error) {
 	if off+8 > len(data) {
 		return off, errors.New("truncated at tableID")
 	}
-	e.TableID = binary.BigEndian.Uint64(data[off : off+8])
+	re.TableID = binary.BigEndian.Uint64(data[off : off+8])
 	off += 8
 	nameLen, n := binary.Uvarint(data[off:])
 	if n <= 0 {
@@ -167,7 +618,7 @@ func decodeCatalogEntry(data []byte, off int, e *CatalogEntry) (int, error) {
 	if off+int(nameLen) > len(data) {
 		return off, errors.New("name out of range")
 	}
-	e.Name = string(data[off : off+int(nameLen)])
+	re.Name = string(data[off : off+int(nameLen)])
 	off += int(nameLen)
 
 	pkLen, n := binary.Uvarint(data[off:])
@@ -179,7 +630,7 @@ func decodeCatalogEntry(data []byte, off int, e *CatalogEntry) (int, error) {
 		return off, errors.New("primary key out of range")
 	}
 	if pkLen > 0 {
-		e.PrimaryKey = string(data[off : off+int(pkLen)])
+		re.PrimaryKey = string(data[off : off+int(pkLen)])
 	}
 	off += int(pkLen)
 
@@ -188,7 +639,7 @@ func decodeCatalogEntry(data []byte, off int, e *CatalogEntry) (int, error) {
 		return off, errors.New("bad col count")
 	}
 	off += n
-	e.Columns = make([]CatalogColumn, colCount)
+	re.Columns = make([]ct.RawColumn, colCount)
 	for i := uint64(0); i < colCount; i++ {
 		cn, n := binary.Uvarint(data[off:])
 		if n <= 0 {
@@ -200,19 +651,12 @@ func decodeCatalogEntry(data []byte, off int, e *CatalogEntry) (int, error) {
 		}
 		name := string(data[off : off+int(cn)])
 		off += int(cn)
-		// Decode column type token (LX.T_INT_KW / T_TEXT / ...).
-		// Pre-iter-16 catalogs did not include this byte; for
-		// backward-compat we accept a missing byte and default
-		// to T_TEXT (treated as VARCHAR by the deparser).
 		var colType int
 		if off+1 > len(data) {
 			colType = 0
 		} else {
 			colType = int(data[off])
 			if colType == 0 {
-				// Pre-iter-16 sentinels encoded as a zero byte
-				// (Type=0). Substitute T_TEXT so downstream
-				// coercibility checks produce a meaningful verdict.
 				colType = int(LX.T_TEXT)
 			}
 			off++
@@ -222,7 +666,7 @@ func decodeCatalogEntry(data []byte, off int, e *CatalogEntry) (int, error) {
 		}
 		nullable := data[off] != 0
 		off++
-		e.Columns[i] = CatalogColumn{Name: name, Type: colType, Nullable: nullable}
+		re.Columns[i] = ct.RawColumn{Name: name, Type: colType, Nullable: nullable}
 	}
 
 	uniqCount, n := binary.Uvarint(data[off:])
@@ -230,7 +674,7 @@ func decodeCatalogEntry(data []byte, off int, e *CatalogEntry) (int, error) {
 		return off, errors.New("bad unique count")
 	}
 	off += n
-	e.Unique = make([]CatalogUnique, uniqCount)
+	re.Unique = make([]ct.RawUnique, uniqCount)
 	for i := uint64(0); i < uniqCount; i++ {
 		nCols, n := binary.Uvarint(data[off:])
 		if n <= 0 {
@@ -246,40 +690,31 @@ func decodeCatalogEntry(data []byte, off int, e *CatalogEntry) (int, error) {
 			off += n
 			idxs[j] = int(idx)
 		}
-		e.Unique[i] = CatalogUnique{Cols: idxs}
+		re.Unique[i] = ct.RawUnique{Cols: idxs}
 	}
 
-	// Indexes (iter-22, V2 only). Pre-V2 files end here; we
-	// detect EOF by checking remaining bytes. A V1 file may have
-	// a stale CreateSQL field right after the Unique block, so
-	// we need to disambiguate. Strategy: try to decode indexes;
-	// if we run out of data, treat as V1 and back up to read
-	// CreateSQL from the saved offset.
 	indexOff := off
 	indexes, newOff, err := decodeCatalogIndexes(data, off)
 	if err == nil {
-		e.Indexes = indexes
+		re.Indexes = indexes
 		off = newOff
 	} else if errors.Is(err, errTruncated) {
-		// V1 file — no indexes
-		e.Indexes = nil
+		re.Indexes = nil
 		off = indexOff
 	} else {
 		return off, err
 	}
 
-	// ColumnStats (iter-23, REQ000258). Optional, detect by EOF.
 	statsOff := off
-	stats, newOff, err := decodeCatalogStats(data, off)
-	if err == nil {
-		e.ColumnStats = stats
+	statsBytes, newOff, statsErr := readInlineStatsBlob(data, off)
+	if statsErr == nil {
+		re.Stats = statsBytes
 		off = newOff
-	} else if errors.Is(err, errTruncated) {
-		// Pre-iter-23 catalog — no stats
-		e.ColumnStats = nil
+	} else if errors.Is(statsErr, errTruncated) {
+		re.Stats = nil
 		off = statsOff
 	} else {
-		return off, err
+		return off, statsErr
 	}
 
 	sqlLen, n := binary.Uvarint(data[off:])
@@ -290,14 +725,12 @@ func decodeCatalogEntry(data []byte, off int, e *CatalogEntry) (int, error) {
 	if off+int(sqlLen) > len(data) {
 		return off, errors.New("sql out of range")
 	}
-	e.CreateSQL = string(data[off : off+int(sqlLen)])
+	re.CreateSQL = string(data[off : off+int(sqlLen)])
 	off += int(sqlLen)
 	return off, nil
 }
 
-var errTruncated = errors.New("catalog: truncated (older schema)")
-
-func decodeCatalogIndexes(data []byte, off int) ([]CatalogIndex, int, error) {
+func decodeCatalogIndexes(data []byte, off int) ([]ct.RawIndex, int, error) {
 	if off >= len(data) {
 		return nil, off, errTruncated
 	}
@@ -306,7 +739,7 @@ func decodeCatalogIndexes(data []byte, off int) ([]CatalogIndex, int, error) {
 		return nil, off, errTruncated
 	}
 	off += n
-	out := make([]CatalogIndex, 0, count)
+	out := make([]ct.RawIndex, 0, count)
 	for i := uint64(0); i < count; i++ {
 		if off >= len(data) {
 			return nil, off, errTruncated
@@ -371,7 +804,7 @@ func decodeCatalogIndexes(data []byte, off int) ([]CatalogIndex, int, error) {
 		}
 		sql := string(data[off : off+int(sqlLen)])
 		off += int(sqlLen)
-		out = append(out, CatalogIndex{
+		out = append(out, ct.RawIndex{
 			IndexID:   id,
 			Name:      name,
 			Columns:   cols,
@@ -382,38 +815,36 @@ func decodeCatalogIndexes(data []byte, off int) ([]CatalogIndex, int, error) {
 	return out, off, nil
 }
 
-func decodeCatalogStats(data []byte, off int) ([]StatsEntry, int, error) {
+// readInlineStatsBlob reads the stats section in inline format
+// (same wire format as the old decodeCatalogStats) and returns
+// the raw bytes for storage in RawEntry.Stats.
+func readInlineStatsBlob(data []byte, off int) ([]byte, int, error) {
 	if off >= len(data) {
 		return nil, off, errTruncated
 	}
+	startOff := off
 	count, n := binary.Uvarint(data[off:])
 	if n <= 0 {
 		return nil, off, errTruncated
 	}
 	off += n
-	out := make([]StatsEntry, 0, count)
 	for i := uint64(0); i < count; i++ {
 		if off >= len(data) {
 			return nil, off, errTruncated
 		}
 		colLen, n := binary.Uvarint(data[off:])
 		if n <= 0 {
-			return nil, off, fmt.Errorf("bad stats %d col len", i)
+			return nil, off, errTruncated
 		}
 		off += n
 		if off+int(colLen) > len(data) {
 			return nil, off, errTruncated
 		}
-		colName := string(data[off : off+int(colLen)])
 		off += int(colLen)
-		// Decode ColumnStats
 		if off+16 > len(data) {
 			return nil, off, errTruncated
 		}
-		distinctCount := int64(binary.BigEndian.Uint64(data[off : off+8]))
-		off += 8
-		nullCount := int64(binary.BigEndian.Uint64(data[off : off+8]))
-		off += 8
+		off += 16 // distinctCount + nullCount
 		minLen, n := binary.Uvarint(data[off:])
 		if n <= 0 {
 			return nil, off, errTruncated
@@ -422,8 +853,6 @@ func decodeCatalogStats(data []byte, off int) ([]StatsEntry, int, error) {
 		if off+int(minLen) > len(data) {
 			return nil, off, errTruncated
 		}
-		minValue := make([]byte, minLen)
-		copy(minValue, data[off:off+int(minLen)])
 		off += int(minLen)
 		maxLen, n := binary.Uvarint(data[off:])
 		if n <= 0 {
@@ -433,19 +862,13 @@ func decodeCatalogStats(data []byte, off int) ([]StatsEntry, int, error) {
 		if off+int(maxLen) > len(data) {
 			return nil, off, errTruncated
 		}
-		maxValue := make([]byte, maxLen)
-		copy(maxValue, data[off:off+int(maxLen)])
 		off += int(maxLen)
 		bucketCount, n := binary.Uvarint(data[off:])
 		if n <= 0 {
 			return nil, off, errTruncated
 		}
 		off += n
-		histogram := make([]HistogramBucket, 0, bucketCount)
 		for j := uint64(0); j < bucketCount; j++ {
-			if off+16 > len(data) {
-				return nil, off, errTruncated
-			}
 			lbLen, n := binary.Uvarint(data[off:])
 			if n <= 0 {
 				return nil, off, errTruncated
@@ -454,8 +877,6 @@ func decodeCatalogStats(data []byte, off int) ([]StatsEntry, int, error) {
 			if off+int(lbLen) > len(data) {
 				return nil, off, errTruncated
 			}
-			lowerBound := make([]byte, lbLen)
-			copy(lowerBound, data[off:off+int(lbLen)])
 			off += int(lbLen)
 			ubLen, n := binary.Uvarint(data[off:])
 			if n <= 0 {
@@ -465,428 +886,20 @@ func decodeCatalogStats(data []byte, off int) ([]StatsEntry, int, error) {
 			if off+int(ubLen) > len(data) {
 				return nil, off, errTruncated
 			}
-			upperBound := make([]byte, ubLen)
-			copy(upperBound, data[off:off+int(ubLen)])
 			off += int(ubLen)
-			count := int64(binary.BigEndian.Uint64(data[off : off+8]))
-			off += 8
-			histogram = append(histogram, HistogramBucket{
-				LowerBound: lowerBound,
-				UpperBound: upperBound,
-				Count:      count,
-			})
+			off += 8 // count
 		}
 		rowCount, n := binary.Uvarint(data[off:])
 		if n <= 0 {
 			return nil, off, errTruncated
 		}
+		_ = rowCount
 		off += n
-		out = append(out, StatsEntry{
-			Column: colName,
-			Stats: ColumnStats{
-				DistinctCount: distinctCount,
-				NullCount:     nullCount,
-				MinValue:      minValue,
-				MaxValue:      maxValue,
-				Histogram:     histogram,
-				RowCount:      int64(rowCount),
-			},
-		})
 	}
-	return out, off, nil
+	return data[startOff:off], off, nil
 }
 
-// NextID reserves and returns the next free tableID.
-func (c *Catalog) NextID() (uint64, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed.Load() {
-		return 0, ErrCatalogClosed
-	}
-	id := c.nextID
-	c.nextID++
-	if err := c.flushLocked(); err != nil {
-		c.nextID--
-		return 0, fmt.Errorf("catalog: persist nextID: %w", err)
-	}
-	return id, nil
-}
-
-// Put registers a new table. The catalog is rewritten atomically.
-func (c *Catalog) Put(entry CatalogEntry) error {
-	if entry.Name == "" {
-		return fmt.Errorf("%w: name is required", ErrCatalogCorrupt)
-	}
-	if entry.CreateSQL == "" {
-		return fmt.Errorf("%w: CreateSQL is required", ErrCatalogCorrupt)
-	}
-	entry.Version = schemaVersionCurrent
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed.Load() {
-		return ErrCatalogClosed
-	}
-	if _, ok := c.byName[entry.Name]; ok {
-		return fmt.Errorf("%w: name=%q", ErrCatalogExists, entry.Name)
-	}
-	if _, ok := c.cache[entry.TableID]; ok {
-		return fmt.Errorf("%w: id=%d", ErrCatalogExists, entry.TableID)
-	}
-	c.cache[entry.TableID] = &entry
-	c.byName[entry.Name] = entry.TableID
-	if err := c.flushLocked(); err != nil {
-		delete(c.cache, entry.TableID)
-		delete(c.byName, entry.Name)
-		return fmt.Errorf("catalog: persist: %w", err)
-	}
-	return nil
-}
-
-// Delete removes a table by ID.
-func (c *Catalog) Delete(tableID uint64) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed.Load() {
-		return ErrCatalogClosed
-	}
-	entry, ok := c.cache[tableID]
-	if !ok {
-		return fmt.Errorf("%w: id=%d", ErrCatalogNotFound, tableID)
-	}
-	delete(c.cache, tableID)
-	delete(c.byName, entry.Name)
-	if err := c.flushLocked(); err != nil {
-		c.cache[tableID] = entry
-		c.byName[entry.Name] = tableID
-		return fmt.Errorf("catalog: persist: %w", err)
-	}
-	return nil
-}
-
-// PutIndex adds a secondary index to a table (REQ000251).
-func (c *Catalog) PutIndex(tableID uint64, idx CatalogIndex) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed.Load() {
-		return ErrCatalogClosed
-	}
-	entry, ok := c.cache[tableID]
-	if !ok {
-		return fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
-	}
-	if idx.Name == "" {
-		return fmt.Errorf("%w: index name is required", ErrCatalogCorrupt)
-	}
-	for _, existing := range entry.Indexes {
-		if existing.Name == idx.Name {
-			return fmt.Errorf("%w: index %q on table %q",
-				ErrCatalogExists, idx.Name, entry.Name)
-		}
-	}
-	if idx.IndexID == 0 {
-		// Reserve a new index ID using a monotonic counter.
-		// We don't persist nextIndexID across runs yet; on
-		// restart, IDs start at 1 again. Conflict on ID is
-		// detected on first use.
-		idx.IndexID = c.nextIndexIDLocked()
-	}
-	entry.Indexes = append(entry.Indexes, idx)
-	if err := c.flushLocked(); err != nil {
-		// Rollback: remove the index we just added.
-		entry.Indexes = entry.Indexes[:len(entry.Indexes)-1]
-		return fmt.Errorf("catalog: persist index: %w", err)
-	}
-	return nil
-}
-
-// DeleteIndex removes a secondary index by name.
-func (c *Catalog) DeleteIndex(tableID uint64, name string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed.Load() {
-		return ErrCatalogClosed
-	}
-	entry, ok := c.cache[tableID]
-	if !ok {
-		return fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
-	}
-	for i, idx := range entry.Indexes {
-		if idx.Name == name {
-			entry.Indexes = append(entry.Indexes[:i], entry.Indexes[i+1:]...)
-			if err := c.flushLocked(); err != nil {
-				// Rollback: re-insert
-				entry.Indexes = append(entry.Indexes, idx)
-				return fmt.Errorf("catalog: persist delete index: %w", err)
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("%w: index %q on table id=%d",
-		ErrCatalogNotFound, name, tableID)
-}
-
-// IndexesByTable returns a copy of the index list for a table.
-func (c *Catalog) IndexesByTable(tableID uint64) ([]CatalogIndex, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.closed.Load() {
-		return nil, ErrCatalogClosed
-	}
-	entry, ok := c.cache[tableID]
-	if !ok {
-		return nil, fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
-	}
-	out := make([]CatalogIndex, len(entry.Indexes))
-	for i, idx := range entry.Indexes {
-		out[i] = CatalogIndex{
-			IndexID:   idx.IndexID,
-			Name:      idx.Name,
-			Columns:   append([]string(nil), idx.Columns...),
-			Unique:    idx.Unique,
-			CreateSQL: idx.CreateSQL,
-		}
-	}
-	return out, nil
-}
-
-// Index returns the named index for a table.
-func (c *Catalog) Index(tableID uint64, name string) (*CatalogIndex, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.closed.Load() {
-		return nil, ErrCatalogClosed
-	}
-	entry, ok := c.cache[tableID]
-	if !ok {
-		return nil, fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
-	}
-	for i := range entry.Indexes {
-		if entry.Indexes[i].Name == name {
-			cp := entry.Indexes[i]
-			cp.Columns = append([]string(nil), cp.Columns...)
-			return &cp, nil
-		}
-	}
-	return nil, fmt.Errorf("%w: index %q on table id=%d",
-		ErrCatalogNotFound, name, tableID)
-}
-
-func (c *Catalog) nextIndexIDLocked() uint64 {
-	maxID := uint64(0)
-	for _, e := range c.cache {
-		for _, idx := range e.Indexes {
-			if idx.IndexID > maxID {
-				maxID = idx.IndexID
-			}
-		}
-	}
-	return maxID + 1
-}
-
-// GetByID returns a deep copy of the entry for tableID (REQ000613).
-func (c *Catalog) GetByID(tableID uint64) (*CatalogEntry, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.closed.Load() {
-		return nil, ErrCatalogClosed
-	}
-	entry, ok := c.cache[tableID]
-	if !ok {
-		return nil, fmt.Errorf("%w: id=%d", ErrCatalogNotFound, tableID)
-	}
-	cp := *entry
-	cp.Columns = append([]CatalogColumn(nil), entry.Columns...)
-	cp.Unique = append([]CatalogUnique(nil), entry.Unique...)
-	cp.Indexes = append([]CatalogIndex(nil), entry.Indexes...)
-	cp.ColumnStats = append([]StatsEntry(nil), entry.ColumnStats...)
-	return &cp, nil
-}
-
-// ByName returns a deep copy of the entry for name.
-func (c *Catalog) ByName(name string) (*CatalogEntry, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.closed.Load() {
-		return nil, ErrCatalogClosed
-	}
-	id, ok := c.byName[name]
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrCatalogNotFound, name)
-	}
-	cp := *c.cache[id]
-	return &cp, nil
-}
-
-// ColumnStats returns column statistics for a table column (REQ000085).
-func (c *Catalog) ColumnStats(tableID uint64, colName string) *ColumnStats {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	entry, ok := c.cache[tableID]
-	if !ok {
-		return nil
-	}
-	for i := range entry.ColumnStats {
-		if entry.ColumnStats[i].Column == colName {
-			// Return a copy to prevent external mutation
-			stats := entry.ColumnStats[i].Stats
-			return &stats
-		}
-	}
-	return nil
-}
-
-// ColumnStatsByName returns column statistics by table name (REQ000085).
-func (c *Catalog) ColumnStatsByName(tableName, colName string) *ColumnStats {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	for _, entry := range c.cache {
-		if entry.Name == tableName {
-			for i := range entry.ColumnStats {
-				if entry.ColumnStats[i].Column == colName {
-					stats := entry.ColumnStats[i].Stats
-					return &stats
-				}
-			}
-			return nil
-		}
-	}
-	return nil
-}
-
-// List returns all entries sorted by tableID.
-func (c *Catalog) List() []*CatalogEntry {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	out := make([]*CatalogEntry, 0, len(c.cache))
-	for _, e := range c.cache {
-		cp := *e
-		cp.Columns = append([]CatalogColumn(nil), e.Columns...)
-		if e.Unique != nil {
-			cp.Unique = append([]CatalogUnique(nil), e.Unique...)
-			for i, u := range cp.Unique {
-				cp.Unique[i] = CatalogUnique{Cols: append([]int(nil), u.Cols...)}
-			}
-		}
-		out = append(out, &cp)
-	}
-	slices.SortFunc(out, func(a, b *CatalogEntry) int { return cmp.Compare(a.TableID, b.TableID) })
-	return out
-}
-
-func (c *Catalog) Len() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.cache)
-}
-
-func (c *Catalog) Close() error {
-	if c == nil {
-		return nil
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.closed.Store(true)
-	return nil
-}
-
-func (c *Catalog) Path() string {
-	if c == nil {
-		return ""
-	}
-	return c.path
-}
-
-func (c *Catalog) flushLocked() error {
-	var buf []byte
-	buf = append(buf, catalogMagic[:]...)
-	buf = append(buf, schemaVersionCurrent)
-	buf = append(buf, 0, 0, 0, 0) // reserved
-	var nxt [8]byte
-	binary.BigEndian.PutUint64(nxt[:], c.nextID)
-	buf = append(buf, nxt[:]...)
-	ids := make([]uint64, 0, len(c.cache))
-	for id := range c.cache {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	buf = binary.AppendUvarint(buf, uint64(len(ids)))
-	for _, id := range ids {
-		buf = encodeCatalogEntry(c.cache[id], buf)
-	}
-	tmpPath := c.path + catalogTmpSuffix
-	if err := os.WriteFile(tmpPath, buf, 0o644); err != nil {
-		return err
-	}
-	// REQ000612: fsync the temp file before renaming so the data
-	// is on stable storage when the rename becomes visible. A
-	// crash after Rename returns but before the OS flushes the
-	// page cache loses the write — even though the file is
-	// already at its final path. We open the written file just
-	// for Sync.
-	{
-		f, err := os.Open(tmpPath)
-		if err != nil {
-			return err
-		}
-		if err := f.Sync(); err != nil {
-			f.Close()
-			return err
-		}
-		f.Close()
-	}
-	if err := os.Rename(tmpPath, c.path); err != nil {
-		return err
-	}
-	return nil
-}
-
-func encodeCatalogEntry(e *CatalogEntry, buf []byte) []byte {
-	var b [8]byte
-	binary.BigEndian.PutUint64(b[:], e.TableID)
-	buf = append(buf, b[:]...)
-	buf = binary.AppendUvarint(buf, uint64(len(e.Name)))
-	buf = append(buf, e.Name...)
-	buf = binary.AppendUvarint(buf, uint64(len(e.PrimaryKey)))
-	buf = append(buf, e.PrimaryKey...)
-	buf = binary.AppendUvarint(buf, uint64(len(e.Columns)))
-	for _, c := range e.Columns {
-		buf = binary.AppendUvarint(buf, uint64(len(c.Name)))
-		buf = append(buf, c.Name...)
-		// Column type token (1 byte; R16-3). Pre-iter-16 catalogs
-		// omitted this byte; readers default to T_TEXT in that case.
-		if c.Type > 0 && c.Type < 256 {
-			buf = append(buf, byte(c.Type))
-		} else {
-			// Sentinel: type=0 means "unknown" — emit a default
-			// (T_TEXT=58 in the LX token table). Replaced by
-			// zero on read; see decode for fallback handling.
-			buf = append(buf, 0)
-		}
-		if c.Nullable {
-			buf = append(buf, 0x01)
-		} else {
-			buf = append(buf, 0x00)
-		}
-	}
-	buf = binary.AppendUvarint(buf, uint64(len(e.Unique)))
-	for _, u := range e.Unique {
-		buf = binary.AppendUvarint(buf, uint64(len(u.Cols)))
-		for _, idx := range u.Cols {
-			buf = binary.AppendUvarint(buf, uint64(idx))
-		}
-	}
-	// Indexes (iter-22; schema V2). Pre-V2 readers hit EOF here
-	// and treat the entry as having zero indexes.
-	buf = encodeCatalogIndexes(e.Indexes, buf)
-	// ColumnStats (iter-23; REQ000258). Pre-iter-23 readers hit EOF here.
-	buf = encodeCatalogStats(e.ColumnStats, buf)
-	buf = binary.AppendUvarint(buf, uint64(len(e.CreateSQL)))
-	buf = append(buf, e.CreateSQL...)
-	return buf
-}
-
-func encodeCatalogIndexes(idxs []CatalogIndex, buf []byte) []byte {
+func encodeCatalogIndexes(idxs []ct.RawIndex, buf []byte) []byte {
 	buf = binary.AppendUvarint(buf, uint64(len(idxs)))
 	for _, idx := range idxs {
 		buf = binary.AppendUvarint(buf, idx.IndexID)
@@ -906,73 +919,4 @@ func encodeCatalogIndexes(idxs []CatalogIndex, buf []byte) []byte {
 		buf = append(buf, idx.CreateSQL...)
 	}
 	return buf
-}
-
-func encodeCatalogStats(stats []StatsEntry, buf []byte) []byte {
-	buf = binary.AppendUvarint(buf, uint64(len(stats)))
-	for _, s := range stats {
-		buf = binary.AppendUvarint(buf, uint64(len(s.Column)))
-		buf = append(buf, s.Column...)
-		// Encode ColumnStats
-		var tmp [8]byte
-		binary.BigEndian.PutUint64(tmp[:], uint64(s.Stats.DistinctCount))
-		buf = append(buf, tmp[:]...)
-		binary.BigEndian.PutUint64(tmp[:], uint64(s.Stats.NullCount))
-		buf = append(buf, tmp[:]...)
-		buf = binary.AppendUvarint(buf, uint64(len(s.Stats.MinValue)))
-		buf = append(buf, s.Stats.MinValue...)
-		buf = binary.AppendUvarint(buf, uint64(len(s.Stats.MaxValue)))
-		buf = append(buf, s.Stats.MaxValue...)
-		buf = binary.AppendUvarint(buf, uint64(len(s.Stats.Histogram)))
-		for _, bucket := range s.Stats.Histogram {
-			buf = binary.AppendUvarint(buf, uint64(len(bucket.LowerBound)))
-			buf = append(buf, bucket.LowerBound...)
-			buf = binary.AppendUvarint(buf, uint64(len(bucket.UpperBound)))
-			buf = append(buf, bucket.UpperBound...)
-			binary.BigEndian.PutUint64(tmp[:], uint64(bucket.Count))
-			buf = append(buf, tmp[:]...)
-		}
-		buf = binary.AppendUvarint(buf, uint64(s.Stats.RowCount))
-	}
-	return buf
-}
-
-// PutStats updates column statistics for a table (REQ000258).
-func (c *Catalog) PutStats(tableID uint64, colName string, stats ColumnStats) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed.Load() {
-		return ErrCatalogClosed
-	}
-	entry, ok := c.cache[tableID]
-	if !ok {
-		return fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
-	}
-	if colName == "" {
-		return fmt.Errorf("%w: column name is required", ErrCatalogCorrupt)
-	}
-	// Snapshot old stats for rollback on flush failure
-	oldStats := append([]StatsEntry(nil), entry.ColumnStats...)
-	// Find or create stats entry
-	found := false
-	for i := range entry.ColumnStats {
-		if entry.ColumnStats[i].Column == colName {
-			entry.ColumnStats[i].Stats = stats
-			found = true
-			break
-		}
-	}
-	if !found {
-		entry.ColumnStats = append(entry.ColumnStats, StatsEntry{
-			TableID: tableID,
-			Column:  colName,
-			Stats:   stats,
-		})
-	}
-	// Rewrite catalog atomically
-	if err := c.flushLocked(); err != nil {
-		entry.ColumnStats = oldStats
-		return fmt.Errorf("catalog: persist stats: %w", err)
-	}
-	return nil
 }
