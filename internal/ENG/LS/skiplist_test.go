@@ -16,74 +16,81 @@ func TestNewSkipList(t *testing.T) {
 	}
 }
 
-func TestInsertSingle(t *testing.T) {
-	sl := New()
-	sl.Insert([]byte("key1"), []byte("value1"))
+func TestSkipList(t *testing.T) {
+	cases := []struct {
+		name string
+		fn   func(t *testing.T)
+	}{
+		{"InsertSingle", func(t *testing.T) {
+			sl := New()
+			sl.Insert([]byte("key1"), []byte("value1"))
 
-	if sl.Len() != 1 {
-		t.Errorf("expected len=1, got %d", sl.Len())
+			if sl.Len() != 1 {
+				t.Errorf("expected len=1, got %d", sl.Len())
+			}
+
+			val, found := sl.Find([]byte("key1"))
+			if !found {
+				t.Error("expected to find key1")
+			}
+			if !bytes.Equal(val, []byte("value1")) {
+				t.Errorf("expected value1, got %s", val)
+			}
+		}},
+		{"InsertMultiple", func(t *testing.T) {
+			sl := New()
+
+			for i := 0; i < 100; i++ {
+				key := []byte{byte(i)}
+				val := []byte{byte(i + 100)}
+				sl.Insert(key, val)
+			}
+
+			if sl.Len() != 100 {
+				t.Errorf("expected len=100, got %d", sl.Len())
+			}
+
+			for i := 0; i < 100; i++ {
+				key := []byte{byte(i)}
+				expected := []byte{byte(i + 100)}
+				val, found := sl.Find(key)
+				if !found {
+					t.Errorf("expected to find key %d", i)
+				}
+				if !bytes.Equal(val, expected) {
+					t.Errorf("expected value %d, got %s", i+100, val)
+				}
+			}
+		}},
+		{"FindNonExistent", func(t *testing.T) {
+			sl := New()
+			sl.Insert([]byte("key1"), []byte("value1"))
+
+			_, found := sl.Find([]byte("nonexistent"))
+			if found {
+				t.Error("expected not to find nonexistent key")
+			}
+		}},
+		{"InsertDuplicateKey", func(t *testing.T) {
+			sl := New()
+			sl.Insert([]byte("key1"), []byte("value1"))
+			sl.Insert([]byte("key1"), []byte("value2"))
+
+			if sl.Len() != 1 {
+				t.Errorf("expected len=1 after duplicate insert, got %d", sl.Len())
+			}
+
+			val, found := sl.Find([]byte("key1"))
+			if !found {
+				t.Error("expected to find key1")
+			}
+			if !bytes.Equal(val, []byte("value2")) {
+				t.Errorf("expected value2 (last insert), got %s", val)
+			}
+		}},
 	}
-
-	val, found := sl.Find([]byte("key1"))
-	if !found {
-		t.Error("expected to find key1")
-	}
-	if !bytes.Equal(val, []byte("value1")) {
-		t.Errorf("expected value1, got %s", val)
-	}
-}
-
-func TestInsertMultiple(t *testing.T) {
-	sl := New()
-
-	for i := 0; i < 100; i++ {
-		key := []byte{byte(i)}
-		val := []byte{byte(i + 100)}
-		sl.Insert(key, val)
-	}
-
-	if sl.Len() != 100 {
-		t.Errorf("expected len=100, got %d", sl.Len())
-	}
-
-	for i := 0; i < 100; i++ {
-		key := []byte{byte(i)}
-		expected := []byte{byte(i + 100)}
-		val, found := sl.Find(key)
-		if !found {
-			t.Errorf("expected to find key %d", i)
-		}
-		if !bytes.Equal(val, expected) {
-			t.Errorf("expected value %d, got %s", i+100, val)
-		}
-	}
-}
-
-func TestFindNonExistent(t *testing.T) {
-	sl := New()
-	sl.Insert([]byte("key1"), []byte("value1"))
-
-	_, found := sl.Find([]byte("nonexistent"))
-	if found {
-		t.Error("expected not to find nonexistent key")
-	}
-}
-
-func TestInsertDuplicateKey(t *testing.T) {
-	sl := New()
-	sl.Insert([]byte("key1"), []byte("value1"))
-	sl.Insert([]byte("key1"), []byte("value2"))
-
-	if sl.Len() != 1 {
-		t.Errorf("expected len=1 after duplicate insert, got %d", sl.Len())
-	}
-
-	val, found := sl.Find([]byte("key1"))
-	if !found {
-		t.Error("expected to find key1")
-	}
-	if !bytes.Equal(val, []byte("value2")) {
-		t.Errorf("expected value2 (last insert), got %s", val)
+	for _, tc := range cases {
+		t.Run(tc.name, tc.fn)
 	}
 }
 
