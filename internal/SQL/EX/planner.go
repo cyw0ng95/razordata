@@ -836,12 +836,30 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	// Create a Values operator that evaluates expressions over a single
 	// virtual row and returns exactly one result row. Also apply the WHERE
 	// filter when present (REQ000458).
-	if s.From == "" {
+	if s.From == "" && s.SubqueryFrom == nil {
 		op := Operator(newValuesOp(s.Cols))
 		if s.Where != nil {
 			op = NewFilter(op, s.Where)
 		}
 		return op
+	}
+
+	// REQ000709: subquery in FROM clause (derived table).
+	// Plan the subquery and use its output as a virtual table.
+	if s.SubqueryFrom != nil {
+		subPlan := p.planSelect(s.SubqueryFrom.(*PS.Select))
+		var current Operator = subPlan
+		if s.Where != nil {
+			current = NewFilter(current, s.Where)
+		}
+		if len(s.Cols) > 0 && !isStarExpr(s.Cols) {
+			current = NewProject(current, s.Cols)
+		}
+		if len(s.OrderBy) > 0 {
+			current = NewSort(current, s.OrderBy)
+		}
+		// Limit is handled separately if needed
+		return current
 	}
 
 	// REQ000727: sqlite_master virtual table
