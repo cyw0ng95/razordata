@@ -26,6 +26,7 @@ type NestedLoopJoin struct {
 	rightTbl  string
 	on        func(outer, inner *Row) (bool, error)
 	kind      JoinKind
+	leftOuter bool // REQ000685: true for LEFT/LEFT OUTER JOIN
 	leftRow   *Row
 	rightPos  int
 	rightRows []Row
@@ -33,7 +34,15 @@ type NestedLoopJoin struct {
 }
 
 func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error), kind JoinKind) *NestedLoopJoin {
-	return &NestedLoopJoin{left: left, right: right, leftTbl: leftTable, rightTbl: rightTable, on: on, kind: kind}
+	return &NestedLoopJoin{
+		left:      left,
+		right:     right,
+		leftTbl:   leftTable,
+		rightTbl:  rightTable,
+		on:        on,
+		kind:      kind,
+		leftOuter: kind == JoinKindLeft || kind == JoinKindFull,
+	}
 }
 
 func (j *NestedLoopJoin) LeftChild() Operator { return j.left }
@@ -67,7 +76,7 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 		if err != nil {
 			if err == errRightExhausted {
 				// No more right rows for this left row
-				if j.kind == JoinKindLeft || j.kind == JoinKindFull {
+				if j.leftOuter {
 					if !j.matched {
 						nullRow := j.nullRightRow()
 						result := joinRowsLL(j.leftRow, &nullRow)
