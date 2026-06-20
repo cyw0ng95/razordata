@@ -2,25 +2,20 @@
 
 ## Overview
 
-The `razor` CLI is a thin presentation layer over the `SYS/AP` public API. It contains zero database logic — all SQL parsing, planning, execution, and transaction management happen inside the engine. The CLI is responsible for:
+The `razor` CLI is a lightweight, scriptable interface over the `SYS/AP` public API. Designed for automation, CI/CD pipelines, scripting, and environments where resource usage matters. Zero external Go dependencies beyond `cobra`.
 
-1. Parsing command-line arguments and flags
-2. Calling `SYS/AP` public API (`SY.Open`, `Session.Query`, `Session.Exec`)
-3. Formatting output (table, json, csv, ndjson)
-4. Handling I/O (stdin/stdout, files, config)
-
-The CLI is **not** responsible for:
-- SQL parsing or validation
-- Query planning or optimization
-- Transaction management
-- Storage engine operations
-- Any `internal/` package access beyond `SYS/AP` and `SYS/SY`
+**Design goals:**
+- Fast startup (< 50ms)
+- Low memory footprint (< 10 MB)
+- Pipe-friendly (structured output, proper exit codes)
+- No interactive features (those belong in TUI)
+- Minimal dependencies
 
 ## Architecture
 
 ```
 cmd/razor/                    # CLI package (package main)
-├── main.go                   # Entry point, 10 lines
+├── main.go                   # Entry point
 ├── root.go                   # cobra root command, global flags
 ├── query.go                  # razor query <dbdir> <sql>
 ├── exec.go                   # razor exec <dbdir> <sql>
@@ -30,43 +25,49 @@ cmd/razor/                    # CLI package (package main)
 ├── export.go                 # razor export <dbdir> <table>
 ├── admin.go                  # integrity-check / vacuum / analyze
 ├── backup.go                 # backup / restore
-├── repl.go                   # Interactive REPL (bubbletea TUI)
+├── info.go                   # razor info <dbdir>
 ├── output.go                 # Output formatting (table/json/csv/ndjson)
-├── completer.go              # Auto-completion (table/col/key)
 └── config.go                 # Config file (~/.config/razor/config.toml)
 ```
-
-All files are `package main` in `cmd/razor/`. No sub-packages.
 
 ## Dependency Rule
 
 ```
 cmd/razor/ ──imports──► SYS/AP (public API)
 cmd/razor/ ──imports──► SYS/SY (engine lifecycle)
-cmd/razor/ ──imports──► cobra, bubbletea, lipgloss (CLI framework)
+cmd/razor/ ──imports──► cobra (CLI framework)
+cmd/razor/ ──imports──► encoding/json, encoding/csv (stdlib)
 cmd/razor/ ──DOES NOT──► SQL/EX, SQL/PS, ENG/*, TXN/*, WAL/*, MEM/*
+cmd/razor/ ──DOES NOT──► bubbletea, lipgloss, chroma (TUI deps)
 ```
 
-If a feature requires access to internal packages, the feature must be exposed through `SYS/AP` first. The CLI never bypasses the public API.
+## External Dependencies
+
+| Package | Purpose | Why needed |
+|---------|---------|-----------|
+| `github.com/spf13/cobra` | CLI framework | Subcommands, flag parsing, help generation |
+
+That's it. One external dependency. Everything else is stdlib.
 
 ## Command Structure
 
 ```
 razor <command> [args] [flags]
 
-# Core
-razor open <dbdir>                           # Interactive REPL
-razor query <dbdir> <sql> [--format json]    # One-shot query
-razor exec <dbdir> <sql>                     # Execute DDL/DML
+# Query
+razor query <dbdir> <sql> [--format json|csv|table|ndjson|line]
 
-# Data
-razor import <dbdir> <file> <table>          # Import CSV/JSON/TSV
-razor export <dbdir> <table> [--format csv]  # Export table data
-razor dump <dbdir> [--tables pattern]        # SQL export
+# Execute
+razor exec <dbdir> <sql>
 
 # Schema
-razor schema <dbdir> [table]                 # Browse schema
-razor diff <dbdir1> <dbdir2>                 # Compare schemas
+razor schema <dbdir> [table]
+razor diff <dbdir1> <dbdir2>
+
+# Data
+razor import <dbdir> <file> <table> [--format csv|json|tsv]
+razor export <dbdir> <table> [--format csv|json] [--output file]
+razor dump <dbdir> [--tables pattern] [--output file]
 
 # Admin
 razor integrity-check <dbdir>
@@ -76,82 +77,99 @@ razor backup <src> <dst>
 razor restore <backup> <dst>
 
 # Info
-razor info <dbdir>                           # Database statistics
+razor info <dbdir>
 razor version
 ```
 
+No `razor open` — that's the TUI's job.
+
 ## Command Details
-
-### `razor open <dbdir>`
-
-Launches interactive REPL. Uses `charmbracelet/bubbletea` for TUI.
-
-**Flow:**
-1. `SY.Open(ctx, dbdir, AP.Options{})` → `*Engine`
-2. `eng.Begin(ctx)` → `Session`
-3. Start bubbletea event loop
-4. On each Enter: `session.Query(ctx, input)` or `session.Exec(ctx, input)`
-5. Format output via `formatOutput(rows, format)`
-6. On `\q` or Ctrl+C: `session.Close()` → `eng.Close(ctx)`
-
-**REPL features:**
-- SQL syntax highlighting (chroma)
-- Multi-line input (Shift+Enter)
-- History (Up/Down arrows, Ctrl+R search)
-- Auto-completion (Tab): table names, column names, SQL keywords
-- Dot commands: `.tables`, `.schema`, `.mode`, `.headers`, `.quit`
-- Query timing display
-- Progress spinner for long queries
 
 ### `razor query <dbdir> <sql>`
 
-One-shot query execution. Pipe-friendly.
+One-shot query. Pipe-friendly.
 
-**Flow:**
-1. `SY.Open(ctx, dbdir, AP.Options{ReadOnly: true})` → `*Engine`
-2. `eng.Begin(ctx)` → `Session`
-3. `session.Query(ctx, sql)` → `*AP.Rows`
-4. `formatOutput(rows, format)` → stdout
-5. Print `(N rows, Xms)` unless `--quiet`
-6. Exit code: 0=success, 1=SQL error, 2=open error
+```bash
+# Table output (default in terminal)
+$ razor query mydb.razor "SELECT * FROM users LIMIT 3"
+┌────┬──────────┬─────┐
+│ id │ name     │ age │
+├────┼──────────┼─────┤
+│  1 │ Alice    │  30 │
+│  2 │ Bob      │  25 │
+│  3 │ Charlie  │  35 │
+└────┴──────────┴─────┘
+(3 rows, 2ms)
+
+# JSON output
+$ razor query mydb.razor "SELECT * FROM users" --format json
+[{"id":1,"name":"Alice","age":30},{"id":2,"name":"Bob","age":25}]
+
+# CSV output (auto-detected when piped)
+$ razor query mydb.razor "SELECT * FROM users" | head -2
+id,name,age
+1,Alice,30
+
+# Raw output (no headers, no formatting)
+$ razor query mydb.razor "SELECT count(*) FROM users" --raw --quiet
+42
+
+# Pipe into another command
+$ razor query mydb.razor "SELECT name FROM users" --format csv --noheader | sort
+Alice
+Bob
+Charlie
+```
 
 **Flags:**
-- `--format table|json|csv|ndjson|line` (default: auto-detect)
-- `--header` / `--noheader` (default: on for terminal, off for pipe)
-- `--null TEXT` (default: empty)
-- `--separator SEP` (default: `|` for table, `,` for csv)
-- `--timing` (default: on)
-- `--quiet` (suppress row count message)
-- `--raw` (no formatting, just values)
-- `--max-rows N` (default: 1000, 0=unlimited)
-- `--timeout DURATION` (default: 30s)
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format` | auto | Output format: `table`, `json`, `csv`, `ndjson`, `line` |
+| `--header` | true (terminal) / false (pipe) | Show column headers |
+| `--noheader` | — | Hide column headers |
+| `--null` | empty | Display string for NULL values |
+| `--separator` | `\|` (table), `,` (csv) | Column separator |
+| `--timing` | true | Show query timing |
+| `--quiet` | false | Suppress row count message |
+| `--raw` | false | No formatting, just values |
+| `--max-rows` | 1000 | Maximum rows to output (0=unlimited) |
+| `--timeout` | 30s | Query timeout |
+
+**Exit codes:**
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | SQL error |
+| 2 | Open/connection error |
+| 3 | Timeout |
+
+**Auto-detection:** When stdout is not a terminal (piped), default format is `csv` with no headers.
 
 ### `razor exec <dbdir> <sql>`
 
-Execute DDL/DML without returning rows.
+Execute DDL/DML. No row output.
 
-**Flow:**
-1. `SY.Open(ctx, dbdir, AP.Options{})` → `*Engine`
-2. `eng.Begin(ctx)` → `Session`
-3. `session.Exec(ctx, sql)` → `AP.Result`
-4. Print `(N rows affected)` unless `--quiet`
-5. Exit code: 0=success, 1=SQL error
+```bash
+$ razor exec mydb.razor "CREATE TABLE users (id INT PRIMARY KEY, name TEXT)"
+OK (0 rows affected, 1ms)
+
+$ razor exec mydb.razor "INSERT INTO users VALUES (1, 'Alice')"
+OK (1 row affected, 0ms)
+```
 
 ### `razor schema <dbdir> [table]`
 
-Browse database schema.
+List tables or show table schema.
 
-**Without table arg:**
-```
+```bash
+# List all tables
 $ razor schema mydb.razor
 Tables (3):
-  users         1,234 rows   48 KB
-  orders          567 rows   32 KB
-  products         89 rows   12 KB
-```
+  users         1,234 rows
+  orders          567 rows
+  products         89 rows
 
-**With table arg:**
-```
+# Show table schema
 $ razor schema mydb.razor users
 CREATE TABLE users (
     id INTEGER PRIMARY KEY,
@@ -163,82 +181,55 @@ CREATE TABLE users (
 Indexes:
   idx_users_email ON users (email)
 
-Foreign Keys:
-  (none)
-
-Row count: 1,234
-Size: 48 KB
+Rows: 1,234
 ```
 
-**Flow:**
-1. Open engine, begin session
-2. `session.Query(ctx, "SELECT name FROM sqlite_master WHERE type='table'")`
-3. For each table: `session.Query(ctx, "PRAGMA table_info("+name+")")`
-4. Format as tree/table
+### `razor dump <dbdir>`
+
+SQL export. Compatible with `razor import`.
+
+```bash
+# Dump to stdout
+$ razor dump mydb.razor
+CREATE TABLE users (...);
+INSERT INTO users VALUES (1, 'Alice', 30);
+INSERT INTO users VALUES (2, 'Bob', 25);
+
+# Dump to file
+$ razor dump mydb.razor --output backup.sql
+
+# Dump specific tables
+$ razor dump mydb.razor --tables "users,orders"
+```
 
 ### `razor import <dbdir> <file> <table>`
 
 Import data from file.
 
-**Flow:**
-1. Detect format from extension (`.csv`, `.json`, `.tsv`) or `--format` flag
-2. Parse file, infer column types
-3. `session.Exec(ctx, "CREATE TABLE IF NOT EXISTS ...")`
-4. For each row: `session.Exec(ctx, "INSERT INTO ... VALUES (?, ?, ...)")`
-5. Show progress bar for large files
-6. Print `(N rows imported in Xs)`
+```bash
+# Import CSV
+$ razor import mydb.razor users.csv users
+Imported 1,234 rows in 0.5s
 
-### `razor export <dbdir> <table>`
+# Import JSON
+$ razor import mydb.razor users.json users --format json
+```
 
-Export table data.
+### `razor info <dbdir>`
 
-**Flow:**
-1. `session.Query(ctx, "SELECT * FROM "+table)` → rows
-2. `formatOutput(rows, format)` → stdout or file
+Database statistics.
 
-### `razor dump <dbdir>`
-
-SQL export compatible with `razor import`.
-
-**Flow:**
-1. For each table: emit `CREATE TABLE ...`
-2. For each row: emit `INSERT INTO ... VALUES (...)`
-3. Output to stdout or `--output` file
-
-### `razor integrity-check <dbdir>`
-
-**Flow:**
-1. `SY.Open(ctx, dbdir, AP.Options{ReadOnly: true})`
-2. `session.Query(ctx, "PRAGMA integrity_check")`
-3. If result is "ok": print "OK"
-4. If result has errors: print each error, exit 1
-
-### `razor vacuum <dbdir>`
-
-**Flow:**
-1. `SY.Open(ctx, dbdir, AP.Options{})`
-2. `session.Exec(ctx, "VACUUM")`
-3. Print "OK"
-
-### `razor analyze <dbdir>`
-
-**Flow:**
-1. `SY.Open(ctx, dbdir, AP.Options{})`
-2. For each table: `session.Exec(ctx, "ANALYZE "+table)`
-3. Print summary
+```bash
+$ razor info mydb.razor
+Database: mydb.razor
+Tables: 3
+Total rows: 1,890
+Size: 92 KB
+WAL segments: 2
+Last modified: 2026-06-20 10:30:00
+```
 
 ## Output Formatting
-
-### Auto-detection
-
-```go
-func detectFormat() string {
-    if !isTerminal(os.Stdout) {
-        return "csv"  // pipe mode: csv, no headers
-    }
-    return "table"    // terminal: box-drawing table
-}
-```
 
 ### Formats
 
@@ -253,6 +244,8 @@ func detectFormat() string {
 (2 rows, 3ms)
 ```
 
+Implemented with `fmt.Printf` and Unicode box-drawing characters. No external library.
+
 **json**:
 ```json
 [
@@ -261,12 +254,16 @@ func detectFormat() string {
 ]
 ```
 
+Uses `encoding/json`.
+
 **csv**:
 ```
 id,name,age
 1,Alice,30
 2,Bob,25
 ```
+
+Uses `encoding/csv`.
 
 **ndjson** (newline-delimited JSON):
 ```
@@ -286,59 +283,36 @@ name = Bob
 age = 25
 ```
 
+### Auto-detection Logic
+
+```go
+func detectFormat() string {
+    if !isTerminal(os.Stdout) {
+        return "csv"  // piped: csv, no headers
+    }
+    return "table"    // terminal: box-drawing table
+}
+```
+
 ## Config File
 
 Location: `~/.config/razor/config.toml`
 
 ```toml
 [output]
-format = "table"        # table|json|csv|line|ndjson
+format = "table"
 headers = true
 null = "NULL"
 separator = "|"
 timing = true
 max_rows = 1000
 
-[editor]
-vi_mode = false
-history_size = 10000
-auto_complete = true
-syntax_highlight = true
-
 [connection]
 timeout = "30s"
 readonly = false
 ```
 
-CLI flags override config values. `--config` flag overrides default path.
-
-## Error Handling
-
-| Exit Code | Meaning |
-|-----------|---------|
-| 0 | Success |
-| 1 | SQL error (syntax, constraint, etc.) |
-| 2 | Connection/open error (dir not found, corrupt, etc.) |
-| 3 | Timeout |
-| 4 | Config error |
-
-Error output goes to stderr. In `--json` mode, errors are JSON:
-```json
-{"error": "syntax error near 'SELEC'", "code": 1}
-```
-
-## Dependencies
-
-| Package | Purpose |
-|---------|---------|
-| `github.com/spf13/cobra` | CLI framework, subcommands, flags |
-| `github.com/charmbracelet/bubbletea` | TUI framework for REPL |
-| `github.com/charmbracelet/bubbles` | TUI components (table, input, spinner) |
-| `github.com/charmbracelet/lipgloss` | Terminal styling |
-| `github.com/alecthomas/chroma` | SQL syntax highlighting |
-| `github.com/pelletier/go-toml` | Config file parsing |
-
-All are external Go libraries. No C dependencies.
+CLI flags override config values. `--config` flag overrides default path. Config file is optional — all defaults work without it.
 
 ## Integration with SYS/AP
 
@@ -355,6 +329,10 @@ eng.Stats() → AP.EngineStats
 sess.Query(ctx, sql) → (*AP.Rows, error)
 sess.Exec(ctx, sql) → (AP.Result, error)
 sess.Close() → error
+
+// Backup/Restore
+AP.Backup(ctx, src, dst, opts) → (*AP.BackupStats, error)
+AP.Restore(ctx, backup, dst) → (*AP.BackupStats, error)
 
 // Types
 AP.Rows { Cols []string, Types []int }

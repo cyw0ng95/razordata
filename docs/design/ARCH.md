@@ -108,7 +108,7 @@ internal/
 
 ## Detailed Design
 
-Full design documents: `docs/design/subsystems/LOG.md` · `FIL.md` · `MEM.md` · `WAL.md` · `ENG.md` · `TXN.md` · `SQL.md` · `SYS.md` · `docs/design/CLI.md`
+Full design documents: `docs/design/subsystems/LOG.md` · `FIL.md` · `MEM.md` · `WAL.md` · `ENG.md` · `TXN.md` · `SQL.md` · `SYS.md` · `CLI.md` · `TUI.md`
 
 ## SQL Surface
 
