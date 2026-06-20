@@ -53,7 +53,8 @@ func (fj *flushJob) Run() error {
 }
 
 func (fj *flushJob) flushToSST() ([]byte, error) {
-	w := newSSTWriter()
+	w := acquireSSTWriter()
+	defer releaseSSTWriter(w)
 
 	it := fj.memtable.Iterator()
 	for it.Next() {

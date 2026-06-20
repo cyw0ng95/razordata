@@ -72,7 +72,8 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	defer os.Remove(outputPath)
 	defer tmpFile.Close()
 
-	w := newSSTWriter()
+	w := acquireSSTWriter()
+	defer releaseSSTWriter(w)
 
 	iters := make([]*sstIterator, 0, len(cj.inputs)+len(cj.overlap))
 	for _, input := range cj.inputs {

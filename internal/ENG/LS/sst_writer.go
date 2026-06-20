@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"sync"
 )
 
 var crc32Koopman = crc32.MakeTable(crc32.Koopman) // REQ000588: pre-allocated
@@ -39,6 +40,25 @@ type sstWriter struct {
 	maxKey             []byte
 	lastKey            []byte
 	currentBlockOffset int
+}
+
+var sstWriterPool = sync.Pool{
+	New: func() any {
+		return &sstWriter{
+			blocks:       make([][]byte, 0, 16),
+			indexEntries: make([]indexEntry, 0, 16),
+			keys:         make([][]byte, 0, 256),
+		}
+	},
+}
+
+func acquireSSTWriter() *sstWriter {
+	return sstWriterPool.Get().(*sstWriter)
+}
+
+func releaseSSTWriter(w *sstWriter) {
+	w.Reset()
+	sstWriterPool.Put(w)
 }
 
 func newSSTWriter() *sstWriter {
