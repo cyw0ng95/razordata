@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
+	"github.com/cyw0ng95/razordata/internal/SYS/SE"
 	v1 "github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
 
@@ -47,6 +48,33 @@ func (c *Conn) Begin() (driver.Tx, error) {
 		return nil, err
 	}
 	return &Tx{tx: tx}, nil
+}
+
+// ExecContext executes a DML/DDL statement. Implements
+// driver.ExecerContext so database/sql calls this directly
+// instead of going through Prepare+Exec. In an explicit
+// transaction, sets the TxWriter so in-memory tables record
+// pre-tx snapshots for rollback. REQ000641.
+func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	if c == nil || c.eng == nil {
+		return nil, AP.ErrNotOpen
+	}
+	sess, ok := c.session.(*SE.Session)
+	if ok && sess.HasActiveTxn() {
+		sess.SetTxWriterForTxn()
+		defer sess.ClearTxWriter()
+	}
+	// Convert NamedValue to Value for the statement path.
+	vals := make([]driver.Value, len(args))
+	for i, a := range args {
+		vals[i] = a.Value
+	}
+	stmt, err := Prepare(c, query)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+	return stmt.Exec(vals)
 }
 
 // Result implements driver.Result for non-RETURNING Exec results.

@@ -287,6 +287,27 @@ func (s *Session) HasActiveTxn() bool {
 	return s.txn != nil
 }
 
+// SetTxWriterForTxn sets the current transaction as the TxWriter on
+// the executor, if an active transaction exists. Used by the driver
+// when executing within an explicit transaction. REQ000641.
+func (s *Session) SetTxWriterForTxn() {
+	s.mu.Lock()
+	txn := s.txn
+	s.mu.Unlock()
+	if txn != nil {
+		if tw, ok := txn.(EX.TxWriter); ok {
+			exe := s.engine.Executor()
+			exe.SetTxWriter(tw)
+		}
+	}
+}
+
+// ClearTxWriter clears the TxWriter on the executor.
+func (s *Session) ClearTxWriter() {
+	exe := s.engine.Executor()
+	exe.ClearTxWriter()
+}
+
 // Commit finalizes the current transaction.
 func (s *Session) Commit(ctx context.Context) error {
 	if s.engine.IsClosed() {

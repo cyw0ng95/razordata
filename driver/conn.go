@@ -39,11 +39,16 @@ func (c *Conn) Close() error {
 	return nil
 }
 
-// ExecContext executes a query that doesn't return rows (INSERT, UPDATE, DELETE, DDL).
-// Auto-commits if not in an explicit transaction.
-func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Value) (driver.Result, error) {
+// ExecContext executes a query that doesn't returns rows (INSERT, UPDATE, DELETE, DDL).
+// Implements driver.ExecerContext. Auto-commits if not in an explicit transaction.
+func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	if c == nil || c.session == nil {
 		return nil, AP.ErrNotOpen
+	}
+	// Convert NamedValue to Value for the statement path.
+	vals := make([]driver.Value, len(args))
+	for i, a := range args {
+		vals[i] = a.Value
 	}
 
 	// Auto-commit: if no explicit transaction is active, wrap execution in one.
@@ -59,7 +64,7 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Valu
 			_ = tx.Rollback(ctx)
 			return nil, err
 		}
-		res, err := stmt.Exec(args)
+		res, err := stmt.Exec(vals)
 		if err != nil {
 			_ = stmt.Close()
 			_ = tx.Rollback(ctx)
@@ -77,19 +82,27 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Valu
 		return res, nil
 	}
 
-	// In an explicit transaction: prepare and execute normally.
+	// In an explicit transaction: prepare and execute with TxWriter set.
+	// REQ000641: the TxWriter must be set so in-memory tables record
+	// pre-tx snapshots for rollback.
+	sess.SetTxWriterForTxn()
+	defer sess.ClearTxWriter()
 	stmt, err := Prepare(c, query)
 	if err != nil {
 		return nil, err
 	}
 	defer stmt.Close()
-	return stmt.Exec(args)
+	return stmt.Exec(vals)
 }
 
 // Exec executes a query that doesn't return rows (INSERT, UPDATE, DELETE, DDL).
 // Auto-commits if not in an explicit transaction.
 func (c *Conn) Exec(query string, args []driver.Value) (driver.Result, error) {
-	return c.ExecContext(context.Background(), query, args)
+	named := make([]driver.NamedValue, len(args))
+	for i, v := range args {
+		named[i] = driver.NamedValue{Ordinal: i + 1, Value: v}
+	}
+	return c.ExecContext(context.Background(), query, named)
 }
 
 // Begin starts a transaction.

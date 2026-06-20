@@ -20,16 +20,21 @@ import (
 // writeSet is discarded. On Rollback, each entry is restored: if
 // the key existed before the tx its previous value is rewritten, if
 // it was absent it is removed. This satisfies ap.R22/R23.
+//
+// REQ000641: in-memory tables (no engine backing) record a
+// snapshot of the table before the first mutation. On rollback
+// the snapshot is restored via the in-memory table registry.
 type Transaction struct {
 	onFinish func()
 	engine   *sy.Engine
 	tx       vl.Tx
 	mu       sync.Mutex
 
-	writeSet       map[string]writeEntry
-	finished       bool
-	savepoints     []savepoint
-	isolationLevel ap.IsolationLevel // REQ000123
+	writeSet           map[string]writeEntry
+	inMemorySnapshots  map[string][]ex.Row // table → pre-tx rows
+	finished           bool
+	savepoints         []savepoint
+	isolationLevel     ap.IsolationLevel // REQ000123
 }
 
 type writeEntry struct {
@@ -46,10 +51,11 @@ type savepoint struct {
 // execution. writeSet is initialized lazily on first write.
 func NewTransaction(engine *sy.Engine, tx vl.Tx) *Transaction {
 	return &Transaction{
-		engine:         engine,
-		tx:             tx,
-		writeSet:       make(map[string]writeEntry),
-		isolationLevel: ap.IsolationReadCommitted, // REQ000061: default RC
+		engine:            engine,
+		tx:                tx,
+		writeSet:          make(map[string]writeEntry),
+		inMemorySnapshots: make(map[string][]ex.Row),
+		isolationLevel:    ap.IsolationReadCommitted, // REQ000061: default RC
 	}
 }
 
@@ -154,6 +160,22 @@ func (t *Transaction) RecordWrite(key []byte, newValue []byte) {
 	t.writeSet[k] = entry
 }
 
+// RecordInMemoryTable captures the pre-tx snapshot of an in-memory
+// table. Only the first call per table is recorded; subsequent
+// writes to the same table use the original snapshot for rollback.
+// REQ000641.
+func (t *Transaction) RecordInMemoryTable(table string, snapshot []ex.Row) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.finished {
+		return
+	}
+	if _, seen := t.inMemorySnapshots[table]; seen {
+		return
+	}
+	t.inMemorySnapshots[table] = snapshot
+}
+
 func (t *Transaction) Commit(ctx context.Context) error {
 	if t.engine.IsClosed() {
 		return ap.ErrClosed
@@ -169,6 +191,7 @@ func (t *Transaction) Commit(ctx context.Context) error {
 	}
 	t.finished = true
 	t.writeSet = nil
+	t.inMemorySnapshots = nil
 	t.savepoints = nil
 	fn := t.onFinish
 	t.mu.Unlock()
@@ -214,8 +237,13 @@ func (t *Transaction) Rollback(ctx context.Context) error {
 			}
 		}
 	}
+	// REQ000641: restore in-memory tables to their pre-tx snapshots.
+	if rollbackErr == nil && len(t.inMemorySnapshots) > 0 {
+		rollbackErr = ex.RestoreInMemoryTables(t.inMemorySnapshots)
+	}
 	t.finished = true
 	t.writeSet = nil
+	t.inMemorySnapshots = nil
 	t.savepoints = nil
 	fn := t.onFinish
 	t.mu.Unlock()

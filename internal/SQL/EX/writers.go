@@ -94,6 +94,10 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 	tablesMu.Lock()
 	defer tablesMu.Unlock()
 	existing := tables[i.table]
+	// REQ000641: snapshot the table before first mutation for rollback.
+	if tw := CurrentTxWriter(); tw != nil {
+		tw.RecordInMemoryTable(i.table, SnapshotInMemoryTable(i.table))
+	}
 	var pending map[string]struct{}
 	var iterValues [][]PS.Expr
 	if i.defaultValues {
@@ -411,6 +415,12 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 	if ss, ok := schemaFor(u.table); ok {
 		cschema = ss
 	}
+	// REQ000641: snapshot the table before first mutation for rollback.
+	if tw := CurrentTxWriter(); tw != nil {
+		tablesMu.RLock()
+		tw.RecordInMemoryTable(u.table, SnapshotInMemoryTable(u.table))
+		tablesMu.RUnlock()
+	}
 	for {
 		row, err := u.iter.Next(ctx)
 		if err != nil {
@@ -711,6 +721,10 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		}
 		tablesMu.Lock()
 		defer tablesMu.Unlock()
+		// REQ000641: snapshot the table before first mutation for rollback.
+		if tw := CurrentTxWriter(); tw != nil {
+			tw.RecordInMemoryTable(d.table, SnapshotInMemoryTable(d.table))
+		}
 		existing := tables[d.table]
 		out := existing[:0]
 		for i, r := range existing {

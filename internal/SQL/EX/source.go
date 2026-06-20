@@ -94,6 +94,33 @@ func Schema(name string) []string {
 	return nil
 }
 
+// SnapshotInMemoryTable returns a deep copy of the in-memory table's
+// current rows. The caller must hold tablesMu (read or write).
+// REQ000641.
+func SnapshotInMemoryTable(table string) []Row {
+	src := tables[table]
+	if src == nil {
+		return nil
+	}
+	cp := make([]Row, len(src))
+	for i, r := range src {
+		cp[i] = cloneRow(r)
+	}
+	return cp
+}
+
+// RestoreInMemoryTables replaces in-memory tables with the given
+// snapshots. Used by TX.Transaction.Rollback to undo in-memory
+// writes. REQ000641.
+func RestoreInMemoryTables(snapshots map[string][]Row) error {
+	tablesMu.Lock()
+	defer tablesMu.Unlock()
+	for table, snap := range snapshots {
+		tables[table] = snap
+	}
+	return nil
+}
+
 func UnregisterAll() {
 	tablesMu.Lock()
 	defer tablesMu.Unlock()

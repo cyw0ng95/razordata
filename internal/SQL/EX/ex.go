@@ -184,6 +184,18 @@ type Executor struct {
 // restore. The SYS layer wires this for transactional sessions.
 type TxWriter interface {
 	RecordWrite(key []byte, newValue []byte)
+	// RecordInMemoryTable captures the pre-tx snapshot of an
+	// in-memory table before the first mutation. On rollback the
+	// implementation restores the table to this snapshot.
+	// REQ000641.
+	InMemoryTxWriter
+}
+
+// InMemoryTxWriter is the optional hook for in-memory table
+// rollback support. Separated so callers can type-assert
+// independently of the store-backed TxWriter.
+type InMemoryTxWriter interface {
+	RecordInMemoryTable(table string, snapshot []Row)
 }
 
 // SetTxWriter installs w as the current transaction's write hook. Pass
