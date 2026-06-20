@@ -18,7 +18,7 @@ Razordata keeps SQLite's ergonomic model — one directory, zero configuration, 
 |---|---|
 | No external C dependencies | Cross-compilation is trivial; no `CGO` portability issues; memory safety via Go's GC |
 | No network server | Embedded-first. The database lives in the same process as the application. |
-| Go 1.22+ | Access to `slices`, `maps`, `iter`, modern `slog`. |
+| Go 1.26+ | Access to `slices`, `maps`, `iter`, `cmp`, `math/rand/v2`, `for range N`, modern `slog`. |
 | Single `go.mod` | No nested modules. Flat, auditable dependency graph. |
 | Page size: 4 KB | Matches OS page size for `O_DIRECT` alignment and `mmap` efficiency. |
 

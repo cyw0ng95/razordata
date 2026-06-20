@@ -1,6 +1,6 @@
 # Razordata — Development Rules
 
-> No network server. No external C deps. Go 1.22+. Single `go.mod`.
+> No network server. No external C deps. Go 1.26+. Single `go.mod`.
 
 ## Directory Structure
 
@@ -223,6 +223,6 @@ Use sqlite3 as a reference implementation to compare against razor-data's output
 
 ## Compatibility
 
-- Go 1.22+ (use `slices`, `maps`, `iter`).
+- Go 1.26+ (use `slices`, `maps`, `iter`, `cmp`, `math/rand/v2`, `for range N`).
 - Linux, macOS, Windows.
 - Single `go.mod` — no nested modules.

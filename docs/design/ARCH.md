@@ -83,7 +83,7 @@ Several constants and utilities are duplicated across packages. The following ru
 
 **Catalog logic:** `ENG/LS` and `ENG/TB` share identical catalog magic bytes, header size, schema versions, bootstrap, and encode/decode logic. Shared code lives in `ENG/catalog/`; LS adds index/stats extensions on top.
 
-**Lifecycle guards:** All `closed` guards use `atomic.Bool` (Go 1.22+). No custom `atomicBool` wrappers, no plain `bool` for goroutine-shared state.
+**Lifecycle guards:** All `closed` guards use `atomic.Bool` (Go 1.19+). No custom `atomicBool` wrappers, no plain `bool` for goroutine-shared state.
 
 **Stats types:** `SYS/AP` embeds subsystem stats types (`ls.ReadStats`, `bf.BufferStats`, `rp.Stats`, `vl.TxnStats`) rather than re-declaring subset structs. This prevents field drift.
 
