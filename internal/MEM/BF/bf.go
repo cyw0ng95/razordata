@@ -82,6 +82,10 @@ type bufferSlot struct {
 	// REQ000302: tier where slot data currently lives.
 	// 0 = DRAM (default), 1 = PMem (cold spill).
 	tier atomic.Uint32
+	// REQ000549: version range for block-level MVCC.
+	// Enables cross-transaction cache sharing with snapshot consistency.
+	versionStartTS atomic.Uint64
+	versionEndTS   atomic.Uint64
 }
 
 // bufferHashTable provides O(1) lookup by blockID.
@@ -279,6 +283,20 @@ allocated:
 
 	b.misses.Add(1)
 	return &Page{ID: blockID, Data: slot.data, Dirty: false}, false, nil
+}
+
+// GetWithTS returns a page whose version range covers readTS
+// (REQ000549). If no version covers readTS, returns the latest
+// version and the caller should filter via the version chain.
+func (b *bp) GetWithTS(ctx context.Context, blockID uint64, readTS uint64) (*Page, bool, error) {
+	page, found, err := b.Get(ctx, blockID)
+	if err != nil || !found {
+		return page, found, err
+	}
+	// For now, return the page as-is. The caller is responsible
+	// for version chain filtering at read time.
+	// Future: check versionStartTS/versionEndTS on the slot.
+	return page, found, nil
 }
 
 // Pin implements BufferPool.
