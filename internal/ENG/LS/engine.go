@@ -110,7 +110,7 @@ func newEngineWithOptions(dir string, opts Options) (*engine, error) {
 
 	e := &engine{
 		dir:       dir,
-		memtables: make([]memtableIface, 0),
+		memtables: make([]memtableIface, 0, 4),
 		activeMem: activeMem,
 		manifest:  manifest,
 		pageCache: NewPageCache(DefaultPageCacheSize), // REQ000571

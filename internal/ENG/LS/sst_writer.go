@@ -44,7 +44,7 @@ type sstWriter struct {
 func newSSTWriter() *sstWriter {
 	return &sstWriter{
 		blocks:       make([][]byte, 0, 16),
-		indexEntries: make([]indexEntry, 0),
+		indexEntries: make([]indexEntry, 0, 16),
 		keys:         make([][]byte, 0, 256),
 	}
 }

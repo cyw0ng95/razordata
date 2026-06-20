@@ -25,7 +25,7 @@ type ReadView struct {
 func NewReadView(mv *MV.MV, readTS uint64) *ReadView {
 	return &ReadView{
 		readTS:   readTS,
-		snapshot: make([]VersionChainSnapshot, 0),
+		snapshot: make([]VersionChainSnapshot, 0, 16),
 		mv:       mv,
 	}
 }
