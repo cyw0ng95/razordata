@@ -149,3 +149,14 @@ The following cross-cutting requirements have been implemented and shipped; they
 | REQ000336 | Developer guide: how to run, add cases, re-baseline coverage | iter-25 |
 | REQ000337 | Architecture note lives in iteration doc (not `design/`); test harness is operational, not architectural | iter-25 |
 | REQ000365 | `allProbeCases` undeclared — register `probeCases` in `AllCases()` | iter-26.1 (v0.26.3) |
+| REQ000547 | Per-NUMA arena pools — `numaArenaPool` with per-node `sync.Pool`; `GetArena`/`PutArena` use `nm.CurrentNode()` for first-touch policy | iter-29 |
+| REQ000571 | SST page cache — `PageCache` with clock-sweep eviction, `sync.Pool` for page buffers, 4 KB block-level caching | iter-29 |
+| REQ000583 | Visitor pattern for AST — `Visitor` interface with `Visit*` methods for all Expr and Stmt types; `BaseVisitor` default no-op | iter-29 |
+| REQ000586 | Thread ExecContext through operators — `ExecContext` struct carries `Planner`, `SessionID`, `TxWriter`; eliminates `currentSubqueryPlanner` global | iter-29 |
+| REQ000615 | Replace custom `maxUint64` constant with `math.MaxUint64` from standard library | iter-29 |
+| REQ000613 | Remove error return from `memtable.Insert` (always returns nil) | iter-29 |
+| REQ000614 | Fix unused variables `keysLen`/`valsLen` in `columnar.go` — now used for validation | iter-29 |
+| REQ000607 | Fix non-atomic read-then-write on `w.synced` — replaced with `CompareAndSwap` loop | iter-29 |
+| REQ000608 | Remove unnecessary `mu.Lock()` around `atomic.Value` reads in skiplist | iter-29 |
+| REQ000609 | Replace global `math/rand` with per-skiplist `rand.New(rand.NewPCG(...))` | iter-29 |
+| REQ000640 | InstallSignalHandler tests — double-stop safety, context cancellation, non-nil stop function | iter-29 |

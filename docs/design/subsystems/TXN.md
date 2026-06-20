@@ -403,7 +403,7 @@ const MaxConcurrentTXNs = 1024
 ## Implementation Plan
 
 1. **`internal/TXN/MV/version.go`** — `VersionNode`, `VersionChain`, CAS insertion, commit.
-2. **`internal/TXN/MV/arena.go`** — per-thread arena: `Alloc`, exhaustion handling, lazy initialization.
+2. **`internal/TXN/MV/arena.go`** — per-thread arena: `Alloc`, exhaustion handling, lazy initialization. Per-NUMA arena pools (REQ000547) eliminate contention on multi-socket hosts.
 3. **`internal/TXN/LC/hazard.go`** — hazard pointer set: `Publish`, `Clear`, `Scan`.
 4. **`internal/TXN/LC/epoch.go`** — epoch manager: `EnterEpoch`, `ExitEpoch`, `Reclaim`, background goroutine.
 5. **`internal/TXN/SN/snapshot.go`** — `ReadView`: creation, `Get`, `Close`.
@@ -454,6 +454,7 @@ The following requirements have been implemented and shipped; they are now part 
 | REQ000307 | MV-OCC timestamp ordering (Silo-style, O(1) per-txn read-set validation; targets 1M+ txn/s on 16 cores) | iter-28 |
 | REQ000551 | Time-traveling snapshot pruning — `GCVersionChain`/`GCAllChains` return prune candidates below `oldestActiveReadTS` | iter-28.2 |
 | REQ000555 | Lock-free transaction slot recycling — Treiber stack (`atomic.Pointer` CAS) replaces mutex-guarded freeList | iter-28.2 |
+| REQ000547 | Per-NUMA arena pools — `numaArenaPool` with per-node `sync.Pool`; `GetArena`/`PutArena` use `nm.CurrentNode()` for first-touch policy; eliminates contention on global `reclaimMu` and `arenaPool` under high transaction throughput on multi-socket hosts | iter-29 |
 | REQ000121 | TXN-API — `BEGIN` / `COMMIT` / `ROLLBACK` | iter-08 |
 
 ## Open Issues

@@ -438,6 +438,7 @@ The following requirements have been implemented and shipped; they are now part 
 | REQ000260 | Admin CLI `razor` (schema dump, vacuum, integrity check) | iter-23 |
 | REQ000261 | Integrity check (`PRAGMA integrity_check`) | iter-23 |
 | REQ000548 | Engine-level prepared statement cache — LRU + ref-counted, `Get`/`Put`/`Release`/`Clear`/`Size` | iter-28.2 |
+| REQ000640 | InstallSignalHandler tests — `shutdown_test.go` verifies double-stop safety (no panic), context cancellation, and non-nil stop function return; fixed double-close panic with `sync.Once` guard | iter-29 |
 
 ## Open Issues
 

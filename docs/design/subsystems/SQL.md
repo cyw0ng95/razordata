@@ -655,6 +655,8 @@ The following requirements have been implemented and shipped; they are now part 
 | REQ000443 | WAL `encodeRecord` allocation reduction (4→2 allocs/record, -32% latency) | iter-27 |
 | REQ000443b | Fix negative_literal eval pipeline bug (case-sensitive Lookup, UnaryExpr column extraction) | iter-27 |
 | REQ000444 | UPDATE deadlock fix — numericFloat Go int handling; equalValue/Eval(*PS.Param) normalization | iter-27 |
+| REQ000583 | Visitor pattern for AST — `Visitor` interface with `Visit*` methods for all 24 Expr and 34 Stmt types; `BaseVisitor` default no-op implementation; `AcceptExpr`/`AcceptStmt` dispatch functions; `visitor_test.go` with exhaustive type coverage | iter-29 |
+| REQ000586 | Thread ExecContext through operators — `ExecContext` struct carries `Planner`, `SessionID`, `TxWriter`; `WithExecContext`/`ExecContextFromRow` attach/retrieve from Row outer chain; eliminates `currentSubqueryPlanner` global from `QueryAll`/`QueryStream` | iter-29 |
 
 ## Open Issues
 

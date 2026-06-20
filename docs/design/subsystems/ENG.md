@@ -362,6 +362,7 @@ The following requirements have been implemented and shipped; they are now part 
 | REQ000364 | Negative WaitGroup counter panic in `flushManager` (REQ000347 followup) — `Add(1)` before send, `enqueueMu` serializes with `Stop` | iter-26.1 (v0.26.3) |
 | REQ000540 | L0 buffer cache — `l0Cache` LRU keyed by blockID; API ready for engine wiring | iter-28.2 |
 | REQ000552 | Adaptive memtable size — `targetSize` atomic.Int64 + `SetTargetSize`/`TargetSize` plumbing | iter-28.2 |
+| REQ000571 | SST page cache — `PageCache` with clock-sweep eviction, `sync.Pool` for page buffers, 4 KB block-level caching keyed by `(fileID, offset)`; integrated into `readFromSST` and `MayContain` via `readSSTFile` helper | iter-29 |
 
 ### ID — Index
 
