@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	ErrFlusherClosed       = errors.New("flusher closed")
-	ErrGroupCommitTimeout  = errors.New("group commit timeout")
+	ErrFlusherClosed      = errors.New("fl: flusher closed")
+	ErrGroupCommitTimeout = errors.New("fl: group commit timeout")
+	ErrBufferFull         = errors.New("fl: WriteBuffer buffer full")
 )
 
 type FlusherOptions struct {
@@ -67,7 +68,7 @@ func (wb *writeBuffer) Available() int {
 
 func (wb *writeBuffer) Write(p []byte) (int, error) {
 	if len(p) > wb.Available() {
-		return 0, errors.New("fl.WriteBuffer: buffer full")
+		return 0, ErrBufferFull
 	}
 	n := copy(wb.buf[wb.off:], p)
 	wb.off += n

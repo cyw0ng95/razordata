@@ -15,6 +15,15 @@ import (
 // SegSize is the maximum size of a single WAL segment.
 const SegSize = int64(64 * 1024 * 1024) // 64 MB
 
+// Sentinel errors for runtime conditions callers may need to match.
+var (
+	ErrWriterClosed      = errors.New("wr: writer is closed")
+	ErrReadOnly          = errors.New("wr: read-only mode")
+	ErrRecordExceedsSeg  = errors.New("wr: single record exceeds SegSize")
+	ErrSyncPoolNilBuffer = errors.New("wr: SyncPool returned nil buffer")
+	ErrShortPwrite       = errors.New("wr: short pwrite")
+)
+
 // LSN is a Log Sequence Number.
 type LSN = uint64
 
@@ -135,11 +144,11 @@ func (w *writer) Append(batch *WriteBatch) (uint64, error) {
 	defer w.mu.Unlock()
 
 	if w.closed.isSet() {
-		return 0, errors.New("wr: writer is closed")
+		return 0, ErrWriterClosed
 	}
 
 	if w.readOnly {
-		return 0, errors.New("wr: read-only mode")
+		return 0, ErrReadOnly
 	}
 
 	if w.seg == nil {
@@ -165,7 +174,7 @@ func (w *writer) Append(batch *WriteBatch) (uint64, error) {
 			maxRec = SegSize
 		}
 		if recLen > maxRec {
-			return lastLSN, errors.New("wr: single record exceeds SegSize")
+			return lastLSN, ErrRecordExceedsSeg
 		}
 		if w.seg.writeOff+recLen > SegSize {
 			if err := w.flushBufferLocked(); err != nil {
@@ -353,7 +362,7 @@ func (w *writer) openSegmentLocked(n uint64) error {
 	buf := w.sp.Get(int(sp.WALBufSize))
 	if buf == nil {
 		_ = fh.Close()
-		return errors.New("wr: SyncPool returned nil buffer")
+		return ErrSyncPoolNilBuffer
 	}
 	for i := range buf {
 		buf[i] = 0
@@ -388,7 +397,7 @@ func (w *writer) flushBufferLocked() error {
 		return err
 	}
 	if n != len(w.seg.buf) {
-		return errors.New("wr: short pwrite")
+		return ErrShortPwrite
 	}
 	w.seg.buf = w.seg.buf[:0]
 	return nil

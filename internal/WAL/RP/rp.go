@@ -20,6 +20,7 @@ var (
 	ErrReplayAborted   = errors.New("rp: replay aborted by callback")
 	ErrSegmentNotFound = errors.New("rp: segment not found during replay")
 	ErrCorrupt         = errors.New("rp: WAL segment is corrupt")
+	ErrReplayerClosed  = errors.New("rp: replayer is closed")
 )
 
 // Stats exposes replay counters (R13-10).
@@ -77,7 +78,7 @@ func New(dir string, sm *lf.SegmentManager, bp bf.BufferPool, cb Callbacks, log 
 // Replay implements Replayer.
 func (r *replayer) Replay() error {
 	if r.closed.isSet() {
-		return errors.New("rp: replayer is closed")
+		return ErrReplayerClosed
 	}
 	r.stats = Stats{}
 
@@ -306,7 +307,7 @@ func (r *replayer) applyRecord(rec *wr.LogRecord) error {
 // LastCheckpoint implements Replayer.
 func (r *replayer) LastCheckpoint() (*CheckpointResult, error) {
 	if r.closed.isSet() {
-		return nil, errors.New("rp: replayer is closed")
+		return nil, ErrReplayerClosed
 	}
 
 	segments, err := r.sm.ListSegments()
