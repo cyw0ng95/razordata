@@ -62,8 +62,6 @@ func TestEncodeDecodeVarchar(t *testing.T) {
 }
 
 func TestValidateRow_Success(t *testing.T) {
-	v := NewValidator()
-
 	schema := &TableSchema{
 		TableID: 1,
 		Name:    "users",
@@ -80,14 +78,12 @@ func TestValidateRow_Success(t *testing.T) {
 		},
 	}
 
-	if err := v.ValidateRow(row, schema); err != nil {
+	if err := ValidateRow(row, schema); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestValidateRow_NullNotNullable(t *testing.T) {
-	v := NewValidator()
-
 	schema := &TableSchema{
 		Columns: []ColumnDef{
 			{Name: "id", Type: CTInt, Nullable: false},
@@ -98,14 +94,12 @@ func TestValidateRow_NullNotNullable(t *testing.T) {
 		Values: [][]byte{nil},
 	}
 
-	if err := v.ValidateRow(row, schema); err != ErrNullValue {
+	if err := ValidateRow(row, schema); err != ErrNullValue {
 		t.Fatalf("expected ErrNullValue, got %v", err)
 	}
 }
 
 func TestValidateRow_NullNullable(t *testing.T) {
-	v := NewValidator()
-
 	schema := &TableSchema{
 		Columns: []ColumnDef{
 			{Name: "id", Type: CTInt, Nullable: true},
@@ -116,14 +110,12 @@ func TestValidateRow_NullNullable(t *testing.T) {
 		Values: [][]byte{nil},
 	}
 
-	if err := v.ValidateRow(row, schema); err != nil {
+	if err := ValidateRow(row, schema); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestValidateRow_TypeMismatch(t *testing.T) {
-	v := NewValidator()
-
 	schema := &TableSchema{
 		Columns: []ColumnDef{
 			{Name: "id", Type: CTInt},
@@ -134,30 +126,26 @@ func TestValidateRow_TypeMismatch(t *testing.T) {
 		Values: [][]byte{[]byte("not an int")},
 	}
 
-	if err := v.ValidateRow(row, schema); err != ErrTypeMismatch {
+	if err := ValidateRow(row, schema); err != ErrTypeMismatch {
 		t.Fatalf("expected ErrTypeMismatch, got %v", err)
 	}
 }
 
 func TestCompareColumnDef(t *testing.T) {
-	v := NewValidator()
-
 	col1 := ColumnDef{Name: "id", Type: CTInt, Nullable: false, PrimaryKey: true}
 	col2 := ColumnDef{Name: "id", Type: CTInt, Nullable: false, PrimaryKey: true}
 	col3 := ColumnDef{Name: "name", Type: CTVarchar, Nullable: false, PrimaryKey: false}
 
-	if !v.CompareColumnDef(col1, col2) {
+	if !CompareColumnDef(col1, col2) {
 		t.Fatal("expected equal column defs")
 	}
 
-	if v.CompareColumnDef(col1, col3) {
+	if CompareColumnDef(col1, col3) {
 		t.Fatal("expected unequal column defs")
 	}
 }
 
 func TestValidateRow_AllTypes(t *testing.T) {
-	v := NewValidator()
-
 	tests := []struct {
 		name  string
 		col   ColumnDef
@@ -201,7 +189,7 @@ func TestValidateRow_AllTypes(t *testing.T) {
 			schema := &TableSchema{Columns: []ColumnDef{tt.col}}
 			row := Row{Values: [][]byte{val}}
 
-			err := v.ValidateRow(row, schema)
+			err := ValidateRow(row, schema)
 			if tt.valid && err != nil {
 				t.Errorf("expected valid, got %v", err)
 			}
@@ -273,57 +261,42 @@ func TestDecodeBool_InvalidLength(t *testing.T) {
 }
 
 func TestCompareColumnDef_DifferentNames(t *testing.T) {
-	v := NewValidator()
 	col1 := ColumnDef{Name: "a", Type: CTInt}
 	col2 := ColumnDef{Name: "b", Type: CTInt}
 
-	if v.CompareColumnDef(col1, col2) {
+	if CompareColumnDef(col1, col2) {
 		t.Error("expected false for different names")
 	}
 }
 
 func TestCompareColumnDef_DifferentTypes(t *testing.T) {
-	v := NewValidator()
 	col1 := ColumnDef{Name: "a", Type: CTInt}
 	col2 := ColumnDef{Name: "a", Type: CTVarchar}
 
-	if v.CompareColumnDef(col1, col2) {
+	if CompareColumnDef(col1, col2) {
 		t.Error("expected false for different types")
 	}
 }
 
 func TestCompareColumnDef_DifferentNullable(t *testing.T) {
-	v := NewValidator()
 	col1 := ColumnDef{Name: "a", Type: CTInt, Nullable: true}
 	col2 := ColumnDef{Name: "a", Type: CTInt, Nullable: false}
 
-	if v.CompareColumnDef(col1, col2) {
+	if CompareColumnDef(col1, col2) {
 		t.Error("expected false for different nullable")
 	}
 }
 
 func TestCompareColumnDef_DifferentPrimaryKey(t *testing.T) {
-	v := NewValidator()
 	col1 := ColumnDef{Name: "a", Type: CTInt, PrimaryKey: true}
 	col2 := ColumnDef{Name: "a", Type: CTInt, PrimaryKey: false}
 
-	if v.CompareColumnDef(col1, col2) {
+	if CompareColumnDef(col1, col2) {
 		t.Error("expected false for different primary key")
 	}
 }
 
-func TestValidateConstraints_DefaultValue(t *testing.T) {
-	v := NewValidator()
-	col := ColumnDef{Name: "c", Type: CTVarchar, Default: []byte("default")}
-
-	err := v.ValidateConstraints([]byte("default"), &col)
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
 func TestValidateRow_WrongColumnCount(t *testing.T) {
-	v := NewValidator()
 	schema := &TableSchema{
 		Columns: []ColumnDef{
 			{Name: "a", Type: CTInt},
@@ -337,7 +310,7 @@ func TestValidateRow_WrongColumnCount(t *testing.T) {
 			t.Error("expected panic for wrong column count")
 		}
 	}()
-	v.ValidateRow(row, schema)
+	ValidateRow(row, schema)
 }
 
 func TestEncodeVarchar(t *testing.T) {

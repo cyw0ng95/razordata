@@ -3,7 +3,6 @@ package ls
 import "github.com/cyw0ng95/razordata/internal/ENG/SC"
 
 type Row = sc.Row
-type Validator = sc.Validator
 type TableSchema = sc.TableSchema
 type ColumnDef = sc.ColumnDef
 type ColumnType = sc.ColumnType
@@ -26,12 +25,14 @@ var (
 	ErrInvalidValue = sc.ErrInvalidValue
 )
 
-func NewValidator() *Validator { return sc.NewValidator() }
+func ValidateRow(row Row, schema *TableSchema) error { return sc.ValidateRow(row, schema) }
+func ValidateType(val []byte, colType ColumnType) error {
+	return sc.ValidateType(val, colType)
+}
+func CompareColumnDef(a, b ColumnDef) bool { return sc.CompareColumnDef(a, b) }
 
 func EncodeInt(v int64) []byte                   { return sc.EncodeInt(v) }
 func DecodeInt(data []byte) (int64, error)       { return sc.DecodeInt(data) }
-func EncodeBigInt(v int64) []byte                { return sc.EncodeBigInt(v) }
-func DecodeBigInt(data []byte) (int64, error)    { return sc.DecodeBigInt(data) }
 func EncodeFloat(v float64) []byte               { return sc.EncodeFloat(v) }
 func DecodeFloat(data []byte) (float64, error)   { return sc.DecodeFloat(data) }
 func EncodeBool(v bool) []byte                   { return sc.EncodeBool(v) }

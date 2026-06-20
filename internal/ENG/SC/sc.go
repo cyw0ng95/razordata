@@ -47,13 +47,10 @@ const (
 	CTTimestamp ColumnType = 7
 )
 
-type Validator struct{}
-
-func NewValidator() *Validator {
-	return &Validator{}
-}
-
-func (v *Validator) ValidateRow(row Row, schema *TableSchema) error {
+// ValidateRow checks every column in row against the schema. Returns
+// ErrNullValue for non-nullable nil columns, ErrTypeMismatch for size
+// violations, or ErrInvalidValue for unknown types.
+func ValidateRow(row Row, schema *TableSchema) error {
 	for i, col := range schema.Columns {
 		val := row.Values[i]
 
@@ -64,11 +61,7 @@ func (v *Validator) ValidateRow(row Row, schema *TableSchema) error {
 			continue
 		}
 
-		if err := v.ValidateType(val, col.Type); err != nil {
-			return err
-		}
-
-		if err := v.ValidateConstraints(val, &col); err != nil {
+		if err := ValidateType(val, col.Type); err != nil {
 			return err
 		}
 	}
@@ -76,21 +69,16 @@ func (v *Validator) ValidateRow(row Row, schema *TableSchema) error {
 	return nil
 }
 
-func (v *Validator) ValidateType(val []byte, colType ColumnType) error {
+// ValidateType checks that val has the correct size for the given column
+// type. Returns ErrTypeMismatch on violation, ErrInvalidValue for unknown
+// types, and nil if val is nil.
+func ValidateType(val []byte, colType ColumnType) error {
 	if val == nil {
 		return nil
 	}
 
 	switch colType {
-	case CTInt:
-		if len(val) != 8 {
-			return ErrTypeMismatch
-		}
-	case CTBigInt:
-		if len(val) != 8 {
-			return ErrTypeMismatch
-		}
-	case CTFloat:
+	case CTInt, CTBigInt, CTFloat, CTTimestamp:
 		if len(val) != 8 {
 			return ErrTypeMismatch
 		}
@@ -100,10 +88,6 @@ func (v *Validator) ValidateType(val []byte, colType ColumnType) error {
 		}
 	case CTVarchar, CTText:
 	case CTBlob:
-	case CTTimestamp:
-		if len(val) != 8 {
-			return ErrTypeMismatch
-		}
 	default:
 		return ErrInvalidValue
 	}
@@ -111,15 +95,9 @@ func (v *Validator) ValidateType(val []byte, colType ColumnType) error {
 	return nil
 }
 
-func (v *Validator) ValidateConstraints(val []byte, col *ColumnDef) error {
-	if col.Default != nil && string(val) == string(col.Default) {
-		return nil
-	}
-
-	return nil
-}
-
-func (v *Validator) CompareColumnDef(a, b ColumnDef) bool {
+// CompareColumnDef returns true if a and b have identical Name, Type,
+// Nullable, and PrimaryKey fields.
+func CompareColumnDef(a, b ColumnDef) bool {
 	if a.Name != b.Name {
 		return false
 	}
@@ -146,14 +124,6 @@ func DecodeInt(data []byte) (int64, error) {
 		return 0, ErrTypeMismatch
 	}
 	return getInt64(data), nil
-}
-
-func EncodeBigInt(v int64) []byte {
-	return EncodeInt(v)
-}
-
-func DecodeBigInt(data []byte) (int64, error) {
-	return DecodeInt(data)
 }
 
 func EncodeFloat(v float64) []byte {
@@ -239,6 +209,41 @@ func getInt64(buf []byte) int64 {
 	v |= int64(buf[6]) << 48
 	v |= int64(buf[7]) << 56
 	return v
+}
+
+func EncodeBigInt(v int64) []byte {
+	buf := make([]byte, 8)
+	putInt64(buf, v)
+	return buf
+}
+
+func DecodeBigInt(data []byte) (int64, error) {
+	if len(data) != 8 {
+		return 0, ErrTypeMismatch
+	}
+	return getInt64(data), nil
+}
+
+type Validator struct{}
+
+func NewValidator() *Validator { return &Validator{} }
+
+func (v *Validator) ValidateRow(row Row, schema *TableSchema) error {
+	return ValidateRow(row, schema)
+}
+
+func (v *Validator) CompareColumnDef(a, b ColumnDef) bool {
+	return CompareColumnDef(a, b)
+}
+
+func (v *Validator) ValidateConstraints(val []byte, col *ColumnDef) error {
+	if val == nil {
+		if !col.Nullable {
+			return ErrNullValue
+		}
+		return nil
+	}
+	return ValidateType(val, col.Type)
 }
 
 func putFloat64(buf []byte, v float64) {
