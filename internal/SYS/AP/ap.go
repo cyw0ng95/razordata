@@ -27,6 +27,7 @@ type Options struct {
 	CreateIfMissingSet bool
 	InMemory           bool
 	ShutdownTimeout    time.Duration // REQ000687: configurable shutdown timeout, default 30s
+	EmergencyShutdown  bool          // REQ000688: skip Phase 2+3, flush only
 }
 
 const (

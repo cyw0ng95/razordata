@@ -82,6 +82,13 @@ func (e *Engine) runShutdown(ctx context.Context, timeouts ShutdownTimeouts) err
 	if e.log != nil {
 		e.log.Info("sy.shutdown.phase1", "msg", "stop accepting requests")
 	}
+	// REQ000688: emergency shutdown skips Phase 2+3
+	if e.opts.EmergencyShutdown {
+		if e.log != nil {
+			e.log.Warn("sy.shutdown.emergency", "msg", "emergency mode: skipping Phase 2+3")
+		}
+		goto phase4
+	}
 	// Phase 2: wait for active tx.
 	if e.log != nil {
 		e.log.Info("sy.shutdown.phase2", "msg", "wait for active transactions")
@@ -116,6 +123,7 @@ func (e *Engine) runShutdown(ctx context.Context, timeouts ShutdownTimeouts) err
 			setErr(err, "phase3.flusher.sync")
 		}
 	}
+phase4:
 	// Phase 4: stop background goroutines.
 	if e.log != nil {
 		e.log.Info("sy.shutdown.phase4", "msg", "stop background goroutines")
