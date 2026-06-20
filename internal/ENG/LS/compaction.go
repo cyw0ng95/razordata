@@ -163,9 +163,13 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 		if err := copyFile(outputPath, newPath); err != nil {
 			return err
 		}
-		os.Remove(outputPath)
+		if err := os.Remove(outputPath); err != nil {
+			slog.Warn("compaction: remove temp output", "path", outputPath, "err", err)
+		}
 		enginePath := filepath.Join(dir, newFileName)
-		os.Remove(enginePath)
+		if err := os.Remove(enginePath); err != nil && !os.IsNotExist(err) {
+			slog.Warn("compaction: remove old engine path", "path", enginePath, "err", err)
+		}
 		if err := os.Symlink(newPath, enginePath); err != nil {
 			return err
 		}
@@ -198,12 +202,16 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 
 	for _, input := range cj.inputs {
 		sstPath := filepath.Join(dir, fileName(&input))
-		os.Remove(sstPath)
+		if err := os.Remove(sstPath); err != nil && !os.IsNotExist(err) {
+			slog.Warn("compaction: remove input SST", "path", sstPath, "err", err)
+		}
 	}
 
 	for _, ov := range cj.overlap {
 		sstPath := filepath.Join(dir, fileName(&ov))
-		os.Remove(sstPath)
+		if err := os.Remove(sstPath); err != nil && !os.IsNotExist(err) {
+			slog.Warn("compaction: remove overlap SST", "path", sstPath, "err", err)
+		}
 	}
 
 	return nil
