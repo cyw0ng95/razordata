@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	df "github.com/cyw0ng95/razordata/internal/FIL/DF"
 )
 
 const (
-	pageSize   = 4096
+	pageSize   = df.DefaultBlockSize
 	headerSize = 16
 	maxKeys    = 200
 	pageMagic  = 0x42545245 // "BTRE"

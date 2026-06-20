@@ -2,10 +2,12 @@ package sp
 
 import (
 	"sync"
+
+	df "github.com/cyw0ng95/razordata/internal/FIL/DF"
 )
 
 const (
-	BlockSize      = 4096
+	BlockSize      = df.DefaultBlockSize
 	IterBufferSize = 64 * 1024  // 64 KB
 	WALBufSize     = 256 * 1024 // 256 KB
 )

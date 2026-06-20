@@ -30,7 +30,7 @@ type Stats struct {
 	CorruptionFailures uint64
 }
 
-const rpSegSize = int64(64 * 1024 * 1024)
+const rpSegSize = wr.SegSize
 
 // Callbacks groups hooks invoked during replay (R36).
 type Callbacks struct {
