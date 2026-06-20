@@ -215,13 +215,76 @@ func aggregateColName(e PS.Expr) string {
 	return agg.Name
 }
 
+// buildAggregateVirtualRow walks e for embedded AggregateFunc
+// nodes, evaluates each against rows, and returns a virtual Row
+// whose Cols/Data hold the aggregate results. This lets Eval
+// resolve AggregateFunc lookups via the normal row mechanism.
+func buildAggregateVirtualRow(e PS.Expr, rows []Row, params []any) (Row, error) {
+	var vrow Row
+	var collect func(expr PS.Expr) error
+	collect = func(expr PS.Expr) error {
+		if expr == nil {
+			return nil
+		}
+		switch v := expr.(type) {
+		case *PS.AggregateFunc:
+			name := aggregateColName(v)
+			if name == "" {
+				return nil
+			}
+			// Check if already collected
+			for _, c := range vrow.Cols {
+				if c == name {
+					return nil
+				}
+			}
+			val, err := evalAggregateOver(v, rows, params)
+			if err != nil {
+				return err
+			}
+			vrow.Cols = append(vrow.Cols, name)
+			vrow.Data = append(vrow.Data, val)
+		case *PS.UnaryExpr:
+			return collect(v.Operand)
+		case *PS.BinaryExpr:
+			if err := collect(v.Left); err != nil {
+				return err
+			}
+			return collect(v.Right)
+		case *PS.AliasedExpr:
+			return collect(v.Expr)
+		case *PS.CastExpr:
+			return collect(v.Expr)
+		}
+		return nil
+	}
+	if err := collect(e); err != nil {
+		return vrow, err
+	}
+	return vrow, nil
+}
+
 func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 	// Unwrap AliasedExpr to get the inner aggregate
 	if ae, ok := e.(*PS.AliasedExpr); ok {
 		return evalAggregateOver(ae.Expr, rows, params)
 	}
+	// REQ000700+: handle expressions wrapping aggregates
+	// (e.g. -COUNT(*), SUM(x)+1, CAST(SUM(x) AS TEXT)).
+	// Evaluate the expression against a virtual row that
+	// contains the aggregate results.
 	agg, ok := e.(*PS.AggregateFunc)
 	if !ok {
+		// Not a bare aggregate — may be an expression wrapping
+		// one or more aggregates. Build a virtual row with the
+		// aggregate values and evaluate the full expression.
+		if containsAggregate(e) {
+			vrow, err := buildAggregateVirtualRow(e, rows, params)
+			if err != nil {
+				return nil, err
+			}
+			return Eval(e, &vrow, params)
+		}
 		return nil, nil
 	}
 	switch agg.Name {
