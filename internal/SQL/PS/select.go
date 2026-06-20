@@ -253,6 +253,21 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 			p.advance()
 		}
 	}
+	// REQ000705: parse alias for the first table BEFORE the
+	// comma-join loop so that `FROM t a, t b` correctly
+	// consumes `a` as the alias before seeing the comma.
+	var fromAlias string
+	if p.current.Type == LX.T_AS {
+		p.advance()
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		fromAlias = p.current.Lexeme
+		p.advance()
+	} else if p.current.Type == LX.T_IDENT {
+		fromAlias = p.current.Lexeme
+		p.advance()
+	}
 	// REQ000368: implicit comma-join. `FROM a, b, c` is parsed
 	// as `FROM a CROSS JOIN b CROSS JOIN c`. The first table
 	// stays as `from`; each subsequent comma-separated identifier
@@ -262,22 +277,26 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 		if err := p.expect(LX.T_IDENT); err != nil {
 			return nil, err
 		}
-		// Defer the join: we need to finish parsing the alias
-		// for the first table before collecting joins. Stash
-		// the right-table name in a local and append after
-		// alias parsing.
-		p.pendingJoins = append(p.pendingJoins, p.current.Lexeme)
+		rightName := p.current.Lexeme
 		p.advance()
-	}
-
-	var fromAlias string
-	if p.current.Type == LX.T_AS {
-		p.advance()
-		if err := p.expect(LX.T_IDENT); err != nil {
-			return nil, err
+		// REQ000705: handle implicit alias for comma-separated tables
+		var rightAlias string
+		if p.current.Type == LX.T_AS {
+			p.advance()
+			if p.current.Type == LX.T_IDENT {
+				rightAlias = p.current.Lexeme
+				p.advance()
+			}
+		} else if p.current.Type == LX.T_IDENT {
+			rightAlias = p.current.Lexeme
+			p.advance()
 		}
-		fromAlias = p.current.Lexeme
-		p.advance()
+		p.pendingJoins = append(p.pendingJoins, rightName)
+		if rightAlias != "" {
+			p.pendingJoinAliases = append(p.pendingJoinAliases, rightAlias)
+		} else {
+			p.pendingJoinAliases = append(p.pendingJoinAliases, "")
+		}
 	}
 	// REQ000529: INDEXED BY / NOT INDEXED after table reference
 	indexHint := p.parseIndexHint()
@@ -285,10 +304,15 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 	// REQ000368: promote any pending comma-separated tables
 	// (collected above) into CROSS joins.
 	var joins []JoinClause
-	for _, right := range p.pendingJoins {
-		joins = append(joins, JoinClause{Kind: "CROSS", Right: right})
+	for i, right := range p.pendingJoins {
+		var alias string
+		if i < len(p.pendingJoinAliases) {
+			alias = p.pendingJoinAliases[i]
+		}
+		joins = append(joins, JoinClause{Kind: "CROSS", Right: right, RightAlias: alias})
 	}
 	p.pendingJoins = nil
+	p.pendingJoinAliases = nil
 
 	for p.current.Type == LX.T_JOIN || p.current.Type == LX.T_LEFT ||
 		p.current.Type == LX.T_RIGHT || p.current.Type == LX.T_INNER ||
@@ -314,6 +338,20 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 		}
 		right := p.current.Lexeme
 		p.advance()
+		// REQ000706: parse alias for JOIN table (implicit or explicit)
+		var rightAlias string
+		if p.current.Type == LX.T_AS {
+			p.advance()
+			if p.current.Type == LX.T_IDENT {
+				rightAlias = p.current.Lexeme
+				p.advance()
+			}
+		} else if p.current.Type == LX.T_IDENT {
+			// Only treat as alias if not followed by ( (function call)
+			// and not ON keyword
+			rightAlias = p.current.Lexeme
+			p.advance()
+		}
 		var on Expr
 		if p.current.Type == LX.T_ON {
 			p.advance()
@@ -323,7 +361,7 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 			}
 			on = e
 		}
-		joins = append(joins, JoinClause{Kind: kind, Right: right, On: on})
+		joins = append(joins, JoinClause{Kind: kind, Right: right, RightAlias: rightAlias, On: on})
 	}
 
 	var where Expr

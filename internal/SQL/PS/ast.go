@@ -461,9 +461,10 @@ type OrderItem struct {
 
 // JoinClause represents a JOIN clause.
 type JoinClause struct {
-	Kind  string // "INNER", "LEFT", "RIGHT", "CROSS"
-	Right string
-	On    Expr
+	Kind      string // "INNER", "LEFT", "RIGHT", "CROSS"
+	Right     string
+	RightAlias string
+	On        Expr
 }
 
 // Select represents a SELECT statement.

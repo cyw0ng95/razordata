@@ -1701,3 +1701,95 @@ func TestParseCreateTable_ForeignKeyMatch(t *testing.T) {
 		t.Errorf("expected OnDelete='CASCADE', got %q", ct.ForeignKeys[0].OnDelete)
 	}
 }
+
+// REQ000705: implicit table alias without AS keyword.
+func TestParseSelect_ImplicitAlias(t *testing.T) {
+	p := NewParser("SELECT a.id, b.id FROM t a, t b WHERE a.v = b.v")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	sel, ok := stmt.(*Select)
+	if !ok {
+		t.Fatalf("expected *Select, got %T", stmt)
+	}
+
+	// The FROM clause should have alias "a"
+	if sel.FromAlias != "a" {
+		t.Errorf("expected FromAlias='a', got %q", sel.FromAlias)
+	}
+
+	// Should have one CROSS join for "t b"
+	if len(sel.Joins) != 1 {
+		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
+	}
+	if sel.Joins[0].Kind != "CROSS" {
+		t.Errorf("expected join kind CROSS, got %q", sel.Joins[0].Kind)
+	}
+	if sel.Joins[0].Right != "t" {
+		t.Errorf("expected join right='t', got %q", sel.Joins[0].Right)
+	}
+	if sel.Joins[0].RightAlias != "b" {
+		t.Errorf("expected join right alias='b', got %q", sel.Joins[0].RightAlias)
+	}
+}
+
+// REQ000705: explicit AS alias still works.
+func TestParseSelect_ExplicitAlias(t *testing.T) {
+	p := NewParser("SELECT a.id, b.id FROM t AS a, t AS b WHERE a.v = b.v")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	sel, ok := stmt.(*Select)
+	if !ok {
+		t.Fatalf("expected *Select, got %T", stmt)
+	}
+
+	if sel.FromAlias != "a" {
+		t.Errorf("expected FromAlias='a', got %q", sel.FromAlias)
+	}
+
+	if len(sel.Joins) != 1 {
+		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
+	}
+	if sel.Joins[0].RightAlias != "b" {
+		t.Errorf("expected join right alias='b', got %q", sel.Joins[0].RightAlias)
+	}
+}
+
+// REQ000706: table alias with AS in JOIN.
+func TestParseSelect_JoinWithAlias(t *testing.T) {
+	cases := []struct {
+		name  string
+		sql   string
+		alias string
+	}{
+		{"explicit_as", "SELECT * FROM a AS a JOIN b AS b ON a.id = b.id", "b"},
+		{"implicit", "SELECT * FROM a a JOIN b b ON a.id = b.id", "b"},
+		{"left_join", "SELECT * FROM a LEFT JOIN b AS b ON a.id = b.id", "b"},
+		{"inner_join", "SELECT * FROM a INNER JOIN b b ON a.id = b.id", "b"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewParser(tc.sql)
+			stmt, err := p.Parse()
+			if err != nil {
+				t.Fatalf("Parse() failed: %v", err)
+			}
+			sel, ok := stmt.(*Select)
+			if !ok {
+				t.Fatalf("expected *Select, got %T", stmt)
+			}
+			if len(sel.Joins) != 1 {
+				t.Fatalf("expected 1 join, got %d", len(sel.Joins))
+			}
+			if sel.Joins[0].RightAlias != tc.alias {
+				t.Errorf("expected alias=%q, got %q", tc.alias, sel.Joins[0].RightAlias)
+			}
+		})
+	}
+}

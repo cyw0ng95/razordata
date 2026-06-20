@@ -11,6 +11,7 @@ type Parser struct {
 	current              LX.Token
 	paramIndex           int
 	pendingJoins         []string // REQ000368: comma-separated tables awaiting CROSS-join synthesis
+	pendingJoinAliases   []string // REQ000705: aliases for comma-separated tables
 	pendingSubquery      Stmt     // REQ000436: subquery from FROM clause
 	pendingSubqueryAlias string
 }
@@ -26,6 +27,7 @@ func NewParser(input string) *Parser {
 func (p *Parser) reset() {
 	p.paramIndex = 0
 	p.pendingJoins = nil
+	p.pendingJoinAliases = nil
 	p.pendingSubquery = nil
 }
 
