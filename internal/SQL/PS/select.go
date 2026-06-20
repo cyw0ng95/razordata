@@ -169,6 +169,9 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 	if p.current.Type == LX.T_DISTINCT {
 		distinct = true
 		p.advance()
+	} else if p.current.Type == LX.T_ALL {
+		// REQ000715: SELECT ALL is a synonym for plain SELECT
+		p.advance()
 	}
 
 	var cols []Expr

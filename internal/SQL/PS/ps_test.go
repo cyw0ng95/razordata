@@ -1825,3 +1825,33 @@ func TestParseInsert_Select(t *testing.T) {
 		})
 	}
 }
+
+// REQ000715: SELECT ALL is a synonym for plain SELECT.
+func TestParseSelect_All(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+	}{
+		{"select_all", "SELECT ALL col0 FROM tab1"},
+		{"select_all_star", "SELECT ALL * FROM t"},
+		{"select_all_where", "SELECT ALL a FROM t WHERE a > 1"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewParser(tc.sql)
+			stmt, err := p.Parse()
+			if err != nil {
+				t.Fatalf("Parse() failed: %v", err)
+			}
+			sel, ok := stmt.(*Select)
+			if !ok {
+				t.Fatalf("expected *Select, got %T", stmt)
+			}
+			// SELECT ALL should not set Distinct
+			if sel.Distinct {
+				t.Errorf("SELECT ALL should not set Distinct=true")
+			}
+		})
+	}
+}
