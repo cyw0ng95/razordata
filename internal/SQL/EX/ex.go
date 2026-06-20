@@ -1089,13 +1089,13 @@ func (s *streamIterator) Next() (Row, error) {
 	return r, nil
 }
 func (s *streamIterator) Close() error {
-	if s == nil || s.done {
+	if s == nil {
 		return nil
 	}
+	s.done = true
 	if s.closer != nil {
 		return s.closer()
 	}
-	s.done = true
 	return nil
 }
 

@@ -200,43 +200,74 @@ func parseHeader(line string, lineNo int) (Record, error) {
 }
 
 // parseResultRows converts the raw expected-result lines into
-// typed Value rows aligned with the query's type string. Each
-// non-empty line is one row; columns are tab- or whitespace-
-// separated per the SLT format.
+// typed Value rows aligned with the query's type string.
+//
+// The SLT format emits one value per line. When the type string
+// has N > 1 columns, every N consecutive values form one row.
+// When lines already contain tab-separated columns (N fields),
+// each line is one row.
 //
 // Some corpora also include rows of the form "<N> values hashing
 // to <HEX>" (hash-threshold mode). We surface that as a single
 // Value{Kind: TypeNull, Text: "hash:..."} cell so the runner
 // knows to skip strict comparison.
 func parseResultRows(lines []string, typeString string) [][]Value {
-	var rows [][]Value
+	numCols := len(typeString)
+	if numCols == 0 {
+		numCols = 1
+	}
+
+	// First pass: collect all parsed values and detect hash markers.
+	type entry struct {
+		text string
+		val  Value
+	}
+	var values []entry
 	for _, ln := range lines {
 		s := strings.TrimSpace(ln)
 		if s == "" {
 			continue
 		}
 		if strings.Contains(s, "values hashing to") {
-			rows = append(rows, []Value{{Kind: TypeText, Text: s}})
+			values = append(values, entry{text: s})
 			continue
 		}
 		fields := splitRow(s)
-		row := make([]Value, len(fields))
-		for i, f := range fields {
-			code := "T"
-			if i < len(typeString) {
-				code = string(typeString[i])
-			}
-			v, err := ParseValue(f, code)
-			if err != nil {
-				// On parse error, treat as text so the diff
-				// surfaces a clear mismatch rather than a
-				// crash.
-				row[i] = Value{Kind: TypeText, Text: f}
-				continue
-			}
-			row[i] = v
+		for _, f := range fields {
+			values = append(values, entry{text: f})
 		}
-		rows = append(rows, row)
+	}
+
+	// If the first entry is a hash marker, return it as-is.
+	if len(values) == 1 && values[0].text != "" && strings.Contains(values[0].text, "values hashing to") {
+		return [][]Value{{Value{Kind: TypeText, Text: values[0].text}}}
+	}
+
+	// Group into rows of numCols values each.
+	var rows [][]Value
+	var curRow []Value
+	for _, e := range values {
+		if strings.Contains(e.text, "values hashing to") {
+			rows = append(rows, []Value{{Kind: TypeText, Text: e.text}})
+			continue
+		}
+		code := "T"
+		colIdx := len(curRow)
+		if colIdx < numCols {
+			code = string(typeString[colIdx])
+		}
+		v, err := ParseValue(e.text, code)
+		if err != nil {
+			v = Value{Kind: TypeText, Text: e.text}
+		}
+		curRow = append(curRow, v)
+		if len(curRow) >= numCols {
+			rows = append(rows, curRow)
+			curRow = nil
+		}
+	}
+	if len(curRow) > 0 {
+		rows = append(rows, curRow)
 	}
 	return rows
 }

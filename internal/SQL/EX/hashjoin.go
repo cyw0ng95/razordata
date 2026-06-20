@@ -108,7 +108,22 @@ func (j *HashJoin) Next(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-func (j *HashJoin) Close() error { return nil }
+func (j *HashJoin) Close() error {
+	j.buckets = nil
+	j.leftRows = nil
+	j.rightRows = nil
+	j.emitIdx = 0
+	j.bucketPos = 0
+	j.done = false
+	j.emitRow = Row{}
+	if j.left != nil {
+		_ = j.left.Close()
+	}
+	if j.right != nil {
+		return j.right.Close()
+	}
+	return nil
+}
 
 // buildAndProbe reads the right side into partition buckets,
 // then reads the left side and probes.

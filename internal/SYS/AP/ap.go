@@ -241,13 +241,13 @@ func (r *Rows) Next() (Row, error) {
 // this is a no-op.
 // REQ000348.
 func (r *Rows) Close() error {
-	if r == nil || r.closed {
+	if r == nil {
 		return nil
 	}
-	r.closed = true
 	if r.closer != nil {
-		return r.closer()
+		_ = r.closer()
 	}
+	r.closed = true
 	return nil
 }
 

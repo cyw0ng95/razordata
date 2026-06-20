@@ -284,8 +284,6 @@ func (p *Parser) parsePostfix() (Expr, error) {
 		return nil, err
 	}
 	switch p.current.Type {
-	case LX.T_BETWEEN:
-		return p.parseBetween(expr)
 	case LX.T_IN:
 		return p.parseIn(expr)
 	}
@@ -298,9 +296,6 @@ func (p *Parser) parsePostfix() (Expr, error) {
 		case LX.T_IN:
 			p.advance()
 			return p.parseNotIn(expr)
-		case LX.T_BETWEEN:
-			p.advance()
-			return p.parseNotBetween(expr)
 		}
 	}
 	return expr, nil
@@ -425,7 +420,32 @@ func (p *Parser) parseBinary(minPrec int) (Expr, error) {
 		return nil, err
 	}
 
-	for isBinaryOp(p.current.Type) && precedence(p.current.Type) >= minPrec {
+	for {
+		// BETWEEN has the same precedence as comparison operators (6).
+		// Handle it inside the loop so `a BETWEEN x AND y OR z`
+		// parses as `(a BETWEEN x AND y) OR z`.
+		const betweenPrec = 6
+		if betweenPrec >= minPrec {
+			if p.current.Type == LX.T_BETWEEN {
+				left, err = p.parseBetween(left)
+				if err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if p.current.Type == LX.T_NOT && p.lex.Peek().Type == LX.T_BETWEEN {
+				p.advance()
+				left, err = p.parseNotBetween(left)
+				if err != nil {
+					return nil, err
+				}
+				continue
+			}
+		}
+
+		if !isBinaryOp(p.current.Type) || precedence(p.current.Type) < minPrec {
+			break
+		}
 		op := int(p.current.Type)
 		p.advance()
 		nextMinPrec := precedence(LX.TokenType(op)) + 1

@@ -671,6 +671,14 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 
 	var current Operator = scan
 
+	// Set table alias on the scan operator so correlated subquery
+	// eval can resolve qualified names like x.col.
+	if s.FromAlias != "" {
+		if ss, ok := current.(*SeqScan); ok {
+			ss.WithAlias(s.FromAlias)
+		}
+	}
+
 	if len(s.Joins) > 0 {
 		leftTbl := s.From
 		for _, j := range s.Joins {

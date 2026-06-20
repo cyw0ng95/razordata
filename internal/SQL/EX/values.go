@@ -53,6 +53,7 @@ func (v *Values) Next(ctx context.Context) (Row, error) {
 }
 
 func (v *Values) Close() error {
+	v.evaluated = false
 	return nil
 }
 
@@ -187,6 +188,7 @@ func (v *ValuesRows) Next(ctx context.Context) (Row, error) {
 }
 
 func (v *ValuesRows) Close() error {
+	v.pos = 0
 	return nil
 }
 

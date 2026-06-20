@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	id "github.com/cyw0ng95/razordata/internal/ENG/ID"
 )
@@ -47,6 +48,10 @@ type SeqScan struct {
 	// most recently decoded row. Preserved so Update/Delete
 	// can reuse the original row key for hidden-PK tables.
 	currentKey []byte
+	// alias is the table alias (e.g. "x" in "FROM t1 AS x").
+	// When set, produced rows have column names prefixed with
+	// "alias." so correlated subquery eval can resolve x.col.
+	alias string
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -60,6 +65,13 @@ func (s *SeqScan) WithParams(p []interface{}) Operator {
 // this SeqScan. REQ000366.
 func (s *SeqScan) WithPlanner(p *Planner) Operator {
 	s.planner = p
+	return s
+}
+
+// WithAlias sets a table alias so produced rows have column names
+// prefixed with "alias.". Used for correlated subqueries.
+func (s *SeqScan) WithAlias(alias string) *SeqScan {
+	s.alias = alias
 	return s
 }
 
@@ -112,6 +124,9 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 	if s.planner != nil {
 		r.planner = s.planner
 	}
+	if s.alias != "" {
+		r = prefixRowCols(r, s.alias)
+	}
 	return r, nil
 }
 
@@ -140,6 +155,9 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		if s.planner != nil {
 			row.planner = s.planner
 		}
+		if s.alias != "" {
+			row = prefixRowCols(row, s.alias)
+		}
 		return row, nil
 	}
 	if err := s.it.Err(); err != nil {
@@ -157,6 +175,27 @@ func (s *SeqScan) Close() error {
 	s.pos = 0
 	s.rows = nil
 	return nil
+}
+
+// prefixRowCols returns a copy of r with each column name prefixed
+// by "alias.". Used by SeqScan when a FROM alias is specified so
+// correlated subquery eval can resolve qualified names like x.col.
+func prefixRowCols(r Row, alias string) Row {
+	out := Row{
+		Data:  r.Data,
+		Outer: r.Outer,
+		Types: r.Types,
+	}
+	out.Cols = make([]string, len(r.Cols))
+	prefix := alias + "."
+	for i, c := range r.Cols {
+		if strings.HasPrefix(c, prefix) {
+			out.Cols[i] = c
+		} else {
+			out.Cols[i] = prefix + c
+		}
+	}
+	return out
 }
 
 type IndexScan struct {
