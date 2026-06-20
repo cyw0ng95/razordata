@@ -107,6 +107,7 @@ func (l *lexer) advance() byte { ... }
 - String literals and identifiers use `string` directly; no heap allocation beyond the input itself.
 - Error recovery: on malformed input, the lexer advances to the next whitespace or delimiter and emits `T_EOF` with an error, allowing the parser to continue and collect all errors in one pass.
 - `Bind` parameters (`?`) are recognized as `T_BIND` tokens.
+- Unary `NOT` is handled as a logical prefix operator.
 
 ### AST Node Types (`PS`)
 
@@ -165,6 +166,7 @@ type Pair struct { Col string; Val Expr }
 
 - Node types are concrete structs with no interface fields except in `Value` (which holds one of: `int64`, `float64`, `string`, `bool`, `nil`).
 - Every node type implements `exprNode()` or `stmtNode()` — no shared mutable state.
+- Visitor pattern: `Visitor` interface with `Visit*` methods for all 24 Expr and 34 Stmt types. `BaseVisitor` provides default no-op implementations. `AcceptExpr`/`AcceptStmt` dispatch functions for exhaustive type coverage.
 
 ### Rewriter (`RE`)
 
@@ -179,25 +181,18 @@ func flattenSubquery(e *InExpr) (Expr, bool) // true if flattened
 - **Predicate pushdown:** move `WHERE` conditions as close to the data source as possible. E.g., `SELECT * FROM t WHERE a > 10 AND b < 20` → the engine applies `a > 10` first (index), then `b < 20` as a filter.
 - **Subquery flattening:** merge single-row subqueries in `WHERE IN` into a join or a list lookup.
 
-### Built-in Functions (v1)
+### Built-in Functions
 
-```go
-const (
-    FN_COUNT    = "COUNT"
-    FN_SUM      = "SUM"
-    FN_AVG      = "AVG"
-    FN_MIN      = "MIN"
-    FN_MAX      = "MAX"
-    FN_NOW      = "NOW"
-    FN_COALESCE = "COALESCE"
-    FN_IFNULL   = "IFNULL"
-    FN_LENGTH   = "LENGTH"
-    FN_SUBSTR   = "SUBSTR"
-)
-```
+The engine implements a comprehensive set of SQLite-compatible scalar functions:
 
-- Aggregates (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`): handled by a dedicated `Aggregate` operator in the executor.
-- Scalar functions (`NOW`, `COALESCE`, `IFNULL`, `LENGTH`, `SUBSTR`): evaluated at expression evaluation time in `EX/eval.go`.
+- **Aggregates:** `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT` (with configurable separator and DISTINCT support)
+- **String:** `length`, `substr`/`substring`, `lower`, `upper`, `trim`/`ltrim`/`rtrim`, `replace`, `instr`, `hex`, `unhex`, `quote`, `soundex`, `unicode`, `unistr`, `char`, `concat`/`concat_ws`, `glob`
+- **Math:** `abs`, `round`, `sign`
+- **Conditional:** `coalesce`, `ifnull`, `nullif`, `iif`/`if`, `case when`
+- **System:** `changes`, `last_insert_rowid`, `total_changes`, `random`, `sqlite_version`, `sqlite_source_id`, `likelihood`, `likely`, `unlikely`
+- **Other:** `printf`/`format`, `typeof`, `zeroblob`, `randomblob`, `octet_length`
+
+All scalar functions handle NULL propagation: any NULL argument returns NULL (except `coalesce`/`ifnull`/`nullif` which have special NULL semantics).
 
 ### Planner (`PL`)
 
@@ -217,6 +212,8 @@ func plan(stmt Stmt) (*plan, error)
 - **Index selection:** if a `WHERE` column has an index, consider `IndexScan`; otherwise `SeqScan`.
 - **Sort ordering:** if `ORDER BY` matches the primary key order, avoid explicit sort; use the natural order from the LSM tree.
 - **`LIMIT` pushdown:** `SeqScan` with `LIMIT` stops after N rows.
+- **Hash agg planning:** hash-based aggregation for GROUP BY queries (1000-row threshold).
+- **Selectivity estimation:** key range selectivity to choose between IndexScan and SeqScan.
 
 ### Operator Tree (`EX`)
 
@@ -241,7 +238,7 @@ type Insert struct { table string; values []Row }
 type Update struct { table string; set []Pair; where Expr; iter Operator }
 type Delete struct { table string; where Expr; iter Operator }
 
-// Future (not in v1)
+// Join operators
 type NestedLoopJoin struct{ left, right Operator; cond Expr }
 type HashJoin    struct{ left, right Operator; keys []string }
 ```
@@ -252,15 +249,16 @@ type HashJoin    struct{ left, right Operator; keys []string }
 - `Sort` must collect all rows first (materialization), then sort and yield in order.
 - No code generation — the executor is a plain Go struct interpreter. Performance comes from tight loops, not JIT.
 - All operators accept `context.Context` for cancellation support.
+- **ExecContext:** per-execution state (`Planner`, `SessionID`, `TxWriter`) threaded through the operator tree via `WithExecContext`/`ExecContextFromRow` on the Row outer chain. Eliminates package-level globals for concurrent Executor safety.
 
 ## Function Clusters
 
 | Cluster | Responsibility |
 |---|---|
 | `LX` | Lexer: tokenization, keyword lookup, error recovery |
-| `PS` | Parser: recursive descent, AST construction, syntax error reporting, CTE/recursive CTE, window function, ALTER TABLE, subquery parsing |
-| `PL` | Planner: query planning, cost estimation, index selection, plan memoization, selectivity estimation, hash agg planning (REQ000306), memo-optimized planning (memo.go) |
-| `EX` | Executor: streaming operator tree with HashJoin (REQ000312), window functions, ALTER TABLE executor, FK validation (REQ000126), CTE/recursive CTE, views, triggers, JSON/datetime functions, PRAGMA, integrity, EXPLAIN, compound SELECT, parallel sort, pipeline parallelism, SIMD-dispatched scalars, decimal, hash agg, coerce |
+| `PS` | Parser: recursive descent, AST construction with visitor pattern, syntax error reporting, CTE/recursive CTE, window function, ALTER TABLE, subquery parsing |
+| `PL` | Planner: query planning, cost estimation, index selection, plan memoization, selectivity estimation, hash agg planning, memo-optimized planning |
+| `EX` | Executor: streaming operator tree with HashJoin, window functions, ALTER TABLE executor, FK validation, CTE/recursive CTE, views, triggers, JSON/datetime functions, PRAGMA, integrity, EXPLAIN, compound SELECT, parallel sort, pipeline parallelism, SIMD-dispatched scalars, decimal, hash agg, coerce, ExecContext threading |
 | `RE` | Rewriter: AST normalization, constant folding, predicate pushdown, subquery flattening, join reorder |
 
 ## Clusters
@@ -283,12 +281,13 @@ type HashJoin    struct{ left, right Operator; keys []string }
 **Key behaviors:**
 - Grammar is LL(1). `parseSelect()`, `parseInsert()`, `parseUpdate()`, `parseDelete()`, `parseCreateTable()`, `parseDropTable()`.
 - Expression parsing: `parseExpr()` uses operator precedence (comparison > add/sub > mul/div > unary > primary).
-- **CTE/recursive CTE:** `ps.go` parses `WITH name AS (query), ...` and `WITH RECURSIVE` syntax.
+- **CTE/recursive CTE:** parses `WITH name AS (query), ...` and `WITH RECURSIVE` syntax.
 - **Window functions:** parses `FUNC() OVER (PARTITION BY ... ORDER BY ...)` syntax.
-- **ALTER TABLE:** parses `ALTER TABLE name ADD COLUMN / DROP COLUMN / RENAME TO`.
+- **ALTER TABLE:** parses `ALTER TABLE name ADD COLUMN / DROP COLUMN / RENAME TO / RENAME COLUMN`.
 - **Subquery:** parses derived tables `(SELECT ...)` and scalar subqueries.
-- **View parsing:** `view_test.go` validates CREATE VIEW syntax.
+- **View parsing:** `CREATE VIEW` and `CREATE TEMP VIEW` syntax.
 - **Error reporting:** each parse function returns `(node, error)`. Errors include `Line` and `Col` for IDE integration.
+- **SQLite compatibility:** `<>` operator, `BEGIN [DEFERRED|IMMEDIATE|EXCLUSIVE]`, `INSERT OR REPLACE`/`REPLACE INTO`, `INSERT INTO t DEFAULT VALUES`, `VALUES (1,'a'),(2,'b')`, `LIKE ... ESCAPE expr`, `DECIMAL(P,S)`, `INDEXED BY`/`NOT INDEXED`, `COLLATE`, `CREATE INDEX ... WHERE expr`, `AUTOINCREMENT`, `DROP TABLE IF EXISTS`, `CREATE TABLE AS SELECT`, `CREATE TABLE WITHOUT ROWID`, `ATTACH`/`DETACH DATABASE`, `RAISE(IGNORE|ABORT|ROLLBACK|FAIL, 'msg')`, `FETCH FIRST n ROWS ONLY`.
 
 ### PL — Planner
 
@@ -299,11 +298,10 @@ type HashJoin    struct{ left, right Operator; keys []string }
 - `memoize(key, plan)`: store the plan in a `map[string]*plan`.
 - `estimateCost(op Operator) float64`: estimate based on row count (from statistics) and selectivity.
 - `selectIndex(col string) bool`: check if an index exists for this column; if yes, use `IndexScan`.
-- **Selectivity estimation (REQ000264):** `planner.go` estimates key range selectivity to choose between IndexScan and SeqScan.
-- **Hash agg planning (REQ000306):** `hashagg_planner_test.go` validates planning of hash-based aggregation for GROUP BY queries.
 - **Sort ordering:** if `ORDER BY` matches the primary key order, avoid explicit sort; use the natural order from the LSM tree.
 - **`LIMIT` pushdown:** `SeqScan` with `LIMIT` stops after N rows.
-- **Plan memoization (REQ000260):** `memo.go` implements SHA256-based plan fingerprinting for equivalent query shapes.
+- **Plan memoization:** SHA256-based plan fingerprinting for equivalent query shapes.
+- **Cost-based scan selection:** `pickCheaperScan` compares IndexScan vs SeqScan cost.
 
 ### RE — Rewriter
 
@@ -320,343 +318,33 @@ type HashJoin    struct{ left, right Operator; keys []string }
 1. **`internal/SQL/LX/lx.go`** — `Lexer`: `Next()`, `peek()`, `advance()`, keyword map. Full token type enum.
 2. **`internal/SQL/LX/token.go`** — `Token` struct, token type constants.
 3. **`internal/SQL/PS/ps.go`** — `Parser`: recursive descent for all statement types including CTE, recursive CTE, window functions, ALTER TABLE, subqueries.
-4. **`internal/SQL/RE/re.go`** — `Rewrite`, `ConstantFold`, `PredicatePushdown`, `FlattenSubquery`.
-5. **`internal/SQL/PL/pl.go`** — `Planner`: `Plan()`, `memoize()`, `estimateCost()`, `selectIndex()`, selectivity estimation, memo-optimized planning.
-6. **`internal/SQL/EX/ex.go`** — `Executor`: `Exec()`, `Query()`. Core execution framework.
-7. **`internal/SQL/EX/operators.go`** — basic operator structs: `SeqScan`, `IndexScan`, `Filter`, `Project`, `Sort`, `Limit`, `Insert`, `Update`, `Delete`.
-8. **`internal/SQL/EX/operators_vec.go`** — SIMD-optimized operators: vectorized `SeqScan`, `Filter`, `Project`, `Aggregate`.
-9. **`internal/SQL/EX/operators_parallel.go`** — parallel operators: parallel `SeqScan`, `IndexScan`, `Update`, `Delete`. Worker pool, fan-out/fan-in.
-10. **`internal/SQL/EX/hashjoin.go`** — radix-partitioned hash join for INNER equi-joins.
-11. **`internal/SQL/EX/window.go`** — window function operator (ROW_NUMBER, RANK, LAG/LEAD, SUM/AVG with OVER).
-12. **`internal/SQL/EX/alter_table.go`** — online schema migration operator.
-13. **`internal/SQL/EX/fk.go`** — foreign key validation and cascade.
-14. **`internal/SQL/EX/subq.go`** — CTE / recursive CTE operator.
-15. **`internal/SQL/EX/view.go`** — view resolution operator.
-16. **`internal/SQL/EX/json.go`** — JSON functions.
-17. **`internal/SQL/EX/datetime.go`** — datetime functions.
-18. **`internal/SQL/EX/pragma.go`** — PRAGMA support.
-19. **`internal/SQL/EX/integrity.go`** — integrity check operator.
-20. **`internal/SQL/EX/explain.go`** — EXPLAIN operator.
-21. **`internal/SQL/EX/compound.go`** — UNION/INTERSECT/EXCEPT set operations.
-22. **`internal/SQL/EX/simd_dispatch.go`** — SIMD-dispatched scalar function evaluation.
-23. **`internal/SQL/EX/aggregate_vec.go`** — vectorized aggregate operators.
-24. **`internal/SQL/EX/hashagg.go`** — hash-based aggregation for GROUP BY.
-25. **`internal/SQL/EX/coerce.go`** — type coercion for prepared statement parameters.
-26. **`internal/SQL/EX/decimal.go`** — DECIMAL type support.
-27. **Tests:** table-driven tests throughout, covering all operators and functions.
-    - `ex_vec_test.go` (SIMD batch evaluation correctness)
-    - `ex_parallel_test.go` (parallel execution, race detection)
-    - `batch_test.go` (columnar batch management)
-    - Use table-driven tests throughout.
-16. **Benchmarks:**
-    - `ex_bench.go`: single-threaded vs vectorized vs parallel for SeqScan, Filter, Aggregate.
-    - Measure throughput (rows/s), latency (p50/p99), memory allocation (allocs/op).
-
-## Shipped Requirements
-
-The following requirements have been implemented and shipped; they are now part of the design baseline.
-
-### LX — Lexer
-
-| ID | Requirement | Iteration |
-|---|---|---|
-| REQ000356 | Unary `NOT` as logical prefix operator | iter-27 |
-
-### PS — Parser
-
-| ID | Requirement | Iteration |
-|---|---|---|
-| REQ000202 | Parser CASE/EXISTS tests | iter-20 |
-| REQ000206 | Type tokens (NUMERIC/DATE/TIME/JSON/DECIMAL) | iter-20 |
-| REQ000207 | Parameterized types VARCHAR(N)/DECIMAL(P,S) | iter-20 |
-| REQ000209 | DEFAULT clause parsing tests | iter-20 |
-| REQ000210 | CHECK constraint parsing | iter-20 |
-| REQ000232 | Parse ON CONFLICT clause (`INSERT ... ON CONFLICT DO NOTHING/UPDATE`) | iter-21 |
-| REQ000234 | Parse RETURNING clause (`INSERT/UPDATE/DELETE ... RETURNING col`) | iter-21 |
-| REQ000236 | Parse window functions (`OVER`, `PARTITION BY`, `ROW_NUMBER`, `RANK`) | iter-23 |
-| REQ000238 | Parse SAVEPOINT / RELEASE / ROLLBACK TO | iter-21 |
-| REQ000240 | Parse CREATE VIEW | iter-24 |
-| REQ000243 | Parse ALTER TABLE ADD/DROP COLUMN/RENAME | iter-24 |
-| REQ000246 | Parse TRIGGER (CREATE TRIGGER, BEFORE/AFTER, FOR EACH ROW) | iter-07 |
-| REQ000248 | Parse generated columns (AS (expr) STORED/VIRTUAL) | iter-27 |
-| REQ000251 | Parse CREATE INDEX (UNIQUE, multi-column) | iter-22 |
-| REQ000256 | Parse VACUUM / ANALYZE | iter-21 |
-| REQ000262 | Add DATE / TIME / TIMESTAMP type tokens | iter-23 |
-| REQ000264 | Add JSON type and parse `->`, `->>`, `json_extract` | iter-23 |
-| REQ000270 | FETCH FIRST n ROWS ONLY | iter-24 |
-| REQ000273 | Add `EXPLAIN` and `EXPLAIN QUERY PLAN` keyword tokens | iter-21 |
-| REQ000274 | Parse `EXPLAIN [QUERY PLAN] <stmt>` prefix syntax | iter-21 |
-| REQ000275 | `ExplainStmt` AST (`Mode` enum, `Inner` statement) | iter-21 |
-| REQ000279 | `EXPLAIN` execution path: skip row execution, return plan as result-set | iter-21 |
-| REQ000280 | EXPLAIN on DML (INSERT/UPDATE/DELETE) returns execution plan | iter-21 |
-| REQ000281 | EXPLAIN QUERY PLAN formatter (tree-style, human-readable) | iter-21 |
-| REQ000288 | `parseInterval` unit validation | iter-24 |
-| REQ000291 | EXCLUDED.col reference in ON CONFLICT DO UPDATE | iter-24 |
-| REQ000230 | Parse WITH clause (CTE: `WITH x AS (...) SELECT...`) | iter-21 |
-| REQ000218 | HAVING filter (already implemented) | iter-20 |
-| REQ000084 | SQL/PL+RE — Subquery planning (FROM-subquery parser support) | iter-27 |
-| REQ000118 | DML — LIKE pattern matching | iter-07 |
-| REQ000119 | DML — BETWEEN | iter-07 |
-| REQ000120 | DML — IS NULL / IS NOT NULL | iter-07 |
-| REQ000349 | Missing SQLite builtin scalar functions: `LENGTH`, `TYPEOF`, `UNICODE`, `QUOTE`, `ZEROBLOB`, `RANDOMBLOB`, `HEX`, `SOUNDEX`. Each emits `ps: syntax error` rather than a typed "unsupported" error, so the SLT classifier must fall back to substring matching on `syntax error` | iter-25 surfacing (edge probe `TestEdge_Expressions`) |
-| REQ000355 | Aggregate function `GROUP_CONCAT(expr)` — route through AggregateFunc when name is a known aggregate | iter-26.2 (v0.26.4) |
-| REQ000358 | XOR parser gap fix | iter-27 |
-| REQ000368 | Parser comma-join `FROM a, b` — synthesize CROSS joins for trailing comma-separated tables | iter-26.2 (v0.26.4) |
-| REQ000379 | Chained unary minus: `SELECT 5- -5` must equal 10 — regression test for SQLite-compatible `--` comment behavior | iter-26.3 (v0.26.5) |
-| REQ000380 | `NOT LIKE` parser error — parsePostfix now peeks `T_NOT T_LIKE` and dispatches to parseNotLike | iter-26.3 (v0.26.5) |
-| REQ000381 | `NOT IN (subquery)` parser error — same pattern, dispatches to parseNotIn; parseIn refactored to use parseInBody helper | iter-26.3 (v0.26.5) |
-| REQ000435 | CREATE TRIGGER parser (BEFORE/AFTER, FOR EACH ROW, BEGIN...END body) | iter-27 |
-| REQ000436 | Recursive CTE (`WITH RECURSIVE ... AS (anchor UNION ALL recursive)`) — parser flag, cycle detection | iter-27 |
-| REQ000451 | `CREATE TEMP VIEW` parser — accepts optional `TEMP`/`TEMPORARY` keyword | iter-27 |
-| REQ000452 | `INSERT OR REPLACE` / `REPLACE INTO` parser — conflict action parsing; `ConflictAction` type | iter-27 |
-| REQ000473 | PRAGMA parser support — `PragmaStmt` AST + parser | iter-28 |
-| REQ000479 | `CREATE INDEX IF NOT EXISTS` — parser accepts `IF NOT EXISTS` clause | iter-28 |
-| REQ000480 | `DROP INDEX IF EXISTS` — parser accepts `IF EXISTS` clause | iter-28 |
-| REQ000482 | `AUTOINCREMENT` keyword accepted — `ColDef.Autoincrement` field | iter-28 |
-| REQ000497 | `DROP TABLE IF EXISTS` accepted by parser | iter-28 |
-| REQ000498 | `ALTER TABLE RENAME COLUMN old TO new` — parser adds `RENAME COLUMN` path | iter-28 |
-| REQ000500 | `EXPLAIN QUERY PLAN` parsing + execution | iter-28 |
-| REQ000520 | `CREATE TABLE AS SELECT` parser + executor | iter-28 |
-| REQ000521 | `OFFSET m LIMIT n` reversed syntax fixed — parser tracks `OffsetFirst` flag | iter-28 |
-| REQ000529 | `INDEXED BY index_name` / `NOT INDEXED` in SELECT | iter-28 |
-| REQ000533 | `<>` (not-equal) operator — lexer now recognizes `<>` as `T_NE` token | iter-28 |
-| REQ000558 | `UPDATE ... ORDER BY ... LIMIT ...` — parser handles trailing clauses | iter-28 |
-| REQ000559 | `BEGIN [DEFERRED|IMMEDIATE|EXCLUSIVE] [TRANSACTION]` — mode tokens + parser | iter-28 |
-| REQ000560 | `RAISE(IGNORE|ABORT|ROLLBACK|FAIL, 'msg')` — `T_RAISE` token + `RaiseFunc` AST | iter-28 |
-| REQ000563 | `INSERT INTO t DEFAULT VALUES` — parser accepts alternative syntax | iter-28 |
-| REQ000564 | Top-level `VALUES (1,'a'),(2,'b')` — `ValuesStmt` AST + `parseValues` | iter-28 |
-| REQ000567 | `LIKE ... ESCAPE expr` — `BinaryExpr.Escape Expr` AST field + `T_ESCAPE` token | iter-28 |
-| REQ000568 | `DECIMAL(P,S)` precision and scale — `ColDef.{Precision,Scale}` fields | iter-28 |
-| REQ000569 | `INDEXED BY index_name` / `NOT INDEXED` on UPDATE and DELETE | iter-28 |
-| REQ000570 | `COMMIT` / `END [TRANSACTION]` — `parseCommit()` + `T_COMMIT`/`T_END` dispatch | iter-28 |
-| REQ000561 | Foreign key `MATCH name` + `[NOT] DEFERRABLE` — parser tokens + AST fields | iter-28 |
-| REQ000565 | `COLLATE collation_name` on indexed columns and ordering terms | iter-28 |
-| REQ000566 | `CREATE INDEX ... WHERE expr` (partial index) | iter-28 |
-| REQ000453 | Scalar `IN (literal-list)` — `SELECT 1 IN (2)`, `SELECT 1 NOT IN (2)` return 1 row with correct boolean via `Values` operator + `evalIn` path | iter-28 |
-| REQ000454 | JOIN duplicate rows fix — `PL/memo.go` `writeStmt` missing `Joins`/`GroupBy`/`Having`/`SubqueryFrom` fields in `Select` serialization, causing different join queries to share stale memo keys; added missing field serialization | iter-27 |
-| REQ000523 | `GROUP_CONCAT(x, sep)` configurable separator — 2nd arg parsed as separator expression in `AggregateFunc.Separator`; `evalAggregateOver` evaluates it once; default `,` when nil | iter-28 |
-| REQ000562 | `CREATE TABLE WITHOUT ROWID` parser — `WithoutRowID` flag on `CreateTableStmt` | iter-28.2 |
-| REQ000557 | `ATTACH`/`DETACH DATABASE` parser + executor stub returning `ErrMultiDatabaseNotSupported` | iter-28.2 |
-| REQ000545 | Selection vector runs — `SelRange{Start,End}` inclusive-end compact representation; `selToRanges`/`rangesToSel` helpers | iter-28.2 |
-| REQ000550 | Predicate cache — LRU keyed by predicate string, plan as `interface{}` | iter-28.2 |
-| REQ000554 | Parallel IN-list evaluation — `evalInListBatch` with int64 sort+binsearch or string hash set | iter-28.2 |
-
-### PL — Planner
-
-| ID | Requirement | Iteration |
-|---|---|---|
-| REQ000231 | CTE planner (materialization vs inline expansion) | iter-21 |
-| REQ000241 | View resolution (inline expansion) | iter-24 |
-| REQ000253 | Index selection in planner (col=lit equality → real seek) | iter-22 |
-| REQ000276 | `PlanNode` tree wrapper (type, cost, rows, children) | iter-21 |
-| REQ000277 | Visitor pattern: emit PlanNodes during planner tree construction | iter-21 |
-| REQ000278 | Per-operator cost annotation (`cost=N rows=N width=N`) | iter-21 |
-| REQ000196 | SQL/EX — HashAggregate in planner (1000-row threshold) | iter-20 |
-
-### EX — Executor
-
-| ID | Requirement | Iteration |
-|---|---|---|
-| REQ000074 | IndexScan real seek (replace prefix-scan fallback; range bounds `>`, `>=`, `BETWEEN`, inclusive/exclusive) | iter-27 (Phase 6) |
-| REQ000116 | DML — JOIN (INNER, CROSS) | iter-08 |
-| REQ000144 | SIMD vectorized execution (batch + 4-wide unrolling + selection vectors) | iter-19 (Phase 1) |
-| REQ000145 | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | iter-19 (Phase 2) |
-| REQ000149 | Columnar batch memory management (sync.Pool for 1024-row batches) | iter-19 (Phase 1) |
-| REQ000150 | Parallel Sort implementation (sample sort for top-k) | iter-19 (Phase 3) |
-| REQ000157 | Expression evaluation SIMD acceleration (batch predicate) | iter-19 (Phase 1) |
-| REQ000163 | Rewriter AST normalization (design mentions, verify completeness) | iter-17 (partial: 65.0%) |
-| REQ000173 | SIMD vectorized operators (consolidated into REQ000144) | iter-19 (Phase 1) |
-| REQ000182 | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | iter-08 |
-| REQ000182 | Parallel Sort implementation (sample sort for top-k, external merge for large datasets) | iter-08 |
-| REQ000183 | Expression evaluation SIMD (batch predicate EvalBatch function) | iter-27 |
-| REQ000192 | Adaptive vectorization threshold (auto-fallback to row-at-a-time for tables <100K rows) | iter-19 |
-| REQ000197 | OUTER JOIN executor (LEFT/RIGHT/FULL) | iter-20 |
-| REQ000201 | QUAL — SQL/PL coverage 30.6% to 98.8% | iter-20 |
-| REQ000208 | Type affinity system (SQLite-like 5 affinities) | iter-20 |
-| REQ000211 | CHECK constraint enforcement | iter-20 |
-| REQ000218 | HAVING filter (already implemented) | iter-20 |
-| REQ000229 | DECIMAL type storage (big.Float) | iter-20 |
-| REQ000233 | UPSERT executor (`INSERT...ON CONFLICT`) | iter-21 |
-| REQ000235 | RETURNING executor (return rows from DML) | iter-21 |
-| REQ000237 | Window function executor (`ROW_NUMBER`, `RANK`, `SUM OVER`, `LAG`, `LEAD`) | iter-23 |
-| REQ000239 | TXN/VL — Savepoint implementation (nested transaction markers) | iter-21 |
-| REQ000244 | ALTER TABLE executor (online schema migration) | iter-27 |
-| REQ000247 | TRIGGER executor (fire on INSERT/UPDATE/DELETE) | iter-07 |
-| REQ000249 | Generated column materialization on INSERT/UPDATE | iter-27 |
-| REQ000252 | IndexScan operator (real seek via LSM index keyspace) | iter-22 |
-| REQ000257 | VACUUM executor (reclaim tombstone space, rebuild SST) | iter-23 |
-| REQ000258 | ANALYZE executor (collect column statistics) | iter-23 |
-| REQ000265 | JSON value storage and `json_extract` executor | iter-23 |
-| REQ000282 | Fix computeRank RANK for tied rows | iter-23 |
-| REQ000286 | Window materialize context propagation — uses context.Background() instead of caller's ctx | iter-23 |
-| REQ000287 | Window setOutput allocation optimization — allocates 2 new slices per call on hot path | iter-23 |
-| REQ000290 | LAG/LEAD arbitrary offset support | iter-24 |
-| REQ000310 | Real SIMD intrinsics for filter/projection (AVX2/AVX-512) | iter-27 |
-| REQ000312 | Vector-aware hash join (Radix partition; SIMD probe) | iter-27 |
-| REQ000345 | Empty-table aggregate returns 1 row (not 0) | iter-26 |
-| REQ000346 | Test isolation: EX package-level maps reset | iter-26 |
-| REQ000357 | SELECT without FROM returns 0 rows — wrap in Values op when `s.From==""` | iter-26.1 (v0.26.3) |
-| REQ000359 | String concat NULL semantics — `'a' \\| NULL` returns NULL | iter-26.1 (v0.26.3) |
-| REQ000360 | Arithmetic NULL semantics — `10 + NULL` returns NULL | iter-26.1 (v0.26.3) |
-| REQ000361 | IS NULL / IS NOT NULL semantics — `NULL IS NULL` true, `NULL IS NOT NULL` false | iter-26.1 (v0.26.3) |
-| REQ000362 | Comparison with NULL — `5 = NULL` returns NULL | iter-26.1 (v0.26.3) |
-| REQ000369 | All aggregate functions (COUNT/SUM/AVG/MIN/MAX) return NULL — verified working | iter-27 |
-| REQ000378 | HAVING with `COUNT(*)` returns 0 rows — evalAggregate resolves `COUNT(*)` (StarExpr arg) to the precomputed column | iter-26.3 (v0.26.5) |
-| REQ000382 | Add `ABS`, `HEX`, `ROUND` scalar functions to evalFunction | iter-26.3 (v0.26.5) |
-| REQ000383 | Compound SELECT: UNION, INTERSECT, EXCEPT with correct precedence (INTERSECT binds tighter), trailing ORDER BY/LIMIT/OFFSET apply to compound result; RE rewrite/format support | iter-26.4 (v0.26.6) |
-| REQ000384 | Scalar function `abs(X)` — returns absolute value, NULL→NULL, string→0.0, MIN_INT64→error | iter-26 |
-| REQ000385 | Scalar function `changes()` — last INSERT/UPDATE/DELETE row count; not yet wired to session state | iter-26 |
-| REQ000386 | Scalar function `char(X1,...,XN)` — Unicode code point → character; variadic int args; any NULL → NULL | iter-26 |
-| REQ000387 | Scalar function `concat(X,...)` — concatenate all args; any NULL → NULL (SQLite semantics) | iter-26 |
-| REQ000388 | Scalar function `concat_ws(SEP,X,...)` — concat with separator; SEP=NULL → NULL, skips NULL values | iter-26 |
-| REQ000389 | Scalar function `format(FORMAT,...)` — printf-style formatting via fmt.Sprintf | iter-26 |
-| REQ000390 | Scalar function `glob(X,Y)` — filename glob match with * and ? wildcards | iter-26 |
-| REQ000391 | Scalar function `hex(X)` — BLOB/text → uppercase hex; integer is converted via text first | iter-26 |
-| REQ000392 | Scalar function `iif(B,V,...)` / `if()` alias — short-circuit CASE; NULL condition → false branch | iter-26 |
-| REQ000393 | Scalar function `instr(X,Y)` — 1-based position of Y in X, 0 if not found; NULL → 0 | iter-26 |
-| REQ000394 | Scalar function `last_insert_rowid()` — last successful INSERT rowid | iter-26 |
-| REQ000395 | Scalar function `likelihood(X,Y)` — no-op pass-through; planner hint | iter-26 |
-| REQ000396 | Scalar function `likely(X)` — no-op pass-through; planner hint | iter-26 |
-| REQ000397 | Scalar function `ltrim(X[,Y])` — trim left whitespace or chars in Y | iter-26 |
-| REQ000398 | Scalar function `max(X,Y,...)` — multi-arg scalar max, NULLs skipped, all-NULL → NULL | iter-26 |
-| REQ000399 | Scalar function `min(X,Y,...)` — multi-arg scalar min, NULLs skipped, all-NULL → NULL | iter-26 |
-| REQ000400 | Scalar function `octet_length(X)` — byte length (not code-point count) | iter-26 |
-| REQ000401 | Scalar function `quote(X)` — SQL literal rendering; strings single-quoted with escape, BLOBs as X'hex' | iter-26 |
-| REQ000402 | Scalar function `random()` — pseudo-random int64; exclude MIN_INT64 | iter-26 |
-| REQ000403 | Scalar function `randomblob(N)` — N-byte random BLOB | iter-26 |
-| REQ000404 | Scalar function `replace(X,Y,Z)` — string substitution; Y="" returns X unchanged | iter-26 |
-| REQ000405 | Scalar function `round(X[,Y])` — round to Y decimal places; Y default 0; Y<0 → 0 | iter-26 |
-| REQ000406 | Scalar function `rtrim(X[,Y])` — trim right; default Y=" " | iter-26 |
-| REQ000407 | Scalar function `sign(X)` — -1/0/+1 or NULL for non-numeric | iter-26 |
-| REQ000408 | Scalar function `soundex(X)` — soundex encoding; "?000" for non-ASCII / NULL | iter-26 |
-| REQ000409 | Scalar function `sqlite_source_id()` — fixed string for v1 | iter-26 |
-| REQ000410 | Scalar function `sqlite_version()` — fixed string for v1 | iter-26 |
-| REQ000411 | Scalar function `total_changes()` — cumulative row-change count since connection open | iter-26 |
-| REQ000413 | Scalar function `unhex(X[,Y])` — hex → BLOB; X invalid → NULL; Y ignored | iter-26 |
-| REQ000414 | Scalar function `unicode(X)` — code point of first char; NULL → NULL | iter-26 |
-| REQ000415 | Scalar function `unistr(X)` — backslash-escape decoder | iter-26 |
-| REQ000416 | Scalar function `unlikely(X)` — no-op pass-through | iter-26 |
-| REQ000417 | Scalar function `zeroblob(N)` — N-byte BLOB of 0x00 | iter-26 |
-| REQ000418 | Scalar function `coalesce(X,Y,...)` — variadic NULL-skipping | iter-26 |
-| REQ000419 | Scalar function `ifnull(X,Y)` — 2-arg NULL coalesce | iter-26 |
-| REQ000420 | Scalar function `length(X)` — code-point count | iter-26 |
-| REQ000421 | Scalar function `like(X,Y[,Z])` — 2-arg pattern match | iter-26 |
-| REQ000422 | Scalar function `lower(X)` — ASCII lower-case | iter-26 |
-| REQ000423 | Scalar function `nullif(X,Y)` — NULL-on-equal | iter-26 |
-| REQ000424 | Scalar function `printf(FORMAT,...)` — alias for format | iter-26 |
-| REQ000425 | Scalar function `substr(X,Y[,Z])` — 1-based, negative start | iter-26 |
-| REQ000426 | Scalar function `substring(X,Y[,Z])` — substr alias | iter-26 |
-| REQ000427 | Scalar function `trim(X[,Y])` — both-sides, default space | iter-26 |
-| REQ000433 | Scalar function `upper(X)` — ASCII upper-case | iter-26 |
-| REQ000437 | Full SQL aggregate DISTINCT support — `SUM/AVG/MIN/MAX/GROUP_CONCAT(DISTINCT col)` now dedup before aggregating (parity with `COUNT(DISTINCT col)`); NULLs are excluded from the distinct set per SQLite semantics; parser routes DISTINCT through the IDENT aggregate path for `GROUP_CONCAT` | iter-27 |
-| REQ000438 | Scalar function eval error routing fix | iter-26 |
-| REQ000439 | EXPLAIN statement support | iter-26 |
-| REQ000440 | VACUUM and ANALYZE not routed — fixed in buildWriterOp | iter-26 |
-| REQ000441 | ALTER TABLE ADD COLUMN not implemented — fixed in buildWriterOp | iter-26 |
-| REQ000442 | SLT gap survey — 30/42 common patterns identified; gaps tracked in individual REQs | iter-26 |
-| REQ000443b | Fix negative_literal eval pipeline bug (case-sensitive Lookup, UnaryExpr column extraction) | iter-27 |
-| REQ000445 | NULL three-valued logic: `<`, `<=`, `>`, `>=`, `=`, `!=` comparisons with NULL operand → return NULL (UNKNOWN), not a boolean | iter-26 |
-| REQ000447 | `count(DISTINCT x)`, `avg(DISTINCT x)`, `sum(DISTINCT x)` — DISTINCT aggregate semantics verified; NULLs skipped, dedup works | iter-26 |
-| REQ000457 | Package-level EX state complete cleanup — `UnregisterAll()` clears `triggerReg` and `tableTriggers` maps | iter-28 |
-| REQ000459 | NULL three-valued logic in IN/NOT IN — `evalIn` returns nil (UNKNOWN) when target is NULL; tracks NULL list elements and returns nil instead of false when no match found and any list element was NULL; `evalInSubquery` same NULL tracking for subquery results | iter-27 |
-| REQ000311 | Operator codegen framework — `go generate` template driver (gen.go), PlanVisitor IR with 15 op types, ExprCompiler emitting Go source from PS expression trees, InlineCache (type-dispatch, LRU 256-entry), generated codegen_ops.go with all 15 registered stubs (SeqScan, IndexScan, Filter, Project, Sort, Limit, NestedLoopJoin, HashJoin, HashAggregate, Aggregate, Distinct, CompoundOp, WindowOperator, ExplainStmtOp, CreateViewOperator) | iter-28 |
-| REQ000313 | Adaptive query compilation — AdaptiveOp wrapper with InvocationCounter (threshold=2, atomic), composite-key LRU cache (planHash@schemaVersion, 256-entry), FallbackOp + trySpecialized panic recovery, adqc_telemetry.go (slog.Debug events, AdqcMetrics counters), planner.go wraps SELECT/query roots | iter-28 |
-| REQ000263 | DATE / TIME / TIMESTAMP value storage and arithmetic | iter-23 |
-| REQ000363 | GROUP_CONCAT empty result — empty table returns NULL (after REQ000367 hidden-PK) | iter-26.2 (v0.26.4) |
-| REQ000366 | Subquery planner store threading — `Row.planner` + `currentSubqueryPlanner`; `outerInjector` updates `outer` in place for memoized plans | iter-26.2 (v0.26.4) |
-| REQ000367 | Hidden rowid for tables without PRIMARY KEY — `hiddenPK` flag, atomic `nextRowID` | iter-26.2 (v0.26.4) |
-| REQ000455 | Subquery planner store propagation — `evalExists`/`evalScalarSubquery`/`evalInSubquery` use `newSubqueryPlanner(outer)` | iter-28 |
-| REQ000456 | ALTER TABLE self-deadlock — `currentCatalog` changed to `atomic.Pointer[ls.Catalog]`; `registerStoreSchemaWithFKLocked` | iter-28 |
-| REQ000458 | BETWEEN NULL semantics — `evalBetween` returns nil (UNKNOWN) when any operand is NULL | iter-28 |
-| REQ000460 | UPDATE executor correctness — verified: simple SET, expression SET, multi-column SET, WHERE filtering | iter-28 |
-| REQ000463 | `PRAGMA` statements — `PRAGMA journal_mode/synchronous/cache_size` routed via `buildWriterOp`; planner `planPragma` | iter-28 |
-| REQ000464 | `LIMIT` / `OFFSET` — `Limit` and `Offset` operators in `intermediate.go` | iter-28 |
-| REQ000465 | `EXISTS` subquery — `evalExists` uses `newSubqueryPlanner(outer)`; correlated EXISTS with store-backed tables | iter-28 |
-| REQ000466 | `CASE WHEN` complex expressions — both simple CASE and searched CASE via `Eval()` | iter-28 |
-| REQ000467 | `GROUP_CONCAT` with DISTINCT and ORDER BY — DISTINCT dedup; custom separator; empty group returns NULL | iter-28 |
-| REQ000468 | `HAVING` clause — `Filter` operator applied after aggregation in planner | iter-28 |
-| REQ000469 | `DISTINCT` on non-primary-key columns — `Distinct` operator dedup via stored row key | iter-28 |
-| REQ000470 | `ORDER BY` with expressions — `Sort` evaluates each `OrderItem.Expr` via `Eval()` | iter-28 |
-| REQ000471 | `CAST` to various types — `evalCast` supports INTEGER, BIGINT, FLOAT/REAL, TEXT, DECIMAL/NUMERIC, BOOL, BLOB | iter-28 |
-| REQ000472 | `COALESCE` with many arguments — variadic implementation iterates `e.Args` returning first non-NULL | iter-28 |
-| REQ000475 | `DELETE` with `ORDER BY` / `LIMIT` — parser accepts trailing ORDER BY/LIMIT/OFFSET after WHERE | iter-28 |
-| REQ000477 | `INSERT` with `RETURNING` clause — accumulates resultRows, returns via Next() | iter-28 |
-| REQ000483 | `DEFAULT` values on omitted INSERT columns — `fillDefaults` applied in both Insert paths | iter-28 |
-| REQ000484 | `CHECK` constraint enforcement — `validateCheck` enforces on INSERT/UPDATE | iter-28 |
-| REQ000485 | `UNIQUE` constraint enforcement on INSERT — single-column UNIQUE; NULLs allowed per SQL standard | iter-28 |
-| REQ000486 | `ON CONFLICT` conflict resolution — `INSERT OR IGNORE` conflict handling in `checkUnique` | iter-28 |
-| REQ000489 | `REINDEX` routed to executor — `buildWriterOp` routes `*PS.ReindexStmt` | iter-28 |
-| REQ000491 | `DROP INDEX` routed to executor — `buildWriterOp` routes `*PS.DropIndexStmt` | iter-28 |
-| REQ000499 | `ALTER TABLE DROP COLUMN` — `execDropColumn` updates row data to remove dropped column | iter-28 |
-| REQ000501 | Hidden-PK UPDATE/Delete no longer allocates new rowid on every mutation | iter-28 |
-| REQ000502 | SELECT scalar subquery no extra rows — subquery in CASE no duplicate rows | iter-28 |
-| REQ000503 | Scalar `IN (literal-list)` — `SELECT 1 IN (2)` returns correct boolean via Values + evalIn | iter-28 |
-| REQ000504 | DELETE executor row count — correctly tracks `d.rows` and returns via `RowsAffected()` | iter-28 |
-| REQ000511 | INSERT ... ON CONFLICT DO UPDATE implemented | iter-28 |
-| REQ000512 | INSERT/UPDATE/DELETE RETURNING returns full resultRows | iter-28 |
-| REQ000513 | FK validation wired into Update.Next | iter-28 |
-| REQ000514 | FK validation wired into Delete.Next | iter-28 |
-| REQ000515 | `fillDefaults` type coercion — `coerceDefault` coerces DEFAULT values to match column type | iter-28 |
-| REQ000516 | `validateCheck` called from Update.Next | iter-28 |
-| REQ000517 | `checkUnique` called from Update.Next | iter-28 |
-| REQ000518 | `RETURNING *` expanded — `expandReturningStar` converts StarExpr to all columns | iter-28 |
-| REQ000519 | Composite PRIMARY KEY — parser uses first column as PK, remaining as UNIQUE | iter-28 |
-| REQ000522 | `Distinct` operator after `Limit` pushdown — Distinct before Limit in plan tree | iter-28 |
-| REQ000524 | `COUNT(*)` on empty set returns 0 — aggregate returns `int64(0)` for 0-row group | iter-28 |
-| REQ000525 | Correlated subquery IndexScan injection | iter-28 |
-| REQ000526 | `EXPLAIN` returns plan tree — `ExplainStmtOp` renders operator tree | iter-28 |
-| REQ000527 | `ANALYZE t1` updates row count — `analyzeTable` scans, counts, stores via `cat.PutStats` | iter-28 |
-| REQ000528 | `VACUUM` implemented — `ManualCompact` via store | iter-28 |
-| REQ000531 | ALTER TABLE self-deadlock fixed in in-memory helpers | iter-28 |
-| REQ000534 | VIEW WHERE clause merge — `planSelect` merges outer WHERE with view WHERE using AND | iter-28 |
-| REQ000535 | `REPLACE INTO` — `Insert` operator removes conflicting rows before inserting replacement | iter-28 |
-| REQ000536 | Correlated subquery re-execution for store-backed SeqScan — `evalQualifiedName` fallback chain | iter-28 |
-| REQ000544 | O(1) `Row.Lookup` via lazy-built `colIndex map[string]int` | iter-28 |
-| REQ000558 | `UPDATE ... ORDER BY ... LIMIT ...` — Update AST extended with trailing clauses | iter-28 |
-
-### Top-level SQL (cross-cluster)
-
-| ID | Requirement | Iteration |
-|---|---|---|
-| REQ000065 | Lexer with keyword map | iter-07 |
-| REQ000066 | Recursive-descent parser | iter-07 |
-| REQ000067 | AST node types for DDL/DML/SELECT | iter-07 |
-| REQ000068 | Constant folding | iter-07 |
-| REQ000069 | Predicate pushdown | iter-07 |
-| REQ000070 | Subquery flattening (IN/EXISTS) | iter-07 |
-| REQ000071 | Plan memoization (SHA256 of AST) | iter-08 |
-| REQ000072 | Cost estimation (uniform distribution) | iter-08 |
-| REQ000073 | `SeqScan` operator | iter-08 |
-| REQ000075 | `Filter` / `Project` / `Sort` / `Limit` operators | iter-08 |
-| REQ000076 | `Insert` / `Update` / `Delete` operators | iter-08 |
-| REQ000077 | `Aggregate` (COUNT/SUM/AVG/MIN/MAX) | iter-08 |
-| REQ000078 | `HashAggregate` | iter-08 |
-| REQ000079 | `NestedLoopJoin` (INNER/CROSS) | iter-08 |
-| REQ000080 | `Distinct` operator | iter-08 |
-| REQ000081 | `EXPLAIN` rendering | iter-08 |
-| REQ000082 | Subquery operator (IN/EXISTS/scalar) | iter-08 |
-| REQ000085 | Histogram-based selectivity (replace uniform distribution) | iter-23 |
-| REQ000086 | Parallel query execution (operators in goroutines, merge via channel) | iter-08 |
-| REQ000107 | `UNIQUE` constraint (in-memory path) | iter-11 |
-| REQ000126 | Foreign keys (REFERENCES, ON DELETE/UPDATE) | iter-27 |
-| REQ000127 | Catalog persistence across restarts (`CREATE TABLE` / `DROP TABLE` survive `Close`/`Open`) | iter-12 |
-| REQ000144 | SIMD vectorized execution (batch + 4-wide unrolling + selection vectors) | iter-19 (Phase 1) |
-| REQ000145 | Parallel query execution (worker pool, fan-out/fan-in, channel merge) | iter-19 (Phase 2) |
-| REQ000156 | Cost-based scan selection in planner — `pickCheaperScan` | iter-27 |
-| REQ000162 | Plan memoization with SHA256(AST binary encoding) | iter-08 |
-| REQ000167 | Parameter binding type coercion (Go int -> BIGINT, string -> INT error) | iter-16 |
-| REQ000185 | Plan memoization with SHA256 canonical AST binary encoding (not JSON) | iter-08 |
-| REQ000204 | CREATE INDEX (no implementation, no parser support) | iter-21 |
-| REQ000205 | EXPLAIN SQL syntax (currently only cost calc, not SQL statement) | iter-21 |
-| REQ000310 | Real SIMD intrinsics for filter/projection (AVX2/AVX-512) | iter-27 |
-| REQ000312 | Vector-aware hash join (Radix partition; SIMD probe) | iter-27 |
-| REQ000442 | SLT gap survey — 30/42 common patterns identified | iter-26 |
-| REQ000457 | Package-level EX state complete cleanup — `UnregisterAll()` clears `triggerReg` and `tableTriggers` maps | iter-28 |
-| REQ000443 | WAL `encodeRecord` allocation reduction (4→2 allocs/record, -32% latency) | iter-27 |
-| REQ000443b | Fix negative_literal eval pipeline bug (case-sensitive Lookup, UnaryExpr column extraction) | iter-27 |
-| REQ000444 | UPDATE deadlock fix — numericFloat Go int handling; equalValue/Eval(*PS.Param) normalization | iter-27 |
-| REQ000583 | Visitor pattern for AST — `Visitor` interface with `Visit*` methods for all 24 Expr and 34 Stmt types; `BaseVisitor` default no-op implementation; `AcceptExpr`/`AcceptStmt` dispatch functions; `visitor_test.go` with exhaustive type coverage | iter-29 |
-| REQ000586 | Thread ExecContext through operators — `ExecContext` struct carries `Planner`, `SessionID`, `TxWriter`; `WithExecContext`/`ExecContextFromRow` attach/retrieve from Row outer chain; eliminates `currentSubqueryPlanner` global from `QueryAll`/`QueryStream` | iter-29 |
+4. **`internal/SQL/PS/visitor.go`** — Visitor pattern for AST traversal.
+5. **`internal/SQL/RE/re.go`** — `Rewrite`, `ConstantFold`, `PredicatePushdown`, `FlattenSubquery`.
+6. **`internal/SQL/PL/pl.go`** — `Planner`: `Plan()`, `memoize()`, `estimateCost()`, `selectIndex()`, selectivity estimation, memo-optimized planning.
+7. **`internal/SQL/EX/ex.go`** — `Executor`: `Exec()`, `Query()`. Core execution framework.
+8. **`internal/SQL/EX/execctx.go`** — `ExecContext` struct for per-execution state threading.
+9. **`internal/SQL/EX/operators.go`** — basic operator structs: `SeqScan`, `IndexScan`, `Filter`, `Project`, `Sort`, `Limit`, `Insert`, `Update`, `Delete`.
+10. **`internal/SQL/EX/operators_vec.go`** — SIMD-optimized operators: vectorized `SeqScan`, `Filter`, `Project`, `Aggregate`.
+11. **`internal/SQL/EX/operators_parallel.go`** — parallel operators: parallel `SeqScan`, `IndexScan`, `Update`, `Delete`. Worker pool, fan-out/fan-in.
+12. **`internal/SQL/EX/hashjoin.go`** — radix-partitioned hash join for INNER equi-joins.
+13. **`internal/SQL/EX/window.go`** — window function operator (ROW_NUMBER, RANK, LAG/LEAD, SUM/AVG with OVER).
+14. **`internal/SQL/EX/alter_table.go`** — online schema migration operator.
+15. **`internal/SQL/EX/fk.go`** — foreign key validation and cascade.
+16. **`internal/SQL/EX/subq.go`** — CTE / recursive CTE operator.
+17. **`internal/SQL/EX/view.go`** — view resolution operator.
+18. **`internal/SQL/EX/json.go`** — JSON functions.
+19. **`internal/SQL/EX/datetime.go`** — datetime functions.
+20. **`internal/SQL/EX/pragma.go`** — PRAGMA support.
+21. **`internal/SQL/EX/integrity.go`** — integrity check operator.
+22. **`internal/SQL/EX/explain.go`** — EXPLAIN operator.
+23. **`internal/SQL/EX/compound.go`** — UNION/INTERSECT/EXCEPT set operations.
+24. **`internal/SQL/EX/simd_dispatch.go`** — SIMD-dispatched scalar function evaluation.
+25. **`internal/SQL/EX/aggregate_vec.go`** — vectorized aggregate operators.
+26. **`internal/SQL/EX/hashagg.go`** — hash-based aggregation for GROUP BY.
+27. **`internal/SQL/EX/coerce.go`** — type coercion for prepared statement parameters.
+28. **`internal/SQL/EX/decimal.go`** — DECIMAL type support.
+29. **`internal/SQL/EX/writers.go`** — in-memory and store-backed INSERT/UPDATE/DELETE with constraint enforcement.
+30. **Tests:** table-driven tests throughout, covering all operators and functions.
 
 ## Open Issues
 
@@ -665,3 +353,4 @@ The following requirements have been implemented and shipped; they are now part 
 - LEFT/RIGHT/FULL OUTER JOIN — only INNER via HashJoin; OUTER via NestedLoopJoin (slower).
 - Non-equi joins — require NestedLoopJoin with filter operator.
 - Should parallel query execution be enabled by default or opt-in via query hint (e.g., `SELECT /*+ PARALLEL(4) */ ...`)?
+- In-memory tables do not support transaction rollback (REQ000641).

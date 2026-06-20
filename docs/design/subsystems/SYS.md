@@ -60,6 +60,7 @@ type Options struct {
     LogFormat    string        // "json" or "text", default "text"
     ReadOnly     bool          // open in read-only mode, default false
     CreateIfMissing bool       // create database if dir does not exist, default true
+    InMemory     bool          // pure in-memory mode, no disk I/O
 }
 ```
 
@@ -87,7 +88,7 @@ type engine struct {
 ```
 
 - `Open`: validate `Options`, construct subsystems in dependency order (`LOG` → `FIL` → `MEM` → `WAL` → `ENG` → `TXN`), create directory if `CreateIfMissing`, call `WAL.RP.Replay()` to recover.
-- `Close`: set `closed = true`, flush all pending writes (memtable, WAL), close all subsystems in reverse order.
+- `Close`: 6-phase graceful shutdown sequence (see below).
 - `Begin`: create a new `Session` with a fresh transaction from `TXN`.
 - `Stats`: return aggregate stats from all subsystems (buffer pool hits, WAL records, compaction bytes, etc.).
 
@@ -110,6 +111,7 @@ type session struct {
 - `Begin`: start a new transaction. Returns `ErrLocked` if a transaction is already active in this session.
 - `Commit` / `Rollback`: commit or abort the current transaction, then set `session.txn = nil`.
 - `SetDeadline`: set a deadline for all subsequent operations in this session.
+- Sessions are pooled via `sync.Pool` for reuse. On `Put` back to the pool, clear `txn`, `params`, and `deadline` fields to avoid stale data in reused sessions.
 
 ### Transaction
 
@@ -141,9 +143,6 @@ var (
     ErrReadOnly         = errors.New("razordata: read-only")
     ErrDeadlineExceeded = errors.New("razordata: deadline exceeded")
 )
-
-var retryable = []error{ErrIO, ErrLocked}
-var fatal = []error{ErrTxAborted, ErrCorrupt, ErrSyntax, ErrTypeMismatch, ErrUpgradeRequired, ErrReadOnly}
 ```
 
 - All errors wrap: I/O errors → structural errors → API-level errors.
@@ -186,7 +185,8 @@ type SessionStats struct {
 | `SE` | Session: session creation, lifecycle, goroutine-safety, deadline, session stats |
 | `TX` | Transaction: transaction context, commit/rollback, savepoints |
 | `ST` | Statement: preparation, parameter binding, type coercion, close |
-| `BK` | Backup/Restore (REQ000259): online backup with read lock, file copy, LSN marker, integrity check, restore to fresh directory |
+| `BK` | Backup/Restore: online backup with read lock, file copy, LSN marker, integrity check, restore to fresh directory |
+| `DS` | database/sql driver implementation |
 
 ## Clusters
 
@@ -199,7 +199,6 @@ type SessionStats struct {
 #### Open (Initialization)
 - `Open`: validate `Options` (dir exists or `CreateIfMissing`, page size is power of 2, sizes are positive). Construct all subsystems in order: `LOG` → `FIL` → `MEM` → `WAL` → `ENG` → `TXN`. Call `WAL/RP.Replay()` to recover from crash.
 - **InMemory mode:** when `Options.InMemory` is true, bypass all disk subsystems. Construct only logger, sync pool, and a raw `EX.NewExecutor()` (no store, no catalog). All state is ephemeral.
-- **Version:** `Version = "0.1.0"` (semantic versioning).
 - **Config validation:** Before any subsystem is constructed, validate all fields:
   - `Dir`: must be non-empty, absolute path or relative to cwd.
   - `PageSize`: must be power of 2, range [1024, 65536].
@@ -210,96 +209,39 @@ type SessionStats struct {
   - Invalid options return `fmt.Errorf("razordata: invalid option: %s", field)` before any subsystem is constructed.
 
 #### Close (Graceful Shutdown)
-- `Close` follows a strict shutdown sequence to ensure data durability and goroutine safety:
+- `Close` follows a strict 6-phase shutdown sequence to ensure data durability and goroutine safety:
 
-```
-Phase 1: Stop accepting new requests
-  1.1. Set `closed = true` (atomic.Bool)
-  1.2. Close `ctxCancel` to signal all goroutines
-  1.3. All public API methods check `closed` — return `ErrClosed` if true
+**Phase 1: Stop accepting new requests**
+- Set `closed = true` (atomic.Bool)
+- All public API methods check `closed` — return `ErrClosed` if true
 
-Phase 2: Wait for active transactions to complete (timeout: 30s)
-  2.1. Acquire read lock on transaction slot array
-  2.2. Count active transactions (slots with status == ACTIVE)
-  2.3. If count > 0:
-       - Log: "waiting for N active transactions to complete"
-       - Wait on `sync.Cond` (broadcast when a transaction commits/aborts)
-       - Timeout after 30s: force-abort remaining transactions
-  2.4. For force-aborted transactions:
-       - Write RTRollback to WAL
-       - Log: "force-aborted transaction %d after shutdown timeout"
+**Phase 2: Wait for active transactions to complete (timeout: 30s)**
+- Count active transactions (slots with status == ACTIVE)
+- If count > 0: wait on `sync.Cond` (broadcast when a transaction commits/aborts)
+- Timeout after 30s: force-abort remaining transactions
 
-Phase 3: Flush pending writes
-  3.1. Call `ENG.Flush()` — flush memtable to SST
-  3.2. Call `WAL.Sync()` — fsync all pending WAL records
-  3.3. Call `FIL.SyncDir()` — fsync directory entries
+**Phase 3: Flush pending writes**
+- `ENG.Flush()` — flush memtable to SST
+- `WAL.Sync()` — fsync all pending WAL records
+- `FIL.SyncDir()` — fsync directory entries
 
-Phase 4: Stop background goroutines
-  4.1. Stop compaction goroutine:
-       - Send stop signal via `stopCh`
-       - Wait for goroutine to exit (via `sync.WaitGroup`)
-       - Timeout after 5s: log warning and proceed
-  4.2. Stop epoch manager goroutine:
-       - Close `drainCh` to signal exit
-       - Wait for goroutine to exit
-  4.3. Stop hook dispatcher goroutine (LOG/HK):
-       - Close event channel
-       - Wait for dispatcher to drain pending events
-  4.4. Stop metric collection goroutine (if enabled):
-       - Flush pending metrics
-       - Close goroutine
+**Phase 4: Stop background goroutines (timeout: 5s each)**
+- Stop compaction goroutine
+- Stop flush manager
+- Stop epoch manager
 
-Phase 5: Close subsystems in reverse order
-  5.1. `TXN.Close()`:
-       - Release all transaction slots
-       - Clear hazard pointer sets
-       - Free all arena buffers
-  5.2. `ENG.Close()`:
-       - Close memtable (release skiplist nodes)
-       - Close manifest file
-       - Release iterator pool
-  5.3. `WAL.Close()`:
-       - Final `fsync` on current segment
-       - Close segment FD
-       - Sync WAL directory
-  5.4. `MEM.Close()`:
-       - Write hint file (serialize hot working set)
-       - Flush all dirty pages to disk
-       - Release buffer pool slots
-       - Return all buffers to `sync.Pool`
-  5.5. `FIL.Close()`:
-       - Close all open file handles (via `handles` map)
-       - Close directory FDs (via `dirFDs` map)
-       - Sync root directory
-  5.6. `LOG.Close()`:
-       - Flush all pending log events
-       - Call `Sync()` on underlying slog handler
-       - Close log file (if configured)
+**Phase 5: Close subsystems in reverse order**
+- TXN → ENG → WAL → MEM → FIL → LOG
 
-Phase 6: Cleanup and logging
-  6.1. Log: "razordata shutdown complete"
-  6.2. Aggregate final stats: uptime, total queries, total bytes read/written
-  6.3. Write stats to `EngineStats` for post-mortem analysis
-```
+**Phase 6: Log final stats**
 
 **Error Handling During Close:**
 - On any error during shutdown, log the error with `slog.Error` and continue closing remaining subsystems.
 - Shutdown is best-effort — the goal is to flush as much data as possible, not to guarantee 100% durability if an error occurs.
-- After `Close()` returns, the `Engine` is unusable. Any subsequent API calls return `ErrClosed`.
 
 #### Signal Handling
-- Register signal handler in `Open()`:
-  ```go
-  sigCh := make(chan os.Signal, 1)
-  signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-  go func() {
-      <-sigCh
-      log.Info("received shutdown signal")
-      engine.Close()
-      os.Exit(0)
-  }()
-  ```
-- Users can override this by catching signals themselves and calling `Close()` manually.
+- `InstallSignalHandler(ctx, engine)` subscribes to SIGINT and SIGTERM and calls `Close` with the provided context on the first signal. A second signal aborts the wait and returns immediately. Returns a stop function that the caller invokes to unsubscribe and release the internal goroutine.
+- The handler is idempotent: calling stop multiple times is safe (guarded by `sync.Once`).
 
 #### Stats Aggregation
 - `Stats()`: acquire read lock, aggregate stats from all subsystems:
@@ -307,7 +249,6 @@ Phase 6: Cleanup and logging
   - `WAL`: records written, bytes written, fsync count
   - `ENG`: memtable size, SST count per level, compaction bytes
   - `TXN`: transactions started, committed, aborted, conflicts
-  - `SQL`: queries executed, rows returned, rows modified
 
 ### AP — API
 
@@ -327,7 +268,7 @@ Phase 6: Cleanup and logging
 **Key behaviors:**
 - `NewSession(engine) *session`: allocate from a `sync.Pool`. On `Put` back to the pool, clear `txn`, `params`, and `deadline` fields to avoid stale data in reused sessions.
 - `Query` / `Exec`: acquire `mu`, bind params, call `SQL/EX.Exec()`, release `mu`.
-- `Begin`: if `session.txn` is `nil` and not active, create a new transaction; if `session.txn` is already active, return `ErrLocked`. The session-level `mu` ensures no concurrent transactions within a session.
+- `Begin`: if `session.txn` is `nil` and not active, create a new transaction; if `session.txn` is already active, return `ErrLocked`.
 - `Commit` / `Rollback`: commit or abort the current transaction, then set `session.txn = nil`.
 - `SetDeadline`: set a `time.Time` in an `atomic.Value`. All subsequent `Query`/`Exec` calls respect this deadline.
 - `Stats`: return `SessionStats` including query count, rows returned, bytes read/written.
@@ -353,6 +294,7 @@ Phase 6: Cleanup and logging
 - `Exec(ctx, args)`: bind args, execute plan, return result.
 - `Close()`: release the plan (if not shared), return to `sync.Pool`.
 - Type coercion: if a Go `int` is passed but the column is `BIGINT`, cast. If a Go `string` is passed but the column is `INT`, return `ErrTypeMismatch`.
+- Engine-level prepared statement cache: LRU + ref-counted, `Get`/`Put`/`Release`/`Clear`/`Size`.
 
 ### BK — Backup/Restore
 
@@ -367,7 +309,6 @@ Phase 6: Cleanup and logging
 **Responsibility:** Go `database/sql/driver` implementation. Registered via `init()` as `sql.Register("razor", &Driver{})`.
 
 **Key behaviors:**
-- 5 files under `internal/SYS/DS/`: `ds.go`, `conn.go`, `stmt.go`, `rows.go`, `tx.go`.
 - DSN parsing: `:memory:` → in-memory mode; file path → on-disk database via `v1.Open`.
 - `OpenConnector` implements `driver.DriverContext` (Go 1.10+) for context-aware connections.
 - Value conversion: `int64`, `float64`, `string`, `[]byte`, `bool` → `driver.Value`; `nil` → `nil`.
@@ -380,6 +321,8 @@ import (
 )
 db, _ := sql.Open("razor", ":memory:")
 ```
+
+## Implementation Plan
 
 1. **`internal/SYS/AP/ap.go`** — `Engine` interface, `Options` struct, all error types, `EngineStats`.
 2. **`internal/SYS/SY/sy.go`** — `engine` struct, `Open` (config validation, subsystem construction), `Stats`, version constant.
@@ -395,58 +338,13 @@ db, _ := sql.Open("razor", ":memory:")
 12. **`internal/SYS/DS/rows.go`** — driver.Rows (materialized).
 13. **`internal/SYS/DS/tx.go`** — driver.Tx.
 14. **Integration tests:**
-   - `engine_test.go` — `Open`/`Close`, concurrent sessions, graceful shutdown, error types.
-   - `shutdown_test.go` — simulate SIGTERM, verify 6-phase close sequence, test timeout handling.
-   - `validate_test.go` — invalid options (page size not power of 2, negative sizes), verify rejection.
-9. **Benchmark tests:** `engine_bench.go` — throughput benchmark: `go test -bench=BenchmarkEngine -benchtime=10s`.
-
-## Shipped Requirements
-
-The following requirements have been implemented and shipped; they are now part of the design baseline.
-
-### SY / AP / SE / TX / ST / BK — System Layer
-
-| ID | Requirement | Iteration |
-|---|---|---|
-| REQ000087 | `Engine.Open` with `Options` validation | iter-09 |
-| REQ000088 | `Engine.Close` with graceful shutdown | iter-09 |
-| REQ000089 | `Engine.Begin` → `Session` | iter-09 |
-| REQ000090 | `Engine.Stats` aggregation | iter-09 |
-| REQ000091 | Error type taxonomy (retryable vs fatal) | iter-09 |
-| REQ000092 | `Session.Query` / `Session.Exec` | iter-09 |
-| REQ000093 | `Session.SetDeadline` with `atomic.Value` | iter-09 |
-| REQ000094 | `Transaction.Commit` / `Rollback` | iter-09 |
-| REQ000095 | `Transaction.Savepoint` / `RollbackTo` | iter-09 |
-| REQ000096 | `Stmt.Prepare` / `Query` / `Exec` / `Close` | iter-09 |
-| REQ000097 | SIGTERM/SIGINT graceful shutdown handler | iter-09 |
-| REQ000098 | Session pooling (`sync.Pool`) | iter-15 |
-| REQ000099 | `ReadOnly` mode in `Options` (skip WAL writes, O_RDONLY opens) | iter-15 |
-| REQ000128 | OPS — Point-in-time backup / restore (snapshot engine dir, restore to a copy) | iter-08 |
-| REQ000130 | OBS — Query tracing via `TraceHook` | iter-00 |
-| REQ000131 | OBS — Latency histograms via `MetricHook` | iter-00 |
-| REQ000132 | OBS — CPU/heap profiling on error | iter-00 |
-| REQ000133 | OBS — Structured stats aggregation (`Engine.Stats`) | iter-09 |
-| REQ000146 | 6-phase graceful shutdown sequence per SYS.md:215-282 | iter-14 |
-| REQ000152 | `validateOptions` with field-by-field checks per SYS.md:198-214 | iter-14 |
-| REQ000153 | Active-tx wait (30s timeout, force-abort on timeout) | iter-14 |
-| REQ000154 | Background-goroutine coordination (compaction, flush, epoch, hook dispatcher) | iter-14 |
-| REQ000166 | Per-subsystem `Close()` ordering in Phase 5 of shutdown | iter-14 |
-| REQ000172 | 6-phase graceful shutdown implementation per SYS.md:196-283 | iter-14 |
-| REQ000178 | `validateOptions` (duplicate of REQ000152, same code) | iter-14 |
-| REQ000242 | Pragmas (cache_size, journal_mode, synchronous) | iter-24 |
-| REQ000259 | Backup/restore API (snapshot engine dir to copy) | iter-23 |
-| REQ000260 | Admin CLI `razor` (schema dump, vacuum, integrity check) | iter-23 |
-| REQ000261 | Integrity check (`PRAGMA integrity_check`) | iter-23 |
-| REQ000548 | Engine-level prepared statement cache — LRU + ref-counted, `Get`/`Put`/`Release`/`Clear`/`Size` | iter-28.2 |
-| REQ000640 | InstallSignalHandler tests — `shutdown_test.go` verifies double-stop safety (no panic), context cancellation, and non-nil stop function return; fixed double-close panic with `sync.Once` guard | iter-29 |
+    - `engine_test.go` — `Open`/`Close`, concurrent sessions, graceful shutdown, error types.
+    - `shutdown_test.go` — signal handler double-stop safety, context cancellation, 6-phase close sequence.
+    - `validate_test.go` — invalid options (page size not power of 2, negative sizes), verify rejection.
 
 ## Open Issues
 
-- ~~Should sessions be pooled (reuse inactive sessions)?~~ Resolved: yes, via `sync.Pool`. **(REQ000098)**
-- ~~Should we support read-only mode~~ Resolved: yes, `ReadOnly` option implemented. **(REQ000099)**
-- ~~How to handle `SetDeadline` cancellation~~ Resolved: uses `context.WithDeadline` internally. **(REQ000093)**
 - Should the engine support a metrics endpoint (Prometheus)? Future work — add an admin interface.
-- What is the optimal timeout for waiting active transactions during shutdown? 30s is the default; may need tuning based on workload. **(REQ000153)**
+- What is the optimal timeout for waiting active transactions during shutdown? 30s is the default; may need tuning based on workload.
 - Should force-aborted transactions during shutdown be rolled back to a savepoint instead of full abort?
 - Should the shutdown sequence be configurable (e.g., skip waiting for transactions in emergency shutdown)?
-- ~~Should backup support incremental backups or only full backup?~~ **(REQ000259 ships full backup; incremental is future work)**
