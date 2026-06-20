@@ -3,7 +3,6 @@ package ls
 import (
 	"bytes"
 	"container/heap"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -144,7 +143,7 @@ func (eng *Engine) Flush() *flushManager {
 // ManualCompact triggers a full compaction (REQ000257).
 func (eng *Engine) ManualCompact() error {
 	if eng == nil || eng.e == nil {
-		return errors.New("engine: closed")
+		return ErrClosed
 	}
 	return eng.e.cm.ManualCompact()
 }
