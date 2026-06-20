@@ -163,14 +163,9 @@ func writeMeta(fd int, p *MetaPage) error {
 	if err != nil {
 		return err
 	}
-	sum := crc32.ChecksumIEEE(data[:len(data)-4])
-	var raw metaPageRaw
-	binary.LittleEndian.PutUint32(raw[0:4], p.Magic)
-	binary.LittleEndian.PutUint32(raw[4:8], p.Version)
-	binary.LittleEndian.PutUint32(raw[8:12], p.BlockSize)
-	binary.LittleEndian.PutUint64(raw[12:20], p.CatalogRootPtr)
-	binary.LittleEndian.PutUint32(raw[20:24], sum)
+	sum := crc32.ChecksumIEEE(data[:metaPageSize-4])
+	binary.LittleEndian.PutUint32(data[metaPageSize-4:metaPageSize], sum)
 
-	_, err = unix.Pwrite(fd, raw[:], 0)
+	_, err = unix.Pwrite(fd, data[:metaPageSize], 0)
 	return err
 }
