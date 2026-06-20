@@ -22,6 +22,12 @@ var corpusSubset = []string{
 	"index/random/select/slt_good_1.test",
 	"index/random/select/slt_good_2.test",
 
+	// Index coverage — between, commute, in, compound.
+	"index/between/1/slt_good_0.test",
+	"index/commute/1/slt_good_0.test",
+	"index/in/1/slt_good_0.test",
+	"index/compound/1/slt_good_0.test",
+
 	// Aggregates, GROUP BY, HAVING.
 	"minmax/test_minmax_2.test",
 	"minmax/test_minmax_3.test",
