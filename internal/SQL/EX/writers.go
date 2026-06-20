@@ -1461,6 +1461,20 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 		return row, nil
 	}
 
+	// Handle PRAGMA foreign_key_list(table_name) (REQ000733)
+	if p.stmt.Name == "foreign_key_list" && p.stmt.Value != "" {
+		if !p.done {
+			p.done = true
+			p.loadForeignKeyList()
+		}
+		if p.idx >= len(p.rows) {
+			return Row{}, ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
 	// Default: return empty result for unknown pragmas
 	if !p.done {
 		p.done = true
@@ -1542,6 +1556,24 @@ func (p *Pragma) loadTableList() {
 			Cols: []string{"type", "name", "tbl_name", "rootpage", "sql"},
 			Data: []any{"table", name, name, int64(0), nil},
 		})
+	}
+}
+
+// loadForeignKeyList populates rows for PRAGMA foreign_key_list(table_name) (REQ000733).
+// Returns columns: id, seq, table, from, to, on_update, on_delete, match
+func (p *Pragma) loadForeignKeyList() {
+	tableName := p.stmt.Value
+	ss, ok := schemaFor(tableName)
+	if !ok || len(ss.foreignKeys) == 0 {
+		return
+	}
+	for id, fk := range ss.foreignKeys {
+		for seq, col := range fk.Columns {
+			p.rows = append(p.rows, Row{
+				Cols: []string{"id", "seq", "table", "from", "to", "on_update", "on_delete", "match"},
+				Data: []any{int64(id), int64(seq), fk.RefTable, col, fk.RefColumns[seq], fk.OnUpdate, fk.OnDelete, "NONE"},
+			})
+		}
 	}
 }
 
