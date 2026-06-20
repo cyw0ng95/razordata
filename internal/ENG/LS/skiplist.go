@@ -11,9 +11,9 @@ import (
 const maxLevel = 12
 
 type node struct {
+	next  [maxLevel]atomic.Pointer[node]
 	key   []byte
 	value atomic.Value
-	next  [maxLevel]atomic.Pointer[node]
 	mu    sync.Mutex
 }
 
