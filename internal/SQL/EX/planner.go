@@ -604,6 +604,15 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		return op
 	}
 
+	// REQ000727: sqlite_master virtual table
+	if s.From == "sqlite_master" || s.From == "sqlite_schema" {
+		var scan Operator = NewSqliteMaster()
+		if s.Where != nil {
+			scan = NewFilter(scan, s.Where)
+		}
+		return scan
+	}
+
 	var scan Operator
 	if p.store != nil {
 		// Try IndexScan first when the WHERE references an indexed column.
