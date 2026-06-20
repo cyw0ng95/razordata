@@ -28,6 +28,7 @@ package lz4
 import (
 	"errors"
 	"fmt"
+	"sync"
 )
 
 // Errors.
@@ -56,6 +57,15 @@ const hashSize = 1 << hashLog
 
 // hashMask is used to map a 32-bit hash to a table index.
 const hashMask = hashSize - 1
+
+// hashTablePool reuses hash tables across compressBlock calls to
+// reduce allocation pressure.
+var hashTablePool = sync.Pool{
+	New: func() any {
+		t := make([]int, hashSize)
+		return &t
+	},
+}
 
 // CompressBound returns the maximum compressed size for an input of
 // length n. Per the LZ4 spec: worst case is the input size plus
@@ -87,10 +97,12 @@ func compressBlock(src, dst []byte) []byte {
 
 	// Hash table: maps 4-byte sequence hash → last-seen position.
 	// A value of -1 means "no prior occurrence".
-	table := make([]int, hashSize)
+	tablePtr := hashTablePool.Get().(*[]int)
+	table := *tablePtr
 	for i := range table {
 		table[i] = -1
 	}
+	defer hashTablePool.Put(tablePtr)
 
 	i := 0
 	for i < srcLen {
