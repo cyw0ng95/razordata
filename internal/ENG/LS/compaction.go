@@ -110,7 +110,6 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 
 	rl := cj.rateLimiter
 
-	var lastKey, lastVal []byte
 	for h.Len() > 0 {
 		minItem := heap.Pop(h).(*sstIterator)
 		k := minItem.Key()
@@ -119,14 +118,10 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 			rl.Wait(int64(len(k) + len(v)))
 		}
 		w.Add(k, v)
-		lastKey = k
-		lastVal = v
 		if minItem.Next() {
 			heap.Push(h, minItem)
 		}
 	}
-	_ = lastKey
-	_ = lastVal
 
 	closeIterators(iters)
 

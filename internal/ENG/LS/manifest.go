@@ -129,7 +129,7 @@ func encodeManifest(v *Version) ([]byte, error) {
 	binary.Write(&buf, binary.LittleEndian, v.num)
 	binary.Write(&buf, binary.LittleEndian, int64(len(v.levels)))
 
-	for i, level := range v.levels {
+	for _, level := range v.levels {
 		binary.Write(&buf, binary.LittleEndian, int64(len(level)))
 		for _, file := range level {
 			buf.Write(encodeVarint(int64(len(file.MinKey))))
@@ -145,7 +145,6 @@ func encodeManifest(v *Version) ([]byte, error) {
 			binary.Write(&buf, binary.LittleEndian, int64(file.Level))
 			binary.Write(&buf, binary.LittleEndian, int64(file.BloomBits))
 		}
-		_ = i
 	}
 
 	checksum := crc32.Checksum(buf.Bytes(), crc32Koopman)
