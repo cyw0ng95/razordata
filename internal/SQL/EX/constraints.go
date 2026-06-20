@@ -124,12 +124,26 @@ func coerceDefault(v any, colType int) any {
 func validateRow(schema *storeSchema, row Row) error {
 	for i, col := range schema.cols {
 		if row.Data[i] == nil && !schema.nullable[i] {
+			// REQ000713: INTEGER PRIMARY KEY allows NULL —
+			// SQLite treats it as a rowid alias and auto-assigns.
+			if schema.pk == col && isIntegerType(schema.colTypes, i) {
+				continue
+			}
 			// Note: PK implies NOT NULL; primary-key columns always have
 			// schema.nullable[i] == false from CREATE TABLE parsing.
 			return fmt.Errorf("%w: column %q is NOT NULL", ErrConstraint, col)
 		}
 	}
 	return nil
+}
+
+// isIntegerType returns true if the column type at index i is an
+// integer type (INTEGER, INT, BIGINT).
+func isIntegerType(colTypes []int, i int) bool {
+	if i >= len(colTypes) {
+		return false
+	}
+	return colTypes[i] == int(LX.T_INT_KW) || colTypes[i] == int(LX.T_BIGINT)
 }
 
 // validateDecimal checks that values in DECIMAL/NUMERIC columns respect

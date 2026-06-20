@@ -1327,3 +1327,36 @@ func TestBugfix_ShiftOperators(t *testing.T) {
 		t.Errorf("10 >> 1: got %v, want 5", rows[0].Data[0])
 	}
 }
+
+// REQ000713: INTEGER PRIMARY KEY allows NULL (auto-assign rowid).
+func TestBugfix_IntPrimaryKeyNull(t *testing.T) {
+	ResetForTest(t)
+	ex := NewExecutor()
+	defer UnregisterAll()
+	ctx := context.Background()
+
+	_, err := ex.Exec(ctx, "CREATE TABLE a (x INTEGER PRIMARY KEY)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE: %v", err)
+	}
+
+	// INSERT with explicit value should work
+	_, err = ex.Exec(ctx, "INSERT INTO a VALUES (1)")
+	if err != nil {
+		t.Fatalf("INSERT 1: %v", err)
+	}
+
+	// INSERT with NULL should work (auto-assign rowid)
+	_, err = ex.Exec(ctx, "INSERT INTO a VALUES (NULL)")
+	if err != nil {
+		t.Fatalf("INSERT NULL: %v", err)
+	}
+
+	rows, err := ex.QueryAll(ctx, "SELECT * FROM a ORDER BY x")
+	if err != nil {
+		t.Fatalf("SELECT: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("got %d rows, want 2", len(rows))
+	}
+}
