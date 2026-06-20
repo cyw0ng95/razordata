@@ -95,6 +95,10 @@ func (e *argTypeError) Error() string {
 		e.ArgIdx, goType, int(e.SQLType))
 }
 
+// Unwrap returns nil (no wrapped error). Added for errors.Is/As
+// chain compatibility. REQ000658.
+func (e *argTypeError) Unwrap() error { return nil }
+
 // validateArgTypes walks the args slice and confirms each Go
 // value can be coerced to the SQL column type recorded for that
 // placeholder (R16-3, R16-4). Returns *argTypeError on
