@@ -1,47 +1,56 @@
 package PS
 
+// Expr is the interface for all expression AST nodes.
 type Expr interface {
 	exprNode()
 }
 
+// Stmt is the interface for all statement AST nodes.
 type Stmt interface {
 	stmtNode()
 }
 
+// NumberLiteral represents an integer literal value.
 type NumberLiteral struct {
 	Val int64
 }
 
 func (n *NumberLiteral) exprNode() {}
 
+// FloatLiteral represents a floating-point literal value.
 type FloatLiteral struct {
 	Val float64
 }
 
 func (f *FloatLiteral) exprNode() {}
 
+// StringLiteral represents a string literal value.
 type StringLiteral struct {
 	Val string
 }
 
 func (s *StringLiteral) exprNode() {}
 
+// BoolLiteral represents a boolean literal value (TRUE/FALSE).
 type BoolLiteral struct {
 	Val bool
 }
 
 func (b *BoolLiteral) exprNode() {}
 
+// NullLiteral represents a NULL value.
 type NullLiteral struct{}
 
 func (n *NullLiteral) exprNode() {}
 
+// Ident represents an unqualified identifier (column or table name).
 type Ident struct {
 	Name string
 }
 
 func (i *Ident) exprNode() {}
 
+// QualifiedName represents a qualified identifier (table.column).
 type QualifiedName struct {
 	Table string
 	Name  string
@@ -49,6 +58,7 @@ type QualifiedName struct {
 
 func (q *QualifiedName) exprNode() {}
 
+// AliasedExpr represents an expression with an alias (expr AS alias).
 type AliasedExpr struct {
 	Expr  Expr
 	Alias string
@@ -56,6 +66,7 @@ type AliasedExpr struct {
 
 func (a *AliasedExpr) exprNode() {}
 
+// CastExpr represents a CAST expression (CAST(expr AS type)).
 type CastExpr struct {
 	Expr Expr
 	Type *TypeInfo
@@ -63,12 +74,14 @@ type CastExpr struct {
 
 func (c *CastExpr) exprNode() {}
 
+// Param represents a bind parameter placeholder (?).
 type Param struct {
 	Index int
 }
 
 func (p *Param) exprNode() {}
 
+// BinaryExpr represents a binary operation (a OP b).
 type BinaryExpr struct {
 	Op     int
 	Left   Expr
@@ -78,6 +91,7 @@ type BinaryExpr struct {
 
 func (b *BinaryExpr) exprNode() {}
 
+// UnaryExpr represents a unary operation (OP a).
 type UnaryExpr struct {
 	Op      int
 	Operand Expr
@@ -85,6 +99,7 @@ type UnaryExpr struct {
 
 func (u *UnaryExpr) exprNode() {}
 
+// FunctionCall represents a scalar function invocation.
 type FunctionCall struct {
 	Name string
 	Args []Expr
@@ -92,6 +107,7 @@ type FunctionCall struct {
 
 func (f *FunctionCall) exprNode() {}
 
+// AggregateFunc represents an aggregate function (COUNT, SUM, etc.).
 type AggregateFunc struct {
 	Name      string
 	Arg       Expr
@@ -130,16 +146,19 @@ type WindowFunc struct {
 
 func (w *WindowFunc) exprNode() {}
 
+// StarExpr represents the * wildcard in SELECT.
 type StarExpr struct{}
 
 func (s *StarExpr) exprNode() {}
 
+// ListExpr represents a list of expressions (e.g., IN list).
 type ListExpr struct {
 	Items []Expr
 }
 
 func (l *ListExpr) exprNode() {}
 
+// BetweenExpr represents a BETWEEN expression (expr BETWEEN low AND high).
 type BetweenExpr struct {
 	Expr Expr
 	Low  Expr
@@ -148,12 +167,14 @@ type BetweenExpr struct {
 
 func (b *BetweenExpr) exprNode() {}
 
+// CaseExpr represents a CASE expression (simple or searched).
 type CaseExpr struct {
 	Expr     Expr
 	WhenList []WhenClause
 	Else     Expr
 }
 
+// WhenClause represents a WHEN condition THEN result pair.
 type WhenClause struct {
 	Cond Expr
 	Then Expr
@@ -161,6 +182,7 @@ type WhenClause struct {
 
 func (c *CaseExpr) exprNode() {}
 
+// InExpr represents an IN expression (expr IN (list) or expr IN (subquery)).
 type InExpr struct {
 	Expr     Expr
 	List     []Expr
@@ -169,12 +191,14 @@ type InExpr struct {
 
 func (i *InExpr) exprNode() {}
 
+// ExistsExpr represents an EXISTS subquery expression.
 type ExistsExpr struct {
 	Subquery Stmt
 }
 
 func (e *ExistsExpr) exprNode() {}
 
+// SubqueryExpr represents a scalar subquery expression.
 type SubqueryExpr struct {
 	Subquery Stmt
 }
@@ -189,6 +213,7 @@ type IntervalLiteral struct {
 
 func (i *IntervalLiteral) exprNode() {}
 
+// ColDef represents a column definition in CREATE TABLE.
 type ColDef struct {
 	Name             string
 	Type             int
@@ -216,15 +241,18 @@ type ColDef struct {
 	Initially     string // REQ000561: INITIALLY DEFERRED / IMMEDIATE
 }
 
+// NewColDef creates a new column definition with the given name and type.
 func NewColDef(name string, typ int) ColDef {
 	return ColDef{Name: name, Type: typ, Nullable: true}
 }
 
+// Pair represents a column-value pair used in UPDATE SET clauses.
 type Pair struct {
 	Col string
 	Val Expr
 }
 
+// CreateTable represents a CREATE TABLE statement.
 type CreateTable struct {
 	Name              string
 	Cols              []ColDef
@@ -262,6 +290,7 @@ func UniqueKeyFromName(name string) UniqueKey {
 
 func (c *CreateTable) stmtNode() {}
 
+// DropTable represents a DROP TABLE statement.
 type DropTable struct {
 	Name     string
 	IfExists bool // REQ000497: DROP TABLE IF EXISTS
@@ -288,6 +317,7 @@ const (
 	ConflictActionReplace
 )
 
+// Insert represents an INSERT statement.
 type Insert struct {
 	Table          string
 	Cols           []string
@@ -388,11 +418,12 @@ type RollbackToStmt struct {
 
 func (r *RollbackToStmt) stmtNode() {}
 
-// REQ000529/569: IndexHint represents an INDEXED BY name or NOT INDEXED hint.
+// IndexHint represents an INDEXED BY name or NOT INDEXED hint.
 type IndexHint struct {
 	IndexedBy string // non-empty = INDEXED BY name; empty = NOT INDEXED
 }
 
+// Update represents an UPDATE statement.
 type Update struct {
 	Table       string
 	Set         []Pair
@@ -407,6 +438,7 @@ type Update struct {
 
 func (u *Update) stmtNode() {}
 
+// Delete represents a DELETE statement.
 type Delete struct {
 	Table       string
 	Where       Expr
@@ -420,18 +452,21 @@ type Delete struct {
 
 func (d *Delete) stmtNode() {}
 
+// OrderItem represents an ORDER BY clause item.
 type OrderItem struct {
 	Expr      Expr
 	Desc      bool
 	Collation string // REQ000565: COLLATE name
 }
 
+// JoinClause represents a JOIN clause.
 type JoinClause struct {
 	Kind  string // "INNER", "LEFT", "RIGHT", "CROSS"
 	Right string
 	On    Expr
 }
 
+// Select represents a SELECT statement.
 type Select struct {
 	Cols        []Expr
 	From        string
@@ -466,6 +501,7 @@ const (
 	CompoundExcept
 )
 
+// String returns the SQL keyword for the compound operator.
 func (c CompoundOp) String() string {
 	switch c {
 	case CompoundUnionAll:
@@ -494,20 +530,24 @@ type CompoundStmt struct {
 
 func (c *CompoundStmt) stmtNode() {}
 
+// BeginTX represents a BEGIN TRANSACTION statement.
 type BeginTX struct {
 	Mode string // "" for bare BEGIN, "DEFERRED", "IMMEDIATE", "EXCLUSIVE" (REQ000559)
 }
 
 func (b *BeginTX) stmtNode() {}
 
+// CommitTX represents a COMMIT statement.
 type CommitTX struct{}
 
 func (c *CommitTX) stmtNode() {}
 
+// RollbackTX represents a ROLLBACK statement.
 type RollbackTX struct{}
 
 func (r *RollbackTX) stmtNode() {}
 
+// ExplainMode represents the EXPLAIN mode.
 type ExplainMode int
 
 const (
@@ -515,6 +555,7 @@ const (
 	ExplainQueryPlan
 )
 
+// ExplainStmt represents an EXPLAIN statement.
 type ExplainStmt struct {
 	Mode  ExplainMode
 	Inner Stmt

@@ -6,8 +6,10 @@ import (
 	"strings"
 )
 
+// ErrSyntax is the sentinel error for all syntax errors.
 var ErrSyntax = errors.New("ps: syntax error")
 
+// SyntaxError represents a SQL syntax error with location information.
 type SyntaxError struct {
 	Input    string
 	Line     int

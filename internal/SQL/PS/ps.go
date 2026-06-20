@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// Parser is a recursive-descent SQL parser that produces an AST.
 type Parser struct {
 	lex                  *LX.Lexer
 	current              LX.Token
@@ -14,6 +15,7 @@ type Parser struct {
 	pendingSubqueryAlias string
 }
 
+// NewParser creates a new Parser for the given SQL input string.
 func NewParser(input string) *Parser {
 	return &Parser{
 		lex:     LX.NewLexer(input),
