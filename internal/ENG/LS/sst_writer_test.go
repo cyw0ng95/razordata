@@ -162,8 +162,8 @@ func TestSSTWriterBloomSizeScalesWithKeyCount(t *testing.T) {
 		wantAtLeast int
 		wantAtMost  int
 	}{
-		{"five_keys", 5, 7, 7},              // (5*10+7)/8 =7
-		{"two_hundred_keys", 200, 250, 250}, // (200*10+7)/8 =250
+		{"five_keys", 5, 7, 8},              // (5*10+7)/8=7, pow2=8
+		{"two_hundred_keys", 200, 250, 256}, // (200*10+7)/8=250, pow2=256
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

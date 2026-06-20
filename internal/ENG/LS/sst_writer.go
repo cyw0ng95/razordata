@@ -76,6 +76,13 @@ func bloomSizeFor(n int) int {
 	return (n*10 + 7) / 8
 }
 
+// bloomSizeForPow2 returns a byte count that is a power of 2,
+// large enough to hold bloomSizeFor(n) bytes.
+func bloomSizeForPow2(n int) int {
+	base := bloomSizeFor(n)
+	return int(nextPow2(uint32(base)))
+}
+
 func (w *sstWriter) Add(key, value []byte) {
 	if w.keyCount == 0 || bytes.Compare(key, w.minKey) < 0 {
 		w.minKey = append(w.minKey[:0], key...)
@@ -118,8 +125,9 @@ func (w *sstWriter) setBloomBitForSize(key []byte, size int) {
 	h2 := fnv1aHash(key, fnv1aPrime32)
 
 	bitCount := uint32(size * 8)
-	bucket1 := int(h1 % bitCount)
-	bucket2 := int(h2 % bitCount)
+	mask := bitCount - 1
+	bucket1 := int(h1 & mask)
+	bucket2 := int(h2 & mask)
 
 	w.bloom[bucket1/8] |= 1 << (bucket1 % 8)
 	w.bloom[bucket2/8] |= 1 << (bucket2 % 8)
@@ -128,9 +136,9 @@ func (w *sstWriter) setBloomBitForSize(key []byte, size int) {
 func (w *sstWriter) setPrefixBloomBit(prefix []byte, size int) {
 	h1 := fnv1aHash(prefix, fnv1aOffset32)
 	h2 := fnv1aHash(prefix, fnv1aPrime32)
-	sizeU := uint32(size)
-	bucket1 := int(h1 % sizeU)
-	bucket2 := int(h2 % sizeU)
+	mask := uint32(size) - 1
+	bucket1 := int(h1 & mask)
+	bucket2 := int(h2 & mask)
 	if bucket1/8 < len(w.prefixBloom) {
 		w.prefixBloom[bucket1/8] |= 1 << (bucket1 % 8)
 	}
@@ -171,13 +179,13 @@ func (w *sstWriter) Finish() ([]byte, error) {
 
 	w.finishCurrentBlock()
 
-	bloomSize := bloomSizeFor(w.keyCount)
+	bloomSize := bloomSizeForPow2(w.keyCount)
 	w.bloom = make([]byte, bloomSize)
 	for _, k := range w.keys {
 		w.setBloomBitForSize(k, bloomSize)
 	}
 
-	prefixBloomSize := bloomSizeFor(w.keyCount)
+	prefixBloomSize := bloomSizeForPow2(w.keyCount)
 	w.prefixBloom = make([]byte, prefixBloomSize)
 	for _, k := range w.keys {
 		prefix := k

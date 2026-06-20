@@ -107,9 +107,9 @@ func (r *sstReader) mayContain(key []byte) bool {
 	h1 := fnv1aHash(key, fnv1aOffset32)
 	h2 := fnv1aHash(key, fnv1aPrime32)
 
-	size := uint32(len(r.bloom) * 8)
-	bucket1 := int(h1 % size)
-	bucket2 := int(h2 % size)
+	mask := uint32(len(r.bloom)*8) - 1
+	bucket1 := int(h1 & mask)
+	bucket2 := int(h2 & mask)
 
 	return (r.bloom[bucket1/8]&(1<<(bucket1%8)) != 0) &&
 		(r.bloom[bucket2/8]&(1<<(bucket2%8)) != 0)
@@ -124,12 +124,11 @@ func (r *sstReader) MayContainPrefix(prefix []byte) bool {
 	if len(prefix) > 8 {
 		prefix = prefix[:8]
 	}
-	size := uint32(len(r.prefixBloom))
+	mask := uint32(len(r.prefixBloom)) - 1
 	h1 := fnv1aHash(prefix, fnv1aOffset32)
 	h2 := fnv1aHash(prefix, fnv1aPrime32)
-	// REQ000615: modulo before cast.
-	bucket1 := int(h1 % size)
-	bucket2 := int(h2 % size)
+	bucket1 := int(h1 & mask)
+	bucket2 := int(h2 & mask)
 	return (r.prefixBloom[bucket1/8]&(1<<(bucket1%8)) != 0) &&
 		(r.prefixBloom[bucket2/8]&(1<<(bucket2%8)) != 0)
 }
