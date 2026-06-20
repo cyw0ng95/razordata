@@ -800,14 +800,17 @@ func swapOp(op int) int {
 
 // invertSelection returns the complement of the selection vector
 // within [0, n). E.g., sel=[0,2,4] with n=6 -> [1,3,5].
+// Uses a [BatchSize]bool bitmap instead of a map for zero allocation.
 func invertSelection(sel []uint16, n int) []uint16 {
-	selSet := make(map[uint16]struct{}, len(sel))
+	var bitmap [BatchSize]bool
 	for _, idx := range sel {
-		selSet[idx] = struct{}{}
+		if int(idx) < BatchSize {
+			bitmap[idx] = true
+		}
 	}
 	inv := make([]uint16, 0, n-len(sel))
 	for i := 0; i < n; i++ {
-		if _, found := selSet[uint16(i)]; !found {
+		if !bitmap[i] {
 			inv = append(inv, uint16(i))
 		}
 	}
