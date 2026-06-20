@@ -1475,6 +1475,24 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 		return row, nil
 	}
 
+	// Handle PRAGMA wal_checkpoint (REQ000735)
+	if p.stmt.Name == "wal_checkpoint" || p.stmt.Name == "wal_autocheckpoint" {
+		if !p.done {
+			p.done = true
+			// Return checkpoint status: busy, log, checkpointed
+			p.rows = append(p.rows, Row{
+				Cols: []string{"busy", "log", "checkpointed"},
+				Data: []any{int64(0), int64(0), int64(0)},
+			})
+		}
+		if p.idx >= len(p.rows) {
+			return Row{}, ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
 	// Default: handle PRAGMA name = value (write) and notify listeners
 	if !p.done {
 		p.done = true
