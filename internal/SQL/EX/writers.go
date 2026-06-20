@@ -15,6 +15,7 @@ type Insert struct {
 	table          string
 	cols           []string
 	values         [][]PS.Expr
+	selectPlan     Operator // REQ000707: INSERT INTO t SELECT ...
 	returning      []PS.Expr
 	onConflict     *PS.OnConflict
 	conflictAction PS.ConflictAction
@@ -79,6 +80,12 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		return Row{}, ErrNoRows
 	}
 	i.done = true
+
+	// REQ000707: INSERT INTO t SELECT ...
+	if i.selectPlan != nil {
+		return i.nextFromSelect(ctx)
+	}
+
 	if i.store != nil {
 		return i.nextFromStore(ctx)
 	}
@@ -359,6 +366,121 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		return row, nil
 	}
 	return Row{}, ErrNoRows
+}
+
+// nextFromSelect handles INSERT INTO t SELECT ... by executing
+// the SELECT query and inserting each row into the target table.
+// REQ000707.
+func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
+	schema := Schema(i.table)
+	if schema == nil && len(i.cols) > 0 {
+		schema = i.cols
+	}
+	var cschema *storeSchema
+	if ss, ok := schemaFor(i.table); ok {
+		cschema = ss
+	}
+
+	// Execute SELECT first (outside the lock to avoid deadlock)
+	var selectRows []Row
+	for {
+		row, err := i.selectPlan.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return Row{}, err
+		}
+		selectRows = append(selectRows, row)
+	}
+
+	// Now insert all rows
+	tablesMu.Lock()
+	defer tablesMu.Unlock()
+	existing := tables[i.table]
+	if tw := CurrentTxWriter(); tw != nil {
+		tw.RecordInMemoryTable(i.table, SnapshotInMemoryTable(i.table))
+	}
+
+	pending := make(map[string]struct{})
+	lookup := inMemoryLookup(i.table)
+
+	for _, row := range selectRows {
+		// Build insert row from SELECT result
+		out, err := buildInsertRowFromSelect(schema, i.cols, row)
+		if err != nil {
+			return Row{}, err
+		}
+
+		if cschema != nil {
+			if out, err = fillDefaults(cschema, out); err != nil {
+				return Row{}, err
+			}
+			if err := validateRow(cschema, out); err != nil {
+				return Row{}, err
+			}
+			if err := checkUnique(cschema, out, pending, Row{}, asUniqueLookup(lookup)); err != nil {
+				if i.conflictAction == PS.ConflictActionIgnore {
+					continue
+				}
+				return Row{}, err
+			}
+		}
+
+		existing = append(existing, out)
+		i.rows++
+
+		if len(i.returning) > 0 {
+			expanded := expandReturningStar(i.returning, out.Cols)
+			resultRow := Row{
+				Cols:  make([]string, len(expanded)),
+				Types: make([]int, len(expanded)),
+				Data:  make([]any, len(expanded)),
+			}
+			for j, expr := range expanded {
+				val, err := Eval(expr, &out, i.params)
+				if err != nil {
+					return Row{}, err
+				}
+				resultRow.Cols[j] = colNameForReturning(expr, out.Cols, j)
+				resultRow.Data[j] = val
+			}
+			i.resultRows = append(i.resultRows, resultRow)
+		}
+	}
+	tables[i.table] = existing
+
+	if len(i.resultRows) > 0 {
+		row := i.resultRows[0]
+		i.resultPos = 1
+		return row, nil
+	}
+	return Row{}, ErrNoRows
+}
+
+// buildInsertRowFromSelect builds an insert row from a SELECT result row.
+func buildInsertRowFromSelect(schema []string, cols []string, src Row) (Row, error) {
+	if len(cols) > 0 {
+		// Map SELECT columns to insert columns by position
+		out := Row{Cols: append([]string(nil), schema...)}
+		out.Data = make([]any, len(schema))
+		colIdx := make(map[string]int, len(schema))
+		for i, c := range schema {
+			colIdx[c] = i
+		}
+		for i, col := range cols {
+			if idx, ok := colIdx[col]; ok {
+				if i < len(src.Data) {
+					out.Data[idx] = src.Data[i]
+				}
+			}
+		}
+		return out, nil
+	}
+	// No column list: use SELECT columns directly
+	out := Row{Cols: append([]string(nil), src.Cols...)}
+	out.Data = append([]any(nil), src.Data...)
+	return out, nil
 }
 
 func (i *Insert) Close() error {

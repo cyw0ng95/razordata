@@ -777,6 +777,22 @@ func (e *Executor) Explain(sql string) (string, error) {
 func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	switch s := stmt.(type) {
 	case *PS.Insert:
+		// REQ000707: INSERT INTO t SELECT ...
+		if s.Select != nil {
+			selPlan, err := e.planner.Plan(s.Select)
+			if err != nil {
+				return nil, err
+			}
+			if selPlan == nil || selPlan.root == nil {
+				return nil, fmt.Errorf("ex: INSERT SELECT: plan produced no root")
+			}
+			op := NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+			op.selectPlan = selPlan.root
+			op.conflictAction = s.ConflictAction
+			propagatePlanner(selPlan.root, e.planner)
+			return op, nil
+		}
+
 		op, iErr := func() (*Insert, error) {
 			if e.store != nil {
 				return NewInsertWithStore(e.store, s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)

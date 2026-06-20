@@ -1538,6 +1538,17 @@ func limitInt64(e PS.Expr) (int64, bool) {
 }
 
 func (p *Planner) planInsert(s *PS.Insert) Operator {
+	// REQ000707: INSERT INTO t SELECT ...
+	if s.Select != nil {
+		selPlan, err := p.Plan(s.Select)
+		if err == nil && selPlan != nil && selPlan.root != nil {
+			op := NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+			op.selectPlan = selPlan.root
+			propagatePlanner(selPlan.root, p)
+			return op
+		}
+	}
+
 	var op *Insert
 	if p.store != nil {
 		var err error

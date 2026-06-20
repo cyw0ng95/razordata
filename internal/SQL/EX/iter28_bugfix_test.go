@@ -1165,3 +1165,49 @@ func TestBugfix_SLT_NegateAggregate(t *testing.T) {
 		}
 	})
 }
+
+// REQ000707: INSERT ... SELECT executor support.
+func TestBugfix_InsertSelect(t *testing.T) {
+	ResetForTest(t)
+	ex := NewExecutor()
+	defer UnregisterAll()
+	ctx := context.Background()
+
+	ex.RegisterTableWithPK("src", []string{"id", "v"}, "id")
+	ex.RegisterTableWithPK("dst", []string{"id", "v"}, "id")
+
+	for i := int64(1); i <= 5; i++ {
+		ex.Exec(ctx, "INSERT INTO src VALUES (?, ?)", i, i*10)
+	}
+
+	t.Run("simple", func(t *testing.T) {
+		_, err := ex.Exec(ctx, "INSERT INTO dst SELECT * FROM src WHERE v > 20")
+		if err != nil {
+			t.Fatalf("INSERT SELECT: %v", err)
+		}
+
+		rows, err := ex.QueryAll(ctx, "SELECT * FROM dst ORDER BY id")
+		if err != nil {
+			t.Fatalf("SELECT: %v", err)
+		}
+		if len(rows) != 3 {
+			t.Errorf("got %d rows, want 3; data=%v", len(rows), rows)
+		}
+	})
+
+	t.Run("with_cols", func(t *testing.T) {
+		_, err := ex.Exec(ctx, "INSERT INTO dst (id, v) SELECT id, v FROM src WHERE v <= 20")
+		if err != nil {
+			t.Fatalf("INSERT SELECT cols: %v", err)
+		}
+
+		rows, err := ex.QueryAll(ctx, "SELECT count(*) FROM dst")
+		if err != nil {
+			t.Fatalf("SELECT count: %v", err)
+		}
+		// 3 from previous + 2 from this = 5
+		if rows[0].Data[0] != int64(5) {
+			t.Errorf("got %v, want 5", rows[0].Data[0])
+		}
+	})
+}
