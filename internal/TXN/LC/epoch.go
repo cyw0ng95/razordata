@@ -114,7 +114,7 @@ func (em *epochManager) Stop() {
 // WaitForDrain blocks until all active readers reach quiescent state.
 func (em *epochManager) WaitForDrain(maxSpins int) bool {
 	prev := em.epoch.Load()
-	for i := 0; i < maxSpins; i++ {
+	for range maxSpins {
 		if em.allStale(prev) {
 			return true
 		}

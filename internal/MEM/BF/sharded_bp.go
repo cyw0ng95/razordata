@@ -39,7 +39,7 @@ func newShardedBufferPool(n int) *shardedBufferPool {
 	n = nextPowerOf2(n)
 
 	shards := make([]*bufferShard, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		shards[i] = &bufferShard{
 			slots:    make(map[uint64]*bufferSlot),
 			capacity: 0, // unlimited per-shard capacity; global capacity enforced at sbp level
@@ -228,7 +228,7 @@ func (sbp *shardedBufferPool) evictOne(pass int, shard *bufferShard, idx int) ([
 	}
 
 	// This shard has no eligible victims. Search other shards.
-	for otherIdx := 0; otherIdx < sbp.n; otherIdx++ {
+	for otherIdx := range sbp.n {
 		if otherIdx == idx {
 			continue
 		}

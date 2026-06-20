@@ -58,7 +58,7 @@ func (q *qsbrManager) Exit(shard int) {
 
 // IsQuiescent returns true if all shards are at 0.
 func (q *qsbrManager) IsQuiescent() bool {
-	for i := 0; i < qsbrShardCount; i++ {
+	for i := range qsbrShardCount {
 		if q.perShard[i].flag.Load() != 0 {
 			return false
 		}
@@ -68,7 +68,7 @@ func (q *qsbrManager) IsQuiescent() bool {
 
 // WaitQuiescent spins until all readers have exited.
 func (q *qsbrManager) WaitQuiescent(maxSpins int) bool {
-	for i := 0; i < maxSpins; i++ {
+	for range maxSpins {
 		if q.IsQuiescent() {
 			return true
 		}
@@ -104,7 +104,7 @@ type qsbrStats struct {
 
 func (q *qsbrManager) Stats() qsbrStats {
 	active := 0
-	for i := 0; i < qsbrShardCount; i++ {
+	for i := range qsbrShardCount {
 		if q.perShard[i].flag.Load() != 0 {
 			active++
 		}

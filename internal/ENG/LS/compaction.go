@@ -368,7 +368,7 @@ func (cm *compactionManager) MaybeCompact() {
 
 	style := CompactionStyle(cm.style.Load())
 	v := cm.manifest.Current()
-	for level := 0; level < len(v.levels)-1; level++ {
+	for level := range len(v.levels) - 1 {
 		files := v.levels[level]
 		totalSize := int64(0)
 		for _, f := range files {

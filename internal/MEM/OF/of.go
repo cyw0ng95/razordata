@@ -51,7 +51,7 @@ func sizeClass(n int) int {
 // OffHeap is the pool itself.
 type OffHeap struct {
 	// Per-class free lists. Indexed by class index (0..classCount-1).
-	pools [classCount]sync.Pool
+	pools  [classCount]sync.Pool
 	gets   atomic.Uint64
 	puts   atomic.Uint64
 	misses atomic.Uint64 // gets that had to allocate
@@ -70,7 +70,7 @@ func classIndex(c int) int {
 // NewOffHeap returns a fresh pool.
 func NewOffHeap() *OffHeap {
 	oh := &OffHeap{}
-	for i := 0; i < classCount; i++ {
+	for i := range classCount {
 		size := sizeClasses[i]
 		oh.pools[i].New = func() any {
 			oh.misses.Add(1)

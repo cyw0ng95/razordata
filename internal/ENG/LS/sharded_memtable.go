@@ -25,8 +25,8 @@ func (a *iteratorAdapter) Close() error {
 // concurrency. REQ000537.
 type shardedMemtable struct {
 	shards_ []*memtable
-	hash   shardHash
-	n      int
+	hash    shardHash
+	n       int
 	// totalSize tracks the combined size of all shards for flush decisions
 	totalSize atomic.Int64
 	// maxSize is the total size threshold that triggers a flush
@@ -51,12 +51,12 @@ func newShardedMemtable(maxSize int64, n int) *shardedMemtable {
 
 	shards := make([]*memtable, n)
 	frozen := make([]atomic.Bool, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		shards[i] = newMemtable(maxSize / int64(n))
 	}
 
 	sm := &shardedMemtable{
-		shards_:  shards,
+		shards_: shards,
 		n:       n,
 		maxSize: maxSize,
 		frozen:  frozen,

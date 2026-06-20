@@ -50,7 +50,7 @@ func New() *skipList {
 	sl := &skipList{}
 	sl.level.Store(1)
 	head := &node{}
-	for i := 0; i < maxLevel; i++ {
+	for i := range maxLevel {
 		head.next[i].Store(nil)
 	}
 	sl.head.Store(head)
@@ -96,7 +96,7 @@ func (sl *skipList) Insert(key, value []byte) {
 			}
 		}
 
-		for i := 0; i < lvl; i++ {
+		for i := range lvl {
 			if predecessors[i] == nil {
 				predecessors[i] = head
 				successors[i] = head.next[i].Load()
@@ -113,7 +113,7 @@ func (sl *skipList) Insert(key, value []byte) {
 
 		newNode := &node{key: key, value: atomic.Value{}}
 		newNode.value.Store(value)
-		for i := 0; i < lvl; i++ {
+		for i := range lvl {
 			newNode.next[i].Store(successors[i])
 		}
 

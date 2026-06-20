@@ -181,12 +181,12 @@ func parseManifest(data []byte) (*Version, error) {
 
 	v.levels = make([][]SSTFileMeta, levelCount)
 
-	for i := 0; i < levelCount; i++ {
+	for i := range levelCount {
 		fileCount := int(binary.LittleEndian.Uint64(data[offset:]))
 		offset += 8
 
 		v.levels[i] = make([]SSTFileMeta, fileCount)
-		for j := 0; j < fileCount; j++ {
+		for j := range fileCount {
 			keyLen, n := decodeVarint(data[offset:])
 			offset += n
 			if offset+int(keyLen) > len(data) {

@@ -123,7 +123,7 @@ func (c *PageCache) Put(fileID uint64, offset uint32, data []byte) {
 // evict returns a free or evicted slot using clock-sweep.
 func (c *PageCache) evict() *pageEntry {
 	// First pass: look for invalid (free) slot.
-	for i := 0; i < c.cap; i++ {
+	for i := range c.cap {
 		if !c.slots[i].valid.Load() {
 			return c.slots[i]
 		}

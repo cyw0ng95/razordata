@@ -260,7 +260,7 @@ func decodeBlock(data []byte) ([]kvPair, error) {
 	}
 
 	restartPoints := make([]int, restartCount)
-	for i := 0; i < restartCount; i++ {
+	for i := range restartCount {
 		if restartOffset+i*4+4 <= len(data)-4 {
 			restartPoints[i] = int(binary.LittleEndian.Uint32(data[restartOffset+i*4:]))
 		}

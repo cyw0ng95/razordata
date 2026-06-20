@@ -157,6 +157,30 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Short-circuit AND/OR: defer right-side evaluation until
+	// we know it's needed. All other operators need both sides.
+	if e.Op == int(LX.T_AND) {
+		if b, ok := left.(bool); ok && !b {
+			return false, nil
+		}
+		right, err := Eval(e.Right, row, params)
+		if err != nil {
+			return nil, err
+		}
+		return band(left, right)
+	}
+	if e.Op == int(LX.T_OR) {
+		if b, ok := left.(bool); ok && b {
+			return true, nil
+		}
+		right, err := Eval(e.Right, row, params)
+		if err != nil {
+			return nil, err
+		}
+		return bor(left, right)
+	}
+
 	right, err := Eval(e.Right, row, params)
 	if err != nil {
 		return nil, err
@@ -239,31 +263,6 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
 		return bitxor(left, right)
 	case int(LX.T_CONCAT):
 		return concat(left, right)
-	case int(LX.T_AND):
-		// REQ000579: short-circuit evaluation. false AND right
-		// = false regardless of right (even if right has side
-		// effects or division-by-zero). true/NULL AND right must
-		// evaluate right and use band's three-valued logic.
-		if b, ok := left.(bool); ok && !b {
-			return false, nil
-		}
-		rval, err := Eval(e.Right, row, params)
-		if err != nil {
-			return nil, err
-		}
-		return band(left, rval)
-	case int(LX.T_OR):
-		// REQ000579: short-circuit evaluation. true OR right
-		// = true regardless of right. false/NULL OR right must
-		// evaluate right and use bor's three-valued logic.
-		if b, ok := left.(bool); ok && b {
-			return true, nil
-		}
-		rval, err := Eval(e.Right, row, params)
-		if err != nil {
-			return nil, err
-		}
-		return bor(left, rval)
 	case int(LX.T_LIKE):
 		{
 			var esc string

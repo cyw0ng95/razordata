@@ -244,7 +244,7 @@ func (fm *flushManager) requestFlush(m *memtable) {
 		fileID:     id,
 		level:      0,
 	}
-	for attempt := 0; attempt < maxFlushRetries; attempt++ {
+	for range maxFlushRetries {
 		select {
 		case <-fm.done:
 			return
