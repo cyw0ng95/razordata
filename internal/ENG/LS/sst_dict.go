@@ -2,9 +2,10 @@ package ls
 
 import (
 	"bytes"
+	"cmp"
 	"compress/flate"
 	"encoding/binary"
-	"sort"
+	"slices"
 )
 
 // dictTrainer builds a frequency-based dictionary for SST compression (REQ000297).
@@ -45,7 +46,7 @@ func (dt *dictTrainer) train(block []byte) []byte {
 		}
 		pairs = append(pairs, pair{s, n})
 	}
-	sort.Slice(pairs, func(i, j int) bool { return pairs[i].n > pairs[j].n })
+	slices.SortFunc(pairs, func(a, b pair) int { return cmp.Compare(b.n, a.n) })
 	var dict bytes.Buffer
 	dict.Grow(dt.maxDictSize)
 	for _, p := range pairs {

@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,15 +51,15 @@ type sharedLogger struct {
 	mu     sync.RWMutex
 
 	// Rotation fields
-	dir             string        // log directory, empty = no rotation
+	dir             string // log directory, empty = no rotation
 	baseName        string
-	maxSize         int64         // rotation threshold in bytes
-	maxFiles        int           // max rotated files to retain
-	compressRotated bool          // gzip rotated files (R16-15)
+	maxSize         int64 // rotation threshold in bytes
+	maxFiles        int   // max rotated files to retain
+	compressRotated bool  // gzip rotated files (R16-15)
 	curSize         atomic.Int64
 	callCount       atomic.Uint64 // log call counter for throttled rotation check
 	rotationFn      func() error
-	rotMu           sync.Mutex    // mutex just for rotation
+	rotMu           sync.Mutex // mutex just for rotation
 }
 
 const rotationCheckInterval = 4 // check rotation every 4 log calls
@@ -386,7 +386,7 @@ func (s *sharedLogger) listRotatedFiles() ([]string, error) {
 		rotated = append(rotated, filepath.Join(s.dir, name))
 	}
 
-	sort.Strings(rotated)
+	slices.Sort(rotated)
 	return rotated, nil
 }
 

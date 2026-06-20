@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -180,7 +180,7 @@ func (sm *SegmentManager) ListSegments() ([]uint64, error) {
 		nums = append(nums, n)
 	}
 
-	sort.Slice(nums, func(i, j int) bool { return nums[i] < nums[j] })
+	slices.Sort(nums)
 	return nums, nil
 }
 

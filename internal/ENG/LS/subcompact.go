@@ -5,7 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"sync"
 
 	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
@@ -115,7 +115,7 @@ func pivotKeys(inputs []SSTFileMeta, n int) [][]byte {
 		all = append(all, in.MinKey)
 		all = append(all, in.MaxKey)
 	}
-	sort.Slice(all, func(i, j int) bool { return bytes.Compare(all[i], all[j]) < 0 })
+	slices.SortFunc(all, func(a, b []byte) int { return bytes.Compare(a, b) })
 
 	pivots := make([][]byte, 0, n+1)
 	step := len(all) / (n + 1)

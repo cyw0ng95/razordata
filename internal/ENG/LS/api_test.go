@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"container/heap"
 	"path/filepath"
-	"sort"
+	"slices"
 	"testing"
 )
 
@@ -76,7 +76,7 @@ func TestEngine_NewIterator_PrefixFilter(t *testing.T) {
 	if err := it.Err(); err != nil {
 		t.Fatalf("iterator error: %v", err)
 	}
-	sort.Strings(got)
+	slices.Sort(got)
 	want := []string{"u:1=alice", "u:2=bob", "u:3=carol"}
 	if !equalStringSlices(got, want) {
 		t.Errorf("iterator got %v, want %v", got, want)
@@ -110,7 +110,7 @@ func TestEngine_NewIterator_SkipsTombstones(t *testing.T) {
 	for it.Next() {
 		got = append(got, string(it.Key()))
 	}
-	sort.Strings(got)
+	slices.Sort(got)
 	want := []string{"a", "c"}
 	if !equalStringSlices(got, want) {
 		t.Errorf("got %v, want %v", got, want)

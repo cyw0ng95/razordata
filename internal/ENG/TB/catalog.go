@@ -4,13 +4,14 @@
 package tb
 
 import (
-	"sync/atomic"
+	"cmp"
 	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"sync"
+	"sync/atomic"
 
 	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
 )
@@ -342,7 +343,7 @@ func (c *Catalog) List() []*Entry {
 		}
 		out = append(out, &cp)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].TableID < out[j].TableID })
+	slices.SortFunc(out, func(a, b *Entry) int { return cmp.Compare(a.TableID, b.TableID) })
 	return out
 }
 
@@ -373,7 +374,7 @@ func (c *Catalog) flushLocked() error {
 	for id := range c.cache {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	buf = binary.AppendUvarint(buf, uint64(len(ids)))
 	for _, id := range ids {
 		buf = encodeCatalogEntry(c.cache[id], buf)

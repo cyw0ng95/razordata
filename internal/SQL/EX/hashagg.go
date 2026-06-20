@@ -6,7 +6,7 @@ package EX
 
 import (
 	"context"
-	"sort"
+	"slices"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
@@ -82,8 +82,10 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 		}
 		a.buckets[ks] = append(a.buckets[ks], row)
 	}
-	sort.SliceStable(a.order, func(i, j int) bool {
-		return keysLessByDistinct(a.buckets[a.order[i]][0], a.buckets[a.order[j]][0], a.groupCols)
+	slices.SortStableFunc(a.order, func(i, j string) int {
+		ai := a.buckets[i][0]
+		aj := a.buckets[j][0]
+		return keysLessByDistinctCmp(ai, aj, a.groupCols)
 	})
 	for _, ks := range a.order {
 		key := a.buckets[ks][0]
@@ -107,16 +109,17 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 }
 
 func keysLessByDistinct(a, b Row, groupCols []PS.Expr) bool {
+	return keysLessByDistinctCmp(a, b, groupCols) < 0
+}
+
+func keysLessByDistinctCmp(a, b Row, groupCols []PS.Expr) int {
 	for _, gc := range groupCols {
 		va, _ := Eval(gc, &a, nil)
 		vb, _ := Eval(gc, &b, nil)
 		c := compare(va, vb)
-		if c < 0 {
-			return true
-		}
-		if c > 0 {
-			return false
+		if c != 0 {
+			return c
 		}
 	}
-	return false
+	return 0
 }

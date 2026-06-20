@@ -2,7 +2,7 @@ package EX
 
 import (
 	"context"
-	"sort"
+	"slices"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
@@ -190,20 +190,18 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 			sorted[i] = sortRow{row: r, keys: sk}
 		}
 
-		sort.SliceStable(sorted, func(i, j int) bool {
-			a := sorted[i].keys
-			b := sorted[j].keys
-			for ki := range a {
-				c := compare(a[ki], b[ki])
+		slices.SortStableFunc(sorted, func(a, b sortRow) int {
+			for ki := range a.keys {
+				c := compare(a.keys[ki], b.keys[ki])
 				if c == 0 {
 					continue
 				}
 				if s.keys[ki].Desc {
-					return c > 0
+					return -c
 				}
-				return c < 0
+				return c
 			}
-			return false
+			return 0
 		})
 
 		s.buf = make([]Row, len(sorted))

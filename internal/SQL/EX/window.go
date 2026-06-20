@@ -3,7 +3,7 @@ package EX
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
@@ -139,20 +139,19 @@ func (w *WindowOperator) sortPartition(indices []int) {
 	if len(w.spec.OrderBy) == 0 {
 		return
 	}
-	sort.SliceStable(indices, func(i, j int) bool {
-		ri, rj := indices[i], indices[j]
+	slices.SortStableFunc(indices, func(a, b int) int {
 		for _, item := range w.spec.OrderBy {
-			vi, _ := Eval(item.Expr, &w.rows[ri], nil)
-			vj, _ := Eval(item.Expr, &w.rows[rj], nil)
+			vi, _ := Eval(item.Expr, &w.rows[a], nil)
+			vj, _ := Eval(item.Expr, &w.rows[b], nil)
 			cmp := compare(vi, vj)
 			if cmp != 0 {
 				if item.Desc {
-					return cmp > 0
+					return -cmp
 				}
-				return cmp < 0
+				return cmp
 			}
 		}
-		return false
+		return 0
 	})
 }
 

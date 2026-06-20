@@ -1,7 +1,7 @@
 package EX
 
 import (
-	"sort"
+	"slices"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
@@ -463,7 +463,7 @@ func evalInListBatch(col Column, list []any, n int) []uint16 {
 		if len(ints) == 0 {
 			return nil
 		}
-		sort.Slice(ints, func(i, j int) bool { return ints[i] < ints[j] })
+		slices.Sort(ints)
 		sel := make([]uint16, 0, n)
 		for i := 0; i < n; i++ {
 			if isNull(col, i) {

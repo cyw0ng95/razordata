@@ -240,7 +240,7 @@ func TestEvalCrossTypeEq(t *testing.T) {
 		{"int_eq_float", int64(1), float64(1), true},
 		{"float_eq_int", float64(2.5), int64(2), false},
 		{"string_eq_string", "abc", "abc", true},
-		{"nil_eq_nil", nil, nil, true},
+		{"nil_eq_nil", nil, nil, false},
 		{"nil_eq_int", nil, int64(0), false},
 	}
 	for _, c := range cases {

@@ -2,7 +2,7 @@ package EX
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
@@ -124,8 +124,14 @@ func (s *ParallelSort) parallelSort() {
 		wg.Add(1)
 		err := s.pool.Submit(context.Background(), func() error {
 			defer wg.Done()
-			sort.SliceStable(p, func(a, b int) bool {
-				return lessRow(p[a], p[b], s.keys)
+			slices.SortStableFunc(p, func(a, b Row) int {
+				if lessRow(a, b, s.keys) {
+					return -1
+				}
+				if lessRow(b, a, s.keys) {
+					return 1
+				}
+				return 0
 			})
 			sorted[i] = p
 			return nil
@@ -152,8 +158,14 @@ func (s *ParallelSort) parallelSort() {
 
 // sequentialSort uses Go's built-in sort.
 func (s *ParallelSort) sequentialSort() {
-	sort.SliceStable(s.rows, func(a, b int) bool {
-		return lessRow(s.rows[a], s.rows[b], s.keys)
+	slices.SortStableFunc(s.rows, func(a, b Row) int {
+		if lessRow(a, b, s.keys) {
+			return -1
+		}
+		if lessRow(b, a, s.keys) {
+			return 1
+		}
+		return 0
 	})
 }
 
@@ -242,8 +254,14 @@ func (s *ParallelSort) Close() error {
 
 // sortSample sorts a small sample of rows by the given keys.
 func sortSample(rows []Row, keys []SortKey) {
-	sort.SliceStable(rows, func(a, b int) bool {
-		return lessRow(rows[a], rows[b], keys)
+	slices.SortStableFunc(rows, func(a, b Row) int {
+		if lessRow(a, b, keys) {
+			return -1
+		}
+		if lessRow(b, a, keys) {
+			return 1
+		}
+		return 0
 	})
 }
 

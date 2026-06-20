@@ -16,7 +16,7 @@ package EX
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
@@ -101,9 +101,7 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 		}
 		// Apply ORDER BY if present.
 		if len(c.orderBy) > 0 {
-			sort.SliceStable(result, func(i, j int) bool {
-				a := result[i]
-				b := result[j]
+			slices.SortStableFunc(result, func(a, b Row) int {
 				for _, k := range c.orderBy {
 					av, _ := Eval(k.Expr, &a, c.params)
 					bv, _ := Eval(k.Expr, &b, c.params)
@@ -112,11 +110,11 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 						continue
 					}
 					if k.Desc {
-						return cmp > 0
+						return -cmp
 					}
-					return cmp < 0
+					return cmp
 				}
-				return false
+				return 0
 			})
 		}
 		// Apply OFFSET / LIMIT.

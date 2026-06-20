@@ -4,7 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
@@ -715,7 +715,7 @@ func TestListSegmentsSorted(t *testing.T) {
 		t.Fatalf("ListSegments: %v", err)
 	}
 	want := []uint64{1, 2, 3, 4, 5}
-	if !reflect.DeepEqual(nums, want) {
+	if !slices.Equal(nums, want) {
 		t.Errorf("expected %v, got %v", want, nums)
 	}
 }
@@ -750,7 +750,7 @@ func TestListSegmentsIgnoresNoise(t *testing.T) {
 		t.Fatalf("ListSegments: %v", err)
 	}
 	want := []uint64{0, 1}
-	if !reflect.DeepEqual(nums, want) {
+	if !slices.Equal(nums, want) {
 		t.Errorf("expected %v, got %v", want, nums)
 	}
 }
@@ -779,7 +779,7 @@ func TestListSegmentsLarge(t *testing.T) {
 		t.Fatalf("ListSegments: %v", err)
 	}
 	want := []uint64{0, 999, 1000, 50000}
-	if !reflect.DeepEqual(nums, want) {
+	if !slices.Equal(nums, want) {
 		t.Errorf("expected %v, got %v", want, nums)
 	}
 }

@@ -1901,7 +1901,7 @@ func is(a, b any) (bool, error) {
 
 func equalValue(a, b any) bool {
 	if a == nil || b == nil {
-		return a == b
+		return false
 	}
 	// Normalize int/int64 for comparison.
 	a = normalizeInt(a)

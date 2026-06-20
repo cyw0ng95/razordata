@@ -9,7 +9,7 @@ package EX
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
@@ -104,8 +104,8 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 		// scalar aggregate: one group with zero rows
 		groups = []groupBucket{{key: nil, rows: nil}}
 	}
-	sort.SliceStable(groups, func(i, j int) bool {
-		return keysLess(groups[i].key, groups[j].key)
+	slices.SortStableFunc(groups, func(a, b groupBucket) int {
+		return keysLessCmp(a.key, b.key)
 	})
 	for _, g := range groups {
 		out := Row{Cols: make([]string, 0, len(a.groupCols)+len(a.aggs))}
@@ -156,19 +156,23 @@ func keysEqual(a, b []any) bool {
 }
 
 func keysLess(a, b []any) bool {
+	return keysLessCmp(a, b) < 0
+}
+
+func keysLessCmp(a, b []any) int {
 	for i := range a {
 		if i >= len(b) {
-			return false
+			return 0
 		}
 		c := compare(a[i], b[i])
-		if c < 0 {
-			return true
-		}
-		if c > 0 {
-			return false
+		if c != 0 {
+			return c
 		}
 	}
-	return len(a) < len(b)
+	if len(a) < len(b) {
+		return -1
+	}
+	return 0
 }
 
 func groupColName(e PS.Expr) string {

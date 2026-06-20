@@ -2,7 +2,7 @@ package EX
 
 import (
 	"context"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -70,7 +70,7 @@ func TestExecutorQueryCols(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
-	if !reflect.DeepEqual(rs.Cols, []string{"a", "b"}) {
+	if !slices.Equal(rs.Cols, []string{"a", "b"}) {
 		t.Errorf("expected cols [a b], got %v", rs.Cols)
 	}
 }
