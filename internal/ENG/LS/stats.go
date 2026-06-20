@@ -10,6 +10,8 @@ type ColumnStats struct {
 	RowCount      int64
 }
 
+// HistogramBucket represents a single bucket in a column value histogram,
+// spanning [LowerBound, UpperBound] with Count rows.
 type HistogramBucket struct {
 	LowerBound []byte
 	UpperBound []byte
@@ -17,6 +19,7 @@ type HistogramBucket struct {
 }
 
 // StatsEntry maps a column name to its ColumnStats.
+// StatsEntry maps a table column to its collected statistics.
 type StatsEntry struct {
 	TableID uint64
 	Column  string

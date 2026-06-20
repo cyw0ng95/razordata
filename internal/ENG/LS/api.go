@@ -38,6 +38,8 @@ func OpenWithOptions(dir string, opts Options) (*Engine, error) {
 	return &Engine{e: e}, nil
 }
 
+// Insert writes a key-value pair to the engine. Triggers a flush when the
+// active memtable exceeds its size threshold.
 func (eng *Engine) Insert(key, value []byte) error {
 	if eng == nil || eng.e == nil {
 		return ErrClosed
@@ -118,6 +120,7 @@ func (eng *Engine) Sync() error {
 	return eng.e.Sync()
 }
 
+// Stats returns a snapshot of the engine's read-path counters.
 func (eng *Engine) Stats() ReadStats {
 	if eng == nil || eng.e == nil {
 		return ReadStats{}
@@ -149,6 +152,7 @@ func (eng *Engine) ManualCompact() error {
 	return eng.e.cm.ManualCompact()
 }
 
+// RangeIter is an iterator over a sorted range of keys.
 type RangeIter interface {
 	Next() bool
 	Key() []byte

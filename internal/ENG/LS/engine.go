@@ -59,6 +59,7 @@ func DefaultOptions() Options {
 	}
 }
 
+// ReadStats holds cumulative read-path counters for the LSM engine.
 type ReadStats struct {
 	MemtableHits int
 	SSTHits      int

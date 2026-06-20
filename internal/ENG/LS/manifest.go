@@ -16,12 +16,16 @@ var (
 	ErrInvalidManifest  = errors.New("ls: invalid manifest format")
 )
 
+// Version represents a point-in-time snapshot of the LSM manifest, holding
+// the set of SST files organized by level.
 type Version struct {
 	num     int64
 	levels  [][]SSTFileMeta
 	created time.Time
 }
 
+// SSTFileMeta describes a single SST file: its level, key range, size, and
+// bloom filter parameters.
 type SSTFileMeta struct {
 	FileID    uint64
 	Level     int
@@ -118,6 +122,8 @@ func (m *manifest) Checkpoint() (*ManifestCheckpoint, error) {
 	}, nil
 }
 
+// ManifestCheckpoint is a serializable snapshot of the manifest version and
+// its SST file list, used for WAL checkpointing.
 type ManifestCheckpoint struct {
 	VersionNum int64
 	Files      [][]SSTFileMeta
