@@ -1,7 +1,7 @@
 package ls
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"testing"
 )
 
@@ -41,11 +41,13 @@ func TestFNV1a_Deterministic(t *testing.T) {
 }
 
 func TestFNV1a_RandomBytesDeterministic(t *testing.T) {
-	rng := rand.New(rand.NewSource(99))
+	rng := rand.New(rand.NewPCG(99, 100))
 	for i := 0; i < 1000; i++ {
-		n := rng.Intn(256)
+		n := rng.IntN(256)
 		buf := make([]byte, n)
-		rng.Read(buf)
+		for j := range buf {
+			buf[j] = byte(rng.IntN(256))
+		}
 		seed := rng.Uint32()
 		h1 := fnv1aHash(buf, seed)
 		h2 := fnv1aHash(buf, seed)

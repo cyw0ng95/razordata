@@ -1,7 +1,7 @@
 package bf
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"path/filepath"
 	"testing"
 )
@@ -150,10 +150,12 @@ func TestPMemFileLargeWrite(t *testing.T) {
 func TestPMemFilePropertyRandomData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "prop.razor")
 
-	rng := rand.New(rand.NewSource(42))
-	size := rng.Intn(10000) + 100
+	rng := rand.New(rand.NewPCG(42, 43))
+	size := rng.IntN(10000) + 100
 	original := make([]byte, size)
-	rng.Read(original)
+	for i := range original {
+		original[i] = byte(rng.IntN(256))
+	}
 
 	pm, err := CreatePMemFile(path)
 	if err != nil {

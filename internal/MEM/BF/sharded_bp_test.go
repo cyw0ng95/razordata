@@ -1,7 +1,7 @@
 package bf
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -141,15 +141,15 @@ func TestShardedBufferPoolConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			r := rand.New(rand.NewSource(int64(id)))
+			r := rand.New(rand.NewPCG(uint64(id), uint64(id+1)))
 			for j := 0; j < nOps; j++ {
-				blockID := uint64(r.Intn(500))
+				blockID := uint64(r.IntN(500))
 				slot, created := sbp.GetOrInsert(blockID)
 				if created {
 					slot.blockID = blockID
 				}
 				_ = sbp.Slot(blockID)
-				if r.Intn(10) == 0 {
+				if r.IntN(10) == 0 {
 					sbp.Delete(blockID)
 				}
 			}
@@ -229,9 +229,9 @@ func TestShardedBufferPoolContention(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			r := rand.New(rand.NewSource(int64(id)))
+			r := rand.New(rand.NewPCG(uint64(id), uint64(id+1)))
 			for j := 0; j < nOps; j++ {
-				blockID := uint64(r.Intn(1000))
+				blockID := uint64(r.IntN(1000))
 				slot := sbp.Slot(blockID)
 				if slot == nil {
 					misses.Add(1)

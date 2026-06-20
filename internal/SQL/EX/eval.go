@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"strconv"
 	"strings"
 	"time"
@@ -1498,12 +1498,11 @@ func evalMinScalar(args []PS.Expr, row *Row, params []any) (any, error) {
 
 // evalRandom returns a pseudo-random int64. REQ000402.
 func evalRandom(args []PS.Expr, row *Row, params []any) (any, error) {
-	// Use global rand source - Int63() returns non-negative, use Sign
 	sign := 1
-	if rand.Intn(2) == 1 {
+	if rand.IntN(2) == 1 {
 		sign = -1
 	}
-	return int64(sign * int(rand.Int63())), nil
+	return int64(sign * int(rand.Int64())), nil
 }
 
 // evalRandomBlob returns N bytes of random data. REQ000403.
@@ -1520,9 +1519,8 @@ func evalRandomBlob(args []PS.Expr, row *Row, params []any) (any, error) {
 		return nil, nil
 	}
 	buf := make([]byte, n)
-	// Use rand.Read from math/rand package
 	for i := range buf {
-		buf[i] = byte(rand.Intn(256))
+		buf[i] = byte(rand.IntN(256))
 	}
 	return buf, nil
 }

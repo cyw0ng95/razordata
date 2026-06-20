@@ -2,7 +2,7 @@ package EX
 
 import (
 	"context"
-	"math/rand"
+	"math/rand/v2"
 	"time"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
@@ -83,7 +83,7 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 
 	const sampleSize = 10000
 	reservoir := make([][]byte, 0, sampleSize)
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano()+1)))
 
 	// Scan all columns - for now just analyze PK column
 	ss, ok := schemaFor(tableName)
@@ -136,7 +136,7 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 			if len(reservoir) < sampleSize {
 				reservoir = append(reservoir, append([]byte(nil), val...))
 			} else {
-				j := rng.Intn(int(rowCount))
+				j := rng.IntN(int(rowCount))
 				if j < sampleSize {
 					reservoir[j] = append([]byte(nil), val...)
 				}

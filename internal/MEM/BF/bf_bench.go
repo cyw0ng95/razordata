@@ -2,7 +2,7 @@ package bf
 
 import (
 	"context"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"testing"
 
@@ -70,12 +70,12 @@ func BenchmarkEvictionPressure(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	r := rand.New(rand.NewSource(42))
+	r := rand.New(rand.NewPCG(42, 43))
 	ctx := context.Background()
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			blockID := uint64(r.Intn(int(numBlocks))) + 1
+			blockID := uint64(r.IntN(int(numBlocks))) + 1
 			page, _, err := bp.Get(ctx, blockID)
 			if err != nil {
 				b.Errorf("Get error: %v", err)

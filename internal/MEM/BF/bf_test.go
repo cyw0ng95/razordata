@@ -3,7 +3,7 @@ package bf
 import (
 	"context"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"sync"
@@ -397,10 +397,10 @@ func TestConcurrentGet(t *testing.T) {
 	for g := 0; g < goroutines; g++ {
 		go func(id int) {
 			defer wg.Done()
-			r := rand.New(rand.NewSource(int64(id) + time.Now().UnixNano()))
+			r := rand.New(rand.NewPCG(uint64(int64(id)+time.Now().UnixNano()), uint64(int64(id)+time.Now().UnixNano()+1)))
 			ctx := context.Background()
 			for i := 0; i < ops; i++ {
-				blockID := uint64(r.Intn(20)) + 1
+				blockID := uint64(r.IntN(20)) + 1
 				page, _, err := bp.Get(ctx, blockID)
 				if err != nil {
 					t.Errorf("Get(%d) error: %v", blockID, err)
@@ -411,7 +411,7 @@ func TestConcurrentGet(t *testing.T) {
 				}
 
 				// Random pin/unpin.
-				if r.Intn(2) == 0 {
+				if r.IntN(2) == 0 {
 					bp.Pin(page)
 				} else {
 					bp.Unpin(page)
@@ -785,12 +785,12 @@ func BenchmarkGet(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	r := rand.New(rand.NewSource(42))
+	r := rand.New(rand.NewPCG(42, 43))
 	ctx := context.Background()
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			blockID := uint64(r.Intn(10)) + 1
+			blockID := uint64(r.IntN(10)) + 1
 			page, _, err := bp.Get(ctx, blockID)
 			if err != nil {
 				b.Errorf("Get error: %v", err)
@@ -842,11 +842,11 @@ func BenchmarkPinUnpin(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	r := rand.New(rand.NewSource(42))
+	r := rand.New(rand.NewPCG(42, 43))
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			blockID := uint64(r.Intn(10)) + 1
+			blockID := uint64(r.IntN(10)) + 1
 			page := pages[blockID]
 			bp.Pin(page)
 			bp.Unpin(page)

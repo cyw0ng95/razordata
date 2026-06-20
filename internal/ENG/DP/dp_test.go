@@ -2,7 +2,7 @@ package dp
 
 import (
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"testing"
 
@@ -24,7 +24,7 @@ func makeTestSchema() *sc.TableSchema {
 	}
 }
 
-func int64ptr(v int64) []byte  { return sc.EncodeInt(v) }
+func int64ptr(v int64) []byte     { return sc.EncodeInt(v) }
 func float64ptr(v float64) []byte { return sc.EncodeFloat(v) }
 func boolptr(v bool) []byte       { return sc.EncodeBool(v) }
 
@@ -37,7 +37,7 @@ func TestEncodeDecodeRowRoundTrip(t *testing.T) {
 			float64ptr(123.45),
 			boolptr(true),
 			[]byte("hello world"),
-			[]byte{0xDE, 0xAD, 0xBE, 0xEF},
+			{0xDE, 0xAD, 0xBE, 0xEF},
 			int64ptr(1000000),
 			int64ptr(999),
 		},
@@ -68,9 +68,9 @@ func TestEncodeDecodeRowRoundTrip(t *testing.T) {
 func TestEncodeDecodeRowMultiRow(t *testing.T) {
 	schema := makeTestSchema()
 	rows := []sc.Row{
-		{Values: [][]byte{int64ptr(1), []byte("a"), float64ptr(1.1), boolptr(true), []byte("x"), []byte{0x01}, int64ptr(100), int64ptr(10)}},
-		{Values: [][]byte{int64ptr(2), []byte("bb"), float64ptr(2.2), boolptr(false), []byte("yy"), []byte{0x02, 0x03}, int64ptr(200), int64ptr(20)}},
-		{Values: [][]byte{int64ptr(3), []byte("ccc"), float64ptr(3.3), boolptr(true), []byte("zzz"), []byte{0x04, 0x05, 0x06}, int64ptr(300), int64ptr(30)}},
+		{Values: [][]byte{int64ptr(1), []byte("a"), float64ptr(1.1), boolptr(true), []byte("x"), {0x01}, int64ptr(100), int64ptr(10)}},
+		{Values: [][]byte{int64ptr(2), []byte("bb"), float64ptr(2.2), boolptr(false), []byte("yy"), {0x02, 0x03}, int64ptr(200), int64ptr(20)}},
+		{Values: [][]byte{int64ptr(3), []byte("ccc"), float64ptr(3.3), boolptr(true), []byte("zzz"), {0x04, 0x05, 0x06}, int64ptr(300), int64ptr(30)}},
 	}
 	for i, row := range rows {
 		data, err := EncodeRow(row, schema)
@@ -273,7 +273,7 @@ func TestConcurrentEncodeDecode(t *testing.T) {
 			float64ptr(99.9),
 			boolptr(true),
 			[]byte("bio"),
-			[]byte{0xAB},
+			{0xAB},
 			int64ptr(123),
 			int64ptr(456),
 		},
@@ -316,34 +316,40 @@ func TestConcurrentEncodeDecode(t *testing.T) {
 
 func TestPropertyRandomRows(t *testing.T) {
 	schema := makeTestSchema()
-	rng := rand.New(rand.NewSource(42))
+	rng := rand.New(rand.NewPCG(42, 43))
 
 	for i := 0; i < 100; i++ {
 		values := make([][]byte, len(schema.Columns))
 		for j, col := range schema.Columns {
-			if rng.Intn(4) == 0 {
+			if rng.IntN(4) == 0 {
 				values[j] = nil
 				continue
 			}
 			switch col.Type {
 			case sc.CTInt, sc.CTBigInt, sc.CTTimestamp:
 				b := make([]byte, 8)
-				rng.Read(b)
+				for k := range b {
+					b[k] = byte(rng.IntN(256))
+				}
 				values[j] = b
 			case sc.CTFloat:
 				b := make([]byte, 8)
-				rng.Read(b)
+				for k := range b {
+					b[k] = byte(rng.IntN(256))
+				}
 				values[j] = b
 			case sc.CTBool:
-				if rng.Intn(2) == 0 {
+				if rng.IntN(2) == 0 {
 					values[j] = []byte{0}
 				} else {
 					values[j] = []byte{1}
 				}
 			case sc.CTVarchar, sc.CTText, sc.CTBlob:
-				l := rng.Intn(256)
+				l := rng.IntN(256)
 				b := make([]byte, l)
-				rng.Read(b)
+				for k := range b {
+					b[k] = byte(rng.IntN(256))
+				}
 				values[j] = b
 			}
 		}
