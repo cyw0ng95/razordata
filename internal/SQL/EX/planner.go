@@ -516,6 +516,116 @@ func (p *Planner) findTableForColumn(col string) string {
 	return ""
 }
 
+// extractTablesFromExpr extracts all table names referenced by
+// columns in the expression. Returns a set of table names.
+func (p *Planner) extractTablesFromExpr(e PS.Expr) map[string]bool {
+	tables := make(map[string]bool)
+	if e == nil {
+		return tables
+	}
+	p.walkExprForTables(e, tables)
+	return tables
+}
+
+// walkExprForTables recursively walks the expression tree and
+// collects table names for each column reference.
+func (p *Planner) walkExprForTables(e PS.Expr, tables map[string]bool) {
+	switch v := e.(type) {
+	case *PS.Ident:
+		// Find which table this column belongs to.
+		// First try the planner's catalog, then fall back to
+		// the in-memory schemas (populated by CREATE TABLE).
+		tbl := p.findTableForColumn(v.Name)
+		if tbl == "" {
+			tbl = findTableInSchemas(v.Name)
+		}
+		if tbl != "" {
+			tables[tbl] = true
+		}
+	case *PS.QualifiedName:
+		// Qualified name has explicit table prefix
+		tables[v.Table] = true
+	case *PS.BinaryExpr:
+		p.walkExprForTables(v.Left, tables)
+		p.walkExprForTables(v.Right, tables)
+	case *PS.UnaryExpr:
+		p.walkExprForTables(v.Operand, tables)
+	case *PS.ListExpr:
+		for _, item := range v.Items {
+			p.walkExprForTables(item, tables)
+		}
+	case *PS.InExpr:
+		p.walkExprForTables(v.Expr, tables)
+		for _, item := range v.List {
+			p.walkExprForTables(item, tables)
+		}
+	case *PS.AggregateFunc:
+		p.walkExprForTables(v.Arg, tables)
+	case *PS.CaseExpr:
+		p.walkExprForTables(v.Expr, tables)
+		for _, w := range v.WhenList {
+			p.walkExprForTables(w.Cond, tables)
+			p.walkExprForTables(w.Then, tables)
+		}
+		p.walkExprForTables(v.Else, tables)
+	case *PS.FunctionCall:
+		for _, arg := range v.Args {
+			p.walkExprForTables(arg, tables)
+		}
+	}
+}
+
+// canPushDown checks if a predicate can be pushed down to a
+// specific table. A predicate can be pushed down if all column
+// references belong to the same table.
+func (p *Planner) canPushDown(e PS.Expr, table string) bool {
+	tables := p.extractTablesFromExpr(e)
+	// The predicate must reference exactly one table, and it
+	// must be the target table
+	return len(tables) == 1 && tables[table]
+}
+
+// findTableInSchemas searches the in-memory schemas (populated
+// by CREATE TABLE) to find which table owns the given column.
+// Returns empty string if not found.
+func findTableInSchemas(col string) string {
+	tablesMu.RLock()
+	defer tablesMu.RUnlock()
+	for tbl, cols := range schemas {
+		for _, c := range cols {
+			if c == col {
+				return tbl
+			}
+		}
+	}
+	return ""
+}
+
+// splitPredicatesByTable splits WHERE conjuncts into per-table
+// predicates and cross-table predicates.
+func (p *Planner) splitPredicatesByTable(conjuncts []PS.Expr, tables []string) (map[string][]PS.Expr, []PS.Expr) {
+	perTable := make(map[string][]PS.Expr)
+	for _, t := range tables {
+		perTable[t] = nil
+	}
+	var crossTable []PS.Expr
+
+	for _, c := range conjuncts {
+		pushed := false
+		for _, t := range tables {
+			if p.canPushDown(c, t) {
+				perTable[t] = append(perTable[t], c)
+				pushed = true
+				break
+			}
+		}
+		if !pushed {
+			crossTable = append(crossTable, c)
+		}
+	}
+	return perTable, crossTable
+}
+
 // extractColumnLiteralExpr is a safe variant of extractColumnLiteral
 // that accepts any expression.
 func extractColumnLiteralExpr(e PS.Expr) (string, []byte, bool) {
@@ -535,6 +645,91 @@ func isColumnLiteralPair(a, b PS.Expr) bool {
 		return true
 	}
 	return false
+}
+
+// equiJoinKey checks if an expression is an equi-join condition
+// between two specific tables (col1 = col2). Returns the left and
+// right column names if it is, empty strings otherwise.
+// Handles the case where leftTbl may be a join of multiple tables.
+func (p *Planner) equiJoinKey(e PS.Expr, leftTbl, rightTbl string) (leftCol, rightCol string) {
+	bin, ok := e.(*PS.BinaryExpr)
+	if !ok || bin.Op != int(LX.T_EQ) {
+		return "", ""
+	}
+	leftTables := p.extractTablesFromExpr(bin.Left)
+	rightTables := p.extractTablesFromExpr(bin.Right)
+
+	// Case 1: left side references leftTbl only, right side references rightTbl only
+	if len(leftTables) == 1 && leftTables[leftTbl] && len(rightTables) == 1 && rightTables[rightTbl] {
+		if id, ok := bin.Left.(*PS.Ident); ok {
+			leftCol = id.Name
+		}
+		if id, ok := bin.Right.(*PS.Ident); ok {
+			rightCol = id.Name
+		}
+		return leftCol, rightCol
+	}
+	// Case 2: left side references rightTbl, right side references leftTbl (reversed)
+	if len(leftTables) == 1 && leftTables[rightTbl] && len(rightTables) == 1 && rightTables[leftTbl] {
+		if id, ok := bin.Right.(*PS.Ident); ok {
+			leftCol = id.Name
+		}
+		if id, ok := bin.Left.(*PS.Ident); ok {
+			rightCol = id.Name
+		}
+		return leftCol, rightCol
+	}
+	// Case 3: left side references a table in the left join, right side references rightTbl
+	// This handles multi-table joins where leftTbl is already a join
+	if len(rightTables) == 1 && rightTables[rightTbl] {
+		// Check that left side references a single table that is NOT rightTbl
+		if len(leftTables) == 1 {
+			for tbl := range leftTables {
+				if tbl != rightTbl {
+					if id, ok := bin.Left.(*PS.Ident); ok {
+						leftCol = id.Name
+					}
+					if id, ok := bin.Right.(*PS.Ident); ok {
+						rightCol = id.Name
+					}
+					return leftCol, rightCol
+				}
+			}
+		}
+	}
+	// Case 4: reversed case 3
+	if len(leftTables) == 1 && leftTables[rightTbl] {
+		if len(rightTables) == 1 {
+			for tbl := range rightTables {
+				if tbl != rightTbl {
+					if id, ok := bin.Right.(*PS.Ident); ok {
+						leftCol = id.Name
+					}
+					if id, ok := bin.Left.(*PS.Ident); ok {
+						rightCol = id.Name
+					}
+					return leftCol, rightCol
+				}
+			}
+		}
+	}
+	return "", ""
+}
+
+// extractEquiJoinKeys finds equi-join conditions between any table
+// in the left side and the rightTbl from the cross-table conjuncts.
+// This handles multi-table joins where the left side is already a join.
+func (p *Planner) extractEquiJoinKeys(crossTable []PS.Expr, leftTbl, rightTbl string) (leftKeys, rightKeys []string, remaining []PS.Expr) {
+	for _, c := range crossTable {
+		lc, rc := p.equiJoinKey(c, leftTbl, rightTbl)
+		if lc != "" && rc != "" {
+			leftKeys = append(leftKeys, lc)
+			rightKeys = append(rightKeys, rc)
+		} else {
+			remaining = append(remaining, c)
+		}
+	}
+	return leftKeys, rightKeys, remaining
 }
 
 func log2ish(x float64) float64 {
@@ -688,6 +883,13 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		}
 	}
 
+	// REQ000XXX: For multi-table implicit JOINs, extract equi-join
+	// conditions from WHERE and use HashJoin instead of NestedLoopJoin.
+	var crossTableConjuncts []PS.Expr
+	if s.Where != nil && len(s.Joins) > 0 {
+		crossTableConjuncts = RE.SplitAnd(s.Where)
+	}
+
 	if len(s.Joins) > 0 {
 		leftTbl := s.From
 		for _, j := range s.Joins {
@@ -695,19 +897,8 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			if j.Kind != "INNER" && j.Kind != "LEFT" && j.Kind != "RIGHT" && j.Kind != "FULL" && j.Kind != "CROSS" {
 				continue
 			}
-			var on func(outer, inner *Row) (bool, error)
-			if j.On != nil {
-				pred := j.On
-				on = func(outer, inner *Row) (bool, error) {
-					v, err := Eval(pred, inner, nil)
-					if err != nil {
-						return false, err
-					}
-					return truthy(v), nil
-				}
-			}
-			// Convert string kind to JoinKind enum
 			kind := JoinKind(j.Kind)
+
 			// REQ000368: prefer the store-backed SeqScan for
 			// the right side so joins over engine tables
 			// actually see the rows. Falls back to the
@@ -717,7 +908,36 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			if ssc, err := NewSeqScanWithStore(p.store, j.Right); err == nil {
 				rightScan = ssc
 			}
-			joinOp := NewNestedLoopJoin(current, rightScan, leftTbl, j.Right, on, kind)
+
+			// REQ000XXX: For INNER and CROSS JOINs, try to find equi-join
+			// conditions in cross-table predicates and use
+			// HashJoin instead of NestedLoopJoin.
+			// CROSS JOIN with equi-key in WHERE can be treated as INNER.
+			var joinOp Operator
+			if (kind == JoinKindInner || kind == JoinKindCross) && len(crossTableConjuncts) > 0 {
+				lk, rk, remaining := p.extractEquiJoinKeys(crossTableConjuncts, leftTbl, j.Right)
+				if len(lk) > 0 {
+					joinOp = NewHashJoin(current, rightScan, leftTbl, j.Right, lk, rk, 0)
+					crossTableConjuncts = remaining
+				}
+			}
+
+			if joinOp == nil {
+				// Fallback to NestedLoopJoin.
+				var on func(outer, inner *Row) (bool, error)
+				if j.On != nil {
+					pred := j.On
+					on = func(outer, inner *Row) (bool, error) {
+						v, err := Eval(pred, inner, nil)
+						if err != nil {
+							return false, err
+						}
+						return truthy(v), nil
+					}
+				}
+				joinOp = NewNestedLoopJoin(current, rightScan, leftTbl, j.Right, on, kind)
+			}
+
 			current = joinOp
 			leftTbl = j.Right
 		}
@@ -811,6 +1031,11 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	}
 
 	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) && !needsWindow {
+		project := NewProject(current, s.Cols)
+		current = project
+	}
+
+	if needsWindow && len(s.Cols) > 0 && !isStarExpr(s.Cols) {
 		project := NewProject(current, s.Cols)
 		current = project
 	}

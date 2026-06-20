@@ -37,11 +37,13 @@ import (
 // excluded from this wrapper; they run under TestSQLLogicTest_CorpusSubset
 // in the nightly CI to keep the default `go test` cycle fast.
 var sltFiles = []string{
+	// Core select queries
 	"select1.test",
 	"select2.test",
 	"select3.test",
 	"select4.test",
 	"select5.test",
+	// DDL/DML evidence
 	"evidence/in1.test",
 	"evidence/in2.test",
 	"evidence/slt_lang_aggfunc.test",
@@ -54,8 +56,47 @@ var sltFiles = []string{
 	"evidence/slt_lang_reindex.test",
 	"evidence/slt_lang_replace.test",
 	"evidence/slt_lang_update.test",
+	// Index: orderby
 	"index/orderby/10/slt_good_0.test",
+	"index/orderby/10/slt_good_1.test",
+	"index/orderby/100/slt_good_0.test",
+	// Index: orderby_nosort
 	"index/orderby_nosort/10/slt_good_0.test",
+	"index/orderby_nosort/10/slt_good_1.test",
+	"index/orderby_nosort/100/slt_good_0.test",
+	// Index: commute (comparison commutativity)
+	"index/commute/10/slt_good_0.test",
+	"index/commute/10/slt_good_1.test",
+	"index/commute/100/slt_good_0.test",
+	// Index: between (range scans)
+	"index/between/10/slt_good_0.test",
+	"index/between/10/slt_good_1.test",
+	"index/between/100/slt_good_0.test",
+	// Index: in (IN-list scans)
+	"index/in/10/slt_good_0.test",
+	"index/in/10/slt_good_1.test",
+	"index/in/100/slt_good_0.test",
+	// Index: delete (delete + index maintenance)
+	"index/delete/10/slt_good_0.test",
+	"index/delete/10/slt_good_1.test",
+	// Index: random (mixed index operations)
+	"index/random/10/slt_good_0.test",
+	"index/random/10/slt_good_1.test",
+	// Index: view (views with indexes)
+	"index/view/10/slt_good_0.test",
+	"index/view/10/slt_good_1.test",
+	// Random: select (complex random queries)
+	"random/select/slt_good_0.test",
+	"random/select/slt_good_1.test",
+	// Random: expr (expression evaluation)
+	"random/expr/slt_good_0.test",
+	"random/expr/slt_good_1.test",
+	// Random: aggregates (SUM/COUNT/AVG etc)
+	"random/aggregates/slt_good_0.test",
+	"random/aggregates/slt_good_1.test",
+	// Random: groupby (GROUP BY)
+	"random/groupby/slt_good_0.test",
+	"random/groupby/slt_good_1.test",
 }
 
 // TestSLT_ListFiles lists all available SLT test files without running them.
