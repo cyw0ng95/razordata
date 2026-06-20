@@ -14,11 +14,6 @@ var (
 	ErrDecodeBlock = errors.New("failed to decode block")
 )
 
-type Pair struct {
-	Key   []byte
-	Value []byte
-}
-
 type KV struct {
 	Key   []byte
 	Value []byte
@@ -155,7 +150,7 @@ func DecodeRow(data []byte, schema *sc.TableSchema) (sc.Row, error) {
 	return sc.Row{Values: values}, nil
 }
 
-func EncodeBlock(kvs []Pair, restartInterval int) ([]byte, error) {
+func EncodeBlock(kvs []KV, restartInterval int) ([]byte, error) {
 	if len(kvs) == 0 {
 		return nil, nil
 	}

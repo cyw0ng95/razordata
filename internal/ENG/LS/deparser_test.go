@@ -242,7 +242,7 @@ func TestDecodeRow_ShortData(t *testing.T) {
 }
 
 func TestEncodeBlock(t *testing.T) {
-	pairs := []Pair{
+	pairs := []KV{
 		{Key: []byte("key1"), Value: []byte("val1")},
 		{Key: []byte("key2"), Value: []byte("val2")},
 	}
@@ -258,7 +258,7 @@ func TestEncodeBlock(t *testing.T) {
 }
 
 func TestDecodeBlock(t *testing.T) {
-	pairs := []Pair{
+	pairs := []KV{
 		{Key: []byte("key1"), Value: []byte("val1")},
 		{Key: []byte("key2"), Value: []byte("val2")},
 	}
@@ -283,7 +283,7 @@ func TestDecodeBlock(t *testing.T) {
 }
 
 func TestEncodeBlock_Empty(t *testing.T) {
-	pairs := []Pair{}
+	pairs := []KV{}
 
 	data, err := EncodeBlock(pairs, 1)
 	if err != nil {
@@ -354,7 +354,7 @@ func TestKV(t *testing.T) {
 }
 
 func TestPair(t *testing.T) {
-	pair := Pair{Key: []byte("key"), Value: []byte("value")}
+	pair := KV{Key: []byte("key"), Value: []byte("value")}
 
 	if string(pair.Key) != "key" {
 		t.Fatal("key mismatch")
@@ -376,7 +376,7 @@ func TestKVBytes(t *testing.T) {
 }
 
 func TestEncodeBlock_OrderPreserved(t *testing.T) {
-	pairs := []Pair{
+	pairs := []KV{
 		{Key: []byte("b"), Value: []byte("val_b")},
 		{Key: []byte("a"), Value: []byte("val_a")},
 		{Key: []byte("c"), Value: []byte("val_c")},
@@ -398,7 +398,7 @@ func TestEncodeBlock_OrderPreserved(t *testing.T) {
 }
 
 func TestEncodeDecode_RoundTrip(t *testing.T) {
-	original := []Pair{
+	original := []KV{
 		{Key: []byte("key1"), Value: []byte("value1")},
 		{Key: []byte("key2"), Value: []byte("value2")},
 		{Key: []byte("key3"), Value: []byte("value3")},

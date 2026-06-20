@@ -154,7 +154,7 @@ func TestEncodeDecodeBlockZeroRows(t *testing.T) {
 		t.Errorf("expected nil data for nil input")
 	}
 
-	data2, err := EncodeBlock([]Pair{}, 16)
+	data2, err := EncodeBlock([]KV{}, 16)
 	if err != nil {
 		t.Fatalf("EncodeBlock(empty): %v", err)
 	}
@@ -164,7 +164,7 @@ func TestEncodeDecodeBlockZeroRows(t *testing.T) {
 }
 
 func TestEncodeDecodeBlockRoundTrip(t *testing.T) {
-	kvs := []Pair{
+	kvs := []KV{
 		{Key: []byte("key1"), Value: []byte("val1")},
 		{Key: []byte("key2_longer"), Value: []byte("val2")},
 		{Key: []byte("k3"), Value: []byte("value3_very_long")},
@@ -295,7 +295,7 @@ func TestConcurrentEncodeDecode(t *testing.T) {
 		}()
 	}
 
-	kvs := []Pair{{Key: []byte("k1"), Value: []byte("v1")}}
+	kvs := []KV{{Key: []byte("k1"), Value: []byte("v1")}}
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
 		go func() {
@@ -400,7 +400,7 @@ func TestEncodeDecodeBlockLargeKeyValues(t *testing.T) {
 		largeKey[i] = byte(i)
 		largeVal[i] = byte(i ^ 0xFF)
 	}
-	kvs := []Pair{
+	kvs := []KV{
 		{Key: largeKey, Value: largeVal},
 		{Key: []byte("small"), Value: []byte("pair")},
 	}
@@ -425,7 +425,7 @@ func TestEncodeDecodeBlockLargeKeyValues(t *testing.T) {
 }
 
 func TestDecodeBlockCorruptSizes(t *testing.T) {
-	kvs := []Pair{{Key: []byte("k"), Value: []byte("v")}}
+	kvs := []KV{{Key: []byte("k"), Value: []byte("v")}}
 	data, _ := EncodeBlock(kvs, 1)
 
 	// Truncate before key length prefix.
