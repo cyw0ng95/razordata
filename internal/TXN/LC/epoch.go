@@ -1,6 +1,7 @@
 package LC
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -144,4 +145,4 @@ func (em *epochManager) allStale(threshold int64) bool {
 
 func runtime_Gosched() { runtime_GoschedFn() }
 
-var runtime_GoschedFn = func() {}
+var runtime_GoschedFn = runtime.Gosched
