@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	ErrCompactionInProgress = errors.New("compaction already in progress")
-	ErrNoFilesToCompact     = errors.New("no files to compact")
+	ErrCompactionInProgress = errors.New("ls: compaction already in progress")
+	ErrNoFilesToCompact     = errors.New("ls: no files to compact")
 )
 
 type levelBudget struct {

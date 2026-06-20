@@ -18,8 +18,8 @@ const (
 )
 
 var (
-	ErrInvalidSSTFormat = errors.New("invalid SST format")
-	ErrBlockNotFound    = errors.New("block not found")
+	ErrInvalidSSTFormat = errors.New("ls: invalid SST format")
+	ErrBlockNotFound    = errors.New("ls: block not found")
 )
 
 type indexEntry struct {

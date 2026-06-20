@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	ErrManifestNotFound = errors.New("manifest not found")
-	ErrInvalidManifest  = errors.New("invalid manifest format")
+	ErrManifestNotFound = errors.New("ls: manifest not found")
+	ErrInvalidManifest  = errors.New("ls: invalid manifest format")
 )
 
 type Version struct {
