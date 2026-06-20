@@ -507,6 +507,9 @@ type Update struct {
 	resultPos  int
 }
 
+// REQ000714: expose child for execCtx/params propagation.
+func (u *Update) Child() Operator { return u.iter }
+
 // WithParams propagates the bound `?` placeholders (R16-1..2).
 func (u *Update) WithParams(p []any) Operator {
 	u.params = p
@@ -778,6 +781,11 @@ func (d *Delete) WithParams(p []any) Operator {
 	}
 	return d
 }
+
+// REQ000714: expose iter as a child so propagateExecContext and
+// propagateParams walk into the input chain (Filter/SeqScan) where
+// the WHERE predicate (and any correlated subquery) is evaluated.
+func (d *Delete) Child() Operator { return d.iter }
 
 func NewDelete(table string, where PS.Expr, iter Operator, returning []PS.Expr) *Delete {
 	return &Delete{table: table, where: where, iter: iter, returning: returning}
