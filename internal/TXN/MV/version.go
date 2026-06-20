@@ -50,6 +50,8 @@ func NewVersionNode(arena *Arena, txnID, beginTS uint64, key, value []byte, dele
 	return node
 }
 
+// IsUncommitted returns true if the node has not yet been committed
+// (endTS is still MaxUint64).
 func (n *VersionNode) IsUncommitted() bool {
 	return n.endTS.Load() == math.MaxUint64
 }
@@ -66,46 +68,59 @@ func NewVersionNodeStack(txnID, beginTS uint64, key, value []byte, deleted bool)
 	return (*VersionNode)(noescape(unsafe.Pointer(&n)))
 }
 
+// IsVisible returns true if the node is visible at the given read timestamp.
 func (n *VersionNode) IsVisible(readTS uint64) bool {
 	return n.beginTS < readTS && n.endTS.Load() >= readTS
 }
 
+// TxnID returns the transaction ID that created this version.
 func (n *VersionNode) TxnID() uint64 {
 	return n.txnID
 }
 
+// BeginTS returns the begin timestamp of this version.
 func (n *VersionNode) BeginTS() uint64 {
 	return n.beginTS
 }
 
+// EndTS returns the end timestamp of this version.
 func (n *VersionNode) EndTS() uint64 {
 	return n.endTS.Load()
 }
 
+// Key returns the row key for this version.
 func (n *VersionNode) Key() []byte {
 	return n.key
 }
 
+// Value returns the value stored in this version.
 func (n *VersionNode) Value() []byte {
 	return n.value
 }
 
+// Deleted returns true if this version represents a deletion tombstone.
 func (n *VersionNode) Deleted() bool {
 	return n.deleted
 }
 
+// Next returns the next older version in the chain, or nil.
 func (n *VersionNode) Next() *VersionNode {
 	return n.next.Load()
 }
 
+// VersionChain is a lock-free singly-linked list of version nodes for a
+// single row key, ordered from newest to oldest.
 type VersionChain struct {
 	head atomic.Pointer[VersionNode]
 }
 
+// Head returns the newest node in the chain, or nil if empty.
 func (vc *VersionChain) Head() *VersionNode {
 	return vc.head.Load()
 }
 
+// Insert prepends a node to the head of the chain using CAS. Returns true
+// on success.
 func (vc *VersionChain) Insert(node *VersionNode) bool {
 	for {
 		oldHead := vc.head.Load()
@@ -116,14 +131,20 @@ func (vc *VersionChain) Insert(node *VersionNode) bool {
 	}
 }
 
+// Commit marks the node as committed at commitTS. Returns false if the node
+// was already committed.
 func (n *VersionNode) Commit(commitTS uint64) bool {
 	return n.endTS.CompareAndSwap(math.MaxUint64, commitTS)
 }
 
+// Commit marks the given node as committed at commitTS. Returns false if the
+// node was already committed.
 func (vc *VersionChain) Commit(node *VersionNode, commitTS uint64) bool {
 	return node.Commit(commitTS)
 }
 
+// FindVisible returns the first committed node in the chain that is visible
+// at readTS, or nil if none matches.
 func (vc *VersionChain) FindVisible(readTS uint64) *VersionNode {
 	for node := vc.Head(); node != nil; node = node.next.Load() {
 		if node.IsUncommitted() {

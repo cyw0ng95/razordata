@@ -125,6 +125,8 @@ func (a *Arena) promote() {
 	}
 }
 
+// Remaining returns the total available bytes across both young and old
+// generations.
 func (a *Arena) Remaining() int64 {
 	if a.promoted.Load() {
 		return oldSize - a.oldOff.Load()
@@ -132,22 +134,27 @@ func (a *Arena) Remaining() int64 {
 	return int64(youngSize-a.youngOff.Load()) + (oldSize - a.oldOff.Load())
 }
 
+// YoungRemaining returns the available bytes in the young generation.
 func (a *Arena) YoungRemaining() int64 {
 	return int64(youngSize - a.youngOff.Load())
 }
 
+// OldRemaining returns the available bytes in the old generation.
 func (a *Arena) OldRemaining() int64 {
 	return oldSize - a.oldOff.Load()
 }
 
+// Size returns the total capacity of the arena in bytes (young + old).
 func (a *Arena) Size() int64 {
 	return int64(youngSize + oldSize)
 }
 
+// YoungSize returns the capacity of the young generation in bytes.
 func (a *Arena) YoungSize() int64 {
 	return int64(youngSize)
 }
 
+// OldSize returns the capacity of the old generation in bytes.
 func (a *Arena) OldSize() int64 {
 	return int64(oldSize)
 }
