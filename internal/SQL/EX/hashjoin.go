@@ -6,7 +6,7 @@ import (
 )
 
 // HashJoin is a radix-partitioned hash join for INNER joins
-// on equi-keys. REQ000312.
+// on equi-keys. REQ000312, REQ000684.
 // Algorithm (classic radix hash join):
 //  1. Build phase: hash the right relation's join key into
 //     N radix partitions (one per high bit of the hash).
@@ -17,27 +17,25 @@ import (
 //     by 2^N (and the hash table fits in L1 cache).
 //
 // The implementation uses maphash.Hash for the partition key.
-// A future iteration can add SIMD probe (4 hashes at once)
-// once the AVX2 build-tagged cgo path lands.
+// Supports multi-column equi-join keys (REQ000684).
 // Current limits:
-//   - Single join key column (multi-column keys deferred)
 //   - INNER JOIN only (LEFT/RIGHT/FULL deferred to NestedLoopJoin)
 //   - Equi-join only (non-equi joins deferred to NestedLoopJoin)
 type HashJoin struct {
-	left       Operator
-	right      Operator
-	leftKey    string
-	rightKey   string
-	leftTbl    string
-	rightTbl   string
-	partitions int
-	buckets    []hashBucket
-	leftRows   []Row
-	rightRows  []Row
-	emitIdx    int
-	bucketPos  int // position within current bucket's hash/rightRows for multi-match
-	emitRow    Row
-	done       bool
+	left        Operator
+	right       Operator
+	leftKeys    []string
+	rightKeys   []string
+	leftTbl     string
+	rightTbl    string
+	partitions  int
+	buckets     []hashBucket
+	leftRows    []Row
+	rightRows   []Row
+	emitIdx     int
+	bucketPos   int // position within current bucket's hash/rightRows for multi-match
+	emitRow     Row
+	done        bool
 }
 
 type hashBucket struct {
@@ -48,7 +46,8 @@ type hashBucket struct {
 // NewHashJoin creates a radix hash join. partitions must be
 // a power of 2; values < 16 are bumped up to 16. The left and
 // right operators are consumed fully during Build/Probe.
-func NewHashJoin(left, right Operator, leftTbl, rightTbl, leftKey, rightKey string, partitions int) *HashJoin {
+// leftKeys and rightKeys are the join column names (multi-column supported).
+func NewHashJoin(left, right Operator, leftTbl, rightTbl string, leftKeys, rightKeys []string, partitions int) *HashJoin {
 	const minPartitions = 16
 	if partitions < minPartitions {
 		partitions = minPartitions
@@ -59,7 +58,7 @@ func NewHashJoin(left, right Operator, leftTbl, rightTbl, leftKey, rightKey stri
 		p <<= 1
 	}
 
-	return &HashJoin{left: left, right: right, leftKey: leftKey, rightKey: rightKey, leftTbl: leftTbl, rightTbl: rightTbl, partitions: p}
+	return &HashJoin{left: left, right: right, leftKeys: leftKeys, rightKeys: rightKeys, leftTbl: leftTbl, rightTbl: rightTbl, partitions: p}
 }
 
 func (j *HashJoin) LeftChild() Operator { return j.left }
@@ -84,8 +83,8 @@ func (j *HashJoin) Next(ctx context.Context) (Row, error) {
 	}
 	for j.emitIdx < len(j.leftRows) {
 		left := j.leftRows[j.emitIdx]
-		lk, _ := left.Lookup(j.leftKey)
-		hash := hashKey(lk)
+		lk := lookupKeys(left, j.leftKeys)
+		hash := hashKeys(lk)
 		idx := int(hash & uint64(j.partitions-1))
 		bucket := j.buckets[idx]
 		// Continue scanning from the saved position within the
@@ -93,8 +92,8 @@ func (j *HashJoin) Next(ctx context.Context) (Row, error) {
 		for k := j.bucketPos; k < len(bucket.hashes); k++ {
 			if bucket.hashes[k] == hash {
 				right := bucket.rightRows[k]
-				lk2, _ := right.Lookup(j.rightKey)
-				if valuesEqual(lk, lk2) {
+				rk := lookupKeys(right, j.rightKeys)
+				if valuesEqualMulti(lk, rk) {
 					j.bucketPos = k + 1
 					return joinRows(left, right, j.leftTbl, j.rightTbl), nil
 				}
@@ -138,8 +137,8 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		rk, _ := row.Lookup(j.rightKey)
-		hash := hashKey(rk)
+		rk := lookupKeys(row, j.rightKeys)
+		hash := hashKeys(rk)
 		idx := int(hash & uint64(j.partitions-1))
 		j.buckets[idx].rightRows = append(j.buckets[idx].rightRows, row)
 		j.buckets[idx].hashes = append(j.buckets[idx].hashes, hash)
@@ -191,6 +190,46 @@ func hashKey(v any) uint64 {
 		_, _ = h.WriteString(stringify(v))
 	}
 	return h.Sum64()
+}
+
+// lookupKeys extracts multiple key values from a row.
+func lookupKeys(row Row, keys []string) []any {
+	vals := make([]any, len(keys))
+	for i, k := range keys {
+		vals[i], _ = row.Lookup(k)
+	}
+	return vals
+}
+
+// hashKeys computes a uint64 hash of multiple key values by
+// hashing each value and combining the hashes.
+func hashKeys(vals []any) uint64 {
+	if len(vals) == 1 {
+		return hashKey(vals[0])
+	}
+	var h maphash.Hash
+	h.SetSeed(hashKeySeed)
+	for _, v := range vals {
+		h2 := hashKey(v)
+		_, _ = h.Write([]byte{
+			byte(h2), byte(h2 >> 8), byte(h2 >> 16), byte(h2 >> 24),
+			byte(h2 >> 32), byte(h2 >> 40), byte(h2 >> 48), byte(h2 >> 56),
+		})
+	}
+	return h.Sum64()
+}
+
+// valuesEqualMulti compares multiple key values for equality.
+func valuesEqualMulti(a, b []any) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !valuesEqual(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // joinRows combines a left and right row into a single Row.
