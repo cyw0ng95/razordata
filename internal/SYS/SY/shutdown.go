@@ -23,6 +23,7 @@ func InstallSignalHandler(ctx context.Context, e *Engine) (stop func()) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	done := make(chan struct{})
+	var once sync.Once
 	go func() {
 		select {
 		case <-done:
@@ -34,8 +35,10 @@ func InstallSignalHandler(ctx context.Context, e *Engine) (stop func()) {
 		}
 	}()
 	return func() {
-		signal.Stop(sigCh)
-		close(done)
+		once.Do(func() {
+			signal.Stop(sigCh)
+			close(done)
+		})
 	}
 }
 
