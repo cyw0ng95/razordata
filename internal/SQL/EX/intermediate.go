@@ -66,38 +66,21 @@ func (f *Filter) Close() error {
 }
 
 type Project struct {
-	child  Operator
-	cols   []PS.Expr
-	params []any
-	cs     *CodegenState
+	child     Operator
+	cols      []PS.Expr
+	params    []any
+	cs        *CodegenState
+	// REQ000756: pre-allocated column names (same for every row).
+	prefixCols []string
 }
 
 // Child returns the project's child operator.
 func (p *Project) Child() Operator { return p.child }
 
 func NewProject(child Operator, cols []PS.Expr) *Project {
-	return &Project{
-		child: child,
-		cols:  cols,
-	}
-}
-
-// WithParams propagates the bound `?` placeholders (R16-1..2).
-func (p *Project) WithParams(p2 []any) Operator {
-	p.params = p2
-	return p
-}
-
-func (p *Project) Next(ctx context.Context) (Row, error) {
-	row, err := p.child.Next(ctx)
-	if err != nil {
-		return Row{}, err
-	}
-	if isStar(p.cols) {
-		return row, nil
-	}
-	out := Row{Cols: make([]string, 0, len(p.cols))}
-	for _, c := range p.cols {
+	// Pre-compute column names once (they're the same for every row).
+	prefixCols := make([]string, len(cols))
+	for i, c := range cols {
 		var name string
 		switch e := c.(type) {
 		case *PS.Ident:
@@ -116,6 +99,38 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 		case *PS.WindowFunc:
 			name = e.Name
 		}
+		if a, ok := c.(*PS.AliasedExpr); ok {
+			name = a.Alias
+		}
+		prefixCols[i] = name
+	}
+	return &Project{
+		child:      child,
+		cols:       cols,
+		prefixCols: prefixCols,
+	}
+}
+
+// WithParams propagates the bound `?` placeholders (R16-1..2).
+func (p *Project) WithParams(p2 []any) Operator {
+	p.params = p2
+	return p
+}
+
+func (p *Project) Next(ctx context.Context) (Row, error) {
+	row, err := p.child.Next(ctx)
+	if err != nil {
+		return Row{}, err
+	}
+	if isStar(p.cols) {
+		return row, nil
+	}
+	// REQ000756: use pre-computed column names, allocate only data.
+	out := Row{
+		Cols: append([]string(nil), p.prefixCols...),
+		Data: make([]any, len(p.cols)),
+	}
+	for i, c := range p.cols {
 		var v any
 		var err error
 		if wf, ok := c.(*PS.WindowFunc); ok {
@@ -129,11 +144,7 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 		}
-		if a, ok := c.(*PS.AliasedExpr); ok {
-			name = a.Alias
-		}
-		out.Cols = append(out.Cols, name)
-		out.Data = append(out.Data, v)
+		out.Data[i] = v
 	}
 	return out, nil
 }
