@@ -63,7 +63,6 @@ type CatalogIndex struct {
 
 // CatalogEntry is the on-disk representation of a table.
 type CatalogEntry struct {
-	Version     uint8
 	TableID     uint64
 	Name        string
 	Columns     []CatalogColumn
@@ -72,6 +71,7 @@ type CatalogEntry struct {
 	Indexes     []CatalogIndex // iter-22 secondary indexes
 	ColumnStats []StatsEntry   // REQ000258: per-column statistics
 	CreateSQL   string
+	Version     uint8
 }
 
 // Catalog is the persistent system catalog backed by catalog.dat.
