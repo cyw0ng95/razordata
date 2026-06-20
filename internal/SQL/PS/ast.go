@@ -322,6 +322,7 @@ type Insert struct {
 	Table          string
 	Cols           []string
 	Values         [][]Expr
+	Select         Stmt           // REQ000707: INSERT INTO t SELECT ...
 	Returning      []Expr
 	OnConflict     *OnConflict    // nil if no ON CONFLICT clause
 	ConflictAction ConflictAction // INSERT OR ROLLBACK/ABORT/FAIL/IGNORE/REPLACE

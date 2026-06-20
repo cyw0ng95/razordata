@@ -92,6 +92,19 @@ func (p *Parser) parseInsertTail(action ConflictAction) (*Insert, error) {
 		return &Insert{Table: table, Cols: cols, DefaultValues: true, Returning: returning, ConflictAction: action}, nil
 	}
 
+	// REQ000707: INSERT INTO t SELECT ... (bulk insert from query)
+	if p.current.Type == LX.T_SELECT {
+		sel, err := p.parseSelect()
+		if err != nil {
+			return nil, err
+		}
+		returning, err := p.parseReturning()
+		if err != nil {
+			return nil, err
+		}
+		return &Insert{Table: table, Cols: cols, Select: sel, Returning: returning, ConflictAction: action}, nil
+	}
+
 	if err := p.expect(LX.T_VALUES); err != nil {
 		return nil, err
 	}

@@ -1793,3 +1793,35 @@ func TestParseSelect_JoinWithAlias(t *testing.T) {
 		})
 	}
 }
+
+// REQ000707: INSERT ... SELECT syntax.
+func TestParseInsert_Select(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+	}{
+		{"simple", "INSERT INTO dst SELECT * FROM src WHERE v > 15"},
+		{"with_cols", "INSERT INTO dst (a, b) SELECT x, y FROM src"},
+		{"with_returning", "INSERT INTO dst SELECT * FROM src RETURNING id"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewParser(tc.sql)
+			stmt, err := p.Parse()
+			if err != nil {
+				t.Fatalf("Parse() failed: %v", err)
+			}
+			ins, ok := stmt.(*Insert)
+			if !ok {
+				t.Fatalf("expected *Insert, got %T", stmt)
+			}
+			if ins.Table != "dst" {
+				t.Errorf("expected table='dst', got %q", ins.Table)
+			}
+			if ins.Select == nil {
+				t.Errorf("expected Select to be non-nil")
+			}
+		})
+	}
+}
