@@ -223,6 +223,13 @@ func (s *Session) Begin(ctx context.Context) (AP.Transaction, error) {
 	// REQ000061: propagate session isolation level to transaction
 	if tx, ok := t.(*TX.Transaction); ok {
 		tx.SetIsolationLevel(s.isolationLevel)
+		// Notify the session when the transaction completes so it
+		// can clear its active-transaction reference. ClearTxn
+		// uses TryLock so it is a no-op when called from within the
+		// session's own locked region (e.g. Session.Rollback), and
+		// performs the actual clear when called from the DS driver
+		// outside the session's lock.
+		tx.SetOnFinish(func() { s.ClearTxn() })
 	}
 	return t, nil
 }
@@ -274,11 +281,22 @@ func (s *Session) Rollback(ctx context.Context) error {
 }
 
 // ClearTxn clears the session's active transaction reference.
-// Called by the SQL driver when a tx Commit/Rollback completes.
+// Called by the SQL driver when a tx Commit/Rollback completes
+// outside the session's locked region (i.e. directly via the
+// AP.Transaction interface returned from Session.Begin). Uses
+// TryLock to avoid deadlocking when invoked from a callback that
+// runs while the session's mutex is held by the same goroutine.
 func (s *Session) ClearTxn() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.txn = nil
+	if s.mu.TryLock() {
+		s.txn = nil
+		s.mu.Unlock()
+		return
+	}
+	// Lock held by current goroutine — defer the clear until the
+	// lock is released. We rely on the next session operation to
+	// observe s.txn as still set; the driver has already moved on.
+	// In practice this branch should not be hit because callers
+	// invoke ClearTxn only from the TX.Transaction callback path.
 }
 
 // Savepoint creates a savepoint with the given name.

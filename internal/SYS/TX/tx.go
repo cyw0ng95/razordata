@@ -21,9 +21,10 @@ import (
 // the key existed before the tx its previous value is rewritten, if
 // it was absent it is removed. This satisfies ap.R22/R23.
 type Transaction struct {
-	session *sy.Engine
-	tx      vl.Tx
-	mu      sync.Mutex
+	onFinish func()
+	engine   *sy.Engine
+	tx       vl.Tx
+	mu       sync.Mutex
 
 	writeSet       map[string]writeEntry
 	finished       bool
@@ -43,13 +44,22 @@ type savepoint struct {
 
 // NewTransaction binds a freshly-allocated VL Tx to a session for SQL
 // execution. writeSet is initialized lazily on first write.
-func NewTransaction(session *sy.Engine, tx vl.Tx) *Transaction {
+func NewTransaction(engine *sy.Engine, tx vl.Tx) *Transaction {
 	return &Transaction{
-		session:        session,
+		engine:         engine,
 		tx:             tx,
 		writeSet:       make(map[string]writeEntry),
 		isolationLevel: ap.IsolationReadCommitted, // REQ000061: default RC
 	}
+}
+
+// SetOnFinish registers a callback invoked after the transaction
+// commits or rolls back. Used by Session.Begin to clear its
+// active-transaction reference.
+func (t *Transaction) SetOnFinish(fn func()) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.onFinish = fn
 }
 
 // SetIsolationLevel sets the transaction's isolation level (REQ000123).
@@ -58,7 +68,7 @@ func (t *Transaction) SetIsolationLevel(level ap.IsolationLevel) {
 }
 
 func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.Rows, error) {
-	if t.session.IsClosed() {
+	if t.engine.IsClosed() {
 		return nil, ap.ErrClosed
 	}
 	t.mu.Lock()
@@ -67,11 +77,11 @@ func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.R
 		return nil, ap.ErrTxAborted
 	}
 	t.mu.Unlock()
-	exe := t.session.Executor()
+	exe := t.engine.Executor()
 	// REQ000255: set per-statement snapshot for read-committed
 	if t.isolationLevel == ap.IsolationReadCommitted {
-		t.session.SetSnapshot(t.session.CurrentTS())
-		defer t.session.SetSnapshot(0)
+		t.engine.SetSnapshot(t.engine.CurrentTS())
+		defer t.engine.SetSnapshot(0)
 	}
 	stream, err := exe.QueryStream(ctx, sql, args...)
 	if err != nil {
@@ -92,7 +102,7 @@ func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.R
 }
 
 func (t *Transaction) Exec(ctx context.Context, sql string, args ...any) (ap.Result, error) {
-	if t.session.IsClosed() {
+	if t.engine.IsClosed() {
 		return ap.Result{}, ap.ErrClosed
 	}
 	t.mu.Lock()
@@ -102,11 +112,11 @@ func (t *Transaction) Exec(ctx context.Context, sql string, args ...any) (ap.Res
 	}
 	t.mu.Unlock()
 
-	exe := t.session.Executor()
+	exe := t.engine.Executor()
 	// REQ000255: set per-statement snapshot for read-committed
 	if t.isolationLevel == ap.IsolationReadCommitted {
-		t.session.SetSnapshot(t.session.CurrentTS())
-		defer t.session.SetSnapshot(0)
+		t.engine.SetSnapshot(t.engine.CurrentTS())
+		defer t.engine.SetSnapshot(0)
 	}
 	exe.SetTxWriter(t)
 	defer exe.ClearTxWriter()
@@ -134,7 +144,7 @@ func (t *Transaction) RecordWrite(key []byte, newValue []byte) {
 		// First-write's pre-tx value wins.
 		return
 	}
-	eng := t.session.Engine()
+	eng := t.engine.Engine()
 	prev, err := eng.Get(key)
 	entry := writeEntry{existed: false}
 	if err == nil {
@@ -145,62 +155,78 @@ func (t *Transaction) RecordWrite(key []byte, newValue []byte) {
 }
 
 func (t *Transaction) Commit(ctx context.Context) error {
-	if t.session.IsClosed() {
+	if t.engine.IsClosed() {
 		return ap.ErrClosed
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.finished {
+		t.mu.Unlock()
 		return ap.ErrTxAborted
 	}
 	if err := t.tx.Commit(ctx); err != nil {
+		t.mu.Unlock()
 		return err
 	}
 	t.finished = true
 	t.writeSet = nil
 	t.savepoints = nil
+	fn := t.onFinish
+	t.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 	return nil
 }
 
+// Rollback aborts the transaction.
 func (t *Transaction) Rollback(ctx context.Context) error {
-	if t.session.IsClosed() {
+	if t.engine.IsClosed() {
 		return ap.ErrClosed
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.finished {
+		t.mu.Unlock()
 		return ap.ErrTxAborted
 	}
 	// REQ000617: persist the abort WAL record (RTRollback) first so a
 	// crash during engine state restoration is recoverable.
 	if err := t.tx.Abort(ctx); err != nil {
+		t.mu.Unlock()
 		return err
 	}
-	eng := t.session.Engine()
+	eng := t.engine.Engine()
 	keys := make([]string, 0, len(t.writeSet))
 	for k := range t.writeSet {
 		keys = append(keys, k)
 	}
+	rollbackErr := error(nil)
 	for _, k := range keys {
 		entry := t.writeSet[k]
 		if entry.existed {
 			if err := eng.Insert([]byte(k), entry.value); err != nil {
-				return err
+				rollbackErr = err
+				break
 			}
 		} else {
 			if err := eng.Delete([]byte(k)); err != nil {
-				return err
+				rollbackErr = err
+				break
 			}
 		}
 	}
 	t.finished = true
 	t.writeSet = nil
 	t.savepoints = nil
-	return nil
+	fn := t.onFinish
+	t.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+	return rollbackErr
 }
 
 func (t *Transaction) Savepoint(ctx context.Context, name string) error {
-	if t.session.IsClosed() {
+	if t.engine.IsClosed() {
 		return ap.ErrClosed
 	}
 	if name == "" {
@@ -220,7 +246,7 @@ func (t *Transaction) Savepoint(ctx context.Context, name string) error {
 }
 
 func (t *Transaction) ReleaseSavepoint(ctx context.Context, name string) error {
-	if t.session.IsClosed() {
+	if t.engine.IsClosed() {
 		return ap.ErrClosed
 	}
 	if name == "" {
@@ -246,7 +272,7 @@ func (t *Transaction) ReleaseSavepoint(ctx context.Context, name string) error {
 }
 
 func (t *Transaction) RollbackTo(ctx context.Context, name string) error {
-	if t.session.IsClosed() {
+	if t.engine.IsClosed() {
 		return ap.ErrClosed
 	}
 	t.mu.Lock()
@@ -265,7 +291,7 @@ func (t *Transaction) RollbackTo(ctx context.Context, name string) error {
 		return ap.ErrUnknownSavepoint
 	}
 	target := t.savepoints[idx].writeSet
-	eng := t.session.Engine()
+	eng := t.engine.Engine()
 	for k, entry := range t.writeSet {
 		if _, ok := target[k]; ok {
 			continue
