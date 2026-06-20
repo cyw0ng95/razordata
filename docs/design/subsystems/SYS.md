@@ -406,7 +406,7 @@ db, _ := sql.Open("razor", ":memory:")
 
 ## Open Issues
 
-- Should the engine support a metrics endpoint (Prometheus)? Future work — add an admin interface.
-- What is the optimal timeout for waiting active transactions during shutdown? 30s is the default; may need tuning based on workload.
-- Should force-aborted transactions during shutdown be rolled back to a savepoint instead of full abort?
-- Should the shutdown sequence be configurable (e.g., skip waiting for transactions in emergency shutdown)?
+- ~~Should the engine support a metrics endpoint (Prometheus)?~~ **Decision: No. Not in scope for this project.**
+- **Configurable shutdown timeout:** Decision: add `Options.ShutdownTimeout` field (default 30s). Phase 2 (active tx wait) uses this value instead of hardcoded 30s. Low priority. Tracked as REQ000687.
+- Should force-aborted transactions during shutdown be rolled back to a savepoint instead of full abort? Low priority — edge case. Defer.
+- **Emergency shutdown mode:** Decision: add `Options.EmergencyShutdown` flag. When true, skip Phase 2 (active tx wait) and Phase 3 (flush). Use for forced restart scenarios where data loss is acceptable. Low priority. Tracked as REQ000688.

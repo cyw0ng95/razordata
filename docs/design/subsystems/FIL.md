@@ -224,6 +224,6 @@ The following requirements have been implemented and shipped; they are now part 
 
 ## Open Issues
 
-- Should we use `MADV_DONTNEED` or `madvise` for buffer eviction hints?
-- How to handle disk full gracefully? Retry with backoff or propagate `ErrIO`?
+- Should we use `MADV_DONTNEED` or `madvise` for buffer eviction hints? Low priority — current clock-sweep eviction works. Revisit if profiling shows memory pressure.
+- **Disk full handling:** Decision: detect `ENOSPC` from `pwrite`/`write` syscalls, propagate as `AP.ErrIO` with `KindIO` wrapping. No retry — disk full is not transient. Caller (WAL, flush, compaction) handles by aborting the operation and logging. Tracked as REQ000683.
 - ~~Should `FileManager` support file locking (flock) to prevent concurrent access from multiple processes?~~ **(Resolved — see REQ000018)**

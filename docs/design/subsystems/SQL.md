@@ -348,9 +348,9 @@ type HashJoin    struct{ left, right Operator; keys []string }
 
 ## Open Issues
 
-- Window function frame specs (ROWS vs RANGE vs GROUPS) — implemented basic ROWS, RANGE needs future work.
-- Multi-column hash join keys — current HashJoin supports single key column only.
-- LEFT/RIGHT/FULL OUTER JOIN — only INNER via HashJoin; OUTER via NestedLoopJoin (slower).
-- Non-equi joins — require NestedLoopJoin with filter operator.
-- Should parallel query execution be enabled by default or opt-in via query hint (e.g., `SELECT /*+ PARALLEL(4) */ ...`)?
-- In-memory tables do not support transaction rollback (REQ000641).
+- **RANGE window frame spec:** ROWS implemented. RANGE requires peer-group detection (rows with equal ORDER BY values share the same frame). Decision: defer to future iteration. Low priority — ROWS covers most use cases. Tracked as REQ000686.
+- **Multi-column hash join keys:** Current HashJoin supports single key column only. Decision: extend HashJoin to support composite keys. Build hash key by concatenating column values (with length prefix to avoid collisions). Medium priority — breaks queries like `SELECT * FROM t1 JOIN t2 ON t1.a = t2.a AND t1.b = t2.b`. Tracked as REQ000684.
+- **LEFT OUTER JOIN:** INNER via HashJoin, OUTER via NestedLoopJoin (slower). Decision: implement LEFT OUTER JOIN as the priority (most common outer join). RIGHT and FULL can be rewritten by the planner as LEFT with swapped inputs. Medium priority. Tracked as REQ000685.
+- Non-equi joins — require NestedLoopJoin with filter operator. Low priority — most real queries use equi-joins. Defer.
+- Parallel query execution remains opt-in via query hint. Auto-parallelism is complex and not needed for MVP.
+- In-memory tables do not support transaction rollback (REQ000641 — already tracked).

@@ -278,4 +278,4 @@ type transactionSlot struct {
 
 ## Open Issues
 
-- How to handle very long-running read transactions? They may prevent GC of many versions. Consider periodic refresh of the read view.
+- **Long-running read transactions blocking GC:** A reader holding a snapshot for hours prevents version chain pruning, causing unbounded memory growth. Decision: implement snapshot TTL with periodic read-view refresh. When a snapshot exceeds the TTL (configurable, default 10 minutes), the next read automatically refreshes the readTS to the current global timestamp. This bounds the version chain depth at the cost of weaker snapshot isolation for long-running queries. Tracked as REQ000682.
