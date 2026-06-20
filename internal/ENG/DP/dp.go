@@ -24,20 +24,49 @@ type KV struct {
 	Value []byte
 }
 
+func varintLen(v uint64) int {
+	n := 0
+	for v >= 0x80 {
+		v >>= 7
+		n++
+	}
+	return n + 1
+}
+
 func EncodeRow(row sc.Row, schema *sc.TableSchema) ([]byte, error) {
 	if len(row.Values) != len(schema.Columns) {
 		return nil, ErrEncodeRow
 	}
 
-	var buf []byte
-
-	nullBitmap := make([]byte, (len(schema.Columns)+7)/8)
-	for i, val := range row.Values {
+	nullBitmapSize := (len(schema.Columns) + 7) / 8
+	totalSize := nullBitmapSize
+	for i, col := range schema.Columns {
+		val := row.Values[i]
 		if val == nil {
-			nullBitmap[i/8] |= 1 << (i % 8)
+			continue
+		}
+		switch col.Type {
+		case sc.CTInt, sc.CTBigInt, sc.CTTimestamp:
+			totalSize += 8
+		case sc.CTFloat:
+			totalSize += 8
+		case sc.CTBool:
+			totalSize += 1
+		case sc.CTVarchar, sc.CTText, sc.CTBlob:
+			totalSize += varintLen(uint64(len(val))) + len(val)
 		}
 	}
-	buf = append(buf, nullBitmap...)
+	buf := make([]byte, 0, totalSize)
+
+	buf = buf[:nullBitmapSize]
+	for i := range buf {
+		buf[i] = 0
+	}
+	for i, val := range row.Values {
+		if val == nil {
+			buf[i/8] |= 1 << (i % 8)
+		}
+	}
 
 	for i, col := range schema.Columns {
 		val := row.Values[i]
@@ -135,7 +164,14 @@ func EncodeBlock(kvs []Pair, restartInterval int) ([]byte, error) {
 		restartInterval = 1
 	}
 
-	var buf []byte
+	totalSize := 0
+	for _, kv := range kvs {
+		totalSize += varintLen(uint64(len(kv.Key))) + len(kv.Key)
+		totalSize += varintLen(uint64(len(kv.Value))) + len(kv.Value)
+	}
+	numRestarts := len(kvs)/restartInterval + 1
+	totalSize += numRestarts*4 + 4
+	buf := make([]byte, 0, totalSize)
 
 	restarts := make([]int, 0, len(kvs)/restartInterval+1)
 
@@ -161,9 +197,9 @@ func EncodeBlock(kvs []Pair, restartInterval int) ([]byte, error) {
 		buf = append(buf, b[:]...)
 	}
 
-	numRestarts := make([]byte, 4)
-	binary.LittleEndian.PutUint32(numRestarts, uint32(len(restarts)))
-	buf = append(buf, numRestarts...)
+	var numBuf [4]byte
+	binary.LittleEndian.PutUint32(numBuf[:], uint32(len(restarts)))
+	buf = append(buf, numBuf[:]...)
 
 	return buf, nil
 }
@@ -189,7 +225,7 @@ func DecodeBlock(data []byte) ([]KV, []int, error) {
 		restarts[i] = int(binary.LittleEndian.Uint32(data[restartOffset+int(i)*4:]))
 	}
 
-	var kvs []KV
+	kvs := make([]KV, 0, numRestarts)
 	offset := 0
 
 	for offset < restartOffset {
