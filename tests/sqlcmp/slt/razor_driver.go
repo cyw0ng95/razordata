@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	_ "github.com/cyw0ng95/razordata/driver"
+	razordriver "github.com/cyw0ng95/razordata/driver"
 	v1 "github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
 
@@ -21,6 +21,7 @@ import (
 type RazorDriver struct {
 	mu         sync.Mutex
 	dir        string
+	dsn        string
 	db         *sql.DB
 	engine     *v1.Engine
 	classifier *RazorClassifier
@@ -76,6 +77,7 @@ func (d *RazorDriver) Connect(ctx context.Context) error {
 	d.dir = dir
 
 	dsn := filepath.Join(dir, "db.razor")
+	d.dsn = dsn
 	db, err := sql.Open("razor", dsn)
 	if err != nil {
 		_ = os.RemoveAll(dir)
@@ -105,6 +107,10 @@ func (d *RazorDriver) Close(ctx context.Context) error {
 			firstErr = err
 		}
 		d.db = nil
+	}
+	if d.dsn != "" {
+		razordriver.CloseEngine(d.dsn)
+		d.dsn = ""
 	}
 	if d.engine != nil {
 		if err := d.engine.Close(ctx); err != nil && firstErr == nil {

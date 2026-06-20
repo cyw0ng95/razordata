@@ -239,12 +239,27 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		pending = make(map[string]struct{}, len(i.values))
 		iterValues = i.values
 	}
-	// In the engine path, unique lookups are best-effort: the LSM
-	// iterator would need a composite-key range scan. For v1, we
-	// check pending-batch duplicates only and skip the in-store
-	// lookup (correctness note: true cross-row UNIQUE in the engine
-	// path is deferred until REQ000045 / index work).
-	noopLookup := func(cols []int, vals []any) (bool, error) { return false, nil }
+	// In the engine path, use store-based lookup for PK uniqueness
+	// only when conflict action is specified (INSERT OR IGNORE/REPLACE).
+	// For plain INSERT, silently overwrite (consistent with LSM semantics).
+	var lookupFn uniqueLookup
+	if i.conflictAction != PS.ConflictActionUnspecified {
+		lookupFn = func(cols []int, vals []any) (bool, error) {
+			if i.store == nil || len(vals) == 0 {
+				return false, nil
+			}
+			prefix := tablePrefix(i.table)
+			if prefix == nil {
+				return false, nil
+			}
+			pk := vals[0]
+			key := rowKey(prefix, pk)
+			_, found, err := i.store.Get(key)
+			return found, err
+		}
+	} else {
+		lookupFn = func(cols []int, vals []any) (bool, error) { return false, nil }
+	}
 	for _, row := range iterValues {
 		var out Row
 		var err error
@@ -269,8 +284,20 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		if err := validateCheck(i.schema, out); err != nil {
 			return Row{}, err
 		}
-		if err := checkUnique(i.schema, out, pending, Row{}, noopLookup); err != nil {
-			return Row{}, err
+		if err := checkUnique(i.schema, out, pending, Row{}, lookupFn); err != nil {
+			if i.conflictAction == PS.ConflictActionReplace {
+				// Delete the existing row, then fall through to insert
+				pk, pkErr := extractPK(i.schema, out)
+				if pkErr == nil {
+					key := rowKey(prefix, pk)
+					_ = i.store.Delete(key)
+				}
+				// Fall through to insert below
+			} else if i.conflictAction == PS.ConflictActionIgnore {
+				continue
+			} else {
+				return Row{}, err
+			}
 		}
 		// REQ000126: FK validation on INSERT (store path)
 		if len(i.schema.foreignKeys) > 0 {

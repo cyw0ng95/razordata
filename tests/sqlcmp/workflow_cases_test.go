@@ -106,11 +106,8 @@ func TestWorkflowSQLite(t *testing.T) {
 	for _, wf := range workflowCases {
 		t.Run(wf.name, func(t *testing.T) {
 			r := NewRunner()
-			for i, sql := range wf.stmts {
-				_, err := r.CompareQuery(sql)
-				if err != nil {
-					t.Errorf("workflow %s step %d: SQLite error for %q: %v", wf.name, i, sql, err)
-				}
+			if err := r.CompareWorkflow(wf.stmts); err != nil {
+				t.Errorf("workflow %s: SQLite error: %v", wf.name, err)
 			}
 		})
 	}

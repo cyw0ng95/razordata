@@ -18,6 +18,8 @@ type Values struct {
 	cols      []PS.Expr
 	evaluated bool
 	row       Row
+	planner   *Planner
+	params    []any
 }
 
 // newValuesOp creates a Values operator for the given column expressions.
@@ -33,13 +35,19 @@ func (v *Values) Next(ctx context.Context) (Row, error) {
 	}
 	v.evaluated = true
 
-	// Evaluate each expression with a nil row (no table context)
+	// Evaluate each expression with a nil row (no table context).
+	// If a planner is available, attach it to the row so subquery
+	// evaluation can resolve tables against the store.
+	var evalRow *Row
+	if v.planner != nil {
+		evalRow = &Row{planner: v.planner}
+	}
 	cols := make([]string, len(v.cols))
 	data := make([]any, len(v.cols))
 	types := make([]int, len(v.cols))
 
 	for i, e := range v.cols {
-		val, err := Eval(e, nil, nil)
+		val, err := Eval(e, evalRow, v.params)
 		if err != nil {
 			return Row{}, err
 		}
@@ -61,7 +69,15 @@ func (v *Values) WithParams(p []any) Operator {
 	if v == nil {
 		return nil
 	}
-	// No child operator, nothing to propagate to
+	v.params = p
+	return v
+}
+
+func (v *Values) WithPlanner(p *Planner) Operator {
+	if v == nil {
+		return nil
+	}
+	v.planner = p
 	return v
 }
 

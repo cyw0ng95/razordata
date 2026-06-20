@@ -2,6 +2,7 @@ package EX
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
@@ -12,6 +13,7 @@ type Filter struct {
 	predicate PS.Expr
 	params    []any
 	cs        *CodegenState
+	execCtx   *ExecContext
 }
 
 // Child returns the filter's child operator. Used by
@@ -42,6 +44,9 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 		row, err := f.child.Next(ctx)
 		if err != nil {
 			return Row{}, err
+		}
+		if f.execCtx != nil {
+			row.execCtx = f.execCtx
 		}
 		if f.predicate == nil {
 			return row, nil
@@ -108,10 +113,21 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 			if inner, ok := e.Operand.(*PS.Ident); ok {
 				name = inner.Name
 			}
+		case *PS.WindowFunc:
+			name = e.Name
 		}
-		v, err := Eval(c, &row, p.params)
-		if err != nil {
-			return Row{}, err
+		var v any
+		var err error
+		if wf, ok := c.(*PS.WindowFunc); ok {
+			v, err = findColumn(row, wf.Name)
+			if err != nil {
+				return Row{}, err
+			}
+		} else {
+			v, err = Eval(c, &row, p.params)
+			if err != nil {
+				return Row{}, err
+			}
 		}
 		if a, ok := c.(*PS.AliasedExpr); ok {
 			name = a.Alias
@@ -128,6 +144,15 @@ func isStar(cols []PS.Expr) bool {
 		return ok
 	}
 	return false
+}
+
+func findColumn(row Row, name string) (any, error) {
+	for i, c := range row.Cols {
+		if c == name {
+			return row.Data[i], nil
+		}
+	}
+	return nil, fmt.Errorf("ex: column %q not found in row", name)
 }
 
 func (p *Project) Close() error {

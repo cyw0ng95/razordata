@@ -1,12 +1,3 @@
-// razor is the razordata admin CLI. REQ000260.
-//
-// Subcommands:
-//   razor integrity-check <dbdir>
-//   razor vacuum <dbdir>
-//   razor analyze <dbdir>
-//   razor backup <srcdir> <dstdir>
-//   razor restore <backupdir> <restoredir>
-//   razor schema-dump <dbdir>
 package main
 
 import (
@@ -47,10 +38,8 @@ func main() {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(1)
 	}
-
 	cmd := os.Args[1]
 	args := os.Args[2:]
-
 	var err error
 	switch cmd {
 	case "integrity-check":
@@ -75,20 +64,16 @@ func main() {
 		fmt.Fprintf(os.Stderr, "razor: unknown command %q\n\n%s", cmd, usage)
 		os.Exit(1)
 	}
-
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "razor %s: %v\n", cmd, err)
 		os.Exit(1)
 	}
 }
 
-// openEngine opens a database directory and returns the engine.
-// Caller is responsible for calling eng.Close(ctx).
 func openEngine(ctx context.Context, dir string) (*SY.Engine, error) {
 	return SY.Open(ctx, dir, AP.Options{})
 }
 
-// rowAsString converts a Row's first cell to string for printing.
 func rowAsString(row EX.Row) string {
 	if len(row.Data) == 0 {
 		return ""
@@ -109,22 +94,18 @@ func runIntegrityCheck(args []string) error {
 	}
 	dir := args[0]
 	fmt.Printf("Running integrity check on %s...\n", dir)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-
 	eng, err := openEngine(ctx, dir)
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
 	defer eng.Close(ctx)
-
 	exe := eng.Executor()
 	rows, err := exe.QueryAll(ctx, "PRAGMA integrity_check")
 	if err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
-
 	if len(rows) == 0 {
 		fmt.Println("OK: integrity check passed")
 		return nil
@@ -142,16 +123,13 @@ func runVacuum(args []string) error {
 	}
 	dir := args[0]
 	fmt.Printf("Running vacuum on %s...\n", dir)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-
 	eng, err := openEngine(ctx, dir)
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
 	defer eng.Close(ctx)
-
 	exe := eng.Executor()
 	if _, err := exe.Exec(ctx, "VACUUM"); err != nil {
 		return fmt.Errorf("vacuum: %w", err)
@@ -166,23 +144,18 @@ func runAnalyze(args []string) error {
 	}
 	dir := args[0]
 	fmt.Printf("Running analyze on %s...\n", dir)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-
 	eng, err := openEngine(ctx, dir)
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
 	defer eng.Close(ctx)
-
 	exe := eng.Executor()
-
 	tables, err := listTables(ctx, exe)
 	if err != nil {
 		return fmt.Errorf("list tables: %w", err)
 	}
-
 	for _, t := range tables {
 		if _, err := exe.Exec(ctx, fmt.Sprintf("ANALYZE %s", t)); err != nil {
 			fmt.Printf("  WARNING: analyze %s failed: %v\n", t, err)
@@ -190,7 +163,6 @@ func runAnalyze(args []string) error {
 		}
 		fmt.Printf("  analyzed %s\n", t)
 	}
-
 	fmt.Println("OK: analyze completed")
 	return nil
 }
@@ -201,15 +173,12 @@ func runBackup(args []string) error {
 	}
 	srcDir, dstDir := args[0], args[1]
 	fmt.Printf("Backing up %s -> %s...\n", srcDir, dstDir)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancel()
-
 	stats, err := AP.Backup(ctx, srcDir, dstDir, AP.BackupOptions{})
 	if err != nil {
 		return fmt.Errorf("backup: %w", err)
 	}
-
 	fmt.Printf("OK: backed up %d files (%d bytes) in %.2fs (LSN=%d)\n",
 		stats.FilesCopied, stats.BytesCopied, stats.DurationSeconds, stats.LSN)
 	return nil
@@ -221,15 +190,12 @@ func runRestore(args []string) error {
 	}
 	backupDir, restoreDir := args[0], args[1]
 	fmt.Printf("Restoring %s -> %s...\n", backupDir, restoreDir)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancel()
-
 	stats, err := AP.Restore(ctx, backupDir, restoreDir)
 	if err != nil {
 		return fmt.Errorf("restore: %w", err)
 	}
-
 	fmt.Printf("OK: restored %d files (%d bytes) (LSN=%d)\n",
 		stats.FilesCopied, stats.BytesCopied, stats.LSN)
 	return nil
@@ -241,37 +207,28 @@ func runSchemaDump(args []string) error {
 	}
 	dir := args[0]
 	fmt.Printf("-- Schema dump for %s --\n", dir)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
 	eng, err := openEngine(ctx, dir)
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
 	defer eng.Close(ctx)
-
 	exe := eng.Executor()
 	tables, err := listTables(ctx, exe)
 	if err != nil {
 		return fmt.Errorf("list tables: %w", err)
 	}
-
 	for _, t := range tables {
 		fmt.Printf("CREATE TABLE %s (...);\n", t)
 	}
-
 	return nil
 }
 
-// listTables returns all user table names in the database.
 func listTables(ctx context.Context, exe *EX.Executor) ([]string, error) {
-	// Use sqlite_master equivalent; if not available, return empty list.
 	rows, err := exe.QueryAll(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
 	if err != nil {
-		// sqlite_master may not exist in this implementation
-		if strings.Contains(err.Error(), "no such table") ||
-			strings.Contains(err.Error(), "syntax") {
+		if strings.Contains(err.Error(), "no such table") || strings.Contains(err.Error(), "syntax") {
 			return nil, nil
 		}
 		return nil, err

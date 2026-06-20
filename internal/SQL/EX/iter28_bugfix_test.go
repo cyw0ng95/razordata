@@ -893,3 +893,57 @@ func TestBugfix_CorrelatedSubquery_Reexecutes(t *testing.T) {
 		}
 	}
 }
+
+// REQ000700: Correlated EXISTS/NOT EXISTS subqueries must filter
+// correctly when both inner and outer tables have a column with
+// the same name. The bug was that QualifiedName resolution's
+// bare-name fallback matched the outer table's column for both
+// s.g and t.g, making the condition trivially true.
+func TestBugfix_CorrelatedExists_SameColumnName(t *testing.T) {
+	ResetForTest(t)
+	ex := NewExecutor()
+	defer UnregisterAll()
+	ctx := context.Background()
+
+	ex.RegisterTableWithPK("t", []string{"id", "g"}, "id")
+	ex.RegisterTableWithPK("s", []string{"id", "g"}, "id")
+
+	// t: id=1,g=10  id=2,g=20  id=3,g=30
+	for i := int64(1); i <= 3; i++ {
+		ex.Exec(ctx, "INSERT INTO t VALUES (?, ?)", i, i*10)
+	}
+	// s: id=100,g=10  id=200,g=20  (matches t.id 1 and 2)
+	ex.Exec(ctx, "INSERT INTO s VALUES (100, 10)")
+	ex.Exec(ctx, "INSERT INTO s VALUES (200, 20)")
+
+	t.Run("exists_same_col", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT id FROM t WHERE EXISTS (SELECT 1 FROM s WHERE s.g = t.g) ORDER BY id")
+		if err != nil {
+			t.Fatalf("EXISTS: %v", err)
+		}
+		if len(rows) != 2 {
+			t.Errorf("EXISTS: got %d rows, want 2; data=%v", len(rows), rows)
+		}
+		if len(rows) >= 2 {
+			if rows[0].Data[0] != int64(1) {
+				t.Errorf("row 0 = %v, want 1", rows[0].Data[0])
+			}
+			if rows[1].Data[0] != int64(2) {
+				t.Errorf("row 1 = %v, want 2", rows[1].Data[0])
+			}
+		}
+	})
+
+	t.Run("not_exists_same_col", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT id FROM t WHERE NOT EXISTS (SELECT 1 FROM s WHERE s.g = t.g) ORDER BY id")
+		if err != nil {
+			t.Fatalf("NOT EXISTS: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Errorf("NOT EXISTS: got %d rows, want 1; data=%v", len(rows), rows)
+		}
+		if len(rows) >= 1 && rows[0].Data[0] != int64(3) {
+			t.Errorf("row 0 = %v, want 3", rows[0].Data[0])
+		}
+	})
+}

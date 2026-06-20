@@ -78,15 +78,22 @@ var ErrClosed = errors.New("ex: operator closed")
 type CodegenFn func(ctx context.Context, batch *Batch, params []any) (*Batch, error)
 
 // codegenRegistry maps operator type names to their batch-execution functions.
-var codegenRegistry = map[string]CodegenFn{}
+var (
+	codegenMu       sync.RWMutex
+	codegenRegistry = map[string]CodegenFn{}
+)
 
 // registerCodegenOp registers a codegen-generated batch function.
 func registerCodegenOp(opType string, fn CodegenFn) {
+	codegenMu.Lock()
+	defer codegenMu.Unlock()
 	codegenRegistry[opType] = fn
 }
 
 // LookupCodegenOp returns a registered codegen function for the given type.
 func LookupCodegenOp(opType string) (CodegenFn, bool) {
+	codegenMu.RLock()
+	defer codegenMu.RUnlock()
 	fn, ok := codegenRegistry[opType]
 	return fn, ok
 }
@@ -116,6 +123,11 @@ type Row struct {
 	// execCtx carries per-execution state (planner, session ID,
 	// tx writer) through the operator tree. REQ000586.
 	execCtx *ExecContext
+	// tableName identifies which table this row was read from.
+	// Set by SeqScan/IndexScan when producing rows so correlated
+	// subquery eval can resolve QualifiedName references (e.g.
+	// t.g) against the correct table. REQ000700.
+	tableName string
 }
 
 // Planner returns the planner associated with this row (or any
@@ -526,6 +538,9 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	// placeholders resolve. Writers (INSERT/UPDATE/DELETE) also
 	// support placeholders (e.g. INSERT ... VALUES (?,?)).
 	propagateParams(op, args)
+	propagatePlanner(op, e.planner)
+	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+	propagateExecContext(op, execCtx)
 	defer op.Close()
 	if _, err := op.Next(ctx); err != nil && err != ErrNoRows {
 		return Result{}, err
@@ -588,6 +603,9 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	// R16-1: thread args down to the operator tree so `?`
 	// placeholders resolve during Eval.
 	propagateParams(plan.root, args)
+	propagatePlanner(plan.root, e.planner)
+	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+	propagateExecContext(plan.root, execCtx)
 	defer plan.root.Close()
 	row, err := plan.root.Next(ctx)
 	if err != nil {
@@ -596,6 +614,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 		}
 		return nil, err
 	}
+	WithExecContext(&row, execCtx)
 	rs := &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]int(nil), row.Types...)}
 	return rs, nil
 }
@@ -622,6 +641,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 	// REQ000586: thread ExecContext through rows to eliminate
 	// the global currentSubqueryPlanner.
 	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+	propagateExecContext(plan.root, execCtx)
 	defer plan.root.Close()
 	var out []Row
 	for {
@@ -661,6 +681,32 @@ func propagatePlanner(root Operator, p *Planner) {
 	if lr, ok := root.(leftRighter); ok {
 		propagatePlanner(lr.LeftChild(), p)
 		propagatePlanner(lr.RightChild(), p)
+	}
+}
+
+// propagateExecContext walks the operator tree and sets execCtx
+// on operators that evaluate expressions (Filter, Project, etc.)
+// so that subquery eval can find the planner via ExecContextFromRow.
+func propagateExecContext(root Operator, ec *ExecContext) {
+	if root == nil || ec == nil {
+		return
+	}
+	if f, ok := root.(*Filter); ok {
+		f.execCtx = ec
+	}
+	type childer interface {
+		Child() Operator
+	}
+	if c, ok := root.(childer); ok {
+		propagateExecContext(c.Child(), ec)
+	}
+	type leftRighter interface {
+		LeftChild() Operator
+		RightChild() Operator
+	}
+	if lr, ok := root.(leftRighter); ok {
+		propagateExecContext(lr.LeftChild(), ec)
+		propagateExecContext(lr.RightChild(), ec)
 	}
 }
 
@@ -1012,6 +1058,7 @@ func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*s
 	propagatePlanner(plan.root, e.planner)
 	// REQ000586: thread ExecContext to eliminate global.
 	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+	propagateExecContext(plan.root, execCtx)
 
 	// Read first row to discover schema
 	row, err := plan.root.Next(ctx)

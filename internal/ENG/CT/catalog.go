@@ -375,10 +375,14 @@ func (c *Catalog) ByNameMap() map[string]uint64 {
 
 // NextIDVal returns the current nextID value without reserving.
 func (c *Catalog) NextIDVal() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.nextID
 }
 
 // SetNextID sets the nextID value (used by bootstrap).
 func (c *Catalog) SetNextID(id uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.nextID = id
 }

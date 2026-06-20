@@ -140,11 +140,13 @@ func UnregisterAll() {
 	triggerReg = map[string]*PS.TriggerStmt{}
 	tableTriggers = map[string][]*PS.TriggerStmt{}
 	triggerMu.Unlock()
+	codegenMu.Lock()
 	codegenRegistry = map[string]CodegenFn{}
+	codegenMu.Unlock()
 }
 
 func cloneRow(r Row) Row {
-	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]int(nil), r.Types...), Outer: r.Outer, planner: r.planner, storeKey: r.storeKey}
+	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]int(nil), r.Types...), Outer: r.Outer, planner: r.planner, storeKey: r.storeKey, tableName: r.tableName}
 	if r.Data != nil {
 		out.Data = append([]any(nil), r.Data...)
 	}

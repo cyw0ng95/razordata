@@ -148,6 +148,12 @@ func keysEqual(a, b []any) bool {
 		return false
 	}
 	for i := range a {
+		if a[i] == nil && b[i] == nil {
+			continue
+		}
+		if a[i] == nil || b[i] == nil {
+			return false
+		}
 		if !equalValue(a[i], b[i]) {
 			return false
 		}
@@ -189,6 +195,13 @@ func groupColName(e PS.Expr) string {
 }
 
 func aggregateColName(e PS.Expr) string {
+	// If wrapped in AliasedExpr, use the alias
+	if ae, ok := e.(*PS.AliasedExpr); ok {
+		if ae.Alias != "" {
+			return ae.Alias
+		}
+		return aggregateColName(ae.Expr)
+	}
 	agg, ok := e.(*PS.AggregateFunc)
 	if !ok {
 		return ""
@@ -203,6 +216,10 @@ func aggregateColName(e PS.Expr) string {
 }
 
 func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
+	// Unwrap AliasedExpr to get the inner aggregate
+	if ae, ok := e.(*PS.AliasedExpr); ok {
+		return evalAggregateOver(ae.Expr, rows, params)
+	}
 	agg, ok := e.(*PS.AggregateFunc)
 	if !ok {
 		return nil, nil
@@ -223,7 +240,17 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 			}
 			return int64(len(seen)), nil
 		}
-		return int64(len(rows)), nil
+		if _, ok := agg.Arg.(*PS.StarExpr); ok {
+			return int64(len(rows)), nil
+		}
+		var count int64
+		for _, r := range rows {
+			v, _ := Eval(agg.Arg, &r, params)
+			if v != nil {
+				count++
+			}
+		}
+		return count, nil
 	case "SUM":
 		if agg.Distinct {
 			return sumDistinct(agg, rows, params)

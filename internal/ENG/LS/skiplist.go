@@ -11,9 +11,9 @@ import (
 const maxLevel = 12
 
 type node struct {
-	next  [maxLevel]atomic.Pointer[node]
 	key   []byte
 	value atomic.Value
+	next  [maxLevel]atomic.Pointer[node]
 	mu    sync.Mutex
 }
 
@@ -22,7 +22,7 @@ type skipList struct {
 	level atomic.Int32
 	len   atomic.Int64
 	rng   *rand.Rand
-	rmu   sync.Mutex // protects rng for concurrent shared-list access
+	rmu   sync.Mutex
 }
 
 var nodeSlicePool = sync.Pool{
@@ -32,9 +32,7 @@ var nodeSlicePool = sync.Pool{
 	},
 }
 
-func acquireSlice() *[]*node {
-	return nodeSlicePool.Get().(*[]*node)
-}
+func acquireSlice() *[]*node { return nodeSlicePool.Get().(*[]*node) }
 
 func releaseSlice(s *[]*node) {
 	if s == nil {
@@ -71,18 +69,15 @@ func (sl *skipList) randomLevel() int {
 
 func (sl *skipList) Insert(key, value []byte) {
 	lvl := sl.randomLevel()
-
 	predecessorsPtr := acquireSlice()
 	successorsPtr := acquireSlice()
 	defer releaseSlice(predecessorsPtr)
 	defer releaseSlice(successorsPtr)
 	predecessors := (*predecessorsPtr)[:lvl]
 	successors := (*successorsPtr)[:lvl]
-
 	for {
 		head := sl.head.Load()
 		currentLevel := sl.level.Load()
-
 		curr := head
 		for i := currentLevel - 1; i >= 0; i-- {
 			next := curr.next[i].Load()
@@ -95,14 +90,12 @@ func (sl *skipList) Insert(key, value []byte) {
 				successors[i] = next
 			}
 		}
-
 		for i := range lvl {
 			if predecessors[i] == nil {
 				predecessors[i] = head
 				successors[i] = head.next[i].Load()
 			}
 		}
-
 		next := successors[0]
 		if next != nil && bytes.Equal(next.key, key) {
 			next.mu.Lock()
@@ -110,18 +103,15 @@ func (sl *skipList) Insert(key, value []byte) {
 			next.mu.Unlock()
 			return
 		}
-
 		newNode := &node{key: key, value: atomic.Value{}}
 		newNode.value.Store(value)
 		for i := range lvl {
 			newNode.next[i].Store(successors[i])
 		}
-
 		inserted := predecessors[0].next[0].CompareAndSwap(next, newNode)
 		if !inserted {
 			continue
 		}
-
 		linkedHigher := true
 		for i := 1; i < lvl; i++ {
 			const maxRetries = 8
@@ -145,17 +135,14 @@ func (sl *skipList) Insert(key, value []byte) {
 			}
 		}
 		_ = linkedHigher
-
 		if lvl > int(currentLevel) {
 			sl.level.CompareAndSwap(currentLevel, int32(lvl))
 		}
-
 		sl.len.Add(1)
 		return
 	}
 }
 
-// findPredSucc walks a single level and returns pred/succ for key.
 func findPredSucc(head *node, level int32, i int, key []byte) (*node, *node) {
 	c := head
 	n := c.next[i].Load()
@@ -186,9 +173,7 @@ func (sl *skipList) Find(key []byte) ([]byte, bool) {
 	return nil, false
 }
 
-func (sl *skipList) Len() int64 {
-	return sl.len.Load()
-}
+func (sl *skipList) Len() int64 { return sl.len.Load() }
 
 func (sl *skipList) Iterator() *Iterator {
 	return &Iterator{current: nil, list: sl}
@@ -219,6 +204,5 @@ func (it *Iterator) Value() []byte {
 	if it.current == nil {
 		return nil
 	}
-	val := it.current.value.Load().([]byte)
-	return val
+	return it.current.value.Load().([]byte)
 }

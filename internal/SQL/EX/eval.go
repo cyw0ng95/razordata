@@ -56,11 +56,15 @@ func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 					}
 				}
 			}
-			// Fallback: try without table prefix in the Outer chain
-			// first, then the current row. This ensures a QualifiedName
-			// like t.id resolves to the outer row's "id" column rather
-			// than a same-named column in the current subquery row.
+			// REQ000700: walk the outer chain, preferring rows
+			// whose tableName matches the QualifiedName's table
+			// prefix. This ensures t.g resolves to the outer row
+			// from table t, not a same-named column from the
+			// current subquery row (table s).
 			for cur := row.Outer; cur != nil; cur = cur.Outer {
+				if cur.tableName != "" && !strings.EqualFold(cur.tableName, e.Table) {
+					continue
+				}
 				for i, c := range cur.Cols {
 					if strings.EqualFold(c, e.Name) {
 						if i < len(cur.Data) {
@@ -69,6 +73,7 @@ func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 					}
 				}
 			}
+			// Current row: last resort for bare-name match.
 			for i, c := range row.Cols {
 				if strings.EqualFold(c, e.Name) {
 					if i < len(row.Data) {
@@ -1004,7 +1009,12 @@ func evalSubstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if !ok {
 		return nil, ErrEval
 	}
-	if start < 1 {
+	if start < 0 {
+		start = int64(len(s)) + start + 1
+		if start < 1 {
+			start = 1
+		}
+	} else if start == 0 {
 		start = 1
 	}
 	// Convert 1-based start to 0-based offset.

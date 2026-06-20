@@ -48,19 +48,20 @@ func (w *WindowOperator) Next(ctx context.Context) (Row, error) {
 	w.idx++
 
 	if w.outCols == nil {
-		w.outCols = make([]string, len(w.cols)+1)
-		copy(w.outCols, w.cols)
-		w.outCols[len(w.cols)] = w.funcName
+		if len(w.rows) > 0 && len(w.rows[0].Cols) > 0 {
+			w.outCols = make([]string, len(w.rows[0].Cols)+1)
+			copy(w.outCols, w.rows[0].Cols)
+			w.outCols[len(w.rows[0].Cols)] = w.funcName
+		} else {
+			w.outCols = make([]string, len(w.cols)+1)
+			copy(w.outCols, w.cols)
+			w.outCols[len(w.cols)] = w.funcName
+		}
 	}
-	w.outData = w.outData[:0]
-	if cap(w.outData) < len(w.cols)+1 {
-		w.outData = make([]any, len(w.cols)+1)
-	} else {
-		w.outData = w.outData[:len(w.cols)+1]
-	}
-	copy(w.outData, row.Data)
-	w.outData[len(w.cols)] = result
-	return Row{Cols: w.outCols, Data: w.outData}, nil
+	outData := make([]any, len(row.Data)+1)
+	copy(outData, row.Data)
+	outData[len(row.Data)] = result
+	return Row{Cols: w.outCols, Data: outData}, nil
 }
 
 func (w *WindowOperator) Close() error {

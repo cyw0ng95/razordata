@@ -2,6 +2,7 @@ package sqlcmp
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -67,6 +68,22 @@ func (r *Runner) CompareQuery(input string) ([]string, error) {
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	return lines, nil
+}
+
+func (r *Runner) CompareWorkflow(stmts []string) error {
+	if r.sqlitePath == "" {
+		return nil
+	}
+	cmd := exec.Command("sqlite3", ":memory:")
+	cmd.Stdin = strings.NewReader(strings.Join(stmts, ";\n") + ";\n")
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%v: %s", err, stderr.String())
+	}
+	return nil
 }
 
 func (r *Runner) SkipSQLite() bool {

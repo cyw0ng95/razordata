@@ -8,20 +8,6 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
-// validateOptions enforces the bounds and invariants declared in
-// docs/design/subsystems/SYS.md:198-214. It is called by Open before any
-// subsystem is constructed; a non-nil return aborts Open and leaves
-// no on-disk state.
-// All error returns wrap AP.ErrInvalidOptions with the offending
-// field name and value so the caller can map the failure to a UX
-// message without re-parsing strings.
-// Side effect: a relative Dir is resolved to an absolute path and
-// stored back into o.Dir. Callers should not rely on o.Dir being
-// exactly the string they passed; the Engine.dir field is set from
-// the original parameter, not from o.Dir, so this rewrite is safe.
-//
-// In InMemory mode, the directory and disk-related options are not
-// validated because no filesystem or disk subsystem is constructed.
 func validateOptions(o *AP.Options) error {
 	if o == nil {
 		return fmt.Errorf("%w: options is nil", AP.ErrInvalidOptions)

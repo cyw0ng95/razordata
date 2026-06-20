@@ -99,7 +99,9 @@ func (c *Catalog) NextID() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
+	c.mu.Lock()
 	c.nextID = c.inner.NextIDVal()
+	c.mu.Unlock()
 	return id, nil
 }
 
@@ -313,7 +315,7 @@ func (c *Catalog) Path() string {
 func (c *Catalog) PutStats(tableID uint64, colName string, stats ColumnStats) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	raw, err := c.inner.GetByID(tableID)
+	raw, err := c.inner.GetByIDRef(tableID)
 	if err != nil {
 		return fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
 	}

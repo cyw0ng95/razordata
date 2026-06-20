@@ -124,8 +124,10 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 	if s.planner != nil {
 		r.planner = s.planner
 	}
+	r.tableName = s.table
 	if s.alias != "" {
 		r = prefixRowCols(r, s.alias)
+		r.tableName = s.alias
 	}
 	return r, nil
 }
@@ -155,8 +157,10 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		if s.planner != nil {
 			row.planner = s.planner
 		}
+		row.tableName = s.table
 		if s.alias != "" {
 			row = prefixRowCols(row, s.alias)
+			row.tableName = s.alias
 		}
 		return row, nil
 	}
@@ -182,9 +186,10 @@ func (s *SeqScan) Close() error {
 // correlated subquery eval can resolve qualified names like x.col.
 func prefixRowCols(r Row, alias string) Row {
 	out := Row{
-		Data:  r.Data,
-		Outer: r.Outer,
-		Types: r.Types,
+		Data:      r.Data,
+		Outer:     r.Outer,
+		Types:     r.Types,
+		tableName: r.tableName,
 	}
 	out.Cols = make([]string, len(r.Cols))
 	prefix := alias + "."
@@ -408,6 +413,7 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
+		row.tableName = i.table
 		return row, nil
 	}
 	if err := i.it.Err(); err != nil {
@@ -487,6 +493,7 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
+		row.tableName = i.table
 		return row, nil
 	}
 	if err := i.indexIt.Err(); err != nil {
@@ -565,6 +572,7 @@ func (i *IndexScan) Next(ctx context.Context) (Row, error) {
 	}
 	r := i.rows[i.pos]
 	i.pos++
+	r.tableName = i.table
 	return r, nil
 }
 
@@ -627,6 +635,7 @@ func (i *IndexScan) nextFromBTree(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
+		row.tableName = i.table
 		i.btreeIt.Next()
 		return row, nil
 	}
