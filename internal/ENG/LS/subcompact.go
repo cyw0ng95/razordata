@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sync"
 
 	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
+	"golang.org/x/sync/errgroup"
 )
 
 // SubCompactor partitions a key range into N parallel sub-jobs (REQ000319).
@@ -74,30 +74,24 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 		})
 	}
 
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, sc.concurrency)
-	errs := make([]error, len(subs))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(sc.concurrency)
 	for i := range subs {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(idx int) {
-			defer wg.Done()
-			defer func() { <-sem }()
+		g.Go(func() error {
 			if nm.IsAvailable() {
 				release := nm.PinWorker()
 				defer release()
 			}
-			if err := subs[idx].job.Run(sc.manifest, sc.dir); err != nil {
-				errs[idx] = err
+			if err := subs[i].job.Run(sc.manifest, sc.dir); err != nil {
+				return err
 			}
-		}(i)
+			return nil
+		})
 	}
-	wg.Wait()
-	for _, e := range errs {
-		if e != nil {
-			return nil, e
-		}
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
+	_ = gctx
 
 	return &CompactionJobResult{
 		SourceLevel: sourceLevel,
