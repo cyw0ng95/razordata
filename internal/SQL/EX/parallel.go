@@ -160,6 +160,10 @@ type WorkerPoolError struct {
 
 func (e *WorkerPoolError) Error() string { return e.Msg }
 
+// Unwrap returns nil (no wrapped error). Added for errors.Is/As
+// chain compatibility. REQ000657.
+func (e *WorkerPoolError) Unwrap() error { return nil }
+
 // ParallelFanOut splits work across N workers using the pool.
 // Each worker processes partitions[partitionIdx] in parallel.
 // The result of each partition is delivered to the results

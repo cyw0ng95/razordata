@@ -2,6 +2,7 @@ package EX
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -18,7 +19,7 @@ func (s *engineStore) Delete(k []byte) error    { return s.eng.Delete(k) }
 func (s *engineStore) Get(k []byte) ([]byte, bool, error) {
 	v, err := s.eng.Get(k)
 	if err != nil {
-		if err.Error() == "key not found" || err.Error() == "not found" || err.Error() == "eng: key not found" {
+		if errors.Is(err, ls.ErrNotFound) {
 			return nil, false, nil
 		}
 		return nil, false, err
