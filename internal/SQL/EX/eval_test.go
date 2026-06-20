@@ -561,3 +561,27 @@ func TestCreateAndDropTable(t *testing.T) {
 	}
 	tablesMu.RUnlock()
 }
+
+func TestGlob_BinaryOp(t *testing.T) {
+	cases := []struct {
+		pattern string
+		s       string
+		want    bool
+	}{
+		{"h*", "hello", true},
+		{"h*", "world", false},
+		{"*.txt", "file.txt", true},
+		{"*.txt", "file.go", false},
+		{"h?llo", "hello", true},
+		{"h?llo", "hllo", false},
+	}
+	for _, tc := range cases {
+		got, err := glob(tc.pattern, tc.s)
+		if err != nil {
+			t.Fatalf("glob(%q, %q): %v", tc.pattern, tc.s, err)
+		}
+		if got != tc.want {
+			t.Errorf("glob(%q, %q) = %v, want %v", tc.pattern, tc.s, got, tc.want)
+		}
+	}
+}

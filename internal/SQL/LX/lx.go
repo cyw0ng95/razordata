@@ -27,6 +27,8 @@ var keywords = map[string]TokenType{
 	"IN":            T_IN,
 	"BETWEEN":       T_BETWEEN,
 	"LIKE":          T_LIKE,
+	"GLOB":          T_GLOB,
+	"DIV":           T_DIV,
 	"IS":            T_IS,
 	"NULL":          T_NULL,
 	"BEGIN":         T_BEGIN,

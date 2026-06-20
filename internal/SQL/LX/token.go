@@ -46,6 +46,8 @@ const (
 	T_IN
 	T_BETWEEN
 	T_LIKE
+	T_GLOB
+	T_DIV
 	T_IS
 	T_NULL
 	T_BEGIN
@@ -253,6 +255,8 @@ var tokenTypeNames = [...]string{
 	T_IN:            "IN",
 	T_BETWEEN:       "BETWEEN",
 	T_LIKE:          "LIKE",
+	T_GLOB:          "GLOB",
+	T_DIV:           "DIV",
 	T_IS:            "IS",
 	T_NULL:          "NULL",
 	T_BEGIN:         "BEGIN",

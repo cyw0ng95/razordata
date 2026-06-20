@@ -56,63 +56,19 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			return &QualifiedName{Table: name, Name: col}, nil
 		}
 		if p.current.Type == LX.T_LPAREN {
-			p.advance()
-			// REQ000437: aggregate names like GROUP_CONCAT accept
-			// the DISTINCT keyword before their argument.
-			// Handle it here (before the arg loop) so the loop
-			// does not try to parse DISTINCT as an expression.
-			var distinct bool
-			if isAggregateName(name) && p.current.Type == LX.T_DISTINCT {
-				distinct = true
-				p.advance()
-			}
-			var args []Expr
-			if p.current.Type != LX.T_RPAREN {
-				if distinct && p.current.Type == LX.T_STAR {
-					return nil, fmt.Errorf("ps: syntax error: DISTINCT not allowed with COUNT(*)")
-				}
-				a, err := p.parseExpr()
-				if err != nil {
-					return nil, err
-				}
-				args = append(args, a)
-				for p.current.Type == LX.T_COMMA {
-					p.advance()
-					a, err := p.parseExpr()
-					if err != nil {
-						return nil, err
-					}
-					args = append(args, a)
-				}
-			}
-			if err := p.expect(LX.T_RPAREN); err != nil {
-				return nil, err
-			}
-			p.advance()
-			// REQ000355: aggregate functions like GROUP_CONCAT are
-			// spelled as plain identifiers in SQL. Route them
-			// through AggregateFunc so the executor's aggregate
-			// path handles them.
-			if isAggregateName(name) {
-				// MIN/MAX with multiple args → scalar function
-				if len(args) > 1 && isMinMaxName(name) {
-					return &FunctionCall{Name: name, Args: args}, nil
-				}
-				var arg Expr
-				if len(args) > 0 {
-					arg = args[0]
-				}
-				// REQ000523: GROUP_CONCAT with optional separator
-				// GROUP_CONCAT(col, sep) stores the second arg as
-				// the separator expression.
-				var sep Expr
-				if name == "GROUP_CONCAT" && len(args) > 1 {
-					sep = args[1]
-				}
-				return &AggregateFunc{Name: name, Arg: arg, Distinct: distinct, Separator: sep}, nil
-			}
-			return &FunctionCall{Name: name, Args: args}, nil
+			return p.parseFunctionCall(name)
 		}
+		return &Ident{Name: name}, nil
+	case LX.T_GLOB:
+		// REQ000729: GLOB can be used as a function call GLOB(pattern, string)
+		// or as a binary operator expr GLOB pattern.
+		name := p.current.Lexeme
+		p.advance()
+		if p.current.Type == LX.T_LPAREN {
+			return p.parseFunctionCall(name)
+		}
+		// Not followed by '(' — treat as identifier for binary operator
+		// parsing in parsePostfix.
 		return &Ident{Name: name}, nil
 	case LX.T_RAISE:
 		// RAISE(ABORT, 'message') or RAISE(IGNORE) (REQ000560)
@@ -265,6 +221,63 @@ func (p *Parser) parsePrimary() (Expr, error) {
 	}
 }
 
+// parseFunctionCall parses a function call: name(arg1, arg2, ...).
+// The '(' has already been consumed.
+func (p *Parser) parseFunctionCall(name string) (Expr, error) {
+	p.advance() // consume '('
+	// REQ000437: aggregate names like GROUP_CONCAT accept
+	// the DISTINCT keyword before their argument.
+	var distinct bool
+	if isAggregateName(name) && p.current.Type == LX.T_DISTINCT {
+		distinct = true
+		p.advance()
+	}
+	var args []Expr
+	if p.current.Type != LX.T_RPAREN {
+		if distinct && p.current.Type == LX.T_STAR {
+			return nil, fmt.Errorf("ps: syntax error: DISTINCT not allowed with COUNT(*)")
+		}
+		a, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, a)
+		for p.current.Type == LX.T_COMMA {
+			p.advance()
+			a, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, a)
+		}
+	}
+	if err := p.expect(LX.T_RPAREN); err != nil {
+		return nil, err
+	}
+	p.advance()
+	// REQ000355: aggregate functions like GROUP_CONCAT are
+	// spelled as plain identifiers in SQL. Route them
+	// through AggregateFunc so the executor's aggregate
+	// path handles them.
+	if isAggregateName(name) {
+		// MIN/MAX with multiple args → scalar function
+		if len(args) > 1 && isMinMaxName(name) {
+			return &FunctionCall{Name: name, Args: args}, nil
+		}
+		var arg Expr
+		if len(args) > 0 {
+			arg = args[0]
+		}
+		// REQ000523: GROUP_CONCAT with optional separator
+		var sep Expr
+		if name == "GROUP_CONCAT" && len(args) > 1 {
+			sep = args[1]
+		}
+		return &AggregateFunc{Name: name, Arg: arg, Distinct: distinct, Separator: sep}, nil
+	}
+	return &FunctionCall{Name: name, Args: args}, nil
+}
+
 func (p *Parser) parseUnary() (Expr, error) {
 	if p.current.Type == LX.T_NOT || p.current.Type == LX.T_MINUS || p.current.Type == LX.T_PLUS || p.current.Type == LX.T_BITNOT {
 		op := int(p.current.Type)
@@ -286,6 +299,9 @@ func (p *Parser) parsePostfix() (Expr, error) {
 	switch p.current.Type {
 	case LX.T_IN:
 		return p.parseIn(expr)
+	case LX.T_GLOB:
+		// REQ000729: GLOB as binary operator
+		return p.parseGlob(expr)
 	}
 	if p.current.Type == LX.T_NOT {
 		next := p.lex.Peek().Type
@@ -296,9 +312,34 @@ func (p *Parser) parsePostfix() (Expr, error) {
 		case LX.T_IN:
 			p.advance()
 			return p.parseNotIn(expr)
+		case LX.T_GLOB:
+			// NOT GLOB
+			p.advance()
+			return p.parseNotGlob(expr)
 		}
 	}
 	return expr, nil
+}
+
+// parseGlob parses `expr GLOB pattern`.
+func (p *Parser) parseGlob(expr Expr) (Expr, error) {
+	p.advance() // consume GLOB
+	right, err := p.parseBinary(7)
+	if err != nil {
+		return nil, err
+	}
+	return &BinaryExpr{Op: int(LX.T_GLOB), Left: expr, Right: right}, nil
+}
+
+// parseNotGlob parses `expr NOT GLOB pattern` as NOT(expr GLOB pattern).
+func (p *Parser) parseNotGlob(expr Expr) (Expr, error) {
+	p.advance() // consume GLOB
+	right, err := p.parseBinary(7)
+	if err != nil {
+		return nil, err
+	}
+	glob := &BinaryExpr{Op: int(LX.T_GLOB), Left: expr, Right: right}
+	return &UnaryExpr{Op: int(LX.T_NOT), Operand: glob}, nil
 }
 
 // REQ000380: `NOT LIKE` — parse x NOT LIKE y as NOT(x LIKE y).

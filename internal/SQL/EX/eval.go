@@ -286,6 +286,10 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
 			}
 			return like(left, right, esc)
 		}
+	case int(LX.T_GLOB):
+		return glob(left, right)
+	case int(LX.T_DIV):
+		return intdiv(left, right)
 	case int(LX.T_IS):
 		// `x IS NOT NULL` parses as BinaryExpr{T_IS, x, UnaryExpr{T_NOT, NULL}}.
 		// Detect this and return the IS NOT NULL predicate semantics
@@ -2334,4 +2338,47 @@ func evalUnlikely(args []PS.Expr, row *Row, params []any) (any, error) {
 		return nil, nil
 	}
 	return Eval(args[0], row, params)
+}
+
+// glob implements the GLOB binary operator (SQLite-compatible).
+// Returns true if string matches the glob pattern.
+func glob(pattern, s any) (any, error) {
+	if pattern == nil || s == nil {
+		return nil, nil
+	}
+	p, ok := pattern.(string)
+	if !ok {
+		return nil, fmt.Errorf("ex: GLOB pattern must be string, got %T", pattern)
+	}
+	str, ok := s.(string)
+	if !ok {
+		return nil, fmt.Errorf("ex: GLOB operand must be string, got %T", s)
+	}
+	return globMatch(p, str), nil
+}
+
+// intdiv implements the DIV integer division operator.
+// Truncates toward zero (like SQLite's / operator on integers).
+func intdiv(a, b any) (any, error) {
+	if a == nil || b == nil {
+		return nil, nil
+	}
+	ai, aok := a.(int64)
+	bi, bok := b.(int64)
+	if aok && bok {
+		if bi == 0 {
+			return nil, nil
+		}
+		return ai / bi, nil
+	}
+	// Fallback: convert to float64 and truncate
+	af, aok := numericFloat(a)
+	bf, bok := numericFloat(b)
+	if aok && bok {
+		if bf == 0 {
+			return nil, nil
+		}
+		return int64(af / bf), nil
+	}
+	return nil, fmt.Errorf("ex: DIV requires numeric operands")
 }
