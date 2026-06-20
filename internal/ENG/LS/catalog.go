@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"os"
 
-	eng "github.com/cyw0ng95/razordata/internal/ENG"
+	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -30,13 +30,13 @@ var (
 	catalogHeaderSize = 17
 )
 
-// Catalog error sentinels — shared with TB via ENG package.
+// Catalog error sentinels — shared with TB via SC package.
 var (
-	ErrCatalogCorrupt  = eng.ErrCatalogCorrupt
-	ErrUpgradeRequired = eng.ErrUpgradeRequired
-	ErrCatalogNotFound = eng.ErrCatalogNotFound
-	ErrCatalogExists   = eng.ErrCatalogExists
-	ErrCatalogClosed   = eng.ErrCatalogClosed
+	ErrCatalogCorrupt  = sc.ErrCatalogCorrupt
+	ErrUpgradeRequired = sc.ErrUpgradeRequired
+	ErrCatalogNotFound = sc.ErrCatalogNotFound
+	ErrCatalogExists   = sc.ErrCatalogExists
+	ErrCatalogClosed   = sc.ErrCatalogClosed
 )
 
 // CatalogColumn represents a column in the on-disk catalog.

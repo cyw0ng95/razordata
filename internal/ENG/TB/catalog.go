@@ -7,13 +7,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
-
-	eng "github.com/cyw0ng95/razordata/internal/ENG"
 	"path/filepath"
 	"sort"
 	"sync"
 
-	"github.com/cyw0ng95/razordata/internal/ENG/SC"
+	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
 )
 
 const (
@@ -29,13 +27,13 @@ var (
 	catalogHeaderSize = 17 // magic(4) + version(1) + reserved(4) + nextID(8)
 )
 
-// Catalog error sentinels — shared with LS via ENG package.
+// Catalog error sentinels — shared with LS via SC package.
 var (
-	ErrCatalogCorrupt  = eng.ErrCatalogCorrupt
-	ErrUpgradeRequired = eng.ErrUpgradeRequired
-	ErrCatalogNotFound = eng.ErrCatalogNotFound
-	ErrCatalogExists   = eng.ErrCatalogExists
-	ErrCatalogClosed   = eng.ErrCatalogClosed
+	ErrCatalogCorrupt  = sc.ErrCatalogCorrupt
+	ErrUpgradeRequired = sc.ErrUpgradeRequired
+	ErrCatalogNotFound = sc.ErrCatalogNotFound
+	ErrCatalogExists   = sc.ErrCatalogExists
+	ErrCatalogClosed   = sc.ErrCatalogClosed
 )
 
 type Column struct {
