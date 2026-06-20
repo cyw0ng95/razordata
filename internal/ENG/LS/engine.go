@@ -66,9 +66,9 @@ func DefaultOptions() Options {
 
 // ReadStats holds cumulative read-path counters for the LSM engine.
 type ReadStats struct {
-	MemtableHits int
-	SSTHits      int
-	DiskReads    int
+	MemtableHits int64
+	SSTHits      int64
+	DiskReads    int64
 }
 
 type engine struct {
@@ -330,9 +330,9 @@ func (e *engine) MayContain(key []byte) bool {
 
 func (e *engine) Stats() ReadStats {
 	return ReadStats{
-		MemtableHits: int(e.stats.MemtableHits.Load()),
-		SSTHits:      int(e.stats.SSTHits.Load()),
-		DiskReads:    int(e.stats.DiskReads.Load()),
+		MemtableHits: e.stats.MemtableHits.Load(),
+		SSTHits:      e.stats.SSTHits.Load(),
+		DiskReads:    e.stats.DiskReads.Load(),
 	}
 }
 

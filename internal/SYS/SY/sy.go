@@ -463,12 +463,7 @@ func (e *Engine) Stats() AP.EngineStats {
 		LastShutdown: snap,
 	}
 	if e.eng != nil {
-		lsm := e.eng.Stats()
-		out.LSMTree = AP.LSMTreeStats{
-			MemtableHits: int64(lsm.MemtableHits),
-			SSTHits:      int64(lsm.SSTHits),
-			DiskReads:    int64(lsm.DiskReads),
-		}
+		out.LSMTree = e.eng.Stats()
 	}
 	if e.bp != nil {
 		bp := e.bp.Stats()

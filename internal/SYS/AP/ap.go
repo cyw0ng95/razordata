@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"time"
 
+	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SYS/BK"
 )
 
@@ -260,7 +261,7 @@ var ErrNoRows = errors.New("ap: no more rows")
 type EngineStats struct {
 	Version      string
 	Uptime       time.Duration
-	LSMTree      LSMTreeStats
+	LSMTree      ls.ReadStats // embedded from ENG/LS
 	BufferPool   BufferPoolStats
 	WAL          WALStats
 	Tx           TxnStats
@@ -279,13 +280,6 @@ type ShutdownStats struct {
 	BackgroundStops int       `json:"background_stops"`
 	UptimeSeconds   int64     `json:"uptime_seconds"`
 	FirstError      string    `json:"first_error,omitempty"`
-}
-
-// LSMTreeStats summarizes the LSM engine's read-side counters.
-type LSMTreeStats struct {
-	MemtableHits int64
-	SSTHits      int64
-	DiskReads    int64
 }
 
 // BufferPoolStats summarizes the page cache.
