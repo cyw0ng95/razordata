@@ -54,6 +54,29 @@ var sltFiles = []string{
 	"evidence/slt_lang_reindex.test",
 	"evidence/slt_lang_replace.test",
 	"evidence/slt_lang_update.test",
+	"index/orderby/10/slt_good_0.test",
+	"index/orderby_nosort/10/slt_good_0.test",
+}
+
+// TestSLT_ListFiles lists all available SLT test files without running them.
+// Useful for discovering test names to pass to -run.
+func TestSLT_ListFiles(t *testing.T) {
+	root := corpusRoot()
+	if _, err := os.Stat(root); err != nil {
+		t.Skipf("corpus not present at %s; initialize submodule: %v", root, err)
+	}
+	t.Logf("SLT corpus root: %s", root)
+	t.Logf("Available test files (%d):", len(sltFiles))
+	for i, rel := range sltFiles {
+		full := filepath.Join(root, rel)
+		testName := strings.ReplaceAll(rel, "/", "_")
+		_, err := os.Stat(full)
+		status := "ok"
+		if err != nil {
+			status = "MISSING"
+		}
+		t.Logf("  [%2d] %-45s (run: TestSLT_Each/%s) [%s]", i+1, rel, testName, status)
+	}
 }
 
 // sltPerFileTimeout caps how long a single file is allowed to run.
@@ -76,8 +99,10 @@ func TestSLT_Each(t *testing.T) {
 	}
 	for _, rel := range sltFiles {
 		rel := rel
-		basename := filepath.Base(rel)
-		t.Run(basename, func(t *testing.T) {
+		// Use the full relative path with slashes replaced by underscores
+		// to ensure unique test names.
+		testName := strings.ReplaceAll(rel, "/", "_")
+		t.Run(testName, func(t *testing.T) {
 			full := filepath.Join(root, rel)
 			if _, err := os.Stat(full); err != nil {
 				t.Skipf("file not present: %s: %v", full, err)
@@ -86,7 +111,7 @@ func TestSLT_Each(t *testing.T) {
 			// Always log the breakdown so a regression is
 			// easy to triage from the verbose output.
 			t.Logf("slt[%s]: pass=%d fail=%d skip=%d parse-err=%d total=%d dur=%s",
-				basename, stats.Passed, stats.Failed, stats.Skipped,
+				rel, stats.Passed, stats.Failed, stats.Skipped,
 				stats.ParseErrors, stats.Total, time.Duration(stats.Duration))
 			if diag != "" {
 				t.Logf("first failure context:\n%s", diag)
