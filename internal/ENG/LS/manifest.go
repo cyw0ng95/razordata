@@ -131,30 +131,36 @@ type ManifestCheckpoint struct {
 
 func encodeManifest(v *Version) ([]byte, error) {
 	var buf bytes.Buffer
+	var b8 [8]byte
 
-	binary.Write(&buf, binary.LittleEndian, v.num)
-	binary.Write(&buf, binary.LittleEndian, int64(len(v.levels)))
+	binary.LittleEndian.PutUint64(b8[:], uint64(v.num))
+	buf.Write(b8[:])
+	binary.LittleEndian.PutUint64(b8[:], uint64(len(v.levels)))
+	buf.Write(b8[:])
 
 	for _, level := range v.levels {
-		binary.Write(&buf, binary.LittleEndian, int64(len(level)))
+		binary.LittleEndian.PutUint64(b8[:], uint64(len(level)))
+		buf.Write(b8[:])
 		for _, file := range level {
 			buf.Write(encodeVarint(int64(len(file.MinKey))))
 			buf.Write(file.MinKey)
 			buf.Write(encodeVarint(int64(len(file.MaxKey))))
 			buf.Write(file.MaxKey)
-			offsetBuf := make([]byte, 8)
-			binary.LittleEndian.PutUint64(offsetBuf, file.FileID)
-			buf.Write(offsetBuf)
-			sizeBuf := make([]byte, 8)
-			binary.LittleEndian.PutUint64(sizeBuf, uint64(file.Size))
-			buf.Write(sizeBuf)
-			binary.Write(&buf, binary.LittleEndian, int64(file.Level))
-			binary.Write(&buf, binary.LittleEndian, int64(file.BloomBits))
+			binary.LittleEndian.PutUint64(b8[:], file.FileID)
+			buf.Write(b8[:])
+			binary.LittleEndian.PutUint64(b8[:], uint64(file.Size))
+			buf.Write(b8[:])
+			binary.LittleEndian.PutUint64(b8[:], uint64(file.Level))
+			buf.Write(b8[:])
+			binary.LittleEndian.PutUint64(b8[:], uint64(file.BloomBits))
+			buf.Write(b8[:])
 		}
 	}
 
 	checksum := crc32.Checksum(buf.Bytes(), crc32Koopman)
-	binary.Write(&buf, binary.LittleEndian, checksum)
+	var b4 [4]byte
+	binary.LittleEndian.PutUint32(b4[:], checksum)
+	buf.Write(b4[:])
 
 	return buf.Bytes(), nil
 }
