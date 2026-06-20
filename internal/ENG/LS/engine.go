@@ -16,6 +16,11 @@ var (
 	ErrNotFound         = errors.New("ls: key not found")
 )
 
+const (
+	DefaultMemTableShards = 1
+	DefaultMemTableSize   = 64 * 1024 * 1024
+)
+
 // memtableAdapter wraps *memtable to satisfy memtableIface.
 type memtableAdapter struct {
 	*memtable
@@ -54,8 +59,8 @@ type Options struct {
 // DefaultOptions returns the default configuration.
 func DefaultOptions() Options {
 	return Options{
-		MemTableShards: 1, // legacy single-shard mode by default
-		MemTableSize:   64 * 1024 * 1024,
+		MemTableShards: DefaultMemTableShards,
+		MemTableSize:   DefaultMemTableSize,
 	}
 }
 
