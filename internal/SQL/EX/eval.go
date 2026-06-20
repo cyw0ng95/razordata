@@ -46,14 +46,12 @@ func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 		return e.Name, nil
 	case *PS.QualifiedName:
 		if row != nil {
+			// REQ000755: Use O(1) Lookup instead of O(N) linear scan.
+			// Try qualified name first (table.col), then bare name.
 			key := e.Table + "." + e.Name
 			for cur := row; cur != nil; cur = cur.Outer {
-				for i, c := range cur.Cols {
-					if strings.EqualFold(c, key) {
-						if i < len(cur.Data) {
-							return cur.Data[i], nil
-						}
-					}
+				if v, ok := cur.Lookup(key); ok {
+					return v, nil
 				}
 			}
 			// REQ000700: walk the outer chain, preferring rows
@@ -65,21 +63,13 @@ func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 				if cur.tableName != "" && !strings.EqualFold(cur.tableName, e.Table) {
 					continue
 				}
-				for i, c := range cur.Cols {
-					if strings.EqualFold(c, e.Name) {
-						if i < len(cur.Data) {
-							return cur.Data[i], nil
-						}
-					}
+				if v, ok := cur.Lookup(e.Name); ok {
+					return v, nil
 				}
 			}
 			// Current row: last resort for bare-name match.
-			for i, c := range row.Cols {
-				if strings.EqualFold(c, e.Name) {
-					if i < len(row.Data) {
-						return row.Data[i], nil
-					}
-				}
+			if v, ok := row.Lookup(e.Name); ok {
+				return v, nil
 			}
 		}
 		return e.Table + "." + e.Name, nil
