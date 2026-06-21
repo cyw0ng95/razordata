@@ -69,6 +69,114 @@ func TestJoinElimination_UnreferencedTable(t *testing.T) {
 	}
 }
 
+// TestJoinElimination_J3Patterns verifies REQ000799 with the
+// patterns from the j3 multi-table join regression suite. Each
+// query has an unreferenced table that should be eliminated.
+//
+// Setup: 3 tables, 10 rows each, values 100-109.
+func TestJoinElimination_J3Patterns(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	e := NewExecutor()
+	ctx := context.Background()
+
+	for _, s := range []string{
+		"CREATE TABLE t1(a INTEGER, b INTEGER, c INTEGER, d INTEGER, e INTEGER)",
+		"CREATE TABLE t2(a INTEGER, b INTEGER, c INTEGER, d INTEGER, e INTEGER)",
+		"CREATE TABLE t3(a INTEGER, b INTEGER, c INTEGER, d INTEGER, e INTEGER)",
+	} {
+		if _, err := e.Exec(ctx, s); err != nil {
+			t.Fatalf("setup CREATE: %v", err)
+		}
+	}
+	for i := 1; i <= 3; i++ {
+		for j := 0; j < 10; j++ {
+			v := int64(100 + j)
+			stmt := "INSERT INTO t" + string(rune('0'+i)) + " VALUES(" +
+				"?,?,?,?,?)"
+			if _, err := e.Exec(ctx, stmt, v, v, v, v, v); err != nil {
+				t.Fatalf("setup INSERT: %v", err)
+			}
+		}
+	}
+
+	// t3 unreferenced — only t1.a and t2.b used. 10*10 = 100 rows.
+	rows, err := e.QueryAll(ctx, "SELECT t1.a, t2.b FROM t1, t2, t3 WHERE t1.a > 105 AND t2.b > 105")
+	if err != nil {
+		t.Fatalf("filter only: %v", err)
+	}
+	// Without elimination: 1000 rows filtered to 16. With elimination:
+	// 100 rows filtered to 16. Same result count, ~10× less work.
+	if len(rows) != 16 {
+		t.Errorf("filter only: expected 16 rows, got %d", len(rows))
+	}
+
+	// Verify no t3.* column references appear in result columns.
+	// Result should have exactly 2 columns: t1.a, t2.b.
+	if len(rows) > 0 && len(rows[0].Cols) != 2 {
+		t.Errorf("expected 2 columns after elimination, got %d", len(rows[0].Cols))
+	}
+
+	// t2 unreferenced — only t1.a in SELECT, only t3.c in WHERE.
+	rows, err = e.QueryAll(ctx, "SELECT t1.a FROM t1, t2, t3 WHERE t3.c IN (100, 105)")
+	if err != nil {
+		t.Fatalf("where only: %v", err)
+	}
+	// With elimination: 10 * 2 = 20 rows. Without: 10 * 10 * 2 = 200 rows.
+	if len(rows) != 20 {
+		t.Errorf("where only: expected 20 rows, got %d", len(rows))
+	}
+
+	// Single-table SELECT — no joins, sanity check.
+	rows, err = e.QueryAll(ctx, "SELECT t1.a FROM t1 WHERE t1.a > 105")
+	if err != nil {
+		t.Fatalf("single: %v", err)
+	}
+	if len(rows) != 4 {
+		t.Errorf("single: expected 4 rows, got %d", len(rows))
+	}
+}
+
+// TestJoinElimination_PreservesEquiJoinKeys verifies REQ000799
+// doesn't eliminate tables whose columns appear in equi-join
+// conditions (the planner still needs those tables for HashJoin).
+func TestJoinElimination_PreservesEquiJoinKeys(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	e := NewExecutor()
+	ctx := context.Background()
+
+	for _, s := range []string{
+		"CREATE TABLE t1(a INTEGER)",
+		"CREATE TABLE t2(b INTEGER)",
+		"CREATE TABLE t3(c INTEGER)",
+		"INSERT INTO t1 VALUES (1), (2), (3)",
+		"INSERT INTO t2 VALUES (1), (2), (3)",
+		"INSERT INTO t3 VALUES (10), (20), (30)",
+	} {
+		if _, err := e.Exec(ctx, s); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+	}
+
+	// t3 appears in equi-join condition (t1.a = t3.c) — must NOT
+	// be eliminated even though t3.c doesn't appear in SELECT/WHERE.
+	rows, err := e.QueryAll(ctx, "SELECT t1.a FROM t1, t2, t3 WHERE t1.a = t3.c")
+	if err != nil {
+		t.Fatalf("equi: %v", err)
+	}
+	// 3 rows where t1.a matches t3.c: 1→10? no, 2→20? no, 3→30? no.
+	// Actually: t1.a IN {1,2,3}, t3.c IN {10,20,30} — no matches → 0 rows.
+	// But with elimination of t3, we'd lose the join condition entirely.
+	// Either we keep t3 (result: 0 rows) or eliminate it (result: 3 rows
+	// from t1 alone). The test asserts we keep t3.
+	if len(rows) != 0 {
+		t.Errorf("equi-join with t3 in WHERE: expected 0 rows (no matches), got %d", len(rows))
+	}
+}
+
 // TestHashCrossJoin_SmallTables verifies REQ000800:
 // hash-based cross join for small materialized tables.
 func TestHashCrossJoin_SmallTables(t *testing.T) {

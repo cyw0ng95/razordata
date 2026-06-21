@@ -339,3 +339,116 @@ func BenchmarkJoinRegress(b *testing.B) {
 		})
 	}
 }
+
+// TestJoinElimination_E2E verifies REQ000799 via the SQL layer.
+// Uses qualified column projections so join elimination can drop
+// unreferenced tables. Compares against the * projection (which
+// disables elimination by design) to show the work-savings.
+func TestJoinElimination_E2E(t *testing.T) {
+	db := setupJoinDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), joinRegressTimeout)
+	defer cancel()
+
+	cases := []struct {
+		name        string
+		sql         string
+		expectRows  int64
+		expectCols  int
+		description string
+	}{
+		{
+			name:        "star_3table_keeps_all",
+			sql:         "SELECT * FROM t1, t2, t3",
+			expectRows:  1000,
+			expectCols:  15,
+			description: "SELECT * blocks elimination — all 3 tables materialized",
+		},
+		{
+			name:        "qual_3table_drops_t3",
+			sql:         "SELECT t1.a, t2.b FROM t1, t2, t3",
+			expectRows:  100,
+			expectCols:  2,
+			description: "Only t1, t2 referenced — t3 eliminated (10×10=100 not 10³)",
+		},
+		{
+			name:        "qual_where_3table",
+			sql:         "SELECT t1.a FROM t1, t2, t3 WHERE t2.b > 105",
+			expectRows:  40,
+			expectCols:  1,
+			description: "t3 unreferenced — eliminated, 10*10=100 input filtered to 40",
+		},
+		{
+			name:        "qual_3table_drops_t2",
+			sql:         "SELECT t1.a FROM t1, t2, t3 WHERE t3.c IN (100, 105)",
+			expectRows:  20,
+			expectCols:  1,
+			description: "Only t1 and t3 referenced — t2 eliminated (10*2=20)",
+		},
+		{
+			name:        "all_3_referenced",
+			sql:         "SELECT t1.a FROM t1, t2, t3 WHERE t1.a = t2.b AND t2.b = t3.c",
+			expectRows:  10,
+			expectCols:  1,
+			description: "All 3 referenced via equi-join chain — nothing eliminated",
+		},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			rows, err := db.QueryContext(ctx, c.sql)
+			if err != nil {
+				t.Fatalf("%s: query failed: %v", c.name, err)
+			}
+			defer rows.Close()
+
+			cols, err := rows.Columns()
+			if err != nil {
+				t.Fatalf("%s: columns: %v", c.name, err)
+			}
+			if len(cols) != c.expectCols {
+				t.Errorf("%s: columns: got %d, want %d (%s)", c.name, len(cols), c.expectCols, c.description)
+			}
+
+			count := int64(0)
+			for rows.Next() {
+				count++
+			}
+			if count != c.expectRows {
+				t.Errorf("%s: rows: got %d, want %d (%s)", c.name, count, c.expectRows, c.description)
+			}
+		})
+	}
+}
+
+// BenchmarkJoinElimination compares SELECT * (no elimination) vs
+// qualified projection (with elimination) for the same join shape.
+// Expectation: qualified projection is significantly faster because
+// the planner drops unreferenced tables from the join chain.
+func BenchmarkJoinElimination(b *testing.B) {
+	db := setupJoinDB(b)
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		sql  string
+	}{
+		{"star_3table", "SELECT * FROM t1, t2, t3"},
+		{"qual_3table_drops_t3", "SELECT t1.a, t2.b FROM t1, t2, t3"},
+		{"qual_3table_drops_t2", "SELECT t1.a, t3.c FROM t1, t2, t3"},
+		{"qual_3table_drops_all_extras", "SELECT t1.a FROM t1, t2, t3"},
+	}
+	for _, c := range cases {
+		b.Run(c.name, func(b *testing.B) {
+			for b.Loop() {
+				rows, err := db.QueryContext(ctx, c.sql)
+				if err != nil {
+					b.Fatal(err)
+				}
+				for rows.Next() {
+				}
+				rows.Close()
+			}
+		})
+	}
+}
