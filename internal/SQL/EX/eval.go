@@ -8,12 +8,18 @@ import (
 	"math/rand/v2"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
+
+// globalSubqueryCache caches results of non-correlated scalar subqueries
+// across all executions. Keyed by serialized statement.
+// This eliminates O(N) subquery re-evaluations for N-row result sets.
+var globalSubqueryCache sync.Map
 
 var ErrEval = errors.New("ex: eval error")
 var ErrDivByZero = errors.New("ex: division by zero")
@@ -487,6 +493,17 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (any, erro
 	if !ok {
 		return nil, ErrSubquery
 	}
+
+	// Compute cache key from the serialized statement.
+	// Non-correlated subqueries (no outer column references)
+	// are cached globally to avoid O(N) re-evaluations.
+	key := serializeKey(sel)
+
+	// Try global cache first.
+	if cached, ok := globalSubqueryCache.Load(key); ok {
+		return cached, nil
+	}
+
 	pl, err := newSubqueryPlanner(outer).Plan(sel)
 	if err != nil {
 		return nil, err
@@ -495,13 +512,17 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (any, erro
 	if err != nil {
 		return nil, err
 	}
+	var result any
 	if len(rows) == 0 {
-		return nil, nil
+		result = nil
+	} else if len(rows[0].Data) == 0 {
+		result = nil
+	} else {
+		result = rows[0].Data[0]
 	}
-	if len(rows[0].Data) == 0 {
-		return nil, nil
-	}
-	return rows[0].Data[0], nil
+	// Cache the result globally.
+	globalSubqueryCache.Store(key, result)
+	return result, nil
 }
 
 func evalInterval(e *PS.IntervalLiteral) (any, error) {

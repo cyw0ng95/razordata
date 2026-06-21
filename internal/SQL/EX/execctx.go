@@ -7,6 +7,10 @@ type ExecContext struct {
 	Planner   *Planner
 	SessionID uint64
 	TxWriter  TxWriter
+	// subqueryCache caches results of non-correlated scalar subqueries.
+	// Keyed by plan hash; value is the scalar result (any).
+	// Eliminates O(N) subquery re-evaluations for N-row result sets.
+	subqueryCache map[string]any
 }
 
 var execCtxKey = struct{}{}
@@ -30,4 +34,13 @@ func ExecContextFromRow(row *Row) *ExecContext {
 		}
 	}
 	return nil
+}
+
+// GetSubqueryCache returns the subquery result cache from the ExecContext.
+// Creates the cache map on first access.
+func (ec *ExecContext) GetSubqueryCache() map[string]any {
+	if ec.subqueryCache == nil {
+		ec.subqueryCache = make(map[string]any)
+	}
+	return ec.subqueryCache
 }
