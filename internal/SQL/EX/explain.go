@@ -220,6 +220,50 @@ func describeOp(op Operator) string {
 		b.WriteString("DropTable(name=")
 		b.WriteString(v.stmt.Name)
 		b.WriteByte(')')
+	case *CreateIndex:
+		b.WriteString("CreateIndex(name=")
+		b.WriteString(v.stmt.Name)
+		b.WriteByte(')')
+	case *DropIndex:
+		b.WriteString("DropIndex(name=")
+		b.WriteString(v.stmt.Name)
+		b.WriteByte(')')
+	case *CreateViewOperator:
+		b.WriteString("CreateView(name=")
+		b.WriteString(v.stmt.Name)
+		b.WriteByte(')')
+	case *DropView:
+		b.WriteString("DropView(name=")
+		b.WriteString(v.stmt.Name)
+		b.WriteByte(')')
+	case *DropTrigger:
+		b.WriteString("DropTrigger(name=")
+		b.WriteString(v.stmt.Name)
+		b.WriteByte(')')
+	case *AlterTable:
+		b.WriteString("AlterTable")
+	case *Pragma:
+		b.WriteString("Pragma")
+	case *Analyze:
+		b.WriteString("Analyze")
+	case *Vacuum:
+		b.WriteString("Vacuum")
+	case *Truncate:
+		b.WriteString("Truncate")
+	case *Reindex:
+		b.WriteString("Reindex")
+	case *HashJoin:
+		b.WriteString("HashJoin")
+	case *WindowOperator:
+		b.WriteString("Window")
+	case *CompoundOp:
+		b.WriteString("Compound")
+	case *ValuesRows:
+		b.WriteString("ValuesRows")
+	case *ExplainStmtOp:
+		b.WriteString("Explain")
+	case *Noop:
+		b.WriteString("Noop")
 	default:
 		return "Unknown"
 	}

@@ -110,6 +110,90 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 	case *DropTable:
 		node.Detail = fmt.Sprintf("DROP TABLE %s", v.stmt.Name)
 		node.Cost = 1.0
+
+	case *CreateIndex:
+		node.Detail = fmt.Sprintf("CREATE INDEX %s", v.stmt.Name)
+		node.Cost = 5.0
+
+	case *DropIndex:
+		node.Detail = fmt.Sprintf("DROP INDEX %s", v.stmt.Name)
+		node.Cost = 1.0
+
+	case *CreateViewOperator:
+		node.Detail = fmt.Sprintf("CREATE VIEW %s", v.stmt.Name)
+		node.Cost = 1.0
+
+	case *DropView:
+		node.Detail = fmt.Sprintf("DROP VIEW %s", v.stmt.Name)
+		node.Cost = 1.0
+
+	case *DropTrigger:
+		node.Detail = fmt.Sprintf("DROP TRIGGER %s", v.stmt.Name)
+		node.Cost = 1.0
+
+	case *AlterTable:
+		node.Detail = fmt.Sprintf("ALTER TABLE %s", v.stmt.Table)
+		node.Cost = 2.0
+
+	case *Pragma:
+		node.Detail = fmt.Sprintf("PRAGMA %s", v.stmt.Name)
+		node.Cost = 0.5
+
+	case *Analyze:
+		node.Detail = "ANALYZE"
+		node.Cost = 10.0
+
+	case *Vacuum:
+		node.Detail = "VACUUM"
+		node.Cost = 50.0
+
+	case *IntegrityCheck:
+		node.Detail = "INTEGRITY_CHECK"
+		node.Cost = 10.0
+
+	case *Truncate:
+		node.Detail = fmt.Sprintf("TRUNCATE %s", v.stmt.Table)
+		node.Cost = 1.0
+
+	case *Reindex:
+		node.Detail = fmt.Sprintf("REINDEX %s", v.stmt.Target)
+		node.Cost = 2.0
+
+	case *CreateMatViewOperator:
+		node.Detail = fmt.Sprintf("CREATE MATERIALIZED VIEW %s", v.Name)
+		node.Cost = 10.0
+
+	case *RefreshMatViewOperator:
+		node.Detail = fmt.Sprintf("REFRESH MATERIALIZED VIEW %s", v.Name)
+		node.Cost = 10.0
+
+	case *DropMatViewOperator:
+		node.Detail = fmt.Sprintf("DROP MATERIALIZED VIEW %s", v.Name)
+		node.Cost = 1.0
+
+	case *HashJoin:
+		node.Detail = fmt.Sprintf("HASH JOIN %s", v.rightTbl)
+		node.Cost = 10.0
+
+	case *WindowOperator:
+		node.Detail = fmt.Sprintf("WINDOW %s", v.funcName)
+		node.Cost = 10.0
+
+	case *CompoundOp:
+		node.Detail = "COMPOUND"
+		node.Cost = 5.0
+
+	case *ValuesRows:
+		node.Detail = fmt.Sprintf("VALUES %d rows", len(v.rows))
+		node.Cost = 1.0
+
+	case *ExplainStmtOp:
+		node.Detail = "EXPLAIN"
+		node.Cost = 0
+
+	case *Noop:
+		node.Detail = "NOOP"
+		node.Cost = 0
 	}
 
 	// Recursively build children
@@ -136,6 +220,28 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 	case *Delete:
 		if v.iter != nil {
 			node.Add(buildPlanNodeTree(v.iter, planner))
+		}
+	case *HashJoin:
+		if v.LeftChild() != nil {
+			node.Add(buildPlanNodeTree(v.LeftChild(), planner))
+		}
+		if v.RightChild() != nil {
+			node.Add(buildPlanNodeTree(v.RightChild(), planner))
+		}
+	case *CompoundOp:
+		if v.left != nil {
+			node.Add(buildPlanNodeTree(v.left, planner))
+		}
+		if v.right != nil {
+			node.Add(buildPlanNodeTree(v.right, planner))
+		}
+	case *WindowOperator:
+		if v.input != nil {
+			node.Add(buildPlanNodeTree(v.input, planner))
+		}
+	case *ExplainStmtOp:
+		if v.root != nil {
+			node.Add(buildPlanNodeTree(v.root, planner))
 		}
 	}
 
@@ -170,6 +276,16 @@ func operatorType(op Operator) string {
 		return "HashAggregate"
 	case *NestedLoopJoin:
 		return "Join"
+	case *HashJoin:
+		return "HashJoin"
+	case *WindowOperator:
+		return "Window"
+	case *CompoundOp:
+		return "Compound"
+	case *Values:
+		return "Values"
+	case *ValuesRows:
+		return "ValuesRows"
 	case *Insert:
 		return "Insert"
 	case *Update:
@@ -180,6 +296,44 @@ func operatorType(op Operator) string {
 		return "CreateTable"
 	case *DropTable:
 		return "DropTable"
+	case *CreateIndex:
+		return "CreateIndex"
+	case *DropIndex:
+		return "DropIndex"
+	case *CreateViewOperator:
+		return "CreateView"
+	case *DropView:
+		return "DropView"
+	case *Trigger:
+		return "CreateTrigger"
+	case *DropTrigger:
+		return "DropTrigger"
+	case *AlterTable:
+		return "AlterTable"
+	case *Pragma:
+		return "Pragma"
+	case *Analyze:
+		return "Analyze"
+	case *Vacuum:
+		return "Vacuum"
+	case *IntegrityCheck:
+		return "IntegrityCheck"
+	case *Truncate:
+		return "Truncate"
+	case *Reindex:
+		return "Reindex"
+	case *CreateMatViewOperator:
+		return "CreateMatView"
+	case *RefreshMatViewOperator:
+		return "RefreshMatView"
+	case *DropMatViewOperator:
+		return "DropMatView"
+	case *ExplainStmtOp:
+		return "Explain"
+	case *Noop:
+		return "Noop"
+	case *FallbackOp:
+		return "Fallback"
 	}
 	return "Unknown"
 }
