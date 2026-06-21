@@ -35,12 +35,13 @@ type NestedLoopJoin struct {
 	// REQ000800: hash-based cross join for small tables.
 	// When both sides fit in memory, materialize both and
 	// do a hash-based cross product instead of NLJ.
-	leftRows    []Row
-	hashMode    bool
-	hashBuckets map[uint64][]int // hash → indices into rightRows
-	leftIdx     int
-	rightIdx    int
-	leftMatched []bool // for LEFT JOIN
+	leftRows     []Row
+	hashMode     bool
+	hashAttempted bool // set true after tryHashCrossJoin fails; prevents O(N²) re-entry
+	hashBuckets  map[uint64][]int // hash → indices into rightRows
+	leftIdx      int
+	rightIdx     int
+	leftMatched  []bool // for LEFT JOIN
 }
 
 func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error), kind JoinKind) *NestedLoopJoin {
@@ -64,7 +65,14 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 		return Row{}, err
 	}
 	// REQ000800: try hash cross join on first call for small tables.
-	if !j.hashMode && j.leftRows == nil && j.rightRows == nil {
+	// Guard includes leftRow == nil to avoid re-entering tryHashCrossJoin
+	// mid-NLJ iteration — after an abort the operator is partway through
+	// the NLJ loop and re-entering would re-drain the left child on
+	// every Next() call (catastrophic for large cross products).
+	// hashAttempted prevents O(N²) re-entry when left has >1024 rows:
+	// without it, every time leftRow becomes nil the guard passes,
+	// re-draining the left child each time.
+	if !j.hashMode && !j.hashAttempted && j.leftRows == nil && j.rightRows == nil && j.leftRow == nil {
 		if j.tryHashCrossJoin(ctx) {
 			// Switched to hash mode — continue with hash iteration.
 		}
@@ -160,8 +168,12 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 		}
 		j.leftRows = append(j.leftRows, prefixed)
 		if len(j.leftRows) >= maxMaterialize {
-			// Too many rows — abort, use NLJ.
+			// Too many rows — abort, use NLJ. Close() to reset
+			// operator state; the NLJ loop re-initializes from
+			// scratch on the next call.
+			j.left.Close()
 			j.leftRows = nil
+			j.hashAttempted = true
 			return false
 		}
 	}
@@ -179,9 +191,13 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 			tableName: row.tableName,
 		})
 		if len(j.rightRows) >= maxMaterialize {
-			// Too many rows — abort, use NLJ.
+			// Too many rows — abort, use NLJ. Close both sides
+			// and reset.
+			j.right.Close()
+			j.left.Close()
 			j.rightRows = nil
 			j.leftRows = nil
+			j.hashAttempted = true
 			return false
 		}
 	}
@@ -189,6 +205,7 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 		// Empty side — result is empty.
 		j.leftRows = nil
 		j.rightRows = nil
+		j.hashAttempted = true
 		return false
 	}
 	// Build hash from right side for equi-join lookups.
@@ -263,6 +280,7 @@ func (j *NestedLoopJoin) nullRightRow() Row {
 
 func (j *NestedLoopJoin) Close() error {
 	j.hashMode = false
+	j.hashAttempted = false
 	j.leftRow = nil
 	j.leftRows = nil
 	j.rightRows = nil

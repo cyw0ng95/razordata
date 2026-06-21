@@ -1070,6 +1070,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		// REQ000797: track all tables already joined so HashJoin can
 		// be used for multi-table chains (not just the first join).
 		joinedTables := map[string]bool{s.From: true}
+		leftTbl := s.From
 		for _, j := range s.Joins {
 			// Support all join kinds (REQ000197: OUTER JOIN)
 			if j.Kind != "INNER" && j.Kind != "LEFT" && j.Kind != "RIGHT" && j.Kind != "FULL" && j.Kind != "CROSS" {
@@ -1102,7 +1103,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			if (kind == JoinKindInner || kind == JoinKindCross) && len(crossTableConjuncts) > 0 {
 				lk, rk, remaining := p.extractEquiJoinKeys(crossTableConjuncts, joinedTables, j.Right)
 				if len(lk) > 0 {
-					joinOp = NewHashJoin(current, rightScan, j.Right, j.Right, lk, rk, 0)
+					joinOp = NewHashJoin(current, rightScan, leftTbl, j.Right, lk, rk, 0)
 					crossTableConjuncts = remaining
 				}
 			}
@@ -1120,11 +1121,12 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 						return truthy(v), nil
 					}
 				}
-				joinOp = NewNestedLoopJoin(current, rightScan, j.Right, j.Right, on, kind)
+				joinOp = NewNestedLoopJoin(current, rightScan, leftTbl, j.Right, on, kind)
 			}
 
 			current = joinOp
 			joinedTables[j.Right] = true
+			leftTbl = j.Right
 		}
 	}
 
