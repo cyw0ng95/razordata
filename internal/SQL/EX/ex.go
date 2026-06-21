@@ -1220,11 +1220,37 @@ func extractResult(op Operator) (Result, error) {
 // returned iterator to release the underlying plan resources.
 // REQ000348.
 func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*streamIterator, error) {
-	parser := PS.NewParser(sql)
-	stmt, err := parser.Parse()
-	if err != nil {
-		return nil, err
+	// REQ000771: try the in-Executor cache before parsing. The
+	// ST.Stmt.Query hot path goes through here, and avoiding the
+	// parser pass on repeated queries reclaims the 12% CPU that
+	// parsing was costing.
+	var stmt PS.Stmt
+	if e.stmtCache.entries != nil {
+		if cached := e.getCachedStmt(sql); cached != nil {
+			stmt = cached
+		}
 	}
+	if stmt == nil {
+		parser := PS.NewParser(sql)
+		parsed, err := parser.Parse()
+		if err != nil {
+			return nil, err
+		}
+		stmt = parsed
+		if e.stmtCache.entries != nil {
+			e.putCachedStmt(sql, stmt)
+		}
+	}
+	return e.QueryStreamFromAST(ctx, stmt, args...)
+}
+
+// QueryStreamFromAST runs a pre-parsed statement through the
+// planner and returns a streaming iterator. Skips the parser pass
+// — used by REQ000771's StmtCache to avoid re-parsing on repeated
+// queries. The caller must ensure `stmt` is the AST for the same
+// SQL that produced this entry (or accept semantic divergence if
+// DDL changed schema).
+func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ...any) (*streamIterator, error) {
 
 	// Check if this is a DML with RETURNING clause
 	if hasReturning(stmt) {

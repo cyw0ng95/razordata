@@ -1127,6 +1127,14 @@ func evalRound(args []PS.Expr, row *Row, params []any) (any, error) {
 	if v == nil {
 		return nil, nil
 	}
+	// REQ000772: int64 fast path when no places arg is given or
+	// places==0. Avoid the float64 conversion in numericFloat for
+	// the common case of ROUND(int_col).
+	if len(args) == 1 {
+		if x, ok := v.(int64); ok {
+			return x, nil
+		}
+	}
 	x, ok := numericFloat(v)
 	if !ok {
 		return 0.0, nil
@@ -1610,6 +1618,17 @@ func evalSign(args []PS.Expr, row *Row, params []any) (any, error) {
 	// REQ000619: SIGN(NULL) must return NULL, not 0.
 	if v == nil {
 		return nil, nil
+	}
+	// REQ000772: int64 fast path — SIGN on int64 only needs a
+	// single comparison instead of the float64 conversion in
+	// numericFloat.
+	if x, ok := v.(int64); ok {
+		if x < 0 {
+			return int64(-1), nil
+		} else if x > 0 {
+			return int64(1), nil
+		}
+		return int64(0), nil
 	}
 	n, ok := numericFloat(v)
 	if !ok {
