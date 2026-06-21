@@ -93,7 +93,27 @@ func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, bool, error) {
 				collation = p.current.Lexeme
 				p.advance()
 			}
-			orderBy = append(orderBy, OrderItem{Expr: expr, Desc: desc, Collation: collation})
+			nullsOrder := int8(0)
+			if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "NULLS") {
+				p.advance()
+				if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "FIRST") {
+					nullsOrder = 1
+					p.advance()
+				} else if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "LAST") {
+					nullsOrder = -1
+					p.advance()
+				} else {
+					return nil, nil, nil, false, &SyntaxError{
+						Input:    p.lex.Input(),
+						Line:     p.current.Line,
+						Col:      p.current.Col,
+						Expected: "FIRST or LAST",
+						Got:      tokenName(p.current.Type),
+						Lexeme:   p.current.Lexeme,
+					}
+				}
+			}
+			orderBy = append(orderBy, OrderItem{Expr: expr, Desc: desc, Collation: collation, NullsOrder: nullsOrder})
 			if p.current.Type != LX.T_COMMA {
 				break
 			}

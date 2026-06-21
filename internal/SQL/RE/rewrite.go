@@ -126,7 +126,7 @@ func cloneOrderBy(in []PS.OrderItem) []PS.OrderItem {
 	}
 	out := make([]PS.OrderItem, len(in))
 	for i, o := range in {
-		out[i] = PS.OrderItem{Expr: RewriteExpr(o.Expr), Desc: o.Desc}
+		out[i] = PS.OrderItem{Expr: RewriteExpr(o.Expr), Desc: o.Desc, Collation: o.Collation, NullsOrder: o.NullsOrder}
 	}
 	return out
 }

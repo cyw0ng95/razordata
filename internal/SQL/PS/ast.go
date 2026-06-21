@@ -458,6 +458,9 @@ type OrderItem struct {
 	Expr      Expr
 	Desc      bool
 	Collation string // REQ000565: COLLATE name
+	// REQ000736: null ordering. 0=not specified, 1=NULLS FIRST,
+	// -1=NULLS LAST.
+	NullsOrder int8
 }
 
 // JoinClause represents a JOIN clause.

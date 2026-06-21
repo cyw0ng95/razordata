@@ -233,7 +233,19 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 
 		slices.SortStableFunc(sorted, func(a, b sortRow) int {
 			for ki := range a.keys {
-				c := compare(a.keys[ki], b.keys[ki])
+				ka, kb := a.keys[ki], b.keys[ki]
+				// REQ000736: NULLS FIRST forces nil before non-nil,
+				// NULLS LAST forces nil after non-nil, regardless
+				// of ASC/DESC.
+				if s.keys[ki].NullsOrder != 0 {
+					if ka == nil && kb != nil {
+						return -int(s.keys[ki].NullsOrder)
+					}
+					if kb == nil && ka != nil {
+						return int(s.keys[ki].NullsOrder)
+					}
+				}
+				c := compare(ka, kb)
 				if c == 0 {
 					continue
 				}
