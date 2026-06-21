@@ -47,6 +47,32 @@ func (p *Parser) parseUpdate() (*Update, error) {
 	}
 
 	var where Expr
+	var from, fromAlias string
+
+	// REQ000740: optional FROM clause (UPDATE ... FROM) — parsed before
+	// WHERE since SQLite syntax is: UPDATE t SET c = e FROM t2 WHERE cond
+	if p.current.Type == LX.T_FROM {
+		p.advance()
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		from = p.current.Lexeme
+		p.advance()
+		// Optional AS alias
+		if p.current.Type == LX.T_AS {
+			p.advance()
+			if err := p.expect(LX.T_IDENT); err != nil {
+				return nil, err
+			}
+			fromAlias = p.current.Lexeme
+			p.advance()
+		} else if p.current.Type == LX.T_IDENT {
+			fromAlias = p.current.Lexeme
+			p.advance()
+		}
+	}
+
+	// Parse WHERE after FROM (if present)
 	if p.current.Type == LX.T_WHERE {
 		p.advance()
 		w, err := p.parseExpr()
@@ -67,7 +93,7 @@ func (p *Parser) parseUpdate() (*Update, error) {
 		return nil, err
 	}
 
-	return &Update{Table: table, Set: set, Where: where, Returning: returning,
+	return &Update{Table: table, Set: set, Where: where, From: from, FromAlias: fromAlias, Returning: returning,
 		OrderBy: orderBy, Limit: limit, Offset: offset, OffsetFirst: offsetFirst, IndexHint: indexHint}, nil
 }
 

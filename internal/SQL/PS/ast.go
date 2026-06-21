@@ -430,6 +430,8 @@ type Update struct {
 	Table       string
 	Set         []Pair
 	Where       Expr
+	From        string // REQ000740: optional FROM table in UPDATE ... FROM
+	FromAlias   string // REQ000740: alias for the FROM table
 	Returning   []Expr
 	OrderBy     []OrderItem // REQ000558
 	Limit       Expr        // REQ000558

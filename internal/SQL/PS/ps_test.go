@@ -570,6 +570,72 @@ func TestParseUpdateWhere(t *testing.T) {
 	}
 }
 
+func TestParseUpdateFrom(t *testing.T) {
+	p := NewParser("UPDATE t1 SET v = 1 FROM t2 WHERE t1.id = t2.id")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	upd := stmt.(*Update)
+	if upd.From != "t2" {
+		t.Errorf("expected From='t2', got %q", upd.From)
+	}
+}
+
+func TestParseUpdateFromWhereBare(t *testing.T) {
+	p := NewParser("UPDATE t1 SET v = 1 FROM t2 WHERE t1.id = 1")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	upd := stmt.(*Update)
+	if upd.From != "t2" {
+		t.Errorf("expected From='t2', got %q", upd.From)
+	}
+	if upd.Where == nil {
+		t.Error("expected WHERE clause")
+	}
+}
+
+func TestParseUpdateFromWithAlias(t *testing.T) {
+	p := NewParser("UPDATE t1 SET v = 1 FROM t2 AS src WHERE t1.id = t2.id")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	upd := stmt.(*Update)
+	if upd.From != "t2" {
+		t.Errorf("expected From='t2', got %q", upd.From)
+	}
+	if upd.FromAlias != "src" {
+		t.Errorf("expected FromAlias='src', got %q", upd.FromAlias)
+	}
+}
+
+func TestParseUpdateFromNoWhere(t *testing.T) {
+	p := NewParser("UPDATE t1 SET v = 1 FROM t2")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	upd := stmt.(*Update)
+	if upd.From != "t2" {
+		t.Errorf("expected From='t2', got %q", upd.From)
+	}
+}
+
+func TestParseUpdateFromQualNoWhere(t *testing.T) {
+	p := NewParser("UPDATE t1 SET v = t2.v FROM t2")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	upd := stmt.(*Update)
+	if upd.From != "t2" {
+		t.Errorf("expected From='t2', got %q", upd.From)
+	}
+}
+
 func TestParseDelete(t *testing.T) {
 	p := NewParser("DELETE FROM t")
 	stmt, err := p.Parse()
