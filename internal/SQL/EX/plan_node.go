@@ -35,7 +35,22 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 
 	// Unwrap AdaptiveOp to show inner operator in EXPLAIN output.
 	if aop, ok := op.(*AdaptiveOp); ok {
-		return buildPlanNodeTree(aop.inner, planner)
+		inner := buildPlanNodeTree(aop.inner, planner)
+		if inner != nil {
+			state := "interpreted"
+			st := AdqcState(aop.state.Load())
+			if st == AdqcCompiling {
+				state = "compiling"
+			} else if st == AdqcCompiled {
+				state = "compiled"
+			}
+			if inner.Detail != "" {
+				inner.Detail += " [" + state + "]"
+			} else {
+				inner.Detail = "[" + state + "]"
+			}
+		}
+		return inner
 	}
 
 	node := &PlanNode{
@@ -43,17 +58,39 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 	}
 
 	switch v := op.(type) {
+case *IndexScan:
+		node.Table = v.table
+		node.Index = v.idx
+		node.Cost = 0.1
+		detail := fmt.Sprintf("idx=%s", v.idx)
+		if v.btree != nil {
+			detail += " [btree]"
+		} else if v.indexMode {
+			if len(v.indexSeek) > 0 {
+				detail += " SEEK"
+			} else if len(v.indexLower) > 0 || len(v.indexUpper) > 0 {
+				detail += " RANGE"
+			} else {
+				detail += " SCAN"
+			}
+		}
+		if v.store != nil {
+			detail += " [store]"
+		} else {
+			detail += " [memory]"
+		}
+		node.Detail = detail
+
 	case *SeqScan:
 		node.Table = v.table
 		node.Cost = 1.0
 		node.Rows = int64(planner.estimateRowCount(v.table, nil))
-		node.Width = 100 // default estimate
-
-	case *IndexScan:
-		node.Table = v.table
-		node.Index = v.idx
-		node.Cost = 0.1
-		node.Detail = fmt.Sprintf("idx=%s", v.idx)
+		node.Width = 100
+		if v.store != nil {
+			node.Detail = "[store]"
+		} else {
+			node.Detail = "[memory]"
+		}
 
 	case *Filter:
 		node.Detail = "WHERE"
@@ -63,13 +100,13 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		node.Cost = estimateFilterCost(v)
 
 	case *Project:
-		node.Detail = "SELECT"
+		node.Detail = "PROJECT"
 		if len(v.cols) > 0 {
 			var parts []string
 			for _, c := range v.cols {
 				parts = append(parts, RE.FormatExpr(c))
 			}
-			node.Detail = "SELECT " + strings.Join(parts, ", ")
+			node.Detail = "PROJECT " + strings.Join(parts, ", ")
 		}
 		node.Cost = estimateProjectCost(v)
 
