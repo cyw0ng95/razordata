@@ -147,11 +147,19 @@ func (r *Row) Lookup(name string) (any, bool) {
 		if cur.colIndex == nil {
 			cur.buildColIndex()
 		}
-		if idx, ok := cur.colIndex[strings.ToLower(name)]; ok {
+		lname := strings.ToLower(name)
+		if idx, ok := cur.colIndex[lname]; ok {
 			if idx < len(cur.Data) {
 				return cur.Data[idx], true
 			}
 			return nil, false
+		}
+		for j, c := range cur.Cols {
+			if i := strings.LastIndexByte(c, '.'); i >= 0 && i < len(c)-1 {
+				if strings.EqualFold(c[i+1:], name) && j < len(cur.Data) {
+					return cur.Data[j], true
+				}
+			}
 		}
 	}
 	return nil, false

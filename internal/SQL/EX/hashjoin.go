@@ -3,6 +3,7 @@ package EX
 import (
 	"context"
 	"hash/maphash"
+	"strings"
 )
 
 // HashJoin is a radix-partitioned hash join for INNER joins
@@ -196,7 +197,22 @@ func hashKey(v any) uint64 {
 func lookupKeys(row Row, keys []string) []any {
 	vals := make([]any, len(keys))
 	for i, k := range keys {
-		vals[i], _ = row.Lookup(k)
+		v, _ := row.Lookup(k)
+		// REQ000725: when the row comes from a previous join,
+		// its columns are prefixed with the table name (e.g.
+		// 't51.a51'). A bare key 'a51' won't match unless we
+		// also try the bare form. Walk Cols once to find a
+		// suffix match if the direct lookup failed.
+		if v == nil {
+			lk := strings.ToLower(k)
+			for j, c := range row.Cols {
+				if strings.HasSuffix(strings.ToLower(c), "."+lk) && j < len(row.Data) {
+					v = row.Data[j]
+					break
+				}
+			}
+		}
+		vals[i] = v
 	}
 	return vals
 }

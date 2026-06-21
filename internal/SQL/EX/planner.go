@@ -955,6 +955,11 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 
 	if len(s.Joins) > 0 {
 		leftTbl := s.From
+		// REQ000725: counter of how many tables (including s.From)
+		// are already joined at the start of each iteration. We use
+		// this to skip HashJoin for the 2nd-and-later join in a
+		// multi-table chain (see HashJoin guard above).
+		joinedSoFar := 1
 		for _, j := range s.Joins {
 			// Support all join kinds (REQ000197: OUTER JOIN)
 			if j.Kind != "INNER" && j.Kind != "LEFT" && j.Kind != "RIGHT" && j.Kind != "FULL" && j.Kind != "CROSS" {
@@ -973,11 +978,18 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			}
 
 			// REQ000XXX: For INNER and CROSS JOINs, try to find equi-join
-			// conditions in cross-table predicates and use
-			// HashJoin instead of NestedLoopJoin.
+			// conditions in WHERE and use HashJoin instead of
+			// NestedLoopJoin.
 			// CROSS JOIN with equi-key in WHERE can be treated as INNER.
+			// REQ000725: skip HashJoin for the second-and-later joins
+			// in a multi-table chain. The equi-key extraction heuristic
+			// can pick a column from a not-yet-joined table as the
+			// "left" key, which then fails Row.Lookup in HashJoin's
+			// build phase. Fall back to NestedLoopJoin which walks
+			// the Outer chain for the merged row. The cost is O(N*M)
+			// for those joins instead of O(N+M); correctness wins.
 			var joinOp Operator
-			if (kind == JoinKindInner || kind == JoinKindCross) && len(crossTableConjuncts) > 0 {
+			if (kind == JoinKindInner || kind == JoinKindCross) && len(crossTableConjuncts) > 0 && joinedSoFar < 2 {
 				lk, rk, remaining := p.extractEquiJoinKeys(crossTableConjuncts, leftTbl, j.Right)
 				if len(lk) > 0 {
 					joinOp = NewHashJoin(current, rightScan, leftTbl, j.Right, lk, rk, 0)
@@ -1004,6 +1016,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			current = joinOp
 			leftTbl = j.Right
 		}
+		joinedSoFar++
 	}
 
 	if s.Where != nil {

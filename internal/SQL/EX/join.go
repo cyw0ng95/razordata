@@ -6,6 +6,7 @@ package EX
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 // JoinKind specifies the type of join.
@@ -59,7 +60,18 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 			if err != nil {
 				return Row{}, err
 			}
-			prefixed := Row{Cols: prefixCols(row.Cols, j.leftTbl), Types: row.Types, Data: row.Data}
+			// REQ000725: if the row's columns are already
+			// prefixed (e.g. it came from a previous join
+			// in a multi-table chain), don't re-prefix — that
+			// produces "t29.t51.a51" etc. The NLJ only
+			// prefixes the right side; the left side keeps
+			// whatever prefix it already has.
+			prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
+			if !hasAnyPrefix(row.Cols) {
+				prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
+			} else {
+				prefixed.Cols = append([]string(nil), row.Cols...)
+			}
 			j.leftRow = &prefixed
 			// REQ000368: drive the right side through its own
 			// operator rather than the in-memory `tables` map.
@@ -172,6 +184,18 @@ func prefixCols(cols []string, prefix string) []string {
 		out[i] = prefix + "." + c
 	}
 	return out
+}
+
+// hasAnyPrefix reports whether any column name in cols contains
+// a dot, indicating it has already been prefixed by a prior join
+// in a multi-table chain. REQ000725.
+func hasAnyPrefix(cols []string) bool {
+	for _, c := range cols {
+		if i := strings.IndexByte(c, '.'); i >= 0 && i < len(c)-1 {
+			return true
+		}
+	}
+	return false
 }
 
 // schemaCols extracts column names from a schema.
