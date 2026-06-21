@@ -322,7 +322,7 @@ type Insert struct {
 	Table          string
 	Cols           []string
 	Values         [][]Expr
-	Select         Stmt           // REQ000707: INSERT INTO t SELECT ...
+	Select         Stmt // REQ000707: INSERT INTO t SELECT ...
 	Returning      []Expr
 	OnConflict     *OnConflict    // nil if no ON CONFLICT clause
 	ConflictAction ConflictAction // INSERT OR ROLLBACK/ABORT/FAIL/IGNORE/REPLACE
@@ -465,10 +465,10 @@ type OrderItem struct {
 
 // JoinClause represents a JOIN clause.
 type JoinClause struct {
-	Kind      string // "INNER", "LEFT", "RIGHT", "CROSS"
-	Right     string
+	Kind       string // "INNER", "LEFT", "RIGHT", "CROSS"
+	Right      string
 	RightAlias string
-	On        Expr
+	On         Expr
 }
 
 // Select represents a SELECT statement.
@@ -654,7 +654,7 @@ type CreateMatViewStmt struct {
 	Name        string
 	As          *Select
 	IfNotExists bool
-	Incremental bool   // true = auto-maintained via triggers; false = manual REFRESH
+	Incremental bool     // true = auto-maintained via triggers; false = manual REFRESH
 	BaseTables  []string // tables referenced in the SELECT (populated at exec)
 }
 

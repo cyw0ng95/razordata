@@ -15,10 +15,10 @@ package EX
 type ShapeKind int
 
 const (
-	ShapeNone           ShapeKind = iota
-	ShapeFilterInt64Eq            // Filter{col = int64_lit}
-	ShapeProjectFixed             // Project{cols = fixed set}
-	ShapeHashAggInt64             // HashAggregate{group_by = int64}
+	ShapeNone          ShapeKind = iota
+	ShapeFilterInt64Eq           // Filter{col = int64_lit}
+	ShapeProjectFixed            // Project{cols = fixed set}
+	ShapeHashAggInt64            // HashAggregate{group_by = int64}
 )
 
 // DetectShape inspects an operator tree and returns the recognized

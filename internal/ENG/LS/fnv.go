@@ -34,7 +34,7 @@ func fnv1aHash64(data []byte, seed uint32) uint32 {
 		hash *= fnv1aPrime32
 		hash ^= uint32(chunk>>24) & 0xff
 		hash *= fnv1aPrime32
-		hash ^= uint32(chunk >> 32) & 0xff
+		hash ^= uint32(chunk>>32) & 0xff
 		hash *= fnv1aPrime32
 		hash ^= uint32(chunk>>40) & 0xff
 		hash *= fnv1aPrime32

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	id "github.com/cyw0ng95/razordata/internal/ENG/ID"
 )
@@ -17,6 +18,51 @@ import (
 var ErrTableNotRegisteredForStorage = errors.New("ex: table not registered for storage")
 
 var ErrNoPKForStorage = errors.New("ex: cannot write to storage without a primary key")
+
+// tableSchemaCache caches shared column metadata per table to avoid
+// rebuilding Cols, Types, and colIndex on every SeqScan.snapshot() call.
+type tableSchemaEntry struct {
+	cols     []string
+	types    []int
+	colIndex map[string]int
+}
+
+var (
+	tableSchemaMu sync.RWMutex
+	tableSchemaCache = map[string]*tableSchemaEntry{}
+)
+
+func getTableSchema(table string, src []Row) *tableSchemaEntry {
+	if len(src) == 0 {
+		return nil
+	}
+	// Fast path: read lock.
+	tableSchemaMu.RLock()
+	entry, ok := tableSchemaCache[table]
+	tableSchemaMu.RUnlock()
+	if ok {
+		return entry
+	}
+	// Slow path: write lock and build.
+	tableSchemaMu.Lock()
+	defer tableSchemaMu.Unlock()
+	// Double-check after acquiring write lock.
+	if entry, ok = tableSchemaCache[table]; ok {
+		return entry
+	}
+	cols := append([]string(nil), src[0].Cols...)
+	var types []int
+	if len(src[0].Types) > 0 {
+		types = append([]int(nil), src[0].Types...)
+	}
+	colIndex := make(map[string]int, len(cols))
+	for i, c := range cols {
+		colIndex[strings.ToLower(c)] = i
+	}
+	entry = &tableSchemaEntry{cols: cols, types: types, colIndex: colIndex}
+	tableSchemaCache[table] = entry
+	return entry
+}
 
 type SeqScan struct {
 	table  string
@@ -103,21 +149,18 @@ func (s *SeqScan) snapshot() []Row {
 	}
 	// REQ000758: share Cols slice across all rows from the same table.
 	// Only deep-copy Data (which varies per row).
-	sharedCols := append([]string(nil), src[0].Cols...)
-	var sharedTypes []int
-	if len(src[0].Types) > 0 {
-		sharedTypes = append([]int(nil), src[0].Types...)
-	}
+	schema := getTableSchema(s.table, src)
 	out := make([]Row, len(src))
 	for i, r := range src {
 		out[i] = Row{
-			Cols:      sharedCols,
-			Types:     sharedTypes,
+			Cols:      schema.cols,
+			Types:     schema.types,
 			Data:      append([]any(nil), r.Data...),
 			Outer:     r.Outer,
 			planner:   r.planner,
 			storeKey:  r.storeKey,
 			tableName: r.tableName,
+			colIndex:  schema.colIndex,
 		}
 	}
 	return out

@@ -10,7 +10,8 @@ import (
 
 // TestEdge_Expressions is a one-off boundary probe.
 // Build tag keeps it out of the default run; invoke with
-//   go test -tags edge_probe -run TestEdge ./tests/sqlcmp/slt/...
+//
+//	go test -tags edge_probe -run TestEdge ./tests/sqlcmp/slt/...
 func TestEdge_Expressions(t *testing.T) {
 	ctx := context.Background()
 	d := NewRazorDriver()

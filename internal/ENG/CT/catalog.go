@@ -85,12 +85,12 @@ type DecodeFunc func(data []byte, off int, e *RawEntry) (int, error)
 
 // Catalog is the persistent system catalog backed by catalog.dat.
 type Catalog struct {
-	path       string
-	mu         sync.RWMutex
-	cache      map[uint64]*RawEntry
-	byName     map[string]uint64
-	nextID     uint64
-	closed     atomic.Bool
+	path        string
+	mu          sync.RWMutex
+	cache       map[uint64]*RawEntry
+	byName      map[string]uint64
+	nextID      uint64
+	closed      atomic.Bool
 	encodeEntry EncodeFunc
 	decodeEntry DecodeFunc
 }

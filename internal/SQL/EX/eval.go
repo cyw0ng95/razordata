@@ -21,6 +21,108 @@ import (
 // This eliminates O(N) subquery re-evaluations for N-row result sets.
 var globalSubqueryCache sync.Map
 
+// correlatedSubqueryCache is an LRU cache for correlated scalar subqueries.
+// Key = "planKey:outerPKValues" (e.g., "SELECT...:1,5,10").
+// Values are cached subquery results (any).
+// Max size 256 entries to bound memory.
+var correlatedSubqueryCache = newLRUCache(256)
+
+// lruCache is a simple thread-safe LRU cache.
+type lruCache struct {
+	mu        sync.Mutex
+	items     map[string]*lruEntry
+	order     []string
+	maxSize   int
+	evictions int64
+}
+
+type lruEntry struct {
+	value any
+}
+
+func newLRUCache(maxSize int) *lruCache {
+	return &lruCache{
+		items:   make(map[string]*lruEntry),
+		order:   make([]string, 0, maxSize),
+		maxSize: maxSize,
+	}
+}
+
+func (c *lruCache) Get(key string) (any, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.items[key]
+	if !ok {
+		return nil, false
+	}
+	// Move to end (most recently used)
+	for i, k := range c.order {
+		if k == key {
+			c.order = append(c.order[:i], c.order[i+1:]...)
+			c.order = append(c.order, key)
+			break
+		}
+	}
+	return entry.value, true
+}
+
+func (c *lruCache) Put(key string, value any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if entry, ok := c.items[key]; ok {
+		entry.value = value
+		// Move to end
+		for i, k := range c.order {
+			if k == key {
+				c.order = append(c.order[:i], c.order[i+1:]...)
+				c.order = append(c.order, key)
+				break
+			}
+		}
+		return
+	}
+	// Evict if at capacity
+	if len(c.items) >= c.maxSize {
+		oldest := c.order[0]
+		delete(c.items, oldest)
+		c.order = c.order[1:]
+		c.evictions++
+	}
+	c.items[key] = &lruEntry{value: value}
+	c.order = append(c.order, key)
+}
+
+func (c *lruCache) Stats() (size int, evictions int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.items), c.evictions
+}
+
+// ClearSubqueryCaches clears both the global and correlated subquery caches.
+// Called by UnregisterAll() for test isolation.
+func ClearSubqueryCaches() {
+	globalSubqueryCache = sync.Map{}
+	correlatedSubqueryCache = newLRUCache(256)
+}
+
+// serializeOuterRow serializes the outer row's column values for use
+// as a cache key component in correlated subquery caching.
+// Format: "col1Val1,col2Val2,..." using normalized string representation.
+func serializeOuterRow(row *Row) string {
+	if row == nil || len(row.Cols) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, col := range row.Cols {
+		if v, ok := row.Lookup(col); ok {
+			parts = append(parts, fmt.Sprint(v))
+		} else {
+			parts = append(parts, "NULL")
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
 var ErrEval = errors.New("ex: eval error")
 var ErrDivByZero = errors.New("ex: division by zero")
 var ErrTypeMismatch = errors.New("ex: type mismatch")
@@ -499,9 +601,19 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (any, erro
 	// are cached globally to avoid O(N) re-evaluations.
 	key := serializeKey(sel)
 
-	// Try global cache first.
-	if cached, ok := globalSubqueryCache.Load(key); ok {
-		return cached, nil
+	// Try global cache first — only safe when outer is nil
+	// (no outer columns the subquery could reference).
+	if outer == nil {
+		if cached, ok := globalSubqueryCache.Load(key); ok {
+			return cached, nil
+		}
+	} else {
+		// P0-1: Try correlated subquery LRU cache.
+		// Key = planKey + outer row values (e.g., "SELECT...:1,5,10").
+		correlatedKey := key + ":" + serializeOuterRow(outer)
+		if cached, ok := correlatedSubqueryCache.Get(correlatedKey); ok {
+			return cached, nil
+		}
 	}
 
 	pl, err := newSubqueryPlanner(outer).Plan(sel)
@@ -520,8 +632,12 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (any, erro
 	} else {
 		result = rows[0].Data[0]
 	}
-	// Cache the result globally.
-	globalSubqueryCache.Store(key, result)
+	// Cache the result: globally for non-correlated, LRU for correlated.
+	if outer == nil {
+		globalSubqueryCache.Store(key, result)
+	} else {
+		correlatedSubqueryCache.Put(key+":"+serializeOuterRow(outer), result)
+	}
 	return result, nil
 }
 

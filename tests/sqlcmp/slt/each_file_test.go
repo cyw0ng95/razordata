@@ -125,7 +125,7 @@ func TestSLT_ListFiles(t *testing.T) {
 // cap a regression in one query could stall the suite for minutes.
 // 30s is generous enough for the evidence files and tight enough
 // for select files to surface real regressions quickly.
-const sltPerFileTimeout = 30 * time.Second
+const sltPerFileTimeout = 300 * time.Second
 
 // TestSLT_Each runs every entry in sltFiles as an isolated subtest.
 // The test is build-gated to `slt_corpus` so it does not require

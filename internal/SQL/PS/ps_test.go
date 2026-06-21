@@ -1459,7 +1459,7 @@ func TestIsBinaryOp(t *testing.T) {
 		typ  LX.TokenType
 		want bool
 	}{
-		{	LX.T_EQ, true}, {LX.T_NE, true}, {LX.T_LT, true}, {LX.T_LE, true},
+		{LX.T_EQ, true}, {LX.T_NE, true}, {LX.T_LT, true}, {LX.T_LE, true},
 		{LX.T_GT, true}, {LX.T_GE, true}, {LX.T_AND, true}, {LX.T_OR, true},
 		{LX.T_PLUS, true}, {LX.T_MINUS, true}, {LX.T_STAR, true}, {LX.T_SLASH, true},
 		{LX.T_LIKE, true}, {LX.T_IS, true}, {LX.T_BITAND, true}, {LX.T_BITOR, true},

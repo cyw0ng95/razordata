@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"path/filepath"
 
-	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
 	ct "github.com/cyw0ng95/razordata/internal/ENG/CT"
+	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
 )
 
 // Constants re-exported from the shared catalog package.

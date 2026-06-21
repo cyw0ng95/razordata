@@ -1,10 +1,10 @@
 package AP
 
 import (
-	"sync/atomic"
 	"context"
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
@@ -31,11 +31,11 @@ type Options struct {
 }
 
 const (
-	DefaultPageSize     = 4096
-	DefaultMemTableSize = 64 * 1024 * 1024
-	DefaultBufferPoolMB = 256
-	DefaultWALSizeMB    = 64
-	DefaultMaxLevel     = 7
+	DefaultPageSize        = 4096
+	DefaultMemTableSize    = 64 * 1024 * 1024
+	DefaultBufferPoolMB    = 256
+	DefaultWALSizeMB       = 64
+	DefaultMaxLevel        = 7
 	DefaultShutdownTimeout = 30 * time.Second // REQ000687
 )
 
@@ -134,8 +134,8 @@ func NewRows(cols []string, types []int, next func() (Row, error), closer func()
 	return &Rows{cols: cols, types: types, next: next, closer: closer}
 }
 
-func (r *Rows) Cols() []string  { return r.cols }
-func (r *Rows) Types() []int    { return r.types }
+func (r *Rows) Cols() []string { return r.cols }
+func (r *Rows) Types() []int   { return r.types }
 
 func (r *Rows) Next() (Row, error) {
 	if r == nil {

@@ -119,11 +119,11 @@ func (r *Row) Planner() *Planner {
 }
 
 func (r *Row) Lookup(name string) (any, bool) {
+	lname := strings.ToLower(name)
 	for cur := r; cur != nil; cur = cur.Outer {
 		if cur.colIndex == nil {
 			cur.buildColIndex()
 		}
-		lname := strings.ToLower(name)
 		if idx, ok := cur.colIndex[lname]; ok {
 			if idx < len(cur.Data) {
 				return cur.Data[idx], true
@@ -226,13 +226,14 @@ func (e *Executor) ClearTxWriter() {
 // original but has its own per-request mutable state (txWriter, snapshotTS,
 // sessionID). Callers use this to avoid races when the shared Executor is
 // used concurrently by multiple sessions (REQ000611).
-// The statement cache is shared (read-only after init), so no copy needed.
+// The statement cache is re-initialized (not shared) since it contains a Mutex.
 func (e *Executor) ShallowCopy() *Executor {
-	return &Executor{
+	e2 := &Executor{
 		planner:   e.planner,
 		store:     e.store,
-		stmtCache: e.stmtCache, // shared read-only cache
 	}
+	e2.initStmtCache(e.stmtCache.maxSize)
+	return e2
 }
 
 // SetSnapshot sets the per-statement snapshot timestamp for read-committed
@@ -352,7 +353,9 @@ func (e *Executor) clearStmtCache() {
 // instead of the in-memory tables map. Pass nil to revert to in-memory
 // mode.
 func NewExecutorWithEngine(store Store) *Executor {
-	return &Executor{planner: NewPlannerWithStore(store), store: store}
+	e := &Executor{planner: NewPlannerWithStore(store), store: store}
+	e.initStmtCache(256)
+	return e
 }
 
 // ExtractParamTypes parses sql and returns the SQL column type

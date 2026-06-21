@@ -6,10 +6,10 @@ import (
 
 func TestREQ000737_CreateVirtualTable(t *testing.T) {
 	tests := []struct {
-		sql         string
-		wantName    string
-		wantModule  string
-		wantArgs    int
+		sql        string
+		wantName   string
+		wantModule string
+		wantArgs   int
 	}{
 		{"CREATE VIRTUAL TABLE t USING fts5(content)", "t", "fts5", 1},
 		{"CREATE VIRTUAL TABLE search USING fts5(content, title)", "search", "fts5", 2},

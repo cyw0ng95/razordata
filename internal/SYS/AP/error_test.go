@@ -107,8 +107,8 @@ func TestIsKind_BackwardCompat(t *testing.T) {
 
 func TestIsRetryable(t *testing.T) {
 	cases := []struct {
-		err     error
-		retry   bool
+		err   error
+		retry bool
 	}{
 		{ErrIO, true},
 		{ErrLocked, true},
@@ -129,7 +129,7 @@ func TestIsRetryable(t *testing.T) {
 
 func TestIsFatal(t *testing.T) {
 	cases := []struct {
-		err  error
+		err   error
 		fatal bool
 	}{
 		{ErrIO, false},

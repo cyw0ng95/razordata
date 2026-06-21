@@ -96,5 +96,5 @@ type Result struct {
 	n      int64
 }
 
-func (r Result) LastInsertId() (int64, error)  { return r.lastID, nil }
+func (r Result) LastInsertId() (int64, error) { return r.lastID, nil }
 func (r Result) RowsAffected() (int64, error) { return r.n, nil }

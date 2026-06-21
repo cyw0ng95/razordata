@@ -32,18 +32,18 @@ type Flusher interface {
 }
 
 type flusher struct {
-	sm    *lf.SegmentManager
-	fm    *fs.FileManager
-	dir   string // absolute WAL directory (used by SyncDir)
-	lsn   *lsnCounter
-	log   lg.Logger
+	sm  *lf.SegmentManager
+	fm  *fs.FileManager
+	dir string // absolute WAL directory (used by SyncDir)
+	lsn *lsnCounter
+	log lg.Logger
 
-	closed      atomicBool
-	wbuf        *writeBuffer
-	gc          *groupCommit       // REQ000542: group commit pipeline
-	gcOpts      FlusherOptions     // group commit options
-	mu          sync.Mutex
-	syncErr     error
+	closed  atomicBool
+	wbuf    *writeBuffer
+	gc      *groupCommit   // REQ000542: group commit pipeline
+	gcOpts  FlusherOptions // group commit options
+	mu      sync.Mutex
+	syncErr error
 }
 
 type writeBuffer struct {

@@ -58,7 +58,7 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 	}
 
 	switch v := op.(type) {
-case *IndexScan:
+	case *IndexScan:
 		node.Table = v.table
 		node.Index = v.idx
 		node.Cost = 0.1

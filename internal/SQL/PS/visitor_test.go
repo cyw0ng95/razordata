@@ -14,64 +14,160 @@ func newTestVisitor() *testVisitor {
 	return &testVisitor{called: make(map[string]bool)}
 }
 
-func (v *testVisitor) VisitNumberLiteral(*NumberLiteral) bool       { v.called["NumberLiteral"] = true; return true }
-func (v *testVisitor) VisitFloatLiteral(*FloatLiteral) bool         { v.called["FloatLiteral"] = true; return true }
-func (v *testVisitor) VisitStringLiteral(*StringLiteral) bool       { v.called["StringLiteral"] = true; return true }
-func (v *testVisitor) VisitBoolLiteral(*BoolLiteral) bool           { v.called["BoolLiteral"] = true; return true }
-func (v *testVisitor) VisitNullLiteral(*NullLiteral) bool           { v.called["NullLiteral"] = true; return true }
-func (v *testVisitor) VisitIdent(*Ident) bool                       { v.called["Ident"] = true; return true }
-func (v *testVisitor) VisitQualifiedName(*QualifiedName) bool       { v.called["QualifiedName"] = true; return true }
-func (v *testVisitor) VisitAliasedExpr(*AliasedExpr) bool           { v.called["AliasedExpr"] = true; return true }
-func (v *testVisitor) VisitCastExpr(*CastExpr) bool                 { v.called["CastExpr"] = true; return true }
-func (v *testVisitor) VisitParam(*Param) bool                       { v.called["Param"] = true; return true }
-func (v *testVisitor) VisitBinaryExpr(*BinaryExpr) bool             { v.called["BinaryExpr"] = true; return true }
-func (v *testVisitor) VisitUnaryExpr(*UnaryExpr) bool               { v.called["UnaryExpr"] = true; return true }
-func (v *testVisitor) VisitFunctionCall(*FunctionCall) bool         { v.called["FunctionCall"] = true; return true }
-func (v *testVisitor) VisitAggregateFunc(*AggregateFunc) bool       { v.called["AggregateFunc"] = true; return true }
-func (v *testVisitor) VisitWindowFunc(*WindowFunc) bool             { v.called["WindowFunc"] = true; return true }
-func (v *testVisitor) VisitStarExpr(*StarExpr) bool                 { v.called["StarExpr"] = true; return true }
-func (v *testVisitor) VisitListExpr(*ListExpr) bool                 { v.called["ListExpr"] = true; return true }
-func (v *testVisitor) VisitBetweenExpr(*BetweenExpr) bool           { v.called["BetweenExpr"] = true; return true }
-func (v *testVisitor) VisitCaseExpr(*CaseExpr) bool                 { v.called["CaseExpr"] = true; return true }
-func (v *testVisitor) VisitInExpr(*InExpr) bool                     { v.called["InExpr"] = true; return true }
-func (v *testVisitor) VisitExistsExpr(*ExistsExpr) bool             { v.called["ExistsExpr"] = true; return true }
-func (v *testVisitor) VisitSubqueryExpr(*SubqueryExpr) bool         { v.called["SubqueryExpr"] = true; return true }
-func (v *testVisitor) VisitIntervalLiteral(*IntervalLiteral) bool   { v.called["IntervalLiteral"] = true; return true }
-func (v *testVisitor) VisitRaiseFunc(*RaiseFunc) bool               { v.called["RaiseFunc"] = true; return true }
-func (v *testVisitor) VisitCreateTable(*CreateTable) bool           { v.called["CreateTable"] = true; return true }
-func (v *testVisitor) VisitDropTable(*DropTable) bool               { v.called["DropTable"] = true; return true }
-func (v *testVisitor) VisitInsert(*Insert) bool                     { v.called["Insert"] = true; return true }
-func (v *testVisitor) VisitUpdate(*Update) bool                     { v.called["Update"] = true; return true }
-func (v *testVisitor) VisitDelete(*Delete) bool                     { v.called["Delete"] = true; return true }
-func (v *testVisitor) VisitSelect(*Select) bool                     { v.called["Select"] = true; return true }
-func (v *testVisitor) VisitCompoundStmt(*CompoundStmt) bool         { v.called["CompoundStmt"] = true; return true }
-func (v *testVisitor) VisitBeginTX(*BeginTX) bool                   { v.called["BeginTX"] = true; return true }
-func (v *testVisitor) VisitCommitTX(*CommitTX) bool                 { v.called["CommitTX"] = true; return true }
-func (v *testVisitor) VisitRollbackTX(*RollbackTX) bool             { v.called["RollbackTX"] = true; return true }
-func (v *testVisitor) VisitExplainStmt(*ExplainStmt) bool           { v.called["ExplainStmt"] = true; return true }
-func (v *testVisitor) VisitCreateIndexStmt(*CreateIndexStmt) bool   { v.called["CreateIndexStmt"] = true; return true }
-func (v *testVisitor) VisitDropIndexStmt(*DropIndexStmt) bool       { v.called["DropIndexStmt"] = true; return true }
-func (v *testVisitor) VisitCreateViewStmt(*CreateViewStmt) bool     { v.called["CreateViewStmt"] = true; return true }
-func (v *testVisitor) VisitAlterTableStmt(*AlterTableStmt) bool     { v.called["AlterTableStmt"] = true; return true }
-func (v *testVisitor) VisitPragmaStmt(*PragmaStmt) bool             { v.called["PragmaStmt"] = true; return true }
-func (v *testVisitor) VisitAnalyzeStmt(*AnalyzeStmt) bool           { v.called["AnalyzeStmt"] = true; return true }
-func (v *testVisitor) VisitVacuumStmt(*VacuumStmt) bool             { v.called["VacuumStmt"] = true; return true }
-func (v *testVisitor) VisitTriggerStmt(*TriggerStmt) bool           { v.called["TriggerStmt"] = true; return true }
-func (v *testVisitor) VisitSavepointStmt(*SavepointStmt) bool       { v.called["SavepointStmt"] = true; return true }
-func (v *testVisitor) VisitReleaseSavepointStmt(*ReleaseSavepointStmt) bool { v.called["ReleaseSavepointStmt"] = true; return true }
-func (v *testVisitor) VisitRollbackToStmt(*RollbackToStmt) bool     { v.called["RollbackToStmt"] = true; return true }
-func (v *testVisitor) VisitWithStmt(*WithStmt) bool                 { v.called["WithStmt"] = true; return true }
-func (v *testVisitor) VisitTruncateStmt(*TruncateStmt) bool         { v.called["TruncateStmt"] = true; return true }
-func (v *testVisitor) VisitReindexStmt(*ReindexStmt) bool           { v.called["ReindexStmt"] = true; return true }
-func (v *testVisitor) VisitDropViewStmt(*DropViewStmt) bool         { v.called["DropViewStmt"] = true; return true }
-func (v *testVisitor) VisitDropTriggerStmt(*DropTriggerStmt) bool   { v.called["DropTriggerStmt"] = true; return true }
-func (v *testVisitor) VisitCreateMatViewStmt(*CreateMatViewStmt) bool { v.called["CreateMatViewStmt"] = true; return true }
-func (v *testVisitor) VisitDropMatViewStmt(*DropMatViewStmt) bool   { v.called["DropMatViewStmt"] = true; return true }
-func (v *testVisitor) VisitRefreshMatViewStmt(*RefreshMatViewStmt) bool { v.called["RefreshMatViewStmt"] = true; return true }
-func (v *testVisitor) VisitSetTransactionStmt(*SetTransactionStmt) bool { v.called["SetTransactionStmt"] = true; return true }
-func (v *testVisitor) VisitValuesStmt(*ValuesStmt) bool             { v.called["ValuesStmt"] = true; return true }
-func (v *testVisitor) VisitAttachStmt(*AttachStmt) bool             { v.called["AttachStmt"] = true; return true }
-func (v *testVisitor) VisitDetachStmt(*DetachStmt) bool             { v.called["DetachStmt"] = true; return true }
+func (v *testVisitor) VisitNumberLiteral(*NumberLiteral) bool {
+	v.called["NumberLiteral"] = true
+	return true
+}
+func (v *testVisitor) VisitFloatLiteral(*FloatLiteral) bool {
+	v.called["FloatLiteral"] = true
+	return true
+}
+func (v *testVisitor) VisitStringLiteral(*StringLiteral) bool {
+	v.called["StringLiteral"] = true
+	return true
+}
+func (v *testVisitor) VisitBoolLiteral(*BoolLiteral) bool {
+	v.called["BoolLiteral"] = true
+	return true
+}
+func (v *testVisitor) VisitNullLiteral(*NullLiteral) bool {
+	v.called["NullLiteral"] = true
+	return true
+}
+func (v *testVisitor) VisitIdent(*Ident) bool { v.called["Ident"] = true; return true }
+func (v *testVisitor) VisitQualifiedName(*QualifiedName) bool {
+	v.called["QualifiedName"] = true
+	return true
+}
+func (v *testVisitor) VisitAliasedExpr(*AliasedExpr) bool {
+	v.called["AliasedExpr"] = true
+	return true
+}
+func (v *testVisitor) VisitCastExpr(*CastExpr) bool     { v.called["CastExpr"] = true; return true }
+func (v *testVisitor) VisitParam(*Param) bool           { v.called["Param"] = true; return true }
+func (v *testVisitor) VisitBinaryExpr(*BinaryExpr) bool { v.called["BinaryExpr"] = true; return true }
+func (v *testVisitor) VisitUnaryExpr(*UnaryExpr) bool   { v.called["UnaryExpr"] = true; return true }
+func (v *testVisitor) VisitFunctionCall(*FunctionCall) bool {
+	v.called["FunctionCall"] = true
+	return true
+}
+func (v *testVisitor) VisitAggregateFunc(*AggregateFunc) bool {
+	v.called["AggregateFunc"] = true
+	return true
+}
+func (v *testVisitor) VisitWindowFunc(*WindowFunc) bool { v.called["WindowFunc"] = true; return true }
+func (v *testVisitor) VisitStarExpr(*StarExpr) bool     { v.called["StarExpr"] = true; return true }
+func (v *testVisitor) VisitListExpr(*ListExpr) bool     { v.called["ListExpr"] = true; return true }
+func (v *testVisitor) VisitBetweenExpr(*BetweenExpr) bool {
+	v.called["BetweenExpr"] = true
+	return true
+}
+func (v *testVisitor) VisitCaseExpr(*CaseExpr) bool     { v.called["CaseExpr"] = true; return true }
+func (v *testVisitor) VisitInExpr(*InExpr) bool         { v.called["InExpr"] = true; return true }
+func (v *testVisitor) VisitExistsExpr(*ExistsExpr) bool { v.called["ExistsExpr"] = true; return true }
+func (v *testVisitor) VisitSubqueryExpr(*SubqueryExpr) bool {
+	v.called["SubqueryExpr"] = true
+	return true
+}
+func (v *testVisitor) VisitIntervalLiteral(*IntervalLiteral) bool {
+	v.called["IntervalLiteral"] = true
+	return true
+}
+func (v *testVisitor) VisitRaiseFunc(*RaiseFunc) bool { v.called["RaiseFunc"] = true; return true }
+func (v *testVisitor) VisitCreateTable(*CreateTable) bool {
+	v.called["CreateTable"] = true
+	return true
+}
+func (v *testVisitor) VisitDropTable(*DropTable) bool { v.called["DropTable"] = true; return true }
+func (v *testVisitor) VisitInsert(*Insert) bool       { v.called["Insert"] = true; return true }
+func (v *testVisitor) VisitUpdate(*Update) bool       { v.called["Update"] = true; return true }
+func (v *testVisitor) VisitDelete(*Delete) bool       { v.called["Delete"] = true; return true }
+func (v *testVisitor) VisitSelect(*Select) bool       { v.called["Select"] = true; return true }
+func (v *testVisitor) VisitCompoundStmt(*CompoundStmt) bool {
+	v.called["CompoundStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitBeginTX(*BeginTX) bool       { v.called["BeginTX"] = true; return true }
+func (v *testVisitor) VisitCommitTX(*CommitTX) bool     { v.called["CommitTX"] = true; return true }
+func (v *testVisitor) VisitRollbackTX(*RollbackTX) bool { v.called["RollbackTX"] = true; return true }
+func (v *testVisitor) VisitExplainStmt(*ExplainStmt) bool {
+	v.called["ExplainStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitCreateIndexStmt(*CreateIndexStmt) bool {
+	v.called["CreateIndexStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitDropIndexStmt(*DropIndexStmt) bool {
+	v.called["DropIndexStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitCreateViewStmt(*CreateViewStmt) bool {
+	v.called["CreateViewStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitAlterTableStmt(*AlterTableStmt) bool {
+	v.called["AlterTableStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitPragmaStmt(*PragmaStmt) bool { v.called["PragmaStmt"] = true; return true }
+func (v *testVisitor) VisitAnalyzeStmt(*AnalyzeStmt) bool {
+	v.called["AnalyzeStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitVacuumStmt(*VacuumStmt) bool { v.called["VacuumStmt"] = true; return true }
+func (v *testVisitor) VisitTriggerStmt(*TriggerStmt) bool {
+	v.called["TriggerStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitSavepointStmt(*SavepointStmt) bool {
+	v.called["SavepointStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitReleaseSavepointStmt(*ReleaseSavepointStmt) bool {
+	v.called["ReleaseSavepointStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitRollbackToStmt(*RollbackToStmt) bool {
+	v.called["RollbackToStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitWithStmt(*WithStmt) bool { v.called["WithStmt"] = true; return true }
+func (v *testVisitor) VisitTruncateStmt(*TruncateStmt) bool {
+	v.called["TruncateStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitReindexStmt(*ReindexStmt) bool {
+	v.called["ReindexStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitDropViewStmt(*DropViewStmt) bool {
+	v.called["DropViewStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitDropTriggerStmt(*DropTriggerStmt) bool {
+	v.called["DropTriggerStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitCreateMatViewStmt(*CreateMatViewStmt) bool {
+	v.called["CreateMatViewStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitDropMatViewStmt(*DropMatViewStmt) bool {
+	v.called["DropMatViewStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitRefreshMatViewStmt(*RefreshMatViewStmt) bool {
+	v.called["RefreshMatViewStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitSetTransactionStmt(*SetTransactionStmt) bool {
+	v.called["SetTransactionStmt"] = true
+	return true
+}
+func (v *testVisitor) VisitValuesStmt(*ValuesStmt) bool { v.called["ValuesStmt"] = true; return true }
+func (v *testVisitor) VisitAttachStmt(*AttachStmt) bool { v.called["AttachStmt"] = true; return true }
+func (v *testVisitor) VisitDetachStmt(*DetachStmt) bool { v.called["DetachStmt"] = true; return true }
 
 func TestAcceptExpr_AllTypes(t *testing.T) {
 	exprs := []struct {

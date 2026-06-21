@@ -167,7 +167,7 @@ var functionCases = []dualCase{
 		Want:  [][]any{{int64(5)}},
 	},
 	{
-		Name:  "group_concat_three_rows",
+		Name: "group_concat_three_rows",
 		Setup: []string{
 			"CREATE TABLE t (v TEXT)",
 			"INSERT INTO t VALUES ('a'), ('b'), ('c')",
@@ -176,7 +176,7 @@ var functionCases = []dualCase{
 		Want:  [][]any{{"a,b,c"}},
 	},
 	{
-		Name:  "group_concat_single",
+		Name: "group_concat_single",
 		Setup: []string{
 			"CREATE TABLE t (v TEXT)",
 			"INSERT INTO t VALUES ('only')",
@@ -185,7 +185,7 @@ var functionCases = []dualCase{
 		Want:  [][]any{{"only"}},
 	},
 	{
-		Name:  "group_concat_empty",
+		Name: "group_concat_empty",
 		Setup: []string{
 			"CREATE TABLE t (v TEXT)",
 		},
@@ -197,7 +197,7 @@ var functionCases = []dualCase{
 // edgeCases verify boundary conditions and NULL handling.
 var edgeCases = []dualCase{
 	{
-		Name:  "empty_table_count",
+		Name: "empty_table_count",
 		Setup: []string{
 			"CREATE TABLE t (id INTEGER)",
 		},
@@ -205,7 +205,7 @@ var edgeCases = []dualCase{
 		Want:  [][]any{{int64(0)}},
 	},
 	{
-		Name:  "empty_table_sum",
+		Name: "empty_table_sum",
 		Setup: []string{
 			"CREATE TABLE t (v INTEGER)",
 		},
@@ -213,7 +213,7 @@ var edgeCases = []dualCase{
 		Want:  [][]any{{nil}},
 	},
 	{
-		Name:  "empty_table_avg",
+		Name: "empty_table_avg",
 		Setup: []string{
 			"CREATE TABLE t (v INTEGER)",
 		},

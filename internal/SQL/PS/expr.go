@@ -768,17 +768,17 @@ func (p *Parser) parseTypePrecision(precision, scale *int) error {
 				Lexeme: p.current.Lexeme,
 			}
 		}
-	m := 0
-	if _, err := fmt.Sscanf(p.current.Lexeme, "%d", &m); err != nil {
-		return &SyntaxError{
-			Input:  p.lex.Input(),
-			Line:   p.current.Line,
-			Col:    p.current.Col,
-			Got:    "integer",
-			Lexeme: p.current.Lexeme,
+		m := 0
+		if _, err := fmt.Sscanf(p.current.Lexeme, "%d", &m); err != nil {
+			return &SyntaxError{
+				Input:  p.lex.Input(),
+				Line:   p.current.Line,
+				Col:    p.current.Col,
+				Got:    "integer",
+				Lexeme: p.current.Lexeme,
+			}
 		}
-	}
-	*scale = m
+		*scale = m
 		p.advance()
 	}
 

@@ -1,9 +1,9 @@
 package ls
 
 import (
-	"log/slog"
 	"bytes"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"

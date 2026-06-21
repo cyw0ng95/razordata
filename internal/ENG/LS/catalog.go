@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"sync"
 
-	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
 	ct "github.com/cyw0ng95/razordata/internal/ENG/CT"
+	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
 
 	LX "github.com/cyw0ng95/razordata/internal/SQL/LX"
 )

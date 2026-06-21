@@ -64,7 +64,7 @@ var bufPool = sync.Pool{
 type BlockDevice struct {
 	fd      int
 	direct  bool
-	mmap    bool   // true: reads via mmap; writes still pwrite
+	mmap    bool // true: reads via mmap; writes still pwrite
 	mmapSz  int
 	mmapBuf []byte
 	log     lg.Logger

@@ -10,11 +10,11 @@ import (
 // rows via driver path. This REQ describes a bug that, as of this
 // iteration, I cannot reproduce in any of the available harnesses:
 //
-//   1. In-memory executor: returns 60/7/10 rows depending on data shape
-//   2. Store-path executor (real engine): returns matching row counts
-//   3. SLT-replica: with the exact 8 INSERTs from
-//      index/in/10/slt_good_0.test L348, returns 7 rows matching the
-//      SQLite reference
+//  1. In-memory executor: returns 60/7/10 rows depending on data shape
+//  2. Store-path executor (real engine): returns matching row counts
+//  3. SLT-replica: with the exact 8 INSERTs from
+//     index/in/10/slt_good_0.test L348, returns 7 rows matching the
+//     SQLite reference
 //
 // The SLT runner itself reports ~4700+ failures in index/in/* but the
 // failure mode described in the REQ ("returns 0 rows instead of 68")

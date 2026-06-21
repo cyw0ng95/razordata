@@ -140,9 +140,12 @@ func UnregisterAll() {
 	triggerReg = map[string]*PS.TriggerStmt{}
 	tableTriggers = map[string][]*PS.TriggerStmt{}
 	triggerMu.Unlock()
-	codegenMu.Lock()
-	codegenRegistry = map[string]CodegenFn{}
-	codegenMu.Unlock()
+	// Clear table schema cache for test isolation.
+	tableSchemaMu.Lock()
+	tableSchemaCache = map[string]*tableSchemaEntry{}
+	tableSchemaMu.Unlock()
+	// Clear subquery caches for test isolation.
+	ClearSubqueryCaches()
 }
 
 // UnregisterTable removes a single table from the in-memory
@@ -153,6 +156,10 @@ func UnregisterTable(name string) {
 	defer tablesMu.Unlock()
 	delete(tables, name)
 	delete(schemas, name)
+	// Clear table schema cache entry.
+	tableSchemaMu.Lock()
+	delete(tableSchemaCache, name)
+	tableSchemaMu.Unlock()
 }
 
 func cloneRow(r Row) Row {

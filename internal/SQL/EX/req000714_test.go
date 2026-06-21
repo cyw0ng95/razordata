@@ -45,5 +45,3 @@ func TestREQ000714_DeleteWithSelfSubquery(t *testing.T) {
 		t.Errorf("expected 2 rows remaining, got %d", len(rows))
 	}
 }
-
-

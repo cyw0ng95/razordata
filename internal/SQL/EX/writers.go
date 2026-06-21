@@ -1538,11 +1538,11 @@ func (d *DropIndex) RowsAffected() int64 { return d.rowsAff }
 
 // Pragma is a writer-op stub for PRAGMA name [= value]. REQ000490.
 type Pragma struct {
-	stmt   *PS.PragmaStmt
-	store  Store
-	done   bool
-	rows   []Row
-	idx    int
+	stmt  *PS.PragmaStmt
+	store Store
+	done  bool
+	rows  []Row
+	idx   int
 }
 
 func NewPragma(stmt *PS.PragmaStmt) *Pragma { return &Pragma{stmt: stmt} }

@@ -651,6 +651,7 @@ func (a *AlterTable) execRenameColumn() error {
 			copy(newStoreCols, ss.cols)
 			newStoreCols[idx] = newCol
 			ss.cols = newStoreCols
+			ss.buildColIndex()
 		}
 	}
 	storeMu.Unlock()

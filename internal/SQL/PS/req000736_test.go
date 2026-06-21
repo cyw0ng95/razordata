@@ -6,8 +6,8 @@ import (
 
 func TestREQ000736_NullsFirstLast(t *testing.T) {
 	tests := []struct {
-		sql        string
-		wantOrder  int8
+		sql       string
+		wantOrder int8
 	}{
 		{"SELECT * FROM t ORDER BY col NULLS FIRST", 1},
 		{"SELECT * FROM t ORDER BY col NULLS LAST", -1},

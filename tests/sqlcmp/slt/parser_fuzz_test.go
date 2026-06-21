@@ -19,8 +19,8 @@ import (
 // Build tag `slt_fuzz` keeps this out of the default test
 // run. Invoke with:
 //
-//   go test -fuzz FuzzParser -fuzztime 60s -tags slt_fuzz \
-//       ./tests/sqlcmp/slt/...
+//	go test -fuzz FuzzParser -fuzztime 60s -tags slt_fuzz \
+//	    ./tests/sqlcmp/slt/...
 func FuzzParser(f *testing.F) {
 	// Seed corpus: a few known-good and known-bad inputs.
 	f.Add("statement ok\nSELECT 1\n")

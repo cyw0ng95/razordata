@@ -30,7 +30,7 @@ func SetEpochManager(em epochManager) {
 // noopEpochManager is a no-op implementation for environments without QSBR.
 type noopEpochManager struct{}
 
-func (n *noopEpochManager) RegisterIterator() uint64   { return 0 }
+func (n *noopEpochManager) RegisterIterator() uint64  { return 0 }
 func (n *noopEpochManager) DeregisterIterator(uint64) {}
 
 // epochRegisteredIterator wraps an iterator and registers it with the

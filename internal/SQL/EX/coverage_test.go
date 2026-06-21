@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-
 func TestCoverage_Aggregate_WithParams(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
@@ -20,7 +19,6 @@ func TestCoverage_Aggregate_WithParams(t *testing.T) {
 	agg.WithParams(nil)
 }
 
-
 func TestCoverage_AnalyzeWithStore(t *testing.T) {
 	ex, eng := newEngineExecutor(t)
 	defer eng.Close()
@@ -33,7 +31,6 @@ func TestCoverage_AnalyzeWithStore(t *testing.T) {
 	}
 }
 
-
 func TestCoverage_Analyze_WithParams(t *testing.T) {
 	a := NewAnalyze(nil)
 	a2 := a.WithParams([]any{42})
@@ -42,7 +39,6 @@ func TestCoverage_Analyze_WithParams(t *testing.T) {
 	}
 }
 
-
 func TestCoverage_Vacuum_WithParams(t *testing.T) {
 	v := NewVacuum(nil)
 	v2 := v.WithParams([]any{42})
@@ -50,7 +46,6 @@ func TestCoverage_Vacuum_WithParams(t *testing.T) {
 		t.Fatal("WithParams returned nil")
 	}
 }
-
 
 func TestCoverage_newUniqueForCatalog(t *testing.T) {
 	unique := []UniqueKey{
@@ -69,7 +64,6 @@ func TestCoverage_newUniqueForCatalogEmpty(t *testing.T) {
 		t.Errorf("expected 0, got %d", len(result))
 	}
 }
-
 
 func TestCoverage_Compound_Intersect(t *testing.T) {
 	ResetForTest(t)
@@ -156,7 +150,6 @@ func TestCoverage_Compound_UnionLimit(t *testing.T) {
 		t.Fatalf("UNION LIMIT: %v", err)
 	}
 }
-
 
 func TestCoverage_sumDistinct(t *testing.T) {
 	ResetForTest(t)
@@ -282,7 +275,6 @@ func TestCoverage_groupConcatDistinctSep(t *testing.T) {
 	}
 }
 
-
 func TestCoverage_aggGroupBy(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
@@ -313,7 +305,6 @@ func TestCoverage_aggGroupByHaving(t *testing.T) {
 	}
 }
 
-
 func TestCoverage_scalarIn(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
@@ -342,7 +333,6 @@ func TestCoverage_scalarInMiss(t *testing.T) {
 		t.Fatalf("scalar IN miss: %v", err)
 	}
 }
-
 
 func TestCoverage_deleteWhere(t *testing.T) {
 	ResetForTest(t)
@@ -373,7 +363,6 @@ func TestCoverage_deleteAll(t *testing.T) {
 	}
 }
 
-
 func TestCoverage_updateWhere(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
@@ -387,7 +376,6 @@ func TestCoverage_updateWhere(t *testing.T) {
 		t.Fatalf("UPDATE WHERE: %v", err)
 	}
 }
-
 
 func TestCoverage_distinct(t *testing.T) {
 	ResetForTest(t)
@@ -407,7 +395,6 @@ func TestCoverage_distinct(t *testing.T) {
 	}
 }
 
-
 func TestCoverage_orderByExpr(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
@@ -426,7 +413,6 @@ func TestCoverage_orderByExpr(t *testing.T) {
 	}
 }
 
-
 func TestCoverage_caseWhen(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
@@ -441,7 +427,6 @@ func TestCoverage_caseWhen(t *testing.T) {
 	}
 }
 
-
 func TestCoverage_castIntToText(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
@@ -454,7 +439,6 @@ func TestCoverage_castIntToText(t *testing.T) {
 		t.Fatalf("CAST: %v", err)
 	}
 }
-
 
 func TestCoverage_limitOffset(t *testing.T) {
 	ResetForTest(t)
@@ -473,7 +457,6 @@ func TestCoverage_limitOffset(t *testing.T) {
 		t.Errorf("expected 3 rows, got %d", len(rows))
 	}
 }
-
 
 func TestCoverage_nullComparison(t *testing.T) {
 	ResetForTest(t)
@@ -516,7 +499,6 @@ func TestCoverage_isNotNullWhere(t *testing.T) {
 		t.Fatalf("IS NOT NULL: %v", err)
 	}
 }
-
 
 func TestCoverage_notIn(t *testing.T) {
 	ResetForTest(t)
@@ -561,7 +543,6 @@ func TestCoverage_notBetween(t *testing.T) {
 		t.Fatalf("NOT BETWEEN: %v", err)
 	}
 }
-
 
 func TestCoverage_like(t *testing.T) {
 	ResetForTest(t)
@@ -636,7 +617,6 @@ func TestCoverage_likeEscape(t *testing.T) {
 	}
 }
 
-
 func TestCoverage_between(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
@@ -651,7 +631,6 @@ func TestCoverage_between(t *testing.T) {
 		t.Fatalf("BETWEEN: %v", err)
 	}
 }
-
 
 func TestCoverage_coalesce(t *testing.T) {
 	ResetForTest(t)
@@ -668,7 +647,6 @@ func TestCoverage_coalesce(t *testing.T) {
 	}
 }
 
-
 func TestCoverage_nullif(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
@@ -683,7 +661,6 @@ func TestCoverage_nullif(t *testing.T) {
 		t.Fatalf("NULLIF: %v", err)
 	}
 }
-
 
 func TestCoverage_scalarSubquery(t *testing.T) {
 	ResetForTest(t)
@@ -734,7 +711,6 @@ func TestCoverage_inSubquery(t *testing.T) {
 		t.Fatalf("IN subquery: %v", err)
 	}
 }
-
 
 func TestCoverage_windowRowNumber(t *testing.T) {
 	ResetForTest(t)
@@ -795,7 +771,6 @@ func TestCoverage_windowSum(t *testing.T) {
 		t.Fatalf("window SUM: %v", err)
 	}
 }
-
 
 func TestCoverage_createTrigger(t *testing.T) {
 	ResetForTest(t)
@@ -883,7 +858,6 @@ func TestCoverage_ctas(t *testing.T) {
 	}
 }
 
-
 func TestCoverage_explain(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
@@ -946,8 +920,6 @@ func TestCoverage_truncate(t *testing.T) {
 		t.Fatalf("TRUNCATE: %v", err)
 	}
 }
-
-
 
 func TestCoverage_multiAggregate(t *testing.T) {
 	ResetForTest(t)

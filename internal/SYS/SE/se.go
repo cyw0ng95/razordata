@@ -360,7 +360,7 @@ func (s *Session) TotalChangesCount() int64 {
 	return st.totalChanges.Load()
 }
 
-func (s *Session) CurrentTS() uint64  { return vl.GetCurrentTS() }
+func (s *Session) CurrentTS() uint64     { return vl.GetCurrentTS() }
 func (s *Session) SetSnapshot(ts uint64) { s.engine.SetSnapshot(ts) }
 
 func (s *Session) lock(ctx context.Context) error {

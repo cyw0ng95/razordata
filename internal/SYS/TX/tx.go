@@ -30,11 +30,11 @@ type Transaction struct {
 	tx       vl.Tx
 	mu       sync.Mutex
 
-	writeSet           map[string]writeEntry
-	inMemorySnapshots  map[string][]ex.Row // table → pre-tx rows
-	finished           bool
-	savepoints         []savepoint
-	isolationLevel     ap.IsolationLevel // REQ000123
+	writeSet          map[string]writeEntry
+	inMemorySnapshots map[string][]ex.Row // table → pre-tx rows
+	finished          bool
+	savepoints        []savepoint
+	isolationLevel    ap.IsolationLevel // REQ000123
 }
 
 type writeEntry struct {

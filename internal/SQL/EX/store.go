@@ -79,14 +79,14 @@ type storeSchema struct {
 	colIndex map[string]int
 }
 
-// buildColIndex builds a column name -> index map from the schema's cols slice.
-// Called once at schema creation time; the result is shared across all rows.
+// buildColIndex (re)builds a column name -> index map from the schema's
+// cols slice. Always overwrites an existing map so callers can invoke it
+// after ALTER TABLE adds/drops/renames columns; the result is shared
+// across all rows.
 func (s *storeSchema) buildColIndex() {
-	if s.colIndex == nil {
-		s.colIndex = make(map[string]int, len(s.cols))
-		for i, c := range s.cols {
-			s.colIndex[c] = i
-		}
+	s.colIndex = make(map[string]int, len(s.cols))
+	for i, c := range s.cols {
+		s.colIndex[c] = i
 	}
 }
 
@@ -319,6 +319,7 @@ func registerStoreSchema(name string, cols []string, pk string) uint64 {
 			ss.pk = pk
 			ss.nullable = nullable
 			ss.defaults = nil
+			ss.buildColIndex()
 			return id
 		}
 	}
@@ -369,6 +370,7 @@ func registerStoreSchemaWithConstraints(name string, cols []string, nullable []b
 			ss.nullable = cpNullable
 			ss.defaults = cpDefaults
 			ss.unique = nil
+			ss.buildColIndex()
 			return id
 		}
 	}
@@ -421,6 +423,7 @@ func registerStoreSchemaWithFKLocked(name string, cols []string, nullable []bool
 			if fks != nil {
 				ss.foreignKeys = fks
 			}
+			ss.buildColIndex()
 			return id
 		}
 	}
@@ -615,9 +618,10 @@ func decodeRow(data []byte, schema *storeSchema) (Row, error) {
 	if int(n) != len(schema.cols) {
 		return Row{}, fmt.Errorf("ex: row has %d cols, schema %d", n, len(schema.cols))
 	}
+	dataSlice := make([]any, len(schema.cols))
 	row := Row{
-		Cols:     append([]string(nil), schema.cols...),
-		Data:     make([]any, len(schema.cols)),
+		Cols:     schema.cols, // share schema's cols slice (immutable)
+		Data:     dataSlice,
 		colIndex: schema.colIndex, // share schema's pre-built index (no allocation)
 	}
 	for i := 0; i < int(n); i++ {

@@ -1156,7 +1156,7 @@ func (p *Parser) parseRefreshMatView() (*RefreshMatViewStmt, error) {
 	p.advance()
 
 	return &RefreshMatViewStmt{
-		Name:       name,
+		Name:         name,
 		Concurrently: concurrently,
 	}, nil
 }

@@ -101,7 +101,7 @@ type bp struct {
 	hintPath string
 	log      lg.Logger
 
-	sbp *shardedBufferPool // sharded buffer pool (REQ000539)
+	sbp      *shardedBufferPool // sharded buffer pool (REQ000539)
 	capacity int64
 
 	hits   atomic.Int64

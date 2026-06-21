@@ -64,9 +64,6 @@ mem.pprof
 tmp/
 /tmp/
 
-# Codegen build artifacts
-/internal/SQL/EX/codegen/gen_main
-
 # AI Coding tools
 .qwen
 .monkeycode

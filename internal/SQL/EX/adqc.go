@@ -128,27 +128,12 @@ func (a *AdaptiveOp) tryCompile(ctx context.Context) {
 	}
 
 	opType := operatorType(a.inner)
-	if fn, ok := LookupCodegenOp(opType); ok {
-		a.compiledFn = fn
-		a.state.Store(uint32(AdqcCompiled))
-		// Cache the compiled function for future executors.
-		GlobalAdqcCache.Put(a.planHash, 0, &SpecializedPlan{
-			Fn:       fn,
-			OpType:   opType,
-			PlanHash: a.planHash,
-		})
-		slog.Debug("adqc: plan specialized and cached",
-			"planHash", a.planHash,
-			"opType", opType,
-		)
-	} else {
-		a.state.Store(uint32(AdqcInterpreted))
-		slog.Debug("adqc: fallback",
-			"planHash", a.planHash,
-			"opType", opType,
-			"reason", "no codegen fn registered",
-		)
-	}
+	a.state.Store(uint32(AdqcInterpreted))
+	slog.Debug("adqc: fallback",
+		"planHash", a.planHash,
+		"opType", opType,
+		"reason", "no codegen fn registered",
+	)
 	_ = ctx
 }
 

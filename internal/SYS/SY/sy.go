@@ -26,27 +26,27 @@ import (
 )
 
 type Engine struct {
-	dir  string
-	opts AP.Options
-	log  lg.Logger
-	fs   *fs.FileManager
-	lf   *lf.SegmentManager
-	df   *df.BlockDevice
-	sp   sp.SyncPool
-	bp   bf.BufferPool
-	wr   wr.Writer
-	fl   fl.Flusher
-	rp   rp.Replayer
-	eng  *ls.Engine
-	txn  *vl.Manager
-	exe  *executor.Executor
+	dir     string
+	opts    AP.Options
+	log     lg.Logger
+	fs      *fs.FileManager
+	lf      *lf.SegmentManager
+	df      *df.BlockDevice
+	sp      sp.SyncPool
+	bp      bf.BufferPool
+	wr      wr.Writer
+	fl      fl.Flusher
+	rp      rp.Replayer
+	eng     *ls.Engine
+	txn     *vl.Manager
+	exe     *executor.Executor
 	catalog *ls.Catalog
 
-	mu          sync.Mutex
-	closed      atomic.Bool
-	opened      atomic.Bool
-	started     time.Time
-	exeAdapter  *executorStoreAdapter
+	mu           sync.Mutex
+	closed       atomic.Bool
+	opened       atomic.Bool
+	started      time.Time
+	exeAdapter   *executorStoreAdapter
 	lastShutdown AP.ShutdownStats
 }
 
@@ -230,39 +230,57 @@ func (e *Engine) closeBestEffort() error {
 	}
 	stop("catalog", func() error { e.closeCatalog(); return nil })
 	stop("vl", func() error {
-		if e.txn == nil { return nil }
+		if e.txn == nil {
+			return nil
+		}
 		return e.txn.Close()
 	})
 	stop("ls", func() error {
-		if e.eng == nil { return nil }
+		if e.eng == nil {
+			return nil
+		}
 		return e.eng.Close()
 	})
 	stop("rp", func() error {
-		if e.rp == nil { return nil }
+		if e.rp == nil {
+			return nil
+		}
 		return e.rp.Close()
 	})
 	stop("fl", func() error {
-		if e.fl == nil { return nil }
+		if e.fl == nil {
+			return nil
+		}
 		return e.fl.Close()
 	})
 	stop("wr", func() error {
-		if e.wr == nil { return nil }
+		if e.wr == nil {
+			return nil
+		}
 		return e.wr.Close()
 	})
 	stop("bf", func() error {
-		if e.bp == nil { return nil }
+		if e.bp == nil {
+			return nil
+		}
 		return e.bp.Close()
 	})
 	stop("df", func() error {
-		if e.df == nil { return nil }
+		if e.df == nil {
+			return nil
+		}
 		return e.df.Close()
 	})
 	stop("lf", func() error {
-		if e.lf == nil { return nil }
+		if e.lf == nil {
+			return nil
+		}
 		return e.lf.Close()
 	})
 	stop("fs", func() error {
-		if e.fs == nil { return nil }
+		if e.fs == nil {
+			return nil
+		}
 		return e.fs.Close()
 	})
 	return firstErr
@@ -285,7 +303,7 @@ func (e *Engine) Begin(ctx context.Context) (AP.Session, error) {
 	return sessionConstructor(e), nil
 }
 
-func (e *Engine) IsClosed() bool  { return e.closed.Load() }
+func (e *Engine) IsClosed() bool   { return e.closed.Load() }
 func (e *Engine) IsReadOnly() bool { return e.opts.ReadOnly }
 
 func (e *Engine) Open(ctx context.Context, dir string, opts AP.Options) error {
@@ -344,9 +362,11 @@ func (a *executorStoreAdapter) Get(k []byte) ([]byte, bool, error) {
 	}
 	return v, true, nil
 }
-func (a *executorStoreAdapter) NewIterator(prefix []byte) ls.RangeIter { return a.eng.NewIterator(prefix) }
-func (a *executorStoreAdapter) ManualCompact() error                    { return a.eng.ManualCompact() }
-func (a *executorStoreAdapter) SetSnapshot(ts uint64)                  { a.snapshotTS = ts }
+func (a *executorStoreAdapter) NewIterator(prefix []byte) ls.RangeIter {
+	return a.eng.NewIterator(prefix)
+}
+func (a *executorStoreAdapter) ManualCompact() error  { return a.eng.ManualCompact() }
+func (a *executorStoreAdapter) SetSnapshot(ts uint64) { a.snapshotTS = ts }
 
 func (e *Engine) walStats() AP.WALStats {
 	if e.rp == nil {
@@ -369,14 +389,14 @@ func (e *Engine) ExtractParamTypes(sql string) []int {
 	return e.exe.ExtractParamTypes(sql)
 }
 
-func (e *Engine) Engine() *ls.Engine       { return e.eng }
-func (e *Engine) TxnManager() *vl.Manager  { return e.txn }
+func (e *Engine) Engine() *ls.Engine           { return e.eng }
+func (e *Engine) TxnManager() *vl.Manager      { return e.txn }
 func (e *Engine) FileManager() *fs.FileManager { return e.fs }
-func (e *Engine) BufferPool() bf.BufferPool { return e.bp }
-func (e *Engine) Writer() wr.Writer         { return e.wr }
-func (e *Engine) Flusher() fl.Flusher       { return e.fl }
-func (e *Engine) Replayer() rp.Replayer     { return e.rp }
-func (e *Engine) Logger() lg.Logger         { return e.log }
+func (e *Engine) BufferPool() bf.BufferPool    { return e.bp }
+func (e *Engine) Writer() wr.Writer            { return e.wr }
+func (e *Engine) Flusher() fl.Flusher          { return e.fl }
+func (e *Engine) Replayer() rp.Replayer        { return e.rp }
+func (e *Engine) Logger() lg.Logger            { return e.log }
 
 func (e *Engine) BeginTxn(ctx context.Context) (AP.Transaction, error) {
 	if e.closed.Load() {

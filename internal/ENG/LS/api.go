@@ -1,12 +1,12 @@
 package ls
 
 import (
-	"sync/atomic"
 	"bytes"
 	"container/heap"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 )
 
 var tombstoneValue = []byte{0xDE, 0xAD, 0xBE, 0xEF}
@@ -74,10 +74,10 @@ func (eng *Engine) Delete(key []byte) error {
 func (eng *Engine) NewIterator(prefix []byte) RangeIter {
 	e := eng.e
 	e.mu.RLock()
-	
+
 	// Build list of memtables to iterate over
 	var memtables []*memtable
-	
+
 	// Add active memtable shards
 	if e.activeMem != nil {
 		for _, shard := range e.activeMem.shards() {
@@ -86,7 +86,7 @@ func (eng *Engine) NewIterator(prefix []byte) RangeIter {
 			}
 		}
 	}
-	
+
 	// Add frozen memtables
 	for _, mt := range e.memtables {
 		// frozen memtables are stored as memtableAdapter in the slice
@@ -94,7 +94,7 @@ func (eng *Engine) NewIterator(prefix []byte) RangeIter {
 			memtables = append(memtables, adapter.memtable)
 		}
 	}
-	
+
 	manifest := e.manifest
 	dir := e.dir
 	e.mu.RUnlock()
@@ -370,7 +370,7 @@ func (mi *mergeIterator) Value() []byte {
 	return append([]byte(nil), mi.curVal...)
 }
 
-func (mi *mergeIterator) Err() error    { return mi.err }
+func (mi *mergeIterator) Err() error { return mi.err }
 
 func (mi *mergeIterator) Close() error {
 	if mi.closed.Load() {

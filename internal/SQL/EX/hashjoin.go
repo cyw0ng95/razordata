@@ -23,20 +23,20 @@ import (
 //   - INNER JOIN only (LEFT/RIGHT/FULL deferred to NestedLoopJoin)
 //   - Equi-join only (non-equi joins deferred to NestedLoopJoin)
 type HashJoin struct {
-	left        Operator
-	right       Operator
-	leftKeys    []string
-	rightKeys   []string
-	leftTbl     string
-	rightTbl    string
-	partitions  int
-	buckets     []hashBucket
-	leftRows    []Row
-	rightRows   []Row
-	emitIdx     int
-	bucketPos   int // position within current bucket's hash/rightRows for multi-match
-	emitRow     Row
-	done        bool
+	left       Operator
+	right      Operator
+	leftKeys   []string
+	rightKeys  []string
+	leftTbl    string
+	rightTbl   string
+	partitions int
+	buckets    []hashBucket
+	leftRows   []Row
+	rightRows  []Row
+	emitIdx    int
+	bucketPos  int // position within current bucket's hash/rightRows for multi-match
+	emitRow    Row
+	done       bool
 }
 
 type hashBucket struct {
