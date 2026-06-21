@@ -86,11 +86,13 @@ case *IndexScan:
 		node.Cost = 1.0
 		node.Rows = int64(planner.estimateRowCount(v.table, nil))
 		node.Width = 100
+		detail := fmt.Sprintf("rows=%d", node.Rows)
 		if v.store != nil {
-			node.Detail = "[store]"
+			detail += " [store]"
 		} else {
-			node.Detail = "[memory]"
+			detail += " [memory]"
 		}
+		node.Detail = detail
 
 	case *Filter:
 		node.Detail = "WHERE"

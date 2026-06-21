@@ -16,13 +16,13 @@ func TestHashAggregateThreshold(t *testing.T) {
 	}
 }
 
-// TestEstimateRowCount verifies the conservative default
-// returns 0 (preferring streaming Aggregate).
+// TestEstimateRowCount verifies estimateRowCount for
+// non-existent tables returns the default estimate of 100.
 func TestEstimateRowCount(t *testing.T) {
 	p := NewPlanner()
 	got := p.estimateRowCount("nonexistent", nil)
-	if got != 0 {
-		t.Errorf("estimateRowCount: got %d, want 0 (conservative default)", got)
+	if got != 100 {
+		t.Errorf("estimateRowCount: got %d, want 100 (default)", got)
 	}
 }
 

@@ -1697,10 +1697,12 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 // A future iteration can integrate histogram-based estimates
 // (REQ000085) for more accuracy.
 func (p *Planner) estimateRowCount(table string, where PS.Expr) int {
-	// Conservative default: return 0 (assume small dataset)
-	// which prefers streaming Aggregate. Future iters can
-	// consult table statistics.
-	return 0
+	// REQ000780: return actual row count for in-memory tables.
+	// For store-backed tables, return a default estimate of 100.
+	if rows, ok := tables[table]; ok {
+		return len(rows)
+	}
+	return 100
 }
 
 func (p *Planner) ParseAndPlan(sql string) (*plan, error) {
