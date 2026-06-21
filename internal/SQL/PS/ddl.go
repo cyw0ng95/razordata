@@ -883,11 +883,11 @@ func (p *Parser) parseCreateTrigger() (*TriggerStmt, error) {
 
 	if p.current.Type == LX.T_WHEN {
 		p.advance()
-		// skip WHEN expression: eat tokens until BEGIN or SEMICOLON.
-		// (Minimal implementation: condition is parsed but ignored at execution.)
-		for p.current.Type != LX.T_BEGIN && p.current.Type != LX.T_SEMICOLON && p.current.Type != LX.T_EOF {
-			p.advance()
+		w, err := p.parseExpr()
+		if err != nil {
+			return nil, err
 		}
+		trigger.When = w
 	}
 
 	if p.current.Type == LX.T_BEGIN {

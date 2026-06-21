@@ -2,10 +2,10 @@ package EX
 
 import (
 	"errors"
+	"fmt"
+	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 	"strings"
 	"sync"
-
-	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
 var errTableExists = errors.New("ex: table already exists")
@@ -314,13 +314,63 @@ func fireTriggers(table string, time string, event string, oldRow *Row, newRow *
 }
 
 // executeTrigger runs a single trigger's body statements.
+// REQ000741: evaluates the WHEN expression before executing the body.
 func executeTrigger(trigger *PS.TriggerStmt, ctx *TriggerContext) error {
+	// Build a synthetic row for NEW/OLD references in the WHEN expression.
+	var whenRow *Row
+	if trigger.When != nil {
+		whenRow = buildTriggerWhenRow(ctx)
+		ok, err := evalTriggerWhen(trigger.When, whenRow, ctx.Params)
+		if err != nil {
+			return fmt.Errorf("ex: trigger WHEN evaluation: %w", err)
+		}
+		if !ok {
+			return nil // WHEN condition false, skip body
+		}
+	}
+
 	for _, stmt := range trigger.Body {
 		if err := executeTriggerStmt(stmt, ctx); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// buildTriggerWhenRow builds a synthetic Row that allows QualifiedName
+// lookups for NEW.col and OLD.col references in trigger WHEN expressions.
+func buildTriggerWhenRow(ctx *TriggerContext) *Row {
+	var data []any
+	var cols []string
+	if ctx.NewRow != nil {
+		for i, c := range ctx.NewRow.Cols {
+			data = append(data, ctx.NewRow.Data[i])
+			cols = append(cols, "NEW."+c)
+		}
+	}
+	if ctx.OldRow != nil {
+		for i, c := range ctx.OldRow.Cols {
+			data = append(data, ctx.OldRow.Data[i])
+			cols = append(cols, "OLD."+c)
+		}
+	}
+	return &Row{Data: data, Cols: cols}
+}
+
+// evalTriggerWhen evaluates a trigger WHEN expression against the
+// synthetic NEW/OLD row. Returns true if the condition passes.
+func evalTriggerWhen(expr PS.Expr, row *Row, params []any) (bool, error) {
+	val, err := Eval(expr, row, params)
+	if err != nil {
+		return false, err
+	}
+	if val == nil {
+		return false, nil
+	}
+	if b, ok := val.(bool); ok {
+		return b, nil
+	}
+	return false, nil
 }
 
 // executeTriggerStmt executes a single statement within a trigger body.

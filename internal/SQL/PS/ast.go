@@ -393,7 +393,7 @@ type TriggerStmt struct {
 	ForEach     string // "ROW" or "STATEMENT"
 	Body        []Stmt // trigger body statements (BEGIN ... END)
 	IfNotExists bool
-	When        string   // optional WHEN expression (raw text)
+	When        Expr     // REQ000741: parsed WHEN expression (nil if absent)
 	OfCols      []string // optional column list for UPDATE OF
 }
 
