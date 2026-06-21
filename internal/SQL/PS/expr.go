@@ -683,6 +683,20 @@ func (p *Parser) parseCastType() (*TypeInfo, error) {
 	case LX.T_JSON:
 		info.Type = int(LX.T_JSON)
 		p.advance()
+	case LX.T_IDENT:
+		switch strings.ToUpper(p.current.Lexeme) {
+		case "SIGNED", "UNSIGNED":
+			info.Type = int(LX.T_INT_KW)
+			p.advance()
+		default:
+			return nil, &SyntaxError{
+				Input:  p.lex.Input(),
+				Line:   p.current.Line,
+				Col:    p.current.Col,
+				Got:    "type " + p.current.Lexeme,
+				Lexeme: p.current.Lexeme,
+			}
+		}
 	default:
 		return nil, &SyntaxError{
 			Input:  p.lex.Input(),
