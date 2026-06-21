@@ -12,7 +12,7 @@ import (
 	"unicode"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
-	"github.com/cyw0ng95/razordata/internal/SQL/PS"
+	PS "github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
 var ErrEval = errors.New("ex: eval error")
@@ -131,6 +131,18 @@ func evalUnary(e *PS.UnaryExpr, row *Row, params []any) (any, error) {
 			return -v, nil
 		case float64:
 			return -v, nil
+		}
+		// REQ000719: handle non-int64 numeric types (e.g. Go's `int`
+		// on 32-bit paths, store-deserialized int from int columns
+		// when the underlying bit-width differs). Convert to int64
+		// or float64 via toInt64/numericFloat before applying the
+		// unary minus, so the driver/store path agrees with the
+		// in-memory path.
+		if n, ok := toInt64(operand); ok {
+			return -n, nil
+		}
+		if f, ok := numericFloat(operand); ok {
+			return -f, nil
 		}
 	case int(LX.T_PLUS):
 		return operand, nil
