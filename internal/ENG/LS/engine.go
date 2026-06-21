@@ -14,6 +14,7 @@ var (
 	ErrNoActiveMemtable = errors.New("ls: no active memtable")
 	ErrClosed           = errors.New("ls: engine is closed")
 	ErrNotFound         = errors.New("ls: key not found")
+	ErrRetryExceeded    = errors.New("ls: retry limit exceeded")
 )
 
 const (
@@ -112,7 +113,9 @@ func (e *engine) Write(key, value []byte) error {
 	if e.closed.Load() {
 		return ErrClosed
 	}
-	e.activeMem.Insert(key, value)
+	if err := e.activeMem.Insert(key, value); err != nil {
+		return err
+	}
 	if e.activeMem.ShouldFlush() {
 		return e.flushActiveMemtable()
 	}

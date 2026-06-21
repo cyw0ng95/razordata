@@ -19,9 +19,12 @@ func newMemtable(maxSize int64) *memtable {
 	}
 }
 
-func (m *memtable) Insert(key, value []byte) {
-	m.skiplist.Insert(key, value)
+func (m *memtable) Insert(key, value []byte) error {
+	if err := m.skiplist.Insert(key, value); err != nil {
+		return err
+	}
 	m.size.Add(int64(len(key) + len(value)))
+	return nil
 }
 
 func (m *memtable) Get(key []byte) ([]byte, bool) {

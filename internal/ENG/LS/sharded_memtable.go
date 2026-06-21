@@ -81,11 +81,14 @@ func (sm *shardedMemtable) shard(key []byte) int {
 }
 
 // Insert inserts a key-value pair into the appropriate shard.
-func (sm *shardedMemtable) Insert(key, value []byte) {
+func (sm *shardedMemtable) Insert(key, value []byte) error {
 	idx := sm.shard(key)
 	shard := sm.shards_[idx]
-	shard.Insert(key, value)
+	if err := shard.Insert(key, value); err != nil {
+		return err
+	}
 	sm.totalSize.Add(int64(len(key) + len(value)))
+	return nil
 }
 
 // Get looks up a key in the appropriate shard.

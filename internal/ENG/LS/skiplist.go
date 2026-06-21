@@ -67,7 +67,7 @@ func (sl *skipList) randomLevel() int {
 	return lvl
 }
 
-func (sl *skipList) Insert(key, value []byte) {
+func (sl *skipList) Insert(key, value []byte) error {
 	lvl := sl.randomLevel()
 	predecessorsPtr := acquireSlice()
 	successorsPtr := acquireSlice()
@@ -75,7 +75,8 @@ func (sl *skipList) Insert(key, value []byte) {
 	defer releaseSlice(successorsPtr)
 	predecessors := (*predecessorsPtr)[:lvl]
 	successors := (*successorsPtr)[:lvl]
-	for {
+	const maxOuterRetries = 100
+	for outerRetries := 0; outerRetries < maxOuterRetries; outerRetries++ {
 		head := sl.head.Load()
 		currentLevel := sl.level.Load()
 		curr := head
@@ -101,7 +102,7 @@ func (sl *skipList) Insert(key, value []byte) {
 			next.mu.Lock()
 			next.value.Store(value)
 			next.mu.Unlock()
-			return
+			return nil
 		}
 		newNode := &node{key: key, value: atomic.Value{}}
 		newNode.value.Store(value)
@@ -139,8 +140,9 @@ func (sl *skipList) Insert(key, value []byte) {
 			sl.level.CompareAndSwap(currentLevel, int32(lvl))
 		}
 		sl.len.Add(1)
-		return
+		return nil
 	}
+	return ErrRetryExceeded
 }
 
 func findPredSucc(head *node, level int32, i int, key []byte) (*node, *node) {
