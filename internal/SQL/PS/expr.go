@@ -103,11 +103,13 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			return nil, err
 		}
 		p.advance()
-		// Handle DISTINCT keyword in aggregate functions
+		// Handle DISTINCT/ALL keyword in aggregate functions
 		distinct := false
 		if p.current.Type == LX.T_DISTINCT {
 			distinct = true
 			p.advance()
+		} else if p.current.Type == LX.T_ALL {
+			p.advance() // ALL is a no-op (default behavior)
 		}
 		var arg Expr
 		if p.current.Type == LX.T_STAR {
@@ -136,11 +138,13 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			return nil, err
 		}
 		p.advance()
-		// Handle DISTINCT keyword in aggregate functions
+		// Handle DISTINCT/ALL keyword in aggregate functions
 		distinct := false
 		if p.current.Type == LX.T_DISTINCT {
 			distinct = true
 			p.advance()
+		} else if p.current.Type == LX.T_ALL {
+			p.advance() // ALL is a no-op (default behavior)
 		}
 		var args []Expr
 		if p.current.Type == LX.T_STAR {
@@ -227,10 +231,13 @@ func (p *Parser) parseFunctionCall(name string) (Expr, error) {
 	p.advance() // consume '('
 	// REQ000437: aggregate names like GROUP_CONCAT accept
 	// the DISTINCT keyword before their argument.
+	// REQ000805: ALL is also accepted as a no-op.
 	var distinct bool
 	if isAggregateName(name) && p.current.Type == LX.T_DISTINCT {
 		distinct = true
 		p.advance()
+	} else if isAggregateName(name) && p.current.Type == LX.T_ALL {
+		p.advance() // ALL is a no-op (default behavior)
 	}
 	var args []Expr
 	if p.current.Type != LX.T_RPAREN {

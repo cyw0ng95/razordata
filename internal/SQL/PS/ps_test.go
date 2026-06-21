@@ -1556,6 +1556,35 @@ func TestIsAggregateName(t *testing.T) {
 	}
 }
 
+// REQ000805: ALL keyword in aggregate function arguments.
+func TestParseAggregateAllKeyword(t *testing.T) {
+	cases := []string{
+		"SELECT MIN(ALL x) FROM t",
+		"SELECT MAX(ALL x) FROM t",
+		"SELECT COUNT(ALL x) FROM t",
+		"SELECT SUM(ALL x) FROM t",
+		"SELECT AVG(ALL x) FROM t",
+		"SELECT GROUP_CONCAT(ALL x) FROM t",
+	}
+	for _, sql := range cases {
+		t.Run(sql, func(t *testing.T) {
+			p := NewParser(sql)
+			stmt, err := p.Parse()
+			if err != nil {
+				t.Fatalf("Parse() failed: %v", err)
+			}
+			sel := stmt.(*Select)
+			agg, ok := sel.Cols[0].(*AggregateFunc)
+			if !ok {
+				t.Fatalf("expected *AggregateFunc, got %T", sel.Cols[0])
+			}
+			if agg.Distinct {
+				t.Errorf("expected Distinct=false for ALL, got true")
+			}
+		})
+	}
+}
+
 // REQ000635: isMinMaxName
 func TestIsMinMaxName(t *testing.T) {
 	cases := []struct {
