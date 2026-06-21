@@ -325,6 +325,10 @@ type IndexScan struct {
 	indexLowerExclusive bool
 	indexUpper          []byte
 	indexUpperInclusive bool
+
+	// REQ000767: pre-computed index key prefix for range-seek
+	// filtering, avoiding buildIndexKey allocation per entry.
+	prefixIdxKey []byte
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -512,11 +516,10 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 		// use, so we filter the key here.
 		if i.indexLower != nil || i.indexUpper != nil {
 			k := i.indexIt.Key()
-			idxValue := indexValueFromKey(k, i.indexTableID, i.indexName)
-			if idxValue == nil {
-				// Key is not part of this index; skip.
+			if len(k) < len(i.prefixIdxKey) || !bytes.Equal(k[:len(i.prefixIdxKey)], i.prefixIdxKey) {
 				continue
 			}
+			idxValue := k[len(i.prefixIdxKey):]
 			if i.indexLower != nil {
 				cmp := bytes.Compare(idxValue, i.indexLower)
 				if i.indexLowerExclusive {
@@ -609,6 +612,7 @@ func (i *IndexScan) openIndexIter() interface {
 		// iterator walks all index entries; the lower/upper
 		// bounds are enforced in nextFromIndex.
 		prefix = buildIndexKey(i.indexTableID, i.indexName, nil)
+		i.prefixIdxKey = prefix // cache for indexValueFromKey equivalent
 	} else {
 		prefix = buildIndexKey(i.indexTableID, i.indexName, i.indexSeek)
 	}
