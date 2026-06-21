@@ -73,6 +73,21 @@ type storeSchema struct {
 	// is unchanged (no rowid column appears in SELECT *).
 	hiddenPK  bool
 	nextRowID atomic.Int64
+	// colIndex is a pre-built O(1) column name -> index map.
+	// Built once at schema creation and shared across all rows.
+	// Eliminates per-row map allocation in Row.buildColIndex().
+	colIndex map[string]int
+}
+
+// buildColIndex builds a column name -> index map from the schema's cols slice.
+// Called once at schema creation time; the result is shared across all rows.
+func (s *storeSchema) buildColIndex() {
+	if s.colIndex == nil {
+		s.colIndex = make(map[string]int, len(s.cols))
+		for i, c := range s.cols {
+			s.colIndex[c] = i
+		}
+	}
 }
 
 // ForeignKeyConstraint describes a single FK constraint (REQ000126).
@@ -309,7 +324,9 @@ func registerStoreSchema(name string, cols []string, pk string) uint64 {
 	}
 	id := nextTableID()
 	tableIDs[name] = id
-	storeSchemas[id] = &storeSchema{cols: append([]string(nil), cols...), pk: pk, nullable: nullable}
+	ss := &storeSchema{cols: append([]string(nil), cols...), pk: pk, nullable: nullable}
+	ss.buildColIndex()
+	storeSchemas[id] = ss
 	return id
 }
 
@@ -322,11 +339,13 @@ func registerInMemorySchema(name string, cols []string, pk string) {
 	for i := range nullable {
 		nullable[i] = true
 	}
-	inMemSchemas[name] = &storeSchema{
+	ss := &storeSchema{
 		cols:     append([]string(nil), cols...),
 		pk:       pk,
 		nullable: nullable,
 	}
+	inMemSchemas[name] = ss
+	ss.buildColIndex()
 }
 
 // registerStoreSchemaWithConstraints stores schema with NOT NULL and DEFAULT
@@ -355,7 +374,9 @@ func registerStoreSchemaWithConstraints(name string, cols []string, nullable []b
 	}
 	id := nextTableID()
 	tableIDs[name] = id
-	storeSchemas[id] = &storeSchema{cols: cpCols, pk: pk, nullable: cpNullable, defaults: cpDefaults}
+	ss := &storeSchema{cols: cpCols, pk: pk, nullable: cpNullable, defaults: cpDefaults}
+	ss.buildColIndex()
+	storeSchemas[id] = ss
 	return id
 }
 
@@ -405,7 +426,9 @@ func registerStoreSchemaWithFKLocked(name string, cols []string, nullable []bool
 	}
 	id := nextTableIDLocked()
 	tableIDs[name] = id
-	storeSchemas[id] = &storeSchema{cols: cpCols, pk: pk, nullable: cpNullable, defaults: cpDefaults, unique: cpUnique, foreignKeys: fks}
+	ss := &storeSchema{cols: cpCols, pk: pk, nullable: cpNullable, defaults: cpDefaults, unique: cpUnique, foreignKeys: fks}
+	ss.buildColIndex()
+	storeSchemas[id] = ss
 	return id
 }
 
@@ -471,7 +494,7 @@ func RegisterFromCatalog(entry *ls.CatalogEntry) error {
 		_ = id
 	}
 	tableIDs[entry.Name] = entry.TableID
-	storeSchemas[entry.TableID] = &storeSchema{
+	ss := &storeSchema{
 		cols:     cols,
 		pk:       entry.PrimaryKey,
 		nullable: nullable,
@@ -479,6 +502,8 @@ func RegisterFromCatalog(entry *ls.CatalogEntry) error {
 		unique:   unique,
 		colTypes: colTypes,
 	}
+	ss.buildColIndex()
+	storeSchemas[entry.TableID] = ss
 	// Also publish to the in-memory `tables` / `schemas` map that
 	// the executor scans.
 	tablesMu.Lock()
@@ -591,8 +616,9 @@ func decodeRow(data []byte, schema *storeSchema) (Row, error) {
 		return Row{}, fmt.Errorf("ex: row has %d cols, schema %d", n, len(schema.cols))
 	}
 	row := Row{
-		Cols: append([]string(nil), schema.cols...),
-		Data: make([]any, len(schema.cols)),
+		Cols:     append([]string(nil), schema.cols...),
+		Data:     make([]any, len(schema.cols)),
+		colIndex: schema.colIndex, // share schema's pre-built index (no allocation)
 	}
 	for i := 0; i < int(n); i++ {
 		if off >= len(data) {

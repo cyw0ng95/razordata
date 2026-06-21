@@ -78,7 +78,7 @@ type AdaptiveOp struct {
 func NewAdaptiveOp(inner Operator, planHash string) *AdaptiveOp {
 	return &AdaptiveOp{
 		inner:    inner,
-		counter:  NewInvocationCounter(planHash, 2),
+		counter:  NewInvocationCounter(planHash, 1), // compile after first invocation
 		planHash: planHash,
 		state:    atomic.Uint32{},
 	}
@@ -106,6 +106,8 @@ func (a *AdaptiveOp) Next(ctx context.Context) (Row, error) {
 }
 
 // tryCompile attempts to swap to the compiled codegen path.
+// It first checks the GlobalAdqcCache for a previously compiled plan,
+// avoiding recompilation across executor recreations.
 func (a *AdaptiveOp) tryCompile(ctx context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -114,13 +116,28 @@ func (a *AdaptiveOp) tryCompile(ctx context.Context) {
 		return
 	}
 
-	a.state.Store(uint32(AdqcCompiling))
+	// Check global cache first - avoids recompilation across executors.
+	if cached := GlobalAdqcCache.Get(a.planHash, 0); cached != nil {
+		a.compiledFn = cached.Fn
+		a.state.Store(uint32(AdqcCompiled))
+		slog.Debug("adqc: plan restored from cache",
+			"planHash", a.planHash,
+			"opType", cached.OpType,
+		)
+		return
+	}
 
 	opType := operatorType(a.inner)
 	if fn, ok := LookupCodegenOp(opType); ok {
 		a.compiledFn = fn
 		a.state.Store(uint32(AdqcCompiled))
-		slog.Debug("adqc: plan specialized",
+		// Cache the compiled function for future executors.
+		GlobalAdqcCache.Put(a.planHash, 0, &SpecializedPlan{
+			Fn:       fn,
+			OpType:   opType,
+			PlanHash: a.planHash,
+		})
+		slog.Debug("adqc: plan specialized and cached",
 			"planHash", a.planHash,
 			"opType", opType,
 		)

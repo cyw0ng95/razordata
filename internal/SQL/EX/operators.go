@@ -143,6 +143,10 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 		r.planner = s.planner
 	}
 	r.tableName = s.table
+	// Share schema's colIndex to avoid per-row map allocation.
+	if s.schema != nil && s.schema.colIndex != nil {
+		r.colIndex = s.schema.colIndex
+	}
 	if s.alias != "" {
 		r = prefixRowCols(r, s.alias)
 		r.tableName = s.alias
@@ -211,11 +215,15 @@ func prefixRowCols(r Row, alias string) Row {
 	}
 	out.Cols = make([]string, len(r.Cols))
 	prefix := alias + "."
+	// Build colIndex for prefixed names.
+	out.colIndex = make(map[string]int, len(r.Cols))
 	for i, c := range r.Cols {
 		if strings.HasPrefix(c, prefix) {
 			out.Cols[i] = c
+			out.colIndex[c] = i
 		} else {
 			out.Cols[i] = prefix + c
+			out.colIndex[prefix+c] = i
 		}
 	}
 	return out
