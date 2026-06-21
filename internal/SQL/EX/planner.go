@@ -45,14 +45,14 @@ func cloneExpr(e PS.Expr) PS.Expr {
 		}
 	case *PS.UnaryExpr:
 		return &PS.UnaryExpr{
-			Op:     x.Op,
+			Op:      x.Op,
 			Operand: cloneExpr(x.Operand),
 		}
 	case *PS.AggregateFunc:
 		return &PS.AggregateFunc{
-			Name:     x.Name,
-			Arg:      cloneExpr(x.Arg),
-			Distinct: x.Distinct,
+			Name:      x.Name,
+			Arg:       cloneExpr(x.Arg),
+			Distinct:  x.Distinct,
 			Separator: cloneExpr(x.Separator),
 		}
 	case *PS.CaseExpr:
@@ -651,7 +651,7 @@ func isColumnLiteralPair(a, b PS.Expr) bool {
 // between two specific tables (col1 = col2). Returns the left and
 // right column names if it is, empty strings otherwise.
 // Handles the case where leftTbl may be a join of multiple tables.
-func (p *Planner) equiJoinKey(e PS.Expr, leftTbl, rightTbl string) (leftCol, rightCol string) {
+func (p *Planner) equiJoinKey(e PS.Expr, joinedTables map[string]bool, rightTbl string) (leftCol, rightCol string) {
 	bin, ok := e.(*PS.BinaryExpr)
 	if !ok || bin.Op != int(LX.T_EQ) {
 		return "", ""
@@ -659,69 +659,53 @@ func (p *Planner) equiJoinKey(e PS.Expr, leftTbl, rightTbl string) (leftCol, rig
 	leftTables := p.extractTablesFromExpr(bin.Left)
 	rightTables := p.extractTablesFromExpr(bin.Right)
 
-	// Case 1: left side references leftTbl only, right side references rightTbl only
-	if len(leftTables) == 1 && leftTables[leftTbl] && len(rightTables) == 1 && rightTables[rightTbl] {
-		if id, ok := bin.Left.(*PS.Ident); ok {
-			leftCol = id.Name
-		}
-		if id, ok := bin.Right.(*PS.Ident); ok {
-			rightCol = id.Name
-		}
-		return leftCol, rightCol
-	}
-	// Case 2: left side references rightTbl, right side references leftTbl (reversed)
-	if len(leftTables) == 1 && leftTables[rightTbl] && len(rightTables) == 1 && rightTables[leftTbl] {
-		if id, ok := bin.Right.(*PS.Ident); ok {
-			leftCol = id.Name
-		}
-		if id, ok := bin.Left.(*PS.Ident); ok {
-			rightCol = id.Name
-		}
-		return leftCol, rightCol
-	}
-	// Case 3: left side references a table in the left join, right side references rightTbl
-	// This handles multi-table joins where leftTbl is already a join
+	// Check that right side references exactly the right table.
 	if len(rightTables) == 1 && rightTables[rightTbl] {
-		// Check that left side references a single table that is NOT rightTbl
-		if len(leftTables) == 1 {
-			for tbl := range leftTables {
-				if tbl != rightTbl {
-					if id, ok := bin.Left.(*PS.Ident); ok {
-						leftCol = id.Name
-					}
-					if id, ok := bin.Right.(*PS.Ident); ok {
-						rightCol = id.Name
-					}
-					return leftCol, rightCol
-				}
-			}
+		// Check that left side references only tables already joined.
+		if allInSet(leftTables, joinedTables) {
+			return colNameFromExpr(bin.Left), colNameFromExpr(bin.Right)
 		}
 	}
-	// Case 4: reversed case 3
+	// Reversed: left side references rightTbl, right side references joined tables.
 	if len(leftTables) == 1 && leftTables[rightTbl] {
-		if len(rightTables) == 1 {
-			for tbl := range rightTables {
-				if tbl != rightTbl {
-					if id, ok := bin.Right.(*PS.Ident); ok {
-						leftCol = id.Name
-					}
-					if id, ok := bin.Left.(*PS.Ident); ok {
-						rightCol = id.Name
-					}
-					return leftCol, rightCol
-				}
-			}
+		if allInSet(rightTables, joinedTables) {
+			return colNameFromExpr(bin.Right), colNameFromExpr(bin.Left)
 		}
 	}
 	return "", ""
 }
 
+// allInSet returns true when every key in m is present in set.
+func allInSet(m, set map[string]bool) bool {
+	if len(m) == 0 {
+		return false
+	}
+	for k := range m {
+		if !set[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// colNameFromExpr extracts a column name from an expression.
+// Handles both Ident (bare column) and QualifiedName (table.col).
+func colNameFromExpr(e PS.Expr) string {
+	switch v := e.(type) {
+	case *PS.Ident:
+		return v.Name
+	case *PS.QualifiedName:
+		return v.Name
+	}
+	return ""
+}
+
 // extractEquiJoinKeys finds equi-join conditions between any table
 // in the left side and the rightTbl from the cross-table conjuncts.
 // This handles multi-table joins where the left side is already a join.
-func (p *Planner) extractEquiJoinKeys(crossTable []PS.Expr, leftTbl, rightTbl string) (leftKeys, rightKeys []string, remaining []PS.Expr) {
+func (p *Planner) extractEquiJoinKeys(crossTable []PS.Expr, joinedTables map[string]bool, rightTbl string) (leftKeys, rightKeys []string, remaining []PS.Expr) {
 	for _, c := range crossTable {
-		lc, rc := p.equiJoinKey(c, leftTbl, rightTbl)
+		lc, rc := p.equiJoinKey(c, joinedTables, rightTbl)
 		if lc != "" && rc != "" {
 			leftKeys = append(leftKeys, lc)
 			rightKeys = append(rightKeys, rc)
@@ -1083,12 +1067,9 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	}
 
 	if len(s.Joins) > 0 {
-		leftTbl := s.From
-		// REQ000725: counter of how many tables (including s.From)
-		// are already joined at the start of each iteration. We use
-		// this to skip HashJoin for the 2nd-and-later join in a
-		// multi-table chain (see HashJoin guard above).
-		joinedSoFar := 1
+		// REQ000797: track all tables already joined so HashJoin can
+		// be used for multi-table chains (not just the first join).
+		joinedTables := map[string]bool{s.From: true}
 		for _, j := range s.Joins {
 			// Support all join kinds (REQ000197: OUTER JOIN)
 			if j.Kind != "INNER" && j.Kind != "LEFT" && j.Kind != "RIGHT" && j.Kind != "FULL" && j.Kind != "CROSS" {
@@ -1118,10 +1099,10 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			// the Outer chain for the merged row. The cost is O(N*M)
 			// for those joins instead of O(N+M); correctness wins.
 			var joinOp Operator
-			if (kind == JoinKindInner || kind == JoinKindCross) && len(crossTableConjuncts) > 0 && joinedSoFar < 2 {
-				lk, rk, remaining := p.extractEquiJoinKeys(crossTableConjuncts, leftTbl, j.Right)
+			if (kind == JoinKindInner || kind == JoinKindCross) && len(crossTableConjuncts) > 0 {
+				lk, rk, remaining := p.extractEquiJoinKeys(crossTableConjuncts, joinedTables, j.Right)
 				if len(lk) > 0 {
-					joinOp = NewHashJoin(current, rightScan, leftTbl, j.Right, lk, rk, 0)
+					joinOp = NewHashJoin(current, rightScan, j.Right, j.Right, lk, rk, 0)
 					crossTableConjuncts = remaining
 				}
 			}
@@ -1139,13 +1120,12 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 						return truthy(v), nil
 					}
 				}
-				joinOp = NewNestedLoopJoin(current, rightScan, leftTbl, j.Right, on, kind)
+				joinOp = NewNestedLoopJoin(current, rightScan, j.Right, j.Right, on, kind)
 			}
 
 			current = joinOp
-			leftTbl = j.Right
+			joinedTables[j.Right] = true
 		}
-		joinedSoFar++
 	}
 
 	if s.Where != nil {

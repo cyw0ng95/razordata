@@ -84,7 +84,7 @@ func TestEquiJoinKey_BasicDetection(t *testing.T) {
 		Right: &PS.Ident{Name: "c"},
 	}
 
-	lc, rc := p.equiJoinKey(expr, "t1", "t2")
+	lc, rc := p.equiJoinKey(expr, map[string]bool{"t1": true}, "t2")
 	if lc != "a" || rc != "c" {
 		t.Errorf("expected (a, c), got (%s, %s)", lc, rc)
 	}
@@ -95,7 +95,7 @@ func TestEquiJoinKey_BasicDetection(t *testing.T) {
 		Right: &PS.Ident{Name: "a"},
 	}
 
-	lc, rc = p.equiJoinKey(expr2, "t1", "t2")
+	lc, rc = p.equiJoinKey(expr2, map[string]bool{"t1": true}, "t2")
 	if lc != "a" || rc != "c" {
 		t.Errorf("reversed: expected (a, c), got (%s, %s)", lc, rc)
 	}
@@ -125,7 +125,7 @@ func TestEquiJoinKey_CrossTableInMultiJoin(t *testing.T) {
 		Right: &PS.Ident{Name: "b9"},
 	}
 
-	lc, rc := p.equiJoinKey(expr, "t2", "t3")
+	lc, rc := p.equiJoinKey(expr, map[string]bool{"t2": true}, "t3")
 	if (lc != "a3" || rc != "b9") && (lc != "b9" || rc != "a3") {
 		t.Errorf("expected (a3, b9) or (b9, a3), got (%s, %s)", lc, rc)
 	}
