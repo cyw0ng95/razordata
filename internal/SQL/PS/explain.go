@@ -49,19 +49,34 @@ func (p *Parser) parseExplain() (*ExplainStmt, error) {
 			inner, innerErr = p.parseCreateIndex()
 		} else if next == LX.T_VIEW {
 			inner, innerErr = p.parseCreateView()
+		} else if next == LX.T_TRIGGER {
+			inner, innerErr = p.parseCreateTrigger()
+		} else if next == LX.T_MATERIALIZED {
+			inner, innerErr = p.parseCreateMaterializedView()
 		} else {
 			inner, innerErr = p.parseCreateTable()
 		}
 	case LX.T_DROP:
-		switch p.lex.Peek().Type {
-		case LX.T_INDEX:
-			inner, innerErr = p.parseDropIndex()
-		case LX.T_VIEW:
-			inner, innerErr = p.parseDropView()
-		case LX.T_TRIGGER:
-			inner, innerErr = p.parseDropTrigger()
-		default:
-			inner, innerErr = p.parseDropTable()
+		next := p.lex.Peek().Type
+		if next == LX.T_MATERIALIZED {
+			p.advance()
+			if p.lex.Peek().Type == LX.T_VIEW {
+				p.advance()
+				inner, innerErr = p.parseDropMaterializedView()
+			} else {
+				inner, innerErr = p.parseDropTable()
+			}
+		} else {
+			switch next {
+			case LX.T_INDEX:
+				inner, innerErr = p.parseDropIndex()
+			case LX.T_VIEW:
+				inner, innerErr = p.parseDropView()
+			case LX.T_TRIGGER:
+				inner, innerErr = p.parseDropTrigger()
+			default:
+				inner, innerErr = p.parseDropTable()
+			}
 		}
 	case LX.T_EXPLAIN:
 		inner, innerErr = p.parseExplain()
@@ -69,6 +84,27 @@ func (p *Parser) parseExplain() (*ExplainStmt, error) {
 		inner, innerErr = p.parseAnalyze()
 	case LX.T_VACUUM:
 		inner, innerErr = p.parseVacuum()
+	case LX.T_TRUNCATE:
+		inner, innerErr = p.parseTruncate()
+	case LX.T_REINDEX:
+		inner, innerErr = p.parseReindex()
+	case LX.T_PRAGMA:
+		inner, innerErr = p.parsePragma()
+	case LX.T_WITH:
+		inner, innerErr = p.parseWith()
+	case LX.T_SAVEPOINT:
+		inner, innerErr = p.parseSavepoint()
+	case LX.T_RELEASE:
+		inner, innerErr = p.parseReleaseSavepoint()
+	case LX.T_ROLLBACK:
+		inner, innerErr = p.parseRollbackTo()
+	case LX.T_BEGIN:
+		inner, innerErr = p.parseBegin()
+	case LX.T_COMMIT:
+		inner, innerErr = p.parseCommit()
+	case LX.T_VALUES:
+		// EXPLAIN VALUES ... is unusual but valid per the parser.
+		inner, innerErr = p.parseValues()
 	default:
 		innerErr = &SyntaxError{
 			Input:    p.lex.Input(),
