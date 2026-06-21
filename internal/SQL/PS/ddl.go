@@ -390,6 +390,31 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 	}
 	p.advance()
 
+	var withoutRowid, strict bool
+
+	// REQ000738: optional WITHOUT ROWID suffix
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "WITHOUT") {
+		p.advance()
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		if !strings.EqualFold(p.current.Lexeme, "ROWID") {
+			return nil, fmt.Errorf("expected ROWID after WITHOUT, got %s", p.current.Lexeme)
+		}
+		p.advance()
+		withoutRowid = true
+		// Optional comma before subsequent clauses.
+		if p.current.Type == LX.T_COMMA {
+			p.advance()
+		}
+	}
+
+	// REQ000739: optional STRICT suffix
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "STRICT") {
+		p.advance()
+		strict = true
+	}
+
 	for _, col := range cols {
 		if col.PK {
 			pk = &col.Name
@@ -397,7 +422,7 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 		}
 	}
 
-	return &CreateTable{Name: name, Cols: cols, PK: pk, UniqueConstraints: uniqueConstraints, ForeignKeys: foreignKeys}, nil
+	return &CreateTable{Name: name, Cols: cols, PK: pk, UniqueConstraints: uniqueConstraints, ForeignKeys: foreignKeys, WithoutRowid: withoutRowid, Strict: strict}, nil
 }
 
 // parseFKAction parses CASCADE / RESTRICT / SET NULL / SET DEFAULT / NO ACTION.

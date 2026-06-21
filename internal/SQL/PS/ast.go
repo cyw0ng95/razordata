@@ -252,7 +252,6 @@ type Pair struct {
 	Val Expr
 }
 
-// CreateTable represents a CREATE TABLE statement.
 type CreateTable struct {
 	Name              string
 	Cols              []ColDef
@@ -260,6 +259,8 @@ type CreateTable struct {
 	UniqueConstraints []UniqueKey
 	ForeignKeys       []ForeignKeyConstraint // REQ000126
 	Select            *Select                // non-nil for CREATE TABLE AS SELECT (REQ000520)
+	WithoutRowid      bool                   // REQ000738
+	Strict            bool                   // REQ000739
 }
 
 // ForeignKeyConstraint represents a table-level FOREIGN KEY constraint.

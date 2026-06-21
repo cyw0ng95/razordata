@@ -800,6 +800,57 @@ func TestParseCreateTableMultipleUniques(t *testing.T) {
 	}
 }
 
+func TestParseCreateTable_WithoutRowid(t *testing.T) {
+	p := NewParser("CREATE TABLE t (id TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct := stmt.(*CreateTable)
+	if !ct.WithoutRowid {
+		t.Error("expected WithoutRowid=true")
+	}
+}
+
+func TestParseCreateTable_Strict(t *testing.T) {
+	p := NewParser("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT NOT NULL) STRICT")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct := stmt.(*CreateTable)
+	if !ct.Strict {
+		t.Error("expected Strict=true")
+	}
+}
+
+func TestParseCreateTable_WithoutRowidAndStrict(t *testing.T) {
+	p := NewParser("CREATE TABLE t (id TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID, STRICT")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct := stmt.(*CreateTable)
+	if !ct.WithoutRowid {
+		t.Error("expected WithoutRowid=true")
+	}
+	if !ct.Strict {
+		t.Error("expected Strict=true")
+	}
+}
+
+func TestParseCreateTable_WithoutRowidCaseInsensitive(t *testing.T) {
+	p := NewParser("CREATE TABLE t (id TEXT PRIMARY KEY) without rowid")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	ct := stmt.(*CreateTable)
+	if !ct.WithoutRowid {
+		t.Error("expected WithoutRowid=true with lowercase")
+	}
+}
+
 func TestParseDropTable(t *testing.T) {
 	p := NewParser("DROP TABLE t")
 	stmt, err := p.Parse()
