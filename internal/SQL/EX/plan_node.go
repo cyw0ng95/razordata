@@ -3,6 +3,8 @@ package EX
 import (
 	"fmt"
 	"strings"
+
+	RE "github.com/cyw0ng95/razordata/internal/SQL/RE"
 )
 
 // PlanNode represents a node in the query plan tree for EXPLAIN output.
@@ -56,20 +58,41 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 	case *Filter:
 		node.Detail = "WHERE"
 		if v.predicate != nil {
-			node.Detail = fmt.Sprintf("WHERE %s", v.predicate)
+			node.Detail = "WHERE " + RE.FormatExpr(v.predicate)
 		}
 		node.Cost = estimateFilterCost(v)
 
 	case *Project:
 		node.Detail = "SELECT"
+		if len(v.cols) > 0 {
+			var parts []string
+			for _, c := range v.cols {
+				parts = append(parts, RE.FormatExpr(c))
+			}
+			node.Detail = "SELECT " + strings.Join(parts, ", ")
+		}
 		node.Cost = estimateProjectCost(v)
 
 	case *Sort:
 		node.Detail = "ORDER BY"
+		if len(v.keys) > 0 {
+			var parts []string
+			for _, k := range v.keys {
+				s := RE.FormatExpr(k.Expr)
+				if k.Desc {
+					s += " DESC"
+				}
+				parts = append(parts, s)
+			}
+			node.Detail = "ORDER BY " + strings.Join(parts, ", ")
+		}
 		node.Cost = estimateSortCost(v)
 
 	case *Limit:
 		node.Detail = "LIMIT"
+		if v.limit > 0 {
+			node.Detail = fmt.Sprintf("LIMIT %d", v.limit)
+		}
 		node.Cost = estimateLimitCost(v)
 
 	case *Offset:

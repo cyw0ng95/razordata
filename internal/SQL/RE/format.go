@@ -443,3 +443,9 @@ func formatWithStmt(w *PS.WithStmt) string {
 func formatAlterTableStmt(a *PS.AlterTableStmt) string {
 	return "ALTER TABLE " + a.Table + " " + a.Action
 }
+
+// FormatExpr renders an expression as a human-readable SQL string.
+// Uses the same formatting logic as the full SELECT formatter.
+func FormatExpr(e PS.Expr) string {
+	return exprString(e)
+}
