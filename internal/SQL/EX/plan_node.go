@@ -406,11 +406,15 @@ func formatPlanTree(n *PlanNode) []Row {
 	}
 
 	var rows []Row
-	var walk func(node *PlanNode, id, parent int)
-	walk = func(node *PlanNode, id, parent int) {
+	nextID := 1
+	var walk func(node *PlanNode, parent int)
+	walk = func(node *PlanNode, parent int) {
 		if node == nil {
 			return
 		}
+
+		id := nextID
+		nextID++
 
 		detail := node.Detail
 		if detail == "" {
@@ -429,30 +433,13 @@ func formatPlanTree(n *PlanNode) []Row {
 			Data:  []any{int64(id), int64(parent), int64(0), detail},
 		})
 
-		currentID := id
 		for _, child := range node.Children {
-			currentID++
-			childID := currentID
-			walk(child, childID, id)
-			// Update currentID to account for all descendants
-			currentID = countNodes(child) + childID - 1
+			walk(child, id)
 		}
 	}
 
-	walk(n, 1, 0)
+	walk(n, 0)
 	return rows
-}
-
-// countNodes returns the total number of nodes in the tree rooted at n.
-func countNodes(n *PlanNode) int {
-	if n == nil {
-		return 0
-	}
-	count := 1
-	for _, child := range n.Children {
-		count += countNodes(child)
-	}
-	return count
 }
 
 // Cost estimation helpers
