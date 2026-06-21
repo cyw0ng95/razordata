@@ -188,21 +188,28 @@ func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []a
 		}
 		return out, nil
 	}
-	byName := make(map[string]any, len(cols))
-	for i, name := range cols {
+	// REQ000774: pre-compute column-name-to-schema-index mapping
+	// to avoid per-row map allocation (case-insensitive match).
+	colIdx := make([]int, len(cols))
+	for i, nm := range cols {
+		idx := -1
+		for j, s := range schema {
+			if strings.EqualFold(nm, s) {
+				idx = j
+				break
+			}
+		}
+		colIdx[i] = idx
+	}
+	out.Data = make([]any, len(schema))
+	for i := range cols {
 		val, err := Eval(values[i], nil, params)
 		if err != nil {
 			return Row{}, err
 		}
-		byName[name] = val
-	}
-	out.Data = make([]any, len(schema))
-	for i, name := range schema {
-		if v, ok := byName[name]; ok {
-			out.Data[i] = v
-			continue
+		if colIdx[i] >= 0 {
+			out.Data[colIdx[i]] = val
 		}
-		out.Data[i] = nil
 	}
 	return out, nil
 }
