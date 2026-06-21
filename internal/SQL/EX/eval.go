@@ -341,9 +341,9 @@ func evalIn(e *PS.InExpr, row *Row, params []any) (any, error) {
 		return nil, err
 	}
 	if e.Subquery != nil {
-		if target == nil {
-			return nil, nil
-		}
+		// REQ000721: when target is NULL, route through evalInSubquery
+		// so it can apply three-valued logic — return NULL only if the
+		// subquery contains a NULL, otherwise return false.
 		return evalInSubquery(target, e.Subquery, row, params)
 	}
 	if len(e.List) == 0 {
@@ -384,6 +384,30 @@ func evalInSubquery(target any, subq PS.Stmt, outer *Row, params []any) (any, er
 	rows, err := runSubqueryPlan(pl, outer, params)
 	if err != nil {
 		return nil, err
+	}
+	// REQ000721: when the LHS is NULL, the IN predicate is
+	// three-valued. The correct result is:
+	//   - true  if any subquery row is non-NULL and equal to NULL's
+	//           *typed* value (impossible — NULL is not equal to
+	//           anything in SQL two-valued-or-UNKNOWN logic)
+	//   - NULL  if any subquery row is NULL
+	//   - false otherwise (no NULLs in subquery, NULL != any value)
+	// Previously the code returned nil (NULL) for any target==nil,
+	// which conflates the no-NULLs case with the has-NULLs case.
+	if target == nil {
+		hadNull := false
+		for _, row := range rows {
+			if len(row.Cols) == 0 {
+				continue
+			}
+			if row.Data[0] == nil {
+				hadNull = true
+			}
+		}
+		if hadNull {
+			return nil, nil
+		}
+		return false, nil
 	}
 	hadNull := false
 	for _, row := range rows {
