@@ -12,7 +12,6 @@ type Filter struct {
 	child     Operator
 	predicate PS.Expr
 	params    []any
-	cs        *CodegenState
 	execCtx   *ExecContext
 }
 
@@ -69,7 +68,6 @@ type Project struct {
 	child     Operator
 	cols      []PS.Expr
 	params    []any
-	cs        *CodegenState
 	// REQ000756: pre-allocated column names (same for every row).
 	prefixCols []string
 }
@@ -182,7 +180,6 @@ type Sort struct {
 	pos          int
 	materialized bool
 	params       []any
-	cs           *CodegenState
 }
 
 // Child returns the sort's child operator.
@@ -284,7 +281,6 @@ type Limit struct {
 	limit  int64
 	seen   int64
 	params []any
-	cs     *CodegenState
 }
 
 // Child returns the limit's child operator.

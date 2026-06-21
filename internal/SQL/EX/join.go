@@ -32,6 +32,15 @@ type NestedLoopJoin struct {
 	rightPos  int
 	rightRows []Row
 	matched   bool // for OUTER JOIN: track if left row found a match
+	// REQ000800: hash-based cross join for small tables.
+	// When both sides fit in memory, materialize both and
+	// do a hash-based cross product instead of NLJ.
+	leftRows     []Row
+	hashMode     bool
+	hashBuckets  map[uint64][]int // hash → indices into rightRows
+	leftIdx      int
+	rightIdx     int
+	leftMatched  []bool // for LEFT JOIN
 }
 
 func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error), kind JoinKind) *NestedLoopJoin {
@@ -53,6 +62,15 @@ func (j *NestedLoopJoin) RightChild() Operator { return j.right }
 func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 	if err := ctx.Err(); err != nil {
 		return Row{}, err
+	}
+	// REQ000800: try hash cross join on first call for small tables.
+	if !j.hashMode && j.leftRows == nil && j.rightRows == nil {
+		if j.tryHashCrossJoin(ctx) {
+			// Switched to hash mode — continue with hash iteration.
+		}
+	}
+	if j.hashMode {
+		return j.nextHash(ctx)
 	}
 	for {
 		if j.leftRow == nil {
@@ -115,6 +133,88 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 		j.matched = true
 		return joinRowsLL(j.leftRow, &inner), nil
 	}
+}
+
+// tryHashCrossJoin attempts to switch to hash mode. Returns true
+// if hash mode was activated. REQ000800.
+func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
+	// Only for INNER/CROSS without ON clause (pure cross product).
+	if j.on != nil || j.leftOuter {
+		return false
+	}
+	// Materialize left side.
+	const maxMaterialize = 1024
+	j.leftRows = make([]Row, 0, 64)
+	for {
+		row, err := j.left.Next(ctx)
+		if err != nil {
+			break
+		}
+		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
+		if !hasAnyPrefix(row.Cols) {
+			prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
+		} else {
+			prefixed.Cols = append([]string(nil), row.Cols...)
+		}
+		j.leftRows = append(j.leftRows, prefixed)
+		if len(j.leftRows) >= maxMaterialize {
+			// Too many rows — abort, use NLJ.
+			j.leftRows = nil
+			return false
+		}
+	}
+	// Materialize right side.
+	j.rightRows = make([]Row, 0, 64)
+	for {
+		row, err := j.right.Next(ctx)
+		if err != nil {
+			break
+		}
+		j.rightRows = append(j.rightRows, Row{
+			Cols:      prefixCols(row.Cols, j.rightTbl),
+			Types:     row.Types,
+			Data:      append([]any(nil), row.Data...),
+			tableName: row.tableName,
+		})
+		if len(j.rightRows) >= maxMaterialize {
+			// Too many rows — abort, use NLJ.
+			j.rightRows = nil
+			j.leftRows = nil
+			return false
+		}
+	}
+	if len(j.leftRows) == 0 || len(j.rightRows) == 0 {
+		// Empty side — result is empty.
+		j.leftRows = nil
+		j.rightRows = nil
+		return false
+	}
+	// Build hash from right side for equi-join lookups.
+	// For cross join, we don't hash — just iterate.
+	// Hash is useful for equi-join ON conditions.
+	j.hashMode = true
+	j.leftIdx = 0
+	j.rightIdx = 0
+	return true
+}
+
+// nextHash produces the next row from the materialized hash join.
+// REQ000800.
+func (j *NestedLoopJoin) nextHash(_ context.Context) (Row, error) {
+	for j.leftIdx < len(j.leftRows) {
+		for j.rightIdx < len(j.rightRows) {
+			l := j.leftRows[j.leftIdx]
+			r := j.rightRows[j.rightIdx]
+			j.rightIdx++
+			return joinRowsLL(&l, &r), nil
+		}
+		j.rightIdx = 0
+		j.leftIdx++
+	}
+	// Exhausted.
+	j.leftRows = nil
+	j.rightRows = nil
+	return Row{}, ErrNoRows
 }
 
 // errRightExhausted is the sentinel returned by advanceRight when

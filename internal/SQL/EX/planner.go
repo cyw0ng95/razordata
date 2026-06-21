@@ -732,6 +732,117 @@ func (p *Planner) extractEquiJoinKeys(crossTable []PS.Expr, leftTbl, rightTbl st
 	return leftKeys, rightKeys, remaining
 }
 
+// collectReferencedTables returns the set of table names referenced
+// in the SELECT statement. Returns nil (not empty map) when
+// elimination is not safe because unqualified columns exist.
+// REQ000799.
+func collectReferencedTables(s *PS.Select) map[string]bool {
+	tables := map[string]bool{s.From: true}
+	hasUnqualified := false
+
+	// Walk SELECT columns
+	for _, c := range s.Cols {
+		collectTablesFromExpr(c, tables, &hasUnqualified)
+	}
+	// WHERE
+	if s.Where != nil {
+		collectTablesFromExpr(s.Where, tables, &hasUnqualified)
+	}
+	// JOIN ON — keep tables referenced in ON clauses (not all joins)
+	for _, j := range s.Joins {
+		if j.On != nil {
+			collectTablesFromExpr(j.On, tables, &hasUnqualified)
+		}
+	}
+	// ORDER BY
+	for _, o := range s.OrderBy {
+		collectTablesFromExpr(o.Expr, tables, &hasUnqualified)
+	}
+	// GROUP BY
+	for _, g := range s.GroupBy {
+		collectTablesFromExpr(g, tables, &hasUnqualified)
+	}
+	// HAVING
+	if s.Having != nil {
+		collectTablesFromExpr(s.Having, tables, &hasUnqualified)
+	}
+
+	// If SELECT contains *, keep all joined tables.
+	for _, c := range s.Cols {
+		if _, ok := c.(*PS.StarExpr); ok {
+			for _, j := range s.Joins {
+				tables[j.Right] = true
+			}
+			return tables
+		}
+	}
+
+	// If we found any unqualified column, we can't prove which
+	// tables are needed — don't eliminate.
+	if hasUnqualified {
+		return nil
+	}
+	return tables
+}
+
+// collectTablesFromExpr walks an expression and adds referenced
+// table names. Sets hasUnqualified when a bare column name is found
+// (we can't determine which table it belongs to).
+func collectTablesFromExpr(e PS.Expr, tables map[string]bool, hasUnqualified *bool) {
+	if e == nil {
+		return
+	}
+	switch v := e.(type) {
+	case *PS.QualifiedName:
+		tables[v.Table] = true
+	case *PS.StarExpr:
+		// * in expression — can't eliminate.
+		*hasUnqualified = true
+	case *PS.Ident:
+		// Bare column name — can't determine table.
+		*hasUnqualified = true
+	case *PS.BinaryExpr:
+		collectTablesFromExpr(v.Left, tables, hasUnqualified)
+		collectTablesFromExpr(v.Right, tables, hasUnqualified)
+	case *PS.UnaryExpr:
+		collectTablesFromExpr(v.Operand, tables, hasUnqualified)
+	case *PS.ListExpr:
+		for _, item := range v.Items {
+			collectTablesFromExpr(item, tables, hasUnqualified)
+		}
+	case *PS.InExpr:
+		collectTablesFromExpr(v.Expr, tables, hasUnqualified)
+		for _, item := range v.List {
+			collectTablesFromExpr(item, tables, hasUnqualified)
+		}
+	case *PS.BetweenExpr:
+		collectTablesFromExpr(v.Expr, tables, hasUnqualified)
+		collectTablesFromExpr(v.Low, tables, hasUnqualified)
+		collectTablesFromExpr(v.High, tables, hasUnqualified)
+	case *PS.AggregateFunc:
+		collectTablesFromExpr(v.Arg, tables, hasUnqualified)
+	case *PS.CaseExpr:
+		collectTablesFromExpr(v.Expr, tables, hasUnqualified)
+		for _, w := range v.WhenList {
+			collectTablesFromExpr(w.Cond, tables, hasUnqualified)
+			collectTablesFromExpr(w.Then, tables, hasUnqualified)
+		}
+		collectTablesFromExpr(v.Else, tables, hasUnqualified)
+	case *PS.FunctionCall:
+		for _, arg := range v.Args {
+			collectTablesFromExpr(arg, tables, hasUnqualified)
+		}
+	case *PS.AliasedExpr:
+		collectTablesFromExpr(v.Expr, tables, hasUnqualified)
+	case *PS.CastExpr:
+		collectTablesFromExpr(v.Expr, tables, hasUnqualified)
+	case *PS.SubqueryExpr:
+		// Subquery has its own scope — don't walk.
+	case *PS.ExistsExpr:
+		// Subquery — don't walk.
+	}
+}
+
 func log2ish(x float64) float64 {
 	if x <= 1 {
 		return 0
@@ -951,6 +1062,24 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	var crossTableConjuncts []PS.Expr
 	if s.Where != nil && len(s.Joins) > 0 {
 		crossTableConjuncts = RE.SplitAnd(s.Where)
+	}
+
+	// REQ000799: Join elimination — remove tables from the join
+	// that are not referenced in SELECT/WHERE/ORDER BY/GROUP BY/HAVING.
+	// Only eliminate when ALL columns in the query are fully qualified
+	// (e.g. `t1.a`) so we can prove which tables are actually needed.
+	// Unqualified columns (e.g. just `a`) prevent elimination since
+	// we can't determine which table owns the column.
+	if len(s.Joins) > 0 {
+		if refTables := collectReferencedTables(s); refTables != nil {
+			filtered := s.Joins[:0]
+			for _, j := range s.Joins {
+				if refTables[j.Right] {
+					filtered = append(filtered, j)
+				}
+			}
+			s.Joins = filtered
+		}
 	}
 
 	if len(s.Joins) > 0 {
