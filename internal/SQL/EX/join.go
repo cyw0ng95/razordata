@@ -35,12 +35,12 @@ type NestedLoopJoin struct {
 	// REQ000800: hash-based cross join for small tables.
 	// When both sides fit in memory, materialize both and
 	// do a hash-based cross product instead of NLJ.
-	leftRows     []Row
-	hashMode     bool
-	hashBuckets  map[uint64][]int // hash → indices into rightRows
-	leftIdx      int
-	rightIdx     int
-	leftMatched  []bool // for LEFT JOIN
+	leftRows    []Row
+	hashMode    bool
+	hashBuckets map[uint64][]int // hash → indices into rightRows
+	leftIdx     int
+	rightIdx    int
+	leftMatched []bool // for LEFT JOIN
 }
 
 func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error), kind JoinKind) *NestedLoopJoin {
@@ -260,9 +260,14 @@ func (j *NestedLoopJoin) nullRightRow() Row {
 }
 
 func (j *NestedLoopJoin) Close() error {
+	j.hashMode = false
 	j.leftRow = nil
+	j.leftRows = nil
 	j.rightRows = nil
+	j.hashBuckets = nil
 	j.rightPos = 0
+	j.leftIdx = 0
+	j.rightIdx = 0
 	_ = j.left.Close()
 	return j.right.Close()
 }
