@@ -1223,3 +1223,71 @@ func (p *Parser) parseDetach() (*DetachStmt, error) {
 
 	return &DetachStmt{Name: name}, nil
 }
+
+// parseCreateVirtualTable parses CREATE VIRTUAL TABLE name USING module (args).
+// The runtime does not execute virtual table modules (FTS5, R-Tree, etc.)
+// so this is a syntax-only parse. REQ000737.
+func (p *Parser) parseCreateVirtualTable() (*CreateVirtualTableStmt, error) {
+	p.advance() // consume CREATE
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	// We expect "VIRTUAL" as the identifier
+	if !strings.EqualFold(p.current.Lexeme, "VIRTUAL") {
+		return nil, &SyntaxError{
+			Input:    p.lex.Input(),
+			Line:     p.current.Line,
+			Col:      p.current.Col,
+			Expected: "VIRTUAL",
+			Got:      tokenName(p.current.Type),
+			Lexeme:   p.current.Lexeme,
+		}
+	}
+	p.advance() // consume VIRTUAL
+
+	if err := p.expect(LX.T_TABLE); err != nil {
+		return nil, err
+	}
+	p.advance() // consume TABLE
+
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	name := p.current.Lexeme
+	p.advance() // consume table name
+
+	if err := p.expect(LX.T_USING); err != nil {
+		return nil, err
+	}
+	p.advance() // consume USING
+
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return nil, err
+	}
+	module := p.current.Lexeme
+	p.advance() // consume module name
+
+	var args []string
+	if p.current.Type == LX.T_LPAREN {
+		p.advance() // consume (
+		for p.current.Type != LX.T_RPAREN && p.current.Type != LX.T_EOF {
+			if len(args) > 0 {
+				if p.current.Type != LX.T_COMMA {
+					break
+				}
+				p.advance() // consume ,
+			}
+			if p.current.Type == LX.T_IDENT || p.current.Type == LX.T_STRING {
+				args = append(args, p.current.Lexeme)
+			} else if p.current.Type == LX.T_INT {
+				args = append(args, p.current.Lexeme)
+			}
+			p.advance()
+		}
+		if p.current.Type == LX.T_RPAREN {
+			p.advance() // consume )
+		}
+	}
+
+	return &CreateVirtualTableStmt{Name: name, Module: module, Args: args}, nil
+}

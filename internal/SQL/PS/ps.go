@@ -290,24 +290,28 @@ func (p *Parser) Parse() (Stmt, error) {
 	case LX.T_DELETE:
 		stmt, err = p.parseDelete()
 	case LX.T_CREATE:
-		// CREATE TABLE vs CREATE INDEX vs CREATE VIEW vs CREATE TRIGGER vs CREATE MATERIALIZED VIEW
-		next := p.lex.Peek().Type
-		if next == LX.T_INDEX {
+		// CREATE TABLE vs CREATE INDEX vs CREATE VIEW vs CREATE TRIGGER vs CREATE MATERIALIZED VIEW vs CREATE VIRTUAL TABLE
+		next := p.lex.Peek()
+		nextType := next.Type
+		peek2 := p.lex.Peek2()
+		if nextType == LX.T_INDEX {
 			stmt, err = p.parseCreateIndex()
-		} else if next == LX.T_UNIQUE && p.lex.Peek2().Type == LX.T_INDEX {
+		} else if nextType == LX.T_UNIQUE && peek2.Type == LX.T_INDEX {
 			stmt, err = p.parseCreateIndex()
-		} else if next == LX.T_VIEW {
+		} else if nextType == LX.T_VIEW {
 			stmt, err = p.parseCreateView()
-		} else if next == LX.T_TRIGGER {
+		} else if nextType == LX.T_TRIGGER {
 			stmt, err = p.parseCreateTrigger()
-		} else if next == LX.T_MATERIALIZED {
+		} else if nextType == LX.T_MATERIALIZED {
 			stmt, err = p.parseCreateMaterializedView()
-		} else if next == LX.T_TEMP || next == LX.T_TEMPORARY {
-			if p.lex.Peek2().Type == LX.T_VIEW {
+		} else if nextType == LX.T_TEMP || nextType == LX.T_TEMPORARY {
+			if peek2.Type == LX.T_VIEW {
 				stmt, err = p.parseCreateView()
 			} else {
 				stmt, err = p.parseCreateTable()
 			}
+		} else if nextType == LX.T_IDENT && strings.EqualFold(next.Lexeme, "VIRTUAL") {
+			stmt, err = p.parseCreateVirtualTable()
 		} else {
 			stmt, err = p.parseCreateTable()
 		}

@@ -639,6 +639,15 @@ type DropTriggerStmt struct {
 
 func (d *DropTriggerStmt) stmtNode() {}
 
+// CreateVirtualTableStmt represents CREATE VIRTUAL TABLE ... USING module(args).
+type CreateVirtualTableStmt struct {
+	Name   string
+	Module string
+	Args   []string
+}
+
+func (c *CreateVirtualTableStmt) stmtNode() {}
+
 // CreateMatViewStmt represents CREATE MATERIALIZED VIEW name AS SELECT ...
 // For incremental matviews, base tables are tracked and triggers fire on changes.
 type CreateMatViewStmt struct {
