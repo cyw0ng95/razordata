@@ -57,8 +57,7 @@ var joinQueries = []joinQuery{
 	},
 	{
 		name: "j2_equi", sql: "SELECT t1.a, t2.b FROM t1 INNER JOIN t2 ON t1.a = t2.b",
-		expectRows: -1, maxDuration: 1 * time.Second, warnAt: 100 * time.Millisecond,
-		brokenNote: "JOIN ON predicate dropped (returns cross product 10K, expected 100)",
+		expectRows: 100, maxDuration: 1 * time.Second, warnAt: 100 * time.Millisecond,
 	},
 	{
 		name: "j2_where_in", sql: "SELECT * FROM t1, t2 WHERE t2.b IN (110, 130, 150)",
