@@ -419,6 +419,20 @@ func (p *Parser) parseIn(expr Expr) (Expr, error) {
 // must have already advanced past the T_IN token. Used by
 // parseIn and parseNotIn (REQ000381).
 func (p *Parser) parseInBody(expr Expr) (Expr, error) {
+	// REQ000718: SQLite allows `expr IN tableName` as shorthand for
+	// `expr IN (SELECT * FROM tableName)`. If the next token is an
+	// identifier (not `(`), synthesize the subquery form. Use StarExpr
+	// (not Ident{"*"}) so the planner expands it against the table
+	// schema just like a hand-written subquery.
+	if p.current.Type == LX.T_IDENT {
+		name := p.current.Lexeme
+		p.advance()
+		sel := &Select{
+			Cols: []Expr{&StarExpr{}},
+			From: name,
+		}
+		return &InExpr{Expr: expr, Subquery: sel}, nil
+	}
 	if err := p.expect(LX.T_LPAREN); err != nil {
 		return nil, err
 	}
