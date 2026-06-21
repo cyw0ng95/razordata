@@ -85,6 +85,11 @@ func NewProject(child Operator, cols []PS.Expr) *Project {
 		switch e := c.(type) {
 		case *PS.Ident:
 			name = e.Name
+		case *PS.QualifiedName:
+			// REQ000720: render qualified name as "table.col"
+			// so the projected column matches what callers
+			// expect when the query uses a table alias.
+			name = e.Table + "." + e.Name
 		case *PS.AliasedExpr:
 			if inner, ok := e.Expr.(*PS.Ident); ok {
 				name = inner.Name

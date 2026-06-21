@@ -185,9 +185,16 @@ func groupColName(e PS.Expr) string {
 	switch v := e.(type) {
 	case *PS.Ident:
 		return v.Name
+	case *PS.QualifiedName:
+		// REQ000720: render as "table.col" so output columns
+		// match the qualified name in the GROUP BY clause.
+		return v.Table + "." + v.Name
 	case *PS.AliasedExpr:
 		if a, ok := v.Expr.(*PS.Ident); ok {
 			return a.Name
+		}
+		if q, ok := v.Expr.(*PS.QualifiedName); ok {
+			return q.Table + "." + q.Name
 		}
 		return v.Alias
 	}
