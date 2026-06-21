@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQL/PS"
@@ -1543,7 +1544,8 @@ func evalUnicode(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(s) == 0 {
 		return int64(0), nil
 	}
-	return int64([]rune(s)[0]), nil
+	r, _ := utf8.DecodeRuneInString(s)
+	return int64(r), nil
 }
 
 // evalSqliteVersion returns the version string "0.26.7".
@@ -1943,6 +1945,11 @@ func rshift(a, b any) (any, error) {
 func concat(a, b any) (any, error) {
 	if a == nil || b == nil {
 		return nil, nil
+	}
+	if as, ok := a.(string); ok {
+		if bs, ok := b.(string); ok {
+			return as + bs, nil
+		}
 	}
 	return fmt.Sprintf("%v%v", a, b), nil
 }
