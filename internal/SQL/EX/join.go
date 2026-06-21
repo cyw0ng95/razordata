@@ -85,6 +85,7 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 			// prefixes the right side; the left side keeps
 			// whatever prefix it already has.
 			prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
+			prefixed.tableName = row.tableName
 			if !hasAnyPrefix(row.Cols) {
 				prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
 			} else {
@@ -151,6 +152,7 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 			break
 		}
 		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
+		prefixed.tableName = row.tableName
 		if !hasAnyPrefix(row.Cols) {
 			prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
 		} else {
