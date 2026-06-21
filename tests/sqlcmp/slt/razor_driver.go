@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	razordriver "github.com/cyw0ng95/razordata/driver"
 	v1 "github.com/cyw0ng95/razordata/internal/SYS/SY"
@@ -134,7 +135,15 @@ func (d *RazorDriver) Exec(ctx context.Context, sql string) error {
 	if d.db == nil {
 		return errors.New("slt: razor: not connected")
 	}
+	t0 := time.Now()
 	_, err := d.db.ExecContext(ctx, sql)
+	if dur := time.Since(t0); dur > 500*time.Millisecond {
+		trunc := sql
+		if len(trunc) > 100 {
+			trunc = trunc[:100]
+		}
+		fmt.Fprintf(os.Stderr, "SLOW_EXEC[%v] %s\n", dur, trunc)
+	}
 	return err
 }
 
@@ -145,7 +154,15 @@ func (d *RazorDriver) Query(ctx context.Context, sql string) (*ResultSet, error)
 	if d.db == nil {
 		return nil, errors.New("slt: razor: not connected")
 	}
-	return d.queryContext(ctx, sql)
+	trunc := sql
+	if len(trunc) > 80 {
+		trunc = trunc[:80]
+	}
+	fmt.Fprintf(os.Stderr, "QUERY_START: %s\n", trunc)
+	t0 := time.Now()
+	rs, err := d.queryContext(ctx, sql)
+	fmt.Fprintf(os.Stderr, "QUERY_END[%v]: %s\n", time.Since(t0), trunc)
+	return rs, err
 }
 
 // queryContext is the internal query path (unlocked).

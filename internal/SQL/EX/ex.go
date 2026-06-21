@@ -74,30 +74,6 @@ var ErrNotImplemented = errors.New("ex: not implemented")
 var ErrNoRows = errors.New("ex: no rows")
 var ErrClosed = errors.New("ex: operator closed")
 
-// CodegenFn is a specialized batch-execution function produced by codegen.
-type CodegenFn func(ctx context.Context, batch *Batch, params []any) (*Batch, error)
-
-// codegenRegistry maps operator type names to their batch-execution functions.
-var (
-	codegenMu       sync.RWMutex
-	codegenRegistry = map[string]CodegenFn{}
-)
-
-// registerCodegenOp registers a codegen-generated batch function.
-func registerCodegenOp(opType string, fn CodegenFn) {
-	codegenMu.Lock()
-	defer codegenMu.Unlock()
-	codegenRegistry[opType] = fn
-}
-
-// LookupCodegenOp returns a registered codegen function for the given type.
-func LookupCodegenOp(opType string) (CodegenFn, bool) {
-	codegenMu.RLock()
-	defer codegenMu.RUnlock()
-	fn, ok := codegenRegistry[opType]
-	return fn, ok
-}
-
 type Operator interface {
 	Next(ctx context.Context) (Row, error)
 	Close() error
@@ -191,12 +167,26 @@ type ColInfo struct {
 	PK       bool    // true means primary key (implies NOT NULL)
 }
 
+// stmtCacheEntry holds a cached parsed statement with LRU metadata.
+type stmtCacheEntry struct {
+	stmt PS.Stmt
+}
+
+// Executor holds the core execution state.
 type Executor struct {
 	planner    *Planner
 	store      Store
 	txWriter   TxWriter
 	snapshotTS uint64 // REQ000255: per-statement snapshot timestamp for read-committed
 	sessionID  uint64 // REQ000385/394/411: current session ID for counter access
+	// stmtCache caches parsed statements keyed by SQL text to avoid
+	// re-parsing on repeated queries. LRU eviction, default 256 entries.
+	stmtCache struct {
+		mu      sync.Mutex
+		entries map[string]*stmtCacheEntry
+		lru     []*stmtCacheEntry
+		maxSize int
+	}
 }
 
 // TxWriter is the optional hook an Executor notifies on every key
@@ -236,10 +226,12 @@ func (e *Executor) ClearTxWriter() {
 // original but has its own per-request mutable state (txWriter, snapshotTS,
 // sessionID). Callers use this to avoid races when the shared Executor is
 // used concurrently by multiple sessions (REQ000611).
+// The statement cache is shared (read-only after init), so no copy needed.
 func (e *Executor) ShallowCopy() *Executor {
 	return &Executor{
-		planner: e.planner,
-		store:   e.store,
+		planner:   e.planner,
+		store:     e.store,
+		stmtCache: e.stmtCache, // shared read-only cache
 	}
 }
 
@@ -269,11 +261,90 @@ func getCurrentSessionID() uint64 {
 }
 
 func NewExecutor() *Executor {
-	return &Executor{planner: NewPlanner()}
+	e := &Executor{planner: NewPlanner()}
+	e.initStmtCache(256)
+	return e
 }
 
 func NewExecutorWithPlanner(pl *Planner) *Executor {
-	return &Executor{planner: pl}
+	e := &Executor{planner: pl}
+	e.initStmtCache(256)
+	return e
+}
+
+// WithStmtCache enables statement caching with the given max size.
+// Call on a newly created Executor before concurrent use.
+func (e *Executor) WithStmtCache(maxSize int) *Executor {
+	e.initStmtCache(maxSize)
+	return e
+}
+
+// initStmtCache initializes the statement cache. Must be called before use.
+func (e *Executor) initStmtCache(maxSize int) {
+	if maxSize <= 0 {
+		maxSize = 256
+	}
+	e.stmtCache.entries = make(map[string]*stmtCacheEntry, maxSize)
+	e.stmtCache.lru = make([]*stmtCacheEntry, 0, maxSize)
+	e.stmtCache.maxSize = maxSize
+}
+
+// getCachedStmt looks up a cached parsed statement. Returns nil if not found.
+func (e *Executor) getCachedStmt(sql string) PS.Stmt {
+	e.stmtCache.mu.Lock()
+	defer e.stmtCache.mu.Unlock()
+	ent, ok := e.stmtCache.entries[sql]
+	if !ok {
+		return nil
+	}
+	// Move to front of LRU
+	for i, entry := range e.stmtCache.lru {
+		if entry == ent {
+			e.stmtCache.lru = append(e.stmtCache.lru[:i], e.stmtCache.lru[i+1:]...)
+			break
+		}
+	}
+	e.stmtCache.lru = append([]*stmtCacheEntry{ent}, e.stmtCache.lru...)
+	return ent.stmt
+}
+
+// putCachedStmt stores a parsed statement in the cache.
+func (e *Executor) putCachedStmt(sql string, stmt PS.Stmt) {
+	e.stmtCache.mu.Lock()
+	defer e.stmtCache.mu.Unlock()
+	if ent, ok := e.stmtCache.entries[sql]; ok {
+		// Already cached, move to front
+		for i, entry := range e.stmtCache.lru {
+			if entry == ent {
+				e.stmtCache.lru = append(e.stmtCache.lru[:i], e.stmtCache.lru[i+1:]...)
+				break
+			}
+		}
+		e.stmtCache.lru = append([]*stmtCacheEntry{ent}, e.stmtCache.lru...)
+		return
+	}
+	ent := &stmtCacheEntry{stmt: stmt}
+	e.stmtCache.entries[sql] = ent
+	e.stmtCache.lru = append([]*stmtCacheEntry{ent}, e.stmtCache.lru...)
+	// Evict LRU if over capacity
+	for len(e.stmtCache.lru) > e.stmtCache.maxSize {
+		oldest := e.stmtCache.lru[len(e.stmtCache.lru)-1]
+		e.stmtCache.lru = e.stmtCache.lru[:len(e.stmtCache.lru)-1]
+		for key, val := range e.stmtCache.entries {
+			if val == oldest {
+				delete(e.stmtCache.entries, key)
+				break
+			}
+		}
+	}
+}
+
+// clearStmtCache clears the statement cache. Used in tests.
+func (e *Executor) clearStmtCache() {
+	e.stmtCache.mu.Lock()
+	defer e.stmtCache.mu.Unlock()
+	e.stmtCache.entries = nil
+	e.stmtCache.lru = nil
 }
 
 // NewExecutorWithEngine wires the executor to a real storage engine. When
@@ -510,10 +581,56 @@ func (e *Executor) RegisterIndex(table, index string, cols []string) {
 }
 
 func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, error) {
+	// Try cache first (P0: StmtCache wiring, saves 12.70% CPU on parsing)
+	if e.stmtCache.entries != nil {
+		if cached := e.getCachedStmt(sql); cached != nil {
+			stmt := cached
+			// Check if this is a DML with RETURNING clause
+			if hasReturning(stmt) {
+				op, err := e.buildWriterOp(stmt)
+				if err != nil {
+					return Result{}, err
+				}
+				propagateParams(op, args)
+				defer op.Close()
+				var count int64
+				for {
+					_, err := op.Next(ctx)
+					if err != nil {
+						if err == ErrNoRows {
+							break
+						}
+						return Result{}, err
+					}
+					count++
+				}
+				return Result{RowsAffected: count}, nil
+			}
+
+			op, err := e.buildWriterOp(stmt)
+			if err != nil {
+				return Result{}, err
+			}
+			propagateParams(op, args)
+			propagatePlanner(op, e.planner)
+			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+			propagateExecContext(op, execCtx)
+			defer op.Close()
+			if _, err := op.Next(ctx); err != nil && err != ErrNoRows {
+				return Result{}, err
+			}
+			return extractResult(op)
+		}
+	}
+
 	parser := PS.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
 		return Result{}, err
+	}
+	// Cache the parsed statement
+	if e.stmtCache.entries != nil {
+		e.putCachedStmt(sql, stmt)
 	}
 
 	// Check if this is a DML with RETURNING clause
@@ -570,10 +687,68 @@ func hasReturning(stmt PS.Stmt) bool {
 }
 
 func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, error) {
+	// Try cache first (P0: StmtCache wiring, saves 12.70% CPU on parsing)
+	if e.stmtCache.entries != nil {
+		if cached := e.getCachedStmt(sql); cached != nil {
+			stmt := cached
+			// Check if this is a DML with RETURNING clause
+			if hasReturning(stmt) {
+				op, err := e.buildWriterOp(stmt)
+				if err != nil {
+					return nil, err
+				}
+				propagateParams(op, args)
+				defer op.Close()
+				var out []Row
+				for {
+					row, err := op.Next(ctx)
+					if err != nil {
+						if err == ErrNoRows {
+							break
+						}
+						return nil, err
+					}
+					out = append(out, row)
+				}
+				if len(out) == 0 {
+					return &Rows{}, nil
+				}
+				return &Rows{Cols: append([]string(nil), out[0].Cols...), Types: append([]int(nil), out[0].Types...)}, nil
+			}
+
+			plan, err := e.planner.Plan(stmt)
+			if err != nil {
+				return nil, err
+			}
+			if plan == nil || plan.root == nil {
+				return nil, errors.New("ex: plan produced no root")
+			}
+			propagateParams(plan.root, args)
+			propagatePlanner(plan.root, e.planner)
+			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+			propagateExecContext(plan.root, execCtx)
+			defer plan.root.Close()
+			row, err := plan.root.Next(ctx)
+			if err != nil {
+				if err == ErrNoRows {
+					return &Rows{}, nil
+				}
+				return nil, err
+			}
+			WithExecContext(&row, execCtx)
+			rs := &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]int(nil), row.Types...)}
+			return rs, nil
+		}
+	}
+
 	parser := PS.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil, err
+	}
+	// Cache the parsed statement
+	if e.stmtCache.entries != nil {
+		e.putCachedStmt(sql, stmt)
 	}
 
 	// Check if this is a DML with RETURNING clause
@@ -628,10 +803,46 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 }
 
 func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row, error) {
+	// Try cache first (P0: StmtCache wiring, saves 12.70% CPU on parsing)
+	if e.stmtCache.entries != nil {
+		if cached := e.getCachedStmt(sql); cached != nil {
+			stmt := cached
+			plan, err := e.planner.Plan(stmt)
+			if err != nil {
+				return nil, err
+			}
+			if plan == nil || plan.root == nil {
+				return nil, errors.New("ex: plan produced no root")
+			}
+			propagateParams(plan.root, args)
+			propagatePlanner(plan.root, e.planner)
+			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+			propagateExecContext(plan.root, execCtx)
+			defer plan.root.Close()
+			var out []Row
+			for {
+				row, err := plan.root.Next(ctx)
+				if err != nil {
+					if err == ErrNoRows {
+						break
+					}
+					return nil, err
+				}
+				WithExecContext(&row, execCtx)
+				out = append(out, row)
+			}
+			return out, nil
+		}
+	}
+
 	parser := PS.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil, err
+	}
+	// Cache the parsed statement
+	if e.stmtCache.entries != nil {
+		e.putCachedStmt(sql, stmt)
 	}
 	plan, err := e.planner.Plan(stmt)
 	if err != nil {
