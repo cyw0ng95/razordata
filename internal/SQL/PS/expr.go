@@ -1,6 +1,7 @@
 package PS
 
 import (
+	"encoding/hex"
 	"fmt"
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"strings"
@@ -46,6 +47,31 @@ func (p *Parser) parsePrimary() (Expr, error) {
 	case LX.T_IDENT, LX.T_EXCLUDED:
 		name := p.current.Lexeme
 		p.advance()
+		// REQ000808: hex string literal X'...'
+		if strings.EqualFold(name, "X") && p.current.Type == LX.T_STRING {
+			hexStr := p.current.Lexeme
+			if len(hexStr)%2 != 0 {
+				return nil, &SyntaxError{
+					Input:  p.lex.Input(),
+					Line:   p.current.Line,
+					Col:    p.current.Col,
+					Got:    "hex string must have even number of hex digits",
+					Lexeme: hexStr,
+				}
+			}
+			decoded, err := hex.DecodeString(hexStr)
+			if err != nil {
+				return nil, &SyntaxError{
+					Input:  p.lex.Input(),
+					Line:   p.current.Line,
+					Col:    p.current.Col,
+					Got:    "invalid hex string: " + err.Error(),
+					Lexeme: hexStr,
+				}
+			}
+			p.advance()
+			return &StringLiteral{Val: string(decoded)}, nil
+		}
 		if p.current.Type == LX.T_DOT {
 			p.advance()
 			if err := p.expect(LX.T_IDENT); err != nil {

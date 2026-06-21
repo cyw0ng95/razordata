@@ -1088,6 +1088,45 @@ func TestParseStringLiteral(t *testing.T) {
 	}
 }
 
+// REQ000808: hex string literal X'...'
+func TestParseHexLiteral(t *testing.T) {
+	tests := []struct {
+		sql    string
+		want   string
+		errMsg string
+	}{
+		{"SELECT X'4142' FROM t", "AB", ""},
+		{"SELECT x'303132' FROM t", "012", ""},
+		{"SELECT X'' FROM t", "", ""},
+		{"SELECT X'4142434445' FROM t", "ABCDE", ""},
+		{"SELECT X'GG' FROM t", "", "invalid hex"},
+		{"SELECT X'ABC' FROM t", "", "even number"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.sql, func(t *testing.T) {
+			p := NewParser(tc.sql)
+			stmt, err := p.Parse()
+			if tc.errMsg != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tc.errMsg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() failed: %v", err)
+			}
+			sel := stmt.(*Select)
+			lit, ok := sel.Cols[0].(*StringLiteral)
+			if !ok {
+				t.Fatalf("expected *StringLiteral, got %T", sel.Cols[0])
+			}
+			if lit.Val != tc.want {
+				t.Errorf("got %q, want %q", lit.Val, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseNullLiteral(t *testing.T) {
 	p := NewParser("SELECT NULL FROM t")
 	stmt, err := p.Parse()
