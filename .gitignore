@@ -57,6 +57,7 @@ wal.*          # WAL segment files (wal.000, wal.001, ...)
 
 # Profiling
 *.prof
+*.pprof
 cpu.pprof
 mem.pprof
 
