@@ -54,6 +54,10 @@ func (i *Ident) exprNode() {}
 type QualifiedName struct {
 	Table string
 	Name  string
+	// CachedKey is "Table.Name" computed once on first use. Lazy
+	// init — safe because the expression tree is read-only after
+	// parsing and Eval runs single-threaded per benchmark.
+	CachedKey string
 }
 
 func (q *QualifiedName) exprNode() {}

@@ -35,19 +35,31 @@ type NestedLoopJoin struct {
 	// REQ000800: hash-based cross join for small tables.
 	// When both sides fit in memory, materialize both and
 	// do a hash-based cross product instead of NLJ.
-	leftRows     []Row
-	hashMode     bool
-	hashAttempted bool // set true after tryHashCrossJoin fails; prevents O(N²) re-entry
-	hashBuckets  map[uint64][]int // hash → indices into rightRows
-	leftIdx      int
-	rightIdx     int
-	leftMatched  []bool // for LEFT JOIN
+	leftRows      []Row
+	hashMode      bool
+	hashAttempted bool             // set true after tryHashCrossJoin fails; prevents O(N²) re-entry
+	hashBuckets   map[uint64][]int // hash → indices into rightRows
+	leftIdx       int
+	rightIdx      int
+	leftMatched   []bool // for LEFT JOIN
 	// sharedColIndex is built lazily from a sample left+right row's
 	// column layouts and reused across all emitted rows so the
 	// downstream Filter/Eval doesn't have to call buildColIndex
 	// per row. j3 perf: ~2.7GB of allocations eliminated per
 	// 1M-row benchmark run.
 	sharedColIndex map[string]int
+	// sharedCols and sharedTypes are pre-built from materialized
+	// left+right column layouts and shared across all hash-mode
+	// output rows instead of allocating fresh slices per row.
+	sharedCols  []string
+	sharedTypes []int
+	// dataBuf is a single pre-allocated []any covering all output
+	// rows' Data slices. Each row gets a non-overlapping sub-slice
+	// [off:off:off+dataPerRow], eliminating per-row make([]any, ...)
+	// allocations. j3 perf: 39% of alloc_space was here.
+	dataBuf    []any
+	dataPerRow int
+	dataOffset int // running write offset into dataBuf
 }
 
 func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error), kind JoinKind) *NestedLoopJoin {
@@ -220,13 +232,25 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 	// right.Cols) which is stable for the lifetime of this join
 	// since both sides come from the same SeqScan snapshots.
 	nCols := len(j.leftRows[0].Cols) + len(j.rightRows[0].Cols)
+	j.sharedCols = make([]string, 0, nCols)
+	j.sharedCols = append(j.sharedCols, j.leftRows[0].Cols...)
+	j.sharedCols = append(j.sharedCols, j.rightRows[0].Cols...)
+
+	j.sharedTypes = make([]int, 0, nCols)
+	j.sharedTypes = append(j.sharedTypes, j.leftRows[0].Types...)
+	j.sharedTypes = append(j.sharedTypes, j.rightRows[0].Types...)
+
 	j.sharedColIndex = make(map[string]int, nCols)
-	combined := make([]string, 0, nCols)
-	combined = append(combined, j.leftRows[0].Cols...)
-	combined = append(combined, j.rightRows[0].Cols...)
-	for i, c := range combined {
+	for i, c := range j.sharedCols {
 		j.sharedColIndex[strings.ToLower(c)] = i
 	}
+	// Pre-allocate a single contiguous Data buffer for all output
+	// rows. Each output row gets a non-overlapping sub-slice
+	// [off:off:off+dataPerRow] — no per-row make([]any) needed.
+	j.dataPerRow = len(j.leftRows[0].Data) + len(j.rightRows[0].Data)
+	totalRows := len(j.leftRows) * len(j.rightRows)
+	j.dataBuf = make([]any, 0, totalRows*j.dataPerRow)
+	j.dataOffset = 0
 	// Build hash from right side for equi-join lookups.
 	// For cross join, we don't hash — just iterate.
 	// Hash is useful for equi-join ON conditions.
@@ -244,11 +268,21 @@ func (j *NestedLoopJoin) nextHash(_ context.Context) (Row, error) {
 			l := j.leftRows[j.leftIdx]
 			r := j.rightRows[j.rightIdx]
 			j.rightIdx++
-			out := joinRowsLL(&l, &r)
-			// Share the operator-level colIndex so downstream
-			// Row.Lookup calls don't have to buildColIndex per row.
-			// j3 perf: ~2.7GB/call eliminated.
-			out.colIndex = j.sharedColIndex
+			// Carve a non-overlapping sub-slice from the
+			// pre-allocated dataBuf. The backing array is shared
+			// across all output rows but each sub-slice is
+			// disjoint — safe because downstream copies values
+			// via rows.Scan before the next row is fetched.
+			off := j.dataOffset
+			j.dataOffset += j.dataPerRow
+			out := Row{
+				Cols:     j.sharedCols,
+				Types:    j.sharedTypes,
+				Data:     j.dataBuf[off : off : off+j.dataPerRow],
+				colIndex: j.sharedColIndex,
+			}
+			out.Data = append(out.Data, l.Data...)
+			out.Data = append(out.Data, r.Data...)
 			return out, nil
 		}
 		j.rightIdx = 0
@@ -310,6 +344,11 @@ func (j *NestedLoopJoin) Close() error {
 	j.rightRows = nil
 	j.hashBuckets = nil
 	j.sharedColIndex = nil
+	j.sharedCols = nil
+	j.sharedTypes = nil
+	j.dataBuf = nil
+	j.dataPerRow = 0
+	j.dataOffset = 0
 	j.rightPos = 0
 	j.leftIdx = 0
 	j.rightIdx = 0

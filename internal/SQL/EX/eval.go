@@ -156,9 +156,11 @@ func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 		if row != nil {
 			// REQ000755: Use O(1) Lookup instead of O(N) linear scan.
 			// Try qualified name first (table.col), then bare name.
-			key := e.Table + "." + e.Name
+			if e.CachedKey == "" {
+				e.CachedKey = e.Table + "." + e.Name
+			}
 			for cur := row; cur != nil; cur = cur.Outer {
-				if v, ok := cur.Lookup(key); ok {
+				if v, ok := cur.Lookup(e.CachedKey); ok {
 					return v, nil
 				}
 			}
@@ -180,7 +182,7 @@ func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 				return v, nil
 			}
 		}
-		return e.Table + "." + e.Name, nil
+		return e.CachedKey, nil
 	case *PS.Param:
 		if e.Index < len(params) {
 			return normalizeInt(params[e.Index]), nil
