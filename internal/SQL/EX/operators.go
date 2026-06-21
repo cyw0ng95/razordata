@@ -98,6 +98,10 @@ type SeqScan struct {
 	// When set, produced rows have column names prefixed with
 	// "alias." so correlated subquery eval can resolve x.col.
 	alias string
+	// REQ000760: pre-computed prefixed column names and index
+	// to avoid per-row allocation in prefixRowCols.
+	prefixedCols     []string
+	prefixedColIndex map[string]int
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -116,8 +120,22 @@ func (s *SeqScan) WithPlanner(p *Planner) Operator {
 
 // WithAlias sets a table alias so produced rows have column names
 // prefixed with "alias.". Used for correlated subqueries.
+// REQ000760: pre-compute prefixed cols once to avoid per-row allocation.
 func (s *SeqScan) WithAlias(alias string) *SeqScan {
 	s.alias = alias
+	// Pre-compute prefixed column names from the schema.
+	if s.schema != nil {
+		prefix := alias + "."
+		s.prefixedCols = make([]string, len(s.schema.cols))
+		s.prefixedColIndex = make(map[string]int, len(s.schema.cols))
+		for i, c := range s.schema.cols {
+			pc := prefix + c
+			s.prefixedCols[i] = pc
+			s.prefixedColIndex[pc] = i
+		}
+	} else {
+		// In-memory mode: schema not yet available; compute on first use.
+	}
 	return s
 }
 
@@ -191,7 +209,12 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 		r.colIndex = s.schema.colIndex
 	}
 	if s.alias != "" {
-		r = prefixRowCols(r, s.alias)
+		if s.prefixedCols != nil {
+			r.Cols = s.prefixedCols
+			r.colIndex = s.prefixedColIndex
+		} else {
+			r = prefixRowCols(r, s.alias)
+		}
 		r.tableName = s.alias
 	}
 	return r, nil
@@ -224,7 +247,12 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		}
 		row.tableName = s.table
 		if s.alias != "" {
-			row = prefixRowCols(row, s.alias)
+			if s.prefixedCols != nil {
+				row.Cols = s.prefixedCols
+				row.colIndex = s.prefixedColIndex
+			} else {
+				row = prefixRowCols(row, s.alias)
+			}
 			row.tableName = s.alias
 		}
 		return row, nil
