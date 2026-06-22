@@ -216,14 +216,11 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 			s.buf = append(s.buf, row)
 		}
 
-		// REQ000580: pre-extract sort keys so each expression is
-		// evaluated exactly once per row (O(N*K)) rather than
-		// inside the comparator which does O(N log N * K).
-		type sortRow struct {
-			row  Row
-			keys []any
-		}
-		sorted := make([]sortRow, len(s.buf))
+		// REQ000768+REQ000773: pre-extract sort keys into a parallel
+		// keyCache slice, then sort an index array in-place.
+		// Eliminates the sortRow allocation and double-buffering.
+		n := len(s.buf)
+		keyCache := make([][]any, n)
 		for i, r := range s.buf {
 			sk := make([]any, len(s.keys))
 			for j, k := range s.keys {
@@ -233,24 +230,25 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 				}
 				sk[j] = v
 			}
-			sorted[i] = sortRow{row: r, keys: sk}
+			keyCache[i] = sk
 		}
 
-		slices.SortStableFunc(sorted, func(a, b sortRow) int {
-			for ki := range a.keys {
-				ka, kb := a.keys[ki], b.keys[ki]
-				// REQ000736: NULLS FIRST forces nil before non-nil,
-				// NULLS LAST forces nil after non-nil, regardless
-				// of ASC/DESC.
+		indices := make([]int, n)
+		for i := range indices {
+			indices[i] = i
+		}
+		slices.SortStableFunc(indices, func(ai, bi int) int {
+			ka, kb := keyCache[ai], keyCache[bi]
+			for ki := range ka {
 				if s.keys[ki].NullsOrder != 0 {
-					if ka == nil && kb != nil {
+					if ka[ki] == nil && kb[ki] != nil {
 						return -int(s.keys[ki].NullsOrder)
 					}
-					if kb == nil && ka != nil {
+					if kb[ki] == nil && ka[ki] != nil {
 						return int(s.keys[ki].NullsOrder)
 					}
 				}
-				c := compare(ka, kb)
+				c := compare(ka[ki], kb[ki])
 				if c == 0 {
 					continue
 				}
@@ -262,11 +260,12 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 			return 0
 		})
 
-		s.buf = make([]Row, len(sorted))
-		for i, sr := range sorted {
-			s.buf[i] = sr.row
+		// Reorder s.buf in-place using sorted indices.
+		reordered := make([]Row, n)
+		for i, idx := range indices {
+			reordered[i] = s.buf[idx]
 		}
-		sorted = nil // allow GC
+		s.buf = reordered
 		s.materialized = true
 	}
 	if s.pos >= len(s.buf) {
