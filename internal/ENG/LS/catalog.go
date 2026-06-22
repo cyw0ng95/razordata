@@ -283,6 +283,30 @@ func (c *Catalog) ColumnStatsByName(tableName, colName string) *ColumnStats {
 	return nil
 }
 
+// TableStats returns aggregated statistics for all columns of a table
+// (REQ000787). Returns nil if the table is not found.
+func (c *Catalog) TableStats(tableName string) *TableStats {
+	for _, raw := range c.inner.Cache() {
+		if raw.Name == tableName {
+			stats := decodeStatsBlob(raw.Stats)
+			ts := &TableStats{
+				ColStats:     make(map[string]*ColumnStats),
+				RowCount:     0,
+				TotalWidth:   0,
+				LastAnalyzed: 0,
+			}
+			for _, entry := range stats {
+				ts.ColStats[entry.Column] = &entry.Stats
+				if entry.Stats.RowCount > ts.RowCount {
+					ts.RowCount = entry.Stats.RowCount
+				}
+			}
+			return ts
+		}
+	}
+	return nil
+}
+
 // List returns all entries sorted by tableID.
 func (c *Catalog) List() []*CatalogEntry {
 	raws := c.inner.List()
