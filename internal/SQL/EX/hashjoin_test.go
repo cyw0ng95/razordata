@@ -21,7 +21,7 @@ func TestHashJoin_Empty(t *testing.T) {
 
 	// Build small in-memory operators.
 	rows := []Row{
-		{Cols: []string{"id", "val"}, Data: []any{int64(1), "a"}},
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
 	}
 	left := NewSeqScan("left")
 	_ = left
@@ -60,17 +60,17 @@ func TestHashJoin_PartitionRounding(t *testing.T) {
 
 // TestHashJoin_KeyHashes verifies the hash function distributes.
 func TestHashJoin_KeyHashes(t *testing.T) {
-	h1 := hashKey(int64(42))
-	h2 := hashKey(int64(42))
+	h1 := hashKey(NewIntValue(int64(42)))
+	h2 := hashKey(NewIntValue(int64(42)))
 	if h1 != h2 {
 		t.Errorf("hash should be stable: %d != %d", h1, h2)
 	}
-	h3 := hashKey(int64(43))
+	h3 := hashKey(NewIntValue(int64(43)))
 	if h1 == h3 {
 		t.Errorf("hashes should differ: %d", h1)
 	}
-	s1 := hashKey("hello")
-	s2 := hashKey("world")
+	s1 := hashKey(NewTextValue("hello"))
+	s2 := hashKey(NewTextValue("world"))
 	if s1 == s2 {
 		t.Errorf("string hashes should differ")
 	}
@@ -92,7 +92,7 @@ func TestHashJoin_ValuesEqual(t *testing.T) {
 		{int64(1), nil, false},
 	}
 	for _, c := range cases {
-		if got := valuesEqual(c.a, c.b); got != c.want {
+		if got := valuesEqual(valueFromAny(c.a), valueFromAny(c.b)); got != c.want {
 			t.Errorf("valuesEqual(%v, %v)=%v, want %v", c.a, c.b, got, c.want)
 		}
 	}
@@ -127,14 +127,14 @@ func TestHashJoin_MultiMatch(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	leftRows := []Row{
-		{Cols: []string{"id", "val"}, Data: []any{int64(1), "a"}},
-		{Cols: []string{"id", "val"}, Data: []any{int64(2), "b"}},
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("b")}},
 	}
 	rightRows := []Row{
-		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "x"}},
-		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "y"}},
-		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "z"}},
-		{Cols: []string{"ref", "name"}, Data: []any{int64(2), "w"}},
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("x")}},
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("y")}},
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("z")}},
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("w")}},
 	}
 	RegisterTable("l", leftRows)
 	RegisterTable("r", rightRows)
@@ -152,7 +152,7 @@ func TestHashJoin_MultiMatch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Next: %v", err)
 		}
-		got = append(got, row.Data)
+		got = append(got, valueSliceToAny(row.Data))
 	}
 	// left row 1 (id=1) matches 3 right rows (ref=1): 3 pairs
 	// left row 2 (id=2) matches 1 right row (ref=2): 1 pair
@@ -173,12 +173,12 @@ func TestHashJoin_NoMatch(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	leftRows := []Row{
-		{Cols: []string{"id", "val"}, Data: []any{int64(1), "a"}},
-		{Cols: []string{"id", "val"}, Data: []any{int64(2), "b"}},
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("b")}},
 	}
 	rightRows := []Row{
-		{Cols: []string{"ref", "name"}, Data: []any{int64(3), "x"}},
-		{Cols: []string{"ref", "name"}, Data: []any{int64(4), "y"}},
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(3)), NewTextValue("x")}},
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(4)), NewTextValue("y")}},
 	}
 	RegisterTable("l", leftRows)
 	RegisterTable("r", rightRows)
@@ -196,7 +196,7 @@ func TestHashJoin_NoMatch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Next: %v", err)
 		}
-		got = append(got, row.Data)
+		got = append(got, valueSliceToAny(row.Data))
 	}
 	if len(got) != 0 {
 		t.Errorf("got %d rows, want 0", len(got))
@@ -209,13 +209,13 @@ func TestHashJoin_AllMatch(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	leftRows := []Row{
-		{Cols: []string{"id", "val"}, Data: []any{int64(1), "a"}},
-		{Cols: []string{"id", "val"}, Data: []any{int64(1), "b"}},
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("b")}},
 	}
 	rightRows := []Row{
-		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "x"}},
-		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "y"}},
-		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "z"}},
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("x")}},
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("y")}},
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("z")}},
 	}
 	RegisterTable("l", leftRows)
 	RegisterTable("r", rightRows)
@@ -233,7 +233,7 @@ func TestHashJoin_AllMatch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Next: %v", err)
 		}
-		got = append(got, row.Data)
+		got = append(got, valueSliceToAny(row.Data))
 	}
 	// 2 left rows * 3 right rows = 6 pairs
 	if len(got) != 6 {

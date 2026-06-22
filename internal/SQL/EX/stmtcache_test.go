@@ -19,7 +19,7 @@ func BenchmarkStmtCache_ParsedVsCached(b *testing.B) {
 	for i := 0; i < 100; i++ {
 		tables["t"] = append(tables["t"], Row{
 			Cols: []string{"id", "name"},
-			Data: []any{int64(i), "u"},
+			Data: []Value{NewIntValue(int64(i)), NewTextValue("u")},
 		})
 	}
 	tablesMu.Unlock()
@@ -77,7 +77,7 @@ func TestStmtCache_QueryStream(t *testing.T) {
 	RegisterTableSchema("t", []string{"id"})
 	tablesMu.Lock()
 	for i := 0; i < 10; i++ {
-		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []any{int64(i)}})
+		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
 	}
 	tablesMu.Unlock()
 
@@ -155,7 +155,7 @@ func TestStmtCache_DDLInvalidates(t *testing.T) {
 
 	RegisterTableSchema("t", []string{"id"})
 	tablesMu.Lock()
-	tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []any{int64(1)}})
+	tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(1))}})
 	tablesMu.Unlock()
 
 	ex := NewExecutor()
@@ -206,7 +206,7 @@ func TestQueryStreamFromAST_BypassParser(t *testing.T) {
 	RegisterTableSchema("t", []string{"id"})
 	tablesMu.Lock()
 	for i := 0; i < 3; i++ {
-		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []any{int64(i)}})
+		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
 	}
 	tablesMu.Unlock()
 

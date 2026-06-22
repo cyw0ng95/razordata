@@ -32,15 +32,15 @@ func TestEstimateRowCount(t *testing.T) {
 func TestHashAggregate_AggregateEquivalence(t *testing.T) {
 	rows := []Row{
 		{Cols: []string{"category", "value"}, Types: []int{int(LX.T_TEXT), int(LX.T_INT_KW)},
-			Data: []any{"A", int64(10)}},
+			Data: []Value{NewTextValue("A"), NewIntValue(int64(10))}},
 		{Cols: []string{"category", "value"}, Types: []int{int(LX.T_TEXT), int(LX.T_INT_KW)},
-			Data: []any{"A", int64(20)}},
+			Data: []Value{NewTextValue("A"), NewIntValue(int64(20))}},
 		{Cols: []string{"category", "value"}, Types: []int{int(LX.T_TEXT), int(LX.T_INT_KW)},
-			Data: []any{"B", int64(5)}},
+			Data: []Value{NewTextValue("B"), NewIntValue(int64(5))}},
 		{Cols: []string{"category", "value"}, Types: []int{int(LX.T_TEXT), int(LX.T_INT_KW)},
-			Data: []any{"B", int64(15)}},
+			Data: []Value{NewTextValue("B"), NewIntValue(int64(15))}},
 		{Cols: []string{"category", "value"}, Types: []int{int(LX.T_TEXT), int(LX.T_INT_KW)},
-			Data: []any{"A", int64(30)}},
+			Data: []Value{NewTextValue("A"), NewIntValue(int64(30))}},
 	}
 	RegisterTable("equivalence_test", rows)
 	defer UnregisterAll()
@@ -64,13 +64,13 @@ func TestHashAggregate_AggregateEquivalence(t *testing.T) {
 		}
 		key := ""
 		if len(row.Data) > 0 {
-			if s, ok := row.Data[0].(string); ok {
+			if s, ok := row.Data[0].ToAny().(string); ok {
 				key = s
 			}
 		}
 		var sum int64
 		if len(row.Data) > 1 {
-			if v, ok := row.Data[1].(int64); ok {
+			if v, ok := row.Data[1].ToAny().(int64); ok {
 				sum = v
 			}
 		}

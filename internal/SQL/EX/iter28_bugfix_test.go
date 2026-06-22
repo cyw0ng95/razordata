@@ -245,7 +245,7 @@ func TestBugfix_InsertOnConflictDoUpdate(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	if v, _ := rows[0].Data[0].(int64); v != 99 {
+	if v, _ := rows[0].Data[0].ToAny().(int64); v != 99 {
 		t.Errorf("v = %d, want 99 (UPSERT update should have taken effect)", v)
 	}
 }
@@ -270,7 +270,7 @@ func TestBugfix_InsertOnConflictDoNothing(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	if v, _ := rows[0].Data[0].(int64); v != 10 {
+	if v, _ := rows[0].Data[0].ToAny().(int64); v != 10 {
 		t.Errorf("v = %d, want 10 (DO NOTHING should not have changed the row)", v)
 	}
 }
@@ -373,10 +373,10 @@ func TestBugfix_FKOnUpdate(t *testing.T) {
 
 	// Seed in-memory table for parent: id=1, id=2.
 	tables["p"] = []Row{
-		{Cols: []string{"id"}, Data: []any{int64(1)}},
+		{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}},
 	}
 	tables["c"] = []Row{
-		{Cols: []string{"id", "pid"}, Data: []any{int64(10), int64(1)}},
+		{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(10), NewIntValue(1)}},
 	}
 
 	// Update child's pid from 1 to 99 — should fail since parent
@@ -429,8 +429,8 @@ func TestBugfix_FKOnDelete(t *testing.T) {
 	tableIDs["p"] = 10
 	tableIDs["c"] = 11
 
-	tables["p"] = []Row{{Cols: []string{"id"}, Data: []any{int64(1)}}}
-	tables["c"] = []Row{{Cols: []string{"id", "pid"}, Data: []any{int64(100), int64(1)}}}
+	tables["p"] = []Row{{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}}}
+	tables["c"] = []Row{{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(100), NewIntValue(1)}}}
 
 	// Deleting parent id=1 must fail because child (100, 1) references it.
 	err := validateForeignKeyDeleteInMemory("p",
@@ -542,7 +542,7 @@ func TestBugfix_CorrelatedSubqueryWithIndex(t *testing.T) {
 	}
 	got := map[string]bool{}
 	for _, r := range rows {
-		got[r.Data[0].(string)] = true
+		got[r.Data[0].ToAny().(string)] = true
 	}
 	if !got["a"] || !got["c"] {
 		t.Errorf("unexpected: %v", got)
@@ -622,10 +622,10 @@ func TestBugfix_CreateTableAsSelect(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows in dst, got %d", len(rows))
 	}
-	if rows[0].Data[0].(int64) != 1 || rows[0].Data[1].(string) != "alice" {
+	if rows[0].Data[0].ToAny().(int64) != 1 || rows[0].Data[1].ToAny().(string) != "alice" {
 		t.Errorf("row 0: %v", rows[0].Data)
 	}
-	if rows[1].Data[0].(int64) != 2 || rows[1].Data[1].(string) != "bob" {
+	if rows[1].Data[0].ToAny().(int64) != 2 || rows[1].Data[1].ToAny().(string) != "bob" {
 		t.Errorf("row 1: %v", rows[1].Data)
 	}
 
@@ -651,7 +651,7 @@ func TestBugfix_CreateTableAsSelect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query dst3: %v", err)
 	}
-	if len(rows) != 1 || rows[0].Data[0].(string) != "bob" {
+	if len(rows) != 1 || rows[0].Data[0].ToAny().(string) != "bob" {
 		t.Errorf("dst3: %v", rows[0].Data)
 	}
 }
@@ -738,7 +738,7 @@ func TestBugfix_FillDefaults_TypeCoercion(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	got, ok := rows[0].Data[0].(string)
+	got, ok := rows[0].Data[0].ToAny().(string)
 	if !ok {
 		t.Fatalf("expected string, got %T (%v)", rows[0].Data[0], rows[0].Data[0])
 	}
@@ -767,7 +767,7 @@ func TestBugfix_ReturningStar(t *testing.T) {
 	if len(rows[0].Cols) != 3 {
 		t.Errorf("expected 3 cols, got %d (%v)", len(rows[0].Cols), rows[0].Cols)
 	}
-	if rows[0].Data[0] != int64(1) || rows[0].Data[1] != "alice" || rows[0].Data[2] != int64(100) {
+	if rows[0].Data[0] != NewIntValue(int64(1)) || rows[0].Data[1] != NewTextValue("alice") || rows[0].Data[2] != NewIntValue(int64(100)) {
 		t.Errorf("unexpected data: %v", rows[0].Data)
 	}
 
@@ -816,7 +816,7 @@ func TestBugfix_CountEmptySet(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	val, ok := rows[0].Data[0].(int64)
+	val, ok := rows[0].Data[0].ToAny().(int64)
 	if !ok {
 		t.Fatalf("expected int64, got %T (%v)", rows[0].Data[0], rows[0].Data[0])
 	}
@@ -830,7 +830,7 @@ func TestBugfix_CountEmptySet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("COUNT(*) no-match: %v", err)
 	}
-	val, _ = rows[0].Data[0].(int64)
+	val, _ = rows[0].Data[0].ToAny().(int64)
 	if val != 0 {
 		t.Errorf("COUNT(*) no-match = %d, want 0", val)
 	}
@@ -882,13 +882,13 @@ func TestBugfix_CorrelatedSubquery_Reexecutes(t *testing.T) {
 	}
 	if len(rows) >= 3 {
 		// t.id=1 has 1 match in s, t.id=2 has 1 match, t.id=3 has 0
-		if rows[0].Data[0] != int64(1) {
+		if rows[0].Data[0] != NewIntValue(int64(1)) {
 			t.Errorf("row 0 val = %v, want 1", rows[0].Data[0])
 		}
-		if rows[1].Data[0] != int64(1) {
+		if rows[1].Data[0] != NewIntValue(int64(1)) {
 			t.Errorf("row 1 val = %v, want 1", rows[1].Data[0])
 		}
-		if rows[2].Data[0] != int64(0) {
+		if rows[2].Data[0] != NewIntValue(int64(0)) {
 			t.Errorf("row 2 val = %v, want 0", rows[2].Data[0])
 		}
 	}
@@ -925,10 +925,10 @@ func TestBugfix_CorrelatedExists_SameColumnName(t *testing.T) {
 			t.Errorf("EXISTS: got %d rows, want 2; data=%v", len(rows), rows)
 		}
 		if len(rows) >= 2 {
-			if rows[0].Data[0] != int64(1) {
+			if rows[0].Data[0] != NewIntValue(int64(1)) {
 				t.Errorf("row 0 = %v, want 1", rows[0].Data[0])
 			}
-			if rows[1].Data[0] != int64(2) {
+			if rows[1].Data[0] != NewIntValue(int64(2)) {
 				t.Errorf("row 1 = %v, want 2", rows[1].Data[0])
 			}
 		}
@@ -942,7 +942,7 @@ func TestBugfix_CorrelatedExists_SameColumnName(t *testing.T) {
 		if len(rows) != 1 {
 			t.Errorf("NOT EXISTS: got %d rows, want 1; data=%v", len(rows), rows)
 		}
-		if len(rows) >= 1 && rows[0].Data[0] != int64(3) {
+		if len(rows) >= 1 && rows[0].Data[0] != NewIntValue(int64(3)) {
 			t.Errorf("row 0 = %v, want 3", rows[0].Data[0])
 		}
 	})
@@ -1015,7 +1015,7 @@ func TestBugfix_SLT_IndexWhereFilter(t *testing.T) {
 			t.Errorf("tab0 where ordered: got %d, want 3", len(rows))
 		}
 		if len(rows) >= 3 {
-			if rows[0].Data[0] != int64(2) || rows[2].Data[0] != int64(0) {
+			if rows[0].Data[0] != NewIntValue(int64(2)) || rows[2].Data[0] != NewIntValue(int64(0)) {
 				t.Errorf("order wrong: %v", rows)
 			}
 		}
@@ -1051,7 +1051,7 @@ func TestBugfix_SLT_UnaryPlusMinusColumn(t *testing.T) {
 			if len(rows) != 1 {
 				t.Fatalf("%s: got %d rows, want 1", tt.name, len(rows))
 			}
-			if rows[0].Data[0] != tt.want {
+			if rows[0].Data[0].ToAny() != tt.want {
 				t.Errorf("%s: got %v, want %v", tt.name, rows[0].Data[0], tt.want)
 			}
 		})
@@ -1088,10 +1088,10 @@ func TestBugfix_ViewColumnAlias(t *testing.T) {
 		}
 		if len(rows) >= 5 {
 			// v*2: 20, 40, 60, 80, 100
-			if rows[0].Data[0] != int64(20) {
+			if rows[0].Data[0] != NewIntValue(int64(20)) {
 				t.Errorf("row 0 = %v, want 20", rows[0].Data[0])
 			}
-			if rows[4].Data[0] != int64(100) {
+			if rows[4].Data[0] != NewIntValue(int64(100)) {
 				t.Errorf("row 4 = %v, want 100", rows[4].Data[0])
 			}
 		}
@@ -1122,7 +1122,7 @@ func TestBugfix_ViewColumnAlias(t *testing.T) {
 		}
 		if len(rows) >= 2 {
 			// id=4,v=40 -> doubled=80; id=5,v=50 -> doubled=100
-			if rows[0].Data[0] != int64(80) {
+			if rows[0].Data[0] != NewIntValue(int64(80)) {
 				t.Errorf("row 0 = %v, want 80", rows[0].Data[0])
 			}
 		}
@@ -1147,7 +1147,7 @@ func TestBugfix_SLT_NegateAggregate(t *testing.T) {
 		if len(rows) != 1 {
 			t.Fatalf("got %d rows, want 1", len(rows))
 		}
-		if rows[0].Data[0] != int64(-2) {
+		if rows[0].Data[0] != NewIntValue(int64(-2)) {
 			t.Errorf("got %v, want -2", rows[0].Data[0])
 		}
 	})
@@ -1160,7 +1160,7 @@ func TestBugfix_SLT_NegateAggregate(t *testing.T) {
 		if len(rows) != 1 {
 			t.Fatalf("got %d rows, want 1", len(rows))
 		}
-		if rows[0].Data[0] != int64(-40) {
+		if rows[0].Data[0] != NewIntValue(int64(-40)) {
 			t.Errorf("got %v, want -40", rows[0].Data[0])
 		}
 	})
@@ -1206,7 +1206,7 @@ func TestBugfix_InsertSelect(t *testing.T) {
 			t.Fatalf("SELECT count: %v", err)
 		}
 		// 3 from previous + 2 from this = 5
-		if rows[0].Data[0] != int64(5) {
+		if rows[0].Data[0] != NewIntValue(int64(5)) {
 			t.Errorf("got %v, want 5", rows[0].Data[0])
 		}
 	})
@@ -1265,7 +1265,7 @@ func TestBugfix_DIV_Operator(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != int64(9) {
+	if rows[0].Data[0] != NewIntValue(int64(9)) {
 		t.Errorf("47 DIV 5: got %v, want 9", rows[0].Data[0])
 	}
 }
@@ -1312,7 +1312,7 @@ func TestBugfix_ShiftOperators(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != int64(40) {
+	if rows[0].Data[0] != NewIntValue(int64(40)) {
 		t.Errorf("10 << 2: got %v, want 40", rows[0].Data[0])
 	}
 
@@ -1323,7 +1323,7 @@ func TestBugfix_ShiftOperators(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != int64(5) {
+	if rows[0].Data[0] != NewIntValue(int64(5)) {
 		t.Errorf("10 >> 1: got %v, want 5", rows[0].Data[0])
 	}
 }
@@ -1389,7 +1389,7 @@ func TestBugfix_ViewWhereClause(t *testing.T) {
 	if len(rows) != 3 {
 		t.Errorf("got %d rows, want 3; data=%v", len(rows), rows)
 	}
-	if len(rows) >= 1 && rows[0].Data[0] != int64(3) {
+	if len(rows) >= 1 && rows[0].Data[0] != NewIntValue(int64(3)) {
 		t.Errorf("first row x = %v, want 3", rows[0].Data[0])
 	}
 }

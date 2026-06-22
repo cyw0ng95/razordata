@@ -46,7 +46,7 @@ func TestREQ000719_UnaryOnColumnInMemory(t *testing.T) {
 			t.Errorf("%s: got %d rows", c.expr, len(rows))
 			continue
 		}
-		v, ok := rows[0].Data[0].(int64)
+		v, ok := rows[0].Data[0].ToAny().(int64)
 		if !ok || v != c.want {
 			t.Errorf("%s: got %v (%T), want %d", c.expr, rows[0].Data[0], rows[0].Data[0], c.want)
 		}
@@ -81,7 +81,7 @@ func TestREQ000719_UnaryOnColumnStore(t *testing.T) {
 		t.Errorf("store + - col0: err=%v", err)
 	} else if len(rows) != 1 {
 		t.Errorf("store: got %d rows", len(rows))
-	} else if v, ok := rows[0].Data[0].(int64); !ok || v != -5 {
+	} else if v, ok := rows[0].Data[0].ToAny().(int64); !ok || v != -5 {
 		t.Errorf("store + - col0: got %v (%T), want -5", rows[0].Data[0], rows[0].Data[0])
 	}
 	_ = strconv.Itoa

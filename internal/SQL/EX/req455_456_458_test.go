@@ -139,7 +139,7 @@ func TestReq456_AlterTableNoDeadlock(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[2] != int64(99) {
+	if rows[0].Data[2] != NewIntValue(int64(99)) {
 		t.Errorf("got x=%v, want 99", rows[0].Data[2])
 	}
 

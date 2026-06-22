@@ -383,10 +383,10 @@ func batchToRows(batch *Batch) []Row {
 		row := Row{
 			Cols:  cols,
 			Types: types,
-			Data:  make([]any, len(cols)),
+			Data:  make([]Value, len(cols)),
 		}
 		for j, colName := range cols {
-			row.Data[j] = batchValueAt(batch.Cols[j], i)
+			row.Data[j] = valueFromAny(batchValueAt(batch.Cols[j], i))
 			_ = colName
 		}
 		rows = append(rows, row)

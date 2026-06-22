@@ -15,7 +15,7 @@ func makeSortTestRows(n int) []Row {
 		rows[i] = Row{
 			Cols:  []string{"id"},
 			Types: []int{int(LX.T_INT_KW)},
-			Data:  []any{int64(n - 1 - i)},
+			Data:  []Value{NewIntValue(int64(n - 1 - i))},
 		}
 	}
 	return rows
@@ -142,9 +142,9 @@ func TestCompareValues(t *testing.T) {
 
 // TestLessRow tests multi-key row comparison.
 func TestLessRow(t *testing.T) {
-	row1 := Row{Cols: []string{"a", "b"}, Data: []any{int64(1), int64(2)}}
-	row2 := Row{Cols: []string{"a", "b"}, Data: []any{int64(1), int64(3)}}
-	row3 := Row{Cols: []string{"a", "b"}, Data: []any{int64(2), int64(1)}}
+	row1 := Row{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}}
+	row2 := Row{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(3))}}
+	row3 := Row{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(2)), NewIntValue(int64(1))}}
 
 	keys := []SortKey{{ColName: "a", Order: AscOrder}, {ColName: "b", Order: AscOrder}}
 	if !lessRow(row1, row2, keys) {

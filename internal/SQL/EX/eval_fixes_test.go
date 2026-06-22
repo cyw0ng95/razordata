@@ -3,6 +3,7 @@ package EX
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
@@ -244,6 +245,12 @@ func formatValue(v any) string {
 	if v == nil {
 		return "<nil>"
 	}
+	if val, ok := v.(Value); ok {
+		if val.IsNull() {
+			return "<nil>"
+		}
+		return fmtSprint(val.ToAny())
+	}
 	if b, ok := v.(bool); ok {
 		if b {
 			return "true"
@@ -259,6 +266,15 @@ func fmtSprint(v any) string {
 	}
 	if i, ok := v.(int64); ok {
 		return i64toa(i)
+	}
+	if f, ok := v.(float64); ok {
+		return fmt.Sprintf("%v", f)
+	}
+	if b, ok := v.(bool); ok {
+		if b {
+			return "true"
+		}
+		return "false"
 	}
 	return ""
 }

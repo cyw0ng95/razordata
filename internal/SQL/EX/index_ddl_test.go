@@ -121,7 +121,7 @@ func TestAggregate_EmptyTable_Scalar(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("COUNT(*) empty: got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != int64(0) {
+	if rows[0].Data[0] != NewIntValue(int64(0)) {
 		t.Errorf("COUNT(*) empty: got %v, want 0", rows[0].Data[0])
 	}
 	// SUM(v) on empty table = NULL
@@ -132,7 +132,7 @@ func TestAggregate_EmptyTable_Scalar(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("SUM(v) empty: got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != nil {
+	if rows[0].Data[0].IsNull() == false {
 		t.Errorf("SUM(v) empty: got %v, want nil", rows[0].Data[0])
 	}
 	// AVG(v) on empty table = NULL
@@ -143,7 +143,7 @@ func TestAggregate_EmptyTable_Scalar(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("AVG(v) empty: got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != nil {
+	if rows[0].Data[0].IsNull() == false {
 		t.Errorf("AVG(v) empty: got %v, want nil", rows[0].Data[0])
 	}
 }

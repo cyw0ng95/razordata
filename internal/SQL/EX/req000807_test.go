@@ -51,7 +51,7 @@ func TestNullIf(t *testing.T) {
 				t.Fatalf("got %d rows, want 1", len(rows))
 			}
 			got := rows[0].Data[0]
-			if got != tc.want {
+			if got.ToAny() != tc.want {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
 		})

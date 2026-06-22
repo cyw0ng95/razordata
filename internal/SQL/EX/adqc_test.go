@@ -417,7 +417,7 @@ type testOp struct {
 }
 
 func (t *testOp) Next(_ context.Context) (Row, error) {
-	return Row{Cols: []string{}, Data: []any{}}, nil
+	return Row{Cols: []string{}, Data: []Value{}}, nil
 }
 
 func (t *testOp) Close() error {

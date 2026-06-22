@@ -12,17 +12,17 @@ import (
 func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 	RegisterTable("left", []Row{
 		{Cols: []string{"id", "val"}, Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
-			Data: []any{int64(1), int64(10)}},
+			Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(10))}},
 		{Cols: []string{"id", "val"}, Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
-			Data: []any{int64(2), int64(20)}},
+			Data: []Value{NewIntValue(int64(2)), NewIntValue(int64(20))}},
 		{Cols: []string{"id", "val"}, Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
-			Data: []any{int64(3), int64(30)}},
+			Data: []Value{NewIntValue(int64(3)), NewIntValue(int64(30))}},
 	})
 	RegisterTable("right", []Row{
 		{Cols: []string{"id", "score"}, Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
-			Data: []any{int64(2), int64(200)}},
+			Data: []Value{NewIntValue(int64(2)), NewIntValue(int64(200))}},
 		{Cols: []string{"id", "score"}, Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
-			Data: []any{int64(4), int64(400)}},
+			Data: []Value{NewIntValue(int64(4)), NewIntValue(int64(400))}},
 	})
 	defer UnregisterAll()
 
@@ -55,7 +55,7 @@ func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 	}
 
 	// Row 1: id=1 unmatched (NULL right)
-	if results[0].Data[0] != int64(1) || results[0].Data[1] != int64(10) {
+	if results[0].Data[0] != NewIntValue(int64(1)) || results[0].Data[1] != NewIntValue(int64(10)) {
 		t.Errorf("row 0 left: got (%v, %v), want (1, 10)", results[0].Data[0], results[0].Data[1])
 	}
 	// Right side should be NULL-padded (2 columns)
@@ -63,20 +63,20 @@ func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 		t.Errorf("row 0 cols: got %d, want 4", len(results[0].Data))
 	}
 	// Right columns should be indices 2,3
-	if results[0].Data[2] != nil || results[0].Data[3] != nil {
+	if results[0].Data[2].IsNull() == false || results[0].Data[3].IsNull() == false {
 		t.Errorf("row 0 right: expected NULL, got (%v, %v)", results[0].Data[2], results[0].Data[3])
 	}
 
 	// Row 2: id=2 matched
-	if results[1].Data[0] != int64(2) || results[1].Data[3] != int64(200) {
+	if results[1].Data[0] != NewIntValue(int64(2)) || results[1].Data[3] != NewIntValue(int64(200)) {
 		t.Errorf("row 1: expected match, got (%v, %v)", results[1].Data[0], results[1].Data[3])
 	}
 
 	// Row 3: id=3 unmatched
-	if results[2].Data[0] != int64(3) || results[2].Data[1] != int64(30) {
+	if results[2].Data[0] != NewIntValue(int64(3)) || results[2].Data[1] != NewIntValue(int64(30)) {
 		t.Errorf("row 2 left: got (%v, %v), want (3, 30)", results[2].Data[0], results[2].Data[1])
 	}
-	if results[2].Data[2] != nil || results[2].Data[3] != nil {
+	if results[2].Data[2].IsNull() == false || results[2].Data[3].IsNull() == false {
 		t.Errorf("row 2 right: expected NULL, got (%v, %v)", results[2].Data[2], results[2].Data[3])
 	}
 }
@@ -85,15 +85,15 @@ func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 func TestNestedLoopJoin_InnerJoin(t *testing.T) {
 	RegisterTable("l", []Row{
 		{Cols: []string{"id"}, Types: []int{int(LX.T_INT_KW)},
-			Data: []any{int64(1)}},
+			Data: []Value{NewIntValue(int64(1))}},
 		{Cols: []string{"id"}, Types: []int{int(LX.T_INT_KW)},
-			Data: []any{int64(2)}},
+			Data: []Value{NewIntValue(int64(2))}},
 	})
 	RegisterTable("r", []Row{
 		{Cols: []string{"id"}, Types: []int{int(LX.T_INT_KW)},
-			Data: []any{int64(2)}},
+			Data: []Value{NewIntValue(int64(2))}},
 		{Cols: []string{"id"}, Types: []int{int(LX.T_INT_KW)},
-			Data: []any{int64(3)}},
+			Data: []Value{NewIntValue(int64(3))}},
 	})
 	defer UnregisterAll()
 
@@ -116,7 +116,7 @@ func TestNestedLoopJoin_InnerJoin(t *testing.T) {
 		}
 		count++
 		// Should only have id=2 match
-		if row.Data[0] != int64(2) || row.Data[1] != int64(2) {
+		if row.Data[0] != NewIntValue(int64(2)) || row.Data[1] != NewIntValue(int64(2)) {
 			t.Errorf("expected match on id=2, got (%v, %v)", row.Data[0], row.Data[1])
 		}
 	}
@@ -129,10 +129,10 @@ func TestNestedLoopJoin_InnerJoin(t *testing.T) {
 // TestNestedLoopJoin_LeftWithNilOn verifies LEFT JOIN without ON clause.
 func TestNestedLoopJoin_LeftWithNilOn(t *testing.T) {
 	RegisterTable("a", []Row{
-		{Cols: []string{"x"}, Types: []int{int(LX.T_INT_KW)}, Data: []any{int64(1)}},
+		{Cols: []string{"x"}, Types: []int{int(LX.T_INT_KW)}, Data: []Value{NewIntValue(int64(1))}},
 	})
 	RegisterTable("b", []Row{
-		{Cols: []string{"y"}, Types: []int{int(LX.T_INT_KW)}, Data: []any{int64(99)}},
+		{Cols: []string{"y"}, Types: []int{int(LX.T_INT_KW)}, Data: []Value{NewIntValue(int64(99))}},
 	})
 	defer UnregisterAll()
 
@@ -150,7 +150,7 @@ func TestNestedLoopJoin_LeftWithNilOn(t *testing.T) {
 	if len(row.Data) != 2 {
 		t.Errorf("expected 2 cols, got %d", len(row.Data))
 	}
-	if row.Data[0] != int64(1) || row.Data[1] != int64(99) {
+	if row.Data[0] != NewIntValue(int64(1)) || row.Data[1] != NewIntValue(int64(99)) {
 		t.Errorf("expected (1, 99), got %v", row.Data)
 	}
 }
@@ -158,10 +158,10 @@ func TestNestedLoopJoin_LeftWithNilOn(t *testing.T) {
 // TestNestedLoopJoin_Close verifies Close resets state.
 func TestNestedLoopJoin_Close(t *testing.T) {
 	RegisterTable("x", []Row{
-		{Cols: []string{"a"}, Types: []int{int(LX.T_INT_KW)}, Data: []any{int64(1)}},
+		{Cols: []string{"a"}, Types: []int{int(LX.T_INT_KW)}, Data: []Value{NewIntValue(int64(1))}},
 	})
 	RegisterTable("y", []Row{
-		{Cols: []string{"b"}, Types: []int{int(LX.T_INT_KW)}, Data: []any{int64(2)}},
+		{Cols: []string{"b"}, Types: []int{int(LX.T_INT_KW)}, Data: []Value{NewIntValue(int64(2))}},
 	})
 	defer UnregisterAll()
 

@@ -37,7 +37,7 @@ func TestScalarIN_ReturnsOneRow(t *testing.T) {
 		}
 		if len(rows) > 0 && len(rows[0].Data) > 0 {
 			got := rows[0].Data[0]
-			if got != tc.val {
+			if got.ToAny() != tc.val {
 				t.Errorf("%s: val got %v (type %T), want %v (type %T)", tc.sql, got, got, tc.val, tc.val)
 			}
 		}

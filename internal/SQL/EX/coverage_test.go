@@ -164,7 +164,7 @@ func TestCoverage_sumDistinct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SUM DISTINCT: %v", err)
 	}
-	val, _ := rows[0].Data[0].(int64)
+	val, _ := rows[0].Data[0].ToAny().(int64)
 	if val != 30 {
 		t.Errorf("SUM DISTINCT = %d, want 30", val)
 	}
@@ -577,7 +577,7 @@ func TestCoverage_likeEscape(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0].Data[0] != "100%" {
+	if rows[0].Data[0] != NewTextValue("100%") {
 		t.Errorf("expected '100%%', got %v", rows[0].Data[0])
 	}
 	// ESCAPE '\' — treat _ as literal
@@ -588,7 +588,7 @@ func TestCoverage_likeEscape(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0].Data[0] != "100_" {
+	if rows[0].Data[0] != NewTextValue("100_") {
 		t.Errorf("expected '100_', got %v", rows[0].Data[0])
 	}
 	// ESCAPE without special chars — no match

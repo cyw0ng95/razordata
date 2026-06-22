@@ -11,14 +11,14 @@ import (
 func TestHashCrossJoin_BasicEquiJoin(t *testing.T) {
 	defer UnregisterAll()
 	left := newTestSeqScan(t, "t1", []Row{
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{int64(1)}, tableName: "t1"},
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{int64(2)}, tableName: "t1"},
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{int64(3)}, tableName: "t1"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NewIntValue(int64(1))}, tableName: "t1"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NewIntValue(int64(2))}, tableName: "t1"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NewIntValue(int64(3))}, tableName: "t1"},
 	})
 	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{int64(2)}, tableName: "t2"},
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{int64(3)}, tableName: "t2"},
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{int64(2)}, tableName: "t2"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NewIntValue(int64(2))}, tableName: "t2"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NewIntValue(int64(3))}, tableName: "t2"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NewIntValue(int64(2))}, tableName: "t2"},
 	})
 
 	j := NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
@@ -35,7 +35,7 @@ func TestHashCrossJoin_BasicEquiJoin(t *testing.T) {
 			}
 			t.Fatalf("Next: %v", err)
 		}
-		l, r := row.Data[0].(int64), row.Data[1].(int64)
+		l, r := row.Data[0].ToAny().(int64), row.Data[1].ToAny().(int64)
 		seen[[2]int64{l, r}]++
 		count++
 	}
@@ -60,7 +60,7 @@ func TestHashCrossJoin_EmptySides(t *testing.T) {
 	defer UnregisterAll()
 	left := newTestSeqScan(t, "t1", nil)
 	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{int64(1)}, tableName: "t2"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NewIntValue(int64(1))}, tableName: "t2"},
 	})
 
 	j := NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
@@ -88,13 +88,13 @@ func TestHashCrossJoin_EmptySides(t *testing.T) {
 func TestHashCrossJoin_AllMatch(t *testing.T) {
 	defer UnregisterAll()
 	left := newTestSeqScan(t, "t1", []Row{
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{int64(1)}, tableName: "t1"},
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{int64(2)}, tableName: "t1"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NewIntValue(int64(1))}, tableName: "t1"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NewIntValue(int64(2))}, tableName: "t1"},
 	})
 	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{int64(1)}, tableName: "t2"},
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{int64(2)}, tableName: "t2"},
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{int64(1)}, tableName: "t2"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NewIntValue(int64(1))}, tableName: "t2"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NewIntValue(int64(2))}, tableName: "t2"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NewIntValue(int64(1))}, tableName: "t2"},
 	})
 
 	j := NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
@@ -122,13 +122,13 @@ func TestHashCrossJoin_AllMatch(t *testing.T) {
 func TestHashCrossJoin_StringKey(t *testing.T) {
 	defer UnregisterAll()
 	left := newTestSeqScan(t, "t1", []Row{
-		{Cols: []string{"k"}, Types: []int{0}, Data: []any{"x"}, tableName: "t1"},
-		{Cols: []string{"k"}, Types: []int{0}, Data: []any{"y"}, tableName: "t1"},
+		{Cols: []string{"k"}, Types: []int{0}, Data: []Value{NewTextValue("x")}, tableName: "t1"},
+		{Cols: []string{"k"}, Types: []int{0}, Data: []Value{NewTextValue("y")}, tableName: "t1"},
 	})
 	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"k"}, Types: []int{0}, Data: []any{"x"}, tableName: "t2"},
-		{Cols: []string{"k"}, Types: []int{0}, Data: []any{"x"}, tableName: "t2"},
-		{Cols: []string{"k"}, Types: []int{0}, Data: []any{"z"}, tableName: "t2"},
+		{Cols: []string{"k"}, Types: []int{0}, Data: []Value{NewTextValue("x")}, tableName: "t2"},
+		{Cols: []string{"k"}, Types: []int{0}, Data: []Value{NewTextValue("x")}, tableName: "t2"},
+		{Cols: []string{"k"}, Types: []int{0}, Data: []Value{NewTextValue("z")}, tableName: "t2"},
 	})
 
 	j := NewHashCrossJoin(left, right, "t1", "t2", "k", "k")
@@ -157,10 +157,10 @@ func TestHashCrossJoin_StringKey(t *testing.T) {
 func TestHashCrossJoin_NullKey(t *testing.T) {
 	defer UnregisterAll()
 	left := newTestSeqScan(t, "t1", []Row{
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{nil}, tableName: "t1"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NullValue()}, tableName: "t1"},
 	})
 	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"a"}, Types: []int{0}, Data: []any{nil}, tableName: "t2"},
+		{Cols: []string{"a"}, Types: []int{0}, Data: []Value{NullValue()}, tableName: "t2"},
 	})
 
 	j := NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
@@ -241,7 +241,7 @@ func newBenchSeqScan(table string, n int) *SeqScan {
 		rows[i] = Row{
 			Cols:      []string{"a"},
 			Types:     []int{0},
-			Data:      []any{int64(i % 50)},
+			Data:      []Value{NewIntValue(int64(i % 50))},
 			tableName: table,
 		}
 	}

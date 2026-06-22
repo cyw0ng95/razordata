@@ -16,7 +16,7 @@ func benchFixture(rows int) {
 	for i := 0; i < rows; i++ {
 		out := Row{
 			Cols: []string{"id", "name", "age"},
-			Data: []any{int64(i), fmt.Sprintf("u%d", i), int64(20 + (i % 50))},
+			Data: []Value{NewIntValue(int64(i)), NewTextValue(fmt.Sprintf("u%d", i)), NewIntValue(int64(20 + (i % 50)))},
 		}
 		existing = append(existing, out)
 	}

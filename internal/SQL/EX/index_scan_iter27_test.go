@@ -57,7 +57,7 @@ func TestIndexScan_RangeSeek_GT(t *testing.T) {
 		if err != nil {
 			break
 		}
-		got = append(got, row.Data[0].(int64))
+		got = append(got, row.Data[0].ToAny().(int64))
 	}
 	want := []int64{7, 9}
 	if len(got) != len(want) {
@@ -97,7 +97,7 @@ func TestIndexScan_RangeSeek_GE(t *testing.T) {
 		if err != nil {
 			break
 		}
-		got = append(got, row.Data[0].(int64))
+		got = append(got, row.Data[0].ToAny().(int64))
 	}
 	want := []int64{5, 7, 9}
 	if len(got) != len(want) {
@@ -133,7 +133,7 @@ func TestIndexScan_RangeSeek_Between(t *testing.T) {
 		if err != nil {
 			break
 		}
-		got = append(got, row.Data[0].(int64))
+		got = append(got, row.Data[0].ToAny().(int64))
 	}
 	want := []int64{3, 5, 7}
 	if len(got) != len(want) {
@@ -175,7 +175,7 @@ func TestIndexScan_RangeSeek_Planner(t *testing.T) {
 	}
 	var got []int64
 	for _, r := range rows {
-		got = append(got, r.Data[0].(int64))
+		got = append(got, r.Data[0].ToAny().(int64))
 	}
 	want := []int64{7, 9}
 	if len(got) != len(want) {

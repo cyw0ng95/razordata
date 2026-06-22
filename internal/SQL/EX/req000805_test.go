@@ -47,8 +47,8 @@ func TestAggregate_AllKeyword(t *testing.T) {
 				t.Fatalf("%s: got %d rows, want 1", tc.sql, len(rows))
 			}
 		got := rows[0].Data[0]
-		if got != tc.want {
-				t.Errorf("%s = %d, want %d", tc.sql, got, tc.want)
+		if got.ToAny() != tc.want {
+				t.Errorf("%s = %v, want %v", tc.sql, got, tc.want)
 			}
 		})
 	}

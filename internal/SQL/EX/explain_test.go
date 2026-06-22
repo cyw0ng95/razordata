@@ -33,7 +33,7 @@ func TestExplain_BasicSelect(t *testing.T) {
 	allDetails := ""
 	for _, r := range rows {
 		if len(r.Data) > 0 {
-			allDetails += r.Data[3].(string) + "\n"
+			allDetails += r.Data[3].ToAny().(string) + "\n"
 		}
 	}
 	t.Logf("EXPLAIN output:\n%s", allDetails)
@@ -88,7 +88,7 @@ func TestExplain_MissingOperatorTypes(t *testing.T) {
 	foundCT := false
 	for _, r := range rows {
 		if len(r.Data) > 0 {
-			d := r.Data[3].(string)
+			d := r.Data[3].ToAny().(string)
 			if strings.Contains(d, "CreateTable") || strings.Contains(d, "CREATE TABLE") {
 				foundCT = true
 			}
@@ -154,7 +154,7 @@ func TestExplainAnalyze(t *testing.T) {
 	allDetails := ""
 	for _, r := range rows {
 		if len(r.Data) > 0 {
-			allDetails += r.Data[3].(string) + "\n"
+			allDetails += r.Data[3].ToAny().(string) + "\n"
 		}
 	}
 	t.Logf("EXPLAIN ANALYZE output:\n%s", allDetails)

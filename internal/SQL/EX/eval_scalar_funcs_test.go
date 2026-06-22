@@ -58,7 +58,7 @@ func TestScalarFunctions_HexIIFMinMax(t *testing.T) {
 			if len(rs) == 0 {
 				t.Fatalf("expected results, got none")
 			}
-			got := fmt.Sprint(rs[0].Data[0])
+			got := fmt.Sprint(rs[0].Data[0].ToAny())
 			if got != p.want {
 				t.Errorf("got %q, want %q", got, p.want)
 			}
@@ -88,12 +88,12 @@ func TestMinMax_AggregateStillWorks(t *testing.T) {
 		t.Fatalf("expected 2 rows, got %d", len(rs))
 	}
 	// a=1: max(b)=10, min(b)=2
-	got1 := fmt.Sprintf("%v %v %v", rs[0].Data[0], rs[0].Data[1], rs[0].Data[2])
+	got1 := fmt.Sprintf("%v %v %v", rs[0].Data[0].ToAny(), rs[0].Data[1].ToAny(), rs[0].Data[2].ToAny())
 	if got1 != "1 10 2" {
 		t.Errorf("row1 got %q, want '1 10 2'", got1)
 	}
 	// a=4: max(b)=5, min(b)=5
-	got2 := fmt.Sprintf("%v %v %v", rs[1].Data[0], rs[1].Data[1], rs[1].Data[2])
+	got2 := fmt.Sprintf("%v %v %v", rs[1].Data[0].ToAny(), rs[1].Data[1].ToAny(), rs[1].Data[2].ToAny())
 	if got2 != "4 5 5" {
 		t.Errorf("row2 got %q, want '4 5 5'", got2)
 	}

@@ -102,7 +102,7 @@ func TestExecutorInSubquery(t *testing.T) {
 	}
 	got := map[string]bool{}
 	for _, r := range rows {
-		got[r.Data[0].(string)] = true
+		got[r.Data[0].ToAny().(string)] = true
 	}
 	if !got["alice"] || !got["carol"] || got["bob"] {
 		t.Errorf("unexpected results: %v", got)
@@ -224,7 +224,7 @@ func TestExecutorExistsCorrelated(t *testing.T) {
 	}
 	got := map[string]bool{}
 	for _, r := range rows {
-		got[r.Data[0].(string)] = true
+		got[r.Data[0].ToAny().(string)] = true
 	}
 	if !got["alice"] || !got["carol"] || got["bob"] {
 		t.Errorf("unexpected: %v", got)
@@ -272,7 +272,7 @@ func TestExecutorScalarSubquery(t *testing.T) {
 		t.Fatalf("expected 3 rows, got %d", len(rows))
 	}
 	for _, r := range rows {
-		if r.Data[1] != int64(10) {
+		if r.Data[1] != NewIntValue(int64(10)) {
 			t.Errorf("expected c=10, got %v", r.Data[1])
 		}
 	}
@@ -290,7 +290,7 @@ func TestExecutorScalarSubqueryEmpty(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0].Data[1] != nil {
+	if rows[0].Data[1].IsNull() == false {
 		t.Errorf("expected nil c, got %v", rows[0].Data[1])
 	}
 }
@@ -351,7 +351,7 @@ func TestExecutorInnerJoin(t *testing.T) {
 	}
 	byName := map[string][]int64{}
 	for _, r := range rows {
-		byName[r.Data[0].(string)] = append(byName[r.Data[0].(string)], r.Data[1].(int64))
+		byName[r.Data[0].ToAny().(string)] = append(byName[r.Data[0].ToAny().(string)], r.Data[1].ToAny().(int64))
 	}
 	if len(byName["alice"]) != 1 || byName["alice"][0] != 10 {
 		t.Errorf("alice: expected [10], got %v", byName["alice"])
@@ -408,8 +408,14 @@ func TestExecutorGroupBy(t *testing.T) {
 	}
 	want := map[string]int64{"a": 30, "b": 20, "c": 100}
 	for _, r := range rows {
-		cat := r.Data[0].(string)
-		sum := r.Data[1].(int64)
+		cat, ok := r.Data[0].ToAny().(string)
+		if !ok {
+			t.Fatalf("expected string type for Data[0], got %s", r.Data[0].Kind)
+		}
+		sum, ok := r.Data[1].ToAny().(int64)
+		if !ok {
+			t.Fatalf("expected int64 type for Data[1], got %s", r.Data[1].Kind)
+		}
 		if want[cat] != sum {
 			t.Errorf("category %s: got %d, want %d", cat, sum, want[cat])
 		}
@@ -440,7 +446,7 @@ func TestExecutorHaving(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, r := range rows {
-		seen[r.Data[0].(string)] = true
+		seen[r.Data[0].ToAny().(string)] = true
 	}
 	if !seen["a"] || !seen["c"] || seen["b"] {
 		t.Errorf("unexpected: %v", seen)
@@ -469,8 +475,8 @@ func TestExecutorGroupByCount(t *testing.T) {
 	}
 	want := map[string]int64{"a": 3, "b": 2, "c": 1}
 	for _, r := range rows {
-		if want[r.Data[0].(string)] != r.Data[1].(int64) {
-			t.Errorf("%s: got %d, want %d", r.Data[0], r.Data[1], want[r.Data[0].(string)])
+		if want[r.Data[0].ToAny().(string)] != r.Data[1].ToAny().(int64) {
+			t.Errorf("%s: got %v, want %d", r.Data[0].ToAny().(string), r.Data[1], want[r.Data[0].ToAny().(string)])
 		}
 	}
 }

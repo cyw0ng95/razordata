@@ -46,7 +46,7 @@ func TestWalkExprForTables_UsesSchemas(t *testing.T) {
 	defer UnregisterAll()
 
 	RegisterTable("t1", []Row{
-		{Cols: []string{"a", "b"}, Data: []any{int64(1), int64(2)}},
+		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 
 	p := NewPlanner()
@@ -70,10 +70,10 @@ func TestEquiJoinKey_BasicDetection(t *testing.T) {
 	defer UnregisterAll()
 
 	RegisterTable("t1", []Row{
-		{Cols: []string{"a", "b"}, Data: []any{int64(1), int64(2)}},
+		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 	RegisterTable("t2", []Row{
-		{Cols: []string{"c", "d"}, Data: []any{int64(1), int64(2)}},
+		{Cols: []string{"c", "d"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 
 	p := NewPlanner()
@@ -108,13 +108,13 @@ func TestEquiJoinKey_CrossTableInMultiJoin(t *testing.T) {
 	defer UnregisterAll()
 
 	RegisterTable("t1", []Row{
-		{Cols: []string{"a1"}, Data: []any{int64(1)}},
+		{Cols: []string{"a1"}, Data: []Value{NewIntValue(int64(1))}},
 	})
 	RegisterTable("t2", []Row{
-		{Cols: []string{"b9"}, Data: []any{int64(1)}},
+		{Cols: []string{"b9"}, Data: []Value{NewIntValue(int64(1))}},
 	})
 	RegisterTable("t3", []Row{
-		{Cols: []string{"a3"}, Data: []any{int64(1)}},
+		{Cols: []string{"a3"}, Data: []Value{NewIntValue(int64(1))}},
 	})
 
 	p := NewPlanner()
@@ -138,10 +138,10 @@ func TestSplitPredicatesByTable(t *testing.T) {
 	defer UnregisterAll()
 
 	RegisterTable("t1", []Row{
-		{Cols: []string{"a", "b"}, Data: []any{int64(1), int64(2)}},
+		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 	RegisterTable("t2", []Row{
-		{Cols: []string{"c", "d"}, Data: []any{int64(1), int64(2)}},
+		{Cols: []string{"c", "d"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 
 	p := NewPlanner()
@@ -328,13 +328,13 @@ func TestJoinPlanStructure(t *testing.T) {
 	defer UnregisterAll()
 
 	RegisterTable("t1", []Row{
-		{Cols: []string{"a", "b"}, Data: []any{int64(1), int64(2)}},
+		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 	RegisterTable("t2", []Row{
-		{Cols: []string{"c", "d"}, Data: []any{int64(1), int64(2)}},
+		{Cols: []string{"c", "d"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 	RegisterTable("t3", []Row{
-		{Cols: []string{"e", "f"}, Data: []any{int64(1), int64(2)}},
+		{Cols: []string{"e", "f"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 
 	p := NewPlanner()

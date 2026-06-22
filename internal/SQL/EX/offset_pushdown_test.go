@@ -8,10 +8,10 @@ import (
 
 func TestOffset_Operator(t *testing.T) {
 	src := &sliceOp{rows: []Row{
-		{Cols: []string{"a"}, Data: []any{int64(1)}},
-		{Cols: []string{"a"}, Data: []any{int64(2)}},
-		{Cols: []string{"a"}, Data: []any{int64(3)}},
-		{Cols: []string{"a"}, Data: []any{int64(4)}},
+		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(1))}},
+		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(2))}},
+		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(3))}},
+		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(4))}},
 	}}
 	off := NewOffset(src, 2)
 	defer off.Close()
@@ -25,7 +25,7 @@ func TestOffset_Operator(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got = append(got, row.Data[0].(int64))
+		got = append(got, row.Data[0].ToAny().(int64))
 	}
 	want := []int64{3, 4}
 	if len(got) != len(want) {
@@ -40,7 +40,7 @@ func TestOffset_Operator(t *testing.T) {
 
 func TestOffset_ExceedingRows(t *testing.T) {
 	src := &sliceOp{rows: []Row{
-		{Cols: []string{"a"}, Data: []any{int64(1)}},
+		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(1))}},
 	}}
 	off := NewOffset(src, 5)
 	defer off.Close()
@@ -79,7 +79,7 @@ func TestLimitOffset_Combined(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
-	got := []int64{rows[0].Data[0].(int64), rows[1].Data[0].(int64)}
+	got := []int64{rows[0].Data[0].ToAny().(int64), rows[1].Data[0].ToAny().(int64)}
 	if got[0] != 2 || got[1] != 3 {
 		t.Errorf("got %v, want [2 3]", got)
 	}

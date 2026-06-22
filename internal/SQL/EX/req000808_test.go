@@ -35,7 +35,7 @@ func TestHexLiteral(t *testing.T) {
 			if len(rows) != 1 {
 				t.Fatalf("got %d rows, want 1", len(rows))
 			}
-			got, ok := rows[0].Data[0].(string)
+			got, ok := rows[0].Data[0].ToAny().(string)
 			if !ok {
 				t.Fatalf("got type %T, want string", rows[0].Data[0])
 			}

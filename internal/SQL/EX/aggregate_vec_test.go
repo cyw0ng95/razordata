@@ -14,7 +14,7 @@ func makeAggregateTestRows(n int) []Row {
 		rows[i] = Row{
 			Cols:  []string{"id", "value"},
 			Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
-			Data:  []any{int64(i), int64(i * 10)},
+			Data:  []Value{NewIntValue(int64(i)), NewIntValue(int64(i * 10))},
 		}
 	}
 	return rows
@@ -112,7 +112,7 @@ func TestVectorizedSum_Float64(t *testing.T) {
 		rows = append(rows, Row{
 			Cols:  []string{"x"},
 			Types: []int{int(LX.T_FLOAT_KW)},
-			Data:  []any{float64(i) * 1.5},
+			Data:  []Value{NewFloatValue(float64(i) * 1.5)},
 		})
 	}
 	src := &rowSourceForTest{rows: rows}
@@ -231,7 +231,7 @@ func TestVectorizedSum_LargeBatch(t *testing.T) {
 		rows[i] = Row{
 			Cols:  []string{"x"},
 			Types: []int{int(LX.T_INT_KW)},
-			Data:  []any{int64(i)},
+			Data:  []Value{NewIntValue(int64(i))},
 		}
 		expected += int64(i)
 	}
@@ -267,7 +267,7 @@ func BenchmarkVectorizedSum_Int64(b *testing.B) {
 		rows[i] = Row{
 			Cols:  []string{"x"},
 			Types: []int{int(LX.T_INT_KW)},
-			Data:  []any{int64(i)},
+			Data:  []Value{NewIntValue(int64(i))},
 		}
 	}
 	schema := []string{"x"}
@@ -298,7 +298,7 @@ func BenchmarkRowSum_Fallback(b *testing.B) {
 		rows[i] = Row{
 			Cols:  []string{"x"},
 			Types: []int{int(LX.T_INT_KW)},
-			Data:  []any{int64(i)},
+			Data:  []Value{NewIntValue(int64(i))},
 		}
 	}
 
@@ -306,7 +306,7 @@ func BenchmarkRowSum_Fallback(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		var sum int64
 		for j := 0; j < n; j++ {
-			sum += rows[j].Data[0].(int64)
+			sum += rows[j].Data[0].ToAny().(int64)
 		}
 	}
 }

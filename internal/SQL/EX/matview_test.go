@@ -19,7 +19,7 @@ func TestCreateMatViewOperator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	if len(row.Data) == 0 || row.Data[0].(string) != "materialized view created" {
+	if len(row.Data) == 0 || row.Data[0].ToAny().(string) != "materialized view created" {
 		t.Errorf("unexpected result: %v", row.Data)
 	}
 
@@ -46,7 +46,7 @@ func TestDropMatViewOperator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	if len(row.Data) == 0 || row.Data[0].(string) != "materialized view dropped" {
+	if len(row.Data) == 0 || row.Data[0].ToAny().(string) != "materialized view dropped" {
 		t.Errorf("unexpected result: %v", row.Data)
 	}
 
@@ -71,8 +71,8 @@ func TestRefreshMatViewOperator(t *testing.T) {
 	defer UnregisterAll()
 
 	leftRows := []Row{
-		{Cols: []string{"id"}, Data: []any{int64(1)}},
-		{Cols: []string{"id"}, Data: []any{int64(2)}},
+		{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(1))}},
+		{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(2))}},
 	}
 	RegisterTable("t1", leftRows)
 
@@ -94,7 +94,7 @@ func TestRefreshMatViewOperator(t *testing.T) {
 	if len(row.Data) == 0 {
 		t.Fatal("empty result")
 	}
-	resultStr, ok := row.Data[0].(string)
+	resultStr, ok := row.Data[0].ToAny().(string)
 	if !ok {
 		t.Fatalf("expected string, got %T", row.Data[0])
 	}
@@ -132,7 +132,7 @@ func TestMatViewDataPrefix(t *testing.T) {
 func TestEncodeMatViewRow(t *testing.T) {
 	row := Row{
 		Cols: []string{"id", "name", "score"},
-		Data: []any{int64(42), "hello", float64(42)},
+		Data: []Value{NewIntValue(int64(42)), NewTextValue("hello"), NewFloatValue(float64(42))},
 	}
 	encoded := encodeMatViewRow(row)
 	if len(encoded) == 0 {

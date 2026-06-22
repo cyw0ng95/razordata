@@ -35,7 +35,7 @@ func TestDivByZero(t *testing.T) {
 			if len(rows) != 1 {
 				t.Fatalf("got %d rows, want 1", len(rows))
 			}
-			if rows[0].Data[0] != nil {
+			if rows[0].Data[0].IsNull() == false {
 				t.Errorf("got %v, want nil (NULL)", rows[0].Data[0])
 			}
 		})

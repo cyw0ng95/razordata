@@ -117,7 +117,7 @@ func TestUpdate_AppendsVersion(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if got, ok := rows[0].Data[0].(string); !ok || got != "new" {
+	if got, ok := rows[0].Data[0].ToAny().(string); !ok || got != "new" {
 		t.Errorf("expected val=new, got %v", rows[0].Data[0])
 	}
 }
@@ -187,7 +187,7 @@ func TestSQLviaEngine_CreateInsertUpdateSelect(t *testing.T) {
 	}
 	expected := [][]int64{{1, 10}, {2, 20}, {3, 60}, {4, 80}, {5, 100}}
 	for i, exp := range expected {
-		if rows[i].Data[0] != exp[0] || rows[i].Data[1] != exp[1] {
+		if rows[i].Data[0] != NewIntValue(exp[0]) || rows[i].Data[1] != NewIntValue(exp[1]) {
 			t.Errorf("row %d: got %v, want %v", i, rows[i].Data, exp)
 		}
 	}

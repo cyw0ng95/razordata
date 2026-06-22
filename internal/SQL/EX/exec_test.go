@@ -18,9 +18,9 @@ func TestExecutorEndToEnd(t *testing.T) {
 	defer UnregisterAll()
 
 	RegisterTable("users", []Row{
-		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []any{int64(1), "alice", int64(30)}},
-		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []any{int64(2), "bob", int64(25)}},
-		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []any{int64(3), "carol", int64(40)}},
+		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []Value{NewIntValue(int64(1)), NewTextValue("alice"), NewIntValue(int64(30))}},
+		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []Value{NewIntValue(int64(2)), NewTextValue("bob"), NewIntValue(int64(25))}},
+		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []Value{NewIntValue(int64(3)), NewTextValue("carol"), NewIntValue(int64(40))}},
 	})
 
 	cases := []runCase{
@@ -257,7 +257,7 @@ func drain(t *testing.T, op Operator) [][]any {
 			t.Fatalf("Next: %v", err)
 		}
 		cp := make([]any, len(row.Data))
-		copy(cp, row.Data)
+		copy(cp, valueSliceToAny(row.Data))
 		out = append(out, cp)
 	}
 	_ = op.Close()

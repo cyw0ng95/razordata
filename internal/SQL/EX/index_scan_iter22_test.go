@@ -92,10 +92,10 @@ func TestIndexScan_WithIndexSeek(t *testing.T) {
 		t.Fatalf("Next: %v", err)
 	}
 	// row.Data[0] is id, row.Data[1] is email
-	if row.Data[0] != int64(2) {
+	if row.Data[0] != NewIntValue(int64(2)) {
 		t.Errorf("row id = %v, want 2", row.Data[0])
 	}
-	if row.Data[1] != "bob@x.com" {
+	if row.Data[1] != NewTextValue("bob@x.com") {
 		t.Errorf("row email = %v, want bob@x.com", row.Data[1])
 	}
 

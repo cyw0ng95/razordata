@@ -30,7 +30,7 @@ func TestGeneratedColumnMaterialize(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if v, ok := rows[0].Data[1].(int64); !ok || v != 11 {
+	if v, ok := rows[0].Data[1].ToAny().(int64); !ok || v != 11 {
 		t.Errorf("expected b=11 (a+1), got %v", rows[0].Data[1])
 	}
 
@@ -42,7 +42,7 @@ func TestGeneratedColumnMaterialize(t *testing.T) {
 		t.Fatalf("insert t2: %v", err)
 	}
 	rows2, _ := ex.QueryAll(ctx, "SELECT x, y, s FROM t2")
-	if v, ok := rows2[0].Data[2].(int64); !ok || v != 7 {
+	if v, ok := rows2[0].Data[2].ToAny().(int64); !ok || v != 7 {
 		t.Errorf("expected s=7, got %v", rows2[0].Data[2])
 	}
 

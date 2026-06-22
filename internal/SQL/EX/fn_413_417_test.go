@@ -56,7 +56,7 @@ func TestScalarFunctions_413_417(t *testing.T) {
 			if len(rs) == 0 {
 				t.Fatalf("expected results, got none")
 			}
-			got := fmt.Sprint(rs[0].Data[0])
+			got := fmt.Sprint(rs[0].Data[0].ToAny())
 			if got != p.want {
 				t.Errorf("got %q, want %q", got, p.want)
 			}

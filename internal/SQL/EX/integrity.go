@@ -62,10 +62,10 @@ func (ic *IntegrityCheck) Next(ctx context.Context) (Row, error) {
 	for _, errMsg := range errors {
 		ic.rows = append(ic.rows, Row{
 			Cols: []string{"table", "page", "error"},
-			Data: []any{
-				[]byte(""),     // table (empty = global)
-				[]byte(""),     // page (empty = not applicable)
-				[]byte(errMsg), // error message
+			Data: []Value{
+				NewTextValue(""),     // table (empty = global)
+				NewTextValue(""),     // page (empty = not applicable)
+				NewTextValue(errMsg), // error message
 			},
 		})
 	}

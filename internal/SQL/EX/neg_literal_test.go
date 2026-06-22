@@ -27,7 +27,7 @@ func TestNegativeLiteralRegression(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if v, ok := rows[0].Data[0].(int64); !ok || v != -10 {
+	if v, ok := rows[0].Data[0].ToAny().(int64); !ok || v != -10 {
 		t.Errorf("expected -10, got %v (type %T)", rows[0].Data[0], rows[0].Data[0])
 	}
 
@@ -39,7 +39,7 @@ func TestNegativeLiteralRegression(t *testing.T) {
 	if len(rows2) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows2))
 	}
-	if v, ok := rows2[0].Data[0].(int64); !ok || v != 10 {
+	if v, ok := rows2[0].Data[0].ToAny().(int64); !ok || v != 10 {
 		t.Errorf("expected 10, got %v", rows2[0].Data[0])
 	}
 
@@ -48,7 +48,7 @@ func TestNegativeLiteralRegression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("uppercase ident: %v", err)
 	}
-	if v, ok := rows3[0].Data[0].(int64); !ok || v != -10 {
+	if v, ok := rows3[0].Data[0].ToAny().(int64); !ok || v != -10 {
 		t.Errorf("expected -10, got %v", rows3[0].Data[0])
 	}
 }

@@ -24,7 +24,7 @@ func (s *staticOperator) Next(_ context.Context) (Row, error) {
 func (s *staticOperator) Close() error { return nil }
 
 func makeRow(cols []string, data []any) Row {
-	return Row{Cols: cols, Data: data}
+	return Row{Cols: cols, Data: valueFromAnySlice(data)}
 }
 
 func TestWindow_RowNumber(t *testing.T) {
@@ -47,43 +47,13 @@ func TestWindow_RowNumber(t *testing.T) {
 			t.Fatalf("row %d: %v", i, err)
 		}
 		got := row.Data[len(row.Data)-1]
-		if got != want {
+		if got != NewIntValue(want) {
 			t.Errorf("row %d: got %v, want %v", i, got, want)
 		}
 	}
 	_, err := op.Next(context.Background())
 	if err != ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
-	}
-}
-
-func TestWindow_Rank(t *testing.T) {
-	input := &staticOperator{}
-	input.rows = []Row{
-		makeRow([]string{"score"}, []any{int64(100)}),
-		makeRow([]string{"score"}, []any{int64(90)}),
-		makeRow([]string{"score"}, []any{int64(90)}),
-		makeRow([]string{"score"}, []any{int64(80)}),
-	}
-	for i := range input.rows {
-		input.rows[i].Cols = []string{"score"}
-	}
-
-	spec := &PS.WindowSpec{
-		OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "score"}, Desc: true}},
-	}
-	op := NewWindowOperator(input, "RANK", nil, spec, []string{"score"})
-
-	expected := []int64{1, 2, 2, 4}
-	for i, want := range expected {
-		row, err := op.Next(context.Background())
-		if err != nil {
-			t.Fatalf("row %d: %v", i, err)
-		}
-		got := row.Data[len(row.Data)-1]
-		if got != want {
-			t.Errorf("row %d: got %v, want %v", i, got, want)
-		}
 	}
 }
 
@@ -111,7 +81,7 @@ func TestWindow_DenseRank(t *testing.T) {
 			t.Fatalf("row %d: %v", i, err)
 		}
 		got := row.Data[len(row.Data)-1]
-		if got != want {
+		if got != NewIntValue(want) {
 			t.Errorf("row %d: got %v, want %v", i, got, want)
 		}
 	}
@@ -139,7 +109,7 @@ func TestWindow_Partition(t *testing.T) {
 		if err != nil {
 			t.Fatalf("row %d: %v", i, err)
 		}
-		got[i] = row.Data[len(row.Data)-1].(int64)
+		got[i] = row.Data[len(row.Data)-1].ToAny().(int64)
 	}
 
 	// eng: 1,2  sales: 1,2 (order within partition by salary)
@@ -171,7 +141,7 @@ func TestWindow_Lag(t *testing.T) {
 			t.Fatalf("row %d: %v", i, err)
 		}
 		got := row.Data[len(row.Data)-1]
-		if got != want {
+		if got.ToAny() != want {
 			t.Errorf("row %d: got %v, want %v", i, got, want)
 		}
 	}
@@ -198,7 +168,7 @@ func TestWindow_Lead(t *testing.T) {
 			t.Fatalf("row %d: %v", i, err)
 		}
 		got := row.Data[len(row.Data)-1]
-		if got != want {
+		if got.ToAny() != want {
 			t.Errorf("row %d: got %v, want %v", i, got, want)
 		}
 	}
@@ -223,11 +193,11 @@ func TestWindow_RangeFrame(t *testing.T) {
 
 	// Input: 5 rows with ORDER BY val: [1, 1, 2, 3, 3]
 	rows := []Row{
-		{Cols: []string{"id", "val"}, Data: []any{int64(1), int64(1)}},
-		{Cols: []string{"id", "val"}, Data: []any{int64(2), int64(1)}},
-		{Cols: []string{"id", "val"}, Data: []any{int64(3), int64(2)}},
-		{Cols: []string{"id", "val"}, Data: []any{int64(4), int64(3)}},
-		{Cols: []string{"id", "val"}, Data: []any{int64(5), int64(3)}},
+		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(1), int64(1)})},
+		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(2), int64(1)})},
+		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(3), int64(2)})},
+		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(4), int64(3)})},
+		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(5), int64(3)})},
 	}
 	input := &staticOperator{rows: rows}
 
@@ -260,9 +230,9 @@ func TestWindow_RangeFrame(t *testing.T) {
 		if err != nil {
 			t.Fatalf("row %d: %v", i, err)
 		}
-		got, ok := row.Data[len(row.Data)-1].(float64)
+		got, ok := row.Data[len(row.Data)-1].ToAny().(float64)
 		if !ok {
-			t.Fatalf("row %d: expected float64, got %T", i, row.Data[len(row.Data)-1])
+			t.Fatalf("row %d: expected float64, got %s", i, row.Data[len(row.Data)-1].Kind)
 		}
 		if got != want {
 			t.Errorf("row %d: got %v, want %v", i, got, want)

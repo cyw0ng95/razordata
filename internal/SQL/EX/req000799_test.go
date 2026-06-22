@@ -209,7 +209,7 @@ func TestHashCrossJoin_SmallTables(t *testing.T) {
 	// Verify all combinations exist
 	seen := map[[2]int64]bool{}
 	for _, r := range rows {
-		key := [2]int64{r.Data[0].(int64), r.Data[1].(int64)}
+		key := [2]int64{r.Data[0].ToAny().(int64), r.Data[1].ToAny().(int64)}
 		seen[key] = true
 	}
 	for _, a := range []int64{1, 2, 3} {

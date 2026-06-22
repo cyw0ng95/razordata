@@ -34,7 +34,7 @@ func TestAggregate_Distinct_Count(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != int64(3) {
+	if rows[0].Data[0] != NewIntValue(int64(3)) {
 		t.Errorf("COUNT(DISTINCT v) = %v, want 3", rows[0].Data[0])
 	}
 }
@@ -66,7 +66,7 @@ func TestAggregate_Distinct_Sum(t *testing.T) {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
 	// Distinct values: {10, 20, 30}; sum = 60
-	if rows[0].Data[0] != int64(60) {
+	if rows[0].Data[0] != NewIntValue(int64(60)) {
 		t.Errorf("SUM(DISTINCT v) = %v, want 60", rows[0].Data[0])
 	}
 }
@@ -97,7 +97,7 @@ func TestAggregate_Distinct_Avg(t *testing.T) {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
 	// Distinct values: {10, 20, 30}; avg = 60/3 = 20
-	got, ok := rows[0].Data[0].(float64)
+	got, ok := rows[0].Data[0].ToAny().(float64)
 	if !ok {
 		t.Fatalf("AVG(DISTINCT v) = %v (type %T), want float64", rows[0].Data[0], rows[0].Data[0])
 	}
@@ -131,10 +131,10 @@ func TestAggregate_Distinct_MinMax(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != int64(10) {
+	if rows[0].Data[0] != NewIntValue(int64(10)) {
 		t.Errorf("MIN(DISTINCT v) = %v, want 10", rows[0].Data[0])
 	}
-	if rows[0].Data[1] != int64(50) {
+	if rows[0].Data[1] != NewIntValue(int64(50)) {
 		t.Errorf("MAX(DISTINCT v) = %v, want 50", rows[0].Data[1])
 	}
 }
@@ -165,7 +165,7 @@ func TestAggregate_Distinct_GroupConcat(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	got, _ := rows[0].Data[0].(string)
+	got, _ := rows[0].Data[0].ToAny().(string)
 	// Order: a, b, c (insertion order, duplicates removed)
 	want := "a,b,c"
 	if got != want {
@@ -203,7 +203,7 @@ func TestAggregate_GroupConcat_Separator(t *testing.T) {
 		if len(rows) != 1 {
 			t.Fatalf("got %d rows, want 1", len(rows))
 		}
-		got, _ := rows[0].Data[0].(string)
+		got, _ := rows[0].Data[0].ToAny().(string)
 		want := "a-b-c"
 		if got != want {
 			t.Errorf("GROUP_CONCAT(v, '-') = %q, want %q", got, want)
@@ -230,7 +230,7 @@ func TestAggregate_GroupConcat_Separator(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GROUP_CONCAT(DISTINCT v, '|'): %v", err)
 		}
-		got, _ := rows[0].Data[0].(string)
+		got, _ := rows[0].Data[0].ToAny().(string)
 		want := "a|b|c"
 		if got != want {
 			t.Errorf("GROUP_CONCAT(DISTINCT v, '|') = %q, want %q", got, want)
@@ -249,7 +249,7 @@ func TestAggregate_GroupConcat_Separator(t *testing.T) {
 		if len(rows) != 1 {
 			t.Fatalf("got %d rows, want 1", len(rows))
 		}
-		if rows[0].Data[0] != nil {
+		if rows[0].Data[0].IsNull() == false {
 			t.Errorf("GROUP_CONCAT over empty set = %v, want nil", rows[0].Data[0])
 		}
 	})
@@ -284,10 +284,10 @@ func TestAggregate_Distinct_GroupBy(t *testing.T) {
 	}
 	// grp=x: distinct {10, 20} = 30
 	// grp=y: distinct {30, 40} = 70
-	if rows[0].Data[0] != "x" || rows[0].Data[1] != int64(30) {
+	if rows[0].Data[0] != NewTextValue("x") || rows[0].Data[1] != NewIntValue(int64(30)) {
 		t.Errorf("grp=x: got %v, want [x, 30]", rows[0].Data)
 	}
-	if rows[1].Data[0] != "y" || rows[1].Data[1] != int64(70) {
+	if rows[1].Data[0] != NewTextValue("y") || rows[1].Data[1] != NewIntValue(int64(70)) {
 		t.Errorf("grp=y: got %v, want [y, 70]", rows[1].Data)
 	}
 }
@@ -319,10 +319,10 @@ func TestAggregate_Distinct_Nulls(t *testing.T) {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
 	// NULLs are skipped, distinct non-null = {10, 20}
-	if rows[0].Data[0] != int64(2) {
+	if rows[0].Data[0] != NewIntValue(int64(2)) {
 		t.Errorf("COUNT(DISTINCT v) = %v, want 2 (NULLs excluded)", rows[0].Data[0])
 	}
-	if rows[0].Data[1] != int64(30) {
+	if rows[0].Data[1] != NewIntValue(int64(30)) {
 		t.Errorf("SUM(DISTINCT v) = %v, want 30", rows[0].Data[1])
 	}
 }
@@ -351,16 +351,16 @@ func TestAggregate_Distinct_AllUnique(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != int64(3) {
+	if rows[0].Data[0] != NewIntValue(int64(3)) {
 		t.Errorf("COUNT(DISTINCT) = %v, want 3", rows[0].Data[0])
 	}
-	if rows[0].Data[1] != int64(3) {
+	if rows[0].Data[1] != NewIntValue(int64(3)) {
 		t.Errorf("COUNT = %v, want 3", rows[0].Data[1])
 	}
-	if rows[0].Data[2] != int64(6) {
+	if rows[0].Data[2] != NewIntValue(int64(6)) {
 		t.Errorf("SUM(DISTINCT) = %v, want 6", rows[0].Data[2])
 	}
-	if rows[0].Data[3] != int64(6) {
+	if rows[0].Data[3] != NewIntValue(int64(6)) {
 		t.Errorf("SUM = %v, want 6", rows[0].Data[3])
 	}
 }
@@ -381,7 +381,7 @@ func TestAggregate_Distinct_EmptyTable(t *testing.T) {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
 	for i, agg := range []string{"SUM", "AVG", "MIN", "MAX", "GROUP_CONCAT"} {
-		if rows[0].Data[i] != nil {
+		if !rows[0].Data[i].IsNull() {
 			t.Errorf("empty %s(DISTINCT) = %v, want nil", agg, rows[0].Data[i])
 		}
 	}

@@ -198,12 +198,12 @@ func TestConstraints_FillDefaults_LiteralInt(t *testing.T) {
 		nullable: []bool{true, true},
 		defaults: []PS.Expr{nil, &PS.NumberLiteral{Val: 99}},
 	}
-	row := Row{Data: []any{int64(1), nil}}
+	row := Row{Data: []Value{NewIntValue(int64(1)), NullValue()}}
 	out, err := fillDefaults(ss, row)
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
 	}
-	if out.Data[1] != int64(99) {
+	if out.Data[1] != NewIntValue(int64(99)) {
 		t.Errorf("expected default 99, got %v", out.Data[1])
 	}
 }
@@ -220,7 +220,7 @@ func TestConstraints_FillDefaults_NullLiteral(t *testing.T) {
 		nullable: []bool{true},
 		defaults: []PS.Expr{&PS.NullLiteral{}},
 	}
-	row := Row{Data: []any{nil}}
+	row := Row{Data: []Value{NullValue()}}
 	out, err := fillDefaults(ss, row)
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
@@ -236,12 +236,12 @@ func TestConstraints_FillDefaults_NilSchema(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	ss := &storeSchema{cols: []string{"a"}, nullable: []bool{true}}
-	row := Row{Data: []any{int64(1)}}
+	row := Row{Data: []Value{NewIntValue(int64(1))}}
 	out, err := fillDefaults(ss, row)
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
 	}
-	if out.Data[0] != int64(1) {
+	if out.Data[0] != NewIntValue(int64(1)) {
 		t.Errorf("expected unchanged value, got %v", out.Data[0])
 	}
 }
@@ -257,7 +257,7 @@ func TestConstraints_ValidateRow_RejectsNullNotNull(t *testing.T) {
 		nullable: []bool{false, true},
 		defaults: nil,
 	}
-	row := Row{Data: []any{nil, int64(2)}}
+	row := Row{Data: []Value{NullValue(), NewIntValue(int64(2))}}
 	err := validateRow(ss, row)
 	if !errors.Is(err, ap.ErrConstraint) {
 		t.Errorf("validateRow: got %v, want ErrConstraint", err)
@@ -277,7 +277,7 @@ func TestConstraints_ValidateRow_AcceptsNullNullable(t *testing.T) {
 		pk:       "",
 		nullable: []bool{true, true},
 	}
-	row := Row{Data: []any{nil, int64(2)}}
+	row := Row{Data: []Value{NullValue(), NewIntValue(int64(2))}}
 	if err := validateRow(ss, row); err != nil {
 		t.Errorf("validateRow: %v", err)
 	}

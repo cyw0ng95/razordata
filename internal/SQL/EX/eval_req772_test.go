@@ -15,7 +15,7 @@ func TestEvalRound_Int64FastPath(t *testing.T) {
 
 	RegisterTableSchema("t", []string{"id"})
 	tablesMu.Lock()
-	tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []any{int64(42)}})
+	tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(42))}})
 	tablesMu.Unlock()
 
 	e := NewExecutor()
@@ -30,10 +30,11 @@ func TestEvalRound_Int64FastPath(t *testing.T) {
 		t.Fatalf("expected 1 row × 1 col, got %d×%d", len(rows), len(rows[0].Data))
 	}
 	// Result must be int64 (same type as input).
-	if _, ok := rows[0].Data[0].(int64); !ok {
-		t.Errorf("ROUND(int64) returned %T, want int64", rows[0].Data[0])
+	v, ok := rows[0].Data[0].ToAny().(int64)
+	if !ok {
+		t.Fatalf("ROUND(int64) returned %s, want int64", rows[0].Data[0].Kind)
 	}
-	if rows[0].Data[0].(int64) != 42 {
+	if v != 42 {
 		t.Errorf("ROUND(42) = %v, want 42", rows[0].Data[0])
 	}
 }
@@ -47,7 +48,7 @@ func TestEvalSign_Int64FastPath(t *testing.T) {
 	RegisterTableSchema("t", []string{"id"})
 	tablesMu.Lock()
 	for _, v := range []int64{-5, 0, 7} {
-		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []any{v}})
+		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(v)}})
 	}
 	tablesMu.Unlock()
 
@@ -63,7 +64,7 @@ func TestEvalSign_Int64FastPath(t *testing.T) {
 	}
 	want := []int64{-1, 0, 1}
 	for i, r := range rows {
-		got, ok := r.Data[0].(int64)
+		got, ok := r.Data[0].ToAny().(int64)
 		if !ok {
 			t.Errorf("row %d: SIGN returned %T, want int64", i, r.Data[0])
 		}
@@ -81,7 +82,7 @@ func TestEvalRound_NullPreserved(t *testing.T) {
 
 	RegisterTableSchema("t", []string{"id"})
 	tablesMu.Lock()
-	tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []any{nil}})
+	tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NullValue()}})
 	tablesMu.Unlock()
 
 	e := NewExecutor()
@@ -91,7 +92,7 @@ func TestEvalRound_NullPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ROUND NULL: %v", err)
 	}
-	if rows[0].Data[0] != nil {
+	if rows[0].Data[0].IsNull() == false {
 		t.Errorf("ROUND(NULL) = %v, want nil", rows[0].Data[0])
 	}
 }
@@ -104,7 +105,7 @@ func TestEvalSign_NullPreserved(t *testing.T) {
 
 	RegisterTableSchema("t", []string{"id"})
 	tablesMu.Lock()
-	tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []any{nil}})
+	tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NullValue()}})
 	tablesMu.Unlock()
 
 	e := NewExecutor()
@@ -114,7 +115,7 @@ func TestEvalSign_NullPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SIGN NULL: %v", err)
 	}
-	if rows[0].Data[0] != nil {
+	if rows[0].Data[0].IsNull() == false {
 		t.Errorf("SIGN(NULL) = %v, want nil", rows[0].Data[0])
 	}
 }
@@ -128,7 +129,7 @@ func BenchmarkEvalRound_Int64(b *testing.B) {
 	RegisterTableSchema("t", []string{"id"})
 	tablesMu.Lock()
 	for i := 0; i < 1000; i++ {
-		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []any{int64(i)}})
+		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
 	}
 	tablesMu.Unlock()
 
@@ -149,7 +150,7 @@ func BenchmarkEvalSign_Int64(b *testing.B) {
 	RegisterTableSchema("t", []string{"id"})
 	tablesMu.Lock()
 	for i := 0; i < 1000; i++ {
-		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []any{int64(i)}})
+		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
 	}
 	tablesMu.Unlock()
 

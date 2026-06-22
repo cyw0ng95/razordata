@@ -10,9 +10,9 @@ func TestSubqueryPlanner_SeesStoreTables(t *testing.T) {
 	defer UnregisterAll()
 
 	RegisterTable("t1", []Row{
-		{Cols: []string{"id", "val"}, Data: []any{int64(1), "a"}},
-		{Cols: []string{"id", "val"}, Data: []any{int64(2), "b"}},
-		{Cols: []string{"id", "val"}, Data: []any{int64(3), "c"}},
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("b")}},
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(3)), NewTextValue("c")}},
 	})
 
 	e := NewExecutor()
@@ -44,12 +44,12 @@ func TestSubqueryPlanner_StorePropagationAfterClone(t *testing.T) {
 	defer UnregisterAll()
 
 	RegisterTable("t1", []Row{
-		{Cols: []string{"id", "val"}, Data: []any{int64(1), "x"}},
-		{Cols: []string{"id", "val"}, Data: []any{int64(2), "y"}},
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("x")}},
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("y")}},
 	})
 	RegisterTable("t2", []Row{
-		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "alice"}},
-		{Cols: []string{"ref", "name"}, Data: []any{int64(1), "bob"}},
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("alice")}},
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("bob")}},
 	})
 
 	e := NewExecutor()
@@ -68,7 +68,7 @@ func TestSubqueryPlanner_StorePropagationAfterClone(t *testing.T) {
 
 func TestSubqueryPlanner_CloneRowPreservesPlanner(t *testing.T) {
 	pl := NewPlannerWithStore(nil)
-	src := Row{Cols: []string{"id"}, Data: []any{int64(1)}}
+	src := Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(1))}}
 	src.planner = pl
 	cloned := cloneRow(src)
 	if cloned.planner != pl {

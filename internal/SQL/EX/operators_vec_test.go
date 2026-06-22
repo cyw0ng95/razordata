@@ -32,7 +32,7 @@ func makeTestRows(n int) []Row {
 		rows[i] = Row{
 			Cols:  []string{"id", "value"},
 			Types: []int{int(LX.T_INT_KW), int(LX.T_TEXT)},
-			Data:  []any{int64(i), "row"},
+			Data:  []Value{NewIntValue(int64(i)), NewTextValue("row")},
 		}
 	}
 	return rows
@@ -299,7 +299,7 @@ func BenchmarkVectorizedFilter_MultiBatch(b *testing.B) {
 		rows[i] = Row{
 			Cols:  []string{"id"},
 			Types: []int{int(LX.T_INT_KW)},
-			Data:  []any{int64(i)},
+			Data:  []Value{NewIntValue(int64(i))},
 		}
 	}
 	schema := []string{"id"}

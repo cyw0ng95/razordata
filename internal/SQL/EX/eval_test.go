@@ -294,8 +294,8 @@ func TestFilterPassesThrough(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	RegisterTable("t", []Row{
-		{Cols: []string{"x"}, Data: []any{int64(1)}},
-		{Cols: []string{"x"}, Data: []any{int64(2)}},
+		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(1))}},
+		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(2))}},
 	})
 	scan := NewSeqScan("t")
 	filter := NewFilter(scan, &PS.NumberLiteral{Val: 1})
@@ -303,7 +303,7 @@ func TestFilterPassesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if row.Data[0] != int64(1) {
+	if row.Data[0] != NewIntValue(int64(1)) {
 		t.Errorf("expected 1, got %v", row.Data[0])
 	}
 }
@@ -312,7 +312,7 @@ func TestProjectStarPassesThrough(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	RegisterTable("t", []Row{
-		{Cols: []string{"x"}, Data: []any{int64(7)}},
+		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(7))}},
 	})
 	scan := NewSeqScan("t")
 	project := NewProject(scan, []PS.Expr{&PS.StarExpr{}})
@@ -320,7 +320,7 @@ func TestProjectStarPassesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if row.Data[0] != int64(7) {
+	if row.Data[0] != NewIntValue(int64(7)) {
 		t.Errorf("expected 7, got %v", row.Data[0])
 	}
 }
@@ -329,9 +329,9 @@ func TestSortThenIterate(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	RegisterTable("t", []Row{
-		{Cols: []string{"x"}, Data: []any{int64(3)}},
-		{Cols: []string{"x"}, Data: []any{int64(1)}},
-		{Cols: []string{"x"}, Data: []any{int64(2)}},
+		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(3))}},
+		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(1))}},
+		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(2))}},
 	})
 	scan := NewSeqScan("t")
 	s := NewSort(scan, []PS.OrderItem{{Expr: &PS.Ident{Name: "x"}, Desc: false}})
@@ -341,7 +341,7 @@ func TestSortThenIterate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if row.Data[0] != w {
+		if row.Data[0] != NewIntValue(int64(w)) {
 			t.Errorf("expected %d, got %v", w, row.Data[0])
 		}
 	}
@@ -354,9 +354,9 @@ func TestLimitStops(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	RegisterTable("t", []Row{
-		{Cols: []string{"x"}, Data: []any{int64(1)}},
-		{Cols: []string{"x"}, Data: []any{int64(2)}},
-		{Cols: []string{"x"}, Data: []any{int64(3)}},
+		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(1))}},
+		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(2))}},
+		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(3))}},
 	})
 	scan := NewSeqScan("t")
 	l := NewLimit(scan, 2)
@@ -379,7 +379,7 @@ func TestLimitStops(t *testing.T) {
 func TestInsertAppendsRows(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	RegisterTable("t", []Row{{Cols: []string{"a"}, Data: []any{int64(0)}}})
+	RegisterTable("t", []Row{{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(0))}}})
 	insert := NewInsert("t", nil, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}},
 		{&PS.NumberLiteral{Val: 2}},
@@ -402,8 +402,8 @@ func TestUpdateModifiesRows(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	RegisterTable("t", []Row{
-		{Cols: []string{"a", "b"}, Data: []any{int64(1), "x"}},
-		{Cols: []string{"a", "b"}, Data: []any{int64(2), "y"}},
+		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("x")}},
+		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("y")}},
 	})
 	scan := NewSeqScan("t")
 	update := NewUpdate("t", []PS.Pair{{Col: "b", Val: &PS.StringLiteral{Val: "z"}}}, nil, scan, nil)
@@ -417,7 +417,7 @@ func TestUpdateModifiesRows(t *testing.T) {
 	tablesMu.RLock()
 	defer tablesMu.RUnlock()
 	for _, r := range tables["t"] {
-		if r.Data[1] != "z" {
+		if r.Data[1] != NewTextValue("z") {
 			t.Errorf("expected b='z', got %v", r.Data[1])
 		}
 	}
@@ -427,9 +427,9 @@ func TestDeleteRemovesMatching(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	RegisterTable("t", []Row{
-		{Cols: []string{"a"}, Data: []any{int64(1)}},
-		{Cols: []string{"a"}, Data: []any{int64(2)}},
-		{Cols: []string{"a"}, Data: []any{int64(3)}},
+		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(1))}},
+		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(2))}},
+		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(3))}},
 	})
 	scan := NewSeqScan("t")
 	filter := NewFilter(scan, &PS.BinaryExpr{
@@ -448,7 +448,7 @@ func TestDeleteRemovesMatching(t *testing.T) {
 	if len(tables["t"]) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(tables["t"]))
 	}
-	if tables["t"][0].Data[0] != int64(1) {
+	if tables["t"][0].Data[0] != NewIntValue(int64(1)) {
 		t.Errorf("expected row 1 to remain, got %v", tables["t"][0].Data[0])
 	}
 }
@@ -492,7 +492,7 @@ func TestUpdate_BackToBackSameTable(t *testing.T) {
 	}
 	for i, r := range rows {
 		want := int64(i + 3)
-		got, ok := r.Data[0].(int64)
+		got, ok := r.Data[0].ToAny().(int64)
 		if !ok {
 			t.Fatalf("row %d: expected int64, got %T", i, r.Data[0])
 		}

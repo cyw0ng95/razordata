@@ -30,7 +30,7 @@ func TestREQ000720_AliasedQualifiedName(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	v, ok := rows[0].Data[0].(int64)
+	v, ok := rows[0].Data[0].ToAny().(int64)
 	if !ok || v != 42 {
 		t.Errorf("expected int64(42), got %v (%T)", rows[0].Data[0], rows[0].Data[0])
 	}
@@ -42,7 +42,7 @@ func TestREQ000720_AliasedQualifiedName(t *testing.T) {
 	if len(rows2) != 1 {
 		t.Fatalf("group by: expected 1 row, got %d", len(rows2))
 	}
-	v2, ok := rows2[0].Data[0].(int64)
+	v2, ok := rows2[0].Data[0].ToAny().(int64)
 	if !ok || v2 != 42 {
 		t.Errorf("group by: expected int64(42), got %v (%T)", rows2[0].Data[0], rows2[0].Data[0])
 	}
@@ -72,7 +72,7 @@ func TestREQ000720_AliasedQualifiedNameStore(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	v, ok := rows[0].Data[0].(int64)
+	v, ok := rows[0].Data[0].ToAny().(int64)
 	if !ok || v != 42 {
 		t.Errorf("expected int64(42), got %v (%T)", rows[0].Data[0], rows[0].Data[0])
 	}

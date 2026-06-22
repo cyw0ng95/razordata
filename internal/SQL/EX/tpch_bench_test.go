@@ -18,14 +18,7 @@ func makeTPCHLikeRows(n int, seed int64) []Row {
 		rows[i] = Row{
 			Cols:  []string{"l_orderkey", "l_linenumber", "l_quantity", "l_extendedprice", "l_discount", "l_tax"},
 			Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW), int(LX.T_FLOAT_KW), int(LX.T_FLOAT_KW), int(LX.T_FLOAT_KW), int(LX.T_FLOAT_KW)},
-			Data: []any{
-				int64(rng.IntN(1000000)),
-				int64(rng.IntN(7) + 1),
-				float64(rng.IntN(50) + 1),
-				float64(rng.IntN(100000)) / 100.0,
-				float64(rng.IntN(10)) / 100.0,
-				float64(rng.IntN(8)) / 100.0,
-			},
+			Data: []Value{NewIntValue(int64(rng.IntN(1000000))), NewIntValue(int64(rng.IntN(7) + 1)), NewFloatValue(float64(rng.IntN(50) + 1)), NewFloatValue(float64(rng.IntN(100000)) / 100.), NewFloatValue(float64(rng.IntN(10)) / 100.), NewFloatValue(float64(rng.IntN(8)) / 100.)},
 		}
 	}
 	return rows
@@ -119,7 +112,7 @@ func BenchmarkTPCH_Q1_Sequential(b *testing.B) {
 				continue
 			}
 			if b, ok := val.(bool); ok && b {
-				sum += rows[j].Data[3].(float64)
+				sum += rows[j].Data[3].ToAny().(float64)
 			}
 		}
 	}
