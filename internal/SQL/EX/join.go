@@ -63,13 +63,18 @@ type NestedLoopJoin struct {
 	// REQ000798: Block NLJ mode — batch left rows and re-scan right
 	// per batch. Used when hash mode is unavailable (left > 1024
 	// or ON clause exists). Reduces right-side scans from N to N/32.
-	blockMode    bool
+blockMode    bool
 	blkLeftBatch []Row
 	blkLeftPos   int   // position within left batch
 	blkRightRows []Row // materialized right side (recreated per batch)
 	blkRightPos  int
-	blkResultBuf []Row // buffered matches for current batch
-	blkResultPos int
+	blkResultBuf []Row  // buffered matches for current batch
+	blkResultPos int    // cursor into blkResultBuf
+	// REQ000816: blkSharedCols/ColIndex built lazily per batch,
+	// reused across all emit rows in the batch to skip per-row
+	// buildColIndex in downstream Lookup.
+	blkSharedCols     []string
+	blkSharedColIndex map[string]int
 }
 
 func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error), kind JoinKind) *NestedLoopJoin {
@@ -383,8 +388,9 @@ func (j *NestedLoopJoin) Close() error {
 }
 
 // nextBlock implements Block Nested-Loop Join (REQ000798). Batches
-// left rows and re-scans the right side once per batch, reducing
-// right-side scans from N to ceil(N/batchSize).
+// up to batchSize left rows, materializes right side, and joins them.
+// Output rows carry the shared colIndex so downstream Lookup can
+// skip per-row buildColIndex (REQ000816).
 func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 	const batchSize = 32
 	// Drain result buffer.
@@ -438,6 +444,21 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 		j.blkRightRows = append(j.blkRightRows, inner)
 	}
 
+	// REQ000816: build blkSharedCols + blkSharedColIndex once per
+	// batch. Used by every emit in this batch so downstream Lookup
+	// can skip per-row buildColIndex.
+	if len(j.blkLeftBatch) > 0 && len(j.blkRightRows) > 0 {
+		lCols := j.blkLeftBatch[0].Cols
+		rCols := j.blkRightRows[0].Cols
+		j.blkSharedCols = make([]string, 0, len(lCols)+len(rCols))
+		j.blkSharedCols = append(j.blkSharedCols, lCols...)
+		j.blkSharedCols = append(j.blkSharedCols, rCols...)
+		j.blkSharedColIndex = make(map[string]int, len(j.blkSharedCols))
+		for i, c := range j.blkSharedCols {
+			j.blkSharedColIndex[c] = i
+		}
+	}
+
 	// Match all left batch rows against right rows, emitting in
 	// left-primary order so LEFT JOIN results match NLJ ordering.
 	for _, l := range j.blkLeftBatch {
@@ -454,12 +475,12 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 				}
 			}
 			matched = true
-			result := joinRowsLL(&l, &r)
+			result := joinRowsLLWithCols(&l, &r, j.blkSharedCols, nil, j.blkSharedColIndex)
 			j.blkResultBuf = append(j.blkResultBuf, result)
 		}
 		if !matched && j.leftOuter {
 			nullRow := j.nullRightRow()
-			result := joinRowsLL(&l, &nullRow)
+			result := joinRowsLLWithCols(&l, &nullRow, j.blkSharedCols, nil, j.blkSharedColIndex)
 			j.blkResultBuf = append(j.blkResultBuf, result)
 		}
 	}
@@ -473,29 +494,44 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 	return j.blkResultBuf[0], nil
 }
 
+// joinRowsLL combines two rows into one output row. Callers that
+// emit rows in a tight loop must pass `sharedColIndex` and
+// `sharedCols` so the downstream Eval path can skip buildColIndex
+// per row (REQ000816). Passing nil for colIndex is allowed but
+// forces a per-row colIndex build downstream.
 func joinRowsLL(a, b *Row) Row {
-	// Pre-compute total lengths and allocate once. The 6× append-
-	// from-slice idiom in the previous implementation over-allocated
-	// and required multiple grow operations per row. j3 perf: this
-	// is the hottest allocation site.
-	nCols := len(a.Cols) + len(b.Cols)
-	nTypes := len(a.Types) + len(b.Types)
-	nData := len(a.Data) + len(b.Data)
+	return joinRowsLLWithCols(a, b, nil, nil, nil)
+}
+
+// joinRowsLLWithCols is the full-form variant: caller supplies
+// pre-built sharedCols, sharedTypes and sharedColIndex to avoid
+// per-row allocation in the hot NLJ/HashCrossJoin path. When
+// sharedCols is non-nil, out.Cols/Types share the slice (no copy).
+// Data is always freshly allocated since it's per-row payload.
+func joinRowsLLWithCols(a, b *Row, sharedCols []string, sharedTypes []int, sharedColIndex map[string]int) Row {
 	out := Row{
-		Cols:  make([]string, 0, nCols),
-		Types: make([]int, 0, nTypes),
-		Data:  make([]Value, 0, nData),
+		colIndex: sharedColIndex,
 	}
-	out.Cols = append(out.Cols, a.Cols...)
-	out.Cols = append(out.Cols, b.Cols...)
-	out.Types = append(out.Types, a.Types...)
-	out.Types = append(out.Types, b.Types...)
+	if sharedCols != nil {
+		out.Cols = sharedCols
+	} else {
+		nCols := len(a.Cols) + len(b.Cols)
+		out.Cols = make([]string, 0, nCols)
+		out.Cols = append(out.Cols, a.Cols...)
+		out.Cols = append(out.Cols, b.Cols...)
+	}
+	if sharedTypes != nil {
+		out.Types = sharedTypes
+	} else {
+		nTypes := len(a.Types) + len(b.Types)
+		out.Types = make([]int, 0, nTypes)
+		out.Types = append(out.Types, a.Types...)
+		out.Types = append(out.Types, b.Types...)
+	}
+	nData := len(a.Data) + len(b.Data)
+	out.Data = make([]Value, 0, nData)
 	out.Data = append(out.Data, a.Data...)
 	out.Data = append(out.Data, b.Data...)
-	// colIndex is intentionally NOT built here — operators that
-	// emit rows via joinRowsLL assign a shared colIndex from the
-	// operator's sharedColIndex field (see NestedLoopJoin).
-	// j3 perf: this avoids allocating a map per output row.
 	return out
 }
 

@@ -38,6 +38,17 @@ type HashCrossJoin struct {
 	bucketPos    int // index into buckets[hash] slice
 	bucketHash   uint64
 	probeBuilt   bool // true after build() ran successfully
+	// REQ000816: left side is materialized lazily so we can build
+	// a shared colIndex for output rows. Streaming probe forced
+	// per-row buildColIndex in downstream Eval.
+	leftRows []Row
+	leftIdx  int
+	// REQ000816: sharedColIndex built from materialized left+right
+	// layouts, reused across all emitted rows to skip per-row
+	// buildColIndex in downstream Lookup.
+	sharedColIndex map[string]int
+	sharedCols     []string
+	sharedTypes    []int
 }
 
 // NewHashCrossJoin creates a hash-probe equi-join. Both sides
@@ -70,6 +81,12 @@ func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {
 		if err := j.build(ctx); err != nil {
 			return Row{}, err
 		}
+		// REQ000816: materialize left side once so we can build
+		// a shared colIndex for output rows. Streaming probe
+		// forced per-row buildColIndex in downstream Eval.
+		if err := j.materializeLeft(ctx); err != nil {
+			return Row{}, err
+		}
 	}
 	if j.buckets == nil {
 		return Row{}, ErrNoRows
@@ -77,22 +94,14 @@ func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {
 	// Probe loop: outer = current left row, inner = each match in its bucket.
 	for {
 		if j.leftRow == nil {
-			row, err := j.left.Next(ctx)
-			if err != nil {
-				return Row{}, err
+			if j.leftIdx >= len(j.leftRows) {
+				return Row{}, ErrNoRows
 			}
-			// Preserve tableName so qualified-name eval works.
-			prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
-			prefixed.tableName = row.tableName
-			if !hasAnyPrefix(row.Cols) {
-				prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
-			} else {
-				prefixed.Cols = append([]string(nil), row.Cols...)
-			}
-			j.leftRow = &prefixed
+			j.leftRow = &j.leftRows[j.leftIdx]
+			j.leftIdx++
 			// Compute the hash of the left row's join key and look up
 			// its bucket. Reset bucketPos to walk through all matches.
-			keyVal, ok := lookupColumn(&prefixed, j.leftTbl, j.leftKey)
+			keyVal, ok := lookupColumn(j.leftRow, j.leftTbl, j.leftKey)
 			if !ok || keyVal == nil {
 				// Left row missing the key column or has NULL —
 				// SQL NULL keys never match.
@@ -122,8 +131,58 @@ func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {
 		right := j.rightRows[rightIdx]
 		// Set Outer so column lookups can resolve across the join.
 		right.Outer = j.leftRow
-		return joinRowsLL(j.leftRow, &right), nil
+		// REQ000816: emit row carries pre-built sharedColIndex.
+		return joinRowsLLWithCols(j.leftRow, &right, j.sharedCols, j.sharedTypes, j.sharedColIndex), nil
 	}
+}
+
+// materializeLeft reads all rows from the left side into leftRows
+// with table-prefixed columns, then merges with rightRows[0] to
+// build sharedCols/sharedColIndex. REQ000816.
+func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
+	const maxMaterialize = 1024
+	j.leftRows = make([]Row, 0, 64)
+	for {
+		row, err := j.left.Next(ctx)
+		if err != nil {
+			break
+		}
+		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
+		prefixed.tableName = row.tableName
+		if !hasAnyPrefix(row.Cols) {
+			prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
+		} else {
+			prefixed.Cols = append([]string(nil), row.Cols...)
+		}
+		j.leftRows = append(j.leftRows, prefixed)
+		if len(j.leftRows) >= maxMaterialize {
+			return ErrNoRows
+		}
+	}
+	if len(j.leftRows) == 0 || len(j.rightRows) == 0 {
+		return nil
+	}
+	lCols := j.leftRows[0].Cols
+	rCols := j.rightRows[0].Cols
+	j.sharedCols = make([]string, 0, len(lCols)+len(rCols))
+	j.sharedCols = append(j.sharedCols, lCols...)
+	j.sharedCols = append(j.sharedCols, rCols...)
+	j.sharedTypes = make([]int, 0, len(j.leftRows[0].Types)+len(j.rightRows[0].Types))
+	j.sharedTypes = append(j.sharedTypes, j.leftRows[0].Types...)
+	j.sharedTypes = append(j.sharedTypes, j.rightRows[0].Types...)
+	j.sharedColIndex = make(map[string]int, len(j.sharedCols))
+	for i, c := range j.sharedCols {
+		j.sharedColIndex[c] = i
+	}
+	for i := range j.leftRows {
+		j.leftRows[i].Cols = j.sharedCols[:len(lCols)]
+		j.leftRows[i].colIndex = j.sharedColIndex
+	}
+	for i := range j.rightRows {
+		j.rightRows[i].Cols = j.sharedCols[len(lCols):]
+		j.rightRows[i].colIndex = j.sharedColIndex
+	}
+	return nil
 }
 
 func (j *HashCrossJoin) build(ctx context.Context) error {

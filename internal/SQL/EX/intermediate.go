@@ -97,6 +97,10 @@ type Project struct {
 	params    []any
 	// REQ000756: pre-allocated column names (same for every row).
 	prefixCols []string
+	// REQ000816: pre-built colIndex map shared across all output
+	// rows. Avoids per-row buildColIndex in Lookup (pprof: 23.45%
+	// cum, 1.06s in j3_mixed).
+	colIndex map[string]int
 }
 
 // Child returns the project's child operator.
@@ -134,10 +138,18 @@ func NewProject(child Operator, cols []PS.Expr) *Project {
 		}
 		prefixCols[i] = name
 	}
+	// REQ000816: build colIndex once. All prefixCols are
+	// already lowercase (parser lowercases at parse time per
+	// REQ000770).
+	colIndex := make(map[string]int, len(prefixCols))
+	for i, c := range prefixCols {
+		colIndex[c] = i
+	}
 	return &Project{
 		child:      child,
 		cols:       cols,
 		prefixCols: prefixCols,
+		colIndex:   colIndex,
 	}
 }
 
@@ -157,8 +169,9 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 	}
 	// REQ000756: use pre-computed column names, allocate only data.
 	out := Row{
-		Cols: append([]string(nil), p.prefixCols...),
-		Data: make([]Value, len(p.cols)),
+		Cols:     append([]string(nil), p.prefixCols...),
+		Data:     make([]Value, len(p.cols)),
+		colIndex: p.colIndex,
 	}
 	for i, c := range p.cols {
 		var v any
