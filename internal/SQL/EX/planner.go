@@ -1061,10 +1061,31 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	var current Operator = scan
 
 	// Set table alias on the scan operator so correlated subquery
-	// eval can resolve qualified names like x.col.
+	// eval can resolve qualified names like x.col. Must happen
+	// BEFORE predicate pushdown (which wraps scan in a Filter).
 	if s.FromAlias != "" {
-		if ss, ok := current.(*SeqScan); ok {
+		if ss, ok := scan.(*SeqScan); ok {
 			ss.WithAlias(s.FromAlias)
+		}
+	}
+
+	// REQ000XXX: predicate pushdown — split WHERE into per-table
+	// conjuncts and push them down to individual table scans before
+	// joins. This reduces intermediate row counts for cross joins.
+	var pushedPredicates map[string][]PS.Expr
+	var crossTablePredicates []PS.Expr
+	if s.Where != nil && (len(s.Joins) > 0 || s.From != "") {
+		conjuncts := RE.SplitAnd(s.Where)
+		allTables := []string{s.From}
+		for _, j := range s.Joins {
+			allTables = append(allTables, j.Right)
+		}
+		pushedPredicates, crossTablePredicates = p.splitPredicatesByTable(conjuncts, allTables)
+		// Push predicates for the first table onto its scan.
+		if firstPreds := pushedPredicates[s.From]; len(firstPreds) > 0 {
+			for _, pred := range firstPreds {
+				current = NewFilter(current, pred)
+			}
 		}
 	}
 
@@ -1113,6 +1134,12 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			var rightScan Operator = NewSeqScan(j.Right)
 			if ssc, err := NewSeqScanWithStore(p.store, j.Right); err == nil {
 				rightScan = ssc
+			}
+			// REQ000XXX: push per-table predicates onto the right scan.
+			if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
+				for _, pred := range rightPreds {
+					rightScan = NewFilter(rightScan, pred)
+				}
 			}
 
 			// REQ000XXX: For INNER and CROSS JOINs, try to find equi-join
@@ -1179,10 +1206,21 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		// code used `NewFilter(scan, ...)` which discarded any
 		// joins and produced wrong results for `FROM a JOIN b
 		// WHERE ...`.
-		conjuncts := RE.SplitAnd(s.Where)
-		current = NewFilter(current, conjuncts[0])
-		for _, c := range conjuncts[1:] {
-			current = NewFilter(current, c)
+		// REQ000XXX: if predicate pushdown already applied some
+		// conjuncts to scans, only apply the remaining cross-table
+		// predicates here.
+		if len(crossTablePredicates) > 0 {
+			current = NewFilter(current, crossTablePredicates[0])
+			for _, c := range crossTablePredicates[1:] {
+				current = NewFilter(current, c)
+			}
+		} else if pushedPredicates == nil {
+			// No predicate pushdown — apply full WHERE as before.
+			conjuncts := RE.SplitAnd(s.Where)
+			current = NewFilter(current, conjuncts[0])
+			for _, c := range conjuncts[1:] {
+				current = NewFilter(current, c)
+			}
 		}
 	}
 
