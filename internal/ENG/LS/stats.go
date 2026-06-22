@@ -10,6 +10,15 @@ type ColumnStats struct {
 	RowCount      int64
 }
 
+// TableStats aggregates column-level statistics for a table, used by
+// the planner for statistics-driven cost estimation (REQ000787).
+type TableStats struct {
+	RowCount      int64
+	ColStats      map[string]*ColumnStats // colName -> ColumnStats
+	TotalWidth    int                     // avg row width in bytes
+	LastAnalyzed  int64                   // unix nanos
+}
+
 // HistogramBucket represents a single bucket in a column value histogram,
 // spanning [LowerBound, UpperBound] with Count rows.
 type HistogramBucket struct {

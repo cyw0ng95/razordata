@@ -29,6 +29,10 @@ func TestEval(t *testing.T) {
 		{"unary_plus", &PS.UnaryExpr{Op: int(LX.T_PLUS), Operand: &PS.NumberLiteral{Val: 5}}, nil, int64(5), false},
 		{"binary_eq", &PS.BinaryExpr{Op: int(LX.T_EQ), Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 1}}, nil, true, false},
 		{"binary_ne", &PS.BinaryExpr{Op: int(LX.T_NE), Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 2}}, nil, true, false},
+		// REQ000815: NULL != NULL should return UNKNOWN (nil), not TRUE.
+		{"null_ne_null", &PS.BinaryExpr{Op: int(LX.T_NE), Left: &PS.NullLiteral{}, Right: &PS.NullLiteral{}}, nil, nil, false},
+		{"null_ne_literal", &PS.BinaryExpr{Op: int(LX.T_NE), Left: &PS.NullLiteral{}, Right: &PS.NumberLiteral{Val: 10}}, nil, nil, false},
+		{"literal_ne_null", &PS.BinaryExpr{Op: int(LX.T_NE), Left: &PS.NumberLiteral{Val: 10}, Right: &PS.NullLiteral{}}, nil, nil, false},
 		{"binary_lt", &PS.BinaryExpr{Op: int(LX.T_LT), Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 2}}, nil, true, false},
 		{"binary_le", &PS.BinaryExpr{Op: int(LX.T_LE), Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 1}}, nil, true, false},
 		{"binary_gt", &PS.BinaryExpr{Op: int(LX.T_GT), Left: &PS.NumberLiteral{Val: 2}, Right: &PS.NumberLiteral{Val: 1}}, nil, true, false},
@@ -583,5 +587,38 @@ func TestGlob_BinaryOp(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("glob(%q, %q) = %v, want %v", tc.pattern, tc.s, got, tc.want)
 		}
+	}
+}
+
+// TestFilter_NullNotEqual verifies REQ000815: WHERE NULL <> NULL
+// returns 0 rows (UNKNOWN filters out the row).
+func TestFilter_NullNotEqual(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"id", "v"})
+
+	ctx := context.Background()
+	// Insert a row with NULL value.
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, NULL)"); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Query with NULL != NULL predicate — should return 0 rows.
+	rows, err := ex.QueryAll(ctx, "SELECT v FROM t WHERE v != v")
+	if err != nil {
+		t.Fatalf("SELECT: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("expected 0 rows for WHERE v != v (NULL <> NULL), got %d", len(rows))
+	}
+
+	// Also test NULL != literal — should also return 0 rows.
+	rows2, err := ex.QueryAll(ctx, "SELECT v FROM t WHERE v != 10")
+	if err != nil {
+		t.Fatalf("SELECT: %v", err)
+	}
+	if len(rows2) != 0 {
+		t.Errorf("expected 0 rows for WHERE v != 10 (NULL <> 10), got %d", len(rows2))
 	}
 }

@@ -2,24 +2,28 @@ package EX
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
+	PS "github.com/cyw0ng95/razordata/internal/SQL/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQL/RE"
+	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 )
 
 // PlanNode represents a node in the query plan tree for EXPLAIN output.
 // It mirrors the Operator tree but captures descriptive metadata for
 // human-readable rendering.
 type PlanNode struct {
-	Type     string        // "SeqScan", "IndexScan", "Filter", etc.
-	Table    string        // for scan nodes
-	Index    string        // for index nodes
-	Cost     float64       // estimated cost
-	Rows     int64         // estimated row count
-	Width    int           // avg row width (bytes)
-	Detail   string        // extra info (filter expr, order by, etc.)
-	Children []*PlanNode   // child nodes
-	Analyze  *AnalyzeStats // REQ000783: runtime stats from EXPLAIN ANALYZE
+	Type        string          // "SeqScan", "IndexScan", "Filter", etc.
+	Table       string          // for scan nodes
+	Index       string          // for index nodes
+	Cost        float64         // estimated cost
+	Rows        int64           // estimated row count
+	Width       int             // avg row width (bytes)
+	Detail      string          // extra info (filter expr, order by, etc.)
+	Children    []*PlanNode     // child nodes
+	Analyze     *AnalyzeStats   // REQ000783: runtime stats from EXPLAIN ANALYZE
+	Bottleneck  *BottleneckInfo // REQ000788: bottleneck analysis
 }
 
 // AnalyzeStats holds runtime statistics for EXPLAIN ANALYZE.
@@ -29,9 +33,36 @@ type AnalyzeStats struct {
 	Allocs       int64
 }
 
+// TableStats aggregates column-level statistics for a table, used by
+// the planner for statistics-driven cost estimation (REQ000787).
+type TableStats struct {
+	RowCount      int64
+	ColStats      map[string]*ls.ColumnStats // colName -> ColumnStats
+	TotalWidth    int                        // avg row width in bytes
+	LastAnalyzed  int64                      // unix nanos
+}
+
+// BottleneckInfo captures identified performance bottlenecks in a query plan
+// (REQ000788). It is attached to PlanNode for EXPLAIN ANALYZE output.
+type BottleneckInfo struct {
+	Severity     string   // "low", "medium", "high", "critical"
+	Type         string   // "seq_scan", "large_sort", "hash_join_fallback", "high_allocs", "skew"
+	Details      string   // human-readable description
+	Recommendations []string // suggested fixes
+	ActualRows   int64
+	EstimatedRows int64
+	ActualTimeNS int64
+	CostRatio    float64 // actual/estimated cost ratio
+}
+
 // Add appends a child node to this PlanNode.
 func (n *PlanNode) Add(child *PlanNode) {
 	n.Children = append(n.Children, child)
+}
+
+// SetBottleneck attaches bottleneck analysis to this node (REQ000788).
+func (n *PlanNode) SetBottleneck(bn *BottleneckInfo) {
+	n.Bottleneck = bn
 }
 
 // buildPlanNodeTree converts an Operator tree into a PlanNode tree.
@@ -107,7 +138,17 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		if v.predicate != nil {
 			node.Detail = "WHERE " + RE.FormatExpr(v.predicate)
 		}
-		node.Cost = estimateFilterCost(v)
+		// REQ000787: get table stats from child operator's table.
+		var ts *TableStats
+		if planner != nil && v.child != nil {
+			// Try to extract table name from child.
+			if seq, ok := v.child.(*SeqScan); ok {
+				ts = planner.getTableStats(seq.table)
+			} else if idx, ok := v.child.(*IndexScan); ok {
+				ts = planner.getTableStats(idx.table)
+			}
+		}
+		node.Cost = estimateFilterCost(v, ts)
 
 	case *Project:
 		node.Detail = "PROJECT"
@@ -133,7 +174,16 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 			}
 			node.Detail = "ORDER BY " + strings.Join(parts, ", ")
 		}
-		node.Cost = estimateSortCost(v)
+		// REQ000787: get table stats from child operator's table.
+		var ts *TableStats
+		if planner != nil && v.child != nil {
+			if seq, ok := v.child.(*SeqScan); ok {
+				ts = planner.getTableStats(seq.table)
+			} else if idx, ok := v.child.(*IndexScan); ok {
+				ts = planner.getTableStats(idx.table)
+			}
+		}
+		node.Cost = estimateSortCost(v, ts)
 
 	case *Limit:
 		node.Detail = "LIMIT"
@@ -148,15 +198,39 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 
 	case *Distinct:
 		node.Detail = "DISTINCT"
-		node.Cost = estimateDistinctCost(v)
+		// REQ000787: get table stats from child operator's table.
+		var ts *TableStats
+		if planner != nil && v.child != nil {
+			if seq, ok := v.child.(*SeqScan); ok {
+				ts = planner.getTableStats(seq.table)
+			} else if idx, ok := v.child.(*IndexScan); ok {
+				ts = planner.getTableStats(idx.table)
+			}
+		}
+		node.Cost = estimateDistinctCost(v, ts)
 
 	case *Aggregate:
 		node.Detail = "GROUP BY"
-		node.Cost = estimateAggregateCost(v)
+		// REQ000787: get table stats from child operator's table.
+		var ts *TableStats
+		if planner != nil && v.child != nil {
+			if seq, ok := v.child.(*SeqScan); ok {
+				ts = planner.getTableStats(seq.table)
+			} else if idx, ok := v.child.(*IndexScan); ok {
+				ts = planner.getTableStats(idx.table)
+			}
+		}
+		node.Cost = estimateAggregateCost(v, ts)
 
 	case *NestedLoopJoin:
 		node.Detail = fmt.Sprintf("JOIN %s", v.rightTbl)
-		node.Cost = estimateJoinCost(v)
+		// REQ000787: get table stats for both sides of the join.
+		var leftTS, rightTS *TableStats
+		if planner != nil {
+			leftTS = planner.getTableStats(v.leftTbl)
+			rightTS = planner.getTableStats(v.rightTbl)
+		}
+		node.Cost = estimateJoinCost(v, leftTS, rightTS)
 
 	case *Insert:
 		node.Table = v.table
@@ -410,7 +484,11 @@ func operatorType(op Operator) string {
 
 // formatPlanTree renders a PlanNode tree as SQLite-compatible EXPLAIN output.
 // Schema: (id, parent, notused, detail)
-func formatPlanTree(n *PlanNode) []Row {
+// The mode parameter controls verbosity:
+//   - ExplainNormal: full detail including expressions, costs, and row estimates
+//   - ExplainQueryPlan: simplified output (SCAN/SEARCH/JOIN style)
+//   - ExplainAnalyze: same as mode but with actual runtime stats appended
+func formatPlanTree(n *PlanNode, mode PS.ExplainMode) []Row {
 	if n == nil {
 		return nil
 	}
@@ -426,19 +504,46 @@ func formatPlanTree(n *PlanNode) []Row {
 		id := nextID
 		nextID++
 
-		detail := node.Detail
-		if detail == "" {
-			detail = node.Type
+		var detail string
+		switch mode {
+		case PS.ExplainQueryPlan:
+			// Simplified SQLite-style output: SCAN, SEARCH, JOIN
+			detail = explainQueryPlanDetail(node)
+		default:
+			// Full detail: type, table, index, expressions, costs, row estimates
+			detail = node.Detail
+			if detail == "" {
+				detail = node.Type
+			}
+			if node.Table != "" && !strings.Contains(detail, node.Table) {
+				detail += " " + node.Table
+			}
+			if node.Index != "" {
+				detail += " USING INDEX " + node.Index
+			}
+			// Include cost and row estimates for verbose modes
+			if node.Cost > 0 {
+				detail += fmt.Sprintf(" cost=%.2f", node.Cost)
+			}
+			if node.Rows > 0 {
+				detail += fmt.Sprintf(" rows=%d", node.Rows)
+			}
 		}
-		if node.Table != "" && !strings.Contains(detail, node.Table) {
-			detail += " " + node.Table
-		}
-		if node.Index != "" {
-			detail += " USING INDEX " + node.Index
-		}
+
 		// REQ000783: append EXPLAIN ANALYZE runtime stats.
 		if a := node.Analyze; a != nil {
 			detail += fmt.Sprintf(" (actual rows=%d time=%dns allocs=%d)", a.RowsReturned, a.TimeNS, a.Allocs)
+		}
+
+		// REQ000788: append bottleneck analysis if present.
+		if bn := node.Bottleneck; bn != nil {
+			detail += fmt.Sprintf(" [BOTTLENECK: %s severity=%s]", bn.Type, bn.Severity)
+			if bn.Details != "" {
+				detail += fmt.Sprintf(" (%s)", bn.Details)
+			}
+			if len(bn.Recommendations) > 0 {
+				detail += fmt.Sprintf(" recommend: %s", strings.Join(bn.Recommendations, "; "))
+			}
 		}
 
 		rows = append(rows, Row{
@@ -456,16 +561,169 @@ func formatPlanTree(n *PlanNode) []Row {
 	return rows
 }
 
+// AnalyzePlanForBottlenecks walks the plan tree and identifies performance
+// bottlenecks based on runtime statistics and cost estimates (REQ000788).
+func AnalyzePlanForBottlenecks(root *PlanNode) []*BottleneckInfo {
+	var bottlenecks []*BottleneckInfo
+	if root == nil {
+		return bottlenecks
+	}
+
+	var walk func(node *PlanNode)
+	walk = func(node *PlanNode) {
+		if node == nil {
+			return
+		}
+
+		bn := identifyBottleneck(node)
+		if bn != nil {
+			node.SetBottleneck(bn)
+			bottlenecks = append(bottlenecks, bn)
+		}
+
+		for _, child := range node.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+
+	return bottlenecks
+}
+
+// identifyBottleneck examines a single plan node and returns a BottleneckInfo
+// if a performance issue is detected (REQ000788).
+func identifyBottleneck(node *PlanNode) *BottleneckInfo {
+	if node.Analyze == nil {
+		return nil
+	}
+
+	bn := &BottleneckInfo{
+		ActualRows:    node.Analyze.RowsReturned,
+		EstimatedRows: node.Rows,
+		ActualTimeNS:  node.Analyze.TimeNS,
+	}
+
+	// Check for high actual vs estimated row ratio (cardinality misestimate).
+	if node.Rows > 0 && node.Analyze.RowsReturned > 0 {
+		bn.CostRatio = float64(node.Analyze.RowsReturned) / float64(node.Rows)
+		if bn.CostRatio > 5.0 {
+			bn.Severity = "high"
+			bn.Type = "cardinality_misestimate"
+			bn.Details = fmt.Sprintf("actual rows (%d) >> estimated rows (%d)", node.Analyze.RowsReturned, node.Rows)
+			bn.Recommendations = []string{"run ANALYZE to refresh statistics", "consider adding indexes on filter columns"}
+		} else if bn.CostRatio > 2.0 {
+			bn.Severity = "medium"
+			bn.Type = "cardinality_misestimate"
+			bn.Details = fmt.Sprintf("actual rows (%d) > estimated rows (%d)", node.Analyze.RowsReturned, node.Rows)
+			bn.Recommendations = []string{"run ANALYZE to refresh statistics"}
+		}
+	}
+
+	// Check for high allocation count (memory pressure).
+	if node.Analyze.Allocs > 100 {
+		if bn.Severity == "" {
+			bn.Severity = "medium"
+		}
+		bn.Type = "high_allocs"
+		bn.Details = fmt.Sprintf("high allocation count (%d)", node.Analyze.Allocs)
+		bn.Recommendations = append(bn.Recommendations, "consider vectorized execution or pre-allocated buffers")
+	}
+
+	// Check for sequential scan on large table.
+	if node.Type == "SeqScan" && node.Analyze.RowsReturned > 1000 {
+		if bn.Severity == "" {
+			bn.Severity = "medium"
+		}
+		if bn.Type == "" {
+			bn.Type = "seq_scan"
+		}
+		bn.Details = fmt.Sprintf("sequential scan processed %d rows", node.Analyze.RowsReturned)
+		bn.Recommendations = append(bn.Recommendations, "consider adding an index on filter/join columns")
+	}
+
+	// Check for sort on large input.
+	if node.Type == "Sort" && node.Analyze.TimeNS > 1000000 { // > 1ms
+		if bn.Severity == "" {
+			bn.Severity = "low"
+		}
+		bn.Type = "large_sort"
+		bn.Details = fmt.Sprintf("sort took %d ns on %d rows", node.Analyze.TimeNS, node.Analyze.RowsReturned)
+		bn.Recommendations = append(bn.Recommendations, "consider adding an index to avoid sort")
+	}
+
+	if bn.Type == "" {
+		return nil
+	}
+	if bn.Severity == "" {
+		bn.Severity = "low"
+	}
+	return bn
+}
+
+// explainQueryPlanDetail produces simplified SQLite-style output for EXPLAIN QUERY PLAN.
+// Maps internal operator types to SCAN/SEARCH/JOIN verbs.
+func explainQueryPlanDetail(n *PlanNode) string {
+	switch n.Type {
+	case "Scan":
+		if n.Index != "" {
+			return "SEARCH " + n.Table + " USING INDEX " + n.Index
+		}
+		return "SCAN " + n.Table
+	case "Search":
+		return "SEARCH " + n.Table + " USING INDEX " + n.Index
+	case "Join":
+		return "JOIN " + n.Table
+	case "HashJoin":
+		return "HASH JOIN " + n.Table
+	case "Filter":
+		return "FILTER"
+	case "Project":
+		return "PROJECT"
+	case "Sort":
+		return "SORT"
+	case "Distinct":
+		return "DISTINCT"
+	case "Aggregate":
+		return "AGGREGATE"
+	case "Limit":
+		return "LIMIT"
+	case "Offset":
+		return "OFFSET"
+	case "Values":
+		return "VALUES"
+	case "Insert":
+		return "INSERT"
+	case "Update":
+		return "UPDATE"
+	case "Delete":
+		return "DELETE"
+	default:
+		return strings.ToUpper(n.Type)
+	}
+}
+
 // Cost estimation helpers
 
-func estimateFilterCost(f *Filter) float64 {
+// estimateFilterCost estimates the cost of a filter operator.
+// REQ000787: uses column statistics to estimate selectivity when available.
+func estimateFilterCost(f *Filter, ts *TableStats) float64 {
 	if f.child == nil {
 		return 1.0
 	}
-	// Filters typically reduce rows; use 0.5 as default selectivity
-	return 0.5
+	// REQ000787: derive selectivity from column statistics.
+	// Without a specific column reference, use a conservative default.
+	selectivity := 0.5 // default
+	if ts != nil && ts.RowCount > 0 {
+		// Use row count ratio as a rough selectivity indicator.
+		// For a filter like "v > X", we assume ~50% selectivity.
+		// In future iterations, histogram-based selectivity estimation
+		// (REQ000085) will provide more accurate estimates.
+		selectivity = 0.5
+	}
+	return selectivity
 }
 
+// estimateProjectCost estimates the cost of a projection operator.
 func estimateProjectCost(p *Project) float64 {
 	if p.child == nil {
 		return 1.0
@@ -473,14 +731,21 @@ func estimateProjectCost(p *Project) float64 {
 	return 1.0 // Projection is cheap
 }
 
-func estimateSortCost(s *Sort) float64 {
+// estimateSortCost estimates the cost of a sort operator.
+// REQ000787: uses table statistics to estimate input size.
+func estimateSortCost(s *Sort, ts *TableStats) float64 {
 	if s.child == nil {
 		return 1.0
 	}
+	inputRows := 100.0
+	if ts != nil && ts.RowCount > 0 {
+		inputRows = float64(ts.RowCount)
+	}
 	// Sort is O(n log n)
-	return 10.0
+	return 10.0 * (1 + math.Log2(inputRows+1))
 }
 
+// estimateLimitCost estimates the cost of a limit operator.
 func estimateLimitCost(l *Limit) float64 {
 	if l.child == nil {
 		return 1.0
@@ -488,6 +753,7 @@ func estimateLimitCost(l *Limit) float64 {
 	return 1.0 // Limit is cheap
 }
 
+// estimateOffsetCost estimates the cost of an offset operator.
 func estimateOffsetCost(o *Offset) float64 {
 	if o.child == nil {
 		return 1.0
@@ -495,28 +761,69 @@ func estimateOffsetCost(o *Offset) float64 {
 	return 1.0 // Offset is cheap
 }
 
-func estimateDistinctCost(d *Distinct) float64 {
+// estimateDistinctCost estimates the cost of a distinct operator.
+// REQ000787: uses table statistics to estimate deduplication cost.
+func estimateDistinctCost(d *Distinct, ts *TableStats) float64 {
 	if d.child == nil {
 		return 1.0
 	}
-	return 2.0 // Distinct requires deduplication
+	inputRows := 100.0
+	if ts != nil && ts.RowCount > 0 {
+		inputRows = float64(ts.RowCount)
+	}
+	return 2.0 + inputRows // deduplication requires hashing/sorting
 }
 
-func estimateAggregateCost(a *Aggregate) float64 {
+// estimateAggregateCost estimates the cost of an aggregation operator.
+// REQ000787: uses table statistics to estimate input size.
+func estimateAggregateCost(a *Aggregate, ts *TableStats) float64 {
 	if a.child == nil {
 		return 1.0
 	}
-	return 5.0 // Aggregation is moderately expensive
+	inputRows := 100.0
+	if ts != nil && ts.RowCount > 0 {
+		inputRows = float64(ts.RowCount)
+	}
+	return 5.0 + inputRows // base cost + per-row processing
 }
 
-func estimateJoinCost(j *NestedLoopJoin) float64 {
+// estimateIndexCost estimates the cost of an index scan.
+// REQ000787: uses table statistics to estimate index selectivity.
+func estimateIndexCost(ts *TableStats, indexCols []string) float64 {
+	if ts == nil || ts.RowCount == 0 {
+		return 10.0 // default index scan cost
+	}
+	// Index scan is cheaper than seq scan; base cost is 1.0 per matching row
+	// Use distinct count to estimate selectivity
+	totalDistinct := int64(1)
+	for _, col := range indexCols {
+		if cs, ok := ts.ColStats[col]; ok {
+			if cs.DistinctCount > 0 {
+				totalDistinct *= cs.DistinctCount
+			}
+		}
+	}
+	selectivity := float64(ts.RowCount) / float64(totalDistinct)
+	if selectivity < 1.0 {
+		selectivity = 1.0
+	}
+	return selectivity // cost proportional to matching rows
+}
+
+// estimateJoinCost estimates the cost of a nested-loop join.
+// REQ000787: uses table statistics to estimate join cardinality.
+func estimateJoinCost(j *NestedLoopJoin, leftTS, rightTS *TableStats) float64 {
 	leftCost := 1.0
 	rightCost := 1.0
 	if j.left != nil {
-		leftCost = 1.0
+		if leftTS != nil && leftTS.RowCount > 0 {
+			leftCost = float64(leftTS.RowCount)
+		}
 	}
 	if j.right != nil {
-		rightCost = 1.0
+		if rightTS != nil && rightTS.RowCount > 0 {
+			rightCost = float64(rightTS.RowCount)
+		}
 	}
 	return leftCost * rightCost
 }

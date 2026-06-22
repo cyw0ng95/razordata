@@ -6,7 +6,7 @@ package EX
 
 import (
 	"context"
-	"strconv"
+	"fmt"
 	"strings"
 	"time"
 
@@ -30,18 +30,15 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
 	}
 
 	if e.rows == nil {
-		switch e.mode {
-		case PS.ExplainQueryPlan:
-			e.rows = formatPlanTree(e.planNode)
-		case PS.ExplainAnalyze:
+		if e.mode == PS.ExplainAnalyze {
 			// REQ000783: execute and collect runtime stats.
 			if err := executeAndCollectStats(ctx, e.root, e.planNode); err != nil {
 				return Row{}, err
 			}
-			e.rows = formatPlanTree(e.planNode)
-		default:
-			e.rows = formatExplainNormal(e.planNode)
+			// REQ000788: analyze for bottlenecks after execution.
+			AnalyzePlanForBottlenecks(e.planNode)
 		}
+		e.rows = formatPlanTree(e.planNode, e.mode)
 	}
 
 	if e.pos >= len(e.rows) {
@@ -86,54 +83,57 @@ func (e *ExplainStmtOp) Close() error {
 	return nil
 }
 
-// formatExplainNormal renders the plan tree in EXPLAIN (non-QUERY PLAN) mode.
-// This returns a simple list of operator descriptions.
-func formatExplainNormal(n *PlanNode) []Row {
-	if n == nil {
-		return nil
-	}
-
-	var rows []Row
-	var walk func(node *PlanNode, depth int)
-	walk = func(node *PlanNode, depth int) {
-		if node == nil {
-			return
-		}
-
-		detail := node.Type
-		if node.Table != "" {
-			detail += " " + node.Table
-		}
-		if node.Index != "" {
-			detail += " USING INDEX " + node.Index
-		}
-		if node.Detail != "" && node.Detail != detail {
-			detail += " (" + node.Detail + ")"
-		}
-
-		rows = append(rows, Row{
-			Cols:  []string{"id", "parent", "notused", "detail"},
-			Types: []int{1, 1, 1, 1},
-			Data:  []Value{NewIntValue(int64(depth + 1)), NewIntValue(int64(depth)), NewIntValue(0), NewTextValue(detail)},
-		})
-
-		for _, child := range node.Children {
-			walk(child, depth+1)
-		}
-	}
-
-	walk(n, 0)
-	return rows
-}
-
+// explainOperator produces a human-readable string representation
+// of an operator tree. Used by Executor.Explain() for debugging.
+// This is a simplified version that doesn't produce the structured
+// EXPLAIN output but provides a quick text dump.
 func explainOperator(op Operator, depth int) string {
 	var b strings.Builder
 	b.WriteString(strings.Repeat("  ", depth))
+
 	// Unwrap AdaptiveOp to show inner operator.
 	if aop, ok := op.(*AdaptiveOp); ok {
 		return explainOperator(aop.inner, depth)
 	}
-	b.WriteString(describeOp(op))
+
+	// Get operator type and details
+	var detail string
+	switch v := op.(type) {
+	case *SeqScan:
+		detail = fmt.Sprintf("SeqScan(table=%s)", v.table)
+	case *IndexScan:
+		detail = fmt.Sprintf("IndexScan(table=%s idx=%s)", v.table, v.idx)
+	case *NestedLoopJoin:
+		detail = fmt.Sprintf("NestedLoopJoin(left=%s right=%s)", v.leftTbl, v.rightTbl)
+	case *Filter:
+		detail = "Filter"
+	case *Project:
+		detail = "Project"
+	case *Sort:
+		detail = "Sort"
+	case *Limit:
+		detail = "Limit"
+	case *Distinct:
+		detail = "Distinct"
+	case *Aggregate:
+		detail = "Aggregate"
+	case *HashJoin:
+		detail = "HashJoin"
+	case *Insert:
+		detail = fmt.Sprintf("Insert(table=%s rows=%d)", v.table, len(v.values))
+	case *Update:
+		detail = fmt.Sprintf("Update(table=%s)", v.table)
+	case *Delete:
+		detail = fmt.Sprintf("Delete(table=%s)", v.table)
+	case *ValuesRows:
+		detail = fmt.Sprintf("ValuesRows(%d rows)", len(v.rows))
+	default:
+		detail = operatorType(op)
+	}
+
+	b.WriteString(detail)
+
+	// Recursively append children
 	if c, ok := op.(interface{ Child() Operator }); ok {
 		child := c.Child()
 		if child != nil {
@@ -142,37 +142,9 @@ func explainOperator(op Operator, depth int) string {
 		}
 		return b.String()
 	}
+
+	// Handle multi-child operators
 	switch v := op.(type) {
-	case *Filter:
-		if v.child != nil {
-			b.WriteByte('\n')
-			b.WriteString(explainOperator(v.child, depth+1))
-		}
-	case *Project:
-		if v.child != nil {
-			b.WriteByte('\n')
-			b.WriteString(explainOperator(v.child, depth+1))
-		}
-	case *Aggregate:
-		if v.child != nil {
-			b.WriteByte('\n')
-			b.WriteString(explainOperator(v.child, depth+1))
-		}
-	case *Sort:
-		if v.child != nil {
-			b.WriteByte('\n')
-			b.WriteString(explainOperator(v.child, depth+1))
-		}
-	case *Limit:
-		if v.child != nil {
-			b.WriteByte('\n')
-			b.WriteString(explainOperator(v.child, depth+1))
-		}
-	case *Distinct:
-		if v.child != nil {
-			b.WriteByte('\n')
-			b.WriteString(explainOperator(v.child, depth+1))
-		}
 	case *NestedLoopJoin:
 		if v.left != nil {
 			b.WriteByte('\n')
@@ -192,112 +164,16 @@ func explainOperator(op Operator, depth int) string {
 			b.WriteByte('\n')
 			b.WriteString(explainOperator(v.iter, depth+1))
 		}
-	}
-	return b.String()
-}
-
-func describeOp(op Operator) string {
-	if aop, ok := op.(*AdaptiveOp); ok {
-		return describeOp(aop.inner)
-	}
-	var b strings.Builder
-	switch v := op.(type) {
-	case *SeqScan:
-		b.WriteString("SeqScan(table=")
-		b.WriteString(v.table)
-		b.WriteByte(')')
-	case *IndexScan:
-		b.WriteString("IndexScan(table=")
-		b.WriteString(v.table)
-		b.WriteString(" idx=")
-		b.WriteString(v.idx)
-		b.WriteByte(')')
-	case *NestedLoopJoin:
-		b.WriteString("NestedLoopJoin(left=")
-		b.WriteString(v.leftTbl)
-		b.WriteString(" right=")
-		b.WriteString(v.rightTbl)
-		b.WriteByte(')')
-	case *Filter:
-		return "Filter"
-	case *Project:
-		return "Project"
-	case *Sort:
-		return "Sort"
-	case *Limit:
-		return "Limit"
-	case *Distinct:
-		return "Distinct"
-	case *Aggregate:
-		return "Aggregate"
-	case *Insert:
-		b.WriteString("Insert(table=")
-		b.WriteString(v.table)
-		b.WriteString(" rows=")
-		b.WriteString(strconv.Itoa(len(v.values)))
-		b.WriteByte(')')
-	case *Update:
-		b.WriteString("Update(table=")
-		b.WriteString(v.table)
-		b.WriteByte(')')
-	case *Delete:
-		b.WriteString("Delete(table=")
-		b.WriteString(v.table)
-		b.WriteByte(')')
-	case *CreateTable:
-		b.WriteString("CreateTable(name=")
-		b.WriteString(v.stmt.Name)
-		b.WriteByte(')')
-	case *DropTable:
-		b.WriteString("DropTable(name=")
-		b.WriteString(v.stmt.Name)
-		b.WriteByte(')')
-	case *CreateIndex:
-		b.WriteString("CreateIndex(name=")
-		b.WriteString(v.stmt.Name)
-		b.WriteByte(')')
-	case *DropIndex:
-		b.WriteString("DropIndex(name=")
-		b.WriteString(v.stmt.Name)
-		b.WriteByte(')')
-	case *CreateViewOperator:
-		b.WriteString("CreateView(name=")
-		b.WriteString(v.stmt.Name)
-		b.WriteByte(')')
-	case *DropView:
-		b.WriteString("DropView(name=")
-		b.WriteString(v.stmt.Name)
-		b.WriteByte(')')
-	case *DropTrigger:
-		b.WriteString("DropTrigger(name=")
-		b.WriteString(v.stmt.Name)
-		b.WriteByte(')')
-	case *AlterTable:
-		b.WriteString("AlterTable")
-	case *Pragma:
-		b.WriteString("Pragma")
-	case *Analyze:
-		b.WriteString("Analyze")
-	case *Vacuum:
-		b.WriteString("Vacuum")
-	case *Truncate:
-		b.WriteString("Truncate")
-	case *Reindex:
-		b.WriteString("Reindex")
 	case *HashJoin:
-		b.WriteString("HashJoin")
-	case *WindowOperator:
-		b.WriteString("Window")
-	case *CompoundOp:
-		b.WriteString("Compound")
-	case *ValuesRows:
-		b.WriteString("ValuesRows")
-	case *ExplainStmtOp:
-		b.WriteString("Explain")
-	case *Noop:
-		b.WriteString("Noop")
-	default:
-		return "Unknown"
+		if v.LeftChild() != nil {
+			b.WriteByte('\n')
+			b.WriteString(explainOperator(v.LeftChild(), depth+1))
+		}
+		if v.RightChild() != nil {
+			b.WriteByte('\n')
+			b.WriteString(explainOperator(v.RightChild(), depth+1))
+		}
 	}
+
 	return b.String()
 }

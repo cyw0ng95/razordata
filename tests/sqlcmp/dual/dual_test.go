@@ -6,6 +6,20 @@ import (
 	"time"
 )
 
+// TestDual_ZeroblobNormalization verifies REQ000811: blob cells
+// from razor are normalized to string to match oracle output.
+func TestDual_ZeroblobNormalization(t *testing.T) {
+	ctx := context.Background()
+	v, diff := RunOne(ctx, dualCase{
+		Name:  "zeroblob_content",
+		Query: "SELECT ZEROBLOB(8)",
+		Want:  [][]any{{[]byte{0, 0, 0, 0, 0, 0, 0, 0}}},
+	})
+	if v != VerdictPassed {
+		t.Errorf("zeroblob_content: verdict=%s diff=%s", v, diff)
+	}
+}
+
 func TestDual_AllSeededCases(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

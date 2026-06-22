@@ -10,6 +10,19 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
+// isNullValue checks if a value represents SQL NULL.
+// Handles both raw nil and Value{Kind: KindNull}.
+func isNullValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	// Check if it's a Value type with KindNull.
+	if val, ok := v.(Value); ok {
+		return val.IsNull()
+	}
+	return false
+}
+
 type Filter struct {
 	child     Operator
 	predicate PS.Expr
@@ -498,6 +511,11 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 		})
 	case int(LX.T_NE):
 		return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+			// SQL semantics: NULL compared with anything = UNKNOWN (drop row)
+			// Handle Value type (tagged-union) which may wrap NULL.
+			if isNullValue(a) || isNullValue(b) {
+				return false
+			}
 			return !equalValue(a, b)
 		})
 	case int(LX.T_GT):

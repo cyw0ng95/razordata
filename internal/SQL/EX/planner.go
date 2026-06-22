@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"sync"
 
-	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	"github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
-	"github.com/cyw0ng95/razordata/internal/SQL/PL"
-	"github.com/cyw0ng95/razordata/internal/SQL/PS"
-	"github.com/cyw0ng95/razordata/internal/SQL/RE"
+	PL "github.com/cyw0ng95/razordata/internal/SQL/PL"
+	PS "github.com/cyw0ng95/razordata/internal/SQL/PS"
+	RE "github.com/cyw0ng95/razordata/internal/SQL/RE"
 )
 
 // cloneExpr creates a deep copy of an expression to avoid
@@ -148,6 +148,49 @@ func (p *Planner) SetStatsCatalog(statsCatalog StatsCatalog) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.statsCatalog = statsCatalog
+}
+
+// getTableStats returns aggregated TableStats for a table, combining
+// column statistics from the stats catalog with in-memory table data.
+// REQ000787.
+func (p *Planner) getTableStats(table string) *TableStats {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	ts := &TableStats{
+		ColStats:     make(map[string]*ls.ColumnStats),
+		RowCount:     0,
+		TotalWidth:   0,
+		LastAnalyzed: 0,
+	}
+
+	// First, try to get row count from in-memory tables.
+	if rows, ok := tables[table]; ok {
+		ts.RowCount = int64(len(rows))
+		ts.TotalWidth = 100 // default width
+	}
+
+	// Then, aggregate column statistics from stats catalog.
+	if p.statsCatalog != nil {
+		// Get table info to know column names.
+		if tInfo, ok := p.catalog[table]; ok {
+			for _, col := range tInfo.cols {
+				if cs := p.statsCatalog.ColumnStatsByName(table, col.Name); cs != nil {
+					ts.ColStats[col.Name] = cs
+					if cs.RowCount > ts.RowCount {
+						ts.RowCount = cs.RowCount
+					}
+				}
+			}
+		}
+	}
+
+	// If no row count from either source, use default.
+	if ts.RowCount == 0 {
+		ts.RowCount = 100
+	}
+
+	return ts
 }
 
 func (p *Planner) RegisterTable(name string, cols []ColInfo, pk string) {
@@ -1916,13 +1959,19 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 // their row count available via package-level tables map.
 // A future iteration can integrate histogram-based estimates
 // (REQ000085) for more accuracy.
+// REQ000787: now uses TableStats from the catalog when available.
 func (p *Planner) estimateRowCount(table string, where PS.Expr) int {
 	// REQ000780: return actual row count for in-memory tables.
-	// For store-backed tables, return a default estimate of 100.
 	if rows, ok := tables[table]; ok {
 		return len(rows)
 	}
-	return 100
+	// REQ000787: use statistics-driven estimate from catalog.
+	if cat := Catalog(); cat != nil {
+		if ts := cat.TableStats(table); ts != nil && ts.RowCount > 0 {
+			return int(ts.RowCount)
+		}
+	}
+	return 100 // default estimate
 }
 
 func (p *Planner) ParseAndPlan(sql string) (*plan, error) {

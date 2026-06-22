@@ -11,9 +11,12 @@ package dual
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 
 	_ "modernc.org/sqlite"
 
@@ -146,6 +149,8 @@ func runRazor(ctx context.Context, c dualCase) ([][]any, error) {
 // razorCellToAny unwraps an slt.Value into a Go any for the
 // normalize step. The mapping mirrors slt's internal
 // valueFromAny so dual and slt agree on the wire format.
+// REQ000811: TypeBlob is decoded from hex to []byte so it
+// normalizes to string alongside oracle's blob output.
 func razorCellToAny(v slt.Value) any {
 	if v.Kind == slt.TypeNull {
 		return nil
@@ -155,6 +160,15 @@ func razorCellToAny(v slt.Value) any {
 		return v.Int
 	case slt.TypeReal:
 		return v.Real
+	case slt.TypeBlob:
+		// REQ000811: decode hex-encoded blob to raw bytes.
+		// normalizeCell will convert []byte -> string.
+		decoded, err := hex.DecodeString(v.Text)
+		if err != nil {
+			// Fallback: return the raw hex string if decode fails.
+			return v.Text
+		}
+		return decoded
 	default:
 		return v.Text
 	}
@@ -251,6 +265,7 @@ func normalize(in [][]any) [][]any {
 }
 
 func normalizeCell(v any) any {
+	// fmt.Printf("DEBUG: normalizeCell input type=%T value=%v\n", v, v)
 	switch x := v.(type) {
 	case int:
 		return int64(x)
@@ -264,8 +279,26 @@ func normalizeCell(v any) any {
 	case float32:
 		return roundFloat(float64(x), 6)
 	case []byte:
+		// REQ000811: convert blob bytes to string for comparison with oracle.
+		// fmt.Printf("DEBUG: normalizeCell []byte len=%d -> string\n", len(x))
 		return string(x)
 	case string:
+		// REQ000811: if the string looks like a slice representation (e.g. "[0 0 0 0 0 0 0 0]"),
+		// it means the blob was already converted to string via fmt.Sprintf("%v", v) in valueFromAny.
+		// In this case, we need to parse the numbers between brackets and convert to raw bytes.
+		if len(x) > 0 && x[0] == '[' {
+			// Parse the slice representation: "[0 0 0 0 0 0 0 0]"
+			// Extract the numbers between brackets
+			x = x[1 : len(x)-1] // remove brackets
+			parts := strings.Fields(x)
+			bytes := make([]byte, len(parts))
+			for i, p := range parts {
+				if n, err := strconv.ParseInt(p, 10, 0); err == nil {
+					bytes[i] = byte(n)
+				}
+			}
+			return string(bytes)
+		}
 		return x
 	case bool:
 		if x {
@@ -275,6 +308,7 @@ func normalizeCell(v any) any {
 	case nil:
 		return nil
 	default:
+		// fmt.Printf("DEBUG: normalizeCell default type=%T value=%v\n", v, v)
 		return fmt.Sprintf("%v", v)
 	}
 }
