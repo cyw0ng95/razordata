@@ -123,3 +123,54 @@ func TestExplain_AllStatementTypes(t *testing.T) {
 		}
 	}
 }
+
+// TestExplainAnalyze verifies REQ000783: EXPLAIN ANALYZE executes the
+// query and shows runtime stats.
+func TestExplainAnalyze(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"id", "v"})
+
+	ctx := context.Background()
+	for _, s := range []string{
+		"INSERT INTO t VALUES (1, 10)",
+		"INSERT INTO t VALUES (2, 20)",
+		"INSERT INTO t VALUES (3, 30)",
+	} {
+		if _, err := ex.Exec(ctx, s); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	rows, err := ex.QueryAll(ctx, "EXPLAIN ANALYZE SELECT * FROM t WHERE v > 15")
+	if err != nil {
+		t.Fatalf("EXPLAIN ANALYZE: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected non-empty output")
+	}
+
+	allDetails := ""
+	for _, r := range rows {
+		if len(r.Data) > 0 {
+			allDetails += r.Data[3].(string) + "\n"
+		}
+	}
+	t.Logf("EXPLAIN ANALYZE output:\n%s", allDetails)
+
+	if !strings.Contains(allDetails, "actual rows=") {
+		t.Errorf("expected actual rows in output")
+	}
+	if !strings.Contains(allDetails, "time=") {
+		t.Errorf("expected time in output")
+	}
+
+	verifyRows, err := ex.QueryAll(ctx, "SELECT * FROM t WHERE v > 15")
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if len(verifyRows) != 2 {
+		t.Errorf("expected 2 rows after EXPLAIN ANALYZE, got %d", len(verifyRows))
+	}
+}

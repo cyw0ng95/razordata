@@ -9,7 +9,27 @@ func (p *Parser) parseExplain() (*ExplainStmt, error) {
 	p.advance() // consume EXPLAIN
 
 	mode := ExplainNormal
-	if p.current.Type == LX.T_QUERY {
+	if p.current.Type == LX.T_ANALYZE {
+		// Disambiguate: EXPLAIN ANALYZE followed by SELECT/INSERT etc.
+		// is the EXPLAIN ANALYZE feature. Bare EXPLAIN ANALYZE or
+		// EXPLAIN ANALYZE table is the ANALYZE statement.
+		next := p.lex.Peek()
+		isExplainAnalyze := next.Type == LX.T_SELECT || next.Type == LX.T_INSERT ||
+			next.Type == LX.T_UPDATE || next.Type == LX.T_DELETE ||
+			next.Type == LX.T_CREATE || next.Type == LX.T_DROP ||
+			next.Type == LX.T_EXPLAIN || next.Type == LX.T_WITH ||
+			next.Type == LX.T_VALUES || next.Type == LX.T_BEGIN ||
+			next.Type == LX.T_COMMIT || next.Type == LX.T_ROLLBACK ||
+			next.Type == LX.T_SAVEPOINT || next.Type == LX.T_RELEASE ||
+			next.Type == LX.T_REINDEX || next.Type == LX.T_VACUUM ||
+			next.Type == LX.T_TRUNCATE || next.Type == LX.T_PRAGMA
+		if isExplainAnalyze {
+			mode = ExplainAnalyze
+			p.advance() // consume ANALYZE
+		}
+		// else: fall through to normal mode, ANALYZE stays as current
+		//       token, and parseTableName below will handle it.
+	} else if p.current.Type == LX.T_QUERY {
 		// Use lexer Peek to check if QUERY is followed by PLAN
 		next := p.lex.Peek()
 		if next.Type == LX.T_PLAN {

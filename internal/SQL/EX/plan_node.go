@@ -11,14 +11,22 @@ import (
 // It mirrors the Operator tree but captures descriptive metadata for
 // human-readable rendering.
 type PlanNode struct {
-	Type     string      // "SeqScan", "IndexScan", "Filter", etc.
-	Table    string      // for scan nodes
-	Index    string      // for index nodes
-	Cost     float64     // estimated cost
-	Rows     int64       // estimated row count
-	Width    int         // avg row width (bytes)
-	Detail   string      // extra info (filter expr, order by, etc.)
-	Children []*PlanNode // child nodes
+	Type     string        // "SeqScan", "IndexScan", "Filter", etc.
+	Table    string        // for scan nodes
+	Index    string        // for index nodes
+	Cost     float64       // estimated cost
+	Rows     int64         // estimated row count
+	Width    int           // avg row width (bytes)
+	Detail   string        // extra info (filter expr, order by, etc.)
+	Children []*PlanNode   // child nodes
+	Analyze  *AnalyzeStats // REQ000783: runtime stats from EXPLAIN ANALYZE
+}
+
+// AnalyzeStats holds runtime statistics for EXPLAIN ANALYZE.
+type AnalyzeStats struct {
+	RowsReturned int64
+	TimeNS       int64
+	Allocs       int64
 }
 
 // Add appends a child node to this PlanNode.
@@ -427,6 +435,10 @@ func formatPlanTree(n *PlanNode) []Row {
 		}
 		if node.Index != "" {
 			detail += " USING INDEX " + node.Index
+		}
+		// REQ000783: append EXPLAIN ANALYZE runtime stats.
+		if a := node.Analyze; a != nil {
+			detail += fmt.Sprintf(" (actual rows=%d time=%dns allocs=%d)", a.RowsReturned, a.TimeNS, a.Allocs)
 		}
 
 		rows = append(rows, Row{

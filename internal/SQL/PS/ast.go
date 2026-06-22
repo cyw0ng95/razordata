@@ -565,6 +565,7 @@ type ExplainMode int
 const (
 	ExplainNormal ExplainMode = iota
 	ExplainQueryPlan
+	ExplainAnalyze
 )
 
 // ExplainStmt represents an EXPLAIN statement.

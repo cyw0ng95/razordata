@@ -8,6 +8,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
@@ -32,6 +33,12 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
 		switch e.mode {
 		case PS.ExplainQueryPlan:
 			e.rows = formatPlanTree(e.planNode)
+		case PS.ExplainAnalyze:
+			// REQ000783: execute and collect runtime stats.
+			if err := executeAndCollectStats(ctx, e.root, e.planNode); err != nil {
+				return Row{}, err
+			}
+			e.rows = formatPlanTree(e.planNode)
 		default:
 			e.rows = formatExplainNormal(e.planNode)
 		}
@@ -45,6 +52,31 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
 	row := e.rows[e.pos]
 	e.pos++
 	return row, nil
+}
+
+// executeAndCollectStats drains the operator tree, collects total stats,
+// and closes the inner plan to reset iterator state (memo may reuse it).
+func executeAndCollectStats(ctx context.Context, root Operator, pn *PlanNode) error {
+	start := time.Now()
+	var rows int64
+	for {
+		_, err := root.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return err
+		}
+		rows++
+	}
+	root.Close()
+	elapsed := time.Since(start)
+	if pn.Analyze == nil {
+		pn.Analyze = &AnalyzeStats{}
+	}
+	pn.Analyze.RowsReturned = rows
+	pn.Analyze.TimeNS = elapsed.Nanoseconds()
+	return nil
 }
 
 func (e *ExplainStmtOp) Close() error {
