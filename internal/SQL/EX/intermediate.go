@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
+	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
@@ -17,6 +19,10 @@ type Filter struct {
 	// when passing &row to Eval. Filter is heap-allocated, so
 	// &f.curRow is already a heap pointer — no escape needed.
 	curRow Row
+	// REQ000802: compiledFilterFn is a specialized predicate function
+	// compiled on first use. It bypasses Eval dispatch overhead.
+	compiledFilterFn func(*Row) (bool, error)
+	compiledOnce     bool
 }
 
 // Child returns the filter's child operator. Used by
@@ -54,9 +60,22 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 		if f.predicate == nil {
 			return r, nil
 		}
-		// REQ000757: copy into f.curRow instead of taking &r.
-		// f.curRow is on the heap (Filter struct), so &f.curRow
-		// is already a heap pointer — Eval won't force escape.
+		// REQ000802: use compiled predicate if available.
+		if !f.compiledOnce {
+			f.compiledFilterFn = compileFilterExpr(f.predicate)
+			f.compiledOnce = true
+		}
+		if f.compiledFilterFn != nil {
+			ok, cerr := f.compiledFilterFn(&r)
+			if cerr != nil {
+				return Row{}, cerr
+			}
+			if ok {
+				return r, nil
+			}
+			continue
+		}
+		// Fallback to Eval-based path.
 		f.curRow = r
 		v, err := Eval(f.predicate, &f.curRow, f.params)
 		if err != nil {
@@ -368,4 +387,161 @@ func (o *Offset) Close() error {
 		return nil
 	}
 	return o.child.Close()
+}
+
+// compileFilterExpr compiles a simple Filter predicate into a
+// specialized function that reads directly from row.Data, bypassing
+// the Eval dispatch tree. Returns nil for complex predicates that
+// cannot be compiled. REQ000802.
+func compileFilterExpr(e PS.Expr) func(*Row) (bool, error) {
+	if e == nil {
+		return nil
+	}
+	switch v := e.(type) {
+	case *PS.BinaryExpr:
+		return compileBinary(v)
+	case *PS.UnaryExpr:
+		if v.Op == int(LX.T_NOT) {
+			inner := compileFilterExpr(v.Operand)
+			if inner == nil {
+				return nil
+			}
+			return func(row *Row) (bool, error) {
+				res, err := inner(row)
+				if err != nil {
+					return false, err
+				}
+				return !res, nil
+			}
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
+func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
+	// Handle AND/OR by compiling both sides.
+	if e.Op == int(LX.T_AND) {
+		left := compileFilterExpr(e.Left)
+		right := compileFilterExpr(e.Right)
+		if left == nil || right == nil {
+			return nil
+		}
+		return func(row *Row) (bool, error) {
+			lr, err := left(row)
+			if err != nil || !lr {
+				return false, err
+			}
+			return right(row)
+		}
+	}
+	if e.Op == int(LX.T_OR) {
+		left := compileFilterExpr(e.Left)
+		right := compileFilterExpr(e.Right)
+		if left == nil || right == nil {
+			return nil
+		}
+		return func(row *Row) (bool, error) {
+			lr, err := left(row)
+			if err != nil || lr {
+				return lr, err
+			}
+			return right(row)
+		}
+	}
+
+	// Simple comparisons: col OP literal
+	col, literal, ok := extractColLiteralPair(e)
+	if !ok {
+		return nil
+	}
+	if literal == nil {
+		return nil
+	}
+	colName := col
+	litVal := literal
+
+	switch e.Op {
+	case int(LX.T_EQ):
+		return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+			return equalValue(a, b)
+		})
+	case int(LX.T_NE):
+		return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+			return !equalValue(a, b)
+		})
+	case int(LX.T_GT):
+		return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+			return compare(a, b) > 0
+		})
+	case int(LX.T_GE):
+		return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+			return compare(a, b) >= 0
+		})
+	case int(LX.T_LT):
+		return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+			return compare(a, b) < 0
+		})
+	case int(LX.T_LE):
+		return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+			return compare(a, b) <= 0
+		})
+	}
+	return nil
+}
+
+func makeCompiledCmp(colName string, litVal any, cmp func(a, b any) bool) func(*Row) (bool, error) {
+	idx := -1
+	return func(row *Row) (bool, error) {
+		if idx < 0 {
+			for i, c := range row.Cols {
+				if strings.EqualFold(c, colName) {
+					idx = i
+					break
+				}
+			}
+			if idx < 0 {
+				return false, nil
+			}
+		}
+		if idx >= len(row.Data) {
+			return false, nil
+		}
+		return cmp(row.Data[idx], litVal), nil
+	}
+}
+
+// extractColLiteralPair extracts (column_name, literal_value, ok) from a
+// BinaryExpr where one side is an Ident and the other is a literal.
+func extractColLiteralPair(e *PS.BinaryExpr) (string, any, bool) {
+	if id, ok := e.Left.(*PS.Ident); ok {
+		if lit, ok := extractLiteral(e.Right); ok {
+			return id.Name, lit, true
+		}
+	}
+	if id, ok := e.Right.(*PS.Ident); ok {
+		if lit, ok := extractLiteral(e.Left); ok {
+			return id.Name, lit, true
+		}
+	}
+	return "", nil, false
+}
+
+// extractLiteral returns the Go value from a literal expression node.
+func extractLiteral(e PS.Expr) (any, bool) {
+	switch v := e.(type) {
+	case *PS.NumberLiteral:
+		return v.Val, true
+	case *PS.FloatLiteral:
+		return v.Val, true
+	case *PS.StringLiteral:
+		return v.Val, true
+	case *PS.BoolLiteral:
+		return v.Val, true
+	case *PS.NullLiteral:
+		return nil, true
+	default:
+		return nil, false
+	}
 }
