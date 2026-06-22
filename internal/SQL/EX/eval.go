@@ -832,7 +832,7 @@ func evalAggregate(e *PS.AggregateFunc, row *Row, params []any) (any, error) {
 }
 
 func evalFunction(e *PS.FunctionCall, row *Row, params []any) (any, error) {
-	switch strings.ToUpper(e.Name) {
+	switch e.Name {
 	case "LENGTH":
 		if len(e.Args) > 0 {
 			v, err := Eval(e.Args[0], row, params)

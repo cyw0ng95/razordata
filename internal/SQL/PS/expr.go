@@ -255,6 +255,9 @@ func (p *Parser) parsePrimary() (Expr, error) {
 // The '(' has already been consumed.
 func (p *Parser) parseFunctionCall(name string) (Expr, error) {
 	p.advance() // consume '('
+	// REQ000761: normalize function name to uppercase once,
+	// eliminating strings.ToUpper in evalFunction.
+	name = strings.ToUpper(name)
 	// REQ000437: aggregate names like GROUP_CONCAT accept
 	// the DISTINCT keyword before their argument.
 	// REQ000805: ALL is also accepted as a no-op.
