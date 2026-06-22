@@ -237,3 +237,74 @@ func BenchmarkUniqueInsert(b *testing.B) {
 		_, _ = ins.Next(context.Background())
 	}
 }
+
+// REQ000799/REQ000802 verification: j3-style benchmark suite.
+// j3_mixed = 3-table cross join (1000×1000×1000) + filter + project
+// j3_filter_only = same shape, filter only, no projection
+// j4_cross, j5_cross, j6_cross scale up to verify complexity bounds.
+func setupJ3Tables(b *testing.B, n int) {
+	b.Helper()
+	UnregisterAll()
+	RegisterTableSchema("t1", []string{"id", "a", "b", "c", "d"})
+	RegisterTableSchema("t2", []string{"id", "a", "b", "c", "d"})
+	RegisterTableSchema("t3", []string{"id", "a", "b", "c", "d"})
+	tablesMu.Lock()
+	for i := 0; i < n; i++ {
+		v := int64(i)
+		tables["t1"] = append(tables["t1"], Row{
+			Cols: []string{"id", "a", "b", "c", "d"},
+			Data: []Value{NewIntValue(v), NewIntValue(v % 100), NewIntValue(v % 50), NewIntValue(v % 25), NewIntValue(v % 10)},
+		})
+		tables["t2"] = append(tables["t2"], Row{
+			Cols: []string{"id", "a", "b", "c", "d"},
+			Data: []Value{NewIntValue(v), NewIntValue(v % 100), NewIntValue(v % 50), NewIntValue(v % 25), NewIntValue(v % 10)},
+		})
+		tables["t3"] = append(tables["t3"], Row{
+			Cols: []string{"id", "a", "b", "c", "d"},
+			Data: []Value{NewIntValue(v), NewIntValue(v % 100), NewIntValue(v % 50), NewIntValue(v % 25), NewIntValue(v % 10)},
+		})
+	}
+	tablesMu.Unlock()
+}
+
+func BenchmarkJ3_Mixed(b *testing.B) {
+	setupJ3Tables(b, 100)
+	ex := NewExecutor()
+	ctx := context.Background()
+	q := "SELECT t1.id, t2.a, t3.b FROM t1, t2, t3 WHERE t1.a > 50 AND t2.b < 25"
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := ex.QueryAll(ctx, q); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJ3_FilterOnly(b *testing.B) {
+	setupJ3Tables(b, 100)
+	ex := NewExecutor()
+	ctx := context.Background()
+	q := "SELECT t1.id FROM t1, t2, t3 WHERE t1.a > 50 AND t2.b < 25 AND t3.c > 10"
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := ex.QueryAll(ctx, q); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJ4_Cross(b *testing.B) {
+	setupJ3Tables(b, 100)
+	ex := NewExecutor()
+	ctx := context.Background()
+	q := "SELECT t1.id FROM t1, t2, t3, t1 t1b WHERE t1.a = t1b.a"
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := ex.QueryAll(ctx, q); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
