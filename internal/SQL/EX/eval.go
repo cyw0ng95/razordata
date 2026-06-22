@@ -226,6 +226,17 @@ func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 	}
 }
 
+// EvalValue is the Value-typed variant of Eval. It returns inline
+// Value structs instead of boxed any, avoiding convT64 overhead
+// in the hot evaluation path. REQ000776.
+func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
+	v, err := Eval(expr, row, params)
+	if err != nil {
+		return NullValue(), err
+	}
+	return valueFromAny(v), nil
+}
+
 func evalUnary(e *PS.UnaryExpr, row *Row, params []any) (any, error) {
 	operand, err := Eval(e.Operand, row, params)
 	if err != nil {

@@ -8,9 +8,10 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/cyw0ng95/razordata/internal/SQL/LX"
+	PS "github.com/cyw0ng95/razordata/internal/SQL/PS"
+
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-	LX "github.com/cyw0ng95/razordata/internal/SQL/LX"
-	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
 // sessionCountersProvider is an optional callback set by SYS/SE to
@@ -73,6 +74,87 @@ func getSessionCounterAccessor() SessionCounterAccessor {
 var ErrNotImplemented = errors.New("ex: not implemented")
 var ErrNoRows = errors.New("ex: no rows")
 var ErrClosed = errors.New("ex: operator closed")
+
+// Value kind constants for the tagged-union Value type (REQ000776).
+const (
+	KindNull ValueKind = iota
+	KindInt
+	KindFloat
+	KindText
+	KindBool
+)
+
+// ValueKind is the type discriminator for Value.
+type ValueKind uint8
+
+// Value is a tagged-union that stores SQL values inline without boxing.
+// The zero value (Kind=0, all fields zero) represents SQL NULL.
+type Value struct {
+	Kind ValueKind
+	I64  int64
+	F64  float64
+	S    string
+	B    bool
+}
+
+// NewIntValue creates a Value from an int64.
+func NewIntValue(v int64) Value { return Value{Kind: KindInt, I64: v} }
+
+// NewFloatValue creates a Value from a float64.
+func NewFloatValue(v float64) Value { return Value{Kind: KindFloat, F64: v} }
+
+// NewTextValue creates a Value from a string.
+func NewTextValue(v string) Value { return Value{Kind: KindText, S: v} }
+
+// NewBoolValue creates a Value from a bool.
+func NewBoolValue(v bool) Value { return Value{Kind: KindBool, B: v} }
+
+// NullValue returns a NULL Value.
+func NullValue() Value { return Value{Kind: KindNull} }
+
+// IsNull returns true if this Value represents SQL NULL.
+func (v Value) IsNull() bool { return v.Kind == KindNull }
+
+// ToAny converts a Value to the boxed any representation.
+// Used for backward compatibility during the migration.
+func (v Value) ToAny() any {
+	switch v.Kind {
+	case KindNull:
+		return nil
+	case KindInt:
+		return v.I64
+	case KindFloat:
+		return v.F64
+	case KindText:
+		return v.S
+	case KindBool:
+		return v.B
+	default:
+		return nil
+	}
+}
+
+// valueFromAny creates a Value from a boxed any. Inverse of ToAny.
+func valueFromAny(a any) Value {
+	if a == nil {
+		return NullValue()
+	}
+	switch x := a.(type) {
+	case int64:
+		return NewIntValue(x)
+	case float64:
+		return NewFloatValue(x)
+	case string:
+		return NewTextValue(x)
+	case bool:
+		return NewBoolValue(x)
+	case int:
+		return NewIntValue(int64(x))
+	default:
+		return NewTextValue(fmt.Sprint(x))
+	}
+}
+
 
 type Operator interface {
 	Next(ctx context.Context) (Row, error)
