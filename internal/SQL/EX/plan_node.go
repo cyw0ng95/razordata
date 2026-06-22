@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	PS "github.com/cyw0ng95/razordata/internal/SQL/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQL/RE"
 )
 
@@ -410,7 +411,11 @@ func operatorType(op Operator) string {
 
 // formatPlanTree renders a PlanNode tree as SQLite-compatible EXPLAIN output.
 // Schema: (id, parent, notused, detail)
-func formatPlanTree(n *PlanNode) []Row {
+// The mode parameter controls verbosity:
+//   - ExplainNormal: full detail including expressions, costs, and row estimates
+//   - ExplainQueryPlan: simplified output (SCAN/SEARCH/JOIN style)
+//   - ExplainAnalyze: same as mode but with actual runtime stats appended
+func formatPlanTree(n *PlanNode, mode PS.ExplainMode) []Row {
 	if n == nil {
 		return nil
 	}
@@ -426,16 +431,32 @@ func formatPlanTree(n *PlanNode) []Row {
 		id := nextID
 		nextID++
 
-		detail := node.Detail
-		if detail == "" {
-			detail = node.Type
+		var detail string
+		switch mode {
+		case PS.ExplainQueryPlan:
+			// Simplified SQLite-style output: SCAN, SEARCH, JOIN
+			detail = explainQueryPlanDetail(node)
+		default:
+			// Full detail: type, table, index, expressions, costs, row estimates
+			detail = node.Detail
+			if detail == "" {
+				detail = node.Type
+			}
+			if node.Table != "" && !strings.Contains(detail, node.Table) {
+				detail += " " + node.Table
+			}
+			if node.Index != "" {
+				detail += " USING INDEX " + node.Index
+			}
+			// Include cost and row estimates for verbose modes
+			if node.Cost > 0 {
+				detail += fmt.Sprintf(" cost=%.2f", node.Cost)
+			}
+			if node.Rows > 0 {
+				detail += fmt.Sprintf(" rows=%d", node.Rows)
+			}
 		}
-		if node.Table != "" && !strings.Contains(detail, node.Table) {
-			detail += " " + node.Table
-		}
-		if node.Index != "" {
-			detail += " USING INDEX " + node.Index
-		}
+
 		// REQ000783: append EXPLAIN ANALYZE runtime stats.
 		if a := node.Analyze; a != nil {
 			detail += fmt.Sprintf(" (actual rows=%d time=%dns allocs=%d)", a.RowsReturned, a.TimeNS, a.Allocs)
@@ -454,6 +475,48 @@ func formatPlanTree(n *PlanNode) []Row {
 
 	walk(n, 0)
 	return rows
+}
+
+// explainQueryPlanDetail produces simplified SQLite-style output for EXPLAIN QUERY PLAN.
+// Maps internal operator types to SCAN/SEARCH/JOIN verbs.
+func explainQueryPlanDetail(n *PlanNode) string {
+	switch n.Type {
+	case "Scan":
+		if n.Index != "" {
+			return "SEARCH " + n.Table + " USING INDEX " + n.Index
+		}
+		return "SCAN " + n.Table
+	case "Search":
+		return "SEARCH " + n.Table + " USING INDEX " + n.Index
+	case "Join":
+		return "JOIN " + n.Table
+	case "HashJoin":
+		return "HASH JOIN " + n.Table
+	case "Filter":
+		return "FILTER"
+	case "Project":
+		return "PROJECT"
+	case "Sort":
+		return "SORT"
+	case "Distinct":
+		return "DISTINCT"
+	case "Aggregate":
+		return "AGGREGATE"
+	case "Limit":
+		return "LIMIT"
+	case "Offset":
+		return "OFFSET"
+	case "Values":
+		return "VALUES"
+	case "Insert":
+		return "INSERT"
+	case "Update":
+		return "UPDATE"
+	case "Delete":
+		return "DELETE"
+	default:
+		return strings.ToUpper(n.Type)
+	}
 }
 
 // Cost estimation helpers

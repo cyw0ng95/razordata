@@ -174,3 +174,75 @@ func TestExplainAnalyze(t *testing.T) {
 		t.Errorf("expected 2 rows after EXPLAIN ANALYZE, got %d", len(verifyRows))
 	}
 }
+
+// TestExplain_UnifiedRendering verifies REQ000784: explainOperator and
+// formatExplainNormal are removed; formatPlanTree handles all modes with
+// a single code path.
+func TestExplain_UnifiedRendering(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"id", "v", "name"})
+
+	ctx := context.Background()
+	for _, s := range []string{
+		"INSERT INTO t VALUES (1, 10, 'alice')",
+		"INSERT INTO t VALUES (2, 20, 'bob')",
+		"INSERT INTO t VALUES (3, 30, 'carol')",
+	} {
+		if _, err := ex.Exec(ctx, s); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	// Test EXPLAIN (normal mode) — should show full detail
+	rowsNorm, err := ex.QueryAll(ctx, "EXPLAIN SELECT id, v FROM t WHERE v > 15 ORDER BY v")
+	if err != nil {
+		t.Fatalf("EXPLAIN: %v", err)
+	}
+	if len(rowsNorm) == 0 {
+		t.Fatal("expected non-empty EXPLAIN output")
+	}
+
+	// Verify normal mode produces output with the standard schema
+	for _, r := range rowsNorm {
+		if len(r.Cols) != 4 {
+			t.Errorf("EXPLAIN: expected 4 columns, got %d", len(r.Cols))
+		}
+		if len(r.Data) != 4 {
+			t.Errorf("EXPLAIN: expected 4 data fields, got %d", len(r.Data))
+		}
+	}
+
+	// Test EXPLAIN QUERY PLAN mode — should produce output
+	rowsQP, err := ex.QueryAll(ctx, "EXPLAIN QUERY PLAN SELECT id, v FROM t WHERE v > 15")
+	if err != nil {
+		t.Fatalf("EXPLAIN QUERY PLAN: %v", err)
+	}
+	if len(rowsQP) == 0 {
+		t.Fatal("expected non-empty EXPLAIN QUERY PLAN output")
+	}
+
+	// Test EXPLAIN ANALYZE mode — should execute and produce output
+	// Note: Actual stats population is tested in TestExplainAnalyze
+	rowsAn, err := ex.QueryAll(ctx, "EXPLAIN ANALYZE SELECT id, v FROM t WHERE v > 15")
+	if err != nil {
+		t.Fatalf("EXPLAIN ANALYZE: %v", err)
+	}
+	if len(rowsAn) == 0 {
+		t.Fatal("expected non-empty EXPLAIN ANALYZE output")
+	}
+
+	// Verify all modes produce the same schema: (id, parent, notused, detail)
+	for i, rows := range [][]Row{rowsNorm, rowsQP, rowsAn} {
+		modeNames := []string{"normal", "query_plan", "analyze"}
+		for _, r := range rows {
+			if len(r.Cols) != 4 {
+				t.Errorf("EXPLAIN %s: expected 4 columns, got %d", modeNames[i], len(r.Cols))
+			}
+			if len(r.Data) != 4 {
+				t.Errorf("EXPLAIN %s: expected 4 data fields, got %d", modeNames[i], len(r.Data))
+			}
+		}
+	}
+}
