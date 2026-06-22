@@ -14,15 +14,16 @@ import (
 // It mirrors the Operator tree but captures descriptive metadata for
 // human-readable rendering.
 type PlanNode struct {
-	Type     string        // "SeqScan", "IndexScan", "Filter", etc.
-	Table    string        // for scan nodes
-	Index    string        // for index nodes
-	Cost     float64       // estimated cost
-	Rows     int64         // estimated row count
-	Width    int           // avg row width (bytes)
-	Detail   string        // extra info (filter expr, order by, etc.)
-	Children []*PlanNode   // child nodes
-	Analyze  *AnalyzeStats // REQ000783: runtime stats from EXPLAIN ANALYZE
+	Type        string          // "SeqScan", "IndexScan", "Filter", etc.
+	Table       string          // for scan nodes
+	Index       string          // for index nodes
+	Cost        float64         // estimated cost
+	Rows        int64           // estimated row count
+	Width       int             // avg row width (bytes)
+	Detail      string          // extra info (filter expr, order by, etc.)
+	Children    []*PlanNode     // child nodes
+	Analyze     *AnalyzeStats   // REQ000783: runtime stats from EXPLAIN ANALYZE
+	Bottleneck  *BottleneckInfo // REQ000788: bottleneck analysis
 }
 
 // AnalyzeStats holds runtime statistics for EXPLAIN ANALYZE.
@@ -41,9 +42,27 @@ type TableStats struct {
 	LastAnalyzed  int64                      // unix nanos
 }
 
+// BottleneckInfo captures identified performance bottlenecks in a query plan
+// (REQ000788). It is attached to PlanNode for EXPLAIN ANALYZE output.
+type BottleneckInfo struct {
+	Severity     string   // "low", "medium", "high", "critical"
+	Type         string   // "seq_scan", "large_sort", "hash_join_fallback", "high_allocs", "skew"
+	Details      string   // human-readable description
+	Recommendations []string // suggested fixes
+	ActualRows   int64
+	EstimatedRows int64
+	ActualTimeNS int64
+	CostRatio    float64 // actual/estimated cost ratio
+}
+
 // Add appends a child node to this PlanNode.
 func (n *PlanNode) Add(child *PlanNode) {
 	n.Children = append(n.Children, child)
+}
+
+// SetBottleneck attaches bottleneck analysis to this node (REQ000788).
+func (n *PlanNode) SetBottleneck(bn *BottleneckInfo) {
+	n.Bottleneck = bn
 }
 
 // buildPlanNodeTree converts an Operator tree into a PlanNode tree.
@@ -516,6 +535,17 @@ func formatPlanTree(n *PlanNode, mode PS.ExplainMode) []Row {
 			detail += fmt.Sprintf(" (actual rows=%d time=%dns allocs=%d)", a.RowsReturned, a.TimeNS, a.Allocs)
 		}
 
+		// REQ000788: append bottleneck analysis if present.
+		if bn := node.Bottleneck; bn != nil {
+			detail += fmt.Sprintf(" [BOTTLENECK: %s severity=%s]", bn.Type, bn.Severity)
+			if bn.Details != "" {
+				detail += fmt.Sprintf(" (%s)", bn.Details)
+			}
+			if len(bn.Recommendations) > 0 {
+				detail += fmt.Sprintf(" recommend: %s", strings.Join(bn.Recommendations, "; "))
+			}
+		}
+
 		rows = append(rows, Row{
 			Cols:  []string{"id", "parent", "notused", "detail"},
 			Types: []int{1, 1, 1, 1},
@@ -529,6 +559,105 @@ func formatPlanTree(n *PlanNode, mode PS.ExplainMode) []Row {
 
 	walk(n, 0)
 	return rows
+}
+
+// AnalyzePlanForBottlenecks walks the plan tree and identifies performance
+// bottlenecks based on runtime statistics and cost estimates (REQ000788).
+func AnalyzePlanForBottlenecks(root *PlanNode) []*BottleneckInfo {
+	var bottlenecks []*BottleneckInfo
+	if root == nil {
+		return bottlenecks
+	}
+
+	var walk func(node *PlanNode)
+	walk = func(node *PlanNode) {
+		if node == nil {
+			return
+		}
+
+		bn := identifyBottleneck(node)
+		if bn != nil {
+			node.SetBottleneck(bn)
+			bottlenecks = append(bottlenecks, bn)
+		}
+
+		for _, child := range node.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+
+	return bottlenecks
+}
+
+// identifyBottleneck examines a single plan node and returns a BottleneckInfo
+// if a performance issue is detected (REQ000788).
+func identifyBottleneck(node *PlanNode) *BottleneckInfo {
+	if node.Analyze == nil {
+		return nil
+	}
+
+	bn := &BottleneckInfo{
+		ActualRows:    node.Analyze.RowsReturned,
+		EstimatedRows: node.Rows,
+		ActualTimeNS:  node.Analyze.TimeNS,
+	}
+
+	// Check for high actual vs estimated row ratio (cardinality misestimate).
+	if node.Rows > 0 && node.Analyze.RowsReturned > 0 {
+		bn.CostRatio = float64(node.Analyze.RowsReturned) / float64(node.Rows)
+		if bn.CostRatio > 5.0 {
+			bn.Severity = "high"
+			bn.Type = "cardinality_misestimate"
+			bn.Details = fmt.Sprintf("actual rows (%d) >> estimated rows (%d)", node.Analyze.RowsReturned, node.Rows)
+			bn.Recommendations = []string{"run ANALYZE to refresh statistics", "consider adding indexes on filter columns"}
+		} else if bn.CostRatio > 2.0 {
+			bn.Severity = "medium"
+			bn.Type = "cardinality_misestimate"
+			bn.Details = fmt.Sprintf("actual rows (%d) > estimated rows (%d)", node.Analyze.RowsReturned, node.Rows)
+			bn.Recommendations = []string{"run ANALYZE to refresh statistics"}
+		}
+	}
+
+	// Check for high allocation count (memory pressure).
+	if node.Analyze.Allocs > 100 {
+		if bn.Severity == "" {
+			bn.Severity = "medium"
+		}
+		bn.Type = "high_allocs"
+		bn.Details = fmt.Sprintf("high allocation count (%d)", node.Analyze.Allocs)
+		bn.Recommendations = append(bn.Recommendations, "consider vectorized execution or pre-allocated buffers")
+	}
+
+	// Check for sequential scan on large table.
+	if node.Type == "SeqScan" && node.Analyze.RowsReturned > 1000 {
+		if bn.Severity == "" {
+			bn.Severity = "medium"
+		}
+		if bn.Type == "" {
+			bn.Type = "seq_scan"
+		}
+		bn.Details = fmt.Sprintf("sequential scan processed %d rows", node.Analyze.RowsReturned)
+		bn.Recommendations = append(bn.Recommendations, "consider adding an index on filter/join columns")
+	}
+
+	// Check for sort on large input.
+	if node.Type == "Sort" && node.Analyze.TimeNS > 1000000 { // > 1ms
+		if bn.Severity == "" {
+			bn.Severity = "low"
+		}
+		bn.Type = "large_sort"
+		bn.Details = fmt.Sprintf("sort took %d ns on %d rows", node.Analyze.TimeNS, node.Analyze.RowsReturned)
+		bn.Recommendations = append(bn.Recommendations, "consider adding an index to avoid sort")
+	}
+
+	if bn.Type == "" {
+		return nil
+	}
+	if bn.Severity == "" {
+		bn.Severity = "low"
+	}
+	return bn
 }
 
 // explainQueryPlanDetail produces simplified SQLite-style output for EXPLAIN QUERY PLAN.

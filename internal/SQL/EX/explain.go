@@ -35,6 +35,8 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
 			if err := executeAndCollectStats(ctx, e.root, e.planNode); err != nil {
 				return Row{}, err
 			}
+			// REQ000788: analyze for bottlenecks after execution.
+			AnalyzePlanForBottlenecks(e.planNode)
 		}
 		e.rows = formatPlanTree(e.planNode, e.mode)
 	}
