@@ -11,6 +11,71 @@ The `rdcli` CLI is a lightweight, scriptable interface over the `SYS/AP` public 
 - No interactive features (those belong in TUI)
 - Minimal dependencies
 
+## Design Principles
+
+### 1. No Database Logic in Clients
+
+The CLI is an **orchestrator only** — it never implements database behavior. All database operations (query execution, transaction management, WAL writes, page cache hits, etc.) live exclusively in internal subsystems (SYS/AP, ENG, TXN, WAL, MEM, SQL/EX). The CLI's sole responsibility is:
+
+- Parse user input (flags, positional args, config)
+- Translate to SYS/AP calls
+- Format and stream output
+- Handle exit codes and error messages
+
+**What the CLI does NOT do:**
+- Parse SQL (delegated to SQL/EX via SYS/AP)
+- Manage connections or sessions directly (SYS/SY handles lifecycle)
+- Buffer or cache query results (SYS/AP streams via `Rows` iterator)
+- Implement backup/restore logic (SYS/AP.Backup/Restore)
+- Validate or transform data (ENG/SQL do this)
+
+**Boundary enforcement:** `cmd/rdcli/` imports only `SYS/AP`, `SYS/SY`, `cobra`, and stdlib. Any attempt to import `ENG/*`, `TXN/*`, `WAL/*`, `MEM/*`, or `SQL/*` is a design violation caught by CI.
+
+### 2. Testable by Pieces
+
+The CLI is structured so every layer can be tested independently:
+
+| Layer | Test Strategy |
+|-------|---------------|
+| **Flag/config parsing** | Unit tests with synthetic args; no I/O |
+| **Command routing** | Table-driven tests mapping (cmd, flags) → expected SYS/AP calls |
+| **Output formatting** | Pure functions: input rows → formatted string; no database needed |
+| **SYS/AP integration** | Mock `SYS/AP` interface; test CLI behavior with controlled responses |
+| **End-to-end** | `go test` with `--tags slt_corpus` against test corpus; verifies real I/O |
+
+**Testable boundaries:**
+- `output.go` — pure formatting functions, fully unit-testable
+- `config.go` — config parsing with no side effects
+- `query.go`, `exec.go`, etc. — accept `SYS/AP.Engine` interface, injectable mock
+- `main.go` — integration test with `t.Parallel()` subtests per command
+
+**Mocking strategy:** Define `type Engine interface { Open(...) (*EngineImpl, error) }` in CLI package. Tests inject `mockEngine` that returns pre-constructed `Rows`/`Result` without touching disk.
+
+### 3. Ergonomic
+
+The CLI is designed for **human and machine** users:
+
+**For humans (terminal):**
+- Auto-detects terminal vs pipe, chooses optimal format
+- Box-drawing table output is readable and compact
+- Timing info shows by default (transparency)
+- Helpful error messages with SQL context: `"syntax error at line 3: unexpected token 'FROM'"`
+- `--help` is comprehensive with examples
+
+**For machines (scripts/CI):**
+- Structured output formats (JSON, CSV, NDJSON) for piping
+- Consistent exit codes (0=success, 1=SQL error, 2=connection error, 3=timeout)
+- `--quiet` and `--raw` flags for minimal output in pipelines
+- `--max-rows` prevents runaway output in scripts
+- `--timeout` prevents hanging in CI
+- Exit code 0 even with 0 rows (query succeeded, just empty result)
+
+**Config defaults that work:**
+- No config file needed — all defaults are sensible
+- Config file is additive, never required
+- CLI flags always override config
+- `~/.config/rdcli/config.toml` is optional
+
 ## Architecture
 
 ```
@@ -341,3 +406,72 @@ AP.Options { Dir, InMemory, ReadOnly, ... }
 ```
 
 No other internal types are used.
+
+### Mock Interface for Testing
+
+The CLI defines a local interface for testability:
+
+```go
+// Engine interface for mocking in tests
+type Engine interface {
+    Close(context.Context) error
+    Begin(context.Context) (Session, error)
+    Stats() AP.EngineStats
+}
+
+type Session interface {
+    Query(context.Context, string) (*AP.Rows, error)
+    Exec(context.Context, string) (AP.Result, error)
+    Close() error
+}
+
+// Production implementation wraps real SYS/AP
+type realEngine struct{ eng *SY.Engine }
+type realSession struct{ sess SY.Session }
+```
+
+Tests inject `mockEngine` and `mockSession` that return pre-constructed responses without I/O.
+
+## Testing
+
+### Unit Tests (no I/O)
+
+| Package | Tests | Coverage |
+|---------|-------|----------|
+| `output_test.go` | Format detection, table/JSON/CSV/NDJSON rendering | All format functions |
+| `config_test.go` | Config parsing, flag overrides, defaults | All config fields |
+| `query_test.go` | Flag parsing, arg validation, command routing | All query flags |
+| `exec_test.go` | DDL/DML output formatting | All exec cases |
+| `schema_test.go` | Schema output formatting | All schema cases |
+| `admin_test.go` | Admin command routing | All admin commands |
+
+**Example unit test:**
+```go
+func TestRenderTable(t *testing.T) {
+    rows := &AP.Rows{
+        Cols: []string{"id", "name"},
+        Data: [][]any{{1, "Alice"}, {2, "Bob"}},
+    }
+    out := renderTable(rows, StyleConfig{Border: true})
+    assert.Contains(t, out, "Alice")
+    assert.Contains(t, out, "id")
+}
+```
+
+### Integration Tests (with I/O)
+
+| Test | Method |
+|------|--------|
+| `cmd_test.go` | End-to-end: real `SYS/AP` engine, in-memory DB, verify output |
+| `backup_test.go` | Real backup/restore cycle, verify data integrity |
+| `import_export_test.go` | Round-trip: import → query → export → compare |
+
+**SLT corpus tests:** `go test -tags slt_corpus -run TestCLI_SLT` runs the SQLLogicTest corpus through the CLI, verifying query results match expected outputs.
+
+### Test Coverage Requirements
+
+- Every public CLI command has at least one test
+- All output formats have unit tests
+- Error paths tested: invalid SQL, missing DB, timeout, permission denied
+- Exit codes verified: 0 (success), 1 (SQL error), 2 (connection error), 3 (timeout)
+- `go test ./cmd/rdcli/... -race -cover` must pass with >80% coverage

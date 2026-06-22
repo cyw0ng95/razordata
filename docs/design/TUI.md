@@ -13,6 +13,92 @@ The `rdtui` command launches an interactive terminal experience for human users.
 - Query timing and performance hints
 - Separate binary from CLI (optional dependency)
 
+## Design Principles
+
+### 1. No Database Logic in Clients
+
+The TUI is an **interactive orchestrator** — it never implements database behavior. All database operations live in internal subsystems accessed exclusively through `SYS/AP`. The TUI's responsibilities:
+
+- Manage the bubbletea event loop and UI state
+- Translate user input (keystrokes, dot commands) to SYS/AP calls
+- Render query results with lipgloss styling
+- Provide syntax highlighting and auto-completion (local, no DB needed for highlighting)
+- Cache schema metadata for completion (lazy-loaded via SYS/AP)
+
+**What the TUI does NOT do:**
+- Execute SQL or parse queries (SYS/AP does this)
+- Manage transactions or connection pooling (SYS/SY handles lifecycle)
+- Implement query optimization or execution plans (SQL/EX, ENG do this)
+- Store or retrieve data pages (MEM, WAL do this)
+- Perform backup/restore (SYS/AP.Backup/Restore)
+
+**Boundary enforcement:** `cmd/rdtui/` imports only `SYS/AP`, `SYS/SY`, `bubbletea`, `bubbles`, `lipgloss`, `chroma`. Any import of `ENG/*`, `TXN/*`, `WAL/*`, `MEM/*`, or `SQL/*` is a CI-catchable violation.
+
+**Auto-completion caveat:** The completer queries the database for table/column names, but only through `SYS/AP`'s public `Query` method. It does not access internal catalog structures directly. Caching (30s TTL) is a TUI concern, not a database concern.
+
+### 2. Testable by Pieces
+
+The TUI is structured for layered testing:
+
+| Layer | Test Strategy |
+|-------|---------------|
+| **Input parsing** | Unit tests: keystroke sequences → parsed command |
+| **Dot command parsing** | Table-driven tests for `.tables`, `.schema`, `.mode`, etc. |
+| **Output rendering** | Pure functions: `Rows` + `StyleConfig` → rendered string |
+| **Auto-completion** | Unit tests with mock completion context; no DB needed |
+| **Syntax highlighting** | Chroma lexer tests; deterministic given SQL input |
+| **SYS/AP integration** | Mock `SYS/AP.Engine` interface; test TUI behavior with controlled responses |
+| **End-to-end** | `bubbletea` test harness with simulated keystrokes; verify UI state transitions |
+
+**Testable boundaries:**
+- `input.go` — multi-line input handling, pure function with keystroke input
+- `table.go` — rendering function, pure: `Rows → string`
+- `completer.go` — accepts `CompleterConfig` with table/column lists; injectable mock
+- `dotcmds.go` — pure command parser, no side effects
+- `repl.go` — accepts `Engine` interface; mockable for unit tests
+
+**Mocking strategy:** Same as CLI — define `Engine` interface in TUI package. Tests inject `mockEngine` that returns pre-constructed `Rows`/`Result`. The bubbletea `Update` function is pure and fully testable given simulated events.
+
+**Key insight:** The TUI's complexity is in the *interaction model*, not the database logic. By isolating interaction code (input parsing, rendering, completion) from the SYS/AP interface, each piece is independently testable without spinning up a real database.
+
+### 3. Ergonomic
+
+The TUI is designed for **exploratory, interactive use**:
+
+**Discoverability:**
+- `F1` help shows all key bindings and dot commands
+- Tab completion reveals available tables/columns
+- `.help` dot command lists all dot commands
+- Context-sensitive completion (after `FROM` → tables, after `.` → columns)
+
+**Efficiency:**
+- Multi-line input with smart newline detection (don't execute mid-typing)
+- Ctrl+R reverse search for finding past queries
+- Schema browser (`.browse`) for visual exploration
+- `.eqp` auto EXPLAIN QUERY PLAN for performance debugging
+- `.timer` toggle for per-query timing
+
+**Feedback:**
+- Query timing always visible (configurable via `.timer`)
+- Row count and execution time shown after every query
+- Performance hints for slow queries (>1s) with index suggestions
+- Syntax errors shown inline with cursor position
+- Connection status shown on startup and reconnection
+
+**Comfort:**
+- Configurable color themes (`~/.config/rdtui/theme.toml`)
+- Adjustable font size and family
+- Customizable key bindings (documented, not runtime-rebindable)
+- History persists across sessions (10,000 entries, deduplicated)
+- Read-only mode (`--readonly`) prevents accidental modifications
+
+**Error handling:**
+- Graceful degradation: if syntax highlighting fails, fall back to plain text
+- If auto-completion query fails, disable completion silently (no error popup)
+- If database is locked, show clear message: `"Database locked. Retry in 1s..."`
+- Ctrl+C cancels current input (doesn't kill the TUI)
+- Ctrl+D exits cleanly (confirms if unsaved work exists)
+
 ## Architecture
 
 ```
@@ -306,6 +392,77 @@ tables, _ := sess.Query(ctx, "SELECT name FROM sqlite_master WHERE type='table'"
 columns, _ := sess.Query(ctx, "PRAGMA table_info("+table+")")
 ```
 
+### Mock Interface for Testing
+
+Same pattern as CLI. The TUI defines local interfaces:
+
+```go
+type Engine interface {
+    Close(context.Context) error
+    Begin(context.Context) (Session, error)
+    Stats() AP.EngineStats
+}
+
+type Session interface {
+    Query(context.Context, string) (*AP.Rows, error)
+    Exec(context.Context, string) (AP.Result, error)
+    Close() error
+}
+```
+
+**Testing the bubbletea loop:** The `Update` function is pure — given an `Event` and current `Model`, it returns a new `Model` and a `Cmd`. Tests call `Update` directly with synthetic events (keypress, query result, error) and verify state transitions without rendering.
+
+**Testing rendering:** `table.go`'s `renderTable(rows *AP.Rows, style StyleConfig) string` is a pure function. Tests pass constructed `Rows` and assert exact output strings.
+
+## Testing
+
+### Unit Tests (no I/O)
+
+| Package | Tests | Coverage |
+|---------|-------|----------|
+| `input_test.go` | Multi-line input parsing, complete-statement detection | All input logic |
+| `table_test.go` | Styled table rendering with lipgloss | All render cases |
+| `completer_test.go` | Auto-completion context matching | All completion contexts |
+| `dotcmds_test.go` | Dot command parsing (`.tables`, `.schema`, etc.) | All dot commands |
+| `history_test.go` | History persistence, search, deduplication | All history ops |
+| `theme_test.go` | Theme parsing, color validation | All theme fields |
+
+**Example: bubbletea Update test:**
+```go
+func TestRepl_Update_ExecuteQuery(t *testing.T) {
+    mock_sess := &mockSession{
+        queryResult: &AP.Rows{Cols: []string{"id"}, Data: [][]any{{1}}},
+    }
+    model := NewReplModel(mock_sess)
+    
+    // Simulate: user typed "SELECT 1" and pressed Enter
+    model.input = "SELECT 1"
+    model.cursor = len(model.input)
+    
+    // Send keypress event
+    model, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+    
+    assert.Equal(t, StateResults, model.state)
+    assert.NotNil(t, cmd)  // Cmd executes the query
+}
+```
+
+### Integration Tests (with I/O)
+
+| Test | Method |
+|------|--------|
+| `repl_test.go` | End-to-end: real `SYS/AP` engine, simulated keystrokes via `tea.Simulate` |
+| `schema_browser_test.go` | Real schema browsing, verify tree structure |
+| `completion_e2e_test.go` | Full completion cycle: type → suggest → select → insert |
+
+### Test Coverage Requirements
+
+- Every TUI component (input, table, completer, dotcmds, history) has unit tests
+- All bubbletea state transitions tested (idle → input → loading → results → error)
+- Error paths: database unavailable, query timeout, syntax error, locked database
+- Theme configuration tested: valid themes, invalid colors, missing fields
+- `go test ./cmd/rdtui/... -race -cover` must pass with >75% coverage
+
 ## Build
 
 ```bash
@@ -323,10 +480,10 @@ Separate binaries. TUI is optional — users who don't need the interactive expe
 
 ## Relationship to CLI
 
-| Aspect | CLI (`rdtui`) | TUI (`rdtui`) |
+| Aspect | CLI (`rdcli`) | TUI (`rdtui`) |
 |--------|--------------|-------------------|
-| Binary | `rdtui` | `rdtui` |
-| Dependencies | cobra only | cobra + bubbletea + bubbles + lipgloss + chroma |
+| Binary | `rdcli` | `rdtui` |
+| Dependencies | cobra only | bubbletea + bubbles + lipgloss + chroma |
 | Startup | < 50ms | < 200ms |
 | Memory | < 10 MB | < 50 MB |
 | Interactive | No | Yes |
