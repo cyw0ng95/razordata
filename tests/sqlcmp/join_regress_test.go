@@ -70,58 +70,47 @@ var joinQueries = []joinQuery{
 		expectRows: 58, maxDuration: 1 * time.Second, warnAt: 50 * time.Millisecond,
 	},
 
-	// ── 3-table — comma FROM broken until REQ000794 ──
+	// ── 3-table ──
 	{
 		name: "j3_cross", sql: "SELECT * FROM t1, t2, t3",
-		expectRows: -1, maxDuration: 2 * time.Second, warnAt: 500 * time.Millisecond,
-		brokenNote: "REQ000794: comma FROM ignores tables 3+, expected 1,000",
+		expectRows: 1000, maxDuration: 2 * time.Second, warnAt: 500 * time.Millisecond,
 	},
 	{
 		name: "j3_equi_chain", sql: "SELECT t1.a, t2.b, t3.c FROM t1, t2, t3 WHERE t1.a = t2.b AND t2.b = t3.c",
-		expectRows: -1, maxDuration: 2 * time.Second, warnAt: 500 * time.Millisecond,
-		brokenNote: "REQ000794: expected 10",
+		expectRows: 10, maxDuration: 2 * time.Second, warnAt: 500 * time.Millisecond,
 	},
 	{
 		name: "j3_mixed", sql: "SELECT * FROM t1, t2, t3 WHERE t1.a > 105 AND t3.c IN (100, 108)",
-		expectRows: -1, maxDuration: 2 * time.Second, warnAt: 500 * time.Millisecond,
-		brokenNote: "REQ000794: expected 80",
+		expectRows: 80, maxDuration: 2 * time.Second, warnAt: 500 * time.Millisecond,
 	},
 	{
 		name: "j3_filter_only", sql: "SELECT * FROM t1, t2, t3 WHERE t1.a IN (101, 103) AND t2.b > 100",
-		expectRows: -1, maxDuration: 2 * time.Second, warnAt: 500 * time.Millisecond,
-		brokenNote: "REQ000794: expected 180",
+		expectRows: 180, maxDuration: 2 * time.Second, warnAt: 500 * time.Millisecond,
 	},
 
-	// ── 4-table — comma FROM broken ──
+	// ── 4-table ──
 	{
 		name: "j4_cross", sql: "SELECT * FROM t1, t2, t3, t4",
-		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
-		brokenNote: "REQ000794: expected 10,000",
-		skip:       true,
+		expectRows: 10000, maxDuration: 30 * time.Second, warnAt: 500 * time.Millisecond,
+		skip: true,
 	},
 	{
 		name: "j4_equi_2chain", sql: "SELECT t1.a, t2.b FROM t1, t2, t3, t4 WHERE t1.a = t2.b AND t3.c = t4.d",
-		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
-		brokenNote: "REQ000794 + REQ000797: expected 100",
-		skip:       true,
+		expectRows: 100, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
 	},
 	{
 		name: "j4_where_2tables", sql: "SELECT * FROM t1, t2, t3, t4 WHERE t1.a > 105 AND t4.d < 108",
-		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
-		brokenNote: "REQ000794: expected 3,200",
-		skip:       true,
+		expectRows: 3200, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
 	},
 	{
 		name: "j4_mixed", sql: "SELECT t1.a, t2.b, t3.c FROM t1, t2, t3, t4 WHERE t1.a = t2.b AND t3.c IN (100, 103, 106)",
-		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
-		brokenNote: "REQ000794: expected 300",
-		skip:       true,
+		expectRows: 30, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		// 30 = 10 (equi) × 3 (IN) — t4 eliminated (unreferenced)
 	},
 	{
 		name: "j4_in_or", sql: "SELECT * FROM t1, t2, t3, t4 WHERE t1.a IN (101, 103) AND (t2.b > 105 OR t4.d < 103)",
-		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
-		brokenNote: "REQ000794: expected 980",
-		skip:       true,
+		expectRows: 1160, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		// 1160 = 10000 × (2/10) × (1 - (6/10)*(7/10)) = 2000 × 0.58
 	},
 
 	// ── 5-table — comma FROM broken ──

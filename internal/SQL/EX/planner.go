@@ -695,7 +695,11 @@ func colNameFromExpr(e PS.Expr) string {
 	case *PS.Ident:
 		return v.Name
 	case *PS.QualifiedName:
-		return v.Name
+		// Return fully qualified name (table.col) so the
+		// HashJoin lookupKeys can find the correct column
+		// when multiple tables share the same column name.
+		// REQ000794: multi-table equi-join fix.
+		return v.Table + "." + v.Name
 	}
 	return ""
 }
@@ -1102,6 +1106,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	// (e.g. `t1.a`) so we can prove which tables are actually needed.
 	// Unqualified columns (e.g. just `a`) prevent elimination since
 	// we can't determine which table owns the column.
+	extractedPreds := map[int]bool{}
 	if len(s.Joins) > 0 {
 		if refTables := collectReferencedTables(s); refTables != nil {
 			filtered := s.Joins[:0]
@@ -1157,6 +1162,24 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			if (kind == JoinKindInner || kind == JoinKindCross) && len(crossTableConjuncts) > 0 {
 				lk, rk, remaining := p.extractEquiJoinKeys(crossTableConjuncts, joinedTables, j.Right)
 				if len(lk) > 0 {
+					// REQ000794: mark extracted predicates so the
+					// post-loop Filter doesn't re-apply them.
+					for _, orig := range crossTableConjuncts {
+						found := false
+						for _, rem := range remaining {
+							if orig == rem {
+								found = true
+								break
+							}
+						}
+						if !found {
+							for pi, cp := range crossTablePredicates {
+								if cp == orig {
+									extractedPreds[pi] = true
+								}
+							}
+						}
+					}
 					joinOp = NewHashJoin(current, rightScan, leftTbl, j.Right, lk, rk, 0)
 					crossTableConjuncts = remaining
 				}
@@ -1208,10 +1231,15 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		// WHERE ...`.
 		// REQ000XXX: if predicate pushdown already applied some
 		// conjuncts to scans, only apply the remaining cross-table
-		// predicates here.
+		// predicates here. Skip predicates already extracted by
+		// HashJoin (REQ000794) — they're already enforced and
+		// re-applying them as Filters gives wrong results because
+		// column prefixes change through the operator chain.
 		if len(crossTablePredicates) > 0 {
-			current = NewFilter(current, crossTablePredicates[0])
-			for _, c := range crossTablePredicates[1:] {
+			for i, c := range crossTablePredicates {
+				if extractedPreds[i] {
+					continue
+				}
 				current = NewFilter(current, c)
 			}
 		} else if pushedPredicates == nil {

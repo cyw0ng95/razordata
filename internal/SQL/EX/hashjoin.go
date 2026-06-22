@@ -204,6 +204,20 @@ func lookupKeys(row Row, keys []string) []Value {
 		// 't51.a51'). A bare key 'a51' won't match unless we
 		// also try the bare form. Walk Cols once to find a
 		// suffix match if the direct lookup failed.
+		// REQ000794: when the key is qualified (e.g. "t3.c"),
+		// try the bare column name after the dot as fallback
+		// so the lookup works for both prefixed NLJ output
+		// rows (where colIndex has "t3.c") and bare SeqScan
+		// rows (where colIndex has "c").
+		if v == nil {
+			bare := k
+			if dotIdx := strings.LastIndexByte(k, '.'); dotIdx >= 0 {
+				bare = k[dotIdx+1:]
+				if bv, ok := row.Lookup(bare); ok {
+					v = bv
+				}
+			}
+		}
 		if v == nil {
 			lk := strings.ToLower(k)
 			for j, c := range row.Cols {
