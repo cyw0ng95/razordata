@@ -158,32 +158,6 @@ func NewSeqScanWithStore(store Store, table string) (*SeqScan, error) {
 	}, nil
 }
 
-func (s *SeqScan) snapshot() []Row {
-	tablesMu.RLock()
-	defer tablesMu.RUnlock()
-	src := tables[s.table]
-	if len(src) == 0 {
-		return nil
-	}
-	// REQ000758: share Cols slice across all rows from the same table.
-	// Only deep-copy Data (which varies per row).
-	schema := getTableSchema(s.table, src)
-	out := make([]Row, len(src))
-	for i, r := range src {
-		out[i] = Row{
-			Cols:      schema.cols,
-			Types:     schema.types,
-			Data:      append([]any(nil), r.Data...),
-			Outer:     r.Outer,
-			planner:   r.planner,
-			storeKey:  r.storeKey,
-			tableName: r.tableName,
-			colIndex:  schema.colIndex,
-		}
-	}
-	return out
-}
-
 func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 	if err := ctx.Err(); err != nil {
 		return Row{}, err
@@ -191,33 +165,46 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 	if s.store != nil {
 		return s.nextFromStore(ctx)
 	}
-	if s.rows == nil {
-		s.rows = s.snapshot()
-		s.pos = 0
-	}
-	if s.pos >= len(s.rows) {
+	tablesMu.RLock()
+	defer tablesMu.RUnlock()
+	src := tables[s.table]
+	if s.pos >= len(src) {
 		return Row{}, ErrNoRows
 	}
-	r := s.rows[s.pos]
+	// REQ000759: clone one row on demand instead of eager snapshot.
+	r := src[s.pos]
 	s.pos++
-	if s.planner != nil {
-		r.planner = s.planner
+	schema := getTableSchema(s.table, src)
+	if schema == nil {
+		return Row{}, ErrNoRows
 	}
-	r.tableName = s.table
-	// Share schema's colIndex to avoid per-row map allocation.
-	if s.schema != nil && s.schema.colIndex != nil {
-		r.colIndex = s.schema.colIndex
+	return s.cloneRow(r, schema), nil
+}
+
+func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
+	out := Row{
+		Cols:      schema.cols,
+		Types:     schema.types,
+		Data:      append([]any(nil), r.Data...),
+		Outer:     r.Outer,
+		planner:   r.planner,
+		storeKey:  r.storeKey,
+		tableName: s.table,
+		colIndex:  schema.colIndex,
+	}
+	if s.planner != nil {
+		out.planner = s.planner
 	}
 	if s.alias != "" {
 		if s.prefixedCols != nil {
-			r.Cols = s.prefixedCols
-			r.colIndex = s.prefixedColIndex
+			out.Cols = s.prefixedCols
+			out.colIndex = s.prefixedColIndex
 		} else {
-			r = prefixRowCols(r, s.alias)
+			out = prefixRowCols(out, s.alias)
 		}
-		r.tableName = s.alias
+		out.tableName = s.alias
 	}
-	return r, nil
+	return out
 }
 
 func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
