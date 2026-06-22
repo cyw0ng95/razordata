@@ -32,8 +32,8 @@ func TestParse_Upsert_ExcludedCol(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected QualifiedName for EXCLUDED.name, got %T", pair.Val)
 	}
-	if qn.Table != "EXCLUDED" || qn.Name != "name" {
-		t.Errorf("EXCLUDED.name = {%s, %s}, want {EXCLUDED, name}", qn.Table, qn.Name)
+	if qn.Table != "excluded" || qn.Name != "name" {
+		t.Errorf("EXCLUDED.name = {%s, %s}, want {excluded, name}", qn.Table, qn.Name)
 	}
 }
 
@@ -54,8 +54,8 @@ func TestParse_Upsert_ExcludedColMultiple(t *testing.T) {
 			t.Errorf("clause %d: expected QualifiedName, got %T", i, pair.Val)
 			continue
 		}
-		if qn.Table != "EXCLUDED" {
-			t.Errorf("clause %d: Table = %q, want EXCLUDED", i, qn.Table)
+		if qn.Table != "excluded" {
+			t.Errorf("clause %d: Table = %q, want excluded", i, qn.Table)
 		}
 	}
 }

@@ -119,7 +119,15 @@ func (r *Row) Planner() *Planner {
 }
 
 func (r *Row) Lookup(name string) (any, bool) {
-	lname := strings.ToLower(name)
+	// REQ000770: try fast path first (caller pre-lowered the name at parse time).
+	// Fall back to ToLower for backward compatibility with programmatic callers.
+	lname := name
+	for _, c := range name {
+		if c >= 'A' && c <= 'Z' {
+			lname = strings.ToLower(name)
+			break
+		}
+	}
 	for cur := r; cur != nil; cur = cur.Outer {
 		if cur.colIndex == nil {
 			cur.buildColIndex()

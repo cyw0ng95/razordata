@@ -45,7 +45,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		p.advance()
 		return &StarExpr{}, nil
 	case LX.T_IDENT, LX.T_EXCLUDED:
-		name := p.current.Lexeme
+		name := strings.ToLower(p.current.Lexeme)
 		p.advance()
 		// REQ000808: hex string literal X'...'
 		if strings.EqualFold(name, "X") && p.current.Type == LX.T_STRING {
@@ -77,7 +77,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			if err := p.expect(LX.T_IDENT); err != nil {
 				return nil, err
 			}
-			col := p.current.Lexeme
+			col := strings.ToLower(p.current.Lexeme)
 			p.advance()
 			return &QualifiedName{Table: name, Name: col}, nil
 		}
