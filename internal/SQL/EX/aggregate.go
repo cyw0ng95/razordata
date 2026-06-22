@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
@@ -450,11 +451,18 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 		if len(parts) == 0 {
 			return nil, nil
 		}
-		out := parts[0]
+		var b strings.Builder
+		total := len(parts[0])
 		for _, p := range parts[1:] {
-			out += sep + p
+			total += len(sep) + len(p)
 		}
-		return out, nil
+		b.Grow(total)
+		b.WriteString(parts[0])
+		for _, p := range parts[1:] {
+			b.WriteString(sep)
+			b.WriteString(p)
+		}
+		return b.String(), nil
 	}
 	return nil, nil
 }
