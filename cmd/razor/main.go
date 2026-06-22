@@ -78,7 +78,7 @@ func rowAsString(row EX.Row) string {
 	if len(row.Data) == 0 {
 		return ""
 	}
-	switch v := row.Data[0].(type) {
+	switch v := row.Data[0].ToAny().(type) {
 	case string:
 		return v
 	case []byte:
