@@ -101,6 +101,11 @@ type Project struct {
 	// rows. Avoids per-row buildColIndex in Lookup (pprof: 23.45%
 	// cum, 1.06s in j3_mixed).
 	colIndex map[string]int
+	// REQ000802: compiled expression evaluators. On the first call
+	// to Next(), each SELECT expression is compiled into a function
+	// that reads directly from the input row's Data, bypassing
+	// Eval dispatch and Value↔any boxing.
+	compiledExprs []func(in *Row) Value
 }
 
 // Child returns the project's child operator.
@@ -173,7 +178,18 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 		Data:     make([]Value, len(p.cols)),
 		colIndex: p.colIndex,
 	}
+	// REQ000802: compile expressions on first use, then use
+	// fast-path evaluators that bypass Eval dispatch.
+	if p.compiledExprs == nil {
+		p.compileProjectExprs()
+	}
 	for i, c := range p.cols {
+		fn := p.compiledExprs[i]
+		if fn != nil {
+			out.Data[i] = fn(&row)
+			continue
+		}
+		// Fallback to Eval for complex or unrecognized expressions.
 		var v any
 		var err error
 		if wf, ok := c.(*PS.WindowFunc); ok {
@@ -593,5 +609,142 @@ func extractLiteral(e PS.Expr) (any, bool) {
 		return nil, true
 	default:
 		return nil, false
+	}
+}
+
+// compileProjectExprs compiles SELECT expressions into fast-path
+// evaluators that read directly from row.Data, bypassing Eval
+// dispatch and Value↔any boxing. REQ000802.
+func (p *Project) compileProjectExprs() {
+	p.compiledExprs = make([]func(*Row) Value, len(p.cols))
+	for i, c := range p.cols {
+		p.compiledExprs[i] = compileRowExpr(c)
+	}
+}
+
+// compileRowExpr compiles a single SELECT expression into a function
+// that reads directly from the input row and returns a Value.
+// Returns nil for unrecognized patterns (caller falls back to Eval).
+func compileRowExpr(e PS.Expr) func(*Row) Value {
+	switch v := e.(type) {
+	case *PS.QualifiedName:
+		return compileColRef(v.Table + "." + v.Name)
+	case *PS.Ident:
+		return compileColRef(v.Name)
+	case *PS.AliasedExpr:
+		return compileRowExpr(v.Expr)
+	case *PS.BinaryExpr:
+		return compileBinaryArith(v)
+	default:
+		return nil
+	}
+}
+
+// compileBinaryArith compiles a binary arithmetic expression (+-*/)
+// into a function that reads directly from the input row.
+func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
+	if v.Op != int(LX.T_PLUS) && v.Op != int(LX.T_MINUS) &&
+		v.Op != int(LX.T_STAR) && v.Op != int(LX.T_SLASH) {
+		return nil
+	}
+	left := compileRowExpr(v.Left)
+	right := compileRowExpr(v.Right)
+	if left == nil || right == nil {
+		return nil
+	}
+	switch v.Op {
+	case int(LX.T_PLUS):
+		return func(row *Row) Value {
+			a, b := left(row), right(row)
+			if a.IsNull() || b.IsNull() {
+				return Value{Kind: KindNull}
+			}
+			if a.Kind == KindInt && b.Kind == KindInt {
+				return Value{Kind: KindInt, I64: a.I64 + b.I64}
+			}
+			return Value{Kind: KindFloat, F64: valueToFloat(a) + valueToFloat(b)}
+		}
+	case int(LX.T_MINUS):
+		return func(row *Row) Value {
+			a, b := left(row), right(row)
+			if a.IsNull() || b.IsNull() {
+				return Value{Kind: KindNull}
+			}
+			if a.Kind == KindInt && b.Kind == KindInt {
+				return Value{Kind: KindInt, I64: a.I64 - b.I64}
+			}
+			return Value{Kind: KindFloat, F64: valueToFloat(a) - valueToFloat(b)}
+		}
+	case int(LX.T_STAR):
+		return func(row *Row) Value {
+			a, b := left(row), right(row)
+			if a.IsNull() || b.IsNull() {
+				return Value{Kind: KindNull}
+			}
+			if a.Kind == KindInt && b.Kind == KindInt {
+				return Value{Kind: KindInt, I64: a.I64 * b.I64}
+			}
+			return Value{Kind: KindFloat, F64: valueToFloat(a) * valueToFloat(b)}
+		}
+	case int(LX.T_SLASH):
+		return func(row *Row) Value {
+			a, b := left(row), right(row)
+			if a.IsNull() || b.IsNull() {
+				return Value{Kind: KindNull}
+			}
+			if a.Kind == KindInt && b.Kind == KindInt {
+				return Value{Kind: KindFloat, F64: float64(a.I64) / float64(b.I64)}
+			}
+			return Value{Kind: KindFloat, F64: valueToFloat(a) / valueToFloat(b)}
+		}
+	}
+	return nil
+}
+
+// compileColRef compiles a column reference (bare or qualified name)
+// into a function that reads directly from row.Data.
+func compileColRef(name string) func(*Row) Value {
+	lower := strings.ToLower(name)
+	bareName := name
+	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+		bareName = name[dot+1:]
+	}
+	bareLower := strings.ToLower(bareName)
+	return func(row *Row) Value {
+		// Fast path: use colIndex if available (avoids linear scan).
+		if row.colIndex != nil {
+			if idx, ok := row.colIndex[lower]; ok && idx < len(row.Data) {
+				return row.Data[idx]
+			}
+		}
+		// Linear scan with suffix/prefix handling.
+		for i, c := range row.Cols {
+			cl := strings.ToLower(c)
+			if cl == lower || cl == bareLower {
+				if i < len(row.Data) {
+					return row.Data[i]
+				}
+				return Value{Kind: KindNull}
+			}
+		}
+		// Suffix match for bare names on prefixed rows.
+		for i, c := range row.Cols {
+			if strings.HasSuffix(strings.ToLower(c), "."+bareLower) && i < len(row.Data) {
+				return row.Data[i]
+			}
+		}
+		return Value{Kind: KindNull}
+	}
+}
+
+// valueToFloat converts a Value to float64 for mixed-type arithmetic.
+func valueToFloat(v Value) float64 {
+	switch v.Kind {
+	case KindInt:
+		return float64(v.I64)
+	case KindFloat:
+		return v.F64
+	default:
+		return 0
 	}
 }
