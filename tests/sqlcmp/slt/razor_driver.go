@@ -3,6 +3,7 @@ package slt
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -240,7 +241,8 @@ func valueFromAny(v any) Value {
 	case string:
 		return Value{Kind: TypeText, Text: x}
 	case []byte:
-		return Value{Kind: TypeText, Text: string(x)}
+		// REQ000811: blobs are stored as hex-encoded text with TypeBlob
+		return Value{Kind: TypeBlob, Text: hex.EncodeToString(x)}
 	case fmt.Stringer:
 		return Value{Kind: TypeText, Text: x.String()}
 	default:

@@ -22,6 +22,7 @@ const (
 	tagDelete      = 4
 	tagCreateTable = 5
 	tagDropTable   = 6
+	tagCompound    = 7 // REQ000814: UNION/UNION ALL/INTERSECT/EXCEPT
 
 	tagNullLit   = 10
 	tagNumberLit = 11
@@ -415,6 +416,18 @@ func (e *enc) writeStmt(s PS.Stmt) {
 	case *PS.DropTable:
 		e.buf = append(e.buf, tagDropTable)
 		e.writeString(v.Name)
+	case *PS.CompoundStmt:
+		e.buf = append(e.buf, tagCompound)
+		e.writeStmt(v.Left)
+		e.writeUvarint(uint64(v.Op))
+		e.writeStmt(v.Right)
+		e.writeUvarint(uint64(len(v.OrderBy)))
+		for _, o := range v.OrderBy {
+			e.writeExpr(o.Expr)
+			e.writeBool(o.Desc)
+		}
+		e.writeExpr(v.Limit)
+		e.writeExpr(v.Offset)
 	}
 }
 

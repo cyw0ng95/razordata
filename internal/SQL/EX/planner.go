@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"sync"
 
-	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	"github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
-	"github.com/cyw0ng95/razordata/internal/SQL/PL"
-	"github.com/cyw0ng95/razordata/internal/SQL/PS"
-	"github.com/cyw0ng95/razordata/internal/SQL/RE"
+	PL "github.com/cyw0ng95/razordata/internal/SQL/PL"
+	PS "github.com/cyw0ng95/razordata/internal/SQL/PS"
+	RE "github.com/cyw0ng95/razordata/internal/SQL/RE"
 )
 
 // cloneExpr creates a deep copy of an expression to avoid
