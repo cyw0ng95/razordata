@@ -13,6 +13,10 @@ type Filter struct {
 	predicate PS.Expr
 	params    []any
 	execCtx   *ExecContext
+	// REQ000757: curRow avoids heap-escape of local row variable
+	// when passing &row to Eval. Filter is heap-allocated, so
+	// &f.curRow is already a heap pointer — no escape needed.
+	curRow Row
 }
 
 // Child returns the filter's child operator. Used by
@@ -40,22 +44,26 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 		if err := ctx.Err(); err != nil {
 			return Row{}, err
 		}
-		row, err := f.child.Next(ctx)
+		r, err := f.child.Next(ctx)
 		if err != nil {
 			return Row{}, err
 		}
 		if f.execCtx != nil {
-			row.execCtx = f.execCtx
+			r.execCtx = f.execCtx
 		}
 		if f.predicate == nil {
-			return row, nil
+			return r, nil
 		}
-		v, err := Eval(f.predicate, &row, f.params)
+		// REQ000757: copy into f.curRow instead of taking &r.
+		// f.curRow is on the heap (Filter struct), so &f.curRow
+		// is already a heap pointer — Eval won't force escape.
+		f.curRow = r
+		v, err := Eval(f.predicate, &f.curRow, f.params)
 		if err != nil {
 			return Row{}, err
 		}
 		if truthy(v) {
-			return row, nil
+			return f.curRow, nil
 		}
 	}
 }
