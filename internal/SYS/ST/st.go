@@ -149,7 +149,7 @@ func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 			}
 			return AP.Row{}, err
 		}
-		return AP.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
+		return AP.Row{Cols: row.Cols, Types: row.Types, Data: executor.ValueSliceToAny(row.Data)}, nil
 	}
 	return AP.NewRows(stream.Cols(), stream.Types(), next, func() error { return stream.Close() }), nil
 }

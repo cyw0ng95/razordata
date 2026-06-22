@@ -101,7 +101,7 @@ func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.R
 			}
 			return ap.Row{}, err
 		}
-		return ap.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
+		return ap.Row{Cols: row.Cols, Types: row.Types, Data: ex.ValueSliceToAny(row.Data)}, nil
 	}
 	closer := func() error { return stream.Close() }
 	return ap.NewRows(stream.Cols(), stream.Types(), next, closer), nil
