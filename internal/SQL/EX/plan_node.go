@@ -24,6 +24,10 @@ type PlanNode struct {
 	Children    []*PlanNode     // child nodes
 	Analyze     *AnalyzeStats   // REQ000783: runtime stats from EXPLAIN ANALYZE
 	Bottleneck  *BottleneckInfo // REQ000788: bottleneck analysis
+	IndexHint   *IndexHint      // REQ000790: index diagnostics
+	Subquery    *SubqueryInfo   // REQ000791: subquery optimization analysis
+	TxnDebug    *TxnDebugInfo   // REQ000792: transaction/MVCC debugging
+	Cache       *CacheInfo      // REQ000793: plan cache analysis
 }
 
 // AnalyzeStats holds runtime statistics for EXPLAIN ANALYZE.
@@ -55,6 +59,45 @@ type BottleneckInfo struct {
 	CostRatio    float64 // actual/estimated cost ratio
 }
 
+// IndexHint provides index diagnostic information for a PlanNode.
+// REQ000790: Index diagnostics in EXPLAIN output.
+type IndexHint struct {
+	Used         bool     // whether an index was used
+	IndexName    string   // name of index used (if Used=true)
+	AvailableIdx []string // available indexes on the table
+	MissingCols  []string // columns that could benefit from an index
+	Reason       string   // why index was skipped or recommended
+}
+
+// SubqueryInfo provides subquery optimization analysis.
+// REQ000791: Subquery optimization analysis in EXPLAIN output.
+type SubqueryInfo struct {
+	Type           string // "correlated", "uncorrelated", "semi-join", "anti-join"
+	Unnested       bool   // whether the subquery was unnested/flattened
+	ExecutionCount int64  // number of times the subquery was executed
+	Method         string // "naive", "semi-join", "hash-join", "flattened"
+}
+
+// TxnDebugInfo provides transaction/MVCC debugging information.
+// REQ000792: Transaction debugging in EXPLAIN ANALYZE output.
+type TxnDebugInfo struct {
+	SnapshotTS    uint64 // snapshot timestamp
+	VisibleRows   int64  // rows visible at snapshot
+	HiddenByMVCC  int64  // rows hidden by older versions
+	LockWaitTimeNS int64 // total lock wait time in nanoseconds
+	IsolationLevel string // transaction isolation level
+}
+
+// CacheInfo provides plan cache analysis information.
+// REQ000793: Plan cache analysis in EXPLAIN output.
+type CacheInfo struct {
+	Hit       bool    // whether this plan was a cache hit
+	HitRate   float64 // overall cache hit rate percentage
+	Hits      int64   // total hits
+	Misses    int64   // total misses
+	Evictions int64   // total evictions
+}
+
 // Add appends a child node to this PlanNode.
 func (n *PlanNode) Add(child *PlanNode) {
 	n.Children = append(n.Children, child)
@@ -63,6 +106,26 @@ func (n *PlanNode) Add(child *PlanNode) {
 // SetBottleneck attaches bottleneck analysis to this node (REQ000788).
 func (n *PlanNode) SetBottleneck(bn *BottleneckInfo) {
 	n.Bottleneck = bn
+}
+
+// SetIndexHint attaches index diagnostic information to this node (REQ000790).
+func (n *PlanNode) SetIndexHint(ih *IndexHint) {
+	n.IndexHint = ih
+}
+
+// SetSubquery attaches subquery optimization analysis to this node (REQ000791).
+func (n *PlanNode) SetSubquery(sq *SubqueryInfo) {
+	n.Subquery = sq
+}
+
+// SetTxnDebug attaches transaction debugging information to this node (REQ000792).
+func (n *PlanNode) SetTxnDebug(td *TxnDebugInfo) {
+	n.TxnDebug = td
+}
+
+// SetCache attaches plan cache analysis to this node (REQ000793).
+func (n *PlanNode) SetCache(ci *CacheInfo) {
+	n.Cache = ci
 }
 
 // buildPlanNodeTree converts an Operator tree into a PlanNode tree.
@@ -543,6 +606,47 @@ func formatPlanTree(n *PlanNode, mode PS.ExplainMode) []Row {
 			}
 			if len(bn.Recommendations) > 0 {
 				detail += fmt.Sprintf(" recommend: %s", strings.Join(bn.Recommendations, "; "))
+			}
+		}
+
+		// REQ000790: append index hint if present.
+		if ih := node.IndexHint; ih != nil {
+			if ih.Used {
+				detail += fmt.Sprintf(" [INDEX: %s used]", ih.IndexName)
+			} else {
+				detail += fmt.Sprintf(" [INDEX: skipped — %s]", ih.Reason)
+				if len(ih.MissingCols) > 0 {
+					detail += fmt.Sprintf(" consider index on (%s)", strings.Join(ih.MissingCols, ", "))
+				}
+			}
+		}
+
+		// REQ000791: append subquery info if present.
+		if sq := node.Subquery; sq != nil {
+			if sq.Unnested {
+				detail += fmt.Sprintf(" [SUBQUERY: unnested → %s]", sq.Method)
+			} else {
+				detail += fmt.Sprintf(" [SUBQUERY: %s executed %d times]", sq.Type, sq.ExecutionCount)
+				if sq.ExecutionCount > 1000 {
+					detail += " WARNING: consider rewriting as JOIN"
+				}
+			}
+		}
+
+		// REQ000792: append txn debug info if present.
+		if td := node.TxnDebug; td != nil {
+			detail += fmt.Sprintf(" [MVCC: visible=%d hidden=%d snapshot=%d]", td.VisibleRows, td.HiddenByMVCC, td.SnapshotTS)
+			if td.LockWaitTimeNS > 0 {
+				detail += fmt.Sprintf(" lock_wait=%dns", td.LockWaitTimeNS)
+			}
+		}
+
+		// REQ000793: append cache info if present.
+		if ci := node.Cache; ci != nil {
+			if ci.Hit {
+				detail += fmt.Sprintf(" [CACHE: hit (rate=%.1f%%)]", ci.HitRate)
+			} else {
+				detail += fmt.Sprintf(" [CACHE: miss (hits=%d misses=%d rate=%.1f%%)]", ci.Hits, ci.Misses, ci.HitRate)
 			}
 		}
 

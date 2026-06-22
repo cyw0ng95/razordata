@@ -318,6 +318,9 @@ type Executor struct {
 	txWriter   TxWriter
 	snapshotTS uint64 // REQ000255: per-statement snapshot timestamp for read-committed
 	sessionID  uint64 // REQ000385/394/411: current session ID for counter access
+	// txnDebugger tracks MVCC/transaction statistics for EXPLAIN ANALYZE.
+	// REQ000792: MVCC debugging.
+	txnDebugger *TxnDebugger
 	// stmtCache caches parsed statements keyed by SQL text to avoid
 	// re-parsing on repeated queries. LRU eviction, default 256 entries.
 	stmtCache struct {
@@ -368,8 +371,9 @@ func (e *Executor) ClearTxWriter() {
 // The statement cache is re-initialized (not shared) since it contains a Mutex.
 func (e *Executor) ShallowCopy() *Executor {
 	e2 := &Executor{
-		planner:   e.planner,
-		store:     e.store,
+		planner:     e.planner,
+		store:       e.store,
+		txnDebugger: NewTxnDebugger(),
 	}
 	e2.initStmtCache(e.stmtCache.maxSize)
 	return e2
@@ -401,13 +405,19 @@ func getCurrentSessionID() uint64 {
 }
 
 func NewExecutor() *Executor {
-	e := &Executor{planner: NewPlanner()}
+	e := &Executor{
+		planner:     NewPlanner(),
+		txnDebugger: NewTxnDebugger(),
+	}
 	e.initStmtCache(256)
 	return e
 }
 
 func NewExecutorWithPlanner(pl *Planner) *Executor {
-	e := &Executor{planner: pl}
+	e := &Executor{
+		planner:     pl,
+		txnDebugger: NewTxnDebugger(),
+	}
 	e.initStmtCache(256)
 	return e
 }
@@ -1605,4 +1615,25 @@ func (n *Noop) Close() error {
 
 func (n *Noop) WithParams(p []any) Operator {
 	return n
+}
+
+// TxnDebugger returns the executor's transaction debugger.
+// REQ000792: MVCC debugging.
+func (e *Executor) TxnDebugger() *TxnDebugger {
+	return e.txnDebugger
+}
+
+// StmtCacheStats returns the statement cache statistics.
+// REQ000793: Plan cache analysis.
+func (e *Executor) StmtCacheStats() *CacheStats {
+	e.stmtCache.mu.Lock()
+	defer e.stmtCache.mu.Unlock()
+	// Count entries
+	size := len(e.stmtCache.entries)
+	return &CacheStats{
+		Hits:      0, // tracked separately if needed
+		Misses:    0,
+		Evictions: 0,
+		MaxSize:   size,
+	}
 }

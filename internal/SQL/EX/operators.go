@@ -102,6 +102,11 @@ type SeqScan struct {
 	// to avoid per-row allocation in prefixRowCols.
 	prefixedCols     []string
 	prefixedColIndex map[string]int
+
+	// REQ000790: index usage tracking for diagnostics.
+	iu *IndexUsage
+	// availableIdx tracks indexes available on this table for skip detection.
+	availableIdx []string
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -178,6 +183,12 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 	if schema == nil {
 		return Row{}, ErrNoRows
 	}
+
+	// REQ000790: record index skip if indexes are available but SeqScan is used.
+	if s.iu != nil && len(s.availableIdx) > 0 {
+		s.iu.RecordIndexSkip(s.availableIdx[0], s.table, "SeqScan used instead of IndexScan")
+	}
+
 	return s.cloneRow(r, schema), nil
 }
 
@@ -242,6 +253,12 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 			}
 			row.tableName = s.alias
 		}
+
+		// REQ000790: record index skip if indexes are available but SeqScan is used.
+		if s.iu != nil && len(s.availableIdx) > 0 {
+			s.iu.RecordIndexSkip(s.availableIdx[0], s.table, "SeqScan used instead of IndexScan")
+		}
+
 		return row, nil
 	}
 	if err := s.it.Err(); err != nil {
@@ -344,6 +361,9 @@ type IndexScan struct {
 	// REQ000767: pre-computed index key prefix for range-seek
 	// filtering, avoiding buildIndexKey allocation per entry.
 	prefixIdxKey []byte
+
+	// REQ000790: index usage tracking for diagnostics.
+	iu *IndexUsage
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -502,6 +522,12 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		row.tableName = i.table
+
+		// REQ000790: record index usage for diagnostics.
+		if i.iu != nil && i.idx != "" {
+			i.iu.RecordIndexUse(i.idx, i.table)
+		}
+
 		return row, nil
 	}
 	if err := i.it.Err(); err != nil {
@@ -581,6 +607,13 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		row.tableName = i.table
+
+		// REQ000790: record index usage for diagnostics.
+		if i.iu != nil && i.idx != "" {
+			i.iu.RecordIndexUse(i.idx, i.table)
+		}
+
+		i.btreeIt.Next()
 		return row, nil
 	}
 	if err := i.indexIt.Err(); err != nil {
@@ -661,6 +694,12 @@ func (i *IndexScan) Next(ctx context.Context) (Row, error) {
 	r := i.rows[i.pos]
 	i.pos++
 	r.tableName = i.table
+
+	// REQ000790: record index usage for diagnostics.
+	if i.iu != nil && i.idx != "" {
+		i.iu.RecordIndexUse(i.idx, i.table)
+	}
+
 	return r, nil
 }
 
@@ -724,6 +763,12 @@ func (i *IndexScan) nextFromBTree(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		row.tableName = i.table
+
+		// REQ000790: record index usage for diagnostics.
+		if i.iu != nil && i.idx != "" {
+			i.iu.RecordIndexUse(i.idx, i.table)
+		}
+
 		i.btreeIt.Next()
 		return row, nil
 	}
