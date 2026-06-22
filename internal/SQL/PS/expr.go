@@ -315,7 +315,17 @@ func (p *Parser) parseFunctionCall(name string) (Expr, error) {
 }
 
 func (p *Parser) parseUnary() (Expr, error) {
-	if p.current.Type == LX.T_NOT || p.current.Type == LX.T_MINUS || p.current.Type == LX.T_PLUS || p.current.Type == LX.T_BITNOT {
+	if p.current.Type == LX.T_NOT {
+		p.advance()
+		// REQ000806: NOT binds at precedence 1 (lower than IS/comparison).
+		// Parse the operand via parseBinary so NOT(-78 IS NOT NULL) ≠ (NOT -78) IS NOT NULL.
+		operand, err := p.parseBinary(1)
+		if err != nil {
+			return nil, err
+		}
+		return &UnaryExpr{Op: int(LX.T_NOT), Operand: operand}, nil
+	}
+	if p.current.Type == LX.T_MINUS || p.current.Type == LX.T_PLUS || p.current.Type == LX.T_BITNOT {
 		op := int(p.current.Type)
 		p.advance()
 		operand, err := p.parseUnary()
