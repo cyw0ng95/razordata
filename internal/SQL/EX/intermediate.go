@@ -506,12 +506,36 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 
 func makeCompiledCmp(colName string, litVal any, cmp func(a, b any) bool) func(*Row) (bool, error) {
 	idx := -1
+	bareName := colName
+	if dot := strings.LastIndexByte(colName, '.'); dot >= 0 {
+		bareName = colName[dot+1:]
+	}
 	return func(row *Row) (bool, error) {
 		if idx < 0 {
+			// Try direct match first (qualified name like "t1.a").
 			for i, c := range row.Cols {
 				if strings.EqualFold(c, colName) {
 					idx = i
 					break
+				}
+			}
+			// Fallback: try bare column name (works for SeqScan rows).
+			if idx < 0 {
+				for i, c := range row.Cols {
+					if strings.EqualFold(c, bareName) && i < len(row.Data) {
+						idx = i
+						break
+					}
+				}
+			}
+			// Fallback: suffix match for bare names on prefixed rows.
+			if idx < 0 {
+				lk := strings.ToLower(bareName)
+				for i, c := range row.Cols {
+					if strings.HasSuffix(strings.ToLower(c), "."+lk) && i < len(row.Data) {
+						idx = i
+						break
+					}
 				}
 			}
 			if idx < 0 {
@@ -526,19 +550,32 @@ func makeCompiledCmp(colName string, litVal any, cmp func(a, b any) bool) func(*
 }
 
 // extractColLiteralPair extracts (column_name, literal_value, ok) from a
-// BinaryExpr where one side is an Ident and the other is a literal.
+// BinaryExpr where one side is a column reference and the other is a literal.
+// REQ000802: supports both Ident (bare name) and QualifiedName (table.col).
 func extractColLiteralPair(e *PS.BinaryExpr) (string, any, bool) {
-	if id, ok := e.Left.(*PS.Ident); ok {
+	if col, ok := colRefName(e.Left); ok {
 		if lit, ok := extractLiteral(e.Right); ok {
-			return id.Name, lit, true
+			return col, lit, true
 		}
 	}
-	if id, ok := e.Right.(*PS.Ident); ok {
+	if col, ok := colRefName(e.Right); ok {
 		if lit, ok := extractLiteral(e.Left); ok {
-			return id.Name, lit, true
+			return col, lit, true
 		}
 	}
 	return "", nil, false
+}
+
+// colRefName returns the column name from an expression that is
+// either an Ident or a QualifiedName, plus whether it succeeded.
+func colRefName(e PS.Expr) (string, bool) {
+	switch v := e.(type) {
+	case *PS.Ident:
+		return v.Name, true
+	case *PS.QualifiedName:
+		return v.Table + "." + v.Name, true
+	}
+	return "", false
 }
 
 // extractLiteral returns the Go value from a literal expression node.
