@@ -155,6 +155,30 @@ func valueFromAny(a any) Value {
 	}
 }
 
+// valueFromAnySlice converts a []any to []Value.
+func valueFromAnySlice(a []any) []Value {
+	if a == nil {
+		return nil
+	}
+	out := make([]Value, len(a))
+	for i, v := range a {
+		out[i] = valueFromAny(v)
+	}
+	return out
+}
+
+// valueSliceToAny converts a []Value to []any.
+func valueSliceToAny(v []Value) []any {
+	if v == nil {
+		return nil
+	}
+	out := make([]any, len(v))
+	for i, val := range v {
+		out[i] = val.ToAny()
+	}
+	return out
+}
+
 
 type Operator interface {
 	Next(ctx context.Context) (Row, error)
@@ -164,7 +188,7 @@ type Operator interface {
 type Row struct {
 	Cols  []string
 	Types []int
-	Data  []any
+	Data  []Value
 	Outer *Row
 	// planner is set by the executor when materializing a row
 	// from the main plan. Subquery eval functions read it to

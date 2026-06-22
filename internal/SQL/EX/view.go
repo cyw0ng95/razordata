@@ -31,7 +31,7 @@ func (c *CreateViewOperator) Next(_ context.Context) (Row, error) {
 
 	return Row{
 		Cols: []string{"result"},
-		Data: []any{"view created"},
+		Data: []Value{NewTextValue("view created")},
 	}, nil
 }
 

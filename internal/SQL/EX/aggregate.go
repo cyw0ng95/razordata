@@ -109,7 +109,7 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 		for i, gc := range a.groupCols {
 			name := groupColName(gc)
 			out.Cols = append(out.Cols, name)
-			out.Data = append(out.Data, g.key[i])
+			out.Data = append(out.Data, valueFromAny(g.key[i]))
 		}
 		for _, ag := range a.aggs {
 			v, err := evalAggregateOver(ag, g.rows, a.params)
@@ -118,7 +118,7 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 			}
 			name := aggregateColName(ag)
 			out.Cols = append(out.Cols, name)
-			out.Data = append(out.Data, v)
+			out.Data = append(out.Data, valueFromAny(v))
 		}
 		a.buf = append(a.buf, out)
 	}
@@ -302,7 +302,7 @@ func buildAggregateVirtualRow(e PS.Expr, rows []Row, params []any) (Row, error) 
 				return err
 			}
 			vrow.Cols = append(vrow.Cols, name)
-			vrow.Data = append(vrow.Data, val)
+			vrow.Data = append(vrow.Data, valueFromAny(val))
 		case *PS.UnaryExpr:
 			return collect(v.Operand)
 		case *PS.BinaryExpr:

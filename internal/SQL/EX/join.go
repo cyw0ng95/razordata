@@ -55,9 +55,9 @@ type NestedLoopJoin struct {
 	sharedTypes []int
 	// dataBuf is a single pre-allocated []any covering all output
 	// rows' Data slices. Each row gets a non-overlapping sub-slice
-	// [off:off:off+dataPerRow], eliminating per-row make([]any, ...)
+	// [off:off:off+dataPerRow], eliminating per-row make([]Value, ...)
 	// allocations. j3 perf: 39% of alloc_space was here.
-	dataBuf    []any
+	dataBuf    []Value
 	dataPerRow int
 	dataOffset int // running write offset into dataBuf
 	// REQ000798: Block NLJ mode — batch left rows and re-scan right
@@ -224,7 +224,7 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 		j.rightRows = append(j.rightRows, Row{
 			Cols:      prefixCols(row.Cols, j.rightTbl),
 			Types:     row.Types,
-			Data:      append([]any(nil), row.Data...),
+			Data:      append([]Value(nil), row.Data...),
 			tableName: row.tableName,
 		})
 		if len(j.rightRows) >= maxMaterialize {
@@ -265,10 +265,10 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 	}
 	// Pre-allocate a single contiguous Data buffer for all output
 	// rows. Each output row gets a non-overlapping sub-slice
-	// [off:off:off+dataPerRow] — no per-row make([]any) needed.
+	// [off:off:off+dataPerRow] — no per-row make([]Value) needed.
 	j.dataPerRow = len(j.leftRows[0].Data) + len(j.rightRows[0].Data)
 	totalRows := len(j.leftRows) * len(j.rightRows)
-	j.dataBuf = make([]any, 0, totalRows*j.dataPerRow)
+	j.dataBuf = make([]Value, 0, totalRows*j.dataPerRow)
 	j.dataOffset = 0
 	// Build hash from right side for equi-join lookups.
 	// For cross join, we don't hash — just iterate.
@@ -350,7 +350,7 @@ func (j *NestedLoopJoin) nullRightRow() Row {
 	nullRow := Row{
 		Cols:  prefixCols(schemaCols(rightSchema), j.rightTbl),
 		Types: schemaTypes(rightSchema),
-		Data:  make([]any, len(rightSchema)),
+		Data:  make([]Value, len(rightSchema)),
 	}
 	return nullRow
 }
@@ -484,7 +484,7 @@ func joinRowsLL(a, b *Row) Row {
 	out := Row{
 		Cols:  make([]string, 0, nCols),
 		Types: make([]int, 0, nTypes),
-		Data:  make([]any, 0, nData),
+		Data:  make([]Value, 0, nData),
 	}
 	out.Cols = append(out.Cols, a.Cols...)
 	out.Cols = append(out.Cols, b.Cols...)

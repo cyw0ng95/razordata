@@ -560,38 +560,34 @@ func encodeRow(schema *storeSchema, row Row) ([]byte, error) {
 	var buf []byte
 	buf = binary.AppendUvarint(buf, uint64(len(schema.cols)))
 	for i, v := range row.Data {
-		if v == nil {
+		if v.IsNull() {
 			buf = append(buf, rvNull)
 			continue
 		}
-		switch x := v.(type) {
-		case int64:
+		switch v.Kind {
+		case KindInt:
 			buf = append(buf, rvInt)
 			var b [8]byte
-			binary.BigEndian.PutUint64(b[:], uint64(x))
+			binary.BigEndian.PutUint64(b[:], uint64(v.I64))
 			buf = append(buf, b[:]...)
-		case float64:
+		case KindFloat:
 			buf = append(buf, rvFloat)
 			var b [8]byte
-			binary.BigEndian.PutUint64(b[:], math.Float64bits(x))
+			binary.BigEndian.PutUint64(b[:], math.Float64bits(v.F64))
 			buf = append(buf, b[:]...)
-		case string:
+		case KindText:
 			buf = append(buf, rvString)
-			buf = binary.AppendUvarint(buf, uint64(len(x)))
-			buf = append(buf, x...)
-		case bool:
+			buf = binary.AppendUvarint(buf, uint64(len(v.S)))
+			buf = append(buf, v.S...)
+		case KindBool:
 			buf = append(buf, rvBool)
-			if x {
+			if v.B {
 				buf = append(buf, 1)
 			} else {
 				buf = append(buf, 0)
 			}
-		case []byte:
-			buf = append(buf, rvBytes)
-			buf = binary.AppendUvarint(buf, uint64(len(x)))
-			buf = append(buf, x...)
 		default:
-			return nil, fmt.Errorf("ex: unsupported value type %T at column %d", v, i)
+			return nil, fmt.Errorf("ex: unsupported value kind %d at column %d", v.Kind, i)
 		}
 	}
 	return buf, nil
@@ -618,7 +614,7 @@ func decodeRow(data []byte, schema *storeSchema) (Row, error) {
 	if int(n) != len(schema.cols) {
 		return Row{}, fmt.Errorf("ex: row has %d cols, schema %d", n, len(schema.cols))
 	}
-	dataSlice := make([]any, len(schema.cols))
+	dataSlice := make([]Value, len(schema.cols))
 	row := Row{
 		Cols:     schema.cols, // share schema's cols slice (immutable)
 		Data:     dataSlice,
@@ -632,24 +628,24 @@ func decodeRow(data []byte, schema *storeSchema) (Row, error) {
 		off++
 		switch tag {
 		case rvNull:
-			row.Data[i] = nil
+			row.Data[i] = NullValue()
 		case rvInt:
 			if off+8 > len(data) {
 				return Row{}, errors.New("ex: truncated int")
 			}
-			row.Data[i] = int64(binary.BigEndian.Uint64(data[off : off+8]))
+			row.Data[i] = NewIntValue(int64(binary.BigEndian.Uint64(data[off : off+8])))
 			off += 8
 		case rvFloat:
 			if off+8 > len(data) {
 				return Row{}, errors.New("ex: truncated float")
 			}
-			row.Data[i] = math.Float64frombits(binary.BigEndian.Uint64(data[off : off+8]))
+			row.Data[i] = NewFloatValue(math.Float64frombits(binary.BigEndian.Uint64(data[off : off+8])))
 			off += 8
 		case rvBool:
 			if off+1 > len(data) {
 				return Row{}, errors.New("ex: truncated bool")
 			}
-			row.Data[i] = data[off] != 0
+			row.Data[i] = NewBoolValue(data[off] != 0)
 			off++
 		case rvString:
 			l, err := readVarint()
@@ -659,7 +655,7 @@ func decodeRow(data []byte, schema *storeSchema) (Row, error) {
 			if off+int(l) > len(data) {
 				return Row{}, errors.New("ex: truncated string")
 			}
-			row.Data[i] = string(data[off : off+int(l)])
+			row.Data[i] = NewTextValue(string(data[off : off+int(l)]))
 			off += int(l)
 		case rvBytes:
 			l, err := readVarint()
@@ -669,7 +665,7 @@ func decodeRow(data []byte, schema *storeSchema) (Row, error) {
 			if off+int(l) > len(data) {
 				return Row{}, errors.New("ex: truncated bytes")
 			}
-			row.Data[i] = append([]byte(nil), data[off:off+int(l)]...)
+			row.Data[i] = NewTextValue(string(data[off : off+int(l)]))
 			off += int(l)
 		default:
 			return Row{}, fmt.Errorf("ex: unknown row tag %d", tag)
@@ -721,7 +717,7 @@ func extractPK(schema *storeSchema, row Row) (any, error) {
 	}
 	for i, c := range schema.cols {
 		if c == schema.pk {
-			if row.Data[i] == nil {
+			if row.Data[i].IsNull() {
 				if !schema.hiddenPK {
 					schema.hiddenPK = true
 				}

@@ -121,7 +121,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		var err error
 		if row == nil && i.defaultValues {
 			out = Row{Cols: append([]string(nil), schema...)}
-			out.Data = make([]any, len(schema))
+			out.Data = make([]Value, len(schema))
 		} else {
 			out, err = buildInsertRow(schema, i.cols, row, i.params)
 			if err != nil {
@@ -188,7 +188,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		}
 		// REQ000126: FK validation on INSERT
 		if cschema != nil && len(cschema.foreignKeys) > 0 {
-			if err := validateForeignKeyInsert(cschema, out.Data, i.store); err != nil {
+			if err := validateForeignKeyInsert(cschema, valueSliceToAny(out.Data), i.store); err != nil {
 				return Row{}, err
 			}
 		}
@@ -201,7 +201,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			resultRow := Row{
 				Cols:  make([]string, len(expanded)),
 				Types: make([]int, len(expanded)),
-				Data:  make([]any, len(expanded)),
+				Data:  make([]Value, len(expanded)),
 			}
 			for j, expr := range expanded {
 				val, err := Eval(expr, &out, i.params)
@@ -209,7 +209,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 					return Row{}, err
 				}
 				resultRow.Cols[j] = colNameForReturning(expr, out.Cols, j)
-				resultRow.Data[j] = val
+				resultRow.Data[j] = valueFromAny(val)
 			}
 			i.resultRows = append(i.resultRows, resultRow)
 		}
@@ -272,7 +272,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		var err error
 		if row == nil && i.defaultValues {
 			out = Row{Cols: append([]string(nil), i.schema.cols...)}
-			out.Data = make([]any, len(i.schema.cols))
+			out.Data = make([]Value, len(i.schema.cols))
 		} else {
 			out, err = buildInsertRow(i.schema.cols, i.cols, row, i.params)
 			if err != nil {
@@ -308,7 +308,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		}
 		// REQ000126: FK validation on INSERT (store path)
 		if len(i.schema.foreignKeys) > 0 {
-			if err := validateForeignKeyInsert(i.schema, out.Data, i.store); err != nil {
+			if err := validateForeignKeyInsert(i.schema, valueSliceToAny(out.Data), i.store); err != nil {
 				return Row{}, err
 			}
 		}
@@ -344,7 +344,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			resultRow := Row{
 				Cols:  make([]string, len(expanded)),
 				Types: make([]int, len(expanded)),
-				Data:  make([]any, len(expanded)),
+				Data:  make([]Value, len(expanded)),
 			}
 			for j, expr := range expanded {
 				val, err := Eval(expr, &out, i.params)
@@ -352,7 +352,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 					return Row{}, err
 				}
 				resultRow.Cols[j] = colNameForReturning(expr, out.Cols, j)
-				resultRow.Data[j] = val
+				resultRow.Data[j] = valueFromAny(val)
 			}
 			i.resultRows = append(i.resultRows, resultRow)
 		}
@@ -435,7 +435,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 			resultRow := Row{
 				Cols:  make([]string, len(expanded)),
 				Types: make([]int, len(expanded)),
-				Data:  make([]any, len(expanded)),
+				Data:  make([]Value, len(expanded)),
 			}
 			for j, expr := range expanded {
 				val, err := Eval(expr, &out, i.params)
@@ -443,7 +443,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 					return Row{}, err
 				}
 				resultRow.Cols[j] = colNameForReturning(expr, out.Cols, j)
-				resultRow.Data[j] = val
+				resultRow.Data[j] = valueFromAny(val)
 			}
 			i.resultRows = append(i.resultRows, resultRow)
 		}
@@ -463,7 +463,7 @@ func buildInsertRowFromSelect(schema []string, cols []string, src Row) (Row, err
 	if len(cols) > 0 {
 		// Map SELECT columns to insert columns by position
 		out := Row{Cols: append([]string(nil), schema...)}
-		out.Data = make([]any, len(schema))
+		out.Data = make([]Value, len(schema))
 		colIdx := make(map[string]int, len(schema))
 		for i, c := range schema {
 			colIdx[c] = i
@@ -479,7 +479,7 @@ func buildInsertRowFromSelect(schema []string, cols []string, src Row) (Row, err
 	}
 	// No column list: use SELECT columns directly
 	out := Row{Cols: append([]string(nil), src.Cols...)}
-	out.Data = append([]any(nil), src.Data...)
+	out.Data = append([]Value(nil), src.Data...)
 	return out, nil
 }
 
@@ -600,7 +600,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 			// REQ000513: FK re-validation when FK columns are updated.
-			if err := validateForeignKeyUpdateInMemory(cschema, snapshot.Data, row.Data); err != nil {
+			if err := validateForeignKeyUpdateInMemory(cschema, valueSliceToAny(snapshot.Data), valueSliceToAny(row.Data)); err != nil {
 				return Row{}, err
 			}
 			// REQ000516: UNIQUE enforcement on UPDATE. Use a real
@@ -632,7 +632,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			resultRow := Row{
 				Cols:  make([]string, len(expanded)),
 				Types: make([]int, len(expanded)),
-				Data:  make([]any, len(expanded)),
+				Data:  make([]Value, len(expanded)),
 			}
 			for j, expr := range expanded {
 				val, err := Eval(expr, &row, u.params)
@@ -640,7 +640,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 					return Row{}, err
 				}
 				resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
-				resultRow.Data[j] = val
+				resultRow.Data[j] = valueFromAny(val)
 			}
 			u.resultRows = append(u.resultRows, resultRow)
 		}
@@ -725,7 +725,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 			resultRow := Row{
 				Cols:  make([]string, len(expanded)),
 				Types: make([]int, len(expanded)),
-				Data:  make([]any, len(expanded)),
+				Data:  make([]Value, len(expanded)),
 			}
 			for j, expr := range expanded {
 				val, err := Eval(expr, &row, u.params)
@@ -733,7 +733,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 					return Row{}, err
 				}
 				resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
-				resultRow.Data[j] = val
+				resultRow.Data[j] = valueFromAny(val)
 			}
 			u.resultRows = append(u.resultRows, resultRow)
 		}
@@ -846,7 +846,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		idx, ok := rowIndex(d.table, row)
 		if ok {
 			toDelete[idx] = true
-			fkRows = append(fkRows, append([]any(nil), row.Data...))
+			fkRows = append(fkRows, valueSliceToAny(row.Data))
 
 			// Evaluate RETURNING expressions before deleting (REQ000518: expand *)
 			if len(d.returning) > 0 {
@@ -854,7 +854,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 				resultRow := Row{
 					Cols:  make([]string, len(expanded)),
 					Types: make([]int, len(expanded)),
-					Data:  make([]any, len(expanded)),
+					Data:  make([]Value, len(expanded)),
 				}
 				for j, expr := range expanded {
 					val, err := Eval(expr, &row, d.params)
@@ -862,7 +862,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 						return Row{}, err
 					}
 					resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
-					resultRow.Data[j] = val
+					resultRow.Data[j] = valueFromAny(val)
 				}
 				d.resultRows = append(d.resultRows, resultRow)
 			}
@@ -897,7 +897,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		// For in-memory path, we fire triggers for each deleted row
 		// This is a simplified implementation; full implementation would pass old row data
 		for _, rowData := range fkRows {
-			oldRow := Row{Data: rowData}
+			oldRow := Row{Data: valueFromAnySlice(rowData)}
 			if err := fireDeleteTriggers(d.table, &oldRow, d.params, nil); err != nil {
 				return Row{}, err
 			}
@@ -939,7 +939,7 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			resultRow := Row{
 				Cols:  make([]string, len(expanded)),
 				Types: make([]int, len(expanded)),
-				Data:  make([]any, len(expanded)),
+				Data:  make([]Value, len(expanded)),
 			}
 			for j, expr := range expanded {
 				val, err := Eval(expr, &row, d.params)
@@ -947,7 +947,7 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 					return Row{}, err
 				}
 				resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
-				resultRow.Data[j] = val
+				resultRow.Data[j] = valueFromAny(val)
 			}
 			d.resultRows = append(d.resultRows, resultRow)
 		}
@@ -1579,7 +1579,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			p.done = true
 			p.rows = append(p.rows, Row{
 				Cols: []string{"seq", "name", "file"},
-				Data: []any{int64(0), "main", nil},
+				Data: []Value{NewIntValue(0), NewTextValue("main"), NullValue()},
 			})
 		}
 		if p.idx >= len(p.rows) {
@@ -1639,7 +1639,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			// Return checkpoint status: busy, log, checkpointed
 			p.rows = append(p.rows, Row{
 				Cols: []string{"busy", "log", "checkpointed"},
-				Data: []any{int64(0), int64(0), int64(0)},
+				Data: []Value{NewIntValue(0), NewIntValue(0), NewIntValue(0)},
 			})
 		}
 		if p.idx >= len(p.rows) {
@@ -1692,7 +1692,7 @@ func (p *Pragma) loadTableInfo() error {
 		}
 		p.rows = append(p.rows, Row{
 			Cols: []string{"cid", "name", "type", "notnull", "dflt_value", "pk"},
-			Data: []any{int64(i), colName, colTypeName(colType), notNull, nil, pk},
+			Data: []Value{NewIntValue(int64(i)), NewTextValue(colName), NewTextValue(colTypeName(colType)), NewIntValue(notNull), NullValue(), NewIntValue(pk)},
 		})
 	}
 	return nil
@@ -1733,7 +1733,7 @@ func (p *Pragma) loadTableList() {
 	for _, name := range names {
 		p.rows = append(p.rows, Row{
 			Cols: []string{"type", "name", "tbl_name", "rootpage", "sql"},
-			Data: []any{"table", name, name, int64(0), nil},
+			Data: []Value{NewTextValue("table"), NewTextValue(name), NewTextValue(name), NewIntValue(0), NullValue()},
 		})
 	}
 }
@@ -1750,7 +1750,7 @@ func (p *Pragma) loadForeignKeyList() {
 		for seq, col := range fk.Columns {
 			p.rows = append(p.rows, Row{
 				Cols: []string{"id", "seq", "table", "from", "to", "on_update", "on_delete", "match"},
-				Data: []any{int64(id), int64(seq), fk.RefTable, col, fk.RefColumns[seq], fk.OnUpdate, fk.OnDelete, "NONE"},
+				Data: []Value{NewIntValue(int64(id)), NewIntValue(int64(seq)), NewTextValue(fk.RefTable), NewTextValue(col), NewTextValue(fk.RefColumns[seq]), NewTextValue(fk.OnUpdate), NewTextValue(fk.OnDelete), NewTextValue("NONE")},
 			})
 		}
 	}
@@ -1792,7 +1792,7 @@ func (e *Explain) Next(ctx context.Context) (Row, error) {
 		return Row{
 			Cols:  []string{"plan"},
 			Types: []int{0},
-			Data:  []any{e.desc},
+			Data:  []Value{NewTextValue(e.desc)},
 		}, nil
 	}
 	e.rowOut = true
@@ -1935,7 +1935,7 @@ func applyConflictUpdate(schema *storeSchema, existing []Row, out Row, sets []PS
 	if err != nil {
 		return err
 	}
-	rowIdx, ok, err := apply.FindAndLock(idxs, vals)
+	rowIdx, ok, err := apply.FindAndLock(idxs, valueSliceToAny(vals))
 	if err != nil {
 		return err
 	}
@@ -1964,7 +1964,7 @@ func applyConflictUpdate(schema *storeSchema, existing []Row, out Row, sets []PS
 				continue
 			}
 			if ci < len(updated.Data) {
-				updated.Data[ci] = v
+				updated.Data[ci] = valueFromAny(v)
 			}
 		}
 		return updated
@@ -1974,20 +1974,20 @@ func applyConflictUpdate(schema *storeSchema, existing []Row, out Row, sets []PS
 // conflictKey returns the column indices and values used to look up
 // a row for ON CONFLICT. If the schema has a PK, that is the conflict
 // target. Otherwise the first unique key is used. REQ000511.
-func conflictKey(schema *storeSchema, row Row) ([]int, []any, error) {
+func conflictKey(schema *storeSchema, row Row) ([]int, []Value, error) {
 	if schema.pk != "" {
 		for i, c := range schema.cols {
 			if c == schema.pk {
 				if i >= len(row.Data) {
 					return nil, nil, fmt.Errorf("ex: PK column %q out of range", schema.pk)
 				}
-				return []int{i}, []any{row.Data[i]}, nil
+				return []int{i}, []Value{row.Data[i]}, nil
 			}
 		}
 	}
 	if len(schema.unique) > 0 {
 		uk := schema.unique[0]
-		vals := make([]any, len(uk.Cols))
+		vals := make([]Value, len(uk.Cols))
 		for i, idx := range uk.Cols {
 			if idx < len(row.Data) {
 				vals[i] = row.Data[idx]

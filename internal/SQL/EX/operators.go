@@ -185,7 +185,7 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 	out := Row{
 		Cols:      schema.cols,
 		Types:     schema.types,
-		Data:      append([]any(nil), r.Data...),
+		Data:      append([]Value(nil), r.Data...),
 		Outer:     r.Outer,
 		planner:   r.planner,
 		storeKey:  r.storeKey,

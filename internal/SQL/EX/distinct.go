@@ -5,6 +5,7 @@ package EX
 
 import (
 	"context"
+	"strconv"
 )
 
 type Distinct struct {
@@ -54,37 +55,29 @@ func distinctKey(row Row) string {
 	if len(row.Data) == 0 {
 		return ""
 	}
-	out := make([]byte, 0, len(row.Data)*8)
+out := make([]byte, 0, len(row.Data)*8)
 	for i, d := range row.Data {
 		if i > 0 {
 			out = append(out, 0)
 		}
-		switch v := d.(type) {
-		case nil:
+		switch d.Kind {
+		case KindNull:
 			out = append(out, "N"...)
-		case string:
+		case KindInt:
+			out = strconv.AppendInt(out, d.I64, 10)
+		case KindFloat:
+			out = strconv.AppendFloat(out, d.F64, 'g', -1, 64)
+		case KindText:
 			out = append(out, "S"...)
-			out = append(out, v...)
-		case []byte:
-			out = append(out, "B"...)
-			out = append(out, v...)
-		case int64:
-			out = append(out, "I"...)
-			out = append(out, []byte(itoa(v))...)
-		case int:
-			out = append(out, "I"...)
-			out = append(out, []byte(itoa(int64(v)))...)
-		case float64:
-			out = append(out, "F"...)
-			out = append(out, []byte(ftoa(v))...)
-		case bool:
-			if v {
+			out = append(out, d.S...)
+		case KindBool:
+			if d.B {
 				out = append(out, "T"...)
 			} else {
 				out = append(out, "F"...)
 			}
 		default:
-			out = append(out, []byte("?")...)
+			out = append(out, "O"...)
 		}
 	}
 	return string(out)

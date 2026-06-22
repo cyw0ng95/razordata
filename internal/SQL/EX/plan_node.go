@@ -444,7 +444,7 @@ func formatPlanTree(n *PlanNode) []Row {
 		rows = append(rows, Row{
 			Cols:  []string{"id", "parent", "notused", "detail"},
 			Types: []int{1, 1, 1, 1},
-			Data:  []any{int64(id), int64(parent), int64(0), detail},
+			Data:  []Value{NewIntValue(int64(id)), NewIntValue(int64(parent)), NewIntValue(0), NewTextValue(detail)},
 		})
 
 		for _, child := range node.Children {

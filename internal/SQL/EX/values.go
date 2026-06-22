@@ -43,7 +43,7 @@ func (v *Values) Next(ctx context.Context) (Row, error) {
 		evalRow = &Row{planner: v.planner}
 	}
 	cols := make([]string, len(v.cols))
-	data := make([]any, len(v.cols))
+	data := make([]Value, len(v.cols))
 	types := make([]int, len(v.cols))
 
 	for i, e := range v.cols {
@@ -52,7 +52,7 @@ func (v *Values) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		cols[i] = exprString(e)
-		data[i] = val
+		data[i] = valueFromAny(val)
 		types[i] = inferType(val)
 	}
 
@@ -185,7 +185,7 @@ func (v *ValuesRows) Next(ctx context.Context) (Row, error) {
 	rowExprs := v.rows[v.pos]
 	v.pos++
 	cols := make([]string, len(rowExprs))
-	data := make([]any, len(rowExprs))
+	data := make([]Value, len(rowExprs))
 	types := make([]int, len(rowExprs))
 	for i, e := range rowExprs {
 		val, err := Eval(e, nil, nil)
@@ -197,7 +197,7 @@ func (v *ValuesRows) Next(ctx context.Context) (Row, error) {
 		} else {
 			cols[i] = exprString(e)
 		}
-		data[i] = val
+		data[i] = valueFromAny(val)
 		types[i] = inferType(val)
 	}
 	return Row{Cols: cols, Types: types, Data: data}, nil

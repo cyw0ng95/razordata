@@ -25,7 +25,7 @@ func fillDefaults(schema *storeSchema, row Row) (Row, error) {
 		if def == nil {
 			continue
 		}
-		if row.Data[i] == nil {
+		if row.Data[i].IsNull() {
 			v, err := Eval(def, nil, nil)
 			if err != nil {
 				return row, fmt.Errorf("%w: default for column %q: %v",
@@ -37,7 +37,7 @@ func fillDefaults(schema *storeSchema, row Row) (Row, error) {
 			if schema.colTypes != nil && i < len(schema.colTypes) {
 				v = coerceDefault(v, schema.colTypes[i])
 			}
-			row.Data[i] = v
+			row.Data[i] = valueFromAny(v)
 		}
 	}
 	// REQ000249: materialize STORED generated columns. The
@@ -53,7 +53,7 @@ func fillDefaults(schema *storeSchema, row Row) (Row, error) {
 				return row, fmt.Errorf("%w: generated column %q: %v",
 					ErrConstraint, schema.cols[i], err)
 			}
-			row.Data[i] = v
+			row.Data[i] = valueFromAny(v)
 		}
 	}
 	return row, nil
@@ -123,7 +123,7 @@ func coerceDefault(v any, colType int) any {
 // violation.
 func validateRow(schema *storeSchema, row Row) error {
 	for i, col := range schema.cols {
-		if row.Data[i] == nil && !schema.nullable[i] {
+		if row.Data[i].IsNull() && !schema.nullable[i] {
 			// REQ000713: INTEGER PRIMARY KEY allows NULL —
 			// SQLite treats it as a rowid alias and auto-assigns.
 			if schema.pk == col && isIntegerType(schema.colTypes, i) {
@@ -157,7 +157,7 @@ func validateDecimal(schema *storeSchema, row Row) error {
 			continue
 		}
 		v := row.Data[i]
-		if v == nil {
+		if v.IsNull() {
 			continue
 		}
 		prec := schema.precision[i]
@@ -165,7 +165,7 @@ func validateDecimal(schema *storeSchema, row Row) error {
 		if prec == 0 && sc == 0 {
 			continue
 		}
-		if _, err := FormatDecimal(v, prec, sc); err != nil {
+		if _, err := FormatDecimal(v.ToAny(), prec, sc); err != nil {
 			return fmt.Errorf("%w: column %q: %v", ErrConstraint, schema.cols[i], err)
 		}
 	}
@@ -398,12 +398,12 @@ func (m *memLookup) Mutate(idx int, fn func(Row) Row) error {
 	return nil
 }
 
-func rowMatchesUnique(data []any, cols []int, vals []any) bool {
+func rowMatchesUnique(data []Value, cols []int, vals []any) bool {
 	for i, idx := range cols {
 		if idx >= len(data) {
 			return false
 		}
-		if !valueEqual(data[idx], vals[i]) {
+		if !valueEqual(data[idx].ToAny(), vals[i]) {
 			return false
 		}
 	}

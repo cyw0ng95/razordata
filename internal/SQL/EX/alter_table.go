@@ -399,7 +399,7 @@ func (a *AlterTable) execDropColumn() error {
 					}
 				}
 			}
-			updated[i] = Row{Cols: newRowCols, Types: row.Types, Data: newData, Outer: row.Outer}
+			updated[i] = Row{Cols: newRowCols, Types: row.Types, Data: valueFromAnySlice(newData), Outer: row.Outer}
 		}
 		tables[a.stmt.Table] = updated
 	}
@@ -449,7 +449,7 @@ func (a *AlterTable) execDropColumnInMemory() error {
 					}
 				}
 			}
-			updated[i] = Row{Cols: newRowCols, Types: row.Types, Data: newData, Outer: row.Outer}
+			updated[i] = Row{Cols: newRowCols, Types: row.Types, Data: valueFromAnySlice(newData), Outer: row.Outer}
 		}
 		tables[a.stmt.Table] = updated
 	}

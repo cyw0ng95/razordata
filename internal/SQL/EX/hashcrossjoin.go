@@ -139,7 +139,7 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 		prefixed := Row{
 			Cols:      prefixCols(row.Cols, j.rightTbl),
 			Types:     row.Types,
-			Data:      append([]any(nil), row.Data...),
+			Data:      append([]Value(nil), row.Data...),
 			tableName: row.tableName,
 		}
 		keyVal, ok := lookupColumn(&prefixed, j.rightTbl, j.rightKey)

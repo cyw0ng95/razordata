@@ -114,7 +114,7 @@ func formatExplainNormal(n *PlanNode) []Row {
 		rows = append(rows, Row{
 			Cols:  []string{"id", "parent", "notused", "detail"},
 			Types: []int{1, 1, 1, 1},
-			Data:  []any{int64(depth + 1), int64(depth), int64(0), detail},
+			Data:  []Value{NewIntValue(int64(depth + 1)), NewIntValue(int64(depth)), NewIntValue(0), NewTextValue(detail)},
 		})
 
 		for _, child := range node.Children {

@@ -58,9 +58,9 @@ func (w *WindowOperator) Next(ctx context.Context) (Row, error) {
 			w.outCols[len(w.cols)] = w.funcName
 		}
 	}
-	outData := make([]any, len(row.Data)+1)
+	outData := make([]Value, len(row.Data)+1)
 	copy(outData, row.Data)
-	outData[len(row.Data)] = result
+	outData[len(row.Data)] = valueFromAny(result)
 	return Row{Cols: w.outCols, Data: outData}, nil
 }
 

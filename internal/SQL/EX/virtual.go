@@ -6,7 +6,7 @@ import (
 
 // SqliteMaster is a virtual table that returns table metadata
 // (REQ000727). It implements Operator and returns rows matching
-// the sqlite_master schema: type, name, tbl_name, rootpage, sql.
+// the sqlite_master schema: type, NewTextValue(name), tbl_name, rootpage, sql.
 type SqliteMaster struct {
 	rows []Row
 	idx  int
@@ -34,7 +34,7 @@ func (s *SqliteMaster) loadRows() {
 	for _, name := range names {
 		s.rows = append(s.rows, Row{
 			Cols: []string{"type", "name", "tbl_name", "rootpage", "sql"},
-			Data: []any{"table", name, name, int64(0), nil},
+			Data: []Value{NewTextValue("table"), NewTextValue(name), NewTextValue(name), NewIntValue(0), NullValue()},
 		})
 	}
 }

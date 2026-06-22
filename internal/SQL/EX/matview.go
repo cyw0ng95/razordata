@@ -40,7 +40,7 @@ func (c *CreateMatViewOperator) Next(ctx context.Context) (Row, error) {
 
 	return Row{
 		Cols: []string{"result"},
-		Data: []any{"materialized view created"},
+		Data: []Value{NewTextValue("materialized view created")},
 	}, nil
 }
 
@@ -108,7 +108,7 @@ func (r *RefreshMatViewOperator) Next(ctx context.Context) (Row, error) {
 
 	return Row{
 		Cols: []string{"result"},
-		Data: []any{fmt.Sprintf("refreshed, %d rows", len(materializedRows))},
+		Data: []Value{NewTextValue(fmt.Sprintf("refreshed, %d rows", len(materializedRows)))},
 	}, nil
 }
 
@@ -148,7 +148,7 @@ func (d *DropMatViewOperator) Next(_ context.Context) (Row, error) {
 
 	return Row{
 		Cols: []string{"result"},
-		Data: []any{"materialized view dropped"},
+		Data: []Value{NewTextValue("materialized view dropped")},
 	}, nil
 }
 
@@ -165,19 +165,16 @@ func MatViewDataPrefix(name string) []byte {
 func encodeMatViewRow(row Row) []byte {
 	var buf []byte
 	for _, v := range row.Data {
-		switch val := v.(type) {
-		case int64:
+		switch v.Kind {
+		case KindInt:
 			buf = append(buf, 'I')
-			buf = appendInt64(buf, val)
-		case float64:
+			buf = appendInt64(buf, v.I64)
+		case KindFloat:
 			buf = append(buf, 'F')
-			buf = appendFloat64(buf, val)
-		case string:
+			buf = appendFloat64(buf, v.F64)
+		case KindText:
 			buf = append(buf, 'S')
-			buf = appendString(buf, val)
-		case []byte:
-			buf = append(buf, 'B')
-			buf = append(buf, val...)
+			buf = appendString(buf, v.S)
 		default:
 			buf = append(buf, 'N')
 		}

@@ -167,35 +167,36 @@ var hashKeySeed = maphash.MakeSeed()
 // is fast and distributes well. A fixed seed is used so
 // the same key always hashes to the same value across
 // calls and goroutines.
-func hashKey(v any) uint64 {
-	if v == nil {
+func hashKey(v Value) uint64 {
+	if v.IsNull() {
 		return 0
 	}
 	var h maphash.Hash
 	h.SetSeed(hashKeySeed)
-	switch x := v.(type) {
-	case int64:
+	switch v.Kind {
+	case KindInt:
+		x := v.I64
 		_, _ = h.Write([]byte{
 			byte(x), byte(x >> 8), byte(x >> 16), byte(x >> 24),
 			byte(x >> 32), byte(x >> 40), byte(x >> 48), byte(x >> 56),
 		})
-	case string:
-		_, _ = h.WriteString(x)
-	case float64:
-		u := uint64Bits(x)
+	case KindText:
+		_, _ = h.WriteString(v.S)
+	case KindFloat:
+		u := uint64Bits(v.F64)
 		_, _ = h.Write([]byte{
 			byte(u), byte(u >> 8), byte(u >> 16), byte(u >> 24),
 			byte(u >> 32), byte(u >> 40), byte(u >> 48), byte(u >> 56),
 		})
 	default:
-		_, _ = h.WriteString(stringify(v))
+		_, _ = h.WriteString(stringify(v.ToAny()))
 	}
 	return h.Sum64()
 }
 
 // lookupKeys extracts multiple key values from a row.
-func lookupKeys(row Row, keys []string) []any {
-	vals := make([]any, len(keys))
+func lookupKeys(row Row, keys []string) []Value {
+	vals := make([]Value, len(keys))
 	for i, k := range keys {
 		v, _ := row.Lookup(k)
 		// REQ000725: when the row comes from a previous join,
@@ -212,14 +213,27 @@ func lookupKeys(row Row, keys []string) []any {
 				}
 			}
 		}
-		vals[i] = v
+		vals[i] = valueFromAny(v)
 	}
 	return vals
 }
 
+// joinRows combines a left and right row into a single Row.
+func joinRows(left, right Row, leftTbl, rightTbl string) Row {
+	out := Row{
+		Cols: make([]string, 0, len(left.Cols)+len(right.Cols)),
+		Data: make([]Value, 0, len(left.Cols)+len(right.Cols)),
+	}
+	out.Cols = append(out.Cols, left.Cols...)
+	out.Data = append(out.Data, left.Data...)
+	out.Cols = append(out.Cols, right.Cols...)
+	out.Data = append(out.Data, right.Data...)
+	return out
+}
+
 // hashKeys computes a uint64 hash of multiple key values by
 // hashing each value and combining the hashes.
-func hashKeys(vals []any) uint64 {
+func hashKeys(vals []Value) uint64 {
 	if len(vals) == 1 {
 		return hashKey(vals[0])
 	}
@@ -236,7 +250,7 @@ func hashKeys(vals []any) uint64 {
 }
 
 // valuesEqualMulti compares multiple key values for equality.
-func valuesEqualMulti(a, b []any) bool {
+func valuesEqualMulti(a, b []Value) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -248,44 +262,26 @@ func valuesEqualMulti(a, b []any) bool {
 	return true
 }
 
-// joinRows combines a left and right row into a single Row.
-func joinRows(left, right Row, leftTbl, rightTbl string) Row {
-	out := Row{
-		Cols: make([]string, 0, len(left.Cols)+len(right.Cols)),
-		Data: make([]any, 0, len(left.Cols)+len(right.Cols)),
-	}
-	out.Cols = append(out.Cols, left.Cols...)
-	out.Data = append(out.Data, left.Data...)
-	out.Cols = append(out.Cols, right.Cols...)
-	out.Data = append(out.Data, right.Data...)
-	return out
-}
-
-// valuesEqual compares two values for join-key equality.
-func valuesEqual(a, b any) bool {
-	if a == nil && b == nil {
+// valuesEqual compares two Values for equality.
+func valuesEqual(a, b Value) bool {
+	if a.IsNull() && b.IsNull() {
 		return true
 	}
-	if a == nil || b == nil {
+	if a.IsNull() || b.IsNull() {
 		return false
 	}
-	switch av := a.(type) {
-	case int64:
-		if bv, ok := b.(int64); ok {
-			return av == bv
-		}
-	case string:
-		if bv, ok := b.(string); ok {
-			return av == bv
-		}
-	case float64:
-		if bv, ok := b.(float64); ok {
-			return av == bv
-		}
-	case bool:
-		if bv, ok := b.(bool); ok {
-			return av == bv
-		}
+	if a.Kind != b.Kind {
+		return false
+	}
+	switch a.Kind {
+	case KindInt:
+		return a.I64 == b.I64
+	case KindText:
+		return a.S == b.S
+	case KindFloat:
+		return a.F64 == b.F64
+	case KindBool:
+		return a.B == b.B
 	}
 	return false
 }

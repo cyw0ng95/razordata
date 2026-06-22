@@ -522,7 +522,7 @@ func evalInSubquery(target any, subq PS.Stmt, outer *Row, params []any) (any, er
 			if len(row.Cols) == 0 {
 				continue
 			}
-			if row.Data[0] == nil {
+			if row.Data[0].IsNull() {
 				hadNull = true
 			}
 		}
@@ -536,7 +536,7 @@ func evalInSubquery(target any, subq PS.Stmt, outer *Row, params []any) (any, er
 		if len(row.Cols) == 0 {
 			continue
 		}
-		if row.Data[0] == nil {
+		if row.Data[0].IsNull() {
 			hadNull = true
 			continue
 		}

@@ -841,14 +841,14 @@ func evalRowFallback(expr PS.Expr, batch *Batch, params []any) []uint16 {
 func batchToRow(batch *Batch, idx int) *Row {
 	row := &Row{
 		Cols: make([]string, 0, len(batch.Cols)),
-		Data: make([]any, 0, len(batch.Cols)),
+		Data: make([]Value, 0, len(batch.Cols)),
 	}
 	for c := range batch.Cols {
 		if batch.Cols[c].Data == nil {
 			continue
 		}
 		row.Cols = append(row.Cols, batch.Cols[c].Name)
-		row.Data = append(row.Data, batchValueAt(batch.Cols[c], idx))
+		row.Data = append(row.Data, valueFromAny(batchValueAt(batch.Cols[c], idx)))
 	}
 	return row
 }

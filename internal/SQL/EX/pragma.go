@@ -62,7 +62,7 @@ func (p *PrAGMAResult) Next(_ context.Context) (Row, error) {
 	}
 	return Row{
 		Cols: []string{p.name},
-		Data: []any{val},
+		Data: []Value{NewTextValue(val)},
 	}, nil
 }
 

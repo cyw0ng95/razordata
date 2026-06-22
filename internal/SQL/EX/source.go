@@ -165,7 +165,7 @@ func UnregisterTable(name string) {
 func cloneRow(r Row) Row {
 	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]int(nil), r.Types...), Outer: r.Outer, planner: r.planner, storeKey: r.storeKey, tableName: r.tableName}
 	if r.Data != nil {
-		out.Data = append([]any(nil), r.Data...)
+		out.Data = append([]Value(nil), r.Data...)
 	}
 	return out
 }
@@ -178,13 +178,13 @@ func cloneRow(r Row) Row {
 func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []any) (Row, error) {
 	out := Row{Cols: append([]string(nil), schema...)}
 	if len(cols) == 0 {
-		out.Data = make([]any, len(values))
+		out.Data = make([]Value, len(values))
 		for i, v := range values {
 			val, err := Eval(v, nil, params)
 			if err != nil {
 				return Row{}, err
 			}
-			out.Data[i] = val
+			out.Data[i] = valueFromAny(val)
 		}
 		return out, nil
 	}
@@ -201,14 +201,14 @@ func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []a
 		}
 		colIdx[i] = idx
 	}
-	out.Data = make([]any, len(schema))
+	out.Data = make([]Value, len(schema))
 	for i := range cols {
 		val, err := Eval(values[i], nil, params)
 		if err != nil {
 			return Row{}, err
 		}
 		if colIdx[i] >= 0 {
-			out.Data[colIdx[i]] = val
+			out.Data[colIdx[i]] = valueFromAny(val)
 		}
 	}
 	return out, nil
@@ -233,7 +233,7 @@ func applyUpdate(row *Row, set []PS.Pair, params []any) error {
 		if idx < 0 {
 			return errors.New("ex: update column not found: " + p.Col)
 		}
-		row.Data[idx] = val
+		row.Data[idx] = valueFromAny(val)
 	}
 	return nil
 }
@@ -347,7 +347,7 @@ func executeTrigger(trigger *PS.TriggerStmt, ctx *TriggerContext) error {
 // buildTriggerWhenRow builds a synthetic Row that allows QualifiedName
 // lookups for NEW.col and OLD.col references in trigger WHEN expressions.
 func buildTriggerWhenRow(ctx *TriggerContext) *Row {
-	var data []any
+	var data []Value
 	var cols []string
 	if ctx.NewRow != nil {
 		for i, c := range ctx.NewRow.Cols {
@@ -374,8 +374,9 @@ func evalTriggerWhen(expr PS.Expr, row *Row, params []any) (bool, error) {
 	if val == nil {
 		return false, nil
 	}
-	if b, ok := val.(bool); ok {
-		return b, nil
+	v := valueFromAny(val)
+	if v.Kind == KindBool {
+		return v.B, nil
 	}
 	return false, nil
 }

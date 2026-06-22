@@ -158,7 +158,7 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 	// REQ000756: use pre-computed column names, allocate only data.
 	out := Row{
 		Cols: append([]string(nil), p.prefixCols...),
-		Data: make([]any, len(p.cols)),
+		Data: make([]Value, len(p.cols)),
 	}
 	for i, c := range p.cols {
 		var v any
@@ -174,7 +174,7 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 		}
-		out.Data[i] = v
+		out.Data[i] = valueFromAny(v)
 	}
 	return out, nil
 }
@@ -239,15 +239,15 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 		// keyCache slice, then sort an index array in-place.
 		// Eliminates the sortRow allocation and double-buffering.
 		n := len(s.buf)
-		keyCache := make([][]any, n)
+		keyCache := make([][]Value, n)
 		for i, r := range s.buf {
-			sk := make([]any, len(s.keys))
+			sk := make([]Value, len(s.keys))
 			for j, k := range s.keys {
 				v, err := Eval(k.Expr, &r, s.params)
 				if err != nil {
 					return Row{}, err
 				}
-				sk[j] = v
+				sk[j] = valueFromAny(v)
 			}
 			keyCache[i] = sk
 		}
@@ -260,10 +260,10 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 			ka, kb := keyCache[ai], keyCache[bi]
 			for ki := range ka {
 				if s.keys[ki].NullsOrder != 0 {
-					if ka[ki] == nil && kb[ki] != nil {
+					if ka[ki].IsNull() && !kb[ki].IsNull() {
 						return -int(s.keys[ki].NullsOrder)
 					}
-					if kb[ki] == nil && ka[ki] != nil {
+					if kb[ki].IsNull() && !ka[ki].IsNull() {
 						return int(s.keys[ki].NullsOrder)
 					}
 				}

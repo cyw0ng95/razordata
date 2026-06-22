@@ -74,7 +74,7 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		ks := distinctKey(Row{Data: key})
+		ks := distinctKey(Row{Data: valueFromAnySlice(key)})
 		if _, ok := a.buckets[ks]; !ok {
 			a.buckets[ks] = nil
 			a.keys = append(a.keys, key)
@@ -93,7 +93,7 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 		out := Row{}
 		for i, gc := range a.groupCols {
 			out.Cols = append(out.Cols, groupColName(gc))
-			out.Data = append(out.Data, keyVals[i])
+			out.Data = append(out.Data, valueFromAny(keyVals[i]))
 		}
 		for _, ag := range a.aggs {
 			v, err := evalAggregateOver(ag, a.buckets[ks], a.params)
@@ -101,7 +101,7 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 				return err
 			}
 			out.Cols = append(out.Cols, aggregateColName(ag))
-			out.Data = append(out.Data, v)
+			out.Data = append(out.Data, valueFromAny(v))
 		}
 		a.buf = append(a.buf, out)
 	}
