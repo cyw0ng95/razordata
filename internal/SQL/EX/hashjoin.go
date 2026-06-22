@@ -37,6 +37,12 @@ type HashJoin struct {
 	bucketPos  int // position within current bucket's hash/rightRows for multi-match
 	emitRow    Row
 	done       bool
+	// sharedCols and sharedColIndex are built once from the first
+	// output row's column layout and shared across all emitted rows,
+	// eliminating per-row make+append for Cols and per-row
+	// buildColIndex for downstream operators (REQ000794).
+	sharedCols     []string
+	sharedColIndex map[string]int
 }
 
 type hashBucket struct {
@@ -96,7 +102,7 @@ func (j *HashJoin) Next(ctx context.Context) (Row, error) {
 				rk := lookupKeys(right, j.rightKeys)
 				if valuesEqualMulti(lk, rk) {
 					j.bucketPos = k + 1
-					return joinRows(left, right, j.leftTbl, j.rightTbl), nil
+					return joinRows(left, right, j.sharedCols, j.sharedColIndex), nil
 				}
 			}
 		}
@@ -116,6 +122,8 @@ func (j *HashJoin) Close() error {
 	j.bucketPos = 0
 	j.done = false
 	j.emitRow = Row{}
+	j.sharedCols = nil
+	j.sharedColIndex = nil
 	if j.left != nil {
 		_ = j.left.Close()
 	}
@@ -155,6 +163,20 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 			return err
 		}
 		j.leftRows = append(j.leftRows, row)
+	}
+	// Pre-build sharedCols and sharedColIndex from the first output
+	// row's column layout so every emitted row reuses them instead
+	// of allocating fresh Cols slices and triggering per-row
+	// buildColIndex downstream.
+	if len(j.leftRows) > 0 && len(j.rightRows) > 0 {
+		n := len(j.leftRows[0].Cols) + len(j.rightRows[0].Cols)
+		j.sharedCols = make([]string, 0, n)
+		j.sharedCols = append(j.sharedCols, j.leftRows[0].Cols...)
+		j.sharedCols = append(j.sharedCols, j.rightRows[0].Cols...)
+		j.sharedColIndex = make(map[string]int, n)
+		for i, c := range j.sharedCols {
+			j.sharedColIndex[strings.ToLower(c)] = i
+		}
 	}
 	return nil
 }
@@ -233,14 +255,23 @@ func lookupKeys(row Row, keys []string) []Value {
 }
 
 // joinRows combines a left and right row into a single Row.
-func joinRows(left, right Row, leftTbl, rightTbl string) Row {
+// When sharedCols (from the HashJoin struct) is set, the output
+// shares the pre-built Cols and colIndex to avoid per-row alloc.
+// Data is always freshly allocated since it carries row-specific
+// values. REQ000794.
+func joinRows(left, right Row, sharedCols []string, sharedColIndex map[string]int) Row {
 	out := Row{
-		Cols: make([]string, 0, len(left.Cols)+len(right.Cols)),
-		Data: make([]Value, 0, len(left.Cols)+len(right.Cols)),
+		Data: make([]Value, 0, len(left.Data)+len(right.Data)),
 	}
-	out.Cols = append(out.Cols, left.Cols...)
+	if sharedCols != nil {
+		out.Cols = sharedCols
+		out.colIndex = sharedColIndex
+	} else {
+		out.Cols = make([]string, 0, len(left.Cols)+len(right.Cols))
+		out.Cols = append(out.Cols, left.Cols...)
+		out.Cols = append(out.Cols, right.Cols...)
+	}
 	out.Data = append(out.Data, left.Data...)
-	out.Cols = append(out.Cols, right.Cols...)
 	out.Data = append(out.Data, right.Data...)
 	return out
 }
