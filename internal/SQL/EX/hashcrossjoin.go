@@ -184,7 +184,7 @@ func lookupColumn(row *Row, tbl, col string) (any, bool) {
 	for i, c := range row.Cols {
 		if c == want || c == col {
 			if i < len(row.Data) {
-				return row.Data[i], true
+				return row.Data[i].ToAny(), true
 			}
 			return nil, false
 		}
@@ -192,10 +192,10 @@ func lookupColumn(row *Row, tbl, col string) (any, bool) {
 	// Fall back to colIndex map.
 	if row.colIndex != nil {
 		if idx, ok := row.colIndex[strings.ToLower(want)]; ok && idx < len(row.Data) {
-			return row.Data[idx], true
+			return row.Data[idx].ToAny(), true
 		}
 		if idx, ok := row.colIndex[strings.ToLower(col)]; ok && idx < len(row.Data) {
-			return row.Data[idx], true
+			return row.Data[idx].ToAny(), true
 		}
 	}
 	return nil, false
@@ -209,6 +209,48 @@ func hashValue(seed maphash.Seed, v any) uint64 {
 	var h maphash.Hash
 	h.SetSeed(seed)
 	switch x := v.(type) {
+	case Value:
+		if x.IsNull() {
+			var b [1]byte
+			b[0] = 0xff
+			h.Write(b[:])
+			return h.Sum64()
+		}
+		switch x.Kind {
+		case KindInt:
+			var b [8]byte
+			u := uint64(x.I64)
+			b[0] = byte(u)
+			b[1] = byte(u >> 8)
+			b[2] = byte(u >> 16)
+			b[3] = byte(u >> 24)
+			b[4] = byte(u >> 32)
+			b[5] = byte(u >> 40)
+			b[6] = byte(u >> 48)
+			b[7] = byte(u >> 56)
+			h.Write(b[:])
+		case KindFloat:
+			var b [8]byte
+			u := math.Float64bits(x.F64)
+			b[0] = byte(u)
+			b[1] = byte(u >> 8)
+			b[2] = byte(u >> 16)
+			b[3] = byte(u >> 24)
+			b[4] = byte(u >> 32)
+			b[5] = byte(u >> 40)
+			b[6] = byte(u >> 48)
+			b[7] = byte(u >> 56)
+			h.Write(b[:])
+		case KindText:
+			h.WriteString(x.S)
+		case KindBool:
+			if x.B {
+				h.WriteByte(1)
+			} else {
+				h.WriteByte(0)
+			}
+		}
+		return h.Sum64()
 	case nil:
 		var b [1]byte
 		b[0] = 0xff

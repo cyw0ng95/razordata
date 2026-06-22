@@ -644,7 +644,7 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (any, erro
 	} else if len(rows[0].Data) == 0 {
 		result = nil
 	} else {
-		result = rows[0].Data[0]
+		result = rows[0].Data[0].ToAny()
 	}
 	// Cache the result: globally for non-correlated, LRU for correlated.
 	if outer == nil {
@@ -1777,6 +1777,9 @@ func evalZeroblob(args []PS.Expr, row *Row, params []any) (any, error) {
 }
 
 func toInt64(v any) (int64, bool) {
+	if val, ok := v.(Value); ok {
+		v = val.ToAny()
+	}
 	switch x := v.(type) {
 	case int64:
 		return x, true
@@ -1789,6 +1792,12 @@ func toInt64(v any) (int64, bool) {
 }
 
 func compare(a, b any) int {
+	if av, ok := a.(Value); ok {
+		a = av.ToAny()
+	}
+	if bv, ok := b.(Value); ok {
+		b = bv.ToAny()
+	}
 	if a == nil && b == nil {
 		return 0
 	}
@@ -2048,6 +2057,9 @@ func numericArith(a, b any, op rune) (any, error) {
 }
 
 func numericFloat(v any) (float64, bool) {
+	if val, ok := v.(Value); ok {
+		v = val.ToAny()
+	}
 	switch x := v.(type) {
 	case int64:
 		return float64(x), true
@@ -2178,6 +2190,12 @@ func is(a, b any) (bool, error) {
 }
 
 func equalValue(a, b any) bool {
+	if av, ok := a.(Value); ok {
+		a = av.ToAny()
+	}
+	if bv, ok := b.(Value); ok {
+		b = bv.ToAny()
+	}
 	if a == nil || b == nil {
 		return false
 	}

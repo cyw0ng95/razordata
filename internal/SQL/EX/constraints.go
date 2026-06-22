@@ -242,7 +242,7 @@ func checkUnique(schema *storeSchema, row Row, pending map[string]struct{}, snap
 		vals := make([]any, len(uk.Cols))
 		anyNil := false
 		for i, idx := range uk.Cols {
-			vals[i] = row.Data[idx]
+			vals[i] = row.Data[idx].ToAny()
 			if vals[i] == nil {
 				anyNil = true
 				break

@@ -115,6 +115,24 @@ func NullValue() Value { return Value{Kind: KindNull} }
 // IsNull returns true if this Value represents SQL NULL.
 func (v Value) IsNull() bool { return v.Kind == KindNull }
 
+// String returns a human-readable representation of the ValueKind.
+func (k ValueKind) String() string {
+	switch k {
+	case KindNull:
+		return "null"
+	case KindInt:
+		return "int64"
+	case KindFloat:
+		return "float64"
+	case KindText:
+		return "string"
+	case KindBool:
+		return "bool"
+	default:
+		return "unknown"
+	}
+}
+
 // ToAny converts a Value to the boxed any representation.
 // Used for backward compatibility during the migration.
 func (v Value) ToAny() any {
@@ -138,6 +156,9 @@ func (v Value) ToAny() any {
 func valueFromAny(a any) Value {
 	if a == nil {
 		return NullValue()
+	}
+	if v, ok := a.(Value); ok {
+		return v
 	}
 	switch x := a.(type) {
 	case int64:
@@ -178,6 +199,10 @@ func valueSliceToAny(v []Value) []any {
 	}
 	return out
 }
+
+// ValueSliceToAny is the exported version of valueSliceToAny for
+// callers outside the EX package (e.g. SYS/AP bridging).
+func ValueSliceToAny(v []Value) []any { return valueSliceToAny(v) }
 
 
 type Operator interface {
@@ -240,14 +265,14 @@ func (r *Row) Lookup(name string) (any, bool) {
 		}
 		if idx, ok := cur.colIndex[lname]; ok {
 			if idx < len(cur.Data) {
-				return cur.Data[idx], true
+				return cur.Data[idx].ToAny(), true
 			}
 			return nil, false
 		}
 		for j, c := range cur.Cols {
 			if i := strings.LastIndexByte(c, '.'); i >= 0 && i < len(c)-1 {
 				if strings.EqualFold(c[i+1:], name) && j < len(cur.Data) {
-					return cur.Data[j], true
+					return cur.Data[j].ToAny(), true
 				}
 			}
 		}

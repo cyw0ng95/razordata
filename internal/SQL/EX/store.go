@@ -678,6 +678,9 @@ func decodeRow(data []byte, schema *storeSchema) (Row, error) {
 func rowKey(prefix []byte, pkValue any) []byte {
 	out := make([]byte, 0, len(prefix)+16)
 	out = append(out, prefix...)
+	if v, ok := pkValue.(Value); ok {
+		pkValue = v.ToAny()
+	}
 	switch v := pkValue.(type) {
 	case int64:
 		var b [8]byte
@@ -844,6 +847,9 @@ func maintainIndexesOnUpdate(store Store, table string, schema *storeSchema, old
 // for int, raw for string/bytes). Used to populate the value
 // side of an index entry.
 func pkToBytes(pk any) ([]byte, error) {
+	if v, ok := pk.(Value); ok {
+		pk = v.ToAny()
+	}
 	switch v := pk.(type) {
 	case int64:
 		return int64ToBytesBigEndian(v), nil
