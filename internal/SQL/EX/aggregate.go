@@ -67,6 +67,7 @@ type groupBucket struct {
 
 func (a *Aggregate) materialize(ctx context.Context) error {
 	var groups []groupBucket
+	groupIndex := make(map[string]int)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -82,17 +83,12 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		idx := -1
-		for i, g := range groups {
-			if keysEqual(g.key, key) {
-				idx = i
-				break
-			}
-		}
-		if idx < 0 {
-			groups = append(groups, groupBucket{key: key, rows: []Row{row}})
-		} else {
+		ks := groupKeyString(key)
+		if idx, ok := groupIndex[ks]; ok {
 			groups[idx].rows = append(groups[idx].rows, row)
+		} else {
+			groupIndex[ks] = len(groups)
+			groups = append(groups, groupBucket{key: key, rows: []Row{row}})
 		}
 	}
 	// REQ000345: no GROUP BY + empty input = single row with
@@ -155,11 +151,66 @@ func keysEqual(a, b []any) bool {
 		if a[i] == nil || b[i] == nil {
 			return false
 		}
-		if !equalValue(a[i], b[i]) {
-			return false
+		switch x := a[i].(type) {
+		case int64:
+			if y, ok := b[i].(int64); ok && x == y {
+				continue
+			}
+		case float64:
+			if y, ok := b[i].(float64); ok && x == y {
+				continue
+			}
+		case string:
+			if y, ok := b[i].(string); ok && x == y {
+				continue
+			}
+		case bool:
+			if y, ok := b[i].(bool); ok && x == y {
+				continue
+			}
+		default:
+			if a[i] == b[i] {
+				continue
+			}
 		}
+		return false
 	}
 	return true
+}
+
+// REQ000765: groupKeyString serializes a group key []any to a
+// deterministic string for O(1) hash lookup, avoiding O(N) linear
+// scan over all groups.
+func groupKeyString(key []any) string {
+	if len(key) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, v := range key {
+		if i > 0 {
+			b.WriteByte('\x00')
+		}
+		switch x := v.(type) {
+		case nil:
+			b.WriteString("\\N")
+		case int64:
+			fmt.Fprintf(&b, "I:%d", x)
+		case float64:
+			fmt.Fprintf(&b, "F:%g", x)
+		case string:
+			b.WriteString("S:")
+			b.WriteString(x)
+		case bool:
+			if x {
+				b.WriteString("B:true")
+			} else {
+				b.WriteString("B:false")
+			}
+		default:
+			fmt.Fprintf(&b, "?:%v", x)
+		}
+	}
+	return b.String()
 }
 
 func keysLess(a, b []any) bool {
