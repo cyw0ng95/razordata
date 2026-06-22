@@ -40,6 +40,22 @@ func BenchmarkExecutorQueryAll(b *testing.B) {
 	}
 }
 
+// BenchmarkEqualValue_IntInt verifies REQ000754: int64-int64 fast path
+// in equalValue avoids normalizeInt re-boxing.
+func BenchmarkEqualValue_IntInt(b *testing.B) {
+	// Direct function call benchmark (no Eval overhead).
+	for i := 0; i < b.N; i++ {
+		equalValue(int64(i), int64(i+1))
+	}
+}
+
+// BenchmarkEqualValue_StringString benchmarks the string comparison path.
+func BenchmarkEqualValue_StringString(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		equalValue("test", "test")
+	}
+}
+
 func BenchmarkExecutorQueryWithFilter(b *testing.B) {
 	benchFixture(1000)
 	ex := NewExecutor()
