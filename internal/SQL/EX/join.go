@@ -60,6 +60,16 @@ type NestedLoopJoin struct {
 	dataBuf    []any
 	dataPerRow int
 	dataOffset int // running write offset into dataBuf
+	// REQ000798: Block NLJ mode — batch left rows and re-scan right
+	// per batch. Used when hash mode is unavailable (left > 1024
+	// or ON clause exists). Reduces right-side scans from N to N/32.
+	blockMode    bool
+	blkLeftBatch []Row
+	blkLeftPos   int   // position within left batch
+	blkRightRows []Row // materialized right side (recreated per batch)
+	blkRightPos  int
+	blkResultBuf []Row // buffered matches for current batch
+	blkResultPos int
 }
 
 func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error), kind JoinKind) *NestedLoopJoin {
@@ -97,6 +107,15 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 	}
 	if j.hashMode {
 		return j.nextHash(ctx)
+	}
+	// REQ000798: block NLJ mode activates when hash mode is
+	// unavailable. Batches left rows and re-scans the right side
+	// once per batch, reducing scans from N to N/32.
+	if !j.blockMode && j.leftRow == nil && len(j.blkLeftBatch) == 0 {
+		j.blockMode = true
+	}
+	if j.blockMode {
+		return j.nextBlock(ctx)
 	}
 	for {
 		if j.leftRow == nil {
@@ -352,8 +371,106 @@ func (j *NestedLoopJoin) Close() error {
 	j.rightPos = 0
 	j.leftIdx = 0
 	j.rightIdx = 0
+	j.blockMode = false
+	j.blkLeftBatch = nil
+	j.blkLeftPos = 0
+	j.blkRightRows = nil
+	j.blkRightPos = 0
+	j.blkResultBuf = nil
+	j.blkResultPos = 0
 	_ = j.left.Close()
 	return j.right.Close()
+}
+
+// nextBlock implements Block Nested-Loop Join (REQ000798). Batches
+// left rows and re-scans the right side once per batch, reducing
+// right-side scans from N to ceil(N/batchSize).
+func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
+	const batchSize = 32
+	// Drain result buffer.
+	if j.blkResultPos < len(j.blkResultBuf) {
+		r := j.blkResultBuf[j.blkResultPos]
+		j.blkResultPos++
+		return r, nil
+	}
+	j.blkResultBuf = j.blkResultBuf[:0]
+	j.blkResultPos = 0
+
+	// Fill left batch (up to batchSize rows).
+	j.blkLeftBatch = j.blkLeftBatch[:0]
+	for len(j.blkLeftBatch) < batchSize {
+		row, err := j.left.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return Row{}, err
+		}
+		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
+		prefixed.tableName = row.tableName
+		if !hasAnyPrefix(row.Cols) {
+			prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
+		} else {
+			prefixed.Cols = append([]string(nil), row.Cols...)
+		}
+		j.blkLeftBatch = append(j.blkLeftBatch, prefixed)
+	}
+	if len(j.blkLeftBatch) == 0 {
+		// Cleanup on exit.
+		j.blockMode = false
+		return Row{}, ErrNoRows
+	}
+
+	// Materialize right side (Close + re-scan once per batch).
+	_ = j.right.Close()
+	j.blkRightRows = j.blkRightRows[:0]
+	for {
+		row, err := j.right.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return Row{}, err
+		}
+		inner := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
+		inner.tableName = row.tableName
+		inner.Cols = prefixCols(row.Cols, j.rightTbl)
+		j.blkRightRows = append(j.blkRightRows, inner)
+	}
+
+	// Match all left batch rows against right rows, emitting in
+	// left-primary order so LEFT JOIN results match NLJ ordering.
+	for _, l := range j.blkLeftBatch {
+		matched := false
+		for _, r := range j.blkRightRows {
+			r.Outer = &l
+			if j.on != nil {
+				ok, err := j.on(&l, &r)
+				if err != nil {
+					return Row{}, err
+				}
+				if !ok {
+					continue
+				}
+			}
+			matched = true
+			result := joinRowsLL(&l, &r)
+			j.blkResultBuf = append(j.blkResultBuf, result)
+		}
+		if !matched && j.leftOuter {
+			nullRow := j.nullRightRow()
+			result := joinRowsLL(&l, &nullRow)
+			j.blkResultBuf = append(j.blkResultBuf, result)
+		}
+	}
+
+	if len(j.blkResultBuf) == 0 {
+		// No matches in this batch — try next batch.
+		j.blkLeftBatch = j.blkLeftBatch[:0]
+		return j.nextBlock(ctx)
+	}
+	j.blkResultPos = 1
+	return j.blkResultBuf[0], nil
 }
 
 func joinRowsLL(a, b *Row) Row {
