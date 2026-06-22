@@ -1132,7 +1132,31 @@ func (e *Executor) Explain(sql string) (string, error) {
 		return "", errors.New("ex: plan produced no root")
 	}
 	defer plan.root.Close()
-	return explainOperator(plan.root, 0), nil
+	// Use formatPlanTree with default ExplainNormal mode for text output
+	nodes := buildPlanNodeTree(plan.root, e.planner)
+	var b strings.Builder
+	var walk func(node *PlanNode, depth int)
+	walk = func(node *PlanNode, depth int) {
+		if node == nil {
+			return
+		}
+		b.WriteString(strings.Repeat("  ", depth))
+		b.WriteString(node.Type)
+		if node.Table != "" {
+			b.WriteString(" ")
+			b.WriteString(node.Table)
+		}
+		if node.Detail != "" {
+			b.WriteString(" ")
+			b.WriteString(node.Detail)
+		}
+		b.WriteByte('\n')
+		for _, child := range node.Children {
+			walk(child, depth+1)
+		}
+	}
+	walk(nodes, 0)
+	return b.String(), nil
 }
 
 func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {

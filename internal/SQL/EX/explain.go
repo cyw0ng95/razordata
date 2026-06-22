@@ -6,8 +6,6 @@ package EX
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
@@ -16,10 +14,12 @@ import (
 // ExplainStmtOp is an operator that produces EXPLAIN output.
 // It wraps a planned inner statement and renders its plan tree.
 type ExplainStmtOp struct {
-	mode     PS.ExplainMode
+	mode   PS.ExplainMode
+	format PS.ExplainFormat
 	planNode *PlanNode
 	root     Operator
 	rows     []Row
+	treeText string // cached tree/DOT/JSON output
 	pos      int
 	done     bool
 }
@@ -29,7 +29,7 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
 		return Row{}, ErrNoRows
 	}
 
-	if e.rows == nil {
+	if e.rows == nil && e.treeText == "" {
 		if e.mode == PS.ExplainAnalyze {
 			// REQ000783: execute and collect runtime stats.
 			if err := executeAndCollectStats(ctx, e.root, e.planNode); err != nil {
@@ -38,7 +38,29 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
 			// REQ000788: analyze for bottlenecks after execution.
 			AnalyzePlanForBottlenecks(e.planNode)
 		}
-		e.rows = formatPlanTree(e.planNode, e.mode)
+
+		// Handle different output formats
+		switch e.format {
+		case PS.ExplainFormatText:
+			e.rows = formatPlanTree(e.planNode, e.mode)
+		case PS.ExplainFormatTree:
+			e.treeText = e.planNode.ToTree()
+		case PS.ExplainFormatJSON:
+			e.treeText = e.planNode.ToJSON()
+		case PS.ExplainFormatDOT:
+			e.treeText = e.planNode.ToDOT()
+		}
+	}
+
+	// For tree/json/dot formats, return single row with formatted output
+	if e.treeText != "" {
+		row := Row{
+			Cols:  []string{"explain_output"},
+			Types: []int{1},
+			Data:  []Value{NewTextValue(e.treeText)},
+		}
+		e.done = true
+		return row, nil
 	}
 
 	if e.pos >= len(e.rows) {
@@ -78,102 +100,10 @@ func executeAndCollectStats(ctx context.Context, root Operator, pn *PlanNode) er
 
 func (e *ExplainStmtOp) Close() error {
 	e.rows = nil
+	e.treeText = ""
 	e.pos = 0
 	e.done = false
 	return nil
 }
 
-// explainOperator produces a human-readable string representation
-// of an operator tree. Used by Executor.Explain() for debugging.
-// This is a simplified version that doesn't produce the structured
-// EXPLAIN output but provides a quick text dump.
-func explainOperator(op Operator, depth int) string {
-	var b strings.Builder
-	b.WriteString(strings.Repeat("  ", depth))
 
-	// Unwrap AdaptiveOp to show inner operator.
-	if aop, ok := op.(*AdaptiveOp); ok {
-		return explainOperator(aop.inner, depth)
-	}
-
-	// Get operator type and details
-	var detail string
-	switch v := op.(type) {
-	case *SeqScan:
-		detail = fmt.Sprintf("SeqScan(table=%s)", v.table)
-	case *IndexScan:
-		detail = fmt.Sprintf("IndexScan(table=%s idx=%s)", v.table, v.idx)
-	case *NestedLoopJoin:
-		detail = fmt.Sprintf("NestedLoopJoin(left=%s right=%s)", v.leftTbl, v.rightTbl)
-	case *Filter:
-		detail = "Filter"
-	case *Project:
-		detail = "Project"
-	case *Sort:
-		detail = "Sort"
-	case *Limit:
-		detail = "Limit"
-	case *Distinct:
-		detail = "Distinct"
-	case *Aggregate:
-		detail = "Aggregate"
-	case *HashJoin:
-		detail = "HashJoin"
-	case *Insert:
-		detail = fmt.Sprintf("Insert(table=%s rows=%d)", v.table, len(v.values))
-	case *Update:
-		detail = fmt.Sprintf("Update(table=%s)", v.table)
-	case *Delete:
-		detail = fmt.Sprintf("Delete(table=%s)", v.table)
-	case *ValuesRows:
-		detail = fmt.Sprintf("ValuesRows(%d rows)", len(v.rows))
-	default:
-		detail = operatorType(op)
-	}
-
-	b.WriteString(detail)
-
-	// Recursively append children
-	if c, ok := op.(interface{ Child() Operator }); ok {
-		child := c.Child()
-		if child != nil {
-			b.WriteByte('\n')
-			b.WriteString(explainOperator(child, depth+1))
-		}
-		return b.String()
-	}
-
-	// Handle multi-child operators
-	switch v := op.(type) {
-	case *NestedLoopJoin:
-		if v.left != nil {
-			b.WriteByte('\n')
-			b.WriteString(explainOperator(v.left, depth+1))
-		}
-		if v.right != nil {
-			b.WriteByte('\n')
-			b.WriteString(explainOperator(v.right, depth+1))
-		}
-	case *Update:
-		if v.iter != nil {
-			b.WriteByte('\n')
-			b.WriteString(explainOperator(v.iter, depth+1))
-		}
-	case *Delete:
-		if v.iter != nil {
-			b.WriteByte('\n')
-			b.WriteString(explainOperator(v.iter, depth+1))
-		}
-	case *HashJoin:
-		if v.LeftChild() != nil {
-			b.WriteByte('\n')
-			b.WriteString(explainOperator(v.LeftChild(), depth+1))
-		}
-		if v.RightChild() != nil {
-			b.WriteByte('\n')
-			b.WriteString(explainOperator(v.RightChild(), depth+1))
-		}
-	}
-
-	return b.String()
-}

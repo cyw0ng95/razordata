@@ -336,3 +336,168 @@ func TestExplainAnalyze_BottleneckDetection(t *testing.T) {
 		t.Log("Note: runtime stats may be displayed differently; check plan output above")
 	}
 }
+
+// TestExplain_Format_Tree verifies REQ000789: EXPLAIN with --format=tree
+// produces ASCII tree output.
+func TestExplain_Format_Tree(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"id", "v", "name"})
+
+	ctx := context.Background()
+	for _, s := range []string{
+		"INSERT INTO t VALUES (1, 10, 'alice')",
+		"INSERT INTO t VALUES (2, 20, 'bob')",
+		"INSERT INTO t VALUES (3, 30, 'carol')",
+	} {
+		if _, err := ex.Exec(ctx, s); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	// Test EXPLAIN with tree format - simple query without joins
+	rows, err := ex.QueryAll(ctx, "EXPLAIN FORMAT = tree SELECT id, name FROM t WHERE v > 15 ORDER BY v")
+	if err != nil {
+		t.Fatalf("EXPLAIN --format=tree: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+
+	output := rows[0].Data[0].ToAny().(string)
+	t.Logf("Tree output:\n%s", output)
+
+	// Verify tree contains expected elements
+	if !strings.Contains(output, "Sort") && !strings.Contains(output, "Filter") && !strings.Contains(output, "Scan") {
+		t.Errorf("expected Scan/Filter/Sort in tree output, got: %s", output)
+	}
+	if !strings.Contains(output, "t") {
+		t.Errorf("expected table name 't' in tree output, got: %s", output)
+	}
+	if !strings.Contains(output, "├──") && !strings.Contains(output, "└──") && !strings.Contains(output, "Scan") {
+		t.Errorf("expected tree structure, got: %s", output)
+	}
+}
+
+// TestExplain_Format_JSON verifies REQ000789: EXPLAIN with --format=json
+// produces valid JSON output.
+func TestExplain_Format_JSON(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"id", "v"})
+
+	ctx := context.Background()
+	for _, s := range []string{
+		"INSERT INTO t VALUES (1, 10)",
+		"INSERT INTO t VALUES (2, 20)",
+		"INSERT INTO t VALUES (3, 30)",
+	} {
+		if _, err := ex.Exec(ctx, s); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	// Test EXPLAIN with JSON format
+	rows, err := ex.QueryAll(ctx, "EXPLAIN FORMAT = json SELECT id, v FROM t WHERE v > 15 ORDER BY v")
+	if err != nil {
+		t.Fatalf("EXPLAIN --format=json: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+
+	output := rows[0].Data[0].ToAny().(string)
+	t.Logf("JSON output:\n%s", output)
+
+	// Verify output starts with { and ends with }
+	if !strings.HasPrefix(output, "{") || !strings.HasSuffix(output, "}") {
+		t.Errorf("expected JSON object, got: %s", output)
+	}
+
+	// Verify JSON contains expected fields
+	if !strings.Contains(output, `"type"`) {
+		t.Errorf("expected 'type' field in JSON, got: %s", output)
+	}
+	if !strings.Contains(output, `"rows"`) {
+		t.Errorf("expected 'rows' field in JSON, got: %s", output)
+	}
+	if !strings.Contains(output, `"children"`) {
+		t.Errorf("expected 'children' field in JSON, got: %s", output)
+	}
+}
+
+// TestExplain_Format_DOT verifies REQ000789: EXPLAIN with --format=dot
+// produces Graphviz DOT format output.
+func TestExplain_Format_DOT(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"id", "v"})
+
+	ctx := context.Background()
+	for _, s := range []string{
+		"INSERT INTO t VALUES (1, 10)",
+		"INSERT INTO t VALUES (2, 20)",
+	} {
+		if _, err := ex.Exec(ctx, s); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	// Test EXPLAIN with DOT format
+	rows, err := ex.QueryAll(ctx, "EXPLAIN FORMAT = dot SELECT * FROM t WHERE v > 5")
+	if err != nil {
+		t.Fatalf("EXPLAIN --format=dot: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+
+	output := rows[0].Data[0].ToAny().(string)
+	t.Logf("DOT output:\n%s", output)
+
+	// Verify DOT format
+	if !strings.HasPrefix(output, "digraph plan") {
+		t.Errorf("expected 'digraph plan' header, got: %s", output)
+	}
+	if !strings.Contains(output, "node [shape=box") {
+		t.Errorf("expected node style definition, got: %s", output)
+	}
+	if !strings.Contains(output, "n0 [") {
+		t.Errorf("expected node definition, got: %s", output)
+	}
+	if !strings.Contains(output, "}") {
+		t.Errorf("expected closing brace, got: %s", output)
+	}
+}
+
+// TestExplain_Format_Default verifies that default format (text) still works.
+func TestExplain_Format_Default(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"id", "v"})
+
+	ctx := context.Background()
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)"); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Test default EXPLAIN (no --format flag)
+	rows, err := ex.QueryAll(ctx, "EXPLAIN SELECT * FROM t WHERE v > 5")
+	if err != nil {
+		t.Fatalf("EXPLAIN: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected non-empty output")
+	}
+
+	// Default format should return rows with standard schema
+	for _, r := range rows {
+		if len(r.Cols) != 4 {
+			t.Errorf("expected 4 columns, got %d", len(r.Cols))
+		}
+	}
+}

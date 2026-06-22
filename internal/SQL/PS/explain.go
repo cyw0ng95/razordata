@@ -9,6 +9,8 @@ func (p *Parser) parseExplain() (*ExplainStmt, error) {
 	p.advance() // consume EXPLAIN
 
 	mode := ExplainNormal
+	format := ExplainFormatText
+
 	if p.current.Type == LX.T_ANALYZE {
 		// Disambiguate: EXPLAIN ANALYZE followed by SELECT/INSERT etc.
 		// is the EXPLAIN ANALYZE feature. Bare EXPLAIN ANALYZE or
@@ -45,6 +47,33 @@ func (p *Parser) parseExplain() (*ExplainStmt, error) {
 				Expected: "PLAN",
 				Got:      tokenName(p.current.Type),
 				Lexeme:   p.current.Lexeme,
+			}
+		}
+	}
+
+	// Parse optional FORMAT = text|tree|json|dot clause
+	// FORMAT is treated as a keyword only in EXPLAIN context
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "FORMAT") {
+		p.advance() // consume FORMAT
+		if p.current.Type == LX.T_EQ {
+			p.advance() // consume "="
+			// Accept IDENT or JSON keyword for format value
+			if p.current.Type == LX.T_IDENT || p.current.Type == LX.T_JSON {
+				lower := strings.ToLower(p.current.Lexeme)
+				if p.current.Type == LX.T_JSON {
+					lower = "json"
+				}
+				switch lower {
+				case "text":
+					format = ExplainFormatText
+				case "tree":
+					format = ExplainFormatTree
+				case "json":
+					format = ExplainFormatJSON
+				case "dot":
+					format = ExplainFormatDOT
+				}
+				p.advance() // consume format value
 			}
 		}
 	}
@@ -143,7 +172,7 @@ func (p *Parser) parseExplain() (*ExplainStmt, error) {
 		return nil, innerErr
 	}
 
-	return &ExplainStmt{Mode: mode, Inner: inner}, nil
+	return &ExplainStmt{Mode: mode, Format: format, Inner: inner}, nil
 }
 
 func (p *Parser) parseAnalyze() (*AnalyzeStmt, error) {

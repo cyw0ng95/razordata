@@ -568,10 +568,21 @@ const (
 	ExplainAnalyze
 )
 
+// ExplainFormat represents the EXPLAIN output format.
+type ExplainFormat int
+
+const (
+	ExplainFormatText ExplainFormat = iota
+	ExplainFormatTree
+	ExplainFormatJSON
+	ExplainFormatDOT
+)
+
 // ExplainStmt represents an EXPLAIN statement.
 type ExplainStmt struct {
-	Mode  ExplainMode
-	Inner Stmt
+	Mode   ExplainMode
+	Format ExplainFormat
+	Inner  Stmt
 }
 
 // AnalyzeStmt represents ANALYZE [table_name]

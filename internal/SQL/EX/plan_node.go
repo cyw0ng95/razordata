@@ -827,3 +827,316 @@ func estimateJoinCost(j *NestedLoopJoin, leftTS, rightTS *TableStats) float64 {
 	}
 	return leftCost * rightCost
 }
+
+// ToJSON serializes the PlanNode tree as JSON.
+func (n *PlanNode) ToJSON() string {
+	result := planNodeToJSON(n)
+	
+	// Inline JSON serialization
+	var b strings.Builder
+	buildJSON(&b, result)
+	return b.String()
+}
+
+// planNodeToJSON converts a PlanNode to a JSON-serializable struct.
+func planNodeToJSON(node *PlanNode) *planNodeJSON {
+	if node == nil {
+		return nil
+	}
+	
+	jn := &planNodeJSON{
+		Type:   node.Type,
+		Table:  node.Table,
+		Index:  node.Index,
+		Cost:   node.Cost,
+		Rows:   node.Rows,
+		Detail: node.Detail,
+	}
+	if len(node.Children) > 0 {
+		for _, child := range node.Children {
+			jn.Children = append(jn.Children, planNodeToJSON(child))
+		}
+	}
+	if node.Analyze != nil {
+		jn.Analyze = &analyzeStatsJSON{
+			RowsReturned: node.Analyze.RowsReturned,
+			TimeNS:       node.Analyze.TimeNS,
+			Allocs:       node.Analyze.Allocs,
+		}
+	}
+	if node.Bottleneck != nil {
+		jn.Bottleneck = &bottleneckJSON{
+			Severity:        node.Bottleneck.Severity,
+			Type:            node.Bottleneck.Type,
+			Details:         node.Bottleneck.Details,
+			Recommendations: node.Bottleneck.Recommendations,
+			ActualRows:      node.Bottleneck.ActualRows,
+			EstimatedRows:   node.Bottleneck.EstimatedRows,
+			ActualTimeNS:    node.Bottleneck.ActualTimeNS,
+			CostRatio:       node.Bottleneck.CostRatio,
+		}
+	}
+	return jn
+}
+
+// buildJSON writes JSON for a planNodeJSON to the builder.
+func buildJSON(b *strings.Builder, jn *planNodeJSON) {
+	if jn == nil {
+		b.WriteString("null")
+		return
+	}
+	b.WriteByte('{')
+	if jn.ID != 0 {
+		b.WriteString(`"id":`)
+		b.WriteString(fmt.Sprintf("%d", jn.ID))
+		b.WriteByte(',')
+	}
+	b.WriteString(`"type":"`)
+	b.WriteString(escapeJSON(jn.Type))
+	b.WriteByte('"')
+	if jn.Table != "" {
+		b.WriteString(`,"table":"`)
+		b.WriteString(escapeJSON(jn.Table))
+		b.WriteByte('"')
+	}
+	if jn.Index != "" {
+		b.WriteString(`,"index":"`)
+		b.WriteString(escapeJSON(jn.Index))
+		b.WriteByte('"')
+	}
+	if jn.Cost > 0 {
+		b.WriteString(`,"cost":`)
+		b.WriteString(fmt.Sprintf("%g", jn.Cost))
+	}
+	if jn.Rows > 0 {
+		b.WriteString(`,"rows":`)
+		b.WriteString(fmt.Sprintf("%d", jn.Rows))
+	}
+	if jn.Detail != "" {
+		b.WriteString(`,"detail":"`)
+		b.WriteString(escapeJSON(jn.Detail))
+		b.WriteByte('"')
+	}
+	if len(jn.Children) > 0 {
+		b.WriteString(`,"children":[`)
+		for i, child := range jn.Children {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			buildJSON(b, child)
+		}
+		b.WriteByte(']')
+	}
+	if jn.Analyze != nil {
+		b.WriteString(`,"analyze":{"rows_returned":`)
+		b.WriteString(fmt.Sprintf("%d", jn.Analyze.RowsReturned))
+		b.WriteString(`,"time_ns":`)
+		b.WriteString(fmt.Sprintf("%d", jn.Analyze.TimeNS))
+		b.WriteString(`,"allocs":`)
+		b.WriteString(fmt.Sprintf("%d", jn.Analyze.Allocs))
+		b.WriteByte('}')
+	}
+	if jn.Bottleneck != nil {
+		b.WriteString(`,"bottleneck":{"severity":"`)
+		b.WriteString(escapeJSON(jn.Bottleneck.Severity))
+		b.WriteByte('"')
+		b.WriteString(`,"type":"`)
+		b.WriteString(escapeJSON(jn.Bottleneck.Type))
+		b.WriteByte('"')
+		if jn.Bottleneck.Details != "" {
+			b.WriteString(`,"details":"`)
+			b.WriteString(escapeJSON(jn.Bottleneck.Details))
+			b.WriteByte('"')
+		}
+		if len(jn.Bottleneck.Recommendations) > 0 {
+			b.WriteString(`,"recommendations":[`)
+			for i, rec := range jn.Bottleneck.Recommendations {
+				if i > 0 {
+					b.WriteByte(',')
+				}
+				b.WriteString(`"`)
+				b.WriteString(escapeJSON(rec))
+				b.WriteByte('"')
+			}
+			b.WriteByte(']')
+		}
+		b.WriteByte('}')
+	}
+	b.WriteByte('}')
+}
+
+// ToDOT generates Graphviz DOT format for the PlanNode tree.
+func (n *PlanNode) ToDOT() string {
+	var b strings.Builder
+	b.WriteString("digraph plan {\n")
+	b.WriteString("  rankdir=TB;\n")
+	b.WriteString("  node [shape=box, style=filled];\n")
+	
+	nodeID := 0
+	var walk func(node *PlanNode) string
+	walk = func(node *PlanNode) string {
+		if node == nil {
+			return ""
+		}
+		id := nodeID
+		nodeID++
+		
+		// Build label
+		label := node.Type
+		if node.Table != "" {
+			label += "\\n" + node.Table
+		}
+		if node.Detail != "" {
+			label += "\\n" + node.Detail
+		}
+		if node.Cost > 0 {
+			label += "\\ncost=" + fmt.Sprintf("%.2f", node.Cost)
+		}
+		if node.Rows > 0 {
+			label += "\\nrows=" + fmt.Sprintf("%d", node.Rows)
+		}
+		if node.Analyze != nil {
+			label += "\\n(actual=" + fmt.Sprintf("%d", node.Analyze.RowsReturned) + ")"
+		}
+		
+		// Write node
+		b.WriteString(fmt.Sprintf("  n%d [label=\"%s\"];\n", id, escapeDOT(label)))
+		
+		// Write edges and recurse
+		for _, child := range node.Children {
+			childID := walk(child)
+			if childID != "" {
+				b.WriteString(fmt.Sprintf("  n%d -> n%s;\n", id, childID))
+			}
+		}
+		
+		return fmt.Sprintf("%d", id)
+	}
+	
+	walk(n)
+	b.WriteString("}\n")
+	return b.String()
+}
+
+// ToTree renders the PlanNode tree as ASCII art.
+func (n *PlanNode) ToTree() string {
+	if n == nil {
+		return ""
+	}
+	
+	var b strings.Builder
+	var walk func(node *PlanNode, prefix string, isLast bool)
+	walk = func(node *PlanNode, prefix string, isLast bool) {
+		if node == nil {
+			return
+		}
+		
+		// Build line
+		connector := "└── "
+		if !isLast {
+			connector = "├── "
+		}
+		if prefix == "" {
+			connector = ""
+		}
+		
+		line := connector
+		if node.Type != "" {
+			line += node.Type
+		}
+		if node.Table != "" {
+			line += " " + node.Table
+		}
+		if node.Index != "" {
+			line += " [idx:" + node.Index + "]"
+		}
+		if node.Detail != "" && node.Detail != node.Type {
+			line += " " + node.Detail
+		}
+		if node.Cost > 0 {
+			line += " cost=" + fmt.Sprintf("%.2f", node.Cost)
+		}
+		if node.Rows > 0 {
+			line += " rows=" + fmt.Sprintf("%d", node.Rows)
+		}
+		if node.Analyze != nil {
+			line += " (actual=" + fmt.Sprintf("%d", node.Analyze.RowsReturned) + " time=" + fmt.Sprintf("%d", node.Analyze.TimeNS) + "ns)"
+		}
+		if node.Bottleneck != nil {
+			line += " [BOTTLENECK: " + node.Bottleneck.Type + "]"
+		}
+		
+		b.WriteString(line + "\n")
+		
+		// Build new prefix for children
+		newPrefix := prefix
+		if prefix != "" {
+			if isLast {
+				newPrefix += "    "
+			} else {
+				newPrefix += "│   "
+			}
+		}
+		
+		// Process children
+		for i, child := range node.Children {
+			isLastChild := i == len(node.Children)-1
+			walk(child, newPrefix, isLastChild)
+		}
+	}
+	
+	walk(n, "", true)
+	return b.String()
+}
+
+// escapeDOT escapes special characters for DOT labels.
+func escapeDOT(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	return s
+}
+
+// escapeJSON escapes special characters for JSON strings.
+func escapeJSON(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	s = strings.ReplaceAll(s, "\t", "\\t")
+	return s
+}
+
+// analyzeStatsJSON is a JSON-serializable version of AnalyzeStats.
+type analyzeStatsJSON struct {
+	RowsReturned int64 `json:"rows_returned"`
+	TimeNS       int64 `json:"time_ns"`
+	Allocs       int64 `json:"allocs"`
+}
+
+// bottleneckJSON is a JSON-serializable version of BottleneckInfo.
+type bottleneckJSON struct {
+	Severity        string   `json:"severity"`
+	Type            string   `json:"type"`
+	Details         string   `json:"details"`
+	Recommendations []string `json:"recommendations"`
+	ActualRows      int64    `json:"actual_rows"`
+	EstimatedRows   int64    `json:"estimated_rows"`
+	ActualTimeNS    int64    `json:"actual_time_ns"`
+	CostRatio       float64  `json:"cost_ratio"`
+}
+
+// planNodeJSON is a JSON-serializable version of PlanNode.
+type planNodeJSON struct {
+	ID         int              `json:"id"`
+	Type       string           `json:"type"`
+	Table      string           `json:"table,omitempty"`
+	Index      string           `json:"index,omitempty"`
+	Cost       float64          `json:"cost,omitempty"`
+	Rows       int64            `json:"rows,omitempty"`
+	Detail     string           `json:"detail,omitempty"`
+	Children   []*planNodeJSON  `json:"children,omitempty"`
+	Analyze    *analyzeStatsJSON `json:"analyze,omitempty"`
+	Bottleneck *bottleneckJSON   `json:"bottleneck,omitempty"`
+}

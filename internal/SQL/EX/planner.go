@@ -1918,7 +1918,8 @@ func (p *Planner) planExplain(s *PS.ExplainStmt) Operator {
 
 	// Return an ExplainStmt operator that renders the plan
 	return &ExplainStmtOp{
-		mode:     s.Mode,
+		mode:   s.Mode,
+		format: s.Format,
 		planNode: planNode,
 		root:     innerPlan.root,
 	}
