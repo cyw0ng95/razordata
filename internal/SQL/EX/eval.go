@@ -1100,23 +1100,44 @@ func evalHex(args []PS.Expr, row *Row, params []any) (any, error) {
 	if v == nil {
 		return nil, nil
 	}
-	var s string
 	switch x := v.(type) {
 	case int64:
 		// SQLite converts the integer to its text form first,
 		// then hex-encodes that text. HEX(255) → "323535"
 		// (the hex of the three ASCII digits).
-		s = hex.EncodeToString([]byte(strconv.FormatInt(x, 10)))
+		// REQ000763: use strconv.AppendInt + hex.Encode to
+		// avoid intermediate []byte allocation from FormatInt.
+		buf := make([]byte, 0, 24)
+		buf = strconv.AppendInt(buf, x, 10)
+		h := make([]byte, hex.EncodedLen(len(buf)))
+		hex.Encode(h, buf)
+		for i, c := range h {
+			if c >= 'a' && c <= 'f' {
+				h[i] = c - 32
+			}
+		}
+		return string(h), nil
 	case float64:
-		s = hex.EncodeToString([]byte(strconv.FormatFloat(x, 'g', -1, 64)))
+		buf := make([]byte, 0, 32)
+		buf = strconv.AppendFloat(buf, x, 'g', -1, 64)
+		h := make([]byte, hex.EncodedLen(len(buf)))
+		hex.Encode(h, buf)
+		for i, c := range h {
+			if c >= 'a' && c <= 'f' {
+				h[i] = c - 32
+			}
+		}
+		return string(h), nil
 	case []byte:
-		s = hex.EncodeToString(x)
+		s := hex.EncodeToString(x)
+		return strings.ToUpper(s), nil
 	case string:
-		s = hex.EncodeToString([]byte(x))
+		s := hex.EncodeToString([]byte(x))
+		return strings.ToUpper(s), nil
 	default:
-		s = hex.EncodeToString([]byte(fmt.Sprint(x)))
+		s := hex.EncodeToString([]byte(fmt.Sprint(x)))
+		return strings.ToUpper(s), nil
 	}
-	return strings.ToUpper(s), nil
 }
 
 func evalRound(args []PS.Expr, row *Row, params []any) (any, error) {
