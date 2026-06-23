@@ -2644,6 +2644,16 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 	}
 
 	// Return the cheapest complete plan.
+	if len(heap) == 0 {
+		// Fallback: return original FROM clause order when N3
+		// cannot find any valid join order.
+		order := make([]string, 0, 1+len(joinTables))
+		order = append(order, baseTable)
+		for _, jt := range joinTables {
+			order = append(order, jt.name)
+		}
+		return order
+	}
 	best := heap[0]
 	for _, pp := range heap[1:] {
 		if pp.cost < best.cost {

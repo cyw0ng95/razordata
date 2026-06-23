@@ -181,3 +181,20 @@ func TestSelectIndex(t *testing.T) {
 		t.Error("should not have index on c")
 	}
 }
+
+func TestPlanner_N3JoinOrdering_EmptyHeapFallback(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("t0", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t2", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t3", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t4", []ColInfo{{Name: "a", Typ: 1}}, "a")
+
+	plan, err := p.ParseAndPlan(`SELECT * FROM t0 CROSS JOIN t1 CROSS JOIN t2 CROSS JOIN t3 CROSS JOIN t4`)
+	if err != nil {
+		t.Fatalf("unexpected plan error: %v", err)
+	}
+	if plan == nil || plan.root == nil {
+		t.Fatal("expected non-nil plan")
+	}
+}
