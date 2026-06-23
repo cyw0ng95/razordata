@@ -33,6 +33,10 @@ type CompoundOp struct {
 	orderBy []PS.OrderItem
 	limit   PS.Expr
 	offset  PS.Expr
+	// REQ000838: streaming state for the fast-path UNION ALL with
+	// no post-processing. Avoids materializing the full result set
+	// into a []Row at every level of the binary tree.
+	streamSide streamSide
 	// Re-exported from PS for convenience.
 	_ bool // alignment placeholder
 }
@@ -54,6 +58,21 @@ func (c *CompoundOp) WithParams(p []any) Operator {
 }
 
 func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
+	// REQ000838: fast path for UNION ALL with no post-processing
+	// (no ORDER BY, no LIMIT, no OFFSET). The original implementation
+	// always drained both children into []Row and concatenated —
+	// for select4's 8-branch UNION ALL chains this materializes
+	// intermediate slices at every level of the binary tree, an
+	// O(N^2) memory traffic shape. The streaming path simply
+	// pulls rows from left.Next() until ErrNoRows, then from
+	// right.Next() — no allocation, no dedup work, no order/limit
+	// processing. The plan tree can still nest CompoundOp instances
+	// (a UNION ALL b UNION ALL c is a left-deep tree), and each
+	// level benefits from this fast path so memory traffic is O(N)
+	// total instead of O(N * depth).
+	if c.canStream() {
+		return c.nextStreaming(ctx)
+	}
 	if !c.materialized {
 		leftRows, err := drainAll(ctx, c.left)
 		if err != nil {
@@ -147,6 +166,67 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 	r := c.buf[c.pos]
 	c.pos++
 	return r, nil
+}
+
+// canStream reports whether c can use the streaming path (REQ000838):
+// UNION ALL with no ORDER BY, no LIMIT, no OFFSET. Only in this
+// case is it semantically equivalent to interleave child rows
+// without materialization.
+func (c *CompoundOp) canStream() bool {
+	return c.op == PS.CompoundUnionAll &&
+		len(c.orderBy) == 0 &&
+		c.limit == nil &&
+		c.offset == nil
+}
+
+// streamSide tracks which child is currently being drained in the
+// streaming path. REQ000838.
+type streamSide uint8
+
+const (
+	streamLeft streamSide = iota
+	streamRight
+	streamDone
+)
+
+// nextStreaming implements the REQ000838 streaming fast path: pull
+// from left.Next() until ErrNoRows, then from right.Next() until
+// ErrNoRows. No allocation per row beyond what the child operators
+// already do. This eliminates the O(N * depth) intermediate slice
+// traffic in long UNION ALL chains (e.g., select4's 8-branch
+// UNION/UNION ALL/EXCEPT queries where the UN*ALL segments are
+// nested several levels deep).
+func (c *CompoundOp) nextStreaming(ctx context.Context) (Row, error) {
+	if c.streamSide == streamDone {
+		return Row{}, ErrNoRows
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return Row{}, err
+		}
+		if c.streamSide == streamLeft {
+			r, err := c.left.Next(ctx)
+			if err == nil {
+				return r, nil
+			}
+			if err != ErrNoRows {
+				return Row{}, err
+			}
+			// Left exhausted; switch to right.
+			c.streamSide = streamRight
+			continue
+		}
+		// streamRight
+		r, err := c.right.Next(ctx)
+		if err == nil {
+			return r, nil
+		}
+		if err != ErrNoRows {
+			return Row{}, err
+		}
+		c.streamSide = streamDone
+		return Row{}, ErrNoRows
+	}
 }
 
 func (c *CompoundOp) Close() error {
