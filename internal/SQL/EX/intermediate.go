@@ -594,8 +594,12 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 	// eliminates Eval dispatch overhead in the hot join path.
 	// REQ000802+: only compile when both columns are from the
 	// same table or are bare names — cross-table qualified names
-	// require the Eval path to resolve table aliases correctly
-	// (the compiled function has no access to the Outer chain).
+	// require the Eval path to resolve table aliases correctly.
+	// Even with Outer-chain walking in findColIndex, correlated
+	// subqueries (e.g., x.b<t1.b where x is an inner alias and t1
+	// is the outer table) need the Eval path because the compiled
+	// function caches column indices from the first row, which
+	// might not have the Outer chain set up yet.
 	leftCol, rightCol, ok := extractColColPair(e)
 	if ok {
 		leftDot := strings.LastIndexByte(leftCol, '.')
@@ -605,15 +609,16 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 			return makeCompiledColColCmp(leftCol, rightCol, e.Op)
 		}
 		if leftDot >= 0 && rightDot >= 0 {
-			// Both are qualified names. Check if they reference
-			// the same table prefix. If different tables, the
-			// compiled function can't resolve alias chains, so
-			// fall back to Eval.
+			// Both are qualified names. Only compile if they
+			// reference the same table prefix. Cross-table
+			// qualified names (including correlated subqueries
+			// like x.b<t1.b) fall back to Eval.
 			leftTbl := leftCol[:leftDot]
 			rightTbl := rightCol[:rightDot]
 			if leftTbl == rightTbl {
 				return makeCompiledColColCmp(leftCol, rightCol, e.Op)
 			}
+			return nil
 		}
 		// Mixed (one qualified, one bare) — compile is safe
 		// since the bare name resolves via the row's columns.
@@ -777,8 +782,49 @@ func makeCompiledColColCmp(leftCol, rightCol string, op int) func(*Row) (bool, e
 }
 
 // findColIndex finds the column index for a name in a row, handling
-// bare names, qualified names, and suffix matches for prefixed rows.
+// bare names, qualified names, suffix matches for prefixed rows,
+// and correlated subquery outer-row resolution.
 func findColIndex(row *Row, name string) int {
+	idx := findColIndexInRow(row, name)
+	if idx >= 0 {
+		return idx
+	}
+	// REQ000700: walk the outer chain for correlated subquery
+	// resolution. The subquery's inner row may not contain the
+	// outer-referenced column (e.g., t1.b when inner row is aliased
+	// as x with columns [x.a, x.b, ...]).
+	for cur := row.Outer; cur != nil; cur = cur.Outer {
+		if nameHasTable(name) && cur.tableName != "" && !strings.EqualFold(cur.tableName, tableOfName(name)) {
+			continue
+		}
+		idx = findColIndexInRow(cur, name)
+		if idx >= 0 {
+			return idx
+		}
+	}
+	return -1
+}
+
+// nameHasTable reports whether name contains a table prefix.
+func nameHasTable(name string) bool {
+	return strings.IndexByte(name, '.') >= 0
+}
+
+// tableOfName returns the table prefix of "t.col" (returns "t");
+// returns "" if name has no table prefix.
+func tableOfName(name string) string {
+	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+		return name[:dot]
+	}
+	return ""
+}
+
+// findColIndexInRow searches a single row for the column name.
+// Does not walk the Outer chain — use findColIndex for that.
+func findColIndexInRow(row *Row, name string) int {
+	if row == nil {
+		return -1
+	}
 	lower := strings.ToLower(name)
 	bareName := name
 	hasDot := false
