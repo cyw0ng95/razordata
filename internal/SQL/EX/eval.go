@@ -864,6 +864,14 @@ func evalAggregate(e *PS.AggregateFunc, row *Row, params []any) (any, error) {
 				return v, nil
 			}
 		}
+		// REQ000830: fallback to bare aggregate name (e.g., "MIN",
+		// "MAX") for cases where the argument is a literal or
+		// expression (e.g., MIN(-96)), not a column reference.
+		// The virtual row from buildAggregateVirtualRow uses
+		// the bare name via aggregateColName.
+		if v, found := row.Lookup(e.Name); found {
+			return v, nil
+		}
 	}
 	switch strings.ToUpper(e.Name) {
 	case "COUNT":

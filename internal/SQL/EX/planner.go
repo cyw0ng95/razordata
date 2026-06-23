@@ -1274,7 +1274,24 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	// Create a Values operator that evaluates expressions over a single
 	// virtual row and returns exactly one result row. Also apply the WHERE
 	// filter when present (REQ000458).
+	//
+	// REQ000830: when the SELECT contains aggregate functions (e.g.
+	// `SELECT COUNT(*)`), we must use an Aggregate operator with a
+	// single-row dummy source so COUNT(*) returns 1 (one implicit row)
+	// instead of 0 (no rows to count).
 	if s.From == "" && s.SubqueryFrom == nil {
+		if hasAnyAggregate(s.Cols) {
+			dummy := newValuesOp([]PS.Expr{&PS.NumberLiteral{Val: int64(1)}})
+			var op Operator = dummy
+			if s.Where != nil {
+				op = NewFilter(op, s.Where)
+			}
+			agg := NewAggregate(op, s.GroupBy, s.Cols)
+			if s.Having != nil {
+				return NewFilter(agg, s.Having)
+			}
+			return agg
+		}
 		op := Operator(newValuesOp(s.Cols))
 		if s.Where != nil {
 			op = NewFilter(op, s.Where)
