@@ -602,6 +602,16 @@ func (p *Parser) parseBinary(minPrec int) (Expr, error) {
 		}
 		op := int(p.current.Type)
 		p.advance()
+		// REQ000833: `IS NOT NULL` — when IS is followed by NOT, handle
+		// it specially so the NOT doesn't consume subsequent operators
+		// (e.g., AND a > b) at NOT's low precedence (1).
+		if op == int(LX.T_IS) && p.current.Type == LX.T_NOT && p.lex.Peek().Type == LX.T_NULL {
+			p.advance() // consume NOT
+			p.advance() // consume NULL
+			notNull := &UnaryExpr{Op: int(LX.T_NOT), Operand: &NullLiteral{}}
+			left = &BinaryExpr{Op: op, Left: left, Right: notNull}
+			continue
+		}
 		nextMinPrec := precedence(LX.TokenType(op)) + 1
 		right, err := p.parseBinary(nextMinPrec)
 		if err != nil {
