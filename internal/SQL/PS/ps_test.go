@@ -2147,3 +2147,67 @@ func TestParseSelect_ImplicitColumnAlias(t *testing.T) {
 		})
 	}
 }
+
+func TestParseParenthesizedTableExpr(t *testing.T) {
+	tests := []struct {
+		sql        string
+		from       string
+		fromAlias  string
+		joinCount  int
+		joinKind   string
+		joinRight  string
+		joinAlias  string
+	}{
+		{
+			sql:       "SELECT MIN(-32) AS col0 FROM (tab0 AS cor0 CROSS JOIN tab0 cor1)",
+			from:      "tab0",
+			fromAlias: "cor0",
+			joinCount: 1,
+			joinKind:  "CROSS",
+			joinRight: "tab0",
+			joinAlias: "cor1",
+		},
+		{
+			sql:       "SELECT 1 FROM (tab0 AS cor0)",
+			from:      "tab0",
+			fromAlias: "cor0",
+			joinCount: 0,
+		},
+		{
+			sql:       "SELECT * FROM (tab0)",
+			from:      "tab0",
+			joinCount: 0,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.sql, func(t *testing.T) {
+			p := NewParser(tc.sql)
+			stmt, err := p.Parse()
+			if err != nil {
+				t.Fatalf("Parse() failed: %v", err)
+			}
+			sel := stmt.(*Select)
+			if sel.From != tc.from {
+				t.Errorf("From: got %q, want %q", sel.From, tc.from)
+			}
+			if sel.FromAlias != tc.fromAlias {
+				t.Errorf("FromAlias: got %q, want %q", sel.FromAlias, tc.fromAlias)
+			}
+			if len(sel.Joins) != tc.joinCount {
+				t.Errorf("Join count: got %d, want %d", len(sel.Joins), tc.joinCount)
+			}
+			if tc.joinCount > 0 {
+				j := sel.Joins[0]
+				if j.Kind != tc.joinKind {
+					t.Errorf("Join kind: got %q, want %q", j.Kind, tc.joinKind)
+				}
+				if j.Right != tc.joinRight {
+					t.Errorf("Join right: got %q, want %q", j.Right, tc.joinRight)
+				}
+				if j.RightAlias != tc.joinAlias {
+					t.Errorf("Join right alias: got %q, want %q", j.RightAlias, tc.joinAlias)
+				}
+			}
+		})
+	}
+}

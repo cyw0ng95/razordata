@@ -264,14 +264,17 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 				// since we don't have a Select pointer yet.
 				p.pendingSubquery = sub
 			} else {
-				return nil, &SyntaxError{
-					Input:    p.lex.Input(),
-					Line:     p.current.Line,
-					Col:      p.current.Col,
-					Expected: "SELECT",
-					Got:      tokenName(p.current.Type),
-					Lexeme:   p.current.Lexeme,
+				// REQ000834: parenthesized table expression
+				// (e.g., `FROM (tab0 AS cor0 CROSS JOIN tab0 cor1)`).
+				// Parse the table name; alias, comma-joins, and
+				// explicit joins are handled by the common code
+				// that follows after this if/else block.
+				p.parenTableExpr = true
+				if err := p.expect(LX.T_IDENT); err != nil {
+					return nil, err
 				}
+				from = p.current.Lexeme
+				p.advance()
 			}
 		} else {
 			if err := p.expect(LX.T_IDENT); err != nil {
@@ -390,6 +393,15 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 			on = e
 		}
 		joins = append(joins, JoinClause{Kind: kind, Right: right, RightAlias: rightAlias, On: on})
+	}
+
+	// REQ000834: close parenthesized table expression
+	if p.parenTableExpr {
+		p.parenTableExpr = false
+		if err := p.expect(LX.T_RPAREN); err != nil {
+			return nil, err
+		}
+		p.advance()
 	}
 
 	var where Expr

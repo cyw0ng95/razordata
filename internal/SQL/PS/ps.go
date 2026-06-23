@@ -14,6 +14,7 @@ type Parser struct {
 	pendingJoinAliases   []string // REQ000705: aliases for comma-separated tables
 	pendingSubquery      Stmt     // REQ000436: subquery from FROM clause
 	pendingSubqueryAlias string
+	parenTableExpr       bool // REQ000834: inside parenthesized table expression
 }
 
 // NewParser creates a new Parser for the given SQL input string.
@@ -29,6 +30,7 @@ func (p *Parser) reset() {
 	p.pendingJoins = nil
 	p.pendingJoinAliases = nil
 	p.pendingSubquery = nil
+	p.parenTableExpr = false
 }
 
 func (p *Parser) advance() {
