@@ -2,6 +2,7 @@ package EX
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
@@ -22,6 +23,11 @@ func (c *CreateViewOperator) Next(_ context.Context) (Row, error) {
 		return Row{}, ErrNoRows
 	}
 	c.done = true
+
+	// REQ000825: reject duplicate view names.
+	if LookupView(c.stmt.Name) != nil {
+		return Row{}, fmt.Errorf("ex: view %q already exists", c.stmt.Name)
+	}
 
 	sel, ok := c.stmt.As.(*PS.Select)
 	if !ok {

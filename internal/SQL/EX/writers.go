@@ -999,13 +999,17 @@ func (d *Delete) RowsAffected() int64 {
 type Trigger struct {
 	stmt *PS.TriggerStmt
 	done bool
+	err  error
 }
 
 func NewTrigger(stmt *PS.TriggerStmt) *Trigger {
+	t := &Trigger{stmt: stmt}
 	if stmt != nil {
-		registerTrigger(stmt)
+		if e := registerTrigger(stmt); e != nil {
+			t.err = e
+		}
 	}
-	return &Trigger{stmt: stmt}
+	return t
 }
 
 func (t *Trigger) Next(ctx context.Context) (Row, error) {
@@ -1013,6 +1017,9 @@ func (t *Trigger) Next(ctx context.Context) (Row, error) {
 		return Row{}, ErrNoRows
 	}
 	t.done = true
+	if t.err != nil {
+		return Row{}, t.err
+	}
 	return Row{}, ErrNoRows
 }
 
@@ -1281,26 +1288,42 @@ func (d *DropTable) Next(ctx context.Context) (Row, error) {
 		return Row{}, ErrNoRows
 	}
 	d.done = true
+
 	tablesMu.Lock()
-	if existing, ok := tables[d.stmt.Name]; ok {
+	existing, tableOk := tables[d.stmt.Name]
+	if !tableOk && !d.stmt.IfExists {
+		tablesMu.Unlock()
+		return Row{}, fmt.Errorf("ex: no such table: %s", d.stmt.Name)
+	}
+	if tableOk {
 		d.rows = int64(len(existing))
 		delete(tables, d.stmt.Name)
 	}
 	tablesMu.Unlock()
-	// Drop the store schema mapping; actual data is left in the engine and
-	// unreachable until the same tableID is reused.
+
+	// Drop the store schema mapping.
 	storeMu.Lock()
-	id, ok := tableIDs[d.stmt.Name]
-	if ok {
+	id, idOk := tableIDs[d.stmt.Name]
+	if idOk {
 		delete(storeSchemas, id)
 		delete(tableIDs, d.stmt.Name)
 	}
+	// Drop indexes associated with this table (REQ000828).
+	delete(registeredIndexes, d.stmt.Name)
 	storeMu.Unlock()
-	// Persist the drop to the system catalog (iter-12). The
-	// catalog write is best-effort; a failure leaves the
-	// in-memory state already gone, so the table is no longer
-	// queryable in this process.
-	if ok {
+
+	// Drop triggers associated with this table (REQ000828).
+	triggerMu.Lock()
+	if triggers, ok := tableTriggers[d.stmt.Name]; ok {
+		for _, t := range triggers {
+			delete(triggerReg, t.Name)
+		}
+		delete(tableTriggers, d.stmt.Name)
+	}
+	triggerMu.Unlock()
+
+	// Persist the drop to the system catalog.
+	if idOk {
 		if cat := Catalog(); cat != nil {
 			_ = cat.Delete(id)
 		}
@@ -1499,10 +1522,27 @@ func (d *DropIndex) Next(ctx context.Context) (Row, error) {
 		return Row{}, ErrNoRows
 	}
 	d.done = true
-	// REQ000622: snapshot tableIDs under storeMu to avoid
-	// concurrent modification by CREATE TABLE/DROP TABLE.
-	var snapshot []uint64
+
+	// Check if index exists before modifying.
 	storeMu.Lock()
+	indexFound := false
+	for _, idxs := range registeredIndexes {
+		for _, idx := range idxs {
+			if idx.Name == d.stmt.Name {
+				indexFound = true
+				break
+			}
+		}
+		if indexFound {
+			break
+		}
+	}
+	if !indexFound && !d.stmt.IfExists {
+		storeMu.Unlock()
+		return Row{}, fmt.Errorf("ex: no such index: %s", d.stmt.Name)
+	}
+
+	// Remove from registeredIndexes.
 	for table, idxs := range registeredIndexes {
 		filtered := idxs[:0]
 		for _, idx := range idxs {
@@ -1516,17 +1556,14 @@ func (d *DropIndex) Next(ctx context.Context) (Row, error) {
 			registeredIndexes[table] = filtered
 		}
 	}
-	snapshot = make([]uint64, 0, len(tableIDs))
+	snapshot := make([]uint64, 0, len(tableIDs))
 	for _, tid := range tableIDs {
 		snapshot = append(snapshot, tid)
 	}
 	storeMu.Unlock()
 	// Remove from catalog
 	if cat := Catalog(); cat != nil {
-		// Find the table that owns this index
 		for _, tableID := range snapshot {
-			_ = tableID
-			// Try delete (ignore if not found)
 			if err := cat.DeleteIndex(tableID, d.stmt.Name); err == nil {
 				break
 			}
@@ -1867,6 +1904,27 @@ func (r *Reindex) Next(ctx context.Context) (Row, error) {
 		return Row{}, ErrNoRows
 	}
 	r.done = true
+
+	// REQ000829: verify target exists when REINDEX specifies a name.
+	if r.stmt.Target != "" {
+		storeMu.Lock()
+		found := false
+		for _, idxs := range registeredIndexes {
+			for _, idx := range idxs {
+				if idx.Name == r.stmt.Target {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		storeMu.Unlock()
+		if !found {
+			return Row{}, fmt.Errorf("ex: no such index: %s", r.stmt.Target)
+		}
+	}
 	return Row{}, ErrNoRows
 }
 
@@ -1890,7 +1948,9 @@ func (d *DropView) Next(ctx context.Context) (Row, error) {
 	if d.stmt == nil {
 		return Row{}, ErrNoRows
 	}
-	UnregisterView(d.stmt.Name)
+	if !UnregisterView(d.stmt.Name) && !d.stmt.IfExists {
+		return Row{}, fmt.Errorf("ex: no such view: %s", d.stmt.Name)
+	}
 	return Row{}, ErrNoRows
 }
 
@@ -1916,7 +1976,9 @@ func (d *DropTrigger) Next(ctx context.Context) (Row, error) {
 	if d.stmt == nil {
 		return Row{}, ErrNoRows
 	}
-	unregisterTrigger(d.stmt.Name)
+	if !unregisterTrigger(d.stmt.Name) && !d.stmt.IfExists {
+		return Row{}, fmt.Errorf("ex: no such trigger: %s", d.stmt.Name)
+	}
 	return Row{}, ErrNoRows
 }
 

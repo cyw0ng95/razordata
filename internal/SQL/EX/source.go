@@ -24,20 +24,25 @@ var (
 	tableTriggers = map[string][]*PS.TriggerStmt{} // by table name
 )
 
-func registerTrigger(t *PS.TriggerStmt) {
+func registerTrigger(t *PS.TriggerStmt) error {
 	triggerMu.Lock()
 	defer triggerMu.Unlock()
+	if _, exists := triggerReg[t.Name]; exists {
+		return fmt.Errorf("ex: trigger %q already exists", t.Name)
+	}
 	triggerReg[t.Name] = t
 	tableTriggers[t.OnTable] = append(tableTriggers[t.OnTable], t)
+	return nil
 }
 
-// unregisterTrigger removes a single trigger by name. REQ000496.
-func unregisterTrigger(name string) {
+// unregisterTrigger removes a single trigger by name. Returns true if
+// the trigger existed. REQ000496.
+func unregisterTrigger(name string) bool {
 	triggerMu.Lock()
 	defer triggerMu.Unlock()
 	t, ok := triggerReg[name]
 	if !ok {
-		return
+		return false
 	}
 	delete(triggerReg, name)
 	if list, ok := tableTriggers[t.OnTable]; ok {
@@ -53,6 +58,7 @@ func unregisterTrigger(name string) {
 			tableTriggers[t.OnTable] = filtered
 		}
 	}
+	return true
 }
 
 func triggersForTable(table string) []*PS.TriggerStmt {

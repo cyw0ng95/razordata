@@ -199,11 +199,14 @@ func UnregisterAllViews() {
 	viewRegistry = map[string]*PS.Select{}
 }
 
-// UnregisterView removes a single view by name. REQ000494.
-func UnregisterView(name string) {
+// UnregisterView removes a single view by name. Returns true if the
+// view existed. REQ000494.
+func UnregisterView(name string) bool {
 	viewMu.Lock()
 	defer viewMu.Unlock()
+	_, existed := viewRegistry[name]
 	delete(viewRegistry, name)
+	return existed
 }
 
 // RegisterMatView stores a materialized view definition (REQ000316).
