@@ -1352,6 +1352,10 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		}
 	}
 
+	// REQ000821: save the filtered scan after predicate pushdown
+	// so bushy groups reuse the filter-wrapped operator.
+	filteredScan := current
+
 	// REQ000XXX: For multi-table implicit JOINs, extract equi-join
 	// conditions from WHERE and use HashJoin instead of NestedLoopJoin.
 	var crossTableConjuncts []PS.Expr
@@ -1413,92 +1417,184 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		}
 
 		// Build operators following the N3-determined order.
-		joinedTables := map[string]bool{s.From: true}
-		leftTbl := s.From
-		for _, rightTbl := range joinOrder[1:] {
-			j, ok := joinMap[rightTbl]
-			if !ok {
-				continue
-			}
-			kind := JoinKind(j.Kind)
+		// REQ000821: detect bushy join opportunities: group tables
+		// by independent equi-join keys so star-join pairs are
+		// joined first (reducing intermediate row counts).
+		// buildBushyJoinTree returns a tree of groups; each group
+		// is a set of tables that should be joined before the
+		// results are joined together.
+		type joinGroup struct {
+			tables []string
+			keys   []string // equi-join keys connecting this group
+		}
+		joinGroups := groupBushyJoins(s.From, joinOrder, crossTableConjuncts)
 
-			var rightScan Operator = NewSeqScan(j.Right)
-			if ssc, err := NewSeqScanWithStore(p.store, j.Right); err == nil {
-				rightScan = ssc
+		// REQ000821: build each bushy group as a separate operator,
+		// then join the group results together.
+		type groupResult struct {
+			op    Operator
+			tbl   string // rightmost table in the group (for leftTbl tracking)
+			set   map[string]bool
+			preds []PS.Expr // remaining cross-table predicates for this group
+		}
+		var groupOps []groupResult
+
+		for gi, group := range joinGroups {
+			baseTable := group[0]
+			var current Operator
+			var leftTbl string
+			joinedTables := map[string]bool{}
+			localConjuncts := make([]PS.Expr, len(crossTableConjuncts))
+			copy(localConjuncts, crossTableConjuncts)
+
+			// Build the scan for the base table of this group.
+			if gi == 0 {
+				// First group reuses the main scan (with pushed predicates).
+				current = filteredScan
+				leftTbl = s.From
+				joinedTables[s.From] = true
+			} else {
+				leftTbl = baseTable
 			}
-			// REQ000820: apply point-lookup to the raw scan before
-			// wrapping it in Filter operators.
-			if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
-				for _, pred := range rightPreds {
-					tryApplyPointLookup(rightScan, pred)
-					rightScan = NewFilter(rightScan, pred)
+
+			for ti, tbl := range group {
+				if gi == 0 && ti == 0 {
+					continue // skip base table of first group
 				}
-			}
+				if _, ok := joinedTables[tbl]; ok {
+					continue
+				}
+				j, ok := joinMap[tbl]
+				if !ok {
+					continue
+				}
+				kind := JoinKind(j.Kind)
 
-			var joinOp Operator
-			if (kind == JoinKindInner || kind == JoinKindCross) && len(crossTableConjuncts) > 0 {
-				lk, rk, remaining := p.extractEquiJoinKeys(crossTableConjuncts, joinedTables, j.Right)
-				if len(lk) > 0 {
-					for _, orig := range crossTableConjuncts {
-						found := false
-						for _, rem := range remaining {
-							if orig == rem {
-								found = true
-								break
+				var rightScan Operator = NewSeqScan(j.Right)
+				if ssc, err := NewSeqScanWithStore(p.store, j.Right); err == nil {
+					rightScan = ssc
+				}
+				if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
+					for _, pred := range rightPreds {
+						tryApplyPointLookup(rightScan, pred)
+						rightScan = NewFilter(rightScan, pred)
+					}
+				}
+
+				var joinOp Operator
+				if (kind == JoinKindInner || kind == JoinKindCross) && len(localConjuncts) > 0 {
+					lk, rk, remaining := p.extractEquiJoinKeys(localConjuncts, joinedTables, j.Right)
+					if len(lk) > 0 {
+						for _, orig := range localConjuncts {
+							found := false
+							for _, rem := range remaining {
+								if orig == rem {
+									found = true
+									break
+								}
+							}
+							if !found {
+								for pi, cp := range crossTablePredicates {
+									if cp == orig {
+										extractedPreds[pi] = true
+									}
+								}
 							}
 						}
-						if !found {
-							for pi, cp := range crossTablePredicates {
-								if cp == orig {
-									extractedPreds[pi] = true
+						joinOp = NewHashJoin(current, rightScan, leftTbl, j.Right, lk, rk, 0)
+						if projectedCols != nil {
+							if hj, ok := joinOp.(*HashJoin); ok {
+								hj.WithProjection(projectedCols)
+							}
+						}
+						localConjuncts = remaining
+					}
+				}
+
+				if joinOp == nil {
+					if kind == JoinKindInner && j.On != nil {
+						if lk, rk, ok := p.extractSingleOnEquiKey(j.On, leftTbl, j.Right); ok {
+							joinOp = NewHashCrossJoin(current, rightScan, leftTbl, j.Right, lk, rk)
+							if projectedCols != nil {
+								if hcj, ok := joinOp.(*HashCrossJoin); ok {
+									hcj.WithProjection(projectedCols)
 								}
 							}
 						}
 					}
-					joinOp = NewHashJoin(current, rightScan, leftTbl, j.Right, lk, rk, 0)
+					if joinOp == nil {
+						var on func(outer, inner *Row) (bool, error)
+						if j.On != nil {
+							pred := j.On
+							on = func(outer, inner *Row) (bool, error) {
+								v, err := Eval(pred, inner, nil)
+								if err != nil {
+									return false, err
+								}
+								return truthy(v), nil
+							}
+						}
+						nlj := NewNestedLoopJoin(current, rightScan, leftTbl, j.Right, on, kind)
+						if projectedCols != nil {
+							nlj.WithProjection(projectedCols)
+						}
+						joinOp = nlj
+					}
+				}
+
+				current = joinOp
+				joinedTables[tbl] = true
+				leftTbl = j.Right
+			}
+
+			if current != nil {
+				groupOps = append(groupOps, groupResult{
+					op:    current,
+					tbl:   leftTbl,
+					set:   joinedTables,
+					preds: localConjuncts,
+				})
+			}
+		}
+
+		// Merge group results into a single join tree.
+		leftTbl := ""
+		joinedTables := map[string]bool{}
+		for i, gr := range groupOps {
+			if i == 0 {
+				current = gr.op
+				leftTbl = gr.tbl
+				for t := range gr.set {
+					joinedTables[t] = true
+				}
+				continue
+			}
+			// Join this group's result with the accumulated tree.
+			var joinOp Operator
+			if len(gr.preds) > 0 {
+				lk, rk, remaining := p.extractEquiJoinKeys(gr.preds, joinedTables, gr.tbl)
+				if len(lk) > 0 {
+					joinOp = NewHashJoin(current, gr.op, leftTbl, gr.tbl, lk, rk, 0)
 					if projectedCols != nil {
 						if hj, ok := joinOp.(*HashJoin); ok {
 							hj.WithProjection(projectedCols)
 						}
 					}
-					crossTableConjuncts = remaining
+					_ = remaining
 				}
 			}
-
 			if joinOp == nil {
-				if kind == JoinKindInner && j.On != nil {
-					if lk, rk, ok := p.extractSingleOnEquiKey(j.On, leftTbl, j.Right); ok {
-						joinOp = NewHashCrossJoin(current, rightScan, leftTbl, j.Right, lk, rk)
-						if projectedCols != nil {
-							if hcj, ok := joinOp.(*HashCrossJoin); ok {
-								hcj.WithProjection(projectedCols)
-							}
-						}
-					}
+				nlj := NewNestedLoopJoin(current, gr.op, leftTbl, gr.tbl, nil, JoinKindCross)
+				if projectedCols != nil {
+					nlj.WithProjection(projectedCols)
 				}
-				if joinOp == nil {
-					var on func(outer, inner *Row) (bool, error)
-					if j.On != nil {
-						pred := j.On
-						on = func(outer, inner *Row) (bool, error) {
-							v, err := Eval(pred, inner, nil)
-							if err != nil {
-								return false, err
-							}
-							return truthy(v), nil
-						}
-					}
-					nlj := NewNestedLoopJoin(current, rightScan, leftTbl, j.Right, on, kind)
-					if projectedCols != nil {
-						nlj.WithProjection(projectedCols)
-					}
-					joinOp = nlj
-				}
+				joinOp = nlj
 			}
-
 			current = joinOp
-			joinedTables[j.Right] = true
-			leftTbl = j.Right
+			leftTbl = gr.tbl
+			for t := range gr.set {
+				joinedTables[t] = true
+			}
 		}
 	}
 
@@ -2273,6 +2369,15 @@ func estimateJoinPredicateSelectivity(pred PS.Expr) float64 {
 	if pred == nil {
 		return 1.0
 	}
+	// REQ000819: handle IN-list expressions: selectivity ≈ len(list)/NDV.
+	// Default NDV ≈ 100 for in-memory tables without histogram stats.
+	if in, ok := pred.(*PS.InExpr); ok && len(in.List) > 0 {
+		sel := float64(len(in.List)) / 100.0
+		if sel > 1.0 {
+			sel = 1.0
+		}
+		return sel
+	}
 	bin, ok := pred.(*PS.BinaryExpr)
 	if !ok {
 		return 0.5
@@ -2524,6 +2629,89 @@ func joinResultRows(leftRows, rightRows float64, predicates []PS.Expr) float64 {
 		result = 1
 	}
 	return result
+}
+
+// groupBushyJoins detects independent equi-join pairs in the join
+// order and groups them for bushy plan execution. A pair of tables
+// is "independent" when their equi-join keys share no columns.
+// REQ000821.
+func groupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates []PS.Expr) [][]string {
+	k := len(joinOrder)
+	if k <= 3 {
+		// 2-3 tables: left-deep is fine, no bushy benefit.
+		return [][]string{joinOrder}
+	}
+
+	// Extract equi-join column sets for each consecutive pair in the order.
+	type pairKey struct {
+		left  string
+		right string
+	}
+	pairKeys := map[pairKey][]string{}
+	for _, pred := range crossTablePredicates {
+		bin, ok := pred.(*PS.BinaryExpr)
+		if !ok || bin.Op != int(LX.T_EQ) {
+			continue
+		}
+		lTable, lCol := extractTableColumn(bin.Left)
+		rTable, rCol := extractTableColumn(bin.Right)
+		if lTable == "" || rTable == "" {
+			continue
+		}
+		pk := pairKey{lTable, rTable}
+		pairKeys[pk] = append(pairKeys[pk], lCol+"="+rCol)
+	}
+
+	// Check for independent pairs: (A,B) and (C,D) where the equi-join
+	// columns of (A,B) don't overlap with those of (C,D).
+	// For simplicity, we look for the pattern where baseTable is joined
+	// to two different tables on different columns — classic star join.
+	groups := [][]string{{baseTable}}
+	for i := 1; i < k; i++ {
+		tbl := joinOrder[i]
+		// Check if this table's equi-join key with any already-grouped
+		// table is independent. If yes, start a new bushy group.
+		independent := true
+		for _, existing := range groups {
+			for _, et := range existing {
+				pk := pairKey{et, tbl}
+				if _, found := pairKeys[pk]; found {
+					independent = false
+					break
+				}
+				pk = pairKey{tbl, et}
+				if _, found := pairKeys[pk]; found {
+					independent = false
+					break
+				}
+			}
+			if !independent {
+				break
+			}
+		}
+		if independent && len(groups[len(groups)-1]) >= 2 {
+			groups = append(groups, []string{tbl})
+		} else {
+			groups[len(groups)-1] = append(groups[len(groups)-1], tbl)
+		}
+	}
+
+	if len(groups) == 1 {
+		return [][]string{joinOrder}
+	}
+	return groups
+}
+
+// extractTableColumn extracts (table, column) from an expression
+// that is an Ident or QualifiedName.
+func extractTableColumn(e PS.Expr) (string, string) {
+	switch v := e.(type) {
+	case *PS.QualifiedName:
+		return v.Table, v.Name
+	case *PS.Ident:
+		return "", v.Name
+	}
+	return "", ""
 }
 
 func (p *Planner) ParseAndPlan(sql string) (*plan, error) {
