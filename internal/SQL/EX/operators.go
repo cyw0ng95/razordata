@@ -620,11 +620,10 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 // via Store.Get.
 func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 	if i.indexIt == nil {
-		// Lazy open: scan all entries in the index matching the
-		// seek prefix. For exact-match, the seek value is the
-		// full index value. For prefix-match, it's a truncated
-		// value.
 		i.indexIt = i.openIndexIter()
+	}
+	if i.indexIt == nil {
+		return Row{}, ErrNoRows
 	}
 	for i.indexIt.Next() {
 		if err := ctx.Err(); err != nil {

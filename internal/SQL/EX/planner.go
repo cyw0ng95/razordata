@@ -1286,6 +1286,9 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 						tableID, _ := tableIDFor(s.From)
 						if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
 							scan = isc
+							if s.Where != nil {
+								scan = NewFilter(scan, s.Where)
+							}
 						}
 					}
 				}
@@ -1295,6 +1298,9 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 					if idx, found := p.selectIndex(s.From, col); found {
 						if isc, err := NewIndexScanWithStore(p.store, s.From, idx); err == nil {
 							scan = isc
+							if s.Where != nil {
+								scan = NewFilter(scan, s.Where)
+							}
 						}
 					}
 				}
