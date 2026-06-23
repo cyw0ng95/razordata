@@ -484,6 +484,9 @@ func buildInsertRowFromSelect(schema []string, cols []string, src Row) (Row, err
 }
 
 func (i *Insert) Close() error {
+	if i.selectPlan != nil {
+		_ = i.selectPlan.Close()
+	}
 	return nil
 }
 
