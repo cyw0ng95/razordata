@@ -463,9 +463,6 @@ func evalIn(e *PS.InExpr, row *Row, params []any) (any, error) {
 		return nil, err
 	}
 	if e.Subquery != nil {
-		// REQ000721: when target is NULL, route through evalInSubquery
-		// so it can apply three-valued logic — return NULL only if the
-		// subquery contains a NULL, otherwise return false.
 		return evalInSubquery(target, e.Subquery, row, params)
 	}
 	if len(e.List) == 0 {
@@ -473,6 +470,11 @@ func evalIn(e *PS.InExpr, row *Row, params []any) (any, error) {
 	}
 	if target == nil {
 		return nil, nil
+	}
+	// REQ000817: for lists with 4+ items, use a hash set for O(1) probing.
+	// The hash set is lazily built and cached on the InExpr node.
+	if len(e.List) >= 4 {
+		return evalInHash(e, target, row, params)
 	}
 	hadNull := false
 	for _, item := range e.List {
@@ -489,6 +491,42 @@ func evalIn(e *PS.InExpr, row *Row, params []any) (any, error) {
 		}
 	}
 	if hadNull {
+		return nil, nil
+	}
+	return false, nil
+}
+
+// REQ000817: cached hash sets for IN-list expressions. Keyed by
+// *PS.InExpr pointer identity; entries live for the query lifetime.
+type inHashCache struct {
+	set    map[any]struct{}
+	hadNull bool
+}
+
+var inHashCacheMap = map[*PS.InExpr]*inHashCache{}
+
+// REQ000817: evalInHash builds a cached hash set for O(1) IN-list probing.
+func evalInHash(e *PS.InExpr, target any, row *Row, params []any) (any, error) {
+	cached := inHashCacheMap[e]
+	if cached == nil {
+		cached = &inHashCache{set: make(map[any]struct{}, len(e.List))}
+		for _, item := range e.List {
+			v, err := Eval(item, row, params)
+			if err != nil {
+				return nil, err
+			}
+			if v == nil {
+				cached.hadNull = true
+				continue
+			}
+			cached.set[v] = struct{}{}
+		}
+		inHashCacheMap[e] = cached
+	}
+	if _, ok := cached.set[target]; ok {
+		return true, nil
+	}
+	if cached.hadNull {
 		return nil, nil
 	}
 	return false, nil

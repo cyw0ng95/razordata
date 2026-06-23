@@ -45,6 +45,12 @@ type HashCrossJoin struct {
 	matchPos   int
 	dataBuf    []Value
 	dataPerRow int
+	// REQ000818: crossOverflow is set when either side exceeds 1024 rows.
+	// In this mode the operator falls back to emitting all left×right pairs
+	// (pure cross product) instead of hash probing.
+	crossOverflow bool
+	crossLeftIdx  int
+	crossRightIdx int
 	// REQ000816: shared col metadata built once, reused across
 	// all emitted rows to skip per-row buildColIndex.
 	sharedColIndex map[string]int
@@ -86,14 +92,25 @@ func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {
 	}
 	if !j.probeBuilt {
 		if err := j.build(ctx); err != nil {
+			// REQ000818: build may set crossOverflow instead of
+			// returning error when rows exceed the hash limit.
+			if j.crossOverflow {
+				return j.nextCross(ctx)
+			}
 			return Row{}, err
 		}
 		// REQ000816: materialize left side once so we can build
 		// a shared colIndex for output rows. Streaming probe forced
 		// per-row buildColIndex in downstream Eval.
 		if err := j.materializeLeft(ctx); err != nil {
+			if j.crossOverflow {
+				return j.nextCross(ctx)
+			}
 			return Row{}, err
 		}
+	}
+	if j.crossOverflow {
+		return j.nextCross(ctx)
 	}
 	if j.buckets == nil {
 		return Row{}, ErrNoRows
@@ -129,7 +146,7 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 		}
 		j.leftRows = append(j.leftRows, prefixed)
 		if len(j.leftRows) >= maxMaterialize {
-			return ErrNoRows
+			j.crossOverflow = true
 		}
 	}
 	if len(j.leftRows) == 0 || len(j.rightRows) == 0 {
@@ -222,8 +239,6 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 		}
 		keyVal, ok := lookupColumn(&prefixed, j.rightTbl, j.rightKey)
 		if !ok || keyVal == nil {
-			// Right row missing the key column or has NULL —
-			// skip. SQL NULL keys never match each other.
 			continue
 		}
 		h := hashValue(j.hashSeed, keyVal)
@@ -231,17 +246,48 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 		j.rightRows = append(j.rightRows, prefixed)
 		j.buckets[h] = append(j.buckets[h], idx)
 		if len(j.rightRows) >= maxMaterialize {
-			// Right side too large — fall back to NLJ semantics
-			// by clearing buckets and forcing probeBuilt=false.
-			// The caller (planner) should not have selected this
-			// operator if size was unknown; abort safely.
-			j.buckets = nil
-			j.rightRows = nil
-			j.probeBuilt = false
-			return ErrNoRows
+			// REQ000818: too many rows for hash probing — fall back
+			// to cross-product mode instead of returning an error.
+			j.crossOverflow = true
 		}
 	}
 	return nil
+}
+
+// REQ000818: cross-product fallback when hash probing is not viable
+// (either side exceeds 1024 rows). Emits all left×right pairs.
+func (j *HashCrossJoin) nextCross(_ context.Context) (Row, error) {
+	for j.crossLeftIdx < len(j.leftRows) {
+		for j.crossRightIdx < len(j.rightRows) {
+			l := j.leftRows[j.crossLeftIdx]
+			r := j.rightRows[j.crossRightIdx]
+			j.crossRightIdx++
+			off := len(j.dataBuf)
+			required := off + j.dataPerRow
+			if cap(j.dataBuf) < required {
+				newCap := cap(j.dataBuf) * 2
+				if newCap < required {
+					newCap = required
+				}
+				buf := make([]Value, required, newCap)
+				copy(buf, j.dataBuf)
+				j.dataBuf = buf
+			}
+			j.dataBuf = j.dataBuf[:required]
+			dataSlice := j.dataBuf[off : off+j.dataPerRow : off+j.dataPerRow]
+			copy(dataSlice, l.Data)
+			copy(dataSlice[len(l.Data):], r.Data)
+			return Row{
+				Cols:     j.sharedCols,
+				Types:    j.sharedTypes,
+				Data:     dataSlice,
+				colIndex: j.sharedColIndex,
+			}, nil
+		}
+		j.crossRightIdx = 0
+		j.crossLeftIdx++
+	}
+	return Row{}, ErrNoRows
 }
 
 func (j *HashCrossJoin) Close() error {
@@ -253,6 +299,9 @@ func (j *HashCrossJoin) Close() error {
 	j.matchPos = 0
 	j.dataBuf = nil
 	j.dataPerRow = 0
+	j.crossOverflow = false
+	j.crossLeftIdx = 0
+	j.crossRightIdx = 0
 	j.sharedColIndex = nil
 	j.sharedCols = nil
 	j.sharedTypes = nil
