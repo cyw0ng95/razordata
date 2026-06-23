@@ -673,6 +673,13 @@ func makeCompiledCmp(colName string, litVal any, cmp func(a, b any) bool) func(*
 		if idx >= len(row.Data) {
 			return false, nil
 		}
+		// SQL three-valued logic: NULL compared with anything = UNKNOWN.
+		// Without this guard, compare() returns a non-zero ordering for
+		// NULL values, causing the comparison to incorrectly evaluate
+		// as true/false instead of NULL (filtered out by Filter).
+		if isNullValue(row.Data[idx]) || isNullValue(litValue) {
+			return false, nil
+		}
 		// Direct Value comparison — no boxing.
 		return cmp(row.Data[idx], litValue), nil
 	}
@@ -760,13 +767,15 @@ func makeCompiledColColCmp(leftCol, rightCol string, op int) func(*Row) (bool, e
 
 		a, b := row.Data[leftIdx], row.Data[rightIdx]
 
+		// SQL three-valued logic: NULL compared with anything = UNKNOWN.
+		if isNullValue(a) || isNullValue(b) {
+			return false, nil
+		}
+
 		switch op {
 		case int(LX.T_EQ):
 			return equalValue(a, b), nil
 		case int(LX.T_NE):
-			if isNullValue(a) || isNullValue(b) {
-				return false, nil
-			}
 			return !equalValue(a, b), nil
 		case int(LX.T_GT):
 			return compare(a, b) > 0, nil
