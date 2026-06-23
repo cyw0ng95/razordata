@@ -43,6 +43,17 @@ type Filter struct {
 	// compiled on first use. It bypasses Eval dispatch overhead.
 	compiledFilterFn func(*Row) (bool, error)
 	compiledOnce     bool
+	// REQ000822: batch mode buffers a slab of input rows, evaluates
+	// the compiled predicate in a tight loop, and emits matching rows
+	// on subsequent Next() calls. This reduces per-row function-call
+	// overhead and improves cache locality for selective predicates
+	// on cross products (select4 multi-table joins). Falls back to
+	// the original per-row loop when the predicate is uncompiled
+	// (falls back to Eval).
+	batchBuf      []Row
+	batchEmit     []Row
+	batchEmitPos  int
+	batchRefilled bool
 }
 
 // Child returns the filter's child operator. Used by
@@ -70,14 +81,14 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 		if err := ctx.Err(); err != nil {
 			return Row{}, err
 		}
-		r, err := f.child.Next(ctx)
-		if err != nil {
-			return Row{}, err
-		}
-		if f.execCtx != nil {
-			r.execCtx = f.execCtx
-		}
 		if f.predicate == nil {
+			r, err := f.child.Next(ctx)
+			if err != nil {
+				return Row{}, err
+			}
+			if f.execCtx != nil {
+				r.execCtx = f.execCtx
+			}
 			return r, nil
 		}
 		// REQ000802: use compiled predicate if available.
@@ -86,17 +97,40 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 			f.compiledFilterFn = lookupOrCompilePredicate(f.predicate)
 			f.compiledOnce = true
 		}
+		// REQ000822: batch path — drain up to filterBatchSize rows
+		// from the child, run the compiled predicate in a tight
+		// loop, and buffer the matches. Subsequent Next() calls
+		// emit from the buffer until exhausted, then refill. This
+		// is the dominant path for selective predicates on cross
+		// products where child.Next() is expensive (e.g. NLJ
+		// inner scan). Only enabled when a compiled predicate is
+		// available — uncompiled predicates fall through to the
+		// per-row Eval path below.
 		if f.compiledFilterFn != nil {
-			ok, cerr := f.compiledFilterFn(&r)
-			if cerr != nil {
-				return Row{}, cerr
+			if f.batchEmitPos >= len(f.batchEmit) {
+				if err := f.refillBatch(ctx); err != nil {
+					return Row{}, err
+				}
 			}
-			if ok {
-				return r, nil
+			if len(f.batchEmit) == 0 {
+				// Child exhausted and nothing matched.
+				return Row{}, ErrNoRows
 			}
-			continue
+			r := f.batchEmit[f.batchEmitPos]
+			f.batchEmitPos++
+			if f.execCtx != nil {
+				r.execCtx = f.execCtx
+			}
+			return r, nil
 		}
-		// Fallback to Eval-based path.
+		// Fallback to Eval-based path (per-row).
+		r, err := f.child.Next(ctx)
+		if err != nil {
+			return Row{}, err
+		}
+		if f.execCtx != nil {
+			r.execCtx = f.execCtx
+		}
 		f.curRow = r
 		v, err := Eval(f.predicate, &f.curRow, f.params)
 		if err != nil {
@@ -106,6 +140,61 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 			return f.curRow, nil
 		}
 	}
+}
+
+// filterBatchSize is the slab size used by REQ000822's batch Filter.
+// 1024 rows is a sweet spot: large enough to amortize child.Next()
+// overhead and to keep the compiled-predicate loop cache-friendly,
+// small enough to avoid excess memory pressure on selective
+// predicates that return only a handful of matches. Tuned against
+// the select4 6-table cross-product profile where a 100×100×100
+// join is the typical workload.
+const filterBatchSize = 1024
+
+// refillBatch pulls up to filterBatchSize rows from the child,
+// evaluates the compiled predicate in a tight loop, and stages the
+// matches in f.batchEmit. Returns ErrNoRows when the child is
+// exhausted and nothing matched.
+func (f *Filter) refillBatch(ctx context.Context) error {
+	f.batchEmit = f.batchEmit[:0]
+	f.batchEmitPos = 0
+	if cap(f.batchBuf) < filterBatchSize {
+		f.batchBuf = make([]Row, 0, filterBatchSize)
+	} else {
+		f.batchBuf = f.batchBuf[:0]
+	}
+	for len(f.batchBuf) < filterBatchSize {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		r, err := f.child.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return err
+		}
+		if f.execCtx != nil {
+			r.execCtx = f.execCtx
+		}
+		f.batchBuf = append(f.batchBuf, r)
+	}
+	// Tight loop: predicate evaluation, no per-row Eval dispatch.
+	// REQ000822: emit row must be a stable copy — refillBatch()
+	// reuses f.batchBuf's backing array, so storing raw Row values
+	// into batchEmit would alias memory the next refill will
+	// overwrite. cloneRow produces an independent Row whose Data
+	// slice does not share storage with the batch buffer.
+	for i := range f.batchBuf {
+		ok, err := f.compiledFilterFn(&f.batchBuf[i])
+		if err != nil {
+			return err
+		}
+		if ok {
+			f.batchEmit = append(f.batchEmit, cloneRow(f.batchBuf[i]))
+		}
+	}
+	return nil
 }
 
 func (f *Filter) Close() error {
