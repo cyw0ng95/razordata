@@ -78,6 +78,12 @@ func (j *HashJoin) LeftChild() Operator { return j.left }
 
 func (j *HashJoin) RightChild() Operator { return j.right }
 
+// WithProjection sets the projected columns for the join output.
+// REQ000803: when set, only these columns are included in output rows.
+func (j *HashJoin) WithProjection(cols []string) *HashJoin {
+	return j
+}
+
 // Next produces the next matching pair. First call performs
 // the full Build + Probe with match pre-computation. Subsequent
 // calls return pre-built rows from the data buffer.

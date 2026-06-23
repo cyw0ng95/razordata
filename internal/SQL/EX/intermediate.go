@@ -5,10 +5,17 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
+
+// predicateCache is a global cache of compiled filter predicate functions,
+// keyed by fmt.Sprintf("%v", predicate). This allows reuse across executor
+// instances when the same predicate text appears in multiple queries.
+// REQ000802+.
+var predicateCache sync.Map
 
 // isNullValue checks if a value represents SQL NULL.
 // Handles both raw nil and Value{Kind: KindNull}.
@@ -74,8 +81,9 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 			return r, nil
 		}
 		// REQ000802: use compiled predicate if available.
+		// REQ000802+: check global predicate cache for reuse.
 		if !f.compiledOnce {
-			f.compiledFilterFn = compileFilterExpr(f.predicate)
+			f.compiledFilterFn = lookupOrCompilePredicate(f.predicate)
 			f.compiledOnce = true
 		}
 		if f.compiledFilterFn != nil {
@@ -105,9 +113,9 @@ func (f *Filter) Close() error {
 }
 
 type Project struct {
-	child     Operator
-	cols      []PS.Expr
-	params    []any
+	child  Operator
+	cols   []PS.Expr
+	params []any
 	// REQ000756: pre-allocated column names (same for every row).
 	prefixCols []string
 	// REQ000816: pre-built colIndex map shared across all output
@@ -462,6 +470,21 @@ func (o *Offset) Close() error {
 		return nil
 	}
 	return o.child.Close()
+}
+
+// lookupOrCompilePredicate checks the global predicate cache for a
+// compiled filter function. On cache miss it compiles and stores the
+// result. REQ000802+.
+func lookupOrCompilePredicate(e PS.Expr) func(*Row) (bool, error) {
+	key := fmt.Sprintf("%v", e)
+	if cached, ok := predicateCache.Load(key); ok {
+		return cached.(func(*Row) (bool, error))
+	}
+	fn := compileFilterExpr(e)
+	if fn != nil {
+		predicateCache.Store(key, fn)
+	}
+	return fn
 }
 
 // compileFilterExpr compiles a simple Filter predicate into a

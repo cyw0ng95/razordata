@@ -89,6 +89,20 @@ type plan struct {
 	memoKey string
 }
 
+// joinPlan captures a partial or complete join plan for the N3
+// nearest-neighbor search. Used internally by n3JoinOrdering.
+type joinPlan struct {
+	root    Operator
+	cost    float64
+	tables  map[string]bool
+	order   []string
+}
+
+// n3HeapMaxSize limits the number of partial plans retained at each
+// step of the N3 algorithm. With N=12 and K<=8, we evaluate at most
+// 96 partial plans instead of 40,320 for worst-case 8-table join.
+const n3HeapMaxSize = 12
+
 // HashAggregateThreshold is the row count above which the
 // planner prefers HashAggregate over streaming Aggregate
 // (REQ000196). HashAggregate has higher upfront cost
@@ -913,6 +927,116 @@ func log2ish(x float64) float64 {
 	return n
 }
 
+// collectReferencedColumns returns the set of qualified column names
+// (e.g., "t1.a", "t2.b") referenced in SELECT, WHERE, ORDER BY,
+// GROUP BY, and HAVING clauses. Returns nil if unqualified columns
+// or * are present (can't determine a safe projection). REQ000803.
+func collectReferencedColumns(s *PS.Select) map[string]bool {
+	cols := map[string]bool{}
+	hasUnqualified := false
+
+	addCols := func(e PS.Expr) {
+		collectColsFromExpr(e, cols, &hasUnqualified)
+	}
+
+	for _, c := range s.Cols {
+		addCols(c)
+	}
+	if s.Where != nil {
+		addCols(s.Where)
+	}
+	for _, j := range s.Joins {
+		if j.On != nil {
+			addCols(j.On)
+		}
+	}
+	for _, o := range s.OrderBy {
+		addCols(o.Expr)
+	}
+	for _, g := range s.GroupBy {
+		addCols(g)
+	}
+	if s.Having != nil {
+		addCols(s.Having)
+	}
+
+	// If SELECT contains *, can't project safely.
+	for _, c := range s.Cols {
+		if _, ok := c.(*PS.StarExpr); ok {
+			return nil
+		}
+	}
+
+	if hasUnqualified {
+		return nil
+	}
+	if len(cols) == 0 {
+		return nil
+	}
+	return cols
+}
+
+// collectColsFromExpr walks an expression and adds qualified column
+// names (Table.Name). Sets hasUnqualified on bare Ident or *.
+func collectColsFromExpr(e PS.Expr, cols map[string]bool, hasUnqualified *bool) {
+	if e == nil {
+		return
+	}
+	switch v := e.(type) {
+	case *PS.QualifiedName:
+		cols[v.Table+"."+v.Name] = true
+	case *PS.Ident:
+		*hasUnqualified = true
+	case *PS.StarExpr:
+		*hasUnqualified = true
+	case *PS.BinaryExpr:
+		collectColsFromExpr(v.Left, cols, hasUnqualified)
+		collectColsFromExpr(v.Right, cols, hasUnqualified)
+	case *PS.UnaryExpr:
+		collectColsFromExpr(v.Operand, cols, hasUnqualified)
+	case *PS.ListExpr:
+		for _, item := range v.Items {
+			collectColsFromExpr(item, cols, hasUnqualified)
+		}
+	case *PS.InExpr:
+		collectColsFromExpr(v.Expr, cols, hasUnqualified)
+		for _, item := range v.List {
+			collectColsFromExpr(item, cols, hasUnqualified)
+		}
+	case *PS.AliasedExpr:
+		collectColsFromExpr(v.Expr, cols, hasUnqualified)
+	case *PS.FunctionCall:
+		for _, arg := range v.Args {
+			collectColsFromExpr(arg, cols, hasUnqualified)
+		}
+	case *PS.AggregateFunc:
+		if v.Arg != nil {
+			collectColsFromExpr(v.Arg, cols, hasUnqualified)
+		}
+	case *PS.WindowFunc:
+		for _, arg := range v.Args {
+			collectColsFromExpr(arg, cols, hasUnqualified)
+		}
+	case *PS.BetweenExpr:
+		collectColsFromExpr(v.Expr, cols, hasUnqualified)
+		collectColsFromExpr(v.Low, cols, hasUnqualified)
+		collectColsFromExpr(v.High, cols, hasUnqualified)
+	case *PS.CastExpr:
+		collectColsFromExpr(v.Expr, cols, hasUnqualified)
+	case *PS.CaseExpr:
+		if v.Expr != nil {
+			collectColsFromExpr(v.Expr, cols, hasUnqualified)
+		}
+		for _, w := range v.WhenList {
+			collectColsFromExpr(w.Cond, cols, hasUnqualified)
+			collectColsFromExpr(w.Then, cols, hasUnqualified)
+		}
+		if v.Else != nil {
+			collectColsFromExpr(v.Else, cols, hasUnqualified)
+		}
+	}
+}
+
 func (p *Planner) selectIndex(table, col string) (string, bool) {
 	t, ok := p.catalog[table]
 	if !ok {
@@ -1163,50 +1287,63 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	}
 
 	if len(s.Joins) > 0 {
-		// REQ000797: track all tables already joined so HashJoin can
-		// be used for multi-table chains (not just the first join).
+		// REQ000801: N3-style join ordering — determine the best
+		// join order using the simplified N3 algorithm, then
+		// create join operators following that order.
+		joinInfos := make([]joinTableInfo, 0, len(s.Joins))
+		joinMap := make(map[string]PS.JoinClause, len(s.Joins))
+		for _, j := range s.Joins {
+			if j.Kind != "INNER" && j.Kind != "LEFT" && j.Kind != "RIGHT" && j.Kind != "FULL" && j.Kind != "CROSS" {
+				continue
+			}
+			joinInfos = append(joinInfos, joinTableInfo{name: j.Right, join: j})
+			joinMap[j.Right] = j
+		}
+
+		// Determine predicates for cost estimation.
+		costPredicates := crossTablePredicates
+		if costPredicates == nil && s.Where != nil {
+			costPredicates = RE.SplitAnd(s.Where)
+		}
+
+		// Run N3 to find the best join order.
+		joinOrder := p.n3JoinOrdering(s.From, joinInfos, costPredicates)
+
+		// REQ000803: compute column projection for join pushdown.
+		// Only include columns referenced by SELECT/WHERE/ORDER BY/etc.
+		// to reduce per-row memory and CPU downstream.
+		var projectedCols []string
+		if refCols := collectReferencedColumns(s); refCols != nil {
+			projectedCols = make([]string, 0, len(refCols))
+			for c := range refCols {
+				projectedCols = append(projectedCols, c)
+			}
+		}
+
+		// Build operators following the N3-determined order.
 		joinedTables := map[string]bool{s.From: true}
 		leftTbl := s.From
-		for _, j := range s.Joins {
-			// Support all join kinds (REQ000197: OUTER JOIN)
-			if j.Kind != "INNER" && j.Kind != "LEFT" && j.Kind != "RIGHT" && j.Kind != "FULL" && j.Kind != "CROSS" {
+		for _, rightTbl := range joinOrder[1:] {
+			j, ok := joinMap[rightTbl]
+			if !ok {
 				continue
 			}
 			kind := JoinKind(j.Kind)
 
-			// REQ000368: prefer the store-backed SeqScan for
-			// the right side so joins over engine tables
-			// actually see the rows. Falls back to the
-			// in-memory SeqScan if the right table isn't
-			// registered for storage.
 			var rightScan Operator = NewSeqScan(j.Right)
 			if ssc, err := NewSeqScanWithStore(p.store, j.Right); err == nil {
 				rightScan = ssc
 			}
-			// REQ000XXX: push per-table predicates onto the right scan.
 			if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
 				for _, pred := range rightPreds {
 					rightScan = NewFilter(rightScan, pred)
 				}
 			}
 
-			// REQ000XXX: For INNER and CROSS JOINs, try to find equi-join
-			// conditions in WHERE and use HashJoin instead of
-			// NestedLoopJoin.
-			// CROSS JOIN with equi-key in WHERE can be treated as INNER.
-			// REQ000725: skip HashJoin for the second-and-later joins
-			// in a multi-table chain. The equi-key extraction heuristic
-			// can pick a column from a not-yet-joined table as the
-			// "left" key, which then fails Row.Lookup in HashJoin's
-			// build phase. Fall back to NestedLoopJoin which walks
-			// the Outer chain for the merged row. The cost is O(N*M)
-			// for those joins instead of O(N+M); correctness wins.
 			var joinOp Operator
 			if (kind == JoinKindInner || kind == JoinKindCross) && len(crossTableConjuncts) > 0 {
 				lk, rk, remaining := p.extractEquiJoinKeys(crossTableConjuncts, joinedTables, j.Right)
 				if len(lk) > 0 {
-					// REQ000794: mark extracted predicates so the
-					// post-loop Filter doesn't re-apply them.
 					for _, orig := range crossTableConjuncts {
 						found := false
 						for _, rem := range remaining {
@@ -1224,26 +1361,26 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 						}
 					}
 					joinOp = NewHashJoin(current, rightScan, leftTbl, j.Right, lk, rk, 0)
+					if projectedCols != nil {
+						if hj, ok := joinOp.(*HashJoin); ok {
+							hj.WithProjection(projectedCols)
+						}
+					}
 					crossTableConjuncts = remaining
 				}
 			}
 
 			if joinOp == nil {
-				// REQ000800: prefer HashCrossJoin for small-table
-				// INNER JOIN with a single ON-clause equi-key. Skips
-				// HashJoin's radix-partition overhead and is ~16×
-				// faster than NLJ when both sides fit in memory.
-				// HashCrossJoin materializes the right operator into
-				// the hash table, so we pass rightScan as the build
-				// side and current as the probe side. The extracted
-				// keys come back in (leftTbl.col, rightTbl.col) order
-				// regardless of which side appears first in the ON.
 				if kind == JoinKindInner && j.On != nil {
 					if lk, rk, ok := p.extractSingleOnEquiKey(j.On, leftTbl, j.Right); ok {
 						joinOp = NewHashCrossJoin(current, rightScan, leftTbl, j.Right, lk, rk)
+						if projectedCols != nil {
+							if hcj, ok := joinOp.(*HashCrossJoin); ok {
+								hcj.WithProjection(projectedCols)
+							}
+						}
 					}
 				}
-				// Fallback to NestedLoopJoin.
 				if joinOp == nil {
 					var on func(outer, inner *Row) (bool, error)
 					if j.On != nil {
@@ -1256,7 +1393,11 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 							return truthy(v), nil
 						}
 					}
-					joinOp = NewNestedLoopJoin(current, rightScan, leftTbl, j.Right, on, kind)
+					nlj := NewNestedLoopJoin(current, rightScan, leftTbl, j.Right, on, kind)
+					if projectedCols != nil {
+						nlj.WithProjection(projectedCols)
+					}
+					joinOp = nlj
 				}
 			}
 
@@ -1973,6 +2114,321 @@ func (p *Planner) estimateRowCount(table string, where PS.Expr) int {
 		}
 	}
 	return 100 // default estimate
+}
+
+// getTableRowCount returns the estimated number of rows in a table.
+// Uses the global in-memory tables map first, then falls back to
+// the statistics catalog, and finally to a default of 100.
+func (p *Planner) getTableRowCount(table string) float64 {
+	if rows, ok := tables[table]; ok {
+		return float64(len(rows))
+	}
+	if cat := Catalog(); cat != nil {
+		if ts := cat.TableStats(table); ts != nil && ts.RowCount > 0 {
+			return float64(ts.RowCount)
+		}
+	}
+	// Check catalog for registered stats.
+	tInfo, ok := p.catalog[table]
+	if ok && len(tInfo.cols) > 0 {
+		if p.statsCatalog != nil {
+			for _, col := range tInfo.cols {
+				if cs := p.statsCatalog.ColumnStatsByName(table, col.Name); cs != nil && cs.RowCount > 0 {
+					return float64(cs.RowCount)
+				}
+			}
+		}
+	}
+	return 100
+}
+
+// estimateJoinCost returns the estimated cost of joining two tables or
+// table sets. The cost is based on the output row count of the join,
+// adjusted by predicate selectivity:
+//   - equi-join predicate:  selectivity = 0.1
+//   - range predicate:      selectivity = 0.3
+//   - other predicates:     selectivity = 0.5
+//   - no predicates (CROSS JOIN): selectivity = 1.0
+func (p *Planner) estimateJoinCost(leftRows, rightRows int, predicates []PS.Expr, hasIndex bool) float64 {
+	indexFactor := 1.0
+	if hasIndex {
+		indexFactor = 0.2
+	}
+
+	if len(predicates) == 0 {
+		// Cross join: full Cartesian product.
+		return float64(leftRows) * float64(rightRows) * indexFactor
+	}
+
+	sel := 1.0
+	for _, pred := range predicates {
+		psel := estimateJoinPredicateSelectivity(pred)
+		sel *= psel
+	}
+	cost := float64(leftRows) * float64(rightRows) * sel * indexFactor
+	if cost < 1 {
+		cost = 1
+	}
+	return cost
+}
+
+// estimateJoinPredicateSelectivity returns the selectivity of a single
+// join predicate expression.
+func estimateJoinPredicateSelectivity(pred PS.Expr) float64 {
+	if pred == nil {
+		return 1.0
+	}
+	bin, ok := pred.(*PS.BinaryExpr)
+	if !ok {
+		return 0.5
+	}
+	isColCol := isColumnColumnPair(bin.Left, bin.Right) || isColumnColumnPair(bin.Right, bin.Left)
+	switch bin.Op {
+	case int(LX.T_EQ):
+		if isColCol {
+			return 0.1
+		}
+		return 0.1
+	case int(LX.T_LT), int(LX.T_LE), int(LX.T_GT), int(LX.T_GE):
+		return 0.3
+	default:
+		return 0.5
+	}
+}
+
+// isColumnColumnPair returns true when both sides of the expression
+// are column references (Ident or QualifiedName). Used to detect
+// equi-join predicates like t1.a = t2.b.
+func isColumnColumnPair(a, b PS.Expr) bool {
+	_, aIsCol := a.(*PS.Ident)
+	_, aIsQn := a.(*PS.QualifiedName)
+	_, bIsCol := b.(*PS.Ident)
+	_, bIsQn := b.(*PS.QualifiedName)
+	return (aIsCol || aIsQn) && (bIsCol || bIsQn)
+}
+
+// n3JoinOrdering implements a simplified N3 (N-nearest-neighbor)
+// algorithm inspired by SQLite's NGQP. It finds a near-optimal join
+// order by maintaining a heap of the N=12 best partial plans and
+// extending them step by step.
+//
+// Parameters:
+//   - baseTable: the FROM-clause table (leftmost in the join tree)
+//   - joinTables: list of (table name, join clause) pairs to join
+//   - wherePredicates: cross-table WHERE conjuncts for selectivity
+//
+// Returns the ordered list of table names that minimizes estimated cost.
+func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, wherePredicates []PS.Expr) []string {
+	k := len(joinTables)
+	if k == 0 {
+		return []string{baseTable}
+	}
+	if k == 1 {
+		return []string{baseTable, joinTables[0].name}
+	}
+
+	// Build initial heap: one partial plan per table (extending baseTable).
+	type partial struct {
+		tablesSet map[string]bool
+		order     []string
+		cost      float64
+		rows      float64
+	}
+
+	heap := make([]partial, 0, n3HeapMaxSize)
+
+	baseRows := p.getTableRowCount(baseTable)
+
+	for _, jt := range joinTables {
+		preds := p.findPredicatesForPair(baseTable, jt.name, wherePredicates)
+		hasIdx := p.hasIndexOnTable(jt.name)
+		rightRows := p.getTableRowCount(jt.name)
+		joinCost := p.estimateJoinCost(int(baseRows), int(rightRows), preds, hasIdx)
+		resultRows := joinResultRows(baseRows, rightRows, preds)
+		heap = append(heap, partial{
+			tablesSet: map[string]bool{baseTable: true, jt.name: true},
+			order:     []string{baseTable, jt.name},
+			cost:      baseRows + joinCost,
+			rows:      resultRows,
+		})
+	}
+
+	// Iteratively extend partial plans with the cheapest remaining table.
+	for step := 1; step < k; step++ {
+		// Determine which tables are still missing from each plan.
+		allTables := make([]string, 0, k)
+		for _, jt := range joinTables {
+			allTables = append(allTables, jt.name)
+		}
+
+		type candidate struct {
+			idx int
+			cost float64
+			order []string
+			tablesSet map[string]bool
+			rows float64
+		}
+		nextHeap := make([]candidate, 0, n3HeapMaxSize)
+
+		for _, pp := range heap {
+			// Which tables are not yet joined?
+			for _, tbl := range allTables {
+				if pp.tablesSet[tbl] {
+					continue
+				}
+				preds := p.findPredicatesForSet(pp.tablesSet, tbl, wherePredicates)
+				hasIdx := p.hasIndexOnTable(tbl)
+				rightRows := p.getTableRowCount(tbl)
+				joinCost := p.estimateJoinCost(int(pp.rows), int(rightRows), preds, hasIdx)
+				newCost := pp.cost + joinCost
+				newRows := joinResultRows(pp.rows, rightRows, preds)
+
+				newOrder := make([]string, len(pp.order)+1)
+				copy(newOrder, pp.order)
+				newOrder[len(pp.order)] = tbl
+
+				newSet := make(map[string]bool, len(pp.tablesSet)+1)
+				for k := range pp.tablesSet {
+					newSet[k] = true
+				}
+				newSet[tbl] = true
+
+				cand := candidate{
+					idx:       0,
+					cost:      newCost,
+					order:     newOrder,
+					tablesSet: newSet,
+					rows:      newRows,
+				}
+
+				// Insert into nextHeap, keep top N.
+				if len(nextHeap) < n3HeapMaxSize {
+					nextHeap = append(nextHeap, cand)
+					// Bubble up (min-heap by cost).
+					for i := len(nextHeap) - 1; i > 0; i-- {
+						parent := (i - 1) / 2
+						if nextHeap[i].cost >= nextHeap[parent].cost {
+							break
+						}
+						nextHeap[i], nextHeap[parent] = nextHeap[parent], nextHeap[i]
+					}
+				} else if cand.cost < nextHeap[0].cost {
+					nextHeap[0] = cand
+					// Sink down.
+					i := 0
+					for {
+						smallest := i
+						left := 2*i + 1
+						right := 2*i + 2
+						if left < len(nextHeap) && nextHeap[left].cost < nextHeap[smallest].cost {
+							smallest = left
+						}
+						if right < len(nextHeap) && nextHeap[right].cost < nextHeap[smallest].cost {
+							smallest = right
+						}
+						if smallest == i {
+							break
+						}
+						nextHeap[i], nextHeap[smallest] = nextHeap[smallest], nextHeap[i]
+						i = smallest
+					}
+				}
+			}
+		}
+
+		// Convert candidates back to partial plans.
+		heap = make([]partial, len(nextHeap))
+		for i, c := range nextHeap {
+			heap[i] = partial{
+				tablesSet: c.tablesSet,
+				order:     c.order,
+				cost:      c.cost,
+				rows:      c.rows,
+			}
+		}
+		if len(heap) == 0 {
+			break
+		}
+	}
+
+	// Return the cheapest complete plan.
+	best := heap[0]
+	for _, pp := range heap[1:] {
+		if pp.cost < best.cost {
+			best = pp
+		}
+	}
+	return best.order
+}
+
+// joinTableInfo holds a table name and its associated JoinClause
+// for use in N3 join ordering.
+type joinTableInfo struct {
+	name string
+	join PS.JoinClause
+}
+
+// findPredicatesForPair finds the subset of WHERE predicates that
+// reference both leftTable and rightTable (cross-table predicates
+// between a specific pair).
+func (p *Planner) findPredicatesForPair(leftTable, rightTable string, predicates []PS.Expr) []PS.Expr {
+	var result []PS.Expr
+	for _, pred := range predicates {
+		tables := p.extractTablesFromExpr(pred)
+		if len(tables) == 2 && tables[leftTable] && tables[rightTable] {
+			result = append(result, pred)
+		}
+	}
+	return result
+}
+
+// findPredicatesForSet finds WHERE predicates that cross between the
+// already-joined tables and the candidate table.
+func (p *Planner) findPredicatesForSet(joined map[string]bool, candidate string, predicates []PS.Expr) []PS.Expr {
+	var result []PS.Expr
+	for _, pred := range predicates {
+		tables := p.extractTablesFromExpr(pred)
+		if len(tables) < 2 {
+			continue
+		}
+		hasCandidate := tables[candidate]
+		hasJoined := false
+		for t := range tables {
+			if t != candidate && joined[t] {
+				hasJoined = true
+				break
+			}
+		}
+		if hasCandidate && hasJoined {
+			result = append(result, pred)
+		}
+	}
+	return result
+}
+
+// hasIndexOnTable checks whether the table has any registered index.
+func (p *Planner) hasIndexOnTable(table string) bool {
+	tInfo, ok := p.catalog[table]
+	if !ok {
+		return false
+	}
+	return len(tInfo.indexes) > 0
+}
+
+// joinResultRows estimates the number of output rows from a join.
+func joinResultRows(leftRows, rightRows float64, predicates []PS.Expr) float64 {
+	if len(predicates) == 0 {
+		return leftRows * rightRows
+	}
+	sel := 1.0
+	for _, pred := range predicates {
+		sel *= estimateJoinPredicateSelectivity(pred)
+	}
+	result := leftRows * rightRows * sel
+	if result < 1 {
+		result = 1
+	}
+	return result
 }
 
 func (p *Planner) ParseAndPlan(sql string) (*plan, error) {

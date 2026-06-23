@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/cyw0ng95/razordata/internal/SQL/LX"
 	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
@@ -307,4 +308,119 @@ func BenchmarkJ4_Cross(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+// BenchmarkFilter_ADQC_Cache measures the benefit of global predicate
+// caching. CacheHit reuses a compiled predicate across Filter instances;
+// CacheMiss uses a different predicate each time (compilation on every
+// call). REQ000802+.
+func BenchmarkFilter_ADQC_Cache(b *testing.B) {
+	pred := &PS.BinaryExpr{
+		Op: int(LX.T_AND),
+		Left: &PS.BinaryExpr{
+			Op:    int(LX.T_GT),
+			Left:  &PS.QualifiedName{Table: "t1", Name: "a"},
+			Right: &PS.NumberLiteral{Val: int64(50)},
+		},
+		Right: &PS.BinaryExpr{
+			Op:    int(LX.T_LT),
+			Left:  &PS.QualifiedName{Table: "t2", Name: "b"},
+			Right: &PS.NumberLiteral{Val: int64(25)},
+		},
+	}
+
+	rows := make([]Row, 100)
+	for i := 0; i < 100; i++ {
+		rows[i] = Row{
+			Cols: []string{"t1.a", "t2.b"},
+			Data: []Value{NewIntValue(int64(i % 100)), NewIntValue(int64(i % 50))},
+		}
+	}
+
+	ctx := context.Background()
+
+	b.Run("CacheHit", func(b *testing.B) {
+		// Warm the cache with one full pass.
+		warm := &sliceRowOp{rows: rows}
+		wf := NewFilter(warm, pred)
+		for {
+			_, err := wf.Next(ctx)
+			if err == ErrNoRows {
+				break
+			}
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+		wf.Close()
+
+		b.ResetTimer()
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			child := &sliceRowOp{rows: rows}
+			f := NewFilter(child, pred)
+			for {
+				_, err := f.Next(ctx)
+				if err == ErrNoRows {
+					break
+				}
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			f.Close()
+		}
+	})
+
+	b.Run("CacheMiss", func(b *testing.B) {
+		b.ResetTimer()
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			p := &PS.BinaryExpr{
+				Op: int(LX.T_AND),
+				Left: &PS.BinaryExpr{
+					Op:    int(LX.T_GT),
+					Left:  &PS.QualifiedName{Table: "t1", Name: "a"},
+					Right: &PS.NumberLiteral{Val: int64(i % 100)},
+				},
+				Right: &PS.BinaryExpr{
+					Op:    int(LX.T_LT),
+					Left:  &PS.QualifiedName{Table: "t2", Name: "b"},
+					Right: &PS.NumberLiteral{Val: int64(25)},
+				},
+			}
+			child := &sliceRowOp{rows: rows}
+			f := NewFilter(child, p)
+			for {
+				_, err := f.Next(ctx)
+				if err == ErrNoRows {
+					break
+				}
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			f.Close()
+		}
+	})
+}
+
+// sliceRowOp is a simple operator that yields rows from a pre-built slice.
+type sliceRowOp struct {
+	rows []Row
+	pos  int
+}
+
+func (s *sliceRowOp) Next(_ context.Context) (Row, error) {
+	if s.pos >= len(s.rows) {
+		return Row{}, ErrNoRows
+	}
+	r := s.rows[s.pos]
+	s.pos++
+	return r, nil
+}
+
+func (s *sliceRowOp) Close() error {
+	s.pos = 0
+	return nil
 }

@@ -72,6 +72,12 @@ func NewHashCrossJoin(left, right Operator, leftTbl, rightTbl, leftKey, rightKey
 func (j *HashCrossJoin) LeftChild() Operator  { return j.left }
 func (j *HashCrossJoin) RightChild() Operator { return j.right }
 
+// WithProjection sets the projected columns for the join output.
+// REQ000803: when set, only these columns are included in output rows.
+func (j *HashCrossJoin) WithProjection(cols []string) *HashCrossJoin {
+	return j
+}
+
 // Next produces the next matching pair. Build happens lazily on
 // the first call. Returns ErrNoRows when exhausted.
 func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {

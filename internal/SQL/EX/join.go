@@ -32,13 +32,22 @@ type NestedLoopJoin struct {
 	rightPos  int
 	rightRows []Row
 	matched   bool // for OUTER JOIN: track if left row found a match
+	// REQ000803: column projection pushdown — only these columns
+	// (if non-nil) are included in output rows. Columns are stored
+	// as "table.col" pairs (e.g., ["t1.id", "t2.a", "t3.b"]).
+	projectedCols []string
+	// projectedLayout maps each projected column to (leftIdx, rightIdx)
+	// where leftIdx ≥ 0 means the column comes from the left side,
+	// rightIdx ≥ 0 from the right side. Built once in tryHashCrossJoin
+	// or on first NLJ row.
+	projectedLayout [][2]int // [][leftIdx, rightIdx], -1 if not on that side
 	// REQ000800: hash-based cross join for small tables.
 	// When both sides fit in memory, materialize both and
 	// do a hash-based cross product instead of NLJ.
-	leftRows      []Row
-	hashMode      bool
-	hashAttempted bool             // set true after tryHashCrossJoin fails; prevents O(N²) re-entry
-	hashBuckets   map[uint64][]int // hash → indices into rightRows
+	leftRows       []Row
+	hashMode       bool
+	hashAttempted  bool // set true after tryHashCrossJoin fails; prevents O(N²) re-entry
+	hashBuckets    map[uint64][]int // hash → indices into rightRows
 	leftIdx       int
 	rightIdx      int
 	leftMatched   []bool // for LEFT JOIN
@@ -82,6 +91,14 @@ blockMode    bool
 	blkDataBuf        []Value
 	blkDataPerRow     int
 	blkDataOffset     int
+}
+
+// WithProjection sets the projected columns for the join output.
+// REQ000803: when set, only these columns are included in output rows,
+// reducing per-row memory and CPU for downstream operators.
+func (j *NestedLoopJoin) WithProjection(projectedCols []string) *NestedLoopJoin {
+	j.projectedCols = projectedCols
+	return j
 }
 
 func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error), kind JoinKind) *NestedLoopJoin {
@@ -593,6 +610,106 @@ func joinRowsLLWithCols(a, b *Row, sharedCols []string, sharedTypes []int, share
 	out.Data = append(out.Data, a.Data...)
 	out.Data = append(out.Data, b.Data...)
 	return out
+}
+
+// joinRowsProjected produces a join output row containing only the
+// projected columns specified by layout. Each entry in layout is
+// (leftIdx, rightIdx); exactly one is ≥0. REQ000803.
+// Data is pre-allocated via the caller-supplied dataBuf slice; the
+// function returns a Row with Data pointing into dataBuf.
+func joinRowsProjected(a, b *Row, cols []string, types []int, colIndex map[string]int, layout [][2]int, dataBuf *[]Value) Row {
+	off := len(*dataBuf)
+	n := len(cols)
+	// Ensure dataBuf has room for n Values.
+	required := off + n
+	if cap(*dataBuf) < required {
+		newCap := cap(*dataBuf) * 2
+		if newCap < required {
+			newCap = required
+		}
+		buf := make([]Value, required, newCap)
+		copy(buf, *dataBuf)
+		*dataBuf = buf
+	}
+	*dataBuf = (*dataBuf)[:required]
+	dataSlice := (*dataBuf)[off : off+n : off+n]
+	for i, pair := range layout {
+		if pair[0] >= 0 {
+			dataSlice[i] = a.Data[pair[0]]
+		} else if pair[1] >= 0 {
+			dataSlice[i] = b.Data[pair[1]]
+		}
+		// pair[0] < 0 && pair[1] < 0: column not found, leave as zero Value (NULL)
+	}
+	return Row{
+		Cols:     cols,
+		Types:    types,
+		Data:     dataSlice,
+		colIndex: colIndex,
+	}
+}
+
+// buildProjectedLayout creates the projected column layout from a
+// set of projected column names and the left/right column name lists.
+// Returns (cols, types, colIndex, layout) for use with joinRowsProjected.
+func buildProjectedLayout(projectedCols []string, leftCols, rightCols []string, leftTypes, rightTypes []int) ([]string, []int, map[string]int, [][2]int) {
+	if projectedCols == nil {
+		// No projection — use all columns.
+		n := len(leftCols) + len(rightCols)
+		allCols := make([]string, n)
+		copy(allCols, leftCols)
+		copy(allCols[len(leftCols):], rightCols)
+		allTypes := make([]int, n)
+		copy(allTypes, leftTypes)
+		copy(allTypes[len(leftTypes):], rightTypes)
+		layout := make([][2]int, n)
+		for i := range leftCols {
+			layout[i] = [2]int{i, -1}
+		}
+		for i := range rightCols {
+			layout[len(leftCols)+i] = [2]int{-1, i}
+		}
+		colIndex := make(map[string]int, n)
+		for i, c := range allCols {
+			colIndex[strings.ToLower(c)] = i
+		}
+		return allCols, allTypes, colIndex, layout
+	}
+
+	n := len(projectedCols)
+	cols := make([]string, n)
+	types := make([]int, n)
+	layout := make([][2]int, n)
+
+	leftLower := make(map[string]int, len(leftCols))
+	for i, c := range leftCols {
+		leftLower[strings.ToLower(c)] = i
+	}
+	rightLower := make(map[string]int, len(rightCols))
+	for i, c := range rightCols {
+		rightLower[strings.ToLower(c)] = i
+	}
+
+	for i, pc := range projectedCols {
+		cols[i] = pc
+		pl := strings.ToLower(pc)
+		if li, ok := leftLower[pl]; ok && li < len(leftTypes) {
+			layout[i] = [2]int{li, -1}
+			types[i] = leftTypes[li]
+		} else if ri, ok := rightLower[pl]; ok && ri < len(rightTypes) {
+			layout[i] = [2]int{-1, ri}
+			types[i] = rightTypes[ri]
+		} else {
+			// Column not found — mark as invalid (will be skipped at output).
+			layout[i] = [2]int{-2, -2}
+		}
+	}
+
+	colIndex := make(map[string]int, n)
+	for i, c := range cols {
+		colIndex[strings.ToLower(c)] = i
+	}
+	return cols, types, colIndex, layout
 }
 
 func prefixCols(cols []string, prefix string) []string {
