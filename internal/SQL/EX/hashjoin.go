@@ -230,16 +230,15 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 			if bucket.hashes[k] == l.hash && valuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys)) {
 				right := bucket.rightRows[k]
 				off := len(j.dataBuf)
-				dataSlice := j.dataBuf[off : off : off+dataPerRow]
+				j.dataBuf = j.dataBuf[:off+dataPerRow]
+				copy(j.dataBuf[off:], j.leftRows[i].Data)
+				copy(j.dataBuf[off+len(j.leftRows[i].Data):], right.Data)
 				out := Row{
 					Cols:     j.sharedCols,
 					Types:    j.sharedTypes,
-					Data:     dataSlice,
+					Data:     j.dataBuf[off : off+dataPerRow : off+dataPerRow],
 					colIndex: j.sharedColIndex,
 				}
-				out.Data = append(out.Data, j.leftRows[i].Data...)
-				out.Data = append(out.Data, right.Data...)
-				j.dataBuf = append(j.dataBuf, out.Data...)
 				j.matches = append(j.matches, out)
 			}
 		}
