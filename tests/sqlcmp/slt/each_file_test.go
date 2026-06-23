@@ -234,11 +234,13 @@ func diagnoseFailures(ctx context.Context, driver Driver, recs []Record, n int) 
 			err = qerr
 		}
 		if err == nil {
+			rs = nil
 			continue
 		}
 		failed++
 		fmt.Fprintf(&b, "  L%-5d %s\n    SQL: %s\n    ERR: %v\n",
 			rec.Line, rec.Kind, truncate(rec.SQL, 200), err)
+		rs = nil
 	}
 	return b.String()
 }

@@ -125,6 +125,16 @@ func CloseEngine(dsn string) {
 	delete(dirByDSN, dsn)
 }
 
+// RegisterEngine pre-registers a caller-created engine under the
+// given DSN so that a subsequent sql.Open("razor", dsn) reuses it
+// instead of creating a new one with default options.
+func RegisterEngine(dsn string, eng *v1.Engine) {
+	engineMu.Lock()
+	defer engineMu.Unlock()
+	engines[dsn] = eng
+	dirByDSN[dsn] = ""
+}
+
 func toDriverValue(v any) driver.Value {
 	if v == nil {
 		return nil

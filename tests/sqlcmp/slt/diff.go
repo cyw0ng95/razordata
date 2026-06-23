@@ -29,14 +29,13 @@ func DiffResultSets(actual *ResultSet, rec *Record) string {
 	if len(expected) == 1 && len(expected[0]) == 1 && strings.Contains(expected[0][0].Text, "values hashing to") {
 		return diffHashed(actual, expected[0][0].Text, rec.Sort)
 	}
-	// Otherwise copy and (optionally) sort the actual result.
-	got := append([][]Value(nil), actual.Rows...)
+	// Otherwise sort the actual result in-place (no copy needed;
+	// the result set is not reused after diff).
+	got := actual.Rows
 	if rec.Sort == RowSort {
 		sortRows(got, false)
 	}
 	// ValueSort: sort rows as tab-separated strings (SQLite convention).
-	// Do NOT use sortRows(got, true) — it flattens all cells into a
-	// single row, destroying row structure and breaking comparisons.
 	if rec.Sort == ValueSort {
 		sort.Slice(got, func(i, j int) bool {
 			return rowString(got[i]) < rowString(got[j])
@@ -44,22 +43,33 @@ func DiffResultSets(actual *ResultSet, rec *Record) string {
 	}
 	// "Expected" is already in source order. The corpus emits
 	// expected rows in the order the test author intended; for
-	// RowSort/ValueSort, we also sort the expected side so the
-	// diff is order-independent.
-	want := append([][]Value(nil), expected...)
+	// RowSort/ValueSort, we sort an index to avoid copying the
+	// expected slice.
+	wantIdx := make([]int, len(expected))
+	for i := range wantIdx {
+		wantIdx[i] = i
+	}
 	if rec.Sort == RowSort {
-		sortRows(want, false)
+		sort.Slice(wantIdx, func(i, j int) bool {
+			a, b := expected[wantIdx[i]], expected[wantIdx[j]]
+			for k := 0; k < len(a) && k < len(b); k++ {
+				if c := valueLess(a[k], b[k]); c != 0 {
+					return c < 0
+				}
+			}
+			return len(a) < len(b)
+		})
 	} else if rec.Sort == ValueSort {
-		sort.Slice(want, func(i, j int) bool {
-			return rowString(want[i]) < rowString(want[j])
+		sort.Slice(wantIdx, func(i, j int) bool {
+			return rowString(expected[wantIdx[i]]) < rowString(expected[wantIdx[j]])
 		})
 	}
-	if len(got) != len(want) {
-		return fmt.Sprintf("row count: got %d, want %d", len(got), len(want))
+	if len(got) != len(wantIdx) {
+		return fmt.Sprintf("row count: got %d, want %d", len(got), len(wantIdx))
 	}
 	for i := range got {
-		if !rowsEqual(got[i], want[i], rec.TypeString) {
-			return fmt.Sprintf("row %d: got %s, want %s", i, renderRow(got[i]), renderRow(want[i]))
+		if !rowsEqual(got[i], expected[wantIdx[i]], rec.TypeString) {
+			return fmt.Sprintf("row %d: got %s, want %s", i, renderRow(got[i]), renderRow(expected[wantIdx[i]]))
 		}
 	}
 	return ""
@@ -97,15 +107,15 @@ func diffHashed(actual *ResultSet, marker string, sortMode SortMode) string {
 		}
 	} else {
 		// Sort rows as tab-separated strings (SQLite sqllogictest convention).
-		sorted := make([][]Value, len(actual.Rows))
-		copy(sorted, actual.Rows)
-		sort.Slice(sorted, func(i, j int) bool {
-			ai := rowString(sorted[i])
-			aj := rowString(sorted[j])
-			return ai < aj
+		idx := make([]int, len(actual.Rows))
+		for i := range idx {
+			idx[i] = i
+		}
+		sort.Slice(idx, func(i, j int) bool {
+			return rowString(actual.Rows[idx[i]]) < rowString(actual.Rows[idx[j]])
 		})
-		for _, row := range sorted {
-			flat = append(flat, row...)
+		for _, i := range idx {
+			flat = append(flat, actual.Rows[i]...)
 		}
 	}
 	if len(flat) != n {

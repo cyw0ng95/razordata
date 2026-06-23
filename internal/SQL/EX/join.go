@@ -289,8 +289,15 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 		return false
 	}
 	// Materialize left side.
+	// REQ000844: initial capacity 16 instead of 64. With IN-list
+	// pushdown, each table scan returns ≤ 8 matching rows. A
+	// cross product of 2 such tables yields ≤ 64 rows max — but
+	// the intermediate after the first join is typically 0-8 rows.
+	// Using a smaller initial capacity saves ~6KB per NLJ level
+	// (144 bytes × 48 wasted slots) with negligible growth cost.
 	const maxMaterialize = 1024
-	j.leftRows = make([]Row, 0, 64)
+	j.leftRows = make([]Row, 0, 16)
+	var leftPrefixedCols []string
 	for {
 		row, err := j.left.Next(ctx)
 		if err != nil {
@@ -298,11 +305,14 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 		}
 		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
 		prefixed.tableName = row.tableName
-		if !hasAnyPrefix(row.Cols) {
-			prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
-		} else {
-			prefixed.Cols = append([]string(nil), row.Cols...)
+		if leftPrefixedCols == nil {
+			if !hasAnyPrefix(row.Cols) {
+				leftPrefixedCols = prefixCols(row.Cols, j.leftTbl)
+			} else {
+				leftPrefixedCols = append([]string(nil), row.Cols...)
+			}
 		}
+		prefixed.Cols = leftPrefixedCols
 		j.leftRows = append(j.leftRows, prefixed)
 		if len(j.leftRows) >= maxMaterialize {
 			// Too many rows — abort, use NLJ. Close() to reset
@@ -315,16 +325,32 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 		}
 	}
 	// Materialize right side.
-	j.rightRows = make([]Row, 0, 64)
+	// REQ000844: short-circuit — if left is empty, the cross
+	// product is empty regardless of right. Skip right
+	// materialization to avoid unnecessary seq scans.
+	if len(j.leftRows) == 0 {
+		j.hashAttempted = true
+		return false
+	}
+	// REQ000844: initial capacity 16 (see left side comment).
+	j.rightRows = make([]Row, 0, 16)
+	var rightPrefixedCols []string
 	for {
 		row, err := j.right.Next(ctx)
 		if err != nil {
 			break
 		}
+		// REQ000844: row.Data from SeqScan.cloneRow is already a
+		// fresh copy. Skip redundant append([]Value(nil),...).
+		// Also: all rows from the same SeqScan share the same Cols,
+		// so prefixCols can be computed once instead of per-row.
+		if rightPrefixedCols == nil {
+			rightPrefixedCols = prefixCols(row.Cols, j.rightTbl)
+		}
 		j.rightRows = append(j.rightRows, Row{
-			Cols:      prefixCols(row.Cols, j.rightTbl),
+			Cols:      rightPrefixedCols,
 			Types:     row.Types,
-			Data:      append([]Value(nil), row.Data...),
+			Data:      row.Data,
 			tableName: row.tableName,
 		})
 		if len(j.rightRows) >= maxMaterialize {

@@ -9,24 +9,14 @@ import (
 
 type Rows struct {
 	columns []string
-	data    []AP.Row
-	pos     int
+	apRows  *AP.Rows
 }
 
 func newRows(apRows *AP.Rows) *Rows {
 	if apRows == nil {
 		return &Rows{}
 	}
-	r := &Rows{columns: apRows.Cols()}
-	for {
-		row, err := apRows.Next()
-		if err != nil {
-			break
-		}
-		r.data = append(r.data, row)
-	}
-	apRows.Close()
-	return r
+	return &Rows{columns: apRows.Cols(), apRows: apRows}
 }
 
 func (r *Rows) Columns() []string { return r.columns }
@@ -35,20 +25,22 @@ func (r *Rows) Close() error {
 	if r == nil {
 		return nil
 	}
-	r.data = nil
+	if r.apRows != nil {
+		_ = r.apRows.Close()
+		r.apRows = nil
+	}
 	r.columns = nil
 	return nil
 }
 
 func (r *Rows) Next(dest []driver.Value) error {
-	if r == nil {
+	if r == nil || r.apRows == nil {
 		return io.EOF
 	}
-	if r.pos >= len(r.data) {
+	row, err := r.apRows.Next()
+	if err != nil {
 		return io.EOF
 	}
-	row := r.data[r.pos]
-	r.pos++
 	for i := range dest {
 		if i < len(row.Data) {
 			dest[i] = toDriverValue(row.Data[i])

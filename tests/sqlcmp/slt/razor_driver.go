@@ -13,6 +13,7 @@ import (
 	"time"
 
 	razordriver "github.com/cyw0ng95/razordata/driver"
+	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	v1 "github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
 
@@ -80,10 +81,35 @@ func (d *RazorDriver) Connect(ctx context.Context) error {
 
 	dsn := filepath.Join(dir, "db.razor")
 	d.dsn = dsn
-	db, err := sql.Open("razor", dsn)
+
+	// Pre-create engine with small memory budget to avoid OOM.
+	opts := AP.Options{
+		Dir:          filepath.Join(dir, "db.razor.engine"),
+		MemTableSize: 1 << 20, // 1 MiB minimum
+		BufferPoolMB: 64,      // 64 MiB minimum
+	}
+	if err := os.MkdirAll(opts.Dir, 0o755); err != nil {
+		_ = os.RemoveAll(dir)
+		d.dir = ""
+		return err
+	}
+	eng, err := v1.Open(ctx, dir, opts)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		d.dir = ""
+		return err
+	}
+	d.engine = eng
+
+	// Register the engine so sql.Open("razor", dsn) finds it.
+	razordriver.RegisterEngine(dsn, eng)
+
+	db, err := sql.Open("razor", dsn)
+	if err != nil {
+		_ = eng.Close(context.Background())
+		_ = os.RemoveAll(dir)
+		d.dir = ""
+		d.engine = nil
 		return err
 	}
 	db.SetMaxOpenConns(1)
@@ -92,9 +118,11 @@ func (d *RazorDriver) Connect(ctx context.Context) error {
 	// Verify the connection is alive.
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
+		_ = eng.Close(context.Background())
 		_ = os.RemoveAll(dir)
 		d.dir = ""
 		d.db = nil
+		d.engine = nil
 		return err
 	}
 

@@ -13,6 +13,7 @@ package slt
 import (
 	"strconv"
 	"strings"
+	"time"
 )
 
 // RecordKind enumerates the record types in a SQLLogicTest file.
@@ -213,6 +214,17 @@ type Stats struct {
 	Skipped     int
 	ParseErrors int
 	Duration    Duration
+	Slowest     []SlowRecord // populated when RAZOR_SLT_PROFILE=1
+}
+
+// SlowRecord captures the wall-clock time of a single SLT record
+// for profiling slow queries. Only populated when RAZOR_SLT_PROFILE=1.
+type SlowRecord struct {
+	Line  int
+	Kind  RecordKind
+	Label string
+	SQL   string
+	Time  time.Duration
 }
 
 // Duration is a time.Duration in milliseconds, kept as int64 so the

@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -41,6 +42,12 @@ type Runner struct {
 	// query label. Re-uses verify equivalence across queries
 	// that share a label.
 	labelMap map[string]string
+
+	// REQ000840: per-record profiling, gated on RAZOR_SLT_PROFILE=1.
+	// Collects every record's wall-clock time. At finalize(), sorts
+	// and returns top-20 in Stats.Slowest.
+	profileOn    bool
+	recordTimers []slowTimer
 }
 
 // NewRunner constructs a runner bound to a driver. The classifier
@@ -53,12 +60,17 @@ func NewRunner(driver Driver, classifier Classifier, engineName string) *Runner 
 	if classifier == nil {
 		classifier = defaultClassifier{}
 	}
+	profileOn := false
+	if v := os.Getenv("RAZOR_SLT_PROFILE"); v == "1" || strings.EqualFold(v, "true") {
+		profileOn = true
+	}
 	return &Runner{
 		driver:        driver,
 		classifier:    classifier,
 		engineName:    engineName,
 		labelMap:      make(map[string]string),
 		hashThreshold: 0,
+		profileOn:     profileOn,
 	}
 }
 
@@ -100,6 +112,11 @@ func (r *Runner) Run(ctx context.Context, records []Record) Stats {
 			// not set the next pendingSkip).
 			continue
 		}
+		// REQ000840: record wall-clock time for each record when profiling.
+		var recStart time.Time
+		if r.profileOn {
+			recStart = time.Now()
+		}
 		switch rec.Kind {
 		case RecordStatementOK:
 			r.runStatementOK(ctx, rec)
@@ -108,6 +125,9 @@ func (r *Runner) Run(ctx context.Context, records []Record) Stats {
 		case RecordQuery:
 			r.runQuery(ctx, rec)
 		case RecordHalt:
+			if r.profileOn {
+				r.recordTimers = append(r.recordTimers, slowTimer{line: rec.Line, kind: rec.Kind, label: rec.Label, sql: rec.SQL, dur: time.Since(recStart)})
+			}
 			return r.finalize()
 		case RecordHashThreshold:
 			r.hashThreshold = rec.HashThreshold
@@ -124,6 +144,9 @@ func (r *Runner) Run(ctx context.Context, records []Record) Stats {
 		case RecordOnlyIf:
 			// Skip the next executable if engine does NOT match.
 			r.pendingSkip = r.engineName != "" && r.engineName != rec.DBName
+		}
+		if r.profileOn {
+			r.recordTimers = append(r.recordTimers, slowTimer{line: rec.Line, kind: rec.Kind, label: rec.Label, sql: rec.SQL, dur: time.Since(recStart)})
 		}
 	}
 	return r.finalize()
@@ -211,14 +234,38 @@ func (r *Runner) runQuery(ctx context.Context, rec *Record) {
 // resultHash is a stable, sort-mode-aware digest of a result set.
 // Used to compare queries that share a label.
 func resultHash(rs *ResultSet, mode SortMode) string {
-	// Operate on a copy so the original ordering is preserved
-	// for diagnostics.
-	rows := make([][]Value, len(rs.Rows))
-	for i, row := range rs.Rows {
-		rows[i] = append([]Value(nil), row...)
-	}
+	rows := rs.Rows
 	if mode == RowSort || mode == ValueSort {
-		sortRows(rows, mode == ValueSort)
+		idx := make([]int, len(rows))
+		for i := range idx {
+			idx[i] = i
+		}
+		if mode == ValueSort {
+			sort.Slice(idx, func(i, j int) bool {
+				return rowString(rows[idx[i]]) < rowString(rows[idx[j]])
+			})
+		} else {
+			sort.Slice(idx, func(i, j int) bool {
+				a, b := rows[idx[i]], rows[idx[j]]
+				for k := 0; k < len(a) && k < len(b); k++ {
+					if c := valueLess(a[k], b[k]); c != 0 {
+						return c < 0
+					}
+				}
+				return len(a) < len(b)
+			})
+		}
+		h := md5.New()
+		for _, i := range idx {
+			for j, cell := range rows[i] {
+				if j > 0 {
+					io.WriteString(h, "\t")
+				}
+				io.WriteString(h, cell.String())
+			}
+			io.WriteString(h, "\n")
+		}
+		return fmt.Sprintf("%x", h.Sum(nil))
 	}
 	h := md5.New()
 	for _, row := range rows {
@@ -328,5 +375,41 @@ func valueLess(a, b Value) int {
 
 func (r *Runner) finalize() Stats {
 	r.stats.Duration = Duration(time.Since(r.startTime).Milliseconds())
+	if r.profileOn && len(r.recordTimers) > 0 {
+		sort.Slice(r.recordTimers, func(i, j int) bool {
+			return r.recordTimers[i].dur > r.recordTimers[j].dur
+		})
+		limit := 20
+		if len(r.recordTimers) < limit {
+			limit = len(r.recordTimers)
+		}
+		r.stats.Slowest = make([]SlowRecord, limit)
+		for i := 0; i < limit; i++ {
+			r.stats.Slowest[i] = SlowRecord{
+				Line:  r.recordTimers[i].line,
+				Kind:  r.recordTimers[i].kind,
+				Label: r.recordTimers[i].label,
+				SQL:   truncateStr(r.recordTimers[i].sql, 300),
+				Time:  r.recordTimers[i].dur,
+			}
+		}
+	}
 	return r.stats
+}
+
+// slowTimer is an internal timing record for per-record profiling.
+type slowTimer struct {
+	line  int
+	kind  RecordKind
+	label string
+	sql   string
+	dur   time.Duration
+}
+
+// truncateStr truncates s to max characters with an ellipsis suffix.
+func truncateStr(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }
