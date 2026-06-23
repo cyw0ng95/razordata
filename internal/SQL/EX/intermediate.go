@@ -119,6 +119,11 @@ type Project struct {
 	// that reads directly from the input row's Data, bypassing
 	// Eval dispatch and Value↔any boxing.
 	compiledExprs []func(in *Row) Value
+	// REQ000802+: pre-allocated data buffer for output rows.
+	// Each row gets a non-overlapping sub-slice [off:off:off+dataPerRow]
+	// from this shared buffer, eliminating per-row make([]Value) allocations.
+	dataBuf    []Value
+	dataPerRow int
 }
 
 // Child returns the project's child operator.
@@ -185,17 +190,43 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 	if isStar(p.cols) {
 		return row, nil
 	}
-	// REQ000756: use pre-computed column names, allocate only data.
-	out := Row{
-		Cols:     append([]string(nil), p.prefixCols...),
-		Data:     make([]Value, len(p.cols)),
-		colIndex: p.colIndex,
-	}
 	// REQ000802: compile expressions on first use, then use
 	// fast-path evaluators that bypass Eval dispatch.
 	if p.compiledExprs == nil {
 		p.compileProjectExprs()
 	}
+	// REQ000802+: use pre-allocated data buffer to eliminate
+	// per-row make([]Value) allocations. Each row gets a
+	// non-overlapping sub-slice from the shared buffer.
+	if p.dataBuf == nil {
+		p.dataPerRow = len(p.cols)
+		// Pre-allocate for a reasonable number of rows.
+		// Will grow lazily if the result set exceeds this.
+		p.dataBuf = make([]Value, 0, 256*p.dataPerRow)
+	}
+	off := len(p.dataBuf)
+	// Ensure buffer has enough capacity for this row.
+	required := off + p.dataPerRow
+	if cap(p.dataBuf) < required {
+		// Grow by doubling capacity.
+		newCap := cap(p.dataBuf) * 2
+		if newCap < required {
+			newCap = required
+		}
+		// Grow the slice length to accommodate the new row.
+		p.dataBuf = append(p.dataBuf, make([]Value, required-off)...)
+	} else {
+		// Extend the slice length by exactly dataPerRow.
+		p.dataBuf = p.dataBuf[:required]
+	}
+	// Carve sub-slice pointing to the newly added space.
+	dataSlice := p.dataBuf[off : off+p.dataPerRow : off+p.dataPerRow]
+	out := Row{
+		Cols:     p.prefixCols, // shared, no copy needed
+		Data:     dataSlice,
+		colIndex: p.colIndex,
+	}
+	// Fill the data slice directly.
 	for i, c := range p.cols {
 		fn := p.compiledExprs[i]
 		if fn != nil {
@@ -239,6 +270,8 @@ func findColumn(row Row, name string) (any, error) {
 }
 
 func (p *Project) Close() error {
+	p.dataBuf = nil
+	p.dataPerRow = 0
 	return p.child.Close()
 }
 
@@ -495,46 +528,77 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 
 	// Simple comparisons: col OP literal
 	col, literal, ok := extractColLiteralPair(e)
-	if !ok {
-		return nil
-	}
-	if literal == nil {
-		return nil
-	}
-	colName := col
-	litVal := literal
+	if ok && literal != nil {
+		colName := col
+		litVal := literal
 
-	switch e.Op {
-	case int(LX.T_EQ):
-		return makeCompiledCmp(colName, litVal, func(a, b any) bool {
-			return equalValue(a, b)
-		})
-	case int(LX.T_NE):
-		return makeCompiledCmp(colName, litVal, func(a, b any) bool {
-			// SQL semantics: NULL compared with anything = UNKNOWN (drop row)
-			// Handle Value type (tagged-union) which may wrap NULL.
-			if isNullValue(a) || isNullValue(b) {
-				return false
-			}
-			return !equalValue(a, b)
-		})
-	case int(LX.T_GT):
-		return makeCompiledCmp(colName, litVal, func(a, b any) bool {
-			return compare(a, b) > 0
-		})
-	case int(LX.T_GE):
-		return makeCompiledCmp(colName, litVal, func(a, b any) bool {
-			return compare(a, b) >= 0
-		})
-	case int(LX.T_LT):
-		return makeCompiledCmp(colName, litVal, func(a, b any) bool {
-			return compare(a, b) < 0
-		})
-	case int(LX.T_LE):
-		return makeCompiledCmp(colName, litVal, func(a, b any) bool {
-			return compare(a, b) <= 0
-		})
+		switch e.Op {
+		case int(LX.T_EQ):
+			return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+				return equalValue(a, b)
+			})
+		case int(LX.T_NE):
+			return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+				// SQL semantics: NULL compared with anything = UNKNOWN (drop row)
+				// Handle Value type (tagged-union) which may wrap NULL.
+				if isNullValue(a) || isNullValue(b) {
+					return false
+				}
+				return !equalValue(a, b)
+			})
+		case int(LX.T_GT):
+			return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+				return compare(a, b) > 0
+			})
+		case int(LX.T_GE):
+			return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+				return compare(a, b) >= 0
+			})
+		case int(LX.T_LT):
+			return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+				return compare(a, b) < 0
+			})
+		case int(LX.T_LE):
+			return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+				return compare(a, b) <= 0
+			})
+		}
 	}
+
+	// Equi-join: col OP col (both sides are column references).
+	// This is the common pattern in multi-table joins like
+	// "WHERE t1.a = t2.b AND t2.b = t3.c". Compiling these
+	// eliminates Eval dispatch overhead in the hot join path.
+	// REQ000802+: only compile when both columns are from the
+	// same table or are bare names — cross-table qualified names
+	// require the Eval path to resolve table aliases correctly
+	// (the compiled function has no access to the Outer chain).
+	leftCol, rightCol, ok := extractColColPair(e)
+	if ok {
+		leftDot := strings.LastIndexByte(leftCol, '.')
+		rightDot := strings.LastIndexByte(rightCol, '.')
+		if leftDot < 0 && rightDot < 0 {
+			// Both are bare names — safe to compile.
+			return makeCompiledColColCmp(leftCol, rightCol, e.Op)
+		}
+		if leftDot >= 0 && rightDot >= 0 {
+			// Both are qualified names. Check if they reference
+			// the same table prefix. If different tables, the
+			// compiled function can't resolve alias chains, so
+			// fall back to Eval.
+			leftTbl := leftCol[:leftDot]
+			rightTbl := rightCol[:rightDot]
+			if leftTbl == rightTbl {
+				return makeCompiledColColCmp(leftCol, rightCol, e.Op)
+			}
+		}
+		// Mixed (one qualified, one bare) — compile is safe
+		// since the bare name resolves via the row's columns.
+		if leftDot >= 0 || rightDot >= 0 {
+			return makeCompiledColColCmp(leftCol, rightCol, e.Op)
+		}
+	}
+
 	return nil
 }
 
@@ -544,6 +608,8 @@ func makeCompiledCmp(colName string, litVal any, cmp func(a, b any) bool) func(*
 	if dot := strings.LastIndexByte(colName, '.'); dot >= 0 {
 		bareName = colName[dot+1:]
 	}
+	// Pre-convert literal to Value to avoid boxing in hot path.
+	litValue := valueFromAny(litVal)
 	return func(row *Row) (bool, error) {
 		if idx < 0 {
 			// Try direct match first (qualified name like "t1.a").
@@ -579,7 +645,8 @@ func makeCompiledCmp(colName string, litVal any, cmp func(a, b any) bool) func(*
 		if idx >= len(row.Data) {
 			return false, nil
 		}
-		return cmp(row.Data[idx], litVal), nil
+		// Direct Value comparison — no boxing.
+		return cmp(row.Data[idx], litValue), nil
 	}
 }
 
@@ -628,6 +695,117 @@ func extractLiteral(e PS.Expr) (any, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// extractColColPair extracts (leftColName, rightColName, ok) from a
+// BinaryExpr where both sides are column references (Ident or QualifiedName).
+// This enables compilation of equi-join predicates like "t1.a = t2.b".
+func extractColColPair(e *PS.BinaryExpr) (string, string, bool) {
+	leftCol, leftOK := colRefName(e.Left)
+	rightCol, rightOK := colRefName(e.Right)
+	if leftOK && rightOK {
+		return leftCol, rightCol, true
+	}
+	return "", "", false
+}
+
+// makeCompiledColColCmp builds a compiled comparison function for
+// two column references. It handles both bare names ("a") and
+// qualified names ("t1.a"), with fallbacks for prefixed rows.
+func makeCompiledColColCmp(leftCol, rightCol string, op int) func(*Row) (bool, error) {
+	// Pre-resolve indices on the first call to avoid repeated linear scans.
+	var leftIdx, rightIdx int = -1, -1
+
+	return func(row *Row) (bool, error) {
+		// Resolve column indices lazily.
+		if leftIdx < 0 {
+			leftIdx = findColIndex(row, leftCol)
+		}
+		if rightIdx < 0 {
+			rightIdx = findColIndex(row, rightCol)
+		}
+
+		// If either column is not found, the comparison yields false.
+		if leftIdx < 0 || rightIdx < 0 || leftIdx >= len(row.Data) || rightIdx >= len(row.Data) {
+			return false, nil
+		}
+
+		a, b := row.Data[leftIdx], row.Data[rightIdx]
+
+		switch op {
+		case int(LX.T_EQ):
+			return equalValue(a, b), nil
+		case int(LX.T_NE):
+			if isNullValue(a) || isNullValue(b) {
+				return false, nil
+			}
+			return !equalValue(a, b), nil
+		case int(LX.T_GT):
+			return compare(a, b) > 0, nil
+		case int(LX.T_GE):
+			return compare(a, b) >= 0, nil
+		case int(LX.T_LT):
+			return compare(a, b) < 0, nil
+		case int(LX.T_LE):
+			return compare(a, b) <= 0, nil
+		}
+		return false, nil
+	}
+}
+
+// findColIndex finds the column index for a name in a row, handling
+// bare names, qualified names, and suffix matches for prefixed rows.
+func findColIndex(row *Row, name string) int {
+	lower := strings.ToLower(name)
+	bareName := name
+	hasDot := false
+	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+		bareName = name[dot+1:]
+		hasDot = true
+	}
+	bareLower := strings.ToLower(bareName)
+
+	// For qualified names (containing dot), prefer exact linear scan
+	// to avoid colIndex's duplicate-key issue in self-joins where
+	// both sides produce columns with the same qualified prefix.
+	if hasDot {
+		for i, c := range row.Cols {
+			if strings.EqualFold(c, name) && i < len(row.Data) {
+				return i
+			}
+		}
+	}
+
+	// Fast path: use colIndex map (safe for bare names or when
+	// the qualified name wasn't found via linear scan).
+	if row.colIndex != nil {
+		if idx, ok := row.colIndex[lower]; ok && idx < len(row.Data) {
+			return idx
+		}
+		if idx, ok := row.colIndex[bareLower]; ok && idx < len(row.Data) {
+			return idx
+		}
+	}
+
+	// Linear scan for exact match (bare or qualified).
+	for i, c := range row.Cols {
+		cl := strings.ToLower(c)
+		if cl == lower || cl == bareLower {
+			if i < len(row.Data) {
+				return i
+			}
+			return -1
+		}
+	}
+
+	// Suffix match for bare names on prefixed rows (e.g., "a" matches "t1.a").
+	for i, c := range row.Cols {
+		if strings.HasSuffix(strings.ToLower(c), "."+bareLower) && i < len(row.Data) {
+			return i
+		}
+	}
+
+	return -1
 }
 
 // compileProjectExprs compiles SELECT expressions into fast-path

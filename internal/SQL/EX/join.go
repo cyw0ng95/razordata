@@ -73,8 +73,15 @@ blockMode    bool
 	// REQ000816: blkSharedCols/ColIndex built lazily per batch,
 	// reused across all emit rows in the batch to skip per-row
 	// buildColIndex in downstream Lookup.
+	// REQ000802+: blkDataBuf/blkDataPerRow/blkDataOffset provide
+	// a shared data buffer for block-mode output rows, eliminating
+	// per-row make([]Value) allocations.
 	blkSharedCols     []string
+	blkSharedTypes    []int
 	blkSharedColIndex map[string]int
+	blkDataBuf        []Value
+	blkDataPerRow     int
+	blkDataOffset     int
 }
 
 func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error), kind JoinKind) *NestedLoopJoin {
@@ -266,7 +273,10 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 
 	j.sharedColIndex = make(map[string]int, nCols)
 	for i, c := range j.sharedCols {
-		j.sharedColIndex[strings.ToLower(c)] = i
+		key := strings.ToLower(c)
+		if _, exists := j.sharedColIndex[key]; !exists {
+			j.sharedColIndex[key] = i
+		}
 	}
 	// Pre-allocate a single contiguous Data buffer for all output
 	// rows. Each output row gets a non-overlapping sub-slice
@@ -383,6 +393,12 @@ func (j *NestedLoopJoin) Close() error {
 	j.blkRightPos = 0
 	j.blkResultBuf = nil
 	j.blkResultPos = 0
+	j.blkSharedCols = nil
+	j.blkSharedTypes = nil
+	j.blkSharedColIndex = nil
+	j.blkDataBuf = nil
+	j.blkDataPerRow = 0
+	j.blkDataOffset = 0
 	_ = j.left.Close()
 	return j.right.Close()
 }
@@ -444,23 +460,45 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 		j.blkRightRows = append(j.blkRightRows, inner)
 	}
 
-	// REQ000816: build blkSharedCols + blkSharedColIndex once per
+	// REQ000816: build blkSharedCols/blkSharedTypes/blkSharedColIndex once per
 	// batch. Used by every emit in this batch so downstream Lookup
 	// can skip per-row buildColIndex.
 	if len(j.blkLeftBatch) > 0 && len(j.blkRightRows) > 0 {
 		lCols := j.blkLeftBatch[0].Cols
 		rCols := j.blkRightRows[0].Cols
+		lTypes := j.blkLeftBatch[0].Types
+		rTypes := j.blkRightRows[0].Types
 		j.blkSharedCols = make([]string, 0, len(lCols)+len(rCols))
 		j.blkSharedCols = append(j.blkSharedCols, lCols...)
 		j.blkSharedCols = append(j.blkSharedCols, rCols...)
+		j.blkSharedTypes = make([]int, 0, len(lTypes)+len(rTypes))
+		j.blkSharedTypes = append(j.blkSharedTypes, lTypes...)
+		j.blkSharedTypes = append(j.blkSharedTypes, rTypes...)
 		j.blkSharedColIndex = make(map[string]int, len(j.blkSharedCols))
 		for i, c := range j.blkSharedCols {
-			j.blkSharedColIndex[c] = i
+			key := strings.ToLower(c)
+			if _, exists := j.blkSharedColIndex[key]; !exists {
+				j.blkSharedColIndex[key] = i
+			}
 		}
 	}
 
 	// Match all left batch rows against right rows, emitting in
 	// left-primary order so LEFT JOIN results match NLJ ordering.
+	// REQ000802+: use blkDataBuf to eliminate per-row Data allocations.
+	if len(j.blkRightRows) == 0 {
+		// Right side empty — no matches possible; move to next batch.
+		j.blkLeftBatch = j.blkLeftBatch[:0]
+		return j.nextBlock(ctx)
+	}
+	blkDataPerRow := len(j.blkLeftBatch[0].Data) + len(j.blkRightRows[0].Data)
+	maxMatches := len(j.blkLeftBatch) * len(j.blkRightRows)
+	// Ensure blkDataBuf has enough capacity for this batch.
+	if cap(j.blkDataBuf) < maxMatches*blkDataPerRow {
+		j.blkDataBuf = make([]Value, 0, maxMatches*blkDataPerRow)
+	}
+	// Reset length for this batch (capacity retained across batches).
+	j.blkDataBuf = j.blkDataBuf[:0]
 	for _, l := range j.blkLeftBatch {
 		matched := false
 		for _, r := range j.blkRightRows {
@@ -475,12 +513,34 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 				}
 			}
 			matched = true
-			result := joinRowsLLWithCols(&l, &r, j.blkSharedCols, nil, j.blkSharedColIndex)
+			// Extend buffer by exactly blkDataPerRow for this row.
+			off := len(j.blkDataBuf)
+			j.blkDataBuf = j.blkDataBuf[:off+blkDataPerRow]
+			dataSlice := j.blkDataBuf[off : off+blkDataPerRow : off+blkDataPerRow]
+			result := Row{
+				Cols:     j.blkSharedCols,
+				Types:    j.blkSharedTypes,
+				Data:     dataSlice,
+				colIndex: j.blkSharedColIndex,
+			}
+			// Fill the data slice directly.
+			copy(result.Data, l.Data)
+			copy(result.Data[len(l.Data):], r.Data)
 			j.blkResultBuf = append(j.blkResultBuf, result)
 		}
 		if !matched && j.leftOuter {
 			nullRow := j.nullRightRow()
-			result := joinRowsLLWithCols(&l, &nullRow, j.blkSharedCols, nil, j.blkSharedColIndex)
+			off := len(j.blkDataBuf)
+			j.blkDataBuf = j.blkDataBuf[:off+blkDataPerRow]
+			dataSlice := j.blkDataBuf[off : off+blkDataPerRow : off+blkDataPerRow]
+			result := Row{
+				Cols:     j.blkSharedCols,
+				Types:    j.blkSharedTypes,
+				Data:     dataSlice,
+				colIndex: j.blkSharedColIndex,
+			}
+			copy(result.Data, l.Data)
+			copy(result.Data[len(l.Data):], nullRow.Data)
 			j.blkResultBuf = append(j.blkResultBuf, result)
 		}
 	}

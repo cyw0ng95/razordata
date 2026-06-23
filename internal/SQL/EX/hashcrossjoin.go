@@ -33,19 +33,20 @@ type HashCrossJoin struct {
 	buckets map[uint64][]int // hash → indices into rightRows
 	// Materialized rows from each side.
 	rightRows []Row
-	// Probe phase: current left row + position in its matching bucket.
-	leftRow      *Row
-	bucketPos    int // index into buckets[hash] slice
-	bucketHash   uint64
-	probeBuilt   bool // true after build() ran successfully
 	// REQ000816: left side is materialized lazily so we can build
-	// a shared colIndex for output rows. Streaming probe forced
-	// per-row buildColIndex in downstream Eval.
+	// a shared colIndex for output rows.
 	leftRows []Row
-	leftIdx  int
-	// REQ000816: sharedColIndex built from materialized left+right
-	// layouts, reused across all emitted rows to skip per-row
-	// buildColIndex in downstream Lookup.
+	probeBuilt bool // true after build() + materializeLeft() ran successfully
+	// Probe phase: pre-computed matches from materializeLeft.
+	// REQ000802+: eliminates on-the-fly probing and per-row
+	// Data allocations by building all matches upfront with a
+	// shared data buffer.
+	matches    []Row
+	matchPos   int
+	dataBuf    []Value
+	dataPerRow int
+	// REQ000816: shared col metadata built once, reused across
+	// all emitted rows to skip per-row buildColIndex.
 	sharedColIndex map[string]int
 	sharedCols     []string
 	sharedTypes    []int
@@ -82,8 +83,8 @@ func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		// REQ000816: materialize left side once so we can build
-		// a shared colIndex for output rows. Streaming probe
-		// forced per-row buildColIndex in downstream Eval.
+		// a shared colIndex for output rows. Streaming probe forced
+		// per-row buildColIndex in downstream Eval.
 		if err := j.materializeLeft(ctx); err != nil {
 			return Row{}, err
 		}
@@ -91,54 +92,20 @@ func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {
 	if j.buckets == nil {
 		return Row{}, ErrNoRows
 	}
-	// Probe loop: outer = current left row, inner = each match in its bucket.
-	for {
-		if j.leftRow == nil {
-			if j.leftIdx >= len(j.leftRows) {
-				return Row{}, ErrNoRows
-			}
-			j.leftRow = &j.leftRows[j.leftIdx]
-			j.leftIdx++
-			// Compute the hash of the left row's join key and look up
-			// its bucket. Reset bucketPos to walk through all matches.
-			keyVal, ok := lookupColumn(j.leftRow, j.leftTbl, j.leftKey)
-			if !ok || keyVal == nil {
-				// Left row missing the key column or has NULL —
-				// SQL NULL keys never match.
-				j.leftRow = nil
-				continue
-			}
-			j.bucketHash = hashValue(j.hashSeed, keyVal)
-			matches, found := j.buckets[j.bucketHash]
-			if !found {
-				// No matches in right for this left key. Skip.
-				j.leftRow = nil
-				continue
-			}
-			j.bucketPos = 0
-			// Stash matches slice in a side channel (we use bucketHash + a map).
-			j.buckets[j.bucketHash] = matches
-		}
-		// Emit the next match from the bucket.
-		matches := j.buckets[j.bucketHash]
-		if j.bucketPos >= len(matches) {
-			// Exhausted matches for this left row — move on.
-			j.leftRow = nil
-			continue
-		}
-		rightIdx := matches[j.bucketPos]
-		j.bucketPos++
-		right := j.rightRows[rightIdx]
-		// Set Outer so column lookups can resolve across the join.
-		right.Outer = j.leftRow
-		// REQ000816: emit row carries pre-built sharedColIndex.
-		return joinRowsLLWithCols(j.leftRow, &right, j.sharedCols, j.sharedTypes, j.sharedColIndex), nil
+	// REQ000802+: return pre-computed matches from data buffer.
+	for j.matchPos < len(j.matches) {
+		m := j.matches[j.matchPos]
+		j.matchPos++
+		return m, nil
 	}
+	return Row{}, ErrNoRows
 }
 
 // materializeLeft reads all rows from the left side into leftRows
 // with table-prefixed columns, then merges with rightRows[0] to
 // build sharedCols/sharedColIndex. REQ000816.
+// REQ000802+: also pre-computes all join matches using a
+// pre-allocated data buffer to eliminate per-row allocations.
 func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 	const maxMaterialize = 1024
 	j.leftRows = make([]Row, 0, 64)
@@ -172,7 +139,10 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 	j.sharedTypes = append(j.sharedTypes, j.rightRows[0].Types...)
 	j.sharedColIndex = make(map[string]int, len(j.sharedCols))
 	for i, c := range j.sharedCols {
-		j.sharedColIndex[c] = i
+		key := strings.ToLower(c)
+		if _, exists := j.sharedColIndex[key]; !exists {
+			j.sharedColIndex[key] = i
+		}
 	}
 	for i := range j.leftRows {
 		j.leftRows[i].Cols = j.sharedCols[:len(lCols)]
@@ -181,6 +151,49 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 	for i := range j.rightRows {
 		j.rightRows[i].Cols = j.sharedCols[len(lCols):]
 		j.rightRows[i].colIndex = j.sharedColIndex
+	}
+	// REQ000802+: pre-compute all matches with data buffer.
+	// Count total matches first.
+	dataPerRow := len(lCols) + len(rCols)
+	var totalMatches int
+	for _, l := range j.leftRows {
+		keyVal, ok := lookupColumn(&l, j.leftTbl, j.leftKey)
+		if !ok || keyVal == nil {
+			continue
+		}
+		h := hashValue(j.hashSeed, keyVal)
+		matches := j.buckets[h]
+		totalMatches += len(matches)
+	}
+	// Pre-allocate contiguous data buffer.
+	j.dataPerRow = dataPerRow
+	j.dataBuf = make([]Value, 0, totalMatches*dataPerRow)
+	j.matches = make([]Row, 0, totalMatches)
+	j.matchPos = 0
+
+	for _, l := range j.leftRows {
+		keyVal, ok := lookupColumn(&l, j.leftTbl, j.leftKey)
+		if !ok || keyVal == nil {
+			continue
+		}
+		h := hashValue(j.hashSeed, keyVal)
+		matches := j.buckets[h]
+		for _, rightIdx := range matches {
+			r := j.rightRows[rightIdx]
+			off := len(j.dataBuf)
+			// Carve non-overlapping sub-slice from dataBuf.
+			dataSlice := j.dataBuf[off : off : off+dataPerRow]
+			out := Row{
+				Cols:     j.sharedCols,
+				Types:    j.sharedTypes,
+				Data:     dataSlice,
+				colIndex: j.sharedColIndex,
+			}
+			out.Data = append(out.Data, l.Data...)
+			out.Data = append(out.Data, r.Data...)
+			j.dataBuf = append(j.dataBuf, out.Data...)
+			j.matches = append(j.matches, out)
+		}
 	}
 	return nil
 }
@@ -229,9 +242,14 @@ func (j *HashCrossJoin) Close() error {
 	j.probeBuilt = false
 	j.buckets = nil
 	j.rightRows = nil
-	j.leftRow = nil
-	j.bucketPos = 0
-	j.bucketHash = 0
+	j.leftRows = nil
+	j.matches = nil
+	j.matchPos = 0
+	j.dataBuf = nil
+	j.dataPerRow = 0
+	j.sharedColIndex = nil
+	j.sharedCols = nil
+	j.sharedTypes = nil
 	_ = j.left.Close()
 	return j.right.Close()
 }

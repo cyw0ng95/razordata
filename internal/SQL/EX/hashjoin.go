@@ -22,6 +22,9 @@ import (
 // Current limits:
 //   - INNER JOIN only (LEFT/RIGHT/FULL deferred to NestedLoopJoin)
 //   - Equi-join only (non-equi joins deferred to NestedLoopJoin)
+//
+// REQ000802+: Pre-computes all matches during build with a
+// shared data buffer, eliminating per-row Data allocations.
 type HashJoin struct {
 	left       Operator
 	right      Operator
@@ -33,15 +36,18 @@ type HashJoin struct {
 	buckets    []hashBucket
 	leftRows   []Row
 	rightRows  []Row
-	emitIdx    int
-	bucketPos  int // position within current bucket's hash/rightRows for multi-match
-	emitRow    Row
+	// REQ000802+: pre-computed matches with data buffer.
+	matches    []Row
+	matchPos   int
+	dataBuf    []Value
+	dataPerRow int
 	done       bool
-	// sharedCols and sharedColIndex are built once from the first
-	// output row's column layout and shared across all emitted rows,
-	// eliminating per-row make+append for Cols and per-row
-	// buildColIndex for downstream operators (REQ000794).
+	// sharedCols, sharedTypes and sharedColIndex are built once
+	// from the first output row's column layout and shared across
+	// all emitted rows, eliminating per-row make+append for Cols/Types
+	// and per-row buildColIndex for downstream operators (REQ000794).
 	sharedCols     []string
+	sharedTypes    []int
 	sharedColIndex map[string]int
 }
 
@@ -73,9 +79,9 @@ func (j *HashJoin) LeftChild() Operator { return j.left }
 func (j *HashJoin) RightChild() Operator { return j.right }
 
 // Next produces the next matching pair. First call performs
-// the full Build + Probe. Subsequent calls iterate over
-// all matches from the current bucket position before advancing
-// to the next left row. ErrNoRows when done.
+// the full Build + Probe with match pre-computation. Subsequent
+// calls return pre-built rows from the data buffer.
+// ErrNoRows when done.
 func (j *HashJoin) Next(ctx context.Context) (Row, error) {
 	if j.done {
 		return Row{}, ErrNoRows
@@ -88,27 +94,11 @@ func (j *HashJoin) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 	}
-	for j.emitIdx < len(j.leftRows) {
-		left := j.leftRows[j.emitIdx]
-		lk := lookupKeys(left, j.leftKeys)
-		hash := hashKeys(lk)
-		idx := int(hash & uint64(j.partitions-1))
-		bucket := j.buckets[idx]
-		// Continue scanning from the saved position within the
-		// bucket to find the next matching right row.
-		for k := j.bucketPos; k < len(bucket.hashes); k++ {
-			if bucket.hashes[k] == hash {
-				right := bucket.rightRows[k]
-				rk := lookupKeys(right, j.rightKeys)
-				if valuesEqualMulti(lk, rk) {
-					j.bucketPos = k + 1
-					return joinRows(left, right, j.sharedCols, j.sharedColIndex), nil
-				}
-			}
-		}
-		// No more matches for this left row; advance to next.
-		j.emitIdx++
-		j.bucketPos = 0
+	// REQ000802+: return pre-computed matches from data buffer.
+	for j.matchPos < len(j.matches) {
+		m := j.matches[j.matchPos]
+		j.matchPos++
+		return m, nil
 	}
 	j.done = true
 	return Row{}, ErrNoRows
@@ -118,11 +108,13 @@ func (j *HashJoin) Close() error {
 	j.buckets = nil
 	j.leftRows = nil
 	j.rightRows = nil
-	j.emitIdx = 0
-	j.bucketPos = 0
+	j.matches = nil
+	j.matchPos = 0
+	j.dataBuf = nil
+	j.dataPerRow = 0
 	j.done = false
-	j.emitRow = Row{}
 	j.sharedCols = nil
+	j.sharedTypes = nil
 	j.sharedColIndex = nil
 	if j.left != nil {
 		_ = j.left.Close()
@@ -134,7 +126,9 @@ func (j *HashJoin) Close() error {
 }
 
 // buildAndProbe reads the right side into partition buckets,
-// then reads the left side and probes.
+// then reads the left side and probes. All matches are
+// pre-computed with a shared data buffer to eliminate per-row
+// Data allocations (REQ000802+).
 func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	j.buckets = make([]hashBucket, j.partitions)
 	// Materialize right side.
@@ -164,20 +158,87 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		}
 		j.leftRows = append(j.leftRows, row)
 	}
-	// Pre-build sharedCols and sharedColIndex from the first output
-	// row's column layout so every emitted row reuses them instead
-	// of allocating fresh Cols slices and triggering per-row
-	// buildColIndex downstream.
+	// Pre-build sharedCols, sharedTypes and sharedColIndex from the
+	// first output row's column layout so every emitted row reuses
+	// them instead of allocating fresh Cols/Types slices and
+	// triggering per-row buildColIndex downstream.
 	if len(j.leftRows) > 0 && len(j.rightRows) > 0 {
 		n := len(j.leftRows[0].Cols) + len(j.rightRows[0].Cols)
 		j.sharedCols = make([]string, 0, n)
 		j.sharedCols = append(j.sharedCols, j.leftRows[0].Cols...)
 		j.sharedCols = append(j.sharedCols, j.rightRows[0].Cols...)
+		j.sharedTypes = make([]int, 0, n)
+		j.sharedTypes = append(j.sharedTypes, j.leftRows[0].Types...)
+		j.sharedTypes = append(j.sharedTypes, j.rightRows[0].Types...)
 		j.sharedColIndex = make(map[string]int, n)
 		for i, c := range j.sharedCols {
-			j.sharedColIndex[strings.ToLower(c)] = i
+			key := strings.ToLower(c)
+			if _, exists := j.sharedColIndex[key]; !exists {
+				j.sharedColIndex[key] = i
+			}
 		}
 	}
+	// REQ000802+: pre-compute all matches with data buffer.
+	// First, pre-compute left-side lookup keys to avoid
+	// redundant lookups during match counting and building.
+	type leftInfo struct {
+		lk   []Value
+		hash uint64
+		idx  int
+	}
+	leftInfos := make([]leftInfo, 0, len(j.leftRows))
+	for _, left := range j.leftRows {
+		lk := lookupKeys(left, j.leftKeys)
+		hash := hashKeys(lk)
+		idx := int(hash & uint64(j.partitions-1))
+		leftInfos = append(leftInfos, leftInfo{lk: lk, hash: hash, idx: idx})
+	}
+
+	// Count total matches.
+	var totalMatches int
+	for i := range j.leftRows {
+		l := leftInfos[i]
+		bucket := j.buckets[l.idx]
+		for k := range bucket.hashes {
+			if bucket.hashes[k] == l.hash && valuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys)) {
+				totalMatches++
+			}
+		}
+	}
+
+	// Pre-allocate contiguous data buffer and matches slice.
+	if len(j.leftRows) == 0 || len(j.rightRows) == 0 {
+		return nil
+	}
+	dataPerRow := len(j.leftRows[0].Cols) + len(j.rightRows[0].Cols)
+	j.dataPerRow = dataPerRow
+	j.dataBuf = make([]Value, 0, totalMatches*dataPerRow)
+	j.matches = make([]Row, 0, totalMatches)
+	j.matchPos = 0
+
+	// Build matches.
+	for i := range j.leftRows {
+		l := leftInfos[i]
+		bucket := j.buckets[l.idx]
+		for k := range bucket.hashes {
+			if bucket.hashes[k] == l.hash && valuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys)) {
+				right := bucket.rightRows[k]
+				off := len(j.dataBuf)
+				dataSlice := j.dataBuf[off : off : off+dataPerRow]
+				out := Row{
+					Cols:     j.sharedCols,
+					Types:    j.sharedTypes,
+					Data:     dataSlice,
+					colIndex: j.sharedColIndex,
+				}
+				out.Data = append(out.Data, j.leftRows[i].Data...)
+				out.Data = append(out.Data, right.Data...)
+				j.dataBuf = append(j.dataBuf, out.Data...)
+				j.matches = append(j.matches, out)
+			}
+		}
+	}
+
 	return nil
 }
 
