@@ -107,6 +107,15 @@ type SeqScan struct {
 	iu *IndexUsage
 	// availableIdx tracks indexes available on this table for skip detection.
 	availableIdx []string
+
+	// REQ000820: pointLookup maps column value→row indices for in-memory
+	// tables. When set, Next() only returns rows whose column value is in
+	// the lookup set. Built lazily on first Next() call.
+	pointLookup    map[any]bool   // wanted values
+	pointLookupCol string         // column name to index by (e.g. "a")
+	pointLookupPos int            // current position within the matching indices
+	pointLookupOnce bool          // true after lookup is built
+	pointLookupRows []int         // pre-computed matching row indices
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -148,6 +157,57 @@ func NewSeqScan(table string) *SeqScan {
 	return &SeqScan{table: table}
 }
 
+// WithPointLookup sets up point-lookup filtering on an in-memory table.
+// Only rows where the given column's value is in values are returned.
+// REQ000820.
+func (s *SeqScan) WithPointLookup(col string, values []any) *SeqScan {
+	if len(values) == 0 {
+		return s
+	}
+	s.pointLookupCol = col
+	want := make(map[any]bool, len(values))
+	for _, v := range values {
+		want[v] = true
+	}
+	s.pointLookup = want
+	s.pointLookupOnce = false
+	return s
+}
+
+// buildPointLookup scans the in-memory table and pre-computes the list
+// of row indices whose pointLookupCol value is in the pointLookup set.
+// REQ000820.
+func (s *SeqScan) buildPointLookup(src []Row) {
+	s.pointLookupOnce = true
+	if len(src) == 0 || s.pointLookup == nil {
+		s.pointLookupRows = nil
+		return
+	}
+	// Find column index.
+	colIdx := -1
+	for i, c := range src[0].Cols {
+		if strings.EqualFold(c, s.pointLookupCol) {
+			colIdx = i
+			break
+		}
+	}
+	if colIdx < 0 || colIdx >= len(src[0].Data) {
+		s.pointLookup = nil
+		return
+	}
+	// Scan table and collect matching row indices.
+	var matching []int
+	for i, row := range src {
+		v := row.Data[colIdx].ToAny()
+		if s.pointLookup[v] {
+			matching = append(matching, i)
+		}
+	}
+	s.pointLookupRows = matching
+	s.pointLookupPos = 0
+	s.pointLookup = nil // free the map, no longer needed
+}
+
 // NewSeqScanWithStore builds a SeqScan that reads from the engine instead
 // of the in-memory table registry. The schema must have been registered.
 func NewSeqScanWithStore(store Store, table string) (*SeqScan, error) {
@@ -173,6 +233,25 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 	tablesMu.RLock()
 	defer tablesMu.RUnlock()
 	src := tables[s.table]
+
+	// REQ000820: if pointLookup is set, build the value→row-index map
+	// lazily and iterate only over matching rows.
+	if s.pointLookup != nil && !s.pointLookupOnce {
+		s.buildPointLookup(src)
+	}
+	if s.pointLookupRows != nil {
+		if s.pointLookupPos >= len(s.pointLookupRows) {
+			return Row{}, ErrNoRows
+		}
+		r := src[s.pointLookupRows[s.pointLookupPos]]
+		s.pointLookupPos++
+		schema := getTableSchema(s.table, src)
+		if schema == nil {
+			return Row{}, ErrNoRows
+		}
+		return s.cloneRow(r, schema), nil
+	}
+
 	if s.pos >= len(src) {
 		return Row{}, ErrNoRows
 	}

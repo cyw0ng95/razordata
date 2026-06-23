@@ -704,6 +704,96 @@ func isColumnLiteralPair(a, b PS.Expr) bool {
 	return false
 }
 
+// tryApplyPointLookup checks if pred is a col IN (literal, ...) or
+// col = literal expression and sets up point-lookup on the scan.
+// REQ000820: only applies to in-memory SeqScan operators.
+func tryApplyPointLookup(scan Operator, pred PS.Expr) {
+	ss, ok := scan.(*SeqScan)
+	if !ok || ss.store != nil {
+		return // only for in-memory tables
+	}
+	col, values, ok := extractInListValues(pred)
+	if ok && len(values) > 0 {
+		ss.WithPointLookup(col, values)
+		return
+	}
+	// Single equality: col = literal
+	col, val, ok := extractSingleEquality(pred)
+	if ok {
+		ss.WithPointLookup(col, []any{val})
+	}
+}
+
+// extractInListValues extracts (columnName, values, ok) from a
+// predicate of the form "col IN (val1, val2, ...)" where all values
+// are literals. Only succeeds for Ident columns.
+func extractInListValues(pred PS.Expr) (string, []any, bool) {
+	bin, ok := pred.(*PS.BinaryExpr)
+	if !ok || bin.Op != int(LX.T_IN) {
+		return "", nil, false
+	}
+	col, ok := bin.Left.(*PS.Ident)
+	if !ok {
+		return "", nil, false
+	}
+	list, ok := bin.Right.(*PS.ListExpr)
+	if !ok || len(list.Items) == 0 {
+		return "", nil, false
+	}
+	values := make([]any, 0, len(list.Items))
+	for _, item := range list.Items {
+		switch v := item.(type) {
+		case *PS.NumberLiteral:
+			values = append(values, v.Val)
+		case *PS.StringLiteral:
+			values = append(values, v.Val)
+		case *PS.BoolLiteral:
+			values = append(values, v.Val)
+		case *PS.NullLiteral:
+			// skip NULLs — NULL IN (...) is always UNKNOWN
+		default:
+			return "", nil, false // non-literal value, can't pre-filter
+		}
+	}
+	return col.Name, values, true
+}
+
+// extractSingleEquality extracts (columnName, value, ok) from a
+// predicate of the form "col = literal".
+func extractSingleEquality(pred PS.Expr) (string, any, bool) {
+	bin, ok := pred.(*PS.BinaryExpr)
+	if !ok || bin.Op != int(LX.T_EQ) {
+		return "", nil, false
+	}
+	col, ok := bin.Left.(*PS.Ident)
+	if !ok {
+		col, ok = bin.Right.(*PS.Ident)
+		if !ok {
+			return "", nil, false
+		}
+		// col = literal form: right is the literal
+		switch v := bin.Left.(type) {
+		case *PS.NumberLiteral:
+			return col.Name, v.Val, true
+		case *PS.StringLiteral:
+			return col.Name, v.Val, true
+		case *PS.BoolLiteral:
+			return col.Name, v.Val, true
+		}
+		return "", nil, false
+	}
+	// col = literal: left is the ident
+	switch v := bin.Right.(type) {
+	case *PS.NumberLiteral:
+		return col.Name, v.Val, true
+	case *PS.StringLiteral:
+		return col.Name, v.Val, true
+	case *PS.BoolLiteral:
+		return col.Name, v.Val, true
+	}
+	return "", nil, false
+}
+
 // equiJoinKey checks if an expression is an equi-join condition
 // between two specific tables (col1 = col2). Returns the left and
 // right column names if it is, empty strings otherwise.
@@ -1253,9 +1343,11 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		}
 		pushedPredicates, crossTablePredicates = p.splitPredicatesByTable(conjuncts, allTables)
 		// Push predicates for the first table onto its scan.
+		// REQ000820: also set up point-lookup for IN-list predicates.
 		if firstPreds := pushedPredicates[s.From]; len(firstPreds) > 0 {
 			for _, pred := range firstPreds {
 				current = NewFilter(current, pred)
+				tryApplyPointLookup(scan, pred)
 			}
 		}
 	}
@@ -1334,8 +1426,11 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			if ssc, err := NewSeqScanWithStore(p.store, j.Right); err == nil {
 				rightScan = ssc
 			}
+			// REQ000820: apply point-lookup to the raw scan before
+			// wrapping it in Filter operators.
 			if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
 				for _, pred := range rightPreds {
+					tryApplyPointLookup(rightScan, pred)
 					rightScan = NewFilter(rightScan, pred)
 				}
 			}
