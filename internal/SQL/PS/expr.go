@@ -153,6 +153,13 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		}
 		p.advance()
 		agg := &AggregateFunc{Name: name, Arg: arg, Distinct: distinct}
+		if p.current.Type == LX.T_FILTER {
+			filter, err := p.parseFilterClause()
+			if err != nil {
+				return nil, err
+			}
+			agg.Filter = filter
+		}
 		if p.current.Type == LX.T_OVER {
 			return p.parseWindowFunc(name, []Expr{arg})
 		}
@@ -201,6 +208,13 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		}
 		// Single arg → aggregate function
 		agg := &AggregateFunc{Name: name, Arg: args[0], Distinct: distinct}
+		if p.current.Type == LX.T_FILTER {
+			filter, err := p.parseFilterClause()
+			if err != nil {
+				return nil, err
+			}
+			agg.Filter = filter
+		}
 		if p.current.Type == LX.T_OVER {
 			return p.parseWindowFunc(name, args)
 		}
@@ -309,9 +323,48 @@ func (p *Parser) parseFunctionCall(name string) (Expr, error) {
 		if name == "GROUP_CONCAT" && len(args) > 1 {
 			sep = args[1]
 		}
-		return &AggregateFunc{Name: name, Arg: arg, Distinct: distinct, Separator: sep}, nil
+		agg := &AggregateFunc{Name: name, Arg: arg, Distinct: distinct, Separator: sep}
+		if p.current.Type == LX.T_FILTER {
+			filter, err := p.parseFilterClause()
+			if err != nil {
+				return nil, err
+			}
+			agg.Filter = filter
+		}
+		return agg, nil
 	}
 	return &FunctionCall{Name: name, Args: args}, nil
+}
+
+// parseFilterClause parses FILTER (WHERE expr). REQ000747.
+// The caller has already consumed the closing paren of the function call,
+// and p.current is the FILTER token.
+func (p *Parser) parseFilterClause() (Expr, error) {
+	p.advance() // consume FILTER
+	if err := p.expect(LX.T_LPAREN); err != nil {
+		return nil, err
+	}
+	p.advance() // consume '('
+	if p.current.Type != LX.T_WHERE {
+		return nil, &SyntaxError{
+			Input:    p.lex.Input(),
+			Line:     p.current.Line,
+			Col:      p.current.Col,
+			Expected: "WHERE",
+			Got:      tokenName(p.current.Type),
+			Lexeme:   p.current.Lexeme,
+		}
+	}
+	p.advance() // consume WHERE
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(LX.T_RPAREN); err != nil {
+		return nil, err
+	}
+	p.advance() // consume ')'
+	return expr, nil
 }
 
 func (p *Parser) parseUnary() (Expr, error) {

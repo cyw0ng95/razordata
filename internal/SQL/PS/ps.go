@@ -214,6 +214,13 @@ var tokenNames = [...]string{
 	LX.T_ALL:          "ALL",
 	LX.T_ATTACH:       "ATTACH",
 	LX.T_DETACH:       "DETACH",
+	LX.T_MATERIALIZED: "MATERIALIZED",
+	LX.T_REFRESH:      "REFRESH",
+	LX.T_FILTER:       "FILTER",
+	LX.T_EXCLUDE:      "EXCLUDE",
+	LX.T_OTHERS:       "OTHERS",
+	LX.T_TIES:         "TIES",
+	LX.T_GROUPS:       "GROUPS",
 }
 
 // isAggregateName reports whether a bare identifier name is a

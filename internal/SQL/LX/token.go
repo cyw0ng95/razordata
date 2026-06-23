@@ -207,6 +207,15 @@ const (
 	T_MATERIALIZED // REQ000316: MATERIALIZED VIEW
 	T_REFRESH      // REQ000316: REFRESH MATERIALIZED VIEW
 
+	// REQ000747: FILTER clause on aggregate functions
+	T_FILTER
+	// REQ000748: EXCLUDE clause in window frames
+	T_EXCLUDE
+	T_OTHERS
+	T_TIES
+	// REQ000746: GROUPS window frame type
+	T_GROUPS
+
 	T_ERROR TokenType = -1
 )
 
@@ -410,6 +419,11 @@ var tokenTypeNames = [...]string{
 	T_DETACH:        "DETACH",
 	T_MATERIALIZED:  "MATERIALIZED",
 	T_REFRESH:       "REFRESH",
+	T_FILTER:        "FILTER",
+	T_EXCLUDE:       "EXCLUDE",
+	T_OTHERS:        "OTHERS",
+	T_TIES:          "TIES",
+	T_GROUPS:        "GROUPS",
 }
 
 func (t Token) String() string {

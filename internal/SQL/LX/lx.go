@@ -180,6 +180,11 @@ var keywords = map[string]TokenType{
 	"DETACH":        T_DETACH,       // REQ000557
 	"MATERIALIZED":  T_MATERIALIZED, // REQ000316
 	"REFRESH":       T_REFRESH,      // REQ000316
+	"FILTER":        T_FILTER,       // REQ000747
+	"EXCLUDE":       T_EXCLUDE,      // REQ000748
+	"OTHERS":        T_OTHERS,       // REQ000748
+	"TIES":          T_TIES,         // REQ000748
+	"GROUPS":        T_GROUPS,       // REQ000746
 }
 
 type Lexer struct {

@@ -28,6 +28,15 @@ type NestedLoopJoin struct {
 	on        func(outer, inner *Row) (bool, error)
 	kind      JoinKind
 	leftOuter bool // REQ000685: true for LEFT/LEFT OUTER JOIN
+	// REQ000743: true for RIGHT/RIGHT OUTER JOIN
+	rightOuter bool
+	// rightMode indicates the right side has been materialized for
+	// RIGHT/FULL OUTER JOIN processing. When true, j.rightRows holds
+	// the materialized rows and the main loop iterates over them
+	// instead of re-scanning the right operator per left row.
+	rightMode    bool
+	rightMatched []bool  // tracks which materialized right rows matched (for RIGHT/FULL)
+	rightEmitted bool    // true after unmatched right rows have been emitted
 	leftRow   *Row
 	rightPos  int
 	rightRows []Row
@@ -103,13 +112,14 @@ func (j *NestedLoopJoin) WithProjection(projectedCols []string) *NestedLoopJoin 
 
 func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error), kind JoinKind) *NestedLoopJoin {
 	return &NestedLoopJoin{
-		left:      left,
-		right:     right,
-		leftTbl:   leftTable,
-		rightTbl:  rightTable,
-		on:        on,
-		kind:      kind,
-		leftOuter: kind == JoinKindLeft || kind == JoinKindFull,
+		left:       left,
+		right:      right,
+		leftTbl:    leftTable,
+		rightTbl:   rightTable,
+		on:         on,
+		kind:       kind,
+		leftOuter:  kind == JoinKindLeft || kind == JoinKindFull,
+		rightOuter: kind == JoinKindRight || kind == JoinKindFull,
 	}
 }
 
@@ -120,6 +130,67 @@ func (j *NestedLoopJoin) RightChild() Operator { return j.right }
 func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 	if err := ctx.Err(); err != nil {
 		return Row{}, err
+	}
+	// REQ000743/744: for RIGHT/FULL OUTER JOIN, materialize the right
+	// side on first call so we can track which rows matched.
+	if j.rightOuter && !j.rightMode && j.leftRow == nil && len(j.rightRows) == 0 {
+		if err := j.materializeRightForOuter(ctx); err != nil {
+			return Row{}, err
+		}
+	}
+	// REQ000743/744: after exhausting the left side, emit unmatched
+	// right rows with NULL-padded left columns.
+	if j.rightOuter && j.rightEmitted {
+		return Row{}, ErrNoRows
+	}
+	if j.rightOuter && j.leftRow == nil && !j.rightEmitted {
+		// Check if we have already exhausted all left rows.
+		// Try to get the next left row; if none, switch to
+		// right-outer emission phase.
+		row, lerr := j.left.Next(ctx)
+		if lerr != nil {
+			if lerr == ErrNoRows {
+				return j.emitUnmatchedRight(), nil
+			}
+			return Row{}, lerr
+		}
+		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
+		prefixed.tableName = row.tableName
+		if !hasAnyPrefix(row.Cols) {
+			prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
+		} else {
+			prefixed.Cols = append([]string(nil), row.Cols...)
+		}
+		j.leftRow = &prefixed
+		j.rightPos = 0
+		j.matched = false
+		// Iterate over materialized right rows.
+		for j.rightPos < len(j.rightRows) {
+			r := j.rightRows[j.rightPos]
+			j.rightPos++
+			r.Outer = j.leftRow
+			if j.on != nil {
+				ok, err := j.on(j.leftRow, &r)
+				if err != nil {
+					return Row{}, err
+				}
+				if !ok {
+					continue
+				}
+			}
+			j.matched = true
+			j.rightMatched[j.rightPos-1] = true
+			return joinRowsLL(j.leftRow, &r), nil
+		}
+		// No matches for this left row.
+		if j.leftOuter && !j.matched {
+			nullRow := j.nullRightRow()
+			result := joinRowsLL(j.leftRow, &nullRow)
+			j.leftRow = nil
+			return result, nil
+		}
+		j.leftRow = nil
+		return j.Next(ctx)
 	}
 	// REQ000800: try hash cross join on first call for small tables.
 	// Guard includes leftRow == nil to avoid re-entering tryHashCrossJoin
@@ -214,7 +285,7 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 // if hash mode was activated. REQ000800.
 func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 	// Only for INNER/CROSS without ON clause (pure cross product).
-	if j.on != nil || j.leftOuter {
+	if j.on != nil || j.leftOuter || j.rightOuter {
 		return false
 	}
 	// Materialize left side.
@@ -387,12 +458,75 @@ func (j *NestedLoopJoin) nullRightRow() Row {
 	return nullRow
 }
 
+// nullLeftRow returns a row with all NULL values for the left table schema.
+// REQ000743: used by RIGHT/FULL OUTER JOIN when a right row has no match.
+func (j *NestedLoopJoin) nullLeftRow() Row {
+	tablesMu.RLock()
+	leftSchema := tables[j.leftTbl]
+	tablesMu.RUnlock()
+
+	nullRow := Row{
+		Cols:  prefixCols(schemaCols(leftSchema), j.leftTbl),
+		Types: schemaTypes(leftSchema),
+		Data:  make([]Value, len(leftSchema)),
+	}
+	return nullRow
+}
+
+// materializeRightForOuter reads the entire right side into j.rightRows
+// and initializes j.rightMatched. Used by RIGHT/FULL OUTER JOIN.
+// REQ000743.
+func (j *NestedLoopJoin) materializeRightForOuter(ctx context.Context) error {
+	j.rightMode = true
+	j.rightMatched = nil
+	j.rightEmitted = false
+	j.rightRows = make([]Row, 0, 64)
+	for {
+		row, err := j.right.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return err
+		}
+		j.rightRows = append(j.rightRows, Row{
+			Cols:      prefixCols(row.Cols, j.rightTbl),
+			Types:     row.Types,
+			Data:      append([]Value(nil), row.Data...),
+			tableName: row.tableName,
+		})
+	}
+	j.rightMatched = make([]bool, len(j.rightRows))
+	return nil
+}
+
+// emitUnmatchedRight returns the next unmatched right row with
+// NULL-padded left columns. Sets rightEmitted=true when done.
+// REQ000743.
+func (j *NestedLoopJoin) emitUnmatchedRight() Row {
+	for i, matched := range j.rightMatched {
+		if !matched {
+			j.rightMatched[i] = true
+			nullLeft := j.nullLeftRow()
+			r := j.rightRows[i]
+			r.Outer = &nullLeft
+			return joinRowsLL(&nullLeft, &r)
+		}
+	}
+	j.rightEmitted = true
+	j.rightMode = false
+	return Row{}
+}
+
 func (j *NestedLoopJoin) Close() error {
 	j.hashMode = false
 	j.hashAttempted = false
 	j.leftRow = nil
 	j.leftRows = nil
 	j.rightRows = nil
+	j.rightMode = false
+	j.rightMatched = nil
+	j.rightEmitted = false
 	j.hashBuckets = nil
 	j.sharedColIndex = nil
 	j.sharedCols = nil

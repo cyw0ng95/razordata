@@ -81,8 +81,8 @@ func (p *Parser) parseWindowSpec() (*WindowSpec, error) {
 		}
 	}
 
-	// Frame clause (ROWS or RANGE)
-	if p.current.Type == LX.T_ROWS || p.current.Type == LX.T_RANGE {
+	// Frame clause (ROWS, RANGE, or GROUPS)
+	if p.current.Type == LX.T_ROWS || p.current.Type == LX.T_RANGE || p.current.Type == LX.T_GROUPS {
 		frameType := p.current.Lexeme
 		p.advance()
 		frame, err := p.parseWindowFrame(frameType)
@@ -99,7 +99,7 @@ func (p *Parser) parseWindowSpec() (*WindowSpec, error) {
 	return spec, nil
 }
 
-// parseWindowFrame parses ROWS/RANGE BETWEEN start AND end.
+// parseWindowFrame parses ROWS/RANGE/GROUPS [BETWEEN start AND end] [EXCLUDE ...].
 func (p *Parser) parseWindowFrame(frameType string) (*WindowFrame, error) {
 	frame := &WindowFrame{Type: strings.ToUpper(frameType)}
 	if err := p.expect(LX.T_BETWEEN); err != nil {
@@ -120,6 +120,40 @@ func (p *Parser) parseWindowFrame(frameType string) (*WindowFrame, error) {
 		return nil, err
 	}
 	frame.End = end
+	// REQ000748: optional EXCLUDE clause
+	if p.current.Type == LX.T_EXCLUDE {
+		p.advance()
+		switch p.current.Type {
+		case LX.T_CURRENT:
+			p.advance()
+			if err := p.expect(LX.T_ROW); err != nil {
+				return nil, err
+			}
+			p.advance()
+			frame.Exclude = "CURRENT_ROW"
+		case LX.T_GROUP:
+			p.advance()
+			frame.Exclude = "GROUP"
+		case LX.T_TIES:
+			p.advance()
+			frame.Exclude = "TIES"
+		case LX.T_NO:
+			p.advance()
+			if err := p.expect(LX.T_OTHERS); err != nil {
+				return nil, err
+			}
+			p.advance()
+			frame.Exclude = "NO_OTHERS"
+		default:
+			return nil, &SyntaxError{
+				Input:  p.lex.Input(),
+				Line:   p.current.Line,
+				Col:    p.current.Col,
+				Got:    tokenName(p.current.Type),
+				Lexeme: p.current.Lexeme,
+			}
+		}
+	}
 	return frame, nil
 }
 

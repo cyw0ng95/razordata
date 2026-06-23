@@ -117,6 +117,7 @@ type AggregateFunc struct {
 	Arg       Expr
 	Distinct  bool
 	Separator Expr // REQ000523: GROUP_CONCAT optional separator
+	Filter    Expr // REQ000747: optional FILTER (WHERE expr) clause
 }
 
 func (a *AggregateFunc) exprNode() {}
@@ -128,11 +129,12 @@ type WindowSpec struct {
 	Frame       *WindowFrame
 }
 
-// WindowFrame represents ROWS/RANGE frame specification.
+// WindowFrame represents ROWS/RANGE/GROUPS frame specification.
 type WindowFrame struct {
-	Type  string // "ROWS" or "RANGE"
-	Start FrameBound
-	End   FrameBound
+	Type    string // "ROWS", "RANGE", or "GROUPS"
+	Start   FrameBound
+	End     FrameBound
+	Exclude string // REQ000748: "CURRENT_ROW", "GROUP", "TIES", "NO_OTHERS", or ""
 }
 
 // FrameBound represents a frame boundary.
