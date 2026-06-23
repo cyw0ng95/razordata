@@ -424,3 +424,175 @@ func (s *sliceRowOp) Close() error {
 	s.pos = 0
 	return nil
 }
+
+// select4-style fixture: 8 tables with 100 rows each (5 int cols).
+func setupSelect4Tables(b *testing.B, n int) {
+	b.Helper()
+	UnregisterAll()
+	for i := 1; i <= 9; i++ {
+		name := fmt.Sprintf("t%d", i)
+		if i == 4 {
+			RegisterTableSchema("t4", []string{"a", "b", "c", "d", "e"})
+			continue
+		}
+		if i == 6 {
+			RegisterTableSchema("tn2", []string{"a", "b", "c", "d", "e"})
+			RegisterTableSchema("t6", []string{"a", "b", "c", "d", "e"})
+			continue
+		}
+		RegisterTableSchema(name, []string{"a", "b", "c", "d", "e"})
+	}
+	tablesMu.Lock()
+	for i := 1; i <= 9; i++ {
+		if i == 4 {
+			continue
+		}
+		names := []string{fmt.Sprintf("t%d", i)}
+		if i == 6 {
+			names = append(names, "tn2")
+		}
+		for _, name := range names {
+			for j := 0; j < n; j++ {
+				v := int64(j)
+				tables[name] = append(tables[name], Row{
+					Cols: []string{"a", "b", "c", "d", "e"},
+					Data: []Value{
+						NewIntValue(v % 1000),
+						NewIntValue(v % 900),
+						NewIntValue(v % 800),
+						NewIntValue(v % 700),
+						NewIntValue(v % 600),
+					},
+				})
+			}
+		}
+	}
+	tablesMu.Unlock()
+	RegisterTableSchema("t4", []string{"a", "b", "c", "d", "e"})
+	tablesMu.Lock()
+	for j := 0; j < n; j++ {
+		v := int64(j)
+		tables["t4"] = append(tables["t4"], Row{
+			Cols: []string{"a", "b", "c", "d", "e"},
+			Data: []Value{
+				NewIntValue(v % 1000),
+				NewIntValue(v % 900),
+				NewIntValue(v % 800),
+				NewIntValue(v % 700),
+				NewIntValue(v % 600),
+			},
+		})
+	}
+	tablesMu.Unlock()
+}
+
+// BenchmarkSelect4_CompoundUnion replicates the ~8.5s slow query pattern:
+// multi-table UNION ALL / EXCEPT / UNION with complex WHERE conditions
+// and large IN-lists.
+func BenchmarkSelect4_CompoundUnion(b *testing.B) {
+	setupSelect4Tables(b, 100)
+	ex := NewExecutor()
+	ctx := context.Background()
+	q := `SELECT b1 FROM t1
+ WHERE b1 IN (226,211,307,736,242,88,956)
+UNION ALL
+ SELECT c5 FROM t5
+ WHERE c5 IN (441,249,613,198,721,149,689,936,668,158,756,855,756)
+    OR d5 IN (309,957,118,4,274,806,321,964,553,691,919,282,360)
+UNION ALL
+ SELECT e3 FROM t3
+ WHERE (656=c3 OR c3=360)
+    OR e3 IN (929,145,211)
+    OR (724=e3 OR 175=c3 OR d3=645)
+EXCEPT
+ SELECT a2 FROM t2
+ WHERE NOT (c2 IN (312,22,179,374,688)
+         OR c2 IN (819,202,449,509,878)
+         OR (d2=847))
+UNION ALL
+ SELECT b6 FROM t6
+ WHERE (c6=490 AND a6=799 AND 933=b6 AND 794=e6 AND 778=d6)
+    OR (452=c6 OR 90=e6 OR 35=d6)
+    OR (c6=561 OR 337=d6 OR 811=a6)
+EXCEPT
+ SELECT d9 FROM t9
+ WHERE NOT (b9 IN (312,827,864,891,66,926,214,228,269,361,446,171,496))
+UNION
+ SELECT c8 FROM t8
+ WHERE (841=a8 AND 702=b8)
+    OR (b8=975 AND c8=225)
+    OR (416=e8 AND a8=883 AND d8=391 AND 52=b8 AND 381=c8)`
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, err := ex.QueryAll(ctx, q)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkSelect4_MultiTableJoin replicates the ~8.5s pattern of
+// 6-table CROSS JOIN with complex OR/AND WHERE conditions, large
+// IN-lists, and arithmetic expressions.
+func BenchmarkSelect4_MultiTableJoin(b *testing.B) {
+	setupSelect4Tables(b, 100)
+	ex := NewExecutor()
+	ctx := context.Background()
+	q := `SELECT x9, a8+113, x3, b5, a2, c1, e7+413, a4
+  FROM t3, t4, t1, t5, t8, t2, t9, t7
+ WHERE e8 IN (295,349,512,242)
+   AND 782=e7
+   AND b4 IN (402,888,408,829,2,986)
+   AND (a1=479 OR a1=20)
+   AND d9 IN (818,763,770)
+   AND c2 IN (161,758,511)
+   AND c5 IN (697,819,158,544,734,293)
+   AND a3=d7`
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, err := ex.QueryAll(ctx, q)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkSelect4_ORChain replicates the pattern of deeply nested
+// OR conditions with multiple IN-lists and range predicates.
+func BenchmarkSelect4_ORChain(b *testing.B) {
+	setupSelect4Tables(b, 100)
+	ex := NewExecutor()
+	ctx := context.Background()
+	q := `SELECT c6*856, x5
+  FROM t6, t5
+ WHERE c5 IN (820,44,696,824,668,723,598)
+   AND (d6=778 OR d6=867 OR d6=778)`
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, err := ex.QueryAll(ctx, q)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkSelect4_NotInChain replicates the NOT (x IN (...)) pattern
+// with large IN-lists.
+func BenchmarkSelect4_NotInChain(b *testing.B) {
+	setupSelect4Tables(b, 100)
+	ex := NewExecutor()
+	ctx := context.Background()
+	q := `SELECT d9 FROM t9
+ WHERE NOT (b9 IN (312,827,864,891,66,926,214,228,269,361,446,171,496))`
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, err := ex.QueryAll(ctx, q)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}

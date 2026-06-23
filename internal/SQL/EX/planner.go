@@ -3,6 +3,7 @@ package EX
 import (
 	"bytes"
 	"fmt"
+	"unicode"
 	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/ENG/LS"
@@ -570,6 +571,12 @@ func (p *Planner) findTableForColumn(col string) string {
 			}
 		}
 	}
+	// Fallback: try SLT naming convention (e8 => t8.e).
+	tablesMu.RLock()
+	defer tablesMu.RUnlock()
+	if tbl := resolveTableForColumn(col); tbl != "" {
+		return tbl
+	}
 	return ""
 }
 
@@ -642,6 +649,50 @@ func (p *Planner) canPushDown(e PS.Expr, table string) bool {
 	return len(tables) == 1 && tables[table]
 }
 
+// splitAlphaNum splits "e8" into ("e", "8").
+// Returns ("", "") if the string doesn't match {letters}{digits}.
+func splitAlphaNum(s string) (string, string) {
+	if s == "" {
+		return "", ""
+	}
+	// Find where digits start.
+	i := 0
+	for i < len(s) && unicode.IsLetter(rune(s[i])) {
+		i++
+	}
+	if i == 0 || i == len(s) {
+		return "", ""
+	}
+	// Verify the rest is all digits.
+	for j := i; j < len(s); j++ {
+		if !unicode.IsDigit(rune(s[j])) {
+			return "", ""
+		}
+	}
+	return s[:i], s[i:]
+}
+
+// resolveTableForColumn tries to resolve a column name using the
+// SLT naming convention: "e8" => column "e" of table "t8".
+// Must be called under tablesMu.RLock.
+func resolveTableForColumn(col string) string {
+	base, numStr := splitAlphaNum(col)
+	if base == "" {
+		return ""
+	}
+	tbl := "t" + numStr
+	cols, ok := schemas[tbl]
+	if !ok {
+		return ""
+	}
+	for _, c := range cols {
+		if c == base {
+			return tbl
+		}
+	}
+	return ""
+}
+
 // findTableInSchemas searches the in-memory schemas (populated
 // by CREATE TABLE) to find which table owns the given column.
 // Returns empty string if not found.
@@ -654,6 +705,10 @@ func findTableInSchemas(col string) string {
 				return tbl
 			}
 		}
+	}
+	// Fallback: try SLT naming convention (e8 => t8.e)
+	if tbl := resolveTableForColumn(col); tbl != "" {
+		return tbl
 	}
 	return ""
 }
