@@ -1454,12 +1454,26 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 				leftTbl = s.From
 				joinedTables[s.From] = true
 			} else {
+				// Secondary group: create a fresh scan for the base table.
+				var baseOp Operator = NewSeqScan(baseTable)
+				if ssc, err := NewSeqScanWithStore(p.store, baseTable); err == nil {
+					baseOp = ssc
+				}
+				// Push single-table predicates for the base table.
+				if basePreds := pushedPredicates[baseTable]; len(basePreds) > 0 {
+					for _, pred := range basePreds {
+						tryApplyPointLookup(baseOp, pred)
+						baseOp = NewFilter(baseOp, pred)
+					}
+				}
+				current = baseOp
 				leftTbl = baseTable
+				joinedTables[baseTable] = true
 			}
 
 			for ti, tbl := range group {
-				if gi == 0 && ti == 0 {
-					continue // skip base table of first group
+				if ti == 0 {
+					continue // skip base table (already set up as current)
 				}
 				if _, ok := joinedTables[tbl]; ok {
 					continue
