@@ -4,6 +4,8 @@ package EX
 
 import (
 	"testing"
+
+	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
 // TestCompareValue verifies REQ000776: compareValue operates directly
@@ -139,4 +141,62 @@ func TestEncodeDecodeBlobRoundTrip(t *testing.T) {
 	if !v.Equal(original.Data[0]) {
 		t.Errorf("round-trip mismatch: got %v, want %v", v, original.Data[0])
 	}
+}
+
+// TestEvalInValue verifies REQ000776: evalInValue uses per-kind
+// hash sets for O(1) IN-list probing without boxing.
+func TestEvalInValue(t *testing.T) {
+	expr := &PS.InExpr{
+		Expr: &PS.NumberLiteral{Val: 5},
+		List: []PS.Expr{
+			&PS.NumberLiteral{Val: 1},
+			&PS.NumberLiteral{Val: 3},
+			&PS.NumberLiteral{Val: 5},
+			&PS.NumberLiteral{Val: 7},
+			&PS.NumberLiteral{Val: 9},
+		},
+	}
+
+	t.Run("hit", func(t *testing.T) {
+		got, err := evalInValue(expr, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.Equal(NewBoolValue(true)) {
+			t.Errorf("got %v, want true", got)
+		}
+	})
+	t.Run("miss", func(t *testing.T) {
+		e2 := *expr
+		e2.Expr = &PS.NumberLiteral{Val: 4}
+		got, err := evalInValue(&e2, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.Equal(NewBoolValue(false)) {
+			t.Errorf("got %v, want false", got)
+		}
+	})
+	t.Run("null_target", func(t *testing.T) {
+		e2 := *expr
+		e2.Expr = &PS.NullLiteral{}
+		got, err := evalInValue(&e2, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.Equal(NullValue()) {
+			t.Errorf("got %v, want NULL", got)
+		}
+	})
+	t.Run("empty_list", func(t *testing.T) {
+		e2 := *expr
+		e2.List = nil
+		got, err := evalInValue(&e2, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.Equal(NewBoolValue(false)) {
+			t.Errorf("got %v, want false (empty IN)", got)
+		}
+	})
 }

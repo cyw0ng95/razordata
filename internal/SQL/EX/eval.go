@@ -134,107 +134,160 @@ func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 	if expr == nil {
 		return nil, nil
 	}
+	v, err := EvalValue(expr, row, params)
+	if err != nil {
+		return nil, err
+	}
+	return v.ToAny(), nil
+}
+
+// EvalValue is the canonical evaluator. Returns inline Value structs
+// instead of boxed any, avoiding convT64 overhead in the hot
+// evaluation path. REQ000776.
+func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
+	if expr == nil {
+		return NullValue(), nil
+	}
 
 	switch e := expr.(type) {
 	case *PS.NumberLiteral:
-		return e.Val, nil
+		return NewIntValue(e.Val), nil
 	case *PS.FloatLiteral:
-		return e.Val, nil
+		return NewFloatValue(e.Val), nil
 	case *PS.StringLiteral:
-		return e.Val, nil
+		return NewTextValue(e.Val), nil
 	case *PS.BoolLiteral:
-		return e.Val, nil
+		return NewBoolValue(e.Val), nil
 	case *PS.NullLiteral:
-		return nil, nil
+		return NullValue(), nil
 	case *PS.Ident:
 		if row != nil {
 			if v, ok := row.Lookup(e.Name); ok {
-				return v, nil
+				return valueFromAny(v), nil
 			}
 		}
-		return e.Name, nil
+		return NewTextValue(e.Name), nil
 	case *PS.QualifiedName:
 		if row != nil {
-			// REQ000755: Use O(1) Lookup instead of O(N) linear scan.
-			// Try qualified name first (table.col), then bare name.
 			if e.CachedKey == "" {
 				e.CachedKey = e.Table + "." + e.Name
 			}
 			for cur := row; cur != nil; cur = cur.Outer {
 				if v, ok := cur.Lookup(e.CachedKey); ok {
-					return v, nil
+					return valueFromAny(v), nil
 				}
 			}
-			// REQ000700: walk the outer chain, preferring rows
-			// whose tableName matches the QualifiedName's table
-			// prefix. This ensures t.g resolves to the outer row
-			// from table t, not a same-named column from the
-			// current subquery row (table s).
 			for cur := row.Outer; cur != nil; cur = cur.Outer {
 				if cur.tableName != "" && !strings.EqualFold(cur.tableName, e.Table) {
 					continue
 				}
 				if v, ok := cur.Lookup(e.Name); ok {
-					return v, nil
+					return valueFromAny(v), nil
 				}
 			}
-			// Current row: last resort for bare-name match.
 			if v, ok := row.Lookup(e.Name); ok {
-				return v, nil
+				return valueFromAny(v), nil
 			}
 		}
-		return e.CachedKey, nil
+		return NewTextValue(e.CachedKey), nil
 	case *PS.Param:
 		if e.Index < len(params) {
-			return normalizeInt(params[e.Index]), nil
+			return valueFromAny(normalizeInt(params[e.Index])), nil
 		}
-		return nil, nil
+		return NullValue(), nil
 	case *PS.StarExpr:
-		return "*", nil
+		return NewTextValue("*"), nil
 	case *PS.UnaryExpr:
-		return evalUnary(e, row, params)
+		switch e.Op {
+		case int(LX.T_MINUS), int(LX.T_PLUS), int(LX.T_NOT), int(LX.T_BITNOT):
+			return evalUnaryValue(e, row, params)
+		}
+		v, err := evalUnary(e, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(v), nil
 	case *PS.BinaryExpr:
-		return evalBinary(e, row, params)
+		switch e.Op {
+		case int(LX.T_EQ), int(LX.T_NE),
+			int(LX.T_LT), int(LX.T_LE), int(LX.T_GT), int(LX.T_GE),
+			int(LX.T_PLUS), int(LX.T_MINUS), int(LX.T_STAR):
+			return evalBinaryValue(e, row, params)
+		}
+		v, err := evalBinary(e, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(v), nil
 	case *PS.ListExpr:
-		return e.Items, nil
+		return valueFromAny(e.Items), nil
 	case *PS.BetweenExpr:
-		return evalBetween(e, row, params)
+		v, err := evalBetween(e, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(v), nil
 	case *PS.InExpr:
-		return evalIn(e, row, params)
+		return evalInValue(e, row, params)
 	case *PS.ExistsExpr:
-		return evalExists(e, row, params)
+		v, err := evalExists(e, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(v), nil
 	case *PS.SubqueryExpr:
-		return evalScalarSubquery(e, row, params)
+		v, err := evalScalarSubquery(e, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(v), nil
 	case *PS.IntervalLiteral:
-		return evalInterval(e)
+		v, err := evalInterval(e)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(v), nil
 	case *PS.CaseExpr:
-		return evalCase(e, row, params)
+		v, err := evalCase(e, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(v), nil
 	case *PS.AggregateFunc:
-		return evalAggregate(e, row, params)
+		v, err := evalAggregate(e, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(v), nil
 	case *PS.WindowFunc:
-		return evalWindowFunc(e, row, params)
+		v, err := evalWindowFunc(e, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(v), nil
 	case *PS.FunctionCall:
-		return evalFunction(e, row, params)
+		v, err := evalFunction(e, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(v), nil
 	case *PS.RaiseFunc:
-		return evalRaise(e, row, params)
+		v, err := evalRaise(e, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(v), nil
 	case *PS.CastExpr:
-		return evalCast(e, row, params)
+		v, err := evalCast(e, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(v), nil
 	case *PS.AliasedExpr:
-		return Eval(e.Expr, row, params)
+		return EvalValue(e.Expr, row, params)
 	default:
-		return nil, ErrEval
+		return NullValue(), ErrEval
 	}
-}
-
-// EvalValue is the Value-typed variant of Eval. It returns inline
-// Value structs instead of boxed any, avoiding convT64 overhead
-// in the hot evaluation path. REQ000776.
-func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
-	v, err := Eval(expr, row, params)
-	if err != nil {
-		return NullValue(), err
-	}
-	return valueFromAny(v), nil
 }
 
 func evalUnary(e *PS.UnaryExpr, row *Row, params []any) (any, error) {
@@ -243,7 +296,11 @@ func evalUnary(e *PS.UnaryExpr, row *Row, params []any) (any, error) {
 	// Kind switch to avoid interface conversion.
 	switch e.Op {
 	case int(LX.T_MINUS), int(LX.T_PLUS), int(LX.T_NOT), int(LX.T_BITNOT):
-		return evalUnaryValue(e, row, params)
+		v, err := evalUnaryValue(e, row, params)
+		if err != nil {
+			return nil, err
+		}
+		return v.ToAny(), nil
 	}
 	operand, err := Eval(e.Operand, row, params)
 	if err != nil {
@@ -259,37 +316,36 @@ func evalUnary(e *PS.UnaryExpr, row *Row, params []any) (any, error) {
 
 // evalUnaryValue is the Value-typed fast path for unary operators
 // (REQ000776). It calls EvalValue and dispatches via Kind switch.
-func evalUnaryValue(e *PS.UnaryExpr, row *Row, params []any) (any, error) {
+func evalUnaryValue(e *PS.UnaryExpr, row *Row, params []any) (Value, error) {
 	operand, err := EvalValue(e.Operand, row, params)
 	if err != nil {
-		return nil, err
+		return NullValue(), err
 	}
 	if operand.Kind == KindNull {
-		return nil, nil
+		return NullValue(), nil
 	}
 	switch e.Op {
 	case int(LX.T_MINUS):
 		switch operand.Kind {
 		case KindInt:
-			return -operand.I64, nil
+			return NewIntValue(-operand.I64), nil
 		case KindFloat:
-			return -operand.F64, nil
+			return NewFloatValue(-operand.F64), nil
 		}
-		return nil, nil
+		return NullValue(), nil
 	case int(LX.T_PLUS):
-		return operand.ToAny(), nil
+		return operand, nil
 	case int(LX.T_NOT):
 		if operand.Kind == KindBool {
-			return !operand.Bo, nil
+			return NewBoolValue(!operand.Bo), nil
 		}
-		// For non-bool operands, apply truthy semantics.
-		return !isValueTruthy(operand), nil
+		return NewBoolValue(!isValueTruthy(operand)), nil
 	case int(LX.T_BITNOT):
 		if operand.Kind == KindInt {
-			return ^operand.I64, nil
+			return NewIntValue(^operand.I64), nil
 		}
 	}
-	return nil, ErrEval
+	return NullValue(), ErrEval
 }
 
 // isValueTruthy mirrors the truthy() logic for Value types so the
@@ -322,7 +378,11 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
 	case int(LX.T_EQ), int(LX.T_NE),
 		int(LX.T_LT), int(LX.T_LE), int(LX.T_GT), int(LX.T_GE),
 		int(LX.T_PLUS), int(LX.T_MINUS), int(LX.T_STAR):
-		return evalBinaryValue(e, row, params)
+		v, err := evalBinaryValue(e, row, params)
+		if err != nil {
+			return nil, err
+		}
+		return v.ToAny(), nil
 	}
 	left, err := Eval(e.Left, row, params)
 	if err != nil {
@@ -483,46 +543,46 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
 // Value-typed results, then dispatches via Kind switch in the
 // Value-based helpers (compareValue, equalValueValue,
 // numericArithValue) to avoid interface conversion.
-func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
+func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 	left, err := EvalValue(e.Left, row, params)
 	if err != nil {
-		return nil, err
+		return NullValue(), err
 	}
 	right, err := EvalValue(e.Right, row, params)
 	if err != nil {
-		return nil, err
+		return NullValue(), err
 	}
 	switch e.Op {
 	case int(LX.T_EQ):
 		if left.Kind == KindNull || right.Kind == KindNull {
-			return nil, nil
+			return NullValue(), nil
 		}
-		return equalValueValue(left, right), nil
+		return NewBoolValue(equalValueValue(left, right)), nil
 	case int(LX.T_NE):
 		if left.Kind == KindNull || right.Kind == KindNull {
-			return nil, nil
+			return NullValue(), nil
 		}
-		return !equalValueValue(left, right), nil
+		return NewBoolValue(!equalValueValue(left, right)), nil
 	case int(LX.T_LT):
 		if left.Kind == KindNull || right.Kind == KindNull {
-			return nil, nil
+			return NullValue(), nil
 		}
-		return compareValue(left, right) < 0, nil
+		return NewBoolValue(compareValue(left, right) < 0), nil
 	case int(LX.T_LE):
 		if left.Kind == KindNull || right.Kind == KindNull {
-			return nil, nil
+			return NullValue(), nil
 		}
-		return compareValue(left, right) <= 0, nil
+		return NewBoolValue(compareValue(left, right) <= 0), nil
 	case int(LX.T_GT):
 		if left.Kind == KindNull || right.Kind == KindNull {
-			return nil, nil
+			return NullValue(), nil
 		}
-		return compareValue(left, right) > 0, nil
+		return NewBoolValue(compareValue(left, right) > 0), nil
 	case int(LX.T_GE):
 		if left.Kind == KindNull || right.Kind == KindNull {
-			return nil, nil
+			return NullValue(), nil
 		}
-		return compareValue(left, right) >= 0, nil
+		return NewBoolValue(compareValue(left, right) >= 0), nil
 	case int(LX.T_PLUS), int(LX.T_MINUS), int(LX.T_STAR):
 		var opRune rune
 		switch e.Op {
@@ -535,11 +595,11 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
 		}
 		r, err := numericArithValue(left, right, opRune)
 		if err != nil {
-			return nil, err
+			return NullValue(), err
 		}
-		return r.ToAny(), nil
+		return r, nil
 	}
-	return nil, ErrEval
+	return NullValue(), ErrEval
 }
 
 func evalBetween(e *PS.BetweenExpr, row *Row, params []any) (any, error) {
@@ -602,6 +662,55 @@ func evalIn(e *PS.InExpr, row *Row, params []any) (any, error) {
 	return false, nil
 }
 
+// evalInValue is the Value-typed variant of evalIn (REQ000776).
+// Uses EvalValue to avoid the any->Value conversion. For 4+ item
+// lists, routes through evalInHashValue which uses per-kind
+// hash sets (int64/float64/string) for zero-boxing O(1) probing.
+func evalInValue(e *PS.InExpr, row *Row, params []any) (Value, error) {
+	target, err := EvalValue(e.Expr, row, params)
+	if err != nil {
+		return NullValue(), err
+	}
+	if e.Subquery != nil {
+		// Subquery path still uses legacy any-based hash; convert
+		// the result back to Value.
+		r, err := evalInSubquery(target.ToAny(), e.Subquery, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(r), nil
+	}
+	if len(e.List) == 0 {
+		return NewBoolValue(false), nil
+	}
+	if target.Kind == KindNull {
+		return NullValue(), nil
+	}
+	// Hash-set path for 4+ items.
+	if len(e.List) >= 4 {
+		return evalInHashValue(e, target, row, params)
+	}
+	// Linear-scan path for short lists.
+	hadNull := false
+	for _, item := range e.List {
+		v, err := EvalValue(item, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		if v.Kind == KindNull {
+			hadNull = true
+			continue
+		}
+		if equalValueValue(target, v) {
+			return NewBoolValue(true), nil
+		}
+	}
+	if hadNull {
+		return NullValue(), nil
+	}
+	return NewBoolValue(false), nil
+}
+
 // REQ000817: cached hash sets for IN-list expressions. Keyed by
 // *PS.InExpr pointer identity; entries live for the query lifetime.
 type inHashCache struct {
@@ -610,6 +719,17 @@ type inHashCache struct {
 }
 
 var inHashCacheMap = map[*PS.InExpr]*inHashCache{}
+
+// evalInHashValue is the Value-typed variant of evalInHash (REQ000776).
+// Converts target to any for probe; the hash set is shared via
+// the legacy inHashCacheMap.
+func evalInHashValue(e *PS.InExpr, target Value, row *Row, params []any) (Value, error) {
+	vr, err := evalInHash(e, target.ToAny(), row, params)
+	if err != nil {
+		return NullValue(), err
+	}
+	return valueFromAny(vr), nil
+}
 
 // REQ000817: evalInHash builds a cached hash set for O(1) IN-list probing.
 func evalInHash(e *PS.InExpr, target any, row *Row, params []any) (any, error) {

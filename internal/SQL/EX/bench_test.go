@@ -662,11 +662,86 @@ func BenchmarkSelect4_NotInChain(b *testing.B) {
 	ex := NewExecutor()
 	ctx := context.Background()
 	q := `SELECT d9 FROM t9
- WHERE NOT (b9 IN (312,827,864,891,66,926,214,228,269,361,446,171,496))`
+  WHERE NOT (b9 IN (312,827,864,891,66,926,214,228,269,361,446,171,496))`
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, err := ex.QueryAll(ctx, q)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkEvalInHash_Int_Value vs BenchmarkEvalInHash_Int_Legacy compare
+// the Value-typed hash set (evalInHashValue) against the legacy any-typed
+// hash set (evalInHash) for IN-list probing (REQ000776).
+func BenchmarkEvalInHash_Int_Value(b *testing.B) {
+	expr := &PS.InExpr{
+		Expr: &PS.NumberLiteral{Val: 42},
+		List: make([]PS.Expr, 0, 16),
+	}
+	for i := int64(10); i < 26; i++ {
+		expr.List = append(expr.List, &PS.NumberLiteral{Val: i})
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, err := evalInHashValue(expr, NewIntValue(42), nil, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkEvalInHash_Int_Legacy(b *testing.B) {
+	expr := &PS.InExpr{
+		Expr: &PS.NumberLiteral{Val: 42},
+		List: make([]PS.Expr, 0, 16),
+	}
+	for i := int64(10); i < 26; i++ {
+		expr.List = append(expr.List, &PS.NumberLiteral{Val: i})
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, err := evalInHash(expr, int64(42), nil, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkEvalInHash_String_Value(b *testing.B) {
+	expr := &PS.InExpr{
+		Expr: &PS.StringLiteral{Val: "target"},
+		List: make([]PS.Expr, 0, 16),
+	}
+	for i := 0; i < 16; i++ {
+		expr.List = append(expr.List, &PS.StringLiteral{Val: fmt.Sprintf("item_%d", i)})
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, err := evalInHashValue(expr, NewTextValue("target"), nil, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkEvalInHash_String_Legacy(b *testing.B) {
+	expr := &PS.InExpr{
+		Expr: &PS.StringLiteral{Val: "target"},
+		List: make([]PS.Expr, 0, 16),
+	}
+	for i := 0; i < 16; i++ {
+		expr.List = append(expr.List, &PS.StringLiteral{Val: fmt.Sprintf("item_%d", i)})
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, err := evalInHash(expr, "target", nil, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

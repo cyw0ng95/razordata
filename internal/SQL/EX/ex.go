@@ -227,6 +227,8 @@ func valueFromAny(a any) Value {
 		return NewBoolValue(x)
 	case int:
 		return NewIntValue(int64(x))
+	case []byte:
+		return NewBlobValue(x)
 	default:
 		return NewTextValue(fmt.Sprint(x))
 	}
