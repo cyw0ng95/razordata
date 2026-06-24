@@ -107,11 +107,11 @@ func BenchmarkTPCH_Q1_Sequential(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		var sum float64
 		for j := 0; j < n; j++ {
-			val, err := Eval(pred, &rows[j], nil)
+			val, err := EvalValue(pred, &rows[j], nil)
 			if err != nil {
 				continue
 			}
-			if b, ok := val.(bool); ok && b {
+			if val.Kind == KindBool && val.Bo {
 				sum += rows[j].Data[3].ToAny().(float64)
 			}
 		}

@@ -48,23 +48,23 @@ func TestCoreFunctions_Eval(t *testing.T) {
 				t.Fatalf("Expected 1 column, got %d", len(sel.Cols))
 			}
 
-			got, err := Eval(sel.Cols[0], nil, nil)
+			got, err := EvalValue(sel.Cols[0], nil, nil)
 			if err != nil {
 				t.Fatalf("Eval error: %v", err)
 			}
 
 			switch want := tt.want.(type) {
 			case int64:
-				if gb, ok := got.(int64); !ok || gb != want {
-					t.Fatalf("Got %v (%T), want %v", got, got, want)
+				if got.Kind != KindInt || got.I64 != want {
+					t.Fatalf("Got %v (%T), want %v", got.ToAny(), got.ToAny(), want)
 				}
 			case string:
-				if gb, ok := got.(string); !ok || gb != want {
-					t.Fatalf("Got %v (%T), want %v", got, got, want)
+				if got.Kind != KindText || got.S != want {
+					t.Fatalf("Got %v (%T), want %v", got.ToAny(), got.ToAny(), want)
 				}
 			default:
-				if got != want {
-					t.Fatalf("Got %v (%T), want %v (%T)", got, got, want, want)
+				if got.ToAny() != want {
+					t.Fatalf("Got %v (%T), want %v (%T)", got.ToAny(), got.ToAny(), want, want)
 				}
 			}
 		})
@@ -78,14 +78,14 @@ func TestZeroblob_Eval(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 	sel := stmt.(*PS.Select)
-	got, err := Eval(sel.Cols[0], nil, nil)
+	got, err := EvalValue(sel.Cols[0], nil, nil)
 	if err != nil {
 		t.Fatalf("Eval error: %v", err)
 	}
-	buf, ok := got.([]byte)
-	if !ok {
-		t.Fatalf("Got %T, want []byte", got)
+	if got.Kind != KindBlob {
+		t.Fatalf("Got Kind=%d, want KindBlob", got.Kind)
 	}
+	buf := got.B
 	if len(buf) != 8 {
 		t.Fatalf("Got len=%d, want 8", len(buf))
 	}
@@ -140,29 +140,29 @@ func TestCoreFunctions_Batch2(t *testing.T) {
 				t.Fatalf("Expected 1 column, got %d", len(sel.Cols))
 			}
 
-			got, err := Eval(sel.Cols[0], nil, nil)
+			got, err := EvalValue(sel.Cols[0], nil, nil)
 			if err != nil {
 				t.Fatalf("Eval error: %v", err)
 			}
 
 			switch want := tt.want.(type) {
 			case int64:
-				if gb, ok := got.(int64); !ok || gb != want {
-					t.Fatalf("Got %v (%T), want %v", got, got, want)
+				if got.Kind != KindInt || got.I64 != want {
+					t.Fatalf("Got %v (%T), want %v", got.ToAny(), got.ToAny(), want)
 				}
 			case string:
-				if gb, ok := got.(string); !ok || gb != want {
-					t.Fatalf("Got %v (%T), want %v", got, got, want)
+				if got.Kind != KindText || got.S != want {
+					t.Fatalf("Got %v (%T), want %v", got.ToAny(), got.ToAny(), want)
 				}
 			case []byte:
-				if gb, ok := got.([]byte); !ok {
-					t.Fatalf("Got %T, want []byte", got)
-				} else if string(gb) != string(want) {
-					t.Fatalf("Got %v, want %v", gb, want)
+				if got.Kind != KindBlob {
+					t.Fatalf("Got Kind=%d, want KindBlob", got.Kind)
+				} else if string(got.B) != string(want) {
+					t.Fatalf("Got %v, want %v", got.B, want)
 				}
 			default:
-				if got != want {
-					t.Fatalf("Got %v (%T), want %v (%T)", got, got, want, want)
+				if got.ToAny() != want {
+					t.Fatalf("Got %v (%T), want %v (%T)", got.ToAny(), got.ToAny(), want, want)
 				}
 			}
 		})

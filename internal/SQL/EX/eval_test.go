@@ -95,7 +95,7 @@ func TestEval(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := Eval(tc.expr, nil, tc.params)
+			got, err := EvalValue(tc.expr, nil, tc.params)
 			if tc.err {
 				if err == nil {
 					t.Errorf("expected error, got nil")
@@ -106,8 +106,8 @@ func TestEval(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 				return
 			}
-			if got != tc.want {
-				t.Errorf("got %v, want %v", got, tc.want)
+			if got.ToAny() != tc.want {
+				t.Errorf("got %v, want %v", got.ToAny(), tc.want)
 			}
 		})
 	}
@@ -184,13 +184,13 @@ func TestEvalNullArithmetic(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := Eval(c.expr, nil, nil)
+			got, err := EvalValue(c.expr, nil, nil)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
 			}
-			if got != c.want {
-				t.Errorf("got %v, want %v", got, c.want)
+			if got.ToAny() != c.want {
+				t.Errorf("got %v, want %v", got.ToAny(), c.want)
 			}
 		})
 	}
@@ -216,7 +216,7 @@ func TestEvalCast(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := Eval(c.expr, nil, nil)
+			got, err := EvalValue(c.expr, nil, nil)
 			if c.err {
 				if err == nil {
 					t.Errorf("expected error, got nil")
@@ -227,8 +227,8 @@ func TestEvalCast(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 				return
 			}
-			if got != c.want {
-				t.Errorf("got %v, want %v", got, c.want)
+			if got.ToAny() != c.want {
+				t.Errorf("got %v, want %v", got.ToAny(), c.want)
 			}
 		})
 	}

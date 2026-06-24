@@ -283,7 +283,7 @@ func BenchmarkRowFilter_Fallback(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, row := range rows {
-			_, _ = Eval(pred, &row, nil)
+			_, _ = EvalValue(pred, &row, nil)
 		}
 	}
 }

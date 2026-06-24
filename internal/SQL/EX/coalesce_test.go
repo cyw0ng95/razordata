@@ -27,12 +27,12 @@ func TestSpecialForms(t *testing.T) {
 				t.Fatalf("Parse error: %v", err)
 			}
 			sel := stmt.(*PS.Select)
-			got, err := Eval(sel.Cols[0], nil, nil)
+			got, err := EvalValue(sel.Cols[0], nil, nil)
 			if err != nil {
 				t.Fatalf("Eval error: %v", err)
 			}
-			if got != tt.want {
-				t.Fatalf("Got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
+			if got.ToAny() != tt.want {
+				t.Fatalf("Got %v (%T), want %v (%T)", got.ToAny(), got.ToAny(), tt.want, tt.want)
 			}
 		})
 	}

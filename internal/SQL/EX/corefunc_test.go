@@ -24,19 +24,19 @@ func TestEvalAbs(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := Eval(&PS.FunctionCall{Name: "ABS", Args: c.args}, nil, nil)
+			got, err := EvalValue(&PS.FunctionCall{Name: "ABS", Args: c.args}, nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got != c.want {
-				t.Errorf("got %v (%T), want %v", got, got, c.want)
+			if got.ToAny() != c.want {
+				t.Errorf("got %v (%T), want %v", got.ToAny(), got.ToAny(), c.want)
 			}
 		})
 	}
 }
 
 func TestEvalAbs_MinInt64Overflow(t *testing.T) {
-	_, err := Eval(&PS.FunctionCall{Name: "ABS", Args: []PS.Expr{&PS.NumberLiteral{Val: -9223372036854775808}}}, nil, nil)
+	_, err := EvalValue(&PS.FunctionCall{Name: "ABS", Args: []PS.Expr{&PS.NumberLiteral{Val: -9223372036854775808}}}, nil, nil)
 	if err == nil {
 		t.Errorf("expected error for ABS(MIN_INT64), got nil")
 	}
@@ -58,17 +58,17 @@ func TestEvalHex(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := Eval(&PS.FunctionCall{Name: "HEX", Args: c.args}, nil, nil)
+			got, err := EvalValue(&PS.FunctionCall{Name: "HEX", Args: c.args}, nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if c.name == "null" {
-				if got != nil {
-					t.Errorf("got %v, want nil", got)
+				if got.Kind != KindNull {
+					t.Errorf("got %v, want nil", got.ToAny())
 				}
 				return
 			}
-			if s, ok := got.(string); !ok || s != c.want {
+			if got.Kind != KindText || got.S != c.want {
 				t.Errorf("got %v, want %q", got, c.want)
 			}
 		})
@@ -93,20 +93,18 @@ func TestEvalRound(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := Eval(&PS.FunctionCall{Name: "ROUND", Args: c.args}, nil, nil)
+			got, err := EvalValue(&PS.FunctionCall{Name: "ROUND", Args: c.args}, nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			switch c.wantType {
 			case "float64":
-				f, ok := got.(float64)
-				if !ok || f != c.want {
-					t.Errorf("got %v (%T), want %v (float64)", got, got, c.want)
+				if got.Kind != KindFloat || got.F64 != c.want {
+					t.Errorf("got %v (%T), want %v (float64)", got.ToAny(), got.ToAny(), c.want)
 				}
 			case "int64":
-				i, ok := got.(int64)
-				if !ok || i != int64(c.want) {
-					t.Errorf("got %v (%T), want %v (int64)", got, got, c.want)
+				if got.Kind != KindInt || got.I64 != int64(c.want) {
+					t.Errorf("got %v (%T), want %v (int64)", got.ToAny(), got.ToAny(), c.want)
 				}
 			}
 		})
@@ -114,11 +112,11 @@ func TestEvalRound(t *testing.T) {
 }
 
 func TestEvalRound_Null(t *testing.T) {
-	got, err := Eval(&PS.FunctionCall{Name: "ROUND", Args: []PS.Expr{&PS.NullLiteral{}}}, nil, nil)
+	got, err := EvalValue(&PS.FunctionCall{Name: "ROUND", Args: []PS.Expr{&PS.NullLiteral{}}}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != nil {
-		t.Errorf("got %v, want nil", got)
+	if got.Kind != KindNull {
+		t.Errorf("got %v, want nil", got.ToAny())
 	}
 }

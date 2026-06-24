@@ -9,15 +9,15 @@ import (
 
 func TestEvalNow_ReturnsRFC3339(t *testing.T) {
 	before := time.Now()
-	got, err := Eval(&PS.FunctionCall{Name: "NOW"}, nil, nil)
+	got, err := EvalValue(&PS.FunctionCall{Name: "NOW"}, nil, nil)
 	if err != nil {
 		t.Fatalf("NOW: %v", err)
 	}
 	after := time.Now()
-	s, ok := got.(string)
-	if !ok {
-		t.Fatalf("NOW: expected string, got %T", got)
+	if got.Kind != KindText {
+		t.Fatalf("NOW: expected string, got Kind=%d", got.Kind)
 	}
+	s := got.S
 	parsed, err := time.Parse(time.RFC3339, s)
 	if err != nil {
 		t.Errorf("NOW: %q is not RFC3339: %v", s, err)
@@ -83,11 +83,11 @@ func TestEvalSubstr(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			expr := &PS.FunctionCall{Name: "SUBSTR", Args: c.args}
-			got, err := Eval(expr, nil, nil)
+			got, err := EvalValue(expr, nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if s, ok := got.(string); !ok || s != c.want {
+			if got.Kind != KindText || got.S != c.want {
 				t.Errorf("got %v, want %q", got, c.want)
 			}
 		})
