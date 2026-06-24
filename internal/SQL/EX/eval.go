@@ -238,47 +238,78 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 }
 
 func evalUnary(e *PS.UnaryExpr, row *Row, params []any) (any, error) {
+	// REQ000776: hot-path optimization for unary operators. Use
+	// EvalValue to get the Value-typed result and dispatch via
+	// Kind switch to avoid interface conversion.
+	switch e.Op {
+	case int(LX.T_MINUS), int(LX.T_PLUS), int(LX.T_NOT), int(LX.T_BITNOT):
+		return evalUnaryValue(e, row, params)
+	}
 	operand, err := Eval(e.Operand, row, params)
 	if err != nil {
 		return nil, err
 	}
 
 	switch e.Op {
-	case int(LX.T_MINUS):
-		if operand == nil {
-			return nil, nil
-		}
-		switch v := operand.(type) {
-		case int64:
-			return -v, nil
-		case float64:
-			return -v, nil
-		}
-		// REQ000719: handle non-int64 numeric types (e.g. Go's `int`
-		// on 32-bit paths, store-deserialized int from int columns
-		// when the underlying bit-width differs). Convert to int64
-		// or float64 via toInt64/numericFloat before applying the
-		// unary minus, so the driver/store path agrees with the
-		// in-memory path.
-		if n, ok := toInt64(operand); ok {
-			return -n, nil
-		}
-		if f, ok := numericFloat(operand); ok {
-			return -f, nil
-		}
 	case int(LX.T_PLUS):
 		return operand, nil
-	case int(LX.T_NOT):
-		if operand == nil {
-			return nil, nil
+	}
+	return nil, ErrEval
+}
+
+// evalUnaryValue is the Value-typed fast path for unary operators
+// (REQ000776). It calls EvalValue and dispatches via Kind switch.
+func evalUnaryValue(e *PS.UnaryExpr, row *Row, params []any) (any, error) {
+	operand, err := EvalValue(e.Operand, row, params)
+	if err != nil {
+		return nil, err
+	}
+	if operand.Kind == KindNull {
+		return nil, nil
+	}
+	switch e.Op {
+	case int(LX.T_MINUS):
+		switch operand.Kind {
+		case KindInt:
+			return -operand.I64, nil
+		case KindFloat:
+			return -operand.F64, nil
 		}
-		return !truthy(operand), nil
+		return nil, nil
+	case int(LX.T_PLUS):
+		return operand.ToAny(), nil
+	case int(LX.T_NOT):
+		if operand.Kind == KindBool {
+			return !operand.Bo, nil
+		}
+		// For non-bool operands, apply truthy semantics.
+		return !isValueTruthy(operand), nil
 	case int(LX.T_BITNOT):
-		if v, ok := toInt64(operand); ok {
-			return ^v, nil
+		if operand.Kind == KindInt {
+			return ^operand.I64, nil
 		}
 	}
 	return nil, ErrEval
+}
+
+// isValueTruthy mirrors the truthy() logic for Value types so the
+// evalUnaryValue NOT path can avoid boxing into any.
+func isValueTruthy(v Value) bool {
+	switch v.Kind {
+	case KindNull:
+		return false
+	case KindInt:
+		return v.I64 != 0
+	case KindFloat:
+		return v.F64 != 0
+	case KindText:
+		return v.S != ""
+	case KindBool:
+		return v.Bo
+	case KindBlob:
+		return len(v.B) > 0
+	}
+	return false
 }
 
 func evalBinary(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
