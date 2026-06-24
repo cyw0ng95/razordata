@@ -1454,6 +1454,11 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			for _, j := range s.Joins {
 				if refTables[j.Right] {
 					filtered = append(filtered, j)
+				} else if j.RightAlias != "" && refTables[j.RightAlias] {
+					// REQ000835/836: when the same table is used
+					// with different aliases (e.g. tab0 a, tab0 b),
+					// check both the physical name and the alias.
+					filtered = append(filtered, j)
 				}
 			}
 			s.Joins = filtered
