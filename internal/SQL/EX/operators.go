@@ -116,6 +116,12 @@ type SeqScan struct {
 	pointLookupPos int            // current position within the matching indices
 	pointLookupOnce bool          // true after lookup is built
 	pointLookupRows []int         // pre-computed matching row indices
+
+	// REQ000840: shallow clone — reuse source row Data for read-only
+	// queries. Set to true for pure SELECT paths to avoid per-row
+	// allocation in cloneRow. Must be false for mutable operators
+	// (UPDATE/DELETE returning, ON CONFLICT DO UPDATE).
+	shallow bool
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -154,7 +160,7 @@ func (s *SeqScan) WithAlias(alias string) *SeqScan {
 }
 
 func NewSeqScan(table string) *SeqScan {
-	return &SeqScan{table: table}
+	return &SeqScan{table: table, shallow: true}
 }
 
 // WithPointLookup sets up point-lookup filtering on an in-memory table.
@@ -275,12 +281,19 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 	out := Row{
 		Cols:      schema.cols,
 		Types:     schema.types,
-		Data:      append([]Value(nil), r.Data...),
+		Data:      r.Data,
 		Outer:     r.Outer,
 		planner:   r.planner,
 		storeKey:  r.storeKey,
 		tableName: s.table,
 		colIndex:  schema.colIndex,
+	}
+	// REQ000840: when shallow, reuse source row Data without copying.
+	// Safe for read-only queries — source rows in tables[] are never
+	// mutated after INSERT, and downstream operators (Filter, Project,
+	// Join) read from Data but never write to it in-place.
+	if !s.shallow {
+		out.Data = append([]Value(nil), r.Data...)
 	}
 	if s.planner != nil {
 		out.planner = s.planner
