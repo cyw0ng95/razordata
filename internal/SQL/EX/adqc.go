@@ -72,6 +72,12 @@ type AdaptiveOp struct {
 	compiledFn func(ctx context.Context, batch *Batch, params []any) (*Batch, error)
 	planHash   string
 	params     []any
+	// REQ000845: tryAttempted prevents repeated calls to tryCompile
+	// when no compiled function is available. After the first tryCompile
+	// returns without setting state to Compiled, subsequent Next() calls
+	// take the direct inner.Next() fast path without going through
+	// the counter.Inc() and lock acquisition.
+	tryAttempted bool
 }
 
 // NewAdaptiveOp wraps an operator with adaptive compilation.
@@ -87,6 +93,8 @@ func NewAdaptiveOp(inner Operator, planHash string) *AdaptiveOp {
 // Next implements the Operator interface. For the first threshold
 // invocations it delegates to the inner interpreted operator.
 // After the threshold, it attempts to swap to the compiled path.
+// REQ000845: once tryCompile has run without success, subsequent
+// calls skip the counter/lock and call inner.Next() directly.
 func (a *AdaptiveOp) Next(ctx context.Context) (Row, error) {
 	state := AdqcState(a.state.Load())
 
@@ -94,7 +102,7 @@ func (a *AdaptiveOp) Next(ctx context.Context) (Row, error) {
 		return a.inner.Next(ctx)
 	}
 
-	if state == AdqcInterpreted {
+	if state == AdqcInterpreted && !a.tryAttempted {
 		reached := a.counter.Inc()
 		if !reached {
 			return a.inner.Next(ctx)
@@ -108,11 +116,15 @@ func (a *AdaptiveOp) Next(ctx context.Context) (Row, error) {
 // tryCompile attempts to swap to the compiled codegen path.
 // It first checks the GlobalAdqcCache for a previously compiled plan,
 // avoiding recompilation across executor recreations.
+// REQ000845: after this function runs (whether successful or not),
+// the AdaptiveOp is marked as tryAttempted so future Next() calls
+// skip the counter increment and lock acquisition.
 func (a *AdaptiveOp) tryCompile(ctx context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if AdqcState(a.state.Load()) != AdqcInterpreted {
+		a.tryAttempted = true
 		return
 	}
 
@@ -120,6 +132,7 @@ func (a *AdaptiveOp) tryCompile(ctx context.Context) {
 	if cached := GlobalAdqcCache.Get(a.planHash, 0); cached != nil {
 		a.compiledFn = cached.Fn
 		a.state.Store(uint32(AdqcCompiled))
+		a.tryAttempted = true
 		slog.Debug("adqc: plan restored from cache",
 			"planHash", a.planHash,
 			"opType", cached.OpType,
@@ -129,6 +142,10 @@ func (a *AdaptiveOp) tryCompile(ctx context.Context) {
 
 	opType := operatorType(a.inner)
 	a.state.Store(uint32(AdqcInterpreted))
+	// REQ000845: mark as attempted so we don't retry on every Next()
+	// call. No compiled function is available, so interpreted path
+	// is the only path for this plan.
+	a.tryAttempted = true
 	slog.Debug("adqc: fallback",
 		"planHash", a.planHash,
 		"opType", opType,
