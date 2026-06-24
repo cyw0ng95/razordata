@@ -1900,6 +1900,114 @@ func cmpFloat(a, b float64) int {
 	return 0
 }
 
+// compareValue is the Value-based variant of compare (REQ000776). It
+// switches on a.Kind to avoid the interface conversion path. Returns
+// -1, 0, or 1.
+func compareValue(a, b Value) int {
+	if a.Kind == KindNull && b.Kind == KindNull {
+		return 0
+	}
+	if a.Kind == KindNull {
+		return -1
+	}
+	if b.Kind == KindNull {
+		return 1
+	}
+	// int64-int64 fast path.
+	if a.Kind == KindInt && b.Kind == KindInt {
+		if a.I64 < b.I64 {
+			return -1
+		}
+		if a.I64 > b.I64 {
+			return 1
+		}
+		return 0
+	}
+	// float64-float64 fast path.
+	if a.Kind == KindFloat && b.Kind == KindFloat {
+		return cmpFloat(a.F64, b.F64)
+	}
+	// Mixed numeric: convert to float64.
+	if (a.Kind == KindInt || a.Kind == KindFloat) &&
+		(b.Kind == KindInt || b.Kind == KindFloat) {
+		var af, bf float64
+		if a.Kind == KindInt {
+			af = float64(a.I64)
+		} else {
+			af = a.F64
+		}
+		if b.Kind == KindInt {
+			bf = float64(b.I64)
+		} else {
+			bf = b.F64
+		}
+		return cmpFloat(af, bf)
+	}
+	// String comparison.
+	if a.Kind == KindText && b.Kind == KindText {
+		return cmpString(a.S, b.S)
+	}
+	// Bool comparison.
+	if a.Kind == KindBool && b.Kind == KindBool {
+		return cmpBool(a.Bo, b.Bo)
+	}
+	// Blob comparison (lexicographic).
+	if a.Kind == KindBlob && b.Kind == KindBlob {
+		minLen := len(a.B)
+		if len(b.B) < minLen {
+			minLen = len(b.B)
+		}
+		for i := 0; i < minLen; i++ {
+			if a.B[i] < b.B[i] {
+				return -1
+			}
+			if a.B[i] > b.B[i] {
+				return 1
+			}
+		}
+		if len(a.B) < len(b.B) {
+			return -1
+		}
+		if len(a.B) > len(b.B) {
+			return 1
+		}
+		return 0
+	}
+	return 0
+}
+
+// equalValueValue is the Value-based variant of equalValue (REQ000776).
+// It switches on a.Kind to avoid interface dispatch.
+func equalValueValue(a, b Value) bool {
+	if a.Kind == KindNull || b.Kind == KindNull {
+		return a.Kind == KindNull && b.Kind == KindNull
+	}
+	if a.Kind != b.Kind {
+		return false
+	}
+	switch a.Kind {
+	case KindInt:
+		return a.I64 == b.I64
+	case KindFloat:
+		return a.F64 == b.F64
+	case KindText:
+		return a.S == b.S
+	case KindBool:
+		return a.Bo == b.Bo
+	case KindBlob:
+		if len(a.B) != len(b.B) {
+			return false
+		}
+		for i := range a.B {
+			if a.B[i] != b.B[i] {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 func cmpString(a, b string) int {
 	if a < b {
 		return -1
@@ -2100,6 +2208,78 @@ func numericArith(a, b any, op rune) (any, error) {
 		r = af * bf
 	}
 	return r, nil
+}
+
+// numericArithValue is the Value-based variant of numericArith that
+// operates directly on the tagged-union Value type (REQ000776). It
+// switches on a.Kind to avoid the interface conversion path. Returns
+// a new Value or NULL for overflow/division by zero.
+func numericArithValue(a, b Value, op rune) (Value, error) {
+	if a.Kind == KindNull || b.Kind == KindNull {
+		return NullValue(), nil
+	}
+	// int64-int64 fast path.
+	if a.Kind == KindInt && b.Kind == KindInt {
+		ai, bi := a.I64, b.I64
+		switch op {
+		case '+':
+			if (bi > 0 && ai > math.MaxInt64-bi) || (bi < 0 && ai < math.MinInt64-bi) {
+				return NullValue(), nil
+			}
+			return NewIntValue(ai + bi), nil
+		case '-':
+			if (bi < 0 && ai > math.MaxInt64+bi) || (bi > 0 && ai < math.MinInt64+bi) {
+				return NullValue(), nil
+			}
+			return NewIntValue(ai - bi), nil
+		case '*':
+			if ai == 0 || bi == 0 {
+				return NewIntValue(0), nil
+			}
+			if ai == -1 && bi == math.MinInt64 {
+				return NullValue(), nil
+			}
+			if bi == -1 && ai == math.MinInt64 {
+				return NullValue(), nil
+			}
+			if ai > 0 && bi > 0 && ai > math.MaxInt64/bi {
+				return NullValue(), nil
+			}
+			if ai < 0 && bi < 0 && ai < math.MaxInt64/bi {
+				return NullValue(), nil
+			}
+			if (ai > 0 && bi < 0 && bi < math.MinInt64/ai) ||
+				(ai < 0 && bi > 0 && ai < math.MinInt64/bi) {
+				return NullValue(), nil
+			}
+			return NewIntValue(ai * bi), nil
+		}
+	}
+	// Float path for mixed/float.
+	var af, bf float64
+	if a.Kind == KindFloat {
+		af = a.F64
+	} else if a.Kind == KindInt {
+		af = float64(a.I64)
+	} else {
+		return NullValue(), nil
+	}
+	if b.Kind == KindFloat {
+		bf = b.F64
+	} else if b.Kind == KindInt {
+		bf = float64(b.I64)
+	} else {
+		return NullValue(), nil
+	}
+	switch op {
+	case '+':
+		return NewFloatValue(af + bf), nil
+	case '-':
+		return NewFloatValue(af - bf), nil
+	case '*':
+		return NewFloatValue(af * bf), nil
+	}
+	return NullValue(), nil
 }
 
 func numericFloat(v any) (float64, bool) {
