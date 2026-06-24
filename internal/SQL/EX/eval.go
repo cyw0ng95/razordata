@@ -222,11 +222,7 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 	case *PS.ListExpr:
 		return valueFromAny(e.Items), nil
 	case *PS.BetweenExpr:
-		v, err := evalBetween(e, row, params)
-		if err != nil {
-			return NullValue(), err
-		}
-		return valueFromAny(v), nil
+		return evalBetween(e, row, params)
 	case *PS.InExpr:
 		return evalInValue(e, row, params)
 	case *PS.ExistsExpr:
@@ -248,11 +244,7 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 		}
 		return valueFromAny(v), nil
 	case *PS.CaseExpr:
-		v, err := evalCase(e, row, params)
-		if err != nil {
-			return NullValue(), err
-		}
-		return valueFromAny(v), nil
+		return evalCase(e, row, params)
 	case *PS.AggregateFunc:
 		v, err := evalAggregate(e, row, params)
 		if err != nil {
@@ -278,11 +270,7 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 		}
 		return valueFromAny(v), nil
 	case *PS.CastExpr:
-		v, err := evalCast(e, row, params)
-		if err != nil {
-			return NullValue(), err
-		}
-		return valueFromAny(v), nil
+		return evalCast(e, row, params)
 	case *PS.AliasedExpr:
 		return EvalValue(e.Expr, row, params)
 	default:
@@ -602,25 +590,25 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 	return NullValue(), ErrEval
 }
 
-func evalBetween(e *PS.BetweenExpr, row *Row, params []any) (any, error) {
-	expr, err := Eval(e.Expr, row, params)
+func evalBetween(e *PS.BetweenExpr, row *Row, params []any) (Value, error) {
+	expr, err := EvalValue(e.Expr, row, params)
 	if err != nil {
-		return nil, err
+		return NullValue(), err
 	}
-	low, err := Eval(e.Low, row, params)
+	low, err := EvalValue(e.Low, row, params)
 	if err != nil {
-		return nil, err
+		return NullValue(), err
 	}
-	high, err := Eval(e.High, row, params)
+	high, err := EvalValue(e.High, row, params)
 	if err != nil {
-		return nil, err
+		return NullValue(), err
 	}
-	if expr == nil || low == nil || high == nil {
-		return nil, nil
+	if expr.Kind == KindNull || low.Kind == KindNull || high.Kind == KindNull {
+		return NullValue(), nil
 	}
-	cmpLow := compare(expr, low)
-	cmpHigh := compare(expr, high)
-	return cmpLow >= 0 && cmpHigh <= 0, nil
+	cmpLow := compareValue(expr, low)
+	cmpHigh := compareValue(expr, high)
+	return NewBoolValue(cmpLow >= 0 && cmpHigh <= 0), nil
 }
 
 func evalIn(e *PS.InExpr, row *Row, params []any) (any, error) {
@@ -927,98 +915,125 @@ func evalInterval(e *PS.IntervalLiteral) (any, error) {
 	return &IntervalValue{Amount: n, Unit: unit}, nil
 }
 
-func evalCast(e *PS.CastExpr, row *Row, params []any) (any, error) {
-	v, err := Eval(e.Expr, row, params)
+func evalCast(e *PS.CastExpr, row *Row, params []any) (Value, error) {
+	v, err := EvalValue(e.Expr, row, params)
 	if err != nil {
-		return nil, err
+		return NullValue(), err
 	}
-	if v == nil {
-		return nil, nil
+	if v.Kind == KindNull {
+		return NullValue(), nil
 	}
 	if e.Type == nil {
 		return v, nil
 	}
 	switch LX.TokenType(e.Type.Type) {
 	case LX.T_INT_KW, LX.T_BIGINT:
-		switch x := v.(type) {
-		case int64:
-			return x, nil
-		case float64:
-			return int64(x), nil
-		case string:
-			n, err := strconv.ParseInt(x, 10, 64)
+		switch v.Kind {
+		case KindInt:
+			return v, nil
+		case KindFloat:
+			return NewIntValue(int64(v.F64)), nil
+		case KindText:
+			n, err := strconv.ParseInt(v.S, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("ex: cast %q to int: %w", x, err)
+				return NullValue(), fmt.Errorf("ex: cast %q to int: %w", v.S, err)
 			}
-			return n, nil
-		case bool:
-			if x {
-				return int64(1), nil
+			return NewIntValue(n), nil
+		case KindBool:
+			if v.Bo {
+				return NewIntValue(1), nil
 			}
-			return int64(0), nil
+			return NewIntValue(0), nil
 		}
 	case LX.T_FLOAT_KW:
-		switch x := v.(type) {
-		case int64:
-			return float64(x), nil
-		case float64:
-			return x, nil
-		case string:
-			f, err := strconv.ParseFloat(x, 64)
+		switch v.Kind {
+		case KindInt:
+			return NewFloatValue(float64(v.I64)), nil
+		case KindFloat:
+			return v, nil
+		case KindText:
+			f, err := strconv.ParseFloat(v.S, 64)
 			if err != nil {
-				return nil, fmt.Errorf("ex: cast %q to float: %w", x, err)
+				return NullValue(), fmt.Errorf("ex: cast %q to float: %w", v.S, err)
 			}
-			return f, nil
+			return NewFloatValue(f), nil
 		}
 	case LX.T_TEXT:
-		return fmt.Sprintf("%v", v), nil
+		return NewTextValue(fmt.Sprintf("%v", v.ToAny())), nil
 	case LX.T_DECIMAL, LX.T_NUMERIC:
-		return evalDecimalCast(v, e.Type.Precision, e.Type.Scale)
+		r, err := evalDecimalCast(v.ToAny(), e.Type.Precision, e.Type.Scale)
+		if err != nil {
+			return NullValue(), err
+		}
+		return valueFromAny(r), nil
 	case LX.T_BOOL:
-		return castToBool(v), nil
+		return NewBoolValue(castToBoolValue(v)), nil
 	case LX.T_BLOB:
-		switch x := v.(type) {
-		case string:
-			return []byte(x), nil
-		case []byte:
-			return x, nil
+		switch v.Kind {
+		case KindText:
+			return NewBlobValue([]byte(v.S)), nil
+		case KindBlob:
+			return v, nil
 		default:
-			return []byte(fmt.Sprintf("%v", v)), nil
+			return NewBlobValue([]byte(fmt.Sprintf("%v", v.ToAny()))), nil
 		}
 	}
-	return nil, ErrEval
+	return NullValue(), ErrEval
 }
 
-func evalCase(e *PS.CaseExpr, row *Row, params []any) (any, error) {
+// castToBoolValue is the Value-typed variant of castToBool (REQ000776).
+func castToBoolValue(v Value) bool {
+	switch v.Kind {
+	case KindNull:
+		return false
+	case KindBool:
+		return v.Bo
+	case KindInt:
+		return v.I64 != 0
+	case KindFloat:
+		return v.F64 != 0
+	case KindText:
+		s := v.S
+		if s == "" || s == "0" || s == "false" || s == "FALSE" {
+			return false
+		}
+		return true
+	case KindBlob:
+		return len(v.B) > 0 && v.B[0] != 0
+	}
+	return true
+}
+
+func evalCase(e *PS.CaseExpr, row *Row, params []any) (Value, error) {
 	if e.Expr != nil {
-		target, err := Eval(e.Expr, row, params)
+		target, err := EvalValue(e.Expr, row, params)
 		if err != nil {
-			return nil, err
+			return NullValue(), err
 		}
 		for _, w := range e.WhenList {
-			v, err := Eval(w.Cond, row, params)
+			v, err := EvalValue(w.Cond, row, params)
 			if err != nil {
-				return nil, err
+				return NullValue(), err
 			}
-			if equalValue(target, v) {
-				return Eval(w.Then, row, params)
+			if equalValueValue(target, v) {
+				return EvalValue(w.Then, row, params)
 			}
 		}
 	} else {
 		for _, w := range e.WhenList {
-			cond, err := Eval(w.Cond, row, params)
+			cond, err := EvalValue(w.Cond, row, params)
 			if err != nil {
-				return nil, err
+				return NullValue(), err
 			}
-			if truthy(cond) {
-				return Eval(w.Then, row, params)
+			if isValueTruthy(cond) {
+				return EvalValue(w.Then, row, params)
 			}
 		}
 	}
 	if e.Else != nil {
-		return Eval(e.Else, row, params)
+		return EvalValue(e.Else, row, params)
 	}
-	return nil, nil
+	return NullValue(), nil
 }
 
 func truthy(v any) bool {
