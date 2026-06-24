@@ -49,6 +49,11 @@ type HashJoin struct {
 	sharedCols     []string
 	sharedTypes    []int
 	sharedColIndex map[string]int
+
+	// REQ000841: reusable key buffer for lookupKeys — pre-allocated
+	// to max(len(leftKeys), len(rightKeys)) to avoid per-probe
+	// make([]Value, len(keys)) in every hash-join probe.
+	keyBuf []Value
 }
 
 type hashBucket struct {
@@ -71,7 +76,14 @@ func NewHashJoin(left, right Operator, leftTbl, rightTbl string, leftKeys, right
 		p <<= 1
 	}
 
-	return &HashJoin{left: left, right: right, leftKeys: leftKeys, rightKeys: rightKeys, leftTbl: leftTbl, rightTbl: rightTbl, partitions: p}
+	return &HashJoin{
+		left: left, right: right,
+		leftKeys: leftKeys, rightKeys: rightKeys,
+		leftTbl: leftTbl, rightTbl: rightTbl,
+		partitions: p,
+		// REQ000841: pre-allocate key buffer to max key width.
+		keyBuf: make([]Value, max(len(leftKeys), len(rightKeys))),
+	}
 }
 
 func (j *HashJoin) LeftChild() Operator { return j.left }
@@ -146,7 +158,7 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		rk := lookupKeys(row, j.rightKeys)
+		rk := lookupKeys(row, j.rightKeys, j.keyBuf)
 		hash := hashKeys(rk)
 		idx := int(hash & uint64(j.partitions-1))
 		j.buckets[idx].rightRows = append(j.buckets[idx].rightRows, row)
@@ -194,10 +206,15 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	}
 	leftInfos := make([]leftInfo, 0, len(j.leftRows))
 	for _, left := range j.leftRows {
-		lk := lookupKeys(left, j.leftKeys)
-		hash := hashKeys(lk)
+		lk := lookupKeys(left, j.leftKeys, j.keyBuf)
+		// REQ000841: copy into dedicated storage — leftInfo stores
+		// the slice for use during match phase, so it must not
+		// share the reusable keyBuf backing array.
+		lkCopy := make([]Value, len(lk))
+		copy(lkCopy, lk)
+		hash := hashKeys(lkCopy)
 		idx := int(hash & uint64(j.partitions-1))
-		leftInfos = append(leftInfos, leftInfo{lk: lk, hash: hash, idx: idx})
+		leftInfos = append(leftInfos, leftInfo{lk: lkCopy, hash: hash, idx: idx})
 	}
 
 	// Count total matches.
@@ -206,7 +223,7 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		l := leftInfos[i]
 		bucket := j.buckets[l.idx]
 		for k := range bucket.hashes {
-			if bucket.hashes[k] == l.hash && valuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys)) {
+			if bucket.hashes[k] == l.hash && valuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys, j.keyBuf)) {
 				totalMatches++
 			}
 		}
@@ -227,7 +244,7 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		l := leftInfos[i]
 		bucket := j.buckets[l.idx]
 		for k := range bucket.hashes {
-			if bucket.hashes[k] == l.hash && valuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys)) {
+			if bucket.hashes[k] == l.hash && valuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys, j.keyBuf)) {
 				right := bucket.rightRows[k]
 				off := len(j.dataBuf)
 				j.dataBuf = j.dataBuf[:off+dataPerRow]
@@ -283,8 +300,13 @@ func hashKey(v Value) uint64 {
 }
 
 // lookupKeys extracts multiple key values from a row.
-func lookupKeys(row Row, keys []string) []Value {
-	vals := make([]Value, len(keys))
+func lookupKeys(row Row, keys []string, buf []Value) []Value {
+	vals := buf
+	if len(vals) < len(keys) {
+		vals = make([]Value, len(keys))
+	} else {
+		vals = vals[:len(keys)]
+	}
 	for i, k := range keys {
 		v, _ := row.Lookup(k)
 		// REQ000725: when the row comes from a previous join,
