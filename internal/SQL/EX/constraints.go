@@ -26,7 +26,7 @@ func fillDefaults(schema *storeSchema, row Row) (Row, error) {
 			continue
 		}
 		if row.Data[i].IsNull() {
-			v, err := Eval(def, nil, nil)
+			v, err := EvalValue(def, nil, nil)
 			if err != nil {
 				return row, fmt.Errorf("%w: default for column %q: %v",
 					ErrConstraint, schema.cols[i], err)
@@ -37,7 +37,7 @@ func fillDefaults(schema *storeSchema, row Row) (Row, error) {
 			if schema.colTypes != nil && i < len(schema.colTypes) {
 				v = coerceDefault(v, schema.colTypes[i])
 			}
-			row.Data[i] = valueFromAny(v)
+			row.Data[i] = v
 		}
 	}
 	// REQ000249: materialize STORED generated columns. The
@@ -48,70 +48,71 @@ func fillDefaults(schema *storeSchema, row Row) (Row, error) {
 			if gen == nil {
 				continue
 			}
-			v, err := Eval(gen, &row, nil)
+			v, err := EvalValue(gen, &row, nil)
 			if err != nil {
 				return row, fmt.Errorf("%w: generated column %q: %v",
 					ErrConstraint, schema.cols[i], err)
 			}
-			row.Data[i] = valueFromAny(v)
+			row.Data[i] = v
 		}
 	}
 	return row, nil
 }
 
-// coerceDefault coerces v to the Go type matching the column's
+// coerceDefault coerces v to the Value type matching the column's
 // token type. Unrecognised types pass through unchanged. REQ000515.
-func coerceDefault(v any, colType int) any {
-	if v == nil {
-		return nil
+func coerceDefault(v Value, colType int) Value {
+	if v.IsNull() {
+		return v
 	}
+	raw := v.ToAny()
 	switch LX.TokenType(colType) {
 	case LX.T_INT_KW, LX.T_BIGINT, LX.T_NUMERIC, LX.T_DATE, LX.T_TIME:
-		switch n := v.(type) {
+		switch n := raw.(type) {
 		case int64:
-			return n
+			return NewIntValue(n)
 		case int:
-			return int64(n)
+			return NewIntValue(int64(n))
 		case float64:
-			return int64(n)
+			return NewIntValue(int64(n))
 		case string:
-			return int64(0)
+			return NewIntValue(0)
 		case bool:
 			if n {
-				return int64(1)
+				return NewIntValue(1)
 			}
-			return int64(0)
+			return NewIntValue(0)
 		}
 	case LX.T_FLOAT_KW:
-		switch n := v.(type) {
+		switch n := raw.(type) {
 		case float64:
-			return n
+			return NewFloatValue(n)
 		case int64:
-			return float64(n)
+			return NewFloatValue(float64(n))
 		case int:
-			return float64(n)
+			return NewFloatValue(float64(n))
 		case string:
-			return float64(0)
+			return NewFloatValue(0)
 		case bool:
 			if n {
-				return float64(1)
+				return NewFloatValue(1)
 			}
-			return float64(0)
+			return NewFloatValue(0)
 		}
 	case LX.T_TEXT, LX.T_VARCHAR, LX.T_TIMESTAMP, LX.T_JSON:
-		return fmt.Sprintf("%v", v)
+		return NewTextValue(fmt.Sprintf("%v", raw))
 	case LX.T_BOOL:
-		switch b := v.(type) {
+		switch b := raw.(type) {
 		case bool:
-			return b
+			return NewBoolValue(b)
 		case int64:
-			return b != 0
+			return NewBoolValue(b != 0)
 		case int:
-			return b != 0
+			return NewBoolValue(b != 0)
 		case float64:
-			return b != 0
+			return NewBoolValue(b != 0)
 		case string:
-			return b == "true" || b == "1" || b == "yes"
+			return NewBoolValue(b == "true" || b == "1" || b == "yes")
 		}
 	}
 	return v
@@ -195,13 +196,13 @@ func validateCheck(schema *storeSchema, row Row) error {
 			continue
 		}
 		// Evaluate the CHECK expression against the row
-		val, err := Eval(check, &row, nil)
+		val, err := EvalValue(check, &row, nil)
 		if err != nil {
 			return fmt.Errorf("%w: CHECK constraint %d: %v",
 				ErrConstraint, i, err)
 		}
 		// CHECK must evaluate to TRUE (not FALSE or NULL)
-		if !truthy(val) {
+		if !isValueTruthy(val) {
 			return fmt.Errorf("%w: CHECK constraint %d failed",
 				ErrConstraint, i)
 		}

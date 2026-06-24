@@ -334,175 +334,8 @@ func isValueTruthy(v Value) bool {
 	return false
 }
 
-func evalBinary(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
-	// REQ000776: hot-path optimization for comparison and arithmetic
-	// operators. Use EvalValue to get the Value-typed result and
-	// then dispatch via Kind switch in compareValue/equalValueValue
-	// /numericArithValue. This avoids the interface conversion path
-	// in the original any-based helpers.
-	switch e.Op {
-	case int(LX.T_EQ), int(LX.T_NE),
-		int(LX.T_LT), int(LX.T_LE), int(LX.T_GT), int(LX.T_GE),
-		int(LX.T_PLUS), int(LX.T_MINUS), int(LX.T_STAR):
-		v, err := evalBinaryValue(e, row, params)
-		if err != nil {
-			return nil, err
-		}
-		return v.ToAny(), nil
-	}
-	left, err := Eval(e.Left, row, params)
-	if err != nil {
-		return nil, err
-	}
 
-	// Short-circuit AND/OR: defer right-side evaluation until
-	// we know it's needed. All other operators need both sides.
-	if e.Op == int(LX.T_AND) {
-		if b, ok := left.(bool); ok && !b {
-			return false, nil
-		}
-		right, err := Eval(e.Right, row, params)
-		if err != nil {
-			return nil, err
-		}
-		return band(left, right)
-	}
-	if e.Op == int(LX.T_OR) {
-		if b, ok := left.(bool); ok && b {
-			return true, nil
-		}
-		right, err := Eval(e.Right, row, params)
-		if err != nil {
-			return nil, err
-		}
-		return bor(left, right)
-	}
 
-	right, err := Eval(e.Right, row, params)
-	if err != nil {
-		return nil, err
-	}
-
-	switch e.Op {
-	case int(LX.T_EQ):
-		// SQL semantics: NULL compared with anything = NULL
-		if left == nil || right == nil {
-			return nil, nil
-		}
-		return equalValue(left, right), nil
-	case int(LX.T_NE):
-		if left == nil || right == nil {
-			return nil, nil
-		}
-		return !equalValue(left, right), nil
-	case int(LX.T_LT):
-		// REQ000445: SQL three-valued logic — comparison
-		// with NULL yields UNKNOWN, not FALSE. Returning
-		// nil makes the WHERE filter drop the row.
-		if left == nil || right == nil {
-			return nil, nil
-		}
-		return compare(left, right) < 0, nil
-	case int(LX.T_LE):
-		if left == nil || right == nil {
-			return nil, nil
-		}
-		return compare(left, right) <= 0, nil
-	case int(LX.T_GT):
-		if left == nil || right == nil {
-			return nil, nil
-		}
-		return compare(left, right) > 0, nil
-	case int(LX.T_GE):
-		if left == nil || right == nil {
-			return nil, nil
-		}
-		return compare(left, right) >= 0, nil
-	case int(LX.T_PLUS):
-		if _, ok := right.(*IntervalValue); ok {
-			if ls, lok := left.(string); lok {
-				if _, lok2 := ParseDateTime(ls); lok2 {
-					return DateTimeArithmetic(left, right, "+")
-				}
-			}
-		}
-		if _, ok := left.(*IntervalValue); ok {
-			if rs, rok := right.(string); rok {
-				if _, rok2 := ParseDateTime(rs); rok2 {
-					return DateTimeArithmetic(right, left, "+")
-				}
-			}
-		}
-		return add(left, right)
-	case int(LX.T_MINUS):
-		if _, ok := right.(*IntervalValue); ok {
-			return DateTimeArithmetic(left, right, "-")
-		}
-		if ls, lok := left.(string); lok {
-			if _, lok2 := ParseDateTime(ls); lok2 {
-				if _, rok := toTime(right); rok {
-					return DateTimeArithmetic(left, right, "-")
-				}
-			}
-		}
-		return sub(left, right)
-	case int(LX.T_STAR):
-		return mul(left, right)
-	case int(LX.T_SLASH):
-		return div(left, right)
-	case int(LX.T_MOD):
-		return mod(left, right)
-	case int(LX.T_BITAND):
-		return bitand(left, right)
-	case int(LX.T_BITOR):
-		return bitor(left, right)
-	case int(LX.T_BITXOR):
-		return bitxor(left, right)
-	case int(LX.T_LSHIFT):
-		return lshift(left, right)
-	case int(LX.T_RSHIFT):
-		return rshift(left, right)
-	case int(LX.T_CONCAT):
-		return concat(left, right)
-	case int(LX.T_LIKE):
-		{
-			var esc string
-			if e.Escape != nil {
-				v, err := Eval(e.Escape, row, params)
-				if err != nil {
-					return nil, err
-				}
-				if v != nil {
-					s, ok := v.(string)
-					if !ok || len(s) != 1 {
-						return nil, ErrEval
-					}
-					esc = s
-				}
-			}
-			return like(left, right, esc)
-		}
-	case int(LX.T_GLOB):
-		return glob(left, right)
-	case int(LX.T_DIV):
-		return intdiv(left, right)
-	case int(LX.T_IS):
-		// `x IS NOT NULL` parses as BinaryExpr{T_IS, x, UnaryExpr{T_NOT, NULL}}.
-		// Detect this and return the IS NOT NULL predicate semantics
-		// directly so the rewriter's fold of `NOT NULL` does not break
-		// the predicate. See REQ000361.
-		if u, ok := e.Right.(*PS.UnaryExpr); ok && u.Op == int(LX.T_NOT) {
-			if _, isNull := u.Operand.(*PS.NullLiteral); isNull {
-				if left == nil {
-					return false, nil
-				}
-				return true, nil
-			}
-		}
-		return is(left, right)
-	}
-	return nil, ErrEval
-}
 
 // evalBinaryValue is the Value-typed fast path for comparison and
 // arithmetic binary operators. REQ000776. It calls EvalValue to get
@@ -634,46 +467,9 @@ func evalBetween(e *PS.BetweenExpr, row *Row, params []any) (Value, error) {
 	return NewBoolValue(cmpLow >= 0 && cmpHigh <= 0), nil
 }
 
-func evalIn(e *PS.InExpr, row *Row, params []any) (any, error) {
-	target, err := Eval(e.Expr, row, params)
-	if err != nil {
-		return nil, err
-	}
-	if e.Subquery != nil {
-		return evalInSubquery(target, e.Subquery, row, params)
-	}
-	if len(e.List) == 0 {
-		return false, nil
-	}
-	if target == nil {
-		return nil, nil
-	}
-	// REQ000817: for lists with 4+ items, use a hash set for O(1) probing.
-	// The hash set is lazily built and cached on the InExpr node.
-	if len(e.List) >= 4 {
-		return evalInHash(e, target, row, params)
-	}
-	hadNull := false
-	for _, item := range e.List {
-		v, err := Eval(item, row, params)
-		if err != nil {
-			return nil, err
-		}
-		if v == nil {
-			hadNull = true
-			continue
-		}
-		if equalValue(target, v) {
-			return true, nil
-		}
-	}
-	if hadNull {
-		return nil, nil
-	}
-	return false, nil
-}
 
-// evalInValue is the Value-typed variant of evalIn (REQ000776).
+
+// evalInValue is the Value-typed handler for IN expressions (REQ000776).
 // Uses EvalValue to avoid the any->Value conversion. For 4+ item
 // lists, routes through evalInHashValue which uses per-kind
 // hash sets (int64/float64/string) for zero-boxing O(1) probing.
@@ -748,15 +544,15 @@ func evalInHash(e *PS.InExpr, target any, row *Row, params []any) (any, error) {
 	if cached == nil {
 		cached = &inHashCache{set: make(map[any]struct{}, len(e.List))}
 		for _, item := range e.List {
-			v, err := Eval(item, row, params)
+			v, err := EvalValue(item, row, params)
 			if err != nil {
 				return nil, err
 			}
-			if v == nil {
+			if v.Kind == KindNull {
 				cached.hadNull = true
 				continue
 			}
-			cached.set[v] = struct{}{}
+			cached.set[v.ToAny()] = struct{}{}
 		}
 		inHashCacheMap[e] = cached
 	}
@@ -828,7 +624,11 @@ func evalInSubquery(target any, subq PS.Stmt, outer *Row, params []any) (any, er
 // EvalForTest exposes Eval for tests; do not use in production
 // code paths where the row may not be valid.
 func EvalForTest(e PS.Expr, row *Row, params []any) (any, error) {
-	return Eval(e, row, params)
+	v, err := EvalValue(e, row, params)
+	if err != nil {
+		return nil, err
+	}
+	return v.ToAny(), nil
 }
 
 // currentSubqueryPlanner is set by the executor before evaluating
@@ -1354,12 +1154,12 @@ func evalRaise(e *PS.RaiseFunc, row *Row, params []any) (Value, error) {
 	}
 	var msg string
 	if e.Message != nil {
-		v, err := Eval(e.Message, row, params)
+		v, err := EvalValue(e.Message, row, params)
 		if err != nil {
 			return NullValue(), err
 		}
-		if s, ok := v.(string); ok {
-			msg = s
+		if v.Kind == KindText {
+			msg = v.S
 		}
 	}
 	return NullValue(), fmt.Errorf("%w: %s", ErrTriggerAbort, msg)
@@ -1382,27 +1182,27 @@ func evalAbs(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := Eval(args[0], row, params)
+	v, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if v == nil {
+	if v.Kind == KindNull {
 		return nil, nil
 	}
-	switch x := v.(type) {
-	case int64:
-		if x == math.MinInt64 {
+	switch v.Kind {
+	case KindInt:
+		if v.I64 == math.MinInt64 {
 			return nil, fmt.Errorf("abs: integer overflow")
 		}
-		if x < 0 {
-			return -x, nil
+		if v.I64 < 0 {
+			return -v.I64, nil
 		}
-		return x, nil
-	case float64:
-		if x < 0 {
-			return -x, nil
+		return v.I64, nil
+	case KindFloat:
+		if v.F64 < 0 {
+			return -v.F64, nil
 		}
-		return x, nil
+		return v.F64, nil
 	}
 	return 0.0, nil
 }
@@ -1411,22 +1211,22 @@ func evalHex(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := Eval(args[0], row, params)
+	v, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if v == nil {
+	if v.Kind == KindNull {
 		return nil, nil
 	}
-	switch x := v.(type) {
-	case int64:
+	switch v.Kind {
+	case KindInt:
 		// SQLite converts the integer to its text form first,
 		// then hex-encodes that text. HEX(255) → "323535"
 		// (the hex of the three ASCII digits).
 		// REQ000763: use strconv.AppendInt + hex.Encode to
 		// avoid intermediate []byte allocation from FormatInt.
 		buf := make([]byte, 0, 24)
-		buf = strconv.AppendInt(buf, x, 10)
+		buf = strconv.AppendInt(buf, v.I64, 10)
 		h := make([]byte, hex.EncodedLen(len(buf)))
 		hex.Encode(h, buf)
 		for i, c := range h {
@@ -1435,9 +1235,9 @@ func evalHex(args []PS.Expr, row *Row, params []any) (any, error) {
 			}
 		}
 		return string(h), nil
-	case float64:
+	case KindFloat:
 		buf := make([]byte, 0, 32)
-		buf = strconv.AppendFloat(buf, x, 'g', -1, 64)
+		buf = strconv.AppendFloat(buf, v.F64, 'g', -1, 64)
 		h := make([]byte, hex.EncodedLen(len(buf)))
 		hex.Encode(h, buf)
 		for i, c := range h {
@@ -1446,14 +1246,14 @@ func evalHex(args []PS.Expr, row *Row, params []any) (any, error) {
 			}
 		}
 		return string(h), nil
-	case []byte:
-		s := hex.EncodeToString(x)
+	case KindBlob:
+		s := hex.EncodeToString(v.B)
 		return strings.ToUpper(s), nil
-	case string:
-		s := hex.EncodeToString([]byte(x))
+	case KindText:
+		s := hex.EncodeToString([]byte(v.S))
 		return strings.ToUpper(s), nil
 	default:
-		s := hex.EncodeToString([]byte(fmt.Sprint(x)))
+		s := hex.EncodeToString([]byte(fmt.Sprint(v.ToAny())))
 		return strings.ToUpper(s), nil
 	}
 }
@@ -1462,33 +1262,48 @@ func evalRound(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 || len(args) > 2 {
 		return nil, ErrEval
 	}
-	v, err := Eval(args[0], row, params)
+	v, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if v == nil {
+	if v.Kind == KindNull {
 		return nil, nil
 	}
 	// REQ000772: int64 fast path when no places arg is given or
 	// places==0. Avoid the float64 conversion in numericFloat for
 	// the common case of ROUND(int_col).
 	if len(args) == 1 {
-		if x, ok := v.(int64); ok {
-			return x, nil
+		if v.Kind == KindInt {
+			return v.I64, nil
 		}
 	}
-	x, ok := numericFloat(v)
+	var x float64
+	var ok bool
+	if v.Kind == KindInt {
+		x = float64(v.I64)
+		ok = true
+	} else if v.Kind == KindFloat {
+		x = v.F64
+		ok = true
+	}
 	if !ok {
 		return 0.0, nil
 	}
 	places := int64(0)
 	if len(args) == 2 {
-		pv, err := Eval(args[1], row, params)
+		pv, err := EvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
-		if pv != nil {
-			if p, ok := toInt64(pv); ok {
+		if pv.Kind != KindNull {
+			if pv.Kind == KindInt {
+				if pv.I64 < 0 {
+					places = 0
+				} else {
+					places = pv.I64
+				}
+			} else if pv.Kind == KindFloat {
+				p := int64(pv.F64)
 				if p < 0 {
 					places = 0
 				} else {
@@ -1509,29 +1324,38 @@ func evalSubstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 2 {
 		return nil, ErrEval
 	}
-	rawStr, err := Eval(args[0], row, params)
+	rawStr, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
 	// REQ000606: SUBSTR(NULL, ...) and SUBSTR(s, NULL, ...) must
 	// return NULL, not "<nil>" (the fmt.Sprint result).
-	if rawStr == nil {
+	if rawStr.Kind == KindNull {
 		return nil, nil
 	}
-	s := fmt.Sprint(rawStr)
-	startV, err := Eval(args[1], row, params)
+	s := rawStr.ToAny()
+	ss := fmt.Sprint(s)
+	startV, err := EvalValue(args[1], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if startV == nil {
+	if startV.Kind == KindNull {
 		return nil, nil
 	}
-	start, ok := toInt64(startV)
-	if !ok {
+	var start int64
+	var startOk bool
+	if startV.Kind == KindInt {
+		start = startV.I64
+		startOk = true
+	} else if startV.Kind == KindFloat {
+		start = int64(startV.F64)
+		startOk = true
+	}
+	if !startOk {
 		return nil, ErrEval
 	}
 	if start < 0 {
-		start = int64(len(s)) + start + 1
+		start = int64(len(ss)) + start + 1
 		if start < 1 {
 			start = 1
 		}
@@ -1540,28 +1364,36 @@ func evalSubstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	}
 	// Convert 1-based start to 0-based offset.
 	offset := int(start) - 1
-	if offset >= len(s) {
+	if offset >= len(ss) {
 		return "", nil
 	}
 	if len(args) >= 3 {
-		lenV, err := Eval(args[2], row, params)
+		lenV, err := EvalValue(args[2], row, params)
 		if err != nil {
 			return nil, err
 		}
-		length, ok := toInt64(lenV)
-		if !ok {
+		var length int64
+		var lenOk bool
+		if lenV.Kind == KindInt {
+			length = lenV.I64
+			lenOk = true
+		} else if lenV.Kind == KindFloat {
+			length = int64(lenV.F64)
+			lenOk = true
+		}
+		if !lenOk {
 			return nil, ErrEval
 		}
 		if length < 0 {
 			return "", nil
 		}
 		end := offset + int(length)
-		if end > len(s) {
-			end = len(s)
+		if end > len(ss) {
+			end = len(ss)
 		}
-		return s[offset:end], nil
+		return ss[offset:end], nil
 	}
-	return s[offset:], nil
+	return ss[offset:], nil
 }
 
 // evalChar converts integer Unicode code points to a UTF-8 string.
@@ -1572,15 +1404,19 @@ func evalChar(args []PS.Expr, row *Row, params []any) (any, error) {
 	}
 	var sb strings.Builder
 	for _, arg := range args {
-		v, err := Eval(arg, row, params)
+		v, err := EvalValue(arg, row, params)
 		if err != nil {
 			return nil, err
 		}
-		if v == nil {
+		if v.Kind == KindNull {
 			return nil, nil // Any NULL arg → NULL result
 		}
-		n, ok := toInt64(v)
-		if !ok {
+		var n int64
+		if v.Kind == KindInt {
+			n = v.I64
+		} else if v.Kind == KindFloat {
+			n = int64(v.F64)
+		} else {
 			continue
 		}
 		if n < 0 || n > unicode.MaxRune {
@@ -1596,14 +1432,14 @@ func evalChar(args []PS.Expr, row *Row, params []any) (any, error) {
 func evalConcat(args []PS.Expr, row *Row, params []any) (any, error) {
 	var sb strings.Builder
 	for _, arg := range args {
-		v, err := Eval(arg, row, params)
+		v, err := EvalValue(arg, row, params)
 		if err != nil {
 			return nil, err
 		}
-		if v == nil {
+		if v.Kind == KindNull {
 			return nil, nil // Any NULL → NULL result
 		}
-		sb.WriteString(fmt.Sprint(v))
+		sb.WriteString(fmt.Sprint(v.ToAny()))
 	}
 	return sb.String(), nil
 }
@@ -1614,28 +1450,28 @@ func evalConcatWS(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 2 {
 		return nil, ErrEval
 	}
-	sep, err := Eval(args[0], row, params)
+	sep, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if sep == nil {
+	if sep.Kind == KindNull {
 		return nil, nil // NULL separator → NULL result
 	}
-	sepStr := fmt.Sprint(sep)
+	sepStr := fmt.Sprint(sep.ToAny())
 	var sb strings.Builder
 	first := true
 	for i := 1; i < len(args); i++ {
-		v, err := Eval(args[i], row, params)
+		v, err := EvalValue(args[i], row, params)
 		if err != nil {
 			return nil, err
 		}
-		if v == nil {
+		if v.Kind == KindNull {
 			continue // Skip NULL values
 		}
 		if !first {
 			sb.WriteString(sepStr)
 		}
-		sb.WriteString(fmt.Sprint(v))
+		sb.WriteString(fmt.Sprint(v.ToAny()))
 		first = false
 	}
 	return sb.String(), nil
@@ -1646,25 +1482,25 @@ func evalFormat(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, ErrEval
 	}
-	fmtV, err := Eval(args[0], row, params)
+	fmtV, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if fmtV == nil {
+	if fmtV.Kind == KindNull {
 		return nil, nil
 	}
-	fmtStr, ok := fmtV.(string)
-	if !ok {
-		fmtStr = fmt.Sprint(fmtV)
+	fmtStr := fmtV.S
+	if fmtV.Kind != KindText {
+		fmtStr = fmt.Sprint(fmtV.ToAny())
 	}
 	// Convert remaining args to any for fmt.Sprintf
 	fmtArgs := make([]any, len(args)-1)
 	for i := 1; i < len(args); i++ {
-		v, err := Eval(args[i], row, params)
+		v, err := EvalValue(args[i], row, params)
 		if err != nil {
 			return nil, err
 		}
-		fmtArgs[i-1] = v
+		fmtArgs[i-1] = v.ToAny()
 	}
 	return fmt.Sprintf(fmtStr, fmtArgs...), nil
 }
@@ -1675,21 +1511,21 @@ func evalLtrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, ErrEval
 	}
-	v, err := Eval(args[0], row, params)
+	v, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if v == nil {
+	if v.Kind == KindNull {
 		return nil, nil
 	}
-	s := fmt.Sprint(v)
+	s := fmt.Sprint(v.ToAny())
 	if len(args) >= 2 {
-		trimV, err := Eval(args[1], row, params)
+		trimV, err := EvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
-		if trimV != nil {
-			return strings.TrimLeft(s, fmt.Sprint(trimV)), nil
+		if trimV.Kind != KindNull {
+			return strings.TrimLeft(s, fmt.Sprint(trimV.ToAny())), nil
 		}
 	}
 	return strings.TrimLeft(s, " "), nil
@@ -1701,21 +1537,21 @@ func evalRtrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, ErrEval
 	}
-	v, err := Eval(args[0], row, params)
+	v, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if v == nil {
+	if v.Kind == KindNull {
 		return nil, nil
 	}
-	s := fmt.Sprint(v)
+	s := fmt.Sprint(v.ToAny())
 	if len(args) >= 2 {
-		trimV, err := Eval(args[1], row, params)
+		trimV, err := EvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
-		if trimV != nil {
-			return strings.TrimRight(s, fmt.Sprint(trimV)), nil
+		if trimV.Kind != KindNull {
+			return strings.TrimRight(s, fmt.Sprint(trimV.ToAny())), nil
 		}
 	}
 	return strings.TrimRight(s, " "), nil
@@ -1727,21 +1563,21 @@ func evalTrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, ErrEval
 	}
-	v, err := Eval(args[0], row, params)
+	v, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if v == nil {
+	if v.Kind == KindNull {
 		return nil, nil
 	}
-	s := fmt.Sprint(v)
+	s := fmt.Sprint(v.ToAny())
 	if len(args) >= 2 {
-		trimV, err := Eval(args[1], row, params)
+		trimV, err := EvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
-		if trimV != nil {
-			return strings.Trim(s, fmt.Sprint(trimV)), nil
+		if trimV.Kind != KindNull {
+			return strings.Trim(s, fmt.Sprint(trimV.ToAny())), nil
 		}
 	}
 	return strings.Trim(s, " "), nil
@@ -1753,29 +1589,29 @@ func evalReplace(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 3 {
 		return nil, ErrEval
 	}
-	x, err := Eval(args[0], row, params)
+	x, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if x == nil {
+	if x.Kind == KindNull {
 		return nil, nil
 	}
-	y, err := Eval(args[1], row, params)
+	y, err := EvalValue(args[1], row, params)
 	if err != nil {
 		return nil, err
 	}
-	z, err := Eval(args[2], row, params)
+	z, err := EvalValue(args[2], row, params)
 	if err != nil {
 		return nil, err
 	}
-	xs := fmt.Sprint(x)
-	if y == nil {
+	xs := fmt.Sprint(x.ToAny())
+	if y.Kind == KindNull {
 		return xs, nil // NULL pattern → return X unchanged
 	}
-	ys := fmt.Sprint(y)
+	ys := fmt.Sprint(y.ToAny())
 	zs := ""
-	if z != nil {
-		zs = fmt.Sprint(z)
+	if z.Kind != KindNull {
+		zs = fmt.Sprint(z.ToAny())
 	}
 	return strings.ReplaceAll(xs, ys, zs), nil
 }
@@ -1787,26 +1623,26 @@ func evalQuote(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := Eval(args[0], row, params)
+	v, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if v == nil {
+	if v.Kind == KindNull {
 		return "NULL", nil
 	}
-	switch x := v.(type) {
-	case string:
+	switch v.Kind {
+	case KindText:
 		// Escape single quotes by doubling
-		escaped := strings.ReplaceAll(x, "'", "''")
+		escaped := strings.ReplaceAll(v.S, "'", "''")
 		return "'" + escaped + "'", nil
-	case int64, float64, int, bool:
+	case KindInt, KindFloat, KindBool:
 		// Numbers and booleans are not quoted
-		return fmt.Sprint(x), nil
-	case []byte:
+		return fmt.Sprint(v.ToAny()), nil
+	case KindBlob:
 		// BLOB as X'hex'
-		return "X'" + hex.EncodeToString(x) + "'", nil
+		return "X'" + hex.EncodeToString(v.B) + "'", nil
 	default:
-		return "'" + strings.ReplaceAll(fmt.Sprint(x), "'", "''") + "'", nil
+		return "'" + strings.ReplaceAll(fmt.Sprint(v.ToAny()), "'", "''") + "'", nil
 	}
 }
 
@@ -1816,25 +1652,22 @@ func evalTypeof(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := Eval(args[0], row, params)
+	v, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if v == nil {
+	if v.Kind == KindNull {
 		return "null", nil
 	}
-	switch v.(type) {
-	case int64, int, float64:
-		if _, ok := v.(float64); ok {
-			return "real", nil
-		}
+	switch v.Kind {
+	case KindInt, KindBool:
 		return "integer", nil
-	case string:
+	case KindFloat:
+		return "real", nil
+	case KindText:
 		return "text", nil
-	case []byte:
+	case KindBlob:
 		return "blob", nil
-	case bool:
-		return "integer", nil // Booleans are stored as integers
 	default:
 		return "text", nil
 	}
@@ -1846,24 +1679,24 @@ func evalOctetLength(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := Eval(args[0], row, params)
+	v, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if v == nil {
+	if v.Kind == KindNull {
 		return nil, nil
 	}
 	// REQ000621: for []byte return the raw byte length, not the
 	// fmt.Sprint representation (which yields "[104 101 ...]" for
 	// "Hello"). For strings, return the byte length directly too
 	// rather than going through fmt.Sprint.
-	if b, ok := v.([]byte); ok {
-		return int64(len(b)), nil
+	if v.Kind == KindBlob {
+		return int64(len(v.B)), nil
 	}
-	if s, ok := v.(string); ok {
-		return int64(len(s)), nil
+	if v.Kind == KindText {
+		return int64(len(v.S)), nil
 	}
-	return int64(len(fmt.Sprint(v))), nil
+	return int64(len(fmt.Sprint(v.ToAny()))), nil
 }
 
 // evalUnicode returns the Unicode code point of the first character.
@@ -1872,14 +1705,14 @@ func evalUnicode(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := Eval(args[0], row, params)
+	v, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if v == nil {
+	if v.Kind == KindNull {
 		return nil, nil
 	}
-	s := fmt.Sprint(v)
+	s := fmt.Sprint(v.ToAny())
 	if len(s) == 0 {
 		return int64(0), nil
 	}
@@ -1905,14 +1738,14 @@ func evalIIF(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 3 {
 		return nil, ErrEval
 	}
-	cond, err := Eval(args[0], row, params)
+	cond, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if truthy(cond) {
-		return Eval(args[1], row, params)
+	if isValueTruthy(cond) {
+		return EvalValue(args[1], row, params)
 	}
-	return Eval(args[2], row, params)
+	return EvalValue(args[2], row, params)
 }
 
 // evalInstr returns the 1-based position of Y in X, or 0 if not found.
@@ -1921,23 +1754,23 @@ func evalInstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 2 {
 		return nil, ErrEval
 	}
-	x, err := Eval(args[0], row, params)
+	x, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
 	// REQ000620: NULL on either side must return NULL, not 0.
-	if x == nil {
+	if x.Kind == KindNull {
 		return nil, nil
 	}
-	y, err := Eval(args[1], row, params)
+	y, err := EvalValue(args[1], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if y == nil {
+	if y.Kind == KindNull {
 		return nil, nil
 	}
-	xs := fmt.Sprint(x)
-	ys := fmt.Sprint(y)
+	xs := fmt.Sprint(x.ToAny())
+	ys := fmt.Sprint(y.ToAny())
 	if ys == "" {
 		return int64(1), nil
 	}
@@ -1954,33 +1787,32 @@ func evalSign(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := Eval(args[0], row, params)
+	v, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
 	// REQ000619: SIGN(NULL) must return NULL, not 0.
-	if v == nil {
+	if v.Kind == KindNull {
 		return nil, nil
 	}
 	// REQ000772: int64 fast path — SIGN on int64 only needs a
 	// single comparison instead of the float64 conversion in
 	// numericFloat.
-	if x, ok := v.(int64); ok {
-		if x < 0 {
+	if v.Kind == KindInt {
+		if v.I64 < 0 {
 			return int64(-1), nil
-		} else if x > 0 {
+		} else if v.I64 > 0 {
 			return int64(1), nil
 		}
 		return int64(0), nil
 	}
-	n, ok := numericFloat(v)
-	if !ok {
+	if v.Kind == KindFloat {
+		if v.F64 < 0 {
+			return int64(-1), nil
+		} else if v.F64 > 0 {
+			return int64(1), nil
+		}
 		return int64(0), nil
-	}
-	if n < 0 {
-		return int64(-1), nil
-	} else if n > 0 {
-		return int64(1), nil
 	}
 	return int64(0), nil
 }
@@ -1993,20 +1825,21 @@ func evalMaxScalar(args []PS.Expr, row *Row, params []any) (any, error) {
 	}
 	var maxV any
 	for _, arg := range args {
-		v, err := Eval(arg, row, params)
+		v, err := EvalValue(arg, row, params)
 		if err != nil {
 			return nil, err
 		}
-		if v == nil {
+		if v.Kind == KindNull {
 			continue
 		}
+		val := v.ToAny()
 		if maxV == nil {
-			maxV = v
+			maxV = val
 			continue
 		}
 		// Compare with current max
-		if compare(v, maxV) > 0 {
-			maxV = v
+		if compare(val, maxV) > 0 {
+			maxV = val
 		}
 	}
 	return maxV, nil
@@ -2020,19 +1853,20 @@ func evalMinScalar(args []PS.Expr, row *Row, params []any) (any, error) {
 	}
 	var minV any
 	for _, arg := range args {
-		v, err := Eval(arg, row, params)
+		v, err := EvalValue(arg, row, params)
 		if err != nil {
 			return nil, err
 		}
-		if v == nil {
+		if v.Kind == KindNull {
 			continue
 		}
+		val := v.ToAny()
 		if minV == nil {
-			minV = v
+			minV = val
 			continue
 		}
-		if compare(v, minV) < 0 {
-			minV = v
+		if compare(val, minV) < 0 {
+			minV = val
 		}
 	}
 	return minV, nil
@@ -2052,12 +1886,19 @@ func evalRandomBlob(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	nV, err := Eval(args[0], row, params)
+	nV, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	n, ok := toInt64(nV)
-	if !ok || n < 0 {
+	var n int64
+	if nV.Kind == KindInt {
+		n = nV.I64
+	} else if nV.Kind == KindFloat {
+		n = int64(nV.F64)
+	} else {
+		return nil, nil
+	}
+	if n < 0 {
 		return nil, nil
 	}
 	buf := make([]byte, n)
@@ -2072,12 +1913,19 @@ func evalZeroblob(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	nV, err := Eval(args[0], row, params)
+	nV, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	n, ok := toInt64(nV)
-	if !ok || n < 0 {
+	var n int64
+	if nV.Kind == KindInt {
+		n = nV.I64
+	} else if nV.Kind == KindFloat {
+		n = int64(nV.F64)
+	} else {
+		return nil, nil
+	}
+	if n < 0 {
 		return nil, nil
 	}
 	return make([]byte, n), nil
@@ -2930,29 +2778,27 @@ func evalGlob(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("glob requires 2 args")
 	}
-	pattern, err := Eval(args[0], row, params)
+	pattern, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if pattern == nil {
+	if pattern.Kind == KindNull {
 		return nil, nil
 	}
-	str, err := Eval(args[1], row, params)
+	str, err := EvalValue(args[1], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if str == nil {
+	if str.Kind == KindNull {
 		return nil, nil
 	}
-	p, ok := pattern.(string)
-	if !ok {
+	if pattern.Kind != KindText {
 		return nil, nil
 	}
-	s, ok := str.(string)
-	if !ok {
+	if str.Kind != KindText {
 		return nil, nil
 	}
-	if globMatch(p, s) {
+	if globMatch(pattern.S, str.S) {
 		return int64(1), nil
 	}
 	return int64(0), nil
@@ -3053,7 +2899,7 @@ func evalLikelihood(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
-	return Eval(args[0], row, params)
+	return EvalValue(args[0], row, params)
 }
 
 // evalLikely implements likely(X) — no-op pass-through.
@@ -3062,7 +2908,7 @@ func evalLikely(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
-	return Eval(args[0], row, params)
+	return EvalValue(args[0], row, params)
 }
 
 // evalSoundex implements soundex(X) — 4-char phonetic encoding.
@@ -3084,17 +2930,17 @@ func evalSoundex(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
-	val, err := Eval(args[0], row, params)
+	val, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if val == nil {
+	if val.Kind == KindNull {
 		return nil, nil
 	}
-	s, ok := val.(string)
-	if !ok {
+	if val.Kind != KindText {
 		return "?000", nil
 	}
+	s := val.S
 	if s == "" {
 		return "?000", nil
 	}
@@ -3150,17 +2996,17 @@ func evalUnhex(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
-	val, err := Eval(args[0], row, params)
+	val, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if val == nil {
+	if val.Kind == KindNull {
 		return nil, nil
 	}
-	s, ok := val.(string)
-	if !ok {
+	if val.Kind != KindText {
 		return nil, nil
 	}
+	s := val.S
 
 	// Decode hex string
 	s = strings.TrimSpace(s)
@@ -3177,7 +3023,6 @@ func evalUnhex(args []PS.Expr, row *Row, params []any) (any, error) {
 		}
 		result = append(result, h1<<4|h2)
 	}
-
 	return result, nil
 }
 
@@ -3200,17 +3045,17 @@ func evalUnistr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
-	val, err := Eval(args[0], row, params)
+	val, err := EvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
-	if val == nil {
+	if val.Kind == KindNull {
 		return nil, nil
 	}
-	s, ok := val.(string)
-	if !ok {
+	if val.Kind != KindText {
 		return nil, nil
 	}
+	s := val.S
 
 	var result strings.Builder
 	for i := 0; i < len(s); i++ {
@@ -3316,7 +3161,7 @@ func evalUnlikely(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
-	return Eval(args[0], row, params)
+	return EvalValue(args[0], row, params)
 }
 
 // glob implements the GLOB binary operator (SQLite-compatible).

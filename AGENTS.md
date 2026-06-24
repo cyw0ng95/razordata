@@ -226,3 +226,43 @@ Use sqlite3 as a reference implementation to compare against razor-data's output
 - Go 1.26+ (use `slices`, `maps`, `iter`, `cmp`, `math/rand/v2`, `for range N`).
 - Linux, macOS, Windows.
 - Single `go.mod` — no nested modules.
+
+## Progress
+
+### Commit `d7e307b` — Migrated eval functions to return `(Value, error)`
+
+**Migrated to return `(Value, error)`:**
+
+1. `evalBetween` — uses `EvalValue` + `compareValue`
+2. `evalCast` — uses `EvalValue` + Kind-switch, added `castToBoolValue` helper
+3. `evalCase` — uses `EvalValue` + `equalValueValue`/`isValueTruthy`
+4. `evalRaise` — trivial (always returns error)
+5. `evalBinary` extended to ALL ops (was only hot-path EQ/NE/LT/LE/GT/GE/PLUS/MINUS/STAR, now also SLASH, MOD, BITAND, BITOR, BITXOR, LSHIFT, RSHIFT, CONCAT, LIKE, GLOB, DIV, IS)
+6. `evalBinaryShortCircuit` — handles AND/OR with three-valued short-circuit logic (separate from `evalBinaryValue` because short-circuit requires conditional right-side eval)
+7. All unary ops handled by `evalUnaryValue` (no more `evalUnary` fallthrough)
+8. `evalAggregate` — row lookups via `valueFromAny`, defaults via Value constructors
+9. `evalFunction` — LENGTH/UPPER/LOWER/IFNULL/COALESCE/NULLIF/NOW native, 33 scalar functions via `valueFromAnyWrap` bridges
+10. `evalWindowFunc` — trivial (always returns error)
+
+**Removed (no longer needed):**
+
+- `evalUnary` (any-returning, dead code)
+- `evalBinary` (any-returning, dead code)
+
+**New helpers added:**
+
+- `bandValue`, `borValue`, `modValue`, `bitandValue`, `bitorValue`, `bitxorValue`
+- `lshiftValue`, `rshiftValue`, `concatValue`, `likeValue`, `globValue`
+- `intdivValue`, `isValue`, `toFloat64`, `valueFromAnyWrap`
+
+**Remaining bridges in `EvalValue`:**
+
+- `evalExists` (uses `sync.Map` caches, non-Value)
+- `evalScalarSubquery` (uses subquery execution, non-Value)
+- `evalInterval` (returns `*IntervalValue` pointer, non-Value)
+
+**Status:**
+
+- 9 of 22 eval functions now native Value (`evalBinaryValue`, `evalUnaryValue`, `evalBetween`, `evalCast`, `evalCase`, `evalInValue`, `evalInHashValue`, `evalBinaryShortCircuit`, `evalAggregate`, `evalFunction`, `evalWindowFunc`, `evalRaise`) — 12 total
+- 156 `Eval()` call sites pending migration to `EvalValue`
+- 8 pre-existing test failures unchanged

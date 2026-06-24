@@ -1619,11 +1619,11 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 						if j.On != nil {
 							pred := j.On
 							on = func(outer, inner *Row) (bool, error) {
-								v, err := Eval(pred, inner, nil)
+								v, err := EvalValue(pred, inner, nil)
 								if err != nil {
 									return false, err
 								}
-								return truthy(v), nil
+								return isValueTruthy(v), nil
 							}
 						}
 						nlj := NewNestedLoopJoin(current, rightScan, leftTbl, j.Right, on, kind)

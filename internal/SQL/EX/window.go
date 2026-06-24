@@ -124,14 +124,14 @@ func (w *WindowOperator) partitionKey(row *Row) string {
 	}
 	key := ""
 	for i, expr := range w.spec.PartitionBy {
-		val, err := Eval(expr, row, nil)
+		val, err := EvalValue(expr, row, nil)
 		if err != nil {
-			val = nil
+			val = NullValue()
 		}
 		if i > 0 {
 			key += "|"
 		}
-		key += fmt.Sprintf("%v", val)
+		key += fmt.Sprintf("%v", val.ToAny())
 	}
 	return key
 }
@@ -142,9 +142,9 @@ func (w *WindowOperator) sortPartition(indices []int) {
 	}
 	slices.SortStableFunc(indices, func(a, b int) int {
 		for _, item := range w.spec.OrderBy {
-			vi, _ := Eval(item.Expr, &w.rows[a], nil)
-			vj, _ := Eval(item.Expr, &w.rows[b], nil)
-			cmp := compare(vi, vj)
+			vi, _ := EvalValue(item.Expr, &w.rows[a], nil)
+			vj, _ := EvalValue(item.Expr, &w.rows[b], nil)
+			cmp := compareValue(vi, vj)
 			if cmp != 0 {
 				if item.Desc {
 					return -cmp
@@ -206,9 +206,9 @@ func (w *WindowOperator) computeWindowFunc(indices []int) {
 // sameOrderByGroup reports whether two rows have equal ORDER BY values.
 func (w *WindowOperator) sameOrderByGroup(i, j int) bool {
 	for _, item := range w.spec.OrderBy {
-		vi, _ := Eval(item.Expr, &w.rows[i], nil)
-		vj, _ := Eval(item.Expr, &w.rows[j], nil)
-		if compare(vi, vj) != 0 {
+		vi, _ := EvalValue(item.Expr, &w.rows[i], nil)
+		vj, _ := EvalValue(item.Expr, &w.rows[j], nil)
+		if compareValue(vi, vj) != 0 {
 			return false
 		}
 	}
@@ -293,17 +293,15 @@ func evalBoundOffset(offset PS.Expr) int {
 	if offset == nil {
 		return 0
 	}
-	v, err := Eval(offset, nil, nil)
+	v, err := EvalValue(offset, nil, nil)
 	if err != nil {
 		return 0
 	}
-	switch val := v.(type) {
-	case int64:
-		return int(val)
-	case float64:
-		return int(val)
-	case int:
-		return val
+	switch v.Kind {
+	case KindInt:
+		return int(v.I64)
+	case KindFloat:
+		return int(v.F64)
 	default:
 		return 0
 	}
@@ -323,18 +321,16 @@ func (w *WindowOperator) aggOverFrame(funcName string, frameRows []int) any {
 	var min, max float64
 	var hasVal bool
 	for _, ri := range frameRows {
-		val, err := Eval(w.args[0], &w.rows[ri], nil)
-		if err != nil || val == nil {
+		val, err := EvalValue(w.args[0], &w.rows[ri], nil)
+		if err != nil || val.Kind == KindNull {
 			continue
 		}
 		var fv float64
-		switch v := val.(type) {
-		case int64:
-			fv = float64(v)
-		case float64:
-			fv = v
-		case int:
-			fv = float64(v)
+		switch val.Kind {
+		case KindInt:
+			fv = float64(val.I64)
+		case KindFloat:
+			fv = val.F64
 		default:
 			continue
 		}
@@ -387,9 +383,9 @@ func (w *WindowOperator) computeRank(indices []int, dense bool) {
 			prevIdx := indices[i-1]
 			equal := true
 			for _, item := range w.spec.OrderBy {
-				vi, _ := Eval(item.Expr, &w.rows[prevIdx], nil)
-				vj, _ := Eval(item.Expr, &w.rows[idx], nil)
-				if compare(vi, vj) != 0 {
+				vi, _ := EvalValue(item.Expr, &w.rows[prevIdx], nil)
+				vj, _ := EvalValue(item.Expr, &w.rows[idx], nil)
+				if compareValue(vi, vj) != 0 {
 					equal = false
 					break
 				}
@@ -413,7 +409,7 @@ func (w *WindowOperator) computeLagLead(indices []int, defaultOffset int) {
 
 	// REQ000290: read offset from args[1] if provided
 	if n >= 2 {
-		if v, err := Eval(w.args[1], nil, nil); err == nil {
+		if v, err := EvalValue(w.args[1], nil, nil); err == nil {
 			if ov, ok := toInt64(v); ok {
 				offset = int(ov)
 				if defaultOffset < 0 {
@@ -423,9 +419,9 @@ func (w *WindowOperator) computeLagLead(indices []int, defaultOffset int) {
 		}
 	}
 	if n >= 3 {
-		var err error
-		defaultVal, err = Eval(w.args[2], nil, nil)
-		if err != nil {
+		if v, err := EvalValue(w.args[2], nil, nil); err == nil {
+			defaultVal = v.ToAny()
+		} else {
 			defaultVal = nil
 		}
 	}
@@ -438,8 +434,8 @@ func (w *WindowOperator) computeLagLead(indices []int, defaultOffset int) {
 		}
 		srcIdx := indices[srcPos]
 		if n >= 1 {
-			val, _ := Eval(w.args[0], &w.rows[srcIdx], nil)
-			w.results[idx] = val
+			val, _ := EvalValue(w.args[0], &w.rows[srcIdx], nil)
+			w.results[idx] = val.ToAny()
 		} else {
 			w.results[idx] = defaultVal
 		}

@@ -114,9 +114,9 @@ func keysLessByDistinct(a, b Row, groupCols []PS.Expr) bool {
 
 func keysLessByDistinctCmp(a, b Row, groupCols []PS.Expr) int {
 	for _, gc := range groupCols {
-		va, _ := Eval(gc, &a, nil)
-		vb, _ := Eval(gc, &b, nil)
-		c := compare(va, vb)
+		va, _ := EvalValue(gc, &a, nil)
+		vb, _ := EvalValue(gc, &b, nil)
+		c := compareValue(va, vb)
 		if c != 0 {
 			return c
 		}

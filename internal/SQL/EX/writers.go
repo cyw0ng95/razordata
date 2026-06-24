@@ -204,12 +204,12 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 				Data:  make([]Value, len(expanded)),
 			}
 			for j, expr := range expanded {
-				val, err := Eval(expr, &out, i.params)
+				val, err := EvalValue(expr, &out, i.params)
 				if err != nil {
 					return Row{}, err
 				}
 				resultRow.Cols[j] = colNameForReturning(expr, out.Cols, j)
-				resultRow.Data[j] = valueFromAny(val)
+				resultRow.Data[j] = val
 			}
 			i.resultRows = append(i.resultRows, resultRow)
 		}
@@ -347,12 +347,12 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 				Data:  make([]Value, len(expanded)),
 			}
 			for j, expr := range expanded {
-				val, err := Eval(expr, &out, i.params)
+				val, err := EvalValue(expr, &out, i.params)
 				if err != nil {
 					return Row{}, err
 				}
 				resultRow.Cols[j] = colNameForReturning(expr, out.Cols, j)
-				resultRow.Data[j] = valueFromAny(val)
+				resultRow.Data[j] = val
 			}
 			i.resultRows = append(i.resultRows, resultRow)
 		}
@@ -438,12 +438,12 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 				Data:  make([]Value, len(expanded)),
 			}
 			for j, expr := range expanded {
-				val, err := Eval(expr, &out, i.params)
+				val, err := EvalValue(expr, &out, i.params)
 				if err != nil {
 					return Row{}, err
 				}
 				resultRow.Cols[j] = colNameForReturning(expr, out.Cols, j)
-				resultRow.Data[j] = valueFromAny(val)
+				resultRow.Data[j] = val
 			}
 			i.resultRows = append(i.resultRows, resultRow)
 		}
@@ -638,12 +638,12 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 				Data:  make([]Value, len(expanded)),
 			}
 			for j, expr := range expanded {
-				val, err := Eval(expr, &row, u.params)
+				val, err := EvalValue(expr, &row, u.params)
 				if err != nil {
 					return Row{}, err
 				}
 				resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
-				resultRow.Data[j] = valueFromAny(val)
+				resultRow.Data[j] = val
 			}
 			u.resultRows = append(u.resultRows, resultRow)
 		}
@@ -731,12 +731,12 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 				Data:  make([]Value, len(expanded)),
 			}
 			for j, expr := range expanded {
-				val, err := Eval(expr, &row, u.params)
+				val, err := EvalValue(expr, &row, u.params)
 				if err != nil {
 					return Row{}, err
 				}
 				resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
-				resultRow.Data[j] = valueFromAny(val)
+				resultRow.Data[j] = val
 			}
 			u.resultRows = append(u.resultRows, resultRow)
 		}
@@ -860,12 +860,12 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 					Data:  make([]Value, len(expanded)),
 				}
 				for j, expr := range expanded {
-					val, err := Eval(expr, &row, d.params)
+					val, err := EvalValue(expr, &row, d.params)
 					if err != nil {
 						return Row{}, err
 					}
 					resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
-					resultRow.Data[j] = valueFromAny(val)
+					resultRow.Data[j] = val
 				}
 				d.resultRows = append(d.resultRows, resultRow)
 			}
@@ -945,12 +945,12 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 				Data:  make([]Value, len(expanded)),
 			}
 			for j, expr := range expanded {
-				val, err := Eval(expr, &row, d.params)
+				val, err := EvalValue(expr, &row, d.params)
 				if err != nil {
 					return Row{}, err
 				}
 				resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
-				resultRow.Data[j] = valueFromAny(val)
+				resultRow.Data[j] = val
 			}
 			d.resultRows = append(d.resultRows, resultRow)
 		}
@@ -2023,13 +2023,13 @@ func applyConflictUpdate(schema *storeSchema, existing []Row, out Row, sets []PS
 			if ci < 0 {
 				continue
 			}
-			v, err := Eval(p.Val, &out, params)
+			v, err := EvalValue(p.Val, &out, params)
 			if err != nil {
 				// Best-effort: leave column unchanged on eval error.
 				continue
 			}
 			if ci < len(updated.Data) {
-				updated.Data[ci] = valueFromAny(v)
+				updated.Data[ci] = v
 			}
 		}
 		return updated

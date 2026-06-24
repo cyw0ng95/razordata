@@ -131,11 +131,11 @@ func evalGroupKey(cols []PS.Expr, row *Row, params []any) ([]any, error) {
 	}
 	out := make([]any, len(cols))
 	for i, c := range cols {
-		v, err := Eval(c, row, params)
+		v, err := EvalValue(c, row, params)
 		if err != nil {
 			return nil, err
 		}
-		out[i] = v
+		out[i] = v.ToAny()
 	}
 	return out, nil
 }
@@ -342,7 +342,11 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			return Eval(e, &vrow, params)
+			v, err := EvalValue(e, &vrow, params)
+			if err != nil {
+				return nil, err
+			}
+			return v.ToAny(), nil
 		}
 		return nil, nil
 	}
@@ -351,14 +355,14 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 		if agg.Distinct {
 			seen := make(map[any]bool)
 			for _, r := range rows {
-				v, err := Eval(agg.Arg, &r, params)
+				v, err := EvalValue(agg.Arg, &r, params)
 				if err != nil {
 					return nil, err
 				}
-				if v == nil {
+				if v.Kind == KindNull {
 					continue
 				}
-				seen[v] = true
+				seen[v.ToAny()] = true
 			}
 			return int64(len(seen)), nil
 		}
@@ -367,8 +371,8 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 		}
 		var count int64
 		for _, r := range rows {
-			v, _ := Eval(agg.Arg, &r, params)
-			if v != nil {
+			v, _ := EvalValue(agg.Arg, &r, params)
+			if v.Kind != KindNull {
 				count++
 			}
 		}
@@ -381,20 +385,20 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 		var sumF float64
 		var seenI, seenF bool
 		for _, r := range rows {
-			v, err := Eval(agg.Arg, &r, params)
+			v, err := EvalValue(agg.Arg, &r, params)
 			if err != nil {
 				return nil, err
 			}
-			if v == nil {
+			if v.Kind == KindNull {
 				continue
 			}
-			if f, ok := v.(float64); ok {
-				sumF += f
+			if v.Kind == KindFloat {
+				sumF += v.F64
 				seenF = true
 				continue
 			}
-			if i, ok := v.(int64); ok {
-				sumI += i
+			if v.Kind == KindInt {
+				sumI += v.I64
 				seenI = true
 			}
 		}
@@ -412,18 +416,18 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 		var sumF float64
 		var n int64
 		for _, r := range rows {
-			v, err := Eval(agg.Arg, &r, params)
+			v, err := EvalValue(agg.Arg, &r, params)
 			if err != nil {
 				return nil, err
 			}
-			if v == nil {
+			if v.Kind == KindNull {
 				continue
 			}
-			if f, ok := v.(float64); ok {
-				sumF += f
+			if v.Kind == KindFloat {
+				sumF += v.F64
 				n++
-			} else if i, ok := v.(int64); ok {
-				sumF += float64(i)
+			} else if v.Kind == KindInt {
+				sumF += float64(v.I64)
 				n++
 			}
 		}
@@ -435,69 +439,69 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 		if agg.Distinct {
 			return minDistinct(agg, rows, params)
 		}
-		var best any
+		var best Value
 		for _, r := range rows {
-			v, err := Eval(agg.Arg, &r, params)
+			v, err := EvalValue(agg.Arg, &r, params)
 			if err != nil {
 				return nil, err
 			}
-			if v == nil {
+			if v.Kind == KindNull {
 				continue
 			}
-			if best == nil || compare(v, best) < 0 {
+			if best.Kind == KindNull || compareValue(v, best) < 0 {
 				best = v
 			}
 		}
-		return best, nil
+		return best.ToAny(), nil
 	case "MAX":
 		if agg.Distinct {
 			return maxDistinct(agg, rows, params)
 		}
-		var best any
+		var best Value
 		for _, r := range rows {
-			v, err := Eval(agg.Arg, &r, params)
+			v, err := EvalValue(agg.Arg, &r, params)
 			if err != nil {
 				return nil, err
 			}
-			if v == nil {
+			if v.Kind == KindNull {
 				continue
 			}
-			if best == nil || compare(v, best) > 0 {
+			if best.Kind == KindNull || compareValue(v, best) > 0 {
 				best = v
 			}
 		}
-		return best, nil
+		return best.ToAny(), nil
 	case "GROUP_CONCAT":
 		// REQ000523: GROUP_CONCAT optional separator. If the
 		// parser provided a separator expression, evaluate it
 		// once; otherwise default to ",".
 		sep := ","
 		if agg.Separator != nil {
-			sv, err := Eval(agg.Separator, nil, params)
+			sv, err := EvalValue(agg.Separator, nil, params)
 			if err != nil {
 				return nil, err
 			}
-			if sv != nil {
-				sep = fmt.Sprintf("%v", sv)
+			if sv.Kind != KindNull {
+				sep = fmt.Sprintf("%v", sv.ToAny())
 			}
 		}
 		var parts []string
 		seen := make(map[any]bool)
 		for _, r := range rows {
-			v, err := Eval(agg.Arg, &r, params)
+			v, err := EvalValue(agg.Arg, &r, params)
 			if err != nil {
 				return nil, err
 			}
-			if v == nil {
+			if v.Kind == KindNull {
 				continue
 			}
 			if agg.Distinct {
-				if seen[v] {
+				if seen[v.ToAny()] {
 					continue
 				}
-				seen[v] = true
+				seen[v.ToAny()] = true
 			}
-			parts = append(parts, fmt.Sprintf("%v", v))
+			parts = append(parts, fmt.Sprintf("%v", v.ToAny()))
 		}
 		if len(parts) == 0 {
 			return nil, nil
@@ -526,24 +530,24 @@ func sumDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 	var sumF float64
 	var seenI, seenF bool
 	for _, r := range rows {
-		v, err := Eval(agg.Arg, &r, params)
+		v, err := EvalValue(agg.Arg, &r, params)
 		if err != nil {
 			return nil, err
 		}
-		if v == nil {
+		if v.Kind == KindNull {
 			continue
 		}
-		if seen[v] {
+		if seen[v.ToAny()] {
 			continue
 		}
-		seen[v] = true
-		if f, ok := v.(float64); ok {
-			sumF += f
+		seen[v.ToAny()] = true
+		if v.Kind == KindFloat {
+			sumF += v.F64
 			seenF = true
 			continue
 		}
-		if i, ok := v.(int64); ok {
-			sumI += i
+		if v.Kind == KindInt {
+			sumI += v.I64
 			seenI = true
 		}
 	}
@@ -563,22 +567,22 @@ func avgDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 	var sumF float64
 	var n int64
 	for _, r := range rows {
-		v, err := Eval(agg.Arg, &r, params)
+		v, err := EvalValue(agg.Arg, &r, params)
 		if err != nil {
 			return nil, err
 		}
-		if v == nil {
+		if v.Kind == KindNull {
 			continue
 		}
-		if seen[v] {
+		if seen[v.ToAny()] {
 			continue
 		}
-		seen[v] = true
-		if f, ok := v.(float64); ok {
-			sumF += f
+		seen[v.ToAny()] = true
+		if v.Kind == KindFloat {
+			sumF += v.F64
 			n++
-		} else if i, ok := v.(int64); ok {
-			sumF += float64(i)
+		} else if v.Kind == KindInt {
+			sumF += float64(v.I64)
 			n++
 		}
 	}
@@ -592,46 +596,46 @@ func avgDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 // the minimum of deduplicated non-NULL values is returned. REQ000437 (iter-27).
 func minDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 	seen := make(map[any]bool)
-	var best any
+	var best Value
 	for _, r := range rows {
-		v, err := Eval(agg.Arg, &r, params)
+		v, err := EvalValue(agg.Arg, &r, params)
 		if err != nil {
 			return nil, err
 		}
-		if v == nil {
+		if v.Kind == KindNull {
 			continue
 		}
-		if seen[v] {
+		if seen[v.ToAny()] {
 			continue
 		}
-		seen[v] = true
-		if best == nil || compare(v, best) < 0 {
+		seen[v.ToAny()] = true
+		if best.Kind == KindNull || compareValue(v, best) < 0 {
 			best = v
 		}
 	}
-	return best, nil
+	return best.ToAny(), nil
 }
 
 // maxDistinct computes MAX(DISTINCT col). NULL values are skipped;
 // the maximum of deduplicated non-NULL values is returned. REQ000437 (iter-27).
 func maxDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 	seen := make(map[any]bool)
-	var best any
+	var best Value
 	for _, r := range rows {
-		v, err := Eval(agg.Arg, &r, params)
+		v, err := EvalValue(agg.Arg, &r, params)
 		if err != nil {
 			return nil, err
 		}
-		if v == nil {
+		if v.Kind == KindNull {
 			continue
 		}
-		if seen[v] {
+		if seen[v.ToAny()] {
 			continue
 		}
-		seen[v] = true
-		if best == nil || compare(v, best) > 0 {
+		seen[v.ToAny()] = true
+		if best.Kind == KindNull || compareValue(v, best) > 0 {
 			best = v
 		}
 	}
-	return best, nil
+	return best.ToAny(), nil
 }

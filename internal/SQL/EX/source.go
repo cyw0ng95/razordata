@@ -186,11 +186,11 @@ func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []a
 	if len(cols) == 0 {
 		out.Data = make([]Value, len(values))
 		for i, v := range values {
-			val, err := Eval(v, nil, params)
+			val, err := EvalValue(v, nil, params)
 			if err != nil {
 				return Row{}, err
 			}
-			out.Data[i] = valueFromAny(val)
+			out.Data[i] = val
 		}
 		return out, nil
 	}
@@ -209,12 +209,12 @@ func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []a
 	}
 	out.Data = make([]Value, len(schema))
 	for i := range cols {
-		val, err := Eval(values[i], nil, params)
+		val, err := EvalValue(values[i], nil, params)
 		if err != nil {
 			return Row{}, err
 		}
 		if colIdx[i] >= 0 {
-			out.Data[colIdx[i]] = valueFromAny(val)
+			out.Data[colIdx[i]] = val
 		}
 	}
 	return out, nil
@@ -225,7 +225,7 @@ func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []a
 // (R16-1..2).
 func applyUpdate(row *Row, set []PS.Pair, params []any) error {
 	for _, p := range set {
-		val, err := Eval(p.Val, row, params)
+		val, err := EvalValue(p.Val, row, params)
 		if err != nil {
 			return err
 		}
@@ -239,7 +239,7 @@ func applyUpdate(row *Row, set []PS.Pair, params []any) error {
 		if idx < 0 {
 			return errors.New("ex: update column not found: " + p.Col)
 		}
-		row.Data[idx] = valueFromAny(val)
+		row.Data[idx] = val
 	}
 	return nil
 }
@@ -373,16 +373,15 @@ func buildTriggerWhenRow(ctx *TriggerContext) *Row {
 // evalTriggerWhen evaluates a trigger WHEN expression against the
 // synthetic NEW/OLD row. Returns true if the condition passes.
 func evalTriggerWhen(expr PS.Expr, row *Row, params []any) (bool, error) {
-	val, err := Eval(expr, row, params)
+	val, err := EvalValue(expr, row, params)
 	if err != nil {
 		return false, err
 	}
-	if val == nil {
+	if val.Kind == KindNull {
 		return false, nil
 	}
-	v := valueFromAny(val)
-	if v.Kind == KindBool {
-		return v.Bo, nil
+	if val.Kind == KindBool {
+		return val.Bo, nil
 	}
 	return false, nil
 }

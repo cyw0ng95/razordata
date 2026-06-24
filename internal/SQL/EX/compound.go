@@ -122,9 +122,9 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 		if len(c.orderBy) > 0 {
 			slices.SortStableFunc(result, func(a, b Row) int {
 				for _, k := range c.orderBy {
-					av, _ := Eval(k.Expr, &a, c.params)
-					bv, _ := Eval(k.Expr, &b, c.params)
-					cmp := compare(av, bv)
+					av, _ := EvalValue(k.Expr, &a, c.params)
+					bv, _ := EvalValue(k.Expr, &b, c.params)
+					cmp := compareValue(av, bv)
 					if cmp == 0 {
 						continue
 					}
@@ -139,9 +139,9 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 		// Apply OFFSET / LIMIT.
 		off := 0
 		if c.offset != nil {
-			if v, err := Eval(c.offset, nil, c.params); err == nil {
-				if n, ok := toInt64(v); ok {
-					off = int(n)
+			if v, err := EvalValue(c.offset, nil, c.params); err == nil {
+				if v.Kind == KindInt {
+					off = int(v.I64)
 				}
 			}
 		}
@@ -151,9 +151,9 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 			result = nil
 		}
 		if c.limit != nil {
-			if v, err := Eval(c.limit, nil, c.params); err == nil {
-				if n, ok := toInt64(v); ok && int(n) < len(result) {
-					result = result[:n]
+			if v, err := EvalValue(c.limit, nil, c.params); err == nil {
+				if v.Kind == KindInt && int(v.I64) < len(result) {
+					result = result[:v.I64]
 				}
 			}
 		}

@@ -132,11 +132,11 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 			r.execCtx = f.execCtx
 		}
 		f.curRow = r
-		v, err := Eval(f.predicate, &f.curRow, f.params)
+		v, err := EvalValue(f.predicate, &f.curRow, f.params)
 		if err != nil {
 			return Row{}, err
 		}
-		if truthy(v) {
+		if isValueTruthy(v) {
 			return f.curRow, nil
 		}
 	}
@@ -339,12 +339,12 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 		} else {
-			v, err = Eval(c, &row, p.params)
+			v, err = EvalValue(c, &row, p.params)
 			if err != nil {
 				return Row{}, err
 			}
 		}
-		out.Data[i] = valueFromAny(v)
+		out.Data[i] = v.(Value)
 	}
 	return out, nil
 }
@@ -415,11 +415,11 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 		for i, r := range s.buf {
 			sk := make([]Value, len(s.keys))
 			for j, k := range s.keys {
-				v, err := Eval(k.Expr, &r, s.params)
+				v, err := EvalValue(k.Expr, &r, s.params)
 				if err != nil {
 					return Row{}, err
 				}
-				sk[j] = valueFromAny(v)
+				sk[j] = v
 			}
 			keyCache[i] = sk
 		}

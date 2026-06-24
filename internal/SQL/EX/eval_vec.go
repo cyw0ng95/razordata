@@ -825,11 +825,11 @@ func evalRowFallback(expr PS.Expr, batch *Batch, params []any) []uint16 {
 	for i := 0; i < batch.Size; i++ {
 		// Build a synthetic row from batch data
 		row := batchToRow(batch, i)
-		val, err := Eval(expr, row, params)
+		val, err := EvalValue(expr, row, params)
 		if err != nil {
 			continue
 		}
-		if b, ok := val.(bool); ok && b {
+		if val.Kind == KindBool && val.Bo {
 			sel = append(sel, uint16(i))
 		}
 	}

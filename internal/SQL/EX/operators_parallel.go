@@ -335,11 +335,11 @@ func (p *ParallelIndexScan) scanIndexRange(start, end int) *Batch {
 		row := p.rows[idx]
 		// Apply predicate if present
 		if p.pred != nil {
-			val, err := Eval(p.pred, &row, nil)
+			val, err := EvalValue(p.pred, &row, nil)
 			if err != nil {
 				continue
 			}
-			if b, ok := val.(bool); !ok || !b {
+			if !isValueTruthy(val) {
 				continue
 			}
 		}
