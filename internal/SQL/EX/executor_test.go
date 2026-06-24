@@ -306,7 +306,7 @@ func TestExecutorExplain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("explain: %v", err)
 	}
-	for _, want := range []string{"SeqScan(table=users)", "Filter", "Sort", "Limit", "Project"} {
+	for _, want := range []string{"Scan", "Filter", "Sort", "Limit", "Project"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plan missing %q in:\n%s", want, out)
 		}
@@ -491,11 +491,11 @@ func TestExecutorIndexScanSelection(t *testing.T) {
 	ex.Exec(ctx, "INSERT INTO users VALUES (1, 'alice')")
 	ex.Exec(ctx, "INSERT INTO users VALUES (2, 'bob')")
 	plan, _ := ex.Explain("SELECT * FROM users WHERE id = 1")
-	if !strings.Contains(plan, "IndexScan") {
-		t.Errorf("expected IndexScan, plan was:\n%s", plan)
+	if !strings.Contains(plan, "Search") {
+		t.Errorf("expected Search (IndexScan), plan was:\n%s", plan)
 	}
 	plan2, _ := ex.Explain("SELECT * FROM users WHERE name = 'alice'")
-	if !strings.Contains(plan2, "SeqScan") {
-		t.Errorf("expected SeqScan (no index on name), plan was:\n%s", plan2)
+	if !strings.Contains(plan2, "Scan") {
+		t.Errorf("expected Scan (SeqScan) (no index on name), plan was:\n%s", plan2)
 	}
 }

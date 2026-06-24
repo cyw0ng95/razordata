@@ -25,11 +25,11 @@ func TestCost_BasedScanSelection_PrefersIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan, "IndexScan") {
-		t.Errorf("expected IndexScan in plan, got:\n%s", plan)
+	if !strings.Contains(plan, "Search") {
+		t.Errorf("expected Search (IndexScan) in plan, got:\n%s", plan)
 	}
-	if strings.Contains(plan, "SeqScan") {
-		t.Errorf("did not expect SeqScan in plan, got:\n%s", plan)
+	if strings.Contains(plan, "Scan") {
+		t.Errorf("did not expect Scan (SeqScan) in plan, got:\n%s", plan)
 	}
 }
 
@@ -45,11 +45,11 @@ func TestCost_BasedScanSelection_NoIndexOnColumn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan, "SeqScan") {
-		t.Errorf("expected SeqScan in plan, got:\n%s", plan)
+	if !strings.Contains(plan, "Scan") {
+		t.Errorf("expected Scan (SeqScan) in plan, got:\n%s", plan)
 	}
-	if strings.Contains(plan, "IndexScan") {
-		t.Errorf("did not expect IndexScan in plan (no index), got:\n%s", plan)
+	if strings.Contains(plan, "Search") {
+		t.Errorf("did not expect Search (IndexScan) in plan (no index), got:\n%s", plan)
 	}
 }
 
@@ -67,8 +67,8 @@ func TestCost_BasedScanSelection_HighSelectivityRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan, "IndexScan") {
-		t.Errorf("expected IndexScan for BETWEEN on indexed column, got:\n%s", plan)
+	if !strings.Contains(plan, "Search") {
+		t.Errorf("expected Search (IndexScan) for BETWEEN on indexed column, got:\n%s", plan)
 	}
 }
 

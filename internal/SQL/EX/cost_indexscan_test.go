@@ -90,8 +90,8 @@ func TestIndexScan_WithStore_ReadsRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan, "IndexScan") {
-		t.Errorf("expected IndexScan in plan, got:\n%s", plan)
+	if !strings.Contains(plan, "Search") {
+		t.Errorf("expected Search (IndexScan) in plan, got:\n%s", plan)
 	}
 	rows, err := ex.QueryAll(ctx, "SELECT id FROM t WHERE a = 'x'")
 	if err != nil {

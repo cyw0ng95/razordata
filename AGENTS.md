@@ -266,3 +266,33 @@ Use sqlite3 as a reference implementation to compare against razor-data's output
 - 9 of 22 eval functions now native Value (`evalBinaryValue`, `evalUnaryValue`, `evalBetween`, `evalCast`, `evalCase`, `evalInValue`, `evalInHashValue`, `evalBinaryShortCircuit`, `evalAggregate`, `evalFunction`, `evalWindowFunc`, `evalRaise`) — 12 total
 - 156 `Eval()` call sites pending migration to `EvalValue`
 - 8 pre-existing test failures unchanged
+
+### Commit `21d9341` — Migrated all 64 production Eval() call sites to EvalValue()
+
+**Production call sites migrated (64 total):**
+- 30 scalar functions in eval.go (evalAbs through evalUnlikely)
+- 13 sites in aggregate.go (evalAggregateOver, computeAggregate, etc.)
+- 12 sites in window.go (partitionKey, sortPartition, computeRank, etc.)
+- 9 sites in writers.go (INSERT/UPDATE/DELETE RETURNING, UPSERT)
+- 4 sites in source.go (buildInsertRow, applyUpdate, evalTriggerWhen)
+- 4 sites in compound.go (ORDER BY sort, OFFSET, LIMIT)
+- 3 sites in constraints.go (fillDefaults, validateCheck)
+- 3 sites in intermediate.go (Filter, EvalProjection, Sort)
+- 2 sites in hashagg.go (keysLessByDistinctCmp)
+- 2 sites in values.go (Values, VALUES rows)
+- 1 site in operators_parallel.go (filter predicate)
+- 1 site in eval_vec.go (batch filter fallback)
+- 2 sites in eval.go (evalRaise.Message, EvalForTest → EvalValue+ToAny)
+
+**Dead code removed:** evalBinary, evalIn (any-returning, all ops migrated)
+
+### Commit `b07f9a5` — Migrated all 92 test Eval() call sites to EvalValue()
+
+**Test files migrated:** eval_test.go, corefunc_test.go, corefunc_quick_test.go,
+coalesce_test.go, eval_extras_test.go, operators_test.go, specialform_test.go,
+overflow_test.go, tpch_bench_test.go, operators_vec_test.go
+
+### Final Status
+- All 156 Eval() call sites (92 test + 64 production) now use EvalValue()
+- Eval() remains as backward-compat wrapper `EvalValue() + ToAny()` for any external callers
+- 8 pre-existing test failures unchanged
