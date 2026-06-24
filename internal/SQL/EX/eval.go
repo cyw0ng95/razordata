@@ -282,6 +282,17 @@ func evalUnary(e *PS.UnaryExpr, row *Row, params []any) (any, error) {
 }
 
 func evalBinary(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
+	// REQ000776: hot-path optimization for comparison and arithmetic
+	// operators. Use EvalValue to get the Value-typed result and
+	// then dispatch via Kind switch in compareValue/equalValueValue
+	// /numericArithValue. This avoids the interface conversion path
+	// in the original any-based helpers.
+	switch e.Op {
+	case int(LX.T_EQ), int(LX.T_NE),
+		int(LX.T_LT), int(LX.T_LE), int(LX.T_GT), int(LX.T_GE),
+		int(LX.T_PLUS), int(LX.T_MINUS), int(LX.T_STAR):
+		return evalBinaryValue(e, row, params)
+	}
 	left, err := Eval(e.Left, row, params)
 	if err != nil {
 		return nil, err
@@ -432,6 +443,70 @@ func evalBinary(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
 			}
 		}
 		return is(left, right)
+	}
+	return nil, ErrEval
+}
+
+// evalBinaryValue is the Value-typed fast path for comparison and
+// arithmetic binary operators. REQ000776. It calls EvalValue to get
+// Value-typed results, then dispatches via Kind switch in the
+// Value-based helpers (compareValue, equalValueValue,
+// numericArithValue) to avoid interface conversion.
+func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (any, error) {
+	left, err := EvalValue(e.Left, row, params)
+	if err != nil {
+		return nil, err
+	}
+	right, err := EvalValue(e.Right, row, params)
+	if err != nil {
+		return nil, err
+	}
+	switch e.Op {
+	case int(LX.T_EQ):
+		if left.Kind == KindNull || right.Kind == KindNull {
+			return nil, nil
+		}
+		return equalValueValue(left, right), nil
+	case int(LX.T_NE):
+		if left.Kind == KindNull || right.Kind == KindNull {
+			return nil, nil
+		}
+		return !equalValueValue(left, right), nil
+	case int(LX.T_LT):
+		if left.Kind == KindNull || right.Kind == KindNull {
+			return nil, nil
+		}
+		return compareValue(left, right) < 0, nil
+	case int(LX.T_LE):
+		if left.Kind == KindNull || right.Kind == KindNull {
+			return nil, nil
+		}
+		return compareValue(left, right) <= 0, nil
+	case int(LX.T_GT):
+		if left.Kind == KindNull || right.Kind == KindNull {
+			return nil, nil
+		}
+		return compareValue(left, right) > 0, nil
+	case int(LX.T_GE):
+		if left.Kind == KindNull || right.Kind == KindNull {
+			return nil, nil
+		}
+		return compareValue(left, right) >= 0, nil
+	case int(LX.T_PLUS), int(LX.T_MINUS), int(LX.T_STAR):
+		var opRune rune
+		switch e.Op {
+		case int(LX.T_PLUS):
+			opRune = '+'
+		case int(LX.T_MINUS):
+			opRune = '-'
+		case int(LX.T_STAR):
+			opRune = '*'
+		}
+		r, err := numericArithValue(left, right, opRune)
+		if err != nil {
+			return nil, err
+		}
+		return r.ToAny(), nil
 	}
 	return nil, ErrEval
 }

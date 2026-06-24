@@ -57,6 +57,82 @@ func BenchmarkEqualValue_StringString(b *testing.B) {
 	}
 }
 
+// BenchmarkEqualValueValue_IntInt verifies REQ000776: equalValueValue
+// switches on Kind directly, avoiding interface conversion.
+func BenchmarkEqualValueValue_IntInt(b *testing.B) {
+	a := NewIntValue(42)
+	c := NewIntValue(43)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		equalValueValue(a, c)
+	}
+}
+
+// BenchmarkCompareValue_IntInt verifies REQ000776: compareValue
+// switches on Kind directly with int64 fast path.
+func BenchmarkCompareValue_IntInt(b *testing.B) {
+	a := NewIntValue(42)
+	c := NewIntValue(43)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		compareValue(a, c)
+	}
+}
+
+// BenchmarkNumericArithValue_IntAdd verifies REQ000776: numericArithValue
+// int64-int64 fast path avoids float conversion.
+func BenchmarkNumericArithValue_IntAdd(b *testing.B) {
+	a := NewIntValue(42)
+	c := NewIntValue(43)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		numericArithValue(a, c, '+')
+	}
+}
+
+// BenchmarkEvalBinaryComparison compares the old any-based compare
+// path with the new Value-based compareValue (REQ000776).
+func BenchmarkEvalBinaryComparison(b *testing.B) {
+	// Pre-build rows with int64 values.
+	rows := make([]Row, 100)
+	for i := range rows {
+		rows[i] = Row{
+			Cols: []string{"x"},
+			Data: []Value{NewIntValue(int64(i))},
+		}
+	}
+	target := NewIntValue(50)
+
+	// Old path: any-based compare (still goes through interface dispatch).
+	oldFn := func(row *Row) any {
+		v, _ := row.Lookup("x")
+		r := compare(v, int64(50))
+		return r < 0
+	}
+	// New path: Value-based compareValue (REQ000776 — direct Kind switch).
+	newFn := func(row *Row) any {
+		v, _ := row.Lookup("x")
+		vv, _ := v.(Value)
+		return compareValue(vv, target) < 0
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	b.Run("old_any", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			oldFn(&rows[i%100])
+		}
+	})
+	b.Run("new_value", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			newFn(&rows[i%100])
+		}
+	})
+}
+
 func BenchmarkExecutorQueryWithFilter(b *testing.B) {
 	benchFixture(1000)
 	ex := NewExecutor()
