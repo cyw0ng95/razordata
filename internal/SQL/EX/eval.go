@@ -518,11 +518,14 @@ func evalInValue(e *PS.InExpr, row *Row, params []any) (Value, error) {
 	return NewBoolValue(false), nil
 }
 
-// REQ000817: cached hash sets for IN-list expressions. Keyed by
-// *PS.InExpr pointer identity; entries live for the query lifetime.
+// REQ000817: inHashCache tracks the hash set for IN-list probing.
+// For int64-only lists, int64Set is used to avoid any boxing.
+// Keyed by *PS.InExpr pointer identity; entries live for the
+// query lifetime.
 type inHashCache struct {
-	set    map[any]struct{}
-	hadNull bool
+	set      map[any]struct{}
+	int64Set map[int64]struct{}
+	hadNull  bool
 }
 
 var inHashCacheMap = map[*PS.InExpr]*inHashCache{}
@@ -539,10 +542,15 @@ func evalInHashValue(e *PS.InExpr, target Value, row *Row, params []any) (Value,
 }
 
 // REQ000817: evalInHash builds a cached hash set for O(1) IN-list probing.
+// For int64-only lists, uses an int64 map to avoid Value boxing.
 func evalInHash(e *PS.InExpr, target any, row *Row, params []any) (any, error) {
 	cached := inHashCacheMap[e]
 	if cached == nil {
-		cached = &inHashCache{set: make(map[any]struct{}, len(e.List))}
+		cached = &inHashCache{
+			set:      make(map[any]struct{}, len(e.List)),
+			int64Set: make(map[int64]struct{}, len(e.List)),
+		}
+		int64Only := true
 		for _, item := range e.List {
 			v, err := EvalValue(item, row, params)
 			if err != nil {
@@ -553,8 +561,27 @@ func evalInHash(e *PS.InExpr, target any, row *Row, params []any) (any, error) {
 				continue
 			}
 			cached.set[v.ToAny()] = struct{}{}
+			if v.Kind == KindInt {
+				cached.int64Set[v.I64] = struct{}{}
+			} else {
+				int64Only = false
+			}
+		}
+		if !int64Only {
+			cached.int64Set = nil
 		}
 		inHashCacheMap[e] = cached
+	}
+	if cached.int64Set != nil {
+		if t, ok := target.(int64); ok {
+			if _, found := cached.int64Set[t]; found {
+				return true, nil
+			}
+			if cached.hadNull {
+				return nil, nil
+			}
+			return false, nil
+		}
 	}
 	if _, ok := cached.set[target]; ok {
 		return true, nil

@@ -200,3 +200,82 @@ func TestEvalInValue(t *testing.T) {
 		}
 	})
 }
+
+// TestEvalInHash_Int64Only verifies REQ000817: int64-only IN-lists
+// use an int64-keyed map to avoid Value boxing.
+func TestEvalInHash_Int64Only(t *testing.T) {
+	// Clear the cache to ensure we test fresh state.
+	delete(inHashCacheMap, getTestInExpr())
+
+	expr := &PS.InExpr{
+		Expr: &PS.NumberLiteral{Val: 42},
+		List: []PS.Expr{
+			&PS.NumberLiteral{Val: 10},
+			&PS.NumberLiteral{Val: 20},
+			&PS.NumberLiteral{Val: 30},
+			&PS.NumberLiteral{Val: 42},
+			&PS.NumberLiteral{Val: 50},
+		},
+	}
+
+	// Hit
+	got, err := evalInValue(expr, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(NewBoolValue(true)) {
+		t.Errorf("got %v, want true (42 in list)", got)
+	}
+
+	// Verify int64Set was populated
+	cached := inHashCacheMap[expr]
+	if cached == nil {
+		t.Fatal("expected cached entry")
+	}
+	if cached.int64Set == nil {
+		t.Error("expected int64Set to be populated for int64-only list")
+	}
+	if _, ok := cached.int64Set[42]; !ok {
+		t.Error("expected 42 in int64Set")
+	}
+}
+
+// TestEvalInHash_MixedTypes verifies REQ000817: mixed-type lists
+// fall back to the any-typed map.
+func TestEvalInHash_MixedTypes(t *testing.T) {
+	expr := &PS.InExpr{
+		Expr: &PS.NumberLiteral{Val: 42},
+		List: []PS.Expr{
+			&PS.NumberLiteral{Val: 10},
+			&PS.StringLiteral{Val: "hello"},
+			&PS.NumberLiteral{Val: 42},
+			&PS.StringLiteral{Val: "world"},
+			&PS.NumberLiteral{Val: 50},
+		},
+	}
+
+	// Hit (string match shouldn't match the int target)
+	got, err := evalInValue(expr, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(NewBoolValue(true)) {
+		t.Errorf("got %v, want true (42 in mixed list)", got)
+	}
+
+	// Verify int64Set was NOT populated
+	cached := inHashCacheMap[expr]
+	if cached == nil {
+		t.Fatal("expected cached entry")
+	}
+	if cached.int64Set != nil {
+		t.Error("expected int64Set to be nil for mixed-type list")
+	}
+}
+
+func getTestInExpr() *PS.InExpr {
+	return &PS.InExpr{
+		Expr: &PS.NumberLiteral{Val: 0},
+		List: []PS.Expr{&PS.NumberLiteral{Val: 0}},
+	}
+}
