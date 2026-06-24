@@ -310,39 +310,82 @@ func (r *Row) Planner() *Planner {
 func (r *Row) Lookup(name string) (any, bool) {
 	// REQ000770: try fast path first (caller pre-lowered the name at parse time).
 	// Fall back to ToLower for backward compatibility with programmatic callers.
+	// REQ000816: also pre-check if name contains a dot to avoid the
+	// dotted-name linear scan when not needed.
 	lname := name
-		for _, c := range name {
-			if c >= 'A' && c <= 'Z' {
-				lname = strings.ToLower(name)
-				break
-			}
+	hasUpper := false
+	for _, c := range name {
+		if c >= 'A' && c <= 'Z' {
+			lname = strings.ToLower(name)
+			hasUpper = true
+			break
 		}
-		for cur := r; cur != nil; cur = cur.Outer {
-			if cur.colIndex == nil {
-				cur.buildColIndex()
+	}
+	hasDot := false
+	for _, c := range name {
+		if c == '.' {
+			hasDot = true
+			break
+		}
+	}
+	for cur := r; cur != nil; cur = cur.Outer {
+		if cur.colIndex == nil {
+			cur.buildColIndex()
+		}
+		if idx, ok := cur.colIndex[lname]; ok {
+			if idx < len(cur.Data) {
+				return cur.Data[idx].ToAny(), true
 			}
-			if idx, ok := cur.colIndex[lname]; ok {
-				if idx < len(cur.Data) {
-					return cur.Data[idx].ToAny(), true
-				}
-				return nil, false
-			}
-			for j, c := range cur.Cols {
-				if i := strings.LastIndexByte(c, '.'); i >= 0 && i < len(c)-1 {
-					if strings.EqualFold(c[i+1:], name) && j < len(cur.Data) {
+			return nil, false
+		}
+		// REQ000816: skip the dotted-name fallback scan when the
+		// caller-provided name has no dot — those calls cannot match
+		// any table.col-style column.
+		if !hasDot {
+			continue
+		}
+		for j, c := range cur.Cols {
+			if i := strings.LastIndexByte(c, '.'); i >= 0 && i < len(c)-1 {
+				if !hasUpper {
+					// Fast path: both name and Cols are lowercase.
+					if c[i+1:] == name && j < len(cur.Data) {
 						return cur.Data[j].ToAny(), true
 					}
+				} else if strings.EqualFold(c[i+1:], name) && j < len(cur.Data) {
+					return cur.Data[j].ToAny(), true
 				}
 			}
 		}
+	}
 	return nil, false
 }
 
 // buildColIndex builds the O(1) column name → index map. REQ000544.
+// REQ000816: skip strings.ToLower when Cols are already lowercase
+// (the common case — Cols from RegisterTable are stored lowercase).
 func (r *Row) buildColIndex() {
 	r.colIndex = make(map[string]int, len(r.Cols))
+	allLower := true
+	for _, c := range r.Cols {
+		if c != "" && (c[0] < 'a' || c[0] > 'z') && c[0] != '_' && c[0] != '.' {
+			// Quick check: if first char is uppercase, we need ToLower.
+			for j := 0; j < len(c); j++ {
+				if c[j] >= 'A' && c[j] <= 'Z' {
+					allLower = false
+					break
+				}
+			}
+			if !allLower {
+				break
+			}
+		}
+	}
 	for i, c := range r.Cols {
-		r.colIndex[strings.ToLower(c)] = i
+		if allLower {
+			r.colIndex[c] = i
+		} else {
+			r.colIndex[strings.ToLower(c)] = i
+		}
 	}
 }
 

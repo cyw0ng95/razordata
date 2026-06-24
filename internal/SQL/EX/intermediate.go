@@ -925,18 +925,30 @@ func tableOfName(name string) string {
 
 // findColIndexInRow searches a single row for the column name.
 // Does not walk the Outer chain — use findColIndex for that.
+// REQ000816: skip strings.ToLower when name is already lowercase.
 func findColIndexInRow(row *Row, name string) int {
 	if row == nil {
 		return -1
 	}
-	lower := strings.ToLower(name)
+	// Fast path: skip ToLower when name is already lowercase.
+	lower := name
+	for _, c := range name {
+		if c >= 'A' && c <= 'Z' {
+			lower = strings.ToLower(name)
+			break
+		}
+	}
 	bareName := name
 	hasDot := false
 	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
 		bareName = name[dot+1:]
 		hasDot = true
 	}
-	bareLower := strings.ToLower(bareName)
+	bareLower := bareName
+	if lower != name {
+		// If name had uppercase, we need ToLower for bareLower too.
+		bareLower = strings.ToLower(bareName)
+	}
 
 	// For qualified names (containing dot), prefer exact linear scan
 	// to avoid colIndex's duplicate-key issue in self-joins where
