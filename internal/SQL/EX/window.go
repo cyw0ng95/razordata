@@ -447,6 +447,6 @@ func (w *WindowOperator) computeLagLead(indices []int, defaultOffset int) {
 }
 
 // evalWindowFunc evaluates a WindowFunc expression.
-func evalWindowFunc(e *PS.WindowFunc, row *Row, params []any) (any, error) {
-	return nil, fmt.Errorf("window function %s requires WindowOperator execution", e.Name)
+func evalWindowFunc(e *PS.WindowFunc, row *Row, params []any) (Value, error) {
+	return NullValue(), fmt.Errorf("window function %s requires WindowOperator execution", e.Name)
 }

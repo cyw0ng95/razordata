@@ -198,27 +198,13 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 	case *PS.StarExpr:
 		return NewTextValue("*"), nil
 	case *PS.UnaryExpr:
-		switch e.Op {
-		case int(LX.T_MINUS), int(LX.T_PLUS), int(LX.T_NOT), int(LX.T_BITNOT):
-			return evalUnaryValue(e, row, params)
-		}
-		v, err := evalUnary(e, row, params)
-		if err != nil {
-			return NullValue(), err
-		}
-		return valueFromAny(v), nil
+		return evalUnaryValue(e, row, params)
 	case *PS.BinaryExpr:
 		switch e.Op {
-		case int(LX.T_EQ), int(LX.T_NE),
-			int(LX.T_LT), int(LX.T_LE), int(LX.T_GT), int(LX.T_GE),
-			int(LX.T_PLUS), int(LX.T_MINUS), int(LX.T_STAR):
-			return evalBinaryValue(e, row, params)
+		case int(LX.T_AND), int(LX.T_OR):
+			return evalBinaryShortCircuit(e, row, params)
 		}
-		v, err := evalBinary(e, row, params)
-		if err != nil {
-			return NullValue(), err
-		}
-		return valueFromAny(v), nil
+		return evalBinaryValue(e, row, params)
 	case *PS.ListExpr:
 		return valueFromAny(e.Items), nil
 	case *PS.BetweenExpr:
@@ -246,29 +232,13 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 	case *PS.CaseExpr:
 		return evalCase(e, row, params)
 	case *PS.AggregateFunc:
-		v, err := evalAggregate(e, row, params)
-		if err != nil {
-			return NullValue(), err
-		}
-		return valueFromAny(v), nil
+		return evalAggregate(e, row, params)
 	case *PS.WindowFunc:
-		v, err := evalWindowFunc(e, row, params)
-		if err != nil {
-			return NullValue(), err
-		}
-		return valueFromAny(v), nil
+		return evalWindowFunc(e, row, params)
 	case *PS.FunctionCall:
-		v, err := evalFunction(e, row, params)
-		if err != nil {
-			return NullValue(), err
-		}
-		return valueFromAny(v), nil
+		return evalFunction(e, row, params)
 	case *PS.RaiseFunc:
-		v, err := evalRaise(e, row, params)
-		if err != nil {
-			return NullValue(), err
-		}
-		return valueFromAny(v), nil
+		return evalRaise(e, row, params)
 	case *PS.CastExpr:
 		return evalCast(e, row, params)
 	case *PS.AliasedExpr:
@@ -278,29 +248,37 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 	}
 }
 
-func evalUnary(e *PS.UnaryExpr, row *Row, params []any) (any, error) {
-	// REQ000776: hot-path optimization for unary operators. Use
-	// EvalValue to get the Value-typed result and dispatch via
-	// Kind switch to avoid interface conversion.
-	switch e.Op {
-	case int(LX.T_MINUS), int(LX.T_PLUS), int(LX.T_NOT), int(LX.T_BITNOT):
-		v, err := evalUnaryValue(e, row, params)
-		if err != nil {
-			return nil, err
-		}
-		return v.ToAny(), nil
-	}
-	operand, err := Eval(e.Operand, row, params)
+// evalBinaryShortCircuit handles AND/OR with three-valued logic and
+// short-circuit evaluation (REQ000776). Right side is only evaluated
+// when the left side does not determine the result.
+func evalBinaryShortCircuit(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
+	left, err := EvalValue(e.Left, row, params)
 	if err != nil {
-		return nil, err
+		return NullValue(), err
 	}
-
 	switch e.Op {
-	case int(LX.T_PLUS):
-		return operand, nil
+	case int(LX.T_AND):
+		if left.Kind == KindBool && !left.Bo {
+			return NewBoolValue(false), nil
+		}
+		right, err := EvalValue(e.Right, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return bandValue(left, right), nil
+	case int(LX.T_OR):
+		if left.Kind == KindBool && left.Bo {
+			return NewBoolValue(true), nil
+		}
+		right, err := EvalValue(e.Right, row, params)
+		if err != nil {
+			return NullValue(), err
+		}
+		return borValue(left, right), nil
 	}
-	return nil, ErrEval
+	return NullValue(), ErrEval
 }
+
 
 // evalUnaryValue is the Value-typed fast path for unary operators
 // (REQ000776). It calls EvalValue and dispatches via Kind switch.
@@ -571,7 +549,7 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 			return NullValue(), nil
 		}
 		return NewBoolValue(compareValue(left, right) >= 0), nil
-	case int(LX.T_PLUS), int(LX.T_MINUS), int(LX.T_STAR):
+	case int(LX.T_PLUS), int(LX.T_MINUS), int(LX.T_STAR), int(LX.T_SLASH):
 		var opRune rune
 		switch e.Op {
 		case int(LX.T_PLUS):
@@ -580,12 +558,57 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 			opRune = '-'
 		case int(LX.T_STAR):
 			opRune = '*'
+		case int(LX.T_SLASH):
+			opRune = '/'
 		}
 		r, err := numericArithValue(left, right, opRune)
 		if err != nil {
 			return NullValue(), err
 		}
 		return r, nil
+	case int(LX.T_MOD):
+		return modValue(left, right)
+	case int(LX.T_BITAND):
+		return bitandValue(left, right)
+	case int(LX.T_BITOR):
+		return bitorValue(left, right)
+	case int(LX.T_BITXOR):
+		return bitxorValue(left, right)
+	case int(LX.T_LSHIFT):
+		return lshiftValue(left, right)
+	case int(LX.T_RSHIFT):
+		return rshiftValue(left, right)
+	case int(LX.T_CONCAT):
+		return concatValue(left, right)
+	case int(LX.T_LIKE):
+		var esc string
+		if e.Escape != nil {
+			v, err := EvalValue(e.Escape, row, params)
+			if err != nil {
+				return NullValue(), err
+			}
+			if v.Kind == KindText && len(v.S) == 1 {
+				esc = v.S
+			} else if v.Kind != KindNull {
+				return NullValue(), ErrEval
+			}
+		}
+		return likeValue(left, right, esc)
+	case int(LX.T_GLOB):
+		return globValue(left, right)
+	case int(LX.T_DIV):
+		return intdivValue(left, right)
+	case int(LX.T_IS):
+		// `x IS NOT NULL` parses as BinaryExpr{T_IS, x, UnaryExpr{T_NOT, NULL}}.
+		if u, ok := e.Right.(*PS.UnaryExpr); ok && u.Op == int(LX.T_NOT) {
+			if _, isNull := u.Operand.(*PS.NullLiteral); isNull {
+				if left.Kind == KindNull {
+					return NewBoolValue(false), nil
+				}
+				return NewBoolValue(true), nil
+			}
+		}
+		return isValue(left, right)
 	}
 	return NullValue(), ErrEval
 }
@@ -1086,236 +1109,237 @@ func castToBool(v any) bool {
 	return true
 }
 
-func evalAggregate(e *PS.AggregateFunc, row *Row, params []any) (any, error) {
+func evalAggregate(e *PS.AggregateFunc, row *Row, params []any) (Value, error) {
 	if row != nil {
-		// REQ000378: HAVING and post-aggregate references to
-		// aggregates must resolve to the precomputed value in
-		// the row emitted by the Aggregate operator. Try all
-		// aggregate column name shapes (COUNT(*), COUNT(col),
-		// SUM(col), ...).
 		if _, ok := e.Arg.(*PS.StarExpr); ok {
 			name := e.Name + "(*)"
 			if v, found := row.Lookup(name); found {
-				return v, nil
+				return valueFromAny(v), nil
 			}
 		}
 		if ident, ok := e.Arg.(*PS.Ident); ok {
 			name := e.Name + "(" + ident.Name + ")"
 			if v, found := row.Lookup(name); found {
-				return v, nil
+				return valueFromAny(v), nil
 			}
 		}
-		// REQ000830: fallback to bare aggregate name (e.g., "MIN",
-		// "MAX") for cases where the argument is a literal or
-		// expression (e.g., MIN(-96)), not a column reference.
-		// The virtual row from buildAggregateVirtualRow uses
-		// the bare name via aggregateColName.
 		if v, found := row.Lookup(e.Name); found {
-			return v, nil
+			return valueFromAny(v), nil
 		}
 	}
 	switch strings.ToUpper(e.Name) {
 	case "COUNT":
-		return int64(0), nil
+		return NewIntValue(0), nil
 	case "SUM":
-		return int64(0), nil
+		return NewIntValue(0), nil
 	case "AVG":
-		return float64(0), nil
+		return NewFloatValue(0), nil
 	case "MIN":
-		return nil, nil
+		return NullValue(), nil
 	case "MAX":
-		return nil, nil
+		return NullValue(), nil
 	}
-	return nil, ErrEval
+	return NullValue(), ErrEval
 }
 
-func evalFunction(e *PS.FunctionCall, row *Row, params []any) (any, error) {
+// valueFromAnyWrap converts (any, error) from a legacy eval helper to
+// (Value, error). REQ000776 bridge helper.
+func valueFromAnyWrap(v any, err error) (Value, error) {
+	if err != nil {
+		return NullValue(), err
+	}
+	return valueFromAny(v), nil
+}
+
+func evalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
 	switch e.Name {
 	case "LENGTH":
 		if len(e.Args) > 0 {
-			v, err := Eval(e.Args[0], row, params)
+			v, err := EvalValue(e.Args[0], row, params)
 			if err != nil {
-				return nil, err
+				return NullValue(), err
 			}
-			if s, ok := v.(string); ok {
-				return int64(len(s)), nil
+			if v.Kind == KindText {
+				return NewIntValue(int64(len(v.S))), nil
 			}
 		}
 	case "UPPER":
 		if len(e.Args) > 0 {
-			v, err := Eval(e.Args[0], row, params)
+			v, err := EvalValue(e.Args[0], row, params)
 			if err != nil {
-				return nil, err
+				return NullValue(), err
 			}
-			if s, ok := v.(string); ok {
-				return strings.ToUpper(s), nil
+			if v.Kind == KindText {
+				return NewTextValue(strings.ToUpper(v.S)), nil
 			}
 		}
 	case "LOWER":
 		if len(e.Args) > 0 {
-			v, err := Eval(e.Args[0], row, params)
+			v, err := EvalValue(e.Args[0], row, params)
 			if err != nil {
-				return nil, err
+				return NullValue(), err
 			}
-			if s, ok := v.(string); ok {
-				return strings.ToLower(s), nil
+			if v.Kind == KindText {
+				return NewTextValue(strings.ToLower(v.S)), nil
 			}
 		}
 	case "IFNULL":
 		if len(e.Args) == 2 {
-			v1, err := Eval(e.Args[0], row, params)
+			v1, err := EvalValue(e.Args[0], row, params)
 			if err != nil {
-				return nil, err
+				return NullValue(), err
 			}
-			if v1 == nil {
-				return Eval(e.Args[1], row, params)
+			if v1.Kind != KindNull {
+				return v1, nil
 			}
-			return v1, nil
+			return EvalValue(e.Args[1], row, params)
 		}
 	case "COALESCE":
 		for _, arg := range e.Args {
-			v, err := Eval(arg, row, params)
+			v, err := EvalValue(arg, row, params)
 			if err != nil {
-				return nil, err
+				return NullValue(), err
 			}
-			if v != nil {
+			if v.Kind != KindNull {
 				return v, nil
 			}
 		}
-		return nil, nil
+		return NullValue(), nil
 	case "NULLIF":
 		if len(e.Args) != 2 {
-			return nil, fmt.Errorf("nullif: expected 2 args")
+			return NullValue(), fmt.Errorf("nullif: expected 2 args")
 		}
-		a, err := Eval(e.Args[0], row, params)
+		a, err := EvalValue(e.Args[0], row, params)
 		if err != nil {
-			return nil, err
+			return NullValue(), err
 		}
-		b, err := Eval(e.Args[1], row, params)
+		b, err := EvalValue(e.Args[1], row, params)
 		if err != nil {
-			return nil, err
+			return NullValue(), err
 		}
-		if equalValue(a, b) == true {
-			return nil, nil
+		if equalValueValue(a, b) {
+			return NullValue(), nil
 		}
 		return a, nil
 	case "NOW":
-		return time.Now().UTC().Format(time.RFC3339), nil
+		return NewTextValue(time.Now().UTC().Format(time.RFC3339)), nil
 	case "SUBSTR":
-		return evalSubstr(e.Args, row, params)
+		return valueFromAnyWrap(evalSubstr(e.Args, row, params))
 	case "ABS":
-		return evalAbs(e.Args, row, params)
+		return valueFromAnyWrap(evalAbs(e.Args, row, params))
 	case "HEX":
-		return evalHex(e.Args, row, params)
+		return valueFromAnyWrap(evalHex(e.Args, row, params))
 	case "ROUND":
-		return evalRound(e.Args, row, params)
+		return valueFromAnyWrap(evalRound(e.Args, row, params))
 	case "CHAR":
-		return evalChar(e.Args, row, params)
+		return valueFromAnyWrap(evalChar(e.Args, row, params))
 	case "CONCAT":
-		return evalConcat(e.Args, row, params)
+		return valueFromAnyWrap(evalConcat(e.Args, row, params))
 	case "CONCAT_WS":
-		return evalConcatWS(e.Args, row, params)
+		return valueFromAnyWrap(evalConcatWS(e.Args, row, params))
 	case "FORMAT":
-		return evalFormat(e.Args, row, params)
+		return valueFromAnyWrap(evalFormat(e.Args, row, params))
 	case "LTRIM":
-		return evalLtrim(e.Args, row, params)
+		return valueFromAnyWrap(evalLtrim(e.Args, row, params))
 	case "RTRIM":
-		return evalRtrim(e.Args, row, params)
+		return valueFromAnyWrap(evalRtrim(e.Args, row, params))
 	case "TRIM":
-		return evalTrim(e.Args, row, params)
+		return valueFromAnyWrap(evalTrim(e.Args, row, params))
 	case "REPLACE":
-		return evalReplace(e.Args, row, params)
+		return valueFromAnyWrap(evalReplace(e.Args, row, params))
 	case "QUOTE":
-		return evalQuote(e.Args, row, params)
+		return valueFromAnyWrap(evalQuote(e.Args, row, params))
 	case "TYPEOF":
-		return evalTypeof(e.Args, row, params)
+		return valueFromAnyWrap(evalTypeof(e.Args, row, params))
 	case "OCTET_LENGTH":
-		return evalOctetLength(e.Args, row, params)
+		return valueFromAnyWrap(evalOctetLength(e.Args, row, params))
 	case "UNICODE":
-		return evalUnicode(e.Args, row, params)
+		return valueFromAnyWrap(evalUnicode(e.Args, row, params))
 	case "SQLITE_VERSION":
-		return evalSqliteVersion(e.Args, row, params)
+		return valueFromAnyWrap(evalSqliteVersion(e.Args, row, params))
 	case "SQLITE_SOURCE_ID":
-		return evalSqliteSourceID(e.Args, row, params)
+		return valueFromAnyWrap(evalSqliteSourceID(e.Args, row, params))
 	case "IIF", "IF":
-		return evalIIF(e.Args, row, params)
+		return valueFromAnyWrap(evalIIF(e.Args, row, params))
 	case "INSTR":
-		return evalInstr(e.Args, row, params)
+		return valueFromAnyWrap(evalInstr(e.Args, row, params))
 	case "SIGN":
-		return evalSign(e.Args, row, params)
+		return valueFromAnyWrap(evalSign(e.Args, row, params))
 	case "MAX":
-		return evalMaxScalar(e.Args, row, params)
+		return valueFromAnyWrap(evalMaxScalar(e.Args, row, params))
 	case "MIN":
-		return evalMinScalar(e.Args, row, params)
+		return valueFromAnyWrap(evalMinScalar(e.Args, row, params))
 	case "RANDOM":
-		return evalRandom(e.Args, row, params)
+		return valueFromAnyWrap(evalRandom(e.Args, row, params))
 	case "RANDOMBLOB":
-		return evalRandomBlob(e.Args, row, params)
+		return valueFromAnyWrap(evalRandomBlob(e.Args, row, params))
 	case "ZEROBLOB":
-		return evalZeroblob(e.Args, row, params)
+		return valueFromAnyWrap(evalZeroblob(e.Args, row, params))
 	case "GLOB":
-		return evalGlob(e.Args, row, params)
+		return valueFromAnyWrap(evalGlob(e.Args, row, params))
 	case "LIKELIHOOD":
-		return evalLikelihood(e.Args, row, params)
+		return valueFromAnyWrap(evalLikelihood(e.Args, row, params))
 	case "LIKELY":
-		return evalLikely(e.Args, row, params)
+		return valueFromAnyWrap(evalLikely(e.Args, row, params))
 	case "SOUNDEX":
-		return evalSoundex(e.Args, row, params)
+		return valueFromAnyWrap(evalSoundex(e.Args, row, params))
 	case "UNHEX":
-		return evalUnhex(e.Args, row, params)
+		return valueFromAnyWrap(evalUnhex(e.Args, row, params))
 	case "UNISTR":
-		return evalUnistr(e.Args, row, params)
+		return valueFromAnyWrap(evalUnistr(e.Args, row, params))
 	case "UNLIKELY":
-		return evalUnlikely(e.Args, row, params)
+		return valueFromAnyWrap(evalUnlikely(e.Args, row, params))
 	case "CHANGES":
-		// REQ000385: changes() returns the number of rows modified
-		// by the most recent INSERT, UPDATE, or DELETE. Takes no args.
 		acc := getSessionCounterAccessor()
 		if acc == nil {
-			return int64(0), nil
+			return NewIntValue(0), nil
 		}
-		return acc.ChangesCount(getCurrentSessionID()), nil
+		return NewIntValue(acc.ChangesCount(getCurrentSessionID())), nil
 	case "LAST_INSERT_ROWID":
-		// REQ000394: last_insert_rowid() returns the rowid of the
-		// last successful INSERT. Takes no args.
 		acc := getSessionCounterAccessor()
 		if acc == nil {
-			return int64(0), nil
+			return NewIntValue(0), nil
 		}
-		return acc.LastInsertRowID(getCurrentSessionID()), nil
+		return NewIntValue(acc.LastInsertRowID(getCurrentSessionID())), nil
 	case "TOTAL_CHANGES":
-		// REQ000411: total_changes() returns cumulative rows modified
-		// since connection open. Takes no args.
 		acc := getSessionCounterAccessor()
 		if acc == nil {
-			return int64(0), nil
+			return NewIntValue(0), nil
 		}
-		return acc.TotalChangesCount(getCurrentSessionID()), nil
+		return NewIntValue(acc.TotalChangesCount(getCurrentSessionID())), nil
 	default:
 		if isDateTimeFunc(e.Name) {
 			args := make([]any, len(e.Args))
 			for i, arg := range e.Args {
-				v, err := Eval(arg, row, params)
+				v, err := EvalValue(arg, row, params)
 				if err != nil {
-					return nil, err
+					return NullValue(), err
 				}
-				args[i] = v
+				args[i] = v.ToAny()
 			}
-			return evalDateTimeFunc(e.Name, args)
+			v, err := evalDateTimeFunc(e.Name, args)
+			if err != nil {
+				return NullValue(), err
+			}
+			return valueFromAny(v), nil
 		}
 		if isJSONFunc(e.Name) {
 			args := make([]any, len(e.Args))
 			for i, arg := range e.Args {
-				v, err := Eval(arg, row, params)
+				v, err := EvalValue(arg, row, params)
 				if err != nil {
-					return nil, err
+					return NullValue(), err
 				}
-				args[i] = v
+				args[i] = v.ToAny()
 			}
-			return evalJSONFunc(e.Name, args)
+			v, err := evalJSONFunc(e.Name, args)
+			if err != nil {
+				return NullValue(), err
+			}
+			return valueFromAny(v), nil
 		}
 	}
-	return nil, ErrEval
+	return NullValue(), ErrEval
 }
 
 // ErrTriggerAbort is returned by RAISE(ABORT, ...) evaluation to
@@ -1323,26 +1347,22 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []any) (any, error) {
 // REQ000560.
 var ErrTriggerAbort = errors.New("ex: trigger abort")
 
-func evalRaise(e *PS.RaiseFunc, row *Row, params []any) (any, error) {
+func evalRaise(e *PS.RaiseFunc, row *Row, params []any) (Value, error) {
 	action := strings.ToUpper(e.Action)
 	if action == "IGNORE" {
-		// RAISE(IGNORE) suppresses the trigger action.
-		// Return a sentinel value; the trigger executor
-		// checks for this and skips the rest of the action.
-		return nil, ErrIgnoreRow
+		return NullValue(), ErrIgnoreRow
 	}
-	// RAISE(ABORT, 'message') or RAISE(ROLLBACK, 'message') etc.
 	var msg string
 	if e.Message != nil {
 		v, err := Eval(e.Message, row, params)
 		if err != nil {
-			return nil, err
+			return NullValue(), err
 		}
 		if s, ok := v.(string); ok {
 			msg = s
 		}
 	}
-	return nil, fmt.Errorf("%w: %s", ErrTriggerAbort, msg)
+	return NullValue(), fmt.Errorf("%w: %s", ErrTriggerAbort, msg)
 }
 
 // REQ000382: ABS, HEX, ROUND scalar functions.
@@ -2494,6 +2514,11 @@ func numericArithValue(a, b Value, op rune) (Value, error) {
 				return NullValue(), nil
 			}
 			return NewIntValue(ai * bi), nil
+		case '/':
+			if bi == 0 {
+				return NullValue(), nil
+			}
+			return NewIntValue(ai / bi), nil
 		}
 	}
 	// Float path for mixed/float.
@@ -2519,8 +2544,195 @@ func numericArithValue(a, b Value, op rune) (Value, error) {
 		return NewFloatValue(af - bf), nil
 	case '*':
 		return NewFloatValue(af * bf), nil
+	case '/':
+		if bf == 0 {
+			return NullValue(), nil
+		}
+		return NewFloatValue(af / bf), nil
 	}
 	return NullValue(), nil
+}
+
+// Value-native helpers for binary ops (REQ000776).
+
+func bandValue(a, b Value) Value {
+	if (a.Kind == KindBool && !a.Bo) || (b.Kind == KindBool && !b.Bo) {
+		return NewBoolValue(false)
+	}
+	if a.Kind == KindNull || b.Kind == KindNull {
+		return NullValue()
+	}
+	return NewBoolValue(true)
+}
+
+func borValue(a, b Value) Value {
+	if (a.Kind == KindBool && a.Bo) || (b.Kind == KindBool && b.Bo) {
+		return NewBoolValue(true)
+	}
+	if a.Kind == KindNull || b.Kind == KindNull {
+		return NullValue()
+	}
+	return NewBoolValue(false)
+}
+
+// modValue implements Value-native modulo (REQ000776).
+func modValue(a, b Value) (Value, error) {
+	if a.Kind == KindNull || b.Kind == KindNull {
+		return NullValue(), nil
+	}
+	if a.Kind == KindInt && b.Kind == KindInt {
+		if b.I64 == 0 {
+			return NullValue(), nil
+		}
+		return NewIntValue(a.I64 % b.I64), nil
+	}
+	af, aok := toFloat64(a)
+	bf, bok := toFloat64(b)
+	if !aok || !bok {
+		return NullValue(), nil
+	}
+	if bf == 0 {
+		return NullValue(), nil
+	}
+	return NewFloatValue(math.Mod(af, bf)), nil
+}
+
+func toFloat64(v Value) (float64, bool) {
+	switch v.Kind {
+	case KindInt:
+		return float64(v.I64), true
+	case KindFloat:
+		return v.F64, true
+	}
+	return 0, false
+}
+
+func bitandValue(a, b Value) (Value, error) {
+	if a.Kind != KindInt || b.Kind != KindInt {
+		return NullValue(), nil
+	}
+	return NewIntValue(a.I64 & b.I64), nil
+}
+
+func bitorValue(a, b Value) (Value, error) {
+	if a.Kind != KindInt || b.Kind != KindInt {
+		return NullValue(), nil
+	}
+	return NewIntValue(a.I64 | b.I64), nil
+}
+
+func bitxorValue(a, b Value) (Value, error) {
+	if a.Kind != KindInt || b.Kind != KindInt {
+		return NullValue(), nil
+	}
+	return NewIntValue(a.I64 ^ b.I64), nil
+}
+
+func lshiftValue(a, b Value) (Value, error) {
+	if a.Kind != KindInt || b.Kind != KindInt {
+		return NullValue(), nil
+	}
+	if b.I64 < 0 || b.I64 > 63 {
+		return NullValue(), nil
+	}
+	return NewIntValue(a.I64 << b.I64), nil
+}
+
+func rshiftValue(a, b Value) (Value, error) {
+	if a.Kind != KindInt || b.Kind != KindInt {
+		return NullValue(), nil
+	}
+	if b.I64 < 0 || b.I64 > 63 {
+		return NullValue(), nil
+	}
+	return NewIntValue(a.I64 >> b.I64), nil
+}
+
+func concatValue(a, b Value) (Value, error) {
+	if a.Kind == KindNull || b.Kind == KindNull {
+		return NullValue(), nil
+	}
+	if a.Kind == KindText && b.Kind == KindText {
+		return NewTextValue(a.S + b.S), nil
+	}
+	return NewTextValue(fmt.Sprintf("%v%v", a.ToAny(), b.ToAny())), nil
+}
+
+func likeValue(a, b Value, escape string) (Value, error) {
+	if a.Kind == KindNull || b.Kind == KindNull {
+		return NullValue(), nil
+	}
+	if a.Kind != KindText || b.Kind != KindText {
+		return NewBoolValue(false), nil
+	}
+	return NewBoolValue(matchLike(b.S, a.S, escape)), nil
+}
+
+func globValue(a, b Value) (Value, error) {
+	if a.Kind == KindNull || b.Kind == KindNull {
+		return NullValue(), nil
+	}
+	if a.Kind != KindText {
+		return NullValue(), fmt.Errorf("ex: GLOB pattern must be string, got Kind %d", a.Kind)
+	}
+	if b.Kind != KindText {
+		return NullValue(), fmt.Errorf("ex: GLOB operand must be string, got Kind %d", b.Kind)
+	}
+	return NewBoolValue(globMatch(a.S, b.S)), nil
+}
+
+func intdivValue(a, b Value) (Value, error) {
+	if a.Kind == KindNull || b.Kind == KindNull {
+		return NullValue(), nil
+	}
+	if a.Kind == KindInt && b.Kind == KindInt {
+		if b.I64 == 0 {
+			return NullValue(), nil
+		}
+		return NewIntValue(a.I64 / b.I64), nil
+	}
+	af, aok := toFloat64(a)
+	bf, bok := toFloat64(b)
+	if !aok || !bok {
+		return NullValue(), fmt.Errorf("ex: DIV requires numeric operands")
+	}
+	if bf == 0 {
+		return NullValue(), nil
+	}
+	return NewIntValue(int64(af / bf)), nil
+}
+
+func isValue(a, b Value) (Value, error) {
+	if a.Kind == KindNull && b.Kind == KindNull {
+		return NewBoolValue(true), nil
+	}
+	if a.Kind == KindNull || b.Kind == KindNull {
+		return NewBoolValue(false), nil
+	}
+	if a.Kind != b.Kind {
+		return NewBoolValue(false), nil
+	}
+	switch a.Kind {
+	case KindInt:
+		return NewBoolValue(a.I64 == b.I64), nil
+	case KindFloat:
+		return NewBoolValue(a.F64 == b.F64), nil
+	case KindText:
+		return NewBoolValue(a.S == b.S), nil
+	case KindBool:
+		return NewBoolValue(a.Bo == b.Bo), nil
+	case KindBlob:
+		if len(a.B) != len(b.B) {
+			return NewBoolValue(false), nil
+		}
+		for i := range a.B {
+			if a.B[i] != b.B[i] {
+				return NewBoolValue(false), nil
+			}
+		}
+		return NewBoolValue(true), nil
+	}
+	return NewBoolValue(false), nil
 }
 
 func numericFloat(v any) (float64, bool) {
