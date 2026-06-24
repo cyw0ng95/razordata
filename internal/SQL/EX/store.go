@@ -589,6 +589,10 @@ func encodeRow(schema *storeSchema, row Row) ([]byte, error) {
 			} else {
 				buf = append(buf, 0)
 			}
+		case KindBlob:
+			buf = append(buf, rvBytes)
+			buf = binary.AppendUvarint(buf, uint64(len(v.B)))
+			buf = append(buf, v.B...)
 		default:
 			return nil, fmt.Errorf("ex: unsupported value kind %d at column %d", v.Kind, i)
 		}
@@ -668,7 +672,8 @@ func decodeRow(data []byte, schema *storeSchema) (Row, error) {
 			if off+int(l) > len(data) {
 				return Row{}, errors.New("ex: truncated bytes")
 			}
-			row.Data[i] = NewTextValue(string(data[off : off+int(l)]))
+			// REQ000776: rvBytes is now decoded as KindBlob.
+			row.Data[i] = NewBlobValue(append([]byte{}, data[off:off+int(l)]...))
 			off += int(l)
 		default:
 			return Row{}, fmt.Errorf("ex: unknown row tag %d", tag)

@@ -109,3 +109,34 @@ func TestNumericArithValue(t *testing.T) {
 		})
 	}
 }
+
+// TestEncodeDecodeBlobRoundTrip verifies REQ000776: encodeRow and
+// decodeRow correctly serialize and deserialize a blob column as
+// KindBlob (not KindText as it was previously).
+func TestEncodeDecodeBlobRoundTrip(t *testing.T) {
+	schema := &storeSchema{
+		cols: []string{"data"},
+	}
+	original := Row{
+		Cols: []string{"data"},
+		Data: []Value{NewBlobValue([]byte{0x00, 0x01, 0x02, 0xff, 0xfe})},
+	}
+	encoded, err := encodeRow(schema, original)
+	if err != nil {
+		t.Fatalf("encodeRow: %v", err)
+	}
+	decoded, err := decodeRow(encoded, schema)
+	if err != nil {
+		t.Fatalf("decodeRow: %v", err)
+	}
+	if len(decoded.Data) != 1 {
+		t.Fatalf("expected 1 column, got %d", len(decoded.Data))
+	}
+	v := decoded.Data[0]
+	if v.Kind != KindBlob {
+		t.Errorf("decoded Kind = %v, want KindBlob", v.Kind)
+	}
+	if !v.Equal(original.Data[0]) {
+		t.Errorf("round-trip mismatch: got %v, want %v", v, original.Data[0])
+	}
+}
