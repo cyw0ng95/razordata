@@ -255,13 +255,23 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 }
 
 // REQ000818: cross-product fallback when hash probing is not viable
-// (either side exceeds 1024 rows). Emits all left×right pairs.
+// (either side exceeds 1024 rows). Emits matching left×right pairs
+// by checking the join key equality for each pair.
 func (j *HashCrossJoin) nextCross(_ context.Context) (Row, error) {
 	for j.crossLeftIdx < len(j.leftRows) {
 		for j.crossRightIdx < len(j.rightRows) {
 			l := j.leftRows[j.crossLeftIdx]
 			r := j.rightRows[j.crossRightIdx]
 			j.crossRightIdx++
+			// Check join key condition.
+			lv, lok := lookupColumn(&l, j.leftTbl, j.leftKey)
+			rv, rok := lookupColumn(&r, j.rightTbl, j.rightKey)
+			if !lok || !rok || lv == nil || rv == nil {
+				continue
+			}
+			if !equalValue(lv, rv) {
+				continue
+			}
 			off := len(j.dataBuf)
 			required := off + j.dataPerRow
 			if cap(j.dataBuf) < required {

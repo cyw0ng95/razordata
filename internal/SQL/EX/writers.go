@@ -586,7 +586,11 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		snapshot := cloneRow(row)
-		if err := applyUpdate(&row, u.set, u.params); err != nil {
+			// REQ000840: SeqScan may return rows that share Data with the
+			// source table. Deep-copy Data before applyUpdate mutates it
+			// in-place, otherwise the source row is corrupted.
+			row.Data = append([]Value(nil), row.Data...)
+			if err := applyUpdate(&row, u.set, u.params); err != nil {
 			return Row{}, err
 		}
 		if cschema != nil {
