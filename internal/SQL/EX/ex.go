@@ -311,30 +311,30 @@ func (r *Row) Lookup(name string) (any, bool) {
 	// REQ000770: try fast path first (caller pre-lowered the name at parse time).
 	// Fall back to ToLower for backward compatibility with programmatic callers.
 	lname := name
-	for _, c := range name {
-		if c >= 'A' && c <= 'Z' {
-			lname = strings.ToLower(name)
-			break
-		}
-	}
-	for cur := r; cur != nil; cur = cur.Outer {
-		if cur.colIndex == nil {
-			cur.buildColIndex()
-		}
-		if idx, ok := cur.colIndex[lname]; ok {
-			if idx < len(cur.Data) {
-				return cur.Data[idx].ToAny(), true
+		for _, c := range name {
+			if c >= 'A' && c <= 'Z' {
+				lname = strings.ToLower(name)
+				break
 			}
-			return nil, false
 		}
-		for j, c := range cur.Cols {
-			if i := strings.LastIndexByte(c, '.'); i >= 0 && i < len(c)-1 {
-				if strings.EqualFold(c[i+1:], name) && j < len(cur.Data) {
-					return cur.Data[j].ToAny(), true
+		for cur := r; cur != nil; cur = cur.Outer {
+			if cur.colIndex == nil {
+				cur.buildColIndex()
+			}
+			if idx, ok := cur.colIndex[lname]; ok {
+				if idx < len(cur.Data) {
+					return cur.Data[idx].ToAny(), true
+				}
+				return nil, false
+			}
+			for j, c := range cur.Cols {
+				if i := strings.LastIndexByte(c, '.'); i >= 0 && i < len(c)-1 {
+					if strings.EqualFold(c[i+1:], name) && j < len(cur.Data) {
+						return cur.Data[j].ToAny(), true
+					}
 				}
 			}
 		}
-	}
 	return nil, false
 }
 

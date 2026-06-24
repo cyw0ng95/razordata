@@ -694,8 +694,14 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 		leftDot := strings.LastIndexByte(leftCol, '.')
 		rightDot := strings.LastIndexByte(rightCol, '.')
 		if leftDot < 0 && rightDot < 0 {
-			// Both are bare names — safe to compile.
-			return makeCompiledColColCmp(leftCol, rightCol, e.Op)
+			// Both are bare names — only compile if both columns
+			// exist in the current row. Correlated subqueries where
+			// one bare name resolves via the outer chain (e.g.
+			// WHERE user_id = id where id is in the outer users row)
+			// must NOT be compiled because makeCompiledColColCmp
+			// reads from row.Data which belongs to the inner row
+			// only. REQ000846.
+			return nil
 		}
 		if leftDot >= 0 && rightDot >= 0 {
 			// Both are qualified names. Only compile if they

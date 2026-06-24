@@ -581,7 +581,6 @@ func NewIndexScanWithRange(store Store, tableID uint64, table, idx string, lower
 }
 
 func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
-	// Index-seek path (iter-22 secondary indexes).
 	if i.indexMode {
 		return i.nextFromIndex(ctx)
 	}
@@ -609,75 +608,72 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 
 		return row, nil
 	}
-	if err := i.it.Err(); err != nil {
-		return Row{}, err
+	if i.indexIt != nil {
+		if err := i.indexIt.Err(); err != nil {
+			return Row{}, err
+		}
 	}
 	return Row{}, ErrNoRows
 }
 
-// nextFromIndex is the iter-22 secondary-index seek path. It reads
-// primary keys from the index iterator, then fetches the full row
-// via Store.Get.
+// nextFromIndex implements the index-seek path for NewIndexScanWithIndex.
+// Reads index entries from the store, extracts the primary key, and fetches
+// the corresponding row. REQ000847.
 func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
+	// Lazily initialize the index iterator.
 	if i.indexIt == nil {
-		i.indexIt = i.openIndexIter()
-	}
-	if i.indexIt == nil {
-		return Row{}, ErrNoRows
-	}
-	for i.indexIt.Next() {
-		if err := ctx.Err(); err != nil {
-			return Row{}, err
+		// For exact-match seeks (indexSeek without indexLower),
+		// narrow the prefix to the seek value. For range scans
+		// (indexLower/indexUpper), use the broad index prefix
+		// and let the loop filter by lower/exclusive bounds.
+		if i.indexSeek != nil && i.indexLower == nil {
+			i.indexIt = i.store.NewIterator(buildIndexKey(i.indexTableID, i.idx, i.indexSeek))
+		} else {
+			i.indexIt = i.store.NewIterator(buildIndexKey(i.indexTableID, i.idx, nil))
 		}
-		// REQ000074 (iter-27): range-seek bounds on the indexed
-		// column value. The iterator is opened with the broad
-		// index prefix (tableID + idxName) when range seek is in
-		// use, so we filter the key here.
-		if i.indexLower != nil || i.indexUpper != nil {
-			k := i.indexIt.Key()
-			if len(k) < len(i.prefixIdxKey) || !bytes.Equal(k[:len(i.prefixIdxKey)], i.prefixIdxKey) {
-				continue
-			}
-			idxValue := k[len(i.prefixIdxKey):]
-			if i.indexLower != nil {
-				cmp := bytes.Compare(idxValue, i.indexLower)
-				if i.indexLowerExclusive {
-					if cmp <= 0 {
-						continue
-					}
-				} else {
-					if cmp < 0 {
-						continue
-					}
-				}
-			}
-			if i.indexUpper != nil {
-				cmp := bytes.Compare(idxValue, i.indexUpper)
-				if i.indexUpperInclusive {
-					if cmp > 0 {
-						return Row{}, ErrNoRows
-					}
-				} else {
-					if cmp >= 0 {
-						return Row{}, ErrNoRows
-					}
-				}
-			}
-		}
-		pk := i.indexIt.Value()
-		// Optional range-end cap on PK (existing behavior)
-		if len(i.indexRangeEnd) > 0 && bytes.Compare(pk, i.indexRangeEnd) >= 0 {
+		if i.indexIt == nil {
 			return Row{}, ErrNoRows
 		}
-		// Fetch the row by primary key
-		rowKey := rowKey(i.prefix, pk)
-		rowBytes, ok, err := i.store.Get(rowKey)
+	}
+	for {
+		if !i.indexIt.Next() {
+			break
+		}
+		key := i.indexIt.Key()
+		// Extract index value from the key for bound-checking.
+		idxVal := indexValueFromKey(key, i.indexTableID, i.idx)
+		if idxVal == nil {
+			continue
+		}
+		// Check lower bound for range scans.
+		if i.indexLower != nil {
+			cmp := bytes.Compare(idxVal, i.indexLower)
+			if cmp < 0 || (cmp == 0 && i.indexLowerExclusive) {
+				continue
+			}
+		}
+		// Check upper bound.
+		if i.indexUpper != nil {
+			cmp := bytes.Compare(idxVal, i.indexUpper)
+			if cmp > 0 || (cmp == 0 && !i.indexUpperInclusive) {
+				break
+			}
+		}
+		// For exact-match seeks (no lower/upper bounds), filter
+		// entries beyond the specific seek value.
+		if i.indexSeek != nil && i.indexLower == nil && i.indexUpper == nil {
+			if bytes.Compare(idxVal, i.indexSeek) > 0 {
+				break
+			}
+		}
+		// Extract primary key and fetch the row.
+		pk := i.indexIt.Value()
+		rowKey := append(append([]byte{}, i.prefix...), pk...)
+		rowBytes, found, err := i.store.Get(rowKey)
 		if err != nil {
 			return Row{}, err
 		}
-		if !ok {
-			// Stale index entry: row was deleted but index
-			// not yet cleaned up. Skip.
+		if !found {
 			continue
 		}
 		row, err := decodeRow(rowBytes, i.schema)
@@ -685,17 +681,7 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		row.tableName = i.table
-
-		// REQ000790: record index usage for diagnostics.
-		if i.iu != nil && i.idx != "" {
-			i.iu.RecordIndexUse(i.idx, i.table)
-		}
-
-		i.btreeIt.Next()
 		return row, nil
-	}
-	if err := i.indexIt.Err(); err != nil {
-		return Row{}, err
 	}
 	return Row{}, ErrNoRows
 }

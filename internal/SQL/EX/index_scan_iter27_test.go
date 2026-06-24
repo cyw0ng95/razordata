@@ -203,7 +203,7 @@ func TestIndexScan_RangeSeek_PlannerExplains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan, "IndexScan") {
-		t.Errorf("plan did not include IndexScan:\n%s", plan)
+	if !strings.Contains(plan, "Search") {
+		t.Errorf("plan did not include Search (IndexScan):\n%s", plan)
 	}
 }
