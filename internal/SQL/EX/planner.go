@@ -1664,7 +1664,28 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			// Join this group's result with the accumulated tree.
 			var joinOp Operator
 			if len(gr.preds) > 0 {
-				lk, rk, remaining := p.extractEquiJoinKeys(gr.preds, joinedTables, gr.tbl)
+				// REQ000843: try every table in the group, not just
+				// the rightmost one (gr.tbl), to find equi-join keys.
+				// In bushy join groups, the equi-join may connect a
+				// non-rightmost table (e.g. t1.a1 = t8.d8 where t1 is
+				// in the middle of the group and t8 is the rightmost).
+				var lk, rk []string
+				var remaining []PS.Expr
+				for t := range gr.set {
+					if joinedTables[t] {
+						continue
+					}
+					lk2, rk2, rem := p.extractEquiJoinKeys(gr.preds, joinedTables, t)
+					if len(lk2) > 0 {
+						lk, rk, remaining = lk2, rk2, rem
+						break
+					}
+				}
+				if len(lk) == 0 {
+					// Fallback: try the rightmost table.
+					lk, rk, remaining = p.extractEquiJoinKeys(gr.preds, joinedTables, gr.tbl)
+					_ = remaining
+				}
 				if len(lk) > 0 {
 					joinOp = NewHashJoin(current, gr.op, leftTbl, gr.tbl, lk, rk, 0)
 					if projectedCols != nil {

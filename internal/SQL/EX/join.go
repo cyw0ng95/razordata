@@ -201,8 +201,15 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 	// without it, every time leftRow becomes nil the guard passes,
 	// re-draining the left child each time.
 	if !j.hashMode && !j.hashAttempted && j.leftRows == nil && j.rightRows == nil && j.leftRow == nil {
-		if j.tryHashCrossJoin(ctx) {
-			// Switched to hash mode — continue with hash iteration.
+		// REQ000843: skip HashCrossJoin when either side is already
+		// a join operator — the bushy group already has all rows
+		// materialized and HashCrossJoin would re-materialize them.
+		if !isJoinOp(j.left) && !isJoinOp(j.right) {
+			if j.tryHashCrossJoin(ctx) {
+				// Switched to hash mode — continue with hash iteration.
+			}
+		} else {
+			j.hashAttempted = true
 		}
 	}
 	if j.hashMode {
@@ -296,9 +303,9 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 	// Using a smaller initial capacity saves ~6KB per NLJ level
 	// (144 bytes × 48 wasted slots) with negligible growth cost.
 	const maxMaterialize = 1024
-	j.leftRows = make([]Row, 0, 16)
+	j.leftRows = make([]Row, 0, 64)
 	var leftPrefixedCols []string
-	for {
+	for len(j.leftRows) < maxMaterialize {
 		row, err := j.left.Next(ctx)
 		if err != nil {
 			break
@@ -314,15 +321,14 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 		}
 		prefixed.Cols = leftPrefixedCols
 		j.leftRows = append(j.leftRows, prefixed)
-		if len(j.leftRows) >= maxMaterialize {
-			// Too many rows — abort, use NLJ. Close() to reset
-			// operator state; the NLJ loop re-initializes from
-			// scratch on the next call.
-			j.left.Close()
-			j.leftRows = nil
-			j.hashAttempted = true
-			return false
-		}
+	}
+	if len(j.leftRows) >= maxMaterialize {
+		// REQ000843: stop early without draining all rows — the
+		// for loop already stopped at maxMaterialize.
+		j.left.Close()
+		j.leftRows = nil
+		j.hashAttempted = true
+		return false
 	}
 	// Materialize right side.
 	// REQ000844: short-circuit — if left is empty, the cross
@@ -885,13 +891,23 @@ func prefixCols(cols []string, prefix string) []string {
 // in a multi-table chain. REQ000725.
 func hasAnyPrefix(cols []string) bool {
 	for _, c := range cols {
-		if i := strings.IndexByte(c, '.'); i >= 0 && i < len(c)-1 {
+		if strings.Contains(c, ".") {
 			return true
 		}
 	}
 	return false
 }
 
+// isJoinOp returns true when the operator is a NestedLoopJoin or
+// HashJoin (i.e., it represents a join operator in the plan tree).
+// REQ000843: used by tryHashCrossJoin to skip bushy-group joins.
+func isJoinOp(op Operator) bool {
+	switch op.(type) {
+	case *NestedLoopJoin, *HashJoin, *HashCrossJoin:
+		return true
+	}
+	return false
+}
 // schemaCols extracts column names from a schema.
 func schemaCols(rows []Row) []string {
 	if len(rows) == 0 {
