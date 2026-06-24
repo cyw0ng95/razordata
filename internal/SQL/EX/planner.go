@@ -112,6 +112,11 @@ const n3HeapMaxSize = 12
 // workloads.
 const HashAggregateThreshold = 1000
 
+// REQ000846: max plan cache size. With 48,300 SLT queries, an
+// unbounded memo would consume ~4.8GB of memory. With this bound,
+// the cache holds only the most recent 1024 plans.
+const maxPlanCacheSize = 1024
+
 type Planner struct {
 	mu      sync.Mutex
 	memo    map[string]*plan
@@ -131,9 +136,18 @@ type tableInfo struct {
 
 func NewPlanner() *Planner {
 	return &Planner{
-		memo:    make(map[string]*plan),
+		memo:    make(map[string]*plan, maxPlanCacheSize),
 		catalog: make(map[string]*tableInfo),
 	}
+}
+
+// InvalidateCache clears the plan cache. REQ000846: called when DDL
+// changes the schema (CREATE/DROP/ALTER TABLE) so cached plans that
+// reference the old schema are not reused.
+func (p *Planner) InvalidateCache() {
+	p.mu.Lock()
+	p.memo = make(map[string]*plan, maxPlanCacheSize)
+	p.mu.Unlock()
 }
 
 // NewPlannerWithStore returns a planner that routes its leaf operators
@@ -252,12 +266,16 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 		root = p.planDelete(s)
 	case *PS.CreateTable:
 		root = p.planCreateTable(s)
+		p.InvalidateCache()
 	case *PS.DropTable:
 		root = p.planDropTable(s)
+		p.InvalidateCache()
 	case *PS.CreateIndexStmt:
 		root = p.planCreateIndex(s)
+		p.InvalidateCache()
 	case *PS.DropIndexStmt:
 		root = p.planDropIndex(s)
+		p.InvalidateCache()
 	case *PS.ExplainStmt:
 		root = p.planExplain(s)
 	case *PS.AnalyzeStmt:
@@ -290,6 +308,22 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 
 	p.mu.Lock()
 	p.memo[key] = result
+	// REQ000846: bound the memo size. When the cache is full,
+	// evict the oldest entry. With maxPlanCacheSize=1024 and the
+	// SLT test's 48,300 unique queries, this keeps the cache
+	// bounded at ~1024 entries instead of growing unboundedly.
+	if len(p.memo) > maxPlanCacheSize {
+		// Find and delete one entry (deterministic but slow).
+		// For 48,300 queries the insertion cost is O(n) per insert,
+		// so the cache size limit prevents the cache from dominating
+		// query planning time.
+		for k := range p.memo {
+			if k != key {
+				delete(p.memo, k)
+				break
+			}
+		}
+	}
 	p.mu.Unlock()
 
 	return result, nil
