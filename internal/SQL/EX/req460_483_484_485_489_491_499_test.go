@@ -26,7 +26,7 @@ func TestReq460_UpdateCorrectResults(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 rows, got %d", len(rows))
 	}
-	if rows[0].Data[0] != NewIntValue(int64(10)) || rows[1].Data[0] != NewIntValue(int64(10)) || rows[2].Data[0] != NewIntValue(int64(10)) {
+	if !rows[0].Data[0].Equal(NewIntValue(int64(10))) || !rows[1].Data[0].Equal(NewIntValue(int64(10))) || !rows[2].Data[0].Equal(NewIntValue(int64(10))) {
 		t.Fatalf("all x should be 10, got %v, %v, %v", rows[0].Data[0], rows[1].Data[0], rows[2].Data[0])
 	}
 
@@ -40,7 +40,7 @@ func TestReq460_UpdateCorrectResults(t *testing.T) {
 	// UPDATE with expression
 	mustExec(t, exec, ctx, "UPDATE t1 SET x = x + 5")
 	rows = mustQueryAll(t, exec, ctx, "SELECT x FROM t1 ORDER BY x")
-	if len(rows) != 3 || rows[0].Data[0] != NewIntValue(int64(15)) {
+	if len(rows) != 3 || !rows[0].Data[0].Equal(NewIntValue(int64(15))) {
 		t.Fatalf("x should be 15, got %v", rows[0].Data[0])
 	}
 
@@ -50,7 +50,7 @@ func TestReq460_UpdateCorrectResults(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 rows, got %d", len(rows))
 	}
-	if rows[0].Data[1] != NewTextValue("zzz") {
+	if !rows[0].Data[1].Equal(NewTextValue("zzz")) {
 		t.Fatalf("y should be 'zzz', got %v", rows[0].Data[1])
 	}
 
@@ -67,7 +67,7 @@ func TestReq460_UpdateCorrectResults(t *testing.T) {
 	mustExec(t, exec2, ctx, "UPDATE t2 SET x = 4")
 	mustExec(t, exec2, ctx, "UPDATE t2 SET x = 5")
 	rows2 := mustQueryAll(t, exec2, ctx, "SELECT x FROM t2")
-	if len(rows2) != 1 || rows2[0].Data[0] != NewIntValue(int64(5)) {
+	if len(rows2) != 1 || !rows2[0].Data[0].Equal(NewIntValue(int64(5))) {
 		t.Fatalf("expected x=5, got %v", rows2[0].Data[0])
 	}
 }
@@ -88,13 +88,13 @@ func TestReq483_DefaultOnInsertOmittedColumns(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0].Data[0] != NewIntValue(int64(1)) {
+	if !rows[0].Data[0].Equal(NewIntValue(int64(1))) {
 		t.Fatalf("a should be 1, got %v", rows[0].Data[0])
 	}
-	if rows[0].Data[1] != NewIntValue(int64(42)) {
+	if !rows[0].Data[1].Equal(NewIntValue(int64(42))) {
 		t.Fatalf("b should be 42 (default), got %v", rows[0].Data[1])
 	}
-	if rows[0].Data[2] != NewTextValue("hello") {
+	if !rows[0].Data[2].Equal(NewTextValue("hello")) {
 		t.Fatalf("c should be 'hello' (default), got %v", rows[0].Data[2])
 	}
 
@@ -104,10 +104,10 @@ func TestReq483_DefaultOnInsertOmittedColumns(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0].Data[1] != NewIntValue(int64(99)) {
+	if !rows[0].Data[1].Equal(NewIntValue(int64(99))) {
 		t.Fatalf("b should be 99 (explicit), got %v", rows[0].Data[1])
 	}
-	if rows[0].Data[2] != NewTextValue("world") {
+	if !rows[0].Data[2].Equal(NewTextValue("world")) {
 		t.Fatalf("c should be 'world' (explicit), got %v", rows[0].Data[2])
 	}
 
@@ -117,10 +117,10 @@ func TestReq483_DefaultOnInsertOmittedColumns(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0].Data[1] != NewIntValue(int64(42)) {
+	if !rows[0].Data[1].Equal(NewIntValue(int64(42))) {
 		t.Fatalf("b should be 42 (default), got %v", rows[0].Data[1])
 	}
-	if rows[0].Data[2] != NewTextValue("xyz") {
+	if !rows[0].Data[2].Equal(NewTextValue("xyz")) {
 		t.Fatalf("c should be 'xyz', got %v", rows[0].Data[2])
 	}
 }
@@ -149,14 +149,14 @@ func TestReq484_CheckConstraintEnforcement(t *testing.T) {
 
 	// Verify only valid row exists
 	rows := mustQueryAll(t, exec, ctx, "SELECT a FROM t_check")
-	if len(rows) != 1 || rows[0].Data[0] != NewIntValue(int64(1)) {
+	if len(rows) != 1 || !rows[0].Data[0].Equal(NewIntValue(int64(1))) {
 		t.Fatalf("expected 1 row with a=1, got %d rows", len(rows))
 	}
 
 	// UPDATE to valid value should succeed
 	mustExec(t, exec, ctx, "UPDATE t_check SET a = 2 WHERE a = 1")
 	rows = mustQueryAll(t, exec, ctx, "SELECT a FROM t_check")
-	if rows[0].Data[0] != NewIntValue(int64(2)) {
+	if !rows[0].Data[0].Equal(NewIntValue(int64(2))) {
 		t.Fatalf("expected a=2 after UPDATE, got %v", rows[0].Data[0])
 	}
 
@@ -168,7 +168,7 @@ func TestReq484_CheckConstraintEnforcement(t *testing.T) {
 
 	// Verify row unchanged after failed UPDATE
 	rows = mustQueryAll(t, exec, ctx, "SELECT a FROM t_check")
-	if rows[0].Data[0] != NewIntValue(int64(2)) {
+	if !rows[0].Data[0].Equal(NewIntValue(int64(2))) {
 		t.Fatalf("expected a=2 after failed UPDATE, got %v", rows[0].Data[0])
 	}
 }
@@ -199,7 +199,7 @@ func TestReq485_UniqueConstraintEnforcement(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
-	if rows[0].Data[0] != NewIntValue(int64(1)) || rows[1].Data[0] != NewIntValue(int64(2)) {
+	if !rows[0].Data[0].Equal(NewIntValue(int64(1))) || !rows[1].Data[0].Equal(NewIntValue(int64(2))) {
 		t.Fatalf("expected a=1,2 got %v,%v", rows[0].Data[0], rows[1].Data[0])
 	}
 
@@ -259,10 +259,10 @@ func TestReq499_AlterTableDropColumn(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
-	if rows[0].Data[0] != NewIntValue(int64(1)) || rows[0].Data[1] != NewIntValue(int64(10)) {
+	if !rows[0].Data[0].Equal(NewIntValue(int64(1))) || !rows[0].Data[1].Equal(NewIntValue(int64(10))) {
 		t.Fatalf("expected (1,10), got (%v,%v)", rows[0].Data[0], rows[0].Data[1])
 	}
-	if rows[1].Data[0] != NewIntValue(int64(2)) || rows[1].Data[1] != NewIntValue(int64(20)) {
+	if !rows[1].Data[0].Equal(NewIntValue(int64(2))) || !rows[1].Data[1].Equal(NewIntValue(int64(20))) {
 		t.Fatalf("expected (2,20), got (%v,%v)", rows[1].Data[0], rows[1].Data[1])
 	}
 
@@ -325,10 +325,10 @@ func TestReq563_InsertDefaultValues(t *testing.T) {
 	if rows[0].Data[0].IsNull() == false {
 		t.Errorf("a should be nil (no default), got %v", rows[0].Data[0])
 	}
-	if rows[0].Data[1] != NewIntValue(int64(42)) {
+	if !rows[0].Data[1].Equal(NewIntValue(int64(42))) {
 		t.Errorf("b should be 42, got %v", rows[0].Data[1])
 	}
-	if rows[0].Data[2] != NewTextValue("x") {
+	if !rows[0].Data[2].Equal(NewTextValue("x")) {
 		t.Errorf("c should be 'x', got %v", rows[0].Data[2])
 	}
 
@@ -339,7 +339,7 @@ func TestReq563_InsertDefaultValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count query: %v", err)
 	}
-	if len(rows) != 1 || rows[0].Data[0] != NewIntValue(int64(3)) {
+	if len(rows) != 1 || !rows[0].Data[0].Equal(NewIntValue(int64(3))) {
 		t.Fatalf("expected 3 rows total, got %v", rows[0].Data)
 	}
 }

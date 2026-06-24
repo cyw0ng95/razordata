@@ -71,7 +71,7 @@ out := make([]byte, 0, len(row.Data)*8)
 			out = append(out, "S"...)
 			out = append(out, d.S...)
 		case KindBool:
-			if d.B {
+			if d.Bo {
 				out = append(out, "T"...)
 			} else {
 				out = append(out, "F"...)

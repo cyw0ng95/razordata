@@ -376,7 +376,7 @@ func hashValue(seed maphash.Seed, v any) uint64 {
 		case KindText:
 			h.WriteString(x.S)
 		case KindBool:
-			if x.B {
+			if x.Bo {
 				h.WriteByte(1)
 			} else {
 				h.WriteByte(0)

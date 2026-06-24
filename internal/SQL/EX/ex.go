@@ -81,6 +81,7 @@ const (
 	KindInt
 	KindFloat
 	KindText
+	KindBlob
 	KindBool
 )
 
@@ -94,7 +95,8 @@ type Value struct {
 	I64  int64
 	F64  float64
 	S    string
-	B    bool
+	B    []byte
+	Bo   bool
 }
 
 // NewIntValue creates a Value from an int64.
@@ -106,14 +108,32 @@ func NewFloatValue(v float64) Value { return Value{Kind: KindFloat, F64: v} }
 // NewTextValue creates a Value from a string.
 func NewTextValue(v string) Value { return Value{Kind: KindText, S: v} }
 
+// NewBlobValue creates a Value from a byte slice.
+func NewBlobValue(v []byte) Value { return Value{Kind: KindBlob, B: v} }
+
 // NewBoolValue creates a Value from a bool.
-func NewBoolValue(v bool) Value { return Value{Kind: KindBool, B: v} }
+func NewBoolValue(v bool) Value { return Value{Kind: KindBool, Bo: v} }
 
 // NullValue returns a NULL Value.
 func NullValue() Value { return Value{Kind: KindNull} }
 
 // IsNull returns true if this Value represents SQL NULL.
 func (v Value) IsNull() bool { return v.Kind == KindNull }
+
+// AsInt returns the int64 value (0 if not int).
+func (v Value) AsInt() int64 { return v.I64 }
+
+// AsFloat returns the float64 value (0 if not float).
+func (v Value) AsFloat() float64 { return v.F64 }
+
+// AsString returns the string value ("" if not text).
+func (v Value) AsString() string { return v.S }
+
+// AsBlob returns the []byte value (nil if not blob).
+func (v Value) AsBlob() []byte { return v.B }
+
+// AsBool returns the bool value (false if not bool).
+func (v Value) AsBool() bool { return v.Bo }
 
 // String returns a human-readable representation of the ValueKind.
 func (k ValueKind) String() string {
@@ -126,6 +146,8 @@ func (k ValueKind) String() string {
 		return "float64"
 	case KindText:
 		return "string"
+	case KindBlob:
+		return "blob"
 	case KindBool:
 		return "bool"
 	default:
@@ -145,11 +167,45 @@ func (v Value) ToAny() any {
 		return v.F64
 	case KindText:
 		return v.S
-	case KindBool:
+	case KindBlob:
 		return v.B
+	case KindBool:
+		return v.Bo
 	default:
 		return nil
 	}
+}
+
+// Equal compares two Values for equality. REQ000776 — supports
+// all kinds including []byte (which is not directly comparable
+// with ==). Two NULLs are equal. A NULL and non-NULL are not equal.
+func (v Value) Equal(other Value) bool {
+	if v.Kind != other.Kind {
+		return false
+	}
+	switch v.Kind {
+	case KindNull:
+		return true
+	case KindInt:
+		return v.I64 == other.I64
+	case KindFloat:
+		return v.F64 == other.F64
+	case KindText:
+		return v.S == other.S
+	case KindBlob:
+		if len(v.B) != len(other.B) {
+			return false
+		}
+		for i := range v.B {
+			if v.B[i] != other.B[i] {
+				return false
+			}
+		}
+		return true
+	case KindBool:
+		return v.Bo == other.Bo
+	}
+	return false
 }
 
 // valueFromAny creates a Value from a boxed any. Inverse of ToAny.

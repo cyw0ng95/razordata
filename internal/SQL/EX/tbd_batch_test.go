@@ -40,7 +40,7 @@ func TestTBD_RemainingBugfixes(t *testing.T) {
 		if len(rows) != 1 {
 			t.Errorf("OFFSET: got %d rows, want 1", len(rows))
 		}
-		if len(rows) > 0 && rows[0].Data[0] != NewIntValue(int64(2)) {
+		if len(rows) > 0 && !rows[0].Data[0].Equal(NewIntValue(int64(2))) {
 			t.Errorf("OFFSET: id=%v, want 2", rows[0].Data[0])
 		}
 	})
@@ -71,13 +71,13 @@ func TestTBD_RemainingBugfixes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CASE WHEN: %v", err)
 		}
-		if rows[0].Data[0] != NewIntValue(int64(111)) {
+		if !rows[0].Data[0].Equal(NewIntValue(int64(111))) {
 			t.Errorf("CASE id=1: %v, want 111", rows[0].Data[0])
 		}
-		if rows[1].Data[0] != NewIntValue(int64(222)) {
+		if !rows[1].Data[0].Equal(NewIntValue(int64(222))) {
 			t.Errorf("CASE id=2: %v, want 222", rows[1].Data[0])
 		}
-		if rows[2].Data[0] != NewIntValue(int64(333)) {
+		if !rows[2].Data[0].Equal(NewIntValue(int64(333))) {
 			t.Errorf("CASE id=3: %v, want 333", rows[2].Data[0])
 		}
 	})

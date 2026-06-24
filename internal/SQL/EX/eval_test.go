@@ -307,7 +307,7 @@ func TestFilterPassesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if row.Data[0] != NewIntValue(int64(1)) {
+	if !row.Data[0].Equal(NewIntValue(int64(1))) {
 		t.Errorf("expected 1, got %v", row.Data[0])
 	}
 }
@@ -324,7 +324,7 @@ func TestProjectStarPassesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if row.Data[0] != NewIntValue(int64(7)) {
+	if !row.Data[0].Equal(NewIntValue(int64(7))) {
 		t.Errorf("expected 7, got %v", row.Data[0])
 	}
 }
@@ -345,7 +345,7 @@ func TestSortThenIterate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if row.Data[0] != NewIntValue(int64(w)) {
+		if !row.Data[0].Equal(NewIntValue(int64(w))) {
 			t.Errorf("expected %d, got %v", w, row.Data[0])
 		}
 	}
@@ -421,7 +421,7 @@ func TestUpdateModifiesRows(t *testing.T) {
 	tablesMu.RLock()
 	defer tablesMu.RUnlock()
 	for _, r := range tables["t"] {
-		if r.Data[1] != NewTextValue("z") {
+		if !r.Data[1].Equal(NewTextValue("z")) {
 			t.Errorf("expected b='z', got %v", r.Data[1])
 		}
 	}
@@ -452,7 +452,7 @@ func TestDeleteRemovesMatching(t *testing.T) {
 	if len(tables["t"]) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(tables["t"]))
 	}
-	if tables["t"][0].Data[0] != NewIntValue(int64(1)) {
+	if !tables["t"][0].Data[0].Equal(NewIntValue(int64(1))) {
 		t.Errorf("expected row 1 to remain, got %v", tables["t"][0].Data[0])
 	}
 }

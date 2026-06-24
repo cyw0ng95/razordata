@@ -104,7 +104,7 @@ func TestREQ000736_NullsFirstLast(t *testing.T) {
 	if rows[2].Data[0].IsNull() == false {
 		t.Errorf("ASC NULLS LAST: row 2 expected nil, got %v", rows[2].Data[0])
 	}
-	if rows[0].Data[0] != NewIntValue(int64(1)) {
+	if !rows[0].Data[0].Equal(NewIntValue(int64(1))) {
 		t.Errorf("ASC NULLS LAST: row 0 expected 1, got %v", rows[0].Data[0])
 	}
 }

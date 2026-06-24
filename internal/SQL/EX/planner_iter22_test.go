@@ -128,7 +128,7 @@ func TestPlanner_PlanSelect_PrefersIndexSeek(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0].Data[0] != NewIntValue(int64(2)) {
+	if !rows[0].Data[0].Equal(NewIntValue(int64(2))) {
 		t.Errorf("id = %v, want 2", rows[0].Data[0])
 	}
 }

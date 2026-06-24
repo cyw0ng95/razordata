@@ -103,10 +103,10 @@ func TestREQ384_Abs_EndToEnd(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("got %d rows, want 3", len(rows))
 	}
-	if rows[0].Data[0] != NewIntValue(5) {
+	if !rows[0].Data[0].Equal(NewIntValue(5)) {
 		t.Errorf("abs(5) = %v, want 5", rows[0].Data[0])
 	}
-	if rows[1].Data[0] != NewIntValue(5) {
+	if !rows[1].Data[0].Equal(NewIntValue(5)) {
 		t.Errorf("abs(-5) = %v, want 5", rows[1].Data[0])
 	}
 	if !rows[2].Data[0].IsNull() {
@@ -132,7 +132,7 @@ func TestREQ384_Abs_StringToZero(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != NewFloatValue(0.0) {
+	if !rows[0].Data[0].Equal(NewFloatValue(0.0)) {
 		t.Errorf("abs('hello') = %v, want 0.0", rows[0].Data[0])
 	}
 }
@@ -163,7 +163,7 @@ func TestREQ447_CountDistinct(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != NewIntValue(2) {
+	if !rows[0].Data[0].Equal(NewIntValue(2)) {
 		t.Errorf("count(DISTINCT v) over {1, 0, NULL} = %v, want 2", rows[0].Data[0])
 	}
 }
@@ -192,7 +192,7 @@ func TestREQ447_SumDistinct(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != NewIntValue(1) {
+	if !rows[0].Data[0].Equal(NewIntValue(1)) {
 		t.Errorf("sum(DISTINCT v) over {1, 0, NULL} = %v, want 1", rows[0].Data[0])
 	}
 }

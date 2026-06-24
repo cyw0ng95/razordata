@@ -52,7 +52,7 @@ func TestE2E_FullCRUD_AgainstEngine(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
-	if rows[0].Data[0] != NewTextValue("carol") || rows[1].Data[0] != NewTextValue("alice") {
+	if !rows[0].Data[0].Equal(NewTextValue("carol")) || !rows[1].Data[0].Equal(NewTextValue("alice")) {
 		t.Errorf("ORDER BY age DESC: got %v, want [carol alice]", rows)
 	}
 
@@ -70,7 +70,7 @@ func TestE2E_FullCRUD_AgainstEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].Data[0] != NewIntValue(int64(26)) {
+	if len(rows) != 1 || !rows[0].Data[0].Equal(NewIntValue(int64(26))) {
 		t.Errorf("update verification: got %v, want [26]", rows)
 	}
 

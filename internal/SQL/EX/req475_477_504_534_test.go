@@ -31,7 +31,7 @@ func TestReq534_ViewWhereMerge(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1 (WHERE combined: view->x>1 AND outer->x>2)", len(rows))
 	}
-	if rows[0].Data[0] != NewIntValue(int64(3)) {
+	if !rows[0].Data[0].Equal(NewIntValue(int64(3))) {
 		t.Errorf("got x=%v, want 3", rows[0].Data[0])
 	}
 
@@ -128,7 +128,7 @@ func TestReq504_DeleteRowCount(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != NewIntValue(int64(1)) {
+	if !rows[0].Data[0].Equal(NewIntValue(int64(1))) {
 		t.Errorf("got a=%v, want 1", rows[0].Data[0])
 	}
 
@@ -204,7 +204,7 @@ func TestReq475_DeleteOrderByLimit(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want 2", len(rows))
 	}
-	if rows[1].Data[0] != NewIntValue(int64(2)) {
+	if !rows[1].Data[0].Equal(NewIntValue(int64(2))) {
 		t.Errorf("got highest a=%v, want 2 (DESC LIMIT 1 deleted a=3)", rows[1].Data[0])
 	}
 }

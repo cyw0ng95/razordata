@@ -187,7 +187,7 @@ func TestSQLviaEngine_CreateInsertUpdateSelect(t *testing.T) {
 	}
 	expected := [][]int64{{1, 10}, {2, 20}, {3, 60}, {4, 80}, {5, 100}}
 	for i, exp := range expected {
-		if rows[i].Data[0] != NewIntValue(exp[0]) || rows[i].Data[1] != NewIntValue(exp[1]) {
+		if !rows[i].Data[0].Equal(NewIntValue(exp[0])) || !rows[i].Data[1].Equal(NewIntValue(exp[1])) {
 			t.Errorf("row %d: got %v, want %v", i, rows[i].Data, exp)
 		}
 	}

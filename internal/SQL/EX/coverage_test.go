@@ -577,7 +577,7 @@ func TestCoverage_likeEscape(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0].Data[0] != NewTextValue("100%") {
+	if !rows[0].Data[0].Equal(NewTextValue("100%")) {
 		t.Errorf("expected '100%%', got %v", rows[0].Data[0])
 	}
 	// ESCAPE '\' — treat _ as literal
@@ -588,7 +588,7 @@ func TestCoverage_likeEscape(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0].Data[0] != NewTextValue("100_") {
+	if !rows[0].Data[0].Equal(NewTextValue("100_")) {
 		t.Errorf("expected '100_', got %v", rows[0].Data[0])
 	}
 	// ESCAPE without special chars — no match

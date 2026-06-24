@@ -584,7 +584,7 @@ func encodeRow(schema *storeSchema, row Row) ([]byte, error) {
 			buf = append(buf, v.S...)
 		case KindBool:
 			buf = append(buf, rvBool)
-			if v.B {
+			if v.Bo {
 				buf = append(buf, 1)
 			} else {
 				buf = append(buf, 0)

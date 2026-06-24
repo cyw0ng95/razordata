@@ -31,7 +31,7 @@ func TestREQ000721_NullInSubqueryNoNulls(t *testing.T) {
 	// SQL semantics: NULL IN (1,2,3) = 0 (false), not NULL.
 	// SQLite returns 0 (int64) for the IN predicate.
 	v := rows[0].Data[0]
-	if v != NewIntValue(int64(0)) && v != NewBoolValue(false) {
+	if !v.Equal(NewIntValue(int64(0))) && !v.Equal(NewBoolValue(false)) {
 		t.Errorf("expected 0 or false, got %v (%T)", v, v)
 	}
 }

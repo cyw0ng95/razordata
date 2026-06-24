@@ -47,7 +47,7 @@ func TestWindow_RowNumber(t *testing.T) {
 			t.Fatalf("row %d: %v", i, err)
 		}
 		got := row.Data[len(row.Data)-1]
-		if got != NewIntValue(want) {
+		if !got.Equal(NewIntValue(want)) {
 			t.Errorf("row %d: got %v, want %v", i, got, want)
 		}
 	}
@@ -81,7 +81,7 @@ func TestWindow_DenseRank(t *testing.T) {
 			t.Fatalf("row %d: %v", i, err)
 		}
 		got := row.Data[len(row.Data)-1]
-		if got != NewIntValue(want) {
+		if !got.Equal(NewIntValue(want)) {
 			t.Errorf("row %d: got %v, want %v", i, got, want)
 		}
 	}

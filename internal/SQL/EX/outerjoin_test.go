@@ -32,7 +32,7 @@ func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 		if len(outer.Data) == 0 || len(inner.Data) == 0 {
 			return false, nil
 		}
-		return outer.Data[0] == inner.Data[0], nil
+		return outer.Data[0].Equal(inner.Data[0]), nil
 	}
 
 	join := NewNestedLoopJoin(left, right, "left", "right", on, JoinKindLeft)
@@ -55,7 +55,7 @@ func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 	}
 
 	// Row 1: id=1 unmatched (NULL right)
-	if results[0].Data[0] != NewIntValue(int64(1)) || results[0].Data[1] != NewIntValue(int64(10)) {
+	if !results[0].Data[0].Equal(NewIntValue(int64(1))) || !results[0].Data[1].Equal(NewIntValue(int64(10))) {
 		t.Errorf("row 0 left: got (%v, %v), want (1, 10)", results[0].Data[0], results[0].Data[1])
 	}
 	// Right side should be NULL-padded (2 columns)
@@ -68,12 +68,12 @@ func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 	}
 
 	// Row 2: id=2 matched
-	if results[1].Data[0] != NewIntValue(int64(2)) || results[1].Data[3] != NewIntValue(int64(200)) {
+	if !results[1].Data[0].Equal(NewIntValue(int64(2))) || !results[1].Data[3].Equal(NewIntValue(int64(200))) {
 		t.Errorf("row 1: expected match, got (%v, %v)", results[1].Data[0], results[1].Data[3])
 	}
 
 	// Row 3: id=3 unmatched
-	if results[2].Data[0] != NewIntValue(int64(3)) || results[2].Data[1] != NewIntValue(int64(30)) {
+	if !results[2].Data[0].Equal(NewIntValue(int64(3))) || !results[2].Data[1].Equal(NewIntValue(int64(30))) {
 		t.Errorf("row 2 left: got (%v, %v), want (3, 30)", results[2].Data[0], results[2].Data[1])
 	}
 	if results[2].Data[2].IsNull() == false || results[2].Data[3].IsNull() == false {
@@ -100,7 +100,7 @@ func TestNestedLoopJoin_InnerJoin(t *testing.T) {
 	left := NewSeqScan("l")
 	right := NewSeqScan("r")
 	on := func(outer, inner *Row) (bool, error) {
-		return outer.Data[0] == inner.Data[0], nil
+		return outer.Data[0].Equal(inner.Data[0]), nil
 	}
 
 	join := NewNestedLoopJoin(left, right, "l", "r", on, JoinKindInner)
@@ -116,7 +116,7 @@ func TestNestedLoopJoin_InnerJoin(t *testing.T) {
 		}
 		count++
 		// Should only have id=2 match
-		if row.Data[0] != NewIntValue(int64(2)) || row.Data[1] != NewIntValue(int64(2)) {
+		if !row.Data[0].Equal(NewIntValue(int64(2))) || !row.Data[1].Equal(NewIntValue(int64(2))) {
 			t.Errorf("expected match on id=2, got (%v, %v)", row.Data[0], row.Data[1])
 		}
 	}
@@ -150,7 +150,7 @@ func TestNestedLoopJoin_LeftWithNilOn(t *testing.T) {
 	if len(row.Data) != 2 {
 		t.Errorf("expected 2 cols, got %d", len(row.Data))
 	}
-	if row.Data[0] != NewIntValue(int64(1)) || row.Data[1] != NewIntValue(int64(99)) {
+	if !row.Data[0].Equal(NewIntValue(int64(1))) || !row.Data[1].Equal(NewIntValue(int64(99))) {
 		t.Errorf("expected (1, 99), got %v", row.Data)
 	}
 }

@@ -203,7 +203,7 @@ func TestConstraints_FillDefaults_LiteralInt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
 	}
-	if out.Data[1] != NewIntValue(int64(99)) {
+	if !out.Data[1].Equal(NewIntValue(int64(99))) {
 		t.Errorf("expected default 99, got %v", out.Data[1])
 	}
 }
@@ -241,7 +241,7 @@ func TestConstraints_FillDefaults_NilSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
 	}
-	if out.Data[0] != NewIntValue(int64(1)) {
+	if !out.Data[0].Equal(NewIntValue(int64(1))) {
 		t.Errorf("expected unchanged value, got %v", out.Data[0])
 	}
 }

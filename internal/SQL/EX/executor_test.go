@@ -272,7 +272,7 @@ func TestExecutorScalarSubquery(t *testing.T) {
 		t.Fatalf("expected 3 rows, got %d", len(rows))
 	}
 	for _, r := range rows {
-		if r.Data[1] != NewIntValue(int64(10)) {
+		if !r.Data[1].Equal(NewIntValue(int64(10))) {
 			t.Errorf("expected c=10, got %v", r.Data[1])
 		}
 	}

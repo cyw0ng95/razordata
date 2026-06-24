@@ -392,7 +392,7 @@ func valuesEqual(a, b Value) bool {
 	case KindFloat:
 		return a.F64 == b.F64
 	case KindBool:
-		return a.B == b.B
+		return a.Bo == b.Bo
 	}
 	return false
 }

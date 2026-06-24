@@ -382,7 +382,7 @@ func evalTriggerWhen(expr PS.Expr, row *Row, params []any) (bool, error) {
 	}
 	v := valueFromAny(val)
 	if v.Kind == KindBool {
-		return v.B, nil
+		return v.Bo, nil
 	}
 	return false, nil
 }

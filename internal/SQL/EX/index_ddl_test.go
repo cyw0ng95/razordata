@@ -121,7 +121,7 @@ func TestAggregate_EmptyTable_Scalar(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("COUNT(*) empty: got %d rows, want 1", len(rows))
 	}
-	if rows[0].Data[0] != NewIntValue(int64(0)) {
+	if !rows[0].Data[0].Equal(NewIntValue(int64(0))) {
 		t.Errorf("COUNT(*) empty: got %v, want 0", rows[0].Data[0])
 	}
 	// SUM(v) on empty table = NULL
