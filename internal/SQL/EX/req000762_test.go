@@ -6,6 +6,21 @@ import (
 	"testing"
 )
 
+func anyToValue(a any) Value {
+	switch v := a.(type) {
+	case nil:
+		return NullValue()
+	case string:
+		return NewTextValue(v)
+	case int64:
+		return NewIntValue(v)
+	case int:
+		return NewIntValue(int64(v))
+	default:
+		return NewTextValue(v.(string))
+	}
+}
+
 // TestConcatFastPath verifies REQ000762: concat has string-string
 // fast path that avoids fmt.Sprintf reflection overhead.
 func TestConcatFastPath(t *testing.T) {
@@ -22,21 +37,20 @@ func TestConcatFastPath(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := concat(tc.a, tc.b)
+			got, err := concatValue(anyToValue(tc.a), anyToValue(tc.b))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if (tc.a == nil || tc.b == nil) && got != nil {
-				t.Errorf("expected nil, got %v", got)
+			if (tc.a == nil || tc.b == nil) && got.Kind != KindNull {
+				t.Errorf("expected KindNull, got %v", got.Kind)
 				return
 			}
-			if got != nil {
-				s, ok := got.(string)
-				if !ok {
-					t.Fatalf("got type %T, want string", got)
+			if got.Kind != KindNull {
+				if got.Kind != KindText {
+					t.Fatalf("got Kind %v, want KindText", got.Kind)
 				}
-				if s != tc.want {
-					t.Errorf("got %q, want %q", s, tc.want)
+				if got.S != tc.want {
+					t.Errorf("got %q, want %q", got.S, tc.want)
 				}
 			}
 		})

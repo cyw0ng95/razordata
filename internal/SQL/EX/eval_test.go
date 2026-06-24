@@ -580,12 +580,15 @@ func TestGlob_BinaryOp(t *testing.T) {
 		{"h?llo", "hllo", false},
 	}
 	for _, tc := range cases {
-		got, err := glob(tc.pattern, tc.s)
+		got, err := globValue(NewTextValue(tc.pattern), NewTextValue(tc.s))
 		if err != nil {
 			t.Fatalf("glob(%q, %q): %v", tc.pattern, tc.s, err)
 		}
-		if got != tc.want {
-			t.Errorf("glob(%q, %q) = %v, want %v", tc.pattern, tc.s, got, tc.want)
+		if got.Kind != KindBool {
+			t.Fatalf("glob(%q, %q): got Kind %v", tc.pattern, tc.s, got.Kind)
+		}
+		if got.Bo != tc.want {
+			t.Errorf("glob(%q, %q) = %v, want %v", tc.pattern, tc.s, got.Bo, tc.want)
 		}
 	}
 }

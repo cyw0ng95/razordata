@@ -296,3 +296,25 @@ overflow_test.go, tpch_bench_test.go, operators_vec_test.go
 - All 156 Eval() call sites (92 test + 64 production) now use EvalValue()
 - Eval() remains as backward-compat wrapper `EvalValue() + ToAny()` for any external callers
 - 8 pre-existing test failures unchanged
+
+### Commits `432d646` — Fixed REQ000843/844/845 (plan string mismatches)
+- TestCost_BasedScanSelection_PrefersIndex, NoIndexOnColumn, HighSelectivityRange
+- TestIndexScan_WithStore_ReadsRows, TestExecutorIndexScanSelection
+- TestExecutorExplain
+- operatorType renders *IndexScan as "Search", *SeqScan as "Scan"
+
+### Commits `5f8881d` — Fixed REQ000846/847 (correlated EXISTS + IndexScan panic)
+- REQ000846: compileBinary no longer compiles bare-name col=col comparisons
+  because the compiled function reads from the wrong row's Data slice for
+  columns that resolve via the outer chain. Eval-based fallback is correct.
+- REQ000847: implemented nextFromIndex for real secondary index seeks
+  (index prefix iteration + rowKey-based Store.Get). Removed spurious
+  btreeIt.Next() calls from non-B-tree paths.
+
+### Current Status
+- All 8 pre-existing test failures fixed (6 plan-string + 1 EXISTS + 1 IndexScan)
+- 5 remaining pre-existing failures (TestBugfix_BuildWriterOp, Reindex_NoOp,
+  DropView_Unknown, DropTrigger_Unknown, TestReq489_ReindexRouting) —
+  these were masked by the 8 original failures, not introduced by recent changes.
+- 156 Eval() call sites migrated to EvalValue()
+- 0 new regressions
