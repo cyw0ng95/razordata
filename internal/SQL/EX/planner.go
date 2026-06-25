@@ -671,6 +671,15 @@ func (p *Planner) walkExprForTables(e PS.Expr, tables map[string]bool) {
 		for _, arg := range v.Args {
 			p.walkExprForTables(arg, tables)
 		}
+	case *PS.BetweenExpr:
+		// REQ000900: BETWEEN references the same table as its Expr.
+		p.walkExprForTables(v.Expr, tables)
+		p.walkExprForTables(v.Low, tables)
+		p.walkExprForTables(v.High, tables)
+	case *PS.CastExpr:
+		p.walkExprForTables(v.Expr, tables)
+	case *PS.AliasedExpr:
+		p.walkExprForTables(v.Expr, tables)
 	}
 }
 
