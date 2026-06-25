@@ -97,6 +97,9 @@ type NestedLoopJoin struct {
 	blkSharedCols     []string
 	blkSharedTypes    []int
 	blkSharedColIndex map[string]int
+	// REQ000877: sharedBuilt guards blkSharedCols/Types/colIndex
+	// — computed once on first batch, reused across all subsequent.
+	sharedBuilt bool
 	blkDataBuf        []Value
 	blkDataPerRow     int
 	blkDataOffset     int
@@ -841,10 +844,10 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 		j.blkRightRows = j.cachedRightRows
 	}
 
-	// REQ000816: build blkSharedCols/blkSharedTypes/blkSharedColIndex once per
-	// batch. Used by every emit in this batch so downstream Lookup
-	// can skip per-row buildColIndex.
-	if len(j.blkLeftBatch) > 0 && len(j.blkRightRows) > 0 {
+	// REQ000877: build blkSharedCols/blkSharedTypes/blkSharedColIndex
+	// once per operator lifetime — column layout is constant across
+	// batches since left/right Cols are fixed for the join's lifetime.
+	if !j.sharedBuilt && len(j.blkLeftBatch) > 0 && len(j.blkRightRows) > 0 {
 		lCols := j.blkLeftBatch[0].Cols
 		rCols := j.blkRightRows[0].Cols
 		lTypes := j.blkLeftBatch[0].Types
@@ -862,6 +865,7 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 				j.blkSharedColIndex[key] = i
 			}
 		}
+		j.sharedBuilt = true
 	}
 
 	// Match all left batch rows against right rows, emitting in
