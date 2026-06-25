@@ -894,7 +894,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 			}
 			propagateParams(plan.root, args)
 			propagatePlanner(plan.root, e.planner)
-			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
+			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			propagateExecContext(plan.root, execCtx)
 			defer plan.root.Close()
 			row, err := plan.root.Next(ctx)
@@ -985,7 +985,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 			}
 			propagateParams(plan.root, args)
 			propagatePlanner(plan.root, e.planner)
-			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
+			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			propagateExecContext(plan.root, execCtx)
 			defer plan.root.Close()
 			var out []Row
@@ -1095,6 +1095,9 @@ func propagateExecContext(root Operator, ec *ExecContext) {
 	}
 	if del, ok := root.(*Delete); ok {
 		del.execCtx = ec
+	}
+	if val, ok := root.(*Values); ok {
+		val.execCtx = ec
 	}
 	type childer interface {
 		Child() Operator
