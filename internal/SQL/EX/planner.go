@@ -1979,6 +1979,12 @@ func containsAggregate(e PS.Expr) bool {
 		return containsAggregate(v.Expr)
 	case *PS.CastExpr:
 		return containsAggregate(v.Expr)
+	case *PS.FunctionCall:
+		for _, a := range v.Args {
+			if containsAggregate(a) {
+				return true
+			}
+		}
 	}
 	return false
 }
