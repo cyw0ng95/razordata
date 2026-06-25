@@ -1178,6 +1178,8 @@ func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 
 // compileColRef compiles a column reference (bare or qualified name)
 // into a function that reads directly from row.Data.
+// REQ000898: caches the column index on first lookup so repeated
+// calls (across rows in a batch) use O(1) direct index access.
 func compileColRef(name string) func(*Row) Value {
 	lower := strings.ToLower(name)
 	bareName := name
@@ -1185,17 +1187,28 @@ func compileColRef(name string) func(*Row) Value {
 		bareName = name[dot+1:]
 	}
 	bareLower := strings.ToLower(bareName)
+	idx := -1
 	return func(row *Row) Value {
 		// Fast path: use colIndex if available (avoids linear scan).
 		if row.colIndex != nil {
-			if idx, ok := row.colIndex[lower]; ok && idx < len(row.Data) {
+			if i, ok := row.colIndex[lower]; ok && i < len(row.Data) {
+				return row.Data[i]
+			}
+		}
+		// Cached index from a previous row in the same batch:
+		// all rows from the same SeqScan share the same Cols, so
+		// the column index is stable once found.
+		if idx >= 0 {
+			if idx < len(row.Data) {
 				return row.Data[idx]
 			}
+			return Value{Kind: KindNull}
 		}
 		// Linear scan with suffix/prefix handling.
 		for i, c := range row.Cols {
 			cl := strings.ToLower(c)
 			if cl == lower || cl == bareLower {
+				idx = i
 				if i < len(row.Data) {
 					return row.Data[i]
 				}
