@@ -270,18 +270,18 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 				// explicit joins are handled by the common code
 				// that follows after this if/else block.
 				p.parenTableExpr = true
-				if err := p.expect(LX.T_IDENT); err != nil {
+				fromRef, err := p.parseTableRef()
+				if err != nil {
 					return nil, err
 				}
-				from = p.current.Lexeme
-				p.advance()
+				from = fromRef
 			}
 		} else {
-			if err := p.expect(LX.T_IDENT); err != nil {
+			fromRef, err := p.parseTableRef()
+			if err != nil {
 				return nil, err
 			}
-			from = p.current.Lexeme
-			p.advance()
+			from = fromRef
 		}
 	}
 	// REQ000705: parse alias for the first table BEFORE the
@@ -305,11 +305,11 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 	// becomes a CROSS join entry.
 	for p.current.Type == LX.T_COMMA {
 		p.advance()
-		if err := p.expect(LX.T_IDENT); err != nil {
+		rightRef, err := p.parseTableRef()
+		if err != nil {
 			return nil, err
 		}
-		rightName := p.current.Lexeme
-		p.advance()
+		rightName := rightRef
 		// REQ000705: handle implicit alias for comma-separated tables
 		var rightAlias string
 		if p.current.Type == LX.T_AS {
@@ -364,11 +364,11 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 		if p.current.Type == LX.T_JOIN {
 			p.advance()
 		}
-		if err := p.expect(LX.T_IDENT); err != nil {
+		rightRef, err := p.parseTableRef()
+		if err != nil {
 			return nil, err
 		}
-		right := p.current.Lexeme
-		p.advance()
+		right := rightRef
 		// REQ000706: parse alias for JOIN table (implicit or explicit)
 		var rightAlias string
 		if p.current.Type == LX.T_AS {

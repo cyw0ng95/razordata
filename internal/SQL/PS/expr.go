@@ -77,9 +77,19 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			if err := p.expect(LX.T_IDENT); err != nil {
 				return nil, err
 			}
-			col := strings.ToLower(p.current.Lexeme)
+			mid := strings.ToLower(p.current.Lexeme)
 			p.advance()
-			return &QualifiedName{Table: name, Name: col}, nil
+			// REQ000750: check for three-part name (db.table.col)
+			if p.current.Type == LX.T_DOT {
+				p.advance()
+				if err := p.expect(LX.T_IDENT); err != nil {
+					return nil, err
+				}
+				col := strings.ToLower(p.current.Lexeme)
+				p.advance()
+				return &QualifiedName{Database: name, Table: mid, Name: col}, nil
+			}
+			return &QualifiedName{Table: name, Name: mid}, nil
 		}
 		if p.current.Type == LX.T_LPAREN {
 			return p.parseFunctionCall(name)

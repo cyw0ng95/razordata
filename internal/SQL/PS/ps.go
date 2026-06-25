@@ -37,6 +37,27 @@ func (p *Parser) advance() {
 	p.current = p.lex.Next()
 }
 
+// parseTableRef reads an identifier optionally qualified with a database
+// prefix (REQ000750: db.table). Returns the table name (last ident) and
+// advances past both tokens.
+func (p *Parser) parseTableRef() (string, error) {
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return "", err
+	}
+	first := strings.ToLower(p.current.Lexeme)
+	p.advance()
+	if p.current.Type == LX.T_DOT {
+		p.advance()
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return "", err
+		}
+		table := strings.ToLower(p.current.Lexeme)
+		p.advance()
+		return table, nil
+	}
+	return first, nil
+}
+
 func (p *Parser) expect(typ LX.TokenType) error {
 	if p.current.Type != typ {
 		return &SyntaxError{

@@ -50,8 +50,11 @@ type Ident struct {
 
 func (i *Ident) exprNode() {}
 
-// QualifiedName represents a qualified identifier (table.column).
+// QualifiedName represents a qualified identifier (table.column or db.table.column).
 type QualifiedName struct {
+	// Database is the optional database qualifier (set for three-part names).
+	// For two-part names it is empty. REQ000750.
+	Database string
 	Table string
 	Name  string
 	// CachedKey is "Table.Name" computed once on first use. Lazy
