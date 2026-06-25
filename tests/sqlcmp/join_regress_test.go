@@ -190,6 +190,176 @@ var joinQueries = []joinQuery{
 		brokenNote: "REQ000794 + REQ000797: expected 16,200",
 		skip:       true,
 	},
+
+	// ── select4-derived patterns: 5-table with equi-joins + IN-list ──
+	{
+		name:       "j5_equi_inlist",
+		sql:        "SELECT t1.a, t2.b FROM t1, t9, t6, t3, t2 WHERE a3 = b9 AND c9 = 688 AND d6 IN (101, 103, 105) AND a1 = d9",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "select4-derived: 5-table with 4 equi/IN predicates",
+		skip:       true,
+	},
+	{
+		name:       "j5_equi_eq_chain",
+		sql:        "SELECT t1.a, t2.b FROM t1, t9, t6, t3, t2 WHERE a3 = b9 AND c9 = 103 AND a1 = d9 AND d6 = 105",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "select4-derived: 5-table with 4 equi-join chains",
+		skip:       true,
+	},
+
+	// ── select4-derived patterns: 6-table with equi-joins + OR ──
+	{
+		name:       "j6_equi_or",
+		sql:        "SELECT t1.a, t2.b FROM t3, t1, t9, t2, t8, t4 WHERE a3 = e1 AND e8 IN (101, 103, 105) AND (e9 = 101 OR e9 = 103) AND c2 = 103 AND a1 IN (100, 102, 104)",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "select4-derived: 6-table with equi + IN + OR",
+		skip:       true,
+	},
+	{
+		name:       "j6_equi_inlist_chain",
+		sql:        "SELECT t1.a, t2.b FROM t1, t2, t9, t8, t3, t4 WHERE c2 = 103 AND e8 IN (101, 103, 105, 107) AND a3 = e1 AND (e9 = 101 OR e9 = 103 OR e9 = 105) AND a1 IN (100, 102, 104, 106, 108)",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "select4-derived: 6-table with equi + IN + OR + multi IN",
+		skip:       true,
+	},
+
+	// ── select4-derived patterns: 7-table with equi-joins + IN + equality ──
+	{
+		name:       "j7_equi_in_eq",
+		sql:        "SELECT t1.a, t2.b FROM t7, t8, t1, t4, t2, t6, t5 WHERE c2 IN (103, 105) AND a1 = 101 AND d6 IN (100, 103, 105, 107) AND e7 IN (101, 103, 105) AND c5 IN (100, 103, 105) AND b4 = 103",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "select4-derived: 7-table with 6 IN/equality predicates",
+		skip:       true,
+	},
+	{
+		name:       "j7_equi_chain_in",
+		sql:        "SELECT t1.a, t2.b FROM t2, t4, t5, t7, t6, t8, t1 WHERE c2 IN (103, 105) AND e7 IN (101, 103, 105, 107, 109) AND d6 IN (100, 103) AND e8 = 105 AND c5 IN (100, 103, 105) AND a1 = 101",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "select4-derived: 7-table with mixed IN/equality chain",
+		skip:       true,
+	},
+
+	// ── select4-derived: 5-table with OR chains (no equi-join) ──
+	{
+		name:       "j5_or_chain",
+		sql:        "SELECT t1.a FROM t1, t2, t3, t4, t5 WHERE t1.a IN (101, 103) OR t2.b IN (105, 107) OR t3.c > 105 OR t4.d < 103 OR t5.e = 101",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "select4-derived: 5-table with 5 OR predicates",
+		skip:       true,
+	},
+	{
+		name:       "j5_or_and_chain",
+		sql:        "SELECT t1.a FROM t1, t2, t3, t4, t5 WHERE (t1.a IN (101, 103) OR t2.b > 105) AND (t3.c < 108 OR t4.d = 101) AND t5.e IN (100, 102, 104)",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "select4-derived: 5-table with OR+AND mixed predicates",
+		skip:       true,
+	},
+
+	// ── select4-derived: 6-table with NOT IN + equi ──
+	{
+		name:       "j6_notin_equi",
+		sql:        "SELECT t1.a, t2.b FROM t6, t8, t2, t3, t4, t1 WHERE c2 = 103 AND a3 = e1 AND a1 IN (100, 102, 104) AND e8 NOT IN (101, 103, 105) AND b4 IN (100, 103)",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "select4-derived: 6-table with NOT IN + equi",
+		skip:       true,
+	},
+
+	// ── select4-derived: 7-table with all selective predicates ──
+	{
+		name:       "j7_all_selective",
+		sql:        "SELECT t1.a, t2.b FROM t3, t8, t6, t1, t2, t4, t7 WHERE c2 = 103 AND a3 = e1 AND a1 IN (100, 102) AND e8 IN (101, 103) AND b4 = 103 AND c7 IN (100, 101, 102)",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "select4-derived: 7-table with 6 selective predicates",
+		skip:       true,
+	},
+
+	// ── select4-derived: "predicate on last table" pattern ──
+	// These test the key bottleneck: selective predicate on the last
+	// table in the join chain means the NLJ must cross-join all
+	// preceding tables before applying the filter.
+	{
+		name:       "j5_last_filter",
+		sql:        "SELECT t1.a FROM t1, t2, t3, t4, t5 WHERE t5.e IN (101, 103)",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "selective predicate only on last table (t5)",
+		skip:       true,
+	},
+	{
+		name:       "j6_last_filter",
+		sql:        "SELECT t1.a FROM t1, t2, t3, t4, t5, t6 WHERE t6.a IN (101, 103)",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "selective predicate only on last table (t6)",
+		skip:       true,
+	},
+	{
+		name:       "j7_last_filter",
+		sql:        "SELECT t1.a FROM t1, t2, t3, t4, t5, t6, t7 WHERE t7.a IN (101, 103)",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "selective predicate only on last table (t7)",
+		skip:       true,
+	},
+
+	// ── select4-derived: multi-column equi-join chain ──
+	{
+		name:       "j5_3equi_chain",
+		sql:        "SELECT t1.a, t2.b, t3.c FROM t1, t2, t3, t4, t5 WHERE t1.a = t2.b AND t2.b = t3.c AND t3.c = t4.d",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "3 equi-join chains in 5-table cross",
+		skip:       true,
+	},
+	{
+		name:       "j6_3equi_inlist",
+		sql:        "SELECT t1.a, t2.b FROM t1, t2, t3, t4, t5, t6 WHERE t1.a = t2.b AND t3.c = t4.d AND t5.e = t6.a AND t1.a IN (101, 103, 105)",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "3 equi-joins + IN-list in 6-table cross",
+		skip:       true,
+	},
+
+	// ── select4-derived: NOT IN + equi (negative selectivity) ──
+	{
+		name:       "j5_notin_equi",
+		sql:        "SELECT t1.a FROM t1, t2, t3, t4, t5 WHERE t1.a = t2.b AND t3.c NOT IN (101, 103, 105) AND t5.e > 105",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "NOT IN + equi-join in 5-table cross",
+		skip:       true,
+	},
+
+	// ── select4-derived: BETWEEN + equi ──
+	{
+		name:       "j5_between_equi",
+		sql:        "SELECT t1.a FROM t1, t2, t3, t4, t5 WHERE t1.a = t2.b AND t3.c BETWEEN 101 AND 105 AND t5.e BETWEEN 100 AND 108",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "BETWEEN + equi-join in 5-table cross",
+		skip:       true,
+	},
+
+	// ── select4-derived: LIKE + equi ──
+	{
+		name:       "j5_like_equi",
+		sql:        "SELECT t1.a FROM t1, t2, t3, t4, t5 WHERE t1.a = t2.b AND t3.c LIKE '10%' AND t5.e > 105",
+		expectRows: -1, maxDuration: 10 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "LIKE pattern + equi-join in 5-table cross",
+		skip:       true,
+	},
+
+	// ── select4-derived: compound SELECT (UNION/EXCEPT) ──
+	{
+		name: "j3_union_2branch",
+		sql: "SELECT a FROM t1 WHERE a IN (101, 103) UNION ALL SELECT b FROM t2 WHERE b IN (105, 107) UNION ALL SELECT c FROM t3 WHERE c IN (100, 102, 104)",
+		expectRows: 7, maxDuration: 1 * time.Second, warnAt: 100 * time.Millisecond,
+	},
+	{
+		name: "j3_except_chain",
+		sql: "SELECT a FROM t1 WHERE a IN (100, 101, 102, 103, 104) EXCEPT SELECT b FROM t2 WHERE b IN (101, 103) EXCEPT SELECT c FROM t3 WHERE c IN (100, 102)",
+		expectRows: 1, maxDuration: 1 * time.Second, warnAt: 100 * time.Millisecond,
+	},
+	{
+		name: "j5_union_except",
+		sql: "SELECT a FROM t1 WHERE a IN (100,101,102,103,104,105) UNION ALL SELECT b FROM t2 WHERE b IN (106,107,108,109) EXCEPT SELECT c FROM t3 WHERE c IN (100,101) UNION ALL SELECT d FROM t4 WHERE d IN (108,109)",
+		expectRows: -1, maxDuration: 2 * time.Second, warnAt: 500 * time.Millisecond,
+		brokenNote: "select4-derived: UNION ALL + EXCEPT + UNION ALL chain",
+		skip:       true,
+	},
 }
 
 // joinSetupSQL creates the 9 tables with 10 rows each.
