@@ -2,6 +2,7 @@ package EX
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"unicode"
 	"sync"
@@ -2416,23 +2417,34 @@ func (p *Planner) planExplain(s *PS.ExplainStmt) Operator {
 }
 
 func (p *Planner) planWith(w *PS.WithStmt) Operator {
-	// For now, implement a simple CTE that inlines the CTE definitions
-	// into the main query. Full materialization decision can be added later.
-
-	// Register CTEs as temporary tables in the catalog
 	for _, cte := range w.CTEs {
-		// Plan the CTE query to get its schema
 		ctePlan, err := p.Plan(cte.Query)
 		if err != nil || ctePlan == nil || ctePlan.root == nil {
 			continue
 		}
 
-		// For simplicity, we'll execute the CTE and store results in a temp table
-		// This is a naive implementation; proper materialization would be more efficient
-		_ = ctePlan
+		var rows []Row
+		for {
+			row, err := ctePlan.root.Next(context.TODO())
+			if err != nil {
+				if err == ErrNoRows {
+					break
+				}
+				continue
+			}
+			rows = append(rows, row)
+		}
+		ctePlan.root.Close()
+
+		RegisterTable(cte.Name, rows)
+
+		var colInfos []ColInfo
+		for _, c := range schemas[cte.Name] {
+			colInfos = append(colInfos, ColInfo{Name: c})
+		}
+		p.RegisterTable(cte.Name, colInfos, "")
 	}
 
-	// Plan the inner query
 	innerPlan, err := p.Plan(w.Inner)
 	if err != nil || innerPlan == nil || innerPlan.root == nil {
 		return NewSeqScan("__cte_error__")
