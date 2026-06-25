@@ -193,6 +193,7 @@ func (j *NestedLoopJoin) WithProjection(projectedCols []string) *NestedLoopJoin 
 }
 
 func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error), kind JoinKind) *NestedLoopJoin {
+	const batchSize = 32
 	return &NestedLoopJoin{
 		left:       left,
 		right:      right,
@@ -202,6 +203,13 @@ func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on fu
 		kind:       kind,
 		leftOuter:  kind == JoinKindLeft || kind == JoinKindFull,
 		rightOuter: kind == JoinKindRight || kind == JoinKindFull,
+		// REQ000881: pre-allocate batch and result buffers to avoid
+		// first-call heap escape of Row literals in the batch-fill loop
+		// and repeated append growth in the matching loop.
+		blkLeftBatch:  make([]Row, 0, batchSize),
+		blkRightRows:  make([]Row, 0, batchSize),
+		blkResultBuf:  make([]Row, 0, batchSize),
+		blkDataBuf:    make([]Value, 0, 64),
 	}
 }
 
@@ -827,9 +835,10 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 			j.rightCached = true
 		}
 	} else {
-		// REQ000873: reuse cached right rows — no re-scan needed.
-		j.blkRightRows = j.blkRightRows[:0]
-		j.blkRightRows = append(j.blkRightRows, j.cachedRightRows...)
+		// REQ000884: use cached right rows directly — no copy needed.
+		// The cached rows are never modified; the matching loop's
+		// `r.Outer = &l` assigns to a range-copy, not the cached element.
+		j.blkRightRows = j.cachedRightRows
 	}
 
 	// REQ000816: build blkSharedCols/blkSharedTypes/blkSharedColIndex once per

@@ -2617,6 +2617,11 @@ func isColumnColumnPair(a, b PS.Expr) bool {
 // order by maintaining a heap of the N=12 best partial plans and
 // extending them step by step.
 //
+// REQ000883: table row counts are reduced by single-table predicate
+// selectivity before cost estimation. Tables with highly selective
+// single-table predicates (e.g., `IN (101,103)` reducing 100→2 rows)
+// are joined first, minimizing intermediate result sizes.
+//
 // Parameters:
 //   - baseTable: the FROM-clause table (leftmost in the join tree)
 //   - joinTables: list of (table name, join clause) pairs to join
@@ -2630,6 +2635,22 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 	}
 	if k == 1 {
 		return []string{baseTable, joinTables[0].name}
+	}
+
+	// REQ000883: pre-compute per-table selectivity from single-table
+	// WHERE predicates. This allows the N3 algorithm to prefer joining
+	// tables first that have highly selective single-table filters
+	// (e.g., IN-list, equality, range predicates).
+	tableSelectivity := make(map[string]float64)
+	for _, jt := range joinTables {
+		sel := 1.0
+		for _, pred := range wherePredicates {
+			if p.canPushDown(pred, jt.name) {
+				psel := estimateJoinPredicateSelectivity(pred)
+				sel *= psel
+			}
+		}
+		tableSelectivity[jt.name] = sel
 	}
 
 	// Build initial heap: one partial plan per table (extending baseTable).
@@ -2648,6 +2669,14 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		preds := p.findPredicatesForPair(baseTable, jt.name, wherePredicates)
 		hasIdx := p.hasIndexOnTable(jt.name)
 		rightRows := p.getTableRowCount(jt.name)
+		// REQ000883: reduce right row count by single-table selectivity.
+		if sel, ok := tableSelectivity[jt.name]; ok {
+			r := rightRows * sel
+			if r < 1 {
+				r = 1
+			}
+			rightRows = r
+		}
 		joinCost := p.estimateJoinCost(int(baseRows), int(rightRows), preds, hasIdx)
 		resultRows := joinResultRows(baseRows, rightRows, preds)
 		heap = append(heap, partial{
@@ -2684,6 +2713,14 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 				preds := p.findPredicatesForSet(pp.tablesSet, tbl, wherePredicates)
 				hasIdx := p.hasIndexOnTable(tbl)
 				rightRows := p.getTableRowCount(tbl)
+				// REQ000883: reduce right row count by single-table selectivity.
+				if sel, ok := tableSelectivity[tbl]; ok {
+					r := rightRows * sel
+					if r < 1 {
+						r = 1
+					}
+					rightRows = r
+				}
 				joinCost := p.estimateJoinCost(int(pp.rows), int(rightRows), preds, hasIdx)
 				newCost := pp.cost + joinCost
 				newRows := joinResultRows(pp.rows, rightRows, preds)
