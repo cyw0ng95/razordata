@@ -466,6 +466,39 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 		j.hashAttempted = true
 		return false
 	}
+	// REQ000864: tiny cross product fast path — if both sides are
+	// small enough that the cross product fits in a single batch,
+	// skip hash bucket building and probe directly. For 3×2 = 6
+	// rows, the hash setup (16 buckets + hash computation + probe)
+	// costs more than the direct cross product emission.
+	const tinyCrossThreshold = 64
+	if len(j.leftRows)*len(j.rightRows) <= tinyCrossThreshold {
+		// Emit cross product directly into matches — no hash needed.
+		// Build shared cols/types/index once (same as hash path).
+		nCols := len(j.leftRows[0].Cols) + len(j.rightRows[0].Cols)
+		j.sharedCols = make([]string, 0, nCols)
+		j.sharedCols = append(j.sharedCols, j.leftRows[0].Cols...)
+		j.sharedCols = append(j.sharedCols, j.rightRows[0].Cols...)
+		j.sharedTypes = make([]int, 0, nCols)
+		j.sharedTypes = append(j.sharedTypes, j.leftRows[0].Types...)
+		j.sharedTypes = append(j.sharedTypes, j.rightRows[0].Types...)
+		j.sharedColIndex = make(map[string]int, nCols)
+		for i, c := range j.sharedCols {
+			key := strings.ToLower(c)
+			if _, exists := j.sharedColIndex[key]; !exists {
+				j.sharedColIndex[key] = i
+			}
+		}
+		dataPerRow := len(j.leftRows[0].Data) + len(j.rightRows[0].Data)
+		j.dataPerRow = dataPerRow
+		totalRows := len(j.leftRows) * len(j.rightRows)
+		j.dataBuf = make([]Value, 0, totalRows*dataPerRow)
+		j.dataOffset = 0
+		j.hashMode = true
+		j.leftIdx = 0
+		j.rightIdx = 0
+		return true
+	}
 	// Build a shared colIndex for the join output shape. This
 	// eliminates per-row map allocation in Row.Lookup downstream.
 	// j3 perf: the colIndex depends on the row shape (left.Cols +

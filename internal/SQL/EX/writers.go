@@ -1944,10 +1944,16 @@ func (r *Reindex) Next(ctx context.Context) (Row, error) {
 	}
 	r.done = true
 
-	// REQ000829: verify target exists when REINDEX specifies a name.
+	// REQ000848/REQ000849: verify target exists when REINDEX specifies a name.
+	// SQLite semantics: REINDEX idxname rebuilds that index;
+	// REINDEX tblname is a no-op if the table has no indexes (or
+	// rebuilds all indexes on that table). We treat both the index
+	// lookup and the table lookup as success paths — if the target
+	// matches either, the statement succeeds.
 	if r.stmt.Target != "" {
 		storeMu.Lock()
 		found := false
+		// Check if target is a known index.
 		for _, idxs := range registeredIndexes {
 			for _, idx := range idxs {
 				if idx.Name == r.stmt.Target {
@@ -1957,6 +1963,14 @@ func (r *Reindex) Next(ctx context.Context) (Row, error) {
 			}
 			if found {
 				break
+			}
+		}
+		// REQ000848: if not an index, check if it's a table name.
+		// SQLite treats REINDEX tblname as a successful no-op when
+		// the table has no indexes.
+		if !found {
+			if _, ok := schemas[r.stmt.Target]; ok {
+				found = true
 			}
 		}
 		storeMu.Unlock()
