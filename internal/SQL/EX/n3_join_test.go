@@ -6,7 +6,7 @@ import (
 
 func TestN3JoinOrdering_NoJoins(t *testing.T) {
 	p := NewPlanner()
-	order := p.n3JoinOrdering("t1", nil, nil)
+	order := p.n3JoinOrdering("t1", nil, nil, nil)
 	if len(order) != 1 || order[0] != "t1" {
 		t.Fatalf("expected [t1], got %v", order)
 	}
@@ -18,7 +18,7 @@ func TestN3JoinOrdering_SingleJoin(t *testing.T) {
 	p.RegisterTable("t2", []ColInfo{{Name: "id", Typ: 1}}, "id")
 
 	joinTables := []joinTableInfo{{name: "t2"}}
-	order := p.n3JoinOrdering("t1", joinTables, nil)
+	order := p.n3JoinOrdering("t1", joinTables, nil, nil)
 	if len(order) != 2 || order[0] != "t1" || order[1] != "t2" {
 		t.Fatalf("expected [t1 t2], got %v", order)
 	}
@@ -31,7 +31,7 @@ func TestN3JoinOrdering_ThreeTablesDefault(t *testing.T) {
 	p.RegisterTable("t3", []ColInfo{{Name: "id", Typ: 1}}, "id")
 
 	joinTables := []joinTableInfo{{name: "t2"}, {name: "t3"}}
-	order := p.n3JoinOrdering("t1", joinTables, nil)
+	order := p.n3JoinOrdering("t1", joinTables, nil, nil)
 	if len(order) != 3 {
 		t.Fatalf("expected 3 tables, got %v", order)
 	}
@@ -44,7 +44,7 @@ func TestN3JoinOrdering_EdgeCases(t *testing.T) {
 	p := NewPlanner()
 
 	// Empty join table list.
-	order := p.n3JoinOrdering("t1", []joinTableInfo{}, nil)
+	order := p.n3JoinOrdering("t1", []joinTableInfo{}, nil, nil)
 	if len(order) != 1 || order[0] != "t1" {
 		t.Fatalf("expected [t1], got %v", order)
 	}

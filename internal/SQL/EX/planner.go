@@ -1530,7 +1530,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		}
 
 		// Run N3 to find the best join order.
-		joinOrder := p.n3JoinOrdering(s.From, joinInfos, costPredicates)
+		joinOrder := p.n3JoinOrdering(s.From, joinInfos, costPredicates, pushedPredicates)
 
 		// REQ000803: compute column projection for join pushdown.
 		// Only include columns referenced by SELECT/WHERE/ORDER BY/etc.
@@ -2635,9 +2635,10 @@ func isColumnColumnPair(a, b PS.Expr) bool {
 //   - baseTable: the FROM-clause table (leftmost in the join tree)
 //   - joinTables: list of (table name, join clause) pairs to join
 //   - wherePredicates: cross-table WHERE conjuncts for selectivity
+//   - pushedPredicates: per-table predicates already pushed down to scans
 //
 // Returns the ordered list of table names that minimizes estimated cost.
-func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, wherePredicates []PS.Expr) []string {
+func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, wherePredicates []PS.Expr, pushedPredicates map[string][]PS.Expr) []string {
 	k := len(joinTables)
 	if k == 0 {
 		return []string{baseTable}
@@ -2646,10 +2647,10 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		return []string{baseTable, joinTables[0].name}
 	}
 
-	// REQ000883: pre-compute per-table selectivity from single-table
-	// WHERE predicates. This allows the N3 algorithm to prefer joining
-	// tables first that have highly selective single-table filters
-	// (e.g., IN-list, equality, range predicates).
+	// REQ000883/REQ000909: pre-compute per-table selectivity from
+	// single-table WHERE predicates (both pushed-down and cross-table
+	// that reference a single table). This allows the N3 algorithm to
+	// prefer joining tables first that have highly selective filters.
 	tableSelectivity := make(map[string]float64)
 	for _, jt := range joinTables {
 		sel := 1.0
@@ -2660,6 +2661,21 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 			}
 		}
 		tableSelectivity[jt.name] = sel
+	}
+	// REQ000909: also factor in pushed-down predicates for each table
+	// (these are the single-table predicates that were already pushed
+	// to SeqScan/IndexScan before n3JoinOrdering is called).
+	if pushedPredicates != nil {
+		for _, jt := range joinTables {
+			if preds, ok := pushedPredicates[jt.name]; ok && len(preds) > 0 {
+				sel := tableSelectivity[jt.name]
+				for _, pred := range preds {
+					psel := estimateJoinPredicateSelectivity(pred)
+					sel *= psel
+				}
+				tableSelectivity[jt.name] = sel
+			}
+		}
 	}
 
 	// Build initial heap: one partial plan per table (extending baseTable).
@@ -2673,6 +2689,21 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 	heap := make([]partial, 0, n3HeapMaxSize)
 
 	baseRows := p.getTableRowCount(baseTable)
+	// REQ000909: reduce base table rows by its own single-table selectivity.
+	if pushedPredicates != nil {
+		if preds, ok := pushedPredicates[baseTable]; ok && len(preds) > 0 {
+			sel := 1.0
+			for _, pred := range preds {
+				psel := estimateJoinPredicateSelectivity(pred)
+				sel *= psel
+			}
+			r := baseRows * sel
+			if r < 1 {
+				r = 1
+			}
+			baseRows = r
+		}
+	}
 
 	for _, jt := range joinTables {
 		preds := p.findPredicatesForPair(baseTable, jt.name, wherePredicates)
@@ -3020,6 +3051,10 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) Operator {
 	case "cache_size", "journal_mode", "synchronous", "user_version":
 		// REQ000242: return pragma value as a single-row result
 		return NewPragmaResult(s.Name, s.Value)
+	case "foreign_keys", "foreign_key_check":
+		// REQ000905/REQ000906: these are handled by the Pragma operator
+		// which needs access to the store for FK introspection.
+		return NewPragma(s).WithStore(p.store)
 	default:
 		return NewSeqScan("__pragma_unknown__")
 	}

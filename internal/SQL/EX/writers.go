@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	LX "github.com/cyw0ng95/razordata/internal/SQL/LX"
@@ -191,8 +192,8 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			existing = removeConflictingInMemory(existing, schema, pkName, out)
 			pending = make(map[string]struct{}, len(i.values))
 		}
-		// REQ000126: FK validation on INSERT
-		if cschema != nil && len(cschema.foreignKeys) > 0 {
+		// REQ000126/REQ000905: FK validation on INSERT (skipped when PRAGMA foreign_keys = OFF)
+		if IsForeignKeysEnabled() && cschema != nil && len(cschema.foreignKeys) > 0 {
 			if err := validateForeignKeyInsert(cschema, valueSliceToAny(out.Data), i.store); err != nil {
 				return Row{}, err
 			}
@@ -315,8 +316,8 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 		}
-		// REQ000126: FK validation on INSERT (store path)
-		if len(i.schema.foreignKeys) > 0 {
+		// REQ000126/REQ000905: FK validation on INSERT (store path, skipped when PRAGMA foreign_keys = OFF)
+		if IsForeignKeysEnabled() && len(i.schema.foreignKeys) > 0 {
 			if err := validateForeignKeyInsert(i.schema, valueSliceToAny(out.Data), i.store); err != nil {
 				return Row{}, err
 			}
@@ -604,11 +605,11 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		snapshot := cloneRow(row)
-			// REQ000840: SeqScan may return rows that share Data with the
-			// source table. Deep-copy Data before applyUpdate mutates it
-			// in-place, otherwise the source row is corrupted.
-			row.Data = append([]Value(nil), row.Data...)
-			if err := applyUpdate(&row, u.set, u.params); err != nil {
+		// REQ000840: SeqScan may return rows that share Data with the
+		// source table. Deep-copy Data before applyUpdate mutates it
+		// in-place, otherwise the source row is corrupted.
+		row.Data = append([]Value(nil), row.Data...)
+		if err := applyUpdate(&row, u.set, u.params); err != nil {
 			return Row{}, err
 		}
 		if cschema != nil {
@@ -624,9 +625,11 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			if err := validateCheck(cschema, row); err != nil {
 				return Row{}, err
 			}
-			// REQ000513: FK re-validation when FK columns are updated.
-			if err := validateForeignKeyUpdateInMemory(cschema, valueSliceToAny(snapshot.Data), valueSliceToAny(row.Data)); err != nil {
-				return Row{}, err
+			// REQ000513/REQ000905: FK re-validation when FK columns are updated.
+			if IsForeignKeysEnabled() {
+				if err := validateForeignKeyUpdateInMemory(cschema, valueSliceToAny(snapshot.Data), valueSliceToAny(row.Data)); err != nil {
+					return Row{}, err
+				}
 			}
 			// REQ000516: UNIQUE enforcement on UPDATE. Use a real
 			// in-memory lookup instead of noopLookup so that
@@ -903,8 +906,8 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		}
 	}
 	if len(toDelete) > 0 {
-		// REQ000514: FK checks must run before mutating the table.
-		if dschema != nil {
+		// REQ000514/REQ000905: FK checks must run before mutating the table.
+		if IsForeignKeysEnabled() && dschema != nil {
 			for _, rowData := range fkRows {
 				if err := validateForeignKeyDeleteInMemory(d.table, rowData, dschema); err != nil {
 					return Row{}, err
@@ -1729,6 +1732,47 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 		return row, nil
 	}
 
+	// Handle PRAGMA foreign_keys [= ON|OFF] (REQ000905)
+	if p.stmt.Name == "foreign_keys" {
+		if !p.done {
+			p.done = true
+			if p.stmt.Value != "" {
+				// Write: set the toggle
+				val := strings.ToUpper(p.stmt.Value)
+				SetForeignKeysEnabled(val == "ON" || val == "1" || val == "TRUE")
+			}
+			// Read: return current value
+			v := 0
+			if IsForeignKeysEnabled() {
+				v = 1
+			}
+			p.rows = append(p.rows, Row{
+				Cols: []string{"foreign_keys"},
+				Data: []Value{NewIntValue(int64(v))},
+			})
+		}
+		if p.idx >= len(p.rows) {
+			return Row{}, ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
+	// Handle PRAGMA foreign_key_check[(table_name)] (REQ000906)
+	if p.stmt.Name == "foreign_key_check" {
+		if !p.done {
+			p.done = true
+			p.loadForeignKeyCheck()
+		}
+		if p.idx >= len(p.rows) {
+			return Row{}, ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
 	// Default: handle PRAGMA name = value (write) and notify listeners
 	if !p.done {
 		p.done = true
@@ -1835,7 +1879,102 @@ func (p *Pragma) loadForeignKeyList() {
 	}
 }
 
-func (p *Pragma) Close() error                { return nil }
+// loadForeignKeyCheck populates rows for PRAGMA foreign_key_check[(table_name)] (REQ000906).
+// Returns columns: table, rowid, parent, fkid per SQLite convention.
+// An empty result means no violations.
+func (p *Pragma) loadForeignKeyCheck() {
+	targetTable := p.stmt.Value
+	names := allTableNames()
+	for _, name := range names {
+		if targetTable != "" && name != targetTable {
+			continue
+		}
+		ss, ok := schemaFor(name)
+		if !ok || len(ss.foreignKeys) == 0 {
+			continue
+		}
+		tablesMu.RLock()
+		rows := tables[name]
+		tablesMu.RUnlock()
+		for rowIdx, row := range rows {
+			for fkID, fk := range ss.foreignKeys {
+				// Extract local FK column values
+				localVals := make([]any, len(fk.Columns))
+				allNull := true
+				for i, col := range fk.Columns {
+					idx := -1
+					for j, c := range ss.cols {
+						if c == col {
+							idx = j
+							break
+						}
+					}
+					if idx < 0 || idx >= len(row.Data) {
+						continue
+					}
+					localVals[i] = row.Data[idx].ToAny()
+					if localVals[i] != nil {
+						allNull = false
+					}
+				}
+				if allNull {
+					continue
+				}
+				// Check if referenced row exists
+				refSS, ok := schemaFor(fk.RefTable)
+				if !ok {
+					continue
+				}
+				tablesMu.RLock()
+				refRows := tables[fk.RefTable]
+				tablesMu.RUnlock()
+				found := false
+				for _, refRow := range refRows {
+					match := true
+					for i, refCol := range fk.RefColumns {
+						idx := -1
+						for j, c := range refSS.cols {
+							if c == refCol {
+								idx = j
+								break
+							}
+						}
+						if idx < 0 || idx >= len(refRow.Data) {
+							match = false
+							break
+						}
+						if !equalValue(refRow.Data[idx], localVals[i]) {
+							match = false
+							break
+						}
+					}
+					if match {
+						found = true
+						break
+					}
+				}
+				if !found {
+					p.rows = append(p.rows, Row{
+						Cols: []string{"table", "rowid", "parent", "fkid"},
+						Data: []Value{
+							NewTextValue(name),
+							NewIntValue(int64(rowIdx)),
+							NewTextValue(fk.RefTable),
+							NewIntValue(int64(fkID)),
+						},
+					})
+				}
+			}
+		}
+	}
+}
+
+func (p *Pragma) Close() error {
+	p.done = false
+	p.idx = 0
+	p.rows = p.rows[:0]
+	return nil
+}
 func (p *Pragma) WithParams(_ []any) Operator { return p }
 func (p *Pragma) RowsAffected() int64         { return 0 }
 

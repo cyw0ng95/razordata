@@ -147,11 +147,20 @@ func (s *SeqScan) WithAlias(alias string) *SeqScan {
 	if s.schema != nil {
 		prefix := alias + "."
 		s.prefixedCols = make([]string, len(s.schema.cols))
-		s.prefixedColIndex = make(map[string]int, len(s.schema.cols))
+		s.prefixedColIndex = make(map[string]int, len(s.schema.cols)*2)
 		for i, c := range s.schema.cols {
 			pc := prefix + c
 			s.prefixedCols[i] = pc
 			s.prefixedColIndex[pc] = i
+		}
+		// REQ000941: also register unprefixed names so unqualified
+		// column lookups (e.g. "col0") work when a table alias is used.
+		// Without this, expressions like "- col0" inside aggregates
+		// resolve to the column name string instead of the value.
+		for i, c := range s.schema.cols {
+			if _, exists := s.prefixedColIndex[c]; !exists {
+				s.prefixedColIndex[c] = i
+			}
 		}
 	} else {
 		// In-memory mode: schema not yet available; compute on first use.
@@ -383,7 +392,7 @@ func prefixRowCols(r Row, alias string) Row {
 	out.Cols = make([]string, len(r.Cols))
 	prefix := alias + "."
 	// Build colIndex for prefixed names.
-	out.colIndex = make(map[string]int, len(r.Cols))
+	out.colIndex = make(map[string]int, len(r.Cols)*2)
 	for i, c := range r.Cols {
 		if strings.HasPrefix(c, prefix) {
 			out.Cols[i] = c
@@ -391,6 +400,11 @@ func prefixRowCols(r Row, alias string) Row {
 		} else {
 			out.Cols[i] = prefix + c
 			out.colIndex[prefix+c] = i
+			// REQ000941: also register unprefixed name so unqualified
+			// column lookups work when a table alias is used.
+			if _, exists := out.colIndex[c]; !exists {
+				out.colIndex[c] = i
+			}
 		}
 	}
 	return out

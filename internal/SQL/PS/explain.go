@@ -240,6 +240,10 @@ func (p *Parser) parsePragma() (*PragmaStmt, error) {
 		} else if p.current.Type == LX.T_INT {
 			stmt.Value = p.current.Lexeme
 			p.advance()
+		} else if p.current.Type == LX.T_ON {
+			// REQ000905: accept ON keyword for PRAGMA foreign_keys = ON
+			stmt.Value = p.current.Lexeme
+			p.advance()
 		}
 	}
 
