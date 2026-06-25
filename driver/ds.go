@@ -135,10 +135,35 @@ func RegisterEngine(dsn string, eng *v1.Engine) {
 	dirByDSN[dsn] = ""
 }
 
+// toDriverValue converts a value to database/sql driver.Value.
+// Accepts both AP.Value (typed, fast path) and any (backward compat).
 func toDriverValue(v any) driver.Value {
 	if v == nil {
 		return nil
 	}
+	// Fast path: AP.Value — switch on Kind, no boxing needed.
+	if av, ok := v.(AP.Value); ok {
+		switch av.Kind {
+		case AP.KindNull:
+			return nil
+		case AP.KindInt:
+			return av.I64
+		case AP.KindFloat:
+			return av.F64
+		case AP.KindText:
+			return av.S
+		case AP.KindBlob:
+			return av.B
+		case AP.KindBool:
+			if av.Bo {
+				return int64(1)
+			}
+			return int64(0)
+		default:
+			return nil
+		}
+	}
+	// Slow path: raw any from driver.Value or legacy callers.
 	switch x := v.(type) {
 	case int64:
 		return x

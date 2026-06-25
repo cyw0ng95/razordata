@@ -17,6 +17,17 @@ import (
 // REQ000802+.
 var predicateCache sync.Map
 
+// REQ000869: batchBufPool reuses []Row backing arrays across Filter
+// instances. Filters are created per query and hold batchBuf/batchEmit
+// slices; returning them to this pool in Close() allows the next query's
+// Filter to reuse the capacity instead of re-allocating.
+var batchBufPool = sync.Pool{
+	New: func() any {
+		b := make([]Row, 0, filterBatchSize)
+		return &b
+	},
+}
+
 // isNullValue checks if a value represents SQL NULL.
 // Handles both raw nil and Value{Kind: KindNull}.
 func isNullValue(v any) bool {
@@ -64,9 +75,25 @@ func (f *Filter) Child() Operator { return f.child }
 func (f *Filter) Predicate() PS.Expr { return f.predicate }
 
 func NewFilter(child Operator, predicate PS.Expr) *Filter {
+	// REQ000869: try to reuse batch buffers from the pool.
+	buf, _ := batchBufPool.Get().(*[]Row)
+	emit, _ := batchBufPool.Get().(*[]Row)
+	if buf == nil {
+		buf = new([]Row)
+		*buf = make([]Row, 0, filterBatchSize)
+	}
+	if emit == nil {
+		emit = new([]Row)
+		*emit = make([]Row, 0, filterBatchSize)
+	}
 	return &Filter{
 		child:     child,
 		predicate: predicate,
+		// REQ000868: pre-allocate batch buffers to avoid first-call
+		// allocation in refillBatch. Every Filter uses these, so the
+		// initial make is amortized across all batches.
+		batchBuf:  *buf,
+		batchEmit: *emit,
 	}
 }
 
@@ -198,6 +225,15 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 }
 
 func (f *Filter) Close() error {
+	// REQ000869: return batch buffers to the pool for reuse.
+	if cap(f.batchBuf) >= filterBatchSize {
+		f.batchBuf = f.batchBuf[:0]
+		batchBufPool.Put(&f.batchBuf)
+	}
+	if cap(f.batchEmit) >= filterBatchSize {
+		f.batchEmit = f.batchEmit[:0]
+		batchBufPool.Put(&f.batchEmit)
+	}
 	return f.child.Close()
 }
 
@@ -303,9 +339,10 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 	// non-overlapping sub-slice from the shared buffer.
 	if p.dataBuf == nil {
 		p.dataPerRow = len(p.cols)
-		// Pre-allocate for a reasonable number of rows.
-		// Will grow lazily if the result set exceeds this.
-		p.dataBuf = make([]Value, 0, 256*p.dataPerRow)
+		// REQ000872: start with smaller initial capacity (64 rows)
+		// instead of 256 to reduce wasted allocation for small
+		// result sets. Grows by doubling if needed.
+		p.dataBuf = make([]Value, 0, 64*p.dataPerRow)
 	}
 	off := len(p.dataBuf)
 	// Ensure buffer has enough capacity for this row.
@@ -652,33 +689,34 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 
 		switch e.Op {
 		case int(LX.T_EQ):
-			return makeCompiledCmp(colName, litVal, func(a, b any) bool {
-				return equalValue(a, b)
+			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
+				return equalValueValue(a, b)
 			})
 		case int(LX.T_NE):
-			return makeCompiledCmp(colName, litVal, func(a, b any) bool {
+			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
 				// SQL semantics: NULL compared with anything = UNKNOWN (drop row)
-				// Handle Value type (tagged-union) which may wrap NULL.
-				if isNullValue(a) || isNullValue(b) {
+				// The NULL guard in makeCompiledCmp handles this for col and lit.
+				// We just need to negate the equality result for non-NULL values.
+				if a.IsNull() || b.IsNull() {
 					return false
 				}
-				return !equalValue(a, b)
+				return !equalValueValue(a, b)
 			})
 		case int(LX.T_GT):
-			return makeCompiledCmp(colName, litVal, func(a, b any) bool {
-				return compare(a, b) > 0
+			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
+				return compareValue(a, b) > 0
 			})
 		case int(LX.T_GE):
-			return makeCompiledCmp(colName, litVal, func(a, b any) bool {
-				return compare(a, b) >= 0
+			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
+				return compareValue(a, b) >= 0
 			})
 		case int(LX.T_LT):
-			return makeCompiledCmp(colName, litVal, func(a, b any) bool {
-				return compare(a, b) < 0
+			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
+				return compareValue(a, b) < 0
 			})
 		case int(LX.T_LE):
-			return makeCompiledCmp(colName, litVal, func(a, b any) bool {
-				return compare(a, b) <= 0
+			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
+				return compareValue(a, b) <= 0
 			})
 		}
 	}
@@ -731,7 +769,7 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 	return nil
 }
 
-func makeCompiledCmp(colName string, litVal any, cmp func(a, b any) bool) func(*Row) (bool, error) {
+func makeCompiledCmp(colName string, litVal any, cmp func(a, b Value) bool) func(*Row) (bool, error) {
 	idx := -1
 	bareName := colName
 	if dot := strings.LastIndexByte(colName, '.'); dot >= 0 {

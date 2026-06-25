@@ -35,12 +35,12 @@ type NestedLoopJoin struct {
 	// the materialized rows and the main loop iterates over them
 	// instead of re-scanning the right operator per left row.
 	rightMode    bool
-	rightMatched []bool  // tracks which materialized right rows matched (for RIGHT/FULL)
-	rightEmitted bool    // true after unmatched right rows have been emitted
-	leftRow   *Row
-	rightPos  int
-	rightRows []Row
-	matched   bool // for OUTER JOIN: track if left row found a match
+	rightMatched []bool // tracks which materialized right rows matched (for RIGHT/FULL)
+	rightEmitted bool   // true after unmatched right rows have been emitted
+	leftRow      *Row
+	rightPos     int
+	rightRows    []Row
+	matched      bool // for OUTER JOIN: track if left row found a match
 	// REQ000803: column projection pushdown — only these columns
 	// (if non-nil) are included in output rows. Columns are stored
 	// as "table.col" pairs (e.g., ["t1.id", "t2.a", "t3.b"]).
@@ -53,10 +53,10 @@ type NestedLoopJoin struct {
 	// REQ000800: hash-based cross join for small tables.
 	// When both sides fit in memory, materialize both and
 	// do a hash-based cross product instead of NLJ.
-	leftRows       []Row
-	hashMode       bool
-	hashAttempted  bool // set true after tryHashCrossJoin fails; prevents O(N²) re-entry
-	hashBuckets    map[uint64][]int // hash → indices into rightRows
+	leftRows      []Row
+	hashMode      bool
+	hashAttempted bool             // set true after tryHashCrossJoin fails; prevents O(N²) re-entry
+	hashBuckets   map[uint64][]int // hash → indices into rightRows
 	leftIdx       int
 	rightIdx      int
 	leftMatched   []bool // for LEFT JOIN
@@ -81,13 +81,13 @@ type NestedLoopJoin struct {
 	// REQ000798: Block NLJ mode — batch left rows and re-scan right
 	// per batch. Used when hash mode is unavailable (left > 1024
 	// or ON clause exists). Reduces right-side scans from N to N/32.
-blockMode    bool
+	blockMode    bool
 	blkLeftBatch []Row
 	blkLeftPos   int   // position within left batch
 	blkRightRows []Row // materialized right side (recreated per batch)
 	blkRightPos  int
-	blkResultBuf []Row  // buffered matches for current batch
-	blkResultPos int    // cursor into blkResultBuf
+	blkResultBuf []Row // buffered matches for current batch
+	blkResultPos int   // cursor into blkResultBuf
 	// REQ000816: blkSharedCols/ColIndex built lazily per batch,
 	// reused across all emit rows in the batch to skip per-row
 	// buildColIndex in downstream Lookup.
@@ -100,6 +100,16 @@ blockMode    bool
 	blkDataBuf        []Value
 	blkDataPerRow     int
 	blkDataOffset     int
+	// REQ000847: limitRemaining tells this NLJ to stop early when a
+	// LIMIT is present above in the plan tree. Set by SetLimit from
+	// the planner. Prevents the join from producing more rows than
+	// necessary when only the first few are needed (e.g. LIMIT 10
+	// on a 5-table cross producing 10^10 rows).
+	limitRemaining int64
+	// totalEmitted counts how many rows this NLJ has emitted so far.
+	// Used in conjunction with limitRemaining to stop batch loops
+	// early. REQ000847.
+	totalEmitted int64
 	// REQ000863: pre-computed prefixed column lists. Computed once
 	// on first nextBlock/Next call and reused across all batches,
 	// eliminating the per-row/ per-batch hasAnyPrefix + prefixCols
@@ -107,6 +117,71 @@ blockMode    bool
 	// 6250 calls to prefixCols (5 allocs each = 31250 saved allocs).
 	leftPrefixedCols  []string
 	rightPrefixedCols []string
+	// REQ000873: cachedRightRows holds the materialized right side
+	// when it is small (< 64 rows). Reused across batches to avoid
+	// re-scanning the right operator per batch. Only populated when
+	// the right side fits entirely in memory.
+	cachedRightRows  []Row
+	cachedRightCols  []string // pre-built prefixed cols for cached rows
+	cachedRightTypes []int    // pre-built types for cached rows
+	rightCached      bool     // true once the cache is populated
+	// REQ000870: pre-computed shared Cols/Types/colIndex for outer-join
+	// emit paths. Computed lazily from the first left+right row pair.
+	// Used by joinRowsLLWithCols to avoid per-row make([]string) and
+	// make([]int) allocations in right-outer and left-outer paths.
+	outerSharedCols     []string
+	outerSharedTypes    []int
+	outerSharedColIndex map[string]int
+	// REQ000870: cached null-row templates to avoid rebuilding Cols/Types
+	// per call in nullRightRow/nullLeftRow.
+	nullRightRowCache *Row
+	nullLeftRowCache  *Row
+}
+
+// emitLimitCheck is called before returning a row from Next().
+// It increments the totalEmitted counter and returns the row
+// unmodified. REQ000847.
+func (j *NestedLoopJoin) emitLimitCheck(row Row) Row {
+	if j.limitRemaining > 0 {
+		j.totalEmitted++
+	}
+	return row
+}
+
+// outerJoinRows is a convenience wrapper that calls ensureOuterShared
+// with the given row pair (to populate the shared Cols/Types template)
+// and then delegates to joinRowsLLWithCols. REQ000870: eliminates
+// per-row make([]string) and make([]int) in outer-join emit paths.
+func (j *NestedLoopJoin) outerJoinRows(a, b *Row) Row {
+	if j.outerSharedCols == nil {
+		j.ensureOuterShared(a, b)
+	}
+	return joinRowsLLWithCols(a, b, j.outerSharedCols, j.outerSharedTypes, j.outerSharedColIndex)
+}
+
+// ensureOuterShared builds pre-computed shared Cols/Types/colIndex
+// for outer-join emit paths from the first left row and right row
+// (or nullRow fallback). REQ000870: used by outerJoinRows to avoid
+// per-row make([]string) and make([]int) allocations.
+func (j *NestedLoopJoin) ensureOuterShared(leftFirst, rightFirst *Row) {
+	if j.outerSharedCols != nil {
+		return
+	}
+	lc, rc := leftFirst.Cols, rightFirst.Cols
+	j.outerSharedCols = make([]string, 0, len(lc)+len(rc))
+	j.outerSharedCols = append(j.outerSharedCols, lc...)
+	j.outerSharedCols = append(j.outerSharedCols, rc...)
+	lt, rt := leftFirst.Types, rightFirst.Types
+	j.outerSharedTypes = make([]int, 0, len(lt)+len(rt))
+	j.outerSharedTypes = append(j.outerSharedTypes, lt...)
+	j.outerSharedTypes = append(j.outerSharedTypes, rt...)
+	j.outerSharedColIndex = make(map[string]int, len(j.outerSharedCols))
+	for i, c := range j.outerSharedCols {
+		key := strings.ToLower(c)
+		if _, exists := j.outerSharedColIndex[key]; !exists {
+			j.outerSharedColIndex[key] = i
+		}
+	}
 }
 
 // WithProjection sets the projected columns for the join output.
@@ -130,6 +205,10 @@ func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on fu
 	}
 }
 
+// SetLimit sets a row limit on this join. After producing `n` rows,
+// Next() returns ErrNoRows. REQ000847.
+func (j *NestedLoopJoin) SetLimit(n int64) { j.limitRemaining = n }
+
 func (j *NestedLoopJoin) LeftChild() Operator { return j.left }
 
 func (j *NestedLoopJoin) RightChild() Operator { return j.right }
@@ -137,6 +216,9 @@ func (j *NestedLoopJoin) RightChild() Operator { return j.right }
 func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 	if err := ctx.Err(); err != nil {
 		return Row{}, err
+	}
+	if j.limitRemaining > 0 && j.totalEmitted >= j.limitRemaining {
+		return Row{}, ErrNoRows
 	}
 	// REQ000743/744: for RIGHT/FULL OUTER JOIN, materialize the right
 	// side on first call so we can track which rows matched.
@@ -187,14 +269,14 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 			}
 			j.matched = true
 			j.rightMatched[j.rightPos-1] = true
-			return joinRowsLL(j.leftRow, &r), nil
+			return j.emitLimitCheck(j.outerJoinRows(j.leftRow, &r)), nil
 		}
 		// No matches for this left row.
 		if j.leftOuter && !j.matched {
 			nullRow := j.nullRightRow()
-			result := joinRowsLL(j.leftRow, &nullRow)
+			result := j.outerJoinRows(j.leftRow, &nullRow)
 			j.leftRow = nil
-			return result, nil
+			return j.emitLimitCheck(result), nil
 		}
 		j.leftRow = nil
 		return j.Next(ctx)
@@ -269,9 +351,9 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 				if j.leftOuter {
 					if !j.matched {
 						nullRow := j.nullRightRow()
-						result := joinRowsLL(j.leftRow, &nullRow)
+						result := j.outerJoinRows(j.leftRow, &nullRow)
 						j.leftRow = nil
-						return result, nil
+						return j.emitLimitCheck(result), nil
 					}
 				}
 				j.leftRow = nil
@@ -291,7 +373,7 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 			}
 		}
 		j.matched = true
-		return joinRowsLL(j.leftRow, &inner), nil
+		return j.emitLimitCheck(j.outerJoinRows(j.leftRow, &inner)), nil
 	}
 }
 
@@ -444,7 +526,7 @@ func (j *NestedLoopJoin) nextHash(_ context.Context) (Row, error) {
 			}
 			out.Data = append(out.Data, l.Data...)
 			out.Data = append(out.Data, r.Data...)
-			return out, nil
+			return j.emitLimitCheck(out), nil
 		}
 		j.rightIdx = 0
 		j.leftIdx++
@@ -485,6 +567,10 @@ func (j *NestedLoopJoin) advanceRight(ctx context.Context) (Row, error) {
 
 // nullRightRow returns a row with all NULL values for the right table schema.
 func (j *NestedLoopJoin) nullRightRow() Row {
+	// REQ000870: return cached template if available (all Data is NilValue).
+	if j.nullRightRowCache != nil {
+		return *j.nullRightRowCache
+	}
 	tablesMu.RLock()
 	rightSchema := tables[j.rightTbl]
 	tablesMu.RUnlock()
@@ -494,12 +580,18 @@ func (j *NestedLoopJoin) nullRightRow() Row {
 		Types: schemaTypes(rightSchema),
 		Data:  make([]Value, len(rightSchema)),
 	}
+	// Cache for reuse (copy the slice header — Data values are all zero = NULL).
+	j.nullRightRowCache = &nullRow
 	return nullRow
 }
 
 // nullLeftRow returns a row with all NULL values for the left table schema.
 // REQ000743: used by RIGHT/FULL OUTER JOIN when a right row has no match.
 func (j *NestedLoopJoin) nullLeftRow() Row {
+	// REQ000870: return cached template if available.
+	if j.nullLeftRowCache != nil {
+		return *j.nullLeftRowCache
+	}
 	tablesMu.RLock()
 	leftSchema := tables[j.leftTbl]
 	tablesMu.RUnlock()
@@ -509,6 +601,7 @@ func (j *NestedLoopJoin) nullLeftRow() Row {
 		Types: schemaTypes(leftSchema),
 		Data:  make([]Value, len(leftSchema)),
 	}
+	j.nullLeftRowCache = &nullRow
 	return nullRow
 }
 
@@ -549,7 +642,7 @@ func (j *NestedLoopJoin) emitUnmatchedRight() Row {
 			nullLeft := j.nullLeftRow()
 			r := j.rightRows[i]
 			r.Outer = &nullLeft
-			return joinRowsLL(&nullLeft, &r)
+			return j.emitLimitCheck(j.outerJoinRows(&nullLeft, &r))
 		}
 	}
 	j.rightEmitted = true
@@ -589,6 +682,15 @@ func (j *NestedLoopJoin) Close() error {
 	j.blkDataBuf = nil
 	j.blkDataPerRow = 0
 	j.blkDataOffset = 0
+	j.leftPrefixedCols = nil
+	j.rightPrefixedCols = nil
+	j.cachedRightRows = nil
+	j.cachedRightCols = nil
+	j.cachedRightTypes = nil
+	j.rightCached = false
+	j.outerSharedCols = nil
+	j.outerSharedTypes = nil
+	j.outerSharedColIndex = nil
 	_ = j.left.Close()
 	return j.right.Close()
 }
@@ -603,7 +705,7 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 	if j.blkResultPos < len(j.blkResultBuf) {
 		r := j.blkResultBuf[j.blkResultPos]
 		j.blkResultPos++
-		return r, nil
+		return j.emitLimitCheck(r), nil
 	}
 	j.blkResultBuf = j.blkResultBuf[:0]
 	j.blkResultPos = 0
@@ -645,31 +747,48 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 	}
 
 	// Materialize right side (Close + re-scan once per batch).
-	_ = j.right.Close()
-	j.blkRightRows = j.blkRightRows[:0]
-	// REQ000863: compute right prefixed columns once. All rows from
-	// the same scan share the same Cols, so prefixCols is identical.
-	if j.rightPrefixedCols == nil {
-		if firstRow, err := j.right.Next(ctx); err == nil {
-			j.rightPrefixedCols = prefixCols(firstRow.Cols, j.rightTbl)
-			inner := Row{Types: firstRow.Types, Data: firstRow.Data, Outer: firstRow.Outer}
-			inner.tableName = firstRow.tableName
+	// REQ000873: if right side is small (< 64 rows), cache it for
+	// reuse across batches instead of re-scanning.
+	if !j.rightCached {
+		_ = j.right.Close()
+		j.blkRightRows = j.blkRightRows[:0]
+		// REQ000863: compute right prefixed columns once. All rows from
+		// the same scan share the same Cols, so prefixCols is identical.
+		if j.rightPrefixedCols == nil {
+			if firstRow, err := j.right.Next(ctx); err == nil {
+				j.rightPrefixedCols = prefixCols(firstRow.Cols, j.rightTbl)
+				inner := Row{Types: firstRow.Types, Data: firstRow.Data, Outer: firstRow.Outer}
+				inner.tableName = firstRow.tableName
+				inner.Cols = j.rightPrefixedCols
+				j.blkRightRows = append(j.blkRightRows, inner)
+			}
+		}
+		for {
+			row, err := j.right.Next(ctx)
+			if err != nil {
+				if err == ErrNoRows {
+					break
+				}
+				return Row{}, err
+			}
+			inner := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
+			inner.tableName = row.tableName
 			inner.Cols = j.rightPrefixedCols
 			j.blkRightRows = append(j.blkRightRows, inner)
 		}
-	}
-	for {
-		row, err := j.right.Next(ctx)
-		if err != nil {
-			if err == ErrNoRows {
-				break
-			}
-			return Row{}, err
+		// REQ000873: if right side is small, cache it for reuse.
+		const tinyRightThreshold = 64
+		if len(j.blkRightRows) <= tinyRightThreshold {
+			j.cachedRightRows = make([]Row, len(j.blkRightRows))
+			copy(j.cachedRightRows, j.blkRightRows)
+			j.cachedRightCols = j.rightPrefixedCols
+			j.cachedRightTypes = nil // Types are on the rows themselves
+			j.rightCached = true
 		}
-		inner := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
-		inner.tableName = row.tableName
-		inner.Cols = j.rightPrefixedCols
-		j.blkRightRows = append(j.blkRightRows, inner)
+	} else {
+		// REQ000873: reuse cached right rows — no re-scan needed.
+		j.blkRightRows = j.blkRightRows[:0]
+		j.blkRightRows = append(j.blkRightRows, j.cachedRightRows...)
 	}
 
 	// REQ000816: build blkSharedCols/blkSharedTypes/blkSharedColIndex once per
@@ -739,6 +858,14 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 			copy(result.Data, l.Data)
 			copy(result.Data[len(l.Data):], r.Data)
 			j.blkResultBuf = append(j.blkResultBuf, result)
+			// REQ000847: stop filling blkResultBuf early when limit
+			// is set. Prevents over-producing rows that the Limit
+			// operator above will discard anyway.
+			if j.limitRemaining > 0 && int64(len(j.blkResultBuf)) >= j.limitRemaining {
+				j.blkLeftBatch = j.blkLeftBatch[:0]
+				j.blkRightRows = j.blkRightRows[:0]
+				goto matchDone
+			}
 		}
 		if !matched && j.leftOuter {
 			nullRow := j.nullRightRow()
@@ -754,8 +881,14 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 			copy(result.Data, l.Data)
 			copy(result.Data[len(l.Data):], nullRow.Data)
 			j.blkResultBuf = append(j.blkResultBuf, result)
+			if j.limitRemaining > 0 && int64(len(j.blkResultBuf)) >= j.limitRemaining {
+				j.blkLeftBatch = j.blkLeftBatch[:0]
+				j.blkRightRows = j.blkRightRows[:0]
+				goto matchDone
+			}
 		}
 	}
+matchDone:
 
 	if len(j.blkResultBuf) == 0 {
 		// No matches in this batch — try next batch.
@@ -937,6 +1070,7 @@ func isJoinOp(op Operator) bool {
 	}
 	return false
 }
+
 // schemaCols extracts column names from a schema.
 func schemaCols(rows []Row) []string {
 	if len(rows) == 0 {

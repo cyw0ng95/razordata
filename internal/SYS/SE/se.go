@@ -154,8 +154,10 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 			}
 			return AP.Row{}, wrapEXError(err)
 		}
-		// REQ000862: reuse stream's internal buffer to avoid per-row []any allocation.
-		return AP.Row{Cols: row.Cols, Types: row.Types, Data: stream.BoxRow(row)}, nil
+		// REQ000862: AP.Row.Data is now []AP.Value (same type as EX.Row.Data),
+		// so no boxing conversion is needed. Direct assignment eliminates
+		// the per-row []any allocation that was 53% of join memory.
+		return AP.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
 	}
 	return AP.NewRows(stream.Cols(), stream.Types(), next, func() error { return stream.Close() }), nil
 }

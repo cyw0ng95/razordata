@@ -22,20 +22,20 @@ import (
 // HashCrossJoin is a simple hash-probe equi-join for small tables.
 // REQ000800.
 type HashCrossJoin struct {
-	left      Operator
-	right     Operator
-	leftTbl   string
-	rightTbl  string
-	leftKey   string // single-column join key on the left
-	rightKey  string // single-column join key on the right
-	hashSeed  maphash.Seed
+	left     Operator
+	right    Operator
+	leftTbl  string
+	rightTbl string
+	leftKey  string // single-column join key on the left
+	rightKey string // single-column join key on the right
+	hashSeed maphash.Seed
 	// Build phase: hash right rows by rightKey into buckets.
 	buckets map[uint64][]int // hash → indices into rightRows
 	// Materialized rows from each side.
 	rightRows []Row
 	// REQ000816: left side is materialized lazily so we can build
 	// a shared colIndex for output rows.
-	leftRows []Row
+	leftRows   []Row
 	probeBuilt bool // true after build() + materializeLeft() ran successfully
 	// Probe phase: pre-computed matches from materializeLeft.
 	// REQ000802+: eliminates on-the-fly probing and per-row
@@ -56,6 +56,12 @@ type HashCrossJoin struct {
 	sharedColIndex map[string]int
 	sharedCols     []string
 	sharedTypes    []int
+	// REQ000874: cached prefix/suffix check. hasAnyPrefix is called
+	// per-row in materializeLeft; hoist the check to the operator
+	// struct so it's computed once per scan (all rows from the same
+	// scan share the same Cols).
+	leftHasPrefix  bool
+	rightHasPrefix bool
 }
 
 // NewHashCrossJoin creates a hash-probe equi-join. Both sides
@@ -132,6 +138,20 @@ func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {
 func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 	const maxMaterialize = 1024
 	j.leftRows = make([]Row, 0, 64)
+	j.leftHasPrefix = false
+	// Check first row to determine prefix state (all rows from the
+	// same scan share the same Cols). REQ000874.
+	if firstRow, err := j.left.Next(ctx); err == nil {
+		j.leftHasPrefix = hasAnyPrefix(firstRow.Cols)
+		prefixed := Row{Types: firstRow.Types, Data: firstRow.Data, Outer: firstRow.Outer}
+		prefixed.tableName = firstRow.tableName
+		if !j.leftHasPrefix {
+			prefixed.Cols = prefixCols(firstRow.Cols, j.leftTbl)
+		} else {
+			prefixed.Cols = append([]string(nil), firstRow.Cols...)
+		}
+		j.leftRows = append(j.leftRows, prefixed)
+	}
 	for {
 		row, err := j.left.Next(ctx)
 		if err != nil {
@@ -139,7 +159,7 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 		}
 		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
 		prefixed.tableName = row.tableName
-		if !hasAnyPrefix(row.Cols) {
+		if !j.leftHasPrefix {
 			prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
 		} else {
 			prefixed.Cols = append([]string(nil), row.Cols...)
@@ -223,19 +243,48 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 
 func (j *HashCrossJoin) build(ctx context.Context) error {
 	j.probeBuilt = true
-	j.buckets = make(map[uint64][]int)
+	j.buckets = make(map[uint64][]int, 64)
 	const maxMaterialize = 1024
 	j.rightRows = make([]Row, 0, 64)
+	j.rightHasPrefix = false
+	// Check first row to determine prefix state (all rows from the
+	// same scan share the same Cols). REQ000874.
+	if firstRow, err := j.right.Next(ctx); err == nil {
+		j.rightHasPrefix = hasAnyPrefix(firstRow.Cols)
+		prefixed := Row{
+			Cols:      firstRow.Cols,
+			Types:     firstRow.Types,
+			Data:      append([]Value(nil), firstRow.Data...),
+			tableName: firstRow.tableName,
+		}
+		if j.rightHasPrefix {
+			prefixed.Cols = append([]string(nil), firstRow.Cols...)
+		} else {
+			prefixed.Cols = prefixCols(firstRow.Cols, j.rightTbl)
+		}
+		keyVal, ok := lookupColumn(&prefixed, j.rightTbl, j.rightKey)
+		if ok && keyVal != nil {
+			h := hashValue(j.hashSeed, keyVal)
+			idx := len(j.rightRows)
+			j.rightRows = append(j.rightRows, prefixed)
+			j.buckets[h] = append(j.buckets[h], idx)
+		}
+	}
 	for {
 		row, err := j.right.Next(ctx)
 		if err != nil {
 			break
 		}
 		prefixed := Row{
-			Cols:      prefixCols(row.Cols, j.rightTbl),
+			Cols:      row.Cols,
 			Types:     row.Types,
 			Data:      append([]Value(nil), row.Data...),
 			tableName: row.tableName,
+		}
+		if j.rightHasPrefix {
+			prefixed.Cols = append([]string(nil), row.Cols...)
+		} else {
+			prefixed.Cols = prefixCols(row.Cols, j.rightTbl)
 		}
 		keyVal, ok := lookupColumn(&prefixed, j.rightTbl, j.rightKey)
 		if !ok || keyVal == nil {
@@ -246,8 +295,6 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 		j.rightRows = append(j.rightRows, prefixed)
 		j.buckets[h] = append(j.buckets[h], idx)
 		if len(j.rightRows) >= maxMaterialize {
-			// REQ000818: too many rows for hash probing — fall back
-			// to cross-product mode instead of returning an error.
 			j.crossOverflow = true
 		}
 	}

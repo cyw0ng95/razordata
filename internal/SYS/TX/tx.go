@@ -101,8 +101,9 @@ func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.R
 			}
 			return ap.Row{}, err
 		}
-		// REQ000862: reuse stream's internal buffer.
-		return ap.Row{Cols: row.Cols, Types: row.Types, Data: stream.BoxRow(row)}, nil
+		// REQ000862: AP.Row.Data is now []AP.Value (same type as EX.Row.Data),
+		// so no boxing conversion is needed.
+		return ap.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
 	}
 	closer := func() error { return stream.Close() }
 	return ap.NewRows(stream.Cols(), stream.Types(), next, closer), nil

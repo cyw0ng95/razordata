@@ -175,12 +175,35 @@ func releaseEngine(cfg Config) {
 }
 
 // toDriverValue converts a Go value from the executor to a
-// database/sql driver.Value. The conversion is lossy: bools become
-// int64 (0/1) to match SQLite's convention.
+// database/sql driver.Value. REQ000862: accepts AP.Value directly
+// and switches on Kind for zero-alloc conversion.
 func toDriverValue(v any) driver.Value {
 	if v == nil {
 		return nil
 	}
+	// Fast path: AP.Value — switch on Kind, no boxing.
+	if av, ok := v.(AP.Value); ok {
+		switch av.Kind {
+		case AP.KindNull:
+			return nil
+		case AP.KindInt:
+			return av.I64
+		case AP.KindFloat:
+			return av.F64
+		case AP.KindText:
+			return av.S
+		case AP.KindBlob:
+			return av.B
+		case AP.KindBool:
+			if av.Bo {
+				return int64(1)
+			}
+			return int64(0)
+		default:
+			return nil
+		}
+	}
+	// Slow path: raw any from legacy callers.
 	switch x := v.(type) {
 	case int64:
 		return x

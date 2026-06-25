@@ -12,6 +12,7 @@ import (
 	PS "github.com/cyw0ng95/razordata/internal/SQL/PS"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
 // sessionCountersProvider is an optional callback set by SYS/SE to
@@ -75,138 +76,42 @@ var ErrNotImplemented = errors.New("ex: not implemented")
 var ErrNoRows = errors.New("ex: no rows")
 var ErrClosed = errors.New("ex: operator closed")
 
-// Value kind constants for the tagged-union Value type (REQ000776).
+// Value kind constants — aliased from SYS/AP for zero-cost interop (REQ000862).
+// EX.Value IS AP.Value (type alias); no conversion needed at package boundaries.
 const (
-	KindNull ValueKind = iota
-	KindInt
-	KindFloat
-	KindText
-	KindBlob
-	KindBool
+	KindNull  = AP.KindNull
+	KindInt   = AP.KindInt
+	KindFloat = AP.KindFloat
+	KindText  = AP.KindText
+	KindBlob  = AP.KindBlob
+	KindBool  = AP.KindBool
 )
 
-// ValueKind is the type discriminator for Value.
-type ValueKind uint8
+// ValueKind is the type discriminator for Value — aliased from SYS/AP.
+type ValueKind = AP.ValueKind
 
 // Value is a tagged-union that stores SQL values inline without boxing.
-// The zero value (Kind=0, all fields zero) represents SQL NULL.
-type Value struct {
-	Kind ValueKind
-	I64  int64
-	F64  float64
-	S    string
-	B    []byte
-	Bo   bool
-}
+// REQ000862: this is a type alias for AP.Value. Both packages share the
+// same concrete type, eliminating []any boxing at the driver boundary.
+type Value = AP.Value
 
 // NewIntValue creates a Value from an int64.
-func NewIntValue(v int64) Value { return Value{Kind: KindInt, I64: v} }
+func NewIntValue(v int64) Value { return AP.NewIntValue(v) }
 
 // NewFloatValue creates a Value from a float64.
-func NewFloatValue(v float64) Value { return Value{Kind: KindFloat, F64: v} }
+func NewFloatValue(v float64) Value { return AP.NewFloatValue(v) }
 
 // NewTextValue creates a Value from a string.
-func NewTextValue(v string) Value { return Value{Kind: KindText, S: v} }
+func NewTextValue(v string) Value { return AP.NewTextValue(v) }
 
 // NewBlobValue creates a Value from a byte slice.
-func NewBlobValue(v []byte) Value { return Value{Kind: KindBlob, B: v} }
+func NewBlobValue(v []byte) Value { return AP.NewBlobValue(v) }
 
 // NewBoolValue creates a Value from a bool.
-func NewBoolValue(v bool) Value { return Value{Kind: KindBool, Bo: v} }
+func NewBoolValue(v bool) Value { return AP.NewBoolValue(v) }
 
 // NullValue returns a NULL Value.
-func NullValue() Value { return Value{Kind: KindNull} }
-
-// IsNull returns true if this Value represents SQL NULL.
-func (v Value) IsNull() bool { return v.Kind == KindNull }
-
-// AsInt returns the int64 value (0 if not int).
-func (v Value) AsInt() int64 { return v.I64 }
-
-// AsFloat returns the float64 value (0 if not float).
-func (v Value) AsFloat() float64 { return v.F64 }
-
-// AsString returns the string value ("" if not text).
-func (v Value) AsString() string { return v.S }
-
-// AsBlob returns the []byte value (nil if not blob).
-func (v Value) AsBlob() []byte { return v.B }
-
-// AsBool returns the bool value (false if not bool).
-func (v Value) AsBool() bool { return v.Bo }
-
-// String returns a human-readable representation of the ValueKind.
-func (k ValueKind) String() string {
-	switch k {
-	case KindNull:
-		return "null"
-	case KindInt:
-		return "int64"
-	case KindFloat:
-		return "float64"
-	case KindText:
-		return "string"
-	case KindBlob:
-		return "blob"
-	case KindBool:
-		return "bool"
-	default:
-		return "unknown"
-	}
-}
-
-// ToAny converts a Value to the boxed any representation.
-// Used for backward compatibility during the migration.
-func (v Value) ToAny() any {
-	switch v.Kind {
-	case KindNull:
-		return nil
-	case KindInt:
-		return v.I64
-	case KindFloat:
-		return v.F64
-	case KindText:
-		return v.S
-	case KindBlob:
-		return v.B
-	case KindBool:
-		return v.Bo
-	default:
-		return nil
-	}
-}
-
-// Equal compares two Values for equality. REQ000776 — supports
-// all kinds including []byte (which is not directly comparable
-// with ==). Two NULLs are equal. A NULL and non-NULL are not equal.
-func (v Value) Equal(other Value) bool {
-	if v.Kind != other.Kind {
-		return false
-	}
-	switch v.Kind {
-	case KindNull:
-		return true
-	case KindInt:
-		return v.I64 == other.I64
-	case KindFloat:
-		return v.F64 == other.F64
-	case KindText:
-		return v.S == other.S
-	case KindBlob:
-		if len(v.B) != len(other.B) {
-			return false
-		}
-		for i := range v.B {
-			if v.B[i] != other.B[i] {
-				return false
-			}
-		}
-		return true
-	case KindBool:
-		return v.Bo == other.Bo
-	}
-	return false
-}
+func NullValue() Value { return AP.NullValue() }
 
 // valueFromAny creates a Value from a boxed any. Inverse of ToAny.
 func valueFromAny(a any) Value {
@@ -261,7 +166,6 @@ func valueSliceToAny(v []Value) []any {
 // ValueSliceToAny is the exported version of valueSliceToAny for
 // callers outside the EX package (e.g. SYS/AP bridging).
 func ValueSliceToAny(v []Value) []any { return valueSliceToAny(v) }
-
 
 type Operator interface {
 	Next(ctx context.Context) (Row, error)
@@ -1696,10 +1600,6 @@ type streamIterator struct {
 	closer func() error
 	done   bool
 	mu     sync.Mutex
-	// REQ000862: reusable buffer for converting []Value to []any.
-	// Avoids the per-row make([]any, N) allocation that was 53% of
-	// the join pipeline memory profile on j5_cross.
-	boxBuf []any
 }
 
 func (s *streamIterator) Cols() []string { return s.cols }
@@ -1716,23 +1616,6 @@ func (s *streamIterator) Next() (Row, error) {
 	return r, nil
 }
 
-// BoxRow converts row.Data ([]Value) to []any, reusing an internal
-// buffer so the caller does not allocate a fresh []any on every row.
-// The returned slice is valid until the next call to BoxRow or Next
-// on the same streamIterator — the caller must copy or scan the
-// values before the next invocation. REQ000862.
-func (s *streamIterator) BoxRow(row Row) []any {
-	n := len(row.Data)
-	if cap(s.boxBuf) < n {
-		s.boxBuf = make([]any, n)
-	} else {
-		s.boxBuf = s.boxBuf[:n]
-	}
-	for i, v := range row.Data {
-		s.boxBuf[i] = v.ToAny()
-	}
-	return s.boxBuf
-}
 func (s *streamIterator) Close() error {
 	if s == nil {
 		return nil

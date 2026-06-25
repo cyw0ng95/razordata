@@ -7,7 +7,7 @@ import (
 )
 
 // HashJoin is a radix-partitioned hash join for INNER joins
-// on equi-keys. REQ000312, REQ000684.
+// on equi-keys. REQ000312, REQ000684, REQ000865.
 // Algorithm (classic radix hash join):
 //  1. Build phase: hash the right relation's join key into
 //     N radix partitions (one per high bit of the hash).
@@ -23,8 +23,9 @@ import (
 //   - INNER JOIN only (LEFT/RIGHT/FULL deferred to NestedLoopJoin)
 //   - Equi-join only (non-equi joins deferred to NestedLoopJoin)
 //
-// REQ000802+: Pre-computes all matches during build with a
-// shared data buffer, eliminating per-row Data allocations.
+// REQ000865: right side is NOT separately materialized — rows live
+// only in the per-bucket slices. The right operator is closed
+// immediately after the build phase to release resources.
 type HashJoin struct {
 	left       Operator
 	right      Operator
@@ -35,8 +36,9 @@ type HashJoin struct {
 	partitions int
 	buckets    []hashBucket
 	leftRows   []Row
-	rightRows  []Row
-	// REQ000802+: pre-computed matches with data buffer.
+	// REQ000865: rightRows removed — right rows live only in buckets.
+	// right operator is closed after build phase.
+	// Pre-computed matches with data buffer.
 	matches    []Row
 	matchPos   int
 	dataBuf    []Value
@@ -54,6 +56,8 @@ type HashJoin struct {
 	// to max(len(leftKeys), len(rightKeys)) to avoid per-probe
 	// make([]Value, len(keys)) in every hash-join probe.
 	keyBuf []Value
+	// REQ000865: built tracks whether buildAndProbe has run.
+	built bool
 }
 
 type hashBucket struct {
@@ -83,6 +87,8 @@ func NewHashJoin(left, right Operator, leftTbl, rightTbl string, leftKeys, right
 		partitions: p,
 		// REQ000841: pre-allocate key buffer to max key width.
 		keyBuf: make([]Value, max(len(leftKeys), len(rightKeys))),
+		// REQ000865: pre-allocate bucket slices for the build phase.
+		buckets: make([]hashBucket, p),
 	}
 }
 
@@ -107,10 +113,11 @@ func (j *HashJoin) Next(ctx context.Context) (Row, error) {
 	if err := ctx.Err(); err != nil {
 		return Row{}, err
 	}
-	if j.buckets == nil {
+	if !j.built {
 		if err := j.buildAndProbe(ctx); err != nil {
 			return Row{}, err
 		}
+		j.built = true
 	}
 	// REQ000802+: return pre-computed matches from data buffer.
 	for j.matchPos < len(j.matches) {
@@ -123,14 +130,17 @@ func (j *HashJoin) Next(ctx context.Context) (Row, error) {
 }
 
 func (j *HashJoin) Close() error {
-	j.buckets = nil
+	for i := range j.buckets {
+		j.buckets[i].rightRows = j.buckets[i].rightRows[:0]
+		j.buckets[i].hashes = j.buckets[i].hashes[:0]
+	}
 	j.leftRows = nil
-	j.rightRows = nil
 	j.matches = nil
 	j.matchPos = 0
 	j.dataBuf = nil
 	j.dataPerRow = 0
 	j.done = false
+	j.built = false
 	j.sharedCols = nil
 	j.sharedTypes = nil
 	j.sharedColIndex = nil
@@ -147,9 +157,21 @@ func (j *HashJoin) Close() error {
 // then reads the left side and probes. All matches are
 // pre-computed with a shared data buffer to eliminate per-row
 // Data allocations (REQ000802+).
+//
+// REQ000865: right side rows live ONLY in per-bucket slices — no
+// separate rightRows materialization. Right operator is closed
+// immediately after the build phase to free resources early.
 func (j *HashJoin) buildAndProbe(ctx context.Context) error {
-	j.buckets = make([]hashBucket, j.partitions)
-	// Materialize right side.
+	// REQ000865: pre-allocate all bucket slices upfront.
+	for i := range j.buckets {
+		j.buckets[i].rightRows = make([]Row, 0, 64)
+		j.buckets[i].hashes = make([]uint64, 0, 64)
+	}
+	// Build phase: hash right side into partition buckets.
+	// Track total right rows for sharedCols/Types computation.
+	var rightCount int
+	var firstRightCols []string
+	var firstRightTypes []int
 	for {
 		row, err := j.right.Next(ctx)
 		if err == ErrNoRows {
@@ -158,12 +180,20 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if rightCount == 0 {
+			firstRightCols = row.Cols
+			firstRightTypes = row.Types
+		}
 		rk := lookupKeys(row, j.rightKeys, j.keyBuf)
 		hash := hashKeys(rk)
 		idx := int(hash & uint64(j.partitions-1))
 		j.buckets[idx].rightRows = append(j.buckets[idx].rightRows, row)
 		j.buckets[idx].hashes = append(j.buckets[idx].hashes, hash)
-		j.rightRows = append(j.rightRows, row)
+		rightCount++
+	}
+	// REQ000865: close right side immediately — rows live in buckets.
+	if j.right != nil {
+		_ = j.right.Close()
 	}
 	// Materialize left side.
 	for {
@@ -180,14 +210,14 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	// first output row's column layout so every emitted row reuses
 	// them instead of allocating fresh Cols/Types slices and
 	// triggering per-row buildColIndex downstream.
-	if len(j.leftRows) > 0 && len(j.rightRows) > 0 {
-		n := len(j.leftRows[0].Cols) + len(j.rightRows[0].Cols)
+	if len(j.leftRows) > 0 && rightCount > 0 {
+		n := len(j.leftRows[0].Cols) + len(firstRightCols)
 		j.sharedCols = make([]string, 0, n)
 		j.sharedCols = append(j.sharedCols, j.leftRows[0].Cols...)
-		j.sharedCols = append(j.sharedCols, j.rightRows[0].Cols...)
+		j.sharedCols = append(j.sharedCols, firstRightCols...)
 		j.sharedTypes = make([]int, 0, n)
 		j.sharedTypes = append(j.sharedTypes, j.leftRows[0].Types...)
-		j.sharedTypes = append(j.sharedTypes, j.rightRows[0].Types...)
+		j.sharedTypes = append(j.sharedTypes, firstRightTypes...)
 		j.sharedColIndex = make(map[string]int, n)
 		for i, c := range j.sharedCols {
 			key := strings.ToLower(c)
@@ -230,10 +260,10 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	}
 
 	// Pre-allocate contiguous data buffer and matches slice.
-	if len(j.leftRows) == 0 || len(j.rightRows) == 0 {
+	if len(j.leftRows) == 0 || rightCount == 0 {
 		return nil
 	}
-	dataPerRow := len(j.leftRows[0].Cols) + len(j.rightRows[0].Cols)
+	dataPerRow := len(j.leftRows[0].Cols) + len(firstRightCols)
 	j.dataPerRow = dataPerRow
 	j.dataBuf = make([]Value, 0, totalMatches*dataPerRow)
 	j.matches = make([]Row, 0, totalMatches)

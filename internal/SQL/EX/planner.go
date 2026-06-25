@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"unicode"
 	"sync"
+	"unicode"
 
 	"github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQL/LX"
@@ -94,10 +94,10 @@ type plan struct {
 // joinPlan captures a partial or complete join plan for the N3
 // nearest-neighbor search. Used internally by n3JoinOrdering.
 type joinPlan struct {
-	root    Operator
-	cost    float64
-	tables  map[string]bool
-	order   []string
+	root   Operator
+	cost   float64
+	tables map[string]bool
+	order  []string
 }
 
 // n3HeapMaxSize limits the number of partial plans retained at each
@@ -1885,6 +1885,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 				return nil
 			}
 			current = NewLimit(current, n)
+			propagateLimitToNLJ(current, n)
 		}
 		if s.Offset != nil {
 			n, ok := limitInt64(s.Offset)
@@ -1906,10 +1907,38 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 				return nil
 			}
 			current = NewLimit(current, n)
+			propagateLimitToNLJ(current, n)
 		}
 	}
 
 	return current
+}
+
+// propagateLimitToNLJ walks the operator tree and calls SetLimit on
+// any NestedLoopJoin it finds. REQ000847: when a LIMIT is above an
+// NLJ, the join can stop producing rows early instead of computing
+// the full cross product. The Limit operator above already stops
+// calling Next() after `n` rows, but without this pushdown the NLJ
+// still does the full batch work for each Next() call.
+func propagateLimitToNLJ(op Operator, n int64) {
+	switch t := op.(type) {
+	case *NestedLoopJoin:
+		t.SetLimit(n)
+	case *AdaptiveOp:
+		propagateLimitToNLJ(t.inner, n)
+	}
+	type childer interface{ Child() Operator }
+	if c, ok := op.(childer); ok {
+		propagateLimitToNLJ(c.Child(), n)
+	}
+	type leftRighter interface {
+		LeftChild() Operator
+		RightChild() Operator
+	}
+	if lr, ok := op.(leftRighter); ok {
+		propagateLimitToNLJ(lr.LeftChild(), n)
+		propagateLimitToNLJ(lr.RightChild(), n)
+	}
 }
 
 // pkOrderMatches reports whether orderBy is a single ascending reference
@@ -2415,8 +2444,8 @@ func (p *Planner) planExplain(s *PS.ExplainStmt) Operator {
 
 	// Return an ExplainStmt operator that renders the plan
 	return &ExplainStmtOp{
-		mode:   s.Mode,
-		format: s.Format,
+		mode:     s.Mode,
+		format:   s.Format,
 		planNode: planNode,
 		root:     innerPlan.root,
 	}
@@ -2638,11 +2667,11 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		}
 
 		type candidate struct {
-			idx int
-			cost float64
-			order []string
+			idx       int
+			cost      float64
+			order     []string
 			tablesSet map[string]bool
-			rows float64
+			rows      float64
 		}
 		nextHeap := make([]candidate, 0, n3HeapMaxSize)
 

@@ -119,7 +119,7 @@ type Result struct {
 type Row struct {
 	Cols  []string
 	Types []int
-	Data  []any
+	Data  []Value
 }
 
 type Rows struct {
@@ -243,6 +243,138 @@ var (
 )
 
 func (r *Row) Len() int { return len(r.Cols) }
+
+// Value kind constants for the tagged-union Value type (REQ000776/REQ000862).
+const (
+	KindNull ValueKind = iota
+	KindInt
+	KindFloat
+	KindText
+	KindBlob
+	KindBool
+)
+
+// ValueKind is the type discriminator for Value.
+type ValueKind uint8
+
+// String returns a human-readable representation of the ValueKind.
+func (k ValueKind) String() string {
+	switch k {
+	case KindNull:
+		return "null"
+	case KindInt:
+		return "int64"
+	case KindFloat:
+		return "float64"
+	case KindText:
+		return "string"
+	case KindBlob:
+		return "blob"
+	case KindBool:
+		return "bool"
+	default:
+		return "unknown"
+	}
+}
+
+// Value is a tagged-union that stores SQL values inline without boxing.
+// The zero value (Kind=0, all fields zero) represents SQL NULL.
+// REQ000862: defined in SYS/AP so both EX (executor) and the driver
+// layer can use the same concrete type without []any boxing.
+type Value struct {
+	Kind ValueKind
+	I64  int64
+	F64  float64
+	S    string
+	B    []byte
+	Bo   bool
+}
+
+// NewIntValue creates a Value from an int64.
+func NewIntValue(v int64) Value { return Value{Kind: KindInt, I64: v} }
+
+// NewFloatValue creates a Value from a float64.
+func NewFloatValue(v float64) Value { return Value{Kind: KindFloat, F64: v} }
+
+// NewTextValue creates a Value from a string.
+func NewTextValue(v string) Value { return Value{Kind: KindText, S: v} }
+
+// NewBlobValue creates a Value from a byte slice.
+func NewBlobValue(v []byte) Value { return Value{Kind: KindBlob, B: v} }
+
+// NewBoolValue creates a Value from a bool.
+func NewBoolValue(v bool) Value { return Value{Kind: KindBool, Bo: v} }
+
+// NullValue returns a NULL Value.
+func NullValue() Value { return Value{Kind: KindNull} }
+
+// IsNull returns true if this Value represents SQL NULL.
+func (v Value) IsNull() bool { return v.Kind == KindNull }
+
+// AsInt returns the int64 value (0 if not int).
+func (v Value) AsInt() int64 { return v.I64 }
+
+// AsFloat returns the float64 value (0 if not float).
+func (v Value) AsFloat() float64 { return v.F64 }
+
+// AsString returns the string value ("" if not text).
+func (v Value) AsString() string { return v.S }
+
+// AsBlob returns the []byte value (nil if not blob).
+func (v Value) AsBlob() []byte { return v.B }
+
+// AsBool returns the bool value (false if not bool).
+func (v Value) AsBool() bool { return v.Bo }
+
+// ToAny converts a Value to the boxed any representation.
+func (v Value) ToAny() any {
+	switch v.Kind {
+	case KindNull:
+		return nil
+	case KindInt:
+		return v.I64
+	case KindFloat:
+		return v.F64
+	case KindText:
+		return v.S
+	case KindBlob:
+		return v.B
+	case KindBool:
+		return v.Bo
+	default:
+		return nil
+	}
+}
+
+// Equal compares two Values for equality. Two NULLs are equal.
+func (v Value) Equal(other Value) bool {
+	if v.Kind != other.Kind {
+		return false
+	}
+	switch v.Kind {
+	case KindNull:
+		return true
+	case KindInt:
+		return v.I64 == other.I64
+	case KindFloat:
+		return v.F64 == other.F64
+	case KindText:
+		return v.S == other.S
+	case KindBlob:
+		if len(v.B) != len(other.B) {
+			return false
+		}
+		for i := range v.B {
+			if v.B[i] != other.B[i] {
+				return false
+			}
+		}
+		return true
+	case KindBool:
+		return v.Bo == other.Bo
+	}
+	return false
+}
 
 type BackupOptions = BK.BackupOptions
 type BackupStats = BK.BackupStats

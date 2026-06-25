@@ -358,16 +358,17 @@ func (mi *mergeIterator) Key() []byte {
 	if mi.curKey == nil {
 		return nil
 	}
-	// Return owned copy (already owned, but we return a copy for safety)
-	return append([]byte(nil), mi.curKey...)
+	// REQ000876: mi.curKey is already an owned copy from the heap pop
+	// in Next(). Return it directly — no extra copy needed.
+	return mi.curKey
 }
 
 func (mi *mergeIterator) Value() []byte {
 	if mi.curVal == nil {
 		return nil
 	}
-	// Return owned copy (already owned, but we return a copy for safety)
-	return append([]byte(nil), mi.curVal...)
+	// REQ000876: mi.curVal is already an owned copy from the heap pop.
+	return mi.curVal
 }
 
 func (mi *mergeIterator) Err() error { return mi.err }

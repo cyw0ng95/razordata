@@ -3,9 +3,10 @@ package EX
 import (
 	"errors"
 	"fmt"
-	"github.com/cyw0ng95/razordata/internal/SQL/PS"
 	"strings"
 	"sync"
+
+	PS "github.com/cyw0ng95/razordata/internal/SQL/PS"
 )
 
 var errTableExists = errors.New("ex: table already exists")

@@ -35,7 +35,7 @@ func newRows(apRows *AP.Rows) *Rows {
 		// Deep-copy Data so the backing array is independent
 		// of the streaming iterator's internal buffer.
 		if row.Data != nil {
-			data := make([]any, len(row.Data))
+			data := make([]AP.Value, len(row.Data))
 			copy(data, row.Data)
 			row.Data = data
 		}
