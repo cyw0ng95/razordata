@@ -94,8 +94,7 @@ func NewFilter(child Operator, predicate PS.Expr) *Filter {
 		child:     child,
 		predicate: predicate,
 		// REQ000868: pre-allocate batch buffers to avoid first-call
-		// allocation in refillBatch. Every Filter uses these, so the
-		// initial make is amortized across all batches.
+		// allocation in refillBatch.
 		batchBuf:  *buf,
 		batchEmit: *emit,
 	}
