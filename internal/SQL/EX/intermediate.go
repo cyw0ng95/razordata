@@ -1141,8 +1141,15 @@ func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 			if a.IsNull() || b.IsNull() {
 				return Value{Kind: KindNull}
 			}
+			if b.Kind == KindInt && b.I64 == 0 {
+				return Value{Kind: KindNull}
+			}
+			if b.Kind == KindFloat && b.F64 == 0 {
+				return Value{Kind: KindNull}
+			}
 			if a.Kind == KindInt && b.Kind == KindInt {
-				return Value{Kind: KindFloat, F64: float64(a.I64) / float64(b.I64)}
+				// REQ000932: int / int = int (integer division), matching SQLite.
+				return Value{Kind: KindInt, I64: a.I64 / b.I64}
 			}
 			return Value{Kind: KindFloat, F64: valueToFloat(a) / valueToFloat(b)}
 		}
