@@ -55,8 +55,8 @@ type QualifiedName struct {
 	// Database is the optional database qualifier (set for three-part names).
 	// For two-part names it is empty. REQ000750.
 	Database string
-	Table string
-	Name  string
+	Table    string
+	Name     string
 	// CachedKey is "Table.Name" computed once on first use. Lazy
 	// init — safe because the expression tree is read-only after
 	// parsing and Eval runs single-threaded per benchmark.

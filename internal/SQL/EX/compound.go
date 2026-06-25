@@ -198,11 +198,11 @@ const (
 )
 
 // nextStreaming implements the streaming fast paths:
-// - UNION ALL (REQ000838): pull left then right, no intermediate buffer.
-// - EXCEPT/INTERSECT (REQ000842): drain right first (hash set), then stream
-//   left and probe against rightKeys. Left-side rows are deduplicated via
-//   emittedKeys tracking. This cuts peak memory by avoiding left-side
-//   materialization for deep EXCEPT/INTERSECT chains.
+//   - UNION ALL (REQ000838): pull left then right, no intermediate buffer.
+//   - EXCEPT/INTERSECT (REQ000842): drain right first (hash set), then stream
+//     left and probe against rightKeys. Left-side rows are deduplicated via
+//     emittedKeys tracking. This cuts peak memory by avoiding left-side
+//     materialization for deep EXCEPT/INTERSECT chains.
 func (c *CompoundOp) nextStreaming(ctx context.Context) (Row, error) {
 	if c.op == PS.CompoundUnionAll {
 		return c.nextStreamingUnionAll(ctx)
