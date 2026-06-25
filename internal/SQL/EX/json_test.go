@@ -157,6 +157,12 @@ func TestJSON_EvalFunc(t *testing.T) {
 		{"JSON_VALID", []any{`bad`}, int64(0)},
 		{"JSON_TYPE", []any{`"hi"`}, "text"},
 		{"JSON_TYPE", []any{`[1]`}, "array"},
+		{"JSON_INSERT", []any{`{"a":1}`, `b`, int64(2)}, `{"a":1,"b":2}`},
+		{"JSON_INSERT", []any{`{"a":1}`, `a`, int64(2)}, `{"a":1}`},
+		{"JSON_REPLACE", []any{`{"a":1}`, `a`, int64(2)}, `{"a":2}`},
+		{"JSON_REPLACE", []any{`{"a":1}`, `b`, int64(2)}, `{"a":1}`},
+		{"JSON_REMOVE", []any{`{"a":1,"b":2}`, `b`}, `{"a":1}`},
+		{"JSON_REMOVE", []any{`[1,2,3]`, `1`}, `[1,3]`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -168,5 +174,65 @@ func TestJSON_EvalFunc(t *testing.T) {
 				t.Errorf("%s = %v, want %v", tt.name, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestJSON_Insert(t *testing.T) {
+	got, err := jsonInsert(`{"a": 1}`, "b", float64(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `{"a":1,"b":2}` {
+		t.Errorf("jsonInsert = %s, want {\"a\":1,\"b\":2}", got)
+	}
+}
+
+func TestJSON_Insert_ExistingKey(t *testing.T) {
+	got, err := jsonInsert(`{"a": 1}`, "a", float64(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `{"a":1}` {
+		t.Errorf("jsonInsert should keep existing key, got %s", got)
+	}
+}
+
+func TestJSON_Replace(t *testing.T) {
+	got, err := jsonReplace(`{"a": 1}`, "a", float64(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `{"a":2}` {
+		t.Errorf("jsonReplace = %s, want {\"a\":2}", got)
+	}
+}
+
+func TestJSON_Replace_MissingKey(t *testing.T) {
+	got, err := jsonReplace(`{"a": 1}`, "b", float64(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `{"a":1}` {
+		t.Errorf("jsonReplace should skip missing key, got %s", got)
+	}
+}
+
+func TestJSON_Remove(t *testing.T) {
+	got, err := jsonRemove(`{"a": 1, "b": 2}`, "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `{"a":1}` {
+		t.Errorf("jsonRemove = %s, want {\"a\":1}", got)
+	}
+}
+
+func TestJSON_Remove_FromArray(t *testing.T) {
+	got, err := jsonRemove(`[1, 2, 3]`, "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `[1,3]` {
+		t.Errorf("jsonRemove from array = %s, want [1,3]", got)
 	}
 }

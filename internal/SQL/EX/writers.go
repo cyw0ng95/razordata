@@ -28,6 +28,7 @@ type Insert struct {
 	params         []any
 	resultRows     []Row
 	resultPos      int
+	execCtx        *ExecContext // REQ000812
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -45,6 +46,10 @@ func NewInsert(table string, cols []string, values [][]PS.Expr, returning []PS.E
 		onConflict: onConflict,
 	}
 }
+
+// Child returns the selectPlan if this is an INSERT INTO ... SELECT,
+// or nil otherwise. Implements childer for execCtx propagation. REQ000812.
+func (i *Insert) Child() Operator { return i.selectPlan }
 
 // NewInsertWithStore builds an Insert that writes through the engine. The
 // table must have been registered. REQ000367: tables without a declared
@@ -194,6 +199,10 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		}
 		existing = append(existing, out)
 		i.rows++
+		if i.execCtx != nil {
+			i.execCtx.LastChanges++
+			i.execCtx.TotalChanges++
+		}
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(i.returning) > 0 {
@@ -332,6 +341,10 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		i.rows++
+		if i.execCtx != nil {
+			i.execCtx.LastChanges++
+			i.execCtx.TotalChanges++
+		}
 
 		// Fire AFTER INSERT triggers (REQ000316: incremental matview support)
 		if err := fireInsertTriggers(i.table, &out, i.params, i.store); err != nil {
@@ -429,6 +442,10 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 
 		existing = append(existing, out)
 		i.rows++
+		if i.execCtx != nil {
+			i.execCtx.LastChanges++
+			i.execCtx.TotalChanges++
+		}
 
 		if len(i.returning) > 0 {
 			expanded := expandReturningStar(i.returning, out.Cols)
@@ -508,6 +525,7 @@ type Update struct {
 	params     []any
 	resultRows []Row
 	resultPos  int
+	execCtx    *ExecContext // REQ000812
 }
 
 // REQ000714: expose child for execCtx/params propagation.
@@ -627,6 +645,10 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		u.rows++
+		if u.execCtx != nil {
+			u.execCtx.LastChanges++
+			u.execCtx.TotalChanges++
+		}
 
 		// Fire AFTER UPDATE triggers (REQ000316: incremental matview support)
 		if err := fireUpdateTriggers(u.table, &snapshot, &row, u.params, nil); err != nil {
@@ -720,6 +742,10 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		u.rows++
+		if u.execCtx != nil {
+			u.execCtx.LastChanges++
+			u.execCtx.TotalChanges++
+		}
 
 		// Fire AFTER UPDATE triggers (REQ000316: incremental matview support)
 		if err := fireUpdateTriggers(u.table, &oldRow, &row, u.params, u.store); err != nil {
@@ -776,6 +802,7 @@ type Delete struct {
 	params     []any
 	resultRows []Row
 	resultPos  int
+	execCtx    *ExecContext // REQ000812
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -899,6 +926,10 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		}
 		tables[d.table] = out
 		d.rows = int64(len(toDelete))
+		if d.execCtx != nil {
+			d.execCtx.LastChanges = int64(len(toDelete))
+			d.execCtx.TotalChanges += int64(len(toDelete))
+		}
 
 		// Fire AFTER DELETE triggers (REQ000316: incremental matview support)
 		// For in-memory path, we fire triggers for each deleted row
@@ -971,6 +1002,10 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			d.txWriter.RecordWrite(key, nil)
 		}
 		d.rows++
+		if d.execCtx != nil {
+			d.execCtx.LastChanges++
+			d.execCtx.TotalChanges++
+		}
 
 		// Fire AFTER DELETE triggers (REQ000316: incremental matview support)
 		if err := fireDeleteTriggers(d.table, &row, d.params, d.store); err != nil {

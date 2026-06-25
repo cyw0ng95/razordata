@@ -214,13 +214,16 @@ type Project struct {
 	// REQ000802: compiled expression evaluators. On the first call
 	// to Next(), each SELECT expression is compiled into a function
 	// that reads directly from the input row's Data, bypassing
-	// Eval dispatch and Value↔any boxing.
+	// Eval dispatch and Value<->any boxing.
 	compiledExprs []func(in *Row) Value
 	// REQ000802+: pre-allocated data buffer for output rows.
 	// Each row gets a non-overlapping sub-slice [off:off:off+dataPerRow]
 	// from this shared buffer, eliminating per-row make([]Value) allocations.
 	dataBuf    []Value
 	dataPerRow int
+	// execCtx carries per-execution state (planner, session ID,
+	// tx writer, change counters) to eval functions. REQ000812.
+	execCtx *ExecContext
 }
 
 // Child returns the project's child operator.
@@ -283,6 +286,9 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 	row, err := p.child.Next(ctx)
 	if err != nil {
 		return Row{}, err
+	}
+	if p.execCtx != nil {
+		row.execCtx = p.execCtx
 	}
 	if isStar(p.cols) {
 		return row, nil

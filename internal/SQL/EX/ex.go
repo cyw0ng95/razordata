@@ -419,6 +419,14 @@ type Executor struct {
 	txWriter   TxWriter
 	snapshotTS uint64 // REQ000255: per-statement snapshot timestamp for read-committed
 	sessionID  uint64 // REQ000385/394/411: current session ID for counter access
+	// lastChanges tracks rows modified by the most recent DML statement.
+	// Persisted across Exec/Query calls so CHANGES() reports the correct
+	// value even after intervening non-DML statements (REQ000812).
+	lastChanges int64
+	// totalChanges tracks cumulative DML row count across all statements
+	// in the session. Copied into/out of ExecContext for each Exec/Query
+	// call so TOTAL_CHANGES() is correct across statements (REQ000812).
+	totalChanges int64
 	// txnDebugger tracks MVCC/transaction statistics for EXPLAIN ANALYZE.
 	// REQ000792: MVCC debugging.
 	txnDebugger *TxnDebugger
@@ -866,12 +874,14 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 			}
 			propagateParams(op, args)
 			propagatePlanner(op, e.planner)
-			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 			propagateExecContext(op, execCtx)
 			defer op.Close()
 			if _, err := op.Next(ctx); err != nil && err != ErrNoRows {
 				return Result{}, err
 			}
+			e.lastChanges = execCtx.LastChanges
+			e.totalChanges = execCtx.TotalChanges
 			return extractResult(op)
 		}
 	}
@@ -917,12 +927,14 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	// support placeholders (e.g. INSERT ... VALUES (?,?)).
 	propagateParams(op, args)
 	propagatePlanner(op, e.planner)
-	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 	propagateExecContext(op, execCtx)
 	defer op.Close()
 	if _, err := op.Next(ctx); err != nil && err != ErrNoRows {
 		return Result{}, err
 	}
+	e.lastChanges = execCtx.LastChanges
+	e.totalChanges = execCtx.TotalChanges
 	return extractResult(op)
 }
 
@@ -978,7 +990,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 			}
 			propagateParams(plan.root, args)
 			propagatePlanner(plan.root, e.planner)
-			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 			propagateExecContext(plan.root, execCtx)
 			defer plan.root.Close()
 			row, err := plan.root.Next(ctx)
@@ -1040,7 +1052,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	// placeholders resolve during Eval.
 	propagateParams(plan.root, args)
 	propagatePlanner(plan.root, e.planner)
-	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.root, execCtx)
 	defer plan.root.Close()
 	row, err := plan.root.Next(ctx)
@@ -1069,7 +1081,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 			}
 			propagateParams(plan.root, args)
 			propagatePlanner(plan.root, e.planner)
-			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 			propagateExecContext(plan.root, execCtx)
 			defer plan.root.Close()
 			var out []Row
@@ -1112,7 +1124,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 	propagatePlanner(plan.root, e.planner)
 	// REQ000586: thread ExecContext through rows to eliminate
 	// the global currentSubqueryPlanner.
-	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.root, execCtx)
 	defer plan.root.Close()
 	var out []Row
@@ -1159,12 +1171,26 @@ func propagatePlanner(root Operator, p *Planner) {
 // propagateExecContext walks the operator tree and sets execCtx
 // on operators that evaluate expressions (Filter, Project, etc.)
 // so that subquery eval can find the planner via ExecContextFromRow.
+// Also propagates execCtx to Insert/Update/Delete for change
+// tracking (REQ000812).
 func propagateExecContext(root Operator, ec *ExecContext) {
 	if root == nil || ec == nil {
 		return
 	}
 	if f, ok := root.(*Filter); ok {
 		f.execCtx = ec
+	}
+	if p, ok := root.(*Project); ok {
+		p.execCtx = ec
+	}
+	if ins, ok := root.(*Insert); ok {
+		ins.execCtx = ec
+	}
+	if upd, ok := root.(*Update); ok {
+		upd.execCtx = ec
+	}
+	if del, ok := root.(*Delete); ok {
+		del.execCtx = ec
 	}
 	type childer interface {
 		Child() Operator
@@ -1595,7 +1621,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	propagateParams(plan.root, args)
 	propagatePlanner(plan.root, e.planner)
 	// REQ000586: thread ExecContext to eliminate global.
-	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter}
+	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.root, execCtx)
 
 	// Read first row to discover schema

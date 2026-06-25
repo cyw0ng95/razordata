@@ -7,6 +7,17 @@ type ExecContext struct {
 	Planner   *Planner
 	SessionID uint64
 	TxWriter  TxWriter
+
+	// LastChanges is the number of rows modified by the most recent
+	// INSERT/UPDATE/DELETE statement. Reset to 0 at the start of each
+	// statement and incremented as rows are written. REQ000812.
+	LastChanges int64
+	// TotalChanges is the cumulative number of rows modified by all
+	// INSERT/UPDATE/DELETE statements over the session lifetime.
+	// Initialised from the Executor's counter so it persists across
+	// per-statement ExecContext creations. REQ000812.
+	TotalChanges int64
+
 	// subqueryCache caches results of non-correlated scalar subqueries.
 	// Keyed by plan hash; value is the scalar result (any).
 	// Eliminates O(N) subquery re-evaluations for N-row result sets.

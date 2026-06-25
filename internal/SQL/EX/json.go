@@ -132,7 +132,20 @@ func jsonSet(jsonStr string, path string, value any) (string, error) {
 	return string(b), nil
 }
 
+// jsonSetMode controls the behavior of jsonSetPathImpl.
+type jsonSetMode int
+
+const (
+	jsonSetModeSet    jsonSetMode = iota // always set (JSON_SET)
+	jsonSetModeInsert                    // only if path does NOT exist (JSON_INSERT)
+	jsonSetModeReplace                   // only if path DOES exist (JSON_REPLACE)
+)
+
 func jsonSetPath(v any, parts []string, value any) error {
+	return jsonSetPathImpl(v, parts, value, jsonSetModeSet)
+}
+
+func jsonSetPathImpl(v any, parts []string, value any, mode jsonSetMode) error {
 	if len(parts) == 0 {
 		return fmt.Errorf("json_set: empty path")
 	}
@@ -142,6 +155,13 @@ func jsonSetPath(v any, parts []string, value any) error {
 	switch obj := v.(type) {
 	case map[string]any:
 		if len(rest) == 0 {
+			_, exists := obj[part]
+			if mode == jsonSetModeInsert && exists {
+				return nil
+			}
+			if mode == jsonSetModeReplace && !exists {
+				return nil
+			}
 			obj[part] = value
 			return nil
 		}
@@ -150,7 +170,7 @@ func jsonSetPath(v any, parts []string, value any) error {
 			child = make(map[string]any)
 			obj[part] = child
 		}
-		return jsonSetPath(child, rest, value)
+		return jsonSetPathImpl(child, rest, value, mode)
 	case []any:
 		idx := 0
 		if _, err := fmt.Sscanf(part, "%d", &idx); err != nil {
@@ -160,13 +180,119 @@ func jsonSetPath(v any, parts []string, value any) error {
 			return fmt.Errorf("json_set: array index out of bounds: %d", idx)
 		}
 		if len(rest) == 0 {
+			if mode == jsonSetModeInsert {
+				return nil
+			}
+			if mode == jsonSetModeReplace {
+				obj[idx] = value
+				return nil
+			}
 			obj[idx] = value
 			return nil
 		}
-		return jsonSetPath(obj[idx], rest, value)
+		return jsonSetPathImpl(obj[idx], rest, value, mode)
 	default:
 		return fmt.Errorf("json_set: cannot set path on %T", v)
 	}
+}
+
+// jsonInsert implements json_insert(json, path, value).
+func jsonInsert(jsonStr string, path string, value any) (string, error) {
+	var v any
+	if err := json.Unmarshal([]byte(jsonStr), &v); err != nil {
+		return "", fmt.Errorf("json_insert: invalid JSON: %w", err)
+	}
+	parts := strings.Split(path, ".")
+	if err := jsonSetPathImpl(v, parts, value, jsonSetModeInsert); err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// jsonReplace implements json_replace(json, path, value).
+func jsonReplace(jsonStr string, path string, value any) (string, error) {
+	var v any
+	if err := json.Unmarshal([]byte(jsonStr), &v); err != nil {
+		return "", fmt.Errorf("json_replace: invalid JSON: %w", err)
+	}
+	parts := strings.Split(path, ".")
+	if err := jsonSetPathImpl(v, parts, value, jsonSetModeReplace); err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// jsonRemoveDeep navigates to the path and removes the element.
+// Returns the (possibly new) root value so slices can be truncated.
+func jsonRemoveDeep(v any, parts []string) (any, error) {
+	if len(parts) == 0 {
+		return v, nil
+	}
+	part := parts[0]
+	rest := parts[1:]
+
+	switch obj := v.(type) {
+	case map[string]any:
+		if len(rest) == 0 {
+			delete(obj, part)
+			return v, nil
+		}
+		child, ok := obj[part]
+		if !ok {
+			return v, nil
+		}
+		newChild, err := jsonRemoveDeep(child, rest)
+		if err != nil {
+			return nil, err
+		}
+		obj[part] = newChild
+		return v, nil
+	case []any:
+		idx := 0
+		if _, err := fmt.Sscanf(part, "%d", &idx); err != nil {
+			return v, nil
+		}
+		if idx < 0 || idx >= len(obj) {
+			return v, nil
+		}
+		if len(rest) == 0 {
+			return append(obj[:idx], obj[idx+1:]...), nil
+		}
+		newChild, err := jsonRemoveDeep(obj[idx], rest)
+		if err != nil {
+			return nil, err
+		}
+		obj[idx] = newChild
+		return v, nil
+	default:
+		return v, nil
+	}
+}
+
+// jsonRemove implements json_remove(json, path).
+func jsonRemove(jsonStr string, path string) (string, error) {
+	var v any
+	if err := json.Unmarshal([]byte(jsonStr), &v); err != nil {
+		return "", fmt.Errorf("json_remove: invalid JSON: %w", err)
+	}
+	parts := strings.Split(path, ".")
+	result, err := jsonRemoveDeep(v, parts)
+	if err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(result)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // evalJSONFunc evaluates JSON functions.
@@ -255,6 +381,48 @@ func evalJSONFunc(name string, args []any) (any, error) {
 		}
 		return jsonSet(jsonStr, path, args[2])
 
+	case "JSON_INSERT":
+		if len(args) < 3 {
+			return nil, fmt.Errorf("json_insert(): requires 3 arguments")
+		}
+		jsonStr, ok := args[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("json_insert(): first argument must be a string")
+		}
+		path, ok := args[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("json_insert(): second argument must be a string")
+		}
+		return jsonInsert(jsonStr, path, args[2])
+
+	case "JSON_REPLACE":
+		if len(args) < 3 {
+			return nil, fmt.Errorf("json_replace(): requires 3 arguments")
+		}
+		jsonStr, ok := args[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("json_replace(): first argument must be a string")
+		}
+		path, ok := args[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("json_replace(): second argument must be a string")
+		}
+		return jsonReplace(jsonStr, path, args[2])
+
+	case "JSON_REMOVE":
+		if len(args) < 2 {
+			return nil, fmt.Errorf("json_remove(): requires 2 arguments")
+		}
+		jsonStr, ok := args[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("json_remove(): first argument must be a string")
+		}
+		path, ok := args[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("json_remove(): second argument must be a string")
+		}
+		return jsonRemove(jsonStr, path)
+
 	default:
 		return nil, fmt.Errorf("unknown json function: %s", name)
 	}
@@ -263,7 +431,7 @@ func evalJSONFunc(name string, args []any) (any, error) {
 // isJSONFunc returns true if the function name is a JSON function.
 func isJSONFunc(name string) bool {
 	switch strings.ToUpper(name) {
-	case "JSON_EXTRACT", "JSON_TYPE", "JSON_VALID", "JSON_ARRAY", "JSON_OBJECT", "JSON_SET":
+	case "JSON_EXTRACT", "JSON_TYPE", "JSON_VALID", "JSON_ARRAY", "JSON_OBJECT", "JSON_SET", "JSON_INSERT", "JSON_REPLACE", "JSON_REMOVE":
 		return true
 	}
 	return false

@@ -1796,9 +1796,15 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		estimatedRows := p.estimateRowCount(s.From, s.Where)
 		if estimatedRows >= HashAggregateThreshold {
 			agg := NewHashAggregate(current, groupCols, aggExprs)
+			if isStarExpr(s.Cols) {
+				agg.SetExpandStar()
+			}
 			current = agg
 		} else {
 			agg := NewAggregate(current, groupCols, aggExprs)
+			if isStarExpr(s.Cols) {
+				agg.SetExpandStar()
+			}
 			current = agg
 		}
 	}

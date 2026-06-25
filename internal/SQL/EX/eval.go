@@ -1117,11 +1117,11 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
 	case "UNLIKELY":
 		return valueFromAnyWrap(evalUnlikely(e.Args, row, params))
 	case "CHANGES":
-		acc := getSessionCounterAccessor()
-		if acc == nil {
+		ec := ExecContextFromRow(row)
+		if ec == nil {
 			return NewIntValue(0), nil
 		}
-		return NewIntValue(acc.ChangesCount(getCurrentSessionID())), nil
+		return NewIntValue(ec.LastChanges), nil
 	case "LAST_INSERT_ROWID":
 		acc := getSessionCounterAccessor()
 		if acc == nil {
@@ -1129,11 +1129,11 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
 		}
 		return NewIntValue(acc.LastInsertRowID(getCurrentSessionID())), nil
 	case "TOTAL_CHANGES":
-		acc := getSessionCounterAccessor()
-		if acc == nil {
+		ec := ExecContextFromRow(row)
+		if ec == nil {
 			return NewIntValue(0), nil
 		}
-		return NewIntValue(acc.TotalChangesCount(getCurrentSessionID())), nil
+		return NewIntValue(ec.TotalChanges), nil
 	default:
 		if isDateTimeFunc(e.Name) {
 			args := make([]any, len(e.Args))

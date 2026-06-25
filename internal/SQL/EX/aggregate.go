@@ -16,17 +16,23 @@ import (
 )
 
 type Aggregate struct {
-	child     Operator
-	groupCols []PS.Expr
-	aggs      []PS.Expr
-	buf       []Row
-	pos       int
-	params    []any
+	child      Operator
+	groupCols  []PS.Expr
+	aggs       []PS.Expr
+	buf        []Row
+	pos        int
+	params     []any
+	expandStar bool
 }
 
 func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
 	return &Aggregate{child: child, groupCols: groupCols, aggs: aggs}
 }
+
+// SetExpandStar enables full-row output for SELECT * with GROUP BY.
+// Non-GROUP BY and non-aggregate columns take their value from the
+// first row in each group.
+func (a *Aggregate) SetExpandStar() { a.expandStar = true }
 
 // WithParams propagates the bound `?` placeholders to this
 // operator and its child (R16-1..2).
@@ -105,11 +111,31 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 		return keysLessCmp(a.key, b.key)
 	})
 	for _, g := range groups {
-		out := Row{Cols: make([]string, 0, len(a.groupCols)+len(a.aggs))}
-		for i, gc := range a.groupCols {
-			name := groupColName(gc)
-			out.Cols = append(out.Cols, name)
-			out.Data = append(out.Data, valueFromAny(g.key[i]))
+		var out Row
+		if a.expandStar && len(g.rows) > 0 {
+			firstRow := g.rows[0]
+			out = Row{
+				Cols: make([]string, len(firstRow.Cols), len(firstRow.Cols)+len(a.aggs)),
+				Data: make([]Value, len(firstRow.Data), len(firstRow.Data)+len(a.aggs)),
+			}
+			copy(out.Cols, firstRow.Cols)
+			copy(out.Data, firstRow.Data)
+			for i, gc := range a.groupCols {
+				name := groupColName(gc)
+				for j, c := range out.Cols {
+					if c == name {
+						out.Data[j] = valueFromAny(g.key[i])
+						break
+					}
+				}
+			}
+		} else {
+			out = Row{Cols: make([]string, 0, len(a.groupCols)+len(a.aggs))}
+			for i, gc := range a.groupCols {
+				name := groupColName(gc)
+				out.Cols = append(out.Cols, name)
+				out.Data = append(out.Data, valueFromAny(g.key[i]))
+			}
 		}
 		for _, ag := range a.aggs {
 			v, err := evalAggregateOver(ag, g.rows, a.params)

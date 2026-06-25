@@ -12,20 +12,24 @@ import (
 )
 
 type HashAggregate struct {
-	child     Operator
-	groupCols []PS.Expr
-	aggs      []PS.Expr
-	keys      [][]any
-	buckets   map[string][]Row
-	order     []string
-	buf       []Row
-	pos       int
-	params    []any
+	child      Operator
+	groupCols  []PS.Expr
+	aggs       []PS.Expr
+	keys       [][]any
+	buckets    map[string][]Row
+	order      []string
+	buf        []Row
+	pos        int
+	params     []any
+	expandStar bool
 }
 
 func NewHashAggregate(child Operator, groupCols, aggs []PS.Expr) *HashAggregate {
 	return &HashAggregate{child: child, groupCols: groupCols, aggs: aggs, buckets: make(map[string][]Row)}
 }
+
+// SetExpandStar enables full-row output for SELECT * with GROUP BY.
+func (a *HashAggregate) SetExpandStar() { a.expandStar = true }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
 func (a *HashAggregate) WithParams(p []any) Operator {
@@ -88,15 +92,37 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 		return keysLessByDistinctCmp(ai, aj, a.groupCols)
 	})
 	for _, ks := range a.order {
-		key := a.buckets[ks][0]
-		keyVals, _ := evalGroupKey(a.groupCols, &key, a.params)
-		out := Row{}
-		for i, gc := range a.groupCols {
-			out.Cols = append(out.Cols, groupColName(gc))
-			out.Data = append(out.Data, valueFromAny(keyVals[i]))
+		rows := a.buckets[ks]
+		var out Row
+		if a.expandStar {
+			firstRow := rows[0]
+			out = Row{
+				Cols: make([]string, len(firstRow.Cols), len(firstRow.Cols)+len(a.aggs)),
+				Data: make([]Value, len(firstRow.Data), len(firstRow.Data)+len(a.aggs)),
+			}
+			copy(out.Cols, firstRow.Cols)
+			copy(out.Data, firstRow.Data)
+			keyVals, _ := evalGroupKey(a.groupCols, &firstRow, a.params)
+			for i, gc := range a.groupCols {
+				name := groupColName(gc)
+				for j, c := range out.Cols {
+					if c == name {
+						out.Data[j] = valueFromAny(keyVals[i])
+						break
+					}
+				}
+			}
+		} else {
+			key := rows[0]
+			keyVals, _ := evalGroupKey(a.groupCols, &key, a.params)
+			out = Row{}
+			for i, gc := range a.groupCols {
+				out.Cols = append(out.Cols, groupColName(gc))
+				out.Data = append(out.Data, valueFromAny(keyVals[i]))
+			}
 		}
 		for _, ag := range a.aggs {
-			v, err := evalAggregateOver(ag, a.buckets[ks], a.params)
+			v, err := evalAggregateOver(ag, rows, a.params)
 			if err != nil {
 				return err
 			}
