@@ -2850,6 +2850,17 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 			best = pp
 		}
 	}
+	// REQ000914: guard against empty order slice — some code paths
+	// (e.g. self-joins with aliases) can produce a non-empty heap
+	// entry with a zero-length order. Fall back to raw joinTables order.
+	if len(best.order) == 0 {
+		order := make([]string, 0, 1+len(joinTables))
+		order = append(order, baseTable)
+		for _, jt := range joinTables {
+			order = append(order, jt.name)
+		}
+		return order
+	}
 	return best.order
 }
 

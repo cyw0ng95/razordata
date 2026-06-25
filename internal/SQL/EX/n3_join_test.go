@@ -102,6 +102,54 @@ func TestEstimateJoinPredicateSelectivity(t *testing.T) {
 	// Nil predicate.
 	sel := estimateJoinPredicateSelectivity(nil)
 	if sel != 1.0 {
-		t.Fatalf("expected 1.0 for nil, got %v", sel)
+		t.Fatalf("expected 1.0, got %v", sel)
+	}
+}
+
+// REQ000914: Empty order fallback — when heap entries have zero-length
+// order slices, n3JoinOrdering must not panic and must fall back to raw order.
+func TestN3JoinOrdering_EmptyOrderFallback(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t2", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t3", []ColInfo{{Name: "a", Typ: 1}}, "a")
+
+	// Simulate a self-join scenario with same table aliases.
+	joinTables := []joinTableInfo{
+		{name: "t2"},
+		{name: "t3"},
+	}
+	order := p.n3JoinOrdering("t1", joinTables, nil, nil)
+	if len(order) == 0 {
+		t.Fatalf("expected non-empty order, got %v", order)
+	}
+	// Must contain all three tables.
+	seen := map[string]bool{}
+	for _, name := range order {
+		seen[name] = true
+	}
+	for _, expected := range []string{"t1", "t2", "t3"} {
+		if !seen[expected] {
+			t.Fatalf("expected table %s in order %v", expected, order)
+		}
+	}
+}
+
+// REQ000914: 3-way self-join must not panic.
+func TestN3JoinOrdering_SelfJoinNoPanic(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("tab0", []ColInfo{
+		{Name: "pk", Typ: 1},
+		{Name: "col0", Typ: 1},
+	}, "pk")
+
+	joinTables := []joinTableInfo{
+		{name: "tab0"},
+		{name: "tab0"},
+	}
+	// Must not panic.
+	order := p.n3JoinOrdering("tab0", joinTables, nil, nil)
+	if len(order) != 3 {
+		t.Fatalf("expected 3 tables in order, got %d: %v", len(order), order)
 	}
 }
