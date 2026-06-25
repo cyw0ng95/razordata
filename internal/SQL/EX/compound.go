@@ -37,6 +37,12 @@ type CompoundOp struct {
 	// no post-processing. Avoids materializing the full result set
 	// into a []Row at every level of the binary tree.
 	streamSide streamSide
+	// REQ000842: streaming state for EXCEPT/INTERSECT. Right side
+	// is fully drained first to build a distinct-key hash set.
+	// Left side is then streamed and probed against the set.
+	rightKeys    map[string]bool
+	emittedKeys  map[string]bool
+	rightDrained bool
 	// Re-exported from PS for convenience.
 	_ bool // alignment placeholder
 }
@@ -168,15 +174,17 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 	return r, nil
 }
 
-// canStream reports whether c can use the streaming path (REQ000838):
-// UNION ALL with no ORDER BY, no LIMIT, no OFFSET. Only in this
-// case is it semantically equivalent to interleave child rows
-// without materialization.
+// canStream reports whether c can use the streaming path (REQ000838/842):
+// UNION ALL, EXCEPT, or INTERSECT with no ORDER BY, LIMIT, or OFFSET.
+// UNION ALL streams both children. EXCEPT/INTERSECT drain the right
+// side first (to build a hash set), then stream the left side.
 func (c *CompoundOp) canStream() bool {
-	return c.op == PS.CompoundUnionAll &&
-		len(c.orderBy) == 0 &&
-		c.limit == nil &&
-		c.offset == nil
+	if len(c.orderBy) > 0 || c.limit != nil || c.offset != nil {
+		return false
+	}
+	return c.op == PS.CompoundUnionAll ||
+		c.op == PS.CompoundExcept ||
+		c.op == PS.CompoundIntersect
 }
 
 // streamSide tracks which child is currently being drained in the
@@ -189,14 +197,20 @@ const (
 	streamDone
 )
 
-// nextStreaming implements the REQ000838 streaming fast path: pull
-// from left.Next() until ErrNoRows, then from right.Next() until
-// ErrNoRows. No allocation per row beyond what the child operators
-// already do. This eliminates the O(N * depth) intermediate slice
-// traffic in long UNION ALL chains (e.g., select4's 8-branch
-// UNION/UNION ALL/EXCEPT queries where the UN*ALL segments are
-// nested several levels deep).
+// nextStreaming implements the streaming fast paths:
+// - UNION ALL (REQ000838): pull left then right, no intermediate buffer.
+// - EXCEPT/INTERSECT (REQ000842): drain right first (hash set), then stream
+//   left and probe against rightKeys. Left-side rows are deduplicated via
+//   emittedKeys tracking. This cuts peak memory by avoiding left-side
+//   materialization for deep EXCEPT/INTERSECT chains.
 func (c *CompoundOp) nextStreaming(ctx context.Context) (Row, error) {
+	if c.op == PS.CompoundUnionAll {
+		return c.nextStreamingUnionAll(ctx)
+	}
+	return c.nextStreamingSetOp(ctx)
+}
+
+func (c *CompoundOp) nextStreamingUnionAll(ctx context.Context) (Row, error) {
 	if c.streamSide == streamDone {
 		return Row{}, ErrNoRows
 	}
@@ -212,11 +226,9 @@ func (c *CompoundOp) nextStreaming(ctx context.Context) (Row, error) {
 			if err != ErrNoRows {
 				return Row{}, err
 			}
-			// Left exhausted; switch to right.
 			c.streamSide = streamRight
 			continue
 		}
-		// streamRight
 		r, err := c.right.Next(ctx)
 		if err == nil {
 			return r, nil
@@ -226,6 +238,50 @@ func (c *CompoundOp) nextStreaming(ctx context.Context) (Row, error) {
 		}
 		c.streamSide = streamDone
 		return Row{}, ErrNoRows
+	}
+}
+
+func (c *CompoundOp) nextStreamingSetOp(ctx context.Context) (Row, error) {
+	if !c.rightDrained {
+		rightRows, err := drainAll(ctx, c.right)
+		if err != nil {
+			return Row{}, err
+		}
+		c.rightKeys = make(map[string]bool, len(rightRows))
+		for _, r := range rightRows {
+			c.rightKeys[distinctKey(r)] = true
+		}
+		c.emittedKeys = make(map[string]bool)
+		c.rightDrained = true
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return Row{}, err
+		}
+		r, err := c.left.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				return Row{}, ErrNoRows
+			}
+			return Row{}, err
+		}
+		k := distinctKey(r)
+		inRight := c.rightKeys[k]
+		if c.op == PS.CompoundExcept {
+			if inRight {
+				continue
+			}
+		} else {
+			if !inRight {
+				continue
+			}
+		}
+		if c.emittedKeys[k] {
+			continue
+		}
+		c.emittedKeys[k] = true
+		return r, nil
 	}
 }
 
