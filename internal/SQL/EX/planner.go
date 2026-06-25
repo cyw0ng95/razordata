@@ -85,6 +85,106 @@ func cloneExpr(e PS.Expr) PS.Expr {
 	}
 }
 
+// REQ000858: buildSelectAliasMap extracts column aliases from the SELECT list.
+// For `SELECT v AS value`, it maps "value" → &PS.QualifiedName{Table: "", Name: "v"}.
+func buildSelectAliasMap(cols []PS.Expr) map[string]PS.Expr {
+	if len(cols) == 0 {
+		return nil
+	}
+	m := make(map[string]PS.Expr)
+	for _, c := range cols {
+		if ae, ok := c.(*PS.AliasedExpr); ok && ae.Alias != "" {
+			m[ae.Alias] = cloneExpr(ae.Expr)
+		}
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+// REQ000858: resolveAliases walks expr and replaces any Ident matching
+// an alias in the map with the aliased expression. Returns a new
+// expression tree (deep copy); the original is not mutated.
+func resolveAliases(expr PS.Expr, aliases map[string]PS.Expr) PS.Expr {
+	if expr == nil || aliases == nil {
+		return expr
+	}
+	switch e := expr.(type) {
+	case *PS.Ident:
+		if replacement, ok := aliases[e.Name]; ok {
+			return cloneExpr(replacement)
+		}
+		return e
+	case *PS.QualifiedName:
+		return e
+	case *PS.BinaryExpr:
+		return &PS.BinaryExpr{
+			Left:  resolveAliases(e.Left, aliases),
+			Op:    e.Op,
+			Right: resolveAliases(e.Right, aliases),
+		}
+	case *PS.UnaryExpr:
+		return &PS.UnaryExpr{
+			Op:      e.Op,
+			Operand: resolveAliases(e.Operand, aliases),
+		}
+	case *PS.BetweenExpr:
+		return &PS.BetweenExpr{
+			Expr: resolveAliases(e.Expr, aliases),
+			Low:  resolveAliases(e.Low, aliases),
+			High: resolveAliases(e.High, aliases),
+		}
+	case *PS.InExpr:
+		list := make([]PS.Expr, len(e.List))
+		for i, item := range e.List {
+			list[i] = resolveAliases(item, aliases)
+		}
+		return &PS.InExpr{
+			Expr:     resolveAliases(e.Expr, aliases),
+			List:     list,
+			Subquery: e.Subquery,
+		}
+	case *PS.CaseExpr:
+		whenList := make([]PS.WhenClause, len(e.WhenList))
+		for i, w := range e.WhenList {
+			whenList[i] = PS.WhenClause{
+				Cond: resolveAliases(w.Cond, aliases),
+				Then: resolveAliases(w.Then, aliases),
+			}
+		}
+		var elseExpr PS.Expr
+		if e.Else != nil {
+			elseExpr = resolveAliases(e.Else, aliases)
+		}
+		return &PS.CaseExpr{
+			Expr:     resolveAliases(e.Expr, aliases),
+			WhenList: whenList,
+			Else:     elseExpr,
+		}
+	case *PS.AggregateFunc:
+		return &PS.AggregateFunc{
+			Name:      e.Name,
+			Arg:       resolveAliases(e.Arg, aliases),
+			Distinct:  e.Distinct,
+			Separator: resolveAliases(e.Separator, aliases),
+		}
+	case *PS.FunctionCall:
+		args := make([]PS.Expr, len(e.Args))
+		for i, a := range e.Args {
+			args[i] = resolveAliases(a, aliases)
+		}
+		return &PS.FunctionCall{
+			Name: e.Name,
+			Args: args,
+		}
+	case *PS.NullLiteral, *PS.NumberLiteral, *PS.FloatLiteral, *PS.StringLiteral, *PS.BoolLiteral, *PS.Param:
+		return e
+	default:
+		return e
+	}
+}
+
 type plan struct {
 	root    Operator
 	cost    float64
@@ -1370,6 +1470,15 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		return scan
 	}
 
+	// REQ000858: resolve column aliases in WHERE before creating filters.
+	// SQLite allows SELECT aliases to be referenced in WHERE (e.g.
+	// `SELECT v AS value FROM t WHERE value > 15`). Build an alias map
+	// from the SELECT list and rewrite the WHERE expression.
+	whereExpr := s.Where
+	if aliasMap := buildSelectAliasMap(s.Cols); aliasMap != nil && s.Where != nil {
+		whereExpr = resolveAliases(s.Where, aliasMap)
+	}
+
 	var scan Operator
 	if p.store != nil {
 		// Try IndexScan first when the WHERE references an indexed column.
@@ -1377,14 +1486,14 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		// prefix-scan fallback when the predicate is an equality on
 		// the indexed column AND the index is registered for writer
 		// maintenance (i.e. the index keyspace is populated).
-		if s.Where != nil {
-			if col, val, ok := indexedColumnEq(s.Where); ok {
+		if whereExpr != nil {
+			if col, val, ok := indexedColumnEq(whereExpr); ok {
 				idx, found := p.selectIndex(s.From, col)
 				if found && hasWriterIndex(s.From, idx) {
 					tableID, _ := tableIDFor(s.From)
 					if isc, err := NewIndexScanWithIndex(p.store, tableID, s.From, idx, val, nil); err == nil {
-						if s.Where != nil {
-							scan = NewFilter(isc, s.Where)
+						if whereExpr != nil {
+							scan = NewFilter(isc, whereExpr)
 						} else {
 							scan = isc
 						}
@@ -1396,26 +1505,26 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			// prefix-scan fallback that the planner used before
 			// for `col > X`, `col BETWEEN X AND Y`, etc.
 			if scan == nil {
-				if col, lo, loIncl, up, upIncl, ok := indexedColumnRange(s.Where); ok {
+				if col, lo, loIncl, up, upIncl, ok := indexedColumnRange(whereExpr); ok {
 					idx, found := p.selectIndex(s.From, col)
 					if found && hasWriterIndex(s.From, idx) {
 						tableID, _ := tableIDFor(s.From)
 						if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
 							scan = isc
-							if s.Where != nil {
-								scan = NewFilter(scan, s.Where)
+							if whereExpr != nil {
+								scan = NewFilter(scan, whereExpr)
 							}
 						}
 					}
 				}
 			}
 			if scan == nil {
-				if col, ok := indexedColumn(s.Where); ok {
+				if col, ok := indexedColumn(whereExpr); ok {
 					if idx, found := p.selectIndex(s.From, col); found {
 						if isc, err := NewIndexScanWithStore(p.store, s.From, idx); err == nil {
 							scan = isc
-							if s.Where != nil {
-								scan = NewFilter(scan, s.Where)
+							if whereExpr != nil {
+								scan = NewFilter(scan, whereExpr)
 							}
 						}
 					}
@@ -1429,14 +1538,14 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		}
 	}
 	if scan == nil {
-		scan = NewIndexOrSeqScan(s.From, s.Where, p)
+		scan = NewIndexOrSeqScan(s.From, whereExpr, p)
 	}
 
 	// REQ000156 (iter-27): cost-based scan selection. If the
 	// planner produced a SeqScan but an IndexScan on the
 	// predicate column would be cheaper, swap the scan.
-	if s.Where != nil && s.From != "" {
-		if alt, ok := p.pickCheaperScan(s.From, s.Where, scan); ok && alt != nil {
+	if whereExpr != nil && s.From != "" {
+		if alt, ok := p.pickCheaperScan(s.From, whereExpr, scan); ok && alt != nil {
 			scan = alt
 		}
 	}
@@ -1457,8 +1566,8 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	// joins. This reduces intermediate row counts for cross joins.
 	var pushedPredicates map[string][]PS.Expr
 	var crossTablePredicates []PS.Expr
-	if s.Where != nil && (len(s.Joins) > 0 || s.From != "") {
-		conjuncts := RE.SplitAnd(s.Where)
+	if whereExpr != nil && (len(s.Joins) > 0 || s.From != "") {
+		conjuncts := RE.SplitAnd(whereExpr)
 		allTables := []string{s.From}
 		for _, j := range s.Joins {
 			allTables = append(allTables, j.Right)
@@ -1481,8 +1590,8 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	// REQ000XXX: For multi-table implicit JOINs, extract equi-join
 	// conditions from WHERE and use HashJoin instead of NestedLoopJoin.
 	var crossTableConjuncts []PS.Expr
-	if s.Where != nil && len(s.Joins) > 0 {
-		crossTableConjuncts = RE.SplitAnd(s.Where)
+	if whereExpr != nil && len(s.Joins) > 0 {
+		crossTableConjuncts = RE.SplitAnd(whereExpr)
 	}
 
 	// REQ000799: Join elimination — remove tables from the join
@@ -1525,8 +1634,8 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 
 		// Determine predicates for cost estimation.
 		costPredicates := crossTablePredicates
-		if costPredicates == nil && s.Where != nil {
-			costPredicates = RE.SplitAnd(s.Where)
+		if costPredicates == nil && whereExpr != nil {
+			costPredicates = RE.SplitAnd(whereExpr)
 		}
 
 		// Run N3 to find the best join order.
@@ -1760,7 +1869,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		}
 	}
 
-	if s.Where != nil {
+	if whereExpr != nil {
 		// REQ000368: apply the WHERE on top of the (possibly
 		// joined) operator, not on the bare scan. The previous
 		// code used `NewFilter(scan, ...)` which discarded any
@@ -1781,7 +1890,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			}
 		} else if pushedPredicates == nil {
 			// No predicate pushdown — apply full WHERE as before.
-			conjuncts := RE.SplitAnd(s.Where)
+			conjuncts := RE.SplitAnd(whereExpr)
 			current = NewFilter(current, conjuncts[0])
 			for _, c := range conjuncts[1:] {
 				current = NewFilter(current, c)
@@ -1803,7 +1912,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		// datasets, HashAggregate is preferred (better group-by
 		// locality); for small datasets, streaming Aggregate
 		// avoids the upfront materialization cost.
-		estimatedRows := p.estimateRowCount(s.From, s.Where)
+		estimatedRows := p.estimateRowCount(s.From, whereExpr)
 		if estimatedRows >= HashAggregateThreshold {
 			agg := NewHashAggregate(current, groupCols, aggExprs)
 			if isStarExpr(s.Cols) {
