@@ -100,6 +100,13 @@ blockMode    bool
 	blkDataBuf        []Value
 	blkDataPerRow     int
 	blkDataOffset     int
+	// REQ000863: pre-computed prefixed column lists. Computed once
+	// on first nextBlock/Next call and reused across all batches,
+	// eliminating the per-row/ per-batch hasAnyPrefix + prefixCols
+	// overhead. For a 5-table cross (3125 batches), this avoids
+	// 6250 calls to prefixCols (5 allocs each = 31250 saved allocs).
+	leftPrefixedCols  []string
+	rightPrefixedCols []string
 }
 
 // WithProjection sets the projected columns for the join output.
@@ -603,6 +610,21 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 
 	// Fill left batch (up to batchSize rows).
 	j.blkLeftBatch = j.blkLeftBatch[:0]
+	// REQ000863: compute left prefixed columns once per operator
+	// lifetime. All rows from the same SeqScan share the same Cols.
+	if j.leftPrefixedCols == nil {
+		if firstRow, err := j.left.Next(ctx); err == nil {
+			if !hasAnyPrefix(firstRow.Cols) {
+				j.leftPrefixedCols = prefixCols(firstRow.Cols, j.leftTbl)
+			} else {
+				j.leftPrefixedCols = append([]string(nil), firstRow.Cols...)
+			}
+			prefixed := Row{Types: firstRow.Types, Data: firstRow.Data, Outer: firstRow.Outer}
+			prefixed.tableName = firstRow.tableName
+			prefixed.Cols = j.leftPrefixedCols
+			j.blkLeftBatch = append(j.blkLeftBatch, prefixed)
+		}
+	}
 	for len(j.blkLeftBatch) < batchSize {
 		row, err := j.left.Next(ctx)
 		if err != nil {
@@ -613,11 +635,7 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 		}
 		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
 		prefixed.tableName = row.tableName
-		if !hasAnyPrefix(row.Cols) {
-			prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
-		} else {
-			prefixed.Cols = append([]string(nil), row.Cols...)
-		}
+		prefixed.Cols = j.leftPrefixedCols
 		j.blkLeftBatch = append(j.blkLeftBatch, prefixed)
 	}
 	if len(j.blkLeftBatch) == 0 {
@@ -629,6 +647,17 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 	// Materialize right side (Close + re-scan once per batch).
 	_ = j.right.Close()
 	j.blkRightRows = j.blkRightRows[:0]
+	// REQ000863: compute right prefixed columns once. All rows from
+	// the same scan share the same Cols, so prefixCols is identical.
+	if j.rightPrefixedCols == nil {
+		if firstRow, err := j.right.Next(ctx); err == nil {
+			j.rightPrefixedCols = prefixCols(firstRow.Cols, j.rightTbl)
+			inner := Row{Types: firstRow.Types, Data: firstRow.Data, Outer: firstRow.Outer}
+			inner.tableName = firstRow.tableName
+			inner.Cols = j.rightPrefixedCols
+			j.blkRightRows = append(j.blkRightRows, inner)
+		}
+	}
 	for {
 		row, err := j.right.Next(ctx)
 		if err != nil {
@@ -639,7 +668,7 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 		}
 		inner := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
 		inner.tableName = row.tableName
-		inner.Cols = prefixCols(row.Cols, j.rightTbl)
+		inner.Cols = j.rightPrefixedCols
 		j.blkRightRows = append(j.blkRightRows, inner)
 	}
 

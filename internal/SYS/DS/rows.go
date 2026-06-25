@@ -19,6 +19,9 @@ type Rows struct {
 }
 
 // newRows drains an AP.Rows into a fully materialized slice.
+// REQ000862: deep-copy each row's Data because the streaming
+// iterator reuses an internal buffer (stream.BoxRow). Without the
+// copy, all stored rows would share the same backing array.
 func newRows(apRows *AP.Rows) *Rows {
 	r := &Rows{columns: apRows.Cols()}
 	if apRows == nil {
@@ -28,6 +31,13 @@ func newRows(apRows *AP.Rows) *Rows {
 		row, err := apRows.Next()
 		if err != nil {
 			break
+		}
+		// Deep-copy Data so the backing array is independent
+		// of the streaming iterator's internal buffer.
+		if row.Data != nil {
+			data := make([]any, len(row.Data))
+			copy(data, row.Data)
+			row.Data = data
 		}
 		r.data = append(r.data, row)
 	}

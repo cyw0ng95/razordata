@@ -154,7 +154,8 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 			}
 			return AP.Row{}, wrapEXError(err)
 		}
-		return AP.Row{Cols: row.Cols, Types: row.Types, Data: EX.ValueSliceToAny(row.Data)}, nil
+		// REQ000862: reuse stream's internal buffer to avoid per-row []any allocation.
+		return AP.Row{Cols: row.Cols, Types: row.Types, Data: stream.BoxRow(row)}, nil
 	}
 	return AP.NewRows(stream.Cols(), stream.Types(), next, func() error { return stream.Close() }), nil
 }

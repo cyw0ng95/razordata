@@ -1696,6 +1696,10 @@ type streamIterator struct {
 	closer func() error
 	done   bool
 	mu     sync.Mutex
+	// REQ000862: reusable buffer for converting []Value to []any.
+	// Avoids the per-row make([]any, N) allocation that was 53% of
+	// the join pipeline memory profile on j5_cross.
+	boxBuf []any
 }
 
 func (s *streamIterator) Cols() []string { return s.cols }
@@ -1710,6 +1714,24 @@ func (s *streamIterator) Next() (Row, error) {
 		return Row{}, ErrNoRows
 	}
 	return r, nil
+}
+
+// BoxRow converts row.Data ([]Value) to []any, reusing an internal
+// buffer so the caller does not allocate a fresh []any on every row.
+// The returned slice is valid until the next call to BoxRow or Next
+// on the same streamIterator — the caller must copy or scan the
+// values before the next invocation. REQ000862.
+func (s *streamIterator) BoxRow(row Row) []any {
+	n := len(row.Data)
+	if cap(s.boxBuf) < n {
+		s.boxBuf = make([]any, n)
+	} else {
+		s.boxBuf = s.boxBuf[:n]
+	}
+	for i, v := range row.Data {
+		s.boxBuf[i] = v.ToAny()
+	}
+	return s.boxBuf
 }
 func (s *streamIterator) Close() error {
 	if s == nil {

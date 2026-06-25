@@ -141,7 +141,7 @@ func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 	if err != nil {
 		return nil, err
 	}
-	next := func() (AP.Row, error) {
+		next := func() (AP.Row, error) {
 		row, err := stream.Next()
 		if err != nil {
 			if err == executor.ErrNoRows {
@@ -149,7 +149,8 @@ func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 			}
 			return AP.Row{}, err
 		}
-		return AP.Row{Cols: row.Cols, Types: row.Types, Data: executor.ValueSliceToAny(row.Data)}, nil
+		// REQ000862: reuse stream's internal buffer to avoid per-row []any allocation.
+		return AP.Row{Cols: row.Cols, Types: row.Types, Data: stream.BoxRow(row)}, nil
 	}
 	return AP.NewRows(stream.Cols(), stream.Types(), next, func() error { return stream.Close() }), nil
 }
