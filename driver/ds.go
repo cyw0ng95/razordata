@@ -136,12 +136,14 @@ func RegisterEngine(dsn string, eng *v1.Engine) {
 }
 
 // toDriverValue converts a value to database/sql driver.Value.
-// Accepts both AP.Value (typed, fast path) and any (backward compat).
+// REQ000867: fast path for AP.Value (Kind switch, no boxing).
+// Slow path for raw any from driver.Value or legacy callers.
 func toDriverValue(v any) driver.Value {
 	if v == nil {
 		return nil
 	}
-	// Fast path: AP.Value — switch on Kind, no boxing needed.
+	// REQ000867: AP.Value fast path — switch on Kind constant,
+	// no pointer indirection, no runtime type lookup.
 	if av, ok := v.(AP.Value); ok {
 		switch av.Kind {
 		case AP.KindNull:
@@ -163,7 +165,7 @@ func toDriverValue(v any) driver.Value {
 			return nil
 		}
 	}
-	// Slow path: raw any from driver.Value or legacy callers.
+	// Slow path: raw any from driver.Value (stmt.go params).
 	switch x := v.(type) {
 	case int64:
 		return x

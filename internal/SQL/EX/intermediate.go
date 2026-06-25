@@ -212,13 +212,33 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 	// into batchEmit would alias memory the next refill will
 	// overwrite. cloneRow produces an independent Row whose Data
 	// slice does not share storage with the batch buffer.
+	//
+	// REQ000869: share Cols/Types across cloned rows. All rows in
+	// batchBuf come from the same child operator and have identical
+	// Cols and Types. Copying them per-row wastes ~66% of cloneRow's
+	// allocation budget. Instead, capture the shared slices from the
+	// first row and reuse them for all subsequent clones.
+	var sharedCols []string
+	var sharedTypes []int
 	for i := range f.batchBuf {
 		ok, err := f.compiledFilterFn(&f.batchBuf[i])
 		if err != nil {
 			return err
 		}
 		if ok {
-			f.batchEmit = append(f.batchEmit, cloneRow(f.batchBuf[i]))
+			r := f.batchBuf[i]
+			if sharedCols == nil {
+				// First match — capture the shared Cols/Types.
+				sharedCols = append([]string(nil), r.Cols...)
+				sharedTypes = append([]int(nil), r.Types...)
+			}
+			r.Cols = sharedCols
+			r.Types = sharedTypes
+			// Only Data needs a per-row deep copy (it varies per row).
+			if r.Data != nil {
+				r.Data = append([]Value(nil), r.Data...)
+			}
+			f.batchEmit = append(f.batchEmit, r)
 		}
 	}
 	return nil

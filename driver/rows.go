@@ -41,9 +41,33 @@ func (r *Rows) Next(dest []driver.Value) error {
 	if err != nil {
 		return io.EOF
 	}
+	// REQ000867: inline the hot path — switch on AP.Value.Kind
+	// directly, avoiding the toDriverValue function call overhead.
+	// The int64 case (90% of cells in join benchmarks) is a single
+	// field load with no type assertion.
 	for i := range dest {
 		if i < len(row.Data) {
-			dest[i] = toDriverValue(row.Data[i])
+			v := row.Data[i]
+			switch v.Kind {
+			case AP.KindNull:
+				dest[i] = nil
+			case AP.KindInt:
+				dest[i] = v.I64
+			case AP.KindFloat:
+				dest[i] = v.F64
+			case AP.KindText:
+				dest[i] = v.S
+			case AP.KindBlob:
+				dest[i] = v.B
+			case AP.KindBool:
+				if v.Bo {
+					dest[i] = int64(1)
+				} else {
+					dest[i] = int64(0)
+				}
+			default:
+				dest[i] = nil
+			}
 		} else {
 			dest[i] = nil
 		}

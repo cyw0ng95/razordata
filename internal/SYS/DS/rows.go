@@ -69,9 +69,30 @@ func (r *Rows) Next(dest []driver.Value) error {
 	}
 	row := r.data[r.pos]
 	r.pos++
+	// REQ000867: inline Kind switch — avoids toDriverValue call overhead.
 	for i := range dest {
 		if i < len(row.Data) {
-			dest[i] = toDriverValue(row.Data[i])
+			v := row.Data[i]
+			switch v.Kind {
+			case AP.KindNull:
+				dest[i] = nil
+			case AP.KindInt:
+				dest[i] = v.I64
+			case AP.KindFloat:
+				dest[i] = v.F64
+			case AP.KindText:
+				dest[i] = v.S
+			case AP.KindBlob:
+				dest[i] = v.B
+			case AP.KindBool:
+				if v.Bo {
+					dest[i] = int64(1)
+				} else {
+					dest[i] = int64(0)
+				}
+			default:
+				dest[i] = nil
+			}
 		} else {
 			dest[i] = nil
 		}
