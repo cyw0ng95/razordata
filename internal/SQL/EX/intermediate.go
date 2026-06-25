@@ -41,6 +41,10 @@ func isNullValue(v any) bool {
 	return false
 }
 
+// isNullValueValue is a Value-typed variant that avoids interface boxing.
+// REQ000871: used in hot paths where v is known to be Value.
+func isNullValueValue(v Value) bool { return v.IsNull() }
+
 type Filter struct {
 	child     Operator
 	predicate PS.Expr
@@ -836,7 +840,7 @@ func makeCompiledCmp(colName string, litVal any, cmp func(a, b Value) bool) func
 		// Without this guard, compare() returns a non-zero ordering for
 		// NULL values, causing the comparison to incorrectly evaluate
 		// as true/false instead of NULL (filtered out by Filter).
-		if isNullValue(row.Data[idx]) || isNullValue(litValue) {
+		if isNullValueValue(row.Data[idx]) || isNullValueValue(litValue) {
 			return false, nil
 		}
 		// Direct Value comparison — no boxing.
