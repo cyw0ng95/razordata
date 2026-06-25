@@ -701,6 +701,14 @@ func (j *NestedLoopJoin) Close() error {
 // skip per-row buildColIndex (REQ000816).
 func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 	const batchSize = 32
+	// REQ000847: early exit — if limit is already satisfied, skip
+	// all batch setup (fill left, materialize right, build shared
+	// cols). Without this, LIMIT 10 over a 5-table cross still
+	// pays the full batch-setup cost on every Next() call after
+	// the limit is reached.
+	if j.limitRemaining > 0 && j.totalEmitted >= j.limitRemaining {
+		return Row{}, ErrNoRows
+	}
 	// Drain result buffer.
 	if j.blkResultPos < len(j.blkResultBuf) {
 		r := j.blkResultBuf[j.blkResultPos]

@@ -340,6 +340,34 @@ func buildAggregateVirtualRow(e PS.Expr, rows []Row, params []any) (Row, error) 
 			return collect(v.Expr)
 		case *PS.CastExpr:
 			return collect(v.Expr)
+		case *PS.FunctionCall:
+			// REQ000832: scalar functions wrapping aggregates (e.g.
+			// COALESCE(NULL, MIN(x) * 10)) must recurse into their
+			// arguments so the inner aggregate is collected into the
+			// virtual row. Without this, COALESCE can't find the
+			// aggregate value and returns NULL.
+			for _, a := range v.Args {
+				if err := collect(a); err != nil {
+					return err
+				}
+			}
+		case *PS.BetweenExpr:
+			if err := collect(v.Expr); err != nil {
+				return err
+			}
+			if err := collect(v.Low); err != nil {
+				return err
+			}
+			return collect(v.High)
+		case *PS.InExpr:
+			if err := collect(v.Expr); err != nil {
+				return err
+			}
+			for _, a := range v.List {
+				if err := collect(a); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	}
