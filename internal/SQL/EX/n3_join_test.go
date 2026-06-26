@@ -100,7 +100,7 @@ func TestGetTableRowCount_Default(t *testing.T) {
 
 func TestEstimateJoinPredicateSelectivity(t *testing.T) {
 	// Nil predicate.
-	sel := estimateJoinPredicateSelectivity(nil)
+	sel := estimateJoinPredicateSelectivity(nil, 0)
 	if sel != 1.0 {
 		t.Fatalf("expected 1.0, got %v", sel)
 	}

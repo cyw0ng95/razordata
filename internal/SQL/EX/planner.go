@@ -201,9 +201,11 @@ type joinPlan struct {
 }
 
 // n3HeapMaxSize limits the number of partial plans retained at each
-// step of the N3 algorithm. With N=12 and K<=8, we evaluate at most
-// 96 partial plans instead of 40,320 for worst-case 8-table join.
-const n3HeapMaxSize = 12
+// step of the N3 algorithm. With N=24 and K<=8, we evaluate at most
+// 192 partial plans instead of 40,320 for worst-case 8-table join.
+// REQ000859: increased from 12 to 24 for better plan diversity in
+// 7-8 table joins (select4 corpus).
+const n3HeapMaxSize = 24
 
 // HashAggregateThreshold is the row count above which the
 // planner prefers HashAggregate over streaming Aggregate
@@ -2676,7 +2678,7 @@ func (p *Planner) estimateJoinCost(leftRows, rightRows int, predicates []PS.Expr
 
 	sel := 1.0
 	for _, pred := range predicates {
-		psel := estimateJoinPredicateSelectivity(pred)
+		psel := estimateJoinPredicateSelectivity(pred, 0)
 		sel *= psel
 	}
 	cost := float64(leftRows) * float64(rightRows) * sel * indexFactor
@@ -2687,15 +2689,21 @@ func (p *Planner) estimateJoinCost(leftRows, rightRows int, predicates []PS.Expr
 }
 
 // estimateJoinPredicateSelectivity returns the selectivity of a single
-// join predicate expression.
-func estimateJoinPredicateSelectivity(pred PS.Expr) float64 {
+// join predicate expression. rowCount is the estimated number of rows
+// in the table the predicate applies to; used for IN-list selectivity
+// scaling. Pass 0 to use the default NDV of 100.
+func estimateJoinPredicateSelectivity(pred PS.Expr, rowCount float64) float64 {
 	if pred == nil {
 		return 1.0
 	}
-	// REQ000819: handle IN-list expressions: selectivity ≈ len(list)/NDV.
-	// Default NDV ≈ 100 for in-memory tables without histogram stats.
+	// REQ000819: handle IN-list expressions: selectivity ≈ len(list)/rowCount.
+	// When rowCount is unavailable, fall back to default NDV=100.
 	if in, ok := pred.(*PS.InExpr); ok && len(in.List) > 0 {
-		sel := float64(len(in.List)) / 100.0
+		ndv := rowCount
+		if ndv <= 0 {
+			ndv = 100
+		}
+		sel := float64(len(in.List)) / ndv
 		if sel > 1.0 {
 			sel = 1.0
 		}
@@ -2763,9 +2771,10 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 	tableSelectivity := make(map[string]float64)
 	for _, jt := range joinTables {
 		sel := 1.0
+		rowCnt := p.getTableRowCount(jt.name)
 		for _, pred := range wherePredicates {
 			if p.canPushDown(pred, jt.name) {
-				psel := estimateJoinPredicateSelectivity(pred)
+				psel := estimateJoinPredicateSelectivity(pred, rowCnt)
 				sel *= psel
 			}
 		}
@@ -2778,8 +2787,9 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		for _, jt := range joinTables {
 			if preds, ok := pushedPredicates[jt.name]; ok && len(preds) > 0 {
 				sel := tableSelectivity[jt.name]
+				rowCnt := p.getTableRowCount(jt.name)
 				for _, pred := range preds {
-					psel := estimateJoinPredicateSelectivity(pred)
+					psel := estimateJoinPredicateSelectivity(pred, rowCnt)
 					sel *= psel
 				}
 				tableSelectivity[jt.name] = sel
@@ -2803,7 +2813,7 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		if preds, ok := pushedPredicates[baseTable]; ok && len(preds) > 0 {
 			sel := 1.0
 			for _, pred := range preds {
-				psel := estimateJoinPredicateSelectivity(pred)
+				psel := estimateJoinPredicateSelectivity(pred, baseRows)
 				sel *= psel
 			}
 			r := baseRows * sel
@@ -3034,7 +3044,7 @@ func joinResultRows(leftRows, rightRows float64, predicates []PS.Expr) float64 {
 	}
 	sel := 1.0
 	for _, pred := range predicates {
-		sel *= estimateJoinPredicateSelectivity(pred)
+		sel *= estimateJoinPredicateSelectivity(pred, 0)
 	}
 	result := leftRows * rightRows * sel
 	if result < 1 {
