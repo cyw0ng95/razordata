@@ -12,13 +12,14 @@
 | `WAL` | `WR`, `FL`, `RP` | `WR` — sequential append, LSN allocation, segment rotation, columnar WAL encoding, LZ4 compression. `FL` — fsync on commit, batch flush, write barrier. `RP` — WAL replay on startup, checkpoint detection, segment truncation, parallel replay. |
 | `ENG` | `LS`, `ID`, `TB`, `CT`, `SC`, `DP`, `NM` | `LS` — LSM tree: skiplist memtable, SST writer/reader, bloom filter, leveled/tiered/hybrid compaction, rate-limited compaction, columnar SST block layout, per-block dictionary compression, subcompaction for L4+, storage policy with tiered device placement, SST page cache. `ID` — B-tree persistent index for secondary indexes (btree.razor), cursor-based scan. `TB` — create/drop/alter table, foreign key enforcement, views, triggers. `CT` — persistent catalog storage, schema versioning, bootstrap, encode/decode. Shared by TB and LS. `SC` — column types, constraints (NOT NULL, DEFAULT, PRIMARY KEY, UNIQUE, CHECK, FOREIGN KEY), table definitions, integrity checks. `DP` — row serialization, SST block encoding, value encoding. `NM` — NUMA topology detection, worker pinning for first-touch allocation. |
 | `TXN` | `MV`, `LC`, `SN`, `VL` | `MV` — version chain (lock-free skip list), CAS insertion, per-transaction arena with per-NUMA pools, GC of obsolete versions. `LC` — hazard pointers, epoch-based reclamation, QSBR protocol, reclaim pool for deferred cleanup, goid tracking via atomic counter, epoch gosched for cooperative yielding. `SN` — read view, epoch registration, thread-local arena, version stack for multi-key reads. `VL` — commit protocol, write-write conflict detection, transaction slots, savepoint support. |
-| `SQL` | `LX`, `PS`, `PL`, `EX`, `RE` | `LX` — tokenization, keyword lookup, error recovery. `PS` — recursive-descent parser, AST construction with visitor pattern, CTE/recursive CTE parsing, window function parsing, ALTER TABLE parsing, subquery parsing. `PL` — query planning, cost estimation, index selection, plan memoization, selectivity estimation, hash agg planning. `EX` — streaming operator executor: SeqScan, IndexScan, Filter, Project, Sort, Limit, Insert, Update, Delete, HashJoin (radix-partitioned), NestedLoopJoin (outer/compound), Aggregate/AggregateDistinct, window functions, ALTER TABLE executor, foreign key validation, CTE/recursive CTE executor, views, triggers, JSON functions, datetime functions, PRAGMA support, integrity checks, EXPLAIN, compound SELECT (UNION/INTERSECT/EXCEPT), parallel sort (top-k/external merge), pipeline parallelism (fan-out/fan-in), SIMD-dispatched scalar funcs, decimal support, coerce/type coercion, hash agg, memo-optimized plan, ExecContext threading. `RE` — constant folding, predicate pushdown, subquery flattening, join reorder. |
+| `SQF` | `LX`, `PS`, `RE`, `PL` | `LX` — tokenization, keyword lookup, error recovery. `PS` — recursive-descent parser, AST construction with visitor pattern, CTE/recursive CTE parsing, window function parsing, ALTER TABLE parsing, subquery parsing. `PL` — query planning, cost estimation, index selection, plan memoization, selectivity estimation, hash agg planning, N3 join ordering, NDV-based selectivity. `RE` — constant folding, predicate pushdown, subquery flattening, join reorder. |
+| `SQB` | `EX` | `EX` — streaming operator executor: SeqScan, IndexScan, Filter, Project, Sort, Limit, Insert, Update, Delete, HashJoin (radix-partitioned), NestedLoopJoin (outer/compound), HashCrossJoin, Aggregate/AggregateDistinct, window functions, ALTER TABLE executor, foreign key validation, CTE/recursive CTE executor, views, triggers, JSON functions, datetime functions, PRAGMA support, integrity checks, EXPLAIN, compound SELECT (UNION/INTERSECT/EXCEPT), parallel sort (top-k/external merge), pipeline parallelism (fan-out/fan-in), SIMD-dispatched scalar funcs, decimal support, coerce/type coercion, hash agg, memo-optimized plan, ExecContext threading, adaptive query compilation (ADQC), plan cache, ANALYZE table statistics. ST (Statistics) and QC (Query Cache) clusters deferred — see iter-35 plan. |
 | `SYS` | `SY`, `AP`, `SE`, `TX`, `ST` | `SY` — init, config validation, graceful shutdown (6-phase), version, stats aggregation, signal handling. `AP` — public API: Engine/Session/Transaction/Stmt, Options, error types. `SE` — session lifecycle, goroutine-safety, deadline, session stats. `TX` — transaction context, commit/rollback, savepoints. `ST` — statement preparation, parameter binding, type coercion, prepared statement pool. |
 
 ## Dependency Order
 
 ```
-LOG → FIL → MEM → WAL → ENG → TXN → SQL → SYS
+LOG → FIL → MEM → WAL → ENG → TXN → SQF → SQB → SYS
 ```
 
 ## Cross-Subsystem Interfaces
@@ -42,7 +43,7 @@ type Tx interface {
     Rollback(ctx context.Context) error
 }
 
-// SQL — Operator in the executor tree
+// SQF/SQB — Operator in the executor tree (defined in SQB/EX, consumed by SQF/PL)
 type Operator interface {
     Next(ctx context.Context) (Row, error)
     Close() error
@@ -53,7 +54,7 @@ type Operator interface {
 
 All user-facing errors are classified by `AP.Kind` and wrapped into `AP.Error` at subsystem boundaries. Lower layers define their own sentinels for internal use but must wrap into `AP.Error` when propagating to higher layers.
 
-**Cross-layer wrapping rule:** When an error crosses a subsystem boundary (e.g., ENG → SYS, WAL → SQL), the receiving layer wraps it:
+**Cross-layer wrapping rule:** When an error crosses a subsystem boundary (e.g., ENG → SYS, SQF → SQB), the receiving layer wraps it:
 ```go
 // In SYS/SY when ENG returns an error:
 if err != nil {
@@ -67,7 +68,7 @@ if err != nil {
 - `ENG/LS`: `ErrNotFound`, `ErrClosed`, `ErrBloomMiss`, `ErrCatalogCorrupt`, etc.
 - `WAL/WR`: `ErrTruncatedRecord`, `ErrCorrupt`, etc.
 - `TXN/MV`: `ErrNotFound`, `ErrDuplicateKey`, `ErrArenaExhausted`, etc.
-- `SQL/EX`: `ErrNotImplemented`, `ErrNoRows`, `ErrEval`, etc.
+- `SQB/EX`: `ErrNotImplemented`, `ErrNoRows`, `ErrEval`, etc.
 
 Each package uses a consistent prefix (`"ls: "`, `"wr: "`, `"txn: "`, `"ex: "`) for debuggability.
 
@@ -102,13 +103,14 @@ internal/
 ├── WAL/   # Write-ahead log (WR, FL, RP)
 ├── ENG/   # Storage engine (LS, ID, TB, CT, SC, DP, NM)
 ├── TXN/   # Transaction (MV, LC, SN, VL)
-├── SQL/   # SQL processing (LX, PS, PL, EX, RE)
+├── SQF/   # SQL Frontend (LX, PS, RE, PL)
+├── SQB/   # SQL Backend  (EX)
 └── SYS/   # System layer (SY, AP, SE, TX, ST)
 ```
 
 ## Detailed Design
 
-Full design documents: `docs/design/subsystems/LOG.md` · `FIL.md` · `MEM.md` · `WAL.md` · `ENG.md` · `TXN.md` · `SQL.md` · `SYS.md` · `CLI.md` · `TUI.md`
+Full design documents: `docs/design/subsystems/LOG.md` · `FIL.md` · `MEM.md` · `WAL.md` · `ENG.md` · `TXN.md` · `SQF.md` · `SQB.md` · `SYS.md` · `CLI.md` · `TUI.md`
 
 ## SQL Surface
 
