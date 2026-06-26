@@ -48,9 +48,10 @@ type HashCrossJoin struct {
 	// REQ000818: crossOverflow is set when either side exceeds 1024 rows.
 	// In this mode the operator falls back to emitting all left×right pairs
 	// (pure cross product) instead of hash probing.
-	crossOverflow bool
-	crossLeftIdx  int
-	crossRightIdx int
+	crossOverflow   bool
+	crossLeftIdx    int
+	crossRightIdx   int
+	crossBucketPos  int   // REQ000951: position within current bucket's index list
 	// REQ000816: shared col metadata built once, reused across
 	// all emitted rows to skip per-row buildColIndex.
 	sharedColIndex map[string]int
@@ -136,7 +137,7 @@ func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {
 // REQ000802+: also pre-computes all join matches using a
 // pre-allocated data buffer to eliminate per-row allocations.
 func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
-	const maxMaterialize = 1024
+	const maxMaterialize = 4096
 	j.leftRows = make([]Row, 0, 64)
 	j.leftHasPrefix = false
 	// Check first row to determine prefix state (all rows from the
@@ -244,7 +245,7 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 func (j *HashCrossJoin) build(ctx context.Context) error {
 	j.probeBuilt = true
 	j.buckets = make(map[uint64][]int, 64)
-	const maxMaterialize = 1024
+	const maxMaterialize = 4096
 	j.rightRows = make([]Row, 0, 64)
 	j.rightHasPrefix = false
 	// Check first row to determine prefix state (all rows from the
@@ -301,19 +302,38 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 	return nil
 }
 
-// REQ000818: cross-product fallback when hash probing is not viable
-// (either side exceeds 1024 rows). Emits matching left×right pairs
-// by checking the join key equality for each pair.
+// REQ000951: cross-product hash fallback when either side exceeds
+// the materialize limit. Uses the already-built j.buckets hash map
+// (from build()) for O(1) right-side lookups instead of the
+// previous O(N*M) sequential equality check. This matches MySQL 8.0's
+// hash join behavior where the smaller side is hashed and the larger
+// side probes.
+//
+// State is tracked across multiple calls via crossLeftIdx,
+// crossRightIdx (position within bucket's index slice), and
+// crossBucketPos (current bucket index list reference).
 func (j *HashCrossJoin) nextCross(_ context.Context) (Row, error) {
 	for j.crossLeftIdx < len(j.leftRows) {
-		for j.crossRightIdx < len(j.rightRows) {
-			l := j.leftRows[j.crossLeftIdx]
-			r := j.rightRows[j.crossRightIdx]
+		l := &j.leftRows[j.crossLeftIdx]
+		lv, lok := lookupColumn(l, j.leftTbl, j.leftKey)
+		if !lok || lv == nil {
+			j.crossLeftIdx++
+			j.crossRightIdx = 0
+			continue
+		}
+		h := hashValue(j.hashSeed, lv)
+		idxs, ok := j.buckets[h]
+		if !ok {
+			j.crossLeftIdx++
+			j.crossRightIdx = 0
+			continue
+		}
+		for j.crossRightIdx < len(idxs) {
+			ridx := idxs[j.crossRightIdx]
 			j.crossRightIdx++
-			// Check join key condition.
-			lv, lok := lookupColumn(&l, j.leftTbl, j.leftKey)
-			rv, rok := lookupColumn(&r, j.rightTbl, j.rightKey)
-			if !lok || !rok || lv == nil || rv == nil {
+			r := &j.rightRows[ridx]
+			rv, rok := lookupColumn(r, j.rightTbl, j.rightKey)
+			if !rok || rv == nil {
 				continue
 			}
 			if !equalValue(lv, rv) {
@@ -359,6 +379,7 @@ func (j *HashCrossJoin) Close() error {
 	j.crossOverflow = false
 	j.crossLeftIdx = 0
 	j.crossRightIdx = 0
+	j.crossBucketPos = 0
 	j.sharedColIndex = nil
 	j.sharedCols = nil
 	j.sharedTypes = nil

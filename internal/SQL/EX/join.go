@@ -79,8 +79,8 @@ type NestedLoopJoin struct {
 	dataPerRow int
 	dataOffset int // running write offset into dataBuf
 	// REQ000798: Block NLJ mode — batch left rows and re-scan right
-	// per batch. Used when hash mode is unavailable (left > 1024
-	// or ON clause exists). Reduces right-side scans from N to N/32.
+	// per batch. Used when hash mode is unavailable (left > 4096
+	// or ON clause exists). Reduces right-side scans from N to N/64.
 	blockMode    bool
 	blkLeftBatch []Row
 	blkLeftPos   int   // position within left batch
@@ -402,7 +402,7 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 	// the intermediate after the first join is typically 0-8 rows.
 	// Using a smaller initial capacity saves ~6KB per NLJ level
 	// (144 bytes × 48 wasted slots) with negligible growth cost.
-	const maxMaterialize = 1024
+	const maxMaterialize = 4096
 	j.leftRows = make([]Row, 0, 64)
 	var leftPrefixedCols []string
 	for len(j.leftRows) < maxMaterialize {
@@ -829,7 +829,7 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 			j.blkRightRows = append(j.blkRightRows, inner)
 		}
 		// REQ000873: if right side is small, cache it for reuse.
-		const tinyRightThreshold = 64
+		const tinyRightThreshold = 256
 		if len(j.blkRightRows) <= tinyRightThreshold {
 			j.cachedRightRows = make([]Row, len(j.blkRightRows))
 			copy(j.cachedRightRows, j.blkRightRows)
