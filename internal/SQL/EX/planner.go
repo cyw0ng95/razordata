@@ -207,6 +207,14 @@ type joinPlan struct {
 // 7-8 table joins (select4 corpus).
 const n3HeapMaxSize = 24
 
+// n3PruneMultiplier is the max cost ratio retained for partial plans
+// at each N3 step. MySQL's optimizer_prune_level=1 uses 1 + a small
+// delta; PostgreSQL's geqo_effort uses 2.0. Higher = more candidates
+// retained = more accurate plan but slower planning.
+// REQ000947: candidates with cost > bestCost × n3PruneMultiplier are
+// discarded. The "bestCost" is the heap minimum after each iteration.
+const n3PruneMultiplier = 2.0
+
 // HashAggregateThreshold is the row count above which the
 // planner prefers HashAggregate over streaming Aggregate
 // (REQ000196). HashAggregate has higher upfront cost
@@ -1640,8 +1648,21 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			costPredicates = RE.SplitAnd(whereExpr)
 		}
 
-		// Run N3 to find the best join order.
-		joinOrder := p.n3JoinOrdering(s.From, joinInfos, costPredicates, pushedPredicates)
+		// REQ000946: run N3 from multiple candidate base tables and
+		// pick the lowest-cost plan. The single-baseTable variant is
+		// kept for backward compat (called as n3JoinOrdering).
+		// REQ000946 perf: multi-start iterates K N3 invocations
+		// (K=number of FROM tables). For K>4, this adds significant
+		// planner overhead per query (~8x more cost comparisons for
+		// 8-table joins) without much benefit since the FROM-list
+		// order is usually a reasonable starting point for small
+		// joins. Fall back to single-start when K > 4.
+		joinOrder := []string(nil)
+		if len(joinInfos) <= 4 {
+			joinOrder = p.n3JoinOrderingMultiStart(s.From, joinInfos, costPredicates, pushedPredicates)
+		} else {
+			joinOrder, _ = p.n3JoinOrdering(s.From, joinInfos, costPredicates, pushedPredicates)
+		}
 
 		// REQ000803: compute column projection for join pushdown.
 		// Only include columns referenced by SELECT/WHERE/ORDER BY/etc.
@@ -2727,6 +2748,122 @@ func estimateJoinPredicateSelectivity(pred PS.Expr, rowCount float64) float64 {
 	}
 }
 
+// REQ000948: NDV-based join predicate selectivity. Method variant of
+// estimateJoinPredicateSelectivity that consults the stats catalog
+// (ColumnStats.DistinctCount) for column-specific NDV values when
+// available. Falls back to the package-level default constants when
+// stats are missing.
+//
+// PostgreSQL reference (eqjoinsel): selectivity = (1 - null_frac) /
+// max(ndv_left, ndv_right, 1). For range predicates, default is
+// (1 - null_frac) / 3 (uniform distribution assumption).
+func (p *Planner) joinPredSel(pred PS.Expr, rowCount float64) float64 {
+	if pred == nil {
+		return 1.0
+	}
+	// REQ000819: IN-list expressions. Use rowCount as NDV when available.
+	if in, ok := pred.(*PS.InExpr); ok && len(in.List) > 0 {
+		ndv := rowCount
+		if ndv <= 0 {
+			ndv = 100
+		}
+		sel := float64(len(in.List)) / ndv
+		if sel > 1.0 {
+			sel = 1.0
+		}
+		return sel
+	}
+	bin, ok := pred.(*PS.BinaryExpr)
+	if !ok {
+		return 0.5
+	}
+	switch bin.Op {
+	case int(LX.T_EQ):
+		// REQ000948: equi-join (col = col) uses NDV of both sides.
+		// REQ000948: equi-join (col = literal) uses NDV of the column.
+		ndvL, ndvR := p.ndvFromExpr(bin.Left), p.ndvFromExpr(bin.Right)
+		if ndvL > 0 && ndvR > 0 {
+			// Both sides have NDV: 1/max(ndvL, ndvR).
+			if ndvL > ndvR {
+				return 1.0 / ndvL
+			}
+			return 1.0 / ndvR
+		}
+		if ndvL > 0 {
+			return 1.0 / ndvL
+		}
+		if ndvR > 0 {
+			return 1.0 / ndvR
+		}
+		// No stats — fall back to default.
+		return 0.1
+	case int(LX.T_LT), int(LX.T_LE), int(LX.T_GT), int(LX.T_GE):
+		// Range predicate: use (1 - null_frac) / 3 (uniform).
+		nullFrac := p.nullFracFromExpr(bin.Left)
+		if nullFrac < 0 {
+			nullFrac = 0
+		}
+		return (1.0 - nullFrac) / 3.0
+	default:
+		return 0.5
+	}
+}
+
+// ndvFromExpr returns the DistinctCount (NDV) of the column referenced
+// by expr, or -1 if NDV is unavailable. Handles Ident and QualifiedName
+// column references; returns -1 for literals, function calls, etc.
+func (p *Planner) ndvFromExpr(expr PS.Expr) float64 {
+	if p.statsCatalog == nil {
+		return -1
+	}
+	table, col := p.tableColFromExpr(expr)
+	if table == "" || col == "" {
+		return -1
+	}
+	stats := p.statsCatalog.ColumnStatsByName(table, col)
+	if stats == nil || stats.DistinctCount <= 0 {
+		return -1
+	}
+	return float64(stats.DistinctCount)
+}
+
+// nullFracFromExpr returns the null fraction (NullCount/RowCount) of
+// the column referenced by expr, or -1 if unavailable.
+func (p *Planner) nullFracFromExpr(expr PS.Expr) float64 {
+	if p.statsCatalog == nil {
+		return -1
+	}
+	table, col := p.tableColFromExpr(expr)
+	if table == "" || col == "" {
+		return -1
+	}
+	stats := p.statsCatalog.ColumnStatsByName(table, col)
+	if stats == nil || stats.RowCount <= 0 {
+		return -1
+	}
+	return float64(stats.NullCount) / float64(stats.RowCount)
+}
+
+// tableColFromExpr extracts the (table, column) pair from a column
+// reference expression. Supports PS.Ident (unqualified) and
+// PS.QualifiedName (table.col). Returns ("", "") for other expr types.
+func (p *Planner) tableColFromExpr(expr PS.Expr) (string, string) {
+	switch e := expr.(type) {
+	case *PS.Ident:
+		// Unqualified column — look up via findTableForColumn.
+		return p.findTableForColumn(e.Name), e.Name
+	case *PS.QualifiedName:
+		// table.col — explicit.
+		if e.Table != "" {
+			return e.Table, e.Name
+		}
+		if e.Name != "" {
+			return "", e.Name
+		}
+	}
+	return "", ""
+}
+
 // isColumnColumnPair returns true when both sides of the expression
 // are column references (Ident or QualifiedName). Used to detect
 // equi-join predicates like t1.a = t2.b.
@@ -2755,13 +2892,17 @@ func isColumnColumnPair(a, b PS.Expr) bool {
 //   - pushedPredicates: per-table predicates already pushed down to scans
 //
 // Returns the ordered list of table names that minimizes estimated cost.
-func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, wherePredicates []PS.Expr, pushedPredicates map[string][]PS.Expr) []string {
+// REQ000946: n3JoinOrdering now returns (order, cost) so the caller
+// (n3JoinOrderingMultiStart) can compare costs across different
+// starting baseTable choices. The cost is the sum of per-step
+// joinCost estimates for the cheapest complete plan in the heap.
+func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, wherePredicates []PS.Expr, pushedPredicates map[string][]PS.Expr) ([]string, float64) {
 	k := len(joinTables)
 	if k == 0 {
-		return []string{baseTable}
+		return []string{baseTable}, p.getTableRowCount(baseTable)
 	}
 	if k == 1 {
-		return []string{baseTable, joinTables[0].name}
+		return []string{baseTable, joinTables[0].name}, p.getTableRowCount(baseTable) + p.getTableRowCount(joinTables[0].name)
 	}
 
 	// REQ000883/REQ000909: pre-compute per-table selectivity from
@@ -2863,6 +3004,22 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		}
 		nextHeap := make([]candidate, 0, n3HeapMaxSize)
 
+		// REQ000947: bestCost is the minimum cost among the current
+		// partial plans (heap[0]). Candidates whose cost exceeds
+		// bestCost × n3PruneMultiplier are pruned. For the first
+		// step, the partial plans are all the base-pair candidates
+		// in heap, so we look up the minimum from heap.
+		var bestCost float64
+		if len(heap) > 0 {
+			bestCost = heap[0].cost
+			for _, pp := range heap[1:] {
+				if pp.cost < bestCost {
+					bestCost = pp.cost
+				}
+			}
+		}
+		pruneThreshold := bestCost * n3PruneMultiplier
+
 		for _, pp := range heap {
 			// Which tables are not yet joined?
 			for _, tbl := range allTables {
@@ -2900,6 +3057,13 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 					order:     newOrder,
 					tablesSet: newSet,
 					rows:      newRows,
+				}
+
+				// REQ000947: prune candidates whose cost exceeds
+				// bestCost × n3PruneMultiplier. Skip both the
+				// append path and the replace path.
+				if bestCost > 0 && cand.cost > pruneThreshold {
+					continue
 				}
 
 				// Insert into nextHeap, keep top N.
@@ -2961,7 +3125,7 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		for _, jt := range joinTables {
 			order = append(order, jt.name)
 		}
-		return order
+		return order, 0
 	}
 	best := heap[0]
 	for _, pp := range heap[1:] {
@@ -2978,9 +3142,112 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		for _, jt := range joinTables {
 			order = append(order, jt.name)
 		}
-		return order
+		return order, best.cost
 	}
-	return best.order
+	return best.order, best.cost
+}
+
+// REQ000946: n3JoinOrderingMultiStart runs the N3 algorithm from
+// every candidate base table (the leftmost table in FROM plus each
+// subsequent table) and returns the lowest-cost plan. This matches
+// SQLite's NGQP "best-of-many-starting-points" strategy.
+//
+// For a query with K FROM-tables, the cost is K × K² × H evaluations
+// where H=n3HeapMaxSize=24. With K=8 this is ~1536 evaluations —
+// negligible compared to execution time.
+//
+// candidateBase is the FROM-list leftmost table (the planner's
+// default base). The full candidate set is candidateBase plus every
+// other table in joinTables. For each candidate, all other tables
+// (the candidate base itself plus every entry in joinTables) form
+// the "remaining" set passed to n3JoinOrdering.
+//
+// The returned order is normalized to start with candidateBase (the
+// FROM-list leftmost) — this is required by the join construction
+// code in planSelect, which uses s.From as the scan base and looks
+// up other tables via joinMap. The relative order of the remaining
+// tables follows the cheapest plan.
+func (p *Planner) n3JoinOrderingMultiStart(candidateBase string, joinTables []joinTableInfo, wherePredicates []PS.Expr, pushedPredicates map[string][]PS.Expr) []string {
+	// Build the full set of tables: candidateBase + every joinTable.
+	allNames := make([]string, 0, 1+len(joinTables))
+	if candidateBase != "" {
+		allNames = append(allNames, candidateBase)
+	}
+	for _, jt := range joinTables {
+		if jt.name != candidateBase {
+			allNames = append(allNames, jt.name)
+		}
+	}
+	if len(allNames) <= 1 {
+		return allNames
+	}
+	// candidates: every name as a possible base.
+	candidates := append([]string(nil), allNames...)
+	bestOrder := []string(nil)
+	bestCost := -1.0
+	for _, base := range candidates {
+		// rest = all joinTables entries whose name != base.
+		// Plus, if candidateBase is not in joinTables and is not
+		// the current base, include it as a joinTable entry (so
+		// the result order includes it).
+		rest := make([]joinTableInfo, 0, len(joinTables))
+		hasBase := false
+		for _, jt := range joinTables {
+			if jt.name == base {
+				hasBase = true
+				continue
+			}
+			rest = append(rest, jt)
+		}
+		if base != candidateBase && !hasBase {
+			// The current base is not candidateBase and is not
+			// listed in joinTables — add it as a join entry so the
+			// resulting order includes all tables.
+			rest = append(rest, joinTableInfo{name: base})
+		}
+		order, cost := p.n3JoinOrdering(base, rest, wherePredicates, pushedPredicates)
+		if bestCost < 0 || cost < bestCost {
+			bestCost = cost
+			bestOrder = order
+		}
+	}
+	if bestOrder == nil {
+		bestOrder = allNames
+		return bestOrder
+	}
+	// REQ000946: normalize the returned order to start with
+	// candidateBase (s.From) so the join construction code that
+	// uses s.From as the scan base works correctly. The cheapest
+	// non-base table is placed second; the rest of the relative
+	// order is preserved.
+	if bestOrder[0] != candidateBase {
+		// Find candidateBase in the order and move it to the front.
+		baseIdx := -1
+		for i, t := range bestOrder {
+			if t == candidateBase {
+				baseIdx = i
+				break
+			}
+		}
+		if baseIdx > 0 {
+			// Move candidateBase to position 0, preserve order of others.
+			normalized := make([]string, 0, len(bestOrder))
+			normalized = append(normalized, candidateBase)
+			for i, t := range bestOrder {
+				if i != baseIdx {
+					normalized = append(normalized, t)
+				}
+			}
+			bestOrder = normalized
+		} else if baseIdx < 0 {
+			// candidateBase is not in the order — prepend it.
+			normalized := make([]string, 0, 1+len(bestOrder))
+			normalized = append(normalized, candidateBase)
+			normalized = append(normalized, bestOrder...)
+			bestOrder = normalized
+		}
+	}
+	return bestOrder
 }
 
 // joinTableInfo holds a table name and its associated JoinClause
