@@ -17,7 +17,7 @@ import (
 	lg "github.com/cyw0ng95/razordata/internal/LOG/LG"
 	bf "github.com/cyw0ng95/razordata/internal/MEM/BF"
 	"github.com/cyw0ng95/razordata/internal/MEM/SP"
-	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
+	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	vl "github.com/cyw0ng95/razordata/internal/TXN/VL"
 	fl "github.com/cyw0ng95/razordata/internal/WAL/FL"

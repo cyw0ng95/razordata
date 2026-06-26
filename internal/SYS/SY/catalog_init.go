@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
+	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
 )
 
 // openCatalog opens the system catalog and rehydrates the EX

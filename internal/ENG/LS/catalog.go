@@ -12,7 +12,7 @@ import (
 	ct "github.com/cyw0ng95/razordata/internal/ENG/CT"
 	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
 
-	LX "github.com/cyw0ng95/razordata/internal/SQL/LX"
+	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // Constants re-exported from the shared catalog package.

@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"testing"
 
-	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
+	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 

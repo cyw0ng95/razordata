@@ -7,9 +7,9 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/cyw0ng95/razordata/internal/SQL/LX"
-	"github.com/cyw0ng95/razordata/internal/SQL/PS"
-	"github.com/cyw0ng95/razordata/internal/SQL/RE"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	"github.com/cyw0ng95/razordata/internal/SQF/RE"
 )
 
 type Runner struct {

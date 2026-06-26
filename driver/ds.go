@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cyw0ng95/razordata/internal/SQL/EX"
+	"github.com/cyw0ng95/razordata/internal/SQB/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/ST"
 	v1 "github.com/cyw0ng95/razordata/internal/SYS/SY"

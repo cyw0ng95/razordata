@@ -3,7 +3,7 @@ package SY
 import (
 	"context"
 	"errors"
-	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
+	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"path/filepath"
 	"testing"

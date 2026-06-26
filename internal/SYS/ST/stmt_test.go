@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-	executor "github.com/cyw0ng95/razordata/internal/SQL/EX"
+	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 )

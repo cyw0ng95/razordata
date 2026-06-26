@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cyw0ng95/razordata/internal/SQL/EX"
+	"github.com/cyw0ng95/razordata/internal/SQB/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 	"github.com/cyw0ng95/razordata/internal/SYS/TX"

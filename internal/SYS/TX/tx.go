@@ -7,7 +7,7 @@ import (
 	"context"
 	"sync"
 
-	ex "github.com/cyw0ng95/razordata/internal/SQL/EX"
+	ex "github.com/cyw0ng95/razordata/internal/SQB/EX"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
 	sy "github.com/cyw0ng95/razordata/internal/SYS/SY"
 	vl "github.com/cyw0ng95/razordata/internal/TXN/VL"
