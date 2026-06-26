@@ -1702,6 +1702,13 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			baseTable := group[0]
 			var current Operator
 			var leftTbl string
+			// REQ000926: count occurrences in the group so we can
+			// allow the same table to be re-joined for self-joins
+			// (e.g. `FROM tab1 a, tab1 b`).
+			groupCounts := make(map[string]int, len(group))
+			for _, t := range group {
+				groupCounts[t]++
+			}
 			joinedTables := map[string]bool{}
 			localConjuncts := make([]PS.Expr, len(crossTableConjuncts))
 			copy(localConjuncts, crossTableConjuncts)
@@ -1734,7 +1741,16 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 				if ti == 0 {
 					continue // skip base table (already set up as current)
 				}
-				if _, ok := joinedTables[tbl]; ok {
+				// REQ000926: allow re-join if the table appears multiple
+				// times in the group (self-join). joinedCounts tracks
+				// how many times each table has been joined.
+				joinedCounts := make(map[string]int, len(group))
+				for t := range joinedTables {
+					joinedCounts[t]++
+				}
+				// If the table is already joined as many times as it
+				// appears in the group, skip it.
+				if joinedCounts[tbl] >= groupCounts[tbl] {
 					continue
 				}
 				j, ok := joinMap[tbl]
@@ -3168,28 +3184,48 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 // up other tables via joinMap. The relative order of the remaining
 // tables follows the cheapest plan.
 func (p *Planner) n3JoinOrderingMultiStart(candidateBase string, joinTables []joinTableInfo, wherePredicates []PS.Expr, pushedPredicates map[string][]PS.Expr) []string {
-	// Build the full set of tables: candidateBase + every joinTable.
+	// REQ000926: preserve duplicate table names in allNames. When the
+	// same physical table appears multiple times in the join list
+	// (e.g. `FROM tab1 a, tab1 b` self-join), each entry is a
+	// distinct reference and must be kept separately in the result
+	// order so the join construction produces a full cross product.
 	allNames := make([]string, 0, 1+len(joinTables))
 	if candidateBase != "" {
 		allNames = append(allNames, candidateBase)
 	}
 	for _, jt := range joinTables {
-		if jt.name != candidateBase {
-			allNames = append(allNames, jt.name)
-		}
+		allNames = append(allNames, jt.name)
 	}
-	if len(allNames) <= 1 {
+	// REQ000926: short-circuit when the result is already the trivial
+	// single-table case. The dedupe check is for the candidate list
+	// (different starting bases), not the result.
+	hasNonBase := false
+	for _, n := range allNames[1:] {
+		hasNonBase = true
+		_ = n
+		break
+	}
+	if !hasNonBase {
 		return allNames
 	}
-	// candidates: every name as a possible base.
-	candidates := append([]string(nil), allNames...)
+	// candidates: every DISTINCT name as a possible base. Duplicate
+	// entries (self-join) collapse to one candidate for planning
+	// purposes — the actual join construction uses the full order.
+	candidates := make([]string, 0, len(allNames))
+	seen := make(map[string]bool)
+	for _, n := range allNames {
+		if !seen[n] {
+			seen[n] = true
+			candidates = append(candidates, n)
+		}
+	}
 	bestOrder := []string(nil)
 	bestCost := -1.0
 	for _, base := range candidates {
 		// rest = all joinTables entries whose name != base.
 		// Plus, if candidateBase is not in joinTables and is not
 		// the current base, include it as a joinTable entry (so
-		// the result order includes it).
+		// the resulting order includes it).
 		rest := make([]joinTableInfo, 0, len(joinTables))
 		hasBase := false
 		for _, jt := range joinTables {
@@ -3215,12 +3251,35 @@ func (p *Planner) n3JoinOrderingMultiStart(candidateBase string, joinTables []jo
 		bestOrder = allNames
 		return bestOrder
 	}
+	// REQ000926: ensure the result order has the same number of
+	// entries as the input. n3JoinOrdering deduplicates by table
+	// name in tablesSet, so for self-joins the order can be shorter
+	// than expected. Append any missing duplicates from allNames.
+	wantLen := len(allNames)
+	if len(bestOrder) < wantLen {
+		// Count occurrences in bestOrder and allNames.
+		have := make(map[string]int)
+		for _, n := range bestOrder {
+			have[n]++
+		}
+		need := make(map[string]int)
+		for _, n := range allNames {
+			need[n]++
+		}
+		// Append missing duplicates.
+		for n, count := range need {
+			for have[n] < count {
+				bestOrder = append(bestOrder, n)
+				have[n]++
+			}
+		}
+	}
 	// REQ000946: normalize the returned order to start with
 	// candidateBase (s.From) so the join construction code that
 	// uses s.From as the scan base works correctly. The cheapest
 	// non-base table is placed second; the rest of the relative
 	// order is preserved.
-	if bestOrder[0] != candidateBase {
+	if len(bestOrder) > 0 && bestOrder[0] != candidateBase {
 		// Find candidateBase in the order and move it to the front.
 		baseIdx := -1
 		for i, t := range bestOrder {
@@ -3247,6 +3306,7 @@ func (p *Planner) n3JoinOrderingMultiStart(candidateBase string, joinTables []jo
 			bestOrder = normalized
 		}
 	}
+
 	return bestOrder
 }
 

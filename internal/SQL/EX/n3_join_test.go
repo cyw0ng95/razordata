@@ -1,6 +1,7 @@
 package EX
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -495,4 +496,53 @@ func makeRows(n int) []Row {
 		rows[i] = Row{Cols: []string{"a"}, Types: []int{1}, Data: []Value{NewIntValue(0)}}
 	}
 	return rows
+}
+
+// REQ000926: Cross join of the same table with different alias should
+// produce the full Cartesian product. `tab1, tab1 AS cor0` on a 3-row
+// table should produce 3×3 = 9 rows. Previously the multi-start N3
+// function deduplicated table names, causing the second occurrence
+// to be lost and only 3 rows produced.
+func TestCrossJoin_SelfJoin3x3Yields9Rows(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	e := NewExecutor()
+	ctx := context.Background()
+	for _, s := range []string{
+		"CREATE TABLE tab1(col0 INTEGER, col1 INTEGER, col2 INTEGER, col3 INTEGER, col4 INTEGER)",
+		"INSERT INTO tab1 VALUES (1, 10, 100, 1000, 10000), (2, 20, 200, 2000, 20000), (3, 30, 300, 3000, 30000)",
+	} {
+		if _, err := e.Exec(ctx, s); err != nil {
+			t.Fatalf("setup %q: %v", s, err)
+		}
+	}
+	// REQ000926: SELECT with constant expr over a self-join. The
+	// row count is the test signal — value is the constant 33*57=1881.
+	rows, err := e.QueryAll(ctx, "SELECT 33*57 col1 FROM tab1, tab1 AS cor0")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 9 {
+		t.Fatalf("self-join: expected 9 rows (3×3), got %d", len(rows))
+	}
+	// Verify all rows have the constant value 1881.
+	for i, r := range rows {
+		if len(r.Data) == 0 || r.Data[0].ToAny().(int64) != 1881 {
+			t.Fatalf("row %d: expected 1881, got %v", i, r.Data)
+		}
+	}
+}
+
+// REQ000926: Multi-start must preserve duplicate table names in
+// the returned order for self-joins.
+func TestN3JoinOrdering_MultiStart_SelfJoinPreservesDuplicates(t *testing.T) {
+	p := NewPlanner()
+	joinTables := []joinTableInfo{{name: "tab1"}}
+	order := p.n3JoinOrderingMultiStart("tab1", joinTables, nil, nil)
+	if len(order) != 2 {
+		t.Fatalf("expected 2 entries [tab1, tab1], got %d: %v", len(order), order)
+	}
+	if order[0] != "tab1" || order[1] != "tab1" {
+		t.Fatalf("expected [tab1, tab1], got %v", order)
+	}
 }
