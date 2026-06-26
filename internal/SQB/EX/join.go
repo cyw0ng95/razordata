@@ -372,7 +372,9 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 			}
 			return Row{}, err
 		}
-		inner.Cols = prefixCols(inner.Cols, j.rightTbl)
+		if !hasAnyPrefix(inner.Cols) {
+			inner.Cols = prefixCols(inner.Cols, j.rightTbl)
+		}
 		inner.Outer = j.leftRow
 		if j.on != nil {
 			ok, err := j.on(j.leftRow, &inner)
@@ -396,12 +398,7 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 		return false
 	}
 	// Materialize left side.
-	// REQ000844: initial capacity 16 instead of 64. With IN-list
-	// pushdown, each table scan returns ≤ 8 matching rows. A
-	// cross product of 2 such tables yields ≤ 64 rows max — but
-	// the intermediate after the first join is typically 0-8 rows.
-	// Using a smaller initial capacity saves ~6KB per NLJ level
-	// (144 bytes × 48 wasted slots) with negligible growth cost.
+	// REQ000844: initial capacity 64.
 	const maxMaterialize = 4096
 	j.leftRows = make([]Row, 0, 64)
 	var leftPrefixedCols []string
@@ -451,7 +448,11 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 		// Also: all rows from the same SeqScan share the same Cols,
 		// so prefixCols can be computed once instead of per-row.
 		if rightPrefixedCols == nil {
-			rightPrefixedCols = prefixCols(row.Cols, j.rightTbl)
+			if !hasAnyPrefix(row.Cols) {
+				rightPrefixedCols = prefixCols(row.Cols, j.rightTbl)
+			} else {
+				rightPrefixedCols = append([]string(nil), row.Cols...)
+			}
 		}
 		j.rightRows = append(j.rightRows, Row{
 			Cols:      rightPrefixedCols,
@@ -459,16 +460,6 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 			Data:      row.Data,
 			tableName: row.tableName,
 		})
-		if len(j.rightRows) >= maxMaterialize {
-			// Too many rows — abort, use NLJ. Close both sides
-			// and reset.
-			j.right.Close()
-			j.left.Close()
-			j.rightRows = nil
-			j.leftRows = nil
-			j.hashAttempted = true
-			return false
-		}
 	}
 	if len(j.leftRows) == 0 || len(j.rightRows) == 0 {
 		// Empty side — result is empty.

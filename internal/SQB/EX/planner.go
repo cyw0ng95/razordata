@@ -1461,8 +1461,28 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		if s.Where != nil {
 			current = NewFilter(current, s.Where)
 		}
+		// REQ000859: handle aggregates in SubqueryFrom (e.g.
+		// `SELECT MAX(v) FROM (SELECT v FROM t WHERE v < 30)`).
+		// Without this, aggregates like MAX are evaluated per-row
+		// instead of as a single-group aggregation.
+		needsAggregate := hasAnyAggregate(s.Cols) || len(s.GroupBy) > 0
+		if needsAggregate {
+			groupCols := s.GroupBy
+			aggsOnly, autoGroup, _ := splitSelectCols(s.Cols)
+			aggExprs := aggsOnly
+			if len(groupCols) == 0 {
+				groupCols = autoGroup
+			}
+			agg := NewAggregate(current, groupCols, aggExprs)
+			current = agg
+		}
 		if len(s.Cols) > 0 && !isStarExpr(s.Cols) {
-			current = NewProject(current, s.Cols)
+			if !needsAggregate {
+				current = NewProject(current, s.Cols)
+			}
+		}
+		if s.Having != nil {
+			current = NewFilter(current, s.Having)
 		}
 		if len(s.OrderBy) > 0 {
 			current = NewSort(current, s.OrderBy)
@@ -1633,13 +1653,13 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		// join order using the simplified N3 algorithm, then
 		// create join operators following that order.
 		joinInfos := make([]joinTableInfo, 0, len(s.Joins))
-		joinMap := make(map[string]PS.JoinClause, len(s.Joins))
+		joinClauses := make([]PS.JoinClause, 0, len(s.Joins))
 		for _, j := range s.Joins {
 			if j.Kind != "INNER" && j.Kind != "LEFT" && j.Kind != "RIGHT" && j.Kind != "FULL" && j.Kind != "CROSS" {
 				continue
 			}
 			joinInfos = append(joinInfos, joinTableInfo{name: j.Right, join: j})
-			joinMap[j.Right] = j
+			joinClauses = append(joinClauses, j)
 		}
 
 		// Determine predicates for cost estimation.
@@ -1702,9 +1722,6 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			baseTable := group[0]
 			var current Operator
 			var leftTbl string
-			// REQ000926: count occurrences in the group so we can
-			// allow the same table to be re-joined for self-joins
-			// (e.g. `FROM tab1 a, tab1 b`).
 			groupCounts := make(map[string]int, len(group))
 			for _, t := range group {
 				groupCounts[t]++
@@ -1712,20 +1729,36 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			joinedTables := map[string]bool{}
 			localConjuncts := make([]PS.Expr, len(crossTableConjuncts))
 			copy(localConjuncts, crossTableConjuncts)
+			// REQ000857: track per-table occurrence count to map
+			// each group entry to the correct JoinClause for self-joins.
+			tableOccurrence := make(map[string]int, len(group))
+			joinClauseIdx := make(map[string]int, len(joinClauses))
+			for ci, jc := range joinClauses {
+				joinClauseIdx[jc.Right] = ci
+			}
 
-			// Build the scan for the base table of this group.
 			if gi == 0 {
-				// First group reuses the main scan (with pushed predicates).
 				current = filteredScan
 				leftTbl = s.From
+				if s.FromAlias != "" {
+					leftTbl = s.FromAlias
+				}
 				joinedTables[s.From] = true
 			} else {
-				// Secondary group: create a fresh scan for the base table.
 				var baseOp Operator = NewSeqScan(baseTable)
 				if ssc, err := NewSeqScanWithStore(p.store, baseTable); err == nil {
 					baseOp = ssc
 				}
-				// Push single-table predicates for the base table.
+				// Apply JoinClause alias to the base table scan for self-joins.
+				if baseCi, ok := joinClauseIdx[baseTable]; ok {
+					jc := joinClauses[baseCi]
+					if jc.RightAlias != "" {
+						if ss, ok := baseOp.(*SeqScan); ok {
+							ss.WithAlias(jc.RightAlias)
+						}
+						leftTbl = jc.RightAlias
+					}
+				}
 				if basePreds := pushedPredicates[baseTable]; len(basePreds) > 0 {
 					for _, pred := range basePreds {
 						tryApplyPointLookup(baseOp, pred)
@@ -1733,35 +1766,63 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 					}
 				}
 				current = baseOp
-				leftTbl = baseTable
+				if leftTbl == "" {
+					leftTbl = baseTable
+				}
 				joinedTables[baseTable] = true
 			}
 
 			for ti, tbl := range group {
 				if ti == 0 {
-					continue // skip base table (already set up as current)
+					continue
 				}
-				// REQ000926: allow re-join if the table appears multiple
-				// times in the group (self-join). joinedCounts tracks
-				// how many times each table has been joined.
+				// REQ000857: map this group entry to the correct JoinClause
+				// using per-table occurrence count (handles self-joins where
+				// the same physical table has multiple JoinClauses with
+				// different aliases).
+				occ := tableOccurrence[tbl]
+				tableOccurrence[tbl]++
+				ci, ok := joinClauseIdx[tbl]
+				if !ok {
+					continue
+				}
 				joinedCounts := make(map[string]int, len(group))
 				for t := range joinedTables {
 					joinedCounts[t]++
 				}
-				// If the table is already joined as many times as it
-				// appears in the group, skip it.
-				if joinedCounts[tbl] >= groupCounts[tbl] {
+			// For self-joins, allow re-join: only skip if we've used
+			// all JoinClauses for this physical table.
+			if occ > 0 {
+				jcCount := 0
+				for _, jc := range joinClauses {
+					if jc.Right == tbl {
+						jcCount++
+					}
+				}
+				if joinedCounts[tbl] >= jcCount {
 					continue
 				}
-				j, ok := joinMap[tbl]
-				if !ok {
-					continue
-				}
+			}
+			j := joinClauses[ci]
+			if j.Right != tbl {
+				continue
+			}
 				kind := JoinKind(j.Kind)
 
+				rightTbl := j.Right
+				if j.RightAlias != "" {
+					rightTbl = j.RightAlias
+				}
 				var rightScan Operator = NewSeqScan(j.Right)
 				if ssc, err := NewSeqScanWithStore(p.store, j.Right); err == nil {
 					rightScan = ssc
+				}
+				// Apply JoinClause alias to the right scan so column
+				// lookups use alias-prefixed names (e.g. "b.v" not "t.v").
+				if j.RightAlias != "" {
+					if ss, ok := rightScan.(*SeqScan); ok {
+						ss.WithAlias(j.RightAlias)
+					}
 				}
 				if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
 					for _, pred := range rightPreds {
@@ -1790,7 +1851,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 								}
 							}
 						}
-						joinOp = NewHashJoin(current, rightScan, leftTbl, j.Right, lk, rk, 0)
+						joinOp = NewHashJoin(current, rightScan, leftTbl, rightTbl, lk, rk, 0)
 						if projectedCols != nil {
 							if hj, ok := joinOp.(*HashJoin); ok {
 								hj.WithProjection(projectedCols)
@@ -1802,8 +1863,8 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 
 				if joinOp == nil {
 					if kind == JoinKindInner && j.On != nil {
-						if lk, rk, ok := p.extractSingleOnEquiKey(j.On, leftTbl, j.Right); ok {
-							joinOp = NewHashCrossJoin(current, rightScan, leftTbl, j.Right, lk, rk)
+						if lk, rk, ok := p.extractSingleOnEquiKey(j.On, leftTbl, rightTbl); ok {
+							joinOp = NewHashCrossJoin(current, rightScan, leftTbl, rightTbl, lk, rk)
 							if projectedCols != nil {
 								if hcj, ok := joinOp.(*HashCrossJoin); ok {
 									hcj.WithProjection(projectedCols)
@@ -1823,7 +1884,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 								return isValueTruthy(v), nil
 							}
 						}
-						nlj := NewNestedLoopJoin(current, rightScan, leftTbl, j.Right, on, kind)
+						nlj := NewNestedLoopJoin(current, rightScan, leftTbl, rightTbl, on, kind)
 						if projectedCols != nil {
 							nlj.WithProjection(projectedCols)
 						}
@@ -1833,7 +1894,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 
 				current = joinOp
 				joinedTables[tbl] = true
-				leftTbl = j.Right
+				leftTbl = rightTbl
 			}
 
 			if current != nil {
@@ -2715,7 +2776,7 @@ func (p *Planner) estimateJoinCost(leftRows, rightRows int, predicates []PS.Expr
 
 	sel := 1.0
 	for _, pred := range predicates {
-		psel := estimateJoinPredicateSelectivity(pred, 0)
+		psel := p.joinPredSel(pred, 0)
 		sel *= psel
 	}
 	cost := float64(leftRows) * float64(rightRows) * sel * indexFactor
@@ -2931,7 +2992,7 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		rowCnt := p.getTableRowCount(jt.name)
 		for _, pred := range wherePredicates {
 			if p.canPushDown(pred, jt.name) {
-				psel := estimateJoinPredicateSelectivity(pred, rowCnt)
+				psel := p.joinPredSel(pred, rowCnt)
 				sel *= psel
 			}
 		}
@@ -2946,7 +3007,7 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 				sel := tableSelectivity[jt.name]
 				rowCnt := p.getTableRowCount(jt.name)
 				for _, pred := range preds {
-					psel := estimateJoinPredicateSelectivity(pred, rowCnt)
+					psel := p.joinPredSel(pred, rowCnt)
 					sel *= psel
 				}
 				tableSelectivity[jt.name] = sel
@@ -2970,7 +3031,7 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		if preds, ok := pushedPredicates[baseTable]; ok && len(preds) > 0 {
 			sel := 1.0
 			for _, pred := range preds {
-				psel := estimateJoinPredicateSelectivity(pred, baseRows)
+				psel := p.joinPredSel(pred, baseRows)
 				sel *= psel
 			}
 			r := baseRows * sel
@@ -2994,7 +3055,7 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 			rightRows = r
 		}
 		joinCost := p.estimateJoinCost(int(baseRows), int(rightRows), preds, hasIdx)
-		resultRows := joinResultRows(baseRows, rightRows, preds)
+		resultRows := p.joinResultRows(baseRows, rightRows, preds)
 		heap = append(heap, partial{
 			tablesSet: map[string]bool{baseTable: true, jt.name: true},
 			order:     []string{baseTable, jt.name},
@@ -3055,7 +3116,7 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 				}
 				joinCost := p.estimateJoinCost(int(pp.rows), int(rightRows), preds, hasIdx)
 				newCost := pp.cost + joinCost
-				newRows := joinResultRows(pp.rows, rightRows, preds)
+				newRows := p.joinResultRows(pp.rows, rightRows, preds)
 
 				newOrder := make([]string, len(pp.order)+1)
 				copy(newOrder, pp.order)
@@ -3365,13 +3426,13 @@ func (p *Planner) hasIndexOnTable(table string) bool {
 }
 
 // joinResultRows estimates the number of output rows from a join.
-func joinResultRows(leftRows, rightRows float64, predicates []PS.Expr) float64 {
+func (p *Planner) joinResultRows(leftRows, rightRows float64, predicates []PS.Expr) float64 {
 	if len(predicates) == 0 {
 		return leftRows * rightRows
 	}
 	sel := 1.0
 	for _, pred := range predicates {
-		sel *= estimateJoinPredicateSelectivity(pred, 0)
+		sel *= p.joinPredSel(pred, 0)
 	}
 	result := leftRows * rightRows * sel
 	if result < 1 {
@@ -3519,6 +3580,12 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) Operator {
 
 // planAnalyze collects table statistics. REQ000258.
 func (p *Planner) planAnalyze(s *PS.AnalyzeStmt) Operator {
+	if p.store != nil {
+		op, err := NewAnalyzeWithStore(p.store, s)
+		if err == nil {
+			return op
+		}
+	}
 	return NewAnalyze(s)
 }
 

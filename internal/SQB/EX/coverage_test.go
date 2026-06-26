@@ -3,7 +3,10 @@ package EX
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
+
+	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 )
 
 func TestCoverage_Aggregate_WithParams(t *testing.T) {
@@ -20,14 +23,66 @@ func TestCoverage_Aggregate_WithParams(t *testing.T) {
 }
 
 func TestCoverage_AnalyzeWithStore(t *testing.T) {
+	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
 	defer eng.Close()
-	ex.Exec(context.Background(), "CREATE TABLE t (id INT, v INT)")
-	ex.Exec(context.Background(), "INSERT INTO t VALUES (1, 10)")
-	ex.Exec(context.Background(), "INSERT INTO t VALUES (2, 20)")
-	_, err := ex.Exec(context.Background(), "ANALYZE t")
+
+	dir := t.TempDir()
+	cat, err := ls.NewCatalog(filepath.Join(dir, "cat"))
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	SetCatalog(cat)
+	t.Cleanup(func() { SetCatalog(nil); _ = cat.Close() })
+
+	ex.RegisterTableWithPK("t", []string{"id", "v", "grp"}, "id")
+	exID, _ := tableIDFor("t")
+	if err := cat.Put(ls.CatalogEntry{
+		Name:       "t",
+		TableID:    exID,
+		PrimaryKey: "id",
+		CreateSQL:  "CREATE TABLE t (id INT, v INT, grp INT, PRIMARY KEY(id))",
+		Columns: []ls.CatalogColumn{
+			{Name: "id", Type: 1, Nullable: false},
+			{Name: "v", Type: 1, Nullable: true},
+			{Name: "grp", Type: 1, Nullable: true},
+		},
+	}); err != nil {
+		t.Fatalf("cat.Put: %v", err)
+	}
+
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10, 1)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (2, 20, 2)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (3, 30, 1)")
+	_, err = ex.Exec(ctx, "ANALYZE t")
 	if err != nil {
 		t.Fatalf("ANALYZE: %v", err)
+	}
+
+	for _, col := range []string{"id", "v", "grp"} {
+		stats := cat.ColumnStatsByName("t", col)
+		if stats == nil {
+			t.Fatalf("no stats for column %q", col)
+		}
+		if stats.RowCount != 3 {
+			t.Fatalf("col %q RowCount=want 3, got %d", col, stats.RowCount)
+		}
+	}
+	// Verify distinct counts: id=3, v=3, grp=2 (values 1,2,1)
+	for _, tc := range []struct {
+		col      string
+		distinct int64
+	}{
+		{"id", 3}, {"v", 3}, {"grp", 2},
+	} {
+		stats := cat.ColumnStatsByName("t", tc.col)
+		if stats == nil {
+			t.Fatalf("no stats for %q", tc.col)
+		}
+		if stats.DistinctCount != tc.distinct {
+			t.Fatalf("col %q DistinctCount=want %d, got %d", tc.col, tc.distinct, stats.DistinctCount)
+		}
 	}
 }
 

@@ -1397,6 +1397,12 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	case *PS.VacuumStmt:
 		return NewVacuum(s), nil
 	case *PS.AnalyzeStmt:
+		if e.store != nil {
+			op, err := NewAnalyzeWithStore(e.store, s)
+			if err == nil {
+				return op, nil
+			}
+		}
 		return NewAnalyze(s), nil
 	case *PS.AlterTableStmt:
 		return NewAlterTable(s), nil

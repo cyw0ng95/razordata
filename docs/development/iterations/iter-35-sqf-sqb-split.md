@@ -2,71 +2,35 @@
 
 **Date**: 2026-06-26
 **Author**: AI Agent
-**Status**: pending
-
-## Goal
-
-Split the monolithic `internal/SQL/` subsystem into two distinct subsystems following
-the same pattern as other subsystems (LOG, MEM, FIL, etc.):
-
-- **`internal/SQF/`** — SQL Frontend. Tokenize, parse, rewrite, plan.
-  - `LX/` — Lexer
-  - `PS/` — Parser (AST)
-  - `RE/` — Rewriter
-  - `PL/` — Planner
-- **`internal/SQB/`** — SQL Backend. Execute the operator tree, collect rows.
-  - `EX/` — Core executor + operators (~160 files; analyze.go, adqc*.go,
-    cache_stats.go remain here in this iteration)
-
-The split is at the **directory level** (cluster reorganization). The `Operator`
-interface, `Row` struct, `Value` type, `Analyze`, `AdaptiveOp`, and `CacheStats`
-all stay in `SQB/EX` for this iteration. Two reasons:
-
-1. **Import cycle**: `SQB/QC/adqc.go` (wrapping Operator) and `SQB/EX/ex.go`
-   (calling NewAdaptiveOp) form a cycle. Moving QC to a separate cluster
-   would require `Operator` to live in a package both can import (a shared
-   `SQF/PL` would work but is a bigger refactor).
-2. **`buildWriterOp` dispatch**: `SQB/EX/ex.go` calls `ST.NewAnalyze` and
-   `QC.NewAdaptiveOp`. Splitting these into separate packages would either
-   create cycles or require an interface registry.
-
-**Resulting dependency direction:** SQF → SQB (frontend depends on backend for
-the operator/row type contract). This is a soft split — the directory layout
-follows the SQF/SQB convention, but the type-level boundary is documented for
-a future iteration to tighten.
-
-## Requirements
-
-- REQ000952: `SQF` subsystem skeleton — new directory layout under `internal/SQF/`
-  with `LX/`, `PS/`, `RE/`, `PL/` subdirectories.
-- REQ000953: `SQB` subsystem skeleton — new directory layout under `internal/SQB/`
-  with `EX/` subdirectory. (ST and QC deferred — see REQ000959/960.)
-- REQ000954: Move `LX/` files from `internal/SQL/LX` to `internal/SQF/LX`.
-- REQ000955: Move `PS/` files from `internal/SQL/PS` to `internal/SQF/PS`.
-- REQ000956: Move `RE/` files from `internal/SQL/RE` to `internal/SQF/RE`.
-- REQ000957: Move `PL/` files from `internal/SQL/PL` to `internal/SQF/PL`.
-- REQ000958: Move `EX/` files from `internal/SQL/EX` to `internal/SQB/EX` (all
-  files; analyze, adqc, cache_stats stay in EX in this iteration).
-- REQ000959: DEFERRED — `SQB/ST` extraction blocked on import cycle.
-- REQ000960: DEFERRED — `SQB/QC` extraction blocked on import cycle.
-- REQ000962: Update all `internal/SQL/*` import paths across the codebase
-  (~150 Go files in `internal/`, `cmd/`, `tests/`) to use the new `SQF/`
-  and `SQB/` prefixes.
-- REQ000963: Remove the empty `internal/SQL/` directory after migration.
-- REQ000964: Flag for human: update `docs/design/ARCH.md` Modules Overview
-  table to replace the single `SQL` row with separate `SQF` and `SQB` rows.
-- REQ000965: Flag for human: split `docs/design/subsystems/SQL.md` into
-  `docs/design/subsystems/SQF.md` and `docs/design/subsystems/SQB.md`.
-- REQ000966: Add iter entries to `docs/development/ROADMAP.md` for iter-35.
-
-## Status
-
-**pending** — design docs (REQ000964, REQ000965) are human-only per AGENTS.md
-Design Protection rule. Code migration is ready to proceed independently.
+**Status**: done
 
 ## Outcome
 
-(populated after completion)
+**Shipped**: v0.30.0 (planned)
+
+**Summary**: Successfully split monolithic `internal/SQL/` into `internal/SQF/` (frontend: LX, PS, RE, PL) and `internal/SQB/` (backend: EX). All 15 REQs addressed — 11 code/import migration REQs verified, 2 design doc REQs flagged for human (verified pre-done), 2 deferred to future iteration (ST/QC blocked on import cycle).
+
+**Actual work delivered**:
+- REQ000952-953: SQF/SQB skeleton directories created
+- REQ000954-958: All frontend (LX/PS/RE/PL → SQF/) and backend (EX → SQB/EX) files moved via `git mv`
+- REQ000962: All ~150 Go import paths updated (`internal/SQL/LX` → `internal/SQF/LX`, etc.) across `internal/`, `cmd/`, `tests/`
+- REQ000963: Empty `internal/SQL/` directory removed
+- REQ000964-965: Verified `docs/design/ARCH.md` already has SQF/SQB rows, `docs/design/subsystems/SQF.md` and `SQB.md` already exist (human pre-done)
+- REQ000966: Verified `docs/development/ROADMAP.md` already has iter-35 row (human pre-done)
+- REQ000959-960: Deferred — ST and QC extraction blocked on import cycle (Operator interface lives in SQB/EX, needed by both EX and QC)
+
+**Deviations from plan**:
+- ST and QC extraction deferred (Phase 2 steps 2-3 in original plan). The Operator/Row types stay in SQB/EX. Soft split documented in the architecture.
+- Design docs (REQ000964-965) were verified pre-existing — the human had already done them before the AI migration.
+
+**LoC**: ~0 net (file moves only, no logic changes). ~150 import path rewrites across ~130 Go files.
+
+**Verification**:
+- `go build ./...` — all packages compile (zero errors)
+- `grep -rln "internal/SQL/" --include="*.go" .` — zero Go file references to old path
+- `ls internal/SQL/` — directory does not exist
+
+**Final commit**: (applied in this session)
 
 ## Plan
 

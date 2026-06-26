@@ -2,6 +2,8 @@ package EX
 
 import (
 	"context"
+	"encoding/binary"
+	"math"
 	"math/rand/v2"
 	"time"
 
@@ -69,143 +71,190 @@ func (a *Analyze) WithParams(p []any) Operator { return a }
 // analyzeTable performs reservoir sampling on a single table
 // and builds column statistics. REQ000258.
 func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
-	// Get catalog for stats persistence
 	cat := Catalog()
 	if cat == nil {
-		// No catalog available, can't persist stats
 		return nil
 	}
 
-	tableID, ok := tableIDFor(tableName)
-	if !ok {
-		return ErrTableNotRegisteredForStorage
+	// Look up the catalog's table ID for this table (the EX-layer's
+	// tableID is not the same as the catalog's internal table ID).
+	var catTableID uint64
+	var catIDFound bool
+	for _, e := range cat.List() {
+		if e.Name == tableName {
+			catTableID = e.TableID
+			catIDFound = true
+			break
+		}
+	}
+	if !catIDFound {
+		// Table not registered in the catalog — can't persist stats.
+		return nil
 	}
 
-	const sampleSize = 10000
-	reservoir := make([][]byte, 0, sampleSize)
-	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano()+1)))
-
-	// Scan all columns - for now just analyze PK column
 	ss, ok := schemaFor(tableName)
 	if !ok {
 		return ErrTableNotRegisteredForStorage
 	}
 
-	// Collect distinct values and compute stats
-	distinctMap := make(map[string]bool)
-	var minValue, maxValue []byte
-	nullCount := int64(0)
+	if a.store == nil || ss == nil {
+		return nil
+	}
+
+	const sampleSize = 10000
+	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano()+1)))
+
+	nCols := len(ss.cols)
+	type colInfo struct {
+		nullCount  int64
+		distinct   map[string]struct{}
+		minValue   []byte
+		maxValue   []byte
+		reservoir  [][]byte
+		reservoirN int64
+	}
+	cols := make([]colInfo, nCols)
+	for i := range cols {
+		cols[i].distinct = make(map[string]struct{})
+		cols[i].reservoir = make([][]byte, 0, sampleSize)
+	}
+
 	rowCount := int64(0)
+	prefix := tablePrefix(tableName)
+	if prefix == nil {
+		return ErrTableNotRegisteredForStorage
+	}
+	it := a.store.NewIterator(prefix)
+	defer it.Close()
 
-	// Use store iterator to scan all rows
-	if a.store != nil && ss != nil {
-		// Build key prefix for PK
-		prefix := []byte(tableName + ":")
-		it := a.store.NewIterator(prefix)
-		defer it.Close()
+	var rowBuf Row
+	var err error
+	for it.Next() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 
-		for it.Next() {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			key := it.Key()
-			rowCount++
-
-			// Extract value from key (after first colon)
-			colonIdx := -1
-			for i, b := range key {
-				if b == ':' {
-					colonIdx = i
-					break
-				}
-			}
-			if colonIdx < 0 || colonIdx >= len(key)-1 {
+		rowCount++
+		encoded := it.Value()
+		if len(encoded) == 0 {
+			continue
+		}
+		rowBuf, err = decodeRow(encoded, ss)
+		if err != nil {
+			continue
+		}
+		for i, v := range rowBuf.Data {
+			ci := &cols[i]
+			if v.IsNull() {
+				ci.nullCount++
 				continue
 			}
 
-			val := key[colonIdx+1:]
-			if len(val) == 0 {
-				nullCount++
+			b := valueToBytes(v)
+			if b == nil {
 				continue
 			}
+			key := string(b)
 
-			// Reservoir sampling
-			if len(reservoir) < sampleSize {
-				reservoir = append(reservoir, append([]byte(nil), val...))
+			ci.distinct[key] = struct{}{}
+
+			if ci.minValue == nil || key < string(ci.minValue) {
+				ci.minValue = append(ci.minValue[:0], b...)
+			}
+			if ci.maxValue == nil || key > string(ci.maxValue) {
+				ci.maxValue = append(ci.maxValue[:0], b...)
+			}
+
+			ci.reservoirN++
+			if len(ci.reservoir) < sampleSize {
+				ci.reservoir = append(ci.reservoir, append([]byte(nil), b...))
 			} else {
-				j := rng.IntN(int(rowCount))
+				j := rng.IntN(int(ci.reservoirN))
 				if j < sampleSize {
-					reservoir[j] = append([]byte(nil), val...)
+					ci.reservoir[j] = append(ci.reservoir[j][:0], b...)
 				}
 			}
-
-			// Track distinct values
-			distinctMap[string(val)] = true
-
-			// Track min/max
-			if minValue == nil || string(val) < string(minValue) {
-				minValue = append([]byte(nil), val...)
-			}
-			if maxValue == nil || string(val) > string(maxValue) {
-				maxValue = append([]byte(nil), val...)
-			}
 		}
-		if err := it.Err(); err != nil {
+	}
+	if err := it.Err(); err != nil {
+		return err
+	}
+
+	for i, colName := range ss.cols {
+		ci := &cols[i]
+		stats := ls.ColumnStats{
+			DistinctCount: int64(len(ci.distinct)),
+			NullCount:     ci.nullCount,
+			MinValue:      ci.minValue,
+			MaxValue:      ci.maxValue,
+			Histogram:     buildHistogram(ci.reservoir, 256),
+			RowCount:      rowCount,
+		}
+		if err := cat.PutStats(catTableID, colName, stats); err != nil {
 			return err
 		}
 	}
 
-	// Build histogram from reservoir
-	histogram := buildHistogram(reservoir, 256)
-
-	// Build stats
-	stats := ls.ColumnStats{
-		DistinctCount: int64(len(distinctMap)),
-		NullCount:     nullCount,
-		MinValue:      minValue,
-		MaxValue:      maxValue,
-		Histogram:     histogram,
-		RowCount:      rowCount,
-	}
-
-	// Persist stats to catalog - analyze PK column
-	pkCol := ss.pk
-	if pkCol != "" {
-		if err := cat.PutStats(tableID, pkCol, stats); err != nil {
-			return err
-		}
-	}
-
-	// Bootstrap learned cardinality model from histogram data
 	lm := PL.Learned()
-	buckets := make([]struct {
+	histograms := make([]struct {
 		Count         int64
 		Lower, Upper  []byte
 		TotalRows     int64
 		DistinctCount int64
 		NullCount     int64
-	}, len(histogram))
-	for i, b := range histogram {
-		buckets[i] = struct {
-			Count         int64
-			Lower, Upper  []byte
-			TotalRows     int64
-			DistinctCount int64
-			NullCount     int64
-		}{
-			Count:         b.Count,
-			Lower:         b.LowerBound,
-			Upper:         b.UpperBound,
-			TotalRows:     rowCount,
-			DistinctCount: stats.DistinctCount,
-			NullCount:     stats.NullCount,
+	}, 0)
+	for _, ci := range cols {
+		for _, b := range buildHistogram(ci.reservoir, 256) {
+			histograms = append(histograms, struct {
+				Count         int64
+				Lower, Upper  []byte
+				TotalRows     int64
+				DistinctCount int64
+				NullCount     int64
+			}{
+				Count:         b.Count,
+				Lower:         b.LowerBound,
+				Upper:         b.UpperBound,
+				TotalRows:     rowCount,
+				DistinctCount: int64(len(ci.distinct)),
+				NullCount:     ci.nullCount,
+			})
 		}
 	}
-	lm.BootstrapFromHistograms(buckets)
+	lm.BootstrapFromHistograms(histograms)
 
+	return nil
+}
+
+// valueToBytes converts a Value to a sortable byte representation
+// suitable for distinct tracking, min/max, and histogram building.
+func valueToBytes(v Value) []byte {
+	switch v.Kind {
+	case KindInt:
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], uint64(v.I64))
+		return b[:]
+	case KindFloat:
+		var b [8]byte
+		bits := math.Float64bits(v.F64)
+		// Flip sign bit for negative values so byte ordering matches float ordering
+		if bits&(1<<63) != 0 {
+			bits = ^bits
+		} else {
+			bits ^= 1 << 63
+		}
+		binary.BigEndian.PutUint64(b[:], bits)
+		return b[:]
+	case KindText:
+		return []byte(v.S)
+	case KindBool:
+		if v.Bo {
+			return []byte{1}
+		}
+		return []byte{0}
+	}
 	return nil
 }
 

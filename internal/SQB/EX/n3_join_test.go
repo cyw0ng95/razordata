@@ -114,14 +114,16 @@ func TestEstimateJoinCost_MinCostFloor(t *testing.T) {
 }
 
 func TestJoinResultRows_CrossJoin(t *testing.T) {
-	result := joinResultRows(100, 200, nil)
+	p := NewPlanner()
+	result := p.joinResultRows(100, 200, nil)
 	if result != float64(100*200) {
 		t.Fatalf("expected %v, got %v", float64(20000), result)
 	}
 }
 
 func TestJoinResultRows_MinFloor(t *testing.T) {
-	result := joinResultRows(1, 1, nil)
+	p := NewPlanner()
+	result := p.joinResultRows(1, 1, nil)
 	if result < 1 {
 		t.Fatalf("expected result >= 1, got %v", result)
 	}
