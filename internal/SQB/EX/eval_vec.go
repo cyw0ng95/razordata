@@ -29,6 +29,23 @@ func EvalBatch(expr PS.Expr, batch *Batch, params []any) []uint16 {
 		return evalBinaryBatch(e, batch, params)
 	case *PS.UnaryExpr:
 		return evalUnaryBatch(e, batch, params)
+	case *PS.InExpr:
+		if e.Subquery != nil || len(e.List) == 0 {
+			return evalRowFallback(expr, batch, params)
+		}
+		col, ok := extractColumnRef(e.Expr, batch)
+		if !ok {
+			return evalRowFallback(expr, batch, params)
+		}
+		list := make([]any, len(e.List))
+		for i, item := range e.List {
+			v, isLit := evalLiteral(item, params)
+			if !isLit {
+				return evalRowFallback(expr, batch, params)
+			}
+			list[i] = v
+		}
+		return evalInListBatch(col, list, batch.Size)
 	default:
 		// Fallback: row-at-a-time
 		return evalRowFallback(expr, batch, params)

@@ -238,6 +238,194 @@ func equalSelection(a, b []uint16) bool {
 	return true
 }
 
+// TestEvalBatch_InList verifies the vectorized IN-list path produces
+// identical results to the row-at-a-time fallback (REQ000991).
+func TestEvalBatch_InList(t *testing.T) {
+	b := makeIntBatch([]int64{10, 20, 30, 40, 50, 60, 70, 80})
+	defer b.Put()
+	// Must set column name for extractColumnRef to match the Ident in InExpr.
+	b.Cols[0].Name = "c0"
+
+	// IN (10, 30, 50) — should match rows 0, 2, 4
+	inExpr := &PS.InExpr{
+		Expr: &PS.Ident{Name: "c0"},
+		List: []PS.Expr{
+			&PS.NumberLiteral{Val: 10},
+			&PS.NumberLiteral{Val: 30},
+			&PS.NumberLiteral{Val: 50},
+		},
+	}
+
+	got := EvalBatch(inExpr, b, nil)
+	want := []uint16{0, 2, 4}
+	if !equalSelection(got, want) {
+		t.Errorf("IN(10,30,50): got %v, want %v", got, want)
+	}
+
+	// Empty list — no rows match
+	emptyExpr := &PS.InExpr{
+		Expr: &PS.Ident{Name: "c0"},
+		List: []PS.Expr{},
+	}
+	gotEmpty := EvalBatch(emptyExpr, b, nil)
+	if len(gotEmpty) != 0 {
+		t.Errorf("empty IN list: got %v, want empty", gotEmpty)
+	}
+
+	// Column not found — should fall back to row-at-a-time
+	unkExpr := &PS.InExpr{
+		Expr: &PS.Ident{Name: "unknown"},
+		List: []PS.Expr{&PS.NumberLiteral{Val: 10}},
+	}
+	gotUnk := EvalBatch(unkExpr, b, nil)
+	// Row-at-a-time fallback: row "unknown" won't be found, so EvalValue returns error,
+	// and evalRowFallback skips the row (continue). No rows match.
+	if len(gotUnk) != 0 {
+		t.Errorf("unknown column IN list: got %v, want empty", gotUnk)
+	}
+}
+
+// TestEvalBatch_NotInList verifies NOT IN via UnaryExpr wrapping (REQ000991).
+func TestEvalBatch_NotInList(t *testing.T) {
+	b := makeIntBatch([]int64{10, 20, 30, 40, 50})
+	defer b.Put()
+	b.Cols[0].Name = "c0"
+
+	// NOT (c0 IN (20, 40)) — should match rows 0, 2, 4
+	notIn := &PS.UnaryExpr{
+		Op: int(LX.T_NOT),
+		Operand: &PS.InExpr{
+			Expr: &PS.Ident{Name: "c0"},
+			List: []PS.Expr{
+				&PS.NumberLiteral{Val: 20},
+				&PS.NumberLiteral{Val: 40},
+			},
+		},
+	}
+
+	got := EvalBatch(notIn, b, nil)
+	want := []uint16{0, 2, 4}
+	if !equalSelection(got, want) {
+		t.Errorf("NOT IN(20,40): got %v, want %v", got, want)
+	}
+}
+
+// TestEvalBatch_InList_String verifies string IN-list vectorized path (REQ000991).
+func TestEvalBatch_InList_String(t *testing.T) {
+	b := GetBatch(1)
+	defer b.Put()
+	vals := []string{"a", "b", "c", "b", "d", "e"}
+	for _, v := range vals {
+		b.AppendRow(0, LX.T_TEXT, v, false)
+		b.AdvanceSize()
+	}
+	b.Cols[0].Name = "s0"
+
+	inExpr := &PS.InExpr{
+		Expr: &PS.Ident{Name: "s0"},
+		List: []PS.Expr{
+			&PS.StringLiteral{Val: "b"},
+			&PS.StringLiteral{Val: "d"},
+			&PS.StringLiteral{Val: "f"},
+		},
+	}
+
+	got := EvalBatch(inExpr, b, nil)
+	want := []uint16{1, 3, 4} // "b" at idx 1,3; "d" at idx 4
+	if !equalSelection(got, want) {
+		t.Errorf("IN('b','d','f'): got %v, want %v", got, want)
+	}
+}
+
+// TestEvalBatch_InList_Nulls verifies NULL handling (REQ000991).
+func TestEvalBatch_InList_Nulls(t *testing.T) {
+	b := GetBatch(1)
+	defer b.Put()
+	vals := []int64{10, 20, 0, 40, 0, 60} // use 0 for NULL placeholders
+	for _, v := range vals {
+		isNull := v == 0
+		b.AppendRow(0, LX.T_INT_KW, v, isNull)
+		b.AdvanceSize()
+	}
+	b.Cols[0].Name = "c0"
+
+	inExpr := &PS.InExpr{
+		Expr: &PS.Ident{Name: "c0"},
+		List: []PS.Expr{
+			&PS.NumberLiteral{Val: 10},
+			&PS.NumberLiteral{Val: 40},
+			&PS.NumberLiteral{Val: 60},
+		},
+	}
+
+	got := EvalBatch(inExpr, b, nil)
+	want := []uint16{0, 3, 5} // idx 2,4 are null → skipped
+	if !equalSelection(got, want) {
+		t.Errorf("IN(10,40,60) with nulls: got %v, want %v", got, want)
+	}
+}
+
+// TestEvalBatch_InList_NonLiteralExpr falls back to row-at-a-time (REQ000991).
+func TestEvalBatch_InList_NonLiteralExpr(t *testing.T) {
+	b := makeIntBatch([]int64{10, 20, 30, 40})
+	defer b.Put()
+	b.Cols[0].Name = "c0"
+
+	// List contains a non-literal expression (param) — forces fallback
+	inExpr := &PS.InExpr{
+		Expr: &PS.Ident{Name: "c0"},
+		List: []PS.Expr{
+			&PS.Param{Index: 0},
+		},
+	}
+	params := []any{int64(10)}
+	got := EvalBatch(inExpr, b, params)
+	want := []uint16{0}
+	if !equalSelection(got, want) {
+		t.Errorf("IN(param): got %v, want %v", got, want)
+	}
+}
+
+// BenchmarkEvalBatch_InList benchmarks vectorized IN-list (REQ000991).
+func BenchmarkEvalBatch_InList(b *testing.B) {
+	const n = 1024
+	batch := GetBatch(1)
+	defer batch.Put()
+	for i := 0; i < n; i++ {
+		batch.AppendRow(0, LX.T_INT_KW, int64(i%100), false)
+		batch.AdvanceSize()
+	}
+	batch.Cols[0].Name = "c0"
+
+	expr := &PS.InExpr{
+		Expr: &PS.Ident{Name: "c0"},
+		List: []PS.Expr{
+			&PS.NumberLiteral{Val: 10},
+			&PS.NumberLiteral{Val: 30},
+			&PS.NumberLiteral{Val: 50},
+			&PS.NumberLiteral{Val: 70},
+			&PS.NumberLiteral{Val: 90},
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = EvalBatch(expr, batch, nil)
+	}
+}
+
+func TestEqualSelection(t *testing.T) {
+	if !equalSelection([]uint16{1, 2, 3}, []uint16{1, 2, 3}) {
+		t.Error("equal")
+	}
+	if equalSelection([]uint16{1, 2}, []uint16{1, 2, 3}) {
+		t.Error("different lengths")
+	}
+	if equalSelection([]uint16{1, 2, 3}, []uint16{1, 2, 4}) {
+		t.Error("different values")
+	}
+}
+
 // BenchmarkEvalBatch_Int64EQ benchmarks int64 column-literal EQ.
 func BenchmarkEvalBatch_Int64EQ(b *testing.B) {
 	const n = 1024
