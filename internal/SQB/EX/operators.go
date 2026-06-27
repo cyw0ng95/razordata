@@ -649,6 +649,10 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 	// Lazily initialize the index iterator.
 	if i.indexIt == nil {
+		// REQ001035: cache the broad prefix for indexValueFromKey.
+		if i.prefixIdxKey == nil {
+			i.prefixIdxKey = buildIndexKey(i.indexTableID, i.idx, nil)
+		}
 		// For exact-match seeks (indexSeek without indexLower),
 		// narrow the prefix to the seek value. For range scans
 		// (indexLower/indexUpper), use the broad index prefix
@@ -656,7 +660,7 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 		if i.indexSeek != nil && i.indexLower == nil {
 			i.indexIt = i.store.NewIterator(buildIndexKey(i.indexTableID, i.idx, i.indexSeek))
 		} else {
-			i.indexIt = i.store.NewIterator(buildIndexKey(i.indexTableID, i.idx, nil))
+			i.indexIt = i.store.NewIterator(i.prefixIdxKey)
 		}
 		if i.indexIt == nil {
 			return Row{}, ErrNoRows
@@ -668,7 +672,8 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 		}
 		key := i.indexIt.Key()
 		// Extract index value from the key for bound-checking.
-		idxVal := indexValueFromKey(key, i.indexTableID, i.idx)
+		// REQ001035: use cached prefix to avoid buildIndexKey allocation.
+		idxVal := indexValueFromKey(key, i.prefixIdxKey)
 		if idxVal == nil {
 			continue
 		}
@@ -717,15 +722,14 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 // `__idx__:<tableID>:<idxName>:` from the key and returns the
 // remaining bytes (the indexed column value). Returns nil if the
 // key does not start with the expected prefix.
-func indexValueFromKey(key []byte, tableID uint64, idxName string) []byte {
-	expected := buildIndexKey(tableID, idxName, nil)
-	if len(key) < len(expected) {
+func indexValueFromKey(key []byte, prefix []byte) []byte {
+	if len(key) < len(prefix) {
 		return nil
 	}
-	if !bytes.Equal(key[:len(expected)], expected) {
+	if !bytes.Equal(key[:len(prefix)], prefix) {
 		return nil
 	}
-	return key[len(expected):]
+	return key[len(prefix):]
 }
 
 // openIndexIter returns the index iterator positioned at the
@@ -751,7 +755,6 @@ func (i *IndexScan) openIndexIter() interface {
 		// iterator walks all index entries; the lower/upper
 		// bounds are enforced in nextFromIndex.
 		prefix = buildIndexKey(i.indexTableID, i.indexName, nil)
-		i.prefixIdxKey = prefix // cache for indexValueFromKey equivalent
 	} else {
 		prefix = buildIndexKey(i.indexTableID, i.indexName, i.indexSeek)
 	}
