@@ -1378,8 +1378,16 @@ func evalSubstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if rawStr.Kind == KindNull {
 		return nil, nil
 	}
-	s := rawStr.ToAny()
-	ss := fmt.Sprint(s)
+	// REQ001040: fast path for text values — avoid boxing + fmt.Sprint.
+	var s string
+	switch rawStr.Kind {
+	case KindText:
+		s = rawStr.S
+	case KindBlob:
+		s = string(rawStr.B)
+	default:
+		s = fmt.Sprint(rawStr.ToAny())
+	}
 	startV, err := EvalValue(args[1], row, params)
 	if err != nil {
 		return nil, err
@@ -1400,7 +1408,7 @@ func evalSubstr(args []PS.Expr, row *Row, params []any) (any, error) {
 		return nil, ErrEval
 	}
 	if start < 0 {
-		start = int64(len(ss)) + start + 1
+		start = int64(len(s)) + start + 1
 		if start < 1 {
 			start = 1
 		}
@@ -1409,7 +1417,7 @@ func evalSubstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	}
 	// Convert 1-based start to 0-based offset.
 	offset := int(start) - 1
-	if offset >= len(ss) {
+	if offset >= len(s) {
 		return "", nil
 	}
 	if len(args) >= 3 {
@@ -1433,12 +1441,12 @@ func evalSubstr(args []PS.Expr, row *Row, params []any) (any, error) {
 			return "", nil
 		}
 		end := offset + int(length)
-		if end > len(ss) {
-			end = len(ss)
+		if end > len(s) {
+			end = len(s)
 		}
-		return ss[offset:end], nil
+		return s[offset:end], nil
 	}
-	return ss[offset:], nil
+	return s[offset:], nil
 }
 
 // evalChar converts integer Unicode code points to a UTF-8 string.
