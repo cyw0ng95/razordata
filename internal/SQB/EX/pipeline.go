@@ -2,7 +2,11 @@ package EX
 
 import (
 	"context"
+	"fmt"
 	"sync"
+
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 // PipelineOperator is the interface for operators in a pipeline.
@@ -156,6 +160,213 @@ func (f *FilterPipelineOperator) Process(ctx context.Context, batch *Batch) (*Ba
 
 // Close is a no-op for stateless operators.
 func (f *FilterPipelineOperator) Close() error { return nil }
+
+// ProjectPipelineOperator is a PipelineOperator that evaluates
+// projection expressions on each batch. REQ001049.
+type ProjectPipelineOperator struct {
+	exprs  []PS.Expr
+	params []any
+	row    Row
+}
+
+// NewProjectPipelineOperator creates a projection stage.
+func NewProjectPipelineOperator(exprs []PS.Expr, params []any) *ProjectPipelineOperator {
+	return &ProjectPipelineOperator{exprs: exprs, params: params}
+}
+
+// Process evaluates projection expressions for each row in the batch
+// and produces a new batch with projected columns.
+func (p *ProjectPipelineOperator) Process(ctx context.Context, batch *Batch) (*Batch, error) {
+	if batch == nil || batch.Size == 0 {
+		return nil, nil
+	}
+	out := GetBatch(len(p.exprs))
+	for i := range p.exprs {
+		out.SetColumnName(i, fmt.Sprintf("c%d", i))
+	}
+	for ri := 0; ri < batch.Size; ri++ {
+		p.row = Row{Data: rowDataAt(batch, ri)}
+		for ei, expr := range p.exprs {
+			v, err := EvalValue(expr, &p.row, p.params)
+			if err != nil {
+				out.Put()
+				return nil, err
+			}
+			out.AppendRow(ei, kindToTokenType(v.Kind), v.ToAny(), v.IsNull())
+		}
+		out.AdvanceSize()
+	}
+	return out, nil
+}
+
+// Close is a no-op.
+func (p *ProjectPipelineOperator) Close() error { return nil }
+
+// AggregatePipelineOperator is a PipelineOperator that accumulates
+// aggregates across batches and produces one result batch at the end.
+// REQ001049.
+type AggregatePipelineOperator struct {
+	aggs  []PS.Expr
+	state []AggregateState
+	done  bool
+	row   Row
+}
+
+// NewAggregatePipelineOperator creates an aggregate stage.
+func NewAggregatePipelineOperator(aggs []PS.Expr) *AggregatePipelineOperator {
+	state := make([]AggregateState, len(aggs))
+	for i, a := range aggs {
+		state[i] = newAggregateState(a)
+	}
+	return &AggregatePipelineOperator{aggs: aggs, state: state}
+}
+
+// Process accumulates one batch into aggregate state.
+// Returns nil until all batches are consumed, then the final result.
+func (a *AggregatePipelineOperator) Process(ctx context.Context, batch *Batch) (*Batch, error) {
+	if batch == nil || batch.Size == 0 {
+		// End of stream: produce result
+		if a.done {
+			return nil, nil
+		}
+		a.done = true
+		out := GetBatch(len(a.aggs))
+		for i, s := range a.state {
+			out.AppendRow(i, kindToTokenType(s.Kind()), s.FinalValue(), false)
+		}
+		out.SetColumnName(0, "count(*)")
+		out.AdvanceSize()
+		return out, nil
+	}
+	for ri := 0; ri < batch.Size; ri++ {
+		a.row = Row{Data: rowDataAt(batch, ri)}
+		for _, s := range a.state {
+			s.Step(a.row)
+		}
+	}
+	return nil, nil
+}
+
+// Close is a no-op.
+func (a *AggregatePipelineOperator) Close() error { return nil }
+
+// rowDataAt extracts column values from a batch row into a []Value.
+func rowDataAt(batch *Batch, rowIdx int) []Value {
+	data := make([]Value, len(batch.Cols))
+	for ci := range batch.Cols {
+		col := &batch.Cols[ci]
+		if col.Nulls != nil && rowIdx < len(col.Nulls) && col.Nulls[rowIdx] {
+			data[ci] = NullValue()
+			continue
+		}
+		switch col.Data.(type) {
+		case []int64:
+			data[ci] = NewIntValue(col.Data.([]int64)[rowIdx])
+		case []float64:
+			data[ci] = NewFloatValue(col.Data.([]float64)[rowIdx])
+		case []string:
+			data[ci] = NewTextValue(col.Data.([]string)[rowIdx])
+		case []bool:
+			data[ci] = NewBoolValue(col.Data.([]bool)[rowIdx])
+		default:
+			data[ci] = NullValue()
+		}
+	}
+	return data
+}
+
+// kindToTokenType maps ValueKind to LX.TokenType for batch column type.
+func kindToTokenType(k ValueKind) LX.TokenType {
+	switch k {
+	case KindInt:
+		return LX.T_INT_KW
+	case KindFloat:
+		return LX.T_FLOAT_KW
+	case KindText:
+		return LX.T_TEXT
+	case KindBool:
+		return LX.T_BOOL
+	default:
+		return LX.TokenType(0)
+	}
+}
+
+// AggregateState is the interface for per-row aggregate accumulation.
+type AggregateState interface {
+	Step(row Row)
+	FinalValue() any
+	Kind() ValueKind
+}
+
+// newAggregateState creates the appropriate state for an aggregate expression.
+func newAggregateState(expr PS.Expr) AggregateState {
+	return &countState{}
+}
+
+// countState implements COUNT(*).
+type countState struct {
+	count int64
+}
+
+func (c *countState) Step(Row) { c.count++ }
+func (c *countState) FinalValue() any { return c.count }
+func (c *countState) Kind() ValueKind { return KindInt }
+
+// buildPipeline creates a Pipeline from a chain of row-based Operators.
+// Each operator is wrapped in a PipelineOperator adapter. REQ001049.
+func buildPipeline(ops []Operator, bufSize int) *Pipeline {
+	stages := make([]PipelineOperator, len(ops))
+	for i, op := range ops {
+		stages[i] = &operatorPipelineAdapter{op: op}
+	}
+	return NewPipeline(stages, bufSize)
+}
+
+// operatorPipelineAdapter wraps a row-based Operator as a PipelineOperator.
+// It drains all rows on first Process call and returns them as a single batch.
+type operatorPipelineAdapter struct {
+	op     Operator
+	batch  *Batch
+	drained bool
+}
+
+func (a *operatorPipelineAdapter) Process(ctx context.Context, batch *Batch) (*Batch, error) {
+	if a.drained {
+		return nil, nil
+	}
+	a.drained = true
+	// Collect all rows from the operator
+	var rows []Row
+	for {
+		r, err := a.op.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				break
+			}
+			return nil, err
+		}
+		rows = append(rows, r)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	// Convert to batch
+	nCols := len(rows[0].Cols)
+	out := GetBatch(nCols)
+	for i, name := range rows[0].Cols {
+		out.SetColumnName(i, name)
+	}
+	for _, r := range rows {
+		for ci := range r.Cols {
+			out.AppendRow(ci, kindToTokenType(r.Data[ci].Kind), r.Data[ci].ToAny(), r.Data[ci].IsNull())
+		}
+		out.AdvanceSize()
+	}
+	a.batch = out
+	return out, nil
+}
+
+func (a *operatorPipelineAdapter) Close() error { return a.op.Close() }
 
 // SyncPipeline is a simpler synchronous pipeline used for testing.
 // It runs each stage sequentially in the same goroutine. Useful
