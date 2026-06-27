@@ -161,7 +161,13 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			}
 			if err := checkUnique(cschema, out, pending, Row{}, asUniqueLookup(lookup)); err != nil {
 				if i.conflictAction == PS.ConflictActionReplace {
-					existing = removeConflicting(existing, cschema, out)
+					var removed int
+					existing, removed = removeConflicting(existing, cschema, out)
+					i.rows += int64(removed)
+					if i.execCtx != nil {
+						i.execCtx.LastChanges += int64(removed)
+						i.execCtx.TotalChanges += int64(removed)
+					}
 					pending = make(map[string]struct{}, len(i.values))
 					goto doInsertReplace
 				}
@@ -201,7 +207,13 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		// REPLACE handling for in-memory path without constraint enforcement
 		if i.conflictAction == PS.ConflictActionReplace && cschema == nil {
 			pkName := tablePKs[i.table]
-			existing = removeConflictingInMemory(existing, schema, pkName, out)
+			var removed int
+			existing, removed = removeConflictingInMemory(existing, schema, pkName, out)
+			i.rows += int64(removed)
+			if i.execCtx != nil {
+				i.execCtx.LastChanges += int64(removed)
+				i.execCtx.TotalChanges += int64(removed)
+			}
 			pending = make(map[string]struct{}, len(i.values))
 		}
 		// REQ000126/REQ000905: FK validation on INSERT (skipped when PRAGMA foreign_keys = OFF)
@@ -329,6 +341,11 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 				if pkErr == nil {
 					key := rowKey(prefix, pk)
 					_ = i.store.Delete(key)
+					i.rows++
+					if i.execCtx != nil {
+						i.execCtx.LastChanges++
+						i.execCtx.TotalChanges++
+					}
 				}
 				// Fall through to insert below
 			} else if i.conflictAction == PS.ConflictActionIgnore {

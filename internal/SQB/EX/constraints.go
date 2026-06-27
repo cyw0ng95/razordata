@@ -471,7 +471,7 @@ func valueEqual(a, b any) bool {
 
 // removeConflicting removes rows from existing that conflict with out
 // on any unique key (including implicit PK). Returns the filtered slice.
-func removeConflicting(existing []Row, schema *storeSchema, out Row) []Row {
+func removeConflicting(existing []Row, schema *storeSchema, out Row) ([]Row, int) {
 	keys := schema.unique
 	if schema.pk != "" {
 		pkIdx := -1
@@ -487,6 +487,7 @@ func removeConflicting(existing []Row, schema *storeSchema, out Row) []Row {
 		}
 	}
 	filtered := make([]Row, 0, len(existing))
+	removed := 0
 	for _, row := range existing {
 		conflict := false
 		for _, uk := range keys {
@@ -508,17 +509,20 @@ func removeConflicting(existing []Row, schema *storeSchema, out Row) []Row {
 		}
 		if !conflict {
 			filtered = append(filtered, row)
+		} else {
+			removed++
 		}
 	}
-	return filtered
+	return filtered, removed
 }
 
 // removeConflictingInMemory removes rows from existing that match out on
-// the PK column (in-memory path without storeSchema). Returns filtered slice.
-// pkName is the table's primary key column name (empty = no PK conflict detection).
-func removeConflictingInMemory(existing []Row, schema []string, pkName string, out Row) []Row {
+// the PK column (in-memory path without storeSchema). Returns filtered slice
+// and count of removed rows. pkName is the table's primary key column name
+// (empty = no PK conflict detection).
+func removeConflictingInMemory(existing []Row, schema []string, pkName string, out Row) ([]Row, int) {
 	if pkName == "" {
-		return existing
+		return existing, 0
 	}
 	pkIdx := -1
 	for i, c := range schema {
@@ -528,14 +532,16 @@ func removeConflictingInMemory(existing []Row, schema []string, pkName string, o
 		}
 	}
 	if pkIdx < 0 || pkIdx >= len(out.Data) {
-		return existing
+		return existing, 0
 	}
 	filtered := make([]Row, 0, len(existing))
+	removed := 0
 	for _, row := range existing {
 		if pkIdx < len(row.Data) && equalValue(row.Data[pkIdx], out.Data[pkIdx]) {
+			removed++
 			continue
 		}
 		filtered = append(filtered, row)
 	}
-	return filtered
+	return filtered, removed
 }
