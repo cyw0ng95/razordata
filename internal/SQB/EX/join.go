@@ -735,7 +735,7 @@ func (j *NestedLoopJoin) Close() error {
 // Output rows carry the shared colIndex so downstream Lookup can
 // skip per-row buildColIndex (REQ000816).
 func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
-	const batchSize = 32
+	const batchSize = 64
 	// REQ000847: early exit — if limit is already satisfied, skip
 	// all batch setup (fill left, materialize right, build shared
 	// cols). Without this, LIMIT 10 over a 5-table cross still
@@ -829,8 +829,9 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 			j.blkRightRows = append(j.blkRightRows, inner)
 		}
 		// REQ000873: if right side is small, cache it for reuse.
+		// REQ000949: for cross-joins (no ON clause), always cache.
 		const tinyRightThreshold = 256
-		if len(j.blkRightRows) <= tinyRightThreshold {
+		if len(j.blkRightRows) <= tinyRightThreshold || j.on == nil {
 			j.cachedRightRows = make([]Row, len(j.blkRightRows))
 			copy(j.cachedRightRows, j.blkRightRows)
 			j.cachedRightCols = j.rightPrefixedCols
