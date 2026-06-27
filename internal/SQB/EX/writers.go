@@ -1092,6 +1092,11 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	}
 	c.done = true
 
+	// REQ000910: WITHOUT ROWID storage is not yet implemented.
+	if c.stmt.WithoutRowid {
+		return Row{}, errors.New("ex: WITHOUT ROWID not yet supported")
+	}
+
 	// CREATE TABLE AS SELECT (REQ000520): the schema comes from
 	// the SELECT output. Register the table, run the SELECT, and
 	// insert rows.
