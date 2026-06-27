@@ -389,6 +389,10 @@ type Executor struct {
 	// ShallowCopy clones via pointer. Shut down in Close().
 	// REQ001044.
 	pool *WorkerPool
+	// attachedDBs maps attached database name → path.
+	// Populated by ATTACH DATABASE, cleared by DETACH.
+	// REQ000908.
+	attachedDBs map[string]string
 }
 
 // TxWriter is the optional hook an Executor notifies on every key
@@ -480,7 +484,8 @@ func NewExecutor() *Executor {
 	e := &Executor{
 		planner:     NewPlanner(),
 		txnDebugger: NewTxnDebugger(),
-		pool:        NewWorkerPool(0), // sized to GOMAXPROCS
+		pool:        NewWorkerPool(0),
+		attachedDBs: make(map[string]string),
 	}
 	e.planner.SetPool(e.pool)
 	e.initStmtCache(256)
@@ -492,6 +497,7 @@ func NewExecutorWithPlanner(pl *Planner) *Executor {
 		planner:     pl,
 		txnDebugger: NewTxnDebugger(),
 		pool:        NewWorkerPool(0),
+		attachedDBs: make(map[string]string),
 	}
 	pl.SetPool(e.pool)
 	e.initStmtCache(256)
@@ -504,6 +510,7 @@ func NewExecutorWithEngine(store Store) *Executor {
 		planner: NewPlannerWithStore(store),
 		store:   store,
 		pool:    NewWorkerPool(0),
+		attachedDBs: make(map[string]string),
 	}
 	e.planner.SetPool(e.pool)
 	e.initStmtCache(256)
@@ -1475,12 +1482,13 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	case *PS.ValuesStmt:
 		return newValuesRowsOp(s.Rows), nil
 	case *PS.AttachStmt:
-		// REQ000557: ATTACH DATABASE — parser accepts the
-		// syntax but the v1 executor refuses to run it.
-		return NewUnsupportedOp(s, ErrMultiDatabaseNotSupported.Error()), nil
+		path, err := extractAttachPath(s.Expr)
+		if err != nil {
+			return nil, err
+		}
+		return NewAttachOp(e, s.Name, path), nil
 	case *PS.DetachStmt:
-		// REQ000557: DETACH DATABASE — same as ATTACH.
-		return NewUnsupportedOp(s, ErrMultiDatabaseNotSupported.Error()), nil
+		return NewDetachOp(e, s.Name), nil
 	}
 	return nil, errors.New("ex: not a writable statement")
 }
@@ -1493,6 +1501,16 @@ func extractResult(op Operator) (Result, error) {
 		return Result{RowsAffected: a.RowsAffected()}, nil
 	}
 	return Result{}, nil
+}
+
+// extractAttachPath extracts the path string from an ATTACH expression.
+// Expects a string literal. REQ000908.
+func extractAttachPath(expr PS.Expr) (string, error) {
+	s, ok := expr.(*PS.StringLiteral)
+	if !ok {
+		return "", errors.New("ex: ATTACH DATABASE path must be a string literal")
+	}
+	return s.Val, nil
 }
 
 // QueryStream runs a SELECT and returns a streaming iterator that

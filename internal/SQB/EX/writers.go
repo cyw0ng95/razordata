@@ -2326,9 +2326,77 @@ func (u *UnsupportedOp) Close() error                { return nil }
 func (u *UnsupportedOp) WithParams(_ []any) Operator { return u }
 func (u *UnsupportedOp) RowsAffected() int64         { return 0 }
 
-// ErrMultiDatabaseNotSupported is returned by ATTACH / DETACH DATABASE
-// at execution time. REQ000557.
-var ErrMultiDatabaseNotSupported = errors.New("ex: multi-database not supported in v1")
+// AttachOp implements ATTACH DATABASE by recording the name→path
+// mapping on the Executor. REQ000908.
+type AttachOp struct {
+	ex     *Executor
+	name   string
+	path   string
+	done   bool
+	closed bool
+}
+
+func NewAttachOp(ex *Executor, name, path string) *AttachOp {
+	return &AttachOp{ex: ex, name: name, path: path}
+}
+
+func (a *AttachOp) Next(ctx context.Context) (Row, error) {
+	if a.done {
+		return Row{}, ErrNoRows
+	}
+	a.done = true
+	if a.closed {
+		return Row{}, errors.New("ex: attach op is closed")
+	}
+	// For v1, cross-database queries (SELECT * FROM attached.t) are
+	// rejected at the planner level by the qualified-name resolver.
+	a.ex.attachedDBs[a.name] = a.path
+	return Row{}, nil
+}
+
+func (a *AttachOp) Close() error {
+	a.closed = true
+	return nil
+}
+func (a *AttachOp) WithParams(_ []any) Operator { return a }
+func (a *AttachOp) RowsAffected() int64         { return 0 }
+
+// DetachOp implements DETACH DATABASE by removing the name→path
+// mapping from the Executor. REQ000908.
+type DetachOp struct {
+	ex     *Executor
+	name   string
+	done   bool
+	closed bool
+}
+
+func NewDetachOp(ex *Executor, name string) *DetachOp {
+	return &DetachOp{ex: ex, name: name}
+}
+
+func (d *DetachOp) Next(ctx context.Context) (Row, error) {
+	if d.done {
+		return Row{}, ErrNoRows
+	}
+	d.done = true
+	if d.closed {
+		return Row{}, errors.New("ex: detach op is closed")
+	}
+	delete(d.ex.attachedDBs, d.name)
+	return Row{}, nil
+}
+
+func (d *DetachOp) Close() error {
+	d.closed = true
+	return nil
+}
+func (d *DetachOp) WithParams(_ []any) Operator { return d }
+func (d *DetachOp) RowsAffected() int64         { return 0 }
+
+// ErrMultiDatabaseNotSupported is returned when a query attempts to
+// reference an attached database. Full cross-database query support
+// (SELECT from attached.t, etc.) is deferred. REQ000908.
+var ErrMultiDatabaseNotSupported = errors.New("ex: cross-database queries not supported in v1")
 
 // fireInsertTriggers fires all AFTER INSERT triggers for the given table.
 // The new row is passed as the context for trigger execution.
