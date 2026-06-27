@@ -1466,6 +1466,8 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		return NewTruncate(s), nil
 	case *PS.ReindexStmt:
 		return NewReindex(s), nil
+	case *PS.CreateVirtualTableStmt:
+		return NewUnsupportedOp(s, "ex: virtual table module not supported in v1: "+s.Module), nil
 	case *PS.BeginTX:
 		return NewNoop(), nil
 	case *PS.CommitTX:
