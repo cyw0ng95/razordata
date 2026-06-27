@@ -28,6 +28,9 @@ type Options struct {
 	InMemory           bool
 	ShutdownTimeout    time.Duration // REQ000687: configurable shutdown timeout, default 30s
 	EmergencyShutdown  bool          // REQ000688: skip Phase 2+3, flush only
+	MaxMemoryPerQuery  int64         // REQ001056: per-query memory cap, 0 = unlimited
+	JoinBufferSize     int64         // REQ001056: per-hash-join memory cap, 0 = unlimited
+	MaxResultRows      int64         // REQ001056: per-query result row cap, 0 = unlimited
 }
 
 const (

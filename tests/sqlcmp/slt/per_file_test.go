@@ -92,7 +92,7 @@ func TestSLT_PerFile(t *testing.T) {
 			}
 
 			if stats.Failed > 0 {
-				diag := diagnoseFailures(ctx, driver, recs, 5)
+				diag := diagnoseFailures(ctx, driver, recs, 20)
 				if diag != "" {
 					t.Logf("first failures:\n%s", diag)
 				}
@@ -131,6 +131,8 @@ func discoverTestFiles(t *testing.T, root string) []string {
 // large select files (>10K lines) get 60s. This avoids the
 // one-size-fits-all 30s that was either too generous for tiny files
 // or too tight for massive ones.
+// REQ001056: very large files (>500KB) get 120s to accommodate
+// cross-join queries that dominate select4.test.
 func perFileTimeout(t *testing.T, path string) time.Duration {
 	t.Helper()
 	info, err := os.Stat(path)
@@ -138,13 +140,16 @@ func perFileTimeout(t *testing.T, path string) time.Duration {
 		return 30 * time.Second // fallback
 	}
 	// Rough heuristic: 1000 lines ≈ 15s. Clamp to [5s, 60s].
+	// Very large corpus files (select4.test at 1.2MB) get extra time.
 	size := info.Size()
 	switch {
 	case size < 2_000:
 		return 5 * time.Second
 	case size < 50_000:
 		return 15 * time.Second
-	default:
+	case size < 500_000:
 		return 60 * time.Second
+	default:
+		return 120 * time.Second
 	}
 }

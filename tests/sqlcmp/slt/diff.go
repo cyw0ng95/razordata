@@ -178,6 +178,7 @@ func rowsEqual(a, b []Value, typeString string) bool {
 //   - integer 0 == real 0.0
 //   - integer that round-trips losslessly to a real and back
 //   - text and "empty" rendered text
+//   - integer/real == text when the string representation matches (REQ001056)
 func valueEqual(a, b Value) bool {
 	if a.Kind == b.Kind {
 		switch a.Kind {
@@ -197,6 +198,14 @@ func valueEqual(a, b Value) bool {
 		return float64(a.Int) == b.Real
 	case a.Kind == TypeReal && b.Kind == TypeInteger:
 		return a.Real == float64(b.Int)
+	case a.Kind == TypeInteger && b.Kind == TypeText:
+		return a.String() == b.String()
+	case a.Kind == TypeText && b.Kind == TypeInteger:
+		return a.String() == b.String()
+	case a.Kind == TypeReal && b.Kind == TypeText:
+		return a.String() == b.String()
+	case a.Kind == TypeText && b.Kind == TypeReal:
+		return a.String() == b.String()
 	}
 	return false
 }

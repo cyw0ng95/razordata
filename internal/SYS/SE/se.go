@@ -159,6 +159,19 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 		// the per-row []any allocation that was 53% of join memory.
 		return AP.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
 	}
+	// REQ001056: wrap with result row limit when set.
+	if s.engine.MaxResultRows() > 0 {
+		origNext := next
+		var rowCount int64
+		limit := s.engine.MaxResultRows()
+		next = func() (AP.Row, error) {
+			rowCount++
+			if rowCount > limit {
+				return AP.Row{}, AP.ErrNoRows
+			}
+			return origNext()
+		}
+	}
 	return AP.NewRows(stream.Cols(), stream.Types(), next, func() error { return stream.Close() }), nil
 }
 

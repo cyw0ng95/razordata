@@ -173,6 +173,10 @@ func (e *Engine) open(ctx context.Context) (err error) {
 	e.txn = vl.NewManager()
 	e.exeAdapter = &executorStoreAdapter{eng: e.eng}
 	e.exe = executor.NewExecutorWithEngine(e.exeAdapter)
+	e.exe.WithMemoryBudget(e.opts.MaxMemoryPerQuery, e.opts.JoinBufferSize)
+	if e.opts.MaxResultRows > 0 {
+		e.exe.WithMaxResultRows(e.opts.MaxResultRows)
+	}
 	if err := e.openCatalog(); err != nil {
 		return err
 	}
@@ -192,6 +196,10 @@ func (e *Engine) openInMemory() (err error) {
 	}()
 	e.sp = sp.New()
 	e.exe = executor.NewExecutor()
+	e.exe.WithMemoryBudget(e.opts.MaxMemoryPerQuery, e.opts.JoinBufferSize)
+	if e.opts.MaxResultRows > 0 {
+		e.exe.WithMaxResultRows(e.opts.MaxResultRows)
+	}
 	e.txn = vl.NewManager()
 	e.started = time.Now()
 	e.opened.Store(true)
@@ -381,6 +389,15 @@ func (e *Engine) walStats() AP.WALStats {
 }
 
 func (e *Engine) Executor() *executor.Executor { return e.exe.ShallowCopy() }
+
+// MaxResultRows returns the per-query result row limit.
+// 0 means unlimited. REQ001056.
+func (e *Engine) MaxResultRows() int64 {
+	if e.exe == nil {
+		return 0
+	}
+	return e.exe.MaxResultRows()
+}
 
 func (e *Engine) ExtractParamTypes(sql string) []int {
 	if e.exe == nil {

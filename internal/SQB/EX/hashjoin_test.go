@@ -2,6 +2,7 @@ package EX
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -238,5 +239,38 @@ func TestHashJoin_AllMatch(t *testing.T) {
 	// 2 left rows * 3 right rows = 6 pairs
 	if len(got) != 6 {
 		t.Errorf("got %d rows, want 6; data=%v", len(got), got)
+	}
+}
+
+// TestHashJoin_JoinBufferSize verifies that setting joinBufferSize
+// rejects queries that materialize more rows than the budget allows.
+// REQ001056.
+func TestHashJoin_JoinBufferSize(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	leftRows := []Row{
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
+		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("b")}},
+	}
+	rightRows := []Row{
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("x")}},
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("y")}},
+		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("z")}},
+	}
+	RegisterTable("l", leftRows)
+	RegisterTable("r", rightRows)
+	leftScan := NewSeqScan("l")
+	rightScan := NewSeqScan("r")
+	hj := NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
+	// Set a tiny buffer — 5 rows × 200 bytes ≈ 1000 bytes → 200 bytes cap will reject.
+	hj.joinBufferSize = 200
+
+	ctx := context.Background()
+	_, err := hj.Next(ctx)
+	if err == nil {
+		t.Fatal("expected error for exceeding joinBufferSize, got nil")
+	}
+	if !strings.Contains(err.Error(), "joinBufferSize") {
+		t.Errorf("error should mention joinBufferSize, got: %v", err)
 	}
 }

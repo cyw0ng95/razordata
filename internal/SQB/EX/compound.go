@@ -80,11 +80,11 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 		return c.nextStreaming(ctx)
 	}
 	if !c.materialized {
-		leftRows, err := drainAll(ctx, c.left)
+		leftRows, err := drainAll(ctx, c.left, 0)
 		if err != nil {
 			return Row{}, err
 		}
-		rightRows, err := drainAll(ctx, c.right)
+		rightRows, err := drainAll(ctx, c.right, 0)
 		if err != nil {
 			return Row{}, err
 		}
@@ -261,7 +261,7 @@ func (c *CompoundOp) nextStreamingUnionAll(ctx context.Context) (Row, error) {
 
 func (c *CompoundOp) nextStreamingSetOp(ctx context.Context) (Row, error) {
 	if !c.rightDrained {
-		rightRows, err := drainAll(ctx, c.right)
+		rightRows, err := drainAll(ctx, c.right, 0)
 		if err != nil {
 			return Row{}, err
 		}
@@ -317,10 +317,18 @@ func (c *CompoundOp) Close() error {
 	return c.right.Close()
 }
 
-// drainAll pulls all rows from op into a slice.
-func drainAll(ctx context.Context, op Operator) ([]Row, error) {
+// drainAll pulls up to maxRows rows from op. maxRows=0 means unlimited.
+// Defaults to 1M rows when maxRows is 0 (safety limit for intermediate
+// compound operator materialization — REQ001056).
+func drainAll(ctx context.Context, op Operator, maxRows int64) ([]Row, error) {
+	if maxRows <= 0 {
+		maxRows = 1_000_000 // safety cap: 1M rows ≈ 50MB per drain
+	}
 	var out []Row
 	for {
+		if int64(len(out)) >= maxRows {
+			return out, nil
+		}
 		r, err := op.Next(ctx)
 		if err != nil {
 			if err == ErrNoRows {

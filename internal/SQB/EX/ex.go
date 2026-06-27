@@ -268,13 +268,6 @@ func (r *Row) Lookup(name string) (any, bool) {
 			break
 		}
 	}
-	hasDot := false
-	for _, c := range name {
-		if c == '.' {
-			hasDot = true
-			break
-		}
-	}
 	for cur := r; cur != nil; cur = cur.Outer {
 		if cur.colIndex == nil {
 			cur.buildColIndex()
@@ -285,12 +278,10 @@ func (r *Row) Lookup(name string) (any, bool) {
 			}
 			return nil, false
 		}
-		// REQ000816: skip the dotted-name fallback scan when the
-		// caller-provided name has no dot — those calls cannot match
-		// any table.col-style column.
-		if !hasDot {
-			continue
-		}
+		// REQ000816: try dotted-name fallback scan even when the
+		// caller-provided name has no dot — a bare column name
+		// like "e3" must match prefixed columns like "t3.e3"
+		// from join output rows (REQ001081).
 		for j, c := range cur.Cols {
 			if i := strings.LastIndexByte(c, '.'); i >= 0 && i < len(c)-1 {
 				if !hasUpper {
@@ -311,9 +302,11 @@ func (r *Row) Lookup(name string) (any, bool) {
 // REQ001027: avoids ToAny() boxing for callers that work with Value directly.
 func (r *Row) LookupValue(name string) (Value, bool) {
 	lname := name
+	hasUpper := false
 	for _, c := range name {
 		if c >= 'A' && c <= 'Z' {
 			lname = strings.ToLower(name)
+			hasUpper = true
 			break
 		}
 	}
@@ -326,6 +319,18 @@ func (r *Row) LookupValue(name string) (Value, bool) {
 				return cur.Data[idx], true
 			}
 			return Value{}, false
+		}
+		// REQ001081: suffix matching for bare names against prefixed cols.
+		for j, c := range cur.Cols {
+			if i := strings.LastIndexByte(c, '.'); i >= 0 && i < len(c)-1 {
+				if !hasUpper {
+					if c[i+1:] == name && j < len(cur.Data) {
+						return cur.Data[j], true
+					}
+				} else if strings.EqualFold(c[i+1:], name) && j < len(cur.Data) {
+					return cur.Data[j], true
+				}
+			}
 		}
 	}
 	return Value{}, false
@@ -421,6 +426,16 @@ type Executor struct {
 	// Populated by ATTACH DATABASE, cleared by DETACH.
 	// REQ000908.
 	attachedDBs map[string]string
+	// maxMemoryPerQuery caps total memory per query execution.
+	// 0 means unlimited (backward compatible). REQ001056.
+	maxMemoryPerQuery int64
+	// joinBufferSize caps per-hash-join memory (right-side + left-side
+	// materialization). 0 means unlimited. REQ001056.
+	joinBufferSize int64
+	// maxResultRows caps total rows returned by a single SELECT query.
+	// 0 means unlimited (backward compatible). REQ001056.
+	// Prevents OOM from unbounded cross-join result accumulation.
+	maxResultRows int64
 }
 
 // TxWriter is the optional hook an Executor notifies on every key
@@ -461,12 +476,16 @@ func (e *Executor) ClearTxWriter() {
 // sessionID). Callers use this to avoid races when the shared Executor is
 // used concurrently by multiple sessions (REQ000611).
 // The statement cache is re-initialized (not shared) since it contains a Mutex.
+// Memory budget fields are inherited from the original. REQ001056.
 func (e *Executor) ShallowCopy() *Executor {
 	e2 := &Executor{
-		planner:     e.planner,
-		store:       e.store,
-		txnDebugger: NewTxnDebugger(),
-		pool:        e.pool, // shared — pool is thread-safe
+		planner:           e.planner,
+		store:             e.store,
+		txnDebugger:       NewTxnDebugger(),
+		pool:              e.pool, // shared — pool is thread-safe
+		maxMemoryPerQuery: e.maxMemoryPerQuery,
+		joinBufferSize:    e.joinBufferSize,
+		maxResultRows:     e.maxResultRows,
 	}
 	e2.initStmtCache(e.stmtCache.maxSize)
 	return e2
@@ -572,6 +591,29 @@ func (e *Executor) WithStmtCache(maxSize int) *Executor {
 	e.initStmtCache(maxSize)
 	return e
 }
+
+// WithMemoryBudget sets per-query and per-join memory limits,
+// plus a per-query result row cap. All default to 0 (unlimited).
+// REQ001056.
+func (e *Executor) WithMemoryBudget(maxMemoryPerQuery, joinBufferSize int64) *Executor {
+	e.maxMemoryPerQuery = maxMemoryPerQuery
+	e.joinBufferSize = joinBufferSize
+	if e.planner != nil {
+		e.planner.SetJoinBufferSize(joinBufferSize)
+	}
+	return e
+}
+
+// WithMaxResultRows sets a cap on total rows returned by a single
+// SELECT query. 0 means unlimited. REQ001056.
+func (e *Executor) WithMaxResultRows(limit int64) *Executor {
+	e.maxResultRows = limit
+	return e
+}
+
+// MaxResultRows returns the per-query result row limit.
+// 0 means unlimited. REQ001056.
+func (e *Executor) MaxResultRows() int64 { return e.maxResultRows }
 
 // initStmtCache initializes the statement cache. Must be called before use.
 func (e *Executor) initStmtCache(maxSize int) {

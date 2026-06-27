@@ -2,6 +2,7 @@ package EX
 
 import (
 	"context"
+	"fmt"
 	"hash/maphash"
 	"strings"
 )
@@ -58,6 +59,10 @@ type HashJoin struct {
 	keyBuf []Value
 	// REQ000865: built tracks whether buildAndProbe has run.
 	built bool
+	// joinBufferSize caps total memory for right-side + left-side
+	// materialization. 0 = unlimited. Set by Planner from
+	// Executor.WithMemoryBudget. REQ001056.
+	joinBufferSize int64
 }
 
 type hashBucket struct {
@@ -206,6 +211,21 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		}
 		j.leftRows = append(j.leftRows, row)
 	}
+
+	// REQ001056: check total materialized rows against joinBufferSize.
+	// Rough estimate: each Row with N columns ≈ N * (8+16) bytes + 64 base.
+	if j.joinBufferSize > 0 {
+		var rightTotal int
+		for i := range j.buckets {
+			rightTotal += len(j.buckets[i].rightRows)
+		}
+		totalRows := len(j.leftRows) + rightTotal
+		// Estimate: each row has ~5 columns × 24 bytes = 120 + 64 base ≈ 200 bytes.
+		estBytes := int64(totalRows) * 200
+		if estBytes > j.joinBufferSize {
+			return fmt.Errorf("hash join materialized %d rows (~%d bytes), exceeds joinBufferSize=%d", totalRows, estBytes, j.joinBufferSize)
+		}
+	}
 	// Pre-build sharedCols, sharedTypes and sharedColIndex from the
 	// first output row's column layout so every emitted row reuses
 	// them instead of allocating fresh Cols/Types slices and
@@ -271,6 +291,14 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	}
 	dataPerRow := len(j.leftRows[0].Cols) + len(firstRightCols)
 	j.dataPerRow = dataPerRow
+	// REQ001090: dataBuf pre-allocates totalMatches*dataPerRow
+	// Values. The output Row.Data sub-slices point INTO this
+	// buffer (line 321: j.dataBuf[off:off+dataPerRow:off+dataPerRow])
+	// so the cap MUST be exact — if we cap lower and append grows,
+	// append reallocates the backing array and the previously
+	// emitted Row.Data slices become dangling pointers. The original
+	// 1GiB MaxResultRows cap at the driver level is the right
+	// place to bound memory for this operator.
 	j.dataBuf = make([]Value, 0, totalMatches*dataPerRow)
 	j.matches = make([]Row, 0, totalMatches)
 	j.matchPos = 0

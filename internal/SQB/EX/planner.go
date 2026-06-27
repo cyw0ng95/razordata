@@ -241,6 +241,9 @@ type Planner struct {
 	// Set by Executor on creation; nil means serial-only execution.
 	// REQ001044.
 	pool *WorkerPool
+	// joinBufferSize caps per-hash-join memory. 0 = unlimited.
+	// Set by Executor.WithMemoryBudget. REQ001056.
+	joinBufferSize int64
 }
 
 type tableInfo struct {
@@ -263,6 +266,10 @@ func (p *Planner) SetPool(pool *WorkerPool) { p.pool = pool }
 
 // Pool returns the attached WorkerPool (may be nil). REQ001044.
 func (p *Planner) Pool() *WorkerPool { return p.pool }
+
+// SetJoinBufferSize sets the per-hash-join memory cap.
+// 0 = unlimited. REQ001056.
+func (p *Planner) SetJoinBufferSize(v int64) { p.joinBufferSize = v }
 
 // InvalidateCache clears the plan cache. REQ000846: called when DDL
 // changes the schema (CREATE/DROP/ALTER TABLE) so cached plans that
@@ -1801,6 +1808,11 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 							}
 						}
 						joinOp = NewHashJoin(current, rightScan, leftTbl, rightTbl, lk, rk, 0)
+						if p.joinBufferSize > 0 {
+							if hj, ok := joinOp.(*HashJoin); ok {
+								hj.joinBufferSize = p.joinBufferSize
+							}
+						}
 						if projectedCols != nil {
 							if hj, ok := joinOp.(*HashJoin); ok {
 								hj.WithProjection(projectedCols)
@@ -1895,6 +1907,11 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 				}
 				if len(lk) > 0 {
 					joinOp = NewHashJoin(current, gr.op, leftTbl, gr.tbl, lk, rk, 0)
+					if p.joinBufferSize > 0 {
+						if hj, ok := joinOp.(*HashJoin); ok {
+							hj.joinBufferSize = p.joinBufferSize
+						}
+					}
 					if projectedCols != nil {
 						if hj, ok := joinOp.(*HashJoin); ok {
 							hj.WithProjection(projectedCols)

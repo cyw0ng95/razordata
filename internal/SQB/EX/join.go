@@ -399,7 +399,12 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 	}
 	// Materialize left side.
 	// REQ000844: initial capacity 64.
-	const maxMaterialize = 4096
+	// REQ001085: raise threshold from 4096 to 16384. select4 with
+	// 100 rows × 9 tables produces 900 rows per table × multiple
+	// bushy-tree materializations > 4K. Hash mode is always faster
+	// than block NLJ for cross joins; only fall back on memory
+	// pressure (controlled by Executor.maxMemoryPerQuery).
+	const maxMaterialize = 16384
 	j.leftRows = make([]Row, 0, 64)
 	var leftPrefixedCols []string
 	for len(j.leftRows) < maxMaterialize {

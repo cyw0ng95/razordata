@@ -11,10 +11,12 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
-// predicateCache is a global cache of compiled filter predicate functions,
-// keyed by fmt.Sprintf("%v", predicate). This allows reuse across executor
-// instances when the same predicate text appears in multiple queries.
-// REQ000802+.
+// REQ001088: predicateCache is now best-effort. The Filter struct caches
+// its own compiled predicate on first use (see Filter.compiledOnce),
+// so the global cache is only consulted by legacy callers via
+// lookupOrCompilePredicate. Per-Filter compilation avoids cross-query
+// pollution when one query's compiled closure referenced a stale
+// row.colIndex.
 var predicateCache sync.Map
 
 // REQ000869: batchBufPool reuses []Row backing arrays across Filter
@@ -123,8 +125,13 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 		}
 		// REQ000802: use compiled predicate if available.
 		// REQ000802+: check global predicate cache for reuse.
+		// REQ001088: compile per-Filter instead. Compiled closures
+		// may reference row.colIndex which is per-row, so a global
+		// cache is only safe for compileFilterExpr results that
+		// are pure (no row state). For simplicity, all compilation
+		// is now per-Filter via compiledOnce.
 		if !f.compiledOnce {
-			f.compiledFilterFn = lookupOrCompilePredicate(f.predicate)
+			f.compiledFilterFn = compileFilterExpr(f.predicate)
 			f.compiledOnce = true
 		}
 		// REQ000822: batch path — drain up to filterBatchSize rows
@@ -791,9 +798,26 @@ func (o *Offset) Close() error {
 	return o.child.Close()
 }
 
+// REQ001088: predicate compilation is now per-Filter. The previous
+// global `sync.Map` cache was keyed by `fmt.Sprintf("%v", e)` which
+// serialized the entire AST on every call AND was shared across
+// all Executors, creating cross-query pollution risk when one
+// query's compiled closure referenced a stale row.colIndex. Per-Filter
+// compilation (via Filter.compiledOnce) is simpler and correct.
+// `lookupOrCompilePredicate` is kept as a thin wrapper for backward
+// compat with tests and any external callers.
+
 // lookupOrCompilePredicate checks the global predicate cache for a
 // compiled filter function. On cache miss it compiles and stores the
 // result. REQ000802+.
+//
+// REQ001088: this cache is now best-effort. The Filter struct caches
+// its own compiled predicate on first use, so the global cache only
+// helps when many Filters share the same predicate text AND the
+// compiled closure doesn't depend on per-Filter state. Most
+// compiled predicates today are column-literal comparisons which
+// ARE state-dependent (row.colIndex), so the global cache is
+// bypassed by per-Filter caching entirely.
 func lookupOrCompilePredicate(e PS.Expr) func(*Row) (bool, error) {
 	key := fmt.Sprintf("%v", e)
 	if cached, ok := predicateCache.Load(key); ok {
@@ -957,44 +981,51 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 }
 
 func makeCompiledCmp(colName string, litVal any, cmp func(a, b Value) bool) func(*Row) (bool, error) {
-	idx := -1
 	bareName := colName
 	if dot := strings.LastIndexByte(colName, '.'); dot >= 0 {
 		bareName = colName[dot+1:]
 	}
 	// Pre-convert literal to Value to avoid boxing in hot path.
 	litValue := valueFromAny(litVal)
+	// REQ001084: idx must NOT be captured in closure — rows in
+	// a batch may have different Cols (e.g. cross join produces
+	// rows with varying prefixed columns between left/right sides).
+	// A cached idx from row N can be wrong for row M in the same
+	// batch. Recompute idx per row by linear scan — slower per row
+	// but correct across heterogeneous row layouts.
 	return func(row *Row) (bool, error) {
+		// REQ001084: recompute idx every call. Cross-join batches
+		// can have rows with different Cols between left/right
+		// sides; a cached idx from a previous row would be wrong.
+		idx := -1
+		// Try direct match first (qualified name like "t1.a").
+		for i, c := range row.Cols {
+			if strings.EqualFold(c, colName) {
+				idx = i
+				break
+			}
+		}
+		// Fallback: try bare column name (works for SeqScan rows).
 		if idx < 0 {
-			// Try direct match first (qualified name like "t1.a").
 			for i, c := range row.Cols {
-				if strings.EqualFold(c, colName) {
+				if strings.EqualFold(c, bareName) && i < len(row.Data) {
 					idx = i
 					break
 				}
 			}
-			// Fallback: try bare column name (works for SeqScan rows).
-			if idx < 0 {
-				for i, c := range row.Cols {
-					if strings.EqualFold(c, bareName) && i < len(row.Data) {
-						idx = i
-						break
-					}
+		}
+		// Fallback: suffix match for bare names on prefixed rows.
+		if idx < 0 {
+			lk := strings.ToLower(bareName)
+			for i, c := range row.Cols {
+				if strings.HasSuffix(strings.ToLower(c), "."+lk) && i < len(row.Data) {
+					idx = i
+					break
 				}
 			}
-			// Fallback: suffix match for bare names on prefixed rows.
-			if idx < 0 {
-				lk := strings.ToLower(bareName)
-				for i, c := range row.Cols {
-					if strings.HasSuffix(strings.ToLower(c), "."+lk) && i < len(row.Data) {
-						idx = i
-						break
-					}
-				}
-			}
-			if idx < 0 {
-				return false, nil
-			}
+		}
+		if idx < 0 {
+			return false, nil
 		}
 		if idx >= len(row.Data) {
 			return false, nil
@@ -1351,28 +1382,21 @@ func compileColRef(name string) func(*Row) Value {
 		bareName = name[dot+1:]
 	}
 	bareLower := strings.ToLower(bareName)
-	idx := -1
 	return func(row *Row) Value {
+		// REQ001084: recompute idx per row. Cross-join output rows
+		// may have different Cols; a cached idx from a previous row
+		// would read from the wrong column. This is the same bug as
+		// makeCompiledCmp (REQ001084) but in the Project column refs.
 		// Fast path: use colIndex if available (avoids linear scan).
 		if row.colIndex != nil {
 			if i, ok := row.colIndex[lower]; ok && i < len(row.Data) {
 				return row.Data[i]
 			}
 		}
-		// Cached index from a previous row in the same batch:
-		// all rows from the same SeqScan share the same Cols, so
-		// the column index is stable once found.
-		if idx >= 0 {
-			if idx < len(row.Data) {
-				return row.Data[idx]
-			}
-			return Value{Kind: KindNull}
-		}
 		// Linear scan with suffix/prefix handling.
 		for i, c := range row.Cols {
 			cl := strings.ToLower(c)
 			if cl == lower || cl == bareLower {
-				idx = i
 				if i < len(row.Data) {
 					return row.Data[i]
 				}
