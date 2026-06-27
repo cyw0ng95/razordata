@@ -1,6 +1,7 @@
 package EX
 
 import (
+	"container/list"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -32,20 +33,21 @@ var correlatedSubqueryCache = newLRUCache(256)
 // lruCache is a simple thread-safe LRU cache.
 type lruCache struct {
 	mu        sync.Mutex
-	items     map[string]*lruEntry
-	order     []string
+	items     map[string]*list.Element
+	order     *list.List
 	maxSize   int
 	evictions int64
 }
 
 type lruEntry struct {
+	key   string
 	value any
 }
 
 func newLRUCache(maxSize int) *lruCache {
 	return &lruCache{
-		items:   make(map[string]*lruEntry),
-		order:   make([]string, 0, maxSize),
+		items:   make(map[string]*list.Element),
+		order:   list.New(),
 		maxSize: maxSize,
 	}
 }
@@ -53,45 +55,38 @@ func newLRUCache(maxSize int) *lruCache {
 func (c *lruCache) Get(key string) (any, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	entry, ok := c.items[key]
+	elem, ok := c.items[key]
 	if !ok {
 		return nil, false
 	}
-	// Move to end (most recently used)
-	for i, k := range c.order {
-		if k == key {
-			c.order = append(c.order[:i], c.order[i+1:]...)
-			c.order = append(c.order, key)
-			break
-		}
-	}
+	// REQ001038: O(1) move-to-end using container/list.
+	c.order.MoveToBack(elem)
+	entry := elem.Value.(*lruEntry)
 	return entry.value, true
 }
 
 func (c *lruCache) Put(key string, value any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if entry, ok := c.items[key]; ok {
-		entry.value = value
-		// Move to end
-		for i, k := range c.order {
-			if k == key {
-				c.order = append(c.order[:i], c.order[i+1:]...)
-				c.order = append(c.order, key)
-				break
-			}
-		}
+	if elem, ok := c.items[key]; ok {
+		elem.Value.(*lruEntry).value = value
+		// REQ001038: O(1) move-to-end using container/list.
+		c.order.MoveToBack(elem)
 		return
 	}
 	// Evict if at capacity
 	if len(c.items) >= c.maxSize {
-		oldest := c.order[0]
-		delete(c.items, oldest)
-		c.order = c.order[1:]
-		c.evictions++
+		oldest := c.order.Front()
+		if oldest != nil {
+			entry := oldest.Value.(*lruEntry)
+			c.order.Remove(oldest)
+			delete(c.items, entry.key)
+			c.evictions++
+		}
 	}
-	c.items[key] = &lruEntry{value: value}
-	c.order = append(c.order, key)
+	entry := &lruEntry{key: key, value: value}
+	elem := c.order.PushBack(entry)
+	c.items[key] = elem
 }
 
 func (c *lruCache) Stats() (size int, evictions int64) {
