@@ -235,12 +235,18 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		idx  int
 	}
 	leftInfos := make([]leftInfo, 0, len(j.leftRows))
-	for _, left := range j.leftRows {
+	// REQ001018: pre-allocate flat key buffer to avoid per-row make.
+	var flatKeyBuf []Value
+	if len(j.leftRows) > 0 {
+		first := lookupKeys(j.leftRows[0], j.leftKeys, j.keyBuf)
+		flatKeyBuf = make([]Value, len(j.leftRows)*len(first))
+	}
+	for li, left := range j.leftRows {
 		lk := lookupKeys(left, j.leftKeys, j.keyBuf)
 		// REQ000841: copy into dedicated storage — leftInfo stores
 		// the slice for use during match phase, so it must not
 		// share the reusable keyBuf backing array.
-		lkCopy := make([]Value, len(lk))
+		lkCopy := flatKeyBuf[li*len(lk) : (li+1)*len(lk)]
 		copy(lkCopy, lk)
 		hash := hashKeys(lkCopy)
 		idx := int(hash & uint64(j.partitions-1))

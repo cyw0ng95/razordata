@@ -518,7 +518,7 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 							return int(s.keys[ki].NullsOrder)
 						}
 					}
-					c := compare(ka[ki], kb[ki])
+					c := compareValue(ka[ki], kb[ki])
 					if c == 0 {
 						continue
 					}
