@@ -91,13 +91,36 @@ func (m *manifest) Apply(v Version) error {
 	}
 
 	tmpPath := filepath.Join(m.dir, "manifest.tmp")
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	f, err := os.Create(tmpPath)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 
 	if err := os.Rename(tmpPath, filepath.Join(m.dir, "manifest")); err != nil {
 		return err
 	}
+
+	// Fsync the parent directory to ensure the rename is durable.
+	dirf, err := os.Open(m.dir)
+	if err != nil {
+		return err
+	}
+	if err := dirf.Sync(); err != nil {
+		dirf.Close()
+		return err
+	}
+	dirf.Close()
 
 	m.version.Store(v.num)
 	m.current.Store(&v)
