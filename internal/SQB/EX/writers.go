@@ -122,6 +122,18 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		iterValues = i.values
 	}
 	lookup := inMemoryLookup(i.table)
+	// REQ001030: pre-compute colIdx once for all rows.
+	colIdx := make([]int, len(i.cols))
+	for ci, nm := range i.cols {
+		idx := -1
+		for j, s := range schema {
+			if strings.EqualFold(nm, s) {
+				idx = j
+				break
+			}
+		}
+		colIdx[ci] = idx
+	}
 	for _, row := range iterValues {
 		var out Row
 		var err error
@@ -129,7 +141,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			out = Row{Cols: schema}
 			out.Data = make([]Value, len(schema))
 		} else {
-			out, err = buildInsertRow(schema, i.cols, row, i.params)
+			out, err = buildInsertRow(schema, i.cols, colIdx, row, i.params)
 			if err != nil {
 				return Row{}, err
 			}
@@ -275,7 +287,19 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			return found, err
 		}
 	} else {
-		lookupFn = func(cols []int, vals []any) (bool, error) { return false, nil }
+	lookupFn = func(cols []int, vals []any) (bool, error) { return false, nil }
+	}
+	// REQ001030: pre-compute colIdx once for all rows.
+	colIdx := make([]int, len(i.cols))
+	for ci, nm := range i.cols {
+		idx := -1
+		for j, s := range i.schema.cols {
+			if strings.EqualFold(nm, s) {
+				idx = j
+				break
+			}
+		}
+		colIdx[ci] = idx
 	}
 	for _, row := range iterValues {
 		var out Row
@@ -284,10 +308,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			out = Row{Cols: i.schema.cols}
 			out.Data = make([]Value, len(i.schema.cols))
 		} else {
-			out, err = buildInsertRow(i.schema.cols, i.cols, row, i.params)
-			if err != nil {
-				return Row{}, err
-			}
+			out, err = buildInsertRow(i.schema.cols, i.cols, colIdx, row, i.params)
 		}
 		if out, err = fillDefaults(i.schema, out); err != nil {
 			return Row{}, err

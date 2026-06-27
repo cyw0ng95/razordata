@@ -182,7 +182,7 @@ func cloneRow(r Row) Row {
 // resolution (R16-1..2). When params is nil the slice is a
 // no-op and `?` placeholders resolve to nil (preserving the
 // pre-iter-16 behavior for callers that do not bind args).
-func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []any) (Row, error) {
+func buildInsertRow(schema []string, cols []string, colIdx []int, values []PS.Expr, params []any) (Row, error) {
 	// REQ001029: share schema slice across all rows — it's read-only.
 	out := Row{Cols: schema}
 	if len(cols) == 0 {
@@ -198,17 +198,7 @@ func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []a
 	}
 	// REQ000774: pre-compute column-name-to-schema-index mapping
 	// to avoid per-row map allocation (case-insensitive match).
-	colIdx := make([]int, len(cols))
-	for i, nm := range cols {
-		idx := -1
-		for j, s := range schema {
-			if strings.EqualFold(nm, s) {
-				idx = j
-				break
-			}
-		}
-		colIdx[i] = idx
-	}
+	// REQ001030: colIdx is pre-computed by caller and passed in.
 	out.Data = make([]Value, len(schema))
 	for i := range cols {
 		val, err := EvalValue(values[i], nil, params)
