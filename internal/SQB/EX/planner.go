@@ -1173,6 +1173,56 @@ func (p *Planner) extractSingleOnEquiKey(on PS.Expr, leftTbl, rightTbl string) (
 // in the SELECT statement. Returns nil (not empty map) when
 // elimination is not safe because unqualified columns exist.
 // REQ000799.
+// collectReferencedColNames collects bare column names referenced in
+// SELECT, WHERE, ORDER BY, GROUP BY, and HAVING. Unlike
+// collectReferencedColumns, this returns bare names (not qualified)
+// and works for single-table queries where columns may be unqualified.
+// REQ001080.
+func collectReferencedColNames(s *PS.Select) []string {
+	cols := make(map[string]bool)
+	addCol := func(e PS.Expr) {
+		walkExpr(e, func(node PS.Expr) {
+			switch v := node.(type) {
+			case *PS.Ident:
+				cols[v.Name] = true
+			case *PS.QualifiedName:
+				cols[v.Name] = true
+			}
+		})
+	}
+	for _, c := range s.Cols {
+		if _, ok := c.(*PS.StarExpr); ok {
+			return nil
+		}
+		addCol(c)
+	}
+	if s.Where != nil {
+		addCol(s.Where)
+	}
+	for _, j := range s.Joins {
+		if j.On != nil {
+			addCol(j.On)
+		}
+	}
+	for _, o := range s.OrderBy {
+		addCol(o.Expr)
+	}
+	for _, g := range s.GroupBy {
+		addCol(g)
+	}
+	if s.Having != nil {
+		addCol(s.Having)
+	}
+	if len(cols) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(cols))
+	for c := range cols {
+		result = append(result, c)
+	}
+	return result
+}
+
 func collectReferencedTables(s *PS.Select) map[string]bool {
 	tables := map[string]bool{s.From: true}
 	hasUnqualified := false
@@ -1184,12 +1234,6 @@ func collectReferencedTables(s *PS.Select) map[string]bool {
 	// WHERE
 	if s.Where != nil {
 		collectTablesFromExpr(s.Where, tables, &hasUnqualified)
-	}
-	// JOIN ON — keep tables referenced in ON clauses (not all joins)
-	for _, j := range s.Joins {
-		if j.On != nil {
-			collectTablesFromExpr(j.On, tables, &hasUnqualified)
-		}
 	}
 	// ORDER BY
 	for _, o := range s.OrderBy {
@@ -1203,6 +1247,11 @@ func collectReferencedTables(s *PS.Select) map[string]bool {
 	if s.Having != nil {
 		collectTablesFromExpr(s.Having, tables, &hasUnqualified)
 	}
+
+	// REQ001076: do NOT walk JOIN ON clauses — tables that appear only in
+	// join conditions can be eliminated when not referenced in SELECT/WHERE
+	// /ORDER BY/GROUP BY/HAVING. The join condition is only meaningful when
+	// both sides contribute columns to the output.
 
 	// If SELECT contains *, keep all joined tables.
 	for _, c := range s.Cols {
@@ -1499,6 +1548,32 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		whereExpr = resolveAliases(s.Where, aliasMap)
 	}
 
+	// REQ001074: constant folding — evaluate constant expressions at plan time
+	// and simplify tautologies/contradictions.
+	if whereExpr != nil {
+		whereExpr = foldConstants(whereExpr)
+		// If folding produced a constant FALSE, the entire WHERE is a
+		// contradiction — no rows will match.
+		if whereExpr != nil {
+			if isFalse(whereExpr) {
+				whereExpr = &PS.BinaryExpr{
+					Left:  &PS.NumberLiteral{Val: int64(0)},
+					Op:    int(LX.T_EQ),
+					Right: &PS.NumberLiteral{Val: int64(1)},
+				}
+			} else if isTrue(whereExpr) && isConstantExpr(whereExpr) {
+				// REQ001074: constant TRUE tautology — remove WHERE entirely.
+				whereExpr = nil
+			}
+		}
+		// REQ001075: common subexpression elimination — remove duplicate
+		// conjuncts from the WHERE clause. Only when whereExpr is still
+		// non-nil and not a constant.
+		if whereExpr != nil {
+			whereExpr = eliminateCommonSubexpressions(whereExpr)
+		}
+	}
+
 	var scan Operator
 	if p.store != nil {
 		// Try IndexScan first when the WHERE references an indexed column.
@@ -1585,6 +1660,18 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	if whereExpr != nil && s.From != "" {
 		if alt, ok := p.pickCheaperScan(s.From, whereExpr, scan); ok && alt != nil {
 			scan = alt
+		}
+	}
+
+	// REQ001080: column pruning — compute the set of columns actually
+	// referenced by the query and pass it to the scan operator so it
+	// only populates those columns. For star queries, unqualified
+	// columns, or queries with window functions we skip pruning.
+	if len(s.Joins) == 0 && !hasAnyWindowFunc(s.Cols) {
+		if usedNames := collectReferencedColNames(s); usedNames != nil {
+			if ss, ok := scan.(*SeqScan); ok {
+				ss.WithUsedCols(usedNames)
+			}
 		}
 	}
 
@@ -2243,6 +2330,274 @@ func splitSelectCols(cols []PS.Expr) (aggs, groupCols, other []PS.Expr) {
 	return aggs, groupCols, nil
 }
 
+// isConstantExpr reports whether e is a constant expression (no column
+// references). Used by constant folding (REQ001074).
+func isConstantExpr(e PS.Expr) bool {
+	if e == nil {
+		return true
+	}
+	switch v := e.(type) {
+	case *PS.NumberLiteral, *PS.FloatLiteral, *PS.StringLiteral,
+		*PS.BoolLiteral, *PS.NullLiteral, *PS.Param:
+		return true
+	case *PS.Ident, *PS.QualifiedName:
+		return false
+	case *PS.UnaryExpr:
+		return isConstantExpr(v.Operand)
+	case *PS.BinaryExpr:
+		return isConstantExpr(v.Left) && isConstantExpr(v.Right)
+	case *PS.FunctionCall:
+		for _, a := range v.Args {
+			if !isConstantExpr(a) {
+				return false
+			}
+		}
+		return true
+	case *PS.CastExpr:
+		return isConstantExpr(v.Expr)
+	}
+	return false
+}
+
+// foldConstants simplifies constant expressions in a WHERE clause.
+// It handles:
+//   - `const = const` → evaluated to BoolLiteral (removes tautologies)
+//   - `col + 0` → col
+//   - `col * 1` → col
+//   - `col - 0` → col
+//   - `col / 1` → col
+//
+// Returns the simplified expression, or nil if the entire expression
+// is a tautology (always true). REQ001074.
+func foldConstants(e PS.Expr) PS.Expr {
+	if e == nil {
+		return nil
+	}
+	if b, ok := e.(*PS.BinaryExpr); ok {
+		l := foldConstants(b.Left)
+		r := foldConstants(b.Right)
+
+		// col + 0 → col
+		if int(LX.T_PLUS) == b.Op && isSameColumn(l, r) && isZero(r) {
+			return l
+		}
+		if int(LX.T_PLUS) == b.Op && isSameColumn(l, r) && isZero(l) {
+			return r
+		}
+		// col * 1 → col
+		if int(LX.T_STAR) == b.Op && isSameColumn(l, r) && isOne(r) {
+			return l
+		}
+		if int(LX.T_STAR) == b.Op && isSameColumn(l, r) && isOne(l) {
+			return r
+		}
+		// col - 0 → col
+		if int(LX.T_MINUS) == b.Op && isSameColumn(l, r) && isZero(r) {
+			return l
+		}
+		// col / 1 → col
+		if int(LX.T_SLASH) == b.Op && isSameColumn(l, r) && isOne(r) {
+			return l
+		}
+
+		// If both sides are constant, eval at plan time.
+		if isConstantExpr(l) && isConstantExpr(r) {
+			v, err := EvalValue(&PS.BinaryExpr{Left: l, Right: r, Op: b.Op}, nil, nil)
+			if err == nil {
+				return valueToLiteral(v)
+			}
+		}
+
+		// Short-circuit: const AND FALSE → FALSE, const OR TRUE → TRUE
+		if b.Op == int(LX.T_AND) {
+			// FALSE AND anything → FALSE
+			if isFalse(l) || isFalse(r) {
+				return &PS.BoolLiteral{Val: false}
+			}
+			// TRUE AND x → x
+			if isTrue(l) && isConstantExpr(l) {
+				return r
+			}
+			if isTrue(r) && isConstantExpr(r) {
+				return l
+			}
+		}
+		if b.Op == int(LX.T_OR) {
+			// TRUE OR anything → TRUE
+			if isTrue(l) || isTrue(r) {
+				return &PS.BoolLiteral{Val: true}
+			}
+			// FALSE OR x → x
+			if isFalse(l) && isConstantExpr(l) {
+				return r
+			}
+			if isFalse(r) && isConstantExpr(r) {
+				return l
+			}
+		}
+
+		// Rebuild with folded children.
+		if l != b.Left || r != b.Right {
+			cp := *b
+			cp.Left = l
+			cp.Right = r
+			return &cp
+		}
+	}
+	return e
+}
+
+// isSameColumn checks if l and r are the same column reference.
+func isSameColumn(l, r PS.Expr) bool {
+	if lid, ok := l.(*PS.Ident); ok {
+		if rid, ok := r.(*PS.Ident); ok {
+			return lid.Name == rid.Name
+		}
+	}
+	if lq, ok := l.(*PS.QualifiedName); ok {
+		if rq, ok := r.(*PS.QualifiedName); ok {
+			return lq.Table == rq.Table && lq.Name == rq.Name
+		}
+	}
+	return false
+}
+
+// isZero checks if an expression is the numeric literal 0.
+func isZero(e PS.Expr) bool {
+	if n, ok := e.(*PS.NumberLiteral); ok {
+		return n.Val == 0
+	}
+	return false
+}
+
+// isOne checks if an expression is the numeric literal 1.
+func isOne(e PS.Expr) bool {
+	if n, ok := e.(*PS.NumberLiteral); ok {
+		return n.Val == 1
+	}
+	return false
+}
+
+// isTrue checks if an expression is the boolean literal TRUE.
+func isTrue(e PS.Expr) bool {
+	if b, ok := e.(*PS.BoolLiteral); ok {
+		return b.Val
+	}
+	// 1 can also be truthy in comparisons
+	if n, ok := e.(*PS.NumberLiteral); ok {
+		return n.Val != 0
+	}
+	return false
+}
+
+// isFalse checks if an expression is the boolean literal FALSE.
+func isFalse(e PS.Expr) bool {
+	if b, ok := e.(*PS.BoolLiteral); ok {
+		return !b.Val
+	}
+	if n, ok := e.(*PS.NumberLiteral); ok {
+		return n.Val == 0
+	}
+	return false
+}
+
+// valueToLiteral converts a Value back to a literal AST node.
+func valueToLiteral(v Value) PS.Expr {
+	switch v.Kind {
+	case KindNull:
+		return &PS.NullLiteral{}
+	case KindInt:
+		return &PS.NumberLiteral{Val: v.I64}
+	case KindFloat:
+		return &PS.FloatLiteral{Val: v.F64}
+	case KindText:
+		return &PS.StringLiteral{Val: v.S}
+	case KindBool:
+		return &PS.BoolLiteral{Val: v.Bo}
+	}
+	return nil
+}
+
+// REQ001075: Common subexpression elimination (CSE).
+// exprHash returns a structural hash for an expression to detect
+// identical subexpressions in the WHERE clause.
+func exprHash(e PS.Expr) string {
+	if e == nil {
+		return ""
+	}
+	switch v := e.(type) {
+	case *PS.Ident:
+		return "id:" + v.Name
+	case *PS.QualifiedName:
+		return "qn:" + v.Table + "." + v.Name
+	case *PS.NumberLiteral:
+		return fmt.Sprintf("num:%d", v.Val)
+	case *PS.FloatLiteral:
+		return fmt.Sprintf("flt:%g", v.Val)
+	case *PS.StringLiteral:
+		return "str:" + v.Val
+	case *PS.BoolLiteral:
+		return fmt.Sprintf("bool:%v", v.Val)
+	case *PS.NullLiteral:
+		return "null"
+	case *PS.UnaryExpr:
+		return fmt.Sprintf("un:%d:%s", v.Op, exprHash(v.Operand))
+	case *PS.BinaryExpr:
+		return fmt.Sprintf("bin:%d:%s:%s", v.Op, exprHash(v.Left), exprHash(v.Right))
+	case *PS.FunctionCall:
+		h := "fn:" + v.Name
+		for _, a := range v.Args {
+			h += ":" + exprHash(a)
+		}
+		return h
+	case *PS.CastExpr:
+		return fmt.Sprintf("cast:%d:%s", v.Type.Type, exprHash(v.Expr))
+	}
+	return fmt.Sprintf("%T", e)
+}
+
+// eliminateCommonSubexpressions detects identical expressions in the
+// WHERE clause and folds them so each is only evaluated once. For
+// expressions that appear multiple times, the first occurrence is kept
+// and subsequent occurrences reference the result of the first. REQ001075.
+// For the MVP, this removes duplicate conjuncts from AND-connected clauses.
+func eliminateCommonSubexpressions(where PS.Expr) PS.Expr {
+	if where == nil {
+		return nil
+	}
+	conjuncts := RE.SplitAnd(where)
+	if len(conjuncts) <= 1 {
+		return where
+	}
+	seen := make(map[string]bool, len(conjuncts))
+	unique := make([]PS.Expr, 0, len(conjuncts))
+	for _, c := range conjuncts {
+		h := exprHash(c)
+		if !seen[h] {
+			seen[h] = true
+			unique = append(unique, c)
+		}
+		// Skip duplicate — identical expression already present.
+	}
+	if len(unique) == 0 {
+		return nil
+	}
+	if len(unique) == 1 {
+		return unique[0]
+	}
+	result := unique[0]
+	for _, u := range unique[1:] {
+		result = &PS.BinaryExpr{
+			Left:  result,
+			Op:    int(LX.T_AND),
+			Right: u,
+		}
+	}
+	return result
+}
+
+// hasAnyAggregate checks if any column in the select list contains
+// an aggregate function.
 func hasAnyAggregate(cols []PS.Expr) bool {
 	for _, c := range cols {
 		if containsAggregate(c) {

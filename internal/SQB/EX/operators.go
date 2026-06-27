@@ -28,7 +28,7 @@ type tableSchemaEntry struct {
 }
 
 var (
-	tableSchemaMu sync.RWMutex
+	tableSchemaMu    sync.RWMutex
 	tableSchemaCache = map[string]*tableSchemaEntry{}
 )
 
@@ -111,11 +111,11 @@ type SeqScan struct {
 	// REQ000820: pointLookup maps column value→row indices for in-memory
 	// tables. When set, Next() only returns rows whose column value is in
 	// the lookup set. Built lazily on first Next() call.
-	pointLookup    map[any]bool   // wanted values
-	pointLookupCol string         // column name to index by (e.g. "a")
-	pointLookupPos int            // current position within the matching indices
-	pointLookupOnce bool          // true after lookup is built
-	pointLookupRows []int         // pre-computed matching row indices
+	pointLookup     map[any]bool // wanted values
+	pointLookupCol  string       // column name to index by (e.g. "a")
+	pointLookupPos  int          // current position within the matching indices
+	pointLookupOnce bool         // true after lookup is built
+	pointLookupRows []int        // pre-computed matching row indices
 
 	// REQ000840: shallow clone — reuse source row Data for read-only
 	// queries. Set to true for pure SELECT paths to avoid per-row
@@ -125,6 +125,13 @@ type SeqScan struct {
 
 	// REQ001042: batched context check counter.
 	ctxCheckCounter int
+
+	// REQ001080: usedCols is the set of columns actually referenced by
+	// the query. When set, Next() only populates these columns in the
+	// returned rows, pruning unused columns from the scan output.
+	usedCols   []string
+	usedColSet map[string]bool
+	usedColIdx []int // index into the full schema
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -189,6 +196,21 @@ func (s *SeqScan) WithPointLookup(col string, values []any) *SeqScan {
 	}
 	s.pointLookup = want
 	s.pointLookupOnce = false
+	return s
+}
+
+// WithUsedCols sets the set of column names the query actually uses.
+// SeqScan will only populate these columns in returned rows.
+// REQ001080.
+func (s *SeqScan) WithUsedCols(cols []string) *SeqScan {
+	if len(cols) == 0 {
+		return s
+	}
+	s.usedCols = cols
+	s.usedColSet = make(map[string]bool, len(cols))
+	for _, c := range cols {
+		s.usedColSet[c] = true
+	}
 	return s
 }
 
@@ -319,6 +341,10 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 		}
 		out.tableName = s.alias
 	}
+	// REQ001080: prune unused columns from the output row.
+	if s.usedCols != nil && !s.shallow {
+		out = pruneRowCols(out, s.usedCols, s.usedColSet)
+	}
 	return out
 }
 
@@ -366,6 +392,11 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		// REQ000790: record index skip if indexes are available but SeqScan is used.
 		if s.iu != nil && len(s.availableIdx) > 0 {
 			s.iu.RecordIndexSkip(s.availableIdx[0], s.table, "SeqScan used instead of IndexScan")
+		}
+
+		// REQ001080: prune unused columns from the store-backed row.
+		if s.usedCols != nil {
+			row = pruneRowCols(row, s.usedCols, s.usedColSet)
 		}
 
 		return row, nil
@@ -909,4 +940,84 @@ func encodeUint64BE(buf *[]byte, v uint64) {
 	b[1] = byte(v >> 48)
 	b[0] = byte(v >> 56)
 	*buf = append(*buf, b[:]...)
+}
+
+// pruneRowCols filters row Data/Cols/Types to only include columns
+// in usedCols. Returns the pruned row. REQ001080.
+func pruneRowCols(row Row, usedCols []string, usedSet map[string]bool) Row {
+	if len(usedSet) == 0 || len(row.Cols) == 0 {
+		return row
+	}
+	// Check if all columns are already used — skip work.
+	allUsed := true
+	for _, c := range row.Cols {
+		if !usedSet[c] {
+			allUsed = false
+			break
+		}
+	}
+	if allUsed {
+		return row
+	}
+	newCols := make([]string, 0, len(usedCols))
+	newTypes := make([]int, 0, len(usedCols))
+	newData := make([]Value, 0, len(usedCols))
+	newIndex := make(map[string]int, len(usedCols)*2)
+	// Build colIndex from scratch if nil.
+	colIndex := row.colIndex
+	if colIndex == nil {
+		colIndex = make(map[string]int, len(row.Cols))
+		for i, c := range row.Cols {
+			colIndex[c] = i
+		}
+	}
+	for _, uc := range usedCols {
+		idx, ok := colIndex[uc]
+		if !ok {
+			// Try without alias prefix
+			found := false
+			for ci, cn := range row.Cols {
+				if cn == uc {
+					idx = ci
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		if idx < 0 || idx >= len(row.Data) {
+			continue
+		}
+		newCols = append(newCols, row.Cols[idx])
+		if idx < len(row.Types) {
+			newTypes = append(newTypes, row.Types[idx])
+		} else {
+			newTypes = append(newTypes, 0)
+		}
+		newData = append(newData, row.Data[idx])
+		newIndex[uc] = len(newCols) - 1
+	}
+	// Also register unprefixed entries for alias-prefixed cols.
+	for i, c := range newCols {
+		dotIdx := -1
+		for j := 0; j < len(c); j++ {
+			if c[j] == '.' {
+				dotIdx = j
+				break
+			}
+		}
+		if dotIdx >= 0 {
+			unprefixed := c[dotIdx+1:]
+			if _, exists := newIndex[unprefixed]; !exists {
+				newIndex[unprefixed] = i
+			}
+		}
+	}
+	row.Cols = newCols
+	row.Types = newTypes
+	row.Data = newData
+	row.colIndex = newIndex
+	return row
 }
