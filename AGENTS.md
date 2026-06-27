@@ -140,6 +140,18 @@ golangci-lint run      # or staticcheck
 go test ./... -race -count=1
 ```
 
+## REQUIREMENTS.md Maintenance
+
+**REQUIREMENTS.md must be kept in-time with the codebase.** When implementing a REQ:
+
+1. **Before starting**: Read the REQ from `docs/development/REQUIREMENTS.md` to understand scope, priority, effort, and dependencies.
+2. **During implementation**: If the REQ description needs updating (e.g., root cause changes, fix is different from proposed), update the REQ in-place.
+3. **After completion**: Delete the completed REQ row from TBD. There is no DONE table — once a REQ is shipped, it leaves the file.
+4. **On commit**: Include the REQ ID in the commit message (e.g., `fix: REQ001084 - compileColRef idx closure fix`).
+5. **For new bugs discovered**: Add them as new REQ rows to TBD following the Bug-To-Requirement Rule.
+
+**Never leave completed REQs in TBD** — they create false backlog noise and make future planning harder. The commit history and iteration plans serve as the permanent record.
+
 ## Running SQLLogicTest
 
 Prerequisite: the corpus submodule must be initialized.
