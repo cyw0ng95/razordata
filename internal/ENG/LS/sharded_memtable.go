@@ -238,9 +238,8 @@ func (si *shardedIter) Next() bool {
 			si.done = true
 			return false
 		}
-		// Check if this shard has entries
+	// Check if this shard has entries
 		if si.its[si.pos].Next() {
-			si.pos-- // back up so current position is valid
 			return true
 		}
 	}
