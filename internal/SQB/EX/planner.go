@@ -751,57 +751,77 @@ func (p *Planner) extractTablesFromExpr(e PS.Expr) map[string]bool {
 // walkExprForTables recursively walks the expression tree and
 // collects table names for each column reference.
 func (p *Planner) walkExprForTables(e PS.Expr, tables map[string]bool) {
+	walkExpr(e, func(node PS.Expr) {
+		switch v := node.(type) {
+		case *PS.Ident:
+			tbl := p.findTableForColumn(v.Name)
+			if tbl == "" {
+				tbl = findTableInSchemas(v.Name)
+			}
+			if tbl != "" {
+				tables[tbl] = true
+			}
+		case *PS.QualifiedName:
+			tables[v.Table] = true
+		}
+	})
+}
+
+// walkExpr is a generic expression tree walker that calls fn for each
+// expression node. REQ000983: replaces three duplicate walkers.
+func walkExpr(e PS.Expr, fn func(PS.Expr)) {
+	if e == nil {
+		return
+	}
+	fn(e)
 	switch v := e.(type) {
-	case *PS.Ident:
-		// Find which table this column belongs to.
-		// First try the planner's catalog, then fall back to
-		// the in-memory schemas (populated by CREATE TABLE).
-		tbl := p.findTableForColumn(v.Name)
-		if tbl == "" {
-			tbl = findTableInSchemas(v.Name)
-		}
-		if tbl != "" {
-			tables[tbl] = true
-		}
-	case *PS.QualifiedName:
-		// Qualified name has explicit table prefix
-		tables[v.Table] = true
 	case *PS.BinaryExpr:
-		p.walkExprForTables(v.Left, tables)
-		p.walkExprForTables(v.Right, tables)
+		walkExpr(v.Left, fn)
+		walkExpr(v.Right, fn)
 	case *PS.UnaryExpr:
-		p.walkExprForTables(v.Operand, tables)
+		walkExpr(v.Operand, fn)
 	case *PS.ListExpr:
 		for _, item := range v.Items {
-			p.walkExprForTables(item, tables)
+			walkExpr(item, fn)
 		}
 	case *PS.InExpr:
-		p.walkExprForTables(v.Expr, tables)
+		walkExpr(v.Expr, fn)
 		for _, item := range v.List {
-			p.walkExprForTables(item, tables)
-		}
-	case *PS.AggregateFunc:
-		p.walkExprForTables(v.Arg, tables)
-	case *PS.CaseExpr:
-		p.walkExprForTables(v.Expr, tables)
-		for _, w := range v.WhenList {
-			p.walkExprForTables(w.Cond, tables)
-			p.walkExprForTables(w.Then, tables)
-		}
-		p.walkExprForTables(v.Else, tables)
-	case *PS.FunctionCall:
-		for _, arg := range v.Args {
-			p.walkExprForTables(arg, tables)
+			walkExpr(item, fn)
 		}
 	case *PS.BetweenExpr:
-		// REQ000900: BETWEEN references the same table as its Expr.
-		p.walkExprForTables(v.Expr, tables)
-		p.walkExprForTables(v.Low, tables)
-		p.walkExprForTables(v.High, tables)
+		walkExpr(v.Expr, fn)
+		walkExpr(v.Low, fn)
+		walkExpr(v.High, fn)
+	case *PS.AggregateFunc:
+		if v.Arg != nil {
+			walkExpr(v.Arg, fn)
+		}
+	case *PS.CaseExpr:
+		if v.Expr != nil {
+			walkExpr(v.Expr, fn)
+		}
+		for _, w := range v.WhenList {
+			walkExpr(w.Cond, fn)
+			walkExpr(w.Then, fn)
+		}
+		if v.Else != nil {
+			walkExpr(v.Else, fn)
+		}
+	case *PS.FunctionCall:
+		for _, arg := range v.Args {
+			walkExpr(arg, fn)
+		}
+	case *PS.WindowFunc:
+		for _, arg := range v.Args {
+			walkExpr(arg, fn)
+		}
 	case *PS.CastExpr:
-		p.walkExprForTables(v.Expr, tables)
+		walkExpr(v.Expr, fn)
 	case *PS.AliasedExpr:
-		p.walkExprForTables(v.Expr, tables)
+		walkExpr(v.Expr, fn)
+	case *PS.SubqueryExpr, *PS.ExistsExpr:
+		// Subqueries have their own scope — don't walk.
 	}
 }
 
@@ -1172,58 +1192,14 @@ func collectReferencedTables(s *PS.Select) map[string]bool {
 // table names. Sets hasUnqualified when a bare column name is found
 // (we can't determine which table it belongs to).
 func collectTablesFromExpr(e PS.Expr, tables map[string]bool, hasUnqualified *bool) {
-	if e == nil {
-		return
-	}
-	switch v := e.(type) {
-	case *PS.QualifiedName:
-		tables[v.Table] = true
-	case *PS.StarExpr:
-		// * in expression — can't eliminate.
-		*hasUnqualified = true
-	case *PS.Ident:
-		// Bare column name — can't determine table.
-		*hasUnqualified = true
-	case *PS.BinaryExpr:
-		collectTablesFromExpr(v.Left, tables, hasUnqualified)
-		collectTablesFromExpr(v.Right, tables, hasUnqualified)
-	case *PS.UnaryExpr:
-		collectTablesFromExpr(v.Operand, tables, hasUnqualified)
-	case *PS.ListExpr:
-		for _, item := range v.Items {
-			collectTablesFromExpr(item, tables, hasUnqualified)
+	walkExpr(e, func(node PS.Expr) {
+		switch v := node.(type) {
+		case *PS.QualifiedName:
+			tables[v.Table] = true
+		case *PS.StarExpr, *PS.Ident:
+			*hasUnqualified = true
 		}
-	case *PS.InExpr:
-		collectTablesFromExpr(v.Expr, tables, hasUnqualified)
-		for _, item := range v.List {
-			collectTablesFromExpr(item, tables, hasUnqualified)
-		}
-	case *PS.BetweenExpr:
-		collectTablesFromExpr(v.Expr, tables, hasUnqualified)
-		collectTablesFromExpr(v.Low, tables, hasUnqualified)
-		collectTablesFromExpr(v.High, tables, hasUnqualified)
-	case *PS.AggregateFunc:
-		collectTablesFromExpr(v.Arg, tables, hasUnqualified)
-	case *PS.CaseExpr:
-		collectTablesFromExpr(v.Expr, tables, hasUnqualified)
-		for _, w := range v.WhenList {
-			collectTablesFromExpr(w.Cond, tables, hasUnqualified)
-			collectTablesFromExpr(w.Then, tables, hasUnqualified)
-		}
-		collectTablesFromExpr(v.Else, tables, hasUnqualified)
-	case *PS.FunctionCall:
-		for _, arg := range v.Args {
-			collectTablesFromExpr(arg, tables, hasUnqualified)
-		}
-	case *PS.AliasedExpr:
-		collectTablesFromExpr(v.Expr, tables, hasUnqualified)
-	case *PS.CastExpr:
-		collectTablesFromExpr(v.Expr, tables, hasUnqualified)
-	case *PS.SubqueryExpr:
-		// Subquery has its own scope — don't walk.
-	case *PS.ExistsExpr:
-		// Subquery — don't walk.
-	}
+	})
 }
 
 func log2ish(x float64) float64 {
@@ -1290,62 +1266,14 @@ func collectReferencedColumns(s *PS.Select) map[string]bool {
 // collectColsFromExpr walks an expression and adds qualified column
 // names (Table.Name). Sets hasUnqualified on bare Ident or *.
 func collectColsFromExpr(e PS.Expr, cols map[string]bool, hasUnqualified *bool) {
-	if e == nil {
-		return
-	}
-	switch v := e.(type) {
-	case *PS.QualifiedName:
-		cols[v.Table+"."+v.Name] = true
-	case *PS.Ident:
-		*hasUnqualified = true
-	case *PS.StarExpr:
-		*hasUnqualified = true
-	case *PS.BinaryExpr:
-		collectColsFromExpr(v.Left, cols, hasUnqualified)
-		collectColsFromExpr(v.Right, cols, hasUnqualified)
-	case *PS.UnaryExpr:
-		collectColsFromExpr(v.Operand, cols, hasUnqualified)
-	case *PS.ListExpr:
-		for _, item := range v.Items {
-			collectColsFromExpr(item, cols, hasUnqualified)
+	walkExpr(e, func(node PS.Expr) {
+		switch v := node.(type) {
+		case *PS.QualifiedName:
+			cols[v.Table+"."+v.Name] = true
+		case *PS.Ident, *PS.StarExpr:
+			*hasUnqualified = true
 		}
-	case *PS.InExpr:
-		collectColsFromExpr(v.Expr, cols, hasUnqualified)
-		for _, item := range v.List {
-			collectColsFromExpr(item, cols, hasUnqualified)
-		}
-	case *PS.AliasedExpr:
-		collectColsFromExpr(v.Expr, cols, hasUnqualified)
-	case *PS.FunctionCall:
-		for _, arg := range v.Args {
-			collectColsFromExpr(arg, cols, hasUnqualified)
-		}
-	case *PS.AggregateFunc:
-		if v.Arg != nil {
-			collectColsFromExpr(v.Arg, cols, hasUnqualified)
-		}
-	case *PS.WindowFunc:
-		for _, arg := range v.Args {
-			collectColsFromExpr(arg, cols, hasUnqualified)
-		}
-	case *PS.BetweenExpr:
-		collectColsFromExpr(v.Expr, cols, hasUnqualified)
-		collectColsFromExpr(v.Low, cols, hasUnqualified)
-		collectColsFromExpr(v.High, cols, hasUnqualified)
-	case *PS.CastExpr:
-		collectColsFromExpr(v.Expr, cols, hasUnqualified)
-	case *PS.CaseExpr:
-		if v.Expr != nil {
-			collectColsFromExpr(v.Expr, cols, hasUnqualified)
-		}
-		for _, w := range v.WhenList {
-			collectColsFromExpr(w.Cond, cols, hasUnqualified)
-			collectColsFromExpr(w.Then, cols, hasUnqualified)
-		}
-		if v.Else != nil {
-			collectColsFromExpr(v.Else, cols, hasUnqualified)
-		}
-	}
+	})
 }
 
 func (p *Planner) selectIndex(table, col string) (string, bool) {
