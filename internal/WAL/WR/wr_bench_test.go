@@ -135,6 +135,54 @@ func BenchmarkBatchAppend(b *testing.B) {
 	w.Sync()
 }
 
+// BenchmarkWAL_BulkInsert measures per-row insert+sync throughput for each
+// WALMode. On a typical SSD, FSYNC_HEADER_ONLY should be >10x faster than
+// FSYNC_EVERY because it skips the fsync barrier on every Sync call.
+// Run with: go test -bench=BenchmarkWAL_BulkInsert -benchmem -count=3
+func BenchmarkWAL_BulkInsert(b *testing.B) {
+	for _, mode := range []WALMode{FSYNC_EVERY, FSYNC_HEADER_ONLY, FSYNC_BATCH} {
+		b.Run(mode.String(), func(b *testing.B) {
+			dir := b.TempDir()
+
+			sm, err := lf.New(filepath.Join(dir, "wal"))
+			if err != nil {
+				b.Fatalf("lf.New: %v", err)
+			}
+			defer sm.Close()
+
+			sp := sp.New()
+			log := lg.New(lg.Options{Output: &nullWriter{}})
+
+			w, err := NewWithOptions(dir, sm, sp, log, false, Options{Mode: mode})
+			if err != nil {
+				b.Fatalf("NewWithOptions: %v", err)
+			}
+			defer w.Close()
+
+			batch := &WriteBatch{
+				TxnID: 1,
+				Recs: []LogRecord{
+					{Type: RTData, BlockID: 1, Value: make([]byte, 100)},
+					{Type: RTCommit, TxnID: 1},
+				},
+			}
+
+			b.ResetTimer()
+			b.ReportAllocs()
+
+			for i := 0; i < b.N; i++ {
+				batch.TxnID = uint64(i + 1)
+				if _, err := w.Append(batch); err != nil {
+					b.Fatalf("Append: %v", err)
+				}
+				if err := w.Sync(); err != nil {
+					b.Fatalf("Sync: %v", err)
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkSegmentRotation measures overhead of segment rotation.
 func BenchmarkSegmentRotation(b *testing.B) {
 	dir := b.TempDir()
