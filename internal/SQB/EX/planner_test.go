@@ -414,3 +414,74 @@ func TestPlanner_N3JoinOrdering_EmptyHeapFallback(t *testing.T) {
 		t.Fatal("expected non-nil plan")
 	}
 }
+
+// TestPlanner_CrossJoinPredicatePushdown verifies that single-table
+// predicates in cross-join WHERE clauses are pushed down to each
+// table scan before the Cartesian product is materialized.
+// Without predicate pushdown, a 5-table cross join with N rows each
+// produces N^5 intermediate rows before filtering.
+// REQ001092.
+func TestPlanner_CrossJoinPredicatePushdown(t *testing.T) {
+	// Verify plan structure: each table should have its
+	// per-table predicate pushed as a Filter.
+	p := NewPlanner()
+	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t2", []ColInfo{{Name: "b", Typ: 1}}, "b")
+	p.RegisterTable("t3", []ColInfo{{Name: "c", Typ: 1}}, "c")
+	p.RegisterTable("t4", []ColInfo{{Name: "d", Typ: 1}}, "d")
+	p.RegisterTable("t5", []ColInfo{{Name: "e", Typ: 1}}, "e")
+
+	plan, err := p.ParseAndPlan(`SELECT * FROM t1, t2, t3, t4, t5 
+		WHERE a = 1 AND b = 3 AND c = 5 AND d = 7 AND e = 9`)
+	if err != nil {
+		t.Fatalf("plan error: %v", err)
+	}
+	if plan == nil || plan.root == nil {
+		t.Fatal("plan is nil")
+	}
+
+	// Walk the plan and verify each table scan has a Filter operator
+	// from predicate pushdown. Each of the 5 SeqScans must have a
+	// pushed-down predicate Filter.
+	filterCount := 0
+	totalScanCount := 0
+	walkOpTreeDebug(plan.root, func(op Operator, depth int) {
+		switch op.(type) {
+		case *Filter:
+			filterCount++
+		case *SeqScan:
+			totalScanCount++
+		}
+	}, 0)
+	if totalScanCount != 5 {
+		t.Fatalf("expected 5 SeqScan operators, got %d", totalScanCount)
+	}
+	if filterCount != 5 {
+		t.Fatalf("expected 5 Filter operators (one per table pushed predicate), got %d", filterCount)
+	}
+}
+
+// walkOpTreeDebug recursively walks and prints the operator tree.
+func walkOpTreeDebug(op Operator, fn func(Operator, int), depth int) {
+	if op == nil {
+		return
+	}
+	fn(op, depth)
+	switch v := op.(type) {
+	case *Filter:
+		walkOpTreeDebug(v.Child(), fn, depth+1)
+	case *NestedLoopJoin:
+		walkOpTreeDebug(v.LeftChild(), fn, depth+1)
+		walkOpTreeDebug(v.RightChild(), fn, depth+1)
+	case *HashJoin:
+		walkOpTreeDebug(v.LeftChild(), fn, depth+1)
+	case *Project:
+		walkOpTreeDebug(v.Child(), fn, depth+1)
+	case *SeqScan:
+	case *IndexScan:
+	case *Sort:
+		walkOpTreeDebug(v.Child(), fn, depth+1)
+	case *AdaptiveOp:
+		walkOpTreeDebug(v.Child(), fn, depth+1)
+	}
+}

@@ -952,10 +952,70 @@ func (p *Planner) splitPredicatesByTable(conjuncts []PS.Expr, tables []string) (
 			}
 		}
 		if !pushed {
-			crossTable = append(crossTable, c)
+			// REQ001092: force-push single-table predicates that
+			// canPushDown failed to recognize (e.g., cold-start
+			// catalog). Try the naming-convention-based resolver
+			// (findTableInSchemas -> resolveTableForColumn).
+			if tbl := resolveSingleTablePredicate(c, tables); tbl != "" {
+				perTable[tbl] = append(perTable[tbl], c)
+			} else {
+				crossTable = append(crossTable, c)
+			}
 		}
 	}
 	return perTable, crossTable
+}
+
+// resolveSingleTablePredicate attempts to find which single table
+// a predicate references, using findTableInSchemas (which includes
+// the SLT naming-convention fallback via resolveTableForColumn).
+// Returns the table name if the predicate references exactly one
+// table from the candidate set, or "" if it references multiple
+// tables (cross-table) or cannot be resolved. REQ001092.
+func resolveSingleTablePredicate(e PS.Expr, candidates []string) string {
+	// Collect all column references.
+	var cols []string
+	walkExpr(e, func(node PS.Expr) {
+		switch v := node.(type) {
+		case *PS.Ident:
+			if v.Name != "" {
+				cols = append(cols, v.Name)
+			}
+		case *PS.QualifiedName:
+			cols = append(cols, v.Table+"."+v.Name)
+		}
+	})
+	if len(cols) == 0 {
+		return "" // constant expression, no table to push to
+	}
+	// Resolve each column to a table.
+	var resolvedTables []string
+	for _, col := range cols {
+		var tbl string
+		if dotIdx := strings.IndexByte(col, '.'); dotIdx >= 0 {
+			tbl = col[:dotIdx]
+		} else {
+			tbl = findTableInSchemas(col)
+		}
+		if tbl == "" {
+			return "" // unresolvable column
+		}
+		resolvedTables = append(resolvedTables, tbl)
+	}
+	// All columns must resolve to the same table.
+	first := resolvedTables[0]
+	for _, t := range resolvedTables[1:] {
+		if t != first {
+			return "" // cross-table predicate
+		}
+	}
+	// Verify the table is in the candidate set.
+	for _, c := range candidates {
+		if c == first {
+			return first
+		}
+	}
+	return ""
 }
 
 // extractColumnLiteralExpr is a safe variant of extractColumnLiteral
