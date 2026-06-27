@@ -306,6 +306,11 @@ func (c *CompoundOp) nextStreamingSetOp(ctx context.Context) (Row, error) {
 func (c *CompoundOp) Close() error {
 	c.buf = nil
 	c.pos = 0
+	c.materialized = false
+	c.streamSide = streamLeft
+	c.rightDrained = false
+	c.emittedKeys = nil
+	c.rightKeys = nil
 	if err := c.left.Close(); err != nil {
 		return err
 	}
