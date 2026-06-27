@@ -483,10 +483,13 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 		// REQ000768+REQ000773: pre-extract sort keys into a parallel
 		// keyCache slice, then sort an index array in-place.
 		// Eliminates the sortRow allocation and double-buffering.
+		// REQ001025: use a flat buffer to avoid N allocations.
 		n := len(s.buf)
+		numKeys := len(s.keys)
 		keyCache := make([][]Value, n)
+		flatKeys := make([]Value, n*numKeys)
 		for i, r := range s.buf {
-			sk := make([]Value, len(s.keys))
+			sk := flatKeys[i*numKeys : (i+1)*numKeys]
 			for j, k := range s.keys {
 				v, err := EvalValue(k.Expr, &r, s.params)
 				if err != nil {
