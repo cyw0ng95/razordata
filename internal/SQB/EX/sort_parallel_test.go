@@ -197,3 +197,29 @@ func BenchmarkSequentialSort(b *testing.B) {
 		sortOp.sequentialSort()
 	}
 }
+
+// BenchmarkSort_KeyLookup verifies that lessRowIdx (pre-computed
+// column indices) provides O(1) per-comparison access without
+// map lookups. REQ001018.
+func BenchmarkSort_KeyLookup(b *testing.B) {
+	rows := makeSortTestRows(1024)
+	keys := []SortKey{{ColName: "id", Order: AscOrder}, {ColName: "val", Order: AscOrder}}
+
+	b.Run("lessRow", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			for j := 1; j < len(rows); j++ {
+				_ = lessRow(rows[j-1], rows[j], keys)
+			}
+		}
+	})
+	b.Run("lessRowIdx", func(b *testing.B) {
+		indices := buildKeyIndices(keys, rows[0])
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			for j := 1; j < len(rows); j++ {
+				_ = lessRowIdx(rows[j-1], rows[j], keys, indices)
+			}
+		}
+	})
+}
