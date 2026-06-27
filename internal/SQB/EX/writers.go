@@ -126,7 +126,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		var out Row
 		var err error
 		if row == nil && i.defaultValues {
-			out = Row{Cols: append([]string(nil), schema...)}
+			out = Row{Cols: schema}
 			out.Data = make([]Value, len(schema))
 		} else {
 			out, err = buildInsertRow(schema, i.cols, row, i.params)
@@ -281,7 +281,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		var out Row
 		var err error
 		if row == nil && i.defaultValues {
-			out = Row{Cols: append([]string(nil), i.schema.cols...)}
+			out = Row{Cols: i.schema.cols}
 			out.Data = make([]Value, len(i.schema.cols))
 		} else {
 			out, err = buildInsertRow(i.schema.cols, i.cols, row, i.params)

@@ -183,7 +183,8 @@ func cloneRow(r Row) Row {
 // no-op and `?` placeholders resolve to nil (preserving the
 // pre-iter-16 behavior for callers that do not bind args).
 func buildInsertRow(schema []string, cols []string, values []PS.Expr, params []any) (Row, error) {
-	out := Row{Cols: append([]string(nil), schema...)}
+	// REQ001029: share schema slice across all rows — it's read-only.
+	out := Row{Cols: schema}
 	if len(cols) == 0 {
 		out.Data = make([]Value, len(values))
 		for i, v := range values {
