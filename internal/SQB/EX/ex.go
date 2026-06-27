@@ -1299,6 +1299,102 @@ func (e *Executor) Explain(sql string) (string, error) {
 	return b.String(), nil
 }
 
+// isUpdatableView checks if a view is updatable (simple single-table
+// select without aggregation, DISTINCT, GROUP BY, HAVING, ORDER BY,
+// LIMIT, or subqueries). REQ001061.
+func isUpdatableView(sel *PS.Select) bool {
+	if sel == nil {
+		return false
+	}
+	// Must be a simple single-table select
+	if sel.From == "" {
+		return false
+	}
+	// No joins (compound views are not updatable)
+	if len(sel.Joins) > 0 {
+		return false
+	}
+	// No aggregation
+	if sel.Having != nil {
+		return false
+	}
+	// No GROUP BY
+	if len(sel.GroupBy) > 0 {
+		return false
+	}
+	// No DISTINCT
+	if sel.Distinct {
+		return false
+	}
+	// No ORDER BY
+	if len(sel.OrderBy) > 0 {
+		return false
+	}
+	// No LIMIT
+	if sel.Limit != nil {
+		return false
+	}
+	// No OFFSET
+	if sel.Offset != nil {
+		return false
+	}
+	// No subquery in FROM
+	if sel.SubqueryFrom != nil {
+		return false
+	}
+	// No aggregation functions in SELECT list
+	for _, col := range sel.Cols {
+		if col == nil {
+			continue
+		}
+		if hasAggFunc(col) {
+			return false
+		}
+	}
+	return true
+}
+
+// hasAggFunc checks if an expression contains an aggregate function.
+func hasAggFunc(expr PS.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	switch e := expr.(type) {
+	case *PS.AggregateFunc:
+		return true
+	case *PS.FunctionCall:
+		switch e.Name {
+		// These are also aggregate functions in some contexts
+		case "count", "sum", "avg", "min", "max", "group_concat":
+			return true
+		}
+	case *PS.BinaryExpr:
+		return hasAggFunc(e.Left) || hasAggFunc(e.Right)
+	case *PS.UnaryExpr:
+		return hasAggFunc(e.Operand)
+	case *PS.CaseExpr:
+		for _, when := range e.WhenList {
+			if hasAggFunc(when.Cond) || hasAggFunc(when.Then) {
+				return true
+			}
+		}
+		if hasAggFunc(e.Else) {
+			return true
+		}
+	case *PS.CastExpr:
+		return hasAggFunc(e.Expr)
+	case *PS.StarExpr, *PS.SubqueryExpr, *PS.Param:
+		return false
+	case *PS.Ident, *PS.QualifiedName:
+		return false
+	case *PS.NumberLiteral, *PS.FloatLiteral, *PS.StringLiteral, *PS.BoolLiteral, *PS.NullLiteral:
+		return false
+	default:
+		return false
+	}
+	return false
+}
+
 func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	switch s := stmt.(type) {
 	case *PS.Insert:
@@ -1333,6 +1429,13 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	case *PS.Update:
 		targetTable := s.Table
 		if viewSel := LookupView(targetTable); viewSel != nil {
+			// REQ001061: DML on non-updatable views is not allowed.
+			// A view is updatable only if it's a simple single-table
+			// select without aggregation, DISTINCT, GROUP BY, HAVING,
+			// ORDER BY, LIMIT, or subqueries.
+			if !isUpdatableView(viewSel) {
+				return nil, fmt.Errorf("ex: cannot modify view %s", targetTable)
+			}
 			targetTable = viewSel.From
 		}
 		var scan Operator = NewSeqScan(targetTable)
@@ -1384,6 +1487,10 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	case *PS.Delete:
 		tableName := s.Table
 		if viewSel := LookupView(tableName); viewSel != nil {
+			// REQ001061: DML on non-updatable views is not allowed.
+			if !isUpdatableView(viewSel) {
+				return nil, fmt.Errorf("ex: cannot modify view %s", tableName)
+			}
 			tableName = viewSel.From
 		}
 		var scan Operator = NewSeqScan(tableName)

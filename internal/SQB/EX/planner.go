@@ -2681,6 +2681,9 @@ func (p *Planner) planInsert(s *PS.Insert) Operator {
 }
 
 func (p *Planner) planUpdate(s *PS.Update) Operator {
+	if LookupView(s.Table) != nil {
+		return NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
+	}
 	if p.store != nil {
 		scan, err := NewSeqScanWithStore(p.store, s.Table)
 		if err == nil {
@@ -2697,6 +2700,9 @@ func (p *Planner) planUpdate(s *PS.Update) Operator {
 }
 
 func (p *Planner) planDelete(s *PS.Delete) Operator {
+	if LookupView(s.Table) != nil {
+		return NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
+	}
 	if p.store != nil {
 		scan, err := NewSeqScanWithStore(p.store, s.Table)
 		if err == nil {
