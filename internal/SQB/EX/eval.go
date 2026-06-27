@@ -1275,14 +1275,36 @@ func evalHex(args []PS.Expr, row *Row, params []any) (any, error) {
 		}
 		return string(h), nil
 	case KindBlob:
-		s := hex.EncodeToString(v.B)
-		return strings.ToUpper(s), nil
+		// REQ001031: use hex.Encode + in-place uppercase to avoid
+		// the intermediate string allocation from EncodeToString.
+		h := make([]byte, hex.EncodedLen(len(v.B)))
+		hex.Encode(h, v.B)
+		for i, c := range h {
+			if c >= 'a' && c <= 'f' {
+				h[i] = c - 32
+			}
+		}
+		return string(h), nil
 	case KindText:
-		s := hex.EncodeToString([]byte(v.S))
-		return strings.ToUpper(s), nil
+		// REQ001031: hex-encode the string bytes directly.
+		h := make([]byte, hex.EncodedLen(len(v.S)))
+		hex.Encode(h, []byte(v.S))
+		for i, c := range h {
+			if c >= 'a' && c <= 'f' {
+				h[i] = c - 32
+			}
+		}
+		return string(h), nil
 	default:
-		s := hex.EncodeToString([]byte(valueToString(v)))
-		return strings.ToUpper(s), nil
+		s := valueToString(v)
+		h := make([]byte, hex.EncodedLen(len(s)))
+		hex.Encode(h, []byte(s))
+		for i, c := range h {
+			if c >= 'a' && c <= 'f' {
+				h[i] = c - 32
+			}
+		}
+		return string(h), nil
 	}
 }
 
