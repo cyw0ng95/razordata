@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -220,9 +221,11 @@ func groupKeyString(key []any) string {
 		case nil:
 			b.WriteString("\\N")
 		case int64:
-			fmt.Fprintf(&b, "I:%d", x)
+			b.WriteString("I:")
+			b.Write(strconv.AppendInt(nil, x, 10))
 		case float64:
-			fmt.Fprintf(&b, "F:%g", x)
+			b.WriteString("F:")
+			b.Write(strconv.AppendFloat(nil, x, 'g', -1, 64))
 		case string:
 			b.WriteString("S:")
 			b.WriteString(x)
