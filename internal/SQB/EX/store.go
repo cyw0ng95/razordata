@@ -537,9 +537,11 @@ func tablePrefix(name string) []byte {
 }
 
 func encodeTablePrefix(id uint64) []byte {
-	out := make([]byte, 8)
-	binary.BigEndian.PutUint64(out, id)
-	return append(out, ':')
+	// REQ001032: use stack array to avoid heap allocation.
+	var buf [9]byte
+	binary.BigEndian.PutUint64(buf[:8], id)
+	buf[8] = ':'
+	return buf[:]
 }
 
 // rowValueType tags the binary encoding of a single value within a row.
