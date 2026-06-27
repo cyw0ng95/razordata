@@ -1,8 +1,9 @@
 package EX
 
 import (
+	"encoding/binary"
 	"fmt"
-	"hash/crc32"
+	"math"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
@@ -297,43 +298,71 @@ func checkUnique(schema *storeSchema, row Row, pending map[string]struct{}, snap
 	return nil
 }
 
-// encodeUniqueKey produces a stable byte key from (cols, vals) for
-// use in the pending set or composite comparison. Columns are
-// CRC32-hashed individually (8 bytes each), then concatenated. Order
-// matters — (a, b) and (b, a) are different keys.
+// encodeUniqueKey produces a deterministic binary key from vals for
+// use in the pending set. Unlike CRC32, this encoding is:
+//   - collision-free (full value preserved)
+//   - type-safe (each value carries a type tag)
+//   - canonical (same input always produces same output)
 func encodeUniqueKey(cols []int, vals []any) []byte {
-	h := crc32.NewIEEE()
+	size := 0
 	for _, v := range vals {
 		switch x := v.(type) {
 		case int64:
-			var buf [8]byte
-			for i := 0; i < 8; i++ {
-				buf[i] = byte(x >> (8 * i))
-			}
-			h.Write(buf[:])
+			size += 9
 		case float64:
-			bits := fmt.Sprintf("%f", x)
-			h.Write([]byte(bits))
+			size += 9
 		case string:
-			h.Write([]byte(x))
+			size += 5 + len(x)
 		case bool:
-			if x {
-				h.Write([]byte{1})
-			} else {
-				h.Write([]byte{0})
-			}
+			size += 2
 		case []byte:
-			h.Write(x)
+			size += 5 + len(x)
 		default:
-			h.Write([]byte(fmt.Sprintf("%v", v)))
+			s := fmt.Sprintf("%v", v)
+			size += 5 + len(s)
 		}
 	}
-	sum := h.Sum32()
-	out := make([]byte, 4)
-	out[0] = byte(sum)
-	out[1] = byte(sum >> 8)
-	out[2] = byte(sum >> 16)
-	out[3] = byte(sum >> 24)
+	out := make([]byte, 0, size)
+	for _, v := range vals {
+		switch x := v.(type) {
+		case int64:
+			out = append(out, 0)
+			var buf [8]byte
+			binary.LittleEndian.PutUint64(buf[:], uint64(x))
+			out = append(out, buf[:]...)
+		case float64:
+			out = append(out, 1)
+			var buf [8]byte
+			binary.LittleEndian.PutUint64(buf[:], math.Float64bits(x))
+			out = append(out, buf[:]...)
+		case string:
+			out = append(out, 2)
+			var blen [4]byte
+			binary.LittleEndian.PutUint32(blen[:], uint32(len(x)))
+			out = append(out, blen[:]...)
+			out = append(out, x...)
+		case bool:
+			out = append(out, 3)
+			if x {
+				out = append(out, 1)
+			} else {
+				out = append(out, 0)
+			}
+		case []byte:
+			out = append(out, 4)
+			var blen [4]byte
+			binary.LittleEndian.PutUint32(blen[:], uint32(len(x)))
+			out = append(out, blen[:]...)
+			out = append(out, x...)
+		default:
+			out = append(out, 5)
+			s := fmt.Sprintf("%v", v)
+			var blen [4]byte
+			binary.LittleEndian.PutUint32(blen[:], uint32(len(s)))
+			out = append(out, blen[:]...)
+			out = append(out, s...)
+		}
+	}
 	return out
 }
 

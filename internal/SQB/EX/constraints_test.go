@@ -3,6 +3,7 @@ package EX
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -541,5 +542,22 @@ func TestUnique_E2E_FullSQL(t *testing.T) {
 	_, err := ex.Exec(ctx, "INSERT INTO users VALUES (2, 'a@x')")
 	if !errors.Is(err, ap.ErrConstraint) {
 		t.Errorf("second INSERT duplicate: got %v, want ErrConstraint", err)
+	}
+}
+
+// TestUnique_NoCollision verifies that encodeUniqueKey does not produce
+// false positives for 100K distinct composite keys (REQ000971).
+func TestUnique_NoCollision(t *testing.T) {
+	seen := make(map[string]struct{}, 100_000)
+	for i := 0; i < 100_000; i++ {
+		k := encodeUniqueKey([]int{0, 1}, []any{int64(i / 1000), fmt.Sprintf("v%d", i)})
+		key := string(k)
+		if _, exists := seen[key]; exists {
+			t.Fatalf("collision at i=%d: %d/100000 unique keys generated before collision", i, len(seen))
+		}
+		seen[key] = struct{}{}
+	}
+	if len(seen) != 100_000 {
+		t.Errorf("expected 100000 unique keys, got %d", len(seen))
 	}
 }
