@@ -124,34 +124,28 @@ func (c *Catalog) PutIndex(tableID uint64, idx CatalogIndex) error {
 	if c.inner == nil {
 		return ErrCatalogClosed
 	}
-	raw, err := c.inner.GetByIDRef(tableID)
-	if err != nil {
-		return fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
-	}
 	if idx.Name == "" {
 		return fmt.Errorf("%w: index name is required", ErrCatalogCorrupt)
-	}
-	for _, existing := range raw.Indexes {
-		if existing.Name == idx.Name {
-			return fmt.Errorf("%w: index %q on table %q",
-				ErrCatalogExists, idx.Name, raw.Name)
-		}
 	}
 	if idx.IndexID == 0 {
 		idx.IndexID = c.nextIndexIDLocked()
 	}
-	raw.Indexes = append(raw.Indexes, ct.RawIndex{
-		IndexID:   idx.IndexID,
-		Name:      idx.Name,
-		Columns:   append([]string(nil), idx.Columns...),
-		Unique:    idx.Unique,
-		CreateSQL: idx.CreateSQL,
+	return c.inner.UpdateEntry(tableID, func(raw *ct.RawEntry) error {
+		for _, existing := range raw.Indexes {
+			if existing.Name == idx.Name {
+				return fmt.Errorf("%w: index %q on table %q",
+					ErrCatalogExists, idx.Name, raw.Name)
+			}
+		}
+		raw.Indexes = append(raw.Indexes, ct.RawIndex{
+			IndexID:   idx.IndexID,
+			Name:      idx.Name,
+			Columns:   append([]string(nil), idx.Columns...),
+			Unique:    idx.Unique,
+			CreateSQL: idx.CreateSQL,
+		})
+		return nil
 	})
-	if err := c.inner.FlushLocked(); err != nil {
-		raw.Indexes = raw.Indexes[:len(raw.Indexes)-1]
-		return fmt.Errorf("catalog: persist index: %w", err)
-	}
-	return nil
 }
 
 // DeleteIndex removes a secondary index by name.
@@ -161,23 +155,16 @@ func (c *Catalog) DeleteIndex(tableID uint64, name string) error {
 	if c.inner == nil {
 		return ErrCatalogClosed
 	}
-	raw, err := c.inner.GetByIDRef(tableID)
-	if err != nil {
-		return fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
-	}
-	for i, idx := range raw.Indexes {
-		if idx.Name == name {
-			removed := raw.Indexes[i]
-			raw.Indexes = append(raw.Indexes[:i], raw.Indexes[i+1:]...)
-			if err := c.inner.FlushLocked(); err != nil {
-				raw.Indexes = append(raw.Indexes, removed)
-				return fmt.Errorf("catalog: persist delete index: %w", err)
+	return c.inner.UpdateEntry(tableID, func(raw *ct.RawEntry) error {
+		for i, idx := range raw.Indexes {
+			if idx.Name == name {
+				raw.Indexes = append(raw.Indexes[:i], raw.Indexes[i+1:]...)
+				return nil
 			}
-			return nil
 		}
-	}
-	return fmt.Errorf("%w: index %q on table id=%d",
-		ErrCatalogNotFound, name, tableID)
+		return fmt.Errorf("%w: index %q on table id=%d",
+			ErrCatalogNotFound, name, tableID)
+	})
 }
 
 // IndexesByTable returns a copy of the index list for a table.
@@ -223,7 +210,7 @@ func (c *Catalog) Index(tableID uint64, name string) (*CatalogIndex, error) {
 
 func (c *Catalog) nextIndexIDLocked() uint64 {
 	maxID := uint64(0)
-	for _, e := range c.inner.Cache() {
+	for _, e := range c.inner.CacheSnapshot() {
 		for _, idx := range e.Indexes {
 			if idx.IndexID > maxID {
 				maxID = idx.IndexID
@@ -269,16 +256,15 @@ func (c *Catalog) ColumnStats(tableID uint64, colName string) *ColumnStats {
 
 // ColumnStatsByName returns column statistics by table name (REQ000085).
 func (c *Catalog) ColumnStatsByName(tableName, colName string) *ColumnStats {
-	for _, raw := range c.inner.Cache() {
-		if raw.Name == tableName {
-			stats := decodeStatsBlob(raw.Stats)
-			for i := range stats {
-				if stats[i].Column == colName {
-					s := stats[i].Stats
-					return &s
-				}
-			}
-			return nil
+	raw, err := c.inner.ByName(tableName)
+	if err != nil {
+		return nil
+	}
+	stats := decodeStatsBlob(raw.Stats)
+	for i := range stats {
+		if stats[i].Column == colName {
+			s := stats[i].Stats
+			return &s
 		}
 	}
 	return nil
@@ -287,25 +273,24 @@ func (c *Catalog) ColumnStatsByName(tableName, colName string) *ColumnStats {
 // TableStats returns aggregated statistics for all columns of a table
 // (REQ000787). Returns nil if the table is not found.
 func (c *Catalog) TableStats(tableName string) *TableStats {
-	for _, raw := range c.inner.Cache() {
-		if raw.Name == tableName {
-			stats := decodeStatsBlob(raw.Stats)
-			ts := &TableStats{
-				ColStats:     make(map[string]*ColumnStats),
-				RowCount:     0,
-				TotalWidth:   0,
-				LastAnalyzed: 0,
-			}
-			for _, entry := range stats {
-				ts.ColStats[entry.Column] = &entry.Stats
-				if entry.Stats.RowCount > ts.RowCount {
-					ts.RowCount = entry.Stats.RowCount
-				}
-			}
-			return ts
+	raw, err := c.inner.ByName(tableName)
+	if err != nil {
+		return nil
+	}
+	stats := decodeStatsBlob(raw.Stats)
+	ts := &TableStats{
+		ColStats:     make(map[string]*ColumnStats),
+		RowCount:     0,
+		TotalWidth:   0,
+		LastAnalyzed: 0,
+	}
+	for _, entry := range stats {
+		ts.ColStats[entry.Column] = &entry.Stats
+		if entry.Stats.RowCount > ts.RowCount {
+			ts.RowCount = entry.Stats.RowCount
 		}
 	}
-	return nil
+	return ts
 }
 
 // List returns all entries sorted by tableID.
@@ -340,36 +325,32 @@ func (c *Catalog) Path() string {
 func (c *Catalog) PutStats(tableID uint64, colName string, stats ColumnStats) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	raw, err := c.inner.GetByIDRef(tableID)
-	if err != nil {
-		return fmt.Errorf("%w: table id=%d", ErrCatalogNotFound, tableID)
+	if c.inner == nil {
+		return ErrCatalogClosed
 	}
 	if colName == "" {
 		return fmt.Errorf("%w: column name is required", ErrCatalogCorrupt)
 	}
-	oldBlob := append([]byte(nil), raw.Stats...)
-	existing := decodeStatsBlob(raw.Stats)
-	found := false
-	for i := range existing {
-		if existing[i].Column == colName {
-			existing[i].Stats = stats
-			found = true
-			break
+	return c.inner.UpdateEntry(tableID, func(raw *ct.RawEntry) error {
+		existing := decodeStatsBlob(raw.Stats)
+		found := false
+		for i := range existing {
+			if existing[i].Column == colName {
+				existing[i].Stats = stats
+				found = true
+				break
+			}
 		}
-	}
-	if !found {
-		existing = append(existing, StatsEntry{
-			TableID: tableID,
-			Column:  colName,
-			Stats:   stats,
-		})
-	}
-	raw.Stats = encodeStatsBlob(existing)
-	if err := c.inner.FlushLocked(); err != nil {
-		raw.Stats = oldBlob
-		return fmt.Errorf("catalog: persist stats: %w", err)
-	}
-	return nil
+		if !found {
+			existing = append(existing, StatsEntry{
+				TableID: tableID,
+				Column:  colName,
+				Stats:   stats,
+			})
+		}
+		raw.Stats = encodeStatsBlob(existing)
+		return nil
+	})
 }
 
 // --- conversion helpers ---

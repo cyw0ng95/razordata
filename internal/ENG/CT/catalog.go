@@ -245,6 +245,39 @@ func (c *Catalog) GetByID(tableID uint64) (*RawEntry, error) {
 	return &cp, nil
 }
 
+// UpdateEntry atomically reads an entry, calls fn with a mutable
+// pointer, then flushes the catalog. The write lock is held across
+// the entire read-modify-write, making this safe from concurrent
+// PutRaw / Delete calls. fn returns nil on success; if fn returns
+// an error the catalog is not flushed and the entry is unchanged.
+// On flush failure, the entry's Indexes, Stats, and Unique slices
+// are reverted to their pre-fn state.
+func (c *Catalog) UpdateEntry(tableID uint64, fn func(*RawEntry) error) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed.Load() {
+		return ErrCatalogClosed
+	}
+	entry, ok := c.cache[tableID]
+	if !ok {
+		return fmt.Errorf("%w: id=%d", ErrCatalogNotFound, tableID)
+	}
+	// Snapshot slice headers for rollback on flush failure.
+	origIndexes := entry.Indexes
+	origStats := entry.Stats
+	origUnique := entry.Unique
+	if err := fn(entry); err != nil {
+		return err
+	}
+	if err := c.flushLocked(); err != nil {
+		entry.Indexes = origIndexes
+		entry.Stats = origStats
+		entry.Unique = origUnique
+		return err
+	}
+	return nil
+}
+
 // GetByIDRef returns a mutable reference to the cached entry for
 // tableID. Caller must hold no locks. Used by subsystems that need
 // to modify entries in-place before flushing (e.g., PutIndex, PutStats).
@@ -363,14 +396,29 @@ func (c *Catalog) flushLocked() error {
 	return nil
 }
 
-// Cache returns the internal cache map (read-only usage expected).
-func (c *Catalog) Cache() map[uint64]*RawEntry {
-	return c.cache
+// CacheSnapshot returns a snapshot of the cache map. Callers receive
+// shallow copies of entries; the map itself is safe from concurrent
+// mutation. Use List() for deep copies of all entries.
+func (c *Catalog) CacheSnapshot() map[uint64]*RawEntry {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[uint64]*RawEntry, len(c.cache))
+	for id, e := range c.cache {
+		cp := *e
+		out[id] = &cp
+	}
+	return out
 }
 
-// ByNameMap returns the internal name→ID map.
-func (c *Catalog) ByNameMap() map[string]uint64 {
-	return c.byName
+// ByNameMapSnapshot returns a snapshot of the name→ID map.
+func (c *Catalog) ByNameMapSnapshot() map[string]uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]uint64, len(c.byName))
+	for name, id := range c.byName {
+		out[name] = id
+	}
+	return out
 }
 
 // NextIDVal returns the current nextID value without reserving.
