@@ -560,7 +560,8 @@ func encodeRow(schema *storeSchema, row Row) ([]byte, error) {
 	if len(row.Data) != len(schema.cols) {
 		return nil, fmt.Errorf("ex: row has %d values, schema has %d", len(row.Data), len(schema.cols))
 	}
-	var buf []byte
+	// REQ001022: pre-estimate buffer size to avoid 3-4x growth reallocations.
+	buf := make([]byte, 0, 9*len(schema.cols)+8)
 	buf = binary.AppendUvarint(buf, uint64(len(schema.cols)))
 	for i, v := range row.Data {
 		if v.IsNull() {
@@ -691,9 +692,9 @@ func rowKey(prefix []byte, pkValue any) []byte {
 	}
 	switch v := pkValue.(type) {
 	case int64:
-		var b [8]byte
-		binary.BigEndian.PutUint64(b[:], uint64(v))
-		out = append(out, b[:]...)
+		// REQ001023: stack-friendly fast path for int64 PKs.
+		out = out[:len(prefix)+8]
+		binary.BigEndian.PutUint64(out[len(prefix):], uint64(v))
 	case string:
 		out = append(out, v...)
 	case []byte:
@@ -705,9 +706,8 @@ func rowKey(prefix []byte, pkValue any) []byte {
 			out = append(out, 0)
 		}
 	case float64:
-		var b [8]byte
-		binary.BigEndian.PutUint64(b[:], math.Float64bits(v))
-		out = append(out, b[:]...)
+		out = out[:len(prefix)+8]
+		binary.BigEndian.PutUint64(out[len(prefix):], math.Float64bits(v))
 	default:
 		out = append(out, fmt.Sprintf("%v", v)...)
 	}

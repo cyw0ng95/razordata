@@ -6,7 +6,17 @@ package EX
 import (
 	"context"
 	"strconv"
+	"sync"
 )
+
+// REQ001017: shared buffer pool for distinctKey to reduce allocation pressure
+// in UNION/EXCEPT/INTERSECT and GROUP BY operations.
+var distinctKeyBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, 64)
+		return &b
+	},
+}
 
 type Distinct struct {
 	child Operator
@@ -55,7 +65,8 @@ func distinctKey(row Row) string {
 	if len(row.Data) == 0 {
 		return ""
 	}
-out := make([]byte, 0, len(row.Data)*8)
+	bp := distinctKeyBufPool.Get().(*[]byte)
+	out := (*bp)[:0]
 	for i, d := range row.Data {
 		if i > 0 {
 			out = append(out, 0)
@@ -80,7 +91,10 @@ out := make([]byte, 0, len(row.Data)*8)
 			out = append(out, "O"...)
 		}
 	}
-	return string(out)
+	key := string(out)
+	*bp = out
+	distinctKeyBufPool.Put(bp)
+	return key
 }
 
 func itoa(i int64) string {
