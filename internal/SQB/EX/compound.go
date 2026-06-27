@@ -126,11 +126,26 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 		}
 		// Apply ORDER BY if present.
 		if len(c.orderBy) > 0 {
-			slices.SortStableFunc(result, func(a, b Row) int {
-				for _, k := range c.orderBy {
-					av, _ := EvalValue(k.Expr, &a, c.params)
-					bv, _ := EvalValue(k.Expr, &b, c.params)
-					cmp := compareValue(av, bv)
+			// REQ001019: Schwartzian transform — pre-extract sort key
+			// values for all rows to avoid O(N log N) expression
+			// evaluations per comparison.
+			type decoratedRow struct {
+				row  Row
+				keys []Value
+			}
+			decorated := make([]decoratedRow, len(result))
+			for i := range result {
+				vals := make([]Value, len(c.orderBy))
+				for j, k := range c.orderBy {
+					v, _ := EvalValue(k.Expr, &result[i], c.params)
+					vals[j] = v
+				}
+				decorated[i].row = result[i]
+				decorated[i].keys = vals
+			}
+			slices.SortStableFunc(decorated, func(a, b decoratedRow) int {
+				for j, k := range c.orderBy {
+					cmp := compareValue(a.keys[j], b.keys[j])
 					if cmp == 0 {
 						continue
 					}
@@ -141,6 +156,9 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 				}
 				return 0
 			})
+			for i, d := range decorated {
+				result[i] = d.row
+			}
 		}
 		// Apply OFFSET / LIMIT.
 		off := 0
