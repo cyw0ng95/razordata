@@ -6,6 +6,7 @@ import (
 	"compress/flate"
 	"encoding/binary"
 	"slices"
+	"sync"
 )
 
 // dictTrainer builds a frequency-based dictionary for SST compression (REQ000297).
@@ -162,25 +163,48 @@ func decompressBlockDict(data []byte) ([]byte, error) {
 }
 
 func decompressFlateOnly(data []byte) ([]byte, error) {
+	// REQ001037: use pooled buffer to avoid per-block allocation.
+	bufPtr := decompressBufPool.Get().(*bytes.Buffer)
+	buf := bufPtr
+	buf.Reset()
 	r := flate.NewReader(bytes.NewReader(data))
 	defer r.Close()
-	var out bytes.Buffer
-	out.Grow(len(data))
-	if _, err := out.ReadFrom(r); err != nil {
+	if _, err := buf.ReadFrom(r); err != nil {
+		buf.Reset()
+		decompressBufPool.Put(bufPtr)
 		return nil, err
 	}
-	return out.Bytes(), nil
+	result := make([]byte, buf.Len())
+	copy(result, buf.Bytes())
+	buf.Reset()
+	decompressBufPool.Put(bufPtr)
+	return result, nil
 }
 
 func decompressFlateWithDict(data, dict []byte) ([]byte, error) {
+	// REQ001037: use pooled buffer to avoid per-block allocation.
+	bufPtr := decompressBufPool.Get().(*bytes.Buffer)
+	buf := bufPtr
+	buf.Reset()
 	r := flate.NewReaderDict(bytes.NewReader(data), dict)
 	defer r.Close()
-	var out bytes.Buffer
-	out.Grow(len(data))
-	if _, err := out.ReadFrom(r); err != nil {
+	if _, err := buf.ReadFrom(r); err != nil {
+		buf.Reset()
+		decompressBufPool.Put(bufPtr)
 		return nil, err
 	}
-	return out.Bytes(), nil
+	result := make([]byte, buf.Len())
+	copy(result, buf.Bytes())
+	buf.Reset()
+	decompressBufPool.Put(bufPtr)
+	return result, nil
+}
+
+// REQ001037: pool for decompression output buffers.
+var decompressBufPool = sync.Pool{
+	New: func() any {
+		return &bytes.Buffer{}
+	},
 }
 
 var _ = binary.MaxVarintLen64
