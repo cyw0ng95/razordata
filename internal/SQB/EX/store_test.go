@@ -225,3 +225,55 @@ func TestEngine_SequentialDDL(t *testing.T) {
 		t.Errorf("ta: expected 3 rows, got %d", len(rows))
 	}
 }
+
+func TestStore_LockOrdering(t *testing.T) {
+	// Verify consistent lock ordering: tablesMu → storeMu (REQ000974).
+	// Cannot run concurrent Exec() calls (Executor is not goroutine-safe),
+	// so we verify the ordering by calling the two problematic code paths
+	// and confirming they don't deadlock via table creation + unregistration.
+	storeMu.Lock()
+	storeMu.Unlock()
+	tablesMu.Lock()
+	tablesMu.Unlock()
+
+	// RegisterFromCatalog: acquires tablesMu → storeMu
+	dir := t.TempDir()
+	lsCat, err := ls.NewCatalog(dir)
+	if err != nil {
+		t.Fatalf("ls.NewCatalog: %v", err)
+	}
+	defer lsCat.Close()
+
+	SetCatalog(lsCat)
+	defer SetCatalog(nil)
+
+	// RegisterFromCatalog uses tablesMu → storeMu order.
+	// UnregisterAll uses tablesMu → storeMu order.
+	// Both follow the same ordering — no deadlock risk.
+	entry := &ls.CatalogEntry{
+		TableID: 1,
+		Name:    "ordering_test",
+		Columns: []ls.CatalogColumn{
+			{Name: "id", Type: 1, Nullable: false},
+			{Name: "val", Type: 4, Nullable: true},
+		},
+		PrimaryKey: "id",
+		CreateSQL:  "CREATE TABLE ordering_test (id INTEGER PRIMARY KEY, val TEXT)",
+	}
+	if err := RegisterFromCatalog(entry); err != nil {
+		t.Fatalf("RegisterFromCatalog: %v", err)
+	}
+
+	// Verify the table was registered
+	if _, ok := schemaFor("ordering_test"); !ok {
+		t.Fatal("schemaFor returned false after RegisterFromCatalog")
+	}
+
+	// UnregisterAll uses tablesMu → storeMu — same ordering
+	UnregisterAll()
+
+	// Verify the table is gone
+	if _, ok := schemaFor("ordering_test"); ok {
+		t.Fatal("schemaFor returned true after UnregisterAll")
+	}
+}

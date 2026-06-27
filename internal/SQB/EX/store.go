@@ -458,16 +458,22 @@ func nextTableIDLocked() uint64 {
 // NextID — the entry already carries its tableID. Subsequent
 // unregistration of this table uses the same tableID, which
 // must match what other code paths expect.
+//
+// Lock ordering: tablesMu → storeMu (REQ000974).
 func RegisterFromCatalog(entry *ls.CatalogEntry) error {
 	if entry == nil {
 		return errors.New("ex: nil catalog entry")
 	}
+	// Acquire tablesMu first, then storeMu, to match the
+	// established tablesMu → storeMu ordering (REQ000974).
+	tablesMu.Lock()
 	storeMu.Lock()
-	defer storeMu.Unlock()
 	if _, exists := tableIDs[entry.Name]; exists {
 		// Already registered (e.g. test setup called RegisterTable
 		// manually before SYS bound the catalog). Leave the
 		// existing entry alone.
+		storeMu.Unlock()
+		tablesMu.Unlock()
 		return nil
 	}
 	cols := make([]string, len(entry.Columns))
@@ -494,11 +500,6 @@ func RegisterFromCatalog(entry *ls.CatalogEntry) error {
 	// parser AST cannot be safely serialized. Callers that need
 	// the defaults back must re-issue the CREATE TABLE statement.
 	var defaults []PS.Expr
-	if id, ok := tableIDs[entry.Name]; ok && id == entry.TableID {
-		// Collision: another table already has this name but
-		// with a different ID. Surface the inconsistency.
-		_ = id
-	}
 	tableIDs[entry.Name] = entry.TableID
 	ss := &storeSchema{
 		cols:     cols,
@@ -512,17 +513,17 @@ func RegisterFromCatalog(entry *ls.CatalogEntry) error {
 	storeSchemas[entry.TableID] = ss
 	// Also publish to the in-memory `tables` / `schemas` map that
 	// the executor scans.
-	tablesMu.Lock()
 	if _, exists := tables[entry.Name]; !exists {
 		tables[entry.Name] = []Row{}
 	}
 	schemas[entry.Name] = cols
-	tablesMu.Unlock()
 	// Track the in-memory counter so subsequent NextID calls
 	// (in the absence of a catalog) do not reuse this ID.
 	if entry.TableID >= tableIDSeq {
 		tableIDSeq = entry.TableID
 	}
+	storeMu.Unlock()
+	tablesMu.Unlock()
 	return nil
 }
 

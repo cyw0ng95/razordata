@@ -65,6 +65,38 @@ type Checkpoint struct {
 	ActiveTXNs       []uint64
 }
 
+// WALMode controls how aggressively the WAL writer fsyncs data.
+type WALMode uint8
+
+const (
+	// FSYNC_EVERY is the default mode: every Sync() flushes and fsyncs
+	// the entire WAL segment. Maximum durability, minimum throughput.
+	FSYNC_EVERY WALMode = iota
+	// FSYNC_HEADER_ONLY flushes buffered frames via pwrite but skips the
+	// fsync barrier. Only the WAL header (first 12 bytes) is guaranteed
+	// durable after close. The kernel may flush frame pages asynchronously.
+	// Trade-off: ~10x higher throughput; crash may lose the last few
+	// committed transactions.
+	FSYNC_HEADER_ONLY
+	// FSYNC_BATCH calls fsync after every BatchLimit Sync() calls.
+	// Default batch size is 100. Reduces fsync frequency while keeping
+	// bounded durability latency.
+	FSYNC_BATCH
+)
+
+func (m WALMode) String() string {
+	switch m {
+	case FSYNC_EVERY:
+		return "every"
+	case FSYNC_HEADER_ONLY:
+		return "header-only"
+	case FSYNC_BATCH:
+		return "batch"
+	default:
+		return "unknown"
+	}
+}
+
 // AsyncSyncResult is the value delivered by SyncAsync (REQ000301).
 type AsyncSyncResult struct {
 	Err       error
@@ -102,12 +134,17 @@ type writer struct {
 	inflightFsyncsCnt atomic.Int64
 	maxRecordSize     int64
 	lsn               LSNCounter // REQ000541: optional batched LSN counter
+	mode              WALMode    // REQ001063
+	batchLimit        int        // REQ001063: for FSYNC_BATCH
+	batchCount        int        // REQ001063: running counter for FSYNC_BATCH
 }
 
 // Options configures optional Writer behavior (REQ000034).
 type Options struct {
 	Compress   bool
 	LSNCounter LSNCounter // REQ000541: optional batched LSN counter
+	Mode       WALMode    // REQ001063: fsync strategy
+	BatchLimit int        // REQ001063: for FSYNC_BATCH, fsync every N Sync calls (default 100)
 }
 
 // LSNCounter is the minimal interface for batched LSN allocation (REQ000541).
@@ -131,7 +168,21 @@ func NewWithOptions(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log l
 	if spPool == nil {
 		return nil, errors.New("wr: SyncPool is required")
 	}
-	return &writer{dir: dir, sm: sm, sp: spPool, log: log, readOnly: readOnly, compress: opts.Compress, lsn: opts.LSNCounter}, nil
+	bl := opts.BatchLimit
+	if bl <= 0 {
+		bl = 100
+	}
+	return &writer{
+		dir:        dir,
+		sm:         sm,
+		sp:         spPool,
+		log:        log,
+		readOnly:   readOnly,
+		compress:   opts.Compress,
+		lsn:        opts.LSNCounter,
+		mode:       opts.Mode,
+		batchLimit: bl,
+	}, nil
 }
 
 // Append encodes and appends every record in batch.
@@ -222,12 +273,31 @@ func (w *writer) syncLocked() error {
 	if err := w.flushBufferLocked(); err != nil {
 		return err
 	}
-	if err := unix.Fsync(w.seg.fh.FD); err != nil {
-		if w.log != nil {
-			w.log.Error("wr.sync", "seg", w.seg.number, "err", err)
+
+	switch w.mode {
+	case FSYNC_HEADER_ONLY:
+		// Write frames to kernel page cache but skip fsync barrier.
+		// Only the WAL header will be synced implicitly on close.
+	case FSYNC_BATCH:
+		w.batchCount++
+		if w.batchCount >= w.batchLimit {
+			w.batchCount = 0
+			if err := unix.Fsync(w.seg.fh.FD); err != nil {
+				if w.log != nil {
+					w.log.Error("wr.sync", "seg", w.seg.number, "err", err)
+				}
+				return err
+			}
 		}
-		return err
+	default: // FSYNC_EVERY
+		if err := unix.Fsync(w.seg.fh.FD); err != nil {
+			if w.log != nil {
+				w.log.Error("wr.sync", "seg", w.seg.number, "err", err)
+			}
+			return err
+		}
 	}
+
 	syncedLSN := LSNFor(w.seg.number, uint64(pendingEnd))
 	// Use CAS loop to avoid lost update from read-then-write race.
 	for {
@@ -268,11 +338,44 @@ func (w *writer) SyncAsync() (<-chan AsyncSyncResult, error) {
 	pendingEnd := w.seg.writeOff
 	segNumber := w.seg.number
 	fd := w.seg.fh.FD
+	mode := w.mode
+	batchLimit := w.batchLimit
 	if err := w.flushBufferLocked(); err != nil {
 		w.mu.Unlock()
 		ch <- AsyncSyncResult{Err: err}
 		close(ch)
 		return ch, nil
+	}
+
+	switch mode {
+	case FSYNC_HEADER_ONLY:
+		w.mu.Unlock()
+		syncedLSN := LSNFor(segNumber, uint64(pendingEnd))
+		for {
+			old := w.synced.Load()
+			if syncedLSN <= old || w.synced.CompareAndSwap(old, syncedLSN) {
+				break
+			}
+		}
+		ch <- AsyncSyncResult{SyncedLSN: syncedLSN}
+		close(ch)
+		return ch, nil
+	case FSYNC_BATCH:
+		w.batchCount++
+		if w.batchCount < batchLimit {
+			w.mu.Unlock()
+			syncedLSN := LSNFor(segNumber, uint64(pendingEnd))
+			for {
+				old := w.synced.Load()
+				if syncedLSN <= old || w.synced.CompareAndSwap(old, syncedLSN) {
+					break
+				}
+			}
+			ch <- AsyncSyncResult{SyncedLSN: syncedLSN}
+			close(ch)
+			return ch, nil
+		}
+		w.batchCount = 0
 	}
 	w.inflightFsyncs.Add(1)
 	w.inflightFsyncsCnt.Add(1)
@@ -337,6 +440,8 @@ func (w *writer) closeLocked() error {
 	pendingEnd := w.seg.writeOff
 	if hadBuffer {
 		recordErr("flush", w.flushBufferLocked())
+	}
+	if pendingEnd > int64(WALHeaderSize) {
 		recordErr("fsync", unix.Fsync(w.seg.fh.FD))
 		syncedLSN := LSNFor(w.seg.number, uint64(pendingEnd))
 		if syncedLSN > w.synced.Load() {

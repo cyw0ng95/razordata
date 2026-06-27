@@ -321,6 +321,82 @@ func TestBTree_DeleteRebalance(t *testing.T) {
 	}
 }
 
+func TestBTree_CursorConcurrentMutation(t *testing.T) {
+	dir := tmpDir(t)
+	bt, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bt.Close()
+
+	// Insert initial set of keys
+	for i := 0; i < 100; i++ {
+		key := []byte{byte(i / 256), byte(i % 256)}
+		bt.Insert(key, []byte{byte(i)})
+	}
+
+	// Start cursor scan and insert concurrently.
+	// Cursor holds RLock across scan, so inserts block until
+	// scan completes — no corruption possible.
+	c := bt.Cursor()
+	if !c.Seek([]byte{0, 0}) {
+		t.Fatal("Seek failed")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		for i := 100; i < 200; i++ {
+			key := []byte{byte(i / 256), byte(i % 256)}
+			bt.Insert(key, []byte{byte(i)})
+		}
+		close(done)
+	}()
+
+	count := 1 // Seek already positioned at first entry
+	for c.Next() {
+		count++
+	}
+	c.Close() // release RLock so insert goroutine can proceed
+
+	<-done // wait for all inserts to complete
+	if count != 100 {
+		t.Errorf("cursor scanned %d keys with concurrent inserts, want 100", count)
+	}
+
+	// Verify all 200 keys are now present
+	for i := 0; i < 200; i++ {
+		key := []byte{byte(i / 256), byte(i % 256)}
+		v, err := bt.Get(key)
+		if err != nil {
+			t.Errorf("Get(%v) after concurrent insert: %v", key, err)
+		}
+		if len(v) == 0 || v[0] != byte(i) {
+			t.Errorf("Get(%v) = %v, want %d", key, v, i)
+		}
+	}
+}
+
+func TestBTree_CursorCloseIdempotent(t *testing.T) {
+	dir := tmpDir(t)
+	bt, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bt.Close()
+
+	bt.Insert([]byte("k"), []byte("v"))
+	c := bt.Cursor()
+	if !c.Seek([]byte("k")) {
+		t.Fatal("Seek failed")
+	}
+	if err := c.Close(); err != nil {
+		t.Errorf("first Close: %v", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Errorf("second Close: %v", err)
+	}
+}
+
 func TestBTree_DeleteAllThenInsert(t *testing.T) {
 	dir := tmpDir(t)
 	bt, err := Open(dir)
