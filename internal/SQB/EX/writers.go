@@ -231,21 +231,9 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(i.returning) > 0 {
-			expanded := expandReturningStar(i.returning, out.Cols)
-			resultRow := Row{
-				Cols:  make([]string, len(expanded)),
-				Types: make([]int, len(expanded)),
-				Data:  make([]Value, len(expanded)),
+			if err := evalReturning(i.returning, &out, i.params, &i.resultRows); err != nil {
+				return Row{}, err
 			}
-			for j, expr := range expanded {
-				val, err := EvalValue(expr, &out, i.params)
-				if err != nil {
-					return Row{}, err
-				}
-				resultRow.Cols[j] = colNameForReturning(expr, out.Cols, j)
-				resultRow.Data[j] = val
-			}
-			i.resultRows = append(i.resultRows, resultRow)
 		}
 	}
 	tables[i.table] = existing
@@ -392,21 +380,9 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(i.returning) > 0 {
-			expanded := expandReturningStar(i.returning, out.Cols)
-			resultRow := Row{
-				Cols:  make([]string, len(expanded)),
-				Types: make([]int, len(expanded)),
-				Data:  make([]Value, len(expanded)),
+			if err := evalReturning(i.returning, &out, i.params, &i.resultRows); err != nil {
+				return Row{}, err
 			}
-			for j, expr := range expanded {
-				val, err := EvalValue(expr, &out, i.params)
-				if err != nil {
-					return Row{}, err
-				}
-				resultRow.Cols[j] = colNameForReturning(expr, out.Cols, j)
-				resultRow.Data[j] = val
-			}
-			i.resultRows = append(i.resultRows, resultRow)
 		}
 	}
 	_ = ctx
@@ -487,21 +463,9 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 		}
 
 		if len(i.returning) > 0 {
-			expanded := expandReturningStar(i.returning, out.Cols)
-			resultRow := Row{
-				Cols:  make([]string, len(expanded)),
-				Types: make([]int, len(expanded)),
-				Data:  make([]Value, len(expanded)),
+			if err := evalReturning(i.returning, &out, i.params, &i.resultRows); err != nil {
+				return Row{}, err
 			}
-			for j, expr := range expanded {
-				val, err := EvalValue(expr, &out, i.params)
-				if err != nil {
-					return Row{}, err
-				}
-				resultRow.Cols[j] = colNameForReturning(expr, out.Cols, j)
-				resultRow.Data[j] = val
-			}
-			i.resultRows = append(i.resultRows, resultRow)
 		}
 	}
 	tables[i.table] = existing
@@ -698,21 +662,9 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(u.returning) > 0 {
-			expanded := expandReturningStar(u.returning, row.Cols)
-			resultRow := Row{
-				Cols:  make([]string, len(expanded)),
-				Types: make([]int, len(expanded)),
-				Data:  make([]Value, len(expanded)),
+			if err := evalReturning(u.returning, &row, u.params, &u.resultRows); err != nil {
+				return Row{}, err
 			}
-			for j, expr := range expanded {
-				val, err := EvalValue(expr, &row, u.params)
-				if err != nil {
-					return Row{}, err
-				}
-				resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
-				resultRow.Data[j] = val
-			}
-			u.resultRows = append(u.resultRows, resultRow)
 		}
 	}
 
@@ -795,21 +747,9 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(u.returning) > 0 {
-			expanded := expandReturningStar(u.returning, row.Cols)
-			resultRow := Row{
-				Cols:  make([]string, len(expanded)),
-				Types: make([]int, len(expanded)),
-				Data:  make([]Value, len(expanded)),
+			if err := evalReturning(u.returning, &row, u.params, &u.resultRows); err != nil {
+				return Row{}, err
 			}
-			for j, expr := range expanded {
-				val, err := EvalValue(expr, &row, u.params)
-				if err != nil {
-					return Row{}, err
-				}
-				resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
-				resultRow.Data[j] = val
-			}
-			u.resultRows = append(u.resultRows, resultRow)
 		}
 	}
 
@@ -925,21 +865,9 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 
 			// Evaluate RETURNING expressions before deleting (REQ000518: expand *)
 			if len(d.returning) > 0 {
-				expanded := expandReturningStar(d.returning, row.Cols)
-				resultRow := Row{
-					Cols:  make([]string, len(expanded)),
-					Types: make([]int, len(expanded)),
-					Data:  make([]Value, len(expanded)),
+				if err := evalReturning(d.returning, &row, d.params, &d.resultRows); err != nil {
+					return Row{}, err
 				}
-				for j, expr := range expanded {
-					val, err := EvalValue(expr, &row, d.params)
-					if err != nil {
-						return Row{}, err
-					}
-					resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
-					resultRow.Data[j] = val
-				}
-				d.resultRows = append(d.resultRows, resultRow)
 			}
 		}
 	}
@@ -1014,21 +942,9 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 		}
 		// Evaluate RETURNING expressions before deleting (REQ000518: expand *)
 		if len(d.returning) > 0 {
-			expanded := expandReturningStar(d.returning, row.Cols)
-			resultRow := Row{
-				Cols:  make([]string, len(expanded)),
-				Types: make([]int, len(expanded)),
-				Data:  make([]Value, len(expanded)),
+			if err := evalReturning(d.returning, &row, d.params, &d.resultRows); err != nil {
+				return Row{}, err
 			}
-			for j, expr := range expanded {
-				val, err := EvalValue(expr, &row, d.params)
-				if err != nil {
-					return Row{}, err
-				}
-				resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
-				resultRow.Data[j] = val
-			}
-			d.resultRows = append(d.resultRows, resultRow)
 		}
 
 		pk, err := extractPKForUpdate(d.schema, row, prefix)
@@ -2340,6 +2256,30 @@ func colNameForReturning(expr PS.Expr, colNames []string, idx int) string {
 		return colNames[idx]
 	}
 	return fmt.Sprintf("col%d", idx)
+}
+
+// evalReturning evaluates RETURNING expressions for a single row.
+// REQ000984: extracted from 7 duplicated call sites in Insert/Update/Delete.
+func evalReturning(exprs []PS.Expr, row *Row, params []any, resultRows *[]Row) error {
+	if len(exprs) == 0 {
+		return nil
+	}
+	expanded := expandReturningStar(exprs, row.Cols)
+	resultRow := Row{
+		Cols:  make([]string, len(expanded)),
+		Types: make([]int, len(expanded)),
+		Data:  make([]Value, len(expanded)),
+	}
+	for j, expr := range expanded {
+		val, err := EvalValue(expr, row, params)
+		if err != nil {
+			return err
+		}
+		resultRow.Cols[j] = colNameForReturning(expr, row.Cols, j)
+		resultRow.Data[j] = val
+	}
+	*resultRows = append(*resultRows, resultRow)
+	return nil
 }
 
 // UnsupportedOp is a writer-op stub for statement types that the
