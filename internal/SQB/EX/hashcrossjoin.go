@@ -391,21 +391,22 @@ func (j *HashCrossJoin) Close() error {
 // bare ("a") or table-qualified ("t1.a") column names.
 func lookupColumn(row *Row, tbl, col string) (any, bool) {
 	want := tbl + "." + col
-	for i, c := range row.Cols {
-		if c == want || c == col {
-			if i < len(row.Data) {
-				return row.Data[i].ToAny(), true
-			}
-			return nil, false
-		}
-	}
-	// Fall back to colIndex map.
+	// REQ001036: check colIndex first (O(1)), fall back to linear scan only if colIndex is nil.
 	if row.colIndex != nil {
 		if idx, ok := row.colIndex[strings.ToLower(want)]; ok && idx < len(row.Data) {
 			return row.Data[idx].ToAny(), true
 		}
 		if idx, ok := row.colIndex[strings.ToLower(col)]; ok && idx < len(row.Data) {
 			return row.Data[idx].ToAny(), true
+		}
+		return nil, false
+	}
+	for i, c := range row.Cols {
+		if c == want || c == col {
+			if i < len(row.Data) {
+				return row.Data[i].ToAny(), true
+			}
+			return nil, false
 		}
 	}
 	return nil, false
