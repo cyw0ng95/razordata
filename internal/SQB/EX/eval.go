@@ -1280,7 +1280,7 @@ func evalHex(args []PS.Expr, row *Row, params []any) (any, error) {
 		s := hex.EncodeToString([]byte(v.S))
 		return strings.ToUpper(s), nil
 	default:
-		s := hex.EncodeToString([]byte(fmt.Sprint(v.ToAny())))
+		s := hex.EncodeToString([]byte(valueToString(v)))
 		return strings.ToUpper(s), nil
 	}
 }
@@ -1466,7 +1466,7 @@ func evalConcat(args []PS.Expr, row *Row, params []any) (any, error) {
 		if v.Kind == KindNull {
 			return nil, nil // Any NULL → NULL result
 		}
-		sb.WriteString(fmt.Sprint(v.ToAny()))
+		sb.WriteString(valueToString(v))
 	}
 	return sb.String(), nil
 }
@@ -1484,7 +1484,7 @@ func evalConcatWS(args []PS.Expr, row *Row, params []any) (any, error) {
 	if sep.Kind == KindNull {
 		return nil, nil // NULL separator → NULL result
 	}
-	sepStr := fmt.Sprint(sep.ToAny())
+	sepStr := valueToString(sep)
 	var sb strings.Builder
 	first := true
 	for i := 1; i < len(args); i++ {
@@ -1498,7 +1498,7 @@ func evalConcatWS(args []PS.Expr, row *Row, params []any) (any, error) {
 		if !first {
 			sb.WriteString(sepStr)
 		}
-		sb.WriteString(fmt.Sprint(v.ToAny()))
+		sb.WriteString(valueToString(v))
 		first = false
 	}
 	return sb.String(), nil
@@ -1545,14 +1545,14 @@ func evalLtrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if v.Kind == KindNull {
 		return nil, nil
 	}
-	s := fmt.Sprint(v.ToAny())
+	s := valueToString(v)
 	if len(args) >= 2 {
 		trimV, err := EvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
 		if trimV.Kind != KindNull {
-			return strings.TrimLeft(s, fmt.Sprint(trimV.ToAny())), nil
+			return strings.TrimLeft(s, valueToString(trimV)), nil
 		}
 	}
 	return strings.TrimLeft(s, " "), nil
@@ -1571,14 +1571,14 @@ func evalRtrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if v.Kind == KindNull {
 		return nil, nil
 	}
-	s := fmt.Sprint(v.ToAny())
+	s := valueToString(v)
 	if len(args) >= 2 {
 		trimV, err := EvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
 		if trimV.Kind != KindNull {
-			return strings.TrimRight(s, fmt.Sprint(trimV.ToAny())), nil
+			return strings.TrimRight(s, valueToString(trimV)), nil
 		}
 	}
 	return strings.TrimRight(s, " "), nil
@@ -1597,14 +1597,14 @@ func evalTrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if v.Kind == KindNull {
 		return nil, nil
 	}
-	s := fmt.Sprint(v.ToAny())
+	s := valueToString(v)
 	if len(args) >= 2 {
 		trimV, err := EvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
 		if trimV.Kind != KindNull {
-			return strings.Trim(s, fmt.Sprint(trimV.ToAny())), nil
+			return strings.Trim(s, valueToString(trimV)), nil
 		}
 	}
 	return strings.Trim(s, " "), nil
@@ -1631,14 +1631,14 @@ func evalReplace(args []PS.Expr, row *Row, params []any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	xs := fmt.Sprint(x.ToAny())
+	xs := valueToString(x)
 	if y.Kind == KindNull {
 		return xs, nil // NULL pattern → return X unchanged
 	}
-	ys := fmt.Sprint(y.ToAny())
+	ys := valueToString(y)
 	zs := ""
 	if z.Kind != KindNull {
-		zs = fmt.Sprint(z.ToAny())
+		zs = valueToString(z)
 	}
 	return strings.ReplaceAll(xs, ys, zs), nil
 }
@@ -1664,12 +1664,9 @@ func evalQuote(args []PS.Expr, row *Row, params []any) (any, error) {
 		return "'" + escaped + "'", nil
 	case KindInt, KindFloat, KindBool:
 		// Numbers and booleans are not quoted
-		return fmt.Sprint(v.ToAny()), nil
-	case KindBlob:
-		// BLOB as X'hex'
-		return "X'" + hex.EncodeToString(v.B) + "'", nil
+		return valueToString(v), nil
 	default:
-		return "'" + strings.ReplaceAll(fmt.Sprint(v.ToAny()), "'", "''") + "'", nil
+		return "'" + strings.ReplaceAll(valueToString(v), "'", "''") + "'", nil
 	}
 }
 
@@ -1723,7 +1720,7 @@ func evalOctetLength(args []PS.Expr, row *Row, params []any) (any, error) {
 	if v.Kind == KindText {
 		return int64(len(v.S)), nil
 	}
-	return int64(len(fmt.Sprint(v.ToAny()))), nil
+	return int64(len(valueToString(v))), nil
 }
 
 // evalUnicode returns the Unicode code point of the first character.
@@ -1739,7 +1736,7 @@ func evalUnicode(args []PS.Expr, row *Row, params []any) (any, error) {
 	if v.Kind == KindNull {
 		return nil, nil
 	}
-	s := fmt.Sprint(v.ToAny())
+	s := valueToString(v)
 	if len(s) == 0 {
 		return int64(0), nil
 	}
@@ -1796,8 +1793,8 @@ func evalInstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if y.Kind == KindNull {
 		return nil, nil
 	}
-	xs := fmt.Sprint(x.ToAny())
-	ys := fmt.Sprint(y.ToAny())
+	xs := valueToString(x)
+	ys := valueToString(y)
 	if ys == "" {
 		return int64(1), nil
 	}

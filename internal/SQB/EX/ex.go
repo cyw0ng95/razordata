@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -131,6 +132,28 @@ func NewBoolValue(v bool) Value { return AP.NewBoolValue(v) }
 
 // NullValue returns a NULL Value.
 func NullValue() Value { return AP.NullValue() }
+
+// valueToString converts a Value to its string representation without
+// going through fmt.Sprint (no reflection, no boxing). REQ001015.
+func valueToString(v Value) string {
+	switch v.Kind {
+	case KindText:
+		return v.S
+	case KindInt:
+		return strconv.FormatInt(v.I64, 10)
+	case KindFloat:
+		return strconv.FormatFloat(v.F64, 'g', -1, 64)
+	case KindBool:
+		if v.Bo {
+			return "1"
+		}
+		return "0"
+	case KindNull:
+		return ""
+	default:
+		return fmt.Sprint(v.ToAny())
+	}
+}
 
 // valueFromAny creates a Value from a boxed any. Inverse of ToAny.
 func valueFromAny(a any) Value {
