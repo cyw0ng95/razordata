@@ -1497,7 +1497,11 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 			current = NewFilter(current, s.Having)
 		}
 		if len(s.OrderBy) > 0 {
-			current = NewSort(current, s.OrderBy)
+			so := NewSort(current, s.OrderBy)
+			if p.pool != nil {
+				so.WithPool(p.pool)
+			}
+			current = so
 		}
 		// Limit is handled separately if needed
 		return current
@@ -2072,6 +2076,9 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	if len(s.OrderBy) > 0 {
 		if !p.pkOrderMatches(s.From, s.OrderBy) {
 			sort := NewSort(current, s.OrderBy)
+			if p.pool != nil {
+				sort.WithPool(p.pool)
+			}
 			current = sort
 		}
 	}

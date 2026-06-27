@@ -445,6 +445,7 @@ type Sort struct {
 	pos          int
 	materialized bool
 	params       []any
+	pool         *WorkerPool // REQ001050: parallel sort support
 }
 
 // Child returns the sort's child operator.
@@ -452,6 +453,12 @@ func (s *Sort) Child() Operator { return s.child }
 
 func NewSort(child Operator, keys []PS.OrderItem) *Sort {
 	return &Sort{child: child, keys: keys}
+}
+
+// WithPool attaches a WorkerPool for parallel sort. REQ001050.
+func (s *Sort) WithPool(pool *WorkerPool) *Sort {
+	s.pool = pool
+	return s
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -490,39 +497,45 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 			keyCache[i] = sk
 		}
 
-		indices := make([]int, n)
-		for i := range indices {
-			indices[i] = i
-		}
-		slices.SortStableFunc(indices, func(ai, bi int) int {
-			ka, kb := keyCache[ai], keyCache[bi]
-			for ki := range ka {
-				if s.keys[ki].NullsOrder != 0 {
-					if ka[ki].IsNull() && !kb[ki].IsNull() {
-						return -int(s.keys[ki].NullsOrder)
-					}
-					if kb[ki].IsNull() && !ka[ki].IsNull() {
-						return int(s.keys[ki].NullsOrder)
-					}
-				}
-				c := compare(ka[ki], kb[ki])
-				if c == 0 {
-					continue
-				}
-				if s.keys[ki].Desc {
-					return -c
-				}
-				return c
+		// REQ001050: parallel sort when pool is available and > threshold
+		if s.pool != nil && n > 10000 {
+			if err := s.parallelSort(ctx, keyCache); err != nil {
+				return Row{}, err
 			}
-			return 0
-		})
+		} else {
+			indices := make([]int, n)
+			for i := range indices {
+				indices[i] = i
+			}
+			slices.SortStableFunc(indices, func(ai, bi int) int {
+				ka, kb := keyCache[ai], keyCache[bi]
+				for ki := range ka {
+					if s.keys[ki].NullsOrder != 0 {
+						if ka[ki].IsNull() && !kb[ki].IsNull() {
+							return -int(s.keys[ki].NullsOrder)
+						}
+						if kb[ki].IsNull() && !ka[ki].IsNull() {
+							return int(s.keys[ki].NullsOrder)
+						}
+					}
+					c := compare(ka[ki], kb[ki])
+					if c == 0 {
+						continue
+					}
+					if s.keys[ki].Desc {
+						return -c
+					}
+					return c
+				}
+				return 0
+			})
 
-		// Reorder s.buf in-place using sorted indices.
-		reordered := make([]Row, n)
-		for i, idx := range indices {
-			reordered[i] = s.buf[idx]
+			reordered := make([]Row, n)
+			for i, idx := range indices {
+				reordered[i] = s.buf[idx]
+			}
+			s.buf = reordered
 		}
-		s.buf = reordered
 		s.materialized = true
 	}
 	if s.pos >= len(s.buf) {
@@ -531,6 +544,154 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 	r := s.buf[s.pos]
 	s.pos++
 	return r, nil
+}
+
+// ParallelSortThreshold is the minimum row count for parallel sort.
+const ParallelSortThreshold = 10000
+
+func (s *Sort) parallelSort(ctx context.Context, keyCache [][]Value) error {
+	n := len(s.buf)
+	workers := s.pool.Workers()
+	if workers < 2 {
+		workers = 2
+	}
+
+	// Sample-based partition: pick workers-1 splitters from keyCache
+	sampleStep := n / (workers * 4)
+	if sampleStep < 1 {
+		sampleStep = 1
+	}
+	samples := make([]int, 0, workers*4)
+	for i := 0; i < n && len(samples) < workers*4; i += sampleStep {
+		samples = append(samples, i)
+	}
+	slices.SortStableFunc(samples, func(a, b int) int {
+		ka, kb := keyCache[a], keyCache[b]
+		for ki := range ka {
+			c := compare(ka[ki], kb[ki])
+			if c == 0 {
+				continue
+			}
+			return c
+		}
+		return 0
+	})
+
+	// Pick every 4th sample as a splitter
+	splitters := make([][]Value, 0, workers-1)
+	for i := 4; i < len(samples) && len(splitters) < workers-1; i += 4 {
+		splitters = append(splitters, keyCache[samples[i]])
+	}
+	if len(splitters) == 0 {
+		// Single partition — sort sequentially
+		indices := make([]int, n)
+		for i := range indices {
+			indices[i] = i
+		}
+		slices.SortStableFunc(indices, func(ai, bi int) int {
+			return s.cmpKeys(keyCache[ai], keyCache[bi])
+		})
+		reordered := make([]Row, n)
+		for i, idx := range indices {
+			reordered[i] = s.buf[idx]
+		}
+		s.buf = reordered
+		return nil
+	}
+
+	// Partition rows by splitters
+	partitions := make([][]int, len(splitters)+1)
+	for i := range partitions {
+		partitions[i] = make([]int, 0, n/(len(splitters)+1))
+	}
+	for i := 0; i < n; i++ {
+		key := keyCache[i]
+		placed := false
+		for pi, split := range splitters {
+			if s.cmpKeys(key, split) < 0 {
+				partitions[pi] = append(partitions[pi], i)
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			partitions[len(partitions)-1] = append(partitions[len(partitions)-1], i)
+		}
+	}
+
+	// Sort each partition in parallel
+	type partResult struct {
+		idx  int
+		rows []Row
+		err  error
+	}
+	resultCh := make(chan partResult, len(partitions))
+	var wg sync.WaitGroup
+
+	for pi, part := range partitions {
+		if len(part) == 0 {
+			continue
+		}
+		pi2, part2 := pi, part
+		wg.Add(1)
+		err := s.pool.Submit(ctx, func() error {
+			defer wg.Done()
+			slices.SortStableFunc(part2, func(a, b int) int {
+				return s.cmpKeys(keyCache[a], keyCache[b])
+			})
+			out := make([]Row, len(part2))
+			for j, idx := range part2 {
+				out[j] = s.buf[idx]
+			}
+			resultCh <- partResult{idx: pi2, rows: out}
+			return nil
+		})
+		if err != nil {
+			wg.Done()
+			resultCh <- partResult{idx: pi2, err: err}
+			break
+		}
+	}
+
+	wg.Wait()
+	close(resultCh)
+
+	ordered := make([][]Row, len(partitions))
+	for res := range resultCh {
+		if res.err != nil {
+			return res.err
+		}
+		ordered[res.idx] = res.rows
+	}
+	var all []Row
+	for _, part := range ordered {
+		all = append(all, part...)
+	}
+	s.buf = all
+	return nil
+}
+
+// cmpKeys compares two sort key Value slices, respecting DESC/NullsOrder.
+func (s *Sort) cmpKeys(a, b []Value) int {
+	for ki := range a {
+		if s.keys[ki].NullsOrder != 0 {
+			if a[ki].IsNull() && !b[ki].IsNull() {
+				return -int(s.keys[ki].NullsOrder)
+			}
+			if b[ki].IsNull() && !a[ki].IsNull() {
+				return int(s.keys[ki].NullsOrder)
+			}
+		}
+		c := compare(a[ki], b[ki])
+		if c == 0 {
+			continue
+		}
+		if s.keys[ki].Desc {
+			return -c
+		}
+		return c
+	}
+	return 0
 }
 
 func (s *Sort) Close() error {
