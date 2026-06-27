@@ -288,8 +288,11 @@ func (w *writer) SyncAsync() (<-chan AsyncSyncResult, error) {
 		syncedLSN := uint64(0)
 		if err == nil {
 			syncedLSN = LSNFor(segNumber, uint64(pendingEnd))
-			if syncedLSN > w.synced.Load() {
-				w.synced.Store(syncedLSN)
+			for {
+				old := w.synced.Load()
+				if syncedLSN <= old || w.synced.CompareAndSwap(old, syncedLSN) {
+					break
+				}
 			}
 		}
 		ch <- AsyncSyncResult{Err: err, SyncedLSN: syncedLSN}

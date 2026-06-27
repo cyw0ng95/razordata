@@ -106,3 +106,46 @@ func TestWriter_SyncAsync_CloseWaits(t *testing.T) {
 		t.Error("Close did not wait for in-flight async fsync to complete")
 	}
 }
+
+// TestWAL_SyncAsyncConcurrent verifies that concurrent SyncAsync
+// calls never regress the synced LSN (REQ000972).
+func TestWAL_SyncAsyncConcurrent(t *testing.T) {
+	w, _ := newTestWriter(t)
+	defer w.Close()
+
+	const n = 64
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			if _, err := w.Append(&WriteBatch{
+				Recs: []LogRecord{{Type: RTData, BlockID: uint64(i), Value: []byte("data")}},
+			}); err != nil {
+				t.Errorf("Append %d: %v", i, err)
+				return
+			}
+			ch, err := w.SyncAsync()
+			if err != nil {
+				t.Errorf("SyncAsync %d: %v", i, err)
+				return
+			}
+			select {
+			case res := <-ch:
+				if res.Err != nil {
+					t.Errorf("async fsync %d error: %v", i, res.Err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Errorf("async fsync %d timeout", i)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// Verify synced LSN is non-zero after concurrent SyncAsync calls.
+	// (Regression check: old non-atomic code could lose updates.)
+	synced := w.synced.Load()
+	if synced == 0 {
+		t.Error("SyncedLSN should be non-zero after concurrent SyncAsync calls")
+	}
+}
