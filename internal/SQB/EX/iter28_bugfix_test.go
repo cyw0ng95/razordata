@@ -306,27 +306,37 @@ func TestBugfix_Truncate_NotRegistered(t *testing.T) {
 	}
 }
 
-// TestBugfix_DropView_Unknown covers REQ000494: DROP VIEW on an
-// unknown view is a no-op (not an error).
+// TestBugfix_DropView_Unknown covers REQ001060: DROP VIEW on an
+// unknown view returns an error (unless IF EXISTS is specified).
 func TestBugfix_DropView_Unknown(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	ex := NewExecutor()
 	ctx := context.Background()
-	if _, err := ex.Exec(ctx, "DROP VIEW unknown_v"); err != nil {
-		t.Errorf("DROP VIEW on missing view: %v", err)
+	// Without IF EXISTS, should return error
+	if _, err := ex.Exec(ctx, "DROP VIEW unknown_v"); err == nil {
+		t.Error("DROP VIEW on missing view should return error")
+	}
+	// With IF EXISTS, should succeed silently
+	if _, err := ex.Exec(ctx, "DROP VIEW IF EXISTS unknown_v"); err != nil {
+		t.Errorf("DROP VIEW IF EXISTS on missing view: %v", err)
 	}
 }
 
-// TestBugfix_DropTrigger_Unknown covers REQ000496: DROP TRIGGER on
-// an unknown trigger is a no-op.
+// TestBugfix_DropTrigger_Unknown covers REQ001060: DROP TRIGGER on
+// an unknown trigger returns an error (unless IF EXISTS is specified).
 func TestBugfix_DropTrigger_Unknown(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	ex := NewExecutor()
 	ctx := context.Background()
-	if _, err := ex.Exec(ctx, "DROP TRIGGER unknown_t"); err != nil {
-		t.Errorf("DROP TRIGGER on missing trigger: %v", err)
+	// Without IF EXISTS, should return error
+	if _, err := ex.Exec(ctx, "DROP TRIGGER unknown_t"); err == nil {
+		t.Error("DROP TRIGGER on missing trigger should return error")
+	}
+	// With IF EXISTS, should succeed silently
+	if _, err := ex.Exec(ctx, "DROP TRIGGER IF EXISTS unknown_t"); err != nil {
+		t.Errorf("DROP TRIGGER IF EXISTS on missing trigger: %v", err)
 	}
 }
 

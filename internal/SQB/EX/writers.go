@@ -2166,8 +2166,10 @@ func (d *DropView) Next(ctx context.Context) (Row, error) {
 	if d.stmt == nil {
 		return Row{}, ErrNoRows
 	}
-	// REQ000850: DROP VIEW on unknown view is a no-op (SQLite semantics).
-	UnregisterView(d.stmt.Name)
+	existed := UnregisterView(d.stmt.Name)
+	if !existed && !d.stmt.IfExists {
+		return Row{}, fmt.Errorf("ex: view %s does not exist", d.stmt.Name)
+	}
 	return Row{}, ErrNoRows
 }
 
@@ -2193,8 +2195,10 @@ func (d *DropTrigger) Next(ctx context.Context) (Row, error) {
 	if d.stmt == nil {
 		return Row{}, ErrNoRows
 	}
-	// REQ000851: DROP TRIGGER on unknown trigger is a no-op (SQLite semantics).
-	unregisterTrigger(d.stmt.Name)
+	existed := unregisterTrigger(d.stmt.Name)
+	if !existed && !d.stmt.IfExists {
+		return Row{}, fmt.Errorf("ex: trigger %s does not exist", d.stmt.Name)
+	}
 	return Row{}, ErrNoRows
 }
 
