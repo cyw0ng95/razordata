@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
@@ -276,4 +277,126 @@ func TestStore_LockOrdering(t *testing.T) {
 	if _, ok := schemaFor("ordering_test"); ok {
 		t.Fatal("schemaFor returned true after UnregisterAll")
 	}
+}
+
+// BenchmarkSeqScan_BatchVsSingle compares row-at-a-time Next() with
+// batched NextBatch() reading 64 rows per call. Uses the real LSM
+// engine to exercise the page cache and SST block iteration paths
+// where batch reads amortize per-block access. REQ001064.
+func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
+	const rowCount = 100000
+	dir := b.TempDir()
+	eng, err := ls.Open(filepath.Join(dir, "db"))
+	if err != nil {
+		b.Fatalf("ls.Open: %v", err)
+	}
+	defer eng.Close()
+
+	s := &engineStore{eng: eng}
+	schema := []string{"id", "name", "val"}
+	_ = registerStoreSchema("bench", schema, "id")
+
+	// Build and insert encoded rows via the engine.
+	ss, _ := schemaFor("bench")
+	for i := 0; i < rowCount; i++ {
+		row := Row{
+			Data: []Value{
+				NewIntValue(int64(i)),
+				NewTextValue("name_" + strconv.Itoa(i)),
+				NewFloatValue(float64(i) * 1.5),
+			},
+		}
+		encoded, err := encodeRow(ss, row)
+		if err != nil {
+			b.Fatalf("encodeRow: %v", err)
+		}
+		key := rowKey(tablePrefix("bench"), NewIntValue(int64(i)))
+		if err := s.Insert(key, encoded); err != nil {
+			b.Fatalf("Insert: %v", err)
+		}
+	}
+
+	// Force data to SST to exercise page cache and block-level reads.
+	if err := s.ManualCompact(); err != nil {
+		b.Fatalf("ManualCompact: %v", err)
+	}
+
+	ctx := context.Background()
+
+	b.Run("Next", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			scan, err := NewSeqScanWithStore(s, "bench")
+			if err != nil {
+				b.Fatalf("NewSeqScanWithStore: %v", err)
+			}
+			var count int
+			for {
+				_, err := scan.Next(ctx)
+				if err != nil {
+					if err == ErrNoRows {
+						break
+					}
+					b.Fatalf("Next: %v", err)
+				}
+				count++
+			}
+			scan.Close()
+			if count != rowCount {
+				b.Fatalf("expected %d rows, got %d", rowCount, count)
+			}
+		}
+	})
+
+	b.Run("NextBatch", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			scan, err := NewSeqScanWithStore(s, "bench")
+			if err != nil {
+				b.Fatalf("NewSeqScanWithStore: %v", err)
+			}
+			var count int
+			for {
+				batch, err := scan.NextBatch(ctx)
+				if err != nil {
+					b.Fatalf("NextBatch: %v", err)
+				}
+				if batch == nil {
+					break
+				}
+				count += batch.Size
+				batch.Put()
+			}
+			scan.Close()
+			if count != rowCount {
+				b.Fatalf("expected %d rows, got %d", rowCount, count)
+			}
+		}
+	})
+
+	b.Run("GetPerRow", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			prefix := tablePrefix("bench")
+			var count int
+			for i := 0; i < rowCount; i++ {
+				key := rowKey(prefix, NewIntValue(int64(i)))
+				v, ok, err := s.Get(key)
+				if err != nil {
+					b.Fatalf("Get: %v", err)
+				}
+				if !ok {
+					b.Fatalf("key not found: %d", i)
+				}
+				_, err = decodeRow(v, ss)
+				if err != nil {
+					b.Fatalf("decodeRow: %v", err)
+				}
+				count++
+			}
+			if count != rowCount {
+				b.Fatalf("expected %d rows, got %d", rowCount, count)
+			}
+		}
+	})
 }
