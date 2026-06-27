@@ -312,27 +312,26 @@ func hashKey(v Value) uint64 {
 	if v.IsNull() {
 		return 0
 	}
-	var h maphash.Hash
-	h.SetSeed(hashKeySeed)
 	switch v.Kind {
 	case KindInt:
-		x := v.I64
-		_, _ = h.Write([]byte{
-			byte(x), byte(x >> 8), byte(x >> 16), byte(x >> 24),
-			byte(x >> 32), byte(x >> 40), byte(x >> 48), byte(x >> 56),
-		})
-	case KindText:
-		_, _ = h.WriteString(v.S)
+		// REQ001039: fast path for int64 keys — FNV-1a mixing, zero allocation.
+		x := uint64(v.I64)
+		return x*0x9e3779b97f4a7c15 ^ (x >> 31)
 	case KindFloat:
+		// REQ001039: fast path for float64 keys — FNV-1a mixing, zero allocation.
 		u := uint64Bits(v.F64)
-		_, _ = h.Write([]byte{
-			byte(u), byte(u >> 8), byte(u >> 16), byte(u >> 24),
-			byte(u >> 32), byte(u >> 40), byte(u >> 48), byte(u >> 56),
-		})
+		return u*0x9e3779b97f4a7c15 ^ (u >> 31)
+	case KindText:
+		var h maphash.Hash
+		h.SetSeed(hashKeySeed)
+		_, _ = h.WriteString(v.S)
+		return h.Sum64()
 	default:
+		var h maphash.Hash
+		h.SetSeed(hashKeySeed)
 		_, _ = h.WriteString(stringify(v.ToAny()))
+		return h.Sum64()
 	}
-	return h.Sum64()
 }
 
 // lookupKeys extracts multiple key values from a row.
