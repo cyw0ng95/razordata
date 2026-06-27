@@ -1,9 +1,9 @@
 package PS
 
 import (
-	"fmt"
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"strings"
+
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 func (p *Parser) parseInsert() (*Insert, error) {
@@ -26,7 +26,14 @@ func (p *Parser) parseInsert() (*Insert, error) {
 		case "REPLACE":
 			action = ConflictActionReplace
 		default:
-			return nil, fmt.Errorf("expected ROLLBACK/ABORT/FAIL/IGNORE/REPLACE after INSERT OR, got %s", p.current.Lexeme)
+			return nil, &SyntaxError{
+				Input:    p.lex.Input(),
+				Line:     p.current.Line,
+				Col:      p.current.Col,
+				Expected: "ROLLBACK, ABORT, FAIL, IGNORE, or REPLACE after INSERT OR",
+				Got:      tokenName(p.current.Type),
+				Lexeme:   p.current.Lexeme,
+			}
 		}
 		p.advance() // consume action keyword
 	}

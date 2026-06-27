@@ -303,7 +303,14 @@ func (p *Parser) parseFunctionCall(name string) (Expr, error) {
 	var args []Expr
 	if p.current.Type != LX.T_RPAREN {
 		if distinct && p.current.Type == LX.T_STAR {
-			return nil, fmt.Errorf("ps: syntax error: DISTINCT not allowed with COUNT(*)")
+			return nil, &SyntaxError{
+				Input:    p.lex.Input(),
+				Line:     p.current.Line,
+				Col:      p.current.Col,
+				Expected: "expression after DISTINCT",
+				Got:      "*",
+				Lexeme:   p.current.Lexeme,
+			}
 		}
 		a, err := p.parseExpr()
 		if err != nil {

@@ -29,7 +29,13 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 		}
 		sel, ok := raw.(*Select)
 		if !ok {
-			return nil, fmt.Errorf("expected SELECT after AS, got %T", raw)
+			return nil, &SyntaxError{
+				Input:    p.lex.Input(),
+				Line:     p.current.Line,
+				Col:      p.current.Col,
+				Expected: "SELECT after AS",
+				Got:      fmt.Sprintf("%T", raw),
+			}
 		}
 		return &CreateTable{Name: name, Select: sel}, nil
 	}
@@ -399,7 +405,14 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 			return nil, err
 		}
 		if !strings.EqualFold(p.current.Lexeme, "ROWID") {
-			return nil, fmt.Errorf("expected ROWID after WITHOUT, got %s", p.current.Lexeme)
+			return nil, &SyntaxError{
+				Input:    p.lex.Input(),
+				Line:     p.current.Line,
+				Col:      p.current.Col,
+				Expected: "ROWID after WITHOUT",
+				Got:      tokenName(p.current.Type),
+				Lexeme:   p.current.Lexeme,
+			}
 		}
 		p.advance()
 		withoutRowid = true
@@ -888,7 +901,14 @@ func (p *Parser) parseCreateTrigger() (*TriggerStmt, error) {
 			}
 		}
 	default:
-		return nil, fmt.Errorf("ps: syntax error at line %d col %d: expected INSERT/UPDATE/DELETE, got %s", p.current.Line, p.current.Col, tokenName(p.current.Type))
+		return nil, &SyntaxError{
+			Input:    p.lex.Input(),
+			Line:     p.current.Line,
+			Col:      p.current.Col,
+			Expected: "INSERT, UPDATE, or DELETE in trigger event",
+			Got:      tokenName(p.current.Type),
+			Lexeme:   p.current.Lexeme,
+		}
 	}
 
 	if err := p.expect(LX.T_ON); err != nil {
@@ -1149,7 +1169,13 @@ func (p *Parser) parseCreateMaterializedView() (*CreateMatViewStmt, error) {
 	}
 	createSel, ok := sel.(*Select)
 	if !ok {
-		return nil, fmt.Errorf("expected SELECT after AS, got %T", sel)
+		return nil, &SyntaxError{
+			Input:    p.lex.Input(),
+			Line:     p.current.Line,
+			Col:      p.current.Col,
+			Expected: "SELECT after AS",
+			Got:      fmt.Sprintf("%T", sel),
+		}
 	}
 
 	return &CreateMatViewStmt{
