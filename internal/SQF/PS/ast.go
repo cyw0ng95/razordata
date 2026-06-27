@@ -497,6 +497,11 @@ type Select struct {
 	GroupBy     []Expr
 	Having      Expr
 	OffsetFirst bool // REQ000521: true when OFFSET appears before LIMIT in the SQL
+	// REQ000907: FETCH FIRST/NEXT n ROWS ONLY (SQL-standard
+	// alternative to LIMIT). When set, the planner maps this
+	// to the Limit field. Stores the count expression (nil
+	// means 1, for `FETCH FIRST ROW ONLY`).
+	FetchFirst *FetchFirst
 	// REQ000436 + REQ000084: when FROM is a subquery (e.g. `FROM
 	// (SELECT ...)`), SubqueryFrom holds the parsed SELECT and
 	// From is set to the alias (or "$$subquery$$" if unnamed).
@@ -504,6 +509,12 @@ type Select struct {
 	// instead of looking up a table by name.
 	SubqueryFrom Stmt
 	IndexHint    *IndexHint // REQ000529
+}
+
+// FetchFirst represents the FETCH FIRST/NEXT clause (REQ000907).
+// Count is nil for `FETCH FIRST ROW ONLY` (equivalent to LIMIT 1).
+type FetchFirst struct {
+	Count Expr // nil means 1
 }
 
 func (s *Select) stmtNode() {}
@@ -543,6 +554,8 @@ type CompoundStmt struct {
 	Limit       Expr
 	Offset      Expr
 	OffsetFirst bool // REQ000521: true when OFFSET appears before LIMIT in the SQL
+	// REQ000907: FETCH FIRST/NEXT n ROWS ONLY.
+	FetchFirst *FetchFirst
 }
 
 func (c *CompoundStmt) stmtNode() {}

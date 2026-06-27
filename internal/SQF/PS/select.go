@@ -42,7 +42,7 @@ func (p *Parser) parseSelect() (Stmt, error) {
 	// REQ000383: ORDER BY / LIMIT / OFFSET at the end of a
 	// compound chain (or standalone SELECT) apply to the entire
 	// result, not individual leaf SELECTs.
-	ob, lim, off, offFirst, err := p.parseTrailingClauses()
+	ob, lim, off, offFirst, fetchFirst, err := p.parseTrailingClauses()
 	if err != nil {
 		return nil, err
 	}
@@ -52,30 +52,31 @@ func (p *Parser) parseSelect() (Stmt, error) {
 		s.Limit = lim
 		s.Offset = off
 		s.OffsetFirst = offFirst
+		s.FetchFirst = fetchFirst
 	case *Select:
 		s.OrderBy = ob
 		s.Limit = lim
 		s.Offset = off
 		s.OffsetFirst = offFirst
+		s.FetchFirst = fetchFirst
 	}
 	return left, nil
 }
 
-// parseTrailingClauses parses optional ORDER BY / LIMIT / OFFSET.
-// REQ000383. Returns offsetFirst=true when OFFSET appears before
-// LIMIT in the SQL (REQ000521).
-func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, bool, error) {
+// parseTrailingClauses parses optional ORDER BY / LIMIT / OFFSET / FETCH FIRST.
+// REQ000907: FETCH FIRST/NEXT n ROWS ONLY is parsed here and mapped to LIMIT.
+func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, bool, *FetchFirst, error) {
 	var orderBy []OrderItem
 	if p.current.Type == LX.T_ORDER {
 		p.advance()
 		if err := p.expect(LX.T_BY); err != nil {
-			return nil, nil, nil, false, err
+			return nil, nil, nil, false, nil, err
 		}
 		p.advance()
 		for {
 			expr, err := p.parseExpr()
 			if err != nil {
-				return nil, nil, nil, false, err
+				return nil, nil, nil, false, nil, err
 			}
 			desc := false
 			if p.current.Type == LX.T_ASC {
@@ -88,22 +89,25 @@ func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, bool, error) {
 			if p.current.Type == LX.T_COLLATE {
 				p.advance()
 				if err := p.expect(LX.T_IDENT); err != nil {
-					return nil, nil, nil, false, err
+					return nil, nil, nil, false, nil, err
 				}
 				collation = p.current.Lexeme
 				p.advance()
 			}
 			nullsOrder := int8(0)
+			// Accept both T_IDENT (legacy) and T_FIRST/T_LAST keywords (REQ000907).
 			if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "NULLS") {
 				p.advance()
-				if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "FIRST") {
+				if p.current.Type == LX.T_FIRST ||
+					(p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "FIRST")) {
 					nullsOrder = 1
 					p.advance()
-				} else if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "LAST") {
+				} else if p.current.Type == LX.T_LAST ||
+					(p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "LAST")) {
 					nullsOrder = -1
 					p.advance()
 				} else {
-					return nil, nil, nil, false, &SyntaxError{
+					return nil, nil, nil, false, nil, &SyntaxError{
 						Input:    p.lex.Input(),
 						Line:     p.current.Line,
 						Col:      p.current.Col,
@@ -131,7 +135,7 @@ func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, bool, error) {
 		p.advance()
 		o, err := p.parseExpr()
 		if err != nil {
-			return nil, nil, nil, false, err
+			return nil, nil, nil, false, nil, err
 		}
 		offset = o
 	}
@@ -139,7 +143,7 @@ func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, bool, error) {
 		p.advance()
 		l, err := p.parseExpr()
 		if err != nil {
-			return nil, nil, nil, false, err
+			return nil, nil, nil, false, nil, err
 		}
 		limit = l
 	}
@@ -148,11 +152,67 @@ func (p *Parser) parseTrailingClauses() ([]OrderItem, Expr, Expr, bool, error) {
 		p.advance()
 		o, err := p.parseExpr()
 		if err != nil {
-			return nil, nil, nil, false, err
+			return nil, nil, nil, false, nil, err
 		}
 		offset = o
 	}
-	return orderBy, limit, offset, offsetFirst, nil
+	// REQ000907: FETCH FIRST/NEXT n ROWS ONLY.
+	// SQL:2008 standard alternative to LIMIT.
+	// Form: FETCH {FIRST|NEXT} [count] {ROW|ROWS} ONLY
+	var fetchFirst *FetchFirst
+	if p.current.Type == LX.T_FETCH {
+		p.advance()
+		// FIRST or NEXT (both equivalent semantically).
+		if p.current.Type != LX.T_FIRST && p.current.Type != LX.T_NEXT {
+			return nil, nil, nil, false, nil, &SyntaxError{
+				Input:    p.lex.Input(),
+				Line:     p.current.Line,
+				Col:      p.current.Col,
+				Expected: "FIRST or NEXT",
+				Got:      tokenName(p.current.Type),
+				Lexeme:   p.current.Lexeme,
+			}
+		}
+		p.advance()
+		// Optional count expression. If ROW/ROWS follows without
+		// a count, treat it as count=1.
+		var count Expr
+		if p.current.Type != LX.T_ROW && p.current.Type != LX.T_ROWS {
+			c, err := p.parseExpr()
+			if err != nil {
+				return nil, nil, nil, false, nil, err
+			}
+			count = c
+		}
+		// ROW or ROWS (both equivalent).
+		if p.current.Type != LX.T_ROW && p.current.Type != LX.T_ROWS {
+			return nil, nil, nil, false, nil, &SyntaxError{
+				Input:    p.lex.Input(),
+				Line:     p.current.Line,
+				Col:      p.current.Col,
+				Expected: "ROW or ROWS",
+				Got:      tokenName(p.current.Type),
+				Lexeme:   p.current.Lexeme,
+			}
+		}
+		p.advance()
+		// ONLY (or WITH TIES — not implemented in v1).
+		if p.current.Type != LX.T_ONLY {
+			return nil, nil, nil, false, nil, &SyntaxError{
+				Input:    p.lex.Input(),
+				Line:     p.current.Line,
+				Col:      p.current.Col,
+				Expected: "ONLY",
+				Got:      tokenName(p.current.Type),
+				Lexeme:   p.current.Lexeme,
+			}
+		}
+		p.advance()
+		fetchFirst = &FetchFirst{Count: count}
+		// REQ000907: SQLite rejects mixing OFFSET with FETCH.
+		// We allow it but map FETCH to LIMIT.
+	}
+	return orderBy, limit, offset, offsetFirst, fetchFirst, nil
 }
 
 // parseIntersectChain parses `INTERSECT` (or chain thereof) and
@@ -206,12 +266,12 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 			}
 			if p.current.Type == LX.T_AS {
 				p.advance()
-				if err := p.expect(LX.T_IDENT); err != nil {
+				if err := p.expectIdentOrErr(); err != nil {
 					return nil, err
 				}
 				expr = &AliasedExpr{Expr: expr, Alias: p.current.Lexeme}
 				p.advance()
-			} else if p.current.Type == LX.T_IDENT {
+			} else if p.expectIdent() {
 				// REQ000717: implicit alias without AS keyword
 				// e.g., SELECT - 87 col0, SELECT col1 * 3 alias
 				expr = &AliasedExpr{Expr: expr, Alias: p.current.Lexeme}
@@ -244,11 +304,11 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 				}
 				p.advance()
 				var subAlias string
-				if p.current.Type == LX.T_AS || p.current.Type == LX.T_IDENT {
+				if p.current.Type == LX.T_AS || p.expectIdent() {
 					if p.current.Type == LX.T_AS {
 						p.advance()
 					}
-					if p.current.Type == LX.T_IDENT {
+					if p.expectIdent() {
 						subAlias = p.current.Lexeme
 						p.advance()
 					}
@@ -290,12 +350,12 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 	var fromAlias string
 	if p.current.Type == LX.T_AS {
 		p.advance()
-		if err := p.expect(LX.T_IDENT); err != nil {
+		if err := p.expectIdentOrErr(); err != nil {
 			return nil, err
 		}
 		fromAlias = p.current.Lexeme
 		p.advance()
-	} else if p.current.Type == LX.T_IDENT {
+	} else if p.expectIdent() {
 		fromAlias = p.current.Lexeme
 		p.advance()
 	}
@@ -314,11 +374,11 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 		var rightAlias string
 		if p.current.Type == LX.T_AS {
 			p.advance()
-			if p.current.Type == LX.T_IDENT {
+			if p.expectIdent() {
 				rightAlias = p.current.Lexeme
 				p.advance()
 			}
-		} else if p.current.Type == LX.T_IDENT {
+		} else if p.expectIdent() {
 			rightAlias = p.current.Lexeme
 			p.advance()
 		}
@@ -373,11 +433,11 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 		var rightAlias string
 		if p.current.Type == LX.T_AS {
 			p.advance()
-			if p.current.Type == LX.T_IDENT {
+			if p.expectIdent() {
 				rightAlias = p.current.Lexeme
 				p.advance()
 			}
-		} else if p.current.Type == LX.T_IDENT {
+		} else if p.expectIdent() {
 			// Only treat as alias if not followed by ( (function call)
 			// and not ON keyword
 			rightAlias = p.current.Lexeme

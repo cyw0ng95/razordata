@@ -168,6 +168,8 @@ const (
 	T_RENAME
 	T_FETCH
 	T_FIRST
+	T_NEXT
+	T_LAST
 	T_ONLY
 	T_REFERENCES
 	T_FOREIGN
@@ -371,6 +373,8 @@ var tokenTypeNames = [...]string{
 	T_RENAME:        "RENAME",
 	T_FETCH:         "FETCH",
 	T_FIRST:         "FIRST",
+	T_NEXT:          "NEXT",
+	T_LAST:          "LAST",
 	T_ONLY:          "ONLY",
 	T_EXPLAIN:       "EXPLAIN",
 	T_QUERY:         "QUERY",

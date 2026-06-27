@@ -82,8 +82,8 @@ func (p *Parser) parseUpdate() (*Update, error) {
 		where = w
 	}
 
-	// REQ000558: parse optional ORDER BY / LIMIT / OFFSET
-	orderBy, limit, offset, offsetFirst, err := p.parseTrailingClauses()
+	// REQ000558: parse optional ORDER BY / LIMIT / OFFSET / FETCH FIRST
+	orderBy, limit, offset, offsetFirst, _, err := p.parseTrailingClauses()
 	if err != nil {
 		return nil, err
 	}

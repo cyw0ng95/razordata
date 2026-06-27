@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"unicode"
 
@@ -1790,23 +1791,23 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 				for t := range joinedTables {
 					joinedCounts[t]++
 				}
-			// For self-joins, allow re-join: only skip if we've used
-			// all JoinClauses for this physical table.
-			if occ > 0 {
-				jcCount := 0
-				for _, jc := range joinClauses {
-					if jc.Right == tbl {
-						jcCount++
+				// For self-joins, allow re-join: only skip if we've used
+				// all JoinClauses for this physical table.
+				if occ > 0 {
+					jcCount := 0
+					for _, jc := range joinClauses {
+						if jc.Right == tbl {
+							jcCount++
+						}
+					}
+					if joinedCounts[tbl] >= jcCount {
+						continue
 					}
 				}
-				if joinedCounts[tbl] >= jcCount {
+				j := joinClauses[ci]
+				if j.Right != tbl {
 					continue
 				}
-			}
-			j := joinClauses[ci]
-			if j.Right != tbl {
-				continue
-			}
 				kind := JoinKind(j.Kind)
 
 				rightTbl := j.Right
@@ -2090,6 +2091,17 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 
 	if s.Distinct && !hasAnyAggregate(s.Cols) {
 		current = NewDistinct(current)
+	}
+
+	// REQ000907: FETCH FIRST/NEXT n ROWS ONLY maps to LIMIT n.
+	// If neither LIMIT nor FETCH FIRST is set, no limit.
+	if s.Limit == nil && s.FetchFirst != nil {
+		if s.FetchFirst.Count != nil {
+			s.Limit = s.FetchFirst.Count
+		} else {
+			// FETCH FIRST ROW ONLY → LIMIT 1
+			s.Limit = &PS.NumberLiteral{Val: int64(1)}
+		}
 	}
 
 	// REQ000521: LIMIT/OFFSET wrapping order depends on which
@@ -2671,6 +2683,15 @@ func (p *Planner) planExplain(s *PS.ExplainStmt) Operator {
 
 func (p *Planner) planWith(w *PS.WithStmt) Operator {
 	for _, cte := range w.CTEs {
+		if w.Recursive {
+			if comp, ok := cte.Query.(*PS.CompoundStmt); ok {
+				if recCTESubtree(comp.Right, cte.Name) {
+					p.planRecursiveCTE(cte, comp)
+					continue
+				}
+			}
+		}
+
 		ctePlan, err := p.Plan(cte.Query)
 		if err != nil || ctePlan == nil || ctePlan.root == nil {
 			continue
@@ -2689,6 +2710,11 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 		}
 		ctePlan.root.Close()
 
+		if len(cte.Cols) > 0 {
+			for i := range rows {
+				rows[i].Cols = cte.Cols
+			}
+		}
 		RegisterTable(cte.Name, rows)
 
 		var colInfos []ColInfo
@@ -2704,6 +2730,176 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 	}
 
 	return innerPlan.root
+}
+
+// planRecursiveCTE evaluates a recursive CTE inline. It executes the
+// non-recursive arm (seed), determines canonical column names, then
+// iterates the recursive arm until it produces 0 new rows. All
+// accumulated rows are registered via RegisterTable for the inner
+// query to consume.
+func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStmt) {
+	ctx := context.TODO()
+
+	// Plan and execute the non-recursive (seed) arm first. The seed
+	// arm never references the CTE, so the CTE does not need to be
+	// in the planner catalog yet.
+	nonRecP, err := p.Plan(comp.Left)
+	if err != nil || nonRecP == nil || nonRecP.root == nil {
+		RegisterTable(cte.Name, nil)
+		return
+	}
+	allRows := drainAllRows(ctx, nonRecP.root)
+	nonRecP.root.Close()
+
+	// Determine canonical column names from the CTE alias or the seed arm.
+	canonicalCols := cte.Cols
+	if len(canonicalCols) == 0 && len(allRows) > 0 {
+		canonicalCols = allRows[0].Cols
+	}
+	if len(canonicalCols) > 0 {
+		for i := range allRows {
+			allRows[i].Cols = canonicalCols
+		}
+	}
+
+	if len(allRows) == 0 {
+		RegisterTable(cte.Name, nil)
+		return
+	}
+
+	// Register CTE in the planner catalog so the recursive arm can
+	// be planned (SeqScan for the CTE name needs catalog metadata).
+	colInfos := make([]ColInfo, len(canonicalCols))
+	for i, cn := range canonicalCols {
+		colInfos[i] = ColInfo{Name: cn}
+	}
+	p.RegisterTable(cte.Name, colInfos, "")
+
+	// Register seed rows so the inner query can see them.
+	RegisterTable(cte.Name, allRows)
+
+	isUnion := comp.Op == PS.CompoundUnion
+	iterRows := allRows
+	compKey := serializeKey(comp.Right)
+
+	// Safety limit: prevent infinite loops from malformed recursive CTEs.
+	const maxRecIters = 10000
+	for iter := 0; iter < maxRecIters; iter++ {
+		// Bypass plan cache so re-planning produces a fresh operator tree.
+		p.mu.Lock()
+		delete(p.memo, compKey)
+		p.mu.Unlock()
+
+		// Feed only the previous iteration's rows to the recursive arm.
+		tablesMu.Lock()
+		tables[cte.Name] = cloneRows(iterRows)
+		if len(iterRows) > 0 {
+			schemas[cte.Name] = iterRows[0].Cols
+		}
+		tablesMu.Unlock()
+
+		recP, err := p.Plan(comp.Right)
+		if err != nil || recP == nil || recP.root == nil {
+			break
+		}
+		newRows := drainAllRows(ctx, recP.root)
+		recP.root.Close()
+
+		if len(newRows) == 0 {
+			break
+		}
+
+		if len(canonicalCols) > 0 {
+			for i := range newRows {
+				newRows[i].Cols = canonicalCols
+			}
+		}
+
+		if isUnion {
+			newRows = dedupRecCTENewRows(newRows, allRows)
+		}
+
+		if len(newRows) == 0 {
+			break
+		}
+
+		allRows = append(allRows, newRows...)
+		iterRows = newRows
+
+		RegisterTable(cte.Name, allRows)
+	}
+
+	RegisterTable(cte.Name, allRows)
+}
+
+// drainAllRows pulls all rows from op into a slice.
+func drainAllRows(ctx context.Context, op Operator) []Row {
+	var out []Row
+	for {
+		row, err := op.Next(ctx)
+		if err != nil {
+			if err == ErrNoRows {
+				return out
+			}
+			return out
+		}
+		out = append(out, row)
+	}
+}
+
+// cloneRows creates a deep copy of each Row in the slice.
+func cloneRows(rows []Row) []Row {
+	out := make([]Row, len(rows))
+	for i, r := range rows {
+		out[i] = cloneRow(r)
+	}
+	return out
+}
+
+// dedupRecCTENewRows filters newRows to only those whose distinct key
+// is not already present in allRows. Used for UNION (not UNION ALL)
+// in recursive CTE evaluation.
+func dedupRecCTENewRows(newRows, allRows []Row) []Row {
+	seen := make(map[string]bool, len(allRows))
+	for _, r := range allRows {
+		seen[distinctKey(r)] = true
+	}
+	out := make([]Row, 0, len(newRows))
+	for _, r := range newRows {
+		k := distinctKey(r)
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// recCTESubtree reports whether any SELECT in the Stmt subtree
+// references a table with the given name. Used to detect recursive
+// CTEs.
+func recCTESubtree(stmt PS.Stmt, name string) bool {
+	switch s := stmt.(type) {
+	case *PS.Select:
+		return recCTESelectRefs(s, name)
+	case *PS.CompoundStmt:
+		return recCTESubtree(s.Left, name) || recCTESubtree(s.Right, name)
+	}
+	return false
+}
+
+// recCTESelectRefs checks if a SELECT's FROM clause or any JOIN
+// clause references the given table name.
+func recCTESelectRefs(s *PS.Select, name string) bool {
+	if strings.EqualFold(s.From, name) {
+		return true
+	}
+	for _, j := range s.Joins {
+		if strings.EqualFold(j.Right, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // estimateRowCount provides a row count estimate for the given

@@ -557,7 +557,9 @@ func (p *Parser) parseCreateIndex() (*CreateIndexStmt, error) {
 // parseIndexColumnList parses a comma-separated list of identifiers with optional COLLATE.
 func (p *Parser) parseIndexColumnList() ([]IndexedColumn, error) {
 	var cols []IndexedColumn
-	if err := p.expect(LX.T_IDENT); err != nil {
+	// REQ000907: accept non-reserved keywords (FIRST, NEXT, ONLY,
+	// ROW, ROWS, LAST) as column names in index column lists.
+	if err := p.expectIdentOrErr(); err != nil {
 		return nil, err
 	}
 	col := IndexedColumn{Name: p.current.Lexeme}
@@ -565,7 +567,7 @@ func (p *Parser) parseIndexColumnList() ([]IndexedColumn, error) {
 	// optional COLLATE name
 	if p.current.Type == LX.T_COLLATE {
 		p.advance()
-		if err := p.expect(LX.T_IDENT); err != nil {
+		if err := p.expectIdentOrErr(); err != nil {
 			return nil, err
 		}
 		col.Collation = p.current.Lexeme
@@ -574,14 +576,14 @@ func (p *Parser) parseIndexColumnList() ([]IndexedColumn, error) {
 	cols = append(cols, col)
 	for p.current.Type == LX.T_COMMA {
 		p.advance()
-		if err := p.expect(LX.T_IDENT); err != nil {
+		if err := p.expectIdentOrErr(); err != nil {
 			return nil, err
 		}
 		c := IndexedColumn{Name: p.current.Lexeme}
 		p.advance()
 		if p.current.Type == LX.T_COLLATE {
 			p.advance()
-			if err := p.expect(LX.T_IDENT); err != nil {
+			if err := p.expectIdentOrErr(); err != nil {
 				return nil, err
 			}
 			c.Collation = p.current.Lexeme

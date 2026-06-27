@@ -72,6 +72,40 @@ func (p *Parser) expect(typ LX.TokenType) error {
 	return nil
 }
 
+// expectIdent accepts either T_IDENT or one of the non-reserved
+// keyword tokens that can also be used as column names
+// (REQ000907: FIRST, NEXT, LAST, ONLY, ROW, ROWS are keywords in
+// the FETCH FIRST clause but can still appear as identifiers in
+// other contexts like CREATE INDEX columns or column aliases).
+func (p *Parser) expectIdent() bool {
+	if p.current.Type == LX.T_IDENT {
+		return true
+	}
+	switch p.current.Type {
+	case LX.T_FIRST, LX.T_NEXT, LX.T_LAST, LX.T_ONLY, LX.T_ROW, LX.T_ROWS:
+		return true
+	}
+	return false
+}
+
+// expectIdentOrErr accepts an identifier-or-keyword token and
+// returns a SyntaxError if neither matches. Used as a drop-in
+// replacement for expect(LX.T_IDENT) at call sites that need to
+// accept reserved keywords as column names.
+func (p *Parser) expectIdentOrErr() error {
+	if p.expectIdent() {
+		return nil
+	}
+	return &SyntaxError{
+		Input:    p.lex.Input(),
+		Line:     p.current.Line,
+		Col:      p.current.Col,
+		Expected: "identifier",
+		Got:      tokenName(p.current.Type),
+		Lexeme:   p.current.Lexeme,
+	}
+}
+
 func tokenName(t LX.TokenType) string {
 	if int(t) < 0 {
 		return "<error>"
@@ -218,6 +252,8 @@ var tokenNames = [...]string{
 	LX.T_RENAME:       "RENAME",
 	LX.T_FETCH:        "FETCH",
 	LX.T_FIRST:        "FIRST",
+	LX.T_NEXT:         "NEXT",
+	LX.T_LAST:         "LAST",
 	LX.T_ONLY:         "ONLY",
 	LX.T_REFERENCES:   "REFERENCES",
 	LX.T_FOREIGN:      "FOREIGN",

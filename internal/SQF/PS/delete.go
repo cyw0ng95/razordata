@@ -31,8 +31,8 @@ func (p *Parser) parseDelete() (*Delete, error) {
 		where = w
 	}
 
-	// REQ000475: parse optional ORDER BY / LIMIT / OFFSET
-	orderBy, limit, offset, offsetFirst, err := p.parseTrailingClauses()
+	// REQ000475: parse optional ORDER BY / LIMIT / OFFSET / FETCH FIRST
+	orderBy, limit, offset, offsetFirst, _, err := p.parseTrailingClauses()
 	if err != nil {
 		return nil, err
 	}
