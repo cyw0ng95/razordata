@@ -43,6 +43,12 @@ type CompoundOp struct {
 	rightKeys    map[string]bool
 	emittedKeys  map[string]bool
 	rightDrained bool
+	// REQ001057: memory budget for drainAll to prevent OOM on deep
+	// compound chains. 0 means use the default 1M row cap.
+	maxDrainRows int64
+	// REQ001057: memory limit for drainAll materialization.
+	// 0 = unlimited. Set by Planner from Executor.WithMemoryBudget.
+	maxMemory int64
 	// Re-exported from PS for convenience.
 	_ bool // alignment placeholder
 }
@@ -56,6 +62,13 @@ func NewCompoundOp(left, right Operator, op PS.CompoundOp, orderBy []PS.OrderIte
 		limit:   limit,
 		offset:  offset,
 	}
+}
+
+// WithMemoryLimit sets the per-compound-operator memory cap.
+// 0 = unlimited. REQ001057.
+func (c *CompoundOp) WithMemoryLimit(v int64) *CompoundOp {
+	c.maxMemory = v
+	return c
 }
 
 func (c *CompoundOp) WithParams(p []any) Operator {
@@ -80,14 +93,18 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 		return c.nextStreaming(ctx)
 	}
 	if !c.materialized {
-		leftRows, err := drainAll(ctx, c.left, 0)
+		leftRows, err := drainAll(ctx, c.left, c.maxDrainRows, c.maxMemory)
 		if err != nil {
 			return Row{}, err
 		}
-		rightRows, err := drainAll(ctx, c.right, 0)
+		// REQ001081: close children after draining to reset streaming
+		// state in nested compound operators.
+		_ = c.left.Close()
+		rightRows, err := drainAll(ctx, c.right, c.maxDrainRows, c.maxMemory)
 		if err != nil {
 			return Row{}, err
 		}
+		_ = c.right.Close()
 		// REQ000383: column-count check.
 		if len(leftRows) > 0 && len(rightRows) > 0 &&
 			len(leftRows[0].Data) != len(rightRows[0].Data) {
@@ -261,10 +278,13 @@ func (c *CompoundOp) nextStreamingUnionAll(ctx context.Context) (Row, error) {
 
 func (c *CompoundOp) nextStreamingSetOp(ctx context.Context) (Row, error) {
 	if !c.rightDrained {
-		rightRows, err := drainAll(ctx, c.right, 0)
+		rightRows, err := drainAll(ctx, c.right, c.maxDrainRows, c.maxMemory)
 		if err != nil {
 			return Row{}, err
 		}
+		// REQ001081: close the right child after draining to reset
+		// any streaming state in nested compound operators.
+		_ = c.right.Close()
 		c.rightKeys = make(map[string]bool, len(rightRows))
 		for _, r := range rightRows {
 			c.rightKeys[distinctKey(r)] = true
@@ -304,6 +324,15 @@ func (c *CompoundOp) nextStreamingSetOp(ctx context.Context) (Row, error) {
 }
 
 func (c *CompoundOp) Close() error {
+	// REQ001081: close children FIRST so their internal state
+	// (Filter compiledOnce, batch buffers, SeqScan pos) is reset
+	// before we clear our own references. This is critical for
+	// memo-cached plan trees where the same CompoundOp instance
+	// is reused across executions.
+	var err1, err2 error
+	err1 = c.left.Close()
+	err2 = c.right.Close()
+	// Now reset our own state.
 	c.buf = nil
 	c.pos = 0
 	c.materialized = false
@@ -311,20 +340,22 @@ func (c *CompoundOp) Close() error {
 	c.rightDrained = false
 	c.emittedKeys = nil
 	c.rightKeys = nil
-	if err := c.left.Close(); err != nil {
-		return err
+	if err1 != nil {
+		return err1
 	}
-	return c.right.Close()
+	return err2
 }
 
 // drainAll pulls up to maxRows rows from op. maxRows=0 means unlimited.
 // Defaults to 1M rows when maxRows is 0 (safety limit for intermediate
 // compound operator materialization — REQ001056).
-func drainAll(ctx context.Context, op Operator, maxRows int64) ([]Row, error) {
+// maxMemory caps total memory usage (0 = unlimited). REQ001057.
+func drainAll(ctx context.Context, op Operator, maxRows int64, maxMemory int64) ([]Row, error) {
 	if maxRows <= 0 {
 		maxRows = 1_000_000 // safety cap: 1M rows ≈ 50MB per drain
 	}
 	var out []Row
+	var memUsed int64
 	for {
 		if int64(len(out)) >= maxRows {
 			return out, nil
@@ -337,6 +368,11 @@ func drainAll(ctx context.Context, op Operator, maxRows int64) ([]Row, error) {
 			return nil, err
 		}
 		out = append(out, r)
+		// Estimate memory: each Row ≈ len(Data) * 24 bytes + 64 base.
+		memUsed += int64(len(r.Data))*24 + 64
+		if maxMemory > 0 && memUsed > maxMemory {
+			return out, fmt.Errorf("compound operator materialized %d rows (~%d bytes), exceeds memory limit=%d", len(out), memUsed, maxMemory)
+		}
 	}
 }
 

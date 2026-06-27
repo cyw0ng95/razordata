@@ -244,6 +244,9 @@ type Planner struct {
 	// joinBufferSize caps per-hash-join memory. 0 = unlimited.
 	// Set by Executor.WithMemoryBudget. REQ001056.
 	joinBufferSize int64
+	// maxMemoryPerQuery caps total memory per query. 0 = unlimited.
+	// Set by Executor.WithMemoryBudget. REQ001057.
+	maxMemoryPerQuery int64
 }
 
 type tableInfo struct {
@@ -270,6 +273,10 @@ func (p *Planner) Pool() *WorkerPool { return p.pool }
 // SetJoinBufferSize sets the per-hash-join memory cap.
 // 0 = unlimited. REQ001056.
 func (p *Planner) SetJoinBufferSize(v int64) { p.joinBufferSize = v }
+
+// SetMaxMemoryPerQuery sets the per-query memory cap.
+// 0 = unlimited. REQ001057.
+func (p *Planner) SetMaxMemoryPerQuery(v int64) { p.maxMemoryPerQuery = v }
 
 // InvalidateCache clears the plan cache. REQ000846: called when DDL
 // changes the schema (CREATE/DROP/ALTER TABLE) so cached plans that
@@ -507,6 +514,26 @@ func (p *Planner) estimateCost(op Operator) float64 {
 		leftCost := p.estimateCost(v.left)
 		rightCost := p.estimateCost(v.right)
 		return leftCost * rightCost
+	case *HashJoin:
+		leftCost := p.estimateCost(v.left)
+		rightCost := p.estimateCost(v.right)
+		if leftCost < 1 {
+			leftCost = 1
+		}
+		if rightCost < 1 {
+			rightCost = 1
+		}
+		return leftCost + rightCost
+	case *HashCrossJoin:
+		leftCost := p.estimateCost(v.left)
+		rightCost := p.estimateCost(v.right)
+		if leftCost < 1 {
+			leftCost = 1
+		}
+		if rightCost < 1 {
+			rightCost = 1
+		}
+		return leftCost + rightCost
 	case *Insert, *Update, *Delete, *CreateTable, *DropTable:
 		// Writer operators: cost ~ 1 (single mutation).
 		return 1.0
@@ -1403,7 +1430,19 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	// REQ000709: subquery in FROM clause (derived table).
 	// Plan the subquery and use its output as a virtual table.
 	if s.SubqueryFrom != nil {
-		subPlan := p.planSelect(s.SubqueryFrom.(*PS.Select))
+		subSel, ok := s.SubqueryFrom.(*PS.Select)
+		if !ok {
+			return nil
+		}
+		// REQ001072: predicate pushdown into subqueries. When the
+		// outer WHERE references only columns from the subquery and
+		// the subquery is flattenable (no aggregation/DISTINCT/GROUP
+		// BY/LIMIT/OFFSET/ORDER BY), push the predicate into the
+		// subquery's WHERE clause. This reduces intermediate rows.
+		if s.Where != nil && isSubqueryFlattenable(subSel) {
+			s.Where = pushPredicateIntoSubquery(s.Where, subSel)
+		}
+		subPlan := p.planSelect(subSel)
 		var current Operator = subPlan
 		if s.Where != nil {
 			current = NewFilter(current, s.Where)
@@ -1491,6 +1530,24 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 					if found && hasWriterIndex(s.From, idx) {
 						tableID, _ := tableIDFor(s.From)
 						if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
+							scan = isc
+							if whereExpr != nil {
+								scan = NewFilter(scan, whereExpr)
+							}
+						}
+					}
+				}
+			}
+			// REQ001070: LIKE prefix range seek on an indexed column.
+			if scan == nil {
+				if col, prefix, ok := indexedColumnLikePrefix(whereExpr); ok {
+					idx, found := p.selectIndex(s.From, col)
+					if found && hasWriterIndex(s.From, idx) {
+						tableID, _ := tableIDFor(s.From)
+						upper := make([]byte, len(prefix)+1)
+						copy(upper, prefix)
+						upper[len(prefix)] = 0xff
+						if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, prefix, true, upper, false); err == nil {
 							scan = isc
 							if whereExpr != nil {
 								scan = NewFilter(scan, whereExpr)
@@ -1632,9 +1689,15 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		// value of 4 unblocks select4 hot paths (join255, join101,
 		// join277) which are 6-8 table joins where the FROM-list
 		// order is a poor starting point.
+		// REQ001071: for very small joins (≤4 tables), use exhaustive
+		// permutation search to find the truly optimal order. The N3
+		// heuristic is fast for larger joins but may miss the optimal
+		// order for small joins where 4! = 24 permutations is cheap.
 		const reorderJoinsLimit = 8
 		joinOrder := []string(nil)
-		if len(joinInfos) <= reorderJoinsLimit {
+		if len(joinInfos) <= 4 {
+			joinOrder = p.exhaustiveJoinOrder(s.From, joinInfos, costPredicates)
+		} else if len(joinInfos) <= reorderJoinsLimit {
 			joinOrder = p.n3JoinOrderingMultiStart(s.From, joinInfos, costPredicates, pushedPredicates)
 		} else {
 			joinOrder, _ = p.n3JoinOrdering(s.From, joinInfos, costPredicates, pushedPredicates)
@@ -2314,6 +2377,57 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 				return NewIndexScan(table, idx, nil, nil)
 			}
 		}
+		// REQ001068: check for equality predicate (col = ?) on an indexed column.
+		if col, seekValue, ok := indexedColumnEq(where); ok {
+			if idx, found := p.selectIndex(table, col); found {
+				if hasWriterIndex(table, idx) {
+					if p.store != nil {
+						if tableID, ok := tableIDFor(table); ok {
+							if isc, err := NewIndexScanWithIndex(p.store, tableID, table, idx, seekValue, nil); err == nil {
+								return isc
+							}
+						}
+					}
+					return NewIndexScan(table, idx, seekValue, nil)
+				}
+			}
+		}
+		// REQ001069: check for range predicate (col > ? / col < ? / BETWEEN) on an indexed column.
+		if col, lower, lowerIncl, upper, upperIncl, ok := indexedColumnRange(where); ok {
+			if idx, found := p.selectIndex(table, col); found {
+				if hasWriterIndex(table, idx) {
+					if p.store != nil {
+						if tableID, ok := tableIDFor(table); ok {
+							if isc, err := NewIndexScanWithRange(p.store, tableID, table, idx, lower, lowerIncl, upper, upperIncl); err == nil {
+								return isc
+							}
+						}
+					}
+					return NewIndexScan(table, idx, lower, upper)
+				}
+			}
+		}
+		// REQ001070: check for LIKE with constant prefix on an indexed column.
+		// Uses IndexScan with range [prefix, prefix+0xff) to seek to matching
+		// entries, then the Filter on top applies the full LIKE match.
+		if col, prefix, ok := indexedColumnLikePrefix(where); ok {
+			if idx, found := p.selectIndex(table, col); found {
+				if hasWriterIndex(table, idx) {
+					// Upper bound: prefix + 0xff (highest char) for prefix match.
+					upper := make([]byte, len(prefix)+1)
+					copy(upper, prefix)
+					upper[len(prefix)] = 0xff
+					if p.store != nil {
+						if tableID, ok := tableIDFor(table); ok {
+							if isc, err := NewIndexScanWithRange(p.store, tableID, table, idx, prefix, true, upper, false); err == nil {
+								return isc
+							}
+						}
+					}
+					return NewIndexScan(table, idx, prefix, upper)
+				}
+			}
+		}
 	}
 	return NewSeqScan(table)
 }
@@ -2557,6 +2671,59 @@ func columnName(b *PS.BinaryExpr) string {
 		return r.Name
 	}
 	return ""
+}
+
+// indexedColumnLikePrefix detects LIKE expressions with a constant prefix.
+// For `col LIKE 'abc%'`, returns ("col", []byte("abc"), true).
+// For `col LIKE '%abc'` (wildcard first), returns ("", nil, false).
+// Underscore (_) also ends the prefix since it matches any single char.
+// REQ001070.
+func indexedColumnLikePrefix(e PS.Expr) (string, []byte, bool) {
+	if e == nil {
+		return "", nil, false
+	}
+	b, ok := e.(*PS.BinaryExpr)
+	if !ok {
+		return "", nil, false
+	}
+	if b.Op != int(LX.T_LIKE) && b.Op != int(LX.T_GLOB) {
+		return "", nil, false
+	}
+	// Column must be on the left side.
+	ident, ok := b.Left.(*PS.Ident)
+	if !ok {
+		return "", nil, false
+	}
+	// Pattern must be a string literal.
+	s, ok := b.Right.(*PS.StringLiteral)
+	if !ok {
+		return "", nil, false
+	}
+	prefix := extractLikePrefix(s.Val)
+	if prefix == "" {
+		return "", nil, false
+	}
+	return ident.Name, []byte(prefix), true
+}
+
+// extractLikePrefix returns the constant prefix before the first
+// LIKE wildcard character (% or _). Returns "" if the pattern
+// starts with a wildcard (no usable prefix).
+func extractLikePrefix(pattern string) string {
+	if pattern == "" {
+		return ""
+	}
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '%', '_':
+			if i == 0 {
+				return ""
+			}
+			return pattern[:i]
+		}
+	}
+	// No wildcards — the entire pattern is a usable prefix.
+	return pattern
 }
 
 // encodeIndexValue converts a literal expression into the byte
@@ -3712,6 +3879,104 @@ func (p *Planner) n3JoinOrderingMultiStart(candidateBase string, joinTables []jo
 	return bestOrder
 }
 
+// REQ001071: exhaustiveJoinOrder tries all permutations of join tables
+// (keeping baseTable fixed as first) and picks the one with minimum
+// estimated cost. This is optimal for small joins (≤4 join tables,
+// i.e. 24 permutations max) where N3's heuristic may miss the true
+// best order. For larger joins, N3 is preferred.
+func (p *Planner) exhaustiveJoinOrder(baseTable string, joinTables []joinTableInfo, predicates []PS.Expr) []string {
+	k := len(joinTables)
+	if k == 0 {
+		return []string{baseTable}
+	}
+	// Extract names, keeping baseTable fixed at position 0.
+	names := make([]string, k)
+	for i, jt := range joinTables {
+		names[i] = jt.name
+	}
+
+	// Evaluate the original order as the baseline.
+	order := make([]string, 0, 1+k)
+	order = append(order, baseTable)
+	order = append(order, names...)
+	bestOrder := make([]string, len(order))
+	copy(bestOrder, order)
+	bestCost := p.estimateJoinOrderCost(order, predicates)
+
+	// Generate all permutations of the join tables using Heap's algorithm.
+	indices := make([]int, k)
+	perm := make([]string, 0, 1+k)
+	for i := 0; i < k; {
+		if indices[i] < i {
+			perm = append(perm[:0], baseTable)
+			if i%2 == 0 {
+				names[0], names[i] = names[i], names[0]
+			} else {
+				names[indices[i]], names[i] = names[i], names[indices[i]]
+			}
+			perm = append(perm, names...)
+			cost := p.estimateJoinOrderCost(perm, predicates)
+			if cost < bestCost {
+				bestCost = cost
+				copy(bestOrder, perm)
+			}
+			indices[i]++
+			i = 0
+		} else {
+			indices[i] = 0
+			i++
+		}
+	}
+	return bestOrder
+}
+
+// estimateJoinOrderCost estimates the total intermediate row cost for
+// joining tables in the given order. The cost is the sum of estimated
+// row counts after each successive join.
+func (p *Planner) estimateJoinOrderCost(order []string, predicates []PS.Expr) float64 {
+	if len(order) == 0 {
+		return 0
+	}
+	cost := p.getTableRowCount(order[0])
+	joined := map[string]bool{order[0]: true}
+	for i := 1; i < len(order); i++ {
+		next := order[i]
+		nextRows := p.getTableRowCount(next)
+		// Apply single-table predicate selectivity.
+		for _, pred := range predicates {
+			if p.canPushDown(pred, next) {
+				psel := p.joinPredSel(pred, nextRows)
+				nextRows *= psel
+			}
+		}
+		// Cross-table selectivity: if there's an equi-join predicate
+		// between joined tables and the next table, assume some reduction.
+		selectivity := 1.0
+		for _, pred := range predicates {
+			tables := p.extractTablesFromExpr(pred)
+			if tables[next] {
+				hasJoined := false
+				for t := range tables {
+					if joined[t] {
+						hasJoined = true
+						break
+					}
+				}
+				if hasJoined {
+					psel := p.joinPredSel(pred, nextRows)
+					if psel < selectivity {
+						selectivity = psel
+					}
+				}
+			}
+		}
+		intermediate := cost * nextRows * selectivity
+		cost += intermediate
+		joined[next] = true
+	}
+	return cost
+}
+
 // joinTableInfo holds a table name and its associated JoinClause
 // for use in N3 join ordering.
 type joinTableInfo struct {
@@ -3940,8 +4205,11 @@ func (p *Planner) planVacuum(s *PS.VacuumStmt) Operator {
 func (p *Planner) planCompound(s *PS.CompoundStmt) Operator {
 	left := p.planSubStmt(s.Left)
 	right := p.planSubStmt(s.Right)
-	op := NewCompoundOp(left, right, s.Op, s.OrderBy, s.Limit, s.Offset)
-	return op
+	cop := NewCompoundOp(left, right, s.Op, s.OrderBy, s.Limit, s.Offset)
+	if p.maxMemoryPerQuery > 0 {
+		cop.WithMemoryLimit(p.maxMemoryPerQuery)
+	}
+	return cop
 }
 
 // planSubStmt is a sub-dispatcher for the inner Stmt of a
@@ -3954,4 +4222,141 @@ func (p *Planner) planSubStmt(stmt PS.Stmt) Operator {
 		return p.planCompound(s)
 	}
 	return nil
+}
+
+// isSubqueryFlattenable checks whether a subquery can accept pushed-down
+// predicates from the outer query. A subquery is flattenable when it has
+// no aggregation, no DISTINCT, no GROUP BY, no LIMIT, no OFFSET, and
+// no ORDER BY — pushing predicates into such subqueries is semantically
+// safe and reduces intermediate row counts. REQ001072.
+func isSubqueryFlattenable(s *PS.Select) bool {
+	if s == nil {
+		return false
+	}
+	if hasAnyAggregate(s.Cols) {
+		return false
+	}
+	if s.Distinct {
+		return false
+	}
+	if len(s.GroupBy) > 0 {
+		return false
+	}
+	if s.Limit != nil || s.Offset != nil {
+		return false
+	}
+	if len(s.OrderBy) > 0 {
+		return false
+	}
+	return true
+}
+
+// pushPredicateIntoSubquery pushes outer WHERE predicates that reference
+// only subquery columns into the subquery's own WHERE clause. Returns the
+// remaining predicates (those that cannot be pushed down).
+// REQ001072.
+func pushPredicateIntoSubquery(outerWhere PS.Expr, subSel *PS.Select) PS.Expr {
+	if outerWhere == nil || subSel == nil {
+		return outerWhere
+	}
+	// Extract subquery column names.
+	subCols := make(map[string]bool)
+	for _, col := range subSel.Cols {
+		switch c := col.(type) {
+		case *PS.AliasedExpr:
+			subCols[c.Alias] = true
+		case *PS.Ident:
+			subCols[c.Name] = true
+		case *PS.StarExpr:
+			// SELECT * — all columns are available, so all predicates
+			// can potentially be pushed. Return the original WHERE
+			// as-is and merge it into the subquery.
+			mergeWhereIntoSubquery(outerWhere, subSel)
+			return nil
+		}
+	}
+	// Split outer WHERE into conjuncts and check each one.
+	conjuncts := RE.SplitAnd(outerWhere)
+	var pushable []PS.Expr
+	var remaining []PS.Expr
+	for _, c := range conjuncts {
+		if referencesOnlySubqueryCols(c, subCols) {
+			pushable = append(pushable, c)
+		} else {
+			remaining = append(remaining, c)
+		}
+	}
+	// Merge pushable conjuncts into the subquery's WHERE.
+	for _, p := range pushable {
+		if subSel.Where != nil {
+			subSel.Where = &PS.BinaryExpr{
+				Left:  subSel.Where,
+				Op:    int(LX.T_AND),
+				Right: p,
+			}
+		} else {
+			subSel.Where = p
+		}
+	}
+	// Return remaining predicates as the outer WHERE.
+	if len(remaining) == 0 {
+		return nil
+	}
+	result := remaining[0]
+	for _, r := range remaining[1:] {
+		result = &PS.BinaryExpr{
+			Left:  result,
+			Op:    int(LX.T_AND),
+			Right: r,
+		}
+	}
+	return result
+}
+
+// mergeWhereIntoSubquery merges outerWhere into the subquery's WHERE.
+// Used when the subquery has SELECT * (all columns available).
+func mergeWhereIntoSubquery(outerWhere PS.Expr, subSel *PS.Select) {
+	if outerWhere == nil || subSel == nil {
+		return
+	}
+	if subSel.Where != nil {
+		subSel.Where = &PS.BinaryExpr{
+			Left:  subSel.Where,
+			Op:    int(LX.T_AND),
+			Right: outerWhere,
+		}
+	} else {
+		subSel.Where = outerWhere
+	}
+}
+
+// referencesOnlySubqueryCols checks if an expression references only
+// columns from the given set. Returns false for multi-table references.
+func referencesOnlySubqueryCols(e PS.Expr, subCols map[string]bool) bool {
+	if e == nil {
+		return true
+	}
+	// Walk the expression and collect all column references.
+	cols := collectIdentsFromExpr(e)
+	if len(cols) == 0 {
+		// Constant expression (e.g., 1=1) — always pushable.
+		return true
+	}
+	for _, c := range cols {
+		if !subCols[c] {
+			return false
+		}
+	}
+	return true
+}
+
+// collectIdentsFromExpr returns all Ident names referenced in an expression.
+func collectIdentsFromExpr(e PS.Expr) []string {
+	var result []string
+	walkExpr(e, func(inner PS.Expr) {
+		if id, ok := inner.(*PS.Ident); ok {
+			result = append(result, id.Name)
+		}
+	})
+	return result
 }

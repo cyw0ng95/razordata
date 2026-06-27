@@ -600,20 +600,23 @@ func (e *Executor) WithMemoryBudget(maxMemoryPerQuery, joinBufferSize int64) *Ex
 	e.joinBufferSize = joinBufferSize
 	if e.planner != nil {
 		e.planner.SetJoinBufferSize(joinBufferSize)
+		e.planner.SetMaxMemoryPerQuery(maxMemoryPerQuery)
 	}
-	return e
-}
-
-// WithMaxResultRows sets a cap on total rows returned by a single
-// SELECT query. 0 means unlimited. REQ001056.
-func (e *Executor) WithMaxResultRows(limit int64) *Executor {
-	e.maxResultRows = limit
 	return e
 }
 
 // MaxResultRows returns the per-query result row limit.
 // 0 means unlimited. REQ001056.
 func (e *Executor) MaxResultRows() int64 { return e.maxResultRows }
+
+// WithMaxResultRows sets a cap on total rows returned by a single
+// SELECT query. 0 means unlimited. REQ001056.
+// Also sets the compound operator drain cap (REQ001057) to the same
+// value to prevent OOM on deep UNION/EXCEPT/INTERSECT chains.
+func (e *Executor) WithMaxResultRows(limit int64) *Executor {
+	e.maxResultRows = limit
+	return e
+}
 
 // initStmtCache initializes the statement cache. Must be called before use.
 func (e *Executor) initStmtCache(maxSize int) {
