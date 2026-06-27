@@ -862,9 +862,11 @@ func pkToBytes(pk any) ([]byte, error) {
 	}
 	switch v := pk.(type) {
 	case int64:
-		return int64ToBytesBigEndian(v), nil
+		b := int64ToBytesBigEndian(v)
+		return b[:], nil
 	case int:
-		return int64ToBytesBigEndian(int64(v)), nil
+		b := int64ToBytesBigEndian(int64(v))
+		return b[:], nil
 	case string:
 		return []byte(v), nil
 	case []byte:
@@ -875,8 +877,9 @@ func pkToBytes(pk any) ([]byte, error) {
 }
 
 // int64ToBytesBigEndian encodes an int64 as 8 bytes big-endian.
-func int64ToBytesBigEndian(n int64) []byte {
-	b := make([]byte, 8)
+func int64ToBytesBigEndian(n int64) [8]byte {
+	// REQ001033: return stack array to avoid heap allocation.
+	var b [8]byte
 	u := uint64(n)
 	b[7] = byte(u)
 	b[6] = byte(u >> 8)
