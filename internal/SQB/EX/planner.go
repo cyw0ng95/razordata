@@ -237,6 +237,10 @@ type Planner struct {
 	// statsCatalog provides access to column statistics for
 	// histogram-based selectivity estimation. REQ000085.
 	statsCatalog StatsCatalog
+	// pool is the shared WorkerPool for parallel operator execution.
+	// Set by Executor on creation; nil means serial-only execution.
+	// REQ001044.
+	pool *WorkerPool
 }
 
 type tableInfo struct {
@@ -252,6 +256,13 @@ func NewPlanner() *Planner {
 		catalog: make(map[string]*tableInfo),
 	}
 }
+
+// SetPool attaches a WorkerPool to the planner for parallel operator
+// execution. Nil means serial-only. REQ001044.
+func (p *Planner) SetPool(pool *WorkerPool) { p.pool = pool }
+
+// Pool returns the attached WorkerPool (may be nil). REQ001044.
+func (p *Planner) Pool() *WorkerPool { return p.pool }
 
 // InvalidateCache clears the plan cache. REQ000846: called when DDL
 // changes the schema (CREATE/DROP/ALTER TABLE) so cached plans that
@@ -2290,7 +2301,35 @@ func isStarExpr(cols []PS.Expr) bool {
 // behaves like a SeqScan for the in-memory source; the
 // selection is the planner decision and the smoke test
 // asserts which operator was chosen.
+// ParallelThreshold is the minimum number of estimated table rows
+// before the planner emits a ParallelSeqScan instead of SeqScan.
+// REQ001043.
+const ParallelThreshold = 10000
+
 func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
+	// REQ001043: emit ParallelSeqScan when pool is available and
+	// the in-memory table has enough rows.
+	if p != nil && p.pool != nil {
+		tablesMu.RLock()
+		src := tables[table]
+		rowCount := len(src)
+		tablesMu.RUnlock()
+		if rowCount >= ParallelThreshold {
+			// Build schema from planner catalog (available at plan time)
+			ti := p.catalog[table]
+			if ti != nil && len(ti.cols) > 0 {
+				schema := make([]string, len(ti.cols))
+				types := make([]int, len(ti.cols))
+				for k, ci := range ti.cols {
+					schema[k] = ci.Name
+					types[k] = ci.Typ
+				}
+				if ss := NewParallelSeqScanRow(src, schema, types, p.pool); ss != nil {
+					return ss
+				}
+			}
+		}
+	}
 	if p != nil && where != nil {
 		if col, ok := indexedColumn(where); ok {
 			if idx, found := p.selectIndex(table, col); found {

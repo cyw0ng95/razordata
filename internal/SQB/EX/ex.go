@@ -361,6 +361,11 @@ type Executor struct {
 		lru     []*stmtCacheEntry
 		maxSize int
 	}
+	// pool is the shared WorkerPool for parallel operator execution.
+	// Created in NewExecutor and sized to GOMAXPROCS. Shared across
+	// ShallowCopy clones via pointer. Shut down in Close().
+	// REQ001044.
+	pool *WorkerPool
 }
 
 // TxWriter is the optional hook an Executor notifies on every key
@@ -406,10 +411,22 @@ func (e *Executor) ShallowCopy() *Executor {
 		planner:     e.planner,
 		store:       e.store,
 		txnDebugger: NewTxnDebugger(),
+		pool:        e.pool, // shared — pool is thread-safe
 	}
 	e2.initStmtCache(e.stmtCache.maxSize)
 	return e2
 }
+
+// Close shuts down the executor's WorkerPool. Idempotent.
+// REQ001044: WorkerPool lifecycle management.
+func (e *Executor) Close() {
+	if e.pool != nil {
+		e.pool.Close()
+	}
+}
+
+// Pool returns the shared WorkerPool (may be nil). REQ001044.
+func (e *Executor) Pool() *WorkerPool { return e.pool }
 
 // SetSnapshot sets the per-statement snapshot timestamp for read-committed
 // isolation (REQ000255). When non-zero, reads filter to versions visible at
@@ -440,7 +457,9 @@ func NewExecutor() *Executor {
 	e := &Executor{
 		planner:     NewPlanner(),
 		txnDebugger: NewTxnDebugger(),
+		pool:        NewWorkerPool(0), // sized to GOMAXPROCS
 	}
+	e.planner.SetPool(e.pool)
 	e.initStmtCache(256)
 	return e
 }
@@ -449,7 +468,21 @@ func NewExecutorWithPlanner(pl *Planner) *Executor {
 	e := &Executor{
 		planner:     pl,
 		txnDebugger: NewTxnDebugger(),
+		pool:        NewWorkerPool(0),
 	}
+	pl.SetPool(e.pool)
+	e.initStmtCache(256)
+	return e
+}
+
+// NewExecutorWithEngine creates an Executor with a store engine.
+func NewExecutorWithEngine(store Store) *Executor {
+	e := &Executor{
+		planner: NewPlannerWithStore(store),
+		store:   store,
+		pool:    NewWorkerPool(0),
+	}
+	e.planner.SetPool(e.pool)
 	e.initStmtCache(256)
 	return e
 }
@@ -527,16 +560,6 @@ func (e *Executor) clearStmtCache() {
 	defer e.stmtCache.mu.Unlock()
 	e.stmtCache.entries = nil
 	e.stmtCache.lru = nil
-}
-
-// NewExecutorWithEngine wires the executor to a real storage engine. When
-// store is non-nil, SeqScan / Insert / Update / Delete route through it
-// instead of the in-memory tables map. Pass nil to revert to in-memory
-// mode.
-func NewExecutorWithEngine(store Store) *Executor {
-	e := &Executor{planner: NewPlannerWithStore(store), store: store}
-	e.initStmtCache(256)
-	return e
 }
 
 // ExtractParamTypes parses sql and returns the SQL column type
