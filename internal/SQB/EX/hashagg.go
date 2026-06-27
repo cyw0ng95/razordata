@@ -15,7 +15,7 @@ type HashAggregate struct {
 	child      Operator
 	groupCols  []PS.Expr
 	aggs       []PS.Expr
-	keys       [][]any
+	keys       [][]Value
 	buckets    map[string][]Row
 	order      []string
 	buf        []Row
@@ -81,7 +81,7 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		ks := distinctKey(Row{Data: valueFromAnySlice(key)})
+		ks := groupKeyString(key)
 		if _, ok := a.buckets[ks]; !ok {
 			a.buckets[ks] = nil
 			a.keys = append(a.keys, key)
@@ -110,7 +110,7 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 				name := groupColName(gc)
 				for j, c := range out.Cols {
 					if c == name {
-						out.Data[j] = valueFromAny(keyVals[i])
+						out.Data[j] = keyVals[i]
 						break
 					}
 				}
@@ -121,7 +121,7 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 			out = Row{}
 			for i, gc := range a.groupCols {
 				out.Cols = append(out.Cols, groupColName(gc))
-				out.Data = append(out.Data, valueFromAny(keyVals[i]))
+				out.Data = append(out.Data, keyVals[i])
 			}
 		}
 		for _, ag := range a.aggs {

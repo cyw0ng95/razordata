@@ -68,7 +68,7 @@ func (a *Aggregate) Close() error {
 }
 
 type groupBucket struct {
-	key  []any
+	key  []Value
 	rows []Row
 }
 
@@ -109,7 +109,7 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 		groups = []groupBucket{{key: nil, rows: nil}}
 	}
 	slices.SortStableFunc(groups, func(a, b groupBucket) int {
-		return keysLessCmp(a.key, b.key)
+		return keysLessCmpValue(a.key, b.key)
 	})
 	for _, g := range groups {
 		var out Row
@@ -125,7 +125,7 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 				name := groupColName(gc)
 				for j, c := range out.Cols {
 					if c == name {
-						out.Data[j] = valueFromAny(g.key[i])
+						out.Data[j] = g.key[i]
 						break
 					}
 				}
@@ -133,9 +133,8 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 		} else {
 			out = Row{Cols: make([]string, 0, len(a.groupCols)+len(a.aggs))}
 			for i, gc := range a.groupCols {
-				name := groupColName(gc)
-				out.Cols = append(out.Cols, name)
-				out.Data = append(out.Data, valueFromAny(g.key[i]))
+				out.Cols = append(out.Cols, groupColName(gc))
+				out.Data = append(out.Data, g.key[i])
 			}
 		}
 		for _, ag := range a.aggs {
@@ -152,17 +151,17 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 	return nil
 }
 
-func evalGroupKey(cols []PS.Expr, row *Row, params []any) ([]any, error) {
+func evalGroupKey(cols []PS.Expr, row *Row, params []any) ([]Value, error) {
 	if len(cols) == 0 {
 		return nil, nil
 	}
-	out := make([]any, len(cols))
+	out := make([]Value, len(cols))
 	for i, c := range cols {
 		v, err := EvalValue(c, row, params)
 		if err != nil {
 			return nil, err
 		}
-		out[i] = v.ToAny()
+		out[i] = v
 	}
 	return out, nil
 }
@@ -208,7 +207,7 @@ func keysEqual(a, b []any) bool {
 // REQ000765: groupKeyString serializes a group key []any to a
 // deterministic string for O(1) hash lookup, avoiding O(N) linear
 // scan over all groups.
-func groupKeyString(key []any) string {
+func groupKeyString(key []Value) string {
 	if len(key) == 0 {
 		return ""
 	}
@@ -217,26 +216,31 @@ func groupKeyString(key []any) string {
 		if i > 0 {
 			b.WriteByte('\x00')
 		}
-		switch x := v.(type) {
-		case nil:
+		switch v.Kind {
+		case KindNull:
 			b.WriteString("\\N")
-		case int64:
+		case KindInt:
 			b.WriteString("I:")
-			b.Write(strconv.AppendInt(nil, x, 10))
-		case float64:
+			b.Write(strconv.AppendInt(nil, v.I64, 10))
+		case KindFloat:
 			b.WriteString("F:")
-			b.Write(strconv.AppendFloat(nil, x, 'g', -1, 64))
-		case string:
+			_ = b
+			b.Write(strconv.AppendFloat(nil, v.F64, 'g', -1, 64))
+		case KindText:
 			b.WriteString("S:")
-			b.WriteString(x)
-		case bool:
-			if x {
+			b.WriteString(v.S)
+		case KindBool:
+			if v.Bo {
 				b.WriteString("B:true")
 			} else {
 				b.WriteString("B:false")
 			}
+		case KindBlob:
+			b.WriteString("X:")
+			b.Write(v.B)
 		default:
-			fmt.Fprintf(&b, "?:%v", x)
+			b.WriteString("?:")
+			b.WriteString(valueToString(v))
 		}
 	}
 	return b.String()
@@ -252,6 +256,22 @@ func keysLessCmp(a, b []any) int {
 			return 0
 		}
 		c := compare(a[i], b[i])
+		if c != 0 {
+			return c
+		}
+	}
+	if len(a) < len(b) {
+		return -1
+	}
+	return 0
+}
+
+func keysLessCmpValue(a, b []Value) int {
+	for i := range a {
+		if i >= len(b) {
+			return 0
+		}
+		c := compareValue(a[i], b[i])
 		if c != 0 {
 			return c
 		}

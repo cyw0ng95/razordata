@@ -116,7 +116,7 @@ func (a *ParallelHashAggregate) sequentialAgg(rows []Row) error {
 		if err != nil {
 			return err
 		}
-		ks := distinctKey(Row{Data: valueFromAnySlice(key)})
+		ks := groupKeyString(key)
 		if _, ok := m[ks]; !ok {
 			m[ks] = nil
 			order = append(order, ks)
@@ -163,7 +163,7 @@ func (a *ParallelHashAggregate) parallelAgg(ctx context.Context, rows []Row, wor
 					resultCh <- partResult{idx: i2, err: err}
 					return err
 				}
-				ks := distinctKey(Row{Data: valueFromAnySlice(key)})
+				ks := groupKeyString(key)
 				if _, ok := buckets[ks]; !ok {
 					buckets[ks] = nil
 					order = append(order, ks)
@@ -211,7 +211,7 @@ func (a *ParallelHashAggregate) parallelAgg(ctx context.Context, rows []Row, wor
 		out := Row{}
 		for i, gc := range a.groupCols {
 			out.Cols = append(out.Cols, groupColName(gc))
-			out.Data = append(out.Data, valueFromAny(keyVals[i]))
+			out.Data = append(out.Data, keyVals[i])
 		}
 		for _, ag := range a.aggs {
 			v, err := evalAggregateOver(ag, rows, a.params)
@@ -239,7 +239,7 @@ func (a *ParallelHashAggregate) buildResults(order []string, buckets map[string]
 		out := Row{}
 		for i, gc := range a.groupCols {
 			out.Cols = append(out.Cols, groupColName(gc))
-			out.Data = append(out.Data, valueFromAny(keyVals[i]))
+			out.Data = append(out.Data, keyVals[i])
 		}
 		for _, ag := range a.aggs {
 			v, err := evalAggregateOver(ag, rows, a.params)
@@ -255,16 +255,24 @@ func (a *ParallelHashAggregate) buildResults(order []string, buckets map[string]
 }
 
 // hashGroupKey computes a hash of the group key values for partitioning.
-func hashGroupKey(key []any) uint64 {
+func hashGroupKey(key []Value) uint64 {
 	var h uint64
 	for _, v := range key {
-		switch val := v.(type) {
-		case int64:
-			h = h*31 + uint64(val)
-		case float64:
-			h = h*31 + uint64(val)
-		case string:
-			for _, c := range val {
+		switch v.Kind {
+		case KindInt:
+			h = h*31 + uint64(v.I64)
+		case KindFloat:
+			h = h*31 + uint64(v.F64)
+		case KindText:
+			for _, c := range v.S {
+				h = h*31 + uint64(c)
+			}
+		case KindBool:
+			if v.Bo {
+				h = h*31 + 1
+			}
+		case KindBlob:
+			for _, c := range v.B {
 				h = h*31 + uint64(c)
 			}
 		}
