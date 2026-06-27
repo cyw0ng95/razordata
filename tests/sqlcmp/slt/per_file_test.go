@@ -84,6 +84,13 @@ func TestSLT_PerFile(t *testing.T) {
 				name, stats.Passed, stats.Failed, stats.Skipped,
 				stats.ParseErrors, stats.Total, time.Duration(stats.Duration))
 
+			if len(stats.Slowest) > 0 {
+				t.Logf("slt[%s] slowest %d records:", name, len(stats.Slowest))
+				for i, s := range stats.Slowest {
+					t.Logf("  #%d L%d %s [%s] %s  dur=%s", i+1, s.Line, s.Kind, s.Label, s.SQL, s.Time)
+				}
+			}
+
 			if stats.Failed > 0 {
 				diag := diagnoseFailures(ctx, driver, recs, 5)
 				if diag != "" {

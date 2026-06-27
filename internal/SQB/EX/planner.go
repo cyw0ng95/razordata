@@ -1688,13 +1688,18 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		// pick the lowest-cost plan. The single-baseTable variant is
 		// kept for backward compat (called as n3JoinOrdering).
 		// REQ000946 perf: multi-start iterates K N3 invocations
-		// (K=number of FROM tables). For K>4, this adds significant
-		// planner overhead per query (~8x more cost comparisons for
-		// 8-table joins) without much benefit since the FROM-list
-		// order is usually a reasonable starting point for small
-		// joins. Fall back to single-start when K > 4.
+		// (K=number of FROM tables). For K > reorderJoinsLimit this
+		// would add significant planner overhead per query (~Kx more
+		// cost comparisons) without much benefit, so fall back to
+		// single-start beyond the limit.
+		// REQ001057c: reorderJoinsLimit=8 matches CockroachDB's
+		// `reorder_joins_limit` default — raising from the prior
+		// value of 4 unblocks select4 hot paths (join255, join101,
+		// join277) which are 6-8 table joins where the FROM-list
+		// order is a poor starting point.
+		const reorderJoinsLimit = 8
 		joinOrder := []string(nil)
-		if len(joinInfos) <= 4 {
+		if len(joinInfos) <= reorderJoinsLimit {
 			joinOrder = p.n3JoinOrderingMultiStart(s.From, joinInfos, costPredicates, pushedPredicates)
 		} else {
 			joinOrder, _ = p.n3JoinOrdering(s.From, joinInfos, costPredicates, pushedPredicates)
