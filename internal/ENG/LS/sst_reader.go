@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"hash/crc32"
 	"io"
+	"os"
 	"unsafe"
 )
 
@@ -13,14 +14,19 @@ type sstReader struct {
 	indexBlock  []indexEntry
 	bloom       []byte
 	prefixBloom []byte
+	filePath    string // non-empty for lazy readers (REQ000997)
 }
 
 func openSST(data []byte) (*sstReader, error) {
+	return openSSTWithPath(data, "")
+}
+
+func openSSTWithPath(data []byte, path string) (*sstReader, error) {
 	if len(data) < 32 {
 		return nil, ErrInvalidSSTFormat
 	}
 
-	r := &sstReader{data: data}
+	r := &sstReader{data: data, filePath: path}
 
 	footerStart := len(data) - 28
 	indexOffset := binary.LittleEndian.Uint64(data[footerStart:])
@@ -195,16 +201,10 @@ func (r *sstReader) searchIndex(key []byte) int {
 }
 
 func (r *sstReader) readBlock(offset, size int) []byte {
-	if offset < 0 || offset >= len(r.data) {
+	raw := r.readRaw(offset, size)
+	if raw == nil {
 		return nil
 	}
-
-	end := offset + size
-	if end > len(r.data) {
-		end = len(r.data)
-	}
-
-	raw := r.data[offset:end]
 	decompressed, err := decompressBlockDict(raw)
 	if err != nil {
 		if d2, err2 := decompressBlock(raw); err2 == nil {
@@ -213,6 +213,34 @@ func (r *sstReader) readBlock(offset, size int) []byte {
 		return raw // fallback to raw data
 	}
 	return decompressed
+}
+
+func (r *sstReader) readRaw(offset, size int) []byte {
+	if offset < 0 || offset >= len(r.data) {
+		if r.filePath == "" {
+			return nil
+		}
+		return r.readFromFile(offset, size)
+	}
+	end := offset + size
+	if end > len(r.data) {
+		end = len(r.data)
+	}
+	return r.data[offset:end]
+}
+
+func (r *sstReader) readFromFile(offset, size int) []byte {
+	f, err := os.Open(r.filePath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	buf := make([]byte, size)
+	n, err := f.ReadAt(buf, int64(offset))
+	if err != nil || n < size {
+		return nil
+	}
+	return buf
 }
 
 type kvPair struct {

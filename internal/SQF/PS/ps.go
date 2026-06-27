@@ -356,55 +356,9 @@ func (p *Parser) Parse() (Stmt, error) {
 	case LX.T_DELETE:
 		stmt, err = p.parseDelete()
 	case LX.T_CREATE:
-		// CREATE TABLE vs CREATE INDEX vs CREATE VIEW vs CREATE TRIGGER vs CREATE MATERIALIZED VIEW vs CREATE VIRTUAL TABLE
-		next := p.lex.Peek()
-		nextType := next.Type
-		peek2 := p.lex.Peek2()
-		if nextType == LX.T_INDEX {
-			stmt, err = p.parseCreateIndex()
-		} else if nextType == LX.T_UNIQUE && peek2.Type == LX.T_INDEX {
-			stmt, err = p.parseCreateIndex()
-		} else if nextType == LX.T_VIEW {
-			stmt, err = p.parseCreateView()
-		} else if nextType == LX.T_TRIGGER {
-			stmt, err = p.parseCreateTrigger()
-		} else if nextType == LX.T_MATERIALIZED {
-			stmt, err = p.parseCreateMaterializedView()
-		} else if nextType == LX.T_TEMP || nextType == LX.T_TEMPORARY {
-			if peek2.Type == LX.T_VIEW {
-				stmt, err = p.parseCreateView()
-			} else {
-				stmt, err = p.parseCreateTable()
-			}
-		} else if nextType == LX.T_IDENT && strings.EqualFold(next.Lexeme, "VIRTUAL") {
-			stmt, err = p.parseCreateVirtualTable()
-		} else {
-			stmt, err = p.parseCreateTable()
-		}
+		stmt, err = p.parseCreateDispatch()
 	case LX.T_DROP:
-		// DROP TABLE vs DROP INDEX vs DROP VIEW vs DROP TRIGGER vs DROP MATERIALIZED VIEW —
-		// disambiguate by peeking.
-		next := p.lex.Peek().Type
-		if next == LX.T_MATERIALIZED {
-			p.advance() // consume MATERIALIZED
-			if p.lex.Peek().Type == LX.T_VIEW {
-				p.advance() // consume VIEW
-				stmt, err = p.parseDropMaterializedView()
-			} else {
-				stmt, err = p.parseDropTable()
-			}
-		} else {
-			switch next {
-			case LX.T_INDEX:
-				stmt, err = p.parseDropIndex()
-			case LX.T_VIEW:
-				stmt, err = p.parseDropView()
-			case LX.T_TRIGGER:
-				stmt, err = p.parseDropTrigger()
-			default:
-				stmt, err = p.parseDropTable()
-			}
-		}
+		stmt, err = p.parseDropDispatch()
 	case LX.T_EXPLAIN:
 		stmt, err = p.parseExplain()
 	case LX.T_ANALYZE:
@@ -504,3 +458,62 @@ func (p *Parser) Parse() (Stmt, error) {
 //	a INTERSECT b UNION c  →  (a INTERSECT b) UNION c
 // We implement a single precedence level for the v1 (UNION, EXCEPT)
 // and a higher one for INTERSECT.
+// parseCreateDispatch disambiguates CREATE variants by peeking at the
+// next token. Supports TABLE, INDEX, UNIQUE INDEX, VIEW, TRIGGER,
+// MATERIALIZED VIEW, TEMP/TEMPORARY TABLE/VIEW, and VIRTUAL TABLE.
+// REQ001000.
+func (p *Parser) parseCreateDispatch() (Stmt, error) {
+	next := p.lex.Peek()
+	nextType := next.Type
+	peek2 := p.lex.Peek2()
+	if nextType == LX.T_INDEX {
+		return p.parseCreateIndex()
+	}
+	if nextType == LX.T_UNIQUE && peek2.Type == LX.T_INDEX {
+		return p.parseCreateIndex()
+	}
+	if nextType == LX.T_VIEW {
+		return p.parseCreateView()
+	}
+	if nextType == LX.T_TRIGGER {
+		return p.parseCreateTrigger()
+	}
+	if nextType == LX.T_MATERIALIZED {
+		return p.parseCreateMaterializedView()
+	}
+	if nextType == LX.T_TEMP || nextType == LX.T_TEMPORARY {
+		if peek2.Type == LX.T_VIEW {
+			return p.parseCreateView()
+		}
+		return p.parseCreateTable()
+	}
+	if nextType == LX.T_IDENT && strings.EqualFold(next.Lexeme, "VIRTUAL") {
+		return p.parseCreateVirtualTable()
+	}
+	return p.parseCreateTable()
+}
+
+// parseDropDispatch disambiguates DROP variants by peeking at the next
+// token. Supports TABLE, INDEX, VIEW, TRIGGER, and MATERIALIZED VIEW.
+// REQ001000.
+func (p *Parser) parseDropDispatch() (Stmt, error) {
+	next := p.lex.Peek().Type
+	if next == LX.T_MATERIALIZED {
+		p.advance() // consume MATERIALIZED
+		if p.lex.Peek().Type == LX.T_VIEW {
+			p.advance() // consume VIEW
+			return p.parseDropMaterializedView()
+		}
+		return p.parseDropTable()
+	}
+	switch next {
+	case LX.T_INDEX:
+		return p.parseDropIndex()
+	case LX.T_VIEW:
+		return p.parseDropView()
+	case LX.T_TRIGGER:
+		return p.parseDropTrigger()
+	default:
+		return p.parseDropTable()
+	}
+}

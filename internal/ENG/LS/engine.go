@@ -2,7 +2,9 @@ package ls
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -193,12 +195,7 @@ func (e *engine) readFromSST(key []byte) ([]byte, error) {
 			}
 			e.stats.DiskReads.Add(1)
 			sstPath := filepath.Join(e.dir, fileName(&file))
-			data, err := e.readSSTFile(file.FileID, sstPath)
-			if err != nil {
-				e.log.Warn("readFromSST: failed to read SST file", "path", sstPath, "err", err)
-				continue
-			}
-			reader, err := openSST(data)
+			reader, err := e.getSSTReader(file.FileID, sstPath)
 			if err != nil {
 				e.log.Warn("readFromSST: failed to open SST file", "path", sstPath, "err", err)
 				continue
@@ -214,21 +211,88 @@ func (e *engine) readFromSST(key []byte) ([]byte, error) {
 	return nil, ErrNotFound
 }
 
-func (e *engine) readSSTFile(fileID uint64, path string) ([]byte, error) {
+func (e *engine) getSSTReader(fileID uint64, path string) (*sstReader, error) {
 	if cached, ok := e.pageCache.Get(fileID, 0); ok {
-		return cached, nil
+		return openSSTWithPath(cached, path)
 	}
-	data, err := os.ReadFile(path)
+	data, err := e.loadSSTMeta(fileID, path)
 	if err != nil {
 		return nil, err
 	}
-	for off := 0; off < len(data); off += PageSize {
-		end := off + PageSize
-		if end > len(data) {
-			end = len(data)
-		}
-		e.pageCache.Put(fileID, uint32(off), data[off:end])
+	return openSSTWithPath(data, path)
+}
+
+func (e *engine) loadSSTMeta(fileID uint64, path string) ([]byte, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
 	}
+	fileSize := int(fi.Size())
+	if fileSize < 32 {
+		return nil, ErrInvalidSSTFormat
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	// Read footer (last page containing the footer)
+	footerPageOff := ((fileSize - 1) / PageSize) * PageSize
+	footerReadLen := fileSize - footerPageOff
+	footerBuf := make([]byte, footerReadLen)
+	if _, err := f.ReadAt(footerBuf, int64(footerPageOff)); err != nil {
+		return nil, err
+	}
+	e.pageCache.Put(fileID, uint32(footerPageOff), footerBuf)
+
+	// Parse footer
+	footerOff := footerReadLen - 28
+	indexOffset := int(binary.LittleEndian.Uint64(footerBuf[footerOff:]))
+	indexSize := int(binary.LittleEndian.Uint32(footerBuf[footerOff+8:]))
+	bloomOffset := int(binary.LittleEndian.Uint64(footerBuf[footerOff+12:]))
+	bloomSize := int(binary.LittleEndian.Uint32(footerBuf[footerOff+20:]))
+
+	if indexOffset <= 0 || indexSize <= 0 || bloomOffset <= 0 {
+		return nil, ErrInvalidSSTFormat
+	}
+
+	// Read index block + bloom data from file, page by page
+	dataEnd := bloomOffset + bloomSize
+	if dataEnd > fileSize {
+		dataEnd = fileSize
+	}
+	dataStart := indexOffset
+	totalSize := dataEnd - dataStart
+	data := make([]byte, totalSize)
+
+	for off := dataStart; off < dataEnd; off += PageSize {
+		pageOff := (off / PageSize) * PageSize
+		pbuf := make([]byte, PageSize)
+		readStart := int64(pageOff)
+		n, err := f.ReadAt(pbuf, readStart)
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+		pbuf = pbuf[:n]
+		e.pageCache.Put(fileID, uint32(pageOff), pbuf)
+
+		// Copy into result
+		destOff := off - dataStart
+		srcOff := off - pageOff
+		copyLen := n - srcOff
+		if destOff+copyLen > totalSize {
+			copyLen = totalSize - destOff
+		}
+		if copyLen > 0 {
+			copy(data[destOff:destOff+copyLen], pbuf[srcOff:srcOff+copyLen])
+		}
+	}
+
+	// Cache the assembled index+bloom data at sentinel offset 0
+	e.pageCache.Put(fileID, 0, data)
+
 	return data, nil
 }
 
@@ -252,12 +316,7 @@ func (e *engine) MayContain(key []byte) bool {
 		for i := range files {
 			file := &files[i]
 			sstPath := filepath.Join(e.dir, fileName(file))
-			data, err := e.readSSTFile(file.FileID, sstPath)
-			if err != nil {
-				e.log.Warn("MayContain: failed to read SST file", "path", sstPath, "err", err)
-				continue
-			}
-			reader, err := openSST(data)
+			reader, err := e.getSSTReader(file.FileID, sstPath)
 			if err != nil {
 				e.log.Warn("MayContain: failed to open SST file", "path", sstPath, "err", err)
 				continue

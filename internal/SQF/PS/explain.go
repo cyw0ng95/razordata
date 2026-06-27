@@ -92,45 +92,9 @@ func (p *Parser) parseExplain() (*ExplainStmt, error) {
 	case LX.T_DELETE:
 		inner, innerErr = p.parseDelete()
 	case LX.T_CREATE:
-		next := p.lex.Peek()
-		nextType := next.Type
-		if nextType == LX.T_INDEX {
-			inner, innerErr = p.parseCreateIndex()
-		} else if nextType == LX.T_UNIQUE && p.lex.Peek2().Type == LX.T_INDEX {
-			inner, innerErr = p.parseCreateIndex()
-		} else if nextType == LX.T_VIEW {
-			inner, innerErr = p.parseCreateView()
-		} else if nextType == LX.T_TRIGGER {
-			inner, innerErr = p.parseCreateTrigger()
-		} else if nextType == LX.T_MATERIALIZED {
-			inner, innerErr = p.parseCreateMaterializedView()
-		} else if nextType == LX.T_IDENT && strings.EqualFold(next.Lexeme, "VIRTUAL") {
-			inner, innerErr = p.parseCreateVirtualTable()
-		} else {
-			inner, innerErr = p.parseCreateTable()
-		}
+		inner, innerErr = p.parseCreateDispatch()
 	case LX.T_DROP:
-		next := p.lex.Peek().Type
-		if next == LX.T_MATERIALIZED {
-			p.advance()
-			if p.lex.Peek().Type == LX.T_VIEW {
-				p.advance()
-				inner, innerErr = p.parseDropMaterializedView()
-			} else {
-				inner, innerErr = p.parseDropTable()
-			}
-		} else {
-			switch next {
-			case LX.T_INDEX:
-				inner, innerErr = p.parseDropIndex()
-			case LX.T_VIEW:
-				inner, innerErr = p.parseDropView()
-			case LX.T_TRIGGER:
-				inner, innerErr = p.parseDropTrigger()
-			default:
-				inner, innerErr = p.parseDropTable()
-			}
-		}
+		inner, innerErr = p.parseDropDispatch()
 	case LX.T_EXPLAIN:
 		inner, innerErr = p.parseExplain()
 	case LX.T_ANALYZE:

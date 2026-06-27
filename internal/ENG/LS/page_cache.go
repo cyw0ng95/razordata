@@ -29,13 +29,14 @@ type pageEntry struct {
 
 // PageCache is a fixed-size block-level cache for SST file pages.
 // It uses clock-sweep eviction and sync.Pool for page buffers
-// (REQ000571).
+// (REQ000571). Lookup is O(1) via an internal index map (REQ000998).
 type PageCache struct {
 	mu      sync.RWMutex
 	slots   []*pageEntry
-	cap     int // max number of pages
-	size    int // current number of valid pages
-	hand    int // clock-sweep hand position
+	index   map[pageKey]*pageEntry // REQ000998: O(1) key→slot lookup
+	cap     int                    // max number of pages
+	size    int                    // current number of valid pages
+	hand    int                    // clock-sweep hand position
 	bufPool sync.Pool
 }
 
@@ -48,6 +49,7 @@ func NewPageCache(capacityBytes int) *PageCache {
 	cap := capacityBytes / PageSize
 	c := &PageCache{
 		slots: make([]*pageEntry, cap),
+		index: make(map[pageKey]*pageEntry, cap),
 		cap:   cap,
 	}
 	c.bufPool = sync.Pool{
@@ -69,13 +71,10 @@ func (c *PageCache) Get(fileID uint64, offset uint32) ([]byte, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	for _, slot := range c.slots {
-		if slot.valid.Load() && slot.key == key {
+	if slot, ok := c.index[key]; ok {
+		if slot.valid.Load() {
 			slot.visited.Store(1)
-			slot.ref.Add(1)
-			data := slot.data
-			slot.ref.Add(-1)
-			return data, true
+			return slot.data, true
 		}
 	}
 	return nil, false
@@ -92,31 +91,30 @@ func (c *PageCache) Put(fileID uint64, offset uint32, data []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Check if already cached.
-	for _, slot := range c.slots {
-		if slot.valid.Load() && slot.key == key {
-			// Already cached; update data.
-			copy(slot.data, data)
-			slot.visited.Store(1)
-			return
-		}
+	if slot, ok := c.index[key]; ok {
+		copy(slot.data, data)
+		slot.visited.Store(1)
+		return
 	}
 
-	// Find a free slot or evict.
 	slot := c.evict()
+	if slot.valid.Swap(false) {
+		delete(c.index, slot.key)
+		c.size--
+	}
 	slot.key = key
 	if slot.data == nil {
 		bufPtr := c.bufPool.Get().(*[]byte)
 		slot.data = *bufPtr
 	}
 	n := copy(slot.data, data)
-	// Zero-pad if data is shorter than PageSize.
 	for i := n; i < len(slot.data); i++ {
 		slot.data[i] = 0
 	}
 	slot.visited.Store(1)
 	slot.ref.Store(0)
 	slot.valid.Store(true)
+	c.index[key] = slot
 	c.size++
 }
 
@@ -138,9 +136,8 @@ func (c *PageCache) evict() *pageEntry {
 		if slot.visited.CompareAndSwap(1, 0) {
 			continue
 		}
-		// Evict this slot.
-		slot.valid.Store(false)
-		c.size--
+		// Return this slot for re-use. The caller (Put) will
+		// remove the old key from the index and reset valid/size.
 		return slot
 	}
 }
@@ -152,6 +149,7 @@ func (c *PageCache) Invalidate(fileID uint64) {
 	defer c.mu.Unlock()
 	for _, slot := range c.slots {
 		if slot.valid.Load() && slot.key.fileID == fileID {
+			delete(c.index, slot.key)
 			slot.valid.Store(false)
 			c.size--
 		}
