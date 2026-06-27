@@ -452,9 +452,70 @@ func (p *Parser) parseFKAction() string {
 			return "NO ACTION"
 		}
 		return "NO"
-	default:
-		return "NO ACTION"
 	}
+	return "NO ACTION"
+}
+// parseIfExists parses "IF EXISTS" if present and returns true.
+// REQ001003: replaces 4 duplicate inline implementations.
+func (p *Parser) parseIfExists() bool {
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
+		p.advance()
+		if p.current.Type == LX.T_EXISTS {
+			p.advance()
+			return true
+		}
+	}
+	return false
+}
+
+// parseIfNotExists parses "IF NOT EXISTS" if present and returns true.
+// REQ001003: replaces 4 duplicate inline implementations.
+func (p *Parser) parseIfNotExists() bool {
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
+		p.advance()
+		if p.current.Type == LX.T_NOT {
+			p.advance()
+			if p.current.Type == LX.T_EXISTS {
+				p.advance()
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// parseIfExistsStrict parses "IF EXISTS" if present, errors otherwise.
+// Like parseIfExists but uses p.expect for stricter error reporting.
+// REQ001003.
+func (p *Parser) parseIfExistsStrict() (bool, error) {
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
+		p.advance()
+		if err := p.expect(LX.T_EXISTS); err != nil {
+			return false, err
+		}
+		p.advance()
+		return true, nil
+	}
+	return false, nil
+}
+
+// parseIfNotExistsStrict parses "IF NOT EXISTS" if present, errors otherwise.
+// Like parseIfNotExists but uses p.expect for stricter error reporting.
+// REQ001003.
+func (p *Parser) parseIfNotExistsStrict() (bool, error) {
+	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
+		p.advance()
+		if err := p.expect(LX.T_NOT); err != nil {
+			return false, err
+		}
+		p.advance()
+		if err := p.expect(LX.T_EXISTS); err != nil {
+			return false, err
+		}
+		p.advance()
+		return true, nil
+	}
+	return false, nil
 }
 
 func (p *Parser) parseDropTable() (*DropTable, error) {
@@ -466,14 +527,7 @@ func (p *Parser) parseDropTable() (*DropTable, error) {
 	p.advance()
 
 	// REQ000497: DROP TABLE IF EXISTS
-	ifExists := false
-	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
-		p.advance()
-		if p.current.Type == LX.T_EXISTS {
-			ifExists = true
-			p.advance()
-		}
-	}
+	ifExists := p.parseIfExists()
 
 	if err := p.expect(LX.T_IDENT); err != nil {
 		return nil, err
@@ -497,17 +551,7 @@ func (p *Parser) parseCreateIndex() (*CreateIndexStmt, error) {
 	}
 	p.advance() // consume INDEX
 	// REQ000479: CREATE INDEX IF NOT EXISTS
-	ifExists := false
-	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
-		p.advance()
-		if p.current.Type == LX.T_NOT {
-			p.advance()
-			if p.current.Type == LX.T_EXISTS {
-				ifExists = true
-				p.advance()
-			}
-		}
-	}
+	ifExists := p.parseIfNotExists()
 	// Read index name
 	if err := p.expect(LX.T_IDENT); err != nil {
 		return nil, err
@@ -603,14 +647,7 @@ func (p *Parser) parseDropIndex() (*DropIndexStmt, error) {
 	}
 	p.advance() // consume INDEX
 	// REQ000480: DROP INDEX IF EXISTS
-	ifExists := false
-	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
-		p.advance()
-		if p.current.Type == LX.T_EXISTS {
-			ifExists = true
-			p.advance()
-		}
-	}
+	ifExists := p.parseIfExists()
 	if err := p.expect(LX.T_IDENT); err != nil {
 		return nil, err
 	}
@@ -805,18 +842,11 @@ func (p *Parser) parseCreateTrigger() (*TriggerStmt, error) {
 
 	trigger := &TriggerStmt{Time: "BEFORE", Event: "INSERT", ForEach: "FOR EACH ROW"}
 
-	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
-		p.advance()
-		if err := p.expect(LX.T_NOT); err != nil {
-			return nil, err
-		}
-		p.advance()
-		if err := p.expect(LX.T_EXISTS); err != nil {
-			return nil, err
-		}
-		p.advance()
-		trigger.IfNotExists = true
+	ifNotExists, err := p.parseIfNotExistsStrict()
+	if err != nil {
+		return nil, err
 	}
+	trigger.IfNotExists = ifNotExists
 
 	if err := p.expect(LX.T_IDENT); err != nil {
 		return nil, err
@@ -994,13 +1024,7 @@ func (p *Parser) parseDropView() (*DropViewStmt, error) {
 	p.advance() // consume VIEW
 
 	stmt := &DropViewStmt{}
-	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
-		p.advance()
-		if p.current.Type == LX.T_EXISTS {
-			p.advance()
-			stmt.IfExists = true
-		}
-	}
+	stmt.IfExists = p.parseIfExists()
 
 	if p.current.Type != LX.T_IDENT {
 		return nil, &SyntaxError{
@@ -1033,14 +1057,11 @@ func (p *Parser) parseDropMaterializedView() (*DropMatViewStmt, error) {
 	stmt := &DropMatViewStmt{}
 
 	// Optional IF EXISTS
-	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
-		p.advance()
-		if err := p.expect(LX.T_EXISTS); err != nil {
-			return nil, err
-		}
-		p.advance()
-		stmt.IfExists = true
+	ifExists, err := p.parseIfExistsStrict()
+	if err != nil {
+		return nil, err
 	}
+	stmt.IfExists = ifExists
 
 	if p.current.Type != LX.T_IDENT {
 		return nil, &SyntaxError{
@@ -1064,13 +1085,7 @@ func (p *Parser) parseDropTrigger() (*DropTriggerStmt, error) {
 	p.advance() // consume TRIGGER
 
 	stmt := &DropTriggerStmt{}
-	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
-		p.advance()
-		if p.current.Type == LX.T_EXISTS {
-			p.advance()
-			stmt.IfExists = true
-		}
-	}
+	stmt.IfExists = p.parseIfExists()
 
 	if p.current.Type != LX.T_IDENT {
 		return nil, &SyntaxError{
@@ -1105,18 +1120,9 @@ func (p *Parser) parseCreateMaterializedView() (*CreateMatViewStmt, error) {
 	p.advance() // consume VIEW
 
 	// Optional IF NOT EXISTS
-	ifNotExists := false
-	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "IF") {
-		p.advance()
-		if err := p.expect(LX.T_NOT); err != nil {
-			return nil, err
-		}
-		p.advance()
-		if err := p.expect(LX.T_EXISTS); err != nil {
-			return nil, err
-		}
-		p.advance()
-		ifNotExists = true
+	ifNotExists, err := p.parseIfNotExistsStrict()
+	if err != nil {
+		return nil, err
 	}
 
 	// Optional INCREMENTAL keyword (default: manual refresh)
