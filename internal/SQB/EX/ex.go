@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -397,6 +398,9 @@ type Executor struct {
 	// in the session. Copied into/out of ExecContext for each Exec/Query
 	// call so TOTAL_CHANGES() is correct across statements (REQ000812).
 	totalChanges int64
+	// maxParallelism controls the maximum number of workers per query.
+	// Default: runtime.GOMAXPROCS(0). REQ001054.
+	maxParallelism int
 	// txnDebugger tracks MVCC/transaction statistics for EXPLAIN ANALYZE.
 	// REQ000792: MVCC debugging.
 	txnDebugger *TxnDebugger
@@ -499,6 +503,24 @@ func (e *Executor) SetSessionID(id uint64) {
 // SessionID returns the current session ID.
 func (e *Executor) SessionID() uint64 { return e.sessionID }
 
+// SetMaxParallelism sets the maximum number of workers per query.
+// REQ001054: Configurable parallelism.
+func (e *Executor) SetMaxParallelism(n int) {
+	if n <= 0 {
+		n = runtime.GOMAXPROCS(0)
+	}
+	e.maxParallelism = n
+	// Recreate the pool with the new size
+	if e.pool != nil {
+		e.pool.Close()
+	}
+	e.pool = NewWorkerPool(n)
+	e.planner.SetPool(e.pool)
+}
+
+// MaxParallelism returns the current maximum parallelism setting.
+func (e *Executor) MaxParallelism() int { return e.maxParallelism }
+
 // getCurrentSessionID returns the package-level session ID for eval.
 func getCurrentSessionID() uint64 {
 	return currentSessionID.Load()
@@ -506,10 +528,11 @@ func getCurrentSessionID() uint64 {
 
 func NewExecutor() *Executor {
 	e := &Executor{
-		planner:     NewPlanner(),
-		txnDebugger: NewTxnDebugger(),
-		pool:        NewWorkerPool(0),
-		attachedDBs: make(map[string]string),
+		planner:        NewPlanner(),
+		txnDebugger:    NewTxnDebugger(),
+		pool:           NewWorkerPool(0),
+		maxParallelism: runtime.GOMAXPROCS(0),
+		attachedDBs:    make(map[string]string),
 	}
 	e.planner.SetPool(e.pool)
 	e.initStmtCache(256)
@@ -518,10 +541,11 @@ func NewExecutor() *Executor {
 
 func NewExecutorWithPlanner(pl *Planner) *Executor {
 	e := &Executor{
-		planner:     pl,
-		txnDebugger: NewTxnDebugger(),
-		pool:        NewWorkerPool(0),
-		attachedDBs: make(map[string]string),
+		planner:        pl,
+		txnDebugger:    NewTxnDebugger(),
+		pool:           NewWorkerPool(0),
+		maxParallelism: runtime.GOMAXPROCS(0),
+		attachedDBs:    make(map[string]string),
 	}
 	pl.SetPool(e.pool)
 	e.initStmtCache(256)
@@ -531,10 +555,11 @@ func NewExecutorWithPlanner(pl *Planner) *Executor {
 // NewExecutorWithEngine creates an Executor with a store engine.
 func NewExecutorWithEngine(store Store) *Executor {
 	e := &Executor{
-		planner: NewPlannerWithStore(store),
-		store:   store,
-		pool:    NewWorkerPool(0),
-		attachedDBs: make(map[string]string),
+		planner:        NewPlannerWithStore(store),
+		store:          store,
+		pool:           NewWorkerPool(0),
+		maxParallelism: runtime.GOMAXPROCS(0),
+		attachedDBs:    make(map[string]string),
 	}
 	e.planner.SetPool(e.pool)
 	e.initStmtCache(256)
