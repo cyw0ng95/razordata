@@ -2341,6 +2341,22 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 				}
 			}
 		}
+		// REQ001051: detect IN-list on any column with > 10 values
+		// and fan out filtered scans across workers.
+		if where != nil {
+			if colName, inValues, ok := extractInListValues(where); ok && len(inValues) >= 10 {
+				ti := p.catalog[table]
+				if ti != nil && len(ti.cols) > 0 && rowCount > 0 {
+					schema := make([]string, len(ti.cols))
+					types := make([]int, len(ti.cols))
+					for k, ci := range ti.cols {
+						schema[k] = ci.Name
+						types[k] = ci.Typ
+					}
+					return NewParallelIndexRangeScan(src, schema, types, colName, inValues, p.pool)
+				}
+			}
+		}
 	}
 	if p != nil && where != nil {
 		if col, ok := indexedColumn(where); ok {

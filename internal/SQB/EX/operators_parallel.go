@@ -586,5 +586,166 @@ func (p *ParallelIndexScan) Close() error {
 	return nil
 }
 
+// ParallelIndexRangeScan fans out N index lookups from IN-list values
+// across workers. Each worker filters its assigned row partition using
+// a hash set built from the IN-list values. Results are merged in
+// partition order. Falls back to sequential when pool is nil or
+// there are fewer than 2 values. REQ001051.
+type ParallelIndexRangeScan struct {
+	pool   *WorkerPool
+	rows   []Row
+	schema []string
+	types  []int
+	colName string
+	values  []any
+
+	rowBuf  []Row
+	rowPos  int
+	done    bool
+	started bool
+	startMu sync.Mutex
+}
+
+// NewParallelIndexRangeScan creates a parallel IN-list index scan.
+func NewParallelIndexRangeScan(rows []Row, schema []string, types []int, colName string, values []any, pool *WorkerPool) *ParallelIndexRangeScan {
+	return &ParallelIndexRangeScan{
+		pool:    pool,
+		rows:    rows,
+		schema:  schema,
+		types:   types,
+		colName: colName,
+		values:  values,
+	}
+}
+
+// Next implements Operator. On first call fans out row partitions
+// across workers, each filtering by the IN-list hash set.
+func (p *ParallelIndexRangeScan) Next(ctx context.Context) (Row, error) {
+	for {
+		if p.rowPos < len(p.rowBuf) {
+			r := p.rowBuf[p.rowPos]
+			p.rowPos++
+			return r, nil
+		}
+		if p.done {
+			return Row{}, ErrNoRows
+		}
+		if err := p.startScan(ctx); err != nil {
+			return Row{}, err
+		}
+	}
+}
+
+func (p *ParallelIndexRangeScan) startScan(ctx context.Context) error {
+	p.startMu.Lock()
+	defer p.startMu.Unlock()
+	if p.started {
+		return nil
+	}
+	p.started = true
+
+	if len(p.rows) == 0 || len(p.values) == 0 {
+		p.done = true
+		return nil
+	}
+
+	// Build hash set for O(1) lookup per value.
+	valueSet := make(map[any]bool, len(p.values))
+	for _, v := range p.values {
+		valueSet[v] = true
+	}
+
+	workers := p.pool.Workers()
+	totalRows := len(p.rows)
+	rowsPerWorker := totalRows / workers
+	if rowsPerWorker < 1 {
+		rowsPerWorker = 1
+		workers = totalRows
+	}
+
+	type partResult struct {
+		idx  int
+		rows []Row
+		err  error
+	}
+	resultCh := make(chan partResult, workers)
+	var wg sync.WaitGroup
+
+	for w := 0; w < workers; w++ {
+		start := w * rowsPerWorker
+		end := start + rowsPerWorker
+		if w == workers-1 {
+			end = totalRows
+		}
+		if start >= end {
+			continue
+		}
+		wi, wstart, wend := w, start, end
+		wg.Add(1)
+		err := p.pool.Submit(ctx, func() error {
+			defer wg.Done()
+			// Find col index in schema to avoid per-row map lookup.
+			colIdx := -1
+			for i, name := range p.schema {
+				if name == p.colName {
+					colIdx = i
+					break
+				}
+			}
+			if colIdx < 0 {
+				resultCh <- partResult{idx: wi}
+				return nil
+			}
+			out := make([]Row, 0, wend-wstart)
+			for idx := wstart; idx < wend; idx++ {
+				r := p.rows[idx]
+				if colIdx >= len(r.Data) {
+					continue
+				}
+				v := r.Data[colIdx]
+				if valueSet[v.ToAny()] {
+					out = append(out, Row{
+						Cols:  p.schema,
+						Types: p.types,
+						Data:  r.Data,
+					})
+				}
+			}
+			resultCh <- partResult{idx: wi, rows: out}
+			return nil
+		})
+		if err != nil {
+			wg.Done()
+			resultCh <- partResult{idx: wi, err: err}
+			break
+		}
+	}
+
+	wg.Wait()
+	close(resultCh)
+
+	ordered := make([][]Row, workers)
+	for res := range resultCh {
+		if res.err != nil {
+			return res.err
+		}
+		ordered[res.idx] = res.rows
+	}
+	var all []Row
+	for _, part := range ordered {
+		all = append(all, part...)
+	}
+	p.rowBuf = all
+	p.rowPos = 0
+	p.done = true
+	return nil
+}
+
+// Close cleans up.
+func (p *ParallelIndexRangeScan) Close() error {
+	p.done = true
+	return nil
+}
+
 // LX import anchor to prevent unused import error
 var _ = LX.T_INT_KW
