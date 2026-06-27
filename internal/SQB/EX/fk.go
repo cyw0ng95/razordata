@@ -105,7 +105,11 @@ func checkReferencedRowExists(refTable string, refCols []string, values []any, s
 	// Build a key from the referenced columns to look up
 	// For single-column FK, use the value directly
 	if len(refCols) == 1 && len(values) == 1 {
-		key := encodeFKLookup(refTable, refCols[0], values[0])
+		// Single-column FK: encode a lookup key.
+		key, err := encodeFKLookup(refTable, refCols[0], values[0])
+		if err != nil {
+			return err
+		}
 		_, found, err := store.Get(key)
 		if err != nil {
 			return err
@@ -128,7 +132,10 @@ func checkChildRowExists(childCols []string, refVals []any, childSchema *storeSc
 	// Build a scan prefix for the child table's FK columns
 	// For single-column FK, check if any child row has this value
 	if len(childCols) == 1 && len(refVals) == 1 {
-		key := encodeFKLookup(childSchema.cols[0], childCols[0], refVals[0])
+		key, err := encodeFKLookup(childSchema.cols[0], childCols[0], refVals[0])
+		if err != nil {
+			return false, err
+		}
 		prefix := key[:len(key)-8] // remove the value part, keep table+col prefix
 		it := store.NewIterator(prefix)
 		defer it.Close()
@@ -186,13 +193,10 @@ func checkMultiColumnFK(refTable string, refCols []string, values []any, store S
 }
 
 // encodeFKLookup builds a key for FK validation lookups.
-func encodeFKLookup(table, col string, val any) []byte {
-	prefix := tablePrefix(table)
-	// For now, use a simple encoding
-	_ = prefix
-	_ = col
-	_ = val
-	return nil
+// Currently unimplemented — returns an error until proper index-backed
+// FK lookup support is added. REQ000977.
+func encodeFKLookup(table, col string, val any) ([]byte, error) {
+	return nil, fmt.Errorf("ex: encodeFKLookup not implemented")
 }
 
 // validateForeignKeyUpdateInMemory is the in-memory analogue of
