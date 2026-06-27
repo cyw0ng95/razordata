@@ -554,6 +554,15 @@ const (
 	rvBytes  byte = 5
 )
 
+// encodeRowBufPool is a sync.Pool for reusable encodeRow scratch buffers.
+// REQ000985: reduces GC pressure on the hot path (bulk INSERT/UPDATE).
+var encodeRowBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 0, 4096) // 4KB page size
+		return &buf
+	},
+}
+
 // encodeRow serializes a row's values in schema column order. nil values
 // become rvNull. The output is a self-describing binary blob:
 //
@@ -562,8 +571,14 @@ func encodeRow(schema *storeSchema, row Row) ([]byte, error) {
 	if len(row.Data) != len(schema.cols) {
 		return nil, fmt.Errorf("ex: row has %d values, schema has %d", len(row.Data), len(schema.cols))
 	}
+	// REQ000985: use pooled buffer to reduce allocations on hot path.
+	bufPtr := encodeRowBufPool.Get().(*[]byte)
+	buf := *bufPtr
+	buf = buf[:0]
 	// REQ001022: pre-estimate buffer size to avoid 3-4x growth reallocations.
-	buf := make([]byte, 0, 9*len(schema.cols)+8)
+	if cap(buf) < 9*len(schema.cols)+8 {
+		buf = make([]byte, 0, 9*len(schema.cols)+8)
+	}
 	buf = binary.AppendUvarint(buf, uint64(len(schema.cols)))
 	for i, v := range row.Data {
 		if v.IsNull() {
@@ -597,10 +612,16 @@ func encodeRow(schema *storeSchema, row Row) ([]byte, error) {
 			buf = binary.AppendUvarint(buf, uint64(len(v.B)))
 			buf = append(buf, v.B...)
 		default:
+			encodeRowBufPool.Put(bufPtr)
 			return nil, fmt.Errorf("ex: unsupported value kind %d at column %d", v.Kind, i)
 		}
 	}
-	return buf, nil
+	// Return a copy of the buffer so the pooled buffer can be reused.
+	result := make([]byte, len(buf))
+	copy(result, buf)
+	*bufPtr = buf
+	encodeRowBufPool.Put(bufPtr)
+	return result, nil
 }
 
 // decodeRow is the inverse of encodeRow.
