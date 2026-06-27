@@ -114,10 +114,10 @@ func serializeOuterRow(row *Row) string {
 	if row == nil || len(row.Cols) == 0 {
 		return ""
 	}
-	var parts []string
+	parts := make([]string, 0, len(row.Cols))
 	for _, col := range row.Cols {
-		if v, ok := row.Lookup(col); ok {
-			parts = append(parts, fmt.Sprint(v))
+		if v, ok := row.LookupValue(col); ok {
+			parts = append(parts, valueToString(v))
 		} else {
 			parts = append(parts, "NULL")
 		}

@@ -306,6 +306,30 @@ func (r *Row) Lookup(name string) (any, bool) {
 	return nil, false
 }
 
+// LookupValue returns the Value at the given column name without boxing.
+// REQ001027: avoids ToAny() boxing for callers that work with Value directly.
+func (r *Row) LookupValue(name string) (Value, bool) {
+	lname := name
+	for _, c := range name {
+		if c >= 'A' && c <= 'Z' {
+			lname = strings.ToLower(name)
+			break
+		}
+	}
+	for cur := r; cur != nil; cur = cur.Outer {
+		if cur.colIndex == nil {
+			cur.buildColIndex()
+		}
+		if idx, ok := cur.colIndex[lname]; ok {
+			if idx < len(cur.Data) {
+				return cur.Data[idx], true
+			}
+			return Value{}, false
+		}
+	}
+	return Value{}, false
+}
+
 // buildColIndex builds the O(1) column name → index map. REQ000544.
 // REQ000816: skip strings.ToLower when Cols are already lowercase
 // (the common case — Cols from RegisterTable are stored lowercase).
