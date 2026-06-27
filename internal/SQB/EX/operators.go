@@ -122,6 +122,9 @@ type SeqScan struct {
 	// allocation in cloneRow. Must be false for mutable operators
 	// (UPDATE/DELETE returning, ON CONFLICT DO UPDATE).
 	shallow bool
+
+	// REQ001042: batched context check counter.
+	ctxCheckCounter int
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -327,8 +330,13 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		return Row{}, ErrNoRows
 	}
 	if s.it.Next() {
-		if err := ctx.Err(); err != nil {
-			return Row{}, err
+		// REQ001042: check ctx.Err() every 1024 rows to reduce overhead.
+		s.ctxCheckCounter++
+		if s.ctxCheckCounter >= 1024 {
+			s.ctxCheckCounter = 0
+			if err := ctx.Err(); err != nil {
+				return Row{}, err
+			}
 		}
 		// REQ000501: save the raw key so Update/Delete can
 		// preserve the original row key for hidden-PK tables.
@@ -470,6 +478,9 @@ type IndexScan struct {
 
 	// REQ000790: index usage tracking for diagnostics.
 	iu *IndexUsage
+
+	// REQ001042: batched context check counter.
+	ctxCheckCounter int
 }
 
 // WithParams propagates the bound `?` placeholders to this
