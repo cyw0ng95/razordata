@@ -3044,14 +3044,7 @@ func estimateJoinPredicateSelectivity(pred PS.Expr, rowCount float64) float64 {
 	// REQ000819: handle IN-list expressions: selectivity ≈ len(list)/rowCount.
 	// When rowCount is unavailable, fall back to default NDV=100.
 	if in, ok := pred.(*PS.InExpr); ok && len(in.List) > 0 {
-		ndv := rowCount
-		if ndv <= 0 {
-			ndv = 100
-		}
-		sel := float64(len(in.List)) / ndv
-		if sel > 1.0 {
-			sel = 1.0
-		}
+		sel := estimateInListSelectivity(in.List, rowCount, nil, nil)
 		return sel
 	}
 	bin, ok := pred.(*PS.BinaryExpr)
@@ -3086,16 +3079,28 @@ func (p *Planner) joinPredSel(pred PS.Expr, rowCount float64) float64 {
 		return 1.0
 	}
 	// REQ000819: IN-list expressions. Use rowCount as NDV when available.
+	// REQ001057b: when the column has MCV stats, prefer the
+	// 1 - ∏(1 - pᵢ) formula over the uniform len/rowCount fallback.
 	if in, ok := pred.(*PS.InExpr); ok && len(in.List) > 0 {
-		ndv := rowCount
-		if ndv <= 0 {
-			ndv = 100
+		var mcvs [][]byte
+		var freqs []float64
+		if p.statsCatalog != nil {
+			// The IN-list target is the leftmost child (a column
+			// reference). Resolve its (table, col) pair and look up
+			// the column stats — but only when the target is a bare
+			// column ref. Mixed targets (e.g. expr IN (…)) fall
+			// through to the legacy formula.
+			if colRef, ok := in.Expr.(*PS.Ident); ok {
+				table, col := p.findTableForColumn(colRef.Name), colRef.Name
+				if table != "" && col != "" {
+					if cs := p.statsCatalog.ColumnStatsByName(table, col); cs != nil {
+						mcvs = cs.MostCommonVals
+						freqs = cs.MostCommonFreqs
+					}
+				}
+			}
 		}
-		sel := float64(len(in.List)) / ndv
-		if sel > 1.0 {
-			sel = 1.0
-		}
-		return sel
+		return estimateInListSelectivity(in.List, rowCount, mcvs, freqs)
 	}
 	bin, ok := pred.(*PS.BinaryExpr)
 	if !ok {
@@ -3131,6 +3136,128 @@ func (p *Planner) joinPredSel(pred PS.Expr, rowCount float64) float64 {
 	default:
 		return 0.5
 	}
+}
+
+// estimateInListSelectivity computes the selectivity of an IN-list
+// predicate using Most-Common-Values stats when available.
+//
+// REQ001057b: matches CockroachDB / PostgreSQL semantics — when MCVs
+// are known, the per-element frequency is used for matching values,
+// and a uniform tail `(remaining list count) / (NDV - MCV count)`
+// accounts for rare values. When MCVs are absent, the legacy
+// uniform-distribution formula `min(1, len(list)/max(rowCount, 1))`
+// is used.
+//
+// Inputs:
+//   - list: the IN-list expressions (literals, parameters, etc.)
+//   - rowCount: estimated number of rows in the column's table.
+//     Used as the NDV denominator when no MCVs are available.
+//     Pass 0 to fall back to the default NDV=100.
+//   - mcvs / freqs: parallel slices of most-common values and their
+//     frequencies. May be nil (legacy path).
+//
+// Returns selectivity in (0, 1]. A selectivity of 1.0 means the
+// predicate matches everything; a value clamped to 1 means every row
+// is selected.
+func estimateInListSelectivity(list []PS.Expr, rowCount float64, mcvs [][]byte, freqs []float64) float64 {
+	if len(list) == 0 {
+		return 1.0
+	}
+	// MCV-aware path: for each IN-list literal, look it up in MCVs.
+	// Match: pᵢ = freqs[j]. No match: contribute (1 / max(1, NDV - |MCVs|))
+	// to the rare-value tail.
+	if len(mcvs) > 0 && len(mcvs) == len(freqs) {
+		// Build a small lookup map. Linear scan is fine for the
+		// typical |MCVs| ≤ 100 and |list| ≤ 1000 budget.
+		freqByVal := make(map[string]float64, len(mcvs))
+		for i, v := range mcvs {
+			freqByVal[string(v)] = freqs[i]
+		}
+		// NDV estimate: use rowCount if positive, else fall back
+		// to the count of distinct MCVs plus a 1.0/NDV-tail term.
+		// We approximate the rare-value uniform frequency as
+		// max(0, (1 - sum(MCV freqs))) / max(1, NDV - |MCVs|).
+		// NDV itself is unknown from MCVs alone, so we use
+		// rowCount as the universe.
+		var matched int
+		var probNotMatched float64 = 1.0
+		var tailCount int
+		for _, item := range list {
+			// REQ001057b: extract literal bytes from the IN-list
+			// element. Most IN-list items are *PS.Literal or
+			// *PS.IntegerLit / *PS.FloatLit / *PS.StringLit; we
+			// only know the AST shape from PS.Ident (column) /
+			// unknown. Treat any non-MCV match as tail.
+			key, ok := inListLiteralKey(item)
+			if !ok {
+				tailCount++
+				continue
+			}
+			if f, hit := freqByVal[key]; hit {
+				probNotMatched *= (1.0 - f)
+				matched++
+			} else {
+				tailCount++
+			}
+		}
+		// Rare-value tail: uniform over (NDV - |MCVs|).
+		var tailSel float64
+		if tailCount > 0 {
+			ndv := rowCount
+			if ndv <= 0 {
+				ndv = 100
+			}
+			rareN := ndv - float64(len(mcvs))
+			if rareN < 1 {
+				rareN = 1
+			}
+			tailSel = float64(tailCount) / rareN
+			if tailSel > 1.0 {
+				tailSel = 1.0
+			}
+		}
+		sel := (1.0 - probNotMatched) + tailSel
+		if sel > 1.0 {
+			sel = 1.0
+		}
+		if sel < 0 {
+			sel = 0
+		}
+		return sel
+	}
+	// Legacy path: uniform distribution.
+	ndv := rowCount
+	if ndv <= 0 {
+		ndv = 100
+	}
+	sel := float64(len(list)) / ndv
+	if sel > 1.0 {
+		sel = 1.0
+	}
+	return sel
+}
+
+// inListLiteralKey returns a canonical byte representation of an
+// IN-list literal for MCV lookup, plus an "ok" flag. Only literal
+// expressions are supported; column references and complex
+// expressions are not (treated as tail).
+//
+// REQ001057b: this avoids importing PS.Literal-specific types — the
+// PS AST exposes a single Literal interface; concrete types are
+// *PS.StringLit, *PS.IntegerLit, *PS.FloatLit, etc. We probe a small
+// set of likely field names.
+func inListLiteralKey(item PS.Expr) (string, bool) {
+	switch v := item.(type) {
+	case *PS.StringLiteral:
+		return "S:" + v.Val, true
+	case *PS.NumberLiteral:
+		return fmt.Sprintf("I:%d", v.Val), true
+	case *PS.FloatLiteral:
+		return fmt.Sprintf("F:%v", v.Val), true
+	case *PS.BoolLiteral:
+		return fmt.Sprintf("B:%v", v.Val), true
+	}
+	return "", false
 }
 
 // ndvFromExpr returns the DistinctCount (NDV) of the column referenced

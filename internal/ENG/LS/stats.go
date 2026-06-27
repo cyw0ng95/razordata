@@ -1,6 +1,9 @@
 package ls
 
 // ColumnStats captures per-column selectivity statistics (REQ000254).
+// REQ001057b: MostCommonVals + MostCommonFreqs enable MCV-based
+// selectivity estimation for IN-list and equality predicates
+// (CockroachDB / PostgreSQL model).
 type ColumnStats struct {
 	DistinctCount int64
 	NullCount     int64
@@ -8,6 +11,12 @@ type ColumnStats struct {
 	MaxValue      []byte
 	Histogram     []HistogramBucket
 	RowCount      int64
+	// MostCommonVals lists the top-K most frequent distinct values
+	// in the column, parallel to MostCommonFreqs. Index i in
+	// MostCommonVals has frequency MostCommonFreqs[i] (0 ≤ f ≤ 1).
+	// Both slices must have the same length, or both be nil.
+	MostCommonVals  [][]byte
+	MostCommonFreqs []float64
 }
 
 // TableStats aggregates column-level statistics for a table, used by

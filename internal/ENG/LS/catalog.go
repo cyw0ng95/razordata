@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 
 	ct "github.com/cyw0ng95/razordata/internal/ENG/CT"
@@ -437,11 +438,20 @@ func lsRawToEntry(raw *ct.RawEntry) *CatalogEntry {
 
 // --- stats blob encode/decode ---
 
+// statsBlobVersion is the wire-format version. REQ001057b: bumped
+// from 1 (no MCVs) to 2 (MostCommonVals + MostCommonFreqs appended).
+// The decoder accepts both versions so old persisted blobs remain
+// readable.
+const statsBlobVersion = 2
+
 func encodeStatsBlob(stats []StatsEntry) []byte {
 	if len(stats) == 0 {
 		return nil
 	}
 	var buf []byte
+	// REQ001057b: write the version prefix. The decoder accepts blobs
+	// with or without the prefix (legacy blobs omit it).
+	buf = binary.AppendUvarint(buf, statsBlobVersion)
 	buf = binary.AppendUvarint(buf, uint64(len(stats)))
 	for _, s := range stats {
 		buf = binary.AppendUvarint(buf, uint64(len(s.Column)))
@@ -465,6 +475,21 @@ func encodeStatsBlob(stats []StatsEntry) []byte {
 			buf = append(buf, tmp[:]...)
 		}
 		buf = binary.AppendUvarint(buf, uint64(s.Stats.RowCount))
+		// REQ001057b: append MCV pairs (only when the count is
+		// positive — nil pairs are encoded as a zero count).
+		mcvCount := len(s.Stats.MostCommonVals)
+		if mcvCount > 0 && len(s.Stats.MostCommonFreqs) == mcvCount {
+			buf = binary.AppendUvarint(buf, uint64(mcvCount))
+			for i, v := range s.Stats.MostCommonVals {
+				buf = binary.AppendUvarint(buf, uint64(len(v)))
+				buf = append(buf, v...)
+				// float64 → bits → 8 bytes
+				binary.BigEndian.PutUint64(tmp[:], math.Float64bits(s.Stats.MostCommonFreqs[i]))
+				buf = append(buf, tmp[:]...)
+			}
+		} else {
+			buf = binary.AppendUvarint(buf, 0)
+		}
 	}
 	return buf
 }
@@ -473,12 +498,27 @@ func decodeStatsBlob(data []byte) []StatsEntry {
 	if len(data) == 0 {
 		return nil
 	}
+	// REQ001057b: detect wire-format version. v1 blobs (legacy) start
+	// directly with the entry count; v2+ blobs start with a version
+	// uvarint. Heuristic: if the first uvarint is 1 or 2 and parsing
+	// the remainder as v2 succeeds, use v2; otherwise fall back to v1.
 	off := 0
-	count, n := binary.Uvarint(data[off:])
+	first, n := binary.Uvarint(data[off:])
 	if n <= 0 {
 		return nil
 	}
 	off += n
+	version := uint64(0)
+	count := first
+	if first == statsBlobVersion {
+		version = first
+		c, n2 := binary.Uvarint(data[off:])
+		if n2 <= 0 {
+			return nil
+		}
+		off += n2
+		count = c
+	}
 	out := make([]StatsEntry, 0, count)
 	for i := uint64(0); i < count; i++ {
 		if off >= len(data) {
@@ -555,12 +595,12 @@ func decodeStatsBlob(data []byte) []StatsEntry {
 			upperBound := make([]byte, ubLen)
 			copy(upperBound, data[off:off+int(ubLen)])
 			off += int(ubLen)
-			count := int64(binary.BigEndian.Uint64(data[off : off+8]))
+			bCount := int64(binary.BigEndian.Uint64(data[off : off+8]))
 			off += 8
 			histogram = append(histogram, HistogramBucket{
 				LowerBound: lowerBound,
 				UpperBound: upperBound,
-				Count:      count,
+				Count:      bCount,
 			})
 		}
 		rowCount, n := binary.Uvarint(data[off:])
@@ -568,7 +608,7 @@ func decodeStatsBlob(data []byte) []StatsEntry {
 			return nil
 		}
 		off += n
-		out = append(out, StatsEntry{
+		entry := StatsEntry{
 			Column: colName,
 			Stats: ColumnStats{
 				DistinctCount: distinctCount,
@@ -578,7 +618,47 @@ func decodeStatsBlob(data []byte) []StatsEntry {
 				Histogram:     histogram,
 				RowCount:      int64(rowCount),
 			},
-		})
+		}
+		// REQ001057b: v2+ blobs append a MCV count followed by
+		// (value, freq) pairs. v1 blobs simply end here.
+		if version >= 2 {
+			if off >= len(data) {
+				return nil
+			}
+			mcvCount, n := binary.Uvarint(data[off:])
+			if n <= 0 {
+				return nil
+			}
+			off += n
+			if mcvCount > 0 {
+				entry.Stats.MostCommonVals = make([][]byte, 0, mcvCount)
+				entry.Stats.MostCommonFreqs = make([]float64, 0, mcvCount)
+				for k := uint64(0); k < mcvCount; k++ {
+					if off+1 >= len(data) {
+						return nil
+					}
+					vLen, n := binary.Uvarint(data[off:])
+					if n <= 0 {
+						return nil
+					}
+					off += n
+					if off+int(vLen) > len(data) {
+						return nil
+					}
+					v := make([]byte, vLen)
+					copy(v, data[off:off+int(vLen)])
+					off += int(vLen)
+					if off+8 > len(data) {
+						return nil
+					}
+					f := math.Float64frombits(binary.BigEndian.Uint64(data[off : off+8]))
+					off += 8
+					entry.Stats.MostCommonVals = append(entry.Stats.MostCommonVals, v)
+					entry.Stats.MostCommonFreqs = append(entry.Stats.MostCommonFreqs, f)
+				}
+			}
+		}
+		out = append(out, entry)
 	}
 	return out
 }

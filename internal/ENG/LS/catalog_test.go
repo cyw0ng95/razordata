@@ -489,3 +489,97 @@ func TestCatalog_CloseNil(t *testing.T) {
 		t.Errorf("Close on nil: got %v, want nil", err)
 	}
 }
+// REQ001057b: Wire-format round-trip for MCV data through the catalog
+// encoder/decoder must preserve MostCommonVals and MostCommonFreqs.
+// This protects against silent data corruption when MCVs are added
+// to a column's stats.
+func TestStatsBlob_MCVRoundTrip(t *testing.T) {
+	mcvs := [][]byte{
+		[]byte("I:846"),
+		[]byte("I:972"),
+		[]byte("I:646"),
+	}
+	freqs := []float64{0.05, 0.04, 0.03}
+	entry := StatsEntry{
+		TableID: 1,
+		Column:  "e8",
+		Stats: ColumnStats{
+			DistinctCount:   100,
+			NullCount:       0,
+			RowCount:        100,
+			MostCommonVals:  mcvs,
+			MostCommonFreqs: freqs,
+		},
+	}
+	encoded := encodeStatsBlob([]StatsEntry{entry})
+	if len(encoded) == 0 {
+		t.Fatal("encoder produced empty blob")
+	}
+	decoded := decodeStatsBlob(encoded)
+	if len(decoded) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(decoded))
+	}
+	got := decoded[0]
+	if got.Column != "e8" {
+		t.Fatalf("expected col=e8, got %s", got.Column)
+	}
+	if len(got.Stats.MostCommonVals) != 3 {
+		t.Fatalf("expected 3 MCVs, got %d", len(got.Stats.MostCommonVals))
+	}
+	for i, want := range mcvs {
+		if string(got.Stats.MostCommonVals[i]) != string(want) {
+			t.Errorf("MCV[%d]: want %q, got %q", i, want, got.Stats.MostCommonVals[i])
+		}
+		if diff := got.Stats.MostCommonFreqs[i] - freqs[i]; diff > 1e-9 || diff < -1e-9 {
+			t.Errorf("MCV freq[%d]: want %v, got %v", i, freqs[i], got.Stats.MostCommonFreqs[i])
+		}
+	}
+}
+
+// REQ001057b: Decoder must remain backward-compatible with the v1
+// (no-MCV) wire format. Simulate a v1 blob by stripping the version
+// prefix; decoding must succeed and yield nil MCVs.
+func TestStatsBlob_LegacyV1Decode(t *testing.T) {
+	entry := StatsEntry{
+		TableID: 1,
+		Column:  "x",
+		Stats: ColumnStats{
+			DistinctCount: 50,
+			NullCount:     0,
+			RowCount:      50,
+		},
+	}
+	encoded := encodeStatsBlob([]StatsEntry{entry})
+	if encoded[0] != 0x02 {
+		t.Fatalf("expected version prefix 0x02, got 0x%x", encoded[0])
+	}
+	v1 := encoded[1:]
+	decoded := decodeStatsBlob(v1)
+	if len(decoded) != 1 {
+		t.Fatalf("legacy v1 decode: expected 1 entry, got %d", len(decoded))
+	}
+	if decoded[0].Column != "x" {
+		t.Fatalf("legacy v1 decode: expected col=x, got %s", decoded[0].Column)
+	}
+	if len(decoded[0].Stats.MostCommonVals) != 0 {
+		t.Fatalf("legacy v1 decode: expected no MCVs, got %d", len(decoded[0].Stats.MostCommonVals))
+	}
+}
+
+// REQ001057b: Decoder round-trip with empty MCVs must not produce
+// spurious non-nil slices.
+func TestStatsBlob_EmptyMCV(t *testing.T) {
+	entry := StatsEntry{
+		TableID: 1,
+		Column:  "y",
+		Stats: ColumnStats{
+			DistinctCount: 10,
+			RowCount:      10,
+		},
+	}
+	encoded := encodeStatsBlob([]StatsEntry{entry})
+	decoded := decodeStatsBlob(encoded)
+	if len(decoded) != 1 || len(decoded[0].Stats.MostCommonVals) != 0 {
+		t.Fatalf("expected no MCVs, got %v", decoded)
+	}
+}

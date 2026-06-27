@@ -670,3 +670,131 @@ func TestN3JoinOrdering_MultiStart_BoundedPlanningTime(t *testing.T) {
 		t.Fatal("multi-start N3 with K=8 exceeded 2s planning budget")
 	}
 }
+// REQ001057b: MCV-based IN-list selectivity. With Most-Common-Values
+// stats, the selectivity formula is 1 - ∏(1 - pᵢ) over matched MCVs
+// plus a uniform tail for non-MCV items. When MCVs are absent, the
+// legacy uniform formula is used.
+func TestEstimateInListSelectivity_NoMCVs(t *testing.T) {
+	// No MCVs — fall back to len/rowCount.
+	list := []PS.Expr{
+		&PS.NumberLiteral{Val: 1},
+		&PS.NumberLiteral{Val: 2},
+		&PS.NumberLiteral{Val: 3},
+	}
+	// rowCount=100, list=3 → 3/100 = 0.03
+	sel := estimateInListSelectivity(list, 100, nil, nil)
+	if sel <= 0 || sel > 0.05 {
+		t.Fatalf("expected ~0.03, got %v", sel)
+	}
+}
+
+// REQ001057b: MCV-aware path must sum matched MCV frequencies using
+// 1 - ∏(1 - pᵢ). For two MCV-matched values with freq 0.5 each:
+// 1 - (1-0.5)*(1-0.5) = 0.75. A third non-MCV value should add a
+// tail term of 1/(rowCount - |MCVs|).
+func TestEstimateInListSelectivity_WithMCVs(t *testing.T) {
+	list := []PS.Expr{
+		&PS.NumberLiteral{Val: 846},
+		&PS.NumberLiteral{Val: 972},
+		&PS.NumberLiteral{Val: 9999}, // rare, not in MCVs
+	}
+	mcvs := [][]byte{
+		[]byte("I:846"),
+		[]byte("I:972"),
+	}
+	freqs := []float64{0.5, 0.5}
+	sel := estimateInListSelectivity(list, 100, mcvs, freqs)
+	// MCV-matched: 1 - (1-0.5)*(1-0.5) = 0.75
+	// Tail (1 rare): 1 / max(1, 100 - 2) = 1/98 ≈ 0.0102
+	// Total: ≈ 0.7602
+	if sel < 0.75 || sel > 0.78 {
+		t.Fatalf("expected ~0.76, got %v", sel)
+	}
+}
+
+// REQ001057b: When the IN-list contains only MCV-matched values,
+// selectivity must equal 1 - ∏(1 - pᵢ) with no tail term.
+func TestEstimateInListSelectivity_AllMCV(t *testing.T) {
+	list := []PS.Expr{
+		&PS.NumberLiteral{Val: 846},
+		&PS.NumberLiteral{Val: 972},
+	}
+	mcvs := [][]byte{
+		[]byte("I:846"),
+		[]byte("I:972"),
+	}
+	freqs := []float64{0.1, 0.2}
+	sel := estimateInListSelectivity(list, 100, mcvs, freqs)
+	// 1 - (1-0.1)*(1-0.2) = 1 - 0.9*0.8 = 1 - 0.72 = 0.28
+	if sel < 0.27 || sel > 0.29 {
+		t.Fatalf("expected ~0.28, got %v", sel)
+	}
+}
+
+// REQ001057b: Selectivity must clamp to [0, 1]. With many rare
+// values the uniform-tail formula can exceed 1.
+func TestEstimateInListSelectivity_ClampsToOne(t *testing.T) {
+	// 50 rare values; rowCount=10, |MCVs|=2.
+	list := make([]PS.Expr, 50)
+	for i := range list {
+		list[i] = &PS.NumberLiteral{Val: int64(1000 + i)}
+	}
+	mcvs := [][]byte{[]byte("I:1"), []byte("I:2")}
+	freqs := []float64{0.5, 0.5}
+	sel := estimateInListSelectivity(list, 10, mcvs, freqs)
+	if sel < 0 || sel > 1.0 {
+		t.Fatalf("expected clamped to [0,1], got %v", sel)
+	}
+}
+
+// REQ001057b: Empty IN-list returns selectivity 1.0 (matches nothing
+// in the model — degenerate but safe default).
+func TestEstimateInListSelectivity_Empty(t *testing.T) {
+	sel := estimateInListSelectivity(nil, 100, nil, nil)
+	if sel != 1.0 {
+		t.Fatalf("expected 1.0 for empty list, got %v", sel)
+	}
+}
+
+// REQ001057b: When joinPredSel sees an InExpr with MCV stats on the
+// target column, the planner must use the MCV-aware formula instead
+// of the uniform len/rowCount fallback. With MCVs containing a 50%
+// common value, selectivity for `col IN (846)` should be ≈0.5, not
+// 1/100 = 0.01.
+func TestJoinPredSel_INList_UsesMCVs(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("t1", []ColInfo{{Name: "id", Typ: 1}, {Name: "e8", Typ: 1}}, "id")
+	// Wire a mock stats catalog with MCVs.
+	cat := newMockStatsCatalog()
+	cat.setStats("t1", "e8", ls.ColumnStats{
+		DistinctCount:   100,
+		NullCount:       0,
+		RowCount:        100,
+		MostCommonVals:  [][]byte{[]byte("I:846")},
+		MostCommonFreqs: []float64{0.5},
+	})
+	p.statsCatalog = cat
+
+	// Make findTableForColumn work — it scans the in-memory `tables`
+	// map for a column name. Add t1 with one row containing e8.
+	tablesMu.Lock()
+	tables["t1"] = []Row{{
+		Cols: []string{"id", "e8"},
+		Data: []Value{NewIntValue(1), NewIntValue(846)},
+	}}
+	tablesMu.Unlock()
+	defer func() {
+		tablesMu.Lock()
+		delete(tables, "t1")
+		tablesMu.Unlock()
+	}()
+
+	in := &PS.InExpr{
+		Expr: &PS.Ident{Name: "e8"},
+		List: []PS.Expr{&PS.NumberLiteral{Val: 846}},
+	}
+	sel := p.joinPredSel(in, 100)
+	if sel < 0.45 || sel > 0.55 {
+		t.Fatalf("expected MCV-aware selectivity ~0.5, got %v", sel)
+	}
+}
