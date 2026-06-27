@@ -307,6 +307,12 @@ func NewParallelSeqScan(source Operator, schema []string, types []LX.TokenType, 
 }
 
 func (p *ParallelSeqScan) NextBatch(ctx context.Context) (*Batch, error) {
+	// Engine path: delegate to SeqScan.NextBatch when source is
+	// a store-backed SeqScan and there are no in-memory rows.
+	// REQ001064.
+	if ss, ok := p.source.(*SeqScan); ok && ss.store != nil {
+		return ss.NextBatch(ctx)
+	}
 	if p.pendingIdx < len(p.pendingBatches) {
 		batch := p.pendingBatches[p.pendingIdx]
 		p.pendingIdx++

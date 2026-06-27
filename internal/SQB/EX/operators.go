@@ -9,8 +9,8 @@ import (
 	"sync"
 
 	id "github.com/cyw0ng95/razordata/internal/ENG/ID"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
-
 // ErrTableNotRegisteredForStorage is returned when an operator is asked to
 // route through the storage engine for a table that has not been registered
 // in the in-memory catalog. Callers can match it with errors.Is and inspect
@@ -239,6 +239,119 @@ func NewSeqScanWithStore(store Store, table string) (*SeqScan, error) {
 		schema: ss,
 		prefix: tablePrefix(table),
 	}, nil
+}
+
+// engineBatchSize is the number of rows to fetch per batch from the
+// LSM engine. 64 balances iterator overhead with per-batch memory
+// (fits in L1 cache). REQ001064.
+const engineBatchSize = 64
+
+// valueToBatch converts a Value to the (any, LX.TokenType) pair
+// expected by Batch.AppendRow. REQ001064.
+func valueToBatch(v Value) (any, LX.TokenType) {
+	switch v.Kind {
+	case KindInt:
+		return v.I64, LX.T_INT_KW
+	case KindFloat:
+		return v.F64, LX.T_FLOAT_KW
+	case KindText:
+		return v.S, LX.T_TEXT
+	case KindBool:
+		return v.Bo, LX.T_BOOL
+	case KindBlob:
+		return string(v.B), LX.T_BLOB
+	default:
+		return nil, LX.T_TEXT
+	}
+}
+
+// NextBatch reads up to engineBatchSize rows from the LSM iterator
+// and returns them as a columnar *Batch. Returns (nil, nil) at EOF.
+// Caller is responsible for calling Put() on each non-nil batch.
+// REQ001064.
+func (s *SeqScan) NextBatch(ctx context.Context) (*Batch, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("ex: SeqScan.NextBatch requires a Store")
+	}
+	if s.schema == nil || len(s.schema.cols) == 0 {
+		return nil, nil
+	}
+	if s.it == nil {
+		if s.prefix == nil {
+			return nil, nil
+		}
+		s.it = s.store.NewIterator(s.prefix)
+	}
+	if s.it == nil {
+		return nil, nil
+	}
+
+	nCols := len(s.schema.cols)
+	cols := s.schema.cols
+	if s.alias != "" && s.prefixedCols != nil {
+		cols = s.prefixedCols
+	}
+	batch := GetBatch(nCols)
+	batch.Size = 0
+	for k := 0; k < nCols; k++ {
+		batch.SetColumnName(k, cols[k])
+	}
+	batch.SetColMap(s.schema.colIndex)
+
+	for batch.Size < engineBatchSize {
+		if !s.it.Next() {
+			if err := s.it.Err(); err != nil {
+				batch.Put()
+				return nil, err
+			}
+			break
+		}
+		s.ctxCheckCounter++
+		if s.ctxCheckCounter >= 1024 {
+			s.ctxCheckCounter = 0
+			if err := ctx.Err(); err != nil {
+				batch.Put()
+				return nil, err
+			}
+		}
+		s.currentKey = s.it.Key()
+		v := s.it.Value()
+		row, err := decodeRow(v, s.schema)
+		if err != nil {
+			batch.Put()
+			return nil, err
+		}
+		row.storeKey = s.currentKey
+		if s.planner != nil {
+			row.planner = s.planner
+		}
+		row.tableName = s.table
+		if s.alias != "" {
+			if s.prefixedCols != nil {
+				row.Cols = s.prefixedCols
+				row.colIndex = s.prefixedColIndex
+			} else {
+				row = prefixRowCols(row, s.alias)
+			}
+			row.tableName = s.alias
+		}
+		for i := 0; i < nCols; i++ {
+			if i >= len(row.Data) {
+				break
+			}
+			val := row.Data[i]
+			isNull := val.IsNull()
+			av, typ := valueToBatch(val)
+			batch.AppendRow(i, typ, av, isNull)
+		}
+		batch.AdvanceSize()
+	}
+
+	if batch.Size == 0 {
+		batch.Put()
+		return nil, nil
+	}
+	return batch, nil
 }
 
 func (s *SeqScan) Next(ctx context.Context) (Row, error) {
