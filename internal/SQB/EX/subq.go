@@ -82,7 +82,7 @@ func injectOuter(op Operator, outer *Row) Operator {
 	return op
 }
 
-func runSubqueryPlan(pl *plan, outer *Row, params []any) ([]Row, error) {
+func runSubqueryPlan(ctx context.Context, pl *plan, outer *Row, params []any) ([]Row, error) {
 	if pl == nil || pl.root == nil {
 		return nil, ErrSubquery
 	}
@@ -92,7 +92,10 @@ func runSubqueryPlan(pl *plan, outer *Row, params []any) ([]Row, error) {
 	defer pl.root.Close()
 	var out []Row
 	for {
-		row, err := pl.root.Next(context.Background())
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		row, err := pl.root.Next(ctx)
 		if err != nil {
 			if err == ErrNoRows {
 				break

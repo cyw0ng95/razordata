@@ -67,6 +67,9 @@ func (a *HashAggregate) Close() error {
 
 func (a *HashAggregate) materialize(ctx context.Context) error {
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		row, err := a.child.Next(ctx)
 		if err != nil {
 			if err == ErrNoRows {

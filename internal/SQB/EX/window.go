@@ -73,6 +73,9 @@ func (w *WindowOperator) Close() error {
 
 func (w *WindowOperator) materialize(ctx context.Context) error {
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		row, err := w.input.Next(ctx)
 		if err != nil {
 			if err == ErrNoRows {

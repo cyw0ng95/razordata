@@ -1,6 +1,7 @@
 package EX
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -601,7 +602,7 @@ func evalInSubquery(target any, subq PS.Stmt, outer *Row, params []any) (any, er
 	if err != nil {
 		return nil, err
 	}
-	rows, err := runSubqueryPlan(pl, outer, params)
+	rows, err := runSubqueryPlan(context.Background(), pl, outer, params)
 	if err != nil {
 		return nil, err
 	}
@@ -699,7 +700,7 @@ func evalExists(e *PS.ExistsExpr, outer *Row, params []any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := runSubqueryPlan(pl, outer, params)
+	rows, err := runSubqueryPlan(context.Background(), pl, outer, params)
 	if err != nil {
 		return nil, err
 	}
@@ -736,7 +737,7 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (any, erro
 	if err != nil {
 		return nil, err
 	}
-	rows, err := runSubqueryPlan(pl, outer, params)
+	rows, err := runSubqueryPlan(context.Background(), pl, outer, params)
 	if err != nil {
 		return nil, err
 	}
