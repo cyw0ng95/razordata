@@ -797,9 +797,18 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 		j.blkRightRows = j.blkRightRows[:0]
 		// REQ000863: compute right prefixed columns once. All rows from
 		// the same scan share the same Cols, so prefixCols is identical.
+		// REQ000861: check hasAnyPrefix first to avoid double-prefixing
+		// when the right side is already a join operator (bushy merge).
+		// Without this, "t3.a" becomes "t4.t3.a" and column lookups
+		// via qualified name ("t4.d") fail to match, causing wrong
+		// predicate evaluation and incorrect OR filter results.
 		if j.rightPrefixedCols == nil {
 			if firstRow, err := j.right.Next(ctx); err == nil {
-				j.rightPrefixedCols = prefixCols(firstRow.Cols, j.rightTbl)
+				if !hasAnyPrefix(firstRow.Cols) {
+					j.rightPrefixedCols = prefixCols(firstRow.Cols, j.rightTbl)
+				} else {
+					j.rightPrefixedCols = append([]string(nil), firstRow.Cols...)
+				}
 				inner := Row{Types: firstRow.Types, Data: firstRow.Data, Outer: firstRow.Outer}
 				inner.tableName = firstRow.tableName
 				inner.Cols = j.rightPrefixedCols
