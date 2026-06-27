@@ -234,7 +234,15 @@ func (p *Parser) parsePrimary() (Expr, error) {
 	case LX.T_LPAREN:
 		p.advance()
 		if p.current.Type == LX.T_SELECT {
+			// REQ000962: save and restore pendingSubquery around
+			// nested subquery parsing. The inner subquery may set
+			// pendingSubquery for its own FROM (SELECT ...) clause,
+			// which would leak into the outer SELECT's SubqueryFrom
+			// field and cause wrong results (e.g. 2 rows instead of 1).
+			savedPending := p.pendingSubquery
+			p.pendingSubquery = nil
 			sel, err := p.parseSelect()
+			p.pendingSubquery = savedPending
 			if err != nil {
 				return nil, err
 			}
