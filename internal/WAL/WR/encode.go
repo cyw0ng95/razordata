@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/WAL/WR/lz4"
 )
@@ -14,6 +15,14 @@ var (
 	ErrUnknownRecord   = errors.New("wr: record length exceeds segment tail")
 	ErrCorrupt         = errors.New("wr: record envelope CRC mismatch")
 )
+
+// REQ001034: pool for the out buffer in encodeRecordCompressed.
+var encodeOutPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 0, 256)
+		return &buf
+	},
+}
 
 const MaxRecordLen = 4 * 1024 * 1024
 
@@ -59,17 +68,28 @@ func encodeRecordCompressed(rec *LogRecord, compress bool) []byte {
 	bodyLen := len(diskBody)
 	totalLen := uint64(bodyLen + 4)
 
-	out := make([]byte, binary.MaxVarintLen64, binary.MaxVarintLen64+bodyLen+4)
-	n := binary.PutUvarint(out, totalLen)
-	// out now has n bytes of length prefix. We allocated
-	// MaxVarintLen64 but only n are used. Shrink to actual
-	// size by re-slicing.
-	out = out[:n]
-	out = append(out, diskBody...)
+	// REQ001034: use pooled buffer for the output, then copy result.
+	bufPtr := encodeOutPool.Get().(*[]byte)
+	buf := *bufPtr
+	if cap(buf) < binary.MaxVarintLen64+bodyLen+4 {
+		buf = make([]byte, binary.MaxVarintLen64, binary.MaxVarintLen64+bodyLen+4)
+		*bufPtr = buf
+		encodeOutPool.Put(bufPtr)
+		bufPtr = encodeOutPool.Get().(*[]byte)
+		buf = *bufPtr
+	}
+	buf = buf[:binary.MaxVarintLen64]
+	n := binary.PutUvarint(buf, totalLen)
+	buf = buf[:n]
+	buf = append(buf, diskBody...)
 	sum := crc32.ChecksumIEEE(diskBody)
-	out = append(out,
+	buf = append(buf,
 		byte(sum), byte(sum>>8), byte(sum>>16), byte(sum>>24))
-	return out
+	result := make([]byte, len(buf))
+	copy(result, buf)
+	*bufPtr = buf[:0]
+	encodeOutPool.Put(bufPtr)
+	return result
 }
 
 func maxPayloadSize(rec *LogRecord) int {
