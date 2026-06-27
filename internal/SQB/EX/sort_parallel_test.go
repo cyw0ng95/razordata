@@ -153,8 +153,50 @@ func TestLessRow(t *testing.T) {
 	if lessRow(row2, row1, keys) {
 		t.Error("row2 not < row1 expected")
 	}
-	if !lessRow(row1, row3, keys) {
-		t.Error("row1 < row3 (by a) expected")
+	if !lessRow(row2, row3, keys) {
+		t.Error("row2 < row3 (by a) expected")
+	}
+}
+
+// TestParallelSort_MultiBatch verifies that NextBatch returns
+// multiple batches when data exceeds BatchSize. REQ001021.
+func TestParallelSort_MultiBatch(t *testing.T) {
+	rows := makeSortTestRows(2 * BatchSize + 10)
+	src := &rowSourceForTest{rows: rows}
+	schema := []string{"id"}
+	types := []LX.TokenType{LX.T_INT_KW}
+	scan := NewVectorizedSeqScan(src, schema, types)
+	defer scan.Close()
+
+	keys := []SortKey{{ColName: "id", Order: AscOrder}}
+	sortOp := NewParallelSort(scan, keys, nil)
+	defer sortOp.Close()
+
+	var allRows []int64
+	for {
+		batch, err := sortOp.NextBatch(context.Background())
+		if err != nil {
+			t.Fatalf("NextBatch: %v", err)
+		}
+		if batch == nil {
+			break
+		}
+		defer batch.Put()
+
+		idCol := batch.Cols[0].Data.([]int64)
+		allRows = append(allRows, idCol...)
+	}
+
+	// Verify all rows are present
+	if len(allRows) != len(rows) {
+		t.Fatalf("expected %d rows, got %d", len(rows), len(allRows))
+	}
+
+	// Verify sorted
+	for i := 1; i < len(allRows); i++ {
+		if allRows[i] < allRows[i-1] {
+			t.Errorf("not sorted at %d: %d > %d", i, allRows[i-1], allRows[i])
+		}
 	}
 }
 

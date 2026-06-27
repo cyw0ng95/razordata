@@ -36,6 +36,7 @@ type ParallelSort struct {
 	keyIndices []int
 	pool       *WorkerPool
 	rows       []Row
+	pos        int
 	done       bool
 }
 
@@ -60,30 +61,39 @@ func (s *ParallelSort) NextBatch(ctx context.Context) (*Batch, error) {
 		return nil, err
 	}
 
-	// Materialize all rows from the source
-	for {
-		batch, err := s.source.NextBatch(ctx)
-		if err != nil {
-			return nil, err
+	// Materialize all rows from the source (first call only)
+	if s.rows == nil {
+		for {
+			batch, err := s.source.NextBatch(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if batch == nil {
+				break
+			}
+			rows := batchToRows(batch)
+			s.rows = append(s.rows, rows...)
+			batch.Put()
 		}
-		if batch == nil {
-			break
+
+		// Sort (parallel or sequential)
+		if s.pool != nil && len(s.rows) > 1024 {
+			s.parallelSort()
+		} else {
+			s.sequentialSort()
 		}
-		// Convert batch back to rows for sorting
-		rows := batchToRows(batch)
-		s.rows = append(s.rows, rows...)
-		batch.Put()
 	}
 
-	// Sort (parallel or sequential)
-	if s.pool != nil && len(s.rows) > 1024 {
-		s.parallelSort()
-	} else {
-		s.sequentialSort()
+	// Return batch from current position
+	batch, err := s.batchFromPos()
+	if err != nil {
+		return nil, err
 	}
-
-	s.done = true
-	return s.firstBatch()
+	if batch == nil {
+		s.done = true
+		return nil, nil
+	}
+	return batch, nil
 }
 
 // parallelSort implements sample sort.
@@ -179,17 +189,16 @@ func (s *ParallelSort) sequentialSort() {
 }
 
 // firstBatch returns the first batch from the sorted rows.
-func (s *ParallelSort) firstBatch() (*Batch, error) {
+func (s *ParallelSort) batchFromPos() (*Batch, error) {
+	if s.pos >= len(s.rows) {
+		return nil, nil
+	}
 	schema := make([]string, 0)
 	types := make([]LX.TokenType, 0)
-	if s.source != nil {
-		// We need to extract schema from the scan
-		// For now, infer from the first row
-		if len(s.rows) > 0 {
-			schema = s.rows[0].Cols
-			for _, t := range s.rows[0].Types {
-				types = append(types, LX.TokenType(t))
-			}
+	if len(s.rows) > 0 {
+		schema = s.rows[0].Cols
+		for _, t := range s.rows[0].Types {
+			types = append(types, LX.TokenType(t))
 		}
 	}
 
@@ -198,11 +207,11 @@ func (s *ParallelSort) firstBatch() (*Batch, error) {
 		batch.SetColumnName(i, name)
 	}
 
-	rowCount := len(s.rows)
-	if rowCount > BatchSize {
-		rowCount = BatchSize
+	end := s.pos + BatchSize
+	if end > len(s.rows) {
+		end = len(s.rows)
 	}
-	for i := 0; i < rowCount; i++ {
+	for i := s.pos; i < end; i++ {
 		row := s.rows[i]
 		for j, colName := range schema {
 			val, ok := row.Lookup(colName)
@@ -228,6 +237,7 @@ func (s *ParallelSort) firstBatch() (*Batch, error) {
 		}
 	}
 
+	s.pos = end
 	if batch.Size == 0 {
 		batch.Put()
 		return nil, nil
