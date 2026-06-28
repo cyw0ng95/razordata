@@ -100,6 +100,7 @@ func AllCases() []dualCase {
 	out = append(out, compoundCases...)
 	out = append(out, compoundNullCases...)
 	out = append(out, crossJoinCases...)
+	out = append(out, genColCases...)
 	out = append(out, probeCases...)
 	out = append(out, probeCasesV2...)
 	return out

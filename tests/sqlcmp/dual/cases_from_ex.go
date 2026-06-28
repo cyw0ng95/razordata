@@ -505,3 +505,25 @@ var compoundNullCases = []dualCase{
 		Want:  [][]any{{int64(10)}, {int64(20)}, {int64(30)}, {int64(40)}, {int64(50)}, {int64(60)}},
 	},
 }
+
+// genColCases from EX/gencol_test.go: generated (STORED) columns.
+var genColCases = []dualCase{
+	{
+		Name: "generated_column_stored",
+		Setup: []string{
+			"CREATE TABLE t (a INTEGER, b INTEGER AS (a + 1) STORED)",
+			"INSERT INTO t (a) VALUES (10)",
+		},
+		Query: "SELECT a, b FROM t",
+		Want:  [][]any{{int64(10), int64(11)}},
+	},
+	{
+		Name: "generated_column_multi",
+		Setup: []string{
+			"CREATE TABLE t2 (x INTEGER, y INTEGER, s INTEGER AS (x + y) STORED)",
+			"INSERT INTO t2 (x, y) VALUES (3, 4)",
+		},
+		Query: "SELECT x, y, s FROM t2",
+		Want:  [][]any{{int64(3), int64(4), int64(7)}},
+	},
+}
