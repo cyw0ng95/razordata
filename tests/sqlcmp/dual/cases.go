@@ -98,6 +98,7 @@ func AllCases() []dualCase {
 	out = append(out, scalarSubqueryCases...)
 	out = append(out, cteCases...)
 	out = append(out, compoundCases...)
+	out = append(out, compoundNullCases...)
 	out = append(out, crossJoinCases...)
 	out = append(out, probeCases...)
 	out = append(out, probeCasesV2...)

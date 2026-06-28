@@ -463,3 +463,45 @@ var crossJoinCases = []dualCase{
 		Want:  [][]any{{int64(1160)}},
 	},
 }
+
+// compoundNullCases from EX/compound_nulls_test.go: NULL handling
+// in UNION and UNION ALL, and multi-branch UNION ALL streaming.
+var compoundNullCases = []dualCase{
+	{
+		Name: "union_all_preserves_nulls",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, NULL), (2, 10), (3, NULL)",
+		},
+		Query: "SELECT v FROM t UNION ALL SELECT v FROM t ORDER BY v",
+		Want:  [][]any{{nil}, {nil}, {nil}, {nil}, {int64(10)}, {int64(10)}},
+	},
+	{
+		Name: "union_dedup_nulls",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, NULL), (2, 10), (3, NULL)",
+		},
+		Query: "SELECT v FROM t UNION SELECT v FROM t ORDER BY v",
+		Want:  [][]any{{nil}, {int64(10)}},
+	},
+	{
+		Name: "union_all_multi_branch",
+		Setup: []string{
+			"CREATE TABLE t1 (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t1 VALUES (1, 10)",
+			"CREATE TABLE t2 (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t2 VALUES (1, 20)",
+			"CREATE TABLE t3 (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t3 VALUES (1, 30)",
+			"CREATE TABLE t4 (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t4 VALUES (1, 40)",
+			"CREATE TABLE t5 (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t5 VALUES (1, 50)",
+			"CREATE TABLE t6 (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t6 VALUES (1, 60)",
+		},
+		Query: "SELECT v FROM t1 UNION ALL SELECT v FROM t2 UNION ALL SELECT v FROM t3 UNION ALL SELECT v FROM t4 UNION ALL SELECT v FROM t5 UNION ALL SELECT v FROM t6",
+		Want:  [][]any{{int64(10)}, {int64(20)}, {int64(30)}, {int64(40)}, {int64(50)}, {int64(60)}},
+	},
+}
