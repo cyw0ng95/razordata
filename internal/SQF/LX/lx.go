@@ -2,6 +2,7 @@ package LX
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -416,7 +417,7 @@ func (l *Lexer) scanString() Token {
 	for {
 		c := l.peek()
 		if c == 0 {
-			return Token{Type: T_ERROR, Lexeme: "", Literal: ErrUnterminatedString, Line: startLine, Col: startCol}
+			return Token{Type: T_ERROR, Lexeme: "", LitErr: ErrUnterminatedString, Line: startLine, Col: startCol}
 		}
 		if c == '\'' {
 			if len(l.input) > l.pos+1 && l.input[l.pos+1] == '\'' {
@@ -438,9 +439,10 @@ func (l *Lexer) scanString() Token {
 						sb.WriteByte(l.input[i])
 					}
 				}
-				return Token{Type: T_STRING, Lexeme: sb.String(), Literal: sb.String(), Line: startLine, Col: startCol}
+				v := sb.String()
+				return Token{Type: T_STRING, Lexeme: v, LitStr: v, Line: startLine, Col: startCol}
 			}
-			return Token{Type: T_STRING, Lexeme: lexeme, Literal: lexeme, Line: startLine, Col: startCol}
+			return Token{Type: T_STRING, Lexeme: lexeme, LitStr: lexeme, Line: startLine, Col: startCol}
 		}
 		l.advance()
 	}
@@ -514,14 +516,25 @@ func (l *Lexer) scanNumber() Token {
 	lit := l.input[start:l.pos]
 
 	if hasDot {
-		return Token{Type: T_FLOAT, Lexeme: lit, Literal: lit, Line: startLine, Col: startCol}
+		// REQ001143: populate LitFloat so callers don't need to
+		// re-parse the lexeme. Lexeme is still set for error
+		// messages and string-form consumers.
+		f, ferr := parseFloatLiteral(lit)
+		if ferr != nil {
+			return Token{Type: T_ERROR, Lexeme: "", LitErr: ferr, Line: startLine, Col: startCol}
+		}
+		return Token{Type: T_FLOAT, Lexeme: lit, LitFloat: f, Line: startLine, Col: startCol}
 	}
 
 	val, err := parseInt64(lit)
 	if err != nil {
-		return Token{Type: T_ERROR, Lexeme: "", Literal: err, Line: startLine, Col: startCol}
+		return Token{Type: T_ERROR, Lexeme: "", LitErr: err, Line: startLine, Col: startCol}
 	}
-	return Token{Type: T_INT, Lexeme: lit, Literal: val, Line: startLine, Col: startCol}
+	return Token{Type: T_INT, Lexeme: lit, LitInt: val, Line: startLine, Col: startCol}
+}
+
+func parseFloatLiteral(s string) (float64, error) {
+	return strconv.ParseFloat(s, 64)
 }
 
 func parseInt64(s string) (int64, error) {
@@ -561,7 +574,7 @@ func (l *Lexer) scanOperator() Token {
 			l.advance()
 			return Token{Type: T_NE, Lexeme: "!=", Line: startLine, Col: startCol}
 		}
-		return Token{Type: T_ERROR, Lexeme: "", Literal: ErrUnexpectedChar, Line: startLine, Col: startCol}
+		return Token{Type: T_ERROR, Lexeme: "", LitErr: ErrUnexpectedChar, Line: startLine, Col: startCol}
 	case '<':
 		if l.peek() == '=' {
 			l.advance()
@@ -624,5 +637,5 @@ func (l *Lexer) scanOperator() Token {
 		return Token{Type: T_MOD, Lexeme: "%", Line: startLine, Col: startCol}
 	}
 
-	return Token{Type: T_ERROR, Lexeme: "", Literal: ErrUnexpectedChar, Line: startLine, Col: startCol}
+	return Token{Type: T_ERROR, Lexeme: "", LitErr: ErrUnexpectedChar, Line: startLine, Col: startCol}
 }

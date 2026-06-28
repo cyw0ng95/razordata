@@ -10,21 +10,18 @@ import (
 func (p *Parser) parsePrimary() (Expr, error) {
 	switch p.current.Type {
 	case LX.T_INT:
-		val, ok := p.current.Literal.(int64)
-		if !ok {
-			return nil, &SyntaxError{Expected: "int64 literal", Got: fmt.Sprintf("%T", p.current.Literal)}
-		}
+		// REQ001143: use typed LitInt accessor (no boxing).
+		val := p.current.LitInt
 		p.advance()
 		return &NumberLiteral{Val: val}, nil
 	case LX.T_FLOAT:
-		val := p.current.Lexeme
+		// REQ001143: use typed LitFloat accessor.
+		val := p.current.LitFloat
 		p.advance()
-		return &FloatLiteral{Val: parseFloat(val)}, nil
+		return &FloatLiteral{Val: val}, nil
 	case LX.T_STRING:
-		val, ok := p.current.Literal.(string)
-		if !ok {
-			return nil, &SyntaxError{Expected: "string literal", Got: fmt.Sprintf("%T", p.current.Literal)}
-		}
+		// REQ001143: use typed LitStr accessor.
+		val := p.current.LitStr
 		p.advance()
 		return &StringLiteral{Val: val}, nil
 	case LX.T_NULL:
@@ -694,7 +691,8 @@ func (p *Parser) parseInterval() (Expr, error) {
 	if err := p.expect(LX.T_STRING); err != nil {
 		return nil, err
 	}
-	val := p.current.Literal.(string)
+	// REQ001143: use typed LitStr accessor.
+	val := p.current.LitStr
 	p.advance()
 	if p.current.Type == LX.T_IDENT {
 		unit := strings.ToUpper(p.current.Lexeme)

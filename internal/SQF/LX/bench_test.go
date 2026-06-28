@@ -92,3 +92,22 @@ func BenchmarkLexerScanNumber(b *testing.B) {
 		})
 	}
 }
+
+// REQ001143: literal-allocation benchmark. Verifies that int / float /
+// string tokens no longer box their payload into the `any` interface
+// header — the typed fields LitInt / LitFloat / LitStr are pure
+// scalars. Run with:
+// go test -bench=BenchmarkLexerLiteralAlloc -benchmem ./internal/SQF/LX
+func BenchmarkLexerLiteralAlloc(b *testing.B) {
+	input := "SELECT 1, 2.5, 'three', 4, 5.5, 'six' FROM t WHERE id = 7"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		l := NewLexer(input)
+		for {
+			tok := l.Next()
+			if tok.Type == T_EOF {
+				break
+			}
+		}
+	}
+}
