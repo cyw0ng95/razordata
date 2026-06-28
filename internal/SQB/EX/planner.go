@@ -2726,6 +2726,48 @@ func exprHash(e PS.Expr) string {
 		return h
 	case *PS.CastExpr:
 		return fmt.Sprintf("cast:%d:%s", v.Type.Type, exprHash(v.Expr))
+	case *PS.InExpr:
+		// REQ0011XX: hash must include the target column and the
+		// full list — without these, two distinct IN-list predicates
+		// (e.g. `b4 IN (532,...)` and `d9 IN (808,...)`) hash to the
+		// same value, causing eliminateCommonSubexpressions to
+		// incorrectly drop one. That destroys cross-join predicate
+		// pushdown and turns 5-table SELECTs into 10^10-row
+		// Cartesian products that OOM the HashJoin dataBuf.
+		h := "in:" + exprHash(v.Expr) + ":["
+		for _, it := range v.List {
+			h += exprHash(it) + ","
+		}
+		return h + "]"
+	case *PS.BetweenExpr:
+		return fmt.Sprintf("btw:%s:%s:%s", exprHash(v.Expr), exprHash(v.Low), exprHash(v.High))
+	case *PS.ListExpr:
+		h := "list:["
+		for _, it := range v.Items {
+			h += exprHash(it) + ","
+		}
+		return h + "]"
+	case *PS.AliasedExpr:
+		return fmt.Sprintf("alias:%s:%s", v.Alias, exprHash(v.Expr))
+	case *PS.AggregateFunc:
+		return fmt.Sprintf("agg:%s:%s:%t", v.Name, exprHash(v.Arg), v.Distinct)
+	case *PS.WindowFunc:
+		return fmt.Sprintf("win:%s", v.Name)
+	case *PS.CaseExpr:
+		h := "case:" + exprHash(v.Expr) + ":["
+		for _, w := range v.WhenList {
+			h += "(" + exprHash(w.Cond) + "->" + exprHash(w.Then) + "),"
+		}
+		if v.Else != nil {
+			h += "else=" + exprHash(v.Else)
+		}
+		return h + "]"
+	case *PS.SubqueryExpr, *PS.ExistsExpr:
+		// Subqueries have their own scope — hash by a stable tag so
+		// they are not deduplicated against each other, but also do
+		// not collapse to "%T" which would treat all subqueries as
+		// identical.
+		return fmt.Sprintf("subq:%T:%p", v, v)
 	}
 	return fmt.Sprintf("%T", e)
 }

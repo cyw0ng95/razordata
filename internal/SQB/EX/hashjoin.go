@@ -330,6 +330,24 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		}
 	}
 
+	// REQ0011XX: defensive cap on dataBuf pre-allocation regardless of
+	// joinBufferSize. Even without an explicit memory budget, a 5-table
+	// cross-join (100^5 = 10^10 matches × 16 Values/row × 24 bytes/Value
+	// = 3.8 TB) is pathologically impossible to materialize. Cap the
+	// dataBuf to a hard ceiling so a planning miss cannot OOM the
+	// process. When the cap is hit, emit a clear error so the planner
+	// can fall back to NestedLoopJoin streaming next iteration.
+	const maxDataBufValues = 64 * 1024 * 1024 // 64M Values ≈ 1.5 GB
+	if dataPerRow > 0 {
+		maxRowsByDataBuf := maxDataBufValues / dataPerRow
+		if maxRowsByDataBuf < 1 {
+			maxRowsByDataBuf = 1
+		}
+		if totalMatches > maxRowsByDataBuf {
+			return fmt.Errorf("hash join would materialize %d match rows × %d cols = %d Values, exceeds hard cap %d (cross-join OOM guard; planner should fall back to NestedLoopJoin)", totalMatches, dataPerRow, totalMatches*dataPerRow, maxDataBufValues)
+		}
+	}
+
 	// Pre-allocate contiguous data buffer and matches slice.
 	if len(j.leftRows) == 0 || rightCount == 0 {
 		return nil
