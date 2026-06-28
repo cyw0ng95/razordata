@@ -79,7 +79,7 @@ func TestIntegrityCheck_Integration(t *testing.T) {
 
 	// Execute
 	ctx := context.Background()
-	op := plan.root
+	op := plan.Root
 	defer op.Close()
 
 	count := 0

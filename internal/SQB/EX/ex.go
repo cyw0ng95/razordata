@@ -11,6 +11,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
@@ -96,24 +97,22 @@ var ErrNotImplemented = errors.New("ex: not implemented")
 var ErrNoRows = errors.New("ex: no rows")
 var ErrClosed = errors.New("ex: operator closed")
 
-// Value kind constants — aliased from SYS/AP for zero-cost interop (REQ000862).
-// EX.Value IS AP.Value (type alias); no conversion needed at package boundaries.
-const (
-	KindNull  = AP.KindNull
-	KindInt   = AP.KindInt
-	KindFloat = AP.KindFloat
-	KindText  = AP.KindText
-	KindBlob  = AP.KindBlob
-	KindBool  = AP.KindBool
-)
-
-// ValueKind is the type discriminator for Value — aliased from SYS/AP.
-type ValueKind = AP.ValueKind
-
 // Value is a tagged-union that stores SQL values inline without boxing.
-// REQ000862: this is a type alias for AP.Value. Both packages share the
-// same concrete type, eliminating []any boxing at the driver boundary.
-type Value = AP.Value
+// EX.Value IS PL.Value (type alias); no conversion needed at package boundaries.
+type Value = pl.Value
+
+// ValueKind is the type discriminator for Value.
+type ValueKind = pl.ValueKind
+
+// Value kind constants — aliased from PL for zero-cost interop.
+const (
+	KindNull  = pl.KindNull
+	KindInt   = pl.KindInt
+	KindFloat = pl.KindFloat
+	KindText  = pl.KindText
+	KindBlob  = pl.KindBlob
+	KindBool  = pl.KindBool
+)
 
 // NewIntValue creates a Value from an int64.
 func NewIntValue(v int64) Value { return AP.NewIntValue(v) }
@@ -194,178 +193,26 @@ func valueSliceToAny(v []Value) []any {
 // callers outside the EX package (e.g. SYS/AP bridging).
 func ValueSliceToAny(v []Value) []any { return valueSliceToAny(v) }
 
-type Operator interface {
-	Next(ctx context.Context) (Row, error)
-	Close() error
-}
+// Operator is the core execution interface. Aliased from PL.
+type Operator = pl.Operator
 
-type Row struct {
-	Cols  []string
-	Types []LX.TokenType
-	Data  []Value
-	Outer *Row
-	// planner is set by the executor when materializing a row
-	// from the main plan. Subquery eval functions read it to
-	// plan their nested queries with the same store, catalog,
-	// and stats catalog. See REQ000366.
-	planner *Planner
-	// colIndex is a pre-built O(1) lookup from column name to
-	// column index, built lazily on first Lookup call. REQ000544.
-	colIndex map[string]int
-	// storeKey holds the raw key from the LSM iterator when this
-	// row was read from the engine store. Populated by SeqScan
-	// and used by Update/Delete to preserve the original key.
-	storeKey []byte
-	// execCtx carries per-execution state (planner, session ID,
-	// tx writer) through the operator tree. REQ000586.
-	execCtx *ExecContext
-	// tableName identifies which table this row was read from.
-	// Set by SeqScan/IndexScan when producing rows so correlated
-	// subquery eval can resolve QualifiedName references (e.g.
-	// t.g) against the correct table. REQ000700.
-	tableName string
-}
+// Row is a single row of data with column metadata. Aliased from PL.
+type Row = pl.Row
 
-// Planner returns the planner associated with this row (or any
-// of its outer parents). Returns nil if no planner was threaded
-// through. REQ000366.
-func (r *Row) Planner() *Planner {
-	for cur := r; cur != nil; cur = cur.Outer {
-		if cur.planner != nil {
-			return cur.planner
-		}
-	}
-	return nil
-}
-
-func (r *Row) Lookup(name string) (any, bool) {
-	// REQ000770: try fast path first (caller pre-lowered the name at parse time).
-	// Fall back to ToLower for backward compatibility with programmatic callers.
-	// REQ000816: also pre-check if name contains a dot to avoid the
-	// dotted-name linear scan when not needed.
-	lname := name
-	hasUpper := false
-	for _, c := range name {
-		if c >= 'A' && c <= 'Z' {
-			lname = strings.ToLower(name)
-			hasUpper = true
-			break
-		}
-	}
-	for cur := r; cur != nil; cur = cur.Outer {
-		if cur.colIndex == nil {
-			cur.buildColIndex()
-		}
-		if idx, ok := cur.colIndex[lname]; ok {
-			if idx < len(cur.Data) {
-				return cur.Data[idx].ToAny(), true
-			}
-			return nil, false
-		}
-		// REQ000816: try dotted-name fallback scan even when the
-		// caller-provided name has no dot — a bare column name
-		// like "e3" must match prefixed columns like "t3.e3"
-		// from join output rows (REQ001081).
-		for j, c := range cur.Cols {
-			if i := strings.LastIndexByte(c, '.'); i >= 0 && i < len(c)-1 {
-				if !hasUpper {
-					// Fast path: both name and Cols are lowercase.
-					if c[i+1:] == name && j < len(cur.Data) {
-						return cur.Data[j].ToAny(), true
-					}
-				} else if strings.EqualFold(c[i+1:], name) && j < len(cur.Data) {
-					return cur.Data[j].ToAny(), true
-				}
-			}
-		}
-	}
-	return nil, false
-}
-
-// LookupValue returns the Value at the given column name without boxing.
-// REQ001027: avoids ToAny() boxing for callers that work with Value directly.
-func (r *Row) LookupValue(name string) (Value, bool) {
-	lname := name
-	hasUpper := false
-	for _, c := range name {
-		if c >= 'A' && c <= 'Z' {
-			lname = strings.ToLower(name)
-			hasUpper = true
-			break
-		}
-	}
-	for cur := r; cur != nil; cur = cur.Outer {
-		if cur.colIndex == nil {
-			cur.buildColIndex()
-		}
-		if idx, ok := cur.colIndex[lname]; ok {
-			if idx < len(cur.Data) {
-				return cur.Data[idx], true
-			}
-			return Value{}, false
-		}
-		// REQ001081: suffix matching for bare names against prefixed cols.
-		for j, c := range cur.Cols {
-			if i := strings.LastIndexByte(c, '.'); i >= 0 && i < len(c)-1 {
-				if !hasUpper {
-					if c[i+1:] == name && j < len(cur.Data) {
-						return cur.Data[j], true
-					}
-				} else if strings.EqualFold(c[i+1:], name) && j < len(cur.Data) {
-					return cur.Data[j], true
-				}
-			}
-		}
-	}
-	return Value{}, false
-}
-
-// buildColIndex builds the O(1) column name → index map. REQ000544.
-// REQ000816: skip strings.ToLower when Cols are already lowercase
-// (the common case — Cols from RegisterTable are stored lowercase).
-func (r *Row) buildColIndex() {
-	r.colIndex = make(map[string]int, len(r.Cols))
-	allLower := true
-	for _, c := range r.Cols {
-		if c != "" && (c[0] < 'a' || c[0] > 'z') && c[0] != '_' && c[0] != '.' {
-			// Quick check: if first char is uppercase, we need ToLower.
-			for j := 0; j < len(c); j++ {
-				if c[j] >= 'A' && c[j] <= 'Z' {
-					allLower = false
-					break
-				}
-			}
-			if !allLower {
-				break
-			}
-		}
-	}
-	for i, c := range r.Cols {
-		if allLower {
-			r.colIndex[c] = i
-		} else {
-			r.colIndex[strings.ToLower(c)] = i
-		}
-	}
-}
-
+// Result holds the outcome of an Exec call.
 type Result struct {
 	RowsAffected int64
 	LastInsertID uint64
 }
 
+// Rows describes the columns of a query result.
 type Rows struct {
 	Cols  []string
 	Types []LX.TokenType
 }
 
-type ColInfo struct {
-	Name     string
-	Typ      LX.TokenType
-	Nullable bool    // default true; false means NOT NULL
-	Default  PS.Expr // nil means no DEFAULT clause
-	PK       bool    // true means primary key (implies NOT NULL)
-}
+// ColInfo describes a single column in a table schema. Aliased from PL.
+type ColInfo = pl.ColInfo
 
 // stmtCacheEntry holds a cached parsed statement with LRU metadata.
 type stmtCacheEntry struct {
@@ -423,23 +270,12 @@ type Executor struct {
 }
 
 // TxWriter is the optional hook an Executor notifies on every key
-// write. Implementations record the pre-write value so ROLLBACK can
-// restore. The SYS layer wires this for transactional sessions.
-type TxWriter interface {
-	RecordWrite(key []byte, newValue []byte)
-	// RecordInMemoryTable captures the pre-tx snapshot of an
-	// in-memory table before the first mutation. On rollback the
-	// implementation restores the table to this snapshot.
-	// REQ000641.
-	InMemoryTxWriter
-}
+// write. Aliased from PL.
+type TxWriter = pl.TxWriter
 
 // InMemoryTxWriter is the optional hook for in-memory table
-// rollback support. Separated so callers can type-assert
-// independently of the store-backed TxWriter.
-type InMemoryTxWriter interface {
-	RecordInMemoryTable(table string, snapshot []Row)
-}
+// rollback support. Aliased from PL.
+type InMemoryTxWriter = pl.InMemoryTxWriter
 
 // SetTxWriter installs w as the current transaction's write hook. Pass
 // nil to disable. Not safe to call concurrently with Exec; the
@@ -1039,15 +875,15 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 			if err != nil {
 				return nil, err
 			}
-			if plan == nil || plan.root == nil {
+			if plan == nil || plan.Root == nil {
 				return nil, errors.New("ex: plan produced no root")
 			}
-			propagateParams(plan.root, args)
-			propagatePlanner(plan.root, e.planner)
+			propagateParams(plan.Root, args)
+			propagatePlanner(plan.Root, e.planner)
 			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-			propagateExecContext(plan.root, execCtx)
-			defer plan.root.Close()
-			row, err := plan.root.Next(ctx)
+			propagateExecContext(plan.Root, execCtx)
+			defer plan.Root.Close()
+			row, err := plan.Root.Next(ctx)
 			if err != nil {
 				if err == ErrNoRows {
 					return &Rows{}, nil
@@ -1099,17 +935,17 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	if err != nil {
 		return nil, err
 	}
-	if plan == nil || plan.root == nil {
+	if plan == nil || plan.Root == nil {
 		return nil, errors.New("ex: plan produced no root")
 	}
 	// R16-1: thread args down to the operator tree so `?`
 	// placeholders resolve during Eval.
-	propagateParams(plan.root, args)
-	propagatePlanner(plan.root, e.planner)
+	propagateParams(plan.Root, args)
+	propagatePlanner(plan.Root, e.planner)
 	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-	propagateExecContext(plan.root, execCtx)
-	defer plan.root.Close()
-	row, err := plan.root.Next(ctx)
+	propagateExecContext(plan.Root, execCtx)
+	defer plan.Root.Close()
+	row, err := plan.Root.Next(ctx)
 	if err != nil {
 		if err == ErrNoRows {
 			return &Rows{}, nil
@@ -1130,17 +966,17 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 			if err != nil {
 				return nil, err
 			}
-			if plan == nil || plan.root == nil {
+			if plan == nil || plan.Root == nil {
 				return nil, errors.New("ex: plan produced no root")
 			}
-			propagateParams(plan.root, args)
-			propagatePlanner(plan.root, e.planner)
+			propagateParams(plan.Root, args)
+			propagatePlanner(plan.Root, e.planner)
 			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-			propagateExecContext(plan.root, execCtx)
-			defer plan.root.Close()
+			propagateExecContext(plan.Root, execCtx)
+			defer plan.Root.Close()
 			var out []Row
 			for {
-				row, err := plan.root.Next(ctx)
+				row, err := plan.Root.Next(ctx)
 				if err != nil {
 					if err == ErrNoRows {
 						break
@@ -1167,23 +1003,23 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 	if err != nil {
 		return nil, err
 	}
-	if plan == nil || plan.root == nil {
+	if plan == nil || plan.Root == nil {
 		return nil, errors.New("ex: plan produced no root")
 	}
-	propagateParams(plan.root, args)
+	propagateParams(plan.Root, args)
 	// REQ000366: thread the main-plan planner so SeqScan rows
 	// carry it into subquery evals. propagatePlanner is a
 	// depth-first walk that calls WithPlanner on every node
 	// that supports it.
-	propagatePlanner(plan.root, e.planner)
+	propagatePlanner(plan.Root, e.planner)
 	// REQ000586: thread ExecContext through rows to eliminate
 	// the global currentSubqueryPlanner.
 	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-	propagateExecContext(plan.root, execCtx)
-	defer plan.root.Close()
+	propagateExecContext(plan.Root, execCtx)
+	defer plan.Root.Close()
 	var out []Row
 	for {
-		row, err := plan.root.Next(ctx)
+		row, err := plan.Root.Next(ctx)
 		if err != nil {
 			if err == ErrNoRows {
 				break
@@ -1322,12 +1158,12 @@ func (e *Executor) Explain(sql string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if plan == nil || plan.root == nil {
+	if plan == nil || plan.Root == nil {
 		return "", errors.New("ex: plan produced no root")
 	}
-	defer plan.root.Close()
+	defer plan.Root.Close()
 	// Use formatPlanTree with default ExplainNormal mode for text output
-	nodes := buildPlanNodeTree(plan.root, e.planner)
+	nodes := buildPlanNodeTree(plan.Root, e.planner)
 	var b strings.Builder
 	var walk func(node *PlanNode, depth int)
 	walk = func(node *PlanNode, depth int) {
@@ -1458,13 +1294,13 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 			if err != nil {
 				return nil, err
 			}
-			if selPlan == nil || selPlan.root == nil {
+			if selPlan == nil || selPlan.Root == nil {
 				return nil, fmt.Errorf("ex: INSERT SELECT: plan produced no root")
 			}
 			op := NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
-			op.selectPlan = selPlan.root
+			op.selectPlan = selPlan.Root
 			op.conflictAction = s.ConflictAction
-			propagatePlanner(selPlan.root, e.planner)
+			propagatePlanner(selPlan.Root, e.planner)
 			return op, nil
 		}
 
@@ -1601,10 +1437,10 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 			if err != nil {
 				return nil, err
 			}
-			if op == nil || op.root == nil {
+			if op == nil || op.Root == nil {
 				return nil, errors.New("ex: plan produced no root for CTAS")
 			}
-			return op.root, nil
+			return op.Root, nil
 		}
 		return NewCreateTable(s), nil
 	case *PS.DropTable:
@@ -1798,20 +1634,20 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	if err != nil {
 		return nil, err
 	}
-	if plan == nil || plan.root == nil {
+	if plan == nil || plan.Root == nil {
 		return nil, errors.New("ex: plan produced no root")
 	}
-	propagateParams(plan.root, args)
-	propagatePlanner(plan.root, e.planner)
+	propagateParams(plan.Root, args)
+	propagatePlanner(plan.Root, e.planner)
 	// REQ000586: thread ExecContext to eliminate global.
 	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-	propagateExecContext(plan.root, execCtx)
+	propagateExecContext(plan.Root, execCtx)
 
 	// Read first row to discover schema
-	row, err := plan.root.Next(ctx)
+	row, err := plan.Root.Next(ctx)
 	if err != nil {
 		if err == ErrNoRows {
-			plan.root.Close()
+			plan.Root.Close()
 			return &streamIterator{
 				cols:  nil,
 				types: nil,
@@ -1819,7 +1655,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 				done:  true,
 			}, nil
 		}
-		plan.root.Close()
+		plan.Root.Close()
 		return nil, err
 	}
 	WithExecContext(&row, execCtx)
@@ -1837,7 +1673,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 			return nil
 		}
 		closed = true
-		return plan.root.Close()
+		return plan.Root.Close()
 	}
 	go func() {
 		defer close(rowCh)
@@ -1848,7 +1684,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 				return
 			}
 			closeMu.Unlock()
-			r, err := plan.root.Next(ctx)
+			r, err := plan.Root.Next(ctx)
 			if err != nil {
 				return
 			}

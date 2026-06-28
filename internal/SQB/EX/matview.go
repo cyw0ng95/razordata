@@ -73,13 +73,13 @@ func (r *RefreshMatViewOperator) Next(ctx context.Context) (Row, error) {
 	if err != nil {
 		return Row{}, err
 	}
-	if plan.root == nil {
+	if plan.Root == nil {
 		return Row{}, ErrNoRows
 	}
 
 	var materializedRows []Row
 	for {
-		row, err := plan.root.Next(ctx)
+		row, err := plan.Root.Next(ctx)
 		if err == ErrNoRows {
 			break
 		}

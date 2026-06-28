@@ -353,19 +353,19 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*Batch, error) {
 			batch.Put()
 			return nil, err
 		}
-		row.storeKey = s.currentKey
+		row.StoreKey = s.currentKey
 		if s.planner != nil {
-			row.planner = s.planner
+			row.Planner = s.planner
 		}
-		row.tableName = s.table
+		row.TableName = s.table
 		if s.alias != "" {
 			if s.prefixedCols != nil {
 				row.Cols = s.prefixedCols
-				row.colIndex = s.prefixedColIndex
+				row.ColIndex = s.prefixedColIndex
 			} else {
 				row = prefixRowCols(row, s.alias)
 			}
-			row.tableName = s.alias
+			row.TableName = s.alias
 		}
 		for i := 0; i < nCols; i++ {
 			if i >= len(row.Data) {
@@ -440,10 +440,10 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 		Types:     schema.types,
 		Data:      r.Data,
 		Outer:     r.Outer,
-		planner:   r.planner,
-		storeKey:  r.storeKey,
-		tableName: s.table,
-		colIndex:  schema.colIndex,
+		Planner:   r.Planner,
+		StoreKey:  r.StoreKey,
+		TableName: s.table,
+		ColIndex:  schema.colIndex,
 	}
 	// REQ000840: when shallow, reuse source row Data without copying.
 	// Safe for read-only queries — source rows in tables[] are never
@@ -453,16 +453,16 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 		out.Data = append([]Value(nil), r.Data...)
 	}
 	if s.planner != nil {
-		out.planner = s.planner
+		out.Planner = s.planner
 	}
 	if s.alias != "" {
 		if s.prefixedCols != nil {
 			out.Cols = s.prefixedCols
-			out.colIndex = s.prefixedColIndex
+			out.ColIndex = s.prefixedColIndex
 		} else {
 			out = prefixRowCols(out, s.alias)
 		}
-		out.tableName = s.alias
+		out.TableName = s.alias
 	}
 	// REQ001080: prune unused columns from the output row.
 	if s.usedCols != nil && !s.shallow {
@@ -497,21 +497,21 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
-		row.storeKey = s.currentKey
+		row.StoreKey = s.currentKey
 		// REQ000366: thread the planner so subquery evals see
 		// the same store/catalog.
 		if s.planner != nil {
-			row.planner = s.planner
+			row.Planner = s.planner
 		}
-		row.tableName = s.table
+		row.TableName = s.table
 		if s.alias != "" {
 			if s.prefixedCols != nil {
 				row.Cols = s.prefixedCols
-				row.colIndex = s.prefixedColIndex
+				row.ColIndex = s.prefixedColIndex
 			} else {
 				row = prefixRowCols(row, s.alias)
 			}
-			row.tableName = s.alias
+			row.TableName = s.alias
 		}
 
 		// REQ000790: record index skip if indexes are available but SeqScan is used.
@@ -588,23 +588,23 @@ func prefixRowCols(r Row, alias string) Row {
 		Data:      r.Data,
 		Outer:     r.Outer,
 		Types:     r.Types,
-		tableName: r.tableName,
+		TableName: r.TableName,
 	}
 	out.Cols = make([]string, len(r.Cols))
 	prefix := alias + "."
 	// Build colIndex for prefixed names.
-	out.colIndex = make(map[string]int, len(r.Cols)*2)
+	out.ColIndex = make(map[string]int, len(r.Cols)*2)
 	for i, c := range r.Cols {
 		if strings.HasPrefix(c, prefix) {
 			out.Cols[i] = c
-			out.colIndex[c] = i
+			out.ColIndex[c] = i
 		} else {
 			out.Cols[i] = prefix + c
-			out.colIndex[prefix+c] = i
+			out.ColIndex[prefix+c] = i
 			// REQ000941: also register unprefixed name so unqualified
 			// column lookups work when a table alias is used.
-			if _, exists := out.colIndex[c]; !exists {
-				out.colIndex[c] = i
+			if _, exists := out.ColIndex[c]; !exists {
+				out.ColIndex[c] = i
 			}
 		}
 	}
@@ -830,7 +830,7 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
-		row.tableName = i.table
+		row.TableName = i.table
 
 		// REQ000790: record index usage for diagnostics.
 		if i.iu != nil && i.idx != "" {
@@ -916,7 +916,7 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
-		row.tableName = i.table
+		row.TableName = i.table
 		return row, nil
 	}
 	return Row{}, ErrNoRows
@@ -991,7 +991,7 @@ func (i *IndexScan) Next(ctx context.Context) (Row, error) {
 	}
 	r := i.rows[i.pos]
 	i.pos++
-	r.tableName = i.table
+	r.TableName = i.table
 
 	// REQ000790: record index usage for diagnostics.
 	if i.iu != nil && i.idx != "" {
@@ -1060,7 +1060,7 @@ func (i *IndexScan) nextFromBTree(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
-		row.tableName = i.table
+		row.TableName = i.table
 
 		// REQ000790: record index usage for diagnostics.
 		if i.iu != nil && i.idx != "" {
@@ -1126,7 +1126,7 @@ func pruneRowCols(row Row, usedCols []string, usedSet map[string]bool) Row {
 	newData := make([]Value, 0, len(usedCols))
 	newIndex := make(map[string]int, len(usedCols)*2)
 	// Build colIndex from scratch if nil.
-	colIndex := row.colIndex
+	colIndex := row.ColIndex
 	if colIndex == nil {
 		colIndex = make(map[string]int, len(row.Cols))
 		for i, c := range row.Cols {
@@ -1180,6 +1180,6 @@ func pruneRowCols(row Row, usedCols []string, usedSet map[string]bool) Row {
 	row.Cols = newCols
 	row.Types = newTypes
 	row.Data = newData
-	row.colIndex = newIndex
+	row.ColIndex = newIndex
 	return row
 }

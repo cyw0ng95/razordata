@@ -343,7 +343,7 @@ func TestJoinPlanStructure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan error: %v", err)
 	}
-	if plan == nil || plan.root == nil {
+	if plan == nil || plan.Root == nil {
 		t.Fatal("plan is nil")
 	}
 }

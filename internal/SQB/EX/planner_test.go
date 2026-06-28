@@ -35,8 +35,8 @@ func TestPlannerPlan(t *testing.T) {
 			if plan == nil {
 				t.Fatal("plan is nil")
 			}
-			if plan.root == nil {
-				t.Fatal("plan.root is nil")
+			if plan.Root == nil {
+				t.Fatal("plan.Root is nil")
 			}
 		})
 	}
@@ -57,7 +57,7 @@ func TestPlannerMemoization(t *testing.T) {
 		t.Fatalf("plan error: %v", err)
 	}
 
-	if plan1.memoKey != plan2.memoKey {
+	if plan1.MemoKey != plan2.MemoKey {
 		t.Error("should return same memoKey for same query")
 	}
 }
@@ -91,8 +91,8 @@ func TestPlannerMemoizationDistinctAST(t *testing.T) {
 			if err != nil {
 				t.Fatalf("plan2 error: %v", err)
 			}
-			if plan1.memoKey == plan2.memoKey {
-				t.Errorf("expected distinct memo keys for\n  %q\n  %q\nboth: %s", c.sql1, c.sql2, plan1.memoKey)
+			if plan1.MemoKey == plan2.MemoKey {
+				t.Errorf("expected distinct memo keys for\n  %q\n  %q\nboth: %s", c.sql1, c.sql2, plan1.MemoKey)
 			}
 		})
 	}
@@ -122,7 +122,7 @@ func TestPlannerMemoizationSameAST(t *testing.T) {
 			if err != nil {
 				t.Fatalf("plan2 error: %v", err)
 			}
-			if plan1.memoKey != plan2.memoKey {
+			if plan1.MemoKey != plan2.MemoKey {
 				t.Errorf("expected identical memo key for two parses of %q", c.sql)
 			}
 		})
@@ -158,7 +158,7 @@ func TestPlannerAggregate(t *testing.T) {
 			if err != nil {
 				t.Fatalf("plan error: %v", err)
 			}
-			if plan == nil || plan.root == nil {
+			if plan == nil || plan.Root == nil {
 				t.Fatal("plan nil")
 			}
 		})
@@ -196,7 +196,7 @@ func TestPlanner_ConstantFolding(t *testing.T) {
 		// The constant fold should remove the WHERE clause entirely,
 		// so no Filter operator appears in the plan tree.
 		// Instead, the Plan tree directly wraps the SeqScan in an AdaptiveOp.
-		op := plan.root
+		op := plan.Root
 		// Unwrap AdaptiveOp (always wraps query plans).
 		if aop, ok := op.(*AdaptiveOp); ok {
 			op = aop.inner
@@ -231,7 +231,7 @@ func TestPlanner_ConstantFolding(t *testing.T) {
 		if err != nil {
 			t.Fatalf("plan error: %v", err)
 		}
-		if plan == nil || plan.root == nil {
+		if plan == nil || plan.Root == nil {
 			t.Fatal("plan is nil")
 		}
 	})
@@ -242,7 +242,7 @@ func TestPlanner_ConstantFolding(t *testing.T) {
 		if err != nil {
 			t.Fatalf("plan error: %v", err)
 		}
-		if plan == nil || plan.root == nil {
+		if plan == nil || plan.Root == nil {
 			t.Fatal("plan is nil")
 		}
 	})
@@ -262,7 +262,7 @@ func TestPlanner_CSE(t *testing.T) {
 		if err != nil {
 			t.Fatalf("plan error: %v", err)
 		}
-		if plan == nil || plan.root == nil {
+		if plan == nil || plan.Root == nil {
 			t.Fatal("plan is nil")
 		}
 	})
@@ -272,7 +272,7 @@ func TestPlanner_CSE(t *testing.T) {
 		if err != nil {
 			t.Fatalf("plan error: %v", err)
 		}
-		if plan == nil || plan.root == nil {
+		if plan == nil || plan.Root == nil {
 			t.Fatal("plan is nil")
 		}
 	})
@@ -289,7 +289,7 @@ func TestPlanner_JoinElimination(t *testing.T) {
 		if err != nil {
 			t.Fatalf("plan error: %v", err)
 		}
-		if plan == nil || plan.root == nil {
+		if plan == nil || plan.Root == nil {
 			t.Fatal("plan is nil")
 		}
 	})
@@ -299,7 +299,7 @@ func TestPlanner_JoinElimination(t *testing.T) {
 		if err != nil {
 			t.Fatalf("plan error: %v", err)
 		}
-		if plan == nil || plan.root == nil {
+		if plan == nil || plan.Root == nil {
 			t.Fatal("plan is nil")
 		}
 	})
@@ -309,7 +309,7 @@ func TestPlanner_JoinElimination(t *testing.T) {
 		if err != nil {
 			t.Fatalf("plan error: %v", err)
 		}
-		if plan == nil || plan.root == nil {
+		if plan == nil || plan.Root == nil {
 			t.Fatal("plan is nil")
 		}
 	})
@@ -330,11 +330,11 @@ func TestPlanner_ColumnPruning(t *testing.T) {
 		if err != nil {
 			t.Fatalf("plan error: %v", err)
 		}
-		if plan == nil || plan.root == nil {
+		if plan == nil || plan.Root == nil {
 			t.Fatal("plan is nil")
 		}
 		// Unwrap AdaptiveOp.
-		op := plan.root
+		op := plan.Root
 		if aop, ok := op.(*AdaptiveOp); ok {
 			op = aop.inner
 		}
@@ -370,11 +370,11 @@ func TestPlanner_ColumnPruning(t *testing.T) {
 		if err != nil {
 			t.Fatalf("plan error: %v", err)
 		}
-		if plan == nil || plan.root == nil {
+		if plan == nil || plan.Root == nil {
 			t.Fatal("plan is nil")
 		}
 		// For SELECT *, usedCols should not be set (nil).
-		op := plan.root
+		op := plan.Root
 		if aop, ok := op.(*AdaptiveOp); ok {
 			op = aop.inner
 		}
@@ -393,7 +393,7 @@ func TestPlanner_ColumnPruning(t *testing.T) {
 		if err != nil {
 			t.Fatalf("plan error: %v", err)
 		}
-		if plan == nil || plan.root == nil {
+		if plan == nil || plan.Root == nil {
 			t.Fatal("plan is nil")
 		}
 		// Verify plan is valid.
@@ -412,7 +412,7 @@ func TestPlanner_N3JoinOrdering_EmptyHeapFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected plan error: %v", err)
 	}
-	if plan == nil || plan.root == nil {
+	if plan == nil || plan.Root == nil {
 		t.Fatal("expected non-nil plan")
 	}
 }
@@ -438,7 +438,7 @@ func TestPlanner_CrossJoinPredicatePushdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan error: %v", err)
 	}
-	if plan == nil || plan.root == nil {
+	if plan == nil || plan.Root == nil {
 		t.Fatal("plan is nil")
 	}
 
@@ -447,7 +447,7 @@ func TestPlanner_CrossJoinPredicatePushdown(t *testing.T) {
 	// pushed-down predicate Filter.
 	filterCount := 0
 	totalScanCount := 0
-	walkOpTreeDebug(plan.root, func(op Operator, depth int) {
+	walkOpTreeDebug(plan.Root, func(op Operator, depth int) {
 		switch op.(type) {
 		case *Filter:
 			filterCount++
@@ -567,14 +567,14 @@ func TestPlanner_CrossJoinColdStart_Pushdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan error: %v", err)
 	}
-	if plan == nil || plan.root == nil {
+	if plan == nil || plan.Root == nil {
 		t.Fatal("plan is nil")
 	}
 
 	// Walk plan: expect 5 SeqScans + 5 Filters (pushed predicates).
 	filterCount := 0
 	scanCount := 0
-	walkOpTreeDebug(plan.root, func(op Operator, depth int) {
+	walkOpTreeDebug(plan.Root, func(op Operator, depth int) {
 		switch op.(type) {
 		case *Filter:
 			filterCount++

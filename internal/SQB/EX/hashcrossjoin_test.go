@@ -13,14 +13,14 @@ import (
 func TestHashCrossJoin_BasicEquiJoin(t *testing.T) {
 	defer UnregisterAll()
 	left := newTestSeqScan(t, "t1", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, tableName: "t1"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, tableName: "t1"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(3))}, tableName: "t1"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t1"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, TableName: "t1"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(3))}, TableName: "t1"},
 	})
 	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, tableName: "t2"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(3))}, tableName: "t2"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, tableName: "t2"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, TableName: "t2"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(3))}, TableName: "t2"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, TableName: "t2"},
 	})
 
 	j := NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
@@ -62,7 +62,7 @@ func TestHashCrossJoin_EmptySides(t *testing.T) {
 	defer UnregisterAll()
 	left := newTestSeqScan(t, "t1", nil)
 	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, tableName: "t2"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t2"},
 	})
 
 	j := NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
@@ -90,13 +90,13 @@ func TestHashCrossJoin_EmptySides(t *testing.T) {
 func TestHashCrossJoin_AllMatch(t *testing.T) {
 	defer UnregisterAll()
 	left := newTestSeqScan(t, "t1", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, tableName: "t1"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, tableName: "t1"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t1"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, TableName: "t1"},
 	})
 	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, tableName: "t2"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, tableName: "t2"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, tableName: "t2"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t2"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, TableName: "t2"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t2"},
 	})
 
 	j := NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
@@ -124,13 +124,13 @@ func TestHashCrossJoin_AllMatch(t *testing.T) {
 func TestHashCrossJoin_StringKey(t *testing.T) {
 	defer UnregisterAll()
 	left := newTestSeqScan(t, "t1", []Row{
-		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("x")}, tableName: "t1"},
-		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("y")}, tableName: "t1"},
+		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("x")}, TableName: "t1"},
+		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("y")}, TableName: "t1"},
 	})
 	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("x")}, tableName: "t2"},
-		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("x")}, tableName: "t2"},
-		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("z")}, tableName: "t2"},
+		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("x")}, TableName: "t2"},
+		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("x")}, TableName: "t2"},
+		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("z")}, TableName: "t2"},
 	})
 
 	j := NewHashCrossJoin(left, right, "t1", "t2", "k", "k")
@@ -159,10 +159,10 @@ func TestHashCrossJoin_StringKey(t *testing.T) {
 func TestHashCrossJoin_NullKey(t *testing.T) {
 	defer UnregisterAll()
 	left := newTestSeqScan(t, "t1", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NullValue()}, tableName: "t1"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NullValue()}, TableName: "t1"},
 	})
 	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NullValue()}, tableName: "t2"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NullValue()}, TableName: "t2"},
 	})
 
 	j := NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
@@ -244,7 +244,7 @@ func newBenchSeqScan(table string, n int) *SeqScan {
 			Cols:      []string{"a"},
 			Types:     []LX.TokenType{LX.T_INT_KW},
 			Data:      []Value{NewIntValue(int64(i % 50))},
-			tableName: table,
+			TableName: table,
 		}
 	}
 	tablesMu.Lock()

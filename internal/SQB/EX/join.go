@@ -284,7 +284,7 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 			return Row{}, lerr
 		}
 		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
-		prefixed.tableName = row.tableName
+		prefixed.TableName = row.TableName
 		if !hasAnyPrefix(row.Cols) {
 			prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
 		} else {
@@ -366,7 +366,7 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 			// prefixes the right side; the left side keeps
 			// whatever prefix it already has.
 			prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
-			prefixed.tableName = row.tableName
+			prefixed.TableName = row.TableName
 			if !hasAnyPrefix(row.Cols) {
 				prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
 			} else {
@@ -461,7 +461,7 @@ func (j *NestedLoopJoin) nextHash(_ context.Context) (Row, error) {
 				Cols:     j.sharedCols,
 				Types:    j.sharedTypes,
 				Data:     j.dataBuf[off : off : off+j.dataPerRow],
-				colIndex: j.sharedColIndex,
+				ColIndex: j.sharedColIndex,
 			}
 			out.Data = append(out.Data, l.Data...)
 			out.Data = append(out.Data, r.Data...)
@@ -564,7 +564,7 @@ func (j *NestedLoopJoin) materializeRightForOuter(ctx context.Context) error {
 			Cols:      prefixCols(row.Cols, j.rightTbl),
 			Types:     row.Types,
 			Data:      append([]Value(nil), row.Data...),
-			tableName: row.tableName,
+			TableName: row.TableName,
 		})
 	}
 	j.rightMatched = make([]bool, len(j.rightRows))
@@ -669,7 +669,7 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 				j.leftPrefixedCols = append([]string(nil), firstRow.Cols...)
 			}
 			prefixed := Row{Types: firstRow.Types, Data: firstRow.Data, Outer: firstRow.Outer}
-			prefixed.tableName = firstRow.tableName
+			prefixed.TableName = firstRow.TableName
 			prefixed.Cols = j.leftPrefixedCols
 			j.blkLeftBatch = append(j.blkLeftBatch, prefixed)
 		}
@@ -683,7 +683,7 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
-		prefixed.tableName = row.tableName
+		prefixed.TableName = row.TableName
 		prefixed.Cols = j.leftPrefixedCols
 		j.blkLeftBatch = append(j.blkLeftBatch, prefixed)
 	}
@@ -714,7 +714,7 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 					j.rightPrefixedCols = append([]string(nil), firstRow.Cols...)
 				}
 				inner := Row{Types: firstRow.Types, Data: firstRow.Data, Outer: firstRow.Outer}
-				inner.tableName = firstRow.tableName
+				inner.TableName = firstRow.TableName
 				inner.Cols = j.rightPrefixedCols
 				j.blkRightRows = append(j.blkRightRows, inner)
 			}
@@ -728,7 +728,7 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 			inner := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
-			inner.tableName = row.tableName
+			inner.TableName = row.TableName
 			inner.Cols = j.rightPrefixedCols
 			j.blkRightRows = append(j.blkRightRows, inner)
 		}
@@ -811,7 +811,7 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 				Cols:     j.blkSharedCols,
 				Types:    j.blkSharedTypes,
 				Data:     dataSlice,
-				colIndex: j.blkSharedColIndex,
+				ColIndex: j.blkSharedColIndex,
 			}
 			// Fill the data slice directly.
 			copy(result.Data, l.Data)
@@ -835,7 +835,7 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 				Cols:     j.blkSharedCols,
 				Types:    j.blkSharedTypes,
 				Data:     dataSlice,
-				colIndex: j.blkSharedColIndex,
+				ColIndex: j.blkSharedColIndex,
 			}
 			copy(result.Data, l.Data)
 			copy(result.Data[len(l.Data):], nullRow.Data)
@@ -874,7 +874,7 @@ func joinRowsLL(a, b *Row) Row {
 // Data is always freshly allocated since it's per-row payload.
 func joinRowsLLWithCols(a, b *Row, sharedCols []string, sharedTypes []LX.TokenType, sharedColIndex map[string]int) Row {
 	out := Row{
-		colIndex: sharedColIndex,
+		ColIndex: sharedColIndex,
 	}
 	if sharedCols != nil {
 		out.Cols = sharedCols
@@ -932,7 +932,7 @@ func joinRowsProjected(a, b *Row, cols []string, types []LX.TokenType, colIndex 
 		Cols:     cols,
 		Types:    types,
 		Data:     dataSlice,
-		colIndex: colIndex,
+		ColIndex: colIndex,
 	}
 }
 

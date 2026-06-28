@@ -4,7 +4,11 @@
 // retained in v1.1 for upcoming releases.
 package EX
 
-import "context"
+import (
+	"context"
+
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+)
 
 type outerInjector struct {
 	child Operator
@@ -82,20 +86,20 @@ func injectOuter(op Operator, outer *Row) Operator {
 	return op
 }
 
-func runSubqueryPlan(ctx context.Context, pl *plan, outer *Row, params []any) ([]Row, error) {
-	if pl == nil || pl.root == nil {
+func runSubqueryPlan(ctx context.Context, pl *pl.PlanResult, outer *Row, params []any) ([]Row, error) {
+	if pl == nil || pl.Root == nil {
 		return nil, ErrSubquery
 	}
 	if outer != nil {
-		pl.root = injectOuter(pl.root, outer)
+		pl.Root = injectOuter(pl.Root, outer)
 	}
-	defer pl.root.Close()
+	defer pl.Root.Close()
 	var out []Row
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		row, err := pl.root.Next(ctx)
+		row, err := pl.Root.Next(ctx)
 		if err != nil {
 			if err == ErrNoRows {
 				break

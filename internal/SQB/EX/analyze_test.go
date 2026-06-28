@@ -32,7 +32,7 @@ func TestVacuum_Integration(t *testing.T) {
 
 	// Execute
 	ctx := context.Background()
-	op := plan.root
+	op := plan.Root
 	defer op.Close()
 
 	_, err = op.Next(ctx)

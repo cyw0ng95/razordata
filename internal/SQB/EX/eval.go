@@ -173,7 +173,7 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 				}
 			}
 			for cur := row.Outer; cur != nil; cur = cur.Outer {
-				if cur.tableName != "" && !strings.EqualFold(cur.tableName, e.Table) {
+				if cur.TableName != "" && !strings.EqualFold(cur.TableName, e.Table) {
 					continue
 				}
 				if v, ok := cur.Lookup(e.Name); ok {
@@ -662,10 +662,14 @@ var currentSubqueryPlanner *Planner
 func newSubqueryPlanner(outer *Row) *Planner {
 	// Check ExecContext first (REQ000586).
 	if ec := ExecContextFromRow(outer); ec != nil && ec.Planner != nil {
-		return ec.Planner
+		if p, ok := ec.Planner.(*Planner); ok {
+			return p
+		}
 	}
-	if p := outer.Planner(); p != nil {
-		return p
+	if p := outer.GetPlanner(); p != nil {
+		if pp, ok := p.(*Planner); ok {
+			return pp
+		}
 	}
 	if currentSubqueryPlanner != nil {
 		return currentSubqueryPlanner

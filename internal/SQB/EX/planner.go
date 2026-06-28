@@ -11,7 +11,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
 )
@@ -244,11 +244,11 @@ type Planner struct {
 	store     Store
 	// statsCatalog provides access to column statistics for
 	// histogram-based selectivity estimation. REQ000085.
-	statsCatalog StatsCatalog
+	statsCatalog pl.StatsCatalog
 	// pool is the shared WorkerPool for parallel operator execution.
 	// Set by Executor on creation; nil means serial-only execution.
 	// REQ001044.
-	pool *WorkerPool
+	pool pl.WorkerPool
 	// joinBufferSize caps per-hash-join memory. 0 = unlimited.
 	// Set by Executor.WithMemoryBudget. REQ001056.
 	joinBufferSize int64
@@ -274,10 +274,10 @@ func NewPlanner() *Planner {
 
 // SetPool attaches a WorkerPool to the planner for parallel operator
 // execution. Nil means serial-only. REQ001044.
-func (p *Planner) SetPool(pool *WorkerPool) { p.pool = pool }
+func (p *Planner) SetPool(pool pl.WorkerPool) { p.pool = pool }
 
 // Pool returns the attached WorkerPool (may be nil). REQ001044.
-func (p *Planner) Pool() *WorkerPool { return p.pool }
+func (p *Planner) Pool() pl.WorkerPool { return p.pool }
 
 // SetJoinBufferSize sets the per-hash-join memory cap.
 // 0 = unlimited. REQ001056.
@@ -323,7 +323,7 @@ func NewPlannerWithStats(store Store, statsCatalog StatsCatalog) *Planner {
 
 // SetStatsCatalog wires a stats catalog into an existing planner.
 // REQ000085.
-func (p *Planner) SetStatsCatalog(statsCatalog StatsCatalog) {
+func (p *Planner) SetStatsCatalog(statsCatalog pl.StatsCatalog) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.statsCatalog = statsCatalog
@@ -387,12 +387,12 @@ func (p *Planner) RegisterIndex(table, index string, cols []string) {
 	}
 }
 
-func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
+func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	key := serializeKey(stmt)
 	p.mu.Lock()
 	if cached, ok := p.memo[key]; ok {
 		p.mu.Unlock()
-		return cached, nil
+		return &pl.PlanResult{Root: cached.root, Cost: cached.cost, MemoKey: cached.memoKey}, nil
 	}
 	p.mu.Unlock()
 
@@ -467,11 +467,10 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 		oldest := p.memoOrder[p.memoHead]
 		delete(p.memo, oldest)
 		p.memoHead = (p.memoHead + 1) % maxPlanCacheSize
-		p.memoSize--
 	}
 	p.mu.Unlock()
 
-	return result, nil
+	return &pl.PlanResult{Root: root, Cost: result.cost, MemoKey: key}, nil
 }
 
 // estimateCost returns a unitless cost for the operator tree rooted at op.
@@ -731,7 +730,7 @@ func (p *Planner) estimatePredicateSelectivity(e PS.Expr) float64 {
 
 	histSel := estimateSelectivityWithStats(e, stats)
 
-	lm := PL.Learned()
+	lm := pl.Learned()
 	if lm.IsTrained() {
 		predType := 0
 		if v, ok := e.(*PS.BinaryExpr); ok {
@@ -1860,8 +1859,8 @@ func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
 	}
 	if len(s.OrderBy) > 0 {
 		so := NewSort(current, s.OrderBy)
-		if p.pool != nil {
-			so.WithPool(p.pool)
+	if p.pool != nil {
+			so.WithPool(p.pool.(*WorkerPool))
 		}
 		current = so
 	}
@@ -2468,7 +2467,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 					schema[k] = ci.Name
 					types[k] = LX.TokenType(ci.Typ)
 				}
-				if ss := NewParallelSeqScanRow(src, schema, types, p.pool); ss != nil {
+				if ss := NewParallelSeqScanRow(src, schema, types, p.pool.(*WorkerPool)); ss != nil {
 					return ss
 				}
 			}
@@ -2485,7 +2484,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 						schema[k] = ci.Name
 						types[k] = LX.TokenType(ci.Typ)
 					}
-					return NewParallelIndexRangeScan(src, schema, types, colName, inValues, p.pool)
+					return NewParallelIndexRangeScan(src, schema, types, colName, inValues, p.pool.(*WorkerPool))
 				}
 			}
 		}
@@ -2894,10 +2893,10 @@ func (p *Planner) planInsert(s *PS.Insert) Operator {
 	// REQ000707: INSERT INTO t SELECT ...
 	if s.Select != nil {
 		selPlan, err := p.Plan(s.Select)
-		if err == nil && selPlan != nil && selPlan.root != nil {
+		if err == nil && selPlan != nil && selPlan.Root != nil {
 			op := NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
-			op.selectPlan = selPlan.root
-			propagatePlanner(selPlan.root, p)
+			op.selectPlan = selPlan.Root
+			propagatePlanner(selPlan.Root, p)
 			return op
 		}
 	}
@@ -2959,8 +2958,8 @@ func (p *Planner) planCreateTable(s *PS.CreateTable) Operator {
 		// CREATE TABLE AS SELECT: plan the inner SELECT and
 		// wrap both in a CreateTable operator. REQ000520.
 		innerPlan, innerErr := p.Plan(s.Select)
-		if innerErr == nil && innerPlan != nil && innerPlan.root != nil {
-			return NewCreateTableAs(s, innerPlan.root)
+		if innerErr == nil && innerPlan != nil && innerPlan.Root != nil {
+			return NewCreateTableAs(s, innerPlan.Root)
 		}
 	}
 	return NewCreateTable(s)
@@ -2973,20 +2972,20 @@ func (p *Planner) planDropTable(s *PS.DropTable) Operator {
 func (p *Planner) planExplain(s *PS.ExplainStmt) Operator {
 	// Plan the inner statement
 	innerPlan, err := p.Plan(s.Inner)
-	if err != nil || innerPlan == nil || innerPlan.root == nil {
+	if err != nil || innerPlan == nil || innerPlan.Root == nil {
 		// Return a placeholder operator that will produce empty output
 		return NewSeqScan("__explain_error__")
 	}
 
 	// Build the PlanNode tree for structured output
-	planNode := buildPlanNodeTree(innerPlan.root, p)
+	planNode := buildPlanNodeTree(innerPlan.Root, p)
 
 	// Return an ExplainStmt operator that renders the plan
 	return &ExplainStmtOp{
 		mode:     s.Mode,
 		format:   s.Format,
 		planNode: planNode,
-		root:     innerPlan.root,
+		root:     innerPlan.Root,
 	}
 }
 
@@ -3002,13 +3001,13 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 		}
 
 		ctePlan, err := p.Plan(cte.Query)
-		if err != nil || ctePlan == nil || ctePlan.root == nil {
+		if err != nil || ctePlan == nil || ctePlan.Root == nil {
 			continue
 		}
 
 		var rows []Row
 		for {
-			row, err := ctePlan.root.Next(context.TODO())
+			row, err := ctePlan.Root.Next(context.TODO())
 			if err != nil {
 				if err == ErrNoRows {
 					break
@@ -3017,7 +3016,7 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 			}
 			rows = append(rows, row)
 		}
-		ctePlan.root.Close()
+		ctePlan.Root.Close()
 
 		if len(cte.Cols) > 0 {
 			for i := range rows {
@@ -3034,11 +3033,11 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 	}
 
 	innerPlan, err := p.Plan(w.Inner)
-	if err != nil || innerPlan == nil || innerPlan.root == nil {
+	if err != nil || innerPlan == nil || innerPlan.Root == nil {
 		return NewSeqScan("__cte_error__")
 	}
 
-	return innerPlan.root
+	return innerPlan.Root
 }
 
 // planRecursiveCTE evaluates a recursive CTE inline. It executes the
@@ -3053,12 +3052,12 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 	// arm never references the CTE, so the CTE does not need to be
 	// in the planner catalog yet.
 	nonRecP, err := p.Plan(comp.Left)
-	if err != nil || nonRecP == nil || nonRecP.root == nil {
+	if err != nil || nonRecP == nil || nonRecP.Root == nil {
 		RegisterTable(cte.Name, nil)
 		return
 	}
-	allRows := drainAllRows(ctx, nonRecP.root)
-	nonRecP.root.Close()
+	allRows := drainAllRows(ctx, nonRecP.Root)
+	nonRecP.Root.Close()
 
 	// Determine canonical column names from the CTE alias or the seed arm.
 	canonicalCols := cte.Cols
@@ -3108,11 +3107,11 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 		tablesMu.Unlock()
 
 		recP, err := p.Plan(comp.Right)
-		if err != nil || recP == nil || recP.root == nil {
+		if err != nil || recP == nil || recP.Root == nil {
 			break
 		}
-		newRows := drainAllRows(ctx, recP.root)
-		recP.root.Close()
+		newRows := drainAllRows(ctx, recP.Root)
+		recP.Root.Close()
 
 		if len(newRows) == 0 {
 			break
@@ -4302,7 +4301,7 @@ func extractTableColumn(e PS.Expr) (string, string) {
 	return "", ""
 }
 
-func (p *Planner) ParseAndPlan(sql string) (*plan, error) {
+func (p *Planner) ParseAndPlan(sql string) (*pl.PlanResult, error) {
 	parser := PS.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
@@ -4597,7 +4596,7 @@ func (p *Planner) planOrdering(s *PS.Select, current Operator) Operator {
 		if !p.pkOrderMatches(s.From, s.OrderBy) {
 			sort := NewSort(current, s.OrderBy)
 			if p.pool != nil {
-				sort.WithPool(p.pool)
+				sort.WithPool(p.pool.(*WorkerPool))
 			}
 			current = sort
 		}

@@ -36,7 +36,7 @@ func TestREQ000736_ParserCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if plann == nil || plann.root == nil {
+	if plann == nil || plann.Root == nil {
 		t.Fatalf("nil plan")
 	}
 	found := false
@@ -53,7 +53,7 @@ func TestREQ000736_ParserCheck(t *testing.T) {
 			}
 		}
 	}
-	walk(plann.root)
+	walk(plann.Root)
 	if !found {
 		t.Fatal("Sort operator not found in plan")
 	}

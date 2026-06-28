@@ -390,7 +390,7 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 					Cols:     j.sharedCols,
 					Types:    j.sharedTypes,
 					Data:     j.dataBuf[off : off+dataPerRow : off+dataPerRow],
-					colIndex: j.sharedColIndex,
+					ColIndex: j.sharedColIndex,
 				}
 				j.matches = append(j.matches, out)
 			}
@@ -488,7 +488,7 @@ func joinRows(left, right Row, sharedCols []string, sharedColIndex map[string]in
 	}
 	if sharedCols != nil {
 		out.Cols = sharedCols
-		out.colIndex = sharedColIndex
+		out.ColIndex = sharedColIndex
 	} else {
 		out.Cols = make([]string, 0, len(left.Cols)+len(right.Cols))
 		out.Cols = append(out.Cols, left.Cols...)

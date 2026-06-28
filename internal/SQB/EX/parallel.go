@@ -9,7 +9,7 @@ import (
 // Task represents a unit of parallel work that produces a result
 // or error. The result is delivered to the caller via the Result
 // channel passed to the task.
-type Task func() error
+type Task = func() error
 
 // WorkerPool coordinates parallel task execution across N workers.
 // Tasks are submitted via Submit() and executed by worker goroutines

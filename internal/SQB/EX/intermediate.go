@@ -17,7 +17,7 @@ import (
 // so the global cache is only consulted by legacy callers via
 // lookupOrCompilePredicate. Per-Filter compilation avoids cross-query
 // pollution when one query's compiled closure referenced a stale
-// row.colIndex.
+// row.ColIndex.
 var predicateCache sync.Map
 
 // REQ000869: batchBufPool reuses []Row backing arrays across Filter
@@ -120,14 +120,14 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 			if f.execCtx != nil {
-				r.execCtx = f.execCtx
+				r.ExecCtx = f.execCtx
 			}
 			return r, nil
 		}
 		// REQ000802: use compiled predicate if available.
 		// REQ000802+: check global predicate cache for reuse.
 		// REQ001088: compile per-Filter instead. Compiled closures
-		// may reference row.colIndex which is per-row, so a global
+		// may reference row.ColIndex which is per-row, so a global
 		// cache is only safe for compileFilterExpr results that
 		// are pure (no row state). For simplicity, all compilation
 		// is now per-Filter via compiledOnce.
@@ -157,7 +157,7 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 			r := f.batchEmit[f.batchEmitPos]
 			f.batchEmitPos++
 			if f.execCtx != nil {
-				r.execCtx = f.execCtx
+				r.ExecCtx = f.execCtx
 			}
 			return r, nil
 		}
@@ -167,7 +167,7 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		if f.execCtx != nil {
-			r.execCtx = f.execCtx
+			r.ExecCtx = f.execCtx
 		}
 		f.curRow = r
 		v, err := EvalValue(f.predicate, &f.curRow, f.params)
@@ -213,7 +213,7 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 			return err
 		}
 		if f.execCtx != nil {
-			r.execCtx = f.execCtx
+			r.ExecCtx = f.execCtx
 		}
 		f.batchBuf = append(f.batchBuf, r)
 	}
@@ -355,7 +355,7 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 		return Row{}, err
 	}
 	if p.execCtx != nil {
-		row.execCtx = p.execCtx
+		row.ExecCtx = p.execCtx
 	}
 	if isStar(p.cols) {
 		return row, nil
@@ -395,7 +395,7 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 	out := Row{
 		Cols:     p.prefixCols, // shared, no copy needed
 		Data:     dataSlice,
-		colIndex: p.colIndex,
+		ColIndex: p.colIndex,
 	}
 	// Fill the data slice directly.
 	for i, c := range p.cols {
@@ -813,7 +813,7 @@ func (o *Offset) Close() error {
 // global `sync.Map` cache was keyed by `fmt.Sprintf("%v", e)` which
 // serialized the entire AST on every call AND was shared across
 // all Executors, creating cross-query pollution risk when one
-// query's compiled closure referenced a stale row.colIndex. Per-Filter
+// query's compiled closure referenced a stale row.ColIndex. Per-Filter
 // compilation (via Filter.compiledOnce) is simpler and correct.
 // `lookupOrCompilePredicate` is kept as a thin wrapper for backward
 // compat with tests and any external callers.
@@ -827,7 +827,7 @@ func (o *Offset) Close() error {
 // helps when many Filters share the same predicate text AND the
 // compiled closure doesn't depend on per-Filter state. Most
 // compiled predicates today are column-literal comparisons which
-// ARE state-dependent (row.colIndex), so the global cache is
+// ARE state-dependent (row.ColIndex), so the global cache is
 // bypassed by per-Filter caching entirely.
 func lookupOrCompilePredicate(e PS.Expr) func(*Row) (bool, error) {
 	key := fmt.Sprintf("%v", e)
@@ -1256,7 +1256,7 @@ func findColIndex(row *Row, name string) int {
 	// outer-referenced column (e.g., t1.b when inner row is aliased
 	// as x with columns [x.a, x.b, ...]).
 	for cur := row.Outer; cur != nil; cur = cur.Outer {
-		if nameHasTable(name) && cur.tableName != "" && !strings.EqualFold(cur.tableName, tableOfName(name)) {
+		if nameHasTable(name) && cur.TableName != "" && !strings.EqualFold(cur.TableName, tableOfName(name)) {
 			continue
 		}
 		idx = findColIndexInRow(cur, name)
@@ -1321,11 +1321,11 @@ func findColIndexInRow(row *Row, name string) int {
 
 	// Fast path: use colIndex map (safe for bare names or when
 	// the qualified name wasn't found via linear scan).
-	if row.colIndex != nil {
-		if idx, ok := row.colIndex[lower]; ok && idx < len(row.Data) {
+	if row.ColIndex != nil {
+		if idx, ok := row.ColIndex[lower]; ok && idx < len(row.Data) {
 			return idx
 		}
-		if idx, ok := row.colIndex[bareLower]; ok && idx < len(row.Data) {
+		if idx, ok := row.ColIndex[bareLower]; ok && idx < len(row.Data) {
 			return idx
 		}
 	}
@@ -1484,8 +1484,8 @@ func compileColRef(name string) func(*Row) Value {
 		// would read from the wrong column. This is the same bug as
 		// makeCompiledCmp (REQ001084) but in the Project column refs.
 		// Fast path: use colIndex if available (avoids linear scan).
-		if row.colIndex != nil {
-			if i, ok := row.colIndex[lower]; ok && i < len(row.Data) {
+		if row.ColIndex != nil {
+			if i, ok := row.ColIndex[lower]; ok && i < len(row.Data) {
 				return row.Data[i]
 			}
 		}

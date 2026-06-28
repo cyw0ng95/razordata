@@ -147,7 +147,7 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 	if firstRow, err := j.left.Next(ctx); err == nil {
 		j.leftHasPrefix = hasAnyPrefix(firstRow.Cols)
 		prefixed := Row{Types: firstRow.Types, Data: firstRow.Data, Outer: firstRow.Outer}
-		prefixed.tableName = firstRow.tableName
+		prefixed.TableName = firstRow.TableName
 		if !j.leftHasPrefix {
 			prefixed.Cols = prefixCols(firstRow.Cols, j.leftTbl)
 		} else {
@@ -161,7 +161,7 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 			break
 		}
 		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
-		prefixed.tableName = row.tableName
+		prefixed.TableName = row.TableName
 		if !j.leftHasPrefix {
 			prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
 		} else {
@@ -192,11 +192,11 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 	}
 	for i := range j.leftRows {
 		j.leftRows[i].Cols = j.sharedCols[:len(lCols)]
-		j.leftRows[i].colIndex = j.sharedColIndex
+		j.leftRows[i].ColIndex = j.sharedColIndex
 	}
 	for i := range j.rightRows {
 		j.rightRows[i].Cols = j.sharedCols[len(lCols):]
-		j.rightRows[i].colIndex = j.sharedColIndex
+		j.rightRows[i].ColIndex = j.sharedColIndex
 	}
 	// REQ000802+: pre-compute all matches with data buffer.
 	// Count total matches first.
@@ -233,7 +233,7 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 				Cols:     j.sharedCols,
 				Types:    j.sharedTypes,
 				Data:     dataSlice,
-				colIndex: j.sharedColIndex,
+				ColIndex: j.sharedColIndex,
 			}
 			out.Data = append(out.Data, l.Data...)
 			out.Data = append(out.Data, r.Data...)
@@ -258,7 +258,7 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 			Cols:      firstRow.Cols,
 			Types:     firstRow.Types,
 			Data:      append([]Value(nil), firstRow.Data...),
-			tableName: firstRow.tableName,
+			TableName: firstRow.TableName,
 		}
 		if j.rightHasPrefix {
 			prefixed.Cols = append([]string(nil), firstRow.Cols...)
@@ -282,7 +282,7 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 			Cols:      row.Cols,
 			Types:     row.Types,
 			Data:      append([]Value(nil), row.Data...),
-			tableName: row.tableName,
+			TableName: row.TableName,
 		}
 		if j.rightHasPrefix {
 			prefixed.Cols = append([]string(nil), row.Cols...)
@@ -360,7 +360,7 @@ func (j *HashCrossJoin) nextCross(_ context.Context) (Row, error) {
 				Cols:     j.sharedCols,
 				Types:    j.sharedTypes,
 				Data:     dataSlice,
-				colIndex: j.sharedColIndex,
+				ColIndex: j.sharedColIndex,
 			}, nil
 		}
 		j.crossRightIdx = 0
@@ -394,11 +394,11 @@ func (j *HashCrossJoin) Close() error {
 func lookupColumn(row *Row, tbl, col string) (any, bool) {
 	want := tbl + "." + col
 	// REQ001036: check colIndex first (O(1)), fall back to linear scan only if colIndex is nil.
-	if row.colIndex != nil {
-		if idx, ok := row.colIndex[strings.ToLower(want)]; ok && idx < len(row.Data) {
+	if row.ColIndex != nil {
+		if idx, ok := row.ColIndex[strings.ToLower(want)]; ok && idx < len(row.Data) {
 			return row.Data[idx].ToAny(), true
 		}
-		if idx, ok := row.colIndex[strings.ToLower(col)]; ok && idx < len(row.Data) {
+		if idx, ok := row.ColIndex[strings.ToLower(col)]; ok && idx < len(row.Data) {
 			return row.Data[idx].ToAny(), true
 		}
 		return nil, false

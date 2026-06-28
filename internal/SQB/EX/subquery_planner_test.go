@@ -69,9 +69,9 @@ func TestSubqueryPlanner_StorePropagationAfterClone(t *testing.T) {
 func TestSubqueryPlanner_CloneRowPreservesPlanner(t *testing.T) {
 	pl := NewPlannerWithStore(nil)
 	src := Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(1))}}
-	src.planner = pl
+	src.Planner = pl
 	cloned := cloneRow(src)
-	if cloned.planner != pl {
+	if cloned.Planner != pl {
 		t.Error("cloneRow should preserve planner")
 	}
 	if cloned.Outer != src.Outer {

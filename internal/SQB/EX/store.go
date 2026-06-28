@@ -33,7 +33,7 @@ type Store interface {
 }
 
 // StatsCatalog provides access to column statistics for
-// histogram-based selectivity estimation. REQ000085.
+// histogram-based selectivity estimation.
 type StatsCatalog interface {
 	ColumnStatsByName(tableName, colName string) *ls.ColumnStats
 }
@@ -653,7 +653,7 @@ func decodeRow(data []byte, schema *storeSchema) (Row, error) {
 	row := Row{
 		Cols:     schema.cols, // share schema's cols slice (immutable)
 		Data:     dataSlice,
-		colIndex: schema.colIndex, // share schema's pre-built index (no allocation)
+		ColIndex: schema.colIndex, // share schema's pre-built index (no allocation)
 	}
 	for i := 0; i < int(n); i++ {
 		if off >= len(data) {
@@ -774,8 +774,8 @@ func extractPK(schema *storeSchema, row Row) (any, error) {
 // storeKey so the update overwrites the same engine row instead of
 // allocating a new synthetic rowid on every UPDATE (REQ000501).
 func extractPKForUpdate(schema *storeSchema, oldRow Row, prefix []byte) (any, error) {
-	if schema.pk == "" && schema.hiddenPK && len(oldRow.storeKey) > len(prefix) {
-		suffix := oldRow.storeKey[len(prefix):]
+	if schema.pk == "" && schema.hiddenPK && len(oldRow.StoreKey) > len(prefix) {
+		suffix := oldRow.StoreKey[len(prefix):]
 		return int64(binary.BigEndian.Uint64(suffix)), nil
 	}
 	return extractPK(schema, oldRow)

@@ -42,7 +42,7 @@ func (v *Values) Next(ctx context.Context) (Row, error) {
 	// can read session-level change counters.
 	var evalRow *Row
 	if v.planner != nil || v.execCtx != nil {
-		evalRow = &Row{planner: v.planner, execCtx: v.execCtx}
+		evalRow = &Row{Planner: v.planner, ExecCtx: v.execCtx}
 	}
 	cols := make([]string, len(v.cols))
 	data := make([]Value, len(v.cols))

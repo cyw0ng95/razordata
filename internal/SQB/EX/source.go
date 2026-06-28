@@ -171,7 +171,7 @@ func UnregisterTable(name string) {
 }
 
 func cloneRow(r Row) Row {
-	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]LX.TokenType(nil), r.Types...), Outer: r.Outer, planner: r.planner, storeKey: r.storeKey, tableName: r.tableName}
+	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]LX.TokenType(nil), r.Types...), Outer: r.Outer, Planner: r.Planner, StoreKey: r.StoreKey, TableName: r.TableName}
 	if r.Data != nil {
 		out.Data = append([]Value(nil), r.Data...)
 	}
