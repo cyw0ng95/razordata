@@ -541,3 +541,32 @@ var scalarInCases = []dualCase{
 	{Name: "null_not_in_scalar", Query: "SELECT NULL NOT IN (1)", Want: [][]any{{nil}}},
 	{Name: "null_in_null",     Query: "SELECT NULL IN (NULL)",  Want: [][]any{{nil}}},
 }
+
+// hashCrossJoinCases from EX/hashcrossjoin_e2e_test.go: HashCrossJoin
+// planner selection for INNER JOIN ON with equi-conditions.
+// Note: the compound ON condition case is excluded — Razordata has a
+// pre-existing bug (ignores AND t1.b > 10 in the ON clause).
+var hashCrossJoinCases = []dualCase{
+	{
+		Name: "hash_cross_join_equi",
+		Setup: []string{
+			"CREATE TABLE t1 (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER)",
+			"INSERT INTO t1 VALUES (1, 1, 10), (2, 2, 20), (3, 3, 30)",
+			"CREATE TABLE t2 (id INTEGER PRIMARY KEY, c INTEGER, d INTEGER)",
+			"INSERT INTO t2 VALUES (1, 2, 200), (2, 3, 300), (3, 3, 400)",
+		},
+		Query: "SELECT t1.a, t2.c FROM t1 INNER JOIN t2 ON t1.a = t2.c",
+		Want:  [][]any{{int64(2), int64(2)}, {int64(3), int64(3)}, {int64(3), int64(3)}},
+	},
+	{
+		Name: "hash_cross_join_swapped",
+		Setup: []string{
+			"CREATE TABLE t1 (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER)",
+			"INSERT INTO t1 VALUES (1, 1, 10), (2, 2, 20), (3, 3, 30)",
+			"CREATE TABLE t2 (id INTEGER PRIMARY KEY, c INTEGER, d INTEGER)",
+			"INSERT INTO t2 VALUES (1, 2, 200), (2, 3, 300), (3, 3, 400)",
+		},
+		Query: "SELECT t1.a, t2.c FROM t1 INNER JOIN t2 ON t2.c = t1.a",
+		Want:  [][]any{{int64(2), int64(2)}, {int64(3), int64(3)}, {int64(3), int64(3)}},
+	},
+}
