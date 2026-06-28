@@ -55,6 +55,8 @@ type storeSchema struct {
 	defaults []PS.Expr   // parallel to cols; nil means no DEFAULT
 	unique   []UniqueKey // each entry is 1+ columns
 	checks   []PS.Expr   // parallel to CHECK constraints
+	// REQ000986: pre-compiled CHECK expressions evaluated per row.
+	compiledChecks []func(*Row) (bool, error)
 	colTypes []int
 	// REQ000568: DECIMAL(P,S) precision and scale per column.
 	// Only meaningful when colTypes[i] is T_DECIMAL or T_NUMERIC.

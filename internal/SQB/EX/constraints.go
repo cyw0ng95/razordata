@@ -191,18 +191,53 @@ type uniqueLookupWithApply interface {
 
 // validateCheck checks that row satisfies all CHECK constraints
 // defined on the table. Returns a wrapped ErrConstraint on violation.
+// REQ000986: CHECK expressions are pre-compiled on first use and
+// cached in schema.compiledChecks to avoid per-row AST re-evaluation.
 func validateCheck(schema *storeSchema, row Row) error {
+	// Lazy-compile CHECK expressions on first call.
+	if schema.compiledChecks == nil && len(schema.checks) > 0 {
+		schema.compiledChecks = make([]func(*Row) (bool, error), len(schema.checks))
+		for i, check := range schema.checks {
+			if check == nil {
+				continue
+			}
+			i2, c2 := i, check
+			schema.compiledChecks[i2] = func(r *Row) (bool, error) {
+				val, err := EvalValue(c2, r, nil)
+				if err != nil {
+					return false, fmt.Errorf("%w: CHECK constraint %d: %v",
+						ErrConstraint, i2, err)
+				}
+				return isValueTruthy(val), nil
+			}
+		}
+	}
+	if schema.compiledChecks != nil {
+		for i, fn := range schema.compiledChecks {
+			if fn == nil {
+				continue
+			}
+			ok, err := fn(&row)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("%w: CHECK constraint %d failed",
+					ErrConstraint, i)
+			}
+		}
+		return nil
+	}
+	// Fallback: evaluate from AST (no caching possible).
 	for i, check := range schema.checks {
 		if check == nil {
 			continue
 		}
-		// Evaluate the CHECK expression against the row
 		val, err := EvalValue(check, &row, nil)
 		if err != nil {
 			return fmt.Errorf("%w: CHECK constraint %d: %v",
 				ErrConstraint, i, err)
 		}
-		// CHECK must evaluate to TRUE (not FALSE or NULL)
 		if !isValueTruthy(val) {
 			return fmt.Errorf("%w: CHECK constraint %d failed",
 				ErrConstraint, i)
