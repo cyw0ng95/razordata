@@ -6,38 +6,343 @@ import (
 	"strings"
 )
 
-func (p *Parser) parseCreateTable() (*CreateTable, error) {
+// parseColumnDef parses a column definition inside CREATE TABLE:
+//
+//	name type [constraints...] [AS (expr) [STORED|VIRTUAL]] [REFERENCES ...]
+//
+// REQ001001: extracted from parseCreateTable.
+func (p *Parser) parseColumnDef() (ColDef, error) {
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return ColDef{}, err
+	}
+	colName := p.current.Lexeme
 	p.advance()
 
+	typeInfo, err := p.parseCastType()
+	if err != nil {
+		return ColDef{}, err
+	}
+
+	col := NewColDef(colName, typeInfo.Type)
+	col.Size = typeInfo.Size
+
+	for p.current.Type == LX.T_NOTNULL || p.current.Type == LX.T_PRIMARY ||
+		p.current.Type == LX.T_DEFAULT || p.current.Type == LX.T_UNIQUE ||
+		p.current.Type == LX.T_NOT || p.current.Type == LX.T_CHECK {
+		if p.current.Type == LX.T_PRIMARY {
+			peek := p.lex.Peek()
+			if peek.Type == LX.T_KEY {
+				p.advance()
+				p.advance()
+				if p.current.Type == LX.T_LPAREN {
+					break
+				}
+				col.PK = true
+				if p.current.Type == LX.T_AUTOINCREMENT {
+					col.Autoincrement = true
+					p.advance()
+				}
+				continue
+			}
+		}
+		switch p.current.Type {
+		case LX.T_NOTNULL:
+			col.Nullable = false
+			p.advance()
+		case LX.T_NOT:
+			p.advance()
+			if p.current.Type == LX.T_NULL {
+				col.Nullable = false
+				p.advance()
+			}
+		case LX.T_PRIMARY:
+			col.PK = true
+			col.Nullable = false
+			p.advance()
+			if p.current.Type == LX.T_KEY {
+				p.advance()
+			}
+			if p.current.Type == LX.T_AUTOINCREMENT {
+				col.Autoincrement = true
+				p.advance()
+			}
+		case LX.T_DEFAULT:
+			p.advance()
+			d, err := p.parseExpr()
+			if err != nil {
+				return ColDef{}, err
+			}
+			col.Default = d
+		case LX.T_CHECK:
+			p.advance()
+			if err := p.expect(LX.T_LPAREN); err != nil {
+				return ColDef{}, err
+			}
+			p.advance()
+			checkExpr, err := p.parseExpr()
+			if err != nil {
+				return ColDef{}, err
+			}
+			if err := p.expect(LX.T_RPAREN); err != nil {
+				return ColDef{}, err
+			}
+			p.advance()
+			col.Check = checkExpr
+		case LX.T_UNIQUE:
+			col.Unique = true
+			p.advance()
+			if p.current.Type == LX.T_KEY {
+				p.advance()
+			}
+		}
+	}
+
+	// Generated column: AS (expr) [STORED|VIRTUAL]
+	if p.current.Type == LX.T_AS {
+		p.advance()
+		if err := p.expect(LX.T_LPAREN); err != nil {
+			return ColDef{}, err
+		}
+		p.advance()
+		genExpr, err := p.parseExpr()
+		if err != nil {
+			return ColDef{}, err
+		}
+		if err := p.expect(LX.T_RPAREN); err != nil {
+			return ColDef{}, err
+		}
+		p.advance()
+		col.Generated = genExpr
+		col.Virtual = false
+		if p.current.Type == LX.T_IDENT {
+			switch strings.ToUpper(p.current.Lexeme) {
+			case "VIRTUAL":
+				col.Virtual = true
+				p.advance()
+			case "STORED":
+				p.advance()
+			}
+		}
+	}
+
+	// Column-level REFERENCES clause
+	if p.current.Type == LX.T_REFERENCES {
+		p.advance()
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return ColDef{}, err
+		}
+		col.ReferencesTable = p.current.Lexeme
+		p.advance()
+		if p.current.Type == LX.T_LPAREN {
+			p.advance()
+			if err := p.expect(LX.T_IDENT); err != nil {
+				return ColDef{}, err
+			}
+			col.ReferencesColumn = p.current.Lexeme
+			p.advance()
+			if err := p.expect(LX.T_RPAREN); err != nil {
+				return ColDef{}, err
+			}
+			p.advance()
+		}
+		for p.current.Type == LX.T_ON {
+			p.advance()
+			if p.current.Type == LX.T_DELETE {
+				p.advance()
+				col.OnDelete = p.parseFKAction()
+			} else if p.current.Type == LX.T_UPDATE {
+				p.advance()
+				col.OnUpdate = p.parseFKAction()
+			}
+		}
+		col.Match = p.parseMatchClause()
+		col.Deferrable, col.Initially = p.parseDeferrableClause()
+	}
+
+	return col, nil
+}
+
+// parseMatchClause parses optional MATCH clause (MATCH <name>).
+func (p *Parser) parseMatchClause() string {
+	if p.current.Type != LX.T_MATCH {
+		return ""
+	}
+	p.advance()
+	if p.current.Type != LX.T_RPAREN && p.current.Type != LX.T_COMMA &&
+		p.current.Type != LX.T_ON && p.current.Type != LX.T_NOT &&
+		p.current.Type != LX.T_DEFERRABLE && p.current.Type != LX.T_INITIALLY {
+		m := p.current.Lexeme
+		p.advance()
+		return m
+	}
+	return ""
+}
+
+// parseDeferrableClause parses [NOT] DEFERRABLE [INITIALLY DEFERRED|IMMEDIATE].
+// REQ001001: extracted from parseCreateTable.
+func (p *Parser) parseDeferrableClause() (deferrable, initially string) {
+	if p.current.Type == LX.T_NOT {
+		if p.lex.Peek().Type == LX.T_DEFERRABLE {
+			p.advance()
+			p.advance()
+			deferrable = "NOT DEFERRABLE"
+		}
+	} else if p.current.Type == LX.T_DEFERRABLE {
+		p.advance()
+		deferrable = "DEFERRABLE"
+	}
+	if p.current.Type == LX.T_INITIALLY {
+		p.advance()
+		if p.current.Type == LX.T_DEFERRED || p.current.Type == LX.T_IMMEDIATE {
+			initially = p.current.Lexeme
+			p.advance()
+		}
+	}
+	return
+}
+
+// parseTableLevelConstraints parses table-level PRIMARY KEY, UNIQUE, and
+// FOREIGN KEY constraints inside a CREATE TABLE definition list.
+// REQ001001: extracted from parseCreateTable.
+func (p *Parser) parseTableLevelConstraints(cols []ColDef, pk *string) ([]UniqueKey, []ForeignKeyConstraint, *string, error) {
+	var uniqueConstraints []UniqueKey
+	var foreignKeys []ForeignKeyConstraint
+	localPK := pk
+	for p.current.Type == LX.T_PRIMARY || p.current.Type == LX.T_UNIQUE || p.current.Type == LX.T_FOREIGN {
+		isPK := p.current.Type == LX.T_PRIMARY
+		isFK := p.current.Type == LX.T_FOREIGN
+		p.advance()
+		if isPK {
+			if err := p.expect(LX.T_KEY); err != nil {
+				return nil, nil, nil, err
+			}
+			p.advance()
+		} else if isFK {
+			if err := p.expect(LX.T_KEY); err != nil {
+				return nil, nil, nil, err
+			}
+			p.advance()
+		} else if p.current.Type == LX.T_KEY {
+			p.advance()
+		}
+		if err := p.expect(LX.T_LPAREN); err != nil {
+			return nil, nil, nil, err
+		}
+		p.advance()
+		names, err := p.parseIdentList()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if err := p.expect(LX.T_RPAREN); err != nil {
+			return nil, nil, nil, err
+		}
+		p.advance()
+		if isFK {
+			fk, err := p.parseForeignKeyConstraint(names)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			foreignKeys = append(foreignKeys, fk)
+		} else if isPK {
+			pkName := names[0]
+			localPK = &pkName
+			if len(names) > 1 {
+				uniqueConstraints = append(uniqueConstraints, UniqueKey{Cols: names})
+			}
+		} else {
+			uniqueConstraints = append(uniqueConstraints, UniqueKey{Cols: names})
+		}
+		if p.current.Type == LX.T_COMMA {
+			p.advance()
+		}
+	}
+	return uniqueConstraints, foreignKeys, localPK, nil
+}
+
+// parseForeignKeyConstraint parses REFERENCES table(refCols) [ON ...] [MATCH ...] [DEFERRABLE ...]
+// after FOREIGN KEY (cols) has already been consumed.
+// REQ001001: extracted from parseCreateTable.
+func (p *Parser) parseForeignKeyConstraint(names []string) (ForeignKeyConstraint, error) {
+	if err := p.expect(LX.T_REFERENCES); err != nil {
+		return ForeignKeyConstraint{}, err
+	}
+	p.advance()
+	if err := p.expect(LX.T_IDENT); err != nil {
+		return ForeignKeyConstraint{}, err
+	}
+	refTable := p.current.Lexeme
+	p.advance()
+	var refCols []string
+	if p.current.Type == LX.T_LPAREN {
+		p.advance()
+		refCols, _ = p.parseIdentList()
+		if err := p.expect(LX.T_RPAREN); err != nil {
+			return ForeignKeyConstraint{}, err
+		}
+		p.advance()
+	}
+	fk := ForeignKeyConstraint{Columns: names, RefTable: refTable, RefColumns: refCols}
+	for p.current.Type == LX.T_ON {
+		p.advance()
+		if p.current.Type == LX.T_DELETE {
+			p.advance()
+			fk.OnDelete = p.parseFKAction()
+		} else if p.current.Type == LX.T_UPDATE {
+			p.advance()
+			fk.OnUpdate = p.parseFKAction()
+		}
+	}
+	fk.Match = p.parseMatchClause()
+	// Re-check for ON clause after MATCH (loop for multiple ON actions)
+	for p.current.Type == LX.T_ON {
+		p.advance()
+		if p.current.Type == LX.T_DELETE {
+			p.advance()
+			fk.OnDelete = p.parseFKAction()
+		} else if p.current.Type == LX.T_UPDATE {
+			p.advance()
+			fk.OnUpdate = p.parseFKAction()
+		}
+	}
+	fk.Deferrable, fk.Initially = p.parseDeferrableClause()
+	return fk, nil
+}
+
+// parseCreateTableAsSelect parses CREATE TABLE <name> AS SELECT ...
+// REQ001001: extracted from parseCreateTable.
+func (p *Parser) parseCreateTableAsSelect(name string) (*CreateTable, error) {
+	p.advance() // consume AS
+	raw, err := p.parseSelect()
+	if err != nil {
+		return nil, err
+	}
+	sel, ok := raw.(*Select)
+	if !ok {
+		return nil, &SyntaxError{
+			Input:    p.lex.Input(),
+			Line:     p.current.Line,
+			Col:      p.current.Col,
+			Expected: "SELECT after AS",
+			Got:      fmt.Sprintf("%T", raw),
+		}
+	}
+	return &CreateTable{Name: name, Select: sel}, nil
+}
+
+func (p *Parser) parseCreateTable() (*CreateTable, error) {
+	p.advance()
 	if err := p.expect(LX.T_TABLE); err != nil {
 		return nil, err
 	}
 	p.advance()
-
 	if err := p.expect(LX.T_IDENT); err != nil {
 		return nil, err
 	}
 	name := p.current.Lexeme
 	p.advance()
 
-	// CREATE TABLE <name> AS SELECT ... (REQ000520)
 	if p.current.Type == LX.T_AS {
-		p.advance()
-		raw, err := p.parseSelect()
-		if err != nil {
-			return nil, err
-		}
-		sel, ok := raw.(*Select)
-		if !ok {
-			return nil, &SyntaxError{
-				Input:    p.lex.Input(),
-				Line:     p.current.Line,
-				Col:      p.current.Col,
-				Expected: "SELECT after AS",
-				Got:      fmt.Sprintf("%T", raw),
-			}
-		}
-		return &CreateTable{Name: name, Select: sel}, nil
+		return p.parseCreateTableAsSelect(name)
 	}
 
 	if err := p.expect(LX.T_LPAREN); err != nil {
@@ -51,190 +356,11 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 		if p.current.Type == LX.T_PRIMARY || p.current.Type == LX.T_UNIQUE || p.current.Type == LX.T_FOREIGN {
 			break
 		}
-		if err := p.expect(LX.T_IDENT); err != nil {
-			return nil, err
-		}
-		colName := p.current.Lexeme
-		p.advance()
-
-		// Parse type with optional size/precision (REQ000207)
-		typeInfo, err := p.parseCastType()
+		col, err := p.parseColumnDef()
 		if err != nil {
 			return nil, err
 		}
-
-		col := NewColDef(colName, typeInfo.Type)
-		col.Size = typeInfo.Size
-
-		for p.current.Type == LX.T_NOTNULL || p.current.Type == LX.T_PRIMARY ||
-			p.current.Type == LX.T_DEFAULT || p.current.Type == LX.T_UNIQUE ||
-			p.current.Type == LX.T_NOT || p.current.Type == LX.T_CHECK {
-			if p.current.Type == LX.T_PRIMARY {
-				peek := p.lex.Peek()
-				if peek.Type == LX.T_KEY {
-					p.advance()
-					p.advance()
-					if p.current.Type == LX.T_LPAREN {
-						break
-					}
-					col.PK = true
-					// REQ000482: accept AUTOINCREMENT after PRIMARY KEY
-					if p.current.Type == LX.T_AUTOINCREMENT {
-						col.Autoincrement = true
-						p.advance()
-					}
-					continue
-				}
-			}
-			switch p.current.Type {
-			case LX.T_NOTNULL:
-				col.Nullable = false
-				p.advance()
-			case LX.T_NOT:
-				p.advance()
-				if p.current.Type == LX.T_NULL {
-					col.Nullable = false
-					p.advance()
-				}
-			case LX.T_PRIMARY:
-				col.PK = true
-				col.Nullable = false
-				p.advance()
-				if p.current.Type == LX.T_KEY {
-					p.advance()
-				}
-				// REQ000482: accept AUTOINCREMENT after PRIMARY KEY
-				if p.current.Type == LX.T_AUTOINCREMENT {
-					col.Autoincrement = true
-					p.advance()
-				}
-			case LX.T_DEFAULT:
-				p.advance()
-				d, err := p.parseExpr()
-				if err != nil {
-					return nil, err
-				}
-				col.Default = d
-			case LX.T_CHECK:
-				p.advance()
-				if err := p.expect(LX.T_LPAREN); err != nil {
-					return nil, err
-				}
-				p.advance()
-				checkExpr, err := p.parseExpr()
-				if err != nil {
-					return nil, err
-				}
-				if err := p.expect(LX.T_RPAREN); err != nil {
-					return nil, err
-				}
-				p.advance()
-				col.Check = checkExpr
-			case LX.T_UNIQUE:
-				col.Unique = true
-				p.advance()
-				if p.current.Type == LX.T_KEY {
-					p.advance()
-				}
-			}
-		}
-
-		// REQ000248: generated column syntax `AS (expr) STORED` or
-		// `AS (expr) VIRTUAL`. We support STORED only in v0.27.0
-		// (materialized on write). VIRTUAL is accepted in the
-		// parser and the column is treated like a normal column at
-		// the storage layer (deferred materialization).
-		if p.current.Type == LX.T_AS {
-			p.advance()
-			if err := p.expect(LX.T_LPAREN); err != nil {
-				return nil, err
-			}
-			p.advance()
-			genExpr, err := p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-			if err := p.expect(LX.T_RPAREN); err != nil {
-				return nil, err
-			}
-			p.advance()
-			col.Generated = genExpr
-			col.Virtual = false
-			// STORED and VIRTUAL are not reserved keywords; we
-			// accept them as identifiers after the expression.
-			if p.current.Type == LX.T_IDENT {
-				switch strings.ToUpper(p.current.Lexeme) {
-				case "VIRTUAL":
-					col.Virtual = true
-					p.advance()
-				case "STORED":
-					p.advance()
-				}
-			}
-		}
-
-		// REQ000126: column-level REFERENCES clause (after other constraints)
-		if p.current.Type == LX.T_REFERENCES {
-			p.advance()
-			if err := p.expect(LX.T_IDENT); err != nil {
-				return nil, err
-			}
-			col.ReferencesTable = p.current.Lexeme
-			p.advance()
-			if p.current.Type == LX.T_LPAREN {
-				p.advance()
-				if err := p.expect(LX.T_IDENT); err != nil {
-					return nil, err
-				}
-				col.ReferencesColumn = p.current.Lexeme
-				p.advance()
-				if err := p.expect(LX.T_RPAREN); err != nil {
-					return nil, err
-				}
-				p.advance()
-			}
-			for p.current.Type == LX.T_ON {
-				p.advance()
-				if p.current.Type == LX.T_DELETE {
-					p.advance()
-					col.OnDelete = p.parseFKAction()
-				} else if p.current.Type == LX.T_UPDATE {
-					p.advance()
-					col.OnUpdate = p.parseFKAction()
-				}
-			}
-			// REQ000561: optional MATCH name at column level
-			if p.current.Type == LX.T_MATCH {
-				p.advance()
-				if p.current.Type != LX.T_RPAREN && p.current.Type != LX.T_COMMA &&
-					p.current.Type != LX.T_ON && p.current.Type != LX.T_NOT &&
-					p.current.Type != LX.T_DEFERRABLE && p.current.Type != LX.T_INITIALLY {
-					col.Match = p.current.Lexeme
-					p.advance()
-				}
-			}
-			// REQ000561: optional [NOT] DEFERRABLE at column level
-			if p.current.Type == LX.T_NOT {
-				if p.lex.Peek().Type == LX.T_DEFERRABLE {
-					p.advance()
-					p.advance()
-					col.Deferrable = "NOT DEFERRABLE"
-				}
-			} else if p.current.Type == LX.T_DEFERRABLE {
-				p.advance()
-				col.Deferrable = "DEFERRABLE"
-			}
-			if p.current.Type == LX.T_INITIALLY {
-				p.advance()
-				if p.current.Type == LX.T_DEFERRED || p.current.Type == LX.T_IMMEDIATE {
-					col.Initially = p.current.Lexeme
-					p.advance()
-				}
-			}
-		}
-
 		cols = append(cols, col)
-
 		if p.current.Type == LX.T_COMMA {
 			p.advance()
 			continue
@@ -250,145 +376,10 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 
 	var uniqueConstraints []UniqueKey
 	var foreignKeys []ForeignKeyConstraint
-	for p.current.Type == LX.T_PRIMARY || p.current.Type == LX.T_UNIQUE || p.current.Type == LX.T_FOREIGN {
-		isPK := p.current.Type == LX.T_PRIMARY
-		isFK := p.current.Type == LX.T_FOREIGN
-		p.advance()
-		if isPK {
-			if err := p.expect(LX.T_KEY); err != nil {
-				return nil, err
-			}
-			p.advance()
-		} else if isFK {
-			if err := p.expect(LX.T_KEY); err != nil {
-				return nil, err
-			}
-			p.advance()
-		} else if p.current.Type == LX.T_KEY {
-			p.advance()
-		}
-		if err := p.expect(LX.T_LPAREN); err != nil {
-			return nil, err
-		}
-		p.advance()
-		// Parse one or more identifiers inside the parens.
-		if err := p.expect(LX.T_IDENT); err != nil {
-			return nil, err
-		}
-		firstName := p.current.Lexeme
-		p.advance()
-		names := []string{firstName}
-		for p.current.Type == LX.T_COMMA {
-			p.advance()
-			if err := p.expect(LX.T_IDENT); err != nil {
-				return nil, err
-			}
-			names = append(names, p.current.Lexeme)
-			p.advance()
-		}
-		if err := p.expect(LX.T_RPAREN); err != nil {
-			return nil, err
-		}
-		p.advance()
-		if isFK {
-			// FOREIGN KEY (cols) REFERENCES table(refCols) [ON DELETE/UPDATE action]
-			if err := p.expect(LX.T_REFERENCES); err != nil {
-				return nil, err
-			}
-			p.advance()
-			if err := p.expect(LX.T_IDENT); err != nil {
-				return nil, err
-			}
-			refTable := p.current.Lexeme
-			p.advance()
-			var refCols []string
-			if p.current.Type == LX.T_LPAREN {
-				p.advance()
-				if err := p.expect(LX.T_IDENT); err != nil {
-					return nil, err
-				}
-				refCols = append(refCols, p.current.Lexeme)
-				p.advance()
-				for p.current.Type == LX.T_COMMA {
-					p.advance()
-					if err := p.expect(LX.T_IDENT); err != nil {
-						return nil, err
-					}
-					refCols = append(refCols, p.current.Lexeme)
-					p.advance()
-				}
-				if err := p.expect(LX.T_RPAREN); err != nil {
-					return nil, err
-				}
-				p.advance()
-			}
-			fk := ForeignKeyConstraint{Columns: names, RefTable: refTable, RefColumns: refCols}
-			for p.current.Type == LX.T_ON {
-				p.advance()
-				if p.current.Type == LX.T_DELETE {
-					p.advance()
-					fk.OnDelete = p.parseFKAction()
-				} else if p.current.Type == LX.T_UPDATE {
-					p.advance()
-					fk.OnUpdate = p.parseFKAction()
-				}
-			}
-			// REQ000561: optional MATCH name (can appear before or after ON)
-			if p.current.Type == LX.T_MATCH {
-				p.advance()
-				if p.current.Type != LX.T_RPAREN && p.current.Type != LX.T_COMMA &&
-					p.current.Type != LX.T_ON && p.current.Type != LX.T_NOT &&
-					p.current.Type != LX.T_DEFERRABLE && p.current.Type != LX.T_INITIALLY {
-					fk.Match = p.current.Lexeme
-					p.advance()
-				}
-			}
-			// Re-check for ON clause after MATCH (loop for multiple ON actions)
-			for p.current.Type == LX.T_ON {
-				p.advance()
-				if p.current.Type == LX.T_DELETE {
-					p.advance()
-					fk.OnDelete = p.parseFKAction()
-				} else if p.current.Type == LX.T_UPDATE {
-					p.advance()
-					fk.OnUpdate = p.parseFKAction()
-				}
-			}
-			// REQ000561: optional [NOT] DEFERRABLE [INITIALLY DEFERRED|IMMEDIATE]
-			if p.current.Type == LX.T_NOT {
-				if p.lex.Peek().Type == LX.T_DEFERRABLE {
-					p.advance() // consume NOT
-					p.advance() // consume DEFERRABLE
-					fk.Deferrable = "NOT DEFERRABLE"
-				}
-			} else if p.current.Type == LX.T_DEFERRABLE {
-				p.advance()
-				fk.Deferrable = "DEFERRABLE"
-			}
-			if p.current.Type == LX.T_INITIALLY {
-				p.advance()
-				if p.current.Type == LX.T_DEFERRED || p.current.Type == LX.T_IMMEDIATE {
-					fk.Initially = p.current.Lexeme
-					p.advance()
-				}
-			}
-			foreignKeys = append(foreignKeys, fk)
-		} else if isPK {
-			// REQ000519: composite PRIMARY KEY. Use the first
-			// column as the primary key; remaining columns are
-			// treated as part of a UNIQUE constraint.
-			pkName := names[0]
-			pk = &pkName
-			if len(names) > 1 {
-				uniqueConstraints = append(uniqueConstraints, UniqueKey{Cols: names})
-			}
-		} else {
-			uniqueConstraints = append(uniqueConstraints, UniqueKey{Cols: names})
-		}
-		// Allow comma between multiple UNIQUE / PRIMARY clauses.
-		if p.current.Type == LX.T_COMMA {
-			p.advance()
-		}
+	var err error
+	uniqueConstraints, foreignKeys, pk, err = p.parseTableLevelConstraints(cols, pk)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := p.expect(LX.T_RPAREN); err != nil {
@@ -397,8 +388,6 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 	p.advance()
 
 	var withoutRowid, strict bool
-
-	// REQ000738: optional WITHOUT ROWID suffix
 	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "WITHOUT") {
 		p.advance()
 		if err := p.expect(LX.T_IDENT); err != nil {
@@ -416,13 +405,10 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 		}
 		p.advance()
 		withoutRowid = true
-		// Optional comma before subsequent clauses.
 		if p.current.Type == LX.T_COMMA {
 			p.advance()
 		}
 	}
-
-	// REQ000739: optional STRICT suffix
 	if p.current.Type == LX.T_IDENT && strings.EqualFold(p.current.Lexeme, "STRICT") {
 		p.advance()
 		strict = true
@@ -468,6 +454,7 @@ func (p *Parser) parseFKAction() string {
 	}
 	return "NO ACTION"
 }
+
 // parseIfExists parses "IF EXISTS" if present and returns true.
 // REQ001003: replaces 4 duplicate inline implementations.
 func (p *Parser) parseIfExists() bool {

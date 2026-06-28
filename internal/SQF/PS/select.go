@@ -239,18 +239,15 @@ func (p *Parser) parseIntersectChain() (Stmt, error) {
 	return left, nil
 }
 
-// parseOneSelect parses a single SELECT statement (no compound
-// chain). REQ000383: split out from parseSelect.
-func (p *Parser) parseOneSelect() (*Select, error) {
-	p.pendingSubquery = nil
-	p.advance()
-
+// parseSelectList parses a SELECT column list: one or more expressions,
+// optionally with AS aliases. Handles * and comma-separated columns.
+// REQ001002: extracted from parseOneSelect.
+func (p *Parser) parseSelectList() ([]Expr, bool, error) {
 	var distinct bool
 	if p.current.Type == LX.T_DISTINCT {
 		distinct = true
 		p.advance()
 	} else if p.current.Type == LX.T_ALL {
-		// REQ000715: SELECT ALL is a synonym for plain SELECT
 		p.advance()
 	}
 
@@ -258,100 +255,95 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 	if p.current.Type == LX.T_STAR {
 		cols = append(cols, &StarExpr{})
 		p.advance()
-	} else {
-		for {
-			expr, err := p.parseExpr()
-			if err != nil {
-				return nil, err
+		return cols, distinct, nil
+	}
+	for {
+		expr, err := p.parseExpr()
+		if err != nil {
+			return nil, false, err
+		}
+		if p.current.Type == LX.T_AS {
+			p.advance()
+			if err := p.expectIdentOrErr(); err != nil {
+				return nil, false, err
 			}
-			if p.current.Type == LX.T_AS {
-				p.advance()
-				if err := p.expectIdentOrErr(); err != nil {
-					return nil, err
-				}
-				expr = &AliasedExpr{Expr: expr, Alias: p.current.Lexeme}
-				p.advance()
-			} else if p.expectIdent() {
-				// REQ000717: implicit alias without AS keyword
-				// e.g., SELECT - 87 col0, SELECT col1 * 3 alias
-				expr = &AliasedExpr{Expr: expr, Alias: p.current.Lexeme}
-				p.advance()
-			}
-			cols = append(cols, expr)
-			if p.current.Type != LX.T_COMMA {
-				break
-			}
+			expr = &AliasedExpr{Expr: expr, Alias: p.current.Lexeme}
+			p.advance()
+		} else if p.expectIdent() {
+			expr = &AliasedExpr{Expr: expr, Alias: p.current.Lexeme}
 			p.advance()
 		}
-	}
-
-	var from string
-	if p.current.Type == LX.T_FROM {
+		cols = append(cols, expr)
+		if p.current.Type != LX.T_COMMA {
+			break
+		}
 		p.advance()
-		// REQ000436 + REQ000084: support subqueries in FROM.
-		// `FROM (SELECT ...)` is a subquery source; the SELECT is
-		// parsed inline (not delegated to Parse which would reset
-		// parser state) and the result is stored in SubqueryFrom.
-		if p.current.Type == LX.T_LPAREN {
-			p.advance()
-			if p.current.Type == LX.T_SELECT {
-				sub, err := p.parseSelect()
-				if err != nil {
-					return nil, err
-				}
-				if err := p.expect(LX.T_RPAREN); err != nil {
-					return nil, err
-				}
-				p.advance()
-				var subAlias string
-				if p.current.Type == LX.T_AS || p.expectIdent() {
-					if p.current.Type == LX.T_AS {
-						p.advance()
-					}
-					if p.expectIdent() {
-						subAlias = p.current.Lexeme
-						p.advance()
-					}
-				}
-				if subAlias != "" {
-					from = subAlias
-				} else {
-					from = "$$subquery$$"
-				}
-				// Stash for later: the Select we're building will
-				// have SubqueryFrom set after we return from this
-				// function. We store it in a package-level slot
-				// since we don't have a Select pointer yet.
-				p.pendingSubquery = sub
-			} else {
-				// REQ000834: parenthesized table expression
-				// (e.g., `FROM (tab0 AS cor0 CROSS JOIN tab0 cor1)`).
-				// Parse the table name; alias, comma-joins, and
-				// explicit joins are handled by the common code
-				// that follows after this if/else block.
-				p.parenTableExpr = true
-				fromRef, err := p.parseTableRef()
-				if err != nil {
-					return nil, err
-				}
-				from = fromRef
+	}
+	return cols, distinct, nil
+}
+
+// parseFromClause parses FROM clause: table references, subqueries,
+// aliases, comma-joins, and explicit JOINs.
+// REQ001002: extracted from parseOneSelect.
+func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinClause, subqueryFrom Stmt, indexHint *IndexHint, err error) {
+	if p.current.Type != LX.T_FROM {
+		return
+	}
+	p.advance()
+
+	if p.current.Type == LX.T_LPAREN {
+		p.advance()
+		if p.current.Type == LX.T_SELECT {
+			sub, err2 := p.parseSelect()
+			if err2 != nil {
+				err = err2
+				return
 			}
+			if err2 := p.expect(LX.T_RPAREN); err2 != nil {
+				err = err2
+				return
+			}
+			p.advance()
+			var subAlias string
+			if p.current.Type == LX.T_AS || p.expectIdent() {
+				if p.current.Type == LX.T_AS {
+					p.advance()
+				}
+				if p.expectIdent() {
+					subAlias = p.current.Lexeme
+					p.advance()
+				}
+			}
+			if subAlias != "" {
+				from = subAlias
+			} else {
+				from = "$$subquery$$"
+			}
+			p.pendingSubquery = sub
+			subqueryFrom = sub
 		} else {
-			fromRef, err := p.parseTableRef()
-			if err != nil {
-				return nil, err
+			p.parenTableExpr = true
+			fromRef, err2 := p.parseTableRef()
+			if err2 != nil {
+				err = err2
+				return
 			}
 			from = fromRef
 		}
+	} else {
+		fromRef, err2 := p.parseTableRef()
+		if err2 != nil {
+			err = err2
+			return
+		}
+		from = fromRef
 	}
-	// REQ000705: parse alias for the first table BEFORE the
-	// comma-join loop so that `FROM t a, t b` correctly
-	// consumes `a` as the alias before seeing the comma.
-	var fromAlias string
+
 	if p.current.Type == LX.T_AS {
 		p.advance()
-		if err := p.expectIdentOrErr(); err != nil {
-			return nil, err
+		if err2 := p.expectIdentOrErr(); err2 != nil {
+			err = err2
+			return
 		}
 		fromAlias = p.current.Lexeme
 		p.advance()
@@ -359,18 +351,14 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 		fromAlias = p.current.Lexeme
 		p.advance()
 	}
-	// REQ000368: implicit comma-join. `FROM a, b, c` is parsed
-	// as `FROM a CROSS JOIN b CROSS JOIN c`. The first table
-	// stays as `from`; each subsequent comma-separated identifier
-	// becomes a CROSS join entry.
+
 	for p.current.Type == LX.T_COMMA {
 		p.advance()
-		rightRef, err := p.parseTableRef()
-		if err != nil {
-			return nil, err
+		rightRef, err2 := p.parseTableRef()
+		if err2 != nil {
+			err = err2
+			return
 		}
-		rightName := rightRef
-		// REQ000705: handle implicit alias for comma-separated tables
 		var rightAlias string
 		if p.current.Type == LX.T_AS {
 			p.advance()
@@ -382,19 +370,12 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 			rightAlias = p.current.Lexeme
 			p.advance()
 		}
-		p.pendingJoins = append(p.pendingJoins, rightName)
-		if rightAlias != "" {
-			p.pendingJoinAliases = append(p.pendingJoinAliases, rightAlias)
-		} else {
-			p.pendingJoinAliases = append(p.pendingJoinAliases, "")
-		}
+		p.pendingJoins = append(p.pendingJoins, rightRef)
+		p.pendingJoinAliases = append(p.pendingJoinAliases, rightAlias)
 	}
-	// REQ000529: INDEXED BY / NOT INDEXED after table reference
-	indexHint := p.parseIndexHint()
 
-	// REQ000368: promote any pending comma-separated tables
-	// (collected above) into CROSS joins.
-	var joins []JoinClause
+	indexHint = p.parseIndexHint()
+
 	for i, right := range p.pendingJoins {
 		var alias string
 		if i < len(p.pendingJoinAliases) {
@@ -424,12 +405,11 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 		if p.current.Type == LX.T_JOIN {
 			p.advance()
 		}
-		rightRef, err := p.parseTableRef()
-		if err != nil {
-			return nil, err
+		rightRef, err2 := p.parseTableRef()
+		if err2 != nil {
+			err = err2
+			return
 		}
-		right := rightRef
-		// REQ000706: parse alias for JOIN table (implicit or explicit)
 		var rightAlias string
 		if p.current.Type == LX.T_AS {
 			p.advance()
@@ -438,53 +418,58 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 				p.advance()
 			}
 		} else if p.expectIdent() {
-			// Only treat as alias if not followed by ( (function call)
-			// and not ON keyword
 			rightAlias = p.current.Lexeme
 			p.advance()
 		}
 		var on Expr
 		if p.current.Type == LX.T_ON {
 			p.advance()
-			e, err := p.parseExpr()
-			if err != nil {
-				return nil, err
+			e, err2 := p.parseExpr()
+			if err2 != nil {
+				err = err2
+				return
 			}
 			on = e
 		}
-		joins = append(joins, JoinClause{Kind: kind, Right: right, RightAlias: rightAlias, On: on})
+		joins = append(joins, JoinClause{Kind: kind, Right: rightRef, RightAlias: rightAlias, On: on})
 	}
 
-	// REQ000834: close parenthesized table expression
 	if p.parenTableExpr {
 		p.parenTableExpr = false
-		if err := p.expect(LX.T_RPAREN); err != nil {
-			return nil, err
+		if err2 := p.expect(LX.T_RPAREN); err2 != nil {
+			err = err2
+			return
 		}
 		p.advance()
 	}
+	return
+}
 
-	var where Expr
+// parseWhereGroupHaving parses WHERE, GROUP BY, and HAVING clauses.
+// REQ001002: extracted from parseOneSelect.
+func (p *Parser) parseWhereGroupHaving() (where Expr, groupBy []Expr, having Expr, err error) {
 	if p.current.Type == LX.T_WHERE {
 		p.advance()
-		w, err := p.parseExpr()
-		if err != nil {
-			return nil, err
+		w, err2 := p.parseExpr()
+		if err2 != nil {
+			err = err2
+			return
 		}
 		where = w
 	}
 
-	var groupBy []Expr
 	if p.current.Type == LX.T_GROUP {
 		p.advance()
-		if err := p.expect(LX.T_BY); err != nil {
-			return nil, err
+		if err2 := p.expect(LX.T_BY); err2 != nil {
+			err = err2
+			return
 		}
 		p.advance()
 		for {
-			expr, err := p.parseExpr()
-			if err != nil {
-				return nil, err
+			expr, err2 := p.parseExpr()
+			if err2 != nil {
+				err = err2
+				return
 			}
 			groupBy = append(groupBy, expr)
 			if p.current.Type != LX.T_COMMA {
@@ -494,20 +479,40 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 		}
 	}
 
-	var having Expr
 	if p.current.Type == LX.T_HAVING {
 		p.advance()
-		h, err := p.parseExpr()
-		if err != nil {
-			return nil, err
+		h, err2 := p.parseExpr()
+		if err2 != nil {
+			err = err2
+			return
 		}
 		having = h
 	}
+	return
+}
 
-	// REQ000383: trailing ORDER BY / LIMIT / OFFSET / FETCH are
-	// parsed by the caller (parseIntersectChain or parseSelect),
-	// not here, so that compound chains can attach them to the
-	// whole result rather than the leaf Select.
+// parseOneSelect parses a single SELECT statement (no compound
+// chain). REQ000383: split out from parseSelect.
+func (p *Parser) parseOneSelect() (*Select, error) {
+	p.pendingSubquery = nil
+	p.advance()
+
+	cols, distinct, err := p.parseSelectList()
+	if err != nil {
+		return nil, err
+	}
+
+	from, fromAlias, joins, subqueryFrom, indexHint, err := p.parseFromClause()
+	if err != nil {
+		return nil, err
+	}
+
+	where, groupBy, having, err := p.parseWhereGroupHaving()
+	if err != nil {
+		return nil, err
+	}
+
+	// Trailing ORDER BY / LIMIT / OFFSET / FETCH are parsed by the caller.
 
 	return &Select{
 		Cols:         cols,
@@ -518,7 +523,7 @@ func (p *Parser) parseOneSelect() (*Select, error) {
 		GroupBy:      groupBy,
 		Having:       having,
 		Distinct:     distinct,
-		SubqueryFrom: p.pendingSubquery,
+		SubqueryFrom: subqueryFrom,
 		IndexHint:    indexHint,
 	}, nil
 }
