@@ -2,6 +2,7 @@ package EX
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -232,4 +233,37 @@ func TestNestedLoopJoin_Close(t *testing.T) {
 
 	// After close, internal state is reset (leftRow=nil)
 	// This is acceptable behavior for Close
+}
+
+// TestCrossJoin_LimitPushdown verifies that LIMIT on a 5-table
+// cross join terminates quickly without materializing the full
+// Cartesian product. REQ001094.
+func TestCrossJoin_LimitPushdown(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	e := NewExecutor()
+	ctx := context.Background()
+
+	for i := 1; i <= 5; i++ {
+		setup := fmt.Sprintf("CREATE TABLE t%d (a INTEGER)", i)
+		if _, err := e.Exec(ctx, setup); err != nil {
+			t.Fatalf("setup t%d: %v", i, err)
+		}
+		for j := 1; j <= 100; j++ {
+			insert := fmt.Sprintf("INSERT INTO t%d VALUES (%d)", i, j)
+			if _, err := e.Exec(ctx, insert); err != nil {
+				t.Fatalf("insert: %v", err)
+			}
+		}
+	}
+	// Without LIMIT, 100^5 = 10 billion rows (would hang).
+	// With LIMIT 10, we should return exactly 10 rows quickly.
+	sql := "SELECT * FROM t1, t2, t3, t4, t5 LIMIT 10"
+	rows, err := e.QueryAll(ctx, sql)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 10 {
+		t.Errorf("expected 10 rows from LIMIT 10 cross join, got %d", len(rows))
+	}
 }

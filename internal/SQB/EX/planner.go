@@ -3763,12 +3763,11 @@ func (p *Planner) joinPredSel(pred PS.Expr, rowCount float64) float64 {
 		return 0.5
 	}
 	switch bin.Op {
-	case int(LX.T_EQ):
+case int(LX.T_EQ):
 		// REQ000948: equi-join (col = col) uses NDV of both sides.
 		// REQ000948: equi-join (col = literal) uses NDV of the column.
 		ndvL, ndvR := p.ndvFromExpr(bin.Left), p.ndvFromExpr(bin.Right)
 		if ndvL > 0 && ndvR > 0 {
-			// Both sides have NDV: 1/max(ndvL, ndvR).
 			if ndvL > ndvR {
 				return 1.0 / ndvL
 			}
@@ -3779,6 +3778,15 @@ func (p *Planner) joinPredSel(pred PS.Expr, rowCount float64) float64 {
 		}
 		if ndvR > 0 {
 			return 1.0 / ndvR
+		}
+		// REQ001095: when stats are unavailable, use the table's row
+		// count as NDV proxy (col = literal hits 1/rows of the table).
+		if rowCount > 0 {
+			sel := 1.0 / rowCount
+			if sel < 0.01 {
+				sel = 0.01 // floor at 1% to avoid over-optimism
+			}
+			return sel
 		}
 		// No stats — fall back to default.
 		return 0.1
@@ -4351,17 +4359,17 @@ func (p *Planner) n3JoinOrderingMultiStart(candidateBase string, joinTables []jo
 			bestOrder = order
 		}
 	}
-	if bestOrder == nil {
+if bestOrder == nil {
 		bestOrder = allNames
 		return bestOrder
 	}
+
 	// REQ000926: ensure the result order has the same number of
 	// entries as the input. n3JoinOrdering deduplicates by table
 	// name in tablesSet, so for self-joins the order can be shorter
 	// than expected. Append any missing duplicates from allNames.
 	wantLen := len(allNames)
 	if len(bestOrder) < wantLen {
-		// Count occurrences in bestOrder and allNames.
 		have := make(map[string]int)
 		for _, n := range bestOrder {
 			have[n]++
@@ -4370,7 +4378,6 @@ func (p *Planner) n3JoinOrderingMultiStart(candidateBase string, joinTables []jo
 		for _, n := range allNames {
 			need[n]++
 		}
-		// Append missing duplicates.
 		for n, count := range need {
 			for have[n] < count {
 				bestOrder = append(bestOrder, n)
@@ -4380,11 +4387,8 @@ func (p *Planner) n3JoinOrderingMultiStart(candidateBase string, joinTables []jo
 	}
 	// REQ000946: normalize the returned order to start with
 	// candidateBase (s.From) so the join construction code that
-	// uses s.From as the scan base works correctly. The cheapest
-	// non-base table is placed second; the rest of the relative
-	// order is preserved.
+	// uses s.From as the scan base works correctly.
 	if len(bestOrder) > 0 && bestOrder[0] != candidateBase {
-		// Find candidateBase in the order and move it to the front.
 		baseIdx := -1
 		for i, t := range bestOrder {
 			if t == candidateBase {
@@ -4393,7 +4397,6 @@ func (p *Planner) n3JoinOrderingMultiStart(candidateBase string, joinTables []jo
 			}
 		}
 		if baseIdx > 0 {
-			// Move candidateBase to position 0, preserve order of others.
 			normalized := make([]string, 0, len(bestOrder))
 			normalized = append(normalized, candidateBase)
 			for i, t := range bestOrder {
@@ -4403,7 +4406,6 @@ func (p *Planner) n3JoinOrderingMultiStart(candidateBase string, joinTables []jo
 			}
 			bestOrder = normalized
 		} else if baseIdx < 0 {
-			// candidateBase is not in the order — prepend it.
 			normalized := make([]string, 0, 1+len(bestOrder))
 			normalized = append(normalized, candidateBase)
 			normalized = append(normalized, bestOrder...)
@@ -4412,6 +4414,24 @@ func (p *Planner) n3JoinOrderingMultiStart(candidateBase string, joinTables []jo
 	}
 
 	return bestOrder
+}
+
+// filteredRowCount estimates the number of rows that remain after
+// applying all single-table predicates on the given table.
+// REQ001095: used by exhaustiveJoinOrder to sort tables by
+// selectivity so the most-filtered table is joined first.
+func filteredRowCount(table string, predicates []PS.Expr, p *Planner) float64 {
+	rows := p.getTableRowCount(table)
+	for _, pred := range predicates {
+		if p.canPushDown(pred, table) {
+			psel := p.joinPredSel(pred, rows)
+			rows *= psel
+		}
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
 }
 
 // REQ001071: exhaustiveJoinOrder tries all permutations of join tables
@@ -4465,9 +4485,6 @@ func (p *Planner) exhaustiveJoinOrder(baseTable string, joinTables []joinTableIn
 	return bestOrder
 }
 
-// estimateJoinOrderCost estimates the total intermediate row cost for
-// joining tables in the given order. The cost is the sum of estimated
-// row counts after each successive join.
 func (p *Planner) estimateJoinOrderCost(order []string, predicates []PS.Expr) float64 {
 	if len(order) == 0 {
 		return 0

@@ -431,7 +431,27 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 	// bushy-tree materializations > 4K. Hash mode is always faster
 	// than block NLJ for cross joins; only fall back on memory
 	// pressure (controlled by Executor.maxMemoryPerQuery).
-	const maxMaterialize = 16384
+	// REQ001094: when a limit is set, cap maxMaterialize to
+	// limitRemaining so we don't materialize more rows than the
+	// caller will ever consume.
+	defaultMaxMaterialize := 16384
+	maxMaterialize := defaultMaxMaterialize
+	if j.limitRemaining > 0 {
+		// REQ001094: with a LIMIT n, we only need enough rows on
+		// the left side to satisfy n joined pairs. The right side
+		// gets materialized fully (filtered), but the left can be
+		// capped to ceil(n / rightRowsExpected).
+		// Use a conservative cap: limitRemaining × 4 gives enough
+		// headroom for the cross product to reach limit at the
+		// worst-case selectivity.
+		capped := int(j.limitRemaining) * 4
+		if capped < maxMaterialize {
+			maxMaterialize = capped
+		}
+		if maxMaterialize < 64 {
+			maxMaterialize = 64
+		}
+	}
 	j.leftRows = make([]Row, 0, 64)
 	var leftPrefixedCols []string
 	for len(j.leftRows) < maxMaterialize {
@@ -470,9 +490,23 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 	// REQ000844: initial capacity 16 (see left side comment).
 	j.rightRows = make([]Row, 0, 16)
 	var rightPrefixedCols []string
+	// REQ001094: when a limit is set, cap right-side materialization
+	// to ceil(limitRemaining / leftRows). The cross product is
+	// leftRows × rightRows; we stop once rightRows × leftRows ≥ limit.
+	maxRightRows := -1 // -1 = unlimited
+	if j.limitRemaining > 0 && len(j.leftRows) > 0 {
+		maxRightRows = int((j.limitRemaining + int64(len(j.leftRows)) - 1) / int64(len(j.leftRows)))
+		if maxRightRows < 1 {
+			maxRightRows = 1
+		}
+	}
 	for {
 		row, err := j.right.Next(ctx)
 		if err != nil {
+			break
+		}
+		if maxRightRows >= 0 && len(j.rightRows) >= maxRightRows {
+			j.right.Close()
 			break
 		}
 		// REQ000844: row.Data from SeqScan.cloneRow is already a
@@ -576,8 +610,14 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 }
 
 // nextHash produces the next row from the materialized hash join.
-// REQ000800.
+// REQ000800. REQ001094: early-exit when limit is satisfied to
+// avoid emitting rows that the Limit operator above would discard.
 func (j *NestedLoopJoin) nextHash(_ context.Context) (Row, error) {
+	if j.limitRemaining > 0 && j.totalEmitted >= j.limitRemaining {
+		j.leftRows = nil
+		j.rightRows = nil
+		return Row{}, ErrNoRows
+	}
 	for j.leftIdx < len(j.leftRows) {
 		for j.rightIdx < len(j.rightRows) {
 			l := j.leftRows[j.leftIdx]
