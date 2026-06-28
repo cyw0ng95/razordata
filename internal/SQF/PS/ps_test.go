@@ -263,7 +263,7 @@ func TestParseSyntaxErrorMessage(t *testing.T) {
 func TestParseCast(t *testing.T) {
 	cases := []struct {
 		sql      string
-		wantType int
+		wantType LX.TokenType
 	}{
 		{"SELECT CAST(x AS INTEGER) FROM t", LX.T_INT_KW},
 		{"SELECT CAST(x AS FLOAT) FROM t", LX.T_FLOAT_KW},
@@ -2106,7 +2106,7 @@ func TestParseExpr_ShiftOperators(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected BinaryExpr, got %T", sel.Cols[0])
 			}
-			if bin.Op != int(tc.op) {
+			if bin.Op != tc.op {
 				t.Errorf("expected %v, got %v", tc.op, bin.Op)
 			}
 		})

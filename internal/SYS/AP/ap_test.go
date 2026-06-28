@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // TestAP_RetryableAndFatal — R04 retry classification.
@@ -98,7 +100,7 @@ func TestAP_ResultAndRows(t *testing.T) {
 	if r.RowsAffected != 5 || r.LastInsertID != 42 {
 		t.Errorf("Result fields lost: %+v", r)
 	}
-	rows := Rows{cols: []string{"a", "b"}, types: []int{1, 2}}
+	rows := Rows{cols: []string{"a", "b"}, types: []LX.TokenType{1, 2}}
 	if len(rows.Cols()) != 2 || len(rows.Types()) != 2 {
 		t.Errorf("Rows fields lost: %+v", rows)
 	}

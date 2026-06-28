@@ -293,7 +293,7 @@ func TestOpString(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := opString(int(tt.op))
+		got := opString(tt.op)
 		if got != tt.want {
 			t.Errorf("opString(%v) = %q, want %q", tt.op, got, tt.want)
 		}

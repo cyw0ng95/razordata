@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/ENG/SC"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 func TestRegistry_CreateGet(t *testing.T) {
@@ -143,7 +144,7 @@ func TestCatalog_PutGet(t *testing.T) {
 	entry := Entry{
 		TableID:   id,
 		Name:      "users",
-		Columns:   []Column{{Name: "id", Type: uint8(sc.CTBigInt), Nullable: false}},
+		Columns:   []Column{{Name: "id", Type: LX.TokenType(sc.CTBigInt), Nullable: false}},
 		CreateSQL: "CREATE TABLE users (id BIGINT)",
 	}
 	if err := c.Put(entry); err != nil {
@@ -176,7 +177,7 @@ func TestCatalog_Persistence(t *testing.T) {
 	c1.Put(Entry{
 		TableID:   id,
 		Name:      "users",
-		Columns:   []Column{{Name: "id", Type: uint8(sc.CTBigInt)}},
+		Columns:   []Column{{Name: "id", Type: LX.TokenType(sc.CTBigInt)}},
 		CreateSQL: "CREATE TABLE users (id BIGINT)",
 	})
 	c1.Close()

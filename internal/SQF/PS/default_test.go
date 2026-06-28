@@ -42,7 +42,7 @@ func TestParseDefaultClause(t *testing.T) {
 					t.Errorf("expected no Default, got %T", ct.Cols[0].Default)
 				}
 			}
-			if ct.Cols[0].Type != int(tt.wantType) {
+			if ct.Cols[0].Type != tt.wantType {
 				t.Errorf("Type: got %d, want %d", ct.Cols[0].Type, tt.wantType)
 			}
 		})
