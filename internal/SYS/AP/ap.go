@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -346,6 +347,29 @@ func (v Value) ToAny() any {
 		return v.Bo
 	default:
 		return nil
+	}
+}
+
+// String returns the string representation of a Value without boxing
+// through any or fmt.Sprint. REQ001066: avoids reflection overhead
+// in hot-path functions like SUBSTR, CONCAT, and CAST.
+func (v Value) String() string {
+	switch v.Kind {
+	case KindText:
+		return v.S
+	case KindInt:
+		return strconv.FormatInt(v.I64, 10)
+	case KindFloat:
+		return strconv.FormatFloat(v.F64, 'g', -1, 64)
+	case KindBool:
+		if v.Bo {
+			return "1"
+		}
+		return "0"
+	case KindNull:
+		return ""
+	default:
+		return ""
 	}
 }
 

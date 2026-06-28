@@ -453,6 +453,9 @@ type Sort struct {
 	materialized bool
 	params       []any
 	pool         *WorkerPool // REQ001050: parallel sort support
+	// sortBufferSize caps the number of rows materialized before
+	// sorting. 0 = unlimited. REQ001065.
+	sortBufferSize int64
 }
 
 // Child returns the sort's child operator.
@@ -465,6 +468,13 @@ func NewSort(child Operator, keys []PS.OrderItem) *Sort {
 // WithPool attaches a WorkerPool for parallel sort. REQ001050.
 func (s *Sort) WithPool(pool *WorkerPool) *Sort {
 	s.pool = pool
+	return s
+}
+
+// WithSortBufferSize caps the in-memory materialization for sorting.
+// 0 = unlimited. REQ001065.
+func (s *Sort) WithSortBufferSize(v int64) *Sort {
+	s.sortBufferSize = v
 	return s
 }
 

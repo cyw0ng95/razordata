@@ -793,7 +793,7 @@ func evalCast(e *PS.CastExpr, row *Row, params []any) (Value, error) {
 			return NewFloatValue(f), nil
 		}
 	case LX.T_TEXT:
-		return NewTextValue(fmt.Sprintf("%v", v.ToAny())), nil
+		return NewTextValue(v.String()), nil
 	case LX.T_DECIMAL, LX.T_NUMERIC:
 		r, err := evalDecimalCast(v.ToAny(), e.Type.Precision, e.Type.Scale)
 		if err != nil {
@@ -809,7 +809,7 @@ func evalCast(e *PS.CastExpr, row *Row, params []any) (Value, error) {
 		case KindBlob:
 			return v, nil
 		default:
-			return NewBlobValue([]byte(fmt.Sprintf("%v", v.ToAny()))), nil
+			return NewBlobValue([]byte(v.String())), nil
 		}
 	}
 	return NullValue(), ErrEval
@@ -1374,7 +1374,7 @@ func evalSubstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	case KindBlob:
 		s = string(rawStr.B)
 	default:
-		s = fmt.Sprint(rawStr.ToAny())
+		s = rawStr.String()
 	}
 	startV, err := EvalValue(args[1], row, params)
 	if err != nil {
@@ -1532,7 +1532,7 @@ func evalFormat(args []PS.Expr, row *Row, params []any) (any, error) {
 	}
 	fmtStr := fmtV.S
 	if fmtV.Kind != KindText {
-		fmtStr = fmt.Sprint(fmtV.ToAny())
+		fmtStr = fmtV.String()
 	}
 	// Convert remaining args to any for fmt.Sprintf
 	fmtArgs := make([]any, len(args)-1)
@@ -2359,7 +2359,7 @@ func concatValue(a, b Value) (Value, error) {
 	if a.Kind == KindText && b.Kind == KindText {
 		return NewTextValue(a.S + b.S), nil
 	}
-	return NewTextValue(fmt.Sprintf("%v%v", a.ToAny(), b.ToAny())), nil
+	return NewTextValue(a.String() + b.String()), nil
 }
 
 func likeValue(a, b Value, escape string) (Value, error) {

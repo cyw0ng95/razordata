@@ -826,3 +826,35 @@ func BenchmarkPlanner_N3SingleStart(b *testing.B) {
 		_, _ = p.n3JoinOrdering("t1", joinTables, wherePredicates, nil)
 	}
 }
+
+// BenchmarkValueStringConversion measures the cost of Value.String()
+// vs the old ToAny()+fmt.Sprint pattern. REQ001066.
+func BenchmarkValueStringConversion(b *testing.B) {
+	vals := []Value{
+		NewIntValue(12345),
+		NewFloatValue(3.14159),
+		NewTextValue("hello world"),
+		NewBoolValue(true),
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = vals[i%len(vals)].String()
+	}
+}
+
+// BenchmarkValueToStringLegacy measures the old approach for comparison.
+func BenchmarkValueToStringLegacy(b *testing.B) {
+	vals := []Value{
+		NewIntValue(12345),
+		NewFloatValue(3.14159),
+		NewTextValue("hello world"),
+		NewBoolValue(true),
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		v := vals[i%len(vals)]
+		_ = fmt.Sprintf("%v", v.ToAny())
+	}
+}

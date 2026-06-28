@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -136,24 +135,9 @@ func NullValue() Value { return AP.NullValue() }
 
 // valueToString converts a Value to its string representation without
 // going through fmt.Sprint (no reflection, no boxing). REQ001015.
+// REQ001066: delegates to Value.String() for the per-kind switch.
 func valueToString(v Value) string {
-	switch v.Kind {
-	case KindText:
-		return v.S
-	case KindInt:
-		return strconv.FormatInt(v.I64, 10)
-	case KindFloat:
-		return strconv.FormatFloat(v.F64, 'g', -1, 64)
-	case KindBool:
-		if v.Bo {
-			return "1"
-		}
-		return "0"
-	case KindNull:
-		return ""
-	default:
-		return fmt.Sprint(v.ToAny())
-	}
+	return v.String()
 }
 
 // valueFromAny creates a Value from a boxed any. Inverse of ToAny.
