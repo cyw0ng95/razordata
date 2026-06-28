@@ -542,6 +542,35 @@ var scalarInCases = []dualCase{
 	{Name: "null_in_null",     Query: "SELECT NULL IN (NULL)",  Want: [][]any{{nil}}},
 }
 
+// scalarFuncCases from EX/eval_scalar_funcs_test.go: HEX, IIF, MAX/MIN.
+var scalarFuncCases = []dualCase{
+	{Name: "hex_string",  Query: "SELECT hex('hello')", Want: [][]any{{"68656C6C6F"}}},
+	{Name: "hex_int",     Query: "SELECT hex(255)",      Want: [][]any{{"323535"}}},
+	{Name: "iif_true",    Query: "SELECT iif(1=1, 'yes', 'no')", Want: [][]any{{"yes"}}},
+	{Name: "iif_false",   Query: "SELECT iif(1=0, 'yes', 'no')", Want: [][]any{{"no"}}},
+	{Name: "iif_null",    Query: "SELECT iif(NULL, 'yes', 'no')", Want: [][]any{{"no"}}},
+	{Name: "if_true",     Query: "SELECT if(1=1, 'yes', 'no')",   Want: [][]any{{"yes"}}},
+	{Name: "if_false",    Query: "SELECT if(1=0, 'yes', 'no')",   Want: [][]any{{"no"}}},
+	{Name: "if_null",     Query: "SELECT if(NULL, 'yes', 'no')",   Want: [][]any{{"no"}}},
+	{Name: "max_multi_arg",  Query: "SELECT max(1, 2, 3)",  Want: [][]any{{int64(3)}}},
+	{Name: "max_with_null",  Query: "SELECT max(1, NULL, 3)", Want: [][]any{{int64(3)}}},
+	{Name: "min_multi_arg",  Query: "SELECT min(1, 2, 3)",  Want: [][]any{{int64(1)}}},
+	{Name: "min_with_null",  Query: "SELECT min(5, NULL, 3)", Want: [][]any{{int64(3)}}},
+	{Name: "max_string",  Query: "SELECT max('z', 'a')", Want: [][]any{{"z"}}},
+	{Name: "min_string",  Query: "SELECT min('z', 'a')", Want: [][]any{{"a"}}},
+	{Name: "max_all_null", Query: "SELECT max(NULL, NULL)", Want: [][]any{{nil}}},
+	{Name: "min_all_null", Query: "SELECT min(NULL, NULL)", Want: [][]any{{nil}}},
+	{
+		Name: "min_max_aggregate_groupby",
+		Setup: []string{
+			"CREATE TABLE t1 (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c INTEGER)",
+			"INSERT INTO t1 VALUES (1, 1, 2, 3), (2, 4, 5, 6), (3, 1, 10, 20)",
+		},
+		Query: "SELECT a, max(b), min(b) FROM t1 GROUP BY a ORDER BY a",
+		Want:  [][]any{{int64(1), int64(10), int64(2)}, {int64(4), int64(5), int64(5)}},
+	},
+}
+
 // hashCrossJoinCases from EX/hashcrossjoin_e2e_test.go: HashCrossJoin
 // planner selection for INNER JOIN ON with equi-conditions.
 // Note: the compound ON condition case is excluded — Razordata has a
