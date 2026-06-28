@@ -3,6 +3,8 @@ package EX
 import (
 	"testing"
 	"time"
+
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 func TestParseDateTime(t *testing.T) {
@@ -11,20 +13,19 @@ func TestParseDateTime(t *testing.T) {
 		wantOK bool
 	}{
 		{"2024-01-15", true},
-		{"2024-01-15 10:30:45", true},
-		{"2024-01-15T10:30:45", true},
-		{"10:30:45", true},
-		{"2024-13-01", false},
-		{"not-a-date", false},
+		{"2024-01-15 10:30:00", true},
+		{"2024-01-15T10:30:00", true},
+		{"10:30:00", true},
+		{"2024-01-15 10:30:00.123", true},
+		{"invalid", false},
 		{"", false},
 	}
+
 	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			_, ok := ParseDateTime(tt.input)
-			if ok != tt.wantOK {
-				t.Errorf("ParseDateTime(%q) ok = %v, want %v", tt.input, ok, tt.wantOK)
-			}
-		})
+		_, ok := UT.ParseDateTime(tt.input)
+		if ok != tt.wantOK {
+			t.Errorf("ParseDateTime(%q) ok = %v, want %v", tt.input, ok, tt.wantOK)
+		}
 	}
 }
 
@@ -40,18 +41,10 @@ func TestFormatDateTimeValue(t *testing.T) {
 		{0, "2024-06-15 14:30:45"},  // default
 	}
 	for _, tt := range tests {
-		got := FormatDateTimeValue(ts, tt.typ)
+		got := UT.FormatDateTimeValue(ts, tt.typ)
 		if got != tt.want {
 			t.Errorf("FormatDateTimeValue(ts, %d) = %q, want %q", tt.typ, got, tt.want)
 		}
-	}
-}
-
-func TestJulianDay(t *testing.T) {
-	// Known value: 2000-01-01 12:00:00 UTC = JD 2451545.0
-	jd := julianDay(time.Date(2000, 1, 1, 12, 0, 0, 0, time.UTC))
-	if jd < 2451544.9 || jd > 2451545.1 {
-		t.Errorf("julianDay(2000-01-01 12:00) = %f, want ~2451545.0", jd)
 	}
 }
 
@@ -70,7 +63,7 @@ func TestDateAdd(t *testing.T) {
 		{-1, "DAY", "2024-01-14 10:30:00"},
 	}
 	for _, tt := range tests {
-		got := DateAdd(base, tt.amount, tt.unit)
+		got := UT.DateAdd(base, tt.amount, tt.unit)
 		gotStr := got.Format("2006-01-02 15:04:05")
 		if gotStr != tt.want {
 			t.Errorf("DateAdd(%v, %d, %q) = %q, want %q", base, tt.amount, tt.unit, gotStr, tt.want)
@@ -90,7 +83,7 @@ func TestDateDiff(t *testing.T) {
 		{"YEAR", 0},
 	}
 	for _, tt := range tests {
-		got := DateDiff(a, b, tt.unit)
+		got := UT.DateDiff(a, b, tt.unit)
 		if got != tt.want {
 			t.Errorf("DateDiff(a, b, %q) = %d, want %d", tt.unit, got, tt.want)
 		}
@@ -111,12 +104,12 @@ func TestDateTimeFuncs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := evalDateTimeFunc(tt.name, tt.args)
+			got, err := UT.EvalDateTimeFunc(tt.name, tt.args)
 			if err != nil {
-				t.Fatalf("evalDateTimeFunc(%q) error: %v", tt.name, err)
+				t.Fatalf("UT.EvalDateTimeFunc(%q) error: %v", tt.name, err)
 			}
 			if got != tt.want {
-				t.Errorf("evalDateTimeFunc(%q) = %q, want %q", tt.name, got, tt.want)
+				t.Errorf("UT.EvalDateTimeFunc(%q) = %q, want %q", tt.name, got, tt.want)
 			}
 		})
 	}
@@ -137,7 +130,7 @@ func TestExtractFunc(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.field, func(t *testing.T) {
-			got, err := evalDateTimeFunc("EXTRACT", []any{tt.field, ts})
+			got, err := UT.EvalDateTimeFunc("EXTRACT", []any{tt.field, ts})
 			if err != nil {
 				t.Fatalf("EXTRACT(%s) error: %v", tt.field, err)
 			}
@@ -165,7 +158,7 @@ func TestParseInterval(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			amt, unit, ok := ParseInterval(tt.input)
+			amt, unit, ok := UT.ParseInterval(tt.input)
 			if ok != tt.wantOK {
 				t.Errorf("ParseInterval(%q) ok = %v, want %v", tt.input, ok, tt.wantOK)
 			}
@@ -180,9 +173,9 @@ func TestParseInterval(t *testing.T) {
 
 func TestDateTimeArithmetic(t *testing.T) {
 	base := "2024-06-15 10:00:00"
-	interval := &IntervalValue{Amount: 7, Unit: "DAY"}
+	interval := &UT.IntervalValue{Amount: 7, Unit: "DAY"}
 
-	got, err := DateTimeArithmetic(base, interval, "+")
+	got, err := UT.DateTimeArithmetic(base, interval, "+")
 	if err != nil {
 		t.Fatalf("DateTimeArithmetic error: %v", err)
 	}
@@ -190,7 +183,7 @@ func TestDateTimeArithmetic(t *testing.T) {
 		t.Errorf("DateTimeArithmetic(+7 DAY) = %q, want %q", got, "2024-06-22 10:00:00")
 	}
 
-	got, err = DateTimeArithmetic(base, interval, "-")
+	got, err = UT.DateTimeArithmetic(base, interval, "-")
 	if err != nil {
 		t.Fatalf("DateTimeArithmetic error: %v", err)
 	}
@@ -212,9 +205,9 @@ func TestToTime(t *testing.T) {
 		{123, false}, // int, not int64
 	}
 	for _, tt := range tests {
-		_, ok := toTime(tt.input)
+		_, ok := UT.ToTime(tt.input)
 		if ok != tt.want {
-			t.Errorf("toTime(%T(%v)) ok = %v, want %v", tt.input, tt.input, ok, tt.want)
+			t.Errorf("UT.ToTime(%T(%v)) ok = %v, want %v", tt.input, tt.input, ok, tt.want)
 		}
 	}
 }

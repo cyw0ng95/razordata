@@ -746,11 +746,11 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (any, erro
 }
 
 func evalInterval(e *PS.IntervalLiteral) (any, error) {
-	n, unit, ok := ParseInterval(e.Value + " " + e.Unit)
+	n, unit, ok := UT.ParseInterval(e.Value + " " + e.Unit)
 	if !ok {
 		return nil, fmt.Errorf("invalid interval: %s %s", e.Value, e.Unit)
 	}
-	return &IntervalValue{Amount: n, Unit: unit}, nil
+	return &UT.IntervalValue{Amount: n, Unit: unit}, nil
 }
 
 func evalCast(e *PS.CastExpr, row *Row, params []any) (Value, error) {
@@ -973,7 +973,7 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
 	if impl, ok := scalarFuncRegistry[e.Name]; ok {
 		return impl(e.Args, row, params)
 	}
-	if isDateTimeFunc(e.Name) {
+	if UT.IsDateTimeFunc(e.Name) {
 		args := make([]any, len(e.Args))
 		for i, arg := range e.Args {
 			v, err := EvalValue(arg, row, params)
@@ -982,7 +982,7 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
 			}
 			args[i] = v.ToAny()
 		}
-		v, err := evalDateTimeFunc(e.Name, args)
+		v, err := UT.EvalDateTimeFunc(e.Name, args)
 		if err != nil {
 			return NullValue(), err
 		}

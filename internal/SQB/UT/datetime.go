@@ -1,4 +1,4 @@
-package EX
+package UT
 
 import (
 	"fmt"
@@ -46,9 +46,9 @@ func FormatDateTimeValue(t time.Time, typ int) string {
 	}
 }
 
-// toTime converts an any to time.Time.
+// ToTime converts an any to time.Time.
 // Supports string (parsed), time.Time (direct), int64/float64 (unix timestamp).
-func toTime(v any) (time.Time, bool) {
+func ToTime(v any) (time.Time, bool) {
 	switch val := v.(type) {
 	case time.Time:
 		return val, true
@@ -68,8 +68,8 @@ func toTime(v any) (time.Time, bool) {
 	}
 }
 
-// strftimeFormat implements SQLite's strftime() formatting.
-func strftimeFormat(t time.Time, format string) string {
+// StrftimeFormat implements SQLite's strftime() formatting.
+func StrftimeFormat(t time.Time, format string) string {
 	var b strings.Builder
 	for i := 0; i < len(format); i++ {
 		ch := format[i]
@@ -95,7 +95,6 @@ func strftimeFormat(t time.Time, format string) string {
 			b.WriteString(fmt.Sprintf("%02d", t.Minute()))
 		case 'S':
 			b.WriteString(fmt.Sprintf("%02d", t.Second()))
-		case 'w':
 			b.WriteString(strconv.Itoa(int(t.Weekday())))
 		case 'j':
 			b.WriteString(fmt.Sprintf("%03d", t.YearDay()))
@@ -132,8 +131,8 @@ func strftimeFormat(t time.Time, format string) string {
 	return b.String()
 }
 
-// julianDay converts a time.Time to Julian Day Number (floating point).
-func julianDay(t time.Time) float64 {
+// JulianDay converts a time.Time to Julian Day Number (floating point).
+func JulianDay(t time.Time) float64 {
 	y := t.Year()
 	m := int(t.Month())
 	d := t.Day()
@@ -197,14 +196,14 @@ func DateDiff(a, b time.Time, unit string) int64 {
 	}
 }
 
-// evalDateTimeFunc evaluates SQL date/time functions.
-func evalDateTimeFunc(name string, args []any) (any, error) {
+// EvalDateTimeFunc evaluates SQL date/time functions.
+func EvalDateTimeFunc(name string, args []any) (any, error) {
 	switch strings.ToUpper(name) {
 	case "DATE":
 		if len(args) == 0 {
 			return time.Now().UTC().Format("2006-01-02"), nil
 		}
-		t, ok := toTime(args[0])
+		t, ok := ToTime(args[0])
 		if !ok {
 			return nil, fmt.Errorf("date(): invalid argument")
 		}
@@ -214,7 +213,7 @@ func evalDateTimeFunc(name string, args []any) (any, error) {
 		if len(args) == 0 {
 			return time.Now().UTC().Format("15:04:05"), nil
 		}
-		t, ok := toTime(args[0])
+		t, ok := ToTime(args[0])
 		if !ok {
 			return nil, fmt.Errorf("time(): invalid argument")
 		}
@@ -224,7 +223,7 @@ func evalDateTimeFunc(name string, args []any) (any, error) {
 		if len(args) == 0 {
 			return time.Now().UTC().Format("2006-01-02 15:04:05"), nil
 		}
-		t, ok := toTime(args[0])
+		t, ok := ToTime(args[0])
 		if !ok {
 			return nil, fmt.Errorf("datetime(): invalid argument")
 		}
@@ -232,13 +231,13 @@ func evalDateTimeFunc(name string, args []any) (any, error) {
 
 	case "JULIANDAY":
 		if len(args) == 0 {
-			return julianDay(time.Now().UTC()), nil
+			return JulianDay(time.Now().UTC()), nil
 		}
-		t, ok := toTime(args[0])
+		t, ok := ToTime(args[0])
 		if !ok {
 			return nil, fmt.Errorf("julianday(): invalid argument")
 		}
-		return julianDay(t), nil
+		return JulianDay(t), nil
 
 	case "STRFTIME":
 		if len(args) < 2 {
@@ -248,11 +247,11 @@ func evalDateTimeFunc(name string, args []any) (any, error) {
 		if !ok {
 			return nil, fmt.Errorf("strftime(): format must be a string")
 		}
-		t, ok := toTime(args[1])
+		t, ok := ToTime(args[1])
 		if !ok {
 			return nil, fmt.Errorf("strftime(): invalid time argument")
 		}
-		return strftimeFormat(t, format), nil
+		return StrftimeFormat(t, format), nil
 
 	case "EXTRACT":
 		if len(args) < 2 {
@@ -262,11 +261,11 @@ func evalDateTimeFunc(name string, args []any) (any, error) {
 		if !ok {
 			return nil, fmt.Errorf("extract(): field must be a string")
 		}
-		t, ok := toTime(args[1])
+		t, ok := ToTime(args[1])
 		if !ok {
 			return nil, fmt.Errorf("extract(): invalid time argument")
 		}
-		return evalExtractField(field, t)
+		return EvalExtractField(field, t)
 
 	case "NOW", "CURRENT_TIMESTAMP":
 		return time.Now().UTC().Format("2006-01-02 15:04:05"), nil
@@ -282,7 +281,7 @@ func evalDateTimeFunc(name string, args []any) (any, error) {
 	}
 }
 
-func evalExtractField(field string, t time.Time) (int64, error) {
+func EvalExtractField(field string, t time.Time) (int64, error) {
 	switch strings.ToUpper(field) {
 	case "YEAR":
 		return int64(t.Year()), nil
@@ -308,8 +307,8 @@ func evalExtractField(field string, t time.Time) (int64, error) {
 	}
 }
 
-// isDateTimeFunc returns true if the function name is a datetime function.
-func isDateTimeFunc(name string) bool {
+// IsDateTimeFunc returns true if the function name is a datetime function.
+func IsDateTimeFunc(name string) bool {
 	switch strings.ToUpper(name) {
 	case "DATE", "TIME", "DATETIME", "JULIANDAY", "STRFTIME",
 		"EXTRACT", "NOW", "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME":
@@ -322,15 +321,15 @@ func isDateTimeFunc(name string) bool {
 func DateTimeArithmetic(left any, right any, op string) (any, error) {
 	switch op {
 	case "+":
-		return dateTimeAdd(left, right)
+		return DateTimeAdd(left, right)
 	case "-":
-		return dateTimeSub(left, right)
+		return DateTimeSub(left, right)
 	}
 	return nil, fmt.Errorf("unsupported datetime operation: %s", op)
 }
 
-func dateTimeAdd(left any, right any) (any, error) {
-	lt, lok := toTime(left)
+func DateTimeAdd(left any, right any) (any, error) {
+	lt, lok := ToTime(left)
 	if !lok {
 		return nil, nil
 	}
@@ -342,8 +341,8 @@ func dateTimeAdd(left any, right any) (any, error) {
 	return nil, nil
 }
 
-func dateTimeSub(left any, right any) (any, error) {
-	lt, lok := toTime(left)
+func DateTimeSub(left any, right any) (any, error) {
+	lt, lok := ToTime(left)
 	if !lok {
 		return nil, nil
 	}
@@ -352,7 +351,7 @@ func dateTimeSub(left any, right any) (any, error) {
 		result := DateSub(lt, r.Amount, r.Unit)
 		return result.Format("2006-01-02 15:04:05"), nil
 	}
-	rt, rok := toTime(right)
+	rt, rok := ToTime(right)
 	if rok {
 		days := DateDiff(lt, rt, "DAY")
 		return days, nil
