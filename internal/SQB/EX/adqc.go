@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // AdqcState is the state of an adaptive plan.
@@ -69,7 +71,7 @@ type AdaptiveOp struct {
 	counter    *InvocationCounter
 	state      atomic.Uint32
 	mu         sync.Mutex
-	compiledFn func(ctx context.Context, batch *Batch, params []any) (*Batch, error)
+	compiledFn func(ctx context.Context, batch *UT.Batch, params []any) (*UT.Batch, error)
 	planHash   string
 	params     []any
 	// REQ000845: tryAttempted prevents repeated calls to tryCompile

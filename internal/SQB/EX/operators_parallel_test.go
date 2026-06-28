@@ -7,7 +7,8 @@ import (
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // makeParallelTestRows creates N rows with id=0..N-1 and value="row".
@@ -29,7 +30,7 @@ func TestParallelSeqScan_Basic(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id", "value"}
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_TEXT}
-	pool := NewWorkerPool(4)
+	pool := UT.NewWorkerPool(4)
 	defer pool.Close()
 
 	scan := NewParallelSeqScan(src, schema, types, pool, rows)
@@ -54,7 +55,7 @@ func TestParallelSeqScan_Basic(t *testing.T) {
 
 // TestParallelSeqScan_Empty verifies empty source.
 func TestParallelSeqScan_Empty(t *testing.T) {
-	pool := NewWorkerPool(4)
+	pool := UT.NewWorkerPool(4)
 	defer pool.Close()
 
 	scan := NewParallelSeqScan(nil, []string{"id"}, []LX.TokenType{LX.T_INT_KW}, pool, nil)
@@ -76,7 +77,7 @@ func TestParallelSeqScan_Large(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id"}
 	types := []LX.TokenType{LX.T_INT_KW}
-	pool := NewWorkerPool(4)
+	pool := UT.NewWorkerPool(4)
 	defer pool.Close()
 
 	scan := NewParallelSeqScan(src, schema, types, pool, rows)
@@ -107,7 +108,7 @@ func TestParallelIndexScan_Basic(t *testing.T) {
 		Op:    LX.T_GE,
 		Right: &PS.NumberLiteral{Val: 25},
 	}
-	pool := NewWorkerPool(4)
+	pool := UT.NewWorkerPool(4)
 	defer pool.Close()
 
 	scan := NewParallelIndexScan(rows, "id", []string{"id"}, []LX.TokenType{LX.T_INT_KW}, pred, pool)
@@ -134,7 +135,7 @@ func TestParallelIndexScan_Basic(t *testing.T) {
 // TestParallelIndexScan_NoPred verifies no-predicate path.
 func TestParallelIndexScan_NoPred(t *testing.T) {
 	rows := makeParallelTestRows(100)
-	pool := NewWorkerPool(4)
+	pool := UT.NewWorkerPool(4)
 	defer pool.Close()
 
 	scan := NewParallelIndexScan(rows, "id", []string{"id"}, []LX.TokenType{LX.T_INT_KW}, nil, pool)
@@ -163,7 +164,7 @@ func TestParallelSeqScan_ConcurrentReaders(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id"}
 	types := []LX.TokenType{LX.T_INT_KW}
-	pool := NewWorkerPool(4)
+	pool := UT.NewWorkerPool(4)
 	defer pool.Close()
 
 	var wg sync.WaitGroup
@@ -196,7 +197,7 @@ func BenchmarkParallelSeqScan(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		pool := NewWorkerPool(4)
+		pool := UT.NewWorkerPool(4)
 		scan := NewParallelSeqScan(src, schema, types, pool, rows)
 		for {
 			batch, _ := scan.NextBatch(context.Background())
@@ -221,7 +222,7 @@ func BenchmarkParallelSeqScanScaling(b *testing.B) {
 		b.Run("workers="+strconv.Itoa(workers), func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				pool := NewWorkerPool(workers)
+				pool := UT.NewWorkerPool(workers)
 				scan := NewParallelSeqScan(src, schema, types, pool, rows)
 				for {
 					batch, _ := scan.NextBatch(context.Background())

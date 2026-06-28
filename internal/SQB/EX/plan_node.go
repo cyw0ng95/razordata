@@ -9,6 +9,7 @@ import (
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // PlanNode represents a node in the query plan tree for EXPLAIN output.
@@ -27,7 +28,7 @@ type PlanNode struct {
 	Bottleneck  *BottleneckInfo // REQ000788: bottleneck analysis
 	IndexHint   *IndexHint      // REQ000790: index diagnostics
 	Subquery    *SubqueryInfo   // REQ000791: subquery optimization analysis
-	TxnDebug    *TxnDebugInfo   // REQ000792: transaction/MVCC debugging
+	TxnDebug    *UT.TxnDebugInfo   // REQ000792: transaction/MVCC debugging
 	Cache       *CacheInfo      // REQ000793: plan cache analysis
 }
 
@@ -79,16 +80,6 @@ type SubqueryInfo struct {
 	Method         string // "naive", "semi-join", "hash-join", "flattened"
 }
 
-// TxnDebugInfo provides transaction/MVCC debugging information.
-// REQ000792: Transaction debugging in EXPLAIN ANALYZE output.
-type TxnDebugInfo struct {
-	SnapshotTS    uint64 // snapshot timestamp
-	VisibleRows   int64  // rows visible at snapshot
-	HiddenByMVCC  int64  // rows hidden by older versions
-	LockWaitTimeNS int64 // total lock wait time in nanoseconds
-	IsolationLevel string // transaction isolation level
-}
-
 // CacheInfo provides plan cache analysis information.
 // REQ000793: Plan cache analysis in EXPLAIN output.
 type CacheInfo struct {
@@ -120,7 +111,7 @@ func (n *PlanNode) SetSubquery(sq *SubqueryInfo) {
 }
 
 // SetTxnDebug attaches transaction debugging information to this node (REQ000792).
-func (n *PlanNode) SetTxnDebug(td *TxnDebugInfo) {
+func (n *PlanNode) SetTxnDebug(td *UT.TxnDebugInfo) {
 	n.TxnDebug = td
 }
 

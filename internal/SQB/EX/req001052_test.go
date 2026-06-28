@@ -3,11 +3,13 @@ package EX
 import (
 	"context"
 	"testing"
+
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // REQ001052: Parallel UNION ALL correctness test.
 func TestParallelUnionAll_Correctness(t *testing.T) {
-	pool := NewWorkerPool(2)
+	pool := UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -51,7 +53,7 @@ func TestParallelUnionAll_Correctness(t *testing.T) {
 
 // REQ001052: empty sides.
 func TestParallelUnionAll_EmptySides(t *testing.T) {
-	pool := NewWorkerPool(2)
+	pool := UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 

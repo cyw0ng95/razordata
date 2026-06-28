@@ -1,4 +1,4 @@
-package EX
+package UT
 
 import (
 	"errors"
@@ -22,6 +22,9 @@ var ErrDecimalOverflow = errors.New("ex: decimal overflow")
 
 // ErrDecimalScale is returned when scale is invalid (negative or exceeds precision).
 var ErrDecimalScale = errors.New("ex: invalid decimal scale")
+
+// ErrDivByZero is returned when dividing by zero.
+var ErrDivByZero = errors.New("ex: division by zero")
 
 // NewDecimal constructs a Decimal from a string with given precision/scale.
 func NewDecimal(s string, precision, scale int) (*Decimal, error) {
@@ -252,8 +255,8 @@ func FormatDecimal(v any, precision, scale int) (string, error) {
 	return "", fmt.Errorf("ex: cannot convert %T to DECIMAL", v)
 }
 
-// evalDecimalCast handles CAST(... AS DECIMAL(P,S)) with precision/scale semantics.
-func evalDecimalCast(v any, precision, scale int) (any, error) {
+// EvalDecimalCast handles CAST(... AS DECIMAL(P,S)) with precision/scale semantics.
+func EvalDecimalCast(v any, precision, scale int) (any, error) {
 	if v == nil {
 		return nil, nil
 	}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // ErrConstraint is the package alias for AP.ErrConstraint. Constraint
@@ -167,7 +168,7 @@ func validateDecimal(schema *storeSchema, row Row) error {
 		if prec == 0 && sc == 0 {
 			continue
 		}
-		if _, err := FormatDecimal(v.ToAny(), prec, sc); err != nil {
+		if _, err := UT.FormatDecimal(v.ToAny(), prec, sc); err != nil {
 			return fmt.Errorf("%w: column %q: %v", ErrConstraint, schema.cols[i], err)
 		}
 	}

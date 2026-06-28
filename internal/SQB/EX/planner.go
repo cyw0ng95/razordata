@@ -14,6 +14,7 @@ import (
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // cloneExpr creates a deep copy of an expression to avoid
@@ -1860,7 +1861,7 @@ func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
 	if len(s.OrderBy) > 0 {
 		so := NewSort(current, s.OrderBy)
 	if p.pool != nil {
-			so.WithPool(p.pool.(*WorkerPool))
+			so.WithPool(p.pool.(*UT.WorkerPool))
 		}
 		current = so
 	}
@@ -2467,7 +2468,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 					schema[k] = ci.Name
 					types[k] = LX.TokenType(ci.Typ)
 				}
-				if ss := NewParallelSeqScanRow(src, schema, types, p.pool.(*WorkerPool)); ss != nil {
+				if ss := NewParallelSeqScanRow(src, schema, types, p.pool.(*UT.WorkerPool)); ss != nil {
 					return ss
 				}
 			}
@@ -2484,7 +2485,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 						schema[k] = ci.Name
 						types[k] = LX.TokenType(ci.Typ)
 					}
-					return NewParallelIndexRangeScan(src, schema, types, colName, inValues, p.pool.(*WorkerPool))
+					return NewParallelIndexRangeScan(src, schema, types, colName, inValues, p.pool.(*UT.WorkerPool))
 				}
 			}
 		}
@@ -4596,7 +4597,7 @@ func (p *Planner) planOrdering(s *PS.Select, current Operator) Operator {
 		if !p.pkOrderMatches(s.From, s.OrderBy) {
 			sort := NewSort(current, s.OrderBy)
 			if p.pool != nil {
-				sort.WithPool(p.pool.(*WorkerPool))
+				sort.WithPool(p.pool.(*UT.WorkerPool))
 			}
 			current = sort
 		}

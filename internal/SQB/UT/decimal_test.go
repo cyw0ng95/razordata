@@ -1,4 +1,4 @@
-package EX
+package UT
 
 import (
 	"strings"
@@ -182,39 +182,39 @@ func TestFormatDecimal(t *testing.T) {
 
 func TestEvalDecimalCast(t *testing.T) {
 	// int64 -> DECIMAL(5,2)
-	got, err := evalDecimalCast(int64(100), 5, 2)
+	got, err := EvalDecimalCast(int64(100), 5, 2)
 	if err != nil {
-		t.Fatalf("evalDecimalCast() error = %v", err)
+		t.Fatalf("EvalDecimalCast() error = %v", err)
 	}
 	if got != "100.00" {
-		t.Errorf("evalDecimalCast(int) = %q, want 100.00", got)
+		t.Errorf("EvalDecimalCast(int) = %q, want 100.00", got)
 	}
 
 	// float64 -> DECIMAL(5,2)
-	got, err = evalDecimalCast(3.14159, 5, 2)
+	got, err = EvalDecimalCast(3.14159, 5, 2)
 	if err != nil {
-		t.Fatalf("evalDecimalCast() error = %v", err)
+		t.Fatalf("EvalDecimalCast() error = %v", err)
 	}
 	if got != "3.14" {
-		t.Errorf("evalDecimalCast(float) = %q, want 3.14", got)
+		t.Errorf("EvalDecimalCast(float) = %q, want 3.14", got)
 	}
 
 	// string -> DECIMAL(5,2)
-	got, err = evalDecimalCast("99.99", 5, 2)
+	got, err = EvalDecimalCast("99.99", 5, 2)
 	if err != nil {
-		t.Fatalf("evalDecimalCast() error = %v", err)
+		t.Fatalf("EvalDecimalCast() error = %v", err)
 	}
 	if got != "99.99" {
-		t.Errorf("evalDecimalCast(string) = %q, want 99.99", got)
+		t.Errorf("EvalDecimalCast(string) = %q, want 99.99", got)
 	}
 
 	// nil -> nil
-	got, err = evalDecimalCast(nil, 5, 2)
+	got, err = EvalDecimalCast(nil, 5, 2)
 	if err != nil {
-		t.Fatalf("evalDecimalCast(nil) error = %v", err)
+		t.Fatalf("EvalDecimalCast(nil) error = %v", err)
 	}
 	if got != nil {
-		t.Errorf("evalDecimalCast(nil) = %v, want nil", got)
+		t.Errorf("EvalDecimalCast(nil) = %v, want nil", got)
 	}
 }
 

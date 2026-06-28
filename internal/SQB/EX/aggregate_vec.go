@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // VectorizedCount accumulates the count of matching rows across
@@ -21,7 +22,7 @@ type VectorizedCount struct {
 // and any future batch-based operator. It allows building chains
 // like: scan -> filter -> aggregate.
 type BatchProducer interface {
-	NextBatch(ctx context.Context) (*Batch, error)
+	NextBatch(ctx context.Context) (*UT.Batch, error)
 	Close() error
 }
 
@@ -33,7 +34,7 @@ func NewVectorizedCount(child BatchProducer) *VectorizedCount {
 // NextBatch returns a single-row batch with the final count.
 // Subsequent calls return nil. This matches the existing
 // row-based Aggregate operator contract.
-func (a *VectorizedCount) NextBatch(ctx context.Context) (*Batch, error) {
+func (a *VectorizedCount) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if a.done {
 		return nil, nil
 	}
@@ -64,8 +65,8 @@ func (a *VectorizedCount) NextBatch(ctx context.Context) (*Batch, error) {
 	return a.finalBatch()
 }
 
-func (a *VectorizedCount) finalBatch() (*Batch, error) {
-	batch := GetBatch(1)
+func (a *VectorizedCount) finalBatch() (*UT.Batch, error) {
+	batch := UT.GetBatch(1)
 	batch.AppendRow(0, LX.T_INT_KW, a.total, false)
 	batch.AdvanceSize()
 	batch.SetColumnName(0, "count")
@@ -101,7 +102,7 @@ func NewVectorizedSum(child BatchProducer, colIdx int) *VectorizedSum {
 }
 
 // NextBatch returns a single-row batch with the final sum.
-func (a *VectorizedSum) NextBatch(ctx context.Context) (*Batch, error) {
+func (a *VectorizedSum) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if a.done {
 		return nil, nil
 	}
@@ -131,7 +132,7 @@ func (a *VectorizedSum) NextBatch(ctx context.Context) (*Batch, error) {
 }
 
 // accumulateColumn performs 4-wide unrolled accumulation.
-func (a *VectorizedSum) accumulateColumn(col Column, batch *Batch) {
+func (a *VectorizedSum) accumulateColumn(col UT.Column, batch *UT.Batch) {
 	switch col.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
 		data := col.Data.Ints
@@ -193,15 +194,15 @@ func (a *VectorizedSum) accumulateColumn(col Column, batch *Batch) {
 	}
 }
 
-func (a *VectorizedSum) finalBatch() (*Batch, error) {
+func (a *VectorizedSum) finalBatch() (*UT.Batch, error) {
 	if !a.hasValue {
-		batch := GetBatch(1)
+		batch := UT.GetBatch(1)
 		batch.AppendRow(0, LX.T_INT_KW, nil, true)
 		batch.AdvanceSize()
 		batch.SetColumnName(0, "sum")
 		return batch, nil
 	}
-	batch := GetBatch(1)
+	batch := UT.GetBatch(1)
 	if a.isFloat {
 		batch.AppendRow(0, LX.T_FLOAT_KW, a.floatSum, false)
 	} else {
@@ -237,7 +238,7 @@ func NewVectorizedAvg(child BatchProducer, colIdx int) *VectorizedAvg {
 }
 
 // NextBatch returns a single-row batch with the average.
-func (a *VectorizedAvg) NextBatch(ctx context.Context) (*Batch, error) {
+func (a *VectorizedAvg) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if a.done {
 		return nil, nil
 	}
@@ -267,7 +268,7 @@ func (a *VectorizedAvg) NextBatch(ctx context.Context) (*Batch, error) {
 
 	// Compute average
 	if a.cnt.total == 0 {
-		batch := GetBatch(1)
+		batch := UT.GetBatch(1)
 		batch.AppendRow(0, LX.T_INT_KW, nil, true)
 		batch.AdvanceSize()
 		batch.SetColumnName(0, "avg")
@@ -280,7 +281,7 @@ func (a *VectorizedAvg) NextBatch(ctx context.Context) (*Batch, error) {
 		avg = float64(a.sum.intSum) / float64(a.cnt.total)
 	}
 
-	batch := GetBatch(1)
+	batch := UT.GetBatch(1)
 	batch.AppendRow(0, LX.T_FLOAT_KW, avg, false)
 	batch.AdvanceSize()
 	batch.SetColumnName(0, "avg")
@@ -313,7 +314,7 @@ func NewVectorizedMin(child BatchProducer, colIdx int) *VectorizedMin {
 }
 
 // NextBatch returns a single-row batch with the min value.
-func (a *VectorizedMin) NextBatch(ctx context.Context) (*Batch, error) {
+func (a *VectorizedMin) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if a.done {
 		return nil, nil
 	}
@@ -340,7 +341,7 @@ func (a *VectorizedMin) NextBatch(ctx context.Context) (*Batch, error) {
 }
 
 // reduceColumn performs 4-wide unrolled min reduction.
-func (a *VectorizedMin) reduceColumn(col Column, batch *Batch) {
+func (a *VectorizedMin) reduceColumn(col UT.Column, batch *UT.Batch) {
 	switch col.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
 		data := col.Data.Ints
@@ -435,15 +436,15 @@ func (a *VectorizedMin) reduceColumn(col Column, batch *Batch) {
 	}
 }
 
-func (a *VectorizedMin) finalBatch() (*Batch, error) {
+func (a *VectorizedMin) finalBatch() (*UT.Batch, error) {
 	if !a.hasValue {
-		batch := GetBatch(1)
+		batch := UT.GetBatch(1)
 		batch.AppendRow(0, LX.T_INT_KW, nil, true)
 		batch.AdvanceSize()
 		batch.SetColumnName(0, "min")
 		return batch, nil
 	}
-	batch := GetBatch(1)
+	batch := UT.GetBatch(1)
 	if a.isFloat {
 		batch.AppendRow(0, LX.T_FLOAT_KW, a.floatMin, false)
 	} else {
@@ -479,7 +480,7 @@ func NewVectorizedMax(child BatchProducer, colIdx int) *VectorizedMax {
 }
 
 // NextBatch returns a single-row batch with the max value.
-func (a *VectorizedMax) NextBatch(ctx context.Context) (*Batch, error) {
+func (a *VectorizedMax) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if a.done {
 		return nil, nil
 	}
@@ -506,7 +507,7 @@ func (a *VectorizedMax) NextBatch(ctx context.Context) (*Batch, error) {
 }
 
 // reduceColumn performs 4-wide unrolled max reduction.
-func (a *VectorizedMax) reduceColumn(col Column, batch *Batch) {
+func (a *VectorizedMax) reduceColumn(col UT.Column, batch *UT.Batch) {
 	switch col.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
 		data := col.Data.Ints
@@ -601,15 +602,15 @@ func (a *VectorizedMax) reduceColumn(col Column, batch *Batch) {
 	}
 }
 
-func (a *VectorizedMax) finalBatch() (*Batch, error) {
+func (a *VectorizedMax) finalBatch() (*UT.Batch, error) {
 	if !a.hasValue {
-		batch := GetBatch(1)
+		batch := UT.GetBatch(1)
 		batch.AppendRow(0, LX.T_INT_KW, nil, true)
 		batch.AdvanceSize()
 		batch.SetColumnName(0, "max")
 		return batch, nil
 	}
-	batch := GetBatch(1)
+	batch := UT.GetBatch(1)
 	if a.isFloat {
 		batch.AppendRow(0, LX.T_FLOAT_KW, a.floatMax, false)
 	} else {

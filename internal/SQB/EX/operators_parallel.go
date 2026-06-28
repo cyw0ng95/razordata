@@ -5,7 +5,8 @@ import (
 	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // ParallelSeqScanRow is a row-based parallel table scan that splits
@@ -17,7 +18,7 @@ type ParallelSeqScanRow struct {
 	schema  []string
 	types   []LX.TokenType
 	colMap  map[string]int
-	pool    *WorkerPool
+	pool    *UT.WorkerPool
 	rows    []Row
 	startID int
 	endID   int
@@ -29,7 +30,7 @@ type ParallelSeqScanRow struct {
 }
 
 // NewParallelSeqScanRow creates a row-based parallel scan.
-func NewParallelSeqScanRow(rows []Row, schema []string, types []LX.TokenType, pool *WorkerPool) *ParallelSeqScanRow {
+func NewParallelSeqScanRow(rows []Row, schema []string, types []LX.TokenType, pool *UT.WorkerPool) *ParallelSeqScanRow {
 	colMap := make(map[string]int, len(schema))
 	for i, name := range schema {
 		colMap[name] = i
@@ -156,7 +157,7 @@ func (p *ParallelSeqScanRow) Close() error {
 type ParallelUnionAll struct {
 	left   Operator
 	right  Operator
-	pool   *WorkerPool
+	pool   *UT.WorkerPool
 	rowBuf []Row
 	rowPos int
 	done   bool
@@ -165,7 +166,7 @@ type ParallelUnionAll struct {
 }
 
 // NewParallelUnionAll creates a parallel UNION ALL operator.
-func NewParallelUnionAll(left, right Operator, pool *WorkerPool) *ParallelUnionAll {
+func NewParallelUnionAll(left, right Operator, pool *UT.WorkerPool) *ParallelUnionAll {
 	return &ParallelUnionAll{
 		left:  left,
 		right: right,
@@ -279,17 +280,17 @@ type ParallelSeqScan struct {
 	schema         []string
 	types          []LX.TokenType
 	colMap         map[string]int
-	pool           *WorkerPool
+	pool           *UT.WorkerPool
 	rows           []Row
 	startID        int
 	endID          int
 	done           bool
-	pendingBatches []*Batch
+	pendingBatches []*UT.Batch
 	pendingIdx     int
 }
 
 // NewParallelSeqScan creates a parallel scan (batch-based).
-func NewParallelSeqScan(source Operator, schema []string, types []LX.TokenType, pool *WorkerPool, rows []Row) *ParallelSeqScan {
+func NewParallelSeqScan(source Operator, schema []string, types []LX.TokenType, pool *UT.WorkerPool, rows []Row) *ParallelSeqScan {
 	colMap := make(map[string]int, len(schema))
 	for i, name := range schema {
 		colMap[name] = i
@@ -306,7 +307,7 @@ func NewParallelSeqScan(source Operator, schema []string, types []LX.TokenType, 
 	}
 }
 
-func (p *ParallelSeqScan) NextBatch(ctx context.Context) (*Batch, error) {
+func (p *ParallelSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	// Engine path: delegate to SeqScan.NextBatch when source is
 	// a store-backed SeqScan and there are no in-memory rows.
 	// REQ001064.
@@ -336,7 +337,7 @@ func (p *ParallelSeqScan) NextBatch(ctx context.Context) (*Batch, error) {
 	}
 
 	type partialResult struct {
-		batch *Batch
+		batch *UT.Batch
 		err   error
 	}
 	resultCh := make(chan partialResult, workers)
@@ -355,8 +356,8 @@ func (p *ParallelSeqScan) NextBatch(ctx context.Context) (*Batch, error) {
 		err := p.pool.Submit(ctx, func() error {
 			defer wg.Done()
 			partitionSize := end - start
-			if partitionSize > BatchSize {
-				partitionSize = BatchSize
+			if partitionSize > UT.BatchSize {
+				partitionSize = UT.BatchSize
 			}
 			batch := p.scanPartition(start, start+partitionSize)
 			resultCh <- partialResult{batch: batch}
@@ -386,8 +387,8 @@ func (p *ParallelSeqScan) NextBatch(ctx context.Context) (*Batch, error) {
 		if i == workers-1 {
 			partitionSize = p.endID - p.startID - i*rowsPerWorker
 		}
-		if partitionSize > BatchSize {
-			partitionSize = BatchSize
+		if partitionSize > UT.BatchSize {
+			partitionSize = UT.BatchSize
 		}
 		scanned += partitionSize
 	}
@@ -404,8 +405,8 @@ func (p *ParallelSeqScan) NextBatch(ctx context.Context) (*Batch, error) {
 	return batch, nil
 }
 
-func (p *ParallelSeqScan) scanPartition(start, end int) *Batch {
-	batch := GetBatch(len(p.schema))
+func (p *ParallelSeqScan) scanPartition(start, end int) *UT.Batch {
+	batch := UT.GetBatch(len(p.schema))
 	batch.Size = 0
 	for i, name := range p.schema {
 		batch.SetColumnName(i, name)
@@ -413,8 +414,8 @@ func (p *ParallelSeqScan) scanPartition(start, end int) *Batch {
 	batch.SetColMap(p.colMap)
 
 	rowCount := end - start
-	if rowCount > BatchSize {
-		rowCount = BatchSize
+	if rowCount > UT.BatchSize {
+		rowCount = UT.BatchSize
 	}
 	for idx := start; idx < start+rowCount; idx++ {
 		row := p.rows[idx]
@@ -449,16 +450,16 @@ type ParallelIndexScan struct {
 	indexCol       string
 	rows           []Row
 	pred           PS.Expr
-	pool           *WorkerPool
+	pool           *UT.WorkerPool
 	schema         []string
 	types          []LX.TokenType
 	colMap         map[string]int
-	pendingBatches []*Batch
+	pendingBatches []*UT.Batch
 	pendingIdx     int
 	done           bool
 }
 
-func NewParallelIndexScan(rows []Row, indexCol string, schema []string, types []LX.TokenType, pred PS.Expr, pool *WorkerPool) *ParallelIndexScan {
+func NewParallelIndexScan(rows []Row, indexCol string, schema []string, types []LX.TokenType, pred PS.Expr, pool *UT.WorkerPool) *ParallelIndexScan {
 	colMap := make(map[string]int, len(schema))
 	for i, name := range schema {
 		colMap[name] = i
@@ -474,7 +475,7 @@ func NewParallelIndexScan(rows []Row, indexCol string, schema []string, types []
 	}
 }
 
-func (p *ParallelIndexScan) NextBatch(ctx context.Context) (*Batch, error) {
+func (p *ParallelIndexScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if p.pendingIdx < len(p.pendingBatches) {
 		batch := p.pendingBatches[p.pendingIdx]
 		p.pendingIdx++
@@ -502,7 +503,7 @@ func (p *ParallelIndexScan) NextBatch(ctx context.Context) (*Batch, error) {
 	}
 
 	type partialResult struct {
-		batch *Batch
+		batch *UT.Batch
 		err   error
 	}
 	resultCh := make(chan partialResult, workers)
@@ -551,15 +552,15 @@ func (p *ParallelIndexScan) NextBatch(ctx context.Context) (*Batch, error) {
 	return batch, nil
 }
 
-func (p *ParallelIndexScan) scanIndexRange(start, end int) *Batch {
-	batch := GetBatch(len(p.schema))
+func (p *ParallelIndexScan) scanIndexRange(start, end int) *UT.Batch {
+	batch := UT.GetBatch(len(p.schema))
 	batch.Size = 0
 	for i, name := range p.schema {
 		batch.SetColumnName(i, name)
 	}
 	batch.SetColMap(p.colMap)
 
-	for idx := start; idx < end && batch.Size < BatchSize; idx++ {
+	for idx := start; idx < end && batch.Size < UT.BatchSize; idx++ {
 		row := p.rows[idx]
 		if p.pred != nil {
 			val, err := EvalValue(p.pred, &row, nil)
@@ -598,7 +599,7 @@ func (p *ParallelIndexScan) Close() error {
 // partition order. Falls back to sequential when pool is nil or
 // there are fewer than 2 values. REQ001051.
 type ParallelIndexRangeScan struct {
-	pool   *WorkerPool
+	pool   *UT.WorkerPool
 	rows   []Row
 	schema []string
 	types  []LX.TokenType
@@ -613,7 +614,7 @@ type ParallelIndexRangeScan struct {
 }
 
 // NewParallelIndexRangeScan creates a parallel IN-list index scan.
-func NewParallelIndexRangeScan(rows []Row, schema []string, types []LX.TokenType, colName string, values []any, pool *WorkerPool) *ParallelIndexRangeScan {
+func NewParallelIndexRangeScan(rows []Row, schema []string, types []LX.TokenType, colName string, values []any, pool *UT.WorkerPool) *ParallelIndexRangeScan {
 	return &ParallelIndexRangeScan{
 		pool:    pool,
 		rows:    rows,

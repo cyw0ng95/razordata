@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/EX"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 	"github.com/cyw0ng95/razordata/internal/SYS/TX"
@@ -122,9 +123,9 @@ func wrapEXError(err error) error {
 		return AP.Wrap(AP.KindInvalidOptions, err)
 	case errors.Is(err, EX.ErrNoEngine):
 		return AP.Wrap(AP.KindClosed, err)
-	case errors.Is(err, EX.ErrDecimalOverflow):
+	case errors.Is(err, UT.ErrDecimalOverflow):
 		return AP.Wrap(AP.KindTypeMismatch, err)
-	case errors.Is(err, EX.ErrDecimalScale):
+	case errors.Is(err, UT.ErrDecimalScale):
 		return AP.Wrap(AP.KindTypeMismatch, err)
 	default:
 		return AP.Wrap(AP.KindIO, err)

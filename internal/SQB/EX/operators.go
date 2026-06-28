@@ -10,6 +10,7 @@ import (
 
 	id "github.com/cyw0ng95/razordata/internal/ENG/ID"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 // ErrTableNotRegisteredForStorage is returned when an operator is asked to
 // route through the storage engine for a table that has not been registered
@@ -298,10 +299,10 @@ func valueToBatch(v Value) (any, LX.TokenType) {
 }
 
 // NextBatch reads up to engineBatchSize rows from the LSM iterator
-// and returns them as a columnar *Batch. Returns (nil, nil) at EOF.
+// and returns them as a columnar *UT.Batch. Returns (nil, nil) at EOF.
 // Caller is responsible for calling Put() on each non-nil batch.
 // REQ001064.
-func (s *SeqScan) NextBatch(ctx context.Context) (*Batch, error) {
+func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if s.store == nil {
 		return nil, fmt.Errorf("ex: SeqScan.NextBatch requires a Store")
 	}
@@ -323,7 +324,7 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*Batch, error) {
 	if s.alias != "" && s.prefixedCols != nil {
 		cols = s.prefixedCols
 	}
-	batch := GetBatch(nCols)
+	batch := UT.GetBatch(nCols)
 	batch.Size = 0
 	for k := 0; k < nCols; k++ {
 		batch.SetColumnName(k, cols[k])

@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // countOp is a counting operator that returns its batch unchanged.
@@ -12,7 +14,7 @@ type countOp struct {
 	count *int32
 }
 
-func (c *countOp) Process(ctx context.Context, batch *Batch) (*Batch, error) {
+func (c *countOp) Process(ctx context.Context, batch *UT.Batch) (*UT.Batch, error) {
 	atomic.AddInt32(c.count, 1)
 	return batch, nil
 }
@@ -39,7 +41,7 @@ func TestPipeline_Basic(t *testing.T) {
 	go func() {
 		in := p.Input()
 		for i := 0; i < 5; i++ {
-			batch := GetBatch(1)
+			batch := UT.GetBatch(1)
 			batch.AppendRow(0, 0, int64(i), false)
 			batch.AdvanceSize()
 			in <- batch
@@ -77,7 +79,7 @@ func TestPipeline_MultiStage(t *testing.T) {
 	go func() {
 		in := p.Input()
 		for i := 0; i < 10; i++ {
-			batch := GetBatch(1)
+			batch := UT.GetBatch(1)
 			batch.AppendRow(0, 0, int64(i), false)
 			batch.AdvanceSize()
 			in <- batch
@@ -129,11 +131,11 @@ func TestSyncPipeline(t *testing.T) {
 	sp := NewSyncPipeline([]PipelineOperator{stage1, stage2})
 
 	ctx := context.Background()
-	in := make(chan *Batch, 4)
+	in := make(chan *UT.Batch, 4)
 	out := sp.Run(ctx, in)
 
 	for i := 0; i < 3; i++ {
-		batch := GetBatch(1)
+		batch := UT.GetBatch(1)
 		batch.AppendRow(0, 0, int64(i), false)
 		batch.AdvanceSize()
 		in <- batch
@@ -182,7 +184,7 @@ func TestPipeline_ConcurrentInput(t *testing.T) {
 			defer wg.Done()
 			in := p.Input()
 			for i := 0; i < perSender; i++ {
-				batch := GetBatch(1)
+				batch := UT.GetBatch(1)
 				batch.AppendRow(0, 0, int64(i), false)
 				batch.AdvanceSize()
 				in <- batch
@@ -219,7 +221,7 @@ func BenchmarkPipeline(b *testing.B) {
 		in := p.Input()
 		go func() {
 			for j := 0; j < 100; j++ {
-				batch := GetBatch(1)
+				batch := UT.GetBatch(1)
 				batch.AppendRow(0, 0, int64(j), false)
 				batch.AdvanceSize()
 				in <- batch

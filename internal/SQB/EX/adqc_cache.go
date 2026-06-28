@@ -3,11 +3,13 @@ package EX
 import (
 	"context"
 	"sync"
+
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // SpecializedPlan holds a compiled plan and its measured performance.
 type SpecializedPlan struct {
-	Fn             func(ctx context.Context, batch *Batch, params []any) (*Batch, error)
+	Fn             func(ctx context.Context, batch *UT.Batch, params []any) (*UT.Batch, error)
 	OpType         string
 	PlanHash       string
 	SchemaVersion  uint64

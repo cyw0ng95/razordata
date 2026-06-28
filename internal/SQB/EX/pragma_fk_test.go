@@ -5,13 +5,14 @@ import (
 	"testing"
 
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // TestPragma_ForeignKeys_Toggle verifies REQ000905: PRAGMA foreign_keys
 // ON/OFF toggles FK enforcement.
 func TestPragma_ForeignKeys_Toggle(t *testing.T) {
-	UnregisterAll()
-	defer UnregisterAll()
+	UT.UnregisterAllPragmaListeners()
+	defer UT.UnregisterAllPragmaListeners()
 	defer SetForeignKeysEnabled(true) // restore default
 
 	// Verify default is ON.
@@ -34,8 +35,8 @@ func TestPragma_ForeignKeys_Toggle(t *testing.T) {
 
 // TestPragma_ForeignKeys_ReadWrite verifies the PRAGMA read/write via Executor.
 func TestPragma_ForeignKeys_ReadWrite(t *testing.T) {
-	UnregisterAll()
-	defer UnregisterAll()
+	UT.UnregisterAllPragmaListeners()
+	defer UT.UnregisterAllPragmaListeners()
 	defer SetForeignKeysEnabled(true) // restore default
 
 	e := NewExecutorWithEngine(nil)
@@ -87,8 +88,8 @@ func TestPragma_ForeignKeys_ReadWrite(t *testing.T) {
 // TestPragma_ForeignKeyCheck_NoViolations verifies REQ000906: no
 // violations when all FK references are valid.
 func TestPragma_ForeignKeyCheck_NoViolations(t *testing.T) {
-	UnregisterAll()
-	defer UnregisterAll()
+	UT.UnregisterAllPragmaListeners()
+	defer UT.UnregisterAllPragmaListeners()
 
 	parent := &storeSchema{cols: []string{"id"}, pk: "id"}
 	child := &storeSchema{
@@ -121,8 +122,8 @@ func TestPragma_ForeignKeyCheck_NoViolations(t *testing.T) {
 // TestPragma_ForeignKeyCheck_Violation verifies REQ000906: violation
 // row is reported when a child references a non-existent parent.
 func TestPragma_ForeignKeyCheck_Violation(t *testing.T) {
-	UnregisterAll()
-	defer UnregisterAll()
+	UT.UnregisterAllPragmaListeners()
+	defer UT.UnregisterAllPragmaListeners()
 
 	parent := &storeSchema{cols: []string{"id"}, pk: "id"}
 	child := &storeSchema{
@@ -157,8 +158,8 @@ func TestPragma_ForeignKeyCheck_Violation(t *testing.T) {
 // TestPragma_ForeignKeyCheck_SpecificTable verifies the optional
 // table_name parameter: only that table is checked.
 func TestPragma_ForeignKeyCheck_SpecificTable(t *testing.T) {
-	UnregisterAll()
-	defer UnregisterAll()
+	UT.UnregisterAllPragmaListeners()
+	defer UT.UnregisterAllPragmaListeners()
 
 	parent := &storeSchema{cols: []string{"id"}, pk: "id"}
 	child := &storeSchema{
@@ -196,8 +197,8 @@ func TestPragma_ForeignKeyCheck_SpecificTable(t *testing.T) {
 // TestPragma_ForeignKeyCheck_NullFKColumns verifies that rows with
 // all-NULL FK columns are not reported as violations.
 func TestPragma_ForeignKeyCheck_NullFKColumns(t *testing.T) {
-	UnregisterAll()
-	defer UnregisterAll()
+	UT.UnregisterAllPragmaListeners()
+	defer UT.UnregisterAllPragmaListeners()
 
 	parent := &storeSchema{cols: []string{"id"}, pk: "id"}
 	child := &storeSchema{

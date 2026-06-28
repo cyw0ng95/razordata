@@ -5,10 +5,11 @@ import (
 	"fmt"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
-// VectorizedSeqScan produces columnar batches of up to BatchSize
+// VectorizedSeqScan produces columnar batches of up to UT.BatchSize
 // rows from an underlying row source. Uses the sync.Pool-backed
 // Batch allocator to avoid per-batch GC pressure.
 // The schema (column names and types) must be pre-computed and
@@ -21,7 +22,7 @@ type VectorizedSeqScan struct {
 	schema  []string
 	types   []LX.TokenType
 	colMap  map[string]int
-	current *Batch
+	current *UT.Batch
 	done    bool
 }
 
@@ -43,7 +44,7 @@ func NewVectorizedSeqScan(source Operator, schema []string, types []LX.TokenType
 
 // NextBatch produces the next batch. Returns (nil, nil) at EOF.
 // Caller is responsible for calling Put() on each non-nil batch.
-func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*Batch, error) {
+func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if v.done {
 		return nil, nil
 	}
@@ -51,7 +52,7 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*Batch, error) {
 		return nil, err
 	}
 
-	batch := GetBatch(len(v.schema))
+	batch := UT.GetBatch(len(v.schema))
 	batch.Size = 0
 	// Install column names and colMap for O(1) filter lookup
 	for i, name := range v.schema {
@@ -59,7 +60,7 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*Batch, error) {
 	}
 	batch.SetColMap(v.colMap)
 
-	for batch.Size < BatchSize {
+	for batch.Size < UT.BatchSize {
 		row, err := v.source.Next(ctx)
 		if err != nil {
 			if err == ErrNoRows {
@@ -130,7 +131,7 @@ func (f *VectorizedFilter) WithParams(p []any) *VectorizedFilter {
 }
 
 // NextBatch produces the next filtered batch.
-func (f *VectorizedFilter) NextBatch(ctx context.Context) (*Batch, error) {
+func (f *VectorizedFilter) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	for {
 		batch, err := f.child.NextBatch(ctx)
 		if err != nil {

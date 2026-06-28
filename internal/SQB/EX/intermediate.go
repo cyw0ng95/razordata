@@ -9,7 +9,8 @@ import (
 	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // REQ001088: predicateCache is now best-effort. The Filter struct caches
@@ -453,7 +454,7 @@ type Sort struct {
 	pos          int
 	materialized bool
 	params       []any
-	pool         *WorkerPool // REQ001050: parallel sort support
+	pool         *UT.WorkerPool // REQ001050: parallel sort support
 	// sortBufferSize caps the number of rows materialized before
 	// sorting. 0 = unlimited. REQ001065.
 	sortBufferSize int64
@@ -467,7 +468,7 @@ func NewSort(child Operator, keys []PS.OrderItem) *Sort {
 }
 
 // WithPool attaches a WorkerPool for parallel sort. REQ001050.
-func (s *Sort) WithPool(pool *WorkerPool) *Sort {
+func (s *Sort) WithPool(pool *UT.WorkerPool) *Sort {
 	s.pool = pool
 	return s
 }

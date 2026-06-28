@@ -6,7 +6,8 @@ import (
 	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // PipelineOperator is the interface for operators in a pipeline.
@@ -15,7 +16,7 @@ import (
 type PipelineOperator interface {
 	// Process consumes one batch and produces output.
 	// Returns (nil, nil) to signal end-of-stream.
-	Process(ctx context.Context, batch *Batch) (*Batch, error)
+	Process(ctx context.Context, batch *UT.Batch) (*UT.Batch, error)
 	Close() error
 }
 
@@ -29,7 +30,7 @@ type PipelineOperator interface {
 // REQ000145 satisfied: Pipeline parallelism for multi-stage queries.
 type Pipeline struct {
 	stages []PipelineOperator
-	bufs   []chan *Batch
+	bufs   []chan *UT.Batch
 	errCh  chan error
 }
 
@@ -40,9 +41,9 @@ func NewPipeline(stages []PipelineOperator, bufSize int) *Pipeline {
 	if bufSize < 1 {
 		bufSize = 1
 	}
-	bufs := make([]chan *Batch, len(stages)+1)
+	bufs := make([]chan *UT.Batch, len(stages)+1)
 	for i := range bufs {
-		bufs[i] = make(chan *Batch, bufSize)
+		bufs[i] = make(chan *UT.Batch, bufSize)
 	}
 	return &Pipeline{
 		stages: stages,
@@ -55,7 +56,7 @@ func NewPipeline(stages []PipelineOperator, bufSize int) *Pipeline {
 // channel produces output batches from the last stage.
 // Close the pipeline via the returned cancel function or by
 // closing the first stage's input.
-func (p *Pipeline) Run(ctx context.Context) (<-chan *Batch, context.CancelFunc) {
+func (p *Pipeline) Run(ctx context.Context) (<-chan *UT.Batch, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Start each stage
@@ -70,7 +71,7 @@ func (p *Pipeline) Run(ctx context.Context) (<-chan *Batch, context.CancelFunc) 
 
 // runStage executes a single stage: pulls from inCh, processes,
 // pushes to outCh. Closes outCh when inCh is closed.
-func (p *Pipeline) runStage(ctx context.Context, idx int, stage PipelineOperator, inCh, outCh chan *Batch) {
+func (p *Pipeline) runStage(ctx context.Context, idx int, stage PipelineOperator, inCh, outCh chan *UT.Batch) {
 	defer close(outCh)
 	for {
 		select {
@@ -101,7 +102,7 @@ func (p *Pipeline) runStage(ctx context.Context, idx int, stage PipelineOperator
 
 // Input returns the first stage's input channel. The caller
 // should send batches here and close when done.
-func (p *Pipeline) Input() chan<- *Batch {
+func (p *Pipeline) Input() chan<- *UT.Batch {
 	return p.bufs[0]
 }
 
@@ -130,7 +131,7 @@ type FilterPipelineOperator struct {
 // PipelinePredicate is a minimal interface for vectorized predicates.
 // Implemented by the same expression types that EvalBatch accepts.
 type PipelinePredicate interface {
-	EvaluateBatch(batch *Batch, params []any) []uint16
+	EvaluateBatch(batch *UT.Batch, params []any) []uint16
 }
 
 // NewFilterPipelineOperator creates a filter stage.
@@ -139,7 +140,7 @@ func NewFilterPipelineOperator(pred PipelinePredicate) *FilterPipelineOperator {
 }
 
 // Process applies the filter to one batch.
-func (f *FilterPipelineOperator) Process(ctx context.Context, batch *Batch) (*Batch, error) {
+func (f *FilterPipelineOperator) Process(ctx context.Context, batch *UT.Batch) (*UT.Batch, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -176,11 +177,11 @@ func NewProjectPipelineOperator(exprs []PS.Expr, params []any) *ProjectPipelineO
 
 // Process evaluates projection expressions for each row in the batch
 // and produces a new batch with projected columns.
-func (p *ProjectPipelineOperator) Process(ctx context.Context, batch *Batch) (*Batch, error) {
+func (p *ProjectPipelineOperator) Process(ctx context.Context, batch *UT.Batch) (*UT.Batch, error) {
 	if batch == nil || batch.Size == 0 {
 		return nil, nil
 	}
-	out := GetBatch(len(p.exprs))
+	out := UT.GetBatch(len(p.exprs))
 	for i := range p.exprs {
 		out.SetColumnName(i, fmt.Sprintf("c%d", i))
 	}
@@ -223,14 +224,14 @@ func NewAggregatePipelineOperator(aggs []PS.Expr) *AggregatePipelineOperator {
 
 // Process accumulates one batch into aggregate state.
 // Returns nil until all batches are consumed, then the final result.
-func (a *AggregatePipelineOperator) Process(ctx context.Context, batch *Batch) (*Batch, error) {
+func (a *AggregatePipelineOperator) Process(ctx context.Context, batch *UT.Batch) (*UT.Batch, error) {
 	if batch == nil || batch.Size == 0 {
 		// End of stream: produce result
 		if a.done {
 			return nil, nil
 		}
 		a.done = true
-		out := GetBatch(len(a.aggs))
+		out := UT.GetBatch(len(a.aggs))
 		for i, s := range a.state {
 			out.AppendRow(i, kindToTokenType(s.Kind()), s.FinalValue(), false)
 		}
@@ -251,7 +252,7 @@ func (a *AggregatePipelineOperator) Process(ctx context.Context, batch *Batch) (
 func (a *AggregatePipelineOperator) Close() error { return nil }
 
 // rowDataAt extracts column values from a batch row into a []Value.
-func rowDataAt(batch *Batch, rowIdx int) []Value {
+func rowDataAt(batch *UT.Batch, rowIdx int) []Value {
 	data := make([]Value, len(batch.Cols))
 	for ci := range batch.Cols {
 		col := &batch.Cols[ci]
@@ -326,11 +327,11 @@ func buildPipeline(ops []Operator, bufSize int) *Pipeline {
 // It drains all rows on first Process call and returns them as a single batch.
 type operatorPipelineAdapter struct {
 	op     Operator
-	batch  *Batch
+	batch  *UT.Batch
 	drained bool
 }
 
-func (a *operatorPipelineAdapter) Process(ctx context.Context, batch *Batch) (*Batch, error) {
+func (a *operatorPipelineAdapter) Process(ctx context.Context, batch *UT.Batch) (*UT.Batch, error) {
 	if a.drained {
 		return nil, nil
 	}
@@ -352,7 +353,7 @@ func (a *operatorPipelineAdapter) Process(ctx context.Context, batch *Batch) (*B
 	}
 	// Convert to batch
 	nCols := len(rows[0].Cols)
-	out := GetBatch(nCols)
+	out := UT.GetBatch(nCols)
 	for i, name := range rows[0].Cols {
 		out.SetColumnName(i, name)
 	}
@@ -383,12 +384,12 @@ func NewSyncPipeline(stages []PipelineOperator) *SyncPipeline {
 // Run executes the pipeline synchronously: each stage processes
 // the output of the previous stage in the same goroutine.
 // Returns a channel that produces final output batches.
-func (sp *SyncPipeline) Run(ctx context.Context, input <-chan *Batch) <-chan *Batch {
-	out := make(chan *Batch, 4)
+func (sp *SyncPipeline) Run(ctx context.Context, input <-chan *UT.Batch) <-chan *UT.Batch {
+	out := make(chan *UT.Batch, 4)
 	go func() {
 		defer close(out)
 		// Use a single goroutine that chains stages
-		chanInput := make(chan *Batch, 4)
+		chanInput := make(chan *UT.Batch, 4)
 		go func() {
 			defer close(chanInput)
 			for batch := range input {
@@ -398,8 +399,8 @@ func (sp *SyncPipeline) Run(ctx context.Context, input <-chan *Batch) <-chan *Ba
 
 		current := chanInput
 		for _, stage := range sp.stages {
-			next := make(chan *Batch, 4)
-			go func(stage PipelineOperator, in, out chan *Batch) {
+			next := make(chan *UT.Batch, 4)
+			go func(stage PipelineOperator, in, out chan *UT.Batch) {
 				defer close(out)
 				for batch := range in {
 					if batch == nil {

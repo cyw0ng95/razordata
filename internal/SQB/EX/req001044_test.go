@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // REQ001044: Executor-level WorkerPool lifecycle.
@@ -33,12 +35,12 @@ func TestExecutor_WorkerPoolLifecycle(t *testing.T) {
 	e.Close()
 	e.Close() // second call no panic
 
-	// 4. Submit after Close returns ErrPoolClosed
+	// 4. Submit after Close returns UT.ErrPoolClosed
 	err = pool.Submit(ctx, func() error {
 		return nil
 	})
-	if err != ErrPoolClosed {
-		t.Fatalf("Submit after Close: got %v, want ErrPoolClosed", err)
+	if err != UT.ErrPoolClosed {
+		t.Fatalf("Submit after Close: got %v, want UT.ErrPoolClosed", err)
 	}
 
 	// 5. ShallowCopy shares the same pool
@@ -52,7 +54,7 @@ func TestExecutor_WorkerPoolLifecycle(t *testing.T) {
 	// 6. Executor.Close shuts down shared pool
 	e2.Close()
 	err = e3.Pool().Submit(ctx, func() error { return nil })
-	if err != ErrPoolClosed {
-		t.Fatalf("Submit after Close on shared pool: got %v, want ErrPoolClosed", err)
+	if err != UT.ErrPoolClosed {
+		t.Fatalf("Submit after Close on shared pool: got %v, want UT.ErrPoolClosed", err)
 	}
 }

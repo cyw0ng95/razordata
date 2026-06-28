@@ -15,6 +15,7 @@ import (
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // sessionCountersProvider is an optional callback set by SYS/SE to
@@ -239,7 +240,7 @@ type Executor struct {
 	maxParallelism int
 	// txnDebugger tracks MVCC/transaction statistics for EXPLAIN ANALYZE.
 	// REQ000792: MVCC debugging.
-	txnDebugger *TxnDebugger
+	txnDebugger *UT.TxnDebugger
 	// stmtCache caches parsed statements keyed by SQL text to avoid
 	// re-parsing on repeated queries. LRU eviction, default 256 entries.
 	stmtCache struct {
@@ -252,7 +253,7 @@ type Executor struct {
 	// Created in NewExecutor and sized to GOMAXPROCS. Shared across
 	// ShallowCopy clones via pointer. Shut down in Close().
 	// REQ001044.
-	pool *WorkerPool
+	pool *UT.WorkerPool
 	// attachedDBs maps attached database name → path.
 	// Populated by ATTACH DATABASE, cleared by DETACH.
 	// REQ000908.
@@ -301,7 +302,7 @@ func (e *Executor) ShallowCopy() *Executor {
 	e2 := &Executor{
 		planner:           e.planner,
 		store:             e.store,
-		txnDebugger:       NewTxnDebugger(),
+		txnDebugger:       UT.NewTxnDebugger(),
 		pool:              e.pool, // shared — pool is thread-safe
 		maxMemoryPerQuery: e.maxMemoryPerQuery,
 		joinBufferSize:    e.joinBufferSize,
@@ -320,7 +321,7 @@ func (e *Executor) Close() {
 }
 
 // Pool returns the shared WorkerPool (may be nil). REQ001044.
-func (e *Executor) Pool() *WorkerPool { return e.pool }
+func (e *Executor) Pool() *UT.WorkerPool { return e.pool }
 
 // SetSnapshot sets the per-statement snapshot timestamp for read-committed
 // isolation (REQ000255). When non-zero, reads filter to versions visible at
@@ -353,7 +354,7 @@ func (e *Executor) SetMaxParallelism(n int) {
 	if e.pool != nil {
 		e.pool.Close()
 	}
-	e.pool = NewWorkerPool(n)
+	e.pool = UT.NewWorkerPool(n)
 	e.planner.SetPool(e.pool)
 }
 
@@ -368,8 +369,8 @@ func getCurrentSessionID() uint64 {
 func NewExecutor() *Executor {
 	e := &Executor{
 		planner:        NewPlanner(),
-		txnDebugger:    NewTxnDebugger(),
-		pool:           NewWorkerPool(0),
+		txnDebugger:    UT.NewTxnDebugger(),
+		pool:           UT.NewWorkerPool(0),
 		maxParallelism: runtime.GOMAXPROCS(0),
 		attachedDBs:    make(map[string]string),
 	}
@@ -381,8 +382,8 @@ func NewExecutor() *Executor {
 func NewExecutorWithPlanner(pl *Planner) *Executor {
 	e := &Executor{
 		planner:        pl,
-		txnDebugger:    NewTxnDebugger(),
-		pool:           NewWorkerPool(0),
+		txnDebugger:    UT.NewTxnDebugger(),
+		pool:           UT.NewWorkerPool(0),
 		maxParallelism: runtime.GOMAXPROCS(0),
 		attachedDBs:    make(map[string]string),
 	}
@@ -396,7 +397,7 @@ func NewExecutorWithEngine(store Store) *Executor {
 	e := &Executor{
 		planner:        NewPlannerWithStore(store),
 		store:          store,
-		pool:           NewWorkerPool(0),
+		pool:           UT.NewWorkerPool(0),
 		maxParallelism: runtime.GOMAXPROCS(0),
 		attachedDBs:    make(map[string]string),
 	}
@@ -1766,7 +1767,7 @@ func (n *Noop) WithParams(p []any) Operator {
 
 // TxnDebugger returns the executor's transaction debugger.
 // REQ000792: MVCC debugging.
-func (e *Executor) TxnDebugger() *TxnDebugger {
+func (e *Executor) TxnDebugger() *UT.TxnDebugger {
 	return e.txnDebugger
 }
 

@@ -1,4 +1,4 @@
-package EX
+package UT
 
 import (
 	"encoding/json"
@@ -296,7 +296,7 @@ func jsonRemove(jsonStr string, path string) (string, error) {
 }
 
 // evalJSONFunc evaluates JSON functions.
-func evalJSONFunc(name string, args []any) (any, error) {
+func EvalJSONFunc(name string, args []any) (any, error) {
 	switch strings.ToUpper(name) {
 	case "JSON_EXTRACT":
 		if len(args) < 2 {
@@ -429,7 +429,7 @@ func evalJSONFunc(name string, args []any) (any, error) {
 }
 
 // isJSONFunc returns true if the function name is a JSON function.
-func isJSONFunc(name string) bool {
+func IsJSONFunc(name string) bool {
 	switch strings.ToUpper(name) {
 	case "JSON_EXTRACT", "JSON_TYPE", "JSON_VALID", "JSON_ARRAY", "JSON_OBJECT", "JSON_SET", "JSON_INSERT", "JSON_REPLACE", "JSON_REMOVE":
 		return true

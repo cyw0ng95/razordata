@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // SortOrder specifies ascending or descending order.
@@ -34,7 +35,7 @@ type ParallelSort struct {
 	source     *VectorizedSeqScan
 	keys       []SortKey
 	keyIndices []int
-	pool       *WorkerPool
+	pool       *UT.WorkerPool
 	rows       []Row
 	pos        int
 	done       bool
@@ -42,7 +43,7 @@ type ParallelSort struct {
 
 // NewParallelSort creates a parallel sort. If pool is nil,
 // uses sequential sort.
-func NewParallelSort(source *VectorizedSeqScan, keys []SortKey, pool *WorkerPool) *ParallelSort {
+func NewParallelSort(source *VectorizedSeqScan, keys []SortKey, pool *UT.WorkerPool) *ParallelSort {
 	return &ParallelSort{
 		source: source,
 		keys:   keys,
@@ -52,8 +53,8 @@ func NewParallelSort(source *VectorizedSeqScan, keys []SortKey, pool *WorkerPool
 
 // NextBatch returns a batch with sorted data. Currently returns
 // the entire sorted dataset in a single batch (or multiple
-// batches if data exceeds BatchSize).
-func (s *ParallelSort) NextBatch(ctx context.Context) (*Batch, error) {
+// batches if data exceeds UT.BatchSize).
+func (s *ParallelSort) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if s.done {
 		return nil, nil
 	}
@@ -189,7 +190,7 @@ func (s *ParallelSort) sequentialSort() {
 }
 
 // firstBatch returns the first batch from the sorted rows.
-func (s *ParallelSort) batchFromPos() (*Batch, error) {
+func (s *ParallelSort) batchFromPos() (*UT.Batch, error) {
 	if s.pos >= len(s.rows) {
 		return nil, nil
 	}
@@ -202,12 +203,12 @@ func (s *ParallelSort) batchFromPos() (*Batch, error) {
 		}
 	}
 
-	batch := GetBatch(len(schema))
+	batch := UT.GetBatch(len(schema))
 	for i, name := range schema {
 		batch.SetColumnName(i, name)
 	}
 
-	end := s.pos + BatchSize
+	end := s.pos + UT.BatchSize
 	if end > len(s.rows) {
 		end = len(s.rows)
 	}
@@ -247,9 +248,9 @@ func (s *ParallelSort) batchFromPos() (*Batch, error) {
 
 // truncateColumnData shrinks a column's Data slices to the
 // specified logical size.
-func truncateColumnData(data ColumnData, size int) ColumnData {
+func truncateColumnData(data UT.ColumnData, size int) UT.ColumnData {
 	if size == 0 {
-		return ColumnData{}
+		return UT.ColumnData{}
 	}
 	if data.Ints != nil {
 		data.Ints = data.Ints[:size]
@@ -437,7 +438,7 @@ func compareValues(a, b any) int {
 }
 
 // batchToRows converts a columnar batch back to rows (for sorting).
-func batchToRows(batch *Batch) []Row {
+func batchToRows(batch *UT.Batch) []Row {
 	if batch == nil || batch.Size == 0 {
 		return nil
 	}

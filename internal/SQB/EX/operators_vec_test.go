@@ -5,7 +5,8 @@ import (
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // rowSourceForTest is a simple in-memory row iterator for tests.
@@ -331,7 +332,7 @@ func BenchmarkVectorizedFilter_MultiBatch(b *testing.B) {
 // This is the "raw SIMD-like" path, free of scan/alloc overhead.
 func BenchmarkEvalDirect_Int64GT(b *testing.B) {
 	const n = 1024
-	batch := GetBatch(1)
+	batch := UT.GetBatch(1)
 	defer batch.Put()
 	for i := 0; i < n; i++ {
 		batch.AppendRow(0, LX.T_INT_KW, int64(i), false)

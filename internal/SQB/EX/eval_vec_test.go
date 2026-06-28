@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // makeIntBatch creates a batch with a single int64 column.
-func makeIntBatch(values []int64) *Batch {
-	b := GetBatch(1)
+func makeIntBatch(values []int64) *UT.Batch {
+	b := UT.GetBatch(1)
 	for _, v := range values {
 		b.AppendRow(0, LX.T_INT_KW, v, false)
 		b.AdvanceSize()
@@ -60,7 +61,7 @@ func TestEvalBatch_Int64ColLit_GT(t *testing.T) {
 
 // TestEvalBatch_Int64ColCol tests col1 = col2.
 func TestEvalBatch_Int64ColCol(t *testing.T) {
-	b := GetBatch(2)
+	b := UT.GetBatch(2)
 	defer b.Put()
 	leftVals := []int64{1, 2, 3, 4, 5}
 	rightVals := []int64{1, 0, 3, 0, 5}
@@ -79,7 +80,7 @@ func TestEvalBatch_Int64ColCol(t *testing.T) {
 
 // TestEvalBatch_Float64ColLit tests float comparisons.
 func TestEvalBatch_Float64ColLit(t *testing.T) {
-	b := GetBatch(1)
+	b := UT.GetBatch(1)
 	defer b.Put()
 	vals := []float64{1.0, 2.5, 3.7, 4.0, 5.5}
 	for _, v := range vals {
@@ -97,7 +98,7 @@ func TestEvalBatch_Float64ColLit(t *testing.T) {
 
 // TestEvalBatch_StringColLit tests string equality.
 func TestEvalBatch_StringColLit(t *testing.T) {
-	b := GetBatch(1)
+	b := UT.GetBatch(1)
 	defer b.Put()
 	vals := []string{"apple", "banana", "cherry", "banana"}
 	for _, v := range vals {
@@ -143,7 +144,7 @@ func TestEvalBatch_NoMatch(t *testing.T) {
 
 // TestEvalBatch_EmptyBatch returns nil for empty batch.
 func TestEvalBatch_EmptyBatch(t *testing.T) {
-	b := GetBatch(1)
+	b := UT.GetBatch(1)
 	defer b.Put()
 	sel := EvalBatch(&PS.NumberLiteral{Val: 1}, b, nil)
 	if sel != nil {
@@ -164,7 +165,7 @@ func TestEvalBatch_NilExpr(t *testing.T) {
 // TestEvalBatch_LargeBatch verifies 4-wide unrolling correctness.
 func TestEvalBatch_LargeBatch(t *testing.T) {
 	const n = 1000
-	b := GetBatch(1)
+	b := UT.GetBatch(1)
 	defer b.Put()
 	for i := 0; i < n; i++ {
 		b.AppendRow(0, LX.T_INT_KW, int64(i), false)
@@ -313,7 +314,7 @@ func TestEvalBatch_NotInList(t *testing.T) {
 
 // TestEvalBatch_InList_String verifies string IN-list vectorized path (REQ000991).
 func TestEvalBatch_InList_String(t *testing.T) {
-	b := GetBatch(1)
+	b := UT.GetBatch(1)
 	defer b.Put()
 	vals := []string{"a", "b", "c", "b", "d", "e"}
 	for _, v := range vals {
@@ -340,7 +341,7 @@ func TestEvalBatch_InList_String(t *testing.T) {
 
 // TestEvalBatch_InList_Nulls verifies NULL handling (REQ000991).
 func TestEvalBatch_InList_Nulls(t *testing.T) {
-	b := GetBatch(1)
+	b := UT.GetBatch(1)
 	defer b.Put()
 	vals := []int64{10, 20, 0, 40, 0, 60} // use 0 for NULL placeholders
 	for _, v := range vals {
@@ -390,7 +391,7 @@ func TestEvalBatch_InList_NonLiteralExpr(t *testing.T) {
 // BenchmarkEvalBatch_InList benchmarks vectorized IN-list (REQ000991).
 func BenchmarkEvalBatch_InList(b *testing.B) {
 	const n = 1024
-	batch := GetBatch(1)
+	batch := UT.GetBatch(1)
 	defer batch.Put()
 	for i := 0; i < n; i++ {
 		batch.AppendRow(0, LX.T_INT_KW, int64(i%100), false)
@@ -430,7 +431,7 @@ func TestEqualSelection(t *testing.T) {
 // BenchmarkEvalBatch_Int64EQ benchmarks int64 column-literal EQ.
 func BenchmarkEvalBatch_Int64EQ(b *testing.B) {
 	const n = 1024
-	batch := GetBatch(1)
+	batch := UT.GetBatch(1)
 	defer batch.Put()
 	for i := 0; i < n; i++ {
 		batch.AppendRow(0, LX.T_INT_KW, int64(i), false)
@@ -447,7 +448,7 @@ func BenchmarkEvalBatch_Int64EQ(b *testing.B) {
 // BenchmarkEvalBatch_Int64GT benchmarks int64 column-literal GT.
 func BenchmarkEvalBatch_Int64GT(b *testing.B) {
 	const n = 1024
-	batch := GetBatch(1)
+	batch := UT.GetBatch(1)
 	defer batch.Put()
 	for i := 0; i < n; i++ {
 		batch.AppendRow(0, LX.T_INT_KW, int64(i), false)
@@ -464,7 +465,7 @@ func BenchmarkEvalBatch_Int64GT(b *testing.B) {
 // BenchmarkEvalBatch_StringEQ benchmarks string column-literal EQ.
 func BenchmarkEvalBatch_StringEQ(b *testing.B) {
 	const n = 1024
-	batch := GetBatch(1)
+	batch := UT.GetBatch(1)
 	defer batch.Put()
 	for i := 0; i < n; i++ {
 		batch.AppendRow(0, LX.T_TEXT, "value", false)
@@ -481,14 +482,14 @@ func BenchmarkEvalBatch_StringEQ(b *testing.B) {
 // TestEvalBatch_AndOr verifies REQ001010: AND/OR batch evaluation.
 func TestEvalBatch_AndOr(t *testing.T) {
 	const n = 10
-	batch := GetBatch(1)
+	batch := UT.GetBatch(1)
 	defer batch.Put()
 	for i := 0; i < n; i++ {
 		batch.AppendRow(0, LX.T_INT_KW, int64(i), false)
 		batch.AdvanceSize()
 	}
 	batch.Cols[0].Name = "x"
-	batch.colMap = map[string]int{"x": 0}
+	batch.SetColMap(map[string]int{"x": 0})
 
 	// a > 3 AND a < 8 => rows 4,5,6,7
 	andExpr := &PS.BinaryExpr{

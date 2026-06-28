@@ -5,7 +5,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // ParallelHashAggregate partitions input by group key hash, builds
@@ -14,7 +15,7 @@ type ParallelHashAggregate struct {
 	child     Operator
 	groupCols []PS.Expr
 	aggs      []PS.Expr
-	pool      *WorkerPool
+	pool      *UT.WorkerPool
 	params    []any
 	buf       []Row
 	pos       int
@@ -22,7 +23,7 @@ type ParallelHashAggregate struct {
 	started   bool
 }
 
-func NewParallelHashAggregate(child Operator, groupCols, aggs []PS.Expr, pool *WorkerPool) *ParallelHashAggregate {
+func NewParallelHashAggregate(child Operator, groupCols, aggs []PS.Expr, pool *UT.WorkerPool) *ParallelHashAggregate {
 	return &ParallelHashAggregate{child: child, groupCols: groupCols, aggs: aggs, pool: pool}
 }
 

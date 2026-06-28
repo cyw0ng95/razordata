@@ -3,6 +3,8 @@ package EX
 import (
 	"context"
 	"log/slog"
+
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // FallbackOp is a safety-net wrapper that catches panics during
@@ -41,11 +43,11 @@ func (f *FallbackOp) Triggered() bool { return f.triggered }
 // any panic and logging a fallback event.
 func trySpecialized(
 	ctx context.Context,
-	fn func(ctx context.Context, batch *Batch, params []any) (*Batch, error),
-	batch *Batch,
+	fn func(ctx context.Context, batch *UT.Batch, params []any) (*UT.Batch, error),
+	batch *UT.Batch,
 	params []any,
 	planHash string,
-) (result *Batch, err error) {
+) (result *UT.Batch, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Debug("adqc: fallback",

@@ -9,7 +9,8 @@ import (
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 type Insert struct {
@@ -1782,7 +1783,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 		p.done = true
 		// If value is set, this is a write pragma — notify listeners
 		if p.stmt.Value != "" {
-			notifyPragmaChange(p.stmt.Name, p.stmt.Value)
+			UT.NotifyPragmaChange(p.stmt.Name, p.stmt.Value)
 		}
 		return Row{}, ErrNoRows
 	}

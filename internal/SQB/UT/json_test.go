@@ -1,4 +1,4 @@
-package EX
+package UT
 
 import (
 	"testing"
@@ -166,7 +166,7 @@ func TestJSON_EvalFunc(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := evalJSONFunc(tt.name, tt.args)
+			got, err := EvalJSONFunc(tt.name, tt.args)
 			if err != nil {
 				t.Fatalf("%s error: %v", tt.name, err)
 			}

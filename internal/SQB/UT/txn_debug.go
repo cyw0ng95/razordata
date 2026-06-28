@@ -1,9 +1,19 @@
-package EX
+package UT
 
 import (
 	"sync"
 	"time"
 )
+
+// TxnDebugInfo provides transaction/MVCC debugging information.
+// REQ000792: Transaction debugging in EXPLAIN ANALYZE output.
+type TxnDebugInfo struct {
+	SnapshotTS     uint64 // snapshot timestamp
+	VisibleRows    int64  // rows visible at snapshot
+	HiddenByMVCC   int64  // rows hidden by older versions
+	LockWaitTimeNS int64  // total lock wait time in nanoseconds
+	IsolationLevel string // transaction isolation level
+}
 
 // TxnDebugger tracks MVCC/transaction statistics for EXPLAIN ANALYZE.
 // REQ000792: MVCC debugging in EXPLAIN output.

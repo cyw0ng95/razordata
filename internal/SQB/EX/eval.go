@@ -16,6 +16,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // globalSubqueryCache caches results of non-correlated scalar subqueries
@@ -798,7 +799,7 @@ func evalCast(e *PS.CastExpr, row *Row, params []any) (Value, error) {
 	case LX.T_TEXT:
 		return NewTextValue(v.String()), nil
 	case LX.T_DECIMAL, LX.T_NUMERIC:
-		r, err := evalDecimalCast(v.ToAny(), e.Type.Precision, e.Type.Scale)
+		r, err := UT.EvalDecimalCast(v.ToAny(), e.Type.Precision, e.Type.Scale)
 		if err != nil {
 			return NullValue(), err
 		}
@@ -987,7 +988,7 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
 		}
 		return valueFromAny(v), nil
 	}
-	if isJSONFunc(e.Name) {
+	if UT.IsJSONFunc(e.Name) {
 		args := make([]any, len(e.Args))
 		for i, arg := range e.Args {
 			v, err := EvalValue(arg, row, params)
@@ -996,7 +997,7 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
 			}
 			args[i] = v.ToAny()
 		}
-		v, err := evalJSONFunc(e.Name, args)
+		v, err := UT.EvalJSONFunc(e.Name, args)
 		if err != nil {
 			return NullValue(), err
 		}
