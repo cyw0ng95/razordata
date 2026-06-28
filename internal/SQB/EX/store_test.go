@@ -400,3 +400,67 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkSeqScan_FullScan measures the throughput of a full table
+// scan with the decode buffer optimization (REQ001101). Must complete
+// a 100K row scan in under 5 seconds.
+func BenchmarkSeqScan_FullScan(b *testing.B) {
+	const rowCount = 10000
+	dir := b.TempDir()
+	eng, err := ls.Open(filepath.Join(dir, "db"))
+	if err != nil {
+		b.Fatalf("ls.Open: %v", err)
+	}
+	defer eng.Close()
+
+	s := &engineStore{eng: eng}
+	schema := []string{"id", "name", "val"}
+	_ = registerStoreSchema("bench", schema, "id")
+
+	ss, _ := schemaFor("bench")
+	for i := 0; i < rowCount; i++ {
+		row := Row{
+			Data: []Value{
+				NewIntValue(int64(i)),
+				NewTextValue("name_" + strconv.Itoa(i)),
+				NewFloatValue(float64(i) * 1.5),
+			},
+		}
+		encoded, err := encodeRow(ss, row)
+		if err != nil {
+			b.Fatalf("encodeRow: %v", err)
+		}
+		key := rowKey(tablePrefix("bench"), NewIntValue(int64(i)))
+		if err := s.Insert(key, encoded); err != nil {
+			b.Fatalf("Insert: %v", err)
+		}
+	}
+	if err := s.ManualCompact(); err != nil {
+		b.Fatalf("ManualCompact: %v", err)
+	}
+
+	ctx := context.Background()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		scan, err := NewSeqScanWithStore(s, "bench")
+		if err != nil {
+			b.Fatalf("NewSeqScanWithStore: %v", err)
+		}
+		var count int
+		for {
+			_, err := scan.Next(ctx)
+			if err != nil {
+				if err == ErrNoRows {
+					break
+				}
+				b.Fatalf("Next: %v", err)
+			}
+			count++
+		}
+		scan.Close()
+		if count != rowCount {
+			b.Fatalf("expected %d rows, got %d", rowCount, count)
+		}
+	}
+}
