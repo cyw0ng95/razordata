@@ -135,95 +135,20 @@ func (p *Parser) parsePrimary() (Expr, error) {
 	case LX.T_COUNT, LX.T_SUM, LX.T_AVG:
 		name := strings.ToUpper(p.current.Lexeme)
 		p.advance()
-		if err := p.expect(LX.T_LPAREN); err != nil {
+		agg, args, err := p.parseAggregateFunc(name, false)
+		if err != nil {
 			return nil, err
-		}
-		p.advance()
-		// Handle DISTINCT/ALL keyword in aggregate functions
-		distinct := false
-		if p.current.Type == LX.T_DISTINCT {
-			distinct = true
-			p.advance()
-		} else if p.current.Type == LX.T_ALL {
-			p.advance() // ALL is a no-op (default behavior)
-		}
-		var arg Expr
-		if p.current.Type == LX.T_STAR {
-			arg = &StarExpr{}
-			p.advance()
-		} else {
-			a, err := p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-			arg = a
-		}
-		if err := p.expect(LX.T_RPAREN); err != nil {
-			return nil, err
-		}
-		p.advance()
-		agg := &AggregateFunc{Name: name, Arg: arg, Distinct: distinct}
-		if p.current.Type == LX.T_FILTER {
-			filter, err := p.parseFilterClause()
-			if err != nil {
-				return nil, err
-			}
-			agg.Filter = filter
 		}
 		if p.current.Type == LX.T_OVER {
-			return p.parseWindowFunc(name, []Expr{arg})
+			return p.parseWindowFunc(name, args)
 		}
 		return agg, nil
 	case LX.T_MIN, LX.T_MAX:
 		name := strings.ToUpper(p.current.Lexeme)
 		p.advance()
-		if err := p.expect(LX.T_LPAREN); err != nil {
+		agg, args, err := p.parseAggregateFunc(name, true)
+		if err != nil {
 			return nil, err
-		}
-		p.advance()
-		// Handle DISTINCT/ALL keyword in aggregate functions
-		distinct := false
-		if p.current.Type == LX.T_DISTINCT {
-			distinct = true
-			p.advance()
-		} else if p.current.Type == LX.T_ALL {
-			p.advance() // ALL is a no-op (default behavior)
-		}
-		var args []Expr
-		if p.current.Type == LX.T_STAR {
-			args = append(args, &StarExpr{})
-			p.advance()
-		} else if p.current.Type != LX.T_RPAREN {
-			a, err := p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-			args = append(args, a)
-			for p.current.Type == LX.T_COMMA {
-				p.advance()
-				a, err := p.parseExpr()
-				if err != nil {
-					return nil, err
-				}
-				args = append(args, a)
-			}
-		}
-		if err := p.expect(LX.T_RPAREN); err != nil {
-			return nil, err
-		}
-		p.advance()
-		// MIN/MAX with multiple args → scalar function (e.g. max(a, b, c))
-		if len(args) > 1 {
-			return &FunctionCall{Name: name, Args: args}, nil
-		}
-		// Single arg → aggregate function
-		agg := &AggregateFunc{Name: name, Arg: args[0], Distinct: distinct}
-		if p.current.Type == LX.T_FILTER {
-			filter, err := p.parseFilterClause()
-			if err != nil {
-				return nil, err
-			}
-			agg.Filter = filter
 		}
 		if p.current.Type == LX.T_OVER {
 			return p.parseWindowFunc(name, args)
@@ -281,6 +206,66 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		Got:    tokenName(p.current.Type),
 		Lexeme: p.current.Lexeme,
 	}
+}
+
+// parseAggregateFunc parses an aggregate function call: name([DISTINCT|ALL] arg, ...).
+// The '(' has already been consumed.
+// Returns (expr, args, err) where expr is *AggregateFunc or *FunctionCall.
+// args is the full argument list for use by parseWindowFunc.
+func (p *Parser) parseAggregateFunc(name string, allowMultiArgs bool) (Expr, []Expr, error) {
+	if err := p.expect(LX.T_LPAREN); err != nil {
+		return nil, nil, err
+	}
+	p.advance()
+
+	distinct := false
+	if p.current.Type == LX.T_DISTINCT {
+		distinct = true
+		p.advance()
+	} else if p.current.Type == LX.T_ALL {
+		p.advance() // ALL is a no-op (default behavior)
+	}
+
+	var args []Expr
+	if p.current.Type == LX.T_STAR {
+		args = append(args, &StarExpr{})
+		p.advance()
+	} else if p.current.Type != LX.T_RPAREN {
+		a, err := p.parseExpr()
+		if err != nil {
+			return nil, nil, err
+		}
+		args = append(args, a)
+		if allowMultiArgs {
+			for p.current.Type == LX.T_COMMA {
+				p.advance()
+				a, err := p.parseExpr()
+				if err != nil {
+					return nil, nil, err
+				}
+				args = append(args, a)
+			}
+		}
+	}
+	if err := p.expect(LX.T_RPAREN); err != nil {
+		return nil, nil, err
+	}
+	p.advance()
+
+	// Multi-arg MIN/MAX → scalar function call (e.g. max(a, b, c))
+	if len(args) > 1 {
+		return &FunctionCall{Name: name, Args: args}, args, nil
+	}
+
+	agg := &AggregateFunc{Name: name, Arg: args[0], Distinct: distinct}
+	if p.current.Type == LX.T_FILTER {
+		filter, err := p.parseFilterClause()
+		if err != nil {
+			return nil, nil, err
+		}
+		agg.Filter = filter
+	}
+	return agg, args, nil
 }
 
 // parseFunctionCall parses a function call: name(arg1, arg2, ...).
@@ -401,10 +386,10 @@ func (p *Parser) parseUnary() (Expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &UnaryExpr{Op: int(LX.T_NOT), Operand: operand}, nil
+		return &UnaryExpr{Op: LX.T_NOT, Operand: operand}, nil
 	}
 	if p.current.Type == LX.T_MINUS || p.current.Type == LX.T_PLUS || p.current.Type == LX.T_BITNOT {
-		op := int(p.current.Type)
+		op := p.current.Type
 		p.advance()
 		operand, err := p.parseUnary()
 		if err != nil {
@@ -452,7 +437,7 @@ func (p *Parser) parseGlob(expr Expr) (Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &BinaryExpr{Op: int(LX.T_GLOB), Left: expr, Right: right}, nil
+	return &BinaryExpr{Op: LX.T_GLOB, Left: expr, Right: right}, nil
 }
 
 // parseNotGlob parses `expr NOT GLOB pattern` as NOT(expr GLOB pattern).
@@ -462,8 +447,8 @@ func (p *Parser) parseNotGlob(expr Expr) (Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	glob := &BinaryExpr{Op: int(LX.T_GLOB), Left: expr, Right: right}
-	return &UnaryExpr{Op: int(LX.T_NOT), Operand: glob}, nil
+	glob := &BinaryExpr{Op: LX.T_GLOB, Left: expr, Right: right}
+	return &UnaryExpr{Op: LX.T_NOT, Operand: glob}, nil
 }
 
 // REQ000380: `NOT LIKE` — parse x NOT LIKE y as NOT(x LIKE y).
@@ -473,7 +458,7 @@ func (p *Parser) parseNotLike(expr Expr) (Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	like := &BinaryExpr{Op: int(LX.T_LIKE), Left: expr, Right: right}
+	like := &BinaryExpr{Op: LX.T_LIKE, Left: expr, Right: right}
 	// REQ000567: LIKE ... ESCAPE expr
 	if p.current.Type == LX.T_ESCAPE {
 		p.advance()
@@ -483,7 +468,7 @@ func (p *Parser) parseNotLike(expr Expr) (Expr, error) {
 		}
 		like.Escape = escape
 	}
-	return &UnaryExpr{Op: int(LX.T_NOT), Operand: like}, nil
+	return &UnaryExpr{Op: LX.T_NOT, Operand: like}, nil
 }
 
 // REQ000381: `NOT IN` — parse x NOT IN (...) as NOT(x IN (...)).
@@ -495,7 +480,7 @@ func (p *Parser) parseNotIn(expr Expr) (Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &UnaryExpr{Op: int(LX.T_NOT), Operand: in}, nil
+	return &UnaryExpr{Op: LX.T_NOT, Operand: in}, nil
 }
 
 // REQ000434: `NOT BETWEEN` — parse x NOT BETWEEN low AND high as NOT(x BETWEEN low AND high).
@@ -514,7 +499,7 @@ func (p *Parser) parseNotBetween(expr Expr) (Expr, error) {
 		return nil, err
 	}
 	between := &BetweenExpr{Expr: expr, Low: low, High: high}
-	return &UnaryExpr{Op: int(LX.T_NOT), Operand: between}, nil
+	return &UnaryExpr{Op: LX.T_NOT, Operand: between}, nil
 }
 
 func (p *Parser) parseBetween(expr Expr) (Expr, error) {
@@ -625,26 +610,26 @@ func (p *Parser) parseBinary(minPrec int) (Expr, error) {
 		if !isBinaryOp(p.current.Type) || precedence(p.current.Type) < minPrec {
 			break
 		}
-		op := int(p.current.Type)
+		op := p.current.Type
 		p.advance()
 		// REQ000833: `IS NOT NULL` — when IS is followed by NOT, handle
 		// it specially so the NOT doesn't consume subsequent operators
 		// (e.g., AND a > b) at NOT's low precedence (1).
-		if op == int(LX.T_IS) && p.current.Type == LX.T_NOT && p.lex.Peek().Type == LX.T_NULL {
+		if op == LX.T_IS && p.current.Type == LX.T_NOT && p.lex.Peek().Type == LX.T_NULL {
 			p.advance() // consume NOT
 			p.advance() // consume NULL
-			notNull := &UnaryExpr{Op: int(LX.T_NOT), Operand: &NullLiteral{}}
+			notNull := &UnaryExpr{Op: LX.T_NOT, Operand: &NullLiteral{}}
 			left = &BinaryExpr{Op: op, Left: left, Right: notNull}
 			continue
 		}
-		nextMinPrec := precedence(LX.TokenType(op)) + 1
+		nextMinPrec := precedence(op) + 1
 		right, err := p.parseBinary(nextMinPrec)
 		if err != nil {
 			return nil, err
 		}
 		left = &BinaryExpr{Op: op, Left: left, Right: right}
 		// REQ000567: LIKE ... ESCAPE expr
-		if op == int(LX.T_LIKE) && p.current.Type == LX.T_ESCAPE {
+		if op == LX.T_LIKE && p.current.Type == LX.T_ESCAPE {
 			p.advance()
 			escape, err := p.parseExpr()
 			if err != nil {
@@ -771,56 +756,56 @@ func (p *Parser) parseCastType() (*TypeInfo, error) {
 
 	switch p.current.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
-		info.Type = int(p.current.Type)
+		info.Type = p.current.Type
 		p.advance()
 	case LX.T_FLOAT_KW:
-		info.Type = int(LX.T_FLOAT_KW)
+		info.Type = LX.T_FLOAT_KW
 		p.advance()
 	case LX.T_BOOL:
-		info.Type = int(LX.T_BOOL)
+		info.Type = LX.T_BOOL
 		p.advance()
 	case LX.T_TEXT:
-		info.Type = int(LX.T_TEXT)
+		info.Type = LX.T_TEXT
 		p.advance()
 	case LX.T_BLOB:
-		info.Type = int(LX.T_BLOB)
+		info.Type = LX.T_BLOB
 		p.advance()
 	case LX.T_TIMESTAMP:
-		info.Type = int(LX.T_TIMESTAMP)
+		info.Type = LX.T_TIMESTAMP
 		p.advance()
 	case LX.T_VARCHAR:
-		info.Type = int(LX.T_VARCHAR)
+		info.Type = LX.T_VARCHAR
 		p.advance()
 		if err := p.parseTypeSize(&info.Size); err != nil {
 			return nil, err
 		}
 	case LX.T_NUMERIC:
-		info.Type = int(LX.T_NUMERIC)
+		info.Type = LX.T_NUMERIC
 		p.advance()
 		if err := p.parseTypePrecision(&info.Precision, &info.Scale); err != nil {
 			return nil, err
 		}
 		info.Size = info.Precision // use Size for ColDef compatibility
 	case LX.T_DECIMAL:
-		info.Type = int(LX.T_DECIMAL)
+		info.Type = LX.T_DECIMAL
 		p.advance()
 		if err := p.parseTypePrecision(&info.Precision, &info.Scale); err != nil {
 			return nil, err
 		}
 		info.Size = info.Precision // use Size for ColDef compatibility
 	case LX.T_DATE:
-		info.Type = int(LX.T_DATE)
+		info.Type = LX.T_DATE
 		p.advance()
 	case LX.T_TIME:
-		info.Type = int(LX.T_TIME)
+		info.Type = LX.T_TIME
 		p.advance()
 	case LX.T_JSON:
-		info.Type = int(LX.T_JSON)
+		info.Type = LX.T_JSON
 		p.advance()
 	case LX.T_IDENT:
 		switch strings.ToUpper(p.current.Lexeme) {
 		case "SIGNED", "UNSIGNED":
-			info.Type = int(LX.T_INT_KW)
+			info.Type = LX.T_INT_KW
 			p.advance()
 		default:
 			return nil, &SyntaxError{

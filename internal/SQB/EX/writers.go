@@ -1032,7 +1032,7 @@ type CreateTable struct {
 // registerTableSchema registers a table in the in-memory tables and
 // schemas maps. Returns the column metadata extracted from the AST.
 // REQ000982: extracted from CreateTable.Next.
-func registerTableSchema(stmt *PS.CreateTable) ([]string, []bool, []PS.Expr, []int, []int, []int, error) {
+func registerTableSchema(stmt *PS.CreateTable) ([]string, []bool, []PS.Expr, []LX.TokenType, []int, []int, error) {
 	tablesMu.Lock()
 	defer tablesMu.Unlock()
 	if _, ok := tables[stmt.Name]; ok {
@@ -1041,7 +1041,7 @@ func registerTableSchema(stmt *PS.CreateTable) ([]string, []bool, []PS.Expr, []i
 	cols := make([]string, len(stmt.Cols))
 	nullable := make([]bool, len(stmt.Cols))
 	defaults := make([]PS.Expr, len(stmt.Cols))
-	colTypes := make([]int, len(stmt.Cols))
+	colTypes := make([]LX.TokenType, len(stmt.Cols))
 	precisions := make([]int, len(stmt.Cols))
 	scales := make([]int, len(stmt.Cols))
 	for i, col := range stmt.Cols {
@@ -1161,7 +1161,7 @@ func buildGeneratedColumns(stmt *PS.CreateTable) []PS.Expr {
 // The catalog write is best-effort: a failure does not roll back
 // the in-memory registration.
 // REQ000982: extracted from CreateTable.Next.
-func persistToCatalog(stmt *PS.CreateTable, cols []string, nullable []bool, colTypes []int, unique []UniqueKey, pk string) {
+func persistToCatalog(stmt *PS.CreateTable, cols []string, nullable []bool, colTypes []LX.TokenType, unique []UniqueKey, pk string) {
 	cat := Catalog()
 	if cat == nil {
 		return
@@ -1249,7 +1249,7 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	// placeholders to their column type at Prepare time.
 	storeMu.Lock()
 	if ss, ok := storeSchemas[id]; ok {
-		ss.colTypes = append([]int(nil), colTypes...)
+		ss.colTypes = append([]LX.TokenType(nil), colTypes...)
 		ss.precision = append([]int(nil), precisions...)
 		ss.scale = append([]int(nil), scales...)
 		ss.generated = generated
@@ -1427,23 +1427,23 @@ func buildCreateSQL(stmt *PS.CreateTable) string {
 // typeToken maps a parser column-type token to its SQL spelling.
 // The token IDs are the LX.T_* constants stored as int on the
 // ColDef. Returns "" if the type is unknown.
-func typeToken(t int) string {
+func typeToken(t LX.TokenType) string {
 	switch t {
-	case int(LX.T_INT_KW):
+	case LX.T_INT_KW:
 		return "INTEGER"
-	case int(LX.T_BIGINT):
+	case LX.T_BIGINT:
 		return "BIGINT"
-	case int(LX.T_TEXT):
+	case LX.T_TEXT:
 		return "TEXT"
-	case int(LX.T_VARCHAR):
+	case LX.T_VARCHAR:
 		return "VARCHAR"
-	case int(LX.T_BOOL):
+	case LX.T_BOOL:
 		return "BOOLEAN"
-	case int(LX.T_FLOAT_KW):
+	case LX.T_FLOAT_KW:
 		return "FLOAT"
-	case int(LX.T_BLOB):
+	case LX.T_BLOB:
 		return "BLOB"
-	case int(LX.T_TIMESTAMP):
+	case LX.T_TIMESTAMP:
 		return "TIMESTAMP"
 	default:
 		return ""
@@ -1813,7 +1813,7 @@ func (p *Pragma) loadTableInfo() error {
 		if i == pkIdx {
 			pk = int64(1)
 		}
-		colType := 0
+		colType := LX.TokenType(0)
 		if i < len(ss.colTypes) {
 			colType = ss.colTypes[i]
 		}
@@ -1825,7 +1825,7 @@ func (p *Pragma) loadTableInfo() error {
 	return nil
 }
 
-func colTypeName(t int) string {
+func colTypeName(t LX.TokenType) string {
 	switch t {
 	case 1: // LX.T_INT_KW
 		return "INTEGER"
@@ -2013,7 +2013,7 @@ func (e *Explain) Next(ctx context.Context) (Row, error) {
 		e.desc = e.explain()
 		return Row{
 			Cols:  []string{"plan"},
-			Types: []int{0},
+			Types: []LX.TokenType{LX.T_TEXT},
 			Data:  []Value{NewTextValue(e.desc)},
 		}, nil
 	}
@@ -2312,7 +2312,7 @@ func evalReturning(exprs []PS.Expr, row *Row, params []any, resultRows *[]Row) e
 	expanded := expandReturningStar(exprs, row.Cols)
 	resultRow := Row{
 		Cols:  make([]string, len(expanded)),
-		Types: make([]int, len(expanded)),
+		Types: make([]LX.TokenType, len(expanded)),
 		Data:  make([]Value, len(expanded)),
 	}
 	for j, expr := range expanded {

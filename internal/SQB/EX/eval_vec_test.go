@@ -1,6 +1,7 @@
 package EX
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -24,7 +25,7 @@ func TestEvalBatch_Int64ColLit_EQ(t *testing.T) {
 
 	// Direct test of compareInt64ColLit (the vectorized fast path)
 	col := b.Cols[0]
-	sel := compareInt64ColLit(col, 5, int(LX.T_EQ), b.Size)
+	sel := compareInt64ColLit(col, 5, LX.T_EQ, b.Size)
 	expected := []uint16{1, 3, 5}
 	if !equalSelection(sel, expected) {
 		t.Errorf("col=5: got %v, want %v", sel, expected)
@@ -37,7 +38,7 @@ func TestEvalBatch_Int64ColLit_LT(t *testing.T) {
 	defer b.Put()
 
 	col := b.Cols[0]
-	sel := compareInt64ColLit(col, 5, int(LX.T_LT), b.Size)
+	sel := compareInt64ColLit(col, 5, LX.T_LT, b.Size)
 	expected := []uint16{0, 1, 2}
 	if !equalSelection(sel, expected) {
 		t.Errorf("col<5: got %v, want %v", sel, expected)
@@ -50,7 +51,7 @@ func TestEvalBatch_Int64ColLit_GT(t *testing.T) {
 	defer b.Put()
 
 	col := b.Cols[0]
-	sel := compareInt64ColLit(col, 5, int(LX.T_GT), b.Size)
+	sel := compareInt64ColLit(col, 5, LX.T_GT, b.Size)
 	expected := []uint16{4, 6}
 	if !equalSelection(sel, expected) {
 		t.Errorf("col>5: got %v, want %v", sel, expected)
@@ -69,7 +70,7 @@ func TestEvalBatch_Int64ColCol(t *testing.T) {
 		b.AdvanceSize()
 	}
 
-	sel := compareInt64Cols(b.Cols[0], b.Cols[1], int(LX.T_EQ), b.Size)
+	sel := compareInt64Cols(b.Cols[0], b.Cols[1], LX.T_EQ, b.Size)
 	expected := []uint16{0, 2, 4}
 	if !equalSelection(sel, expected) {
 		t.Errorf("col0=col1: got %v, want %v", sel, expected)
@@ -87,7 +88,7 @@ func TestEvalBatch_Float64ColLit(t *testing.T) {
 	}
 
 	col := b.Cols[0]
-	sel := compareFloat64ColLit(col, 3.0, int(LX.T_GT), b.Size)
+	sel := compareFloat64ColLit(col, 3.0, LX.T_GT, b.Size)
 	expected := []uint16{2, 3, 4}
 	if !equalSelection(sel, expected) {
 		t.Errorf("col>3.0: got %v, want %v", sel, expected)
@@ -105,7 +106,7 @@ func TestEvalBatch_StringColLit(t *testing.T) {
 	}
 
 	col := b.Cols[0]
-	sel := compareStringColLit(col, "banana", int(LX.T_EQ), b.Size)
+	sel := compareStringColLit(col, "banana", LX.T_EQ, b.Size)
 	expected := []uint16{1, 3}
 	if !equalSelection(sel, expected) {
 		t.Errorf("col=banana: got %v, want %v", sel, expected)
@@ -119,7 +120,7 @@ func TestEvalBatch_AllMatch(t *testing.T) {
 
 	// col > 0 matches all
 	col := b.Cols[0]
-	sel := compareInt64ColLit(col, 0, int(LX.T_GT), b.Size)
+	sel := compareInt64ColLit(col, 0, LX.T_GT, b.Size)
 	if sel == nil {
 		t.Error("expected non-nil selection for all-match")
 	}
@@ -134,7 +135,7 @@ func TestEvalBatch_NoMatch(t *testing.T) {
 	defer b.Put()
 
 	col := b.Cols[0]
-	sel := compareInt64ColLit(col, 100, int(LX.T_LT), b.Size)
+	sel := compareInt64ColLit(col, 100, LX.T_LT, b.Size)
 	if len(sel) != 0 {
 		t.Errorf("expected empty selection, got %v", sel)
 	}
@@ -179,7 +180,7 @@ func TestEvalBatch_LargeBatch(t *testing.T) {
 		}
 	}
 	// Apply filter via vectorized path
-	actual := compareInt64ColLit(col, 0, int(LX.T_GE), n) // all match
+	actual := compareInt64ColLit(col, 0, LX.T_GE, n) // all match
 	if len(actual) != n {
 		t.Errorf("all-match: expected %d, got %d", n, len(actual))
 	}
@@ -191,7 +192,7 @@ func TestEvalBatch_LargeBatch(t *testing.T) {
 			sel5 = append(sel5, uint16(i))
 		}
 	}
-	actual5 := compareInt64ColLit(col, 5, int(LX.T_EQ), n)
+	actual5 := compareInt64ColLit(col, 5, LX.T_EQ, n)
 	if !equalSelection(actual5, sel5) {
 		t.Errorf("col==5: got %v, want %v", actual5, sel5)
 	}
@@ -200,13 +201,13 @@ func TestEvalBatch_LargeBatch(t *testing.T) {
 // TestSwapOp verifies operator swapping for reversed column-literal.
 func TestSwapOp(t *testing.T) {
 	cases := []struct {
-		in, want int
+		in, want LX.TokenType
 	}{
-		{int(LX.T_LT), int(LX.T_GT)},
-		{int(LX.T_LE), int(LX.T_GE)},
-		{int(LX.T_GT), int(LX.T_LT)},
-		{int(LX.T_GE), int(LX.T_LE)},
-		{int(LX.T_EQ), int(LX.T_EQ)},
+		{LX.T_LT, LX.T_GT},
+		{LX.T_LE, LX.T_GE},
+		{LX.T_GT, LX.T_LT},
+		{LX.T_GE, LX.T_LE},
+		{LX.T_EQ, LX.T_EQ},
 	}
 	for _, c := range cases {
 		if got := swapOp(c.in); got != c.want {
@@ -293,7 +294,7 @@ func TestEvalBatch_NotInList(t *testing.T) {
 
 	// NOT (c0 IN (20, 40)) — should match rows 0, 2, 4
 	notIn := &PS.UnaryExpr{
-		Op: int(LX.T_NOT),
+		Op: LX.T_NOT,
 		Operand: &PS.InExpr{
 			Expr: &PS.Ident{Name: "c0"},
 			List: []PS.Expr{
@@ -439,7 +440,7 @@ func BenchmarkEvalBatch_Int64EQ(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = compareInt64ColLit(col, 512, int(LX.T_EQ), n)
+		_ = compareInt64ColLit(col, 512, LX.T_EQ, n)
 	}
 }
 
@@ -456,7 +457,7 @@ func BenchmarkEvalBatch_Int64GT(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = compareInt64ColLit(col, 512, int(LX.T_GT), n)
+		_ = compareInt64ColLit(col, 512, LX.T_GT, n)
 	}
 }
 
@@ -473,6 +474,69 @@ func BenchmarkEvalBatch_StringEQ(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = compareStringColLit(col, "value", int(LX.T_EQ), n)
+		_ = compareStringColLit(col, "value", LX.T_EQ, n)
+	}
+}
+
+// TestEvalBatch_AndOr verifies REQ001010: AND/OR batch evaluation.
+func TestEvalBatch_AndOr(t *testing.T) {
+	const n = 10
+	batch := GetBatch(1)
+	defer batch.Put()
+	for i := 0; i < n; i++ {
+		batch.AppendRow(0, LX.T_INT_KW, int64(i), false)
+		batch.AdvanceSize()
+	}
+	batch.Cols[0].Name = "x"
+	batch.colMap = map[string]int{"x": 0}
+
+	// a > 3 AND a < 8 => rows 4,5,6,7
+	andExpr := &PS.BinaryExpr{
+		Op: LX.T_AND,
+		Left: &PS.BinaryExpr{
+			Op: LX.T_GT,
+			Left: &PS.Ident{Name: "x"},
+			Right: &PS.NumberLiteral{Val: 3},
+		},
+		Right: &PS.BinaryExpr{
+			Op: LX.T_LT,
+			Left: &PS.Ident{Name: "x"},
+			Right: &PS.NumberLiteral{Val: 8},
+		},
+	}
+	andSel := EvalBatch(andExpr, batch, nil)
+	sort.Slice(andSel, func(i, j int) bool { return andSel[i] < andSel[j] })
+	assertUint16Slice(t, andSel, []uint16{4, 5, 6, 7})
+
+	// a < 2 OR a > 8 => rows 0,1,9
+	orExpr := &PS.BinaryExpr{
+		Op: LX.T_OR,
+		Left: &PS.BinaryExpr{
+			Op: LX.T_LT,
+			Left: &PS.Ident{Name: "x"},
+			Right: &PS.NumberLiteral{Val: 2},
+		},
+		Right: &PS.BinaryExpr{
+			Op: LX.T_GT,
+			Left: &PS.Ident{Name: "x"},
+			Right: &PS.NumberLiteral{Val: 8},
+		},
+	}
+	orSel := EvalBatch(orExpr, batch, nil)
+	sort.Slice(orSel, func(i, j int) bool { return orSel[i] < orSel[j] })
+	assertUint16Slice(t, orSel, []uint16{0, 1, 9})
+}
+
+func assertUint16Slice(t *testing.T, got, want []uint16) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Errorf("got %v, want %v", got, want)
+		return
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("got %v, want %v", got, want)
+			return
+		}
 	}
 }

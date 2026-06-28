@@ -8,6 +8,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -56,7 +57,7 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
 	if e.treeText != "" {
 		row := Row{
 			Cols:  []string{"explain_output"},
-			Types: []int{1},
+			Types: []LX.TokenType{LX.T_TEXT},
 			Data:  []Value{NewTextValue(e.treeText)},
 		}
 		e.done = true

@@ -8,6 +8,8 @@ package EX
 import (
 	"context"
 	"testing"
+
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // TestIndexScan_StrategySelection covers the four mode → strategy
@@ -53,9 +55,9 @@ func TestScanStrategy_InterfaceConformance(t *testing.T) {
 // small slice and checks the rows come out in order.
 func TestScanStrategy_InMemoryDispatch(t *testing.T) {
 	rows := []Row{
-		{Cols: []string{"a"}, Types: []int{1}, Data: []Value{NewIntValue(1)}},
-		{Cols: []string{"a"}, Types: []int{1}, Data: []Value{NewIntValue(2)}},
-		{Cols: []string{"a"}, Types: []int{1}, Data: []Value{NewIntValue(3)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(1)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(2)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(3)}},
 	}
 	s := NewInMemoryScan(rows)
 	ctx := context.Background()

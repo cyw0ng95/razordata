@@ -1229,7 +1229,7 @@ func TestRewriteInsertFoldsConstants(t *testing.T) {
 		Table: "t",
 		Values: [][]PS.Expr{
 			{&PS.BinaryExpr{
-				Op:    int(LX.T_PLUS),
+				Op:    LX.T_PLUS,
 				Left:  &PS.NumberLiteral{Val: 1},
 				Right: &PS.NumberLiteral{Val: 2},
 			}},
@@ -1259,17 +1259,17 @@ func TestCloneExprSliceNil(t *testing.T) {
 func TestConstantFoldBinaryNullOperand(t *testing.T) {
 	null := &PS.NullLiteral{}
 	num := &PS.NumberLiteral{Val: 1}
-	if got := constantFoldBinary(int(LX.T_PLUS), null, num); got != nil {
+	if got := constantFoldBinary(LX.T_PLUS, null, num); got != nil {
 		t.Errorf("expected nil for NULL + 1, got %v", got)
 	}
-	if got := constantFoldBinary(int(LX.T_PLUS), num, null); got != nil {
+	if got := constantFoldBinary(LX.T_PLUS, num, null); got != nil {
 		t.Errorf("expected nil for 1 + NULL, got %v", got)
 	}
 }
 
 // REQ000637: foldIntInt(1, 0, T_SLASH) returns nil (division by zero).
 func TestFoldIntIntDivideByZero(t *testing.T) {
-	if got := foldIntInt(int(LX.T_SLASH), 1, 0); got != nil {
+	if got := foldIntInt(LX.T_SLASH, 1, 0); got != nil {
 		t.Errorf("expected nil for 1/0, got %v", got)
 	}
 }

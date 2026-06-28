@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -114,7 +115,7 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 		// Choose schema from left (UNION's output is the left's
 		// column names; the right side's aliases are discarded).
 		var cols []string
-		var types []int
+		var types []LX.TokenType
 		if len(leftRows) > 0 {
 			cols = leftRows[0].Cols
 			types = leftRows[0].Types

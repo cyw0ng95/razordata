@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -18,9 +19,9 @@ func TestExecutorEndToEnd(t *testing.T) {
 	defer UnregisterAll()
 
 	RegisterTable("users", []Row{
-		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []Value{NewIntValue(int64(1)), NewTextValue("alice"), NewIntValue(int64(30))}},
-		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []Value{NewIntValue(int64(2)), NewTextValue("bob"), NewIntValue(int64(25))}},
-		{Cols: []string{"id", "name", "age"}, Types: []int{1, 2, 1}, Data: []Value{NewIntValue(int64(3)), NewTextValue("carol"), NewIntValue(int64(40))}},
+		{Cols: []string{"id", "name", "age"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1)), NewTextValue("alice"), NewIntValue(int64(30))}},
+		{Cols: []string{"id", "name", "age"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2)), NewTextValue("bob"), NewIntValue(int64(25))}},
+		{Cols: []string{"id", "name", "age"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}, Data: []Value{NewIntValue(int64(3)), NewTextValue("carol"), NewIntValue(int64(40))}},
 	})
 
 	cases := []runCase{

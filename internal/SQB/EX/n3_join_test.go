@@ -211,7 +211,7 @@ func TestJoinPredSel_NDVEquiJoin(t *testing.T) {
 		RowCount:      100,
 	})
 	pred := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.QualifiedName{Table: "t1", Name: "a"},
 		Right: &PS.QualifiedName{Table: "t2", Name: "b"},
 	}
@@ -236,7 +236,7 @@ func TestJoinPredSel_NDVAsymmetric(t *testing.T) {
 		RowCount:      1000,
 	})
 	pred := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.QualifiedName{Table: "t1", Name: "a"},
 		Right: &PS.QualifiedName{Table: "t2", Name: "b"},
 	}
@@ -258,7 +258,7 @@ func TestJoinPredSel_RangeWithNullFrac(t *testing.T) {
 		RowCount:      100,
 	})
 	pred := &PS.BinaryExpr{
-		Op:    int(LX.T_LT),
+		Op:    LX.T_LT,
 		Left:  &PS.QualifiedName{Table: "t1", Name: "a"},
 		Right: &PS.NumberLiteral{Val: 100},
 	}
@@ -274,7 +274,7 @@ func TestJoinPredSel_NoStatsFallback(t *testing.T) {
 	p := NewPlanner()
 	// No stats catalog set.
 	pred := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.QualifiedName{Table: "t1", Name: "a"},
 		Right: &PS.QualifiedName{Table: "t2", Name: "b"},
 	}
@@ -293,7 +293,7 @@ func TestJoinPredSel_ColEqLiteral(t *testing.T) {
 		RowCount:      100,
 	})
 	pred := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.QualifiedName{Table: "t1", Name: "a"},
 		Right: &PS.NumberLiteral{Val: 5},
 	}
@@ -314,7 +314,7 @@ func TestJoinPredSel_UnqualifiedColumn(t *testing.T) {
 		RowCount:      200,
 	})
 	pred := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.Ident{Name: "a"},
 		Right: &PS.NumberLiteral{Val: 5},
 	}
@@ -342,12 +342,12 @@ func TestN3JoinOrdering_PruneThreshold_ThreeTables(t *testing.T) {
 	// as the base.
 	wherePreds := []PS.Expr{
 		&PS.BinaryExpr{
-			Op:    int(LX.T_EQ),
+			Op:    LX.T_EQ,
 			Left:  &PS.QualifiedName{Table: "t2", Name: "a"},
 			Right: &PS.NumberLiteral{Val: 1},
 		},
 		&PS.BinaryExpr{
-			Op:    int(LX.T_LT),
+			Op:    LX.T_LT,
 			Left:  &PS.QualifiedName{Table: "t3", Name: "a"},
 			Right: &PS.NumberLiteral{Val: 50},
 		},
@@ -496,7 +496,7 @@ func TestN3JoinOrdering_MultiStart_NoJoins(t *testing.T) {
 func makeRows(n int) []Row {
 	rows := make([]Row, n)
 	for i := range rows {
-		rows[i] = Row{Cols: []string{"a"}, Types: []int{1}, Data: []Value{NewIntValue(0)}}
+		rows[i] = Row{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(0)}}
 	}
 	return rows
 }

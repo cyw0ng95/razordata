@@ -15,25 +15,25 @@ func TestTypeToAffinity(t *testing.T) {
 		want     Affinity
 	}{
 		// TEXT affinity
-		{"TEXT", &PS.TypeInfo{Type: int(LX.T_TEXT)}, AffinityText},
-		{"VARCHAR", &PS.TypeInfo{Type: int(LX.T_VARCHAR)}, AffinityText},
+		{"TEXT", &PS.TypeInfo{Type: LX.T_TEXT}, AffinityText},
+		{"VARCHAR", &PS.TypeInfo{Type: LX.T_VARCHAR}, AffinityText},
 
 		// INTEGER affinity
-		{"INT", &PS.TypeInfo{Type: int(LX.T_INT_KW)}, AffinityInteger},
-		{"INT_KW", &PS.TypeInfo{Type: int(LX.T_INT)}, AffinityInteger},
-		{"BIGINT", &PS.TypeInfo{Type: int(LX.T_BIGINT)}, AffinityInteger},
+		{"INT", &PS.TypeInfo{Type: LX.T_INT_KW}, AffinityInteger},
+		{"INT_KW", &PS.TypeInfo{Type: LX.T_INT}, AffinityInteger},
+		{"BIGINT", &PS.TypeInfo{Type: LX.T_BIGINT}, AffinityInteger},
 
 		// REAL affinity
-		{"FLOAT", &PS.TypeInfo{Type: int(LX.T_FLOAT_KW)}, AffinityReal},
-		{"FLOAT_KW", &PS.TypeInfo{Type: int(LX.T_FLOAT)}, AffinityReal},
+		{"FLOAT", &PS.TypeInfo{Type: LX.T_FLOAT_KW}, AffinityReal},
+		{"FLOAT_KW", &PS.TypeInfo{Type: LX.T_FLOAT}, AffinityReal},
 
 		// NUMERIC affinity
-		{"NUMERIC", &PS.TypeInfo{Type: int(LX.T_NUMERIC)}, AffinityNumeric},
-		{"DECIMAL", &PS.TypeInfo{Type: int(LX.T_DECIMAL)}, AffinityNumeric},
-		{"BOOL", &PS.TypeInfo{Type: int(LX.T_BOOL)}, AffinityNumeric},
+		{"NUMERIC", &PS.TypeInfo{Type: LX.T_NUMERIC}, AffinityNumeric},
+		{"DECIMAL", &PS.TypeInfo{Type: LX.T_DECIMAL}, AffinityNumeric},
+		{"BOOL", &PS.TypeInfo{Type: LX.T_BOOL}, AffinityNumeric},
 
 		// NONE affinity (default)
-		{"BLOB", &PS.TypeInfo{Type: int(LX.T_BLOB)}, AffinityNone},
+		{"BLOB", &PS.TypeInfo{Type: LX.T_BLOB}, AffinityNone},
 		{"nil", nil, AffinityNone},
 	}
 

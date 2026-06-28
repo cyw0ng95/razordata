@@ -101,7 +101,7 @@ func TestPlan_IndexSelection_EqualityPredicate(t *testing.T) {
 	})
 	indexed := &PS.Select{From: "users", Where: &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Right: &PS.NumberLiteral{Val: 42},
 	}}
 	plan, _ := pl.Plan(indexed)
@@ -124,7 +124,7 @@ func TestPlan_IndexSelection_RangePredicate(t *testing.T) {
 	})
 	rangeQ := &PS.Select{From: "users", Where: &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
-		Op:    int(LX.T_GT),
+		Op:    LX.T_GT,
 		Right: &PS.NumberLiteral{Val: 10},
 	}}
 	plan, _ := pl.Plan(rangeQ)
@@ -148,11 +148,11 @@ func TestPlan_IndexSelection_Composite(t *testing.T) {
 	composite := &PS.Select{From: "t", Where: &PS.BinaryExpr{
 		Left: &PS.BinaryExpr{
 			Left:  &PS.Ident{Name: "a"},
-			Op:    int(LX.T_EQ),
+			Op:    LX.T_EQ,
 			Right: &PS.NumberLiteral{Val: 1},
 		},
-		Op:    int(LX.T_AND),
-		Right: &PS.BinaryExpr{Left: &PS.Ident{Name: "b"}, Op: int(LX.T_EQ), Right: &PS.NumberLiteral{Val: 2}},
+		Op:    LX.T_AND,
+		Right: &PS.BinaryExpr{Left: &PS.Ident{Name: "b"}, Op: LX.T_EQ, Right: &PS.NumberLiteral{Val: 2}},
 	}}
 	plan, _ := pl.Plan(composite)
 	if plan.Cost != 5.0 {
@@ -290,11 +290,11 @@ func TestSerializeKey_AllExprTypes(t *testing.T) {
 		&PS.AliasedExpr{Expr: &PS.Ident{Name: "x"}, Alias: "y"},
 		&PS.Param{Index: 0},
 		&PS.StarExpr{},
-		&PS.UnaryExpr{Op: int(LX.T_MINUS), Operand: &PS.NumberLiteral{Val: 1}},
-		&PS.BinaryExpr{Left: &PS.NumberLiteral{Val: 1}, Op: int(LX.T_PLUS), Right: &PS.NumberLiteral{Val: 2}},
+		&PS.UnaryExpr{Op: LX.T_MINUS, Operand: &PS.NumberLiteral{Val: 1}},
+		&PS.BinaryExpr{Left: &PS.NumberLiteral{Val: 1}, Op: LX.T_PLUS, Right: &PS.NumberLiteral{Val: 2}},
 		&PS.FunctionCall{Name: "ABS", Args: []PS.Expr{&PS.NumberLiteral{Val: 1}}},
 		&PS.AggregateFunc{Name: "COUNT", Arg: &PS.StarExpr{}},
-		&PS.CastExpr{Expr: &PS.Ident{Name: "x"}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}},
+		&PS.CastExpr{Expr: &PS.Ident{Name: "x"}, Type: &PS.TypeInfo{Type: LX.T_INT_KW}},
 		&PS.ListExpr{Items: []PS.Expr{&PS.NumberLiteral{Val: 1}}},
 		&PS.BetweenExpr{Expr: &PS.Ident{Name: "x"}, Low: &PS.NumberLiteral{Val: 1}, High: &PS.NumberLiteral{Val: 10}},
 		&PS.CaseExpr{WhenList: []PS.WhenClause{{Cond: &PS.NumberLiteral{Val: 1}, Then: &PS.StringLiteral{Val: "a"}}}},
@@ -366,7 +366,7 @@ func TestSerializeKey_AllCreateTableFields(t *testing.T) {
 	stmt := &PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
-			{Name: "id", Type: int(LX.T_INT_KW), Nullable: false, PK: true, Unique: true},
+			{Name: "id", Type: LX.T_INT_KW, Nullable: false, PK: true, Unique: true},
 		},
 		PK: &pk,
 	}
@@ -380,7 +380,7 @@ func TestSerializeKey_ColDefWithDefault(t *testing.T) {
 	stmt := &PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
-			{Name: "x", Type: int(LX.T_INT_KW), Default: &PS.NumberLiteral{Val: 0}},
+			{Name: "x", Type: LX.T_INT_KW, Default: &PS.NumberLiteral{Val: 0}},
 		},
 	}
 	k := SerializeKey(stmt)
@@ -451,7 +451,7 @@ func isEqualityOnIndexedCol(e PS.Expr) bool {
 	if !ok {
 		return false
 	}
-	if b.Op != int(LX.T_EQ) {
+	if b.Op != LX.T_EQ {
 		return false
 	}
 	id, ok := b.Left.(*PS.Ident)
@@ -466,7 +466,7 @@ func isRangeOnIndexedCol(e PS.Expr) bool {
 	if !ok {
 		return false
 	}
-	if b.Op != int(LX.T_GT) && b.Op != int(LX.T_LT) && b.Op != int(LX.T_GE) && b.Op != int(LX.T_LE) {
+	if b.Op != LX.T_GT && b.Op != LX.T_LT && b.Op != LX.T_GE && b.Op != LX.T_LE {
 		return false
 	}
 	id, ok := b.Left.(*PS.Ident)
@@ -481,7 +481,7 @@ func hasCompositeIndexMatch(e PS.Expr, cols []string) bool {
 	if !ok {
 		return false
 	}
-	if b.Op != int(LX.T_AND) {
+	if b.Op != LX.T_AND {
 		return false
 	}
 	left, lok := b.Left.(*PS.BinaryExpr)

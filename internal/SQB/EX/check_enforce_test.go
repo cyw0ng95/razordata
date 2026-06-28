@@ -12,7 +12,7 @@ func TestCheckConstraintValidateCheckFunc(t *testing.T) {
 	schema := &storeSchema{
 		cols: []string{"x"},
 		checks: []PS.Expr{
-			&PS.BinaryExpr{Op: int(LX.T_GT), Left: &PS.Ident{Name: "x"}, Right: &PS.NumberLiteral{Val: 0}},
+			&PS.BinaryExpr{Op: LX.T_GT, Left: &PS.Ident{Name: "x"}, Right: &PS.NumberLiteral{Val: 0}},
 		},
 	}
 
@@ -40,8 +40,8 @@ func TestCheckConstraintMultiple(t *testing.T) {
 	schema := &storeSchema{
 		cols: []string{"score"},
 		checks: []PS.Expr{
-			&PS.BinaryExpr{Op: int(LX.T_GE), Left: &PS.Ident{Name: "score"}, Right: &PS.NumberLiteral{Val: 0}},
-			&PS.BinaryExpr{Op: int(LX.T_LE), Left: &PS.Ident{Name: "score"}, Right: &PS.NumberLiteral{Val: 100}},
+			&PS.BinaryExpr{Op: LX.T_GE, Left: &PS.Ident{Name: "score"}, Right: &PS.NumberLiteral{Val: 0}},
+			&PS.BinaryExpr{Op: LX.T_LE, Left: &PS.Ident{Name: "score"}, Right: &PS.NumberLiteral{Val: 100}},
 		},
 	}
 
@@ -81,9 +81,9 @@ func TestCheckConstraintNilExpr(t *testing.T) {
 func TestCheckConstraintWithAnd(t *testing.T) {
 	// price > 0 AND price < 1000
 	andExpr := &PS.BinaryExpr{
-		Op:    int(LX.T_AND),
-		Left:  &PS.BinaryExpr{Op: int(LX.T_GT), Left: &PS.Ident{Name: "price"}, Right: &PS.NumberLiteral{Val: 0}},
-		Right: &PS.BinaryExpr{Op: int(LX.T_LT), Left: &PS.Ident{Name: "price"}, Right: &PS.NumberLiteral{Val: 1000}},
+		Op:    LX.T_AND,
+		Left:  &PS.BinaryExpr{Op: LX.T_GT, Left: &PS.Ident{Name: "price"}, Right: &PS.NumberLiteral{Val: 0}},
+		Right: &PS.BinaryExpr{Op: LX.T_LT, Left: &PS.Ident{Name: "price"}, Right: &PS.NumberLiteral{Val: 1000}},
 	}
 
 	schema := &storeSchema{

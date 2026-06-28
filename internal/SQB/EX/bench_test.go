@@ -392,14 +392,14 @@ func BenchmarkJ4_Cross(b *testing.B) {
 // call). REQ000802+.
 func BenchmarkFilter_ADQC_Cache(b *testing.B) {
 	pred := &PS.BinaryExpr{
-		Op: int(LX.T_AND),
+		Op: LX.T_AND,
 		Left: &PS.BinaryExpr{
-			Op:    int(LX.T_GT),
+			Op:    LX.T_GT,
 			Left:  &PS.QualifiedName{Table: "t1", Name: "a"},
 			Right: &PS.NumberLiteral{Val: int64(50)},
 		},
 		Right: &PS.BinaryExpr{
-			Op:    int(LX.T_LT),
+			Op:    LX.T_LT,
 			Left:  &PS.QualifiedName{Table: "t2", Name: "b"},
 			Right: &PS.NumberLiteral{Val: int64(25)},
 		},
@@ -453,14 +453,14 @@ func BenchmarkFilter_ADQC_Cache(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			p := &PS.BinaryExpr{
-				Op: int(LX.T_AND),
+				Op: LX.T_AND,
 				Left: &PS.BinaryExpr{
-					Op:    int(LX.T_GT),
+					Op:    LX.T_GT,
 					Left:  &PS.QualifiedName{Table: "t1", Name: "a"},
 					Right: &PS.NumberLiteral{Val: int64(i % 100)},
 				},
 				Right: &PS.BinaryExpr{
-					Op:    int(LX.T_LT),
+					Op:    LX.T_LT,
 					Left:  &PS.QualifiedName{Table: "t2", Name: "b"},
 					Right: &PS.NumberLiteral{Val: int64(25)},
 				},
@@ -769,7 +769,7 @@ func BenchmarkPlanner_N3WithMemoization(b *testing.B) {
 	for i := 0; i < 4; i++ {
 		wherePredicates = append(wherePredicates,
 			&PS.BinaryExpr{
-				Op: int(LX.T_AND),
+				Op: LX.T_AND,
 				Left: &PS.QualifiedName{
 					Table: fmt.Sprintf("t%d", i+1),
 					Name:  "a",
@@ -809,7 +809,7 @@ func BenchmarkPlanner_N3SingleStart(b *testing.B) {
 	for i := 0; i < 4; i++ {
 		wherePredicates = append(wherePredicates,
 			&PS.BinaryExpr{
-				Op: int(LX.T_AND),
+				Op: LX.T_AND,
 				Left: &PS.QualifiedName{
 					Table: fmt.Sprintf("t%d", i+1),
 					Name:  "a",

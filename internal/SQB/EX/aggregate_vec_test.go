@@ -13,7 +13,7 @@ func makeAggregateTestRows(n int) []Row {
 	for i := 0; i < n; i++ {
 		rows[i] = Row{
 			Cols:  []string{"id", "value"},
-			Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
+			Types: []LX.TokenType{LX.T_TEXT},
 			Data:  []Value{NewIntValue(int64(i)), NewIntValue(int64(i * 10))},
 		}
 	}
@@ -111,7 +111,7 @@ func TestVectorizedSum_Float64(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		rows = append(rows, Row{
 			Cols:  []string{"x"},
-			Types: []int{int(LX.T_FLOAT_KW)},
+			Types: []LX.TokenType{LX.T_TEXT},
 			Data:  []Value{NewFloatValue(float64(i) * 1.5)},
 		})
 	}
@@ -230,7 +230,7 @@ func TestVectorizedSum_LargeBatch(t *testing.T) {
 	for i := 0; i < n; i++ {
 		rows[i] = Row{
 			Cols:  []string{"x"},
-			Types: []int{int(LX.T_INT_KW)},
+			Types: []LX.TokenType{LX.T_TEXT},
 			Data:  []Value{NewIntValue(int64(i))},
 		}
 		expected += int64(i)
@@ -266,7 +266,7 @@ func BenchmarkVectorizedSum_Int64(b *testing.B) {
 	for i := 0; i < n; i++ {
 		rows[i] = Row{
 			Cols:  []string{"x"},
-			Types: []int{int(LX.T_INT_KW)},
+			Types: []LX.TokenType{LX.T_TEXT},
 			Data:  []Value{NewIntValue(int64(i))},
 		}
 	}
@@ -297,7 +297,7 @@ func BenchmarkRowSum_Fallback(b *testing.B) {
 	for i := 0; i < n; i++ {
 		rows[i] = Row{
 			Cols:  []string{"x"},
-			Types: []int{int(LX.T_INT_KW)},
+			Types: []LX.TokenType{LX.T_TEXT},
 			Data:  []Value{NewIntValue(int64(i))},
 		}
 	}

@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -57,7 +58,7 @@ type storeSchema struct {
 	checks   []PS.Expr   // parallel to CHECK constraints
 	// REQ000986: pre-compiled CHECK expressions evaluated per row.
 	compiledChecks []func(*Row) (bool, error)
-	colTypes []int
+	colTypes []LX.TokenType
 	// REQ000568: DECIMAL(P,S) precision and scale per column.
 	// Only meaningful when colTypes[i] is T_DECIMAL or T_NUMERIC.
 	precision []int
@@ -480,7 +481,7 @@ func RegisterFromCatalog(entry *ls.CatalogEntry) error {
 	}
 	cols := make([]string, len(entry.Columns))
 	nullable := make([]bool, len(entry.Columns))
-	colTypes := make([]int, len(entry.Columns))
+	colTypes := make([]LX.TokenType, len(entry.Columns))
 	colIndex := make(map[string]int, len(entry.Columns))
 	for i, c := range entry.Columns {
 		cols[i] = c.Name

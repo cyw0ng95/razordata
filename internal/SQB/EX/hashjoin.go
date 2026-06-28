@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"hash/maphash"
 	"strings"
+
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // HashJoin is a radix-partitioned hash join for INNER joins
@@ -50,7 +52,7 @@ type HashJoin struct {
 	// all emitted rows, eliminating per-row make+append for Cols/Types
 	// and per-row buildColIndex for downstream operators (REQ000794).
 	sharedCols     []string
-	sharedTypes    []int
+	sharedTypes    []LX.TokenType
 	sharedColIndex map[string]int
 
 	// REQ000841: reusable key buffer for lookupKeys — pre-allocated
@@ -190,7 +192,7 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	// the full right side in memory before the budget check.
 	var rightCount int
 	var firstRightCols []string
-	var firstRightTypes []int
+	var firstRightTypes []LX.TokenType
 	for {
 		row, err := j.right.Next(ctx)
 		if err == ErrNoRows {
@@ -260,7 +262,7 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		j.sharedCols = make([]string, 0, n)
 		j.sharedCols = append(j.sharedCols, j.leftRows[0].Cols...)
 		j.sharedCols = append(j.sharedCols, firstRightCols...)
-		j.sharedTypes = make([]int, 0, n)
+		j.sharedTypes = make([]LX.TokenType, 0, n)
 		j.sharedTypes = append(j.sharedTypes, j.leftRows[0].Types...)
 		j.sharedTypes = append(j.sharedTypes, firstRightTypes...)
 		j.sharedColIndex = make(map[string]int, n)

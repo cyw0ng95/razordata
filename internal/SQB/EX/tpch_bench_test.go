@@ -17,7 +17,7 @@ func makeTPCHLikeRows(n int, seed int64) []Row {
 	for i := 0; i < n; i++ {
 		rows[i] = Row{
 			Cols:  []string{"l_orderkey", "l_linenumber", "l_quantity", "l_extendedprice", "l_discount", "l_tax"},
-			Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW), int(LX.T_FLOAT_KW), int(LX.T_FLOAT_KW), int(LX.T_FLOAT_KW), int(LX.T_FLOAT_KW)},
+			Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW, LX.T_FLOAT_KW, LX.T_FLOAT_KW, LX.T_FLOAT_KW, LX.T_FLOAT_KW},
 			Data: []Value{NewIntValue(int64(rng.IntN(1000000))), NewIntValue(int64(rng.IntN(7) + 1)), NewFloatValue(float64(rng.IntN(50) + 1)), NewFloatValue(float64(rng.IntN(100000)) / 100.), NewFloatValue(float64(rng.IntN(10)) / 100.), NewFloatValue(float64(rng.IntN(8)) / 100.)},
 		}
 	}
@@ -40,7 +40,7 @@ func BenchmarkTPCH_Q1(b *testing.B) {
 		// Apply filter: l_quantity > 25 (simulating l_shipdate filter)
 		filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
 			Left:  &PS.Ident{Name: "l_quantity"},
-			Op:    int(LX.T_GT),
+			Op:    LX.T_GT,
 			Right: &PS.FloatLiteral{Val: 25.0},
 		})
 		// Aggregate: SUM(l_extendedprice)
@@ -74,7 +74,7 @@ func BenchmarkTPCH_Q6(b *testing.B) {
 		// Apply filter: l_quantity < 24
 		filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
 			Left:  &PS.Ident{Name: "l_quantity"},
-			Op:    int(LX.T_LT),
+			Op:    LX.T_LT,
 			Right: &PS.FloatLiteral{Val: 24.0},
 		})
 		// Aggregate: SUM(l_extendedprice)
@@ -99,7 +99,7 @@ func BenchmarkTPCH_Q1_Sequential(b *testing.B) {
 	rows := makeTPCHLikeRows(n, 42)
 	pred := &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "l_quantity"},
-		Op:    int(LX.T_GT),
+		Op:    LX.T_GT,
 		Right: &PS.FloatLiteral{Val: 25.0},
 	}
 

@@ -14,13 +14,13 @@ import (
 // REQ001097.
 func TestNestedLoopJoin_WithSharedSchema(t *testing.T) {
 	RegisterTable("l", []Row{
-		{Cols: []string{"a"}, Types: []int{int(LX.T_INT_KW)},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW},
 			Data: []Value{NewIntValue(1)}},
-		{Cols: []string{"a"}, Types: []int{int(LX.T_INT_KW)},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW},
 			Data: []Value{NewIntValue(2)}},
 	})
 	RegisterTable("r", []Row{
-		{Cols: []string{"b"}, Types: []int{int(LX.T_INT_KW)},
+		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW},
 			Data: []Value{NewIntValue(10)}},
 	})
 	defer UnregisterAll()
@@ -30,7 +30,7 @@ func TestNestedLoopJoin_WithSharedSchema(t *testing.T) {
 	join := NewNestedLoopJoin(left, right, "l", "r", nil, JoinKindInner).
 		WithSharedSchema(
 			[]string{"a", "b"},
-			[]int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
+			[]LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
 			map[string]int{"a": 0, "b": 1},
 		)
 
@@ -60,17 +60,17 @@ func TestNestedLoopJoin_WithSharedSchema(t *testing.T) {
 // with NULL-padded right when no match (REQ000197).
 func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 	RegisterTable("left", []Row{
-		{Cols: []string{"id", "val"}, Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
+		{Cols: []string{"id", "val"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(10))}},
-		{Cols: []string{"id", "val"}, Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
+		{Cols: []string{"id", "val"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(2)), NewIntValue(int64(20))}},
-		{Cols: []string{"id", "val"}, Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
+		{Cols: []string{"id", "val"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(3)), NewIntValue(int64(30))}},
 	})
 	RegisterTable("right", []Row{
-		{Cols: []string{"id", "score"}, Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
+		{Cols: []string{"id", "score"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(2)), NewIntValue(int64(200))}},
-		{Cols: []string{"id", "score"}, Types: []int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
+		{Cols: []string{"id", "score"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(4)), NewIntValue(int64(400))}},
 	})
 	defer UnregisterAll()
@@ -133,15 +133,15 @@ func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 // TestNestedLoopJoin_InnerJoin verifies INNER JOIN still works.
 func TestNestedLoopJoin_InnerJoin(t *testing.T) {
 	RegisterTable("l", []Row{
-		{Cols: []string{"id"}, Types: []int{int(LX.T_INT_KW)},
+		{Cols: []string{"id"}, Types: []LX.TokenType{LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(1))}},
-		{Cols: []string{"id"}, Types: []int{int(LX.T_INT_KW)},
+		{Cols: []string{"id"}, Types: []LX.TokenType{LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(2))}},
 	})
 	RegisterTable("r", []Row{
-		{Cols: []string{"id"}, Types: []int{int(LX.T_INT_KW)},
+		{Cols: []string{"id"}, Types: []LX.TokenType{LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(2))}},
-		{Cols: []string{"id"}, Types: []int{int(LX.T_INT_KW)},
+		{Cols: []string{"id"}, Types: []LX.TokenType{LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(3))}},
 	})
 	defer UnregisterAll()
@@ -178,10 +178,10 @@ func TestNestedLoopJoin_InnerJoin(t *testing.T) {
 // TestNestedLoopJoin_LeftWithNilOn verifies LEFT JOIN without ON clause.
 func TestNestedLoopJoin_LeftWithNilOn(t *testing.T) {
 	RegisterTable("a", []Row{
-		{Cols: []string{"x"}, Types: []int{int(LX.T_INT_KW)}, Data: []Value{NewIntValue(int64(1))}},
+		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}},
 	})
 	RegisterTable("b", []Row{
-		{Cols: []string{"y"}, Types: []int{int(LX.T_INT_KW)}, Data: []Value{NewIntValue(int64(99))}},
+		{Cols: []string{"y"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(99))}},
 	})
 	defer UnregisterAll()
 
@@ -207,10 +207,10 @@ func TestNestedLoopJoin_LeftWithNilOn(t *testing.T) {
 // TestNestedLoopJoin_Close verifies Close resets state.
 func TestNestedLoopJoin_Close(t *testing.T) {
 	RegisterTable("x", []Row{
-		{Cols: []string{"a"}, Types: []int{int(LX.T_INT_KW)}, Data: []Value{NewIntValue(int64(1))}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}},
 	})
 	RegisterTable("y", []Row{
-		{Cols: []string{"b"}, Types: []int{int(LX.T_INT_KW)}, Data: []Value{NewIntValue(int64(2))}},
+		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}},
 	})
 	defer UnregisterAll()
 

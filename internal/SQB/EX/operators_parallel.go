@@ -15,7 +15,7 @@ import (
 // REQ001043.
 type ParallelSeqScanRow struct {
 	schema  []string
-	types   []int
+	types   []LX.TokenType
 	colMap  map[string]int
 	pool    *WorkerPool
 	rows    []Row
@@ -29,7 +29,7 @@ type ParallelSeqScanRow struct {
 }
 
 // NewParallelSeqScanRow creates a row-based parallel scan.
-func NewParallelSeqScanRow(rows []Row, schema []string, types []int, pool *WorkerPool) *ParallelSeqScanRow {
+func NewParallelSeqScanRow(rows []Row, schema []string, types []LX.TokenType, pool *WorkerPool) *ParallelSeqScanRow {
 	colMap := make(map[string]int, len(schema))
 	for i, name := range schema {
 		colMap[name] = i
@@ -601,7 +601,7 @@ type ParallelIndexRangeScan struct {
 	pool   *WorkerPool
 	rows   []Row
 	schema []string
-	types  []int
+	types  []LX.TokenType
 	colName string
 	values  []any
 
@@ -613,7 +613,7 @@ type ParallelIndexRangeScan struct {
 }
 
 // NewParallelIndexRangeScan creates a parallel IN-list index scan.
-func NewParallelIndexRangeScan(rows []Row, schema []string, types []int, colName string, values []any, pool *WorkerPool) *ParallelIndexRangeScan {
+func NewParallelIndexRangeScan(rows []Row, schema []string, types []LX.TokenType, colName string, values []any, pool *WorkerPool) *ParallelIndexRangeScan {
 	return &ParallelIndexRangeScan{
 		pool:    pool,
 		rows:    rows,

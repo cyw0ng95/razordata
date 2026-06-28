@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // TestJoinStrategy_InterfaceConformance is a compile-time guard
@@ -52,13 +54,13 @@ func TestJoinStrategy_EmptyStreamsReturnNoRows(t *testing.T) {
 // product is produced correctly.
 func TestJoinStrategy_InnerNLJ_Smoke(t *testing.T) {
 	left := &memScan{rows: []Row{
-		{Cols: []string{"a"}, Types: []int{1}, Data: []Value{NewIntValue(1)}},
-		{Cols: []string{"a"}, Types: []int{1}, Data: []Value{NewIntValue(2)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(1)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(2)}},
 	}}
 	right := &memScan{rows: []Row{
-		{Cols: []string{"b"}, Types: []int{1}, Data: []Value{NewIntValue(10)}},
-		{Cols: []string{"b"}, Types: []int{1}, Data: []Value{NewIntValue(20)}},
-		{Cols: []string{"b"}, Types: []int{1}, Data: []Value{NewIntValue(30)}},
+		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(10)}},
+		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(20)}},
+		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(30)}},
 	}}
 	strat := NewInnerNLJStrategy(left, right, nil)
 	defer strat.Close()
@@ -86,13 +88,13 @@ func TestJoinStrategy_InnerNLJ_Smoke(t *testing.T) {
 // caps emission.
 func TestJoinStrategy_InnerNLJ_Limit(t *testing.T) {
 	left := &memScan{rows: []Row{
-		{Cols: []string{"a"}, Types: []int{1}, Data: []Value{NewIntValue(1)}},
-		{Cols: []string{"a"}, Types: []int{1}, Data: []Value{NewIntValue(2)}},
-		{Cols: []string{"a"}, Types: []int{1}, Data: []Value{NewIntValue(3)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(1)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(2)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(3)}},
 	}}
 	right := &memScan{rows: []Row{
-		{Cols: []string{"b"}, Types: []int{1}, Data: []Value{NewIntValue(10)}},
-		{Cols: []string{"b"}, Types: []int{1}, Data: []Value{NewIntValue(20)}},
+		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(10)}},
+		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(20)}},
 	}}
 	strat := NewInnerNLJStrategy(left, right, nil)
 	strat.SetLimit(3)

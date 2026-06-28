@@ -265,13 +265,13 @@ func TestParseCast(t *testing.T) {
 		sql      string
 		wantType int
 	}{
-		{"SELECT CAST(x AS INTEGER) FROM t", int(LX.T_INT_KW)},
-		{"SELECT CAST(x AS FLOAT) FROM t", int(LX.T_FLOAT_KW)},
-		{"SELECT CAST(x AS TEXT) FROM t", int(LX.T_TEXT)},
-		{"SELECT CAST(x AS BOOLEAN) FROM t", int(LX.T_BOOL)},
-		{"SELECT CAST(x AS BIGINT) FROM t", int(LX.T_BIGINT)},
-		{"SELECT CAST(x AS SIGNED) FROM t", int(LX.T_INT_KW)},
-		{"SELECT CAST(x AS UNSIGNED) FROM t", int(LX.T_INT_KW)},
+		{"SELECT CAST(x AS INTEGER) FROM t", LX.T_INT_KW},
+		{"SELECT CAST(x AS FLOAT) FROM t", LX.T_FLOAT_KW},
+		{"SELECT CAST(x AS TEXT) FROM t", LX.T_TEXT},
+		{"SELECT CAST(x AS BOOLEAN) FROM t", LX.T_BOOL},
+		{"SELECT CAST(x AS BIGINT) FROM t", LX.T_BIGINT},
+		{"SELECT CAST(x AS SIGNED) FROM t", LX.T_INT_KW},
+		{"SELECT CAST(x AS UNSIGNED) FROM t", LX.T_INT_KW},
 	}
 	for _, c := range cases {
 		t.Run(c.sql, func(t *testing.T) {
@@ -947,7 +947,7 @@ func TestParseExpression(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *BinaryExpr, got %T", sel.Cols[0])
 	}
-	if bin.Op != int(LX.T_PLUS) {
+	if bin.Op != LX.T_PLUS {
 		t.Errorf("expected PLUS op, got %d", bin.Op)
 	}
 }
@@ -964,7 +964,7 @@ func TestParseExpressionPrecedence(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *BinaryExpr, got %T", sel.Cols[0])
 	}
-	if bin.Op != int(LX.T_PLUS) {
+	if bin.Op != LX.T_PLUS {
 		t.Errorf("expected PLUS op, got %d", bin.Op)
 	}
 }
@@ -1032,7 +1032,7 @@ func TestParseUnaryMinus(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *UnaryExpr, got %T", sel.Cols[0])
 	}
-	if unary.Op != int(LX.T_MINUS) {
+	if unary.Op != LX.T_MINUS {
 		t.Errorf("expected MINUS op, got %d", unary.Op)
 	}
 }
@@ -1049,7 +1049,7 @@ func TestParseUnaryPlus(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *UnaryExpr, got %T", sel.Cols[0])
 	}
-	if unary.Op != int(LX.T_PLUS) {
+	if unary.Op != LX.T_PLUS {
 		t.Errorf("expected PLUS op, got %d", unary.Op)
 	}
 }
@@ -1066,7 +1066,7 @@ func TestParseNotExpression(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *UnaryExpr, got %T", sel.Cols[0])
 	}
-	if unary.Op != int(LX.T_NOT) {
+	if unary.Op != LX.T_NOT {
 		t.Errorf("expected NOT op, got %d", unary.Op)
 	}
 }
@@ -1167,7 +1167,7 @@ func TestParseBinaryExpr(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *BinaryExpr, got %T", sel.Cols[0])
 	}
-	if bin.Op != int(LX.T_PLUS) {
+	if bin.Op != LX.T_PLUS {
 		t.Errorf("expected PLUS, got %d", bin.Op)
 	}
 }
@@ -1184,7 +1184,7 @@ func TestParseComplexExpression(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *BinaryExpr, got %T", sel.Cols[0])
 	}
-	if bin.Op != int(LX.T_MINUS) {
+	if bin.Op != LX.T_MINUS {
 		t.Errorf("expected MINUS at top level, got %d", bin.Op)
 	}
 }
@@ -1327,7 +1327,7 @@ func TestParseLikeEscape(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *BinaryExpr, got %T", sel.Where)
 	}
-	if be.Op != int(LX.T_LIKE) {
+	if be.Op != LX.T_LIKE {
 		t.Errorf("expected LIKE op, got %d", be.Op)
 	}
 	if be.Escape == nil {
@@ -1360,7 +1360,7 @@ func TestParseLikeEscapeNot(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *BinaryExpr, got %T", ue.Operand)
 	}
-	if be.Op != int(LX.T_LIKE) {
+	if be.Op != LX.T_LIKE {
 		t.Errorf("expected LIKE op, got %d", be.Op)
 	}
 	if be.Escape == nil {
@@ -2058,7 +2058,7 @@ func TestParseExpr_DIV(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected BinaryExpr, got %T", sel.Cols[0])
 	}
-	if bin.Op != int(LX.T_DIV) {
+	if bin.Op != LX.T_DIV {
 		t.Errorf("expected T_DIV, got %d", bin.Op)
 	}
 }
@@ -2078,7 +2078,7 @@ func TestParseExpr_GLOB(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected BinaryExpr, got %T", sel.Where)
 	}
-	if bin.Op != int(LX.T_GLOB) {
+	if bin.Op != LX.T_GLOB {
 		t.Errorf("expected T_GLOB, got %d", bin.Op)
 	}
 }

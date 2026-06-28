@@ -20,7 +20,7 @@ func TestIndexedColumnLikePrefix(t *testing.T) {
 		{
 			name: "simple prefix",
 			expr: &PS.BinaryExpr{
-				Op:    int(LX.T_LIKE),
+				Op:    LX.T_LIKE,
 				Left:  &PS.Ident{Name: "name"},
 				Right: &PS.StringLiteral{Val: "abc%"},
 			},
@@ -31,7 +31,7 @@ func TestIndexedColumnLikePrefix(t *testing.T) {
 		{
 			name: "exact match no wildcard",
 			expr: &PS.BinaryExpr{
-				Op:    int(LX.T_LIKE),
+				Op:    LX.T_LIKE,
 				Left:  &PS.Ident{Name: "name"},
 				Right: &PS.StringLiteral{Val: "abc"},
 			},
@@ -42,7 +42,7 @@ func TestIndexedColumnLikePrefix(t *testing.T) {
 		{
 			name: "wildcard in middle",
 			expr: &PS.BinaryExpr{
-				Op:    int(LX.T_LIKE),
+				Op:    LX.T_LIKE,
 				Left:  &PS.Ident{Name: "name"},
 				Right: &PS.StringLiteral{Val: "ab%c"},
 			},
@@ -53,7 +53,7 @@ func TestIndexedColumnLikePrefix(t *testing.T) {
 		{
 			name: "no prefix wildcard first char",
 			expr: &PS.BinaryExpr{
-				Op:    int(LX.T_LIKE),
+				Op:    LX.T_LIKE,
 				Left:  &PS.Ident{Name: "name"},
 				Right: &PS.StringLiteral{Val: "%abc"},
 			},
@@ -63,7 +63,7 @@ func TestIndexedColumnLikePrefix(t *testing.T) {
 		{
 			name: "column on right side",
 			expr: &PS.BinaryExpr{
-				Op:    int(LX.T_LIKE),
+				Op:    LX.T_LIKE,
 				Left:  &PS.StringLiteral{Val: "abc%"},
 				Right: &PS.Ident{Name: "name"},
 			},
@@ -100,7 +100,7 @@ func TestIndexedColumnLikePrefix(t *testing.T) {
 // wildcard in LIKE pattern. The prefix ends before the first '_' or '%'.
 func TestIndexedColumnLikePrefix_Underscore(t *testing.T) {
 	expr := &PS.BinaryExpr{
-		Op:    int(LX.T_LIKE),
+		Op:    LX.T_LIKE,
 		Left:  &PS.Ident{Name: "name"},
 		Right: &PS.StringLiteral{Val: "abc_def%"},
 	}

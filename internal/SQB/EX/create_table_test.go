@@ -39,8 +39,8 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 	stmt := &PS.CreateTable{
 		Name: "test1",
 		Cols: []PS.ColDef{
-			{Name: "id", Type: int(LX.T_INT_KW), Nullable: false},
-			{Name: "name", Type: int(LX.T_TEXT), Nullable: true},
+			{Name: "id", Type: LX.T_INT_KW, Nullable: false},
+			{Name: "name", Type: LX.T_TEXT, Nullable: true},
 		},
 		PK: strPtr("id"),
 	}
@@ -69,8 +69,8 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 	stmt2 := &PS.CreateTable{
 		Name: "test2",
 		Cols: []PS.ColDef{
-			{Name: "id", Type: int(LX.T_INT_KW), Nullable: false, Unique: true},
-			{Name: "value", Type: int(LX.T_TEXT)},
+			{Name: "id", Type: LX.T_INT_KW, Nullable: false, Unique: true},
+			{Name: "value", Type: LX.T_TEXT},
 		},
 		UniqueConstraints: []PS.UniqueKey{
 			{Cols: []string{"id", "value"}},
@@ -92,8 +92,8 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 	stmt3 := &PS.CreateTable{
 		Name: "test3",
 		Cols: []PS.ColDef{
-			{Name: "id", Type: int(LX.T_INT_KW)},
-			{Name: "ref_id", Type: int(LX.T_INT_KW), ReferencesTable: "test1", ReferencesColumn: "id"},
+			{Name: "id", Type: LX.T_INT_KW},
+			{Name: "ref_id", Type: LX.T_INT_KW, ReferencesTable: "test1", ReferencesColumn: "id"},
 		},
 		ForeignKeys: []PS.ForeignKeyConstraint{
 			{Columns: []string{"ref_id"}, RefTable: "test1", RefColumns: []string{"id"}},
@@ -109,10 +109,10 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 	stmt4 := &PS.CreateTable{
 		Name: "test4",
 		Cols: []PS.ColDef{
-			{Name: "id", Type: int(LX.T_INT_KW)},
-			{Name: "age", Type: int(LX.T_INT_KW), Check: &PS.BinaryExpr{
+			{Name: "id", Type: LX.T_INT_KW},
+			{Name: "age", Type: LX.T_INT_KW, Check: &PS.BinaryExpr{
 				Left:  &PS.Ident{Name: "age"},
-				Op:    int(LX.T_GT),
+				Op:    LX.T_GT,
 				Right: &PS.NumberLiteral{Val: 0},
 			}},
 		},
@@ -127,7 +127,7 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 	stmt5 := &PS.CreateTable{
 		Name: "test1",
 		Cols: []PS.ColDef{
-			{Name: "id", Type: int(LX.T_INT_KW)},
+			{Name: "id", Type: LX.T_INT_KW},
 		},
 	}
 	op5 := NewCreateTable(stmt5)
@@ -140,7 +140,7 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 	stmt6 := &PS.CreateTable{
 		Name: "test6",
 		Cols: []PS.ColDef{
-			{Name: "id", Type: int(LX.T_INT_KW)},
+			{Name: "id", Type: LX.T_INT_KW},
 		},
 		WithoutRowid: true,
 	}

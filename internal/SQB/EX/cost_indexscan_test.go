@@ -42,7 +42,7 @@ func TestPlanner_EstimateCost_FilterSelectivity(t *testing.T) {
 	scan := NewSeqScan("t")
 	// col = literal without stats: 0.5 (uniform fallback)
 	filterEQ := NewFilter(scan, &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.Ident{Name: "a"},
 		Right: &PS.NumberLiteral{Val: 1},
 	})
@@ -51,7 +51,7 @@ func TestPlanner_EstimateCost_FilterSelectivity(t *testing.T) {
 	}
 	// generic predicate: 0.5
 	filterGeneric := NewFilter(scan, &PS.BinaryExpr{
-		Op:    int(LX.T_GT),
+		Op:    LX.T_GT,
 		Left:  &PS.Ident{Name: "a"},
 		Right: &PS.Ident{Name: "b"},
 	})

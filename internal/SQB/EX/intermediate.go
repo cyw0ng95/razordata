@@ -230,7 +230,7 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 	// allocation budget. Instead, capture the shared slices from the
 	// first row and reuse them for all subsequent clones.
 	var sharedCols []string
-	var sharedTypes []int
+	var sharedTypes []LX.TokenType
 	for i := range f.batchBuf {
 		ok, err := f.compiledFilterFn(&f.batchBuf[i])
 		if err != nil {
@@ -241,7 +241,7 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 			if sharedCols == nil {
 				// First match — capture the shared Cols/Types.
 				sharedCols = append([]string(nil), r.Cols...)
-				sharedTypes = append([]int(nil), r.Types...)
+				sharedTypes = append([]LX.TokenType(nil), r.Types...)
 			}
 			r.Cols = sharedCols
 			r.Types = sharedTypes
@@ -855,7 +855,7 @@ func compileFilterExpr(e PS.Expr) func(*Row) (bool, error) {
 	case *PS.InExpr:
 		return compileInExpr(v)
 	case *PS.UnaryExpr:
-		if v.Op == int(LX.T_NOT) {
+		if v.Op == LX.T_NOT {
 			inner := compileFilterExpr(v.Operand)
 			if inner == nil {
 				return nil
@@ -959,7 +959,7 @@ func apValueKey(v Value) string {
 
 func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 	// Handle AND/OR by compiling both sides.
-	if e.Op == int(LX.T_AND) {
+	if e.Op == LX.T_AND {
 		left := compileFilterExpr(e.Left)
 		right := compileFilterExpr(e.Right)
 		if left == nil || right == nil {
@@ -973,7 +973,7 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 			return right(row)
 		}
 	}
-	if e.Op == int(LX.T_OR) {
+	if e.Op == LX.T_OR {
 		left := compileFilterExpr(e.Left)
 		right := compileFilterExpr(e.Right)
 		if left == nil || right == nil {
@@ -995,11 +995,11 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 		litVal := literal
 
 		switch e.Op {
-		case int(LX.T_EQ):
+		case LX.T_EQ:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
 				return equalValueValue(a, b)
 			})
-		case int(LX.T_NE):
+		case LX.T_NE:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
 				// SQL semantics: NULL compared with anything = UNKNOWN (drop row)
 				// The NULL guard in makeCompiledCmp handles this for col and lit.
@@ -1009,19 +1009,19 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 				}
 				return !equalValueValue(a, b)
 			})
-		case int(LX.T_GT):
+		case LX.T_GT:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
 				return compareValue(a, b) > 0
 			})
-		case int(LX.T_GE):
+		case LX.T_GE:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
 				return compareValue(a, b) >= 0
 			})
-		case int(LX.T_LT):
+		case LX.T_LT:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
 				return compareValue(a, b) < 0
 			})
-		case int(LX.T_LE):
+		case LX.T_LE:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
 				return compareValue(a, b) <= 0
 			})
@@ -1200,7 +1200,7 @@ func extractColColPair(e *PS.BinaryExpr) (string, string, bool) {
 // makeCompiledColColCmp builds a compiled comparison function for
 // two column references. It handles both bare names ("a") and
 // qualified names ("t1.a"), with fallbacks for prefixed rows.
-func makeCompiledColColCmp(leftCol, rightCol string, op int) func(*Row) (bool, error) {
+func makeCompiledColColCmp(leftCol, rightCol string, op LX.TokenType) func(*Row) (bool, error) {
 	// Pre-resolve indices on the first call to avoid repeated linear scans.
 	var leftIdx, rightIdx int = -1, -1
 
@@ -1226,17 +1226,17 @@ func makeCompiledColColCmp(leftCol, rightCol string, op int) func(*Row) (bool, e
 		}
 
 		switch op {
-		case int(LX.T_EQ):
+		case LX.T_EQ:
 			return equalValue(a, b), nil
-		case int(LX.T_NE):
+		case LX.T_NE:
 			return !equalValue(a, b), nil
-		case int(LX.T_GT):
+		case LX.T_GT:
 			return compare(a, b) > 0, nil
-		case int(LX.T_GE):
+		case LX.T_GE:
 			return compare(a, b) >= 0, nil
-		case int(LX.T_LT):
+		case LX.T_LT:
 			return compare(a, b) < 0, nil
-		case int(LX.T_LE):
+		case LX.T_LE:
 			return compare(a, b) <= 0, nil
 		}
 		return false, nil
@@ -1382,9 +1382,9 @@ func compileRowExpr(e PS.Expr) func(*Row) Value {
 // compileBinaryArith compiles a binary arithmetic expression (+-*/ and DIV)
 // into a function that reads directly from the input row.
 func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
-	if v.Op != int(LX.T_PLUS) && v.Op != int(LX.T_MINUS) &&
-		v.Op != int(LX.T_STAR) && v.Op != int(LX.T_SLASH) &&
-		v.Op != int(LX.T_DIV) {
+	if v.Op != LX.T_PLUS && v.Op != LX.T_MINUS &&
+		v.Op != LX.T_STAR && v.Op != LX.T_SLASH &&
+		v.Op != LX.T_DIV {
 		return nil
 	}
 	left := compileRowExpr(v.Left)
@@ -1393,7 +1393,7 @@ func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 		return nil
 	}
 	switch v.Op {
-	case int(LX.T_PLUS):
+	case LX.T_PLUS:
 		return func(row *Row) Value {
 			a, b := left(row), right(row)
 			if a.IsNull() || b.IsNull() {
@@ -1404,7 +1404,7 @@ func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 			}
 			return Value{Kind: KindFloat, F64: valueToFloat(a) + valueToFloat(b)}
 		}
-	case int(LX.T_MINUS):
+	case LX.T_MINUS:
 		return func(row *Row) Value {
 			a, b := left(row), right(row)
 			if a.IsNull() || b.IsNull() {
@@ -1415,7 +1415,7 @@ func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 			}
 			return Value{Kind: KindFloat, F64: valueToFloat(a) - valueToFloat(b)}
 		}
-	case int(LX.T_STAR):
+	case LX.T_STAR:
 		return func(row *Row) Value {
 			a, b := left(row), right(row)
 			if a.IsNull() || b.IsNull() {
@@ -1426,7 +1426,7 @@ func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 			}
 			return Value{Kind: KindFloat, F64: valueToFloat(a) * valueToFloat(b)}
 		}
-	case int(LX.T_SLASH):
+	case LX.T_SLASH:
 		return func(row *Row) Value {
 			a, b := left(row), right(row)
 			if a.IsNull() || b.IsNull() {
@@ -1444,7 +1444,7 @@ func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 			}
 			return Value{Kind: KindFloat, F64: valueToFloat(a) / valueToFloat(b)}
 		}
-	case int(LX.T_DIV):
+	case LX.T_DIV:
 		return func(row *Row) Value {
 			a, b := left(row), right(row)
 			if a.IsNull() || b.IsNull() {

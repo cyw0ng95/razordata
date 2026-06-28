@@ -9,6 +9,7 @@ import (
 	"time"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SYS/BK"
 )
 
@@ -122,24 +123,24 @@ type Result struct {
 
 type Row struct {
 	Cols  []string
-	Types []int
+	Types []LX.TokenType
 	Data  []Value
 }
 
 type Rows struct {
 	cols   []string
-	types  []int
+	types  []LX.TokenType
 	next   func() (Row, error)
 	closer func() error
 	closed atomic.Bool
 }
 
-func NewRows(cols []string, types []int, next func() (Row, error), closer func() error) *Rows {
+func NewRows(cols []string, types []LX.TokenType, next func() (Row, error), closer func() error) *Rows {
 	return &Rows{cols: cols, types: types, next: next, closer: closer}
 }
 
 func (r *Rows) Cols() []string { return r.cols }
-func (r *Rows) Types() []int   { return r.types }
+func (r *Rows) Types() []LX.TokenType { return r.types }
 
 func (r *Rows) Next() (Row, error) {
 	if r == nil {

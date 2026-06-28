@@ -58,6 +58,14 @@ func EvalBatch(expr PS.Expr, batch *Batch, params []any) []uint16 {
 //   - column op literal: vectorized column-to-literal comparison
 //   - otherwise: row-at-a-time fallback
 func evalBinaryBatch(e *PS.BinaryExpr, batch *Batch, params []any) []uint16 {
+	// REQ001010: AND/OR batch evaluation
+	if e.Op == LX.T_AND {
+		return evalAndBatch(e, batch, params)
+	}
+	if e.Op == LX.T_OR {
+		return evalOrBatch(e, batch, params)
+	}
+
 	leftCol, leftIsCol := extractColumnRef(e.Left, batch)
 	rightCol, rightIsCol := extractColumnRef(e.Right, batch)
 
@@ -85,9 +93,25 @@ func evalBinaryBatch(e *PS.BinaryExpr, batch *Batch, params []any) []uint16 {
 	return evalRowFallback(e, batch, params)
 }
 
+// evalAndBatch evaluates left AND right as batch selection vectors.
+// AND = set intersection of left and right selection vectors.
+func evalAndBatch(e *PS.BinaryExpr, batch *Batch, params []any) []uint16 {
+	leftSel := EvalBatch(e.Left, batch, params)
+	rightSel := EvalBatch(e.Right, batch, params)
+	return intersectSelection(leftSel, rightSel, batch.Size)
+}
+
+// evalOrBatch evaluates left OR right as batch selection vectors.
+// OR = set union of left and right selection vectors.
+func evalOrBatch(e *PS.BinaryExpr, batch *Batch, params []any) []uint16 {
+	leftSel := EvalBatch(e.Left, batch, params)
+	rightSel := EvalBatch(e.Right, batch, params)
+	return unionSelection(leftSel, rightSel, batch.Size)
+}
+
 // evalUnaryBatch handles unary expressions (NOT, -).
 func evalUnaryBatch(e *PS.UnaryExpr, batch *Batch, params []any) []uint16 {
-	if e.Op == int(LX.T_NOT) {
+	if e.Op == LX.T_NOT {
 		// NOT predicate: invert selection vector
 		inner := EvalBatch(e.Operand, batch, params)
 		if inner == nil {
@@ -160,7 +184,7 @@ func evalLiteral(expr PS.Expr, params []any) (any, bool) {
 
 // compareColumns performs vectorized column-to-column comparison.
 // Uses 4-wide manual unrolling for int64 and float64 columns.
-func compareColumns(left, right Column, op int, batch *Batch) []uint16 {
+func compareColumns(left, right Column, op LX.TokenType, batch *Batch) []uint16 {
 	// Type matching required
 	if left.Type != right.Type {
 		return evalRowFallback(&PS.BinaryExpr{Op: op}, batch, nil)
@@ -178,7 +202,7 @@ func compareColumns(left, right Column, op int, batch *Batch) []uint16 {
 }
 
 // compareColLiteral performs vectorized column-to-literal comparison.
-func compareColLiteral(col Column, lit any, op int, batch *Batch) []uint16 {
+func compareColLiteral(col Column, lit any, op LX.TokenType, batch *Batch) []uint16 {
 	switch col.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
 		if v, ok := lit.(int64); ok {
@@ -204,21 +228,21 @@ func isNull(col Column, i int) bool {
 
 // compareInt64Cols: hoisted-operator int64 column-column comparison.
 // REQ000608: skip rows where either side is NULL.
-func compareInt64Cols(left, right Column, op int, n int) []uint16 {
+func compareInt64Cols(left, right Column, op LX.TokenType, n int) []uint16 {
 	l := left.Data.([]int64)
 	r := right.Data.([]int64)
 	switch op {
-	case int(LX.T_EQ):
+	case LX.T_EQ:
 		return cmpInt64ColsEQ(l, r, left, right, n)
-	case int(LX.T_NE):
+	case LX.T_NE:
 		return cmpInt64ColsNE(l, r, left, right, n)
-	case int(LX.T_LT):
+	case LX.T_LT:
 		return cmpInt64ColsLT(l, r, left, right, n)
-	case int(LX.T_LE):
+	case LX.T_LE:
 		return cmpInt64ColsLE(l, r, left, right, n)
-	case int(LX.T_GT):
+	case LX.T_GT:
 		return cmpInt64ColsGT(l, r, left, right, n)
-	case int(LX.T_GE):
+	case LX.T_GE:
 		return cmpInt64ColsGE(l, r, left, right, n)
 	}
 	return nil
@@ -304,20 +328,20 @@ func cmpInt64ColsGE(l, r []int64, lc, rc Column, n int) []uint16 {
 
 // compareInt64ColLit: hoisted-operator int64 column-literal comparison.
 // REQ000608: skip NULL rows.
-func compareInt64ColLit(col Column, lit int64, op int, n int) []uint16 {
+func compareInt64ColLit(col Column, lit int64, op LX.TokenType, n int) []uint16 {
 	data := col.Data.([]int64)
 	switch op {
-	case int(LX.T_EQ):
+	case LX.T_EQ:
 		return cmpInt64LitEQ(data, lit, col, n)
-	case int(LX.T_NE):
+	case LX.T_NE:
 		return cmpInt64LitNE(data, lit, col, n)
-	case int(LX.T_LT):
+	case LX.T_LT:
 		return cmpInt64LitLT(data, lit, col, n)
-	case int(LX.T_LE):
+	case LX.T_LE:
 		return cmpInt64LitLE(data, lit, col, n)
-	case int(LX.T_GT):
+	case LX.T_GT:
 		return cmpInt64LitGT(data, lit, col, n)
-	case int(LX.T_GE):
+	case LX.T_GE:
 		return cmpInt64LitGE(data, lit, col, n)
 	}
 	return nil
@@ -403,21 +427,21 @@ func cmpInt64LitGE(data []int64, lit int64, col Column, n int) []uint16 {
 
 // compareFloat64Cols: hoisted-operator float64 column-column comparison.
 // REQ000608: skip NULL rows.
-func compareFloat64Cols(left, right Column, op int, n int) []uint16 {
+func compareFloat64Cols(left, right Column, op LX.TokenType, n int) []uint16 {
 	l := left.Data.([]float64)
 	r := right.Data.([]float64)
 	switch op {
-	case int(LX.T_EQ):
+	case LX.T_EQ:
 		return cmpFloat64ColsEQ(l, r, left, right, n)
-	case int(LX.T_NE):
+	case LX.T_NE:
 		return cmpFloat64ColsNE(l, r, left, right, n)
-	case int(LX.T_LT):
+	case LX.T_LT:
 		return cmpFloat64ColsLT(l, r, left, right, n)
-	case int(LX.T_LE):
+	case LX.T_LE:
 		return cmpFloat64ColsLE(l, r, left, right, n)
-	case int(LX.T_GT):
+	case LX.T_GT:
 		return cmpFloat64ColsGT(l, r, left, right, n)
-	case int(LX.T_GE):
+	case LX.T_GE:
 		return cmpFloat64ColsGE(l, r, left, right, n)
 	}
 	return nil
@@ -503,20 +527,20 @@ func cmpFloat64ColsGE(l, r []float64, lc, rc Column, n int) []uint16 {
 
 // compareFloat64ColLit: hoisted-operator float64 column-literal comparison.
 // REQ000608: skip NULL rows.
-func compareFloat64ColLit(col Column, lit float64, op int, n int) []uint16 {
+func compareFloat64ColLit(col Column, lit float64, op LX.TokenType, n int) []uint16 {
 	data := col.Data.([]float64)
 	switch op {
-	case int(LX.T_EQ):
+	case LX.T_EQ:
 		return cmpFloat64LitEQ(data, lit, col, n)
-	case int(LX.T_NE):
+	case LX.T_NE:
 		return cmpFloat64LitNE(data, lit, col, n)
-	case int(LX.T_LT):
+	case LX.T_LT:
 		return cmpFloat64LitLT(data, lit, col, n)
-	case int(LX.T_LE):
+	case LX.T_LE:
 		return cmpFloat64LitLE(data, lit, col, n)
-	case int(LX.T_GT):
+	case LX.T_GT:
 		return cmpFloat64LitGT(data, lit, col, n)
-	case int(LX.T_GE):
+	case LX.T_GE:
 		return cmpFloat64LitGE(data, lit, col, n)
 	}
 	return nil
@@ -602,21 +626,21 @@ func cmpFloat64LitGE(data []float64, lit float64, col Column, n int) []uint16 {
 
 // compareStringCols: hoisted-operator string column-column comparison.
 // REQ000608: skip NULL rows.
-func compareStringCols(left, right Column, op int, n int) []uint16 {
+func compareStringCols(left, right Column, op LX.TokenType, n int) []uint16 {
 	l := left.Data.([]string)
 	r := right.Data.([]string)
 	switch op {
-	case int(LX.T_EQ):
+	case LX.T_EQ:
 		return cmpStringColsEQ(l, r, left, right, n)
-	case int(LX.T_NE):
+	case LX.T_NE:
 		return cmpStringColsNE(l, r, left, right, n)
-	case int(LX.T_LT):
+	case LX.T_LT:
 		return cmpStringColsLT(l, r, left, right, n)
-	case int(LX.T_LE):
+	case LX.T_LE:
 		return cmpStringColsLE(l, r, left, right, n)
-	case int(LX.T_GT):
+	case LX.T_GT:
 		return cmpStringColsGT(l, r, left, right, n)
-	case int(LX.T_GE):
+	case LX.T_GE:
 		return cmpStringColsGE(l, r, left, right, n)
 	}
 	return nil
@@ -702,20 +726,20 @@ func cmpStringColsGE(l, r []string, lc, rc Column, n int) []uint16 {
 
 // compareStringColLit: hoisted-operator string column-literal comparison.
 // REQ000608: skip NULL rows.
-func compareStringColLit(col Column, lit string, op int, n int) []uint16 {
+func compareStringColLit(col Column, lit string, op LX.TokenType, n int) []uint16 {
 	data := col.Data.([]string)
 	switch op {
-	case int(LX.T_EQ):
+	case LX.T_EQ:
 		return cmpStringLitEQ(data, lit, col, n)
-	case int(LX.T_NE):
+	case LX.T_NE:
 		return cmpStringLitNE(data, lit, col, n)
-	case int(LX.T_LT):
+	case LX.T_LT:
 		return cmpStringLitLT(data, lit, col, n)
-	case int(LX.T_LE):
+	case LX.T_LE:
 		return cmpStringLitLE(data, lit, col, n)
-	case int(LX.T_GT):
+	case LX.T_GT:
 		return cmpStringLitGT(data, lit, col, n)
-	case int(LX.T_GE):
+	case LX.T_GE:
 		return cmpStringLitGE(data, lit, col, n)
 	}
 	return nil
@@ -801,18 +825,83 @@ func cmpStringLitGE(data []string, lit string, col Column, n int) []uint16 {
 
 // swapOp swaps the operator for column-literal evaluation.
 // e.g., "5 < x" becomes "x > 5".
-func swapOp(op int) int {
+func swapOp(op LX.TokenType) LX.TokenType {
 	switch op {
-	case int(LX.T_LT):
-		return int(LX.T_GT)
-	case int(LX.T_LE):
-		return int(LX.T_GE)
-	case int(LX.T_GT):
-		return int(LX.T_LT)
-	case int(LX.T_GE):
-		return int(LX.T_LE)
+	case LX.T_LT:
+		return LX.T_GT
+	case LX.T_LE:
+		return LX.T_GE
+	case LX.T_GT:
+		return LX.T_LT
+	case LX.T_GE:
+		return LX.T_LE
 	}
 	return op
+}
+
+// intersectSelection returns the intersection of two selection vectors.
+// nil means "all rows" (identity for AND).
+func intersectSelection(a, b []uint16, n int) []uint16 {
+	// nil = all rows (identity)
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	// Both empty = no rows
+	if len(a) == 0 || len(b) == 0 {
+		return []uint16{}
+	}
+	// Build bitmap from the smaller set for efficiency
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	var bitmap [BatchSize]bool
+	for _, idx := range a {
+		if int(idx) < BatchSize {
+			bitmap[idx] = true
+		}
+	}
+	result := make([]uint16, 0, len(b))
+	for _, idx := range b {
+		if int(idx) < BatchSize && bitmap[idx] {
+			result = append(result, idx)
+		}
+	}
+	return result
+}
+
+// unionSelection returns the union of two selection vectors.
+// nil means "all rows" (identity for OR).
+func unionSelection(a, b []uint16, n int) []uint16 {
+	// nil = all rows (identity)
+	if a == nil || b == nil {
+		return nil
+	}
+	// Both empty = no rows
+	if len(a) == 0 && len(b) == 0 {
+		return []uint16{}
+	}
+	// Build bitmap from first set
+	var bitmap [BatchSize]bool
+	for _, idx := range a {
+		if int(idx) < BatchSize {
+			bitmap[idx] = true
+		}
+	}
+	result := make([]uint16, 0, len(a)+len(b))
+	for _, idx := range a {
+		if int(idx) < BatchSize {
+			result = append(result, idx)
+		}
+	}
+	for _, idx := range b {
+		if int(idx) < BatchSize && !bitmap[idx] {
+			result = append(result, idx)
+		}
+	}
+	return result
 }
 
 // invertSelection returns the complement of the selection vector

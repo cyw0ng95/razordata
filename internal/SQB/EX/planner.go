@@ -557,7 +557,7 @@ func estimateSelectivity(e PS.Expr) float64 {
 	if v, ok := e.(*PS.BinaryExpr); ok {
 		if isColumnLiteralPair(v.Left, v.Right) || isColumnLiteralPair(v.Right, v.Left) {
 			switch v.Op {
-			case int(LX.T_EQ):
+			case LX.T_EQ:
 				return 0.1
 			}
 		}
@@ -585,11 +585,11 @@ func estimateSelectivityWithStats(e PS.Expr, stats *ls.ColumnStats) float64 {
 		_, lit, isColLit := extractColumnLiteral(v)
 		if isColLit && stats != nil {
 			switch v.Op {
-			case int(LX.T_EQ):
+			case LX.T_EQ:
 				return estimateEqSelectivity(stats, lit)
-			case int(LX.T_LT), int(LX.T_LE):
+			case LX.T_LT, LX.T_LE:
 				return estimateRangeSelectivity(stats, nil, lit, false)
-			case int(LX.T_GT), int(LX.T_GE):
+			case LX.T_GT, LX.T_GE:
 				return estimateRangeSelectivity(stats, lit, nil, false)
 			}
 		}
@@ -736,9 +736,9 @@ func (p *Planner) estimatePredicateSelectivity(e PS.Expr) float64 {
 		predType := 0
 		if v, ok := e.(*PS.BinaryExpr); ok {
 			switch v.Op {
-			case int(LX.T_EQ):
+			case LX.T_EQ:
 				predType = 0
-			case int(LX.T_LT), int(LX.T_LE), int(LX.T_GT), int(LX.T_GE):
+			case LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
 				predType = 1
 			}
 		}
@@ -1072,7 +1072,7 @@ func tryApplyPointLookup(scan Operator, pred PS.Expr) {
 // are literals. Only succeeds for Ident columns.
 func extractInListValues(pred PS.Expr) (string, []any, bool) {
 	bin, ok := pred.(*PS.BinaryExpr)
-	if !ok || bin.Op != int(LX.T_IN) {
+	if !ok || bin.Op != LX.T_IN {
 		return "", nil, false
 	}
 	col, ok := bin.Left.(*PS.Ident)
@@ -1105,7 +1105,7 @@ func extractInListValues(pred PS.Expr) (string, []any, bool) {
 // predicate of the form "col = literal".
 func extractSingleEquality(pred PS.Expr) (string, any, bool) {
 	bin, ok := pred.(*PS.BinaryExpr)
-	if !ok || bin.Op != int(LX.T_EQ) {
+	if !ok || bin.Op != LX.T_EQ {
 		return "", nil, false
 	}
 	col, ok := bin.Left.(*PS.Ident)
@@ -1143,7 +1143,7 @@ func extractSingleEquality(pred PS.Expr) (string, any, bool) {
 // Handles the case where leftTbl may be a join of multiple tables.
 func (p *Planner) equiJoinKey(e PS.Expr, joinedTables map[string]bool, rightTbl string) (leftCol, rightCol string) {
 	bin, ok := e.(*PS.BinaryExpr)
-	if !ok || bin.Op != int(LX.T_EQ) {
+	if !ok || bin.Op != LX.T_EQ {
 		return "", ""
 	}
 	leftTables := p.extractTablesFromExpr(bin.Left)
@@ -1219,7 +1219,7 @@ func (p *Planner) extractEquiJoinKeys(crossTable []PS.Expr, joinedTables map[str
 // REQ000800.
 func (p *Planner) extractSingleOnEquiKey(on PS.Expr, leftTbl, rightTbl string) (string, string, bool) {
 	bin, ok := on.(*PS.BinaryExpr)
-	if !ok || bin.Op != int(LX.T_EQ) {
+	if !ok || bin.Op != LX.T_EQ {
 		return "", "", false
 	}
 	a, aok := bin.Left.(*PS.QualifiedName)
@@ -1465,7 +1465,7 @@ func extractViewAliases(cols []PS.Expr) map[string]bool {
 // sharedTypes/colIndex so the NLJ execution path skips the
 // per-operator lazy schema build. Returns (nil, nil, nil) when
 // the schema cannot be statically determined.
-func deriveJoinSchema(left, right Operator) ([]string, []int, map[string]int) {
+func deriveJoinSchema(left, right Operator) ([]string, []LX.TokenType, map[string]int) {
 	if left == nil || right == nil {
 		return nil, nil, nil
 	}
@@ -1485,7 +1485,7 @@ func deriveJoinSchema(left, right Operator) ([]string, []int, map[string]int) {
 	cols := make([]string, 0, len(leftCols)+len(rightCols))
 	cols = append(cols, leftCols...)
 	cols = append(cols, rightCols...)
-	types := make([]int, 0, len(cols))
+	types := make([]LX.TokenType, 0, len(cols))
 	types = append(types, leftTypes...)
 	types = append(types, rightTypes...)
 	idx := make(map[string]int, len(cols))
@@ -1530,7 +1530,7 @@ func colsOf(op Operator) []string {
 }
 
 // typesOf extracts the column types similarly to colsOf.
-func typesOf(op Operator) []int {
+func typesOf(op Operator) []LX.TokenType {
 	switch o := op.(type) {
 	case *SeqScan:
 		if o.schema != nil {
@@ -1772,7 +1772,7 @@ func (p *Planner) resolveView(s *PS.Select, viewSel *PS.Select) Operator {
 	if s.Where != nil {
 		if merged.Where != nil {
 			merged.Where = &PS.BinaryExpr{
-				Op:    int(LX.T_AND),
+				Op:    LX.T_AND,
 				Left:  merged.Where,
 				Right: s.Where,
 			}
@@ -1895,7 +1895,7 @@ func (p *Planner) resolveAliasesAndFold(whereExpr PS.Expr) PS.Expr {
 		if isFalse(whereExpr) {
 			whereExpr = &PS.BinaryExpr{
 				Left:  &PS.NumberLiteral{Val: int64(0)},
-				Op:    int(LX.T_EQ),
+				Op:    LX.T_EQ,
 				Right: &PS.NumberLiteral{Val: int64(1)},
 			}
 		} else if isTrue(whereExpr) && isConstantExpr(whereExpr) {
@@ -2105,25 +2105,25 @@ func foldConstants(e PS.Expr) PS.Expr {
 		r := foldConstants(b.Right)
 
 		// col + 0 → col
-		if int(LX.T_PLUS) == b.Op && isSameColumn(l, r) && isZero(r) {
+		if LX.T_PLUS == b.Op && isSameColumn(l, r) && isZero(r) {
 			return l
 		}
-		if int(LX.T_PLUS) == b.Op && isSameColumn(l, r) && isZero(l) {
+		if LX.T_PLUS == b.Op && isSameColumn(l, r) && isZero(l) {
 			return r
 		}
 		// col * 1 → col
-		if int(LX.T_STAR) == b.Op && isSameColumn(l, r) && isOne(r) {
+		if LX.T_STAR == b.Op && isSameColumn(l, r) && isOne(r) {
 			return l
 		}
-		if int(LX.T_STAR) == b.Op && isSameColumn(l, r) && isOne(l) {
+		if LX.T_STAR == b.Op && isSameColumn(l, r) && isOne(l) {
 			return r
 		}
 		// col - 0 → col
-		if int(LX.T_MINUS) == b.Op && isSameColumn(l, r) && isZero(r) {
+		if LX.T_MINUS == b.Op && isSameColumn(l, r) && isZero(r) {
 			return l
 		}
 		// col / 1 → col
-		if int(LX.T_SLASH) == b.Op && isSameColumn(l, r) && isOne(r) {
+		if LX.T_SLASH == b.Op && isSameColumn(l, r) && isOne(r) {
 			return l
 		}
 
@@ -2136,7 +2136,7 @@ func foldConstants(e PS.Expr) PS.Expr {
 		}
 
 		// Short-circuit: const AND FALSE → FALSE, const OR TRUE → TRUE
-		if b.Op == int(LX.T_AND) {
+		if b.Op == LX.T_AND {
 			// FALSE AND anything → FALSE
 			if isFalse(l) || isFalse(r) {
 				return &PS.BoolLiteral{Val: false}
@@ -2149,7 +2149,7 @@ func foldConstants(e PS.Expr) PS.Expr {
 				return l
 			}
 		}
-		if b.Op == int(LX.T_OR) {
+		if b.Op == LX.T_OR {
 			// TRUE OR anything → TRUE
 			if isTrue(l) || isTrue(r) {
 				return &PS.BoolLiteral{Val: true}
@@ -2358,7 +2358,7 @@ func eliminateCommonSubexpressions(where PS.Expr) PS.Expr {
 	for _, u := range unique[1:] {
 		result = &PS.BinaryExpr{
 			Left:  result,
-			Op:    int(LX.T_AND),
+			Op:    LX.T_AND,
 			Right: u,
 		}
 	}
@@ -2463,10 +2463,10 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 			ti := p.catalog[table]
 			if ti != nil && len(ti.cols) > 0 {
 				schema := make([]string, len(ti.cols))
-				types := make([]int, len(ti.cols))
+				types := make([]LX.TokenType, len(ti.cols))
 				for k, ci := range ti.cols {
 					schema[k] = ci.Name
-					types[k] = ci.Typ
+					types[k] = LX.TokenType(ci.Typ)
 				}
 				if ss := NewParallelSeqScanRow(src, schema, types, p.pool); ss != nil {
 					return ss
@@ -2480,10 +2480,10 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 				ti := p.catalog[table]
 				if ti != nil && len(ti.cols) > 0 && rowCount > 0 {
 					schema := make([]string, len(ti.cols))
-					types := make([]int, len(ti.cols))
+					types := make([]LX.TokenType, len(ti.cols))
 					for k, ci := range ti.cols {
 						schema[k] = ci.Name
-						types[k] = ci.Typ
+						types[k] = LX.TokenType(ci.Typ)
 					}
 					return NewParallelIndexRangeScan(src, schema, types, colName, inValues, p.pool)
 				}
@@ -2659,7 +2659,7 @@ func indexedColumnEq(e PS.Expr) (string, []byte, bool) {
 	if !ok {
 		return "", nil, false
 	}
-	if b.Op != int(LX.T_EQ) {
+	if b.Op != LX.T_EQ {
 		return "", nil, false
 	}
 	// Pattern: Ident = Literal
@@ -2754,15 +2754,15 @@ func rangeBounds(b *PS.BinaryExpr) (lower []byte, lowerIncl bool, upper []byte, 
 
 // rangeFromOp converts (op, literalValue) to (lower, lowerIncl,
 // upper, upperIncl, hasBounds).
-func rangeFromOp(op int, v []byte) (lower []byte, lowerIncl bool, upper []byte, upperIncl bool, hasBounds bool) {
+func rangeFromOp(op LX.TokenType, v []byte) (lower []byte, lowerIncl bool, upper []byte, upperIncl bool, hasBounds bool) {
 	switch op {
-	case int(LX.T_GT):
+	case LX.T_GT:
 		return v, false, nil, false, true
-	case int(LX.T_GE):
+	case LX.T_GE:
 		return v, true, nil, false, true
-	case int(LX.T_LT):
+	case LX.T_LT:
 		return nil, false, v, false, true
-	case int(LX.T_LE):
+	case LX.T_LE:
 		return nil, false, v, true, true
 	}
 	return nil, false, nil, false, false
@@ -2771,16 +2771,16 @@ func rangeFromOp(op int, v []byte) (lower []byte, lowerIncl bool, upper []byte, 
 // flipOp mirrors a comparison: `5 < col` becomes `col > 5`.
 // The token table uses distinct constants for each op, so we map
 // each one explicitly.
-func flipOp(op int) int {
+func flipOp(op LX.TokenType) LX.TokenType {
 	switch op {
-	case int(LX.T_LT):
-		return int(LX.T_GT)
-	case int(LX.T_LE):
-		return int(LX.T_GE)
-	case int(LX.T_GT):
-		return int(LX.T_LT)
-	case int(LX.T_GE):
-		return int(LX.T_LE)
+	case LX.T_LT:
+		return LX.T_GT
+	case LX.T_LE:
+		return LX.T_GE
+	case LX.T_GT:
+		return LX.T_LT
+	case LX.T_GE:
+		return LX.T_LE
 	}
 	return op
 }
@@ -2810,7 +2810,7 @@ func indexedColumnLikePrefix(e PS.Expr) (string, []byte, bool) {
 	if !ok {
 		return "", nil, false
 	}
-	if b.Op != int(LX.T_LIKE) && b.Op != int(LX.T_GLOB) {
+	if b.Op != LX.T_LIKE && b.Op != LX.T_GLOB {
 		return "", nil, false
 	}
 	// Column must be on the left side.
@@ -3311,12 +3311,12 @@ func estimateJoinPredicateSelectivity(pred PS.Expr, rowCount float64) float64 {
 	}
 	isColCol := isColumnColumnPair(bin.Left, bin.Right) || isColumnColumnPair(bin.Right, bin.Left)
 	switch bin.Op {
-	case int(LX.T_EQ):
+	case LX.T_EQ:
 		if isColCol {
 			return 0.1
 		}
 		return 0.1
-	case int(LX.T_LT), int(LX.T_LE), int(LX.T_GT), int(LX.T_GE):
+	case LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
 		return 0.3
 	default:
 		return 0.5
@@ -3365,7 +3365,7 @@ func (p *Planner) joinPredSel(pred PS.Expr, rowCount float64) float64 {
 		return 0.5
 	}
 	switch bin.Op {
-	case int(LX.T_EQ):
+	case LX.T_EQ:
 		// REQ000948: equi-join (col = col) uses NDV of both sides.
 		// REQ000948: equi-join (col = literal) uses NDV of the column.
 		ndvL, ndvR := p.ndvFromExpr(bin.Left), p.ndvFromExpr(bin.Right)
@@ -3392,7 +3392,7 @@ func (p *Planner) joinPredSel(pred PS.Expr, rowCount float64) float64 {
 		}
 		// No stats — fall back to default.
 		return 0.1
-	case int(LX.T_LT), int(LX.T_LE), int(LX.T_GT), int(LX.T_GE):
+	case LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
 		// Range predicate: use (1 - null_frac) / 3 (uniform).
 		nullFrac := p.nullFracFromExpr(bin.Left)
 		if nullFrac < 0 {
@@ -4238,7 +4238,7 @@ func groupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates 
 	pairKeys := map[pairKey][]string{}
 	for _, pred := range crossTablePredicates {
 		bin, ok := pred.(*PS.BinaryExpr)
-		if !ok || bin.Op != int(LX.T_EQ) {
+		if !ok || bin.Op != LX.T_EQ {
 			continue
 		}
 		lTable, lCol := extractTableColumn(bin.Left)
@@ -4463,7 +4463,7 @@ func pushPredicateIntoSubquery(outerWhere PS.Expr, subSel *PS.Select) PS.Expr {
 		if subSel.Where != nil {
 			subSel.Where = &PS.BinaryExpr{
 				Left:  subSel.Where,
-				Op:    int(LX.T_AND),
+				Op:    LX.T_AND,
 				Right: p,
 			}
 		} else {
@@ -4478,7 +4478,7 @@ func pushPredicateIntoSubquery(outerWhere PS.Expr, subSel *PS.Select) PS.Expr {
 	for _, r := range remaining[1:] {
 		result = &PS.BinaryExpr{
 			Left:  result,
-			Op:    int(LX.T_AND),
+			Op:    LX.T_AND,
 			Right: r,
 		}
 	}
@@ -4494,7 +4494,7 @@ func mergeWhereIntoSubquery(outerWhere PS.Expr, subSel *PS.Select) {
 	if subSel.Where != nil {
 		subSel.Where = &PS.BinaryExpr{
 			Left:  subSel.Where,
-			Op:    int(LX.T_AND),
+			Op:    LX.T_AND,
 			Right: outerWhere,
 		}
 	} else {

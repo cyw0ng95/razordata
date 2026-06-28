@@ -17,6 +17,8 @@ import (
 	"hash/maphash"
 	"math"
 	"strings"
+
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // HashCrossJoin is a simple hash-probe equi-join for small tables.
@@ -56,7 +58,7 @@ type HashCrossJoin struct {
 	// all emitted rows to skip per-row buildColIndex.
 	sharedColIndex map[string]int
 	sharedCols     []string
-	sharedTypes    []int
+	sharedTypes    []LX.TokenType
 	// REQ000874: cached prefix/suffix check. hasAnyPrefix is called
 	// per-row in materializeLeft; hoist the check to the operator
 	// struct so it's computed once per scan (all rows from the same
@@ -178,7 +180,7 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 	j.sharedCols = make([]string, 0, len(lCols)+len(rCols))
 	j.sharedCols = append(j.sharedCols, lCols...)
 	j.sharedCols = append(j.sharedCols, rCols...)
-	j.sharedTypes = make([]int, 0, len(j.leftRows[0].Types)+len(j.rightRows[0].Types))
+	j.sharedTypes = make([]LX.TokenType, 0, len(j.leftRows[0].Types)+len(j.rightRows[0].Types))
 	j.sharedTypes = append(j.sharedTypes, j.leftRows[0].Types...)
 	j.sharedTypes = append(j.sharedTypes, j.rightRows[0].Types...)
 	j.sharedColIndex = make(map[string]int, len(j.sharedCols))

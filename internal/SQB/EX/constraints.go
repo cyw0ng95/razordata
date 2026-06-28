@@ -62,7 +62,7 @@ func fillDefaults(schema *storeSchema, row Row) (Row, error) {
 
 // coerceDefault coerces v to the Value type matching the column's
 // token type. Unrecognised types pass through unchanged. REQ000515.
-func coerceDefault(v Value, colType int) Value {
+func coerceDefault(v Value, colType LX.TokenType) Value {
 	if v.IsNull() {
 		return v
 	}
@@ -141,11 +141,11 @@ func validateRow(schema *storeSchema, row Row) error {
 
 // isIntegerType returns true if the column type at index i is an
 // integer type (INTEGER, INT, BIGINT).
-func isIntegerType(colTypes []int, i int) bool {
+func isIntegerType(colTypes []LX.TokenType, i int) bool {
 	if i >= len(colTypes) {
 		return false
 	}
-	return colTypes[i] == int(LX.T_INT_KW) || colTypes[i] == int(LX.T_BIGINT)
+	return colTypes[i] == LX.T_INT_KW || colTypes[i] == LX.T_BIGINT
 }
 
 // validateDecimal checks that values in DECIMAL/NUMERIC columns respect
@@ -155,7 +155,7 @@ func validateDecimal(schema *storeSchema, row Row) error {
 		return nil
 	}
 	for i, typ := range schema.colTypes {
-		if typ != int(LX.T_DECIMAL) && typ != int(LX.T_NUMERIC) {
+		if typ != LX.T_DECIMAL && typ != LX.T_NUMERIC {
 			continue
 		}
 		v := row.Data[i]

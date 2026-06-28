@@ -16,6 +16,8 @@ package EX
 import (
 	"context"
 	"errors"
+
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // JoinStrategy is the interface every concrete join strategy
@@ -293,7 +295,7 @@ func (s *HashCrossNLJStrategy) Close() error {
 func joinRowsSimple(a, b *Row) Row {
 	out := Row{
 		Cols:  append(append([]string{}, a.Cols...), b.Cols...),
-		Types: append(append([]int{}, a.Types...), b.Types...),
+		Types: append(append([]LX.TokenType{}, a.Types...), b.Types...),
 		Data:  append(append([]Value{}, a.Data...), b.Data...),
 	}
 	return out

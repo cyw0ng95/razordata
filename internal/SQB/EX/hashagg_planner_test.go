@@ -31,15 +31,15 @@ func TestEstimateRowCount(t *testing.T) {
 // (REQ000196 - equivalence).
 func TestHashAggregate_AggregateEquivalence(t *testing.T) {
 	rows := []Row{
-		{Cols: []string{"category", "value"}, Types: []int{int(LX.T_TEXT), int(LX.T_INT_KW)},
+		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
 			Data: []Value{NewTextValue("A"), NewIntValue(int64(10))}},
-		{Cols: []string{"category", "value"}, Types: []int{int(LX.T_TEXT), int(LX.T_INT_KW)},
+		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
 			Data: []Value{NewTextValue("A"), NewIntValue(int64(20))}},
-		{Cols: []string{"category", "value"}, Types: []int{int(LX.T_TEXT), int(LX.T_INT_KW)},
+		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
 			Data: []Value{NewTextValue("B"), NewIntValue(int64(5))}},
-		{Cols: []string{"category", "value"}, Types: []int{int(LX.T_TEXT), int(LX.T_INT_KW)},
+		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
 			Data: []Value{NewTextValue("B"), NewIntValue(int64(15))}},
-		{Cols: []string{"category", "value"}, Types: []int{int(LX.T_TEXT), int(LX.T_INT_KW)},
+		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
 			Data: []Value{NewTextValue("A"), NewIntValue(int64(30))}},
 	}
 	RegisterTable("equivalence_test", rows)

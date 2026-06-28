@@ -206,7 +206,7 @@ func (e *enc) writeString(s string) {
 	e.buf = append(e.buf, s...)
 }
 
-func (e *enc) writeOp(op int) {
+func (e *enc) writeOp(op LX.TokenType) {
 	e.writeUvarint(uint64(LX.TokenType(op)))
 }
 

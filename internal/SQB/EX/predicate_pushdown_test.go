@@ -52,7 +52,7 @@ func TestWalkExprForTables_UsesSchemas(t *testing.T) {
 	p := NewPlanner()
 
 	expr := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.Ident{Name: "a"},
 		Right: &PS.NumberLiteral{Val: 1},
 	}
@@ -79,7 +79,7 @@ func TestEquiJoinKey_BasicDetection(t *testing.T) {
 	p := NewPlanner()
 
 	expr := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.Ident{Name: "a"},
 		Right: &PS.Ident{Name: "c"},
 	}
@@ -90,7 +90,7 @@ func TestEquiJoinKey_BasicDetection(t *testing.T) {
 	}
 
 	expr2 := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.Ident{Name: "c"},
 		Right: &PS.Ident{Name: "a"},
 	}
@@ -120,7 +120,7 @@ func TestEquiJoinKey_CrossTableInMultiJoin(t *testing.T) {
 	p := NewPlanner()
 
 	expr := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.Ident{Name: "a3"},
 		Right: &PS.Ident{Name: "b9"},
 	}
@@ -147,17 +147,17 @@ func TestSplitPredicatesByTable(t *testing.T) {
 	p := NewPlanner()
 
 	predT1 := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.Ident{Name: "a"},
 		Right: &PS.NumberLiteral{Val: 1},
 	}
 	predT2 := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.Ident{Name: "c"},
 		Right: &PS.NumberLiteral{Val: 2},
 	}
 	predCross := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.Ident{Name: "a"},
 		Right: &PS.Ident{Name: "c"},
 	}

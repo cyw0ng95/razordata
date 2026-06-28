@@ -7,7 +7,6 @@ package EX
 import (
 	"context"
 
-	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -47,7 +46,7 @@ func (v *Values) Next(ctx context.Context) (Row, error) {
 	}
 	cols := make([]string, len(v.cols))
 	data := make([]Value, len(v.cols))
-	types := make([]int, len(v.cols))
+	types := make([]LX.TokenType, len(v.cols))
 
 	for i, e := range v.cols {
 		val, err := EvalValue(e, evalRow, v.params)
@@ -141,24 +140,23 @@ func unaryOpString(u *PS.UnaryExpr) string {
 }
 
 // inferType maps a Go value to an LS column type.
-func inferType(v any) int {
+func inferType(v any) LX.TokenType {
 	if v == nil {
-		return -1
+		return LX.TokenType(-1)
 	}
 	switch v.(type) {
 	case int64, int, int32:
-		return int(ls.CTInt)
+		return LX.T_INT_KW
 	case float64, float32:
-		return int(ls.CTFloat)
+		return LX.T_FLOAT_KW
 	case bool:
-		return int(ls.CTBool)
+		return LX.T_BOOL
 	case string:
-		return int(ls.CTText)
+		return LX.T_TEXT
 	case []byte:
-		return int(ls.CTBlob)
-	default:
-		return int(ls.CTText)
+		return LX.T_BLOB
 	}
+	return LX.T_TEXT
 }
 
 // ValuesRows implements a multi-row operator for standalone VALUES
@@ -189,7 +187,7 @@ func (v *ValuesRows) Next(ctx context.Context) (Row, error) {
 	v.pos++
 	cols := make([]string, len(rowExprs))
 	data := make([]Value, len(rowExprs))
-	types := make([]int, len(rowExprs))
+	types := make([]LX.TokenType, len(rowExprs))
 	for i, e := range rowExprs {
 		val, err := EvalValue(e, nil, nil)
 		if err != nil {

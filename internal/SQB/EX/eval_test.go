@@ -25,24 +25,24 @@ func TestEval(t *testing.T) {
 		{"ident", &PS.Ident{Name: "x"}, nil, "x", false},
 		{"param", &PS.Param{Index: 0}, []any{10}, int64(10), false},
 		{"star", &PS.StarExpr{}, nil, "*", false},
-		{"unary_minus", &PS.UnaryExpr{Op: int(LX.T_MINUS), Operand: &PS.NumberLiteral{Val: 5}}, nil, int64(-5), false},
-		{"unary_plus", &PS.UnaryExpr{Op: int(LX.T_PLUS), Operand: &PS.NumberLiteral{Val: 5}}, nil, int64(5), false},
-		{"binary_eq", &PS.BinaryExpr{Op: int(LX.T_EQ), Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 1}}, nil, true, false},
-		{"binary_ne", &PS.BinaryExpr{Op: int(LX.T_NE), Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 2}}, nil, true, false},
+		{"unary_minus", &PS.UnaryExpr{Op: LX.T_MINUS, Operand: &PS.NumberLiteral{Val: 5}}, nil, int64(-5), false},
+		{"unary_plus", &PS.UnaryExpr{Op: LX.T_PLUS, Operand: &PS.NumberLiteral{Val: 5}}, nil, int64(5), false},
+		{"binary_eq", &PS.BinaryExpr{Op: LX.T_EQ, Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 1}}, nil, true, false},
+		{"binary_ne", &PS.BinaryExpr{Op: LX.T_NE, Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 2}}, nil, true, false},
 		// REQ000815: NULL != NULL should return UNKNOWN (nil), not TRUE.
-		{"null_ne_null", &PS.BinaryExpr{Op: int(LX.T_NE), Left: &PS.NullLiteral{}, Right: &PS.NullLiteral{}}, nil, nil, false},
-		{"null_ne_literal", &PS.BinaryExpr{Op: int(LX.T_NE), Left: &PS.NullLiteral{}, Right: &PS.NumberLiteral{Val: 10}}, nil, nil, false},
-		{"literal_ne_null", &PS.BinaryExpr{Op: int(LX.T_NE), Left: &PS.NumberLiteral{Val: 10}, Right: &PS.NullLiteral{}}, nil, nil, false},
-		{"binary_lt", &PS.BinaryExpr{Op: int(LX.T_LT), Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 2}}, nil, true, false},
-		{"binary_le", &PS.BinaryExpr{Op: int(LX.T_LE), Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 1}}, nil, true, false},
-		{"binary_gt", &PS.BinaryExpr{Op: int(LX.T_GT), Left: &PS.NumberLiteral{Val: 2}, Right: &PS.NumberLiteral{Val: 1}}, nil, true, false},
-		{"binary_ge", &PS.BinaryExpr{Op: int(LX.T_GE), Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 1}}, nil, true, false},
-		{"binary_plus", &PS.BinaryExpr{Op: int(LX.T_PLUS), Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 2}}, nil, int64(3), false},
-		{"binary_minus", &PS.BinaryExpr{Op: int(LX.T_MINUS), Left: &PS.NumberLiteral{Val: 5}, Right: &PS.NumberLiteral{Val: 3}}, nil, int64(2), false},
-		{"binary_mul", &PS.BinaryExpr{Op: int(LX.T_STAR), Left: &PS.NumberLiteral{Val: 3}, Right: &PS.NumberLiteral{Val: 4}}, nil, int64(12), false},
-		{"binary_div", &PS.BinaryExpr{Op: int(LX.T_SLASH), Left: &PS.NumberLiteral{Val: 10}, Right: &PS.NumberLiteral{Val: 2}}, nil, int64(5), false},
-		{"binary_and", &PS.BinaryExpr{Op: int(LX.T_AND), Left: &PS.BoolLiteral{Val: true}, Right: &PS.BoolLiteral{Val: true}}, nil, true, false},
-		{"binary_or", &PS.BinaryExpr{Op: int(LX.T_OR), Left: &PS.BoolLiteral{Val: false}, Right: &PS.BoolLiteral{Val: true}}, nil, true, false},
+		{"null_ne_null", &PS.BinaryExpr{Op: LX.T_NE, Left: &PS.NullLiteral{}, Right: &PS.NullLiteral{}}, nil, nil, false},
+		{"null_ne_literal", &PS.BinaryExpr{Op: LX.T_NE, Left: &PS.NullLiteral{}, Right: &PS.NumberLiteral{Val: 10}}, nil, nil, false},
+		{"literal_ne_null", &PS.BinaryExpr{Op: LX.T_NE, Left: &PS.NumberLiteral{Val: 10}, Right: &PS.NullLiteral{}}, nil, nil, false},
+		{"binary_lt", &PS.BinaryExpr{Op: LX.T_LT, Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 2}}, nil, true, false},
+		{"binary_le", &PS.BinaryExpr{Op: LX.T_LE, Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 1}}, nil, true, false},
+		{"binary_gt", &PS.BinaryExpr{Op: LX.T_GT, Left: &PS.NumberLiteral{Val: 2}, Right: &PS.NumberLiteral{Val: 1}}, nil, true, false},
+		{"binary_ge", &PS.BinaryExpr{Op: LX.T_GE, Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 1}}, nil, true, false},
+		{"binary_plus", &PS.BinaryExpr{Op: LX.T_PLUS, Left: &PS.NumberLiteral{Val: 1}, Right: &PS.NumberLiteral{Val: 2}}, nil, int64(3), false},
+		{"binary_minus", &PS.BinaryExpr{Op: LX.T_MINUS, Left: &PS.NumberLiteral{Val: 5}, Right: &PS.NumberLiteral{Val: 3}}, nil, int64(2), false},
+		{"binary_mul", &PS.BinaryExpr{Op: LX.T_STAR, Left: &PS.NumberLiteral{Val: 3}, Right: &PS.NumberLiteral{Val: 4}}, nil, int64(12), false},
+		{"binary_div", &PS.BinaryExpr{Op: LX.T_SLASH, Left: &PS.NumberLiteral{Val: 10}, Right: &PS.NumberLiteral{Val: 2}}, nil, int64(5), false},
+		{"binary_and", &PS.BinaryExpr{Op: LX.T_AND, Left: &PS.BoolLiteral{Val: true}, Right: &PS.BoolLiteral{Val: true}}, nil, true, false},
+		{"binary_or", &PS.BinaryExpr{Op: LX.T_OR, Left: &PS.BoolLiteral{Val: false}, Right: &PS.BoolLiteral{Val: true}}, nil, true, false},
 		{"case_simple", &PS.CaseExpr{
 			WhenList: []PS.WhenClause{{Cond: &PS.BoolLiteral{Val: true}, Then: &PS.StringLiteral{Val: "yes"}}},
 			Else:     &PS.StringLiteral{Val: "no"},
@@ -59,9 +59,9 @@ func TestEval(t *testing.T) {
 			WhenList: []PS.WhenClause{{Cond: &PS.NumberLiteral{Val: 1}, Then: &PS.StringLiteral{Val: "one"}}},
 			Else:     &PS.StringLiteral{Val: "other"},
 		}, nil, "other", false},
-		{"unary_not_truthy_int", &PS.UnaryExpr{Op: int(LX.T_NOT), Operand: &PS.NumberLiteral{Val: 5}}, nil, false, false},
-		{"unary_not_falsy_int", &PS.UnaryExpr{Op: int(LX.T_NOT), Operand: &PS.NumberLiteral{Val: 0}}, nil, true, false},
-		{"unary_not_empty_string", &PS.UnaryExpr{Op: int(LX.T_NOT), Operand: &PS.StringLiteral{Val: ""}}, nil, true, false},
+		{"unary_not_truthy_int", &PS.UnaryExpr{Op: LX.T_NOT, Operand: &PS.NumberLiteral{Val: 5}}, nil, false, false},
+		{"unary_not_falsy_int", &PS.UnaryExpr{Op: LX.T_NOT, Operand: &PS.NumberLiteral{Val: 0}}, nil, true, false},
+		{"unary_not_empty_string", &PS.UnaryExpr{Op: LX.T_NOT, Operand: &PS.StringLiteral{Val: ""}}, nil, true, false},
 		{"between_in_range", &PS.BetweenExpr{
 			Expr: &PS.NumberLiteral{Val: 5},
 			Low:  &PS.NumberLiteral{Val: 1},
@@ -89,8 +89,8 @@ func TestEval(t *testing.T) {
 			Expr: &PS.NullLiteral{},
 			List: []PS.Expr{&PS.NumberLiteral{Val: 1}, &PS.NumberLiteral{Val: 2}},
 		}, nil, nil, false},
-		{"is_null_true", &PS.BinaryExpr{Op: int(LX.T_IS), Left: &PS.NullLiteral{}, Right: &PS.NullLiteral{}}, nil, true, false},
-		{"is_not_null_false", &PS.BinaryExpr{Op: int(LX.T_IS), Left: &PS.NullLiteral{}, Right: &PS.UnaryExpr{Op: int(LX.T_NOT), Operand: &PS.NullLiteral{}}}, nil, false, false},
+		{"is_null_true", &PS.BinaryExpr{Op: LX.T_IS, Left: &PS.NullLiteral{}, Right: &PS.NullLiteral{}}, nil, true, false},
+		{"is_not_null_false", &PS.BinaryExpr{Op: LX.T_IS, Left: &PS.NullLiteral{}, Right: &PS.UnaryExpr{Op: LX.T_NOT, Operand: &PS.NullLiteral{}}}, nil, false, false},
 	}
 
 	for _, tc := range cases {
@@ -174,13 +174,13 @@ func TestEvalNullArithmetic(t *testing.T) {
 		expr PS.Expr
 		want any
 	}{
-		{"null_plus_int", &PS.BinaryExpr{Op: int(LX.T_PLUS), Left: &PS.NullLiteral{}, Right: &PS.NumberLiteral{Val: 5}}, nil},
-		{"int_plus_null", &PS.BinaryExpr{Op: int(LX.T_PLUS), Left: &PS.NumberLiteral{Val: 5}, Right: &PS.NullLiteral{}}, nil},
-		{"null_times_int", &PS.BinaryExpr{Op: int(LX.T_STAR), Left: &PS.NullLiteral{}, Right: &PS.NumberLiteral{Val: 5}}, nil},
-		{"null_div_int", &PS.BinaryExpr{Op: int(LX.T_SLASH), Left: &PS.NullLiteral{}, Right: &PS.NumberLiteral{Val: 5}}, nil},
-		{"int_div_by_zero", &PS.BinaryExpr{Op: int(LX.T_SLASH), Left: &PS.NumberLiteral{Val: 10}, Right: &PS.NumberLiteral{Val: 0}}, nil},
-		{"float_div_by_zero", &PS.BinaryExpr{Op: int(LX.T_SLASH), Left: &PS.FloatLiteral{Val: 10}, Right: &PS.FloatLiteral{Val: 0}}, nil},
-		{"int_plus_float_promotes", &PS.BinaryExpr{Op: int(LX.T_PLUS), Left: &PS.NumberLiteral{Val: 1}, Right: &PS.FloatLiteral{Val: 2.5}}, float64(3.5)},
+		{"null_plus_int", &PS.BinaryExpr{Op: LX.T_PLUS, Left: &PS.NullLiteral{}, Right: &PS.NumberLiteral{Val: 5}}, nil},
+		{"int_plus_null", &PS.BinaryExpr{Op: LX.T_PLUS, Left: &PS.NumberLiteral{Val: 5}, Right: &PS.NullLiteral{}}, nil},
+		{"null_times_int", &PS.BinaryExpr{Op: LX.T_STAR, Left: &PS.NullLiteral{}, Right: &PS.NumberLiteral{Val: 5}}, nil},
+		{"null_div_int", &PS.BinaryExpr{Op: LX.T_SLASH, Left: &PS.NullLiteral{}, Right: &PS.NumberLiteral{Val: 5}}, nil},
+		{"int_div_by_zero", &PS.BinaryExpr{Op: LX.T_SLASH, Left: &PS.NumberLiteral{Val: 10}, Right: &PS.NumberLiteral{Val: 0}}, nil},
+		{"float_div_by_zero", &PS.BinaryExpr{Op: LX.T_SLASH, Left: &PS.FloatLiteral{Val: 10}, Right: &PS.FloatLiteral{Val: 0}}, nil},
+		{"int_plus_float_promotes", &PS.BinaryExpr{Op: LX.T_PLUS, Left: &PS.NumberLiteral{Val: 1}, Right: &PS.FloatLiteral{Val: 2.5}}, float64(3.5)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -203,16 +203,16 @@ func TestEvalCast(t *testing.T) {
 		want any
 		err  bool
 	}{
-		{"int_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 42}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}}, int64(42), false},
-		{"int_from_float", &PS.CastExpr{Expr: &PS.FloatLiteral{Val: 3.7}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}}, int64(3), false},
-		{"int_from_string", &PS.CastExpr{Expr: &PS.StringLiteral{Val: "123"}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}}, int64(123), false},
-		{"int_from_string_bad", &PS.CastExpr{Expr: &PS.StringLiteral{Val: "abc"}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}}, nil, true},
-		{"float_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 5}, Type: &PS.TypeInfo{Type: int(LX.T_FLOAT_KW)}}, float64(5), false},
-		{"text_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 5}, Type: &PS.TypeInfo{Type: int(LX.T_TEXT)}}, "5", false},
-		{"text_from_float", &PS.CastExpr{Expr: &PS.FloatLiteral{Val: 1.5}, Type: &PS.TypeInfo{Type: int(LX.T_TEXT)}}, "1.5", false},
-		{"bool_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 1}, Type: &PS.TypeInfo{Type: int(LX.T_BOOL)}}, true, false},
-		{"bool_from_zero", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 0}, Type: &PS.TypeInfo{Type: int(LX.T_BOOL)}}, false, false},
-		{"null_to_int", &PS.CastExpr{Expr: &PS.NullLiteral{}, Type: &PS.TypeInfo{Type: int(LX.T_INT_KW)}}, nil, false},
+		{"int_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 42}, Type: &PS.TypeInfo{Type: LX.T_INT_KW}}, int64(42), false},
+		{"int_from_float", &PS.CastExpr{Expr: &PS.FloatLiteral{Val: 3.7}, Type: &PS.TypeInfo{Type: LX.T_INT_KW}}, int64(3), false},
+		{"int_from_string", &PS.CastExpr{Expr: &PS.StringLiteral{Val: "123"}, Type: &PS.TypeInfo{Type: LX.T_INT_KW}}, int64(123), false},
+		{"int_from_string_bad", &PS.CastExpr{Expr: &PS.StringLiteral{Val: "abc"}, Type: &PS.TypeInfo{Type: LX.T_INT_KW}}, nil, true},
+		{"float_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 5}, Type: &PS.TypeInfo{Type: LX.T_FLOAT_KW}}, float64(5), false},
+		{"text_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 5}, Type: &PS.TypeInfo{Type: LX.T_TEXT}}, "5", false},
+		{"text_from_float", &PS.CastExpr{Expr: &PS.FloatLiteral{Val: 1.5}, Type: &PS.TypeInfo{Type: LX.T_TEXT}}, "1.5", false},
+		{"bool_from_int", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 1}, Type: &PS.TypeInfo{Type: LX.T_BOOL}}, true, false},
+		{"bool_from_zero", &PS.CastExpr{Expr: &PS.NumberLiteral{Val: 0}, Type: &PS.TypeInfo{Type: LX.T_BOOL}}, false, false},
+		{"null_to_int", &PS.CastExpr{Expr: &PS.NullLiteral{}, Type: &PS.TypeInfo{Type: LX.T_INT_KW}}, nil, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -437,7 +437,7 @@ func TestDeleteRemovesMatching(t *testing.T) {
 	})
 	scan := NewSeqScan("t")
 	filter := NewFilter(scan, &PS.BinaryExpr{
-		Op: int(LX.T_GT), Left: &PS.Ident{Name: "a"}, Right: &PS.NumberLiteral{Val: 1},
+		Op: LX.T_GT, Left: &PS.Ident{Name: "a"}, Right: &PS.NumberLiteral{Val: 1},
 	})
 	del := NewDelete("t", nil, filter, nil)
 	_, err := del.Next(context.Background())
@@ -544,7 +544,7 @@ func TestUpdate_BackToBackMatchingRows(t *testing.T) {
 func TestCreateAndDropTable(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{Name: "new", Cols: []PS.ColDef{{Name: "a", Type: int(LX.T_INT_KW)}}})
+	ct := NewCreateTable(&PS.CreateTable{Name: "new", Cols: []PS.ColDef{{Name: "a", Type: LX.T_INT_KW}}})
 	_, err := ct.Next(context.Background())
 	if err != ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)

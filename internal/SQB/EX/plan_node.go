@@ -7,6 +7,7 @@ import (
 
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 )
 
@@ -652,7 +653,7 @@ func formatPlanTree(n *PlanNode, mode PS.ExplainMode) []Row {
 
 		rows = append(rows, Row{
 			Cols:  []string{"id", "parent", "notused", "detail"},
-			Types: []int{1, 1, 1, 1},
+			Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW, LX.T_INT_KW, LX.T_TEXT},
 			Data:  []Value{NewIntValue(int64(id)), NewIntValue(int64(parent)), NewIntValue(0), NewTextValue(detail)},
 		})
 

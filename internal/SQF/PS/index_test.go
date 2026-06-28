@@ -204,7 +204,7 @@ func TestParseCreateIndex_Where(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected BinaryExpr, got %T", ci.Where)
 	}
-	if bin.Op != int(LX.T_GT) {
+	if bin.Op != LX.T_GT {
 		t.Errorf("expected GT op, got %d", bin.Op)
 	}
 }

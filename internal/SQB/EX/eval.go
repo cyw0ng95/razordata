@@ -196,7 +196,7 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 		return evalUnaryValue(e, row, params)
 	case *PS.BinaryExpr:
 		switch e.Op {
-		case int(LX.T_AND), int(LX.T_OR):
+		case LX.T_AND, LX.T_OR:
 			return evalBinaryShortCircuit(e, row, params)
 		}
 		return evalBinaryValue(e, row, params)
@@ -252,7 +252,7 @@ func evalBinaryShortCircuit(e *PS.BinaryExpr, row *Row, params []any) (Value, er
 		return NullValue(), err
 	}
 	switch e.Op {
-	case int(LX.T_AND):
+	case LX.T_AND:
 		if left.Kind == KindBool && !left.Bo {
 			return NewBoolValue(false), nil
 		}
@@ -261,7 +261,7 @@ func evalBinaryShortCircuit(e *PS.BinaryExpr, row *Row, params []any) (Value, er
 			return NullValue(), err
 		}
 		return bandValue(left, right), nil
-	case int(LX.T_OR):
+	case LX.T_OR:
 		if left.Kind == KindBool && left.Bo {
 			return NewBoolValue(true), nil
 		}
@@ -286,7 +286,7 @@ func evalUnaryValue(e *PS.UnaryExpr, row *Row, params []any) (Value, error) {
 		return NullValue(), nil
 	}
 	switch e.Op {
-	case int(LX.T_MINUS):
+	case LX.T_MINUS:
 		switch operand.Kind {
 		case KindInt:
 			return NewIntValue(-operand.I64), nil
@@ -294,14 +294,14 @@ func evalUnaryValue(e *PS.UnaryExpr, row *Row, params []any) (Value, error) {
 			return NewFloatValue(-operand.F64), nil
 		}
 		return NullValue(), nil
-	case int(LX.T_PLUS):
+	case LX.T_PLUS:
 		return operand, nil
-	case int(LX.T_NOT):
+	case LX.T_NOT:
 		if operand.Kind == KindBool {
 			return NewBoolValue(!operand.Bo), nil
 		}
 		return NewBoolValue(!isValueTruthy(operand)), nil
-	case int(LX.T_BITNOT):
+	case LX.T_BITNOT:
 		if operand.Kind == KindInt {
 			return NewIntValue(^operand.I64), nil
 		}
@@ -347,46 +347,46 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 		return NullValue(), err
 	}
 	switch e.Op {
-	case int(LX.T_EQ):
+	case LX.T_EQ:
 		if left.Kind == KindNull || right.Kind == KindNull {
 			return NullValue(), nil
 		}
 		return NewBoolValue(equalValueValue(left, right)), nil
-	case int(LX.T_NE):
+	case LX.T_NE:
 		if left.Kind == KindNull || right.Kind == KindNull {
 			return NullValue(), nil
 		}
 		return NewBoolValue(!equalValueValue(left, right)), nil
-	case int(LX.T_LT):
+	case LX.T_LT:
 		if left.Kind == KindNull || right.Kind == KindNull {
 			return NullValue(), nil
 		}
 		return NewBoolValue(compareValue(left, right) < 0), nil
-	case int(LX.T_LE):
+	case LX.T_LE:
 		if left.Kind == KindNull || right.Kind == KindNull {
 			return NullValue(), nil
 		}
 		return NewBoolValue(compareValue(left, right) <= 0), nil
-	case int(LX.T_GT):
+	case LX.T_GT:
 		if left.Kind == KindNull || right.Kind == KindNull {
 			return NullValue(), nil
 		}
 		return NewBoolValue(compareValue(left, right) > 0), nil
-	case int(LX.T_GE):
+	case LX.T_GE:
 		if left.Kind == KindNull || right.Kind == KindNull {
 			return NullValue(), nil
 		}
 		return NewBoolValue(compareValue(left, right) >= 0), nil
-	case int(LX.T_PLUS), int(LX.T_MINUS), int(LX.T_STAR), int(LX.T_SLASH):
+	case LX.T_PLUS, LX.T_MINUS, LX.T_STAR, LX.T_SLASH:
 		var opRune rune
 		switch e.Op {
-		case int(LX.T_PLUS):
+		case LX.T_PLUS:
 			opRune = '+'
-		case int(LX.T_MINUS):
+		case LX.T_MINUS:
 			opRune = '-'
-		case int(LX.T_STAR):
+		case LX.T_STAR:
 			opRune = '*'
-		case int(LX.T_SLASH):
+		case LX.T_SLASH:
 			opRune = '/'
 		}
 		r, err := numericArithValue(left, right, opRune)
@@ -394,21 +394,21 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 			return NullValue(), err
 		}
 		return r, nil
-	case int(LX.T_MOD):
+	case LX.T_MOD:
 		return modValue(left, right)
-	case int(LX.T_BITAND):
+	case LX.T_BITAND:
 		return bitandValue(left, right)
-	case int(LX.T_BITOR):
+	case LX.T_BITOR:
 		return bitorValue(left, right)
-	case int(LX.T_BITXOR):
+	case LX.T_BITXOR:
 		return bitxorValue(left, right)
-	case int(LX.T_LSHIFT):
+	case LX.T_LSHIFT:
 		return lshiftValue(left, right)
-	case int(LX.T_RSHIFT):
+	case LX.T_RSHIFT:
 		return rshiftValue(left, right)
-	case int(LX.T_CONCAT):
+	case LX.T_CONCAT:
 		return concatValue(left, right)
-	case int(LX.T_LIKE):
+	case LX.T_LIKE:
 		var esc string
 		if e.Escape != nil {
 			v, err := EvalValue(e.Escape, row, params)
@@ -422,13 +422,13 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 			}
 		}
 		return likeValue(left, right, esc)
-	case int(LX.T_GLOB):
+	case LX.T_GLOB:
 		return globValue(left, right)
-	case int(LX.T_DIV):
+	case LX.T_DIV:
 		return intdivValue(left, right)
-	case int(LX.T_IS):
+	case LX.T_IS:
 		// `x IS NOT NULL` parses as BinaryExpr{T_IS, x, UnaryExpr{T_NOT, NULL}}.
-		if u, ok := e.Right.(*PS.UnaryExpr); ok && u.Op == int(LX.T_NOT) {
+		if u, ok := e.Right.(*PS.UnaryExpr); ok && u.Op == LX.T_NOT {
 			if _, isNull := u.Operand.(*PS.NullLiteral); isNull {
 				if left.Kind == KindNull {
 					return NewBoolValue(false), nil

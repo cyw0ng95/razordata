@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 
 	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 const (
@@ -45,7 +46,7 @@ var (
 // RawColumn is the shared column representation on disk.
 type RawColumn struct {
 	Name     string
-	Type     int
+	Type     LX.TokenType
 	Nullable bool
 }
 

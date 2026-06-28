@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // REQ001043: ParallelSeqScanRow basic unit test.
@@ -17,7 +19,7 @@ func TestParallelSeqScanRow_Basic(t *testing.T) {
 		rows[i] = Row{Data: []Value{{Kind: KindInt, I64: int64(i)}}}
 	}
 	schema := []string{"val"}
-	types := []int{0}
+	types := []LX.TokenType{LX.T_INT_KW}
 
 	ps := NewParallelSeqScanRow(rows, schema, types, pool)
 	defer ps.Close()
@@ -50,7 +52,7 @@ func TestParallelSeqScanRow_Values(t *testing.T) {
 		}}
 	}
 	schema := []string{"id", "name"}
-	types := []int{0, 2}
+	types := []LX.TokenType{LX.T_INT_KW, LX.T_TEXT}
 
 	ps := NewParallelSeqScanRow(rows, schema, types, pool)
 	defer ps.Close()
@@ -118,7 +120,7 @@ func TestParallelSeqScanRow_MultiWorker(t *testing.T) {
 		rows[i] = Row{Data: []Value{{Kind: KindInt, I64: int64(i)}}}
 	}
 	schema := []string{"v"}
-	types := []int{0}
+	types := []LX.TokenType{LX.T_INT_KW}
 
 	ps := NewParallelSeqScanRow(rows, schema, types, pool)
 	defer ps.Close()

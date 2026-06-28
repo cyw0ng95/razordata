@@ -129,7 +129,7 @@ func TestExistsExprType(t *testing.T) {
 // TestCaseExprType verifies the CaseExpr structure
 func TestCaseExprType(t *testing.T) {
 	when := []WhenClause{
-		{Cond: &BinaryExpr{Op: int(LX.T_EQ)}, Then: &Ident{Name: "y"}},
+		{Cond: &BinaryExpr{Op: LX.T_EQ}, Then: &Ident{Name: "y"}},
 	}
 	caseExpr := &CaseExpr{
 		Expr:     &Ident{Name: "x"},

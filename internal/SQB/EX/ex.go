@@ -201,7 +201,7 @@ type Operator interface {
 
 type Row struct {
 	Cols  []string
-	Types []int
+	Types []LX.TokenType
 	Data  []Value
 	Outer *Row
 	// planner is set by the executor when materializing a row
@@ -356,12 +356,12 @@ type Result struct {
 
 type Rows struct {
 	Cols  []string
-	Types []int
+	Types []LX.TokenType
 }
 
 type ColInfo struct {
 	Name     string
-	Typ      int
+	Typ      LX.TokenType
 	Nullable bool    // default true; false means NOT NULL
 	Default  PS.Expr // nil means no DEFAULT clause
 	PK       bool    // true means primary key (implies NOT NULL)
@@ -832,7 +832,7 @@ func columnTypeFor(name string) int {
 // lxTokenToColumnType converts an LX token (T_INT_KW/T_TEXT/...)
 // into the corresponding LS ColumnType. Returns -1 for
 // unrecognized tokens.
-func lxTokenToColumnType(tok int) int {
+func lxTokenToColumnType(tok LX.TokenType) int {
 	switch LX.TokenType(tok) {
 	case LX.T_INT_KW:
 		return int(ls.CTInt)
@@ -1032,7 +1032,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 				if len(out) == 0 {
 					return &Rows{}, nil
 				}
-				return &Rows{Cols: append([]string(nil), out[0].Cols...), Types: append([]int(nil), out[0].Types...)}, nil
+				return &Rows{Cols: append([]string(nil), out[0].Cols...), Types: append([]LX.TokenType(nil), out[0].Types...)}, nil
 			}
 
 			plan, err := e.planner.Plan(stmt)
@@ -1055,7 +1055,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 				return nil, err
 			}
 			WithExecContext(&row, execCtx)
-			rs := &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]int(nil), row.Types...)}
+			rs := &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]LX.TokenType(nil), row.Types...)}
 			return rs, nil
 		}
 	}
@@ -1092,7 +1092,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 		if len(out) == 0 {
 			return &Rows{}, nil
 		}
-		return &Rows{Cols: append([]string(nil), out[0].Cols...), Types: append([]int(nil), out[0].Types...)}, nil
+		return &Rows{Cols: append([]string(nil), out[0].Cols...), Types: append([]LX.TokenType(nil), out[0].Types...)}, nil
 	}
 
 	plan, err := e.planner.Plan(stmt)
@@ -1117,7 +1117,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 		return nil, err
 	}
 	WithExecContext(&row, execCtx)
-	rs := &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]int(nil), row.Types...)}
+	rs := &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]LX.TokenType(nil), row.Types...)}
 	return rs, nil
 }
 
@@ -1788,7 +1788,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 		}()
 		return &streamIterator{
 			cols:   append([]string(nil), firstRow.Cols...),
-			types:  append([]int(nil), firstRow.Types...),
+			types:  append([]LX.TokenType(nil), firstRow.Types...),
 			rowCh:  rowCh,
 			closer: closer,
 		}, nil
@@ -1824,7 +1824,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	}
 	WithExecContext(&row, execCtx)
 	cols := append([]string(nil), row.Cols...)
-	types := append([]int(nil), row.Types...)
+	types := append([]LX.TokenType(nil), row.Types...)
 
 	rowCh := make(chan Row, 16)
 	rowCh <- row
@@ -1874,7 +1874,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 // REQ000348.
 type streamIterator struct {
 	cols   []string
-	types  []int
+	types  []LX.TokenType
 	rowCh  chan Row
 	closer func() error
 	done   bool
@@ -1882,7 +1882,7 @@ type streamIterator struct {
 }
 
 func (s *streamIterator) Cols() []string { return s.cols }
-func (s *streamIterator) Types() []int   { return s.types }
+func (s *streamIterator) Types() []LX.TokenType { return s.types }
 func (s *streamIterator) Next() (Row, error) {
 	if s == nil || s.done || s.rowCh == nil {
 		return Row{}, ErrNoRows

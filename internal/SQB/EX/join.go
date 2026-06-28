@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // JoinKind specifies the type of join.
@@ -70,7 +72,7 @@ type NestedLoopJoin struct {
 	// left+right column layouts and shared across all hash-mode
 	// output rows instead of allocating fresh slices per row.
 	sharedCols  []string
-	sharedTypes []int
+	sharedTypes []LX.TokenType
 	// dataBuf is a single pre-allocated []any covering all output
 	// rows' Data slices. Each row gets a non-overlapping sub-slice
 	// [off:off:off+dataPerRow], eliminating per-row make([]Value, ...)
@@ -95,7 +97,7 @@ type NestedLoopJoin struct {
 	// a shared data buffer for block-mode output rows, eliminating
 	// per-row make([]Value) allocations.
 	blkSharedCols     []string
-	blkSharedTypes    []int
+	blkSharedTypes    []LX.TokenType
 	blkSharedColIndex map[string]int
 	// REQ000877: sharedBuilt guards blkSharedCols/Types/colIndex
 	// — computed once on first batch, reused across all subsequent.
@@ -133,7 +135,7 @@ type NestedLoopJoin struct {
 	// Used by joinRowsLLWithCols to avoid per-row make([]string) and
 	// make([]int) allocations in right-outer and left-outer paths.
 	outerSharedCols     []string
-	outerSharedTypes    []int
+	outerSharedTypes    []LX.TokenType
 	outerSharedColIndex map[string]int
 	// REQ000870: cached null-row templates to avoid rebuilding Cols/Types
 	// per call in nullRightRow/nullLeftRow.
@@ -177,7 +179,7 @@ func (j *NestedLoopJoin) ensureOuterShared(leftFirst, rightFirst *Row) {
 	j.outerSharedCols = append(j.outerSharedCols, lc...)
 	j.outerSharedCols = append(j.outerSharedCols, rc...)
 	lt, rt := leftFirst.Types, rightFirst.Types
-	j.outerSharedTypes = make([]int, 0, len(lt)+len(rt))
+	j.outerSharedTypes = make([]LX.TokenType, 0, len(lt)+len(rt))
 	j.outerSharedTypes = append(j.outerSharedTypes, lt...)
 	j.outerSharedTypes = append(j.outerSharedTypes, rt...)
 	j.outerSharedColIndex = make(map[string]int, len(j.outerSharedCols))
@@ -201,9 +203,9 @@ func (j *NestedLoopJoin) WithProjection(projectedCols []string) *NestedLoopJoin 
 // for this join. REQ001097: when set, the runtime paths (tryHashCrossJoin,
 // nextBlock, outerJoinRows) skip their per-operator schema build phase,
 // avoiding redundant allocation across an NLJ chain.
-func (j *NestedLoopJoin) WithSharedSchema(cols []string, types []int, colIndex map[string]int) *NestedLoopJoin {
+func (j *NestedLoopJoin) WithSharedSchema(cols []string, types []LX.TokenType, colIndex map[string]int) *NestedLoopJoin {
 	colsCopy := append([]string(nil), cols...)
-	typesCopy := append([]int(nil), types...)
+	typesCopy := append([]LX.TokenType(nil), types...)
 	colIdx := make(map[string]int, len(colIndex))
 	for k, v := range colIndex {
 		colIdx[k] = v
@@ -758,7 +760,7 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 		j.blkSharedCols = make([]string, 0, len(lCols)+len(rCols))
 		j.blkSharedCols = append(j.blkSharedCols, lCols...)
 		j.blkSharedCols = append(j.blkSharedCols, rCols...)
-		j.blkSharedTypes = make([]int, 0, len(lTypes)+len(rTypes))
+		j.blkSharedTypes = make([]LX.TokenType, 0, len(lTypes)+len(rTypes))
 		j.blkSharedTypes = append(j.blkSharedTypes, lTypes...)
 		j.blkSharedTypes = append(j.blkSharedTypes, rTypes...)
 		j.blkSharedColIndex = make(map[string]int, len(j.blkSharedCols))
@@ -870,7 +872,7 @@ func joinRowsLL(a, b *Row) Row {
 // per-row allocation in the hot NLJ/HashCrossJoin path. When
 // sharedCols is non-nil, out.Cols/Types share the slice (no copy).
 // Data is always freshly allocated since it's per-row payload.
-func joinRowsLLWithCols(a, b *Row, sharedCols []string, sharedTypes []int, sharedColIndex map[string]int) Row {
+func joinRowsLLWithCols(a, b *Row, sharedCols []string, sharedTypes []LX.TokenType, sharedColIndex map[string]int) Row {
 	out := Row{
 		colIndex: sharedColIndex,
 	}
@@ -886,7 +888,7 @@ func joinRowsLLWithCols(a, b *Row, sharedCols []string, sharedTypes []int, share
 		out.Types = sharedTypes
 	} else {
 		nTypes := len(a.Types) + len(b.Types)
-		out.Types = make([]int, 0, nTypes)
+		out.Types = make([]LX.TokenType, 0, nTypes)
 		out.Types = append(out.Types, a.Types...)
 		out.Types = append(out.Types, b.Types...)
 	}
@@ -902,7 +904,7 @@ func joinRowsLLWithCols(a, b *Row, sharedCols []string, sharedTypes []int, share
 // (leftIdx, rightIdx); exactly one is ≥0. REQ000803.
 // Data is pre-allocated via the caller-supplied dataBuf slice; the
 // function returns a Row with Data pointing into dataBuf.
-func joinRowsProjected(a, b *Row, cols []string, types []int, colIndex map[string]int, layout [][2]int, dataBuf *[]Value) Row {
+func joinRowsProjected(a, b *Row, cols []string, types []LX.TokenType, colIndex map[string]int, layout [][2]int, dataBuf *[]Value) Row {
 	off := len(*dataBuf)
 	n := len(cols)
 	// Ensure dataBuf has room for n Values.
@@ -1037,9 +1039,9 @@ func schemaCols(rows []Row) []string {
 }
 
 // schemaTypes extracts column types from a schema.
-func schemaTypes(rows []Row) []int {
+func schemaTypes(rows []Row) []LX.TokenType {
 	if len(rows) == 0 {
 		return nil
 	}
-	return append([]int(nil), rows[0].Types...)
+	return append([]LX.TokenType(nil), rows[0].Types...)
 }

@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -85,12 +86,12 @@ func (a *AlterTable) execAddColumn() error {
 	}
 	newDefaults = append(newDefaults, a.stmt.NewCol.Default)
 
-	var newTypes []int
+	var newTypes []LX.TokenType
 	for i := range ss.cols {
 		if ss.colTypes != nil && i < len(ss.colTypes) {
 			newTypes = append(newTypes, ss.colTypes[i])
 		} else {
-			newTypes = append(newTypes, 0)
+			newTypes = append(newTypes, LX.TokenType(0))
 		}
 	}
 	newTypes = append(newTypes, a.stmt.NewCol.Type)
@@ -258,9 +259,9 @@ func (a *AlterTable) execDropColumn() error {
 	if ss.defaults != nil {
 		newDefaults = make([]PS.Expr, 0, len(ss.defaults)-1)
 	}
-	var newTypes []int
+	var newTypes []LX.TokenType
 	if ss.colTypes != nil {
-		newTypes = make([]int, 0, len(ss.colTypes)-1)
+		newTypes = make([]LX.TokenType, 0, len(ss.colTypes)-1)
 	}
 	var newGenerated []PS.Expr
 	if ss.generated != nil {
@@ -513,7 +514,7 @@ func (a *AlterTable) execRename() error {
 	newTableID, ok := tableIDs[newName]
 	if ok {
 		if newSS, exists := storeSchemas[newTableID]; exists {
-			newSS.colTypes = append([]int(nil), ss.colTypes...)
+			newSS.colTypes = append([]LX.TokenType(nil), ss.colTypes...)
 			newSS.precision = append([]int(nil), ss.precision...)
 			newSS.scale = append([]int(nil), ss.scale...)
 			newSS.generated = append([]PS.Expr(nil), ss.generated...)

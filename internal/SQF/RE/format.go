@@ -179,23 +179,23 @@ func formatCreateTableStmt(c *PS.CreateTable) string {
 	return b.String()
 }
 
-func typeName(t int) string {
+func typeName(t LX.TokenType) string {
 	switch t {
-	case int(LX.T_INT_KW):
+	case LX.T_INT_KW:
 		return "INTEGER"
-	case int(LX.T_BIGINT):
+	case LX.T_BIGINT:
 		return "BIGINT"
-	case int(LX.T_FLOAT_KW):
+	case LX.T_FLOAT_KW:
 		return "FLOAT"
-	case int(LX.T_BOOL):
+	case LX.T_BOOL:
 		return "BOOLEAN"
-	case int(LX.T_TEXT):
+	case LX.T_TEXT:
 		return "TEXT"
-	case int(LX.T_BLOB):
+	case LX.T_BLOB:
 		return "BLOB"
-	case int(LX.T_VARCHAR):
+	case LX.T_VARCHAR:
 		return "VARCHAR"
-	case int(LX.T_TIMESTAMP):
+	case LX.T_TIMESTAMP:
 		return "TIMESTAMP"
 	default:
 		return "TEXT"
@@ -305,7 +305,7 @@ func exprString(e PS.Expr) string {
 	return "?"
 }
 
-func opString(op int) string {
+func opString(op LX.TokenType) string {
 	switch LX.TokenType(op) {
 	case LX.T_EQ:
 		return "="

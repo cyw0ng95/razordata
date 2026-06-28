@@ -14,7 +14,7 @@ func makeSortTestRows(n int) []Row {
 	for i := 0; i < n; i++ {
 		rows[i] = Row{
 			Cols:  []string{"id"},
-			Types: []int{int(LX.T_INT_KW)},
+			Types: []LX.TokenType{LX.T_INT_KW},
 			Data:  []Value{NewIntValue(int64(n - 1 - i))},
 		}
 	}

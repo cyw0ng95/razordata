@@ -32,8 +32,8 @@ func TestParseVarcharSize(t *testing.T) {
 			if len(ct.Cols) != 1 {
 				t.Fatalf("expected 1 col, got %d", len(ct.Cols))
 			}
-			if ct.Cols[0].Type != int(LX.T_VARCHAR) {
-				t.Errorf("Type: got %d, want VARCHAR (%d)", ct.Cols[0].Type, int(LX.T_VARCHAR))
+			if ct.Cols[0].Type != LX.T_VARCHAR {
+				t.Errorf("Type: got %d, want VARCHAR (%d)", ct.Cols[0].Type, LX.T_VARCHAR)
 			}
 			if tt.want != 0 && ct.Cols[0].Size != tt.want {
 				t.Errorf("Size: got %d, want %d", ct.Cols[0].Size, tt.want)
@@ -69,8 +69,8 @@ func TestParseDecimalPrecisionScale(t *testing.T) {
 			if len(ct.Cols) != 1 {
 				t.Fatalf("expected 1 col, got %d", len(ct.Cols))
 			}
-			if ct.Cols[0].Type != int(LX.T_DECIMAL) {
-				t.Errorf("Type: got %d, want DECIMAL (%d)", ct.Cols[0].Type, int(LX.T_DECIMAL))
+			if ct.Cols[0].Type != LX.T_DECIMAL {
+				t.Errorf("Type: got %d, want DECIMAL (%d)", ct.Cols[0].Type, LX.T_DECIMAL)
 			}
 			if tt.wantP != 0 && ct.Cols[0].Size != tt.wantP {
 				t.Errorf("Size (precision): got %d, want %d", ct.Cols[0].Size, tt.wantP)
@@ -90,7 +90,7 @@ func TestParseNumericType(t *testing.T) {
 	if len(ct.Cols) != 1 {
 		t.Fatalf("expected 1 col, got %d", len(ct.Cols))
 	}
-	if ct.Cols[0].Type != int(LX.T_NUMERIC) {
+	if ct.Cols[0].Type != LX.T_NUMERIC {
 		t.Errorf("Type: got %d, want NUMERIC", ct.Cols[0].Type)
 	}
 	if ct.Cols[0].Size != 20 {
@@ -116,7 +116,7 @@ func TestCastExprType(t *testing.T) {
 	if cast.Type == nil {
 		t.Fatal("Type should not be nil")
 	}
-	if cast.Type.Type != int(LX.T_VARCHAR) {
+	if cast.Type.Type != LX.T_VARCHAR {
 		t.Errorf("Type: got %d, want VARCHAR", cast.Type.Type)
 	}
 	if cast.Type.Size != 50 {

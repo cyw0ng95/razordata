@@ -16,7 +16,7 @@ func makeParallelTestRows(n int) []Row {
 	for i := 0; i < n; i++ {
 		rows[i] = Row{
 			Cols:  []string{"id", "value"},
-			Types: []int{int(LX.T_INT_KW), int(LX.T_TEXT)},
+			Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT},
 			Data:  []Value{NewIntValue(int64(i)), NewTextValue("row")},
 		}
 	}
@@ -104,7 +104,7 @@ func TestParallelIndexScan_Basic(t *testing.T) {
 	rows := makeParallelTestRows(50)
 	pred := &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
-		Op:    int(LX.T_GE),
+		Op:    LX.T_GE,
 		Right: &PS.NumberLiteral{Val: 25},
 	}
 	pool := NewWorkerPool(4)

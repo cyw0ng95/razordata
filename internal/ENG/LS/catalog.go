@@ -42,7 +42,7 @@ var (
 // CatalogColumn represents a column in the on-disk catalog.
 type CatalogColumn struct {
 	Name     string
-	Type     int
+	Type     LX.TokenType
 	Nullable bool
 }
 
@@ -738,13 +738,13 @@ func lsDecodeEntry(data []byte, off int, re *ct.RawEntry) (int, error) {
 		}
 		name := string(data[off : off+int(cn)])
 		off += int(cn)
-		var colType int
+		var colType LX.TokenType
 		if off+1 > len(data) {
-			colType = 0
+			colType = LX.T_TEXT
 		} else {
-			colType = int(data[off])
+			colType = LX.TokenType(data[off])
 			if colType == 0 {
-				colType = int(LX.T_TEXT)
+				colType = LX.T_TEXT
 			}
 			off++
 		}

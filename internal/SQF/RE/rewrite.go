@@ -245,11 +245,11 @@ func simplifyUnary(v *PS.UnaryExpr) PS.Expr {
 	operand := RewriteExpr(v.Operand)
 	var folded PS.Expr
 	switch v.Op {
-	case int(LX.T_MINUS):
+	case LX.T_MINUS:
 		folded = constantFoldUnaryMinus(operand)
-	case int(LX.T_PLUS):
+	case LX.T_PLUS:
 		folded = operand
-	case int(LX.T_NOT):
+	case LX.T_NOT:
 		// Do NOT fold `NOT NULL` to `NULL`: the resulting
 		// UnaryExpr must survive rewriting so that
 		// `x IS NOT NULL` (parsed as T_IS between x and
@@ -269,7 +269,7 @@ func simplifyUnary(v *PS.UnaryExpr) PS.Expr {
 		if folded == nil {
 			if b, ok := operand.(*PS.BoolLiteral); ok {
 				folded = &PS.BoolLiteral{Val: !b.Val}
-			} else if u, ok := operand.(*PS.UnaryExpr); ok && u.Op == int(LX.T_NOT) {
+			} else if u, ok := operand.(*PS.UnaryExpr); ok && u.Op == LX.T_NOT {
 				return u.Operand
 			}
 		}
@@ -291,7 +291,7 @@ func simplifyBinary(v *PS.BinaryExpr) PS.Expr {
 	if folded := constantFoldBinary(v.Op, left, right); folded != nil {
 		return folded
 	}
-	if v.Op == int(LX.T_AND) {
+	if v.Op == LX.T_AND {
 		if l, ok := left.(*PS.BoolLiteral); ok {
 			if l.Val {
 				return right
@@ -311,7 +311,7 @@ func simplifyBinary(v *PS.BinaryExpr) PS.Expr {
 			return left
 		}
 	}
-	if v.Op == int(LX.T_OR) {
+	if v.Op == LX.T_OR {
 		if l, ok := left.(*PS.BoolLiteral); ok {
 			if l.Val {
 				return left
@@ -328,12 +328,12 @@ func simplifyBinary(v *PS.BinaryExpr) PS.Expr {
 			return left
 		}
 	}
-	if v.Op == int(LX.T_EQ) {
+	if v.Op == LX.T_EQ {
 		if isLiteral(left) && isLiteral(right) && equalLiteral(left, right) {
 			return &PS.BoolLiteral{Val: true}
 		}
 	}
-	if v.Op == int(LX.T_NE) {
+	if v.Op == LX.T_NE {
 		if isLiteral(left) && isLiteral(right) && equalLiteral(left, right) {
 			return &PS.BoolLiteral{Val: false}
 		}
@@ -408,7 +408,7 @@ func constantFoldNot(operand PS.Expr) PS.Expr {
 	return nil
 }
 
-func constantFoldBinary(op int, left, right PS.Expr) PS.Expr {
+func constantFoldBinary(op LX.TokenType, left, right PS.Expr) PS.Expr {
 	if !isLiteral(left) || !isLiteral(right) {
 		return nil
 	}
@@ -428,7 +428,7 @@ func constantFoldBinary(op int, left, right PS.Expr) PS.Expr {
 	_ = ri
 	_ = li
 	switch op {
-	case int(LX.T_PLUS), int(LX.T_MINUS), int(LX.T_STAR), int(LX.T_SLASH):
+	case LX.T_PLUS, LX.T_MINUS, LX.T_STAR, LX.T_SLASH:
 		if ln != nil && rn != nil {
 			return foldIntInt(op, ln.Val, rn.Val)
 		}
@@ -446,11 +446,11 @@ func constantFoldBinary(op int, left, right PS.Expr) PS.Expr {
 			}
 			return foldFloatFloat(op, a, b)
 		}
-	case int(LX.T_EQ), int(LX.T_NE), int(LX.T_LT), int(LX.T_LE), int(LX.T_GT), int(LX.T_GE):
+	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
 		return foldCompare(op, left, right, ln, lf, ls, lb, rn, rf, rs, rb)
-	case int(LX.T_AND), int(LX.T_OR):
+	case LX.T_AND, LX.T_OR:
 		if lbok && rbok {
-			if op == int(LX.T_AND) {
+			if op == LX.T_AND {
 				return &PS.BoolLiteral{Val: lb.Val && rb.Val}
 			}
 			return &PS.BoolLiteral{Val: lb.Val || rb.Val}
@@ -461,15 +461,15 @@ func constantFoldBinary(op int, left, right PS.Expr) PS.Expr {
 	return nil
 }
 
-func foldIntInt(op int, a, b int64) PS.Expr {
+func foldIntInt(op LX.TokenType, a, b int64) PS.Expr {
 	switch op {
-	case int(LX.T_PLUS):
+	case LX.T_PLUS:
 		return &PS.NumberLiteral{Val: a + b}
-	case int(LX.T_MINUS):
+	case LX.T_MINUS:
 		return &PS.NumberLiteral{Val: a - b}
-	case int(LX.T_STAR):
+	case LX.T_STAR:
 		return &PS.NumberLiteral{Val: a * b}
-	case int(LX.T_SLASH):
+	case LX.T_SLASH:
 		if b == 0 {
 			return nil
 		}
@@ -478,30 +478,30 @@ func foldIntInt(op int, a, b int64) PS.Expr {
 	return nil
 }
 
-func foldFloatFloat(op int, a, b float64) PS.Expr {
+func foldFloatFloat(op LX.TokenType, a, b float64) PS.Expr {
 	switch op {
-	case int(LX.T_PLUS):
+	case LX.T_PLUS:
 		if ln, ok := intFromFloat(a); ok {
 			if rn, ok := intFromFloat(b); ok {
 				return &PS.NumberLiteral{Val: ln + rn}
 			}
 		}
 		return &PS.FloatLiteral{Val: a + b}
-	case int(LX.T_MINUS):
+	case LX.T_MINUS:
 		if ln, ok := intFromFloat(a); ok {
 			if rn, ok := intFromFloat(b); ok {
 				return &PS.NumberLiteral{Val: ln - rn}
 			}
 		}
 		return &PS.FloatLiteral{Val: a - b}
-	case int(LX.T_STAR):
+	case LX.T_STAR:
 		if ln, ok := intFromFloat(a); ok {
 			if rn, ok := intFromFloat(b); ok {
 				return &PS.NumberLiteral{Val: ln * rn}
 			}
 		}
 		return &PS.FloatLiteral{Val: a * b}
-	case int(LX.T_SLASH):
+	case LX.T_SLASH:
 		if b == 0 {
 			return nil
 		}
@@ -518,7 +518,7 @@ func intFromFloat(f float64) (int64, bool) {
 	return 0, false
 }
 
-func foldCompare(op int, left, right PS.Expr, ln *PS.NumberLiteral, lf *PS.FloatLiteral, ls *PS.StringLiteral, lb *PS.BoolLiteral, rn *PS.NumberLiteral, rf *PS.FloatLiteral, rs *PS.StringLiteral, rb *PS.BoolLiteral) PS.Expr {
+func foldCompare(op LX.TokenType, left, right PS.Expr, ln *PS.NumberLiteral, lf *PS.FloatLiteral, ls *PS.StringLiteral, lb *PS.BoolLiteral, rn *PS.NumberLiteral, rf *PS.FloatLiteral, rs *PS.StringLiteral, rb *PS.BoolLiteral) PS.Expr {
 	cmp := 0
 	switch {
 	case ln != nil && rn != nil:
@@ -551,17 +551,17 @@ func foldCompare(op int, left, right PS.Expr, ln *PS.NumberLiteral, lf *PS.Float
 		return nil
 	}
 	switch op {
-	case int(LX.T_EQ):
+	case LX.T_EQ:
 		return &PS.BoolLiteral{Val: cmp == 0}
-	case int(LX.T_NE):
+	case LX.T_NE:
 		return &PS.BoolLiteral{Val: cmp != 0}
-	case int(LX.T_LT):
+	case LX.T_LT:
 		return &PS.BoolLiteral{Val: cmp < 0}
-	case int(LX.T_LE):
+	case LX.T_LE:
 		return &PS.BoolLiteral{Val: cmp <= 0}
-	case int(LX.T_GT):
+	case LX.T_GT:
 		return &PS.BoolLiteral{Val: cmp > 0}
-	case int(LX.T_GE):
+	case LX.T_GE:
 		return &PS.BoolLiteral{Val: cmp >= 0}
 	}
 	_ = left
@@ -638,7 +638,7 @@ func SplitAnd(e PS.Expr) []PS.Expr {
 	if e == nil {
 		return nil
 	}
-	if b, ok := e.(*PS.BinaryExpr); ok && b.Op == int(LX.T_AND) {
+	if b, ok := e.(*PS.BinaryExpr); ok && b.Op == LX.T_AND {
 		left := SplitAnd(b.Left)
 		right := SplitAnd(b.Right)
 		return append(left, right...)
@@ -651,7 +651,7 @@ func SplitOr(e PS.Expr) []PS.Expr {
 	if e == nil {
 		return nil
 	}
-	if b, ok := e.(*PS.BinaryExpr); ok && b.Op == int(LX.T_OR) {
+	if b, ok := e.(*PS.BinaryExpr); ok && b.Op == LX.T_OR {
 		left := SplitOr(b.Left)
 		right := SplitOr(b.Right)
 		return append(left, right...)

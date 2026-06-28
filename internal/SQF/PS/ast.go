@@ -1,5 +1,7 @@
 package PS
 
+import "github.com/cyw0ng95/razordata/internal/SQF/LX"
+
 // Expr is the interface for all expression AST nodes.
 type Expr interface {
 	exprNode()
@@ -90,7 +92,7 @@ func (p *Param) exprNode() {}
 
 // BinaryExpr represents a binary operation (a OP b).
 type BinaryExpr struct {
-	Op     int
+	Op     LX.TokenType
 	Left   Expr
 	Right  Expr
 	Escape Expr // REQ000567: LIKE ... ESCAPE expr
@@ -100,7 +102,7 @@ func (b *BinaryExpr) exprNode() {}
 
 // UnaryExpr represents a unary operation (OP a).
 type UnaryExpr struct {
-	Op      int
+	Op      LX.TokenType
 	Operand Expr
 }
 
@@ -225,7 +227,7 @@ func (i *IntervalLiteral) exprNode() {}
 // ColDef represents a column definition in CREATE TABLE.
 type ColDef struct {
 	Name             string
-	Type             int
+	Type             LX.TokenType
 	Size             int
 	Precision        int // REQ000568: DECIMAL(P,S) precision
 	Scale            int // REQ000568: DECIMAL(P,S) scale
@@ -251,7 +253,7 @@ type ColDef struct {
 }
 
 // NewColDef creates a new column definition with the given name and type.
-func NewColDef(name string, typ int) ColDef {
+func NewColDef(name string, typ LX.TokenType) ColDef {
 	return ColDef{Name: name, Type: typ, Nullable: true}
 }
 

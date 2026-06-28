@@ -444,14 +444,14 @@ func batchToRows(batch *Batch) []Row {
 	}
 	rows := make([]Row, 0, batch.Size)
 	cols := make([]string, 0, len(batch.Cols))
-	types := make([]int, 0, len(batch.Cols))
+	types := make([]LX.TokenType, 0, len(batch.Cols))
 	for i := range batch.Cols {
 		if batch.Cols[i].Name != "" {
 			cols = append(cols, batch.Cols[i].Name)
 		} else {
 			cols = append(cols, "c"+itoaSimple(i))
 		}
-		types = append(types, int(batch.Cols[i].Type))
+		types = append(types, batch.Cols[i].Type)
 	}
 
 	for i := 0; i < batch.Size; i++ {

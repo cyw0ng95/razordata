@@ -167,15 +167,9 @@ func (f *VectorizedFilter) Close() error {
 	return nil
 }
 
-// SchemaFromRowSchema converts a Row's Types ([]int) to []LX.TokenType.
-// The PS package stores type as int; LX.TokenType is the same int
-// representation, so this is a zero-cost conversion.
-func SchemaFromRowSchema(types []int) []LX.TokenType {
-	out := make([]LX.TokenType, len(types))
-	for i, t := range types {
-		out[i] = LX.TokenType(t)
-	}
-	return out
+// SchemaFromRowSchema converts a Row's Types to []LX.TokenType.
+func SchemaFromRowSchema(types []LX.TokenType) []LX.TokenType {
+	return append([]LX.TokenType(nil), types...)
 }
 
 // errVectorizedNotImplemented is a placeholder for future

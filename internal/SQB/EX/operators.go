@@ -23,7 +23,7 @@ var ErrNoPKForStorage = errors.New("ex: cannot write to storage without a primar
 // rebuilding Cols, Types, and colIndex on every SeqScan.snapshot() call.
 type tableSchemaEntry struct {
 	cols     []string
-	types    []int
+	types    []LX.TokenType
 	colIndex map[string]int
 }
 
@@ -51,9 +51,9 @@ func getTableSchema(table string, src []Row) *tableSchemaEntry {
 		return entry
 	}
 	cols := append([]string(nil), src[0].Cols...)
-	var types []int
+	var types []LX.TokenType
 	if len(src[0].Types) > 0 {
-		types = append([]int(nil), src[0].Types...)
+		types = append([]LX.TokenType(nil), src[0].Types...)
 	}
 	colIndex := make(map[string]int, len(cols))
 	for i, c := range cols {
@@ -1122,7 +1122,7 @@ func pruneRowCols(row Row, usedCols []string, usedSet map[string]bool) Row {
 		return row
 	}
 	newCols := make([]string, 0, len(usedCols))
-	newTypes := make([]int, 0, len(usedCols))
+	newTypes := make([]LX.TokenType, 0, len(usedCols))
 	newData := make([]Value, 0, len(usedCols))
 	newIndex := make(map[string]int, len(usedCols)*2)
 	// Build colIndex from scratch if nil.

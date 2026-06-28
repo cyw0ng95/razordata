@@ -3,6 +3,8 @@ package sc
 import (
 	"errors"
 	"math"
+
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 var (
@@ -34,7 +36,7 @@ type ColumnDef struct {
 	PrimaryKey bool
 }
 
-type ColumnType uint8
+type ColumnType LX.TokenType
 
 const (
 	CTInt       ColumnType = 0

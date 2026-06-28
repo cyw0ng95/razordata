@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // TestFunctionRegistry_AllFunctionsRegistered verifies every
@@ -94,9 +95,9 @@ func TestFunctionRegistry_DispatchReachesImpl(t *testing.T) {
 // dispatch via the registry.
 func TestFunctionRegistry_AggregateDispatch(t *testing.T) {
 	rows := []Row{
-		{Cols: []string{"x"}, Types: []int{1}, Data: []Value{NewIntValue(10)}},
-		{Cols: []string{"x"}, Types: []int{1}, Data: []Value{NewIntValue(20)}},
-		{Cols: []string{"x"}, Types: []int{1}, Data: []Value{NewIntValue(30)}},
+		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(10)}},
+		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(20)}},
+		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(30)}},
 	}
 	t.Run("COUNT", func(t *testing.T) {
 		agg := &PS.AggregateFunc{Name: "COUNT", Arg: &PS.StarExpr{}}

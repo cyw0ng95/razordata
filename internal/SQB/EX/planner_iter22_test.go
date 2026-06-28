@@ -13,7 +13,7 @@ import (
 func TestPlanner_IndexedColumnEq(t *testing.T) {
 	// Build a SELECT WHERE id = 5
 	e := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.Ident{Name: "id"},
 		Right: &PS.NumberLiteral{Val: 5},
 	}
@@ -31,7 +31,7 @@ func TestPlanner_IndexedColumnEq(t *testing.T) {
 
 func TestPlanner_IndexedColumnEq_String(t *testing.T) {
 	e := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.Ident{Name: "email"},
 		Right: &PS.StringLiteral{Val: "alice@x.com"},
 	}
@@ -49,7 +49,7 @@ func TestPlanner_IndexedColumnEq_String(t *testing.T) {
 
 func TestPlanner_IndexedColumnEq_NotEquality(t *testing.T) {
 	e := &PS.BinaryExpr{
-		Op:    int(LX.T_GT),
+		Op:    LX.T_GT,
 		Left:  &PS.Ident{Name: "id"},
 		Right: &PS.NumberLiteral{Val: 5},
 	}
@@ -61,7 +61,7 @@ func TestPlanner_IndexedColumnEq_NotEquality(t *testing.T) {
 
 func TestPlanner_IndexedColumnEq_NotLiteral(t *testing.T) {
 	e := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.Ident{Name: "a"},
 		Right: &PS.Ident{Name: "b"},
 	}
@@ -73,7 +73,7 @@ func TestPlanner_IndexedColumnEq_NotLiteral(t *testing.T) {
 
 func TestPlanner_IndexedColumnEq_Reversed(t *testing.T) {
 	e := &PS.BinaryExpr{
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Left:  &PS.NumberLiteral{Val: 5},
 		Right: &PS.Ident{Name: "id"},
 	}

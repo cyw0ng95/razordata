@@ -80,7 +80,7 @@ func TestPickCheaperScan_NoIndex(t *testing.T) {
 	seq := NewSeqScan("t")
 	where := &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "a"},
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Right: &PS.NumberLiteral{Val: 1},
 	}
 	alt, ok := p.pickCheaperScan("t", where, seq)
@@ -107,7 +107,7 @@ func TestPickCheaperScan_WithIndex(t *testing.T) {
 	seq := NewSeqScan("t")
 	where := &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "a"},
-		Op:    int(LX.T_EQ),
+		Op:    LX.T_EQ,
 		Right: &PS.NumberLiteral{Val: 1},
 	}
 	alt, ok := p.pickCheaperScan("t", where, seq)
@@ -137,7 +137,7 @@ func TestPickCheaperScan_HighSelectivityRange(t *testing.T) {
 	seq := NewSeqScan("t")
 	where := &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "a"},
-		Op:    int(LX.T_GT),
+		Op:    LX.T_GT,
 		Right: &PS.NumberLiteral{Val: 5},
 	}
 	alt, ok := p.pickCheaperScan("t", where, seq)

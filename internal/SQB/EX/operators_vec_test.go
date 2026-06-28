@@ -31,7 +31,7 @@ func makeTestRows(n int) []Row {
 	for i := 0; i < n; i++ {
 		rows[i] = Row{
 			Cols:  []string{"id", "value"},
-			Types: []int{int(LX.T_INT_KW), int(LX.T_TEXT)},
+			Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT},
 			Data:  []Value{NewIntValue(int64(i)), NewTextValue("row")},
 		}
 	}
@@ -114,7 +114,7 @@ func TestVectorizedFilter_AllMatch(t *testing.T) {
 	// Filter: id >= 0 (all rows match)
 	filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
-		Op:    int(LX.T_GE),
+		Op:    LX.T_GE,
 		Right: &PS.NumberLiteral{Val: 0},
 	})
 	defer filter.Close()
@@ -147,7 +147,7 @@ func TestVectorizedFilter_NoMatch(t *testing.T) {
 	// Filter: id > 100 (no rows match)
 	filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
-		Op:    int(LX.T_GT),
+		Op:    LX.T_GT,
 		Right: &PS.NumberLiteral{Val: 100},
 	})
 	defer filter.Close()
@@ -172,7 +172,7 @@ func TestVectorizedFilter_PartialMatch(t *testing.T) {
 	// Filter: id < 5 (matches 0, 1, 2, 3, 4)
 	filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
-		Op:    int(LX.T_LT),
+		Op:    LX.T_LT,
 		Right: &PS.NumberLiteral{Val: 5},
 	})
 	defer filter.Close()
@@ -201,7 +201,7 @@ func TestVectorizedFilter_MultiBatch(t *testing.T) {
 	// Filter: id >= 1000
 	filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
-		Op:    int(LX.T_GE),
+		Op:    LX.T_GE,
 		Right: &PS.NumberLiteral{Val: 1000},
 	})
 	defer filter.Close()
@@ -226,7 +226,7 @@ func TestVectorizedFilter_MultiBatch(t *testing.T) {
 
 // TestSchemaFromRowSchema verifies the int -> TokenType conversion.
 func TestSchemaFromRowSchema(t *testing.T) {
-	types := []int{int(LX.T_INT_KW), int(LX.T_TEXT), int(LX.T_BOOL)}
+	types := []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_BOOL}
 	got := SchemaFromRowSchema(types)
 	if len(got) != 3 {
 		t.Fatalf("expected 3 types, got %d", len(got))
@@ -250,7 +250,7 @@ func BenchmarkVectorizedFilter(b *testing.B) {
 	types := []LX.TokenType{LX.T_INT_KW}
 	pred := &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
-		Op:    int(LX.T_GE),
+		Op:    LX.T_GE,
 		Right: &PS.NumberLiteral{Val: 512},
 	}
 
@@ -276,7 +276,7 @@ func BenchmarkRowFilter_Fallback(b *testing.B) {
 	rows := makeTestRows(1024)
 	pred := &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
-		Op:    int(LX.T_GE),
+		Op:    LX.T_GE,
 		Right: &PS.NumberLiteral{Val: 512},
 	}
 
@@ -298,7 +298,7 @@ func BenchmarkVectorizedFilter_MultiBatch(b *testing.B) {
 	for i := 0; i < n; i++ {
 		rows[i] = Row{
 			Cols:  []string{"id"},
-			Types: []int{int(LX.T_INT_KW)},
+			Types: []LX.TokenType{LX.T_INT_KW},
 			Data:  []Value{NewIntValue(int64(i))},
 		}
 	}
@@ -306,7 +306,7 @@ func BenchmarkVectorizedFilter_MultiBatch(b *testing.B) {
 	types := []LX.TokenType{LX.T_INT_KW}
 	pred := &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
-		Op:    int(LX.T_GE),
+		Op:    LX.T_GE,
 		Right: &PS.NumberLiteral{Val: 5000},
 	}
 
@@ -341,6 +341,6 @@ func BenchmarkEvalDirect_Int64GT(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = compareInt64ColLit(col, 512, int(LX.T_GT), n)
+		_ = compareInt64ColLit(col, 512, LX.T_GT, n)
 	}
 }

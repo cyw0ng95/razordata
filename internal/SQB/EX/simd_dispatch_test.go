@@ -43,7 +43,7 @@ func TestEvalBatch_8Wide(t *testing.T) {
 	b.SetColMap(map[string]int{"x": 0})
 
 	expr := &PS.BinaryExpr{
-		Op:    int(LX.T_LT),
+		Op:    LX.T_LT,
 		Left:  &PS.Ident{Name: "x"},
 		Right: &PS.NumberLiteral{Val: 50},
 	}
