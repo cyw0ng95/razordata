@@ -279,11 +279,6 @@ All scalar functions (aggregate, string, math, conditional, system) are executed
 
 ## Open Issues
 
-- **SQB/ST (Statistics) and SQB/QC (Query Cache) clusters are deferred.**
-  Blocked on import cycle: `SQB/EX` calls `SQB/QC.NewAdaptiveOp`, while
-  `SQB/QC` implements `SQB/EX.Operator`. Breaking the cycle requires moving
-  `Operator`/`Row` to a package both can import (e.g., `SQF/PL`). Tracked
-  as REQ000959/960.
 - **RANGE window frame spec:** ROWS implemented; RANGE deferred.
 - **Multi-column hash join keys:** Single key column only. Composite keys
   deferred (REQ000684).
