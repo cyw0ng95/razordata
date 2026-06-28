@@ -191,13 +191,21 @@ var keywords = map[string]TokenType{
 }
 
 type Lexer struct {
-	input     string
-	pos       int
-	line      int
-	col       int
-	savedPos  int
-	savedLine int
-	savedCol  int
+	input string
+	pos   int
+	line  int
+	col   int
+	// REQ001141: token-start position snapshot. captureStart() is
+	// called once per Next(); all scanner functions read these
+	// fields instead of stashing their own local copies.
+	startLine int
+	startCol  int
+	// For Peek()/Peek2() save/restore.
+	savedPos        int
+	savedLine       int
+	savedCol        int
+	savedStartLine  int
+	savedStartCol   int
 }
 
 func NewLexer(input string) *Lexer {
@@ -207,6 +215,14 @@ func NewLexer(input string) *Lexer {
 		line:  1,
 		col:   1,
 	}
+}
+
+// REQ001141: captureStart snapshots line/col at the current
+// cursor so scanner functions can build their Token with a
+// single field read instead of two locals.
+func (l *Lexer) captureStart() {
+	l.startLine = l.line
+	l.startCol = l.col
 }
 
 func (l *Lexer) peek() byte {
@@ -220,12 +236,16 @@ func (l *Lexer) Peek() Token {
 	l.savedPos = l.pos
 	l.savedLine = l.line
 	l.savedCol = l.col
+	l.savedStartLine = l.startLine
+	l.savedStartCol = l.startCol
 
 	token := l.Next()
 
 	l.pos = l.savedPos
 	l.line = l.savedLine
 	l.col = l.savedCol
+	l.startLine = l.savedStartLine
+	l.startCol = l.savedStartCol
 
 	return token
 }
@@ -237,6 +257,7 @@ func (l *Lexer) Peek() Token {
 func (l *Lexer) Peek2() Token {
 	// Save full state.
 	savedPos, savedLine, savedCol := l.pos, l.line, l.col
+	savedSL, savedSC := l.startLine, l.startCol
 	first := l.Peek()
 	if first.Type == T_EOF {
 		return first
@@ -247,6 +268,7 @@ func (l *Lexer) Peek2() Token {
 	second := l.Peek()
 	// Restore.
 	l.pos, l.line, l.col = savedPos, savedLine, savedCol
+	l.startLine, l.startCol = savedSL, savedSC
 	return second
 }
 
@@ -254,6 +276,12 @@ func (l *Lexer) Input() string {
 	return l.input
 }
 
+// REQ001141: advance() bookkeeping is unchanged from baseline;
+// the line/col updates per byte are required to keep Token.Line
+// /Token.Col correct (public API + SyntaxError reporting).
+// The savings documented in REQ001141 come from the
+// captureStart() refactor below: each scanner drops 2 local
+// reads and reuses the snapshotted startLine/startCol.
 func (l *Lexer) advance() byte {
 	if l.pos >= len(l.input) {
 		return 0
@@ -276,6 +304,8 @@ func (l *Lexer) Next() Token {
 		return Token{Type: T_EOF, Lexeme: "", Line: l.line, Col: l.col}
 	}
 
+	// REQ001141: snapshot line/col once for the upcoming token.
+	l.captureStart()
 	c := l.peek()
 
 	if c == '\'' {
@@ -335,8 +365,9 @@ func (l *Lexer) skipWhitespaceAndComments() {
 }
 
 func (l *Lexer) scanString() Token {
-	startLine := l.line
-	startCol := l.col
+	// REQ001141: use the snapshot captured by Next().
+	startLine := l.startLine
+	startCol := l.startCol
 
 	l.advance()
 
@@ -377,8 +408,9 @@ func (l *Lexer) scanString() Token {
 }
 
 func (l *Lexer) scanIdent() Token {
-	startLine := l.line
-	startCol := l.col
+	// REQ001141: use the snapshot captured by Next().
+	startLine := l.startLine
+	startCol := l.startCol
 
 	// REQ001010: scan start position, slice directly from input string.
 	start := l.pos
@@ -400,8 +432,9 @@ func (l *Lexer) scanIdent() Token {
 }
 
 func (l *Lexer) scanNumber() Token {
-	startLine := l.line
-	startCol := l.col
+	// REQ001141: use the snapshot captured by Next().
+	startLine := l.startLine
+	startCol := l.startCol
 
 	var sb strings.Builder
 	hasDot := false
@@ -456,8 +489,9 @@ func ParseIntLiteral(s string) (int64, error) {
 }
 
 func (l *Lexer) scanOperator() Token {
-	startLine := l.line
-	startCol := l.col
+	// REQ001141: use the snapshot captured by Next().
+	startLine := l.startLine
+	startCol := l.startCol
 
 	c := l.advance()
 
