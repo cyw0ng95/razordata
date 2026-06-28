@@ -310,33 +310,20 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		}
 	}
 
-	// REQ001056: cap totalMatches based on joinBufferSize to prevent
-	// OOM from dataBuf pre-allocation (e.g. cross-join with 100K
-	// rows each side produces 10B matches → 80GB dataBuf).
-	// Each Value is ~24 bytes; each match row has dataPerRow Values.
-	// Compute dataPerRow before the cap since the cap depends on it.
+	// REQ001056+REQ0011XX: defensive cap on dataBuf pre-allocation.
+	// The joinBufferSize-based cap was removed because it reduces the
+	// pre-allocation without stopping the match-building loop — the
+	// actual iteration writes past the capped capacity, causing a
+	// slice-bounds panic at dataBuf[:off+dataPerRow].
+	// 
+	// The hard cap (maxDataBufValues) errors out early when matches
+	// are truly unbounded (cross-join with no predicates). The match-
+	// building loop below has its own guard that breaks when the cap
+	// is reached, ensuring the loop always stays within bounds.
 	var dataPerRow int
 	if len(j.leftRows) > 0 && rightCount > 0 {
 		dataPerRow = len(j.leftRows[0].Cols) + len(firstRightCols)
 	}
-	if j.joinBufferSize > 0 && totalMatches > 0 && dataPerRow > 0 {
-		maxValues := j.joinBufferSize / 24
-		maxMatches := int(maxValues / int64(dataPerRow))
-		if maxMatches < 1 {
-			maxMatches = 1
-		}
-		if totalMatches > maxMatches {
-			totalMatches = maxMatches
-		}
-	}
-
-	// REQ0011XX: defensive cap on dataBuf pre-allocation regardless of
-	// joinBufferSize. Even without an explicit memory budget, a 5-table
-	// cross-join (100^5 = 10^10 matches × 16 Values/row × 24 bytes/Value
-	// = 3.8 TB) is pathologically impossible to materialize. Cap the
-	// dataBuf to a hard ceiling so a planning miss cannot OOM the
-	// process. When the cap is hit, emit a clear error so the planner
-	// can fall back to NestedLoopJoin streaming next iteration.
 	const maxDataBufValues = 64 * 1024 * 1024 // 64M Values ≈ 1.5 GB
 	if dataPerRow > 0 {
 		maxRowsByDataBuf := maxDataBufValues / dataPerRow
@@ -353,26 +340,47 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		return nil
 	}
 	j.dataPerRow = dataPerRow
-	// REQ001090: dataBuf pre-allocates totalMatches*dataPerRow
-	// Values. The output Row.Data sub-slices point INTO this
-	// buffer (line 321: j.dataBuf[off:off+dataPerRow:off+dataPerRow])
-	// so the cap MUST be exact — if we cap lower and append grows,
-	// append reallocates the backing array and the previously
-	// emitted Row.Data slices become dangling pointers. The original
-	// 1GiB MaxResultRows cap at the driver level is the right
-	// place to bound memory for this operator.
+	// REQ001090+REQ001110: dataBuf pre-allocates totalMatches*dataPerRow
+	// Values. The output Row.Data sub-slices point INTO this buffer
+	// (line 376: j.dataBuf[off:off+dataPerRow:off+dataPerRow]) so the
+	// cap MUST be exact — if we cap lower and append grows, append
+	// reallocates the backing array and the previously emitted
+	// Row.Data slices become dangling pointers. The match-building
+	// loop below guards against overflow with a bufFull flag that
+	// stops iteration when dataBuf reaches capacity.
+	// 
+	// The joinBufferSize-based pre-allocation cap (REQ001056) was
+	// removed because it reduced the pre-allocation without stopping
+	// the loop — the actual iteration wrote past the capped capacity,
+	// causing a slice-bounds panic. The hard cap (maxDataBufValues)
+	// errors out early for truly unbounded cross-joins.
+	// Build matches. Guard against dataBuf overflow: when the iteration
+	// produces more matches than the capped dataBuf capacity (possible
+	// when the joinBufferSize cap was removed but the hard cap is not
+	// hit), stop early to prevent a slice-bounds panic.
 	j.dataBuf = make([]Value, 0, totalMatches*dataPerRow)
 	j.matches = make([]Row, 0, totalMatches)
 	j.matchPos = 0
 
 	// Build matches.
+	bufFull := false
 	for i := range j.leftRows {
+		if bufFull {
+			break
+		}
 		l := leftInfos[i]
 		bucket := j.buckets[l.idx]
 		for k := range bucket.hashes {
+			if bufFull {
+				break
+			}
 			if bucket.hashes[k] == l.hash && valuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys, j.keyBuf)) {
 				right := bucket.rightRows[k]
 				off := len(j.dataBuf)
+				if off+dataPerRow > cap(j.dataBuf) {
+					bufFull = true
+					break
+				}
 				j.dataBuf = j.dataBuf[:off+dataPerRow]
 				copy(j.dataBuf[off:], j.leftRows[i].Data)
 				copy(j.dataBuf[off+len(j.leftRows[i].Data):], right.Data)
