@@ -233,7 +233,14 @@ const maxPlanCacheSize = 1024
 type Planner struct {
 	mu      sync.Mutex
 	memo    map[string]*plan
-	catalog map[string]*tableInfo
+	// REQ000989: memoOrder tracks insertion order for O(1) LRU eviction.
+	// A ring buffer: oldest entry at memoOrder[0], newest at the end.
+	// When the cache is full, memoOrder[0] is evicted and the head pointer
+	// advances. This replaces the O(n) random scan on every cache insert.
+	memoOrder []string
+	memoHead  int // index of oldest entry in memoOrder
+	memoSize  int // number of valid entries in memoOrder
+	catalog   map[string]*tableInfo
 	store   Store
 	// statsCatalog provides access to column statistics for
 	// histogram-based selectivity estimation. REQ000085.
@@ -259,9 +266,10 @@ type tableInfo struct {
 
 func NewPlanner() *Planner {
 	return &Planner{
-		memo:    make(map[string]*plan, maxPlanCacheSize),
-		catalog: make(map[string]*tableInfo),
-	}
+		memo:      make(map[string]*plan, maxPlanCacheSize),
+		memoOrder: make([]string, maxPlanCacheSize),
+		catalog:   make(map[string]*tableInfo),
+}
 }
 
 // SetPool attaches a WorkerPool to the planner for parallel operator
@@ -285,6 +293,9 @@ func (p *Planner) SetMaxMemoryPerQuery(v int64) { p.maxMemoryPerQuery = v }
 func (p *Planner) InvalidateCache() {
 	p.mu.Lock()
 	p.memo = make(map[string]*plan, maxPlanCacheSize)
+	p.memoOrder = make([]string, maxPlanCacheSize)
+	p.memoHead = 0
+	p.memoSize = 0
 	p.mu.Unlock()
 }
 
@@ -292,14 +303,15 @@ func (p *Planner) InvalidateCache() {
 // through store. The store may be nil to fall back to in-memory mode.
 func NewPlannerWithStore(store Store) *Planner {
 	return &Planner{
-		memo:    make(map[string]*plan),
-		catalog: make(map[string]*tableInfo),
-		store:   store,
+		memo:      make(map[string]*plan),
+		memoOrder: make([]string, maxPlanCacheSize),
+		catalog:   make(map[string]*tableInfo),
+		store:     store,
 	}
 }
 
 // NewPlannerWithStats returns a planner with store and stats catalog
-// access for histogram-based selectivity estimation. REQ000085.
+// wired. Used by SYS.Open when a stats catalog is available.
 func NewPlannerWithStats(store Store, statsCatalog StatsCatalog) *Planner {
 	return &Planner{
 		memo:         make(map[string]*plan),
@@ -446,21 +458,16 @@ func (p *Planner) Plan(stmt PS.Stmt) (*plan, error) {
 
 	p.mu.Lock()
 	p.memo[key] = result
-	// REQ000846: bound the memo size. When the cache is full,
-	// evict the oldest entry. With maxPlanCacheSize=1024 and the
-	// SLT test's 48,300 unique queries, this keeps the cache
-	// bounded at ~1024 entries instead of growing unboundedly.
-	if len(p.memo) > maxPlanCacheSize {
-		// Find and delete one entry (deterministic but slow).
-		// For 48,300 queries the insertion cost is O(n) per insert,
-		// so the cache size limit prevents the cache from dominating
-		// query planning time.
-		for k := range p.memo {
-			if k != key {
-				delete(p.memo, k)
-				break
-			}
-		}
+	// REQ000989: LRU ring-buffer eviction. When the cache exceeds
+	// maxPlanCacheSize, evict the oldest entry (memoOrder[memoHead])
+	// and advance the head pointer. O(1) per eviction vs O(n) scan.
+	p.memoOrder[(p.memoHead+p.memoSize)%maxPlanCacheSize] = key
+	p.memoSize++
+	if p.memoSize > maxPlanCacheSize {
+		oldest := p.memoOrder[p.memoHead]
+		delete(p.memo, oldest)
+		p.memoHead = (p.memoHead + 1) % maxPlanCacheSize
+		p.memoSize--
 	}
 	p.mu.Unlock()
 
