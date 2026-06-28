@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 var ErrUnexpectedChar = errors.New("lx: unexpected character")
@@ -246,29 +247,58 @@ func (l *Lexer) peek() byte {
 // Callers that go through Next()/Peek()/Peek2() never see the
 // buffer state; scan() is the single source of truth for what
 // the next token at the current cursor is.
+//
+// REQ001146 forward-progress guarantee: scan() must always
+// advance `l.pos` by at least 1 byte when returning a non-EOF
+// token. The dispatch below verifies this invariant — if a
+// chosen scanner returns without consuming the lead byte, we
+// fall through to scanOperator which emits T_ERROR and advances
+// one byte. Without this guard, hostile input (e.g. bare UTF-8
+// continuation bytes that scanIdent rejects) causes infinite
+// loops.
 func (l *Lexer) scan() Token {
 	l.skipWhitespaceAndComments()
 	if l.pos >= len(l.input) {
 		return Token{Type: T_EOF, Lexeme: "", Line: l.line, Col: l.col}
 	}
 	l.captureStart()
+	startPos := l.pos
 	c := l.peek()
 	if c == '\'' {
 		return l.scanString()
 	}
 	if c < 0x80 {
 		if isASCIILetter(c) {
-			return l.scanIdent()
+			tok := l.scanIdent()
+			if l.pos == startPos {
+				return l.scanOperator()
+			}
+			return tok
 		}
 		if isASCIIDigit(c) {
-			return l.scanNumber()
+			tok := l.scanNumber()
+			if l.pos == startPos {
+				return l.scanOperator()
+			}
+			return tok
 		}
 	} else {
-		if unicode.IsLetter(rune(c)) || c == '_' {
-			return l.scanIdent()
+		// REQ001146: only treat the byte as an identifier start
+		// when the full rune is a letter/digit/underscore.
+		r, w := utf8.DecodeRuneInString(l.input[l.pos:])
+		if w >= 2 && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_') {
+			tok := l.scanIdent()
+			if l.pos == startPos {
+				return l.scanOperator()
+			}
+			return tok
 		}
-		if unicode.IsDigit(rune(c)) {
-			return l.scanNumber()
+		if w >= 2 && unicode.IsDigit(r) {
+			tok := l.scanNumber()
+			if l.pos == startPos {
+				return l.scanOperator()
+			}
+			return tok
 		}
 	}
 	return l.scanOperator()
@@ -348,6 +378,26 @@ func (l *Lexer) advance() byte {
 		l.col++
 	}
 	return c
+}
+
+// REQ001146: advanceRune decodes one full rune at the current
+// cursor and advances by its UTF-8 width. Newline handling still
+// runs once per byte (a multi-byte rune cannot contain '\n' in
+// valid UTF-8). Returns the decoded rune and its byte width, or
+// (utf8.RuneError, 1) on invalid input — degenerate bytes are
+// consumed one at a time so the lexer makes forward progress.
+func (l *Lexer) advanceRune() (rune, int) {
+	if l.pos >= len(l.input) {
+		return 0, 0
+	}
+	r, w := utf8.DecodeRuneInString(l.input[l.pos:])
+	if w == 0 {
+		return 0, 0
+	}
+	for i := 0; i < w; i++ {
+		l.advance()
+	}
+	return r, w
 }
 
 // REQ001144: ASCII fast-path helpers. SQL keywords, identifiers,
@@ -472,20 +522,42 @@ func (l *Lexer) scanIdent() Token {
 
 	// REQ001010: scan start position, slice directly from input string.
 	start := l.pos
-	for {
-		c := l.peek()
-		if c == 0 {
-			break
-		}
+	for l.pos < len(l.input) {
+		c := l.input[l.pos]
 		// REQ001144: ASCII fast-path for the inner ident loop.
 		if c < 0x80 {
 			if !isASCIILetterDigit(c) {
 				break
 			}
-		} else if !unicode.IsLetter(rune(c)) && !unicode.IsDigit(rune(c)) && c != '_' {
+			l.advance()
+			continue
+		}
+		// REQ001146: non-ASCII byte must form a complete UTF-8
+		// rune. Decode the rune first; only consume its full
+		// width when it is a letter/digit/underscore. Continuation
+		// bytes (0x80..0xBF) are not valid stand-alone runes
+		// and must terminate the ident without advancing —
+		// otherwise we would orphan them as degenerate bytes.
+		r, w := utf8.DecodeRuneInString(l.input[l.pos:])
+		if w < 2 {
+			// REQ001146 fallback: invalid-UTF-8 lead byte or
+			// stray continuation byte. The pre-fix lexer
+			// accepted these as single-char idents via
+			// unicode.IsLetter(rune(c)); preserve that
+			// behaviour when the byte is a letter/digit/_
+			// and break otherwise. scan() guarantees forward
+			// progress by routing non-ident bytes through
+			// scanOperator which emits T_ERROR + advance.
+			if !unicode.IsLetter(rune(c)) && !unicode.IsDigit(rune(c)) && c != '_' {
+				break
+			}
+			l.advance()
+			continue
+		}
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
 			break
 		}
-		l.advance()
+		l.advanceRune()
 	}
 
 	ident := l.input[start:l.pos]
@@ -508,18 +580,32 @@ func (l *Lexer) scanNumber() Token {
 	// and the .String() copy.
 	start := l.pos
 	hasDot := false
-	for {
-		c := l.peek()
-		if c == 0 {
-			break
-		}
+	for l.pos < len(l.input) {
+		c := l.input[l.pos]
 		// REQ001144: ASCII fast-path for the inner number loop.
 		if c < 0x80 {
 			if !isASCIIDigit(c) && c != '.' {
 				break
 			}
-		} else if !unicode.IsDigit(rune(c)) && c != '.' {
-			break
+		} else {
+			// REQ001146: multi-byte non-ASCII digit runes (rare
+			// but legal) must be consumed in full.
+			r, w := utf8.DecodeRuneInString(l.input[l.pos:])
+			if w == 0 || (!unicode.IsDigit(r) && r != '.') {
+				break
+			}
+			// Reject non-ASCII dots — only ASCII '.' is the
+			// decimal separator.
+			if r == '.' {
+				if hasDot {
+					break
+				}
+				hasDot = true
+				l.advanceRune()
+				continue
+			}
+			l.advanceRune()
+			continue
 		}
 		if c == '.' {
 			if hasDot {
