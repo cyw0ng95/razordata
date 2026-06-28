@@ -287,7 +287,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			return found, err
 		}
 	} else {
-	lookupFn = func(cols []int, vals []any) (bool, error) { return false, nil }
+		lookupFn = func(cols []int, vals []any) (bool, error) { return false, nil }
 	}
 	// REQ001030: pre-compute colIdx once for all rows.
 	colIdx := make([]int, len(i.cols))
@@ -1029,6 +1029,165 @@ type CreateTable struct {
 	selectPlan Operator // non-nil for CREATE TABLE AS SELECT (REQ000520)
 }
 
+// registerTableSchema registers a table in the in-memory tables and
+// schemas maps. Returns the column metadata extracted from the AST.
+// REQ000982: extracted from CreateTable.Next.
+func registerTableSchema(stmt *PS.CreateTable) ([]string, []bool, []PS.Expr, []int, []int, []int, error) {
+	tablesMu.Lock()
+	defer tablesMu.Unlock()
+	if _, ok := tables[stmt.Name]; ok {
+		return nil, nil, nil, nil, nil, nil, errTableExists
+	}
+	cols := make([]string, len(stmt.Cols))
+	nullable := make([]bool, len(stmt.Cols))
+	defaults := make([]PS.Expr, len(stmt.Cols))
+	colTypes := make([]int, len(stmt.Cols))
+	precisions := make([]int, len(stmt.Cols))
+	scales := make([]int, len(stmt.Cols))
+	for i, col := range stmt.Cols {
+		cols[i] = col.Name
+		nullable[i] = col.Nullable
+		defaults[i] = col.Default
+		colTypes[i] = col.Type
+		precisions[i] = col.Precision
+		scales[i] = col.Scale
+	}
+	tables[stmt.Name] = []Row{}
+	schemas[stmt.Name] = cols
+	return cols, nullable, defaults, colTypes, precisions, scales, nil
+}
+
+// buildUniqueConstraints builds a list of UniqueKey constraints from
+// column-level ColDef.Unique and table-level UniqueConstraints.
+// REQ000982: extracted from CreateTable.Next.
+func buildUniqueConstraints(cols []string, stmt *PS.CreateTable) []UniqueKey {
+	var unique []UniqueKey
+	colIndex := make(map[string]int, len(cols))
+	for i, n := range cols {
+		colIndex[n] = i
+	}
+	for _, col := range stmt.Cols {
+		if col.Unique {
+			if idx, ok := colIndex[col.Name]; ok {
+				unique = append(unique, UniqueKey{Cols: []int{idx}})
+			}
+		}
+	}
+	for _, uk := range stmt.UniqueConstraints {
+		idxs := make([]int, 0, len(uk.Cols))
+		allFound := true
+		for _, name := range uk.Cols {
+			idx, ok := colIndex[name]
+			if !ok {
+				allFound = false
+				break
+			}
+			idxs = append(idxs, idx)
+		}
+		if allFound && len(idxs) > 0 {
+			unique = append(unique, UniqueKey{Cols: idxs})
+		}
+	}
+	return unique
+}
+
+// buildFKConstraints extracts ForeignKeyConstraint from column-level
+// and table-level foreign key definitions.
+// REQ000982: extracted from CreateTable.Next.
+func buildFKConstraints(stmt *PS.CreateTable) []ForeignKeyConstraint {
+	var fks []ForeignKeyConstraint
+	for _, col := range stmt.Cols {
+		if col.ReferencesTable != "" {
+			fk := ForeignKeyConstraint{
+				Columns:    []string{col.Name},
+				RefTable:   col.ReferencesTable,
+				RefColumns: []string{col.ReferencesColumn},
+				OnDelete:   col.OnDelete,
+				OnUpdate:   col.OnUpdate,
+			}
+			if fk.OnDelete == "" {
+				fk.OnDelete = "NO ACTION"
+			}
+			if fk.OnUpdate == "" {
+				fk.OnUpdate = "NO ACTION"
+			}
+			fks = append(fks, fk)
+		}
+	}
+	for _, fkAST := range stmt.ForeignKeys {
+		fk := ForeignKeyConstraint{
+			Columns:    fkAST.Columns,
+			RefTable:   fkAST.RefTable,
+			RefColumns: fkAST.RefColumns,
+			OnDelete:   fkAST.OnDelete,
+			OnUpdate:   fkAST.OnUpdate,
+		}
+		if fk.OnDelete == "" {
+			fk.OnDelete = "NO ACTION"
+		}
+		if fk.OnUpdate == "" {
+			fk.OnUpdate = "NO ACTION"
+		}
+		fks = append(fks, fk)
+	}
+	return fks
+}
+
+// buildCheckConstraints captures CHECK constraint expressions from
+// column definitions.
+// REQ000982: extracted from CreateTable.Next.
+func buildCheckConstraints(stmt *PS.CreateTable) []PS.Expr {
+	checks := make([]PS.Expr, 0, len(stmt.Cols))
+	for _, col := range stmt.Cols {
+		checks = append(checks, col.Check)
+	}
+	return checks
+}
+
+// buildGeneratedColumns captures generated column expressions so the
+// INSERT/UPDATE path can materialize them.
+// REQ000982: extracted from CreateTable.Next.
+func buildGeneratedColumns(stmt *PS.CreateTable) []PS.Expr {
+	generated := make([]PS.Expr, len(stmt.Cols))
+	for i, col := range stmt.Cols {
+		if !col.Virtual && col.Generated != nil {
+			generated[i] = col.Generated
+		}
+	}
+	return generated
+}
+
+// persistToCatalog persists a CREATE TABLE to the system catalog.
+// The catalog write is best-effort: a failure does not roll back
+// the in-memory registration.
+// REQ000982: extracted from CreateTable.Next.
+func persistToCatalog(stmt *PS.CreateTable, cols []string, nullable []bool, colTypes []int, unique []UniqueKey, pk string) {
+	cat := Catalog()
+	if cat == nil {
+		return
+	}
+	catCols := make([]ls.CatalogColumn, len(cols))
+	for i, n := range cols {
+		catCols[i] = ls.CatalogColumn{Name: n, Type: colTypes[i], Nullable: nullable[i]}
+	}
+	catUnique := make([]ls.CatalogUnique, len(unique))
+	for i, u := range unique {
+		catUnique[i] = ls.CatalogUnique{Cols: append([]int(nil), u.Cols...)}
+	}
+	id, _ := tableIDFor(stmt.Name)
+	if id == 0 {
+		id, _ = cat.NextID()
+	}
+	_ = cat.Put(ls.CatalogEntry{
+		TableID:    id,
+		Name:       stmt.Name,
+		Columns:    catCols,
+		PrimaryKey: pk,
+		Unique:     catUnique,
+		CreateSQL:  buildCreateSQL(stmt),
+	})
+}
+
 func NewCreateTable(stmt *PS.CreateTable) *CreateTable {
 	return &CreateTable{stmt: stmt}
 }
@@ -1058,28 +1217,12 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 		return c.nextAsSelect(ctx)
 	}
 
-	tablesMu.Lock()
-	if _, ok := tables[c.stmt.Name]; ok {
-		tablesMu.Unlock()
-		return Row{}, errTableExists
+	// Extract column metadata and register the table.
+	cols, nullable, defaults, colTypes, precisions, scales, err := registerTableSchema(c.stmt)
+	if err != nil {
+		return Row{}, err
 	}
-	cols := make([]string, len(c.stmt.Cols))
-	nullable := make([]bool, len(c.stmt.Cols))
-	defaults := make([]PS.Expr, len(c.stmt.Cols))
-	colTypes := make([]int, len(c.stmt.Cols))
-	precisions := make([]int, len(c.stmt.Cols))
-	scales := make([]int, len(c.stmt.Cols))
-	for i, col := range c.stmt.Cols {
-		cols[i] = col.Name
-		nullable[i] = col.Nullable
-		defaults[i] = col.Default
-		colTypes[i] = col.Type
-		precisions[i] = col.Precision
-		scales[i] = col.Scale
-	}
-	tables[c.stmt.Name] = []Row{}
-	schemas[c.stmt.Name] = cols
-	tablesMu.Unlock()
+
 	var pk string
 	if c.stmt.PK != nil {
 		pk = *c.stmt.PK
@@ -1093,86 +1236,12 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 			}
 		}
 	}
-	// Build unique constraints: column-level ColDef.Unique + table-level
-	// UniqueConstraints from the AST. Resolve names to indices.
-	var unique []UniqueKey
-	colIndex := make(map[string]int, len(cols))
-	for i, n := range cols {
-		colIndex[n] = i
-	}
-	for _, col := range c.stmt.Cols {
-		if col.Unique {
-			if idx, ok := colIndex[col.Name]; ok {
-				unique = append(unique, UniqueKey{Cols: []int{idx}})
-			}
-		}
-	}
-	for _, uk := range c.stmt.UniqueConstraints {
-		idxs := make([]int, 0, len(uk.Cols))
-		allFound := true
-		for _, name := range uk.Cols {
-			idx, ok := colIndex[name]
-			if !ok {
-				allFound = false
-				break
-			}
-			idxs = append(idxs, idx)
-		}
-		if allFound && len(idxs) > 0 {
-			unique = append(unique, UniqueKey{Cols: idxs})
-		}
-	}
-	// REQ000126: extract FK constraints from column-level and table-level
-	var fks []ForeignKeyConstraint
-	for _, col := range c.stmt.Cols {
-		if col.ReferencesTable != "" {
-			fk := ForeignKeyConstraint{
-				Columns:    []string{col.Name},
-				RefTable:   col.ReferencesTable,
-				RefColumns: []string{col.ReferencesColumn},
-				OnDelete:   col.OnDelete,
-				OnUpdate:   col.OnUpdate,
-			}
-			if fk.OnDelete == "" {
-				fk.OnDelete = "NO ACTION"
-			}
-			if fk.OnUpdate == "" {
-				fk.OnUpdate = "NO ACTION"
-			}
-			fks = append(fks, fk)
-		}
-	}
-	for _, fkAST := range c.stmt.ForeignKeys {
-		fk := ForeignKeyConstraint{
-			Columns:    fkAST.Columns,
-			RefTable:   fkAST.RefTable,
-			RefColumns: fkAST.RefColumns,
-			OnDelete:   fkAST.OnDelete,
-			OnUpdate:   fkAST.OnUpdate,
-		}
-		if fk.OnDelete == "" {
-			fk.OnDelete = "NO ACTION"
-		}
-		if fk.OnUpdate == "" {
-			fk.OnUpdate = "NO ACTION"
-		}
-		fks = append(fks, fk)
-	}
-	// REQ000248/249: capture generated column expressions so the
-	// INSERT/UPDATE path can materialize them.
-	generated := make([]PS.Expr, len(c.stmt.Cols))
-	for i, col := range c.stmt.Cols {
-		if !col.Virtual && col.Generated != nil {
-			generated[i] = col.Generated
-		}
-	}
 
-	// REQ000484: capture CHECK constraint expressions so
-	// validateCheck can enforce them on INSERT/UPDATE.
-	checks := make([]PS.Expr, 0, len(c.stmt.Cols))
-	for _, col := range c.stmt.Cols {
-		checks = append(checks, col.Check)
-	}
+	// Build constraints.
+	unique := buildUniqueConstraints(cols, c.stmt)
+	fks := buildFKConstraints(c.stmt)
+	generated := buildGeneratedColumns(c.stmt)
+	checks := buildCheckConstraints(c.stmt)
 
 	id := registerStoreSchemaWithFK(c.stmt.Name, cols, nullable, defaults, unique, pk, fks)
 	// R16-3: record each column's SQL type token alongside the
@@ -1193,38 +1262,14 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 			ss.hiddenPK = true
 		}
 	}
+	_ = ctx
 	storeMu.Unlock()
 
 	// Persist to the system catalog if one is wired in (iter-12).
-	// The catalog write is best-effort: a failure does not roll
-	// back the in-memory registration because the user-visible
-	// operation has already succeeded. A subsequent Open will
-	// re-replay the catalog and re-register the schema.
-	if cat := Catalog(); cat != nil {
-		catCols := make([]ls.CatalogColumn, len(cols))
-		for i, n := range cols {
-			catCols[i] = ls.CatalogColumn{Name: n, Type: colTypes[i], Nullable: nullable[i]}
-		}
-		catUnique := make([]ls.CatalogUnique, len(unique))
-		for i, u := range unique {
-			catUnique[i] = ls.CatalogUnique{Cols: append([]int(nil), u.Cols...)}
-		}
-		id, _ := tableIDFor(c.stmt.Name)
-		if id == 0 {
-			id, _ = cat.NextID()
-		}
-		_ = cat.Put(ls.CatalogEntry{
-			TableID:    id,
-			Name:       c.stmt.Name,
-			Columns:    catCols,
-			PrimaryKey: pk,
-			Unique:     catUnique,
-			CreateSQL:  buildCreateSQL(c.stmt),
-		})
-	}
+	persistToCatalog(c.stmt, cols, nullable, colTypes, unique, pk)
+
 	return Row{}, ErrNoRows
 }
-
 func (c *CreateTable) Close() error {
 	if c.selectPlan != nil {
 		return c.selectPlan.Close()

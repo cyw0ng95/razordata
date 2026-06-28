@@ -231,8 +231,8 @@ const HashAggregateThreshold = 1000
 const maxPlanCacheSize = 1024
 
 type Planner struct {
-	mu      sync.Mutex
-	memo    map[string]*plan
+	mu   sync.Mutex
+	memo map[string]*plan
 	// REQ000989: memoOrder tracks insertion order for O(1) LRU eviction.
 	// A ring buffer: oldest entry at memoOrder[0], newest at the end.
 	// When the cache is full, memoOrder[0] is evicted and the head pointer
@@ -241,7 +241,7 @@ type Planner struct {
 	memoHead  int // index of oldest entry in memoOrder
 	memoSize  int // number of valid entries in memoOrder
 	catalog   map[string]*tableInfo
-	store   Store
+	store     Store
 	// statsCatalog provides access to column statistics for
 	// histogram-based selectivity estimation. REQ000085.
 	statsCatalog StatsCatalog
@@ -269,7 +269,7 @@ func NewPlanner() *Planner {
 		memo:      make(map[string]*plan, maxPlanCacheSize),
 		memoOrder: make([]string, maxPlanCacheSize),
 		catalog:   make(map[string]*tableInfo),
-}
+	}
 }
 
 // SetPool attaches a WorkerPool to the planner for parallel operator
@@ -1561,56 +1561,7 @@ func typesOf(op Operator) []int {
 func (p *Planner) planSelect(s *PS.Select) Operator {
 	// REQ000241: view resolution — expand view to underlying SELECT
 	if viewSel := LookupView(s.From); viewSel != nil {
-		// REQ000702: When the outer query references view column
-		// aliases (e.g., SELECT doubled FROM v), we must wrap the
-		// view as a subquery so the outer query projects over the
-		// view's output columns.
-		if len(s.Cols) > 0 {
-			viewAliases := extractViewAliases(viewSel.Cols)
-			needsWrap := false
-			for _, col := range s.Cols {
-				if id, ok := col.(*PS.Ident); ok {
-					if viewAliases[id.Name] {
-						needsWrap = true
-						break
-					}
-				}
-			}
-			if needsWrap {
-				// Plan the view's SELECT to get the underlying scan
-				innerOp := p.planSelect(viewSel)
-				// Apply the outer query's WHERE clause if present
-				if s.Where != nil {
-					innerOp = NewFilter(innerOp, s.Where)
-				}
-				// Project the outer query's columns over the view's output
-				return NewProject(innerOp, s.Cols)
-			}
-		}
-
-		merged := *viewSel
-		if s.Where != nil {
-			if merged.Where != nil {
-				merged.Where = &PS.BinaryExpr{
-					Op:    int(LX.T_AND),
-					Left:  merged.Where,
-					Right: s.Where,
-				}
-			} else {
-				merged.Where = s.Where
-			}
-		}
-		if len(s.Cols) > 0 {
-			merged.Cols = s.Cols
-		}
-		merged.OrderBy = s.OrderBy
-		merged.Limit = s.Limit
-		merged.Offset = s.Offset
-		merged.Distinct = s.Distinct
-		merged.GroupBy = s.GroupBy
-		merged.Having = s.Having
-		merged.OffsetFirst = s.OffsetFirst
-		return p.planSelect(&merged)
+		return p.resolveView(s, viewSel)
 	}
 
 	// REQ000357 (iter-27): SELECT without FROM clause (e.g. `SELECT 1+1`).
@@ -1623,86 +1574,18 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	// single-row dummy source so COUNT(*) returns 1 (one implicit row)
 	// instead of 0 (no rows to count).
 	if s.From == "" && s.SubqueryFrom == nil {
-		if hasAnyAggregate(s.Cols) {
-			dummy := newValuesOp([]PS.Expr{&PS.NumberLiteral{Val: int64(1)}})
-			var op Operator = dummy
-			if s.Where != nil {
-				op = NewFilter(op, s.Where)
-			}
-			agg := NewAggregate(op, s.GroupBy, s.Cols)
-			if s.Having != nil {
-				return NewFilter(agg, s.Having)
-			}
-			return agg
-		}
-		op := Operator(newValuesOp(s.Cols))
-		if s.Where != nil {
-			op = NewFilter(op, s.Where)
-		}
-		return op
+		return p.planSelectNoFrom(s)
 	}
 
 	// REQ000709: subquery in FROM clause (derived table).
 	// Plan the subquery and use its output as a virtual table.
 	if s.SubqueryFrom != nil {
-		subSel, ok := s.SubqueryFrom.(*PS.Select)
-		if !ok {
-			return nil
-		}
-		// REQ001072: predicate pushdown into subqueries. When the
-		// outer WHERE references only columns from the subquery and
-		// the subquery is flattenable (no aggregation/DISTINCT/GROUP
-		// BY/LIMIT/OFFSET/ORDER BY), push the predicate into the
-		// subquery's WHERE clause. This reduces intermediate rows.
-		if s.Where != nil && isSubqueryFlattenable(subSel) {
-			s.Where = pushPredicateIntoSubquery(s.Where, subSel)
-		}
-		subPlan := p.planSelect(subSel)
-		var current Operator = subPlan
-		if s.Where != nil {
-			current = NewFilter(current, s.Where)
-		}
-		// REQ000859: handle aggregates in SubqueryFrom (e.g.
-		// `SELECT MAX(v) FROM (SELECT v FROM t WHERE v < 30)`).
-		// Without this, aggregates like MAX are evaluated per-row
-		// instead of as a single-group aggregation.
-		needsAggregate := hasAnyAggregate(s.Cols) || len(s.GroupBy) > 0
-		if needsAggregate {
-			groupCols := s.GroupBy
-			aggsOnly, autoGroup, _ := splitSelectCols(s.Cols)
-			aggExprs := aggsOnly
-			if len(groupCols) == 0 {
-				groupCols = autoGroup
-			}
-			agg := NewAggregate(current, groupCols, aggExprs)
-			current = agg
-		}
-		if len(s.Cols) > 0 && !isStarExpr(s.Cols) {
-			if !needsAggregate {
-				current = NewProject(current, s.Cols)
-			}
-		}
-		if s.Having != nil {
-			current = NewFilter(current, s.Having)
-		}
-		if len(s.OrderBy) > 0 {
-			so := NewSort(current, s.OrderBy)
-			if p.pool != nil {
-				so.WithPool(p.pool)
-			}
-			current = so
-		}
-		// Limit is handled separately if needed
-		return current
+		return p.planSelectSubquery(s)
 	}
 
 	// REQ000727: sqlite_master virtual table
 	if s.From == "sqlite_master" || s.From == "sqlite_schema" {
-		var scan Operator = NewSqliteMaster()
-		if s.Where != nil {
-			scan = NewFilter(scan, s.Where)
-		}
-		return scan
+		return p.planSelectSqliteMaster(s)
 	}
 
 	// REQ000858: resolve column aliases in WHERE before creating filters.
@@ -1716,105 +1599,11 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 
 	// REQ001074: constant folding — evaluate constant expressions at plan time
 	// and simplify tautologies/contradictions.
-	if whereExpr != nil {
-		whereExpr = foldConstants(whereExpr)
-		// If folding produced a constant FALSE, the entire WHERE is a
-		// contradiction — no rows will match.
-		if whereExpr != nil {
-			if isFalse(whereExpr) {
-				whereExpr = &PS.BinaryExpr{
-					Left:  &PS.NumberLiteral{Val: int64(0)},
-					Op:    int(LX.T_EQ),
-					Right: &PS.NumberLiteral{Val: int64(1)},
-				}
-			} else if isTrue(whereExpr) && isConstantExpr(whereExpr) {
-				// REQ001074: constant TRUE tautology — remove WHERE entirely.
-				whereExpr = nil
-			}
-		}
-		// REQ001075: common subexpression elimination — remove duplicate
-		// conjuncts from the WHERE clause. Only when whereExpr is still
-		// non-nil and not a constant.
-		if whereExpr != nil {
-			whereExpr = eliminateCommonSubexpressions(whereExpr)
-		}
-	}
+	whereExpr = p.resolveAliasesAndFold(whereExpr)
 
 	var scan Operator
 	if p.store != nil {
-		// Try IndexScan first when the WHERE references an indexed column.
-		// iter-22: prefer NewIndexScanWithIndex (real seek) over the
-		// prefix-scan fallback when the predicate is an equality on
-		// the indexed column AND the index is registered for writer
-		// maintenance (i.e. the index keyspace is populated).
-		if whereExpr != nil {
-			if col, val, ok := indexedColumnEq(whereExpr); ok {
-				idx, found := p.selectIndex(s.From, col)
-				if found && hasWriterIndex(s.From, idx) {
-					tableID, _ := tableIDFor(s.From)
-					if isc, err := NewIndexScanWithIndex(p.store, tableID, s.From, idx, val, nil); err == nil {
-						if whereExpr != nil {
-							scan = NewFilter(isc, whereExpr)
-						} else {
-							scan = isc
-						}
-					}
-				}
-			}
-			// REQ000074 (iter-27): range seek for non-equality
-			// predicates on an indexed column. Replaces the
-			// prefix-scan fallback that the planner used before
-			// for `col > X`, `col BETWEEN X AND Y`, etc.
-			if scan == nil {
-				if col, lo, loIncl, up, upIncl, ok := indexedColumnRange(whereExpr); ok {
-					idx, found := p.selectIndex(s.From, col)
-					if found && hasWriterIndex(s.From, idx) {
-						tableID, _ := tableIDFor(s.From)
-						if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
-							scan = isc
-							if whereExpr != nil {
-								scan = NewFilter(scan, whereExpr)
-							}
-						}
-					}
-				}
-			}
-			// REQ001070: LIKE prefix range seek on an indexed column.
-			if scan == nil {
-				if col, prefix, ok := indexedColumnLikePrefix(whereExpr); ok {
-					idx, found := p.selectIndex(s.From, col)
-					if found && hasWriterIndex(s.From, idx) {
-						tableID, _ := tableIDFor(s.From)
-						upper := make([]byte, len(prefix)+1)
-						copy(upper, prefix)
-						upper[len(prefix)] = 0xff
-						if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, prefix, true, upper, false); err == nil {
-							scan = isc
-							if whereExpr != nil {
-								scan = NewFilter(scan, whereExpr)
-							}
-						}
-					}
-				}
-			}
-			if scan == nil {
-				if col, ok := indexedColumn(whereExpr); ok {
-					if idx, found := p.selectIndex(s.From, col); found {
-						if isc, err := NewIndexScanWithStore(p.store, s.From, idx); err == nil {
-							scan = isc
-							if whereExpr != nil {
-								scan = NewFilter(scan, whereExpr)
-							}
-						}
-					}
-				}
-			}
-		}
-		if scan == nil {
-			if ssc, err := NewSeqScanWithStore(p.store, s.From); err == nil {
-				scan = ssc
-			}
-		}
+		scan = p.planSelectScan(s, whereExpr)
 	}
 	if scan == nil {
 		scan = NewIndexOrSeqScan(s.From, whereExpr, p)
@@ -1910,353 +1699,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	}
 
 	if len(s.Joins) > 0 {
-		// REQ000801: N3-style join ordering — determine the best
-		// join order using the simplified N3 algorithm, then
-		// create join operators following that order.
-		joinInfos := make([]joinTableInfo, 0, len(s.Joins))
-		joinClauses := make([]PS.JoinClause, 0, len(s.Joins))
-		for _, j := range s.Joins {
-			if j.Kind != "INNER" && j.Kind != "LEFT" && j.Kind != "RIGHT" && j.Kind != "FULL" && j.Kind != "CROSS" {
-				continue
-			}
-			joinInfos = append(joinInfos, joinTableInfo{name: j.Right, join: j})
-			joinClauses = append(joinClauses, j)
-		}
-
-		// Determine predicates for cost estimation.
-		costPredicates := crossTablePredicates
-		if costPredicates == nil && whereExpr != nil {
-			costPredicates = RE.SplitAnd(whereExpr)
-		}
-
-		// REQ000946: run N3 from multiple candidate base tables and
-		// pick the lowest-cost plan. The single-baseTable variant is
-		// kept for backward compat (called as n3JoinOrdering).
-		// REQ000946 perf: multi-start iterates K N3 invocations
-		// (K=number of FROM tables). For K > reorderJoinsLimit this
-		// would add significant planner overhead per query (~Kx more
-		// cost comparisons) without much benefit, so fall back to
-		// single-start beyond the limit.
-		// REQ001057c: reorderJoinsLimit=8 matches CockroachDB's
-		// `reorder_joins_limit` default — raising from the prior
-		// value of 4 unblocks select4 hot paths (join255, join101,
-		// join277) which are 6-8 table joins where the FROM-list
-		// order is a poor starting point.
-		// REQ001071: for very small joins (≤4 tables), use exhaustive
-		// permutation search to find the truly optimal order. The N3
-		// heuristic is fast for larger joins but may miss the optimal
-		// order for small joins where 4! = 24 permutations is cheap.
-		const reorderJoinsLimit = 8
-		joinOrder := []string(nil)
-		if len(joinInfos) <= 4 {
-			joinOrder = p.exhaustiveJoinOrder(s.From, joinInfos, costPredicates)
-		} else if len(joinInfos) <= reorderJoinsLimit {
-			joinOrder = p.n3JoinOrderingMultiStart(s.From, joinInfos, costPredicates, pushedPredicates)
-		} else {
-			joinOrder, _ = p.n3JoinOrdering(s.From, joinInfos, costPredicates, pushedPredicates)
-		}
-
-		// REQ000803: compute column projection for join pushdown.
-		// Only include columns referenced by SELECT/WHERE/ORDER BY/etc.
-		// to reduce per-row memory and CPU downstream.
-		var projectedCols []string
-		if refCols := collectReferencedColumns(s); refCols != nil {
-			projectedCols = make([]string, 0, len(refCols))
-			for c := range refCols {
-				projectedCols = append(projectedCols, c)
-			}
-		}
-
-		// Build operators following the N3-determined order.
-		// REQ000821: detect bushy join opportunities: group tables
-		// by independent equi-join keys so star-join pairs are
-		// joined first (reducing intermediate row counts).
-		// buildBushyJoinTree returns a tree of groups; each group
-		// is a set of tables that should be joined before the
-		// results are joined together.
-		type joinGroup struct {
-			tables []string
-			keys   []string // equi-join keys connecting this group
-		}
-		joinGroups := groupBushyJoins(s.From, joinOrder, crossTableConjuncts)
-
-		// REQ000821: build each bushy group as a separate operator,
-		// then join the group results together.
-		type groupResult struct {
-			op    Operator
-			tbl   string // rightmost table in the group (for leftTbl tracking)
-			set   map[string]bool
-			preds []PS.Expr // remaining cross-table predicates for this group
-		}
-		var groupOps []groupResult
-
-		for gi, group := range joinGroups {
-			baseTable := group[0]
-			var current Operator
-			var leftTbl string
-			groupCounts := make(map[string]int, len(group))
-			for _, t := range group {
-				groupCounts[t]++
-			}
-			joinedTables := map[string]bool{}
-			localConjuncts := make([]PS.Expr, len(crossTableConjuncts))
-			copy(localConjuncts, crossTableConjuncts)
-			// REQ000857: track per-table occurrence count to map
-			// each group entry to the correct JoinClause for self-joins.
-			tableOccurrence := make(map[string]int, len(group))
-			joinClauseIdx := make(map[string]int, len(joinClauses))
-			for ci, jc := range joinClauses {
-				joinClauseIdx[jc.Right] = ci
-			}
-
-			if gi == 0 {
-				current = filteredScan
-				leftTbl = s.From
-				if s.FromAlias != "" {
-					leftTbl = s.FromAlias
-				}
-				joinedTables[s.From] = true
-			} else {
-				var baseOp Operator = NewSeqScan(baseTable)
-				if ssc, err := NewSeqScanWithStore(p.store, baseTable); err == nil {
-					baseOp = ssc
-				}
-				// Apply JoinClause alias to the base table scan for self-joins.
-				if baseCi, ok := joinClauseIdx[baseTable]; ok {
-					jc := joinClauses[baseCi]
-					if jc.RightAlias != "" {
-						if ss, ok := baseOp.(*SeqScan); ok {
-							ss.WithAlias(jc.RightAlias)
-						}
-						leftTbl = jc.RightAlias
-					}
-				}
-				if basePreds := pushedPredicates[baseTable]; len(basePreds) > 0 {
-					for _, pred := range basePreds {
-						tryApplyPointLookup(baseOp, pred)
-						baseOp = NewFilter(baseOp, pred)
-					}
-				}
-				current = baseOp
-				if leftTbl == "" {
-					leftTbl = baseTable
-				}
-				joinedTables[baseTable] = true
-			}
-
-			for ti, tbl := range group {
-				if ti == 0 {
-					continue
-				}
-				// REQ000857: map this group entry to the correct JoinClause
-				// using per-table occurrence count (handles self-joins where
-				// the same physical table has multiple JoinClauses with
-				// different aliases).
-				occ := tableOccurrence[tbl]
-				tableOccurrence[tbl]++
-				ci, ok := joinClauseIdx[tbl]
-				if !ok {
-					continue
-				}
-				joinedCounts := make(map[string]int, len(group))
-				for t := range joinedTables {
-					joinedCounts[t]++
-				}
-				// For self-joins, allow re-join: only skip if we've used
-				// all JoinClauses for this physical table.
-				if occ > 0 {
-					jcCount := 0
-					for _, jc := range joinClauses {
-						if jc.Right == tbl {
-							jcCount++
-						}
-					}
-					if joinedCounts[tbl] >= jcCount {
-						continue
-					}
-				}
-				j := joinClauses[ci]
-				if j.Right != tbl {
-					continue
-				}
-				kind := JoinKind(j.Kind)
-
-				rightTbl := j.Right
-				if j.RightAlias != "" {
-					rightTbl = j.RightAlias
-				}
-				var rightScan Operator = NewSeqScan(j.Right)
-				if ssc, err := NewSeqScanWithStore(p.store, j.Right); err == nil {
-					rightScan = ssc
-				}
-				// Apply JoinClause alias to the right scan so column
-				// lookups use alias-prefixed names (e.g. "b.v" not "t.v").
-				if j.RightAlias != "" {
-					if ss, ok := rightScan.(*SeqScan); ok {
-						ss.WithAlias(j.RightAlias)
-					}
-				}
-				if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
-					for _, pred := range rightPreds {
-						tryApplyPointLookup(rightScan, pred)
-						rightScan = NewFilter(rightScan, pred)
-					}
-				}
-
-				var joinOp Operator
-				if (kind == JoinKindInner || kind == JoinKindCross) && len(localConjuncts) > 0 {
-					lk, rk, remaining := p.extractEquiJoinKeys(localConjuncts, joinedTables, j.Right)
-					if len(lk) > 0 {
-						for _, orig := range localConjuncts {
-							found := false
-							for _, rem := range remaining {
-								if orig == rem {
-									found = true
-									break
-								}
-							}
-							if !found {
-								for pi, cp := range crossTablePredicates {
-									if cp == orig {
-										extractedPreds[pi] = true
-									}
-								}
-							}
-						}
-						joinOp = NewHashJoin(current, rightScan, leftTbl, rightTbl, lk, rk, 0)
-						if p.joinBufferSize > 0 {
-							if hj, ok := joinOp.(*HashJoin); ok {
-								hj.WithJoinBufferSize(p.joinBufferSize)
-							}
-						}
-						if projectedCols != nil {
-							if hj, ok := joinOp.(*HashJoin); ok {
-								hj.WithProjection(projectedCols)
-							}
-						}
-						localConjuncts = remaining
-					}
-				}
-
-				if joinOp == nil {
-					if kind == JoinKindInner && j.On != nil {
-						if lk, rk, ok := p.extractSingleOnEquiKey(j.On, leftTbl, rightTbl); ok {
-							joinOp = NewHashCrossJoin(current, rightScan, leftTbl, rightTbl, lk, rk)
-							if projectedCols != nil {
-								if hcj, ok := joinOp.(*HashCrossJoin); ok {
-									hcj.WithProjection(projectedCols)
-								}
-							}
-						}
-					}
-					if joinOp == nil {
-						var on func(outer, inner *Row) (bool, error)
-						if j.On != nil {
-							pred := j.On
-							on = func(outer, inner *Row) (bool, error) {
-								v, err := EvalValue(pred, inner, nil)
-								if err != nil {
-									return false, err
-								}
-								return isValueTruthy(v), nil
-							}
-						}
-						nlj := NewNestedLoopJoin(current, rightScan, leftTbl, rightTbl, on, kind)
-						if projectedCols != nil {
-							nlj.WithProjection(projectedCols)
-						}
-						// REQ001097: pre-compute the NLJ output schema to
-						// avoid lazy rebuild in the join execution path.
-						// Disabled by default — the runtime prefixing of
-						// table-qualified columns (e.g., "t1.a") means the
-						// planner's static schema doesn't match the
-						// runtime's prefixed schema. Wire this when
-						// the prefix layout is tracked at plan time.
-						_ = deriveJoinSchema
-						joinOp = nlj
-					}
-				}
-
-				current = joinOp
-				joinedTables[tbl] = true
-				leftTbl = rightTbl
-			}
-
-			if current != nil {
-				groupOps = append(groupOps, groupResult{
-					op:    current,
-					tbl:   leftTbl,
-					set:   joinedTables,
-					preds: localConjuncts,
-				})
-			}
-		}
-
-		// Merge group results into a single join tree.
-		leftTbl := ""
-		joinedTables := map[string]bool{}
-		for i, gr := range groupOps {
-			if i == 0 {
-				current = gr.op
-				leftTbl = gr.tbl
-				for t := range gr.set {
-					joinedTables[t] = true
-				}
-				continue
-			}
-			// Join this group's result with the accumulated tree.
-			var joinOp Operator
-			if len(gr.preds) > 0 {
-				// REQ000843: try every table in the group, not just
-				// the rightmost one (gr.tbl), to find equi-join keys.
-				// In bushy join groups, the equi-join may connect a
-				// non-rightmost table (e.g. t1.a1 = t8.d8 where t1 is
-				// in the middle of the group and t8 is the rightmost).
-				var lk, rk []string
-				var remaining []PS.Expr
-				for t := range gr.set {
-					if joinedTables[t] {
-						continue
-					}
-					lk2, rk2, rem := p.extractEquiJoinKeys(gr.preds, joinedTables, t)
-					if len(lk2) > 0 {
-						lk, rk, remaining = lk2, rk2, rem
-						break
-					}
-				}
-				if len(lk) == 0 {
-					// Fallback: try the rightmost table.
-					lk, rk, remaining = p.extractEquiJoinKeys(gr.preds, joinedTables, gr.tbl)
-					_ = remaining
-				}
-				if len(lk) > 0 {
-					joinOp = NewHashJoin(current, gr.op, leftTbl, gr.tbl, lk, rk, 0)
-					if p.joinBufferSize > 0 {
-						if hj, ok := joinOp.(*HashJoin); ok {
-							hj.WithJoinBufferSize(p.joinBufferSize)
-						}
-					}
-					if projectedCols != nil {
-						if hj, ok := joinOp.(*HashJoin); ok {
-							hj.WithProjection(projectedCols)
-						}
-					}
-					_ = remaining
-				}
-			}
-			if joinOp == nil {
-				nlj := NewNestedLoopJoin(current, gr.op, leftTbl, gr.tbl, nil, JoinKindCross)
-				if projectedCols != nil {
-					nlj.WithProjection(projectedCols)
-				}
-				joinOp = nlj
-			}
-			current = joinOp
-			leftTbl = gr.tbl
-			for t := range gr.set {
-				joinedTables[t] = true
-			}
-		}
+		current = p.planSelectJoins(s, filteredScan, pushedPredicates, crossTableConjuncts, crossTablePredicates, extractedPreds)
 	}
 
 	if whereExpr != nil {
@@ -2288,160 +1731,270 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		}
 	}
 
-	needsAggregate := hasAnyAggregate(s.Cols) || len(s.GroupBy) > 0
-	groupCols := s.GroupBy
-	var aggExprs []PS.Expr
-	if needsAggregate {
-		aggsOnly, autoGroup, _ := splitSelectCols(s.Cols)
-		aggExprs = aggsOnly
-		if len(groupCols) == 0 {
-			groupCols = autoGroup
-		}
-		// Choose between streaming Aggregate and HashAggregate
-		// based on estimated row count (REQ000196). For large
-		// datasets, HashAggregate is preferred (better group-by
-		// locality); for small datasets, streaming Aggregate
-		// avoids the upfront materialization cost.
-		estimatedRows := p.estimateRowCount(s.From, whereExpr)
-		if estimatedRows >= HashAggregateThreshold {
-			agg := NewHashAggregate(current, groupCols, aggExprs)
-			if isStarExpr(s.Cols) {
-				agg.SetExpandStar()
-			}
-			current = agg
-		} else {
-			agg := NewAggregate(current, groupCols, aggExprs)
-			if isStarExpr(s.Cols) {
-				agg.SetExpandStar()
-			}
-			current = agg
-		}
-	}
-
-	if s.Having != nil {
-		filter := NewFilter(current, s.Having)
-		current = filter
-	}
-
-	// Resolve ORDER BY position references (e.g., "ORDER BY 1" means first SELECT column).
-	// This must happen before pkOrderMatches check and sort creation.
-	if len(s.OrderBy) > 0 {
-		// Build a list of SELECT column expressions for position resolution.
-		selectExprs := make([]PS.Expr, 0, len(s.Cols))
-		for _, col := range s.Cols {
-			if ae, ok := col.(*PS.AliasedExpr); ok {
-				selectExprs = append(selectExprs, ae.Expr)
-			} else {
-				selectExprs = append(selectExprs, col)
-			}
-		}
-		// Replace integer literal position references with the corresponding SELECT expression.
-		for i := range s.OrderBy {
-			if nl, ok := s.OrderBy[i].Expr.(*PS.NumberLiteral); ok {
-				pos := int(nl.Val)
-				if pos >= 1 && pos <= len(selectExprs) {
-					// Clone the expression to avoid mutating the original AST.
-					s.OrderBy[i].Expr = cloneExpr(selectExprs[pos-1])
-				}
-			}
-		}
-	}
-
-	if len(s.OrderBy) > 0 {
-		if !p.pkOrderMatches(s.From, s.OrderBy) {
-			sort := NewSort(current, s.OrderBy)
-			if p.pool != nil {
-				sort.WithPool(p.pool)
-			}
-			current = sort
-		}
-	}
-
-	needsWindow := hasAnyWindowFunc(s.Cols)
-	if needsWindow {
-		for _, col := range s.Cols {
-			if wf, ok := col.(*PS.WindowFunc); ok {
-				args := make([]PS.Expr, len(wf.Args))
-				copy(args, wf.Args)
-				cols := make([]string, 0)
-				cols = append(cols, "*")
-				winOp := NewWindowOperator(current, wf.Name, args, wf.Over, cols)
-				current = winOp
-			}
-		}
-	}
-
-	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) && !needsWindow {
-		project := NewProject(current, s.Cols)
-		current = project
-	}
-
-	if needsWindow && len(s.Cols) > 0 && !isStarExpr(s.Cols) {
-		project := NewProject(current, s.Cols)
-		current = project
-	}
-
-	if s.Distinct && !hasAnyAggregate(s.Cols) {
-		current = NewDistinct(current)
-	}
-
-	// REQ000907: FETCH FIRST/NEXT n ROWS ONLY maps to LIMIT n.
-	// If neither LIMIT nor FETCH FIRST is set, no limit.
-	if s.Limit == nil && s.FetchFirst != nil {
-		if s.FetchFirst.Count != nil {
-			s.Limit = s.FetchFirst.Count
-		} else {
-			// FETCH FIRST ROW ONLY → LIMIT 1
-			s.Limit = &PS.NumberLiteral{Val: int64(1)}
-		}
-	}
-
-	// REQ000521: LIMIT/OFFSET wrapping order depends on which
-	// keyword appeared first in the SQL. The parser tracks this
-	// in s.OffsetFirst.
-	if s.OffsetFirst {
-		// OFFSET m LIMIT n → Limit wraps scan, then Offset wraps that
-		if s.Limit != nil {
-			n, ok := limitInt64(s.Limit)
-			if !ok {
-				return nil
-			}
-			current = NewLimit(current, n)
-			propagateLimitToNLJ(current, n)
-		}
-		if s.Offset != nil {
-			n, ok := limitInt64(s.Offset)
-			if ok && n > 0 {
-				current = NewOffset(current, n)
-			}
-		}
-	} else {
-		// LIMIT n OFFSET m (standard) → Offset wraps scan, then Limit wraps that
-		if s.Offset != nil {
-			n, ok := limitInt64(s.Offset)
-			if ok && n > 0 {
-				current = NewOffset(current, n)
-			}
-		}
-		if s.Limit != nil {
-			n, ok := limitInt64(s.Limit)
-			if !ok {
-				return nil
-			}
-			current = NewLimit(current, n)
-			propagateLimitToNLJ(current, n)
-		}
-	}
+	current = p.planAggregation(s, current)
+	current = p.planOrdering(s, current)
+	current = p.planLimitOffset(s, current)
 
 	return current
 }
 
-// propagateLimitToNLJ walks the operator tree and calls SetLimit on
-// any NestedLoopJoin it finds. REQ000847: when a LIMIT is above an
-// NLJ, the join can stop producing rows early instead of computing
-// the full cross product. The Limit operator above already stops
-// calling Next() after `n` rows, but without this pushdown the NLJ
-// still does the full batch work for each Next() call.
+// resolveView handles view resolution — expand view to underlying SELECT.
+// REQ000981: extracted from planSelect.
+func (p *Planner) resolveView(s *PS.Select, viewSel *PS.Select) Operator {
+	// REQ000702: When the outer query references view column
+	// aliases (e.g., SELECT doubled FROM v), we must wrap the
+	// view as a subquery so the outer query projects over the
+	// view's output columns.
+	if len(s.Cols) > 0 {
+		viewAliases := extractViewAliases(viewSel.Cols)
+		needsWrap := false
+		for _, col := range s.Cols {
+			if id, ok := col.(*PS.Ident); ok {
+				if viewAliases[id.Name] {
+					needsWrap = true
+					break
+				}
+			}
+		}
+		if needsWrap {
+			// Plan the view's SELECT to get the underlying scan
+			innerOp := p.planSelect(viewSel)
+			// Apply the outer query's WHERE clause if present
+			if s.Where != nil {
+				innerOp = NewFilter(innerOp, s.Where)
+			}
+			// Project the outer query's columns over the view's output
+			return NewProject(innerOp, s.Cols)
+		}
+	}
+
+	merged := *viewSel
+	if s.Where != nil {
+		if merged.Where != nil {
+			merged.Where = &PS.BinaryExpr{
+				Op:    int(LX.T_AND),
+				Left:  merged.Where,
+				Right: s.Where,
+			}
+		} else {
+			merged.Where = s.Where
+		}
+	}
+	if len(s.Cols) > 0 {
+		merged.Cols = s.Cols
+	}
+	merged.OrderBy = s.OrderBy
+	merged.Limit = s.Limit
+	merged.Offset = s.Offset
+	merged.Distinct = s.Distinct
+	merged.GroupBy = s.GroupBy
+	merged.Having = s.Having
+	merged.OffsetFirst = s.OffsetFirst
+	return p.planSelect(&merged)
+}
+
+// planSelectNoFrom handles SELECT without FROM clause (e.g. `SELECT 1+1`).
+// REQ000981: extracted from planSelect.
+func (p *Planner) planSelectNoFrom(s *PS.Select) Operator {
+	if hasAnyAggregate(s.Cols) {
+		dummy := newValuesOp([]PS.Expr{&PS.NumberLiteral{Val: int64(1)}})
+		var op Operator = dummy
+		if s.Where != nil {
+			op = NewFilter(op, s.Where)
+		}
+		agg := NewAggregate(op, s.GroupBy, s.Cols)
+		if s.Having != nil {
+			return NewFilter(agg, s.Having)
+		}
+		return agg
+	}
+	op := Operator(newValuesOp(s.Cols))
+	if s.Where != nil {
+		op = NewFilter(op, s.Where)
+	}
+	return op
+}
+
+// planSelectSubquery handles subquery in FROM clause (derived table).
+// REQ000981: extracted from planSelect.
+func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
+	subSel, ok := s.SubqueryFrom.(*PS.Select)
+	if !ok {
+		return nil
+	}
+	// REQ001072: predicate pushdown into subqueries. When the
+	// outer WHERE references only columns from the subquery and
+	// the subquery is flattenable (no aggregation/DISTINCT/GROUP
+	// BY/LIMIT/OFFSET/ORDER BY), push the predicate into the
+	// subquery's WHERE clause. This reduces intermediate rows.
+	if s.Where != nil && isSubqueryFlattenable(subSel) {
+		s.Where = pushPredicateIntoSubquery(s.Where, subSel)
+	}
+	subPlan := p.planSelect(subSel)
+	var current Operator = subPlan
+	if s.Where != nil {
+		current = NewFilter(current, s.Where)
+	}
+	// REQ000859: handle aggregates in SubqueryFrom (e.g.
+	// `SELECT MAX(v) FROM (SELECT v FROM t WHERE v < 30)`).
+	// Without this, aggregates like MAX are evaluated per-row
+	// instead of as a single-group aggregation.
+	needsAggregate := hasAnyAggregate(s.Cols) || len(s.GroupBy) > 0
+	if needsAggregate {
+		groupCols := s.GroupBy
+		aggsOnly, autoGroup, _ := splitSelectCols(s.Cols)
+		aggExprs := aggsOnly
+		if len(groupCols) == 0 {
+			groupCols = autoGroup
+		}
+		agg := NewAggregate(current, groupCols, aggExprs)
+		current = agg
+	}
+	if len(s.Cols) > 0 && !isStarExpr(s.Cols) {
+		if !needsAggregate {
+			current = NewProject(current, s.Cols)
+		}
+	}
+	if s.Having != nil {
+		current = NewFilter(current, s.Having)
+	}
+	if len(s.OrderBy) > 0 {
+		so := NewSort(current, s.OrderBy)
+		if p.pool != nil {
+			so.WithPool(p.pool)
+		}
+		current = so
+	}
+	// Limit is handled separately if needed
+	return current
+}
+
+// planSelectSqliteMaster handles sqlite_master virtual table.
+// REQ000981: extracted from planSelect.
+func (p *Planner) planSelectSqliteMaster(s *PS.Select) Operator {
+	var scan Operator = NewSqliteMaster()
+	if s.Where != nil {
+		scan = NewFilter(scan, s.Where)
+	}
+	return scan
+}
+
+// resolveAliasesAndFold resolves column aliases, folds constants, and
+// eliminates common subexpressions in the WHERE clause.
+// REQ000981: extracted from planSelect.
+func (p *Planner) resolveAliasesAndFold(whereExpr PS.Expr) PS.Expr {
+	if whereExpr == nil {
+		return nil
+	}
+	// REQ001074: constant folding — evaluate constant expressions at plan time
+	// and simplify tautologies/contradictions.
+	whereExpr = foldConstants(whereExpr)
+	// If folding produced a constant FALSE, the entire WHERE is a
+	// contradiction — no rows will match.
+	if whereExpr != nil {
+		if isFalse(whereExpr) {
+			whereExpr = &PS.BinaryExpr{
+				Left:  &PS.NumberLiteral{Val: int64(0)},
+				Op:    int(LX.T_EQ),
+				Right: &PS.NumberLiteral{Val: int64(1)},
+			}
+		} else if isTrue(whereExpr) && isConstantExpr(whereExpr) {
+			// REQ001074: constant TRUE tautology — remove WHERE entirely.
+			whereExpr = nil
+		}
+	}
+	// REQ001075: common subexpression elimination — remove duplicate
+	// conjuncts from the WHERE clause. Only when whereExpr is still
+	// non-nil and not a constant.
+	if whereExpr != nil {
+		whereExpr = eliminateCommonSubexpressions(whereExpr)
+	}
+	return whereExpr
+}
+
+// planSelectScan creates the scan operator (IndexScan or SeqScan) for
+// the FROM table, trying index seeks first.
+// REQ000981: extracted from planSelect.
+func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
+	var scan Operator
+	if p.store == nil {
+		return nil
+	}
+	// Try IndexScan first when the WHERE references an indexed column.
+	// iter-22: prefer NewIndexScanWithIndex (real seek) over the
+	// prefix-scan fallback when the predicate is an equality on
+	// the indexed column AND the index is registered for writer
+	// maintenance (i.e. the index keyspace is populated).
+	if whereExpr != nil {
+		if col, val, ok := indexedColumnEq(whereExpr); ok {
+			idx, found := p.selectIndex(s.From, col)
+			if found && hasWriterIndex(s.From, idx) {
+				tableID, _ := tableIDFor(s.From)
+				if isc, err := NewIndexScanWithIndex(p.store, tableID, s.From, idx, val, nil); err == nil {
+					if whereExpr != nil {
+						scan = NewFilter(isc, whereExpr)
+					} else {
+						scan = isc
+					}
+				}
+			}
+		}
+		// REQ000074 (iter-27): range seek for non-equality
+		// predicates on an indexed column. Replaces the
+		// prefix-scan fallback that the planner used before
+		// for `col > X`, `col BETWEEN X AND Y`, etc.
+		if scan == nil {
+			if col, lo, loIncl, up, upIncl, ok := indexedColumnRange(whereExpr); ok {
+				idx, found := p.selectIndex(s.From, col)
+				if found && hasWriterIndex(s.From, idx) {
+					tableID, _ := tableIDFor(s.From)
+					if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
+						scan = isc
+						if whereExpr != nil {
+							scan = NewFilter(scan, whereExpr)
+						}
+					}
+				}
+			}
+		}
+		// REQ001070: LIKE prefix range seek on an indexed column.
+		if scan == nil {
+			if col, prefix, ok := indexedColumnLikePrefix(whereExpr); ok {
+				idx, found := p.selectIndex(s.From, col)
+				if found && hasWriterIndex(s.From, idx) {
+					tableID, _ := tableIDFor(s.From)
+					upper := make([]byte, len(prefix)+1)
+					copy(upper, prefix)
+					upper[len(prefix)] = 0xff
+					if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, prefix, true, upper, false); err == nil {
+						scan = isc
+						if whereExpr != nil {
+							scan = NewFilter(scan, whereExpr)
+						}
+					}
+				}
+			}
+		}
+		if scan == nil {
+			if col, ok := indexedColumn(whereExpr); ok {
+				if idx, found := p.selectIndex(s.From, col); found {
+					if isc, err := NewIndexScanWithStore(p.store, s.From, idx); err == nil {
+						scan = isc
+						if whereExpr != nil {
+							scan = NewFilter(scan, whereExpr)
+						}
+					}
+				}
+			}
+		}
+	}
+	if scan == nil {
+		if ssc, err := NewSeqScanWithStore(p.store, s.From); err == nil {
+			scan = ssc
+		}
+	}
+	return scan
+}
 func propagateLimitToNLJ(op Operator, n int64) {
 	switch t := op.(type) {
 	case *NestedLoopJoin:
@@ -3812,7 +3365,7 @@ func (p *Planner) joinPredSel(pred PS.Expr, rowCount float64) float64 {
 		return 0.5
 	}
 	switch bin.Op {
-case int(LX.T_EQ):
+	case int(LX.T_EQ):
 		// REQ000948: equi-join (col = col) uses NDV of both sides.
 		// REQ000948: equi-join (col = literal) uses NDV of the column.
 		ndvL, ndvR := p.ndvFromExpr(bin.Left), p.ndvFromExpr(bin.Right)
@@ -4408,7 +3961,7 @@ func (p *Planner) n3JoinOrderingMultiStart(candidateBase string, joinTables []jo
 			bestOrder = order
 		}
 	}
-if bestOrder == nil {
+	if bestOrder == nil {
 		bestOrder = allNames
 		return bestOrder
 	}
@@ -4978,4 +4531,418 @@ func collectIdentsFromExpr(e PS.Expr) []string {
 		}
 	})
 	return result
+}
+
+// planAggregation handles aggregate selection (HashAggregate vs streaming
+// Aggregate) and HAVING clause application.
+// REQ000981: extracted from planSelect.
+func (p *Planner) planAggregation(s *PS.Select, current Operator) Operator {
+	needsAggregate := hasAnyAggregate(s.Cols) || len(s.GroupBy) > 0
+	groupCols := s.GroupBy
+	var aggExprs []PS.Expr
+	if !needsAggregate {
+		if s.Having != nil {
+			return NewFilter(current, s.Having)
+		}
+		return current
+	}
+	aggsOnly, autoGroup, _ := splitSelectCols(s.Cols)
+	aggExprs = aggsOnly
+	if len(groupCols) == 0 {
+		groupCols = autoGroup
+	}
+	estimatedRows := p.estimateRowCount(s.From, s.Where)
+	if estimatedRows >= HashAggregateThreshold {
+		agg := NewHashAggregate(current, groupCols, aggExprs)
+		if isStarExpr(s.Cols) {
+			agg.SetExpandStar()
+		}
+		current = agg
+	} else {
+		agg := NewAggregate(current, groupCols, aggExprs)
+		if isStarExpr(s.Cols) {
+			agg.SetExpandStar()
+		}
+		current = agg
+	}
+	if s.Having != nil {
+		current = NewFilter(current, s.Having)
+	}
+	return current
+}
+
+// planOrdering handles ORDER BY resolution, Sort operator creation,
+// window functions, projection, and DISTINCT.
+// REQ000981: extracted from planSelect.
+func (p *Planner) planOrdering(s *PS.Select, current Operator) Operator {
+	if len(s.OrderBy) > 0 {
+		selectExprs := make([]PS.Expr, 0, len(s.Cols))
+		for _, col := range s.Cols {
+			if ae, ok := col.(*PS.AliasedExpr); ok {
+				selectExprs = append(selectExprs, ae.Expr)
+			} else {
+				selectExprs = append(selectExprs, col)
+			}
+		}
+		for i := range s.OrderBy {
+			if nl, ok := s.OrderBy[i].Expr.(*PS.NumberLiteral); ok {
+				pos := int(nl.Val)
+				if pos >= 1 && pos <= len(selectExprs) {
+					s.OrderBy[i].Expr = cloneExpr(selectExprs[pos-1])
+				}
+			}
+		}
+	}
+	if len(s.OrderBy) > 0 {
+		if !p.pkOrderMatches(s.From, s.OrderBy) {
+			sort := NewSort(current, s.OrderBy)
+			if p.pool != nil {
+				sort.WithPool(p.pool)
+			}
+			current = sort
+		}
+	}
+	needsWindow := hasAnyWindowFunc(s.Cols)
+	if needsWindow {
+		for _, col := range s.Cols {
+			if wf, ok := col.(*PS.WindowFunc); ok {
+				args := make([]PS.Expr, len(wf.Args))
+				copy(args, wf.Args)
+				cols := []string{"*"}
+				winOp := NewWindowOperator(current, wf.Name, args, wf.Over, cols)
+				current = winOp
+			}
+		}
+	}
+	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) && !needsWindow {
+		current = NewProject(current, s.Cols)
+	}
+	if needsWindow && len(s.Cols) > 0 && !isStarExpr(s.Cols) {
+		current = NewProject(current, s.Cols)
+	}
+	if s.Distinct && !hasAnyAggregate(s.Cols) {
+		current = NewDistinct(current)
+	}
+	return current
+}
+
+// planLimitOffset handles LIMIT, OFFSET, and FETCH FIRST wrapping.
+// REQ000981: extracted from planSelect.
+func (p *Planner) planLimitOffset(s *PS.Select, current Operator) Operator {
+	if s.Limit == nil && s.FetchFirst != nil {
+		if s.FetchFirst.Count != nil {
+			s.Limit = s.FetchFirst.Count
+		} else {
+			s.Limit = &PS.NumberLiteral{Val: int64(1)}
+		}
+	}
+	if s.OffsetFirst {
+		if s.Limit != nil {
+			n, ok := limitInt64(s.Limit)
+			if !ok {
+				return nil
+			}
+			current = NewLimit(current, n)
+			propagateLimitToNLJ(current, n)
+		}
+		if s.Offset != nil {
+			n, ok := limitInt64(s.Offset)
+			if ok && n > 0 {
+				current = NewOffset(current, n)
+			}
+		}
+	} else {
+		if s.Offset != nil {
+			n, ok := limitInt64(s.Offset)
+			if ok && n > 0 {
+				current = NewOffset(current, n)
+			}
+		}
+		if s.Limit != nil {
+			n, ok := limitInt64(s.Limit)
+			if !ok {
+				return nil
+			}
+			current = NewLimit(current, n)
+			propagateLimitToNLJ(current, n)
+		}
+	}
+	return current
+}
+
+// planSelectJoins handles join planning: N3 join ordering, bushy join tree
+// construction, and join operator creation. REQ000981: extracted from planSelect.
+func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPredicates map[string][]PS.Expr, crossTableConjuncts, crossTablePredicates []PS.Expr, extractedPreds map[int]bool) Operator {
+	joinInfos := make([]joinTableInfo, 0, len(s.Joins))
+	joinClauses := make([]PS.JoinClause, 0, len(s.Joins))
+	for _, j := range s.Joins {
+		if j.Kind != "INNER" && j.Kind != "LEFT" && j.Kind != "RIGHT" && j.Kind != "FULL" && j.Kind != "CROSS" {
+			continue
+		}
+		joinInfos = append(joinInfos, joinTableInfo{name: j.Right, join: j})
+		joinClauses = append(joinClauses, j)
+	}
+	costPredicates := crossTablePredicates
+	if costPredicates == nil && s.Where != nil {
+		costPredicates = RE.SplitAnd(s.Where)
+	}
+	const reorderJoinsLimit = 8
+	joinOrder := []string(nil)
+	if len(joinInfos) <= 4 {
+		joinOrder = p.exhaustiveJoinOrder(s.From, joinInfos, costPredicates)
+	} else if len(joinInfos) <= reorderJoinsLimit {
+		joinOrder = p.n3JoinOrderingMultiStart(s.From, joinInfos, costPredicates, pushedPredicates)
+	} else {
+		joinOrder, _ = p.n3JoinOrdering(s.From, joinInfos, costPredicates, pushedPredicates)
+	}
+	var projectedCols []string
+	if refCols := collectReferencedColumns(s); refCols != nil {
+		projectedCols = make([]string, 0, len(refCols))
+		for c := range refCols {
+			projectedCols = append(projectedCols, c)
+		}
+	}
+	joinGroups := groupBushyJoins(s.From, joinOrder, crossTableConjuncts)
+	type groupResult struct {
+		op    Operator
+		tbl   string
+		set   map[string]bool
+		preds []PS.Expr
+	}
+	var groupOps []groupResult
+	for gi, group := range joinGroups {
+		baseTable := group[0]
+		var current Operator
+		var leftTbl string
+		groupCounts := make(map[string]int, len(group))
+		for _, t := range group {
+			groupCounts[t]++
+		}
+		joinedTables := map[string]bool{}
+		localConjuncts := make([]PS.Expr, len(crossTableConjuncts))
+		copy(localConjuncts, crossTableConjuncts)
+		tableOccurrence := make(map[string]int, len(group))
+		joinClauseIdx := make(map[string]int, len(joinClauses))
+		for ci, jc := range joinClauses {
+			joinClauseIdx[jc.Right] = ci
+		}
+		if gi == 0 {
+			current = filteredScan
+			leftTbl = s.From
+			if s.FromAlias != "" {
+				leftTbl = s.FromAlias
+			}
+			joinedTables[s.From] = true
+		} else {
+			var baseOp Operator = NewSeqScan(baseTable)
+			if ssc, err := NewSeqScanWithStore(p.store, baseTable); err == nil {
+				baseOp = ssc
+			}
+			if baseCi, ok := joinClauseIdx[baseTable]; ok {
+				jc := joinClauses[baseCi]
+				if jc.RightAlias != "" {
+					if ss, ok := baseOp.(*SeqScan); ok {
+						ss.WithAlias(jc.RightAlias)
+					}
+					leftTbl = jc.RightAlias
+				}
+			}
+			if basePreds := pushedPredicates[baseTable]; len(basePreds) > 0 {
+				for _, pred := range basePreds {
+					tryApplyPointLookup(baseOp, pred)
+					baseOp = NewFilter(baseOp, pred)
+				}
+			}
+			current = baseOp
+			if leftTbl == "" {
+				leftTbl = baseTable
+			}
+			joinedTables[baseTable] = true
+		}
+		for ti, tbl := range group {
+			if ti == 0 {
+				continue
+			}
+			occ := tableOccurrence[tbl]
+			tableOccurrence[tbl]++
+			ci, ok := joinClauseIdx[tbl]
+			if !ok {
+				continue
+			}
+			joinedCounts := make(map[string]int, len(group))
+			for t := range joinedTables {
+				joinedCounts[t]++
+			}
+			if occ > 0 {
+				jcCount := 0
+				for _, jc := range joinClauses {
+					if jc.Right == tbl {
+						jcCount++
+					}
+				}
+				if joinedCounts[tbl] >= jcCount {
+					continue
+				}
+			}
+			j := joinClauses[ci]
+			if j.Right != tbl {
+				continue
+			}
+			kind := JoinKind(j.Kind)
+			rightTbl := j.Right
+			if j.RightAlias != "" {
+				rightTbl = j.RightAlias
+			}
+			var rightScan Operator = NewSeqScan(j.Right)
+			if ssc, err := NewSeqScanWithStore(p.store, j.Right); err == nil {
+				rightScan = ssc
+			}
+			if j.RightAlias != "" {
+				if ss, ok := rightScan.(*SeqScan); ok {
+					ss.WithAlias(j.RightAlias)
+				}
+			}
+			if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
+				for _, pred := range rightPreds {
+					tryApplyPointLookup(rightScan, pred)
+					rightScan = NewFilter(rightScan, pred)
+				}
+			}
+			var joinOp Operator
+			if (kind == JoinKindInner || kind == JoinKindCross) && len(localConjuncts) > 0 {
+				lk, rk, remaining := p.extractEquiJoinKeys(localConjuncts, joinedTables, j.Right)
+				if len(lk) > 0 {
+					for _, orig := range localConjuncts {
+						found := false
+						for _, rem := range remaining {
+							if orig == rem {
+								found = true
+								break
+							}
+						}
+						if !found {
+							for pi, cp := range crossTablePredicates {
+								if cp == orig {
+									extractedPreds[pi] = true
+								}
+							}
+						}
+					}
+					joinOp = NewHashJoin(current, rightScan, leftTbl, rightTbl, lk, rk, 0)
+					if p.joinBufferSize > 0 {
+						if hj, ok := joinOp.(*HashJoin); ok {
+							hj.WithJoinBufferSize(p.joinBufferSize)
+						}
+					}
+					if projectedCols != nil {
+						if hj, ok := joinOp.(*HashJoin); ok {
+							hj.WithProjection(projectedCols)
+						}
+					}
+					localConjuncts = remaining
+				}
+			}
+			if joinOp == nil {
+				if kind == JoinKindInner && j.On != nil {
+					if lk, rk, ok := p.extractSingleOnEquiKey(j.On, leftTbl, rightTbl); ok {
+						joinOp = NewHashCrossJoin(current, rightScan, leftTbl, rightTbl, lk, rk)
+						if projectedCols != nil {
+							if hcj, ok := joinOp.(*HashCrossJoin); ok {
+								hcj.WithProjection(projectedCols)
+							}
+						}
+					}
+				}
+				if joinOp == nil {
+					var on func(outer, inner *Row) (bool, error)
+					if j.On != nil {
+						pred := j.On
+						on = func(outer, inner *Row) (bool, error) {
+							v, err := EvalValue(pred, inner, nil)
+							if err != nil {
+								return false, err
+							}
+							return isValueTruthy(v), nil
+						}
+					}
+					nlj := NewNestedLoopJoin(current, rightScan, leftTbl, rightTbl, on, kind)
+					if projectedCols != nil {
+						nlj.WithProjection(projectedCols)
+					}
+					_ = deriveJoinSchema
+					joinOp = nlj
+				}
+			}
+			current = joinOp
+			joinedTables[tbl] = true
+			leftTbl = rightTbl
+		}
+		if current != nil {
+			groupOps = append(groupOps, groupResult{
+				op:    current,
+				tbl:   leftTbl,
+				set:   joinedTables,
+				preds: localConjuncts,
+			})
+		}
+	}
+	leftTbl := ""
+	joinedTables := map[string]bool{}
+	var current Operator
+	for i, gr := range groupOps {
+		if i == 0 {
+			current = gr.op
+			leftTbl = gr.tbl
+			for t := range gr.set {
+				joinedTables[t] = true
+			}
+			continue
+		}
+		var joinOp Operator
+		if len(gr.preds) > 0 {
+			var lk, rk []string
+			var remaining []PS.Expr
+			for t := range gr.set {
+				if joinedTables[t] {
+					continue
+				}
+				lk2, rk2, rem := p.extractEquiJoinKeys(gr.preds, joinedTables, t)
+				if len(lk2) > 0 {
+					lk, rk, remaining = lk2, rk2, rem
+					break
+				}
+			}
+			if len(lk) == 0 {
+				lk, rk, remaining = p.extractEquiJoinKeys(gr.preds, joinedTables, gr.tbl)
+				_ = remaining
+			}
+			if len(lk) > 0 {
+				joinOp = NewHashJoin(current, gr.op, leftTbl, gr.tbl, lk, rk, 0)
+				if p.joinBufferSize > 0 {
+					if hj, ok := joinOp.(*HashJoin); ok {
+						hj.WithJoinBufferSize(p.joinBufferSize)
+					}
+				}
+				if projectedCols != nil {
+					if hj, ok := joinOp.(*HashJoin); ok {
+						hj.WithProjection(projectedCols)
+					}
+				}
+				_ = remaining
+			}
+		}
+		if joinOp == nil {
+			nlj := NewNestedLoopJoin(current, gr.op, leftTbl, gr.tbl, nil, JoinKindCross)
+			if projectedCols != nil {
+				nlj.WithProjection(projectedCols)
+			}
+			joinOp = nlj
+		}
+		current = joinOp
+		leftTbl = gr.tbl
+		for t := range gr.set {
+			joinedTables[t] = true
+		}
+	}
+	return current
 }
