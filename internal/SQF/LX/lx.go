@@ -201,11 +201,11 @@ type Lexer struct {
 	startLine int
 	startCol  int
 	// For Peek()/Peek2() save/restore.
-	savedPos        int
-	savedLine       int
-	savedCol        int
-	savedStartLine  int
-	savedStartCol   int
+	savedPos       int
+	savedLine      int
+	savedCol       int
+	savedStartLine int
+	savedStartCol  int
 }
 
 func NewLexer(input string) *Lexer {
@@ -297,6 +297,30 @@ func (l *Lexer) advance() byte {
 	return c
 }
 
+// REQ001144: ASCII fast-path helpers. SQL keywords, identifiers,
+// numbers, and whitespace are dominated by ASCII bytes. The
+// unicode.Is* family dispatches through a Unicode category table;
+// a single range check on byte values is roughly an order of
+// magnitude faster on the hot path. We fall back to unicode.Is*
+// only when the byte is non-ASCII (≥ 0x80).
+func isASCIILetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+}
+
+func isASCIILetterDigit(c byte) bool {
+	return isASCIILetter(c) || (c >= '0' && c <= '9')
+}
+
+func isASCIIDigit(c byte) bool {
+	return c >= '0' && c <= '9'
+}
+
+// isASCIISpace covers ASCII whitespace: space, tab, LF, VT, FF, CR.
+// Matches unicode.IsSpace's behaviour for the ASCII subset.
+func isASCIISpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r'
+}
+
 func (l *Lexer) Next() Token {
 	l.skipWhitespaceAndComments()
 
@@ -312,12 +336,21 @@ func (l *Lexer) Next() Token {
 		return l.scanString()
 	}
 
-	if unicode.IsLetter(rune(c)) || c == '_' {
-		return l.scanIdent()
-	}
-
-	if unicode.IsDigit(rune(c)) {
-		return l.scanNumber()
+	// REQ001144: ASCII fast-path for identifier vs number dispatch.
+	if c < 0x80 {
+		if isASCIILetter(c) {
+			return l.scanIdent()
+		}
+		if isASCIIDigit(c) {
+			return l.scanNumber()
+		}
+	} else {
+		if unicode.IsLetter(rune(c)) || c == '_' {
+			return l.scanIdent()
+		}
+		if unicode.IsDigit(rune(c)) {
+			return l.scanNumber()
+		}
 	}
 
 	return l.scanOperator()
@@ -330,7 +363,13 @@ func (l *Lexer) skipWhitespaceAndComments() {
 			return
 		}
 
-		if unicode.IsSpace(rune(c)) {
+		// REQ001144: ASCII fast-path for whitespace.
+		if c < 0x80 {
+			if isASCIISpace(c) {
+				l.advance()
+				continue
+			}
+		} else if unicode.IsSpace(rune(c)) {
 			l.advance()
 			continue
 		}
@@ -416,7 +455,15 @@ func (l *Lexer) scanIdent() Token {
 	start := l.pos
 	for {
 		c := l.peek()
-		if c == 0 || (!unicode.IsLetter(rune(c)) && !unicode.IsDigit(rune(c)) && c != '_') {
+		if c == 0 {
+			break
+		}
+		// REQ001144: ASCII fast-path for the inner ident loop.
+		if c < 0x80 {
+			if !isASCIILetterDigit(c) {
+				break
+			}
+		} else if !unicode.IsLetter(rune(c)) && !unicode.IsDigit(rune(c)) && c != '_' {
 			break
 		}
 		l.advance()
@@ -436,12 +483,24 @@ func (l *Lexer) scanNumber() Token {
 	startLine := l.startLine
 	startCol := l.startCol
 
+	// REQ001142: slice directly from input instead of building with
+	// strings.Builder (will be replaced in the REQ001142 commit;
+	// keeping the builder here so this commit is purely the ASCII
+	// fast-path delta).
 	var sb strings.Builder
 	hasDot := false
 
 	for {
 		c := l.peek()
-		if c == 0 || (!unicode.IsDigit(rune(c)) && c != '.') {
+		if c == 0 {
+			break
+		}
+		// REQ001144: ASCII fast-path for the inner number loop.
+		if c < 0x80 {
+			if !isASCIIDigit(c) && c != '.' {
+				break
+			}
+		} else if !unicode.IsDigit(rune(c)) && c != '.' {
 			break
 		}
 		if c == '.' {

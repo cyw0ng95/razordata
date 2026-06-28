@@ -45,3 +45,20 @@ func BenchmarkLexerAdvance(b *testing.B) {
 		}
 	}
 }
+
+// REQ001144: ASCII-only throughput benchmark. Covers identifier,
+// number, operator, and whitespace dispatch on a typical SQL query.
+// Run with: go test -bench=BenchmarkLexerASCII -benchmem ./internal/SQF/LX
+func BenchmarkLexerASCII(b *testing.B) {
+	input := "SELECT id, name, age FROM users WHERE age > 30 AND age < 50 ORDER BY age LIMIT 100"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		l := NewLexer(input)
+		for {
+			tok := l.Next()
+			if tok.Type == T_EOF {
+				break
+			}
+		}
+	}
+}
