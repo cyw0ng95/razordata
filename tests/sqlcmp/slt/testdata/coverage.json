@@ -2,69 +2,77 @@
   "version": "1",
   "threshold": 0.3,
   "files": {
-    "/workspace/tests/sqlcmp/corpus/test/evidence/slt_lang_aggfunc.test": {
+    "../corpus/test/evidence/slt_lang_aggfunc.test": {
       "total": 7,
       "passed": 5,
       "failed": 0,
       "skipped": 0,
       "parse_errors": 0
     },
-    "/workspace/tests/sqlcmp/corpus/test/evidence/slt_lang_createtrigger.test": {
+    "../corpus/test/evidence/slt_lang_createtrigger.test": {
       "total": 28,
-      "passed": 14,
+      "passed": 24,
       "failed": 2,
-      "skipped": 11,
+      "skipped": 1,
       "parse_errors": 0
     },
-    "/workspace/tests/sqlcmp/corpus/test/evidence/slt_lang_createview.test": {
+    "../corpus/test/evidence/slt_lang_createview.test": {
       "total": 37,
-      "passed": 8,
-      "failed": 7,
+      "passed": 9,
+      "failed": 6,
       "skipped": 10,
       "parse_errors": 0
     },
-    "/workspace/tests/sqlcmp/corpus/test/evidence/slt_lang_dropview.test": {
+    "../corpus/test/evidence/slt_lang_dropview.test": {
       "total": 13,
-      "passed": 7,
-      "failed": 6,
+      "passed": 11,
+      "failed": 2,
       "skipped": 0,
       "parse_errors": 0
     },
-    "/workspace/tests/sqlcmp/corpus/test/evidence/slt_lang_update.test": {
+    "../corpus/test/evidence/slt_lang_update.test": {
       "total": 31,
       "passed": 18,
       "failed": 9,
       "skipped": 0,
       "parse_errors": 0
     },
-    "/workspace/tests/sqlcmp/corpus/test/select1.test": {
+    "../corpus/test/index/between/1/slt_good_0.test": {
+      "total": 10022,
+      "passed": 6707,
+      "failed": 3312,
+      "skipped": 3,
+      "parse_errors": 0
+    },
+    "../corpus/test/select1.test": {
       "total": 1031,
       "passed": 58,
       "failed": 973,
       "skipped": 0,
       "parse_errors": 0
     },
-    "/workspace/tests/sqlcmp/corpus/test/select2.test": {
+    "../corpus/test/select2.test": {
       "total": 1031,
       "passed": 69,
       "failed": 962,
       "skipped": 0,
       "parse_errors": 0
     },
-    "/workspace/tests/sqlcmp/corpus/test/select4.test": {
+    "../corpus/test/select4.test": {
       "total": 3857,
-      "passed": 925,
-      "failed": 2931,
+      "passed": 2367,
+      "failed": 1489,
       "skipped": 1,
       "parse_errors": 0
     }
   },
   "totals": {
-    "Total": 6035,
-    "Passed": 1104,
-    "Failed": 4890,
-    "Skipped": 22,
+    "Total": 16057,
+    "Passed": 9268,
+    "Failed": 6755,
+    "Skipped": 15,
     "ParseErrors": 0,
-    "Duration": 292081
+    "Duration": 24573,
+    "Slowest": null
   }
 }
