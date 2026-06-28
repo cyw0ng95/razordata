@@ -166,8 +166,10 @@ func (j *NestedLoopJoin) outerJoinRows(a, b *Row) Row {
 // for outer-join emit paths from the first left row and right row
 // (or nullRow fallback). REQ000870: used by outerJoinRows to avoid
 // per-row make([]string) and make([]int) allocations.
+// REQ001097: skip the build when WithSharedSchema has pre-populated
+// the schema fields.
 func (j *NestedLoopJoin) ensureOuterShared(leftFirst, rightFirst *Row) {
-	if j.outerSharedCols != nil {
+	if j.outerSharedCols != nil || j.sharedBuilt {
 		return
 	}
 	lc, rc := leftFirst.Cols, rightFirst.Cols
@@ -192,6 +194,31 @@ func (j *NestedLoopJoin) ensureOuterShared(leftFirst, rightFirst *Row) {
 // reducing per-row memory and CPU for downstream operators.
 func (j *NestedLoopJoin) WithProjection(projectedCols []string) *NestedLoopJoin {
 	j.projectedCols = projectedCols
+	return j
+}
+
+// WithSharedSchema pre-computes the output schema (cols, types, colIndex)
+// for this join. REQ001097: when set, the runtime paths (tryHashCrossJoin,
+// nextBlock, outerJoinRows) skip their per-operator schema build phase,
+// avoiding redundant allocation across an NLJ chain.
+func (j *NestedLoopJoin) WithSharedSchema(cols []string, types []int, colIndex map[string]int) *NestedLoopJoin {
+	colsCopy := append([]string(nil), cols...)
+	typesCopy := append([]int(nil), types...)
+	colIdx := make(map[string]int, len(colIndex))
+	for k, v := range colIndex {
+		colIdx[k] = v
+	}
+	j.sharedCols = colsCopy
+	j.sharedTypes = typesCopy
+	j.sharedColIndex = colIdx
+	// Same triplet for block-mode and outer-join emit paths.
+	j.blkSharedCols = colsCopy
+	j.blkSharedTypes = typesCopy
+	j.blkSharedColIndex = colIdx
+	j.outerSharedCols = colsCopy
+	j.outerSharedTypes = typesCopy
+	j.outerSharedColIndex = colIdx
+	j.sharedBuilt = true
 	return j
 }
 
@@ -482,18 +509,20 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 	if len(j.leftRows)*len(j.rightRows) <= tinyCrossThreshold {
 		// Emit cross product directly into matches — no hash needed.
 		// Build shared cols/types/index once (same as hash path).
-		nCols := len(j.leftRows[0].Cols) + len(j.rightRows[0].Cols)
-		j.sharedCols = make([]string, 0, nCols)
-		j.sharedCols = append(j.sharedCols, j.leftRows[0].Cols...)
-		j.sharedCols = append(j.sharedCols, j.rightRows[0].Cols...)
-		j.sharedTypes = make([]int, 0, nCols)
-		j.sharedTypes = append(j.sharedTypes, j.leftRows[0].Types...)
-		j.sharedTypes = append(j.sharedTypes, j.rightRows[0].Types...)
-		j.sharedColIndex = make(map[string]int, nCols)
-		for i, c := range j.sharedCols {
-			key := strings.ToLower(c)
-			if _, exists := j.sharedColIndex[key]; !exists {
-				j.sharedColIndex[key] = i
+		if !j.sharedBuilt {
+			nCols := len(j.leftRows[0].Cols) + len(j.rightRows[0].Cols)
+			j.sharedCols = make([]string, 0, nCols)
+			j.sharedCols = append(j.sharedCols, j.leftRows[0].Cols...)
+			j.sharedCols = append(j.sharedCols, j.rightRows[0].Cols...)
+			j.sharedTypes = make([]int, 0, nCols)
+			j.sharedTypes = append(j.sharedTypes, j.leftRows[0].Types...)
+			j.sharedTypes = append(j.sharedTypes, j.rightRows[0].Types...)
+			j.sharedColIndex = make(map[string]int, nCols)
+			for i, c := range j.sharedCols {
+				key := strings.ToLower(c)
+				if _, exists := j.sharedColIndex[key]; !exists {
+					j.sharedColIndex[key] = i
+				}
 			}
 		}
 		dataPerRow := len(j.leftRows[0].Data) + len(j.rightRows[0].Data)
@@ -511,20 +540,23 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 	// j3 perf: the colIndex depends on the row shape (left.Cols +
 	// right.Cols) which is stable for the lifetime of this join
 	// since both sides come from the same SeqScan snapshots.
-	nCols := len(j.leftRows[0].Cols) + len(j.rightRows[0].Cols)
-	j.sharedCols = make([]string, 0, nCols)
-	j.sharedCols = append(j.sharedCols, j.leftRows[0].Cols...)
-	j.sharedCols = append(j.sharedCols, j.rightRows[0].Cols...)
+	// REQ001097: skip schema build when pre-computed via WithSharedSchema.
+	if !j.sharedBuilt {
+		nCols := len(j.leftRows[0].Cols) + len(j.rightRows[0].Cols)
+		j.sharedCols = make([]string, 0, nCols)
+		j.sharedCols = append(j.sharedCols, j.leftRows[0].Cols...)
+		j.sharedCols = append(j.sharedCols, j.rightRows[0].Cols...)
 
-	j.sharedTypes = make([]int, 0, nCols)
-	j.sharedTypes = append(j.sharedTypes, j.leftRows[0].Types...)
-	j.sharedTypes = append(j.sharedTypes, j.rightRows[0].Types...)
+		j.sharedTypes = make([]int, 0, nCols)
+		j.sharedTypes = append(j.sharedTypes, j.leftRows[0].Types...)
+		j.sharedTypes = append(j.sharedTypes, j.rightRows[0].Types...)
 
-	j.sharedColIndex = make(map[string]int, nCols)
-	for i, c := range j.sharedCols {
-		key := strings.ToLower(c)
-		if _, exists := j.sharedColIndex[key]; !exists {
-			j.sharedColIndex[key] = i
+		j.sharedColIndex = make(map[string]int, nCols)
+		for i, c := range j.sharedCols {
+			key := strings.ToLower(c)
+			if _, exists := j.sharedColIndex[key]; !exists {
+				j.sharedColIndex[key] = i
+			}
 		}
 	}
 	// Pre-allocate a single contiguous Data buffer for all output

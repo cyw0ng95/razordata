@@ -7,6 +7,54 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
+// TestNestedLoopJoin_WithSharedSchema verifies that pre-computing
+// the schema via WithSharedSchema sets all three field triplets
+// (shared/blkShared/outerShared) and the sharedBuilt flag.
+// REQ001097.
+func TestNestedLoopJoin_WithSharedSchema(t *testing.T) {
+	RegisterTable("l", []Row{
+		{Cols: []string{"a"}, Types: []int{int(LX.T_INT_KW)},
+			Data: []Value{NewIntValue(1)}},
+		{Cols: []string{"a"}, Types: []int{int(LX.T_INT_KW)},
+			Data: []Value{NewIntValue(2)}},
+	})
+	RegisterTable("r", []Row{
+		{Cols: []string{"b"}, Types: []int{int(LX.T_INT_KW)},
+			Data: []Value{NewIntValue(10)}},
+	})
+	defer UnregisterAll()
+
+	left := NewSeqScan("l")
+	right := NewSeqScan("r")
+	join := NewNestedLoopJoin(left, right, "l", "r", nil, JoinKindInner).
+		WithSharedSchema(
+			[]string{"a", "b"},
+			[]int{int(LX.T_INT_KW), int(LX.T_INT_KW)},
+			map[string]int{"a": 0, "b": 1},
+		)
+
+	if !join.sharedBuilt {
+		t.Fatal("sharedBuilt should be true after WithSharedSchema")
+	}
+	if got := join.sharedCols; len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Errorf("sharedCols mismatch: %v", got)
+	}
+	if got := join.sharedTypes; len(got) != 2 {
+		t.Errorf("sharedTypes length: got %d", len(got))
+	}
+	if got := join.sharedColIndex; got["a"] != 0 || got["b"] != 1 {
+		t.Errorf("sharedColIndex mismatch: %v", got)
+	}
+	// Block-mode triplet should also be set.
+	if len(join.blkSharedCols) != 2 || len(join.blkSharedTypes) != 2 {
+		t.Errorf("blkShared* not populated: cols=%v types=%v", join.blkSharedCols, join.blkSharedTypes)
+	}
+	// Outer-join triplet should also be set.
+	if len(join.outerSharedCols) != 2 || len(join.outerSharedTypes) != 2 {
+		t.Errorf("outerShared* not populated: cols=%v types=%v", join.outerSharedCols, join.outerSharedTypes)
+	}
+}
+
 // TestNestedLoopJoin_LeftJoin verifies LEFT JOIN returns all left rows
 // with NULL-padded right when no match (REQ000197).
 func TestNestedLoopJoin_LeftJoin(t *testing.T) {

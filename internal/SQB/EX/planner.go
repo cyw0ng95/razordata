@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"unicode"
@@ -1452,6 +1453,104 @@ func extractViewAliases(cols []PS.Expr) map[string]bool {
 	return aliases
 }
 
+// deriveJoinSchema builds the output column schema for a binary join.
+// REQ001097: used at planning time to pre-compute sharedCols/
+// sharedTypes/colIndex so the NLJ execution path skips the
+// per-operator lazy schema build. Returns (nil, nil, nil) when
+// the schema cannot be statically determined.
+func deriveJoinSchema(left, right Operator) ([]string, []int, map[string]int) {
+	if left == nil || right == nil {
+		return nil, nil, nil
+	}
+	leftCols := colsOf(left)
+	rightCols := colsOf(right)
+	if leftCols == nil || rightCols == nil {
+		return nil, nil, nil
+	}
+	leftTypes := typesOf(left)
+	rightTypes := typesOf(right)
+	if leftTypes == nil || rightTypes == nil {
+		return nil, nil, nil
+	}
+	if len(leftCols) != len(leftTypes) || len(rightCols) != len(rightTypes) {
+		return nil, nil, nil
+	}
+	cols := make([]string, 0, len(leftCols)+len(rightCols))
+	cols = append(cols, leftCols...)
+	cols = append(cols, rightCols...)
+	types := make([]int, 0, len(cols))
+	types = append(types, leftTypes...)
+	types = append(types, rightTypes...)
+	idx := make(map[string]int, len(cols))
+	for i, c := range cols {
+		key := strings.ToLower(c)
+		if _, exists := idx[key]; !exists {
+			idx[key] = i
+		}
+	}
+	return cols, types, idx
+}
+
+// colsOf extracts the column names from a known-shape operator.
+// Returns nil if the schema is unknown (e.g. for valuesOp or
+// computed projections).
+func colsOf(op Operator) []string {
+	switch o := op.(type) {
+	case *SeqScan:
+		if o.schema != nil {
+			return o.schema.cols
+		}
+		return nil
+	case *IndexScan:
+		if o.schema != nil {
+			return o.schema.cols
+		}
+		return nil
+	case *NestedLoopJoin:
+		return o.sharedCols
+	case *HashJoin:
+		return o.sharedCols
+	case *HashCrossJoin:
+		return o.sharedCols
+	case *Filter:
+		return colsOf(o.Child())
+	case *Project:
+		return colsOf(o.Child())
+	case *Sort:
+		return colsOf(o.Child())
+	}
+	return nil
+}
+
+// typesOf extracts the column types similarly to colsOf.
+func typesOf(op Operator) []int {
+	switch o := op.(type) {
+	case *SeqScan:
+		if o.schema != nil {
+			return o.schema.colTypes
+		}
+		return nil
+	case *IndexScan:
+		if o.schema != nil {
+			return o.schema.colTypes
+		}
+		return nil
+	case *NestedLoopJoin:
+		return o.sharedTypes
+	case *HashJoin:
+		return o.sharedTypes
+	case *HashCrossJoin:
+		return o.sharedTypes
+	case *Filter:
+		return typesOf(o.Child())
+	case *Project:
+		return typesOf(o.Child())
+	case *Sort:
+		return typesOf(o.Child())
+	}
+	return nil
+}
+
 func (p *Planner) planSelect(s *PS.Select) Operator {
 	// REQ000241: view resolution — expand view to underlying SELECT
 	if viewSel := LookupView(s.From); viewSel != nil {
@@ -2059,6 +2158,14 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 						if projectedCols != nil {
 							nlj.WithProjection(projectedCols)
 						}
+						// REQ001097: pre-compute the NLJ output schema to
+						// avoid lazy rebuild in the join execution path.
+						// Disabled by default — the runtime prefixing of
+						// table-qualified columns (e.g., "t1.a") means the
+						// planner's static schema doesn't match the
+						// runtime's prefixed schema. Wire this when
+						// the prefix layout is tracked at plan time.
+						_ = deriveJoinSchema
 						joinOp = nlj
 					}
 				}
@@ -4020,13 +4127,26 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		}
 		pruneThreshold := bestCost * n3PruneMultiplier
 
+		// REQ001096: memoize findPredicatesForSet keyed by
+		// (sorted joined-set, candidate). The N3 inner loop calls
+		// this O(heap × tables) times; the same (joined-set, tbl)
+		// pair recurs across heap entries, so the cache turns the
+		// inner-loop predicate scan from O(predicates) to O(1).
+		predCache := make(map[string][]PS.Expr, len(heap)*len(allTables))
+
 		for _, pp := range heap {
 			// Which tables are not yet joined?
 			for _, tbl := range allTables {
 				if pp.tablesSet[tbl] {
 					continue
 				}
-				preds := p.findPredicatesForSet(pp.tablesSet, tbl, wherePredicates)
+				// REQ001096: cache lookup by sorted tables-set + tbl.
+				cacheKey := n3PredCacheKey(pp.tablesSet, tbl)
+				preds, ok := predCache[cacheKey]
+				if !ok {
+					preds = p.findPredicatesForSet(pp.tablesSet, tbl, wherePredicates)
+					predCache[cacheKey] = preds
+				}
 				hasIdx := p.hasIndexOnTable(tbl)
 				rightRows := p.getTableRowCount(tbl)
 				// REQ000883: reduce right row count by single-table selectivity.
@@ -4397,6 +4517,24 @@ func (p *Planner) estimateJoinOrderCost(order []string, predicates []PS.Expr) fl
 type joinTableInfo struct {
 	name string
 	join PS.JoinClause
+}
+
+// n3PredCacheKey returns a deterministic string key for the
+// (joined-set, candidate) pair. REQ001096: sorts the set entries
+// so different iteration orders produce the same key.
+func n3PredCacheKey(joined map[string]bool, candidate string) string {
+	keys := make([]string, 0, len(joined)+1)
+	for k := range joined {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte(0)
+	}
+	b.WriteString(candidate)
+	return b.String()
 }
 
 // findPredicatesForPair finds the subset of WHERE predicates that
