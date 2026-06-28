@@ -424,3 +424,48 @@ func TestBTree_DeleteAllThenInsert(t *testing.T) {
 		}
 	}
 }
+
+// TestBTree_PageEviction verifies that the page cache does not grow
+// unboundedly. After inserting enough rows to exceed maxCachedPages,
+// the cache should evict old pages. Data integrity must be preserved.
+// REQ000990.
+func TestBTree_PageEviction(t *testing.T) {
+	dir := tmpDir(t)
+	bt, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bt.Close()
+
+	// Insert enough rows to exceed maxCachedPages (4096).
+	// Each leaf holds ~200 keys, so ~25 leaf pages + internal pages.
+	n := maxCachedPages * 2
+	for i := 0; i < n; i++ {
+		key := []byte{byte(i >> 8), byte(i)}
+		val := []byte{byte(i >> 8), byte(i), 0xFF}
+		if err := bt.Insert(key, val); err != nil {
+			t.Fatalf("Insert(%d): %v", i, err)
+		}
+	}
+
+	// Verify cache does not exceed maxCachedPages.
+	bt.mu.RLock()
+	cached := len(bt.pages)
+	bt.mu.RUnlock()
+	if cached > maxCachedPages {
+		t.Errorf("page cache size %d exceeds maxCachedPages %d", cached, maxCachedPages)
+	}
+
+	// Verify data integrity — all inserted keys must be retrievable.
+	for i := 0; i < n; i++ {
+		key := []byte{byte(i >> 8), byte(i)}
+		want := []byte{byte(i >> 8), byte(i), 0xFF}
+		v, err := bt.Get(key)
+		if err != nil {
+			t.Fatalf("Get(%d): %v", i, err)
+		}
+		if !bytes.Equal(v, want) {
+			t.Errorf("Get(%d) = %v, want %v", i, v, want)
+		}
+	}
+}

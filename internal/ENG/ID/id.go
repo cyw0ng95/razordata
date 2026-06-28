@@ -19,12 +19,35 @@ const (
 	maxKeys    = 200
 	pageMagic  = 0x42545245 // "BTRE"
 	fileName   = "btree.razor"
+
+	// maxCachedPages is the soft limit for the in-memory page cache.
+	// When exceeded, the least-recently-used clean pages are evicted.
+	maxCachedPages = 4096
 )
 
 var (
 	ErrNotFound = errors.New("id: key not found")
 	ErrClosed   = errors.New("id: btree closed")
+
+	// bufPool is a sync.Pool for reusable 4KB page I/O buffers.
+	bufPool = sync.Pool{
+		New: func() any {
+			b := make([]byte, pageSize)
+			return &b
+		},
+	}
 )
+
+func getBuf() *[]byte {
+	return bufPool.Get().(*[]byte)
+}
+
+func putBuf(b *[]byte) {
+	if b != nil && cap(*b) >= pageSize {
+		*b = (*b)[:pageSize]
+		bufPool.Put(b)
+	}
+}
 
 // BTree is a persistent B-tree for secondary indexes.
 type BTree struct {
@@ -35,6 +58,11 @@ type BTree struct {
 	dirty  map[uint32]bool
 	nextID uint32
 	closed atomic.Bool
+
+	// LRU tracking: monotonically increasing counter. Each page gets
+	// a timestamp on access. Eviction picks pages with the smallest
+	// timestamp (oldest access).
+	lruClock uint64
 }
 
 type pageType byte
@@ -59,6 +87,7 @@ type page struct {
 	vals   [][]byte
 	childs []uint32
 	dirty  bool
+	lru    uint64 // LRU timestamp — smaller = older = evict first
 }
 
 func newPage(id uint32, pType pageType) *page {
@@ -106,6 +135,9 @@ func (bt *BTree) Close() error {
 		return err
 	}
 	bt.closed.Store(true)
+	// Release page cache for GC.
+	bt.pages = nil
+	bt.dirty = nil
 	return bt.file.Close()
 }
 
@@ -193,24 +225,56 @@ func (bt *BTree) Cursor() *Cursor {
 
 func (bt *BTree) getPage(id uint32) *page {
 	if p, ok := bt.pages[id]; ok {
+		bt.lruClock++
+		p.lru = bt.lruClock
 		return p
+	}
+	// Evict before loading if cache is full.
+	if len(bt.pages) >= maxCachedPages {
+		bt.evict()
 	}
 	p := bt.loadPage(id)
 	if p != nil {
+		bt.lruClock++
+		p.lru = bt.lruClock
 		bt.pages[id] = p
 	}
 	return p
 }
 
+// evict removes the least-recently-used clean page from the cache.
+// Dirty pages are never evicted — they must be flushed first.
+func (bt *BTree) evict() {
+	var oldestID uint32
+	var oldestTS uint64
+	found := false
+	for id, p := range bt.pages {
+		if p.dirty {
+			continue
+		}
+		if !found || p.lru < oldestTS {
+			oldestID = id
+			oldestTS = p.lru
+			found = true
+		}
+	}
+	if found {
+		delete(bt.pages, oldestID)
+	}
+}
+
 func (bt *BTree) loadPage(id uint32) *page {
 	offset := int64(id-1) * int64(pageSize)
-	buf := make([]byte, pageSize)
+	bufp := getBuf()
+	buf := *bufp
 	n, err := bt.file.ReadAt(buf, offset)
 	if err != nil || n < headerSize {
+		putBuf(bufp)
 		return nil
 	}
 	hdr := decodeHeader(buf[:headerSize])
 	if hdr.crc != crc32.ChecksumIEEE(buf[headerSize:]) {
+		putBuf(bufp)
 		return nil
 	}
 	p := &page{id: id, header: *hdr}
@@ -253,6 +317,7 @@ func (bt *BTree) loadPage(id uint32) *page {
 			p.childs = append(p.childs, childID)
 		}
 	}
+	putBuf(bufp)
 	return p
 }
 
@@ -280,12 +345,15 @@ func (bt *BTree) loadRoot() error {
 	if stat.Size() < int64(pageSize) {
 		return nil
 	}
-	buf := make([]byte, pageSize)
+	bufp := getBuf()
+	buf := *bufp
 	if _, err := bt.file.ReadAt(buf, 0); err != nil {
+		putBuf(bufp)
 		return err
 	}
 	hdr := decodeHeader(buf[:headerSize])
 	if hdr.crc != crc32.ChecksumIEEE(buf[headerSize:]) {
+		putBuf(bufp)
 		return nil
 	}
 	bt.root = 1
@@ -294,6 +362,7 @@ func (bt *BTree) loadRoot() error {
 	if numPages > 1 {
 		bt.nextID = uint32(numPages) + 1
 	}
+	putBuf(bufp)
 	return nil
 }
 
@@ -632,7 +701,8 @@ func (bt *BTree) maxKeys(p *page) int {
 }
 
 func encodePage(p *page) []byte {
-	buf := make([]byte, pageSize)
+	bufp := getBuf()
+	buf := *bufp
 	hdr := p.header
 	hdr.numKeys = uint16(len(p.keys))
 	off := headerSize
@@ -657,7 +727,11 @@ func encodePage(p *page) []byte {
 	}
 	hdr.crc = crc32.ChecksumIEEE(buf[headerSize:])
 	copy(buf[:headerSize], encodeHeader(&hdr))
-	return buf
+	// Return a copy so the pooled buffer can be reused.
+	out := make([]byte, pageSize)
+	copy(out, buf)
+	putBuf(bufp)
+	return out
 }
 
 func encodeHeader(h *pageHeader) []byte {
