@@ -1,6 +1,7 @@
 package VL
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 )
@@ -483,7 +484,7 @@ func TestValidate_ReadWriteConflict(t *testing.T) {
 
 	slot2 := sm.AllocateSlot()
 	slot2.beginTS = 30
-	slot2.readSet = []ReadEntry{{Key: []byte("a"), ObservedTS: 5}}
+	slot2.readSet = map[string]uint64{"a": 5}
 
 	if sm.Validate(slot2) {
 		t.Error("expected read-write conflict: slot1 wrote a, slot2 read a")
@@ -505,7 +506,7 @@ func TestValidate_ReadNoConflict(t *testing.T) {
 
 	slot2 := sm.AllocateSlot()
 	slot2.beginTS = 30
-	slot2.readSet = []ReadEntry{{Key: []byte("a"), ObservedTS: 5}}
+	slot2.readSet = map[string]uint64{"a": 5}
 
 	if !sm.Validate(slot2) {
 		t.Error("expected no conflict: slot1 wrote x, slot2 read a")
@@ -526,12 +527,9 @@ func TestValidate_ReadWriteLargeReadSet(t *testing.T) {
 
 	slot2 := sm.AllocateSlot()
 	slot2.beginTS = 30
-	slot2.readSet = make([]ReadEntry, 0, 1001)
+	slot2.readSet = make(map[string]uint64, 1001)
 	for i := 0; i < 1001; i++ {
-		slot2.readSet = append(slot2.readSet, ReadEntry{
-			Key:        []byte{byte(i)},
-			ObservedTS: 5,
-		})
+		slot2.readSet[fmt.Sprintf("key-%d", i)] = 5
 	}
 
 	// No conflict — slot1 wrote "conflict-key", read-set doesn't include it.
@@ -540,7 +538,7 @@ func TestValidate_ReadWriteLargeReadSet(t *testing.T) {
 	}
 
 	// With conflict — add "conflict-key" to read-set.
-	slot2.readSet = append(slot2.readSet, ReadEntry{Key: []byte("conflict-key"), ObservedTS: 5})
+	slot2.readSet["conflict-key"] = 5
 	if sm.Validate(slot2) {
 		t.Error("expected conflict after adding conflict key to large read-set")
 	}
@@ -566,4 +564,32 @@ func TestValidate_NoReadsWriteWriteConflict(t *testing.T) {
 	if sm.Validate(slot2) {
 		t.Error("expected write-write conflict on key a")
 	}
+}
+
+// TestReadSet_BoundedMemory — readSet as map[string]uint64 stays bounded
+// even when the same key is read many times. REQ001007.
+func TestReadSet_BoundedMemory(t *testing.T) {
+	sm := newSlotManager()
+	slot := sm.AllocateSlot()
+	slot.beginTS = 10
+
+	// Simulate 10K reads of the same key — map should dedup to 1 entry.
+	for i := 0; i < 10000; i++ {
+		slot.readSet["same-key"] = uint64(i)
+	}
+	if len(slot.readSet) != 1 {
+		t.Errorf("expected 1 entry after 10K reads of same key, got %d", len(slot.readSet))
+	}
+
+	// Simulate 10K reads of distinct keys — map should have 10K entries.
+	for i := 0; i < 10000; i++ {
+		slot.readSet[fmt.Sprintf("key-%d", i)] = 5
+	}
+	if len(slot.readSet) != 10001 {
+		t.Errorf("expected 10001 entries after 10K distinct reads, got %d", len(slot.readSet))
+	}
+
+	// Memory is bounded: map overhead is O(distinct keys), not O(total reads).
+	// For 10K distinct keys, map overhead is ~10K × (len(key) + 16 bytes) ≈ 100KB.
+	// Without dedup, 10K reads of the same key would be 10K × (len(key) + 16 bytes).
 }

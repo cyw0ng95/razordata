@@ -50,12 +50,6 @@ func (sm *slotManager) Validate(mySlot *transactionSlot) bool {
 		return validateWriteWrite(sm, mySlot)
 	}
 
-	// Build hash set of read keys for O(1) lookup.
-	readKeys := make(map[string]struct{}, len(mySlot.readSet))
-	for _, re := range mySlot.readSet {
-		readKeys[string(re.Key)] = struct{}{}
-	}
-
 	for i := 0; i < MaxConcurrentTXNs; i++ {
 		slot := &sm.slots[i]
 		if slot.status.Load() != int32(SlotCommitted) {
@@ -70,7 +64,7 @@ func (sm *slotManager) Validate(mySlot *transactionSlot) bool {
 
 		// Check write-set overlap with read-set.
 		for _, kr := range slot.writeSet {
-			if _, hit := readKeys[string(kr.Start)]; hit {
+			if _, hit := mySlot.readSet[string(kr.Start)]; hit {
 				return false
 			}
 		}

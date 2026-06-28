@@ -69,7 +69,7 @@ type transactionSlot struct {
 	beginTS  uint64
 	commitTS uint64
 	writeSet []KeyRange
-	readSet  []ReadEntry
+	readSet  map[string]uint64
 	arena    *MV.Arena
 	index    int
 }
@@ -104,7 +104,7 @@ func (sm *slotManager) AllocateSlot() *transactionSlot {
 	slot.beginTS = 0
 	slot.commitTS = 0
 	slot.writeSet = nil
-	slot.readSet = nil
+	slot.readSet = make(map[string]uint64)
 	slot.arena = MV.AcquireArena()
 
 	return slot

@@ -100,10 +100,7 @@ func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
 }
 
 func (t *tx) trackRead(key []byte, observedTS uint64) {
-	t.slot.readSet = append(t.slot.readSet, ReadEntry{
-		Key:        append([]byte(nil), key...),
-		ObservedTS: observedTS,
-	})
+	t.slot.readSet[string(key)] = observedTS
 }
 
 func (t *tx) Insert(ctx context.Context, key, value []byte) error {

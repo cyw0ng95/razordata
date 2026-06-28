@@ -1,7 +1,6 @@
 package SN
 
 import (
-	"bytes"
 	"sync"
 	"sync/atomic"
 
@@ -15,7 +14,7 @@ type VersionChainSnapshot struct {
 
 type ReadView struct {
 	readTS   uint64
-	snapshot []VersionChainSnapshot
+	snapshot map[string]*VersionChainSnapshot
 	arena    *MV.Arena
 	mv       *MV.MV
 	closed   atomic.Bool
@@ -25,7 +24,7 @@ type ReadView struct {
 func NewReadView(mv *MV.MV, readTS uint64) *ReadView {
 	return &ReadView{
 		readTS:   readTS,
-		snapshot: make([]VersionChainSnapshot, 0, 16),
+		snapshot: make(map[string]*VersionChainSnapshot),
 		mv:       mv,
 	}
 }
@@ -33,10 +32,10 @@ func NewReadView(mv *MV.MV, readTS uint64) *ReadView {
 func (rv *ReadView) addSnapshot(key []byte, head *MV.VersionNode) {
 	rv.mu.Lock()
 	defer rv.mu.Unlock()
-	rv.snapshot = append(rv.snapshot, VersionChainSnapshot{
+	rv.snapshot[string(key)] = &VersionChainSnapshot{
 		Key:  key,
 		Head: head,
-	})
+	}
 }
 
 func (rv *ReadView) Get(key []byte) ([]byte, error) {
@@ -45,24 +44,19 @@ func (rv *ReadView) Get(key []byte) ([]byte, error) {
 	}
 
 	rv.mu.Lock()
-	snap := make([]VersionChainSnapshot, len(rv.snapshot))
-	copy(snap, rv.snapshot)
+	snap := rv.snapshot[string(key)]
 	rv.mu.Unlock()
 
-	for i := range snap {
-		if bytes.Equal(snap[i].Key, key) {
-			node := snap[i].Head
-			for node != nil {
-				if node.IsVisible(rv.readTS) {
-					if node.Deleted() {
-						return nil, MV.ErrNotFound
-					}
-					return node.Value(), nil
+	if snap != nil {
+		for node := snap.Head; node != nil; node = node.Next() {
+			if node.IsVisible(rv.readTS) {
+				if node.Deleted() {
+					return nil, MV.ErrNotFound
 				}
-				node = node.Next()
+				return node.Value(), nil
 			}
-			return nil, MV.ErrNotFound
 		}
+		return nil, MV.ErrNotFound
 	}
 
 	chain := rv.mv.VersionChain(key)
