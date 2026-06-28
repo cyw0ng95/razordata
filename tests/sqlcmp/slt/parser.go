@@ -272,13 +272,22 @@ func parseResultRows(lines []string, typeString string) [][]Value {
 	return rows
 }
 
-// splitRow splits a result row on tab boundaries, falling back to
-// whitespace if no tabs are present. The SLT format uses tabs
-// between columns, but a tolerant parser also handles multi-space
-// layouts that appear in some hand-written scripts.
+// splitRow splits a result row on tab boundaries. The SLT
+// canonical format uses tabs to separate columns within a single
+// row, with one cell per line as the alternative "1 value per
+// line" format.
+//
+// REQ001092: the previous implementation fell back to
+// `strings.Fields` when no tab was present, which broke for VARCHAR
+// cells like "table tn4 row 83" — a single cell with embedded
+// spaces got tokenized into 4 phantom columns, polluting the next
+// 3 rows. Per the corpus contract, when a row uses the multi-line
+// format the entire line is exactly one cell, regardless of how
+// many whitespace-separated tokens it contains. Tab-separated
+// rows are still split on tabs.
 func splitRow(s string) []string {
 	if strings.Contains(s, "\t") {
 		return strings.Split(s, "\t")
 	}
-	return strings.Fields(s)
+	return []string{s}
 }

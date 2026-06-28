@@ -69,11 +69,7 @@ SELECT 1
 }
 
 func TestParse_QueryWithLabel(t *testing.T) {
-	in := `query IT label-foo
-SELECT 1, 'a'
-----
-1 a
-`
+	in := "query IT label-foo\nSELECT 1, 'a'\n----\n1\ta\n"
 	recs, _ := Parse(strings.NewReader(in))
 	if recs[0].Label != "label-foo" {
 		t.Errorf("Label = %q", recs[0].Label)

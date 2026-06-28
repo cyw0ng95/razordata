@@ -46,9 +46,9 @@ carol
 query IT rowsort label-pairs
 SELECT id, name FROM t
 ----
-1 alice
-2 bob
-3 carol
+1	alice
+2	bob
+3	carol
 
 # A query with the same label must hash to the same result;
 # re-issuing the same query and asserting equivalence.

@@ -82,21 +82,7 @@ func TestRazorDriver_EndToEnd_ParseAndRun(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close(ctx) })
 
-	src := `statement ok
-CREATE TABLE t (a INT PRIMARY KEY, b TEXT)
-
-statement ok
-INSERT INTO t VALUES (1, 'x')
-
-statement ok
-INSERT INTO t VALUES (2, 'y')
-
-query IT rowsort
-SELECT a, b FROM t
-----
-1 x
-2 y
-`
+	src := "statement ok\nCREATE TABLE t (a INT PRIMARY KEY, b TEXT)\n\nstatement ok\nINSERT INTO t VALUES (1, 'x')\n\nstatement ok\nINSERT INTO t VALUES (2, 'y')\n\nquery IT rowsort\nSELECT a, b FROM t\n----\n1\tx\n2\ty\n"
 	recs, err := Parse(strings.NewReader(src))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
