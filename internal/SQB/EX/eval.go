@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -963,192 +962,41 @@ func valueFromAnyWrap(v any, err error) (Value, error) {
 }
 
 func evalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
-	switch e.Name {
-	case "LENGTH":
-		if len(e.Args) > 0 {
-			v, err := EvalValue(e.Args[0], row, params)
-			if err != nil {
-				return NullValue(), err
-			}
-			if v.Kind == KindText {
-				return NewIntValue(int64(len(v.S))), nil
-			}
-		}
-	case "UPPER":
-		if len(e.Args) > 0 {
-			v, err := EvalValue(e.Args[0], row, params)
-			if err != nil {
-				return NullValue(), err
-			}
-			if v.Kind == KindText {
-				return NewTextValue(strings.ToUpper(v.S)), nil
-			}
-		}
-	case "LOWER":
-		if len(e.Args) > 0 {
-			v, err := EvalValue(e.Args[0], row, params)
-			if err != nil {
-				return NullValue(), err
-			}
-			if v.Kind == KindText {
-				return NewTextValue(strings.ToLower(v.S)), nil
-			}
-		}
-	case "IFNULL":
-		if len(e.Args) == 2 {
-			v1, err := EvalValue(e.Args[0], row, params)
-			if err != nil {
-				return NullValue(), err
-			}
-			if v1.Kind != KindNull {
-				return v1, nil
-			}
-			return EvalValue(e.Args[1], row, params)
-		}
-	case "COALESCE":
-		for _, arg := range e.Args {
+	// REQ000978: registry-based dispatch. Adding a new function is
+	// a one-line registration in function_registry.go's init(),
+	// not an edit to a switch block.
+	if impl, ok := scalarFuncRegistry[e.Name]; ok {
+		return impl(e.Args, row, params)
+	}
+	if isDateTimeFunc(e.Name) {
+		args := make([]any, len(e.Args))
+		for i, arg := range e.Args {
 			v, err := EvalValue(arg, row, params)
 			if err != nil {
 				return NullValue(), err
 			}
-			if v.Kind != KindNull {
-				return v, nil
-			}
+			args[i] = v.ToAny()
 		}
-		return NullValue(), nil
-	case "NULLIF":
-		if len(e.Args) != 2 {
-			return NullValue(), fmt.Errorf("nullif: expected 2 args")
-		}
-		a, err := EvalValue(e.Args[0], row, params)
+		v, err := evalDateTimeFunc(e.Name, args)
 		if err != nil {
 			return NullValue(), err
 		}
-		b, err := EvalValue(e.Args[1], row, params)
+		return valueFromAny(v), nil
+	}
+	if isJSONFunc(e.Name) {
+		args := make([]any, len(e.Args))
+		for i, arg := range e.Args {
+			v, err := EvalValue(arg, row, params)
+			if err != nil {
+				return NullValue(), err
+			}
+			args[i] = v.ToAny()
+		}
+		v, err := evalJSONFunc(e.Name, args)
 		if err != nil {
 			return NullValue(), err
 		}
-		if equalValueValue(a, b) {
-			return NullValue(), nil
-		}
-		return a, nil
-	case "NOW":
-		return NewTextValue(time.Now().UTC().Format(time.RFC3339)), nil
-	case "SUBSTR":
-		return valueFromAnyWrap(evalSubstr(e.Args, row, params))
-	case "ABS":
-		return valueFromAnyWrap(evalAbs(e.Args, row, params))
-	case "HEX":
-		return valueFromAnyWrap(evalHex(e.Args, row, params))
-	case "ROUND":
-		return valueFromAnyWrap(evalRound(e.Args, row, params))
-	case "CHAR":
-		return valueFromAnyWrap(evalChar(e.Args, row, params))
-	case "CONCAT":
-		return valueFromAnyWrap(evalConcat(e.Args, row, params))
-	case "CONCAT_WS":
-		return valueFromAnyWrap(evalConcatWS(e.Args, row, params))
-	case "FORMAT":
-		return valueFromAnyWrap(evalFormat(e.Args, row, params))
-	case "LTRIM":
-		return valueFromAnyWrap(evalLtrim(e.Args, row, params))
-	case "RTRIM":
-		return valueFromAnyWrap(evalRtrim(e.Args, row, params))
-	case "TRIM":
-		return valueFromAnyWrap(evalTrim(e.Args, row, params))
-	case "REPLACE":
-		return valueFromAnyWrap(evalReplace(e.Args, row, params))
-	case "QUOTE":
-		return valueFromAnyWrap(evalQuote(e.Args, row, params))
-	case "TYPEOF":
-		return valueFromAnyWrap(evalTypeof(e.Args, row, params))
-	case "OCTET_LENGTH":
-		return valueFromAnyWrap(evalOctetLength(e.Args, row, params))
-	case "UNICODE":
-		return valueFromAnyWrap(evalUnicode(e.Args, row, params))
-	case "SQLITE_VERSION":
-		return valueFromAnyWrap(evalSqliteVersion(e.Args, row, params))
-	case "SQLITE_SOURCE_ID":
-		return valueFromAnyWrap(evalSqliteSourceID(e.Args, row, params))
-	case "IIF", "IF":
-		return valueFromAnyWrap(evalIIF(e.Args, row, params))
-	case "INSTR":
-		return valueFromAnyWrap(evalInstr(e.Args, row, params))
-	case "SIGN":
-		return valueFromAnyWrap(evalSign(e.Args, row, params))
-	case "MAX":
-		return valueFromAnyWrap(evalMaxScalar(e.Args, row, params))
-	case "MIN":
-		return valueFromAnyWrap(evalMinScalar(e.Args, row, params))
-	case "RANDOM":
-		return valueFromAnyWrap(evalRandom(e.Args, row, params))
-	case "RANDOMBLOB":
-		return valueFromAnyWrap(evalRandomBlob(e.Args, row, params))
-	case "ZEROBLOB":
-		return valueFromAnyWrap(evalZeroblob(e.Args, row, params))
-	case "GLOB":
-		return valueFromAnyWrap(evalGlob(e.Args, row, params))
-	case "LIKELIHOOD":
-		return valueFromAnyWrap(evalLikelihood(e.Args, row, params))
-	case "LIKELY":
-		return valueFromAnyWrap(evalLikely(e.Args, row, params))
-	case "SOUNDEX":
-		return valueFromAnyWrap(evalSoundex(e.Args, row, params))
-	case "UNHEX":
-		return valueFromAnyWrap(evalUnhex(e.Args, row, params))
-	case "UNISTR":
-		return valueFromAnyWrap(evalUnistr(e.Args, row, params))
-	case "UNLIKELY":
-		return valueFromAnyWrap(evalUnlikely(e.Args, row, params))
-	case "CHANGES":
-		ec := ExecContextFromRow(row)
-		if ec == nil {
-			return NewIntValue(0), nil
-		}
-		return NewIntValue(ec.LastChanges), nil
-	case "LAST_INSERT_ROWID":
-		acc := getSessionCounterAccessor()
-		if acc == nil {
-			return NewIntValue(0), nil
-		}
-		return NewIntValue(acc.LastInsertRowID(getCurrentSessionID())), nil
-	case "TOTAL_CHANGES":
-		ec := ExecContextFromRow(row)
-		if ec == nil {
-			return NewIntValue(0), nil
-		}
-		return NewIntValue(ec.TotalChanges), nil
-	default:
-		if isDateTimeFunc(e.Name) {
-			args := make([]any, len(e.Args))
-			for i, arg := range e.Args {
-				v, err := EvalValue(arg, row, params)
-				if err != nil {
-					return NullValue(), err
-				}
-				args[i] = v.ToAny()
-			}
-			v, err := evalDateTimeFunc(e.Name, args)
-			if err != nil {
-				return NullValue(), err
-			}
-			return valueFromAny(v), nil
-		}
-		if isJSONFunc(e.Name) {
-			args := make([]any, len(e.Args))
-			for i, arg := range e.Args {
-				v, err := EvalValue(arg, row, params)
-				if err != nil {
-					return NullValue(), err
-				}
-				args[i] = v.ToAny()
-			}
-			v, err := evalJSONFunc(e.Name, args)
-			if err != nil {
-				return NullValue(), err
-			}
-			return valueFromAny(v), nil
-		}
+		return valueFromAny(v), nil
 	}
 	return NullValue(), ErrEval
 }

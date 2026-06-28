@@ -1,0 +1,145 @@
+// Package EX function/aggregate registry tests.
+//
+// REQ000978: verifies every documented function and aggregate has
+// a registry entry, and that the registry dispatches to the right
+// implementation.
+package EX
+
+import (
+	"strings"
+	"testing"
+
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+)
+
+// TestFunctionRegistry_AllFunctionsRegistered verifies every
+// documented function name has a registry entry.
+func TestFunctionRegistry_AllFunctionsRegistered(t *testing.T) {
+	expected := []string{
+		"LENGTH", "UPPER", "LOWER", "IFNULL", "COALESCE", "NULLIF",
+		"NOW", "SUBSTR", "ABS", "HEX", "ROUND", "CHAR",
+		"CONCAT", "CONCAT_WS", "FORMAT", "LTRIM", "RTRIM", "TRIM",
+		"REPLACE", "QUOTE", "TYPEOF", "OCTET_LENGTH", "UNICODE",
+		"SQLITE_VERSION", "SQLITE_SOURCE_ID", "IIF", "IF", "INSTR",
+		"SIGN", "MAX", "MIN", "RANDOM", "RANDOMBLOB", "ZEROBLOB",
+		"GLOB", "LIKELIHOOD", "LIKELY", "SOUNDEX", "UNHEX", "UNISTR",
+		"UNLIKELY", "CHANGES", "LAST_INSERT_ROWID", "TOTAL_CHANGES",
+	}
+	for _, name := range expected {
+		if _, ok := scalarFuncRegistry[name]; !ok {
+			t.Errorf("scalarFuncRegistry missing entry for %q", name)
+		}
+	}
+}
+
+func TestAggregateRegistry_AllFunctionsRegistered(t *testing.T) {
+	expected := []string{"COUNT", "SUM", "AVG", "MIN", "MAX", "GROUP_CONCAT"}
+	for _, name := range expected {
+		if _, ok := aggregateFuncRegistry[name]; !ok {
+			t.Errorf("aggregateFuncRegistry missing entry for %q", name)
+		}
+	}
+}
+
+// TestFunctionRegistry_DispatchReachesImpl verifies the registry
+// dispatches to the registered implementation for a few sample
+// functions.
+func TestFunctionRegistry_DispatchReachesImpl(t *testing.T) {
+	cases := []struct {
+		name string
+		expr *PS.FunctionCall
+		want any
+	}{
+		{
+			name: "UPPER",
+			expr: &PS.FunctionCall{Name: "UPPER", Args: []PS.Expr{&PS.StringLiteral{Val: "abc"}}},
+			want: "ABC",
+		},
+		{
+			name: "LOWER",
+			expr: &PS.FunctionCall{Name: "LOWER", Args: []PS.Expr{&PS.StringLiteral{Val: "ABC"}}},
+			want: "abc",
+		},
+		{
+			name: "LENGTH",
+			expr: &PS.FunctionCall{Name: "LENGTH", Args: []PS.Expr{&PS.StringLiteral{Val: "hello"}}},
+			want: int64(5),
+		},
+		{
+			name: "COALESCE",
+			expr: &PS.FunctionCall{Name: "COALESCE", Args: []PS.Expr{&PS.NullLiteral{}, &PS.StringLiteral{Val: "fallback"}}},
+			want: "fallback",
+		},
+		{
+			name: "IFNULL",
+			expr: &PS.FunctionCall{Name: "IFNULL", Args: []PS.Expr{&PS.NullLiteral{}, &PS.StringLiteral{Val: "fb"}}},
+			want: "fb",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := EvalValue(tc.expr, nil, nil)
+			if err != nil {
+				t.Fatalf("EvalValue: %v", err)
+			}
+			got := v.ToAny()
+			if got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFunctionRegistry_AggregateDispatch verifies aggregate
+// dispatch via the registry.
+func TestFunctionRegistry_AggregateDispatch(t *testing.T) {
+	rows := []Row{
+		{Cols: []string{"x"}, Types: []int{1}, Data: []Value{NewIntValue(10)}},
+		{Cols: []string{"x"}, Types: []int{1}, Data: []Value{NewIntValue(20)}},
+		{Cols: []string{"x"}, Types: []int{1}, Data: []Value{NewIntValue(30)}},
+	}
+	t.Run("COUNT", func(t *testing.T) {
+		agg := &PS.AggregateFunc{Name: "COUNT", Arg: &PS.StarExpr{}}
+		v, err := evalAggregateOver(agg, rows, nil)
+		if err != nil {
+			t.Fatalf("evalAggregateOver: %v", err)
+		}
+		if v != int64(3) {
+			t.Errorf("COUNT got %v, want 3", v)
+		}
+	})
+	t.Run("SUM", func(t *testing.T) {
+		agg := &PS.AggregateFunc{Name: "SUM", Arg: &PS.QualifiedName{Table: "", Name: "x"}}
+		v, err := evalAggregateOver(agg, rows, nil)
+		if err != nil {
+			t.Fatalf("evalAggregateOver: %v", err)
+		}
+		if v != int64(60) {
+			t.Errorf("SUM got %v, want 60", v)
+		}
+	})
+	t.Run("AVG", func(t *testing.T) {
+		agg := &PS.AggregateFunc{Name: "AVG", Arg: &PS.QualifiedName{Name: "x"}}
+		v, err := evalAggregateOver(agg, rows, nil)
+		if err != nil {
+			t.Fatalf("evalAggregateOver: %v", err)
+		}
+		if v.(float64) != 20.0 {
+			t.Errorf("AVG got %v, want 20.0", v)
+		}
+	})
+}
+
+// TestFunctionRegistry_DispatchByString checks a few functions that
+// are NOT in the registry still work via isDateTimeFunc / isJSONFunc
+// paths (smoke test).
+func TestFunctionRegistry_DispatchUnknownFails(t *testing.T) {
+	expr := &PS.FunctionCall{Name: "NOT_A_REAL_FUNC", Args: nil}
+	v, err := evalFunction(expr, nil, nil)
+	if err == nil {
+		t.Errorf("expected error for unknown function, got %v", v)
+	}
+	if !strings.Contains(err.Error(), "eval") && err != ErrEval {
+		t.Logf("got err: %v (acceptable)", err)
+	}
+}

@@ -8,7 +8,6 @@ package EX
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -427,174 +426,12 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 		}
 		return nil, nil
 	}
-	switch agg.Name {
-	case "COUNT":
-		if agg.Distinct {
-			seen := make(map[any]bool)
-			for _, r := range rows {
-				v, err := EvalValue(agg.Arg, &r, params)
-				if err != nil {
-					return nil, err
-				}
-				if v.Kind == KindNull {
-					continue
-				}
-				seen[v.ToAny()] = true
-			}
-			return int64(len(seen)), nil
-		}
-		if _, ok := agg.Arg.(*PS.StarExpr); ok {
-			return int64(len(rows)), nil
-		}
-		var count int64
-		for _, r := range rows {
-			v, _ := EvalValue(agg.Arg, &r, params)
-			if v.Kind != KindNull {
-				count++
-			}
-		}
-		return count, nil
-	case "SUM":
-		if agg.Distinct {
-			return sumDistinct(agg, rows, params)
-		}
-		var sumI int64
-		var sumF float64
-		var seenI, seenF bool
-		for _, r := range rows {
-			v, err := EvalValue(agg.Arg, &r, params)
-			if err != nil {
-				return nil, err
-			}
-			if v.Kind == KindNull {
-				continue
-			}
-			if v.Kind == KindFloat {
-				sumF += v.F64
-				seenF = true
-				continue
-			}
-			if v.Kind == KindInt {
-				sumI += v.I64
-				seenI = true
-			}
-		}
-		if seenF {
-			return sumF + float64(sumI), nil
-		}
-		if seenI {
-			return sumI, nil
-		}
-		return nil, nil
-	case "AVG":
-		if agg.Distinct {
-			return avgDistinct(agg, rows, params)
-		}
-		var sumF float64
-		var n int64
-		for _, r := range rows {
-			v, err := EvalValue(agg.Arg, &r, params)
-			if err != nil {
-				return nil, err
-			}
-			if v.Kind == KindNull {
-				continue
-			}
-			if v.Kind == KindFloat {
-				sumF += v.F64
-				n++
-			} else if v.Kind == KindInt {
-				sumF += float64(v.I64)
-				n++
-			}
-		}
-		if n == 0 {
-			return nil, nil
-		}
-		return sumF / float64(n), nil
-	case "MIN":
-		if agg.Distinct {
-			return minDistinct(agg, rows, params)
-		}
-		var best Value
-		for _, r := range rows {
-			v, err := EvalValue(agg.Arg, &r, params)
-			if err != nil {
-				return nil, err
-			}
-			if v.Kind == KindNull {
-				continue
-			}
-			if best.Kind == KindNull || compareValue(v, best) < 0 {
-				best = v
-			}
-		}
-		return best.ToAny(), nil
-	case "MAX":
-		if agg.Distinct {
-			return maxDistinct(agg, rows, params)
-		}
-		var best Value
-		for _, r := range rows {
-			v, err := EvalValue(agg.Arg, &r, params)
-			if err != nil {
-				return nil, err
-			}
-			if v.Kind == KindNull {
-				continue
-			}
-			if best.Kind == KindNull || compareValue(v, best) > 0 {
-				best = v
-			}
-		}
-		return best.ToAny(), nil
-	case "GROUP_CONCAT":
-		// REQ000523: GROUP_CONCAT optional separator. If the
-		// parser provided a separator expression, evaluate it
-		// once; otherwise default to ",".
-		sep := ","
-		if agg.Separator != nil {
-			sv, err := EvalValue(agg.Separator, nil, params)
-			if err != nil {
-				return nil, err
-			}
-			if sv.Kind != KindNull {
-				sep = fmt.Sprintf("%v", sv.ToAny())
-			}
-		}
-		var parts []string
-		seen := make(map[any]bool)
-		for _, r := range rows {
-			v, err := EvalValue(agg.Arg, &r, params)
-			if err != nil {
-				return nil, err
-			}
-			if v.Kind == KindNull {
-				continue
-			}
-			if agg.Distinct {
-				if seen[v.ToAny()] {
-					continue
-				}
-				seen[v.ToAny()] = true
-			}
-			parts = append(parts, fmt.Sprintf("%v", v.ToAny()))
-		}
-		if len(parts) == 0 {
-			return nil, nil
-		}
-		var b strings.Builder
-		total := len(parts[0])
-		for _, p := range parts[1:] {
-			total += len(sep) + len(p)
-		}
-		b.Grow(total)
-		b.WriteString(parts[0])
-		for _, p := range parts[1:] {
-			b.WriteString(sep)
-			b.WriteString(p)
-		}
-		return b.String(), nil
+	// REQ000978: registry-based aggregate dispatch. Adding a new
+	// aggregate is a one-line registration in
+	// aggregate_registry.go's init(), not an edit to a switch
+	// block here.
+	if impl, ok := aggregateFuncRegistry[agg.Name]; ok {
+		return impl(agg, rows, params)
 	}
 	return nil, nil
 }
