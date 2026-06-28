@@ -1,6 +1,8 @@
 package EX
 
 import (
+	"context"
+	"fmt"
 	"testing"
 )
 
@@ -483,5 +485,158 @@ func walkOpTreeDebug(op Operator, fn func(Operator, int), depth int) {
 		walkOpTreeDebug(v.Child(), fn, depth+1)
 	case *AdaptiveOp:
 		walkOpTreeDebug(v.Child(), fn, depth+1)
+	}
+}
+
+// TestPlanner_CrossJoinPredicatePushdownINList verifies that IN-list
+// predicates in cross-join WHERE clauses are pushed down and the
+// result row count stays small (<10K, not billions). REQ001092.
+// Uses SLT-style unique column names (a1 in t1, b2 in t2, etc.)
+// so the planner can unambiguously resolve columns to tables.
+func TestPlanner_CrossJoinPredicatePushdownINList(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	// Register 5 tables with 100 rows each.
+	// Each table has a unique column name (SLT convention).
+	for i := 1; i <= 5; i++ {
+		colName := string(rune('a' + i - 1)) // a, b, c, d, e
+		cols := []string{colName}
+		var rows []Row
+		for r := 0; r < 100; r++ {
+			rows = append(rows, Row{
+				Cols: cols,
+				Data: []Value{NewIntValue(int64(r))},
+			})
+		}
+		RegisterTable(fmt.Sprintf("t%d", i), rows)
+	}
+
+	// 5-table cross-join with IN-list predicates on each table.
+	// Each IN-list has 3 values that match specific rows.
+	// With pushdown: small result. Without: 100^5 = 10B rows (OOM).
+	sql := `SELECT * FROM t1, t2, t3, t4, t5
+		WHERE a IN (1,2,3) AND b IN (10,20,30) AND c IN (20,30,40)
+		AND d IN (30,40,50) AND e IN (40,50,60)`
+
+	ex := NewExecutor()
+	ctx := context.Background()
+	rows, err := ex.QueryAll(ctx, sql)
+	if err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	// With pushdown: each table produces ~3 rows, result ~3^5=243.
+	// Without pushdown: 100^5 = 10 billion rows (OOM).
+	if len(rows) > 10000 {
+		t.Fatalf("result too large (%d rows) — predicates likely not pushed down", len(rows))
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected some rows, got none")
+	}
+}
+
+// TestPlanner_CrossJoinColdStart_Pushdown verifies predicate pushdown
+// works when the planner catalog is NOT populated (cold-start scenario).
+// The planner must fall back to resolveTableForColumn / findTableInSchemas.
+// REQ001092.
+func TestPlanner_CrossJoinColdStart_Pushdown(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	// Register tables via source-level RegisterTable (populates schemas)
+	// but do NOT use Planner.RegisterTable — leaves p.catalog empty.
+	for i := 1; i <= 5; i++ {
+		colName := string(rune('a' + i - 1))
+		cols := []string{colName}
+		var rows []Row
+		for r := 0; r < 100; r++ {
+			rows = append(rows, Row{
+				Cols: cols,
+				Data: []Value{NewIntValue(int64(r))},
+			})
+		}
+		RegisterTable(fmt.Sprintf("t%d", i), rows)
+	}
+
+	p := NewPlanner()
+	// Deliberately NOT calling p.RegisterTable — cold-start.
+
+	plan, err := p.ParseAndPlan(`SELECT * FROM t1, t2, t3, t4, t5
+		WHERE a IN (1,2,3) AND b IN (10,20,30) AND c IN (20,30,40)
+		AND d IN (30,40,50) AND e IN (40,50,60)`)
+	if err != nil {
+		t.Fatalf("plan error: %v", err)
+	}
+	if plan == nil || plan.root == nil {
+		t.Fatal("plan is nil")
+	}
+
+	// Walk plan: expect 5 SeqScans + 5 Filters (pushed predicates).
+	filterCount := 0
+	scanCount := 0
+	walkOpTreeDebug(plan.root, func(op Operator, depth int) {
+		switch op.(type) {
+		case *Filter:
+			filterCount++
+		case *SeqScan:
+			scanCount++
+		}
+	}, 0)
+	if scanCount != 5 {
+		t.Fatalf("expected 5 SeqScan, got %d", scanCount)
+	}
+	if filterCount < 5 {
+		t.Fatalf("expected at least 5 Filters (pushed predicates), got %d — cold-start pushdown failing", filterCount)
+	}
+}
+
+// BenchmarkSelect4_CrossJoinColdStart measures first-execution time for
+// a 5-table cross-join with IN-list predicates under cold-start (no
+// planner catalog). REQ001092: target <1s.
+func BenchmarkSelect4_CrossJoinColdStart(b *testing.B) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	for i := 1; i <= 5; i++ {
+		colName := string(rune('a' + i - 1))
+		cols := []string{colName}
+		var rows []Row
+		for r := 0; r < 100; r++ {
+			rows = append(rows, Row{
+				Cols: cols,
+				Data: []Value{NewIntValue(int64(r))},
+			})
+		}
+		RegisterTable(fmt.Sprintf("t%d", i), rows)
+	}
+
+	sql := `SELECT * FROM t1, t2, t3, t4, t5
+		WHERE a IN (1,2,3) AND b IN (10,20,30) AND c IN (20,30,40)
+		AND d IN (30,40,50) AND e IN (40,50,60)`
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		UnregisterAll()
+		for j := 1; j <= 5; j++ {
+			colName := string(rune('a' + j - 1))
+			cols := []string{colName}
+			var rs []Row
+			for r := 0; r < 100; r++ {
+				rs = append(rs, Row{
+					Cols: cols,
+					Data: []Value{NewIntValue(int64(r))},
+				})
+			}
+			RegisterTable(fmt.Sprintf("t%d", j), rs)
+		}
+		ex := NewExecutor()
+		ctx := context.Background()
+		rows, err := ex.QueryAll(ctx, sql)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(rows) == 0 {
+			b.Fatal("expected rows")
+		}
 	}
 }
