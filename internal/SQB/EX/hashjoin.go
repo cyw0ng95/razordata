@@ -180,8 +180,14 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		j.buckets[i].rightRows = make([]Row, 0, 64)
 		j.buckets[i].hashes = make([]uint64, 0, 64)
 	}
+	// REQ001056: estimated bytes per row for budget checking.
+	// Each Row ≈ 5 × 24 bytes (Value) + 64 base + column metadata.
+	const estBytesPerRow = 200
+
 	// Build phase: hash right side into partition buckets.
-	// Track total right rows for sharedCols/Types computation.
+	// REQ001056: check budget every 1024 rows and stop early
+	// when joinBufferSize is exceeded — prevents materializing
+	// the full right side in memory before the budget check.
 	var rightCount int
 	var firstRightCols []string
 	var firstRightTypes []int
@@ -197,18 +203,24 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 			firstRightCols = row.Cols
 			firstRightTypes = row.Types
 		}
+		rightCount++
+		// REQ001056: proactive budget check during materialization.
+		if j.joinBufferSize > 0 && rightCount%1024 == 0 {
+			if int64(rightCount)*estBytesPerRow > j.joinBufferSize {
+				break
+			}
+		}
 		rk := lookupKeys(row, j.rightKeys, j.keyBuf)
 		hash := hashKeys(rk)
 		idx := int(hash & uint64(j.partitions-1))
 		j.buckets[idx].rightRows = append(j.buckets[idx].rightRows, row)
 		j.buckets[idx].hashes = append(j.buckets[idx].hashes, hash)
-		rightCount++
 	}
 	// REQ000865: close right side immediately — rows live in buckets.
 	if j.right != nil {
 		_ = j.right.Close()
 	}
-	// Materialize left side.
+	// Materialize left side. REQ001056: proactive budget check.
 	for {
 		row, err := j.left.Next(ctx)
 		if err == ErrNoRows {
@@ -218,6 +230,11 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 			return err
 		}
 		j.leftRows = append(j.leftRows, row)
+		if j.joinBufferSize > 0 && len(j.leftRows)%1024 == 0 {
+			if int64(len(j.leftRows))*estBytesPerRow > j.joinBufferSize {
+				break
+			}
+		}
 	}
 
 	// REQ001056: check total materialized rows against joinBufferSize.
@@ -293,11 +310,30 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		}
 	}
 
+	// REQ001056: cap totalMatches based on joinBufferSize to prevent
+	// OOM from dataBuf pre-allocation (e.g. cross-join with 100K
+	// rows each side produces 10B matches → 80GB dataBuf).
+	// Each Value is ~24 bytes; each match row has dataPerRow Values.
+	// Compute dataPerRow before the cap since the cap depends on it.
+	var dataPerRow int
+	if len(j.leftRows) > 0 && rightCount > 0 {
+		dataPerRow = len(j.leftRows[0].Cols) + len(firstRightCols)
+	}
+	if j.joinBufferSize > 0 && totalMatches > 0 && dataPerRow > 0 {
+		maxValues := j.joinBufferSize / 24
+		maxMatches := int(maxValues / int64(dataPerRow))
+		if maxMatches < 1 {
+			maxMatches = 1
+		}
+		if totalMatches > maxMatches {
+			totalMatches = maxMatches
+		}
+	}
+
 	// Pre-allocate contiguous data buffer and matches slice.
 	if len(j.leftRows) == 0 || rightCount == 0 {
 		return nil
 	}
-	dataPerRow := len(j.leftRows[0].Cols) + len(firstRightCols)
 	j.dataPerRow = dataPerRow
 	// REQ001090: dataBuf pre-allocates totalMatches*dataPerRow
 	// Values. The output Row.Data sub-slices point INTO this
