@@ -62,3 +62,33 @@ func BenchmarkLexerASCII(b *testing.B) {
 		}
 	}
 }
+
+// REQ001142: scanNumber throughput benchmark. Verifies that the
+// switch from strings.Builder to direct string slicing yields zero
+// heap allocations per integer/float token. Run with:
+// go test -bench=BenchmarkLexerScanNumber -benchmem ./internal/SQF/LX
+func BenchmarkLexerScanNumber(b *testing.B) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"int", "1234567890"},
+		{"float", "12345.6789"},
+		{"mixed", "1 22 333 4444 55555 666666 7777777 88888888 999999999 0"},
+	}
+	for _, c := range cases {
+		c := c
+		b.Run(c.name, func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				l := NewLexer(c.input)
+				for {
+					tok := l.Next()
+					if tok.Type == T_EOF {
+						break
+					}
+				}
+			}
+		})
+	}
+}

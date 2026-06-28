@@ -483,13 +483,12 @@ func (l *Lexer) scanNumber() Token {
 	startLine := l.startLine
 	startCol := l.startCol
 
-	// REQ001142: slice directly from input instead of building with
-	// strings.Builder (will be replaced in the REQ001142 commit;
-	// keeping the builder here so this commit is purely the ASCII
-	// fast-path delta).
-	var sb strings.Builder
+	// REQ001142: slice directly from input. Numbers have no escapes,
+	// so start/end indices are always sufficient (same pattern as
+	// REQ001010 for scanIdent). This eliminates the strings.Builder
+	// and the .String() copy.
+	start := l.pos
 	hasDot := false
-
 	for {
 		c := l.peek()
 		if c == 0 {
@@ -509,10 +508,10 @@ func (l *Lexer) scanNumber() Token {
 			}
 			hasDot = true
 		}
-		sb.WriteByte(l.advance())
+		l.advance()
 	}
 
-	lit := sb.String()
+	lit := l.input[start:l.pos]
 
 	if hasDot {
 		return Token{Type: T_FLOAT, Lexeme: lit, Literal: lit, Line: startLine, Col: startCol}
