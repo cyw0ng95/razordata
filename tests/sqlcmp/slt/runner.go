@@ -48,6 +48,10 @@ type Runner struct {
 	// and returns top-20 in Stats.Slowest.
 	profileOn    bool
 	recordTimers []slowTimer
+
+	// haltOnTimeout is set when a query hits context deadline exceeded.
+	// Subsequent records are skipped (fast-fail for timeout cascades).
+	haltOnTimeout bool
 }
 
 // NewRunner constructs a runner bound to a driver. The classifier
@@ -131,19 +135,20 @@ func (r *Runner) Run(ctx context.Context, records []Record) Stats {
 			return r.finalize()
 		case RecordHashThreshold:
 			r.hashThreshold = rec.HashThreshold
-			// The hash-threshold record itself is a config
-			// directive, not an executable; do not count it
-			// twice. The Total increment above is the only
-			// occurrence. We treat it as a pass without
-			// affecting Passed/Failed counts: subtract from
-			// Total so the pass rate is not skewed.
 			r.stats.Total--
 		case RecordSkipIf:
-			// Skip the next executable if engine matches.
 			r.pendingSkip = r.engineName != "" && r.engineName == rec.DBName
 		case RecordOnlyIf:
-			// Skip the next executable if engine does NOT match.
 			r.pendingSkip = r.engineName != "" && r.engineName != rec.DBName
+		}
+		// REQ001056: fast-fail on context deadline exceeded — skip all
+		// remaining records (they will also time out and waste time).
+		if r.haltOnTimeout {
+			r.stats.Skipped += len(records) - i - 1
+			if r.profileOn {
+				r.recordTimers = append(r.recordTimers, slowTimer{line: rec.Line, kind: rec.Kind, label: rec.Label, sql: rec.SQL, dur: time.Since(recStart)})
+			}
+			return r.finalize()
 		}
 		if r.profileOn {
 			r.recordTimers = append(r.recordTimers, slowTimer{line: rec.Line, kind: rec.Kind, label: rec.Label, sql: rec.SQL, dur: time.Since(recStart)})
@@ -168,6 +173,13 @@ func (r *Runner) runStatementOK(ctx context.Context, rec *Record) {
 	err := r.driver.Exec(ctx, rec.SQL)
 	if err == nil {
 		r.stats.Passed++
+		return
+	}
+	// REQ001056: fast-fail on timeout — subsequent records will also
+	// time out in a cascade, wasting wall-clock time on diagnosis.
+	if isContextDeadlineExceeded(err) {
+		r.stats.Failed++
+		r.haltOnTimeout = true
 		return
 	}
 	switch r.classifier.Classify(err) {
@@ -200,6 +212,13 @@ func (r *Runner) runStatementError(ctx context.Context, rec *Record) {
 func (r *Runner) runQuery(ctx context.Context, rec *Record) {
 	rs, err := r.driver.Query(ctx, rec.SQL)
 	if err != nil {
+		// REQ001056: fast-fail on timeout — subsequent records will
+		// also time out in a cascade, wasting wall-clock time.
+		if isContextDeadlineExceeded(err) {
+			r.stats.Failed++
+			r.haltOnTimeout = true
+			return
+		}
 		switch r.classifier.Classify(err) {
 		case VerdictSkipped:
 			r.stats.Skipped++
@@ -404,6 +423,14 @@ type slowTimer struct {
 	label string
 	sql   string
 	dur   time.Duration
+}
+
+// isContextDeadlineExceeded detects go context deadline errors.
+func isContextDeadlineExceeded(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "context deadline exceeded")
 }
 
 // truncateStr truncates s to max characters with an ellipsis suffix.
