@@ -1,6 +1,8 @@
 package ls
 
 import (
+	"bytes"
+	"container/heap"
 	"sync/atomic"
 )
 
@@ -194,15 +196,38 @@ const (
 	fnv1aPrime       uint64 = 1099511628211
 )
 
-// shardedIter iterates over multiple shards, merging results in order.
-// It does not guarantee global sorted order across shards (each shard
-// is sorted independently), but provides a union of all active shard entries.
+// shardedIter iterates over multiple shards, merging results in sorted
+// order using a min-heap. REQ000996: replaces the sequential union
+// which violated the RangeIter sorted-order contract.
 type shardedIter struct {
 	shards []*memtable
 	its    []RangeIter
-	pos    int
-	done   bool
+	h      entryHeap
+	curKey []byte
+	curVal []byte
 	err    error
+	done   bool
+}
+
+// entryHeap implements heap.Interface for merge-sort across shards.
+type entryHeap []entryItem
+
+type entryItem struct {
+	key   []byte
+	value []byte
+	src   int
+}
+
+func (h entryHeap) Len() int            { return len(h) }
+func (h entryHeap) Less(i, j int) bool  { return bytes.Compare(h[i].key, h[j].key) < 0 }
+func (h entryHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+func (h *entryHeap) Push(x any)         { *h = append(*h, x.(entryItem)) }
+func (h *entryHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+	return item
 }
 
 func newShardedIter(shards []*memtable) RangeIter {
@@ -210,55 +235,51 @@ func newShardedIter(shards []*memtable) RangeIter {
 	for _, s := range shards {
 		its = append(its, &iteratorAdapter{it: s.Iterator()})
 	}
-	return &shardedIter{
-		shards: shards,
-		its:    its,
-		pos:    -1,
+	si := &shardedIter{shards: shards, its: its}
+	// Prime the heap: advance each iterator and push its first entry.
+	for i, it := range its {
+		if it.Next() {
+			heap.Push(&si.h, entryItem{
+				key:   append([]byte(nil), it.Key()...),
+				value: append([]byte(nil), it.Value()...),
+				src:   i,
+			})
+		}
 	}
+	return si
 }
 
-// Next advances to the next entry across any shard.
-// Returns false when all shards are exhausted.
-// NOTE: Does not guarantee sorted order - just unions all shards.
+// Next advances to the next entry in global sorted order across all
+// shards using the merge-heap. REQ000996.
 func (si *shardedIter) Next() bool {
 	if si.done {
 		return false
 	}
-
-	// Find the next available iterator
-	for {
-		if si.pos >= 0 && si.pos < len(si.its) {
-			if si.its[si.pos].Next() {
-				return true
-			}
-		}
-		// Move to next shard
-		si.pos++
-		if si.pos >= len(si.its) {
-			si.done = true
-			return false
-		}
-	// Check if this shard has entries
-		if si.its[si.pos].Next() {
-			return true
-		}
+	if si.h.Len() == 0 {
+		si.done = true
+		return false
 	}
+	item := heap.Pop(&si.h).(entryItem)
+	si.curKey = item.key
+	si.curVal = item.value
+	if si.its[item.src].Next() {
+		heap.Push(&si.h, entryItem{
+			key:   append([]byte(nil), si.its[item.src].Key()...),
+			value: append([]byte(nil), si.its[item.src].Value()...),
+			src:   item.src,
+		})
+	}
+	return true
 }
 
 // Key returns the key at the current position.
 func (si *shardedIter) Key() []byte {
-	if si.pos >= 0 && si.pos < len(si.its) {
-		return si.its[si.pos].Key()
-	}
-	return nil
+	return si.curKey
 }
 
 // Value returns the value at the current position.
 func (si *shardedIter) Value() []byte {
-	if si.pos >= 0 && si.pos < len(si.its) {
-		return si.its[si.pos].Value()
-	}
-	return nil
+	return si.curVal
 }
 
 // Err returns any error encountered.
