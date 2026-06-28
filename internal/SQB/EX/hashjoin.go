@@ -101,6 +101,14 @@ func (j *HashJoin) LeftChild() Operator { return j.left }
 
 func (j *HashJoin) RightChild() Operator { return j.right }
 
+// WithJoinBufferSize sets the per-hash-join memory cap
+// (right-side + left-side materialization). 0 = unlimited.
+// REQ001056.
+func (j *HashJoin) WithJoinBufferSize(v int64) *HashJoin {
+	j.joinBufferSize = v
+	return j
+}
+
 // WithProjection sets the projected columns for the join output.
 // REQ000803: when set, only these columns are included in output rows.
 func (j *HashJoin) WithProjection(cols []string) *HashJoin {

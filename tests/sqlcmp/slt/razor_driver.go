@@ -72,8 +72,15 @@ func (c *RazorClassifier) Classify(err error) Verdict {
 
 // Connect creates a unique temp dir, opens a database/sql connection,
 // and stores the underlying engine for edge-probe tests.
+// Temp dir is created under RAZOR_SLT_TMP when set, or the system
+// default temp dir otherwise. REQ001056: use a non-tmpfs directory
+// (e.g. project-local tmp/) to avoid in-memory filesystem issues.
 func (d *RazorDriver) Connect(ctx context.Context) error {
-	dir, err := os.MkdirTemp("", "razor-slt-")
+	tmpRoot := os.Getenv("RAZOR_SLT_TMP")
+	if tmpRoot == "" {
+		tmpRoot = ""
+	}
+	dir, err := os.MkdirTemp(tmpRoot, "razor-slt-")
 	if err != nil {
 		return err
 	}

@@ -2020,7 +2020,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 						joinOp = NewHashJoin(current, rightScan, leftTbl, rightTbl, lk, rk, 0)
 						if p.joinBufferSize > 0 {
 							if hj, ok := joinOp.(*HashJoin); ok {
-								hj.joinBufferSize = p.joinBufferSize
+								hj.WithJoinBufferSize(p.joinBufferSize)
 							}
 						}
 						if projectedCols != nil {
@@ -2119,7 +2119,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 					joinOp = NewHashJoin(current, gr.op, leftTbl, gr.tbl, lk, rk, 0)
 					if p.joinBufferSize > 0 {
 						if hj, ok := joinOp.(*HashJoin); ok {
-							hj.joinBufferSize = p.joinBufferSize
+							hj.WithJoinBufferSize(p.joinBufferSize)
 						}
 					}
 					if projectedCols != nil {
