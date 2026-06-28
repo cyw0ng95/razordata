@@ -101,6 +101,16 @@ const BatchSize = 1024
 // pre-allocation cost in the sync.Pool.
 const MaxColumns = 64
 
+// ColumnData is a concrete union of typed slices for columnar batch data.
+// Exactly one field is non-nil at any time, determined by Column.Type.
+// Avoids the interface boxing of `any` in the hot path.
+type ColumnData struct {
+	Ints   []int64
+	Floats []float64
+	Strs   []string
+	Bools  []bool
+}
+
 // Column is a typed container for batch column data.
 // Data is stored as a concrete slice ([]int64, []float64,
 // []string, []bool) to avoid any boxing in the hot
@@ -108,7 +118,7 @@ const MaxColumns = 64
 type Column struct {
 	Name  string
 	Type  LX.TokenType
-	Data  any
+	Data  ColumnData
 	Nulls []bool
 }
 
@@ -178,7 +188,7 @@ func GetBatch(cols int) *Batch {
 	// the entire pre-allocated slice.
 	for i := 0; i < cols && i < MaxColumns; i++ {
 		b.Cols[i].Type = 0
-		b.Cols[i].Data = nil
+		b.Cols[i].Data = ColumnData{}
 		b.Cols[i].Nulls = nil
 	}
 	return b
@@ -200,7 +210,7 @@ func (b *Batch) Put() {
 	// reallocate on demand via the New function.
 	for i := range b.Cols {
 		b.Cols[i].Type = 0
-		b.Cols[i].Data = nil
+		b.Cols[i].Data = ColumnData{}
 		b.Cols[i].Nulls = nil
 	}
 	batchPool.Put(b)
@@ -226,32 +236,32 @@ func (b *Batch) AppendRow(colIdx int, typ LX.TokenType, val any, isNull bool) {
 
 	switch typ {
 	case LX.T_INT_KW, LX.T_BIGINT:
-		if col.Data == nil {
-			col.Data = make([]int64, BatchSize)
+		if col.Data.Ints == nil {
+			col.Data.Ints = make([]int64, BatchSize)
 		}
 		if v, ok := val.(int64); ok {
-			col.Data.([]int64)[b.Size] = v
+			col.Data.Ints[b.Size] = v
 		}
 	case LX.T_FLOAT_KW:
-		if col.Data == nil {
-			col.Data = make([]float64, BatchSize)
+		if col.Data.Floats == nil {
+			col.Data.Floats = make([]float64, BatchSize)
 		}
 		if v, ok := val.(float64); ok {
-			col.Data.([]float64)[b.Size] = v
+			col.Data.Floats[b.Size] = v
 		}
 	case LX.T_BOOL:
-		if col.Data == nil {
-			col.Data = make([]bool, BatchSize)
+		if col.Data.Bools == nil {
+			col.Data.Bools = make([]bool, BatchSize)
 		}
 		if v, ok := val.(bool); ok {
-			col.Data.([]bool)[b.Size] = v
+			col.Data.Bools[b.Size] = v
 		}
 	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
-		if col.Data == nil {
-			col.Data = make([]string, BatchSize)
+		if col.Data.Strs == nil {
+			col.Data.Strs = make([]string, BatchSize)
 		}
 		if v, ok := val.(string); ok {
-			col.Data.([]string)[b.Size] = v
+			col.Data.Strs[b.Size] = v
 		}
 	}
 }
@@ -295,25 +305,22 @@ func (b *Batch) Value(colIdx, rowIdx int) any {
 	if col.Nulls != nil && rowIdx < len(col.Nulls) && col.Nulls[rowIdx] {
 		return nil
 	}
-	if col.Data == nil {
-		return nil
-	}
-	switch d := col.Data.(type) {
-	case []int64:
-		if rowIdx < len(d) {
-			return d[rowIdx]
+	switch col.Type {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		if rowIdx < len(col.Data.Ints) {
+			return col.Data.Ints[rowIdx]
 		}
-	case []float64:
-		if rowIdx < len(d) {
-			return d[rowIdx]
+	case LX.T_FLOAT_KW:
+		if rowIdx < len(col.Data.Floats) {
+			return col.Data.Floats[rowIdx]
 		}
-	case []string:
-		if rowIdx < len(d) {
-			return d[rowIdx]
+	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+		if rowIdx < len(col.Data.Strs) {
+			return col.Data.Strs[rowIdx]
 		}
-	case []bool:
-		if rowIdx < len(d) {
-			return d[rowIdx]
+	case LX.T_BOOL:
+		if rowIdx < len(col.Data.Bools) {
+			return col.Data.Bools[rowIdx]
 		}
 	}
 	return nil

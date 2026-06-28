@@ -134,8 +134,8 @@ func (a *VectorizedSum) NextBatch(ctx context.Context) (*Batch, error) {
 func (a *VectorizedSum) accumulateColumn(col Column, batch *Batch) {
 	switch col.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
-		data, ok := col.Data.([]int64)
-		if !ok {
+		data := col.Data.Ints
+		if data == nil {
 			return
 		}
 		a.isFloat = false
@@ -164,8 +164,8 @@ func (a *VectorizedSum) accumulateColumn(col Column, batch *Batch) {
 		}
 
 	case LX.T_FLOAT_KW:
-		data, ok := col.Data.([]float64)
-		if !ok {
+		data := col.Data.Floats
+		if data == nil {
 			return
 		}
 		a.isFloat = true
@@ -343,8 +343,8 @@ func (a *VectorizedMin) NextBatch(ctx context.Context) (*Batch, error) {
 func (a *VectorizedMin) reduceColumn(col Column, batch *Batch) {
 	switch col.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
-		data, ok := col.Data.([]int64)
-		if !ok {
+		data := col.Data.Ints
+		if data == nil {
 			return
 		}
 		a.isFloat = false
@@ -388,8 +388,8 @@ func (a *VectorizedMin) reduceColumn(col Column, batch *Batch) {
 			}
 		}
 	case LX.T_FLOAT_KW:
-		data, ok := col.Data.([]float64)
-		if !ok {
+		data := col.Data.Floats
+		if data == nil {
 			return
 		}
 		a.isFloat = true
@@ -509,8 +509,8 @@ func (a *VectorizedMax) NextBatch(ctx context.Context) (*Batch, error) {
 func (a *VectorizedMax) reduceColumn(col Column, batch *Batch) {
 	switch col.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
-		data, ok := col.Data.([]int64)
-		if !ok {
+		data := col.Data.Ints
+		if data == nil {
 			return
 		}
 		a.isFloat = false
@@ -554,8 +554,8 @@ func (a *VectorizedMax) reduceColumn(col Column, batch *Batch) {
 			}
 		}
 	case LX.T_FLOAT_KW:
-		data, ok := col.Data.([]float64)
-		if !ok {
+		data := col.Data.Floats
+		if data == nil {
 			return
 		}
 		a.isFloat = true

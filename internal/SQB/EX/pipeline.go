@@ -259,15 +259,15 @@ func rowDataAt(batch *Batch, rowIdx int) []Value {
 			data[ci] = NullValue()
 			continue
 		}
-		switch col.Data.(type) {
-		case []int64:
-			data[ci] = NewIntValue(col.Data.([]int64)[rowIdx])
-		case []float64:
-			data[ci] = NewFloatValue(col.Data.([]float64)[rowIdx])
-		case []string:
-			data[ci] = NewTextValue(col.Data.([]string)[rowIdx])
-		case []bool:
-			data[ci] = NewBoolValue(col.Data.([]bool)[rowIdx])
+		switch col.Type {
+		case LX.T_INT_KW, LX.T_BIGINT:
+			data[ci] = NewIntValue(col.Data.Ints[rowIdx])
+		case LX.T_FLOAT_KW:
+			data[ci] = NewFloatValue(col.Data.Floats[rowIdx])
+		case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+			data[ci] = NewTextValue(col.Data.Strs[rowIdx])
+		case LX.T_BOOL:
+			data[ci] = NewBoolValue(col.Data.Bools[rowIdx])
 		default:
 			data[ci] = NullValue()
 		}

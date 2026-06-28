@@ -245,21 +245,20 @@ func (s *ParallelSort) batchFromPos() (*Batch, error) {
 	return batch, nil
 }
 
-// truncateColumnData shrinks a column's Data slice to the
-// specified logical size. Handles typed slices.
-func truncateColumnData(data any, size int) any {
-	if data == nil {
-		return nil
+// truncateColumnData shrinks a column's Data slices to the
+// specified logical size.
+func truncateColumnData(data ColumnData, size int) ColumnData {
+	if size == 0 {
+		return ColumnData{}
 	}
-	switch d := data.(type) {
-	case []int64:
-		return d[:size]
-	case []float64:
-		return d[:size]
-	case []string:
-		return d[:size]
-	case []bool:
-		return d[:size]
+	if data.Ints != nil {
+		data.Ints = data.Ints[:size]
+	} else if data.Floats != nil {
+		data.Floats = data.Floats[:size]
+	} else if data.Strs != nil {
+		data.Strs = data.Strs[:size]
+	} else if data.Bools != nil {
+		data.Bools = data.Bools[:size]
 	}
 	return data
 }

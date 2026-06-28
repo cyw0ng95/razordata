@@ -44,7 +44,7 @@ func TestVectorizedCount_Basic(t *testing.T) {
 	if batch.LogicalSize() != 1 {
 		t.Errorf("expected 1 result row, got %d", batch.LogicalSize())
 	}
-	idCol := batch.Cols[0].Data.([]int64)
+	idCol := batch.Cols[0].Data.Ints
 	if idCol[0] != 100 {
 		t.Errorf("count = %d, want 100", idCol[0])
 	}
@@ -71,7 +71,7 @@ func TestVectorizedCount_Empty(t *testing.T) {
 	}
 	defer batch.Put()
 
-	idCol := batch.Cols[0].Data.([]int64)
+	idCol := batch.Cols[0].Data.Ints
 	if idCol[0] != 0 {
 		t.Errorf("count = %d, want 0", idCol[0])
 	}
@@ -99,7 +99,7 @@ func TestVectorizedSum_Int64(t *testing.T) {
 	defer batch.Put()
 
 	// 0+10+20+...+90 = 450
-	idCol := batch.Cols[0].Data.([]int64)
+	idCol := batch.Cols[0].Data.Ints
 	if idCol[0] != 450 {
 		t.Errorf("sum = %d, want 450", idCol[0])
 	}
@@ -134,7 +134,7 @@ func TestVectorizedSum_Float64(t *testing.T) {
 	defer batch.Put()
 
 	// 0 + 1.5 + 3.0 + 4.5 + 6.0 + 7.5 + 9.0 + 10.5 + 12.0 + 13.5 = 67.5
-	idCol := batch.Cols[0].Data.([]float64)
+	idCol := batch.Cols[0].Data.Floats
 	if idCol[0] != 67.5 {
 		t.Errorf("sum = %f, want 67.5", idCol[0])
 	}
@@ -162,7 +162,7 @@ func TestVectorizedAvg_Basic(t *testing.T) {
 	defer batch.Put()
 
 	// avg of 0,10,...,90 = 45
-	idCol := batch.Cols[0].Data.([]float64)
+	idCol := batch.Cols[0].Data.Floats
 	if idCol[0] != 45.0 {
 		t.Errorf("avg = %f, want 45.0", idCol[0])
 	}
@@ -189,7 +189,7 @@ func TestVectorizedMin_Basic(t *testing.T) {
 	}
 	defer batch.Put()
 
-	idCol := batch.Cols[0].Data.([]int64)
+	idCol := batch.Cols[0].Data.Ints
 	if idCol[0] != 0 {
 		t.Errorf("min = %d, want 0", idCol[0])
 	}
@@ -216,7 +216,7 @@ func TestVectorizedMax_Basic(t *testing.T) {
 	}
 	defer batch.Put()
 
-	idCol := batch.Cols[0].Data.([]int64)
+	idCol := batch.Cols[0].Data.Ints
 	if idCol[0] != 90 {
 		t.Errorf("max = %d, want 90", idCol[0])
 	}
@@ -253,7 +253,7 @@ func TestVectorizedSum_LargeBatch(t *testing.T) {
 	}
 	defer batch.Put()
 
-	idCol := batch.Cols[0].Data.([]int64)
+	idCol := batch.Cols[0].Data.Ints
 	if idCol[0] != expected {
 		t.Errorf("sum = %d, want %d", idCol[0], expected)
 	}

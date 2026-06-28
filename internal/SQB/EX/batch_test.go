@@ -34,7 +34,7 @@ func TestBatchPoolReuse(t *testing.T) {
 	b1 := GetBatch(2)
 	b1.Size = 100
 	b1.Sel = []uint16{0, 1, 2}
-	b1.Cols[0].Data = []int64{1, 2, 3}
+	b1.Cols[0].Data = ColumnData{Ints: []int64{1, 2, 3}}
 	b1.Put()
 
 	b2 := GetBatch(2)
@@ -44,8 +44,8 @@ func TestBatchPoolReuse(t *testing.T) {
 	if b2.Sel != nil {
 		t.Error("reused batch: expected Sel=nil")
 	}
-	if b2.Cols[0].Data != nil {
-		t.Error("reused batch: expected Cols[0].Data=nil")
+	if b2.Cols[0].Data.Ints != nil || b2.Cols[0].Data.Floats != nil || b2.Cols[0].Data.Strs != nil || b2.Cols[0].Data.Bools != nil {
+		t.Error("reused batch: expected Cols[0].Data to be zero")
 	}
 	b2.Put()
 }
@@ -93,15 +93,15 @@ func TestBatchAppendRow(t *testing.T) {
 	if b.Size != 1 {
 		t.Errorf("expected Size=1, got %d", b.Size)
 	}
-	col0 := b.Cols[0].Data.([]int64)
+	col0 := b.Cols[0].Data.Ints
 	if col0[0] != 42 {
 		t.Errorf("col[0][0] = %d; want 42", col0[0])
 	}
-	col1 := b.Cols[1].Data.([]string)
+	col1 := b.Cols[1].Data.Strs
 	if col1[0] != "hello" {
 		t.Errorf("col[1][0] = %q; want hello", col1[0])
 	}
-	col2 := b.Cols[2].Data.([]bool)
+	col2 := b.Cols[2].Data.Bools
 	if !col2[0] {
 		t.Error("col[2][0] = false; want true")
 	}

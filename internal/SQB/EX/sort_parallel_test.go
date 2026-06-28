@@ -43,7 +43,7 @@ func TestParallelSort_Sequential(t *testing.T) {
 	}
 	defer batch.Put()
 
-	idCol := batch.Cols[0].Data.([]int64)
+	idCol := batch.Cols[0].Data.Ints
 	if len(idCol) != 100 {
 		t.Logf("got %d rows in batch (expected 100), idCol=%v", len(idCol), idCol)
 	}
@@ -76,7 +76,7 @@ func TestParallelSort_Descending(t *testing.T) {
 	}
 	defer batch.Put()
 
-	idCol := batch.Cols[0].Data.([]int64)
+	idCol := batch.Cols[0].Data.Ints
 	for i := 1; i < len(idCol); i++ {
 		if idCol[i] > idCol[i-1] {
 			t.Errorf("not sorted desc at %d: %d < %d", i, idCol[i-1], idCol[i])
@@ -109,7 +109,7 @@ func TestParallelSort_LargeDataset(t *testing.T) {
 	}
 	defer batch.Put()
 
-	idCol := batch.Cols[0].Data.([]int64)
+	idCol := batch.Cols[0].Data.Ints
 	// Verify ascending order on first BatchSize rows
 	for i := 1; i < len(idCol); i++ {
 		if idCol[i] < idCol[i-1] {
@@ -183,7 +183,7 @@ func TestParallelSort_MultiBatch(t *testing.T) {
 		}
 		defer batch.Put()
 
-		idCol := batch.Cols[0].Data.([]int64)
+		idCol := batch.Cols[0].Data.Ints
 		allRows = append(allRows, idCol...)
 	}
 

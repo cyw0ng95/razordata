@@ -229,8 +229,8 @@ func isNull(col Column, i int) bool {
 // compareInt64Cols: hoisted-operator int64 column-column comparison.
 // REQ000608: skip rows where either side is NULL.
 func compareInt64Cols(left, right Column, op LX.TokenType, n int) []uint16 {
-	l := left.Data.([]int64)
-	r := right.Data.([]int64)
+	l := left.Data.Ints
+	r := right.Data.Ints
 	switch op {
 	case LX.T_EQ:
 		return cmpInt64ColsEQ(l, r, left, right, n)
@@ -329,7 +329,7 @@ func cmpInt64ColsGE(l, r []int64, lc, rc Column, n int) []uint16 {
 // compareInt64ColLit: hoisted-operator int64 column-literal comparison.
 // REQ000608: skip NULL rows.
 func compareInt64ColLit(col Column, lit int64, op LX.TokenType, n int) []uint16 {
-	data := col.Data.([]int64)
+	data := col.Data.Ints
 	switch op {
 	case LX.T_EQ:
 		return cmpInt64LitEQ(data, lit, col, n)
@@ -428,8 +428,8 @@ func cmpInt64LitGE(data []int64, lit int64, col Column, n int) []uint16 {
 // compareFloat64Cols: hoisted-operator float64 column-column comparison.
 // REQ000608: skip NULL rows.
 func compareFloat64Cols(left, right Column, op LX.TokenType, n int) []uint16 {
-	l := left.Data.([]float64)
-	r := right.Data.([]float64)
+	l := left.Data.Floats
+	r := right.Data.Floats
 	switch op {
 	case LX.T_EQ:
 		return cmpFloat64ColsEQ(l, r, left, right, n)
@@ -528,7 +528,7 @@ func cmpFloat64ColsGE(l, r []float64, lc, rc Column, n int) []uint16 {
 // compareFloat64ColLit: hoisted-operator float64 column-literal comparison.
 // REQ000608: skip NULL rows.
 func compareFloat64ColLit(col Column, lit float64, op LX.TokenType, n int) []uint16 {
-	data := col.Data.([]float64)
+	data := col.Data.Floats
 	switch op {
 	case LX.T_EQ:
 		return cmpFloat64LitEQ(data, lit, col, n)
@@ -627,8 +627,8 @@ func cmpFloat64LitGE(data []float64, lit float64, col Column, n int) []uint16 {
 // compareStringCols: hoisted-operator string column-column comparison.
 // REQ000608: skip NULL rows.
 func compareStringCols(left, right Column, op LX.TokenType, n int) []uint16 {
-	l := left.Data.([]string)
-	r := right.Data.([]string)
+	l := left.Data.Strs
+	r := right.Data.Strs
 	switch op {
 	case LX.T_EQ:
 		return cmpStringColsEQ(l, r, left, right, n)
@@ -727,7 +727,7 @@ func cmpStringColsGE(l, r []string, lc, rc Column, n int) []uint16 {
 // compareStringColLit: hoisted-operator string column-literal comparison.
 // REQ000608: skip NULL rows.
 func compareStringColLit(col Column, lit string, op LX.TokenType, n int) []uint16 {
-	data := col.Data.([]string)
+	data := col.Data.Strs
 	switch op {
 	case LX.T_EQ:
 		return cmpStringLitEQ(data, lit, col, n)
@@ -950,7 +950,8 @@ func batchToRow(batch *Batch, idx int) *Row {
 		Data: make([]Value, 0, len(batch.Cols)),
 	}
 	for c := range batch.Cols {
-		if batch.Cols[c].Data == nil {
+		d := batch.Cols[c].Data
+		if d.Ints == nil && d.Floats == nil && d.Strs == nil && d.Bools == nil {
 			continue
 		}
 		row.Cols = append(row.Cols, batch.Cols[c].Name)
@@ -966,20 +967,20 @@ func batchValueAt(col Column, i int) any {
 	}
 	switch col.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
-		if d, ok := col.Data.([]int64); ok && i < len(d) {
-			return d[i]
+		if i < len(col.Data.Ints) {
+			return col.Data.Ints[i]
 		}
 	case LX.T_FLOAT_KW:
-		if d, ok := col.Data.([]float64); ok && i < len(d) {
-			return d[i]
+		if i < len(col.Data.Floats) {
+			return col.Data.Floats[i]
 		}
 	case LX.T_BOOL:
-		if d, ok := col.Data.([]bool); ok && i < len(d) {
-			return d[i]
+		if i < len(col.Data.Bools) {
+			return col.Data.Bools[i]
 		}
 	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
-		if d, ok := col.Data.([]string); ok && i < len(d) {
-			return d[i]
+		if i < len(col.Data.Strs) {
+			return col.Data.Strs[i]
 		}
 	}
 	return nil
@@ -997,7 +998,7 @@ func evalInListBatch(col Column, list []any, n int) []uint16 {
 		return nil
 	}
 	// Int64 path: sort + binary search.
-	if d, ok := col.Data.([]int64); ok {
+	if d := col.Data.Ints; d != nil {
 		ints := make([]int64, 0, len(list))
 		for _, v := range list {
 			switch x := v.(type) {
@@ -1038,7 +1039,7 @@ func evalInListBatch(col Column, list []any, n int) []uint16 {
 		return sel
 	}
 	// String path: hash set.
-	if d, ok := col.Data.([]string); ok {
+	if d := col.Data.Strs; d != nil {
 		set := make(map[string]struct{}, len(list))
 		for _, v := range list {
 			if s, ok := v.(string); ok {

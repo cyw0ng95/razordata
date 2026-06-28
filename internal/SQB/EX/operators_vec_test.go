@@ -64,8 +64,8 @@ func TestVectorizedSeqScan(t *testing.T) {
 		totalRows += batch.LogicalSize()
 
 		// Verify column data is populated
-		idCol := batch.Cols[0].Data.([]int64)
-		valCol := batch.Cols[1].Data.([]string)
+		idCol := batch.Cols[0].Data.Ints
+		valCol := batch.Cols[1].Data.Strs
 		for i := 0; i < batch.Size; i++ {
 			expectedID := totalRows - batch.LogicalSize() + i
 			if idCol[i] != int64(expectedID) {
