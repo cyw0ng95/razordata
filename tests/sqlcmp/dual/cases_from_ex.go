@@ -527,3 +527,17 @@ var genColCases = []dualCase{
 		Want:  [][]any{{int64(3), int64(4), int64(7)}},
 	},
 }
+
+// scalarInCases from EX/in_e2e_test.go: scalar IN / NOT IN expressions.
+// IN () cases are RazorData-specific extensions, skipped here.
+var scalarInCases = []dualCase{
+	{Name: "in_false",   Query: "SELECT 1 IN (2)",   Want: [][]any{{int64(0)}}},
+	{Name: "not_in_true", Query: "SELECT 1 NOT IN (2)", Want: [][]any{{int64(1)}}},
+	{Name: "in_true",    Query: "SELECT 1 IN (1)",   Want: [][]any{{int64(1)}}},
+	{Name: "not_in_false", Query: "SELECT 1 NOT IN (1)", Want: [][]any{{int64(0)}}},
+	{Name: "null_in_list",  Query: "SELECT NULL IN (1)",  Want: [][]any{{nil}}},
+	{Name: "value_in_null", Query: "SELECT 1 IN (NULL)",  Want: [][]any{{nil}}},
+	{Name: "value_not_in_null", Query: "SELECT 1 NOT IN (NULL)", Want: [][]any{{nil}}},
+	{Name: "null_not_in_scalar", Query: "SELECT NULL NOT IN (1)", Want: [][]any{{nil}}},
+	{Name: "null_in_null",     Query: "SELECT NULL IN (NULL)",  Want: [][]any{{nil}}},
+}
