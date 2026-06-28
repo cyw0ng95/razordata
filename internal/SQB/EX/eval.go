@@ -601,29 +601,17 @@ func evalInSubquery(target any, subq PS.Stmt, outer *Row, params []any) (any, er
 	if err != nil {
 		return nil, err
 	}
-	// REQ000721: when the LHS is NULL, the IN predicate is
-	// three-valued. The correct result is:
-	//   - true  if any subquery row is non-NULL and equal to NULL's
-	//           *typed* value (impossible — NULL is not equal to
-	//           anything in SQL two-valued-or-UNKNOWN logic)
-	//   - NULL  if any subquery row is NULL
-	//   - false otherwise (no NULLs in subquery, NULL != any value)
-	// Previously the code returned nil (NULL) for any target==nil,
-	// which conflates the no-NULLs case with the has-NULLs case.
+	// REQ001059: three-valued IN/NOT IN with NULL in subquery.
+	// Per SQL standard:
+	//   NULL IN (non-empty set) → NULL (all comparisons UNKNOWN)
+	//   NULL IN (empty set)    → FALSE (no element could match)
+	// Previous code returned FALSE when RHS had no NULLs, which
+	// conflates "all comparisons are UNKNOWN" with "no NULLs in RHS".
 	if target == nil {
-		hadNull := false
-		for _, row := range rows {
-			if len(row.Cols) == 0 {
-				continue
-			}
-			if row.Data[0].IsNull() {
-				hadNull = true
-			}
+		if len(rows) == 0 {
+			return false, nil
 		}
-		if hadNull {
-			return nil, nil
-		}
-		return false, nil
+		return nil, nil
 	}
 	hadNull := false
 	for _, row := range rows {

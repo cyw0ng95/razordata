@@ -6,9 +6,12 @@ import (
 	"testing"
 )
 
-// REQ000721: NULL IN (subquery) should return 0 (false) per SQL
-// three-valued logic, not NULL, when the subquery contains no NULLs.
-// If the subquery contains a NULL, the result is NULL (unknown).
+// REQ001059: NULL IN (subquery) should return NULL (UNKNOWN) per SQL
+// three-valued logic when the subquery is non-empty, regardless of
+// whether it contains NULLs. Only empty subquery returns FALSE.
+// This overrides the previous REQ000721 behavior which returned
+// FALSE for NULL IN a subquery with no NULLs — that conflated
+// "all comparisons are UNKNOWN" with "no NULLs in RHS".
 func TestREQ000721_NullInSubqueryNoNulls(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
@@ -28,11 +31,12 @@ func TestREQ000721_NullInSubqueryNoNulls(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	// SQL semantics: NULL IN (1,2,3) = 0 (false), not NULL.
-	// SQLite returns 0 (int64) for the IN predicate.
-	v := rows[0].Data[0]
-	if !v.Equal(NewIntValue(int64(0))) && !v.Equal(NewBoolValue(false)) {
-		t.Errorf("expected 0 or false, got %v (%T)", v, v)
+	// SQL standard: NULL IN (1,2,3) = NULL (UNKNOWN).
+	// Each comparison NULL=1/NULL=2/NULL=3 returns UNKNOWN.
+	// Since no comparison returns TRUE, the ANY quantifier
+	// yields UNKNOWN (NULL), not FALSE.
+	if !rows[0].Data[0].IsNull() {
+		t.Errorf("expected NULL (UNKNOWN), got %v (%T)", rows[0].Data[0], rows[0].Data[0])
 	}
 }
 
