@@ -510,3 +510,101 @@ func TestTokenTypedAccessors_WrongTypePanic(t *testing.T) {
 	tok := l.Next()
 	_ = tok.IntLit()
 }
+
+// REQ001140: Peek does not advance and is idempotent within a
+// token position. Two consecutive Peek() calls must return the
+// same token.
+func TestLexerPeekIdempotent(t *testing.T) {
+	l := NewLexer("SELECT * FROM t")
+	first := l.Peek()
+	second := l.Peek()
+	if first.Type != second.Type || first.Lexeme != second.Lexeme {
+		t.Errorf("Peek not idempotent: %v then %v", first, second)
+	}
+	// Next() after Peek must return the same token.
+	next := l.Next()
+	if next.Type != first.Type || next.Lexeme != first.Lexeme {
+		t.Errorf("Next() after Peek() = %v, want %v", next, first)
+	}
+}
+
+// REQ001140: Peek then Peek2 should return the first and second
+// upcoming tokens, respectively.
+func TestLexerPeekAndPeek2(t *testing.T) {
+	l := NewLexer("SELECT id FROM t")
+	p1 := l.Peek()
+	p2 := l.Peek2()
+	if p1.Type != T_SELECT || p1.Lexeme != "SELECT" {
+		t.Errorf("Peek() = %v, want SELECT", p1)
+	}
+	if p2.Type != T_IDENT || p2.Lexeme != "id" {
+		t.Errorf("Peek2() = %v, want IDENT 'id'", p2)
+	}
+	// Next should emit SELECT then id then FROM then t then EOF.
+	wantSeq := []struct {
+		typ TokenType
+		lex string
+	}{
+		{T_SELECT, "SELECT"},
+		{T_IDENT, "id"},
+		{T_FROM, "FROM"},
+		{T_IDENT, "t"},
+		{T_EOF, ""},
+	}
+	for i, want := range wantSeq {
+		got := l.Next()
+		if got.Type != want.typ || got.Lexeme != want.lex {
+			t.Errorf("token %d: got %v %q, want %v %q", i, got.Type, got.Lexeme, want.typ, want.lex)
+		}
+	}
+}
+
+// REQ001140: Peek2 on EOF input returns EOF.
+func TestLexerPeek2_EOF(t *testing.T) {
+	l := NewLexer("")
+	if got := l.Peek2(); got.Type != T_EOF {
+		t.Errorf("Peek2 on empty input: got %v, want EOF", got)
+	}
+}
+
+// REQ001140: After Next() at EOF, Peek() must continue to return
+// EOF without panicking.
+func TestLexerPeekAfterEOF(t *testing.T) {
+	l := NewLexer("a")
+	_ = l.Next()
+	if got := l.Peek(); got.Type != T_EOF {
+		t.Errorf("Peek after EOF: got %v, want EOF", got)
+	}
+	if got := l.Peek2(); got.Type != T_EOF {
+		t.Errorf("Peek2 after EOF: got %v, want EOF", got)
+	}
+}
+
+// REQ001140: Repeated Peek interleaved with Next consumes the
+// correct sequence — cache must be invalidated when Next() advances.
+func TestLexerPeekNextInterleave(t *testing.T) {
+	l := NewLexer("a b c")
+	// Peek 'a', Next (returns 'a'), Peek 'b', Next (returns 'b'),
+	// Peek 'c', Next (returns 'c').
+	if got := l.Peek(); got.Lexeme != "a" {
+		t.Errorf("Peek1 = %q, want 'a'", got.Lexeme)
+	}
+	if got := l.Next(); got.Lexeme != "a" {
+		t.Errorf("Next1 = %q, want 'a'", got.Lexeme)
+	}
+	if got := l.Peek(); got.Lexeme != "b" {
+		t.Errorf("Peek2 = %q, want 'b'", got.Lexeme)
+	}
+	if got := l.Peek2(); got.Lexeme != "c" {
+		t.Errorf("Peek2 = %q, want 'c'", got.Lexeme)
+	}
+	if got := l.Next(); got.Lexeme != "b" {
+		t.Errorf("Next2 = %q, want 'b'", got.Lexeme)
+	}
+	if got := l.Next(); got.Lexeme != "c" {
+		t.Errorf("Next3 = %q, want 'c'", got.Lexeme)
+	}
+	if got := l.Next(); got.Type != T_EOF {
+		t.Errorf("Next4 = %v, want EOF", got.Type)
+	}
+}

@@ -198,15 +198,23 @@ type Lexer struct {
 	col   int
 	// REQ001141: token-start position snapshot. captureStart() is
 	// called once per Next(); all scanner functions read these
-	// fields instead of stashing their own local copies.
+	// fields instead of stashing their own copies.
 	startLine int
 	startCol  int
-	// For Peek()/Peek2() save/restore.
-	savedPos       int
-	savedLine      int
-	savedCol       int
-	savedStartLine int
-	savedStartCol  int
+	// REQ001140: ring buffer for lookahead. Two slots hold the
+	// next two upcoming tokens; Peek/Peek2 fill them lazily so
+	// repeated peeks at the same position cost O(1).
+	//
+	// Invariant: buf[0].valid implies buf[0] holds the token
+	// that Next() will return next. After Next() consumes it,
+	// buf[1] (if valid) is shifted into buf[0], and buf[1] is
+	// marked invalid so the next scan fills it.
+	buf [2]peekSlot
+}
+
+type peekSlot struct {
+	tok   Token
+	valid bool
 }
 
 func NewLexer(input string) *Lexer {
@@ -233,44 +241,88 @@ func (l *Lexer) peek() byte {
 	return l.input[l.pos]
 }
 
-func (l *Lexer) Peek() Token {
-	l.savedPos = l.pos
-	l.savedLine = l.line
-	l.savedCol = l.col
-	l.savedStartLine = l.startLine
-	l.savedStartCol = l.startCol
-
-	token := l.Next()
-
-	l.pos = l.savedPos
-	l.line = l.savedLine
-	l.col = l.savedCol
-	l.startLine = l.savedStartLine
-	l.startCol = l.savedStartCol
-
-	return token
+// REQ001140: scan performs one full tokenization step. It is the
+// non-cached version of Next() — it does NOT consult the buffer.
+// Callers that go through Next()/Peek()/Peek2() never see the
+// buffer state; scan() is the single source of truth for what
+// the next token at the current cursor is.
+func (l *Lexer) scan() Token {
+	l.skipWhitespaceAndComments()
+	if l.pos >= len(l.input) {
+		return Token{Type: T_EOF, Lexeme: "", Line: l.line, Col: l.col}
+	}
+	l.captureStart()
+	c := l.peek()
+	if c == '\'' {
+		return l.scanString()
+	}
+	if c < 0x80 {
+		if isASCIILetter(c) {
+			return l.scanIdent()
+		}
+		if isASCIIDigit(c) {
+			return l.scanNumber()
+		}
+	} else {
+		if unicode.IsLetter(rune(c)) || c == '_' {
+			return l.scanIdent()
+		}
+		if unicode.IsDigit(rune(c)) {
+			return l.scanNumber()
+		}
+	}
+	return l.scanOperator()
 }
 
-// Peek2 returns the second upcoming token without consuming the
-// first. It saves state, peeks (which leaves the lexer at the
-// same state), captures the result, advances one token, peeks
-// again, then restores.
-func (l *Lexer) Peek2() Token {
-	// Save full state.
-	savedPos, savedLine, savedCol := l.pos, l.line, l.col
-	savedSL, savedSC := l.startLine, l.startCol
-	first := l.Peek()
-	if first.Type == T_EOF {
-		return first
+// REQ001140: Next() consumes the next token. It returns the head
+// slot (which must be valid) and rotates the buffer so the
+// peeked-ahead token becomes the new head.
+func (l *Lexer) Next() Token {
+	if !l.buf[0].valid {
+		l.buf[0].tok = l.scan()
+		l.buf[0].valid = true
 	}
-	// The Peek() above already restored pos/line/col. Now advance
-	// one token and peek again.
-	_ = l.Next()
-	second := l.Peek()
-	// Restore.
-	l.pos, l.line, l.col = savedPos, savedLine, savedCol
-	l.startLine, l.startCol = savedSL, savedSC
-	return second
+	tok := l.buf[0].tok
+	// Rotate: buf[1] (the pre-peeked token) becomes the new
+	// head. buf[1] is now invalid so the next Next() will scan
+	// into it.
+	l.buf[0] = l.buf[1]
+	l.buf[1].valid = false
+	return tok
+}
+
+// REQ001140: Peek() returns the next token without consuming it.
+// On entry, ensure buf[0] holds the upcoming token; if not,
+// scan it. After returning buf[0], pre-scan buf[1] so Peek2()
+// can return immediately on a subsequent call.
+func (l *Lexer) Peek() Token {
+	if !l.buf[0].valid {
+		l.buf[0].tok = l.scan()
+		l.buf[0].valid = true
+	}
+	if !l.buf[1].valid && l.buf[0].tok.Type != T_EOF {
+		l.buf[1].tok = l.scan()
+		l.buf[1].valid = true
+	}
+	return l.buf[0].tok
+}
+
+// REQ001140: Peek2 returns the second upcoming token without
+// consuming either. Mirrors the legacy semantics (returns EOF
+// if the first token is EOF).
+func (l *Lexer) Peek2() Token {
+	if !l.buf[0].valid {
+		l.buf[0].tok = l.scan()
+		l.buf[0].valid = true
+	}
+	if l.buf[0].tok.Type == T_EOF {
+		return l.buf[0].tok
+	}
+	if !l.buf[1].valid {
+		l.buf[1].tok = l.scan()
+		l.buf[1].valid = true
+	}
+	return l.buf[1].tok
 }
 
 func (l *Lexer) Input() string {
@@ -320,41 +372,6 @@ func isASCIIDigit(c byte) bool {
 // Matches unicode.IsSpace's behaviour for the ASCII subset.
 func isASCIISpace(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r'
-}
-
-func (l *Lexer) Next() Token {
-	l.skipWhitespaceAndComments()
-
-	if l.pos >= len(l.input) {
-		return Token{Type: T_EOF, Lexeme: "", Line: l.line, Col: l.col}
-	}
-
-	// REQ001141: snapshot line/col once for the upcoming token.
-	l.captureStart()
-	c := l.peek()
-
-	if c == '\'' {
-		return l.scanString()
-	}
-
-	// REQ001144: ASCII fast-path for identifier vs number dispatch.
-	if c < 0x80 {
-		if isASCIILetter(c) {
-			return l.scanIdent()
-		}
-		if isASCIIDigit(c) {
-			return l.scanNumber()
-		}
-	} else {
-		if unicode.IsLetter(rune(c)) || c == '_' {
-			return l.scanIdent()
-		}
-		if unicode.IsDigit(rune(c)) {
-			return l.scanNumber()
-		}
-	}
-
-	return l.scanOperator()
 }
 
 func (l *Lexer) skipWhitespaceAndComments() {

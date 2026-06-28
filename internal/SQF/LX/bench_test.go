@@ -111,3 +111,27 @@ func BenchmarkLexerLiteralAlloc(b *testing.B) {
 		}
 	}
 }
+
+// REQ001140: Peek throughput benchmark. The parser calls Peek() ~20
+// times per query and Peek2() ~5 times. After the ring-buffer
+// refactor, repeated peeks at the same position are O(1) — only the
+// first call scans; subsequent calls return the cached head slot.
+// Run with: go test -bench=BenchmarkLexerPeek -benchmem ./internal/SQF/LX
+func BenchmarkLexerPeek(b *testing.B) {
+	input := "SELECT id, name FROM users WHERE age > 30 AND active = 1"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		l := NewLexer(input)
+		for j := 0; j < 10; j++ {
+			_ = l.Peek()
+			_ = l.Peek2()
+		}
+		// drain to EOF to reset for next iteration
+		for {
+			tok := l.Next()
+			if tok.Type == T_EOF {
+				break
+			}
+		}
+	}
+}
