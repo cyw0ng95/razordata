@@ -222,11 +222,50 @@ const (
 )
 
 type Token struct {
-	Type    TokenType
-	Lexeme  string
-	Literal any
-	Line    int
-	Col     int
+	Type   TokenType
+	Lexeme string
+	// REQ001143: typed literal fields replace the `Literal any`
+	// box. Only one field is populated at a time, determined by
+	// Type:
+	//   T_INT    -> LitInt
+	//   T_FLOAT  -> LitFloat
+	//   T_STRING -> LitStr
+	//   T_ERROR  -> LitErr
+	// The legacy `Literal` field is preserved for backward
+	// compatibility with external callers but is no longer set
+	// by the lexer; use the IntLit/StrLit/ErrLit accessors.
+	Literal  any
+	LitInt   int64
+	LitFloat float64
+	LitStr   string
+	LitErr   error
+	Line     int
+	Col      int
+}
+
+// REQ001143: typed accessors. These replace `tok.Literal.(int64)`
+// type assertions at call sites. They panic if invoked on the
+// wrong Token.Type — the lexer is the single source of truth for
+// which field is populated.
+func (t Token) IntLit() int64 {
+	if t.Type != T_INT {
+		panic("LX: IntLit called on non-T_INT token")
+	}
+	return t.LitInt
+}
+
+func (t Token) StrLit() string {
+	if t.Type != T_STRING {
+		panic("LX: StrLit called on non-T_STRING token")
+	}
+	return t.LitStr
+}
+
+func (t Token) ErrLit() error {
+	if t.Type != T_ERROR {
+		panic("LX: ErrLit called on non-T_ERROR token")
+	}
+	return t.LitErr
 }
 
 var tokenTypeNames = [...]string{

@@ -66,8 +66,8 @@ func TestLexerInt(t *testing.T) {
 	if tok.Lexeme != "123" {
 		t.Errorf("expected '123', got %q", tok.Lexeme)
 	}
-	if tok.Literal != int64(123) {
-		t.Errorf("expected Literal=int64(123), got %v (%T)", tok.Literal, tok.Literal)
+	if tok.LitInt != int64(123) {
+		t.Errorf("expected LitInt=int64(123), got %v", tok.LitInt)
 	}
 }
 
@@ -85,8 +85,8 @@ func TestLexerIntMaxInt64(t *testing.T) {
 	if tok.Type != T_INT {
 		t.Fatalf("expected T_INT for max int64, got %v", tok.Type)
 	}
-	if tok.Literal != int64(9223372036854775807) {
-		t.Errorf("expected max int64 literal, got %v", tok.Literal)
+	if tok.LitInt != int64(9223372036854775807) {
+		t.Errorf("expected max int64 literal, got %v", tok.LitInt)
 	}
 }
 
@@ -107,8 +107,8 @@ func TestLexerString(t *testing.T) {
 	if tok.Type != T_STRING {
 		t.Errorf("expected T_STRING, got %v", tok.Type)
 	}
-	if tok.Literal != "hello" {
-		t.Errorf("expected 'hello', got %q", tok.Literal)
+	if tok.LitStr != "hello" {
+		t.Errorf("expected 'hello', got %q", tok.LitStr)
 	}
 }
 
@@ -126,8 +126,8 @@ func TestLexerStringEscapedQuote(t *testing.T) {
 	if tok.Type != T_STRING {
 		t.Errorf("expected T_STRING, got %v", tok.Type)
 	}
-	if tok.Literal != "it's here" {
-		t.Errorf("expected \"it's here\", got %q", tok.Literal)
+	if tok.LitStr != "it's here" {
+		t.Errorf("expected \"it's here\", got %q", tok.LitStr)
 	}
 }
 
@@ -455,5 +455,156 @@ func TestErrorSentinelMessages(t *testing.T) {
 	}
 	if ErrInvalidInt.Error() != "lx: invalid integer literal" {
 		t.Error("unexpected ErrInvalidInt message")
+	}
+}
+
+// REQ001143: typed accessors surface the typed literal fields.
+func TestTokenTypedAccessors(t *testing.T) {
+	// T_INT
+	l := NewLexer("42")
+	tok := l.Next()
+	if got := tok.IntLit(); got != 42 {
+		t.Errorf("IntLit() = %d, want 42", got)
+	}
+
+	// T_STRING
+	l = NewLexer("'foo'")
+	tok = l.Next()
+	if got := tok.StrLit(); got != "foo" {
+		t.Errorf("StrLit() = %q, want 'foo'", got)
+	}
+
+	// T_ERROR (unterminated string)
+	l = NewLexer("'unterminated")
+	tok = l.Next()
+	if tok.ErrLit() != ErrUnterminatedString {
+		t.Errorf("ErrLit() = %v, want ErrUnterminatedString", tok.ErrLit())
+	}
+
+	// T_ERROR (unexpected char)
+	l = NewLexer("@")
+	tok = l.Next()
+	if tok.ErrLit() != ErrUnexpectedChar {
+		t.Errorf("ErrLit() = %v, want ErrUnexpectedChar", tok.ErrLit())
+	}
+
+	// T_FLOAT populates LitFloat
+	l = NewLexer("3.14")
+	tok = l.Next()
+	if tok.Type != T_FLOAT {
+		t.Fatalf("expected T_FLOAT, got %v", tok.Type)
+	}
+	if tok.LitFloat != 3.14 {
+		t.Errorf("LitFloat = %v, want 3.14", tok.LitFloat)
+	}
+}
+
+// REQ001143: typed accessors must panic on wrong Type.
+func TestTokenTypedAccessors_WrongTypePanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("IntLit on T_IDENT did not panic")
+		}
+	}()
+	l := NewLexer("foo")
+	tok := l.Next()
+	_ = tok.IntLit()
+}
+
+// REQ001140: Peek does not advance and is idempotent within a
+// token position. Two consecutive Peek() calls must return the
+// same token.
+func TestLexerPeekIdempotent(t *testing.T) {
+	l := NewLexer("SELECT * FROM t")
+	first := l.Peek()
+	second := l.Peek()
+	if first.Type != second.Type || first.Lexeme != second.Lexeme {
+		t.Errorf("Peek not idempotent: %v then %v", first, second)
+	}
+	// Next() after Peek must return the same token.
+	next := l.Next()
+	if next.Type != first.Type || next.Lexeme != first.Lexeme {
+		t.Errorf("Next() after Peek() = %v, want %v", next, first)
+	}
+}
+
+// REQ001140: Peek then Peek2 should return the first and second
+// upcoming tokens, respectively.
+func TestLexerPeekAndPeek2(t *testing.T) {
+	l := NewLexer("SELECT id FROM t")
+	p1 := l.Peek()
+	p2 := l.Peek2()
+	if p1.Type != T_SELECT || p1.Lexeme != "SELECT" {
+		t.Errorf("Peek() = %v, want SELECT", p1)
+	}
+	if p2.Type != T_IDENT || p2.Lexeme != "id" {
+		t.Errorf("Peek2() = %v, want IDENT 'id'", p2)
+	}
+	// Next should emit SELECT then id then FROM then t then EOF.
+	wantSeq := []struct {
+		typ TokenType
+		lex string
+	}{
+		{T_SELECT, "SELECT"},
+		{T_IDENT, "id"},
+		{T_FROM, "FROM"},
+		{T_IDENT, "t"},
+		{T_EOF, ""},
+	}
+	for i, want := range wantSeq {
+		got := l.Next()
+		if got.Type != want.typ || got.Lexeme != want.lex {
+			t.Errorf("token %d: got %v %q, want %v %q", i, got.Type, got.Lexeme, want.typ, want.lex)
+		}
+	}
+}
+
+// REQ001140: Peek2 on EOF input returns EOF.
+func TestLexerPeek2_EOF(t *testing.T) {
+	l := NewLexer("")
+	if got := l.Peek2(); got.Type != T_EOF {
+		t.Errorf("Peek2 on empty input: got %v, want EOF", got)
+	}
+}
+
+// REQ001140: After Next() at EOF, Peek() must continue to return
+// EOF without panicking.
+func TestLexerPeekAfterEOF(t *testing.T) {
+	l := NewLexer("a")
+	_ = l.Next()
+	if got := l.Peek(); got.Type != T_EOF {
+		t.Errorf("Peek after EOF: got %v, want EOF", got)
+	}
+	if got := l.Peek2(); got.Type != T_EOF {
+		t.Errorf("Peek2 after EOF: got %v, want EOF", got)
+	}
+}
+
+// REQ001140: Repeated Peek interleaved with Next consumes the
+// correct sequence — cache must be invalidated when Next() advances.
+func TestLexerPeekNextInterleave(t *testing.T) {
+	l := NewLexer("a b c")
+	// Peek 'a', Next (returns 'a'), Peek 'b', Next (returns 'b'),
+	// Peek 'c', Next (returns 'c').
+	if got := l.Peek(); got.Lexeme != "a" {
+		t.Errorf("Peek1 = %q, want 'a'", got.Lexeme)
+	}
+	if got := l.Next(); got.Lexeme != "a" {
+		t.Errorf("Next1 = %q, want 'a'", got.Lexeme)
+	}
+	if got := l.Peek(); got.Lexeme != "b" {
+		t.Errorf("Peek2 = %q, want 'b'", got.Lexeme)
+	}
+	if got := l.Peek2(); got.Lexeme != "c" {
+		t.Errorf("Peek2 = %q, want 'c'", got.Lexeme)
+	}
+	if got := l.Next(); got.Lexeme != "b" {
+		t.Errorf("Next2 = %q, want 'b'", got.Lexeme)
+	}
+	if got := l.Next(); got.Lexeme != "c" {
+		t.Errorf("Next3 = %q, want 'c'", got.Lexeme)
+	}
+	if got := l.Next(); got.Type != T_EOF {
+		t.Errorf("Next4 = %v, want EOF", got.Type)
 	}
 }
