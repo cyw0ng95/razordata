@@ -534,7 +534,7 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 
 // decodeRowBuffered decodes a row into a reusable buffer slice.
 // REQ001101: amortizes the make([]Value, N) allocation across
-// defaultScanRowBuf (64) rows by cycling a pre-allocated buffer.
+// defaultScanRowBuf (64) rows by growing the buffer as needed.
 func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
 	row, err := decodeRow(data, s.schema)
 	if err != nil {
@@ -551,10 +551,16 @@ func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
 	start := s.decodeBufPos
 	end := start + n
 	s.decodeBufPos = end
-	if s.decodeBufPos+n > cap(s.decodeBuf) {
-		s.decodeBufPos = 0
-		start = 0
-		end = n
+	if s.decodeBufPos > cap(s.decodeBuf) {
+		// Grow buffer instead of wrapping — wrapping corrupts previously
+		// decoded rows when the caller materializes them (e.g. Sort).
+		newCap := cap(s.decodeBuf) * 2
+		if newCap < cap(s.decodeBuf)+n {
+			newCap = cap(s.decodeBuf) + n
+		}
+		newBuf := make([]Value, s.decodeBufPos, newCap)
+		copy(newBuf, s.decodeBuf)
+		s.decodeBuf = newBuf
 	}
 	copy(s.decodeBuf[start:end], row.Data)
 	row.Data = s.decodeBuf[start:end]
