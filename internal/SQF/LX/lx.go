@@ -340,7 +340,9 @@ func (l *Lexer) scanString() Token {
 
 	l.advance()
 
-	var sb strings.Builder
+	// REQ001010: track start position to avoid strings.Builder when no escapes.
+	start := l.pos
+	hasEscape := false
 	for {
 		c := l.peek()
 		if c == 0 {
@@ -348,15 +350,29 @@ func (l *Lexer) scanString() Token {
 		}
 		if c == '\'' {
 			if len(l.input) > l.pos+1 && l.input[l.pos+1] == '\'' {
-				sb.WriteByte('\'')
+				hasEscape = true
 				l.advance()
 				l.advance()
 				continue
 			}
 			l.advance()
-			return Token{Type: T_STRING, Lexeme: sb.String(), Literal: sb.String(), Line: startLine, Col: startCol}
+			lexeme := l.input[start : l.pos-1]
+			if hasEscape {
+				// Build string with escape processing
+				var sb strings.Builder
+				for i := start; i < l.pos-1; i++ {
+					if l.input[i] == '\'' && i+1 < l.pos-1 && l.input[i+1] == '\'' {
+						sb.WriteByte('\'')
+						i++
+					} else {
+						sb.WriteByte(l.input[i])
+					}
+				}
+				return Token{Type: T_STRING, Lexeme: sb.String(), Literal: sb.String(), Line: startLine, Col: startCol}
+			}
+			return Token{Type: T_STRING, Lexeme: lexeme, Literal: lexeme, Line: startLine, Col: startCol}
 		}
-		sb.WriteByte(l.advance())
+		l.advance()
 	}
 }
 
@@ -364,16 +380,17 @@ func (l *Lexer) scanIdent() Token {
 	startLine := l.line
 	startCol := l.col
 
-	var sb strings.Builder
+	// REQ001010: scan start position, slice directly from input string.
+	start := l.pos
 	for {
 		c := l.peek()
 		if c == 0 || (!unicode.IsLetter(rune(c)) && !unicode.IsDigit(rune(c)) && c != '_') {
 			break
 		}
-		sb.WriteByte(l.advance())
+		l.advance()
 	}
 
-	ident := sb.String()
+	ident := l.input[start:l.pos]
 
 	if typ, ok := keywords[strings.ToUpper(ident)]; ok {
 		return Token{Type: typ, Lexeme: ident, Line: startLine, Col: startCol}
