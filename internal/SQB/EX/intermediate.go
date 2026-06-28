@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -851,6 +852,8 @@ func compileFilterExpr(e PS.Expr) func(*Row) (bool, error) {
 	switch v := e.(type) {
 	case *PS.BinaryExpr:
 		return compileBinary(v)
+	case *PS.InExpr:
+		return compileInExpr(v)
 	case *PS.UnaryExpr:
 		if v.Op == int(LX.T_NOT) {
 			inner := compileFilterExpr(v.Operand)
@@ -868,6 +871,89 @@ func compileFilterExpr(e PS.Expr) func(*Row) (bool, error) {
 		return nil
 	default:
 		return nil
+	}
+}
+
+// compileInExpr compiles a `col IN (lit1, lit2, ...)` predicate into
+// a map lookup. Pre-computes the lookup map once at Filter creation
+// so per-row evaluation is O(1) instead of O(N) comparisons.
+// REQ001087. Only works when the IN-list contains only literal
+// values (no subqueries or computed expressions).
+func compileInExpr(e *PS.InExpr) func(*Row) (bool, error) {
+	if e.Subquery != nil || len(e.List) == 0 {
+		return nil
+	}
+	colName, ok := colRefName(e.Expr)
+	if !ok {
+		return nil
+	}
+	lookup := make(map[string]bool, len(e.List))
+	for _, item := range e.List {
+		lit, ok := extractLiteral(item)
+		if !ok {
+			return nil // non-constant expression; fall back to Eval
+		}
+		lookup[apValueKey(valueFromAny(lit))] = true
+	}
+	bareName := colName
+	if dot := strings.LastIndexByte(colName, '.'); dot >= 0 {
+		bareName = colName[dot+1:]
+	}
+	return func(row *Row) (bool, error) {
+		idx := -1
+		for i, c := range row.Cols {
+			if strings.EqualFold(c, colName) {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			for i, c := range row.Cols {
+				if strings.EqualFold(c, bareName) && i < len(row.Data) {
+					idx = i
+					break
+				}
+			}
+		}
+		if idx < 0 {
+			lk := strings.ToLower(bareName)
+			for i, c := range row.Cols {
+				if strings.HasSuffix(strings.ToLower(c), "."+lk) && i < len(row.Data) {
+					idx = i
+					break
+				}
+			}
+		}
+		if idx < 0 || idx >= len(row.Data) {
+			return false, nil
+		}
+		return lookup[apValueKey(row.Data[idx])], nil
+	}
+}
+
+// apValueKey returns a string key for a Value suitable for map lookup.
+// The key includes the Kind prefix so different types never collide
+// (e.g. int 1 != text "1"), and avoids []byte incomparability.
+// REQ001087.
+func apValueKey(v Value) string {
+	switch v.Kind {
+	case KindNull:
+		return "NULL"
+	case KindInt:
+		return "I:" + strconv.FormatInt(v.I64, 10)
+	case KindFloat:
+		return "F:" + strconv.FormatFloat(v.F64, 'g', -1, 64)
+	case KindText:
+		return "T:" + v.S
+	case KindBool:
+		if v.Bo {
+			return "B:true"
+		}
+		return "B:false"
+	case KindBlob:
+		return "BL:" + string(v.B)
+	default:
+		return ""
 	}
 }
 
