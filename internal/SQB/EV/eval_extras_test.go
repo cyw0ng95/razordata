@@ -4,6 +4,9 @@ import (
 	"testing"
 	"time"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -91,5 +94,71 @@ func TestEvalSubstr(t *testing.T) {
 				t.Errorf("got %v, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// TestQualifiedName_OuterChain verifies that EvalValue resolves
+// QualifiedName column references correctly when the outer row
+// chain is set up (REQ001098). x.b must resolve to the inner row,
+// t1.b must resolve to the outer row.
+func TestQualifiedName_OuterChain(t *testing.T) {
+	outer := PL.Row{
+		Cols:      []string{"a", "b", "c"},
+		Data:      []Value{DT.NewIntValue(1), DT.NewIntValue(2), DT.NewIntValue(3)},
+		TableName: "t1",
+	}
+	inner := PL.Row{
+		Cols:      []string{"x.a", "x.b", "x.c"},
+		Data:      []Value{DT.NewIntValue(10), DT.NewIntValue(20), DT.NewIntValue(30)},
+		TableName: "x",
+	}
+	inner.Outer = &outer
+
+	// x.b should resolve to inner row's b (20)
+	v, err := EvalValue(&PS.QualifiedName{Table: "x", Name: "b"}, &inner, nil)
+	if err != nil {
+		t.Fatalf("x.b: %v", err)
+	}
+	if v.Kind != KindInt || v.I64 != 20 {
+		t.Errorf("x.b: got %v, want 20", v)
+	}
+
+	// t1.b should resolve to outer row's b (2)
+	v, err = EvalValue(&PS.QualifiedName{Table: "t1", Name: "b"}, &inner, nil)
+	if err != nil {
+		t.Fatalf("t1.b: %v", err)
+	}
+	if v.Kind != KindInt || v.I64 != 2 {
+		t.Errorf("t1.b: got %v, want 2", v)
+	}
+
+	// x.c > t1.c should correctly compare inner to outer
+	gt := &PS.BinaryExpr{
+		Left:  &PS.QualifiedName{Table: "x", Name: "c"},
+		Op:    LX.T_GT,
+		Right: &PS.QualifiedName{Table: "t1", Name: "c"},
+	}
+	v, err = EvalValue(gt, &inner, nil)
+	if err != nil {
+		t.Fatalf("x.c > t1.c: %v", err)
+	}
+	// inner.c=30 > outer.c=3 → TRUE
+	if v.Kind != KindBool || !v.Bo {
+		t.Errorf("x.c > t1.c: got %v, want TRUE", v)
+	}
+
+	// x.b < t1.b should correctly compare inner to outer
+	lt := &PS.BinaryExpr{
+		Left:  &PS.QualifiedName{Table: "x", Name: "b"},
+		Op:    LX.T_LT,
+		Right: &PS.QualifiedName{Table: "t1", Name: "b"},
+	}
+	v, err = EvalValue(lt, &inner, nil)
+	if err != nil {
+		t.Fatalf("x.b < t1.b: %v", err)
+	}
+	// inner.b=20 < outer.b=2 → FALSE
+	if v.Kind != KindBool || v.Bo {
+		t.Errorf("x.b < t1.b: got %v, want FALSE", v)
 	}
 }

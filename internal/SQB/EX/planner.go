@@ -1282,9 +1282,21 @@ func collectReferencedColNames(s *PS.Select) []string {
 			return nil
 		}
 		addCol(c)
+		// REQ001098: correlated subqueries in the SELECT list
+		// (scalar subqueries) also reference outer table columns.
+		walkSubqueryColRefs(c, cols)
 	}
 	if s.Where != nil {
 		addCol(s.Where)
+		// REQ001098: correlated subqueries in WHERE (EXISTS, IN, scalar)
+		// reference outer table columns via QualifiedName.
+		// walkExpr skips subqueries (they have their own scope), so the
+		// outer table's columns used only inside subqueries would be
+		// pruned away — the outer SeqScan wouldn't read them and the
+		// EvalValue fallback would resolve the QualifiedName to the
+		// inner row instead. Walk subqueries explicitly to collect
+		// QualifiedName references that reference outer tables.
+		walkSubqueryColRefs(s.Where, cols)
 	}
 	for _, j := range s.Joins {
 		if j.On != nil {
@@ -1308,6 +1320,88 @@ func collectReferencedColNames(s *PS.Select) []string {
 		result = append(result, c)
 	}
 	return result
+}
+
+// walkSubqueryColRefs walks into subqueries (EXISTS, IN, scalar) within the
+// expression tree and collects QualifiedName column references. Bare idents
+// inside subqueries are NOT collected — they resolve to the inner table and
+// would cause unnecessary column reads. Only QualifiedName references like
+// t1.b are clearly outer references that the outer scan must include.
+// REQ001098.
+func walkSubqueryColRefs(e PS.Expr, cols map[string]bool) {
+	if e == nil {
+		return
+	}
+	switch v := e.(type) {
+	case *PS.ExistsExpr:
+		if v.Subquery != nil {
+			collectQualifiedFromSubquery(v.Subquery, cols)
+		}
+	case *PS.SubqueryExpr:
+		if v.Subquery != nil {
+			collectQualifiedFromSubquery(v.Subquery, cols)
+		}
+	case *PS.InExpr:
+		if v.Subquery != nil {
+			collectQualifiedFromSubquery(v.Subquery, cols)
+		}
+		// Also walk the target expression (e.g., col IN (subq))
+		walkSubqueryColRefs(v.Expr, cols)
+		for _, item := range v.List {
+			walkSubqueryColRefs(item, cols)
+		}
+	case *PS.BinaryExpr:
+		walkSubqueryColRefs(v.Left, cols)
+		walkSubqueryColRefs(v.Right, cols)
+	case *PS.UnaryExpr:
+		walkSubqueryColRefs(v.Operand, cols)
+	case *PS.CaseExpr:
+		walkSubqueryColRefs(v.Expr, cols)
+		for _, w := range v.WhenList {
+			walkSubqueryColRefs(w.Cond, cols)
+			walkSubqueryColRefs(w.Then, cols)
+		}
+		walkSubqueryColRefs(v.Else, cols)
+	}
+}
+
+// collectQualifiedFromSubquery walks a subquery SELECT and collects all
+// QualifiedName column references from its WHERE, ON, and other clauses.
+// These are references to outer table columns (e.g., t1.b inside a
+// correlated subquery). REQ001098.
+func collectQualifiedFromSubquery(stmt PS.Stmt, cols map[string]bool) {
+	sel, ok := stmt.(*PS.Select)
+	if !ok {
+		return
+	}
+	walkInto := func(e PS.Expr) {
+		if e == nil {
+			return
+		}
+		walkExpr(e, func(node PS.Expr) {
+			if qn, ok := node.(*PS.QualifiedName); ok {
+				cols[qn.Name] = true
+			}
+			// Recursively handle nested subqueries within this
+			// subquery's WHERE/ON etc.
+			switch v := node.(type) {
+			case *PS.ExistsExpr:
+				collectQualifiedFromSubquery(v.Subquery, cols)
+			case *PS.SubqueryExpr:
+				collectQualifiedFromSubquery(v.Subquery, cols)
+			case *PS.InExpr:
+				collectQualifiedFromSubquery(v.Subquery, cols)
+			}
+		})
+	}
+	if sel.Where != nil {
+		walkInto(sel.Where)
+	}
+	for _, j := range sel.Joins {
+		if j.On != nil {
+			walkInto(j.On)
+		}
+	}
 }
 
 func collectReferencedTables(s *PS.Select) map[string]bool {
