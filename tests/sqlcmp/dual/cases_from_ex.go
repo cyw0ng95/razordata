@@ -724,6 +724,21 @@ var nullInSubqCases = []dualCase{
 	},
 }
 
+// deleteSelfSubqCases from EX/req000714_test.go: DELETE with
+// self-referencing subquery in WHERE.
+var deleteSelfSubqCases = []dualCase{
+	{
+		Name: "delete_with_self_subquery",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)",
+			"DELETE FROM t WHERE v > (SELECT AVG(v) FROM t)",
+		},
+		Query: "SELECT id, v FROM t ORDER BY id",
+		Want:  [][]any{{int64(1), int64(10)}, {int64(2), int64(20)}},
+	},
+}
+
 // crudCases from EX/e2e_test.go: full SQL DML lifecycle and LIMIT/OFFSET.
 var crudCases = []dualCase{
 	{
