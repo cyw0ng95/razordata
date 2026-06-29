@@ -701,6 +701,29 @@ var qualifiedNameCases = []dualCase{
 	},
 }
 
+// nullInSubqCases from EX/req000721_test.go: NULL IN (subquery)
+// three-valued logic.
+var nullInSubqCases = []dualCase{
+	{
+		Name: "null_in_subquery_no_nulls",
+		Setup: []string{
+			"CREATE TABLE t1 (id INTEGER PRIMARY KEY, x INTEGER)",
+			"INSERT INTO t1 VALUES (1, 1), (2, 2), (3, 3)",
+		},
+		Query: "SELECT NULL IN (SELECT x FROM t1)",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name: "null_in_subquery_with_nulls",
+		Setup: []string{
+			"CREATE TABLE t1 (id INTEGER PRIMARY KEY, x INTEGER)",
+			"INSERT INTO t1 VALUES (1, 1), (2, NULL), (3, 3)",
+		},
+		Query: "SELECT NULL IN (SELECT x FROM t1)",
+		Want:  [][]any{{nil}},
+	},
+}
+
 // crudCases from EX/e2e_test.go: full SQL DML lifecycle and LIMIT/OFFSET.
 var crudCases = []dualCase{
 	{
