@@ -100,13 +100,13 @@ func NewHashJoin(left, right pl.Operator, leftTbl, rightTbl string, leftKeys, ri
 	}
 }
 
-func (j *HashJoin) LeftChild() pl.Operator { return j.left }
-func (j *HashJoin) RightChild() pl.Operator { return j.right }
-func (j *HashJoin) LeftTbl() string        { return j.leftTbl }
-func (j *HashJoin) RightTbl() string       { return j.rightTbl }
-func (j *HashJoin) LeftKeys() []string     { return j.leftKeys }
-func (j *HashJoin) RightKeys() []string    { return j.rightKeys }
-func (j *HashJoin) SharedCols() []string    { return j.sharedCols }
+func (j *HashJoin) LeftChild() pl.Operator      { return j.left }
+func (j *HashJoin) RightChild() pl.Operator     { return j.right }
+func (j *HashJoin) LeftTbl() string             { return j.leftTbl }
+func (j *HashJoin) RightTbl() string            { return j.rightTbl }
+func (j *HashJoin) LeftKeys() []string          { return j.leftKeys }
+func (j *HashJoin) RightKeys() []string         { return j.rightKeys }
+func (j *HashJoin) SharedCols() []string        { return j.sharedCols }
 func (j *HashJoin) SharedTypes() []LX.TokenType { return j.sharedTypes }
 
 // Partitions returns the number of hash partitions.
@@ -205,10 +205,27 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	var rightCount int
 	var firstRightCols []string
 	var firstRightTypes []LX.TokenType
+	var firstRightData []pl.Value
 	for {
 		row, err := j.right.Next(ctx)
 		if err == ErrNoRows {
 			break
+		}
+		if err != nil {
+			return err
+		}
+		if rightCount == 0 {
+			firstRightCols = row.Cols
+			firstRightTypes = row.Types
+			firstRightData = row.Data
+		}
+		if err != nil {
+			return err
+		}
+		if rightCount == 0 {
+			firstRightCols = row.Cols
+			firstRightTypes = row.Types
+			firstRightData = row.Data
 		}
 		if err != nil {
 			return err
@@ -329,14 +346,14 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	// pre-allocation without stopping the match-building loop — the
 	// actual iteration writes past the capped capacity, causing a
 	// slice-bounds panic at dataBuf[:off+dataPerRow].
-	// 
+	//
 	// The hard cap (maxDataBufValues) errors out early when matches
 	// are truly unbounded (cross-join with no predicates). The match-
 	// building loop below has its own guard that breaks when the cap
 	// is reached, ensuring the loop always stays within bounds.
 	var dataPerRow int
 	if len(j.leftRows) > 0 && rightCount > 0 {
-		dataPerRow = len(j.leftRows[0].Cols) + len(firstRightCols)
+		dataPerRow = len(j.leftRows[0].Data) + len(firstRightData)
 	}
 	const maxDataBufValues = 64 * 1024 * 1024 // 64M Values ≈ 1.5 GB
 	if dataPerRow > 0 {
@@ -362,7 +379,7 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	// pl.Row.Data slices become dangling pointers. The match-building
 	// loop below guards against overflow with a bufFull flag that
 	// stops iteration when dataBuf reaches capacity.
-	// 
+	//
 	// The joinBufferSize-based pre-allocation cap (REQ001056) was
 	// removed because it reduced the pre-allocation without stopping
 	// the loop — the actual iteration wrote past the capped capacity,
