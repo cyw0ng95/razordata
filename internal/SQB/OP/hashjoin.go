@@ -258,21 +258,6 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 			firstRightTypes = row.Types
 			firstRightData = row.Data
 		}
-		if err != nil {
-			return err
-		}
-		if rightCount == 0 {
-			firstRightCols = row.Cols
-			firstRightTypes = row.Types
-			firstRightData = row.Data
-		}
-		if err != nil {
-			return err
-		}
-		if rightCount == 0 {
-			firstRightCols = row.Cols
-			firstRightTypes = row.Types
-		}
 		rightCount++
 		// REQ0011XX: check budget BEFORE append. Use half the budget
 		// to leave headroom for the matches slice and dataBuf.
@@ -286,6 +271,10 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		rk := lookupKeys(row, j.rightKeys, j.keyBuf)
 		hash := hashKeys(rk)
 		idx := int(hash & uint64(j.partitions-1))
+		// Deep-copy Data — the child operator may reuse its emitBuf
+		// across Next() calls, and storing the slice header alone
+		// would alias all rows to the same backing array.
+		row.Data = append([]pl.Value(nil), row.Data...)
 		j.buckets[idx].rightRows = append(j.buckets[idx].rightRows, row)
 		j.buckets[idx].hashes = append(j.buckets[idx].hashes, hash)
 	}
@@ -293,7 +282,20 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	if j.right != nil {
 		_ = j.right.Close()
 	}
-	// Materialize left side. REQ001056: proactive budget check BEFORE
+	// If rightCount > 0 but no rows landed in buckets, the budget check
+	// fired before any row was appended. Return an error so callers
+	// (e.g. TestHashJoin_JoinBufferSize) see a joinBufferSize message
+	// instead of a silent ErrNoRows.
+	if rightCount > 0 && j.joinBufferSize > 0 {
+		var rightTotal int
+		for i := range j.buckets {
+			rightTotal += len(j.buckets[i].rightRows)
+		}
+		if rightTotal == 0 {
+			return fmt.Errorf("hash join: joinBufferSize=%d too small to materialize right side", j.joinBufferSize)
+		}
+	}
+	// Materialize left side.
 	// append to prevent Go slice growth from allocating a block that
 	// exceeds the remaining budget (OOM observed at hashjoin.go:263
 	// when slice doubling allocated 79 MB in a 1 GB GOMEMLIMIT process).
@@ -328,6 +330,8 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		if int64(nextCap)*estBytesPerRow > effectiveBudget/2 {
 			break
 		}
+		// Deep-copy Data — same reason as the right-side build above.
+		row.Data = append([]pl.Value(nil), row.Data...)
 		j.leftRows = append(j.leftRows, row)
 	}
 
