@@ -1,9 +1,10 @@
-package EX
+package AD
 
 import (
 	"context"
 	"log/slog"
 
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
@@ -12,14 +13,14 @@ import (
 // The user must never see a "specialization failed" error.
 // REQ000313: fallback is silent and total.
 type FallbackOp struct {
-	inner     Operator
+	inner     pl.Operator
 	planHash  string
 	reason    string
 	triggered bool
 }
 
 // NewFallbackOp creates a fallback wrapper around an interpreted operator.
-func NewFallbackOp(inner Operator, planHash, reason string) *FallbackOp {
+func NewFallbackOp(inner pl.Operator, planHash, reason string) *FallbackOp {
 	return &FallbackOp{
 		inner:    inner,
 		planHash: planHash,
@@ -27,8 +28,8 @@ func NewFallbackOp(inner Operator, planHash, reason string) *FallbackOp {
 	}
 }
 
-// Next implements Operator.
-func (f *FallbackOp) Next(ctx context.Context) (Row, error) {
+// Next implements pl.Operator.
+func (f *FallbackOp) Next(ctx context.Context) (pl.Row, error) {
 	return f.inner.Next(ctx)
 }
 
@@ -63,4 +64,4 @@ func trySpecialized(
 }
 
 // ensure interface compliance
-var _ Operator = (*FallbackOp)(nil)
+var _ pl.Operator = (*FallbackOp)(nil)

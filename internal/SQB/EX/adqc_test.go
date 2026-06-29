@@ -304,7 +304,7 @@ func TestAdqcCache_ConcurrentAccess(t *testing.T) {
 
 func TestNewFallbackOp_Delegates(t *testing.T) {
 	inner := &testOp{}
-	fb := NewFallbackOp(inner, "hash", "test reason")
+	fb := AD.NewFallbackOp(inner, "hash", "test reason")
 	ctx := context.Background()
 	row, err := fb.Next(ctx)
 	if err != nil {
@@ -317,7 +317,7 @@ func TestNewFallbackOp_Delegates(t *testing.T) {
 
 func TestFallbackOp_Close(t *testing.T) {
 	inner := &testOp{}
-	fb := NewFallbackOp(inner, "hash", "test")
+	fb := AD.NewFallbackOp(inner, "hash", "test")
 	if err := fb.Close(); err != nil {
 		t.Errorf("Close returned error: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestFallbackOp_Close(t *testing.T) {
 }
 
 func TestFallbackOp_TriggeredInitially(t *testing.T) {
-	fb := NewFallbackOp(&testOp{}, "h", "test")
+	fb := AD.NewFallbackOp(&testOp{}, "h", "test")
 	if fb.Triggered() {
 		t.Error("expected Triggered() to be false initially")
 	}
@@ -335,7 +335,7 @@ func TestFallbackOp_TriggeredInitially(t *testing.T) {
 
 func TestFallbackOp_MultipleNext(t *testing.T) {
 	inner := &testOp{}
-	fb := NewFallbackOp(inner, "h", "test")
+	fb := AD.NewFallbackOp(inner, "h", "test")
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
 		_, err := fb.Next(ctx)

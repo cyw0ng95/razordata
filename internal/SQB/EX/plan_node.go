@@ -1,6 +1,7 @@
 package EX
 
 import (
+	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"fmt"
 	"math"
 	"strings"
@@ -531,7 +532,7 @@ func operatorType(op Operator) string {
 		return "Explain"
 	case *Noop:
 		return "Noop"
-	case *FallbackOp:
+	case *AD.FallbackOp:
 		return "Fallback"
 	}
 	return "Unknown"
