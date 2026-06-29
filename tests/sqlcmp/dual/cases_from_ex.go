@@ -802,6 +802,23 @@ var recursiveCTECases = []dualCase{
 	},
 }
 
+// joinReorderCases from EX/req001071_test.go: planner join reordering.
+var joinReorderCases = []dualCase{
+	{
+		Name: "three_way_join_reorder",
+		Setup: []string{
+			"CREATE TABLE t1 (id INTEGER PRIMARY KEY, val INTEGER)",
+			"INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30)",
+			"CREATE TABLE t2 (id INTEGER PRIMARY KEY, val INTEGER)",
+			"INSERT INTO t2 VALUES (1, 100), (2, 200), (3, 300)",
+			"CREATE TABLE t3 (id INTEGER PRIMARY KEY, val INTEGER)",
+			"INSERT INTO t3 VALUES (1, 1000), (2, 2000), (4, 4000)",
+		},
+		Query: "SELECT t1.val, t2.val, t3.val FROM t1, t2, t3 WHERE t1.id = t2.id AND t2.id = t3.id ORDER BY t1.id",
+		Want:  [][]any{{int64(10), int64(100), int64(1000)}, {int64(20), int64(200), int64(2000)}},
+	},
+}
+
 // crudCases from EX/e2e_test.go: full SQL DML lifecycle and LIMIT/OFFSET.
 var crudCases = []dualCase{
 	{

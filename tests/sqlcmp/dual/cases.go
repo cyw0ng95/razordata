@@ -110,6 +110,7 @@ func AllCases() []dualCase {
 	out = append(out, deleteSelfSubqCases...)
 	out = append(out, threePartNameCases...)
 	out = append(out, recursiveCTECases...)
+	out = append(out, joinReorderCases...)
 	out = append(out, hashCrossJoinCases...)
 	out = append(out, crudCases...)
 	out = append(out, probeCases...)
