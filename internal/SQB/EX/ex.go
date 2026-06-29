@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
@@ -1773,12 +1774,12 @@ func (e *Executor) TxnDebugger() *UT.TxnDebugger {
 
 // StmtCacheStats returns the statement cache statistics.
 // REQ000793: Plan cache analysis.
-func (e *Executor) StmtCacheStats() *CacheStats {
+func (e *Executor) StmtCacheStats() *AD.CacheStats {
 	e.stmtCache.mu.Lock()
 	defer e.stmtCache.mu.Unlock()
 	// Count entries
 	size := len(e.stmtCache.entries)
-	return &CacheStats{
+	return &AD.CacheStats{
 		Hits:      0, // tracked separately if needed
 		Misses:    0,
 		Evictions: 0,

@@ -1,8 +1,10 @@
-package EX
+package AD
 
 import (
 	"fmt"
 	"sync"
+
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
 // CacheStats tracks plan cache hit/miss statistics.
@@ -72,7 +74,7 @@ func (cs *CacheStats) GetSummary() string {
 // StmtCacheEntry represents a cached prepared statement plan.
 // REQ000793: StmtCache wiring for plan reuse.
 type StmtCacheEntry struct {
-	Plan     Operator
+	Plan     pl.Operator
 	SQL      string
 	LastUsed int64 // unix nanos
 	UseCount int64
