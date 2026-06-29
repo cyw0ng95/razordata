@@ -52,6 +52,16 @@ type Runner struct {
 	// haltOnTimeout is set when a query hits context deadline exceeded.
 	// Subsequent records are skipped (fast-fail for timeout cascades).
 	haltOnTimeout bool
+
+	// FailFast controls whether the runner stops on the first failure.
+	// When true, any statement error, query diff mismatch, or label
+	// hash mismatch sets haltOnFailure and the Run loop skips all
+	// remaining records. Default false (tolerant mode).
+	FailFast bool
+
+	// haltOnFailure is set when FailFast is true and a record fails.
+	// Subsequent records are skipped (fast-fail on first failure).
+	haltOnFailure bool
 }
 
 // NewRunner constructs a runner bound to a driver. The classifier
@@ -75,6 +85,7 @@ func NewRunner(driver Driver, classifier Classifier, engineName string) *Runner 
 		labelMap:      make(map[string]string),
 		hashThreshold: 0,
 		profileOn:     profileOn,
+		FailFast:      os.Getenv("RAZOR_SLT_FAILFAST") == "1",
 	}
 }
 
@@ -141,6 +152,16 @@ func (r *Runner) Run(ctx context.Context, records []Record) Stats {
 		case RecordOnlyIf:
 			r.pendingSkip = r.engineName != "" && r.engineName != rec.DBName
 		}
+		// REQ000xxx: fast-fail on first failure. Useful during debugging
+		// to see the first failing record immediately instead of waiting
+		// for the full corpus to finish.
+		if r.haltOnFailure {
+			r.stats.Skipped += len(records) - i - 1
+			if r.profileOn {
+				r.recordTimers = append(r.recordTimers, slowTimer{line: rec.Line, kind: rec.Kind, label: rec.Label, sql: rec.SQL, dur: time.Since(recStart)})
+			}
+			return r.finalize()
+		}
 		// REQ001056: fast-fail on context deadline exceeded — skip all
 		// remaining records (they will also time out and waste time).
 		if r.haltOnTimeout {
@@ -187,6 +208,9 @@ func (r *Runner) runStatementOK(ctx context.Context, rec *Record) {
 		r.stats.Skipped++
 	default:
 		r.stats.Failed++
+		if r.FailFast {
+			r.haltOnFailure = true
+		}
 	}
 }
 
@@ -197,6 +221,9 @@ func (r *Runner) runStatementError(ctx context.Context, rec *Record) {
 	if err == nil {
 		// Engine accepted a statement it should have rejected.
 		r.stats.Failed++
+		if r.FailFast {
+			r.haltOnFailure = true
+		}
 		return
 	}
 	// The error here is expected; the runner treats any error as
@@ -229,9 +256,9 @@ func (r *Runner) runQuery(ctx context.Context, rec *Record) {
 	}
 	if diff := DiffResultSets(rs, rec); diff != "" {
 		r.stats.Failed++
-		// diff is a diagnostic; it is not currently retained
-		// beyond the stat. A future iteration may attach diffs
-		// to a Coverage record for the failing file.
+		if r.FailFast {
+			r.haltOnFailure = true
+		}
 		return
 	}
 	// Label bookkeeping: if this query has a label, the next
@@ -241,6 +268,9 @@ func (r *Runner) runQuery(ctx context.Context, rec *Record) {
 		if prev, ok := r.labelMap[rec.Label]; ok {
 			if prev != h {
 				r.stats.Failed++
+				if r.FailFast {
+					r.haltOnFailure = true
+				}
 				return
 			}
 		} else {
