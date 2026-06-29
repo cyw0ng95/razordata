@@ -13,10 +13,10 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
@@ -97,24 +97,24 @@ func getSessionCounterAccessor() SessionCounterAccessor {
 }
 
 var ErrNotImplemented = errors.New("ex: not implemented")
-var ErrNoRows = pl.ErrNoRows
+var ErrNoRows = DT.ErrNoRows
 var ErrClosed = errors.New("ex: operator closed")
 
 // Value is a tagged-union that stores SQL values inline without boxing.
 // EX.Value IS PL.Value (type alias); no conversion needed at package boundaries.
-type Value = pl.Value
+type Value = DT.Value
 
 // ValueKind is the type discriminator for Value.
-type ValueKind = pl.ValueKind
+type ValueKind = DT.ValueKind
 
 // Value kind constants — aliased from PL for zero-cost interop.
 const (
-	KindNull  = pl.KindNull
-	KindInt   = pl.KindInt
-	KindFloat = pl.KindFloat
-	KindText  = pl.KindText
-	KindBlob  = pl.KindBlob
-	KindBool  = pl.KindBool
+	KindNull  = DT.KindNull
+	KindInt   = DT.KindInt
+	KindFloat = DT.KindFloat
+	KindText  = DT.KindText
+	KindBlob  = DT.KindBlob
+	KindBool  = DT.KindBool
 )
 
 // NewIntValue creates a Value from an int64.
@@ -197,11 +197,11 @@ func valueSliceToAny(v []Value) []any {
 func ValueSliceToAny(v []Value) []any { return valueSliceToAny(v) }
 
 // Operator is the core execution interface. Aliased from PL.
-type Operator = pl.Operator
+type Operator = DT.Operator
 
 // Row is a single row of data with column metadata. Aliased from PL.
-type Row = pl.Row
-type ExecContext = pl.ExecContext
+type Row = DT.Row
+type ExecContext = DT.ExecContext
 
 // Result holds the outcome of an Exec call.
 type Result struct {
@@ -216,7 +216,7 @@ type Rows struct {
 }
 
 // ColInfo describes a single column in a table schema. Aliased from PL.
-type ColInfo = pl.ColInfo
+type ColInfo = DT.ColInfo
 
 // stmtCacheEntry holds a cached parsed statement with LRU metadata.
 type stmtCacheEntry struct {
@@ -275,11 +275,11 @@ type Executor struct {
 
 // TxWriter is the optional hook an Executor notifies on every key
 // write. Aliased from PL.
-type TxWriter = pl.TxWriter
+type TxWriter = DT.TxWriter
 
 // InMemoryTxWriter is the optional hook for in-memory table
 // rollback support. Aliased from PL.
-type InMemoryTxWriter = pl.InMemoryTxWriter
+type InMemoryTxWriter = DT.InMemoryTxWriter
 
 // SetTxWriter installs w as the current transaction's write hook. Pass
 // nil to disable. Not safe to call concurrently with Exec; the
