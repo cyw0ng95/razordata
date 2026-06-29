@@ -1,5 +1,7 @@
 package LX
 
+import "strings"
+
 type TokenType int
 
 const (
@@ -470,10 +472,29 @@ var tokenTypeNames = [...]string{
 }
 
 func (t Token) String() string {
+	var name string
 	if int(t.Type) < len(tokenTypeNames) && tokenTypeNames[t.Type] != "" {
-		return tokenTypeNames[t.Type] + ":" + t.Lexeme
+		name = tokenTypeNames[t.Type]
+	} else {
+		name = "UNKNOWN"
 	}
-	return "UNKNOWN:" + t.Lexeme
+	// REQ001152: stack buffer avoids heap alloc for short strings.
+	n := len(name) + 1 + len(t.Lexeme)
+	var buf [128]byte
+	if n <= len(buf) {
+		i := copy(buf[:], name)
+		buf[i] = ':'
+		i++
+		copy(buf[i:], t.Lexeme)
+		return string(buf[:n])
+	}
+	// Fallback for unusually long strings.
+	var b strings.Builder
+	b.Grow(n)
+	b.WriteString(name)
+	b.WriteByte(':')
+	b.WriteString(t.Lexeme)
+	return b.String()
 }
 
 func (t Token) IsEOF() bool {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 )
@@ -35,6 +36,41 @@ type keywordNode struct {
 }
 
 var keywordTrie = buildKeywordTrie()
+
+// REQ001151: branchless operator dispatch via 256-entry lookup table.
+// opTable[c] holds the TokenType for single-char operator c.
+// Multi-char operators (<, >, |, !) are handled by peek + dispatch.
+// Unassigned entries are 0 (non-operator; T_EOF is only at index 0).
+type opEntry struct {
+	tok    TokenType
+	lexeme string
+}
+
+var opTable [256]opEntry
+
+func init() {
+	opTable[0] = opEntry{tok: T_EOF}
+	opTable['='] = opEntry{tok: T_EQ, lexeme: "="}
+	opTable['<'] = opEntry{tok: T_LT, lexeme: "<"}
+	opTable['>'] = opEntry{tok: T_GT, lexeme: ">"}
+	opTable['+'] = opEntry{tok: T_PLUS, lexeme: "+"}
+	opTable['-'] = opEntry{tok: T_MINUS, lexeme: "-"}
+	opTable['*'] = opEntry{tok: T_STAR, lexeme: "*"}
+	opTable['/'] = opEntry{tok: T_SLASH, lexeme: "/"}
+	opTable['('] = opEntry{tok: T_LPAREN, lexeme: "("}
+	opTable[')'] = opEntry{tok: T_RPAREN, lexeme: ")"}
+	opTable[','] = opEntry{tok: T_COMMA, lexeme: ","}
+	opTable['.'] = opEntry{tok: T_DOT, lexeme: "."}
+	opTable[';'] = opEntry{tok: T_SEMICOLON, lexeme: ";"}
+	opTable[':'] = opEntry{tok: T_COLON, lexeme: ":"}
+	opTable['?'] = opEntry{tok: T_BIND, lexeme: "?"}
+	opTable['&'] = opEntry{tok: T_BITAND, lexeme: "&"}
+	opTable['|'] = opEntry{tok: T_BITOR, lexeme: "|"}
+	opTable['^'] = opEntry{tok: T_BITXOR, lexeme: "^"}
+	opTable['~'] = opEntry{tok: T_BITNOT, lexeme: "~"}
+	opTable['%'] = opEntry{tok: T_MOD, lexeme: "%"}
+	opTable['!'] = opEntry{tok: T_ERROR, lexeme: ""}
+}
 
 func buildKeywordTrie() *keywordNode {
 	// Source list — must stay in sync with the historical
@@ -324,6 +360,35 @@ type Lexer struct {
 type peekSlot struct {
 	tok   Token
 	valid bool
+}
+
+// REQ001153: lexerPool amortizes per-query Lexer allocation
+// across many small SQL statements (OLTP workloads).
+var lexerPool = sync.Pool{
+	New: func() any { return &Lexer{} },
+}
+
+// GetLexer retrieves a Lexer from the pool, resetting it for the
+// given input. Callers must return the Lexer to the pool via
+// PutLexer when done.
+func GetLexer(input string) *Lexer {
+	l := lexerPool.Get().(*Lexer)
+	l.input = input
+	l.pos = 0
+	l.line = 1
+	l.col = 1
+	l.startLine = 0
+	l.startCol = 0
+	l.buf[0].valid = false
+	l.buf[1].valid = false
+	return l
+}
+
+// PutLexer returns a Lexer to the pool. The caller must not use l
+// after calling PutLexer.
+func PutLexer(l *Lexer) {
+	l.input = ""
+	lexerPool.Put(l)
 }
 
 func NewLexer(input string) *Lexer {
@@ -781,16 +846,12 @@ func (l *Lexer) scanOperator() Token {
 	startCol := l.startCol
 
 	c := l.advance()
-
-	switch c {
-	case '=':
-		return Token{Type: T_EQ, Lexeme: "=", Line: startLine, Col: startCol}
-	case '!':
-		if l.peek() == '=' {
-			l.advance()
-			return Token{Type: T_NE, Lexeme: "!=", Line: startLine, Col: startCol}
-		}
+	if c == 0 {
 		return Token{Type: T_ERROR, Lexeme: "", LitErr: ErrUnexpectedChar, Line: startLine, Col: startCol}
+	}
+
+	// REQ001151: multi-char operators need second-byte peek.
+	switch c {
 	case '<':
 		if l.peek() == '=' {
 			l.advance()
@@ -815,43 +876,24 @@ func (l *Lexer) scanOperator() Token {
 			return Token{Type: T_RSHIFT, Lexeme: ">>", Line: startLine, Col: startCol}
 		}
 		return Token{Type: T_GT, Lexeme: ">", Line: startLine, Col: startCol}
-	case '+':
-		return Token{Type: T_PLUS, Lexeme: "+", Line: startLine, Col: startCol}
-	case '-':
-		return Token{Type: T_MINUS, Lexeme: "-", Line: startLine, Col: startCol}
-	case '*':
-		return Token{Type: T_STAR, Lexeme: "*", Line: startLine, Col: startCol}
-	case '/':
-		return Token{Type: T_SLASH, Lexeme: "/", Line: startLine, Col: startCol}
-	case '(':
-		return Token{Type: T_LPAREN, Lexeme: "(", Line: startLine, Col: startCol}
-	case ')':
-		return Token{Type: T_RPAREN, Lexeme: ")", Line: startLine, Col: startCol}
-	case ',':
-		return Token{Type: T_COMMA, Lexeme: ",", Line: startLine, Col: startCol}
-	case '.':
-		return Token{Type: T_DOT, Lexeme: ".", Line: startLine, Col: startCol}
-	case ';':
-		return Token{Type: T_SEMICOLON, Lexeme: ";", Line: startLine, Col: startCol}
-	case ':':
-		return Token{Type: T_COLON, Lexeme: ":", Line: startLine, Col: startCol}
-	case '?':
-		return Token{Type: T_BIND, Lexeme: "?", Line: startLine, Col: startCol}
-	case '&':
-		return Token{Type: T_BITAND, Lexeme: "&", Line: startLine, Col: startCol}
 	case '|':
 		if l.peek() == '|' {
 			l.advance()
 			return Token{Type: T_CONCAT, Lexeme: "||", Line: startLine, Col: startCol}
 		}
 		return Token{Type: T_BITOR, Lexeme: "|", Line: startLine, Col: startCol}
-	case '^':
-		return Token{Type: T_BITXOR, Lexeme: "^", Line: startLine, Col: startCol}
-	case '~':
-		return Token{Type: T_BITNOT, Lexeme: "~", Line: startLine, Col: startCol}
-	case '%':
-		return Token{Type: T_MOD, Lexeme: "%", Line: startLine, Col: startCol}
+	case '!':
+		if l.peek() == '=' {
+			l.advance()
+			return Token{Type: T_NE, Lexeme: "!=", Line: startLine, Col: startCol}
+		}
+		return Token{Type: T_ERROR, Lexeme: "", LitErr: ErrUnexpectedChar, Line: startLine, Col: startCol}
 	}
 
-	return Token{Type: T_ERROR, Lexeme: "", LitErr: ErrUnexpectedChar, Line: startLine, Col: startCol}
+	// REQ001151: single-char operators via branchless table lookup.
+	entry := opTable[c]
+	if entry.tok == 0 {
+		return Token{Type: T_ERROR, Lexeme: "", LitErr: ErrUnexpectedChar, Line: startLine, Col: startCol}
+	}
+	return Token{Type: entry.tok, Lexeme: entry.lexeme, Line: startLine, Col: startCol}
 }
