@@ -1,4 +1,4 @@
-package EX
+package AD
 
 import (
 	"context"
@@ -37,6 +37,9 @@ func NewAdqcCache(limit int) *AdqcCache {
 		limit: limit,
 	}
 }
+
+// Limit returns the cache size limit.
+func (c *AdqcCache) Limit() int { return c.limit }
 
 // cacheKey builds the composite key from plan hash and schema version.
 func cacheKey(planHash string, schemaVersion uint64) string {

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
@@ -196,6 +197,6 @@ func (a *AdaptiveOp) WithParams(p []any) Operator {
 func (a *AdaptiveOp) Child() Operator { return a.inner }
 
 // GlobalAdqcCache is the process-wide adaptive compilation cache.
-var GlobalAdqcCache = NewAdqcCache(256)
+var GlobalAdqcCache = AD.NewAdqcCache(256)
 
 var _ Operator = (*AdaptiveOp)(nil)

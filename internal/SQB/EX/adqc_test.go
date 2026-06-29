@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 )
 
 func TestInvocationCounter_Basic(t *testing.T) {
@@ -188,18 +190,18 @@ func TestAdaptiveOp_EmptyPlanHash(t *testing.T) {
 }
 
 func TestNewAdqcCache_DefaultLimit(t *testing.T) {
-	c := NewAdqcCache(0)
+	c := AD.NewAdqcCache(0)
 	if c == nil {
 		t.Fatal("NewAdqcCache returned nil")
 	}
-	if c.limit != 256 {
-		t.Errorf("expected default limit 256, got %d", c.limit)
+	if c.Limit() != 256 {
+		t.Errorf("expected default limit 256, got %d", c.Limit())
 	}
 }
 
 func TestAdqcCache_GetPut(t *testing.T) {
-	c := NewAdqcCache(10)
-	plan := &SpecializedPlan{OpType: "Filter", PlanHash: "h1"}
+	c := AD.NewAdqcCache(10)
+	plan := &AD.SpecializedPlan{OpType: "Filter", PlanHash: "h1"}
 	c.Put("h1", 1, plan)
 	got := c.Get("h1", 1)
 	if got == nil {
@@ -211,7 +213,7 @@ func TestAdqcCache_GetPut(t *testing.T) {
 }
 
 func TestAdqcCache_Miss(t *testing.T) {
-	c := NewAdqcCache(10)
+	c := AD.NewAdqcCache(10)
 	got := c.Get("nonexistent", 0)
 	if got != nil {
 		t.Errorf("expected nil, got %v", got)
@@ -219,9 +221,9 @@ func TestAdqcCache_Miss(t *testing.T) {
 }
 
 func TestAdqcCache_Invalidate(t *testing.T) {
-	c := NewAdqcCache(10)
-	c.Put("h1", 1, &SpecializedPlan{PlanHash: "h1", SchemaVersion: 1})
-	c.Put("h2", 2, &SpecializedPlan{PlanHash: "h2", SchemaVersion: 2})
+	c := AD.NewAdqcCache(10)
+	c.Put("h1", 1, &AD.SpecializedPlan{PlanHash: "h1", SchemaVersion: 1})
+	c.Put("h2", 2, &AD.SpecializedPlan{PlanHash: "h2", SchemaVersion: 2})
 	c.Invalidate(1)
 	if c.Len() != 1 {
 		t.Errorf("expected 1 entry after invalidation, got %d", c.Len())
@@ -229,9 +231,9 @@ func TestAdqcCache_Invalidate(t *testing.T) {
 }
 
 func TestAdqcCache_InvalidateAll(t *testing.T) {
-	c := NewAdqcCache(10)
-	c.Put("h1", 1, &SpecializedPlan{PlanHash: "h1", SchemaVersion: 1})
-	c.Put("h2", 1, &SpecializedPlan{PlanHash: "h2", SchemaVersion: 1})
+	c := AD.NewAdqcCache(10)
+	c.Put("h1", 1, &AD.SpecializedPlan{PlanHash: "h1", SchemaVersion: 1})
+	c.Put("h2", 1, &AD.SpecializedPlan{PlanHash: "h2", SchemaVersion: 1})
 	c.Invalidate(1)
 	if c.Len() != 0 {
 		t.Errorf("expected 0 entries after full invalidation, got %d", c.Len())
@@ -239,8 +241,8 @@ func TestAdqcCache_InvalidateAll(t *testing.T) {
 }
 
 func TestAdqcCache_InvalidateNoop(t *testing.T) {
-	c := NewAdqcCache(10)
-	c.Put("h1", 1, &SpecializedPlan{PlanHash: "h1", SchemaVersion: 1})
+	c := AD.NewAdqcCache(10)
+	c.Put("h1", 1, &AD.SpecializedPlan{PlanHash: "h1", SchemaVersion: 1})
 	c.Invalidate(99)
 	if c.Len() != 1 {
 		t.Errorf("expected 1 entry after non-matching invalidation, got %d", c.Len())
@@ -248,9 +250,9 @@ func TestAdqcCache_InvalidateNoop(t *testing.T) {
 }
 
 func TestAdqcCache_Eviction(t *testing.T) {
-	c := NewAdqcCache(2)
+	c := AD.NewAdqcCache(2)
 	for i := 0; i < 5; i++ {
-		c.Put(string(rune('a'+i)), 0, &SpecializedPlan{PlanHash: string(rune('a' + i))})
+		c.Put(string(rune('a'+i)), 0, &AD.SpecializedPlan{PlanHash: string(rune('a' + i))})
 	}
 	if c.Len() > 2 {
 		t.Errorf("expected max 2 entries, got %d", c.Len())
@@ -258,23 +260,23 @@ func TestAdqcCache_Eviction(t *testing.T) {
 }
 
 func TestAdqcCache_EvictionKeepsRecent(t *testing.T) {
-	c := NewAdqcCache(3)
-	c.Put("a", 0, &SpecializedPlan{PlanHash: "a"})
-	c.Put("b", 0, &SpecializedPlan{PlanHash: "b"})
-	c.Put("c", 0, &SpecializedPlan{PlanHash: "c"})
+	c := AD.NewAdqcCache(3)
+	c.Put("a", 0, &AD.SpecializedPlan{PlanHash: "a"})
+	c.Put("b", 0, &AD.SpecializedPlan{PlanHash: "b"})
+	c.Put("c", 0, &AD.SpecializedPlan{PlanHash: "c"})
 	_ = c.Get("a", 0)
-	c.Put("d", 0, &SpecializedPlan{PlanHash: "d"})
+	c.Put("d", 0, &AD.SpecializedPlan{PlanHash: "d"})
 	if c.Get("a", 0) == nil {
 		t.Log("adqc: 'a' was evicted (expected with LRU of 3)")
 	}
 }
 
 func TestAdqcCache_UpdatePromotes(t *testing.T) {
-	c := NewAdqcCache(3)
-	c.Put("a", 0, &SpecializedPlan{PlanHash: "a"})
-	c.Put("b", 0, &SpecializedPlan{PlanHash: "b"})
-	c.Put("c", 0, &SpecializedPlan{PlanHash: "c"})
-	c.Put("a", 0, &SpecializedPlan{PlanHash: "a-updated"})
+	c := AD.NewAdqcCache(3)
+	c.Put("a", 0, &AD.SpecializedPlan{PlanHash: "a"})
+	c.Put("b", 0, &AD.SpecializedPlan{PlanHash: "b"})
+	c.Put("c", 0, &AD.SpecializedPlan{PlanHash: "c"})
+	c.Put("a", 0, &AD.SpecializedPlan{PlanHash: "a-updated"})
 	got := c.Get("a", 0)
 	if got == nil || got.PlanHash != "a-updated" {
 		t.Errorf("expected updated plan 'a-updated', got %v", got)
@@ -282,7 +284,7 @@ func TestAdqcCache_UpdatePromotes(t *testing.T) {
 }
 
 func TestAdqcCache_ConcurrentAccess(t *testing.T) {
-	c := NewAdqcCache(64)
+	c := AD.NewAdqcCache(64)
 	var wg sync.WaitGroup
 	n := runtime.GOMAXPROCS(0)
 	if n < 2 {
@@ -293,7 +295,7 @@ func TestAdqcCache_ConcurrentAccess(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			key := string(rune('a' + id%26))
-			c.Put(key, uint64(id), &SpecializedPlan{PlanHash: key, SchemaVersion: uint64(id)})
+			c.Put(key, uint64(id), &AD.SpecializedPlan{PlanHash: key, SchemaVersion: uint64(id)})
 			_ = c.Get(key, uint64(id))
 		}(i)
 	}
@@ -371,22 +373,22 @@ func TestNewInvocationCounter_ConcurrentInc(t *testing.T) {
 }
 
 func TestAdqcCache_ZeroCapacity(t *testing.T) {
-	c := NewAdqcCache(0)
-	if c.limit != 256 {
-		t.Errorf("expected 256, got %d", c.limit)
+	c := AD.NewAdqcCache(0)
+	if c.Limit() != 256 {
+		t.Errorf("expected 256, got %d", c.Limit())
 	}
 }
 
 func TestAdqcCache_NegativeCapacity(t *testing.T) {
-	c := NewAdqcCache(-5)
-	if c.limit != 256 {
-		t.Errorf("expected 256, got %d", c.limit)
+	c := AD.NewAdqcCache(-5)
+	if c.Limit() != 256 {
+		t.Errorf("expected 256, got %d", c.Limit())
 	}
 }
 
 func TestAdqcCache_DoubleInvalidate(t *testing.T) {
-	c := NewAdqcCache(10)
-	c.Put("h1", 1, &SpecializedPlan{PlanHash: "h1", SchemaVersion: 1})
+	c := AD.NewAdqcCache(10)
+	c.Put("h1", 1, &AD.SpecializedPlan{PlanHash: "h1", SchemaVersion: 1})
 	c.Invalidate(1)
 	c.Invalidate(1)
 	if c.Len() != 0 {
@@ -395,9 +397,9 @@ func TestAdqcCache_DoubleInvalidate(t *testing.T) {
 }
 
 func TestAdqcCache_SameHashDifferentVersion(t *testing.T) {
-	c := NewAdqcCache(10)
-	c.Put("hash", 1, &SpecializedPlan{PlanHash: "hash", SchemaVersion: 1})
-	c.Put("hash", 2, &SpecializedPlan{PlanHash: "hash", SchemaVersion: 2})
+	c := AD.NewAdqcCache(10)
+	c.Put("hash", 1, &AD.SpecializedPlan{PlanHash: "hash", SchemaVersion: 1})
+	c.Put("hash", 2, &AD.SpecializedPlan{PlanHash: "hash", SchemaVersion: 2})
 	if c.Len() != 2 {
 		t.Errorf("expected 2 entries for different versions, got %d", c.Len())
 	}
