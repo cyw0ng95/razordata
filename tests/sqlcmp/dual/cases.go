@@ -116,6 +116,9 @@ func AllCases() []dualCase {
 	out = append(out, evalFixesCases...)
 	out = append(out, scalarFunc386Cases...)
 	out = append(out, scalarFunc413Cases...)
+	out = append(out, executorCases...)
+	out = append(out, executorSubqueryJoinCases...)
+	out = append(out, req458Cases...)
 	out = append(out, probeCases...)
 	out = append(out, probeCasesV2...)
 	return out

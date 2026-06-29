@@ -1457,3 +1457,322 @@ var scalarFunc413Cases = []dualCase{
 		Want:  [][]any{{int64(42)}},
 	},
 }
+
+// executorCases from EX/executor_test.go: GROUP BY, HAVING, DISTINCT,
+// EXISTS subqueries. Tests that use internal Go APIs or test planner
+// internals (EXPLAIN, RegisterTable, IndexScanSelection) are skipped.
+var executorCases = []dualCase{
+	{
+		Name: "executor_groupby_count",
+		Setup: []string{
+			"CREATE TABLE t (k TEXT)",
+			"INSERT INTO t VALUES ('a')",
+			"INSERT INTO t VALUES ('a')",
+			"INSERT INTO t VALUES ('a')",
+			"INSERT INTO t VALUES ('b')",
+			"INSERT INTO t VALUES ('b')",
+			"INSERT INTO t VALUES ('c')",
+		},
+		Query: "SELECT k, COUNT(*) FROM t GROUP BY k ORDER BY k",
+		Want:  [][]any{{"a", int64(3)}, {"b", int64(2)}, {"c", int64(1)}},
+	},
+	{
+		Name: "executor_having",
+		Setup: []string{
+			"CREATE TABLE orders (category TEXT, amount INTEGER)",
+			"INSERT INTO orders VALUES ('a', 10)",
+			"INSERT INTO orders VALUES ('a', 20)",
+			"INSERT INTO orders VALUES ('b', 5)",
+			"INSERT INTO orders VALUES ('b', 15)",
+			"INSERT INTO orders VALUES ('c', 100)",
+		},
+		Query: "SELECT category, SUM(amount) FROM orders GROUP BY category HAVING SUM(amount) > 25 ORDER BY category",
+		Want:  [][]any{{"a", int64(30)}, {"c", int64(100)}},
+	},
+	{
+		Name: "executor_distinct_where",
+		Setup: []string{
+			"CREATE TABLE t (x INTEGER)",
+			"INSERT INTO t VALUES (1)",
+			"INSERT INTO t VALUES (2)",
+			"INSERT INTO t VALUES (2)",
+			"INSERT INTO t VALUES (3)",
+			"INSERT INTO t VALUES (3)",
+			"INSERT INTO t VALUES (3)",
+		},
+		Query: "SELECT DISTINCT x FROM t WHERE x > 1 ORDER BY x",
+		Want:  [][]any{{int64(2)}, {int64(3)}},
+	},
+	{
+		Name: "executor_exists_true",
+		Setup: []string{
+			"CREATE TABLE t (a INTEGER)",
+			"INSERT INTO t VALUES (1)",
+			"INSERT INTO t VALUES (2)",
+			"CREATE TABLE has_orders (id INTEGER)",
+			"INSERT INTO has_orders VALUES (10)",
+		},
+		Query: "SELECT a FROM t WHERE EXISTS (SELECT 1 FROM has_orders) ORDER BY a",
+		Want:  [][]any{{int64(1)}, {int64(2)}},
+	},
+	{
+		Name: "executor_exists_false",
+		Setup: []string{
+			"CREATE TABLE users (id INTEGER, name TEXT)",
+			"INSERT INTO users VALUES (1, 'alice')",
+			"INSERT INTO users VALUES (2, 'bob')",
+			"CREATE TABLE orders (user_id INTEGER)",
+		},
+		Query: "SELECT name FROM users WHERE EXISTS (SELECT 1 FROM orders)",
+		Want:  [][]any{},
+	},
+}
+
+// req458Cases from EX/req455_456_458_test.go: BETWEEN/NOT BETWEEN
+// NULL semantics (REQ000458). Tests using newEngineExecutor
+// (subquery planner, ALTER TABLE deadlock) are skipped.
+var req458Cases = []dualCase{
+	{
+		Name: "between_no_null",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 10)",
+			"INSERT INTO t VALUES (2, 20)",
+			"INSERT INTO t VALUES (3, 30)",
+		},
+		Query: "SELECT id FROM t WHERE v BETWEEN 15 AND 25 ORDER BY id",
+		Want:  [][]any{{int64(2)}},
+	},
+	{
+		Name: "not_between",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 10)",
+			"INSERT INTO t VALUES (2, 20)",
+			"INSERT INTO t VALUES (3, 30)",
+		},
+		Query: "SELECT id FROM t WHERE v NOT BETWEEN 15 AND 25 ORDER BY id",
+		Want:  [][]any{{int64(1)}, {int64(3)}},
+	},
+	{
+		Name: "literal_between_all_match",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 10)",
+			"INSERT INTO t VALUES (2, 20)",
+			"INSERT INTO t VALUES (3, 30)",
+		},
+		Query: "SELECT id FROM t WHERE 1 BETWEEN 0 AND 2",
+		Want:  [][]any{{int64(1)}, {int64(2)}, {int64(3)}},
+	},
+	{
+		Name: "literal_not_between_no_match",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)",
+			"INSERT INTO t VALUES (1, 10)",
+			"INSERT INTO t VALUES (2, 20)",
+			"INSERT INTO t VALUES (3, 30)",
+		},
+		Query: "SELECT id FROM t WHERE 1 NOT BETWEEN 0 AND 2",
+		Want:  [][]any{},
+	},
+	{
+		Name:  "null_between_no_match",
+		Query: "SELECT 1 WHERE NULL BETWEEN 1 AND 2",
+		Want:  [][]any{},
+	},
+	{
+		Name:  "null_not_between_no_match",
+		Query: "SELECT 1 WHERE NULL NOT BETWEEN 1 AND 2",
+		Want:  [][]any{},
+	},
+}
+
+// executorSubqueryJoinCases from EX/executor_test.go: subqueries,
+// EXISTS, joins, GROUP BY, HAVING.
+var executorSubqueryJoinCases = []dualCase{
+	{
+		Name: "executor_in_subquery",
+		Setup: []string{
+			"CREATE TABLE users (id INTEGER, name TEXT, age INTEGER)",
+			"CREATE TABLE orders (user_id INTEGER)",
+			"INSERT INTO users VALUES (1, 'alice', 30)",
+			"INSERT INTO users VALUES (2, 'bob', 25)",
+			"INSERT INTO users VALUES (3, 'carol', 40)",
+			"INSERT INTO orders VALUES (1)",
+			"INSERT INTO orders VALUES (3)",
+		},
+		Query: "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders) ORDER BY id",
+		Want:  [][]any{{"alice"}, {"carol"}},
+	},
+	{
+		Name: "executor_distinct",
+		Setup: []string{
+			"CREATE TABLE t (category TEXT, value INTEGER)",
+			"INSERT INTO t VALUES ('a', 1)",
+			"INSERT INTO t VALUES ('a', 2)",
+			"INSERT INTO t VALUES ('a', 1)",
+			"INSERT INTO t VALUES ('b', 10)",
+			"INSERT INTO t VALUES ('b', 10)",
+			"INSERT INTO t VALUES ('c', 100)",
+		},
+		Query: "SELECT DISTINCT category FROM t ORDER BY category",
+		Want:  [][]any{{"a"}, {"b"}, {"c"}},
+	},
+	{
+		Name: "executor_distinct_with_where",
+		Setup: []string{
+			"CREATE TABLE t (x INTEGER)",
+			"INSERT INTO t VALUES (1)",
+			"INSERT INTO t VALUES (2)",
+			"INSERT INTO t VALUES (2)",
+			"INSERT INTO t VALUES (3)",
+			"INSERT INTO t VALUES (3)",
+			"INSERT INTO t VALUES (3)",
+		},
+		Query: "SELECT DISTINCT x FROM t WHERE x > 1 ORDER BY x",
+		Want:  [][]any{{int64(2)}, {int64(3)}},
+	},
+	{
+		Name: "executor_exists_true",
+		Setup: []string{
+			"CREATE TABLE t (a INTEGER)",
+			"CREATE TABLE has_orders (id INTEGER)",
+			"INSERT INTO t VALUES (1)",
+			"INSERT INTO t VALUES (2)",
+			"INSERT INTO has_orders VALUES (10)",
+		},
+		Query: "SELECT a FROM t WHERE EXISTS (SELECT 1 FROM has_orders) ORDER BY a",
+		Want:  [][]any{{int64(1)}, {int64(2)}},
+	},
+	{
+		Name: "executor_exists_false",
+		Setup: []string{
+			"CREATE TABLE users (id INTEGER, name TEXT)",
+			"CREATE TABLE orders (user_id INTEGER)",
+			"INSERT INTO users VALUES (1, 'alice')",
+			"INSERT INTO users VALUES (2, 'bob')",
+		},
+		Query: "SELECT name FROM users WHERE EXISTS (SELECT 1 FROM orders)",
+		Want:  [][]any{},
+	},
+	{
+		Name: "executor_exists_correlated",
+		Setup: []string{
+			"CREATE TABLE users (id INTEGER, name TEXT)",
+			"CREATE TABLE orders (user_id INTEGER)",
+			"INSERT INTO users VALUES (1, 'alice')",
+			"INSERT INTO users VALUES (2, 'bob')",
+			"INSERT INTO users VALUES (3, 'carol')",
+			"INSERT INTO orders VALUES (1)",
+			"INSERT INTO orders VALUES (3)",
+		},
+		Query: "SELECT name FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE user_id = id) ORDER BY id",
+		Want:  [][]any{{"alice"}, {"carol"}},
+	},
+	{
+		Name: "executor_in_subquery_correlated",
+		Setup: []string{
+			"CREATE TABLE users (id INTEGER, name TEXT)",
+			"CREATE TABLE orders (user_id INTEGER)",
+			"INSERT INTO users VALUES (1, 'alice')",
+			"INSERT INTO users VALUES (2, 'bob')",
+			"INSERT INTO users VALUES (3, 'carol')",
+			"INSERT INTO orders VALUES (1)",
+			"INSERT INTO orders VALUES (3)",
+		},
+		Query: "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders WHERE user_id = id) ORDER BY id",
+		Want:  [][]any{{"alice"}, {"carol"}},
+	},
+	{
+		Name: "executor_scalar_subquery",
+		Setup: []string{
+			"CREATE TABLE t (x INTEGER)",
+			"CREATE TABLE counters (n INTEGER)",
+			"INSERT INTO t VALUES (1)",
+			"INSERT INTO t VALUES (2)",
+			"INSERT INTO t VALUES (3)",
+			"INSERT INTO counters VALUES (10)",
+		},
+		Query: "SELECT x, (SELECT n FROM counters) AS c FROM t ORDER BY x",
+		Want:  [][]any{{int64(1), int64(10)}, {int64(2), int64(10)}, {int64(3), int64(10)}},
+	},
+	{
+		Name: "executor_scalar_subquery_empty",
+		Setup: []string{
+			"CREATE TABLE t (x INTEGER)",
+			"CREATE TABLE counters (n INTEGER)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT x, (SELECT n FROM counters) AS c FROM t",
+		Want:  [][]any{{int64(1), nil}},
+	},
+	{
+		Name: "executor_inner_join",
+		Setup: []string{
+			"CREATE TABLE users (id INTEGER, name TEXT)",
+			"CREATE TABLE orders (id INTEGER, user_id INTEGER)",
+			"INSERT INTO users VALUES (1, 'alice')",
+			"INSERT INTO users VALUES (2, 'bob')",
+			"INSERT INTO users VALUES (3, 'carol')",
+			"INSERT INTO orders VALUES (10, 1)",
+			"INSERT INTO orders VALUES (20, 3)",
+			"INSERT INTO orders VALUES (30, 3)",
+		},
+		Query: "SELECT users.name, orders.id FROM users INNER JOIN orders ON orders.user_id = users.id ORDER BY users.name, orders.id",
+		Want:  [][]any{{"alice", int64(10)}, {"carol", int64(20)}, {"carol", int64(30)}},
+	},
+	{
+		Name: "executor_cross_join",
+		Setup: []string{
+			"CREATE TABLE a (x INTEGER)",
+			"CREATE TABLE b (y INTEGER)",
+			"INSERT INTO a VALUES (1)",
+			"INSERT INTO a VALUES (2)",
+			"INSERT INTO b VALUES (10)",
+			"INSERT INTO b VALUES (20)",
+		},
+		Query: "SELECT * FROM a CROSS JOIN b ORDER BY a.x, b.y",
+		Want:  [][]any{{int64(1), int64(10)}, {int64(1), int64(20)}, {int64(2), int64(10)}, {int64(2), int64(20)}},
+	},
+	{
+		Name: "executor_group_by_sum",
+		Setup: []string{
+			"CREATE TABLE orders (category TEXT, amount INTEGER)",
+			"INSERT INTO orders VALUES ('a', 10)",
+			"INSERT INTO orders VALUES ('a', 20)",
+			"INSERT INTO orders VALUES ('b', 5)",
+			"INSERT INTO orders VALUES ('b', 15)",
+			"INSERT INTO orders VALUES ('c', 100)",
+		},
+		Query: "SELECT category, SUM(amount) FROM orders GROUP BY category ORDER BY category",
+		Want:  [][]any{{"a", int64(30)}, {"b", int64(20)}, {"c", int64(100)}},
+	},
+	{
+		Name: "executor_having",
+		Setup: []string{
+			"CREATE TABLE orders (category TEXT, amount INTEGER)",
+			"INSERT INTO orders VALUES ('a', 10)",
+			"INSERT INTO orders VALUES ('a', 20)",
+			"INSERT INTO orders VALUES ('b', 5)",
+			"INSERT INTO orders VALUES ('b', 15)",
+			"INSERT INTO orders VALUES ('c', 100)",
+		},
+		Query: "SELECT category, SUM(amount) FROM orders GROUP BY category HAVING SUM(amount) > 25 ORDER BY category",
+		Want:  [][]any{{"a", int64(30)}, {"c", int64(100)}},
+	},
+	{
+		Name: "executor_group_by_count",
+		Setup: []string{
+			"CREATE TABLE t (k TEXT)",
+			"INSERT INTO t VALUES ('a')",
+			"INSERT INTO t VALUES ('a')",
+			"INSERT INTO t VALUES ('a')",
+			"INSERT INTO t VALUES ('b')",
+			"INSERT INTO t VALUES ('b')",
+			"INSERT INTO t VALUES ('c')",
+		},
+		Query: "SELECT k, COUNT(*) FROM t GROUP BY k ORDER BY k",
+		Want:  [][]any{{"a", int64(3)}, {"b", int64(2)}, {"c", int64(1)}},
+	},
+}
