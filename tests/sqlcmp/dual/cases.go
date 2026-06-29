@@ -104,6 +104,7 @@ func AllCases() []dualCase {
 	out = append(out, scalarInCases...)
 	out = append(out, scalarFuncCases...)
 	out = append(out, hashCrossJoinCases...)
+	out = append(out, crudCases...)
 	out = append(out, probeCases...)
 	out = append(out, probeCasesV2...)
 	return out

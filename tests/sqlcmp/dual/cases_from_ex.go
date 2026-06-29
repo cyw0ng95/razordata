@@ -597,3 +597,54 @@ var hashCrossJoinCases = []dualCase{
 		Want:  [][]any{{int64(2), int64(2)}, {int64(3), int64(3)}, {int64(3), int64(3)}},
 	},
 }
+
+// crudCases from EX/e2e_test.go: full SQL DML lifecycle and LIMIT/OFFSET.
+var crudCases = []dualCase{
+	{
+		Name: "crud_select_all",
+		Setup: []string{
+			"CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)",
+			"INSERT INTO users VALUES (1, 'alice', 30), (2, 'bob', 25), (3, 'carol', 40)",
+		},
+		Query: "SELECT * FROM users ORDER BY id",
+		Want:  [][]any{{int64(1), "alice", int64(30)}, {int64(2), "bob", int64(25)}, {int64(3), "carol", int64(40)}},
+	},
+	{
+		Name: "crud_where_order_limit",
+		Setup: []string{
+			"CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)",
+			"INSERT INTO users VALUES (1, 'alice', 30), (2, 'bob', 25), (3, 'carol', 40)",
+		},
+		Query: "SELECT name FROM users WHERE age > 25 ORDER BY age DESC LIMIT 2",
+		Want:  [][]any{{"carol"}, {"alice"}},
+	},
+	{
+		Name: "crud_after_update",
+		Setup: []string{
+			"CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)",
+			"INSERT INTO users VALUES (1, 'alice', 30), (2, 'bob', 25), (3, 'carol', 40)",
+			"UPDATE users SET age = 26 WHERE name = 'bob'",
+		},
+		Query: "SELECT age FROM users WHERE name = 'bob'",
+		Want:  [][]any{{int64(26)}},
+	},
+	{
+		Name: "crud_after_delete",
+		Setup: []string{
+			"CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)",
+			"INSERT INTO users VALUES (1, 'alice', 30), (2, 'bob', 25), (3, 'carol', 40)",
+			"DELETE FROM users WHERE id = 3",
+		},
+		Query: "SELECT * FROM users ORDER BY id",
+		Want:  [][]any{{int64(1), "alice", int64(30)}, {int64(2), "bob", int64(25)}},
+	},
+	{
+		Name: "limit_offset",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)",
+			"INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')",
+		},
+		Query: "SELECT name FROM t ORDER BY id LIMIT 2 OFFSET 2",
+		Want:  [][]any{{"c"}, {"d"}},
+	},
+}
