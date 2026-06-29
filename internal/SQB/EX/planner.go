@@ -1891,7 +1891,7 @@ func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
 // planSelectSqliteMaster handles sqlite_master virtual table.
 // REQ000981: extracted from planSelect.
 func (p *Planner) planSelectSqliteMaster(s *PS.Select) Operator {
-	var scan Operator = NewSqliteMaster()
+	var scan Operator = OP.NewSqliteMaster()
 	if s.Where != nil {
 		scan = NewFilter(scan, s.Where)
 	}
@@ -4319,7 +4319,7 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) Operator {
 		return NewIntegrityCheckWithStore(p.store)
 	case "cache_size", "journal_mode", "synchronous", "user_version":
 		// REQ000242: return pragma value as a single-row result
-		return NewPragmaResult(s.Name, s.Value)
+		return OP.NewPragmaResult(s.Name, s.Value)
 	case "foreign_keys", "foreign_key_check":
 		// REQ000905/REQ000906: these are handled by the Pragma operator
 		// which needs access to the store for FK introspection.

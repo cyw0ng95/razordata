@@ -1,8 +1,9 @@
-package EX
+package OP
 
 import (
 	"context"
 
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
@@ -36,10 +37,10 @@ func (s *SqliteMaster) loadRows() {
 	for _, name := range names {
 		s.rows = append(s.rows, Row{
 			Cols: []string{"type", "name", "tbl_name", "rootpage", "sql"},
-			Data: []Value{NewTextValue("table"), NewTextValue(name), NewTextValue(name), NewIntValue(0), NullValue()},
+			Data: []Value{DT.NewTextValue("table"), DT.NewTextValue(name), DT.NewTextValue(name), DT.NewIntValue(0), DT.NullValue()},
 		})
 	}
 }
 
-func (s *SqliteMaster) Close() error                { return nil }
-func (s *SqliteMaster) WithParams(_ []any) Operator { return s }
+func (s *SqliteMaster) Close() error                  { return nil }
+func (s *SqliteMaster) WithParams(_ []any) pl.Operator { return s }
