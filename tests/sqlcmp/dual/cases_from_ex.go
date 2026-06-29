@@ -620,6 +620,64 @@ var inTableCases = []dualCase{
 	},
 }
 
+// unaryColCases from EX/req000719_test.go: unary +/- on column expressions.
+var unaryColCases = []dualCase{
+	{
+		Name: "unary_plus_minus_col",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, col0 INTEGER, col1 INTEGER)",
+			"INSERT INTO t VALUES (1, 5, 10)",
+		},
+		Query: "SELECT + - col0 FROM t",
+		Want:  [][]any{{int64(-5)}},
+	},
+	{
+		Name: "unary_minus_plus_col",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, col0 INTEGER, col1 INTEGER)",
+			"INSERT INTO t VALUES (1, 5, 10)",
+		},
+		Query: "SELECT - + col0 FROM t",
+		Want:  [][]any{{int64(-5)}},
+	},
+	{
+		Name: "unary_plus_plus_col",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, col0 INTEGER, col1 INTEGER)",
+			"INSERT INTO t VALUES (1, 5, 10)",
+		},
+		Query: "SELECT + + col0 FROM t",
+		Want:  [][]any{{int64(5)}},
+	},
+	{
+		Name: "unary_plus_col",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, col0 INTEGER, col1 INTEGER)",
+			"INSERT INTO t VALUES (1, 5, 10)",
+		},
+		Query: "SELECT + col0 FROM t",
+		Want:  [][]any{{int64(5)}},
+	},
+	{
+		Name: "unary_minus_col",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, col0 INTEGER, col1 INTEGER)",
+			"INSERT INTO t VALUES (1, 5, 10)",
+		},
+		Query: "SELECT - col0 FROM t",
+		Want:  [][]any{{int64(-5)}},
+	},
+	{
+		Name: "unary_minus_minus_col",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, col0 INTEGER, col1 INTEGER)",
+			"INSERT INTO t VALUES (1, 5, 10)",
+		},
+		Query: "SELECT - - col0 FROM t",
+		Want:  [][]any{{int64(5)}},
+	},
+}
+
 // crudCases from EX/e2e_test.go: full SQL DML lifecycle and LIMIT/OFFSET.
 var crudCases = []dualCase{
 	{
