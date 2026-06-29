@@ -678,6 +678,29 @@ var unaryColCases = []dualCase{
 	},
 }
 
+// qualifiedNameCases from EX/req000720_test.go: qualified column
+// access via table alias.
+var qualifiedNameCases = []dualCase{
+	{
+		Name: "qualified_name_alias",
+		Setup: []string{
+			"CREATE TABLE tab1 (id INTEGER PRIMARY KEY, col1 INTEGER)",
+			"INSERT INTO tab1 VALUES (1, 42)",
+		},
+		Query: "SELECT cor0.col1 FROM tab1 AS cor0",
+		Want:  [][]any{{int64(42)}},
+	},
+	{
+		Name: "qualified_name_alias_groupby",
+		Setup: []string{
+			"CREATE TABLE tab1 (id INTEGER PRIMARY KEY, col1 INTEGER)",
+			"INSERT INTO tab1 VALUES (1, 42)",
+		},
+		Query: "SELECT cor0.col1 FROM tab1 AS cor0 GROUP BY cor0.col1",
+		Want:  [][]any{{int64(42)}},
+	},
+}
+
 // crudCases from EX/e2e_test.go: full SQL DML lifecycle and LIMIT/OFFSET.
 var crudCases = []dualCase{
 	{
