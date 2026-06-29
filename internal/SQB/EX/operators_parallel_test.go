@@ -183,7 +183,7 @@ UT.NewWorkerPool(4)
 			scan := NewParallelSeqScan(src, schema, types, pool, rows)
 			defer scan.Close()
 			total := 0
-			for {
+	for {
 				batch, _ := scan.NextBatch(context.Background())
 				if batch == nil {
 					break

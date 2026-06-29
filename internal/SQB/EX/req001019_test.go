@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -86,7 +87,7 @@ func BenchmarkCompoundOrderBy_EvalCost(b *testing.B) {
 			for j := range result {
 				vals := make([]Value, len(orderBy))
 				for k, o := range orderBy {
-					v, _ := EvalValue(o.Expr, &result[j], nil)
+					v, _ :=EV.EvalValue(o.Expr, &result[j], nil)
 					vals[k] = v
 				}
 				decorated[j].row = result[j]
@@ -139,7 +140,7 @@ func BenchmarkCompoundOrderBy_ActualSort(b *testing.B) {
 				for j := range rows {
 					vals := make([]Value, len(orderBy))
 					for k, o := range orderBy {
-						v, _ := EvalValue(o.Expr, &rows[j], nil)
+						v, _ :=EV.EvalValue(o.Expr, &rows[j], nil)
 						vals[k] = v
 					}
 					decorated[j].row = rows[j]

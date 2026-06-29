@@ -5,6 +5,7 @@ import (
 	"math"
 	"testing"
 
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -12,7 +13,7 @@ import (
 
 func TestREQ384_Abs_UnitTests(t *testing.T) {
 	t.Run("positive int", func(t *testing.T) {
-		result, err := EvalAbs([]PS.Expr{&PS.NumberLiteral{Val: 42}}, nil, nil)
+		result, err := EV.EvalAbs([]PS.Expr{&PS.NumberLiteral{Val: 42}}, nil, nil)
 		if err != nil {
 			t.Fatalf("abs(42): %v", err)
 		}
@@ -21,7 +22,7 @@ func TestREQ384_Abs_UnitTests(t *testing.T) {
 		}
 	})
 	t.Run("negative int", func(t *testing.T) {
-		result, err := EvalAbs([]PS.Expr{&PS.NumberLiteral{Val: -42}}, nil, nil)
+		result, err := EV.EvalAbs([]PS.Expr{&PS.NumberLiteral{Val: -42}}, nil, nil)
 		if err != nil {
 			t.Fatalf("abs(-42): %v", err)
 		}
@@ -30,7 +31,7 @@ func TestREQ384_Abs_UnitTests(t *testing.T) {
 		}
 	})
 	t.Run("zero", func(t *testing.T) {
-		result, err := EvalAbs([]PS.Expr{&PS.NumberLiteral{Val: 0}}, nil, nil)
+		result, err := EV.EvalAbs([]PS.Expr{&PS.NumberLiteral{Val: 0}}, nil, nil)
 		if err != nil {
 			t.Fatalf("abs(0): %v", err)
 		}
@@ -39,7 +40,7 @@ func TestREQ384_Abs_UnitTests(t *testing.T) {
 		}
 	})
 	t.Run("negative float", func(t *testing.T) {
-		result, err := EvalAbs([]PS.Expr{&PS.FloatLiteral{Val: -3.14}}, nil, nil)
+		result, err := EV.EvalAbs([]PS.Expr{&PS.FloatLiteral{Val: -3.14}}, nil, nil)
 		if err != nil {
 			t.Fatalf("abs(-3.14): %v", err)
 		}
@@ -48,7 +49,7 @@ func TestREQ384_Abs_UnitTests(t *testing.T) {
 		}
 	})
 	t.Run("null", func(t *testing.T) {
-		result, err := EvalAbs([]PS.Expr{&PS.NullLiteral{}}, nil, nil)
+		result, err := EV.EvalAbs([]PS.Expr{&PS.NullLiteral{}}, nil, nil)
 		if err != nil {
 			t.Fatalf("abs(NULL): %v", err)
 		}
@@ -57,7 +58,7 @@ func TestREQ384_Abs_UnitTests(t *testing.T) {
 		}
 	})
 	t.Run("string to 0.0", func(t *testing.T) {
-		result, err := EvalAbs([]PS.Expr{&PS.StringLiteral{Val: "hello"}}, nil, nil)
+		result, err := EV.EvalAbs([]PS.Expr{&PS.StringLiteral{Val: "hello"}}, nil, nil)
 		if err != nil {
 			t.Fatalf("abs('hello'): %v", err)
 		}
@@ -66,13 +67,13 @@ func TestREQ384_Abs_UnitTests(t *testing.T) {
 		}
 	})
 	t.Run("min int64 overflow", func(t *testing.T) {
-		result, err := EvalAbs([]PS.Expr{&PS.NumberLiteral{Val: math.MinInt64}}, nil, nil)
+		result, err := EV.EvalAbs([]PS.Expr{&PS.NumberLiteral{Val: math.MinInt64}}, nil, nil)
 		if err == nil {
 			t.Errorf("abs(MIN_INT64) = %v, want error", result)
 		}
 	})
 	t.Run("wrong arg count", func(t *testing.T) {
-		_, err := EvalAbs(nil, nil, nil)
+		_, err := EV.EvalAbs(nil, nil, nil)
 		if err == nil {
 			t.Error("abs() with no args: want error")
 		}

@@ -6,6 +6,7 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
 
 // TestHashCrossJoin_BasicEquiJoin verifies REQ000800: HashCrossJoin
@@ -25,7 +26,7 @@ func TestHashCrossJoin_BasicEquiJoin(t *testing.T) {
 	})
 
 	j := 
-NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
+OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -68,7 +69,7 @@ func TestHashCrossJoin_EmptySides(t *testing.T) {
 	})
 
 	j := 
-NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
+OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -103,7 +104,7 @@ func TestHashCrossJoin_AllMatch(t *testing.T) {
 	})
 
 	j := 
-NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
+OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -138,7 +139,7 @@ func TestHashCrossJoin_StringKey(t *testing.T) {
 	})
 
 	j := 
-NewHashCrossJoin(left, right, "t1", "t2", "k", "k")
+OP.NewHashCrossJoin(left, right, "t1", "t2", "k", "k")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -171,7 +172,7 @@ func TestHashCrossJoin_NullKey(t *testing.T) {
 	})
 
 	j := 
-NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
+OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -216,7 +217,7 @@ func BenchmarkHashCrossJoin_SmallTables(b *testing.B) {
 			left2 := newBenchSeqScan("t1", 100)
 			right2 := newBenchSeqScan("t2", 100)
 			j := 
-NewHashCrossJoin(left2, right2, "t1", "t2", "a", "a")
+OP.NewHashCrossJoin(left2, right2, "t1", "t2", "a", "a")
 			ctx := context.Background()
 			for {
 				_, err := j.Next(ctx)

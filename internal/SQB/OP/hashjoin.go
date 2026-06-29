@@ -40,14 +40,17 @@ type HashJoin struct {
 	partitions int
 	buckets    []hashBucket
 	leftRows   []pl.Row
-	// REQ000865: rightRows removed — right rows live only in buckets.
-	// right operator is closed after build phase.
-	// Pre-computed matches with data buffer.
-	matches    []pl.Row
-	matchPos   int
-	dataBuf    []pl.Value
-	dataPerRow int
-	done       bool
+	leftInfos  []leftInfo
+	// REQ0011XX: streaming match emission. Instead of pre-computing
+	// all matches into a []Row slice (which OOMs for large cross-joins),
+	// we track the current left/right probe position and emit one match
+	// per Next() call. emitBuf is a reusable data buffer for the
+	// current match (size dataPerRow).
+	curLeftIdx  int
+	curRightIdx int
+	emitBuf     []pl.Value
+	dataPerRow  int
+	done        bool
 	// sharedCols, sharedTypes and sharedColIndex are built once
 	// from the first output row's column layout and shared across
 	// all emitted rows, eliminating per-row make+append for Cols/Types
@@ -71,6 +74,15 @@ type HashJoin struct {
 type hashBucket struct {
 	rightRows []pl.Row // indexed by hash
 	hashes    []uint64
+}
+
+// leftInfo stores pre-computed join key info for a left row, used
+// by both the match-counting pass and the streaming probe in Next().
+// REQ0011XX: hoisted to package scope so it can be stored on HashJoin.
+type leftInfo struct {
+	lk   []pl.Value
+	hash uint64
+	idx  int
 }
 
 // NewHashJoin creates a radix hash join. partitions must be
@@ -146,11 +158,34 @@ func (j *HashJoin) Next(ctx context.Context) (pl.Row, error) {
 		}
 		j.built = true
 	}
-	// REQ000802+: return pre-computed matches from data buffer.
-	for j.matchPos < len(j.matches) {
-		m := j.matches[j.matchPos]
-		j.matchPos++
-		return m, nil
+	// REQ0011XX: streaming match emission. Iterate left rows and
+	// probe buckets lazily — one match per Next() call. This avoids
+	// the OOM from pre-computing all matches upfront for large
+	// cross-joins (the previous design allocated totalMatches*dataPerRow
+	// for dataBuf and totalMatches for matches, which OOMs at ~1.9M
+	// matches for a 5-table join).
+	for j.curLeftIdx < len(j.leftRows) {
+		l := j.leftInfos[j.curLeftIdx]
+		bucket := j.buckets[l.idx]
+		for j.curRightIdx < len(bucket.hashes) {
+			k := j.curRightIdx
+			j.curRightIdx++
+			if bucket.hashes[k] == l.hash && ValuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys, j.keyBuf)) {
+				// Emit match: copy left + right data into emitBuf.
+				right := bucket.rightRows[k]
+				leftData := j.leftRows[j.curLeftIdx].Data
+				copy(j.emitBuf, leftData)
+				copy(j.emitBuf[len(leftData):], right.Data)
+				return pl.Row{
+					Cols:     j.sharedCols,
+					Types:    j.sharedTypes,
+					Data:     j.emitBuf[:j.dataPerRow],
+					ColIndex: j.sharedColIndex,
+				}, nil
+			}
+		}
+		j.curRightIdx = 0
+		j.curLeftIdx++
 	}
 	j.done = true
 	return pl.Row{}, ErrNoRows
@@ -162,10 +197,11 @@ func (j *HashJoin) Close() error {
 		j.buckets[i].hashes = j.buckets[i].hashes[:0]
 	}
 	j.leftRows = nil
-	j.matches = nil
-	j.matchPos = 0
-	j.dataBuf = nil
+	j.leftInfos = nil
+	j.emitBuf = nil
 	j.dataPerRow = 0
+	j.curLeftIdx = 0
+	j.curRightIdx = 0
 	j.done = false
 	j.built = false
 	j.sharedCols = nil
@@ -194,9 +230,12 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		j.buckets[i].rightRows = make([]pl.Row, 0, 64)
 		j.buckets[i].hashes = make([]uint64, 0, 64)
 	}
-	// REQ001056: estimated bytes per row for budget checking.
-	// Each pl.Row ≈ 5 × 24 bytes (pl.Value) + 64 base + column metadata.
-	const estBytesPerRow = 200
+	// REQ0011XX: estimated bytes per row for budget checking.
+	// Each pl.Row ≈ N × 24 bytes (pl.Value) + 64 base + column metadata.
+	// Using 1200 bytes per row (covers up to ~30 columns) to be safe —
+	// Go's slice growth doubles capacity, so undersizing causes large
+	// allocations that bypass the budget check.
+	const estBytesPerRow = 1200
 
 	// Build phase: hash right side into partition buckets.
 	// REQ001056: check budget every 1024 rows and stop early
@@ -235,11 +274,14 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 			firstRightTypes = row.Types
 		}
 		rightCount++
-		// REQ001056: proactive budget check during materialization.
-		if j.joinBufferSize > 0 && rightCount%1024 == 0 {
-			if int64(rightCount)*estBytesPerRow > j.joinBufferSize {
-				break
-			}
+		// REQ0011XX: check budget BEFORE append. Use half the budget
+		// to leave headroom for the matches slice and dataBuf.
+		effectiveBudget := j.joinBufferSize
+		if effectiveBudget <= 0 {
+			effectiveBudget = 64 << 20
+		}
+		if int64(rightCount)*estBytesPerRow > effectiveBudget/2 {
+			break
 		}
 		rk := lookupKeys(row, j.rightKeys, j.keyBuf)
 		hash := hashKeys(rk)
@@ -251,7 +293,10 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	if j.right != nil {
 		_ = j.right.Close()
 	}
-	// Materialize left side. REQ001056: proactive budget check.
+	// Materialize left side. REQ001056: proactive budget check BEFORE
+	// append to prevent Go slice growth from allocating a block that
+	// exceeds the remaining budget (OOM observed at hashjoin.go:263
+	// when slice doubling allocated 79 MB in a 1 GB GOMEMLIMIT process).
 	for {
 		row, err := j.left.Next(ctx)
 		if err == ErrNoRows {
@@ -260,12 +305,30 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		j.leftRows = append(j.leftRows, row)
-		if j.joinBufferSize > 0 && len(j.leftRows)%1024 == 0 {
-			if int64(len(j.leftRows))*estBytesPerRow > j.joinBufferSize {
-				break
-			}
+		// REQ0011XX: check budget BEFORE append. The old check ran
+		// AFTER append and every 1024 rows, allowing Go's slice
+		// growth to allocate a block that exceeds the budget.
+		// Account for the next slice doubling: when len == cap, the
+		// next append doubles capacity. Check against 2× the current
+		// capacity to stay under budget.
+		//
+		// When joinBufferSize is 0 (caller didn't set it), apply a
+		// hard default cap of 64 MB to prevent unbounded materialization
+		// from OOM-killing the process.
+		effectiveBudget := j.joinBufferSize
+		if effectiveBudget <= 0 {
+			effectiveBudget = 64 << 20 // 64 MB default
 		}
+		nextCap := cap(j.leftRows)
+		if len(j.leftRows) == nextCap {
+			nextCap *= 2
+		} else {
+			nextCap = len(j.leftRows) + 1
+		}
+		if int64(nextCap)*estBytesPerRow > effectiveBudget/2 {
+			break
+		}
+		j.leftRows = append(j.leftRows, row)
 	}
 
 	// REQ001056: check total materialized rows against joinBufferSize.
@@ -305,11 +368,6 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	// REQ000802+: pre-compute all matches with data buffer.
 	// First, pre-compute left-side lookup keys to avoid
 	// redundant lookups during match counting and building.
-	type leftInfo struct {
-		lk   []pl.Value
-		hash uint64
-		idx  int
-	}
 	leftInfos := make([]leftInfo, 0, len(j.leftRows))
 	// REQ001018: pre-allocate flat key buffer to avoid per-row make.
 	var flatKeyBuf []pl.Value
@@ -329,102 +387,21 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		leftInfos = append(leftInfos, leftInfo{lk: lkCopy, hash: hash, idx: idx})
 	}
 
-	// Count total matches.
-	var totalMatches int
-	for i := range j.leftRows {
-		l := leftInfos[i]
-		bucket := j.buckets[l.idx]
-		for k := range bucket.hashes {
-			if bucket.hashes[k] == l.hash && ValuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys, j.keyBuf)) {
-				totalMatches++
-			}
-		}
-	}
-
-	// REQ001056+REQ0011XX: defensive cap on dataBuf pre-allocation.
-	// The joinBufferSize-based cap was removed because it reduces the
-	// pre-allocation without stopping the match-building loop — the
-	// actual iteration writes past the capped capacity, causing a
-	// slice-bounds panic at dataBuf[:off+dataPerRow].
-	//
-	// The hard cap (maxDataBufValues) errors out early when matches
-	// are truly unbounded (cross-join with no predicates). The match-
-	// building loop below has its own guard that breaks when the cap
-	// is reached, ensuring the loop always stays within bounds.
-	var dataPerRow int
-	if len(j.leftRows) > 0 && rightCount > 0 {
-		dataPerRow = len(j.leftRows[0].Data) + len(firstRightData)
-	}
-	const maxDataBufValues = 64 * 1024 * 1024 // 64M Values ≈ 1.5 GB
-	if dataPerRow > 0 {
-		maxRowsByDataBuf := maxDataBufValues / dataPerRow
-		if maxRowsByDataBuf < 1 {
-			maxRowsByDataBuf = 1
-		}
-		if totalMatches > maxRowsByDataBuf {
-			return fmt.Errorf("hash join would materialize %d match rows × %d cols = %d Values, exceeds hard cap %d (cross-join OOM guard; planner should fall back to NestedLoopJoin)", totalMatches, dataPerRow, totalMatches*dataPerRow, maxDataBufValues)
-		}
-	}
-
-	// Pre-allocate contiguous data buffer and matches slice.
+	// REQ0011XX: streaming match emission setup. Instead of pre-computing
+	// all matches into dataBuf + matches slices (which OOMs for large
+	// cross-joins), we store leftInfos for lazy probing in Next() and
+	// allocate a small reusable emitBuf of size dataPerRow.
+	// No match counting or pre-allocation needed — matches are emitted
+	// one at a time in Next().
 	if len(j.leftRows) == 0 || rightCount == 0 {
 		return nil
 	}
+	dataPerRow := len(j.leftRows[0].Data) + len(firstRightData)
 	j.dataPerRow = dataPerRow
-	// REQ001090+REQ001110: dataBuf pre-allocates totalMatches*dataPerRow
-	// Values. The output pl.Row.Data sub-slices point INTO this buffer
-	// (line 376: j.dataBuf[off:off+dataPerRow:off+dataPerRow]) so the
-	// cap MUST be exact — if we cap lower and append grows, append
-	// reallocates the backing array and the previously emitted
-	// pl.Row.Data slices become dangling pointers. The match-building
-	// loop below guards against overflow with a bufFull flag that
-	// stops iteration when dataBuf reaches capacity.
-	//
-	// The joinBufferSize-based pre-allocation cap (REQ001056) was
-	// removed because it reduced the pre-allocation without stopping
-	// the loop — the actual iteration wrote past the capped capacity,
-	// causing a slice-bounds panic. The hard cap (maxDataBufValues)
-	// errors out early for truly unbounded cross-joins.
-	// Build matches. Guard against dataBuf overflow: when the iteration
-	// produces more matches than the capped dataBuf capacity (possible
-	// when the joinBufferSize cap was removed but the hard cap is not
-	// hit), stop early to prevent a slice-bounds panic.
-	j.dataBuf = make([]pl.Value, 0, totalMatches*dataPerRow)
-	j.matches = make([]pl.Row, 0, totalMatches)
-	j.matchPos = 0
-
-	// Build matches.
-	bufFull := false
-	for i := range j.leftRows {
-		if bufFull {
-			break
-		}
-		l := leftInfos[i]
-		bucket := j.buckets[l.idx]
-		for k := range bucket.hashes {
-			if bufFull {
-				break
-			}
-			if bucket.hashes[k] == l.hash && ValuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys, j.keyBuf)) {
-				right := bucket.rightRows[k]
-				off := len(j.dataBuf)
-				if off+dataPerRow > cap(j.dataBuf) {
-					bufFull = true
-					break
-				}
-				j.dataBuf = j.dataBuf[:off+dataPerRow]
-				copy(j.dataBuf[off:], j.leftRows[i].Data)
-				copy(j.dataBuf[off+len(j.leftRows[i].Data):], right.Data)
-				out := pl.Row{
-					Cols:     j.sharedCols,
-					Types:    j.sharedTypes,
-					Data:     j.dataBuf[off : off+dataPerRow : off+dataPerRow],
-					ColIndex: j.sharedColIndex,
-				}
-				j.matches = append(j.matches, out)
-			}
-		}
-	}
+	j.leftInfos = leftInfos
+	j.emitBuf = make([]pl.Value, dataPerRow)
+	j.curLeftIdx = 0
+	j.curRightIdx = 0
 
 	return nil
 }

@@ -1,7 +1,6 @@
 package EX
 
-import (
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+import(DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"runtime"
 	"testing"
 )

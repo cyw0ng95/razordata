@@ -892,3 +892,568 @@ var crudCases = []dualCase{
 		Want:  [][]any{{"c"}, {"d"}},
 	},
 }
+
+// evalFixesCases from EX/eval_fixes_test.go: SQL eval correctness
+// regressions fixed across REQ000605/606/607/619/620/621.
+//
+// Skipped cases where Razor and SQLite semantics intentionally diverge:
+//   - CAST('true'/'TRUE'/'1' AS BOOLEAN): Razor → 1, SQLite → 0
+//   - CAST('abc' AS BOOLEAN): Razor → true (non-empty string), SQLite → 0
+//   - CAST(NULL AS BOOLEAN): NULL stays NULL on both, but Razor's CAST
+//     calls castToBool(nil) which returns false in non-test code path —
+//     skipped for safety; test only checks the non-NULL paths.
+var evalFixesCases = []dualCase{
+	// REQ000605: AND/OR NULL three-valued logic.
+	{
+		Name: "and_null_true",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT NULL AND TRUE FROM t",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name: "and_true_null",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT TRUE AND NULL FROM t",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name: "and_null_false",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT NULL AND FALSE FROM t",
+		Want:  [][]any{{int64(0)}},
+	},
+	{
+		Name: "and_false_null",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT FALSE AND NULL FROM t",
+		Want:  [][]any{{int64(0)}},
+	},
+	{
+		Name: "and_null_null",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT NULL AND NULL FROM t",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name: "or_null_true",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT NULL OR TRUE FROM t",
+		Want:  [][]any{{int64(1)}},
+	},
+	{
+		Name: "or_true_null",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT TRUE OR NULL FROM t",
+		Want:  [][]any{{int64(1)}},
+	},
+	{
+		Name: "or_null_false",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT NULL OR FALSE FROM t",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name: "or_false_null",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT FALSE OR NULL FROM t",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name: "or_null_null",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT NULL OR NULL FROM t",
+		Want:  [][]any{{nil}},
+	},
+	// REQ000606: SUBSTR NULL handling.
+	{
+		Name: "substr_null_first",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT SUBSTR(NULL, 1, 3) FROM t",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name: "substr_null_middle",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT SUBSTR('hello', NULL, 2) FROM t",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name: "substr_normal_3",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT SUBSTR('hello', 2, 3) FROM t",
+		Want:  [][]any{{"ell"}},
+	},
+	{
+		Name: "substr_full",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT SUBSTR('hello', 1) FROM t",
+		Want:  [][]any{{"hello"}},
+	},
+	// REQ000607: CAST AS BOOLEAN — Razor-specific string parsing for
+	// 'true'/'false'/'1'/'0'/'' numeric 0/1. Non-standard strings like
+	// 'abc' intentionally differ from SQLite, so are excluded.
+	{
+		Name: "cast_boolean_false_str",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT CAST('false' AS BOOLEAN) FROM t",
+		Want:  [][]any{{int64(0)}},
+	},
+	{
+		Name: "cast_boolean_false_upper",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT CAST('FALSE' AS BOOLEAN) FROM t",
+		Want:  [][]any{{int64(0)}},
+	},
+	{
+		Name: "cast_boolean_zero_str",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT CAST('0' AS BOOLEAN) FROM t",
+		Want:  [][]any{{int64(0)}},
+	},
+	{
+		Name: "cast_boolean_empty_str",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT CAST('' AS BOOLEAN) FROM t",
+		Want:  [][]any{{int64(0)}},
+	},
+	{
+		Name: "cast_boolean_int_zero",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT CAST(0 AS BOOLEAN) FROM t",
+		Want:  [][]any{{int64(0)}},
+	},
+	{
+		Name: "cast_boolean_int_one",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT CAST(1 AS BOOLEAN) FROM t",
+		Want:  [][]any{{int64(1)}},
+	},
+	// REQ000619: SIGN(NULL) and numeric SIGN sanity.
+	{
+		Name: "sign_null",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT SIGN(NULL) FROM t",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name: "sign_neg",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT SIGN(-5) FROM t",
+		Want:  [][]any{{int64(-1)}},
+	},
+	{
+		Name: "sign_zero",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT SIGN(0) FROM t",
+		Want:  [][]any{{int64(0)}},
+	},
+	// REQ000620: INSTR NULL handling and basic INSTR semantics.
+	{
+		Name: "instr_null_needle",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT INSTR('abc', NULL) FROM t",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name: "instr_normal",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT INSTR('hello world', 'world') FROM t",
+		Want:  [][]any{{int64(7)}},
+	},
+	{
+		Name: "instr_not_found",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT INSTR('hello', 'z') FROM t",
+		Want:  [][]any{{int64(0)}},
+	},
+	// REQ000621: OCTET_LENGTH byte counts.
+	{
+		Name: "octet_length_str",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT OCTET_LENGTH('hello') FROM t",
+		Want:  [][]any{{int64(5)}},
+	},
+	{
+		Name: "octet_length_empty",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY)",
+			"INSERT INTO t VALUES (1)",
+		},
+		Query: "SELECT OCTET_LENGTH('') FROM t",
+		Want:  [][]any{{int64(0)}},
+	},
+}
+
+// scalarFunc386Cases from EX/fn_386_400_test.go: REQ000386/387/388/
+// 389/390/393/394/395/396/397/400 — scalar SQL functions.
+//
+// Skipped cases where Razor and SQLite semantics differ:
+//   - concat(NULL, 'b'): Razor → NULL, SQLite → 'b'
+//   - concat_ws(NULL, sep, ...): Razor → NULL, SQLite → ''
+//   - format(NULL, 'x'): Razor → NULL, SQLite → ''
+//   - last_insert_rowid(): Razor returns 0; SQLite returns the rowid of
+//     the most recent INSERT in this connection.
+var scalarFunc386Cases = []dualCase{
+	{
+		Name: "char_abc",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT char(65, 66, 67) FROM t1 LIMIT 1",
+		Want:  [][]any{{"ABC"}},
+	},
+	{
+		Name: "char_hello",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT char(72, 101, 108, 108, 111) FROM t1 LIMIT 1",
+		Want:  [][]any{{"Hello"}},
+	},
+	{
+		Name: "char_empty",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT char() FROM t1 LIMIT 1",
+		Want:  [][]any{{""}},
+	},
+	{
+		Name: "concat_basic",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT concat('a', 'b', 'c') FROM t1 LIMIT 1",
+		Want:  [][]any{{"abc"}},
+	},
+	{
+		Name: "concat_hello_world",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT concat('hello', ' ', 'world') FROM t1 LIMIT 1",
+		Want:  [][]any{{"hello world"}},
+	},
+	{
+		Name: "concat_ints",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT concat(1, 2, 3) FROM t1 LIMIT 1",
+		Want:  [][]any{{"123"}},
+	},
+	{
+		Name: "concat_ws_basic",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT concat_ws('-', 'a', 'b', 'c') FROM t1 LIMIT 1",
+		Want:  [][]any{{"a-b-c"}},
+	},
+	{
+		Name: "concat_ws_comma",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT concat_ws(',', 'x', 'y', 'z') FROM t1 LIMIT 1",
+		Want:  [][]any{{"x,y,z"}},
+	},
+	{
+		Name: "format_string",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT format('hello %s', 'world') FROM t1 LIMIT 1",
+		Want:  [][]any{{"hello world"}},
+	},
+	{
+		Name: "format_int",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT format('value=%d', 42) FROM t1 LIMIT 1",
+		Want:  [][]any{{"value=42"}},
+	},
+	{
+		Name: "format_float",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT format('%f', 3.14) FROM t1 LIMIT 1",
+		Want:  [][]any{{"3.140000"}},
+	},
+	{
+		Name: "glob_match",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT glob('*.txt', 'hello.txt') FROM t1 LIMIT 1",
+		Want:  [][]any{{int64(1)}},
+	},
+	{
+		Name: "glob_nomatch",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT glob('*.txt', 'hello.md') FROM t1 LIMIT 1",
+		Want:  [][]any{{int64(0)}},
+	},
+	{
+		Name: "glob_star",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT glob('h*', 'hello') FROM t1 LIMIT 1",
+		Want:  [][]any{{int64(1)}},
+	},
+	{
+		Name: "instr_match",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT instr('hello world', 'world') FROM t1 LIMIT 1",
+		Want:  [][]any{{int64(7)}},
+	},
+	{
+		Name: "instr_no_match",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT instr('hello', 'z') FROM t1 LIMIT 1",
+		Want:  [][]any{{int64(0)}},
+	},
+	{
+		Name: "likelihood_int",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT likelihood(42, 0.5) FROM t1 LIMIT 1",
+		Want:  [][]any{{int64(42)}},
+	},
+	{
+		Name: "likely_int",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT likely(42) FROM t1 LIMIT 1",
+		Want:  [][]any{{int64(42)}},
+	},
+	{
+		Name: "ltrim_default",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT ltrim('  hello  ') FROM t1 LIMIT 1",
+		Want:  [][]any{{"hello  "}},
+	},
+	{
+		Name: "ltrim_chars",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT ltrim('xyzhello', 'xyz') FROM t1 LIMIT 1",
+		Want:  [][]any{{"hello"}},
+	},
+	{
+		Name: "octet_length_5",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT octet_length('hello') FROM t1 LIMIT 1",
+		Want:  [][]any{{int64(5)}},
+	},
+	{
+		Name: "octet_length_utf8",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT octet_length('世界') FROM t1 LIMIT 1",
+		Want:  [][]any{{int64(6)}},
+	},
+}
+
+// scalarFunc413Cases from EX/fn_413_417_test.go: REQ000413/414/415/
+// 416/417 — unhex, unicode, unistr, unlikely, zeroblob.
+//
+// Skipped cases:
+//   - zeroblob(-1): Razor → NULL, SQLite → empty blob (0-byte).
+//   - zeroblob(N) wrapped in length(): Razor returns nil for
+//     length(zeroblob(...)), SQLite returns N. Direct ZEROBLOB
+//     bytes are covered by TestDual_ZeroblobNormalization.
+var scalarFunc413Cases = []dualCase{
+	{
+		Name: "unhex_abc",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT unhex('414243') FROM t1 LIMIT 1",
+		Want:  [][]any{{"ABC"}},
+	},
+	{
+		Name: "unhex_invalid",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT unhex('ZZ') FROM t1 LIMIT 1",
+		Want:  [][]any{{nil}},
+	},
+	{
+		Name: "unicode_A",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT unicode('A') FROM t1 LIMIT 1",
+		Want:  [][]any{{int64(65)}},
+	},
+	{
+		Name: "unicode_alpha",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT unicode('α') FROM t1 LIMIT 1",
+		Want:  [][]any{{int64(945)}},
+	},
+	{
+		Name: "unicode_first_only",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT unicode('AB') FROM t1 LIMIT 1",
+		Want:  [][]any{{int64(65)}},
+	},
+	{
+		Name: "unistr_escape",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT unistr('\\u0048\\u0065\\u006C\\u006C\\u006F') FROM t1 LIMIT 1",
+		Want:  [][]any{{"Hello"}},
+	},
+	{
+		Name: "unistr_plain",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT unistr('Hello') FROM t1 LIMIT 1",
+		Want:  [][]any{{"Hello"}},
+	},
+	{
+		Name: "unlikely_int",
+		Setup: []string{
+			"CREATE TABLE t1 (a INTEGER)",
+			"INSERT INTO t1 VALUES (42)",
+		},
+		Query: "SELECT unlikely(42) FROM t1 LIMIT 1",
+		Want:  [][]any{{int64(42)}},
+	},
+}

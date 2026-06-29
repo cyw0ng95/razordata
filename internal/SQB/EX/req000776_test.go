@@ -5,6 +5,7 @@ package EX
 import (
 	"testing"
 
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -101,12 +102,12 @@ func TestNumericArithValue(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := NumericArithValue(tc.a, tc.b, tc.op)
+			got, err := EV.NumericArithValue(tc.a, tc.b, tc.op)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if !got.Equal(tc.want) {
-				t.Errorf("NumericArithValue(%v, %v, %c) = %v, want %v",
+				t.Errorf("EV.NumericArithValue(%v, %v, %c) = %v, want %v",
 					tc.a, tc.b, tc.op, got, tc.want)
 			}
 		})
@@ -159,7 +160,7 @@ func TestEvalInValue(t *testing.T) {
 	}
 
 	t.Run("hit", func(t *testing.T) {
-		got, err := EvalInValue(expr, nil, nil)
+		got, err := EV.EvalInValue(expr, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -170,7 +171,7 @@ func TestEvalInValue(t *testing.T) {
 	t.Run("miss", func(t *testing.T) {
 		e2 := *expr
 		e2.Expr = &PS.NumberLiteral{Val: 4}
-		got, err := EvalInValue(&e2, nil, nil)
+		got, err := EV.EvalInValue(&e2, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -181,7 +182,7 @@ func TestEvalInValue(t *testing.T) {
 	t.Run("null_target", func(t *testing.T) {
 		e2 := *expr
 		e2.Expr = &PS.NullLiteral{}
-		got, err := EvalInValue(&e2, nil, nil)
+		got, err := EV.EvalInValue(&e2, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -192,7 +193,7 @@ func TestEvalInValue(t *testing.T) {
 	t.Run("empty_list", func(t *testing.T) {
 		e2 := *expr
 		e2.List = nil
-		got, err := EvalInValue(&e2, nil, nil)
+		got, err := EV.EvalInValue(&e2, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -207,7 +208,7 @@ func TestEvalInValue(t *testing.T) {
 func TestEvalInHash_Int64Only(t *testing.T) {
 	// Clear the cache to ensure we test fresh state.
 	delete(
-InHashCacheMap, getTestInExpr())
+EV.InHashCacheMap, getTestInExpr())
 
 	expr := &PS.InExpr{
 		Expr: &PS.NumberLiteral{Val: 42},
@@ -221,7 +222,7 @@ InHashCacheMap, getTestInExpr())
 	}
 
 	// Hit
-	got, err := EvalInValue(expr, nil, nil)
+	got, err := EV.EvalInValue(expr, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +232,7 @@ InHashCacheMap, getTestInExpr())
 
 	// Verify int64Set was populated
 	cached := 
-InHashCacheMap[expr]
+EV.InHashCacheMap[expr]
 	if cached == nil {
 		t.Fatal("expected cached entry")
 	}
@@ -258,7 +259,7 @@ func TestEvalInHash_MixedTypes(t *testing.T) {
 	}
 
 	// Hit (string match shouldn't match the int target)
-	got, err := EvalInValue(expr, nil, nil)
+	got, err := EV.EvalInValue(expr, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +269,7 @@ func TestEvalInHash_MixedTypes(t *testing.T) {
 
 	// Verify int64Set was NOT populated
 	cached := 
-InHashCacheMap[expr]
+EV.InHashCacheMap[expr]
 	if cached == nil {
 		t.Fatal("expected cached entry")
 	}

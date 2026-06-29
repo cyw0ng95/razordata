@@ -93,7 +93,7 @@ func TestStmtCache_QueryStream(t *testing.T) {
 			t.Fatalf("iter %d: %v", i, err)
 		}
 		count := 0
-		for {
+	for {
 			_, err := rows.Next()
 			if err != nil {
 				break

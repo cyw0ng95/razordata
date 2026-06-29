@@ -94,7 +94,7 @@ opts := AP.Options{
 		Dir:              filepath.Join(dir, "db.razor.engine"),
 		MemTableSize:     1 << 20,   // 1 MiB minimum
 		BufferPoolMB:     64,        // 64 MiB minimum
-		MaxMemoryPerQuery: 2 << 30,   // 2 GiB per-query cap (REQ001056)
+		MaxMemoryPerQuery: 512 << 20, // 512 MiB per-query cap (REQ001056)
 		JoinBufferSize:    256 << 20, // 256 MiB per-hash-join cap (REQ001056)
 		MaxResultRows:     100_000,   // cap query results to prevent OOM from cross joins (REQ001056)
 	}
