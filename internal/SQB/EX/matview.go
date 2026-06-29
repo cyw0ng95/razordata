@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -24,7 +25,7 @@ func (c *CreateMatViewOperator) Next(ctx context.Context) (Row, error) {
 	}
 	c.done = true
 
-	RegisterMatView(c.Name, c.Query)
+	DT.RegisterMatView(c.Name, c.Query)
 
 	matKey := MatViewMetaKey(c.Name)
 	if c.Store != nil {
@@ -33,7 +34,7 @@ func (c *CreateMatViewOperator) Next(ctx context.Context) (Row, error) {
 		}
 	}
 
-	// For incremental matviews, create AFTER triggers on base tables
+	// For incremental matviews, create AFTER triggers on base DT.Tables
 	// that refresh this matview on data changes
 	// TODO: Implement incremental refresh with change tracking
 	// For now, triggers are created but perform full refresh
@@ -64,7 +65,7 @@ func (r *RefreshMatViewOperator) Next(ctx context.Context) (Row, error) {
 	}
 	r.done = true
 
-	sel := LookupMatView(r.Name)
+	sel := DT.LookupMatView(r.Name)
 	if sel == nil {
 		return Row{}, fmt.Errorf("ex: materialized view %q not found", r.Name)
 	}
@@ -130,11 +131,11 @@ func (d *DropMatViewOperator) Next(_ context.Context) (Row, error) {
 	}
 	d.done = true
 
-	if LookupMatView(d.Name) == nil {
+	if DT.LookupMatView(d.Name) == nil {
 		return Row{}, fmt.Errorf("ex: materialized view %q not found", d.Name)
 	}
 
-	UnregisterMatView(d.Name)
+	DT.UnregisterMatView(d.Name)
 
 	matPrefix := MatViewDataPrefix(d.Name)
 	if d.Store != nil {

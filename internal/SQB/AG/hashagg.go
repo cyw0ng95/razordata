@@ -2,12 +2,14 @@
 // streaming Aggregate. Hash-based aggregation is a v1.1 extension; v1
 // only requires the basic Aggregate operator. Retained for upcoming
 // releases where grouped performance matters.
-package EX
+package AG
 
 import (
 	"context"
 	"slices"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -28,6 +30,12 @@ type HashAggregate struct {
 func NewHashAggregate(child Operator, groupCols, aggs []PS.Expr) *HashAggregate {
 	return &HashAggregate{child: child, groupCols: groupCols, aggs: aggs, buckets: make(map[string][]Row)}
 }
+
+// Child returns the input operator feeding this hash aggregate.
+func (h *HashAggregate) Child() Operator { return h.child }
+
+// GroupCols returns the group-by columns.
+func (h *HashAggregate) GroupCols() []PS.Expr { return h.groupCols }
 
 // SetExpandStar enables full-row output for SELECT * with GROUP BY.
 func (a *HashAggregate) SetExpandStar() { a.expandStar = true }
@@ -126,12 +134,12 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 			}
 		}
 		for _, ag := range a.aggs {
-			v, err := evalAggregateOver(ag, rows, a.params)
+			v, err := EvalAggregateOver(ag, rows, a.params)
 			if err != nil {
 				return err
 			}
 			out.Cols = append(out.Cols, aggregateColName(ag))
-			out.Data = append(out.Data, valueFromAny(v))
+			out.Data = append(out.Data, DT.ValueFromAny(v))
 		}
 		a.buf = append(a.buf, out)
 	}
@@ -144,8 +152,8 @@ func keysLessByDistinct(a, b Row, groupCols []PS.Expr) bool {
 
 func keysLessByDistinctCmp(a, b Row, groupCols []PS.Expr) int {
 	for _, gc := range groupCols {
-		va, _ := EvalValue(gc, &a, nil)
-		vb, _ := EvalValue(gc, &b, nil)
+		va, _ := EV.EvalValue(gc, &a, nil)
+		vb, _ := EV.EvalValue(gc, &b, nil)
 		c := PL.CompareValue(va, vb)
 		if c != 0 {
 			return c

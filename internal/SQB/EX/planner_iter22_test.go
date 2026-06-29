@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -97,7 +98,7 @@ func TestPlanner_PlanSelect_PrefersIndexSeek(t *testing.T) {
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("users", []string{"id", "email"}, "id")
 
-	id, _ := tableIDFor("users")
+	id, _ := DT.TableIDFor("users")
 
 	// Manually populate the secondary index
 	idxStore := ls.NewIndexStore(eng, id, "idx_email")

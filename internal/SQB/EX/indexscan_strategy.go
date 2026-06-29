@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/ENG/ID"
 )
 
@@ -79,7 +80,7 @@ func (s *InMemoryScan) Close() error { return nil }
 type StorePrefixScan struct {
 	store  Store
 	prefix []byte
-	schema *storeSchema
+	schema *StoreSchema
 	it     storeIter
 }
 
@@ -96,7 +97,7 @@ type storeIter interface {
 
 // NewStorePrefixScan builds a prefix-scan strategy over the given
 // store, prefix, and schema.
-func NewStorePrefixScan(store Store, prefix []byte, schema *storeSchema) *StorePrefixScan {
+func NewStorePrefixScan(store Store, prefix []byte, schema *StoreSchema) *StorePrefixScan {
 	return &StorePrefixScan{store: store, prefix: prefix, schema: schema}
 }
 
@@ -138,7 +139,7 @@ func (s *StorePrefixScan) Close() error {
 // (rangeLower, rangeUpper).
 type IndexSeekScan struct {
 	store        Store
-	schema       *storeSchema
+	schema       *StoreSchema
 	prefix       []byte
 	indexTableID uint64
 	indexName    string
@@ -156,7 +157,7 @@ type IndexSeekScan struct {
 // bound a range scan. When both are nil, the strategy returns all
 // rows in index order. REQ000847: replaces the prefix-scan fallback
 // with a real index seek.
-func NewIndexSeekScan(store Store, prefix []byte, schema *storeSchema, tableID uint64, idxName string, seekValue, rangeLower []byte, rangeLowerExcl bool, rangeUpper []byte, rangeUpperIncl bool) *IndexSeekScan {
+func NewIndexSeekScan(store Store, prefix []byte, schema *StoreSchema, tableID uint64, idxName string, seekValue, rangeLower []byte, rangeLowerExcl bool, rangeUpper []byte, rangeUpperIncl bool) *IndexSeekScan {
 	return &IndexSeekScan{
 		store:          store,
 		prefix:         prefix,
@@ -251,13 +252,13 @@ type BTreeScan struct {
 	btree    *id.BTree
 	store    Store
 	prefix   []byte
-	schema   *storeSchema
+	schema   *StoreSchema
 	cursor   *id.Cursor
 	done     bool
 }
 
 // NewBTreeScan builds a B-tree-backed scan strategy.
-func NewBTreeScan(bt *id.BTree, store Store, prefix []byte, schema *storeSchema) *BTreeScan {
+func NewBTreeScan(bt *id.BTree, store Store, prefix []byte, schema *StoreSchema) *BTreeScan {
 	return &BTreeScan{btree: bt, store: store, prefix: prefix, schema: schema}
 }
 
@@ -324,7 +325,7 @@ type RangeSeekScan = IndexSeekScan
 // NewRangeSeekScan is a convenience constructor for range-seek
 // strategies. It is a thin alias for NewIndexSeekScan with
 // seekValue=nil.
-func NewRangeSeekScan(store Store, prefix []byte, schema *storeSchema, tableID uint64, idxName string, lower []byte, lowerIncl bool, upper []byte, upperIncl bool) *RangeSeekScan {
+func NewRangeSeekScan(store Store, prefix []byte, schema *StoreSchema, tableID uint64, idxName string, lower []byte, lowerIncl bool, upper []byte, upperIncl bool) *RangeSeekScan {
 	return NewIndexSeekScan(store, prefix, schema, tableID, idxName, nil, lower, !lowerIncl, upper, upperIncl)
 }
 
@@ -369,18 +370,18 @@ func SelectStrategy(scan *IndexScan) (ScanStrategy, error) {
 }
 
 // ensureInMemoryRows materializes the table's rows from the
-// in-memory tables map. Mirrors the lazy init in IndexScan.Next.
+// in-memory DT.Tables map. Mirrors the lazy init in IndexScan.Next.
 func (i *IndexScan) ensureInMemoryRows() []Row {
 	if i.rows != nil {
 		return i.rows
 	}
-	tablesMu.RLock()
-	src := tables[i.table]
+	DT.TablesMu.RLock()
+	src := DT.Tables[i.table]
 	out := make([]Row, len(src))
 	for k, r := range src {
-		out[k] = cloneRow(r)
+		out[k] = DT.CloneRow(r)
 	}
-	tablesMu.RUnlock()
+	DT.TablesMu.RUnlock()
 	i.rows = out
 	i.pos = 0
 	return out

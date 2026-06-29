@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/crc32"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 )
 
@@ -43,7 +44,7 @@ func (ic *IntegrityCheck) Next(ctx context.Context) (Row, error) {
 	var errors []string
 
 	// Check 1: Catalog integrity
-	if cat := Catalog(); cat != nil {
+	if cat := DT.Catalog(); cat != nil {
 		if err := ic.checkCatalog(cat); err != nil {
 			errors = append(errors, err.Error())
 		}
@@ -87,7 +88,7 @@ func (ic *IntegrityCheck) checkCatalog(cat any) error {
 		return nil
 	}
 
-	// Get all tables and verify they have valid entries
+	// Get all DT.Tables and verify they have valid entries
 	entries := catalog.List()
 	for _, entry := range entries {
 		if entry == nil {

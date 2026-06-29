@@ -9,6 +9,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // Values implements a single-row operator that evaluates scalar
@@ -37,7 +38,7 @@ func (v *Values) Next(ctx context.Context) (Row, error) {
 
 	// Evaluate each expression with a nil row (no table context).
 	// If a planner is available, attach it to the row so subquery
-	// evaluation can resolve tables against the store.
+	// evaluation can resolve DT.Tables against the store.
 	// REQ000853: also attach execCtx so CHANGES()/TOTAL_CHANGES()
 	// can read session-level change counters.
 	var evalRow *Row
@@ -49,7 +50,7 @@ func (v *Values) Next(ctx context.Context) (Row, error) {
 	types := make([]LX.TokenType, len(v.cols))
 
 	for i, e := range v.cols {
-		val, err := EvalValue(e, evalRow, v.params)
+		val, err := EV.EvalValue(e, evalRow, v.params)
 		if err != nil {
 			return Row{}, err
 		}
@@ -189,7 +190,7 @@ func (v *ValuesRows) Next(ctx context.Context) (Row, error) {
 	data := make([]Value, len(rowExprs))
 	types := make([]LX.TokenType, len(rowExprs))
 	for i, e := range rowExprs {
-		val, err := EvalValue(e, nil, nil)
+		val, err := EV.EvalValue(e, nil, nil)
 		if err != nil {
 			return Row{}, err
 		}

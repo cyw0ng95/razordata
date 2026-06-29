@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -17,7 +18,7 @@ type AlterTable struct {
 }
 
 // catalogMu guards catalog operations. A separate mutex avoids
-// deadlock with storeMu when the catalog rewrites its atomic file.
+// deadlock with DT.StoreMu when the catalog rewrites its atomic file.
 var catalogMu sync.Mutex
 
 func NewAlterTable(stmt *PS.AlterTableStmt) *AlterTable {
@@ -48,38 +49,38 @@ func (a *AlterTable) execAddColumn() error {
 		return fmt.Errorf("ex: ADD COLUMN requires column definition")
 	}
 
-	storeMu.Lock()
-	tableID, ok := tableIDs[a.stmt.Table]
+	DT.StoreMu.Lock()
+	tableID, ok := DT.TableIDs[a.stmt.Table]
 	if !ok {
-		// In-memory mode: release storeMu first; the in-memory
+		// In-memory mode: release DT.StoreMu first; the in-memory
 		// helper re-acquires it (sync.Mutex is not reentrant).
-		storeMu.Unlock()
+		DT.StoreMu.Unlock()
 		return a.execAddColumnInMemory()
 	}
-	defer storeMu.Unlock()
+	defer DT.StoreMu.Unlock()
 
-	ss, ok := storeSchemas[tableID]
+	ss, ok := DT.StoreSchemas[tableID]
 	if !ok {
 		return fmt.Errorf("ex: table schema for %q not found", a.stmt.Table)
 	}
 
 	// Check duplicate column name
-	for _, c := range ss.cols {
+	for _, c := range ss.Cols {
 		if c == a.stmt.NewCol.Name {
 			return fmt.Errorf("ex: column %q already exists", a.stmt.NewCol.Name)
 		}
 	}
 
 	// Re-register the complete updated schema (idempotent)
-	newCols := append(append([]string(nil), ss.cols...), a.stmt.NewCol.Name)
-	newNullable := append(append([]bool(nil), ss.nullable...), a.stmt.NewCol.Nullable)
+	newCols := append(append([]string(nil), ss.Cols...), a.stmt.NewCol.Name)
+	newNullable := append(append([]bool(nil), ss.Nullable...), a.stmt.NewCol.Nullable)
 
-	// Pad parallel slices that may be nil or shorter than ss.cols.
+	// Pad parallel slices that may be nil or shorter than ss.Cols.
 	// The loop produces slices aligned to the new schema length.
 	var newDefaults []PS.Expr
-	for i := range ss.cols {
-		if ss.defaults != nil && i < len(ss.defaults) {
-			newDefaults = append(newDefaults, ss.defaults[i])
+	for i := range ss.Cols {
+		if ss.Defaults != nil && i < len(ss.Defaults) {
+			newDefaults = append(newDefaults, ss.Defaults[i])
 		} else {
 			newDefaults = append(newDefaults, nil)
 		}
@@ -87,9 +88,9 @@ func (a *AlterTable) execAddColumn() error {
 	newDefaults = append(newDefaults, a.stmt.NewCol.Default)
 
 	var newTypes []LX.TokenType
-	for i := range ss.cols {
-		if ss.colTypes != nil && i < len(ss.colTypes) {
-			newTypes = append(newTypes, ss.colTypes[i])
+	for i := range ss.Cols {
+		if ss.ColTypes != nil && i < len(ss.ColTypes) {
+			newTypes = append(newTypes, ss.ColTypes[i])
 		} else {
 			newTypes = append(newTypes, LX.TokenType(0))
 		}
@@ -97,9 +98,9 @@ func (a *AlterTable) execAddColumn() error {
 	newTypes = append(newTypes, a.stmt.NewCol.Type)
 
 	var newPrecision []int
-	for i := range ss.cols {
-		if ss.precision != nil && i < len(ss.precision) {
-			newPrecision = append(newPrecision, ss.precision[i])
+	for i := range ss.Cols {
+		if ss.Precision != nil && i < len(ss.Precision) {
+			newPrecision = append(newPrecision, ss.Precision[i])
 		} else {
 			newPrecision = append(newPrecision, 0)
 		}
@@ -107,9 +108,9 @@ func (a *AlterTable) execAddColumn() error {
 	newPrecision = append(newPrecision, a.stmt.NewCol.Precision)
 
 	var newScale []int
-	for i := range ss.cols {
-		if ss.scale != nil && i < len(ss.scale) {
-			newScale = append(newScale, ss.scale[i])
+	for i := range ss.Cols {
+		if ss.Scale != nil && i < len(ss.Scale) {
+			newScale = append(newScale, ss.Scale[i])
 		} else {
 			newScale = append(newScale, 0)
 		}
@@ -117,9 +118,9 @@ func (a *AlterTable) execAddColumn() error {
 	newScale = append(newScale, a.stmt.NewCol.Scale)
 
 	var newGenerated []PS.Expr
-	for i := range ss.cols {
-		if ss.generated != nil && i < len(ss.generated) {
-			newGenerated = append(newGenerated, ss.generated[i])
+	for i := range ss.Cols {
+		if ss.Generated != nil && i < len(ss.Generated) {
+			newGenerated = append(newGenerated, ss.Generated[i])
 		} else {
 			newGenerated = append(newGenerated, nil)
 		}
@@ -127,16 +128,16 @@ func (a *AlterTable) execAddColumn() error {
 	newGenerated = append(newGenerated, a.stmt.NewCol.Generated)
 
 	// Rebuild unique keys with updated column indices
-	newUnique := make([]UniqueKey, len(ss.unique))
-	for i, u := range ss.unique {
+	newUnique := make([]UniqueKey, len(ss.Unique))
+	for i, u := range ss.Unique {
 		newUnique[i] = UniqueKey{Cols: append([]int(nil), u.Cols...)}
 	}
 
 	// Copy FK constraints
 	var newFKs []ForeignKeyConstraint
-	if ss.foreignKeys != nil {
-		newFKs = make([]ForeignKeyConstraint, len(ss.foreignKeys))
-		for i, fk := range ss.foreignKeys {
+	if ss.ForeignKeys != nil {
+		newFKs = make([]ForeignKeyConstraint, len(ss.ForeignKeys))
+		for i, fk := range ss.ForeignKeys {
 			newFKs[i] = ForeignKeyConstraint{
 				Columns:    append([]string(nil), fk.Columns...),
 				RefTable:   fk.RefTable,
@@ -147,16 +148,16 @@ func (a *AlterTable) execAddColumn() error {
 		}
 	}
 
-	registerStoreSchemaWithFKLocked(a.stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.pk, newFKs)
+	DT.RegisterStoreSchemaWithFKLocked(a.stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.Pk, newFKs)
 
 	// Update colTypes, precision, scale and generated inline
-	ss.colTypes = newTypes
-	ss.precision = newPrecision
-	ss.scale = newScale
-	ss.generated = newGenerated
+	ss.ColTypes = newTypes
+	ss.Precision = newPrecision
+	ss.Scale = newScale
+	ss.Generated = newGenerated
 
 	// Update persistent catalog
-	catalog := Catalog()
+	catalog := DT.Catalog()
 	if catalog != nil {
 		catalogMu.Lock()
 		defer catalogMu.Unlock()
@@ -187,18 +188,18 @@ func (a *AlterTable) execAddColumn() error {
 	}
 
 	// Also update in-memory schema (for planner consistency)
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
-	schemas[a.stmt.Table] = newCols
+	DT.TablesMu.Lock()
+	defer DT.TablesMu.Unlock()
+	DT.Schemas[a.stmt.Table] = newCols
 
 	return nil
 }
 
 func (a *AlterTable) execAddColumnInMemory() error {
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
+	DT.TablesMu.Lock()
+	defer DT.TablesMu.Unlock()
 
-	cols, ok := schemas[a.stmt.Table]
+	cols, ok := DT.Schemas[a.stmt.Table]
 	if !ok {
 		return fmt.Errorf("ex: table %q not found", a.stmt.Table)
 	}
@@ -212,32 +213,32 @@ func (a *AlterTable) execAddColumnInMemory() error {
 
 	// Update in-memory schema
 	newCols := append(append([]string(nil), cols...), a.stmt.NewCol.Name)
-	schemas[a.stmt.Table] = newCols
+	DT.Schemas[a.stmt.Table] = newCols
 
-	// registerStoreSchema takes storeMu internally; the helper
-	// must not be called with storeMu already held.
-	registerStoreSchema(a.stmt.Table, newCols, "")
+	// DT.RegisterStoreSchema takes DT.StoreMu internally; the helper
+	// must not be called with DT.StoreMu already held.
+	DT.RegisterStoreSchema(a.stmt.Table, newCols, "")
 
 	return nil
 }
 
 func (a *AlterTable) execDropColumn() error {
-	storeMu.Lock()
-	tableID, ok := tableIDs[a.stmt.Table]
+	DT.StoreMu.Lock()
+	tableID, ok := DT.TableIDs[a.stmt.Table]
 	if !ok {
-		storeMu.Unlock()
+		DT.StoreMu.Unlock()
 		return a.execDropColumnInMemory()
 	}
-	defer storeMu.Unlock()
+	defer DT.StoreMu.Unlock()
 
-	ss, ok := storeSchemas[tableID]
+	ss, ok := DT.StoreSchemas[tableID]
 	if !ok {
 		return fmt.Errorf("ex: table schema for %q not found", a.stmt.Table)
 	}
 
 	// Find column index
 	idx := -1
-	for i, c := range ss.cols {
+	for i, c := range ss.Cols {
 		if c == a.stmt.Column {
 			idx = i
 			break
@@ -248,59 +249,59 @@ func (a *AlterTable) execDropColumn() error {
 	}
 
 	// Cannot drop the primary key column
-	if ss.pk == a.stmt.Column {
+	if ss.Pk == a.stmt.Column {
 		return fmt.Errorf("ex: cannot drop primary key column %q", a.stmt.Column)
 	}
 
 	// Rebuild without the dropped column
-	newCols := make([]string, 0, len(ss.cols)-1)
-	newNullable := make([]bool, 0, len(ss.nullable)-1)
+	newCols := make([]string, 0, len(ss.Cols)-1)
+	newNullable := make([]bool, 0, len(ss.Nullable)-1)
 	var newDefaults []PS.Expr
-	if ss.defaults != nil {
-		newDefaults = make([]PS.Expr, 0, len(ss.defaults)-1)
+	if ss.Defaults != nil {
+		newDefaults = make([]PS.Expr, 0, len(ss.Defaults)-1)
 	}
 	var newTypes []LX.TokenType
-	if ss.colTypes != nil {
-		newTypes = make([]LX.TokenType, 0, len(ss.colTypes)-1)
+	if ss.ColTypes != nil {
+		newTypes = make([]LX.TokenType, 0, len(ss.ColTypes)-1)
 	}
 	var newGenerated []PS.Expr
-	if ss.generated != nil {
-		newGenerated = make([]PS.Expr, 0, len(ss.generated)-1)
+	if ss.Generated != nil {
+		newGenerated = make([]PS.Expr, 0, len(ss.Generated)-1)
 	}
 	var newPrecision []int
-	if ss.precision != nil {
-		newPrecision = make([]int, 0, len(ss.precision)-1)
+	if ss.Precision != nil {
+		newPrecision = make([]int, 0, len(ss.Precision)-1)
 	}
 	var newScale []int
-	if ss.scale != nil {
-		newScale = make([]int, 0, len(ss.scale)-1)
+	if ss.Scale != nil {
+		newScale = make([]int, 0, len(ss.Scale)-1)
 	}
-	for i := range ss.cols {
+	for i := range ss.Cols {
 		if i == idx {
 			continue
 		}
-		newCols = append(newCols, ss.cols[i])
-		newNullable = append(newNullable, ss.nullable[i])
-		if ss.defaults != nil {
-			newDefaults = append(newDefaults, ss.defaults[i])
+		newCols = append(newCols, ss.Cols[i])
+		newNullable = append(newNullable, ss.Nullable[i])
+		if ss.Defaults != nil {
+			newDefaults = append(newDefaults, ss.Defaults[i])
 		}
-		if ss.colTypes != nil {
-			newTypes = append(newTypes, ss.colTypes[i])
+		if ss.ColTypes != nil {
+			newTypes = append(newTypes, ss.ColTypes[i])
 		}
-		if ss.generated != nil {
-			newGenerated = append(newGenerated, ss.generated[i])
+		if ss.Generated != nil {
+			newGenerated = append(newGenerated, ss.Generated[i])
 		}
-		if ss.precision != nil {
-			newPrecision = append(newPrecision, ss.precision[i])
+		if ss.Precision != nil {
+			newPrecision = append(newPrecision, ss.Precision[i])
 		}
-		if ss.scale != nil {
-			newScale = append(newScale, ss.scale[i])
+		if ss.Scale != nil {
+			newScale = append(newScale, ss.Scale[i])
 		}
 	}
 
 	// Rebuild unique keys: remove any UNIQUE constraint that includes the dropped column
 	var newUnique []UniqueKey
-	for _, u := range ss.unique {
+	for _, u := range ss.Unique {
 		skip := false
 		for _, ci := range u.Cols {
 			if ci == idx {
@@ -325,7 +326,7 @@ func (a *AlterTable) execDropColumn() error {
 
 	// Rebuild FK constraints: remove any FK that references the dropped column
 	var newFKs []ForeignKeyConstraint
-	for _, fk := range ss.foreignKeys {
+	for _, fk := range ss.ForeignKeys {
 		skip := false
 		for _, col := range fk.Columns {
 			if col == a.stmt.Column {
@@ -345,16 +346,16 @@ func (a *AlterTable) execDropColumn() error {
 		})
 	}
 
-	registerStoreSchemaWithFKLocked(a.stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.pk, newFKs)
+	DT.RegisterStoreSchemaWithFKLocked(a.stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.Pk, newFKs)
 
 	// Update colTypes, precision, scale and generated inline
-	ss.colTypes = newTypes
-	ss.precision = newPrecision
-	ss.scale = newScale
-	ss.generated = newGenerated
+	ss.ColTypes = newTypes
+	ss.Precision = newPrecision
+	ss.Scale = newScale
+	ss.Generated = newGenerated
 
 	// Update persistent catalog
-	catalog := Catalog()
+	catalog := DT.Catalog()
 	if catalog != nil {
 		catalogMu.Lock()
 		defer catalogMu.Unlock()
@@ -382,12 +383,12 @@ func (a *AlterTable) execDropColumn() error {
 	}
 
 	// Also update in-memory schema
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
-	schemas[a.stmt.Table] = newCols
+	DT.TablesMu.Lock()
+	defer DT.TablesMu.Unlock()
+	DT.Schemas[a.stmt.Table] = newCols
 
 	// Update existing row data to remove the dropped column
-	if existing, ok := tables[a.stmt.Table]; ok {
+	if existing, ok := DT.Tables[a.stmt.Table]; ok {
 		updated := make([]Row, len(existing))
 		for i, row := range existing {
 			newData := make([]Value, 0, len(row.Data)-1)
@@ -402,17 +403,17 @@ func (a *AlterTable) execDropColumn() error {
 			}
 			updated[i] = Row{Cols: newRowCols, Types: row.Types, Data: newData, Outer: row.Outer}
 		}
-		tables[a.stmt.Table] = updated
+		DT.Tables[a.stmt.Table] = updated
 	}
 
 	return nil
 }
 
 func (a *AlterTable) execDropColumnInMemory() error {
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
+	DT.TablesMu.Lock()
+	defer DT.TablesMu.Unlock()
 
-	cols, ok := schemas[a.stmt.Table]
+	cols, ok := DT.Schemas[a.stmt.Table]
 	if !ok {
 		return fmt.Errorf("ex: table %q not found", a.stmt.Table)
 	}
@@ -434,10 +435,10 @@ func (a *AlterTable) execDropColumnInMemory() error {
 			newCols = append(newCols, c)
 		}
 	}
-	schemas[a.stmt.Table] = newCols
+	DT.Schemas[a.stmt.Table] = newCols
 
 	// Update existing row data to remove the dropped column
-	if existing, ok := tables[a.stmt.Table]; ok {
+	if existing, ok := DT.Tables[a.stmt.Table]; ok {
 		updated := make([]Row, len(existing))
 		for i, row := range existing {
 			newData := make([]Value, 0, len(row.Data)-1)
@@ -452,10 +453,10 @@ func (a *AlterTable) execDropColumnInMemory() error {
 			}
 			updated[i] = Row{Cols: newRowCols, Types: row.Types, Data: newData, Outer: row.Outer}
 		}
-		tables[a.stmt.Table] = updated
+		DT.Tables[a.stmt.Table] = updated
 	}
 
-	registerStoreSchema(a.stmt.Table, newCols, "")
+	DT.RegisterStoreSchema(a.stmt.Table, newCols, "")
 
 	return nil
 }
@@ -464,36 +465,36 @@ func (a *AlterTable) execRename() error {
 	oldName := a.stmt.Table
 	newName := a.stmt.Column
 
-	storeMu.Lock()
-	tableID, ok := tableIDs[oldName]
+	DT.StoreMu.Lock()
+	tableID, ok := DT.TableIDs[oldName]
 	if !ok {
-		storeMu.Unlock()
+		DT.StoreMu.Unlock()
 		return a.execRenameInMemory(oldName, newName)
 	}
-	defer storeMu.Unlock()
+	defer DT.StoreMu.Unlock()
 
-	if _, exists := tableIDs[newName]; exists {
+	if _, exists := DT.TableIDs[newName]; exists {
 		return fmt.Errorf("ex: table %q already exists", newName)
 	}
 
-	ss, ok := storeSchemas[tableID]
+	ss, ok := DT.StoreSchemas[tableID]
 	if !ok {
 		return fmt.Errorf("ex: table schema for %q not found", oldName)
 	}
 
 	// Build full schema for re-registration under new name
-	newCols := append([]string(nil), ss.cols...)
-	newNullable := append([]bool(nil), ss.nullable...)
-	newDefaults := make([]PS.Expr, len(ss.defaults))
-	copy(newDefaults, ss.defaults)
-	newUnique := make([]UniqueKey, len(ss.unique))
-	for i, u := range ss.unique {
+	newCols := append([]string(nil), ss.Cols...)
+	newNullable := append([]bool(nil), ss.Nullable...)
+	newDefaults := make([]PS.Expr, len(ss.Defaults))
+	copy(newDefaults, ss.Defaults)
+	newUnique := make([]UniqueKey, len(ss.Unique))
+	for i, u := range ss.Unique {
 		newUnique[i] = UniqueKey{Cols: append([]int(nil), u.Cols...)}
 	}
 	var newFKs []ForeignKeyConstraint
-	if ss.foreignKeys != nil {
-		newFKs = make([]ForeignKeyConstraint, len(ss.foreignKeys))
-		for i, fk := range ss.foreignKeys {
+	if ss.ForeignKeys != nil {
+		newFKs = make([]ForeignKeyConstraint, len(ss.ForeignKeys))
+		for i, fk := range ss.ForeignKeys {
 			newFKs[i] = ForeignKeyConstraint{
 				Columns:    append([]string(nil), fk.Columns...),
 				RefTable:   fk.RefTable,
@@ -505,24 +506,24 @@ func (a *AlterTable) execRename() error {
 	}
 
 	// Remove old name and register new name
-	delete(tableIDs, oldName)
-	delete(storeSchemas, tableID)
+	delete(DT.TableIDs, oldName)
+	delete(DT.StoreSchemas, tableID)
 
-	registerStoreSchemaWithFKLocked(newName, newCols, newNullable, newDefaults, newUnique, ss.pk, newFKs)
+	DT.RegisterStoreSchemaWithFKLocked(newName, newCols, newNullable, newDefaults, newUnique, ss.Pk, newFKs)
 
 	// Copy colTypes and generated to the new schema entry
-	newTableID, ok := tableIDs[newName]
+	newTableID, ok := DT.TableIDs[newName]
 	if ok {
-		if newSS, exists := storeSchemas[newTableID]; exists {
-			newSS.colTypes = append([]LX.TokenType(nil), ss.colTypes...)
-			newSS.precision = append([]int(nil), ss.precision...)
-			newSS.scale = append([]int(nil), ss.scale...)
-			newSS.generated = append([]PS.Expr(nil), ss.generated...)
+		if newSS, exists := DT.StoreSchemas[newTableID]; exists {
+			newSS.ColTypes = append([]LX.TokenType(nil), ss.ColTypes...)
+			newSS.Precision = append([]int(nil), ss.Precision...)
+			newSS.Scale = append([]int(nil), ss.Scale...)
+			newSS.Generated = append([]PS.Expr(nil), ss.Generated...)
 		}
 	}
 
 	// Update persistent catalog
-	catalog := Catalog()
+	catalog := DT.Catalog()
 	if catalog != nil {
 		catalogMu.Lock()
 		defer catalogMu.Unlock()
@@ -546,43 +547,43 @@ func (a *AlterTable) execRename() error {
 	}
 
 	// Rename registered indexes
-	if idxs, ok := registeredIndexes[oldName]; ok {
-		registeredIndexes[newName] = idxs
-		delete(registeredIndexes, oldName)
+	if idxs, ok := DT.RegisteredIndexes[oldName]; ok {
+		DT.RegisteredIndexes[newName] = idxs
+		delete(DT.RegisteredIndexes, oldName)
 	}
 
-	// Also update in-memory schemas
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
-	if cols, ok := schemas[oldName]; ok {
-		schemas[newName] = append([]string(nil), cols...)
-		delete(schemas, oldName)
+	// Also update in-memory DT.Schemas
+	DT.TablesMu.Lock()
+	defer DT.TablesMu.Unlock()
+	if cols, ok := DT.Schemas[oldName]; ok {
+		DT.Schemas[newName] = append([]string(nil), cols...)
+		delete(DT.Schemas, oldName)
 	}
 
 	return nil
 }
 
 func (a *AlterTable) execRenameInMemory(oldName, newName string) error {
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
+	DT.TablesMu.Lock()
+	defer DT.TablesMu.Unlock()
 
-	if _, ok := schemas[newName]; ok {
+	if _, ok := DT.Schemas[newName]; ok {
 		return fmt.Errorf("ex: table %q already exists", newName)
 	}
 
-	cols, ok := schemas[oldName]
+	cols, ok := DT.Schemas[oldName]
 	if !ok {
 		return fmt.Errorf("ex: table %q not found", oldName)
 	}
 
-	schemas[newName] = append([]string(nil), cols...)
-	delete(schemas, oldName)
+	DT.Schemas[newName] = append([]string(nil), cols...)
+	delete(DT.Schemas, oldName)
 
-	// registerStoreSchema takes storeMu internally; the helper
-	// must not be called with storeMu already held.
-	registerStoreSchema(newName, cols, "")
-	if _, ok := tableIDs[oldName]; ok {
-		delete(tableIDs, oldName)
+	// DT.RegisterStoreSchema takes DT.StoreMu internally; the helper
+	// must not be called with DT.StoreMu already held.
+	DT.RegisterStoreSchema(newName, cols, "")
+	if _, ok := DT.TableIDs[oldName]; ok {
+		delete(DT.TableIDs, oldName)
 	}
 
 	return nil
@@ -611,10 +612,10 @@ func (a *AlterTable) execRenameColumn() error {
 		return fmt.Errorf("ex: RENAME COLUMN requires old and new column names")
 	}
 
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
+	DT.TablesMu.Lock()
+	defer DT.TablesMu.Unlock()
 
-	cols, ok := schemas[a.stmt.Table]
+	cols, ok := DT.Schemas[a.stmt.Table]
 	if !ok {
 		return fmt.Errorf("ex: table %q not found", a.stmt.Table)
 	}
@@ -642,20 +643,20 @@ func (a *AlterTable) execRenameColumn() error {
 	newCols := make([]string, len(cols))
 	copy(newCols, cols)
 	newCols[idx] = newCol
-	schemas[a.stmt.Table] = newCols
+	DT.Schemas[a.stmt.Table] = newCols
 
-	// Also update store schemas
-	storeMu.Lock()
-	if id, ok := tableIDs[a.stmt.Table]; ok {
-		if ss, ok := storeSchemas[id]; ok {
-			newStoreCols := make([]string, len(ss.cols))
-			copy(newStoreCols, ss.cols)
+	// Also update store DT.Schemas
+	DT.StoreMu.Lock()
+	if id, ok := DT.TableIDs[a.stmt.Table]; ok {
+		if ss, ok := DT.StoreSchemas[id]; ok {
+			newStoreCols := make([]string, len(ss.Cols))
+			copy(newStoreCols, ss.Cols)
 			newStoreCols[idx] = newCol
-			ss.cols = newStoreCols
-			ss.buildColIndex()
+			ss.Cols = newStoreCols
+			ss.BuildColIndex()
 		}
 	}
-	storeMu.Unlock()
+	DT.StoreMu.Unlock()
 
 	return nil
 }

@@ -6,17 +6,9 @@ import (
 	"strings"
 	"sync"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-)
-
-var errTableExists = errors.New("ex: table already exists")
-
-var (
-	tablesMu sync.RWMutex
-	tables   = map[string][]Row{}
-	schemas  = map[string][]string{}
-	tablePKs = map[string]string{} // in-memory table primary key column name
 )
 
 // triggerMu guards the package-level trigger registry. REQ000435.
@@ -50,7 +42,7 @@ func unregisterTrigger(name string) bool {
 	if list, ok := tableTriggers[t.OnTable]; ok {
 		filtered := list[:0]
 		for _, x := range list {
-			if x.Name != name {
+			if x.Name != t.Name {
 				filtered = append(filtered, x)
 			}
 		}
@@ -71,111 +63,32 @@ func triggersForTable(table string) []*PS.TriggerStmt {
 	return out
 }
 
-func RegisterTable(name string, rows []Row) {
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
-	cp := make([]Row, len(rows))
-	for i, r := range rows {
-		cp[i] = cloneRow(r)
-	}
-	tables[name] = cp
-	if len(rows) > 0 {
-		schemas[name] = append([]string(nil), rows[0].Cols...)
-	}
-}
-
-func RegisterTableSchema(name string, cols []string) {
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
-	if _, ok := tables[name]; !ok {
-		tables[name] = []Row{}
-	}
-	schemas[name] = append([]string(nil), cols...)
-}
-
-func Schema(name string) []string {
-	tablesMu.RLock()
-	defer tablesMu.RUnlock()
-	if s, ok := schemas[name]; ok {
-		return append([]string(nil), s...)
-	}
-	return nil
-}
-
-// SnapshotInMemoryTable returns a deep copy of the in-memory table's
-// current rows. The caller must hold tablesMu (read or write).
-// REQ000641.
-func SnapshotInMemoryTable(table string) []Row {
-	src := tables[table]
-	if src == nil {
-		return nil
-	}
-	cp := make([]Row, len(src))
-	for i, r := range src {
-		cp[i] = cloneRow(r)
-	}
-	return cp
-}
-
-// RestoreInMemoryTables replaces in-memory tables with the given
-// snapshots. Used by TX.Transaction.Rollback to undo in-memory
-// writes. REQ000641.
-func RestoreInMemoryTables(snapshots map[string][]Row) error {
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
-	for table, snap := range snapshots {
-		tables[table] = snap
-	}
-	return nil
-}
-
+// UnregisterAll clears all registered state for test isolation.
 func UnregisterAll() {
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
-	tables = map[string][]Row{}
-	schemas = map[string][]string{}
-	storeMu.Lock()
-	storeSchemas = map[uint64]*storeSchema{}
-	tableIDs = map[string]uint64{}
-	inMemSchemas = map[string]*storeSchema{}
-	tableIDSeq = 0
-	currentCatalog.Store(nil)
-	registeredIndexes = map[string][]RegisteredIndex{}
-	viewRegistry = map[string]*PS.Select{}
-	matViewRegistry = map[string]*PS.Select{}
-	storeMu.Unlock()
+	DT.TablesMu.Lock()
+	DT.Tables = map[string][]Row{}
+	DT.Schemas = map[string][]string{}
+	DT.StoreMu.Lock()
+	DT.StoreSchemas = map[uint64]*StoreSchema{}
+	DT.TableIDs = map[string]uint64{}
+	DT.InMemSchemas = map[string]*StoreSchema{}
+	DT.TableIDSeq = 0
+	DT.CurrentCatalog.Store(nil)
+	DT.RegisteredIndexes = map[string][]RegisteredIndex{}
+	DT.ViewRegistry = map[string]*PS.Select{}
+	DT.MatViewRegistry = map[string]*PS.Select{}
+	DT.StoreMu.Unlock()
 	triggerMu.Lock()
 	triggerReg = map[string]*PS.TriggerStmt{}
 	tableTriggers = map[string][]*PS.TriggerStmt{}
 	triggerMu.Unlock()
+	DT.TablesMu.Unlock()
 	// Clear table schema cache for test isolation.
 	tableSchemaMu.Lock()
 	tableSchemaCache = map[string]*tableSchemaEntry{}
 	tableSchemaMu.Unlock()
 	// Clear subquery caches for test isolation.
-	ClearSubqueryCaches()
-}
-
-// UnregisterTable removes a single table from the in-memory
-// tables and schemas maps. Used by CTE cleanup to remove
-// temporary CTE tables after query execution.
-func UnregisterTable(name string) {
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
-	delete(tables, name)
-	delete(schemas, name)
-	// Clear table schema cache entry.
-	tableSchemaMu.Lock()
-	delete(tableSchemaCache, name)
-	tableSchemaMu.Unlock()
-}
-
-func cloneRow(r Row) Row {
-	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]LX.TokenType(nil), r.Types...), Outer: r.Outer, Planner: r.Planner, StoreKey: r.StoreKey, TableName: r.TableName}
-	if r.Data != nil {
-		out.Data = append([]Value(nil), r.Data...)
-	}
-	return out
+	EV.ClearSubqueryCaches()
 }
 
 // buildInsertRow materializes an INSERT row from values. The
@@ -189,7 +102,7 @@ func buildInsertRow(schema []string, cols []string, colIdx []int, values []PS.Ex
 	if len(cols) == 0 {
 		out.Data = make([]Value, len(values))
 		for i, v := range values {
-			val, err := EvalValue(v, nil, params)
+			val, err := EV.EvalValue(v, nil, params)
 			if err != nil {
 				return Row{}, err
 			}
@@ -202,11 +115,12 @@ func buildInsertRow(schema []string, cols []string, colIdx []int, values []PS.Ex
 	// REQ001030: colIdx is pre-computed by caller and passed in.
 	out.Data = make([]Value, len(schema))
 	for i := range cols {
-		val, err := EvalValue(values[i], nil, params)
+		val, err := EV.EvalValue(values[i], nil, params)
 		if err != nil {
 			return Row{}, err
 		}
 		if colIdx[i] >= 0 {
+			// REQ001030: colIdx is pre-computed by caller and passed in.
 			out.Data[colIdx[i]] = val
 		}
 	}
@@ -218,7 +132,7 @@ func buildInsertRow(schema []string, cols []string, colIdx []int, values []PS.Ex
 // (R16-1..2).
 func applyUpdate(row *Row, set []PS.Pair, params []any) error {
 	for _, p := range set {
-		val, err := EvalValue(p.Val, row, params)
+		val, err := EV.EvalValue(p.Val, row, params)
 		if err != nil {
 			return err
 		}
@@ -235,46 +149,6 @@ func applyUpdate(row *Row, set []PS.Pair, params []any) error {
 		row.Data[idx] = val
 	}
 	return nil
-}
-
-func replaceBySnapshot(table string, snapshot, updated Row) error {
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
-	existing := tables[table]
-	idx, ok := rowIndexLocked(existing, snapshot)
-	if !ok {
-		return errors.New("ex: row not found for update")
-	}
-	existing[idx] = updated
-	tables[table] = existing
-	return nil
-}
-
-func rowIndex(table string, row Row) (int, bool) {
-	tablesMu.RLock()
-	defer tablesMu.RUnlock()
-	return rowIndexLocked(tables[table], row)
-}
-
-func rowIndexLocked(rows []Row, row Row) (int, bool) {
-	for i, r := range rows {
-		if rowEqual(r, row) {
-			return i, true
-		}
-	}
-	return -1, false
-}
-
-func rowEqual(a, b Row) bool {
-	if len(a.Cols) != len(b.Cols) {
-		return false
-	}
-	for i := range a.Cols {
-		if !equalValue(a.Data[i], b.Data[i]) {
-			return false
-		}
-	}
-	return true
 }
 
 // TriggerContext provides the runtime context for trigger execution.
@@ -356,6 +230,7 @@ func buildTriggerWhenRow(ctx *TriggerContext) *Row {
 	}
 	if ctx.OldRow != nil {
 		for i, c := range ctx.OldRow.Cols {
+			// REQ001023: stack-friendly fast path for OLD row construction.
 			data = append(data, ctx.OldRow.Data[i])
 			cols = append(cols, "OLD."+c)
 		}
@@ -366,7 +241,7 @@ func buildTriggerWhenRow(ctx *TriggerContext) *Row {
 // evalTriggerWhen evaluates a trigger WHEN expression against the
 // synthetic NEW/OLD row. Returns true if the condition passes.
 func evalTriggerWhen(expr PS.Expr, row *Row, params []any) (bool, error) {
-	val, err := EvalValue(expr, row, params)
+	val, err := EV.EvalValue(expr, row, params)
 	if err != nil {
 		return false, err
 	}

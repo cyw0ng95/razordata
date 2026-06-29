@@ -3,12 +3,13 @@
 // REQ000978: replaces the flat `switch name` in evalAggregateOver
 // with a map-based registry. Adding a new aggregate is a one-line
 // registration in init() rather than editing a switch block.
-package EX
+package AG
 
 import (
 	"fmt"
 	"strings"
 
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -19,16 +20,16 @@ type aggregateFuncImpl func(agg *PS.AggregateFunc, rows []Row, params []any) (an
 
 // aggregateFuncRegistry maps an aggregate name to its
 // implementation. Populated at init time and read-only thereafter.
-var aggregateFuncRegistry = map[string]aggregateFuncImpl{}
+var AggregateFuncRegistry = map[string]aggregateFuncImpl{}
 
 // registerAggregateFunc adds an entry to the registry. Called only
 // from init; panics on duplicate registration so the build fails
 // loudly if an aggregate is added twice.
 func registerAggregateFunc(name string, impl aggregateFuncImpl) {
-	if _, exists := aggregateFuncRegistry[name]; exists {
+	if _, exists := AggregateFuncRegistry[name]; exists {
 		panic("EX: duplicate aggregate function registration: " + name)
 	}
-	aggregateFuncRegistry[name] = impl
+	AggregateFuncRegistry[name] = impl
 }
 
 func init() {
@@ -44,7 +45,7 @@ func evalAggCount(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) 
 	if agg.Distinct {
 		seen := make(map[any]bool)
 		for _, r := range rows {
-			v, err := EvalValue(agg.Arg, &r, params)
+			v, err := EV.EvalValue(agg.Arg, &r, params)
 			if err != nil {
 				return nil, err
 			}
@@ -60,7 +61,7 @@ func evalAggCount(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) 
 	}
 	var count int64
 	for _, r := range rows {
-		v, _ := EvalValue(agg.Arg, &r, params)
+		v, _ := EV.EvalValue(agg.Arg, &r, params)
 		if v.Kind != KindNull {
 			count++
 		}
@@ -76,7 +77,7 @@ func evalAggSum(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 	var sumF float64
 	var seenI, seenF bool
 	for _, r := range rows {
-		v, err := EvalValue(agg.Arg, &r, params)
+		v, err := EV.EvalValue(agg.Arg, &r, params)
 		if err != nil {
 			return nil, err
 		}
@@ -109,7 +110,7 @@ func evalAggAvg(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 	var sumF float64
 	var n int64
 	for _, r := range rows {
-		v, err := EvalValue(agg.Arg, &r, params)
+		v, err := EV.EvalValue(agg.Arg, &r, params)
 		if err != nil {
 			return nil, err
 		}
@@ -136,7 +137,7 @@ func evalAggMin(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 	}
 	var best Value
 	for _, r := range rows {
-		v, err := EvalValue(agg.Arg, &r, params)
+		v, err := EV.EvalValue(agg.Arg, &r, params)
 		if err != nil {
 			return nil, err
 		}
@@ -156,7 +157,7 @@ func evalAggMax(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 	}
 	var best Value
 	for _, r := range rows {
-		v, err := EvalValue(agg.Arg, &r, params)
+		v, err := EV.EvalValue(agg.Arg, &r, params)
 		if err != nil {
 			return nil, err
 		}
@@ -173,7 +174,7 @@ func evalAggMax(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 func evalAggGroupConcat(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 	sep := ","
 	if agg.Separator != nil {
-		sv, err := EvalValue(agg.Separator, nil, params)
+		sv, err := EV.EvalValue(agg.Separator, nil, params)
 		if err != nil {
 			return nil, err
 		}
@@ -184,7 +185,7 @@ func evalAggGroupConcat(agg *PS.AggregateFunc, rows []Row, params []any) (any, e
 	var parts []string
 	seen := make(map[any]bool)
 	for _, r := range rows {
-		v, err := EvalValue(agg.Arg, &r, params)
+		v, err := EV.EvalValue(agg.Arg, &r, params)
 		if err != nil {
 			return nil, err
 		}

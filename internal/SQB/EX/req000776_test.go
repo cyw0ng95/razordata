@@ -7,6 +7,7 @@ import (
 
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // TestCompareValue verifies REQ000776: compareValue operates directly
@@ -101,12 +102,12 @@ func TestNumericArithValue(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := numericArithValue(tc.a, tc.b, tc.op)
+			got, err := EV.NumericArithValue(tc.a, tc.b, tc.op)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if !got.Equal(tc.want) {
-				t.Errorf("numericArithValue(%v, %v, %c) = %v, want %v",
+				t.Errorf("EV.NumericArithValue(%v, %v, %c) = %v, want %v",
 					tc.a, tc.b, tc.op, got, tc.want)
 			}
 		})
@@ -117,8 +118,8 @@ func TestNumericArithValue(t *testing.T) {
 // decodeRow correctly serialize and deserialize a blob column as
 // KindBlob (not KindText as it was previously).
 func TestEncodeDecodeBlobRoundTrip(t *testing.T) {
-	schema := &storeSchema{
-		cols: []string{"data"},
+	schema := &StoreSchema{
+		Cols: []string{"data"},
 	}
 	original := Row{
 		Cols: []string{"data"},
@@ -159,7 +160,7 @@ func TestEvalInValue(t *testing.T) {
 	}
 
 	t.Run("hit", func(t *testing.T) {
-		got, err := evalInValue(expr, nil, nil)
+		got, err := EV.EvalInValue(expr, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -170,7 +171,7 @@ func TestEvalInValue(t *testing.T) {
 	t.Run("miss", func(t *testing.T) {
 		e2 := *expr
 		e2.Expr = &PS.NumberLiteral{Val: 4}
-		got, err := evalInValue(&e2, nil, nil)
+		got, err := EV.EvalInValue(&e2, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -181,7 +182,7 @@ func TestEvalInValue(t *testing.T) {
 	t.Run("null_target", func(t *testing.T) {
 		e2 := *expr
 		e2.Expr = &PS.NullLiteral{}
-		got, err := evalInValue(&e2, nil, nil)
+		got, err := EV.EvalInValue(&e2, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -192,7 +193,7 @@ func TestEvalInValue(t *testing.T) {
 	t.Run("empty_list", func(t *testing.T) {
 		e2 := *expr
 		e2.List = nil
-		got, err := evalInValue(&e2, nil, nil)
+		got, err := EV.EvalInValue(&e2, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -206,7 +207,7 @@ func TestEvalInValue(t *testing.T) {
 // use an int64-keyed map to avoid Value boxing.
 func TestEvalInHash_Int64Only(t *testing.T) {
 	// Clear the cache to ensure we test fresh state.
-	delete(inHashCacheMap, getTestInExpr())
+	delete(EV.InHashCacheMap, getTestInExpr())
 
 	expr := &PS.InExpr{
 		Expr: &PS.NumberLiteral{Val: 42},
@@ -220,7 +221,7 @@ func TestEvalInHash_Int64Only(t *testing.T) {
 	}
 
 	// Hit
-	got, err := evalInValue(expr, nil, nil)
+	got, err := EV.EvalInValue(expr, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,14 +230,14 @@ func TestEvalInHash_Int64Only(t *testing.T) {
 	}
 
 	// Verify int64Set was populated
-	cached := inHashCacheMap[expr]
+	cached := EV.InHashCacheMap[expr]
 	if cached == nil {
 		t.Fatal("expected cached entry")
 	}
-	if cached.int64Set == nil {
+	if cached.Int64Set == nil {
 		t.Error("expected int64Set to be populated for int64-only list")
 	}
-	if _, ok := cached.int64Set[42]; !ok {
+	if _, ok := cached.Int64Set[42]; !ok {
 		t.Error("expected 42 in int64Set")
 	}
 }
@@ -256,7 +257,7 @@ func TestEvalInHash_MixedTypes(t *testing.T) {
 	}
 
 	// Hit (string match shouldn't match the int target)
-	got, err := evalInValue(expr, nil, nil)
+	got, err := EV.EvalInValue(expr, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,11 +266,11 @@ func TestEvalInHash_MixedTypes(t *testing.T) {
 	}
 
 	// Verify int64Set was NOT populated
-	cached := inHashCacheMap[expr]
+	cached := EV.InHashCacheMap[expr]
 	if cached == nil {
 		t.Fatal("expected cached entry")
 	}
-	if cached.int64Set != nil {
+	if cached.Int64Set != nil {
 		t.Error("expected int64Set to be nil for mixed-type list")
 	}
 }

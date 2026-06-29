@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
@@ -13,13 +14,13 @@ import (
 // (shared/blkShared/outerShared) and the sharedBuilt flag.
 // REQ001097.
 func TestNestedLoopJoin_WithSharedSchema(t *testing.T) {
-	RegisterTable("l", []Row{
+	DT.RegisterTable("l", []Row{
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW},
 			Data: []Value{NewIntValue(1)}},
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW},
 			Data: []Value{NewIntValue(2)}},
 	})
-	RegisterTable("r", []Row{
+	DT.RegisterTable("r", []Row{
 		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW},
 			Data: []Value{NewIntValue(10)}},
 	})
@@ -59,7 +60,7 @@ func TestNestedLoopJoin_WithSharedSchema(t *testing.T) {
 // TestNestedLoopJoin_LeftJoin verifies LEFT JOIN returns all left rows
 // with NULL-padded right when no match (REQ000197).
 func TestNestedLoopJoin_LeftJoin(t *testing.T) {
-	RegisterTable("left", []Row{
+	DT.RegisterTable("left", []Row{
 		{Cols: []string{"id", "val"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(10))}},
 		{Cols: []string{"id", "val"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
@@ -67,7 +68,7 @@ func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 		{Cols: []string{"id", "val"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(3)), NewIntValue(int64(30))}},
 	})
-	RegisterTable("right", []Row{
+	DT.RegisterTable("right", []Row{
 		{Cols: []string{"id", "score"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(2)), NewIntValue(int64(200))}},
 		{Cols: []string{"id", "score"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
@@ -132,13 +133,13 @@ func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 
 // TestNestedLoopJoin_InnerJoin verifies INNER JOIN still works.
 func TestNestedLoopJoin_InnerJoin(t *testing.T) {
-	RegisterTable("l", []Row{
+	DT.RegisterTable("l", []Row{
 		{Cols: []string{"id"}, Types: []LX.TokenType{LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(1))}},
 		{Cols: []string{"id"}, Types: []LX.TokenType{LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(2))}},
 	})
-	RegisterTable("r", []Row{
+	DT.RegisterTable("r", []Row{
 		{Cols: []string{"id"}, Types: []LX.TokenType{LX.T_INT_KW},
 			Data: []Value{NewIntValue(int64(2))}},
 		{Cols: []string{"id"}, Types: []LX.TokenType{LX.T_INT_KW},
@@ -177,10 +178,10 @@ func TestNestedLoopJoin_InnerJoin(t *testing.T) {
 
 // TestNestedLoopJoin_LeftWithNilOn verifies LEFT JOIN without ON clause.
 func TestNestedLoopJoin_LeftWithNilOn(t *testing.T) {
-	RegisterTable("a", []Row{
+	DT.RegisterTable("a", []Row{
 		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}},
 	})
-	RegisterTable("b", []Row{
+	DT.RegisterTable("b", []Row{
 		{Cols: []string{"y"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(99))}},
 	})
 	defer UnregisterAll()
@@ -206,10 +207,10 @@ func TestNestedLoopJoin_LeftWithNilOn(t *testing.T) {
 
 // TestNestedLoopJoin_Close verifies Close resets state.
 func TestNestedLoopJoin_Close(t *testing.T) {
-	RegisterTable("x", []Row{
+	DT.RegisterTable("x", []Row{
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}},
 	})
-	RegisterTable("y", []Row{
+	DT.RegisterTable("y", []Row{
 		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}},
 	})
 	defer UnregisterAll()

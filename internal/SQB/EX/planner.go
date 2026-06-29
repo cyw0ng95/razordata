@@ -2,6 +2,7 @@ package EX
 
 import (
 	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"bytes"
 	"context"
 	"fmt"
@@ -17,6 +18,8 @@ import (
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // cloneExpr creates a deep copy of an expression to avoid
@@ -347,7 +350,7 @@ func (p *Planner) getTableStats(table string) *TableStats {
 	}
 
 	// First, try to get row count from in-memory tables.
-	if rows, ok := tables[table]; ok {
+	if rows, ok := DT.Tables[table]; ok {
 		ts.RowCount = int64(len(rows))
 		ts.TotalWidth = 100 // default width
 	}
@@ -476,6 +479,20 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	return &pl.PlanResult{Root: root, Cost: result.cost, MemoKey: key}, nil
 }
 
+// ExecuteSubquery plans a subquery select statement and collects all
+// results in a single slice. Implements pl.QueryPlanner.
+func (p *Planner) ExecuteSubquery(ctx context.Context, stmt PS.Stmt, outer *Row, params []any) ([]Row, error) {
+	sel, ok := stmt.(*PS.Select)
+	if !ok {
+		return nil, EV.ErrSubquery
+	}
+	planResult, err := p.Plan(sel)
+	if err != nil {
+		return nil, err
+	}
+	return runSubqueryPlan(ctx, planResult, outer, params)
+}
+
 // estimateCost returns a unitless cost for the operator tree rooted at op.
 // The model uses uniform distribution: each row is 1.0 unit, filters and
 // joins apply selectivity, sort adds a log(n) factor. Real statistics land
@@ -518,8 +535,8 @@ func (p *Planner) estimateCost(op Operator) float64 {
 			childCost = 1
 		}
 		return childCost * (1 + log2ish(childCost))
-	case *Aggregate:
-		return p.estimateCost(v.child) + 1
+	case *AG.Aggregate:
+		return p.estimateCost(v.Child()) + 1
 	case *NestedLoopJoin:
 		leftCost := p.estimateCost(v.left)
 		rightCost := p.estimateCost(v.right)
@@ -773,8 +790,8 @@ func (p *Planner) findTableForColumn(col string) string {
 		}
 	}
 	// Fallback: try SLT naming convention (e8 => t8.e).
-	tablesMu.RLock()
-	defer tablesMu.RUnlock()
+	DT.TablesMu.RLock()
+	defer DT.TablesMu.RUnlock()
 	if tbl := resolveTableForColumn(col); tbl != "" {
 		return tbl
 	}
@@ -911,7 +928,7 @@ func resolveTableForColumn(col string) string {
 		return ""
 	}
 	tbl := "t" + numStr
-	cols, ok := schemas[tbl]
+	cols, ok := DT.Schemas[tbl]
 	if !ok {
 		return ""
 	}
@@ -927,9 +944,9 @@ func resolveTableForColumn(col string) string {
 // by CREATE TABLE) to find which table owns the given column.
 // Returns empty string if not found.
 func findTableInSchemas(col string) string {
-	tablesMu.RLock()
-	defer tablesMu.RUnlock()
-	for tbl, cols := range schemas {
+	DT.TablesMu.RLock()
+	defer DT.TablesMu.RUnlock()
+	for tbl, cols := range DT.Schemas {
 		for _, c := range cols {
 			if c == col {
 				return tbl
@@ -1507,12 +1524,12 @@ func colsOf(op Operator) []string {
 	switch o := op.(type) {
 	case *SeqScan:
 		if o.schema != nil {
-			return o.schema.cols
+			return o.schema.Cols
 		}
 		return nil
 	case *IndexScan:
 		if o.schema != nil {
-			return o.schema.cols
+			return o.schema.Cols
 		}
 		return nil
 	case *NestedLoopJoin:
@@ -1536,12 +1553,12 @@ func typesOf(op Operator) []LX.TokenType {
 	switch o := op.(type) {
 	case *SeqScan:
 		if o.schema != nil {
-			return o.schema.colTypes
+			return o.schema.ColTypes
 		}
 		return nil
 	case *IndexScan:
 		if o.schema != nil {
-			return o.schema.colTypes
+			return o.schema.ColTypes
 		}
 		return nil
 	case *NestedLoopJoin:
@@ -1562,7 +1579,7 @@ func typesOf(op Operator) []LX.TokenType {
 
 func (p *Planner) planSelect(s *PS.Select) Operator {
 	// REQ000241: view resolution — expand view to underlying SELECT
-	if viewSel := LookupView(s.From); viewSel != nil {
+	if viewSel := DT.LookupView(s.From); viewSel != nil {
 		return p.resolveView(s, viewSel)
 	}
 
@@ -1804,7 +1821,7 @@ func (p *Planner) planSelectNoFrom(s *PS.Select) Operator {
 		if s.Where != nil {
 			op = NewFilter(op, s.Where)
 		}
-		agg := NewAggregate(op, s.GroupBy, s.Cols)
+		agg := AG.NewAggregate(op, s.GroupBy, s.Cols)
 		if s.Having != nil {
 			return NewFilter(agg, s.Having)
 		}
@@ -1849,7 +1866,7 @@ func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
 		if len(groupCols) == 0 {
 			groupCols = autoGroup
 		}
-		agg := NewAggregate(current, groupCols, aggExprs)
+		agg := AG.NewAggregate(current, groupCols, aggExprs)
 		current = agg
 	}
 	if len(s.Cols) > 0 && !isStarExpr(s.Cols) {
@@ -1931,7 +1948,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 		if col, val, ok := indexedColumnEq(whereExpr); ok {
 			idx, found := p.selectIndex(s.From, col)
 			if found && hasWriterIndex(s.From, idx) {
-				tableID, _ := tableIDFor(s.From)
+				tableID, _ := DT.TableIDFor(s.From)
 				if isc, err := NewIndexScanWithIndex(p.store, tableID, s.From, idx, val, nil); err == nil {
 					if whereExpr != nil {
 						scan = NewFilter(isc, whereExpr)
@@ -1949,7 +1966,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 			if col, lo, loIncl, up, upIncl, ok := indexedColumnRange(whereExpr); ok {
 				idx, found := p.selectIndex(s.From, col)
 				if found && hasWriterIndex(s.From, idx) {
-					tableID, _ := tableIDFor(s.From)
+					tableID, _ := DT.TableIDFor(s.From)
 					if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
 						scan = isc
 						if whereExpr != nil {
@@ -1964,7 +1981,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 			if col, prefix, ok := indexedColumnLikePrefix(whereExpr); ok {
 				idx, found := p.selectIndex(s.From, col)
 				if found && hasWriterIndex(s.From, idx) {
-					tableID, _ := tableIDFor(s.From)
+					tableID, _ := DT.TableIDFor(s.From)
 					upper := make([]byte, len(prefix)+1)
 					copy(upper, prefix)
 					upper[len(prefix)] = 0xff
@@ -2036,8 +2053,8 @@ func (p *Planner) pkOrderMatches(table string, orderBy []PS.OrderItem) bool {
 		return t.pk == ident.Name
 	}
 	// Fall back to the store schema if the planner catalog is unaware.
-	if ss, ok := schemaFor(table); ok {
-		return ss.pk == ident.Name
+	if ss, ok := DT.SchemaFor(table); ok {
+		return ss.Pk == ident.Name
 	}
 	return false
 }
@@ -2047,7 +2064,7 @@ func splitSelectCols(cols []PS.Expr) (aggs, groupCols, other []PS.Expr) {
 		return nil, nil, cols
 	}
 	for _, c := range cols {
-		if containsAggregate(c) {
+		if DT.ContainsAggregate(c) {
 			aggs = append(aggs, c)
 			continue
 		}
@@ -2131,7 +2148,7 @@ func foldConstants(e PS.Expr) PS.Expr {
 
 		// If both sides are constant, eval at plan time.
 		if isConstantExpr(l) && isConstantExpr(r) {
-			v, err := EvalValue(&PS.BinaryExpr{Left: l, Right: r, Op: b.Op}, nil, nil)
+			v, err := EV.EvalValue(&PS.BinaryExpr{Left: l, Right: r, Op: b.Op}, nil, nil)
 			if err == nil {
 				return valueToLiteral(v)
 			}
@@ -2371,35 +2388,8 @@ func eliminateCommonSubexpressions(where PS.Expr) PS.Expr {
 // an aggregate function.
 func hasAnyAggregate(cols []PS.Expr) bool {
 	for _, c := range cols {
-		if containsAggregate(c) {
+		if DT.ContainsAggregate(c) {
 			return true
-		}
-	}
-	return false
-}
-
-func containsAggregate(e PS.Expr) bool {
-	if e == nil {
-		return false
-	}
-	switch v := e.(type) {
-	case *PS.AggregateFunc:
-		return true
-	case *PS.WindowFunc:
-		return false
-	case *PS.BinaryExpr:
-		return containsAggregate(v.Left) || containsAggregate(v.Right)
-	case *PS.UnaryExpr:
-		return containsAggregate(v.Operand)
-	case *PS.AliasedExpr:
-		return containsAggregate(v.Expr)
-	case *PS.CastExpr:
-		return containsAggregate(v.Expr)
-	case *PS.FunctionCall:
-		for _, a := range v.Args {
-			if containsAggregate(a) {
-				return true
-			}
 		}
 	}
 	return false
@@ -2407,28 +2397,9 @@ func containsAggregate(e PS.Expr) bool {
 
 func hasAnyWindowFunc(cols []PS.Expr) bool {
 	for _, c := range cols {
-		if containsWindowFunc(c) {
+		if DT.ContainsWindowFunc(c) {
 			return true
 		}
-	}
-	return false
-}
-
-func containsWindowFunc(e PS.Expr) bool {
-	if e == nil {
-		return false
-	}
-	switch v := e.(type) {
-	case *PS.WindowFunc:
-		return true
-	case *PS.BinaryExpr:
-		return containsWindowFunc(v.Left) || containsWindowFunc(v.Right)
-	case *PS.UnaryExpr:
-		return containsWindowFunc(v.Operand)
-	case *PS.AliasedExpr:
-		return containsWindowFunc(v.Expr)
-	case *PS.CastExpr:
-		return containsWindowFunc(v.Expr)
 	}
 	return false
 }
@@ -2456,10 +2427,10 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 	// REQ001043: emit ParallelSeqScan when pool is available and
 	// the in-memory table has enough rows.
 	if p != nil && p.pool != nil {
-		tablesMu.RLock()
-		src := tables[table]
+		DT.TablesMu.RLock()
+		src := DT.Tables[table]
 		rowCount := len(src)
-		tablesMu.RUnlock()
+		DT.TablesMu.RUnlock()
 		if rowCount >= ParallelThreshold {
 			// Build schema from planner catalog (available at plan time)
 			ti := p.catalog[table]
@@ -2508,7 +2479,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 			if idx, found := p.selectIndex(table, col); found {
 				if hasWriterIndex(table, idx) {
 					if p.store != nil {
-						if tableID, ok := tableIDFor(table); ok {
+						if tableID, ok := DT.TableIDFor(table); ok {
 							if isc, err := NewIndexScanWithIndex(p.store, tableID, table, idx, seekValue, nil); err == nil {
 								return isc
 							}
@@ -2523,7 +2494,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 			if idx, found := p.selectIndex(table, col); found {
 				if hasWriterIndex(table, idx) {
 					if p.store != nil {
-						if tableID, ok := tableIDFor(table); ok {
+						if tableID, ok := DT.TableIDFor(table); ok {
 							if isc, err := NewIndexScanWithRange(p.store, tableID, table, idx, lower, lowerIncl, upper, upperIncl); err == nil {
 								return isc
 							}
@@ -2544,7 +2515,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 					copy(upper, prefix)
 					upper[len(prefix)] = 0xff
 					if p.store != nil {
-						if tableID, ok := tableIDFor(table); ok {
+						if tableID, ok := DT.TableIDFor(table); ok {
 							if isc, err := NewIndexScanWithRange(p.store, tableID, table, idx, prefix, true, upper, false); err == nil {
 								return isc
 							}
@@ -2919,7 +2890,7 @@ func (p *Planner) planInsert(s *PS.Insert) Operator {
 }
 
 func (p *Planner) planUpdate(s *PS.Update) Operator {
-	if LookupView(s.Table) != nil {
+	if DT.LookupView(s.Table) != nil {
 		return NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
 	}
 	if p.store != nil {
@@ -2938,7 +2909,7 @@ func (p *Planner) planUpdate(s *PS.Update) Operator {
 }
 
 func (p *Planner) planDelete(s *PS.Delete) Operator {
-	if LookupView(s.Table) != nil {
+	if DT.LookupView(s.Table) != nil {
 		return NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
 	}
 	if p.store != nil {
@@ -3026,10 +2997,10 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 				rows[i].Cols = cte.Cols
 			}
 		}
-		RegisterTable(cte.Name, rows)
+		DT.RegisterTable(cte.Name, rows)
 
 		var colInfos []ColInfo
-		for _, c := range schemas[cte.Name] {
+		for _, c := range DT.Schemas[cte.Name] {
 			colInfos = append(colInfos, ColInfo{Name: c})
 		}
 		p.RegisterTable(cte.Name, colInfos, "")
@@ -3056,7 +3027,7 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 	// in the planner catalog yet.
 	nonRecP, err := p.Plan(comp.Left)
 	if err != nil || nonRecP == nil || nonRecP.Root == nil {
-		RegisterTable(cte.Name, nil)
+		DT.RegisterTable(cte.Name, nil)
 		return
 	}
 	allRows := drainAllRows(ctx, nonRecP.Root)
@@ -3074,7 +3045,7 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 	}
 
 	if len(allRows) == 0 {
-		RegisterTable(cte.Name, nil)
+		DT.RegisterTable(cte.Name, nil)
 		return
 	}
 
@@ -3087,7 +3058,7 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 	p.RegisterTable(cte.Name, colInfos, "")
 
 	// Register seed rows so the inner query can see them.
-	RegisterTable(cte.Name, allRows)
+	DT.RegisterTable(cte.Name, allRows)
 
 	isUnion := comp.Op == PS.CompoundUnion
 	iterRows := allRows
@@ -3102,12 +3073,12 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 		p.mu.Unlock()
 
 		// Feed only the previous iteration's rows to the recursive arm.
-		tablesMu.Lock()
-		tables[cte.Name] = cloneRows(iterRows)
+		DT.TablesMu.Lock()
+		DT.Tables[cte.Name] = cloneRows(iterRows)
 		if len(iterRows) > 0 {
-			schemas[cte.Name] = iterRows[0].Cols
+			DT.Schemas[cte.Name] = iterRows[0].Cols
 		}
-		tablesMu.Unlock()
+		DT.TablesMu.Unlock()
 
 		recP, err := p.Plan(comp.Right)
 		if err != nil || recP == nil || recP.Root == nil {
@@ -3137,10 +3108,10 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 		allRows = append(allRows, newRows...)
 		iterRows = newRows
 
-		RegisterTable(cte.Name, allRows)
+		DT.RegisterTable(cte.Name, allRows)
 	}
 
-	RegisterTable(cte.Name, allRows)
+	DT.RegisterTable(cte.Name, allRows)
 }
 
 // drainAllRows pulls all rows from op into a slice.
@@ -3162,7 +3133,7 @@ func drainAllRows(ctx context.Context, op Operator) []Row {
 func cloneRows(rows []Row) []Row {
 	out := make([]Row, len(rows))
 	for i, r := range rows {
-		out[i] = cloneRow(r)
+		out[i] = DT.CloneRow(r)
 	}
 	return out
 }
@@ -3225,11 +3196,11 @@ func recCTESelectRefs(s *PS.Select, name string) bool {
 // REQ000787: now uses TableStats from the catalog when available.
 func (p *Planner) estimateRowCount(table string, where PS.Expr) int {
 	// REQ000780: return actual row count for in-memory tables.
-	if rows, ok := tables[table]; ok {
+	if rows, ok := DT.Tables[table]; ok {
 		return len(rows)
 	}
 	// REQ000787: use statistics-driven estimate from catalog.
-	if cat := Catalog(); cat != nil {
+	if cat := DT.Catalog(); cat != nil {
 		if ts := cat.TableStats(table); ts != nil && ts.RowCount > 0 {
 			return int(ts.RowCount)
 		}
@@ -3241,10 +3212,10 @@ func (p *Planner) estimateRowCount(table string, where PS.Expr) int {
 // Uses the global in-memory tables map first, then falls back to
 // the statistics catalog, and finally to a default of 100.
 func (p *Planner) getTableRowCount(table string) float64 {
-	if rows, ok := tables[table]; ok {
+	if rows, ok := DT.Tables[table]; ok {
 		return float64(len(rows))
 	}
-	if cat := Catalog(); cat != nil {
+	if cat := DT.Catalog(); cat != nil {
 		if ts := cat.TableStats(table); ts != nil && ts.RowCount > 0 {
 			return float64(ts.RowCount)
 		}
@@ -4318,7 +4289,7 @@ func (p *Planner) ParseAndPlan(sql string) (*pl.PlanResult, error) {
 // planner uses this to decide between the real-seek path and
 // the prefix-scan fallback.
 func hasWriterIndex(table, indexName string) bool {
-	for _, idx := range GetRegisteredIndexes(table) {
+	for _, idx := range DT.GetRegisteredIndexes(table) {
 		if idx.Name == indexName {
 			return true
 		}
@@ -4555,13 +4526,13 @@ func (p *Planner) planAggregation(s *PS.Select, current Operator) Operator {
 	}
 	estimatedRows := p.estimateRowCount(s.From, s.Where)
 	if estimatedRows >= HashAggregateThreshold {
-		agg := NewHashAggregate(current, groupCols, aggExprs)
+		agg := AG.NewHashAggregate(current, groupCols, aggExprs)
 		if isStarExpr(s.Cols) {
 			agg.SetExpandStar()
 		}
 		current = agg
 	} else {
-		agg := NewAggregate(current, groupCols, aggExprs)
+		agg := AG.NewAggregate(current, groupCols, aggExprs)
 		if isStarExpr(s.Cols) {
 			agg.SetExpandStar()
 		}
@@ -4611,7 +4582,7 @@ func (p *Planner) planOrdering(s *PS.Select, current Operator) Operator {
 				args := make([]PS.Expr, len(wf.Args))
 				copy(args, wf.Args)
 				cols := []string{"*"}
-				winOp := NewWindowOperator(current, wf.Name, args, wf.Over, cols)
+				winOp := AG.NewWindowOperator(current, wf.Name, args, wf.Over, cols)
 				current = winOp
 			}
 		}
@@ -4860,11 +4831,11 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 					if j.On != nil {
 						pred := j.On
 						on = func(outer, inner *Row) (bool, error) {
-							v, err := EvalValue(pred, inner, nil)
+							v, err := EV.EvalValue(pred, inner, nil)
 							if err != nil {
 								return false, err
 							}
-							return isValueTruthy(v), nil
+							return DT.IsValueTruthy(v), nil
 						}
 					}
 					nlj := NewNestedLoopJoin(current, rightScan, leftTbl, rightTbl, on, kind)

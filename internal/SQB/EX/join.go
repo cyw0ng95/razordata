@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
@@ -53,7 +54,7 @@ type NestedLoopJoin struct {
 	// rightIdx ≥ 0 from the right side. Built once in tryHashCrossJoin
 	// or on first NLJ row.
 	projectedLayout [][2]int // [][leftIdx, rightIdx], -1 if not on that side
-	// REQ000800: hash-based cross join for small tables.
+	// REQ000800: hash-based cross join for small DT.Tables.
 	// When both sides fit in memory, materialize both and
 	// do a hash-based cross product instead of NLJ.
 	leftRows      []Row
@@ -65,7 +66,7 @@ type NestedLoopJoin struct {
 	leftMatched   []bool // for LEFT JOIN
 	// sharedColIndex is built lazily from a sample left+right row's
 	// column layouts and reused across all emitted rows so the
-	// downstream Filter/Eval doesn't have to call buildColIndex
+	// downstream Filter/Eval doesn't have to call BuildColIndex
 	// per row. j3 perf: ~2.7GB of allocations eliminated per
 	// 1M-row benchmark run.
 	sharedColIndex map[string]int
@@ -93,7 +94,7 @@ type NestedLoopJoin struct {
 	blkResultPos int   // cursor into blkResultBuf
 	// REQ000816: blkSharedCols/ColIndex built lazily per batch,
 	// reused across all emit rows in the batch to skip per-row
-	// buildColIndex in downstream Lookup.
+	// BuildColIndex in downstream Lookup.
 	// REQ000802+: blkDataBuf/blkDataPerRow/blkDataOffset provide
 	// a shared data buffer for block-mode output rows, eliminating
 	// per-row make([]Value) allocations.
@@ -322,7 +323,7 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 		j.leftRow = nil
 		return j.Next(ctx)
 	}
-	// REQ000800: try hash cross join on first call for small tables.
+	// REQ000800: try hash cross join on first call for small DT.Tables.
 	// Guard includes leftRow == nil to avoid re-entering tryHashCrossJoin
 	// mid-NLJ iteration — after an abort the operator is partway through
 	// the NLJ loop and re-entering would re-drain the left child on
@@ -375,10 +376,10 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 			}
 			j.leftRow = &prefixed
 			// REQ000368: drive the right side through its own
-			// operator rather than the in-memory `tables` map.
+			// operator rather than the in-memory `DT.Tables` map.
 			// The in-memory map is empty for store-backed
-			// tables, which caused CROSS JOIN (and any JOIN
-			// of store-backed tables) to return zero rows.
+			// DT.Tables, which caused CROSS JOIN (and any JOIN
+			// of store-backed DT.Tables) to return zero rows.
 			j.rightPos = -1
 			j.matched = false
 		}
@@ -432,7 +433,7 @@ func (j *NestedLoopJoin) tryHashCrossJoin(ctx context.Context) bool {
 	// materialization. Hash mode is only beneficial for equi-join
 	// ON conditions (hash probe), but for cross-joins it just does
 	// a nested loop over leftRows x rightRows, pre-allocating
-	// dataBuf = O(N^2) which triggers OOM for large tables.
+	// dataBuf = O(N^2) which triggers OOM for large DT.Tables.
 	j.hashAttempted = true
 	return false
 }
@@ -511,9 +512,9 @@ func (j *NestedLoopJoin) nullRightRow() Row {
 	if j.nullRightRowCache != nil {
 		return *j.nullRightRowCache
 	}
-	tablesMu.RLock()
-	rightSchema := tables[j.rightTbl]
-	tablesMu.RUnlock()
+	DT.TablesMu.RLock()
+	rightSchema := DT.Tables[j.rightTbl]
+	DT.TablesMu.RUnlock()
 
 	nullRow := Row{
 		Cols:  prefixCols(schemaCols(rightSchema), j.rightTbl),
@@ -532,9 +533,9 @@ func (j *NestedLoopJoin) nullLeftRow() Row {
 	if j.nullLeftRowCache != nil {
 		return *j.nullLeftRowCache
 	}
-	tablesMu.RLock()
-	leftSchema := tables[j.leftTbl]
-	tablesMu.RUnlock()
+	DT.TablesMu.RLock()
+	leftSchema := DT.Tables[j.leftTbl]
+	DT.TablesMu.RUnlock()
 
 	nullRow := Row{
 		Cols:  prefixCols(schemaCols(leftSchema), j.leftTbl),
@@ -638,7 +639,7 @@ func (j *NestedLoopJoin) Close() error {
 // nextBlock implements Block Nested-Loop Join (REQ000798). Batches
 // up to batchSize left rows, materializes right side, and joins them.
 // Output rows carry the shared colIndex so downstream Lookup can
-// skip per-row buildColIndex (REQ000816).
+// skip per-row BuildColIndex (REQ000816).
 func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 	const batchSize = 64
 	// REQ000847: early exit — if limit is already satisfied, skip
@@ -861,7 +862,7 @@ matchDone:
 
 // joinRowsLL combines two rows into one output row. Callers that
 // emit rows in a tight loop must pass `sharedColIndex` and
-// `sharedCols` so the downstream Eval path can skip buildColIndex
+// `sharedCols` so the downstream Eval path can skip BuildColIndex
 // per row (REQ000816). Passing nil for colIndex is allowed but
 // forces a per-row colIndex build downstream.
 func joinRowsLL(a, b *Row) Row {

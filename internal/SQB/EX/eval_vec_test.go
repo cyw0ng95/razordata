@@ -6,7 +6,8 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	"github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // makeIntBatch creates a batch with a single int64 column.
@@ -26,7 +27,7 @@ func TestEvalBatch_Int64ColLit_EQ(t *testing.T) {
 
 	// Direct test of compareInt64ColLit (the vectorized fast path)
 	col := b.Cols[0]
-	sel := compareInt64ColLit(col, 5, LX.T_EQ, b.Size)
+	sel := EV.CompareInt64ColLit(col, 5, LX.T_EQ, b.Size)
 	expected := []uint16{1, 3, 5}
 	if !equalSelection(sel, expected) {
 		t.Errorf("col=5: got %v, want %v", sel, expected)
@@ -39,7 +40,7 @@ func TestEvalBatch_Int64ColLit_LT(t *testing.T) {
 	defer b.Put()
 
 	col := b.Cols[0]
-	sel := compareInt64ColLit(col, 5, LX.T_LT, b.Size)
+	sel := EV.CompareInt64ColLit(col, 5, LX.T_LT, b.Size)
 	expected := []uint16{0, 1, 2}
 	if !equalSelection(sel, expected) {
 		t.Errorf("col<5: got %v, want %v", sel, expected)
@@ -52,7 +53,7 @@ func TestEvalBatch_Int64ColLit_GT(t *testing.T) {
 	defer b.Put()
 
 	col := b.Cols[0]
-	sel := compareInt64ColLit(col, 5, LX.T_GT, b.Size)
+	sel := EV.CompareInt64ColLit(col, 5, LX.T_GT, b.Size)
 	expected := []uint16{4, 6}
 	if !equalSelection(sel, expected) {
 		t.Errorf("col>5: got %v, want %v", sel, expected)
@@ -71,7 +72,7 @@ func TestEvalBatch_Int64ColCol(t *testing.T) {
 		b.AdvanceSize()
 	}
 
-	sel := compareInt64Cols(b.Cols[0], b.Cols[1], LX.T_EQ, b.Size)
+	sel := EV.CompareInt64Cols(b.Cols[0], b.Cols[1], LX.T_EQ, b.Size)
 	expected := []uint16{0, 2, 4}
 	if !equalSelection(sel, expected) {
 		t.Errorf("col0=col1: got %v, want %v", sel, expected)
@@ -89,7 +90,7 @@ func TestEvalBatch_Float64ColLit(t *testing.T) {
 	}
 
 	col := b.Cols[0]
-	sel := compareFloat64ColLit(col, 3.0, LX.T_GT, b.Size)
+	sel := EV.CompareFloat64ColLit(col, 3.0, LX.T_GT, b.Size)
 	expected := []uint16{2, 3, 4}
 	if !equalSelection(sel, expected) {
 		t.Errorf("col>3.0: got %v, want %v", sel, expected)
@@ -107,7 +108,7 @@ func TestEvalBatch_StringColLit(t *testing.T) {
 	}
 
 	col := b.Cols[0]
-	sel := compareStringColLit(col, "banana", LX.T_EQ, b.Size)
+	sel := EV.CompareStringColLit(col, "banana", LX.T_EQ, b.Size)
 	expected := []uint16{1, 3}
 	if !equalSelection(sel, expected) {
 		t.Errorf("col=banana: got %v, want %v", sel, expected)
@@ -121,7 +122,7 @@ func TestEvalBatch_AllMatch(t *testing.T) {
 
 	// col > 0 matches all
 	col := b.Cols[0]
-	sel := compareInt64ColLit(col, 0, LX.T_GT, b.Size)
+	sel := EV.CompareInt64ColLit(col, 0, LX.T_GT, b.Size)
 	if sel == nil {
 		t.Error("expected non-nil selection for all-match")
 	}
@@ -136,7 +137,7 @@ func TestEvalBatch_NoMatch(t *testing.T) {
 	defer b.Put()
 
 	col := b.Cols[0]
-	sel := compareInt64ColLit(col, 100, LX.T_LT, b.Size)
+	sel := EV.CompareInt64ColLit(col, 100, LX.T_LT, b.Size)
 	if len(sel) != 0 {
 		t.Errorf("expected empty selection, got %v", sel)
 	}
@@ -146,7 +147,7 @@ func TestEvalBatch_NoMatch(t *testing.T) {
 func TestEvalBatch_EmptyBatch(t *testing.T) {
 	b := UT.GetBatch(1)
 	defer b.Put()
-	sel := EvalBatch(&PS.NumberLiteral{Val: 1}, b, nil)
+	sel := EV.EvalBatch(&PS.NumberLiteral{Val: 1}, b, nil)
 	if sel != nil {
 		t.Errorf("expected nil for empty batch, got %v", sel)
 	}
@@ -156,7 +157,7 @@ func TestEvalBatch_EmptyBatch(t *testing.T) {
 func TestEvalBatch_NilExpr(t *testing.T) {
 	b := makeIntBatch([]int64{1, 2, 3})
 	defer b.Put()
-	sel := EvalBatch(nil, b, nil)
+	sel := EV.EvalBatch(nil, b, nil)
 	if sel != nil {
 		t.Errorf("expected nil for nil expr, got %v", sel)
 	}
@@ -181,7 +182,7 @@ func TestEvalBatch_LargeBatch(t *testing.T) {
 		}
 	}
 	// Apply filter via vectorized path
-	actual := compareInt64ColLit(col, 0, LX.T_GE, n) // all match
+	actual := EV.CompareInt64ColLit(col, 0, LX.T_GE, n) // all match
 	if len(actual) != n {
 		t.Errorf("all-match: expected %d, got %d", n, len(actual))
 	}
@@ -193,7 +194,7 @@ func TestEvalBatch_LargeBatch(t *testing.T) {
 			sel5 = append(sel5, uint16(i))
 		}
 	}
-	actual5 := compareInt64ColLit(col, 5, LX.T_EQ, n)
+	actual5 := EV.CompareInt64ColLit(col, 5, LX.T_EQ, n)
 	if !equalSelection(actual5, sel5) {
 		t.Errorf("col==5: got %v, want %v", actual5, sel5)
 	}
@@ -211,8 +212,8 @@ func TestSwapOp(t *testing.T) {
 		{LX.T_EQ, LX.T_EQ},
 	}
 	for _, c := range cases {
-		if got := swapOp(c.in); got != c.want {
-			t.Errorf("swapOp(%d) = %d; want %d", c.in, got, c.want)
+		if got := EV.SwapOp(c.in); got != c.want {
+			t.Errorf("EV.SwapOp(%d) = %d; want %d", c.in, got, c.want)
 		}
 	}
 }
@@ -220,7 +221,7 @@ func TestSwapOp(t *testing.T) {
 // TestInvertSelection verifies complement of selection.
 func TestInvertSelection(t *testing.T) {
 	sel := []uint16{0, 2, 4}
-	inv := invertSelection(sel, 6)
+	inv := EV.InvertSelection(sel, 6)
 	expected := []uint16{1, 3, 5}
 	if !equalSelection(inv, expected) {
 		t.Errorf("invert: got %v, want %v", inv, expected)
@@ -258,7 +259,7 @@ func TestEvalBatch_InList(t *testing.T) {
 		},
 	}
 
-	got := EvalBatch(inExpr, b, nil)
+	got := EV.EvalBatch(inExpr, b, nil)
 	want := []uint16{0, 2, 4}
 	if !equalSelection(got, want) {
 		t.Errorf("IN(10,30,50): got %v, want %v", got, want)
@@ -269,7 +270,7 @@ func TestEvalBatch_InList(t *testing.T) {
 		Expr: &PS.Ident{Name: "c0"},
 		List: []PS.Expr{},
 	}
-	gotEmpty := EvalBatch(emptyExpr, b, nil)
+	gotEmpty := EV.EvalBatch(emptyExpr, b, nil)
 	if len(gotEmpty) != 0 {
 		t.Errorf("empty IN list: got %v, want empty", gotEmpty)
 	}
@@ -279,8 +280,8 @@ func TestEvalBatch_InList(t *testing.T) {
 		Expr: &PS.Ident{Name: "unknown"},
 		List: []PS.Expr{&PS.NumberLiteral{Val: 10}},
 	}
-	gotUnk := EvalBatch(unkExpr, b, nil)
-	// Row-at-a-time fallback: row "unknown" won't be found, so EvalValue returns error,
+	gotUnk := EV.EvalBatch(unkExpr, b, nil)
+	// Row-at-a-time fallback: row "unknown" won't be found, so EV.EvalValue returns error,
 	// and evalRowFallback skips the row (continue). No rows match.
 	if len(gotUnk) != 0 {
 		t.Errorf("unknown column IN list: got %v, want empty", gotUnk)
@@ -305,7 +306,7 @@ func TestEvalBatch_NotInList(t *testing.T) {
 		},
 	}
 
-	got := EvalBatch(notIn, b, nil)
+	got := EV.EvalBatch(notIn, b, nil)
 	want := []uint16{0, 2, 4}
 	if !equalSelection(got, want) {
 		t.Errorf("NOT IN(20,40): got %v, want %v", got, want)
@@ -332,7 +333,7 @@ func TestEvalBatch_InList_String(t *testing.T) {
 		},
 	}
 
-	got := EvalBatch(inExpr, b, nil)
+	got := EV.EvalBatch(inExpr, b, nil)
 	want := []uint16{1, 3, 4} // "b" at idx 1,3; "d" at idx 4
 	if !equalSelection(got, want) {
 		t.Errorf("IN('b','d','f'): got %v, want %v", got, want)
@@ -360,7 +361,7 @@ func TestEvalBatch_InList_Nulls(t *testing.T) {
 		},
 	}
 
-	got := EvalBatch(inExpr, b, nil)
+	got := EV.EvalBatch(inExpr, b, nil)
 	want := []uint16{0, 3, 5} // idx 2,4 are null → skipped
 	if !equalSelection(got, want) {
 		t.Errorf("IN(10,40,60) with nulls: got %v, want %v", got, want)
@@ -381,7 +382,7 @@ func TestEvalBatch_InList_NonLiteralExpr(t *testing.T) {
 		},
 	}
 	params := []any{int64(10)}
-	got := EvalBatch(inExpr, b, params)
+	got := EV.EvalBatch(inExpr, b, params)
 	want := []uint16{0}
 	if !equalSelection(got, want) {
 		t.Errorf("IN(param): got %v, want %v", got, want)
@@ -412,7 +413,7 @@ func BenchmarkEvalBatch_InList(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = EvalBatch(expr, batch, nil)
+		_ = EV.EvalBatch(expr, batch, nil)
 	}
 }
 
@@ -441,7 +442,7 @@ func BenchmarkEvalBatch_Int64EQ(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = compareInt64ColLit(col, 512, LX.T_EQ, n)
+		_ = EV.CompareInt64ColLit(col, 512, LX.T_EQ, n)
 	}
 }
 
@@ -458,7 +459,7 @@ func BenchmarkEvalBatch_Int64GT(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = compareInt64ColLit(col, 512, LX.T_GT, n)
+		_ = EV.CompareInt64ColLit(col, 512, LX.T_GT, n)
 	}
 }
 
@@ -475,7 +476,7 @@ func BenchmarkEvalBatch_StringEQ(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = compareStringColLit(col, "value", LX.T_EQ, n)
+		_ = EV.CompareStringColLit(col, "value", LX.T_EQ, n)
 	}
 }
 
@@ -505,7 +506,7 @@ func TestEvalBatch_AndOr(t *testing.T) {
 			Right: &PS.NumberLiteral{Val: 8},
 		},
 	}
-	andSel := EvalBatch(andExpr, batch, nil)
+	andSel := EV.EvalBatch(andExpr, batch, nil)
 	sort.Slice(andSel, func(i, j int) bool { return andSel[i] < andSel[j] })
 	assertUint16Slice(t, andSel, []uint16{4, 5, 6, 7})
 
@@ -523,7 +524,7 @@ func TestEvalBatch_AndOr(t *testing.T) {
 			Right: &PS.NumberLiteral{Val: 8},
 		},
 	}
-	orSel := EvalBatch(orExpr, batch, nil)
+	orSel := EV.EvalBatch(orExpr, batch, nil)
 	sort.Slice(orSel, func(i, j int) bool { return orSel[i] < orSel[j] })
 	assertUint16Slice(t, orSel, []uint16{0, 1, 9})
 }

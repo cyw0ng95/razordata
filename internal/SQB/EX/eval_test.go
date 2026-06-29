@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -95,7 +97,7 @@ func TestEval(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := EvalValue(tc.expr, nil, tc.params)
+			got, err := EV.EvalValue(tc.expr, nil, tc.params)
 			if tc.err {
 				if err == nil {
 					t.Errorf("expected error, got nil")
@@ -133,9 +135,9 @@ func TestEvalLike(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := matchLike(c.pattern, c.s, "")
+			got := EV.MatchLike(c.pattern, c.s, "")
 			if got != c.want {
-				t.Errorf("matchLike(%q, %q) = %v, want %v", c.pattern, c.s, got, c.want)
+				t.Errorf("EV.MatchLike(%q, %q) = %v, want %v", c.pattern, c.s, got, c.want)
 			}
 		})
 	}
@@ -160,9 +162,9 @@ func TestEvalLikeEscape(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := matchLike(c.pattern, c.s, c.escape)
+			got := EV.MatchLike(c.pattern, c.s, c.escape)
 			if got != c.want {
-				t.Errorf("matchLike(%q, %q, %q) = %v, want %v", c.pattern, c.s, c.escape, got, c.want)
+				t.Errorf("EV.MatchLike(%q, %q, %q) = %v, want %v", c.pattern, c.s, c.escape, got, c.want)
 			}
 		})
 	}
@@ -184,7 +186,7 @@ func TestEvalNullArithmetic(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := EvalValue(c.expr, nil, nil)
+			got, err := EV.EvalValue(c.expr, nil, nil)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -216,7 +218,7 @@ func TestEvalCast(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := EvalValue(c.expr, nil, nil)
+			got, err := EV.EvalValue(c.expr, nil, nil)
 			if c.err {
 				if err == nil {
 					t.Errorf("expected error, got nil")
@@ -249,9 +251,9 @@ func TestEvalCrossTypeEq(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := equalValue(c.a, c.b)
+			got := DT.EqualValueAny(c.a, c.b)
 			if got != c.want {
-				t.Errorf("equalValue(%v, %v) = %v, want %v", c.a, c.b, got, c.want)
+				t.Errorf("DT.EqualValueAny(%v, %v) = %v, want %v", c.a, c.b, got, c.want)
 			}
 		})
 	}
@@ -297,7 +299,7 @@ func TestSeqScanEmpty(t *testing.T) {
 func TestFilterPassesThrough(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	RegisterTable("t", []Row{
+	DT.RegisterTable("t", []Row{
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(1))}},
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(2))}},
 	})
@@ -315,7 +317,7 @@ func TestFilterPassesThrough(t *testing.T) {
 func TestProjectStarPassesThrough(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	RegisterTable("t", []Row{
+	DT.RegisterTable("t", []Row{
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(7))}},
 	})
 	scan := NewSeqScan("t")
@@ -332,7 +334,7 @@ func TestProjectStarPassesThrough(t *testing.T) {
 func TestSortThenIterate(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	RegisterTable("t", []Row{
+	DT.RegisterTable("t", []Row{
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(3))}},
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(1))}},
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(2))}},
@@ -357,7 +359,7 @@ func TestSortThenIterate(t *testing.T) {
 func TestLimitStops(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	RegisterTable("t", []Row{
+	DT.RegisterTable("t", []Row{
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(1))}},
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(2))}},
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(3))}},
@@ -383,7 +385,7 @@ func TestLimitStops(t *testing.T) {
 func TestInsertAppendsRows(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	RegisterTable("t", []Row{{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(0))}}})
+	DT.RegisterTable("t", []Row{{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(0))}}})
 	insert := NewInsert("t", nil, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}},
 		{&PS.NumberLiteral{Val: 2}},
@@ -395,17 +397,17 @@ func TestInsertAppendsRows(t *testing.T) {
 	if insert.RowsAffected() != 2 {
 		t.Errorf("expected 2 rows affected, got %d", insert.RowsAffected())
 	}
-	tablesMu.RLock()
-	defer tablesMu.RUnlock()
-	if len(tables["t"]) != 3 {
-		t.Errorf("expected 3 rows in table (1 seed + 2 inserts), got %d", len(tables["t"]))
+	DT.TablesMu.RLock()
+	defer DT.TablesMu.RUnlock()
+	if len(DT.Tables["t"]) != 3 {
+		t.Errorf("expected 3 rows in table (1 seed + 2 inserts), got %d", len(DT.Tables["t"]))
 	}
 }
 
 func TestUpdateModifiesRows(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	RegisterTable("t", []Row{
+	DT.RegisterTable("t", []Row{
 		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("x")}},
 		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("y")}},
 	})
@@ -418,9 +420,9 @@ func TestUpdateModifiesRows(t *testing.T) {
 	if update.RowsAffected() != 2 {
 		t.Errorf("expected 2 rows affected, got %d", update.RowsAffected())
 	}
-	tablesMu.RLock()
-	defer tablesMu.RUnlock()
-	for _, r := range tables["t"] {
+	DT.TablesMu.RLock()
+	defer DT.TablesMu.RUnlock()
+	for _, r := range DT.Tables["t"] {
 		if !r.Data[1].Equal(NewTextValue("z")) {
 			t.Errorf("expected b='z', got %v", r.Data[1])
 		}
@@ -430,7 +432,7 @@ func TestUpdateModifiesRows(t *testing.T) {
 func TestDeleteRemovesMatching(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	RegisterTable("t", []Row{
+	DT.RegisterTable("t", []Row{
 		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(1))}},
 		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(2))}},
 		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(3))}},
@@ -447,13 +449,13 @@ func TestDeleteRemovesMatching(t *testing.T) {
 	if del.RowsAffected() != 2 {
 		t.Errorf("expected 2 rows affected, got %d", del.RowsAffected())
 	}
-	tablesMu.RLock()
-	defer tablesMu.RUnlock()
-	if len(tables["t"]) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(tables["t"]))
+	DT.TablesMu.RLock()
+	defer DT.TablesMu.RUnlock()
+	if len(DT.Tables["t"]) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(DT.Tables["t"]))
 	}
-	if !tables["t"][0].Data[0].Equal(NewIntValue(int64(1))) {
-		t.Errorf("expected row 1 to remain, got %v", tables["t"][0].Data[0])
+	if !DT.Tables["t"][0].Data[0].Equal(NewIntValue(int64(1))) {
+		t.Errorf("expected row 1 to remain, got %v", DT.Tables["t"][0].Data[0])
 	}
 }
 
@@ -549,21 +551,21 @@ func TestCreateAndDropTable(t *testing.T) {
 	if err != ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
 	}
-	tablesMu.RLock()
-	if _, ok := tables["new"]; !ok {
+	DT.TablesMu.RLock()
+	if _, ok := DT.Tables["new"]; !ok {
 		t.Error("expected table to be created")
 	}
-	tablesMu.RUnlock()
+	DT.TablesMu.RUnlock()
 	dt := NewDropTable(&PS.DropTable{Name: "new"})
 	_, err = dt.Next(context.Background())
 	if err != ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
 	}
-	tablesMu.RLock()
-	if _, ok := tables["new"]; ok {
+	DT.TablesMu.RLock()
+	if _, ok := DT.Tables["new"]; ok {
 		t.Error("expected table to be dropped")
 	}
-	tablesMu.RUnlock()
+	DT.TablesMu.RUnlock()
 }
 
 func TestGlob_BinaryOp(t *testing.T) {
@@ -580,7 +582,7 @@ func TestGlob_BinaryOp(t *testing.T) {
 		{"h?llo", "hllo", false},
 	}
 	for _, tc := range cases {
-		got, err := globValue(NewTextValue(tc.pattern), NewTextValue(tc.s))
+		got, err := EV.GlobValue(NewTextValue(tc.pattern), NewTextValue(tc.s))
 		if err != nil {
 			t.Fatalf("glob(%q, %q): %v", tc.pattern, tc.s, err)
 		}

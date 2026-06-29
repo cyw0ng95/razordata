@@ -1,8 +1,9 @@
-package EX
+package EV
 
 import (
 	"slices"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -86,7 +87,7 @@ func evalBinaryBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
 	if rightIsCol {
 		litVal, litOk := evalLiteral(e.Left, params)
 		if litOk {
-			return compareColLiteral(rightCol, litVal, swapOp(e.Op), batch)
+			return compareColLiteral(rightCol, litVal, SwapOp(e.Op), batch)
 		}
 	}
 
@@ -124,7 +125,7 @@ func evalUnaryBatch(e *PS.UnaryExpr, batch *UT.Batch, params []any) []uint16 {
 			return nil
 		}
 		// Invert
-		return invertSelection(inner, batch.Size)
+		return InvertSelection(inner, batch.Size)
 	}
 	// Other unary ops: row-at-a-time
 	return evalRowFallback(e, batch, params)
@@ -193,7 +194,7 @@ func compareColumns(left, right UT.Column, op LX.TokenType, batch *UT.Batch) []u
 
 	switch left.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
-		return compareInt64Cols(left, right, op, batch.Size)
+		return CompareInt64Cols(left, right, op, batch.Size)
 	case LX.T_FLOAT_KW:
 		return compareFloat64Cols(left, right, op, batch.Size)
 	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
@@ -207,15 +208,15 @@ func compareColLiteral(col UT.Column, lit any, op LX.TokenType, batch *UT.Batch)
 	switch col.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
 		if v, ok := lit.(int64); ok {
-			return compareInt64ColLit(col, v, op, batch.Size)
+			return CompareInt64ColLit(col, v, op, batch.Size)
 		}
 	case LX.T_FLOAT_KW:
 		if v, ok := lit.(float64); ok {
-			return compareFloat64ColLit(col, v, op, batch.Size)
+			return CompareFloat64ColLit(col, v, op, batch.Size)
 		}
 	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
 		if v, ok := lit.(string); ok {
-			return compareStringColLit(col, v, op, batch.Size)
+			return CompareStringColLit(col, v, op, batch.Size)
 		}
 	}
 	return evalRowFallback(&PS.BinaryExpr{Op: op}, batch, nil)
@@ -229,7 +230,7 @@ func isNull(col UT.Column, i int) bool {
 
 // compareInt64Cols: hoisted-operator int64 column-column comparison.
 // REQ000608: skip rows where either side is NULL.
-func compareInt64Cols(left, right UT.Column, op LX.TokenType, n int) []uint16 {
+func CompareInt64Cols(left, right UT.Column, op LX.TokenType, n int) []uint16 {
 	l := left.Data.Ints
 	r := right.Data.Ints
 	switch op {
@@ -329,7 +330,7 @@ func cmpInt64ColsGE(l, r []int64, lc, rc UT.Column, n int) []uint16 {
 
 // compareInt64ColLit: hoisted-operator int64 column-literal comparison.
 // REQ000608: skip NULL rows.
-func compareInt64ColLit(col UT.Column, lit int64, op LX.TokenType, n int) []uint16 {
+func CompareInt64ColLit(col UT.Column, lit int64, op LX.TokenType, n int) []uint16 {
 	data := col.Data.Ints
 	switch op {
 	case LX.T_EQ:
@@ -528,7 +529,7 @@ func cmpFloat64ColsGE(l, r []float64, lc, rc UT.Column, n int) []uint16 {
 
 // compareFloat64ColLit: hoisted-operator float64 column-literal comparison.
 // REQ000608: skip NULL rows.
-func compareFloat64ColLit(col UT.Column, lit float64, op LX.TokenType, n int) []uint16 {
+func CompareFloat64ColLit(col UT.Column, lit float64, op LX.TokenType, n int) []uint16 {
 	data := col.Data.Floats
 	switch op {
 	case LX.T_EQ:
@@ -727,7 +728,7 @@ func cmpStringColsGE(l, r []string, lc, rc UT.Column, n int) []uint16 {
 
 // compareStringColLit: hoisted-operator string column-literal comparison.
 // REQ000608: skip NULL rows.
-func compareStringColLit(col UT.Column, lit string, op LX.TokenType, n int) []uint16 {
+func CompareStringColLit(col UT.Column, lit string, op LX.TokenType, n int) []uint16 {
 	data := col.Data.Strs
 	switch op {
 	case LX.T_EQ:
@@ -826,7 +827,7 @@ func cmpStringLitGE(data []string, lit string, col UT.Column, n int) []uint16 {
 
 // swapOp swaps the operator for column-literal evaluation.
 // e.g., "5 < x" becomes "x > 5".
-func swapOp(op LX.TokenType) LX.TokenType {
+func SwapOp(op LX.TokenType) LX.TokenType {
 	switch op {
 	case LX.T_LT:
 		return LX.T_GT
@@ -908,7 +909,7 @@ func unionSelection(a, b []uint16, n int) []uint16 {
 // invertSelection returns the complement of the selection vector
 // within [0, n). E.g., sel=[0,2,4] with n=6 -> [1,3,5].
 // Uses a [UT.BatchSize]bool bitmap instead of a map for zero allocation.
-func invertSelection(sel []uint16, n int) []uint16 {
+func InvertSelection(sel []uint16, n int) []uint16 {
 	var bitmap [UT.BatchSize]bool
 	for _, idx := range sel {
 		if int(idx) < UT.BatchSize {
@@ -956,13 +957,13 @@ func batchToRow(batch *UT.Batch, idx int) *Row {
 			continue
 		}
 		row.Cols = append(row.Cols, batch.Cols[c].Name)
-		row.Data = append(row.Data, valueFromAny(batchValueAt(batch.Cols[c], idx)))
+		row.Data = append(row.Data, DT.ValueFromAny(BatchValueAt(batch.Cols[c], idx)))
 	}
 	return row
 }
 
-// batchValueAt extracts the i-th value from a column.
-func batchValueAt(col UT.Column, i int) any {
+// BatchValueAt extracts the i-th value from a column.
+func BatchValueAt(col UT.Column, i int) any {
 	if col.Nulls != nil && i < len(col.Nulls) && col.Nulls[i] {
 		return nil
 	}

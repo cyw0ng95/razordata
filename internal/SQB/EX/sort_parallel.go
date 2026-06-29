@@ -7,6 +7,8 @@ import (
 
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
@@ -462,7 +464,7 @@ func batchToRows(batch *UT.Batch) []Row {
 			Data:  make([]Value, len(cols)),
 		}
 		for j, colName := range cols {
-			row.Data[j] = valueFromAny(batchValueAt(batch.Cols[j], i))
+			row.Data[j] = DT.ValueFromAny(EV.BatchValueAt(batch.Cols[j], i))
 			_ = colName
 		}
 		rows = append(rows, row)

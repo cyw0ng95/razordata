@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -12,9 +14,9 @@ import (
 
 func benchFixture(rows int) {
 	UnregisterAll()
-	RegisterTableSchema("t", []string{"id", "name", "age"})
-	tablesMu.Lock()
-	existing := tables["t"]
+	DT.RegisterTableSchema("t", []string{"id", "name", "age"})
+	DT.TablesMu.Lock()
+	existing := DT.Tables["t"]
 	for i := 0; i < rows; i++ {
 		out := Row{
 			Cols: []string{"id", "name", "age"},
@@ -22,8 +24,8 @@ func benchFixture(rows int) {
 		}
 		existing = append(existing, out)
 	}
-	tables["t"] = existing
-	tablesMu.Unlock()
+	DT.Tables["t"] = existing
+	DT.TablesMu.Unlock()
 }
 
 func BenchmarkExecutorQueryAll(b *testing.B) {
@@ -47,14 +49,14 @@ func BenchmarkExecutorQueryAll(b *testing.B) {
 func BenchmarkEqualValue_IntInt(b *testing.B) {
 	// Direct function call benchmark (no Eval overhead).
 	for i := 0; i < b.N; i++ {
-		equalValue(int64(i), int64(i+1))
+		DT.EqualValueAny(int64(i), int64(i+1))
 	}
 }
 
 // BenchmarkEqualValue_StringString benchmarks the string comparison path.
 func BenchmarkEqualValue_StringString(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		equalValue("test", "test")
+		DT.EqualValueAny("test", "test")
 	}
 }
 
@@ -90,7 +92,7 @@ func BenchmarkNumericArithValue_IntAdd(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		numericArithValue(a, c, '+')
+		EV.NumericArithValue(a, c, '+')
 	}
 }
 
@@ -110,7 +112,7 @@ func BenchmarkEvalBinaryComparison(b *testing.B) {
 	// Old path: any-based compare (still goes through interface dispatch).
 	oldFn := func(row *Row) any {
 		v, _ := row.Lookup("x")
-		r := compare(v, int64(50))
+		r := DT.Compare(v, int64(50))
 		return r < 0
 	}
 	// New path: Value-based compareValue (REQ000776 — direct Kind switch).
@@ -166,7 +168,7 @@ func BenchmarkExecutorCountStar(b *testing.B) {
 
 func BenchmarkExecutorInsert(b *testing.B) {
 	UnregisterAll()
-	RegisterTableSchema("t", []string{"id", "name", "age"})
+	DT.RegisterTableSchema("t", []string{"id", "name", "age"})
 	ex := NewExecutor()
 	ctx := context.Background()
 	b.ResetTimer()
@@ -180,7 +182,7 @@ func BenchmarkExecutorInsert(b *testing.B) {
 
 func BenchmarkPlannerMemoization(b *testing.B) {
 	UnregisterAll()
-	RegisterTableSchema("t", []string{"id", "name", "age"})
+	DT.RegisterTableSchema("t", []string{"id", "name", "age"})
 	ex := NewExecutor()
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 'x', 10)")
@@ -198,7 +200,7 @@ func BenchmarkPlannerMemoization(b *testing.B) {
 
 func BenchmarkExecutorGroupBy(b *testing.B) {
 	UnregisterAll()
-	RegisterTableSchema("t", []string{"category", "amount"})
+	DT.RegisterTableSchema("t", []string{"category", "amount"})
 	ex := NewExecutor()
 	ctx := context.Background()
 	for i := 0; i < 1000; i++ {
@@ -215,8 +217,8 @@ func BenchmarkExecutorGroupBy(b *testing.B) {
 
 func BenchmarkExecutorInnerJoin(b *testing.B) {
 	UnregisterAll()
-	RegisterTableSchema("a", []string{"id", "x"})
-	RegisterTableSchema("b", []string{"a_id", "y"})
+	DT.RegisterTableSchema("a", []string{"id", "x"})
+	DT.RegisterTableSchema("b", []string{"a_id", "y"})
 	ex := NewExecutor()
 	ctx := context.Background()
 	for i := 0; i < 200; i++ {
@@ -323,26 +325,26 @@ func BenchmarkUniqueInsert(b *testing.B) {
 func setupJ3Tables(b *testing.B, n int) {
 	b.Helper()
 	UnregisterAll()
-	RegisterTableSchema("t1", []string{"id", "a", "b", "c", "d"})
-	RegisterTableSchema("t2", []string{"id", "a", "b", "c", "d"})
-	RegisterTableSchema("t3", []string{"id", "a", "b", "c", "d"})
-	tablesMu.Lock()
+	DT.RegisterTableSchema("t1", []string{"id", "a", "b", "c", "d"})
+	DT.RegisterTableSchema("t2", []string{"id", "a", "b", "c", "d"})
+	DT.RegisterTableSchema("t3", []string{"id", "a", "b", "c", "d"})
+	DT.TablesMu.Lock()
 	for i := 0; i < n; i++ {
 		v := int64(i)
-		tables["t1"] = append(tables["t1"], Row{
+		DT.Tables["t1"] = append(DT.Tables["t1"], Row{
 			Cols: []string{"id", "a", "b", "c", "d"},
 			Data: []Value{NewIntValue(v), NewIntValue(v % 100), NewIntValue(v % 50), NewIntValue(v % 25), NewIntValue(v % 10)},
 		})
-		tables["t2"] = append(tables["t2"], Row{
+		DT.Tables["t2"] = append(DT.Tables["t2"], Row{
 			Cols: []string{"id", "a", "b", "c", "d"},
 			Data: []Value{NewIntValue(v), NewIntValue(v % 100), NewIntValue(v % 50), NewIntValue(v % 25), NewIntValue(v % 10)},
 		})
-		tables["t3"] = append(tables["t3"], Row{
+		DT.Tables["t3"] = append(DT.Tables["t3"], Row{
 			Cols: []string{"id", "a", "b", "c", "d"},
 			Data: []Value{NewIntValue(v), NewIntValue(v % 100), NewIntValue(v % 50), NewIntValue(v % 25), NewIntValue(v % 10)},
 		})
 	}
-	tablesMu.Unlock()
+	DT.TablesMu.Unlock()
 }
 
 func BenchmarkJ3_Mixed(b *testing.B) {
@@ -502,24 +504,24 @@ func (s *sliceRowOp) Close() error {
 	return nil
 }
 
-// select4-style fixture: 8 tables with 100 rows each (5 int cols).
+// select4-style fixture: 8 DT.Tables with 100 rows each (5 int cols).
 func setupSelect4Tables(b *testing.B, n int) {
 	b.Helper()
 	UnregisterAll()
 	for i := 1; i <= 9; i++ {
 		name := fmt.Sprintf("t%d", i)
 		if i == 4 {
-			RegisterTableSchema("t4", []string{"a", "b", "c", "d", "e"})
+			DT.RegisterTableSchema("t4", []string{"a", "b", "c", "d", "e"})
 			continue
 		}
 		if i == 6 {
-			RegisterTableSchema("tn2", []string{"a", "b", "c", "d", "e"})
-			RegisterTableSchema("t6", []string{"a", "b", "c", "d", "e"})
+			DT.RegisterTableSchema("tn2", []string{"a", "b", "c", "d", "e"})
+			DT.RegisterTableSchema("t6", []string{"a", "b", "c", "d", "e"})
 			continue
 		}
-		RegisterTableSchema(name, []string{"a", "b", "c", "d", "e"})
+		DT.RegisterTableSchema(name, []string{"a", "b", "c", "d", "e"})
 	}
-	tablesMu.Lock()
+	DT.TablesMu.Lock()
 	for i := 1; i <= 9; i++ {
 		if i == 4 {
 			continue
@@ -531,7 +533,7 @@ func setupSelect4Tables(b *testing.B, n int) {
 		for _, name := range names {
 			for j := 0; j < n; j++ {
 				v := int64(j)
-				tables[name] = append(tables[name], Row{
+				DT.Tables[name] = append(DT.Tables[name], Row{
 					Cols: []string{"a", "b", "c", "d", "e"},
 					Data: []Value{
 						NewIntValue(v % 1000),
@@ -544,12 +546,12 @@ func setupSelect4Tables(b *testing.B, n int) {
 			}
 		}
 	}
-	tablesMu.Unlock()
-	RegisterTableSchema("t4", []string{"a", "b", "c", "d", "e"})
-	tablesMu.Lock()
+	DT.TablesMu.Unlock()
+	DT.RegisterTableSchema("t4", []string{"a", "b", "c", "d", "e"})
+	DT.TablesMu.Lock()
 	for j := 0; j < n; j++ {
 		v := int64(j)
-		tables["t4"] = append(tables["t4"], Row{
+		DT.Tables["t4"] = append(DT.Tables["t4"], Row{
 			Cols: []string{"a", "b", "c", "d", "e"},
 			Data: []Value{
 				NewIntValue(v % 1000),
@@ -560,7 +562,7 @@ func setupSelect4Tables(b *testing.B, n int) {
 			},
 		})
 	}
-	tablesMu.Unlock()
+	DT.TablesMu.Unlock()
 }
 
 // BenchmarkSelect4_CompoundUnion replicates the ~8.5s slow query pattern:
@@ -688,7 +690,7 @@ func BenchmarkEvalInHash_Int_Value(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, err := evalInHashValue(expr, NewIntValue(42), nil, nil)
+		_, err := EV.EvalInHashValue(expr, NewIntValue(42), nil, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -706,7 +708,7 @@ func BenchmarkEvalInHash_Int_Legacy(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, err := evalInHash(expr, int64(42), nil, nil)
+		_, err := EV.EvalInHash(expr, int64(42), nil, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -724,7 +726,7 @@ func BenchmarkEvalInHash_String_Value(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, err := evalInHashValue(expr, NewTextValue("target"), nil, nil)
+		_, err := EV.EvalInHashValue(expr, NewTextValue("target"), nil, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -742,7 +744,7 @@ func BenchmarkEvalInHash_String_Legacy(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, err := evalInHash(expr, "target", nil, nil)
+		_, err := EV.EvalInHash(expr, "target", nil, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -756,7 +758,7 @@ func BenchmarkEvalInHash_String_Legacy(b *testing.B) {
 func BenchmarkPlanner_N3WithMemoization(b *testing.B) {
 	UnregisterAll()
 	for i := 1; i <= 7; i++ {
-		RegisterTableSchema(fmt.Sprintf("t%d", i),
+		DT.RegisterTableSchema(fmt.Sprintf("t%d", i),
 			[]string{"a", "b", "c", "d", "e"})
 	}
 	p := NewPlanner()
@@ -796,7 +798,7 @@ func BenchmarkPlanner_N3WithMemoization(b *testing.B) {
 func BenchmarkPlanner_N3SingleStart(b *testing.B) {
 	UnregisterAll()
 	for i := 1; i <= 7; i++ {
-		RegisterTableSchema(fmt.Sprintf("t%d", i),
+		DT.RegisterTableSchema(fmt.Sprintf("t%d", i),
 			[]string{"a", "b", "c", "d", "e"})
 	}
 	p := NewPlanner()

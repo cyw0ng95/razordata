@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// ResetForTest clears the package-level tables and schemas
+// ResetForTest clears the package-level DT.Tables and schemas
 // maps and arranges a Cleanup that re-clears after the test
 // returns. Tests that call RegisterTable, RegisterTableSchema,
 // or RegisterTableWithPK MUST call ResetForTest at the top

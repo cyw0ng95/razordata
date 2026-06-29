@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // CreateViewOperator registers a view definition (REQ000240).
@@ -25,15 +27,15 @@ func (c *CreateViewOperator) Next(_ context.Context) (Row, error) {
 	c.done = true
 
 	// REQ000825: reject duplicate view names.
-	if LookupView(c.stmt.Name) != nil {
+	if DT.LookupView(c.stmt.Name) != nil {
 		return Row{}, fmt.Errorf("ex: view %q already exists", c.stmt.Name)
 	}
 
 	sel, ok := c.stmt.As.(*PS.Select)
 	if !ok {
-		return Row{}, ErrEval
+		return Row{}, EV.ErrEval
 	}
-	RegisterView(c.stmt.Name, sel)
+	DT.RegisterView(c.stmt.Name, sel)
 
 	return Row{
 		Cols: []string{"result"},

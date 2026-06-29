@@ -210,6 +210,9 @@ type PlanResult struct {
 // lives in SQB/EX (the planner.go file).
 type QueryPlanner interface {
 	Plan(stmt PS.Stmt) (*PlanResult, error)
+	// ExecuteSubquery plans and executes a subquery statement in one call.
+	// outer carries correlated column references; params are bound arguments.
+	ExecuteSubquery(ctx context.Context, stmt PS.Stmt, outer *Row, params []any) ([]Row, error)
 	RegisterTable(name string, cols []ColInfo, pk string)
 	RegisterIndex(table, index string, cols []string)
 	SetPool(pool WorkerPool)

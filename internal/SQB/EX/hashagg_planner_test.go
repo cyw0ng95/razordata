@@ -4,8 +4,10 @@ import (
 	"context"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 )
 
 // TestHashAggregateThreshold verifies the threshold constant
@@ -17,7 +19,7 @@ func TestHashAggregateThreshold(t *testing.T) {
 }
 
 // TestEstimateRowCount verifies estimateRowCount for
-// non-existent tables returns the default estimate of 100.
+// non-existent DT.Tables returns the default estimate of 100.
 func TestEstimateRowCount(t *testing.T) {
 	p := NewPlanner()
 	got := p.estimateRowCount("nonexistent", nil)
@@ -42,16 +44,16 @@ func TestHashAggregate_AggregateEquivalence(t *testing.T) {
 		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
 			Data: []Value{NewTextValue("A"), NewIntValue(int64(30))}},
 	}
-	RegisterTable("equivalence_test", rows)
+	DT.RegisterTable("equivalence_test", rows)
 	defer UnregisterAll()
 
 	groupCols := []PS.Expr{&PS.Ident{Name: "category"}}
 	aggExprs := []PS.Expr{&PS.AggregateFunc{Name: "SUM", Arg: &PS.Ident{Name: "value"}}}
 
 	// HashAggregate
-	RegisterTable("hashagg_test", rows)
+	DT.RegisterTable("hashagg_test", rows)
 	scan := NewSeqScan("hashagg_test")
-	ha := NewHashAggregate(scan, groupCols, aggExprs)
+	ha := AG.NewHashAggregate(scan, groupCols, aggExprs)
 
 	haResults := make(map[string]int64)
 	for {

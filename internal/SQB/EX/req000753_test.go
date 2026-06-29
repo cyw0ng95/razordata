@@ -4,9 +4,11 @@ package EX
 
 import (
 	"testing"
+
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
-// TestCompareFastPath verifies REQ000753: compare() has int64-int64
+// TestCompareFastPath verifies REQ000753: DT.Compare() has int64-int64
 // and float64-float64 fast paths that avoid float64 conversion.
 func TestCompareFastPath(t *testing.T) {
 	tests := []struct {
@@ -31,9 +33,9 @@ func TestCompareFastPath(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := compare(tc.a, tc.b)
+			got := DT.Compare(tc.a, tc.b)
 			if got != tc.want {
-				t.Errorf("compare(%v, %v) = %d, want %d", tc.a, tc.b, got, tc.want)
+				t.Errorf("DT.Compare(%v, %v) = %d, want %d", tc.a, tc.b, got, tc.want)
 			}
 		})
 	}

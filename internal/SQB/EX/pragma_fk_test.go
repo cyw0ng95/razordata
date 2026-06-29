@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
@@ -91,23 +92,23 @@ func TestPragma_ForeignKeyCheck_NoViolations(t *testing.T) {
 	UT.UnregisterAllPragmaListeners()
 	defer UT.UnregisterAllPragmaListeners()
 
-	parent := &storeSchema{cols: []string{"id"}, pk: "id"}
-	child := &storeSchema{
-		cols:        []string{"id", "pid"},
-		pk:          "id",
-		foreignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+	parent := &StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &StoreSchema{
+		Cols:        []string{"id", "pid"},
+		Pk:          "id",
+		ForeignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
 	}
-	storeSchemas[1] = parent
-	storeSchemas[2] = child
-	tableIDs["p"] = 1
-	tableIDs["c"] = 2
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
 
 	// Parent has id=1,2,3. Child references valid parent ids.
-	tables["p"] = []Row{
+	DT.Tables["p"] = []Row{
 		{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}},
 		{Cols: []string{"id"}, Data: []Value{NewIntValue(2)}},
 	}
-	tables["c"] = []Row{
+	DT.Tables["c"] = []Row{
 		{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(10), NewIntValue(1)}},
 		{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(20), NewIntValue(2)}},
 	}
@@ -125,22 +126,22 @@ func TestPragma_ForeignKeyCheck_Violation(t *testing.T) {
 	UT.UnregisterAllPragmaListeners()
 	defer UT.UnregisterAllPragmaListeners()
 
-	parent := &storeSchema{cols: []string{"id"}, pk: "id"}
-	child := &storeSchema{
-		cols:        []string{"id", "pid"},
-		pk:          "id",
-		foreignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+	parent := &StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &StoreSchema{
+		Cols:        []string{"id", "pid"},
+		Pk:          "id",
+		ForeignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
 	}
-	storeSchemas[1] = parent
-	storeSchemas[2] = child
-	tableIDs["p"] = 1
-	tableIDs["c"] = 2
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
 
-	tables["p"] = []Row{
+	DT.Tables["p"] = []Row{
 		{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}},
 	}
 	// Child has pid=99 which does NOT exist in parent.
-	tables["c"] = []Row{
+	DT.Tables["c"] = []Row{
 		{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(10), NewIntValue(99)}},
 	}
 
@@ -161,21 +162,21 @@ func TestPragma_ForeignKeyCheck_SpecificTable(t *testing.T) {
 	UT.UnregisterAllPragmaListeners()
 	defer UT.UnregisterAllPragmaListeners()
 
-	parent := &storeSchema{cols: []string{"id"}, pk: "id"}
-	child := &storeSchema{
-		cols:        []string{"id", "pid"},
-		pk:          "id",
-		foreignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+	parent := &StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &StoreSchema{
+		Cols:        []string{"id", "pid"},
+		Pk:          "id",
+		ForeignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
 	}
-	storeSchemas[1] = parent
-	storeSchemas[2] = child
-	tableIDs["p"] = 1
-	tableIDs["c"] = 2
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
 
-	tables["p"] = []Row{
+	DT.Tables["p"] = []Row{
 		{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}},
 	}
-	tables["c"] = []Row{
+	DT.Tables["c"] = []Row{
 		{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(10), NewIntValue(99)}},
 	}
 
@@ -200,22 +201,22 @@ func TestPragma_ForeignKeyCheck_NullFKColumns(t *testing.T) {
 	UT.UnregisterAllPragmaListeners()
 	defer UT.UnregisterAllPragmaListeners()
 
-	parent := &storeSchema{cols: []string{"id"}, pk: "id"}
-	child := &storeSchema{
-		cols:        []string{"id", "pid"},
-		pk:          "id",
-		foreignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+	parent := &StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &StoreSchema{
+		Cols:        []string{"id", "pid"},
+		Pk:          "id",
+		ForeignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
 	}
-	storeSchemas[1] = parent
-	storeSchemas[2] = child
-	tableIDs["p"] = 1
-	tableIDs["c"] = 2
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
 
-	tables["p"] = []Row{
+	DT.Tables["p"] = []Row{
 		{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}},
 	}
 	// Child has NULL pid — should not be a violation (SQL standard).
-	tables["c"] = []Row{
+	DT.Tables["c"] = []Row{
 		{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(10), NullValue()}},
 	}
 

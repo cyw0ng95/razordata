@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -138,8 +139,8 @@ func TestHashJoin_MultiMatch(t *testing.T) {
 		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("z")}},
 		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("w")}},
 	}
-	RegisterTable("l", leftRows)
-	RegisterTable("r", rightRows)
+	DT.RegisterTable("l", leftRows)
+	DT.RegisterTable("r", rightRows)
 	leftScan := NewSeqScan("l")
 	rightScan := NewSeqScan("r")
 	hj := OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
@@ -182,8 +183,8 @@ func TestHashJoin_NoMatch(t *testing.T) {
 		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(3)), NewTextValue("x")}},
 		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(4)), NewTextValue("y")}},
 	}
-	RegisterTable("l", leftRows)
-	RegisterTable("r", rightRows)
+	DT.RegisterTable("l", leftRows)
+	DT.RegisterTable("r", rightRows)
 	leftScan := NewSeqScan("l")
 	rightScan := NewSeqScan("r")
 	hj := OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
@@ -219,8 +220,8 @@ func TestHashJoin_AllMatch(t *testing.T) {
 		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("y")}},
 		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("z")}},
 	}
-	RegisterTable("l", leftRows)
-	RegisterTable("r", rightRows)
+	DT.RegisterTable("l", leftRows)
+	DT.RegisterTable("r", rightRows)
 	leftScan := NewSeqScan("l")
 	rightScan := NewSeqScan("r")
 	hj := OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
@@ -258,8 +259,8 @@ func TestHashJoin_JoinBufferSize(t *testing.T) {
 		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("y")}},
 		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("z")}},
 	}
-	RegisterTable("l", leftRows)
-	RegisterTable("r", rightRows)
+	DT.RegisterTable("l", leftRows)
+	DT.RegisterTable("r", rightRows)
 	leftScan := NewSeqScan("l")
 	rightScan := NewSeqScan("r")
 	hj := OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)

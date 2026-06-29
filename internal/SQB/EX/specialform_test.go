@@ -2,6 +2,7 @@ package EX
 
 import (
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"testing"
 )
 
@@ -24,7 +25,7 @@ func TestSpecialForms_NoParens(t *testing.T) {
 				t.Fatalf("Parse error: %v", err)
 			}
 			sel := stmt.(*PS.Select)
-			got, err := EvalValue(sel.Cols[0], nil, nil)
+			got, err := EV.EvalValue(sel.Cols[0], nil, nil)
 			if err != nil {
 				t.Fatalf("Eval error: %v", err)
 			}

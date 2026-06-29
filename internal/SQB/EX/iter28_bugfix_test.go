@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
@@ -147,13 +148,13 @@ func TestBugfix_DropView_RemovesRegistry(t *testing.T) {
 	if _, err := ex.Exec(ctx, "CREATE VIEW v AS SELECT id FROM t"); err != nil {
 		t.Fatalf("CREATE VIEW: %v", err)
 	}
-	if LookupView("v") == nil {
+	if DT.LookupView("v") == nil {
 		t.Fatal("view not registered after CREATE")
 	}
 	if _, err := ex.Exec(ctx, "DROP VIEW v"); err != nil {
 		t.Fatalf("DROP VIEW: %v", err)
 	}
-	if LookupView("v") != nil {
+	if DT.LookupView("v") != nil {
 		t.Error("view still registered after DROP")
 	}
 }
@@ -208,10 +209,10 @@ func TestBugfix_InsertOnConflictDoUpdate(t *testing.T) {
 	defer UnregisterAll()
 	ex := NewExecutor()
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
-	// registerStoreSchema wires the schema into tableIDs so
-	// schemaFor() returns true; without it the in-memory
+	// registerStoreSchema wires the schema into DT.TableIDs so
+	// DT.SchemaFor() returns true; without it the in-memory
 	// Insert path skips unique-key validation.
-	registerStoreSchema("t", []string{"id", "v"}, "id")
+	DT.RegisterStoreSchema("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 
 	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)"); err != nil {
@@ -257,7 +258,7 @@ func TestBugfix_InsertOnConflictDoNothing(t *testing.T) {
 	defer UnregisterAll()
 	ex := NewExecutor()
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
-	registerStoreSchema("t", []string{"id", "v"}, "id")
+	DT.RegisterStoreSchema("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 
 	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)"); err != nil {
@@ -347,7 +348,7 @@ func TestBugfix_ConstraintNotPresent(t *testing.T) {
 	defer UnregisterAll()
 	ex := NewExecutor()
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
-	registerStoreSchema("t", []string{"id"}, "id")
+	DT.RegisterStoreSchema("t", []string{"id"}, "id")
 	ctx := context.Background()
 	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1)"); err != nil {
 		t.Fatal(err)
@@ -370,22 +371,22 @@ func TestBugfix_FKOnUpdate(t *testing.T) {
 	defer UnregisterAll()
 
 	// Build parent + child schemas.
-	parent := &storeSchema{cols: []string{"id"}, pk: "id"}
-	child := &storeSchema{
-		cols:        []string{"id", "pid"},
-		pk:          "id",
-		foreignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+	parent := &StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &StoreSchema{
+		Cols:        []string{"id", "pid"},
+		Pk:          "id",
+		ForeignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
 	}
-	storeSchemas[1] = parent
-	storeSchemas[2] = child
-	tableIDs["p"] = 1
-	tableIDs["c"] = 2
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
 
 	// Seed in-memory table for parent: id=1, id=2.
-	tables["p"] = []Row{
+	DT.Tables["p"] = []Row{
 		{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}},
 	}
-	tables["c"] = []Row{
+	DT.Tables["c"] = []Row{
 		{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(10), NewIntValue(1)}},
 	}
 
@@ -428,19 +429,19 @@ func TestBugfix_FKOnDelete(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	parent := &storeSchema{cols: []string{"id"}, pk: "id"}
-	child := &storeSchema{
-		cols:        []string{"id", "pid"},
-		pk:          "id",
-		foreignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+	parent := &StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &StoreSchema{
+		Cols:        []string{"id", "pid"},
+		Pk:          "id",
+		ForeignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
 	}
-	storeSchemas[10] = parent
-	storeSchemas[11] = child
-	tableIDs["p"] = 10
-	tableIDs["c"] = 11
+	DT.StoreSchemas[10] = parent
+	DT.StoreSchemas[11] = child
+	DT.TableIDs["p"] = 10
+	DT.TableIDs["c"] = 11
 
-	tables["p"] = []Row{{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}}}
-	tables["c"] = []Row{{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(100), NewIntValue(1)}}}
+	DT.Tables["p"] = []Row{{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}}}
+	DT.Tables["c"] = []Row{{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(100), NewIntValue(1)}}}
 
 	// Deleting parent id=1 must fail because child (100, 1) references it.
 	err := validateForeignKeyDeleteInMemory("p",
@@ -460,12 +461,12 @@ func TestBugfix_ExecReturningCount(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	ex := NewExecutor()
-	registerStoreSchema("t", []string{"id", "v"}, "id")
-	// REQ000512: registerStoreSchema only populates storeSchemas and
-	// tableIDs, not the schemas map that Schema() reads. The in-memory
+	DT.RegisterStoreSchema("t", []string{"id", "v"}, "id")
+	// REQ000512: registerStoreSchema only populates DT.StoreSchemas and
+	// DT.TableIDs, not the schemas map that Schema() reads. The in-memory
 	// Insert path uses Schema() to set row Cols; without it rows have
 	// nil Cols and UPDATE/DELETE column lookups fail silently.
-	RegisterTableSchema("t", []string{"id", "v"})
+	DT.RegisterTableSchema("t", []string{"id", "v"})
 	ctx := context.Background()
 
 	// Single-row INSERT with RETURNING
@@ -566,8 +567,8 @@ func TestBugfix_UniqueOnUpdate(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	ex := NewExecutor()
-	RegisterTableSchema("t", []string{"id", "email"})
-	registerStoreSchemaFull("t",
+	DT.RegisterTableSchema("t", []string{"id", "email"})
+	DT.RegisterStoreSchemaFull("t",
 		[]string{"id", "email"},
 		[]bool{false, false},
 		nil,
@@ -655,7 +656,7 @@ func TestBugfix_CreateTableAsSelect(t *testing.T) {
 	// CTAS with specific columns.
 	_, err = ex.Exec(ctx, "CREATE TABLE dst3 AS SELECT name FROM src WHERE id = 2")
 	if err != nil {
-		t.Fatalf("ctas cols: %v", err)
+		t.Fatalf("ctas Cols: %v", err)
 	}
 	rows, err = ex.QueryAll(ctx, "SELECT name FROM dst3")
 	if err != nil {
@@ -683,21 +684,21 @@ func TestBugfix_CompositePrimaryKey(t *testing.T) {
 	}
 
 	// Verify the first column is registered as PK
-	ss, ok := schemaFor("cpk")
+	ss, ok := DT.SchemaFor("cpk")
 	if !ok {
 		t.Fatal("schema not found")
 	}
-	if ss.pk != "a" {
-		t.Errorf("pk = %q, want %q", ss.pk, "a")
+	if ss.Pk != "a" {
+		t.Errorf("pk = %q, want %q", ss.Pk, "a")
 	}
 	// Verify the composite UNIQUE constraint on (a, b) is registered
-	if len(ss.unique) != 1 || len(ss.unique[0].Cols) != 2 {
-		t.Errorf("unique = %v, want [{[0 1]}]", ss.unique)
+	if len(ss.Unique) != 1 || len(ss.Unique[0].Cols) != 2 {
+		t.Errorf("unique = %v, want [{[0 1]}]", ss.Unique)
 	}
 
 	// PK column (a) should be NOT NULL
-	for i, c := range ss.cols {
-		if c == "a" && ss.nullable[i] {
+	for i, c := range ss.Cols {
+		if c == "a" && ss.Nullable[i] {
 			t.Error("PK column 'a' should be NOT NULL")
 		}
 	}
@@ -905,7 +906,7 @@ func TestBugfix_CorrelatedSubquery_Reexecutes(t *testing.T) {
 }
 
 // REQ000700: Correlated EXISTS/NOT EXISTS subqueries must filter
-// correctly when both inner and outer tables have a column with
+// correctly when both inner and outer DT.Tables have a column with
 // the same name. The bug was that QualifiedName resolution's
 // bare-name fallback matched the outer table's column for both
 // s.g and t.g, making the condition trivially true.
@@ -959,7 +960,7 @@ func TestBugfix_CorrelatedExists_SameColumnName(t *testing.T) {
 }
 
 // SLT PL-1 investigation: WHERE with comparison on store-backed
-// tables populated via INSERT INTO ... SELECT.
+// DT.Tables populated via INSERT INTO ... SELECT.
 func TestBugfix_SLT_IndexWhereFilter(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
@@ -969,7 +970,7 @@ func TestBugfix_SLT_IndexWhereFilter(t *testing.T) {
 	ex.RegisterTableWithPK("tab0", []string{"pk", "col0", "col1"}, "pk")
 	ex.RegisterTableWithPK("tab1", []string{"pk", "col0", "col1"}, "pk")
 
-	// Insert 5 rows into both tables
+	// Insert 5 rows into both DT.Tables
 	for i := int64(0); i < 5; i++ {
 		ex.Exec(ctx, "INSERT INTO tab0 VALUES (?, ?, ?)", i, i*100, float64(i)*1.5)
 		ex.Exec(ctx, "INSERT INTO tab1 VALUES (?, ?, ?)", i, i*100, float64(i)*1.5)
@@ -1208,7 +1209,7 @@ func TestBugfix_InsertSelect(t *testing.T) {
 	t.Run("with_cols", func(t *testing.T) {
 		_, err := ex.Exec(ctx, "INSERT INTO dst (id, v) SELECT id, v FROM src WHERE v <= 20")
 		if err != nil {
-			t.Fatalf("INSERT SELECT cols: %v", err)
+			t.Fatalf("INSERT SELECT Cols: %v", err)
 		}
 
 		rows, err := ex.QueryAll(ctx, "SELECT count(*) FROM dst")

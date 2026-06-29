@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
@@ -191,12 +192,12 @@ func TestHashCrossJoin_NullKey(t *testing.T) {
 // Used by HashCrossJoin tests to inject deterministic rows without
 // touching the engine. Tables remain registered until the caller
 // invokes UnregisterAll (typically via defer in the outer test).
-// Does NOT call UnregisterAll so multiple tables can coexist.
+// Does NOT call UnregisterAll so multiple DT.Tables can coexist.
 func newTestSeqScan(t *testing.T, table string, rows []Row) *SeqScan {
 	t.Helper()
-	tablesMu.Lock()
-	tables[table] = rows
-	tablesMu.Unlock()
+	DT.TablesMu.Lock()
+	DT.Tables[table] = rows
+	DT.TablesMu.Unlock()
 	return NewSeqScan(table)
 }
 
@@ -248,8 +249,8 @@ func newBenchSeqScan(table string, n int) *SeqScan {
 			TableName: table,
 		}
 	}
-	tablesMu.Lock()
-	tables[table] = rows
-	tablesMu.Unlock()
+	DT.TablesMu.Lock()
+	DT.Tables[table] = rows
+	DT.TablesMu.Unlock()
 	return NewSeqScan(table)
 }

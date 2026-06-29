@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // memOp is a simple in-memory operator that returns rows from a slice.
@@ -45,13 +46,13 @@ func BenchmarkCompoundOrderBy_EvalCost(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			// Simulate the OLD approach: EvalValue per comparison
+			// Simulate the OLD approach: EV.EvalValue per comparison
 			result := make([]Row, n)
 			copy(result, rows)
 			_ = result
 			_ = orderBy
-			// Count total EvalValue calls (N log N with sort)
-			// In the old approach, every comparison calls EvalValue twice.
+			// Count total EV.EvalValue calls (N log N with sort)
+			// In the old approach, every comparison calls EV.EvalValue twice.
 			// Total ~ 2 * K * N log2(N) calls for K sort keys.
 			estCalls := 2 * len(orderBy) * n * log2(n)
 			_ = estCalls
@@ -81,12 +82,12 @@ func BenchmarkCompoundOrderBy_EvalCost(b *testing.B) {
 			result := make([]Row, n)
 			copy(result, rows)
 
-			// Decorate: K * N EvalValue calls, NOT K * N log N.
+			// Decorate: K * N EV.EvalValue calls, NOT K * N log N.
 			decorated := make([]decoratedRow, n)
 			for j := range result {
 				vals := make([]Value, len(orderBy))
 				for k, o := range orderBy {
-					v, _ := EvalValue(o.Expr, &result[j], nil)
+					v, _ := EV.EvalValue(o.Expr, &result[j], nil)
 					vals[k] = v
 				}
 				decorated[j].row = result[j]
@@ -139,7 +140,7 @@ func BenchmarkCompoundOrderBy_ActualSort(b *testing.B) {
 				for j := range rows {
 					vals := make([]Value, len(orderBy))
 					for k, o := range orderBy {
-						v, _ := EvalValue(o.Expr, &rows[j], nil)
+						v, _ := EV.EvalValue(o.Expr, &rows[j], nil)
 						vals[k] = v
 					}
 					decorated[j].row = rows[j]

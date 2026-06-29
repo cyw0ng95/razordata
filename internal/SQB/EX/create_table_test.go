@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -11,25 +12,25 @@ import (
 func TestCreateTable_SchemaRegistration(t *testing.T) {
 	// Clean up after test
 	defer func() {
-		tablesMu.Lock()
-		defer tablesMu.Unlock()
-		for name := range tables {
-			delete(tables, name)
+		DT.TablesMu.Lock()
+		defer DT.TablesMu.Unlock()
+		for name := range DT.Tables {
+			delete(DT.Tables, name)
 		}
-		for name := range schemas {
-			// REQ000982: clean up schemas map
-			delete(schemas, name)
+		for name := range DT.Schemas {
+			// REQ000982: clean up DT.Schemas map
+			delete(DT.Schemas, name)
 		}
-		storeMu.Lock()
-		defer storeMu.Unlock()
-		for id := range storeSchemas {
-			delete(storeSchemas, id)
+		DT.StoreMu.Lock()
+		defer DT.StoreMu.Unlock()
+		for id := range DT.StoreSchemas {
+			delete(DT.StoreSchemas, id)
 		}
-		for name := range tableIDs {
-			delete(tableIDs, name)
+		for name := range DT.TableIDs {
+			delete(DT.TableIDs, name)
 		}
-		for name := range registeredIndexes {
-			delete(registeredIndexes, name)
+		for name := range DT.RegisteredIndexes {
+			delete(DT.RegisteredIndexes, name)
 		}
 	}()
 
@@ -54,15 +55,15 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 	}
 
 	// Verify table was registered
-	tablesMu.RLock()
-	_, ok := tables["test1"]
-	tablesMu.RUnlock()
+	DT.TablesMu.RLock()
+	_, ok := DT.Tables["test1"]
+	DT.TablesMu.RUnlock()
 	if !ok {
-		t.Error("Table 'test1' was not registered in tables map")
+		t.Error("Table 'test1' was not registered in DT.Tables map")
 	}
-	_, ok = schemas["test1"]
+	_, ok = DT.Schemas["test1"]
 	if !ok {
-		t.Error("Table 'test1' was not registered in schemas map")
+		t.Error("Table 'test1' was not registered in DT.Schemas map")
 	}
 
 	// Test 2: Table with unique constraint
@@ -132,8 +133,8 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 	}
 	op5 := NewCreateTable(stmt5)
 	_, err = op5.Next(ctx)
-	if err != errTableExists {
-		t.Errorf("Expected errTableExists for duplicate table, got: %v", err)
+	if err != DT.ErrTableExists {
+		t.Errorf("Expected DT.ErrTableExists for duplicate table, got: %v", err)
 	}
 
 	// Test 6: WITHOUT ROWID should fail

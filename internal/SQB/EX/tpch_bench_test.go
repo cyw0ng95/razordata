@@ -8,6 +8,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // makeTPCHLikeRows creates N rows simulating TPC-H lineitem schema:
@@ -108,7 +109,7 @@ func BenchmarkTPCH_Q1_Sequential(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		var sum float64
 		for j := 0; j < n; j++ {
-			val, err := EvalValue(pred, &rows[j], nil)
+			val, err := EV.EvalValue(pred, &rows[j], nil)
 			if err != nil {
 				continue
 			}

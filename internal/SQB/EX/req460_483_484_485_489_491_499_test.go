@@ -2,6 +2,7 @@ package EX
 
 import (
 	"context"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"testing"
 )
 
@@ -267,7 +268,7 @@ func TestReq499_AlterTableDropColumn(t *testing.T) {
 	}
 
 	// Verify b is gone from schema
-	schema := Schema("t_dropcol")
+	schema := DT.Schema("t_dropcol")
 	foundB := false
 	for _, c := range schema {
 		if c == "b" {

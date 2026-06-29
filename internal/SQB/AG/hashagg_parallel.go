@@ -1,16 +1,17 @@
-package EX
+package AG
 
 import (
 	"context"
 	"slices"
 	"sync"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // ParallelHashAggregate partitions input by group key hash, builds
-// N partial hash tables in parallel, and merges results. REQ001046.
+// N partial hash DT.Tables in parallel, and merges results. REQ001046.
 type ParallelHashAggregate struct {
 	child     Operator
 	groupCols []PS.Expr
@@ -215,12 +216,12 @@ func (a *ParallelHashAggregate) parallelAgg(ctx context.Context, rows []Row, wor
 			out.Data = append(out.Data, keyVals[i])
 		}
 		for _, ag := range a.aggs {
-			v, err := evalAggregateOver(ag, rows, a.params)
+			v, err := EvalAggregateOver(ag, rows, a.params)
 			if err != nil {
 				return err
 			}
 			out.Cols = append(out.Cols, aggregateColName(ag))
-			out.Data = append(out.Data, valueFromAny(v))
+			out.Data = append(out.Data, DT.ValueFromAny(v))
 		}
 		a.buf = append(a.buf, out)
 	}
@@ -243,12 +244,12 @@ func (a *ParallelHashAggregate) buildResults(order []string, buckets map[string]
 			out.Data = append(out.Data, keyVals[i])
 		}
 		for _, ag := range a.aggs {
-			v, err := evalAggregateOver(ag, rows, a.params)
+			v, err := EvalAggregateOver(ag, rows, a.params)
 			if err != nil {
 				return err
 			}
 			out.Cols = append(out.Cols, aggregateColName(ag))
-			out.Data = append(out.Data, valueFromAny(v))
+			out.Data = append(out.Data, DT.ValueFromAny(v))
 		}
 		a.buf = append(a.buf, out)
 	}

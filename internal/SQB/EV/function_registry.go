@@ -8,7 +8,7 @@
 // All native implementations are `func([]PS.Expr, *Row, []any) (Value, error)`
 // — they evaluate arguments and return a Value directly without going
 // through the any-typed `valueFromAnyWrap` bridge (REQ000978c).
-package EX
+package EV
 
 import (
 	"fmt"
@@ -16,6 +16,7 @@ import (
 	"time"
 
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -27,16 +28,16 @@ type scalarFuncImpl func(args []PS.Expr, row *Row, params []any) (Value, error)
 // scalarFuncRegistry maps a function name to its implementation.
 // All entries are populated at init time. The map is read-only
 // after init — callers must not mutate it.
-var scalarFuncRegistry = map[string]scalarFuncImpl{}
+var ScalarFuncRegistry = map[string]scalarFuncImpl{}
 
 // registerScalarFunc adds an entry to the registry. Called only from
 // init; panics on duplicate registration so the build fails loudly
 // if a function is added twice.
 func registerScalarFunc(name string, impl scalarFuncImpl) {
-	if _, exists := scalarFuncRegistry[name]; exists {
+	if _, exists := ScalarFuncRegistry[name]; exists {
 		panic("EX: duplicate scalar function registration: " + name)
 	}
-	scalarFuncRegistry[name] = impl
+	ScalarFuncRegistry[name] = impl
 }
 
 // init populates the registry with all built-in scalar functions.
@@ -94,29 +95,29 @@ func init() {
 // evalLength returns the length of a string argument.
 func evalLength(args []PS.Expr, row *Row, params []any) (Value, error) {
 	if len(args) != 1 {
-		return NullValue(), fmt.Errorf("length: expected 1 arg, got %d", len(args))
+		return DT.NullValue(), fmt.Errorf("length: expected 1 arg, got %d", len(args))
 	}
 	v, err := EvalValue(args[0], row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	if v.Kind == KindText {
-		return NewIntValue(int64(len(v.S))), nil
+		return DT.NewIntValue(int64(len(v.S))), nil
 	}
-	return NullValue(), nil
+	return DT.NullValue(), nil
 }
 
 // evalUpper upper-cases a string argument.
 func evalUpper(args []PS.Expr, row *Row, params []any) (Value, error) {
 	if len(args) != 1 {
-		return NullValue(), fmt.Errorf("upper: expected 1 arg, got %d", len(args))
+		return DT.NullValue(), fmt.Errorf("upper: expected 1 arg, got %d", len(args))
 	}
 	v, err := EvalValue(args[0], row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	if v.Kind == KindText {
-		return NewTextValue(strings.ToUpper(v.S)), nil
+		return DT.NewTextValue(strings.ToUpper(v.S)), nil
 	}
 	return v, nil
 }
@@ -124,14 +125,14 @@ func evalUpper(args []PS.Expr, row *Row, params []any) (Value, error) {
 // evalLower lower-cases a string argument.
 func evalLower(args []PS.Expr, row *Row, params []any) (Value, error) {
 	if len(args) != 1 {
-		return NullValue(), fmt.Errorf("lower: expected 1 arg, got %d", len(args))
+		return DT.NullValue(), fmt.Errorf("lower: expected 1 arg, got %d", len(args))
 	}
 	v, err := EvalValue(args[0], row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	if v.Kind == KindText {
-		return NewTextValue(strings.ToLower(v.S)), nil
+		return DT.NewTextValue(strings.ToLower(v.S)), nil
 	}
 	return v, nil
 }
@@ -139,11 +140,11 @@ func evalLower(args []PS.Expr, row *Row, params []any) (Value, error) {
 // evalIfNull returns the first non-NULL argument.
 func evalIfNull(args []PS.Expr, row *Row, params []any) (Value, error) {
 	if len(args) != 2 {
-		return NullValue(), fmt.Errorf("ifnull: expected 2 args, got %d", len(args))
+		return DT.NullValue(), fmt.Errorf("ifnull: expected 2 args, got %d", len(args))
 	}
 	v, err := EvalValue(args[0], row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	if v.Kind != KindNull {
 		return v, nil
@@ -156,55 +157,55 @@ func evalCoalesce(args []PS.Expr, row *Row, params []any) (Value, error) {
 	for _, arg := range args {
 		v, err := EvalValue(arg, row, params)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
 		if v.Kind != KindNull {
 			return v, nil
 		}
 	}
-	return NullValue(), nil
+	return DT.NullValue(), nil
 }
 
 // evalNullIf returns NULL if the two args are equal, else the first.
 func evalNullIf(args []PS.Expr, row *Row, params []any) (Value, error) {
 	if len(args) != 2 {
-		return NullValue(), fmt.Errorf("nullif: expected 2 args, got %d", len(args))
+		return DT.NullValue(), fmt.Errorf("nullif: expected 2 args, got %d", len(args))
 	}
 	a, err := EvalValue(args[0], row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	b, err := EvalValue(args[1], row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	if PL.EqualValueValue(a, b) {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	return a, nil
 }
 
 // evalNow returns the current UTC time as an RFC3339 string.
 func evalNow(args []PS.Expr, row *Row, params []any) (Value, error) {
-	return NewTextValue(time.Now().UTC().Format(time.RFC3339)), nil
+	return DT.NewTextValue(time.Now().UTC().Format(time.RFC3339)), nil
 }
 
 // evalChangesNative returns the row count of the most recent INSERT/UPDATE/DELETE.
 func evalChangesNative(args []PS.Expr, row *Row, params []any) (Value, error) {
 	ec := OP.ExecContextFromRow(row)
 	if ec == nil {
-		return NewIntValue(0), nil
+		return DT.NewIntValue(0), nil
 	}
-	return NewIntValue(ec.LastChanges), nil
+	return DT.NewIntValue(ec.LastChanges), nil
 }
 
 // evalLastInsertRowIDNative returns the most recent successful INSERT rowid.
 func evalLastInsertRowIDNative(args []PS.Expr, row *Row, params []any) (Value, error) {
-	acc := getSessionCounterAccessor()
+	acc := DT.GetSessionCounterAccessor()
 	if acc == nil {
-		return NewIntValue(0), nil
+		return DT.NewIntValue(0), nil
 	}
-	return NewIntValue(acc.LastInsertRowID(getCurrentSessionID())), nil
+	return DT.NewIntValue(acc.LastInsertRowID(DT.GetCurrentSessionID())), nil
 }
 
 // evalTotalChangesNative returns the cumulative row count of all
@@ -212,9 +213,9 @@ func evalLastInsertRowIDNative(args []PS.Expr, row *Row, params []any) (Value, e
 func evalTotalChangesNative(args []PS.Expr, row *Row, params []any) (Value, error) {
 	ec := OP.ExecContextFromRow(row)
 	if ec == nil {
-		return NewIntValue(0), nil
+		return DT.NewIntValue(0), nil
 	}
-	return NewIntValue(ec.TotalChanges), nil
+	return DT.NewIntValue(ec.TotalChanges), nil
 }
 
 // evalSubstrNative returns the substring of a string.
@@ -224,7 +225,7 @@ func evalSubstrNative(args []PS.Expr, row *Row, params []any) (Value, error) {
 
 // evalAbsNative returns the absolute value of a numeric expression.
 func evalAbsNative(args []PS.Expr, row *Row, params []any) (Value, error) {
-	return valueFromAnyWrap(evalAbs(args, row, params))
+	return valueFromAnyWrap(EvalAbs(args, row, params))
 }
 
 // evalHexNative returns the hexadecimal encoding of a blob.

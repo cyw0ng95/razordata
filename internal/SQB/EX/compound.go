@@ -20,6 +20,7 @@ import (
 
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -157,7 +158,7 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 			for i := range result {
 				vals := make([]Value, len(c.orderBy))
 				for j, k := range c.orderBy {
-					v, _ := EvalValue(k.Expr, &result[i], c.params)
+					v, _ := EV.EvalValue(k.Expr, &result[i], c.params)
 					vals[j] = v
 				}
 				decorated[i].row = result[i]
@@ -183,7 +184,7 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 		// Apply OFFSET / LIMIT.
 		off := 0
 		if c.offset != nil {
-			if v, err := EvalValue(c.offset, nil, c.params); err == nil {
+			if v, err := EV.EvalValue(c.offset, nil, c.params); err == nil {
 				if v.Kind == KindInt {
 					off = int(v.I64)
 				}
@@ -195,7 +196,7 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 			result = nil
 		}
 		if c.limit != nil {
-			if v, err := EvalValue(c.limit, nil, c.params); err == nil {
+			if v, err := EV.EvalValue(c.limit, nil, c.params); err == nil {
 				if v.Kind == KindInt && int(v.I64) < len(result) {
 					result = result[:v.I64]
 				}

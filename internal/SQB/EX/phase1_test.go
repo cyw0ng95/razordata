@@ -2,6 +2,7 @@ package EX
 
 import (
 	"context"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	"testing"
 )
@@ -95,7 +96,7 @@ func TestPhase1_AlterTableRenameColumn(t *testing.T) {
 	}
 
 	// Verify schema updated
-	schema := Schema("t1")
+	schema := DT.Schema("t1")
 	found := false
 	for _, c := range schema {
 		if c == "fullname" {

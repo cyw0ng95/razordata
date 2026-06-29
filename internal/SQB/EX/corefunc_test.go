@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // REQ000382: ABS, HEX, ROUND unit tests.
@@ -24,7 +25,7 @@ func TestEvalAbs(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := EvalValue(&PS.FunctionCall{Name: "ABS", Args: c.args}, nil, nil)
+			got, err := EV.EvalValue(&PS.FunctionCall{Name: "ABS", Args: c.args}, nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -36,7 +37,7 @@ func TestEvalAbs(t *testing.T) {
 }
 
 func TestEvalAbs_MinInt64Overflow(t *testing.T) {
-	_, err := EvalValue(&PS.FunctionCall{Name: "ABS", Args: []PS.Expr{&PS.NumberLiteral{Val: -9223372036854775808}}}, nil, nil)
+	_, err := EV.EvalValue(&PS.FunctionCall{Name: "ABS", Args: []PS.Expr{&PS.NumberLiteral{Val: -9223372036854775808}}}, nil, nil)
 	if err == nil {
 		t.Errorf("expected error for ABS(MIN_INT64), got nil")
 	}
@@ -58,7 +59,7 @@ func TestEvalHex(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := EvalValue(&PS.FunctionCall{Name: "HEX", Args: c.args}, nil, nil)
+			got, err := EV.EvalValue(&PS.FunctionCall{Name: "HEX", Args: c.args}, nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -93,7 +94,7 @@ func TestEvalRound(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := EvalValue(&PS.FunctionCall{Name: "ROUND", Args: c.args}, nil, nil)
+			got, err := EV.EvalValue(&PS.FunctionCall{Name: "ROUND", Args: c.args}, nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -112,7 +113,7 @@ func TestEvalRound(t *testing.T) {
 }
 
 func TestEvalRound_Null(t *testing.T) {
-	got, err := EvalValue(&PS.FunctionCall{Name: "ROUND", Args: []PS.Expr{&PS.NullLiteral{}}}, nil, nil)
+	got, err := EV.EvalValue(&PS.FunctionCall{Name: "ROUND", Args: []PS.Expr{&PS.NullLiteral{}}}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

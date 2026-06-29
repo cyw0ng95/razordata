@@ -9,9 +9,9 @@ import (
 
 // TestCheckConstraintValidateCheckFunc tests the validateCheck function directly (REQ000211).
 func TestCheckConstraintValidateCheckFunc(t *testing.T) {
-	schema := &storeSchema{
-		cols: []string{"x"},
-		checks: []PS.Expr{
+	schema := &StoreSchema{
+		Cols: []string{"x"},
+		Checks: []PS.Expr{
 			&PS.BinaryExpr{Op: LX.T_GT, Left: &PS.Ident{Name: "x"}, Right: &PS.NumberLiteral{Val: 0}},
 		},
 	}
@@ -37,9 +37,9 @@ func TestCheckConstraintValidateCheckFunc(t *testing.T) {
 
 // TestCheckConstraintMultiple checks multiple CHECK constraints.
 func TestCheckConstraintMultiple(t *testing.T) {
-	schema := &storeSchema{
-		cols: []string{"score"},
-		checks: []PS.Expr{
+	schema := &StoreSchema{
+		Cols: []string{"score"},
+		Checks: []PS.Expr{
 			&PS.BinaryExpr{Op: LX.T_GE, Left: &PS.Ident{Name: "score"}, Right: &PS.NumberLiteral{Val: 0}},
 			&PS.BinaryExpr{Op: LX.T_LE, Left: &PS.Ident{Name: "score"}, Right: &PS.NumberLiteral{Val: 100}},
 		},
@@ -66,9 +66,9 @@ func TestCheckConstraintMultiple(t *testing.T) {
 
 // TestCheckConstraintNilExpr verifies nil CHECK expressions are skipped.
 func TestCheckConstraintNilExpr(t *testing.T) {
-	schema := &storeSchema{
-		cols:   []string{"x"},
-		checks: []PS.Expr{nil},
+	schema := &StoreSchema{
+		Cols:   []string{"x"},
+		Checks: []PS.Expr{nil},
 	}
 
 	row := Row{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(0))}}
@@ -86,9 +86,9 @@ func TestCheckConstraintWithAnd(t *testing.T) {
 		Right: &PS.BinaryExpr{Op: LX.T_LT, Left: &PS.Ident{Name: "price"}, Right: &PS.NumberLiteral{Val: 1000}},
 	}
 
-	schema := &storeSchema{
-		cols:   []string{"price"},
-		checks: []PS.Expr{andExpr},
+	schema := &StoreSchema{
+		Cols:   []string{"price"},
+		Checks: []PS.Expr{andExpr},
 	}
 
 	// price = 500 should pass

@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"math"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // ErrConstraint is the package alias for AP.ErrConstraint. Constraint
@@ -19,25 +21,25 @@ var ErrConstraint = ap.ErrConstraint
 // their nil. The row is returned with the same Data slice length.
 // Returns a wrapped ErrConstraint on DEFAULT evaluation failure.
 // REQ000515: type coercion applied to match the column's declared type.
-func fillDefaults(schema *storeSchema, row Row) (Row, error) {
-	if schema.defaults == nil {
+func fillDefaults(schema *StoreSchema, row Row) (Row, error) {
+	if schema.Defaults == nil {
 		return row, nil
 	}
-	for i, def := range schema.defaults {
+	for i, def := range schema.Defaults {
 		if def == nil {
 			continue
 		}
 		if row.Data[i].IsNull() {
-			v, err := EvalValue(def, nil, nil)
+			v, err := EV.EvalValue(def, nil, nil)
 			if err != nil {
 				return row, fmt.Errorf("%w: default for column %q: %v",
-					ErrConstraint, schema.cols[i], err)
+					ErrConstraint, schema.Cols[i], err)
 			}
 			// REQ000515: coerce the default value to the column's
 			// declared type. Without this, a DEFAULT 1 for a TEXT
 			// column stays int64 instead of becoming "1".
-			if schema.colTypes != nil && i < len(schema.colTypes) {
-				v = coerceDefault(v, schema.colTypes[i])
+			if schema.ColTypes != nil && i < len(schema.ColTypes) {
+				v = coerceDefault(v, schema.ColTypes[i])
 			}
 			row.Data[i] = v
 		}
@@ -45,15 +47,15 @@ func fillDefaults(schema *storeSchema, row Row) (Row, error) {
 	// REQ000249: materialize STORED generated columns. The
 	// expression is evaluated against the row so it can reference
 	// any earlier column. Virtual columns are skipped (deferred).
-	if schema.generated != nil {
-		for i, gen := range schema.generated {
+	if schema.Generated != nil {
+		for i, gen := range schema.Generated {
 			if gen == nil {
 				continue
 			}
-			v, err := EvalValue(gen, &row, nil)
+			v, err := EV.EvalValue(gen, &row, nil)
 			if err != nil {
 				return row, fmt.Errorf("%w: generated column %q: %v",
-					ErrConstraint, schema.cols[i], err)
+					ErrConstraint, schema.Cols[i], err)
 			}
 			row.Data[i] = v
 		}
@@ -124,16 +126,16 @@ func coerceDefault(v Value, colType LX.TokenType) Value {
 // in row.Data. Columns with a DEFAULT are allowed to be nil at this
 // stage (fillDefaults runs first). Returns a wrapped ErrConstraint on
 // violation.
-func validateRow(schema *storeSchema, row Row) error {
-	for i, col := range schema.cols {
-		if row.Data[i].IsNull() && !schema.nullable[i] {
+func validateRow(schema *StoreSchema, row Row) error {
+	for i, col := range schema.Cols {
+		if row.Data[i].IsNull() && !schema.Nullable[i] {
 			// REQ000713: INTEGER PRIMARY KEY allows NULL —
 			// SQLite treats it as a rowid alias and auto-assigns.
-			if schema.pk == col && isIntegerType(schema.colTypes, i) {
+			if schema.Pk == col && isIntegerType(schema.ColTypes, i) {
 				continue
 			}
 			// Note: PK implies NOT NULL; primary-key columns always have
-			// schema.nullable[i] == false from CREATE TABLE parsing.
+			// schema.Nullable[i] == false from CREATE TABLE parsing.
 			return fmt.Errorf("%w: column %q is NOT NULL", ErrConstraint, col)
 		}
 	}
@@ -151,11 +153,11 @@ func isIntegerType(colTypes []LX.TokenType, i int) bool {
 
 // validateDecimal checks that values in DECIMAL/NUMERIC columns respect
 // the column's precision and scale. REQ000568.
-func validateDecimal(schema *storeSchema, row Row) error {
-	if schema.precision == nil || schema.scale == nil {
+func validateDecimal(schema *StoreSchema, row Row) error {
+	if schema.Precision == nil || schema.Scale == nil {
 		return nil
 	}
-	for i, typ := range schema.colTypes {
+	for i, typ := range schema.ColTypes {
 		if typ != LX.T_DECIMAL && typ != LX.T_NUMERIC {
 			continue
 		}
@@ -163,13 +165,13 @@ func validateDecimal(schema *storeSchema, row Row) error {
 		if v.IsNull() {
 			continue
 		}
-		prec := schema.precision[i]
-		sc := schema.scale[i]
+		prec := schema.Precision[i]
+		sc := schema.Scale[i]
 		if prec == 0 && sc == 0 {
 			continue
 		}
 		if _, err := UT.FormatDecimal(v.ToAny(), prec, sc); err != nil {
-			return fmt.Errorf("%w: column %q: %v", ErrConstraint, schema.cols[i], err)
+			return fmt.Errorf("%w: column %q: %v", ErrConstraint, schema.Cols[i], err)
 		}
 	}
 	return nil
@@ -193,28 +195,28 @@ type uniqueLookupWithApply interface {
 // validateCheck checks that row satisfies all CHECK constraints
 // defined on the table. Returns a wrapped ErrConstraint on violation.
 // REQ000986: CHECK expressions are pre-compiled on first use and
-// cached in schema.compiledChecks to avoid per-row AST re-evaluation.
-func validateCheck(schema *storeSchema, row Row) error {
+// cached in schema.CompiledChecks to avoid per-row AST re-evaluation.
+func validateCheck(schema *StoreSchema, row Row) error {
 	// Lazy-compile CHECK expressions on first call.
-	if schema.compiledChecks == nil && len(schema.checks) > 0 {
-		schema.compiledChecks = make([]func(*Row) (bool, error), len(schema.checks))
-		for i, check := range schema.checks {
+	if schema.CompiledChecks == nil && len(schema.Checks) > 0 {
+		schema.CompiledChecks = make([]func(*Row) (bool, error), len(schema.Checks))
+		for i, check := range schema.Checks {
 			if check == nil {
 				continue
 			}
 			i2, c2 := i, check
-			schema.compiledChecks[i2] = func(r *Row) (bool, error) {
-				val, err := EvalValue(c2, r, nil)
+			schema.CompiledChecks[i2] = func(r *Row) (bool, error) {
+				val, err := EV.EvalValue(c2, r, nil)
 				if err != nil {
 					return false, fmt.Errorf("%w: CHECK constraint %d: %v",
 						ErrConstraint, i2, err)
 				}
-				return isValueTruthy(val), nil
+				return DT.IsValueTruthy(val), nil
 			}
 		}
 	}
-	if schema.compiledChecks != nil {
-		for i, fn := range schema.compiledChecks {
+	if schema.CompiledChecks != nil {
+		for i, fn := range schema.CompiledChecks {
 			if fn == nil {
 				continue
 			}
@@ -230,16 +232,16 @@ func validateCheck(schema *storeSchema, row Row) error {
 		return nil
 	}
 	// Fallback: evaluate from AST (no caching possible).
-	for i, check := range schema.checks {
+	for i, check := range schema.Checks {
 		if check == nil {
 			continue
 		}
-		val, err := EvalValue(check, &row, nil)
+		val, err := EV.EvalValue(check, &row, nil)
 		if err != nil {
 			return fmt.Errorf("%w: CHECK constraint %d: %v",
 				ErrConstraint, i, err)
 		}
-		if !isValueTruthy(val) {
+		if !DT.IsValueTruthy(val) {
 			return fmt.Errorf("%w: CHECK constraint %d failed",
 				ErrConstraint, i)
 		}
@@ -257,16 +259,16 @@ func validateCheck(schema *storeSchema, row Row) error {
 // non-nil, each unique key's old value is compared: if the old value
 // equals the new value, the check is skipped (no-op self-match) so
 // `UPDATE t SET a = a` does not self-conflict. REQ000516.
-func checkUnique(schema *storeSchema, row Row, pending map[string]struct{}, snapshot Row, lookup uniqueLookup) error {
+func checkUnique(schema *StoreSchema, row Row, pending map[string]struct{}, snapshot Row, lookup uniqueLookup) error {
 	if lookup == nil {
 		return nil
 	}
-	keys := schema.unique
+	keys := schema.Unique
 	// Implicit UNIQUE on the PK: add a synthetic UniqueKey.
-	if schema.pk != "" {
+	if schema.Pk != "" {
 		pkIdx := -1
-		for i, c := range schema.cols {
-			if c == schema.pk {
+		for i, c := range schema.Cols {
+			if c == schema.Pk {
 				pkIdx = i
 				break
 			}
@@ -306,7 +308,7 @@ func checkUnique(schema *storeSchema, row Row, pending map[string]struct{}, snap
 		if len(snapshot.Data) > 0 {
 			same := true
 			for i, idx := range uk.Cols {
-				if idx >= len(snapshot.Data) || !equalValue(snapshot.Data[idx], vals[i]) {
+				if idx >= len(snapshot.Data) || !DT.EqualValueAny(snapshot.Data[idx], vals[i]) {
 					same = false
 					break
 				}
@@ -322,7 +324,7 @@ func checkUnique(schema *storeSchema, row Row, pending map[string]struct{}, snap
 		if exists {
 			colNames := make([]string, len(uk.Cols))
 			for i, idx := range uk.Cols {
-				colNames[i] = schema.cols[idx]
+				colNames[i] = schema.Cols[idx]
 			}
 			return fmt.Errorf("%w: duplicate of (%v) on column(s) %v", ErrConstraint, vals, colNames)
 		}
@@ -403,7 +405,7 @@ func encodeUniqueKey(cols []int, vals []any) []byte {
 }
 
 // inMemoryLookup returns a uniqueLookup that scans the in-memory
-// tables map for matching values. Caller MUST hold tablesMu
+// DT.Tables map for matching values. Caller MUST hold tablesMu
 // (write or read); the lookup does not take the lock itself.
 func inMemoryLookup(tableName string) uniqueLookupWithApply {
 	return &memLookup{table: tableName}
@@ -443,7 +445,7 @@ func asUniqueLookup(apply uniqueLookupWithApply) uniqueLookup {
 // tablesMu (typically because they're inside Insert.Next /
 // checkUnique which are called under tablesMu).
 func (m *memLookup) FindAndLock(cols []int, vals []any) (int, bool, error) {
-	rows := tables[m.table]
+	rows := DT.Tables[m.table]
 	for i, existing := range rows {
 		if rowMatchesUnique(existing.Data, cols, vals) {
 			return i, true, nil
@@ -455,12 +457,12 @@ func (m *memLookup) FindAndLock(cols []int, vals []any) (int, bool, error) {
 // Mutate replaces the row at idx using fn. Callers MUST already
 // hold tablesMu.
 func (m *memLookup) Mutate(idx int, fn func(Row) Row) error {
-	rows := tables[m.table]
+	rows := DT.Tables[m.table]
 	if idx < 0 || idx >= len(rows) {
 		return fmt.Errorf("ex: mutate out of range %d", idx)
 	}
 	rows[idx] = fn(rows[idx])
-	tables[m.table] = rows
+	DT.Tables[m.table] = rows
 	return nil
 }
 
@@ -507,12 +509,12 @@ func valueEqual(a, b any) bool {
 
 // removeConflicting removes rows from existing that conflict with out
 // on any unique key (including implicit PK). Returns the filtered slice.
-func removeConflicting(existing []Row, schema *storeSchema, out Row) ([]Row, int) {
-	keys := schema.unique
-	if schema.pk != "" {
+func removeConflicting(existing []Row, schema *StoreSchema, out Row) ([]Row, int) {
+	keys := schema.Unique
+	if schema.Pk != "" {
 		pkIdx := -1
-		for i, c := range schema.cols {
-			if c == schema.pk {
+		for i, c := range schema.Cols {
+			if c == schema.Pk {
 				pkIdx = i
 				break
 			}
@@ -533,7 +535,7 @@ func removeConflicting(existing []Row, schema *storeSchema, out Row) ([]Row, int
 					match = false
 					break
 				}
-				if !equalValue(row.Data[idx], out.Data[idx]) {
+				if !DT.EqualValueAny(row.Data[idx], out.Data[idx]) {
 					match = false
 					break
 				}
@@ -553,7 +555,7 @@ func removeConflicting(existing []Row, schema *storeSchema, out Row) ([]Row, int
 }
 
 // removeConflictingInMemory removes rows from existing that match out on
-// the PK column (in-memory path without storeSchema). Returns filtered slice
+// the PK column (in-memory path without StoreSchema). Returns filtered slice
 // and count of removed rows. pkName is the table's primary key column name
 // (empty = no PK conflict detection).
 func removeConflictingInMemory(existing []Row, schema []string, pkName string, out Row) ([]Row, int) {
@@ -573,7 +575,7 @@ func removeConflictingInMemory(existing []Row, schema []string, pkName string, o
 	filtered := make([]Row, 0, len(existing))
 	removed := 0
 	for _, row := range existing {
-		if pkIdx < len(row.Data) && equalValue(row.Data[pkIdx], out.Data[pkIdx]) {
+		if pkIdx < len(row.Data) && DT.EqualValueAny(row.Data[pkIdx], out.Data[pkIdx]) {
 			removed++
 			continue
 		}

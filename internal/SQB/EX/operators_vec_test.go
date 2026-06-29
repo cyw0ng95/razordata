@@ -6,7 +6,8 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	"github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // rowSourceForTest is a simple in-memory row iterator for tests.
@@ -284,7 +285,7 @@ func BenchmarkRowFilter_Fallback(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, row := range rows {
-			_, _ = EvalValue(pred, &row, nil)
+			_, _ = EV.EvalValue(pred, &row, nil)
 		}
 	}
 }
@@ -342,6 +343,6 @@ func BenchmarkEvalDirect_Int64GT(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = compareInt64ColLit(col, 512, LX.T_GT, n)
+		_ = EV.CompareInt64ColLit(col, 512, LX.T_GT, n)
 	}
 }

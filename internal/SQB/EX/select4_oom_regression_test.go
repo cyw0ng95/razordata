@@ -11,7 +11,7 @@ import (
 // IN-list predicates on every table must NOT OOM. Before the fix,
 // eliminateCommonSubexpressions collapsed all IN predicates to a
 // single one (because exprHash fell through to "%T" for *PS.InExpr),
-// so only 2 of 5 tables received pushed-down filters. The 5-table
+// so only 2 of 5 DT.Tables received pushed-down filters. The 5-table
 // cross-join then materialized 30^5 = 24.3M rows and triggered a
 // 50 GB HashJoin.dataBuf pre-allocation that OOM-killed the process.
 func TestSelect4Plan5Table_NoOOM(t *testing.T) {
@@ -39,7 +39,7 @@ func TestSelect4Plan5Table_NoOOM(t *testing.T) {
 	_ = context.Background
 }
 
-// TestSelect4Plan6Table_NoOOM extends the 5-table case to 6 tables
+// TestSelect4Plan6Table_NoOOM extends the 5-table case to 6 DT.Tables
 // with 6 IN-list predicates — same shape but stress-tests the CSE
 // dedup with one more level.
 func TestSelect4Plan6Table_NoOOM(t *testing.T) {

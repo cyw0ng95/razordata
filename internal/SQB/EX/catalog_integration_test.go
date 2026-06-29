@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -21,9 +22,9 @@ func TestCatalog_Integration_CreateSurvivesClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCatalog: %v", err)
 	}
-	SetCatalog(cat)
+	DT.SetCatalog(cat)
 	t.Cleanup(func() {
-		SetCatalog(nil)
+		DT.SetCatalog(nil)
 		_ = cat.Close()
 	})
 
@@ -36,7 +37,7 @@ func TestCatalog_Integration_CreateSurvivesClose(t *testing.T) {
 	if err := cat.Close(); err != nil {
 		t.Fatalf("catalog Close: %v", err)
 	}
-	SetCatalog(nil)
+	DT.SetCatalog(nil)
 
 	// Simulate process restart.
 	cat2, err := ls.NewCatalog(dir)
@@ -44,10 +45,10 @@ func TestCatalog_Integration_CreateSurvivesClose(t *testing.T) {
 		t.Fatalf("reopen catalog: %v", err)
 	}
 	t.Cleanup(func() { _ = cat2.Close() })
-	SetCatalog(cat2)
+	DT.SetCatalog(cat2)
 	for _, e := range cat2.List() {
-		if err := RegisterFromCatalog(e); err != nil {
-			t.Fatalf("RegisterFromCatalog(%s): %v", e.Name, err)
+		if err := DT.RegisterFromCatalog(e); err != nil {
+			t.Fatalf("DT.RegisterFromCatalog(%s): %v", e.Name, err)
 		}
 	}
 
@@ -70,9 +71,9 @@ func TestCatalog_Integration_DropSurvivesClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCatalog: %v", err)
 	}
-	SetCatalog(cat)
+	DT.SetCatalog(cat)
 	t.Cleanup(func() {
-		SetCatalog(nil)
+		DT.SetCatalog(nil)
 		_ = cat.Close()
 	})
 
@@ -87,14 +88,14 @@ func TestCatalog_Integration_DropSurvivesClose(t *testing.T) {
 	if err := cat.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	SetCatalog(nil)
+	DT.SetCatalog(nil)
 
 	cat2, err := ls.NewCatalog(dir)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { _ = cat2.Close() })
-	SetCatalog(cat2)
+	DT.SetCatalog(cat2)
 	if got := cat2.Len(); got != 0 {
 		t.Fatalf("Len after drop+reopen = %d, want 0", got)
 	}
@@ -108,9 +109,9 @@ func TestCatalog_Integration_NextIDSurvives(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCatalog: %v", err)
 	}
-	SetCatalog(cat)
+	DT.SetCatalog(cat)
 	t.Cleanup(func() {
-		SetCatalog(nil)
+		DT.SetCatalog(nil)
 		_ = cat.Close()
 	})
 
@@ -125,14 +126,14 @@ func TestCatalog_Integration_NextIDSurvives(t *testing.T) {
 	if err := cat.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	SetCatalog(nil)
+	DT.SetCatalog(nil)
 
 	cat2, err := ls.NewCatalog(dir)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { _ = cat2.Close() })
-	SetCatalog(cat2)
+	DT.SetCatalog(cat2)
 	id, err := cat2.NextID()
 	if err != nil {
 		t.Fatalf("NextID after reopen: %v", err)
@@ -154,9 +155,9 @@ func TestCatalog_Integration_ConcurrentCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCatalog: %v", err)
 	}
-	SetCatalog(cat)
+	DT.SetCatalog(cat)
 	t.Cleanup(func() {
-		SetCatalog(nil)
+		DT.SetCatalog(nil)
 		_ = cat.Close()
 	})
 
@@ -176,12 +177,12 @@ func TestCatalog_Integration_ConcurrentCreate(t *testing.T) {
 	}
 	wg.Wait()
 	exCount := func() int {
-		storeMu.Lock()
-		defer storeMu.Unlock()
-		return len(tableIDs)
+		DT.StoreMu.Lock()
+		defer DT.StoreMu.Unlock()
+		return len(DT.TableIDs)
 	}()
 	if exCount != cat.Len() {
-		t.Fatalf("EX tables=%d, catalog tables=%d, must agree", exCount, cat.Len())
+		t.Fatalf("EX DT.Tables=%d, catalog DT.Tables=%d, must agree", exCount, cat.Len())
 	}
 }
 

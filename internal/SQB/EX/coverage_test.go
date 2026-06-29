@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 )
 
@@ -18,7 +20,7 @@ func TestCoverage_Aggregate_WithParams(t *testing.T) {
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
 	ex.Exec(ctx, "INSERT INTO t VALUES (2, 20)")
 	// Verify WithParams doesn't panic
-	agg := NewAggregate(nil, nil, nil)
+	agg := AG.NewAggregate(nil, nil, nil)
 	agg.WithParams(nil)
 }
 
@@ -32,11 +34,11 @@ func TestCoverage_AnalyzeWithStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCatalog: %v", err)
 	}
-	SetCatalog(cat)
-	t.Cleanup(func() { SetCatalog(nil); _ = cat.Close() })
+	DT.SetCatalog(cat)
+	t.Cleanup(func() { DT.SetCatalog(nil); _ = cat.Close() })
 
 	ex.RegisterTableWithPK("t", []string{"id", "v", "grp"}, "id")
-	exID, _ := tableIDFor("t")
+	exID, _ := DT.TableIDFor("t")
 	if err := cat.Put(ls.CatalogEntry{
 		Name:       "t",
 		TableID:    exID,

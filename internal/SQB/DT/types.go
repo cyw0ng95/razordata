@@ -7,6 +7,10 @@ import (
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // Value is a tagged-union that stores SQL values inline without boxing.
@@ -133,14 +137,248 @@ var (
 	ErrClosed         = errors.New("ex: operator closed")
 )
 
+// SessionCounterAccessor is an optional callback set by SYS/SE to
+// provide per-session counter accessors for changes(), last_insert_rowid(),
+// and total_changes() eval functions.
+type SessionCounterAccessor interface {
+	ChangesCount(sessionID uint64) int64
+	LastInsertRowID(sessionID uint64) int64
+	TotalChangesCount(sessionID uint64) int64
+}
+
+var (
+	SessionCounterMu       sync.RWMutex
+	SessionCounterAccessor_ SessionCounterAccessor
+)
+
+// CurrentSessionID is the package-level current session ID for eval functions.
+var CurrentSessionID atomic.Uint64
+
+// SetSessionCounterAccessor sets the callback for reading per-session
+// counters. Called once during SYS initialization.
+func SetSessionCounterAccessor(acc SessionCounterAccessor) {
+	SessionCounterMu.Lock()
+	defer SessionCounterMu.Unlock()
+	SessionCounterAccessor_ = acc
+}
+
+// GetSessionCounterAccessor returns the current accessor (may be nil).
+func GetSessionCounterAccessor() SessionCounterAccessor {
+	SessionCounterMu.RLock()
+	defer SessionCounterMu.RUnlock()
+	return SessionCounterAccessor_
+}
+
+// GetCurrentSessionID returns the package-level session ID for eval.
+func GetCurrentSessionID() uint64 {
+	return CurrentSessionID.Load()
+}
+
+// ToInt64 converts an any (or Value) to int64. Returns ok=false
+// if the value cannot be converted.
+func ToInt64(v any) (int64, bool) {
+	if val, ok := v.(Value); ok {
+		v = val.ToAny()
+	}
+	switch x := v.(type) {
+	case int64:
+		return x, true
+	case float64:
+		return int64(x), true
+	case int:
+		return int64(x), true
+	}
+	return 0, false
+}
+
+// Compare returns -1/0/1 comparing two any values (or Values). NULLs
+// sort less than non-NULLs; two NULLs compare equal.
+func Compare(a, b any) int {
+	if av, ok := a.(Value); ok {
+		a = av.ToAny()
+	}
+	if bv, ok := b.(Value); ok {
+		b = bv.ToAny()
+	}
+	if a == nil && b == nil {
+		return 0
+	}
+	if a == nil {
+		return -1
+	}
+	if b == nil {
+		return 1
+	}
+	switch ax := a.(type) {
+	case string:
+		if bs, ok := b.(string); ok {
+			return strings.Compare(ax, bs)
+		}
+	case int64:
+		switch bx := b.(type) {
+		case int64:
+			if ax < bx {
+				return -1
+			}
+			if ax > bx {
+				return 1
+			}
+			return 0
+		case float64:
+			if float64(ax) < bx {
+				return -1
+			}
+			if float64(ax) > bx {
+				return 1
+			}
+			return 0
+		}
+	case float64:
+		if bf, ok := b.(float64); ok {
+			if ax < bf {
+				return -1
+			}
+			if ax > bf {
+				return 1
+			}
+			return 0
+		}
+		if bi, ok := b.(int64); ok {
+			if ax < float64(bi) {
+				return -1
+			}
+			if ax > float64(bi) {
+				return 1
+			}
+			return 0
+		}
+	}
+	return 0
+}
+
+// IsValueTruthy reports whether a Value should be treated as true in
+// boolean contexts.
+func IsValueTruthy(v Value) bool {
+	switch v.Kind {
+	case KindNull:
+		return false
+	case KindInt:
+		return v.I64 != 0
+	case KindFloat:
+		return v.F64 != 0
+	case KindText:
+		return v.S != ""
+	case KindBool:
+		return v.Bo
+	case KindBlob:
+		return len(v.B) > 0
+	}
+	return false
+}
+
 // Result holds the outcome of an Exec call.
 type Result struct {
 	RowsAffected int64
 	LastInsertID uint64
 }
 
+// EqualValueAny compares two any values for equality after unwrapping
+// any Value to its underlying Go type. If either side is nil, returns false.
+func EqualValueAny(a, b any) bool {
+	if av, ok := a.(Value); ok {
+		a = av.ToAny()
+	}
+	if bv, ok := b.(Value); ok {
+		b = bv.ToAny()
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if ai, aok := a.(int64); aok {
+		if bi, bok := b.(int64); bok {
+			return ai == bi
+		}
+		if bf, bok := b.(float64); bok {
+			return float64(ai) == bf
+		}
+		if bi, bok := b.(int); bok {
+			return ai == int64(bi)
+		}
+		return false
+	}
+	if af, aok := a.(float64); aok {
+		if bf, bok := b.(float64); bok {
+			return af == bf
+		}
+		return false
+	}
+	if as, aok := a.(string); aok {
+		if bs, bok := b.(string); bok {
+			return as == bs
+		}
+		return false
+	}
+	if ab, aok := a.(bool); aok {
+		if bb, bok := b.(bool); bok {
+			return ab == bb
+		}
+		return false
+	}
+	return a == b
+}
+
 // Rows describes the columns of a query result.
 type Rows struct {
 	Cols  []string
 	Types []int // LX.TokenType
+}
+
+// ContainsAggregate reports whether an expression tree contains any
+// aggregate function call.
+func ContainsAggregate(e PS.Expr) bool {
+	if e == nil {
+		return false
+	}
+	switch v := e.(type) {
+	case *PS.AggregateFunc:
+		return true
+	case *PS.WindowFunc:
+		return false
+	case *PS.BinaryExpr:
+		return ContainsAggregate(v.Left) || ContainsAggregate(v.Right)
+	case *PS.UnaryExpr:
+		return ContainsAggregate(v.Operand)
+	case *PS.AliasedExpr:
+		return ContainsAggregate(v.Expr)
+	case *PS.CastExpr:
+		return ContainsAggregate(v.Expr)
+	case *PS.FunctionCall:
+		for _, a := range v.Args {
+			if ContainsAggregate(a) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ContainsWindowFunc reports whether an expression tree contains any
+// window function call.
+func ContainsWindowFunc(e PS.Expr) bool {
+	if e == nil {
+		return false
+	}
+	switch v := e.(type) {
+	case *PS.WindowFunc:
+		return true
+	case *PS.BinaryExpr:
+		return ContainsWindowFunc(v.Left) || ContainsWindowFunc(v.Right)
+	case *PS.UnaryExpr:
+		return ContainsWindowFunc(v.Operand)
+	case *PS.AliasedExpr:
+		return ContainsWindowFunc(v.Expr)
+	case *PS.CastExpr:
+		return ContainsWindowFunc(v.Expr)
+	}
+	return false
 }

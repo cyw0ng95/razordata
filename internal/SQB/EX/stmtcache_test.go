@@ -2,6 +2,7 @@ package EX
 
 import (
 	"context"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -14,15 +15,15 @@ func BenchmarkStmtCache_ParsedVsCached(b *testing.B) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTableSchema("t", []string{"id", "name"})
-	tablesMu.Lock()
+	DT.RegisterTableSchema("t", []string{"id", "name"})
+	DT.TablesMu.Lock()
 	for i := 0; i < 100; i++ {
-		tables["t"] = append(tables["t"], Row{
+		DT.Tables["t"] = append(DT.Tables["t"], Row{
 			Cols: []string{"id", "name"},
 			Data: []Value{NewIntValue(int64(i)), NewTextValue("u")},
 		})
 	}
-	tablesMu.Unlock()
+	DT.TablesMu.Unlock()
 
 	// Use a complex SQL where parsing cost is significant.
 	sql := `SELECT t1.id, t1.name FROM t AS t1
@@ -74,12 +75,12 @@ func TestStmtCache_QueryStream(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTableSchema("t", []string{"id"})
-	tablesMu.Lock()
+	DT.RegisterTableSchema("t", []string{"id"})
+	DT.TablesMu.Lock()
 	for i := 0; i < 10; i++ {
-		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
+		DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
 	}
-	tablesMu.Unlock()
+	DT.TablesMu.Unlock()
 
 	ex := NewExecutor()
 	ctx := context.Background()
@@ -143,7 +144,7 @@ func TestStmtCache_InvalidationOnError(t *testing.T) {
 }
 
 // TestStmtCache_DDLInvalidates verifies REQ000771: after a DDL
-// statement (e.g. CREATE TABLE), cached queries for tables that
+// statement (e.g. CREATE TABLE), cached queries for DT.Tables that
 // no longer exist must still error gracefully. The cache itself
 // keeps entries — DDL invalidation is the planner's responsibility
 // (it re-checks catalog at plan time). This test verifies the
@@ -153,10 +154,10 @@ func TestStmtCache_DDLInvalidates(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTableSchema("t", []string{"id"})
-	tablesMu.Lock()
-	tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(1))}})
-	tablesMu.Unlock()
+	DT.RegisterTableSchema("t", []string{"id"})
+	DT.TablesMu.Lock()
+	DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(1))}})
+	DT.TablesMu.Unlock()
 
 	ex := NewExecutor()
 	ctx := context.Background()
@@ -203,12 +204,12 @@ func TestQueryStreamFromAST_BypassParser(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTableSchema("t", []string{"id"})
-	tablesMu.Lock()
+	DT.RegisterTableSchema("t", []string{"id"})
+	DT.TablesMu.Lock()
 	for i := 0; i < 3; i++ {
-		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
+		DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
 	}
-	tablesMu.Unlock()
+	DT.TablesMu.Unlock()
 
 	ex := NewExecutor()
 	ctx := context.Background()

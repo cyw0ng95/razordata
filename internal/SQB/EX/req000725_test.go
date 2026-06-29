@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// REQ000725: Multi-table implicit cross join (4+ tables) returns 0
+// REQ000725: Multi-table implicit cross join (4+ DT.Tables) returns 0
 // rows. The planner only handles explicit JOINs; comma-separated
-// tables in FROM with WHERE conditions acting as join predicates
+// DT.Tables in FROM with WHERE conditions acting as join predicates
 // are ignored except for the first table.
 func TestREQ000725_ImplicitCrossJoin(t *testing.T) {
 	UnregisterAll()

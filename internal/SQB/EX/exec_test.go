@@ -4,8 +4,10 @@ import (
 	"context"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 )
 
 type runCase struct {
@@ -18,7 +20,7 @@ func TestExecutorEndToEnd(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTable("users", []Row{
+	DT.RegisterTable("users", []Row{
 		{Cols: []string{"id", "name", "age"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1)), NewTextValue("alice"), NewIntValue(int64(30))}},
 		{Cols: []string{"id", "name", "age"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2)), NewTextValue("bob"), NewIntValue(int64(25))}},
 		{Cols: []string{"id", "name", "age"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}, Data: []Value{NewIntValue(int64(3)), NewTextValue("carol"), NewIntValue(int64(40))}},
@@ -186,7 +188,7 @@ func buildPlan(t *testing.T, stmt PS.Stmt) Operator {
 	}
 	hasAgg := hasAggregatePublic(sel.Cols)
 	if hasAgg {
-		current = NewAggregate(current, nil, sel.Cols)
+		current = AG.NewAggregate(current, nil, sel.Cols)
 	}
 	if len(sel.OrderBy) > 0 {
 		current = NewSort(current, sel.OrderBy)

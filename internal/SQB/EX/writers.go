@@ -7,10 +7,12 @@ import (
 	"strconv"
 	"strings"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 type Insert struct {
@@ -23,7 +25,7 @@ type Insert struct {
 	conflictAction PS.ConflictAction
 	defaultValues  bool // REQ000563: INSERT INTO t DEFAULT VALUES
 	store          Store
-	schema         *storeSchema
+	schema         *StoreSchema
 	txWriter       TxWriter
 	rows           int64
 	done           bool
@@ -54,10 +56,10 @@ func NewInsert(table string, cols []string, values [][]PS.Expr, returning []PS.E
 func (i *Insert) Child() Operator { return i.selectPlan }
 
 // NewInsertWithStore builds an Insert that writes through the engine. The
-// table must have been registered. REQ000367: tables without a declared
+// table must have been registered. REQ000367: DT.Tables without a declared
 // PRIMARY KEY get a synthetic int64 rowid and remain writable.
 func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.Expr, returning []PS.Expr, onConflict *PS.OnConflict) (*Insert, error) {
-	ss, ok := schemaFor(table)
+	ss, ok := DT.SchemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
@@ -96,22 +98,22 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 	if i.store != nil {
 		return i.nextFromStore(ctx)
 	}
-	schema := Schema(i.table)
+	schema := DT.Schema(i.table)
 	if schema == nil && len(i.cols) > 0 {
 		schema = i.cols
 	}
 	// Resolve the constraint-aware schema for NOT NULL / DEFAULT
-	// enforcement. Falls back to nil for ad-hoc schemas.
-	var cschema *storeSchema
-	if ss, ok := schemaFor(i.table); ok {
+	// enforcement. Falls back to nil for ad-hoc DT.Schemas.
+	var cschema *StoreSchema
+	if ss, ok := DT.SchemaFor(i.table); ok {
 		cschema = ss
 	}
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
-	existing := tables[i.table]
+	DT.TablesMu.Lock()
+	defer DT.TablesMu.Unlock()
+	existing := DT.Tables[i.table]
 	// REQ000641: snapshot the table before first mutation for rollback.
 	if tw := CurrentTxWriter(); tw != nil {
-		tw.RecordInMemoryTable(i.table, SnapshotInMemoryTable(i.table))
+		tw.RecordInMemoryTable(i.table, DT.SnapshotInMemoryTable(i.table))
 	}
 	var pending map[string]struct{}
 	var iterValues [][]PS.Expr
@@ -207,7 +209,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		}
 		// REPLACE handling for in-memory path without constraint enforcement
 		if i.conflictAction == PS.ConflictActionReplace && cschema == nil {
-			pkName := tablePKs[i.table]
+			pkName := DT.TablePKs[i.table]
 			var removed int
 			existing, removed = removeConflictingInMemory(existing, schema, pkName, out)
 			i.rows += int64(removed)
@@ -218,7 +220,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			pending = make(map[string]struct{}, len(i.values))
 		}
 		// REQ000126/REQ000905: FK validation on INSERT (skipped when PRAGMA foreign_keys = OFF)
-		if IsForeignKeysEnabled() && cschema != nil && len(cschema.foreignKeys) > 0 {
+		if IsForeignKeysEnabled() && cschema != nil && len(cschema.ForeignKeys) > 0 {
 			if err := validateForeignKeyInsert(cschema, valueSliceToAny(out.Data), i.store); err != nil {
 				return Row{}, err
 			}
@@ -237,7 +239,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			}
 		}
 	}
-	tables[i.table] = existing
+	DT.Tables[i.table] = existing
 
 	// Return first RETURNING result if any
 	if len(i.resultRows) > 0 {
@@ -294,7 +296,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 	colIdx := make([]int, len(i.cols))
 	for ci, nm := range i.cols {
 		idx := -1
-		for j, s := range i.schema.cols {
+		for j, s := range i.schema.Cols {
 			if strings.EqualFold(nm, s) {
 				idx = j
 				break
@@ -306,10 +308,10 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		var out Row
 		var err error
 		if row == nil && i.defaultValues {
-			out = Row{Cols: i.schema.cols}
-			out.Data = make([]Value, len(i.schema.cols))
+			out = Row{Cols: i.schema.Cols}
+			out.Data = make([]Value, len(i.schema.Cols))
 		} else {
-			out, err = buildInsertRow(i.schema.cols, i.cols, colIdx, row, i.params)
+			out, err = buildInsertRow(i.schema.Cols, i.cols, colIdx, row, i.params)
 		}
 		if out, err = fillDefaults(i.schema, out); err != nil {
 			return Row{}, err
@@ -344,7 +346,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			}
 		}
 		// REQ000126/REQ000905: FK validation on INSERT (store path, skipped when PRAGMA foreign_keys = OFF)
-		if IsForeignKeysEnabled() && len(i.schema.foreignKeys) > 0 {
+		if IsForeignKeysEnabled() && len(i.schema.ForeignKeys) > 0 {
 			if err := validateForeignKeyInsert(i.schema, valueSliceToAny(out.Data), i.store); err != nil {
 				return Row{}, err
 			}
@@ -401,12 +403,12 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 // the SELECT query and inserting each row into the target table.
 // REQ000707.
 func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
-	schema := Schema(i.table)
+	schema := DT.Schema(i.table)
 	if schema == nil && len(i.cols) > 0 {
 		schema = i.cols
 	}
-	var cschema *storeSchema
-	if ss, ok := schemaFor(i.table); ok {
+	var cschema *StoreSchema
+	if ss, ok := DT.SchemaFor(i.table); ok {
 		cschema = ss
 	}
 
@@ -424,11 +426,11 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 	}
 
 	// Now insert all rows
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
-	existing := tables[i.table]
+	DT.TablesMu.Lock()
+	defer DT.TablesMu.Unlock()
+	existing := DT.Tables[i.table]
 	if tw := CurrentTxWriter(); tw != nil {
-		tw.RecordInMemoryTable(i.table, SnapshotInMemoryTable(i.table))
+		tw.RecordInMemoryTable(i.table, DT.SnapshotInMemoryTable(i.table))
 	}
 
 	pending := make(map[string]struct{})
@@ -469,7 +471,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 			}
 		}
 	}
-	tables[i.table] = existing
+	DT.Tables[i.table] = existing
 
 	if len(i.resultRows) > 0 {
 		row := i.resultRows[0]
@@ -522,7 +524,7 @@ type Update struct {
 	returning  []PS.Expr
 	iter       Operator
 	store      Store
-	schema     *storeSchema
+	schema     *StoreSchema
 	txWriter   TxWriter
 	rows       int64
 	done       bool
@@ -552,9 +554,9 @@ func NewUpdate(table string, set []PS.Pair, where PS.Expr, iter Operator, return
 
 // NewUpdateWithStore builds an Update that reads the old row via the engine
 // iterator and writes the new version through engine.Insert. REQ000367:
-// tables without a declared PRIMARY KEY are writable via synthetic rowid.
+// DT.Tables without a declared PRIMARY KEY are writable via synthetic rowid.
 func NewUpdateWithStore(store Store, table string, set []PS.Pair, where PS.Expr, iter Operator, returning []PS.Expr) (*Update, error) {
-	ss, ok := schemaFor(table)
+	ss, ok := DT.SchemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
@@ -589,15 +591,15 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 	}
 	// Resolve the constraint-aware schema for NOT NULL / DEFAULT
 	// enforcement on the new row.
-	var cschema *storeSchema
-	if ss, ok := schemaFor(u.table); ok {
+	var cschema *StoreSchema
+	if ss, ok := DT.SchemaFor(u.table); ok {
 		cschema = ss
 	}
 	// REQ000641: snapshot the table before first mutation for rollback.
 	if tw := CurrentTxWriter(); tw != nil {
-		tablesMu.RLock()
-		tw.RecordInMemoryTable(u.table, SnapshotInMemoryTable(u.table))
-		tablesMu.RUnlock()
+		DT.TablesMu.RLock()
+		tw.RecordInMemoryTable(u.table, DT.SnapshotInMemoryTable(u.table))
+		DT.TablesMu.RUnlock()
 	}
 	for {
 		row, err := u.iter.Next(ctx)
@@ -607,7 +609,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			}
 			return Row{}, err
 		}
-		snapshot := cloneRow(row)
+		snapshot := DT.CloneRow(row)
 		// REQ000840: SeqScan may return rows that share Data with the
 		// source table. Deep-copy Data before applyUpdate mutates it
 		// in-place, otherwise the source row is corrupted.
@@ -639,15 +641,15 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			// updating a row to a value that collides with another
 			// row's UNIQUE key is caught.  The snapshot is passed
 			// to checkUnique for self-exclusion.
-			tablesMu.RLock()
+			DT.TablesMu.RLock()
 			ul := inMemoryLookup(u.table).Lookup
 			uidErr := checkUnique(cschema, row, nil, snapshot, ul)
-			tablesMu.RUnlock()
+			DT.TablesMu.RUnlock()
 			if uidErr != nil {
 				return Row{}, uidErr
 			}
 		}
-		if err := replaceBySnapshot(u.table, snapshot, row); err != nil {
+		if err := DT.ReplaceBySnapshot(u.table, snapshot, row); err != nil {
 			return Row{}, err
 		}
 		u.rows++
@@ -698,7 +700,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 			}
 			return Row{}, err
 		}
-		oldRow := cloneRow(row)
+		oldRow := DT.CloneRow(row)
 		if err := applyUpdate(&row, u.set, u.params); err != nil {
 			return Row{}, err
 		}
@@ -777,7 +779,7 @@ type Delete struct {
 	returning  []PS.Expr
 	iter       Operator
 	store      Store
-	schema     *storeSchema
+	schema     *StoreSchema
 	txWriter   TxWriter
 	rows       int64
 	done       bool
@@ -808,10 +810,10 @@ func NewDelete(table string, where PS.Expr, iter Operator, returning []PS.Expr) 
 }
 
 // NewDeleteWithStore builds a Delete that removes rows through engine.Delete.
-// REQ000367: tables without a declared PRIMARY KEY are deletable via
+// REQ000367: DT.Tables without a declared PRIMARY KEY are deletable via
 // the synthetic rowid.
 func NewDeleteWithStore(store Store, table string, where PS.Expr, iter Operator, returning []PS.Expr) (*Delete, error) {
-	ss, ok := schemaFor(table)
+	ss, ok := DT.SchemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
@@ -845,8 +847,8 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 	}
 	// REQ000514: resolve the schema for FK validation, then
 	// collect to-be-deleted row indices and run FK checks.
-	var dschema *storeSchema
-	if ss, ok := schemaFor(d.table); ok {
+	var dschema *StoreSchema
+	if ss, ok := DT.SchemaFor(d.table); ok {
 		dschema = ss
 	}
 	toDelete := map[int]bool{}
@@ -859,7 +861,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 			}
 			return Row{}, err
 		}
-		idx, ok := rowIndex(d.table, row)
+		idx, ok := DT.RowIndex(d.table, row)
 		if ok {
 			toDelete[idx] = true
 			fkRows = append(fkRows, valueSliceToAny(row.Data))
@@ -881,20 +883,20 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 				}
 			}
 		}
-		tablesMu.Lock()
-		defer tablesMu.Unlock()
+		DT.TablesMu.Lock()
+		defer DT.TablesMu.Unlock()
 		// REQ000641: snapshot the table before first mutation for rollback.
 		if tw := CurrentTxWriter(); tw != nil {
-			tw.RecordInMemoryTable(d.table, SnapshotInMemoryTable(d.table))
+			tw.RecordInMemoryTable(d.table, DT.SnapshotInMemoryTable(d.table))
 		}
-		existing := tables[d.table]
+		existing := DT.Tables[d.table]
 		out := existing[:0]
 		for i, r := range existing {
 			if !toDelete[i] {
 				out = append(out, r)
 			}
 		}
-		tables[d.table] = out
+		DT.Tables[d.table] = out
 		d.rows = int64(len(toDelete))
 		if d.execCtx != nil {
 			d.execCtx.LastChanges = int64(len(toDelete))
@@ -1030,14 +1032,14 @@ type CreateTable struct {
 	selectPlan Operator // non-nil for CREATE TABLE AS SELECT (REQ000520)
 }
 
-// registerTableSchema registers a table in the in-memory tables and
-// schemas maps. Returns the column metadata extracted from the AST.
+// registerTableSchema registers a table in the in-memory DT.Tables and
+// DT.Schemas maps. Returns the column metadata extracted from the AST.
 // REQ000982: extracted from CreateTable.Next.
 func registerTableSchema(stmt *PS.CreateTable) ([]string, []bool, []PS.Expr, []LX.TokenType, []int, []int, error) {
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
-	if _, ok := tables[stmt.Name]; ok {
-		return nil, nil, nil, nil, nil, nil, errTableExists
+	DT.TablesMu.Lock()
+	defer DT.TablesMu.Unlock()
+	if _, ok := DT.Tables[stmt.Name]; ok {
+		return nil, nil, nil, nil, nil, nil, DT.ErrTableExists
 	}
 	cols := make([]string, len(stmt.Cols))
 	nullable := make([]bool, len(stmt.Cols))
@@ -1053,8 +1055,8 @@ func registerTableSchema(stmt *PS.CreateTable) ([]string, []bool, []PS.Expr, []L
 		precisions[i] = col.Precision
 		scales[i] = col.Scale
 	}
-	tables[stmt.Name] = []Row{}
-	schemas[stmt.Name] = cols
+	DT.Tables[stmt.Name] = []Row{}
+	DT.Schemas[stmt.Name] = cols
 	return cols, nullable, defaults, colTypes, precisions, scales, nil
 }
 
@@ -1163,7 +1165,7 @@ func buildGeneratedColumns(stmt *PS.CreateTable) []PS.Expr {
 // the in-memory registration.
 // REQ000982: extracted from CreateTable.Next.
 func persistToCatalog(stmt *PS.CreateTable, cols []string, nullable []bool, colTypes []LX.TokenType, unique []UniqueKey, pk string) {
-	cat := Catalog()
+	cat := DT.Catalog()
 	if cat == nil {
 		return
 	}
@@ -1175,7 +1177,7 @@ func persistToCatalog(stmt *PS.CreateTable, cols []string, nullable []bool, colT
 	for i, u := range unique {
 		catUnique[i] = ls.CatalogUnique{Cols: append([]int(nil), u.Cols...)}
 	}
-	id, _ := tableIDFor(stmt.Name)
+	id, _ := DT.TableIDFor(stmt.Name)
 	if id == 0 {
 		id, _ = cat.NextID()
 	}
@@ -1244,27 +1246,27 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	generated := buildGeneratedColumns(c.stmt)
 	checks := buildCheckConstraints(c.stmt)
 
-	id := registerStoreSchemaWithFK(c.stmt.Name, cols, nullable, defaults, unique, pk, fks)
+	id := DT.RegisterStoreSchemaWithFK(c.stmt.Name, cols, nullable, defaults, unique, pk, fks)
 	// R16-3: record each column's SQL type token alongside the
 	// schema so ExtractParamTypes can resolve `column = ?`
 	// placeholders to their column type at Prepare time.
-	storeMu.Lock()
-	if ss, ok := storeSchemas[id]; ok {
-		ss.colTypes = append([]LX.TokenType(nil), colTypes...)
-		ss.precision = append([]int(nil), precisions...)
-		ss.scale = append([]int(nil), scales...)
-		ss.generated = generated
-		ss.checks = append([]PS.Expr(nil), checks...)
-		// REQ000367: tables without a PRIMARY KEY that are
+	DT.StoreMu.Lock()
+	if ss, ok := DT.StoreSchemas[id]; ok {
+		ss.ColTypes = append([]LX.TokenType(nil), colTypes...)
+		ss.Precision = append([]int(nil), precisions...)
+		ss.Scale = append([]int(nil), scales...)
+		ss.Generated = generated
+		ss.Checks = append([]PS.Expr(nil), checks...)
+		// REQ000367: DT.Tables without a PRIMARY KEY that are
 		// registered for storage get a synthetic int64 rowid.
 		// This makes them writable to the engine store while
 		// keeping the user-visible schema unchanged.
 		if pk == "" {
-			ss.hiddenPK = true
+			ss.HiddenPK = true
 		}
 	}
 	_ = ctx
-	storeMu.Unlock()
+	DT.StoreMu.Unlock()
 
 	// Persist to the system catalog if one is wired in (iter-12).
 	persistToCatalog(c.stmt, cols, nullable, colTypes, unique, pk)
@@ -1287,23 +1289,23 @@ func (c *CreateTable) nextAsSelect(ctx context.Context) (Row, error) {
 	if err != nil {
 		if err == ErrNoRows {
 			// Empty SELECT: register table with no columns.
-			tablesMu.Lock()
-			tables[c.stmt.Name] = []Row{}
-			schemas[c.stmt.Name] = nil
-			tablesMu.Unlock()
+			DT.TablesMu.Lock()
+			DT.Tables[c.stmt.Name] = []Row{}
+			DT.Schemas[c.stmt.Name] = nil
+			DT.TablesMu.Unlock()
 			return Row{}, ErrNoRows
 		}
 		return Row{}, err
 	}
 	cols := append([]string(nil), firstRow.Cols...)
-	tablesMu.Lock()
-	if _, ok := tables[c.stmt.Name]; ok {
-		tablesMu.Unlock()
-		return Row{}, errTableExists
+	DT.TablesMu.Lock()
+	if _, ok := DT.Tables[c.stmt.Name]; ok {
+		DT.TablesMu.Unlock()
+		return Row{}, DT.ErrTableExists
 	}
-	tables[c.stmt.Name] = []Row{firstRow}
-	schemas[c.stmt.Name] = cols
-	tablesMu.Unlock()
+	DT.Tables[c.stmt.Name] = []Row{firstRow}
+	DT.Schemas[c.stmt.Name] = cols
+	DT.TablesMu.Unlock()
 	// Drain remaining rows.
 	for {
 		row, err := c.selectPlan.Next(ctx)
@@ -1313,9 +1315,9 @@ func (c *CreateTable) nextAsSelect(ctx context.Context) (Row, error) {
 			}
 			return Row{}, err
 		}
-		tablesMu.Lock()
-		tables[c.stmt.Name] = append(tables[c.stmt.Name], row)
-		tablesMu.Unlock()
+		DT.TablesMu.Lock()
+		DT.Tables[c.stmt.Name] = append(DT.Tables[c.stmt.Name], row)
+		DT.TablesMu.Unlock()
 	}
 	return Row{}, ErrNoRows
 }
@@ -1336,28 +1338,28 @@ func (d *DropTable) Next(ctx context.Context) (Row, error) {
 	}
 	d.done = true
 
-	tablesMu.Lock()
-	existing, tableOk := tables[d.stmt.Name]
+	DT.TablesMu.Lock()
+	existing, tableOk := DT.Tables[d.stmt.Name]
 	if !tableOk && !d.stmt.IfExists {
-		tablesMu.Unlock()
+		DT.TablesMu.Unlock()
 		return Row{}, fmt.Errorf("ex: no such table: %s", d.stmt.Name)
 	}
 	if tableOk {
 		d.rows = int64(len(existing))
-		delete(tables, d.stmt.Name)
+		delete(DT.Tables, d.stmt.Name)
 	}
-	tablesMu.Unlock()
+	DT.TablesMu.Unlock()
 
 	// Drop the store schema mapping.
-	storeMu.Lock()
-	id, idOk := tableIDs[d.stmt.Name]
+	DT.StoreMu.Lock()
+	id, idOk := DT.TableIDs[d.stmt.Name]
 	if idOk {
-		delete(storeSchemas, id)
-		delete(tableIDs, d.stmt.Name)
+		delete(DT.StoreSchemas, id)
+		delete(DT.TableIDs, d.stmt.Name)
 	}
 	// Drop indexes associated with this table (REQ000828).
-	delete(registeredIndexes, d.stmt.Name)
-	storeMu.Unlock()
+	delete(DT.RegisteredIndexes, d.stmt.Name)
+	DT.StoreMu.Unlock()
 
 	// Drop triggers associated with this table (REQ000828).
 	triggerMu.Lock()
@@ -1371,7 +1373,7 @@ func (d *DropTable) Next(ctx context.Context) (Row, error) {
 
 	// Persist the drop to the system catalog.
 	if idOk {
-		if cat := Catalog(); cat != nil {
+		if cat := DT.Catalog(); cat != nil {
 			_ = cat.Delete(id)
 		}
 	}
@@ -1502,8 +1504,8 @@ func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
 	// REQ000479: IF NOT EXISTS — skip if index already exists
 	if c.stmt.IfExists {
 		exists := false
-		storeMu.Lock()
-		for _, idxs := range registeredIndexes {
+		DT.StoreMu.Lock()
+		for _, idxs := range DT.RegisteredIndexes {
 			for _, idx := range idxs {
 				if idx.Name == c.stmt.Name {
 					exists = true
@@ -1514,7 +1516,7 @@ func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
 				break
 			}
 		}
-		storeMu.Unlock()
+		DT.StoreMu.Unlock()
 		if exists {
 			return Row{}, ErrNoRows
 		}
@@ -1525,15 +1527,15 @@ func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
 		indexCols[i] = ic.Name
 	}
 	// Register for writer maintenance
-	RegisterIndexWithID(c.stmt.Table, RegisteredIndex{
+	DT.RegisterIndexWithID(c.stmt.Table, RegisteredIndex{
 		Name:    c.stmt.Name,
 		Columns: indexCols,
 		Unique:  c.stmt.Unique,
 	})
 	// Persist to catalog if available
-	if cat := Catalog(); cat != nil {
+	if cat := DT.Catalog(); cat != nil {
 		// Find the tableID
-		if tableID, ok := tableIDFor(c.stmt.Table); ok {
+		if tableID, ok := DT.TableIDFor(c.stmt.Table); ok {
 			idx := ls.CatalogIndex{
 				Name:      c.stmt.Name,
 				Columns:   indexCols,
@@ -1571,9 +1573,9 @@ func (d *DropIndex) Next(ctx context.Context) (Row, error) {
 	d.done = true
 
 	// Check if index exists before modifying.
-	storeMu.Lock()
+	DT.StoreMu.Lock()
 	indexFound := false
-	for _, idxs := range registeredIndexes {
+	for _, idxs := range DT.RegisteredIndexes {
 		for _, idx := range idxs {
 			if idx.Name == d.stmt.Name {
 				indexFound = true
@@ -1585,12 +1587,12 @@ func (d *DropIndex) Next(ctx context.Context) (Row, error) {
 		}
 	}
 	if !indexFound && !d.stmt.IfExists {
-		storeMu.Unlock()
+		DT.StoreMu.Unlock()
 		return Row{}, fmt.Errorf("ex: no such index: %s", d.stmt.Name)
 	}
 
-	// Remove from registeredIndexes.
-	for table, idxs := range registeredIndexes {
+	// Remove from DT.RegisteredIndexes.
+	for table, idxs := range DT.RegisteredIndexes {
 		filtered := idxs[:0]
 		for _, idx := range idxs {
 			if idx.Name != d.stmt.Name {
@@ -1598,18 +1600,18 @@ func (d *DropIndex) Next(ctx context.Context) (Row, error) {
 			}
 		}
 		if len(filtered) == 0 {
-			delete(registeredIndexes, table)
+			delete(DT.RegisteredIndexes, table)
 		} else {
-			registeredIndexes[table] = filtered
+			DT.RegisteredIndexes[table] = filtered
 		}
 	}
-	snapshot := make([]uint64, 0, len(tableIDs))
-	for _, tid := range tableIDs {
+	snapshot := make([]uint64, 0, len(DT.TableIDs))
+	for _, tid := range DT.TableIDs {
 		snapshot = append(snapshot, tid)
 	}
-	storeMu.Unlock()
+	DT.StoreMu.Unlock()
 	// Remove from catalog
-	if cat := Catalog(); cat != nil {
+	if cat := DT.Catalog(); cat != nil {
 		for _, tableID := range snapshot {
 			if err := cat.DeleteIndex(tableID, d.stmt.Name); err == nil {
 				break
@@ -1792,22 +1794,22 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 
 func (p *Pragma) loadTableInfo() error {
 	tableName := p.stmt.Value
-	ss, ok := schemaFor(tableName)
+	ss, ok := DT.SchemaFor(tableName)
 	if !ok {
 		return nil
 	}
 	pkIdx := -1
-	if ss.pk != "" {
-		for i, c := range ss.cols {
-			if c == ss.pk {
+	if ss.Pk != "" {
+		for i, c := range ss.Cols {
+			if c == ss.Pk {
 				pkIdx = i
 				break
 			}
 		}
 	}
-	for i, colName := range ss.cols {
+	for i, colName := range ss.Cols {
 		notNull := int64(0)
-		if i < len(ss.nullable) && !ss.nullable[i] {
+		if i < len(ss.Nullable) && !ss.Nullable[i] {
 			notNull = int64(1)
 		}
 		pk := int64(0)
@@ -1815,8 +1817,8 @@ func (p *Pragma) loadTableInfo() error {
 			pk = int64(1)
 		}
 		colType := LX.TokenType(0)
-		if i < len(ss.colTypes) {
-			colType = ss.colTypes[i]
+		if i < len(ss.ColTypes) {
+			colType = ss.ColTypes[i]
 		}
 		p.rows = append(p.rows, Row{
 			Cols: []string{"cid", "name", "type", "notnull", "dflt_value", "pk"},
@@ -1846,7 +1848,7 @@ func colTypeName(t LX.TokenType) string {
 func (p *Pragma) loadIndexList() {
 	tableName := p.stmt.Value
 	// Check if table exists
-	if _, ok := schemaFor(tableName); !ok {
+	if _, ok := DT.SchemaFor(tableName); !ok {
 		return
 	}
 	// For now, only the primary key index exists
@@ -1857,7 +1859,7 @@ func (p *Pragma) loadIndexList() {
 // loadTableList populates rows for PRAGMA table_list (REQ000732).
 // Returns columns: type, name, tbl_name, rootpage, sql
 func (p *Pragma) loadTableList() {
-	names := allTableNames()
+	names := DT.AllTableNames()
 	for _, name := range names {
 		p.rows = append(p.rows, Row{
 			Cols: []string{"type", "name", "tbl_name", "rootpage", "sql"},
@@ -1870,11 +1872,11 @@ func (p *Pragma) loadTableList() {
 // Returns columns: id, seq, table, from, to, on_update, on_delete, match
 func (p *Pragma) loadForeignKeyList() {
 	tableName := p.stmt.Value
-	ss, ok := schemaFor(tableName)
-	if !ok || len(ss.foreignKeys) == 0 {
+	ss, ok := DT.SchemaFor(tableName)
+	if !ok || len(ss.ForeignKeys) == 0 {
 		return
 	}
-	for id, fk := range ss.foreignKeys {
+	for id, fk := range ss.ForeignKeys {
 		for seq, col := range fk.Columns {
 			p.rows = append(p.rows, Row{
 				Cols: []string{"id", "seq", "table", "from", "to", "on_update", "on_delete", "match"},
@@ -1889,26 +1891,26 @@ func (p *Pragma) loadForeignKeyList() {
 // An empty result means no violations.
 func (p *Pragma) loadForeignKeyCheck() {
 	targetTable := p.stmt.Value
-	names := allTableNames()
+	names := DT.AllTableNames()
 	for _, name := range names {
 		if targetTable != "" && name != targetTable {
 			continue
 		}
-		ss, ok := schemaFor(name)
-		if !ok || len(ss.foreignKeys) == 0 {
+		ss, ok := DT.SchemaFor(name)
+		if !ok || len(ss.ForeignKeys) == 0 {
 			continue
 		}
-		tablesMu.RLock()
-		rows := tables[name]
-		tablesMu.RUnlock()
+		DT.TablesMu.RLock()
+		rows := DT.Tables[name]
+		DT.TablesMu.RUnlock()
 		for rowIdx, row := range rows {
-			for fkID, fk := range ss.foreignKeys {
+			for fkID, fk := range ss.ForeignKeys {
 				// Extract local FK column values
 				localVals := make([]any, len(fk.Columns))
 				allNull := true
 				for i, col := range fk.Columns {
 					idx := -1
-					for j, c := range ss.cols {
+					for j, c := range ss.Cols {
 						if c == col {
 							idx = j
 							break
@@ -1926,19 +1928,19 @@ func (p *Pragma) loadForeignKeyCheck() {
 					continue
 				}
 				// Check if referenced row exists
-				refSS, ok := schemaFor(fk.RefTable)
+				refSS, ok := DT.SchemaFor(fk.RefTable)
 				if !ok {
 					continue
 				}
-				tablesMu.RLock()
-				refRows := tables[fk.RefTable]
-				tablesMu.RUnlock()
+				DT.TablesMu.RLock()
+				refRows := DT.Tables[fk.RefTable]
+				DT.TablesMu.RUnlock()
 				found := false
 				for _, refRow := range refRows {
 					match := true
 					for i, refCol := range fk.RefColumns {
 						idx := -1
-						for j, c := range refSS.cols {
+						for j, c := range refSS.Cols {
 							if c == refCol {
 								idx = j
 								break
@@ -1948,7 +1950,7 @@ func (p *Pragma) loadForeignKeyCheck() {
 							match = false
 							break
 						}
-						if !equalValue(refRow.Data[idx], localVals[i]) {
+						if !DT.EqualValueAny(refRow.Data[idx], localVals[i]) {
 							match = false
 							break
 						}
@@ -2059,13 +2061,13 @@ func (t *Truncate) Next(ctx context.Context) (Row, error) {
 	}
 	t.done = true
 	// Truncate = DELETE without WHERE; reuse the in-memory delete path.
-	if Schema(t.stmt.Table) != nil {
-		tablesMu.Lock()
-		if existing, ok := tables[t.stmt.Table]; ok {
+	if DT.Schema(t.stmt.Table) != nil {
+		DT.TablesMu.Lock()
+		if existing, ok := DT.Tables[t.stmt.Table]; ok {
 			t.rows = int64(len(existing))
 		}
-		tables[t.stmt.Table] = nil
-		tablesMu.Unlock()
+		DT.Tables[t.stmt.Table] = nil
+		DT.TablesMu.Unlock()
 	}
 	return Row{}, ErrNoRows
 }
@@ -2095,10 +2097,10 @@ func (r *Reindex) Next(ctx context.Context) (Row, error) {
 	// lookup and the table lookup as success paths — if the target
 	// matches either, the statement succeeds.
 	if r.stmt.Target != "" {
-		storeMu.Lock()
+		DT.StoreMu.Lock()
 		found := false
 		// Check if target is a known index.
-		for _, idxs := range registeredIndexes {
+		for _, idxs := range DT.RegisteredIndexes {
 			for _, idx := range idxs {
 				if idx.Name == r.stmt.Target {
 					found = true
@@ -2113,11 +2115,11 @@ func (r *Reindex) Next(ctx context.Context) (Row, error) {
 		// SQLite treats REINDEX tblname as a successful no-op when
 		// the table has no indexes.
 		if !found {
-			if _, ok := schemas[r.stmt.Target]; ok {
+			if _, ok := DT.Schemas[r.stmt.Target]; ok {
 				found = true
 			}
 		}
-		storeMu.Unlock()
+		DT.StoreMu.Unlock()
 		if !found {
 			return Row{}, fmt.Errorf("ex: no such index: %s", r.stmt.Target)
 		}
@@ -2145,7 +2147,7 @@ func (d *DropView) Next(ctx context.Context) (Row, error) {
 	if d.stmt == nil {
 		return Row{}, ErrNoRows
 	}
-	existed := UnregisterView(d.stmt.Name)
+	existed := DT.UnregisterView(d.stmt.Name)
 	if !existed && !d.stmt.IfExists {
 		return Row{}, fmt.Errorf("ex: view %s does not exist", d.stmt.Name)
 	}
@@ -2188,7 +2190,7 @@ func (d *DropTrigger) RowsAffected() int64         { return 0 }
 // applyConflictUpdate locates the conflicting row by unique-key match
 // and applies the SET clauses. Used by INSERT ... ON CONFLICT DO
 // UPDATE. REQ000511.
-func applyConflictUpdate(schema *storeSchema, existing []Row, out Row, sets []PS.Pair, params []any, apply uniqueLookupWithApply) error {
+func applyConflictUpdate(schema *StoreSchema, existing []Row, out Row, sets []PS.Pair, params []any, apply uniqueLookupWithApply) error {
 	if apply == nil {
 		return nil
 	}
@@ -2210,10 +2212,10 @@ func applyConflictUpdate(schema *storeSchema, existing []Row, out Row, sets []PS
 	}
 	_ = existing
 	return apply.Mutate(rowIdx, func(target Row) Row {
-		updated := cloneRow(target)
+		updated := DT.CloneRow(target)
 		for _, p := range sets {
 			ci := -1
-			for i, c := range schema.cols {
+			for i, c := range schema.Cols {
 				if c == p.Col {
 					ci = i
 					break
@@ -2222,7 +2224,7 @@ func applyConflictUpdate(schema *storeSchema, existing []Row, out Row, sets []PS
 			if ci < 0 {
 				continue
 			}
-			v, err := EvalValue(p.Val, &out, params)
+			v, err := EV.EvalValue(p.Val, &out, params)
 			if err != nil {
 				// Best-effort: leave column unchanged on eval error.
 				continue
@@ -2238,19 +2240,19 @@ func applyConflictUpdate(schema *storeSchema, existing []Row, out Row, sets []PS
 // conflictKey returns the column indices and values used to look up
 // a row for ON CONFLICT. If the schema has a PK, that is the conflict
 // target. Otherwise the first unique key is used. REQ000511.
-func conflictKey(schema *storeSchema, row Row) ([]int, []Value, error) {
-	if schema.pk != "" {
-		for i, c := range schema.cols {
-			if c == schema.pk {
+func conflictKey(schema *StoreSchema, row Row) ([]int, []Value, error) {
+	if schema.Pk != "" {
+		for i, c := range schema.Cols {
+			if c == schema.Pk {
 				if i >= len(row.Data) {
-					return nil, nil, fmt.Errorf("ex: PK column %q out of range", schema.pk)
+					return nil, nil, fmt.Errorf("ex: PK column %q out of range", schema.Pk)
 				}
 				return []int{i}, []Value{row.Data[i]}, nil
 			}
 		}
 	}
-	if len(schema.unique) > 0 {
-		uk := schema.unique[0]
+	if len(schema.Unique) > 0 {
+		uk := schema.Unique[0]
 		vals := make([]Value, len(uk.Cols))
 		for i, idx := range uk.Cols {
 			if idx < len(row.Data) {
@@ -2317,7 +2319,7 @@ func evalReturning(exprs []PS.Expr, row *Row, params []any, resultRows *[]Row) e
 		Data:  make([]Value, len(expanded)),
 	}
 	for j, expr := range expanded {
-		val, err := EvalValue(expr, row, params)
+		val, err := EV.EvalValue(expr, row, params)
 		if err != nil {
 			return err
 		}
@@ -2462,13 +2464,13 @@ func executeRefreshMatViewSQL(sql string, store Store) error {
 	}
 
 	// Look up the matview definition
-	matSel := LookupMatView(refresh.Name)
+	matSel := DT.LookupMatView(refresh.Name)
 	if matSel == nil {
 		return fmt.Errorf("ex: materialized view %q not found", refresh.Name)
 	}
 
 	// For now, this is a full refresh (re-execute the query and store results)
-	// Incremental refresh would require tracking changes to base tables
+	// Incremental refresh would require tracking changes to base DT.Tables
 	// This is the baseline implementation for REQ000316
 	return refreshMatViewData(refresh.Name, matSel, store)
 }

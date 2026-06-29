@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// REQ000723: NOT(...) filter returns wrong results on indexed tables
+// REQ000723: NOT(...) filter returns wrong results on indexed DT.Tables
 // via driver path. Same root cause as REQ000722 — cannot reproduce
 // in minimal harness. Guard test.
 func TestREQ000723_NOTFilterOnIndex(t *testing.T) {
@@ -37,7 +37,7 @@ func TestREQ000723_NOTFilterOnIndex(t *testing.T) {
 	_ = eng
 }
 
-// REQ000724: Complex OR/AND/IN on indexed tables. Same root cause as 722.
+// REQ000724: Complex OR/AND/IN on indexed DT.Tables. Same root cause as 722.
 func TestREQ000724_ComplexORANDIN(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()

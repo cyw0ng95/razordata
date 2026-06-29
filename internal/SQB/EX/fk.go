@@ -3,22 +3,23 @@ package EX
 import (
 	"fmt"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
 // validateForeignKeyInsert checks that all FK-referenced rows exist
 // in the referenced table. REQ000126.
-func validateForeignKeyInsert(schema *storeSchema, row []any, store Store) error {
+func validateForeignKeyInsert(schema *StoreSchema, row []any, store Store) error {
 	if store == nil || schema == nil {
 		return nil
 	}
-	for _, fk := range schema.foreignKeys {
+	for _, fk := range schema.ForeignKeys {
 		// Extract local column values
 		localVals := make([]any, len(fk.Columns))
 		allNull := true
 		for i, col := range fk.Columns {
 			idx := -1
-			for j, c := range schema.cols {
+			for j, c := range schema.Cols {
 				if c == col {
 					idx = j
 					break
@@ -46,14 +47,14 @@ func validateForeignKeyInsert(schema *storeSchema, row []any, store Store) error
 
 // validateForeignKeyDelete checks if any child rows reference the
 // row being deleted. For CASCADE, it deletes child rows. REQ000126.
-func validateForeignKeyDelete(table string, row []any, schema *storeSchema, store Store) error {
+func validateForeignKeyDelete(table string, row []any, schema *StoreSchema, store Store) error {
 	if store == nil || schema == nil {
 		return nil
 	}
-	storeMu.Lock()
-	defer storeMu.Unlock()
-	for _, ss := range storeSchemas {
-		for _, fk := range ss.foreignKeys {
+	DT.StoreMu.Lock()
+	defer DT.StoreMu.Unlock()
+	for _, ss := range DT.StoreSchemas {
+		for _, fk := range ss.ForeignKeys {
 			if fk.RefTable != table {
 				continue
 			}
@@ -61,7 +62,7 @@ func validateForeignKeyDelete(table string, row []any, schema *storeSchema, stor
 			refVals := make([]any, len(fk.RefColumns))
 			for i, refCol := range fk.RefColumns {
 				idx := -1
-				for j, c := range schema.cols {
+				for j, c := range schema.Cols {
 					if c == refCol {
 						idx = j
 						break
@@ -87,7 +88,7 @@ func validateForeignKeyDelete(table string, row []any, schema *storeSchema, stor
 				case "SET DEFAULT":
 					return fmt.Errorf("%w: set default on delete not yet implemented", ap.ErrConstraint)
 				case "RESTRICT", "NO ACTION":
-					return fmt.Errorf("%w: foreign key violation: child rows exist in %s", ap.ErrConstraint, ss.cols[0])
+					return fmt.Errorf("%w: foreign key violation: child rows exist in %s", ap.ErrConstraint, ss.Cols[0])
 				}
 			}
 		}
@@ -98,7 +99,7 @@ func validateForeignKeyDelete(table string, row []any, schema *storeSchema, stor
 // checkReferencedRowExists checks if a row with the given values exists
 // in the referenced table.
 func checkReferencedRowExists(refTable string, refCols []string, values []any, store Store) error {
-	refSchema, _ := schemaFor(refTable)
+	refSchema, _ := DT.SchemaFor(refTable)
 	if refSchema == nil {
 		return nil // table not registered, skip check
 	}
@@ -125,14 +126,14 @@ func checkReferencedRowExists(refTable string, refCols []string, values []any, s
 
 // checkChildRowExists checks if any row in the child table references
 // the given values.
-func checkChildRowExists(childCols []string, refVals []any, childSchema *storeSchema, store Store) (bool, error) {
+func checkChildRowExists(childCols []string, refVals []any, childSchema *StoreSchema, store Store) (bool, error) {
 	if store == nil {
 		return false, nil
 	}
 	// Build a scan prefix for the child table's FK columns
 	// For single-column FK, check if any child row has this value
 	if len(childCols) == 1 && len(refVals) == 1 {
-		key, err := encodeFKLookup(childSchema.cols[0], childCols[0], refVals[0])
+		key, err := encodeFKLookup(childSchema.Cols[0], childCols[0], refVals[0])
 		if err != nil {
 			return false, err
 		}
@@ -150,7 +151,7 @@ func checkChildRowExists(childCols []string, refVals []any, childSchema *storeSc
 
 // checkMultiColumnFK checks a multi-column FK by scanning the referenced table.
 func checkMultiColumnFK(refTable string, refCols []string, values []any, store Store) error {
-	refSchema, _ := schemaFor(refTable)
+	refSchema, _ := DT.SchemaFor(refTable)
 	if refSchema == nil {
 		return nil
 	}
@@ -170,7 +171,7 @@ func checkMultiColumnFK(refTable string, refCols []string, values []any, store S
 		match := true
 		for i, refCol := range refCols {
 			idx := -1
-			for j, c := range refSchema.cols {
+			for j, c := range refSchema.Cols {
 				if c == refCol {
 					idx = j
 					break
@@ -180,7 +181,7 @@ func checkMultiColumnFK(refTable string, refCols []string, values []any, store S
 				match = false
 				break
 			}
-			if !equalValue(row.Data[idx], values[i]) {
+			if !DT.EqualValueAny(row.Data[idx], values[i]) {
 				match = false
 				break
 			}
@@ -203,18 +204,18 @@ func encodeFKLookup(table, col string, val any) ([]byte, error) {
 // validateForeignKeyInsert. When an UPDATE changes the values of FK
 // columns, the new values must still point at a valid referenced row.
 // REQ000513.
-func validateForeignKeyUpdateInMemory(schema *storeSchema, oldRow, newRow []any) error {
-	if schema == nil || len(schema.foreignKeys) == 0 {
+func validateForeignKeyUpdateInMemory(schema *StoreSchema, oldRow, newRow []any) error {
+	if schema == nil || len(schema.ForeignKeys) == 0 {
 		return nil
 	}
-	for _, fk := range schema.foreignKeys {
+	for _, fk := range schema.ForeignKeys {
 		// Build old and new local-col value slices.
 		oldVals := make([]any, len(fk.Columns))
 		newVals := make([]any, len(fk.Columns))
 		_, newAllNull := true, true
 		for i, col := range fk.Columns {
 			idx := -1
-			for j, c := range schema.cols {
+			for j, c := range schema.Cols {
 				if c == col {
 					idx = j
 					break
@@ -235,7 +236,7 @@ func validateForeignKeyUpdateInMemory(schema *storeSchema, oldRow, newRow []any)
 		}
 		// If the FK columns are unchanged, the row was already valid
 		// at INSERT time, so no re-check is needed.
-		if equalValue(oldVals[0], newVals[0]) && len(fk.Columns) == 1 {
+		if DT.EqualValueAny(oldVals[0], newVals[0]) && len(fk.Columns) == 1 {
 			continue
 		}
 		// If new values are all NULL, the constraint is satisfied
@@ -255,14 +256,14 @@ func validateForeignKeyUpdateInMemory(schema *storeSchema, oldRow, newRow []any)
 
 // validateForeignKeyDeleteInMemory is the in-memory analogue of
 // validateForeignKeyDelete. REQ000514.
-func validateForeignKeyDeleteInMemory(table string, row []any, schema *storeSchema) error {
+func validateForeignKeyDeleteInMemory(table string, row []any, schema *StoreSchema) error {
 	if schema == nil {
 		return nil
 	}
-	tablesMu.Lock()
-	defer tablesMu.Unlock()
-	for _, ss := range storeSchemas {
-		for _, fk := range ss.foreignKeys {
+	DT.TablesMu.Lock()
+	defer DT.TablesMu.Unlock()
+	for _, ss := range DT.StoreSchemas {
+		for _, fk := range ss.ForeignKeys {
 			if fk.RefTable != table {
 				continue
 			}
@@ -270,7 +271,7 @@ func validateForeignKeyDeleteInMemory(table string, row []any, schema *storeSche
 			refVals := make([]any, len(fk.RefColumns))
 			for i, refCol := range fk.RefColumns {
 				idx := -1
-				for j, c := range schema.cols {
+				for j, c := range schema.Cols {
 					if c == refCol {
 						idx = j
 						break
@@ -290,7 +291,7 @@ func validateForeignKeyDeleteInMemory(table string, row []any, schema *storeSche
 					// v1: refuse rather than silently do the wrong thing
 					return fmt.Errorf("%w: %s on delete not yet implemented", ap.ErrConstraint, fk.OnDelete)
 				default:
-					return fmt.Errorf("%w: foreign key delete: child rows exist in %s", ap.ErrConstraint, ss.cols[0])
+					return fmt.Errorf("%w: foreign key delete: child rows exist in %s", ap.ErrConstraint, ss.Cols[0])
 				}
 			}
 		}
@@ -301,14 +302,14 @@ func validateForeignKeyDeleteInMemory(table string, row []any, schema *storeSche
 // rowExistsInMemory checks whether the referenced table has a row
 // whose FK-target columns equal the given values.
 func rowExistsInMemory(tableName string, cols []string, vals []any) bool {
-	tablesMu.RLock()
-	defer tablesMu.RUnlock()
-	rows := tables[tableName]
+	DT.TablesMu.RLock()
+	defer DT.TablesMu.RUnlock()
+	rows := DT.Tables[tableName]
 	for _, r := range rows {
 		match := true
 		for i, col := range cols {
 			idx := -1
-			for j, c := range Schema(tableName) {
+			for j, c := range DT.Schema(tableName) {
 				if c == col {
 					idx = j
 					break
@@ -318,7 +319,7 @@ func rowExistsInMemory(tableName string, cols []string, vals []any) bool {
 				match = false
 				break
 			}
-			if !equalValue(r.Data[idx], vals[i]) {
+			if !DT.EqualValueAny(r.Data[idx], vals[i]) {
 				match = false
 				break
 			}
@@ -332,14 +333,14 @@ func rowExistsInMemory(tableName string, cols []string, vals []any) bool {
 
 // rowInTableMatches returns true if any row in the given schema's
 // table has values matching the supplied values in the given columns.
-// Caller must hold tablesMu.
-func rowInTableMatches(ss *storeSchema, cols []string, vals []any) bool {
-	rows := tables[tableNameFor(ss)]
+// Caller must hold DT.TablesMu.
+func rowInTableMatches(ss *StoreSchema, cols []string, vals []any) bool {
+	rows := DT.Tables[tableNameFor(ss)]
 	for _, r := range rows {
 		match := true
 		for i, col := range cols {
 			idx := -1
-			for j, c := range ss.cols {
+			for j, c := range ss.Cols {
 				if c == col {
 					idx = j
 					break
@@ -349,7 +350,7 @@ func rowInTableMatches(ss *storeSchema, cols []string, vals []any) bool {
 				match = false
 				break
 			}
-			if !equalValue(r.Data[idx], vals[i]) {
+			if !DT.EqualValueAny(r.Data[idx], vals[i]) {
 				match = false
 				break
 			}
@@ -361,14 +362,14 @@ func rowInTableMatches(ss *storeSchema, cols []string, vals []any) bool {
 	return false
 }
 
-// tableNameFor returns the registered name for a storeSchema. The
+// tableNameFor returns the registered name for a StoreSchema. The
 // schema store doesn't store the name, so we reverse-lookup via
-// tableIDs. REQ000513.
-func tableNameFor(ss *storeSchema) string {
-	storeMu.Lock()
-	defer storeMu.Unlock()
-	for name, id := range tableIDs {
-		if storeSchemas[id] == ss {
+// DT.TableIDs. REQ000513.
+func tableNameFor(ss *StoreSchema) string {
+	DT.StoreMu.Lock()
+	defer DT.StoreMu.Unlock()
+	for name, id := range DT.TableIDs {
+		if DT.StoreSchemas[id] == ss {
 			return name
 		}
 	}

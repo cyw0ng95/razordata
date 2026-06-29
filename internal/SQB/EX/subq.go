@@ -6,9 +6,11 @@ package EX
 
 import (
 	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	"context"
 
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
@@ -73,8 +75,8 @@ func injectOuter(op Operator, outer *Row) Operator {
 	case *OP.Distinct:
 		injectOuter(v.Child(), outer)
 		return v
-	case *Aggregate:
-		v.child = injectOuter(v.child, outer)
+	case *AG.Aggregate:
+		injectOuter(v.Child(), outer)
 		return v
 	case *NestedLoopJoin:
 		v.left = injectOuter(v.left, outer)
@@ -90,7 +92,7 @@ func injectOuter(op Operator, outer *Row) Operator {
 
 func runSubqueryPlan(ctx context.Context, pl *pl.PlanResult, outer *Row, params []any) ([]Row, error) {
 	if pl == nil || pl.Root == nil {
-		return nil, ErrSubquery
+		return nil, EV.ErrSubquery
 	}
 	if outer != nil {
 		pl.Root = injectOuter(pl.Root, outer)

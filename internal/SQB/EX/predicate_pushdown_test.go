@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -45,7 +46,7 @@ func TestWalkExprForTables_UsesSchemas(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTable("t1", []Row{
+	DT.RegisterTable("t1", []Row{
 		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 
@@ -57,22 +58,22 @@ func TestWalkExprForTables_UsesSchemas(t *testing.T) {
 		Right: &PS.NumberLiteral{Val: 1},
 	}
 
-	tables := p.extractTablesFromExpr(expr)
-	if !tables["t1"] {
+	tbls := p.extractTablesFromExpr(expr)
+	if !tbls["t1"] {
 		t.Error("walkExprForTables should find t1 via schemas map fallback")
 	}
 }
 
 // TestEquiJoinKey_BasicDetection verifies equiJoinKey detects
-// simple equi-join conditions between two tables.
+// simple equi-join conditions between two DT.Tables.
 func TestEquiJoinKey_BasicDetection(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTable("t1", []Row{
+	DT.RegisterTable("t1", []Row{
 		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
-	RegisterTable("t2", []Row{
+	DT.RegisterTable("t2", []Row{
 		{Cols: []string{"c", "d"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 
@@ -107,13 +108,13 @@ func TestEquiJoinKey_CrossTableInMultiJoin(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTable("t1", []Row{
+	DT.RegisterTable("t1", []Row{
 		{Cols: []string{"a1"}, Data: []Value{NewIntValue(int64(1))}},
 	})
-	RegisterTable("t2", []Row{
+	DT.RegisterTable("t2", []Row{
 		{Cols: []string{"b9"}, Data: []Value{NewIntValue(int64(1))}},
 	})
-	RegisterTable("t3", []Row{
+	DT.RegisterTable("t3", []Row{
 		{Cols: []string{"a3"}, Data: []Value{NewIntValue(int64(1))}},
 	})
 
@@ -137,10 +138,10 @@ func TestSplitPredicatesByTable(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTable("t1", []Row{
+	DT.RegisterTable("t1", []Row{
 		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
-	RegisterTable("t2", []Row{
+	DT.RegisterTable("t2", []Row{
 		{Cols: []string{"c", "d"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 
@@ -163,9 +164,9 @@ func TestSplitPredicatesByTable(t *testing.T) {
 	}
 
 	conjuncts := []PS.Expr{predT1, predT2, predCross}
-	tables := []string{"t1", "t2"}
+	tbls := []string{"t1", "t2"}
 
-	perTable, crossTable := p.splitPredicatesByTable(conjuncts, tables)
+	perTable, crossTable := p.splitPredicatesByTable(conjuncts, tbls)
 
 	if len(perTable["t1"]) != 1 {
 		t.Errorf("t1: expected 1 predicate, got %d", len(perTable["t1"]))
@@ -252,7 +253,7 @@ func TestJoinWithExplicitON(t *testing.T) {
 	}
 }
 
-// TestJoinEmptyTables verifies join behavior with empty tables.
+// TestJoinEmptyTables verifies join behavior with empty DT.Tables.
 func TestJoinEmptyTables(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
@@ -327,13 +328,13 @@ func TestJoinPlanStructure(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTable("t1", []Row{
+	DT.RegisterTable("t1", []Row{
 		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
-	RegisterTable("t2", []Row{
+	DT.RegisterTable("t2", []Row{
 		{Cols: []string{"c", "d"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
-	RegisterTable("t3", []Row{
+	DT.RegisterTable("t3", []Row{
 		{Cols: []string{"e", "f"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 

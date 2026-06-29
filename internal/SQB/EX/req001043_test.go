@@ -73,7 +73,7 @@ func TestParallelSeqScanRow_Values(t *testing.T) {
 	}
 }
 
-// REQ001043: Planner emits ParallelSeqScan for tables above the threshold.
+// REQ001043: Planner emits ParallelSeqScan for DT.Tables above the threshold.
 func TestPlanner_ParallelScanSelection(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()

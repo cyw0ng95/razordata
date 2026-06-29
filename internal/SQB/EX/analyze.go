@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"time"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -19,7 +20,7 @@ import (
 type Analyze struct {
 	stmt    *PS.AnalyzeStmt
 	store   Store
-	schema  *storeSchema
+	schema  *StoreSchema
 	done    bool
 	rowsAff int64
 }
@@ -30,7 +31,7 @@ func NewAnalyze(stmt *PS.AnalyzeStmt) *Analyze {
 
 // NewAnalyzeWithStore builds an Analyze that reads from the engine.
 func NewAnalyzeWithStore(store Store, stmt *PS.AnalyzeStmt) (*Analyze, error) {
-	ss, ok := schemaFor(stmt.Table)
+	ss, ok := DT.SchemaFor(stmt.Table)
 	if !ok && stmt.Table != "" {
 		return nil, ErrTableNotRegisteredForStorage
 	}
@@ -56,7 +57,7 @@ func (a *Analyze) Next(ctx context.Context) (Row, error) {
 		return Row{}, ErrNoRows
 	}
 
-	// Analyze all tables
+	// Analyze all DT.Tables
 	// For now, just return success (empty implementation for phase 1)
 	a.rowsAff = 0
 	return Row{}, ErrNoRows
@@ -71,7 +72,7 @@ func (a *Analyze) WithParams(p []any) Operator { return a }
 // analyzeTable performs reservoir sampling on a single table
 // and builds column statistics. REQ000258.
 func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
-	cat := Catalog()
+	cat := DT.Catalog()
 	if cat == nil {
 		return nil
 	}
@@ -92,7 +93,7 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 		return nil
 	}
 
-	ss, ok := schemaFor(tableName)
+	ss, ok := DT.SchemaFor(tableName)
 	if !ok {
 		return ErrTableNotRegisteredForStorage
 	}
@@ -104,7 +105,7 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 	const sampleSize = 10000
 	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano()+1)))
 
-	nCols := len(ss.cols)
+	nCols := len(ss.Cols)
 	type colInfo struct {
 		nullCount  int64
 		distinct   map[string]struct{}
@@ -182,7 +183,7 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 		return err
 	}
 
-	for i, colName := range ss.cols {
+	for i, colName := range ss.Cols {
 		ci := &cols[i]
 		stats := ls.ColumnStats{
 			DistinctCount: int64(len(ci.distinct)),

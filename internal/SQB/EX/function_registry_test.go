@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
@@ -27,8 +29,8 @@ func TestFunctionRegistry_AllFunctionsRegistered(t *testing.T) {
 		"UNLIKELY", "CHANGES", "LAST_INSERT_ROWID", "TOTAL_CHANGES",
 	}
 	for _, name := range expected {
-		if _, ok := scalarFuncRegistry[name]; !ok {
-			t.Errorf("scalarFuncRegistry missing entry for %q", name)
+		if _, ok := EV.ScalarFuncRegistry[name]; !ok {
+			t.Errorf("EV.ScalarFuncRegistry missing entry for %q", name)
 		}
 	}
 }
@@ -36,8 +38,8 @@ func TestFunctionRegistry_AllFunctionsRegistered(t *testing.T) {
 func TestAggregateRegistry_AllFunctionsRegistered(t *testing.T) {
 	expected := []string{"COUNT", "SUM", "AVG", "MIN", "MAX", "GROUP_CONCAT"}
 	for _, name := range expected {
-		if _, ok := aggregateFuncRegistry[name]; !ok {
-			t.Errorf("aggregateFuncRegistry missing entry for %q", name)
+		if _, ok := AG.AggregateFuncRegistry[name]; !ok {
+			t.Errorf("AG.AggregateFuncRegistry missing entry for %q", name)
 		}
 	}
 }
@@ -79,9 +81,9 @@ func TestFunctionRegistry_DispatchReachesImpl(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			v, err := EvalValue(tc.expr, nil, nil)
+			v, err := EV.EvalValue(tc.expr, nil, nil)
 			if err != nil {
-				t.Fatalf("EvalValue: %v", err)
+				t.Fatalf("EV.EvalValue: %v", err)
 			}
 			got := v.ToAny()
 			if got != tc.want {
@@ -101,7 +103,7 @@ func TestFunctionRegistry_AggregateDispatch(t *testing.T) {
 	}
 	t.Run("COUNT", func(t *testing.T) {
 		agg := &PS.AggregateFunc{Name: "COUNT", Arg: &PS.StarExpr{}}
-		v, err := evalAggregateOver(agg, rows, nil)
+		v, err := AG.EvalAggregateOver(agg, rows, nil)
 		if err != nil {
 			t.Fatalf("evalAggregateOver: %v", err)
 		}
@@ -111,7 +113,7 @@ func TestFunctionRegistry_AggregateDispatch(t *testing.T) {
 	})
 	t.Run("SUM", func(t *testing.T) {
 		agg := &PS.AggregateFunc{Name: "SUM", Arg: &PS.QualifiedName{Table: "", Name: "x"}}
-		v, err := evalAggregateOver(agg, rows, nil)
+		v, err := AG.EvalAggregateOver(agg, rows, nil)
 		if err != nil {
 			t.Fatalf("evalAggregateOver: %v", err)
 		}
@@ -121,7 +123,7 @@ func TestFunctionRegistry_AggregateDispatch(t *testing.T) {
 	})
 	t.Run("AVG", func(t *testing.T) {
 		agg := &PS.AggregateFunc{Name: "AVG", Arg: &PS.QualifiedName{Name: "x"}}
-		v, err := evalAggregateOver(agg, rows, nil)
+		v, err := AG.EvalAggregateOver(agg, rows, nil)
 		if err != nil {
 			t.Fatalf("evalAggregateOver: %v", err)
 		}
@@ -136,7 +138,7 @@ func TestFunctionRegistry_AggregateDispatch(t *testing.T) {
 // paths (smoke test).
 func TestFunctionRegistry_DispatchUnknownFails(t *testing.T) {
 	expr := &PS.FunctionCall{Name: "NOT_A_REAL_FUNC", Args: nil}
-	v, err := evalFunction(expr, nil, nil)
+	v, err := EV.EvalFunction(expr, nil, nil)
 	if err == nil {
 		t.Errorf("expected error for unknown function, got %v", v)
 	}

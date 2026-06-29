@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 )
 
@@ -26,7 +27,7 @@ func TestIndexScan_RangeSeek_GT(t *testing.T) {
 	ex := NewExecutorWithEngine(store)
 
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
-	id, _ := tableIDFor("t")
+	id, _ := DT.TableIDFor("t")
 
 	ctx := context.Background()
 	// Insert rows with a values: 1, 3, 5, 7, 9
@@ -78,7 +79,7 @@ func TestIndexScan_RangeSeek_GE(t *testing.T) {
 	store := &engineStoreWithGet{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
-	id, _ := tableIDFor("t")
+	id, _ := DT.TableIDFor("t")
 
 	ctx := context.Background()
 	for _, v := range []int64{1, 3, 5, 7, 9} {
@@ -113,7 +114,7 @@ func TestIndexScan_RangeSeek_Between(t *testing.T) {
 	store := &engineStoreWithGet{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
-	id, _ := tableIDFor("t")
+	id, _ := DT.TableIDFor("t")
 
 	ctx := context.Background()
 	for _, v := range []int64{1, 3, 5, 7, 9} {
@@ -153,7 +154,7 @@ func TestIndexScan_RangeSeek_Planner(t *testing.T) {
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	ex.RegisterIndex("t", "idx_a", []string{"a"})
-	id, _ := tableIDFor("t")
+	id, _ := DT.TableIDFor("t")
 
 	ctx := context.Background()
 	for _, v := range []int64{1, 3, 5, 7, 9} {

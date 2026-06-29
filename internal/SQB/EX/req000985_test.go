@@ -1,6 +1,7 @@
 package EX
 
 import (
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"runtime"
 	"testing"
 )
@@ -10,8 +11,8 @@ import (
 // The returned []byte is always a fresh copy (caller-owned), but the
 // encoding itself reuses a sync.Pool buffer internally.
 func TestStore_EncodeRowNoAlloc(t *testing.T) {
-	_ = registerStoreSchema("enc_test", []string{"id", "name", "val"}, "id")
-	ss, _ := schemaFor("enc_test")
+	_ = DT.RegisterStoreSchema("enc_test", []string{"id", "name", "val"}, "id")
+	ss, _ := DT.SchemaFor("enc_test")
 	row := Row{
 		Data: []Value{
 			NewIntValue(42),

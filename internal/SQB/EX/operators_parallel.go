@@ -6,7 +6,9 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // ParallelSeqScanRow is a row-based parallel table scan that splits
@@ -563,11 +565,11 @@ func (p *ParallelIndexScan) scanIndexRange(start, end int) *UT.Batch {
 	for idx := start; idx < end && batch.Size < UT.BatchSize; idx++ {
 		row := p.rows[idx]
 		if p.pred != nil {
-			val, err := EvalValue(p.pred, &row, nil)
+			val, err := EV.EvalValue(p.pred, &row, nil)
 			if err != nil {
 				continue
 			}
-			if !isValueTruthy(val) {
+			if !DT.IsValueTruthy(val) {
 				continue
 			}
 		}

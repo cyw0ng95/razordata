@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -20,24 +21,28 @@ import (
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
-// sessionCountersProvider is an optional callback set by SYS/SE to
-// provide per-session counter accessors for changes(), last_insert_rowid(),
-// and total_changes() eval functions. This avoids an import cycle between
-// EX and SE packages. REQ000385/394/411.
-type SessionCounterAccessor interface {
-	ChangesCount(sessionID uint64) int64
-	LastInsertRowID(sessionID uint64) int64
-	TotalChangesCount(sessionID uint64) int64
-}
+// SessionCounterAccessor is the session counter provider interface.
+// Re-exported from DT for backward compatibility.
+type SessionCounterAccessor = DT.SessionCounterAccessor
 
+// SetSessionCounterAccessor re-exports DT.SetSessionCounterAccessor for
+// backward-compatibility with SYS packages.
+var SetSessionCounterAccessor = DT.SetSessionCounterAccessor
+
+// Eval error re-exports for backward compatibility with SYS packages.
+// Aliased to EV versions so identity matches.
 var (
-	sessionCounterMu       sync.RWMutex
-	sessionCounterAccessor SessionCounterAccessor
+	ErrEval         = EV.ErrEval
+	ErrDivByZero    = EV.ErrDivByZero
+	ErrTypeMismatch = EV.ErrTypeMismatch
+	ErrSubquery     = EV.ErrSubquery
+	ErrTriggerAbort = EV.ErrTriggerAbort
 )
 
-// currentSessionID is the package-level current session ID for evalFunction.
-// It's stored atomically to avoid races with concurrent sessions.
-var currentSessionID atomic.Uint64
+var (
+	// sessionCounterMu       sync.RWMutex — moved to DT
+	// sessionCounterAccessor SessionCounterAccessor — moved to DT
+)
 
 // currentTxWriter is the package-level current TxWriter. Set by
 // Executor.SetTxWriter and read by Insert/Update/Delete operators
@@ -79,21 +84,6 @@ func CurrentTxWriter() TxWriter {
 		return *p
 	}
 	return nil
-}
-
-// SetSessionCounterAccessor sets the callback for reading per-session
-// counters. Called once during SYS initialization.
-func SetSessionCounterAccessor(acc SessionCounterAccessor) {
-	sessionCounterMu.Lock()
-	defer sessionCounterMu.Unlock()
-	sessionCounterAccessor = acc
-}
-
-// getSessionCounterAccessor returns the current accessor (may be nil).
-func getSessionCounterAccessor() SessionCounterAccessor {
-	sessionCounterMu.RLock()
-	defer sessionCounterMu.RUnlock()
-	return sessionCounterAccessor
 }
 
 var ErrNotImplemented = errors.New("ex: not implemented")
@@ -195,6 +185,12 @@ func valueSliceToAny(v []Value) []any {
 // ValueSliceToAny is the exported version of valueSliceToAny for
 // callers outside the EX package (e.g. SYS/AP bridging).
 func ValueSliceToAny(v []Value) []any { return valueSliceToAny(v) }
+
+// SetCatalog and RegisterFromCatalog re-export DT functions for
+// backward-compatibility with SYS packages.
+var SetCatalog = DT.SetCatalog
+var RegisterFromCatalog = DT.RegisterFromCatalog
+var RestoreInMemoryTables = DT.RestoreInMemoryTables
 
 // Operator is the core execution interface. Aliased from PL.
 type Operator = DT.Operator
@@ -340,7 +336,7 @@ func (e *Executor) Snapshot() uint64 { return e.snapshotTS }
 func (e *Executor) SetSessionID(id uint64) {
 	// Don't write e.sessionID - the Executor is shared across sessions.
 	// Only update the atomic global that eval functions read.
-	currentSessionID.Store(id)
+	DT.CurrentSessionID.Store(id)
 }
 
 // SessionID returns the current session ID.
@@ -363,11 +359,6 @@ func (e *Executor) SetMaxParallelism(n int) {
 
 // MaxParallelism returns the current maximum parallelism setting.
 func (e *Executor) MaxParallelism() int { return e.maxParallelism }
-
-// getCurrentSessionID returns the package-level session ID for eval.
-func getCurrentSessionID() uint64 {
-	return currentSessionID.Load()
-}
 
 func NewExecutor() *Executor {
 	e := &Executor{
@@ -648,18 +639,18 @@ func walkExprTypes(table string, expr PS.Expr, out *[]int) {
 // planner has a registered table with that column. Returns -1
 // otherwise (the caller skips validation for that slot).
 func columnTypeFor(name string) int {
-	for _, ss := range storeSchemas {
-		for i, c := range ss.cols {
-			if c == name && i < len(ss.colTypes) {
-				return lxTokenToColumnType(ss.colTypes[i])
+	for _, ss := range DT.StoreSchemas {
+		for i, c := range ss.Cols {
+			if c == name && i < len(ss.ColTypes) {
+				return lxTokenToColumnType(ss.ColTypes[i])
 			}
 		}
 	}
-	// Fall back: walk the legacy schemas map and best-effort
+	// Fall back: walk the legacy DT.Schemas map and best-effort
 	// match by name. We treat any col with a Type==0 (the
 	// pre-iter-16 default) as TEXT so downstream coercibility
 	// checks still produce a meaningful verdict.
-	for _, cols := range schemas {
+	for _, cols := range DT.Schemas {
 		for _, c := range cols {
 			if c == name {
 				return int(ls.CTText)
@@ -700,17 +691,17 @@ func (e *Executor) RegisterTable(name string, schema []string) {
 		cols[i] = ColInfo{Name: n, Typ: 1}
 	}
 	e.planner.RegisterTable(name, cols, "")
-	RegisterTableSchema(name, schema)
+	DT.RegisterTableSchema(name, schema)
 	if e.store != nil {
 		// REQ000367: API-level registration without a PK
 		// also enables hidden-PK mode so the table can be
 		// written to the engine store.
-		if id := registerStoreSchema(name, schema, ""); id != 0 {
-			storeMu.Lock()
-			if ss, ok := storeSchemas[id]; ok {
-				ss.hiddenPK = true
+		if id := DT.RegisterStoreSchema(name, schema, ""); id != 0 {
+			DT.StoreMu.Lock()
+			if ss, ok := DT.StoreSchemas[id]; ok {
+				ss.HiddenPK = true
 			}
-			storeMu.Unlock()
+			DT.StoreMu.Unlock()
 		}
 	}
 }
@@ -721,13 +712,13 @@ func (e *Executor) RegisterTableWithPK(name string, schema []string, pk string) 
 		cols[i] = ColInfo{Name: n, Typ: 1}
 	}
 	e.planner.RegisterTable(name, cols, pk)
-	RegisterTableSchema(name, schema)
-	tablesMu.Lock()
-	tablePKs[name] = pk
-	tablesMu.Unlock()
-	registerInMemorySchema(name, schema, pk)
+	DT.RegisterTableSchema(name, schema)
+	DT.TablesMu.Lock()
+	DT.TablePKs[name] = pk
+	DT.TablesMu.Unlock()
+	DT.RegisterInMemorySchema(name, schema, pk)
 	if e.store != nil {
-		registerStoreSchema(name, schema, pk)
+		DT.RegisterStoreSchema(name, schema, pk)
 	}
 }
 
@@ -768,7 +759,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 			}
 			propagateParams(op, args)
 			propagatePlanner(op, e.planner)
-			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
+			execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 			propagateExecContext(op, execCtx)
 			defer op.Close()
 			if _, err := op.Next(ctx); err != nil && err != ErrNoRows {
@@ -821,7 +812,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	// support placeholders (e.g. INSERT ... VALUES (?,?)).
 	propagateParams(op, args)
 	propagatePlanner(op, e.planner)
-	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
+	execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 	propagateExecContext(op, execCtx)
 	defer op.Close()
 	if _, err := op.Next(ctx); err != nil && err != ErrNoRows {
@@ -884,7 +875,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 			}
 			propagateParams(plan.Root, args)
 			propagatePlanner(plan.Root, e.planner)
-			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+			execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			propagateExecContext(plan.Root, execCtx)
 			defer plan.Root.Close()
 			row, err := plan.Root.Next(ctx)
@@ -946,7 +937,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	// placeholders resolve during Eval.
 	propagateParams(plan.Root, args)
 	propagatePlanner(plan.Root, e.planner)
-	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+	execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
 	defer plan.Root.Close()
 	row, err := plan.Root.Next(ctx)
@@ -975,7 +966,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 			}
 			propagateParams(plan.Root, args)
 			propagatePlanner(plan.Root, e.planner)
-			execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+			execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			propagateExecContext(plan.Root, execCtx)
 			defer plan.Root.Close()
 			var out []Row
@@ -1018,7 +1009,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 	propagatePlanner(plan.Root, e.planner)
 	// REQ000586: thread ExecContext through rows to eliminate
 	// the global currentSubqueryPlanner.
-	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+	execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
 	defer plan.Root.Close()
 	var out []Row
@@ -1322,7 +1313,7 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		return op, nil
 	case *PS.Update:
 		targetTable := s.Table
-		if viewSel := LookupView(targetTable); viewSel != nil {
+		if viewSel := DT.LookupView(targetTable); viewSel != nil {
 			// REQ001061: DML on non-updatable views is not allowed.
 			// A view is updatable only if it's a simple single-table
 			// select without aggregation, DISTINCT, GROUP BY, HAVING,
@@ -1380,7 +1371,7 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		return NewUpdate(targetTable, s.Set, s.Where, current, s.Returning), nil
 	case *PS.Delete:
 		tableName := s.Table
-		if viewSel := LookupView(tableName); viewSel != nil {
+		if viewSel := DT.LookupView(tableName); viewSel != nil {
 			// REQ001061: DML on non-updatable views is not allowed.
 			if !isUpdatableView(viewSel) {
 				return nil, fmt.Errorf("ex: cannot modify view %s", tableName)
@@ -1467,7 +1458,7 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		return NewDropMatView(s.Name, e.store), nil
 	case *PS.RefreshMatViewStmt:
 		// Lookup the matview definition from registry
-		sel := LookupMatView(s.Name)
+		sel := DT.LookupMatView(s.Name)
 		if sel == nil {
 			return nil, fmt.Errorf("ex: materialized view %q not found", s.Name)
 		}
@@ -1644,7 +1635,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	propagateParams(plan.Root, args)
 	propagatePlanner(plan.Root, e.planner)
 	// REQ000586: thread ExecContext to eliminate global.
-	execCtx := &ExecContext{Planner: e.planner, SessionID: getCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+	execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
 
 	// Read first row to discover schema
@@ -1717,6 +1708,7 @@ type streamIterator struct {
 	types  []LX.TokenType
 	rowCh  chan Row
 	closer func() error
+
 	done   bool
 	mu     sync.Mutex
 }

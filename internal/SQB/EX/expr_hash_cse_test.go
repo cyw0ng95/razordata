@@ -94,7 +94,7 @@ func TestExprHash_SameExpressionStable(t *testing.T) {
 // TestEliminateCommonSubexpressions_PreservesDistinctIN verifies
 // REQ001111 end-to-end: when splitPredicatesByTable receives 4
 // distinct IN predicates plus 1 binary equality, all 5 are
-// distributed to their respective tables (not deduplicated by
+// distributed to their respective DT.Tables (not deduplicated by
 // eliminateCommonSubexpressions).
 func TestEliminateCommonSubexpressions_PreservesDistinctIN(t *testing.T) {
 	UnregisterAll()

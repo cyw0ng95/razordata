@@ -6,6 +6,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
@@ -142,7 +143,7 @@ func (f *VectorizedFilter) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		}
 
 		// Apply predicate via vectorized evaluation
-		sel := EvalBatch(f.pred, batch, f.params)
+		sel := EV.EvalBatch(f.pred, batch, f.params)
 
 		if sel == nil {
 			// All rows match

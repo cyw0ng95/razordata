@@ -2,6 +2,7 @@ package EX
 
 import (
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"testing"
 )
 
@@ -48,7 +49,7 @@ func TestCoreFunctions_Eval(t *testing.T) {
 				t.Fatalf("Expected 1 column, got %d", len(sel.Cols))
 			}
 
-			got, err := EvalValue(sel.Cols[0], nil, nil)
+			got, err := EV.EvalValue(sel.Cols[0], nil, nil)
 			if err != nil {
 				t.Fatalf("Eval error: %v", err)
 			}
@@ -78,7 +79,7 @@ func TestZeroblob_Eval(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 	sel := stmt.(*PS.Select)
-	got, err := EvalValue(sel.Cols[0], nil, nil)
+	got, err := EV.EvalValue(sel.Cols[0], nil, nil)
 	if err != nil {
 		t.Fatalf("Eval error: %v", err)
 	}
@@ -140,7 +141,7 @@ func TestCoreFunctions_Batch2(t *testing.T) {
 				t.Fatalf("Expected 1 column, got %d", len(sel.Cols))
 			}
 
-			got, err := EvalValue(sel.Cols[0], nil, nil)
+			got, err := EV.EvalValue(sel.Cols[0], nil, nil)
 			if err != nil {
 				t.Fatalf("Eval error: %v", err)
 			}

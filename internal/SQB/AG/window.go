@@ -1,10 +1,12 @@
-package EX
+package AG
 
 import (
 	"context"
 	"fmt"
 	"slices"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -35,6 +37,12 @@ func NewWindowOperator(input Operator, funcName string, args []PS.Expr, spec *PS
 	}
 }
 
+// Input returns the input operator feeding this window.
+func (w *WindowOperator) Input() Operator { return w.input }
+
+// FuncName returns the name of the window function (ROW_NUMBER, RANK, etc.).
+func (w *WindowOperator) FuncName() string { return w.funcName }
+
 func (w *WindowOperator) Next(ctx context.Context) (Row, error) {
 	if w.rows == nil {
 		if err := w.materialize(ctx); err != nil {
@@ -61,7 +69,7 @@ func (w *WindowOperator) Next(ctx context.Context) (Row, error) {
 	}
 	outData := make([]Value, len(row.Data)+1)
 	copy(outData, row.Data)
-	outData[len(row.Data)] = valueFromAny(result)
+	outData[len(row.Data)] = DT.ValueFromAny(result)
 	return Row{Cols: w.outCols, Data: outData}, nil
 }
 
@@ -128,9 +136,9 @@ func (w *WindowOperator) partitionKey(row *Row) string {
 	}
 	key := ""
 	for i, expr := range w.spec.PartitionBy {
-		val, err := EvalValue(expr, row, nil)
+		val, err := EV.EvalValue(expr, row, nil)
 		if err != nil {
-			val = NullValue()
+			val = DT.NullValue()
 		}
 		if i > 0 {
 			key += "|"
@@ -146,8 +154,8 @@ func (w *WindowOperator) sortPartition(indices []int) {
 	}
 	slices.SortStableFunc(indices, func(a, b int) int {
 		for _, item := range w.spec.OrderBy {
-			vi, _ := EvalValue(item.Expr, &w.rows[a], nil)
-			vj, _ := EvalValue(item.Expr, &w.rows[b], nil)
+			vi, _ := EV.EvalValue(item.Expr, &w.rows[a], nil)
+			vj, _ := EV.EvalValue(item.Expr, &w.rows[b], nil)
 			cmp := PL.CompareValue(vi, vj)
 			if cmp != 0 {
 				if item.Desc {
@@ -210,8 +218,8 @@ func (w *WindowOperator) computeWindowFunc(indices []int) {
 // sameOrderByGroup reports whether two rows have equal ORDER BY values.
 func (w *WindowOperator) sameOrderByGroup(i, j int) bool {
 	for _, item := range w.spec.OrderBy {
-		vi, _ := EvalValue(item.Expr, &w.rows[i], nil)
-		vj, _ := EvalValue(item.Expr, &w.rows[j], nil)
+		vi, _ := EV.EvalValue(item.Expr, &w.rows[i], nil)
+		vj, _ := EV.EvalValue(item.Expr, &w.rows[j], nil)
 		if PL.CompareValue(vi, vj) != 0 {
 			return false
 		}
@@ -297,7 +305,7 @@ func evalBoundOffset(offset PS.Expr) int {
 	if offset == nil {
 		return 0
 	}
-	v, err := EvalValue(offset, nil, nil)
+	v, err := EV.EvalValue(offset, nil, nil)
 	if err != nil {
 		return 0
 	}
@@ -325,7 +333,7 @@ func (w *WindowOperator) aggOverFrame(funcName string, frameRows []int) any {
 	var min, max float64
 	var hasVal bool
 	for _, ri := range frameRows {
-		val, err := EvalValue(w.args[0], &w.rows[ri], nil)
+		val, err := EV.EvalValue(w.args[0], &w.rows[ri], nil)
 		if err != nil || val.Kind == KindNull {
 			continue
 		}
@@ -387,8 +395,8 @@ func (w *WindowOperator) computeRank(indices []int, dense bool) {
 			prevIdx := indices[i-1]
 			equal := true
 			for _, item := range w.spec.OrderBy {
-				vi, _ := EvalValue(item.Expr, &w.rows[prevIdx], nil)
-				vj, _ := EvalValue(item.Expr, &w.rows[idx], nil)
+				vi, _ := EV.EvalValue(item.Expr, &w.rows[prevIdx], nil)
+				vj, _ := EV.EvalValue(item.Expr, &w.rows[idx], nil)
 				if PL.CompareValue(vi, vj) != 0 {
 					equal = false
 					break
@@ -413,8 +421,8 @@ func (w *WindowOperator) computeLagLead(indices []int, defaultOffset int) {
 
 	// REQ000290: read offset from args[1] if provided
 	if n >= 2 {
-		if v, err := EvalValue(w.args[1], nil, nil); err == nil {
-			if ov, ok := toInt64(v); ok {
+		if v, err := EV.EvalValue(w.args[1], nil, nil); err == nil {
+			if ov, ok := DT.ToInt64(v); ok {
 				offset = int(ov)
 				if defaultOffset < 0 {
 					offset = -offset // LAG: negative offset
@@ -423,7 +431,7 @@ func (w *WindowOperator) computeLagLead(indices []int, defaultOffset int) {
 		}
 	}
 	if n >= 3 {
-		if v, err := EvalValue(w.args[2], nil, nil); err == nil {
+		if v, err := EV.EvalValue(w.args[2], nil, nil); err == nil {
 			defaultVal = v.ToAny()
 		} else {
 			defaultVal = nil
@@ -438,15 +446,10 @@ func (w *WindowOperator) computeLagLead(indices []int, defaultOffset int) {
 		}
 		srcIdx := indices[srcPos]
 		if n >= 1 {
-			val, _ := EvalValue(w.args[0], &w.rows[srcIdx], nil)
+			val, _ := EV.EvalValue(w.args[0], &w.rows[srcIdx], nil)
 			w.results[idx] = val.ToAny()
 		} else {
 			w.results[idx] = defaultVal
 		}
 	}
-}
-
-// evalWindowFunc evaluates a WindowFunc expression.
-func evalWindowFunc(e *PS.WindowFunc, row *Row, params []any) (Value, error) {
-	return NullValue(), fmt.Errorf("window function %s requires WindowOperator execution", e.Name)
 }

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 )
 
@@ -199,7 +200,7 @@ func TestEngine_SequentialDDL(t *testing.T) {
 	defer eng.Close()
 	ctx := context.Background()
 
-	// Create multiple tables with indexes (like SLT tests do)
+	// Create multiple DT.Tables with indexes (like SLT tests do)
 	tnames := []string{"ta", "tb", "tc"}
 	for _, tname := range tnames {
 		_, err := ex.Exec(ctx, "CREATE TABLE "+tname+" (id INTEGER PRIMARY KEY, val NUMERIC, w TEXT)")
@@ -228,16 +229,16 @@ func TestEngine_SequentialDDL(t *testing.T) {
 }
 
 func TestStore_LockOrdering(t *testing.T) {
-	// Verify consistent lock ordering: tablesMu → storeMu (REQ000974).
+	// Verify consistent lock ordering: DT.TablesMu → DT.StoreMu (REQ000974).
 	// Cannot run concurrent Exec() calls (Executor is not goroutine-safe),
 	// so we verify the ordering by calling the two problematic code paths
 	// and confirming they don't deadlock via table creation + unregistration.
-	storeMu.Lock()
-	storeMu.Unlock()
-	tablesMu.Lock()
-	tablesMu.Unlock()
+	DT.StoreMu.Lock()
+	DT.StoreMu.Unlock()
+	DT.TablesMu.Lock()
+	DT.TablesMu.Unlock()
 
-	// RegisterFromCatalog: acquires tablesMu → storeMu
+	// RegisterFromCatalog: acquires DT.TablesMu → DT.StoreMu
 	dir := t.TempDir()
 	lsCat, err := ls.NewCatalog(dir)
 	if err != nil {
@@ -245,11 +246,11 @@ func TestStore_LockOrdering(t *testing.T) {
 	}
 	defer lsCat.Close()
 
-	SetCatalog(lsCat)
-	defer SetCatalog(nil)
+	DT.SetCatalog(lsCat)
+	defer DT.SetCatalog(nil)
 
-	// RegisterFromCatalog uses tablesMu → storeMu order.
-	// UnregisterAll uses tablesMu → storeMu order.
+	// RegisterFromCatalog uses DT.TablesMu → DT.StoreMu order.
+	// UnregisterAll uses DT.TablesMu → DT.StoreMu order.
 	// Both follow the same ordering — no deadlock risk.
 	entry := &ls.CatalogEntry{
 		TableID: 1,
@@ -261,21 +262,21 @@ func TestStore_LockOrdering(t *testing.T) {
 		PrimaryKey: "id",
 		CreateSQL:  "CREATE TABLE ordering_test (id INTEGER PRIMARY KEY, val TEXT)",
 	}
-	if err := RegisterFromCatalog(entry); err != nil {
+	if err := DT.RegisterFromCatalog(entry); err != nil {
 		t.Fatalf("RegisterFromCatalog: %v", err)
 	}
 
 	// Verify the table was registered
-	if _, ok := schemaFor("ordering_test"); !ok {
-		t.Fatal("schemaFor returned false after RegisterFromCatalog")
+	if _, ok := DT.SchemaFor("ordering_test"); !ok {
+		t.Fatal("DT.SchemaFor returned false after RegisterFromCatalog")
 	}
 
-	// UnregisterAll uses tablesMu → storeMu — same ordering
+	// UnregisterAll uses DT.TablesMu → DT.StoreMu — same ordering
 	UnregisterAll()
 
 	// Verify the table is gone
-	if _, ok := schemaFor("ordering_test"); ok {
-		t.Fatal("schemaFor returned true after UnregisterAll")
+	if _, ok := DT.SchemaFor("ordering_test"); ok {
+		t.Fatal("DT.SchemaFor returned true after UnregisterAll")
 	}
 }
 
@@ -294,10 +295,10 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 
 	s := &engineStore{eng: eng}
 	schema := []string{"id", "name", "val"}
-	_ = registerStoreSchema("bench", schema, "id")
+	_ = DT.RegisterStoreSchema("bench", schema, "id")
 
 	// Build and insert encoded rows via the engine.
-	ss, _ := schemaFor("bench")
+	ss, _ := DT.SchemaFor("bench")
 	for i := 0; i < rowCount; i++ {
 		row := Row{
 			Data: []Value{
@@ -415,9 +416,9 @@ func BenchmarkSeqScan_FullScan(b *testing.B) {
 
 	s := &engineStore{eng: eng}
 	schema := []string{"id", "name", "val"}
-	_ = registerStoreSchema("bench", schema, "id")
+	_ = DT.RegisterStoreSchema("bench", schema, "id")
 
-	ss, _ := schemaFor("bench")
+	ss, _ := DT.SchemaFor("bench")
 	for i := 0; i < rowCount; i++ {
 		row := Row{
 			Data: []Value{

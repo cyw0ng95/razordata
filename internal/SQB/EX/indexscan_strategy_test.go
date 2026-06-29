@@ -15,7 +15,7 @@ import (
 // TestIndexScan_StrategySelection covers the four mode → strategy
 // mappings defined in SelectStrategy. The InMemoryScan branch is
 // exercised without a store; the Store/Index/BTree branches use
-// the in-memory store registered via the `tables` map (the only
+// the in-memory store registered via the `DT.Tables` map (the only
 // public Store surface available in unit tests).
 func TestIndexScan_StrategySelection(t *testing.T) {
 	t.Run("in-memory", func(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -23,7 +24,7 @@ func TestCreateMatViewOperator(t *testing.T) {
 		t.Errorf("unexpected result: %v", row.Data)
 	}
 
-	if LookupMatView("mv_test") == nil {
+	if DT.LookupMatView("mv_test") == nil {
 		t.Error("mat view should be registered")
 	}
 
@@ -38,7 +39,7 @@ func TestDropMatViewOperator(t *testing.T) {
 	defer UnregisterAll()
 
 	sel := &PS.Select{From: "t1", Cols: []PS.Expr{&PS.Ident{Name: "a"}}}
-	RegisterMatView("mv_drop", sel)
+	DT.RegisterMatView("mv_drop", sel)
 
 	op := NewDropMatView("mv_drop", nil)
 	ctx := context.Background()
@@ -50,7 +51,7 @@ func TestDropMatViewOperator(t *testing.T) {
 		t.Errorf("unexpected result: %v", row.Data)
 	}
 
-	if LookupMatView("mv_drop") != nil {
+	if DT.LookupMatView("mv_drop") != nil {
 		t.Error("mat view should be unregistered after drop")
 	}
 }
@@ -74,10 +75,10 @@ func TestRefreshMatViewOperator(t *testing.T) {
 		{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(1))}},
 		{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(2))}},
 	}
-	RegisterTable("t1", leftRows)
+	DT.RegisterTable("t1", leftRows)
 
 	sel := &PS.Select{From: "t1", Cols: []PS.Expr{&PS.Ident{Name: "id"}}}
-	RegisterMatView("mv_ref", sel)
+	DT.RegisterMatView("mv_ref", sel)
 
 	planner := NewPlanner()
 	planner.catalog["t1"] = &tableInfo{
@@ -166,7 +167,7 @@ func TestCreateMatView_WithStore(t *testing.T) {
 		t.Errorf("meta value should be '1', got '%s'", val)
 	}
 
-	if LookupMatView("mv_store") == nil {
+	if DT.LookupMatView("mv_store") == nil {
 		t.Error("mat view should be registered")
 	}
 }
@@ -176,7 +177,7 @@ func TestDropMatView_WithStore(t *testing.T) {
 	defer UnregisterAll()
 
 	store := newMemStore()
-	RegisterMatView("mv_drop_store", &PS.Select{From: "t1"})
+	DT.RegisterMatView("mv_drop_store", &PS.Select{From: "t1"})
 	_ = store.Insert(MatViewMetaKey("mv_drop_store"), []byte("1"))
 	_ = store.Insert(MatViewDataPrefix("mv_drop_store"), []byte("data"))
 
@@ -186,7 +187,7 @@ func TestDropMatView_WithStore(t *testing.T) {
 		t.Fatalf("Next: %v", err)
 	}
 
-	if LookupMatView("mv_drop_store") != nil {
+	if DT.LookupMatView("mv_drop_store") != nil {
 		t.Error("mat view should be unregistered")
 	}
 
@@ -221,14 +222,14 @@ func TestMatViewClearAll(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterMatView("mv1", &PS.Select{})
-	RegisterMatView("mv2", &PS.Select{})
-	if LookupMatView("mv1") == nil || LookupMatView("mv2") == nil {
+	DT.RegisterMatView("mv1", &PS.Select{})
+	DT.RegisterMatView("mv2", &PS.Select{})
+	if DT.LookupMatView("mv1") == nil || DT.LookupMatView("mv2") == nil {
 		t.Fatal("mat views should be registered")
 	}
 
-	UnregisterAllMatViews()
-	if LookupMatView("mv1") != nil || LookupMatView("mv2") != nil {
+	DT.UnregisterAllMatViews()
+	if DT.LookupMatView("mv1") != nil || DT.LookupMatView("mv2") != nil {
 		t.Error("all mat views should be cleared")
 	}
 }

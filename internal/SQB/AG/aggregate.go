@@ -4,7 +4,7 @@
 // paths but are not part of the v1 MVP scope per docs/design/ARCH.md
 // ("Out of Scope (v1)" — joins, aggregates, subqueries, DISTINCT).
 // They are retained in v1.1 for upcoming releases.
-package EX
+package AG
 
 import (
 	"context"
@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -29,6 +31,9 @@ type Aggregate struct {
 func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
 	return &Aggregate{child: child, groupCols: groupCols, aggs: aggs}
 }
+
+// Child returns the input operator feeding this aggregate.
+func (a *Aggregate) Child() Operator { return a.child }
 
 // SetExpandStar enables full-row output for SELECT * with GROUP BY.
 // Non-GROUP BY and non-aggregate columns take their value from the
@@ -138,13 +143,13 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 			}
 		}
 		for _, ag := range a.aggs {
-			v, err := evalAggregateOver(ag, g.rows, a.params)
+			v, err := EvalAggregateOver(ag, g.rows, a.params)
 			if err != nil {
 				return err
 			}
 			name := aggregateColName(ag)
 			out.Cols = append(out.Cols, name)
-			out.Data = append(out.Data, valueFromAny(v))
+			out.Data = append(out.Data, DT.ValueFromAny(v))
 		}
 		a.buf = append(a.buf, out)
 	}
@@ -157,7 +162,7 @@ func evalGroupKey(cols []PS.Expr, row *Row, params []any) ([]Value, error) {
 	}
 	out := make([]Value, len(cols))
 	for i, c := range cols {
-		v, err := EvalValue(c, row, params)
+		v, err := EV.EvalValue(c, row, params)
 		if err != nil {
 			return nil, err
 		}
@@ -240,7 +245,7 @@ func groupKeyString(key []Value) string {
 			b.Write(v.B)
 		default:
 			b.WriteString("?:")
-			b.WriteString(valueToString(v))
+			b.WriteString(DT.ValueToString(v))
 		}
 	}
 	return b.String()
@@ -255,7 +260,7 @@ func keysLessCmp(a, b []any) int {
 		if i >= len(b) {
 			return 0
 		}
-		c := compare(a[i], b[i])
+		c := DT.Compare(a[i], b[i])
 		if c != 0 {
 			return c
 		}
@@ -346,12 +351,12 @@ func buildAggregateVirtualRow(e PS.Expr, rows []Row, params []any) (Row, error) 
 					return nil
 				}
 			}
-			val, err := evalAggregateOver(v, rows, params)
+			val, err := EvalAggregateOver(v, rows, params)
 			if err != nil {
 				return err
 			}
 			vrow.Cols = append(vrow.Cols, name)
-			vrow.Data = append(vrow.Data, valueFromAny(val))
+			vrow.Data = append(vrow.Data, DT.ValueFromAny(val))
 		case *PS.UnaryExpr:
 			return collect(v.Operand)
 		case *PS.BinaryExpr:
@@ -400,10 +405,10 @@ func buildAggregateVirtualRow(e PS.Expr, rows []Row, params []any) (Row, error) 
 	return vrow, nil
 }
 
-func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
+func EvalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 	// Unwrap AliasedExpr to get the inner aggregate
 	if ae, ok := e.(*PS.AliasedExpr); ok {
-		return evalAggregateOver(ae.Expr, rows, params)
+		return EvalAggregateOver(ae.Expr, rows, params)
 	}
 	// REQ000700+: handle expressions wrapping aggregates
 	// (e.g. -COUNT(*), SUM(x)+1, CAST(SUM(x) AS TEXT)).
@@ -414,12 +419,12 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 		// Not a bare aggregate — may be an expression wrapping
 		// one or more aggregates. Build a virtual row with the
 		// aggregate values and evaluate the full expression.
-		if containsAggregate(e) {
+		if DT.ContainsAggregate(e) {
 			vrow, err := buildAggregateVirtualRow(e, rows, params)
 			if err != nil {
 				return nil, err
 			}
-			v, err := EvalValue(e, &vrow, params)
+			v, err := EV.EvalValue(e, &vrow, params)
 			if err != nil {
 				return nil, err
 			}
@@ -431,7 +436,7 @@ func evalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 	// aggregate is a one-line registration in
 	// aggregate_registry.go's init(), not an edit to a switch
 	// block here.
-	if impl, ok := aggregateFuncRegistry[agg.Name]; ok {
+	if impl, ok := AggregateFuncRegistry[agg.Name]; ok {
 		return impl(agg, rows, params)
 	}
 	return nil, nil
@@ -445,7 +450,7 @@ func sumDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 	var sumF float64
 	var seenI, seenF bool
 	for _, r := range rows {
-		v, err := EvalValue(agg.Arg, &r, params)
+		v, err := EV.EvalValue(agg.Arg, &r, params)
 		if err != nil {
 			return nil, err
 		}
@@ -482,7 +487,7 @@ func avgDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 	var sumF float64
 	var n int64
 	for _, r := range rows {
-		v, err := EvalValue(agg.Arg, &r, params)
+		v, err := EV.EvalValue(agg.Arg, &r, params)
 		if err != nil {
 			return nil, err
 		}
@@ -513,7 +518,7 @@ func minDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 	seen := make(map[any]bool)
 	var best Value
 	for _, r := range rows {
-		v, err := EvalValue(agg.Arg, &r, params)
+		v, err := EV.EvalValue(agg.Arg, &r, params)
 		if err != nil {
 			return nil, err
 		}
@@ -537,7 +542,7 @@ func maxDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 	seen := make(map[any]bool)
 	var best Value
 	for _, r := range rows {
-		v, err := EvalValue(agg.Arg, &r, params)
+		v, err := EV.EvalValue(agg.Arg, &r, params)
 		if err != nil {
 			return nil, err
 		}

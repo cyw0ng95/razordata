@@ -258,7 +258,7 @@ func (s *RightOuterNLJStrategy) Close() error {
 }
 
 // HashCrossNLJStrategy is the hash-based cross-join strategy for
-// small tables. Materializes both sides and produces a Cartesian
+// small DT.Tables. Materializes both sides and produces a Cartesian
 // product in O(N+M) build time.
 type HashCrossNLJStrategy struct {
 	left  Operator

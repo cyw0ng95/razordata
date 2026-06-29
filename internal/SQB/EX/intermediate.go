@@ -11,7 +11,9 @@ import (
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // REQ001088: predicateCache is now best-effort. The Filter struct caches
@@ -172,11 +174,11 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 			r.ExecCtx = f.execCtx
 		}
 		f.curRow = r
-		v, err := EvalValue(f.predicate, &f.curRow, f.params)
+		v, err := EV.EvalValue(f.predicate, &f.curRow, f.params)
 		if err != nil {
 			return Row{}, err
 		}
-		if isValueTruthy(v) {
+		if DT.IsValueTruthy(v) {
 			return f.curRow, nil
 		}
 	}
@@ -277,7 +279,7 @@ type Project struct {
 	// REQ000756: pre-allocated column names (same for every row).
 	prefixCols []string
 	// REQ000816: pre-built colIndex map shared across all output
-	// rows. Avoids per-row buildColIndex in Lookup (pprof: 23.45%
+	// rows. Avoids per-row BuildColIndex in Lookup (pprof: 23.45%
 	// cum, 1.06s in j3_mixed).
 	colIndex map[string]int
 	// REQ000802: compiled expression evaluators. On the first call
@@ -415,7 +417,7 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 		} else {
-			v, err = EvalValue(c, &row, p.params)
+			v, err = EV.EvalValue(c, &row, p.params)
 			if err != nil {
 				return Row{}, err
 			}
@@ -511,7 +513,7 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 		for i, r := range s.buf {
 			sk := flatKeys[i*numKeys : (i+1)*numKeys]
 			for j, k := range s.keys {
-				v, err := EvalValue(k.Expr, &r, s.params)
+				v, err := EV.EvalValue(k.Expr, &r, s.params)
 				if err != nil {
 					return Row{}, err
 				}
@@ -591,7 +593,7 @@ func (s *Sort) parallelSort(ctx context.Context, keyCache [][]Value) error {
 	slices.SortStableFunc(samples, func(a, b int) int {
 		ka, kb := keyCache[a], keyCache[b]
 		for ki := range ka {
-			c := compare(ka[ki], kb[ki])
+			c := DT.Compare(ka[ki], kb[ki])
 			if c == 0 {
 				continue
 			}
@@ -705,7 +707,7 @@ func (s *Sort) cmpKeys(a, b []Value) int {
 				return int(s.keys[ki].NullsOrder)
 			}
 		}
-		c := compare(a[ki], b[ki])
+		c := DT.Compare(a[ki], b[ki])
 		if c == 0 {
 			continue
 		}
@@ -1129,7 +1131,7 @@ func makeCompiledCmp(colName string, litVal any, cmp func(a, b Value) bool) func
 			return false, nil
 		}
 		// SQL three-valued logic: NULL compared with anything = UNKNOWN.
-		// Without this guard, compare() returns a non-zero ordering for
+		// Without this guard, DT.Compare() returns a non-zero ordering for
 		// NULL values, causing the comparison to incorrectly evaluate
 		// as true/false instead of NULL (filtered out by Filter).
 		if isNullValueValue(row.Data[idx]) || isNullValueValue(litValue) {
@@ -1229,17 +1231,17 @@ func makeCompiledColColCmp(leftCol, rightCol string, op LX.TokenType) func(*Row)
 
 		switch op {
 		case LX.T_EQ:
-			return equalValue(a, b), nil
+			return DT.EqualValueAny(a, b), nil
 		case LX.T_NE:
-			return !equalValue(a, b), nil
+			return !DT.EqualValueAny(a, b), nil
 		case LX.T_GT:
-			return compare(a, b) > 0, nil
+			return DT.Compare(a, b) > 0, nil
 		case LX.T_GE:
-			return compare(a, b) >= 0, nil
+			return DT.Compare(a, b) >= 0, nil
 		case LX.T_LT:
-			return compare(a, b) < 0, nil
+			return DT.Compare(a, b) < 0, nil
 		case LX.T_LE:
-			return compare(a, b) <= 0, nil
+			return DT.Compare(a, b) <= 0, nil
 		}
 		return false, nil
 	}

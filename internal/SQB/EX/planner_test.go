@@ -2,6 +2,7 @@ package EX
 
 import (
 	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"context"
 	"fmt"
 	"testing"
@@ -495,12 +496,12 @@ func walkOpTreeDebug(op Operator, fn func(Operator, int), depth int) {
 // predicates in cross-join WHERE clauses are pushed down and the
 // result row count stays small (<10K, not billions). REQ001092.
 // Uses SLT-style unique column names (a1 in t1, b2 in t2, etc.)
-// so the planner can unambiguously resolve columns to tables.
+// so the planner can unambiguously resolve columns to DT.Tables.
 func TestPlanner_CrossJoinPredicatePushdownINList(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	// Register 5 tables with 100 rows each.
+	// Register 5 DT.Tables with 100 rows each.
 	// Each table has a unique column name (SLT convention).
 	for i := 1; i <= 5; i++ {
 		colName := string(rune('a' + i - 1)) // a, b, c, d, e
@@ -512,7 +513,7 @@ func TestPlanner_CrossJoinPredicatePushdownINList(t *testing.T) {
 				Data: []Value{NewIntValue(int64(r))},
 			})
 		}
-		RegisterTable(fmt.Sprintf("t%d", i), rows)
+		DT.RegisterTable(fmt.Sprintf("t%d", i), rows)
 	}
 
 	// 5-table cross-join with IN-list predicates on each table.
@@ -546,7 +547,7 @@ func TestPlanner_CrossJoinColdStart_Pushdown(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	// Register tables via source-level RegisterTable (populates schemas)
+	// Register DT.Tables via source-level RegisterTable (populates schemas)
 	// but do NOT use Planner.RegisterTable — leaves p.catalog empty.
 	for i := 1; i <= 5; i++ {
 		colName := string(rune('a' + i - 1))
@@ -558,7 +559,7 @@ func TestPlanner_CrossJoinColdStart_Pushdown(t *testing.T) {
 				Data: []Value{NewIntValue(int64(r))},
 			})
 		}
-		RegisterTable(fmt.Sprintf("t%d", i), rows)
+		DT.RegisterTable(fmt.Sprintf("t%d", i), rows)
 	}
 
 	p := NewPlanner()
@@ -610,7 +611,7 @@ func BenchmarkSelect4_CrossJoinColdStart(b *testing.B) {
 				Data: []Value{NewIntValue(int64(r))},
 			})
 		}
-		RegisterTable(fmt.Sprintf("t%d", i), rows)
+		DT.RegisterTable(fmt.Sprintf("t%d", i), rows)
 	}
 
 	sql := `SELECT * FROM t1, t2, t3, t4, t5
@@ -630,7 +631,7 @@ func BenchmarkSelect4_CrossJoinColdStart(b *testing.B) {
 					Data: []Value{NewIntValue(int64(r))},
 				})
 			}
-			RegisterTable(fmt.Sprintf("t%d", j), rs)
+			DT.RegisterTable(fmt.Sprintf("t%d", j), rs)
 		}
 		ex := NewExecutor()
 		ctx := context.Background()

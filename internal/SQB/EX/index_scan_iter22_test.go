@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -51,7 +52,7 @@ func TestIndexScan_WithIndexSeek(t *testing.T) {
 
 	// Register table and a real secondary index
 	ex.RegisterTableWithPK("users", []string{"id", "email", "name"}, "id")
-	id, ok := tableIDFor("users")
+	id, ok := DT.TableIDFor("users")
 	if !ok {
 		t.Fatal("users not registered")
 	}
@@ -177,7 +178,7 @@ func TestIndexScan_CloseWithIndex(t *testing.T) {
 	store := &engineStoreWithGet{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
-	id, _ := tableIDFor("t")
+	id, _ := DT.TableIDFor("t")
 	_ = id
 
 	ctx := context.Background()

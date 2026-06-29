@@ -5,6 +5,7 @@ import (
 	"context"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 )
 
@@ -23,7 +24,7 @@ func TestCreateIndex_Registers(t *testing.T) {
 		t.Fatalf("CREATE INDEX: %v", err)
 	}
 
-	idxs := GetRegisteredIndexes("t")
+	idxs := DT.GetRegisteredIndexes("t")
 	if len(idxs) != 1 {
 		t.Errorf("got %d indexes, want 1", len(idxs))
 	}
@@ -48,7 +49,7 @@ func TestCreateIndex_PopulatesOnInsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("INSERT: %v", err)
 	}
-	idxs := GetRegisteredIndexes("t")
+	idxs := DT.GetRegisteredIndexes("t")
 	if len(idxs) != 1 {
 		t.Errorf("got %d indexes, want 1", len(idxs))
 	}
@@ -77,7 +78,7 @@ func TestCreateIndex_Duplicate(t *testing.T) {
 	_, _ = ex.Exec(context.Background(),
 		"CREATE INDEX idx_email ON t (email)")
 	// Sanity: at least one registered index for "t".
-	idxs := GetRegisteredIndexes("t")
+	idxs := DT.GetRegisteredIndexes("t")
 	if len(idxs) < 1 {
 		t.Errorf("got %d indexes, want >= 1", len(idxs))
 	}
@@ -100,7 +101,7 @@ func TestDropIndex_RemovesFromRegistry(t *testing.T) {
 		"DROP INDEX idx_email"); err != nil {
 		t.Fatalf("DROP INDEX: %v", err)
 	}
-	if got := len(GetRegisteredIndexes("t")); got != 0 {
+	if got := len(DT.GetRegisteredIndexes("t")); got != 0 {
 		t.Errorf("after drop: got %d indexes, want 0", got)
 	}
 }
@@ -184,7 +185,7 @@ func TestDropIndex_FullFlow(t *testing.T) {
 		"DROP INDEX idx_email"); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(GetRegisteredIndexes("t")); got != 0 {
+	if got := len(DT.GetRegisteredIndexes("t")); got != 0 {
 		t.Errorf("after full flow, got %d indexes, want 0", got)
 	}
 }

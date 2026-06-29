@@ -48,7 +48,7 @@ func TestExplain_BasicSelect(t *testing.T) {
 		t.Errorf("expected row count in output, got: %s", allDetails)
 	}
 	if !strings.Contains(allDetails, "memory") || !strings.Contains(allDetails, "store") {
-		// At least one of these should be present for in-memory tables
+		// At least one of these should be present for in-memory DT.Tables
 		if !strings.Contains(allDetails, "memory") {
 			t.Errorf("expected storage path indicator, got: %s", allDetails)
 		}

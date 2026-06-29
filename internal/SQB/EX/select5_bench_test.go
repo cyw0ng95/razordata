@@ -2,12 +2,13 @@ package EX
 
 import (
 	"context"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"fmt"
 	"runtime"
 	"testing"
 )
 
-// setupSelect5Tables creates 64 tables (t1-t64) with 10 rows each,
+// setupSelect5Tables creates 64 DT.Tables (t1-t64) with 10 rows each,
 // matching the schema and data from select5.test.
 // Each table has columns: an (INTEGER PRIMARY KEY), bn (INTEGER), xn (VARCHAR(40)).
 func setupSelect5Tables(tb testing.TB) {
@@ -84,10 +85,10 @@ func setupSelect5Tables(tb testing.TB) {
 
 	for i := 1; i <= 64; i++ {
 		name := fmt.Sprintf("t%d", i)
-		RegisterTableSchema(name, []string{fmt.Sprintf("a%d", i), fmt.Sprintf("b%d", i), fmt.Sprintf("x%d", i)})
-		tablesMu.Lock()
+		DT.RegisterTableSchema(name, []string{fmt.Sprintf("a%d", i), fmt.Sprintf("b%d", i), fmt.Sprintf("x%d", i)})
+		DT.TablesMu.Lock()
 		for j := 0; j < 10; j++ {
-			tables[name] = append(tables[name], Row{
+			DT.Tables[name] = append(DT.Tables[name], Row{
 				Cols: []string{fmt.Sprintf("a%d", i), fmt.Sprintf("b%d", i), fmt.Sprintf("x%d", i)},
 				Data: []Value{
 					NewIntValue(int64(j + 1)),
@@ -96,7 +97,7 @@ func setupSelect5Tables(tb testing.TB) {
 				},
 			})
 		}
-		tablesMu.Unlock()
+		DT.TablesMu.Unlock()
 	}
 }
 
@@ -110,7 +111,7 @@ func memStats() (alloc, totalAlloc uint64) {
 
 // TestSelect5_MultiTableJoin_OOM tests that multi-table joins from
 // select5.test complete without OOM. This extracts representative
-// queries from different join levels (4-10 tables) and verifies
+// queries from different join levels (4-10 DT.Tables) and verifies
 // they produce the correct result with bounded memory usage.
 //
 // NOTE: The original select5.test queries use arbitrary table order
@@ -123,7 +124,7 @@ func memStats() (alloc, totalAlloc uint64) {
 //
 // The queries in this test use the anchor table first to ensure
 // correct results. The OOM fix should be in the planner to use
-// multi-start N3 for 7+ tables as well.
+// multi-start N3 for 7+ DT.Tables as well.
 func TestSelect5_MultiTableJoin_OOM(t *testing.T) {
 	setupSelect5Tables(t)
 	ex := NewExecutor()
@@ -271,7 +272,7 @@ func TestSelect5_MultiTableJoin_OOM(t *testing.T) {
 // If the anchor table is not first, the join order is suboptimal and
 // may produce wrong results (0 rows instead of 1).
 //
-// The fix should be in the planner to use multi-start N3 for 7+ tables
+// The fix should be in the planner to use multi-start N3 for 7+ DT.Tables
 // as well, or to use a better join order optimization algorithm.
 func TestSelect5_PlannerJoinOrder(t *testing.T) {
 	setupSelect5Tables(t)
@@ -314,7 +315,7 @@ func TestSelect5_PlannerJoinOrder(t *testing.T) {
 				// NOTE: The anchor-second case is expected to fail due to
 				// single-start N3 join ordering for 7+ table joins.
 				// This is a known issue that should be fixed in the planner.
-				t.Logf("expected %d rows, got %d (known issue: single-start N3 for 7+ tables)", tt.want, len(rows))
+				t.Logf("expected %d rows, got %d (known issue: single-start N3 for 7+ DT.Tables)", tt.want, len(rows))
 			}
 		})
 	}

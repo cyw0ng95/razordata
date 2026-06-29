@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -13,10 +14,10 @@ func TestEvalRound_Int64FastPath(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTableSchema("t", []string{"id"})
-	tablesMu.Lock()
-	tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(42))}})
-	tablesMu.Unlock()
+	DT.RegisterTableSchema("t", []string{"id"})
+	DT.TablesMu.Lock()
+	DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(42))}})
+	DT.TablesMu.Unlock()
 
 	e := NewExecutor()
 	ctx := context.Background()
@@ -45,12 +46,12 @@ func TestEvalSign_Int64FastPath(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTableSchema("t", []string{"id"})
-	tablesMu.Lock()
+	DT.RegisterTableSchema("t", []string{"id"})
+	DT.TablesMu.Lock()
 	for _, v := range []int64{-5, 0, 7} {
-		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(v)}})
+		DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(v)}})
 	}
-	tablesMu.Unlock()
+	DT.TablesMu.Unlock()
 
 	e := NewExecutor()
 	ctx := context.Background()
@@ -80,10 +81,10 @@ func TestEvalRound_NullPreserved(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTableSchema("t", []string{"id"})
-	tablesMu.Lock()
-	tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NullValue()}})
-	tablesMu.Unlock()
+	DT.RegisterTableSchema("t", []string{"id"})
+	DT.TablesMu.Lock()
+	DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NullValue()}})
+	DT.TablesMu.Unlock()
 
 	e := NewExecutor()
 	ctx := context.Background()
@@ -103,10 +104,10 @@ func TestEvalSign_NullPreserved(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTableSchema("t", []string{"id"})
-	tablesMu.Lock()
-	tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NullValue()}})
-	tablesMu.Unlock()
+	DT.RegisterTableSchema("t", []string{"id"})
+	DT.TablesMu.Lock()
+	DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NullValue()}})
+	DT.TablesMu.Unlock()
 
 	e := NewExecutor()
 	ctx := context.Background()
@@ -126,12 +127,12 @@ func BenchmarkEvalRound_Int64(b *testing.B) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTableSchema("t", []string{"id"})
-	tablesMu.Lock()
+	DT.RegisterTableSchema("t", []string{"id"})
+	DT.TablesMu.Lock()
 	for i := 0; i < 1000; i++ {
-		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
+		DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
 	}
-	tablesMu.Unlock()
+	DT.TablesMu.Unlock()
 
 	ex := NewExecutor()
 	ctx := context.Background()
@@ -147,12 +148,12 @@ func BenchmarkEvalSign_Int64(b *testing.B) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTableSchema("t", []string{"id"})
-	tablesMu.Lock()
+	DT.RegisterTableSchema("t", []string{"id"})
+	DT.TablesMu.Lock()
 	for i := 0; i < 1000; i++ {
-		tables["t"] = append(tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
+		DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
 	}
-	tablesMu.Unlock()
+	DT.TablesMu.Unlock()
 
 	ex := NewExecutor()
 	ctx := context.Background()

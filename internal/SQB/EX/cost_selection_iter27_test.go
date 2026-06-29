@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -20,7 +21,7 @@ func TestCost_BasedScanSelection_PrefersIndex(t *testing.T) {
 	defer eng.Close()
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	ex.RegisterIndex("t", "idx_a", []string{"a"})
-	RegisterIndexWithID("t", RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
+	DT.RegisterIndexWithID("t", RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
 	plan, err := ex.Explain("SELECT * FROM t WHERE a = 'x'")
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +63,7 @@ func TestCost_BasedScanSelection_HighSelectivityRange(t *testing.T) {
 	defer eng.Close()
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	ex.RegisterIndex("t", "idx_a", []string{"a"})
-	RegisterIndexWithID("t", RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
+	DT.RegisterIndexWithID("t", RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
 	plan, err := ex.Explain("SELECT * FROM t WHERE a BETWEEN 1 AND 10")
 	if err != nil {
 		t.Fatal(err)
@@ -98,11 +99,11 @@ func TestPickCheaperScan_WithIndex(t *testing.T) {
 	p := NewPlanner()
 	p.RegisterTable("t", []ColInfo{{Name: "a"}}, "")
 	p.RegisterIndex("t", "idx_a", []string{"a"})
-	RegisterIndexWithID("t", RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
+	DT.RegisterIndexWithID("t", RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
 	defer func() {
-		storeMu.Lock()
-		delete(registeredIndexes, "t")
-		storeMu.Unlock()
+		DT.StoreMu.Lock()
+		delete(DT.RegisteredIndexes, "t")
+		DT.StoreMu.Unlock()
 	}()
 	seq := NewSeqScan("t")
 	where := &PS.BinaryExpr{
@@ -128,11 +129,11 @@ func TestPickCheaperScan_HighSelectivityRange(t *testing.T) {
 	p := NewPlanner()
 	p.RegisterTable("t", []ColInfo{{Name: "a"}}, "")
 	p.RegisterIndex("t", "idx_a", []string{"a"})
-	RegisterIndexWithID("t", RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
+	DT.RegisterIndexWithID("t", RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
 	defer func() {
-		storeMu.Lock()
-		delete(registeredIndexes, "t")
-		storeMu.Unlock()
+		DT.StoreMu.Lock()
+		delete(DT.RegisteredIndexes, "t")
+		DT.StoreMu.Unlock()
 	}()
 	seq := NewSeqScan("t")
 	where := &PS.BinaryExpr{

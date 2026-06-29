@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	id "github.com/cyw0ng95/razordata/internal/ENG/ID"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -69,7 +70,7 @@ func getTableSchema(table string, src []Row) *tableSchemaEntry {
 type SeqScan struct {
 	table  string
 	store  Store
-	schema *storeSchema
+	schema *StoreSchema
 	prefix []byte
 	it     interface {
 		Next() bool
@@ -94,7 +95,7 @@ type SeqScan struct {
 	planner *Planner
 	// currentKey is the raw key from the LSM iterator for the
 	// most recently decoded row. Preserved so Update/Delete
-	// can reuse the original row key for hidden-PK tables.
+	// can reuse the original row key for hidden-PK DT.Tables.
 	currentKey []byte
 	// alias is the table alias (e.g. "x" in "FROM t1 AS x").
 	// When set, produced rows have column names prefixed with
@@ -111,7 +112,7 @@ type SeqScan struct {
 	availableIdx []string
 
 	// REQ000820: pointLookup maps column value→row indices for in-memory
-	// tables. When set, Next() only returns rows whose column value is in
+	// DT.Tables. When set, Next() only returns rows whose column value is in
 	// the lookup set. Built lazily on first Next() call.
 	pointLookup     map[any]bool // wanted values
 	pointLookupCol  string       // column name to index by (e.g. "a")
@@ -121,7 +122,7 @@ type SeqScan struct {
 
 	// REQ000840: shallow clone — reuse source row Data for read-only
 	// queries. Set to true for pure SELECT paths to avoid per-row
-	// allocation in cloneRow. Must be false for mutable operators
+	// allocation in DT.CloneRow. Must be false for mutable operators
 	// (UPDATE/DELETE returning, ON CONFLICT DO UPDATE).
 	shallow bool
 
@@ -163,9 +164,9 @@ func (s *SeqScan) WithAlias(alias string) *SeqScan {
 	// Pre-compute prefixed column names from the schema.
 	if s.schema != nil {
 		prefix := alias + "."
-		s.prefixedCols = make([]string, len(s.schema.cols))
-		s.prefixedColIndex = make(map[string]int, len(s.schema.cols)*2)
-		for i, c := range s.schema.cols {
+		s.prefixedCols = make([]string, len(s.schema.Cols))
+		s.prefixedColIndex = make(map[string]int, len(s.schema.Cols)*2)
+		for i, c := range s.schema.Cols {
 			pc := prefix + c
 			s.prefixedCols[i] = pc
 			s.prefixedColIndex[pc] = i
@@ -174,7 +175,7 @@ func (s *SeqScan) WithAlias(alias string) *SeqScan {
 		// column lookups (e.g. "col0") work when a table alias is used.
 		// Without this, expressions like "- col0" inside aggregates
 		// resolve to the column name string instead of the value.
-		for i, c := range s.schema.cols {
+		for i, c := range s.schema.Cols {
 			if _, exists := s.prefixedColIndex[c]; !exists {
 				s.prefixedColIndex[c] = i
 			}
@@ -258,7 +259,7 @@ func (s *SeqScan) buildPointLookup(src []Row) {
 // NewSeqScanWithStore builds a SeqScan that reads from the engine instead
 // of the in-memory table registry. The schema must have been registered.
 func NewSeqScanWithStore(store Store, table string) (*SeqScan, error) {
-	ss, ok := schemaFor(table)
+	ss, ok := DT.SchemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
@@ -307,7 +308,7 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if s.store == nil {
 		return nil, fmt.Errorf("ex: SeqScan.NextBatch requires a Store")
 	}
-	if s.schema == nil || len(s.schema.cols) == 0 {
+	if s.schema == nil || len(s.schema.Cols) == 0 {
 		return nil, nil
 	}
 	if s.it == nil {
@@ -320,8 +321,8 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		return nil, nil
 	}
 
-	nCols := len(s.schema.cols)
-	cols := s.schema.cols
+	nCols := len(s.schema.Cols)
+	cols := s.schema.Cols
 	if s.alias != "" && s.prefixedCols != nil {
 		cols = s.prefixedCols
 	}
@@ -330,7 +331,7 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	for k := 0; k < nCols; k++ {
 		batch.SetColumnName(k, cols[k])
 	}
-	batch.SetColMap(s.schema.colIndex)
+	batch.SetColMap(s.schema.ColIndex)
 
 	for batch.Size < engineBatchSize {
 		if !s.it.Next() {
@@ -395,9 +396,9 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 	if s.store != nil {
 		return s.nextFromStore(ctx)
 	}
-	tablesMu.RLock()
-	defer tablesMu.RUnlock()
-	src := tables[s.table]
+	DT.TablesMu.RLock()
+	defer DT.TablesMu.RUnlock()
+	src := DT.Tables[s.table]
 
 	// REQ000820: if pointLookup is set, build the value→row-index map
 	// lazily and iterate only over matching rows.
@@ -414,7 +415,7 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 		if schema == nil {
 			return Row{}, ErrNoRows
 		}
-		return s.cloneRow(r, schema), nil
+	return s.cloneRow(r, schema), nil
 	}
 
 	if s.pos >= len(src) {
@@ -448,7 +449,7 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 		ColIndex:  schema.colIndex,
 	}
 	// REQ000840: when shallow, reuse source row Data without copying.
-	// Safe for read-only queries — source rows in tables[] are never
+	// Safe for read-only queries — source rows in DT.Tables[] are never
 	// mutated after INSERT, and downstream operators (Filter, Project,
 	// Join) read from Data but never write to it in-place.
 	if !s.shallow {
@@ -490,7 +491,7 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 			}
 		}
 		// REQ000501: save the raw key so Update/Delete can
-		// preserve the original row key for hidden-PK tables.
+		// preserve the original row key for hidden-PK DT.Tables.
 		s.currentKey = s.it.Key()
 		v := s.it.Value()
 		// REQ001101: decode into reusable buffer to avoid per-row
@@ -619,7 +620,7 @@ type IndexScan struct {
 	rangeStart []byte
 	rangeEnd   []byte
 	store      Store
-	schema     *storeSchema
+	schema     *StoreSchema
 	prefix     []byte
 	it         interface {
 		Next() bool
@@ -701,7 +702,7 @@ func NewIndexScan(table, idx string, rangeStart, rangeEnd []byte) *IndexScan {
 // the column is indexed. Future work replaces this with a real index
 // seek.
 func NewIndexScanWithStore(store Store, table, idx string) (*IndexScan, error) {
-	ss, ok := schemaFor(table)
+	ss, ok := DT.SchemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
@@ -723,7 +724,7 @@ func NewIndexScanWithStore(store Store, table, idx string) (*IndexScan, error) {
 // (lexicographic).
 // REQ000252 — secondary indexes MVP.
 func NewIndexScanWithIndex(store Store, tableID uint64, table, idx string, seekValue, rangeEnd []byte) (*IndexScan, error) {
-	ss, ok := schemaFor(table)
+	ss, ok := DT.SchemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
@@ -744,7 +745,7 @@ func NewIndexScanWithIndex(store Store, tableID uint64, table, idx string, seekV
 // NewIndexScanWithBTree builds an IndexScan that uses a B-tree secondary
 // index for lookups. The B-tree maps index values to primary keys.
 func NewIndexScanWithBTree(bt *id.BTree, store Store, table, idx string) (*IndexScan, error) {
-	ss, ok := schemaFor(table)
+	ss, ok := DT.SchemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
@@ -774,7 +775,7 @@ func NewIndexScanWithBTree(bt *id.BTree, store Store, table, idx string) (*Index
 // a byte prefix (which would require knowing the value's
 // successor, impossible for variable-length strings).
 func NewIndexScanWithRange(store Store, tableID uint64, table, idx string, lower []byte, lowerInclusive bool, upper []byte, upperInclusive bool) (*IndexScan, error) {
-	ss, ok := schemaFor(table)
+	ss, ok := DT.SchemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
@@ -978,13 +979,13 @@ func (i *IndexScan) Next(ctx context.Context) (Row, error) {
 		return i.nextFromStore(ctx)
 	}
 	if i.rows == nil {
-		tablesMu.RLock()
-		src := tables[i.table]
+		DT.TablesMu.RLock()
+		src := DT.Tables[i.table]
 		out := make([]Row, len(src))
 		for k, r := range src {
-			out[k] = cloneRow(r)
+			out[k] = DT.CloneRow(r)
 		}
-		tablesMu.RUnlock()
+		DT.TablesMu.RUnlock()
 		i.rows = out
 		i.pos = 0
 	}

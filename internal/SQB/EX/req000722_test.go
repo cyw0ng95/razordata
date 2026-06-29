@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// REQ000722: WHERE with comparison on indexed tables returning 0
+// REQ000722: WHERE with comparison on indexed DT.Tables returning 0
 // rows via driver path. This REQ describes a bug that, as of this
 // iteration, I cannot reproduce in any of the available harnesses:
 //

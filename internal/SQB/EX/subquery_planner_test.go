@@ -2,6 +2,7 @@ package EX
 
 import (
 	"context"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"testing"
 )
 
@@ -9,7 +10,7 @@ func TestSubqueryPlanner_SeesStoreTables(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTable("t1", []Row{
+	DT.RegisterTable("t1", []Row{
 		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
 		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("b")}},
 		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(3)), NewTextValue("c")}},
@@ -24,9 +25,9 @@ func TestSubqueryPlanner_SeesStoreTables(t *testing.T) {
 		want  int
 		label string
 	}{
-		{"SELECT * FROM t1 WHERE id > (SELECT avg(id) FROM t1)", 1, "scalar subquery with tables (avg=2, id>2 → id=3)"},
-		{"SELECT EXISTS(SELECT 1 FROM t1 WHERE id = 3)", 1, "exists subquery with tables"},
-		{"SELECT 3 IN (SELECT id FROM t1)", 1, "IN subquery with tables"},
+		{"SELECT * FROM t1 WHERE id > (SELECT avg(id) FROM t1)", 1, "scalar subquery with DT.Tables (avg=2, id>2 → id=3)"},
+		{"SELECT EXISTS(SELECT 1 FROM t1 WHERE id = 3)", 1, "exists subquery with DT.Tables"},
+		{"SELECT 3 IN (SELECT id FROM t1)", 1, "IN subquery with DT.Tables"},
 	}
 	for _, tc := range tests {
 		rows, err := e.QueryAll(ctx, tc.sql)
@@ -43,11 +44,11 @@ func TestSubqueryPlanner_StorePropagationAfterClone(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	RegisterTable("t1", []Row{
+	DT.RegisterTable("t1", []Row{
 		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("x")}},
 		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("y")}},
 	})
-	RegisterTable("t2", []Row{
+	DT.RegisterTable("t2", []Row{
 		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("alice")}},
 		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("bob")}},
 	})
@@ -70,11 +71,11 @@ func TestSubqueryPlanner_CloneRowPreservesPlanner(t *testing.T) {
 	pl := NewPlannerWithStore(nil)
 	src := Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(1))}}
 	src.Planner = pl
-	cloned := cloneRow(src)
+	cloned := DT.CloneRow(src)
 	if cloned.Planner != pl {
-		t.Error("cloneRow should preserve planner")
+		t.Error("DT.CloneRow should preserve planner")
 	}
 	if cloned.Outer != src.Outer {
-		t.Error("cloneRow should preserve Outer")
+		t.Error("DT.CloneRow should preserve Outer")
 	}
 }

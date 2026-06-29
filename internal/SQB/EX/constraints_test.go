@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
@@ -89,12 +90,12 @@ func TestConstraints_Default_InsertFills(t *testing.T) {
 	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
-	ss, ok := schemaFor("t")
+	ss, ok := DT.SchemaFor("t")
 	if !ok {
 		t.Fatal("schema not found")
 	}
-	if len(ss.defaults) != 2 || ss.defaults[1] == nil {
-		t.Fatalf("expected default on col 1, got %v", ss.defaults)
+	if len(ss.Defaults) != 2 || ss.Defaults[1] == nil {
+		t.Fatalf("expected default on col 1, got %v", ss.Defaults)
 	}
 }
 
@@ -193,11 +194,11 @@ func TestConstraints_Update_NotNull(t *testing.T) {
 func TestConstraints_FillDefaults_LiteralInt(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ss := &storeSchema{
-		cols:     []string{"a", "b"},
-		pk:       "",
-		nullable: []bool{true, true},
-		defaults: []PS.Expr{nil, &PS.NumberLiteral{Val: 99}},
+	ss := &StoreSchema{
+		Cols:     []string{"a", "b"},
+		Pk:       "",
+		Nullable: []bool{true, true},
+		Defaults: []PS.Expr{nil, &PS.NumberLiteral{Val: 99}},
 	}
 	row := Row{Data: []Value{NewIntValue(int64(1)), NullValue()}}
 	out, err := fillDefaults(ss, row)
@@ -215,11 +216,11 @@ func TestConstraints_FillDefaults_LiteralInt(t *testing.T) {
 func TestConstraints_FillDefaults_NullLiteral(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ss := &storeSchema{
-		cols:     []string{"a"},
-		pk:       "",
-		nullable: []bool{true},
-		defaults: []PS.Expr{&PS.NullLiteral{}},
+	ss := &StoreSchema{
+		Cols:     []string{"a"},
+		Pk:       "",
+		Nullable: []bool{true},
+		Defaults: []PS.Expr{&PS.NullLiteral{}},
 	}
 	row := Row{Data: []Value{NullValue()}}
 	out, err := fillDefaults(ss, row)
@@ -236,7 +237,7 @@ func TestConstraints_FillDefaults_NullLiteral(t *testing.T) {
 func TestConstraints_FillDefaults_NilSchema(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ss := &storeSchema{cols: []string{"a"}, nullable: []bool{true}}
+	ss := &StoreSchema{Cols: []string{"a"}, Nullable: []bool{true}}
 	row := Row{Data: []Value{NewIntValue(int64(1))}}
 	out, err := fillDefaults(ss, row)
 	if err != nil {
@@ -252,11 +253,11 @@ func TestConstraints_FillDefaults_NilSchema(t *testing.T) {
 func TestConstraints_ValidateRow_RejectsNullNotNull(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ss := &storeSchema{
-		cols:     []string{"a", "b"},
-		pk:       "",
-		nullable: []bool{false, true},
-		defaults: nil,
+	ss := &StoreSchema{
+		Cols:     []string{"a", "b"},
+		Pk:       "",
+		Nullable: []bool{false, true},
+		Defaults: nil,
 	}
 	row := Row{Data: []Value{NullValue(), NewIntValue(int64(2))}}
 	err := validateRow(ss, row)
@@ -273,10 +274,10 @@ func TestConstraints_ValidateRow_RejectsNullNotNull(t *testing.T) {
 func TestConstraints_ValidateRow_AcceptsNullNullable(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ss := &storeSchema{
-		cols:     []string{"a", "b"},
-		pk:       "",
-		nullable: []bool{true, true},
+	ss := &StoreSchema{
+		Cols:     []string{"a", "b"},
+		Pk:       "",
+		Nullable: []bool{true, true},
 	}
 	row := Row{Data: []Value{NullValue(), NewIntValue(int64(2))}}
 	if err := validateRow(ss, row); err != nil {
@@ -285,7 +286,7 @@ func TestConstraints_ValidateRow_AcceptsNullNullable(t *testing.T) {
 }
 
 // TestConstraints_E2E_CreateTable_PropagatesConstraints: SQL DDL via the
-// executor should produce a storeSchema with the right NOT NULL/DEFAULT
+// executor should produce a StoreSchema with the right NOT NULL/DEFAULT
 // fields.
 func TestConstraints_E2E_CreateTable_PropagatesConstraints(t *testing.T) {
 	UnregisterAll()
@@ -295,20 +296,20 @@ func TestConstraints_E2E_CreateTable_PropagatesConstraints(t *testing.T) {
 	if _, err := ex.Exec(ctx, "CREATE TABLE users (id INTEGER NOT NULL, name TEXT NOT NULL, score INTEGER DEFAULT 0)"); err != nil {
 		t.Fatalf("CREATE: %v", err)
 	}
-	ss, ok := schemaFor("users")
+	ss, ok := DT.SchemaFor("users")
 	if !ok {
 		t.Fatal("schema not found")
 	}
-	if len(ss.cols) != 3 {
-		t.Fatalf("expected 3 cols, got %d", len(ss.cols))
+	if len(ss.Cols) != 3 {
+		t.Fatalf("expected 3 cols, got %d", len(ss.Cols))
 	}
-	if !(!ss.nullable[0] && !ss.nullable[1]) {
-		t.Errorf("id/name should be NOT NULL, got %v", ss.nullable)
+	if !(!ss.Nullable[0] && !ss.Nullable[1]) {
+		t.Errorf("id/name should be NOT NULL, got %v", ss.Nullable)
 	}
-	if !ss.nullable[2] {
-		t.Errorf("score should be nullable (no NOT NULL), got %v", ss.nullable[2])
+	if !ss.Nullable[2] {
+		t.Errorf("score should be nullable (no NOT NULL), got %v", ss.Nullable[2])
 	}
-	if ss.defaults[2] == nil {
+	if ss.Defaults[2] == nil {
 		t.Errorf("score should have DEFAULT, got nil")
 	}
 }
@@ -391,15 +392,15 @@ func TestUnique_Composite_PartialMatchAllowed(t *testing.T) {
 	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
-	ss, ok := schemaFor("t")
+	ss, ok := DT.SchemaFor("t")
 	if !ok {
 		t.Fatal("schema not found")
 	}
-	if len(ss.unique) != 1 || len(ss.unique[0].Cols) != 2 {
-		t.Fatalf("expected 1 composite unique, got %v", ss.unique)
+	if len(ss.Unique) != 1 || len(ss.Unique[0].Cols) != 2 {
+		t.Fatalf("expected 1 composite unique, got %v", ss.Unique)
 	}
-	if ss.unique[0].Cols[0] != 1 || ss.unique[0].Cols[1] != 2 {
-		t.Errorf("composite indices wrong: %v", ss.unique[0].Cols)
+	if ss.Unique[0].Cols[0] != 1 || ss.Unique[0].Cols[1] != 2 {
+		t.Errorf("composite indices wrong: %v", ss.Unique[0].Cols)
 	}
 }
 

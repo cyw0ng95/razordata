@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 )
 
 type staticOperator struct {
@@ -38,7 +39,7 @@ func TestWindow_RowNumber(t *testing.T) {
 	spec := &PS.WindowSpec{
 		OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "id"}}},
 	}
-	op := NewWindowOperator(input, "ROW_NUMBER", nil, spec, []string{"id"})
+	op := AG.NewWindowOperator(input, "ROW_NUMBER", nil, spec, []string{"id"})
 
 	expected := []int64{1, 2, 3}
 	for i, want := range expected {
@@ -72,7 +73,7 @@ func TestWindow_DenseRank(t *testing.T) {
 	spec := &PS.WindowSpec{
 		OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "score"}, Desc: true}},
 	}
-	op := NewWindowOperator(input, "DENSE_RANK", nil, spec, []string{"score"})
+	op := AG.NewWindowOperator(input, "DENSE_RANK", nil, spec, []string{"score"})
 
 	expected := []int64{1, 2, 2, 3}
 	for i, want := range expected {
@@ -100,7 +101,7 @@ func TestWindow_Partition(t *testing.T) {
 		PartitionBy: []PS.Expr{&PS.Ident{Name: "dept"}},
 		OrderBy:     []PS.OrderItem{{Expr: &PS.Ident{Name: "salary"}}},
 	}
-	op := NewWindowOperator(input, "ROW_NUMBER", nil, spec, []string{"dept", "salary"})
+	op := AG.NewWindowOperator(input, "ROW_NUMBER", nil, spec, []string{"dept", "salary"})
 
 	// Each partition gets its own ROW_NUMBER starting at 1
 	got := make([]int64, 4)
@@ -131,7 +132,7 @@ func TestWindow_Lag(t *testing.T) {
 	spec := &PS.WindowSpec{
 		OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "val"}}},
 	}
-	op := NewWindowOperator(input, "LAG", []PS.Expr{&PS.Ident{Name: "val"}}, spec, []string{"val"})
+	op := AG.NewWindowOperator(input, "LAG", []PS.Expr{&PS.Ident{Name: "val"}}, spec, []string{"val"})
 
 	// LAG(val): first row -> nil, second -> 10, third -> 20
 	expected := []any{nil, int64(10), int64(20)}
@@ -158,7 +159,7 @@ func TestWindow_Lead(t *testing.T) {
 	spec := &PS.WindowSpec{
 		OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "val"}}},
 	}
-	op := NewWindowOperator(input, "LEAD", []PS.Expr{&PS.Ident{Name: "val"}}, spec, []string{"val"})
+	op := AG.NewWindowOperator(input, "LEAD", []PS.Expr{&PS.Ident{Name: "val"}}, spec, []string{"val"})
 
 	// LEAD(val): first -> 20, second -> 30, third -> nil
 	expected := []any{int64(20), int64(30), nil}
@@ -177,7 +178,7 @@ func TestWindow_Lead(t *testing.T) {
 func TestWindow_EmptyInput(t *testing.T) {
 	input := &staticOperator{}
 	spec := &PS.WindowSpec{}
-	op := NewWindowOperator(input, "ROW_NUMBER", nil, spec, []string{})
+	op := AG.NewWindowOperator(input, "ROW_NUMBER", nil, spec, []string{})
 	_, err := op.Next(context.Background())
 	if err != ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
@@ -213,7 +214,7 @@ func TestWindow_RangeFrame(t *testing.T) {
 		},
 	}
 
-	op := NewWindowOperator(input, "SUM", []PS.Expr{&PS.Ident{Name: "val"}}, spec, []string{"id", "val"})
+	op := AG.NewWindowOperator(input, "SUM", []PS.Expr{&PS.Ident{Name: "val"}}, spec, []string{"id", "val"})
 
 	// RANGE UNBOUNDED PRECEDING to CURRENT ROW:
 	// Row 1 (val=1): peers=[1,1], SUM=2

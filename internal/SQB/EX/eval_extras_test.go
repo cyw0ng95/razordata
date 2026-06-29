@@ -5,11 +5,12 @@ import (
 	"time"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 func TestEvalNow_ReturnsRFC3339(t *testing.T) {
 	before := time.Now()
-	got, err := EvalValue(&PS.FunctionCall{Name: "NOW"}, nil, nil)
+	got, err := EV.EvalValue(&PS.FunctionCall{Name: "NOW"}, nil, nil)
 	if err != nil {
 		t.Fatalf("NOW: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestEvalSubstr(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			expr := &PS.FunctionCall{Name: "SUBSTR", Args: c.args}
-			got, err := EvalValue(expr, nil, nil)
+			got, err := EV.EvalValue(expr, nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

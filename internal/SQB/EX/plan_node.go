@@ -12,6 +12,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 )
 
 // PlanNode represents a node in the query plan tree for EXPLAIN output.
@@ -197,11 +198,11 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		}
 		// REQ000787: get table stats from child operator's table.
 		var ts *TableStats
-		if planner != nil && v.child != nil {
+		if planner != nil && v.Child() != nil {
 			// Try to extract table name from child.
-			if seq, ok := v.child.(*SeqScan); ok {
+			if seq, ok := v.Child().(*SeqScan); ok {
 				ts = planner.getTableStats(seq.table)
-			} else if idx, ok := v.child.(*IndexScan); ok {
+			} else if idx, ok := v.Child().(*IndexScan); ok {
 				ts = planner.getTableStats(idx.table)
 			}
 		}
@@ -233,10 +234,10 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		}
 		// REQ000787: get table stats from child operator's table.
 		var ts *TableStats
-		if planner != nil && v.child != nil {
-			if seq, ok := v.child.(*SeqScan); ok {
+		if planner != nil && v.Child() != nil {
+			if seq, ok := v.Child().(*SeqScan); ok {
 				ts = planner.getTableStats(seq.table)
-			} else if idx, ok := v.child.(*IndexScan); ok {
+			} else if idx, ok := v.Child().(*IndexScan); ok {
 				ts = planner.getTableStats(idx.table)
 			}
 		}
@@ -266,14 +267,14 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		}
 		node.Cost = estimateDistinctCost(v, ts)
 
-	case *Aggregate:
+	case *AG.Aggregate:
 		node.Detail = "GROUP BY"
 		// REQ000787: get table stats from child operator's table.
 		var ts *TableStats
-		if planner != nil && v.child != nil {
-			if seq, ok := v.child.(*SeqScan); ok {
+		if planner != nil && v.Child() != nil {
+			if seq, ok := v.Child().(*SeqScan); ok {
 				ts = planner.getTableStats(seq.table)
-			} else if idx, ok := v.child.(*IndexScan); ok {
+			} else if idx, ok := v.Child().(*IndexScan); ok {
 				ts = planner.getTableStats(idx.table)
 			}
 		}
@@ -376,8 +377,8 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		node.Detail = fmt.Sprintf("HASH JOIN %s", v.RightTbl())
 		node.Cost = 10.0
 
-	case *WindowOperator:
-		node.Detail = fmt.Sprintf("WINDOW %s", v.funcName)
+	case *AG.WindowOperator:
+		node.Detail = fmt.Sprintf("WINDOW %s", v.FuncName())
 		node.Cost = 10.0
 
 	case *CompoundOp:
@@ -436,9 +437,9 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		if v.right != nil {
 			node.Add(buildPlanNodeTree(v.right, planner))
 		}
-	case *WindowOperator:
-		if v.input != nil {
-			node.Add(buildPlanNodeTree(v.input, planner))
+	case *AG.WindowOperator:
+		if v.Input() != nil {
+			node.Add(buildPlanNodeTree(v.Input(), planner))
 		}
 	case *ExplainStmtOp:
 		if v.root != nil {
@@ -471,15 +472,15 @@ func operatorType(op Operator) string {
 		return "Offset"
 	case *OP.Distinct:
 		return "OP.Distinct"
-	case *Aggregate:
+	case *AG.Aggregate:
 		return "Aggregate"
-	case *HashAggregate:
+	case *AG.HashAggregate:
 		return "HashAggregate"
 	case *NestedLoopJoin:
 		return "Join"
 	case *OP.HashJoin:
 		return "OP.HashJoin"
-	case *WindowOperator:
+	case *AG.WindowOperator:
 		return "Window"
 	case *CompoundOp:
 		return "Compound"
@@ -874,8 +875,8 @@ func estimateDistinctCost(d *OP.Distinct, ts *TableStats) float64 {
 
 // estimateAggregateCost estimates the cost of an aggregation operator.
 // REQ000787: uses table statistics to estimate input size.
-func estimateAggregateCost(a *Aggregate, ts *TableStats) float64 {
-	if a.child == nil {
+func estimateAggregateCost(a *AG.Aggregate, ts *TableStats) float64 {
+	if a.Child() == nil {
 		return 1.0
 	}
 	inputRows := 100.0

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -71,7 +72,7 @@ func TestN3JoinOrdering_ThreeTablesDefault(t *testing.T) {
 	joinTables := []joinTableInfo{{name: "t2"}, {name: "t3"}}
 	order, _ := p.n3JoinOrdering("t1", joinTables, nil, nil)
 	if len(order) != 3 {
-		t.Fatalf("expected 3 tables, got %v", order)
+		t.Fatalf("expected 3 DT.Tables, got %v", order)
 	}
 	if order[0] != "t1" {
 		t.Fatalf("expected base table t1 first, got %s", order[0])
@@ -163,7 +164,7 @@ func TestN3JoinOrdering_EmptyOrderFallback(t *testing.T) {
 	if len(order) == 0 {
 		t.Fatalf("expected non-empty order, got %v", order)
 	}
-	// Must contain all three tables.
+	// Must contain all three DT.Tables.
 	seen := map[string]bool{}
 	for _, name := range order {
 		seen[name] = true
@@ -190,7 +191,7 @@ func TestN3JoinOrdering_SelfJoinNoPanic(t *testing.T) {
 	// Must not panic.
 	order, _ := p.n3JoinOrdering("tab0", joinTables, nil, nil)
 	if len(order) != 3 {
-		t.Fatalf("expected 3 tables in order, got %d: %v", len(order), order)
+		t.Fatalf("expected 3 DT.Tables in order, got %d: %v", len(order), order)
 	}
 }
 
@@ -329,7 +330,7 @@ func TestJoinPredSel_UnqualifiedColumn(t *testing.T) {
 // asymmetric costs must still return a valid complete order even
 // with the prune threshold active. The test verifies that the
 // planner does not produce a partial order (must include all 3
-// tables) when one candidate is much more expensive than another.
+// DT.Tables) when one candidate is much more expensive than another.
 func TestN3JoinOrdering_PruneThreshold_ThreeTables(t *testing.T) {
 	p := NewPlanner()
 	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}}, "a")
@@ -355,7 +356,7 @@ func TestN3JoinOrdering_PruneThreshold_ThreeTables(t *testing.T) {
 	joinTables := []joinTableInfo{{name: "t2"}, {name: "t3"}}
 	order, _ := p.n3JoinOrdering("t1", joinTables, wherePreds, nil)
 	if len(order) != 3 {
-		t.Fatalf("expected 3 tables, got %d: %v", len(order), order)
+		t.Fatalf("expected 3 DT.Tables, got %d: %v", len(order), order)
 	}
 	seen := map[string]bool{}
 	for _, n := range order {
@@ -377,7 +378,7 @@ func TestN3PruneMultiplier_Default(t *testing.T) {
 }
 
 // REQ000947: 5-table join with prune threshold — must produce a
-// valid complete order (all 5 tables present) even when the prune
+// valid complete order (all 5 DT.Tables present) even when the prune
 // is active. This is a stress test for the iterative N3 path.
 func TestN3JoinOrdering_PruneThreshold_FiveTables(t *testing.T) {
 	p := NewPlanner()
@@ -389,7 +390,7 @@ func TestN3JoinOrdering_PruneThreshold_FiveTables(t *testing.T) {
 	}
 	order, _ := p.n3JoinOrdering("t1", joinTables, nil, nil)
 	if len(order) != 5 {
-		t.Fatalf("expected 5 tables, got %d: %v", len(order), order)
+		t.Fatalf("expected 5 DT.Tables, got %d: %v", len(order), order)
 	}
 	seen := map[string]bool{}
 	for _, n := range order {
@@ -422,27 +423,27 @@ func TestN3JoinOrdering_MultiStart_PicksSmallerBase(t *testing.T) {
 	p.RegisterTable("t2", []ColInfo{{Name: "a", Typ: 1}}, "a")
 	p.RegisterTable("t3", []ColInfo{{Name: "a", Typ: 1}}, "a")
 
-	// Use a custom row count via the in-memory `tables` map.
-	tablesMu.Lock()
-	tables["t1"] = makeRows(1000)
-	tables["t2"] = makeRows(10)
-	tables["t3"] = makeRows(10)
-	tablesMu.Unlock()
+	// Use a custom row count via the in-memory `DT.Tables` map.
+	DT.TablesMu.Lock()
+	DT.Tables["t1"] = makeRows(1000)
+	DT.Tables["t2"] = makeRows(10)
+	DT.Tables["t3"] = makeRows(10)
+	DT.TablesMu.Unlock()
 	defer func() {
-		tablesMu.Lock()
-		delete(tables, "t1")
-		delete(tables, "t2")
-		delete(tables, "t3")
-		tablesMu.Unlock()
+		DT.TablesMu.Lock()
+		delete(DT.Tables, "t1")
+		delete(DT.Tables, "t2")
+		delete(DT.Tables, "t3")
+		DT.TablesMu.Unlock()
 	}()
 
 	joinTables := []joinTableInfo{{name: "t2"}, {name: "t3"}}
 	order := p.n3JoinOrderingMultiStart("t1", joinTables, nil, nil)
 	if len(order) != 3 {
-		t.Fatalf("expected 3 tables, got %d: %v", len(order), order)
+		t.Fatalf("expected 3 DT.Tables, got %d: %v", len(order), order)
 	}
 	// Multi-start should pick a small table (t2 or t3) as the first
-	// joined table. Verify the order is valid (all 3 tables present).
+	// joined table. Verify the order is valid (all 3 DT.Tables present).
 	seen := map[string]bool{}
 	for _, n := range order {
 		seen[n] = true
@@ -455,7 +456,7 @@ func TestN3JoinOrdering_MultiStart_PicksSmallerBase(t *testing.T) {
 }
 
 // REQ000946: Multi-start vs single-start — verify both return a
-// valid order with the same set of tables. Multi-start may return
+// valid order with the same set of DT.Tables. Multi-start may return
 // a different order than single-start when the leftmost table is
 // not the best base.
 func TestN3JoinOrdering_MultiStart_ValidOrder(t *testing.T) {
@@ -468,7 +469,7 @@ func TestN3JoinOrdering_MultiStart_ValidOrder(t *testing.T) {
 	}
 	order := p.n3JoinOrderingMultiStart("t1", joinTables, nil, nil)
 	if len(order) != 4 {
-		t.Fatalf("expected 4 tables, got %d: %v", len(order), order)
+		t.Fatalf("expected 4 DT.Tables, got %d: %v", len(order), order)
 	}
 	seen := map[string]bool{}
 	for _, n := range order {
@@ -569,7 +570,7 @@ func TestN3JoinOrdering_MultiStart_K8(t *testing.T) {
 	}
 	order := p.n3JoinOrderingMultiStart("t1", joinTables, nil, nil)
 	if len(order) != 8 {
-		t.Fatalf("expected 8 tables, got %d: %v", len(order), order)
+		t.Fatalf("expected 8 DT.Tables, got %d: %v", len(order), order)
 	}
 	seen := map[string]bool{}
 	for _, n := range order {
@@ -588,27 +589,27 @@ func TestN3JoinOrdering_MultiStart_K8(t *testing.T) {
 // prior single-start path was locked to t1 (1000 rows) and never
 // tried t2 (10 rows). After the fix, the returned order — though
 // normalized to start with t1 — must reflect t2's lower cost in
-// the relative position of subsequent tables.
+// the relative position of subsequent DT.Tables.
 func TestN3JoinOrdering_MultiStart_PicksSmallBaseAtK8(t *testing.T) {
 	p := NewPlanner()
 	for i := 1; i <= 8; i++ {
 		name := fmt.Sprintf("t%d", i)
 		p.RegisterTable(name, []ColInfo{{Name: "id", Typ: 1}}, "id")
 	}
-	tablesMu.Lock()
+	DT.TablesMu.Lock()
 	// t1 is huge; everything else is tiny. A cost-aware planner
 	// should choose a smaller base even when t1 is the leftmost.
-	tables["t1"] = makeRows(10000)
+	DT.Tables["t1"] = makeRows(10000)
 	for i := 2; i <= 8; i++ {
-		tables[fmt.Sprintf("t%d", i)] = makeRows(10)
+		DT.Tables[fmt.Sprintf("t%d", i)] = makeRows(10)
 	}
-	tablesMu.Unlock()
+	DT.TablesMu.Unlock()
 	defer func() {
-		tablesMu.Lock()
+		DT.TablesMu.Lock()
 		for i := 1; i <= 8; i++ {
-			delete(tables, fmt.Sprintf("t%d", i))
+			delete(DT.Tables, fmt.Sprintf("t%d", i))
 		}
-		tablesMu.Unlock()
+		DT.TablesMu.Unlock()
 	}()
 
 	joinTables := []joinTableInfo{}
@@ -617,9 +618,9 @@ func TestN3JoinOrdering_MultiStart_PicksSmallBaseAtK8(t *testing.T) {
 	}
 	order := p.n3JoinOrderingMultiStart("t1", joinTables, nil, nil)
 	if len(order) != 8 {
-		t.Fatalf("expected 8 tables, got %d: %v", len(order), order)
+		t.Fatalf("expected 8 DT.Tables, got %d: %v", len(order), order)
 	}
-	// The relative position of small tables after the normalized t1
+	// The relative position of small DT.Tables after the normalized t1
 	// front is implementation-defined; just verify all 8 are present
 	// and t1 is first (the normalization contract from REQ000946).
 	if order[0] != "t1" {
@@ -640,17 +641,17 @@ func TestN3JoinOrdering_MultiStart_BoundedPlanningTime(t *testing.T) {
 		name := fmt.Sprintf("t%d", i)
 		p.RegisterTable(name, []ColInfo{{Name: "id", Typ: 1}}, "id")
 	}
-	tablesMu.Lock()
+	DT.TablesMu.Lock()
 	for i := 1; i <= 8; i++ {
-		tables[fmt.Sprintf("t%d", i)] = makeRows(100)
+		DT.Tables[fmt.Sprintf("t%d", i)] = makeRows(100)
 	}
-	tablesMu.Unlock()
+	DT.TablesMu.Unlock()
 	defer func() {
-		tablesMu.Lock()
+		DT.TablesMu.Lock()
 		for i := 1; i <= 8; i++ {
-			delete(tables, fmt.Sprintf("t%d", i))
+			delete(DT.Tables, fmt.Sprintf("t%d", i))
 		}
-		tablesMu.Unlock()
+		DT.TablesMu.Unlock()
 	}()
 
 	joinTables := []joinTableInfo{}
@@ -664,7 +665,7 @@ func TestN3JoinOrdering_MultiStart_BoundedPlanningTime(t *testing.T) {
 	select {
 	case order := <-done:
 		if len(order) != 8 {
-			t.Fatalf("expected 8 tables, got %d", len(order))
+			t.Fatalf("expected 8 DT.Tables, got %d", len(order))
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("multi-start N3 with K=8 exceeded 2s planning budget")
@@ -775,18 +776,18 @@ func TestJoinPredSel_INList_UsesMCVs(t *testing.T) {
 	})
 	p.statsCatalog = cat
 
-	// Make findTableForColumn work — it scans the in-memory `tables`
+	// Make findTableForColumn work — it scans the in-memory `DT.Tables`
 	// map for a column name. Add t1 with one row containing e8.
-	tablesMu.Lock()
-	tables["t1"] = []Row{{
+	DT.TablesMu.Lock()
+	DT.Tables["t1"] = []Row{{
 		Cols: []string{"id", "e8"},
 		Data: []Value{NewIntValue(1), NewIntValue(846)},
 	}}
-	tablesMu.Unlock()
+	DT.TablesMu.Unlock()
 	defer func() {
-		tablesMu.Lock()
-		delete(tables, "t1")
-		tablesMu.Unlock()
+		DT.TablesMu.Lock()
+		delete(DT.Tables, "t1")
+		DT.TablesMu.Unlock()
 	}()
 
 	in := &PS.InExpr{

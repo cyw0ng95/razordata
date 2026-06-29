@@ -1,6 +1,7 @@
-package EX
+package EV
 
 import (
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"container/list"
@@ -114,7 +115,7 @@ func serializeOuterRow(row *Row) string {
 	parts := make([]string, 0, len(row.Cols))
 	for _, col := range row.Cols {
 		if v, ok := row.LookupValue(col); ok {
-			parts = append(parts, valueToString(v))
+			parts = append(parts, DT.ValueToString(v))
 		} else {
 			parts = append(parts, "NULL")
 		}
@@ -144,27 +145,27 @@ func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 // evaluation path. REQ000776.
 func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 	if expr == nil {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 
 	switch e := expr.(type) {
 	case *PS.NumberLiteral:
-		return NewIntValue(e.Val), nil
+		return DT.NewIntValue(e.Val), nil
 	case *PS.FloatLiteral:
-		return NewFloatValue(e.Val), nil
+		return DT.NewFloatValue(e.Val), nil
 	case *PS.StringLiteral:
-		return NewTextValue(e.Val), nil
+		return DT.NewTextValue(e.Val), nil
 	case *PS.BoolLiteral:
-		return NewBoolValue(e.Val), nil
+		return DT.NewBoolValue(e.Val), nil
 	case *PS.NullLiteral:
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	case *PS.Ident:
 		if row != nil {
 			if v, ok := row.Lookup(e.Name); ok {
-				return valueFromAny(v), nil
+				return DT.ValueFromAny(v), nil
 			}
 		}
-		return NewTextValue(e.Name), nil
+		return DT.NewTextValue(e.Name), nil
 	case *PS.QualifiedName:
 		if row != nil {
 			if e.CachedKey == "" {
@@ -172,7 +173,7 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 			}
 			for cur := row; cur != nil; cur = cur.Outer {
 				if v, ok := cur.Lookup(e.CachedKey); ok {
-					return valueFromAny(v), nil
+					return DT.ValueFromAny(v), nil
 				}
 			}
 			for cur := row.Outer; cur != nil; cur = cur.Outer {
@@ -180,21 +181,21 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 					continue
 				}
 				if v, ok := cur.Lookup(e.Name); ok {
-					return valueFromAny(v), nil
+					return DT.ValueFromAny(v), nil
 				}
 			}
 			if v, ok := row.Lookup(e.Name); ok {
-				return valueFromAny(v), nil
+				return DT.ValueFromAny(v), nil
 			}
 		}
-		return NewTextValue(e.CachedKey), nil
+		return DT.NewTextValue(e.CachedKey), nil
 	case *PS.Param:
 		if e.Index < len(params) {
-			return valueFromAny(normalizeInt(params[e.Index])), nil
+			return DT.ValueFromAny(normalizeInt(params[e.Index])), nil
 		}
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	case *PS.StarExpr:
-		return NewTextValue("*"), nil
+		return DT.NewTextValue("*"), nil
 	case *PS.UnaryExpr:
 		return evalUnaryValue(e, row, params)
 	case *PS.BinaryExpr:
@@ -204,29 +205,29 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 		}
 		return evalBinaryValue(e, row, params)
 	case *PS.ListExpr:
-		return valueFromAny(e.Items), nil
+		return DT.ValueFromAny(e.Items), nil
 	case *PS.BetweenExpr:
 		return evalBetween(e, row, params)
 	case *PS.InExpr:
-		return evalInValue(e, row, params)
+		return EvalInValue(e, row, params)
 	case *PS.ExistsExpr:
 		v, err := evalExists(e, row, params)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
-		return valueFromAny(v), nil
+		return DT.ValueFromAny(v), nil
 	case *PS.SubqueryExpr:
 		v, err := evalScalarSubquery(e, row, params)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
-		return valueFromAny(v), nil
+		return DT.ValueFromAny(v), nil
 	case *PS.IntervalLiteral:
 		v, err := evalInterval(e)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
-		return valueFromAny(v), nil
+		return DT.ValueFromAny(v), nil
 	case *PS.CaseExpr:
 		return evalCase(e, row, params)
 	case *PS.AggregateFunc:
@@ -234,7 +235,7 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 	case *PS.WindowFunc:
 		return evalWindowFunc(e, row, params)
 	case *PS.FunctionCall:
-		return evalFunction(e, row, params)
+		return EvalFunction(e, row, params)
 	case *PS.RaiseFunc:
 		return evalRaise(e, row, params)
 	case *PS.CastExpr:
@@ -242,8 +243,14 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 	case *PS.AliasedExpr:
 		return EvalValue(e.Expr, row, params)
 	default:
-		return NullValue(), ErrEval
+		return DT.NullValue(), ErrEval
 	}
+}
+
+// evalWindowFunc evaluates a WindowFunc expression. Window functions
+// require WindowOperator execution; direct EvalValue only reports the error.
+func evalWindowFunc(e *PS.WindowFunc, row *Row, params []any) (Value, error) {
+	return DT.NullValue(), fmt.Errorf("window function %s requires WindowOperator execution", e.Name)
 }
 
 // evalBinaryShortCircuit handles AND/OR with three-valued logic and
@@ -252,29 +259,29 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 func evalBinaryShortCircuit(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 	left, err := EvalValue(e.Left, row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	switch e.Op {
 	case LX.T_AND:
 		if left.Kind == KindBool && !left.Bo {
-			return NewBoolValue(false), nil
+			return DT.NewBoolValue(false), nil
 		}
 		right, err := EvalValue(e.Right, row, params)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
 		return bandValue(left, right), nil
 	case LX.T_OR:
 		if left.Kind == KindBool && left.Bo {
-			return NewBoolValue(true), nil
+			return DT.NewBoolValue(true), nil
 		}
 		right, err := EvalValue(e.Right, row, params)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
 		return borValue(left, right), nil
 	}
-	return NullValue(), ErrEval
+	return DT.NullValue(), ErrEval
 }
 
 
@@ -283,33 +290,33 @@ func evalBinaryShortCircuit(e *PS.BinaryExpr, row *Row, params []any) (Value, er
 func evalUnaryValue(e *PS.UnaryExpr, row *Row, params []any) (Value, error) {
 	operand, err := EvalValue(e.Operand, row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	if operand.Kind == KindNull {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	switch e.Op {
 	case LX.T_MINUS:
 		switch operand.Kind {
 		case KindInt:
-			return NewIntValue(-operand.I64), nil
+			return DT.NewIntValue(-operand.I64), nil
 		case KindFloat:
-			return NewFloatValue(-operand.F64), nil
+			return DT.NewFloatValue(-operand.F64), nil
 		}
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	case LX.T_PLUS:
 		return operand, nil
 	case LX.T_NOT:
 		if operand.Kind == KindBool {
-			return NewBoolValue(!operand.Bo), nil
+			return DT.NewBoolValue(!operand.Bo), nil
 		}
-		return NewBoolValue(!isValueTruthy(operand)), nil
+		return DT.NewBoolValue(!isValueTruthy(operand)), nil
 	case LX.T_BITNOT:
 		if operand.Kind == KindInt {
-			return NewIntValue(^operand.I64), nil
+			return DT.NewIntValue(^operand.I64), nil
 		}
 	}
-	return NullValue(), ErrEval
+	return DT.NullValue(), ErrEval
 }
 
 // isValueTruthy mirrors the truthy() logic for Value types so the
@@ -343,43 +350,43 @@ func isValueTruthy(v Value) bool {
 func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 	left, err := EvalValue(e.Left, row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	right, err := EvalValue(e.Right, row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	switch e.Op {
 	case LX.T_EQ:
 		if left.Kind == KindNull || right.Kind == KindNull {
-			return NullValue(), nil
+			return DT.NullValue(), nil
 		}
-		return NewBoolValue(PL.EqualValueValue(left, right)), nil
+		return DT.NewBoolValue(PL.EqualValueValue(left, right)), nil
 	case LX.T_NE:
 		if left.Kind == KindNull || right.Kind == KindNull {
-			return NullValue(), nil
+			return DT.NullValue(), nil
 		}
-		return NewBoolValue(!PL.EqualValueValue(left, right)), nil
+		return DT.NewBoolValue(!PL.EqualValueValue(left, right)), nil
 	case LX.T_LT:
 		if left.Kind == KindNull || right.Kind == KindNull {
-			return NullValue(), nil
+			return DT.NullValue(), nil
 		}
-		return NewBoolValue(PL.CompareValue(left, right) < 0), nil
+		return DT.NewBoolValue(PL.CompareValue(left, right) < 0), nil
 	case LX.T_LE:
 		if left.Kind == KindNull || right.Kind == KindNull {
-			return NullValue(), nil
+			return DT.NullValue(), nil
 		}
-		return NewBoolValue(PL.CompareValue(left, right) <= 0), nil
+		return DT.NewBoolValue(PL.CompareValue(left, right) <= 0), nil
 	case LX.T_GT:
 		if left.Kind == KindNull || right.Kind == KindNull {
-			return NullValue(), nil
+			return DT.NullValue(), nil
 		}
-		return NewBoolValue(PL.CompareValue(left, right) > 0), nil
+		return DT.NewBoolValue(PL.CompareValue(left, right) > 0), nil
 	case LX.T_GE:
 		if left.Kind == KindNull || right.Kind == KindNull {
-			return NullValue(), nil
+			return DT.NullValue(), nil
 		}
-		return NewBoolValue(PL.CompareValue(left, right) >= 0), nil
+		return DT.NewBoolValue(PL.CompareValue(left, right) >= 0), nil
 	case LX.T_PLUS, LX.T_MINUS, LX.T_STAR, LX.T_SLASH:
 		var opRune rune
 		switch e.Op {
@@ -392,9 +399,9 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 		case LX.T_SLASH:
 			opRune = '/'
 		}
-		r, err := numericArithValue(left, right, opRune)
+		r, err := NumericArithValue(left, right, opRune)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
 		return r, nil
 	case LX.T_MOD:
@@ -410,23 +417,23 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 	case LX.T_RSHIFT:
 		return rshiftValue(left, right)
 	case LX.T_CONCAT:
-		return concatValue(left, right)
+		return ConcatValue(left, right)
 	case LX.T_LIKE:
 		var esc string
 		if e.Escape != nil {
 			v, err := EvalValue(e.Escape, row, params)
 			if err != nil {
-				return NullValue(), err
+				return DT.NullValue(), err
 			}
 			if v.Kind == KindText && len(v.S) == 1 {
 				esc = v.S
 			} else if v.Kind != KindNull {
-				return NullValue(), ErrEval
+				return DT.NullValue(), ErrEval
 			}
 		}
 		return likeValue(left, right, esc)
 	case LX.T_GLOB:
-		return globValue(left, right)
+		return GlobValue(left, right)
 	case LX.T_DIV:
 		return intdivValue(left, right)
 	case LX.T_IS:
@@ -434,35 +441,35 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 		if u, ok := e.Right.(*PS.UnaryExpr); ok && u.Op == LX.T_NOT {
 			if _, isNull := u.Operand.(*PS.NullLiteral); isNull {
 				if left.Kind == KindNull {
-					return NewBoolValue(false), nil
+					return DT.NewBoolValue(false), nil
 				}
-				return NewBoolValue(true), nil
+				return DT.NewBoolValue(true), nil
 			}
 		}
 		return isValue(left, right)
 	}
-	return NullValue(), ErrEval
+	return DT.NullValue(), ErrEval
 }
 
 func evalBetween(e *PS.BetweenExpr, row *Row, params []any) (Value, error) {
 	expr, err := EvalValue(e.Expr, row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	low, err := EvalValue(e.Low, row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	high, err := EvalValue(e.High, row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	if expr.Kind == KindNull || low.Kind == KindNull || high.Kind == KindNull {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	cmpLow := PL.CompareValue(expr, low)
 	cmpHigh := PL.CompareValue(expr, high)
-	return NewBoolValue(cmpLow >= 0 && cmpHigh <= 0), nil
+	return DT.NewBoolValue(cmpLow >= 0 && cmpHigh <= 0), nil
 }
 
 
@@ -471,82 +478,82 @@ func evalBetween(e *PS.BetweenExpr, row *Row, params []any) (Value, error) {
 // Uses EvalValue to avoid the any->Value conversion. For 4+ item
 // lists, routes through evalInHashValue which uses per-kind
 // hash sets (int64/float64/string) for zero-boxing O(1) probing.
-func evalInValue(e *PS.InExpr, row *Row, params []any) (Value, error) {
+func EvalInValue(e *PS.InExpr, row *Row, params []any) (Value, error) {
 	target, err := EvalValue(e.Expr, row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	if e.Subquery != nil {
 		// Subquery path still uses legacy any-based hash; convert
 		// the result back to Value.
 		r, err := evalInSubquery(target.ToAny(), e.Subquery, row, params)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
-		return valueFromAny(r), nil
+		return DT.ValueFromAny(r), nil
 	}
 	if len(e.List) == 0 {
-		return NewBoolValue(false), nil
+		return DT.NewBoolValue(false), nil
 	}
 	if target.Kind == KindNull {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	// Hash-set path for 4+ items.
 	if len(e.List) >= 4 {
-		return evalInHashValue(e, target, row, params)
+		return EvalInHashValue(e, target, row, params)
 	}
 	// Linear-scan path for short lists.
 	hadNull := false
 	for _, item := range e.List {
 		v, err := EvalValue(item, row, params)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
 		if v.Kind == KindNull {
 			hadNull = true
 			continue
 		}
 		if PL.EqualValueValue(target, v) {
-			return NewBoolValue(true), nil
+			return DT.NewBoolValue(true), nil
 		}
 	}
 	if hadNull {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
-	return NewBoolValue(false), nil
+	return DT.NewBoolValue(false), nil
 }
 
-// REQ000817: inHashCache tracks the hash set for IN-list probing.
+// REQ000817: InHashCache tracks the hash set for IN-list probing.
 // For int64-only lists, int64Set is used to avoid any boxing.
 // Keyed by *PS.InExpr pointer identity; entries live for the
 // query lifetime.
-type inHashCache struct {
+type InHashCache struct {
 	set      map[any]struct{}
-	int64Set map[int64]struct{}
+	Int64Set map[int64]struct{}
 	hadNull  bool
 }
 
-var inHashCacheMap = map[*PS.InExpr]*inHashCache{}
+var InHashCacheMap = map[*PS.InExpr]*InHashCache{}
 
 // evalInHashValue is the Value-typed variant of evalInHash (REQ000776).
 // Converts target to any for probe; the hash set is shared via
-// the legacy inHashCacheMap.
-func evalInHashValue(e *PS.InExpr, target Value, row *Row, params []any) (Value, error) {
-	vr, err := evalInHash(e, target.ToAny(), row, params)
+// the legacy InHashCacheMap.
+func EvalInHashValue(e *PS.InExpr, target Value, row *Row, params []any) (Value, error) {
+	vr, err := EvalInHash(e, target.ToAny(), row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
-	return valueFromAny(vr), nil
+	return DT.ValueFromAny(vr), nil
 }
 
 // REQ000817: evalInHash builds a cached hash set for O(1) IN-list probing.
 // For int64-only lists, uses an int64 map to avoid Value boxing.
-func evalInHash(e *PS.InExpr, target any, row *Row, params []any) (any, error) {
-	cached := inHashCacheMap[e]
+func EvalInHash(e *PS.InExpr, target any, row *Row, params []any) (any, error) {
+	cached := InHashCacheMap[e]
 	if cached == nil {
-		cached = &inHashCache{
+		cached = &InHashCache{
 			set:      make(map[any]struct{}, len(e.List)),
-			int64Set: make(map[int64]struct{}, len(e.List)),
+			Int64Set: make(map[int64]struct{}, len(e.List)),
 		}
 		int64Only := true
 		for _, item := range e.List {
@@ -560,19 +567,19 @@ func evalInHash(e *PS.InExpr, target any, row *Row, params []any) (any, error) {
 			}
 			cached.set[v.ToAny()] = struct{}{}
 			if v.Kind == KindInt {
-				cached.int64Set[v.I64] = struct{}{}
+				cached.Int64Set[v.I64] = struct{}{}
 			} else {
 				int64Only = false
 			}
 		}
 		if !int64Only {
-			cached.int64Set = nil
+			cached.Int64Set = nil
 		}
-		inHashCacheMap[e] = cached
+		InHashCacheMap[e] = cached
 	}
-	if cached.int64Set != nil {
+	if cached.Int64Set != nil {
 		if t, ok := target.(int64); ok {
-			if _, found := cached.int64Set[t]; found {
+			if _, found := cached.Int64Set[t]; found {
 				return true, nil
 			}
 			if cached.hadNull {
@@ -591,15 +598,11 @@ func evalInHash(e *PS.InExpr, target any, row *Row, params []any) (any, error) {
 }
 
 func evalInSubquery(target any, subq PS.Stmt, outer *Row, params []any) (any, error) {
-	sel, ok := subq.(*PS.Select)
-	if !ok {
+	pl := getSubqueryPlanner(outer)
+	if pl == nil {
 		return nil, ErrSubquery
 	}
-	pl, err := newSubqueryPlanner(outer).Plan(sel)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := runSubqueryPlan(context.Background(), pl, outer, params)
+	rows, err := pl.ExecuteSubquery(context.Background(), subq, outer, params)
 	if err != nil {
 		return nil, err
 	}
@@ -644,52 +647,26 @@ func EvalForTest(e PS.Expr, row *Row, params []any) (any, error) {
 	return v.ToAny(), nil
 }
 
-// currentSubqueryPlanner is set by the executor before evaluating
-// a query and read by newSubqueryPlanner when no outer row
-// carries a planner. Used to support top-level non-correlated
-// subqueries (`SELECT EXISTS(SELECT 1 FROM s WHERE v = 2)`)
-// which have no outer row but still need the executor's
-// store-backed planner. See REQ000366.
-// Not goroutine-safe: only the executor's owning goroutine
-// should set/clear this for the duration of a single query.
-// Concurrent queries on the same engine are serialized by the
-// executor's own locking (see SYS/SY).
-var currentSubqueryPlanner *Planner
-
-// newSubqueryPlanner returns a planner for evaluating a subquery
-// inside Eval. Priority order:
-//  1. Row's ExecContext (REQ000586 — eliminates global)
+// getSubqueryPlanner returns the query planner from the outer row's
+// execution context. Priority order:
+//  1. Row's ExecContext.Planner (REQ000586)
 //  2. Row's outer-chain planner (REQ000366)
-//  3. Package-level currentSubqueryPlanner (legacy fallback)
-//  4. Fresh in-memory planner (tests without a store)
-func newSubqueryPlanner(outer *Row) *Planner {
-	// Check ExecContext first (REQ000586).
+func getSubqueryPlanner(outer *Row) PL.QueryPlanner {
 	if ec := OP.ExecContextFromRow(outer); ec != nil && ec.Planner != nil {
-		if p, ok := ec.Planner.(*Planner); ok {
-			return p
-		}
+		return ec.Planner
 	}
 	if p := outer.GetPlanner(); p != nil {
-		if pp, ok := p.(*Planner); ok {
-			return pp
-		}
+		return p
 	}
-	if currentSubqueryPlanner != nil {
-		return currentSubqueryPlanner
-	}
-	return NewPlanner()
+	return nil
 }
 
 func evalExists(e *PS.ExistsExpr, outer *Row, params []any) (any, error) {
-	sel, ok := e.Subquery.(*PS.Select)
-	if !ok {
+	pl := getSubqueryPlanner(outer)
+	if pl == nil {
 		return nil, ErrSubquery
 	}
-	pl, err := newSubqueryPlanner(outer).Plan(sel)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := runSubqueryPlan(context.Background(), pl, outer, params)
+	rows, err := pl.ExecuteSubquery(context.Background(), e.Subquery, outer, params)
 	if err != nil {
 		return nil, err
 	}
@@ -722,11 +699,11 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (any, erro
 		}
 	}
 
-	pl, err := newSubqueryPlanner(outer).Plan(sel)
-	if err != nil {
-		return nil, err
+	pl := getSubqueryPlanner(outer)
+	if pl == nil {
+		return nil, ErrSubquery
 	}
-	rows, err := runSubqueryPlan(context.Background(), pl, outer, params)
+	rows, err := pl.ExecuteSubquery(context.Background(), e.Subquery, outer, params)
 	if err != nil {
 		return nil, err
 	}
@@ -758,10 +735,10 @@ func evalInterval(e *PS.IntervalLiteral) (any, error) {
 func evalCast(e *PS.CastExpr, row *Row, params []any) (Value, error) {
 	v, err := EvalValue(e.Expr, row, params)
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
 	if v.Kind == KindNull {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	if e.Type == nil {
 		return v, nil
@@ -772,53 +749,53 @@ func evalCast(e *PS.CastExpr, row *Row, params []any) (Value, error) {
 		case KindInt:
 			return v, nil
 		case KindFloat:
-			return NewIntValue(int64(v.F64)), nil
+			return DT.NewIntValue(int64(v.F64)), nil
 		case KindText:
 			n, err := strconv.ParseInt(v.S, 10, 64)
 			if err != nil {
-				return NullValue(), fmt.Errorf("ex: cast %q to int: %w", v.S, err)
+				return DT.NullValue(), fmt.Errorf("ex: cast %q to int: %w", v.S, err)
 			}
-			return NewIntValue(n), nil
+			return DT.NewIntValue(n), nil
 		case KindBool:
 			if v.Bo {
-				return NewIntValue(1), nil
+				return DT.NewIntValue(1), nil
 			}
-			return NewIntValue(0), nil
+			return DT.NewIntValue(0), nil
 		}
 	case LX.T_FLOAT_KW:
 		switch v.Kind {
 		case KindInt:
-			return NewFloatValue(float64(v.I64)), nil
+			return DT.NewFloatValue(float64(v.I64)), nil
 		case KindFloat:
 			return v, nil
 		case KindText:
 			f, err := strconv.ParseFloat(v.S, 64)
 			if err != nil {
-				return NullValue(), fmt.Errorf("ex: cast %q to float: %w", v.S, err)
+				return DT.NullValue(), fmt.Errorf("ex: cast %q to float: %w", v.S, err)
 			}
-			return NewFloatValue(f), nil
+			return DT.NewFloatValue(f), nil
 		}
 	case LX.T_TEXT:
-		return NewTextValue(v.String()), nil
+		return DT.NewTextValue(v.String()), nil
 	case LX.T_DECIMAL, LX.T_NUMERIC:
 		r, err := UT.EvalDecimalCast(v.ToAny(), e.Type.Precision, e.Type.Scale)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
-		return valueFromAny(r), nil
+		return DT.ValueFromAny(r), nil
 	case LX.T_BOOL:
-		return NewBoolValue(castToBoolValue(v)), nil
+		return DT.NewBoolValue(castToBoolValue(v)), nil
 	case LX.T_BLOB:
 		switch v.Kind {
 		case KindText:
-			return NewBlobValue([]byte(v.S)), nil
+			return DT.NewBlobValue([]byte(v.S)), nil
 		case KindBlob:
 			return v, nil
 		default:
-			return NewBlobValue([]byte(v.String())), nil
+			return DT.NewBlobValue([]byte(v.String())), nil
 		}
 	}
-	return NullValue(), ErrEval
+	return DT.NullValue(), ErrEval
 }
 
 // castToBoolValue is the Value-typed variant of castToBool (REQ000776).
@@ -848,12 +825,12 @@ func evalCase(e *PS.CaseExpr, row *Row, params []any) (Value, error) {
 	if e.Expr != nil {
 		target, err := EvalValue(e.Expr, row, params)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
 		for _, w := range e.WhenList {
 			v, err := EvalValue(w.Cond, row, params)
 			if err != nil {
-				return NullValue(), err
+				return DT.NullValue(), err
 			}
 			if PL.EqualValueValue(target, v) {
 				return EvalValue(w.Then, row, params)
@@ -863,7 +840,7 @@ func evalCase(e *PS.CaseExpr, row *Row, params []any) (Value, error) {
 		for _, w := range e.WhenList {
 			cond, err := EvalValue(w.Cond, row, params)
 			if err != nil {
-				return NullValue(), err
+				return DT.NullValue(), err
 			}
 			if isValueTruthy(cond) {
 				return EvalValue(w.Then, row, params)
@@ -873,7 +850,7 @@ func evalCase(e *PS.CaseExpr, row *Row, params []any) (Value, error) {
 	if e.Else != nil {
 		return EvalValue(e.Else, row, params)
 	}
-	return NullValue(), nil
+	return DT.NullValue(), nil
 }
 
 func truthy(v any) bool {
@@ -931,48 +908,48 @@ func evalAggregate(e *PS.AggregateFunc, row *Row, params []any) (Value, error) {
 		if _, ok := e.Arg.(*PS.StarExpr); ok {
 			name := e.Name + "(*)"
 			if v, found := row.Lookup(name); found {
-				return valueFromAny(v), nil
+				return DT.ValueFromAny(v), nil
 			}
 		}
 		if ident, ok := e.Arg.(*PS.Ident); ok {
 			name := e.Name + "(" + ident.Name + ")"
 			if v, found := row.Lookup(name); found {
-				return valueFromAny(v), nil
+				return DT.ValueFromAny(v), nil
 			}
 		}
 		if v, found := row.Lookup(e.Name); found {
-			return valueFromAny(v), nil
+			return DT.ValueFromAny(v), nil
 		}
 	}
 	switch strings.ToUpper(e.Name) {
 	case "COUNT":
-		return NewIntValue(0), nil
+		return DT.NewIntValue(0), nil
 	case "SUM":
-		return NewIntValue(0), nil
+		return DT.NewIntValue(0), nil
 	case "AVG":
-		return NewFloatValue(0), nil
+		return DT.NewFloatValue(0), nil
 	case "MIN":
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	case "MAX":
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
-	return NullValue(), ErrEval
+	return DT.NullValue(), ErrEval
 }
 
 // valueFromAnyWrap converts (any, error) from a legacy eval helper to
 // (Value, error). REQ000776 bridge helper.
 func valueFromAnyWrap(v any, err error) (Value, error) {
 	if err != nil {
-		return NullValue(), err
+		return DT.NullValue(), err
 	}
-	return valueFromAny(v), nil
+	return DT.ValueFromAny(v), nil
 }
 
-func evalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
+func EvalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
 	// REQ000978: registry-based dispatch. Adding a new function is
 	// a one-line registration in function_registry.go's init(),
 	// not an edit to a switch block.
-	if impl, ok := scalarFuncRegistry[e.Name]; ok {
+	if impl, ok := ScalarFuncRegistry[e.Name]; ok {
 		return impl(e.Args, row, params)
 	}
 	if UT.IsDateTimeFunc(e.Name) {
@@ -980,32 +957,32 @@ func evalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
 		for i, arg := range e.Args {
 			v, err := EvalValue(arg, row, params)
 			if err != nil {
-				return NullValue(), err
+				return DT.NullValue(), err
 			}
 			args[i] = v.ToAny()
 		}
 		v, err := UT.EvalDateTimeFunc(e.Name, args)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
-		return valueFromAny(v), nil
+		return DT.ValueFromAny(v), nil
 	}
 	if UT.IsJSONFunc(e.Name) {
 		args := make([]any, len(e.Args))
 		for i, arg := range e.Args {
 			v, err := EvalValue(arg, row, params)
 			if err != nil {
-				return NullValue(), err
+				return DT.NullValue(), err
 			}
 			args[i] = v.ToAny()
 		}
 		v, err := UT.EvalJSONFunc(e.Name, args)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
-		return valueFromAny(v), nil
+		return DT.ValueFromAny(v), nil
 	}
-	return NullValue(), ErrEval
+	return DT.NullValue(), ErrEval
 }
 
 // ErrTriggerAbort is returned by RAISE(ABORT, ...) evaluation to
@@ -1016,19 +993,19 @@ var ErrTriggerAbort = errors.New("ex: trigger abort")
 func evalRaise(e *PS.RaiseFunc, row *Row, params []any) (Value, error) {
 	action := strings.ToUpper(e.Action)
 	if action == "IGNORE" {
-		return NullValue(), ErrIgnoreRow
+		return DT.NullValue(), ErrIgnoreRow
 	}
 	var msg string
 	if e.Message != nil {
 		v, err := EvalValue(e.Message, row, params)
 		if err != nil {
-			return NullValue(), err
+			return DT.NullValue(), err
 		}
 		if v.Kind == KindText {
 			msg = v.S
 		}
 	}
-	return NullValue(), fmt.Errorf("%w: %s", ErrTriggerAbort, msg)
+	return DT.NullValue(), fmt.Errorf("%w: %s", ErrTriggerAbort, msg)
 }
 
 // REQ000382: ABS, HEX, ROUND scalar functions.
@@ -1044,7 +1021,7 @@ func evalRaise(e *PS.RaiseFunc, row *Row, params []any) (Value, error) {
 // SQLite; Y < 0 also surfaces a warning in SQLite but we treat it
 // as 0 for v1.
 
-func evalAbs(args []PS.Expr, row *Row, params []any) (any, error) {
+func EvalAbs(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
@@ -1134,7 +1111,7 @@ func evalHex(args []PS.Expr, row *Row, params []any) (any, error) {
 		}
 		return string(h), nil
 	default:
-		s := valueToString(v)
+		s := DT.ValueToString(v)
 		h := make([]byte, hex.EncodedLen(len(s)))
 		hex.Encode(h, []byte(s))
 		for i, c := range h {
@@ -1335,7 +1312,7 @@ func evalConcat(args []PS.Expr, row *Row, params []any) (any, error) {
 		if v.Kind == KindNull {
 			return nil, nil // Any NULL → NULL result
 		}
-		sb.WriteString(valueToString(v))
+		sb.WriteString(DT.ValueToString(v))
 	}
 	return sb.String(), nil
 }
@@ -1353,7 +1330,7 @@ func evalConcatWS(args []PS.Expr, row *Row, params []any) (any, error) {
 	if sep.Kind == KindNull {
 		return nil, nil // NULL separator → NULL result
 	}
-	sepStr := valueToString(sep)
+	sepStr := DT.ValueToString(sep)
 	var sb strings.Builder
 	first := true
 	for i := 1; i < len(args); i++ {
@@ -1367,7 +1344,7 @@ func evalConcatWS(args []PS.Expr, row *Row, params []any) (any, error) {
 		if !first {
 			sb.WriteString(sepStr)
 		}
-		sb.WriteString(valueToString(v))
+		sb.WriteString(DT.ValueToString(v))
 		first = false
 	}
 	return sb.String(), nil
@@ -1414,14 +1391,14 @@ func evalLtrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if v.Kind == KindNull {
 		return nil, nil
 	}
-	s := valueToString(v)
+	s := DT.ValueToString(v)
 	if len(args) >= 2 {
 		trimV, err := EvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
 		if trimV.Kind != KindNull {
-			return strings.TrimLeft(s, valueToString(trimV)), nil
+			return strings.TrimLeft(s, DT.ValueToString(trimV)), nil
 		}
 	}
 	return strings.TrimLeft(s, " "), nil
@@ -1440,14 +1417,14 @@ func evalRtrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if v.Kind == KindNull {
 		return nil, nil
 	}
-	s := valueToString(v)
+	s := DT.ValueToString(v)
 	if len(args) >= 2 {
 		trimV, err := EvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
 		if trimV.Kind != KindNull {
-			return strings.TrimRight(s, valueToString(trimV)), nil
+			return strings.TrimRight(s, DT.ValueToString(trimV)), nil
 		}
 	}
 	return strings.TrimRight(s, " "), nil
@@ -1466,14 +1443,14 @@ func evalTrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if v.Kind == KindNull {
 		return nil, nil
 	}
-	s := valueToString(v)
+	s := DT.ValueToString(v)
 	if len(args) >= 2 {
 		trimV, err := EvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
 		if trimV.Kind != KindNull {
-			return strings.Trim(s, valueToString(trimV)), nil
+			return strings.Trim(s, DT.ValueToString(trimV)), nil
 		}
 	}
 	return strings.Trim(s, " "), nil
@@ -1500,14 +1477,14 @@ func evalReplace(args []PS.Expr, row *Row, params []any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	xs := valueToString(x)
+	xs := DT.ValueToString(x)
 	if y.Kind == KindNull {
 		return xs, nil // NULL pattern → return X unchanged
 	}
-	ys := valueToString(y)
+	ys := DT.ValueToString(y)
 	zs := ""
 	if z.Kind != KindNull {
-		zs = valueToString(z)
+		zs = DT.ValueToString(z)
 	}
 	return strings.ReplaceAll(xs, ys, zs), nil
 }
@@ -1533,9 +1510,9 @@ func evalQuote(args []PS.Expr, row *Row, params []any) (any, error) {
 		return "'" + escaped + "'", nil
 	case KindInt, KindFloat, KindBool:
 		// Numbers and booleans are not quoted
-		return valueToString(v), nil
+		return DT.ValueToString(v), nil
 	default:
-		return "'" + strings.ReplaceAll(valueToString(v), "'", "''") + "'", nil
+		return "'" + strings.ReplaceAll(DT.ValueToString(v), "'", "''") + "'", nil
 	}
 }
 
@@ -1589,7 +1566,7 @@ func evalOctetLength(args []PS.Expr, row *Row, params []any) (any, error) {
 	if v.Kind == KindText {
 		return int64(len(v.S)), nil
 	}
-	return int64(len(valueToString(v))), nil
+	return int64(len(DT.ValueToString(v))), nil
 }
 
 // evalUnicode returns the Unicode code point of the first character.
@@ -1605,7 +1582,7 @@ func evalUnicode(args []PS.Expr, row *Row, params []any) (any, error) {
 	if v.Kind == KindNull {
 		return nil, nil
 	}
-	s := valueToString(v)
+	s := DT.ValueToString(v)
 	if len(s) == 0 {
 		return int64(0), nil
 	}
@@ -1662,8 +1639,8 @@ func evalInstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if y.Kind == KindNull {
 		return nil, nil
 	}
-	xs := valueToString(x)
-	ys := valueToString(y)
+	xs := DT.ValueToString(x)
+	ys := DT.ValueToString(y)
 	if ys == "" {
 		return int64(1), nil
 	}
@@ -1897,9 +1874,9 @@ func compare(a, b any) int {
 // operates directly on the tagged-union Value type (REQ000776). It
 // switches on a.Kind to avoid the interface conversion path. Returns
 // a new Value or NULL for overflow/division by zero.
-func numericArithValue(a, b Value, op rune) (Value, error) {
+func NumericArithValue(a, b Value, op rune) (Value, error) {
 	if a.Kind == KindNull || b.Kind == KindNull {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	// int64-int64 fast path.
 	if a.Kind == KindInt && b.Kind == KindInt {
@@ -1907,40 +1884,40 @@ func numericArithValue(a, b Value, op rune) (Value, error) {
 		switch op {
 		case '+':
 			if (bi > 0 && ai > math.MaxInt64-bi) || (bi < 0 && ai < math.MinInt64-bi) {
-				return NullValue(), nil
+				return DT.NullValue(), nil
 			}
-			return NewIntValue(ai + bi), nil
+			return DT.NewIntValue(ai + bi), nil
 		case '-':
 			if (bi < 0 && ai > math.MaxInt64+bi) || (bi > 0 && ai < math.MinInt64+bi) {
-				return NullValue(), nil
+				return DT.NullValue(), nil
 			}
-			return NewIntValue(ai - bi), nil
+			return DT.NewIntValue(ai - bi), nil
 		case '*':
 			if ai == 0 || bi == 0 {
-				return NewIntValue(0), nil
+				return DT.NewIntValue(0), nil
 			}
 			if ai == -1 && bi == math.MinInt64 {
-				return NullValue(), nil
+				return DT.NullValue(), nil
 			}
 			if bi == -1 && ai == math.MinInt64 {
-				return NullValue(), nil
+				return DT.NullValue(), nil
 			}
 			if ai > 0 && bi > 0 && ai > math.MaxInt64/bi {
-				return NullValue(), nil
+				return DT.NullValue(), nil
 			}
 			if ai < 0 && bi < 0 && ai < math.MaxInt64/bi {
-				return NullValue(), nil
+				return DT.NullValue(), nil
 			}
 			if (ai > 0 && bi < 0 && bi < math.MinInt64/ai) ||
 				(ai < 0 && bi > 0 && ai < math.MinInt64/bi) {
-				return NullValue(), nil
+				return DT.NullValue(), nil
 			}
-			return NewIntValue(ai * bi), nil
+			return DT.NewIntValue(ai * bi), nil
 		case '/':
 			if bi == 0 {
-				return NullValue(), nil
+				return DT.NullValue(), nil
 			}
-			return NewIntValue(ai / bi), nil
+			return DT.NewIntValue(ai / bi), nil
 		}
 	}
 	// Float path for mixed/float.
@@ -1950,73 +1927,73 @@ func numericArithValue(a, b Value, op rune) (Value, error) {
 	} else if a.Kind == KindInt {
 		af = float64(a.I64)
 	} else {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	if b.Kind == KindFloat {
 		bf = b.F64
 	} else if b.Kind == KindInt {
 		bf = float64(b.I64)
 	} else {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	switch op {
 	case '+':
-		return NewFloatValue(af + bf), nil
+		return DT.NewFloatValue(af + bf), nil
 	case '-':
-		return NewFloatValue(af - bf), nil
+		return DT.NewFloatValue(af - bf), nil
 	case '*':
-		return NewFloatValue(af * bf), nil
+		return DT.NewFloatValue(af * bf), nil
 	case '/':
 		if bf == 0 {
-			return NullValue(), nil
+			return DT.NullValue(), nil
 		}
-		return NewFloatValue(af / bf), nil
+		return DT.NewFloatValue(af / bf), nil
 	}
-	return NullValue(), nil
+	return DT.NullValue(), nil
 }
 
 // Value-native helpers for binary ops (REQ000776).
 
 func bandValue(a, b Value) Value {
 	if (a.Kind == KindBool && !a.Bo) || (b.Kind == KindBool && !b.Bo) {
-		return NewBoolValue(false)
+		return DT.NewBoolValue(false)
 	}
 	if a.Kind == KindNull || b.Kind == KindNull {
-		return NullValue()
+		return DT.NullValue()
 	}
-	return NewBoolValue(true)
+	return DT.NewBoolValue(true)
 }
 
 func borValue(a, b Value) Value {
 	if (a.Kind == KindBool && a.Bo) || (b.Kind == KindBool && b.Bo) {
-		return NewBoolValue(true)
+		return DT.NewBoolValue(true)
 	}
 	if a.Kind == KindNull || b.Kind == KindNull {
-		return NullValue()
+		return DT.NullValue()
 	}
-	return NewBoolValue(false)
+	return DT.NewBoolValue(false)
 }
 
 // modValue implements Value-native modulo (REQ000776).
 func modValue(a, b Value) (Value, error) {
 	if a.Kind == KindNull || b.Kind == KindNull {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	if a.Kind == KindInt && b.Kind == KindInt {
 		if b.I64 == 0 {
-			return NullValue(), nil
+			return DT.NullValue(), nil
 		}
-		return NewIntValue(a.I64 % b.I64), nil
+		return DT.NewIntValue(a.I64 % b.I64), nil
 	}
 	af, aok := toFloat64(a)
 	bf, bok := toFloat64(b)
 	if !aok || !bok {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	if bf == 0 {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
-	return NewFloatValue(math.Mod(af, bf)), nil
+	return DT.NewFloatValue(math.Mod(af, bf)), nil
 }
 
 func toFloat64(v Value) (float64, bool) {
@@ -2031,130 +2008,130 @@ func toFloat64(v Value) (float64, bool) {
 
 func bitandValue(a, b Value) (Value, error) {
 	if a.Kind != KindInt || b.Kind != KindInt {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
-	return NewIntValue(a.I64 & b.I64), nil
+	return DT.NewIntValue(a.I64 & b.I64), nil
 }
 
 func bitorValue(a, b Value) (Value, error) {
 	if a.Kind != KindInt || b.Kind != KindInt {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
-	return NewIntValue(a.I64 | b.I64), nil
+	return DT.NewIntValue(a.I64 | b.I64), nil
 }
 
 func bitxorValue(a, b Value) (Value, error) {
 	if a.Kind != KindInt || b.Kind != KindInt {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
-	return NewIntValue(a.I64 ^ b.I64), nil
+	return DT.NewIntValue(a.I64 ^ b.I64), nil
 }
 
 func lshiftValue(a, b Value) (Value, error) {
 	if a.Kind != KindInt || b.Kind != KindInt {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	if b.I64 < 0 || b.I64 > 63 {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
-	return NewIntValue(a.I64 << b.I64), nil
+	return DT.NewIntValue(a.I64 << b.I64), nil
 }
 
 func rshiftValue(a, b Value) (Value, error) {
 	if a.Kind != KindInt || b.Kind != KindInt {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	if b.I64 < 0 || b.I64 > 63 {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
-	return NewIntValue(a.I64 >> b.I64), nil
+	return DT.NewIntValue(a.I64 >> b.I64), nil
 }
 
-func concatValue(a, b Value) (Value, error) {
+func ConcatValue(a, b Value) (Value, error) {
 	if a.Kind == KindNull || b.Kind == KindNull {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	if a.Kind == KindText && b.Kind == KindText {
-		return NewTextValue(a.S + b.S), nil
+		return DT.NewTextValue(a.S + b.S), nil
 	}
-	return NewTextValue(a.String() + b.String()), nil
+	return DT.NewTextValue(a.String() + b.String()), nil
 }
 
 func likeValue(a, b Value, escape string) (Value, error) {
 	if a.Kind == KindNull || b.Kind == KindNull {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	if a.Kind != KindText || b.Kind != KindText {
-		return NewBoolValue(false), nil
+		return DT.NewBoolValue(false), nil
 	}
-	return NewBoolValue(matchLike(b.S, a.S, escape)), nil
+	return DT.NewBoolValue(MatchLike(b.S, a.S, escape)), nil
 }
 
-func globValue(a, b Value) (Value, error) {
+func GlobValue(a, b Value) (Value, error) {
 	if a.Kind == KindNull || b.Kind == KindNull {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	if a.Kind != KindText {
-		return NullValue(), fmt.Errorf("ex: GLOB pattern must be string, got Kind %d", a.Kind)
+		return DT.NullValue(), fmt.Errorf("ex: GLOB pattern must be string, got Kind %d", a.Kind)
 	}
 	if b.Kind != KindText {
-		return NullValue(), fmt.Errorf("ex: GLOB operand must be string, got Kind %d", b.Kind)
+		return DT.NullValue(), fmt.Errorf("ex: GLOB operand must be string, got Kind %d", b.Kind)
 	}
-	return NewBoolValue(globMatch(a.S, b.S)), nil
+	return DT.NewBoolValue(globMatch(a.S, b.S)), nil
 }
 
 func intdivValue(a, b Value) (Value, error) {
 	if a.Kind == KindNull || b.Kind == KindNull {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
 	if a.Kind == KindInt && b.Kind == KindInt {
 		if b.I64 == 0 {
-			return NullValue(), nil
+			return DT.NullValue(), nil
 		}
-		return NewIntValue(a.I64 / b.I64), nil
+		return DT.NewIntValue(a.I64 / b.I64), nil
 	}
 	af, aok := toFloat64(a)
 	bf, bok := toFloat64(b)
 	if !aok || !bok {
-		return NullValue(), fmt.Errorf("ex: DIV requires numeric operands")
+		return DT.NullValue(), fmt.Errorf("ex: DIV requires numeric operands")
 	}
 	if bf == 0 {
-		return NullValue(), nil
+		return DT.NullValue(), nil
 	}
-	return NewIntValue(int64(af / bf)), nil
+	return DT.NewIntValue(int64(af / bf)), nil
 }
 
 func isValue(a, b Value) (Value, error) {
 	if a.Kind == KindNull && b.Kind == KindNull {
-		return NewBoolValue(true), nil
+		return DT.NewBoolValue(true), nil
 	}
 	if a.Kind == KindNull || b.Kind == KindNull {
-		return NewBoolValue(false), nil
+		return DT.NewBoolValue(false), nil
 	}
 	if a.Kind != b.Kind {
-		return NewBoolValue(false), nil
+		return DT.NewBoolValue(false), nil
 	}
 	switch a.Kind {
 	case KindInt:
-		return NewBoolValue(a.I64 == b.I64), nil
+		return DT.NewBoolValue(a.I64 == b.I64), nil
 	case KindFloat:
-		return NewBoolValue(a.F64 == b.F64), nil
+		return DT.NewBoolValue(a.F64 == b.F64), nil
 	case KindText:
-		return NewBoolValue(a.S == b.S), nil
+		return DT.NewBoolValue(a.S == b.S), nil
 	case KindBool:
-		return NewBoolValue(a.Bo == b.Bo), nil
+		return DT.NewBoolValue(a.Bo == b.Bo), nil
 	case KindBlob:
 		if len(a.B) != len(b.B) {
-			return NewBoolValue(false), nil
+			return DT.NewBoolValue(false), nil
 		}
 		for i := range a.B {
 			if a.B[i] != b.B[i] {
-				return NewBoolValue(false), nil
+				return DT.NewBoolValue(false), nil
 			}
 		}
-		return NewBoolValue(true), nil
+		return DT.NewBoolValue(true), nil
 	}
-	return NewBoolValue(false), nil
+	return DT.NewBoolValue(false), nil
 }
 
 func numericFloat(v any) (float64, bool) {
@@ -2174,7 +2151,7 @@ func numericFloat(v any) (float64, bool) {
 	return 0, false
 }
 
-func matchLike(pattern, s, escape string) bool {
+func MatchLike(pattern, s, escape string) bool {
 	pi, si := 0, 0
 	starPI, starSI := -1, -1
 	escByte := byte(0)

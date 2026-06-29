@@ -2,6 +2,8 @@ package EX
 
 import (
 	"context"
+
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
 // SqliteMaster is a virtual table that returns table metadata
@@ -30,7 +32,7 @@ func (s *SqliteMaster) Next(_ context.Context) (Row, error) {
 }
 
 func (s *SqliteMaster) loadRows() {
-	names := allTableNames()
+	names := DT.AllTableNames()
 	for _, name := range names {
 		s.rows = append(s.rows, Row{
 			Cols: []string{"type", "name", "tbl_name", "rootpage", "sql"},

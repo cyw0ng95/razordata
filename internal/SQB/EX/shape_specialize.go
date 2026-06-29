@@ -1,5 +1,9 @@
 package EX
 
+import (
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
+)
+
 // ShapeSpecializer detects common operator patterns and returns
 // specialized fast-path functions (REQ000543). The goal is to
 // eliminate per-row interpretation overhead for hot paths by
@@ -33,7 +37,7 @@ func DetectShape(op Operator) ShapeKind {
 		if isFixedCols(o) {
 			return ShapeProjectFixed
 		}
-	case *HashAggregate:
+	case *AG.HashAggregate:
 		if isInt64GroupBy(o) {
 			return ShapeHashAggInt64
 		}
@@ -53,6 +57,6 @@ func isFixedCols(p *Project) bool {
 }
 
 // isInt64GroupBy checks if the hash aggregate groups by int64 columns.
-func isInt64GroupBy(h *HashAggregate) bool {
-	return len(h.groupCols) > 0
+func isInt64GroupBy(h *AG.HashAggregate) bool {
+	return len(h.GroupCols()) > 0
 }

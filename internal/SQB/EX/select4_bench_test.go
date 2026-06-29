@@ -2,12 +2,13 @@ package EX
 
 import (
 	"context"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"fmt"
 	"testing"
 )
 
 // setupSelect4TablesN is a variant of setupSelect4Tables that
-// creates 9 tables (t1-t9) with n rows each and 5 int columns
+// creates 9 DT.Tables (t1-t9) with n rows each and 5 int columns
 // [a, b, c, d, e]. Values: a%1000, b%900, c%800, d%700, e%600.
 // REQ000844: used for select4 slow-case benchmarks with smaller
 // data sizes (15-30 rows instead of 100).
@@ -17,11 +18,11 @@ func setupSelect4TablesN(b *testing.B, n int) {
 	for i := 1; i <= 9; i++ {
 		name := fmt.Sprintf("t%d", i)
 		if i == 6 {
-			RegisterTableSchema("tn2", []string{"a", "b", "c", "d", "e"})
+			DT.RegisterTableSchema("tn2", []string{"a", "b", "c", "d", "e"})
 		}
-		RegisterTableSchema(name, []string{"a", "b", "c", "d", "e"})
+		DT.RegisterTableSchema(name, []string{"a", "b", "c", "d", "e"})
 	}
-	tablesMu.Lock()
+	DT.TablesMu.Lock()
 	for i := 1; i <= 9; i++ {
 		names := []string{fmt.Sprintf("t%d", i)}
 		if i == 6 {
@@ -30,7 +31,7 @@ func setupSelect4TablesN(b *testing.B, n int) {
 		for _, name := range names {
 			for j := 0; j < n; j++ {
 				v := int64(j)
-				tables[name] = append(tables[name], Row{
+				DT.Tables[name] = append(DT.Tables[name], Row{
 					Cols: []string{"a", "b", "c", "d", "e"},
 					Data: []Value{
 						NewIntValue(v % 1000),
@@ -43,7 +44,7 @@ func setupSelect4TablesN(b *testing.B, n int) {
 			}
 		}
 	}
-	tablesMu.Unlock()
+	DT.TablesMu.Unlock()
 }
 
 // BenchmarkSelect4_Join277 replicates the worst-case 8-table join
