@@ -739,6 +739,40 @@ var deleteSelfSubqCases = []dualCase{
 	},
 }
 
+// threePartNameCases from EX/req000750_test.go: database.table.column
+// qualified names.
+var threePartNameCases = []dualCase{
+	{
+		Name: "three_part_column_ref",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, val INTEGER)",
+			"INSERT INTO t VALUES (1, 10)",
+		},
+		Query: "SELECT main.t.id FROM t",
+		Want:  [][]any{{int64(1)}},
+	},
+	{
+		Name: "three_part_from_table",
+		Setup: []string{
+			"CREATE TABLE t (id INTEGER PRIMARY KEY, val INTEGER)",
+			"INSERT INTO t VALUES (1, 10)",
+		},
+		Query: "SELECT id FROM main.t",
+		Want:  [][]any{{int64(1)}},
+	},
+	{
+		Name: "three_part_comma_join",
+		Setup: []string{
+			"CREATE TABLE t1 (id INTEGER PRIMARY KEY, a INTEGER)",
+			"INSERT INTO t1 VALUES (1, 1)",
+			"CREATE TABLE t2 (id INTEGER PRIMARY KEY, b INTEGER)",
+			"INSERT INTO t2 VALUES (1, 2)",
+		},
+		Query: "SELECT a, b FROM main.t1, main.t2",
+		Want:  [][]any{{int64(1), int64(2)}},
+	},
+}
+
 // crudCases from EX/e2e_test.go: full SQL DML lifecycle and LIMIT/OFFSET.
 var crudCases = []dualCase{
 	{
