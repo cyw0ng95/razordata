@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -189,7 +190,7 @@ func evalNow(args []PS.Expr, row *Row, params []any) (Value, error) {
 
 // evalChangesNative returns the row count of the most recent INSERT/UPDATE/DELETE.
 func evalChangesNative(args []PS.Expr, row *Row, params []any) (Value, error) {
-	ec := ExecContextFromRow(row)
+	ec := OP.ExecContextFromRow(row)
 	if ec == nil {
 		return NewIntValue(0), nil
 	}
@@ -208,7 +209,7 @@ func evalLastInsertRowIDNative(args []PS.Expr, row *Row, params []any) (Value, e
 // evalTotalChangesNative returns the cumulative row count of all
 // INSERT/UPDATE/DELETE statements since the connection opened.
 func evalTotalChangesNative(args []PS.Expr, row *Row, params []any) (Value, error) {
-	ec := ExecContextFromRow(row)
+	ec := OP.ExecContextFromRow(row)
 	if ec == nil {
 		return NewIntValue(0), nil
 	}

@@ -2,6 +2,7 @@ package EX
 
 import (
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"container/list"
 	"context"
 	"encoding/hex"
@@ -663,7 +664,7 @@ var currentSubqueryPlanner *Planner
 //  4. Fresh in-memory planner (tests without a store)
 func newSubqueryPlanner(outer *Row) *Planner {
 	// Check ExecContext first (REQ000586).
-	if ec := ExecContextFromRow(outer); ec != nil && ec.Planner != nil {
+	if ec := OP.ExecContextFromRow(outer); ec != nil && ec.Planner != nil {
 		if p, ok := ec.Planner.(*Planner); ok {
 			return p
 		}

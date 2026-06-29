@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
@@ -200,6 +201,7 @@ type Operator = pl.Operator
 
 // Row is a single row of data with column metadata. Aliased from PL.
 type Row = pl.Row
+type ExecContext = pl.ExecContext
 
 // Result holds the outcome of an Exec call.
 type Result struct {
@@ -892,7 +894,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 				}
 				return nil, err
 			}
-			WithExecContext(&row, execCtx)
+			OP.WithExecContext(&row, execCtx)
 			rs := &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]LX.TokenType(nil), row.Types...)}
 			return rs, nil
 		}
@@ -954,7 +956,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 		}
 		return nil, err
 	}
-	WithExecContext(&row, execCtx)
+	OP.WithExecContext(&row, execCtx)
 	rs := &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]LX.TokenType(nil), row.Types...)}
 	return rs, nil
 }
@@ -985,7 +987,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 					}
 					return nil, err
 				}
-				WithExecContext(&row, execCtx)
+				OP.WithExecContext(&row, execCtx)
 				out = append(out, row)
 			}
 			return out, nil
@@ -1028,7 +1030,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 			}
 			return nil, err
 		}
-		WithExecContext(&row, execCtx)
+		OP.WithExecContext(&row, execCtx)
 		out = append(out, row)
 	}
 	return out, nil
@@ -1660,7 +1662,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 		plan.Root.Close()
 		return nil, err
 	}
-	WithExecContext(&row, execCtx)
+	OP.WithExecContext(&row, execCtx)
 	cols := append([]string(nil), row.Cols...)
 	types := append([]LX.TokenType(nil), row.Types...)
 
@@ -1690,7 +1692,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 			if err != nil {
 				return
 			}
-			WithExecContext(&r, execCtx)
+			OP.WithExecContext(&r, execCtx)
 			select {
 			case rowCh <- r:
 			case <-ctx.Done():
