@@ -5,21 +5,21 @@ package EX
 import (
 	"testing"
 
-	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
 func anyToValue(a any) Value {
 	switch v := a.(type) {
-	case nil:
-		return NullValue()
-	case string:
-		return NewTextValue(v)
-	case int64:
-		return NewIntValue(v)
-	case int:
-		return NewIntValue(int64(v))
-	default:
-		return NewTextValue(v.(string))
+		case nil:
+			return DT.NullValue()
+		case string:
+			return DT.NewTextValue(v)
+		case int64:
+			return DT.NewIntValue(v)
+		case int:
+			return DT.NewIntValue(int64(v))
+		default:
+			return DT.NewTextValue(v.(string))
 	}
 }
 
@@ -39,7 +39,7 @@ func TestConcatFastPath(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := EV.ConcatValue(anyToValue(tc.a), anyToValue(tc.b))
+			got, err := ConcatValue(anyToValue(tc.a), anyToValue(tc.b))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

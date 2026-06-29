@@ -4,16 +4,17 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // makeSortTestRows creates N rows with random id values for sorting.
-func makeSortTestRows(n int) []Row {
-	rows := make([]Row, n)
+func makeSortTestRows(n int) []pl.Row {
+	rows := make([]pl.Row, n)
 	// Create reversed order: n-1, n-2, ..., 1, 0
 	for i := 0; i < n; i++ {
-		rows[i] = Row{
+		rows[i] = pl.Row{
 			Cols:  []string{"id"},
 			Types: []LX.TokenType{LX.T_INT_KW},
 			Data:  []Value{NewIntValue(int64(n - 1 - i))},
@@ -95,7 +96,8 @@ func TestParallelSort_LargeDataset(t *testing.T) {
 	defer scan.Close()
 
 	keys := []SortKey{{ColName: "id", Order: AscOrder}}
-	pool := UT.NewWorkerPool(4)
+	pool := 
+UT.NewWorkerPool(4)
 	defer pool.Close()
 
 	sortOp := NewParallelSort(scan, keys, pool)
@@ -162,7 +164,7 @@ func TestLessRow(t *testing.T) {
 // TestParallelSort_MultiBatch verifies that NextBatch returns
 // multiple batches when data exceeds UT.BatchSize. REQ001021.
 func TestParallelSort_MultiBatch(t *testing.T) {
-	rows := makeSortTestRows(2 * UT.BatchSize + 10)
+	rows := makeSortTestRows(2*UT.BatchSize + 10)
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id"}
 	types := []LX.TokenType{LX.T_INT_KW}
@@ -212,7 +214,8 @@ func BenchmarkParallelSort_Large(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		src := &rowSourceForTest{rows: rows}
 		scan := NewVectorizedSeqScan(src, schema, types)
-		pool := UT.NewWorkerPool(4)
+		pool := 
+UT.NewWorkerPool(4)
 		sortOp := NewParallelSort(scan, keys, pool)
 		for {
 			batch, _ := sortOp.NextBatch(context.Background())

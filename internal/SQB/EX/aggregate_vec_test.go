@@ -1,21 +1,23 @@
 package EX
 
 import (
-	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	"context"
 	"testing"
 
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // makeAggregateTestRows creates N rows with id=0..N-1 and value=id*10.
-func makeAggregateTestRows(n int) []Row {
-	rows := make([]Row, n)
+func makeAggregateTestRows(n int) []pl.Row {
+	rows := make([]pl.Row, n)
 	for i := 0; i < n; i++ {
-		rows[i] = Row{
+		rows[i] = pl.Row{
 			Cols:  []string{"id", "value"},
 			Types: []LX.TokenType{LX.T_TEXT},
-			Data:  []Value{NewIntValue(int64(i)), NewIntValue(int64(i * 10))},
+			Data:  []pl.Value{DT.NewIntValue(int64(i)), DT.NewIntValue(int64(i * 10))},
 		}
 	}
 	return rows
@@ -30,7 +32,8 @@ func TestVectorizedCount_Basic(t *testing.T) {
 	scan := NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	cnt := AG.NewVectorizedCount(scan)
+	cnt := 
+AG.NewVectorizedCount(scan)
 	defer cnt.Close()
 
 	batch, err := cnt.NextBatch(context.Background())
@@ -60,7 +63,8 @@ func TestVectorizedCount_Empty(t *testing.T) {
 	scan := NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	cnt := AG.NewVectorizedCount(scan)
+	cnt := 
+AG.NewVectorizedCount(scan)
 	defer cnt.Close()
 
 	batch, err := cnt.NextBatch(context.Background())
@@ -87,7 +91,8 @@ func TestVectorizedSum_Int64(t *testing.T) {
 	scan := NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	sum := AG.NewVectorizedSum(scan, 1) // sum value column
+	sum := 
+AG.NewVectorizedSum(scan, 1) // sum value column
 	defer sum.Close()
 
 	batch, err := sum.NextBatch(context.Background())
@@ -108,12 +113,12 @@ func TestVectorizedSum_Int64(t *testing.T) {
 
 // TestVectorizedSum_Float64 verifies float64 sum.
 func TestVectorizedSum_Float64(t *testing.T) {
-	rows := []Row{}
+	rows := []pl.Row{}
 	for i := 0; i < 10; i++ {
-		rows = append(rows, Row{
+		rows = append(rows, pl.Row{
 			Cols:  []string{"x"},
 			Types: []LX.TokenType{LX.T_TEXT},
-			Data:  []Value{NewFloatValue(float64(i) * 1.5)},
+			Data:  []pl.Value{DT.NewFloatValue(float64(i) * 1.5)},
 		})
 	}
 	src := &rowSourceForTest{rows: rows}
@@ -122,7 +127,8 @@ func TestVectorizedSum_Float64(t *testing.T) {
 	scan := NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	sum := AG.NewVectorizedSum(scan, 0)
+	sum := 
+AG.NewVectorizedSum(scan, 0)
 	defer sum.Close()
 
 	batch, err := sum.NextBatch(context.Background())
@@ -150,7 +156,8 @@ func TestVectorizedAvg_Basic(t *testing.T) {
 	scan := NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	avg := AG.NewVectorizedAvg(scan, 1)
+	avg := 
+AG.NewVectorizedAvg(scan, 1)
 	defer avg.Close()
 
 	batch, err := avg.NextBatch(context.Background())
@@ -178,7 +185,8 @@ func TestVectorizedMin_Basic(t *testing.T) {
 	scan := NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	min := AG.NewVectorizedMin(scan, 1)
+	min := 
+AG.NewVectorizedMin(scan, 1)
 	defer min.Close()
 
 	batch, err := min.NextBatch(context.Background())
@@ -205,7 +213,8 @@ func TestVectorizedMax_Basic(t *testing.T) {
 	scan := NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	max := AG.NewVectorizedMax(scan, 1)
+	max := 
+AG.NewVectorizedMax(scan, 1)
 	defer max.Close()
 
 	batch, err := max.NextBatch(context.Background())
@@ -229,10 +238,10 @@ func TestVectorizedSum_LargeBatch(t *testing.T) {
 	rows := make([]Row, n)
 	expected := int64(0)
 	for i := 0; i < n; i++ {
-		rows[i] = Row{
+		rows[i] = pl.Row{
 			Cols:  []string{"x"},
 			Types: []LX.TokenType{LX.T_TEXT},
-			Data:  []Value{NewIntValue(int64(i))},
+			Data:  []pl.Value{DT.NewIntValue(int64(i))},
 		}
 		expected += int64(i)
 	}
@@ -242,7 +251,8 @@ func TestVectorizedSum_LargeBatch(t *testing.T) {
 	scan := NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	sum := AG.NewVectorizedSum(scan, 0)
+	sum := 
+AG.NewVectorizedSum(scan, 0)
 	defer sum.Close()
 
 	batch, err := sum.NextBatch(context.Background())
@@ -265,10 +275,10 @@ func BenchmarkVectorizedSum_Int64(b *testing.B) {
 	const n = 10 * 1024
 	rows := make([]Row, n)
 	for i := 0; i < n; i++ {
-		rows[i] = Row{
+		rows[i] = pl.Row{
 			Cols:  []string{"x"},
 			Types: []LX.TokenType{LX.T_TEXT},
-			Data:  []Value{NewIntValue(int64(i))},
+			Data:  []pl.Value{DT.NewIntValue(int64(i))},
 		}
 	}
 	schema := []string{"x"}
@@ -278,7 +288,8 @@ func BenchmarkVectorizedSum_Int64(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		src := &rowSourceForTest{rows: rows}
 		scan := NewVectorizedSeqScan(src, schema, types)
-		sum := AG.NewVectorizedSum(scan, 0)
+		sum := 
+AG.NewVectorizedSum(scan, 0)
 		for {
 			batch, _ := sum.NextBatch(context.Background())
 			if batch == nil {
@@ -296,10 +307,10 @@ func BenchmarkRowSum_Fallback(b *testing.B) {
 	const n = 10 * 1024
 	rows := make([]Row, n)
 	for i := 0; i < n; i++ {
-		rows[i] = Row{
+		rows[i] = pl.Row{
 			Cols:  []string{"x"},
 			Types: []LX.TokenType{LX.T_TEXT},
-			Data:  []Value{NewIntValue(int64(i))},
+			Data:  []pl.Value{DT.NewIntValue(int64(i))},
 		}
 	}
 

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // REQ001051: ParallelIndexRangeScan filters IN-list values correctly.
@@ -48,7 +48,8 @@ func TestParallelIndexRangeScan_Basic(t *testing.T) {
 
 // REQ001051: ParallelIndexRangeScan empty rows returns nothing.
 func TestParallelIndexRangeScan_EmptyRows(t *testing.T) {
-	pool := UT.NewWorkerPool(2)
+	pool := 
+UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -64,7 +65,8 @@ func TestParallelIndexRangeScan_EmptyRows(t *testing.T) {
 
 // REQ001051: ParallelIndexRangeScan empty values returns nothing.
 func TestParallelIndexRangeScan_EmptyValues(t *testing.T) {
-	pool := UT.NewWorkerPool(2)
+	pool := 
+UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -80,7 +82,8 @@ func TestParallelIndexRangeScan_EmptyValues(t *testing.T) {
 
 // REQ001051: ParallelIndexRangeScan with string values.
 func TestParallelIndexRangeScan_String(t *testing.T) {
-	pool := UT.NewWorkerPool(2)
+	pool := 
+UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -113,7 +116,8 @@ func TestParallelIndexRangeScan_String(t *testing.T) {
 
 // REQ001051: ParallelIndexRangeScan with multiple columns filters by correct column.
 func TestParallelIndexRangeScan_MultiCol(t *testing.T) {
-	pool := UT.NewWorkerPool(2)
+	pool := 
+UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -153,7 +157,8 @@ func TestParallelIndexRangeScan_MultiCol(t *testing.T) {
 
 // REQ001051: ParallelIndexRangeScan no match returns empty.
 func TestParallelIndexRangeScan_NoMatch(t *testing.T) {
-	pool := UT.NewWorkerPool(2)
+	pool := 
+UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -173,7 +178,8 @@ func TestParallelIndexRangeScan_NoMatch(t *testing.T) {
 
 // REQ001051: ParallelIndexRangeScan single worker still works.
 func TestParallelIndexRangeScan_SingleWorker(t *testing.T) {
-	pool := UT.NewWorkerPool(1)
+	pool := 
+UT.NewWorkerPool(1)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -200,7 +206,8 @@ func TestParallelIndexRangeScan_SingleWorker(t *testing.T) {
 
 // BenchmarkParallelIndexRangeScan_INList_100Values benchmarks 100-value IN-list.
 func BenchmarkParallelIndexRangeScan_100Values(b *testing.B) {
-	pool := UT.NewWorkerPool(2)
+	pool := 
+UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 

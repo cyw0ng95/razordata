@@ -11,7 +11,6 @@ import (
 
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
-	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
@@ -29,8 +28,8 @@ func TestFunctionRegistry_AllFunctionsRegistered(t *testing.T) {
 		"UNLIKELY", "CHANGES", "LAST_INSERT_ROWID", "TOTAL_CHANGES",
 	}
 	for _, name := range expected {
-		if _, ok := EV.ScalarFuncRegistry[name]; !ok {
-			t.Errorf("EV.ScalarFuncRegistry missing entry for %q", name)
+		if _, ok := ScalarFuncRegistry[name]; !ok {
+			t.Errorf("ScalarFuncRegistry missing entry for %q", name)
 		}
 	}
 }
@@ -81,9 +80,11 @@ func TestFunctionRegistry_DispatchReachesImpl(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			v, err := EV.EvalValue(tc.expr, nil, nil)
+			v, err := 
+EvalValue(tc.expr, nil, nil)
 			if err != nil {
-				t.Fatalf("EV.EvalValue: %v", err)
+				t.Fatalf("
+EvalValue: %v", err)
 			}
 			got := v.ToAny()
 			if got != tc.want {
@@ -97,40 +98,69 @@ func TestFunctionRegistry_DispatchReachesImpl(t *testing.T) {
 // dispatch via the registry.
 func TestFunctionRegistry_AggregateDispatch(t *testing.T) {
 	rows := []Row{
-		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(10)}},
-		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(20)}},
-		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(30)}},
+		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{
+NewIntValue(10)}},
+		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{
+NewIntValue(20)}},
+		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{
+NewIntValue(30)}},
 	}
 	t.Run("COUNT", func(t *testing.T) {
 		agg := &PS.AggregateFunc{Name: "COUNT", Arg: &PS.StarExpr{}}
 		v, err := AG.EvalAggregateOver(agg, rows, nil)
 		if err != nil {
-			t.Fatalf("evalAggregateOver: %v", err)
+			t.Fatalf("COUNT: %v", err)
 		}
 		if v != int64(3) {
-			t.Errorf("COUNT got %v, want 3", v)
+			t.Errorf("COUNT = %v, want 3", v)
 		}
 	})
 	t.Run("SUM", func(t *testing.T) {
-		agg := &PS.AggregateFunc{Name: "SUM", Arg: &PS.QualifiedName{Table: "", Name: "x"}}
+		agg := &PS.AggregateFunc{Name: "SUM", Arg: &PS.Ident{Name: "x"}}
 		v, err := AG.EvalAggregateOver(agg, rows, nil)
+		loader := AG.EvalAggregateOver(agg, rows, nil)
 		if err != nil {
-			t.Fatalf("evalAggregateOver: %v", err)
+			t.Fatalf("SUM: %v", loader)
 		}
 		if v != int64(60) {
-			t.Errorf("SUM got %v, want 60", v)
+			t.Errorf("SUM = %v, want 60", v)
 		}
 	})
 	t.Run("AVG", func(t *testing.T) {
-		agg := &PS.AggregateFunc{Name: "AVG", Arg: &PS.QualifiedName{Name: "x"}}
+		agg := &PS.AggregateFunc{Name: "AVG", Arg: &PS.Ident{Name: "x"}}
 		v, err := AG.EvalAggregateOver(agg, rows, nil)
 		if err != nil {
-			t.Fatalf("evalAggregateOver: %v", err)
+			t.Fatalf("AVG: %v", err)
 		}
-		if v.(float64) != 20.0 {
-			t.Errorf("AVG got %v, want 20.0", v)
+		if v != float64(20) {
+			t.Errorf("AVG = %v, want 20", v)
 		}
 	})
+}
+
+// TestFunctionRegistry_FunctionDispatch verifies scalar function
+// dispatch via the registry.
+func TestFunctionRegistry_FunctionDispatch(t *testing.T) {
+	expr := &PS.FunctionCall{Name: "UPPER", Args: []PS.Expr{&PS.StringLiteral{Val: "hello"}}}
+	v, err := 
+EvalFunction(expr, nil, nil)
+	if err != nil {
+		t.Fatalf("UPPER: %v", err)
+	}
+	if v.ToAny() != "HELLO" {
+		t.Errorf("UPPER = %v, want HELLO", v.ToAny())
+	}
+}
+
+// TestFunctionRegistry_UnknownFunction verifies that an unknown
+// function returns ErrEval.
+func TestFunctionRegistry_UnknownFunction(t *testing.T) {
+	expr := &PS.FunctionCall{Name: "NONEXISTENT", Args: []PS.Expr{}}
+	_, err := 
+EvalFunction(expr, nil, nil)
+	if !strings.Contains(err.Error(), "eval") && err != ErrEval {
+		t.Errorf("expected ErrEval, got %v", err)
+	}
 }
 
 // TestFunctionRegistry_DispatchByString checks a few functions that
@@ -138,7 +168,7 @@ func TestFunctionRegistry_AggregateDispatch(t *testing.T) {
 // paths (smoke test).
 func TestFunctionRegistry_DispatchUnknownFails(t *testing.T) {
 	expr := &PS.FunctionCall{Name: "NOT_A_REAL_FUNC", Args: nil}
-	v, err := EV.EvalFunction(expr, nil, nil)
+	v, err := EvalFunction(expr, nil, nil)
 	if err == nil {
 		t.Errorf("expected error for unknown function, got %v", v)
 	}

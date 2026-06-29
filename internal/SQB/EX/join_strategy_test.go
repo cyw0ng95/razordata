@@ -10,6 +10,7 @@ import (
 	"errors"
 	"testing"
 
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
@@ -116,8 +117,8 @@ func TestJoinStrategy_InnerNLJ_Limit(t *testing.T) {
 	}
 }
 
-// memScan is a minimal in-memory Operator used by the strategy
-// tests. It satisfies the Operator interface (Next, Close,
+// memScan is a minimal in-memory pl.Operator used by the strategy
+// tests. It satisfies the pl.Operator interface (Next, Close,
 // WithParams).
 type memScan struct {
 	rows []Row
@@ -138,9 +139,9 @@ func (m *memScan) Next(ctx context.Context) (Row, error) {
 
 func (m *memScan) Close() error { return nil }
 
-func (m *memScan) WithParams(p []any) Operator { m.rows = nil; return m }
+func (m *memScan) WithParams(p []any) pl.Operator { m.rows = nil; return m }
 
-// emptyOp is an Operator that immediately returns ErrNoRows. It
+// emptyOp is an pl.Operator that immediately returns ErrNoRows. It
 // is used to drive strategy boundary cases.
 type emptyOp struct{}
 
@@ -151,4 +152,4 @@ func (emptyOp) Next(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 func (emptyOp) Close() error                    { return nil }
-func (emptyOp) WithParams(p []any) Operator     { return emptyOp{} }
+func (emptyOp) WithParams(p []any) pl.Operator     { return emptyOp{} }

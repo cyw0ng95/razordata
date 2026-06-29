@@ -1,7 +1,6 @@
 package EX
 
 import (
-	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"context"
 	"fmt"
@@ -11,8 +10,12 @@ import (
 )
 
 func TestPlannerPlan(t *testing.T) {
-	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+	p := 
+
+NewPlanner()
+	p.RegisterTable("t", []
+
+ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 
 	cases := []struct {
 		name string
@@ -47,8 +50,10 @@ func TestPlannerPlan(t *testing.T) {
 }
 
 func TestPlannerMemoization(t *testing.T) {
-	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p := 
+NewPlanner()
+	p.RegisterTable("t", []
+ColInfo{{Name: "a", Typ: 1}}, "a")
 
 	sql := "SELECT * FROM t"
 	plan1, err := p.ParseAndPlan(sql)
@@ -67,8 +72,10 @@ func TestPlannerMemoization(t *testing.T) {
 }
 
 func TestPlannerMemoizationDistinctAST(t *testing.T) {
-	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p := 
+NewPlanner()
+	p.RegisterTable("t", []
+ColInfo{{Name: "a", Typ: 1}}, "a")
 
 	cases := []struct {
 		name string
@@ -103,8 +110,10 @@ func TestPlannerMemoizationDistinctAST(t *testing.T) {
 }
 
 func TestPlannerMemoizationSameAST(t *testing.T) {
-	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p := 
+NewPlanner()
+	p.RegisterTable("t", []
+ColInfo{{Name: "a", Typ: 1}}, "a")
 
 	cases := []struct {
 		name string
@@ -134,7 +143,8 @@ func TestPlannerMemoizationSameAST(t *testing.T) {
 }
 
 func TestPlannerEstimateCost(t *testing.T) {
-	p := NewPlanner()
+	p := 
+NewPlanner()
 	plan := &plan{cost: 0}
 	cost := p.estimateCost(plan.root)
 	if cost != 0 {
@@ -143,8 +153,10 @@ func TestPlannerEstimateCost(t *testing.T) {
 }
 
 func TestPlannerAggregate(t *testing.T) {
-	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "x", Typ: 1}}, "x")
+	p := 
+NewPlanner()
+	p.RegisterTable("t", []
+ColInfo{{Name: "x", Typ: 1}}, "x")
 
 	cases := []struct {
 		name string
@@ -170,8 +182,10 @@ func TestPlannerAggregate(t *testing.T) {
 }
 
 func TestSelectIndex(t *testing.T) {
-	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+	p := 
+NewPlanner()
+	p.RegisterTable("t", []
+ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 	p.RegisterIndex("t", "idx_b", []string{"b"})
 
 	idx, ok := p.selectIndex("t", "b")
@@ -189,8 +203,10 @@ func TestSelectIndex(t *testing.T) {
 }
 
 func TestPlanner_ConstantFolding(t *testing.T) {
-	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+	p := 
+NewPlanner()
+	p.RegisterTable("t", []
+ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 
 	t.Run("tautology_1_eq_1_removes_filter", func(t *testing.T) {
 		plan, err := p.ParseAndPlan("SELECT * FROM t WHERE 1 = 1")
@@ -202,7 +218,8 @@ func TestPlanner_ConstantFolding(t *testing.T) {
 		// Instead, the Plan tree directly wraps the SeqScan in an AdaptiveOp.
 		op := plan.Root
 		// Unwrap AdaptiveOp (always wraps query plans).
-		if aop, ok := op.(*AD.AdaptiveOp); ok {
+		if aop, ok := op.(*
+AdaptiveOp); ok {
 			op = aop.Inner
 		}
 		if _, ok := op.(*SeqScan); !ok {
@@ -253,8 +270,10 @@ func TestPlanner_ConstantFolding(t *testing.T) {
 }
 
 func TestPlanner_CSE(t *testing.T) {
-	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}, {Name: "c", Typ: 1}}, "a")
+	p := 
+NewPlanner()
+	p.RegisterTable("t", []
+ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}, {Name: "c", Typ: 1}}, "a")
 
 	// Common subexpression elimination: identical conjuncts should be
 	// deduplicated. `WHERE (a + b) > 10 AND (a + b) < 20` has two
@@ -283,10 +302,13 @@ func TestPlanner_CSE(t *testing.T) {
 }
 
 func TestPlanner_JoinElimination(t *testing.T) {
-	p := NewPlanner()
+	p := 
+NewPlanner()
 	// Register t1 and t2 with the same columns.
-	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
-	p.RegisterTable("t2", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+	p.RegisterTable("t1", []
+ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+	p.RegisterTable("t2", []
+ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 
 	t.Run("unreferenced_join_table_eliminated", func(t *testing.T) {
 		plan, err := p.ParseAndPlan("SELECT t1.a FROM t1 JOIN t2 ON t1.a = t2.a")
@@ -320,8 +342,10 @@ func TestPlanner_JoinElimination(t *testing.T) {
 }
 
 func TestPlanner_ColumnPruning(t *testing.T) {
-	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{
+	p := 
+NewPlanner()
+	p.RegisterTable("t", []
+ColInfo{
 		{Name: "a", Typ: 1},
 		{Name: "b", Typ: 1},
 		{Name: "c", Typ: 1},
@@ -339,7 +363,8 @@ func TestPlanner_ColumnPruning(t *testing.T) {
 		}
 		// Unwrap AdaptiveOp.
 		op := plan.Root
-		if aop, ok := op.(*AD.AdaptiveOp); ok {
+		if aop, ok := op.(*
+AdaptiveOp); ok {
 			op = aop.Inner
 		}
 		// Expect: Project -> SeqScan with usedCols set
@@ -379,7 +404,8 @@ func TestPlanner_ColumnPruning(t *testing.T) {
 		}
 		// For SELECT *, usedCols should not be set (nil).
 		op := plan.Root
-		if aop, ok := op.(*AD.AdaptiveOp); ok {
+		if aop, ok := op.(*
+AdaptiveOp); ok {
 			op = aop.Inner
 		}
 		// Star expands to Project, but star causes usedCols to be nil.
@@ -405,12 +431,18 @@ func TestPlanner_ColumnPruning(t *testing.T) {
 }
 
 func TestPlanner_N3JoinOrdering_EmptyHeapFallback(t *testing.T) {
-	p := NewPlanner()
-	p.RegisterTable("t0", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t2", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t3", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t4", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p := 
+NewPlanner()
+	p.RegisterTable("t0", []
+ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t1", []
+ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t2", []
+ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t3", []
+ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t4", []
+ColInfo{{Name: "a", Typ: 1}}, "a")
 
 	plan, err := p.ParseAndPlan(`SELECT * FROM t0 CROSS JOIN t1 CROSS JOIN t2 CROSS JOIN t3 CROSS JOIN t4`)
 	if err != nil {
@@ -430,12 +462,18 @@ func TestPlanner_N3JoinOrdering_EmptyHeapFallback(t *testing.T) {
 func TestPlanner_CrossJoinPredicatePushdown(t *testing.T) {
 	// Verify plan structure: each table should have its
 	// per-table predicate pushed as a Filter.
-	p := NewPlanner()
-	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t2", []ColInfo{{Name: "b", Typ: 1}}, "b")
-	p.RegisterTable("t3", []ColInfo{{Name: "c", Typ: 1}}, "c")
-	p.RegisterTable("t4", []ColInfo{{Name: "d", Typ: 1}}, "d")
-	p.RegisterTable("t5", []ColInfo{{Name: "e", Typ: 1}}, "e")
+	p := 
+NewPlanner()
+	p.RegisterTable("t1", []
+ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t2", []
+ColInfo{{Name: "b", Typ: 1}}, "b")
+	p.RegisterTable("t3", []
+ColInfo{{Name: "c", Typ: 1}}, "c")
+	p.RegisterTable("t4", []
+ColInfo{{Name: "d", Typ: 1}}, "d")
+	p.RegisterTable("t5", []
+ColInfo{{Name: "e", Typ: 1}}, "e")
 
 	plan, err := p.ParseAndPlan(`SELECT * FROM t1, t2, t3, t4, t5 
 		WHERE a = 1 AND b = 3 AND c = 5 AND d = 7 AND e = 9`)
@@ -451,7 +489,8 @@ func TestPlanner_CrossJoinPredicatePushdown(t *testing.T) {
 	// pushed-down predicate Filter.
 	filterCount := 0
 	totalScanCount := 0
-	walkOpTreeDebug(plan.Root, func(op Operator, depth int) {
+	walkOpTreeDebug(plan.Root, func(op 
+Operator, depth int) {
 		switch op.(type) {
 		case *Filter:
 			filterCount++
@@ -468,7 +507,9 @@ func TestPlanner_CrossJoinPredicatePushdown(t *testing.T) {
 }
 
 // walkOpTreeDebug recursively walks and prints the operator tree.
-func walkOpTreeDebug(op Operator, fn func(Operator, int), depth int) {
+func walkOpTreeDebug(op 
+Operator, fn func(
+Operator, int), depth int) {
 	if op == nil {
 		return
 	}
@@ -487,7 +528,8 @@ func walkOpTreeDebug(op Operator, fn func(Operator, int), depth int) {
 	case *IndexScan:
 	case *Sort:
 		walkOpTreeDebug(v.Child(), fn, depth+1)
-	case *AD.AdaptiveOp:
+	case *
+AdaptiveOp:
 		walkOpTreeDebug(v.Child(), fn, depth+1)
 	}
 }
@@ -562,7 +604,8 @@ func TestPlanner_CrossJoinColdStart_Pushdown(t *testing.T) {
 		DT.RegisterTable(fmt.Sprintf("t%d", i), rows)
 	}
 
-	p := NewPlanner()
+	p := 
+NewPlanner()
 	// Deliberately NOT calling p.RegisterTable — cold-start.
 
 	plan, err := p.ParseAndPlan(`SELECT * FROM t1, t2, t3, t4, t5
@@ -578,7 +621,8 @@ func TestPlanner_CrossJoinColdStart_Pushdown(t *testing.T) {
 	// Walk plan: expect 5 SeqScans + 5 Filters (pushed predicates).
 	filterCount := 0
 	scanCount := 0
-	walkOpTreeDebug(plan.Root, func(op Operator, depth int) {
+	walkOpTreeDebug(plan.Root, func(op 
+Operator, depth int) {
 		switch op.(type) {
 		case *Filter:
 			filterCount++

@@ -1,11 +1,10 @@
-package EX
+package EV
 
 import (
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
-	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // TestEvalBatch_8Wide compares the 8-wide path against the
@@ -25,7 +24,7 @@ func TestEvalBatch_8Wide(t *testing.T) {
 		Left:  &PS.Ident{Name: "x"},
 		Right: &PS.NumberLiteral{Val: 50},
 	}
-	sel := EV.EvalBatch(expr, b, nil)
+	sel := EvalBatch(expr, b, nil)
 	if len(sel) != 50 {
 		t.Errorf("expected 50 rows, got %d", len(sel))
 	}

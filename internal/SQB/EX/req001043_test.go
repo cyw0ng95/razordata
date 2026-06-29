@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // REQ001043: ParallelSeqScanRow basic unit test.
@@ -41,7 +41,8 @@ func TestParallelSeqScanRow_Basic(t *testing.T) {
 
 // REQ001043: ParallelSeqScanRow value correctness.
 func TestParallelSeqScanRow_Values(t *testing.T) {
-	pool := UT.NewWorkerPool(2)
+	pool := 
+UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -112,7 +113,8 @@ func TestPlanner_ParallelScanSelection(t *testing.T) {
 
 // REQ001043: Verify the scan is actually parallel (multiple workers submit).
 func TestParallelSeqScanRow_MultiWorker(t *testing.T) {
-	pool := UT.NewWorkerPool(4)
+	pool := 
+UT.NewWorkerPool(4)
 	defer pool.Close()
 	ctx := context.Background()
 

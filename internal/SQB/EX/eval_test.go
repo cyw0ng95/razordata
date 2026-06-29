@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -97,7 +96,7 @@ func TestEval(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := EV.EvalValue(tc.expr, nil, tc.params)
+			got, err := EvalValue(tc.expr, nil, tc.params)
 			if tc.err {
 				if err == nil {
 					t.Errorf("expected error, got nil")
@@ -135,9 +134,9 @@ func TestEvalLike(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := EV.MatchLike(c.pattern, c.s, "")
+			got := MatchLike(c.pattern, c.s, "")
 			if got != c.want {
-				t.Errorf("EV.MatchLike(%q, %q) = %v, want %v", c.pattern, c.s, got, c.want)
+				t.Errorf("MatchLike(%q, %q) = %v, want %v", c.pattern, c.s, got, c.want)
 			}
 		})
 	}
@@ -162,9 +161,9 @@ func TestEvalLikeEscape(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := EV.MatchLike(c.pattern, c.s, c.escape)
+			got := MatchLike(c.pattern, c.s, c.escape)
 			if got != c.want {
-				t.Errorf("EV.MatchLike(%q, %q, %q) = %v, want %v", c.pattern, c.s, c.escape, got, c.want)
+				t.Errorf("MatchLike(%q, %q, %q) = %v, want %v", c.pattern, c.s, c.escape, got, c.want)
 			}
 		})
 	}
@@ -186,7 +185,7 @@ func TestEvalNullArithmetic(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := EV.EvalValue(c.expr, nil, nil)
+			got, err := EvalValue(c.expr, nil, nil)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -218,7 +217,7 @@ func TestEvalCast(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := EV.EvalValue(c.expr, nil, nil)
+			got, err := EvalValue(c.expr, nil, nil)
 			if c.err {
 				if err == nil {
 					t.Errorf("expected error, got nil")
@@ -582,7 +581,7 @@ func TestGlob_BinaryOp(t *testing.T) {
 		{"h?llo", "hllo", false},
 	}
 	for _, tc := range cases {
-		got, err := EV.GlobValue(NewTextValue(tc.pattern), NewTextValue(tc.s))
+		got, err := GlobValue(NewTextValue(tc.pattern), NewTextValue(tc.s))
 		if err != nil {
 			t.Fatalf("glob(%q, %q): %v", tc.pattern, tc.s, err)
 		}

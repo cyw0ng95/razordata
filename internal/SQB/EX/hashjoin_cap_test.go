@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-
-	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
 
 // TestHashJoin_HardCapPreventsOOM verifies REQ001112: when the planner
@@ -25,7 +23,8 @@ func TestHashJoin_HardCapPreventsOOM(t *testing.T) {
 		// Build a real HashJoin with a small budget that will trip
 		// the cap. The cross-join shape (no equi-join key → all rows
 		// match → totalMatches = left × right) will exceed the cap.
-		hj := OP.NewHashJoin(nil, nil, "l", "r", []string{"k"}, []string{"k"}, 16)
+		hj := 
+NewHashJoin(nil, nil, "l", "r", []string{"k"}, []string{"k"}, 16)
 		hj.WithJoinBufferSize(1) // 1 byte cap → maxMatches = 0
 		// Trigger the cap by setting up minimal state. We can't
 		// invoke buildAndProbe without a real child, so just

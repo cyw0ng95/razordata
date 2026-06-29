@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
@@ -14,14 +15,14 @@ func TestParallelUnionAll_Correctness(t *testing.T) {
 	ctx := context.Background()
 
 	// Left: [10, 20], Right: [30, 40, 50]
-	left := newArrayScan([]Row{
-		{Data: []Value{{Kind: KindInt, I64: 10}}},
-		{Data: []Value{{Kind: KindInt, I64: 20}}},
+	left := newArrayScan([]pl.Row{
+		{Data: []pl.Value{{Kind: pl.KindInt, I64: 10}}},
+		{Data: []pl.Value{{Kind: pl.KindInt, I64: 20}}},
 	})
-	right := newArrayScan([]Row{
-		{Data: []Value{{Kind: KindInt, I64: 30}}},
-		{Data: []Value{{Kind: KindInt, I64: 40}}},
-		{Data: []Value{{Kind: KindInt, I64: 50}}},
+	right := newArrayScan([]pl.Row{
+		{Data: []pl.Value{{Kind: pl.KindInt, I64: 30}}},
+		{Data: []pl.Value{{Kind: pl.KindInt, I64: 40}}},
+		{Data: []pl.Value{{Kind: pl.KindInt, I64: 50}}},
 	})
 
 	u := NewParallelUnionAll(left, right, pool)
@@ -53,7 +54,8 @@ func TestParallelUnionAll_Correctness(t *testing.T) {
 
 // REQ001052: empty sides.
 func TestParallelUnionAll_EmptySides(t *testing.T) {
-	pool := UT.NewWorkerPool(2)
+	pool := 
+UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -66,8 +68,8 @@ func TestParallelUnionAll_EmptySides(t *testing.T) {
 	}
 
 	// Left empty
-	u2 := NewParallelUnionAll(newArrayScan(nil), newArrayScan([]Row{
-		{Data: []Value{{Kind: KindInt, I64: 5}}},
+	u2 := NewParallelUnionAll(newArrayScan(nil), newArrayScan([]pl.Row{
+		{Data: []pl.Value{{Kind: pl.KindInt, I64: 5}}},
 	}), pool)
 	defer u2.Close()
 	r, err := u2.Next(ctx)
@@ -85,14 +87,14 @@ func TestParallelUnionAll_EmptySides(t *testing.T) {
 
 // arrayScan is a simple Operator that yields rows from a slice.
 type arrayScan struct {
-	rows []Row
+	rows []pl.Row
 	pos  int
 }
 
-func newArrayScan(rows []Row) *arrayScan { return &arrayScan{rows: rows} }
-func (a *arrayScan) Next(context.Context) (Row, error) {
+func newArrayScan(rows []pl.Row) *arrayScan { return &arrayScan{rows: rows} }
+func (a *arrayScan) Next(context.Context) (pl.Row, error) {
 	if a.pos >= len(a.rows) {
-		return Row{}, ErrNoRows
+		return pl.Row{}, ErrNoRows
 	}
 	r := a.rows[a.pos]
 	a.pos++

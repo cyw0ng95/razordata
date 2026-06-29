@@ -7,7 +7,6 @@ import (
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
-	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 )
 
 // TestHashAggregateThreshold verifies the threshold constant
@@ -34,15 +33,15 @@ func TestEstimateRowCount(t *testing.T) {
 func TestHashAggregate_AggregateEquivalence(t *testing.T) {
 	rows := []Row{
 		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
-			Data: []Value{NewTextValue("A"), NewIntValue(int64(10))}},
+			Data: []Value{DT.NewTextValue("A"), DT.NewIntValue(int64(10))}},
 		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
-			Data: []Value{NewTextValue("A"), NewIntValue(int64(20))}},
+			Data: []Value{DT.NewTextValue("A"), DT.NewIntValue(int64(20))}},
 		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
-			Data: []Value{NewTextValue("B"), NewIntValue(int64(5))}},
+			Data: []Value{DT.NewTextValue("B"), DT.NewIntValue(int64(5))}},
 		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
-			Data: []Value{NewTextValue("B"), NewIntValue(int64(15))}},
+			Data: []Value{DT.NewTextValue("B"), DT.NewIntValue(int64(15))}},
 		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
-			Data: []Value{NewTextValue("A"), NewIntValue(int64(30))}},
+			Data: []Value{DT.NewTextValue("A"), DT.NewIntValue(int64(30))}},
 	}
 	DT.RegisterTable("equivalence_test", rows)
 	defer UnregisterAll()
@@ -53,7 +52,8 @@ func TestHashAggregate_AggregateEquivalence(t *testing.T) {
 	// HashAggregate
 	DT.RegisterTable("hashagg_test", rows)
 	scan := NewSeqScan("hashagg_test")
-	ha := AG.NewHashAggregate(scan, groupCols, aggExprs)
+	ha := 
+NewHashAggregate(scan, groupCols, aggExprs)
 
 	haResults := make(map[string]int64)
 	for {

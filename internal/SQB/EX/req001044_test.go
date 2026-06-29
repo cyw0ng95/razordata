@@ -35,7 +35,7 @@ func TestExecutor_WorkerPoolLifecycle(t *testing.T) {
 	e.Close()
 	e.Close() // second call no panic
 
-	// 4. Submit after Close returns UT.ErrPoolClosed
+	// 4. Submit after Close returns
 	err = pool.Submit(ctx, func() error {
 		return nil
 	})

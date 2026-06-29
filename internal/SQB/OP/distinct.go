@@ -1,6 +1,3 @@
-// Package EX's distinct.go hosts the Distinct operator. DISTINCT is
-// not part of the v1 MVP scope per docs/design/ARCH.md; the operator is
-// retained in v1.1 for upcoming releases.
 package OP
 
 import (
@@ -8,8 +5,8 @@ import (
 	"strconv"
 	"sync"
 
-	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
 // Type aliases.

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -30,7 +29,8 @@ func TestHashJoin_Empty(t *testing.T) {
 	_ = left
 	_ = rows
 	// Verify HashJoin can be created without error.
-	hj := OP.NewHashJoin(nil, nil, "left", "right", []string{"id"}, []string{"id"}, 16)
+	hj := 
+NewHashJoin(nil, nil, "left", "right", []string{"id"}, []string{"id"}, 16)
 	if hj == nil {
 		t.Fatal("NewHashJoin returned nil")
 	}
@@ -54,7 +54,8 @@ func TestHashJoin_PartitionRounding(t *testing.T) {
 		{100, 128},
 	}
 	for _, c := range cases {
-		hj := OP.NewHashJoin(nil, nil, "l", "r", []string{"id"}, []string{"id"}, c.in)
+		hj := 
+NewHashJoin(nil, nil, "l", "r", []string{"id"}, []string{"id"}, c.in)
 		if hj.Partitions() != c.want {
 			t.Errorf("input=%d: got %d, want %d", c.in, hj.Partitions(), c.want)
 		}
@@ -63,17 +64,22 @@ func TestHashJoin_PartitionRounding(t *testing.T) {
 
 // TestHashJoin_KeyHashes verifies the hash function distributes.
 func TestHashJoin_KeyHashes(t *testing.T) {
-	h1 := OP.HashKey(NewIntValue(int64(42)))
-	h2 := OP.HashKey(NewIntValue(int64(42)))
+	h1 := 
+HashKey(NewIntValue(int64(42)))
+	h2 := 
+HashKey(NewIntValue(int64(42)))
 	if h1 != h2 {
 		t.Errorf("hash should be stable: %d != %d", h1, h2)
 	}
-	h3 := OP.HashKey(NewIntValue(int64(43)))
+	h3 := 
+HashKey(NewIntValue(int64(43)))
 	if h1 == h3 {
 		t.Errorf("hashes should differ: %d", h1)
 	}
-	s1 := OP.HashKey(NewTextValue("hello"))
-	s2 := OP.HashKey(NewTextValue("world"))
+	s1 := 
+HashKey(NewTextValue("hello"))
+	s2 := 
+HashKey(NewTextValue("world"))
 	if s1 == s2 {
 		t.Errorf("string hashes should differ")
 	}
@@ -95,8 +101,8 @@ func TestHashJoin_ValuesEqual(t *testing.T) {
 		{int64(1), nil, false},
 	}
 	for _, c := range cases {
-		if got := OP.ValuesEqual(valueFromAny(c.a), valueFromAny(c.b)); got != c.want {
-			t.Errorf("OP.ValuesEqual(%v, %v)=%v, want %v", c.a, c.b, got, c.want)
+		if got := ValuesEqual(valueFromAny(c.a), valueFromAny(c.b)); got != c.want {
+			t.Errorf("ValuesEqual(%v, %v)=%v, want %v", c.a, c.b, got, c.want)
 		}
 	}
 }
@@ -143,7 +149,8 @@ func TestHashJoin_MultiMatch(t *testing.T) {
 	DT.RegisterTable("r", rightRows)
 	leftScan := NewSeqScan("l")
 	rightScan := NewSeqScan("r")
-	hj := OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
+	hj := 
+NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
 
 	ctx := context.Background()
 	var got [][]any
@@ -187,7 +194,8 @@ func TestHashJoin_NoMatch(t *testing.T) {
 	DT.RegisterTable("r", rightRows)
 	leftScan := NewSeqScan("l")
 	rightScan := NewSeqScan("r")
-	hj := OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
+	hj := 
+NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
 
 	ctx := context.Background()
 	var got [][]any
@@ -224,7 +232,8 @@ func TestHashJoin_AllMatch(t *testing.T) {
 	DT.RegisterTable("r", rightRows)
 	leftScan := NewSeqScan("l")
 	rightScan := NewSeqScan("r")
-	hj := OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
+	hj := 
+NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
 
 	ctx := context.Background()
 	var got [][]any
@@ -263,7 +272,8 @@ func TestHashJoin_JoinBufferSize(t *testing.T) {
 	DT.RegisterTable("r", rightRows)
 	leftScan := NewSeqScan("l")
 	rightScan := NewSeqScan("r")
-	hj := OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
+	hj := 
+NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
 	// Set a tiny buffer — 5 rows × 200 bytes ≈ 1000 bytes → 200 bytes cap will reject.
 	hj.WithJoinBufferSize(200)
 

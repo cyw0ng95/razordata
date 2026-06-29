@@ -1,20 +1,22 @@
-package EX
+package EV
 
 import (
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
-	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"testing"
 )
 
-func TestSpecialForms_NoParens(t *testing.T) {
+func TestSpecialForms(t *testing.T) {
 	tests := []struct {
 		sql  string
 		want any
 	}{
-		// COALESCE without parens (special form)
-		{"SELECT COALESCE NULL, 42", int64(42)},
-		// NULLIF without parens (special form)
-		{"SELECT NULLIF 5, 5", nil},
+		{"SELECT COALESCE(NULL, NULL, 3, 'x')", int64(3)},
+		{"SELECT COALESCE(NULL, 42)", int64(42)},
+		{"SELECT COALESCE('first', NULL, 'third')", "first"},
+		{"SELECT NULLIF(5, 5)", nil},
+		{"SELECT NULLIF(5, 6)", int64(5)},
+		{"SELECT NULLIF('abc', 'abc')", nil},
+		{"SELECT NULLIF('abc', 'def')", "abc"},
 	}
 
 	for _, tt := range tests {
@@ -25,7 +27,7 @@ func TestSpecialForms_NoParens(t *testing.T) {
 				t.Fatalf("Parse error: %v", err)
 			}
 			sel := stmt.(*PS.Select)
-			got, err := EV.EvalValue(sel.Cols[0], nil, nil)
+			got, err := EvalValue(sel.Cols[0], nil, nil)
 			if err != nil {
 				t.Fatalf("Eval error: %v", err)
 			}
