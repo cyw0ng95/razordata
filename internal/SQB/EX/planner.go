@@ -389,7 +389,7 @@ func (p *Planner) RegisterIndex(table, index string, cols []string) {
 }
 
 func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
-	key := serializeKey(stmt)
+	key := pl.SerializeKey(stmt)
 	p.mu.Lock()
 	if cached, ok := p.memo[key]; ok {
 		p.mu.Unlock()
@@ -3089,7 +3089,7 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 
 	isUnion := comp.Op == PS.CompoundUnion
 	iterRows := allRows
-	compKey := serializeKey(comp.Right)
+	compKey := pl.SerializeKey(comp.Right)
 
 	// Safety limit: prevent infinite loops from malformed recursive CTEs.
 	const maxRecIters = 10000

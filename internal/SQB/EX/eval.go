@@ -1,6 +1,7 @@
 package EX
 
 import (
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"container/list"
 	"context"
 	"encoding/hex"
@@ -703,7 +704,7 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (any, erro
 	// Compute cache key from the serialized statement.
 	// Non-correlated subqueries (no outer column references)
 	// are cached globally to avoid O(N) re-evaluations.
-	key := serializeKey(sel)
+	key := PL.SerializeKey(sel)
 
 	// Try global cache first — only safe when outer is nil
 	// (no outer columns the subquery could reference).

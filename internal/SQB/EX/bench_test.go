@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -234,7 +235,7 @@ func BenchmarkExecutorInnerJoin(b *testing.B) {
 func BenchmarkPlannerMemoizeKey(b *testing.B) {
 	stmt := memoKeyFixture()
 	for i := 0; i < b.N; i++ {
-		_ = serializeKey(stmt)
+		_ = pl.SerializeKey(stmt)
 	}
 }
 
