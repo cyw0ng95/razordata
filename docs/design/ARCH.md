@@ -13,7 +13,7 @@
 | `ENG` | `LS`, `ID`, `TB`, `CT`, `SC`, `DP`, `NM` | `LS` — LSM tree: skiplist memtable, SST writer/reader, bloom filter, leveled/tiered/hybrid compaction, rate-limited compaction, columnar SST block layout, per-block dictionary compression, subcompaction for L4+, storage policy with tiered device placement, SST page cache. `ID` — B-tree persistent index for secondary indexes (btree.razor), cursor-based scan. `TB` — create/drop/alter table, foreign key enforcement, views, triggers. `CT` — persistent catalog storage, schema versioning, bootstrap, encode/decode. Shared by TB and LS. `SC` — column types, constraints (NOT NULL, DEFAULT, PRIMARY KEY, UNIQUE, CHECK, FOREIGN KEY), table definitions, integrity checks. `DP` — row serialization, SST block encoding, value encoding. `NM` — NUMA topology detection, worker pinning for first-touch allocation. |
 | `TXN` | `MV`, `LC`, `SN`, `VL` | `MV` — version chain (lock-free skip list), CAS insertion, per-transaction arena with per-NUMA pools, GC of obsolete versions. `LC` — hazard pointers, epoch-based reclamation, QSBR protocol, reclaim pool for deferred cleanup, goid tracking via atomic counter, epoch gosched for cooperative yielding. `SN` — read view, epoch registration, thread-local arena, version stack for multi-key reads. `VL` — commit protocol, write-write conflict detection, transaction slots, savepoint support. |
 | `SQF` | `LX`, `PS`, `RE`, `PL` | `LX` — tokenization, keyword lookup, error recovery. `PS` — recursive-descent parser, AST construction with visitor pattern, CTE/recursive CTE parsing, window function parsing, ALTER TABLE parsing, subquery parsing. `PL` — query planning, cost estimation, index selection, plan memoization, selectivity estimation, hash agg planning, N3 join ordering, NDV-based selectivity. `RE` — constant folding, predicate pushdown, subquery flattening, join reorder. |
-| `SQB` | `EX`, `OP`, `EV`, `AG`, `AD`, `WT`, `UT` | `EX` — core types: Operator/Row/Value/ExecContext, executor factory. `OP` — operators: SeqScan, IndexScan, Filter, Project, Sort, Limit, Insert, Update, Delete, Join, Compound. `EV` — evaluation: eval.go, eval_vec.go, all scalar functions. `AG` — aggregation: aggregate.go, hashagg.go, window.go. `AD` — ADQC/Planning: adqc*.go, planner.go, memo.go, selectivity. `WT` — write operators: writers.go, source.go, store.go. `UT` — utilities: coerce.go, pragma.go, integrity.go, decimal.go, datetime.go, json.go, etc. ST (Statistics) and QC (Query Cache) clusters deferred — see iter-35 plan. |
+| `SQB` | `EX`, `OP`, `EV`, `AG`, `AD`, `WT`, `UT`, `DT` | `DT` — shared data types: Row/Value/Operator/ExecContext/Store/StatsCatalog types, schema registry, view/matview/index/catalog registries, session counters (SessionCounterAccessor), AST traversal helpers (ContainsAggregate, ContainsWindowFunc), value conversion utilities (ValueFromAny, ValueToString, Compare, ToInt64, EqualValueAny, IsValueTruthy). `EX` — executor factory, Executor, subq.go (injectOuter + runSubqueryPlan), plan_node.go (PlanNode tree for EXPLAIN), shape_specialize.go, matview.go. `OP` — operators: Distinct, HashJoin, HashCrossJoin, PragmaResult, SqliteMaster (leaf operators continuing to move from EX: SeqScan, IndexScan, Filter, Project, Sort, Limit, Offset, NestedLoopJoin, Compound are scheduled for iter-36). `EV` — evaluation: eval.go, eval_vec.go, function_registry.go, all scalar functions. `AG` — aggregation: aggregate.go, aggregate_registry.go, hashagg.go, hashagg_parallel.go, window.go, aggregate_vec.go. `AD` — ADQC and cache: adqc*.go, cache_stats.go, index_usage.go; planner.go still in EX until iter-36. `WT` — write operators: writers.go, source.go, store.go, alter_table.go, fk.go (planned; directory does not yet exist). `UT` — utilities: coerce.go, integrity.go, decimal.go, datetime.go, json.go, parallel.go, batch.go, pipeline.go, simd_dispatch.go, string_column.go, txn_debug.go, pragma listener. |
 | `SYS` | `SY`, `AP`, `SE`, `TX`, `ST` | `SY` — init, config validation, graceful shutdown (6-phase), version, stats aggregation, signal handling. `AP` — public API: Engine/Session/Transaction/Stmt, Options, error types. `SE` — session lifecycle, goroutine-safety, deadline, session stats. `TX` — transaction context, commit/rollback, savepoints. `ST` — statement preparation, parameter binding, type coercion, prepared statement pool. |
 
 ## Dependency Order
@@ -43,7 +43,10 @@ type Tx interface {
     Rollback(ctx context.Context) error
 }
 
-// SQF/SQB — Operator in the executor tree (defined in SQB/EX, consumed by SQF/PL)
+// SQB/DT — Operator interface (defined in SQB/DT, consumed by SQF/PL and every SQB cluster)
+//
+// `Operator` lives in `SQB/DT` so any SQB cluster can implement it without
+// importing `SQB/EX`. `SQF/PL` imports `SQB/DT`, not `SQB/EX`.
 type Operator interface {
     Next(ctx context.Context) (Row, error)
     Close() error
@@ -68,7 +71,9 @@ if err != nil {
 - `ENG/LS`: `ErrNotFound`, `ErrClosed`, `ErrBloomMiss`, `ErrCatalogCorrupt`, etc.
 - `WAL/WR`: `ErrTruncatedRecord`, `ErrCorrupt`, etc.
 - `TXN/MV`: `ErrNotFound`, `ErrDuplicateKey`, `ErrArenaExhausted`, etc.
-- `SQB/EX`: `ErrNotImplemented`, `ErrNoRows`, `ErrEval`, etc.
+- `SQB/DT`: `ErrNotImplemented`, `ErrNoRows`, `ErrClosed`
+- `SQB/EV`: `ErrEval`, `ErrDivByZero`, `ErrTypeMismatch`, `ErrSubquery`, `ErrIgnoreRow`, `ErrTriggerAbort` (re-exported by EX for backward compatibility with SYS callers)
+- `SQB/EX`: `SessionCounterAccessor` interface and the Executor factory
 
 Each package uses a consistent prefix (`"ls: "`, `"wr: "`, `"txn: "`, `"ex: "`) for debuggability.
 
