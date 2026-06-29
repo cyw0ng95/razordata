@@ -598,6 +598,28 @@ var hashCrossJoinCases = []dualCase{
 	},
 }
 
+// inTableCases from EX/req000718_test.go: IN tableName shorthand.
+var inTableCases = []dualCase{
+	{
+		Name: "in_tablename_shorthand",
+		Setup: []string{
+			"CREATE TABLE t1 (x INTEGER PRIMARY KEY)",
+			"INSERT INTO t1 VALUES (1), (2), (3), (4), (5)",
+		},
+		Query: "SELECT x FROM t1 WHERE x IN t1 ORDER BY x",
+		Want:  [][]any{{int64(1)}, {int64(2)}, {int64(3)}, {int64(4)}, {int64(5)}},
+	},
+	{
+		Name: "in_tablename_standard",
+		Setup: []string{
+			"CREATE TABLE t1 (x INTEGER PRIMARY KEY)",
+			"INSERT INTO t1 VALUES (1), (2), (3), (4), (5)",
+		},
+		Query: "SELECT x FROM t1 WHERE x IN (SELECT * FROM t1) ORDER BY x",
+		Want:  [][]any{{int64(1)}, {int64(2)}, {int64(3)}, {int64(4)}, {int64(5)}},
+	},
+}
+
 // crudCases from EX/e2e_test.go: full SQL DML lifecycle and LIMIT/OFFSET.
 var crudCases = []dualCase{
 	{
