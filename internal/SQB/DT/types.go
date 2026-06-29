@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
+	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
@@ -98,6 +99,29 @@ type ColInfo = pl.ColInfo
 
 // TxWriter is the optional hook an Executor notifies on every key write.
 type TxWriter = pl.TxWriter
+
+// Store is the minimal storage surface the executor needs to integrate
+// with the real engine. The in-memory map (tables/schemas) is the fallback
+// when Store is nil; when Store is non-nil, operators read from the engine.
+type Store interface {
+	Insert(key, value []byte) error
+	Delete(key []byte) error
+	// Get returns the value for an exact key match, or (nil, false, nil)
+	// if the key is not present. Added in iter-22 to support secondary
+	// index seeks (the index yields a primary key, then the executor
+	// fetches the row via Get).
+	Get(key []byte) ([]byte, bool, error)
+	NewIterator(prefix []byte) ls.RangeIter
+	// ManualCompact triggers a full LSM compaction cycle. REQ000257.
+	// Returns ErrCompactionInProgress if already compacting.
+	ManualCompact() error
+}
+
+// StatsCatalog provides access to column statistics for
+// histogram-based selectivity estimation.
+type StatsCatalog interface {
+	ColumnStatsByName(tableName, colName string) *ls.ColumnStats
+}
 
 // InMemoryTxWriter is the optional hook for in-memory table rollback support.
 type InMemoryTxWriter = pl.InMemoryTxWriter

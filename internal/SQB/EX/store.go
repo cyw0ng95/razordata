@@ -10,33 +10,15 @@ import (
 	"sync"
 	"sync/atomic"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
-// Store is the minimal storage surface the executor needs to integrate
-// with the real engine. The in-memory map (tables/schemas) is the fallback
-// when Store is nil; when Store is non-nil, operators read from the engine.
-type Store interface {
-	Insert(key, value []byte) error
-	Delete(key []byte) error
-	// Get returns the value for an exact key match, or (nil, false, nil)
-	// if the key is not present. Added in iter-22 to support secondary
-	// index seeks (the index yields a primary key, then the executor
-	// fetches the row via Get).
-	Get(key []byte) ([]byte, bool, error)
-	NewIterator(prefix []byte) ls.RangeIter
-	// ManualCompact triggers a full LSM compaction cycle. REQ000257.
-	// Returns ErrCompactionInProgress if already compacting.
-	ManualCompact() error
-}
-
-// StatsCatalog provides access to column statistics for
-// histogram-based selectivity estimation.
-type StatsCatalog interface {
-	ColumnStatsByName(tableName, colName string) *ls.ColumnStats
-}
+// Store and StatsCatalog are now in DT.
+type Store = DT.Store
+type StatsCatalog = DT.StatsCatalog
 
 // ErrNoEngine is returned when a query requires a wired store but the
 // executor was constructed without one.
