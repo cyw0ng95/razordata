@@ -156,6 +156,7 @@ func (r *Runner) Run(ctx context.Context, records []Record) Stats {
 		// to see the first failing record immediately instead of waiting
 		// for the full corpus to finish.
 		if r.haltOnFailure {
+			r.stats.FailFastTriggered = true
 			r.stats.Skipped += len(records) - i - 1
 			if r.profileOn {
 				r.recordTimers = append(r.recordTimers, slowTimer{line: rec.Line, kind: rec.Kind, label: rec.Label, sql: rec.SQL, dur: time.Since(recStart)})

@@ -215,6 +215,8 @@ type Stats struct {
 	ParseErrors int
 	Duration    Duration
 	Slowest     []SlowRecord // populated when RAZOR_SLT_PROFILE=1
+	// FailFastTriggered is set when FailFast mode stopped the run early.
+	FailFastTriggered bool
 }
 
 // SlowRecord captures the wall-clock time of a single SLT record

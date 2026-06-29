@@ -80,9 +80,10 @@ func TestSLT_PerFile(t *testing.T) {
 			runner := NewRunner(driver, driver.classifier, RazorEngineName)
 			stats := runner.Run(ctx, recs)
 
-			t.Logf("slt[%s]: pass=%d fail=%d skip=%d parse-err=%d total=%d dur=%s",
+			t.Logf("slt[%s]: pass=%d fail=%d skip=%d parse-err=%d total=%d dur=%s%s",
 				name, stats.Passed, stats.Failed, stats.Skipped,
-				stats.ParseErrors, stats.Total, time.Duration(stats.Duration))
+				stats.ParseErrors, stats.Total, time.Duration(stats.Duration),
+				ffTag(stats))
 
 			if len(stats.Slowest) > 0 {
 				t.Logf("slt[%s] slowest %d records:", name, len(stats.Slowest))
@@ -144,4 +145,12 @@ func perFileTimeout(t *testing.T, path string) time.Duration {
 	default:
 		return 240 * time.Second
 	}
+}
+
+// ffTag returns " [FAILFAST]" if the runner stopped early due to FailFast.
+func ffTag(s Stats) string {
+	if s.FailFastTriggered {
+		return " [FAILFAST]"
+	}
+	return ""
 }
