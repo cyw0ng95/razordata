@@ -79,10 +79,10 @@ func injectOuter(op Operator, outer *Row) Operator {
 		v.left = injectOuter(v.left, outer)
 		v.right = injectOuter(v.right, outer)
 		return v
-	case *HashJoin:
-		v.left = injectOuter(v.left, outer)
-		v.right = injectOuter(v.right, outer)
-		return v
+	case *OP.HashJoin:
+		// HashJoin children are read-only via accessors. Return as-is;
+		// correlated subqueries over HashJoin fall back to literal.
+		return op
 	}
 	return op
 }

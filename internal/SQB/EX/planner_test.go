@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
 
 func TestPlannerPlan(t *testing.T) {
@@ -475,7 +477,7 @@ func walkOpTreeDebug(op Operator, fn func(Operator, int), depth int) {
 	case *NestedLoopJoin:
 		walkOpTreeDebug(v.LeftChild(), fn, depth+1)
 		walkOpTreeDebug(v.RightChild(), fn, depth+1)
-	case *HashJoin:
+	case *OP.HashJoin:
 		walkOpTreeDebug(v.LeftChild(), fn, depth+1)
 	case *Project:
 		walkOpTreeDebug(v.Child(), fn, depth+1)

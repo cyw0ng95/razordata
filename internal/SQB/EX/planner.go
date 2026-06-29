@@ -523,9 +523,9 @@ func (p *Planner) estimateCost(op Operator) float64 {
 		leftCost := p.estimateCost(v.left)
 		rightCost := p.estimateCost(v.right)
 		return leftCost * rightCost
-	case *HashJoin:
-		leftCost := p.estimateCost(v.left)
-		rightCost := p.estimateCost(v.right)
+	case *OP.HashJoin:
+		leftCost := p.estimateCost(v.LeftChild())
+		rightCost := p.estimateCost(v.RightChild())
 		if leftCost < 1 {
 			leftCost = 1
 		}
@@ -1187,7 +1187,7 @@ func colNameFromExpr(e PS.Expr) string {
 		return v.Name
 	case *PS.QualifiedName:
 		// Return fully qualified name (table.col) so the
-		// HashJoin lookupKeys can find the correct column
+		// OP.HashJoin lookupKeys can find the correct column
 		// when multiple tables share the same column name.
 		// REQ000794: multi-table equi-join fix.
 		return v.Table + "." + v.Name
@@ -1516,8 +1516,8 @@ func colsOf(op Operator) []string {
 		return nil
 	case *NestedLoopJoin:
 		return o.sharedCols
-	case *HashJoin:
-		return o.sharedCols
+	case *OP.HashJoin:
+		return o.SharedCols()
 	case *OP.HashCrossJoin:
 		return o.SharedCols()
 	case *Filter:
@@ -1545,8 +1545,8 @@ func typesOf(op Operator) []LX.TokenType {
 		return nil
 	case *NestedLoopJoin:
 		return o.sharedTypes
-	case *HashJoin:
-		return o.sharedTypes
+	case *OP.HashJoin:
+		return o.SharedTypes()
 	case *OP.HashCrossJoin:
 		return o.SharedTypes()
 	case *Filter:
@@ -1669,7 +1669,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	filteredScan := current
 
 	// REQ000XXX: For multi-table implicit JOINs, extract equi-join
-	// conditions from WHERE and use HashJoin instead of NestedLoopJoin.
+	// conditions from WHERE and use OP.HashJoin instead of NestedLoopJoin.
 	var crossTableConjuncts []PS.Expr
 	if whereExpr != nil && len(s.Joins) > 0 {
 		crossTableConjuncts = RE.SplitAnd(whereExpr)
@@ -1712,7 +1712,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		// REQ000XXX: if predicate pushdown already applied some
 		// conjuncts to scans, only apply the remaining cross-table
 		// predicates here. Skip predicates already extracted by
-		// HashJoin (REQ000794) — they're already enforced and
+		// OP.HashJoin (REQ000794) — they're already enforced and
 		// re-applying them as Filters gives wrong results because
 		// column prefixes change through the operator chain.
 		if len(crossTablePredicates) > 0 {
@@ -2287,7 +2287,7 @@ func exprHash(e PS.Expr) string {
 		// same value, causing eliminateCommonSubexpressions to
 		// incorrectly drop one. That destroys cross-join predicate
 		// pushdown and turns 5-table SELECTs into 10^10-row
-		// Cartesian products that OOM the HashJoin dataBuf.
+		// Cartesian products that OOM the OP.HashJoin dataBuf.
 		h := "in:" + exprHash(v.Expr) + ":["
 		for _, it := range v.List {
 			h += exprHash(it) + ","
@@ -4829,14 +4829,14 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 							}
 						}
 					}
-					joinOp = NewHashJoin(current, rightScan, leftTbl, rightTbl, lk, rk, 0)
+					joinOp = OP.NewHashJoin(current, rightScan, leftTbl, rightTbl, lk, rk, 0)
 					if p.joinBufferSize > 0 {
-						if hj, ok := joinOp.(*HashJoin); ok {
+						if hj, ok := joinOp.(*OP.HashJoin); ok {
 							hj.WithJoinBufferSize(p.joinBufferSize)
 						}
 					}
 					if projectedCols != nil {
-						if hj, ok := joinOp.(*HashJoin); ok {
+						if hj, ok := joinOp.(*OP.HashJoin); ok {
 							hj.WithProjection(projectedCols)
 						}
 					}
@@ -4918,14 +4918,14 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 				_ = remaining
 			}
 			if len(lk) > 0 {
-				joinOp = NewHashJoin(current, gr.op, leftTbl, gr.tbl, lk, rk, 0)
+				joinOp = OP.NewHashJoin(current, gr.op, leftTbl, gr.tbl, lk, rk, 0)
 				if p.joinBufferSize > 0 {
-					if hj, ok := joinOp.(*HashJoin); ok {
+					if hj, ok := joinOp.(*OP.HashJoin); ok {
 						hj.WithJoinBufferSize(p.joinBufferSize)
 					}
 				}
 				if projectedCols != nil {
-					if hj, ok := joinOp.(*HashJoin); ok {
+					if hj, ok := joinOp.(*OP.HashJoin); ok {
 						hj.WithProjection(projectedCols)
 					}
 				}

@@ -372,8 +372,8 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		node.Detail = fmt.Sprintf("DROP MATERIALIZED VIEW %s", v.Name)
 		node.Cost = 1.0
 
-	case *HashJoin:
-		node.Detail = fmt.Sprintf("HASH JOIN %s", v.rightTbl)
+	case *OP.HashJoin:
+		node.Detail = fmt.Sprintf("HASH JOIN %s", v.RightTbl())
 		node.Cost = 10.0
 
 	case *WindowOperator:
@@ -422,7 +422,7 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		if v.iter != nil {
 			node.Add(buildPlanNodeTree(v.iter, planner))
 		}
-	case *HashJoin:
+	case *OP.HashJoin:
 		if v.LeftChild() != nil {
 			node.Add(buildPlanNodeTree(v.LeftChild(), planner))
 		}
@@ -477,8 +477,8 @@ func operatorType(op Operator) string {
 		return "HashAggregate"
 	case *NestedLoopJoin:
 		return "Join"
-	case *HashJoin:
-		return "HashJoin"
+	case *OP.HashJoin:
+		return "OP.HashJoin"
 	case *WindowOperator:
 		return "Window"
 	case *CompoundOp:
@@ -771,7 +771,7 @@ func explainQueryPlanDetail(n *PlanNode) string {
 		return "SEARCH " + n.Table + " USING INDEX " + n.Index
 	case "Join":
 		return "JOIN " + n.Table
-	case "HashJoin":
+	case "OP.HashJoin":
 		return "HASH JOIN " + n.Table
 	case "Filter":
 		return "FILTER"

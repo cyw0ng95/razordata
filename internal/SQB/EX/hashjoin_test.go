@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -28,12 +29,12 @@ func TestHashJoin_Empty(t *testing.T) {
 	_ = left
 	_ = rows
 	// Verify HashJoin can be created without error.
-	hj := NewHashJoin(nil, nil, "left", "right", []string{"id"}, []string{"id"}, 16)
+	hj := OP.NewHashJoin(nil, nil, "left", "right", []string{"id"}, []string{"id"}, 16)
 	if hj == nil {
 		t.Fatal("NewHashJoin returned nil")
 	}
-	if hj.partitions != 16 {
-		t.Errorf("expected 16 partitions, got %d", hj.partitions)
+	if hj.Partitions() != 16 {
+		t.Errorf("expected 16 partitions, got %d", hj.Partitions())
 	}
 	hj.Close()
 }
@@ -52,26 +53,26 @@ func TestHashJoin_PartitionRounding(t *testing.T) {
 		{100, 128},
 	}
 	for _, c := range cases {
-		hj := NewHashJoin(nil, nil, "l", "r", []string{"id"}, []string{"id"}, c.in)
-		if hj.partitions != c.want {
-			t.Errorf("input=%d: got %d, want %d", c.in, hj.partitions, c.want)
+		hj := OP.NewHashJoin(nil, nil, "l", "r", []string{"id"}, []string{"id"}, c.in)
+		if hj.Partitions() != c.want {
+			t.Errorf("input=%d: got %d, want %d", c.in, hj.Partitions(), c.want)
 		}
 	}
 }
 
 // TestHashJoin_KeyHashes verifies the hash function distributes.
 func TestHashJoin_KeyHashes(t *testing.T) {
-	h1 := hashKey(NewIntValue(int64(42)))
-	h2 := hashKey(NewIntValue(int64(42)))
+	h1 := OP.HashKey(NewIntValue(int64(42)))
+	h2 := OP.HashKey(NewIntValue(int64(42)))
 	if h1 != h2 {
 		t.Errorf("hash should be stable: %d != %d", h1, h2)
 	}
-	h3 := hashKey(NewIntValue(int64(43)))
+	h3 := OP.HashKey(NewIntValue(int64(43)))
 	if h1 == h3 {
 		t.Errorf("hashes should differ: %d", h1)
 	}
-	s1 := hashKey(NewTextValue("hello"))
-	s2 := hashKey(NewTextValue("world"))
+	s1 := OP.HashKey(NewTextValue("hello"))
+	s2 := OP.HashKey(NewTextValue("world"))
 	if s1 == s2 {
 		t.Errorf("string hashes should differ")
 	}
@@ -93,8 +94,8 @@ func TestHashJoin_ValuesEqual(t *testing.T) {
 		{int64(1), nil, false},
 	}
 	for _, c := range cases {
-		if got := valuesEqual(valueFromAny(c.a), valueFromAny(c.b)); got != c.want {
-			t.Errorf("valuesEqual(%v, %v)=%v, want %v", c.a, c.b, got, c.want)
+		if got := OP.ValuesEqual(valueFromAny(c.a), valueFromAny(c.b)); got != c.want {
+			t.Errorf("OP.ValuesEqual(%v, %v)=%v, want %v", c.a, c.b, got, c.want)
 		}
 	}
 }
@@ -141,7 +142,7 @@ func TestHashJoin_MultiMatch(t *testing.T) {
 	RegisterTable("r", rightRows)
 	leftScan := NewSeqScan("l")
 	rightScan := NewSeqScan("r")
-	hj := NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
+	hj := OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
 
 	ctx := context.Background()
 	var got [][]any
@@ -185,7 +186,7 @@ func TestHashJoin_NoMatch(t *testing.T) {
 	RegisterTable("r", rightRows)
 	leftScan := NewSeqScan("l")
 	rightScan := NewSeqScan("r")
-	hj := NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
+	hj := OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
 
 	ctx := context.Background()
 	var got [][]any
@@ -222,7 +223,7 @@ func TestHashJoin_AllMatch(t *testing.T) {
 	RegisterTable("r", rightRows)
 	leftScan := NewSeqScan("l")
 	rightScan := NewSeqScan("r")
-	hj := NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
+	hj := OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
 
 	ctx := context.Background()
 	var got [][]any
@@ -261,9 +262,9 @@ func TestHashJoin_JoinBufferSize(t *testing.T) {
 	RegisterTable("r", rightRows)
 	leftScan := NewSeqScan("l")
 	rightScan := NewSeqScan("r")
-	hj := NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
+	hj := OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
 	// Set a tiny buffer — 5 rows × 200 bytes ≈ 1000 bytes → 200 bytes cap will reject.
-	hj.joinBufferSize = 200
+	hj.WithJoinBufferSize(200)
 
 	ctx := context.Background()
 	_, err := hj.Next(ctx)

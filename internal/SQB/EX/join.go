@@ -1021,11 +1021,11 @@ func hasAnyPrefix(cols []string) bool {
 }
 
 // isJoinOp returns true when the operator is a NestedLoopJoin or
-// HashJoin (i.e., it represents a join operator in the plan tree).
+// OP.HashJoin (i.e., it represents a join operator in the plan tree).
 // REQ000843: used by tryHashCrossJoin to skip bushy-group joins.
 func isJoinOp(op Operator) bool {
 	switch op.(type) {
-	case *NestedLoopJoin, *HashJoin, *OP.HashCrossJoin:
+	case *NestedLoopJoin, *OP.HashJoin, *OP.HashCrossJoin:
 		return true
 	}
 	return false

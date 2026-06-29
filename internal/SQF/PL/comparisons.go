@@ -1,5 +1,11 @@
 package PL
 
+import (
+	"fmt"
+
+	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
+)
+
 // cmpFloat compares two float64 values. Returns -1, 0, or 1.
 func cmpFloat(a, b float64) int {
 	if a < b {
@@ -128,6 +134,33 @@ func cmpBool(a, b bool) int {
 		return 1
 	}
 	return -1
+}
+
+// ValueFromAny converts a Go any to a Value.
+// REQ000776: bridges Go primitive types into the SQL Value type.
+func ValueFromAny(a any) Value {
+	if a == nil {
+		return AP.NullValue()
+	}
+	if v, ok := a.(Value); ok {
+		return v
+	}
+	switch x := a.(type) {
+	case int64:
+		return AP.NewIntValue(x)
+	case float64:
+		return AP.NewFloatValue(x)
+	case string:
+		return AP.NewTextValue(x)
+	case bool:
+		return AP.NewBoolValue(x)
+	case int:
+		return AP.NewIntValue(int64(x))
+	case []byte:
+		return AP.NewBlobValue(x)
+	default:
+		return AP.NewTextValue(fmt.Sprint(x))
+	}
 }
 
 // EqualValue compares two any-typed values for equality (REQ000754).
