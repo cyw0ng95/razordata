@@ -70,6 +70,86 @@ func openSSTWithPath(data []byte, path string) (*sstReader, error) {
 	return r, nil
 }
 
+// openSSTLazy opens an SST file lazily — only the footer, index block, and
+// bloom filter are read upfront. Data blocks are read on demand via readRaw.
+// This avoids loading entire SST files into memory during compaction.
+func openSSTLazy(path string) (*sstReader, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	fileSize := stat.Size()
+	if fileSize < 32 {
+		return nil, ErrInvalidSSTFormat
+	}
+
+	// Read footer (last 28 bytes)
+	footer := make([]byte, 28)
+	if _, err := f.ReadAt(footer, fileSize-28); err != nil {
+		return nil, err
+	}
+
+	indexOffset := binary.LittleEndian.Uint64(footer)
+	indexSize := binary.LittleEndian.Uint32(footer[8:])
+	bloomOffset := binary.LittleEndian.Uint64(footer[12:])
+	bloomSize := binary.LittleEndian.Uint32(footer[20:])
+	magic := binary.LittleEndian.Uint32(footer[24:])
+
+	if magic != sstMagic {
+		return nil, ErrInvalidSSTFormat
+	}
+
+	r := &sstReader{filePath: path}
+
+	// Read index block
+	if indexOffset > 0 {
+		if indexOffset >= uint64(fileSize) || indexOffset+uint64(indexSize) > uint64(fileSize) {
+			return nil, ErrInvalidSSTFormat
+		}
+		indexData := make([]byte, indexSize)
+		if _, err := f.ReadAt(indexData, int64(indexOffset)); err != nil {
+			return nil, err
+		}
+		r.indexBlock = parseIndexBlock(indexData)
+	}
+
+	// Read bloom filter
+	if bloomOffset > 0 {
+		if bloomOffset >= uint64(fileSize) || bloomOffset+uint64(bloomSize) > uint64(fileSize) {
+			return nil, ErrInvalidSSTFormat
+		}
+		if indexOffset > 0 && indexOffset+uint64(indexSize) > bloomOffset {
+			return nil, ErrInvalidSSTFormat
+		}
+		bloomData := make([]byte, bloomSize)
+		if _, err := f.ReadAt(bloomData, int64(bloomOffset)); err != nil {
+			return nil, err
+		}
+		r.bloom = bloomData
+
+		// Read prefix bloom
+		prefixBloomStart := bloomOffset + uint64(bloomSize)
+		if prefixBloomStart < uint64(fileSize) {
+			remaining := uint64(fileSize) - prefixBloomStart - 28
+			if remaining > 0 && remaining < uint64(fileSize) && prefixBloomStart+remaining <= uint64(fileSize) {
+				prefixBloomData := make([]byte, remaining)
+				if _, err := f.ReadAt(prefixBloomData, int64(prefixBloomStart)); err != nil {
+					return nil, err
+				}
+				r.prefixBloom = prefixBloomData
+			}
+		}
+	}
+
+	return r, nil
+}
+
 func parseIndexBlock(data []byte) []indexEntry {
 	var entries []indexEntry
 	offset := 0

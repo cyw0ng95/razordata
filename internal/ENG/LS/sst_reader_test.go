@@ -1,6 +1,7 @@
 package ls
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -380,5 +381,131 @@ func TestSSTReader_Find_NotFoundByBloom(t *testing.T) {
 	}
 	if !foundBloomFalse {
 		t.Log("no candidate key was rejected by bloom filter (all false positives)")
+	}
+}
+
+func TestSSTReader_LazyOpen(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.sst")
+
+	// Write SST to disk
+	w := newSSTWriter()
+	w.Add([]byte("a"), []byte("1"))
+	w.Add([]byte("b"), []byte("2"))
+	w.Add([]byte("c"), []byte("3"))
+
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish failed: %v", err)
+	}
+	if err := os.WriteFile(path, sstData, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Open lazily
+	reader, err := openSSTLazy(path)
+	if err != nil {
+		t.Fatalf("openSSTLazy failed: %v", err)
+	}
+
+	// Verify data is NOT loaded into memory
+	if len(reader.data) != 0 {
+		t.Errorf("lazy reader.data should be empty, got %d bytes", len(reader.data))
+	}
+
+	// Verify filePath is set
+	if reader.filePath != path {
+		t.Errorf("filePath = %q, want %q", reader.filePath, path)
+	}
+
+	// Verify Find works (reads blocks lazily)
+	for i, key := range []string{"a", "b", "c"} {
+		v, found := reader.Find([]byte(key))
+		if !found {
+			t.Errorf("Find(%q) = false, want true", key)
+		}
+		if string(v) != string('1'+byte(i)) {
+			t.Errorf("Find(%q) = %q, want %q", key, v, string('1'+byte(i)))
+		}
+	}
+
+	// Verify Iterator works
+	it := reader.Iterator()
+	var keys []string
+	for it.Next() {
+		keys = append(keys, string(it.Key()))
+	}
+	if len(keys) != 3 {
+		t.Errorf("Iterator returned %d keys, want 3", len(keys))
+	}
+	for i, k := range keys {
+		if k != string('a'+byte(i)) {
+			// Use byte arithmetic for 'a', 'b', 'c'
+			expected := string('a' + byte(i))
+			loader := reader.readBlock(reader.indexBlock[0].blockOffset, reader.indexBlock[0].blockSize)
+			t.Logf("blockData len: %d", len(loader))
+			t.Errorf("Iterator key[%d] = %q, want %q", i, k, expected)
+		}
+	}
+}
+
+func TestSSTReader_LazyOpen_MultiBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.sst")
+
+	// Write SST with many keys to force multiple blocks
+	w := newSSTWriter()
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("key%03d", i)
+		val := fmt.Sprintf("value%03d", i)
+		w.Add([]byte(key), []byte(val))
+	}
+
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish failed: %v", err)
+	}
+	if err := os.WriteFile(path, sstData, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Open lazily
+	reader, err := openSSTLazy(path)
+	if err != nil {
+		t.Fatalf("openSSTLazy failed: %v", err)
+	}
+
+	// Verify data is NOT loaded into memory
+	if len(reader.data) != 0 {
+		t.Errorf("lazy reader.data should be empty, got %d bytes", len(reader.data))
+	}
+
+	// Verify all keys can be found
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("key%03d", i)
+		val := fmt.Sprintf("value%03d", i)
+		v, found := reader.Find([]byte(key))
+		if !found {
+			t.Errorf("Find(%q) = false, want true", key)
+		}
+		if string(v) != val {
+			t.Errorf("Find(%q) = %q, want %q", key, v, val)
+		}
+	}
+
+	// Verify Iterator returns all keys
+	it := reader.Iterator()
+	var keys []string
+	for it.Next() {
+		keys = append(keys, string(it.Key()))
+	}
+	if len(keys) != 100 {
+		t.Errorf("Iterator returned %d keys, want 100", len(keys))
+	}
+	for i, k := range keys {
+		expected := fmt.Sprintf("key%03d", i)
+		if k != expected {
+			t.Errorf("Iterator key[%d] = %q, want %q", i, k, expected)
+		}
 	}
 }

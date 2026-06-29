@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -78,12 +79,7 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	iters := make([]*sstIterator, 0, len(cj.inputs)+len(cj.overlap))
 	for _, input := range cj.inputs {
 		sstPath := filepath.Join(dir, fileName(&input))
-		data, err := os.ReadFile(sstPath)
-		if err != nil {
-			closeIterators(iters)
-			return err
-		}
-		reader, err := openSST(data)
+		reader, err := openSSTLazy(sstPath)
 		if err != nil {
 			closeIterators(iters)
 			return err
@@ -93,12 +89,7 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 
 	for _, ov := range cj.overlap {
 		sstPath := filepath.Join(dir, fileName(&ov))
-		data, err := os.ReadFile(sstPath)
-		if err != nil {
-			closeIterators(iters)
-			return err
-		}
-		reader, err := openSST(data)
+		reader, err := openSSTLazy(sstPath)
 		if err != nil {
 			closeIterators(iters)
 			return err
@@ -219,11 +210,20 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 }
 
 func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
+	sf, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, 0644)
+	defer sf.Close()
+
+	df, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer df.Close()
+
+	_, err = io.Copy(df, sf)
+	return err
 }
 
 func fileName(meta *SSTFileMeta) string {
