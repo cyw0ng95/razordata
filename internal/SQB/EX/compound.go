@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -288,7 +289,7 @@ func (c *CompoundOp) nextStreamingSetOp(ctx context.Context) (Row, error) {
 		_ = c.right.Close()
 		c.rightKeys = make(map[string]bool, len(rightRows))
 		for _, r := range rightRows {
-			c.rightKeys[distinctKey(r)] = true
+			c.rightKeys[OP.DistinctKey(r)] = true
 		}
 		c.emittedKeys = make(map[string]bool)
 		c.rightDrained = true
@@ -305,7 +306,7 @@ func (c *CompoundOp) nextStreamingSetOp(ctx context.Context) (Row, error) {
 			}
 			return Row{}, err
 		}
-		k := distinctKey(r)
+		k := OP.DistinctKey(r)
 		inRight := c.rightKeys[k]
 		if c.op == PS.CompoundExcept {
 			if inRight {
@@ -381,7 +382,7 @@ func dedupRows(in []Row) []Row {
 	seen := make(map[string]bool, len(in))
 	out := make([]Row, 0, len(in))
 	for _, r := range in {
-		k := distinctKey(r)
+		k := OP.DistinctKey(r)
 		if !seen[k] {
 			seen[k] = true
 			out = append(out, r)
@@ -396,12 +397,12 @@ func intersectRows(left, right []Row) []Row {
 	}
 	rightKeys := make(map[string]bool, len(right))
 	for _, r := range right {
-		rightKeys[distinctKey(r)] = true
+		rightKeys[OP.DistinctKey(r)] = true
 	}
 	seen := make(map[string]bool)
 	var out []Row
 	for _, r := range left {
-		k := distinctKey(r)
+		k := OP.DistinctKey(r)
 		if rightKeys[k] && !seen[k] {
 			seen[k] = true
 			out = append(out, r)
@@ -416,12 +417,12 @@ func exceptRows(left, right []Row) []Row {
 	}
 	rightKeys := make(map[string]bool, len(right))
 	for _, r := range right {
-		rightKeys[distinctKey(r)] = true
+		rightKeys[OP.DistinctKey(r)] = true
 	}
 	seen := make(map[string]bool)
 	var out []Row
 	for _, r := range left {
-		k := distinctKey(r)
+		k := OP.DistinctKey(r)
 		if rightKeys[k] || seen[k] {
 			continue
 		}

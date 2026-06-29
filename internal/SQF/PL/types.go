@@ -6,6 +6,7 @@ package PL
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
@@ -31,6 +32,11 @@ const (
 	KindBlob  = AP.KindBlob
 	KindBool  = AP.KindBool
 )
+
+// ErrNoRows is returned by Operator.Next() when no more rows exist.
+// Defined here as a shared sentinel so that all SQB clusters use
+// the same error value.
+var ErrNoRows = errors.New("pl: no rows")
 
 // Operator is the core execution interface. Every operator implements
 // Next() to produce the next row and Close() to release resources.

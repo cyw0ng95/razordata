@@ -96,7 +96,7 @@ func getSessionCounterAccessor() SessionCounterAccessor {
 }
 
 var ErrNotImplemented = errors.New("ex: not implemented")
-var ErrNoRows = errors.New("ex: no rows")
+var ErrNoRows = pl.ErrNoRows
 var ErrClosed = errors.New("ex: operator closed")
 
 // Value is a tagged-union that stores SQL values inline without boxing.

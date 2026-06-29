@@ -1,13 +1,34 @@
 // Package EX's distinct.go hosts the Distinct operator. DISTINCT is
 // not part of the v1 MVP scope per docs/design/ARCH.md; the operator is
 // retained in v1.1 for upcoming releases.
-package EX
+package OP
 
 import (
 	"context"
 	"strconv"
 	"sync"
+
+	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
+
+// Type aliases.
+type Row = pl.Row
+type Value = pl.Value
+type ValueKind = pl.ValueKind
+
+// Value kind constants.
+const (
+	KindNull  = AP.KindNull
+	KindInt   = AP.KindInt
+	KindFloat = AP.KindFloat
+	KindText  = AP.KindText
+	KindBlob  = AP.KindBlob
+	KindBool  = AP.KindBool
+)
+
+// ErrNoRows is returned by Next() when no more rows exist.
+var ErrNoRows = pl.ErrNoRows
 
 // REQ001017: shared buffer pool for distinctKey to reduce allocation pressure
 // in UNION/EXCEPT/INTERSECT and GROUP BY operations.
@@ -19,17 +40,17 @@ var distinctKeyBufPool = sync.Pool{
 }
 
 type Distinct struct {
-	child Operator
+	child pl.Operator
 	seen  map[string]bool
-	buf   []Row
+	buf   []pl.Row
 	pos   int
 }
 
-func NewDistinct(child Operator) *Distinct {
+func NewDistinct(child pl.Operator) *Distinct {
 	return &Distinct{child: child, seen: make(map[string]bool)}
 }
 
-func (d *Distinct) Next(ctx context.Context) (Row, error) {
+func (d *Distinct) Next(ctx context.Context) (pl.Row, error) {
 	if d.buf == nil {
 		for {
 			row, err := d.child.Next(ctx)
@@ -37,9 +58,9 @@ func (d *Distinct) Next(ctx context.Context) (Row, error) {
 				if err == ErrNoRows {
 					break
 				}
-				return Row{}, err
+				return pl.Row{}, err
 			}
-			key := distinctKey(row)
+			key := DistinctKey(row)
 			if !d.seen[key] {
 				d.seen[key] = true
 				d.buf = append(d.buf, row)
@@ -47,7 +68,7 @@ func (d *Distinct) Next(ctx context.Context) (Row, error) {
 		}
 	}
 	if d.pos >= len(d.buf) {
-		return Row{}, ErrNoRows
+		return pl.Row{}, ErrNoRows
 	}
 	r := d.buf[d.pos]
 	d.pos++
@@ -56,12 +77,14 @@ func (d *Distinct) Next(ctx context.Context) (Row, error) {
 
 func (d *Distinct) Close() error {
 	d.buf = nil
-	d.pos = 0
-	d.seen = make(map[string]bool)
+	d.seen = nil
 	return d.child.Close()
 }
 
-func distinctKey(row Row) string {
+// Child returns the wrapped child operator.
+func (d *Distinct) Child() pl.Operator { return d.child }
+
+func DistinctKey(row pl.Row) string {
 	if len(row.Data) == 0 {
 		return ""
 	}

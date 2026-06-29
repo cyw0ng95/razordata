@@ -7,6 +7,7 @@ package EX
 import (
 	"context"
 
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
@@ -68,8 +69,8 @@ func injectOuter(op Operator, outer *Row) Operator {
 	case *Limit:
 		v.child = injectOuter(v.child, outer)
 		return v
-	case *Distinct:
-		v.child = injectOuter(v.child, outer)
+	case *OP.Distinct:
+		injectOuter(v.Child(), outer)
 		return v
 	case *Aggregate:
 		v.child = injectOuter(v.child, outer)

@@ -2,6 +2,7 @@ package EX
 
 import (
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"fmt"
 	"math"
 	"strings"
@@ -252,14 +253,14 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		node.Detail = "OFFSET"
 		node.Cost = estimateOffsetCost(v)
 
-	case *Distinct:
+	case *OP.Distinct:
 		node.Detail = "DISTINCT"
 		// REQ000787: get table stats from child operator's table.
 		var ts *TableStats
-		if planner != nil && v.child != nil {
-			if seq, ok := v.child.(*SeqScan); ok {
+		if planner != nil && v.Child() != nil {
+			if seq, ok := v.Child().(*SeqScan); ok {
 				ts = planner.getTableStats(seq.table)
-			} else if idx, ok := v.child.(*IndexScan); ok {
+			} else if idx, ok := v.Child().(*IndexScan); ok {
 				ts = planner.getTableStats(idx.table)
 			}
 		}
@@ -468,8 +469,8 @@ func operatorType(op Operator) string {
 		return "Limit"
 	case *Offset:
 		return "Offset"
-	case *Distinct:
-		return "Distinct"
+	case *OP.Distinct:
+		return "OP.Distinct"
 	case *Aggregate:
 		return "Aggregate"
 	case *HashAggregate:
@@ -778,7 +779,7 @@ func explainQueryPlanDetail(n *PlanNode) string {
 		return "PROJECT"
 	case "Sort":
 		return "SORT"
-	case "Distinct":
+	case "OP.Distinct":
 		return "DISTINCT"
 	case "Aggregate":
 		return "AGGREGATE"
@@ -860,8 +861,8 @@ func estimateOffsetCost(o *Offset) float64 {
 
 // estimateDistinctCost estimates the cost of a distinct operator.
 // REQ000787: uses table statistics to estimate deduplication cost.
-func estimateDistinctCost(d *Distinct, ts *TableStats) float64 {
-	if d.child == nil {
+func estimateDistinctCost(d *OP.Distinct, ts *TableStats) float64 {
+	if d.Child() == nil {
 		return 1.0
 	}
 	inputRows := 100.0

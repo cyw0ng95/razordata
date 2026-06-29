@@ -14,6 +14,7 @@ import (
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
@@ -508,8 +509,8 @@ func (p *Planner) estimateCost(op Operator) float64 {
 		return p.estimateCost(v.child)
 	case *Offset:
 		return p.estimateCost(v.child)
-	case *Distinct:
-		return p.estimateCost(v.child)
+	case *OP.Distinct:
+		return p.estimateCost(v.Child())
 	case *Sort:
 		childCost := p.estimateCost(v.child)
 		if childCost < 1 {
@@ -3171,11 +3172,11 @@ func cloneRows(rows []Row) []Row {
 func dedupRecCTENewRows(newRows, allRows []Row) []Row {
 	seen := make(map[string]bool, len(allRows))
 	for _, r := range allRows {
-		seen[distinctKey(r)] = true
+		seen[OP.DistinctKey(r)] = true
 	}
 	out := make([]Row, 0, len(newRows))
 	for _, r := range newRows {
-		k := distinctKey(r)
+		k := OP.DistinctKey(r)
 		if !seen[k] {
 			seen[k] = true
 			out = append(out, r)
@@ -4621,7 +4622,7 @@ func (p *Planner) planOrdering(s *PS.Select, current Operator) Operator {
 		current = NewProject(current, s.Cols)
 	}
 	if s.Distinct && !hasAnyAggregate(s.Cols) {
-		current = NewDistinct(current)
+		current = OP.NewDistinct(current)
 	}
 	return current
 }
