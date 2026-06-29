@@ -291,6 +291,13 @@ func (e *Engine) closeBestEffort() error {
 		}
 		return e.fs.Close()
 	})
+	stop("exe", func() error {
+		if e.exe == nil {
+			return nil
+		}
+		e.exe.Close()
+		return nil
+	})
 	return firstErr
 }
 
