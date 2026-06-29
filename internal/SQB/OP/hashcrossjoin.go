@@ -10,7 +10,7 @@
 //
 // Falls back to NLJ if the hash key is not a simple column
 // reference (e.g., expression on the right side).
-package EX
+package OP
 
 import (
 	"context"
@@ -19,13 +19,14 @@ import (
 	"strings"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
 // HashCrossJoin is a simple hash-probe equi-join for small tables.
 // REQ000800.
 type HashCrossJoin struct {
-	left     Operator
-	right    Operator
+	left     pl.Operator
+	right    pl.Operator
 	leftTbl  string
 	rightTbl string
 	leftKey  string // single-column join key on the left
@@ -34,18 +35,18 @@ type HashCrossJoin struct {
 	// Build phase: hash right rows by rightKey into buckets.
 	buckets map[uint64][]int // hash → indices into rightRows
 	// Materialized rows from each side.
-	rightRows []Row
+	rightRows []pl.Row
 	// REQ000816: left side is materialized lazily so we can build
 	// a shared colIndex for output rows.
-	leftRows   []Row
+	leftRows   []pl.Row
 	probeBuilt bool // true after build() + materializeLeft() ran successfully
 	// Probe phase: pre-computed matches from materializeLeft.
 	// REQ000802+: eliminates on-the-fly probing and per-row
 	// Data allocations by building all matches upfront with a
 	// shared data buffer.
-	matches    []Row
+	matches    []pl.Row
 	matchPos   int
-	dataBuf    []Value
+	dataBuf    []pl.Value
 	dataPerRow int
 	// REQ000818: crossOverflow is set when either side exceeds 1024 rows.
 	// In this mode the operator falls back to emitting all left×right pairs
@@ -72,7 +73,7 @@ type HashCrossJoin struct {
 // leftKey/rightKey are unqualified column names; they are matched
 // against the right-side row's table-prefixed column name (e.g.,
 // "t2.a") and the left-side row's prefixed column name.
-func NewHashCrossJoin(left, right Operator, leftTbl, rightTbl, leftKey, rightKey string) *HashCrossJoin {
+func NewHashCrossJoin(left, right pl.Operator, leftTbl, rightTbl, leftKey, rightKey string) *HashCrossJoin {
 	return &HashCrossJoin{
 		left:     left,
 		right:    right,
@@ -84,8 +85,14 @@ func NewHashCrossJoin(left, right Operator, leftTbl, rightTbl, leftKey, rightKey
 	}
 }
 
-func (j *HashCrossJoin) LeftChild() Operator  { return j.left }
-func (j *HashCrossJoin) RightChild() Operator { return j.right }
+func (j *HashCrossJoin) LeftChild() pl.Operator  { return j.left }
+func (j *HashCrossJoin) RightChild() pl.Operator { return j.right }
+
+// SharedCols returns the cached join column names.
+func (j *HashCrossJoin) SharedCols() []string { return j.sharedCols }
+
+// SharedTypes returns the cached join column types.
+func (j *HashCrossJoin) SharedTypes() []LX.TokenType { return j.sharedTypes }
 
 // WithProjection sets the projected columns for the join output.
 // REQ000803: when set, only these columns are included in output rows.
@@ -95,9 +102,9 @@ func (j *HashCrossJoin) WithProjection(cols []string) *HashCrossJoin {
 
 // Next produces the next matching pair. Build happens lazily on
 // the first call. Returns ErrNoRows when exhausted.
-func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {
+func (j *HashCrossJoin) Next(ctx context.Context) (pl.Row, error) {
 	if err := ctx.Err(); err != nil {
-		return Row{}, err
+		return pl.Row{}, err
 	}
 	if !j.probeBuilt {
 		if err := j.build(ctx); err != nil {
@@ -106,7 +113,7 @@ func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {
 			if j.crossOverflow {
 				return j.nextCross(ctx)
 			}
-			return Row{}, err
+			return pl.Row{}, err
 		}
 		// REQ000816: materialize left side once so we can build
 		// a shared colIndex for output rows. Streaming probe forced
@@ -115,14 +122,14 @@ func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {
 			if j.crossOverflow {
 				return j.nextCross(ctx)
 			}
-			return Row{}, err
+			return pl.Row{}, err
 		}
 	}
 	if j.crossOverflow {
 		return j.nextCross(ctx)
 	}
 	if j.buckets == nil {
-		return Row{}, ErrNoRows
+		return pl.Row{}, ErrNoRows
 	}
 	// REQ000802+: return pre-computed matches from data buffer.
 	for j.matchPos < len(j.matches) {
@@ -130,7 +137,7 @@ func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {
 		j.matchPos++
 		return m, nil
 	}
-	return Row{}, ErrNoRows
+	return pl.Row{}, ErrNoRows
 }
 
 // materializeLeft reads all rows from the left side into leftRows
@@ -140,13 +147,13 @@ func (j *HashCrossJoin) Next(ctx context.Context) (Row, error) {
 // pre-allocated data buffer to eliminate per-row allocations.
 func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 	const maxMaterialize = 4096
-	j.leftRows = make([]Row, 0, 64)
+	j.leftRows = make([]pl.Row, 0, 64)
 	j.leftHasPrefix = false
 	// Check first row to determine prefix state (all rows from the
 	// same scan share the same Cols). REQ000874.
 	if firstRow, err := j.left.Next(ctx); err == nil {
 		j.leftHasPrefix = hasAnyPrefix(firstRow.Cols)
-		prefixed := Row{Types: firstRow.Types, Data: firstRow.Data, Outer: firstRow.Outer}
+		prefixed := pl.Row{Types: firstRow.Types, Data: firstRow.Data, Outer: firstRow.Outer}
 		prefixed.TableName = firstRow.TableName
 		if !j.leftHasPrefix {
 			prefixed.Cols = prefixCols(firstRow.Cols, j.leftTbl)
@@ -160,7 +167,7 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 		if err != nil {
 			break
 		}
-		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
+		prefixed := pl.Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
 		prefixed.TableName = row.TableName
 		if !j.leftHasPrefix {
 			prefixed.Cols = prefixCols(row.Cols, j.leftTbl)
@@ -213,8 +220,8 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 	}
 	// Pre-allocate contiguous data buffer.
 	j.dataPerRow = dataPerRow
-	j.dataBuf = make([]Value, 0, totalMatches*dataPerRow)
-	j.matches = make([]Row, 0, totalMatches)
+	j.dataBuf = make([]pl.Value, 0, totalMatches*dataPerRow)
+	j.matches = make([]pl.Row, 0, totalMatches)
 	j.matchPos = 0
 
 	for _, l := range j.leftRows {
@@ -229,7 +236,7 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 			off := len(j.dataBuf)
 			// Carve non-overlapping sub-slice from dataBuf.
 			dataSlice := j.dataBuf[off : off : off+dataPerRow]
-			out := Row{
+			out := pl.Row{
 				Cols:     j.sharedCols,
 				Types:    j.sharedTypes,
 				Data:     dataSlice,
@@ -248,16 +255,16 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 	j.probeBuilt = true
 	j.buckets = make(map[uint64][]int, 64)
 	const maxMaterialize = 4096
-	j.rightRows = make([]Row, 0, 64)
+	j.rightRows = make([]pl.Row, 0, 64)
 	j.rightHasPrefix = false
 	// Check first row to determine prefix state (all rows from the
 	// same scan share the same Cols). REQ000874.
 	if firstRow, err := j.right.Next(ctx); err == nil {
 		j.rightHasPrefix = hasAnyPrefix(firstRow.Cols)
-		prefixed := Row{
+		prefixed := pl.Row{
 			Cols:      firstRow.Cols,
 			Types:     firstRow.Types,
-			Data:      append([]Value(nil), firstRow.Data...),
+			Data:      append([]pl.Value(nil), firstRow.Data...),
 			TableName: firstRow.TableName,
 		}
 		if j.rightHasPrefix {
@@ -278,10 +285,10 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 		if err != nil {
 			break
 		}
-		prefixed := Row{
+		prefixed := pl.Row{
 			Cols:      row.Cols,
 			Types:     row.Types,
-			Data:      append([]Value(nil), row.Data...),
+			Data:      append([]pl.Value(nil), row.Data...),
 			TableName: row.TableName,
 		}
 		if j.rightHasPrefix {
@@ -314,7 +321,7 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 // State is tracked across multiple calls via crossLeftIdx,
 // crossRightIdx (position within bucket's index slice), and
 // crossBucketPos (current bucket index list reference).
-func (j *HashCrossJoin) nextCross(_ context.Context) (Row, error) {
+func (j *HashCrossJoin) nextCross(_ context.Context) (pl.Row, error) {
 	for j.crossLeftIdx < len(j.leftRows) {
 		l := &j.leftRows[j.crossLeftIdx]
 		lv, lok := lookupColumn(l, j.leftTbl, j.leftKey)
@@ -338,7 +345,7 @@ func (j *HashCrossJoin) nextCross(_ context.Context) (Row, error) {
 			if !rok || rv == nil {
 				continue
 			}
-			if !equalValue(lv, rv) {
+			if !pl.EqualValue(lv, rv) {
 				continue
 			}
 			off := len(j.dataBuf)
@@ -348,7 +355,7 @@ func (j *HashCrossJoin) nextCross(_ context.Context) (Row, error) {
 				if newCap < required {
 					newCap = required
 				}
-				buf := make([]Value, required, newCap)
+				buf := make([]pl.Value, required, newCap)
 				copy(buf, j.dataBuf)
 				j.dataBuf = buf
 			}
@@ -356,7 +363,7 @@ func (j *HashCrossJoin) nextCross(_ context.Context) (Row, error) {
 			dataSlice := j.dataBuf[off : off+j.dataPerRow : off+j.dataPerRow]
 			copy(dataSlice, l.Data)
 			copy(dataSlice[len(l.Data):], r.Data)
-			return Row{
+			return pl.Row{
 				Cols:     j.sharedCols,
 				Types:    j.sharedTypes,
 				Data:     dataSlice,
@@ -366,7 +373,7 @@ func (j *HashCrossJoin) nextCross(_ context.Context) (Row, error) {
 		j.crossRightIdx = 0
 		j.crossLeftIdx++
 	}
-	return Row{}, ErrNoRows
+	return pl.Row{}, ErrNoRows
 }
 
 func (j *HashCrossJoin) Close() error {
@@ -391,7 +398,7 @@ func (j *HashCrossJoin) Close() error {
 
 // lookupColumn finds the value of `col` in row, allowing either
 // bare ("a") or table-qualified ("t1.a") column names.
-func lookupColumn(row *Row, tbl, col string) (any, bool) {
+func lookupColumn(row *pl.Row, tbl, col string) (any, bool) {
 	want := tbl + "." + col
 	// REQ001036: check colIndex first (O(1)), fall back to linear scan only if colIndex is nil.
 	if row.ColIndex != nil {
@@ -422,7 +429,7 @@ func hashValue(seed maphash.Seed, v any) uint64 {
 	var h maphash.Hash
 	h.SetSeed(seed)
 	switch x := v.(type) {
-	case Value:
+	case pl.Value:
 		if x.IsNull() {
 			var b [1]byte
 			b[0] = 0xff
@@ -520,4 +527,24 @@ func toStringFallback(v any) string {
 		return "f"
 	}
 	return ""
+}
+
+// prefixCols adds prefix to each column name.
+func prefixCols(cols []string, prefix string) []string {
+	out := make([]string, len(cols))
+	for i, c := range cols {
+		out[i] = prefix + "." + c
+	}
+	return out
+}
+
+// hasAnyPrefix reports whether any column name in cols contains
+// a dot separator (e.g., "t.col").
+func hasAnyPrefix(cols []string) bool {
+	for _, c := range cols {
+		if strings.Contains(c, ".") {
+			return true
+		}
+	}
+	return false
 }

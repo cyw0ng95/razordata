@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
 
 // JoinKind specifies the type of join.
@@ -330,9 +331,9 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 	// without it, every time leftRow becomes nil the guard passes,
 	// re-draining the left child each time.
 	if !j.hashMode && !j.hashAttempted && j.leftRows == nil && j.rightRows == nil && j.leftRow == nil {
-		// REQ000843: skip HashCrossJoin when either side is already
+		// REQ000843: skip OP.HashCrossJoin when either side is already
 		// a join operator — the bushy group already has all rows
-		// materialized and HashCrossJoin would re-materialize them.
+		// materialized and OP.HashCrossJoin would re-materialize them.
 		if !isJoinOp(j.left) && !isJoinOp(j.right) {
 			if j.tryHashCrossJoin(ctx) {
 				// Switched to hash mode — continue with hash iteration.
@@ -869,7 +870,7 @@ func joinRowsLL(a, b *Row) Row {
 
 // joinRowsLLWithCols is the full-form variant: caller supplies
 // pre-built sharedCols, sharedTypes and sharedColIndex to avoid
-// per-row allocation in the hot NLJ/HashCrossJoin path. When
+// per-row allocation in the hot NLJ/OP.HashCrossJoin path. When
 // sharedCols is non-nil, out.Cols/Types share the slice (no copy).
 // Data is always freshly allocated since it's per-row payload.
 func joinRowsLLWithCols(a, b *Row, sharedCols []string, sharedTypes []LX.TokenType, sharedColIndex map[string]int) Row {
@@ -1024,7 +1025,7 @@ func hasAnyPrefix(cols []string) bool {
 // REQ000843: used by tryHashCrossJoin to skip bushy-group joins.
 func isJoinOp(op Operator) bool {
 	switch op.(type) {
-	case *NestedLoopJoin, *HashJoin, *HashCrossJoin:
+	case *NestedLoopJoin, *HashJoin, *OP.HashCrossJoin:
 		return true
 	}
 	return false

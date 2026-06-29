@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
@@ -23,7 +24,7 @@ func TestHashCrossJoin_BasicEquiJoin(t *testing.T) {
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, TableName: "t2"},
 	})
 
-	j := NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
+	j := OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -65,7 +66,7 @@ func TestHashCrossJoin_EmptySides(t *testing.T) {
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t2"},
 	})
 
-	j := NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
+	j := OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -99,7 +100,7 @@ func TestHashCrossJoin_AllMatch(t *testing.T) {
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t2"},
 	})
 
-	j := NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
+	j := OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -133,7 +134,7 @@ func TestHashCrossJoin_StringKey(t *testing.T) {
 		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("z")}, TableName: "t2"},
 	})
 
-	j := NewHashCrossJoin(left, right, "t1", "t2", "k", "k")
+	j := OP.NewHashCrossJoin(left, right, "t1", "t2", "k", "k")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -165,7 +166,7 @@ func TestHashCrossJoin_NullKey(t *testing.T) {
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NullValue()}, TableName: "t2"},
 	})
 
-	j := NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
+	j := OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -209,7 +210,7 @@ func BenchmarkHashCrossJoin_SmallTables(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			left2 := newBenchSeqScan("t1", 100)
 			right2 := newBenchSeqScan("t2", 100)
-			j := NewHashCrossJoin(left2, right2, "t1", "t2", "a", "a")
+			j := OP.NewHashCrossJoin(left2, right2, "t1", "t2", "a", "a")
 			ctx := context.Background()
 			for {
 				_, err := j.Next(ctx)

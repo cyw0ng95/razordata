@@ -533,9 +533,9 @@ func (p *Planner) estimateCost(op Operator) float64 {
 			rightCost = 1
 		}
 		return leftCost + rightCost
-	case *HashCrossJoin:
-		leftCost := p.estimateCost(v.left)
-		rightCost := p.estimateCost(v.right)
+	case *OP.HashCrossJoin:
+		leftCost := p.estimateCost(v.LeftChild())
+		rightCost := p.estimateCost(v.RightChild())
 		if leftCost < 1 {
 			leftCost = 1
 		}
@@ -1518,8 +1518,8 @@ func colsOf(op Operator) []string {
 		return o.sharedCols
 	case *HashJoin:
 		return o.sharedCols
-	case *HashCrossJoin:
-		return o.sharedCols
+	case *OP.HashCrossJoin:
+		return o.SharedCols()
 	case *Filter:
 		return colsOf(o.Child())
 	case *Project:
@@ -1547,8 +1547,8 @@ func typesOf(op Operator) []LX.TokenType {
 		return o.sharedTypes
 	case *HashJoin:
 		return o.sharedTypes
-	case *HashCrossJoin:
-		return o.sharedTypes
+	case *OP.HashCrossJoin:
+		return o.SharedTypes()
 	case *Filter:
 		return typesOf(o.Child())
 	case *Project:
@@ -4846,9 +4846,9 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			if joinOp == nil {
 				if kind == JoinKindInner && j.On != nil {
 					if lk, rk, ok := p.extractSingleOnEquiKey(j.On, leftTbl, rightTbl); ok {
-						joinOp = NewHashCrossJoin(current, rightScan, leftTbl, rightTbl, lk, rk)
+						joinOp = OP.NewHashCrossJoin(current, rightScan, leftTbl, rightTbl, lk, rk)
 						if projectedCols != nil {
-							if hcj, ok := joinOp.(*HashCrossJoin); ok {
+							if hcj, ok := joinOp.(*OP.HashCrossJoin); ok {
 								hcj.WithProjection(projectedCols)
 							}
 						}

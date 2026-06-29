@@ -129,3 +129,47 @@ func cmpBool(a, b bool) int {
 	}
 	return -1
 }
+
+// EqualValue compares two any-typed values for equality (REQ000754).
+// Accepts both Value types and Go primitives, with int/float fast paths.
+func EqualValue(a, b any) bool {
+	if av, ok := a.(Value); ok {
+		a = av.ToAny()
+	}
+	if bv, ok := b.(Value); ok {
+		b = bv.ToAny()
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if ai, aok := a.(int64); aok {
+		if bi, bok := b.(int64); bok {
+			return ai == bi
+		}
+		if bf, bok := b.(float64); bok {
+			return float64(ai) == bf
+		}
+		if bi, bok := b.(int); bok {
+			return ai == int64(bi)
+		}
+		return false
+	}
+	if af, aok := a.(float64); aok {
+		if bf, bok := b.(float64); bok {
+			return af == bf
+		}
+		if bi, bok := b.(int64); bok {
+			return af == float64(bi)
+		}
+	}
+	if ai, aok := a.(int); aok {
+		if bi, bok := b.(int); bok {
+			return ai == bi
+		}
+		if bi, bok := b.(int64); bok {
+			return int64(ai) == bi
+		}
+		return false
+	}
+	return a == b
+}
