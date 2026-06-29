@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -147,7 +148,7 @@ func (w *WindowOperator) sortPartition(indices []int) {
 		for _, item := range w.spec.OrderBy {
 			vi, _ := EvalValue(item.Expr, &w.rows[a], nil)
 			vj, _ := EvalValue(item.Expr, &w.rows[b], nil)
-			cmp := compareValue(vi, vj)
+			cmp := PL.CompareValue(vi, vj)
 			if cmp != 0 {
 				if item.Desc {
 					return -cmp
@@ -211,7 +212,7 @@ func (w *WindowOperator) sameOrderByGroup(i, j int) bool {
 	for _, item := range w.spec.OrderBy {
 		vi, _ := EvalValue(item.Expr, &w.rows[i], nil)
 		vj, _ := EvalValue(item.Expr, &w.rows[j], nil)
-		if compareValue(vi, vj) != 0 {
+		if PL.CompareValue(vi, vj) != 0 {
 			return false
 		}
 	}
@@ -388,7 +389,7 @@ func (w *WindowOperator) computeRank(indices []int, dense bool) {
 			for _, item := range w.spec.OrderBy {
 				vi, _ := EvalValue(item.Expr, &w.rows[prevIdx], nil)
 				vj, _ := EvalValue(item.Expr, &w.rows[idx], nil)
-				if compareValue(vi, vj) != 0 {
+				if PL.CompareValue(vi, vj) != 0 {
 					equal = false
 					break
 				}

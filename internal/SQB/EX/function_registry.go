@@ -16,6 +16,7 @@ import (
 	"time"
 
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -177,7 +178,7 @@ func evalNullIf(args []PS.Expr, row *Row, params []any) (Value, error) {
 	if err != nil {
 		return NullValue(), err
 	}
-	if equalValueValue(a, b) {
+	if PL.EqualValueValue(a, b) {
 		return NullValue(), nil
 	}
 	return a, nil

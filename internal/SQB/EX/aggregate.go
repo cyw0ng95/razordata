@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -270,7 +271,7 @@ func keysLessCmpValue(a, b []Value) int {
 		if i >= len(b) {
 			return 0
 		}
-		c := compareValue(a[i], b[i])
+		c := PL.CompareValue(a[i], b[i])
 		if c != 0 {
 			return c
 		}
@@ -523,7 +524,7 @@ func minDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 			continue
 		}
 		seen[v.ToAny()] = true
-		if best.Kind == KindNull || compareValue(v, best) < 0 {
+		if best.Kind == KindNull || PL.CompareValue(v, best) < 0 {
 			best = v
 		}
 	}
@@ -547,7 +548,7 @@ func maxDistinct(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 			continue
 		}
 		seen[v.ToAny()] = true
-		if best.Kind == KindNull || compareValue(v, best) > 0 {
+		if best.Kind == KindNull || PL.CompareValue(v, best) > 0 {
 			best = v
 		}
 	}

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"slices"
 
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -164,7 +165,7 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 			}
 			slices.SortStableFunc(decorated, func(a, b decoratedRow) int {
 				for j, k := range c.orderBy {
-					cmp := compareValue(a.keys[j], b.keys[j])
+					cmp := PL.CompareValue(a.keys[j], b.keys[j])
 					if cmp == 0 {
 						continue
 					}

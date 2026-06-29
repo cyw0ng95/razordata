@@ -5,6 +5,7 @@ package EX
 import (
 	"testing"
 
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -37,9 +38,9 @@ func TestCompareValue(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := compareValue(tc.a, tc.b)
+			got := pl.CompareValue(tc.a, tc.b)
 			if got != tc.want {
-				t.Errorf("compareValue(%v, %v) = %d, want %d", tc.a, tc.b, got, tc.want)
+				t.Errorf("pl.CompareValue(%v, %v) = %d, want %d", tc.a, tc.b, got, tc.want)
 			}
 		})
 	}
@@ -69,9 +70,9 @@ func TestEqualValueValue(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := equalValueValue(tc.a, tc.b)
+			got := pl.EqualValueValue(tc.a, tc.b)
 			if got != tc.want {
-				t.Errorf("equalValueValue(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+				t.Errorf("pl.EqualValueValue(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
 			}
 		})
 	}

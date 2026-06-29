@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sync"
 
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
@@ -330,7 +331,7 @@ func lessRowIdx(a, b Row, keys []SortKey, indices []int) bool {
 		if idx < len(b.Data) {
 			bv = b.Data[idx]
 		}
-		cmp := compareValue(av, bv)
+		cmp := PL.CompareValue(av, bv)
 		if cmp == 0 {
 			continue
 		}

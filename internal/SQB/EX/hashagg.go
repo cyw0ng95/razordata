@@ -8,7 +8,8 @@ import (
 	"context"
 	"slices"
 
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 type HashAggregate struct {
@@ -145,7 +146,7 @@ func keysLessByDistinctCmp(a, b Row, groupCols []PS.Expr) int {
 	for _, gc := range groupCols {
 		va, _ := EvalValue(gc, &a, nil)
 		vb, _ := EvalValue(gc, &b, nil)
-		c := compareValue(va, vb)
+		c := PL.CompareValue(va, vb)
 		if c != 0 {
 			return c
 		}

@@ -66,7 +66,7 @@ func BenchmarkEqualValueValue_IntInt(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		equalValueValue(a, c)
+		pl.EqualValueValue(a, c)
 	}
 }
 
@@ -78,7 +78,7 @@ func BenchmarkCompareValue_IntInt(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		compareValue(a, c)
+		pl.CompareValue(a, c)
 	}
 }
 
@@ -117,7 +117,7 @@ func BenchmarkEvalBinaryComparison(b *testing.B) {
 	newFn := func(row *Row) any {
 		v, _ := row.Lookup("x")
 		vv, _ := v.(Value)
-		return compareValue(vv, target) < 0
+		return pl.CompareValue(vv, target) < 0
 	}
 
 	b.ResetTimer()

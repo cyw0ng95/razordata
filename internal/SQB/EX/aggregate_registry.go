@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -142,7 +143,7 @@ func evalAggMin(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 		if v.Kind == KindNull {
 			continue
 		}
-		if best.Kind == KindNull || compareValue(v, best) < 0 {
+		if best.Kind == KindNull || PL.CompareValue(v, best) < 0 {
 			best = v
 		}
 	}
@@ -162,7 +163,7 @@ func evalAggMax(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {
 		if v.Kind == KindNull {
 			continue
 		}
-		if best.Kind == KindNull || compareValue(v, best) > 0 {
+		if best.Kind == KindNull || PL.CompareValue(v, best) > 0 {
 			best = v
 		}
 	}

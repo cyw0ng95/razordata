@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -540,7 +541,7 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 							return int(s.keys[ki].NullsOrder)
 						}
 					}
-					c := compareValue(ka[ki], kb[ki])
+					c := PL.CompareValue(ka[ki], kb[ki])
 					if c == 0 {
 						continue
 					}
@@ -998,7 +999,7 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 		switch e.Op {
 		case LX.T_EQ:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return equalValueValue(a, b)
+				return PL.EqualValueValue(a, b)
 			})
 		case LX.T_NE:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
@@ -1008,23 +1009,23 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 				if a.IsNull() || b.IsNull() {
 					return false
 				}
-				return !equalValueValue(a, b)
+				return !PL.EqualValueValue(a, b)
 			})
 		case LX.T_GT:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return compareValue(a, b) > 0
+				return PL.CompareValue(a, b) > 0
 			})
 		case LX.T_GE:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return compareValue(a, b) >= 0
+				return PL.CompareValue(a, b) >= 0
 			})
 		case LX.T_LT:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return compareValue(a, b) < 0
+				return PL.CompareValue(a, b) < 0
 			})
 		case LX.T_LE:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return compareValue(a, b) <= 0
+				return PL.CompareValue(a, b) <= 0
 			})
 		}
 	}
