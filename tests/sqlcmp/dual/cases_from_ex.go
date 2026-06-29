@@ -569,6 +569,46 @@ var scalarFuncCases = []dualCase{
 	},
 }
 
+// joinCases from EX/req000799_test.go: cross join, LEFT JOIN (standard SQL).
+// Join elimination tests (Razordata-specific) go to razor-only.
+var joinCases = []dualCase{
+	{
+		Name: "cross_join_2table",
+		Setup: []string{
+			"CREATE TABLE t1 (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER)",
+			"INSERT INTO t1 VALUES (1, 1, 10), (2, 2, 20), (3, 3, 30)",
+			"CREATE TABLE t2 (id INTEGER PRIMARY KEY, c INTEGER, d INTEGER)",
+			"INSERT INTO t2 VALUES (1, 1, 100), (2, 2, 200)",
+		},
+		Query: "SELECT t1.a, t2.c FROM t1, t2 ORDER BY t1.a, t2.c",
+		Want:  [][]any{{int64(1), int64(1)}, {int64(1), int64(2)}, {int64(2), int64(1)}, {int64(2), int64(2)}, {int64(3), int64(1)}, {int64(3), int64(2)}},
+	},
+	{
+		Name: "cross_join_3table",
+		Setup: []string{
+			"CREATE TABLE t1 (id INTEGER PRIMARY KEY, a INTEGER)",
+			"INSERT INTO t1 VALUES (1, 1), (2, 2)",
+			"CREATE TABLE t2 (id INTEGER PRIMARY KEY, b INTEGER)",
+			"INSERT INTO t2 VALUES (1, 10), (2, 20)",
+			"CREATE TABLE t3 (id INTEGER PRIMARY KEY, c INTEGER)",
+			"INSERT INTO t3 VALUES (1, 100)",
+		},
+		Query: "SELECT t1.a, t2.b, t3.c FROM t1, t2, t3 ORDER BY t1.a, t2.b, t3.c",
+		Want:  [][]any{{int64(1), int64(10), int64(100)}, {int64(1), int64(20), int64(100)}, {int64(2), int64(10), int64(100)}, {int64(2), int64(20), int64(100)}},
+	},
+	{
+		Name: "left_join_fallback",
+		Setup: []string{
+			"CREATE TABLE t1 (id INTEGER PRIMARY KEY, a INTEGER)",
+			"INSERT INTO t1 VALUES (1, 1), (2, 2), (3, 3)",
+			"CREATE TABLE t2 (id INTEGER PRIMARY KEY, b INTEGER)",
+			"INSERT INTO t2 VALUES (1, 10), (2, 20)",
+		},
+		Query: "SELECT t1.a, t2.b FROM t1 LEFT JOIN t2 ON t1.a = t2.b ORDER BY t1.id",
+		Want:  [][]any{{int64(1), nil}, {int64(2), nil}, {int64(3), nil}},
+	},
+}
+
 // hashCrossJoinCases from EX/hashcrossjoin_e2e_test.go: HashCrossJoin
 // planner selection for INNER JOIN ON with equi-conditions.
 // Note: the compound ON condition case is excluded — Razordata has a
