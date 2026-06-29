@@ -1,6 +1,7 @@
 package EX
 
 import (
+	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	"context"
 	"math/rand/v2"
 	"testing"
@@ -44,7 +45,7 @@ func BenchmarkTPCH_Q1(b *testing.B) {
 			Right: &PS.FloatLiteral{Val: 25.0},
 		})
 		// Aggregate: SUM(l_extendedprice)
-		sum := NewVectorizedSum(filter, 3)
+		sum := AG.NewVectorizedSum(filter, 3)
 
 		for {
 			batch, _ := sum.NextBatch(context.Background())
@@ -78,7 +79,7 @@ func BenchmarkTPCH_Q6(b *testing.B) {
 			Right: &PS.FloatLiteral{Val: 24.0},
 		})
 		// Aggregate: SUM(l_extendedprice)
-		sum := NewVectorizedSum(filter, 3)
+		sum := AG.NewVectorizedSum(filter, 3)
 
 		for {
 			batch, _ := sum.NextBatch(context.Background())
