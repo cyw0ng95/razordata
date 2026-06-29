@@ -773,6 +773,35 @@ var threePartNameCases = []dualCase{
 	},
 }
 
+// recursiveCTECases from EX/req000904_test.go: recursive CTE.
+var recursiveCTECases = []dualCase{
+	{
+		Name:  "recursive_cte_basic",
+		Query: "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt WHERE x<5) SELECT x FROM cnt",
+		Want:  [][]any{{int64(1)}, {int64(2)}, {int64(3)}, {int64(4)}, {int64(5)}},
+	},
+	{
+		Name:  "recursive_cte_empty",
+		Query: "WITH RECURSIVE cnt(x) AS (SELECT 1 WHERE 1=0 UNION ALL SELECT x+1 FROM cnt WHERE x<5) SELECT x FROM cnt",
+		Want:  [][]any{},
+	},
+	{
+		Name:  "recursive_cte_no_recursion",
+		Query: "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT 2 WHERE 1=0) SELECT x FROM cnt",
+		Want:  [][]any{{int64(1)}},
+	},
+	{
+		Name:  "recursive_cte_union_dedup",
+		Query: "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION SELECT x+1 FROM cnt WHERE x<3) SELECT x FROM cnt",
+		Want:  [][]any{{int64(1)}, {int64(2)}, {int64(3)}},
+	},
+	{
+		Name:  "recursive_cte_fibonacci",
+		Query: "WITH RECURSIVE fib(a, b) AS (SELECT 0, 1 UNION ALL SELECT b, a+b FROM fib WHERE b<50) SELECT a FROM fib",
+		Want:  [][]any{{int64(0)}, {int64(1)}, {int64(1)}, {int64(2)}, {int64(3)}, {int64(5)}, {int64(8)}},
+	},
+}
+
 // crudCases from EX/e2e_test.go: full SQL DML lifecycle and LIMIT/OFFSET.
 var crudCases = []dualCase{
 	{
