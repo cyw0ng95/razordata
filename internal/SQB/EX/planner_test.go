@@ -1,6 +1,7 @@
 package EX
 
 import (
+	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"context"
 	"fmt"
 	"testing"
@@ -200,8 +201,8 @@ func TestPlanner_ConstantFolding(t *testing.T) {
 		// Instead, the Plan tree directly wraps the SeqScan in an AdaptiveOp.
 		op := plan.Root
 		// Unwrap AdaptiveOp (always wraps query plans).
-		if aop, ok := op.(*AdaptiveOp); ok {
-			op = aop.inner
+		if aop, ok := op.(*AD.AdaptiveOp); ok {
+			op = aop.Inner
 		}
 		if _, ok := op.(*SeqScan); !ok {
 			// The top-level should be SeqScan (or Project -> SeqScan if star expr)
@@ -337,8 +338,8 @@ func TestPlanner_ColumnPruning(t *testing.T) {
 		}
 		// Unwrap AdaptiveOp.
 		op := plan.Root
-		if aop, ok := op.(*AdaptiveOp); ok {
-			op = aop.inner
+		if aop, ok := op.(*AD.AdaptiveOp); ok {
+			op = aop.Inner
 		}
 		// Expect: Project -> SeqScan with usedCols set
 		proj, ok := op.(*Project)
@@ -377,8 +378,8 @@ func TestPlanner_ColumnPruning(t *testing.T) {
 		}
 		// For SELECT *, usedCols should not be set (nil).
 		op := plan.Root
-		if aop, ok := op.(*AdaptiveOp); ok {
-			op = aop.inner
+		if aop, ok := op.(*AD.AdaptiveOp); ok {
+			op = aop.Inner
 		}
 		// Star expands to Project, but star causes usedCols to be nil.
 		if proj, ok := op.(*Project); ok {
@@ -485,7 +486,7 @@ func walkOpTreeDebug(op Operator, fn func(Operator, int), depth int) {
 	case *IndexScan:
 	case *Sort:
 		walkOpTreeDebug(v.Child(), fn, depth+1)
-	case *AdaptiveOp:
+	case *AD.AdaptiveOp:
 		walkOpTreeDebug(v.Child(), fn, depth+1)
 	}
 }

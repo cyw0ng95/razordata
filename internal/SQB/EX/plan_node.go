@@ -130,14 +130,14 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 	}
 
 	// Unwrap AdaptiveOp to show inner operator in EXPLAIN output.
-	if aop, ok := op.(*AdaptiveOp); ok {
-		inner := buildPlanNodeTree(aop.inner, planner)
+	if aop, ok := op.(*AD.AdaptiveOp); ok {
+		inner := buildPlanNodeTree(aop.Inner, planner)
 		if inner != nil {
 			state := "interpreted"
-			st := AdqcState(aop.state.Load())
-			if st == AdqcCompiling {
+			st := AD.AdqcState(aop.State())
+			if st == AD.AdqcCompiling {
 				state = "compiling"
-			} else if st == AdqcCompiled {
+			} else if st == AD.AdqcCompiled {
 				state = "compiled"
 			}
 			if inner.Detail != "" {
@@ -451,8 +451,8 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 
 // operatorType returns a human-readable type name for an operator.
 func operatorType(op Operator) string {
-	if aop, ok := op.(*AdaptiveOp); ok {
-		return operatorType(aop.inner)
+	if aop, ok := op.(*AD.AdaptiveOp); ok {
+		return operatorType(aop.Inner)
 	}
 	switch op.(type) {
 	case *SeqScan:

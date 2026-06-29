@@ -1,6 +1,7 @@
 package EX
 
 import (
+	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"bytes"
 	"context"
 	"fmt"
@@ -449,7 +450,7 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	case *Insert, *Update, *Delete, *CreateTable, *DropTable:
 		// no adaptive wrapper for DDL/DML
 	default:
-		root = NewAdaptiveOp(root, key)
+		root = AD.NewAdaptiveOp(root, key)
 	}
 
 	result := &plan{
@@ -484,8 +485,8 @@ func (p *Planner) estimateCost(op Operator) float64 {
 		return 0
 	}
 	// Unwrap AdaptiveOp to estimate cost of the inner operator.
-	if aop, ok := op.(*AdaptiveOp); ok {
-		return p.estimateCost(aop.inner)
+	if aop, ok := op.(*AD.AdaptiveOp); ok {
+		return p.estimateCost(aop.Inner)
 	}
 	switch v := op.(type) {
 	case *SeqScan:
@@ -2000,8 +2001,8 @@ func propagateLimitToNLJ(op Operator, n int64) {
 	switch t := op.(type) {
 	case *NestedLoopJoin:
 		t.SetLimit(n)
-	case *AdaptiveOp:
-		propagateLimitToNLJ(t.inner, n)
+	case *AD.AdaptiveOp:
+		propagateLimitToNLJ(t.Inner, n)
 	}
 	type childer interface{ Child() Operator }
 	if c, ok := op.(childer); ok {

@@ -5,6 +5,7 @@
 package EX
 
 import (
+	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"context"
 
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -50,8 +51,8 @@ func injectOuter(op Operator, outer *Row) Operator {
 		return inj
 	}
 	switch v := op.(type) {
-	case *AdaptiveOp:
-		v.inner = injectOuter(v.inner, outer)
+	case *AD.AdaptiveOp:
+		v.Inner = injectOuter(v.Inner, outer)
 		return v
 	case *SeqScan:
 		return &outerInjector{child: v, outer: outer}
