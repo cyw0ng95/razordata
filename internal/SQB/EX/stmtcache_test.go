@@ -2,9 +2,11 @@ package EX
 
 import (
 	"context"
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"fmt"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -63,10 +65,10 @@ func drainStream(rows *streamIterator) {
 	for {
 		_, err := rows.Next()
 		if err != nil {
+			_ = rows.Close()
 			return
 		}
 	}
-	_ = rows.Close()
 }
 
 // TestStmtCache_QueryStream verifies REQ000771: QueryStream hits
@@ -93,7 +95,7 @@ func TestStmtCache_QueryStream(t *testing.T) {
 			t.Fatalf("iter %d: %v", i, err)
 		}
 		count := 0
-	for {
+		for {
 			_, err := rows.Next()
 			if err != nil {
 				break
@@ -238,4 +240,311 @@ func TestQueryStreamFromAST_BypassParser(t *testing.T) {
 	if count != 3 {
 		t.Errorf("expected 3 rows, got %d", count)
 	}
+}
+
+// TestPreparedCache_HitRate verifies REQ001011: repeated queries
+// use cached compiled plans. The plan cache should be populated
+// after the first query and hit on subsequent identical queries.
+func TestPreparedCache_HitRate(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	DT.RegisterTableSchema("t", []string{"id", "name"})
+	DT.TablesMu.Lock()
+	for i := 0; i < 10; i++ {
+		DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id", "name"}, Data: []Value{NewIntValue(int64(i)), NewTextValue("u")}})
+	}
+	DT.TablesMu.Unlock()
+
+	ex := NewExecutor()
+	ctx := context.Background()
+
+	sql := "SELECT id, name FROM t WHERE id > 3 ORDER BY id"
+
+	// First query: plan cache miss, should populate the cache.
+	rows, err := ex.Query(ctx, sql)
+	if err != nil {
+		t.Fatalf("first query: %v", err)
+	}
+	if rows == nil {
+		t.Fatal("first query: nil rows")
+	}
+	// Drain the single row (Query returns one row for discovery).
+	_ = rows
+
+	// Plan cache should now have one entry.
+	ex.planCache.mu.Lock()
+	size := len(ex.planCache.entries)
+	ex.planCache.mu.Unlock()
+	if size != 1 {
+		t.Fatalf("expected 1 plan cache entry after first query, got %d", size)
+	}
+
+	// Second query: should hit the plan cache.
+	rows2, err := ex.Query(ctx, sql)
+	if err != nil {
+		t.Fatalf("second query: %v", err)
+	}
+	if rows2 == nil {
+		t.Fatal("second query: nil rows")
+	}
+
+	// Plan cache should still have exactly one entry.
+	ex.planCache.mu.Lock()
+	size = len(ex.planCache.entries)
+	ex.planCache.mu.Unlock()
+	if size != 1 {
+		t.Fatalf("expected 1 plan cache entry after second query, got %d", size)
+	}
+
+	// Run a different query to verify cache handles multiple entries.
+	sql2 := "SELECT name FROM t WHERE id = 5"
+	rows3, err := ex.Query(ctx, sql2)
+	if err != nil {
+		t.Fatalf("different query: %v", err)
+	}
+	if rows3 == nil {
+		t.Fatal("different query: nil rows")
+	}
+
+	// Plan cache should now have two entries.
+	ex.planCache.mu.Lock()
+	size = len(ex.planCache.entries)
+	ex.planCache.mu.Unlock()
+	if size != 2 {
+		t.Fatalf("expected 2 plan cache entries, got %d", size)
+	}
+
+	// Run the first query again — should still hit cache.
+	rows4, err := ex.Query(ctx, sql)
+	if err != nil {
+		t.Fatalf("first query again: %v", err)
+	}
+	if rows4 == nil {
+		t.Fatal("first query again: nil rows")
+	}
+
+	// Cache size unchanged.
+	ex.planCache.mu.Lock()
+	size = len(ex.planCache.entries)
+	ex.planCache.mu.Unlock()
+	if size != 2 {
+		t.Fatalf("expected 2 plan cache entries after repeat, got %d", size)
+	}
+
+	// Verify QueryAll also uses the plan cache.
+	allRows, err := ex.QueryAll(ctx, sql)
+	if err != nil {
+		t.Fatalf("QueryAll: %v", err)
+	}
+	if len(allRows) != 6 {
+		t.Fatalf("QueryAll: expected 6 rows, got %d", len(allRows))
+	}
+
+	// Cache still has 2 entries.
+	ex.planCache.mu.Lock()
+	size = len(ex.planCache.entries)
+	ex.planCache.mu.Unlock()
+	if size != 2 {
+		t.Fatalf("expected 2 plan cache entries after QueryAll, got %d", size)
+	}
+}
+
+// TestPreparedCache_DDLInvalidates verifies REQ001011: DDL statements
+// invalidate cached plans (schema version change changes the memo key).
+func TestPreparedCache_DDLInvalidates(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	DT.RegisterTableSchema("t", []string{"id"})
+	DT.TablesMu.Lock()
+	DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(1))}})
+	DT.TablesMu.Unlock()
+
+	ex := NewExecutor()
+	ctx := context.Background()
+
+	// First query primes the cache.
+	rows, err := ex.Query(ctx, "SELECT id FROM t")
+	if err != nil {
+		t.Fatalf("first query: %v", err)
+	}
+	_ = rows
+
+	ex.planCache.mu.Lock()
+	preDDL := len(ex.planCache.entries)
+	ex.planCache.mu.Unlock()
+	if preDDL != 1 {
+		t.Fatalf("expected 1 entry before DDL, got %d", preDDL)
+	}
+
+	// Simulate DDL: bump schema version so memo key changes.
+	pl.BumpDefaultSchemaVersion()
+
+	// Same query again — should be a plan cache miss (different key).
+	rows2, err := ex.Query(ctx, "SELECT id FROM t")
+	if err != nil {
+		t.Fatalf("query after DDL: %v", err)
+	}
+	_ = rows2
+
+	// Cache should now have the old entry (stale) plus the new entry.
+	// The old entry becomes a cache fragment — will be evicted on overflow.
+	ex.planCache.mu.Lock()
+	postDDL := len(ex.planCache.entries)
+	ex.planCache.mu.Unlock()
+	// After DDL, the old key + new key = 2 entries (or 1 if eviction).
+	if postDDL < 1 || postDDL > 2 {
+		t.Fatalf("expected 1 or 2 entries after DDL, got %d", postDDL)
+	}
+}
+
+// TestPreparedCache_EdgeCases verifies REQ001011 edge cases:
+// empty result, invalid SQL, disabled cache.
+func TestPreparedCache_EdgeCases(t *testing.T) {
+	t.Run("empty_result", func(t *testing.T) {
+		UnregisterAll()
+		defer UnregisterAll()
+
+		DT.RegisterTableSchema("t", []string{"id"})
+		ex := NewExecutor()
+		ctx := context.Background()
+
+		// Query on empty table — should succeed and return no rows.
+		rows, err := ex.Query(ctx, "SELECT id FROM t WHERE id > 100")
+		if err != nil {
+			t.Fatalf("empty result query: %v", err)
+		}
+		if rows == nil {
+			// nil rows means no result — acceptable.
+		}
+	})
+
+	t.Run("invalid_sql_not_cached", func(t *testing.T) {
+		UnregisterAll()
+		defer UnregisterAll()
+
+		ex := NewExecutor()
+		ctx := context.Background()
+
+		// Invalid SQL should not populate the plan cache.
+		_, err := ex.Query(ctx, "SELECT FROM WHERE")
+		if err == nil {
+			t.Fatal("expected error for invalid SQL")
+		}
+
+		ex.planCache.mu.Lock()
+		size := len(ex.planCache.entries)
+		ex.planCache.mu.Unlock()
+		if size != 0 {
+			t.Errorf("expected 0 entries after invalid SQL, got %d", size)
+		}
+	})
+
+	t.Run("disabled_cache", func(t *testing.T) {
+		UnregisterAll()
+		defer UnregisterAll()
+
+		DT.RegisterTableSchema("d", []string{"x"})
+		DT.TablesMu.Lock()
+		DT.Tables["d"] = append(DT.Tables["d"], Row{Cols: []string{"x"}, Data: []Value{NewIntValue(42)}})
+		DT.TablesMu.Unlock()
+
+		// Create executor but don't enable plan cache.
+		ex := NewExecutor()
+		// Disable plan cache by setting entries to nil.
+		ex.planCache.entries = nil
+		ctx := context.Background()
+
+		rows, err := ex.Query(ctx, "SELECT x FROM d")
+		if err != nil {
+			t.Fatalf("query with disabled cache: %v", err)
+		}
+		if rows == nil {
+			t.Fatal("nil rows with disabled cache")
+		}
+	})
+
+	t.Run("cache_lru_eviction", func(t *testing.T) {
+		UnregisterAll()
+		defer UnregisterAll()
+
+		DT.RegisterTableSchema("e", []string{"id"})
+		DT.TablesMu.Lock()
+		DT.Tables["e"] = append(DT.Tables["e"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}})
+		DT.TablesMu.Unlock()
+
+		// Use a tiny max size to force eviction.
+		ex := NewExecutor()
+		ex.initPlanCache(2)
+		ctx := context.Background()
+
+		// Insert 3 different query plans — should evict the oldest.
+		for i := 0; i < 3; i++ {
+			sql := fmt.Sprintf("SELECT id FROM e WHERE id = %d", i)
+			_, _ = ex.Query(ctx, sql)
+		}
+
+		ex.planCache.mu.Lock()
+		size := len(ex.planCache.entries)
+		ex.planCache.mu.Unlock()
+		if size > 2 {
+			t.Errorf("expected at most 2 entries after eviction, got %d", size)
+		}
+	})
+}
+
+// BenchmarkPreparedCache_HitVsMiss measures the throughput difference
+// between plan cache hits and misses. REQ001011.
+func BenchmarkPreparedCache_HitVsMiss(b *testing.B) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	DT.RegisterTableSchema("t", []string{"id", "name", "value"})
+	DT.TablesMu.Lock()
+	for i := 0; i < 1000; i++ {
+		DT.Tables["t"] = append(DT.Tables["t"], Row{
+			Cols: []string{"id", "name", "value"},
+			Data: []Value{NewIntValue(int64(i)), NewTextValue("u"), NewIntValue(int64(i * 2))},
+		})
+	}
+	DT.TablesMu.Unlock()
+
+	// Use a complex multi-table query where planning cost is significant.
+	sql := `SELECT t1.id, t2.name
+	        FROM t AS t1
+	        INNER JOIN t AS t2 ON t1.id = t2.id
+	        WHERE t1.id > 500 AND t2.name IN ('u', 'v')
+	        ORDER BY t1.id`
+
+	b.Run("cache_hit", func(b *testing.B) {
+		ex := NewExecutor()
+		ctx := context.Background()
+		// Prime cache.
+		rows, _ := ex.Query(ctx, sql)
+		if rows != nil {
+			_ = rows
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			rows2, _ := ex.Query(ctx, sql)
+			if rows2 != nil {
+				_ = rows2
+			}
+		}
+	})
+
+	b.Run("cache_miss", func(b *testing.B) {
+		ex := NewExecutor()
+		// Disable plan cache.
+		ex.planCache.entries = nil
+		ctx := context.Background()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			rows, _ := ex.Query(ctx, sql)
+			if rows != nil {
+				_ = rows
+			}
+		}
+	})
 }

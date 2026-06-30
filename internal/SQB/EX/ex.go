@@ -12,14 +12,14 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
 // SessionCounterAccessor is the session counter provider interface.
@@ -41,8 +41,8 @@ var (
 )
 
 var (
-	// sessionCounterMu       sync.RWMutex — moved to DT
-	// sessionCounterAccessor SessionCounterAccessor — moved to DT
+// sessionCounterMu       sync.RWMutex — moved to DT
+// sessionCounterAccessor SessionCounterAccessor — moved to DT
 )
 
 // currentTxWriter is the package-level current TxWriter. Set by
@@ -304,6 +304,12 @@ type stmtCacheEntry struct {
 	stmt PS.Stmt
 }
 
+// planCacheEntry holds a cached compiled plan with LRU metadata.
+// REQ001011.
+type planCacheEntry struct {
+	result *pl.PlanResult
+}
+
 // Executor holds the core execution state.
 type Executor struct {
 	planner    *Planner
@@ -331,6 +337,15 @@ type Executor struct {
 		mu      sync.Mutex
 		entries map[string]*stmtCacheEntry
 		lru     []*stmtCacheEntry
+		maxSize int
+	}
+	// planCache caches compiled plan trees keyed by AST fingerprint
+	// (memo key) to avoid re-planning on repeated queries. LRU eviction,
+	// default 128 entries. REQ001011.
+	planCache struct {
+		mu      sync.Mutex
+		entries map[string]*planCacheEntry
+		lru     []*planCacheEntry
 		maxSize int
 	}
 	// pool is the shared WorkerPool for parallel operator execution.
@@ -393,6 +408,7 @@ func (e *Executor) ShallowCopy() *Executor {
 		maxResultRows:     e.maxResultRows,
 	}
 	e2.initStmtCache(e.stmtCache.maxSize)
+	e2.initPlanCache(e.planCache.maxSize)
 	return e2
 }
 
@@ -455,6 +471,7 @@ func NewExecutor() *Executor {
 	}
 	e.planner.SetPool(e.pool)
 	e.initStmtCache(256)
+	e.initPlanCache(128)
 	return e
 }
 
@@ -468,6 +485,7 @@ func NewExecutorWithPlanner(pl *Planner) *Executor {
 	}
 	pl.SetPool(e.pool)
 	e.initStmtCache(256)
+	e.initPlanCache(128)
 	return e
 }
 
@@ -482,6 +500,7 @@ func NewExecutorWithEngine(store Store) *Executor {
 	}
 	e.planner.SetPool(e.pool)
 	e.initStmtCache(256)
+	e.initPlanCache(128)
 	return e
 }
 
@@ -489,6 +508,14 @@ func NewExecutorWithEngine(store Store) *Executor {
 // Call on a newly created Executor before concurrent use.
 func (e *Executor) WithStmtCache(maxSize int) *Executor {
 	e.initStmtCache(maxSize)
+	e.initPlanCache(128)
+	return e
+}
+
+// WithPlanCache enables plan caching with the given max size.
+// Default 128 entries. REQ001011.
+func (e *Executor) WithPlanCache(maxSize int) *Executor {
+	e.initPlanCache(maxSize)
 	return e
 }
 
@@ -584,6 +611,97 @@ func (e *Executor) clearStmtCache() {
 	defer e.stmtCache.mu.Unlock()
 	e.stmtCache.entries = nil
 	e.stmtCache.lru = nil
+}
+
+// initPlanCache initializes the plan cache. Must be called before use.
+// REQ001011.
+func (e *Executor) initPlanCache(maxSize int) {
+	if maxSize <= 0 {
+		maxSize = 128
+	}
+	e.planCache.entries = make(map[string]*planCacheEntry, maxSize)
+	e.planCache.lru = make([]*planCacheEntry, 0, maxSize)
+	e.planCache.maxSize = maxSize
+}
+
+// getCachedPlan looks up a cached compiled plan by memo key.
+// Returns nil if not found. REQ001011.
+func (e *Executor) getCachedPlan(key string) *pl.PlanResult {
+	e.planCache.mu.Lock()
+	defer e.planCache.mu.Unlock()
+	ent, ok := e.planCache.entries[key]
+	if !ok {
+		return nil
+	}
+	// Move to front of LRU
+	for i, entry := range e.planCache.lru {
+		if entry == ent {
+			e.planCache.lru = append(e.planCache.lru[:i], e.planCache.lru[i+1:]...)
+			break
+		}
+	}
+	e.planCache.lru = append([]*planCacheEntry{ent}, e.planCache.lru...)
+	return ent.result
+}
+
+// putCachedPlan stores a compiled plan in the cache.
+// REQ001011.
+func (e *Executor) putCachedPlan(key string, result *pl.PlanResult) {
+	e.planCache.mu.Lock()
+	defer e.planCache.mu.Unlock()
+	if ent, ok := e.planCache.entries[key]; ok {
+		for i, entry := range e.planCache.lru {
+			if entry == ent {
+				e.planCache.lru = append(e.planCache.lru[:i], e.planCache.lru[i+1:]...)
+				break
+			}
+		}
+		e.planCache.lru = append([]*planCacheEntry{ent}, e.planCache.lru...)
+		return
+	}
+	ent := &planCacheEntry{result: result}
+	e.planCache.entries[key] = ent
+	e.planCache.lru = append([]*planCacheEntry{ent}, e.planCache.lru...)
+	for len(e.planCache.lru) > e.planCache.maxSize {
+		oldest := e.planCache.lru[len(e.planCache.lru)-1]
+		e.planCache.lru = e.planCache.lru[:len(e.planCache.lru)-1]
+		for key, val := range e.planCache.entries {
+			if val == oldest {
+				delete(e.planCache.entries, key)
+				break
+			}
+		}
+	}
+}
+
+// clearPlanCache clears the plan cache. Used in tests.
+func (e *Executor) clearPlanCache() {
+	e.planCache.mu.Lock()
+	defer e.planCache.mu.Unlock()
+	e.planCache.entries = nil
+	e.planCache.lru = nil
+}
+
+// planWithCache returns a compiled plan for stmt, checking the plan
+// cache first. On cache miss, plans via Planner.Plan and caches the
+// result. REQ001011.
+func (e *Executor) planWithCache(stmt PS.Stmt) (*pl.PlanResult, error) {
+	if e.planCache.entries != nil {
+		key := pl.SerializeKey(stmt)
+		if cached := e.getCachedPlan(key); cached != nil {
+			return cached, nil
+		}
+		plan, err := e.planner.Plan(stmt)
+		if err != nil {
+			return nil, err
+		}
+		if plan == nil || plan.Root == nil {
+			return nil, errors.New("ex: plan produced no root")
+		}
+		e.putCachedPlan(key, plan)
+		return plan, nil
+	}
+	return e.planner.Plan(stmt)
 }
 
 // ExtractParamTypes parses sql and returns the SQL column type
@@ -951,7 +1069,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 				return &Rows{Cols: append([]string(nil), out[0].Cols...), Types: append([]LX.TokenType(nil), out[0].Types...)}, nil
 			}
 
-			plan, err := e.planner.Plan(stmt)
+			plan, err := e.planWithCache(stmt)
 			if err != nil {
 				return nil, err
 			}
@@ -1011,7 +1129,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 		return &Rows{Cols: append([]string(nil), out[0].Cols...), Types: append([]LX.TokenType(nil), out[0].Types...)}, nil
 	}
 
-	plan, err := e.planner.Plan(stmt)
+	plan, err := e.planWithCache(stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -1042,7 +1160,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 	if e.stmtCache.entries != nil {
 		if cached := e.getCachedStmt(sql); cached != nil {
 			stmt := cached
-			plan, err := e.planner.Plan(stmt)
+			plan, err := e.planWithCache(stmt)
 			if err != nil {
 				return nil, err
 			}
@@ -1063,7 +1181,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 					}
 					return nil, err
 				}
-DT.WithExecContext(&row, execCtx)
+				DT.WithExecContext(&row, execCtx)
 				out = append(out, row)
 			}
 			return out, nil
@@ -1079,7 +1197,7 @@ DT.WithExecContext(&row, execCtx)
 	if e.stmtCache.entries != nil {
 		e.putCachedStmt(sql, stmt)
 	}
-	plan, err := e.planner.Plan(stmt)
+	plan, err := e.planWithCache(stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -1119,7 +1237,9 @@ func propagatePlanner(root Operator, p *Planner) {
 	if root == nil {
 		return
 	}
-	if w, ok := root.(interface{ WithPlanner(pl.QueryPlanner) pl.Operator }); ok {
+	if w, ok := root.(interface {
+		WithPlanner(pl.QueryPlanner) pl.Operator
+	}); ok {
 		w.WithPlanner(p)
 	}
 	type childer interface {
@@ -1234,7 +1354,7 @@ func (e *Executor) Explain(sql string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	plan, err := e.planner.Plan(stmt)
+	plan, err := e.planWithCache(stmt)
 	if err != nil {
 		return "", err
 	}
@@ -1710,7 +1830,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 		}, nil
 	}
 
-	plan, err := e.planner.Plan(stmt)
+	plan, err := e.planWithCache(stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -1794,11 +1914,11 @@ type streamIterator struct {
 	rowCh  chan Row
 	closer func() error
 
-	done   bool
-	mu     sync.Mutex
+	done bool
+	mu   sync.Mutex
 }
 
-func (s *streamIterator) Cols() []string { return s.cols }
+func (s *streamIterator) Cols() []string        { return s.cols }
 func (s *streamIterator) Types() []LX.TokenType { return s.types }
 func (s *streamIterator) Next() (Row, error) {
 	if s == nil || s.done || s.rowCh == nil {
