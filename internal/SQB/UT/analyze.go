@@ -1,4 +1,4 @@
-package EX
+package UT
 
 import (
 	"context"
@@ -33,7 +33,7 @@ func NewAnalyze(stmt *PS.AnalyzeStmt) *Analyze {
 func NewAnalyzeWithStore(store Store, stmt *PS.AnalyzeStmt) (*Analyze, error) {
 	ss, ok := DT.SchemaFor(stmt.Table)
 	if !ok && stmt.Table != "" {
-		return nil, ErrTableNotRegisteredForStorage
+		return nil, DT.ErrTableNotRegisteredForStorage
 	}
 	return &Analyze{
 		stmt:   stmt,
@@ -95,7 +95,7 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 
 	ss, ok := DT.SchemaFor(tableName)
 	if !ok {
-		return ErrTableNotRegisteredForStorage
+		return DT.ErrTableNotRegisteredForStorage
 	}
 
 	if a.store == nil || ss == nil {
@@ -121,9 +121,9 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 	}
 
 	rowCount := int64(0)
-	prefix := tablePrefix(tableName)
+	prefix := DT.TablePrefix(tableName)
 	if prefix == nil {
-		return ErrTableNotRegisteredForStorage
+		return DT.ErrTableNotRegisteredForStorage
 	}
 	it := a.store.NewIterator(prefix)
 	defer it.Close()
@@ -142,7 +142,7 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 		if len(encoded) == 0 {
 			continue
 		}
-		rowBuf, err = decodeRow(encoded, ss)
+		rowBuf, err = DT.DecodeRow(encoded, ss)
 		if err != nil {
 			continue
 		}
@@ -233,11 +233,11 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 // suitable for distinct tracking, min/max, and histogram building.
 func valueToBytes(v Value) []byte {
 	switch v.Kind {
-	case KindInt:
+	case DT.KindInt:
 		var b [8]byte
 		binary.BigEndian.PutUint64(b[:], uint64(v.I64))
 		return b[:]
-	case KindFloat:
+	case DT.KindFloat:
 		var b [8]byte
 		bits := math.Float64bits(v.F64)
 		// Flip sign bit for negative values so byte ordering matches float ordering
@@ -248,9 +248,9 @@ func valueToBytes(v Value) []byte {
 		}
 		binary.BigEndian.PutUint64(b[:], bits)
 		return b[:]
-	case KindText:
+	case DT.KindText:
 		return []byte(v.S)
-	case KindBool:
+	case DT.KindBool:
 		if v.Bo {
 			return []byte{1}
 		}

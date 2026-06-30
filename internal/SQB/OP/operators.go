@@ -3,7 +3,6 @@ package OP
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -15,9 +14,6 @@ import (
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
-
-var ErrTableNotRegisteredForStorage = errors.New("op: table not registered for storage")
-var ErrNoPKForStorage = errors.New("op: cannot write to storage without a primary key")
 
 // TableSchemaCache caches shared column metadata per table to avoid
 // rebuilding Cols, Types, and colIndex on every SeqScan.snapshot() call.
@@ -924,19 +920,7 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-// IndexValueFromKey strips the index prefix
-// `__idx__:<tableID>:<idxName>:` from the key and returns the
-// remaining bytes (the indexed column value). Returns nil if the
-// key does not start with the expected prefix.
-func IndexValueFromKey(key []byte, prefix []byte) []byte {
-	if len(key) < len(prefix) {
-		return nil
-	}
-	if !bytes.Equal(key[:len(prefix)], prefix) {
-		return nil
-	}
-	return key[len(prefix):]
-}
+// IndexValueFromKey moved to DT/storage.go; aliased in OP/store.go.
 
 // openIndexIter returns the index iterator positioned at the
 // configured seek. It uses the prefix-iter interface on the
@@ -1075,36 +1059,8 @@ func (i *IndexScan) nextFromBTree(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-// BuildIndexKey synthesizes the index keyspace prefix for use with
-// Store.NewIterator. The full key is:
-//
-//	"__idx__:" + tableID(u64, BE) + ":" + indexName + ":" + indexValue
-//
-// iter-22 secondary indexes MVP.
-func BuildIndexKey(tableID uint64, indexName string, indexValue []byte) []byte {
-	out := make([]byte, 0, 32+len(indexName)+len(indexValue))
-	out = append(out, "__idx__:"...)
-	encodeUint64BE(&out, tableID)
-	out = append(out, ':')
-	out = append(out, indexName...)
-	out = append(out, ':')
-	out = append(out, indexValue...)
-	return out
-}
-
-// encodeUint64BE writes v big-endian into *buf.
-func encodeUint64BE(buf *[]byte, v uint64) {
-	var b [8]byte
-	b[7] = byte(v)
-	b[6] = byte(v >> 8)
-	b[5] = byte(v >> 16)
-	b[4] = byte(v >> 24)
-	b[3] = byte(v >> 32)
-	b[2] = byte(v >> 40)
-	b[1] = byte(v >> 48)
-	b[0] = byte(v >> 56)
-	*buf = append(*buf, b[:]...)
-}
+// BuildIndexKey and encodeUint64BE moved to DT/storage.go; aliased in
+// OP/store.go via OP.BuildIndexKey var alias.
 
 // pruneRowCols filters row Data/Cols/Types to only include columns
 // in usedCols. Returns the pruned row. REQ001080.

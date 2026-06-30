@@ -13,6 +13,7 @@ type Operator = pl.Operator
 type Row = pl.Row
 type Value = pl.Value
 type Store = DT.Store
+type StoreSchema = DT.StoreSchema
 
 // ErrNoRows signals end-of-stream from operators.
 var ErrNoRows = pl.ErrNoRows

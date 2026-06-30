@@ -231,6 +231,8 @@ type CompoundOp = OP.CompoundOp
 type Values = OP.Values
 type ValuesRows = OP.ValuesRows
 type IntegrityCheck = UT.IntegrityCheck
+type Analyze = UT.Analyze
+type Vacuum = UT.Vacuum
 
 // Backward-compat type aliases formerly in EX/store.go.
 type Store = DT.Store
@@ -273,6 +275,10 @@ var newValuesOp = OP.NewValuesOp
 var newValuesRowsOp = OP.NewValuesRowsOp
 var NewIntegrityCheck = UT.NewIntegrityCheck
 var NewIntegrityCheckWithStore = UT.NewIntegrityCheckWithStore
+var NewAnalyze = UT.NewAnalyze
+var NewAnalyzeWithStore = UT.NewAnalyzeWithStore
+var NewVacuum = UT.NewVacuum
+var NewVacuumWithStore = UT.NewVacuumWithStore
 var SchemaFromRowSchema = OP.SchemaFromRowSchema
 var NewIndexScan = OP.NewIndexScan
 var NewIndexScanWithStore = OP.NewIndexScanWithStore
