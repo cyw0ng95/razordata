@@ -1,17 +1,147 @@
 package OP
 
 import (
+	"bytes"
 	"context"
 	"sync"
 
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
-// ParallelSeqScanRow is a row-based parallel table scan that splits
+// ParallelStoreSeqScan splits an LSM key prefix range across N
+// workers, each opening its own Store.Iterator. REQ001045.
+// Workers scan their sub-range concurrently; results are merged
+// in key order in a coordinator goroutine.
+type ParallelStoreSeqScan struct {
+	store       DT.Store
+	schema      *DT.StoreSchema
+	prefix      []byte
+	pool        *UT.WorkerPool
+	concurrency int
+	rowBuf      []Row
+	rowPos      int
+	done        bool
+	started     bool
+	startMu     sync.Mutex
+}
+
+// NewParallelStoreSeqScan creates a store-backed parallel scan.
+func NewParallelStoreSeqScan(store DT.Store, table string, pool *UT.WorkerPool, concurrency int) *ParallelStoreSeqScan {
+	ss, _ := DT.SchemaFor(table)
+	prefix := DT.TablePrefix(table)
+	if concurrency < 2 {
+		concurrency = 2
+	}
+	return &ParallelStoreSeqScan{
+		store:       store,
+		schema:      ss,
+		prefix:      prefix,
+		pool:        pool,
+		concurrency: concurrency,
+	}
+}
+
+func (p *ParallelStoreSeqScan) Next(ctx context.Context) (Row, error) {
+	if p.done {
+		return Row{}, pl.ErrNoRows
+	}
+	if err := ctx.Err(); err != nil {
+		return Row{}, err
+	}
+	if !p.started {
+		p.startMu.Lock()
+		if !p.started {
+			if err := p.startScan(ctx); err != nil {
+				p.startMu.Unlock()
+				return Row{}, err
+			}
+		}
+		p.startMu.Unlock()
+	}
+	for p.rowPos < len(p.rowBuf) {
+		r := p.rowBuf[p.rowPos]
+		p.rowPos++
+		return r, nil
+	}
+	p.done = true
+	return Row{}, pl.ErrNoRows
+}
+
+func (p *ParallelStoreSeqScan) startScan(ctx context.Context) error {
+	p.started = true
+	n := p.concurrency
+	// Build sub-range boundaries by dividing the key space
+	// within the prefix. Each worker scans keys [lo, hi).
+	ranges := make([][2][]byte, n)
+	for i := 0; i < n; i++ {
+		lo := append([]byte(nil), p.prefix...)
+		hi := append([]byte(nil), p.prefix...)
+		if i > 0 {
+			lo = append(lo, byte(0xFF*int(i)/n))
+		}
+		if i < n-1 {
+			hi = append(hi, byte(0xFF*(i+1)/n))
+		} else {
+			hi = append(hi, 0xFF)
+		}
+		ranges[i] = [2][]byte{lo, hi}
+	}
+	var mu sync.Mutex
+	partitions := make([]UT.Partition, n)
+	for i := 0; i < n; i++ {
+		lo, hi := ranges[i][0], ranges[i][1]
+		partitions[i] = UT.Partition{ID: i, Start: uint64(i), End: uint64(i + 1)}
+		_ = lo
+		_ = hi
+	}
+
+	results := make([][]Row, n)
+	err := p.pool.ParallelFanOut(ctx, partitions, func(part UT.Partition) error {
+		idx := int(part.Start)
+		lo, hi := ranges[idx][0], ranges[idx][1]
+		var localRows []Row
+		it := p.store.NewIterator(lo)
+		if it == nil {
+			return nil
+		}
+		defer it.Close()
+		for it.Next() {
+			k := it.Key()
+			if len(hi) > 0 && bytes.Compare(k, hi) >= 0 {
+				break
+			}
+			v := it.Value()
+			localRows = append(localRows, Row{
+				Data: []Value{{Kind: KindText, S: string(v)}},
+			})
+		}
+		if err := it.Err(); err != nil {
+			return err
+		}
+		mu.Lock()
+		results[idx] = localRows
+		mu.Unlock()
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, rs := range results {
+		p.rowBuf = append(p.rowBuf, rs...)
+	}
+	return nil
+}
+
+func (p *ParallelStoreSeqScan) Close() error {
+	p.rowBuf = nil
+	return nil
+}
+
 // the row range into N partitions and scans each in parallel using a
 // WorkerPool. On the first call to Next(), all partitions are fanned
 // out to workers and their results are merged in partition order.
@@ -157,12 +287,12 @@ func (p *ParallelSeqScanRow) Close() error {
 // Left and right children are drained in parallel via WorkerPool,
 // and their rows are emitted in arrival order. REQ001052.
 type ParallelUnionAll struct {
-	left   Operator
-	right  Operator
-	pool   *UT.WorkerPool
-	rowBuf []Row
-	rowPos int
-	done   bool
+	left    Operator
+	right   Operator
+	pool    *UT.WorkerPool
+	rowBuf  []Row
+	rowPos  int
+	done    bool
 	startMu sync.Mutex
 	started bool
 }
@@ -601,10 +731,10 @@ func (p *ParallelIndexScan) Close() error {
 // partition order. Falls back to sequential when pool is nil or
 // there are fewer than 2 values. REQ001051.
 type ParallelIndexRangeScan struct {
-	pool   *UT.WorkerPool
-	rows   []Row
-	schema []string
-	types  []LX.TokenType
+	pool    *UT.WorkerPool
+	rows    []Row
+	schema  []string
+	types   []LX.TokenType
 	colName string
 	values  []any
 
