@@ -10,8 +10,8 @@ import (
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
-// HashJoin is a radix-partitioned hash join for INNER joins
-// on equi-keys. REQ000312, REQ000684, REQ000865.
+// HashJoin is a radix-partitioned hash join for equi-keys.
+// REQ000312, REQ000684, REQ000865, REQ001020.
 // Algorithm (classic radix hash join):
 //  1. Build phase: hash the right relation's join key into
 //     N radix partitions (one per high bit of the hash).
@@ -23,13 +23,19 @@ import (
 //
 // The implementation uses maphash.Hash for the partition key.
 // Supports multi-column equi-join keys (REQ000684).
-// Current limits:
-//   - INNER JOIN only (LEFT/RIGHT/FULL deferred to NestedLoopJoin)
-//   - Equi-join only (non-equi joins deferred to NestedLoopJoin)
+//
+// REQ001020: INNER, LEFT, RIGHT, and FULL outer joins are all
+// supported. Outer semantics:
+//   - LEFT:  every unmatched left row emits with NULL right side.
+//   - RIGHT: every unmatched right row emits with NULL left side.
+//   - FULL:  union of LEFT and RIGHT semantics.
+//
+// Equi-joins only (non-equi joins still fall back to NestedLoopJoin).
 //
 // REQ000865: right side is NOT separately materialized — rows live
-// only in the per-bucket slices. The right operator is closed
-// immediately after the build phase to release resources.
+// only in the per-bucket slices. No separate rightRows materialization.
+// Right operator is closed immediately after the build phase to
+// free resources early.
 type HashJoin struct {
 	left       pl.Operator
 	right      pl.Operator
@@ -69,6 +75,23 @@ type HashJoin struct {
 	// materialization. 0 = unlimited. Set by Planner from
 	// Executor.WithMemoryBudget. REQ001056.
 	joinBufferSize int64
+
+	// REQ001020: outer-join state. kind selects INNER (default),
+	// LEFT, RIGHT, or FULL. matchedRight[bucketIdx][rowIdx] tracks
+	// whether that right row has been emitted at least once, so
+	// the final pass can produce NULL-padded unmatched rows.
+	kind         JoinKind
+	leftMatched  []bool   // REQ001020: indexed by leftRows index
+	matchedRight [][]bool // REQ001020: matchedRight[b][i] for bucket b, row i
+	// REQ001020: phase tracks where Next() is in the multi-phase
+	// emission: 0 = match pairs, 1 = unmatched-left (LEFT/FULL),
+	// 2 = unmatched-right (RIGHT/FULL), 3 = done.
+	phase int
+	// REQ001020: unmatchedLeftIdx and unmatchedRightBucket/Idx
+	// track positions within the unmatched-row sweeps.
+	unmatchedLeftIdx     int
+	unmatchedRightBucket int
+	unmatchedRightIdx    int
 }
 
 type hashBucket struct {
@@ -141,6 +164,17 @@ func (j *HashJoin) WithProjection(cols []string) *HashJoin {
 	return j
 }
 
+// WithKind selects the join kind (Inner/Left/Right/Full). REQ001020.
+// Defaults to JoinKindInner. Pass any other JoinKind value to
+// enable outer semantics.
+func (j *HashJoin) WithKind(k JoinKind) *HashJoin {
+	j.kind = k
+	return j
+}
+
+// Kind returns the configured join kind. REQ001020.
+func (j *HashJoin) Kind() JoinKind { return j.kind }
+
 // Next produces the next matching pair. First call performs
 // the full Build + Probe with match pre-computation. Subsequent
 // calls return pre-built rows from the data buffer.
@@ -158,12 +192,82 @@ func (j *HashJoin) Next(ctx context.Context) (pl.Row, error) {
 		}
 		j.built = true
 	}
-	// REQ0011XX: streaming match emission. Iterate left rows and
-	// probe buckets lazily — one match per Next() call. This avoids
-	// the OOM from pre-computing all matches upfront for large
-	// cross-joins (the previous design allocated totalMatches*dataPerRow
-	// for dataBuf and totalMatches for matches, which OOMs at ~1.9M
-	// matches for a 5-table join).
+	// REQ001020: three-phase emission. Phase 0 = matched pairs
+	// (always). Phase 1 = unmatched-left for LEFT/FULL. Phase 2
+	// = unmatched-right for RIGHT/FULL.
+	for j.phase == 0 {
+		row, matchedLeft, bucketIdx, rightIdx, ok := j.nextMatched()
+		if ok {
+			if matchedLeft >= 0 && j.leftMatched != nil {
+				j.leftMatched[matchedLeft] = true
+			}
+			if bucketIdx >= 0 && rightIdx >= 0 && j.matchedRight != nil && bucketIdx < len(j.matchedRight) && rightIdx < len(j.matchedRight[bucketIdx]) {
+				j.matchedRight[bucketIdx][rightIdx] = true
+			}
+			return row, nil
+		}
+		// Phase 0 exhausted. Decide next phase based on join kind.
+		switch j.kind {
+		case JoinKindLeft:
+			j.phase = 1
+			j.unmatchedLeftIdx = 0
+		case JoinKindFull:
+			// FULL: emit unmatched-left first, then unmatched-right
+			// in a second pass (handled by the outer loop).
+			j.phase = 1
+			j.unmatchedLeftIdx = 0
+		case JoinKindRight:
+			j.phase = 2
+			j.unmatchedRightBucket = 0
+			j.unmatchedRightIdx = 0
+		default:
+			j.phase = 3
+		}
+	}
+	if j.phase == 1 {
+		for j.unmatchedLeftIdx < len(j.leftRows) {
+			li := j.unmatchedLeftIdx
+			j.unmatchedLeftIdx++
+			if j.leftMatched != nil && j.leftMatched[li] {
+				continue
+			}
+			return j.emitUnmatchedLeft(li), nil
+		}
+		// After unmatched-left, FULL also needs unmatched-right.
+		if j.kind == JoinKindFull {
+			j.phase = 2
+			j.unmatchedRightBucket = 0
+			j.unmatchedRightIdx = 0
+		} else {
+			j.phase = 3
+		}
+	}
+	if j.phase == 2 {
+		for j.unmatchedRightBucket < len(j.buckets) {
+			bucket := &j.buckets[j.unmatchedRightBucket]
+			for j.unmatchedRightIdx < len(bucket.rightRows) {
+				ri := j.unmatchedRightIdx
+				j.unmatchedRightIdx++
+				if j.matchedRight != nil && j.matchedRight[j.unmatchedRightBucket][ri] {
+					continue
+				}
+				return j.emitUnmatchedRight(j.unmatchedRightBucket, ri), nil
+			}
+			j.unmatchedRightIdx = 0
+			j.unmatchedRightBucket++
+		}
+		j.phase = 3
+	}
+	j.done = true
+	return pl.Row{}, ErrNoRows
+}
+
+// nextMatched emits the next matching pair across left rows and
+// right rows. Returns (row, leftIdx, bucketIdx, rightIdx, true) on
+// a match or (zero, 0, 0, 0, false) when all matches are exhausted.
+// REQ001020: also returns the (leftIdx, bucketIdx, rightIdx)
+// coordinates so Next() can update matchedRight/leftMatched.
+func (j *HashJoin) nextMatched() (pl.Row, int, int, int, bool) {
 	for j.curLeftIdx < len(j.leftRows) {
 		l := j.leftInfos[j.curLeftIdx]
 		bucket := j.buckets[l.idx]
@@ -171,24 +275,53 @@ func (j *HashJoin) Next(ctx context.Context) (pl.Row, error) {
 			k := j.curRightIdx
 			j.curRightIdx++
 			if bucket.hashes[k] == l.hash && ValuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys, j.keyBuf)) {
-				// Emit match: copy left + right data into emitBuf.
 				right := bucket.rightRows[k]
 				leftData := j.leftRows[j.curLeftIdx].Data
-				copy(j.emitBuf, leftData)
-				copy(j.emitBuf[len(leftData):], right.Data)
+				outData := make([]pl.Value, j.dataPerRow)
+				copy(outData, leftData)
+				copy(outData[len(leftData):], right.Data)
 				return pl.Row{
 					Cols:     j.sharedCols,
 					Types:    j.sharedTypes,
-					Data:     j.emitBuf[:j.dataPerRow],
+					Data:     outData,
 					ColIndex: j.sharedColIndex,
-				}, nil
+				}, j.curLeftIdx, l.idx, k, true
 			}
 		}
 		j.curRightIdx = 0
 		j.curLeftIdx++
 	}
-	j.done = true
-	return pl.Row{}, ErrNoRows
+	return pl.Row{}, -1, -1, -1, false
+}
+
+// emitUnmatchedLeft produces a row with the left side's data and
+// NULL right columns. REQ001020. Returns a fresh Data slice so
+// the emitBuf backing array can be reused without aliasing.
+func (j *HashJoin) emitUnmatchedLeft(li int) pl.Row {
+	out := pl.Row{
+		Cols:     j.sharedCols,
+		Types:    j.sharedTypes,
+		ColIndex: j.sharedColIndex,
+		Data:     make([]pl.Value, j.dataPerRow),
+	}
+	leftData := j.leftRows[li].Data
+	copy(out.Data, leftData)
+	return out
+}
+
+// emitUnmatchedRight produces a row with the right side's data
+// and NULL left columns. REQ001020.
+func (j *HashJoin) emitUnmatchedRight(bucketIdx, rowInBucket int) pl.Row {
+	out := pl.Row{
+		Cols:     j.sharedCols,
+		Types:    j.sharedTypes,
+		ColIndex: j.sharedColIndex,
+		Data:     make([]pl.Value, j.dataPerRow),
+	}
+	right := j.buckets[bucketIdx].rightRows[rowInBucket]
+	leftLen := j.dataPerRow - len(right.Data)
+	copy(out.Data[leftLen:], right.Data)
+	return out
 }
 
 func (j *HashJoin) Close() error {
@@ -397,16 +530,53 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	// allocate a small reusable emitBuf of size dataPerRow.
 	// No match counting or pre-allocation needed — matches are emitted
 	// one at a time in Next().
-	if len(j.leftRows) == 0 || rightCount == 0 {
+	// REQ001020: even when one side is empty (LEFT outer against
+	// empty right, RIGHT outer against empty left), we still need
+	// dataPerRow and emitBuf initialised so the unmatched-row phase
+	// can emit NULL-padded rows with the correct column count.
+	if len(j.leftRows) == 0 && rightCount == 0 {
 		return nil
 	}
-	dataPerRow := len(j.leftRows[0].Data) + len(firstRightData)
-	j.dataPerRow = dataPerRow
-	j.leftInfos = leftInfos
-	j.emitBuf = make([]pl.Value, dataPerRow)
-	j.curLeftIdx = 0
+	if len(j.leftRows) > 0 {
+		j.leftInfos = leftInfos
+		j.curLeftIdx = 0
+	}
 	j.curRightIdx = 0
+	if rightCount > 0 && len(j.leftRows) > 0 {
+		dataPerRow := len(j.leftRows[0].Data) + len(firstRightData)
+		j.dataPerRow = dataPerRow
+		j.emitBuf = make([]pl.Value, dataPerRow)
+	}
 
+	// REQ001020: allocate matched-state slices for outer joins.
+	// Both slices stay nil for INNER joins so the bookkeeping
+	// branches in Next() no-op cheaply.
+	if j.kind == JoinKindLeft || j.kind == JoinKindFull {
+		j.leftMatched = make([]bool, len(j.leftRows))
+	}
+	if j.kind == JoinKindRight || j.kind == JoinKindFull {
+		j.matchedRight = make([][]bool, len(j.buckets))
+		for bi := range j.buckets {
+			j.matchedRight[bi] = make([]bool, len(j.buckets[bi].rightRows))
+		}
+	}
+
+	// REQ001020: handle empty-side cases by sizing emitBuf to
+	// the union of left + right row widths so unmatched-row
+	// emission can produce NULL-padded output even when one
+	// side is empty.
+	if j.emitBuf == nil {
+		var leftW, rightW int
+		if len(j.leftRows) > 0 {
+			leftW = len(j.leftRows[0].Data)
+		}
+		if rightCount > 0 {
+			rightW = len(firstRightData)
+		}
+		width := leftW + rightW
+		j.dataPerRow = width
+		j.emitBuf = make([]pl.Value, width)
+	}
 	return nil
 }
 
