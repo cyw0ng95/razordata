@@ -21,6 +21,11 @@ var globalMV = MV.NewMV()
 
 var defaultManager = NewManagerShared(globalSlotManager, globalMV)
 
+func init() {
+	// Disable lock table for global manager to avoid test interference.
+	defaultManager.lt = nil
+}
+
 type Tx interface {
 	Get(ctx context.Context, key []byte) ([]byte, error)
 	Insert(ctx context.Context, key, value []byte) error
@@ -74,6 +79,12 @@ func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
 	if t.Phase() == PhaseBegin {
 		t.setPhase(PhaseRead)
 	}
+	// REQ000994: acquire shared lock on read.
+	if t.manager != nil && t.manager.lt != nil {
+		if err := t.manager.lt.Lock(t.slot.txnID, key, LockModeShared); err != nil {
+			return nil, err
+		}
+	}
 	chain := t.mv.VersionChain(key)
 	if chain != nil {
 		for node := chain.Head(); node != nil; node = node.Next() {
@@ -118,6 +129,12 @@ func (t *tx) Insert(ctx context.Context, key, value []byte) error {
 		return ErrTxFinished
 	}
 	t.setPhase(PhaseWrite)
+	// REQ000994: acquire exclusive lock on write.
+	if t.manager != nil && t.manager.lt != nil {
+		if err := t.manager.lt.Lock(t.slot.txnID, key, LockModeExclusive); err != nil {
+			return err
+		}
+	}
 	node := MV.NewVersionNode(t.slot.arena, t.slot.txnID, t.slot.beginTS, key, value, false)
 	if !t.mv.Insert(key, node) {
 		return ErrInsertFailed
@@ -136,6 +153,12 @@ func (t *tx) Delete(ctx context.Context, key []byte) error {
 		return ErrTxFinished
 	}
 	t.setPhase(PhaseWrite)
+	// REQ000994: acquire exclusive lock on write.
+	if t.manager != nil && t.manager.lt != nil {
+		if err := t.manager.lt.Lock(t.slot.txnID, key, LockModeExclusive); err != nil {
+			return err
+		}
+	}
 	node := MV.NewVersionNode(t.slot.arena, t.slot.txnID, t.slot.beginTS, key, nil, true)
 	if !t.mv.Insert(key, node) {
 		return ErrDeleteFailed
@@ -175,6 +198,10 @@ func (t *tx) Commit(ctx context.Context) error {
 		batch := &walwr.WriteBatch{Recs: []walwr.LogRecord{{Type: walwr.RTCommit, Value: rec}}}
 		if _, err := t.wal.Append(batch); err != nil {
 			t.setPhase(PhaseAborted)
+			// REQ000994: release locks BEFORE finalize (which clears txnID).
+			if t.manager != nil && t.manager.lt != nil {
+				t.manager.lt.Unlock(t.slot.txnID)
+			}
 			t.finalize(SlotAborted)
 			if t.manager != nil {
 				t.manager.recordAbort()
@@ -183,6 +210,10 @@ func (t *tx) Commit(ctx context.Context) error {
 		}
 		if err := t.wal.Sync(); err != nil {
 			t.setPhase(PhaseAborted)
+			// REQ000994: release locks BEFORE finalize (which clears txnID).
+			if t.manager != nil && t.manager.lt != nil {
+				t.manager.lt.Unlock(t.slot.txnID)
+			}
 			t.finalize(SlotAborted)
 			if t.manager != nil {
 				t.manager.recordAbort()
@@ -205,6 +236,10 @@ func (t *tx) Commit(ctx context.Context) error {
 	}
 
 	t.setPhase(PhasePostCommit)
+	// REQ000994: release locks BEFORE finalize (which clears txnID).
+	if t.manager != nil && t.manager.lt != nil {
+		t.manager.lt.Unlock(t.slot.txnID)
+	}
 	t.finalize(SlotCommitted)
 	if t.manager != nil {
 		t.manager.recordCommit()
@@ -222,16 +257,22 @@ func (t *tx) Abort(ctx context.Context) error {
 		return nil
 	}
 	t.setPhase(PhasePreCommit) // REQ000617: persist RTRollback before marking aborted
+	// REQ000994: release locks before finalize (which clears txnID).
+	if t.manager != nil && t.manager.lt != nil {
+		t.manager.lt.Unlock(t.slot.txnID)
+	}
 	if t.wal != nil {
 		batch := &walwr.WriteBatch{
 			TxnID: t.slot.txnID,
 			Recs:  []walwr.LogRecord{{Type: walwr.RTRollback}},
 		}
 		if _, err := t.wal.Append(batch); err != nil {
+			// Locks already released above.
 			t.setPhase(PhaseAborted)
 			return err
 		}
 		if err := t.wal.Sync(); err != nil {
+			// Locks already released above.
 			t.setPhase(PhaseAborted)
 			return err
 		}

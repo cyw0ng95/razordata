@@ -567,30 +567,30 @@ func TestValidate_NoReadsWriteWriteConflict(t *testing.T) {
 }
 
 // TestReadSet_BoundedMemory — readSet as map[uint64][]byte stays bounded
-	// even when the same key is read many times. REQ001007.
-	func TestReadSet_BoundedMemory(t *testing.T) {
-		sm := newSlotManager()
-		slot := sm.AllocateSlot()
-		slot.beginTS = 10
+// even when the same key is read many times. REQ001007.
+func TestReadSet_BoundedMemory(t *testing.T) {
+	sm := newSlotManager()
+	slot := sm.AllocateSlot()
+	slot.beginTS = 10
 
-		// Simulate 10K reads of the same key — map should dedup to 1 entry.
-		for i := 0; i < 10000; i++ {
-			slot.readSet[fnv1aHash64([]byte("same-key"))] = []byte("same-key")
-		}
-		if len(slot.readSet) != 1 {
-			t.Errorf("expected 1 entry after 10K reads of same key, got %d", len(slot.readSet))
-		}
-
-		// Simulate 10K reads of distinct keys — map should have 10K entries.
-		for i := 0; i < 10000; i++ {
-			k := fmt.Sprintf("key-%d", i)
-			slot.readSet[fnv1aHash64([]byte(k))] = []byte(k)
-		}
-		if len(slot.readSet) != 10001 {
-			t.Errorf("expected 10001 entries after 10K distinct reads, got %d", len(slot.readSet))
-		}
-
-		// Memory is bounded: map overhead is O(distinct keys), not O(total reads).
-		// For 10K distinct keys, map overhead is ~10K × (8 + len(key) + 16 bytes).
-		// Without dedup, 10K reads of the same key would be 10K × (8 + len(key) + 16 bytes).
+	// Simulate 10K reads of the same key — map should dedup to 1 entry.
+	for i := 0; i < 10000; i++ {
+		slot.readSet[fnv1aHash64([]byte("same-key"))] = []byte("same-key")
 	}
+	if len(slot.readSet) != 1 {
+		t.Errorf("expected 1 entry after 10K reads of same key, got %d", len(slot.readSet))
+	}
+
+	// Simulate 10K reads of distinct keys — map should have 10K entries.
+	for i := 0; i < 10000; i++ {
+		k := fmt.Sprintf("key-%d", i)
+		slot.readSet[fnv1aHash64([]byte(k))] = []byte(k)
+	}
+	if len(slot.readSet) != 10001 {
+		t.Errorf("expected 10001 entries after 10K distinct reads, got %d", len(slot.readSet))
+	}
+
+	// Memory is bounded: map overhead is O(distinct keys), not O(total reads).
+	// For 10K distinct keys, map overhead is ~10K × (8 + len(key) + 16 bytes).
+	// Without dedup, 10K reads of the same key would be 10K × (8 + len(key) + 16 bytes).
+}

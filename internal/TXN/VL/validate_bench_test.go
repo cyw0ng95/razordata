@@ -14,7 +14,7 @@ func BenchmarkVL_Validate_Concurrent(b *testing.B) {
 	for i := 0; i < 64; i++ {
 		slot := sm.AllocateSlot()
 		slot.beginTS = uint64(i * 10)
-		slot.commitTS = uint64(i * 10 + 5)
+		slot.commitTS = uint64(i*10 + 5)
 		slot.status.Store(int32(SlotCommitted))
 		key := []byte{byte(i)}
 		slot.writeSet = append(slot.writeSet, KeyRange{Start: bytes.Clone(key)})
