@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
@@ -23,7 +24,7 @@ func TestParallelSeqScanRow_Basic(t *testing.T) {
 	schema := []string{"val"}
 	types := []LX.TokenType{LX.T_INT_KW}
 
-	ps := NewParallelSeqScanRow(rows, schema, types, pool)
+	ps := OP.NewParallelSeqScanRow(rows, schema, types, pool)
 	defer ps.Close()
 
 	count := 0
@@ -57,7 +58,7 @@ func TestParallelSeqScanRow_Values(t *testing.T) {
 	schema := []string{"id", "name"}
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_TEXT}
 
-	ps := NewParallelSeqScanRow(rows, schema, types, pool)
+	ps := OP.NewParallelSeqScanRow(rows, schema, types, pool)
 	defer ps.Close()
 
 	for i := 0; i < 10; i++ {
@@ -126,7 +127,7 @@ func TestParallelSeqScanRow_MultiWorker(t *testing.T) {
 	schema := []string{"v"}
 	types := []LX.TokenType{LX.T_INT_KW}
 
-	ps := NewParallelSeqScanRow(rows, schema, types, pool)
+	ps := OP.NewParallelSeqScanRow(rows, schema, types, pool)
 	defer ps.Close()
 
 	var sum int64

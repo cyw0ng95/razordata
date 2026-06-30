@@ -5,11 +5,12 @@ import (
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/UT"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 func TestIntegrityCheck_Success(t *testing.T) {
-	ic := NewIntegrityCheck()
+	ic := UT.NewIntegrityCheck()
 	defer ic.Close()
 
 	ctx := context.Background()
@@ -35,7 +36,7 @@ func TestIntegrityCheck_Success(t *testing.T) {
 }
 
 func TestIntegrityCheck_Idempotent(t *testing.T) {
-	ic := NewIntegrityCheck()
+	ic := UT.NewIntegrityCheck()
 	defer ic.Close()
 
 	ctx := context.Background()

@@ -510,7 +510,7 @@ func BenchmarkHashCrossJoin_SmallTables(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			left2 := newBenchSeqScan("t1", 100)
 			right2 := newBenchSeqScan("t2", 100)
-			j := NewNestedLoopJoin(left2, right2, "t1", "t2", nil, JoinKindInner)
+			j := OP.NewNestedLoopJoin(left2, right2, "t1", "t2", nil, OP.JoinKindInner)
 			ctx := context.Background()
 			for {
 				_, err := j.Next(ctx)

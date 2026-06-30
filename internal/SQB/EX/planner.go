@@ -446,7 +446,7 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	case *PS.WithStmt:
 		root = p.planWith(s)
 	case *PS.ValuesStmt:
-		root = newValuesRowsOp(s.Rows)
+		root = OP.NewValuesRowsOp(s.Rows)
 	}
 
 	// Wrap query plans in AdaptiveOp for hot-path specialization.
@@ -2272,7 +2272,7 @@ func (p *Planner) resolveView(s *PS.Select, viewSel *PS.Select) Operator {
 // REQ000981: extracted from planSelect.
 func (p *Planner) planSelectNoFrom(s *PS.Select) Operator {
 	if hasAnyAggregate(s.Cols) {
-		dummy := newValuesOp([]PS.Expr{&PS.NumberLiteral{Val: int64(1)}})
+		dummy := OP.NewValuesOp([]PS.Expr{&PS.NumberLiteral{Val: int64(1)}})
 		var op Operator = dummy
 		if s.Where != nil {
 			op = OP.NewFilter(op, s.Where)
@@ -2283,7 +2283,7 @@ func (p *Planner) planSelectNoFrom(s *PS.Select) Operator {
 		}
 		return agg
 	}
-	op := Operator(newValuesOp(s.Cols))
+	op := Operator(OP.NewValuesOp(s.Cols))
 	if s.Where != nil {
 		op = OP.NewFilter(op, s.Where)
 	}
@@ -2416,7 +2416,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 			idx, found := p.selectIndex(s.From, col)
 			if found && hasWriterIndex(s.From, idx) {
 				tableID, _ := DT.TableIDFor(s.From)
-				if isc, err := NewIndexScanWithIndex(p.store, tableID, s.From, idx, val, nil); err == nil {
+				if isc, err := OP.NewIndexScanWithIndex(p.store, tableID, s.From, idx, val, nil); err == nil {
 					if whereExpr != nil {
 						scan = OP.NewFilter(isc, whereExpr)
 					} else {
@@ -2464,7 +2464,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 		if scan == nil {
 			if col, ok := indexedColumn(whereExpr); ok {
 				if idx, found := p.selectIndex(s.From, col); found {
-					if isc, err := NewIndexScanWithStore(p.store, s.From, idx); err == nil {
+					if isc, err := OP.NewIndexScanWithStore(p.store, s.From, idx); err == nil {
 						scan = isc
 						if whereExpr != nil {
 							scan = OP.NewFilter(scan, whereExpr)
@@ -2908,7 +2908,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 					schema[k] = ci.Name
 					types[k] = LX.TokenType(ci.Typ)
 				}
-				if ss := NewParallelSeqScanRow(src, schema, types, p.pool.(*UT.WorkerPool)); ss != nil {
+				if ss := OP.NewParallelSeqScanRow(src, schema, types, p.pool.(*UT.WorkerPool)); ss != nil {
 					return ss
 				}
 			}
@@ -2934,7 +2934,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 		if col, ok := indexedColumn(where); ok {
 			if idx, found := p.selectIndex(table, col); found {
 				if p.store != nil {
-					if isc, err := NewIndexScanWithStore(p.store, table, idx); err == nil {
+					if isc, err := OP.NewIndexScanWithStore(p.store, table, idx); err == nil {
 						return isc
 					}
 				}
@@ -2947,7 +2947,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 				if hasWriterIndex(table, idx) {
 					if p.store != nil {
 						if tableID, ok := DT.TableIDFor(table); ok {
-							if isc, err := NewIndexScanWithIndex(p.store, tableID, table, idx, seekValue, nil); err == nil {
+							if isc, err := OP.NewIndexScanWithIndex(p.store, tableID, table, idx, seekValue, nil); err == nil {
 								return isc
 							}
 						}
@@ -3034,7 +3034,7 @@ func (p *Planner) pickCheaperScan(table string, where PS.Expr, current Operator)
 	// Build a candidate IndexScan.
 	var indexScan Operator
 	if p.store != nil {
-		if isc, err := NewIndexScanWithStore(p.store, table, idx); err == nil {
+		if isc, err := OP.NewIndexScanWithStore(p.store, table, idx); err == nil {
 			indexScan = isc
 		}
 	}
@@ -4837,7 +4837,7 @@ func (p *Planner) planDropIndex(s *PS.DropIndexStmt) Operator {
 func (p *Planner) planPragma(s *PS.PragmaStmt) Operator {
 	switch s.Name {
 	case "integrity_check":
-		return NewIntegrityCheckWithStore(p.store)
+		return UT.NewIntegrityCheckWithStore(p.store)
 	case "cache_size", "journal_mode", "synchronous", "user_version":
 		// REQ000242: return pragma value as a single-row result
 		return OP.NewPragmaResult(s.Name, s.Value)
@@ -4853,17 +4853,17 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) Operator {
 // planAnalyze collects table statistics. REQ000258.
 func (p *Planner) planAnalyze(s *PS.AnalyzeStmt) Operator {
 	if p.store != nil {
-		op, err := NewAnalyzeWithStore(p.store, s)
+		op, err := UT.NewAnalyzeWithStore(p.store, s)
 		if err == nil {
 			return op
 		}
 	}
-	return NewAnalyze(s)
+	return UT.NewAnalyze(s)
 }
 
 // planVacuum reclaims storage. REQ000257.
 func (p *Planner) planVacuum(s *PS.VacuumStmt) Operator {
-	return NewVacuumWithStore(s, p.store)
+	return UT.NewVacuumWithStore(s, p.store)
 }
 
 // planCompound dispatches a UNION/UNION ALL/INTERSECT/EXCEPT
@@ -4871,7 +4871,7 @@ func (p *Planner) planVacuum(s *PS.VacuumStmt) Operator {
 func (p *Planner) planCompound(s *PS.CompoundStmt) Operator {
 	left := p.planSubStmt(s.Left)
 	right := p.planSubStmt(s.Right)
-	cop := NewCompoundOp(left, right, s.Op, s.OrderBy, s.Limit, s.Offset)
+	cop := OP.NewCompoundOp(left, right, s.Op, s.OrderBy, s.Limit, s.Offset)
 	if p.maxMemoryPerQuery > 0 {
 		cop.WithMemoryLimit(p.maxMemoryPerQuery)
 	}
@@ -5612,7 +5612,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 				}
 			}
 			var joinOp Operator
-			if (kind == JoinKindInner || kind == JoinKindCross) && len(localConjuncts) > 0 {
+			if (kind == OP.JoinKindInner || kind == OP.JoinKindCross) && len(localConjuncts) > 0 {
 				lk, rk, remaining := p.extractEquiJoinKeys(localConjuncts, joinedTables, j.Right)
 				if len(lk) > 0 {
 					for _, orig := range localConjuncts {
@@ -5646,7 +5646,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 				}
 			}
 			if joinOp == nil {
-				if kind == JoinKindInner && j.On != nil {
+				if kind == OP.JoinKindInner && j.On != nil {
 					if lk, rk, ok := p.extractSingleOnEquiKey(j.On, leftTbl, rightTbl); ok {
 						joinOp = OP.NewHashCrossJoin(current, rightScan, leftTbl, rightTbl, lk, rk)
 						if projectedCols != nil {
@@ -5678,7 +5678,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 							return DT.IsValueTruthy(v), nil
 						}
 					}
-					nlj := NewNestedLoopJoin(current, rightScan, leftTbl, rightTbl, on, kind)
+					nlj := OP.NewNestedLoopJoin(current, rightScan, leftTbl, rightTbl, on, kind)
 					if projectedCols != nil {
 						nlj.WithProjection(projectedCols)
 					}
@@ -5758,7 +5758,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			}
 		}
 		if joinOp == nil {
-			nlj := NewNestedLoopJoin(current, gr.op, leftTbl, gr.tbl, nil, JoinKindCross)
+			nlj := OP.NewNestedLoopJoin(current, gr.op, leftTbl, gr.tbl, nil, OP.JoinKindCross)
 			if projectedCols != nil {
 				nlj.WithProjection(projectedCols)
 			}

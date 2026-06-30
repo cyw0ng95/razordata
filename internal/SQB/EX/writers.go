@@ -63,7 +63,7 @@ func (i *Insert) Child() Operator { return i.selectPlan }
 func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.Expr, returning []PS.Expr, onConflict *PS.OnConflict) (*Insert, error) {
 	ss, ok := DT.SchemaFor(table)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
 	}
 	return &Insert{
 		table:      table,
@@ -287,7 +287,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 				return false, nil
 			}
 			pk := vals[0]
-			key := RowKey(prefix, pk)
+			key := OP.RowKey(prefix, pk)
 			_, found, err := i.store.Get(key)
 			return found, err
 		}
@@ -330,9 +330,9 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		if err := checkUnique(i.schema, out, pending, Row{}, lookupFn); err != nil {
 			if i.conflictAction == PS.ConflictActionReplace {
 				// Delete the existing row, then fall through to insert
-				pk, pkErr := ExtractPK(i.schema, out)
+				pk, pkErr := OP.ExtractPK(i.schema, out)
 				if pkErr == nil {
-					key := RowKey(prefix, pk)
+					key := OP.RowKey(prefix, pk)
 					_ = i.store.Delete(key)
 					i.rows++
 					if i.execCtx != nil {
@@ -353,15 +353,15 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 		}
-		pk, err := ExtractPK(i.schema, out)
+		pk, err := OP.ExtractPK(i.schema, out)
 		if err != nil {
 			return Row{}, err
 		}
-		buf, err := EncodeRow(i.schema, out)
+		buf, err := OP.EncodeRow(i.schema, out)
 		if err != nil {
 			return Row{}, err
 		}
-		key := RowKey(prefix, pk)
+		key := OP.RowKey(prefix, pk)
 		if err := i.store.Insert(key, buf); err != nil {
 			return Row{}, err
 		}
@@ -369,7 +369,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			i.txWriter.RecordWrite(key, buf)
 		}
 		// Maintain secondary indexes (iter-22).
-		if err := MaintainIndexesOnInsert(i.store, i.table, i.schema, out); err != nil {
+		if err := OP.MaintainIndexesOnInsert(i.store, i.table, i.schema, out); err != nil {
 			return Row{}, err
 		}
 		i.rows++
@@ -560,7 +560,7 @@ func NewUpdate(table string, set []PS.Pair, where PS.Expr, iter Operator, return
 func NewUpdateWithStore(store Store, table string, set []PS.Pair, where PS.Expr, iter Operator, returning []PS.Expr) (*Update, error) {
 	ss, ok := DT.SchemaFor(table)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
 	}
 	return &Update{
 		table:     table,
@@ -721,22 +721,22 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 		if err := checkUnique(u.schema, row, nil, Row{}, noopLookup); err != nil {
 			return Row{}, err
 		}
-		pk, err := ExtractPKForUpdate(u.schema, oldRow, prefix)
+		pk, err := OP.ExtractPKForUpdate(u.schema, oldRow, prefix)
 		if err != nil {
 			return Row{}, err
 		}
-		buf, err := EncodeRow(u.schema, row)
+		buf, err := OP.EncodeRow(u.schema, row)
 		if err != nil {
 			return Row{}, err
 		}
-		key := RowKey(prefix, pk)
+		key := OP.RowKey(prefix, pk)
 		if err := u.store.Insert(key, buf); err != nil {
 			return Row{}, err
 		}
 		if u.txWriter != nil {
 			u.txWriter.RecordWrite(key, buf)
 		}
-		if err := MaintainIndexesOnUpdate(u.store, u.table, u.schema, oldRow, row, pk); err != nil {
+		if err := OP.MaintainIndexesOnUpdate(u.store, u.table, u.schema, oldRow, row, pk); err != nil {
 			return Row{}, err
 		}
 		u.rows++
@@ -817,7 +817,7 @@ func NewDelete(table string, where PS.Expr, iter Operator, returning []PS.Expr) 
 func NewDeleteWithStore(store Store, table string, where PS.Expr, iter Operator, returning []PS.Expr) (*Delete, error) {
 	ss, ok := DT.SchemaFor(table)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
 	}
 	return &Delete{
 		table:     table,
@@ -952,11 +952,11 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			}
 		}
 
-		pk, err := ExtractPKForUpdate(d.schema, row, prefix)
+		pk, err := OP.ExtractPKForUpdate(d.schema, row, prefix)
 		if err != nil {
 			return Row{}, err
 		}
-		key := RowKey(prefix, pk)
+		key := OP.RowKey(prefix, pk)
 		if err := d.store.Delete(key); err != nil {
 			return Row{}, err
 		}

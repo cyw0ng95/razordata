@@ -1,6 +1,8 @@
 package EX
 
-import(DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+import (
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"runtime"
 	"testing"
 )
@@ -22,7 +24,7 @@ func TestStore_EncodeRowNoAlloc(t *testing.T) {
 
 	// Warm up the pool.
 	for i := 0; i < 10; i++ {
-		_, _ = EncodeRow(ss, row)
+		_, _ = OP.EncodeRow(ss, row)
 	}
 
 	runtime.GC()
@@ -33,7 +35,7 @@ func TestStore_EncodeRowNoAlloc(t *testing.T) {
 	// expected and unavoidable since the caller must own the data.
 	// We verify the *encoding* does not allocate beyond that one copy.
 	allocs := testing.AllocsPerRun(100, func() {
-		_, _ = EncodeRow(ss, row)
+		_, _ = OP.EncodeRow(ss, row)
 	})
 
 	// Exactly 1 allocation per call is the copy for the returned slice.

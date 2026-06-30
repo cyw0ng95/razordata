@@ -7,6 +7,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -177,7 +178,7 @@ func TestCompoundOrderBy_Schwartzian(t *testing.T) {
 		{Expr: &PS.Ident{Name: "val"}},
 	}
 
-	op := NewCompoundOp(left, right, PS.CompoundUnionAll, orderBy, nil, nil)
+	op := OP.NewCompoundOp(left, right, PS.CompoundUnionAll, orderBy, nil, nil)
 
 	var vals []int64
 	for {
@@ -221,7 +222,7 @@ func TestCompoundOrderBy_Desc(t *testing.T) {
 		{Expr: &PS.Ident{Name: "val"}, Desc: true},
 	}
 
-	op := NewCompoundOp(left, right, PS.CompoundUnionAll, orderBy, nil, nil)
+	op := OP.NewCompoundOp(left, right, PS.CompoundUnionAll, orderBy, nil, nil)
 
 	var vals []int64
 	for {

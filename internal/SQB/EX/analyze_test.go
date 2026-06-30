@@ -8,6 +8,7 @@ import (
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/UT"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -87,7 +88,7 @@ func TestVacuum_WithStore(t *testing.T) {
 	}
 
 	// Run VACUUM (triggers compaction)
-	vacuum := NewVacuumWithStore(&PS.VacuumStmt{}, store)
+	vacuum := UT.NewVacuumWithStore(&PS.VacuumStmt{}, store)
 	defer vacuum.Close()
 
 	ctx := context.Background()

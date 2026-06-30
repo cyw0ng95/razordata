@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 func TestCoverage_Aggregate_WithParams(t *testing.T) {
@@ -89,7 +90,7 @@ func TestCoverage_AnalyzeWithStore(t *testing.T) {
 }
 
 func TestCoverage_Analyze_WithParams(t *testing.T) {
-	a := NewAnalyze(nil)
+	a := UT.NewAnalyze(nil)
 	a2 := a.WithParams([]any{42})
 	if a2 == nil {
 		t.Fatal("WithParams returned nil")
@@ -97,7 +98,7 @@ func TestCoverage_Analyze_WithParams(t *testing.T) {
 }
 
 func TestCoverage_Vacuum_WithParams(t *testing.T) {
-	v := NewVacuum(nil)
+	v := UT.NewVacuum(nil)
 	v2 := v.WithParams([]any{42})
 	if v2 == nil {
 		t.Fatal("WithParams returned nil")

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
@@ -26,7 +27,7 @@ func TestParallelUnionAll_Correctness(t *testing.T) {
 		{Data: []pl.Value{{Kind: pl.KindInt, I64: 50}}},
 	})
 
-	u := NewParallelUnionAll(left, right, pool)
+	u := OP.NewParallelUnionAll(left, right, pool)
 	defer u.Close()
 
 	var vals []int64
@@ -61,7 +62,7 @@ func TestParallelUnionAll_EmptySides(t *testing.T) {
 	ctx := context.Background()
 
 	// Both empty
-	u := NewParallelUnionAll(newArrayScan(nil), newArrayScan(nil), pool)
+	u := OP.NewParallelUnionAll(newArrayScan(nil), newArrayScan(nil), pool)
 	defer u.Close()
 	_, err := u.Next(ctx)
 	if err != DT.ErrNoRows {
@@ -69,7 +70,7 @@ func TestParallelUnionAll_EmptySides(t *testing.T) {
 	}
 
 	// Left empty
-	u2 := NewParallelUnionAll(newArrayScan(nil), newArrayScan([]pl.Row{
+	u2 := OP.NewParallelUnionAll(newArrayScan(nil), newArrayScan([]pl.Row{
 		{Data: []pl.Value{{Kind: pl.KindInt, I64: 5}}},
 	}), pool)
 	defer u2.Close()

@@ -119,7 +119,7 @@ func TestParallelIndexScan_Basic(t *testing.T) {
 		UT.NewWorkerPool(4)
 	defer pool.Close()
 
-	scan := NewParallelIndexScan(rows, "id", []string{"id"}, []LX.TokenType{LX.T_INT_KW}, pred, pool)
+	scan := OP.NewParallelIndexScan(rows, "id", []string{"id"}, []LX.TokenType{LX.T_INT_KW}, pred, pool)
 	defer scan.Close()
 
 	total := 0
@@ -147,7 +147,7 @@ func TestParallelIndexScan_NoPred(t *testing.T) {
 		UT.NewWorkerPool(4)
 	defer pool.Close()
 
-	scan := NewParallelIndexScan(rows, "id", []string{"id"}, []LX.TokenType{LX.T_INT_KW}, nil, pool)
+	scan := OP.NewParallelIndexScan(rows, "id", []string{"id"}, []LX.TokenType{LX.T_INT_KW}, nil, pool)
 	defer scan.Close()
 
 	total := 0
@@ -469,7 +469,7 @@ func TestVectorizedFilter_MultiBatch(t *testing.T) {
 // TestSchemaFromRowSchema verifies the int -> TokenType conversion.
 func TestSchemaFromRowSchema(t *testing.T) {
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_BOOL}
-	got := SchemaFromRowSchema(types)
+	got := OP.SchemaFromRowSchema(types)
 	if len(got) != 3 {
 		t.Fatalf("expected 3 types, got %d", len(got))
 	}

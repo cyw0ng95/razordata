@@ -76,7 +76,7 @@ func TestCostModel_SeqScan(t *testing.T) {
 func TestCostModel_NLJ(t *testing.T) {
 	scan1 := OP.NewSeqScan("t")
 	scan2 := OP.NewSeqScan("t")
-	nlj := NewNestedLoopJoin(scan1, scan2, "l", "r", nil, JoinKindInner)
+	nlj := OP.NewNestedLoopJoin(scan1, scan2, "l", "r", nil, OP.JoinKindInner)
 
 	t.Run("low_cpu", func(t *testing.T) {
 		p := NewPlanner()

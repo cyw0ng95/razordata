@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
-	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
@@ -28,14 +27,7 @@ type SessionCounterAccessor = DT.SessionCounterAccessor
 
 // Eval error re-exports for backward compatibility with SYS packages.
 // Aliased to EV versions so identity matches.
-var (
-	ErrEval = EV.ErrEval
-)
-
-var (
-// sessionCounterMu       sync.RWMutex — moved to DT
-// sessionCounterAccessor SessionCounterAccessor — moved to DT
-)
+// (ErrEval re-export removed; callers use EV.ErrEval directly.)
 
 // currentTxWriter is the package-level current TxWriter. Set by
 // Executor.SetTxWriter and read by Insert/Update/Delete operators
@@ -180,7 +172,6 @@ func ValueSliceToAny(v []Value) []any { return valueSliceToAny(v) }
 
 // SetCatalog and RegisterFromCatalog re-export DT functions for
 // backward-compatibility with SYS packages.
-var RegisterFromCatalog = DT.RegisterFromCatalog
 
 // Operator is the core execution interface. Aliased from PL.
 type Operator = DT.Operator
@@ -231,37 +222,9 @@ type UniqueKey = DT.UniqueKey
 type ForeignKeyConstraint = DT.ForeignKeyConstraint
 type RegisteredIndex = DT.RegisteredIndex
 
-var ErrTableNotRegisteredForStorage = OP.ErrTableNotRegisteredForStorage
-
 // Backward-compat function aliases for types/functions moved to OP.
-var JoinKindInner = OP.JoinKindInner
-var JoinKindCross = OP.JoinKindCross
 
 var NewSeqScanWithStore = OP.NewSeqScanWithStore
-var NewNestedLoopJoin = OP.NewNestedLoopJoin
-var NewParallelSeqScanRow = OP.NewParallelSeqScanRow
-var NewParallelIndexScan = OP.NewParallelIndexScan
-var NewParallelUnionAll = OP.NewParallelUnionAll
-var NewCompoundOp = OP.NewCompoundOp
-var newValuesOp = OP.NewValuesOp
-var newValuesRowsOp = OP.NewValuesRowsOp
-var NewIntegrityCheck = UT.NewIntegrityCheck
-var NewIntegrityCheckWithStore = UT.NewIntegrityCheckWithStore
-var NewAnalyze = UT.NewAnalyze
-var NewAnalyzeWithStore = UT.NewAnalyzeWithStore
-var NewVacuum = UT.NewVacuum
-var NewVacuumWithStore = UT.NewVacuumWithStore
-var SchemaFromRowSchema = OP.SchemaFromRowSchema
-var NewIndexScanWithStore = OP.NewIndexScanWithStore
-var NewIndexScanWithIndex = OP.NewIndexScanWithIndex
-var decodeRow = OP.DecodeRow
-var buildIndexKey = OP.BuildIndexKey
-var EncodeRow = OP.EncodeRow
-var RowKey = OP.RowKey
-var ExtractPK = OP.ExtractPK
-var ExtractPKForUpdate = OP.ExtractPKForUpdate
-var MaintainIndexesOnInsert = OP.MaintainIndexesOnInsert
-var MaintainIndexesOnUpdate = OP.MaintainIndexesOnUpdate
 
 // stmtCacheEntry holds a cached parsed statement with LRU metadata.
 type stmtCacheEntry struct {
@@ -1633,15 +1596,15 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		}
 		return NewRefreshMatView(s.Name, sel, e.store, e.planner), nil
 	case *PS.VacuumStmt:
-		return NewVacuum(s), nil
+		return UT.NewVacuum(s), nil
 	case *PS.AnalyzeStmt:
 		if e.store != nil {
-			op, err := NewAnalyzeWithStore(e.store, s)
+			op, err := UT.NewAnalyzeWithStore(e.store, s)
 			if err == nil {
 				return op, nil
 			}
 		}
-		return NewAnalyze(s), nil
+		return UT.NewAnalyze(s), nil
 	case *PS.AlterTableStmt:
 		return NewAlterTable(s), nil
 	case *PS.TriggerStmt:
@@ -1665,7 +1628,7 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	case *PS.CommitTX:
 		return NewNoop(), nil
 	case *PS.ValuesStmt:
-		return newValuesRowsOp(s.Rows), nil
+		return OP.NewValuesRowsOp(s.Rows), nil
 	case *PS.AttachStmt:
 		path, err := extractAttachPath(s.Expr)
 		if err != nil {
