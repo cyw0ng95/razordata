@@ -26,12 +26,12 @@ func TestHashJoin_Empty(t *testing.T) {
 	rows := []Row{
 		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
 	}
-	left := NewSeqScan("left")
+	left := OP.NewSeqScan("left")
 	_ = left
 	_ = rows
 	// Verify HashJoin can be created without error.
-	hj := 
-OP.NewHashJoin(nil, nil, "left", "right", []string{"id"}, []string{"id"}, 16)
+	hj :=
+		OP.NewHashJoin(nil, nil, "left", "right", []string{"id"}, []string{"id"}, 16)
 	if hj == nil {
 		t.Fatal("NewHashJoin returned nil")
 	}
@@ -55,8 +55,8 @@ func TestHashJoin_PartitionRounding(t *testing.T) {
 		{100, 128},
 	}
 	for _, c := range cases {
-		hj := 
-OP.NewHashJoin(nil, nil, "l", "r", []string{"id"}, []string{"id"}, c.in)
+		hj :=
+			OP.NewHashJoin(nil, nil, "l", "r", []string{"id"}, []string{"id"}, c.in)
 		if hj.Partitions() != c.want {
 			t.Errorf("input=%d: got %d, want %d", c.in, hj.Partitions(), c.want)
 		}
@@ -65,22 +65,22 @@ OP.NewHashJoin(nil, nil, "l", "r", []string{"id"}, []string{"id"}, c.in)
 
 // TestHashJoin_KeyHashes verifies the hash function distributes.
 func TestHashJoin_KeyHashes(t *testing.T) {
-	h1 := 
-OP.HashKey(NewIntValue(int64(42)))
-	h2 := 
-OP.HashKey(NewIntValue(int64(42)))
+	h1 :=
+		OP.HashKey(NewIntValue(int64(42)))
+	h2 :=
+		OP.HashKey(NewIntValue(int64(42)))
 	if h1 != h2 {
 		t.Errorf("hash should be stable: %d != %d", h1, h2)
 	}
-	h3 := 
-OP.HashKey(NewIntValue(int64(43)))
+	h3 :=
+		OP.HashKey(NewIntValue(int64(43)))
 	if h1 == h3 {
 		t.Errorf("hashes should differ: %d", h1)
 	}
-	s1 := 
-OP.HashKey(NewTextValue("hello"))
-	s2 := 
-OP.HashKey(NewTextValue("world"))
+	s1 :=
+		OP.HashKey(NewTextValue("hello"))
+	s2 :=
+		OP.HashKey(NewTextValue("world"))
 	if s1 == s2 {
 		t.Errorf("string hashes should differ")
 	}
@@ -123,8 +123,8 @@ func TestHashJoin_BuildAndProbe(t *testing.T) {
 	ex.Exec(ctx, "INSERT INTO r VALUES (2, 'y')")
 	ex.Exec(ctx, "INSERT INTO r VALUES (4, 'z')")
 
-	left, _ := NewSeqScanWithStore(nil, "l")
-	right, _ := NewSeqScanWithStore(nil, "r")
+	left, _ := OP.NewSeqScanWithStore(nil, "l")
+	right, _ := OP.NewSeqScanWithStore(nil, "r")
 	_ = left
 	_ = right
 	_ = LX.T_INT_KW
@@ -148,16 +148,16 @@ func TestHashJoin_MultiMatch(t *testing.T) {
 	}
 	DT.RegisterTable("l", leftRows)
 	DT.RegisterTable("r", rightRows)
-	leftScan := NewSeqScan("l")
-	rightScan := NewSeqScan("r")
-	hj := 
-OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
+	leftScan := OP.NewSeqScan("l")
+	rightScan := OP.NewSeqScan("r")
+	hj :=
+		OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
 
 	ctx := context.Background()
 	var got [][]any
 	for {
 		row, err := hj.Next(ctx)
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			break
 		}
 		if err != nil {
@@ -193,16 +193,16 @@ func TestHashJoin_NoMatch(t *testing.T) {
 	}
 	DT.RegisterTable("l", leftRows)
 	DT.RegisterTable("r", rightRows)
-	leftScan := NewSeqScan("l")
-	rightScan := NewSeqScan("r")
-	hj := 
-OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
+	leftScan := OP.NewSeqScan("l")
+	rightScan := OP.NewSeqScan("r")
+	hj :=
+		OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
 
 	ctx := context.Background()
 	var got [][]any
 	for {
 		row, err := hj.Next(ctx)
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			break
 		}
 		if err != nil {
@@ -231,16 +231,16 @@ func TestHashJoin_AllMatch(t *testing.T) {
 	}
 	DT.RegisterTable("l", leftRows)
 	DT.RegisterTable("r", rightRows)
-	leftScan := NewSeqScan("l")
-	rightScan := NewSeqScan("r")
-	hj := 
-OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
+	leftScan := OP.NewSeqScan("l")
+	rightScan := OP.NewSeqScan("r")
+	hj :=
+		OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
 
 	ctx := context.Background()
 	var got [][]any
 	for {
 		row, err := hj.Next(ctx)
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			break
 		}
 		if err != nil {
@@ -271,10 +271,10 @@ func TestHashJoin_JoinBufferSize(t *testing.T) {
 	}
 	DT.RegisterTable("l", leftRows)
 	DT.RegisterTable("r", rightRows)
-	leftScan := NewSeqScan("l")
-	rightScan := NewSeqScan("r")
-	hj := 
-OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
+	leftScan := OP.NewSeqScan("l")
+	rightScan := OP.NewSeqScan("r")
+	hj :=
+		OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4)
 	// Set a tiny buffer — 5 rows × 200 bytes ≈ 1000 bytes → 200 bytes cap will reject.
 	hj.WithJoinBufferSize(200)
 
@@ -287,6 +287,7 @@ OP.NewHashJoin(leftScan, rightScan, "l", "r", []string{"id"}, []string{"ref"}, 4
 		t.Errorf("error should mention joinBufferSize, got: %v", err)
 	}
 }
+
 // materializes the right side into hash buckets keyed by the join
 // column and probes each left row's bucket.
 func TestHashCrossJoin_BasicEquiJoin(t *testing.T) {
@@ -302,8 +303,8 @@ func TestHashCrossJoin_BasicEquiJoin(t *testing.T) {
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, TableName: "t2"},
 	})
 
-	j := 
-OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
+	j :=
+		OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -312,7 +313,7 @@ OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	for {
 		row, err := j.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			t.Fatalf("Next: %v", err)
@@ -345,8 +346,8 @@ func TestHashCrossJoin_EmptySides(t *testing.T) {
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t2"},
 	})
 
-	j := 
-OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
+	j :=
+		OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -354,7 +355,7 @@ OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	for {
 		_, err := j.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			t.Fatalf("Next: %v", err)
@@ -380,8 +381,8 @@ func TestHashCrossJoin_AllMatch(t *testing.T) {
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t2"},
 	})
 
-	j := 
-OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
+	j :=
+		OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -389,7 +390,7 @@ OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	for {
 		_, err := j.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			t.Fatalf("Next: %v", err)
@@ -415,8 +416,8 @@ func TestHashCrossJoin_StringKey(t *testing.T) {
 		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("z")}, TableName: "t2"},
 	})
 
-	j := 
-OP.NewHashCrossJoin(left, right, "t1", "t2", "k", "k")
+	j :=
+		OP.NewHashCrossJoin(left, right, "t1", "t2", "k", "k")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -424,7 +425,7 @@ OP.NewHashCrossJoin(left, right, "t1", "t2", "k", "k")
 	for {
 		_, err := j.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			t.Fatalf("Next: %v", err)
@@ -448,8 +449,8 @@ func TestHashCrossJoin_NullKey(t *testing.T) {
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NullValue()}, TableName: "t2"},
 	})
 
-	j := 
-OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
+	j :=
+		OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	defer j.Close()
 	ctx := context.Background()
 
@@ -457,7 +458,7 @@ OP.NewHashCrossJoin(left, right, "t1", "t2", "a", "a")
 	for {
 		_, err := j.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			t.Fatalf("Next: %v", err)
@@ -480,7 +481,7 @@ func newTestSeqScan(t *testing.T, table string, rows []Row) *SeqScan {
 	DT.TablesMu.Lock()
 	DT.Tables[table] = rows
 	DT.TablesMu.Unlock()
-	return NewSeqScan(table)
+	return OP.NewSeqScan(table)
 }
 
 // BenchmarkHashCrossJoin_SmallTables measures HashCrossJoin vs
@@ -493,8 +494,8 @@ func BenchmarkHashCrossJoin_SmallTables(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			left2 := newBenchSeqScan("t1", 100)
 			right2 := newBenchSeqScan("t2", 100)
-			j := 
-OP.NewHashCrossJoin(left2, right2, "t1", "t2", "a", "a")
+			j :=
+				OP.NewHashCrossJoin(left2, right2, "t1", "t2", "a", "a")
 			ctx := context.Background()
 			for {
 				_, err := j.Next(ctx)
@@ -509,7 +510,7 @@ OP.NewHashCrossJoin(left2, right2, "t1", "t2", "a", "a")
 		for i := 0; i < b.N; i++ {
 			left2 := newBenchSeqScan("t1", 100)
 			right2 := newBenchSeqScan("t2", 100)
-			j := NewNestedLoopJoin(left2, right2, "t1", "t2", nil, JoinKindInner)
+			j := OP.NewNestedLoopJoin(left2, right2, "t1", "t2", nil, OP.JoinKindInner)
 			ctx := context.Background()
 			for {
 				_, err := j.Next(ctx)
@@ -535,8 +536,8 @@ func newBenchSeqScan(table string, n int) *SeqScan {
 	DT.TablesMu.Lock()
 	DT.Tables[table] = rows
 	DT.TablesMu.Unlock()
-	return NewSeqScan(table)
-}// TestHashJoin_HardCapPreventsOOM verifies REQ001112: when the planner
+	return OP.NewSeqScan(table)
+} // TestHashJoin_HardCapPreventsOOM verifies REQ001112: when the planner
 // selects HashJoin but the cross-product would exceed the hard cap
 // (64M Values ≈ 1.5 GB), buildAndProbe returns a clear error instead
 // of OOM-killing the process. We construct the failure by feeding
@@ -553,8 +554,8 @@ func TestHashJoin_HardCapPreventsOOM(t *testing.T) {
 		// Build a real HashJoin with a small budget that will trip
 		// the cap. The cross-join shape (no equi-join key → all rows
 		// match → totalMatches = left × right) will exceed the cap.
-		hj := 
-OP.NewHashJoin(nil, nil, "l", "r", []string{"k"}, []string{"k"}, 16)
+		hj :=
+			OP.NewHashJoin(nil, nil, "l", "r", []string{"k"}, []string{"k"}, 16)
 		hj.WithJoinBufferSize(1) // 1 byte cap → maxMatches = 0
 		// Trigger the cap by setting up minimal state. We can't
 		// invoke buildAndProbe without a real child, so just

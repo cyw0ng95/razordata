@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
@@ -22,7 +24,7 @@ func TestParallelSeqScanRow_Basic(t *testing.T) {
 	schema := []string{"val"}
 	types := []LX.TokenType{LX.T_INT_KW}
 
-	ps := NewParallelSeqScanRow(rows, schema, types, pool)
+	ps := OP.NewParallelSeqScanRow(rows, schema, types, pool)
 	defer ps.Close()
 
 	count := 0
@@ -41,8 +43,8 @@ func TestParallelSeqScanRow_Basic(t *testing.T) {
 
 // REQ001043: ParallelSeqScanRow value correctness.
 func TestParallelSeqScanRow_Values(t *testing.T) {
-	pool := 
-UT.NewWorkerPool(2)
+	pool :=
+		UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -56,7 +58,7 @@ UT.NewWorkerPool(2)
 	schema := []string{"id", "name"}
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_TEXT}
 
-	ps := NewParallelSeqScanRow(rows, schema, types, pool)
+	ps := OP.NewParallelSeqScanRow(rows, schema, types, pool)
 	defer ps.Close()
 
 	for i := 0; i < 10; i++ {
@@ -69,7 +71,7 @@ UT.NewWorkerPool(2)
 		}
 	}
 	_, err := ps.Next(ctx)
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Fatalf("expected ErrNoRows, got %v", err)
 	}
 }
@@ -113,8 +115,8 @@ func TestPlanner_ParallelScanSelection(t *testing.T) {
 
 // REQ001043: Verify the scan is actually parallel (multiple workers submit).
 func TestParallelSeqScanRow_MultiWorker(t *testing.T) {
-	pool := 
-UT.NewWorkerPool(4)
+	pool :=
+		UT.NewWorkerPool(4)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -125,7 +127,7 @@ UT.NewWorkerPool(4)
 	schema := []string{"v"}
 	types := []LX.TokenType{LX.T_INT_KW}
 
-	ps := NewParallelSeqScanRow(rows, schema, types, pool)
+	ps := OP.NewParallelSeqScanRow(rows, schema, types, pool)
 	defer ps.Close()
 
 	var sum int64

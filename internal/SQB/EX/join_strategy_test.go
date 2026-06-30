@@ -10,8 +10,9 @@ import (
 	"errors"
 	"testing"
 
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
 // TestJoinStrategy_InterfaceConformance is a compile-time guard
@@ -41,7 +42,7 @@ func TestJoinStrategy_EmptyStreamsReturnNoRows(t *testing.T) {
 	}
 	for i, s := range strategies {
 		_, err := s.Next(context.Background())
-		if !errors.Is(err, ErrNoRows) {
+		if !errors.Is(err, DT.ErrNoRows) {
 			t.Errorf("strategy %d: got err=%v, want ErrNoRows", i, err)
 		}
 		if err := s.Close(); err != nil {
@@ -69,7 +70,7 @@ func TestJoinStrategy_InnerNLJ_Smoke(t *testing.T) {
 	got := 0
 	for {
 		row, err := strat.Next(ctx)
-		if errors.Is(err, ErrNoRows) {
+		if errors.Is(err, DT.ErrNoRows) {
 			break
 		}
 		if err != nil {
@@ -104,7 +105,7 @@ func TestJoinStrategy_InnerNLJ_Limit(t *testing.T) {
 	got := 0
 	for {
 		_, err := strat.Next(ctx)
-		if errors.Is(err, ErrNoRows) {
+		if errors.Is(err, DT.ErrNoRows) {
 			break
 		}
 		if err != nil {
@@ -130,7 +131,7 @@ func (m *memScan) Next(ctx context.Context) (Row, error) {
 		return Row{}, err
 	}
 	if m.pos >= len(m.rows) {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	r := m.rows[m.pos]
 	m.pos++
@@ -149,10 +150,10 @@ func (emptyOp) Next(ctx context.Context) (Row, error) {
 	if err := ctx.Err(); err != nil {
 		return Row{}, err
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
-func (emptyOp) Close() error                    { return nil }
-func (emptyOp) WithParams(p []any) pl.Operator     { return emptyOp{} }
+func (emptyOp) Close() error                   { return nil }
+func (emptyOp) WithParams(p []any) pl.Operator { return emptyOp{} }
 func TestJOIN_DuplicateRows(t *testing.T) {
 	e := NewExecutor()
 	ctx := context.Background()

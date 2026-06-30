@@ -7,13 +7,14 @@ import (
 	"strconv"
 	"strings"
 
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
-	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 type Insert struct {
@@ -62,7 +63,7 @@ func (i *Insert) Child() Operator { return i.selectPlan }
 func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.Expr, returning []PS.Expr, onConflict *PS.OnConflict) (*Insert, error) {
 	ss, ok := DT.SchemaFor(table)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
 	}
 	return &Insert{
 		table:      table,
@@ -83,11 +84,11 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			i.resultPos++
 			return row, nil
 		}
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 
 	if i.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	i.done = true
 
@@ -248,7 +249,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		i.resultPos = 1
 		return row, nil
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
@@ -259,10 +260,10 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			i.resultPos++
 			return row, nil
 		}
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 
-	prefix := tablePrefix(i.table)
+	prefix := OP.TablePrefix(i.table)
 	var pending map[string]struct{}
 	var iterValues [][]PS.Expr
 	if i.defaultValues {
@@ -281,12 +282,12 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			if i.store == nil || len(vals) == 0 {
 				return false, nil
 			}
-			prefix := tablePrefix(i.table)
+			prefix := OP.TablePrefix(i.table)
 			if prefix == nil {
 				return false, nil
 			}
 			pk := vals[0]
-			key := RowKey(prefix, pk)
+			key := OP.RowKey(prefix, pk)
 			_, found, err := i.store.Get(key)
 			return found, err
 		}
@@ -329,9 +330,9 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		if err := checkUnique(i.schema, out, pending, Row{}, lookupFn); err != nil {
 			if i.conflictAction == PS.ConflictActionReplace {
 				// Delete the existing row, then fall through to insert
-				pk, pkErr := ExtractPK(i.schema, out)
+				pk, pkErr := OP.ExtractPK(i.schema, out)
 				if pkErr == nil {
-					key := RowKey(prefix, pk)
+					key := OP.RowKey(prefix, pk)
 					_ = i.store.Delete(key)
 					i.rows++
 					if i.execCtx != nil {
@@ -352,15 +353,15 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 		}
-		pk, err := ExtractPK(i.schema, out)
+		pk, err := OP.ExtractPK(i.schema, out)
 		if err != nil {
 			return Row{}, err
 		}
-		buf, err := EncodeRow(i.schema, out)
+		buf, err := OP.EncodeRow(i.schema, out)
 		if err != nil {
 			return Row{}, err
 		}
-		key := RowKey(prefix, pk)
+		key := OP.RowKey(prefix, pk)
 		if err := i.store.Insert(key, buf); err != nil {
 			return Row{}, err
 		}
@@ -368,7 +369,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			i.txWriter.RecordWrite(key, buf)
 		}
 		// Maintain secondary indexes (iter-22).
-		if err := MaintainIndexesOnInsert(i.store, i.table, i.schema, out); err != nil {
+		if err := OP.MaintainIndexesOnInsert(i.store, i.table, i.schema, out); err != nil {
 			return Row{}, err
 		}
 		i.rows++
@@ -397,7 +398,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		i.resultPos = 1
 		return row, nil
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 // nextFromSelect handles INSERT INTO t SELECT ... by executing
@@ -418,7 +419,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 	for {
 		row, err := i.selectPlan.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			return Row{}, err
@@ -479,7 +480,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 		i.resultPos = 1
 		return row, nil
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 // buildInsertRowFromSelect builds an insert row from a SELECT result row.
@@ -559,7 +560,7 @@ func NewUpdate(table string, set []PS.Pair, where PS.Expr, iter Operator, return
 func NewUpdateWithStore(store Store, table string, set []PS.Pair, where PS.Expr, iter Operator, returning []PS.Expr) (*Update, error) {
 	ss, ok := DT.SchemaFor(table)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
 	}
 	return &Update{
 		table:     table,
@@ -580,11 +581,11 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			u.resultPos++
 			return row, nil
 		}
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 
 	if u.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	u.done = true
 	if u.store != nil {
@@ -605,7 +606,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 	for {
 		row, err := u.iter.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			return Row{}, err
@@ -678,7 +679,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 		u.resultPos = 1
 		return row, nil
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
@@ -689,14 +690,14 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 			u.resultPos++
 			return row, nil
 		}
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 
-	prefix := tablePrefix(u.table)
+	prefix := OP.TablePrefix(u.table)
 	for {
 		row, err := u.iter.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			return Row{}, err
@@ -720,22 +721,22 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 		if err := checkUnique(u.schema, row, nil, Row{}, noopLookup); err != nil {
 			return Row{}, err
 		}
-		pk, err := ExtractPKForUpdate(u.schema, oldRow, prefix)
+		pk, err := OP.ExtractPKForUpdate(u.schema, oldRow, prefix)
 		if err != nil {
 			return Row{}, err
 		}
-		buf, err := EncodeRow(u.schema, row)
+		buf, err := OP.EncodeRow(u.schema, row)
 		if err != nil {
 			return Row{}, err
 		}
-		key := RowKey(prefix, pk)
+		key := OP.RowKey(prefix, pk)
 		if err := u.store.Insert(key, buf); err != nil {
 			return Row{}, err
 		}
 		if u.txWriter != nil {
 			u.txWriter.RecordWrite(key, buf)
 		}
-		if err := MaintainIndexesOnUpdate(u.store, u.table, u.schema, oldRow, row, pk); err != nil {
+		if err := OP.MaintainIndexesOnUpdate(u.store, u.table, u.schema, oldRow, row, pk); err != nil {
 			return Row{}, err
 		}
 		u.rows++
@@ -763,7 +764,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 		u.resultPos = 1
 		return row, nil
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (u *Update) Close() error {
@@ -816,7 +817,7 @@ func NewDelete(table string, where PS.Expr, iter Operator, returning []PS.Expr) 
 func NewDeleteWithStore(store Store, table string, where PS.Expr, iter Operator, returning []PS.Expr) (*Delete, error) {
 	ss, ok := DT.SchemaFor(table)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
 	}
 	return &Delete{
 		table:     table,
@@ -836,11 +837,11 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 			d.resultPos++
 			return row, nil
 		}
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 
 	if d.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	d.done = true
 	if d.store != nil {
@@ -857,7 +858,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 	for {
 		row, err := d.iter.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			return Row{}, err
@@ -921,7 +922,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		d.resultPos = 1
 		return row, nil
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
@@ -932,14 +933,14 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			d.resultPos++
 			return row, nil
 		}
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 
-	prefix := tablePrefix(d.table)
+	prefix := OP.TablePrefix(d.table)
 	for {
 		row, err := d.iter.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			return Row{}, err
@@ -951,11 +952,11 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			}
 		}
 
-		pk, err := ExtractPKForUpdate(d.schema, row, prefix)
+		pk, err := OP.ExtractPKForUpdate(d.schema, row, prefix)
 		if err != nil {
 			return Row{}, err
 		}
-		key := RowKey(prefix, pk)
+		key := OP.RowKey(prefix, pk)
 		if err := d.store.Delete(key); err != nil {
 			return Row{}, err
 		}
@@ -980,7 +981,7 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 		d.resultPos = 1
 		return row, nil
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (d *Delete) Close() error {
@@ -1014,13 +1015,13 @@ func NewTrigger(stmt *PS.TriggerStmt) *Trigger {
 
 func (t *Trigger) Next(ctx context.Context) (Row, error) {
 	if t.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	t.done = true
 	if t.err != nil {
 		return Row{}, t.err
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (t *Trigger) Close() error                { return nil }
@@ -1205,7 +1206,7 @@ func NewCreateTableAs(stmt *PS.CreateTable, selectPlan Operator) *CreateTable {
 
 func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	if c.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	c.done = true
 
@@ -1272,7 +1273,7 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	// Persist to the system catalog if one is wired in (iter-12).
 	persistToCatalog(c.stmt, cols, nullable, colTypes, unique, pk)
 
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 func (c *CreateTable) Close() error {
 	if c.selectPlan != nil {
@@ -1288,13 +1289,13 @@ func (c *CreateTable) nextAsSelect(ctx context.Context) (Row, error) {
 	// Read first row to discover schema.
 	firstRow, err := c.selectPlan.Next(ctx)
 	if err != nil {
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			// Empty SELECT: register table with no columns.
 			DT.TablesMu.Lock()
 			DT.Tables[c.stmt.Name] = []Row{}
 			DT.Schemas[c.stmt.Name] = nil
 			DT.TablesMu.Unlock()
-			return Row{}, ErrNoRows
+			return Row{}, DT.ErrNoRows
 		}
 		return Row{}, err
 	}
@@ -1311,7 +1312,7 @@ func (c *CreateTable) nextAsSelect(ctx context.Context) (Row, error) {
 	for {
 		row, err := c.selectPlan.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			return Row{}, err
@@ -1320,7 +1321,7 @@ func (c *CreateTable) nextAsSelect(ctx context.Context) (Row, error) {
 		DT.Tables[c.stmt.Name] = append(DT.Tables[c.stmt.Name], row)
 		DT.TablesMu.Unlock()
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 type DropTable struct {
@@ -1335,7 +1336,7 @@ func NewDropTable(stmt *PS.DropTable) *DropTable {
 
 func (d *DropTable) Next(ctx context.Context) (Row, error) {
 	if d.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	d.done = true
 
@@ -1378,7 +1379,7 @@ func (d *DropTable) Next(ctx context.Context) (Row, error) {
 			_ = cat.Delete(id)
 		}
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 // buildCreateSQL reconstructs a canonical CREATE TABLE statement
@@ -1499,7 +1500,7 @@ func NewCreateIndex(stmt *PS.CreateIndexStmt) *CreateIndex {
 
 func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
 	if c.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	c.done = true
 	// REQ000479: IF NOT EXISTS — skip if index already exists
@@ -1519,7 +1520,7 @@ func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
 		}
 		DT.StoreMu.Unlock()
 		if exists {
-			return Row{}, ErrNoRows
+			return Row{}, DT.ErrNoRows
 		}
 	}
 	// extract column name strings from IndexedColumns
@@ -1550,7 +1551,7 @@ func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
 		}
 	}
 	c.rowsAff = 0
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (c *CreateIndex) Close() error        { return nil }
@@ -1569,7 +1570,7 @@ func NewDropIndex(stmt *PS.DropIndexStmt) *DropIndex {
 
 func (d *DropIndex) Next(ctx context.Context) (Row, error) {
 	if d.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	d.done = true
 
@@ -1620,7 +1621,7 @@ func (d *DropIndex) Next(ctx context.Context) (Row, error) {
 		}
 	}
 	d.rowsAff = 0
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (d *DropIndex) Close() error        { return nil }
@@ -1644,7 +1645,7 @@ func (p *Pragma) WithStore(s Store) Operator {
 
 func (p *Pragma) Next(ctx context.Context) (Row, error) {
 	if p.done && p.idx >= len(p.rows) {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 
 	// Handle PRAGMA table_info(table_name)
@@ -1656,7 +1657,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			}
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, ErrNoRows
+			return Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1673,7 +1674,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			})
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, ErrNoRows
+			return Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1687,7 +1688,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			p.loadIndexList()
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, ErrNoRows
+			return Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1701,7 +1702,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			p.loadTableList()
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, ErrNoRows
+			return Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1715,7 +1716,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			p.loadForeignKeyList()
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, ErrNoRows
+			return Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1733,7 +1734,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			})
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, ErrNoRows
+			return Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1760,7 +1761,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			})
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, ErrNoRows
+			return Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1774,7 +1775,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			p.loadForeignKeyCheck()
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, ErrNoRows
+			return Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1788,9 +1789,9 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 		if p.stmt.Value != "" {
 			UT.NotifyPragmaChange(p.stmt.Name, p.stmt.Value)
 		}
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (p *Pragma) loadTableInfo() error {
@@ -2010,7 +2011,7 @@ func (e *Explain) WithPlanner(p pl.QueryPlanner) pl.Operator {
 
 func (e *Explain) Next(ctx context.Context) (Row, error) {
 	if e.done && e.rowOut {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	if !e.done {
 		e.done = true
@@ -2022,7 +2023,7 @@ func (e *Explain) Next(ctx context.Context) (Row, error) {
 		}, nil
 	}
 	e.rowOut = true
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (e *Explain) explain() string {
@@ -2058,7 +2059,7 @@ func NewTruncate(stmt *PS.TruncateStmt) *Truncate { return &Truncate{stmt: stmt}
 
 func (t *Truncate) Next(ctx context.Context) (Row, error) {
 	if t.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	t.done = true
 	// Truncate = DELETE without WHERE; reuse the in-memory delete path.
@@ -2070,7 +2071,7 @@ func (t *Truncate) Next(ctx context.Context) (Row, error) {
 		DT.Tables[t.stmt.Table] = nil
 		DT.TablesMu.Unlock()
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (t *Truncate) Close() error                { return nil }
@@ -2087,7 +2088,7 @@ func NewReindex(stmt *PS.ReindexStmt) *Reindex { return &Reindex{stmt: stmt} }
 
 func (r *Reindex) Next(ctx context.Context) (Row, error) {
 	if r.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	r.done = true
 
@@ -2125,7 +2126,7 @@ func (r *Reindex) Next(ctx context.Context) (Row, error) {
 			return Row{}, fmt.Errorf("ex: no such index: %s", r.stmt.Target)
 		}
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (r *Reindex) Close() error                { return nil }
@@ -2142,17 +2143,17 @@ func NewDropView(stmt *PS.DropViewStmt) *DropView { return &DropView{stmt: stmt}
 
 func (d *DropView) Next(ctx context.Context) (Row, error) {
 	if d.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	d.done = true
 	if d.stmt == nil {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	existed := DT.UnregisterView(d.stmt.Name)
 	if !existed && !d.stmt.IfExists {
 		return Row{}, fmt.Errorf("ex: view %s does not exist", d.stmt.Name)
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (d *DropView) Close() error                { return nil }
@@ -2171,17 +2172,17 @@ func NewDropTrigger(stmt *PS.DropTriggerStmt) *DropTrigger {
 
 func (d *DropTrigger) Next(ctx context.Context) (Row, error) {
 	if d.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	d.done = true
 	if d.stmt == nil {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	existed := unregisterTrigger(d.stmt.Name)
 	if !existed && !d.stmt.IfExists {
 		return Row{}, fmt.Errorf("ex: trigger %s does not exist", d.stmt.Name)
 	}
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (d *DropTrigger) Close() error                { return nil }
@@ -2347,7 +2348,7 @@ func NewUnsupportedOp(stmt PS.Stmt, msg string) *UnsupportedOp {
 
 func (u *UnsupportedOp) Next(ctx context.Context) (Row, error) {
 	if u.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	u.done = true
 	return Row{}, u.err
@@ -2373,7 +2374,7 @@ func NewAttachOp(ex *Executor, name, path string) *AttachOp {
 
 func (a *AttachOp) Next(ctx context.Context) (Row, error) {
 	if a.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	a.done = true
 	if a.closed {
@@ -2407,7 +2408,7 @@ func NewDetachOp(ex *Executor, name string) *DetachOp {
 
 func (d *DetachOp) Next(ctx context.Context) (Row, error) {
 	if d.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	d.done = true
 	if d.closed {

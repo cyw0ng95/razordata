@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
@@ -34,14 +35,14 @@ type JoinStrategy interface {
 // InnerNLJStrategy is the classic nested-loop join strategy: for
 // each left row, scan all right rows. O(N*M).
 type InnerNLJStrategy struct {
-	left   Operator
-	right  Operator
-	on     func(outer, inner *Row) (bool, error)
-	limit  int64
-	emitted int64
-	leftRow   *Row
-	rightRows []Row
-	rightPos  int
+	left         Operator
+	right        Operator
+	on           func(outer, inner *Row) (bool, error)
+	limit        int64
+	emitted      int64
+	leftRow      *Row
+	rightRows    []Row
+	rightPos     int
 	materialized bool
 }
 
@@ -62,7 +63,7 @@ func (s *InnerNLJStrategy) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		if s.limit > 0 && s.emitted >= s.limit {
-			return Row{}, ErrNoRows
+			return Row{}, DT.ErrNoRows
 		}
 		if !s.materialized {
 			// Materialize the right side once so the inner
@@ -70,7 +71,7 @@ func (s *InnerNLJStrategy) Next(ctx context.Context) (Row, error) {
 			for {
 				r, err := s.right.Next(ctx)
 				if err != nil {
-					if errors.Is(err, ErrNoRows) {
+					if errors.Is(err, DT.ErrNoRows) {
 						break
 					}
 					return Row{}, err
@@ -146,7 +147,7 @@ func (s *HashNLJStrategy) Next(ctx context.Context) (Row, error) {
 	// strategy is exposed for interface conformance and
 	// dispatcher tests; the production code path uses the
 	// existing NestedLoopJoin.tryHashCrossJoin / nextHash.
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 // Close releases the child operators.
@@ -164,9 +165,9 @@ func (s *HashNLJStrategy) Close() error {
 // and re-scan the right side once per batch. Reduces right-side
 // scans from N to N/32.
 type BlockNLJStrategy struct {
-	left   Operator
-	right  Operator
-	on     func(outer, inner *Row) (bool, error)
+	left      Operator
+	right     Operator
+	on        func(outer, inner *Row) (bool, error)
 	batchSize int
 }
 
@@ -183,7 +184,7 @@ func NewBlockNLJStrategy(left, right Operator, on func(outer, inner *Row) (bool,
 // already implemented in NestedLoopJoin.blockMode; this strategy
 // is a marker for type-based dispatch.
 func (s *BlockNLJStrategy) Next(ctx context.Context) (Row, error) {
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 // Close releases the child operators.
@@ -200,9 +201,9 @@ func (s *BlockNLJStrategy) Close() error {
 // LeftOuterNLJStrategy is the left-outer NLJ strategy. Emits
 // unmatched left rows as right-NULL rows.
 type LeftOuterNLJStrategy struct {
-	left   Operator
-	right  Operator
-	on     func(outer, inner *Row) (bool, error)
+	left  Operator
+	right Operator
+	on    func(outer, inner *Row) (bool, error)
 }
 
 // NewLeftOuterNLJStrategy builds a left-outer NLJ strategy.
@@ -213,7 +214,7 @@ func NewLeftOuterNLJStrategy(left, right Operator, on func(outer, inner *Row) (b
 // Next returns the next left-outer-joined row. Mirrors the
 // leftOuter branch of NestedLoopJoin.Next.
 func (s *LeftOuterNLJStrategy) Next(ctx context.Context) (Row, error) {
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 // Close releases the child operators.
@@ -243,7 +244,7 @@ func NewRightOuterNLJStrategy(left, right Operator, on func(outer, inner *Row) (
 // Next returns the next right-outer-joined row. Marker for type
 // dispatch; the full implementation lives in NestedLoopJoin.rightMode.
 func (s *RightOuterNLJStrategy) Next(ctx context.Context) (Row, error) {
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 // Close releases the child operators.
@@ -274,7 +275,7 @@ func NewHashCrossNLJStrategy(left, right Operator) *HashCrossNLJStrategy {
 
 // Next returns the next cross-joined row. Marker for type dispatch.
 func (s *HashCrossNLJStrategy) Next(ctx context.Context) (Row, error) {
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 // Close releases the child operators.
@@ -310,4 +311,3 @@ func joinRowsSimple(a, b *Row) Row {
 // REQ000980: declared as a re-export to keep the join_strategy.go
 // file self-contained for readers, but the actual definition
 // lives in join.go.
-

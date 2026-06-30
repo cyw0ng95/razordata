@@ -7,8 +7,9 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -421,10 +422,10 @@ func BenchmarkFilter_ADQC_Cache(b *testing.B) {
 	b.Run("CacheHit", func(b *testing.B) {
 		// Warm the cache with one full pass.
 		warm := &sliceRowOp{rows: rows}
-		wf := NewFilter(warm, pred)
+		wf := OP.NewFilter(warm, pred)
 		for {
 			_, err := wf.Next(ctx)
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			if err != nil {
@@ -437,10 +438,10 @@ func BenchmarkFilter_ADQC_Cache(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			child := &sliceRowOp{rows: rows}
-			f := NewFilter(child, pred)
+			f := OP.NewFilter(child, pred)
 			for {
 				_, err := f.Next(ctx)
-				if err == ErrNoRows {
+				if err == DT.ErrNoRows {
 					break
 				}
 				if err != nil {
@@ -469,10 +470,10 @@ func BenchmarkFilter_ADQC_Cache(b *testing.B) {
 				},
 			}
 			child := &sliceRowOp{rows: rows}
-			f := NewFilter(child, p)
+			f := OP.NewFilter(child, p)
 			for {
 				_, err := f.Next(ctx)
-				if err == ErrNoRows {
+				if err == DT.ErrNoRows {
 					break
 				}
 				if err != nil {
@@ -492,7 +493,7 @@ type sliceRowOp struct {
 
 func (s *sliceRowOp) Next(_ context.Context) (Row, error) {
 	if s.pos >= len(s.rows) {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	r := s.rows[s.pos]
 	s.pos++

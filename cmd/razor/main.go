@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
@@ -74,7 +75,7 @@ func openEngine(ctx context.Context, dir string) (*SY.Engine, error) {
 	return SY.Open(ctx, dir, AP.Options{})
 }
 
-func rowAsString(row EX.Row) string {
+func rowAsString(row DT.Row) string {
 	if len(row.Data) == 0 {
 		return ""
 	}

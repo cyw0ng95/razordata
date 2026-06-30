@@ -4,8 +4,10 @@ import (
 	"context"
 	"testing"
 
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	"github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
 // REQ001052: Parallel UNION ALL correctness test.
@@ -25,7 +27,7 @@ func TestParallelUnionAll_Correctness(t *testing.T) {
 		{Data: []pl.Value{{Kind: pl.KindInt, I64: 50}}},
 	})
 
-	u := NewParallelUnionAll(left, right, pool)
+	u := OP.NewParallelUnionAll(left, right, pool)
 	defer u.Close()
 
 	var vals []int64
@@ -54,21 +56,21 @@ func TestParallelUnionAll_Correctness(t *testing.T) {
 
 // REQ001052: empty sides.
 func TestParallelUnionAll_EmptySides(t *testing.T) {
-	pool := 
-UT.NewWorkerPool(2)
+	pool :=
+		UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
 	// Both empty
-	u := NewParallelUnionAll(newArrayScan(nil), newArrayScan(nil), pool)
+	u := OP.NewParallelUnionAll(newArrayScan(nil), newArrayScan(nil), pool)
 	defer u.Close()
 	_, err := u.Next(ctx)
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Fatalf("expected ErrNoRows, got %v", err)
 	}
 
 	// Left empty
-	u2 := NewParallelUnionAll(newArrayScan(nil), newArrayScan([]pl.Row{
+	u2 := OP.NewParallelUnionAll(newArrayScan(nil), newArrayScan([]pl.Row{
 		{Data: []pl.Value{{Kind: pl.KindInt, I64: 5}}},
 	}), pool)
 	defer u2.Close()
@@ -80,7 +82,7 @@ UT.NewWorkerPool(2)
 		t.Errorf("got %d, want 5", r.Data[0].I64)
 	}
 	_, err = u2.Next(ctx)
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Fatalf("expected ErrNoRows after drain, got %v", err)
 	}
 }
@@ -94,7 +96,7 @@ type arrayScan struct {
 func newArrayScan(rows []pl.Row) *arrayScan { return &arrayScan{rows: rows} }
 func (a *arrayScan) Next(context.Context) (pl.Row, error) {
 	if a.pos >= len(a.rows) {
-		return pl.Row{}, ErrNoRows
+		return pl.Row{}, DT.ErrNoRows
 	}
 	r := a.rows[a.pos]
 	a.pos++

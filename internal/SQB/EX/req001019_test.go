@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -17,7 +19,7 @@ type memOp struct {
 
 func (m *memOp) Next(ctx context.Context) (Row, error) {
 	if m.pos >= len(m.rows) {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	r := m.rows[m.pos]
 	m.pos++
@@ -25,7 +27,7 @@ func (m *memOp) Next(ctx context.Context) (Row, error) {
 }
 
 func (m *memOp) WithParams(p []any) Operator { return m }
-func (m *memOp) Close() error                 { return nil }
+func (m *memOp) Close() error                { return nil }
 
 // BenchmarkCompoundOrderBy_EvalCost verifies that the Schwartzian
 // transform in CompoundOp reduces per-comparison expression
@@ -87,7 +89,7 @@ func BenchmarkCompoundOrderBy_EvalCost(b *testing.B) {
 			for j := range result {
 				vals := make([]Value, len(orderBy))
 				for k, o := range orderBy {
-					v, _ :=EV.EvalValue(o.Expr, &result[j], nil)
+					v, _ := EV.EvalValue(o.Expr, &result[j], nil)
 					vals[k] = v
 				}
 				decorated[j].row = result[j]
@@ -140,7 +142,7 @@ func BenchmarkCompoundOrderBy_ActualSort(b *testing.B) {
 				for j := range rows {
 					vals := make([]Value, len(orderBy))
 					for k, o := range orderBy {
-						v, _ :=EV.EvalValue(o.Expr, &rows[j], nil)
+						v, _ := EV.EvalValue(o.Expr, &rows[j], nil)
 						vals[k] = v
 					}
 					decorated[j].row = rows[j]
@@ -176,7 +178,7 @@ func TestCompoundOrderBy_Schwartzian(t *testing.T) {
 		{Expr: &PS.Ident{Name: "val"}},
 	}
 
-	op := NewCompoundOp(left, right, PS.CompoundUnionAll, orderBy, nil, nil)
+	op := OP.NewCompoundOp(left, right, PS.CompoundUnionAll, orderBy, nil, nil)
 
 	var vals []int64
 	for {
@@ -220,7 +222,7 @@ func TestCompoundOrderBy_Desc(t *testing.T) {
 		{Expr: &PS.Ident{Name: "val"}, Desc: true},
 	}
 
-	op := NewCompoundOp(left, right, PS.CompoundUnionAll, orderBy, nil, nil)
+	op := OP.NewCompoundOp(left, right, PS.CompoundUnionAll, orderBy, nil, nil)
 
 	var vals []int64
 	for {

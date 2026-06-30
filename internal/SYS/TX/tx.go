@@ -7,7 +7,7 @@ import (
 	"context"
 	"sync"
 
-	ex "github.com/cyw0ng95/razordata/internal/SQB/EX"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
 	sy "github.com/cyw0ng95/razordata/internal/SYS/SY"
 	vl "github.com/cyw0ng95/razordata/internal/TXN/VL"
@@ -31,7 +31,7 @@ type Transaction struct {
 	mu       sync.Mutex
 
 	writeSet          map[string]writeEntry
-	inMemorySnapshots map[string][]ex.Row // table → pre-tx rows
+	inMemorySnapshots map[string][]DT.Row // table → pre-tx rows
 	finished          bool
 	savepoints        []savepoint
 	isolationLevel    ap.IsolationLevel // REQ000123
@@ -54,7 +54,7 @@ func NewTransaction(engine *sy.Engine, tx vl.Tx) *Transaction {
 		engine:            engine,
 		tx:                tx,
 		writeSet:          make(map[string]writeEntry),
-		inMemorySnapshots: make(map[string][]ex.Row),
+		inMemorySnapshots: make(map[string][]DT.Row),
 		isolationLevel:    ap.IsolationReadCommitted, // REQ000061: default RC
 	}
 }
@@ -96,12 +96,12 @@ func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.R
 	next := func() (ap.Row, error) {
 		row, err := stream.Next()
 		if err != nil {
-			if err == ex.ErrNoRows {
+			if err == DT.ErrNoRows {
 				return ap.Row{}, ap.ErrNoRows
 			}
 			return ap.Row{}, err
 		}
-		// REQ000862: AP.Row.Data is now []AP.Value (same type as EX.Row.Data),
+		// REQ000862: AP.Row.Data is now []AP.Value (same type as DT.Row.Data),
 		// so no boxing conversion is needed.
 		return ap.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
 	}
@@ -166,7 +166,7 @@ func (t *Transaction) RecordWrite(key []byte, newValue []byte) {
 // table. Only the first call per table is recorded; subsequent
 // writes to the same table use the original snapshot for rollback.
 // REQ000641.
-func (t *Transaction) RecordInMemoryTable(table string, snapshot []ex.Row) {
+func (t *Transaction) RecordInMemoryTable(table string, snapshot []DT.Row) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.finished {
@@ -241,7 +241,7 @@ func (t *Transaction) Rollback(ctx context.Context) error {
 	}
 	// REQ000641: restore in-memory tables to their pre-tx snapshots.
 	if rollbackErr == nil && len(t.inMemorySnapshots) > 0 {
-		rollbackErr = ex.RestoreInMemoryTables(t.inMemorySnapshots)
+		rollbackErr = DT.RestoreInMemoryTables(t.inMemorySnapshots)
 	}
 	t.finished = true
 	t.writeSet = nil

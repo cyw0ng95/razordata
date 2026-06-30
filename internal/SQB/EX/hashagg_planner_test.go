@@ -6,6 +6,7 @@ import (
 
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -52,14 +53,14 @@ func TestHashAggregate_AggregateEquivalence(t *testing.T) {
 
 	// HashAggregate
 	DT.RegisterTable("hashagg_test", rows)
-	scan := NewSeqScan("hashagg_test")
+	scan := OP.NewSeqScan("hashagg_test")
 	ha := AG.NewHashAggregate(scan, groupCols, aggExprs)
 
 	haResults := make(map[string]int64)
 	for {
 		row, err := ha.Next(context.Background())
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			t.Fatalf("HashAggregate Next: %v", err)

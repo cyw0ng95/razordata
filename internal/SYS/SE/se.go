@@ -7,7 +7,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQB/EX"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
@@ -101,27 +104,27 @@ func wrapEXError(err error) error {
 		return err
 	}
 	switch {
-	case errors.Is(err, EX.ErrNoRows):
+	case errors.Is(err, DT.ErrNoRows):
 		return AP.ErrNoRows
-	case errors.Is(err, EX.ErrEval):
+	case errors.Is(err, EV.ErrEval):
 		return AP.Wrap(AP.KindSyntax, err)
-	case errors.Is(err, EX.ErrDivByZero):
+	case errors.Is(err, EV.ErrDivByZero):
 		return AP.Wrap(AP.KindTypeMismatch, err)
-	case errors.Is(err, EX.ErrTypeMismatch):
+	case errors.Is(err, EV.ErrTypeMismatch):
 		return AP.Wrap(AP.KindTypeMismatch, err)
 	case errors.Is(err, EX.ErrClosed):
 		return AP.Wrap(AP.KindClosed, err)
-	case errors.Is(err, EX.ErrTableNotRegisteredForStorage):
+	case errors.Is(err, OP.ErrTableNotRegisteredForStorage):
 		return AP.Wrap(AP.KindNotFound, err)
-	case errors.Is(err, EX.ErrNoPKForStorage):
+	case errors.Is(err, OP.ErrNoPKForStorage):
 		return AP.Wrap(AP.KindConstraint, err)
-	case errors.Is(err, EX.ErrSubquery):
+	case errors.Is(err, EV.ErrSubquery):
 		return AP.Wrap(AP.KindSyntax, err)
-	case errors.Is(err, EX.ErrTriggerAbort):
+	case errors.Is(err, EV.ErrTriggerAbort):
 		return AP.Wrap(AP.KindConstraint, err)
 	case errors.Is(err, EX.ErrMultiDatabaseNotSupported):
 		return AP.Wrap(AP.KindInvalidOptions, err)
-	case errors.Is(err, EX.ErrNoEngine):
+	case errors.Is(err, OP.ErrNoEngine):
 		return AP.Wrap(AP.KindClosed, err)
 	case errors.Is(err, UT.ErrDecimalOverflow):
 		return AP.Wrap(AP.KindTypeMismatch, err)
@@ -150,12 +153,12 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 	next := func() (AP.Row, error) {
 		row, err := stream.Next()
 		if err != nil {
-			if err == EX.ErrNoRows {
+			if err == DT.ErrNoRows {
 				return AP.Row{}, AP.ErrNoRows
 			}
 			return AP.Row{}, wrapEXError(err)
 		}
-		// REQ000862: AP.Row.Data is now []AP.Value (same type as EX.Row.Data),
+		// REQ000862: AP.Row.Data is now []AP.Value (same type as DT.Row.Data),
 		// so no boxing conversion is needed. Direct assignment eliminates
 		// the per-row []any allocation that was 53% of join memory.
 		return AP.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
@@ -239,7 +242,7 @@ func (s *Session) SetTxWriterForTxn() {
 	txn := s.txn
 	s.mu.Unlock()
 	if txn != nil {
-		if tw, ok := txn.(EX.TxWriter); ok {
+		if tw, ok := txn.(DT.TxWriter); ok {
 			exe := s.engine.Executor()
 			exe.SetTxWriter(tw)
 		}
@@ -406,7 +409,7 @@ var _ = (*TX.Transaction)(nil)
 
 func init() {
 	SY.RegisterSession(func(e *SY.Engine) AP.Session { return NewSession(e) })
-	EX.SetSessionCounterAccessor(&sessionStateAccessor{})
+	DT.SetSessionCounterAccessor(&sessionStateAccessor{})
 }
 
 type sessionStateAccessor struct{}

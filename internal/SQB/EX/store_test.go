@@ -7,8 +7,9 @@ import (
 	"strconv"
 	"testing"
 
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
 
 // engineStore adapts an *ls.Engine to the EX.Store interface.
@@ -307,11 +308,11 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 				NewFloatValue(float64(i) * 1.5),
 			},
 		}
-		encoded, err := EncodeRow(ss, row)
+		encoded, err := OP.EncodeRow(ss, row)
 		if err != nil {
 			b.Fatalf("EncodeRow: %v", err)
 		}
-		key := RowKey(tablePrefix("bench"), NewIntValue(int64(i)))
+		key := OP.RowKey(OP.TablePrefix("bench"), NewIntValue(int64(i)))
 		if err := s.Insert(key, encoded); err != nil {
 			b.Fatalf("Insert: %v", err)
 		}
@@ -327,7 +328,7 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 	b.Run("Next", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			scan, err := NewSeqScanWithStore(s, "bench")
+			scan, err := OP.NewSeqScanWithStore(s, "bench")
 			if err != nil {
 				b.Fatalf("NewSeqScanWithStore: %v", err)
 			}
@@ -335,7 +336,7 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 			for {
 				_, err := scan.Next(ctx)
 				if err != nil {
-					if err == ErrNoRows {
+					if err == DT.ErrNoRows {
 						break
 					}
 					b.Fatalf("Next: %v", err)
@@ -352,7 +353,7 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 	b.Run("NextBatch", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			scan, err := NewSeqScanWithStore(s, "bench")
+			scan, err := OP.NewSeqScanWithStore(s, "bench")
 			if err != nil {
 				b.Fatalf("NewSeqScanWithStore: %v", err)
 			}
@@ -378,10 +379,10 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 	b.Run("GetPerRow", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			prefix := tablePrefix("bench")
+			prefix := OP.TablePrefix("bench")
 			var count int
 			for i := 0; i < rowCount; i++ {
-				key := RowKey(prefix, NewIntValue(int64(i)))
+				key := OP.RowKey(prefix, NewIntValue(int64(i)))
 				v, ok, err := s.Get(key)
 				if err != nil {
 					b.Fatalf("Get: %v", err)
@@ -389,7 +390,7 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 				if !ok {
 					b.Fatalf("key not found: %d", i)
 				}
-				_, err = decodeRow(v, ss)
+				_, err = OP.DecodeRow(v, ss)
 				if err != nil {
 					b.Fatalf("decodeRow: %v", err)
 				}
@@ -427,11 +428,11 @@ func BenchmarkSeqScan_FullScan(b *testing.B) {
 				NewFloatValue(float64(i) * 1.5),
 			},
 		}
-		encoded, err := EncodeRow(ss, row)
+		encoded, err := OP.EncodeRow(ss, row)
 		if err != nil {
 			b.Fatalf("EncodeRow: %v", err)
 		}
-		key := RowKey(tablePrefix("bench"), NewIntValue(int64(i)))
+		key := OP.RowKey(OP.TablePrefix("bench"), NewIntValue(int64(i)))
 		if err := s.Insert(key, encoded); err != nil {
 			b.Fatalf("Insert: %v", err)
 		}
@@ -444,7 +445,7 @@ func BenchmarkSeqScan_FullScan(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		scan, err := NewSeqScanWithStore(s, "bench")
+		scan, err := OP.NewSeqScanWithStore(s, "bench")
 		if err != nil {
 			b.Fatalf("NewSeqScanWithStore: %v", err)
 		}
@@ -452,7 +453,7 @@ func BenchmarkSeqScan_FullScan(b *testing.B) {
 		for {
 			_, err := scan.Next(ctx)
 			if err != nil {
-				if err == ErrNoRows {
+				if err == DT.ErrNoRows {
 					break
 				}
 				b.Fatalf("Next: %v", err)

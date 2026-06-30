@@ -3,8 +3,9 @@ package EX
 import (
 	"context"
 
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // buildPipeline creates a Pipeline from a chain of row-based Operators.
@@ -33,7 +34,7 @@ func (a *operatorPipelineAdapter) Process(ctx context.Context, batch *UT.Batch) 
 	for {
 		r, err := a.op.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			return nil, err

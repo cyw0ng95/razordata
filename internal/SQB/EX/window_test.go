@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
+	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -16,7 +17,7 @@ type staticOperator struct {
 
 func (s *staticOperator) Next(_ context.Context) (pl.Row, error) {
 	if s.idx >= len(s.rows) {
-		return pl.Row{}, ErrNoRows
+		return pl.Row{}, DT.ErrNoRows
 	}
 	r := s.rows[s.idx]
 	s.idx++
@@ -55,7 +56,7 @@ func TestWindow_RowNumber(t *testing.T) {
 		}
 	}
 	_, err := op.Next(context.Background())
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
 	}
 }
@@ -187,7 +188,7 @@ func TestWindow_EmptyInput(t *testing.T) {
 	op :=
 		AG.NewWindowOperator(input, "ROW_NUMBER", nil, spec, []string{})
 	_, err := op.Next(context.Background())
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
 	}
 }
@@ -248,7 +249,7 @@ func TestWindow_RangeFrame(t *testing.T) {
 		}
 	}
 	_, err := op.Next(context.Background())
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
 	}
 }

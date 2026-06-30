@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
@@ -23,7 +24,7 @@ func TestParallelIndexRangeScan_Basic(t *testing.T) {
 	types := []LX.TokenType{LX.T_INT_KW}
 
 	// IN (5, 12, 18) — should match rows at indices 5, 12, 18
-	ps := NewParallelIndexRangeScan(rows, schema, types, "val",
+	ps := OP.NewParallelIndexRangeScan(rows, schema, types, "val",
 		[]any{int64(5), int64(12), int64(18)}, pool)
 	defer ps.Close()
 
@@ -48,12 +49,12 @@ func TestParallelIndexRangeScan_Basic(t *testing.T) {
 
 // REQ001051: ParallelIndexRangeScan empty rows returns nothing.
 func TestParallelIndexRangeScan_EmptyRows(t *testing.T) {
-	pool := 
-UT.NewWorkerPool(2)
+	pool :=
+		UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
-	ps := NewParallelIndexRangeScan(nil, []string{"val"}, []LX.TokenType{LX.T_INT_KW}, "val",
+	ps := OP.NewParallelIndexRangeScan(nil, []string{"val"}, []LX.TokenType{LX.T_INT_KW}, "val",
 		[]any{int64(1)}, pool)
 	defer ps.Close()
 
@@ -65,13 +66,13 @@ UT.NewWorkerPool(2)
 
 // REQ001051: ParallelIndexRangeScan empty values returns nothing.
 func TestParallelIndexRangeScan_EmptyValues(t *testing.T) {
-	pool := 
-UT.NewWorkerPool(2)
+	pool :=
+		UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
 	rows := []Row{{Data: []Value{{Kind: KindInt, I64: 1}}}}
-	ps := NewParallelIndexRangeScan(rows, []string{"val"}, []LX.TokenType{LX.T_INT_KW}, "val", nil, pool)
+	ps := OP.NewParallelIndexRangeScan(rows, []string{"val"}, []LX.TokenType{LX.T_INT_KW}, "val", nil, pool)
 	defer ps.Close()
 
 	_, err := ps.Next(ctx)
@@ -82,8 +83,8 @@ UT.NewWorkerPool(2)
 
 // REQ001051: ParallelIndexRangeScan with string values.
 func TestParallelIndexRangeScan_String(t *testing.T) {
-	pool := 
-UT.NewWorkerPool(2)
+	pool :=
+		UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -97,7 +98,7 @@ UT.NewWorkerPool(2)
 	schema := []string{"s"}
 	types := []LX.TokenType{LX.T_TEXT}
 
-	ps := NewParallelIndexRangeScan(rows, schema, types, "s",
+	ps := OP.NewParallelIndexRangeScan(rows, schema, types, "s",
 		[]any{"b", "d"}, pool)
 	defer ps.Close()
 
@@ -116,8 +117,8 @@ UT.NewWorkerPool(2)
 
 // REQ001051: ParallelIndexRangeScan with multiple columns filters by correct column.
 func TestParallelIndexRangeScan_MultiCol(t *testing.T) {
-	pool := 
-UT.NewWorkerPool(2)
+	pool :=
+		UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -132,7 +133,7 @@ UT.NewWorkerPool(2)
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_TEXT}
 
 	// Filter by id IN (2, 5, 8)
-	ps := NewParallelIndexRangeScan(rows, schema, types, "id",
+	ps := OP.NewParallelIndexRangeScan(rows, schema, types, "id",
 		[]any{int64(2), int64(5), int64(8)}, pool)
 	defer ps.Close()
 
@@ -157,8 +158,8 @@ UT.NewWorkerPool(2)
 
 // REQ001051: ParallelIndexRangeScan no match returns empty.
 func TestParallelIndexRangeScan_NoMatch(t *testing.T) {
-	pool := 
-UT.NewWorkerPool(2)
+	pool :=
+		UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -166,7 +167,7 @@ UT.NewWorkerPool(2)
 		{Data: []Value{{Kind: KindInt, I64: 1}}},
 		{Data: []Value{{Kind: KindInt, I64: 2}}},
 	}
-	ps := NewParallelIndexRangeScan(rows, []string{"val"}, []LX.TokenType{LX.T_INT_KW}, "val",
+	ps := OP.NewParallelIndexRangeScan(rows, []string{"val"}, []LX.TokenType{LX.T_INT_KW}, "val",
 		[]any{int64(99), int64(100)}, pool)
 	defer ps.Close()
 
@@ -178,8 +179,8 @@ UT.NewWorkerPool(2)
 
 // REQ001051: ParallelIndexRangeScan single worker still works.
 func TestParallelIndexRangeScan_SingleWorker(t *testing.T) {
-	pool := 
-UT.NewWorkerPool(1)
+	pool :=
+		UT.NewWorkerPool(1)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -187,7 +188,7 @@ UT.NewWorkerPool(1)
 	for i := range rows {
 		rows[i] = Row{Data: []Value{{Kind: KindInt, I64: int64(i)}}}
 	}
-	ps := NewParallelIndexRangeScan(rows, []string{"val"}, []LX.TokenType{LX.T_INT_KW}, "val",
+	ps := OP.NewParallelIndexRangeScan(rows, []string{"val"}, []LX.TokenType{LX.T_INT_KW}, "val",
 		[]any{int64(0), int64(25), int64(49)}, pool)
 	defer ps.Close()
 
@@ -206,8 +207,8 @@ UT.NewWorkerPool(1)
 
 // BenchmarkParallelIndexRangeScan_INList_100Values benchmarks 100-value IN-list.
 func BenchmarkParallelIndexRangeScan_100Values(b *testing.B) {
-	pool := 
-UT.NewWorkerPool(2)
+	pool :=
+		UT.NewWorkerPool(2)
 	defer pool.Close()
 	ctx := context.Background()
 
@@ -224,7 +225,7 @@ UT.NewWorkerPool(2)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ps := NewParallelIndexRangeScan(rows, []string{"val"}, []LX.TokenType{LX.T_INT_KW}, "val", values, pool)
+		ps := OP.NewParallelIndexRangeScan(rows, []string{"val"}, []LX.TokenType{LX.T_INT_KW}, "val", values, pool)
 		for {
 			_, err := ps.Next(ctx)
 			if err != nil {

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -85,7 +86,7 @@ func TestNumericArithValue(t *testing.T) {
 	tests := []struct {
 		name string
 		a, b Value
-		op  rune
+		op   rune
 		want Value
 	}{
 		{"int_add", NewIntValue(2), NewIntValue(3), '+', NewIntValue(5)},
@@ -125,11 +126,11 @@ func TestEncodeDecodeBlobRoundTrip(t *testing.T) {
 		Cols: []string{"data"},
 		Data: []Value{NewBlobValue([]byte{0x00, 0x01, 0x02, 0xff, 0xfe})},
 	}
-	encoded, err := EncodeRow(schema, original)
+	encoded, err := OP.EncodeRow(schema, original)
 	if err != nil {
 		t.Fatalf("EncodeRow: %v", err)
 	}
-	decoded, err := decodeRow(encoded, schema)
+	decoded, err := OP.DecodeRow(encoded, schema)
 	if err != nil {
 		t.Fatalf("decodeRow: %v", err)
 	}
@@ -208,7 +209,7 @@ func TestEvalInValue(t *testing.T) {
 func TestEvalInHash_Int64Only(t *testing.T) {
 	// Clear the cache to ensure we test fresh state.
 	delete(
-EV.InHashCacheMap, getTestInExpr())
+		EV.InHashCacheMap, getTestInExpr())
 
 	expr := &PS.InExpr{
 		Expr: &PS.NumberLiteral{Val: 42},
@@ -231,8 +232,8 @@ EV.InHashCacheMap, getTestInExpr())
 	}
 
 	// Verify int64Set was populated
-	cached := 
-EV.InHashCacheMap[expr]
+	cached :=
+		EV.InHashCacheMap[expr]
 	if cached == nil {
 		t.Fatal("expected cached entry")
 	}
@@ -268,8 +269,8 @@ func TestEvalInHash_MixedTypes(t *testing.T) {
 	}
 
 	// Verify int64Set was NOT populated
-	cached := 
-EV.InHashCacheMap[expr]
+	cached :=
+		EV.InHashCacheMap[expr]
 	if cached == nil {
 		t.Fatal("expected cached entry")
 	}

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -78,7 +79,7 @@ func TestCost_BasedScanSelection_HighSelectivityRange(t *testing.T) {
 func TestPickCheaperScan_NoIndex(t *testing.T) {
 	p := NewPlanner()
 	p.RegisterTable("t", []ColInfo{{Name: "a"}}, "")
-	seq := NewSeqScan("t")
+	seq := OP.NewSeqScan("t")
 	where := &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "a"},
 		Op:    LX.T_EQ,
@@ -105,7 +106,7 @@ func TestPickCheaperScan_WithIndex(t *testing.T) {
 		delete(DT.RegisteredIndexes, "t")
 		DT.StoreMu.Unlock()
 	}()
-	seq := NewSeqScan("t")
+	seq := OP.NewSeqScan("t")
 	where := &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "a"},
 		Op:    LX.T_EQ,
@@ -135,7 +136,7 @@ func TestPickCheaperScan_HighSelectivityRange(t *testing.T) {
 		delete(DT.RegisteredIndexes, "t")
 		DT.StoreMu.Unlock()
 	}()
-	seq := NewSeqScan("t")
+	seq := OP.NewSeqScan("t")
 	where := &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "a"},
 		Op:    LX.T_GT,

@@ -6,12 +6,13 @@ import (
 	"sync"
 	"testing"
 
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // makeParallelTestRows creates N rows with id=0..N-1 and value="row".
@@ -33,11 +34,11 @@ func TestParallelSeqScan_Basic(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id", "value"}
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_TEXT}
-	pool := 
-UT.NewWorkerPool(4)
+	pool :=
+		UT.NewWorkerPool(4)
 	defer pool.Close()
 
-	scan := NewParallelSeqScan(src, schema, types, pool, rows)
+	scan := OP.NewParallelSeqScan(src, schema, types, pool, rows)
 	defer scan.Close()
 
 	total := 0
@@ -59,11 +60,11 @@ UT.NewWorkerPool(4)
 
 // TestParallelSeqScan_Empty verifies empty source.
 func TestParallelSeqScan_Empty(t *testing.T) {
-	pool := 
-UT.NewWorkerPool(4)
+	pool :=
+		UT.NewWorkerPool(4)
 	defer pool.Close()
 
-	scan := NewParallelSeqScan(nil, []string{"id"}, []LX.TokenType{LX.T_INT_KW}, pool, nil)
+	scan := OP.NewParallelSeqScan(nil, []string{"id"}, []LX.TokenType{LX.T_INT_KW}, pool, nil)
 	defer scan.Close()
 
 	batch, err := scan.NextBatch(context.Background())
@@ -82,11 +83,11 @@ func TestParallelSeqScan_Large(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id"}
 	types := []LX.TokenType{LX.T_INT_KW}
-	pool := 
-UT.NewWorkerPool(4)
+	pool :=
+		UT.NewWorkerPool(4)
 	defer pool.Close()
 
-	scan := NewParallelSeqScan(src, schema, types, pool, rows)
+	scan := OP.NewParallelSeqScan(src, schema, types, pool, rows)
 	defer scan.Close()
 
 	total := 0
@@ -114,11 +115,11 @@ func TestParallelIndexScan_Basic(t *testing.T) {
 		Op:    LX.T_GE,
 		Right: &PS.NumberLiteral{Val: 25},
 	}
-	pool := 
-UT.NewWorkerPool(4)
+	pool :=
+		UT.NewWorkerPool(4)
 	defer pool.Close()
 
-	scan := NewParallelIndexScan(rows, "id", []string{"id"}, []LX.TokenType{LX.T_INT_KW}, pred, pool)
+	scan := OP.NewParallelIndexScan(rows, "id", []string{"id"}, []LX.TokenType{LX.T_INT_KW}, pred, pool)
 	defer scan.Close()
 
 	total := 0
@@ -142,11 +143,11 @@ UT.NewWorkerPool(4)
 // TestParallelIndexScan_NoPred verifies no-predicate path.
 func TestParallelIndexScan_NoPred(t *testing.T) {
 	rows := makeParallelTestRows(100)
-	pool := 
-UT.NewWorkerPool(4)
+	pool :=
+		UT.NewWorkerPool(4)
 	defer pool.Close()
 
-	scan := NewParallelIndexScan(rows, "id", []string{"id"}, []LX.TokenType{LX.T_INT_KW}, nil, pool)
+	scan := OP.NewParallelIndexScan(rows, "id", []string{"id"}, []LX.TokenType{LX.T_INT_KW}, nil, pool)
 	defer scan.Close()
 
 	total := 0
@@ -172,8 +173,8 @@ func TestParallelSeqScan_ConcurrentReaders(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id"}
 	types := []LX.TokenType{LX.T_INT_KW}
-	pool := 
-UT.NewWorkerPool(4)
+	pool :=
+		UT.NewWorkerPool(4)
 	defer pool.Close()
 
 	var wg sync.WaitGroup
@@ -181,10 +182,10 @@ UT.NewWorkerPool(4)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			scan := NewParallelSeqScan(src, schema, types, pool, rows)
+			scan := OP.NewParallelSeqScan(src, schema, types, pool, rows)
 			defer scan.Close()
 			total := 0
-	for {
+			for {
 				batch, _ := scan.NextBatch(context.Background())
 				if batch == nil {
 					break
@@ -206,9 +207,9 @@ func BenchmarkParallelSeqScan(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		pool := 
-UT.NewWorkerPool(4)
-		scan := NewParallelSeqScan(src, schema, types, pool, rows)
+		pool :=
+			UT.NewWorkerPool(4)
+		scan := OP.NewParallelSeqScan(src, schema, types, pool, rows)
 		for {
 			batch, _ := scan.NextBatch(context.Background())
 			if batch == nil {
@@ -232,9 +233,9 @@ func BenchmarkParallelSeqScanScaling(b *testing.B) {
 		b.Run("workers="+strconv.Itoa(workers), func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				pool := 
-UT.NewWorkerPool(workers)
-				scan := NewParallelSeqScan(src, schema, types, pool, rows)
+				pool :=
+					UT.NewWorkerPool(workers)
+				scan := OP.NewParallelSeqScan(src, schema, types, pool, rows)
 				for {
 					batch, _ := scan.NextBatch(context.Background())
 					if batch == nil {
@@ -248,6 +249,7 @@ UT.NewWorkerPool(workers)
 		})
 	}
 }
+
 // rowSourceForTest is a simple in-memory row iterator for tests.
 type rowSourceForTest struct {
 	rows []Row
@@ -256,7 +258,7 @@ type rowSourceForTest struct {
 
 func (r *rowSourceForTest) Next(ctx context.Context) (Row, error) {
 	if r.pos >= len(r.rows) {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	row := r.rows[r.pos]
 	r.pos++
@@ -286,7 +288,7 @@ func TestVectorizedSeqScan(t *testing.T) {
 	schema := []string{"id", "value"}
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_TEXT}
 
-	scan := NewVectorizedSeqScan(src, schema, types)
+	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
 	ctx := context.Background()
@@ -330,7 +332,7 @@ func TestVectorizedSeqScan(t *testing.T) {
 // TestVectorizedSeqScan_EmptySource verifies EOF on empty source.
 func TestVectorizedSeqScan_EmptySource(t *testing.T) {
 	src := &rowSourceForTest{rows: nil}
-	scan := NewVectorizedSeqScan(src, []string{"x"}, []LX.TokenType{LX.T_INT_KW})
+	scan := OP.NewVectorizedSeqScan(src, []string{"x"}, []LX.TokenType{LX.T_INT_KW})
 	defer scan.Close()
 
 	batch, err := scan.NextBatch(context.Background())
@@ -348,11 +350,11 @@ func TestVectorizedSeqScan_EmptySource(t *testing.T) {
 func TestVectorizedFilter_AllMatch(t *testing.T) {
 	rows := makeTestRows(10)
 	src := &rowSourceForTest{rows: rows}
-	scan := NewVectorizedSeqScan(src, []string{"id"}, []LX.TokenType{LX.T_INT_KW})
+	scan := OP.NewVectorizedSeqScan(src, []string{"id"}, []LX.TokenType{LX.T_INT_KW})
 	defer scan.Close()
 
 	// Filter: id >= 0 (all rows match)
-	filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
+	filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
 		Op:    LX.T_GE,
 		Right: &PS.NumberLiteral{Val: 0},
@@ -381,11 +383,11 @@ func TestVectorizedFilter_AllMatch(t *testing.T) {
 func TestVectorizedFilter_NoMatch(t *testing.T) {
 	rows := makeTestRows(5)
 	src := &rowSourceForTest{rows: rows}
-	scan := NewVectorizedSeqScan(src, []string{"id"}, []LX.TokenType{LX.T_INT_KW})
+	scan := OP.NewVectorizedSeqScan(src, []string{"id"}, []LX.TokenType{LX.T_INT_KW})
 	defer scan.Close()
 
 	// Filter: id > 100 (no rows match)
-	filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
+	filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
 		Op:    LX.T_GT,
 		Right: &PS.NumberLiteral{Val: 100},
@@ -406,11 +408,11 @@ func TestVectorizedFilter_NoMatch(t *testing.T) {
 func TestVectorizedFilter_PartialMatch(t *testing.T) {
 	rows := makeTestRows(10)
 	src := &rowSourceForTest{rows: rows}
-	scan := NewVectorizedSeqScan(src, []string{"id"}, []LX.TokenType{LX.T_INT_KW})
+	scan := OP.NewVectorizedSeqScan(src, []string{"id"}, []LX.TokenType{LX.T_INT_KW})
 	defer scan.Close()
 
 	// Filter: id < 5 (matches 0, 1, 2, 3, 4)
-	filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
+	filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
 		Op:    LX.T_LT,
 		Right: &PS.NumberLiteral{Val: 5},
@@ -435,11 +437,11 @@ func TestVectorizedFilter_PartialMatch(t *testing.T) {
 func TestVectorizedFilter_MultiBatch(t *testing.T) {
 	rows := makeTestRows(2500)
 	src := &rowSourceForTest{rows: rows}
-	scan := NewVectorizedSeqScan(src, []string{"id"}, []LX.TokenType{LX.T_INT_KW})
+	scan := OP.NewVectorizedSeqScan(src, []string{"id"}, []LX.TokenType{LX.T_INT_KW})
 	defer scan.Close()
 
 	// Filter: id >= 1000
-	filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
+	filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
 		Op:    LX.T_GE,
 		Right: &PS.NumberLiteral{Val: 1000},
@@ -467,7 +469,7 @@ func TestVectorizedFilter_MultiBatch(t *testing.T) {
 // TestSchemaFromRowSchema verifies the int -> TokenType conversion.
 func TestSchemaFromRowSchema(t *testing.T) {
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_BOOL}
-	got := SchemaFromRowSchema(types)
+	got := OP.SchemaFromRowSchema(types)
 	if len(got) != 3 {
 		t.Fatalf("expected 3 types, got %d", len(got))
 	}
@@ -497,8 +499,8 @@ func BenchmarkVectorizedFilter(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		src := &rowSourceForTest{rows: rows}
-		scan := NewVectorizedSeqScan(src, schema, types)
-		filter := NewVectorizedFilter(scan, pred)
+		scan := OP.NewVectorizedSeqScan(src, schema, types)
+		filter := OP.NewVectorizedFilter(scan, pred)
 		for {
 			batch, _ := filter.NextBatch(context.Background())
 			if batch == nil {
@@ -553,8 +555,8 @@ func BenchmarkVectorizedFilter_MultiBatch(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		src := &rowSourceForTest{rows: rows}
-		scan := NewVectorizedSeqScan(src, schema, types)
-		filter := NewVectorizedFilter(scan, pred)
+		scan := OP.NewVectorizedSeqScan(src, schema, types)
+		filter := OP.NewVectorizedFilter(scan, pred)
 		for {
 			batch, _ := filter.NextBatch(context.Background())
 			if batch == nil {
@@ -603,7 +605,7 @@ func TestParallelSort_Sequential(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id"}
 	types := []LX.TokenType{LX.T_INT_KW}
-	scan := NewVectorizedSeqScan(src, schema, types)
+	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
 	keys := []SortKey{{ColName: "id", Order: AscOrder}}
@@ -636,7 +638,7 @@ func TestParallelSort_Descending(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id"}
 	types := []LX.TokenType{LX.T_INT_KW}
-	scan := NewVectorizedSeqScan(src, schema, types)
+	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
 	keys := []SortKey{{ColName: "id", Order: DescOrder}}
@@ -666,12 +668,12 @@ func TestParallelSort_LargeDataset(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id"}
 	types := []LX.TokenType{LX.T_INT_KW}
-	scan := NewVectorizedSeqScan(src, schema, types)
+	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
 	keys := []SortKey{{ColName: "id", Order: AscOrder}}
-	pool := 
-UT.NewWorkerPool(4)
+	pool :=
+		UT.NewWorkerPool(4)
 	defer pool.Close()
 
 	sortOp := NewParallelSort(scan, keys, pool)
@@ -742,7 +744,7 @@ func TestParallelSort_MultiBatch(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id"}
 	types := []LX.TokenType{LX.T_INT_KW}
-	scan := NewVectorizedSeqScan(src, schema, types)
+	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
 	keys := []SortKey{{ColName: "id", Order: AscOrder}}
@@ -787,9 +789,9 @@ func BenchmarkParallelSort_Large(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		src := &rowSourceForTest{rows: rows}
-		scan := NewVectorizedSeqScan(src, schema, types)
-		pool := 
-UT.NewWorkerPool(4)
+		scan := OP.NewVectorizedSeqScan(src, schema, types)
+		pool :=
+			UT.NewWorkerPool(4)
 		sortOp := NewParallelSort(scan, keys, pool)
 		for {
 			batch, _ := sortOp.NextBatch(context.Background())

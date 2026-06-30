@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"testing"
 
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -82,7 +83,7 @@ func TestIndexScan_WithIndexSeek(t *testing.T) {
 	}
 
 	// Build an IndexScan that seeks for "bob@x.com"
-	scan, err := NewIndexScanWithIndex(store, id, "users", "idx_email", []byte("bob@x.com"), nil)
+	scan, err := OP.NewIndexScanWithIndex(store, id, "users", "idx_email", []byte("bob@x.com"), nil)
 	if err != nil {
 		t.Fatalf("NewIndexScanWithIndex: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestIndexScan_WithIndexSeek(t *testing.T) {
 
 	// Next call should return ErrNoRows
 	_, err = scan.Next(ctx)
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Errorf("second Next: got %v, want ErrNoRows", err)
 	}
 }
@@ -124,7 +125,7 @@ func int64ToBytes(n int64) []byte {
 
 // TestIndexScan_BuildIndexKey verifies the key encoding format.
 func TestIndexScan_BuildIndexKey(t *testing.T) {
-	key := buildIndexKey(7, "idx_email", []byte("alice"))
+	key := OP.BuildIndexKey(7, "idx_email", []byte("alice"))
 	want := []byte("__idx__:")
 	want = append(want, 0, 0, 0, 0, 0, 0, 0, 7)
 	want = append(want, ':')
@@ -184,7 +185,7 @@ func TestIndexScan_CloseWithIndex(t *testing.T) {
 	ctx := context.Background()
 	_, _ = ex.Exec(ctx, "INSERT INTO t VALUES (1, 'x')")
 
-	scan, _ := NewIndexScanWithIndex(store, id, "t", "idx_a", []byte("x"), nil)
+	scan, _ := OP.NewIndexScanWithIndex(store, id, "t", "idx_a", []byte("x"), nil)
 	if err := scan.Close(); err != nil {
 		t.Errorf("Close: %v", err)
 	}

@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
@@ -235,7 +235,7 @@ func TestBugfix_InsertOnConflictDoUpdate(t *testing.T) {
 		t.Fatalf("buildWriterOp: %v", err)
 	}
 	defer op.Close()
-	if _, err := op.Next(ctx); err != nil && err != ErrNoRows {
+	if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("insert op: %v", err)
 	}
 

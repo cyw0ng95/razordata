@@ -3,6 +3,8 @@
 > Research report — June 2026
 > Problem: Subsystem and cluster dependency structure is hard to maintain
 > Goals: Strict layering (interface at boundary), clear principles, maintainable patterns
+>
+> **Status (2026-07-01): reviewed and partially adopted.** See §11 "Decisions" for what was accepted, what was rejected, and why. The original report is preserved below for context; sections marked **[Rejected]** in §11 should not be acted on.
 
 ---
 
@@ -13,11 +15,12 @@
 3. [Principle 2 — Package-Oriented Design](#3-principle-package-oriented-design)
 4. [Principle 3 — Stable-Dependency Principle (Reversal)](#4-principle-stable-dependency-principle-reversal)
 5. [Principle 4 — Cluster Extraction Policy](#5-principle-cluster-extraction-policy)
-6. [Principle 5 — Dumpster Prevention (Against DTs)](#6-principle-dumpster-prevention)
+6. [Principle 5 — Dumpster Prevention (Against DTs)](#6-principle-dumpster-prevention-against-dts)
 7. [Principle 6 — Automated Enforcement](#7-principle-automated-enforcement)
 8. [Revised Subsystem Dependency Graph](#8-revised-subsystem-dependency-graph)
 9. [Revised SQB Cluster Map](#9-revised-sqb-cluster-map)
 10. [Actionable Steps](#10-actionable-steps)
+11. [Decisions (2026-07-01 review)](#11-decisions-2026-07-01-review)
 
 ---
 
@@ -429,74 +432,128 @@ Key changes:
 
 ## 10. Actionable Steps
 
-### Phase 1: Create `internal/types/` (replace DT)
+**Phase ordering note:** the original report proposed Phase 1 (`internal/types/` creation) as the first step. That step is **rejected** — see §11. The remaining phases (2–5) are cluster operations within SQB and SYS that are within the scope of iter-36 / iter-37 work and respect the Subsystem/Function Cluster rule.
 
-**Estimated: 1-2 days.**
+### Phase 2: Finish iter-36 (operator + AD extraction) — cluster-fill, not cluster-create
 
-1. Create `internal/types/` directory
-2. Move `Operator`, `Row`, `Value` (and constructors), `ExecContext`, `Store`, `StatsCatalog`, `PlannerProvider` from `SQB/DT` → `internal/types/`
-3. Move `ErrNotImplemented`, `ErrNoRows`, `ErrClosed` to `internal/types/`
-4. Update all import paths in SQF, SQB, and SYS
-5. Move `ContainsAggregate`, `ContainsWindowFunc` → `SQF/PL/ast_helpers.go`
-6. Move `ValueFromAny`, `Compare`, `ToInt64`, `EqualValueAny`, `IsValueTruthy` → `SQB/EV/value_helpers.go`
-7. Move `SessionCounterAccessor`, `CurrentSessionID` → `SYS/AP/session.go`
-8. Decide ownership of schema registry (`Tables`, `Schemas`, `TablesMu`, etc.) — either `ENG/schema/` or a dedicated `SQB/schema/` package. This is a design decision: schema is used by SQB/WT for writes, SQB/AD for planning, and ENG/TB for DDL. **Recommendation**: `internal/schema/` (layer 5) — it's a cross-cutting concern.
-9. **Verify**: `go build ./...`, `go test ./... -race -count=1`, ensure `SQB/DT` has zero files left (or only thin aliases if backward compat needed)
+**Estimated: 3-5 days.** `SQB/OP/` and `SQB/AD/` already exist as populated clusters; this phase finishes the fill.
 
-### Phase 2: Finish iter-36 (operator + AD extraction)
+1. `SQB/OP/` is **already populated** as of iter-36 partial-merge: `operators.go` (SeqScan, IndexScan), `intermediate.go` (Filter, Project, Sort, Limit, Offset), `join.go` (NestedLoopJoin), `join_strategy.go` (still in EX — needs to move), `operators_parallel.go`, `operators_vec.go`, `compound.go`, `values.go`, plus the iter-35 leaf operators. **Verify** no further file moves are needed by `ls internal/SQB/OP/` and `ls internal/SQB/EX/`.
+2. Move planner from `SQB/EX/` → `SQB/AD/`: `planner.go`, `plan_node.go`, `shape_specialize.go`, `memo.go`, plus their test files. `SQB/AD/` already has `adqc*.go`, `cache_stats.go`, `index_usage.go`.
+3. Update all imports in moved files and remaining `SQB/EX/` files. `SQB/AD/` may import `SQF/PL` for AST types, `SQB/DT` for `Operator`/`Row`, `SQB/EV` for `EvalValue`. It must not import `SQB/EX`.
+4. **Verify**: `go build ./...`, `go test ./... -race -count=1`.
 
-**Estimated: 3-5 days.**
+### Phase 3: Fill `SQB/WT/` and finish iter-37
 
-1. Move all operator files from EX → OP: `operators.go`, `intermediate.go`, `join.go`, `join_strategy.go`, `operators_parallel.go`, `operators_vec.go`, `compound.go`, `values.go`
-2. Move planner from EX → AD: `planner.go`, `plan_node.go`, `shape_specialize.go`, `memo.go`, `selectivity*.go`, `cost_*_test.go`
-3. Move ADQC files from EX → AD if not already there: `adqc*.go`
-4. Move `matview.go` → AD (or WT — design decision)
-5. Update all imports
-6. **Verify**: `go build ./...`, `go test ./... -race -count=1`
+**Estimated: 2-3 days.** `internal/SQB/WT/` directory already exists; it is empty. This phase populates it.
 
-### Phase 3: Create SQB/WT and finish iter-37
-
-**Estimated: 2-3 days.**
-
-1. Create `internal/SQB/WT/` directory
-2. Move: `writers.go`, `source.go`, `store.go`, `alter_table.go`, `fk.go`, `view.go`, `constraints.go`, `indexscan_strategy.go`, `subq.go`
-3. Move remaining UT files: `explain.go`, `analyze.go`, `sort_parallel.go`, `pipeline.go`, `integrity.go`
-4. Move remaining test files: `eval_test.go` → EV, `aggregate_*_test.go` → AG, etc.
-5. Update all imports
-6. **Verify**: `go build ./...`, `go test ./... -race -count=1`
+1. Move to `SQB/WT/`: `writers.go`, `source.go`, `alter_table.go`, `fk.go`, `view.go`, `constraints.go`, `subq.go` from `SQB/EX/`. **Note**: there are two `store.go` files. The one in `SQB/EX/` is `EX/store_test.go`; the one in `SQB/OP/` (`encodeRow`/`decodeRow`/`extractPK`/`indexValueFor`) is the canonical storage key encoding layer and stays in OP. Move `indexscan_strategy.go` only if the OP/EX split warrants.
+2. Move to `SQB/UT/` from `SQB/EX/`: `explain.go`, `analyze.go`, `sort_parallel.go`, `pipeline.go`, `integrity.go`.
+3. Move remaining test files: `eval_test.go` → `SQB/EV/`, `aggregate_*_test.go` → `SQB/AG/`, `window_test.go` → `SQB/AG/`.
+4. Update all imports. `SQB/WT/` may import `SQF/PL`, `SQB/DT`, `SQB/EV`, `SQB/OP`. It must not import `SQB/EX`.
+5. **Verify**: `go build ./...`, `go test ./... -race -count=1`.
 
 ### Phase 4: Clean up re-exports
 
 **Estimated: 1 day.**
 
-1. Remove all re-exports from `SQB/EX`:
-   - `ErrEval`, `ErrDivByZero`, `ErrTypeMismatch`, `ErrSubquery`, `ErrTriggerAbort` — SYS should import SQB/EV directly
-   - `SessionCounterAccessor` — SYS should import SYS/AP directly
-   - `SetCatalog`, `RegisterFromCatalog`, `RestoreInMemoryTables` — callers should use the owning package
-2. Update all SYS imports to point directly to the owning packages
-3. **Verify**: `go build ./...`, `go test ./... -race -count=1`
+1. Remove all re-exports from `SQB/EX/ex.go`:
+   - `ErrEval`, `ErrDivByZero`, `ErrTypeMismatch`, `ErrSubquery`, `ErrTriggerAbort` — SYS callers should import `SQB/EV` directly.
+   - `SetCatalog`, `RegisterFromCatalog`, `RestoreInMemoryTables` — callers should use `SQB/DT` directly.
+   - `SessionCounterAccessor` interface re-export — call should go to the source of truth (still `SQB/DT` per ARCH.md; long-term the human should decide whether session counter is `SQB/DT` or `SYS/AP`).
+2. Update all SYS imports to point directly to the owning packages.
+3. **Verify**: `go build ./...`, `go test ./... -race -count=1`.
 
 ### Phase 5: Add depcheck enforcement
 
 **Estimated: 1 day.**
 
-1. Create `tests/depcheck/main.go` with the allowlist defined in §7
-2. Run via CI: `go test ./tests/depcheck/`
-3. Add to `Makefile` or CI config
-4. Document the architecture rules in `docs/development/DEPENDENCIES.md` (or `AGENTS.md`)
-5. **Verify**: depcheck passes, all existing tests pass
+1. Create `tests/depcheck/main.go` with the allowlist derived from §8 and §9 (revised to match the **current** package layout, not the proposed `internal/types/` layout).
+2. Run via CI: `go test ./tests/depcheck/`. Land as a **warning** (not failure) until iter-37 finishes, then promote to failure.
+3. Document the architecture rules in `docs/development/DEPENDENCIES.md` (new — not in `docs/design/` so AI can maintain it).
+4. **Verify**: depcheck passes, all existing tests pass.
+
+### Deprecation note (revised §10 Summary)
+
+The original §10 Summary claimed: "The root cause of the dependency mess is that the most shared types in the system were owned by one of the consuming subsystems." This framing is **not supported by the code**:
+
+- `SQF/PL` does not import `internal/SQB/**` — there is no SQF → SQB arrow.
+- `Operator` and `Row` are documented (ARCH.md §Cross-Subsystem Interfaces) as living in `SQB/DT`. That is by design — DT was created in iter-35 specifically so any SQB cluster can implement `Operator` without importing `SQB/EX`. The pattern works.
+- The "fix" of extracting types to `internal/types/` is not the right move; it would create a new top-level package outside the Subsystem/Function Cluster taxonomy. See §11.
+
+The actual high-leverage work is the cluster fills in Phase 2–3 and the depcheck in Phase 5.
 
 ---
 
-## Summary
+## Summary (revised 2026-07-01)
 
-The root cause of the dependency mess is that **the most shared types in the system (`Operator`, `Row`, `Value`) were owned by one of the consuming subsystems (SQF then SQB/DT)**. This forced every consumer to import the owner, creating cycles and preventing clean extraction.
+The original report's diagnosis ("the most shared types in the system were owned by one of the consuming subsystems, forcing every consumer to import the owner and creating cycles") is **not supported by the current code**. Verified findings:
 
-**The fix is one architectural move**: extract these types into a neutral `internal/types/` package at layer 3.5 (after MEM, before WAL). This single change:
+- `SQF/PL` does not import `internal/SQB/**`. There is no SQF → SQB arrow in the import graph.
+- `Operator` and `Row` are documented (ARCH.md §Cross-Subsystem Interfaces, line 46–53) as living in `SQB/DT`. The doc explicitly states: "Operator lives in SQB/DT so any SQB cluster can implement it without importing SQB/EX. SQF/PL imports SQB/DT, not SQB/EX." This is by design and works.
+- `SQB/DT` is a thin alias layer over `SQF/PL`'s canonical types — it does not own the types, it re-exports them. The aliasing pattern is correct (it solves a real import-direction problem) and does not need to be replaced by a neutral package.
 
-- Eliminates the SQF ↔ SQB import cycle at the root
-- Allows SQB cluster extraction to complete (no DT bottleneck)
-- Enables strict dependency enforcement (one neutral foundation instead of ad-hoc ownership)
-- Reduces total import confusion — every cluster imports `types/` instead of importing a kitchen-sink DT
+The actual high-leverage work is:
 
-Combined with the six principles (strict layering, package-oriented design, stable-dependency, extraction policy, dumpster prevention, automated enforcement), the result is a structure that can be reasoned about, checked automatically, and maintained by a growing team without silent architectural drift.
+1. **Cluster-fill**: Populate `SQB/OP/`, `SQB/AD/`, `SQB/WT/`, `SQB/UT/`. The clusters already exist; the work is moving files out of `SQB/EX/`. Tracked under REQ001117/118/119/120/121/122/123 in `docs/development/REQUIREMENTS.md`.
+2. **Re-export cleanup**: Remove the `EX` re-exports of EV error sentinels, DT registry helpers, and the session-counter accessor. SYS callers should import the owning packages directly.
+3. **Depcheck**: A test that codifies the current dependency graph as the baseline and fails on new violations. Land as a warning, promote to failure after iter-37.
+
+The six principles from §2–§7 are sound and worth keeping. The architectural move proposed in §8–§9 (extract `internal/types/` as a layer 3.5 package) is **rejected** because it would create a new top-level package outside the Subsystem/Function Cluster taxonomy. The concrete decisions are recorded in §11.
+
+---
+
+## 11. Decisions (2026-07-01 review)
+
+Reviewer: AI agent (Hermes).
+Status: **Decisions recorded; design-doc updates pending human application (see `docs/compose/reports/design-doc-update-list.md`).**
+
+### 11.1 Accepted (will be acted on)
+
+- **Principle 1 (Strict Layering via Interface Boundaries) — accepted.** The depcheck tooling and the layer table in §8 are sound. The allowlist should be derived from the **current** package layout, not the proposed `internal/types/` layout.
+- **Principle 4 (Cluster Extraction Policy) — accepted, with refinement.** The cluster-fill work (Phase 2–3) is the right next step. The refinement: `SQB/OP/` is already populated and `SQB/WT/` already exists (empty). The work is **filling** existing clusters, not creating new ones. The original report's "create WT" framing is stale.
+- **Principle 6 (Automated Enforcement) — accepted, with revised timing.** Depcheck lands as a **warning** in CI during iter-36/37, then promotes to failure. The original report's "land after iter-37" timing is wrong — the detector should be live before the changes, not after.
+- **Phase 4 (Re-export cleanup) — accepted.** Will be done as a separate, focused iteration.
+- **Phase 5 (Depcheck tooling) — accepted.** Will be tracked as a new REQ.
+
+### 11.2 Rejected
+
+- **§8.4 "neutral base package" / `internal/types/` — REJECTED.** Reasons:
+  1. The "SQF ↔ SQB import cycle" the proposal claims to break does not exist. `SQF/PL` has zero imports from `internal/SQB/**`. Verified via `grep -l "razordata/internal/SQB" internal/SQF/**/*.go` returning nothing.
+  2. `Operator` ownership is by design in `SQB/DT` per ARCH.md §Cross-Subsystem Interfaces. The doc says so explicitly. The `SQB/DT` aliasing pattern is correct — it allows `SQF/PL` to depend on `SQB/DT` (downhill) while keeping the `Operator` interface implementation in the SQB cluster that needs it.
+  3. The Subsystem/Function Cluster rule (AGENTS.md, ARCH.md line 7) requires every package to be a cluster of a subsystem. There is no "layer 3.5" between MEM (3) and WAL (4). Adding `internal/types/` would either create a new top-level subsystem (which has no place in the documented dependency chain LOG → FIL → MEM → WAL → ENG → TXN → SQF → SQB → SYS) or place the package inside a subsystem where it has no cohesion.
+  4. `ExecContext` is not a kit primitive. It carries per-statement runtime state (Outer row chain, SubqueryCache, LastChanges, TotalChanges, planner reference, session ID). It cannot be a portable type that lives outside SQB.
+  5. The `Value` ownership chain is `SYS/AP.Value` → `SQF/PL.Value` (= `AP.Value`) → `SQB/DT.Value` (= `pl.Value`). Three packages already share the type via type aliases. Adding a fourth alias layer creates ownership ambiguity, not clarity.
+
+- **§6.3 "DT split" — PARTIALLY REJECTED.** The proposed split of `DT/schema.go` (653 LOC) into a `SQB/SC/` cluster is rejected because there is no `SQB/SC` cluster in the design table, and adding one would require a human design-doc edit (which is the only legitimate place to introduce new clusters). The remaining DT-split proposals (moving `ValueFromAny`/`Compare`/etc. to `SQB/EV/`, `ContainsAggregate`/`ContainsWindowFunc` to `SQF/PL/`, `SessionCounterAccessor` to `SYS/AP/`) are **rejected for the same reason**: the design doc says these belong in `SQB/DT`. Moving them is a design change, not a refactor.
+
+- **§10 Phase 1 ("Create `internal/types/`") — REJECTED.** Same reasons as above.
+
+- **§1.2 "DT dumpster" framing — PARTIALLY REJECTED.** DT is not a 1100-LOC kitchen sink. It is three files with distinct purposes: `types.go` (403 LOC, type aliases + value utilities), `schema.go` (653 LOC, schema-registry + view/matview/catalog lifecycle), `storage.go` (490 LOC, storage-engine-agnostic key encoding). The "split DT" claim is overstated — only `schema.go` is a candidate for splitting, and even then, splitting it requires a design decision (where schema lives), not a refactor.
+
+### 11.3 Corrections to factual claims in the original report
+
+- **§1.1 "SQF/PL imports SQB/DT for Operator interface"** — correct, but the framing "creating an implicit import cycle SQF → SQB → SQF" is wrong. There is no `SQB/EX` → `SQF/PL` arrow. SQB/DT → SQF/PL is a normal downhill import for type aliases.
+- **§1.2 "EX re-exports for backward compatibility with SYS"** — correct factually, but the report treats this as a transitional concern. It is actually **decades of accumulated cruft**; some of the re-exports (e.g., `SessionCounterAccessor`) are 5+ years old. The cleanup is worth its own iteration.
+- **§5.3 "planner.go split to AD is blocked on moving operator types"** — partially correct. The planner.go split is blocked on accessor methods for `Aggregate.Child()`, `HashAggregate.GroupCols()`, etc. (which were added in iter-35), and on moving `planner.go`'s **test files** alongside. The operator types themselves are not the blocker — they have accessors.
+
+### 11.4 Out of scope (deferred or human-only)
+
+- Schema-cluster split (`SQB/DT/schema.go` → `SQB/SC/` or `ENG/SC/`). Human-only edit because it introduces a new cluster.
+- Session-counter ownership (`SQB/DT` vs `SYS/AP`). Human-only decision.
+- Depcheck policy details (which exceptions to allow). Human judgment at code review.
+- Anything in `docs/design/`. Human-only per Design Protection rule.
+
+### 11.5 Action items (AI-actionable, will be done in this commit)
+
+1. ~~Create `internal/types/`~~ — DELETED, not done.
+2. Create `docs/development/DEPENDENCIES.md` (new) codifying the cluster rule and depcheck plan. ✓
+3. Add REQ001158 to `docs/development/REQUIREMENTS.md` for the EX re-export removal. ✓
+4. Add REQ001159 to `docs/development/REQUIREMENTS.md` for depcheck tooling. ✓
+5. Add REQ001160 to `docs/development/REQUIREMENTS.md` recording the `internal/types/` rejection. ✓
+6. Create `docs/compose/reports/design-doc-update-list.md` (new) listing design-doc diffs for the human to apply. ✓
+7. Update this report's §10, §11 to reflect the decisions. ✓
+
+### 11.6 Action items (human-only, awaiting application)
+
+See `docs/compose/reports/design-doc-update-list.md` for line-precise diffs.

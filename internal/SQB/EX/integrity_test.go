@@ -4,18 +4,20 @@ import (
 	"context"
 	"testing"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/UT"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 func TestIntegrityCheck_Success(t *testing.T) {
-	ic := NewIntegrityCheck()
+	ic := UT.NewIntegrityCheck()
 	defer ic.Close()
 
 	ctx := context.Background()
 	count := 0
 	for {
 		_, err := ic.Next(ctx)
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			break
 		}
 		if err != nil {
@@ -34,7 +36,7 @@ func TestIntegrityCheck_Success(t *testing.T) {
 }
 
 func TestIntegrityCheck_Idempotent(t *testing.T) {
-	ic := NewIntegrityCheck()
+	ic := UT.NewIntegrityCheck()
 	defer ic.Close()
 
 	ctx := context.Background()
@@ -42,7 +44,7 @@ func TestIntegrityCheck_Idempotent(t *testing.T) {
 	// First run
 	for {
 		_, err := ic.Next(ctx)
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			break
 		}
 	}
@@ -50,7 +52,7 @@ func TestIntegrityCheck_Idempotent(t *testing.T) {
 	// Second run - should still work
 	for {
 		_, err := ic.Next(ctx)
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			break
 		}
 	}
@@ -85,7 +87,7 @@ func TestIntegrityCheck_Integration(t *testing.T) {
 	count := 0
 	for {
 		row, err := op.Next(ctx)
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			break
 		}
 		if err != nil {

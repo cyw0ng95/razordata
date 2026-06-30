@@ -166,7 +166,7 @@ func TestFunctionRegistry_DispatchUnknownFails(t *testing.T) {
 	if err == nil {
 		t.Errorf("expected error for unknown function, got %v", v)
 	}
-	if !strings.Contains(err.Error(), "eval") && err != ErrEval {
+	if !strings.Contains(err.Error(), "eval") && err != EV.ErrEval {
 		t.Logf("got err: %v (acceptable)", err)
 	}
 }

@@ -2,6 +2,8 @@ package EX
 
 import (
 	"context"
+	"github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"strings"
 	"testing"
 )
@@ -13,13 +15,13 @@ func TestOffset_Operator(t *testing.T) {
 		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(3))}},
 		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(4))}},
 	}}
-	off := NewOffset(src, 2)
+	off := OP.NewOffset(src, 2)
 	defer off.Close()
 	ctx := context.Background()
 	var got []int64
 	for {
 		row, err := off.Next(ctx)
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			break
 		}
 		if err != nil {
@@ -42,12 +44,12 @@ func TestOffset_ExceedingRows(t *testing.T) {
 	src := &sliceOp{rows: []Row{
 		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(1))}},
 	}}
-	off := NewOffset(src, 5)
+	off := OP.NewOffset(src, 5)
 	defer off.Close()
 	ctx := context.Background()
 	for {
 		_, err := off.Next(ctx)
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			return
 		}
 		if err != nil {
@@ -149,7 +151,7 @@ type sliceOp struct {
 
 func (s *sliceOp) Next(ctx context.Context) (Row, error) {
 	if s.pos >= len(s.rows) {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	r := s.rows[s.pos]
 	s.pos++
