@@ -222,7 +222,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		}
 		// REQ000126/REQ000905: FK validation on INSERT (skipped when PRAGMA foreign_keys = OFF)
 		if IsForeignKeysEnabled() && cschema != nil && len(cschema.ForeignKeys) > 0 {
-			if err := validateForeignKeyInsert(cschema, valueSliceToAny(out.Data), i.store); err != nil {
+			if err := UT.ValidateForeignKeyInsert(cschema, valueSliceToAny(out.Data), i.store); err != nil {
 				return Row{}, err
 			}
 		}
@@ -348,7 +348,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		}
 		// REQ000126/REQ000905: FK validation on INSERT (store path, skipped when PRAGMA foreign_keys = OFF)
 		if IsForeignKeysEnabled() && len(i.schema.ForeignKeys) > 0 {
-			if err := validateForeignKeyInsert(i.schema, valueSliceToAny(out.Data), i.store); err != nil {
+			if err := UT.ValidateForeignKeyInsert(i.schema, valueSliceToAny(out.Data), i.store); err != nil {
 				return Row{}, err
 			}
 		}
@@ -633,7 +633,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			}
 			// REQ000513/REQ000905: FK re-validation when FK columns are updated.
 			if IsForeignKeysEnabled() {
-				if err := validateForeignKeyUpdateInMemory(cschema, valueSliceToAny(snapshot.Data), valueSliceToAny(row.Data)); err != nil {
+				if err := UT.ValidateForeignKeyUpdateInMemory(cschema, valueSliceToAny(snapshot.Data), valueSliceToAny(row.Data)); err != nil {
 					return Row{}, err
 				}
 			}
@@ -879,7 +879,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		// REQ000514/REQ000905: FK checks must run before mutating the table.
 		if IsForeignKeysEnabled() && dschema != nil {
 			for _, rowData := range fkRows {
-				if err := validateForeignKeyDeleteInMemory(d.table, rowData, dschema); err != nil {
+				if err := UT.ValidateForeignKeyDeleteInMemory(d.table, rowData, dschema); err != nil {
 					return Row{}, err
 				}
 			}

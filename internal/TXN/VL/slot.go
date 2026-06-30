@@ -1,6 +1,7 @@
 package VL
 
 import (
+	"sync"
 	"sync/atomic"
 
 	"github.com/cyw0ng95/razordata/internal/TXN/MV"
@@ -18,6 +19,12 @@ type ReadEntry struct {
 }
 
 const MaxConcurrentTXNs = 1024
+
+var readSetPool = sync.Pool{
+	New: func() any {
+		return make(map[string]uint64)
+	},
+}
 
 type SlotStatus int32
 
@@ -104,7 +111,7 @@ func (sm *slotManager) AllocateSlot() *transactionSlot {
 	slot.beginTS = 0
 	slot.commitTS = 0
 	slot.writeSet = nil
-	slot.readSet = make(map[string]uint64)
+	slot.readSet = readSetPool.Get().(map[string]uint64)
 	slot.arena = MV.AcquireArena()
 
 	return slot
@@ -119,7 +126,11 @@ func (sm *slotManager) ReleaseSlot(slot *transactionSlot) {
 	slot.beginTS = 0
 	slot.commitTS = 0
 	slot.writeSet = nil
-	slot.readSet = nil
+	if slot.readSet != nil {
+		clear(slot.readSet)
+		readSetPool.Put(slot.readSet)
+		slot.readSet = nil
+	}
 	if slot.arena != nil {
 		MV.PutArena(slot.arena)
 		slot.arena = nil

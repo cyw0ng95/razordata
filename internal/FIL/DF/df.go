@@ -125,14 +125,13 @@ func openFile(path string, readOnly, create bool, logs []lg.Logger) (*BlockDevic
 	bd := &BlockDevice{fd: fd, log: log}
 
 	if !readOnly && supportsODirect() {
-		unix.Close(fd)
-		fd2, err := unix.Open(path, flags|unix.O_DIRECT, 0600)
-		if err == nil {
-			bd.fd = fd2
+		// REQ001139: use fcntl to set O_DIRECT on the existing fd
+		// atomically instead of close+reopen (avoids race window).
+		if _, err := unix.FcntlInt(uintptr(fd), unix.F_SETFL, flags|unix.O_DIRECT); err == nil {
 			bd.direct = true
 		} else {
 			if log != nil {
-				log.Info("df.open", "path", path, "msg", "O_DIRECT not supported, using buffered I/O", "err", err)
+				log.Info("df.open", "path", path, "msg", "O_DIRECT not supported via fcntl, using buffered I/O", "err", err)
 			}
 		}
 	}

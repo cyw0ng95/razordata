@@ -1,4 +1,4 @@
-package EX
+package UT
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 
 // validateForeignKeyInsert checks that all FK-referenced rows exist
 // in the referenced table. REQ000126.
-func validateForeignKeyInsert(schema *StoreSchema, row []any, store Store) error {
+func ValidateForeignKeyInsert(schema *DT.StoreSchema, row []any, store DT.Store) error {
 	if store == nil || schema == nil {
 		return nil
 	}
@@ -47,7 +47,7 @@ func validateForeignKeyInsert(schema *StoreSchema, row []any, store Store) error
 
 // validateForeignKeyDelete checks if any child rows reference the
 // row being deleted. For CASCADE, it deletes child rows. REQ000126.
-func validateForeignKeyDelete(table string, row []any, schema *StoreSchema, store Store) error {
+func validateForeignKeyDelete(table string, row []any, schema *DT.StoreSchema, store DT.Store) error {
 	if store == nil || schema == nil {
 		return nil
 	}
@@ -98,7 +98,7 @@ func validateForeignKeyDelete(table string, row []any, schema *StoreSchema, stor
 
 // checkReferencedRowExists checks if a row with the given values exists
 // in the referenced table.
-func checkReferencedRowExists(refTable string, refCols []string, values []any, store Store) error {
+func checkReferencedRowExists(refTable string, refCols []string, values []any, store DT.Store) error {
 	refSchema, _ := DT.SchemaFor(refTable)
 	if refSchema == nil {
 		return nil // table not registered, skip check
@@ -126,7 +126,7 @@ func checkReferencedRowExists(refTable string, refCols []string, values []any, s
 
 // checkChildRowExists checks if any row in the child table references
 // the given values.
-func checkChildRowExists(childCols []string, refVals []any, childSchema *StoreSchema, store Store) (bool, error) {
+func checkChildRowExists(childCols []string, refVals []any, childSchema *DT.StoreSchema, store DT.Store) (bool, error) {
 	if store == nil {
 		return false, nil
 	}
@@ -150,13 +150,13 @@ func checkChildRowExists(childCols []string, refVals []any, childSchema *StoreSc
 }
 
 // checkMultiColumnFK checks a multi-column FK by scanning the referenced table.
-func checkMultiColumnFK(refTable string, refCols []string, values []any, store Store) error {
+func checkMultiColumnFK(refTable string, refCols []string, values []any, store DT.Store) error {
 	refSchema, _ := DT.SchemaFor(refTable)
 	if refSchema == nil {
 		return nil
 	}
 	// Simple approach: scan the referenced table and check each row
-	prefix := tablePrefix(refTable)
+	prefix := DT.TablePrefix(refTable)
 	it := store.NewIterator(prefix)
 	defer it.Close()
 	for it.Next() {
@@ -164,7 +164,7 @@ func checkMultiColumnFK(refTable string, refCols []string, values []any, store S
 		if rowBytes == nil {
 			continue
 		}
-		row, err := decodeRow(rowBytes, refSchema)
+		row, err := DT.DecodeRow(rowBytes, refSchema)
 		if err != nil {
 			continue
 		}
@@ -204,7 +204,7 @@ func encodeFKLookup(table, col string, val any) ([]byte, error) {
 // validateForeignKeyInsert. When an UPDATE changes the values of FK
 // columns, the new values must still point at a valid referenced row.
 // REQ000513.
-func validateForeignKeyUpdateInMemory(schema *StoreSchema, oldRow, newRow []any) error {
+func ValidateForeignKeyUpdateInMemory(schema *DT.StoreSchema, oldRow, newRow []any) error {
 	if schema == nil || len(schema.ForeignKeys) == 0 {
 		return nil
 	}
@@ -256,7 +256,7 @@ func validateForeignKeyUpdateInMemory(schema *StoreSchema, oldRow, newRow []any)
 
 // validateForeignKeyDeleteInMemory is the in-memory analogue of
 // validateForeignKeyDelete. REQ000514.
-func validateForeignKeyDeleteInMemory(table string, row []any, schema *StoreSchema) error {
+func ValidateForeignKeyDeleteInMemory(table string, row []any, schema *DT.StoreSchema) error {
 	if schema == nil {
 		return nil
 	}
@@ -334,7 +334,7 @@ func rowExistsInMemory(tableName string, cols []string, vals []any) bool {
 // rowInTableMatches returns true if any row in the given schema's
 // table has values matching the supplied values in the given columns.
 // Caller must hold DT.TablesMu.
-func rowInTableMatches(ss *StoreSchema, cols []string, vals []any) bool {
+func rowInTableMatches(ss *DT.StoreSchema, cols []string, vals []any) bool {
 	rows := DT.Tables[tableNameFor(ss)]
 	for _, r := range rows {
 		match := true
@@ -362,10 +362,10 @@ func rowInTableMatches(ss *StoreSchema, cols []string, vals []any) bool {
 	return false
 }
 
-// tableNameFor returns the registered name for a StoreSchema. The
+// tableNameFor returns the registered name for a DT.StoreSchema. The
 // schema store doesn't store the name, so we reverse-lookup via
 // DT.TableIDs. REQ000513.
-func tableNameFor(ss *StoreSchema) string {
+func tableNameFor(ss *DT.StoreSchema) string {
 	DT.StoreMu.Lock()
 	defer DT.StoreMu.Unlock()
 	for name, id := range DT.TableIDs {

@@ -24,6 +24,14 @@ var encodeOutPool = sync.Pool{
 	},
 }
 
+// REQ001138: pool for the body buffer in encodeRecordCompressed.
+var encodeBodyPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 0, 256)
+		return &buf
+	},
+}
+
 const MaxRecordLen = 4 * 1024 * 1024
 
 func encodeVarint(buf []byte, v uint64) []byte {
@@ -55,7 +63,18 @@ func encodeRecordCompressed(rec *LogRecord, compress bool) []byte {
 	}
 
 	capHint := maxPayloadSize(rec) + binary.MaxVarintLen64 + 1
-	body := make([]byte, 0, capHint)
+
+	// REQ001138: pool the body buffer instead of allocating fresh.
+	bodyPtr := encodeBodyPool.Get().(*[]byte)
+	body := *bodyPtr
+	if cap(body) < capHint {
+		body = make([]byte, 0, capHint)
+		*bodyPtr = body
+		encodeBodyPool.Put(bodyPtr)
+		bodyPtr = encodeBodyPool.Get().(*[]byte)
+		body = *bodyPtr
+	}
+	body = body[:0]
 	body = encodeVarint(body, rec.TxnID)
 	body = append(body, byte(rec.Type))
 	body = appendPayload(body, rec)
@@ -68,7 +87,7 @@ func encodeRecordCompressed(rec *LogRecord, compress bool) []byte {
 	bodyLen := len(diskBody)
 	totalLen := uint64(bodyLen + 4)
 
-	// REQ001034: use pooled buffer for the output, then copy result.
+	// REQ001138: return the pooled output buffer directly — no copy.
 	bufPtr := encodeOutPool.Get().(*[]byte)
 	buf := *bufPtr
 	if cap(buf) < binary.MaxVarintLen64+bodyLen+4 {
@@ -85,11 +104,12 @@ func encodeRecordCompressed(rec *LogRecord, compress bool) []byte {
 	sum := crc32.ChecksumIEEE(diskBody)
 	buf = append(buf,
 		byte(sum), byte(sum>>8), byte(sum>>16), byte(sum>>24))
-	result := make([]byte, len(buf))
-	copy(result, buf)
-	*bufPtr = buf[:0]
-	encodeOutPool.Put(bufPtr)
-	return result
+
+	// Return body to pool now that its contents have been copied into buf.
+	*bodyPtr = body[:0]
+	encodeBodyPool.Put(bodyPtr)
+
+	return buf
 }
 
 func maxPayloadSize(rec *LogRecord) int {

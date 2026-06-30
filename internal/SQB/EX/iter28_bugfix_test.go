@@ -9,6 +9,7 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
@@ -365,7 +366,7 @@ func TestBugfix_ConstraintNotPresent(t *testing.T) {
 // TestBugfix_FKOnUpdate covers REQ000513: when an UPDATE changes a FK
 // column to a value that doesn't exist in the referenced table, the
 // UPDATE must fail with a wrapped ErrConstraint. The in-memory path
-// is exercised via validateForeignKeyUpdateInMemory.
+// is exercised via UT.ValidateForeignKeyUpdateInMemory.
 func TestBugfix_FKOnUpdate(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
@@ -392,7 +393,7 @@ func TestBugfix_FKOnUpdate(t *testing.T) {
 
 	// Update child's pid from 1 to 99 — should fail since parent
 	// has no row with id=99.
-	err := validateForeignKeyUpdateInMemory(child,
+	err := UT.ValidateForeignKeyUpdateInMemory(child,
 		[]any{int64(10), int64(1)},  // old
 		[]any{int64(10), int64(99)}, // new
 	)
@@ -404,7 +405,7 @@ func TestBugfix_FKOnUpdate(t *testing.T) {
 	}
 
 	// Same-value update (no FK change) must NOT trigger re-check.
-	if err := validateForeignKeyUpdateInMemory(child,
+	if err := UT.ValidateForeignKeyUpdateInMemory(child,
 		[]any{int64(10), int64(1)},
 		[]any{int64(10), int64(1)},
 	); err != nil {
@@ -413,7 +414,7 @@ func TestBugfix_FKOnUpdate(t *testing.T) {
 
 	// Update child's pid to 2 (which doesn't exist as a parent row
 	// either). Should still fail.
-	err = validateForeignKeyUpdateInMemory(child,
+	err = UT.ValidateForeignKeyUpdateInMemory(child,
 		[]any{int64(10), int64(1)},
 		[]any{int64(10), int64(2)},
 	)
@@ -444,7 +445,7 @@ func TestBugfix_FKOnDelete(t *testing.T) {
 	DT.Tables["c"] = []Row{{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(100), NewIntValue(1)}}}
 
 	// Deleting parent id=1 must fail because child (100, 1) references it.
-	err := validateForeignKeyDeleteInMemory("p",
+	err := UT.ValidateForeignKeyDeleteInMemory("p",
 		[]any{int64(1)}, parent)
 	if err == nil {
 		t.Fatal("expected FK violation, got nil")
