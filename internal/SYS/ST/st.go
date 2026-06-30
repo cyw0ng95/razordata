@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
@@ -144,12 +144,12 @@ func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 		next := func() (AP.Row, error) {
 		row, err := stream.Next()
 		if err != nil {
-			if err == executor.ErrNoRows {
+			if err == DT.ErrNoRows {
 				return AP.Row{}, AP.ErrNoRows
 			}
 			return AP.Row{}, err
 		}
-		// REQ000862: AP.Row.Data is now []AP.Value (same type as EX.Row.Data),
+		// REQ000862: AP.Row.Data is now []AP.Value (same type as DT.Row.Data),
 		// so no boxing conversion is needed. Direct assignment eliminates
 		// the per-row []any allocation that was 53% of join memory.
 		return AP.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
@@ -188,5 +188,5 @@ func (s *Stmt) Close() error {
 	return nil
 }
 
-var _ = executor.ErrNoRows
+var _ = DT.ErrNoRows
 var errNotEnoughArgs = errors.New("st: not enough args for `?` placeholders")
