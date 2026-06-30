@@ -12,8 +12,6 @@ func (p *Parser) parseInsert() (*Insert, error) {
 	var action ConflictAction
 	if p.current.Type == LX.T_OR {
 		p.advance() // consume OR
-		// INSERT OR ROLLBACK/ABORT/FAIL/IGNORE/REPLACE
-		// These are not hard keywords; compare lexeme strings.
 		switch strings.ToUpper(p.current.Lexeme) {
 		case "ROLLBACK":
 			action = ConflictActionRollback
@@ -35,13 +33,13 @@ func (p *Parser) parseInsert() (*Insert, error) {
 				Lexeme:   p.current.Lexeme,
 			}
 		}
-		p.advance() // consume action keyword
+		p.advance()
 	}
 
 	if err := p.expect(LX.T_INTO); err != nil {
 		return nil, err
 	}
-	p.advance() // consume INTO
+	p.advance()
 
 	return p.parseInsertTail(action)
 }
@@ -52,7 +50,7 @@ func (p *Parser) parseReplace() (*Insert, error) {
 	if err := p.expect(LX.T_INTO); err != nil {
 		return nil, err
 	}
-	p.advance() // consume INTO
+	p.advance()
 	return p.parseInsertTail(ConflictActionReplace)
 }
 

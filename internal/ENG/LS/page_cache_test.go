@@ -104,3 +104,37 @@ func TestPageCache_Concurrent(t *testing.T) {
 		<-done
 	}
 }
+
+// BenchmarkPageCache_Get_Concurrent measures concurrent Get throughput
+// under N goroutines. REQ001133 expects sharding to reduce lock contention.
+func BenchmarkPageCache_Get_Concurrent(b *testing.B) {
+	for _, n := range []int{1, 2, 4, 8, 16, 32} {
+		b.Run(intToStr(n)+"g", func(b *testing.B) {
+			c := NewPageCache(DefaultPageCacheSize)
+			// Pre-populate with distinct pages across shards.
+			for i := 0; i < 64; i++ {
+				c.Put(uint64(i), 0, bytes.Repeat([]byte{byte(i)}, PageSize))
+			}
+			b.ResetTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				i := uint64(0)
+				for pb.Next() {
+					c.Get(i%64, 0)
+					i++
+				}
+			})
+		})
+	}
+}
+
+func intToStr(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	s := ""
+	for n > 0 {
+		s = string(rune('0'+n%10)) + s
+		n /= 10
+	}
+	return s
+}

@@ -2,6 +2,12 @@ package PS
 
 import "github.com/cyw0ng95/razordata/internal/SQF/LX"
 
+// Loc holds source position information for an AST node (REQ001004).
+type Loc struct {
+	Line uint32
+	Col  uint32
+}
+
 // Expr is the interface for all expression AST nodes.
 type Expr interface {
 	exprNode()
@@ -12,165 +18,162 @@ type Stmt interface {
 	stmtNode()
 }
 
-// NumberLiteral represents an integer literal value.
 type NumberLiteral struct {
+	Loc
 	Val int64
 }
 
 func (n *NumberLiteral) exprNode() {}
 
-// FloatLiteral represents a floating-point literal value.
 type FloatLiteral struct {
+	Loc
 	Val float64
 }
 
 func (f *FloatLiteral) exprNode() {}
 
-// StringLiteral represents a string literal value.
 type StringLiteral struct {
+	Loc
 	Val string
 }
 
 func (s *StringLiteral) exprNode() {}
 
-// BoolLiteral represents a boolean literal value (TRUE/FALSE).
 type BoolLiteral struct {
+	Loc
 	Val bool
 }
 
 func (b *BoolLiteral) exprNode() {}
 
-// NullLiteral represents a NULL value.
-type NullLiteral struct{}
+type NullLiteral struct {
+	Loc
+}
 
 func (n *NullLiteral) exprNode() {}
 
-// Ident represents an unqualified identifier (column or table name).
 type Ident struct {
+	Loc
 	Name string
 }
 
 func (i *Ident) exprNode() {}
 
-// QualifiedName represents a qualified identifier (table.column or db.table.column).
 type QualifiedName struct {
-	// Database is the optional database qualifier (set for three-part names).
-	// For two-part names it is empty. REQ000750.
-	Database string
-	Table    string
-	Name     string
-	// CachedKey is "Table.Name" computed once on first use. Lazy
-	// init — safe because the expression tree is read-only after
-	// parsing and Eval runs single-threaded per benchmark.
-	CachedKey string
+	Loc
+	Database   string
+	Table      string
+	Name       string
+	CachedKey  string
 }
 
 func (q *QualifiedName) exprNode() {}
 
-// AliasedExpr represents an expression with an alias (expr AS alias).
 type AliasedExpr struct {
+	Loc
 	Expr  Expr
 	Alias string
 }
 
 func (a *AliasedExpr) exprNode() {}
 
-// CastExpr represents a CAST expression (CAST(expr AS type)).
 type CastExpr struct {
+	Loc
 	Expr Expr
 	Type *TypeInfo
 }
 
 func (c *CastExpr) exprNode() {}
 
-// Param represents a bind parameter placeholder (?).
 type Param struct {
+	Loc
 	Index int
 }
 
 func (p *Param) exprNode() {}
 
-// BinaryExpr represents a binary operation (a OP b).
 type BinaryExpr struct {
+	Loc
 	Op     LX.TokenType
 	Left   Expr
 	Right  Expr
-	Escape Expr // REQ000567: LIKE ... ESCAPE expr
+	Escape Expr
 }
 
 func (b *BinaryExpr) exprNode() {}
 
-// UnaryExpr represents a unary operation (OP a).
 type UnaryExpr struct {
+	Loc
 	Op      LX.TokenType
 	Operand Expr
 }
 
 func (u *UnaryExpr) exprNode() {}
 
-// FunctionCall represents a scalar function invocation.
 type FunctionCall struct {
+	Loc
 	Name string
 	Args []Expr
 }
 
 func (f *FunctionCall) exprNode() {}
 
-// AggregateFunc represents an aggregate function (COUNT, SUM, etc.).
 type AggregateFunc struct {
+	Loc
 	Name      string
 	Arg       Expr
 	Distinct  bool
-	Separator Expr // REQ000523: GROUP_CONCAT optional separator
-	Filter    Expr // REQ000747: optional FILTER (WHERE expr) clause
+	Separator Expr
+	Filter    Expr
 }
 
 func (a *AggregateFunc) exprNode() {}
 
-// WindowSpec represents the OVER clause of a window function.
 type WindowSpec struct {
+	Loc
 	PartitionBy []Expr
 	OrderBy     []OrderItem
 	Frame       *WindowFrame
 }
 
-// WindowFrame represents ROWS/RANGE/GROUPS frame specification.
 type WindowFrame struct {
-	Type    string // "ROWS", "RANGE", or "GROUPS"
+	Loc
+	Type    string
 	Start   FrameBound
 	End     FrameBound
-	Exclude string // REQ000748: "CURRENT_ROW", "GROUP", "TIES", "NO_OTHERS", or ""
+	Exclude string
 }
 
-// FrameBound represents a frame boundary.
 type FrameBound struct {
-	Type   string // "UNBOUNDED_PRECEDING", "PRECEDING", "CURRENT_ROW", "FOLLOWING", "UNBOUNDED_FOLLOWING"
-	Offset Expr   // offset for PRECEDING/FOLLOWING (nil for UNBOUNDED/CURRENT)
+	Loc
+	Type   string
+	Offset Expr
 }
 
-// WindowFunc represents a window function call with OVER clause.
 type WindowFunc struct {
-	Name string // ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, etc.
+	Loc
+	Name string
 	Args []Expr
 	Over *WindowSpec
 }
 
 func (w *WindowFunc) exprNode() {}
 
-// StarExpr represents the * wildcard in SELECT.
-type StarExpr struct{}
+type StarExpr struct {
+	Loc
+}
 
 func (s *StarExpr) exprNode() {}
 
-// ListExpr represents a list of expressions (e.g., IN list).
 type ListExpr struct {
+	Loc
 	Items []Expr
 }
 
 func (l *ListExpr) exprNode() {}
 
-// BetweenExpr represents a BETWEEN expression (expr BETWEEN low AND high).
 type BetweenExpr struct {
+	Loc
 	Expr Expr
 	Low  Expr
 	High Expr
@@ -178,23 +181,23 @@ type BetweenExpr struct {
 
 func (b *BetweenExpr) exprNode() {}
 
-// CaseExpr represents a CASE expression (simple or searched).
 type CaseExpr struct {
+	Loc
 	Expr     Expr
 	WhenList []WhenClause
 	Else     Expr
 }
 
-// WhenClause represents a WHEN condition THEN result pair.
 type WhenClause struct {
+	Loc
 	Cond Expr
 	Then Expr
 }
 
 func (c *CaseExpr) exprNode() {}
 
-// InExpr represents an IN expression (expr IN (list) or expr IN (subquery)).
 type InExpr struct {
+	Loc
 	Expr     Expr
 	List     []Expr
 	Subquery Stmt
@@ -202,122 +205,117 @@ type InExpr struct {
 
 func (i *InExpr) exprNode() {}
 
-// ExistsExpr represents an EXISTS subquery expression.
 type ExistsExpr struct {
+	Loc
 	Subquery Stmt
 }
 
 func (e *ExistsExpr) exprNode() {}
 
-// SubqueryExpr represents a scalar subquery expression.
 type SubqueryExpr struct {
+	Loc
 	Subquery Stmt
 }
 
 func (s *SubqueryExpr) exprNode() {}
 
-// IntervalLiteral represents an INTERVAL expression like INTERVAL '7' DAY.
 type IntervalLiteral struct {
-	Value string // the numeric part as string, e.g. "7"
-	Unit  string // YEAR, MONTH, DAY, HOUR, MINUTE, SECOND
+	Loc
+	Value string
+	Unit  string
 }
 
 func (i *IntervalLiteral) exprNode() {}
 
-// ColDef represents a column definition in CREATE TABLE.
+type RaiseFunc struct {
+	Loc
+	Action  string
+	Message Expr
+}
+
+func (r *RaiseFunc) exprNode() {}
+
 type ColDef struct {
 	Name             string
 	Type             LX.TokenType
 	Size             int
-	Precision        int // REQ000568: DECIMAL(P,S) precision
-	Scale            int // REQ000568: DECIMAL(P,S) scale
+	Precision        int
+	Scale            int
 	Nullable         bool
 	Default          Expr
 	PK               bool
 	Unique           bool
 	Check            Expr
-	ReferencesTable  string // REQ000126: FOREIGN KEY REFERENCES table
-	ReferencesColumn string // REQ000126: referenced column
-	OnDelete         string // CASCADE, RESTRICT, SET NULL, SET DEFAULT, NO ACTION
-	OnUpdate         string // same set
-	// REQ000248: generated columns (`AS (expr) STORED`).
-	// Expr holds the generation expression; Virtual distinguishes
-	// STORED (materialized on write) from VIRTUAL (computed on read).
-	// Only STORED is supported in v0.27.0.
-	Generated     Expr
-	Virtual       bool
-	Autoincrement bool   // REQ000482: INTEGER PRIMARY KEY AUTOINCREMENT
-	Match         string // REQ000561: MATCH FULL/PARTIAL/SIMPLE
-	Deferrable    string // REQ000561: DEFERRABLE / NOT DEFERRABLE
-	Initially     string // REQ000561: INITIALLY DEFERRED / IMMEDIATE
+	ReferencesTable  string
+	ReferencesColumn string
+	OnDelete         string
+	OnUpdate         string
+	Generated        Expr
+	Virtual          bool
+	Autoincrement    bool
+	Match            string
+	Deferrable       string
+	Initially        string
 }
 
-// NewColDef creates a new column definition with the given name and type.
 func NewColDef(name string, typ LX.TokenType) ColDef {
 	return ColDef{Name: name, Type: typ, Nullable: true}
 }
 
-// Pair represents a column-value pair used in UPDATE SET clauses.
 type Pair struct {
 	Col string
 	Val Expr
 }
 
 type CreateTable struct {
+	Loc
 	Name              string
 	Cols              []ColDef
 	PK                *string
 	UniqueConstraints []UniqueKey
-	ForeignKeys       []ForeignKeyConstraint // REQ000126
-	Select            *Select                // non-nil for CREATE TABLE AS SELECT (REQ000520)
-	WithoutRowid      bool                   // REQ000738
-	Strict            bool                   // REQ000739
+	ForeignKeys       []ForeignKeyConstraint
+	Select            *Select
+	WithoutRowid      bool
+	Strict            bool
 }
 
-// ForeignKeyConstraint represents a table-level FOREIGN KEY constraint.
 type ForeignKeyConstraint struct {
-	Columns    []string // local column names
-	RefTable   string   // referenced table
-	RefColumns []string // referenced columns
-	OnDelete   string   // CASCADE, RESTRICT, SET NULL, SET DEFAULT, NO ACTION
-	OnUpdate   string   // same set
-	Match      string   // REQ000561: PARTIAL, FULL, SIMPLE
-	Deferrable string   // REQ000561: "DEFERRABLE" or "NOT DEFERRABLE"
-	Initially  string   // REQ000561: "DEFERRED" or "IMMEDIATE"
+	Columns    []string
+	RefTable   string
+	RefColumns []string
+	OnDelete   string
+	OnUpdate   string
+	Match      string
+	Deferrable string
+	Initially  string
 }
 
-// UniqueKey represents a UNIQUE constraint over one or more columns.
-// Cols holds column names as written in the SQL (resolved to indices
-// at registration time by the executor).
 type UniqueKey struct {
 	Cols []string
 }
 
 func (u UniqueKey) stmtNode() {}
 
-// UniqueKeyFromName constructs a single-column UniqueKey.
 func UniqueKeyFromName(name string) UniqueKey {
 	return UniqueKey{Cols: []string{name}}
 }
 
 func (c *CreateTable) stmtNode() {}
 
-// DropTable represents a DROP TABLE statement.
 type DropTable struct {
+	Loc
 	Name     string
-	IfExists bool // REQ000497: DROP TABLE IF EXISTS
+	IfExists bool
 }
 
 func (d *DropTable) stmtNode() {}
 
-// OnConflict represents an ON CONFLICT clause for UPSERT operations.
 type OnConflict struct {
-	Columns    []string // target columns for conflict detection
-	DoNothing  bool     // true = DO NOTHING
-	SetClauses []Pair   // DO UPDATE SET clauses
+	Columns    []string
+	DoNothing  bool
+	SetClauses []Pair
 }
 
-// ConflictAction represents INSERT OR <action> / REPLACE conflict resolution.
 type ConflictAction int
 
 const (
@@ -329,132 +327,126 @@ const (
 	ConflictActionReplace
 )
 
-// Insert represents an INSERT statement.
 type Insert struct {
+	Loc
 	Table          string
 	Cols           []string
 	Values         [][]Expr
-	Select         Stmt // REQ000707: INSERT INTO t SELECT ...
+	Select         Stmt
 	Returning      []Expr
-	OnConflict     *OnConflict    // nil if no ON CONFLICT clause
-	ConflictAction ConflictAction // INSERT OR ROLLBACK/ABORT/FAIL/IGNORE/REPLACE
-	DefaultValues  bool           // REQ000563: INSERT INTO t DEFAULT VALUES
+	OnConflict     *OnConflict
+	ConflictAction ConflictAction
+	DefaultValues  bool
 }
 
 func (i *Insert) stmtNode() {}
 
-// IndexedColumn represents a column in a CREATE INDEX with optional COLLATE.
 type IndexedColumn struct {
 	Name      string
-	Collation string // REQ000565: COLLATE name
+	Collation string
 }
 
-// CreateIndexStmt represents a CREATE INDEX statement.
-// REQ000251 — secondary indexes MVP.
 type CreateIndexStmt struct {
-	Name           string          // index name
-	Table          string          // target table name
-	IndexedColumns []IndexedColumn // REQ000565: columns with optional COLLATE
-	Unique         bool            // UNIQUE modifier (reserved; not yet enforced)
-	IfExists       bool            // REQ000479: CREATE INDEX IF NOT EXISTS
-	Where          Expr            // REQ000566: partial index predicate
+	Loc
+	Name           string
+	Table          string
+	IndexedColumns []IndexedColumn
+	Unique         bool
+	IfExists       bool
+	Where          Expr
 }
 
 func (c *CreateIndexStmt) stmtNode() {}
 
-// DropIndexStmt represents a DROP INDEX statement.
-// REQ000251 — secondary indexes MVP.
 type DropIndexStmt struct {
-	Name     string // index name
-	IfExists bool   // REQ000480: DROP INDEX IF EXISTS
+	Loc
+	Name     string
+	IfExists bool
 }
 
 func (d *DropIndexStmt) stmtNode() {}
 
-// CommonTableExpr represents a CTE (Common Table Expression) definition.
 type CommonTableExpr struct {
-	Name  string   // CTE name
-	Cols  []string // optional column aliases
-	Query Stmt     // SELECT statement
+	Loc
+	Name  string
+	Cols  []string
+	Query Stmt
 }
 
-// WithStmt represents a WITH clause containing CTEs.
 type WithStmt struct {
+	Loc
 	Recursive bool
 	CTEs      []*CommonTableExpr
-	Inner     Stmt // the main query
+	Inner     Stmt
 }
 
 func (w *WithStmt) stmtNode() {}
 
-// TriggerEvent is the time and action that fires a trigger.
 type TriggerEvent struct {
-	Time  string   // "BEFORE" or "AFTER"
-	Event string   // "INSERT", "UPDATE", or "DELETE"
-	Cols  []string // optional column list for UPDATE OF
+	Time  string
+	Event string
+	Cols  []string
 }
 
-// TriggerStmt represents a CREATE TRIGGER statement.
-// REQ000435.
 type TriggerStmt struct {
+	Loc
 	Name        string
-	Time        string // "BEFORE", "AFTER", or "INSTEAD OF"
-	Event       string // "INSERT", "UPDATE", or "DELETE"
+	Time        string
+	Event       string
 	OnTable     string
-	ForEach     string // "ROW" or "STATEMENT"
-	Body        []Stmt // trigger body statements (BEGIN ... END)
+	ForEach     string
+	Body        []Stmt
 	IfNotExists bool
-	When        Expr     // REQ000741: parsed WHEN expression (nil if absent)
-	OfCols      []string // optional column list for UPDATE OF
+	When        Expr
+	OfCols      []string
 }
 
 func (t *TriggerStmt) stmtNode() {}
 
-// SavepointStmt represents a SAVEPOINT statement.
 type SavepointStmt struct {
+	Loc
 	Name string
 }
 
 func (s *SavepointStmt) stmtNode() {}
 
-// ReleaseSavepointStmt represents a RELEASE SAVEPOINT statement.
 type ReleaseSavepointStmt struct {
+	Loc
 	Name string
 }
 
 func (r *ReleaseSavepointStmt) stmtNode() {}
 
-// RollbackToStmt represents a ROLLBACK TO SAVEPOINT statement.
 type RollbackToStmt struct {
+	Loc
 	Name string
 }
 
 func (r *RollbackToStmt) stmtNode() {}
 
-// IndexHint represents an INDEXED BY name or NOT INDEXED hint.
 type IndexHint struct {
-	IndexedBy string // non-empty = INDEXED BY name; empty = NOT INDEXED
+	IndexedBy string
 }
 
-// Update represents an UPDATE statement.
 type Update struct {
+	Loc
 	Table       string
 	Set         []Pair
 	Where       Expr
-	From        string // REQ000740: optional FROM table in UPDATE ... FROM
-	FromAlias   string // REQ000740: alias for the FROM table
+	From        string
+	FromAlias   string
 	Returning   []Expr
-	OrderBy     []OrderItem // REQ000558
-	Limit       Expr        // REQ000558
-	Offset      Expr        // REQ000558
-	OffsetFirst bool        // REQ000558
-	IndexHint   *IndexHint  // REQ000569
+	OrderBy     []OrderItem
+	Limit       Expr
+	Offset      Expr
+	OffsetFirst bool
+	IndexHint   *IndexHint
 }
 
 func (u *Update) stmtNode() {}
 
-// Delete represents a DELETE statement.
 type Delete struct {
+	Loc
 	Table       string
 	Where       Expr
 	Returning   []Expr
@@ -462,66 +454,53 @@ type Delete struct {
 	Limit       Expr
 	Offset      Expr
 	OffsetFirst bool
-	IndexHint   *IndexHint // REQ000569
+	IndexHint   *IndexHint
 }
 
 func (d *Delete) stmtNode() {}
 
-// OrderItem represents an ORDER BY clause item.
 type OrderItem struct {
-	Expr      Expr
-	Desc      bool
-	Collation string // REQ000565: COLLATE name
-	// REQ000736: null ordering. 0=not specified, 1=NULLS FIRST,
-	// -1=NULLS LAST.
+	Loc
+	Expr       Expr
+	Desc       bool
+	Collation  string
 	NullsOrder int8
 }
 
-// JoinClause represents a JOIN clause.
 type JoinClause struct {
-	Kind       string // "INNER", "LEFT", "RIGHT", "CROSS"
+	Loc
+	Kind       string
 	Right      string
 	RightAlias string
 	On         Expr
 }
 
-// Select represents a SELECT statement.
 type Select struct {
-	Cols        []Expr
-	From        string
-	FromAlias   string
-	Joins       []JoinClause
-	Where       Expr
-	OrderBy     []OrderItem
-	Limit       Expr
-	Offset      Expr
-	Distinct    bool
-	GroupBy     []Expr
-	Having      Expr
-	OffsetFirst bool // REQ000521: true when OFFSET appears before LIMIT in the SQL
-	// REQ000907: FETCH FIRST/NEXT n ROWS ONLY (SQL-standard
-	// alternative to LIMIT). When set, the planner maps this
-	// to the Limit field. Stores the count expression (nil
-	// means 1, for `FETCH FIRST ROW ONLY`).
-	FetchFirst *FetchFirst
-	// REQ000436 + REQ000084: when FROM is a subquery (e.g. `FROM
-	// (SELECT ...)`), SubqueryFrom holds the parsed SELECT and
-	// From is set to the alias (or "$$subquery$$" if unnamed).
-	// The planner uses this to build a materialized subplan
-	// instead of looking up a table by name.
+	Loc
+	Cols         []Expr
+	From         string
+	FromAlias    string
+	Joins        []JoinClause
+	Where        Expr
+	OrderBy      []OrderItem
+	Limit        Expr
+	Offset       Expr
+	Distinct     bool
+	GroupBy      []Expr
+	Having       Expr
+	OffsetFirst  bool
+	FetchFirst   *FetchFirst
 	SubqueryFrom Stmt
-	IndexHint    *IndexHint // REQ000529
+	IndexHint    *IndexHint
 }
 
-// FetchFirst represents the FETCH FIRST/NEXT clause (REQ000907).
-// Count is nil for `FETCH FIRST ROW ONLY` (equivalent to LIMIT 1).
 type FetchFirst struct {
-	Count Expr // nil means 1
+	Loc
+	Count Expr
 }
 
 func (s *Select) stmtNode() {}
 
-// CompoundOp encodes the SQL compound-select operator. REQ000383.
 type CompoundOp int
 
 const (
@@ -531,7 +510,6 @@ const (
 	CompoundExcept
 )
 
-// String returns the SQL keyword for the compound operator.
 func (c CompoundOp) String() string {
 	switch c {
 	case CompoundUnionAll:
@@ -544,42 +522,39 @@ func (c CompoundOp) String() string {
 	return "UNION"
 }
 
-// CompoundStmt is a `SELECT ... <op> SELECT ...` chain. Left
-// and Right may themselves be CompoundStmt (left-associative
-// chain), or a plain *Select at the leaves. REQ000383.
 type CompoundStmt struct {
-	Left  Stmt
-	Op    CompoundOp
-	Right Stmt
-	// OrderBy / Limit / Offset apply to the entire compound result.
+	Loc
+	Left        Stmt
+	Op          CompoundOp
+	Right       Stmt
 	OrderBy     []OrderItem
 	Limit       Expr
 	Offset      Expr
-	OffsetFirst bool // REQ000521: true when OFFSET appears before LIMIT in the SQL
-	// REQ000907: FETCH FIRST/NEXT n ROWS ONLY.
-	FetchFirst *FetchFirst
+	OffsetFirst bool
+	FetchFirst  *FetchFirst
 }
 
 func (c *CompoundStmt) stmtNode() {}
 
-// BeginTX represents a BEGIN TRANSACTION statement.
 type BeginTX struct {
-	Mode string // "" for bare BEGIN, "DEFERRED", "IMMEDIATE", "EXCLUSIVE" (REQ000559)
+	Loc
+	Mode string
 }
 
 func (b *BeginTX) stmtNode() {}
 
-// CommitTX represents a COMMIT statement.
-type CommitTX struct{}
+type CommitTX struct {
+	Loc
+}
 
 func (c *CommitTX) stmtNode() {}
 
-// RollbackTX represents a ROLLBACK statement.
-type RollbackTX struct{}
+type RollbackTX struct {
+	Loc
+}
 
 func (r *RollbackTX) stmtNode() {}
 
-// ExplainMode represents the EXPLAIN mode.
 type ExplainMode int
 
 const (
@@ -588,7 +563,6 @@ const (
 	ExplainAnalyze
 )
 
-// ExplainFormat represents the EXPLAIN output format.
 type ExplainFormat int
 
 const (
@@ -598,88 +572,90 @@ const (
 	ExplainFormatDOT
 )
 
-// ExplainStmt represents an EXPLAIN statement.
 type ExplainStmt struct {
+	Loc
 	Mode   ExplainMode
 	Format ExplainFormat
 	Inner  Stmt
 }
 
-// AnalyzeStmt represents ANALYZE [table_name]
+func (e *ExplainStmt) stmtNode() {}
+
 type AnalyzeStmt struct {
-	Table string // empty = analyze all tables
-}
-
-// VacuumStmt represents VACUUM [table_name]
-type VacuumStmt struct {
-	Table string // empty = vacuum all tables
-}
-
-// CreateViewStmt represents CREATE [TEMP|TEMPORARY] VIEW name AS SELECT ... (REQ000240)
-type CreateViewStmt struct {
-	Name      string
-	As        Stmt // the SELECT statement
-	Temporary bool // true if CREATE TEMP/TEMPORARY VIEW
-}
-
-func (c *CreateViewStmt) stmtNode() {}
-
-// AlterTableStmt represents ALTER TABLE ... (REQ000243)
-type AlterTableStmt struct {
-	Table    string
-	Action   string  // "ADD COLUMN", "DROP COLUMN", "RENAME", "RENAME COLUMN"
-	Column   string  // column name for ADD/DROP/RENAME COLUMN
-	NewCol   *ColDef // for ADD COLUMN
-	NewName  string  // REQ000498: new name for RENAME COLUMN
-	IfExists bool    // for DROP TABLE IF EXISTS (stored for executor)
-}
-
-func (a *AlterTableStmt) stmtNode() {}
-
-// PragmaStmt represents PRAGMA name [= value]
-type PragmaStmt struct {
-	Name  string
-	Value string // optional, empty for read-only pragmas
+	Loc
+	Table string
 }
 
 func (a *AnalyzeStmt) stmtNode() {}
 
+type VacuumStmt struct {
+	Loc
+	Table string
+}
+
 func (v *VacuumStmt) stmtNode() {}
+
+type CreateViewStmt struct {
+	Loc
+	Name      string
+	As        Stmt
+	Temporary bool
+}
+
+func (c *CreateViewStmt) stmtNode() {}
+
+type AlterTableStmt struct {
+	Loc
+	Table    string
+	Action   string
+	Column   string
+	NewCol   *ColDef
+	NewName  string
+	IfExists bool
+}
+
+func (a *AlterTableStmt) stmtNode() {}
+
+type PragmaStmt struct {
+	Loc
+	Name  string
+	Value string
+}
 
 func (p *PragmaStmt) stmtNode() {}
 
-// TruncateStmt represents TRUNCATE [TABLE] name (iter-28 REQ000476)
 type TruncateStmt struct {
+	Loc
 	Table string
 }
 
 func (t *TruncateStmt) stmtNode() {}
 
-// ReindexStmt represents REINDEX [name] (iter-28 REQ000478)
 type ReindexStmt struct {
-	Target string // empty = reindex all
+	Loc
+	Target string
 }
 
 func (r *ReindexStmt) stmtNode() {}
 
-// DropViewStmt represents DROP VIEW [IF EXISTS] name (iter-28 REQ000494)
 type DropViewStmt struct {
+	Loc
 	Name     string
 	IfExists bool
 }
 
 func (d *DropViewStmt) stmtNode() {}
 
-// DropTriggerStmt represents DROP TRIGGER [IF EXISTS] name (iter-28 REQ000496)
 type DropTriggerStmt struct {
+	Loc
 	Name     string
 	IfExists bool
 }
 
 func (d *DropTriggerStmt) stmtNode() {}
 
-// CreateVirtualTableStmt represents CREATE VIRTUAL TABLE ... USING module(args).
 type CreateVirtualTableStmt struct {
+	Loc
 	Name   string
 	Module string
 	Args   []string
@@ -687,77 +663,58 @@ type CreateVirtualTableStmt struct {
 
 func (c *CreateVirtualTableStmt) stmtNode() {}
 
-// CreateMatViewStmt represents CREATE MATERIALIZED VIEW name AS SELECT ...
-// For incremental matviews, base tables are tracked and triggers fire on changes.
 type CreateMatViewStmt struct {
+	Loc
 	Name        string
 	As          *Select
 	IfNotExists bool
-	Incremental bool     // true = auto-maintained via triggers; false = manual REFRESH
-	BaseTables  []string // tables referenced in the SELECT (populated at exec)
+	Incremental bool
+	BaseTables  []string
 }
 
 func (c *CreateMatViewStmt) stmtNode() {}
 
-// DropMatViewStmt represents DROP MATERIALIZED VIEW [IF EXISTS] name.
 type DropMatViewStmt struct {
+	Loc
 	Name     string
 	IfExists bool
 }
 
 func (d *DropMatViewStmt) stmtNode() {}
 
-// RefreshMatViewStmt represents REFRESH MATERIALIZED VIEW [CONCURRENTLY] name.
 type RefreshMatViewStmt struct {
+	Loc
 	Name         string
-	Concurrently bool // not yet implemented; accepted for syntax compatibility
+	Concurrently bool
 }
 
 func (r *RefreshMatViewStmt) stmtNode() {}
 
-// SetTransactionStmt represents SET TRANSACTION ISOLATION LEVEL ...
 type SetTransactionStmt struct {
-	Level string // "READ UNCOMMITTED", "READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"
+	Loc
+	Level string
 }
 
 func (s *SetTransactionStmt) stmtNode() {}
 
-func (e *ExplainStmt) stmtNode() {}
-
-// RaiseFunc represents the RAISE() function in triggers (REQ000560).
-// RAISE(ABORT, 'error message') causes the trigger to abort with
-// the given error message. The single-argument form RAISE(IGNORE)
-// suppresses the trigger action.
-type RaiseFunc struct {
-	Action  string // "ABORT", "IGNORE"
-	Message Expr   // nil for RAISE(IGNORE)
-}
-
-func (r *RaiseFunc) exprNode() {}
-
-// ValuesStmt represents a standalone VALUES statement (REQ000564).
-// Each element of Rows is a row of scalar expressions.
 type ValuesStmt struct {
+	Loc
 	Rows [][]Expr
 }
 
 func (v *ValuesStmt) stmtNode() {}
 
-// AttachStmt represents `ATTACH DATABASE expr AS name` (REQ000557).
-// In v1 the executor rejects this statement at runtime with
-// "multi-database not supported in v1"; the parser still
-// accepts it so applications using SQLite-style multi-db
-// idioms get a parse-time success.
 type AttachStmt struct {
-	Expr Expr   // path expression (typically a string literal)
-	Name string // schema alias
+	Loc
+	Expr Expr
+	Name string
 }
 
 func (a *AttachStmt) stmtNode() {}
 
-// DetachStmt represents `DETACH DATABASE name` (REQ000557).
 type DetachStmt struct {
-	Name string // schema alias
+	Loc
+	Name string
 }
 
 func (d *DetachStmt) stmtNode() {}

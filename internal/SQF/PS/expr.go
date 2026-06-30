@@ -10,38 +10,44 @@ import (
 func (p *Parser) parsePrimary() (Expr, error) {
 	switch p.current.Type {
 	case LX.T_INT:
-		// REQ001143: use typed LitInt accessor (no boxing).
+		loc := p.loc()
 		val := p.current.LitInt
 		p.advance()
-		return &NumberLiteral{Val: val}, nil
+		return &NumberLiteral{Loc: loc, Val: val}, nil
 	case LX.T_FLOAT:
-		// REQ001143: use typed LitFloat accessor.
+		loc := p.loc()
 		val := p.current.LitFloat
 		p.advance()
-		return &FloatLiteral{Val: val}, nil
+		return &FloatLiteral{Loc: loc, Val: val}, nil
 	case LX.T_STRING:
-		// REQ001143: use typed LitStr accessor.
+		loc := p.loc()
 		val := p.current.LitStr
 		p.advance()
-		return &StringLiteral{Val: val}, nil
+		return &StringLiteral{Loc: loc, Val: val}, nil
 	case LX.T_NULL:
+		loc := p.loc()
 		p.advance()
-		return &NullLiteral{}, nil
+		return &NullLiteral{Loc: loc}, nil
 	case LX.T_TRUE:
+		loc := p.loc()
 		p.advance()
-		return &BoolLiteral{Val: true}, nil
+		return &BoolLiteral{Loc: loc, Val: true}, nil
 	case LX.T_FALSE:
+		loc := p.loc()
 		p.advance()
-		return &BoolLiteral{Val: false}, nil
+		return &BoolLiteral{Loc: loc, Val: false}, nil
 	case LX.T_BIND:
+		loc := p.loc()
 		idx := p.paramIndex
 		p.paramIndex++
 		p.advance()
-		return &Param{Index: idx}, nil
+		return &Param{Loc: loc, Index: idx}, nil
 	case LX.T_STAR:
+		loc := p.loc()
 		p.advance()
-		return &StarExpr{}, nil
+		return &StarExpr{Loc: loc}, nil
 	case LX.T_IDENT, LX.T_EXCLUDED:
+		loc := p.loc()
 		name := strings.ToLower(p.current.Lexeme)
 		p.advance()
 		// REQ000808: hex string literal X'...'
@@ -67,7 +73,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 				}
 			}
 			p.advance()
-			return &StringLiteral{Val: string(decoded)}, nil
+			return &StringLiteral{Loc: loc, Val: string(decoded)}, nil
 		}
 		if p.current.Type == LX.T_DOT {
 			p.advance()
@@ -84,17 +90,18 @@ func (p *Parser) parsePrimary() (Expr, error) {
 				}
 				col := strings.ToLower(p.current.Lexeme)
 				p.advance()
-				return &QualifiedName{Database: name, Table: mid, Name: col}, nil
+				return &QualifiedName{Loc: loc, Database: name, Table: mid, Name: col}, nil
 			}
-			return &QualifiedName{Table: name, Name: mid}, nil
+			return &QualifiedName{Loc: loc, Table: name, Name: mid}, nil
 		}
 		if p.current.Type == LX.T_LPAREN {
 			return p.parseFunctionCall(name)
 		}
-		return &Ident{Name: name}, nil
+		return &Ident{Loc: loc, Name: name}, nil
 	case LX.T_GLOB:
 		// REQ000729: GLOB can be used as a function call GLOB(pattern, string)
 		// or as a binary operator expr GLOB pattern.
+		loc := p.loc()
 		name := p.current.Lexeme
 		p.advance()
 		if p.current.Type == LX.T_LPAREN {
@@ -102,9 +109,10 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		}
 		// Not followed by '(' — treat as identifier for binary operator
 		// parsing in parsePostfix.
-		return &Ident{Name: name}, nil
+		return &Ident{Loc: loc, Name: name}, nil
 	case LX.T_RAISE:
 		// RAISE(ABORT, 'message') or RAISE(IGNORE) (REQ000560)
+		loc := p.loc()
 		p.advance()
 		if err := p.expect(LX.T_LPAREN); err != nil {
 			return nil, err
@@ -115,7 +123,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		}
 		action := p.current.Lexeme
 		p.advance()
-		rf := &RaiseFunc{Action: action}
+		rf := &RaiseFunc{Loc: loc, Action: action}
 		if p.current.Type == LX.T_COMMA {
 			p.advance()
 			msg, err := p.parseExpr()
@@ -154,6 +162,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 	case LX.T_ROW_NUMBER, LX.T_RANK, LX.T_DENSE_RANK, LX.T_LAG, LX.T_LEAD, LX.T_FIRST_VALUE, LX.T_LAST_VALUE, LX.T_NTH_VALUE:
 		return p.parseWindowBuiltin()
 	case LX.T_LPAREN:
+		loc := p.loc()
 		p.advance()
 		if p.current.Type == LX.T_SELECT {
 			// REQ000962: save and restore pendingSubquery around
@@ -172,7 +181,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 				return nil, err
 			}
 			p.advance()
-			return &SubqueryExpr{Subquery: sel}, nil
+			return &SubqueryExpr{Loc: loc, Subquery: sel}, nil
 		}
 		expr, err := p.parseExpr()
 		if err != nil {
@@ -213,6 +222,7 @@ func (p *Parser) parseAggregateFunc(name string, allowMultiArgs bool) (Expr, []E
 	if err := p.expect(LX.T_LPAREN); err != nil {
 		return nil, nil, err
 	}
+	loc := p.loc()
 	p.advance()
 
 	distinct := false
@@ -225,7 +235,7 @@ func (p *Parser) parseAggregateFunc(name string, allowMultiArgs bool) (Expr, []E
 
 	var args []Expr
 	if p.current.Type == LX.T_STAR {
-		args = append(args, &StarExpr{})
+		args = append(args, &StarExpr{Loc: loc})
 		p.advance()
 	} else if p.current.Type != LX.T_RPAREN {
 		a, err := p.parseExpr()
@@ -251,10 +261,10 @@ func (p *Parser) parseAggregateFunc(name string, allowMultiArgs bool) (Expr, []E
 
 	// Multi-arg MIN/MAX → scalar function call (e.g. max(a, b, c))
 	if len(args) > 1 {
-		return &FunctionCall{Name: name, Args: args}, args, nil
+		return &FunctionCall{Loc: loc, Name: name, Args: args}, args, nil
 	}
 
-	agg := &AggregateFunc{Name: name, Arg: args[0], Distinct: distinct}
+	agg := &AggregateFunc{Loc: loc, Name: name, Arg: args[0], Distinct: distinct}
 	if p.current.Type == LX.T_FILTER {
 		filter, err := p.parseFilterClause()
 		if err != nil {
@@ -268,6 +278,7 @@ func (p *Parser) parseAggregateFunc(name string, allowMultiArgs bool) (Expr, []E
 // parseFunctionCall parses a function call: name(arg1, arg2, ...).
 // The '(' has already been consumed.
 func (p *Parser) parseFunctionCall(name string) (Expr, error) {
+	loc := p.loc()
 	p.advance() // consume '('
 	// REQ000761: normalize function name to uppercase once,
 	// eliminating strings.ToUpper in evalFunction.
@@ -319,7 +330,7 @@ func (p *Parser) parseFunctionCall(name string) (Expr, error) {
 	if isAggregateName(name) {
 		// MIN/MAX with multiple args → scalar function
 		if len(args) > 1 && isMinMaxName(name) {
-			return &FunctionCall{Name: name, Args: args}, nil
+			return &FunctionCall{Loc: loc, Name: name, Args: args}, nil
 		}
 		var arg Expr
 		if len(args) > 0 {
@@ -330,7 +341,7 @@ func (p *Parser) parseFunctionCall(name string) (Expr, error) {
 		if name == "GROUP_CONCAT" && len(args) > 1 {
 			sep = args[1]
 		}
-		agg := &AggregateFunc{Name: name, Arg: arg, Distinct: distinct, Separator: sep}
+		agg := &AggregateFunc{Loc: loc, Name: name, Arg: arg, Distinct: distinct, Separator: sep}
 		if p.current.Type == LX.T_FILTER {
 			filter, err := p.parseFilterClause()
 			if err != nil {
@@ -340,7 +351,7 @@ func (p *Parser) parseFunctionCall(name string) (Expr, error) {
 		}
 		return agg, nil
 	}
-	return &FunctionCall{Name: name, Args: args}, nil
+	return &FunctionCall{Loc: loc, Name: name, Args: args}, nil
 }
 
 // parseFilterClause parses FILTER (WHERE expr). REQ000747.
@@ -376,6 +387,7 @@ func (p *Parser) parseFilterClause() (Expr, error) {
 
 func (p *Parser) parseUnary() (Expr, error) {
 	if p.current.Type == LX.T_NOT {
+		loc := p.loc()
 		p.advance()
 		// REQ000806: NOT binds at precedence 1 (lower than IS/comparison).
 		// Parse the operand via parseBinary so NOT(-78 IS NOT NULL) ≠ (NOT -78) IS NOT NULL.
@@ -383,16 +395,17 @@ func (p *Parser) parseUnary() (Expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &UnaryExpr{Op: LX.T_NOT, Operand: operand}, nil
+		return &UnaryExpr{Loc: loc, Op: LX.T_NOT, Operand: operand}, nil
 	}
 	if p.current.Type == LX.T_MINUS || p.current.Type == LX.T_PLUS || p.current.Type == LX.T_BITNOT {
+		loc := p.loc()
 		op := p.current.Type
 		p.advance()
 		operand, err := p.parseUnary()
 		if err != nil {
 			return nil, err
 		}
-		return &UnaryExpr{Op: op, Operand: operand}, nil
+		return &UnaryExpr{Loc: loc, Op: op, Operand: operand}, nil
 	}
 	return p.parsePostfix()
 }
@@ -429,33 +442,36 @@ func (p *Parser) parsePostfix() (Expr, error) {
 
 // parseGlob parses `expr GLOB pattern`.
 func (p *Parser) parseGlob(expr Expr) (Expr, error) {
+	loc := p.loc()
 	p.advance() // consume GLOB
 	right, err := p.parseBinary(7)
 	if err != nil {
 		return nil, err
 	}
-	return &BinaryExpr{Op: LX.T_GLOB, Left: expr, Right: right}, nil
+	return &BinaryExpr{Loc: loc, Op: LX.T_GLOB, Left: expr, Right: right}, nil
 }
 
 // parseNotGlob parses `expr NOT GLOB pattern` as NOT(expr GLOB pattern).
 func (p *Parser) parseNotGlob(expr Expr) (Expr, error) {
+	loc := p.loc()
 	p.advance() // consume GLOB
 	right, err := p.parseBinary(7)
 	if err != nil {
 		return nil, err
 	}
-	glob := &BinaryExpr{Op: LX.T_GLOB, Left: expr, Right: right}
-	return &UnaryExpr{Op: LX.T_NOT, Operand: glob}, nil
+	glob := &BinaryExpr{Loc: loc, Op: LX.T_GLOB, Left: expr, Right: right}
+	return &UnaryExpr{Loc: loc, Op: LX.T_NOT, Operand: glob}, nil
 }
 
 // REQ000380: `NOT LIKE` — parse x NOT LIKE y as NOT(x LIKE y).
 func (p *Parser) parseNotLike(expr Expr) (Expr, error) {
+	loc := p.loc()
 	p.advance()
 	right, err := p.parseBinary(7)
 	if err != nil {
 		return nil, err
 	}
-	like := &BinaryExpr{Op: LX.T_LIKE, Left: expr, Right: right}
+	like := &BinaryExpr{Loc: loc, Op: LX.T_LIKE, Left: expr, Right: right}
 	// REQ000567: LIKE ... ESCAPE expr
 	if p.current.Type == LX.T_ESCAPE {
 		p.advance()
@@ -465,11 +481,12 @@ func (p *Parser) parseNotLike(expr Expr) (Expr, error) {
 		}
 		like.Escape = escape
 	}
-	return &UnaryExpr{Op: LX.T_NOT, Operand: like}, nil
+	return &UnaryExpr{Loc: loc, Op: LX.T_NOT, Operand: like}, nil
 }
 
 // REQ000381: `NOT IN` — parse x NOT IN (...) as NOT(x IN (...)).
 func (p *Parser) parseNotIn(expr Expr) (Expr, error) {
+	loc := p.loc()
 	// parsePostfix already consumed T_NOT; we still need to
 	// consume T_IN and the ( ... ).
 	p.advance()
@@ -477,11 +494,12 @@ func (p *Parser) parseNotIn(expr Expr) (Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &UnaryExpr{Op: LX.T_NOT, Operand: in}, nil
+	return &UnaryExpr{Loc: loc, Op: LX.T_NOT, Operand: in}, nil
 }
 
 // REQ000434: `NOT BETWEEN` — parse x NOT BETWEEN low AND high as NOT(x BETWEEN low AND high).
 func (p *Parser) parseNotBetween(expr Expr) (Expr, error) {
+	loc := p.loc()
 	p.advance() // consume BETWEEN
 	low, err := p.parseBinary(3)
 	if err != nil {
@@ -495,11 +513,12 @@ func (p *Parser) parseNotBetween(expr Expr) (Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	between := &BetweenExpr{Expr: expr, Low: low, High: high}
-	return &UnaryExpr{Op: LX.T_NOT, Operand: between}, nil
+	between := &BetweenExpr{Loc: loc, Expr: expr, Low: low, High: high}
+	return &UnaryExpr{Loc: loc, Op: LX.T_NOT, Operand: between}, nil
 }
 
 func (p *Parser) parseBetween(expr Expr) (Expr, error) {
+	loc := p.loc()
 	p.advance()
 	low, err := p.parseBinary(3)
 	if err != nil {
@@ -513,7 +532,7 @@ func (p *Parser) parseBetween(expr Expr) (Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &BetweenExpr{Expr: expr, Low: low, High: high}, nil
+	return &BetweenExpr{Loc: loc, Expr: expr, Low: low, High: high}, nil
 }
 
 func (p *Parser) parseIn(expr Expr) (Expr, error) {
@@ -531,17 +550,20 @@ func (p *Parser) parseInBody(expr Expr) (Expr, error) {
 	// (not Ident{"*"}) so the planner expands it against the table
 	// schema just like a hand-written subquery.
 	if p.current.Type == LX.T_IDENT {
+		loc := p.loc()
 		name := p.current.Lexeme
 		p.advance()
 		sel := &Select{
-			Cols: []Expr{&StarExpr{}},
+			Loc:  loc,
+			Cols: []Expr{&StarExpr{Loc: loc}},
 			From: name,
 		}
-		return &InExpr{Expr: expr, Subquery: sel}, nil
+		return &InExpr{Loc: loc, Expr: expr, Subquery: sel}, nil
 	}
 	if err := p.expect(LX.T_LPAREN); err != nil {
 		return nil, err
 	}
+	loc := p.loc()
 	p.advance()
 	if p.current.Type == LX.T_SELECT {
 		sel, err := p.parseSelect()
@@ -552,7 +574,7 @@ func (p *Parser) parseInBody(expr Expr) (Expr, error) {
 			return nil, err
 		}
 		p.advance()
-		return &InExpr{Expr: expr, Subquery: sel}, nil
+		return &InExpr{Loc: loc, Expr: expr, Subquery: sel}, nil
 	}
 	var items []Expr
 	if p.current.Type != LX.T_RPAREN {
@@ -572,7 +594,7 @@ func (p *Parser) parseInBody(expr Expr) (Expr, error) {
 		return nil, err
 	}
 	p.advance()
-	return &InExpr{Expr: expr, List: items}, nil
+	return &InExpr{Loc: loc, Expr: expr, List: items}, nil
 }
 
 func (p *Parser) parseBinary(minPrec int) (Expr, error) {
@@ -608,6 +630,7 @@ func (p *Parser) parseBinary(minPrec int) (Expr, error) {
 			break
 		}
 		op := p.current.Type
+		loc := p.loc()
 		p.advance()
 		// REQ000833: `IS NOT NULL` — when IS is followed by NOT, handle
 		// it specially so the NOT doesn't consume subsequent operators
@@ -615,8 +638,8 @@ func (p *Parser) parseBinary(minPrec int) (Expr, error) {
 		if op == LX.T_IS && p.current.Type == LX.T_NOT && p.lex.Peek().Type == LX.T_NULL {
 			p.advance() // consume NOT
 			p.advance() // consume NULL
-			notNull := &UnaryExpr{Op: LX.T_NOT, Operand: &NullLiteral{}}
-			left = &BinaryExpr{Op: op, Left: left, Right: notNull}
+			notNull := &UnaryExpr{Loc: loc, Op: LX.T_NOT, Operand: &NullLiteral{Loc: loc}}
+			left = &BinaryExpr{Loc: loc, Op: op, Left: left, Right: notNull}
 			continue
 		}
 		nextMinPrec := precedence(op) + 1
@@ -624,7 +647,7 @@ func (p *Parser) parseBinary(minPrec int) (Expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		left = &BinaryExpr{Op: op, Left: left, Right: right}
+		left = &BinaryExpr{Loc: loc, Op: op, Left: left, Right: right}
 		// REQ000567: LIKE ... ESCAPE expr
 		if op == LX.T_LIKE && p.current.Type == LX.T_ESCAPE {
 			p.advance()
@@ -644,6 +667,7 @@ func (p *Parser) parseExpr() (Expr, error) {
 }
 
 func (p *Parser) parseCast() (Expr, error) {
+	loc := p.loc()
 	p.advance()
 	if err := p.expect(LX.T_LPAREN); err != nil {
 		return nil, err
@@ -665,10 +689,11 @@ func (p *Parser) parseCast() (Expr, error) {
 		return nil, err
 	}
 	p.advance()
-	return &CastExpr{Expr: expr, Type: typ}, nil
+	return &CastExpr{Loc: loc, Expr: expr, Type: typ}, nil
 }
 
 func (p *Parser) parseExists() (Expr, error) {
+	loc := p.loc()
 	p.advance()
 	if err := p.expect(LX.T_LPAREN); err != nil {
 		return nil, err
@@ -682,11 +707,12 @@ func (p *Parser) parseExists() (Expr, error) {
 		return nil, err
 	}
 	p.advance()
-	return &ExistsExpr{Subquery: sel}, nil
+	return &ExistsExpr{Loc: loc, Subquery: sel}, nil
 }
 
 // parseInterval parses INTERVAL 'value' UNIT. REQ000288: validates unit.
 func (p *Parser) parseInterval() (Expr, error) {
+	loc := p.loc()
 	p.advance() // consume INTERVAL
 	if err := p.expect(LX.T_STRING); err != nil {
 		return nil, err
@@ -714,9 +740,9 @@ func (p *Parser) parseInterval() (Expr, error) {
 			}
 		}
 		p.advance()
-		return &IntervalLiteral{Value: val, Unit: unit}, nil
+		return &IntervalLiteral{Loc: loc, Value: val, Unit: unit}, nil
 	}
-	return &IntervalLiteral{Value: val, Unit: "DAY"}, nil
+	return &IntervalLiteral{Loc: loc, Value: val, Unit: "DAY"}, nil
 }
 
 // parseWindowBuiltin parses window built-in functions (ROW_NUMBER, RANK, etc.).
@@ -921,6 +947,7 @@ func (p *Parser) parseTypePrecision(precision, scale *int) error {
 }
 
 func (p *Parser) parseCaseExpr() (Expr, error) {
+	loc := p.loc()
 	p.advance()
 
 	var expr Expr
@@ -936,6 +963,7 @@ func (p *Parser) parseCaseExpr() (Expr, error) {
 	}
 
 	for p.current.Type == LX.T_WHEN {
+		wLoc := p.loc()
 		p.advance()
 		cond, err := p.parseExpr()
 		if err != nil {
@@ -949,7 +977,7 @@ func (p *Parser) parseCaseExpr() (Expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		whenList = append(whenList, WhenClause{Cond: cond, Then: then})
+		whenList = append(whenList, WhenClause{Loc: wLoc, Cond: cond, Then: then})
 	}
 
 	if p.current.Type == LX.T_ELSE {
@@ -966,7 +994,7 @@ func (p *Parser) parseCaseExpr() (Expr, error) {
 	}
 	p.advance()
 
-	return &CaseExpr{Expr: expr, WhenList: whenList, Else: elseExpr}, nil
+	return &CaseExpr{Loc: loc, Expr: expr, WhenList: whenList, Else: elseExpr}, nil
 }
 
 func parseFloat(s string) float64 {
@@ -993,6 +1021,7 @@ func parseFloat(s string) float64 {
 // parseCoalesce parses: COALESCE(expr1, expr2, ...)
 // Returns the first non-NULL argument, or NULL if all are NULL.
 func (p *Parser) parseCoalesce() (Expr, error) {
+	loc := p.loc()
 	p.advance() // consume COALESCE
 
 	var args []Expr
@@ -1031,12 +1060,13 @@ func (p *Parser) parseCoalesce() (Expr, error) {
 		}
 	}
 
-	return &FunctionCall{Name: "COALESCE", Args: args}, nil
+	return &FunctionCall{Loc: loc, Name: "COALESCE", Args: args}, nil
 }
 
 // parseNullif parses: NULLIF(expr1, expr2)
 // Returns NULL if expr1 = expr2, otherwise expr1.
 func (p *Parser) parseNullif() (Expr, error) {
+	loc := p.loc()
 	p.advance() // consume NULLIF
 
 	var arg1, arg2 Expr
@@ -1076,7 +1106,7 @@ func (p *Parser) parseNullif() (Expr, error) {
 		}
 	}
 
-	return &FunctionCall{Name: "NULLIF", Args: []Expr{arg1, arg2}}, nil
+	return &FunctionCall{Loc: loc, Name: "NULLIF", Args: []Expr{arg1, arg2}}, nil
 }
 
 func (p *Parser) parseIdentList() ([]string, error) {

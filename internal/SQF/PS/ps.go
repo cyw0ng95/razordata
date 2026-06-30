@@ -37,6 +37,11 @@ func (p *Parser) advance() {
 	p.current = p.lex.Next()
 }
 
+// loc returns the current token's source position (REQ001004).
+func (p *Parser) loc() Loc {
+	return Loc{Line: p.current.Line, Col: p.current.Col}
+}
+
 // parseTableRef reads an identifier optionally qualified with a database
 // prefix (REQ000750: db.table). Returns the table name (last ident) and
 // advances past both tokens.
