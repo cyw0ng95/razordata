@@ -339,13 +339,13 @@ func lookupKeyword(input string) (int, TokenType) {
 type Lexer struct {
 	input string
 	pos   int
-	line  int
-	col   int
+	line  uint32
+	col   uint32
 	// REQ001141: token-start position snapshot. captureStart() is
 	// called once per Next(); all scanner functions read these
 	// fields instead of stashing their own copies.
-	startLine int
-	startCol  int
+	startLine uint32
+	startCol  uint32
 	// REQ001140: ring buffer for lookahead. Two slots hold the
 	// next two upcoming tokens; Peek/Peek2 fill them lazily so
 	// repeated peeks at the same position cost O(1).
@@ -604,7 +604,23 @@ func (l *Lexer) skipWhitespaceAndComments() {
 			return
 		}
 
-		// REQ001144: ASCII fast-path for whitespace.
+		// REQ001149: bulk-scan ASCII space/tab runs without per-byte
+		// function call overhead. These two characters never change
+		// the line number, so we can advance col in bulk.
+		if c == ' ' || c == '\t' {
+			start := l.pos
+			for l.pos < len(l.input) {
+				b := l.input[l.pos]
+				if b != ' ' && b != '\t' {
+					break
+				}
+				l.pos++
+			}
+			l.col += uint32(l.pos - start)
+			continue
+		}
+
+		// REQ001144: ASCII fast-path for other whitespace.
 		if c < 0x80 {
 			if isASCIISpace(c) {
 				l.advance()
@@ -669,17 +685,58 @@ func (l *Lexer) scanString() Token {
 			l.advance()
 			lexeme := l.input[start : l.pos-1]
 			if hasEscape {
-				// Build string with escape processing
-				var sb strings.Builder
+				// REQ001150: use stack buffer for short strings to avoid
+				// heap allocation. Fall back to strings.Builder for
+				// strings exceeding the buffer.
+				const stackBufSize = 256
+				var buf [stackBufSize]byte
+				n := 0
 				for i := start; i < l.pos-1; i++ {
 					if l.input[i] == '\'' && i+1 < l.pos-1 && l.input[i+1] == '\'' {
-						sb.WriteByte('\'')
+						if n >= stackBufSize {
+							// Overflow: switch to strings.Builder
+							var sb strings.Builder
+							sb.Grow(n + (l.pos - 1 - i))
+							sb.WriteString(string(buf[:]))
+							sb.WriteByte('\'')
+							i++
+							for ; i < l.pos-1; i++ {
+								if l.input[i] == '\'' && i+1 < l.pos-1 && l.input[i+1] == '\'' {
+									sb.WriteByte('\'')
+									i++
+								} else {
+									sb.WriteByte(l.input[i])
+								}
+							}
+							v := sb.String()
+							return Token{Type: T_STRING, Lexeme: v, LitStr: v, Line: startLine, Col: startCol}
+						}
+						buf[n] = '\''
+						n++
 						i++
 					} else {
-						sb.WriteByte(l.input[i])
+						if n >= stackBufSize {
+							// Overflow: switch to strings.Builder
+							var sb strings.Builder
+							sb.Grow(n + (l.pos - 1 - i))
+							sb.WriteString(string(buf[:]))
+							sb.WriteByte(l.input[i])
+							for i++; i < l.pos-1; i++ {
+								if l.input[i] == '\'' && i+1 < l.pos-1 && l.input[i+1] == '\'' {
+									sb.WriteByte('\'')
+									i++
+								} else {
+									sb.WriteByte(l.input[i])
+								}
+							}
+							v := sb.String()
+							return Token{Type: T_STRING, Lexeme: v, LitStr: v, Line: startLine, Col: startCol}
+						}
+						buf[n] = l.input[i]
+						n++
 					}
 				}
-				v := sb.String()
+				v := string(buf[:n])
 				return Token{Type: T_STRING, Lexeme: v, LitStr: v, Line: startLine, Col: startCol}
 			}
 			return Token{Type: T_STRING, Lexeme: lexeme, LitStr: lexeme, Line: startLine, Col: startCol}

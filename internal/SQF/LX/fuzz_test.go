@@ -207,8 +207,8 @@ func FuzzLineColMonotonic(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, input string) {
 		l := NewLexer(input)
-		prevLine := 1
-		prevCol := 1
+		prevLine := uint32(1)
+		prevCol := uint32(1)
 		first := true
 		for {
 			tok := l.Next()

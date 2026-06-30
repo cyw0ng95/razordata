@@ -4,11 +4,10 @@ import "testing"
 
 func TestTokenStruct(t *testing.T) {
 	token := Token{
-		Type:    T_IDENT,
-		Lexeme:  "foo",
-		Literal: nil,
-		Line:    1,
-		Col:     5,
+		Type:   T_IDENT,
+		Lexeme: "foo",
+		Line:   1,
+		Col:    5,
 	}
 
 	if token.Type != T_IDENT {

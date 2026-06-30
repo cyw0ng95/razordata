@@ -224,8 +224,7 @@ const (
 )
 
 type Token struct {
-	Type   TokenType
-	Lexeme string
+	Type TokenType
 	// REQ001143: typed literal fields replace the `Literal any`
 	// box. Only one field is populated at a time, determined by
 	// Type:
@@ -233,16 +232,15 @@ type Token struct {
 	//   T_FLOAT  -> LitFloat
 	//   T_STRING -> LitStr
 	//   T_ERROR  -> LitErr
-	// The legacy `Literal` field is preserved for backward
-	// compatibility with external callers but is no longer set
-	// by the lexer; use the IntLit/StrLit/ErrLit accessors.
-	Literal  any
+	Lexeme   string
 	LitInt   int64
 	LitFloat float64
 	LitStr   string
 	LitErr   error
-	Line     int
-	Col      int
+	// REQ001148: uint32 instead of int — Line/Col are always
+	// positive (1-based), saving 4 bytes per field.
+	Line uint32
+	Col  uint32
 }
 
 // REQ001143: typed accessors. These replace `tok.Literal.(int64)`

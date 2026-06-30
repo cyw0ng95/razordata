@@ -12,8 +12,8 @@ var ErrSyntax = errors.New("ps: syntax error")
 // SyntaxError represents a SQL syntax error with location information.
 type SyntaxError struct {
 	Input    string
-	Line     int
-	Col      int
+	Line     uint32
+	Col      uint32
 	Expected string
 	Got      string
 	Lexeme   string
@@ -39,18 +39,20 @@ func (e *SyntaxError) Unwrap() error {
 	return ErrSyntax
 }
 
-func renderCaret(input string, line, col int) string {
-	lines := strings.SplitN(input, "\n", line+1)
-	if line-1 >= len(lines) {
+func renderCaret(input string, line, col uint32) string {
+	l := int(line)
+	c := int(col)
+	lines := strings.SplitN(input, "\n", l+1)
+	if l-1 >= len(lines) {
 		return ""
 	}
-	row := lines[line-1]
+	row := lines[l-1]
 	var b strings.Builder
 	b.WriteString("    ")
 	b.WriteString(row)
 	b.WriteByte('\n')
 	b.WriteString("    ")
-	for i := 1; i < col; i++ {
+	for i := 1; i < c; i++ {
 		b.WriteByte(' ')
 	}
 	b.WriteString("^\n")
