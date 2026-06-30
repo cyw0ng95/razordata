@@ -1,25 +1,25 @@
 package EX
 
 import (
-	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"bytes"
 	"context"
 	"fmt"
+	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"slices"
 	"strings"
 	"sync"
 	"unicode"
 
 	"github.com/cyw0ng95/razordata/internal/ENG/LS"
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
-	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
-	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
-	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // cloneExpr creates a deep copy of an expression to avoid
@@ -1858,9 +1858,109 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	return current
 }
 
+// isViewMergeable returns true when the view's underlying SELECT is a
+// simple single-table scan with no aggregation, DISTINCT, GROUP BY,
+// ORDER BY, LIMIT, OFFSET, or HAVING, and the view's column list
+// contains only simple column references (no computed expressions,
+// function calls, aggregates, or *). In that case the view can be
+// merged into the outer query — the outer SELECT reads directly from
+// the view's underlying table, with the view's WHERE merged into the
+// outer WHERE. REQ001078.
+//
+// Computed columns (e.g. `v * 2 AS doubled`) are NOT mergeable because
+// the outer query references `doubled` which only exists as an alias
+// after the view computes it — merging would expose raw columns
+// instead of the alias.
+func isViewMergeable(viewSel *PS.Select) bool {
+	if viewSel == nil {
+		return false
+	}
+	if viewSel.From == "" || viewSel.SubqueryFrom != nil {
+		return false
+	}
+	if viewSel.Distinct {
+		return false
+	}
+	if len(viewSel.GroupBy) > 0 {
+		return false
+	}
+	if len(viewSel.OrderBy) > 0 {
+		return false
+	}
+	if viewSel.Limit != nil || viewSel.Offset != nil {
+		return false
+	}
+	if viewSel.Having != nil {
+		return false
+	}
+	if hasAnyAggregate(viewSel.Cols) {
+		return false
+	}
+	if !viewColsAreSimpleRefs(viewSel.Cols) {
+		return false
+	}
+	return true
+}
+
+// viewColsAreSimpleRefs returns true when every entry in cols is
+// either a QualifiedName, an Ident, or an AliasedExpr wrapping one
+// of those. Rejects *, function calls, computed expressions, etc.
+func viewColsAreSimpleRefs(cols []PS.Expr) bool {
+	for _, c := range cols {
+		switch v := c.(type) {
+		case *PS.QualifiedName:
+			continue
+		case *PS.Ident:
+			continue
+		case *PS.AliasedExpr:
+			switch v.Expr.(type) {
+			case *PS.QualifiedName, *PS.Ident:
+				continue
+			}
+			return false
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// mergeViewIntoOuter produces a SELECT equivalent to (SELECT s.Cols FROM
+// viewSel.From WHERE viewSel.Where AND s.Where ORDER BY ... LIMIT ...).
+// Caller must verify the view is mergeable via isViewMergeable first.
+// REQ001078.
+func mergeViewIntoOuter(s *PS.Select, viewSel *PS.Select) *PS.Select {
+	merged := *viewSel
+	merged.Where = andExpr(viewSel.Where, s.Where)
+	if len(s.Cols) > 0 {
+		merged.Cols = s.Cols
+	}
+	merged.OrderBy = s.OrderBy
+	merged.Limit = s.Limit
+	merged.Offset = s.Offset
+	merged.Distinct = s.Distinct
+	merged.GroupBy = s.GroupBy
+	merged.Having = s.Having
+	merged.OffsetFirst = s.OffsetFirst
+	merged.SubqueryFrom = nil
+	return &merged
+}
+
 // resolveView handles view resolution — expand view to underlying SELECT.
 // REQ000981: extracted from planSelect.
+// REQ001078: when the view is a simple single-table SELECT (no agg,
+// DISTINCT, etc.), merge it directly into the outer SELECT. Otherwise
+// fall back to wrapping the view as a subquery.
 func (p *Planner) resolveView(s *PS.Select, viewSel *PS.Select) Operator {
+	// REQ001078: view merging. When the view is mergeable, rewrite
+	// the outer SELECT against the view's underlying table. This
+	// eliminates the view indirection and lets predicate pushdown,
+	// index selection, and column pruning apply to the combined
+	// query.
+	if isViewMergeable(viewSel) {
+		return p.planSelect(mergeViewIntoOuter(s, viewSel))
+	}
+
 	// REQ000702: When the outer query references view column
 	// aliases (e.g., SELECT doubled FROM v), we must wrap the
 	// view as a subquery so the outer query projects over the
@@ -1888,17 +1988,12 @@ func (p *Planner) resolveView(s *PS.Select, viewSel *PS.Select) Operator {
 		}
 	}
 
+	// Fallback: merge what we can (preserves existing behavior for
+	// non-mergeable views — the view stays as the FROM target and
+	// outer clauses wrap around it).
 	merged := *viewSel
 	if s.Where != nil {
-		if merged.Where != nil {
-			merged.Where = &PS.BinaryExpr{
-				Op:    LX.T_AND,
-				Left:  merged.Where,
-				Right: s.Where,
-			}
-		} else {
-			merged.Where = s.Where
-		}
+		merged.Where = andExpr(viewSel.Where, s.Where)
 	}
 	if len(s.Cols) > 0 {
 		merged.Cols = s.Cols
@@ -1991,7 +2086,7 @@ func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
 	}
 	if len(s.OrderBy) > 0 {
 		so := NewSort(current, s.OrderBy)
-	if p.pool != nil {
+		if p.pool != nil {
 			so.WithPool(p.pool.(*UT.WorkerPool))
 		}
 		current = so
