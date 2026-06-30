@@ -70,12 +70,12 @@ func TestRunSubCompactionEmpty(t *testing.T) {
 	defer m.Close()
 
 	sc := NewSubCompactor(dir, m, 2)
-	_, err = sc.RunSubCompaction(context.Background(), 0, nil)
+	_, err = sc.RunSubCompaction(context.Background(), 0, nil, SubCompactionOptions{})
 	if err != ErrNoFilesToCompact {
 		t.Fatalf("expected ErrNoFilesToCompact for nil, got %v", err)
 	}
 
-	_, err = sc.RunSubCompaction(context.Background(), 0, []SSTFileMeta{})
+	_, err = sc.RunSubCompaction(context.Background(), 0, []SSTFileMeta{}, SubCompactionOptions{})
 	if err != ErrNoFilesToCompact {
 		t.Fatalf("expected ErrNoFilesToCompact for empty, got %v", err)
 	}
@@ -97,7 +97,7 @@ func TestRunSubCompactionCancelledContext(t *testing.T) {
 
 	_, err = sc.RunSubCompaction(ctx, 0, []SSTFileMeta{
 		{FileID: 1, MinKey: []byte("a"), MaxKey: []byte("z")},
-	})
+	}, SubCompactionOptions{})
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
 	}

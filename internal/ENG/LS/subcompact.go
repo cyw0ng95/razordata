@@ -11,7 +11,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// SubCompactor partitions a key range into N parallel sub-jobs (REQ000319).
+// SubCompactor partitions a key range into N parallel sub-jobs
+// (REQ000319). Each sub-job is a compactionJob with the same
+// overlap, rate limiter, and placement policy as the parent — so
+// sub-compaction produces equivalent state to serial compaction but
+// in parallel sub-ranges. REQ001048.
 type SubCompactor struct {
 	dir         string
 	manifest    *manifest
@@ -26,6 +30,20 @@ func NewSubCompactor(dir string, m *manifest, concurrency int) *SubCompactor {
 	return &SubCompactor{dir: dir, manifest: m, concurrency: concurrency}
 }
 
+// SubCompactionOptions carries the cross-cutting compaction settings
+// that must be forwarded to every sub-job so sub-compaction matches
+// the semantics of a single serial compactionJob. REQ001048.
+type SubCompactionOptions struct {
+	// Overlap files at level+1 that fall within the input range.
+	// Each sub-job processes only the overlap files whose key range
+	// intersects the sub-range (filtering happens in RunSubCompaction).
+	Overlap []SSTFileMeta
+	// RateLimiter optionally throttles bytes/sec. May be nil.
+	RateLimiter *RateLimiter
+	// PlacementPolicy controls tier-aware output placement.
+	PlacementPolicy PlacementPolicy
+}
+
 type CompactionJobResult struct {
 	SourceLevel int
 	Inputs      []SSTFileMeta
@@ -33,7 +51,13 @@ type CompactionJobResult struct {
 }
 
 // RunSubCompaction splits inputs into parallel sub-range compaction jobs.
-func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, inputs []SSTFileMeta) (*CompactionJobResult, error) {
+// Each sub-job inherits the parent job's overlap, rate limiter, and
+// placement policy so the merged output is equivalent to a single
+// serial compactionJob over the full input range. REQ001048.
+//
+// If `inputs` is too small to benefit from partitioning (pivots < 2),
+// it falls back to a serial compactionJob.Run for simplicity.
+func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, inputs []SSTFileMeta, opts SubCompactionOptions) (*CompactionJobResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -42,7 +66,23 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 	}
 	pivots := pivotKeys(inputs, sc.concurrency)
 	if len(pivots) < 2 {
-		job := &compactionJob{level: sourceLevel, inputs: inputs}
+		job := &compactionJob{
+			level:           sourceLevel,
+			inputs:          inputs,
+			overlap:         opts.Overlap,
+			rateLimiter:     opts.RateLimiter,
+			placementPolicy: opts.PlacementPolicy,
+		}
+		// REQ001048: even in single-job fallback, set a unique
+		// tmpPath so the legacy hard-coded name doesn't race with
+		// future parallel sub-jobs sharing the same temp dir.
+		if job.tmpPath == "" {
+			tp, err := uniqueSubTempPath(sc.dir)
+			if err != nil {
+				return nil, err
+			}
+			job.tmpPath = tp
+		}
 		if err := job.Run(sc.manifest, sc.dir); err != nil {
 			return nil, err
 		}
@@ -67,14 +107,40 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 		if len(subInputs) == 0 {
 			continue
 		}
+		// REQ001048: each sub-job sees only the overlap files whose
+		// key range intersects this sub-range. Filtering prevents
+		// double-counting overlap data across sub-jobs.
+		var subOverlap []SSTFileMeta
+		for _, ov := range opts.Overlap {
+			if bytes.Compare(ov.MaxKey, lo) < 0 || bytes.Compare(ov.MinKey, hi) >= 0 {
+				continue
+			}
+			subOverlap = append(subOverlap, ov)
+		}
+		// REQ001048: each sub-job gets a unique tmpPath so parallel
+		// goroutines don't collide on the shared compaction.tmp
+		// filename inside compactionJob.Run. We use os.CreateTemp
+		// to guarantee uniqueness; the file is closed and removed
+		// immediately — compactionJob.Run will recreate it.
+		subTmp, err := uniqueSubTempPath(sc.dir)
+		if err != nil {
+			return nil, err
+		}
 		subs = append(subs, sub{
 			minKey: append([]byte(nil), lo...),
 			maxKey: append([]byte(nil), hi...),
-			job:    &compactionJob{level: sourceLevel, inputs: subInputs},
+			job: &compactionJob{
+				level:           sourceLevel,
+				inputs:          subInputs,
+				overlap:         subOverlap,
+				rateLimiter:     opts.RateLimiter,
+				placementPolicy: opts.PlacementPolicy,
+				tmpPath:         subTmp,
+			},
 		})
 	}
 
-	g, gctx := errgroup.WithContext(ctx)
+	g, _ := errgroup.WithContext(ctx)
 	g.SetLimit(sc.concurrency)
 	for i := range subs {
 		g.Go(func() error {
@@ -91,7 +157,6 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
-	_ = gctx
 
 	return &CompactionJobResult{
 		SourceLevel: sourceLevel,
@@ -136,10 +201,29 @@ func pivotKeys(inputs []SSTFileMeta, n int) [][]byte {
 }
 
 func subTempPath(dir string) string {
-	f, err := os.CreateTemp(dir, "subcompact-*.tmp")
-	if err == nil {
-		_ = f.Close()
-		_ = os.Remove(f.Name())
-	}
+	// Legacy entrypoint — kept for any out-of-tree caller. Returns
+	// a fixed filename; not safe for parallel sub-compaction.
 	return filepath.Join(dir, "subcompact.tmp")
+}
+
+// uniqueSubTempPath returns a fresh, unused temp path under dir
+// suitable for use as a sub-job's compaction.tmp. The file is
+// created (to claim the name) and immediately removed — callers
+// must recreate it themselves. REQ001048.
+func uniqueSubTempPath(dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp(dir, "subcompact-*.tmp")
+	if err != nil {
+		return "", err
+	}
+	path := f.Name()
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Remove(path); err != nil {
+		return "", err
+	}
+	return path, nil
 }

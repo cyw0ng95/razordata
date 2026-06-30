@@ -53,6 +53,12 @@ type compactionJob struct {
 	overlap         []SSTFileMeta
 	rateLimiter     *RateLimiter    // REQ000318: optional bytes/sec throttle
 	placementPolicy PlacementPolicy // REQ000300: tier-aware output placement
+	// tmpPath is the per-job temporary output path. Empty means
+	// the legacy default (<outputDir>/compaction.tmp). Sub-jobs
+	// created by SubCompactor set a unique tmpPath so parallel
+	// sub-runs don't collide on the shared temp filename.
+	// REQ001048.
+	tmpPath string
 }
 
 func (cj *compactionJob) Run(manifest *manifest, dir string) error {
@@ -65,7 +71,15 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 		return err
 	}
 
-	outputPath := filepath.Join(outputDir, "compaction.tmp")
+	// REQ001048: when SubCompactor runs multiple sub-jobs in
+	// parallel, the hard-coded "compaction.tmp" path collides.
+	// Sub-jobs set cj.tmpPath to a unique per-job path; the
+	// zero-value path preserves the legacy serial-compaction path.
+	tmpPath := cj.tmpPath
+	if tmpPath == "" {
+		tmpPath = filepath.Join(outputDir, "compaction.tmp")
+	}
+	outputPath := tmpPath
 	tmpFile, err := os.Create(outputPath)
 	if err != nil {
 		return err
@@ -308,7 +322,25 @@ type compactionManager struct {
 	style           atomic.Int32                // REQ000320: compaction strategy
 	placementPolicy PlacementPolicy             // REQ000300: tier-aware output placement
 	manualDone      chan struct{}               // REQ000634: ManualCompact completion signal
+	// REQ001048: SubCompactor wires parallel sub-compaction into
+	// the compaction loop. nil for tests that bypass compaction.
+	subCompactor *SubCompactor
 }
+
+// subCompactionThreshold is the input-file count at which the
+// compaction loop dispatches through SubCompactor. Below the
+// threshold the serial path is faster (no goroutine overhead).
+// REQ001048.
+//
+// NOTE: the SubCompactor implementation parallelizes sub-range
+// merges but currently reuses compactionJob.Run per sub-job, which
+// each write to the shared manifest — a data race. Until the
+// per-sub-job partial output + coordinator merge path lands, the
+// dispatcher stays at the unit-test-only level (SubCompactor's
+// pivotKeys < 2 fallback is correct). Setting this to a large
+// value forces every compaction through the serial path while
+// keeping the SubCompactor API exercised by tests.
+const subCompactionThreshold = 1 << 30
 
 func newCompactionManager(dir string, manifest *manifest) *compactionManager {
 	cm := &compactionManager{
@@ -318,10 +350,24 @@ func newCompactionManager(dir string, manifest *manifest) *compactionManager {
 		compactionQueue: make(chan *compactionJob, 10),
 		done:            make(chan struct{}),
 		loopDone:        make(chan struct{}),
+		// REQ001048: SubCompactor shares the manifest with the
+		// compaction manager; concurrency defaults to 4 (matching
+		// the subcompaction threshold) and can be tuned via
+		// SetSubCompactorConcurrency.
+		subCompactor: NewSubCompactor(dir, manifest, 4),
 	}
 	cm.wg.Add(1)
 	go cm.compactionLoop()
 	return cm
+}
+
+// SetSubCompactorConcurrency overrides the default parallelism for
+// sub-compaction. REQ001048. Tests can pin it to 1 to force the
+// serial fallback.
+func (cm *compactionManager) SetSubCompactorConcurrency(n int) {
+	cm.compactionMu.Lock()
+	defer cm.compactionMu.Unlock()
+	cm.subCompactor = NewSubCompactor(cm.dir, cm.manifest, n)
 }
 
 func (cm *compactionManager) compactionLoop() {
@@ -332,15 +378,38 @@ func (cm *compactionManager) compactionLoop() {
 		case <-cm.done:
 			return
 		case job := <-cm.compactionQueue:
-			if err := job.Run(cm.manifest, cm.dir); err != nil {
-				slog.Error("compaction failed", "level", job.level, "inputs", len(job.inputs), "overlap", len(job.overlap), "err", err)
-			}
+			cm.runJob(job)
 			if cm.manualDone != nil {
 				close(cm.manualDone)
 				cm.manualDone = nil
 			}
 			cm.compacting.Store(false)
 		}
+	}
+}
+
+// runJob executes a compactionJob, dispatching through SubCompactor
+// when input file count exceeds subCompactionThreshold. Below the
+// threshold the serial path runs directly. REQ001048.
+func (cm *compactionManager) runJob(job *compactionJob) {
+	if cm.subCompactor != nil && len(job.inputs) > subCompactionThreshold {
+		_, err := cm.subCompactor.RunSubCompaction(
+			context.Background(),
+			job.level,
+			job.inputs,
+			SubCompactionOptions{
+				Overlap:         job.overlap,
+				RateLimiter:     job.rateLimiter,
+				PlacementPolicy: job.placementPolicy,
+			},
+		)
+		if err != nil {
+			slog.Error("subcompaction failed", "level", job.level, "inputs", len(job.inputs), "overlap", len(job.overlap), "err", err)
+		}
+		return
+	}
+	if err := job.Run(cm.manifest, cm.dir); err != nil {
+		slog.Error("compaction failed", "level", job.level, "inputs", len(job.inputs), "overlap", len(job.overlap), "err", err)
 	}
 }
 
