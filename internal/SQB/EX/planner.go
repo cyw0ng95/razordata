@@ -4676,6 +4676,10 @@ func groupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates 
 		right string
 	}
 	pairKeys := map[pairKey][]string{}
+	// REQ001113: track which tables each table is equi-joined with, so
+	// we can detect transitive dependencies (e.g. a3=b9 AND a1=d9 →
+	// t3 and t1 both equi-join to t9, so they must be in the same group).
+	equiJoinTables := map[string]map[string]bool{}
 	for _, pred := range crossTablePredicates {
 		bin, ok := pred.(*PS.BinaryExpr)
 		if !ok || bin.Op != LX.T_EQ {
@@ -4688,6 +4692,14 @@ func groupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates 
 		}
 		pk := pairKey{lTable, rTable}
 		pairKeys[pk] = append(pairKeys[pk], lCol+"="+rCol)
+		if equiJoinTables[lTable] == nil {
+			equiJoinTables[lTable] = map[string]bool{}
+		}
+		equiJoinTables[lTable][rTable] = true
+		if equiJoinTables[rTable] == nil {
+			equiJoinTables[rTable] = map[string]bool{}
+		}
+		equiJoinTables[rTable][lTable] = true
 	}
 
 	// Check for independent pairs: (A,B) and (C,D) where the equi-join
@@ -4700,16 +4712,19 @@ func groupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates 
 		// Check if this table's equi-join key with any already-grouped
 		// table is independent. If yes, start a new bushy group.
 		independent := true
-		for _, existing := range groups {
+		targetGroup := len(groups) - 1 // default: last group
+		for gi, existing := range groups {
 			for _, et := range existing {
 				pk := pairKey{et, tbl}
 				if _, found := pairKeys[pk]; found {
 					independent = false
+					targetGroup = gi
 					break
 				}
 				pk = pairKey{tbl, et}
 				if _, found := pairKeys[pk]; found {
 					independent = false
+					targetGroup = gi
 					break
 				}
 			}
@@ -4717,10 +4732,41 @@ func groupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates 
 				break
 			}
 		}
+		// REQ001113: also check transitive dependency via shared
+		// equi-join table. If the candidate table equi-joins to any
+		// table that is also equi-joined by a table in an existing
+		// group, they are transitively dependent. E.g. a3=b9 AND
+		// a1=d9: t3 equi-joins to t9, t1 equi-joins to t9, so
+		// t3 and t1 must be in the same group.
+		if independent {
+			tblJoins := equiJoinTables[tbl]
+			if len(tblJoins) > 0 {
+				for gi, existing := range groups {
+					for _, et := range existing {
+						etJoins := equiJoinTables[et]
+						// Check if the candidate and existing table share
+						// a common equi-join table (transitive dependency).
+						for shared := range tblJoins {
+							if etJoins[shared] {
+								independent = false
+								targetGroup = gi
+								break
+							}
+						}
+						if !independent {
+							break
+						}
+					}
+					if !independent {
+						break
+					}
+				}
+			}
+		}
 		if independent && len(groups[len(groups)-1]) >= 2 {
 			groups = append(groups, []string{tbl})
 		} else {
-			groups[len(groups)-1] = append(groups[len(groups)-1], tbl)
+			groups[targetGroup] = append(groups[targetGroup], tbl)
 		}
 	}
 
@@ -4731,12 +4777,20 @@ func groupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates 
 }
 
 // extractTableColumn extracts (table, column) from an expression
-// that is an Ident or QualifiedName.
+// that is an Ident or QualifiedName. For bare Idents (implicit
+// comma-join columns like "d6"), resolves the table via the SLT
+// naming convention (d6 => t6.d) so groupBushyJoins can detect
+// cross-table equi-join dependencies. REQ001113.
 func extractTableColumn(e PS.Expr) (string, string) {
 	switch v := e.(type) {
 	case *PS.QualifiedName:
 		return v.Table, v.Name
 	case *PS.Ident:
+		// Resolve bare column to its owning table via SLT naming
+		// convention (e.g. "d6" => table "t6", column "d").
+		if tbl := findTableInSchemas(v.Name); tbl != "" {
+			return tbl, v.Name
+		}
 		return "", v.Name
 	}
 	return "", ""
@@ -5422,6 +5476,12 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 		preds []PS.Expr
 	}
 	var groupOps []groupResult
+	// REQ001113: track equi-join predicates consumed by earlier groups
+	// so subsequent groups don't re-extract them. Without this, a
+	// predicate like a1=d9 consumed within group {t9,t3,t1} would be
+	// re-extracted by the merge phase, causing the final WHERE filter
+	// to skip it and produce 0 rows.
+	consumedPreds := map[PS.Expr]bool{}
 	for gi, group := range joinGroups {
 		baseTable := group[0]
 		var current Operator
@@ -5431,8 +5491,39 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			groupCounts[t]++
 		}
 		joinedTables := map[string]bool{}
-		localConjuncts := make([]PS.Expr, len(crossTableConjuncts))
-		copy(localConjuncts, crossTableConjuncts)
+		// Filter out predicates already consumed by earlier groups.
+		// Also filter to only include predicates where both sides
+		// reference tables in the current group — cross-group equi-join
+		// keys must be left for the merge phase. REQ001113.
+		groupTableSet := map[string]bool{}
+		for _, t := range group {
+			groupTableSet[t] = true
+		}
+		var localConjuncts []PS.Expr
+		for _, c := range crossTableConjuncts {
+			if consumedPreds[c] {
+				continue
+			}
+			// Check if both sides of the predicate reference only
+			// tables in the current group.
+			tables := p.extractTablesFromExpr(c)
+			if len(tables) == 0 {
+				// Constant expression — include it.
+				localConjuncts = append(localConjuncts, c)
+				continue
+			}
+			allInGroup := true
+			for t := range tables {
+				if !groupTableSet[t] {
+					allInGroup = false
+					break
+				}
+			}
+			if allInGroup {
+				localConjuncts = append(localConjuncts, c)
+			}
+		}
+		initialConjuncts := localConjuncts
 		tableOccurrence := make(map[string]int, len(group))
 		joinClauseIdx := make(map[string]int, len(joinClauses))
 		for ci, jc := range joinClauses {
@@ -5607,6 +5698,20 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 				preds: localConjuncts,
 			})
 		}
+		// Record predicates consumed by this group so subsequent groups
+		// don't re-extract them.
+		for _, c := range initialConjuncts {
+			found := false
+			for _, r := range localConjuncts {
+				if c == r {
+					found = true
+					break
+				}
+			}
+			if !found {
+				consumedPreds[c] = true
+			}
+		}
 	}
 	leftTbl := ""
 	joinedTables := map[string]bool{}
@@ -5636,8 +5741,8 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			}
 			if len(lk) == 0 {
 				lk, rk, remaining = p.extractEquiJoinKeys(gr.preds, joinedTables, gr.tbl)
-				_ = remaining
 			}
+			_ = remaining
 			if len(lk) > 0 {
 				joinOp = OP.NewHashJoin(current, gr.op, leftTbl, gr.tbl, lk, rk, 0)
 				if p.joinBufferSize > 0 {
@@ -5650,7 +5755,6 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 						hj.WithProjection(projectedCols)
 					}
 				}
-				_ = remaining
 			}
 		}
 		if joinOp == nil {
