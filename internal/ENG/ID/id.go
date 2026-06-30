@@ -735,12 +735,17 @@ func encodePage(p *page) []byte {
 }
 
 func encodeHeader(h *pageHeader) []byte {
-	buf := make([]byte, headerSize)
+	// REQ001134: stack-allocated array instead of make([]byte, headerSize).
+	// encodeHeader is called from encodePage for every dirty page during
+	// flush. For a BTree with 10K dirty pages, this eliminates 10K small
+	// heap allocations. The slice does not escape because it is used
+	// immediately in copy() by the caller.
+	var buf [headerSize]byte
 	buf[0] = byte(h.pType)
 	binary.BigEndian.PutUint16(buf[1:3], h.numKeys)
 	binary.BigEndian.PutUint16(buf[3:5], h.level)
 	binary.BigEndian.PutUint32(buf[5:9], h.crc)
-	return buf
+	return buf[:]
 }
 
 func decodeHeader(buf []byte) *pageHeader {
