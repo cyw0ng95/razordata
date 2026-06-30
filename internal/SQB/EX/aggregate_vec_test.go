@@ -5,9 +5,10 @@ import (
 	"testing"
 
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
 // makeAggregateTestRows creates N rows with id=0..N-1 and value=id*10.
@@ -29,11 +30,11 @@ func TestVectorizedCount_Basic(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id", "value"}
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW}
-	scan := NewVectorizedSeqScan(src, schema, types)
+	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	cnt := 
-AG.NewVectorizedCount(scan)
+	cnt :=
+		AG.NewVectorizedCount(scan)
 	defer cnt.Close()
 
 	batch, err := cnt.NextBatch(context.Background())
@@ -60,11 +61,11 @@ func TestVectorizedCount_Empty(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id"}
 	types := []LX.TokenType{LX.T_INT_KW}
-	scan := NewVectorizedSeqScan(src, schema, types)
+	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	cnt := 
-AG.NewVectorizedCount(scan)
+	cnt :=
+		AG.NewVectorizedCount(scan)
 	defer cnt.Close()
 
 	batch, err := cnt.NextBatch(context.Background())
@@ -88,11 +89,11 @@ func TestVectorizedSum_Int64(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id", "value"}
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW}
-	scan := NewVectorizedSeqScan(src, schema, types)
+	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	sum := 
-AG.NewVectorizedSum(scan, 1) // sum value column
+	sum :=
+		AG.NewVectorizedSum(scan, 1) // sum value column
 	defer sum.Close()
 
 	batch, err := sum.NextBatch(context.Background())
@@ -124,11 +125,11 @@ func TestVectorizedSum_Float64(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"x"}
 	types := []LX.TokenType{LX.T_FLOAT_KW}
-	scan := NewVectorizedSeqScan(src, schema, types)
+	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	sum := 
-AG.NewVectorizedSum(scan, 0)
+	sum :=
+		AG.NewVectorizedSum(scan, 0)
 	defer sum.Close()
 
 	batch, err := sum.NextBatch(context.Background())
@@ -153,11 +154,11 @@ func TestVectorizedAvg_Basic(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id", "value"}
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW}
-	scan := NewVectorizedSeqScan(src, schema, types)
+	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	avg := 
-AG.NewVectorizedAvg(scan, 1)
+	avg :=
+		AG.NewVectorizedAvg(scan, 1)
 	defer avg.Close()
 
 	batch, err := avg.NextBatch(context.Background())
@@ -182,11 +183,11 @@ func TestVectorizedMin_Basic(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id", "value"}
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW}
-	scan := NewVectorizedSeqScan(src, schema, types)
+	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	min := 
-AG.NewVectorizedMin(scan, 1)
+	min :=
+		AG.NewVectorizedMin(scan, 1)
 	defer min.Close()
 
 	batch, err := min.NextBatch(context.Background())
@@ -210,11 +211,11 @@ func TestVectorizedMax_Basic(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"id", "value"}
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW}
-	scan := NewVectorizedSeqScan(src, schema, types)
+	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	max := 
-AG.NewVectorizedMax(scan, 1)
+	max :=
+		AG.NewVectorizedMax(scan, 1)
 	defer max.Close()
 
 	batch, err := max.NextBatch(context.Background())
@@ -248,11 +249,11 @@ func TestVectorizedSum_LargeBatch(t *testing.T) {
 	src := &rowSourceForTest{rows: rows}
 	schema := []string{"x"}
 	types := []LX.TokenType{LX.T_INT_KW}
-	scan := NewVectorizedSeqScan(src, schema, types)
+	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	sum := 
-AG.NewVectorizedSum(scan, 0)
+	sum :=
+		AG.NewVectorizedSum(scan, 0)
 	defer sum.Close()
 
 	batch, err := sum.NextBatch(context.Background())
@@ -287,9 +288,9 @@ func BenchmarkVectorizedSum_Int64(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		src := &rowSourceForTest{rows: rows}
-		scan := NewVectorizedSeqScan(src, schema, types)
-		sum := 
-AG.NewVectorizedSum(scan, 0)
+		scan := OP.NewVectorizedSeqScan(src, schema, types)
+		sum :=
+			AG.NewVectorizedSum(scan, 0)
 		for {
 			batch, _ := sum.NextBatch(context.Background())
 			if batch == nil {

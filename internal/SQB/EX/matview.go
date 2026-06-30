@@ -21,7 +21,7 @@ func NewCreateMatView(name string, query *PS.Select, store Store) *CreateMatView
 
 func (c *CreateMatViewOperator) Next(ctx context.Context) (Row, error) {
 	if c.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	c.done = true
 
@@ -61,7 +61,7 @@ func NewRefreshMatView(name string, query *PS.Select, store Store, planner *Plan
 
 func (r *RefreshMatViewOperator) Next(ctx context.Context) (Row, error) {
 	if r.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	r.done = true
 
@@ -75,13 +75,13 @@ func (r *RefreshMatViewOperator) Next(ctx context.Context) (Row, error) {
 		return Row{}, err
 	}
 	if plan.Root == nil {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 
 	var materializedRows []Row
 	for {
 		row, err := plan.Root.Next(ctx)
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			break
 		}
 		if err != nil {
@@ -127,7 +127,7 @@ func NewDropMatView(name string, store Store) *DropMatViewOperator {
 
 func (d *DropMatViewOperator) Next(_ context.Context) (Row, error) {
 	if d.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	d.done = true
 

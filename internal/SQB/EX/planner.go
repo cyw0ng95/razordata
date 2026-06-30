@@ -2030,7 +2030,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		// REQ000820: also set up point-lookup for IN-list predicates.
 		if firstPreds := pushedPredicates[s.From]; len(firstPreds) > 0 {
 			for _, pred := range firstPreds {
-				current = NewFilter(current, pred)
+				current = OP.NewFilter(current, pred)
 				tryApplyPointLookup(scan, pred)
 			}
 		}
@@ -2099,14 +2099,14 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 				if extractedPreds[i] {
 					continue
 				}
-				current = NewFilter(current, c)
+				current = OP.NewFilter(current, c)
 			}
 		} else if pushedPredicates == nil {
 			// No predicate pushdown — apply full WHERE as before.
 			conjuncts := RE.SplitAnd(whereExpr)
-			current = NewFilter(current, conjuncts[0])
+			current = OP.NewFilter(current, conjuncts[0])
 			for _, c := range conjuncts[1:] {
-				current = NewFilter(current, c)
+				current = OP.NewFilter(current, c)
 			}
 		}
 	}
@@ -2241,7 +2241,7 @@ func (p *Planner) resolveView(s *PS.Select, viewSel *PS.Select) Operator {
 			innerOp := p.planSelect(viewSel)
 			// Apply the outer query's WHERE clause if present
 			if s.Where != nil {
-				innerOp = NewFilter(innerOp, s.Where)
+				innerOp = OP.NewFilter(innerOp, s.Where)
 			}
 			// Project the outer query's columns over the view's output
 			return NewProject(innerOp, s.Cols)
@@ -2275,17 +2275,17 @@ func (p *Planner) planSelectNoFrom(s *PS.Select) Operator {
 		dummy := newValuesOp([]PS.Expr{&PS.NumberLiteral{Val: int64(1)}})
 		var op Operator = dummy
 		if s.Where != nil {
-			op = NewFilter(op, s.Where)
+			op = OP.NewFilter(op, s.Where)
 		}
 		agg := AG.NewAggregate(op, s.GroupBy, s.Cols)
 		if s.Having != nil {
-			return NewFilter(agg, s.Having)
+			return OP.NewFilter(agg, s.Having)
 		}
 		return agg
 	}
 	op := Operator(newValuesOp(s.Cols))
 	if s.Where != nil {
-		op = NewFilter(op, s.Where)
+		op = OP.NewFilter(op, s.Where)
 	}
 	return op
 }
@@ -2319,7 +2319,7 @@ func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
 	subPlan := p.planSelect(subSel)
 	var current Operator = subPlan
 	if s.Where != nil {
-		current = NewFilter(current, s.Where)
+		current = OP.NewFilter(current, s.Where)
 	}
 	// REQ000859: handle aggregates in SubqueryFrom (e.g.
 	// `SELECT MAX(v) FROM (SELECT v FROM t WHERE v < 30)`).
@@ -2342,7 +2342,7 @@ func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
 		}
 	}
 	if s.Having != nil {
-		current = NewFilter(current, s.Having)
+		current = OP.NewFilter(current, s.Having)
 	}
 	if len(s.OrderBy) > 0 {
 		so := NewSort(current, s.OrderBy)
@@ -2360,7 +2360,7 @@ func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
 func (p *Planner) planSelectSqliteMaster(s *PS.Select) Operator {
 	var scan Operator = OP.NewSqliteMaster()
 	if s.Where != nil {
-		scan = NewFilter(scan, s.Where)
+		scan = OP.NewFilter(scan, s.Where)
 	}
 	return scan
 }
@@ -2418,7 +2418,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 				tableID, _ := DT.TableIDFor(s.From)
 				if isc, err := NewIndexScanWithIndex(p.store, tableID, s.From, idx, val, nil); err == nil {
 					if whereExpr != nil {
-						scan = NewFilter(isc, whereExpr)
+						scan = OP.NewFilter(isc, whereExpr)
 					} else {
 						scan = isc
 					}
@@ -2437,7 +2437,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 					if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
 						scan = isc
 						if whereExpr != nil {
-							scan = NewFilter(scan, whereExpr)
+							scan = OP.NewFilter(scan, whereExpr)
 						}
 					}
 				}
@@ -2455,7 +2455,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 					if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, prefix, true, upper, false); err == nil {
 						scan = isc
 						if whereExpr != nil {
-							scan = NewFilter(scan, whereExpr)
+							scan = OP.NewFilter(scan, whereExpr)
 						}
 					}
 				}
@@ -2467,7 +2467,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 					if isc, err := NewIndexScanWithStore(p.store, s.From, idx); err == nil {
 						scan = isc
 						if whereExpr != nil {
-							scan = NewFilter(scan, whereExpr)
+							scan = OP.NewFilter(scan, whereExpr)
 						}
 					}
 				}
@@ -2475,7 +2475,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 		}
 	}
 	if scan == nil {
-		if ssc, err := NewSeqScanWithStore(p.store, s.From); err == nil {
+		if ssc, err := OP.NewSeqScanWithStore(p.store, s.From); err == nil {
 			scan = ssc
 		}
 	}
@@ -2993,7 +2993,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 			}
 		}
 	}
-	return NewSeqScan(table)
+	return OP.NewSeqScan(table)
 }
 
 // pickCheaperScan returns a cheaper scan alternative for the
@@ -3046,8 +3046,8 @@ func (p *Planner) pickCheaperScan(table string, where PS.Expr, current Operator)
 	}
 	// Wrap both scans in a Filter so the cost reflects the
 	// post-filter work, matching how they will actually run.
-	seqCandidate := NewFilter(current, where)
-	idxCandidate := NewFilter(indexScan, where)
+	seqCandidate := OP.NewFilter(current, where)
+	idxCandidate := OP.NewFilter(indexScan, where)
 	seqCost := p.estimateCost(seqCandidate)
 	idxCost := p.estimateCost(idxCandidate)
 	if idxCost < seqCost {
@@ -3361,17 +3361,17 @@ func (p *Planner) planUpdate(s *PS.Update) Operator {
 		return NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
 	}
 	if p.store != nil {
-		scan, err := NewSeqScanWithStore(p.store, s.Table)
+		scan, err := OP.NewSeqScanWithStore(p.store, s.Table)
 		if err == nil {
-			filter := NewFilter(scan, s.Where)
+			filter := OP.NewFilter(scan, s.Where)
 			op, err := NewUpdateWithStore(p.store, s.Table, s.Set, s.Where, filter, s.Returning)
 			if err == nil {
 				return op
 			}
 		}
 	}
-	scan := NewSeqScan(s.Table)
-	filter := NewFilter(scan, s.Where)
+	scan := OP.NewSeqScan(s.Table)
+	filter := OP.NewFilter(scan, s.Where)
 	return NewUpdate(s.Table, s.Set, s.Where, filter, s.Returning)
 }
 
@@ -3380,17 +3380,17 @@ func (p *Planner) planDelete(s *PS.Delete) Operator {
 		return NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
 	}
 	if p.store != nil {
-		scan, err := NewSeqScanWithStore(p.store, s.Table)
+		scan, err := OP.NewSeqScanWithStore(p.store, s.Table)
 		if err == nil {
-			filter := NewFilter(scan, s.Where)
+			filter := OP.NewFilter(scan, s.Where)
 			op, err := NewDeleteWithStore(p.store, s.Table, s.Where, filter, s.Returning)
 			if err == nil {
 				return op
 			}
 		}
 	}
-	scan := NewSeqScan(s.Table)
-	filter := NewFilter(scan, s.Where)
+	scan := OP.NewSeqScan(s.Table)
+	filter := OP.NewFilter(scan, s.Where)
 	return NewDelete(s.Table, s.Where, filter, s.Returning)
 }
 
@@ -3415,7 +3415,7 @@ func (p *Planner) planExplain(s *PS.ExplainStmt) Operator {
 	innerPlan, err := p.Plan(s.Inner)
 	if err != nil || innerPlan == nil || innerPlan.Root == nil {
 		// Return a placeholder operator that will produce empty output
-		return NewSeqScan("__explain_error__")
+		return OP.NewSeqScan("__explain_error__")
 	}
 
 	// Build the PlanNode tree for structured output
@@ -3450,7 +3450,7 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 		for {
 			row, err := ctePlan.Root.Next(context.TODO())
 			if err != nil {
-				if err == ErrNoRows {
+				if err == DT.ErrNoRows {
 					break
 				}
 				continue
@@ -3475,7 +3475,7 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 
 	innerPlan, err := p.Plan(w.Inner)
 	if err != nil || innerPlan == nil || innerPlan.Root == nil {
-		return NewSeqScan("__cte_error__")
+		return OP.NewSeqScan("__cte_error__")
 	}
 
 	return innerPlan.Root
@@ -3587,7 +3587,7 @@ func drainAllRows(ctx context.Context, op Operator) []Row {
 	for {
 		row, err := op.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				return out
 			}
 			return out
@@ -4846,7 +4846,7 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) Operator {
 		// which needs access to the store for FK introspection.
 		return NewPragma(s).WithStore(p.store)
 	default:
-		return NewSeqScan("__pragma_unknown__")
+		return OP.NewSeqScan("__pragma_unknown__")
 	}
 }
 
@@ -5308,7 +5308,7 @@ func (p *Planner) planAggregation(s *PS.Select, current Operator) Operator {
 	var aggExprs []PS.Expr
 	if !needsAggregate {
 		if s.Having != nil {
-			return NewFilter(current, s.Having)
+			return OP.NewFilter(current, s.Having)
 		}
 		return current
 	}
@@ -5332,7 +5332,7 @@ func (p *Planner) planAggregation(s *PS.Select, current Operator) Operator {
 		current = agg
 	}
 	if s.Having != nil {
-		current = NewFilter(current, s.Having)
+		current = OP.NewFilter(current, s.Having)
 	}
 	return current
 }
@@ -5537,8 +5537,8 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			}
 			joinedTables[s.From] = true
 		} else {
-			var baseOp Operator = NewSeqScan(baseTable)
-			if ssc, err := NewSeqScanWithStore(p.store, baseTable); err == nil {
+			var baseOp Operator = OP.NewSeqScan(baseTable)
+			if ssc, err := OP.NewSeqScanWithStore(p.store, baseTable); err == nil {
 				baseOp = ssc
 			}
 			if baseCi, ok := joinClauseIdx[baseTable]; ok {
@@ -5553,7 +5553,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			if basePreds := pushedPredicates[baseTable]; len(basePreds) > 0 {
 				for _, pred := range basePreds {
 					tryApplyPointLookup(baseOp, pred)
-					baseOp = NewFilter(baseOp, pred)
+					baseOp = OP.NewFilter(baseOp, pred)
 				}
 			}
 			current = baseOp
@@ -5596,8 +5596,8 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			if j.RightAlias != "" {
 				rightTbl = j.RightAlias
 			}
-			var rightScan Operator = NewSeqScan(j.Right)
-			if ssc, err := NewSeqScanWithStore(p.store, j.Right); err == nil {
+			var rightScan Operator = OP.NewSeqScan(j.Right)
+			if ssc, err := OP.NewSeqScanWithStore(p.store, j.Right); err == nil {
 				rightScan = ssc
 			}
 			if j.RightAlias != "" {
@@ -5608,7 +5608,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
 				for _, pred := range rightPreds {
 					tryApplyPointLookup(rightScan, pred)
-					rightScan = NewFilter(rightScan, pred)
+					rightScan = OP.NewFilter(rightScan, pred)
 				}
 			}
 			var joinOp Operator

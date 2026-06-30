@@ -8,6 +8,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -15,8 +16,8 @@ import (
 // ExplainStmtOp is an operator that produces EXPLAIN output.
 // It wraps a planned inner statement and renders its plan tree.
 type ExplainStmtOp struct {
-	mode   PS.ExplainMode
-	format PS.ExplainFormat
+	mode     PS.ExplainMode
+	format   PS.ExplainFormat
 	planNode *PlanNode
 	root     Operator
 	rows     []Row
@@ -27,7 +28,7 @@ type ExplainStmtOp struct {
 
 func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
 	if e.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 
 	if e.rows == nil && e.treeText == "" {
@@ -66,7 +67,7 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
 
 	if e.pos >= len(e.rows) {
 		e.done = true
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 
 	row := e.rows[e.pos]
@@ -82,7 +83,7 @@ func executeAndCollectStats(ctx context.Context, root Operator, pn *PlanNode) er
 	for {
 		_, err := root.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			return err
@@ -106,5 +107,3 @@ func (e *ExplainStmtOp) Close() error {
 	e.done = false
 	return nil
 }
-
-

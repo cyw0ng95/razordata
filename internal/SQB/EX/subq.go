@@ -5,12 +5,13 @@
 package EX
 
 import (
+	"context"
 	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
-	"context"
 
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
@@ -105,7 +106,7 @@ func runSubqueryPlan(ctx context.Context, pl *pl.PlanResult, outer *Row, params 
 		}
 		row, err := pl.Root.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			return nil, err

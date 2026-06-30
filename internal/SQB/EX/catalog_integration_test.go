@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -31,7 +31,7 @@ func TestCatalog_Integration_CreateSurvivesClose(t *testing.T) {
 	stmt := newCreateTable("users", []string{"id", "name"}, "id")
 	ct := NewCreateTable(stmt)
 	_, err = ct.Next(context.Background())
-	if err != nil && err != ErrNoRows {
+	if err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CreateTable.Next: %v", err)
 	}
 	if err := cat.Close(); err != nil {
@@ -78,11 +78,11 @@ func TestCatalog_Integration_DropSurvivesClose(t *testing.T) {
 	})
 
 	ct := NewCreateTable(newCreateTable("t", []string{"id"}, "id"))
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CreateTable: %v", err)
 	}
 	dt := NewDropTable(&PS.DropTable{Name: "t"})
-	if _, err := dt.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := dt.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("DropTable: %v", err)
 	}
 	if err := cat.Close(); err != nil {

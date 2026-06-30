@@ -4,10 +4,11 @@ import (
 	"context"
 	"testing"
 
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
-	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 )
 
 type runCase struct {
@@ -181,10 +182,10 @@ func buildPlan(t *testing.T, stmt PS.Stmt) Operator {
 	if !ok {
 		t.Fatalf("expected *Select, got %T", stmt)
 	}
-	scan := NewSeqScan(sel.From)
+	scan := OP.NewSeqScan(sel.From)
 	var current Operator = scan
 	if sel.Where != nil {
-		current = NewFilter(current, sel.Where)
+		current = OP.NewFilter(current, sel.Where)
 	}
 	hasAgg := hasAggregatePublic(sel.Cols)
 	if hasAgg {
@@ -253,7 +254,7 @@ func drain(t *testing.T, op Operator) [][]any {
 	var out [][]any
 	for {
 		row, err := op.Next(ctx)
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			break
 		}
 		if err != nil {
@@ -292,7 +293,7 @@ func TestShallowCopy_Independent(t *testing.T) {
 
 // REQ000638: SeqScan.Close on uninitialized scan does not panic or error.
 func TestSeqScan_CloseUninitialized(t *testing.T) {
-	s := NewSeqScan("test")
+	s := OP.NewSeqScan("test")
 	if err := s.Close(); err != nil {
 		t.Errorf("Close on uninitialized SeqScan: %v", err)
 	}
@@ -300,7 +301,7 @@ func TestSeqScan_CloseUninitialized(t *testing.T) {
 
 // REQ000638: SeqScan double-close is idempotent.
 func TestSeqScan_CloseDouble(t *testing.T) {
-	s := NewSeqScan("test")
+	s := OP.NewSeqScan("test")
 	err1 := s.Close()
 	err2 := s.Close()
 	if err1 != nil || err2 != nil {

@@ -29,7 +29,7 @@ func TestCreateMatViewOperator(t *testing.T) {
 	}
 
 	_, err = op.Next(ctx)
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Errorf("second Next should return ErrNoRows, got %v", err)
 	}
 }

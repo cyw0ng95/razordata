@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 // CreateViewOperator registers a view definition (REQ000240).
@@ -22,7 +22,7 @@ func NewCreateView(stmt *PS.CreateViewStmt) *CreateViewOperator {
 
 func (c *CreateViewOperator) Next(_ context.Context) (Row, error) {
 	if c.done {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	c.done = true
 

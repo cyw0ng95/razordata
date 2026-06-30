@@ -47,7 +47,7 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 	}
 	op := NewCreateTable(stmt)
 	row, err := op.Next(ctx)
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Fatalf("CreateTable.Next() unexpected error = %v", err)
 	}
 	if row.Cols != nil || len(row.Data) != 0 {
@@ -79,7 +79,7 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 	}
 	op2 := NewCreateTable(stmt2)
 	row2, err := op2.Next(ctx)
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Fatalf("CreateTable.Next() error for test2 = %v", err)
 	}
 	if row2.Cols != nil || len(row2.Data) != 0 {
@@ -102,7 +102,7 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 	}
 	op3 := NewCreateTable(stmt3)
 	_, err = op3.Next(ctx)
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Fatalf("CreateTable.Next() error for test3 = %v", err)
 	}
 
@@ -120,7 +120,7 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 	}
 	op4 := NewCreateTable(stmt4)
 	_, err = op4.Next(ctx)
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Fatalf("CreateTable.Next() error for test4 = %v", err)
 	}
 

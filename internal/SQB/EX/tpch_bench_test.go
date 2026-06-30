@@ -1,14 +1,15 @@
 package EX
 
 import (
-	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	"context"
+	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	"math/rand/v2"
 	"testing"
 
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
-	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
 // makeTPCHLikeRows creates N rows simulating TPC-H lineitem schema:
@@ -20,7 +21,7 @@ func makeTPCHLikeRows(n int, seed int64) []Row {
 		rows[i] = Row{
 			Cols:  []string{"l_orderkey", "l_linenumber", "l_quantity", "l_extendedprice", "l_discount", "l_tax"},
 			Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW, LX.T_FLOAT_KW, LX.T_FLOAT_KW, LX.T_FLOAT_KW, LX.T_FLOAT_KW},
-			Data: []Value{NewIntValue(int64(rng.IntN(1000000))), NewIntValue(int64(rng.IntN(7) + 1)), NewFloatValue(float64(rng.IntN(50) + 1)), NewFloatValue(float64(rng.IntN(100000)) / 100.), NewFloatValue(float64(rng.IntN(10)) / 100.), NewFloatValue(float64(rng.IntN(8)) / 100.)},
+			Data:  []Value{NewIntValue(int64(rng.IntN(1000000))), NewIntValue(int64(rng.IntN(7) + 1)), NewFloatValue(float64(rng.IntN(50) + 1)), NewFloatValue(float64(rng.IntN(100000)) / 100.), NewFloatValue(float64(rng.IntN(10)) / 100.), NewFloatValue(float64(rng.IntN(8)) / 100.)},
 		}
 	}
 	return rows
@@ -38,7 +39,7 @@ func BenchmarkTPCH_Q1(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		src := &rowSourceForTest{rows: rows}
-		scan := NewVectorizedSeqScan(src, schema, types)
+		scan := OP.NewVectorizedSeqScan(src, schema, types)
 		// Apply filter: l_quantity > 25 (simulating l_shipdate filter)
 		filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
 			Left:  &PS.Ident{Name: "l_quantity"},
@@ -72,7 +73,7 @@ func BenchmarkTPCH_Q6(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		src := &rowSourceForTest{rows: rows}
-		scan := NewVectorizedSeqScan(src, schema, types)
+		scan := OP.NewVectorizedSeqScan(src, schema, types)
 		// Apply filter: l_quantity < 24
 		filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
 			Left:  &PS.Ident{Name: "l_quantity"},

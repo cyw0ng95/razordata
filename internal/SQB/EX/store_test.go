@@ -7,8 +7,9 @@ import (
 	"strconv"
 	"testing"
 
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
 
 // engineStore adapts an *ls.Engine to the EX.Store interface.
@@ -327,7 +328,7 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 	b.Run("Next", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			scan, err := NewSeqScanWithStore(s, "bench")
+			scan, err := OP.NewSeqScanWithStore(s, "bench")
 			if err != nil {
 				b.Fatalf("NewSeqScanWithStore: %v", err)
 			}
@@ -335,7 +336,7 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 			for {
 				_, err := scan.Next(ctx)
 				if err != nil {
-					if err == ErrNoRows {
+					if err == DT.ErrNoRows {
 						break
 					}
 					b.Fatalf("Next: %v", err)
@@ -352,7 +353,7 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 	b.Run("NextBatch", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			scan, err := NewSeqScanWithStore(s, "bench")
+			scan, err := OP.NewSeqScanWithStore(s, "bench")
 			if err != nil {
 				b.Fatalf("NewSeqScanWithStore: %v", err)
 			}
@@ -444,7 +445,7 @@ func BenchmarkSeqScan_FullScan(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		scan, err := NewSeqScanWithStore(s, "bench")
+		scan, err := OP.NewSeqScanWithStore(s, "bench")
 		if err != nil {
 			b.Fatalf("NewSeqScanWithStore: %v", err)
 		}
@@ -452,7 +453,7 @@ func BenchmarkSeqScan_FullScan(b *testing.B) {
 		for {
 			_, err := scan.Next(ctx)
 			if err != nil {
-				if err == ErrNoRows {
+				if err == DT.ErrNoRows {
 					break
 				}
 				b.Fatalf("Next: %v", err)

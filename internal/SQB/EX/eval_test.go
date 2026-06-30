@@ -6,6 +6,7 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -260,12 +261,12 @@ func TestEvalCrossTypeEq(t *testing.T) {
 }
 
 func TestOperators(t *testing.T) {
-	scan := NewSeqScan("t")
+	scan := OP.NewSeqScan("t")
 	if scan == nil {
 		t.Fatal("NewSeqScan returned nil")
 	}
 
-	filter := NewFilter(scan, nil)
+	filter := OP.NewFilter(scan, nil)
 	if filter == nil {
 		t.Fatal("NewFilter returned nil")
 	}
@@ -289,9 +290,9 @@ func TestOperators(t *testing.T) {
 func TestSeqScanEmpty(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	scan := NewSeqScan("missing")
+	scan := OP.NewSeqScan("missing")
 	_, err := scan.Next(context.Background())
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows for missing table, got %v", err)
 	}
 }
@@ -303,8 +304,8 @@ func TestFilterPassesThrough(t *testing.T) {
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(1))}},
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(2))}},
 	})
-	scan := NewSeqScan("t")
-	filter := NewFilter(scan, &PS.NumberLiteral{Val: 1})
+	scan := OP.NewSeqScan("t")
+	filter := OP.NewFilter(scan, &PS.NumberLiteral{Val: 1})
 	row, err := filter.Next(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -320,7 +321,7 @@ func TestProjectStarPassesThrough(t *testing.T) {
 	DT.RegisterTable("t", []Row{
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(7))}},
 	})
-	scan := NewSeqScan("t")
+	scan := OP.NewSeqScan("t")
 	project := NewProject(scan, []PS.Expr{&PS.StarExpr{}})
 	row, err := project.Next(context.Background())
 	if err != nil {
@@ -339,7 +340,7 @@ func TestSortThenIterate(t *testing.T) {
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(1))}},
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(2))}},
 	})
-	scan := NewSeqScan("t")
+	scan := OP.NewSeqScan("t")
 	s := NewSort(scan, []PS.OrderItem{{Expr: &PS.Ident{Name: "x"}, Desc: false}})
 	want := []int64{1, 2, 3}
 	for _, w := range want {
@@ -351,7 +352,7 @@ func TestSortThenIterate(t *testing.T) {
 			t.Errorf("expected %d, got %v", w, row.Data[0])
 		}
 	}
-	if _, err := s.Next(context.Background()); err != ErrNoRows {
+	if _, err := s.Next(context.Background()); err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
 	}
 }
@@ -364,12 +365,12 @@ func TestLimitStops(t *testing.T) {
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(2))}},
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(3))}},
 	})
-	scan := NewSeqScan("t")
+	scan := OP.NewSeqScan("t")
 	l := NewLimit(scan, 2)
 	count := 0
 	for {
 		_, err := l.Next(context.Background())
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			break
 		}
 		if err != nil {
@@ -391,7 +392,7 @@ func TestInsertAppendsRows(t *testing.T) {
 		{&PS.NumberLiteral{Val: 2}},
 	}, nil, nil)
 	_, err := insert.Next(context.Background())
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
 	}
 	if insert.RowsAffected() != 2 {
@@ -411,10 +412,10 @@ func TestUpdateModifiesRows(t *testing.T) {
 		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("x")}},
 		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("y")}},
 	})
-	scan := NewSeqScan("t")
+	scan := OP.NewSeqScan("t")
 	update := NewUpdate("t", []PS.Pair{{Col: "b", Val: &PS.StringLiteral{Val: "z"}}}, nil, scan, nil)
 	_, err := update.Next(context.Background())
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
 	}
 	if update.RowsAffected() != 2 {
@@ -437,13 +438,13 @@ func TestDeleteRemovesMatching(t *testing.T) {
 		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(2))}},
 		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(3))}},
 	})
-	scan := NewSeqScan("t")
-	filter := NewFilter(scan, &PS.BinaryExpr{
+	scan := OP.NewSeqScan("t")
+	filter := OP.NewFilter(scan, &PS.BinaryExpr{
 		Op: LX.T_GT, Left: &PS.Ident{Name: "a"}, Right: &PS.NumberLiteral{Val: 1},
 	})
 	del := NewDelete("t", nil, filter, nil)
 	_, err := del.Next(context.Background())
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
 	}
 	if del.RowsAffected() != 2 {
@@ -548,7 +549,7 @@ func TestCreateAndDropTable(t *testing.T) {
 	defer UnregisterAll()
 	ct := NewCreateTable(&PS.CreateTable{Name: "new", Cols: []PS.ColDef{{Name: "a", Type: LX.T_INT_KW}}})
 	_, err := ct.Next(context.Background())
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
 	}
 	DT.TablesMu.RLock()
@@ -558,7 +559,7 @@ func TestCreateAndDropTable(t *testing.T) {
 	DT.TablesMu.RUnlock()
 	dt := NewDropTable(&PS.DropTable{Name: "new"})
 	_, err = dt.Next(context.Background())
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
 	}
 	DT.TablesMu.RLock()

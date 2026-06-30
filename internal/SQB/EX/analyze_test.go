@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -36,7 +37,7 @@ func TestVacuum_Integration(t *testing.T) {
 	defer op.Close()
 
 	_, err = op.Next(ctx)
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Fatalf("expected ErrNoRows, got %v", err)
 	}
 
@@ -91,7 +92,7 @@ func TestVacuum_WithStore(t *testing.T) {
 
 	ctx := context.Background()
 	_, err = vacuum.Next(ctx)
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Fatalf("Vacuum Next failed: %v", err)
 	}
 

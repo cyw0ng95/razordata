@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
@@ -27,7 +28,7 @@ func TestConstraints_NotNull_InsertOK(t *testing.T) {
 		},
 		PK: ptr("id"),
 	})
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
 	ins, err := NewInsertWithStore(nil, "t", []string{"id", "name"}, [][]PS.Expr{
@@ -36,7 +37,7 @@ func TestConstraints_NotNull_InsertOK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewInsertWithStore: %v", err)
 	}
-	if _, err := ins.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ins.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Errorf("INSERT with values: %v", err)
 	}
 }
@@ -54,7 +55,7 @@ func TestConstraints_NotNull_InsertMissingValue_Rejected(t *testing.T) {
 		},
 		PK: ptr("id"),
 	})
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
 	// Omit the `name` column.
@@ -87,7 +88,7 @@ func TestConstraints_Default_InsertFills(t *testing.T) {
 		},
 		PK: ptr("id"),
 	})
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
 	ss, ok := DT.SchemaFor("t")
@@ -112,7 +113,7 @@ func TestConstraints_NotNull_PrimaryKey_Implied(t *testing.T) {
 		},
 		PK: ptr("id"),
 	})
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
 	// Omit the PK column entirely.
@@ -141,7 +142,7 @@ func TestConstraints_Nullable_ColumnAcceptsNull(t *testing.T) {
 		},
 		PK: ptr("id"),
 	})
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
 	ins, err := NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
@@ -150,7 +151,7 @@ func TestConstraints_Nullable_ColumnAcceptsNull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewInsertWithStore: %v", err)
 	}
-	if _, err := ins.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ins.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Errorf("INSERT omitting nullable col: %v", err)
 	}
 }
@@ -168,18 +169,18 @@ func TestConstraints_Update_NotNull(t *testing.T) {
 		},
 		PK: ptr("id"),
 	})
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
 	// Seed a row.
 	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "name"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "a"}},
 	}, nil, nil)
-	if _, err := ins.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ins.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("seed INSERT: %v", err)
 	}
 	// Attempt to set name = NULL via UPDATE.
-	scan := NewSeqScan("t")
+	scan := OP.NewSeqScan("t")
 	upd := NewUpdate("t", []PS.Pair{
 		{Col: "name", Val: &PS.NullLiteral{}},
 	}, nil, scan, nil)
@@ -327,7 +328,7 @@ func TestUnique_ColumnLevel_DuplicateRejected(t *testing.T) {
 		},
 		PK: ptr("id"),
 	})
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
 	ins, err := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
@@ -336,7 +337,7 @@ func TestUnique_ColumnLevel_DuplicateRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ins.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ins.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("first INSERT: %v", err)
 	}
 	// Second insert with same email → ErrConstraint.
@@ -362,14 +363,14 @@ func TestUnique_ColumnLevel_DistinctValuesOK(t *testing.T) {
 		},
 		PK: ptr("id"),
 	})
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
 	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "a@x"}},
 		{&PS.NumberLiteral{Val: 2}, &PS.StringLiteral{Val: "b@x"}},
 	}, nil, nil)
-	if _, err := ins.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ins.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Errorf("distinct emails: %v", err)
 	}
 }
@@ -389,7 +390,7 @@ func TestUnique_Composite_PartialMatchAllowed(t *testing.T) {
 		PK:                ptr("id"),
 		UniqueConstraints: []PS.UniqueKey{{Cols: []string{"a", "b"}}},
 	})
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
 	ss, ok := DT.SchemaFor("t")
@@ -419,7 +420,7 @@ func TestUnique_Composite_FullMatchRejected(t *testing.T) {
 		PK:                ptr("id"),
 		UniqueConstraints: []PS.UniqueKey{{Cols: []string{"a", "b"}}},
 	})
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
 	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "a", "b"}, [][]PS.Expr{
@@ -445,7 +446,7 @@ func TestUnique_WithinStatement(t *testing.T) {
 		},
 		PK: ptr("id"),
 	})
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
 	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
@@ -470,7 +471,7 @@ func TestUnique_PrimaryKeyImplied(t *testing.T) {
 		},
 		PK: ptr("id"),
 	})
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
 	ins, _ := NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
@@ -496,14 +497,14 @@ func TestUnique_NullSkipped(t *testing.T) {
 		},
 		PK: ptr("id"),
 	})
-	if _, err := ct.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
 	ins, _ := NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}}, // tag omitted → NULL
 		{&PS.NumberLiteral{Val: 2}}, // tag omitted → NULL (allowed)
 	}, nil, nil)
-	if _, err := ins.Next(context.Background()); err != nil && err != ErrNoRows {
+	if _, err := ins.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Errorf("multiple NULLs on UNIQUE: %v", err)
 	}
 }

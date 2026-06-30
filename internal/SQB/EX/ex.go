@@ -80,7 +80,6 @@ func CurrentTxWriter() TxWriter {
 }
 
 var ErrNotImplemented = errors.New("ex: not implemented")
-var ErrNoRows = DT.ErrNoRows
 var ErrClosed = errors.New("ex: operator closed")
 
 // Value is a tagged-union that stores SQL values inline without boxing.
@@ -238,9 +237,7 @@ var ErrTableNotRegisteredForStorage = OP.ErrTableNotRegisteredForStorage
 var JoinKindInner = OP.JoinKindInner
 var JoinKindCross = OP.JoinKindCross
 
-var NewSeqScan = OP.NewSeqScan
 var NewSeqScanWithStore = OP.NewSeqScanWithStore
-var NewFilter = OP.NewFilter
 var NewProject = OP.NewProject
 var NewSort = OP.NewSort
 var NewLimit = OP.NewLimit
@@ -251,7 +248,6 @@ var NewParallelSeqScan = OP.NewParallelSeqScan
 var NewParallelIndexScan = OP.NewParallelIndexScan
 var NewParallelIndexRangeScan = OP.NewParallelIndexRangeScan
 var NewParallelUnionAll = OP.NewParallelUnionAll
-var NewVectorizedSeqScan = OP.NewVectorizedSeqScan
 var NewVectorizedFilter = OP.NewVectorizedFilter
 var NewCompoundOp = OP.NewCompoundOp
 var newValuesOp = OP.NewValuesOp
@@ -924,7 +920,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 				for {
 					_, err := op.Next(ctx)
 					if err != nil {
-						if err == ErrNoRows {
+						if err == DT.ErrNoRows {
 							break
 						}
 						return Result{}, err
@@ -943,7 +939,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 			execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 			propagateExecContext(op, execCtx)
 			defer op.Close()
-			if _, err := op.Next(ctx); err != nil && err != ErrNoRows {
+			if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
 				return Result{}, err
 			}
 			e.lastChanges = execCtx.LastChanges
@@ -974,7 +970,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 		for {
 			_, err := op.Next(ctx)
 			if err != nil {
-				if err == ErrNoRows {
+				if err == DT.ErrNoRows {
 					break
 				}
 				return Result{}, err
@@ -996,7 +992,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 	propagateExecContext(op, execCtx)
 	defer op.Close()
-	if _, err := op.Next(ctx); err != nil && err != ErrNoRows {
+	if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
 		return Result{}, err
 	}
 	e.lastChanges = execCtx.LastChanges
@@ -1034,7 +1030,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 				for {
 					row, err := op.Next(ctx)
 					if err != nil {
-						if err == ErrNoRows {
+						if err == DT.ErrNoRows {
 							break
 						}
 						return nil, err
@@ -1061,7 +1057,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 			defer plan.Root.Close()
 			row, err := plan.Root.Next(ctx)
 			if err != nil {
-				if err == ErrNoRows {
+				if err == DT.ErrNoRows {
 					return &Rows{}, nil
 				}
 				return nil, err
@@ -1094,7 +1090,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 		for {
 			row, err := op.Next(ctx)
 			if err != nil {
-				if err == ErrNoRows {
+				if err == DT.ErrNoRows {
 					break
 				}
 				return nil, err
@@ -1123,7 +1119,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	defer plan.Root.Close()
 	row, err := plan.Root.Next(ctx)
 	if err != nil {
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			return &Rows{}, nil
 		}
 		return nil, err
@@ -1154,7 +1150,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 			for {
 				row, err := plan.Root.Next(ctx)
 				if err != nil {
-					if err == ErrNoRows {
+					if err == DT.ErrNoRows {
 						break
 					}
 					return nil, err
@@ -1197,7 +1193,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 	for {
 		row, err := plan.Root.Next(ctx)
 		if err != nil {
-			if err == ErrNoRows {
+			if err == DT.ErrNoRows {
 				break
 			}
 			return nil, err
@@ -1506,15 +1502,15 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 			}
 			targetTable = viewSel.From
 		}
-		var scan Operator = NewSeqScan(targetTable)
+		var scan Operator = OP.NewSeqScan(targetTable)
 		if e.store != nil {
-			ssc, err := NewSeqScanWithStore(e.store, targetTable)
+			ssc, err := OP.NewSeqScanWithStore(e.store, targetTable)
 			if err != nil {
 				return nil, err
 			}
 			scan = ssc
 		}
-		filter := NewFilter(scan, s.Where)
+		filter := OP.NewFilter(scan, s.Where)
 		// REQ000558: apply ORDER BY / LIMIT / OFFSET to the row
 		// selection before updating.
 		var current Operator = filter
@@ -1561,15 +1557,15 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 			}
 			tableName = viewSel.From
 		}
-		var scan Operator = NewSeqScan(tableName)
+		var scan Operator = OP.NewSeqScan(tableName)
 		if e.store != nil {
-			ssc, err := NewSeqScanWithStore(e.store, tableName)
+			ssc, err := OP.NewSeqScanWithStore(e.store, tableName)
 			if err != nil {
 				return nil, err
 			}
 			scan = ssc
 		}
-		filter := NewFilter(scan, s.Where)
+		filter := OP.NewFilter(scan, s.Where)
 		// REQ000475: apply ORDER BY / LIMIT / OFFSET to the row
 		// selection before deleting.
 		var current Operator = filter
@@ -1757,11 +1753,11 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 		}
 		propagateParams(op, args)
 		firstRow, firstErr := op.Next(ctx)
-		if firstErr != nil && firstErr != ErrNoRows {
+		if firstErr != nil && firstErr != DT.ErrNoRows {
 			op.Close()
 			return nil, firstErr
 		}
-		if firstErr == ErrNoRows {
+		if firstErr == DT.ErrNoRows {
 			// No RETURNING rows; return empty iterator
 			op.Close()
 			return &streamIterator{
@@ -1824,7 +1820,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	// Read first row to discover schema
 	row, err := plan.Root.Next(ctx)
 	if err != nil {
-		if err == ErrNoRows {
+		if err == DT.ErrNoRows {
 			plan.Root.Close()
 			return &streamIterator{
 				cols:  nil,
@@ -1900,12 +1896,12 @@ func (s *streamIterator) Cols() []string        { return s.cols }
 func (s *streamIterator) Types() []LX.TokenType { return s.types }
 func (s *streamIterator) Next() (Row, error) {
 	if s == nil || s.done || s.rowCh == nil {
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	r, ok := <-s.rowCh
 	if !ok {
 		s.done = true
-		return Row{}, ErrNoRows
+		return Row{}, DT.ErrNoRows
 	}
 	return r, nil
 }
@@ -1932,7 +1928,7 @@ func NewNoop() *Noop {
 }
 
 func (n *Noop) Next(ctx context.Context) (Row, error) {
-	return Row{}, ErrNoRows
+	return Row{}, DT.ErrNoRows
 }
 
 func (n *Noop) Close() error {

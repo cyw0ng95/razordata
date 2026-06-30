@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"testing"
 
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -102,7 +102,7 @@ func TestIndexScan_WithIndexSeek(t *testing.T) {
 
 	// Next call should return ErrNoRows
 	_, err = scan.Next(ctx)
-	if err != ErrNoRows {
+	if err != DT.ErrNoRows {
 		t.Errorf("second Next: got %v, want ErrNoRows", err)
 	}
 }

@@ -52,7 +52,7 @@ func TestCostModel_Parameters(t *testing.T) {
 		// test expectations and behavior).
 		p := NewPlanner()
 		p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
-		if got := p.estimateCost(NewSeqScan("t")); got != 1.0 {
+		if got := p.estimateCost(OP.NewSeqScan("t")); got != 1.0 {
 			t.Errorf("SeqScan cost (legacy) = %v, want 1.0", got)
 		}
 	})
@@ -64,7 +64,7 @@ func TestCostModel_SeqScan(t *testing.T) {
 	p := NewPlanner()
 	p.SetCostParams(DefaultCostParams())
 	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	scan := NewSeqScan("t")
+	scan := OP.NewSeqScan("t")
 	cost := p.estimateCost(scan)
 	if cost < 1.0 {
 		t.Errorf("SeqScan cost = %v, want >= 1.0", cost)
@@ -74,8 +74,8 @@ func TestCostModel_SeqScan(t *testing.T) {
 // TestCostModel_NLJ verifies REQ001104: NLJ cost with the new
 // formula scales with CPUOperatorCost.
 func TestCostModel_NLJ(t *testing.T) {
-	scan1 := NewSeqScan("t")
-	scan2 := NewSeqScan("t")
+	scan1 := OP.NewSeqScan("t")
+	scan2 := OP.NewSeqScan("t")
 	nlj := NewNestedLoopJoin(scan1, scan2, "l", "r", nil, JoinKindInner)
 
 	t.Run("low_cpu", func(t *testing.T) {
@@ -116,8 +116,8 @@ func TestCostModel_HashJoin(t *testing.T) {
 	p := NewPlanner()
 	p.SetCostParams(DefaultCostParams())
 	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	left := NewSeqScan("t")
-	right := NewSeqScan("t")
+	left := OP.NewSeqScan("t")
+	right := OP.NewSeqScan("t")
 	hj := OP.NewHashJoin(left, right, "l", "r", []string{"a"}, []string{"a"}, 0)
 	cost := p.estimateCost(hj)
 	if cost < 1.0 {
@@ -134,7 +134,7 @@ func TestCostModel_MemoryPressure(t *testing.T) {
 	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
 
 	t.Run("sort_under_budget", func(t *testing.T) {
-		scan := NewSeqScan("t")
+		scan := OP.NewSeqScan("t")
 		sort := NewSort(scan, []PS.OrderItem{{Expr: &PS.QualifiedName{Name: "a"}, Desc: false}})
 		estimated, budget := p.estimateMemoryPressure(sort)
 		if budget != 16<<20 {
@@ -145,8 +145,8 @@ func TestCostModel_MemoryPressure(t *testing.T) {
 		}
 	})
 	t.Run("hash_join_under_budget", func(t *testing.T) {
-		left := NewSeqScan("t")
-		right := NewSeqScan("t")
+		left := OP.NewSeqScan("t")
+		right := OP.NewSeqScan("t")
 		hj := OP.NewHashJoin(left, right, "l", "r", []string{"a"}, []string{"a"}, 0)
 		estimated, _ := p.estimateMemoryPressure(hj)
 		if estimated < 0 {
@@ -156,7 +156,7 @@ func TestCostModel_MemoryPressure(t *testing.T) {
 	t.Run("default_budget_when_unset", func(t *testing.T) {
 		p2 := NewPlanner()
 		p2.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
-		scan := NewSeqScan("t")
+		scan := OP.NewSeqScan("t")
 		sort := NewSort(scan, []PS.OrderItem{{Expr: &PS.QualifiedName{Name: "a"}, Desc: false}})
 		_, budget := p2.estimateMemoryPressure(sort)
 		// Default 64 MB when maxMemoryPerQuery unset.
@@ -173,7 +173,7 @@ func TestCostModel_MemoryPressure(t *testing.T) {
 func TestCostModel_LegacyStillWorks(t *testing.T) {
 	p := NewPlanner()
 	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	scan := NewSeqScan("t")
+	scan := OP.NewSeqScan("t")
 	// Legacy SeqScan = 1.0.
 	if got := p.estimateCost(scan); got != 1.0 {
 		t.Errorf("Legacy SeqScan = %v, want 1.0", got)
