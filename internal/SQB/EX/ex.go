@@ -17,7 +17,6 @@ import (
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
@@ -27,18 +26,10 @@ import (
 // Re-exported from DT for backward compatibility.
 type SessionCounterAccessor = DT.SessionCounterAccessor
 
-// SetSessionCounterAccessor re-exports DT.SetSessionCounterAccessor for
-// backward-compatibility with SYS packages.
-var SetSessionCounterAccessor = DT.SetSessionCounterAccessor
-
 // Eval error re-exports for backward compatibility with SYS packages.
 // Aliased to EV versions so identity matches.
 var (
-	ErrEval         = EV.ErrEval
-	ErrDivByZero    = EV.ErrDivByZero
-	ErrTypeMismatch = EV.ErrTypeMismatch
-	ErrSubquery     = EV.ErrSubquery
-	ErrTriggerAbort = EV.ErrTriggerAbort
+	ErrEval = EV.ErrEval
 )
 
 var (
@@ -190,9 +181,7 @@ func ValueSliceToAny(v []Value) []any { return valueSliceToAny(v) }
 
 // SetCatalog and RegisterFromCatalog re-export DT functions for
 // backward-compatibility with SYS packages.
-var SetCatalog = DT.SetCatalog
 var RegisterFromCatalog = DT.RegisterFromCatalog
-var RestoreInMemoryTables = DT.RestoreInMemoryTables
 
 // Operator is the core execution interface. Aliased from PL.
 type Operator = DT.Operator
@@ -244,15 +233,10 @@ type ForeignKeyConstraint = DT.ForeignKeyConstraint
 type RegisteredIndex = DT.RegisteredIndex
 
 var ErrTableNotRegisteredForStorage = OP.ErrTableNotRegisteredForStorage
-var ErrNoPKForStorage = OP.ErrNoPKForStorage
-var ErrNoEngine = OP.ErrNoEngine
 
 // Backward-compat function aliases for types/functions moved to OP.
 var JoinKindInner = OP.JoinKindInner
 var JoinKindCross = OP.JoinKindCross
-var JoinKindLeft = OP.JoinKindLeft
-var JoinKindRight = OP.JoinKindRight
-var JoinKindFull = OP.JoinKindFull
 
 var NewSeqScan = OP.NewSeqScan
 var NewSeqScanWithStore = OP.NewSeqScanWithStore
@@ -270,8 +254,6 @@ var NewParallelUnionAll = OP.NewParallelUnionAll
 var NewVectorizedSeqScan = OP.NewVectorizedSeqScan
 var NewVectorizedFilter = OP.NewVectorizedFilter
 var NewCompoundOp = OP.NewCompoundOp
-var NewValuesOp = OP.NewValuesOp
-var NewValuesRowsOp = OP.NewValuesRowsOp
 var newValuesOp = OP.NewValuesOp
 var newValuesRowsOp = OP.NewValuesRowsOp
 var NewIntegrityCheck = UT.NewIntegrityCheck
@@ -280,24 +262,19 @@ var NewAnalyze = UT.NewAnalyze
 var NewAnalyzeWithStore = UT.NewAnalyzeWithStore
 var NewVacuum = UT.NewVacuum
 var NewVacuumWithStore = UT.NewVacuumWithStore
-var ValidateForeignKeyUpdateInMemory = UT.ValidateForeignKeyUpdateInMemory
-var ValidateForeignKeyDeleteInMemory = UT.ValidateForeignKeyDeleteInMemory
 var SchemaFromRowSchema = OP.SchemaFromRowSchema
 var NewIndexScan = OP.NewIndexScan
 var NewIndexScanWithStore = OP.NewIndexScanWithStore
 var NewIndexScanWithIndex = OP.NewIndexScanWithIndex
-var NewIndexScanWithBTree = OP.NewIndexScanWithBTree
 var NewIndexScanWithRange = OP.NewIndexScanWithRange
 var tablePrefix = OP.TablePrefix
 var decodeRow = OP.DecodeRow
 var buildIndexKey = OP.BuildIndexKey
-var encodeTablePrefix = OP.EncodeTablePrefix
 var EncodeRow = OP.EncodeRow
 var RowKey = OP.RowKey
 var ExtractPK = OP.ExtractPK
 var ExtractPKForUpdate = OP.ExtractPKForUpdate
 var MaintainIndexesOnInsert = OP.MaintainIndexesOnInsert
-var MaintainIndexesOnDelete = OP.MaintainIndexesOnDelete
 var MaintainIndexesOnUpdate = OP.MaintainIndexesOnUpdate
 
 // stmtCacheEntry holds a cached parsed statement with LRU metadata.
@@ -455,12 +432,7 @@ func (e *Executor) SetMaxParallelism(n int) {
 	if e.pool != nil {
 		e.pool.Close()
 	}
-	pool := UT.NewWorkerPool(n)
-	// REQ001055: set NUMA topology if available.
-	if nm.IsAvailable() {
-		pool.SetNUMATopology(nm.GetTopology())
-	}
-	e.pool = pool
+	e.pool = UT.NewWorkerPool(n)
 	e.planner.SetPool(e.pool)
 }
 
@@ -468,15 +440,10 @@ func (e *Executor) SetMaxParallelism(n int) {
 func (e *Executor) MaxParallelism() int { return e.maxParallelism }
 
 func NewExecutor() *Executor {
-	pool := UT.NewWorkerPool(0)
-	// REQ001055: set NUMA topology if available.
-	if nm.IsAvailable() {
-		pool.SetNUMATopology(nm.GetTopology())
-	}
 	e := &Executor{
 		planner:        NewPlanner(),
 		txnDebugger:    UT.NewTxnDebugger(),
-		pool:           pool,
+		pool:           UT.NewWorkerPool(0),
 		maxParallelism: runtime.GOMAXPROCS(0),
 		attachedDBs:    make(map[string]string),
 	}

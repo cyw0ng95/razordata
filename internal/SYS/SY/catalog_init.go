@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
 // openCatalog opens the system catalog and rehydrates the EX
@@ -24,12 +24,12 @@ func (e *Engine) openCatalog() error {
 	}
 	// Wire the catalog into the EX layer so that subsequent
 	// CREATE TABLE / DROP TABLE calls persist to it.
-	executor.SetCatalog(cat)
+	DT.SetCatalog(cat)
 	// Rehydrate the in-memory schema maps from the catalog so
 	// queries can run against tables created in a previous
 	// process. RegisterFromCatalog is idempotent.
 	for _, entry := range cat.List() {
-		if err := executor.RegisterFromCatalog(entry); err != nil {
+		if err := DT.RegisterFromCatalog(entry); err != nil {
 			_ = cat.Close()
 			return err
 		}
@@ -46,5 +46,5 @@ func (e *Engine) closeCatalog() {
 	}
 	_ = e.catalog.Close()
 	e.catalog = nil
-	executor.SetCatalog(nil)
+	DT.SetCatalog(nil)
 }
