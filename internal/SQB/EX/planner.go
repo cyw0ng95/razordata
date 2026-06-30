@@ -561,6 +561,18 @@ func (p *Planner) estimateCost(op Operator) float64 {
 			rightCost = 1
 		}
 		return leftCost + rightCost
+	case *OP.MergeJoin:
+		// REQ001102: MergeJoin is O(N+M) on pre-sorted inputs. Cost
+		// is dominated by the children plus a small merge overhead.
+		leftCost := p.estimateCost(v.LeftChild())
+		rightCost := p.estimateCost(v.RightChild())
+		if leftCost < 1 {
+			leftCost = 1
+		}
+		if rightCost < 1 {
+			rightCost = 1
+		}
+		return leftCost + rightCost + 1
 	case *Insert, *Update, *Delete, *CreateTable, *DropTable:
 		// Writer operators: cost ~ 1 (single mutation).
 		return 1.0
@@ -4929,6 +4941,62 @@ func collectIdentsFromExpr(e PS.Expr) []string {
 	return result
 }
 
+// operatorProducesSorted returns true when op is guaranteed to emit
+// rows sorted ascending on the given key columns. REQ001102: used by
+// the planner to detect when MergeJoin is applicable. Currently
+// recognized: Sort with matching keys. IndexScan recognition is
+// deferred to a future iteration because the planner doesn't expose
+// the indexed column name through the operator interface.
+func operatorProducesSorted(op Operator, keys []string) bool {
+	if op == nil || len(keys) == 0 {
+		return false
+	}
+	if s, ok := op.(*Sort); ok {
+		// Match Sort's keys (in order) against the join keys.
+		if len(s.Keys()) < len(keys) {
+			return false
+		}
+		for i, k := range keys {
+			sortExpr := s.Keys()[i].Expr
+			switch v := sortExpr.(type) {
+			case *PS.QualifiedName:
+				if v.Name != k && v.Table+"."+v.Name != k {
+					return false
+				}
+			case *PS.Ident:
+				if v.Name != k {
+					return false
+				}
+			default:
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// tryMergeJoin returns a MergeJoin operator if BOTH the left and right
+// sides are already sorted on the equi-join keys; otherwise nil.
+// REQ001102. Left/Right/Full outer joins are supported via WithKind.
+func (p *Planner) tryMergeJoin(left, right Operator, leftTbl, rightTbl string, leftKeys, rightKeys []string, kind JoinKind) Operator {
+	if len(leftKeys) == 0 || len(rightKeys) == 0 {
+		return nil
+	}
+	if len(leftKeys) != len(rightKeys) {
+		return nil
+	}
+	if !operatorProducesSorted(left, leftKeys) {
+		return nil
+	}
+	if !operatorProducesSorted(right, rightKeys) {
+		return nil
+	}
+	mj := OP.NewMergeJoin(left, right, leftTbl, rightTbl, leftKeys, rightKeys)
+	mj.WithKind(kind)
+	return mj
+}
+
 // planAggregation handles aggregate selection (HashAggregate vs streaming
 // Aggregate) and HAVING clause application.
 // REQ000981: extracted from planSelect.
@@ -5246,6 +5314,16 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 							if hcj, ok := joinOp.(*OP.HashCrossJoin); ok {
 								hcj.WithProjection(projectedCols)
 							}
+						}
+					}
+				}
+				if joinOp == nil && len(localConjuncts) == 0 {
+					// REQ001102: try MergeJoin when both sides are
+					// already sorted on the join keys. Falls back to
+					// NLJ if not applicable.
+					if lk, rk, ok := p.extractSingleOnEquiKey(j.On, leftTbl, rightTbl); ok && j.On != nil {
+						if mj := p.tryMergeJoin(current, rightScan, leftTbl, rightTbl, []string{lk}, []string{rk}, kind); mj != nil {
+							joinOp = mj
 						}
 					}
 				}

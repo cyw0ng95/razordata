@@ -102,10 +102,10 @@ type NestedLoopJoin struct {
 	blkSharedColIndex map[string]int
 	// REQ000877: sharedBuilt guards blkSharedCols/Types/colIndex
 	// — computed once on first batch, reused across all subsequent.
-	sharedBuilt bool
-	blkDataBuf        []Value
-	blkDataPerRow     int
-	blkDataOffset     int
+	sharedBuilt   bool
+	blkDataBuf    []Value
+	blkDataPerRow int
+	blkDataOffset int
 	// REQ000847: limitRemaining tells this NLJ to stop early when a
 	// LIMIT is present above in the plan tree. Set by SetLimit from
 	// the planner. Prevents the join from producing more rows than
@@ -239,10 +239,10 @@ func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on fu
 		// REQ000881: pre-allocate batch and result buffers to avoid
 		// first-call heap escape of Row literals in the batch-fill loop
 		// and repeated append growth in the matching loop.
-		blkLeftBatch:  make([]Row, 0, batchSize),
-		blkRightRows:  make([]Row, 0, batchSize),
-		blkResultBuf:  make([]Row, 0, batchSize),
-		blkDataBuf:    make([]Value, 0, 64),
+		blkLeftBatch: make([]Row, 0, batchSize),
+		blkRightRows: make([]Row, 0, batchSize),
+		blkResultBuf: make([]Row, 0, batchSize),
+		blkDataBuf:   make([]Value, 0, 64),
 	}
 }
 
@@ -251,10 +251,10 @@ func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on fu
 func (j *NestedLoopJoin) SetLimit(n int64) { j.limitRemaining = n }
 
 func (j *NestedLoopJoin) LeftChild() Operator { return j.left }
-func (j *NestedLoopJoin) SetLeft(c Operator) { j.left = c }
+func (j *NestedLoopJoin) SetLeft(c Operator)  { j.left = c }
 
 func (j *NestedLoopJoin) RightChild() Operator { return j.right }
-func (j *NestedLoopJoin) SetRight(c Operator) { j.right = c }
+func (j *NestedLoopJoin) SetRight(c Operator)  { j.right = c }
 
 func (j *NestedLoopJoin) LeftTbl() string { return j.leftTbl }
 
@@ -1013,9 +1013,10 @@ func buildProjectedLayout(projectedCols []string, leftCols, rightCols []string, 
 // isJoinOp returns true when the operator is a NestedLoopJoin or
 // HashJoin (i.e., it represents a join operator in the plan tree).
 // REQ000843: used by tryHashCrossJoin to skip bushy-group joins.
+// REQ001102: also includes MergeJoin.
 func isJoinOp(op Operator) bool {
 	switch op.(type) {
-	case *NestedLoopJoin, *HashJoin, *HashCrossJoin:
+	case *NestedLoopJoin, *HashJoin, *HashCrossJoin, *MergeJoin:
 		return true
 	}
 	return false
