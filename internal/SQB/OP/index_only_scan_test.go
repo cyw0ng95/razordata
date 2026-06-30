@@ -167,9 +167,9 @@ func TestIsCoveringIndex(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := isCoveringIndex(tc.project, tc.idxCols, tc.pk)
+			got := IsCoveringIndex(tc.project, tc.idxCols, tc.pk)
 			if got != tc.want {
-				t.Errorf("isCoveringIndex(%v, %v, %q) = %v, want %v",
+				t.Errorf("IsCoveringIndex(%v, %v, %q) = %v, want %v",
 					tc.project, tc.idxCols, tc.pk, got, tc.want)
 			}
 		})

@@ -2611,13 +2611,86 @@ func flattenOr(e PS.Expr) []PS.Expr {
 // (plus optionally the primary key). Returns nil if not
 // eligible. REQ001107.
 //
-// Stub in Step 4: covering-detection logic lands in Step 4b.
-// Today this returns nil unconditionally.
+// Conservative guard: we refuse to wrap when the projection is
+// empty or `*` (i.e. SELECT 1 or SELECT *). Those cases already
+// work via IndexScan — wrapping them in IndexOnlyScan breaks
+// correlated-subquery machinery that inspects the inner scan
+// type. Only concrete column projections trigger the path.
 func (p *Planner) tryIndexOnlyScan(s *PS.Select, whereExpr PS.Expr, scan Operator) Operator {
-	_ = s
+	if s == nil || scan == nil {
+		return nil
+	}
+	isc, ok := scan.(*IndexScan)
+	if !ok || isc == nil {
+		return nil
+	}
+	pk := p.tablePK(s.From)
+	idxCols, ok := p.indexColumns(s.From, isc.Idx())
+	if !ok {
+		return nil
+	}
+	projected := projectColumns(s)
+	if len(projected) == 0 {
+		return nil
+	}
+	if !OP.IsCoveringIndex(projected, idxCols, pk) {
+		return nil
+	}
 	_ = whereExpr
-	_ = scan
-	return nil
+	return OP.NewIndexOnlyScan(isc)
+}
+
+// projectColumns returns the projected column names from a
+// Select. StarExpr maps to nil so IsCoveringIndex rejects
+// covering evaluation gracefully (it returns true only for
+// empty projection).
+func projectColumns(s *PS.Select) []string {
+	if s == nil || len(s.Cols) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(s.Cols))
+	for _, c := range s.Cols {
+		switch v := c.(type) {
+		case *PS.StarExpr:
+			return nil // any column → not covering
+		case *PS.Ident:
+			out = append(out, v.Name)
+		default:
+			return nil
+		}
+	}
+	return out
+}
+
+// tablePK looks up the primary key column for a registered
+// table. Empty string when unknown — IsCoveringIndex treats an
+// empty pk as "no pk cover" and falls back to index-column
+// coverage only.
+func (p *Planner) tablePK(table string) string {
+	if p.catalog == nil {
+		return ""
+	}
+	if t, ok := p.catalog[table]; ok && t != nil {
+		return t.pk
+	}
+	return ""
+}
+
+// indexColumns returns the columns a registered index covers
+// and whether the index exists.
+func (p *Planner) indexColumns(table, idx string) ([]string, bool) {
+	if p.catalog == nil {
+		return nil, false
+	}
+	t, ok := p.catalog[table]
+	if !ok || t == nil {
+		return nil, false
+	}
+	cols, ok := t.indexes[idx]
+	if !ok {
+		return nil, false
+	}
+	return append([]string(nil), cols...), true
 }
 func propagateLimitToNLJ(op Operator, n int64) {
 	switch t := op.(type) {
