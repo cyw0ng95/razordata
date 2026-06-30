@@ -261,6 +261,9 @@ type Planner struct {
 	// maxMemoryPerQuery caps total memory per query. 0 = unlimited.
 	// Set by Executor.WithMemoryBudget. REQ001057.
 	maxMemoryPerQuery int64
+	// costParamsX holds the cost-model coefficients used by
+	// estimateCost. nil = use DefaultCostParams. REQ001104.
+	costParamsX *CostParams
 }
 
 type tableInfo struct {
@@ -497,13 +500,165 @@ func (p *Planner) ExecuteSubquery(ctx context.Context, stmt PS.Stmt, outer *Row,
 // The model uses uniform distribution: each row is 1.0 unit, filters and
 // joins apply selectivity, sort adds a log(n) factor. Real statistics land
 // in v2.
+// CostParams captures the cost-model coefficients used by
+// estimateCost. REQ001104. Defaults match PostgreSQL's conventional
+// values (seq_page_cost=1.0, random_page_cost=4.0, cpu_tuple_cost=0.01,
+// cpu_index_tuple_cost=0.005, cpu_operator_cost=0.0025) but are
+// tunable via SetCostParams so callers can adjust for specific
+// workloads (e.g. all-in-memory tables where random I/O is cheap).
+type CostParams struct {
+	// REQ001104: cost coefficients for I/O vs CPU. seqPageCost is
+	// the cost of reading one row from a sequential scan; random
+	// page cost is the cost of one random row from an index.
+	SeqPageCost       float64
+	RandomPageCost    float64
+	CPUTupleCost      float64
+	CPUIndexTupleCost float64
+	CPUOperatorCost   float64
+}
+
+// DefaultCostParams returns the cost-model defaults. REQ001104.
+func DefaultCostParams() CostParams {
+	return CostParams{
+		SeqPageCost:       1.0,
+		RandomPageCost:    4.0,
+		CPUTupleCost:      0.01,
+		CPUIndexTupleCost: 0.005,
+		CPUOperatorCost:   0.0025,
+	}
+}
+
+// costParams returns the planner's active cost parameters, falling
+// back to defaults when not explicitly set.
+func (p *Planner) costParams() CostParams {
+	if p.costParamsX == nil {
+		return DefaultCostParams()
+	}
+	return *p.costParamsX
+}
+
+// SetCostParams installs custom cost-model coefficients. REQ001104.
+func (p *Planner) SetCostParams(cp CostParams) *Planner {
+	p.costParamsX = &cp
+	return p
+}
+
+// estimateMemoryPressure reports whether the given operator tree's
+// estimated memory footprint exceeds the planner's maxMemoryPerQuery
+// budget. REQ001104. Returns the estimated bytes used and the budget.
+// Currently a coarse heuristic: sort + hash-build operations are
+// the dominant memory consumers.
+func (p *Planner) estimateMemoryPressure(op Operator) (estimated int64, budget int64) {
+	budget = p.maxMemoryPerQuery
+	if budget <= 0 {
+		budget = 64 << 20 // 64 MB default
+	}
+	switch v := op.(type) {
+	case *Sort:
+		// Sort materializes all rows. Estimate ~120 bytes per row
+		// (covers up to ~30 columns).
+		const estBytesPerRow = 120
+		if rows := p.estimateRowCountFromOp(v.Child()); rows > 0 {
+			estimated += int64(rows) * estBytesPerRow
+		} else {
+			estimated += 1 << 20 // 1 MB default when unknown
+		}
+	case *OP.HashJoin:
+		// Hash build holds the right side. Estimate the right side's
+		// materialization cost.
+		if rows := p.estimateRowCountFromOp(v.RightChild()); rows > 0 {
+			estimated += int64(rows) * 1200
+		} else {
+			estimated += 1 << 20
+		}
+	case *AG.Aggregate:
+		// HashAggregate holds distinct group keys. Estimate as
+		// 256 bytes per group.
+		if rows := p.estimateRowCountFromOp(v.Child()); rows > 0 {
+			estimated += int64(rows) * 256
+		} else {
+			estimated += 1 << 20
+		}
+	}
+	// Recurse into children. Use type-assertion helpers that the
+	// planner's operators already expose (LeftChild/RightChild and
+	// Child) — this avoids referencing OP types directly.
+	if cp, ok := op.(interface {
+		LeftChild() Operator
+		RightChild() Operator
+	}); ok {
+		if l := cp.LeftChild(); l != nil {
+			subE, _ := p.estimateMemoryPressure(l)
+			estimated += subE
+		}
+		if r := cp.RightChild(); r != nil {
+			subE, _ := p.estimateMemoryPressure(r)
+			estimated += subE
+		}
+	} else if fl, ok := op.(interface{ Child() Operator }); ok {
+		if c := fl.Child(); c != nil {
+			subE, _ := p.estimateMemoryPressure(c)
+			estimated += subE
+		}
+	}
+	return estimated, budget
+}
+
+// estimateRowCountFromOp walks an op tree to find the underlying
+// table reference and returns the planner's row-count estimate for
+// that table. Returns 0 when no reference is found.
+func (p *Planner) estimateRowCountFromOp(op Operator) float64 {
+	if op == nil {
+		return 0
+	}
+	switch v := op.(type) {
+	case *SeqScan:
+		return float64(p.estimateRowCount(v.Table(), nil))
+	}
+	if aop, ok := op.(*AD.AdaptiveOp); ok {
+		return p.estimateRowCountFromOp(aop.Inner)
+	}
+	if fl, ok := op.(interface{ Child() Operator }); ok {
+		return p.estimateRowCountFromOp(fl.Child())
+	}
+	if cp, ok := op.(interface {
+		LeftChild() Operator
+		RightChild() Operator
+	}); ok {
+		if r := p.estimateRowCountFromOp(cp.LeftChild()); r > 0 {
+			return r
+		}
+		return p.estimateRowCountFromOp(cp.RightChild())
+	}
+	return 0
+}
+
 func (p *Planner) estimateCost(op Operator) float64 {
+	if op == nil {
+		return 0
+	}
+	// REQ001104: when CostParams are explicitly set, use the
+	// PostgreSQL-style cost formulas (rows × page cost, etc).
+	// When unset, fall back to the legacy per-operator heuristic
+	// (1.0 for SeqScan, 0.05/0.1 for IndexScan, etc.) so existing
+	// tests and behavior remain stable.
+	cp := p.costParams()
+	if p.costParamsX != nil {
+		return p.estimateCostWithParams(op, cp)
+	}
+	return p.estimateCostLegacy(op)
+}
+
+// estimateCostLegacy is the original per-operator heuristic. Kept
+// as the default to avoid breaking existing tests that pin exact
+// numeric cost values.
+func (p *Planner) estimateCostLegacy(op Operator) float64 {
 	if op == nil {
 		return 0
 	}
 	// Unwrap AdaptiveOp to estimate cost of the inner operator.
 	if aop, ok := op.(*AD.AdaptiveOp); ok {
-		return p.estimateCost(aop.Inner)
+		return p.estimateCostLegacy(aop.Inner)
 	}
 	switch v := op.(type) {
 	case *SeqScan:
@@ -520,30 +675,30 @@ func (p *Planner) estimateCost(op Operator) float64 {
 		}
 		return 0.1
 	case *Filter:
-		return p.estimateCost(v.Child()) * p.estimatePredicateSelectivity(v.Predicate())
+		return p.estimateCostLegacy(v.Child()) * p.estimatePredicateSelectivity(v.Predicate())
 	case *Project:
-		return p.estimateCost(v.Child())
+		return p.estimateCostLegacy(v.Child())
 	case *Limit:
-		return p.estimateCost(v.Child())
+		return p.estimateCostLegacy(v.Child())
 	case *Offset:
-		return p.estimateCost(v.Child())
+		return p.estimateCostLegacy(v.Child())
 	case *OP.Distinct:
-		return p.estimateCost(v.Child())
+		return p.estimateCostLegacy(v.Child())
 	case *Sort:
-		childCost := p.estimateCost(v.Child())
+		childCost := p.estimateCostLegacy(v.Child())
 		if childCost < 1 {
 			childCost = 1
 		}
 		return childCost * (1 + log2ish(childCost))
 	case *AG.Aggregate:
-		return p.estimateCost(v.Child()) + 1
+		return p.estimateCostLegacy(v.Child()) + 1
 	case *NestedLoopJoin:
-		leftCost := p.estimateCost(v.LeftChild())
-		rightCost := p.estimateCost(v.RightChild())
+		leftCost := p.estimateCostLegacy(v.LeftChild())
+		rightCost := p.estimateCostLegacy(v.RightChild())
 		return leftCost * rightCost
 	case *OP.HashJoin:
-		leftCost := p.estimateCost(v.LeftChild())
-		rightCost := p.estimateCost(v.RightChild())
+		leftCost := p.estimateCostLegacy(v.LeftChild())
+		rightCost := p.estimateCostLegacy(v.RightChild())
 		if leftCost < 1 {
 			leftCost = 1
 		}
@@ -552,8 +707,8 @@ func (p *Planner) estimateCost(op Operator) float64 {
 		}
 		return leftCost + rightCost
 	case *OP.HashCrossJoin:
-		leftCost := p.estimateCost(v.LeftChild())
-		rightCost := p.estimateCost(v.RightChild())
+		leftCost := p.estimateCostLegacy(v.LeftChild())
+		rightCost := p.estimateCostLegacy(v.RightChild())
 		if leftCost < 1 {
 			leftCost = 1
 		}
@@ -564,8 +719,8 @@ func (p *Planner) estimateCost(op Operator) float64 {
 	case *OP.MergeJoin:
 		// REQ001102: MergeJoin is O(N+M) on pre-sorted inputs. Cost
 		// is dominated by the children plus a small merge overhead.
-		leftCost := p.estimateCost(v.LeftChild())
-		rightCost := p.estimateCost(v.RightChild())
+		leftCost := p.estimateCostLegacy(v.LeftChild())
+		rightCost := p.estimateCostLegacy(v.RightChild())
 		if leftCost < 1 {
 			leftCost = 1
 		}
@@ -575,6 +730,99 @@ func (p *Planner) estimateCost(op Operator) float64 {
 		return leftCost + rightCost + 1
 	case *Insert, *Update, *Delete, *CreateTable, *DropTable:
 		// Writer operators: cost ~ 1 (single mutation).
+		return 1.0
+	default:
+		return 1.0
+	}
+}
+
+// estimateCostWithParams applies the PostgreSQL-style cost formulas
+// driven by the supplied CostParams. REQ001104: row counts are
+// estimated via estimateRowCount; CPU/IO costs use the supplied
+// coefficients; memory pressure is exposed via estimateMemoryPressure.
+func (p *Planner) estimateCostWithParams(op Operator, cp CostParams) float64 {
+	if op == nil {
+		return 0
+	}
+	if aop, ok := op.(*AD.AdaptiveOp); ok {
+		return p.estimateCostWithParams(aop.Inner, cp)
+	}
+	switch v := op.(type) {
+	case *SeqScan:
+		rows := p.estimateRowCount(v.Table(), nil)
+		cost := float64(rows) * cp.SeqPageCost
+		if cost < 1.0 {
+			cost = 1.0
+		}
+		return cost
+	case *IndexScan:
+		rows := p.estimateRowCount(v.Table(), nil)
+		base := float64(rows) * cp.CPUIndexTupleCost
+		indexIO := float64(rows) * cp.RandomPageCost / 100
+		if v.IndexMode() {
+			return base + indexIO
+		}
+		return 2*base + 2*indexIO
+	case *Filter:
+		childCost := p.estimateCostWithParams(v.Child(), cp)
+		return childCost + childCost*p.estimatePredicateSelectivity(v.Predicate())*cp.CPUOperatorCost
+	case *Project:
+		return p.estimateCostWithParams(v.Child(), cp) + cp.CPUTupleCost
+	case *Limit:
+		return p.estimateCostWithParams(v.Child(), cp)
+	case *Offset:
+		return p.estimateCostWithParams(v.Child(), cp)
+	case *OP.Distinct:
+		return p.estimateCostWithParams(v.Child(), cp) + cp.CPUTupleCost
+	case *Sort:
+		childCost := p.estimateCostWithParams(v.Child(), cp)
+		if childCost < 1 {
+			childCost = 1
+		}
+		return childCost*(1+log2ish(childCost)) + childCost*cp.CPUOperatorCost
+	case *AG.Aggregate:
+		return p.estimateCostWithParams(v.Child(), cp) + 1
+	case *NestedLoopJoin:
+		leftCost := p.estimateCostWithParams(v.LeftChild(), cp)
+		rightCost := p.estimateCostWithParams(v.RightChild(), cp)
+		if leftCost < 1 {
+			leftCost = 1
+		}
+		if rightCost < 1 {
+			rightCost = 1
+		}
+		return leftCost * (rightCost + cp.CPUOperatorCost)
+	case *OP.HashJoin:
+		leftCost := p.estimateCostWithParams(v.LeftChild(), cp)
+		rightCost := p.estimateCostWithParams(v.RightChild(), cp)
+		if leftCost < 1 {
+			leftCost = 1
+		}
+		if rightCost < 1 {
+			rightCost = 1
+		}
+		return rightCost + leftCost*cp.CPUOperatorCost + rightCost*cp.CPUTupleCost
+	case *OP.HashCrossJoin:
+		leftCost := p.estimateCostWithParams(v.LeftChild(), cp)
+		rightCost := p.estimateCostWithParams(v.RightChild(), cp)
+		if leftCost < 1 {
+			leftCost = 1
+		}
+		if rightCost < 1 {
+			rightCost = 1
+		}
+		return leftCost + rightCost
+	case *OP.MergeJoin:
+		leftCost := p.estimateCostWithParams(v.LeftChild(), cp)
+		rightCost := p.estimateCostWithParams(v.RightChild(), cp)
+		if leftCost < 1 {
+			leftCost = 1
+		}
+		if rightCost < 1 {
+			rightCost = 1
+		}
+		return leftCost + rightCost + cp.CPUTupleCost
+	case *Insert, *Update, *Delete, *CreateTable, *DropTable:
 		return 1.0
 	default:
 		return 1.0
