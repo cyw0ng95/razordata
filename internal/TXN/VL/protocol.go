@@ -1,6 +1,7 @@
 package VL
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,11 @@ type Tx interface {
 	Delete(ctx context.Context, key []byte) error
 	Commit(ctx context.Context) error
 	Abort(ctx context.Context) error
+	// Savepoint creates a named savepoint for partial rollback (REQ000995).
+	Savepoint(name string) error
+	// RollbackTo rolls back to a named savepoint, undoing writes and reads
+	// made after the savepoint (REQ000995).
+	RollbackTo(name string) error
 }
 
 // CommitPhase tracks the 6-phase commit protocol state (REQ000147).
@@ -57,6 +63,14 @@ type tx struct {
 	finished bool
 	wal      WALWriter
 	phase    atomic.Int32 // REQ000147: 6-phase commit protocol
+	// REQ000995: savepoint stack for partial rollback.
+	savepoints map[string]*savepoint
+}
+
+// savepoint holds a snapshot of the transaction state at a point in time.
+type savepoint struct {
+	writeSetLen int
+	readSet     map[uint64][]byte
 }
 
 func (t *tx) Phase() CommitPhase {
@@ -89,6 +103,17 @@ func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
 	if chain != nil {
 		for node := chain.Head(); node != nil; node = node.Next() {
 			if node.TxnID() == t.slot.txnID && node.BeginTS() == t.slot.beginTS {
+				// REQ000995: skip own writes that were rolled back (not in writeSet).
+				inWriteSet := false
+				for _, kr := range t.slot.writeSet {
+					if bytes.Equal(kr.Start, key) {
+						inWriteSet = true
+						break
+					}
+				}
+				if !inWriteSet {
+					continue
+				}
 				t.trackRead(key, node.BeginTS())
 				if node.Deleted() {
 					return nil, nil
@@ -242,6 +267,8 @@ func (t *tx) Commit(ctx context.Context) error {
 	}
 	t.finalize(SlotCommitted)
 	if t.manager != nil {
+		// REQ000995: clear savepoints on commit.
+		t.savepoints = nil
 		t.manager.recordCommit()
 	}
 	return nil
@@ -280,8 +307,78 @@ func (t *tx) Abort(ctx context.Context) error {
 	t.setPhase(PhaseAborted)
 	t.finalize(SlotAborted)
 	if t.manager != nil {
+		// REQ000995: clear savepoints on abort.
+		t.savepoints = nil
 		t.manager.recordAbort()
 	}
+	return nil
+}
+
+// Savepoint creates a named savepoint for partial rollback (REQ000995).
+func (t *tx) Savepoint(name string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.finished {
+		return ErrTxFinished
+	}
+	if t.savepoints == nil {
+		return ErrSavepointNotSupported
+	}
+	// Snapshot write-set length and readSet.
+	readSetCopy := make(map[uint64][]byte, len(t.slot.readSet))
+	for k, v := range t.slot.readSet {
+		readSetCopy[k] = v
+	}
+	t.savepoints[name] = &savepoint{
+		writeSetLen: len(t.slot.writeSet),
+		readSet:     readSetCopy,
+	}
+	return nil
+}
+
+// RollbackTo rolls back to a named savepoint (REQ000995).
+// It truncates the write-set and read-set to the saved state, and
+// reverts the MVCC chain for writes made after the savepoint.
+func (t *tx) RollbackTo(name string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.finished {
+		return ErrTxFinished
+	}
+	sp, ok := t.savepoints[name]
+	if !ok {
+		return ErrSavepointNotFound
+	}
+	if len(t.slot.writeSet) < sp.writeSetLen {
+		return ErrRollbackPastSavepoint
+	}
+
+	// Truncate write-set to saved length.
+	removed := t.slot.writeSet[sp.writeSetLen:]
+	t.slot.writeSet = t.slot.writeSet[:sp.writeSetLen]
+
+	// Revert MVCC chain: mark version nodes for removed writes as uncommitted.
+	for _, kr := range removed {
+		chain := t.mv.VersionChain(kr.Start)
+		if chain == nil {
+			continue
+		}
+		for node := chain.Head(); node != nil; node = node.Next() {
+			if node.TxnID() == t.slot.txnID && node.BeginTS() == t.slot.beginTS {
+				node.Revert()
+				break
+			}
+		}
+	}
+
+	// Restore read-set to saved state.
+	if t.slot.readSet != nil {
+		clear(t.slot.readSet)
+	}
+	for k, v := range sp.readSet {
+		t.slot.readSet[k] = v
+	}
+
 	return nil
 }
 

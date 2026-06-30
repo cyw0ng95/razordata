@@ -77,11 +77,12 @@ func (m *Manager) Begin(ctx context.Context) (Tx, error) {
 	readView := SN.NewReadView(m.mv, slot.beginTS)
 
 	return &tx{
-		sm:       m.sm,
-		mv:       m.mv,
-		manager:  m,
-		slot:     slot,
-		readView: readView,
+		sm:         m.sm,
+		mv:         m.mv,
+		manager:    m,
+		slot:       slot,
+		readView:   readView,
+		savepoints: make(map[string]*savepoint),
 	}, nil
 }
 
