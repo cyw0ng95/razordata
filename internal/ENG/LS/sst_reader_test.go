@@ -482,6 +482,7 @@ func TestSSTReader_LazyOpen_MultiBlock(t *testing.T) {
 
 	// Verify all keys can be found
 	for i := 0; i < 100; i++ {
+		// REQ001008: range tombstones should suppress keys in the range
 		key := fmt.Sprintf("key%03d", i)
 		val := fmt.Sprintf("value%03d", i)
 		v, found := reader.Find([]byte(key))
@@ -506,6 +507,118 @@ func TestSSTReader_LazyOpen_MultiBlock(t *testing.T) {
 		expected := fmt.Sprintf("key%03d", i)
 		if k != expected {
 			t.Errorf("Iterator key[%d] = %q, want %q", i, k, expected)
+		}
+	}
+}
+
+// TestRangeTombstone_SuppressesRange verifies REQ001008: range tombstones
+// suppress all keys in the [start, end) range. Keys outside the range are
+// unaffected.
+func TestRangeTombstone_SuppressesRange(t *testing.T) {
+	w := newSSTWriter()
+
+	// Insert keys: a, b, c, d, e, f, g
+	keys := []string{"a", "b", "c", "d", "e", "f", "g"}
+	for _, k := range keys {
+		w.Add([]byte(k), []byte(k))
+	}
+
+	// Add range tombstone covering [c, f)
+	w.AddRangeTombstone([]byte("c"), []byte("f"))
+
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	reader, err := openSST(sstData)
+	if err != nil {
+		t.Fatalf("openSST: %v", err)
+	}
+	defer reader.Close()
+
+	// Keys outside range should be found
+	for _, k := range []string{"a", "b", "g"} {
+		v, found := reader.Find([]byte(k))
+		if !found {
+			t.Errorf("Find(%q) = false, want true (outside range tombstone)", k)
+		}
+		if string(v) != k {
+			t.Errorf("Find(%q) = %q, want %q", k, v, k)
+		}
+	}
+
+	// Keys inside range should be suppressed
+	for _, k := range []string{"c", "d", "e"} {
+		v, found := reader.Find([]byte(k))
+		if found {
+			t.Errorf("Find(%q) = true, want false (inside range tombstone [c, f))", k)
+		}
+		if v != nil {
+			t.Errorf("Find(%q) value = %q, want nil", k, v)
+		}
+	}
+
+	// Key at range boundary (end) should NOT be suppressed
+	v, found := reader.Find([]byte("f"))
+	if !found {
+		t.Errorf("Find(%q) = false, want true (at range end boundary)", "f")
+	}
+	if string(v) != "f" {
+		t.Errorf("Find(%q) = %q, want %q", "f", v, "f")
+	}
+}
+
+// TestRangeTombstone_MultipleRanges verifies REQ001008: multiple range
+// tombstones can coexist and each suppresses its own range.
+func TestRangeTombstone_MultipleRanges(t *testing.T) {
+	w := newSSTWriter()
+
+	// Insert keys: a through j
+	for i := 0; i < 10; i++ {
+		k := []byte{byte('a' + i)}
+		w.Add(k, k)
+	}
+
+	// Add two range tombstones: [c, e) and [g, i)
+	w.AddRangeTombstone([]byte("c"), []byte("e"))
+	w.AddRangeTombstone([]byte("g"), []byte("i"))
+
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	reader, err := openSST(sstData)
+	if err != nil {
+		t.Fatalf("openSST: %v", err)
+	}
+	defer reader.Close()
+
+	// Keys outside any range should be found
+	for _, k := range []string{"a", "b", "f", "j"} {
+		v, found := reader.Find([]byte(k))
+		if !found {
+			t.Errorf("Find(%q) = false, want true", k)
+		}
+		if string(v) != k {
+			t.Errorf("Find(%q) = %q, want %q", k, v, k)
+		}
+	}
+
+	// Keys inside first range [c, e) should be suppressed
+	for _, k := range []string{"c", "d"} {
+		_, found := reader.Find([]byte(k))
+		if found {
+			t.Errorf("Find(%q) = true, want false (inside [c, e))", k)
+		}
+	}
+
+	// Keys inside second range [g, i) should be suppressed
+	for _, k := range []string{"g", "h"} {
+		_, found := reader.Find([]byte(k))
+		if found {
+			t.Errorf("Find(%q) = true, want false (inside [g, i))", k)
 		}
 	}
 }

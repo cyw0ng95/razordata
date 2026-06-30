@@ -223,6 +223,126 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	return nil
 }
 
+// partialResult holds the output of a single sub-compaction phase.
+// REQ001157: two-phase compaction — each sub-job writes a partial
+// SST to its own tmpPath, then the coordinator merges all partial
+// outputs and applies a single manifest update.
+type partialResult struct {
+	tmpPath string
+	inputs  []SSTFileMeta
+	overlap []SSTFileMeta
+	minKey  []byte
+	maxKey  []byte
+	size    int64
+}
+
+// RunPartial writes the merged SST to cj.tmpPath without touching
+// the manifest or removing input files. REQ001157. Returns the
+// partialResult describing the output.
+func (cj *compactionJob) RunPartial(dir string) (*partialResult, error) {
+	if len(cj.inputs) == 0 {
+		return nil, ErrNoFilesToCompact
+	}
+
+	outputDir := cj.placementPolicy.DeviceDir(cj.level+1, dir)
+	if err := os.MkdirAll(filepath.Join(outputDir, "sst"), 0755); err != nil {
+		return nil, err
+	}
+
+	tmpPath := cj.tmpPath
+	if tmpPath == "" {
+		tmpPath = filepath.Join(outputDir, "compaction.tmp")
+	}
+
+	tmpFile, err := os.Create(tmpPath)
+	if err != nil {
+		return nil, err
+	}
+
+	w := acquireSSTWriter()
+	defer releaseSSTWriter(w)
+
+	iters := make([]*sstIterator, 0, len(cj.inputs)+len(cj.overlap))
+	for _, input := range cj.inputs {
+		sstPath := filepath.Join(dir, fileName(&input))
+		reader, err := openSSTLazy(sstPath)
+		if err != nil {
+			closeIterators(iters)
+			tmpFile.Close()
+			os.Remove(tmpPath)
+			return nil, err
+		}
+		iters = append(iters, reader.Iterator())
+	}
+
+	for _, ov := range cj.overlap {
+		sstPath := filepath.Join(dir, fileName(&ov))
+		reader, err := openSSTLazy(sstPath)
+		if err != nil {
+			closeIterators(iters)
+			tmpFile.Close()
+			os.Remove(tmpPath)
+			return nil, err
+		}
+		iters = append(iters, reader.Iterator())
+	}
+
+	h := &keyHeap{items: iters}
+	heap.Init(h)
+
+	rl := cj.rateLimiter
+
+	for h.Len() > 0 {
+		minItem := heap.Pop(h).(*sstIterator)
+		k := minItem.Key()
+		v := minItem.Value()
+		if rl != nil {
+			rl.Wait(int64(len(k) + len(v)))
+		}
+		w.Add(k, v)
+		if minItem.Next() {
+			heap.Push(h, minItem)
+		}
+	}
+
+	closeIterators(iters)
+
+	sstData, err := w.Finish()
+	if err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return nil, err
+	}
+
+	if rl != nil {
+		rl.Wait(int64(len(sstData)))
+	}
+
+	if _, err := tmpFile.Write(sstData); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return nil, err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return nil, err
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return nil, err
+	}
+
+	return &partialResult{
+		tmpPath: tmpPath,
+		inputs:  cj.inputs,
+		overlap: cj.overlap,
+		minKey:  cj.inputs[0].MinKey,
+		maxKey:  cj.inputs[len(cj.inputs)-1].MaxKey,
+		size:    int64(len(sstData)),
+	}, nil
+}
+
 func copyFile(src, dst string) error {
 	sf, err := os.Open(src)
 	if err != nil {
@@ -340,7 +460,7 @@ type compactionManager struct {
 // pivotKeys < 2 fallback is correct). Setting this to a large
 // value forces every compaction through the serial path while
 // keeping the SubCompactor API exercised by tests.
-const subCompactionThreshold = 1 << 30
+const subCompactionThreshold = 4
 
 func newCompactionManager(dir string, manifest *manifest) *compactionManager {
 	cm := &compactionManager{
@@ -527,4 +647,172 @@ func (cm *compactionManager) requestCompaction(level int) bool {
 
 func (cm *compactionManager) Close() error {
 	return cm.Stop(context.Background())
+}
+
+// MergePartials merges all partial SST outputs into a single SST file
+// and applies a single manifest update. REQ001157: this is the
+// coordinator phase of two-phase compaction.
+func (cm *compactionManager) MergePartials(partials []*partialResult, manifest *manifest, dir string) error {
+	if len(partials) == 0 {
+		return ErrNoFilesToCompact
+	}
+
+	// Collect all inputs and overlaps for manifest update
+	allInputs := make([]SSTFileMeta, 0, len(partials))
+	allOverlap := make([]SSTFileMeta, 0, len(partials))
+	for _, p := range partials {
+		allInputs = append(allInputs, p.inputs...)
+		allOverlap = append(allOverlap, p.overlap...)
+	}
+
+	// Determine output directory from the first partial
+	outputDir := partials[0].inputs[0].Level + 1
+	outputDirPath := cm.placementPolicy.DeviceDir(outputDir, dir)
+	if err := os.MkdirAll(filepath.Join(outputDirPath, "sst"), 0755); err != nil {
+		return err
+	}
+
+	// Merge all partial SSTs into a single SST
+	tmpFile, err := os.CreateTemp(outputDirPath, "merge-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+	defer tmpFile.Close()
+
+	w := acquireSSTWriter()
+	defer releaseSSTWriter(w)
+
+	iters := make([]*sstIterator, 0, len(partials))
+	for _, p := range partials {
+		reader, err := openSSTLazy(p.tmpPath)
+		if err != nil {
+			closeIterators(iters)
+			return err
+		}
+		iters = append(iters, reader.Iterator())
+	}
+
+	h := &keyHeap{items: iters}
+	heap.Init(h)
+
+	for h.Len() > 0 {
+		minItem := heap.Pop(h).(*sstIterator)
+		k := minItem.Key()
+		v := minItem.Value()
+		w.Add(k, v)
+		if minItem.Next() {
+			heap.Push(h, minItem)
+		}
+	}
+
+	closeIterators(iters)
+
+	sstData, err := w.Finish()
+	if err != nil {
+		return err
+	}
+
+	if _, err := tmpFile.Write(sstData); err != nil {
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+
+	// Determine min/max key from all partials
+	globalMin := partials[0].minKey
+	globalMax := partials[0].maxKey
+	for _, p := range partials[1:] {
+		if bytes.Compare(p.minKey, globalMin) < 0 {
+			globalMin = p.minKey
+		}
+		if bytes.Compare(p.maxKey, globalMax) > 0 {
+			globalMax = p.maxKey
+		}
+	}
+
+	newFileID := nextFileID()
+	newFileName := fileName(&SSTFileMeta{
+		FileID:    newFileID,
+		Level:     outputDir,
+		MinKey:    globalMin,
+		MaxKey:    globalMax,
+		Size:      int64(len(sstData)),
+		BloomBits: 10,
+	})
+	newPath := filepath.Join(outputDirPath, newFileName)
+	if outputDirPath == dir {
+		if err := os.Rename(tmpPath, newPath); err != nil {
+			return err
+		}
+	} else {
+		if err := copyFile(tmpPath, newPath); err != nil {
+			return err
+		}
+		if err := os.Remove(tmpPath); err != nil {
+			slog.Warn("compaction: remove temp output", "path", tmpPath, "err", err)
+		}
+		enginePath := filepath.Join(dir, newFileName)
+		if err := os.Remove(enginePath); err != nil && !os.IsNotExist(err) {
+			slog.Warn("compaction: remove old engine path", "path", enginePath, "err", err)
+		}
+		if err := os.Symlink(newPath, enginePath); err != nil {
+			return err
+		}
+	}
+
+	// Apply manifest update
+	newLevels := make([][]SSTFileMeta, len(manifest.Current().levels))
+	copy(newLevels, manifest.Current().levels)
+
+	newLevels[partials[0].inputs[0].Level] = removeFiles(newLevels[partials[0].inputs[0].Level], allInputs)
+	newLevels[outputDir] = removeFiles(newLevels[outputDir], allOverlap)
+	newLevels[outputDir] = append(newLevels[outputDir], SSTFileMeta{
+		FileID:    newFileID,
+		Level:     outputDir,
+		MinKey:    globalMin,
+		MaxKey:    globalMax,
+		Size:      int64(len(sstData)),
+		BloomBits: 10,
+	})
+
+	v := Version{
+		num:     manifest.Current().num + 1,
+		levels:  newLevels,
+		created: time.Now(),
+	}
+
+	if err := manifest.Apply(v); err != nil {
+		_ = os.Remove(newPath)
+		return err
+	}
+
+	// Remove input files
+	for _, input := range allInputs {
+		sstPath := filepath.Join(dir, fileName(&input))
+		if err := os.Remove(sstPath); err != nil && !os.IsNotExist(err) {
+			slog.Warn("compaction: remove input SST", "path", sstPath, "err", err)
+		}
+	}
+
+	for _, ov := range allOverlap {
+		sstPath := filepath.Join(dir, fileName(&ov))
+		if err := os.Remove(sstPath); err != nil && !os.IsNotExist(err) {
+			slog.Warn("compaction: remove overlap SST", "path", sstPath, "err", err)
+		}
+	}
+
+	// Remove partial temp files
+	for _, p := range partials {
+		if err := os.Remove(p.tmpPath); err != nil && !os.IsNotExist(err) {
+			slog.Warn("compaction: remove partial tmp", "path", p.tmpPath, "err", err)
+		}
+	}
+
+	return nil
 }

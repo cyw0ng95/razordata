@@ -84,10 +84,9 @@ func TestSubCompactor_ThresholdFallback(t *testing.T) {
 	}
 }
 
-// TestSubCompactor_Dispatch verifies REQ001048: compactionManager's
-// runJob uses the serial path by default while the SubCompactor
-// instance is wired in (the dispatch threshold is set high until
-// the parallel partial-output path lands).
+// TestSubCompactor_Dispatch verifies REQ001048/REQ001157: compactionManager's
+// runJob dispatches through SubCompactor when input count exceeds the
+// threshold (4). Below the threshold the serial path runs directly.
 func TestSubCompactor_Dispatch(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_subcompact_dispatch")
 	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0755); err != nil {
@@ -105,18 +104,17 @@ func TestSubCompactor_Dispatch(t *testing.T) {
 	cm := newCompactionManager(dir, m)
 	defer func() { _ = cm.Close() }()
 
-	// Verify SubCompactor is wired in but threshold keeps the
-	// dispatcher on the serial path.
+	// Verify SubCompactor is wired in and threshold is 4.
 	if cm.subCompactor == nil {
 		t.Fatal("SubCompactor should be wired into compactionManager")
 	}
-	if subCompactionThreshold <= 1<<20 {
-		t.Fatalf("subCompactionThreshold = %d, expected INF (1<<30)", subCompactionThreshold)
+	if subCompactionThreshold != 4 {
+		t.Fatalf("subCompactionThreshold = %d, expected 4", subCompactionThreshold)
 	}
 
-	// Run a job through runJob — must succeed via serial path.
+	// Run a job with 3 inputs (below threshold) — must succeed via serial path.
 	var inputs []SSTFileMeta
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 3; i++ {
 		base := byte('a' + i*4)
 		meta := writeSST(t, dir, uint64(i+1), 0, [][2]string{
 			{string([]byte{base}), "v1"},
@@ -226,5 +224,90 @@ func BenchmarkCompaction_Serial(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		cm.runJob(job)
 		_ = ctx
+	}
+}
+
+// TestSubCompactor_Parallel_NoManifestRace verifies REQ001157: when
+// sub-compaction runs multiple sub-jobs in parallel, the two-phase
+// approach (partial SST write + coordinator merge) ensures no manifest
+// data race. Each sub-job writes to its own tmpPath without touching
+// the manifest; the coordinator applies a single manifest update.
+func TestSubCompactor_Parallel_NoManifestRace(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "test_subcompact_parallel")
+	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0755); err != nil {
+		t.Fatalf("mkdir sst: %v", err)
+	}
+	m, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("newManifest: %v", err)
+	}
+	defer m.Close()
+	v := m.Current()
+	v.levels = make([][]SSTFileMeta, 3)
+	m.Apply(*v)
+
+	// Create 8 input SSTs at level 0 (above threshold of 4)
+	var inputs []SSTFileMeta
+	for i := 0; i < 8; i++ {
+		base := byte('a' + i*3)
+		meta := writeSST(t, dir, uint64(i+1), 0, [][2]string{
+			{string([]byte{base}), "v1"},
+			{string([]byte{base + 1}), "v2"},
+		})
+		inputs = append(inputs, meta)
+	}
+
+	sc := NewSubCompactor(dir, m, 4)
+	ctx := context.Background()
+
+	// Run sub-compaction — should use two-phase approach
+	result, err := sc.RunSubCompaction(ctx, 0, inputs, SubCompactionOptions{})
+	if err != nil {
+		t.Fatalf("RunSubCompaction: %v", err)
+	}
+	if result == nil {
+		t.Fatal("RunSubCompaction returned nil result")
+	}
+
+	// Verify manifest was updated exactly once (single manifest apply)
+	v = m.Current()
+	if got := len(v.levels[0]); got != 0 {
+		t.Fatalf("L0 file count = %d, want 0 (all inputs compacted)", got)
+	}
+	if got := len(v.levels[1]); got != 1 {
+		// REQ001157: two-phase compaction — each sub-job writes a partial
+		// SST to its own tmpPath, then the coordinator merges all partial
+		// outputs and applies a single manifest update.
+		t.Fatalf("L1 file count = %d, want 1 (single merged output)", got)
+	}
+
+	// Debug: check the merged SST file
+	l1File := v.levels[1][0]
+	sstPath := filepath.Join(dir, fileName(&l1File))
+	data, err := os.ReadFile(sstPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", sstPath, err)
+	}
+	t.Logf("Merged SST size: %d bytes", len(data))
+
+	// Verify the SST can be opened
+	reader, err := openSST(data)
+	if err != nil {
+		t.Fatalf("openSST: %v", err)
+	}
+	defer reader.Close()
+
+	// Verify data integrity: all keys from inputs should be readable
+	for i := 0; i < 8; i++ {
+		base := byte('a' + i*3)
+		for j := 0; j < 2; j++ {
+			key := []byte{base + byte(j)}
+			val, found := reader.Find(key)
+			if !found {
+				t.Errorf("Find(%q): not found", key)
+			} else if string(val) != "v1" && string(val) != "v2" {
+				t.Errorf("Find(%q) = %q, want v1 or v2", key, val)
+			}
+		}
 	}
 }

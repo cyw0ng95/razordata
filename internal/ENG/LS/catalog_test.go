@@ -489,6 +489,7 @@ func TestCatalog_CloseNil(t *testing.T) {
 		t.Errorf("Close on nil: got %v, want nil", err)
 	}
 }
+
 // REQ001057b: Wire-format round-trip for MCV data through the catalog
 // encoder/decoder must preserve MostCommonVals and MostCommonFreqs.
 // This protects against silent data corruption when MCVs are added

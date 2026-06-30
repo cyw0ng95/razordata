@@ -10,11 +10,12 @@ import (
 )
 
 type sstReader struct {
-	data        []byte
-	indexBlock  []indexEntry
-	bloom       []byte
-	prefixBloom []byte
-	filePath    string // non-empty for lazy readers (REQ000997)
+	data            []byte
+	indexBlock      []indexEntry
+	bloom           []byte
+	prefixBloom     []byte
+	rangeTombstones []kvPair // REQ001008: sorted [start, end) pairs
+	filePath        string   // non-empty for lazy readers (REQ000997)
 }
 
 func openSST(data []byte) (*sstReader, error) {
@@ -22,22 +23,36 @@ func openSST(data []byte) (*sstReader, error) {
 }
 
 func openSSTWithPath(data []byte, path string) (*sstReader, error) {
-	if len(data) < 32 {
+	if len(data) < sstFooterSizeOld {
 		return nil, ErrInvalidSSTFormat
 	}
 
 	r := &sstReader{data: data, filePath: path}
 
-	footerStart := len(data) - 28
+	// REQ001008: detect footer format by checking magic field position.
+	// New format (44-byte footer): magic at offset len(data)-44+36 = len(data)-8
+	// Old format (28-byte footer): magic at offset len(data)-28+24 = len(data)-4
+	var footerStart int
+	var footerSize int
+	magicNew := len(data) - 8
+	magicOld := len(data) - 4
+
+	if magicNew >= 4 && binary.LittleEndian.Uint32(data[magicNew:]) == sstMagic {
+		// New format (44-byte footer)
+		footerSize = sstFooterSize
+		footerStart = len(data) - footerSize
+	} else if magicOld >= 4 && binary.LittleEndian.Uint32(data[magicOld:]) == sstMagic {
+		// Old format (28-byte footer)
+		footerSize = sstFooterSizeOld
+		footerStart = len(data) - footerSize
+	} else {
+		return nil, ErrInvalidSSTFormat
+	}
+
 	indexOffset := binary.LittleEndian.Uint64(data[footerStart:])
 	indexSize := binary.LittleEndian.Uint32(data[footerStart+8:])
 	bloomOffset := binary.LittleEndian.Uint64(data[footerStart+12:])
 	bloomSize := binary.LittleEndian.Uint32(data[footerStart+20:])
-	magic := binary.LittleEndian.Uint32(data[footerStart+24:])
-
-	if magic != sstMagic {
-		return nil, ErrInvalidSSTFormat
-	}
 
 	dataLen := uint64(len(data))
 	if indexOffset > 0 {
@@ -60,10 +75,23 @@ func openSSTWithPath(data []byte, path string) (*sstReader, error) {
 		// REQ000047: prefix bloom is stored right after the regular bloom
 		prefixBloomStart := bloomOffset + uint64(bloomSize)
 		if prefixBloomStart < dataLen {
-			remaining := dataLen - prefixBloomStart - 28 // subtract footer
+			remaining := dataLen - prefixBloomStart - uint64(footerSize)
 			if remaining > 0 && remaining < dataLen && prefixBloomStart+remaining <= dataLen {
 				r.prefixBloom = data[prefixBloomStart : prefixBloomStart+remaining]
 			}
+		}
+	}
+
+	// REQ001008: parse range tombstone block if present (new format only)
+	if footerSize == sstFooterSize {
+		rangeTombstoneOffset := binary.LittleEndian.Uint64(data[footerStart+24:])
+		rangeTombstoneSize := binary.LittleEndian.Uint32(data[footerStart+32:])
+		if rangeTombstoneOffset > 0 && rangeTombstoneSize > 0 {
+			if rangeTombstoneOffset >= dataLen || rangeTombstoneOffset+uint64(rangeTombstoneSize) > dataLen {
+				return nil, ErrInvalidSSTFormat
+			}
+			rtData := data[rangeTombstoneOffset : rangeTombstoneOffset+uint64(rangeTombstoneSize)]
+			r.rangeTombstones = parseRangeTombstones(rtData)
 		}
 	}
 
@@ -85,13 +113,46 @@ func openSSTLazy(path string) (*sstReader, error) {
 		return nil, err
 	}
 	fileSize := stat.Size()
-	if fileSize < 32 {
+	if fileSize < sstFooterSizeOld {
 		return nil, ErrInvalidSSTFormat
 	}
 
-	// Read footer (last 28 bytes)
-	footer := make([]byte, 28)
-	if _, err := f.ReadAt(footer, fileSize-28); err != nil {
+	// Read last 44 bytes to detect footer format
+	readSize := sstFooterSize
+	if fileSize < int64(sstFooterSize) {
+		readSize = int(fileSize)
+	}
+	footerBuf := make([]byte, readSize)
+	if _, err := f.ReadAt(footerBuf, fileSize-int64(readSize)); err != nil {
+		return nil, err
+	}
+
+	// Detect footer format by checking magic field position
+	var footerStart int64
+	var footerSize int
+
+	// Magic field in new footer (44 bytes) is at offset 36 from footer start,
+	// which is readSize-8 from the start of footerBuf.
+	// Magic field in old footer (28 bytes) is at offset 24 from footer start,
+	// which is readSize-4 from the start of footerBuf.
+	offsetNew := readSize - 8
+	offsetOld := readSize - 4
+
+	if offsetNew >= 0 && offsetNew+4 <= readSize && binary.LittleEndian.Uint32(footerBuf[offsetNew:]) == sstMagic {
+		// New format (44-byte footer)
+		footerSize = sstFooterSize
+		footerStart = fileSize - int64(footerSize)
+	} else if offsetOld >= 0 && offsetOld+4 <= readSize && binary.LittleEndian.Uint32(footerBuf[offsetOld:]) == sstMagic {
+		// Old format (28-byte footer)
+		footerSize = sstFooterSizeOld
+		footerStart = fileSize - int64(footerSize)
+	} else {
+		return nil, ErrInvalidSSTFormat
+	}
+
+	// Read full footer
+	footer := make([]byte, footerSize)
+	if _, err := f.ReadAt(footer, footerStart); err != nil {
 		return nil, err
 	}
 
@@ -99,17 +160,13 @@ func openSSTLazy(path string) (*sstReader, error) {
 	indexSize := binary.LittleEndian.Uint32(footer[8:])
 	bloomOffset := binary.LittleEndian.Uint64(footer[12:])
 	bloomSize := binary.LittleEndian.Uint32(footer[20:])
-	magic := binary.LittleEndian.Uint32(footer[24:])
-
-	if magic != sstMagic {
-		return nil, ErrInvalidSSTFormat
-	}
 
 	r := &sstReader{filePath: path}
 
 	// Read index block
 	if indexOffset > 0 {
 		if indexOffset >= uint64(fileSize) || indexOffset+uint64(indexSize) > uint64(fileSize) {
+			// REQ001008: range tombstones should suppress keys in the range
 			return nil, ErrInvalidSSTFormat
 		}
 		indexData := make([]byte, indexSize)
@@ -136,7 +193,7 @@ func openSSTLazy(path string) (*sstReader, error) {
 		// Read prefix bloom
 		prefixBloomStart := bloomOffset + uint64(bloomSize)
 		if prefixBloomStart < uint64(fileSize) {
-			remaining := uint64(fileSize) - prefixBloomStart - 28
+			remaining := uint64(fileSize) - prefixBloomStart - uint64(footerSize)
 			if remaining > 0 && remaining < uint64(fileSize) && prefixBloomStart+remaining <= uint64(fileSize) {
 				prefixBloomData := make([]byte, remaining)
 				if _, err := f.ReadAt(prefixBloomData, int64(prefixBloomStart)); err != nil {
@@ -144,6 +201,22 @@ func openSSTLazy(path string) (*sstReader, error) {
 				}
 				r.prefixBloom = prefixBloomData
 			}
+		}
+	}
+
+	// REQ001008: read range tombstone block if present (new format only)
+	if footerSize == sstFooterSize {
+		rangeTombstoneOffset := binary.LittleEndian.Uint64(footer[24:])
+		rangeTombstoneSize := binary.LittleEndian.Uint32(footer[32:])
+		if rangeTombstoneOffset > 0 && rangeTombstoneSize > 0 {
+			if rangeTombstoneOffset >= uint64(fileSize) || rangeTombstoneOffset+uint64(rangeTombstoneSize) > uint64(fileSize) {
+				return nil, ErrInvalidSSTFormat
+			}
+			rtData := make([]byte, rangeTombstoneSize)
+			if _, err := f.ReadAt(rtData, int64(rangeTombstoneOffset)); err != nil {
+				return nil, err
+			}
+			r.rangeTombstones = parseRangeTombstones(rtData)
 		}
 	}
 
@@ -178,11 +251,50 @@ func parseIndexBlock(data []byte) []indexEntry {
 		entries = append(entries, indexEntry{
 			largestKey:  key,
 			blockOffset: int(blockOffset),
-			blockSize:   int(blockSize),
+			// REQ001008: range tombstones should suppress keys in the range
+			blockSize: int(blockSize),
 		})
 	}
 
 	return entries
+}
+
+// parseRangeTombstones parses the range tombstone block.
+// Format: [start_len][start][end_len][end]...
+// REQ001008.
+func parseRangeTombstones(data []byte) []kvPair {
+	var pairs []kvPair
+	offset := 0
+
+	for offset < len(data) {
+		if offset+1 > len(data) {
+			break
+		}
+		startLen, n := decodeVarint(data[offset:])
+		offset += n
+
+		if offset+int(startLen) > len(data) {
+			break
+		}
+		start := data[offset : offset+int(startLen)]
+		offset += int(startLen)
+
+		if offset+1 > len(data) {
+			break
+		}
+		endLen, n := decodeVarint(data[offset:])
+		offset += n
+
+		if offset+int(endLen) > len(data) {
+			break
+		}
+		end := data[offset : offset+int(endLen)]
+		offset += int(endLen)
+
+		pairs = append(pairs, kvPair{key: start, value: end})
+	}
+
+	return pairs
 }
 
 func (r *sstReader) mayContain(key []byte) bool {
@@ -195,6 +307,7 @@ func (r *sstReader) mayContain(key []byte) bool {
 
 	mask := uint32(len(r.bloom)*8) - 1
 	bucket1 := int(h1 & mask)
+	// REQ001008: range tombstones should suppress keys in the range
 	bucket2 := int(h2 & mask)
 
 	return (r.bloom[bucket1/8]&(1<<(bucket1%8)) != 0) &&
@@ -220,6 +333,12 @@ func (r *sstReader) MayContainPrefix(prefix []byte) bool {
 }
 
 func (r *sstReader) Find(key []byte) ([]byte, bool) {
+	// REQ001008: check range tombstones before scanning data blocks.
+	// If the key falls within any range tombstone, return nil, false.
+	if r.isInRangeTombstone(key) {
+		return nil, false
+	}
+
 	if !r.mayContain(key) {
 		return nil, false
 	}
@@ -250,6 +369,18 @@ func (r *sstReader) Find(key []byte) ([]byte, bool) {
 	}
 
 	return nil, false
+}
+
+// isInRangeTombstone checks if key falls within any range tombstone [start, end).
+// REQ001008: range tombstones suppress all keys in the range.
+func (r *sstReader) isInRangeTombstone(key []byte) bool {
+	for _, rt := range r.rangeTombstones {
+		// rt.key = start, rt.value = end
+		if bytes.Compare(key, rt.key) >= 0 && bytes.Compare(key, rt.value) < 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *sstReader) searchIndex(key []byte) int {
