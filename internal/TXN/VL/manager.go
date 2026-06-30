@@ -3,6 +3,7 @@ package VL
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/cyw0ng95/razordata/internal/TXN/MV"
 	"github.com/cyw0ng95/razordata/internal/TXN/SN"
@@ -30,6 +31,7 @@ type TxnManager interface {
 type Manager struct {
 	sm        *slotManager
 	mv        *MV.MV
+	lt        *LockTable
 	committed atomic.Int64
 	aborted   atomic.Int64
 	closed    atomic.Bool
@@ -40,6 +42,7 @@ func NewManager() *Manager {
 	return &Manager{
 		sm: newSlotManager(),
 		mv: MV.NewMV(),
+		lt: NewLockTable(5 * time.Second),
 	}
 }
 
@@ -48,6 +51,7 @@ func NewManagerShared(sm *slotManager, mv *MV.MV) *Manager {
 	return &Manager{
 		sm: sm,
 		mv: mv,
+		lt: NewLockTable(5 * time.Second),
 	}
 }
 
@@ -73,11 +77,12 @@ func (m *Manager) Begin(ctx context.Context) (Tx, error) {
 	readView := SN.NewReadView(m.mv, slot.beginTS)
 
 	return &tx{
-		sm:       m.sm,
-		mv:       m.mv,
-		manager:  m,
-		slot:     slot,
-		readView: readView,
+		sm:         m.sm,
+		mv:         m.mv,
+		manager:    m,
+		slot:       slot,
+		readView:   readView,
+		savepoints: make(map[string]*savepoint),
 	}, nil
 }
 

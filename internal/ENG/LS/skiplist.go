@@ -2,7 +2,6 @@ package ls
 
 import (
 	"bytes"
-	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,8 +20,12 @@ type skipList struct {
 	head  atomic.Pointer[node]
 	level atomic.Int32
 	len   atomic.Int64
-	rng   *rand.Rand
-	rmu   sync.Mutex
+	// REQ001132: lock-free xorshift64 PRNG replaces the previous
+	// sl.rmu + sl.rng combination. Every insert used to acquire
+	// sl.rmu for randomLevel(), serializing all concurrent inserts.
+	// The xorshift64 state lives in an atomic.Uint64 and is updated
+	// via CAS — no lock needed.
+	rng atomic.Uint64
 }
 
 var nodeSlicePool = sync.Pool{
@@ -53,18 +56,41 @@ func New() *skipList {
 	}
 	sl.head.Store(head)
 	seed := uint64(time.Now().UnixNano())
-	sl.rng = rand.New(rand.NewPCG(seed, seed))
+	if seed == 0 {
+		seed = 1
+	}
+	sl.rng.Store(seed)
 	return sl
 }
 
+// REQ001132: lock-free randomLevel using xorshift64.
+// The original implementation held sl.rmu for every call,
+// serializing all concurrent inserts. This version uses a
+// CAS loop on an atomic.Uint64 xorshift64 state — no lock.
 func (sl *skipList) randomLevel() int {
-	sl.rmu.Lock()
-	lvl := 1
-	for lvl < maxLevel && sl.rng.IntN(2) == 0 {
-		lvl++
+	for {
+		old := sl.rng.Load()
+		// xorshift64: three shifts, three xors
+		x := old
+		x ^= x << 13
+		x ^= x >> 7
+		x ^= x << 17
+		if x == 0 {
+			x = 1
+		}
+		if sl.rng.CompareAndSwap(old, x) {
+			lvl := 1
+			for lvl < maxLevel && (x&1) == 0 {
+				lvl++
+				// Use successive bits for the coin flip,
+				// matching the original IntN(2) == 0 distribution.
+				x >>= 1
+			}
+			return lvl
+		}
+		// CAS lost — another goroutine updated the RNG state.
+		// Retry with the new value.
 	}
-	sl.rmu.Unlock()
-	return lvl
 }
 
 func (sl *skipList) Insert(key, value []byte) error {

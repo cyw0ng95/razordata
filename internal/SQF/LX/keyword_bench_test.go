@@ -3,6 +3,7 @@ package LX
 import (
 	"sort"
 	"testing"
+	"unsafe"
 )
 
 // REQ001145: trie lookup benchmark. The trie is the production
@@ -83,16 +84,8 @@ func BenchmarkLexer_KeywordLookup_SortedSlice(b *testing.B) {
 		if n.value != 0 {
 			entries = append(entries, entry{string(prefix), n.value})
 		}
-		for i, c := range n.children {
-			if c != nil {
-				ch := byte('a')
-				if i == 26 {
-					ch = '_'
-				} else {
-					ch = byte('a' + i)
-				}
-				walk(c, append(prefix, ch))
-			}
+		for _, e := range n.children {
+			walk(e.next, append(prefix, e.ch))
 		}
 	}
 	walk(keywordTrie, nil)
@@ -114,6 +107,62 @@ func BenchmarkLexer_KeywordLookup_SortedSlice(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for _, s := range samples {
 			_ = sort.SearchStrings(keys, s)
+		}
+	}
+}
+
+// REQ001154: memory usage benchmark — measures the compact trie's
+// memory footprint and compares it to the old [27]*keywordNode layout.
+func BenchmarkKeywordTrie_MemoryUsage(b *testing.B) {
+	// Count nodes and total memory for the compact representation.
+	var (
+		nodeCount  int
+		childCount int
+		totalBytes int64
+	)
+	var walk func(n *keywordNode)
+	walk = func(n *keywordNode) {
+		nodeCount++
+		childCount += len(n.children)
+		// keywordNode: slice header (24 bytes) + value (8 bytes) = 32 bytes
+		// childEntry: 16 bytes each (byte + pointer + padding)
+		totalBytes += 32 + int64(len(n.children))*16
+		for _, e := range n.children {
+			walk(e.next)
+		}
+	}
+	walk(keywordTrie)
+
+	b.ReportMetric(float64(nodeCount), "nodes")
+	b.ReportMetric(float64(childCount), "children")
+	b.ReportMetric(float64(totalBytes), "bytes/compact")
+
+	// Old layout: each node had [27]*keywordNode (216 bytes) + value (8 bytes) = 224 bytes
+	oldBytes := int64(nodeCount) * 224
+	b.ReportMetric(float64(oldBytes), "bytes/old")
+
+	// Verify the compact representation is smaller
+	if totalBytes >= oldBytes {
+		b.Errorf("compact trie (%d bytes) is not smaller than old (%d bytes)", totalBytes, oldBytes)
+	}
+
+	// Also verify struct sizes
+	b.ReportMetric(float64(unsafe.Sizeof(keywordNode{})), "bytes/keywordNode")
+	b.ReportMetric(float64(unsafe.Sizeof(childEntry{})), "bytes/childEntry")
+}
+
+// REQ001154: compact trie lookup benchmark — measures the hot path
+// of the compact keyword trie on a representative sample.
+func BenchmarkKeywordTrie_Lookup_Compact(b *testing.B) {
+	samples := []string{
+		"SELECT", "FROM", "WHERE", "PRIMARY", "FOREIGN",
+		"myTable", "col_name", "x", "INDEXED", "INSIDE",
+		"INT", "INTEGER", "ROW", "ROW_NUMBER", "SELECTOR",
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, s := range samples {
+			_, _ = lookupKeyword(s)
 		}
 	}
 }

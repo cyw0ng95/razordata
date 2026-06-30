@@ -137,6 +137,20 @@ func (n *VersionNode) Commit(commitTS uint64) bool {
 	return n.endTS.CompareAndSwap(math.MaxUint64, commitTS)
 }
 
+// Revert marks the node as uncommitted again (REQ000995).
+// Returns false if the node was not committed.
+func (n *VersionNode) Revert() bool {
+	for {
+		cur := n.endTS.Load()
+		if cur == math.MaxUint64 {
+			return false // already uncommitted
+		}
+		if n.endTS.CompareAndSwap(cur, math.MaxUint64) {
+			return true
+		}
+	}
+}
+
 // Commit marks the given node as committed at commitTS. Returns false if the
 // node was already committed.
 func (vc *VersionChain) Commit(node *VersionNode, commitTS uint64) bool {

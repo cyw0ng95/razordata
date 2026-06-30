@@ -162,9 +162,9 @@ func (e *engine) Read(key []byte) ([]byte, error) {
 		return nil, ErrClosed
 	}
 	e.mu.RLock()
-	defer e.mu.RUnlock()
 	if e.activeMem != nil {
 		if val, found := e.activeMem.Get(key); found {
+			e.mu.RUnlock()
 			e.stats.MemtableHits.Add(1)
 			return val, nil
 		}
@@ -172,11 +172,19 @@ func (e *engine) Read(key []byte) ([]byte, error) {
 	for i := len(e.memtables) - 1; i >= 0; i-- {
 		mt := e.memtables[i]
 		if val, found := mt.Get(key); found {
+			e.mu.RUnlock()
 			e.stats.MemtableHits.Add(1)
 			return val, nil
 		}
 	}
-	val, err := e.readFromSST(key)
+	// REQ001131: snapshot the manifest under RLock, then release
+	// the lock before doing I/O-heavy SST reads. The Version
+	// pointer is loaded atomically from the manifest, so it is
+	// safe to use after releasing the lock.
+	version := e.manifest.Current()
+	e.mu.RUnlock()
+
+	val, err := e.readFromSSTWithVersion(key, version)
 	if err == nil {
 		e.stats.SSTHits.Add(1)
 		return val, nil
@@ -185,10 +193,17 @@ func (e *engine) Read(key []byte) ([]byte, error) {
 }
 
 func (e *engine) readFromSST(key []byte) ([]byte, error) {
-	v := e.manifest.Current()
-	for level := 0; level < len(v.levels); level++ {
-		files := v.levels[level]
+	return e.readFromSSTWithVersion(key, e.manifest.Current())
+}
+
+// readFromSSTWithVersion searches SST files using the provided version
+// snapshot. This allows callers to release locks before I/O.
+func (e *engine) readFromSSTWithVersion(key []byte, version *Version) ([]byte, error) {
+	for level := 0; level < len(version.levels); level++ {
+		files := version.levels[level]
 		for i := len(files) - 1; i >= 0; i-- {
+			// REQ001131: files slice is owned by the version snapshot,
+			// which is immutable after creation. Safe to access without lock.
 			file := files[i]
 			if bytes.Compare(key, file.MinKey) < 0 || bytes.Compare(key, file.MaxKey) > 0 {
 				continue
