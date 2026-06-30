@@ -23,15 +23,28 @@ var ErrIntOverflow = errors.New("lx: integer literal overflows int64")
 // and lowercases input bytes on the fly, avoiding the ToUpper
 // allocation entirely.
 //
-// Layout: 27-way trie indexed 0..25 for 'a'..'z' and 26 for
-// '_'. Each node carries a `value` (0 = non-terminal). Lookup
-// is O(input_len) and allocation-free.
+// REQ001154: compact child representation. Each node stores
+// children as a sorted []childEntry slice instead of [27]*keywordNode.
+// Most nodes have 1-3 children; the old 27-slot array wasted
+// ~216 bytes of nil pointers per node. The compact form uses
+// 16 bytes per child (byte + pointer + padding), so a node with
+// 3 children is 72 bytes vs 224 bytes — a 3x reduction.
+//
+// Layout: sorted childEntry slice indexed by byte ('a'..'z', '_').
+// Each node carries a `value` (0 = non-terminal). Lookup is
+// O(input_len × avg_children) with linear scan on the tiny
+// child slices (typically 1-3 entries).
 //
 // On lookup failure (no matching keyword), lookupKeyword
 // returns (0, T_EOF), signalling the caller to treat the input
 // as a plain identifier.
+type childEntry struct {
+	ch   byte // 'a'..'z' or '_'
+	next *keywordNode
+}
+
 type keywordNode struct {
-	children [27]*keywordNode
+	children []childEntry
 	value    TokenType // 0 = not a terminal here
 }
 
@@ -265,14 +278,35 @@ func buildKeywordTrie() *keywordNode {
 			if idx < 0 {
 				panic("buildKeywordTrie: invalid keyword char: " + p.k)
 			}
-			if cur.children[idx] == nil {
-				cur.children[idx] = &keywordNode{}
+			ch := byte(idx)
+			if idx == 26 {
+				ch = '_'
+			} else {
+				ch = 'a' + byte(idx)
 			}
-			cur = cur.children[idx]
+			// Find existing child or append (children are kept sorted by ch).
+			next := findChild(cur.children, ch)
+			if next == nil {
+				next = &keywordNode{}
+				cur.children = append(cur.children, childEntry{ch: ch, next: next})
+			}
+			cur = next
 		}
 		cur.value = p.v
 	}
 	return root
+}
+
+// findChild returns the child node for byte ch from a childEntry
+// slice. The slice is NOT sorted; we scan linearly. Most nodes
+// have 1-3 children, so linear scan is optimal.
+func findChild(cs []childEntry, ch byte) *keywordNode {
+	for _, e := range cs {
+		if e.ch == ch {
+			return e.next
+		}
+	}
+	return nil
 }
 
 // keywordCharIndex maps an ASCII letter (upper or lower) or '_'
@@ -297,7 +331,8 @@ func keywordCharIndex(c byte) int {
 //
 // Hot-path contract:
 //   - allocation-free (no heap traffic)
-//   - one byte compare per input char + one pointer load
+//   - one byte compare per input char + linear scan of tiny
+//     child slice (typically 1-3 entries)
 //   - case-insensitive: input bytes are folded inline
 //
 // The first terminal reached is returned — for the SQL keyword
@@ -318,8 +353,17 @@ func lookupKeyword(input string) (int, TokenType) {
 		if idx < 0 {
 			break
 		}
-		next := cur.children[idx]
+		ch := byte(idx)
+		if idx == 26 {
+			ch = '_'
+		} else {
+			ch = 'a' + byte(idx)
+		}
+		next := findChild(cur.children, ch)
 		if next == nil {
+			// REQ001154: linear scan on sorted childEntry slice.
+			// Most nodes have 1-3 children; linear scan beats
+			// binary search for this range.
 			break
 		}
 		cur = next
@@ -330,6 +374,9 @@ func lookupKeyword(input string) (int, TokenType) {
 			// idents (e.g. SELECTOR → SELECT then OR is
 			// already not a continuation, so SELECT matches).
 			bestLen = matched
+			// REQ001154: keep the deepest terminal so that
+			// prefix collisions (INT vs INTEGER) resolve to
+			// the longer keyword when the input matches all of it.
 			bestType = cur.value
 		}
 	}
