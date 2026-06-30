@@ -224,7 +224,6 @@ type RegisteredIndex = DT.RegisteredIndex
 
 // Backward-compat function aliases for types/functions moved to OP.
 
-var NewSeqScanWithStore = OP.NewSeqScanWithStore
 
 // stmtCacheEntry holds a cached parsed statement with LRU metadata.
 type stmtCacheEntry struct {
