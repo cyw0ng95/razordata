@@ -3,7 +3,6 @@ package EV
 import (
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"container/list"
 	"context"
 	"encoding/hex"
@@ -652,7 +651,7 @@ func EvalForTest(e PS.Expr, row *Row, params []any) (any, error) {
 //  1. Row's ExecContext.Planner (REQ000586)
 //  2. Row's outer-chain planner (REQ000366)
 func getSubqueryPlanner(outer *Row) PL.QueryPlanner {
-	if ec := OP.ExecContextFromRow(outer); ec != nil && ec.Planner != nil {
+	if ec := DT.ExecContextFromRow(outer); ec != nil && ec.Planner != nil {
 		return ec.Planner
 	}
 	if p := outer.GetPlanner(); p != nil {

@@ -1,7 +1,7 @@
 // Package EX's join.go hosts NestedLoopJoin. Joins are not part of the
 // v1 MVP scope per docs/design/ARCH.md; the operator is retained in v1.1 for
 // upcoming releases.
-package EX
+package OP
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
 
 // JoinKind specifies the type of join.
@@ -252,8 +251,18 @@ func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on fu
 func (j *NestedLoopJoin) SetLimit(n int64) { j.limitRemaining = n }
 
 func (j *NestedLoopJoin) LeftChild() Operator { return j.left }
+func (j *NestedLoopJoin) SetLeft(c Operator) { j.left = c }
 
 func (j *NestedLoopJoin) RightChild() Operator { return j.right }
+func (j *NestedLoopJoin) SetRight(c Operator) { j.right = c }
+
+func (j *NestedLoopJoin) LeftTbl() string { return j.leftTbl }
+
+func (j *NestedLoopJoin) RightTbl() string { return j.rightTbl }
+
+func (j *NestedLoopJoin) SharedCols() []string { return j.sharedCols }
+
+func (j *NestedLoopJoin) SharedTypes() []LX.TokenType { return j.sharedTypes }
 
 func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 	if err := ctx.Err(); err != nil {
@@ -332,9 +341,9 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 	// without it, every time leftRow becomes nil the guard passes,
 	// re-draining the left child each time.
 	if !j.hashMode && !j.hashAttempted && j.leftRows == nil && j.rightRows == nil && j.leftRow == nil {
-		// REQ000843: skip OP.HashCrossJoin when either side is already
+		// REQ000843: skip HashCrossJoin when either side is already
 		// a join operator — the bushy group already has all rows
-		// materialized and OP.HashCrossJoin would re-materialize them.
+		// materialized and HashCrossJoin would re-materialize them.
 		if !isJoinOp(j.left) && !isJoinOp(j.right) {
 			if j.tryHashCrossJoin(ctx) {
 				// Switched to hash mode — continue with hash iteration.
@@ -871,7 +880,7 @@ func joinRowsLL(a, b *Row) Row {
 
 // joinRowsLLWithCols is the full-form variant: caller supplies
 // pre-built sharedCols, sharedTypes and sharedColIndex to avoid
-// per-row allocation in the hot NLJ/OP.HashCrossJoin path. When
+// per-row allocation in the hot NLJ/HashCrossJoin path. When
 // sharedCols is non-nil, out.Cols/Types share the slice (no copy).
 // Data is always freshly allocated since it's per-row payload.
 func joinRowsLLWithCols(a, b *Row, sharedCols []string, sharedTypes []LX.TokenType, sharedColIndex map[string]int) Row {
@@ -1001,32 +1010,12 @@ func buildProjectedLayout(projectedCols []string, leftCols, rightCols []string, 
 	return cols, types, colIndex, layout
 }
 
-func prefixCols(cols []string, prefix string) []string {
-	out := make([]string, len(cols))
-	for i, c := range cols {
-		out[i] = prefix + "." + c
-	}
-	return out
-}
-
-// hasAnyPrefix reports whether any column name in cols contains
-// a dot, indicating it has already been prefixed by a prior join
-// in a multi-table chain. REQ000725.
-func hasAnyPrefix(cols []string) bool {
-	for _, c := range cols {
-		if strings.Contains(c, ".") {
-			return true
-		}
-	}
-	return false
-}
-
 // isJoinOp returns true when the operator is a NestedLoopJoin or
-// OP.HashJoin (i.e., it represents a join operator in the plan tree).
+// HashJoin (i.e., it represents a join operator in the plan tree).
 // REQ000843: used by tryHashCrossJoin to skip bushy-group joins.
 func isJoinOp(op Operator) bool {
 	switch op.(type) {
-	case *NestedLoopJoin, *OP.HashJoin, *OP.HashCrossJoin:
+	case *NestedLoopJoin, *HashJoin, *HashCrossJoin:
 		return true
 	}
 	return false

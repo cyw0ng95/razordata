@@ -12,6 +12,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 
@@ -213,6 +214,79 @@ type Rows struct {
 
 // ColInfo describes a single column in a table schema. Aliased from PL.
 type ColInfo = DT.ColInfo
+
+// Backward-compat aliases for types moved to OP.
+type SeqScan = OP.SeqScan
+type IndexScan = OP.IndexScan
+type Filter = OP.Filter
+type Project = OP.Project
+type Sort = OP.Sort
+type Limit = OP.Limit
+type Offset = OP.Offset
+type NestedLoopJoin = OP.NestedLoopJoin
+type JoinKind = OP.JoinKind
+type VectorizedSeqScan = OP.VectorizedSeqScan
+type VectorizedFilter = OP.VectorizedFilter
+type CompoundOp = OP.CompoundOp
+type Values = OP.Values
+type ValuesRows = OP.ValuesRows
+
+// Backward-compat type aliases formerly in EX/store.go.
+type Store = DT.Store
+type StoreSchema = DT.StoreSchema
+type StatsCatalog = DT.StatsCatalog
+type UniqueKey = DT.UniqueKey
+type ForeignKeyConstraint = DT.ForeignKeyConstraint
+type RegisteredIndex = DT.RegisteredIndex
+
+var ErrTableNotRegisteredForStorage = OP.ErrTableNotRegisteredForStorage
+var ErrNoPKForStorage = OP.ErrNoPKForStorage
+var ErrNoEngine = OP.ErrNoEngine
+
+// Backward-compat function aliases for types/functions moved to OP.
+var JoinKindInner = OP.JoinKindInner
+var JoinKindCross = OP.JoinKindCross
+var JoinKindLeft = OP.JoinKindLeft
+var JoinKindRight = OP.JoinKindRight
+var JoinKindFull = OP.JoinKindFull
+
+var NewSeqScan = OP.NewSeqScan
+var NewSeqScanWithStore = OP.NewSeqScanWithStore
+var NewFilter = OP.NewFilter
+var NewProject = OP.NewProject
+var NewSort = OP.NewSort
+var NewLimit = OP.NewLimit
+var NewOffset = OP.NewOffset
+var NewNestedLoopJoin = OP.NewNestedLoopJoin
+var NewParallelSeqScanRow = OP.NewParallelSeqScanRow
+var NewParallelSeqScan = OP.NewParallelSeqScan
+var NewParallelIndexScan = OP.NewParallelIndexScan
+var NewParallelIndexRangeScan = OP.NewParallelIndexRangeScan
+var NewParallelUnionAll = OP.NewParallelUnionAll
+var NewVectorizedSeqScan = OP.NewVectorizedSeqScan
+var NewVectorizedFilter = OP.NewVectorizedFilter
+var NewCompoundOp = OP.NewCompoundOp
+var NewValuesOp = OP.NewValuesOp
+var NewValuesRowsOp = OP.NewValuesRowsOp
+var newValuesOp = OP.NewValuesOp
+var newValuesRowsOp = OP.NewValuesRowsOp
+var SchemaFromRowSchema = OP.SchemaFromRowSchema
+var NewIndexScan = OP.NewIndexScan
+var NewIndexScanWithStore = OP.NewIndexScanWithStore
+var NewIndexScanWithIndex = OP.NewIndexScanWithIndex
+var NewIndexScanWithBTree = OP.NewIndexScanWithBTree
+var NewIndexScanWithRange = OP.NewIndexScanWithRange
+var tablePrefix = OP.TablePrefix
+var decodeRow = OP.DecodeRow
+var buildIndexKey = OP.BuildIndexKey
+var encodeTablePrefix = OP.EncodeTablePrefix
+var EncodeRow = OP.EncodeRow
+var RowKey = OP.RowKey
+var ExtractPK = OP.ExtractPK
+var ExtractPKForUpdate = OP.ExtractPKForUpdate
+var MaintainIndexesOnInsert = OP.MaintainIndexesOnInsert
+var MaintainIndexesOnDelete = OP.MaintainIndexesOnDelete
+var MaintainIndexesOnUpdate = OP.MaintainIndexesOnUpdate
 
 // stmtCacheEntry holds a cached parsed statement with LRU metadata.
 type stmtCacheEntry struct {
@@ -885,7 +959,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 				}
 				return nil, err
 			}
-			OP.WithExecContext(&row, execCtx)
+			DT.WithExecContext(&row, execCtx)
 			rs := &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]LX.TokenType(nil), row.Types...)}
 			return rs, nil
 		}
@@ -947,7 +1021,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 		}
 		return nil, err
 	}
-	OP.WithExecContext(&row, execCtx)
+	DT.WithExecContext(&row, execCtx)
 	rs := &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]LX.TokenType(nil), row.Types...)}
 	return rs, nil
 }
@@ -978,7 +1052,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 					}
 					return nil, err
 				}
-				OP.WithExecContext(&row, execCtx)
+DT.WithExecContext(&row, execCtx)
 				out = append(out, row)
 			}
 			return out, nil
@@ -1021,7 +1095,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 			}
 			return nil, err
 		}
-		OP.WithExecContext(&row, execCtx)
+		DT.WithExecContext(&row, execCtx)
 		out = append(out, row)
 	}
 	return out, nil
@@ -1034,7 +1108,7 @@ func propagatePlanner(root Operator, p *Planner) {
 	if root == nil {
 		return
 	}
-	if w, ok := root.(interface{ WithPlanner(*Planner) Operator }); ok {
+	if w, ok := root.(interface{ WithPlanner(pl.QueryPlanner) pl.Operator }); ok {
 		w.WithPlanner(p)
 	}
 	type childer interface {
@@ -1063,10 +1137,10 @@ func propagateExecContext(root Operator, ec *ExecContext) {
 		return
 	}
 	if f, ok := root.(*Filter); ok {
-		f.execCtx = ec
+		f.SetExecCtx(ec)
 	}
 	if p, ok := root.(*Project); ok {
-		p.execCtx = ec
+		p.SetExecCtx(ec)
 	}
 	if ins, ok := root.(*Insert); ok {
 		ins.execCtx = ec
@@ -1078,7 +1152,7 @@ func propagateExecContext(root Operator, ec *ExecContext) {
 		del.execCtx = ec
 	}
 	if val, ok := root.(*Values); ok {
-		val.execCtx = ec
+		val.SetExecCtx(ec)
 	}
 	type childer interface {
 		Child() Operator
@@ -1653,7 +1727,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 		plan.Root.Close()
 		return nil, err
 	}
-	OP.WithExecContext(&row, execCtx)
+	DT.WithExecContext(&row, execCtx)
 	cols := append([]string(nil), row.Cols...)
 	types := append([]LX.TokenType(nil), row.Types...)
 

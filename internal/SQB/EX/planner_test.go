@@ -345,20 +345,20 @@ func TestPlanner_ColumnPruning(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected SeqScan under Project, got %T", proj.Child())
 		}
-		if len(ss.usedCols) == 0 {
+		if len(ss.UsedCols()) == 0 {
 			t.Error("expected non-empty usedCols on SeqScan")
 		}
 		hasA := false
-		for _, c := range ss.usedCols {
+		for _, c := range ss.UsedCols() {
 			if c == "a" {
 				hasA = true
 				break
 			}
 		}
 		if !hasA {
-			t.Errorf("expected 'a' in usedCols, got %v", ss.usedCols)
+			t.Errorf("expected 'a' in usedCols, got %v", ss.UsedCols())
 		}
-		if len(ss.usedCols) > 0 && len(ss.usedCols) < 5 {
+		if len(ss.UsedCols()) > 0 && len(ss.UsedCols()) < 5 {
 			// col pruning is working — fewer than all 5 columns are projected.
 		}
 	})
@@ -378,8 +378,8 @@ func TestPlanner_ColumnPruning(t *testing.T) {
 		// Star expands to Project, but star causes usedCols to be nil.
 		if proj, ok := op.(*Project); ok {
 			if ss, ok2 := proj.Child().(*SeqScan); ok2 {
-				if ss.usedCols != nil {
-					t.Logf("SeqScan has usedCols=%v (ok for star, pruning is optional)", ss.usedCols)
+				if ss.UsedCols() != nil {
+					t.Logf("SeqScan has usedCols=%v (ok for star, pruning is optional)", ss.UsedCols())
 				}
 			}
 		}

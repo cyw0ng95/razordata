@@ -44,7 +44,7 @@ func TestREQ000736_ParserCheck(t *testing.T) {
 	walk = func(op Operator) {
 		if s, ok := op.(*Sort); ok {
 			found = true
-			t.Logf("Sort has %d keys, NullsOrder[0]=%d", len(s.keys), s.keys[0].NullsOrder)
+			t.Logf("Sort has %d keys, NullsOrder[0]=%d", len(s.Keys()), s.Keys()[0].NullsOrder)
 		}
 		if c, ok := op.(interface{ Child() Operator }); ok {
 			c2 := c.Child()

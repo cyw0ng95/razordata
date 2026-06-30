@@ -53,7 +53,7 @@ func isInt64EqPredicate(expr interface{}) bool {
 
 // isFixedCols checks if the project has a fixed set of columns.
 func isFixedCols(p *Project) bool {
-	return len(p.cols) > 0 && len(p.cols) <= 8
+	return len(p.Cols()) > 0 && len(p.Cols()) <= 8
 }
 
 // isInt64GroupBy checks if the hash aggregate groups by int64 columns.

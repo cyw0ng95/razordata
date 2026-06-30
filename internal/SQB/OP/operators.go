@@ -1,4 +1,4 @@
-package EX
+package OP
 
 import (
 	"bytes"
@@ -12,17 +12,14 @@ import (
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	id "github.com/cyw0ng95/razordata/internal/ENG/ID"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
-// ErrTableNotRegisteredForStorage is returned when an operator is asked to
-// route through the storage engine for a table that has not been registered
-// in the in-memory catalog. Callers can match it with errors.Is and inspect
-// the table name via the wrapped error.
-var ErrTableNotRegisteredForStorage = errors.New("ex: table not registered for storage")
 
-var ErrNoPKForStorage = errors.New("ex: cannot write to storage without a primary key")
+var ErrTableNotRegisteredForStorage = errors.New("op: table not registered for storage")
+var ErrNoPKForStorage = errors.New("op: cannot write to storage without a primary key")
 
-// tableSchemaCache caches shared column metadata per table to avoid
+// TableSchemaCache caches shared column metadata per table to avoid
 // rebuilding Cols, Types, and colIndex on every SeqScan.snapshot() call.
 type tableSchemaEntry struct {
 	cols     []string
@@ -30,9 +27,11 @@ type tableSchemaEntry struct {
 	colIndex map[string]int
 }
 
+type TableSchemaEntry = tableSchemaEntry
+
 var (
-	tableSchemaMu    sync.RWMutex
-	tableSchemaCache = map[string]*tableSchemaEntry{}
+	TableSchemaMu    sync.RWMutex
+	TableSchemaCache = map[string]*TableSchemaEntry{}
 )
 
 func getTableSchema(table string, src []Row) *tableSchemaEntry {
@@ -40,17 +39,17 @@ func getTableSchema(table string, src []Row) *tableSchemaEntry {
 		return nil
 	}
 	// Fast path: read lock.
-	tableSchemaMu.RLock()
-	entry, ok := tableSchemaCache[table]
-	tableSchemaMu.RUnlock()
+	TableSchemaMu.RLock()
+	entry, ok := TableSchemaCache[table]
+	TableSchemaMu.RUnlock()
 	if ok {
 		return entry
 	}
 	// Slow path: write lock and build.
-	tableSchemaMu.Lock()
-	defer tableSchemaMu.Unlock()
+	TableSchemaMu.Lock()
+	defer TableSchemaMu.Unlock()
 	// Double-check after acquiring write lock.
-	if entry, ok = tableSchemaCache[table]; ok {
+	if entry, ok = TableSchemaCache[table]; ok {
 		return entry
 	}
 	cols := append([]string(nil), src[0].Cols...)
@@ -63,7 +62,7 @@ func getTableSchema(table string, src []Row) *tableSchemaEntry {
 		colIndex[strings.ToLower(c)] = i
 	}
 	entry = &tableSchemaEntry{cols: cols, types: types, colIndex: colIndex}
-	tableSchemaCache[table] = entry
+	TableSchemaCache[table] = entry
 	return entry
 }
 
@@ -92,7 +91,7 @@ type SeqScan struct {
 	// produced by SeqScan carry it through to the Filter,
 	// Project, and (importantly) subquery eval sites.
 	// See REQ000366.
-	planner *Planner
+	planner pl.QueryPlanner
 	// currentKey is the raw key from the LSM iterator for the
 	// most recently decoded row. Preserved so Update/Delete
 	// can reuse the original row key for hidden-PK DT.Tables.
@@ -144,14 +143,14 @@ type SeqScan struct {
 
 // WithParams propagates the bound `?` placeholders to this
 // operator (R16-1..2). Returns the receiver for chaining.
-func (s *SeqScan) WithParams(p []any) Operator {
+func (s *SeqScan) WithParams(p []any) pl.Operator {
 	s.params = p
 	return s
 }
 
 // WithPlanner attaches the main-plan planner to rows produced by
 // this SeqScan. REQ000366.
-func (s *SeqScan) WithPlanner(p *Planner) Operator {
+func (s *SeqScan) WithPlanner(p pl.QueryPlanner) pl.Operator {
 	s.planner = p
 	return s
 }
@@ -267,7 +266,7 @@ func NewSeqScanWithStore(store Store, table string) (*SeqScan, error) {
 		table:  table,
 		store:  store,
 		schema: ss,
-		prefix: tablePrefix(table),
+		prefix: TablePrefix(table),
 	}, nil
 }
 
@@ -306,7 +305,7 @@ func valueToBatch(v Value) (any, LX.TokenType) {
 // REQ001064.
 func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if s.store == nil {
-		return nil, fmt.Errorf("ex: SeqScan.NextBatch requires a Store")
+		return nil, fmt.Errorf("op: SeqScan.NextBatch requires a Store")
 	}
 	if s.schema == nil || len(s.schema.Cols) == 0 {
 		return nil, nil
@@ -351,7 +350,7 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		}
 		s.currentKey = s.it.Key()
 		v := s.it.Value()
-		row, err := decodeRow(v, s.schema)
+		row, err := DecodeRow(v, s.schema)
 		if err != nil {
 			batch.Put()
 			return nil, err
@@ -539,7 +538,7 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 // REQ001101: amortizes the make([]Value, N) allocation across
 // defaultScanRowBuf (64) rows by growing the buffer as needed.
 func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
-	row, err := decodeRow(data, s.schema)
+	row, err := DecodeRow(data, s.schema)
 	if err != nil {
 		return Row{}, err
 	}
@@ -669,7 +668,7 @@ type IndexScan struct {
 	indexUpperInclusive bool
 
 	// REQ000767: pre-computed index key prefix for range-seek
-	// filtering, avoiding buildIndexKey allocation per entry.
+	// filtering, avoiding BuildIndexKey allocation per entry.
 	prefixIdxKey []byte
 
 	// REQ000790: index usage tracking for diagnostics.
@@ -681,7 +680,7 @@ type IndexScan struct {
 
 // WithParams propagates the bound `?` placeholders to this
 // operator (R16-1..2).
-func (i *IndexScan) WithParams(p []any) Operator {
+func (i *IndexScan) WithParams(p []any) pl.Operator {
 	i.params = p
 	return i
 }
@@ -711,7 +710,7 @@ func NewIndexScanWithStore(store Store, table, idx string) (*IndexScan, error) {
 		idx:    idx,
 		store:  store,
 		schema: ss,
-		prefix: tablePrefix(table),
+		prefix: TablePrefix(table),
 	}, nil
 }
 
@@ -733,7 +732,7 @@ func NewIndexScanWithIndex(store Store, tableID uint64, table, idx string, seekV
 		idx:           idx,
 		store:         store,
 		schema:        ss,
-		prefix:        tablePrefix(table),
+		prefix:        TablePrefix(table),
 		indexMode:     true,
 		indexTableID:  tableID,
 		indexName:     idx,
@@ -754,7 +753,7 @@ func NewIndexScanWithBTree(bt *id.BTree, store Store, table, idx string) (*Index
 		idx:    idx,
 		store:  store,
 		schema: ss,
-		prefix: tablePrefix(table),
+		prefix: TablePrefix(table),
 		btree:  bt,
 	}, nil
 }
@@ -780,7 +779,7 @@ func NewIndexScanWithRange(store Store, tableID uint64, table, idx string, lower
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
 	if len(lower) == 0 {
-		return nil, fmt.Errorf("ex: IndexScan range requires non-empty lower bound")
+		return nil, fmt.Errorf("op: IndexScan range requires non-empty lower bound")
 	}
 	// Convert the inclusive upper bound into the exclusive form
 	// the iterator naturally understands. We append a 0x00 byte
@@ -802,7 +801,7 @@ func NewIndexScanWithRange(store Store, tableID uint64, table, idx string, lower
 		idx:                 idx,
 		store:               store,
 		schema:              ss,
-		prefix:              tablePrefix(table),
+		prefix:              TablePrefix(table),
 		indexMode:           true,
 		indexTableID:        tableID,
 		indexName:           idx,
@@ -829,7 +828,7 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		v := i.it.Value()
-		row, err := decodeRow(v, i.schema)
+		row, err := DecodeRow(v, i.schema)
 		if err != nil {
 			return Row{}, err
 		}
@@ -856,16 +855,16 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 	// Lazily initialize the index iterator.
 	if i.indexIt == nil {
-		// REQ001035: cache the broad prefix for indexValueFromKey.
+		// REQ001035: cache the broad prefix for IndexValueFromKey.
 		if i.prefixIdxKey == nil {
-			i.prefixIdxKey = buildIndexKey(i.indexTableID, i.idx, nil)
+			i.prefixIdxKey = BuildIndexKey(i.indexTableID, i.idx, nil)
 		}
 		// For exact-match seeks (indexSeek without indexLower),
 		// narrow the prefix to the seek value. For range scans
 		// (indexLower/indexUpper), use the broad index prefix
 		// and let the loop filter by lower/exclusive bounds.
 		if i.indexSeek != nil && i.indexLower == nil {
-			i.indexIt = i.store.NewIterator(buildIndexKey(i.indexTableID, i.idx, i.indexSeek))
+			i.indexIt = i.store.NewIterator(BuildIndexKey(i.indexTableID, i.idx, i.indexSeek))
 		} else {
 			i.indexIt = i.store.NewIterator(i.prefixIdxKey)
 		}
@@ -879,8 +878,8 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 		}
 		key := i.indexIt.Key()
 		// Extract index value from the key for bound-checking.
-		// REQ001035: use cached prefix to avoid buildIndexKey allocation.
-		idxVal := indexValueFromKey(key, i.prefixIdxKey)
+		// REQ001035: use cached prefix to avoid BuildIndexKey allocation.
+		idxVal := IndexValueFromKey(key, i.prefixIdxKey)
 		if idxVal == nil {
 			continue
 		}
@@ -907,15 +906,15 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 		}
 		// Extract primary key and fetch the row.
 		pk := i.indexIt.Value()
-		rowKey := append(append([]byte{}, i.prefix...), pk...)
-		rowBytes, found, err := i.store.Get(rowKey)
+		RowKey := append(append([]byte{}, i.prefix...), pk...)
+		rowBytes, found, err := i.store.Get(RowKey)
 		if err != nil {
 			return Row{}, err
 		}
 		if !found {
 			continue
 		}
-		row, err := decodeRow(rowBytes, i.schema)
+		row, err := DecodeRow(rowBytes, i.schema)
 		if err != nil {
 			return Row{}, err
 		}
@@ -925,11 +924,11 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-// indexValueFromKey strips the index prefix
+// IndexValueFromKey strips the index prefix
 // `__idx__:<tableID>:<idxName>:` from the key and returns the
 // remaining bytes (the indexed column value). Returns nil if the
 // key does not start with the expected prefix.
-func indexValueFromKey(key []byte, prefix []byte) []byte {
+func IndexValueFromKey(key []byte, prefix []byte) []byte {
 	if len(key) < len(prefix) {
 		return nil
 	}
@@ -961,9 +960,9 @@ func (i *IndexScan) openIndexIter() interface {
 		// Range seek: open with the broad index prefix so the
 		// iterator walks all index entries; the lower/upper
 		// bounds are enforced in nextFromIndex.
-		prefix = buildIndexKey(i.indexTableID, i.indexName, nil)
+		prefix = BuildIndexKey(i.indexTableID, i.indexName, nil)
 	} else {
-		prefix = buildIndexKey(i.indexTableID, i.indexName, i.indexSeek)
+		prefix = BuildIndexKey(i.indexTableID, i.indexName, i.indexSeek)
 	}
 	return i.store.NewIterator(prefix)
 }
@@ -1048,7 +1047,7 @@ func (i *IndexScan) nextFromBTree(ctx context.Context) (Row, error) {
 		if len(i.indexRangeEnd) > 0 && bytes.Compare(pk, i.indexRangeEnd) >= 0 {
 			return Row{}, ErrNoRows
 		}
-		rowKey := rowKey(i.prefix, pk)
+		rowKey := RowKey(i.prefix, pk)
 		rowBytes, ok, err := i.store.Get(rowKey)
 		if err != nil {
 			return Row{}, err
@@ -1059,7 +1058,7 @@ func (i *IndexScan) nextFromBTree(ctx context.Context) (Row, error) {
 			}
 			continue
 		}
-		row, err := decodeRow(rowBytes, i.schema)
+		row, err := DecodeRow(rowBytes, i.schema)
 		if err != nil {
 			return Row{}, err
 		}
@@ -1076,13 +1075,13 @@ func (i *IndexScan) nextFromBTree(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-// buildIndexKey synthesizes the index keyspace prefix for use with
+// BuildIndexKey synthesizes the index keyspace prefix for use with
 // Store.NewIterator. The full key is:
 //
 //	"__idx__:" + tableID(u64, BE) + ":" + indexName + ":" + indexValue
 //
 // iter-22 secondary indexes MVP.
-func buildIndexKey(tableID uint64, indexName string, indexValue []byte) []byte {
+func BuildIndexKey(tableID uint64, indexName string, indexValue []byte) []byte {
 	out := make([]byte, 0, 32+len(indexName)+len(indexValue))
 	out = append(out, "__idx__:"...)
 	encodeUint64BE(&out, tableID)
@@ -1186,3 +1185,24 @@ func pruneRowCols(row Row, usedCols []string, usedSet map[string]bool) Row {
 	row.ColIndex = newIndex
 	return row
 }
+
+// Accessor methods for SeqScan fields used by EX plan_node and parallel operators.
+func (s *SeqScan) Table() string               { return s.table }
+func (s *SeqScan) Store() DT.Store              { return s.store }
+func (s *SeqScan) Schema() *DT.StoreSchema      { return s.schema }
+func (s *SeqScan) UsedCols() []string           { return s.usedCols }
+func (s *SeqScan) UsedColSet() map[string]bool  { return s.usedColSet }
+func (s *SeqScan) Btree() *id.BTree             { return nil } // SeqScan has no B-tree
+
+// Accessor methods for IndexScan fields used by EX plan_node and strategy.
+func (i *IndexScan) Table() string              { return i.table }
+func (i *IndexScan) Idx() string                { return i.idx }
+func (i *IndexScan) Store() DT.Store            { return i.store }
+func (i *IndexScan) Schema() *DT.StoreSchema    { return i.schema }
+func (i *IndexScan) Btree() *id.BTree           { return i.btree }
+func (i *IndexScan) IndexMode() bool            { return i.indexMode }
+func (i *IndexScan) IndexSeek() []byte          { return i.indexSeek }
+func (i *IndexScan) IndexLower() []byte         { return i.indexLower }
+func (i *IndexScan) IndexUpper() []byte         { return i.indexUpper }
+func (i *IndexScan) Prefix() []byte             { return i.prefix }
+func (i *IndexScan) PrefixIdxKey() []byte       { return i.prefixIdxKey }

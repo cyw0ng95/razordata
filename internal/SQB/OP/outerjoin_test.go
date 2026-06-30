@@ -1,8 +1,7 @@
-package EX
+package OP
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -16,15 +15,15 @@ import (
 func TestNestedLoopJoin_WithSharedSchema(t *testing.T) {
 	DT.RegisterTable("l", []Row{
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW},
-			Data: []Value{NewIntValue(1)}},
+			Data: []Value{DT.NewIntValue(1)}},
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW},
-			Data: []Value{NewIntValue(2)}},
+			Data: []Value{DT.NewIntValue(2)}},
 	})
 	DT.RegisterTable("r", []Row{
 		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW},
-			Data: []Value{NewIntValue(10)}},
+			Data: []Value{DT.NewIntValue(10)}},
 	})
-	defer UnregisterAll()
+	
 
 	left := NewSeqScan("l")
 	right := NewSeqScan("r")
@@ -62,19 +61,19 @@ func TestNestedLoopJoin_WithSharedSchema(t *testing.T) {
 func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 	DT.RegisterTable("left", []Row{
 		{Cols: []string{"id", "val"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
-			Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(10))}},
+			Data: []Value{DT.NewIntValue(int64(1)), DT.NewIntValue(int64(10))}},
 		{Cols: []string{"id", "val"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
-			Data: []Value{NewIntValue(int64(2)), NewIntValue(int64(20))}},
+			Data: []Value{DT.NewIntValue(int64(2)), DT.NewIntValue(int64(20))}},
 		{Cols: []string{"id", "val"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
-			Data: []Value{NewIntValue(int64(3)), NewIntValue(int64(30))}},
+			Data: []Value{DT.NewIntValue(int64(3)), DT.NewIntValue(int64(30))}},
 	})
 	DT.RegisterTable("right", []Row{
 		{Cols: []string{"id", "score"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
-			Data: []Value{NewIntValue(int64(2)), NewIntValue(int64(200))}},
+			Data: []Value{DT.NewIntValue(int64(2)), DT.NewIntValue(int64(200))}},
 		{Cols: []string{"id", "score"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
-			Data: []Value{NewIntValue(int64(4)), NewIntValue(int64(400))}},
+			Data: []Value{DT.NewIntValue(int64(4)), DT.NewIntValue(int64(400))}},
 	})
-	defer UnregisterAll()
+	
 
 	left := NewSeqScan("left")
 	right := NewSeqScan("right")
@@ -105,7 +104,7 @@ func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 	}
 
 	// Row 1: id=1 unmatched (NULL right)
-	if !results[0].Data[0].Equal(NewIntValue(int64(1))) || !results[0].Data[1].Equal(NewIntValue(int64(10))) {
+	if !results[0].Data[0].Equal(DT.NewIntValue(int64(1))) || !results[0].Data[1].Equal(DT.NewIntValue(int64(10))) {
 		t.Errorf("row 0 left: got (%v, %v), want (1, 10)", results[0].Data[0], results[0].Data[1])
 	}
 	// Right side should be NULL-padded (2 columns)
@@ -118,12 +117,12 @@ func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 	}
 
 	// Row 2: id=2 matched
-	if !results[1].Data[0].Equal(NewIntValue(int64(2))) || !results[1].Data[3].Equal(NewIntValue(int64(200))) {
+	if !results[1].Data[0].Equal(DT.NewIntValue(int64(2))) || !results[1].Data[3].Equal(DT.NewIntValue(int64(200))) {
 		t.Errorf("row 1: expected match, got (%v, %v)", results[1].Data[0], results[1].Data[3])
 	}
 
 	// Row 3: id=3 unmatched
-	if !results[2].Data[0].Equal(NewIntValue(int64(3))) || !results[2].Data[1].Equal(NewIntValue(int64(30))) {
+	if !results[2].Data[0].Equal(DT.NewIntValue(int64(3))) || !results[2].Data[1].Equal(DT.NewIntValue(int64(30))) {
 		t.Errorf("row 2 left: got (%v, %v), want (3, 30)", results[2].Data[0], results[2].Data[1])
 	}
 	if results[2].Data[2].IsNull() == false || results[2].Data[3].IsNull() == false {
@@ -135,17 +134,17 @@ func TestNestedLoopJoin_LeftJoin(t *testing.T) {
 func TestNestedLoopJoin_InnerJoin(t *testing.T) {
 	DT.RegisterTable("l", []Row{
 		{Cols: []string{"id"}, Types: []LX.TokenType{LX.T_INT_KW},
-			Data: []Value{NewIntValue(int64(1))}},
+			Data: []Value{DT.NewIntValue(int64(1))}},
 		{Cols: []string{"id"}, Types: []LX.TokenType{LX.T_INT_KW},
-			Data: []Value{NewIntValue(int64(2))}},
+			Data: []Value{DT.NewIntValue(int64(2))}},
 	})
 	DT.RegisterTable("r", []Row{
 		{Cols: []string{"id"}, Types: []LX.TokenType{LX.T_INT_KW},
-			Data: []Value{NewIntValue(int64(2))}},
+			Data: []Value{DT.NewIntValue(int64(2))}},
 		{Cols: []string{"id"}, Types: []LX.TokenType{LX.T_INT_KW},
-			Data: []Value{NewIntValue(int64(3))}},
+			Data: []Value{DT.NewIntValue(int64(3))}},
 	})
-	defer UnregisterAll()
+	
 
 	left := NewSeqScan("l")
 	right := NewSeqScan("r")
@@ -166,7 +165,7 @@ func TestNestedLoopJoin_InnerJoin(t *testing.T) {
 		}
 		count++
 		// Should only have id=2 match
-		if !row.Data[0].Equal(NewIntValue(int64(2))) || !row.Data[1].Equal(NewIntValue(int64(2))) {
+		if !row.Data[0].Equal(DT.NewIntValue(int64(2))) || !row.Data[1].Equal(DT.NewIntValue(int64(2))) {
 			t.Errorf("expected match on id=2, got (%v, %v)", row.Data[0], row.Data[1])
 		}
 	}
@@ -179,12 +178,12 @@ func TestNestedLoopJoin_InnerJoin(t *testing.T) {
 // TestNestedLoopJoin_LeftWithNilOn verifies LEFT JOIN without ON clause.
 func TestNestedLoopJoin_LeftWithNilOn(t *testing.T) {
 	DT.RegisterTable("a", []Row{
-		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}},
+		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{DT.NewIntValue(int64(1))}},
 	})
 	DT.RegisterTable("b", []Row{
-		{Cols: []string{"y"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(99))}},
+		{Cols: []string{"y"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{DT.NewIntValue(int64(99))}},
 	})
-	defer UnregisterAll()
+	
 
 	left := NewSeqScan("a")
 	right := NewSeqScan("b")
@@ -200,7 +199,7 @@ func TestNestedLoopJoin_LeftWithNilOn(t *testing.T) {
 	if len(row.Data) != 2 {
 		t.Errorf("expected 2 cols, got %d", len(row.Data))
 	}
-	if !row.Data[0].Equal(NewIntValue(int64(1))) || !row.Data[1].Equal(NewIntValue(int64(99))) {
+	if !row.Data[0].Equal(DT.NewIntValue(int64(1))) || !row.Data[1].Equal(DT.NewIntValue(int64(99))) {
 		t.Errorf("expected (1, 99), got %v", row.Data)
 	}
 }
@@ -208,12 +207,12 @@ func TestNestedLoopJoin_LeftWithNilOn(t *testing.T) {
 // TestNestedLoopJoin_Close verifies Close resets state.
 func TestNestedLoopJoin_Close(t *testing.T) {
 	DT.RegisterTable("x", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{DT.NewIntValue(int64(1))}},
 	})
 	DT.RegisterTable("y", []Row{
-		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}},
+		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{DT.NewIntValue(int64(2))}},
 	})
-	defer UnregisterAll()
+	
 
 	left := NewSeqScan("x")
 	right := NewSeqScan("y")
@@ -234,37 +233,4 @@ func TestNestedLoopJoin_Close(t *testing.T) {
 
 	// After close, internal state is reset (leftRow=nil)
 	// This is acceptable behavior for Close
-}
-
-// TestCrossJoin_LimitPushdown verifies that LIMIT on a 5-table
-// cross join terminates quickly without materializing the full
-// Cartesian product. REQ001094.
-func TestCrossJoin_LimitPushdown(t *testing.T) {
-	UnregisterAll()
-	defer UnregisterAll()
-	e := NewExecutor()
-	ctx := context.Background()
-
-	for i := 1; i <= 5; i++ {
-		setup := fmt.Sprintf("CREATE TABLE t%d (a INTEGER)", i)
-		if _, err := e.Exec(ctx, setup); err != nil {
-			t.Fatalf("setup t%d: %v", i, err)
-		}
-		for j := 1; j <= 100; j++ {
-			insert := fmt.Sprintf("INSERT INTO t%d VALUES (%d)", i, j)
-			if _, err := e.Exec(ctx, insert); err != nil {
-				t.Fatalf("insert: %v", err)
-			}
-		}
-	}
-	// Without LIMIT, 100^5 = 10 billion rows (would hang).
-	// With LIMIT 10, we should return exactly 10 rows quickly.
-	sql := "SELECT * FROM t1, t2, t3, t4, t5 LIMIT 10"
-	rows, err := e.QueryAll(ctx, sql)
-	if err != nil {
-		t.Fatalf("query: %v", err)
-	}
-	if len(rows) != 10 {
-		t.Errorf("expected 10 rows from LIMIT 10 cross join, got %d", len(rows))
-	}
 }

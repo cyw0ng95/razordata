@@ -61,16 +61,16 @@ func injectOuter(op Operator, outer *Row) Operator {
 	case *IndexScan:
 		return &outerInjector{child: v, outer: outer}
 	case *Filter:
-		v.child = injectOuter(v.child, outer)
+		v.SetChild(injectOuter(v.Child(), outer))
 		return v
 	case *Project:
-		v.child = injectOuter(v.child, outer)
+		v.SetChild(injectOuter(v.Child(), outer))
 		return v
 	case *Sort:
-		v.child = injectOuter(v.child, outer)
+		v.SetChild(injectOuter(v.Child(), outer))
 		return v
 	case *Limit:
-		v.child = injectOuter(v.child, outer)
+		v.SetChild(injectOuter(v.Child(), outer))
 		return v
 	case *OP.Distinct:
 		injectOuter(v.Child(), outer)
@@ -79,8 +79,8 @@ func injectOuter(op Operator, outer *Row) Operator {
 		injectOuter(v.Child(), outer)
 		return v
 	case *NestedLoopJoin:
-		v.left = injectOuter(v.left, outer)
-		v.right = injectOuter(v.right, outer)
+		v.SetLeft(injectOuter(v.LeftChild(), outer))
+		v.SetRight(injectOuter(v.RightChild(), outer))
 		return v
 	case *OP.HashJoin:
 		// HashJoin children are read-only via accessors. Return as-is;

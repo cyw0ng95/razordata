@@ -1,4 +1,4 @@
-package EX
+package OP
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ type StatsCatalog = DT.StatsCatalog
 
 // ErrNoEngine is returned when a query requires a wired store but the
 // executor was constructed without one.
-var ErrNoEngine = errors.New("ex: no engine wired; use NewExecutorWithEngine")
+var ErrNoEngine = errors.New("op: no engine wired; use NewExecutorWithEngine")
 
 // Type aliases for schema types now in DT.
 type StoreSchema = DT.StoreSchema
@@ -27,15 +27,15 @@ type RegisteredIndex = DT.RegisteredIndex
 
 // tablePrefix returns the storage key prefix for a table, or nil if the
 // table is not registered.
-func tablePrefix(name string) []byte {
+func TablePrefix(name string) []byte {
 	id, ok := DT.TableIDFor(name)
 	if !ok {
 		return nil
 	}
-	return encodeTablePrefix(id)
+	return EncodeTablePrefix(id)
 }
 
-func encodeTablePrefix(id uint64) []byte {
+func EncodeTablePrefix(id uint64) []byte {
 	// REQ001032: use stack array to avoid heap allocation.
 	var buf [9]byte
 	binary.BigEndian.PutUint64(buf[:8], id)
@@ -53,7 +53,7 @@ const (
 	rvBytes  byte = 5
 )
 
-// encodeRowBufPool is a sync.Pool for reusable encodeRow scratch buffers.
+// encodeRowBufPool is a sync.Pool for reusable EncodeRow scratch buffers.
 // REQ000985: reduces GC pressure on the hot path (bulk INSERT/UPDATE).
 var encodeRowBufPool = sync.Pool{
 	New: func() any {
@@ -62,13 +62,13 @@ var encodeRowBufPool = sync.Pool{
 	},
 }
 
-// encodeRow serializes a row's values in schema column order. nil values
+// EncodeRow serializes a row's values in schema column order. nil values
 // become rvNull. The output is a self-describing binary blob:
 //
 //	[col_count:varint] for each col: [type:1][value_bytes...]
-func encodeRow(schema *StoreSchema, row Row) ([]byte, error) {
+func EncodeRow(schema *StoreSchema, row Row) ([]byte, error) {
 	if len(row.Data) != len(schema.Cols) {
-		return nil, fmt.Errorf("ex: row has %d values, schema has %d", len(row.Data), len(schema.Cols))
+		return nil, fmt.Errorf("op: row has %d values, schema has %d", len(row.Data), len(schema.Cols))
 	}
 	// REQ000985: use pooled buffer to reduce allocations on hot path.
 	bufPtr := encodeRowBufPool.Get().(*[]byte)
@@ -112,7 +112,7 @@ func encodeRow(schema *StoreSchema, row Row) ([]byte, error) {
 			buf = append(buf, v.B...)
 		default:
 			encodeRowBufPool.Put(bufPtr)
-			return nil, fmt.Errorf("ex: unsupported value kind %d at column %d", v.Kind, i)
+			return nil, fmt.Errorf("op: unsupported value kind %d at column %d", v.Kind, i)
 		}
 	}
 	// Return a copy of the buffer so the pooled buffer can be reused.
@@ -123,16 +123,16 @@ func encodeRow(schema *StoreSchema, row Row) ([]byte, error) {
 	return result, nil
 }
 
-// decodeRow is the inverse of encodeRow.
-func decodeRow(data []byte, schema *StoreSchema) (Row, error) {
+// decodeRow is the inverse of EncodeRow.
+func DecodeRow(data []byte, schema *StoreSchema) (Row, error) {
 	if len(data) == 0 {
-		return Row{}, errors.New("ex: empty row payload")
+		return Row{}, errors.New("op: empty row payload")
 	}
 	off := 0
 	readVarint := func() (uint64, error) {
 		v, n := binary.Uvarint(data[off:])
 		if n <= 0 {
-			return 0, errors.New("ex: bad varint")
+			return 0, errors.New("op: bad varint")
 		}
 		off += n
 		return v, nil
@@ -142,7 +142,7 @@ func decodeRow(data []byte, schema *StoreSchema) (Row, error) {
 		return Row{}, err
 	}
 	if int(n) != len(schema.Cols) {
-		return Row{}, fmt.Errorf("ex: row has %d cols, schema %d", n, len(schema.Cols))
+		return Row{}, fmt.Errorf("op: row has %d cols, schema %d", n, len(schema.Cols))
 	}
 	dataSlice := make([]Value, len(schema.Cols))
 	row := Row{
@@ -152,30 +152,30 @@ func decodeRow(data []byte, schema *StoreSchema) (Row, error) {
 	}
 	for i := 0; i < int(n); i++ {
 		if off >= len(data) {
-			return Row{}, errors.New("ex: truncated row")
+			return Row{}, errors.New("op: truncated row")
 		}
 		tag := data[off]
 		off++
 		switch tag {
 		case rvNull:
-			row.Data[i] = NullValue()
+			row.Data[i] = DT.NullValue()
 		case rvInt:
 			if off+8 > len(data) {
-				return Row{}, errors.New("ex: truncated int")
+				return Row{}, errors.New("op: truncated int")
 			}
-			row.Data[i] = NewIntValue(int64(binary.BigEndian.Uint64(data[off : off+8])))
+			row.Data[i] = DT.NewIntValue(int64(binary.BigEndian.Uint64(data[off : off+8])))
 			off += 8
 		case rvFloat:
 			if off+8 > len(data) {
-				return Row{}, errors.New("ex: truncated float")
+				return Row{}, errors.New("op: truncated float")
 			}
-			row.Data[i] = NewFloatValue(math.Float64frombits(binary.BigEndian.Uint64(data[off : off+8])))
+			row.Data[i] = DT.NewFloatValue(math.Float64frombits(binary.BigEndian.Uint64(data[off : off+8])))
 			off += 8
 		case rvBool:
 			if off+1 > len(data) {
-				return Row{}, errors.New("ex: truncated bool")
+				return Row{}, errors.New("op: truncated bool")
 			}
-			row.Data[i] = NewBoolValue(data[off] != 0)
+			row.Data[i] = DT.NewBoolValue(data[off] != 0)
 			off++
 		case rvString:
 			l, err := readVarint()
@@ -183,9 +183,9 @@ func decodeRow(data []byte, schema *StoreSchema) (Row, error) {
 				return Row{}, err
 			}
 			if off+int(l) > len(data) {
-				return Row{}, errors.New("ex: truncated string")
+				return Row{}, errors.New("op: truncated string")
 			}
-			row.Data[i] = NewTextValue(string(data[off : off+int(l)]))
+			row.Data[i] = DT.NewTextValue(string(data[off : off+int(l)]))
 			off += int(l)
 		case rvBytes:
 			l, err := readVarint()
@@ -194,20 +194,20 @@ func decodeRow(data []byte, schema *StoreSchema) (Row, error) {
 			}
 			if off+int(l) > len(data) {
 				// REQ000776: rvBytes is now decoded as KindBlob.
-				return Row{}, errors.New("ex: truncated bytes")
+				return Row{}, errors.New("op: truncated bytes")
 			}
 			// REQ000776: rvBytes is now decoded as KindBlob.
-			row.Data[i] = NewBlobValue(append([]byte{}, data[off:off+int(l)]...))
+			row.Data[i] = DT.NewBlobValue(append([]byte{}, data[off:off+int(l)]...))
 			off += int(l)
 		default:
-			return Row{}, fmt.Errorf("ex: unknown row tag %d", tag)
+			return Row{}, fmt.Errorf("op: unknown row tag %d", tag)
 		}
 	}
 	return row, nil
 }
 
-// rowKey builds a storage key for a row: <tablePrefix><pk-bytes>.
-func rowKey(prefix []byte, pkValue any) []byte {
+// RowKey builds a storage key for a row: <tablePrefix><pk-bytes>.
+func RowKey(prefix []byte, pkValue any) []byte {
 	// REQ001023: stack-friendly fast path for int64 PKs.
 	out := make([]byte, 0, len(prefix)+16)
 	out = append(out, prefix...)
@@ -239,14 +239,14 @@ func rowKey(prefix []byte, pkValue any) []byte {
 	return out
 }
 
-// extractPK returns the value of the primary-key column from a row.
+// ExtractPK returns the value of the primary-key column from a row.
 // For REQ000367 (hidden-PK DT.Tables, no PRIMARY KEY declared at
 // CREATE TABLE time), this allocates and returns a synthetic int64
 // rowid that is unique within the table.
-func extractPK(schema *StoreSchema, row Row) (any, error) {
+func ExtractPK(schema *StoreSchema, row Row) (any, error) {
 	if schema.Pk == "" {
 		if !schema.HiddenPK {
-			return nil, errors.New("ex: table has no primary key")
+			return nil, errors.New("op: table has no primary key")
 		}
 		id := schema.NextRowID.Add(1)
 		return id, nil
@@ -263,26 +263,26 @@ func extractPK(schema *StoreSchema, row Row) (any, error) {
 			return row.Data[i], nil
 		}
 	}
-	return nil, fmt.Errorf("ex: pk column %q not in schema", schema.Pk)
+	return nil, fmt.Errorf("op: pk column %q not in schema", schema.Pk)
 }
 
-// extractPKForUpdate returns the primary key to use when writing
-// the updated row. For regular PK DT.Tables, delegates to extractPK.
+// ExtractPKForUpdate returns the primary key to use when writing
+// the updated row. For regular PK DT.Tables, delegates to ExtractPK.
 // For hidden-PK DT.Tables, reuses the original row's key suffix from
 // storeKey so the update overwrites the same engine row instead of
 // allocating a new synthetic rowid on every UPDATE (REQ000501).
-func extractPKForUpdate(schema *StoreSchema, oldRow Row, prefix []byte) (any, error) {
+func ExtractPKForUpdate(schema *StoreSchema, oldRow Row, prefix []byte) (any, error) {
 	if schema.Pk == "" && schema.HiddenPK && len(oldRow.StoreKey) > len(prefix) {
 		suffix := oldRow.StoreKey[len(prefix):]
 		return int64(binary.BigEndian.Uint64(suffix)), nil
 	}
-	return extractPK(schema, oldRow)
+	return ExtractPK(schema, oldRow)
 }
 
-// maintainIndexesOnInsert populates secondary-index entries
+// MaintainIndexesOnInsert populates secondary-index entries
 // for a newly-inserted row. iter-22 secondary indexes MVP.
 // Returns the first error encountered, or nil on success.
-func maintainIndexesOnInsert(store Store, table string, schema *StoreSchema, row Row) error {
+func MaintainIndexesOnInsert(store Store, table string, schema *StoreSchema, row Row) error {
 	indexes := DT.GetRegisteredIndexes(table)
 	if len(indexes) == 0 {
 		return nil
@@ -291,7 +291,7 @@ func maintainIndexesOnInsert(store Store, table string, schema *StoreSchema, row
 	if !ok {
 		return nil
 	}
-	pk, err := extractPK(schema, row)
+	pk, err := ExtractPK(schema, row)
 	if err != nil {
 		return err
 	}
@@ -304,17 +304,17 @@ func maintainIndexesOnInsert(store Store, table string, schema *StoreSchema, row
 		if key == nil {
 			continue
 		}
-		fullKey := buildIndexKey(tableID, idx.Name, key)
+		fullKey := BuildIndexKey(tableID, idx.Name, key)
 		if err := store.Insert(fullKey, pkBytes); err != nil {
-			return fmt.Errorf("ex: index %q insert: %w", idx.Name, err)
+			return fmt.Errorf("op: index %q insert: %w", idx.Name, err)
 		}
 	}
 	return nil
 }
 
-// maintainIndexesOnDelete removes secondary-index entries for a
+// MaintainIndexesOnDelete removes secondary-index entries for a
 // deleted row. iter-22.
-func maintainIndexesOnDelete(store Store, table string, schema *StoreSchema, row Row) error {
+func MaintainIndexesOnDelete(store Store, table string, schema *StoreSchema, row Row) error {
 	indexes := DT.GetRegisteredIndexes(table)
 	if len(indexes) == 0 {
 		return nil
@@ -329,19 +329,19 @@ func maintainIndexesOnDelete(store Store, table string, schema *StoreSchema, row
 		if key == nil {
 			continue
 		}
-		fullKey := buildIndexKey(tableID, idx.Name, key)
+		fullKey := BuildIndexKey(tableID, idx.Name, key)
 		if err := store.Delete(fullKey); err != nil {
-			return fmt.Errorf("ex: index %q delete: %w", idx.Name, err)
+			return fmt.Errorf("op: index %q delete: %w", idx.Name, err)
 		}
 	}
 	return nil
 }
 
-// maintainIndexesOnUpdate updates secondary-index entries when
+// MaintainIndexesOnUpdate updates secondary-index entries when
 // the indexed column value changes. The pk parameter is the primary
 // key of the row being updated (extracted from oldRow to preserve
 // the original key for hidden-PK DT.Tables). iter-22 secondary indexes.
-func maintainIndexesOnUpdate(store Store, table string, schema *StoreSchema, oldRow, newRow Row, pk any) error {
+func MaintainIndexesOnUpdate(store Store, table string, schema *StoreSchema, oldRow, newRow Row, pk any) error {
 	indexes := DT.GetRegisteredIndexes(table)
 	if len(indexes) == 0 {
 		return nil
@@ -360,18 +360,18 @@ func maintainIndexesOnUpdate(store Store, table string, schema *StoreSchema, old
 		if oldKey == nil || newKey == nil {
 			continue
 		}
-		oldFull := buildIndexKey(tableID, idx.Name, oldKey)
-		newFull := buildIndexKey(tableID, idx.Name, newKey)
+		oldFull := BuildIndexKey(tableID, idx.Name, oldKey)
+		newFull := BuildIndexKey(tableID, idx.Name, newKey)
 		// If the key didn't change, no-op.
 		if bytes.Equal(oldFull, newFull) {
 			continue
 		}
 		// Key changed: delete old, insert new.
 		if err := store.Delete(oldFull); err != nil {
-			return fmt.Errorf("ex: index %q update delete: %w", idx.Name, err)
+			return fmt.Errorf("op: index %q update delete: %w", idx.Name, err)
 		}
 		if err := store.Insert(newFull, pkBytes); err != nil {
-			return fmt.Errorf("ex: index %q update insert: %w", idx.Name, err)
+			return fmt.Errorf("op: index %q update insert: %w", idx.Name, err)
 		}
 	}
 	return nil
@@ -396,7 +396,7 @@ func pkToBytes(pk any) ([]byte, error) {
 	case []byte:
 		return append([]byte(nil), v...), nil
 	default:
-		return nil, fmt.Errorf("ex: unsupported pk type %T", pk)
+		return nil, fmt.Errorf("op: unsupported pk type %T", pk)
 	}
 }
 

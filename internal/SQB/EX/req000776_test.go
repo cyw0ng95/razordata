@@ -114,7 +114,7 @@ func TestNumericArithValue(t *testing.T) {
 	}
 }
 
-// TestEncodeDecodeBlobRoundTrip verifies REQ000776: encodeRow and
+// TestEncodeDecodeBlobRoundTrip verifies REQ000776: EncodeRow and
 // decodeRow correctly serialize and deserialize a blob column as
 // KindBlob (not KindText as it was previously).
 func TestEncodeDecodeBlobRoundTrip(t *testing.T) {
@@ -125,9 +125,9 @@ func TestEncodeDecodeBlobRoundTrip(t *testing.T) {
 		Cols: []string{"data"},
 		Data: []Value{NewBlobValue([]byte{0x00, 0x01, 0x02, 0xff, 0xfe})},
 	}
-	encoded, err := encodeRow(schema, original)
+	encoded, err := EncodeRow(schema, original)
 	if err != nil {
-		t.Fatalf("encodeRow: %v", err)
+		t.Fatalf("EncodeRow: %v", err)
 	}
 	decoded, err := decodeRow(encoded, schema)
 	if err != nil {

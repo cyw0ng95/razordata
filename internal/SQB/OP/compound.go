@@ -11,18 +11,17 @@
 // After the set operator, the optional ORDER BY / LIMIT / OFFSET
 // declared on the CompoundStmt is applied to the materialized
 // result.
-package EX
+package OP
 
 import (
 	"context"
 	"fmt"
 	"slices"
 
-	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
-	"github.com/cyw0ng95/razordata/internal/SQB/OP"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 type CompoundOp struct {
@@ -56,6 +55,9 @@ type CompoundOp struct {
 	// Re-exported from PS for convenience.
 	_ bool // alignment placeholder
 }
+
+func (c *CompoundOp) LeftChild() Operator { return c.left }
+func (c *CompoundOp) RightChild() Operator { return c.right }
 
 func NewCompoundOp(left, right Operator, op PS.CompoundOp, orderBy []PS.OrderItem, limit, offset PS.Expr) *CompoundOp {
 	return &CompoundOp{
@@ -166,7 +168,7 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 			}
 			slices.SortStableFunc(decorated, func(a, b decoratedRow) int {
 				for j, k := range c.orderBy {
-					cmp := PL.CompareValue(a.keys[j], b.keys[j])
+					cmp := pl.CompareValue(a.keys[j], b.keys[j])
 					if cmp == 0 {
 						continue
 					}
@@ -291,7 +293,7 @@ func (c *CompoundOp) nextStreamingSetOp(ctx context.Context) (Row, error) {
 		_ = c.right.Close()
 		c.rightKeys = make(map[string]bool, len(rightRows))
 		for _, r := range rightRows {
-			c.rightKeys[OP.DistinctKey(r)] = true
+			c.rightKeys[DistinctKey(r)] = true
 		}
 		c.emittedKeys = make(map[string]bool)
 		c.rightDrained = true
@@ -308,7 +310,7 @@ func (c *CompoundOp) nextStreamingSetOp(ctx context.Context) (Row, error) {
 			}
 			return Row{}, err
 		}
-		k := OP.DistinctKey(r)
+		k := DistinctKey(r)
 		inRight := c.rightKeys[k]
 		if c.op == PS.CompoundExcept {
 			if inRight {
@@ -384,7 +386,7 @@ func dedupRows(in []Row) []Row {
 	seen := make(map[string]bool, len(in))
 	out := make([]Row, 0, len(in))
 	for _, r := range in {
-		k := OP.DistinctKey(r)
+		k := DistinctKey(r)
 		if !seen[k] {
 			seen[k] = true
 			out = append(out, r)
@@ -399,12 +401,12 @@ func intersectRows(left, right []Row) []Row {
 	}
 	rightKeys := make(map[string]bool, len(right))
 	for _, r := range right {
-		rightKeys[OP.DistinctKey(r)] = true
+		rightKeys[DistinctKey(r)] = true
 	}
 	seen := make(map[string]bool)
 	var out []Row
 	for _, r := range left {
-		k := OP.DistinctKey(r)
+		k := DistinctKey(r)
 		if rightKeys[k] && !seen[k] {
 			seen[k] = true
 			out = append(out, r)
@@ -419,12 +421,12 @@ func exceptRows(left, right []Row) []Row {
 	}
 	rightKeys := make(map[string]bool, len(right))
 	for _, r := range right {
-		rightKeys[OP.DistinctKey(r)] = true
+		rightKeys[DistinctKey(r)] = true
 	}
 	seen := make(map[string]bool)
 	var out []Row
 	for _, r := range left {
-		k := OP.DistinctKey(r)
+		k := DistinctKey(r)
 		if rightKeys[k] || seen[k] {
 			continue
 		}

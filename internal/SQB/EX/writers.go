@@ -10,6 +10,7 @@ import (
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
@@ -285,7 +286,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 				return false, nil
 			}
 			pk := vals[0]
-			key := rowKey(prefix, pk)
+			key := RowKey(prefix, pk)
 			_, found, err := i.store.Get(key)
 			return found, err
 		}
@@ -328,9 +329,9 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		if err := checkUnique(i.schema, out, pending, Row{}, lookupFn); err != nil {
 			if i.conflictAction == PS.ConflictActionReplace {
 				// Delete the existing row, then fall through to insert
-				pk, pkErr := extractPK(i.schema, out)
+				pk, pkErr := ExtractPK(i.schema, out)
 				if pkErr == nil {
-					key := rowKey(prefix, pk)
+					key := RowKey(prefix, pk)
 					_ = i.store.Delete(key)
 					i.rows++
 					if i.execCtx != nil {
@@ -351,15 +352,15 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 				return Row{}, err
 			}
 		}
-		pk, err := extractPK(i.schema, out)
+		pk, err := ExtractPK(i.schema, out)
 		if err != nil {
 			return Row{}, err
 		}
-		buf, err := encodeRow(i.schema, out)
+		buf, err := EncodeRow(i.schema, out)
 		if err != nil {
 			return Row{}, err
 		}
-		key := rowKey(prefix, pk)
+		key := RowKey(prefix, pk)
 		if err := i.store.Insert(key, buf); err != nil {
 			return Row{}, err
 		}
@@ -367,7 +368,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			i.txWriter.RecordWrite(key, buf)
 		}
 		// Maintain secondary indexes (iter-22).
-		if err := maintainIndexesOnInsert(i.store, i.table, i.schema, out); err != nil {
+		if err := MaintainIndexesOnInsert(i.store, i.table, i.schema, out); err != nil {
 			return Row{}, err
 		}
 		i.rows++
@@ -719,22 +720,22 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 		if err := checkUnique(u.schema, row, nil, Row{}, noopLookup); err != nil {
 			return Row{}, err
 		}
-		pk, err := extractPKForUpdate(u.schema, oldRow, prefix)
+		pk, err := ExtractPKForUpdate(u.schema, oldRow, prefix)
 		if err != nil {
 			return Row{}, err
 		}
-		buf, err := encodeRow(u.schema, row)
+		buf, err := EncodeRow(u.schema, row)
 		if err != nil {
 			return Row{}, err
 		}
-		key := rowKey(prefix, pk)
+		key := RowKey(prefix, pk)
 		if err := u.store.Insert(key, buf); err != nil {
 			return Row{}, err
 		}
 		if u.txWriter != nil {
 			u.txWriter.RecordWrite(key, buf)
 		}
-		if err := maintainIndexesOnUpdate(u.store, u.table, u.schema, oldRow, row, pk); err != nil {
+		if err := MaintainIndexesOnUpdate(u.store, u.table, u.schema, oldRow, row, pk); err != nil {
 			return Row{}, err
 		}
 		u.rows++
@@ -950,11 +951,11 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			}
 		}
 
-		pk, err := extractPKForUpdate(d.schema, row, prefix)
+		pk, err := ExtractPKForUpdate(d.schema, row, prefix)
 		if err != nil {
 			return Row{}, err
 		}
-		key := rowKey(prefix, pk)
+		key := RowKey(prefix, pk)
 		if err := d.store.Delete(key); err != nil {
 			return Row{}, err
 		}
@@ -1997,7 +1998,7 @@ type Explain struct {
 
 func NewExplain(stmt *PS.ExplainStmt) *Explain { return &Explain{stmt: stmt} }
 
-func (e *Explain) WithPlanner(p Planner) Operator {
+func (e *Explain) WithPlanner(p pl.QueryPlanner) pl.Operator {
 	if e.stmt != nil && e.stmt.Inner != nil {
 		// The inner statement has already been planned by buildWriterOp or
 		// the caller. Stash the planner so the EXPLAIN text can mention

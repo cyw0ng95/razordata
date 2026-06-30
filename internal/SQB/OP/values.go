@@ -2,12 +2,13 @@
 // REQ000357: `SELECT 1+1`, `SELECT 10 & 6` should return one row
 // with the evaluated expression, not zero rows.
 
-package EX
+package OP
 
 import (
 	"context"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
@@ -18,13 +19,13 @@ type Values struct {
 	cols      []PS.Expr
 	evaluated bool
 	row       Row
-	planner   *Planner
+	planner   pl.QueryPlanner
 	params    []any
-	execCtx   *ExecContext // REQ000853: for CHANGES()/TOTAL_CHANGES() eval
+	execCtx   *pl.ExecContext // REQ000853: for CHANGES()/TOTAL_CHANGES() eval
 }
 
 // newValuesOp creates a Values operator for the given column expressions.
-func newValuesOp(cols []PS.Expr) *Values {
+func NewValuesOp(cols []PS.Expr) *Values {
 	return &Values{cols: cols}
 }
 
@@ -76,7 +77,9 @@ func (v *Values) WithParams(p []any) Operator {
 	return v
 }
 
-func (v *Values) WithPlanner(p *Planner) Operator {
+func (v *Values) SetExecCtx(ec *pl.ExecContext) { v.execCtx = ec }
+
+func (v *Values) WithPlanner(p pl.QueryPlanner) pl.Operator {
 	if v == nil {
 		return nil
 	}
@@ -171,7 +174,7 @@ type ValuesRows struct {
 
 var _ Operator = (*ValuesRows)(nil)
 
-func newValuesRowsOp(rows [][]PS.Expr) *ValuesRows {
+func NewValuesRowsOp(rows [][]PS.Expr) *ValuesRows {
 	colExpr := rows[0]
 	names := make([]string, len(colExpr))
 	for i := range colExpr {
@@ -204,6 +207,8 @@ func (v *ValuesRows) Next(ctx context.Context) (Row, error) {
 	}
 	return Row{Cols: cols, Types: types, Data: data}, nil
 }
+
+func (v *ValuesRows) Rows() [][]PS.Expr { return v.rows }
 
 func (v *ValuesRows) Close() error {
 	v.pos = 0

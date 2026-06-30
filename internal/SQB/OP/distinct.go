@@ -13,6 +13,7 @@ import (
 type Row = pl.Row
 type Value = pl.Value
 type ValueKind = pl.ValueKind
+type Operator = pl.Operator
 
 // Value kind constants.
 const (

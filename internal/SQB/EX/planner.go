@@ -515,22 +515,22 @@ func (p *Planner) estimateCost(op Operator) float64 {
 		// cheapest; range seek is slightly more expensive;
 		// full prefix read is the most expensive of the
 		// index paths but still cheaper than SeqScan.
-		if v.indexMode {
+		if v.IndexMode() {
 			return 0.05
 		}
 		return 0.1
 	case *Filter:
-		return p.estimateCost(v.child) * p.estimatePredicateSelectivity(v.predicate)
+		return p.estimateCost(v.Child()) * p.estimatePredicateSelectivity(v.Predicate())
 	case *Project:
-		return p.estimateCost(v.child)
+		return p.estimateCost(v.Child())
 	case *Limit:
-		return p.estimateCost(v.child)
+		return p.estimateCost(v.Child())
 	case *Offset:
-		return p.estimateCost(v.child)
+		return p.estimateCost(v.Child())
 	case *OP.Distinct:
 		return p.estimateCost(v.Child())
 	case *Sort:
-		childCost := p.estimateCost(v.child)
+		childCost := p.estimateCost(v.Child())
 		if childCost < 1 {
 			childCost = 1
 		}
@@ -538,8 +538,8 @@ func (p *Planner) estimateCost(op Operator) float64 {
 	case *AG.Aggregate:
 		return p.estimateCost(v.Child()) + 1
 	case *NestedLoopJoin:
-		leftCost := p.estimateCost(v.left)
-		rightCost := p.estimateCost(v.right)
+		leftCost := p.estimateCost(v.LeftChild())
+		rightCost := p.estimateCost(v.RightChild())
 		return leftCost * rightCost
 	case *OP.HashJoin:
 		leftCost := p.estimateCost(v.LeftChild())
@@ -1071,7 +1071,7 @@ func isColumnLiteralPair(a, b PS.Expr) bool {
 // REQ000820: only applies to in-memory SeqScan operators.
 func tryApplyPointLookup(scan Operator, pred PS.Expr) {
 	ss, ok := scan.(*SeqScan)
-	if !ok || ss.store != nil {
+	if !ok || ss.Store() != nil {
 		return // only for in-memory tables
 	}
 	col, values, ok := extractInListValues(pred)
@@ -1617,17 +1617,17 @@ func deriveJoinSchema(left, right Operator) ([]string, []LX.TokenType, map[strin
 func colsOf(op Operator) []string {
 	switch o := op.(type) {
 	case *SeqScan:
-		if o.schema != nil {
-			return o.schema.Cols
+		if o.Schema() != nil {
+			return o.Schema().Cols
 		}
 		return nil
 	case *IndexScan:
-		if o.schema != nil {
-			return o.schema.Cols
+		if o.Schema() != nil {
+			return o.Schema().Cols
 		}
 		return nil
 	case *NestedLoopJoin:
-		return o.sharedCols
+		return o.SharedCols()
 	case *OP.HashJoin:
 		return o.SharedCols()
 	case *OP.HashCrossJoin:
@@ -1646,17 +1646,17 @@ func colsOf(op Operator) []string {
 func typesOf(op Operator) []LX.TokenType {
 	switch o := op.(type) {
 	case *SeqScan:
-		if o.schema != nil {
-			return o.schema.ColTypes
+		if o.Schema() != nil {
+			return o.Schema().ColTypes
 		}
 		return nil
 	case *IndexScan:
-		if o.schema != nil {
-			return o.schema.ColTypes
+		if o.Schema() != nil {
+			return o.Schema().ColTypes
 		}
 		return nil
 	case *NestedLoopJoin:
-		return o.sharedTypes
+		return o.SharedTypes()
 	case *OP.HashJoin:
 		return o.SharedTypes()
 	case *OP.HashCrossJoin:

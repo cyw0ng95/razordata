@@ -1,14 +1,10 @@
-// Package EX IndexScan strategy selection tests.
-//
-// REQ000979: verifies that SelectStrategy() dispatches to the
-// right ScanStrategy type based on the IndexScan's configured
-// mode.
-package EX
+package OP
 
 import (
 	"context"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
@@ -55,9 +51,9 @@ func TestScanStrategy_InterfaceConformance(t *testing.T) {
 // small slice and checks the rows come out in order.
 func TestScanStrategy_InMemoryDispatch(t *testing.T) {
 	rows := []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(1)}},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(2)}},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(3)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{DT.NewIntValue(1)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{DT.NewIntValue(2)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{DT.NewIntValue(3)}},
 	}
 	s := NewInMemoryScan(rows)
 	ctx := context.Background()

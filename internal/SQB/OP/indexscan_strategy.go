@@ -18,14 +18,15 @@
 // AsStrategy() to expose itself as a ScanStrategy, which is what
 // the planner/executor use when they want to compose strategies
 // uniformly.
-package EX
+package OP
 
 import (
 	"context"
 	"fmt"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	"github.com/cyw0ng95/razordata/internal/ENG/ID"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	id "github.com/cyw0ng95/razordata/internal/ENG/ID"
 )
 
 // ScanStrategy is the interface every concrete index-scan strategy
@@ -35,11 +36,7 @@ import (
 // REQ000979: replacing the god-struct's mode-switching with
 // per-strategy implementations.
 type ScanStrategy interface {
-	// Next returns the next row or ErrNoRows when the strategy is
-	// exhausted. Implementations must respect ctx cancellation.
-	Next(ctx context.Context) (Row, error)
-	// Close releases any resources held by the strategy. After
-	// Close, Next must return an error.
+	Next(ctx context.Context) (pl.Row, error)
 	Close() error
 }
 
@@ -114,7 +111,7 @@ func (s *StorePrefixScan) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		v := s.it.Value()
-		row, err := decodeRow(v, s.schema)
+		row, err := DecodeRow(v, s.schema)
 		if err != nil {
 			return Row{}, err
 		}
@@ -177,14 +174,14 @@ func NewIndexSeekScan(store Store, prefix []byte, schema *StoreSchema, tableID u
 func (s *IndexSeekScan) Next(ctx context.Context) (Row, error) {
 	if s.it == nil {
 		if s.prefixIdxKey == nil {
-			s.prefixIdxKey = buildIndexKey(s.indexTableID, s.indexName, nil)
+			s.prefixIdxKey = BuildIndexKey(s.indexTableID, s.indexName, nil)
 		}
 		// For exact-match seeks (seekValue without rangeLower),
 		// narrow the prefix to the seek value. For range scans
 		// (rangeLower/rangeUpper), use the broad index prefix and
 		// let the loop filter by lower/exclusive bounds.
 		if s.seekValue != nil && s.rangeLower == nil {
-			s.it = s.store.NewIterator(buildIndexKey(s.indexTableID, s.indexName, s.seekValue))
+			s.it = s.store.NewIterator(BuildIndexKey(s.indexTableID, s.indexName, s.seekValue))
 		} else {
 			s.it = s.store.NewIterator(s.prefixIdxKey)
 		}
@@ -197,7 +194,7 @@ func (s *IndexSeekScan) Next(ctx context.Context) (Row, error) {
 			return Row{}, ErrNoRows
 		}
 		key := s.it.Key()
-		idxVal := indexValueFromKey(key, s.prefixIdxKey)
+		idxVal := IndexValueFromKey(key, s.prefixIdxKey)
 		if idxVal == nil {
 			continue
 		}
@@ -227,7 +224,7 @@ func (s *IndexSeekScan) Next(ctx context.Context) (Row, error) {
 		if !found {
 			continue
 		}
-		row, err := decodeRow(rowBytes, s.schema)
+		row, err := DecodeRow(rowBytes, s.schema)
 		if err != nil {
 			return Row{}, err
 		}
@@ -297,7 +294,7 @@ func (s *BTreeScan) Next(ctx context.Context) (Row, error) {
 			}
 			continue
 		}
-		row, err := decodeRow(rowBytes, s.schema)
+		row, err := DecodeRow(rowBytes, s.schema)
 		if err != nil {
 			return Row{}, err
 		}

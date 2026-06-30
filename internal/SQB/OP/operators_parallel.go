@@ -1,4 +1,4 @@
-package EX
+package OP
 
 import (
 	"context"
@@ -313,7 +313,7 @@ func (p *ParallelSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	// Engine path: delegate to SeqScan.NextBatch when source is
 	// a store-backed SeqScan and there are no in-memory rows.
 	// REQ001064.
-	if ss, ok := p.source.(*SeqScan); ok && ss.store != nil {
+	if ss, ok := p.source.(*SeqScan); ok && ss.Store() != nil {
 		return ss.NextBatch(ctx)
 	}
 	if p.pendingIdx < len(p.pendingBatches) {

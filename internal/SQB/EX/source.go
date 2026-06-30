@@ -8,6 +8,7 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -84,9 +85,9 @@ func UnregisterAll() {
 	triggerMu.Unlock()
 	DT.TablesMu.Unlock()
 	// Clear table schema cache for test isolation.
-	tableSchemaMu.Lock()
-	tableSchemaCache = map[string]*tableSchemaEntry{}
-	tableSchemaMu.Unlock()
+	OP.TableSchemaMu.Lock()
+	OP.TableSchemaCache = map[string]*OP.TableSchemaEntry{}
+	OP.TableSchemaMu.Unlock()
 	// Clear subquery caches for test isolation.
 	EV.ClearSubqueryCaches()
 }

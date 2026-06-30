@@ -1,4 +1,4 @@
-package EX
+package OP
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -56,7 +56,7 @@ type Filter struct {
 	child     Operator
 	predicate PS.Expr
 	params    []any
-	execCtx   *ExecContext
+	execCtx   *pl.ExecContext
 	// REQ000757: curRow avoids heap-escape of local row variable
 	// when passing &row to Eval. Filter is heap-allocated, so
 	// &f.curRow is already a heap pointer — no escape needed.
@@ -81,6 +81,8 @@ type Filter struct {
 // Child returns the filter's child operator. Used by
 // propagateParams to walk the operator tree.
 func (f *Filter) Child() Operator { return f.child }
+func (f *Filter) SetChild(c Operator) { f.child = c }
+func (f *Filter) SetExecCtx(ec *pl.ExecContext) { f.execCtx = ec }
 
 // Predicate returns the filter's predicate expression.
 func (f *Filter) Predicate() PS.Expr { return f.predicate }
@@ -294,11 +296,14 @@ type Project struct {
 	dataPerRow int
 	// execCtx carries per-execution state (planner, session ID,
 	// tx writer, change counters) to eval functions. REQ000812.
-	execCtx *ExecContext
+	execCtx *pl.ExecContext
 }
 
 // Child returns the project's child operator.
 func (p *Project) Child() Operator { return p.child }
+func (p *Project) SetChild(c Operator) { p.child = c }
+func (p *Project) Cols() []PS.Expr { return p.cols }
+func (p *Project) SetExecCtx(ec *pl.ExecContext) { p.execCtx = ec }
 
 func NewProject(child Operator, cols []PS.Expr) *Project {
 	// Pre-compute column names once (they're the same for every row).
@@ -465,6 +470,8 @@ type Sort struct {
 
 // Child returns the sort's child operator.
 func (s *Sort) Child() Operator { return s.child }
+func (s *Sort) SetChild(c Operator) { s.child = c }
+func (s *Sort) Keys() []PS.OrderItem { return s.keys }
 
 func NewSort(child Operator, keys []PS.OrderItem) *Sort {
 	return &Sort{child: child, keys: keys}
@@ -543,7 +550,7 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 							return int(s.keys[ki].NullsOrder)
 						}
 					}
-					c := PL.CompareValue(ka[ki], kb[ki])
+					c := pl.CompareValue(ka[ki], kb[ki])
 					if c == 0 {
 						continue
 					}
@@ -735,6 +742,7 @@ type Limit struct {
 
 // Child returns the limit's child operator.
 func (l *Limit) Child() Operator { return l.child }
+func (l *Limit) SetChild(c Operator) { l.child = c }
 
 // LimitValue returns the limit value.
 func (l *Limit) LimitValue() int64 { return l.limit }
@@ -778,6 +786,7 @@ type Offset struct {
 
 // Child returns the offset's child operator.
 func (o *Offset) Child() Operator { return o.child }
+func (o *Offset) SetChild(c Operator) { o.child = c }
 
 func NewOffset(child Operator, n int64) *Offset {
 	if n < 0 {
@@ -897,7 +906,7 @@ func compileInExpr(e *PS.InExpr) func(*Row) (bool, error) {
 		if !ok {
 			return nil // non-constant expression; fall back to Eval
 		}
-		lookup[apValueKey(valueFromAny(lit))] = true
+		lookup[apValueKey(DT.ValueFromAny(lit))] = true
 	}
 	bareName := colName
 	if dot := strings.LastIndexByte(colName, '.'); dot >= 0 {
@@ -1001,7 +1010,7 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 		switch e.Op {
 		case LX.T_EQ:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return PL.EqualValueValue(a, b)
+				return pl.EqualValueValue(a, b)
 			})
 		case LX.T_NE:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
@@ -1011,23 +1020,23 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 				if a.IsNull() || b.IsNull() {
 					return false
 				}
-				return !PL.EqualValueValue(a, b)
+				return !pl.EqualValueValue(a, b)
 			})
 		case LX.T_GT:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return PL.CompareValue(a, b) > 0
+				return pl.CompareValue(a, b) > 0
 			})
 		case LX.T_GE:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return PL.CompareValue(a, b) >= 0
+				return pl.CompareValue(a, b) >= 0
 			})
 		case LX.T_LT:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return PL.CompareValue(a, b) < 0
+				return pl.CompareValue(a, b) < 0
 			})
 		case LX.T_LE:
 			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return PL.CompareValue(a, b) <= 0
+				return pl.CompareValue(a, b) <= 0
 			})
 		}
 	}
@@ -1086,7 +1095,7 @@ func makeCompiledCmp(colName string, litVal any, cmp func(a, b Value) bool) func
 		bareName = colName[dot+1:]
 	}
 	// Pre-convert literal to Value to avoid boxing in hot path.
-	litValue := valueFromAny(litVal)
+	litValue := DT.ValueFromAny(litVal)
 	// REQ001084: idx must NOT be captured in closure — rows in
 	// a batch may have different Cols (e.g. cross join produces
 	// rows with varying prefixed columns between left/right sides).

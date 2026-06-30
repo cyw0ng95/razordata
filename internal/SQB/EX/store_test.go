@@ -307,11 +307,11 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 				NewFloatValue(float64(i) * 1.5),
 			},
 		}
-		encoded, err := encodeRow(ss, row)
+		encoded, err := EncodeRow(ss, row)
 		if err != nil {
-			b.Fatalf("encodeRow: %v", err)
+			b.Fatalf("EncodeRow: %v", err)
 		}
-		key := rowKey(tablePrefix("bench"), NewIntValue(int64(i)))
+		key := RowKey(tablePrefix("bench"), NewIntValue(int64(i)))
 		if err := s.Insert(key, encoded); err != nil {
 			b.Fatalf("Insert: %v", err)
 		}
@@ -381,7 +381,7 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 			prefix := tablePrefix("bench")
 			var count int
 			for i := 0; i < rowCount; i++ {
-				key := rowKey(prefix, NewIntValue(int64(i)))
+				key := RowKey(prefix, NewIntValue(int64(i)))
 				v, ok, err := s.Get(key)
 				if err != nil {
 					b.Fatalf("Get: %v", err)
@@ -427,11 +427,11 @@ func BenchmarkSeqScan_FullScan(b *testing.B) {
 				NewFloatValue(float64(i) * 1.5),
 			},
 		}
-		encoded, err := encodeRow(ss, row)
+		encoded, err := EncodeRow(ss, row)
 		if err != nil {
-			b.Fatalf("encodeRow: %v", err)
+			b.Fatalf("EncodeRow: %v", err)
 		}
-		key := rowKey(tablePrefix("bench"), NewIntValue(int64(i)))
+		key := RowKey(tablePrefix("bench"), NewIntValue(int64(i)))
 		if err := s.Insert(key, encoded); err != nil {
 			b.Fatalf("Insert: %v", err)
 		}
