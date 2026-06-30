@@ -4,6 +4,8 @@ import (
 	"context"
 	"runtime"
 	"sync"
+
+	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
 )
 
 // Task represents a unit of parallel work that produces a result
@@ -16,6 +18,7 @@ type Task = func() error
 // in a FIFO order. The pool provides graceful shutdown via Close().
 // REQ000145 satisfied (partial): Worker pool foundation for
 // parallel query execution.
+// REQ001055: NUMA-aware variant pins workers to local NUMA nodes.
 type WorkerPool struct {
 	workers   int
 	taskQueue chan Task
@@ -25,6 +28,11 @@ type WorkerPool struct {
 	closed    chan struct{}
 	closeOnce sync.Once
 	closeMu   sync.Mutex
+
+	// REQ001055: NUMA-awareness fields.
+	topo        *nm.Topology
+	workerNodes []int       // worker id → NUMA node assignment
+	nodeWorkers map[int]int // node → number of workers assigned
 }
 
 // NewWorkerPool creates a worker pool with the specified number
@@ -55,8 +63,20 @@ func NewWorkerPool(n int) *WorkerPool {
 
 // worker is the main loop for a single worker goroutine.
 // It pulls tasks from the queue and executes them.
+// REQ001055: when NUMA topology is set, pins to local node.
 func (wp *WorkerPool) worker(id int) {
 	defer wp.wg.Done()
+
+	// REQ001055: pin to NUMA node if topology is set.
+	if wp.topo != nil && id < len(wp.workerNodes) {
+		node := wp.workerNodes[id]
+		if cpus := wp.topo.CPUsForNode(node); len(cpus) > 0 {
+			release := nm.PinWorker()
+			defer release()
+			_ = node // pinned via OS thread lock
+		}
+	}
+
 	for {
 		select {
 		case <-wp.ctx.Done():
@@ -145,6 +165,55 @@ func (wp *WorkerPool) Close() {
 		}()
 		close(wp.taskQueue)
 	})
+}
+
+// SetNUMATopology assigns workers to NUMA nodes and enables thread
+// pinning. Workers are distributed round-robin across nodes.
+// REQ001055.
+func (wp *WorkerPool) SetNUMATopology(topo *nm.Topology) {
+	if topo == nil || topo.NodeCount <= 1 {
+		return
+	}
+	wp.topo = topo
+	wp.workerNodes = make([]int, wp.workers)
+	wp.nodeWorkers = make(map[int]int)
+
+	// Distribute workers round-robin across NUMA nodes.
+	// Sort nodes for deterministic assignment.
+	nodes := make([]int, 0, topo.NodeCount)
+	for node := range topo.NodeCPUs {
+		nodes = append(nodes, node)
+	}
+	for i := range nodes {
+		for j := i + 1; j < len(nodes); j++ {
+			if nodes[i] > nodes[j] {
+				nodes[i], nodes[j] = nodes[j], nodes[i]
+			}
+		}
+	}
+
+	for i := 0; i < wp.workers; i++ {
+		node := nodes[i%len(nodes)]
+		wp.workerNodes[i] = node
+		wp.nodeWorkers[node]++
+	}
+}
+
+// WorkerNode returns the NUMA node assigned to worker i.
+// Returns 0 if no topology is set.
+func (wp *WorkerPool) WorkerNode(i int) int {
+	if wp.topo == nil || i < 0 || i >= len(wp.workerNodes) {
+		return 0
+	}
+	return wp.workerNodes[i]
+}
+
+// NodeWorkers returns the number of workers assigned to a node.
+func (wp *WorkerPool) NodeWorkers(node int) int {
+	if wp.nodeWorkers == nil {
+		return 0
+	}
+	return wp.nodeWorkers[node]
 }
 
 // Errors

@@ -66,3 +66,55 @@ func TestPinWorker_Releases(t *testing.T) {
 		t.Errorf("goroutines leaked: before=%d after=%d", before, after)
 	}
 }
+
+// TestGetTopology_SingleNodeOnNonNUMA verifies that on non-NUMA
+// hosts, GetTopology returns a single-node topology with all CPUs.
+func TestGetTopology_SingleNodeOnNonNUMA(t *testing.T) {
+	topo := GetTopology()
+	if topo == nil {
+		t.Fatal("GetTopology returned nil")
+	}
+	if topo.NodeCount < 1 {
+		t.Errorf("NodeCount = %d, want >= 1", topo.NodeCount)
+	}
+	// All CPUs should be assigned to node 0.
+	cpus := topo.CPUsForNode(0)
+	if len(cpus) != runtime.NumCPU() {
+		t.Errorf("node 0 has %d CPUs, want %d", len(cpus), runtime.NumCPU())
+	}
+	// Reverse mapping should be consistent.
+	for _, c := range cpus {
+		if topo.NodeForCPU(c) != 0 {
+			t.Errorf("CPU %d maps to node %d, want 0", c, topo.NodeForCPU(c))
+		}
+	}
+}
+
+// TestParseCPURange verifies the CPU range parser.
+func TestParseCPURange(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []int
+	}{
+		{"0-3", []int{0, 1, 2, 3}},
+		{"0,1,2,3", []int{0, 1, 2, 3}},
+		{"0-1,4-5", []int{0, 1, 4, 5}},
+		{"7", []int{7}},
+		{"", nil},
+		{"0-2,5", []int{0, 1, 2, 5}},
+	}
+	for _, tt := range tests {
+		got := parseCPURange(tt.input)
+		if len(got) != len(tt.want) {
+			t.Errorf("parseCPURange(%q) = %v (len %d), want %v (len %d)",
+				tt.input, got, len(got), tt.want, len(tt.want))
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("parseCPURange(%q)[%d] = %d, want %d",
+					tt.input, i, got[i], tt.want[i])
+			}
+		}
+	}
+}

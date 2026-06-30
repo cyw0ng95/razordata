@@ -17,6 +17,7 @@ import (
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
@@ -454,7 +455,12 @@ func (e *Executor) SetMaxParallelism(n int) {
 	if e.pool != nil {
 		e.pool.Close()
 	}
-	e.pool = UT.NewWorkerPool(n)
+	pool := UT.NewWorkerPool(n)
+	// REQ001055: set NUMA topology if available.
+	if nm.IsAvailable() {
+		pool.SetNUMATopology(nm.GetTopology())
+	}
+	e.pool = pool
 	e.planner.SetPool(e.pool)
 }
 
@@ -462,10 +468,15 @@ func (e *Executor) SetMaxParallelism(n int) {
 func (e *Executor) MaxParallelism() int { return e.maxParallelism }
 
 func NewExecutor() *Executor {
+	pool := UT.NewWorkerPool(0)
+	// REQ001055: set NUMA topology if available.
+	if nm.IsAvailable() {
+		pool.SetNUMATopology(nm.GetTopology())
+	}
 	e := &Executor{
 		planner:        NewPlanner(),
 		txnDebugger:    UT.NewTxnDebugger(),
-		pool:           UT.NewWorkerPool(0),
+		pool:           pool,
 		maxParallelism: runtime.GOMAXPROCS(0),
 		attachedDBs:    make(map[string]string),
 	}

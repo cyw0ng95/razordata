@@ -10,9 +10,10 @@ import (
 	"strings"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
+	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
 // Value is a tagged-union that stores SQL values inline without boxing.
@@ -257,4 +258,19 @@ type WorkerPool interface {
 	Submit(ctx context.Context, task func() error) error
 	Close()
 	Workers() int
+}
+
+// NUMAWorkerPool extends WorkerPool with NUMA-awareness.
+// Workers are assigned to NUMA nodes and pinned to local CPUs
+// when a NUMATopology is provided (REQ001055).
+type NUMAWorkerPool interface {
+	WorkerPool
+	// SetNUMATopology assigns workers to NUMA nodes and enables
+	// thread pinning. Must be called before any Submit.
+	SetNUMATopology(topo *nm.Topology)
+	// WorkerNode returns the NUMA node assigned to worker i.
+	// Returns 0 if no topology is set.
+	WorkerNode(i int) int
+	// NodeWorkers returns the number of workers assigned to a node.
+	NodeWorkers(node int) int
 }
