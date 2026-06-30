@@ -459,6 +459,10 @@ func operatorType(op Operator) string {
 		return "Scan"
 	case *IndexScan:
 		return "Search"
+	case *OP.BitmapHeapScan:
+		return "BitmapHeapScan" // REQ001106
+	case *OP.IndexOnlyScan:
+		return "IndexOnlyScan" // REQ001107
 	case *Filter:
 		return "Filter"
 	case *Project:

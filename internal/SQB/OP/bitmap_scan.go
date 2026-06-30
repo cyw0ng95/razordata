@@ -25,6 +25,15 @@ import (
 // fetched exactly once per row even when multiple index conditions
 // match it (avoiding the tuple-duplication that a pure IndexScan
 // OR-chain would produce).
+//
+// Output contract: each emitted row carries exactly one column
+// ("__heap__") with the schema-aligned Kind for the raw heap value
+// (KindText for string values, mirroring pre-existing OP tests).
+// Downstream operators that need the full table schema should
+// re-resolve keys through the heap; the bitmap itself is a
+// row-id set, not a tuple table.
+const bitmapHeapValueCol = "__heap__" // sentinel column name for the heap-row payload
+
 type BitmapHeapScan struct {
 	table      string
 	store      DT.Store
@@ -46,17 +55,28 @@ type BitmapHeapScan struct {
 func NewBitmapHeapScan(table string, store DT.Store, children []pl.Operator) *BitmapHeapScan {
 	ss, _ := DT.SchemaFor(table)
 	prefix := DT.TablePrefix(table)
+	cols := []string{bitmapHeapValueCol}
+	types := []LX.TokenType{LX.T_TEXT}
 	return &BitmapHeapScan{
 		table:      table,
 		store:      store,
 		schema:     ss,
 		prefix:     prefix,
 		indexScans: children,
+		cols:       cols,
+		types:      types,
+		colIndex:   map[string]int{bitmapHeapValueCol: 0},
 	}
 }
 
 // Table returns the underlying table name.
 func (b *BitmapHeapScan) Table() string { return b.table }
+
+// IndexScans exposes the underlying IndexScan children so the
+// planner can estimate cost, run EXPLAIN on children, or close
+// the bitmap explicitly. Cost-aware callers prefer this over
+// reaching into unexported state.
+func (b *BitmapHeapScan) IndexScans() []pl.Operator { return b.indexScans }
 
 // buildBitmap drains each child IndexScan, collects primary keys,
 // sorts and dedupes them. Safe to call repeatedly (idempotent).

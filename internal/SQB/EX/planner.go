@@ -674,6 +674,17 @@ func (p *Planner) estimateCostLegacy(op Operator) float64 {
 			return 0.05
 		}
 		return 0.1
+	case *BitmapHeapScan:
+		// REQ001106: bitmap heap scan cost = sum of child
+		// index seek costs + a single heap-fanout pass. We
+		// model each child as a real seek (0.05) and add a
+		// fixed bookkeeping factor so a 2-child bitmap is
+		// cheaper than 2 separate IndexScans+Filter stacks.
+		return 0.05*float64(len(v.IndexScans())) + 0.05
+	case *IndexOnlyScan:
+		// REQ001107: index-only scan is the cheapest path —
+		// no heap fetch, just index entry emission.
+		return 0.03
 	case *Filter:
 		return p.estimateCostLegacy(v.Child()) * p.estimatePredicateSelectivity(v.Predicate())
 	case *Project:
@@ -1982,6 +1993,16 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		scan = NewIndexOrSeqScan(s.From, whereExpr, p)
 	}
 
+	// REQ001106: bitmap heap scan for multi-index OR/AND predicates
+	// REQ001107: covering-index detection (IndexOnlyScan) on any scan path
+	if whereExpr != nil && scan != nil {
+		if bitmap := p.tryBitmapHeapScan(s, whereExpr); bitmap != nil {
+			scan = bitmap
+		} else if cover := p.tryIndexOnlyScan(s, whereExpr, scan); cover != nil {
+			scan = cover
+		}
+	}
+
 	// REQ000156 (iter-27): cost-based scan selection. If the
 	// planner produced a SeqScan but an IndexScan on the
 	// predicate column would be cheaper, swap the scan.
@@ -2480,6 +2501,123 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 		}
 	}
 	return scan
+}
+
+// tryBitmapHeapScan combines multiple index conditions on
+// distinct indexed columns into a BitmapHeapScan. Returns nil if
+// the predicate is not eligible (e.g. only one indexed column,
+// or columns lack registered indexes). REQ001106.
+//
+// Detects the top-level OR-of-equality shape: at least two
+// operands each carry an indexed-column equality on a distinct
+// column whose index is registered. Each child becomes an
+// IndexScan; the result bitmap is fetched once per row via the
+// heap.
+func (p *Planner) tryBitmapHeapScan(s *PS.Select, whereExpr PS.Expr) Operator {
+	if s == nil || whereExpr == nil || p.store == nil {
+		return nil
+	}
+	cols, lits, ok := extractOrIndexedEqColumns(whereExpr)
+	if !ok || len(cols) < 2 {
+		return nil
+	}
+	if len(cols) != len(lits) {
+		return nil
+	}
+	children := make([]Operator, 0, len(cols))
+	for i, col := range cols {
+		idx, found := p.selectIndex(s.From, col)
+		if !found || !hasWriterIndex(s.From, idx) {
+			return nil
+		}
+		tableID, _ := DT.TableIDFor(s.From)
+		isc, err := OP.NewIndexScanWithIndex(p.store, tableID, s.From, idx, lits[i], nil)
+		if err != nil {
+			return nil
+		}
+		children = append(children, isc)
+	}
+	if len(children) < 2 {
+		return nil
+	}
+	bhs := OP.NewBitmapHeapScan(s.From, p.store, children)
+	if whereExpr != nil {
+		return OP.NewFilter(bhs, whereExpr)
+	}
+	return bhs
+}
+
+// extractOrIndexedEqColumns recognises top-level OR whose
+// branches are indexed-column equalities on distinct columns.
+// Returns the columns and their indexed-key bytes, in order. Only
+// the simplest shape — `col1 = lit1 OR col2 = lit2` (or
+// OR-chains) — is recognised. Deeper expressions fall through
+// to the IndexScan/SeqScan path.
+func extractOrIndexedEqColumns(e PS.Expr) ([]string, [][]byte, bool) {
+	b, ok := e.(*PS.BinaryExpr)
+	if !ok || b.Op != LX.T_OR {
+		// also handle top-level BinaryExpr that wraps a single AND-of-OR?
+		// For Step 3b we keep scope tight: OR only.
+		return nil, nil, false
+	}
+	branches := flattenOr(b)
+	if len(branches) < 2 {
+		return nil, nil, false
+	}
+	cols := make([]string, 0, len(branches))
+	lits := make([][]byte, 0, len(branches))
+	seen := make(map[string]struct{}, len(branches))
+	for _, br := range branches {
+		col, lit, ok := indexedColumnEq(br)
+		if !ok {
+			return nil, nil, false
+		}
+		if _, dup := seen[col]; dup {
+			// Same column twice → simple IndexScan path is enough;
+			// bitmap doesn't help.
+			return nil, nil, false
+		}
+		seen[col] = struct{}{}
+		cols = append(cols, col)
+		lits = append(lits, lit)
+	}
+	return cols, lits, true
+}
+
+// flattenOr returns the leaves of a top-level chain of OR
+// BinaryExprs. The leaves preserve the order they appear in the
+// predicate so the bitmap ordering is stable across calls.
+func flattenOr(e PS.Expr) []PS.Expr {
+	var out []PS.Expr
+	var walk func(PS.Expr)
+	walk = func(x PS.Expr) {
+		if x == nil {
+			return
+		}
+		b, ok := x.(*PS.BinaryExpr)
+		if ok && b.Op == LX.T_OR {
+			walk(b.Left)
+			walk(b.Right)
+			return
+		}
+		out = append(out, x)
+	}
+	walk(e)
+	return out
+}
+
+// tryIndexOnlyScan wraps an IndexScan in IndexOnlyScan when the
+// projected columns are entirely covered by the index columns
+// (plus optionally the primary key). Returns nil if not
+// eligible. REQ001107.
+//
+// Stub in Step 4: covering-detection logic lands in Step 4b.
+// Today this returns nil unconditionally.
+func (p *Planner) tryIndexOnlyScan(s *PS.Select, whereExpr PS.Expr, scan Operator) Operator {
+	_ = s
+	_ = whereExpr
+	_ = scan
+	return nil
 }
 func propagateLimitToNLJ(op Operator, n int64) {
 	switch t := op.(type) {
@@ -3010,6 +3148,15 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 // returns the original scan unchanged. If the cost of the
 // index scan is not lower, the original scan is returned.
 func (p *Planner) pickCheaperScan(table string, where PS.Expr, current Operator) (Operator, bool) {
+	// REQ001106/107: don't downgrade a bitmap/index-only scan
+	// back to a plain IndexScan via the cost model — the new
+	// operators are explicit planner choices, not cost fallback.
+	if _, isBitmap := current.(*BitmapHeapScan); isBitmap {
+		return current, false
+	}
+	if _, isCover := current.(*IndexOnlyScan); isCover {
+		return current, false
+	}
 	// REQ000156 (iter-27): cost-based scan selection. The
 	// function looks at the WHERE predicate to discover the
 	// indexed column. We accept both simple equality

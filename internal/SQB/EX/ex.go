@@ -198,6 +198,8 @@ type ColInfo = DT.ColInfo
 // Backward-compat aliases for types moved to OP.
 type SeqScan = OP.SeqScan
 type IndexScan = OP.IndexScan
+type BitmapHeapScan = OP.BitmapHeapScan // REQ001106
+type IndexOnlyScan = OP.IndexOnlyScan   // REQ001107
 type Filter = OP.Filter
 type Project = OP.Project
 type Sort = OP.Sort
