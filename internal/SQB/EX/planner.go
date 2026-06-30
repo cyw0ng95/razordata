@@ -1785,6 +1785,13 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	var crossTableConjuncts []PS.Expr
 	if whereExpr != nil && len(s.Joins) > 0 {
 		crossTableConjuncts = RE.SplitAnd(whereExpr)
+		// REQ001077: transitive equality inference. For
+		// `WHERE a = b AND b = c`, infer `a = c` so downstream
+		// join planning can use any of the inferred equalities
+		// as a join key.
+		if inferred := p.inferTransitiveEqualities(crossTableConjuncts); len(inferred) > 0 {
+			crossTableConjuncts = append(crossTableConjuncts, inferred...)
+		}
 	}
 
 	// REQ000799: Join elimination — remove tables from the join
@@ -4550,6 +4557,110 @@ func pushPredicateIntoSubquery(outerWhere PS.Expr, subSel *PS.Select) PS.Expr {
 		}
 	}
 	return result
+}
+
+// canonicalColRef extracts a column reference identifier from an expression.
+// Returns "Table.Name" for qualified names or "Name" for bare identifiers.
+// Returns empty string if the expression is not a column reference.
+func canonicalColRef(e PS.Expr) string {
+	switch v := e.(type) {
+	case *PS.QualifiedName:
+		if v.Table != "" {
+			return v.Table + "." + v.Name
+		}
+		return v.Name
+	case *PS.Ident:
+		return v.Name
+	}
+	return ""
+}
+
+// colRefFromCanonical reconstructs a column reference expression from
+// the canonical "Table.Name" form (or just "Name" for unqualified cols).
+func colRefFromCanonical(canonical string) PS.Expr {
+	if idx := strings.Index(canonical, "."); idx >= 0 {
+		return &PS.QualifiedName{Table: canonical[:idx], Name: canonical[idx+1:]}
+	}
+	return &PS.Ident{Name: canonical}
+}
+
+// inferTransitiveEqualities builds equivalence classes from
+// column-to-column equality predicates and emits inferred equalities
+// for every pair within each equivalence class. REQ001077: WHERE
+// a = b AND b = c implies a = c, so the planner can use any inferred
+// equality as a join key or index condition. Already-existing equalities
+// are not re-emitted.
+func (p *Planner) inferTransitiveEqualities(conjuncts []PS.Expr) []PS.Expr {
+	parent := make(map[string]string)
+	var find func(string) string
+	find = func(x string) string {
+		if _, ok := parent[x]; !ok {
+			parent[x] = x
+		}
+		if parent[x] != x {
+			parent[x] = find(parent[x])
+		}
+		return parent[x]
+	}
+	union := func(a, b string) {
+		ra, rb := find(a), find(b)
+		if ra != rb {
+			parent[ra] = rb
+		}
+	}
+	for _, e := range conjuncts {
+		be, ok := e.(*PS.BinaryExpr)
+		if !ok || be.Op != LX.T_EQ {
+			continue
+		}
+		l := canonicalColRef(be.Left)
+		r := canonicalColRef(be.Right)
+		if l == "" || r == "" || l == r {
+			continue
+		}
+		union(l, r)
+	}
+	// Collect existing equalities so we don't re-emit them.
+	existing := make(map[string]bool)
+	for _, e := range conjuncts {
+		be, ok := e.(*PS.BinaryExpr)
+		if !ok || be.Op != LX.T_EQ {
+			continue
+		}
+		l := canonicalColRef(be.Left)
+		r := canonicalColRef(be.Right)
+		if l != "" && r != "" {
+			existing[l+"\x00"+r] = true
+			existing[r+"\x00"+l] = true
+		}
+	}
+	// Group columns by equivalence class root.
+	groups := make(map[string][]string)
+	for col := range parent {
+		root := find(col)
+		groups[root] = append(groups[root], col)
+	}
+	var inferred []PS.Expr
+	for _, members := range groups {
+		if len(members) < 2 {
+			continue
+		}
+		for i := 0; i < len(members); i++ {
+			for j := i + 1; j < len(members); j++ {
+				a, b := members[i], members[j]
+				if existing[a+"\x00"+b] {
+					continue
+				}
+				existing[a+"\x00"+b] = true
+				inferred = append(inferred, &PS.BinaryExpr{
+					Op:    LX.T_EQ,
+					Left:  colRefFromCanonical(a),
+					Right: colRefFromCanonical(b),
+				})
+			}
+		}
+	}
+	return inferred
 }
 
 // mergeWhereIntoSubquery merges outerWhere into the subquery's WHERE.
