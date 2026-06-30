@@ -1,4 +1,4 @@
-package EX
+package UT
 
 import (
 	"context"
@@ -64,9 +64,9 @@ func (ic *IntegrityCheck) Next(ctx context.Context) (Row, error) {
 		ic.rows = append(ic.rows, Row{
 			Cols: []string{"table", "page", "error"},
 			Data: []Value{
-				NewTextValue(""),     // table (empty = global)
-				NewTextValue(""),     // page (empty = not applicable)
-				NewTextValue(errMsg), // error message
+				DT.NewTextValue(""),     // table (empty = global)
+				DT.NewTextValue(""),     // page (empty = not applicable)
+				DT.NewTextValue(errMsg), // error message
 			},
 		})
 	}

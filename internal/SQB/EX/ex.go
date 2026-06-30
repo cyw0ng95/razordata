@@ -230,6 +230,7 @@ type VectorizedFilter = OP.VectorizedFilter
 type CompoundOp = OP.CompoundOp
 type Values = OP.Values
 type ValuesRows = OP.ValuesRows
+type IntegrityCheck = UT.IntegrityCheck
 
 // Backward-compat type aliases formerly in EX/store.go.
 type Store = DT.Store
@@ -270,6 +271,8 @@ var NewValuesOp = OP.NewValuesOp
 var NewValuesRowsOp = OP.NewValuesRowsOp
 var newValuesOp = OP.NewValuesOp
 var newValuesRowsOp = OP.NewValuesRowsOp
+var NewIntegrityCheck = UT.NewIntegrityCheck
+var NewIntegrityCheckWithStore = UT.NewIntegrityCheckWithStore
 var SchemaFromRowSchema = OP.SchemaFromRowSchema
 var NewIndexScan = OP.NewIndexScan
 var NewIndexScanWithStore = OP.NewIndexScanWithStore

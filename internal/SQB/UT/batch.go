@@ -3,8 +3,19 @@ package UT
 import (
 	"sync"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
+
+// Backward-compat aliases for cross-package references.
+type Operator = pl.Operator
+type Row = pl.Row
+type Value = pl.Value
+type Store = DT.Store
+
+// ErrNoRows signals end-of-stream from operators.
+var ErrNoRows = pl.ErrNoRows
 
 // SelRange is a contiguous inclusive-end run of row indices
 // in a selection vector: [Start, End). It is used to compactly
