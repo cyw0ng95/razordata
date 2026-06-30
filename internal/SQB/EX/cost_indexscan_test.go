@@ -19,20 +19,20 @@ func TestPlanner_EstimateCost_PerOperator(t *testing.T) {
 		t.Errorf("SeqScan cost = %v, want 1.0", got)
 	}
 	// IndexScan: 0.1
-	if got := p.estimateCost(NewIndexScan("t", "idx", nil, nil)); got != 0.1 {
+	if got := p.estimateCost(OP.NewIndexScan("t", "idx", nil, nil)); got != 0.1 {
 		t.Errorf("IndexScan cost = %v, want 0.1", got)
 	}
 	// Project, Limit, Offset: pass-through to child cost
 	scan := OP.NewSeqScan("t")
-	proj := NewProject(scan, nil)
+	proj := OP.NewProject(scan, nil)
 	if got := p.estimateCost(proj); got != 1.0 {
 		t.Errorf("Project cost = %v, want 1.0 (child SeqScan)", got)
 	}
-	lim := NewLimit(scan, 10)
+	lim := OP.NewLimit(scan, 10)
 	if got := p.estimateCost(lim); got != 1.0 {
 		t.Errorf("Limit cost = %v, want 1.0 (child SeqScan)", got)
 	}
-	off := NewOffset(scan, 5)
+	off := OP.NewOffset(scan, 5)
 	if got := p.estimateCost(off); got != 1.0 {
 		t.Errorf("Offset cost = %v, want 1.0 (child SeqScan)", got)
 	}
@@ -64,7 +64,7 @@ func TestPlanner_EstimateCost_FilterSelectivity(t *testing.T) {
 func TestPlanner_EstimateCost_Sort(t *testing.T) {
 	p := NewPlanner()
 	scan := OP.NewSeqScan("t")
-	sort := NewSort(scan, []PS.OrderItem{{Expr: &PS.Ident{Name: "a"}, Desc: false}})
+	sort := OP.NewSort(scan, []PS.OrderItem{{Expr: &PS.Ident{Name: "a"}, Desc: false}})
 	// child = 1.0, log2(1) = 0, so 1 * (1 + 0) = 1
 	if got := p.estimateCost(sort); got != 1.0 {
 		t.Errorf("Sort cost = %v, want 1.0", got)

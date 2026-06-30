@@ -238,17 +238,10 @@ var JoinKindInner = OP.JoinKindInner
 var JoinKindCross = OP.JoinKindCross
 
 var NewSeqScanWithStore = OP.NewSeqScanWithStore
-var NewProject = OP.NewProject
-var NewSort = OP.NewSort
-var NewLimit = OP.NewLimit
-var NewOffset = OP.NewOffset
 var NewNestedLoopJoin = OP.NewNestedLoopJoin
 var NewParallelSeqScanRow = OP.NewParallelSeqScanRow
-var NewParallelSeqScan = OP.NewParallelSeqScan
 var NewParallelIndexScan = OP.NewParallelIndexScan
-var NewParallelIndexRangeScan = OP.NewParallelIndexRangeScan
 var NewParallelUnionAll = OP.NewParallelUnionAll
-var NewVectorizedFilter = OP.NewVectorizedFilter
 var NewCompoundOp = OP.NewCompoundOp
 var newValuesOp = OP.NewValuesOp
 var newValuesRowsOp = OP.NewValuesRowsOp
@@ -259,11 +252,8 @@ var NewAnalyzeWithStore = UT.NewAnalyzeWithStore
 var NewVacuum = UT.NewVacuum
 var NewVacuumWithStore = UT.NewVacuumWithStore
 var SchemaFromRowSchema = OP.SchemaFromRowSchema
-var NewIndexScan = OP.NewIndexScan
 var NewIndexScanWithStore = OP.NewIndexScanWithStore
 var NewIndexScanWithIndex = OP.NewIndexScanWithIndex
-var NewIndexScanWithRange = OP.NewIndexScanWithRange
-var tablePrefix = OP.TablePrefix
 var decodeRow = OP.DecodeRow
 var buildIndexKey = OP.BuildIndexKey
 var EncodeRow = OP.EncodeRow
@@ -1515,28 +1505,28 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		// selection before updating.
 		var current Operator = filter
 		if len(s.OrderBy) > 0 {
-			current = NewSort(current, s.OrderBy)
+			current = OP.NewSort(current, s.OrderBy)
 		}
 		if s.OffsetFirst {
 			if s.Limit != nil {
 				if n, ok := limitInt64(s.Limit); ok {
-					current = NewLimit(current, n)
+					current = OP.NewLimit(current, n)
 				}
 			}
 			if s.Offset != nil {
 				if n, ok := limitInt64(s.Offset); ok && n > 0 {
-					current = NewOffset(current, n)
+					current = OP.NewOffset(current, n)
 				}
 			}
 		} else {
 			if s.Offset != nil {
 				if n, ok := limitInt64(s.Offset); ok && n > 0 {
-					current = NewOffset(current, n)
+					current = OP.NewOffset(current, n)
 				}
 			}
 			if s.Limit != nil {
 				if n, ok := limitInt64(s.Limit); ok {
-					current = NewLimit(current, n)
+					current = OP.NewLimit(current, n)
 				}
 			}
 		}
@@ -1570,28 +1560,28 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		// selection before deleting.
 		var current Operator = filter
 		if len(s.OrderBy) > 0 {
-			current = NewSort(current, s.OrderBy)
+			current = OP.NewSort(current, s.OrderBy)
 		}
 		if s.OffsetFirst {
 			if s.Limit != nil {
 				if n, ok := limitInt64(s.Limit); ok {
-					current = NewLimit(current, n)
+					current = OP.NewLimit(current, n)
 				}
 			}
 			if s.Offset != nil {
 				if n, ok := limitInt64(s.Offset); ok && n > 0 {
-					current = NewOffset(current, n)
+					current = OP.NewOffset(current, n)
 				}
 			}
 		} else {
 			if s.Offset != nil {
 				if n, ok := limitInt64(s.Offset); ok && n > 0 {
-					current = NewOffset(current, n)
+					current = OP.NewOffset(current, n)
 				}
 			}
 			if s.Limit != nil {
 				if n, ok := limitInt64(s.Limit); ok {
-					current = NewLimit(current, n)
+					current = OP.NewLimit(current, n)
 				}
 			}
 		}

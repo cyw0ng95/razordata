@@ -192,17 +192,17 @@ func buildPlan(t *testing.T, stmt PS.Stmt) Operator {
 		current = AG.NewAggregate(current, nil, sel.Cols)
 	}
 	if len(sel.OrderBy) > 0 {
-		current = NewSort(current, sel.OrderBy)
+		current = OP.NewSort(current, sel.OrderBy)
 	}
 	if sel.Limit != nil {
 		n, ok := limitInt64Public(sel.Limit)
 		if !ok {
 			t.Fatalf("non-literal LIMIT not supported in smoke test")
 		}
-		current = NewLimit(current, n)
+		current = OP.NewLimit(current, n)
 	}
 	if !hasAgg && !isStarExprPublic(sel.Cols) {
-		current = NewProject(current, sel.Cols)
+		current = OP.NewProject(current, sel.Cols)
 	}
 	return current
 }

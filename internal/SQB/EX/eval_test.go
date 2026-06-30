@@ -271,17 +271,17 @@ func TestOperators(t *testing.T) {
 		t.Fatal("NewFilter returned nil")
 	}
 
-	project := NewProject(scan, nil)
+	project := OP.NewProject(scan, nil)
 	if project == nil {
 		t.Fatal("NewProject returned nil")
 	}
 
-	sort := NewSort(scan, nil)
+	sort := OP.NewSort(scan, nil)
 	if sort == nil {
 		t.Fatal("NewSort returned nil")
 	}
 
-	limit := NewLimit(scan, 0)
+	limit := OP.NewLimit(scan, 0)
 	if limit == nil {
 		t.Fatal("NewLimit returned nil")
 	}
@@ -322,7 +322,7 @@ func TestProjectStarPassesThrough(t *testing.T) {
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(7))}},
 	})
 	scan := OP.NewSeqScan("t")
-	project := NewProject(scan, []PS.Expr{&PS.StarExpr{}})
+	project := OP.NewProject(scan, []PS.Expr{&PS.StarExpr{}})
 	row, err := project.Next(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -341,7 +341,7 @@ func TestSortThenIterate(t *testing.T) {
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(2))}},
 	})
 	scan := OP.NewSeqScan("t")
-	s := NewSort(scan, []PS.OrderItem{{Expr: &PS.Ident{Name: "x"}, Desc: false}})
+	s := OP.NewSort(scan, []PS.OrderItem{{Expr: &PS.Ident{Name: "x"}, Desc: false}})
 	want := []int64{1, 2, 3}
 	for _, w := range want {
 		row, err := s.Next(context.Background())
@@ -366,7 +366,7 @@ func TestLimitStops(t *testing.T) {
 		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(3))}},
 	})
 	scan := OP.NewSeqScan("t")
-	l := NewLimit(scan, 2)
+	l := OP.NewLimit(scan, 2)
 	count := 0
 	for {
 		_, err := l.Next(context.Background())

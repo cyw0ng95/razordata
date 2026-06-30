@@ -135,7 +135,7 @@ func TestCostModel_MemoryPressure(t *testing.T) {
 
 	t.Run("sort_under_budget", func(t *testing.T) {
 		scan := OP.NewSeqScan("t")
-		sort := NewSort(scan, []PS.OrderItem{{Expr: &PS.QualifiedName{Name: "a"}, Desc: false}})
+		sort := OP.NewSort(scan, []PS.OrderItem{{Expr: &PS.QualifiedName{Name: "a"}, Desc: false}})
 		estimated, budget := p.estimateMemoryPressure(sort)
 		if budget != 16<<20 {
 			t.Errorf("budget = %d, want %d", budget, 16<<20)
@@ -157,7 +157,7 @@ func TestCostModel_MemoryPressure(t *testing.T) {
 		p2 := NewPlanner()
 		p2.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
 		scan := OP.NewSeqScan("t")
-		sort := NewSort(scan, []PS.OrderItem{{Expr: &PS.QualifiedName{Name: "a"}, Desc: false}})
+		sort := OP.NewSort(scan, []PS.OrderItem{{Expr: &PS.QualifiedName{Name: "a"}, Desc: false}})
 		_, budget := p2.estimateMemoryPressure(sort)
 		// Default 64 MB when maxMemoryPerQuery unset.
 		if budget != 64<<20 {
@@ -179,7 +179,7 @@ func TestCostModel_LegacyStillWorks(t *testing.T) {
 		t.Errorf("Legacy SeqScan = %v, want 1.0", got)
 	}
 	// Legacy Project = 1.0 (passes through to child).
-	if got := p.estimateCost(NewProject(scan, nil)); got != 1.0 {
+	if got := p.estimateCost(OP.NewProject(scan, nil)); got != 1.0 {
 		t.Errorf("Legacy Project = %v, want 1.0", got)
 	}
 }

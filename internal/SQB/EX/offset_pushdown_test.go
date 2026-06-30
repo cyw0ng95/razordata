@@ -3,6 +3,7 @@ package EX
 import (
 	"context"
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"strings"
 	"testing"
 )
@@ -14,7 +15,7 @@ func TestOffset_Operator(t *testing.T) {
 		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(3))}},
 		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(4))}},
 	}}
-	off := NewOffset(src, 2)
+	off := OP.NewOffset(src, 2)
 	defer off.Close()
 	ctx := context.Background()
 	var got []int64
@@ -43,7 +44,7 @@ func TestOffset_ExceedingRows(t *testing.T) {
 	src := &sliceOp{rows: []Row{
 		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(1))}},
 	}}
-	off := NewOffset(src, 5)
+	off := OP.NewOffset(src, 5)
 	defer off.Close()
 	ctx := context.Background()
 	for {

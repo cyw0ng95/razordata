@@ -41,7 +41,7 @@ func BenchmarkTPCH_Q1(b *testing.B) {
 		src := &rowSourceForTest{rows: rows}
 		scan := OP.NewVectorizedSeqScan(src, schema, types)
 		// Apply filter: l_quantity > 25 (simulating l_shipdate filter)
-		filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
+		filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 			Left:  &PS.Ident{Name: "l_quantity"},
 			Op:    LX.T_GT,
 			Right: &PS.FloatLiteral{Val: 25.0},
@@ -75,7 +75,7 @@ func BenchmarkTPCH_Q6(b *testing.B) {
 		src := &rowSourceForTest{rows: rows}
 		scan := OP.NewVectorizedSeqScan(src, schema, types)
 		// Apply filter: l_quantity < 24
-		filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
+		filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 			Left:  &PS.Ident{Name: "l_quantity"},
 			Op:    LX.T_LT,
 			Right: &PS.FloatLiteral{Val: 24.0},

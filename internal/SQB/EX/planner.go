@@ -2244,7 +2244,7 @@ func (p *Planner) resolveView(s *PS.Select, viewSel *PS.Select) Operator {
 				innerOp = OP.NewFilter(innerOp, s.Where)
 			}
 			// Project the outer query's columns over the view's output
-			return NewProject(innerOp, s.Cols)
+			return OP.NewProject(innerOp, s.Cols)
 		}
 	}
 
@@ -2338,14 +2338,14 @@ func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
 	}
 	if len(s.Cols) > 0 && !isStarExpr(s.Cols) {
 		if !needsAggregate {
-			current = NewProject(current, s.Cols)
+			current = OP.NewProject(current, s.Cols)
 		}
 	}
 	if s.Having != nil {
 		current = OP.NewFilter(current, s.Having)
 	}
 	if len(s.OrderBy) > 0 {
-		so := NewSort(current, s.OrderBy)
+		so := OP.NewSort(current, s.OrderBy)
 		if p.pool != nil {
 			so.WithPool(p.pool.(*UT.WorkerPool))
 		}
@@ -2434,7 +2434,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 				idx, found := p.selectIndex(s.From, col)
 				if found && hasWriterIndex(s.From, idx) {
 					tableID, _ := DT.TableIDFor(s.From)
-					if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
+					if isc, err := OP.NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
 						scan = isc
 						if whereExpr != nil {
 							scan = OP.NewFilter(scan, whereExpr)
@@ -2452,7 +2452,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 					upper := make([]byte, len(prefix)+1)
 					copy(upper, prefix)
 					upper[len(prefix)] = 0xff
-					if isc, err := NewIndexScanWithRange(p.store, tableID, s.From, idx, prefix, true, upper, false); err == nil {
+					if isc, err := OP.NewIndexScanWithRange(p.store, tableID, s.From, idx, prefix, true, upper, false); err == nil {
 						scan = isc
 						if whereExpr != nil {
 							scan = OP.NewFilter(scan, whereExpr)
@@ -2925,7 +2925,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 						schema[k] = ci.Name
 						types[k] = LX.TokenType(ci.Typ)
 					}
-					return NewParallelIndexRangeScan(src, schema, types, colName, inValues, p.pool.(*UT.WorkerPool))
+					return OP.NewParallelIndexRangeScan(src, schema, types, colName, inValues, p.pool.(*UT.WorkerPool))
 				}
 			}
 		}
@@ -2938,7 +2938,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 						return isc
 					}
 				}
-				return NewIndexScan(table, idx, nil, nil)
+				return OP.NewIndexScan(table, idx, nil, nil)
 			}
 		}
 		// REQ001068: check for equality predicate (col = ?) on an indexed column.
@@ -2952,7 +2952,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 							}
 						}
 					}
-					return NewIndexScan(table, idx, seekValue, nil)
+					return OP.NewIndexScan(table, idx, seekValue, nil)
 				}
 			}
 		}
@@ -2962,12 +2962,12 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 				if hasWriterIndex(table, idx) {
 					if p.store != nil {
 						if tableID, ok := DT.TableIDFor(table); ok {
-							if isc, err := NewIndexScanWithRange(p.store, tableID, table, idx, lower, lowerIncl, upper, upperIncl); err == nil {
+							if isc, err := OP.NewIndexScanWithRange(p.store, tableID, table, idx, lower, lowerIncl, upper, upperIncl); err == nil {
 								return isc
 							}
 						}
 					}
-					return NewIndexScan(table, idx, lower, upper)
+					return OP.NewIndexScan(table, idx, lower, upper)
 				}
 			}
 		}
@@ -2983,12 +2983,12 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 					upper[len(prefix)] = 0xff
 					if p.store != nil {
 						if tableID, ok := DT.TableIDFor(table); ok {
-							if isc, err := NewIndexScanWithRange(p.store, tableID, table, idx, prefix, true, upper, false); err == nil {
+							if isc, err := OP.NewIndexScanWithRange(p.store, tableID, table, idx, prefix, true, upper, false); err == nil {
 								return isc
 							}
 						}
 					}
-					return NewIndexScan(table, idx, prefix, upper)
+					return OP.NewIndexScan(table, idx, prefix, upper)
 				}
 			}
 		}
@@ -3039,7 +3039,7 @@ func (p *Planner) pickCheaperScan(table string, where PS.Expr, current Operator)
 		}
 	}
 	if indexScan == nil {
-		indexScan = NewIndexScan(table, idx, nil, nil)
+		indexScan = OP.NewIndexScan(table, idx, nil, nil)
 	}
 	if indexScan == nil {
 		return current, false
@@ -5361,7 +5361,7 @@ func (p *Planner) planOrdering(s *PS.Select, current Operator) Operator {
 	}
 	if len(s.OrderBy) > 0 {
 		if !p.pkOrderMatches(s.From, s.OrderBy) {
-			sort := NewSort(current, s.OrderBy)
+			sort := OP.NewSort(current, s.OrderBy)
 			if p.pool != nil {
 				sort.WithPool(p.pool.(*UT.WorkerPool))
 			}
@@ -5381,10 +5381,10 @@ func (p *Planner) planOrdering(s *PS.Select, current Operator) Operator {
 		}
 	}
 	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) && !needsWindow {
-		current = NewProject(current, s.Cols)
+		current = OP.NewProject(current, s.Cols)
 	}
 	if needsWindow && len(s.Cols) > 0 && !isStarExpr(s.Cols) {
-		current = NewProject(current, s.Cols)
+		current = OP.NewProject(current, s.Cols)
 	}
 	if s.Distinct && !hasAnyAggregate(s.Cols) {
 		current = OP.NewDistinct(current)
@@ -5408,20 +5408,20 @@ func (p *Planner) planLimitOffset(s *PS.Select, current Operator) Operator {
 			if !ok {
 				return nil
 			}
-			current = NewLimit(current, n)
+			current = OP.NewLimit(current, n)
 			propagateLimitToNLJ(current, n)
 		}
 		if s.Offset != nil {
 			n, ok := limitInt64(s.Offset)
 			if ok && n > 0 {
-				current = NewOffset(current, n)
+				current = OP.NewOffset(current, n)
 			}
 		}
 	} else {
 		if s.Offset != nil {
 			n, ok := limitInt64(s.Offset)
 			if ok && n > 0 {
-				current = NewOffset(current, n)
+				current = OP.NewOffset(current, n)
 			}
 		}
 		if s.Limit != nil {
@@ -5429,7 +5429,7 @@ func (p *Planner) planLimitOffset(s *PS.Select, current Operator) Operator {
 			if !ok {
 				return nil
 			}
-			current = NewLimit(current, n)
+			current = OP.NewLimit(current, n)
 			propagateLimitToNLJ(current, n)
 		}
 	}

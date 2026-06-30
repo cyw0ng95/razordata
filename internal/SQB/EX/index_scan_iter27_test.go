@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
 
 // TestIndexScan_RangeSeek_GT exercises REQ000074: IndexScan real
@@ -46,7 +47,7 @@ func TestIndexScan_RangeSeek_GT(t *testing.T) {
 	}
 
 	// Range seek for a > 5 should yield a = 7, 9
-	scan, err := NewIndexScanWithRange(store, id, "t", "idx_a", int64ToBytes(5), false, nil, false)
+	scan, err := OP.NewIndexScanWithRange(store, id, "t", "idx_a", int64ToBytes(5), false, nil, false)
 	if err != nil {
 		t.Fatalf("NewIndexScanWithRange: %v", err)
 	}
@@ -90,7 +91,7 @@ func TestIndexScan_RangeSeek_GE(t *testing.T) {
 		idxStore.Insert(int64ToBytes(v), int64ToBytes(v))
 	}
 
-	scan, _ := NewIndexScanWithRange(store, id, "t", "idx_a", int64ToBytes(5), true, nil, false)
+	scan, _ := OP.NewIndexScanWithRange(store, id, "t", "idx_a", int64ToBytes(5), true, nil, false)
 	defer scan.Close()
 	var got []int64
 	for {
@@ -126,7 +127,7 @@ func TestIndexScan_RangeSeek_Between(t *testing.T) {
 	}
 
 	// BETWEEN 3 AND 7 inclusive on both ends
-	scan, _ := NewIndexScanWithRange(store, id, "t", "idx_a", int64ToBytes(3), true, int64ToBytes(7), true)
+	scan, _ := OP.NewIndexScanWithRange(store, id, "t", "idx_a", int64ToBytes(3), true, int64ToBytes(7), true)
 	defer scan.Close()
 	var got []int64
 	for {

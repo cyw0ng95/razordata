@@ -10,6 +10,7 @@ import (
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
@@ -262,7 +263,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		return Row{}, DT.ErrNoRows
 	}
 
-	prefix := tablePrefix(i.table)
+	prefix := OP.TablePrefix(i.table)
 	var pending map[string]struct{}
 	var iterValues [][]PS.Expr
 	if i.defaultValues {
@@ -281,7 +282,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			if i.store == nil || len(vals) == 0 {
 				return false, nil
 			}
-			prefix := tablePrefix(i.table)
+			prefix := OP.TablePrefix(i.table)
 			if prefix == nil {
 				return false, nil
 			}
@@ -692,7 +693,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 		return Row{}, DT.ErrNoRows
 	}
 
-	prefix := tablePrefix(u.table)
+	prefix := OP.TablePrefix(u.table)
 	for {
 		row, err := u.iter.Next(ctx)
 		if err != nil {
@@ -935,7 +936,7 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 		return Row{}, DT.ErrNoRows
 	}
 
-	prefix := tablePrefix(d.table)
+	prefix := OP.TablePrefix(d.table)
 	for {
 		row, err := d.iter.Next(ctx)
 		if err != nil {

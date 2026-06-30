@@ -38,7 +38,7 @@ func TestParallelSeqScan_Basic(t *testing.T) {
 		UT.NewWorkerPool(4)
 	defer pool.Close()
 
-	scan := NewParallelSeqScan(src, schema, types, pool, rows)
+	scan := OP.NewParallelSeqScan(src, schema, types, pool, rows)
 	defer scan.Close()
 
 	total := 0
@@ -64,7 +64,7 @@ func TestParallelSeqScan_Empty(t *testing.T) {
 		UT.NewWorkerPool(4)
 	defer pool.Close()
 
-	scan := NewParallelSeqScan(nil, []string{"id"}, []LX.TokenType{LX.T_INT_KW}, pool, nil)
+	scan := OP.NewParallelSeqScan(nil, []string{"id"}, []LX.TokenType{LX.T_INT_KW}, pool, nil)
 	defer scan.Close()
 
 	batch, err := scan.NextBatch(context.Background())
@@ -87,7 +87,7 @@ func TestParallelSeqScan_Large(t *testing.T) {
 		UT.NewWorkerPool(4)
 	defer pool.Close()
 
-	scan := NewParallelSeqScan(src, schema, types, pool, rows)
+	scan := OP.NewParallelSeqScan(src, schema, types, pool, rows)
 	defer scan.Close()
 
 	total := 0
@@ -182,7 +182,7 @@ func TestParallelSeqScan_ConcurrentReaders(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			scan := NewParallelSeqScan(src, schema, types, pool, rows)
+			scan := OP.NewParallelSeqScan(src, schema, types, pool, rows)
 			defer scan.Close()
 			total := 0
 			for {
@@ -209,7 +209,7 @@ func BenchmarkParallelSeqScan(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		pool :=
 			UT.NewWorkerPool(4)
-		scan := NewParallelSeqScan(src, schema, types, pool, rows)
+		scan := OP.NewParallelSeqScan(src, schema, types, pool, rows)
 		for {
 			batch, _ := scan.NextBatch(context.Background())
 			if batch == nil {
@@ -235,7 +235,7 @@ func BenchmarkParallelSeqScanScaling(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				pool :=
 					UT.NewWorkerPool(workers)
-				scan := NewParallelSeqScan(src, schema, types, pool, rows)
+				scan := OP.NewParallelSeqScan(src, schema, types, pool, rows)
 				for {
 					batch, _ := scan.NextBatch(context.Background())
 					if batch == nil {
@@ -354,7 +354,7 @@ func TestVectorizedFilter_AllMatch(t *testing.T) {
 	defer scan.Close()
 
 	// Filter: id >= 0 (all rows match)
-	filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
+	filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
 		Op:    LX.T_GE,
 		Right: &PS.NumberLiteral{Val: 0},
@@ -387,7 +387,7 @@ func TestVectorizedFilter_NoMatch(t *testing.T) {
 	defer scan.Close()
 
 	// Filter: id > 100 (no rows match)
-	filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
+	filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
 		Op:    LX.T_GT,
 		Right: &PS.NumberLiteral{Val: 100},
@@ -412,7 +412,7 @@ func TestVectorizedFilter_PartialMatch(t *testing.T) {
 	defer scan.Close()
 
 	// Filter: id < 5 (matches 0, 1, 2, 3, 4)
-	filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
+	filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
 		Op:    LX.T_LT,
 		Right: &PS.NumberLiteral{Val: 5},
@@ -441,7 +441,7 @@ func TestVectorizedFilter_MultiBatch(t *testing.T) {
 	defer scan.Close()
 
 	// Filter: id >= 1000
-	filter := NewVectorizedFilter(scan, &PS.BinaryExpr{
+	filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
 		Op:    LX.T_GE,
 		Right: &PS.NumberLiteral{Val: 1000},
@@ -500,7 +500,7 @@ func BenchmarkVectorizedFilter(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		src := &rowSourceForTest{rows: rows}
 		scan := OP.NewVectorizedSeqScan(src, schema, types)
-		filter := NewVectorizedFilter(scan, pred)
+		filter := OP.NewVectorizedFilter(scan, pred)
 		for {
 			batch, _ := filter.NextBatch(context.Background())
 			if batch == nil {
@@ -556,7 +556,7 @@ func BenchmarkVectorizedFilter_MultiBatch(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		src := &rowSourceForTest{rows: rows}
 		scan := OP.NewVectorizedSeqScan(src, schema, types)
-		filter := NewVectorizedFilter(scan, pred)
+		filter := OP.NewVectorizedFilter(scan, pred)
 		for {
 			batch, _ := filter.NextBatch(context.Background())
 			if batch == nil {
