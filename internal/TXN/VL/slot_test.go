@@ -484,7 +484,7 @@ func TestValidate_ReadWriteConflict(t *testing.T) {
 
 	slot2 := sm.AllocateSlot()
 	slot2.beginTS = 30
-	slot2.readSet = map[string]uint64{"a": 5}
+	slot2.readSet = map[uint64][]byte{fnv1aHash64([]byte("a")): []byte("a")}
 
 	if sm.Validate(slot2) {
 		t.Error("expected read-write conflict: slot1 wrote a, slot2 read a")
@@ -506,7 +506,7 @@ func TestValidate_ReadNoConflict(t *testing.T) {
 
 	slot2 := sm.AllocateSlot()
 	slot2.beginTS = 30
-	slot2.readSet = map[string]uint64{"a": 5}
+	slot2.readSet = map[uint64][]byte{fnv1aHash64([]byte("a")): []byte("a")}
 
 	if !sm.Validate(slot2) {
 		t.Error("expected no conflict: slot1 wrote x, slot2 read a")
@@ -527,9 +527,9 @@ func TestValidate_ReadWriteLargeReadSet(t *testing.T) {
 
 	slot2 := sm.AllocateSlot()
 	slot2.beginTS = 30
-	slot2.readSet = make(map[string]uint64, 1001)
+	slot2.readSet = make(map[uint64][]byte, 1001)
 	for i := 0; i < 1001; i++ {
-		slot2.readSet[fmt.Sprintf("key-%d", i)] = 5
+		slot2.readSet[fnv1aHash64([]byte(fmt.Sprintf("key-%d", i)))] = []byte(fmt.Sprintf("key-%d", i))
 	}
 
 	// No conflict — slot1 wrote "conflict-key", read-set doesn't include it.
@@ -538,7 +538,7 @@ func TestValidate_ReadWriteLargeReadSet(t *testing.T) {
 	}
 
 	// With conflict — add "conflict-key" to read-set.
-	slot2.readSet["conflict-key"] = 5
+	slot2.readSet[fnv1aHash64([]byte("conflict-key"))] = []byte("conflict-key")
 	if sm.Validate(slot2) {
 		t.Error("expected conflict after adding conflict key to large read-set")
 	}
@@ -566,30 +566,31 @@ func TestValidate_NoReadsWriteWriteConflict(t *testing.T) {
 	}
 }
 
-// TestReadSet_BoundedMemory — readSet as map[string]uint64 stays bounded
-// even when the same key is read many times. REQ001007.
-func TestReadSet_BoundedMemory(t *testing.T) {
-	sm := newSlotManager()
-	slot := sm.AllocateSlot()
-	slot.beginTS = 10
+// TestReadSet_BoundedMemory — readSet as map[uint64][]byte stays bounded
+	// even when the same key is read many times. REQ001007.
+	func TestReadSet_BoundedMemory(t *testing.T) {
+		sm := newSlotManager()
+		slot := sm.AllocateSlot()
+		slot.beginTS = 10
 
-	// Simulate 10K reads of the same key — map should dedup to 1 entry.
-	for i := 0; i < 10000; i++ {
-		slot.readSet["same-key"] = uint64(i)
-	}
-	if len(slot.readSet) != 1 {
-		t.Errorf("expected 1 entry after 10K reads of same key, got %d", len(slot.readSet))
-	}
+		// Simulate 10K reads of the same key — map should dedup to 1 entry.
+		for i := 0; i < 10000; i++ {
+			slot.readSet[fnv1aHash64([]byte("same-key"))] = []byte("same-key")
+		}
+		if len(slot.readSet) != 1 {
+			t.Errorf("expected 1 entry after 10K reads of same key, got %d", len(slot.readSet))
+		}
 
-	// Simulate 10K reads of distinct keys — map should have 10K entries.
-	for i := 0; i < 10000; i++ {
-		slot.readSet[fmt.Sprintf("key-%d", i)] = 5
-	}
-	if len(slot.readSet) != 10001 {
-		t.Errorf("expected 10001 entries after 10K distinct reads, got %d", len(slot.readSet))
-	}
+		// Simulate 10K reads of distinct keys — map should have 10K entries.
+		for i := 0; i < 10000; i++ {
+			k := fmt.Sprintf("key-%d", i)
+			slot.readSet[fnv1aHash64([]byte(k))] = []byte(k)
+		}
+		if len(slot.readSet) != 10001 {
+			t.Errorf("expected 10001 entries after 10K distinct reads, got %d", len(slot.readSet))
+		}
 
-	// Memory is bounded: map overhead is O(distinct keys), not O(total reads).
-	// For 10K distinct keys, map overhead is ~10K × (len(key) + 16 bytes) ≈ 100KB.
-	// Without dedup, 10K reads of the same key would be 10K × (len(key) + 16 bytes).
-}
+		// Memory is bounded: map overhead is O(distinct keys), not O(total reads).
+		// For 10K distinct keys, map overhead is ~10K × (8 + len(key) + 16 bytes).
+		// Without dedup, 10K reads of the same key would be 10K × (8 + len(key) + 16 bytes).
+	}

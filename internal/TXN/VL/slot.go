@@ -7,6 +7,22 @@ import (
 	"github.com/cyw0ng95/razordata/internal/TXN/MV"
 )
 
+// FNV-1a 64-bit constants for readSet key hashing (REQ001135).
+const (
+	fnv1aOffset64 = 14695981039346656037
+	fnv1aPrime64  = 1099511628211
+)
+
+// fnv1aHash64 computes the FNV-1a 64-bit hash of data.
+func fnv1aHash64(data []byte) uint64 {
+	var hash uint64 = fnv1aOffset64
+	for _, b := range data {
+		hash ^= uint64(b)
+		hash *= fnv1aPrime64
+	}
+	return hash
+}
+
 type KeyRange struct {
 	Start []byte
 	End   []byte
@@ -22,7 +38,7 @@ const MaxConcurrentTXNs = 1024
 
 var readSetPool = sync.Pool{
 	New: func() any {
-		return make(map[string]uint64)
+		return make(map[uint64][]byte)
 	},
 }
 
@@ -76,9 +92,13 @@ type transactionSlot struct {
 	beginTS  uint64
 	commitTS uint64
 	writeSet []KeyRange
-	readSet  map[string]uint64
-	arena    *MV.Arena
-	index    int
+	// REQ001135: readSet uses FNV-1a hash keys (uint64) instead of
+	// string keys to avoid per-read string() allocation. The value
+	// is the original key bytes for collision resolution during
+	// validation.
+	readSet map[uint64][]byte
+	arena   *MV.Arena
+	index   int
 }
 
 type slotManager struct {
@@ -111,7 +131,7 @@ func (sm *slotManager) AllocateSlot() *transactionSlot {
 	slot.beginTS = 0
 	slot.commitTS = 0
 	slot.writeSet = nil
-	slot.readSet = readSetPool.Get().(map[string]uint64)
+	slot.readSet = readSetPool.Get().(map[uint64][]byte)
 	slot.arena = MV.AcquireArena()
 
 	return slot

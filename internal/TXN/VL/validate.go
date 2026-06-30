@@ -38,18 +38,11 @@ func RangesOverlap(a, b KeyRange) bool {
 }
 
 // Validate implements Silo-style OCC validation (REQ000307).
-// It detects read-write conflicts: if any slot that committed after our
-// beginTS wrote to a key we read, we must abort. This ensures
-// serializable snapshot isolation without key-level locking.
-// The algorithm is O(C × R) where C = number of committed slots with
-// commitTS > beginTS and R = readSet size. In practice C is small
-// (slot pool of 1024, only committed slots in the window).
+// It detects read-write and write-write conflicts in a single pass
+// over committed slots. REQ001135: merged the two separate loops
+// (read-write + write-write) into one, and uses FNV-1a hash keys
+// for readSet lookup to avoid per-key string() allocation.
 func (sm *slotManager) Validate(mySlot *transactionSlot) bool {
-	// Fast path: no reads → write-write conflict detection only.
-	if len(mySlot.readSet) == 0 {
-		return validateWriteWrite(sm, mySlot)
-	}
-
 	for i := 0; i < MaxConcurrentTXNs; i++ {
 		slot := &sm.slots[i]
 		if slot.status.Load() != int32(SlotCommitted) {
@@ -62,27 +55,20 @@ func (sm *slotManager) Validate(mySlot *transactionSlot) bool {
 			continue
 		}
 
-		// Check write-set overlap with read-set.
-		for _, kr := range slot.writeSet {
-			if _, hit := mySlot.readSet[string(kr.Start)]; hit {
-				return false
+		// REQ001135: check read-write conflict using FNV-1a hash.
+		if len(mySlot.readSet) > 0 {
+			for _, kr := range slot.writeSet {
+				h := fnv1aHash64(kr.Start)
+				if storedKey, ok := mySlot.readSet[h]; ok {
+					// Collision resolution: verify the actual key matches.
+					if bytes.Equal(storedKey, kr.Start) {
+						return false
+					}
+				}
 			}
 		}
-	}
 
-	// Also check write-write: other committed slots that wrote to
-	// the same keys we're writing.
-	for i := 0; i < MaxConcurrentTXNs; i++ {
-		slot := &sm.slots[i]
-		if slot.status.Load() != int32(SlotCommitted) {
-			continue
-		}
-		if slot.beginTS >= mySlot.beginTS {
-			continue
-		}
-		if slot.commitTS <= mySlot.beginTS {
-			continue
-		}
+		// REQ001135: check write-write conflict in the same pass.
 		if KeyRangesOverlap(slot.writeSet, mySlot.writeSet) {
 			return false
 		}
@@ -98,6 +84,8 @@ func validateWriteWrite(sm *slotManager, mySlot *transactionSlot) bool {
 	for i := 0; i < MaxConcurrentTXNs; i++ {
 		slot := &sm.slots[i]
 		if slot.status.Load() != int32(SlotCommitted) {
+			// REQ001135: slots are not sorted by commitTS, so we
+			// cannot break early. Continue scanning.
 			continue
 		}
 		if slot.beginTS >= mySlot.beginTS {

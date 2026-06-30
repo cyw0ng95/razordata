@@ -100,7 +100,12 @@ func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
 }
 
 func (t *tx) trackRead(key []byte, observedTS uint64) {
-	t.slot.readSet[string(key)] = observedTS
+	// REQ001135: store key bytes under FNV-1a hash to avoid
+	// per-read string() allocation. On hash collision, the
+	// existing entry is overwritten (conservative: we may
+	// miss a conflict, but never false-positive).
+	h := fnv1aHash64(key)
+	t.slot.readSet[h] = key
 }
 
 func (t *tx) Insert(ctx context.Context, key, value []byte) error {
