@@ -1942,6 +1942,17 @@ func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
 	if !ok {
 		return nil
 	}
+	// REQ001079: full subquery flattening. When the derived table
+	// is a single-table SELECT with no aggregation/DISTINCT/GROUP
+	// BY/ORDER BY/LIMIT/OFFSET, and the outer query references no
+	// join-side columns, we can eliminate the SubqueryFrom nesting
+	// by re-planning the outer SELECT directly against the inner
+	// table. This reduces operator tree depth and lets predicate
+	// pushdown, index selection, and column pruning apply to the
+	// combined query.
+	if op := p.tryFlattenSubqueryFrom(s, subSel); op != nil {
+		return op
+	}
 	// REQ001072: predicate pushdown into subqueries. When the
 	// outer WHERE references only columns from the subquery and
 	// the subquery is flattenable (no aggregation/DISTINCT/GROUP
@@ -4557,6 +4568,118 @@ func pushPredicateIntoSubquery(outerWhere PS.Expr, subSel *PS.Select) PS.Expr {
 		}
 	}
 	return result
+}
+
+// tryFlattenSubqueryFrom attempts to fully flatten a FROM-clause derived
+// table by rewriting the outer SELECT against the inner table directly.
+// REQ001079: `SELECT * FROM (SELECT x FROM t) WHERE x > 10` becomes
+// `SELECT x FROM t WHERE x > 10`. Returns nil if flattening is not safe.
+//
+// Flattening is safe when:
+//   - subSel is flattenable (no aggregation/DISTINCT/GROUP BY/ORDER BY/LIMIT/OFFSET)
+//   - subSel.From is a real table (not another derived table)
+//   - outer SELECT has no JOINs (single-table flattening only)
+//   - outer Cols and WHERE do not reference the subquery alias
+//     (e.g. `sub.x`) — those need alias resolution before flattening
+func (p *Planner) tryFlattenSubqueryFrom(s *PS.Select, subSel *PS.Select) Operator {
+	if !isSubqueryFlattenable(subSel) {
+		return nil
+	}
+	if subSel.From == "" || subSel.SubqueryFrom != nil {
+		return nil
+	}
+	if len(s.Joins) > 0 {
+		return nil
+	}
+	subAlias := s.From
+	if subAlias == "" || subAlias == "$$subquery$$" {
+		subAlias = ""
+	}
+	if subAlias != "" {
+		// Outer cols or WHERE that reference `sub.X` need alias
+		// rewriting to use subSel's underlying column names. Skip
+		// flatten for now — REQ001072 pushdown still applies.
+		if s.Where != nil && exprReferencesTable(s.Where, subAlias) {
+			return nil
+		}
+		for _, c := range s.Cols {
+			if colExprReferencesTable(c, subAlias) {
+				return nil
+			}
+		}
+	}
+	// Build the flattened SELECT: SELECT s.Cols FROM subSel.From
+	// WHERE subSel.Where AND s.Where.
+	flat := &PS.Select{}
+	*flat = *subSel
+	flat.Cols = s.Cols
+	flat.FromAlias = subAlias
+	flat.Where = andExpr(subSel.Where, s.Where)
+	flat.OrderBy = s.OrderBy
+	flat.Limit = s.Limit
+	flat.Offset = s.Offset
+	flat.Distinct = s.Distinct
+	flat.GroupBy = s.GroupBy
+	flat.Having = s.Having
+	flat.OffsetFirst = s.OffsetFirst
+	// Clear the SubqueryFrom marker — flatten has absorbed it.
+	flat.SubqueryFrom = nil
+	return p.planSelect(flat)
+}
+
+// andExpr returns a AND b as a fresh BinaryExpr. Returns a when b is nil,
+// b when a is nil, nil when both are nil.
+func andExpr(a, b PS.Expr) PS.Expr {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	return &PS.BinaryExpr{Op: LX.T_AND, Left: a, Right: b}
+}
+
+// exprReferencesTable returns true if e contains a QualifiedName or
+// AliasedExpr whose Table matches `tbl`. Used by REQ001079 to decide
+// whether outer WHERE/Cols can be flattened without alias rewriting.
+func exprReferencesTable(e PS.Expr, tbl string) bool {
+	if e == nil || tbl == "" {
+		return false
+	}
+	hit := false
+	walkExpr(e, func(n PS.Expr) {
+		if hit {
+			return
+		}
+		switch v := n.(type) {
+		case *PS.QualifiedName:
+			if v.Table == tbl {
+				hit = true
+			}
+		case *PS.AliasedExpr:
+			if colExprReferencesTable(v.Expr, tbl) {
+				hit = true
+			}
+		}
+	})
+	return hit
+}
+
+// colExprReferencesTable is the variant used for top-level SELECT col
+// entries (which are bare Expr values, not wrapped in another Expr).
+func colExprReferencesTable(c PS.Expr, tbl string) bool {
+	if c == nil || tbl == "" {
+		return false
+	}
+	switch v := c.(type) {
+	case *PS.QualifiedName:
+		return v.Table == tbl
+	case *PS.AliasedExpr:
+		return colExprReferencesTable(v.Expr, tbl)
+	case *PS.BinaryExpr:
+		return colExprReferencesTable(v.Left, tbl) || colExprReferencesTable(v.Right, tbl)
+	}
+	return false
 }
 
 // canonicalColRef extracts a column reference identifier from an expression.
