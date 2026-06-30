@@ -1,4 +1,3 @@
-// Package wr implements the WAL Writer cluster.
 package wr
 
 import (
@@ -12,10 +11,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// SegSize is the maximum size of a single WAL segment.
-const SegSize = int64(64 * 1024 * 1024) // 64 MB
+const SegSize = int64(64 * 1024 * 1024)
 
-// Sentinel errors for runtime conditions callers may need to match.
 var (
 	ErrWriterClosed      = errors.New("wr: writer is closed")
 	ErrReadOnly          = errors.New("wr: read-only mode")
@@ -24,10 +21,8 @@ var (
 	ErrShortPwrite       = errors.New("wr: short pwrite")
 )
 
-// LSN is a Log Sequence Number.
 type LSN = uint64
 
-// LSNFor computes the LSN for a given segment and offset.
 func LSNFor(segmentNumber, offset uint64) LSN {
 	return segmentNumber*uint64(SegSize) + offset
 }
@@ -42,7 +37,6 @@ const (
 	RTMerge      RecordType = 4
 )
 
-// LogRecord is a single WAL record.
 type LogRecord struct {
 	Type       RecordType
 	TxnID      uint64
@@ -57,7 +51,6 @@ type WriteBatch struct {
 	Recs  []LogRecord
 }
 
-// Checkpoint captures a snapshot of engine state.
 type Checkpoint struct {
 	LSN              uint64
 	CatalogRootPtr   uint64
@@ -65,22 +58,11 @@ type Checkpoint struct {
 	ActiveTXNs       []uint64
 }
 
-// WALMode controls how aggressively the WAL writer fsyncs data.
 type WALMode uint8
 
 const (
-	// FSYNC_EVERY is the default mode: every Sync() flushes and fsyncs
-	// the entire WAL segment. Maximum durability, minimum throughput.
 	FSYNC_EVERY WALMode = iota
-	// FSYNC_HEADER_ONLY flushes buffered frames via pwrite but skips the
-	// fsync barrier. Only the WAL header (first 12 bytes) is guaranteed
-	// durable after close. The kernel may flush frame pages asynchronously.
-	// Trade-off: ~10x higher throughput; crash may lose the last few
-	// committed transactions.
 	FSYNC_HEADER_ONLY
-	// FSYNC_BATCH calls fsync after every BatchLimit Sync() calls.
-	// Default batch size is 100. Reduces fsync frequency while keeping
-	// bounded durability latency.
 	FSYNC_BATCH
 )
 
@@ -97,13 +79,11 @@ func (m WALMode) String() string {
 	}
 }
 
-// AsyncSyncResult is the value delivered by SyncAsync (REQ000301).
 type AsyncSyncResult struct {
 	Err       error
 	SyncedLSN uint64
 }
 
-// Writer appends records to the WAL.
 type Writer interface {
 	Append(batch *WriteBatch) (lsn uint64, err error)
 	Sync() error
@@ -113,9 +93,33 @@ type Writer interface {
 
 type logSegment struct {
 	number   uint64
-	fh       *lf.FileHandle // owned reference; Close() releases it
-	writeOff int64          // total bytes logically written (incl. unflushed buf)
-	buf      []byte         // pending writes, len ≤ cap = WALBufSize
+	fh       *lf.FileHandle
+	writeOff int64
+	buf      []byte
+}
+
+// cmdType enumerates worker command kinds.
+type cmdType uint8
+
+const (
+	cmdAppend cmdType = iota
+	cmdSync
+	cmdSyncAsync
+	cmdStop
+)
+
+// cmd is a message sent to the background writer goroutine.
+type cmd struct {
+	typ   cmdType
+	batch *WriteBatch
+	seq   [][]byte // pre-encoded records for cmdAppend
+	res   chan cmdResult
+}
+
+type cmdResult struct {
+	lsn    uint64
+	err    error
+	asyncC <-chan AsyncSyncResult
 }
 
 type writer struct {
@@ -124,40 +128,42 @@ type writer struct {
 	sp       sp.SyncPool
 	log      lg.Logger
 	readOnly bool
-	compress bool // REQ000034: lz4 compression of record bodies
 
-	mu                sync.Mutex
-	seg               *logSegment
-	closed            atomicBool
-	synced            atomic.Uint64
+	closed     atomicBool
+	synced     atomic.Uint64
+	mode       WALMode
+	batchLimit int
+	compress   bool
+
+	ch   chan cmd
+	wg   sync.WaitGroup
+	once sync.Once
+
+	seg *logSegment
+
+	maxRecordSize int64
+	lsn           LSNCounter
+	batchCount    int
+
 	inflightFsyncs    sync.WaitGroup
 	inflightFsyncsCnt atomic.Int64
-	maxRecordSize     int64
-	lsn               LSNCounter // REQ000541: optional batched LSN counter
-	mode              WALMode    // REQ001063
-	batchLimit        int        // REQ001063: for FSYNC_BATCH
-	batchCount        int        // REQ001063: running counter for FSYNC_BATCH
 }
 
-// Options configures optional Writer behavior (REQ000034).
 type Options struct {
 	Compress   bool
-	LSNCounter LSNCounter // REQ000541: optional batched LSN counter
-	Mode       WALMode    // REQ001063: fsync strategy
-	BatchLimit int        // REQ001063: for FSYNC_BATCH, fsync every N Sync calls (default 100)
+	LSNCounter LSNCounter
+	Mode       WALMode
+	BatchLimit int
 }
 
-// LSNCounter is the minimal interface for batched LSN allocation (REQ000541).
 type LSNCounter interface {
 	Reserve(n int) LSN
 }
 
-// New constructs a Writer rooted at dir.
 func New(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log lg.Logger, readOnly bool) (Writer, error) {
 	return NewWithOptions(dir, sm, spPool, log, readOnly, Options{})
 }
 
-// NewWithOptions is like New but applies the given Options.
 func NewWithOptions(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log lg.Logger, readOnly bool, opts Options) (Writer, error) {
 	if dir == "" {
 		return nil, errors.New("wr: dir is required")
@@ -172,7 +178,7 @@ func NewWithOptions(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log l
 	if bl <= 0 {
 		bl = 100
 	}
-	return &writer{
+	w := &writer{
 		dir:        dir,
 		sm:         sm,
 		sp:         spPool,
@@ -182,174 +188,173 @@ func NewWithOptions(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log l
 		lsn:        opts.LSNCounter,
 		mode:       opts.Mode,
 		batchLimit: bl,
-	}, nil
+	}
+	w.ch = make(chan cmd, 256)
+	w.wg.Add(1)
+	go w.loop()
+	return w, nil
 }
 
-// Append encodes and appends every record in batch.
+func (w *writer) loop() {
+	defer w.wg.Done()
+	for c := range w.ch {
+		switch c.typ {
+		case cmdAppend:
+			c.res <- w.handleAppend(c)
+		case cmdSync:
+			c.res <- w.handleSync(c)
+		case cmdSyncAsync:
+			c.res <- w.handleSyncAsync(c)
+		case cmdStop:
+			w.handleStop()
+			close(c.res)
+			return
+		}
+	}
+}
+
+func (w *writer) send(typ cmdType) cmdResult {
+	res := make(chan cmdResult, 1)
+	w.ch <- cmd{typ: typ, res: res}
+	return <-res
+}
+
+func (w *writer) sendAppend(batch *WriteBatch, seq [][]byte) cmdResult {
+	res := make(chan cmdResult, 1)
+	w.ch <- cmd{typ: cmdAppend, batch: batch, seq: seq, res: res}
+	return <-res
+}
+
 func (w *writer) Append(batch *WriteBatch) (uint64, error) {
 	if batch == nil || len(batch.Recs) == 0 {
 		return 0, nil
 	}
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
 	if w.closed.isSet() {
 		return 0, ErrWriterClosed
 	}
-
 	if w.readOnly {
 		return 0, ErrReadOnly
 	}
 
+	seq := make([][]byte, len(batch.Recs))
+	for i := range batch.Recs {
+		rec := &batch.Recs[i]
+		rec.TxnID = batch.TxnID
+		seq[i] = encodeRecordCompressed(rec, w.compress)
+	}
+
+	res := w.sendAppend(batch, seq)
+	return res.lsn, res.err
+}
+
+func (w *writer) Sync() error {
+	if w.closed.isSet() {
+		return nil
+	}
+	res := w.send(cmdSync)
+	return res.err
+}
+
+func (w *writer) SyncAsync() (<-chan AsyncSyncResult, error) {
+	if w.closed.isSet() {
+		ch := make(chan AsyncSyncResult, 1)
+		ch <- AsyncSyncResult{}
+		close(ch)
+		return ch, nil
+	}
+	res := make(chan cmdResult, 1)
+	w.ch <- cmd{typ: cmdSyncAsync, res: res}
+	r := <-res
+	return r.asyncC, r.err
+}
+
+func (w *writer) Close() error {
+	if !w.closed.set() {
+		return nil
+	}
+	res := make(chan cmdResult, 1)
+	w.ch <- cmd{typ: cmdStop, res: res}
+	<-res
+	w.wg.Wait()
+	close(w.ch)
+	return nil
+}
+
+func (w *writer) handleAppend(c cmd) cmdResult {
 	if w.seg == nil {
-		if err := w.openSegmentLocked(0); err != nil {
-			return 0, err
+		if err := w.openSegment(); err != nil {
+			return cmdResult{err: err}
 		}
 	}
 
 	if w.lsn != nil {
-		w.lsn.Reserve(len(batch.Recs))
+		w.lsn.Reserve(len(c.seq))
 	}
 
 	var lastLSN uint64
-	for i := range batch.Recs {
-		rec := &batch.Recs[i]
-		rec.TxnID = batch.TxnID
-
-		encoded := encodeRecordCompressed(rec, w.compress)
+	for i, encoded := range c.seq {
 		recLen := int64(len(encoded))
-
 		maxRec := w.maxRecordSize
 		if maxRec <= 0 {
 			maxRec = SegSize
 		}
 		if recLen > maxRec {
-			return lastLSN, ErrRecordExceedsSeg
+			return cmdResult{lsn: lastLSN, err: ErrRecordExceedsSeg}
 		}
 		if w.seg.writeOff+recLen > SegSize {
-			if err := w.flushBufferLocked(); err != nil {
-				return lastLSN, err
+			if err := w.flushBuffer(); err != nil {
+				return cmdResult{lsn: lastLSN, err: err}
 			}
-			if err := w.rotateLocked(); err != nil {
-				return lastLSN, err
+			if err := w.rotate(); err != nil {
+				return cmdResult{lsn: lastLSN, err: err}
 			}
 		}
 
 		lsn := LSNFor(w.seg.number, uint64(w.seg.writeOff))
 
 		if int64(cap(w.seg.buf))-int64(len(w.seg.buf)) < recLen {
-			if err := w.flushBufferLocked(); err != nil {
-				return lastLSN, err
+			if err := w.flushBuffer(); err != nil {
+				return cmdResult{lsn: lastLSN, err: err}
 			}
 		}
 
 		w.seg.buf = append(w.seg.buf, encoded...)
 		w.seg.writeOff += recLen
 		lastLSN = lsn
+		_ = i
 	}
 
-	return lastLSN, nil
+	return cmdResult{lsn: lastLSN}
 }
 
-// Sync flushes the in-memory write buffer and fsyncs the segment.
-func (w *writer) Sync() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.closed.isSet() {
-		return nil
-	}
-	return w.syncLocked()
+func (w *writer) handleSync(c cmd) cmdResult {
+	return cmdResult{err: w.syncInternal()}
 }
 
-func (w *writer) syncLocked() error {
-	if w.seg == nil {
-		return nil
-	}
-	if len(w.seg.buf) == 0 {
-		return nil
-	}
-	pendingEnd := w.seg.writeOff
-	if err := w.flushBufferLocked(); err != nil {
-		return err
-	}
-
-	switch w.mode {
-	case FSYNC_HEADER_ONLY:
-		// Write frames to kernel page cache but skip fsync barrier.
-		// Only the WAL header will be synced implicitly on close.
-	case FSYNC_BATCH:
-		w.batchCount++
-		if w.batchCount >= w.batchLimit {
-			w.batchCount = 0
-			if err := unix.Fsync(w.seg.fh.FD); err != nil {
-				if w.log != nil {
-					w.log.Error("wr.sync", "seg", w.seg.number, "err", err)
-				}
-				return err
-			}
-		}
-	default: // FSYNC_EVERY
-		if err := unix.Fsync(w.seg.fh.FD); err != nil {
-			if w.log != nil {
-				w.log.Error("wr.sync", "seg", w.seg.number, "err", err)
-			}
-			return err
-		}
-	}
-
-	syncedLSN := LSNFor(w.seg.number, uint64(pendingEnd))
-	// Use CAS loop to avoid lost update from read-then-write race.
-	for {
-		old := w.synced.Load()
-		if syncedLSN <= old {
-			break
-		}
-		if w.synced.CompareAndSwap(old, syncedLSN) {
-			break
-		}
-	}
-	return nil
-}
-
-// SyncAsync issues the fsync on a background goroutine (REQ000301).
-func (w *writer) SyncAsync() (<-chan AsyncSyncResult, error) {
-	ch := make(chan AsyncSyncResult, 1)
-	w.mu.Lock()
-	if w.closed.isSet() {
-		w.mu.Unlock()
-		// Closed: deliver a no-op result synchronously.
-		ch <- AsyncSyncResult{}
-		close(ch)
-		return ch, nil
-	}
-	if w.seg == nil {
-		w.mu.Unlock()
-		ch <- AsyncSyncResult{}
-		close(ch)
-		return ch, nil
-	}
-	if len(w.seg.buf) == 0 {
+func (w *writer) handleSyncAsync(c cmd) cmdResult {
+	if w.seg == nil || len(w.seg.buf) == 0 {
+		ch := make(chan AsyncSyncResult, 1)
 		ch <- AsyncSyncResult{SyncedLSN: w.synced.Load()}
-		w.mu.Unlock()
 		close(ch)
-		return ch, nil
+		return cmdResult{asyncC: ch}
 	}
+
 	pendingEnd := w.seg.writeOff
 	segNumber := w.seg.number
 	fd := w.seg.fh.FD
 	mode := w.mode
-	batchLimit := w.batchLimit
-	if err := w.flushBufferLocked(); err != nil {
-		w.mu.Unlock()
+	bl := w.batchLimit
+
+	if err := w.flushBuffer(); err != nil {
+		ch := make(chan AsyncSyncResult, 1)
 		ch <- AsyncSyncResult{Err: err}
 		close(ch)
-		return ch, nil
+		return cmdResult{asyncC: ch}
 	}
 
 	switch mode {
 	case FSYNC_HEADER_ONLY:
-		w.mu.Unlock()
+		ch := make(chan AsyncSyncResult, 1)
 		syncedLSN := LSNFor(segNumber, uint64(pendingEnd))
 		for {
 			old := w.synced.Load()
@@ -359,11 +364,12 @@ func (w *writer) SyncAsync() (<-chan AsyncSyncResult, error) {
 		}
 		ch <- AsyncSyncResult{SyncedLSN: syncedLSN}
 		close(ch)
-		return ch, nil
+		return cmdResult{asyncC: ch}
+
 	case FSYNC_BATCH:
 		w.batchCount++
-		if w.batchCount < batchLimit {
-			w.mu.Unlock()
+		if w.batchCount < bl {
+			ch := make(chan AsyncSyncResult, 1)
 			syncedLSN := LSNFor(segNumber, uint64(pendingEnd))
 			for {
 				old := w.synced.Load()
@@ -373,13 +379,14 @@ func (w *writer) SyncAsync() (<-chan AsyncSyncResult, error) {
 			}
 			ch <- AsyncSyncResult{SyncedLSN: syncedLSN}
 			close(ch)
-			return ch, nil
+			return cmdResult{asyncC: ch}
 		}
 		w.batchCount = 0
 	}
+
+	ch := make(chan AsyncSyncResult, 1)
 	w.inflightFsyncs.Add(1)
 	w.inflightFsyncsCnt.Add(1)
-	w.mu.Unlock()
 
 	go func() {
 		defer w.inflightFsyncs.Done()
@@ -401,23 +408,13 @@ func (w *writer) SyncAsync() (<-chan AsyncSyncResult, error) {
 		ch <- AsyncSyncResult{Err: err, SyncedLSN: syncedLSN}
 		close(ch)
 	}()
-	return ch, nil
+
+	return cmdResult{asyncC: ch}
 }
 
-// Close flushes buffered writes, fsyncs, and releases resources.
-func (w *writer) Close() error {
-	if !w.closed.set() {
-		return nil
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.closeLocked()
-}
-
-func (w *writer) closeLocked() error {
+func (w *writer) handleStop() {
 	if w.seg == nil {
-		// Writer was never used. Nothing to flush or close.
-		return nil
+		return
 	}
 	var firstErr error
 	recordErr := func(stage string, err error) {
@@ -432,14 +429,12 @@ func (w *writer) closeLocked() error {
 		}
 	}
 	if w.inflightFsyncsCnt.Load() > 0 {
-		w.mu.Unlock()
 		w.inflightFsyncs.Wait()
-		w.mu.Lock()
 	}
 	hadBuffer := len(w.seg.buf) > 0
 	pendingEnd := w.seg.writeOff
 	if hadBuffer {
-		recordErr("flush", w.flushBufferLocked())
+		recordErr("flush", w.flushBuffer())
 	}
 	if pendingEnd > int64(WALHeaderSize) {
 		recordErr("fsync", unix.Fsync(w.seg.fh.FD))
@@ -456,10 +451,58 @@ func (w *writer) closeLocked() error {
 		recordErr("fd", err)
 	}
 	w.seg = nil
-	return firstErr
+	_ = firstErr
 }
 
-func (w *writer) openSegmentLocked(n uint64) error {
+func (w *writer) syncInternal() error {
+	if w.seg == nil {
+		return nil
+	}
+	if len(w.seg.buf) == 0 {
+		return nil
+	}
+	pendingEnd := w.seg.writeOff
+	if err := w.flushBuffer(); err != nil {
+		return err
+	}
+
+	switch w.mode {
+	case FSYNC_HEADER_ONLY:
+	case FSYNC_BATCH:
+		w.batchCount++
+		if w.batchCount >= w.batchLimit {
+			w.batchCount = 0
+			if err := unix.Fsync(w.seg.fh.FD); err != nil {
+				if w.log != nil {
+					w.log.Error("wr.sync", "seg", w.seg.number, "err", err)
+				}
+				return err
+			}
+		}
+	default:
+		if err := unix.Fsync(w.seg.fh.FD); err != nil {
+			if w.log != nil {
+				w.log.Error("wr.sync", "seg", w.seg.number, "err", err)
+			}
+			return err
+		}
+	}
+
+	syncedLSN := LSNFor(w.seg.number, uint64(pendingEnd))
+	for {
+		old := w.synced.Load()
+		if syncedLSN <= old || w.synced.CompareAndSwap(old, syncedLSN) {
+			break
+		}
+	}
+	return nil
+}
+
+func (w *writer) openSegment() error {
+	n := uint64(0)
+	if w.seg != nil {
+		n = w.seg.number + 1
+	}
 	fh, err := w.sm.CreateSegment(n)
 	if err != nil {
 		if w.log != nil {
@@ -487,12 +530,12 @@ func (w *writer) openSegmentLocked(n uint64) error {
 		number:   n,
 		fh:       fh,
 		writeOff: WALHeaderSize,
-		buf:      buf[:0], // accumulate into pre-allocated backing array
+		buf:      buf[:0],
 	}
 	return nil
 }
 
-func (w *writer) flushBufferLocked() error {
+func (w *writer) flushBuffer() error {
 	if w.seg == nil || len(w.seg.buf) == 0 {
 		return nil
 	}
@@ -511,7 +554,7 @@ func (w *writer) flushBufferLocked() error {
 	return nil
 }
 
-func (w *writer) rotateLocked() error {
+func (w *writer) rotate() error {
 	if w.seg != nil {
 		if w.seg.buf != nil {
 			w.sp.Put(w.seg.buf)
@@ -522,13 +565,15 @@ func (w *writer) rotateLocked() error {
 			}
 		}
 	}
-	return w.openSegmentLocked(w.seg.number + 1)
+	return w.openSegment()
 }
 
 var _ Writer = (*writer)(nil)
 
 func (w *writer) flushForTest() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.flushBufferLocked()
+	if w.closed.isSet() {
+		return nil
+	}
+	res := w.send(cmdSync)
+	return res.err
 }

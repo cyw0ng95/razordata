@@ -2,6 +2,7 @@ package wr
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/LF"
@@ -217,4 +218,77 @@ func BenchmarkSegmentRotation(b *testing.B) {
 		w.Sync()
 		w.Close()
 	}
+}
+
+// BenchmarkWAL_Append_Concurrent measures concurrent WAL append throughput
+// under N goroutines. REQ001136 expects the producer-consumer pattern to
+// scale beyond the old mutex-based serialization, especially as encoding
+// happens outside the serial path. The old design serialized ALL appends
+// on a single mutex (wr.go:194). The new design: encode (CPU) is parallel
+// across goroutines, only the channel send+wait is serialized.
+func BenchmarkWAL_Append_Concurrent(b *testing.B) {
+	for _, n := range []int{1, 2, 4, 8, 16, 32} {
+		b.Run(formatGoroutineCount(n), func(b *testing.B) {
+			dir := b.TempDir()
+
+			sm, err := lf.New(filepath.Join(dir, "wal"))
+			if err != nil {
+				b.Fatalf("lf.New: %v", err)
+			}
+			defer sm.Close()
+
+			sp := sp.New()
+			log := lg.New(lg.Options{Output: &nullWriter{}})
+
+			w, err := New(dir, sm, sp, log, false)
+			if err != nil {
+				b.Fatalf("New: %v", err)
+			}
+			defer w.Close()
+
+			batch := &WriteBatch{
+				TxnID: 1,
+				Recs: []LogRecord{
+					{Type: RTData, BlockID: 1, Value: make([]byte, 100)},
+					{Type: RTCommit, TxnID: 1},
+				},
+			}
+
+			b.ResetTimer()
+			b.ReportAllocs()
+
+			var wg sync.WaitGroup
+			work := b.N
+			perG := (work + n - 1) / n
+
+			for g := 0; g < n; g++ {
+				wg.Add(1)
+				go func(base int) {
+					defer wg.Done()
+					for i := 0; i < perG; i++ {
+						batch.TxnID = uint64(base + i)
+						if _, err := w.Append(batch); err != nil {
+							b.Errorf("Append: %v", err)
+							return
+						}
+					}
+				}(g * perG)
+			}
+			wg.Wait()
+
+			w.Sync()
+		})
+	}
+}
+
+func formatGoroutineCount(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	s := ""
+	for n > 0 {
+		s = string(rune('0'+n%10)) + s
+		n /= 10
+	}
+	return s + "g"
 }
