@@ -7,12 +7,14 @@ import (
 	"strings"
 	"sync"
 
+	id "github.com/cyw0ng95/razordata/internal/ENG/ID"
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	id "github.com/cyw0ng95/razordata/internal/ENG/ID"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
-	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 // TableSchemaCache caches shared column metadata per table to avoid
@@ -410,7 +412,7 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 		if schema == nil {
 			return Row{}, ErrNoRows
 		}
-	return s.cloneRow(r, schema), nil
+		return s.cloneRow(r, schema), nil
 	}
 
 	if s.pos >= len(src) {
@@ -672,6 +674,15 @@ type IndexScan struct {
 
 	// REQ001042: batched context check counter.
 	ctxCheckCounter int
+
+	// REQ001108: residual predicates evaluated after the seek
+	// but before the row is returned. nil/empty = no residual
+	// filtering (hot path unchanged). The planner decomposes
+	// an AND-of-multi-col WHERE into a single seek predicate
+	// (on the indexed column) and one or more residuals (on
+	// other columns) and pushes the residuals here so the
+	// outer Filter is unnecessary.
+	residual []PS.Expr
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -809,6 +820,33 @@ func NewIndexScanWithRange(store Store, tableID uint64, table, idx string, lower
 	}, nil
 }
 
+// NewIndexScanWithResidual returns an IndexScan built atop
+// NewIndexScanWithIndex plus a slice of residual predicates
+// evaluated after each row is produced. REQ001108. Residual
+// filtering happens inside the scan's hot loop, so a
+// non-matching row is silently skipped and the next index
+// entry is consumed. The planner uses this to push non-index
+// side conditions (e.g. `b > 10` on a table with index on `a`
+// only) into the scan so the outer Filter is unnecessary.
+func NewIndexScanWithResidual(store Store, tableID uint64, table, idx string, seekValue, rangeEnd []byte, residual []PS.Expr) (*IndexScan, error) {
+	is, err := NewIndexScanWithIndex(store, tableID, table, idx, seekValue, rangeEnd)
+	if err != nil {
+		return nil, err
+	}
+	is.residual = residual
+	return is, nil
+}
+
+// WithResidual attaches a residual predicate list to an
+// existing IndexScan. Returns the scan for chaining. REQ001108.
+func (i *IndexScan) WithResidual(residual []PS.Expr) *IndexScan {
+	i.residual = residual
+	return i
+}
+
+// Residual returns the residual predicate list. REQ001108.
+func (i *IndexScan) Residual() []PS.Expr { return i.residual }
+
 func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 	if i.indexMode {
 		return i.nextFromIndex(ctx)
@@ -819,7 +857,10 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 	if i.it == nil {
 		return Row{}, ErrNoRows
 	}
-	if i.it.Next() {
+	for {
+		if !i.it.Next() {
+			break
+		}
 		if err := ctx.Err(); err != nil {
 			return Row{}, err
 		}
@@ -835,6 +876,12 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 			i.iu.RecordIndexUse(i.idx, i.table)
 		}
 
+		// REQ001108: residual predicates apply on the prefix
+		// path too, so a non-index-mode IndexScan with
+		// residuals filters before returning.
+		if !i.matchResidual(&row) {
+			continue
+		}
 		return row, nil
 	}
 	if i.indexIt != nil {
@@ -915,9 +962,53 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		row.TableName = i.table
+		// REQ001108: residual predicates. Skip rows that don't
+		// match; the next loop iteration fetches the next index
+		// entry. With residual==nil this is a single bool check
+		// and the row returns immediately.
+		if !i.matchResidual(&row) {
+			continue
+		}
 		return row, nil
 	}
 	return Row{}, ErrNoRows
+}
+
+// matchResidual evaluates every residual predicate against the
+// given row and returns true iff all of them succeed. REQ001108.
+// Short-circuits on the first false predicate. nil/empty
+// residual is the hot path: returns true without allocation.
+func (i *IndexScan) matchResidual(row *Row) bool {
+	if len(i.residual) == 0 {
+		return true
+	}
+	for _, e := range i.residual {
+		v, err := EV.EvalValue(e, row, i.params)
+		if err != nil {
+			return false
+		}
+		switch v.Kind {
+		case DT.KindNull:
+			return false
+		case DT.KindBool:
+			if !v.Bo {
+				return false
+			}
+		case DT.KindInt:
+			if v.I64 == 0 {
+				return false
+			}
+		case DT.KindFloat:
+			if v.F64 == 0 {
+				return false
+			}
+		case DT.KindText:
+			if v.S == "" {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // IndexValueFromKey moved to DT/storage.go; aliased in OP/store.go.
@@ -1144,21 +1235,21 @@ func pruneRowCols(row Row, usedCols []string, usedSet map[string]bool) Row {
 
 // Accessor methods for SeqScan fields used by EX plan_node and parallel operators.
 func (s *SeqScan) Table() string               { return s.table }
-func (s *SeqScan) Store() DT.Store              { return s.store }
-func (s *SeqScan) Schema() *DT.StoreSchema      { return s.schema }
-func (s *SeqScan) UsedCols() []string           { return s.usedCols }
-func (s *SeqScan) UsedColSet() map[string]bool  { return s.usedColSet }
-func (s *SeqScan) Btree() *id.BTree             { return nil } // SeqScan has no B-tree
+func (s *SeqScan) Store() DT.Store             { return s.store }
+func (s *SeqScan) Schema() *DT.StoreSchema     { return s.schema }
+func (s *SeqScan) UsedCols() []string          { return s.usedCols }
+func (s *SeqScan) UsedColSet() map[string]bool { return s.usedColSet }
+func (s *SeqScan) Btree() *id.BTree            { return nil } // SeqScan has no B-tree
 
 // Accessor methods for IndexScan fields used by EX plan_node and strategy.
-func (i *IndexScan) Table() string              { return i.table }
-func (i *IndexScan) Idx() string                { return i.idx }
-func (i *IndexScan) Store() DT.Store            { return i.store }
-func (i *IndexScan) Schema() *DT.StoreSchema    { return i.schema }
-func (i *IndexScan) Btree() *id.BTree           { return i.btree }
-func (i *IndexScan) IndexMode() bool            { return i.indexMode }
-func (i *IndexScan) IndexSeek() []byte          { return i.indexSeek }
-func (i *IndexScan) IndexLower() []byte         { return i.indexLower }
-func (i *IndexScan) IndexUpper() []byte         { return i.indexUpper }
-func (i *IndexScan) Prefix() []byte             { return i.prefix }
-func (i *IndexScan) PrefixIdxKey() []byte       { return i.prefixIdxKey }
+func (i *IndexScan) Table() string           { return i.table }
+func (i *IndexScan) Idx() string             { return i.idx }
+func (i *IndexScan) Store() DT.Store         { return i.store }
+func (i *IndexScan) Schema() *DT.StoreSchema { return i.schema }
+func (i *IndexScan) Btree() *id.BTree        { return i.btree }
+func (i *IndexScan) IndexMode() bool         { return i.indexMode }
+func (i *IndexScan) IndexSeek() []byte       { return i.indexSeek }
+func (i *IndexScan) IndexLower() []byte      { return i.indexLower }
+func (i *IndexScan) IndexUpper() []byte      { return i.indexUpper }
+func (i *IndexScan) Prefix() []byte          { return i.prefix }
+func (i *IndexScan) PrefixIdxKey() []byte    { return i.prefixIdxKey }
