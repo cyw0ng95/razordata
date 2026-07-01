@@ -2,6 +2,7 @@ package EX
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"testing"
 )
@@ -96,12 +97,15 @@ func TestREQ648_IsNullWrongCount(t *testing.T) {
 	defer eng.Close()
 	ctx := context.Background()
 
-	ex.RegisterTableWithPK("t1", []string{"a"}, "a")
+	// REQ001128: INTEGER PRIMARY KEY auto-generates values for NULL
+	// inserts (matching SQLite behavior). Use a non-PK column for
+	// IS NULL testing.
+	ex.RegisterTableWithPK("t1", []string{"id", "a"}, "id")
 	for i := 1; i <= 30; i++ {
 		if i%4 == 0 {
-			ex.Exec(ctx, "INSERT INTO t1 VALUES (NULL)")
+			ex.Exec(ctx, fmt.Sprintf("INSERT INTO t1 VALUES (%d, NULL)", i))
 		} else {
-			ex.Exec(ctx, "INSERT INTO t1 VALUES ("+itos(i)+")")
+			ex.Exec(ctx, fmt.Sprintf("INSERT INTO t1 VALUES (%d, %d)", i, i))
 		}
 	}
 
