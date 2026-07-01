@@ -9,8 +9,9 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
+	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 func ptr(s string) *string { return &s }
@@ -202,7 +203,7 @@ func TestConstraints_FillDefaults_LiteralInt(t *testing.T) {
 		Defaults: []PS.Expr{nil, &PS.NumberLiteral{Val: 99}},
 	}
 	row := DT.Row{Data: []DT.Value{NewIntValue(int64(1)), NullValue()}}
-	out, err := fillDefaults(ss, row)
+	out, err := WT.FillDefaults(ss, row)
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
 	}
@@ -224,11 +225,11 @@ func TestConstraints_FillDefaults_NullLiteral(t *testing.T) {
 		Defaults: []PS.Expr{&PS.NullLiteral{}},
 	}
 	row := DT.Row{Data: []DT.Value{NullValue()}}
-	out, err := fillDefaults(ss, row)
+	out, err := WT.FillDefaults(ss, row)
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
 	}
-	if err := validateRow(ss, out); err != nil {
+	if err := WT.ValidateRow(ss, out); err != nil {
 		t.Errorf("validateRow after default NULL fill: %v", err)
 	}
 }
@@ -240,7 +241,7 @@ func TestConstraints_FillDefaults_NilSchema(t *testing.T) {
 	defer UnregisterAll()
 	ss := &DT.StoreSchema{Cols: []string{"a"}, Nullable: []bool{true}}
 	row := DT.Row{Data: []DT.Value{NewIntValue(int64(1))}}
-	out, err := fillDefaults(ss, row)
+	out, err := WT.FillDefaults(ss, row)
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
 	}
@@ -261,7 +262,7 @@ func TestConstraints_ValidateRow_RejectsNullNotNull(t *testing.T) {
 		Defaults: nil,
 	}
 	row := DT.Row{Data: []DT.Value{NullValue(), NewIntValue(int64(2))}}
-	err := validateRow(ss, row)
+	err := WT.ValidateRow(ss, row)
 	if !errors.Is(err, ap.ErrConstraint) {
 		t.Errorf("validateRow: got %v, want ErrConstraint", err)
 	}
@@ -281,7 +282,7 @@ func TestConstraints_ValidateRow_AcceptsNullNullable(t *testing.T) {
 		Nullable: []bool{true, true},
 	}
 	row := DT.Row{Data: []DT.Value{NullValue(), NewIntValue(int64(2))}}
-	if err := validateRow(ss, row); err != nil {
+	if err := WT.ValidateRow(ss, row); err != nil {
 		t.Errorf("validateRow: %v", err)
 	}
 }
@@ -512,18 +513,18 @@ func TestUnique_NullSkipped(t *testing.T) {
 // TestUnique_EncodeKey_Stable: encoding the same values produces the
 // same key; different values produce different keys.
 func TestUnique_EncodeKey_Stable(t *testing.T) {
-	k1 := encodeUniqueKey([]int{0}, []any{int64(42)})
-	k2 := encodeUniqueKey([]int{0}, []any{int64(42)})
+	k1 := WT.EncodeUniqueKey([]int{0}, []any{int64(42)})
+	k2 := WT.EncodeUniqueKey([]int{0}, []any{int64(42)})
 	if string(k1) != string(k2) {
 		t.Errorf("same values produced different keys: %x vs %x", k1, k2)
 	}
-	k3 := encodeUniqueKey([]int{0}, []any{int64(99)})
+	k3 := WT.EncodeUniqueKey([]int{0}, []any{int64(99)})
 	if string(k1) == string(k3) {
 		t.Errorf("different values produced same key: %x", k1)
 	}
 	// Composite: (a=1, b='x') vs (a=1, b='y') should differ.
-	k4 := encodeUniqueKey([]int{0, 1}, []any{int64(1), "x"})
-	k5 := encodeUniqueKey([]int{0, 1}, []any{int64(1), "y"})
+	k4 := WT.EncodeUniqueKey([]int{0, 1}, []any{int64(1), "x"})
+	k5 := WT.EncodeUniqueKey([]int{0, 1}, []any{int64(1), "y"})
 	if string(k4) == string(k5) {
 		t.Errorf("composite with different second col produced same key")
 	}
@@ -552,7 +553,7 @@ func TestUnique_E2E_FullSQL(t *testing.T) {
 func TestUnique_NoCollision(t *testing.T) {
 	seen := make(map[string]struct{}, 100_000)
 	for i := 0; i < 100_000; i++ {
-		k := encodeUniqueKey([]int{0, 1}, []any{int64(i / 1000), fmt.Sprintf("v%d", i)})
+		k := WT.EncodeUniqueKey([]int{0, 1}, []any{int64(i / 1000), fmt.Sprintf("v%d", i)})
 		key := string(k)
 		if _, exists := seen[key]; exists {
 			t.Fatalf("collision at i=%d: %d/100000 unique keys generated before collision", i, len(seen))

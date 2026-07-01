@@ -7,6 +7,7 @@ import (
 	"reflect"
 	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"slices"
 	"strings"
 	"sync"
@@ -530,7 +531,7 @@ func (p *Planner) ExecuteSubquery(ctx context.Context, stmt PS.Stmt, outer *DT.R
 	if err != nil {
 		return nil, err
 	}
-	return runSubqueryPlan(ctx, planResult, outer, params)
+	return WT.RunSubqueryPlan(ctx, planResult, outer, params)
 }
 
 // estimateCost returns a unitless cost for the operator tree rooted at op.

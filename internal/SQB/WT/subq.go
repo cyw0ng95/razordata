@@ -91,7 +91,7 @@ func injectOuter(op DT.Operator, outer *DT.Row) DT.Operator {
 	return op
 }
 
-func runSubqueryPlan(ctx context.Context, pl *pl.PlanResult, outer *DT.Row, params []any) ([]DT.Row, error) {
+func RunSubqueryPlan(ctx context.Context, pl *pl.PlanResult, outer *DT.Row, params []any) ([]DT.Row, error) {
 	if pl == nil || pl.Root == nil {
 		return nil, EV.ErrSubquery
 	}

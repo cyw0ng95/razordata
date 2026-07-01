@@ -127,7 +127,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 		pending = make(map[string]struct{}, len(i.values))
 		iterValues = i.values
 	}
-	lookup := inMemoryLookup(i.table)
+	lookup := WT.InMemoryLookup(i.table)
 	// REQ001030: pre-compute colIdx once for all rows.
 	colIdx := make([]int, len(i.cols))
 	for ci, nm := range i.cols {
@@ -153,22 +153,22 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 			}
 		}
 		if cschema != nil {
-			if out, err = fillDefaults(cschema, out); err != nil {
+			if out, err = WT.FillDefaults(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := validateRow(cschema, out); err != nil {
+			if err := WT.ValidateRow(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := validateDecimal(cschema, out); err != nil {
+			if err := WT.ValidateDecimal(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := validateCheck(cschema, out); err != nil {
+			if err := WT.ValidateCheck(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := checkUnique(cschema, out, pending, DT.Row{}, asUniqueLookup(lookup)); err != nil {
+			if err := WT.CheckUnique(cschema, out, pending, DT.Row{}, WT.AsUniqueLookup(lookup)); err != nil {
 				if i.conflictAction == PS.ConflictActionReplace {
 					var removed int
-					existing, removed = removeConflicting(existing, cschema, out)
+					existing, removed = WT.RemoveConflicting(existing, cschema, out)
 					i.rows += int64(removed)
 					if i.execCtx != nil {
 						i.execCtx.LastChanges += int64(removed)
@@ -191,7 +191,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 				// DO UPDATE: locate the conflicting row and apply
 				// the SET clauses. We re-use the lookup closure
 				// to find the existing row and mutate it in place.
-				if apply, ok := lookup.(uniqueLookupWithApply); ok {
+				if apply, ok := lookup.(WT.UniqueLookupWithApply); ok {
 					if err := applyConflictUpdate(cschema, existing, out, i.onConflict.SetClauses, i.params, apply); err != nil {
 						return DT.Row{}, err
 					}
@@ -203,7 +203,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 					continue
 				}
 				// Fallback: no mutating lookup available — silently
-				// skip the row. The in-memory uniqueLookup does
+				// skip the row. The in-memory WT.UniqueLookup does
 				// support the apply path above, so this branch is
 				// only hit in degenerate cases.
 				continue
@@ -214,7 +214,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 		if i.conflictAction == PS.ConflictActionReplace && cschema == nil {
 			pkName := DT.TablePKs[i.table]
 			var removed int
-			existing, removed = removeConflictingInMemory(existing, schema, pkName, out)
+			existing, removed = WT.RemoveConflictingInMemory(existing, schema, pkName, out)
 			i.rows += int64(removed)
 			if i.execCtx != nil {
 				i.execCtx.LastChanges += int64(removed)
@@ -277,7 +277,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 	// In the engine path, use store-based lookup for PK uniqueness
 	// only when conflict action is specified (INSERT OR IGNORE/REPLACE).
 	// For plain INSERT, silently overwrite (consistent with LSM semantics).
-	var lookupFn uniqueLookup
+	var lookupFn WT.UniqueLookup
 	if i.conflictAction != PS.ConflictActionUnspecified {
 		lookupFn = func(cols []int, vals []any) (bool, error) {
 			if i.store == nil || len(vals) == 0 {
@@ -316,19 +316,19 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 		} else {
 			out, err = buildInsertRow(i.schema.Cols, i.cols, colIdx, row, i.params)
 		}
-		if out, err = fillDefaults(i.schema, out); err != nil {
+		if out, err = WT.FillDefaults(i.schema, out); err != nil {
 			return DT.Row{}, err
 		}
-		if err := validateRow(i.schema, out); err != nil {
+		if err := WT.ValidateRow(i.schema, out); err != nil {
 			return DT.Row{}, err
 		}
-		if err := validateDecimal(i.schema, out); err != nil {
+		if err := WT.ValidateDecimal(i.schema, out); err != nil {
 			return DT.Row{}, err
 		}
-		if err := validateCheck(i.schema, out); err != nil {
+		if err := WT.ValidateCheck(i.schema, out); err != nil {
 			return DT.Row{}, err
 		}
-		if err := checkUnique(i.schema, out, pending, DT.Row{}, lookupFn); err != nil {
+		if err := WT.CheckUnique(i.schema, out, pending, DT.Row{}, lookupFn); err != nil {
 			if i.conflictAction == PS.ConflictActionReplace {
 				// Delete the existing row, then fall through to insert
 				pk, pkErr := OP.ExtractPK(i.schema, out)
@@ -450,7 +450,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 	}
 
 	pending := make(map[string]struct{})
-	lookup := inMemoryLookup(i.table)
+	lookup := WT.InMemoryLookup(i.table)
 
 		for _, row := range selectRows {
 		// Build insert row from SELECT result
@@ -460,13 +460,13 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 		}
 
 		if cschema != nil {
-			if out, err = fillDefaults(cschema, out); err != nil {
+			if out, err = WT.FillDefaults(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := validateRow(cschema, out); err != nil {
+			if err := WT.ValidateRow(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := checkUnique(cschema, out, pending, DT.Row{}, asUniqueLookup(lookup)); err != nil {
+			if err := WT.CheckUnique(cschema, out, pending, DT.Row{}, WT.AsUniqueLookup(lookup)); err != nil {
 				if i.conflictAction == PS.ConflictActionIgnore {
 					continue
 				}
@@ -668,16 +668,16 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 			return DT.Row{}, err
 		}
 		if cschema != nil {
-			if row, err = fillDefaults(cschema, row); err != nil {
+			if row, err = WT.FillDefaults(cschema, row); err != nil {
 				return DT.Row{}, err
 			}
-			if err := validateRow(cschema, row); err != nil {
+			if err := WT.ValidateRow(cschema, row); err != nil {
 				return DT.Row{}, err
 			}
-			if err := validateDecimal(cschema, row); err != nil {
+			if err := WT.ValidateDecimal(cschema, row); err != nil {
 				return DT.Row{}, err
 			}
-			if err := validateCheck(cschema, row); err != nil {
+			if err := WT.ValidateCheck(cschema, row); err != nil {
 				return DT.Row{}, err
 			}
 			// REQ000513/REQ000905: FK re-validation when FK columns are updated.
@@ -692,8 +692,8 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 			// row's UNIQUE key is caught.  The snapshot is passed
 			// to checkUnique for self-exclusion.
 			DT.TablesMu.RLock()
-			ul := inMemoryLookup(u.table).Lookup
-			uidErr := checkUnique(cschema, row, nil, snapshot, ul)
+			ul := WT.InMemoryLookup(u.table).Lookup
+			uidErr := WT.CheckUnique(cschema, row, nil, snapshot, ul)
 			DT.TablesMu.RUnlock()
 			if uidErr != nil {
 				return DT.Row{}, uidErr
@@ -754,19 +754,19 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 		if err := applyUpdate(&row, u.set, u.params); err != nil {
 			return DT.Row{}, err
 		}
-		if row, err = fillDefaults(u.schema, row); err != nil {
+		if row, err = WT.FillDefaults(u.schema, row); err != nil {
 			return DT.Row{}, err
 		}
-		if err := validateRow(u.schema, row); err != nil {
+		if err := WT.ValidateRow(u.schema, row); err != nil {
 			return DT.Row{}, err
 		}
-		if err := validateCheck(u.schema, row); err != nil {
+		if err := WT.ValidateCheck(u.schema, row); err != nil {
 			return DT.Row{}, err
 		}
 		// Engine-path unique: best-effort no-op (correct UNIQUE in the
 		// engine path requires a real index, deferred to REQ000045).
 		noopLookup := func(cols []int, vals []any) (bool, error) { return false, nil }
-		if err := checkUnique(u.schema, row, nil, DT.Row{}, noopLookup); err != nil {
+		if err := WT.CheckUnique(u.schema, row, nil, DT.Row{}, noopLookup); err != nil {
 			return DT.Row{}, err
 		}
 		pk, err := OP.ExtractPKForUpdate(u.schema, oldRow, prefix)
@@ -1281,7 +1281,7 @@ func (c *CreateTable) Next(ctx context.Context) (DT.Row, error) {
 		pk = *c.Stmt.PK
 	}
 	// PRIMARY KEY implies NOT NULL. If PK is one of the cols, flip its
-	// nullable bit so validateRow rejects NULL PK inserts.
+	// nullable bit so WT.ValidateRow rejects NULL PK inserts.
 	if pk != "" {
 		for i, n := range cols {
 			if n == pk {
@@ -2240,7 +2240,7 @@ func (d *DropTrigger) RowsAffected() int64         { return 0 }
 // applyConflictUpdate locates the conflicting row by unique-key match
 // and applies the SET clauses. Used by INSERT ... ON CONFLICT DO
 // UPDATE. REQ000511.
-func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, sets []PS.Pair, params []any, apply uniqueLookupWithApply) error {
+func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, sets []PS.Pair, params []any, apply WT.UniqueLookupWithApply) error {
 	if apply == nil {
 		return nil
 	}

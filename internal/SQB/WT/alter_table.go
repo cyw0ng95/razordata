@@ -369,7 +369,7 @@ func (a *AlterTable) execDropColumn() error {
 			Name:       entry.Name,
 			PrimaryKey: entry.PrimaryKey,
 			CreateSQL:  entry.CreateSQL,
-			Unique:     newUniqueForCatalog(newUnique, newCols),
+			Unique:     NewUniqueForCatalog(newUnique, newCols),
 		}
 		newEntry.Columns = make([]ls.CatalogColumn, 0, len(entry.Columns)-1)
 		for i, c := range entry.Columns {
@@ -591,7 +591,7 @@ func (a *AlterTable) execRenameInMemory(oldName, newName string) error {
 
 // newUniqueForCatalog converts EX-layer DT.UniqueKey indices back
 // to CatalogUnique column-name format.
-func newUniqueForCatalog(unique []DT.UniqueKey, cols []string) []ls.CatalogUnique {
+func NewUniqueForCatalog(unique []DT.UniqueKey, cols []string) []ls.CatalogUnique {
 	result := make([]ls.CatalogUnique, 0, len(unique))
 	for _, u := range unique {
 		cu := ls.CatalogUnique{Cols: make([]int, len(u.Cols))}

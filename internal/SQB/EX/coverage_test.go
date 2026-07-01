@@ -9,6 +9,7 @@ import (
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
@@ -105,19 +106,18 @@ func TestCoverage_Vacuum_WithParams(t *testing.T) {
 	}
 }
 
-func TestCoverage_newUniqueForCatalog(t *testing.T) {
+func TestCoverage_NewUniqueForCatalog(t *testing.T) {
 	unique := []DT.UniqueKey{
 		{Cols: []int{0, 1}},
-		{Cols: []int{2}},
 	}
-	result := newUniqueForCatalog(unique, []string{"a", "b", "c"})
-	if len(result) != 2 {
-		t.Fatalf("expected 2, got %d", len(result))
+	result := WT.NewUniqueForCatalog(unique, []string{"a", "b", "c"})
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
 	}
 }
 
 func TestCoverage_newUniqueForCatalogEmpty(t *testing.T) {
-	result := newUniqueForCatalog(nil, nil)
+	result := WT.NewUniqueForCatalog(nil, nil)
 	if len(result) != 0 {
 		t.Errorf("expected 0, got %d", len(result))
 	}

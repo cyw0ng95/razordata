@@ -5,9 +5,10 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
-
-// TestCheckConstraintValidateCheckFunc tests the validateCheck function directly (REQ000211).
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
+)
+// TestCheckConstraintValidateCheckFunc tests the WT.ValidateCheck function directly (REQ000211).
 func TestCheckConstraintValidateCheckFunc(t *testing.T) {
 	schema := &DT.StoreSchema{
 		Cols: []string{"x"},
@@ -18,19 +19,19 @@ func TestCheckConstraintValidateCheckFunc(t *testing.T) {
 
 	// x = 5 should pass
 	row := DT.Row{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(5))}}
-	if err := validateCheck(schema, row); err != nil {
+	if err := WT.ValidateCheck(schema, row); err != nil {
 		t.Errorf("expected no error for x=5, got %v", err)
 	}
 
 	// x = 0 should fail (0 > 0 is false)
 	row = DT.Row{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(0))}}
-	if err := validateCheck(schema, row); err == nil {
+	if err := WT.ValidateCheck(schema, row); err == nil {
 		t.Error("expected error for x=0")
 	}
 
 	// x = -1 should fail (-1 > 0 is false)
 	row = DT.Row{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(-1))}}
-	if err := validateCheck(schema, row); err == nil {
+	if err := WT.ValidateCheck(schema, row); err == nil {
 		t.Error("expected error for x=-1")
 	}
 }
@@ -47,19 +48,19 @@ func TestCheckConstraintMultiple(t *testing.T) {
 
 	// score = 50 should pass both checks
 	row := DT.Row{Cols: []string{"score"}, Data: []DT.Value{NewIntValue(int64(50))}}
-	if err := validateCheck(schema, row); err != nil {
+	if err := WT.ValidateCheck(schema, row); err != nil {
 		t.Errorf("expected no error for score=50, got %v", err)
 	}
 
 	// score = -1 should fail first check
 	row = DT.Row{Cols: []string{"score"}, Data: []DT.Value{NewIntValue(int64(-1))}}
-	if err := validateCheck(schema, row); err == nil {
+	if err := WT.ValidateCheck(schema, row); err == nil {
 		t.Error("expected error for score=-1")
 	}
 
 	// score = 150 should fail second check
 	row = DT.Row{Cols: []string{"score"}, Data: []DT.Value{NewIntValue(int64(150))}}
-	if err := validateCheck(schema, row); err == nil {
+	if err := WT.ValidateCheck(schema, row); err == nil {
 		t.Error("expected error for score=150")
 	}
 }
@@ -72,7 +73,7 @@ func TestCheckConstraintNilExpr(t *testing.T) {
 	}
 
 	row := DT.Row{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(0))}}
-	if err := validateCheck(schema, row); err != nil {
+	if err := WT.ValidateCheck(schema, row); err != nil {
 		t.Errorf("expected no error for nil CHECK, got %v", err)
 	}
 }
@@ -93,19 +94,19 @@ func TestCheckConstraintWithAnd(t *testing.T) {
 
 	// price = 500 should pass
 	row := DT.Row{Cols: []string{"price"}, Data: []DT.Value{NewIntValue(int64(500))}}
-	if err := validateCheck(schema, row); err != nil {
+	if err := WT.ValidateCheck(schema, row); err != nil {
 		t.Errorf("expected no error for price=500, got %v", err)
 	}
 
 	// price = 0 should fail
 	row = DT.Row{Cols: []string{"price"}, Data: []DT.Value{NewIntValue(int64(0))}}
-	if err := validateCheck(schema, row); err == nil {
+	if err := WT.ValidateCheck(schema, row); err == nil {
 		t.Error("expected error for price=0")
 	}
 
 	// price = 1000 should fail
 	row = DT.Row{Cols: []string{"price"}, Data: []DT.Value{NewIntValue(int64(1000))}}
-	if err := validateCheck(schema, row); err == nil {
+	if err := WT.ValidateCheck(schema, row); err == nil {
 		t.Error("expected error for price=1000")
 	}
 }

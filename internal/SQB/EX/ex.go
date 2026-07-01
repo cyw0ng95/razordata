@@ -1505,7 +1505,7 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 		}
 		return UT.NewAnalyze(s), nil
 	case *PS.AlterTableStmt:
-		return NewAlterTable(s), nil
+		return WT.NewAlterTable(s), nil
 	case *PS.TriggerStmt:
 		return NewTrigger(s), nil
 	case *PS.DropViewStmt:

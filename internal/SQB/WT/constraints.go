@@ -21,7 +21,7 @@ var ErrConstraint = ap.ErrConstraint
 // their nil. The row is returned with the same Data slice length.
 // Returns a wrapped ErrConstraint on DEFAULT evaluation failure.
 // REQ000515: type coercion applied to match the column's declared type.
-func fillDefaults(schema *DT.StoreSchema, row DT.Row) (DT.Row, error) {
+func FillDefaults(schema *DT.StoreSchema, row DT.Row) (DT.Row, error) {
 	if schema.Defaults == nil {
 		return row, nil
 	}
@@ -126,7 +126,7 @@ func coerceDefault(v DT.Value, colType LX.TokenType) DT.Value {
 // in row.Data. Columns with a DEFAULT are allowed to be nil at this
 // stage (fillDefaults runs first). Returns a wrapped ErrConstraint on
 // violation.
-func validateRow(schema *DT.StoreSchema, row DT.Row) error {
+func ValidateRow(schema *DT.StoreSchema, row DT.Row) error {
 	for i, col := range schema.Cols {
 		if row.Data[i].IsNull() && !schema.Nullable[i] {
 			// REQ000713: INTEGER PRIMARY KEY allows NULL —
@@ -153,7 +153,7 @@ func isIntegerType(colTypes []LX.TokenType, i int) bool {
 
 // validateDecimal checks that values in DECIMAL/NUMERIC columns respect
 // the column's precision and scale. REQ000568.
-func validateDecimal(schema *DT.StoreSchema, row DT.Row) error {
+func ValidateDecimal(schema *DT.StoreSchema, row DT.Row) error {
 	if schema.Precision == nil || schema.Scale == nil {
 		return nil
 	}
@@ -177,16 +177,16 @@ func validateDecimal(schema *DT.StoreSchema, row DT.Row) error {
 	return nil
 }
 
-// uniqueLookup returns (true, nil) if the (cols, vals) combination
+// UniqueLookup returns (true, nil) if the (cols, vals) combination
 // already exists in another row of the table, (false, nil) if no
 // match, or an error. Implementations may scan an in-memory map or an
 // LSM key range iterator.
-type uniqueLookup func(cols []int, vals []any) (bool, error)
+type UniqueLookup func(cols []int, vals []any) (bool, error)
 
-// uniqueLookupWithApply is an extended lookup that exposes the matching
+// UniqueLookupWithApply is an extended lookup that exposes the matching
 // row so callers can mutate it in place. Implementations are
 // responsible for any locking. REQ000511.
-type uniqueLookupWithApply interface {
+type UniqueLookupWithApply interface {
 	Lookup(cols []int, vals []any) (bool, error)
 	FindAndLock(cols []int, vals []any) (int, bool, error)
 	Mutate(idx int, fn func(DT.Row) DT.Row) error
@@ -196,7 +196,7 @@ type uniqueLookupWithApply interface {
 // defined on the table. Returns a wrapped ErrConstraint on violation.
 // REQ000986: CHECK expressions are pre-compiled on first use and
 // cached in schema.CompiledChecks to avoid per-row AST re-evaluation.
-func validateCheck(schema *DT.StoreSchema, row DT.Row) error {
+func ValidateCheck(schema *DT.StoreSchema, row DT.Row) error {
 	// Lazy-compile CHECK expressions on first call.
 	if schema.CompiledChecks == nil && len(schema.Checks) > 0 {
 		schema.CompiledChecks = make([]func(*DT.Row) (bool, error), len(schema.Checks))
@@ -259,7 +259,7 @@ func validateCheck(schema *DT.StoreSchema, row DT.Row) error {
 // non-nil, each unique key's old value is compared: if the old value
 // equals the new value, the check is skipped (no-op self-match) so
 // `UPDATE t SET a = a` does not self-conflict. REQ000516.
-func checkUnique(schema *DT.StoreSchema, row DT.Row, pending map[string]struct{}, snapshot DT.Row, lookup uniqueLookup) error {
+func CheckUnique(schema *DT.StoreSchema, row DT.Row, pending map[string]struct{}, snapshot DT.Row, lookup UniqueLookup) error {
 	if lookup == nil {
 		return nil
 	}
@@ -294,7 +294,7 @@ func checkUnique(schema *DT.StoreSchema, row DT.Row, pending map[string]struct{}
 		if anyNil {
 			continue
 		}
-		key := encodeUniqueKey(uk.Cols, vals)
+		key := EncodeUniqueKey(uk.Cols, vals)
 		keyStr := string(key)
 		// Pending-batch check.
 		if pending != nil {
@@ -341,7 +341,7 @@ func checkUnique(schema *DT.StoreSchema, row DT.Row, pending map[string]struct{}
 //   - collision-free (full value preserved)
 //   - type-safe (each value carries a type tag)
 //   - canonical (same input always produces same output)
-func encodeUniqueKey(cols []int, vals []any) []byte {
+func EncodeUniqueKey(cols []int, vals []any) []byte {
 	size := 0
 	for _, v := range vals {
 		switch x := v.(type) {
@@ -404,10 +404,10 @@ func encodeUniqueKey(cols []int, vals []any) []byte {
 	return out
 }
 
-// inMemoryLookup returns a uniqueLookup that scans the in-memory
+// inMemoryLookup returns a UniqueLookup that scans the in-memory
 // DT.Tables map for matching values. Caller MUST hold tablesMu
 // (write or read); the lookup does not take the lock itself.
-func inMemoryLookup(tableName string) uniqueLookupWithApply {
+func InMemoryLookup(tableName string) UniqueLookupWithApply {
 	return &memLookup{table: tableName}
 }
 
@@ -422,18 +422,18 @@ func (m *memLookup) Lookup(cols []int, vals []any) (bool, error) {
 	return ok, err
 }
 
-// memLookupAdapter adapts a uniqueLookupWithApply back to a
-// uniqueLookup for callers (like checkUnique) that only need
+// memLookupAdapter adapts a UniqueLookupWithApply back to a
+// UniqueLookup for callers (like checkUnique) that only need
 // the boolean result. REQ000511.
-type memLookupAdapter struct{ inner uniqueLookupWithApply }
+type memLookupAdapter struct{ inner UniqueLookupWithApply }
 
 func (a memLookupAdapter) lookup(cols []int, vals []any) (bool, error) {
 	return a.inner.Lookup(cols, vals)
 }
 
-// asUniqueLookup downgrades a uniqueLookupWithApply to a
-// uniqueLookup for callers that don't need the apply path. REQ000511.
-func asUniqueLookup(apply uniqueLookupWithApply) uniqueLookup {
+// asUniqueLookup downgrades a UniqueLookupWithApply to a
+// UniqueLookup for callers that don't need the apply path. REQ000511.
+func AsUniqueLookup(apply UniqueLookupWithApply) UniqueLookup {
 	if apply == nil {
 		return nil
 	}
@@ -509,7 +509,7 @@ func valueEqual(a, b any) bool {
 
 // removeConflicting removes rows from existing that conflict with out
 // on any unique key (including implicit PK). Returns the filtered slice.
-func removeConflicting(existing []DT.Row, schema *DT.StoreSchema, out DT.Row) ([]DT.Row, int) {
+func RemoveConflicting(existing []DT.Row, schema *DT.StoreSchema, out DT.Row) ([]DT.Row, int) {
 	keys := schema.Unique
 	if schema.Pk != "" {
 		pkIdx := -1
@@ -558,7 +558,7 @@ func removeConflicting(existing []DT.Row, schema *DT.StoreSchema, out DT.Row) ([
 // the PK column (in-memory path without StoreSchema). Returns filtered slice
 // and count of removed rows. pkName is the table's primary key column name
 // (empty = no PK conflict detection).
-func removeConflictingInMemory(existing []DT.Row, schema []string, pkName string, out DT.Row) ([]DT.Row, int) {
+func RemoveConflictingInMemory(existing []DT.Row, schema []string, pkName string, out DT.Row) ([]DT.Row, int) {
 	if pkName == "" {
 		return existing, 0
 	}
