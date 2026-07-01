@@ -114,7 +114,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 	defer DT.TablesMu.Unlock()
 	existing := DT.Tables[i.table]
 	// REQ000641: snapshot the table before first mutation for rollback.
-	if tw := CurrentTxWriter(); tw != nil {
+	if tw := DT.CurrentTxWriter(); tw != nil {
 		tw.RecordInMemoryTable(i.table, DT.SnapshotInMemoryTable(i.table))
 	}
 	var pending map[string]struct{}
@@ -222,7 +222,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 			pending = make(map[string]struct{}, len(i.values))
 		}
 		// REQ000126/REQ000905: FK validation on INSERT (skipped when PRAGMA foreign_keys = OFF)
-		if IsForeignKeysEnabled() && cschema != nil && len(cschema.ForeignKeys) > 0 {
+		if DT.IsForeignKeysEnabled() && cschema != nil && len(cschema.ForeignKeys) > 0 {
 			if err := UT.ValidateForeignKeyInsert(cschema, valueSliceToAny(out.Data), i.store); err != nil {
 				return DT.Row{}, err
 			}
@@ -348,7 +348,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 			}
 		}
 		// REQ000126/REQ000905: FK validation on INSERT (store path, skipped when PRAGMA foreign_keys = OFF)
-		if IsForeignKeysEnabled() && len(i.schema.ForeignKeys) > 0 {
+		if DT.IsForeignKeysEnabled() && len(i.schema.ForeignKeys) > 0 {
 			if err := UT.ValidateForeignKeyInsert(i.schema, valueSliceToAny(out.Data), i.store); err != nil {
 				return DT.Row{}, err
 			}
@@ -444,7 +444,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 	DT.TablesMu.Lock()
 	defer DT.TablesMu.Unlock()
 	existing := DT.Tables[i.table]
-	if tw := CurrentTxWriter(); tw != nil {
+	if tw := DT.CurrentTxWriter(); tw != nil {
 		tw.RecordInMemoryTable(i.table, DT.SnapshotInMemoryTable(i.table))
 	}
 
@@ -645,7 +645,7 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 		cschema = ss
 	}
 	// REQ000641: snapshot the table before first mutation for rollback.
-	if tw := CurrentTxWriter(); tw != nil {
+	if tw := DT.CurrentTxWriter(); tw != nil {
 		DT.TablesMu.RLock()
 		tw.RecordInMemoryTable(u.table, DT.SnapshotInMemoryTable(u.table))
 		DT.TablesMu.RUnlock()
@@ -680,7 +680,7 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 				return DT.Row{}, err
 			}
 			// REQ000513/REQ000905: FK re-validation when FK columns are updated.
-			if IsForeignKeysEnabled() {
+			if DT.IsForeignKeysEnabled() {
 				if err := UT.ValidateForeignKeyUpdateInMemory(cschema, valueSliceToAny(snapshot.Data), valueSliceToAny(row.Data)); err != nil {
 					return DT.Row{}, err
 				}
@@ -925,7 +925,7 @@ func (d *Delete) Next(ctx context.Context) (DT.Row, error) {
 	}
 	if len(toDelete) > 0 {
 		// REQ000514/REQ000905: FK checks must run before mutating the table.
-		if IsForeignKeysEnabled() && dschema != nil {
+		if DT.IsForeignKeysEnabled() && dschema != nil {
 			for _, rowData := range fkRows {
 				if err := UT.ValidateForeignKeyDeleteInMemory(d.table, rowData, dschema); err != nil {
 					return DT.Row{}, err
@@ -935,7 +935,7 @@ func (d *Delete) Next(ctx context.Context) (DT.Row, error) {
 		DT.TablesMu.Lock()
 		defer DT.TablesMu.Unlock()
 		// REQ000641: snapshot the table before first mutation for rollback.
-		if tw := CurrentTxWriter(); tw != nil {
+		if tw := DT.CurrentTxWriter(); tw != nil {
 			tw.RecordInMemoryTable(d.table, DT.SnapshotInMemoryTable(d.table))
 		}
 		existing := DT.Tables[d.table]
@@ -1795,11 +1795,11 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 			if p.stmt.Value != "" {
 				// Write: set the toggle
 				val := strings.ToUpper(p.stmt.Value)
-				SetForeignKeysEnabled(val == "ON" || val == "1" || val == "TRUE")
+				DT.SetForeignKeysEnabled(val == "ON" || val == "1" || val == "TRUE")
 			}
 			// Read: return current value
 			v := 0
-			if IsForeignKeysEnabled() {
+			if DT.IsForeignKeysEnabled() {
 				v = 1
 			}
 			p.rows = append(p.rows, DT.Row{

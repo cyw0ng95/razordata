@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -22,49 +21,6 @@ import (
 )
 
 // Value is a tagged-union that stores SQL values inline without boxing.
-// EX.Value IS PL.Value (type alias); no conversion needed at package boundaries.
-
-// currentTxWriter is the package-level current TxWriter. Set by
-// Executor.SetTxWriter and read by Insert/Update/Delete operators
-// (both in-memory and store-backed) so that transactions can
-// capture pre-write state for rollback. REQ000588.
-var currentTxWriter atomic.Pointer[DT.TxWriter]
-
-// foreignKeysEnabled controls whether FK constraint enforcement is
-// active. PRAGMA foreign_keys = ON/OFF toggles this per-session.
-// Default is true (enforced). REQ000905.
-var foreignKeysEnabled atomic.Bool
-
-func init() {
-	foreignKeysEnabled.Store(true)
-}
-
-// SetForeignKeysEnabled stores the FK enforcement toggle.
-func SetForeignKeysEnabled(v bool) {
-	foreignKeysEnabled.Store(v)
-}
-
-// IsForeignKeysEnabled returns the current FK enforcement toggle.
-func IsForeignKeysEnabled() bool {
-	return foreignKeysEnabled.Load()
-}
-
-// SetCurrentTxWriter stores w in the package-level slot.
-func SetCurrentTxWriter(w DT.TxWriter) {
-	var boxed *DT.TxWriter
-	if w != nil {
-		boxed = &w
-	}
-	currentTxWriter.Store(boxed)
-}
-
-// CurrentTxWriter returns the package-level current TxWriter.
-func CurrentTxWriter() DT.TxWriter {
-	if p := currentTxWriter.Load(); p != nil {
-		return *p
-	}
-	return nil
-}
 
 var ErrNotImplemented = errors.New("ex: not implemented")
 var ErrClosed = errors.New("ex: operator closed")
@@ -154,13 +110,6 @@ func valueSliceToAny(v []DT.Value) []any {
 	return out
 }
 
-// ValueSliceToAny is the exported version of valueSliceToAny for
-// callers outside the EX package (e.g. SYS/AP bridging).
-func ValueSliceToAny(v []DT.Value) []any { return valueSliceToAny(v) }
-
-// SetCatalog and RegisterFromCatalog re-export DT functions for
-// backward-compatibility with SYS packages.
-
 // Result holds the outcome of an Exec call.
 type Result struct {
 	RowsAffected int64
@@ -172,9 +121,6 @@ type Rows struct {
 	Cols  []string
 	Types []LX.TokenType
 }
-
-// Backward-compat function aliases for types/functions moved to OP.
-
 
 // stmtCacheEntry holds a cached parsed statement with LRU metadata.
 type stmtCacheEntry struct {
@@ -250,13 +196,13 @@ type Executor struct {
 // write. Aliased from PL.
 func (e *Executor) SetTxWriter(w DT.TxWriter) {
 	e.txWriter = w
-	SetCurrentTxWriter(w)
+	DT.SetCurrentTxWriter(w)
 }
 
 // ClearTxWriter resets the write hook to nil. Pair with SetTxWriter.
 func (e *Executor) ClearTxWriter() {
 	e.txWriter = nil
-	SetCurrentTxWriter(nil)
+	DT.SetCurrentTxWriter(nil)
 }
 
 // ShallowCopy returns a new Executor that shares Planner and Store with the
