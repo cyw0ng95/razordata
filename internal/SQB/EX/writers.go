@@ -147,7 +147,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 			out = DT.Row{Cols: schema}
 			out.Data = make([]DT.Value, len(schema))
 		} else {
-			out, err = buildInsertRow(schema, i.cols, colIdx, row, i.params)
+			out, err = WT.BuildInsertRow(schema, i.cols, colIdx, row, i.params)
 			if err != nil {
 				return DT.Row{}, err
 			}
@@ -314,7 +314,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 			out = DT.Row{Cols: i.schema.Cols}
 			out.Data = make([]DT.Value, len(i.schema.Cols))
 		} else {
-			out, err = buildInsertRow(i.schema.Cols, i.cols, colIdx, row, i.params)
+			out, err = WT.BuildInsertRow(i.schema.Cols, i.cols, colIdx, row, i.params)
 		}
 		if out, err = WT.FillDefaults(i.schema, out); err != nil {
 			return DT.Row{}, err
@@ -664,7 +664,7 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 		// source table. Deep-copy Data before applyUpdate mutates it
 		// in-place, otherwise the source row is corrupted.
 		row.Data = append([]DT.Value(nil), row.Data...)
-		if err := applyUpdate(&row, u.set, u.params); err != nil {
+		if err := WT.ApplyUpdate(&row, u.set, u.params); err != nil {
 			return DT.Row{}, err
 		}
 		if cschema != nil {
@@ -751,7 +751,7 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 			return DT.Row{}, err
 		}
 		oldRow := DT.CloneRow(row)
-		if err := applyUpdate(&row, u.set, u.params); err != nil {
+		if err := WT.ApplyUpdate(&row, u.set, u.params); err != nil {
 			return DT.Row{}, err
 		}
 		if row, err = WT.FillDefaults(u.schema, row); err != nil {
@@ -1054,7 +1054,7 @@ type Trigger struct {
 func NewTrigger(stmt *PS.TriggerStmt) *Trigger {
 	t := &Trigger{Stmt: stmt}
 	if stmt != nil {
-		if e := registerTrigger(stmt); e != nil {
+		if e := WT.RegisterTrigger(stmt); e != nil {
 			t.err = e
 		}
 	}
@@ -1412,14 +1412,7 @@ func (d *DropTable) Next(ctx context.Context) (DT.Row, error) {
 	DT.StoreMu.Unlock()
 
 	// Drop triggers associated with this table (REQ000828).
-	triggerMu.Lock()
-	if triggers, ok := tableTriggers[d.Stmt.Name]; ok {
-		for _, t := range triggers {
-			delete(triggerReg, t.Name)
-		}
-		delete(tableTriggers, d.Stmt.Name)
-	}
-	triggerMu.Unlock()
+	WT.DropTriggersForTable(d.Stmt.Name)
 
 	// Persist the drop to the system catalog.
 	if idOk {
@@ -2226,7 +2219,7 @@ func (d *DropTrigger) Next(ctx context.Context) (DT.Row, error) {
 	if d.Stmt == nil {
 		return DT.Row{}, DT.ErrNoRows
 	}
-	existed := unregisterTrigger(d.Stmt.Name)
+	existed := WT.UnregisterTrigger(d.Stmt.Name)
 	if !existed && !d.Stmt.IfExists {
 		return DT.Row{}, fmt.Errorf("ex: trigger %s does not exist", d.Stmt.Name)
 	}
@@ -2498,7 +2491,7 @@ func fireInsertTriggers(table string, newRow *DT.Row, params []any, store DT.Sto
 		return nil
 	}
 
-	return fireTriggers(table, "AFTER", "INSERT", nil, newRow, params, exec)
+	return WT.FireTriggers(table, "AFTER", "INSERT", nil, newRow, params, exec)
 }
 
 // executeRefreshMatViewSQL executes a REFRESH MATERIALIZED VIEW statement.
@@ -2558,7 +2551,7 @@ func fireUpdateTriggers(table string, oldRow *DT.Row, newRow *DT.Row, params []a
 		return nil
 	}
 
-	return fireTriggers(table, "AFTER", "UPDATE", oldRow, newRow, params, exec)
+	return WT.FireTriggers(table, "AFTER", "UPDATE", oldRow, newRow, params, exec)
 }
 
 // fireDeleteTriggers fires all AFTER DELETE triggers for the given table.
@@ -2575,5 +2568,5 @@ func fireDeleteTriggers(table string, oldRow *DT.Row, params []any, store DT.Sto
 		return nil
 	}
 
-	return fireTriggers(table, "AFTER", "DELETE", oldRow, nil, params, exec)
+	return WT.FireTriggers(table, "AFTER", "DELETE", oldRow, nil, params, exec)
 }

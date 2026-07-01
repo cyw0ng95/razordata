@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
@@ -171,19 +172,13 @@ func TestBugfix_DropTrigger_RemovesRegistry(t *testing.T) {
 	if _, err := ex.Exec(ctx, "CREATE TRIGGER tg AFTER INSERT ON t BEGIN SELECT 1; END"); err != nil {
 		t.Fatalf("CREATE TRIGGER: %v", err)
 	}
-	triggerMu.RLock()
-	_, present := triggerReg["tg"]
-	triggerMu.RUnlock()
-	if !present {
+	if !WT.IsTriggerRegistered("tg") {
 		t.Fatal("trigger not registered after CREATE")
 	}
 	if _, err := ex.Exec(ctx, "DROP TRIGGER tg"); err != nil {
 		t.Fatalf("DROP TRIGGER: %v", err)
 	}
-	triggerMu.RLock()
-	_, present = triggerReg["tg"]
-	triggerMu.RUnlock()
-	if present {
+	if WT.IsTriggerRegistered("tg") {
 		t.Error("trigger still registered after DROP")
 	}
 }
