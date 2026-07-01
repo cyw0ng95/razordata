@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	id "github.com/cyw0ng95/razordata/internal/ENG/ID"
-	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -104,7 +103,7 @@ type SeqScan struct {
 	prefixedColIndex map[string]int
 
 	// REQ000790: index usage tracking for diagnostics.
-	iu *AD.IndexUsage
+	iu *DT.IndexUsage
 	// availableIdx tracks indexes available on this table for skip detection.
 	availableIdx []string
 
@@ -670,7 +669,7 @@ type IndexScan struct {
 	prefixIdxKey []byte
 
 	// REQ000790: index usage tracking for diagnostics.
-	iu *AD.IndexUsage
+	iu *DT.IndexUsage
 
 	// REQ001042: batched context check counter.
 	ctxCheckCounter int

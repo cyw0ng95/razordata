@@ -1,4 +1,4 @@
-package AD
+package DT
 
 import (
 	"testing"
@@ -6,23 +6,19 @@ import (
 
 func TestIndexUsage_Basic(t *testing.T) {
 	iu := NewIndexUsage()
-	
-	// Register indexes
+
 	iu.RegisterIndex("users", "idx_users_email")
 	iu.RegisterIndex("users", "idx_users_name")
-	
-	// Record index use
+
 	iu.RecordIndexUse("idx_users_email", "users")
 	iu.RecordIndexUse("idx_users_email", "users")
 	iu.RecordIndexUse("idx_users_name", "users")
-	
-	// Record index skip
+
 	iu.RecordIndexSkip("idx_users_name", "users", "filter on non-indexed column")
-	
-	// Get summary
-summary := iu.GetUsageSummary()
+
+	summary := iu.GetUsageSummary()
 	t.Logf("Summary: %s", summary)
-	
+
 	if summary == "" {
 		t.Fatal("expected non-empty summary")
 	}
@@ -30,7 +26,7 @@ summary := iu.GetUsageSummary()
 
 func TestIndexUsage_Empty(t *testing.T) {
 	iu := NewIndexUsage()
-summary := iu.GetUsageSummary()
+	summary := iu.GetUsageSummary()
 	if summary != "" {
 		t.Fatalf("expected empty summary for unused tracker, got %q", summary)
 	}
@@ -71,7 +67,7 @@ func TestMissingIndexSuggestion_Format(t *testing.T) {
 			expected: "IndexHint: consider adding index on products(sku) — point lookup by sku (100x faster)",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := tt.s.Format()
@@ -84,8 +80,7 @@ func TestMissingIndexSuggestion_Format(t *testing.T) {
 
 func TestIndexUsage_Concurrency(t *testing.T) {
 	iu := NewIndexUsage()
-	
-	// Concurrently record index uses
+
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 100; i++ {
@@ -99,11 +94,11 @@ func TestIndexUsage_Concurrency(t *testing.T) {
 		}
 		done <- struct{}{}
 	}()
-	
+
 	<-done
 	<-done
-	
-summary := iu.GetUsageSummary()
+
+	summary := iu.GetUsageSummary()
 	if summary == "" {
 		t.Fatal("expected non-empty summary after concurrent updates")
 	}

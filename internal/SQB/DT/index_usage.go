@@ -1,4 +1,4 @@
-package AD
+package DT
 
 import (
 	"fmt"
@@ -49,22 +49,22 @@ func (iu *IndexUsage) RegisterIndex(tableName, idxName string) {
 func (iu *IndexUsage) GetUsageSummary() string {
 	iu.mu.Lock()
 	defer iu.mu.Unlock()
-	
+
 	var b strings.Builder
 	totalUsed := int64(0)
 	totalSkipped := int64(0)
-	
+
 	for _, cnt := range iu.IndexUsed {
 		totalUsed += cnt
 	}
 	for _, cnt := range iu.IndexSkipped {
 		totalSkipped += cnt
 	}
-	
+
 	if totalUsed == 0 && totalSkipped == 0 {
 		return ""
 	}
-	
+
 	b.WriteString("IndexUsage: ")
 	if totalUsed > 0 {
 		b.WriteString("used=")
@@ -77,7 +77,7 @@ func (iu *IndexUsage) GetUsageSummary() string {
 		b.WriteString("skipped=")
 		b.WriteString(fmt.Sprintf("%d", totalSkipped))
 	}
-	
+
 	return b.String()
 }
 
