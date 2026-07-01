@@ -21,7 +21,7 @@ type Insert struct {
 	table          string
 	cols           []string
 	values         [][]PS.Expr
-	selectPlan     Operator // REQ000707: INSERT INTO t SELECT ...
+	selectPlan     DT.Operator // REQ000707: INSERT INTO t SELECT ...
 	returning      []PS.Expr
 	onConflict     *PS.OnConflict
 	conflictAction PS.ConflictAction
@@ -32,13 +32,13 @@ type Insert struct {
 	rows           int64
 	done           bool
 	params         []any
-	resultRows     []Row
+	resultRows     []DT.Row
 	resultPos      int
 	execCtx        *DT.ExecContext // REQ000812
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
-func (i *Insert) WithParams(p []any) Operator {
+func (i *Insert) WithParams(p []any) DT.Operator {
 	i.params = p
 	return i
 }
@@ -55,7 +55,7 @@ func NewInsert(table string, cols []string, values [][]PS.Expr, returning []PS.E
 
 // Child returns the selectPlan if this is an INSERT INTO ... SELECT,
 // or nil otherwise. Implements childer for execCtx propagation. REQ000812.
-func (i *Insert) Child() Operator { return i.selectPlan }
+func (i *Insert) Child() DT.Operator { return i.selectPlan }
 
 // NewInsertWithStore builds an Insert that writes through the engine. The
 // table must have been registered. REQ000367: DT.Tables without a declared
@@ -76,7 +76,7 @@ func NewInsertWithStore(store DT.Store, table string, cols []string, values [][]
 	}, nil
 }
 
-func (i *Insert) Next(ctx context.Context) (Row, error) {
+func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 	// If we have RETURNING results, return them
 	if len(i.resultRows) > 0 {
 		if i.resultPos < len(i.resultRows) {
@@ -84,11 +84,11 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 			i.resultPos++
 			return row, nil
 		}
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 
 	if i.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	i.done = true
 
@@ -140,31 +140,31 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		colIdx[ci] = idx
 	}
 	for _, row := range iterValues {
-		var out Row
+		var out DT.Row
 		var err error
 		if row == nil && i.defaultValues {
-			out = Row{Cols: schema}
-			out.Data = make([]Value, len(schema))
+			out = DT.Row{Cols: schema}
+			out.Data = make([]DT.Value, len(schema))
 		} else {
 			out, err = buildInsertRow(schema, i.cols, colIdx, row, i.params)
 			if err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 		if cschema != nil {
 			if out, err = fillDefaults(cschema, out); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 			if err := validateRow(cschema, out); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 			if err := validateDecimal(cschema, out); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 			if err := validateCheck(cschema, out); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
-			if err := checkUnique(cschema, out, pending, Row{}, asUniqueLookup(lookup)); err != nil {
+			if err := checkUnique(cschema, out, pending, DT.Row{}, asUniqueLookup(lookup)); err != nil {
 				if i.conflictAction == PS.ConflictActionReplace {
 					var removed int
 					existing, removed = removeConflicting(existing, cschema, out)
@@ -180,7 +180,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 					continue
 				}
 				if i.onConflict == nil {
-					return Row{}, err
+					return DT.Row{}, err
 				}
 				// ON CONFLICT: handle unique violation. REQ000511.
 				if i.onConflict.DoNothing {
@@ -192,7 +192,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 				// to find the existing row and mutate it in place.
 				if apply, ok := lookup.(uniqueLookupWithApply); ok {
 					if err := applyConflictUpdate(cschema, existing, out, i.onConflict.SetClauses, i.params, apply); err != nil {
-						return Row{}, err
+						return DT.Row{}, err
 					}
 					// Note: we already counted the row's impact in
 					// applyConflictUpdate (it updated an existing
@@ -224,7 +224,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		// REQ000126/REQ000905: FK validation on INSERT (skipped when PRAGMA foreign_keys = OFF)
 		if IsForeignKeysEnabled() && cschema != nil && len(cschema.ForeignKeys) > 0 {
 			if err := UT.ValidateForeignKeyInsert(cschema, valueSliceToAny(out.Data), i.store); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 		existing = append(existing, out)
@@ -237,7 +237,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(i.returning) > 0 {
 			if err := evalReturning(i.returning, &out, i.params, &i.resultRows); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 	}
@@ -249,10 +249,10 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 		i.resultPos = 1
 		return row, nil
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
-func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
+func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 	// If we have RETURNING results, return them
 	if len(i.resultRows) > 0 {
 		if i.resultPos < len(i.resultRows) {
@@ -260,7 +260,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			i.resultPos++
 			return row, nil
 		}
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 
 	prefix := OP.TablePrefix(i.table)
@@ -307,27 +307,27 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		colIdx[ci] = idx
 	}
 	for _, row := range iterValues {
-		var out Row
+		var out DT.Row
 		var err error
 		if row == nil && i.defaultValues {
-			out = Row{Cols: i.schema.Cols}
-			out.Data = make([]Value, len(i.schema.Cols))
+			out = DT.Row{Cols: i.schema.Cols}
+			out.Data = make([]DT.Value, len(i.schema.Cols))
 		} else {
 			out, err = buildInsertRow(i.schema.Cols, i.cols, colIdx, row, i.params)
 		}
 		if out, err = fillDefaults(i.schema, out); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		if err := validateRow(i.schema, out); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		if err := validateDecimal(i.schema, out); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		if err := validateCheck(i.schema, out); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
-		if err := checkUnique(i.schema, out, pending, Row{}, lookupFn); err != nil {
+		if err := checkUnique(i.schema, out, pending, DT.Row{}, lookupFn); err != nil {
 			if i.conflictAction == PS.ConflictActionReplace {
 				// Delete the existing row, then fall through to insert
 				pk, pkErr := OP.ExtractPK(i.schema, out)
@@ -344,18 +344,18 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 			} else if i.conflictAction == PS.ConflictActionIgnore {
 				continue
 			} else {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 		// REQ000126/REQ000905: FK validation on INSERT (store path, skipped when PRAGMA foreign_keys = OFF)
 		if IsForeignKeysEnabled() && len(i.schema.ForeignKeys) > 0 {
 			if err := UT.ValidateForeignKeyInsert(i.schema, valueSliceToAny(out.Data), i.store); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 		pk, err := OP.ExtractPK(i.schema, out)
 		if err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		// REQ001128: when the PK was NULL (ExtractPK generated a
 		// synthetic rowid), update the row data so the stored value
@@ -371,18 +371,18 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		}
 		buf, err := OP.EncodeRow(i.schema, out)
 		if err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		key := OP.RowKey(prefix, pk)
 		if err := i.store.Insert(key, buf); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		if i.txWriter != nil {
 			i.txWriter.RecordWrite(key, buf)
 		}
 		// Maintain secondary indexes (iter-22).
 		if err := OP.MaintainIndexesOnInsert(i.store, i.table, i.schema, out); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		i.rows++
 		if i.execCtx != nil {
@@ -392,13 +392,13 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 
 		// Fire AFTER INSERT triggers (REQ000316: incremental matview support)
 		if err := fireInsertTriggers(i.table, &out, i.params, i.store); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(i.returning) > 0 {
 			if err := evalReturning(i.returning, &out, i.params, &i.resultRows); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 	}
@@ -410,13 +410,13 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		i.resultPos = 1
 		return row, nil
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 // nextFromSelect handles INSERT INTO t SELECT ... by executing
 // the SELECT query and inserting each row into the target table.
 // REQ000707.
-func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
+func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 	schema := DT.Schema(i.table)
 	if schema == nil && len(i.cols) > 0 {
 		schema = i.cols
@@ -428,14 +428,14 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 	prefix := OP.TablePrefix(i.table)
 
 	// Execute SELECT first (outside the lock to avoid deadlock)
-	var selectRows []Row
+	var selectRows []DT.Row
 	for {
 		row, err := i.selectPlan.Next(ctx)
 		if err != nil {
 			if err == DT.ErrNoRows {
 				break
 			}
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		selectRows = append(selectRows, row)
 	}
@@ -455,28 +455,28 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 		// Build insert row from SELECT result
 		out, err := buildInsertRowFromSelect(schema, i.cols, row)
 		if err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 
 		if cschema != nil {
 			if out, err = fillDefaults(cschema, out); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 			if err := validateRow(cschema, out); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
-			if err := checkUnique(cschema, out, pending, Row{}, asUniqueLookup(lookup)); err != nil {
+			if err := checkUnique(cschema, out, pending, DT.Row{}, asUniqueLookup(lookup)); err != nil {
 				if i.conflictAction == PS.ConflictActionIgnore {
 					continue
 				}
-				return Row{}, err
+				return DT.Row{}, err
 			}
 			// REQ001129: store-backed INSERT...SELECT must write to
 			// the store engine, not just the in-memory table map.
 			if i.store != nil {
 				pk, pkErr := OP.ExtractPK(cschema, out)
 				if pkErr != nil {
-					return Row{}, pkErr
+					return DT.Row{}, pkErr
 				}
 				// REQ001128: when PK is NULL, update the row data to
 				// match the auto-generated rowid.
@@ -490,18 +490,18 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 				}
 				buf, err := OP.EncodeRow(cschema, out)
 				if err != nil {
-					return Row{}, err
+					return DT.Row{}, err
 				}
 				key := OP.RowKey(prefix, pk)
 				if err := i.store.Insert(key, buf); err != nil {
-					return Row{}, err
+					return DT.Row{}, err
 				}
 				if i.txWriter != nil {
 					i.txWriter.RecordWrite(key, buf)
 				}
 				// Maintain secondary indexes (iter-22).
 				if err := OP.MaintainIndexesOnInsert(i.store, i.table, cschema, out); err != nil {
-					return Row{}, err
+					return DT.Row{}, err
 				}
 			}
 		}
@@ -516,7 +516,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 
 		if len(i.returning) > 0 {
 			if err := evalReturning(i.returning, &out, i.params, &i.resultRows); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 	}
@@ -527,15 +527,15 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 		i.resultPos = 1
 		return row, nil
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 // buildInsertRowFromSelect builds an insert row from a SELECT result row.
-func buildInsertRowFromSelect(schema []string, cols []string, src Row) (Row, error) {
+func buildInsertRowFromSelect(schema []string, cols []string, src DT.Row) (DT.Row, error) {
 	if len(cols) > 0 {
 		// Map SELECT columns to insert columns by position
-		out := Row{Cols: append([]string(nil), schema...)}
-		out.Data = make([]Value, len(schema))
+		out := DT.Row{Cols: append([]string(nil), schema...)}
+		out.Data = make([]DT.Value, len(schema))
 		colIdx := make(map[string]int, len(schema))
 		for i, c := range schema {
 			colIdx[c] = i
@@ -550,8 +550,8 @@ func buildInsertRowFromSelect(schema []string, cols []string, src Row) (Row, err
 		return out, nil
 	}
 	// No column list: use SELECT columns directly
-	out := Row{Cols: append([]string(nil), src.Cols...)}
-	out.Data = append([]Value(nil), src.Data...)
+	out := DT.Row{Cols: append([]string(nil), src.Cols...)}
+	out.Data = append([]DT.Value(nil), src.Data...)
 	return out, nil
 }
 
@@ -571,40 +571,40 @@ type Update struct {
 	set        []PS.Pair
 	where      PS.Expr
 	returning  []PS.Expr
-	iter       Operator
+	iter       DT.Operator
 	store      DT.Store
 	schema     *DT.StoreSchema
 	txWriter   DT.TxWriter
 	rows       int64
 	done       bool
 	params     []any
-	resultRows []Row
+	resultRows []DT.Row
 	resultPos  int
 	execCtx    *DT.ExecContext // REQ000812
 }
 
 // REQ000714: expose child for execCtx/params propagation.
-func (u *Update) Child() Operator { return u.iter }
+func (u *Update) Child() DT.Operator { return u.iter }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
-func (u *Update) WithParams(p []any) Operator {
+func (u *Update) WithParams(p []any) DT.Operator {
 	u.params = p
 	if u.iter != nil {
-		if w, ok := u.iter.(interface{ WithParams([]any) Operator }); ok {
+		if w, ok := u.iter.(interface{ WithParams([]any) DT.Operator }); ok {
 			w.WithParams(p)
 		}
 	}
 	return u
 }
 
-func NewUpdate(table string, set []PS.Pair, where PS.Expr, iter Operator, returning []PS.Expr) *Update {
+func NewUpdate(table string, set []PS.Pair, where PS.Expr, iter DT.Operator, returning []PS.Expr) *Update {
 	return &Update{table: table, set: set, where: where, iter: iter, returning: returning}
 }
 
 // NewUpdateWithStore builds an Update that reads the old row via the engine
 // iterator and writes the new version through engine.Insert. REQ000367:
 // DT.Tables without a declared PRIMARY KEY are writable via synthetic rowid.
-func NewUpdateWithStore(store DT.Store, table string, set []PS.Pair, where PS.Expr, iter Operator, returning []PS.Expr) (*Update, error) {
+func NewUpdateWithStore(store DT.Store, table string, set []PS.Pair, where PS.Expr, iter DT.Operator, returning []PS.Expr) (*Update, error) {
 	ss, ok := DT.SchemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
@@ -620,7 +620,7 @@ func NewUpdateWithStore(store DT.Store, table string, set []PS.Pair, where PS.Ex
 	}, nil
 }
 
-func (u *Update) Next(ctx context.Context) (Row, error) {
+func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 	// If we have RETURNING results, return them
 	if len(u.resultRows) > 0 {
 		if u.resultPos < len(u.resultRows) {
@@ -628,11 +628,11 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			u.resultPos++
 			return row, nil
 		}
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 
 	if u.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	u.done = true
 	if u.store != nil {
@@ -656,33 +656,33 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			if err == DT.ErrNoRows {
 				break
 			}
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		snapshot := DT.CloneRow(row)
 		// REQ000840: OP.SeqScan may return rows that share Data with the
 		// source table. Deep-copy Data before applyUpdate mutates it
 		// in-place, otherwise the source row is corrupted.
-		row.Data = append([]Value(nil), row.Data...)
+		row.Data = append([]DT.Value(nil), row.Data...)
 		if err := applyUpdate(&row, u.set, u.params); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		if cschema != nil {
 			if row, err = fillDefaults(cschema, row); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 			if err := validateRow(cschema, row); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 			if err := validateDecimal(cschema, row); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 			if err := validateCheck(cschema, row); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 			// REQ000513/REQ000905: FK re-validation when FK columns are updated.
 			if IsForeignKeysEnabled() {
 				if err := UT.ValidateForeignKeyUpdateInMemory(cschema, valueSliceToAny(snapshot.Data), valueSliceToAny(row.Data)); err != nil {
-					return Row{}, err
+					return DT.Row{}, err
 				}
 			}
 			// REQ000516: UNIQUE enforcement on UPDATE. Use a real
@@ -695,11 +695,11 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			uidErr := checkUnique(cschema, row, nil, snapshot, ul)
 			DT.TablesMu.RUnlock()
 			if uidErr != nil {
-				return Row{}, uidErr
+				return DT.Row{}, uidErr
 			}
 		}
 		if err := DT.ReplaceBySnapshot(u.table, snapshot, row); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		u.rows++
 		if u.execCtx != nil {
@@ -709,13 +709,13 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 
 		// Fire AFTER UPDATE triggers (REQ000316: incremental matview support)
 		if err := fireUpdateTriggers(u.table, &snapshot, &row, u.params, nil); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(u.returning) > 0 {
 			if err := evalReturning(u.returning, &row, u.params, &u.resultRows); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 	}
@@ -726,10 +726,10 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 		u.resultPos = 1
 		return row, nil
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
-func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
+func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 	// If we have RETURNING results, return them
 	if len(u.resultRows) > 0 {
 		if u.resultPos < len(u.resultRows) {
@@ -737,7 +737,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 			u.resultPos++
 			return row, nil
 		}
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 
 	prefix := OP.TablePrefix(u.table)
@@ -747,44 +747,44 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 			if err == DT.ErrNoRows {
 				break
 			}
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		oldRow := DT.CloneRow(row)
 		if err := applyUpdate(&row, u.set, u.params); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		if row, err = fillDefaults(u.schema, row); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		if err := validateRow(u.schema, row); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		if err := validateCheck(u.schema, row); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		// Engine-path unique: best-effort no-op (correct UNIQUE in the
 		// engine path requires a real index, deferred to REQ000045).
 		noopLookup := func(cols []int, vals []any) (bool, error) { return false, nil }
-		if err := checkUnique(u.schema, row, nil, Row{}, noopLookup); err != nil {
-			return Row{}, err
+		if err := checkUnique(u.schema, row, nil, DT.Row{}, noopLookup); err != nil {
+			return DT.Row{}, err
 		}
 		pk, err := OP.ExtractPKForUpdate(u.schema, oldRow, prefix)
 		if err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		buf, err := OP.EncodeRow(u.schema, row)
 		if err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		key := OP.RowKey(prefix, pk)
 		if err := u.store.Insert(key, buf); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		if u.txWriter != nil {
 			u.txWriter.RecordWrite(key, buf)
 		}
 		if err := OP.MaintainIndexesOnUpdate(u.store, u.table, u.schema, oldRow, row, pk); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		u.rows++
 		if u.execCtx != nil {
@@ -794,13 +794,13 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 
 		// Fire AFTER UPDATE triggers (REQ000316: incremental matview support)
 		if err := fireUpdateTriggers(u.table, &oldRow, &row, u.params, u.store); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(u.returning) > 0 {
 			if err := evalReturning(u.returning, &row, u.params, &u.resultRows); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 	}
@@ -811,7 +811,7 @@ func (u *Update) nextFromStore(ctx context.Context) (Row, error) {
 		u.resultPos = 1
 		return row, nil
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 func (u *Update) Close() error {
@@ -826,23 +826,23 @@ type Delete struct {
 	table      string
 	where      PS.Expr
 	returning  []PS.Expr
-	iter       Operator
+	iter       DT.Operator
 	store      DT.Store
 	schema     *DT.StoreSchema
 	txWriter   DT.TxWriter
 	rows       int64
 	done       bool
 	params     []any
-	resultRows []Row
+	resultRows []DT.Row
 	resultPos  int
 	execCtx    *DT.ExecContext // REQ000812
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
-func (d *Delete) WithParams(p []any) Operator {
+func (d *Delete) WithParams(p []any) DT.Operator {
 	d.params = p
 	if d.iter != nil {
-		if w, ok := d.iter.(interface{ WithParams([]any) Operator }); ok {
+		if w, ok := d.iter.(interface{ WithParams([]any) DT.Operator }); ok {
 			w.WithParams(p)
 		}
 	}
@@ -852,16 +852,16 @@ func (d *Delete) WithParams(p []any) Operator {
 // REQ000714: expose iter as a child so propagateDT.ExecContext and
 // propagateParams walk into the input chain (OP.Filter/OP.SeqScan) where
 // the WHERE predicate (and any correlated subquery) is evaluated.
-func (d *Delete) Child() Operator { return d.iter }
+func (d *Delete) Child() DT.Operator { return d.iter }
 
-func NewDelete(table string, where PS.Expr, iter Operator, returning []PS.Expr) *Delete {
+func NewDelete(table string, where PS.Expr, iter DT.Operator, returning []PS.Expr) *Delete {
 	return &Delete{table: table, where: where, iter: iter, returning: returning}
 }
 
 // NewDeleteWithStore builds a Delete that removes rows through engine.Delete.
 // REQ000367: DT.Tables without a declared PRIMARY KEY are deletable via
 // the synthetic rowid.
-func NewDeleteWithStore(store DT.Store, table string, where PS.Expr, iter Operator, returning []PS.Expr) (*Delete, error) {
+func NewDeleteWithStore(store DT.Store, table string, where PS.Expr, iter DT.Operator, returning []PS.Expr) (*Delete, error) {
 	ss, ok := DT.SchemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
@@ -876,7 +876,7 @@ func NewDeleteWithStore(store DT.Store, table string, where PS.Expr, iter Operat
 	}, nil
 }
 
-func (d *Delete) Next(ctx context.Context) (Row, error) {
+func (d *Delete) Next(ctx context.Context) (DT.Row, error) {
 	// If we have RETURNING results, return them
 	if len(d.resultRows) > 0 {
 		if d.resultPos < len(d.resultRows) {
@@ -884,11 +884,11 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 			d.resultPos++
 			return row, nil
 		}
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 
 	if d.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	d.done = true
 	if d.store != nil {
@@ -908,7 +908,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 			if err == DT.ErrNoRows {
 				break
 			}
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		idx, ok := DT.RowIndex(d.table, row)
 		if ok {
@@ -918,7 +918,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 			// Evaluate RETURNING expressions before deleting (REQ000518: expand *)
 			if len(d.returning) > 0 {
 				if err := evalReturning(d.returning, &row, d.params, &d.resultRows); err != nil {
-					return Row{}, err
+					return DT.Row{}, err
 				}
 			}
 		}
@@ -928,7 +928,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		if IsForeignKeysEnabled() && dschema != nil {
 			for _, rowData := range fkRows {
 				if err := UT.ValidateForeignKeyDeleteInMemory(d.table, rowData, dschema); err != nil {
-					return Row{}, err
+					return DT.Row{}, err
 				}
 			}
 		}
@@ -956,9 +956,9 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		// For in-memory path, we fire triggers for each deleted row
 		// This is a simplified implementation; full implementation would pass old row data
 		for _, rowData := range fkRows {
-			oldRow := Row{Data: valueFromAnySlice(rowData)}
+			oldRow := DT.Row{Data: valueFromAnySlice(rowData)}
 			if err := fireDeleteTriggers(d.table, &oldRow, d.params, nil); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 	}
@@ -969,10 +969,10 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 		d.resultPos = 1
 		return row, nil
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
-func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
+func (d *Delete) nextFromStore(ctx context.Context) (DT.Row, error) {
 	// If we have RETURNING results, return them
 	if len(d.resultRows) > 0 {
 		if d.resultPos < len(d.resultRows) {
@@ -980,7 +980,7 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			d.resultPos++
 			return row, nil
 		}
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 
 	prefix := OP.TablePrefix(d.table)
@@ -990,22 +990,22 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 			if err == DT.ErrNoRows {
 				break
 			}
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		// Evaluate RETURNING expressions before deleting (REQ000518: expand *)
 		if len(d.returning) > 0 {
 			if err := evalReturning(d.returning, &row, d.params, &d.resultRows); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 
 		pk, err := OP.ExtractPKForUpdate(d.schema, row, prefix)
 		if err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		key := OP.RowKey(prefix, pk)
 		if err := d.store.Delete(key); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		if d.txWriter != nil {
 			d.txWriter.RecordWrite(key, nil)
@@ -1018,7 +1018,7 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 
 		// Fire AFTER DELETE triggers (REQ000316: incremental matview support)
 		if err := fireDeleteTriggers(d.table, &row, d.params, d.store); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 	}
 
@@ -1028,7 +1028,7 @@ func (d *Delete) nextFromStore(ctx context.Context) (Row, error) {
 		d.resultPos = 1
 		return row, nil
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 func (d *Delete) Close() error {
@@ -1060,25 +1060,25 @@ func NewTrigger(stmt *PS.TriggerStmt) *Trigger {
 	return t
 }
 
-func (t *Trigger) Next(ctx context.Context) (Row, error) {
+func (t *Trigger) Next(ctx context.Context) (DT.Row, error) {
 	if t.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	t.done = true
 	if t.err != nil {
-		return Row{}, t.err
+		return DT.Row{}, t.err
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 func (t *Trigger) Close() error                { return nil }
-func (t *Trigger) WithParams(p []any) Operator { return t }
+func (t *Trigger) WithParams(p []any) DT.Operator { return t }
 func (t *Trigger) RowsAffected() int64         { return 0 }
 
 type CreateTable struct {
 	stmt       *PS.CreateTable
 	done       bool
-	selectPlan Operator // non-nil for CREATE TABLE AS SELECT (REQ000520)
+	selectPlan DT.Operator // non-nil for CREATE TABLE AS SELECT (REQ000520)
 }
 
 // registerTableSchema registers a table in the in-memory DT.Tables and
@@ -1104,7 +1104,7 @@ func registerTableSchema(stmt *PS.CreateTable) ([]string, []bool, []PS.Expr, []L
 		precisions[i] = col.Precision
 		scales[i] = col.Scale
 	}
-	DT.Tables[stmt.Name] = []Row{}
+	DT.Tables[stmt.Name] = []DT.Row{}
 	DT.Schemas[stmt.Name] = cols
 	return cols, nullable, defaults, colTypes, precisions, scales, nil
 }
@@ -1247,19 +1247,19 @@ func NewCreateTable(stmt *PS.CreateTable) *CreateTable {
 // NewCreateTableAs builds a CREATE TABLE AS SELECT operator. The
 // selectPlan is the planned SELECT tree that produces the rows to
 // insert into the new table. REQ000520.
-func NewCreateTableAs(stmt *PS.CreateTable, selectPlan Operator) *CreateTable {
+func NewCreateTableAs(stmt *PS.CreateTable, selectPlan DT.Operator) *CreateTable {
 	return &CreateTable{stmt: stmt, selectPlan: selectPlan}
 }
 
-func (c *CreateTable) Next(ctx context.Context) (Row, error) {
+func (c *CreateTable) Next(ctx context.Context) (DT.Row, error) {
 	if c.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	c.done = true
 
 	// REQ000910: WITHOUT ROWID storage is not yet implemented.
 	if c.stmt.WithoutRowid {
-		return Row{}, errors.New("ex: WITHOUT ROWID not yet supported")
+		return DT.Row{}, errors.New("ex: WITHOUT ROWID not yet supported")
 	}
 
 	// CREATE TABLE AS SELECT (REQ000520): the schema comes from
@@ -1272,7 +1272,7 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	// Extract column metadata and register the table.
 	cols, nullable, defaults, colTypes, precisions, scales, err := registerTableSchema(c.stmt)
 	if err != nil {
-		return Row{}, err
+		return DT.Row{}, err
 	}
 
 	var pk string
@@ -1320,7 +1320,7 @@ func (c *CreateTable) Next(ctx context.Context) (Row, error) {
 	// Persist to the system catalog if one is wired in (iter-12).
 	persistToCatalog(c.stmt, cols, nullable, colTypes, unique, pk)
 
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 func (c *CreateTable) Close() error {
 	if c.selectPlan != nil {
@@ -1332,27 +1332,27 @@ func (c *CreateTable) Close() error {
 // nextAsSelect implements CREATE TABLE AS SELECT: register the
 // table using the SELECT's output schema, then iterate the SELECT
 // plan and insert each row. REQ000520.
-func (c *CreateTable) nextAsSelect(ctx context.Context) (Row, error) {
+func (c *CreateTable) nextAsSelect(ctx context.Context) (DT.Row, error) {
 	// Read first row to discover schema.
 	firstRow, err := c.selectPlan.Next(ctx)
 	if err != nil {
 		if err == DT.ErrNoRows {
 			// Empty SELECT: register table with no columns.
 			DT.TablesMu.Lock()
-			DT.Tables[c.stmt.Name] = []Row{}
+			DT.Tables[c.stmt.Name] = []DT.Row{}
 			DT.Schemas[c.stmt.Name] = nil
 			DT.TablesMu.Unlock()
-			return Row{}, DT.ErrNoRows
+			return DT.Row{}, DT.ErrNoRows
 		}
-		return Row{}, err
+		return DT.Row{}, err
 	}
 	cols := append([]string(nil), firstRow.Cols...)
 	DT.TablesMu.Lock()
 	if _, ok := DT.Tables[c.stmt.Name]; ok {
 		DT.TablesMu.Unlock()
-		return Row{}, DT.ErrTableExists
+		return DT.Row{}, DT.ErrTableExists
 	}
-	DT.Tables[c.stmt.Name] = []Row{firstRow}
+	DT.Tables[c.stmt.Name] = []DT.Row{firstRow}
 	DT.Schemas[c.stmt.Name] = cols
 	DT.TablesMu.Unlock()
 	// Drain remaining rows.
@@ -1362,13 +1362,13 @@ func (c *CreateTable) nextAsSelect(ctx context.Context) (Row, error) {
 			if err == DT.ErrNoRows {
 				break
 			}
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		DT.TablesMu.Lock()
 		DT.Tables[c.stmt.Name] = append(DT.Tables[c.stmt.Name], row)
 		DT.TablesMu.Unlock()
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 type DropTable struct {
@@ -1381,9 +1381,9 @@ func NewDropTable(stmt *PS.DropTable) *DropTable {
 	return &DropTable{stmt: stmt}
 }
 
-func (d *DropTable) Next(ctx context.Context) (Row, error) {
+func (d *DropTable) Next(ctx context.Context) (DT.Row, error) {
 	if d.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	d.done = true
 
@@ -1391,7 +1391,7 @@ func (d *DropTable) Next(ctx context.Context) (Row, error) {
 	existing, tableOk := DT.Tables[d.stmt.Name]
 	if !tableOk && !d.stmt.IfExists {
 		DT.TablesMu.Unlock()
-		return Row{}, fmt.Errorf("ex: no such table: %s", d.stmt.Name)
+		return DT.Row{}, fmt.Errorf("ex: no such table: %s", d.stmt.Name)
 	}
 	if tableOk {
 		d.rows = int64(len(existing))
@@ -1426,7 +1426,7 @@ func (d *DropTable) Next(ctx context.Context) (Row, error) {
 			_ = cat.Delete(id)
 		}
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 // buildCreateSQL reconstructs a canonical CREATE TABLE statement
@@ -1545,9 +1545,9 @@ func NewCreateIndex(stmt *PS.CreateIndexStmt) *CreateIndex {
 	return &CreateIndex{stmt: stmt}
 }
 
-func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
+func (c *CreateIndex) Next(ctx context.Context) (DT.Row, error) {
 	if c.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	c.done = true
 	// REQ000479: IF NOT EXISTS — skip if index already exists
@@ -1567,7 +1567,7 @@ func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
 		}
 		DT.StoreMu.Unlock()
 		if exists {
-			return Row{}, DT.ErrNoRows
+			return DT.Row{}, DT.ErrNoRows
 		}
 	}
 	// extract column name strings from IndexedColumns
@@ -1593,12 +1593,12 @@ func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
 			}
 			if err := cat.PutIndex(tableID, idx); err != nil {
 				// Duplicate or other error — surface it.
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 	}
 	c.rowsAff = 0
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 func (c *CreateIndex) Close() error        { return nil }
@@ -1615,9 +1615,9 @@ func NewDropIndex(stmt *PS.DropIndexStmt) *DropIndex {
 	return &DropIndex{stmt: stmt}
 }
 
-func (d *DropIndex) Next(ctx context.Context) (Row, error) {
+func (d *DropIndex) Next(ctx context.Context) (DT.Row, error) {
 	if d.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	d.done = true
 
@@ -1637,7 +1637,7 @@ func (d *DropIndex) Next(ctx context.Context) (Row, error) {
 	}
 	if !indexFound && !d.stmt.IfExists {
 		DT.StoreMu.Unlock()
-		return Row{}, fmt.Errorf("ex: no such index: %s", d.stmt.Name)
+		return DT.Row{}, fmt.Errorf("ex: no such index: %s", d.stmt.Name)
 	}
 
 	// Remove from DT.RegisteredIndexes.
@@ -1668,7 +1668,7 @@ func (d *DropIndex) Next(ctx context.Context) (Row, error) {
 		}
 	}
 	d.rowsAff = 0
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 func (d *DropIndex) Close() error        { return nil }
@@ -1679,20 +1679,20 @@ type Pragma struct {
 	stmt  *PS.PragmaStmt
 	store DT.Store
 	done  bool
-	rows  []Row
+	rows  []DT.Row
 	idx   int
 }
 
 func NewPragma(stmt *PS.PragmaStmt) *Pragma { return &Pragma{stmt: stmt} }
 
-func (p *Pragma) WithStore(s DT.Store) Operator {
+func (p *Pragma) WithStore(s DT.Store) DT.Operator {
 	p.store = s
 	return p
 }
 
-func (p *Pragma) Next(ctx context.Context) (Row, error) {
+func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 	if p.done && p.idx >= len(p.rows) {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 
 	// Handle PRAGMA table_info(table_name)
@@ -1700,11 +1700,11 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 		if !p.done {
 			p.done = true
 			if err := p.loadTableInfo(); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, DT.ErrNoRows
+			return DT.Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1715,13 +1715,13 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 	if p.stmt.Name == "database_list" {
 		if !p.done {
 			p.done = true
-			p.rows = append(p.rows, Row{
+			p.rows = append(p.rows, DT.Row{
 				Cols: []string{"seq", "name", "file"},
-				Data: []Value{NewIntValue(0), NewTextValue("main"), NullValue()},
+				Data: []DT.Value{NewIntValue(0), NewTextValue("main"), NullValue()},
 			})
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, DT.ErrNoRows
+			return DT.Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1735,7 +1735,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			p.loadIndexList()
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, DT.ErrNoRows
+			return DT.Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1749,7 +1749,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			p.loadTableList()
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, DT.ErrNoRows
+			return DT.Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1763,7 +1763,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			p.loadForeignKeyList()
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, DT.ErrNoRows
+			return DT.Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1775,13 +1775,13 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 		if !p.done {
 			p.done = true
 			// Return checkpoint status: busy, log, checkpointed
-			p.rows = append(p.rows, Row{
+			p.rows = append(p.rows, DT.Row{
 				Cols: []string{"busy", "log", "checkpointed"},
-				Data: []Value{NewIntValue(0), NewIntValue(0), NewIntValue(0)},
+				Data: []DT.Value{NewIntValue(0), NewIntValue(0), NewIntValue(0)},
 			})
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, DT.ErrNoRows
+			return DT.Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1802,13 +1802,13 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			if IsForeignKeysEnabled() {
 				v = 1
 			}
-			p.rows = append(p.rows, Row{
+			p.rows = append(p.rows, DT.Row{
 				Cols: []string{"foreign_keys"},
-				Data: []Value{NewIntValue(int64(v))},
+				Data: []DT.Value{NewIntValue(int64(v))},
 			})
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, DT.ErrNoRows
+			return DT.Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1822,7 +1822,7 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 			p.loadForeignKeyCheck()
 		}
 		if p.idx >= len(p.rows) {
-			return Row{}, DT.ErrNoRows
+			return DT.Row{}, DT.ErrNoRows
 		}
 		row := p.rows[p.idx]
 		p.idx++
@@ -1836,9 +1836,9 @@ func (p *Pragma) Next(ctx context.Context) (Row, error) {
 		if p.stmt.Value != "" {
 			UT.NotifyPragmaChange(p.stmt.Name, p.stmt.Value)
 		}
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 func (p *Pragma) loadTableInfo() error {
@@ -1869,9 +1869,9 @@ func (p *Pragma) loadTableInfo() error {
 		if i < len(ss.ColTypes) {
 			colType = ss.ColTypes[i]
 		}
-		p.rows = append(p.rows, Row{
+		p.rows = append(p.rows, DT.Row{
 			Cols: []string{"cid", "name", "type", "notnull", "dflt_value", "pk"},
-			Data: []Value{NewIntValue(int64(i)), NewTextValue(colName), NewTextValue(colTypeName(colType)), NewIntValue(notNull), NullValue(), NewIntValue(pk)},
+			Data: []DT.Value{NewIntValue(int64(i)), NewTextValue(colName), NewTextValue(colTypeName(colType)), NewIntValue(notNull), NullValue(), NewIntValue(pk)},
 		})
 	}
 	return nil
@@ -1910,9 +1910,9 @@ func (p *Pragma) loadIndexList() {
 func (p *Pragma) loadTableList() {
 	names := DT.AllTableNames()
 	for _, name := range names {
-		p.rows = append(p.rows, Row{
+		p.rows = append(p.rows, DT.Row{
 			Cols: []string{"type", "name", "tbl_name", "rootpage", "sql"},
-			Data: []Value{NewTextValue("table"), NewTextValue(name), NewTextValue(name), NewIntValue(0), NullValue()},
+			Data: []DT.Value{NewTextValue("table"), NewTextValue(name), NewTextValue(name), NewIntValue(0), NullValue()},
 		})
 	}
 }
@@ -1927,9 +1927,9 @@ func (p *Pragma) loadForeignKeyList() {
 	}
 	for id, fk := range ss.ForeignKeys {
 		for seq, col := range fk.Columns {
-			p.rows = append(p.rows, Row{
+			p.rows = append(p.rows, DT.Row{
 				Cols: []string{"id", "seq", "table", "from", "to", "on_update", "on_delete", "match"},
-				Data: []Value{NewIntValue(int64(id)), NewIntValue(int64(seq)), NewTextValue(fk.RefTable), NewTextValue(col), NewTextValue(fk.RefColumns[seq]), NewTextValue(fk.OnUpdate), NewTextValue(fk.OnDelete), NewTextValue("NONE")},
+				Data: []DT.Value{NewIntValue(int64(id)), NewIntValue(int64(seq)), NewTextValue(fk.RefTable), NewTextValue(col), NewTextValue(fk.RefColumns[seq]), NewTextValue(fk.OnUpdate), NewTextValue(fk.OnDelete), NewTextValue("NONE")},
 			})
 		}
 	}
@@ -2010,9 +2010,9 @@ func (p *Pragma) loadForeignKeyCheck() {
 					}
 				}
 				if !found {
-					p.rows = append(p.rows, Row{
+					p.rows = append(p.rows, DT.Row{
 						Cols: []string{"table", "rowid", "parent", "fkid"},
-						Data: []Value{
+						Data: []DT.Value{
 							NewTextValue(name),
 							NewIntValue(int64(rowIdx)),
 							NewTextValue(fk.RefTable),
@@ -2031,14 +2031,14 @@ func (p *Pragma) Close() error {
 	p.rows = p.rows[:0]
 	return nil
 }
-func (p *Pragma) WithParams(_ []any) Operator { return p }
+func (p *Pragma) WithParams(_ []any) DT.Operator { return p }
 func (p *Pragma) RowsAffected() int64         { return 0 }
 
 // Explain runs the inner plan and returns a textual description of it
 // as a single-row result. REQ000481, REQ000500.
 type Explain struct {
 	stmt   *PS.ExplainStmt
-	plan   Operator
+	plan   DT.Operator
 	done   bool
 	rowOut bool
 	desc   string
@@ -2046,7 +2046,7 @@ type Explain struct {
 
 func NewExplain(stmt *PS.ExplainStmt) *Explain { return &Explain{stmt: stmt} }
 
-func (e *Explain) WithPlanner(p pl.QueryPlanner) pl.Operator {
+func (e *Explain) WithPlanner(p pl.QueryPlanner) DT.Operator {
 	if e.stmt != nil && e.stmt.Inner != nil {
 		// The inner statement has already been planned by buildWriterOp or
 		// the caller. Stash the planner so the EXPLAIN text can mention
@@ -2056,21 +2056,21 @@ func (e *Explain) WithPlanner(p pl.QueryPlanner) pl.Operator {
 	return e
 }
 
-func (e *Explain) Next(ctx context.Context) (Row, error) {
+func (e *Explain) Next(ctx context.Context) (DT.Row, error) {
 	if e.done && e.rowOut {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	if !e.done {
 		e.done = true
 		e.desc = e.explain()
-		return Row{
+		return DT.Row{
 			Cols:  []string{"plan"},
 			Types: []LX.TokenType{LX.T_TEXT},
-			Data:  []Value{NewTextValue(e.desc)},
+			Data:  []DT.Value{NewTextValue(e.desc)},
 		}, nil
 	}
 	e.rowOut = true
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 func (e *Explain) explain() string {
@@ -2092,7 +2092,7 @@ func (e *Explain) explain() string {
 }
 
 func (e *Explain) Close() error                { return nil }
-func (e *Explain) WithParams(_ []any) Operator { return e }
+func (e *Explain) WithParams(_ []any) DT.Operator { return e }
 func (e *Explain) RowsAffected() int64         { return 0 }
 
 // Truncate is a writer-op stub for TRUNCATE [TABLE] name. REQ000476.
@@ -2104,9 +2104,9 @@ type Truncate struct {
 
 func NewTruncate(stmt *PS.TruncateStmt) *Truncate { return &Truncate{stmt: stmt} }
 
-func (t *Truncate) Next(ctx context.Context) (Row, error) {
+func (t *Truncate) Next(ctx context.Context) (DT.Row, error) {
 	if t.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	t.done = true
 	// Truncate = DELETE without WHERE; reuse the in-memory delete path.
@@ -2118,11 +2118,11 @@ func (t *Truncate) Next(ctx context.Context) (Row, error) {
 		DT.Tables[t.stmt.Table] = nil
 		DT.TablesMu.Unlock()
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 func (t *Truncate) Close() error                { return nil }
-func (t *Truncate) WithParams(_ []any) Operator { return t }
+func (t *Truncate) WithParams(_ []any) DT.Operator { return t }
 func (t *Truncate) RowsAffected() int64         { return t.rows }
 
 // Reindex is a writer-op stub for REINDEX. REQ000478.
@@ -2133,9 +2133,9 @@ type Reindex struct {
 
 func NewReindex(stmt *PS.ReindexStmt) *Reindex { return &Reindex{stmt: stmt} }
 
-func (r *Reindex) Next(ctx context.Context) (Row, error) {
+func (r *Reindex) Next(ctx context.Context) (DT.Row, error) {
 	if r.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	r.done = true
 
@@ -2170,14 +2170,14 @@ func (r *Reindex) Next(ctx context.Context) (Row, error) {
 		}
 		DT.StoreMu.Unlock()
 		if !found {
-			return Row{}, fmt.Errorf("ex: no such index: %s", r.stmt.Target)
+			return DT.Row{}, fmt.Errorf("ex: no such index: %s", r.stmt.Target)
 		}
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 func (r *Reindex) Close() error                { return nil }
-func (r *Reindex) WithParams(_ []any) Operator { return r }
+func (r *Reindex) WithParams(_ []any) DT.Operator { return r }
 func (r *Reindex) RowsAffected() int64         { return 0 }
 
 // DropView is a writer-op for DROP VIEW [IF EXISTS] name. REQ000494.
@@ -2188,23 +2188,23 @@ type DropView struct {
 
 func NewDropView(stmt *PS.DropViewStmt) *DropView { return &DropView{stmt: stmt} }
 
-func (d *DropView) Next(ctx context.Context) (Row, error) {
+func (d *DropView) Next(ctx context.Context) (DT.Row, error) {
 	if d.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	d.done = true
 	if d.stmt == nil {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	existed := DT.UnregisterView(d.stmt.Name)
 	if !existed && !d.stmt.IfExists {
-		return Row{}, fmt.Errorf("ex: view %s does not exist", d.stmt.Name)
+		return DT.Row{}, fmt.Errorf("ex: view %s does not exist", d.stmt.Name)
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 func (d *DropView) Close() error                { return nil }
-func (d *DropView) WithParams(_ []any) Operator { return d }
+func (d *DropView) WithParams(_ []any) DT.Operator { return d }
 func (d *DropView) RowsAffected() int64         { return 0 }
 
 // DropTrigger is a writer-op for DROP TRIGGER [IF EXISTS] name. REQ000496.
@@ -2217,29 +2217,29 @@ func NewDropTrigger(stmt *PS.DropTriggerStmt) *DropTrigger {
 	return &DropTrigger{stmt: stmt}
 }
 
-func (d *DropTrigger) Next(ctx context.Context) (Row, error) {
+func (d *DropTrigger) Next(ctx context.Context) (DT.Row, error) {
 	if d.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	d.done = true
 	if d.stmt == nil {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	existed := unregisterTrigger(d.stmt.Name)
 	if !existed && !d.stmt.IfExists {
-		return Row{}, fmt.Errorf("ex: trigger %s does not exist", d.stmt.Name)
+		return DT.Row{}, fmt.Errorf("ex: trigger %s does not exist", d.stmt.Name)
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 
 func (d *DropTrigger) Close() error                { return nil }
-func (d *DropTrigger) WithParams(_ []any) Operator { return d }
+func (d *DropTrigger) WithParams(_ []any) DT.Operator { return d }
 func (d *DropTrigger) RowsAffected() int64         { return 0 }
 
 // applyConflictUpdate locates the conflicting row by unique-key match
 // and applies the SET clauses. Used by INSERT ... ON CONFLICT DO
 // UPDATE. REQ000511.
-func applyConflictUpdate(schema *DT.StoreSchema, existing []Row, out Row, sets []PS.Pair, params []any, apply uniqueLookupWithApply) error {
+func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, sets []PS.Pair, params []any, apply uniqueLookupWithApply) error {
 	if apply == nil {
 		return nil
 	}
@@ -2260,7 +2260,7 @@ func applyConflictUpdate(schema *DT.StoreSchema, existing []Row, out Row, sets [
 		return nil
 	}
 	_ = existing
-	return apply.Mutate(rowIdx, func(target Row) Row {
+	return apply.Mutate(rowIdx, func(target DT.Row) DT.Row {
 		updated := DT.CloneRow(target)
 		for _, p := range sets {
 			ci := -1
@@ -2289,20 +2289,20 @@ func applyConflictUpdate(schema *DT.StoreSchema, existing []Row, out Row, sets [
 // conflictKey returns the column indices and values used to look up
 // a row for ON CONFLICT. If the schema has a PK, that is the conflict
 // target. Otherwise the first unique key is used. REQ000511.
-func conflictKey(schema *DT.StoreSchema, row Row) ([]int, []Value, error) {
+func conflictKey(schema *DT.StoreSchema, row DT.Row) ([]int, []DT.Value, error) {
 	if schema.Pk != "" {
 		for i, c := range schema.Cols {
 			if c == schema.Pk {
 				if i >= len(row.Data) {
 					return nil, nil, fmt.Errorf("ex: PK column %q out of range", schema.Pk)
 				}
-				return []int{i}, []Value{row.Data[i]}, nil
+				return []int{i}, []DT.Value{row.Data[i]}, nil
 			}
 		}
 	}
 	if len(schema.Unique) > 0 {
 		uk := schema.Unique[0]
-		vals := make([]Value, len(uk.Cols))
+		vals := make([]DT.Value, len(uk.Cols))
 		for i, idx := range uk.Cols {
 			if idx < len(row.Data) {
 				vals[i] = row.Data[idx]
@@ -2357,15 +2357,15 @@ func colNameForReturning(expr PS.Expr, colNames []string, idx int) string {
 
 // evalReturning evaluates RETURNING expressions for a single row.
 // REQ000984: extracted from 7 duplicated call sites in Insert/Update/Delete.
-func evalReturning(exprs []PS.Expr, row *Row, params []any, resultRows *[]Row) error {
+func evalReturning(exprs []PS.Expr, row *DT.Row, params []any, resultRows *[]DT.Row) error {
 	if len(exprs) == 0 {
 		return nil
 	}
 	expanded := expandReturningStar(exprs, row.Cols)
-	resultRow := Row{
+	resultRow := DT.Row{
 		Cols:  make([]string, len(expanded)),
 		Types: make([]LX.TokenType, len(expanded)),
-		Data:  make([]Value, len(expanded)),
+		Data:  make([]DT.Value, len(expanded)),
 	}
 	for j, expr := range expanded {
 		val, err := EV.EvalValue(expr, row, params)
@@ -2393,16 +2393,16 @@ func NewUnsupportedOp(stmt PS.Stmt, msg string) *UnsupportedOp {
 	return &UnsupportedOp{err: errors.New(msg), stmt: stmt}
 }
 
-func (u *UnsupportedOp) Next(ctx context.Context) (Row, error) {
+func (u *UnsupportedOp) Next(ctx context.Context) (DT.Row, error) {
 	if u.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	u.done = true
-	return Row{}, u.err
+	return DT.Row{}, u.err
 }
 
 func (u *UnsupportedOp) Close() error                { return nil }
-func (u *UnsupportedOp) WithParams(_ []any) Operator { return u }
+func (u *UnsupportedOp) WithParams(_ []any) DT.Operator { return u }
 func (u *UnsupportedOp) RowsAffected() int64         { return 0 }
 
 // AttachOp implements ATTACH DATABASE by recording the name→path
@@ -2419,25 +2419,25 @@ func NewAttachOp(ex *Executor, name, path string) *AttachOp {
 	return &AttachOp{ex: ex, name: name, path: path}
 }
 
-func (a *AttachOp) Next(ctx context.Context) (Row, error) {
+func (a *AttachOp) Next(ctx context.Context) (DT.Row, error) {
 	if a.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	a.done = true
 	if a.closed {
-		return Row{}, errors.New("ex: attach op is closed")
+		return DT.Row{}, errors.New("ex: attach op is closed")
 	}
 	// For v1, cross-database queries (SELECT * FROM attached.t) are
 	// rejected at the planner level by the qualified-name resolver.
 	a.ex.attachedDBs[a.name] = a.path
-	return Row{}, nil
+	return DT.Row{}, nil
 }
 
 func (a *AttachOp) Close() error {
 	a.closed = true
 	return nil
 }
-func (a *AttachOp) WithParams(_ []any) Operator { return a }
+func (a *AttachOp) WithParams(_ []any) DT.Operator { return a }
 func (a *AttachOp) RowsAffected() int64         { return 0 }
 
 // DetachOp implements DETACH DATABASE by removing the name→path
@@ -2453,23 +2453,23 @@ func NewDetachOp(ex *Executor, name string) *DetachOp {
 	return &DetachOp{ex: ex, name: name}
 }
 
-func (d *DetachOp) Next(ctx context.Context) (Row, error) {
+func (d *DetachOp) Next(ctx context.Context) (DT.Row, error) {
 	if d.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	d.done = true
 	if d.closed {
-		return Row{}, errors.New("ex: detach op is closed")
+		return DT.Row{}, errors.New("ex: detach op is closed")
 	}
 	delete(d.ex.attachedDBs, d.name)
-	return Row{}, nil
+	return DT.Row{}, nil
 }
 
 func (d *DetachOp) Close() error {
 	d.closed = true
 	return nil
 }
-func (d *DetachOp) WithParams(_ []any) Operator { return d }
+func (d *DetachOp) WithParams(_ []any) DT.Operator { return d }
 func (d *DetachOp) RowsAffected() int64         { return 0 }
 
 // ErrMultiDatabaseNotSupported is returned when a query attempts to
@@ -2479,7 +2479,7 @@ var ErrMultiDatabaseNotSupported = errors.New("ex: cross-database queries not su
 
 // fireInsertTriggers fires all AFTER INSERT triggers for the given table.
 // The new row is passed as the context for trigger execution.
-func fireInsertTriggers(table string, newRow *Row, params []any, store DT.Store) error {
+func fireInsertTriggers(table string, newRow *DT.Row, params []any, store DT.Store) error {
 	// Build a minimal executor callback for trigger SQL execution
 	exec := func(sql string) error {
 		parser := PS.NewParser(sql)
@@ -2544,7 +2544,7 @@ func refreshMatViewData(name string, sel *PS.Select, store DT.Store) error {
 }
 
 // fireUpdateTriggers fires all AFTER UPDATE triggers for the given table.
-func fireUpdateTriggers(table string, oldRow *Row, newRow *Row, params []any, store DT.Store) error {
+func fireUpdateTriggers(table string, oldRow *DT.Row, newRow *DT.Row, params []any, store DT.Store) error {
 	exec := func(sql string) error {
 		parser := PS.NewParser(sql)
 		stmt, err := parser.Parse()
@@ -2561,7 +2561,7 @@ func fireUpdateTriggers(table string, oldRow *Row, newRow *Row, params []any, st
 }
 
 // fireDeleteTriggers fires all AFTER DELETE triggers for the given table.
-func fireDeleteTriggers(table string, oldRow *Row, params []any, store DT.Store) error {
+func fireDeleteTriggers(table string, oldRow *DT.Row, params []any, store DT.Store) error {
 	exec := func(sql string) error {
 		parser := PS.NewParser(sql)
 		stmt, err := parser.Parse()

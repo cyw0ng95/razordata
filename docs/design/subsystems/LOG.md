@@ -143,19 +143,19 @@ The following requirements have been implemented and shipped; they are now part 
 
 | ID | Requirement | Iteration |
 |---|---|---|
-| REQ000001 | `Logger` wraps `log/slog` with atomic level control | iter-00 |
-| REQ000002 | Structured key-value output (JSON/text) | iter-00 |
-| REQ000003 | Log file rotation on size threshold | iter-00 |
-| REQ000004 | Hook registry with async dispatch | iter-00 |
-| REQ000005 | `TraceHook` for SQL query tracing | iter-00 |
-| REQ000006 | `MetricHook` for throughput/latency counters | iter-00 |
-| REQ000007 | `ProfileHook` for CPU/heap dump on error | iter-00 |
-| REQ000008 | Bounded channel: drop on overflow, never block log path | iter-00 |
-| REQ000009 | Log compression after rotation (gzip) | iter-16 |
-| REQ000169 | Debug-level allocation trade-off documentation (level check before allocation) | iter-17 |
-| REQ000193 | MetricHook counters wiring | iter-20 |
-| REQ000194 | Implement TraceHook for SQL query tracing (start/end with timing) | iter-00 |
-| REQ000195 | Implement ProfileHook (pprof dump on Error events) | iter-00 |
+| REQ000001 | `Logger` wraps `log/slog` with atomic level control | shipped |
+| REQ000002 | Structured key-value output (JSON/text) | shipped |
+| REQ000003 | Log file rotation on size threshold | shipped |
+| REQ000004 | Hook registry with async dispatch | shipped |
+| REQ000005 | `TraceHook` for SQL query tracing | shipped |
+| REQ000006 | `MetricHook` for throughput/latency counters | shipped |
+| REQ000007 | `ProfileHook` for CPU/heap dump on error | shipped |
+| REQ000008 | Bounded channel: drop on overflow, never block log path | shipped |
+| REQ000009 | Log compression after rotation (gzip) | shipped |
+| REQ000169 | Debug-level allocation trade-off documentation (level check before allocation) | shipped |
+| REQ000193 | MetricHook counters wiring | shipped |
+| REQ000194 | Implement TraceHook for SQL query tracing (start/end with timing) | shipped |
+| REQ000195 | Implement ProfileHook (pprof dump on Error events) | shipped |
 
 ## Open Issues
 

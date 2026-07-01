@@ -185,18 +185,18 @@ The following requirements have been implemented and shipped; they are now part 
 
 | ID | Requirement | Iteration |
 |---|---|---|
-| REQ000019 | `MADV_DONTNEED` hints for buffer eviction | iter-11 |
-| REQ000020 | Buffer pool: clock-sweep LRU eviction | iter-02 |
-| REQ000021 | Atomic `Pin`/`Unpin` with eviction gating | iter-02 |
-| REQ000022 | O(1) hash table lookup by `blockID` | iter-02 |
-| REQ000023 | Hint file for warm startup | iter-02 |
-| REQ000024 | Hint file compression (gzip) when > 1 MB | iter-02 |
-| REQ000025 | `sync.Pool` for page/iterator buffers | iter-02 |
-| REQ000161 | Clock-sweep integration details (atomic hand, refKey update, eviction gating) | iter-02 |
-| REQ000199 | Sharded buffer pool mutex (reduce hash table contention) | iter-02 |
-| REQ000302 | PMem-aware buffer pool (MADV_HUGEPAGE, PMemFile, slot tier field) | iter-27 |
-| REQ000303 | W-TinyLFU admission policy (Count-Min Sketch, 32KB footprint) | iter-27 |
-| REQ000304 | Off-heap large object pool (16 size classes, sync.Pool) | iter-27 |
+| REQ000019 | `MADV_DONTNEED` hints for buffer eviction | shipped |
+| REQ000020 | Buffer pool: clock-sweep LRU eviction | shipped |
+| REQ000021 | Atomic `Pin`/`Unpin` with eviction gating | shipped |
+| REQ000022 | O(1) hash table lookup by `blockID` | shipped |
+| REQ000023 | Hint file for warm startup | shipped |
+| REQ000024 | Hint file compression (gzip) when > 1 MB | shipped |
+| REQ000025 | `sync.Pool` for page/iterator buffers | shipped |
+| REQ000161 | Clock-sweep integration details (atomic hand, refKey update, eviction gating) | shipped |
+| REQ000199 | Sharded buffer pool mutex (reduce hash table contention) | shipped |
+| REQ000302 | PMem-aware buffer pool (MADV_HUGEPAGE, PMemFile, slot tier field) | shipped |
+| REQ000303 | W-TinyLFU admission policy (Count-Min Sketch, 32KB footprint) | shipped |
+| REQ000304 | Off-heap large object pool (16 size classes, sync.Pool) | shipped |
 
 ## Open Issues
 

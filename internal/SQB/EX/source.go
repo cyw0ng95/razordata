@@ -67,7 +67,7 @@ func triggersForTable(table string) []*PS.TriggerStmt {
 // UnregisterAll clears all registered state for test isolation.
 func UnregisterAll() {
 	DT.TablesMu.Lock()
-	DT.Tables = map[string][]Row{}
+	DT.Tables = map[string][]DT.Row{}
 	DT.Schemas = map[string][]string{}
 	DT.StoreMu.Lock()
 	DT.StoreSchemas = map[uint64]*DT.StoreSchema{}
@@ -97,15 +97,15 @@ func UnregisterAll() {
 // resolution (R16-1..2). When params is nil the slice is a
 // no-op and `?` placeholders resolve to nil (preserving the
 // pre-iter-16 behavior for callers that do not bind args).
-func buildInsertRow(schema []string, cols []string, colIdx []int, values []PS.Expr, params []any) (Row, error) {
+func buildInsertRow(schema []string, cols []string, colIdx []int, values []PS.Expr, params []any) (DT.Row, error) {
 	// REQ001029: share schema slice across all rows — it's read-only.
-	out := Row{Cols: schema}
+	out := DT.Row{Cols: schema}
 	if len(cols) == 0 {
-		out.Data = make([]Value, len(values))
+		out.Data = make([]DT.Value, len(values))
 		for i, v := range values {
 			val, err := EV.EvalValue(v, nil, params)
 			if err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 			out.Data[i] = val
 		}
@@ -114,11 +114,11 @@ func buildInsertRow(schema []string, cols []string, colIdx []int, values []PS.Ex
 	// REQ000774: pre-compute column-name-to-schema-index mapping
 	// to avoid per-row map allocation (case-insensitive match).
 	// REQ001030: colIdx is pre-computed by caller and passed in.
-	out.Data = make([]Value, len(schema))
+	out.Data = make([]DT.Value, len(schema))
 	for i := range cols {
 		val, err := EV.EvalValue(values[i], nil, params)
 		if err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		if colIdx[i] >= 0 {
 			// REQ001030: colIdx is pre-computed by caller and passed in.
@@ -131,7 +131,7 @@ func buildInsertRow(schema []string, cols []string, colIdx []int, values []PS.Ex
 // applyUpdate evaluates SET expressions against the current
 // row, forwarding params for `?` placeholder resolution
 // (R16-1..2).
-func applyUpdate(row *Row, set []PS.Pair, params []any) error {
+func applyUpdate(row *DT.Row, set []PS.Pair, params []any) error {
 	for _, p := range set {
 		val, err := EV.EvalValue(p.Val, row, params)
 		if err != nil {
@@ -155,8 +155,8 @@ func applyUpdate(row *Row, set []PS.Pair, params []any) error {
 // TriggerContext provides the runtime context for trigger execution.
 // It holds the old/new row values and the executor for running trigger body statements.
 type TriggerContext struct {
-	OldRow *Row // nil for INSERT
-	NewRow *Row // nil for DELETE
+	OldRow *DT.Row // nil for INSERT
+	NewRow *DT.Row // nil for DELETE
 	Params []any
 	Exec   func(sql string) error // callback to execute SQL (for matview refresh)
 }
@@ -165,7 +165,7 @@ type TriggerContext struct {
 // Returns an error if any trigger fails. For AFTER triggers, oldRow and newRow
 // represent the state before and after the DML operation.
 // REQ000316: AFTER triggers are used for incremental matview refresh.
-func fireTriggers(table string, time string, event string, oldRow *Row, newRow *Row, params []any, exec func(sql string) error) error {
+func fireTriggers(table string, time string, event string, oldRow *DT.Row, newRow *DT.Row, params []any, exec func(sql string) error) error {
 	triggerMu.RLock()
 	triggers := make([]*PS.TriggerStmt, 0, len(tableTriggers[table]))
 	for _, t := range tableTriggers[table] {
@@ -198,7 +198,7 @@ func fireTriggers(table string, time string, event string, oldRow *Row, newRow *
 // REQ000741: evaluates the WHEN expression before executing the body.
 func executeTrigger(trigger *PS.TriggerStmt, ctx *TriggerContext) error {
 	// Build a synthetic row for NEW/OLD references in the WHEN expression.
-	var whenRow *Row
+	var whenRow *DT.Row
 	if trigger.When != nil {
 		whenRow = buildTriggerWhenRow(ctx)
 		ok, err := evalTriggerWhen(trigger.When, whenRow, ctx.Params)
@@ -218,10 +218,10 @@ func executeTrigger(trigger *PS.TriggerStmt, ctx *TriggerContext) error {
 	return nil
 }
 
-// buildTriggerWhenRow builds a synthetic Row that allows QualifiedName
+// buildTriggerWhenRow builds a synthetic DT.Row that allows QualifiedName
 // lookups for NEW.col and OLD.col references in trigger WHEN expressions.
-func buildTriggerWhenRow(ctx *TriggerContext) *Row {
-	var data []Value
+func buildTriggerWhenRow(ctx *TriggerContext) *DT.Row {
+	var data []DT.Value
 	var cols []string
 	if ctx.NewRow != nil {
 		for i, c := range ctx.NewRow.Cols {
@@ -236,12 +236,12 @@ func buildTriggerWhenRow(ctx *TriggerContext) *Row {
 			cols = append(cols, "OLD."+c)
 		}
 	}
-	return &Row{Data: data, Cols: cols}
+	return &DT.Row{Data: data, Cols: cols}
 }
 
 // evalTriggerWhen evaluates a trigger WHEN expression against the
 // synthetic NEW/OLD row. Returns true if the condition passes.
-func evalTriggerWhen(expr PS.Expr, row *Row, params []any) (bool, error) {
+func evalTriggerWhen(expr PS.Expr, row *DT.Row, params []any) (bool, error) {
 	val, err := EV.EvalValue(expr, row, params)
 	if err != nil {
 		return false, err

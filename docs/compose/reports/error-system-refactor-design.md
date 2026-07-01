@@ -2,8 +2,8 @@
 
 > Generated: 2026-07-01
 > Scope: Cross-cutting ERROR model refactor (Code + SQLSTATE + Module + Layer + Classification).
-> Status: Design frozen, iter-36 ready to start.
-> Audience: Subsequent agents working on iter-36 through iter-40.
+> Status: Design frozen, Phase 1 ready to start.
+> Audience: Subsequent agents working on Phase 1 through Phase 5.
 
 ## Why this refactor exists
 
@@ -28,29 +28,27 @@ errors and only 1.5 structural error types (`AP.Error`, `PS.SyntaxError`). Key p
 
 This report captures the design decisions for the ERROR refactor that downstream agents
 must follow. It is the contract between the design discussion (this report) and the
-implementation iterations (iter-36 through iter-40).
+implementation phases (Phase 1 through Phase 5).
 
 **Out of scope**:
-- Changes to any file under `docs/design/` (human-only per AGENTS.md). A separate human action
-  list is in `design-doc-update-list.md`.
-- Changes to error generation in lower layers (those happen in iter-37+).
+- Changes to error generation in lower layers (those happen in Phase 2+).
 
-## Frozen decisions (15 items)
+## Frozen decisions (17 items)
 
 | # | Dimension | Decision |
 |---|---|---|
 | 0 | Overall approach | **Layered structural: B** — `AP.Error` extended; lower-layer sentinels retained as deprecation shims |
 | 1 | Error code | **Code + SQLSTATE dual field** — internal stable `Code` + external standard 5-char `SQLSTATE` |
-| 2 | Legacy sentinels | **Retain 1-2 iterations, then delete** — `// Deprecated:` comments; `errors.Is` compatibility throughout deprecation window |
-| 3 | Struct fields (iter-36) | `Code` + `SQLSTATE` + `Module` + `Layer` + `Fields` + `Cause` |
-| 4 | Struct fields (iter-38) | `Op` (operation name: SELECT / INSERT / LOCK / REPLAY / ...) |
+| 2 | Legacy sentinels | **Retain 1-2 phases, then delete** — `// Deprecated:` comments; `errors.Is` compatibility throughout deprecation window |
+| 3 | Struct fields (Phase 1) | `Code` + `SQLSTATE` + `Module` + `Layer` + `Fields` + `Cause` |
+| 4 | Struct fields (Phase 3) | `Op` (operation name: SELECT / INSERT / LOCK / REPLAY / ...) |
 | 5 | Field naming | `wrapped` retained as internal alias; new public field is **`Cause error`** pointing at the same underlying value |
 | 6 | Retry/Fatal API | **New: `Classify(err) Classification` returning a struct** (Kind / Code / SQLSTATE / Retryable / Fatal); existing `IsRetryable(err)` and `IsFatal(err)` retained for compatibility |
 | 7 | Cluster placement | **Inside `SYS/AP`** — new files `error_kind.go`, `error_code.go`, `error_classify.go`; do not create `internal/ERR/` |
 | 8 | `Fields` type | **`map[string]string`** — no boxing; structured serialization stays simple |
-| 9 | i18n | iter-36 does NOT implement; comment reserves `// TODO: Localized(locale string) string` |
+| 9 | i18n | Phase 1 does NOT implement; comment reserves `// TODO: Localized(locale string) string` |
 | 10 | Logging/Metrics | Optional `Emit func(*Error)` hook in `AP` package; default nil; caller decides |
-| 11 | `database/sql/driver.Error` | iter-36 implements `SQLState() string` method on `*Error` |
+| 11 | `database/sql/driver.Error` | Phase 1 implements `SQLState() string` method on `*Error` |
 | 12 | Stability promise | v1.0 free to renumber; v1.0+ locks Code + SQLSTATE |
 | 13 | Wrap output | `Error()` is single-line summary; `%+v` expands the cause chain |
 | 14 | Deprecation style | `// Deprecated:` comment + `go vet` reporting |
@@ -74,7 +72,7 @@ const (
 
 Use these constants (defined in `error_kind.go`) when populating `Fields["entity"]`.
 
-## `AP.Error` final shape (target after iter-36)
+## `AP.Error` final shape (target after Phase 1)
 
 ```go
 // internal/SYS/AP/error.go (revised)
@@ -124,7 +122,7 @@ type Error struct {
 //   SetEmit(fn func(*Error))                        — global setter (testable)
 ```
 
-## Code table (snapshot — locked after iter-39)
+## Code table (snapshot — locked after Phase 4)
 
 Format: `RZR-{LAYER}-{NNN}` where NNN is a 3-digit fixed number per Kind.
 
@@ -217,7 +215,7 @@ works because `ErrNotFound` is already an `*Error` and `errors.Is` compares poin
 
 ## Migration of conflicting names
 
-The two `ErrNoRows` and two `ErrDivByZero` collisions must be resolved before iter-40:
+The two `ErrNoRows` and two `ErrDivByZero` collisions must be resolved before Phase 5:
 
 | Old location | Old name | New location | New name |
 |---|---|---|---|
@@ -226,12 +224,12 @@ The two `ErrNoRows` and two `ErrDivByZero` collisions must be resolved before it
 | `SQB/EV/eval.go` | `ErrDivByZero` | `SQB/EV/eval.go` | `ErrEvalDivByZero` (rename + deprecation alias for old name) |
 | `SQB/UT/decimal.go` | `ErrDivByZero` | `SQB/UT/decimal.go` | `ErrDecimalDivByZero` |
 
-The rename in `SQB/EV` and `SQB/UT` happens in iter-37 with deprecation aliases so `errors.Is`
-keeps working for one iteration before iter-40 deletes the old names.
+The rename in `SQB/EV` and `SQB/UT` happens in Phase 2 with deprecation aliases so `errors.Is`
+keeps working for one phase before Phase 5 deletes the old names.
 
-## Iteration roadmap
+## Phase roadmap
 
-### iter-36 — ERROR Foundation
+### Phase 1 — ERROR Foundation
 
 **Scope** (additive only; no breaking changes):
 - New `internal/SYS/AP/error_kind.go` with all `Kind` constants and `Kind.String()`.
@@ -262,12 +260,12 @@ keeps working for one iteration before iter-40 deletes the old names.
 - All existing 45 `errors.Is(err, ErrXxx)` test sites unchanged.
 
 **Out of scope**:
-- Cluster exit-point wrapping (iter-37).
-- Sentinel removal (iter-40).
+- Cluster exit-point wrapping (Phase 2).
+- Sentinel removal (Phase 5).
 - NotFound entity splitting (already decided; just document constants).
-- i18n / Logging / Op field (later iterations).
+- i18n / Logging / Op field (later phases).
 
-### iter-37 — Wrap Boundary
+### Phase 2 — Wrap Boundary
 
 - Rename conflicting sentinels: `EV.ErrDivByZero` → `EV.ErrEvalDivByZero`; `UT.ErrDivByZero` → `UT.ErrDecimalDivByZero`. Both old names kept as deprecated aliases.
 - New `internal/SYS/AP/error_wrap.go`:
@@ -276,7 +274,7 @@ keeps working for one iteration before iter-40 deletes the old names.
 - Install wrap layer at cluster exit points: `EX/Exec`, `EX/Query`, `SE/Exec`, `SE/Query`, `ST/Query`, `DS/Query`.
 - All errors that cross subsystem boundary must come out as `*AP.Error`.
 
-### iter-38 — Structural Error Types
+### Phase 3 — Structural Error Types
 
 - Add `Op` field to `AP.Error` struct.
 - Add `Op` constants: `OpSelect`, `OpInsert`, `OpUpdate`, `OpDelete`, `OpCreate`, `OpDrop`, `OpAlter`, `OpBegin`, `OpCommit`, `OpRollback`, `OpSavepoint`, `OpReplay`, `OpFlush`, `OpCompact`, `OpCheckpoint`, `OpBackup`, `OpRestore`.
@@ -287,14 +285,13 @@ keeps working for one iteration before iter-40 deletes the old names.
   - New `TX.VL.DeadlockError{TxID, Holders, Op}`.
 - Each structural error implements a `ToAPError() *AP.Error` method.
 
-### iter-39 — Code + SQLSTATE Snapshot Lock
+### Phase 4 — Code + SQLSTATE Snapshot Lock
 
-- Lock `Code` and `SQLSTATE` constants with `// stable since v0.9.0` (current version 0.8.1; bumped at iter-39 start).
+- Lock `Code` and `SQLSTATE` constants with `// stable since v0.9.0` (current version 0.8.1; bumped at Phase 4 start).
 - Add wire format: `AP.Error.Error()` stable string format with byte-exact snapshot tests.
 - Add JSON marshaling for `AP.Error`; snapshot tests for marshaled output.
-- Document wire format compatibility promise in design doc (human edits).
 
-### iter-40 — Sentinel Removal
+### Phase 5 — Sentinel Removal
 
 - Remove deprecation aliases for old sentinels in `SYS/AP/ap.go`.
 - Remove old names: `EV.ErrDivByZero`, `UT.ErrDivByZero`.
@@ -304,7 +301,7 @@ keeps working for one iteration before iter-40 deletes the old names.
 
 ## Files to create or modify
 
-### iter-36
+### Phase 1
 
 - **NEW**: `internal/SYS/AP/error_kind.go`
 - **NEW**: `internal/SYS/AP/error_code.go`
@@ -313,7 +310,7 @@ keeps working for one iteration before iter-40 deletes the old names.
 - **MODIFY**: `internal/SYS/AP/ap.go` (only sentinel declarations; add `// Deprecated:`)
 - **MODIFY**: `internal/SYS/AP/error_test.go` (extend existing tests)
 
-### iter-37
+### Phase 2
 
 - **NEW**: `internal/SYS/AP/error_wrap.go`
 - **MODIFY**: `internal/SQB/EV/eval.go` (rename `ErrDivByZero`)
@@ -323,7 +320,7 @@ keeps working for one iteration before iter-40 deletes the old names.
 - **MODIFY**: `internal/SYS/ST/st.go` (extend wrap calls)
 - **MODIFY**: `internal/SYS/DS/` (driver wrap if needed)
 
-### iter-38
+### Phase 3
 
 - **MODIFY**: `internal/SYS/AP/error.go` (add `Op` field, `Op` constants)
 - **NEW**: `internal/SQB/EX/constraint_error.go`
@@ -331,13 +328,13 @@ keeps working for one iteration before iter-40 deletes the old names.
 - **NEW**: `internal/TXN/VL/deadlock_error.go`
 - **MODIFY**: `internal/SQF/PS/error.go` (align `SyntaxError` fields)
 
-### iter-39
+### Phase 4
 
 - **MODIFY**: `internal/SYS/AP/error_code.go` (lock constants with `// stable since`)
 - **NEW**: `internal/SYS/AP/error_wire_test.go` (snapshot tests)
 - **NEW**: `internal/SYS/AP/error_json_test.go`
 
-### iter-40
+### Phase 5
 
 - **MODIFY**: `internal/SYS/AP/ap.go` (remove 14 deprecated sentinels)
 - **MODIFY**: `internal/SQB/EV/eval.go` (remove `ErrDivByZero` alias)
@@ -346,10 +343,10 @@ keeps working for one iteration before iter-40 deletes the old names.
 
 ## Test contracts
 
-### Existing tests that must NOT break in iter-36
+### Existing tests that must NOT break in Phase 1
 
 ```go
-// These must keep working in iter-36:
+// These must keep working in Phase 1:
 errors.Is(err, AP.ErrNotFound)
 errors.Is(err, AP.ErrTypeMismatch)
 errors.Is(err, AP.ErrClosed)
@@ -360,9 +357,9 @@ AP.IsFatal(err)
 ```
 
 All 45 `errors.Is(err, ErrXxx)` sites and the 33 sentinel references in tests stay untouched
-through iter-36.
+through Phase 1.
 
-### New tests for iter-36
+### New tests for Phase 1
 
 ```go
 // Snapshot per Kind
@@ -401,26 +398,16 @@ func TestEmit_Hook(t *testing.T) { ... }
 
 ## Cross-references
 
-- `docs/design/subsystems/SYS.md` line 130-213 — original design intent for `AP.Error` and `Kind` (human-owned; will be updated by human after iter-39 to reflect actual final shape).
+- `docs/design/subsystems/SYS.md` line 130-213 — original design intent for `AP.Error` and `Kind`.
 - `docs/design/ARCH.md` — subsystem map and dependency rules.
-- `AGENTS.md` lines starting with "REQUIREMENTS.md Maintenance" and "Iteration Lifecycle" — when iter-36 through iter-40 complete, REQ rows are deleted from `TBD` table.
-- `docs/compose/reports/dependency-structure-principles.md` — sibling report on dependency structure.
-
-## Pending human actions
-
-The following changes to `docs/design/` are deferred to the human per Design Protection:
-
-1. `docs/design/subsystems/SYS.md` §"Error Types" — update to match final `AP.Error` shape after iter-39.
-2. `docs/design/subsystems/SYS.md` §"Cross-layer error contract" — update with new `Module` / `Layer` / `Code` / `SQLSTATE` fields.
-3. `docs/design/ARCH.md` — no change required (error system is internal to SYS).
-4. Add REQ rows for iter-36 through iter-40 to `docs/development/REQUIREMENTS.md` (per AGENTS.md Bug-To-Requirement Rule when bugs surface).
+- `AGENTS.md` lines starting with "REQUIREMENTS.md Maintenance" — when phases complete, REQ rows are deleted from `TBD` table.
 
 ## Open issues (non-blocking)
 
 These were considered but not frozen:
 
-- **[OPEN-1]**: Should `Op` field be in `Fields["op"]` map or a top-level struct field? — Decision deferred to iter-38 implementation; recommend top-level for ergonomic access.
+- **[OPEN-1]**: Should `Op` field be in `Fields["op"]` map or a top-level struct field? — Decision deferred to Phase 3 implementation; recommend top-level for ergonomic access.
 - **[OPEN-2]**: Should `Classification` be a method `(e *Error) Classify() Classification` in addition to package-level `Classify(err) Classification`? — Decision deferred; both can coexist.
 - **[OPEN-3]**: JSON tag strategy on `AP.Error` — should `Module` be lowercase `"module"`? — Recommend snake_case for stable external contract; lowercase for internal-only fields.
 
-These do not block iter-36.
+These do not block Phase 1.

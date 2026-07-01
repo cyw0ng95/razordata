@@ -194,7 +194,7 @@ func resolveAliases(expr PS.Expr, aliases map[string]PS.Expr) PS.Expr {
 }
 
 type plan struct {
-	root    Operator
+	root    DT.Operator
 	cost    float64
 	memoKey string
 }
@@ -202,7 +202,7 @@ type plan struct {
 // joinPlan captures a partial or complete join plan for the N3
 // nearest-neighbor search. Used internally by n3JoinOrdering.
 type joinPlan struct {
-	root   Operator
+	root   DT.Operator
 	cost   float64
 	tables map[string]bool
 	order  []string
@@ -410,7 +410,7 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	}
 	p.mu.Unlock()
 
-	var root Operator
+	var root DT.Operator
 
 	switch s := rewritten.(type) {
 	case *PS.Select:
@@ -484,7 +484,7 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 
 // ExecuteSubquery plans a subquery select statement and collects all
 // results in a single slice. Implements pl.QueryPlanner.
-func (p *Planner) ExecuteSubquery(ctx context.Context, stmt PS.Stmt, outer *Row, params []any) ([]Row, error) {
+func (p *Planner) ExecuteSubquery(ctx context.Context, stmt PS.Stmt, outer *DT.Row, params []any) ([]DT.Row, error) {
 	sel, ok := stmt.(*PS.Select)
 	if !ok {
 		return nil, EV.ErrSubquery
@@ -548,7 +548,7 @@ func (p *Planner) SetCostParams(cp CostParams) *Planner {
 // budget. REQ001104. Returns the estimated bytes used and the budget.
 // Currently a coarse heuristic: sort + hash-build operations are
 // the dominant memory consumers.
-func (p *Planner) estimateMemoryPressure(op Operator) (estimated int64, budget int64) {
+func (p *Planner) estimateMemoryPressure(op DT.Operator) (estimated int64, budget int64) {
 	budget = p.maxMemoryPerQuery
 	if budget <= 0 {
 		budget = 64 << 20 // 64 MB default
@@ -584,8 +584,8 @@ func (p *Planner) estimateMemoryPressure(op Operator) (estimated int64, budget i
 	// planner's operators already expose (LeftChild/RightChild and
 	// Child) — this avoids referencing OP types directly.
 	if cp, ok := op.(interface {
-		LeftChild() Operator
-		RightChild() Operator
+		LeftChild() DT.Operator
+		RightChild() DT.Operator
 	}); ok {
 		if l := cp.LeftChild(); l != nil {
 			subE, _ := p.estimateMemoryPressure(l)
@@ -595,7 +595,7 @@ func (p *Planner) estimateMemoryPressure(op Operator) (estimated int64, budget i
 			subE, _ := p.estimateMemoryPressure(r)
 			estimated += subE
 		}
-	} else if fl, ok := op.(interface{ Child() Operator }); ok {
+	} else if fl, ok := op.(interface{ Child() DT.Operator }); ok {
 		if c := fl.Child(); c != nil {
 			subE, _ := p.estimateMemoryPressure(c)
 			estimated += subE
@@ -607,7 +607,7 @@ func (p *Planner) estimateMemoryPressure(op Operator) (estimated int64, budget i
 // estimateRowCountFromOp walks an op tree to find the underlying
 // table reference and returns the planner's row-count estimate for
 // that table. Returns 0 when no reference is found.
-func (p *Planner) estimateRowCountFromOp(op Operator) float64 {
+func (p *Planner) estimateRowCountFromOp(op DT.Operator) float64 {
 	if op == nil {
 		return 0
 	}
@@ -618,12 +618,12 @@ func (p *Planner) estimateRowCountFromOp(op Operator) float64 {
 	if aop, ok := op.(*AD.AdaptiveOp); ok {
 		return p.estimateRowCountFromOp(aop.Inner)
 	}
-	if fl, ok := op.(interface{ Child() Operator }); ok {
+	if fl, ok := op.(interface{ Child() DT.Operator }); ok {
 		return p.estimateRowCountFromOp(fl.Child())
 	}
 	if cp, ok := op.(interface {
-		LeftChild() Operator
-		RightChild() Operator
+		LeftChild() DT.Operator
+		RightChild() DT.Operator
 	}); ok {
 		if r := p.estimateRowCountFromOp(cp.LeftChild()); r > 0 {
 			return r
@@ -633,7 +633,7 @@ func (p *Planner) estimateRowCountFromOp(op Operator) float64 {
 	return 0
 }
 
-func (p *Planner) estimateCost(op Operator) float64 {
+func (p *Planner) estimateCost(op DT.Operator) float64 {
 	if op == nil {
 		return 0
 	}
@@ -652,7 +652,7 @@ func (p *Planner) estimateCost(op Operator) float64 {
 // estimateCostLegacy is the original per-operator heuristic. Kept
 // as the default to avoid breaking existing tests that pin exact
 // numeric cost values.
-func (p *Planner) estimateCostLegacy(op Operator) float64 {
+func (p *Planner) estimateCostLegacy(op DT.Operator) float64 {
 	if op == nil {
 		return 0
 	}
@@ -751,7 +751,7 @@ func (p *Planner) estimateCostLegacy(op Operator) float64 {
 // driven by the supplied CostParams. REQ001104: row counts are
 // estimated via estimateRowCount; CPU/IO costs use the supplied
 // coefficients; memory pressure is exposed via estimateMemoryPressure.
-func (p *Planner) estimateCostWithParams(op Operator, cp CostParams) float64 {
+func (p *Planner) estimateCostWithParams(op DT.Operator, cp CostParams) float64 {
 	if op == nil {
 		return 0
 	}
@@ -1340,7 +1340,7 @@ func isColumnLiteralPair(a, b PS.Expr) bool {
 // tryApplyPointLookup checks if pred is a col IN (literal, ...) or
 // col = literal expression and sets up point-lookup on the scan.
 // REQ000820: only applies to in-memory OP.SeqScan operators.
-func tryApplyPointLookup(scan Operator, pred PS.Expr) {
+func tryApplyPointLookup(scan DT.Operator, pred PS.Expr) {
 	ss, ok := scan.(*OP.SeqScan)
 	if !ok || ss.Store() != nil {
 		return // only for in-memory tables
@@ -1879,7 +1879,7 @@ func extractViewAliases(cols []PS.Expr) map[string]bool {
 // sharedTypes/colIndex so the NLJ execution path skips the
 // per-operator lazy schema build. Returns (nil, nil, nil) when
 // the schema cannot be statically determined.
-func deriveJoinSchema(left, right Operator) ([]string, []LX.TokenType, map[string]int) {
+func deriveJoinSchema(left, right DT.Operator) ([]string, []LX.TokenType, map[string]int) {
 	if left == nil || right == nil {
 		return nil, nil, nil
 	}
@@ -1915,7 +1915,7 @@ func deriveJoinSchema(left, right Operator) ([]string, []LX.TokenType, map[strin
 // colsOf extracts the column names from a known-shape operator.
 // Returns nil if the schema is unknown (e.g. for valuesOp or
 // computed projections).
-func colsOf(op Operator) []string {
+func colsOf(op DT.Operator) []string {
 	switch o := op.(type) {
 	case *OP.SeqScan:
 		if o.Schema() != nil {
@@ -1944,7 +1944,7 @@ func colsOf(op Operator) []string {
 }
 
 // typesOf extracts the column types similarly to colsOf.
-func typesOf(op Operator) []LX.TokenType {
+func typesOf(op DT.Operator) []LX.TokenType {
 	switch o := op.(type) {
 	case *OP.SeqScan:
 		if o.Schema() != nil {
@@ -1972,7 +1972,7 @@ func typesOf(op Operator) []LX.TokenType {
 	return nil
 }
 
-func (p *Planner) planSelect(s *PS.Select) Operator {
+func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	// REQ000241: view resolution — expand view to underlying SELECT
 	if viewSel := DT.LookupView(s.From); viewSel != nil {
 		return p.resolveView(s, viewSel)
@@ -2015,7 +2015,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	// and simplify tautologies/contradictions.
 	whereExpr = p.resolveAliasesAndFold(whereExpr)
 
-	var scan Operator
+	var scan DT.Operator
 	if p.store != nil {
 		scan, whereExpr = p.planSelectScan(s, whereExpr)
 	}
@@ -2059,7 +2059,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 		}
 	}
 
-	var current Operator = scan
+	var current DT.Operator = scan
 
 	// Set table alias on the scan operator so correlated subquery
 	// eval can resolve qualified names like x.col. Must happen
@@ -2276,7 +2276,7 @@ func mergeViewIntoOuter(s *PS.Select, viewSel *PS.Select) *PS.Select {
 // REQ001078: when the view is a simple single-table SELECT (no agg,
 // DISTINCT, etc.), merge it directly into the outer SELECT. Otherwise
 // fall back to wrapping the view as a subquery.
-func (p *Planner) resolveView(s *PS.Select, viewSel *PS.Select) Operator {
+func (p *Planner) resolveView(s *PS.Select, viewSel *PS.Select) DT.Operator {
 	// REQ001078: view merging. When the view is mergeable, rewrite
 	// the outer SELECT against the view's underlying table. This
 	// eliminates the view indirection and lets predicate pushdown,
@@ -2335,10 +2335,10 @@ func (p *Planner) resolveView(s *PS.Select, viewSel *PS.Select) Operator {
 
 // planSelectNoFrom handles SELECT without FROM clause (e.g. `SELECT 1+1`).
 // REQ000981: extracted from planSelect.
-func (p *Planner) planSelectNoFrom(s *PS.Select) Operator {
+func (p *Planner) planSelectNoFrom(s *PS.Select) DT.Operator {
 	if hasAnyAggregate(s.Cols) {
 		dummy := OP.NewValuesOp([]PS.Expr{&PS.NumberLiteral{Val: int64(1)}})
-		var op Operator = dummy
+		var op DT.Operator = dummy
 		if s.Where != nil {
 			op = OP.NewFilter(op, s.Where)
 		}
@@ -2348,7 +2348,7 @@ func (p *Planner) planSelectNoFrom(s *PS.Select) Operator {
 		}
 		return agg
 	}
-	op := Operator(OP.NewValuesOp(s.Cols))
+	op := DT.Operator(OP.NewValuesOp(s.Cols))
 	if s.Where != nil {
 		op = OP.NewFilter(op, s.Where)
 	}
@@ -2357,7 +2357,7 @@ func (p *Planner) planSelectNoFrom(s *PS.Select) Operator {
 
 // planSelectSubquery handles subquery in FROM clause (derived table).
 // REQ000981: extracted from planSelect.
-func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
+func (p *Planner) planSelectSubquery(s *PS.Select) DT.Operator {
 	subSel, ok := s.SubqueryFrom.(*PS.Select)
 	if !ok {
 		return nil
@@ -2382,7 +2382,7 @@ func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
 		s.Where = pushPredicateIntoSubquery(s.Where, subSel)
 	}
 	subPlan := p.planSelect(subSel)
-	var current Operator = subPlan
+	var current DT.Operator = subPlan
 	if s.Where != nil {
 		current = OP.NewFilter(current, s.Where)
 	}
@@ -2422,8 +2422,8 @@ func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
 
 // planSelectSqliteMaster handles sqlite_master virtual table.
 // REQ000981: extracted from planSelect.
-func (p *Planner) planSelectSqliteMaster(s *PS.Select) Operator {
-	var scan Operator = OP.NewSqliteMaster()
+func (p *Planner) planSelectSqliteMaster(s *PS.Select) DT.Operator {
+	var scan DT.Operator = OP.NewSqliteMaster()
 	if s.Where != nil {
 		scan = OP.NewFilter(scan, s.Where)
 	}
@@ -2466,8 +2466,8 @@ func (p *Planner) resolveAliasesAndFold(whereExpr PS.Expr) PS.Expr {
 // planSelectScan creates the scan operator (OP.IndexScan or OP.SeqScan) for
 // the FROM table, trying index seeks first.
 // REQ000981: extracted from planSelect.
-func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (Operator, PS.Expr) {
-	var scan Operator
+func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, PS.Expr) {
+	var scan DT.Operator
 	remaining := whereExpr
 	if p.store == nil {
 		return nil, remaining
@@ -2599,7 +2599,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (Operator, PS.
 // column whose index is registered. Each child becomes an
 // OP.IndexScan; the result bitmap is fetched once per row via the
 // heap.
-func (p *Planner) tryBitmapHeapScan(s *PS.Select, whereExpr PS.Expr) Operator {
+func (p *Planner) tryBitmapHeapScan(s *PS.Select, whereExpr PS.Expr) DT.Operator {
 	if s == nil || whereExpr == nil || p.store == nil {
 		return nil
 	}
@@ -2610,7 +2610,7 @@ func (p *Planner) tryBitmapHeapScan(s *PS.Select, whereExpr PS.Expr) Operator {
 	if len(cols) != len(lits) {
 		return nil
 	}
-	children := make([]Operator, 0, len(cols))
+	children := make([]DT.Operator, 0, len(cols))
 	for i, col := range cols {
 		idx, found := p.selectIndex(s.From, col)
 		if !found || !hasWriterIndex(s.From, idx) {
@@ -2702,7 +2702,7 @@ func flattenOr(e PS.Expr) []PS.Expr {
 // work via OP.IndexScan — wrapping them in OP.IndexOnlyScan breaks
 // correlated-subquery machinery that inspects the inner scan
 // type. Only concrete column projections trigger the path.
-func (p *Planner) tryIndexOnlyScan(s *PS.Select, whereExpr PS.Expr, scan Operator) Operator {
+func (p *Planner) tryIndexOnlyScan(s *PS.Select, whereExpr PS.Expr, scan DT.Operator) DT.Operator {
 	if s == nil || scan == nil {
 		return nil
 	}
@@ -2778,20 +2778,20 @@ func (p *Planner) indexColumns(table, idx string) ([]string, bool) {
 	}
 	return append([]string(nil), cols...), true
 }
-func propagateLimitToNLJ(op Operator, n int64) {
+func propagateLimitToNLJ(op DT.Operator, n int64) {
 	switch t := op.(type) {
 	case *OP.NestedLoopJoin:
 		t.SetLimit(n)
 	case *AD.AdaptiveOp:
 		propagateLimitToNLJ(t.Inner, n)
 	}
-	type childer interface{ Child() Operator }
+	type childer interface{ Child() DT.Operator }
 	if c, ok := op.(childer); ok {
 		propagateLimitToNLJ(c.Child(), n)
 	}
 	type leftRighter interface {
-		LeftChild() Operator
-		RightChild() Operator
+		LeftChild() DT.Operator
+		RightChild() DT.Operator
 	}
 	if lr, ok := op.(leftRighter); ok {
 		propagateLimitToNLJ(lr.LeftChild(), n)
@@ -3012,7 +3012,7 @@ func isFalse(e PS.Expr) bool {
 }
 
 // valueToLiteral converts a Value back to a literal AST node.
-func valueToLiteral(v Value) PS.Expr {
+func valueToLiteral(v DT.Value) PS.Expr {
 	switch v.Kind {
 	case KindNull:
 		return &PS.NullLiteral{}
@@ -3187,7 +3187,7 @@ func isStarExpr(cols []PS.Expr) bool {
 // REQ001043.
 const ParallelThreshold = 10000
 
-func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
+func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) DT.Operator {
 	// REQ001043: emit ParallelSeqScan when pool is available and
 	// the in-memory table has enough rows.
 	if p != nil && p.pool != nil {
@@ -3306,7 +3306,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 // If no index exists on the WHERE column, the function
 // returns the original scan unchanged. If the cost of the
 // index scan is not lower, the original scan is returned.
-func (p *Planner) pickCheaperScan(table string, where PS.Expr, current Operator) (Operator, bool) {
+func (p *Planner) pickCheaperScan(table string, where PS.Expr, current DT.Operator) (DT.Operator, bool) {
 	// REQ001106/107: don't downgrade a bitmap/index-only scan
 	// back to a plain OP.IndexScan via the cost model — the new
 	// operators are explicit planner choices, not cost fallback.
@@ -3338,7 +3338,7 @@ func (p *Planner) pickCheaperScan(table string, where PS.Expr, current Operator)
 		return current, false
 	}
 	// Build a candidate OP.IndexScan.
-	var indexScan Operator
+	var indexScan DT.Operator
 	if p.store != nil {
 		if isc, err := OP.NewIndexScanWithStore(p.store, table, idx); err == nil {
 			indexScan = isc
@@ -3636,7 +3636,7 @@ func limitInt64(e PS.Expr) (int64, bool) {
 	return 0, false
 }
 
-func (p *Planner) planInsert(s *PS.Insert) Operator {
+func (p *Planner) planInsert(s *PS.Insert) DT.Operator {
 	// REQ000707: INSERT INTO t SELECT ...
 	if s.Select != nil {
 		selPlan, selErr := p.Plan(s.Select)
@@ -3672,7 +3672,7 @@ func (p *Planner) planInsert(s *PS.Insert) Operator {
 	return op
 }
 
-func (p *Planner) planUpdate(s *PS.Update) Operator {
+func (p *Planner) planUpdate(s *PS.Update) DT.Operator {
 	if DT.LookupView(s.Table) != nil {
 		return NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
 	}
@@ -3691,7 +3691,7 @@ func (p *Planner) planUpdate(s *PS.Update) Operator {
 	return NewUpdate(s.Table, s.Set, s.Where, filter, s.Returning)
 }
 
-func (p *Planner) planDelete(s *PS.Delete) Operator {
+func (p *Planner) planDelete(s *PS.Delete) DT.Operator {
 	if DT.LookupView(s.Table) != nil {
 		return NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
 	}
@@ -3710,7 +3710,7 @@ func (p *Planner) planDelete(s *PS.Delete) Operator {
 	return NewDelete(s.Table, s.Where, filter, s.Returning)
 }
 
-func (p *Planner) planCreateTable(s *PS.CreateTable) Operator {
+func (p *Planner) planCreateTable(s *PS.CreateTable) DT.Operator {
 	if s.Select != nil {
 		// CREATE TABLE AS SELECT: plan the inner SELECT and
 		// wrap both in a CreateTable operator. REQ000520.
@@ -3722,11 +3722,11 @@ func (p *Planner) planCreateTable(s *PS.CreateTable) Operator {
 	return NewCreateTable(s)
 }
 
-func (p *Planner) planDropTable(s *PS.DropTable) Operator {
+func (p *Planner) planDropTable(s *PS.DropTable) DT.Operator {
 	return NewDropTable(s)
 }
 
-func (p *Planner) planExplain(s *PS.ExplainStmt) Operator {
+func (p *Planner) planExplain(s *PS.ExplainStmt) DT.Operator {
 	// Plan the inner statement
 	innerPlan, err := p.Plan(s.Inner)
 	if err != nil || innerPlan == nil || innerPlan.Root == nil {
@@ -3746,7 +3746,7 @@ func (p *Planner) planExplain(s *PS.ExplainStmt) Operator {
 	}
 }
 
-func (p *Planner) planWith(w *PS.WithStmt) Operator {
+func (p *Planner) planWith(w *PS.WithStmt) DT.Operator {
 	for _, cte := range w.CTEs {
 		if w.Recursive {
 			if comp, ok := cte.Query.(*PS.CompoundStmt); ok {
@@ -3762,7 +3762,7 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 			continue
 		}
 
-		var rows []Row
+		var rows []DT.Row
 		for {
 			row, err := ctePlan.Root.Next(context.TODO())
 			if err != nil {
@@ -3898,8 +3898,8 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 }
 
 // drainAllRows pulls all rows from op into a slice.
-func drainAllRows(ctx context.Context, op Operator) []Row {
-	var out []Row
+func drainAllRows(ctx context.Context, op DT.Operator) []DT.Row {
+	var out []DT.Row
 	for {
 		row, err := op.Next(ctx)
 		if err != nil {
@@ -3912,9 +3912,9 @@ func drainAllRows(ctx context.Context, op Operator) []Row {
 	}
 }
 
-// cloneRows creates a deep copy of each Row in the slice.
-func cloneRows(rows []Row) []Row {
-	out := make([]Row, len(rows))
+// cloneRows creates a deep copy of each DT.Row in the slice.
+func cloneRows(rows []DT.Row) []DT.Row {
+	out := make([]DT.Row, len(rows))
 	for i, r := range rows {
 		out[i] = DT.CloneRow(r)
 	}
@@ -3924,12 +3924,12 @@ func cloneRows(rows []Row) []Row {
 // dedupRecCTENewRows filters newRows to only those whose distinct key
 // is not already present in allRows. Used for UNION (not UNION ALL)
 // in recursive CTE evaluation.
-func dedupRecCTENewRows(newRows, allRows []Row) []Row {
+func dedupRecCTENewRows(newRows, allRows []DT.Row) []DT.Row {
 	seen := make(map[string]bool, len(allRows))
 	for _, r := range allRows {
 		seen[OP.DistinctKey(r)] = true
 	}
-	out := make([]Row, 0, len(newRows))
+	out := make([]DT.Row, 0, len(newRows))
 	for _, r := range newRows {
 		k := OP.DistinctKey(r)
 		if !seen[k] {
@@ -5140,17 +5140,17 @@ func hasWriterIndex(table, indexName string) bool {
 // does not backfill existing rows into the index keyspace, so
 // the planner cannot rely on the index for query plans
 // triggered by CREATE INDEX.
-func (p *Planner) planCreateIndex(s *PS.CreateIndexStmt) Operator {
+func (p *Planner) planCreateIndex(s *PS.CreateIndexStmt) DT.Operator {
 	return NewCreateIndex(s)
 }
 
 // planDropIndex removes a secondary index. iter-22.
-func (p *Planner) planDropIndex(s *PS.DropIndexStmt) Operator {
+func (p *Planner) planDropIndex(s *PS.DropIndexStmt) DT.Operator {
 	return NewDropIndex(s)
 }
 
 // planPragma handles PRAGMA statements. REQ000261.
-func (p *Planner) planPragma(s *PS.PragmaStmt) Operator {
+func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 	switch s.Name {
 	case "integrity_check":
 		return UT.NewIntegrityCheckWithStore(p.store)
@@ -5167,7 +5167,7 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) Operator {
 }
 
 // planAnalyze collects table statistics. REQ000258.
-func (p *Planner) planAnalyze(s *PS.AnalyzeStmt) Operator {
+func (p *Planner) planAnalyze(s *PS.AnalyzeStmt) DT.Operator {
 	if p.store != nil {
 		op, err := UT.NewAnalyzeWithStore(p.store, s)
 		if err == nil {
@@ -5178,13 +5178,13 @@ func (p *Planner) planAnalyze(s *PS.AnalyzeStmt) Operator {
 }
 
 // planVacuum reclaims storage. REQ000257.
-func (p *Planner) planVacuum(s *PS.VacuumStmt) Operator {
+func (p *Planner) planVacuum(s *PS.VacuumStmt) DT.Operator {
 	return UT.NewVacuumWithStore(s, p.store)
 }
 
 // planCompound dispatches a UNION/UNION ALL/INTERSECT/EXCEPT
 // statement. REQ000383.
-func (p *Planner) planCompound(s *PS.CompoundStmt) Operator {
+func (p *Planner) planCompound(s *PS.CompoundStmt) DT.Operator {
 	left := p.planSubStmt(s.Left)
 	right := p.planSubStmt(s.Right)
 	cop := OP.NewCompoundOp(left, right, s.Op, s.OrderBy, s.Limit, s.Offset)
@@ -5196,7 +5196,7 @@ func (p *Planner) planCompound(s *PS.CompoundStmt) Operator {
 
 // planSubStmt is a sub-dispatcher for the inner Stmt of a
 // CompoundStmt. REQ000383.
-func (p *Planner) planSubStmt(stmt PS.Stmt) Operator {
+func (p *Planner) planSubStmt(stmt PS.Stmt) DT.Operator {
 	switch s := stmt.(type) {
 	case *PS.Select:
 		return p.planSelect(s)
@@ -5306,7 +5306,7 @@ func pushPredicateIntoSubquery(outerWhere PS.Expr, subSel *PS.Select) PS.Expr {
 //   - outer SELECT has no JOINs (single-table flattening only)
 //   - outer Cols and WHERE do not reference the subquery alias
 //     (e.g. `sub.x`) — those need alias resolution before flattening
-func (p *Planner) tryFlattenSubqueryFrom(s *PS.Select, subSel *PS.Select) Operator {
+func (p *Planner) tryFlattenSubqueryFrom(s *PS.Select, subSel *PS.Select) DT.Operator {
 	if !isSubqueryFlattenable(subSel) {
 		return nil
 	}
@@ -5565,7 +5565,7 @@ func collectIdentsFromExpr(e PS.Expr) []string {
 // recognized: OP.Sort with matching keys. OP.IndexScan recognition is
 // deferred to a future iteration because the planner doesn't expose
 // the indexed column name through the operator interface.
-func operatorProducesSorted(op Operator, keys []string) bool {
+func operatorProducesSorted(op DT.Operator, keys []string) bool {
 	if op == nil || len(keys) == 0 {
 		return false
 	}
@@ -5597,7 +5597,7 @@ func operatorProducesSorted(op Operator, keys []string) bool {
 // tryMergeJoin returns a MergeJoin operator if BOTH the left and right
 // sides are already sorted on the equi-join keys; otherwise nil.
 // REQ001102. Left/Right/Full outer joins are supported via WithKind.
-func (p *Planner) tryMergeJoin(left, right Operator, leftTbl, rightTbl string, leftKeys, rightKeys []string, kind OP.JoinKind) Operator {
+func (p *Planner) tryMergeJoin(left, right DT.Operator, leftTbl, rightTbl string, leftKeys, rightKeys []string, kind OP.JoinKind) DT.Operator {
 	if len(leftKeys) == 0 || len(rightKeys) == 0 {
 		return nil
 	}
@@ -5618,7 +5618,7 @@ func (p *Planner) tryMergeJoin(left, right Operator, leftTbl, rightTbl string, l
 // planAggregation handles aggregate selection (HashAggregate vs streaming
 // Aggregate) and HAVING clause application.
 // REQ000981: extracted from planSelect.
-func (p *Planner) planAggregation(s *PS.Select, current Operator) Operator {
+func (p *Planner) planAggregation(s *PS.Select, current DT.Operator) DT.Operator {
 	needsAggregate := hasAnyAggregate(s.Cols) || len(s.GroupBy) > 0
 	groupCols := s.GroupBy
 	var aggExprs []PS.Expr
@@ -5656,7 +5656,7 @@ func (p *Planner) planAggregation(s *PS.Select, current Operator) Operator {
 // planOrdering handles ORDER BY resolution, OP.Sort operator creation,
 // window functions, projection, and DISTINCT.
 // REQ000981: extracted from planSelect.
-func (p *Planner) planOrdering(s *PS.Select, current Operator) Operator {
+func (p *Planner) planOrdering(s *PS.Select, current DT.Operator) DT.Operator {
 	if len(s.OrderBy) > 0 {
 		selectExprs := make([]PS.Expr, 0, len(s.Cols))
 		for _, col := range s.Cols {
@@ -5710,7 +5710,7 @@ func (p *Planner) planOrdering(s *PS.Select, current Operator) Operator {
 
 // planLimitOffset handles LIMIT, OFFSET, and FETCH FIRST wrapping.
 // REQ000981: extracted from planSelect.
-func (p *Planner) planLimitOffset(s *PS.Select, current Operator) Operator {
+func (p *Planner) planLimitOffset(s *PS.Select, current DT.Operator) DT.Operator {
 	if s.Limit == nil && s.FetchFirst != nil {
 		if s.FetchFirst.Count != nil {
 			s.Limit = s.FetchFirst.Count
@@ -5754,7 +5754,7 @@ func (p *Planner) planLimitOffset(s *PS.Select, current Operator) Operator {
 
 // planSelectJoins handles join planning: N3 join ordering, bushy join tree
 // construction, and join operator creation. REQ000981: extracted from planSelect.
-func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPredicates map[string][]PS.Expr, crossTableConjuncts, crossTablePredicates []PS.Expr, extractedPreds map[int]bool) Operator {
+func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushedPredicates map[string][]PS.Expr, crossTableConjuncts, crossTablePredicates []PS.Expr, extractedPreds map[int]bool) DT.Operator {
 	joinInfos := make([]joinTableInfo, 0, len(s.Joins))
 	joinClauses := make([]PS.JoinClause, 0, len(s.Joins))
 	for _, j := range s.Joins {
@@ -5786,7 +5786,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 	}
 	joinGroups := groupBushyJoins(s.From, joinOrder, crossTableConjuncts)
 	type groupResult struct {
-		op    Operator
+		op    DT.Operator
 		tbl   string
 		set   map[string]bool
 		preds []PS.Expr
@@ -5800,7 +5800,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 	consumedPreds := map[PS.Expr]bool{}
 	for gi, group := range joinGroups {
 		baseTable := group[0]
-		var current Operator
+		var current DT.Operator
 		var leftTbl string
 		groupCounts := make(map[string]int, len(group))
 		for _, t := range group {
@@ -5853,7 +5853,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			}
 			joinedTables[s.From] = true
 		} else {
-			var baseOp Operator = OP.NewSeqScan(baseTable)
+			var baseOp DT.Operator = OP.NewSeqScan(baseTable)
 			if ssc, err := OP.NewSeqScanWithStore(p.store, baseTable); err == nil {
 				baseOp = ssc
 			}
@@ -5912,7 +5912,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			if j.RightAlias != "" {
 				rightTbl = j.RightAlias
 			}
-			var rightScan Operator = OP.NewSeqScan(j.Right)
+			var rightScan DT.Operator = OP.NewSeqScan(j.Right)
 			if ssc, err := OP.NewSeqScanWithStore(p.store, j.Right); err == nil {
 				rightScan = ssc
 			}
@@ -5927,7 +5927,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 					rightScan = OP.NewFilter(rightScan, pred)
 				}
 			}
-			var joinOp Operator
+			var joinOp DT.Operator
 			if (kind == OP.JoinKindInner || kind == OP.JoinKindCross) && len(localConjuncts) > 0 {
 				lk, rk, remaining := p.extractEquiJoinKeys(localConjuncts, joinedTables, j.Right)
 				if len(lk) > 0 {
@@ -5983,10 +5983,10 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 					}
 				}
 				if joinOp == nil {
-					var on func(outer, inner *Row) (bool, error)
+					var on func(outer, inner *DT.Row) (bool, error)
 					if j.On != nil {
 						pred := j.On
-						on = func(outer, inner *Row) (bool, error) {
+						on = func(outer, inner *DT.Row) (bool, error) {
 							v, err := EV.EvalValue(pred, inner, nil)
 							if err != nil {
 								return false, err
@@ -6031,7 +6031,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 	}
 	leftTbl := ""
 	joinedTables := map[string]bool{}
-	var current Operator
+	var current DT.Operator
 	for i, gr := range groupOps {
 		if i == 0 {
 			current = gr.op
@@ -6041,7 +6041,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			}
 			continue
 		}
-		var joinOp Operator
+		var joinOp DT.Operator
 		if len(gr.preds) > 0 {
 			var lk, rk []string
 			var remaining []PS.Expr

@@ -209,18 +209,18 @@ The following requirements have been implemented and shipped; they are now part 
 
 | ID | Requirement | Iteration |
 |---|---|---|
-| REQ000010 | Block I/O via `pread`/`pwrite` | iter-01 |
-| REQ000011 | `O_DIRECT` support with fallback | iter-01 |
-| REQ000012 | CRC32 checksum per block | iter-01 |
-| REQ000013 | `MetaPage` with magic/version/catalog root | iter-01 |
-| REQ000014 | Path validation (reject `..`, symlinks) | iter-01 |
-| REQ000015 | Cached directory FDs for `SyncDir` | iter-01 |
-| REQ000016 | WAL segment handle pool | iter-01 |
-| REQ000017 | `ftruncate` for replay segment shrinking | iter-01 |
-| REQ000018 | File locking (`flock`) for multi-process access | iter-27 |
-| REQ000026 | `mmap` BlockDevice for SST reads | iter-11 |
-| REQ000295 | io_uring async I/O wrapper (raw syscall shim Linux-only with `uring_other.go` fallback; `IORING_ENTER_GETEVENTS` constant) | iter-27 (Phase 6) |
-| REQ000296 | Direct I/O + fixed-fd (`IOSQE_FIXED_FILE` constant, `Ring.RegisterFixedFile()`, `Ring.UnregisterFixedFile()`) | iter-27 (Phase 6) |
+| REQ000010 | Block I/O via `pread`/`pwrite` | shipped |
+| REQ000011 | `O_DIRECT` support with fallback | shipped |
+| REQ000012 | CRC32 checksum per block | shipped |
+| REQ000013 | `MetaPage` with magic/version/catalog root | shipped |
+| REQ000014 | Path validation (reject `..`, symlinks) | shipped |
+| REQ000015 | Cached directory FDs for `SyncDir` | shipped |
+| REQ000016 | WAL segment handle pool | shipped |
+| REQ000017 | `ftruncate` for replay segment shrinking | shipped |
+| REQ000018 | File locking (`flock`) for multi-process access | shipped |
+| REQ000026 | `mmap` BlockDevice for SST reads | shipped |
+| REQ000295 | io_uring async I/O wrapper (raw syscall shim Linux-only with `uring_other.go` fallback; `IORING_ENTER_GETEVENTS` constant) | shipped |
+| REQ000296 | Direct I/O + fixed-fd (`IOSQE_FIXED_FILE` constant, `Ring.RegisterFixedFile()`, `Ring.UnregisterFixedFile()`) | shipped |
 
 ## Open Issues
 

@@ -25,18 +25,18 @@ func NewAlterTable(stmt *PS.AlterTableStmt) *AlterTable {
 	return &AlterTable{stmt: stmt}
 }
 
-func (a *AlterTable) Next(ctx context.Context) (Row, error) {
+func (a *AlterTable) Next(ctx context.Context) (DT.Row, error) {
 	switch a.stmt.Action {
 	case "ADD COLUMN":
-		return Row{}, a.execAddColumn()
+		return DT.Row{}, a.execAddColumn()
 	case "DROP COLUMN":
-		return Row{}, a.execDropColumn()
+		return DT.Row{}, a.execDropColumn()
 	case "RENAME":
-		return Row{}, a.execRename()
+		return DT.Row{}, a.execRename()
 	case "RENAME COLUMN":
-		return Row{}, a.execRenameColumn()
+		return DT.Row{}, a.execRenameColumn()
 	default:
-		return Row{}, fmt.Errorf("ex: unknown ALTER TABLE action: %s", a.stmt.Action)
+		return DT.Row{}, fmt.Errorf("ex: unknown ALTER TABLE action: %s", a.stmt.Action)
 	}
 }
 
@@ -389,9 +389,9 @@ func (a *AlterTable) execDropColumn() error {
 
 	// Update existing row data to remove the dropped column
 	if existing, ok := DT.Tables[a.stmt.Table]; ok {
-		updated := make([]Row, len(existing))
+		updated := make([]DT.Row, len(existing))
 		for i, row := range existing {
-			newData := make([]Value, 0, len(row.Data)-1)
+			newData := make([]DT.Value, 0, len(row.Data)-1)
 			newRowCols := make([]string, 0, len(row.Cols)-1)
 			for j := range row.Data {
 				if j != idx {
@@ -401,7 +401,7 @@ func (a *AlterTable) execDropColumn() error {
 					}
 				}
 			}
-			updated[i] = Row{Cols: newRowCols, Types: row.Types, Data: newData, Outer: row.Outer}
+			updated[i] = DT.Row{Cols: newRowCols, Types: row.Types, Data: newData, Outer: row.Outer}
 		}
 		DT.Tables[a.stmt.Table] = updated
 	}
@@ -439,9 +439,9 @@ func (a *AlterTable) execDropColumnInMemory() error {
 
 	// Update existing row data to remove the dropped column
 	if existing, ok := DT.Tables[a.stmt.Table]; ok {
-		updated := make([]Row, len(existing))
+		updated := make([]DT.Row, len(existing))
 		for i, row := range existing {
-			newData := make([]Value, 0, len(row.Data)-1)
+			newData := make([]DT.Value, 0, len(row.Data)-1)
 			newRowCols := make([]string, 0, len(row.Cols)-1)
 			for j := range row.Data {
 				if j != idx {
@@ -451,7 +451,7 @@ func (a *AlterTable) execDropColumnInMemory() error {
 					}
 				}
 			}
-			updated[i] = Row{Cols: newRowCols, Types: row.Types, Data: newData, Outer: row.Outer}
+			updated[i] = DT.Row{Cols: newRowCols, Types: row.Types, Data: newData, Outer: row.Outer}
 		}
 		DT.Tables[a.stmt.Table] = updated
 	}

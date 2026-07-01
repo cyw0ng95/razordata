@@ -19,9 +19,9 @@ func NewCreateMatView(name string, query *PS.Select, store DT.Store) *CreateMatV
 	return &CreateMatViewOperator{Name: name, Query: query, Store: store}
 }
 
-func (c *CreateMatViewOperator) Next(ctx context.Context) (Row, error) {
+func (c *CreateMatViewOperator) Next(ctx context.Context) (DT.Row, error) {
 	if c.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	c.done = true
 
@@ -30,7 +30,7 @@ func (c *CreateMatViewOperator) Next(ctx context.Context) (Row, error) {
 	matKey := MatViewMetaKey(c.Name)
 	if c.Store != nil {
 		if err := c.Store.Insert(matKey, []byte("1")); err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 	}
 
@@ -39,9 +39,9 @@ func (c *CreateMatViewOperator) Next(ctx context.Context) (Row, error) {
 	// TODO: Implement incremental refresh with change tracking
 	// For now, triggers are created but perform full refresh
 
-	return Row{
+	return DT.Row{
 		Cols: []string{"result"},
-		Data: []Value{NewTextValue("materialized view created")},
+		Data: []DT.Value{NewTextValue("materialized view created")},
 	}, nil
 }
 
@@ -59,33 +59,33 @@ func NewRefreshMatView(name string, query *PS.Select, store DT.Store, planner *P
 	return &RefreshMatViewOperator{Name: name, Query: query, Store: store, Planner: planner}
 }
 
-func (r *RefreshMatViewOperator) Next(ctx context.Context) (Row, error) {
+func (r *RefreshMatViewOperator) Next(ctx context.Context) (DT.Row, error) {
 	if r.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	r.done = true
 
 	sel := DT.LookupMatView(r.Name)
 	if sel == nil {
-		return Row{}, fmt.Errorf("ex: materialized view %q not found", r.Name)
+		return DT.Row{}, fmt.Errorf("ex: materialized view %q not found", r.Name)
 	}
 
 	plan, err := r.Planner.Plan(sel)
 	if err != nil {
-		return Row{}, err
+		return DT.Row{}, err
 	}
 	if plan.Root == nil {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 
-	var materializedRows []Row
+	var materializedRows []DT.Row
 	for {
 		row, err := plan.Root.Next(ctx)
 		if err == DT.ErrNoRows {
 			break
 		}
 		if err != nil {
-			return Row{}, err
+			return DT.Row{}, err
 		}
 		materializedRows = append(materializedRows, row)
 	}
@@ -102,14 +102,14 @@ func (r *RefreshMatViewOperator) Next(ctx context.Context) (Row, error) {
 			encoded := encodeMatViewRow(row)
 			key := append(matPrefix, []byte(fmt.Sprintf("%016d", len(encoded)))...)
 			if err := r.Store.Insert(key, encoded); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 		}
 	}
 
-	return Row{
+	return DT.Row{
 		Cols: []string{"result"},
-		Data: []Value{NewTextValue(fmt.Sprintf("refreshed, %d rows", len(materializedRows)))},
+		Data: []DT.Value{NewTextValue(fmt.Sprintf("refreshed, %d rows", len(materializedRows)))},
 	}, nil
 }
 
@@ -125,14 +125,14 @@ func NewDropMatView(name string, store DT.Store) *DropMatViewOperator {
 	return &DropMatViewOperator{Name: name, Store: store}
 }
 
-func (d *DropMatViewOperator) Next(_ context.Context) (Row, error) {
+func (d *DropMatViewOperator) Next(_ context.Context) (DT.Row, error) {
 	if d.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	d.done = true
 
 	if DT.LookupMatView(d.Name) == nil {
-		return Row{}, fmt.Errorf("ex: materialized view %q not found", d.Name)
+		return DT.Row{}, fmt.Errorf("ex: materialized view %q not found", d.Name)
 	}
 
 	DT.UnregisterMatView(d.Name)
@@ -147,9 +147,9 @@ func (d *DropMatViewOperator) Next(_ context.Context) (Row, error) {
 		_ = d.Store.Delete(MatViewMetaKey(d.Name))
 	}
 
-	return Row{
+	return DT.Row{
 		Cols: []string{"result"},
-		Data: []Value{NewTextValue("materialized view dropped")},
+		Data: []DT.Value{NewTextValue("materialized view dropped")},
 	}, nil
 }
 
@@ -163,7 +163,7 @@ func MatViewDataPrefix(name string) []byte {
 	return []byte("_matview:" + name + ":data:")
 }
 
-func encodeMatViewRow(row Row) []byte {
+func encodeMatViewRow(row DT.Row) []byte {
 	var buf []byte
 	for _, v := range row.Data {
 		switch v.Kind {

@@ -77,14 +77,14 @@ DT ← EX, EV, AG, AD, OP, UT (terminal)
     ↑
 EV ← AG (aggregate needs EvalValue)
 OP ← AD (planner constructs OP operators), AG (planner constructs AG operators)
-EX ← AD (planner currently in EX, scheduled to move to AD in iter-36)
+EX ← AD (planner currently in EX, scheduled to move to AD as part of SQB finalization)
 ```
 
 The current state of EX is the subject of REQ001117/118/119/120/121/122/123
 (populating OP, EV, AG, AD, WT, UT clusters). After REQ001123 ships, EX
 should hold only `ex.go` and the ExecContext glue.
 
-### 3.3 SQB cluster dependencies (allowlist, post-iter-37)
+### 3.3 SQB cluster dependencies (allowlist, post-SQB-finalization)
 
 | Cluster | May import (production) |
 |---|---|
@@ -160,7 +160,7 @@ Before creating a new package under `internal/`:
 
 Tracked under REQ001159. A `tests/depcheck/` Go program (or `_test.go`) will
 walk the import graph and assert the allowlists in §3.3 and §3.4. It will
-land as a warning during iter-36/37 and promote to failure after REQ001123
+land as a warning during the SQB cluster fills and promote to failure after REQ001123
 (SQB finalization) ships.
 
 ## 7. Updating This Document

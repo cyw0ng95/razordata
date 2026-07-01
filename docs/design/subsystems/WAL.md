@@ -114,7 +114,7 @@ type writeBuffer struct {
 - `Sync()` calls `fsync` on the segment FD, then updates `synced`.
 - Batch commit: multiple transactions can be grouped into one `fsync` call via a `sync.WaitGroup` and a single write barrier.
 
-**Implementation gap (REQ000176, REQ000184):** The current `WAL/FL/fl.go` has stub implementations of `Sync()` and `BatchSync()` that return `nil` without doing anything. The `writeBuffer` struct is also missing. This is a known gap that should be fixed in a future iteration.
+**Implementation gap (REQ000176, REQ000184):** The current `WAL/FL/fl.go` has stub implementations of `Sync()` and `BatchSync()` that return `nil` without doing anything. The `writeBuffer` struct is also missing. This is a known gap to be addressed in a future phase.
 
 ### Checkpoint
 
@@ -209,28 +209,28 @@ The following requirements have been implemented and shipped; they are now part 
 
 | ID | Requirement | Iteration |
 |---|---|---|
-| REQ000027 | Sequential append with LSN allocation | iter-03 |
-| REQ000028 | 64 MB segment rotation | iter-03 |
-| REQ000029 | `fsync` on commit | iter-03 |
-| REQ000030 | Batch flush / write barrier | iter-03 |
-| REQ000031 | WAL replay on startup | iter-03 |
-| REQ000032 | Checkpoint detection and segment truncation | iter-03 |
-| REQ000033 | `RTCheckpoint` record with catalog root | iter-03 |
-| REQ000034 | WAL compression (lz4) — pure-Go LZ4 block codec (`WAL/WR/lz4/`); segment header gains `FlagCompressionLZ4` (bit 0 of flags byte); writer optionally lz4-compresses record bodies before CRC; replayer reads flag and decompresses; CRC verified against on-disk (compressed) body to prevent decompression bombs; mixed compressed/uncompressed segments supported | iter-27 |
-| REQ000035 | Corruption recovery policy: detect torn write, skip vs. fail | iter-13 |
-| REQ000160 | Batch commit with sync.WaitGroup and write barrier | iter-03 |
-| REQ000170 | RTMerge record encoding implementation | iter-17 |
-| REQ000176 | Batch commit with sync.WaitGroup and write barrier | iter-17 |
-| REQ000184 | 256 KB pre-allocated writeBuffer for batched WAL writes | iter-17 |
-| REQ000191 | WAL/RP coverage lift: WAL/RP is at 75.2% (multi-segment truncate + ErrUnknownRecord added; shortfall now in resync-window edges) | iter-16 |
-| REQ000200 | Per-segment locks (replace global write mutex) | iter-03 |
-| REQ000272 | Checksum verification on WAL replay (detect corruption) | iter-23 |
-| REQ000299 | WAL columnar batch encoding (column-major, single envelope CRC) | iter-27 |
-| REQ000301 | Async fsync (buffered channel with `AsyncSyncResult`, `inflightFsyncs` WaitGroup, `Close` blocks on in-flight fsyncs) | iter-27 (Phase 6) |
-| REQ000317 | Parallel WAL replay by key-range partition | iter-27 |
-| REQ000541 | Batched LSN reservation — `Reserve(n)` atomically claims `[start,start+n)` | iter-28.2 |
+| REQ000027 | Sequential append with LSN allocation | shipped |
+| REQ000028 | 64 MB segment rotation | shipped |
+| REQ000029 | `fsync` on commit | shipped |
+| REQ000030 | Batch flush / write barrier | shipped |
+| REQ000031 | WAL replay on startup | shipped |
+| REQ000032 | Checkpoint detection and segment truncation | shipped |
+| REQ000033 | `RTCheckpoint` record with catalog root | shipped |
+| REQ000034 | WAL compression (lz4) — pure-Go LZ4 block codec (`WAL/WR/lz4/`); segment header gains `FlagCompressionLZ4` (bit 0 of flags byte); writer optionally lz4-compresses record bodies before CRC; replayer reads flag and decompresses; CRC verified against on-disk (compressed) body to prevent decompression bombs; mixed compressed/uncompressed segments supported | shipped |
+| REQ000035 | Corruption recovery policy: detect torn write, skip vs. fail | shipped |
+| REQ000160 | Batch commit with sync.WaitGroup and write barrier | shipped |
+| REQ000170 | RTMerge record encoding implementation | shipped |
+| REQ000176 | Batch commit with sync.WaitGroup and write barrier | shipped |
+| REQ000184 | 256 KB pre-allocated writeBuffer for batched WAL writes | shipped |
+| REQ000191 | WAL/RP coverage lift: WAL/RP is at 75.2% (multi-segment truncate + ErrUnknownRecord added; shortfall now in resync-window edges) | shipped |
+| REQ000200 | Per-segment locks (replace global write mutex) | shipped |
+| REQ000272 | Checksum verification on WAL replay (detect corruption) | shipped |
+| REQ000299 | WAL columnar batch encoding (column-major, single envelope CRC) | shipped |
+| REQ000301 | Async fsync (buffered channel with `AsyncSyncResult`, `inflightFsyncs` WaitGroup, `Close` blocks on in-flight fsyncs) | shipped |
+| REQ000317 | Parallel WAL replay by key-range partition | shipped |
+| REQ000541 | Batched LSN reservation — `Reserve(n)` atomically claims `[start,start+n)` | shipped |
 
 ## Open Issues
 
 - Should we support WAL compression (lz4) to reduce I/O, at the cost of CPU?
-- (Resolved in iter-13) How to handle WAL corruption (partial record at end of segment)? Answered: tail-of-last-segment is tolerated (torn write, expected after a crash); mid-segment corruption fails loud with `ErrCorrupt`. Wire format bumped to carry a 12-byte segment header and a 4-byte envelope CRC. See `docs/development/iterations/iter-legacy.md`.
+- (Resolved) How to handle WAL corruption (partial record at end of segment)? Answered: tail-of-last-segment is tolerated (torn write, expected after a crash); mid-segment corruption fails loud with `ErrCorrupt`. Wire format bumped to carry a 12-byte segment header and a 4-byte envelope CRC.

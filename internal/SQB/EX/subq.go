@@ -16,14 +16,14 @@ import (
 )
 
 type outerInjector struct {
-	child Operator
-	outer *Row
+	child DT.Operator
+	outer *DT.Row
 }
 
-func (o *outerInjector) Next(ctx context.Context) (Row, error) {
+func (o *outerInjector) Next(ctx context.Context) (DT.Row, error) {
 	row, err := o.child.Next(ctx)
 	if err != nil {
-		return Row{}, err
+		return DT.Row{}, err
 	}
 	row.Outer = o.outer
 	return row, nil
@@ -37,7 +37,7 @@ func (o *outerInjector) Close() error {
 // and OP.IndexScan so that rows produced inside the subquery have
 // Outer set before any OP.Filter/OP.Project sees them. Returns the
 // (possibly new) root.
-func injectOuter(op Operator, outer *Row) Operator {
+func injectOuter(op DT.Operator, outer *DT.Row) DT.Operator {
 	if outer == nil {
 		return op
 	}
@@ -91,7 +91,7 @@ func injectOuter(op Operator, outer *Row) Operator {
 	return op
 }
 
-func runSubqueryPlan(ctx context.Context, pl *pl.PlanResult, outer *Row, params []any) ([]Row, error) {
+func runSubqueryPlan(ctx context.Context, pl *pl.PlanResult, outer *DT.Row, params []any) ([]DT.Row, error) {
 	if pl == nil || pl.Root == nil {
 		return nil, EV.ErrSubquery
 	}
@@ -99,7 +99,7 @@ func runSubqueryPlan(ctx context.Context, pl *pl.PlanResult, outer *Row, params 
 		pl.Root = injectOuter(pl.Root, outer)
 	}
 	defer pl.Root.Close()
-	var out []Row
+	var out []DT.Row
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err

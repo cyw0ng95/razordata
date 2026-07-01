@@ -40,7 +40,7 @@ type ParallelSort struct {
 	keys       []SortKey
 	keyIndices []int
 	pool       *UT.WorkerPool
-	rows       []Row
+	rows       []DT.Row
 	pos        int
 	done       bool
 }
@@ -119,7 +119,7 @@ func (s *ParallelSort) parallelSort() {
 	if sampleStep < 1 {
 		sampleStep = 1
 	}
-	samples := make([]Row, 0, workers-1)
+	samples := make([]DT.Row, 0, workers-1)
 	for i := 0; i < workers-1; i++ {
 		idx := (i + 1) * sampleStep
 		if idx < len(s.rows) {
@@ -130,7 +130,7 @@ func (s *ParallelSort) parallelSort() {
 	sortSample(samples, s.keys, s.keyIndices)
 
 	// 2. Pick splitters (every 4th sample)
-	splitters := make([]Row, 0, workers-1)
+	splitters := make([]DT.Row, 0, workers-1)
 	for i := 0; i < len(samples); i += 4 {
 		splitters = append(splitters, samples[i])
 	}
@@ -139,13 +139,13 @@ func (s *ParallelSort) parallelSort() {
 	partitions := partitionBySplitters(s.rows, splitters, s.keys, s.keyIndices)
 
 	// 4. OP.Sort each partition in parallel
-	sorted := make([][]Row, len(partitions))
+	sorted := make([][]DT.Row, len(partitions))
 	var wg sync.WaitGroup
 	for i, p := range partitions {
 		wg.Add(1)
 		err := s.pool.Submit(context.Background(), func() error {
 			defer wg.Done()
-			slices.SortStableFunc(p, func(a, b Row) int {
+			slices.SortStableFunc(p, func(a, b DT.Row) int {
 				if lessRowIdx(a, b, s.keys, s.keyIndices) {
 					return -1
 				}
@@ -170,7 +170,7 @@ func (s *ParallelSort) parallelSort() {
 	for _, p := range sorted {
 		total += len(p)
 	}
-	merged := make([]Row, 0, total)
+	merged := make([]DT.Row, 0, total)
 	for _, p := range sorted {
 		merged = append(merged, p...)
 	}
@@ -182,7 +182,7 @@ func (s *ParallelSort) sequentialSort() {
 	if s.keyIndices == nil && len(s.rows) > 0 {
 		s.keyIndices = buildKeyIndices(s.keys, s.rows[0])
 	}
-	slices.SortStableFunc(s.rows, func(a, b Row) int {
+	slices.SortStableFunc(s.rows, func(a, b DT.Row) int {
 		if lessRowIdx(a, b, s.keys, s.keyIndices) {
 			return -1
 		}
@@ -276,14 +276,14 @@ func (s *ParallelSort) Close() error {
 }
 
 // sortSample sorts a small sample of rows by the given keys.
-func sortSample(rows []Row, keys []SortKey, indices []int) {
+func sortSample(rows []DT.Row, keys []SortKey, indices []int) {
 	if len(rows) == 0 {
 		return
 	}
 	if indices == nil {
 		indices = buildKeyIndices(keys, rows[0])
 	}
-	slices.SortStableFunc(rows, func(a, b Row) int {
+	slices.SortStableFunc(rows, func(a, b DT.Row) int {
 		if lessRowIdx(a, b, keys, indices) {
 			return -1
 		}
@@ -296,8 +296,8 @@ func sortSample(rows []Row, keys []SortKey, indices []int) {
 
 // partitionBySplitters divides rows into partitions based on
 // splitter rows. Rows < splitter[0] go to partition 0, etc.
-func partitionBySplitters(rows []Row, splitters []Row, keys []SortKey, indices []int) [][]Row {
-	partitions := make([][]Row, len(splitters)+1)
+func partitionBySplitters(rows []DT.Row, splitters []DT.Row, keys []SortKey, indices []int) [][]DT.Row {
+	partitions := make([][]DT.Row, len(splitters)+1)
 	for _, row := range rows {
 		placed := false
 		for i, splitter := range splitters {
@@ -315,9 +315,9 @@ func partitionBySplitters(rows []Row, splitters []Row, keys []SortKey, indices [
 }
 
 // lessRowIdx compares two rows using pre-computed column indices.
-// Avoids map lookups in Row.Lookup by indexing directly into Data.
+// Avoids map lookups in DT.Row.Lookup by indexing directly into Data.
 // REQ001018.
-func lessRowIdx(a, b Row, keys []SortKey, indices []int) bool {
+func lessRowIdx(a, b DT.Row, keys []SortKey, indices []int) bool {
 	for i, key := range keys {
 		if i >= len(indices) {
 			continue
@@ -326,8 +326,8 @@ func lessRowIdx(a, b Row, keys []SortKey, indices []int) bool {
 		if idx < 0 {
 			continue
 		}
-		av := Value{}
-		bv := Value{}
+		av := DT.Value{}
+		bv := DT.Value{}
 		if idx < len(a.Data) {
 			av = a.Data[idx]
 		}
@@ -347,8 +347,8 @@ func lessRowIdx(a, b Row, keys []SortKey, indices []int) bool {
 }
 
 // buildKeyIndices pre-computes column indices from sort key names
-// for O(1) Row.Data access during sort comparisons. REQ001018.
-func buildKeyIndices(keys []SortKey, first Row) []int {
+// for O(1) DT.Row.Data access during sort comparisons. REQ001018.
+func buildKeyIndices(keys []SortKey, first DT.Row) []int {
 	indices := make([]int, len(keys))
 	for i, key := range keys {
 		idx := -1
@@ -365,7 +365,7 @@ func buildKeyIndices(keys []SortKey, first Row) []int {
 
 // lessRow compares two rows by the sort keys, in order.
 // Deprecated: use lessRowIdx for better performance. REQ001018.
-func lessRow(a, b Row, keys []SortKey) bool {
+func lessRow(a, b DT.Row, keys []SortKey) bool {
 	for _, key := range keys {
 		av, aok := a.Lookup(key.ColName)
 		bv, bok := b.Lookup(key.ColName)
@@ -442,11 +442,11 @@ func compareValues(a, b any) int {
 }
 
 // batchToRows converts a columnar batch back to rows (for sorting).
-func batchToRows(batch *UT.Batch) []Row {
+func batchToRows(batch *UT.Batch) []DT.Row {
 	if batch == nil || batch.Size == 0 {
 		return nil
 	}
-	rows := make([]Row, 0, batch.Size)
+	rows := make([]DT.Row, 0, batch.Size)
 	cols := make([]string, 0, len(batch.Cols))
 	types := make([]LX.TokenType, 0, len(batch.Cols))
 	for i := range batch.Cols {
@@ -459,10 +459,10 @@ func batchToRows(batch *UT.Batch) []Row {
 	}
 
 	for i := 0; i < batch.Size; i++ {
-		row := Row{
+		row := DT.Row{
 			Cols:  cols,
 			Types: types,
-			Data:  make([]Value, len(cols)),
+			Data:  make([]DT.Value, len(cols)),
 		}
 		for j, colName := range cols {
 			row.Data[j] = DT.ValueFromAny(EV.BatchValueAt(batch.Cols[j], i))

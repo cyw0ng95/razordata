@@ -23,7 +23,6 @@ import (
 
 // Value is a tagged-union that stores SQL values inline without boxing.
 // EX.Value IS PL.Value (type alias); no conversion needed at package boundaries.
-type Value = DT.Value
 
 // currentTxWriter is the package-level current TxWriter. Set by
 // Executor.SetTxWriter and read by Insert/Update/Delete operators
@@ -81,36 +80,36 @@ const (
 )
 
 // NewIntValue creates a Value from an int64.
-func NewIntValue(v int64) Value { return AP.NewIntValue(v) }
+func NewIntValue(v int64) DT.Value { return AP.NewIntValue(v) }
 
 // NewFloatValue creates a Value from a float64.
-func NewFloatValue(v float64) Value { return AP.NewFloatValue(v) }
+func NewFloatValue(v float64) DT.Value { return AP.NewFloatValue(v) }
 
 // NewTextValue creates a Value from a string.
-func NewTextValue(v string) Value { return AP.NewTextValue(v) }
+func NewTextValue(v string) DT.Value { return AP.NewTextValue(v) }
 
 // NewBlobValue creates a Value from a byte slice.
-func NewBlobValue(v []byte) Value { return AP.NewBlobValue(v) }
+func NewBlobValue(v []byte) DT.Value { return AP.NewBlobValue(v) }
 
 // NewBoolValue creates a Value from a bool.
-func NewBoolValue(v bool) Value { return AP.NewBoolValue(v) }
+func NewBoolValue(v bool) DT.Value { return AP.NewBoolValue(v) }
 
 // NullValue returns a NULL Value.
-func NullValue() Value { return AP.NullValue() }
+func NullValue() DT.Value { return AP.NullValue() }
 
 // valueToString converts a Value to its string representation without
 // going through fmt.Sprint (no reflection, no boxing). REQ001015.
 // REQ001066: delegates to Value.String() for the per-kind switch.
-func valueToString(v Value) string {
+func valueToString(v DT.Value) string {
 	return v.String()
 }
 
 // valueFromAny creates a Value from a boxed any. Inverse of ToAny.
-func valueFromAny(a any) Value {
+func valueFromAny(a any) DT.Value {
 	if a == nil {
 		return NullValue()
 	}
-	if v, ok := a.(Value); ok {
+	if v, ok := a.(DT.Value); ok {
 		return v
 	}
 	switch x := a.(type) {
@@ -131,20 +130,20 @@ func valueFromAny(a any) Value {
 	}
 }
 
-// valueFromAnySlice converts a []any to []Value.
-func valueFromAnySlice(a []any) []Value {
+// valueFromAnySlice converts a []any to []DT.Value.
+func valueFromAnySlice(a []any) []DT.Value {
 	if a == nil {
 		return nil
 	}
-	out := make([]Value, len(a))
+	out := make([]DT.Value, len(a))
 	for i, v := range a {
 		out[i] = valueFromAny(v)
 	}
 	return out
 }
 
-// valueSliceToAny converts a []Value to []any.
-func valueSliceToAny(v []Value) []any {
+// valueSliceToAny converts a []DT.Value to []any.
+func valueSliceToAny(v []DT.Value) []any {
 	if v == nil {
 		return nil
 	}
@@ -157,14 +156,10 @@ func valueSliceToAny(v []Value) []any {
 
 // ValueSliceToAny is the exported version of valueSliceToAny for
 // callers outside the EX package (e.g. SYS/AP bridging).
-func ValueSliceToAny(v []Value) []any { return valueSliceToAny(v) }
+func ValueSliceToAny(v []DT.Value) []any { return valueSliceToAny(v) }
 
 // SetCatalog and RegisterFromCatalog re-export DT functions for
 // backward-compatibility with SYS packages.
-
-// Operator is the core execution interface. Aliased from PL.
-type Operator = DT.Operator
-type Row = DT.Row
 
 // Result holds the outcome of an Exec call.
 type Result struct {
@@ -925,7 +920,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 				}
 				propagateParams(op, args)
 				defer op.Close()
-				var out []Row
+				var out []DT.Row
 				for {
 					row, err := op.Next(ctx)
 					if err != nil {
@@ -985,7 +980,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 		}
 		propagateParams(op, args)
 		defer op.Close()
-		var out []Row
+		var out []DT.Row
 		for {
 			row, err := op.Next(ctx)
 			if err != nil {
@@ -1028,7 +1023,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	return rs, nil
 }
 
-func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row, error) {
+func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.Row, error) {
 	// Try cache first (P0: StmtCache wiring, saves 12.70% CPU on parsing)
 	if e.stmtCache.entries != nil {
 		if cached := e.getCachedStmt(sql); cached != nil {
@@ -1045,7 +1040,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			propagateExecContext(plan.Root, execCtx)
 			defer plan.Root.Close()
-			var out []Row
+			var out []DT.Row
 			for {
 				row, err := plan.Root.Next(ctx)
 				if err != nil {
@@ -1088,7 +1083,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
 	defer plan.Root.Close()
-	var out []Row
+	var out []DT.Row
 	for {
 		row, err := plan.Root.Next(ctx)
 		if err != nil {
@@ -1106,7 +1101,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 // propagatePlanner walks the operator tree rooted at root and
 // calls WithPlanner(p) on every node that supports it. See
 // REQ000366.
-func propagatePlanner(root Operator, p *Planner) {
+func propagatePlanner(root DT.Operator, p *Planner) {
 	if root == nil {
 		return
 	}
@@ -1116,14 +1111,14 @@ func propagatePlanner(root Operator, p *Planner) {
 		w.WithPlanner(p)
 	}
 	type childer interface {
-		Child() Operator
+		Child() DT.Operator
 	}
 	if c, ok := root.(childer); ok {
 		propagatePlanner(c.Child(), p)
 	}
 	type leftRighter interface {
-		LeftChild() Operator
-		RightChild() Operator
+		LeftChild() DT.Operator
+		RightChild() DT.Operator
 	}
 	if lr, ok := root.(leftRighter); ok {
 		propagatePlanner(lr.LeftChild(), p)
@@ -1136,7 +1131,7 @@ func propagatePlanner(root Operator, p *Planner) {
 // so that subquery eval can find the planner via DT.ExecContextFromRow.
 // Also propagates execCtx to Insert/Update/Delete for change
 // tracking (REQ000812).
-func propagateExecContext(root Operator, ec *DT.ExecContext) {
+func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 	if root == nil || ec == nil {
 		return
 	}
@@ -1159,14 +1154,14 @@ func propagateExecContext(root Operator, ec *DT.ExecContext) {
 		val.SetExecCtx(ec)
 	}
 	type childer interface {
-		Child() Operator
+		Child() DT.Operator
 	}
 	if c, ok := root.(childer); ok {
 		propagateExecContext(c.Child(), ec)
 	}
 	type leftRighter interface {
-		LeftChild() Operator
-		RightChild() Operator
+		LeftChild() DT.Operator
+		RightChild() DT.Operator
 	}
 	if lr, ok := root.(leftRighter); ok {
 		propagateExecContext(lr.LeftChild(), ec)
@@ -1179,7 +1174,7 @@ func propagateExecContext(root Operator, ec *DT.ExecContext) {
 // (R16-1..2). The walk is depth-first, children-first so the
 // args reach every leaf operator. Operators without a
 // WithParams method are skipped silently.
-func propagateParams(root Operator, args []any) {
+func propagateParams(root DT.Operator, args []any) {
 	if root == nil {
 		return
 	}
@@ -1187,13 +1182,13 @@ func propagateParams(root Operator, args []any) {
 		return
 	}
 	p := asAnySlice(args)
-	if w, ok := root.(interface{ WithParams([]any) Operator }); ok {
+	if w, ok := root.(interface{ WithParams([]any) DT.Operator }); ok {
 		w.WithParams(p)
 	}
 	// Walk children via the Child() convention used elsewhere
 	// in this package (explain.go).
 	type childer interface {
-		Child() Operator
+		Child() DT.Operator
 	}
 	if c, ok := root.(childer); ok {
 		propagateParams(c.Child(), args)
@@ -1358,7 +1353,7 @@ func hasAggFunc(expr PS.Expr) bool {
 	return false
 }
 
-func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
+func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 	switch s := stmt.(type) {
 	case *PS.Insert:
 		// REQ000707: INSERT INTO t SELECT ...
@@ -1412,7 +1407,7 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 			}
 			targetTable = viewSel.From
 		}
-		var scan Operator = OP.NewSeqScan(targetTable)
+		var scan DT.Operator = OP.NewSeqScan(targetTable)
 		if e.store != nil {
 			ssc, err := OP.NewSeqScanWithStore(e.store, targetTable)
 			if err != nil {
@@ -1423,7 +1418,7 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		filter := OP.NewFilter(scan, s.Where)
 		// REQ000558: apply ORDER BY / LIMIT / OFFSET to the row
 		// selection before updating.
-		var current Operator = filter
+		var current DT.Operator = filter
 		if len(s.OrderBy) > 0 {
 			current = OP.NewSort(current, s.OrderBy)
 		}
@@ -1467,7 +1462,7 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 			}
 			tableName = viewSel.From
 		}
-		var scan Operator = OP.NewSeqScan(tableName)
+		var scan DT.Operator = OP.NewSeqScan(tableName)
 		if e.store != nil {
 			ssc, err := OP.NewSeqScanWithStore(e.store, tableName)
 			if err != nil {
@@ -1478,7 +1473,7 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 		filter := OP.NewFilter(scan, s.Where)
 		// REQ000475: apply ORDER BY / LIMIT / OFFSET to the row
 		// selection before deleting.
-		var current Operator = filter
+		var current DT.Operator = filter
 		if len(s.OrderBy) > 0 {
 			current = OP.NewSort(current, s.OrderBy)
 		}
@@ -1598,7 +1593,7 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 	return nil, errors.New("ex: not a writable statement")
 }
 
-func extractResult(op Operator) (Result, error) {
+func extractResult(op DT.Operator) (Result, error) {
 	type affected interface {
 		RowsAffected() int64
 	}
@@ -1679,7 +1674,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 		}
 		// Wrap in a buffered channel so the caller can pull rows
 		// sequentially after the first.
-		rowCh := make(chan Row, 16)
+		rowCh := make(chan DT.Row, 16)
 		rowCh <- firstRow
 		closed := false
 		var closeOnce sync.Once
@@ -1746,7 +1741,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	cols := append([]string(nil), row.Cols...)
 	types := append([]LX.TokenType(nil), row.Types...)
 
-	rowCh := make(chan Row, 16)
+	rowCh := make(chan DT.Row, 16)
 	rowCh <- row
 	closed := false
 	var closeMu sync.Mutex
@@ -1795,7 +1790,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 type streamIterator struct {
 	cols   []string
 	types  []LX.TokenType
-	rowCh  chan Row
+	rowCh  chan DT.Row
 	closer func() error
 
 	done bool
@@ -1804,14 +1799,14 @@ type streamIterator struct {
 
 func (s *streamIterator) Cols() []string        { return s.cols }
 func (s *streamIterator) Types() []LX.TokenType { return s.types }
-func (s *streamIterator) Next() (Row, error) {
+func (s *streamIterator) Next() (DT.Row, error) {
 	if s == nil || s.done || s.rowCh == nil {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	r, ok := <-s.rowCh
 	if !ok {
 		s.done = true
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	return r, nil
 }
@@ -1831,21 +1826,21 @@ func (s *streamIterator) Close() error {
 // Used for statements like BEGIN that affect state but produce no results.
 type Noop struct{}
 
-var _ Operator = (*Noop)(nil)
+var _ DT.Operator = (*Noop)(nil)
 
 func NewNoop() *Noop {
 	return &Noop{}
 }
 
-func (n *Noop) Next(ctx context.Context) (Row, error) {
-	return Row{}, DT.ErrNoRows
+func (n *Noop) Next(ctx context.Context) (DT.Row, error) {
+	return DT.Row{}, DT.ErrNoRows
 }
 
 func (n *Noop) Close() error {
 	return nil
 }
 
-func (n *Noop) WithParams(p []any) Operator {
+func (n *Noop) WithParams(p []any) DT.Operator {
 	return n
 }
 

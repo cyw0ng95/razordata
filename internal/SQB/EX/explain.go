@@ -19,23 +19,23 @@ type ExplainStmtOp struct {
 	mode     PS.ExplainMode
 	format   PS.ExplainFormat
 	planNode *PlanNode
-	root     Operator
-	rows     []Row
+	root     DT.Operator
+	rows     []DT.Row
 	treeText string // cached tree/DOT/JSON output
 	pos      int
 	done     bool
 }
 
-func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
+func (e *ExplainStmtOp) Next(ctx context.Context) (DT.Row, error) {
 	if e.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 
 	if e.rows == nil && e.treeText == "" {
 		if e.mode == PS.ExplainAnalyze {
 			// REQ000783: execute and collect runtime stats.
 			if err := executeAndCollectStats(ctx, e.root, e.planNode); err != nil {
-				return Row{}, err
+				return DT.Row{}, err
 			}
 			// REQ000788: analyze for bottlenecks after execution.
 			AnalyzePlanForBottlenecks(e.planNode)
@@ -56,10 +56,10 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
 
 	// For tree/json/dot formats, return single row with formatted output
 	if e.treeText != "" {
-		row := Row{
+		row := DT.Row{
 			Cols:  []string{"explain_output"},
 			Types: []LX.TokenType{LX.T_TEXT},
-			Data:  []Value{NewTextValue(e.treeText)},
+			Data:  []DT.Value{NewTextValue(e.treeText)},
 		}
 		e.done = true
 		return row, nil
@@ -67,7 +67,7 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
 
 	if e.pos >= len(e.rows) {
 		e.done = true
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 
 	row := e.rows[e.pos]
@@ -77,7 +77,7 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (Row, error) {
 
 // executeAndCollectStats drains the operator tree, collects total stats,
 // and closes the inner plan to reset iterator state (memo may reuse it).
-func executeAndCollectStats(ctx context.Context, root Operator, pn *PlanNode) error {
+func executeAndCollectStats(ctx context.Context, root DT.Operator, pn *PlanNode) error {
 	start := time.Now()
 	var rows int64
 	for {

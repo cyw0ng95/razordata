@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -16,7 +17,7 @@ import (
 )
 
 // PlanNode represents a node in the query plan tree for EXPLAIN output.
-// It mirrors the Operator tree but captures descriptive metadata for
+// It mirrors the DT.Operator tree but captures descriptive metadata for
 // human-readable rendering.
 type PlanNode struct {
 	Type        string          // "OP.SeqScan", "OP.IndexScan", "OP.Filter", etc.
@@ -123,9 +124,9 @@ func (n *PlanNode) SetCache(ci *CacheInfo) {
 	n.Cache = ci
 }
 
-// buildPlanNodeTree converts an Operator tree into a PlanNode tree.
+// buildPlanNodeTree converts an DT.Operator tree into a PlanNode tree.
 // This is used by EXPLAIN to generate structured plan output.
-func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
+func buildPlanNodeTree(op DT.Operator, planner *Planner) *PlanNode {
 	if op == nil {
 		return nil
 	}
@@ -398,7 +399,7 @@ case *OP.NestedLoopJoin:
 	}
 
 	// Recursively build children
-	if c, ok := op.(interface{ Child() Operator }); ok {
+	if c, ok := op.(interface{ Child() DT.Operator }); ok {
 		child := c.Child()
 		if child != nil {
 			node.Add(buildPlanNodeTree(child, planner))
@@ -450,7 +451,7 @@ case *OP.NestedLoopJoin:
 }
 
 // operatorType returns a human-readable type name for an operator.
-func operatorType(op Operator) string {
+func operatorType(op DT.Operator) string {
 	if aop, ok := op.(*AD.AdaptiveOp); ok {
 		return operatorType(aop.Inner)
 	}
@@ -549,12 +550,12 @@ func operatorType(op Operator) string {
 //   - ExplainNormal: full detail including expressions, costs, and row estimates
 //   - ExplainQueryPlan: simplified output (SCAN/SEARCH/JOIN style)
 //   - ExplainAnalyze: same as mode but with actual runtime stats appended
-func formatPlanTree(n *PlanNode, mode PS.ExplainMode) []Row {
+func formatPlanTree(n *PlanNode, mode PS.ExplainMode) []DT.Row {
 	if n == nil {
 		return nil
 	}
 
-	var rows []Row
+	var rows []DT.Row
 	nextID := 1
 	var walk func(node *PlanNode, parent int)
 	walk = func(node *PlanNode, parent int) {
@@ -648,10 +649,10 @@ func formatPlanTree(n *PlanNode, mode PS.ExplainMode) []Row {
 			}
 		}
 
-		rows = append(rows, Row{
+		rows = append(rows, DT.Row{
 			Cols:  []string{"id", "parent", "notused", "detail"},
 			Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW, LX.T_INT_KW, LX.T_TEXT},
-			Data:  []Value{NewIntValue(int64(id)), NewIntValue(int64(parent)), NewIntValue(0), NewTextValue(detail)},
+			Data:  []DT.Value{NewIntValue(int64(id)), NewIntValue(int64(parent)), NewIntValue(0), NewTextValue(detail)},
 		})
 
 		for _, child := range node.Children {

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Receives raw SQL text, tokenizes it, builds an AST, rewrites and plans it, then produces an operator tree for the backend (`SQB/EX`) to execute. Never touches the disk directly — calls down into `TXN` and `ENG`. Depends on `TXN`, `ENG`, and `LOG`. The `Operator` interface it produces is defined in `SQB/EX` (soft split; a future iteration will move it to `SQF/PL`).
+Receives raw SQL text, tokenizes it, builds an AST, rewrites and plans it, then produces an operator tree for the backend (`SQB/EX`) to execute. Never touches the disk directly — calls down into `TXN` and `ENG`. Depends on `TXN`, `ENG`, and `LOG`. The `Operator` interface it produces is defined in `SQB/EX` (soft split; a future phase will move it to `SQF/PL`).
 
 ## Dependencies
 

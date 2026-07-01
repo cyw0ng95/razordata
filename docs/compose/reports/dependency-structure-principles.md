@@ -49,9 +49,9 @@ On paper this is a clean linear chain. In practice, **SQB breaks the layering**:
 | **Fragile cycle breaks** | `eval.go ⇄ aggregate.go` broken by moving helpers to DT; `eval.go ⇄ planner.go` broken via `QueryPlanner` interface | DT carries code that doesn't belong there; interfaces create opaque dependencies |
 | **No dependency enforcement** | Nothing prevents DT from importing EX, or SQB from importing ENG directly | Architecture drifts silently with every PR |
 
-### 1.3 What We Know From iter-35
+### 1.3 What We Know From the SQB/WT Cluster Extraction
 
-The iter-35 extraction was successful (EX shrank from 48,907 LOC to ~38,000 LOC, no new test failures). It demonstrated:
+The SQB/WT cluster extraction was successful (EX shrank from 48,907 LOC to ~38,000 LOC, no new test failures). It demonstrated:
 
 - **Accessor methods** (`AG.Aggregate.Child()`) break cross-package field access — workable but verbose
 - **Interface mediation** (`SQF/PL.QueryPlanner`) breaks import cycles — the right pattern
@@ -206,7 +206,7 @@ A file belongs in a cluster when:
 3. **Dependency direction**: The file imports only from equal-or-lower clusters
 4. **Test locality**: Tests for the file live alongside it in the same cluster
 
-### 5.3 Remaining Extraction (iter-36/37)
+### 5.3 Remaining Extraction (SQB cluster fills)
 
 | File | Current | Target | Blocked By | Priority |
 |---|---|---|---|---|
@@ -237,7 +237,7 @@ A file belongs in a cluster when:
 
 ### 6.1 The Problem
 
-`SQB/DT` started as `types.go` (137 LOC after iter-34) but grew to ~1100 LOC by carrying:
+`SQB/DT` started as `types.go` (137 LOC after the original SQL/Core split) but grew to ~1100 LOC by carrying:
 
 - **Core types**: `Row`, `Value`, `Operator`, `ExecContext` — stable, low change
 - **Schema registry**: `Tables`, `Schemas`, `StoreSchemas`, `InMemSchemas`, `TableIDs`, `TablePKs`, `RegisteredIndexes` + guards `TablesMu`/`StoreMu` — medium change, complex locking
@@ -321,9 +321,9 @@ Run via `go test ./tests/depcheck/` in CI. Fails on any violation.
 
 ### 7.4 Incremental Enforcement
 
-Don't add this until the current extraction work (iter-36/37) is complete. Otherwise every move triggers false failures.
+Don't add this until the current extraction work (SQB cluster fills) is complete. Otherwise every move triggers false failures.
 
-**Implementation plan**: create `tests/depcheck/` after iter-37, run in CI, break the build on violations. Teams can add exceptions by editing the allowlist (reviewed at code review).
+**Implementation plan**: create `tests/depcheck/` after the SQB finalization lands, run in CI, break the build on violations. Teams can add exceptions by editing the allowlist (reviewed at code review).
 
 ---
 
@@ -432,18 +432,18 @@ Key changes:
 
 ## 10. Actionable Steps
 
-**Phase ordering note:** the original report proposed Phase 1 (`internal/types/` creation) as the first step. That step is **rejected** — see §11. The remaining phases (2–5) are cluster operations within SQB and SYS that are within the scope of iter-36 / iter-37 work and respect the Subsystem/Function Cluster rule.
+**Phase ordering note:** the original report proposed Phase 1 (`internal/types/` creation) as the first step. That step is **rejected** — see §11. The remaining phases (2–5) are cluster operations within SQB and SYS that are part of SQB finalization and respect the Subsystem/Function Cluster rule.
 
-### Phase 2: Finish iter-36 (operator + AD extraction) — cluster-fill, not cluster-create
+### Phase 2: Finish SQB/OP + SQB/AD extraction — cluster-fill, not cluster-create
 
 **Estimated: 3-5 days.** `SQB/OP/` and `SQB/AD/` already exist as populated clusters; this phase finishes the fill.
 
-1. `SQB/OP/` is **already populated** as of iter-36 partial-merge: `operators.go` (SeqScan, IndexScan), `intermediate.go` (Filter, Project, Sort, Limit, Offset), `join.go` (NestedLoopJoin), `join_strategy.go` (still in EX — needs to move), `operators_parallel.go`, `operators_vec.go`, `compound.go`, `values.go`, plus the iter-35 leaf operators. **Verify** no further file moves are needed by `ls internal/SQB/OP/` and `ls internal/SQB/EX/`.
+1. `SQB/OP/` is **already populated** as of the current state: `operators.go` (SeqScan, IndexScan), `intermediate.go` (Filter, Project, Sort, Limit, Offset), `join.go` (NestedLoopJoin), `join_strategy.go` (still in EX — needs to move), `operators_parallel.go`, `operators_vec.go`, `compound.go`, `values.go`, plus the previously-migrated leaf operators. **Verify** no further file moves are needed by `ls internal/SQB/OP/` and `ls internal/SQB/EX/`.
 2. Move planner from `SQB/EX/` → `SQB/AD/`: `planner.go`, `plan_node.go`, `shape_specialize.go`, `memo.go`, plus their test files. `SQB/AD/` already has `adqc*.go`, `cache_stats.go`, `index_usage.go`.
 3. Update all imports in moved files and remaining `SQB/EX/` files. `SQB/AD/` may import `SQF/PL` for AST types, `SQB/DT` for `Operator`/`Row`, `SQB/EV` for `EvalValue`. It must not import `SQB/EX`.
 4. **Verify**: `go build ./...`, `go test ./... -race -count=1`.
 
-### Phase 3: Fill `SQB/WT/` and finish iter-37
+### Phase 3: Fill `SQB/WT/` and finish SQB finalization
 
 **Estimated: 2-3 days.** `internal/SQB/WT/` directory already exists; it is empty. This phase populates it.
 
@@ -469,7 +469,7 @@ Key changes:
 **Estimated: 1 day.**
 
 1. Create `tests/depcheck/main.go` with the allowlist derived from §8 and §9 (revised to match the **current** package layout, not the proposed `internal/types/` layout).
-2. Run via CI: `go test ./tests/depcheck/`. Land as a **warning** (not failure) until iter-37 finishes, then promote to failure.
+2. Run via CI: `go test ./tests/depcheck/`. Land as a **warning** (not failure) until SQB finalization finishes, then promote to failure.
 3. Document the architecture rules in `docs/development/DEPENDENCIES.md` (new — not in `docs/design/` so AI can maintain it).
 4. **Verify**: depcheck passes, all existing tests pass.
 
@@ -478,7 +478,7 @@ Key changes:
 The original §10 Summary claimed: "The root cause of the dependency mess is that the most shared types in the system were owned by one of the consuming subsystems." This framing is **not supported by the code**:
 
 - `SQF/PL` does not import `internal/SQB/**` — there is no SQF → SQB arrow.
-- `Operator` and `Row` are documented (ARCH.md §Cross-Subsystem Interfaces) as living in `SQB/DT`. That is by design — DT was created in iter-35 specifically so any SQB cluster can implement `Operator` without importing `SQB/EX`. The pattern works.
+- `Operator` and `Row` are documented (ARCH.md §Cross-Subsystem Interfaces) as living in `SQB/DT`. That is by design — DT was created specifically so any SQB cluster can implement `Operator` without importing `SQB/EX`. The pattern works.
 - The "fix" of extracting types to `internal/types/` is not the right move; it would create a new top-level package outside the Subsystem/Function Cluster taxonomy. See §11.
 
 The actual high-leverage work is the cluster fills in Phase 2–3 and the depcheck in Phase 5.
@@ -497,7 +497,7 @@ The actual high-leverage work is:
 
 1. **Cluster-fill**: Populate `SQB/OP/`, `SQB/AD/`, `SQB/WT/`, `SQB/UT/`. The clusters already exist; the work is moving files out of `SQB/EX/`. Tracked under REQ001117/118/119/120/121/122/123 in `docs/development/REQUIREMENTS.md`.
 2. **Re-export cleanup**: Remove the `EX` re-exports of EV error sentinels, DT registry helpers, and the session-counter accessor. SYS callers should import the owning packages directly.
-3. **Depcheck**: A test that codifies the current dependency graph as the baseline and fails on new violations. Land as a warning, promote to failure after iter-37.
+3. **Depcheck**: A test that codifies the current dependency graph as the baseline and fails on new violations. Land as a warning, promote to failure after SQB finalization.
 
 The six principles from §2–§7 are sound and worth keeping. The architectural move proposed in §8–§9 (extract `internal/types/` as a layer 3.5 package) is **rejected** because it would create a new top-level package outside the Subsystem/Function Cluster taxonomy. The concrete decisions are recorded in §11.
 
@@ -512,8 +512,8 @@ Status: **Decisions recorded; design-doc updates pending human application (see 
 
 - **Principle 1 (Strict Layering via Interface Boundaries) — accepted.** The depcheck tooling and the layer table in §8 are sound. The allowlist should be derived from the **current** package layout, not the proposed `internal/types/` layout.
 - **Principle 4 (Cluster Extraction Policy) — accepted, with refinement.** The cluster-fill work (Phase 2–3) is the right next step. The refinement: `SQB/OP/` is already populated and `SQB/WT/` already exists (empty). The work is **filling** existing clusters, not creating new ones. The original report's "create WT" framing is stale.
-- **Principle 6 (Automated Enforcement) — accepted, with revised timing.** Depcheck lands as a **warning** in CI during iter-36/37, then promotes to failure. The original report's "land after iter-37" timing is wrong — the detector should be live before the changes, not after.
-- **Phase 4 (Re-export cleanup) — accepted.** Will be done as a separate, focused iteration.
+- **Principle 6 (Automated Enforcement) — accepted, with revised timing.** Depcheck lands as a **warning** in CI during SQB cluster fills, then promotes to failure. The original report's "land after finalization" timing is wrong — the detector should be live before the changes, not after.
+- **Phase 4 (Re-export cleanup) — accepted.** Will be done as a separate, focused milestone.
 - **Phase 5 (Depcheck tooling) — accepted.** Will be tracked as a new REQ.
 
 ### 11.2 Rejected
@@ -534,8 +534,8 @@ Status: **Decisions recorded; design-doc updates pending human application (see 
 ### 11.3 Corrections to factual claims in the original report
 
 - **§1.1 "SQF/PL imports SQB/DT for Operator interface"** — correct, but the framing "creating an implicit import cycle SQF → SQB → SQF" is wrong. There is no `SQB/EX` → `SQF/PL` arrow. SQB/DT → SQF/PL is a normal downhill import for type aliases.
-- **§1.2 "EX re-exports for backward compatibility with SYS"** — correct factually, but the report treats this as a transitional concern. It is actually **decades of accumulated cruft**; some of the re-exports (e.g., `SessionCounterAccessor`) are 5+ years old. The cleanup is worth its own iteration.
-- **§5.3 "planner.go split to AD is blocked on moving operator types"** — partially correct. The planner.go split is blocked on accessor methods for `Aggregate.Child()`, `HashAggregate.GroupCols()`, etc. (which were added in iter-35), and on moving `planner.go`'s **test files** alongside. The operator types themselves are not the blocker — they have accessors.
+- **§1.2 "EX re-exports for backward compatibility with SYS"** — correct factually, but the report treats this as a transitional concern. It is actually **decades of accumulated cruft**; some of the re-exports (e.g., `SessionCounterAccessor`) are 5+ years old. The cleanup is worth its own milestone.
+- **§5.3 "planner.go split to AD is blocked on moving operator types"** — partially correct. The planner.go split is blocked on accessor methods for `Aggregate.Child()`, `HashAggregate.GroupCols()`, etc. (which already exist), and on moving `planner.go`'s **test files** alongside. The operator types themselves are not the blocker — they have accessors.
 
 ### 11.4 Out of scope (deferred or human-only)
 

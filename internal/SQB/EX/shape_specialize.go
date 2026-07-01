@@ -2,6 +2,7 @@ package EX
 
 import (
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
 
@@ -28,7 +29,7 @@ const (
 
 // DetectShape inspects an operator tree and returns the recognized
 // shape, or ShapeNone if no specialization is available.
-func DetectShape(op Operator) ShapeKind {
+func DetectShape(op DT.Operator) ShapeKind {
 	switch o := op.(type) {
 	case *OP.Filter:
 		if isInt64EqPredicate(o.Predicate()) {

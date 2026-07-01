@@ -20,26 +20,26 @@ func NewCreateView(stmt *PS.CreateViewStmt) *CreateViewOperator {
 	return &CreateViewOperator{stmt: stmt}
 }
 
-func (c *CreateViewOperator) Next(_ context.Context) (Row, error) {
+func (c *CreateViewOperator) Next(_ context.Context) (DT.Row, error) {
 	if c.done {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	c.done = true
 
 	// REQ000825: reject duplicate view names.
 	if DT.LookupView(c.stmt.Name) != nil {
-		return Row{}, fmt.Errorf("ex: view %q already exists", c.stmt.Name)
+		return DT.Row{}, fmt.Errorf("ex: view %q already exists", c.stmt.Name)
 	}
 
 	sel, ok := c.stmt.As.(*PS.Select)
 	if !ok {
-		return Row{}, EV.ErrEval
+		return DT.Row{}, EV.ErrEval
 	}
 	DT.RegisterView(c.stmt.Name, sel)
 
-	return Row{
+	return DT.Row{
 		Cols: []string{"result"},
-		Data: []Value{NewTextValue("view created")},
+		Data: []DT.Value{NewTextValue("view created")},
 	}, nil
 }
 
