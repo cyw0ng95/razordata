@@ -81,3 +81,4 @@ tmp/
 
 # Home directory artifacts
 ${HOME}/
+.worktrees/
