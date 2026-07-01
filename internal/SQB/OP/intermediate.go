@@ -379,6 +379,9 @@ func NewProject(child Operator, cols []PS.Expr) *Project {
 		prefixCols: prefixCols,
 		colIndex:   colIndex,
 		dataBuf:    dataBuf,
+		// REQ001091: dataPerRow is now set in NewProject so the lazy-init
+		// branch in Next is a no-op for the pool-acquired case.
+		dataPerRow: len(cols),
 	}
 }
 
@@ -487,7 +490,8 @@ func (p *Project) Close() error {
 	// REQ001091: return the data buffer to the pool so the next
 	// Project can reuse the backing array. Only return buffers
 	// that grew to a meaningful size to avoid wasting pool slots
-	// on degenerate empty Projects.
+	// on degenerate empty Projects. Reset length to 0 so the
+	// next acquirer starts from a clean slate.
 	if cap(p.dataBuf) >= projectDataBufChunkSize {
 		buf := p.dataBuf[:0]
 		projectDataBufPool.Put(&buf)
