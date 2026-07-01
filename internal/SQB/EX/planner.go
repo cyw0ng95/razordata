@@ -3639,9 +3639,19 @@ func limitInt64(e PS.Expr) (int64, bool) {
 func (p *Planner) planInsert(s *PS.Insert) Operator {
 	// REQ000707: INSERT INTO t SELECT ...
 	if s.Select != nil {
-		selPlan, err := p.Plan(s.Select)
-		if err == nil && selPlan != nil && selPlan.Root != nil {
-			op := NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+		selPlan, selErr := p.Plan(s.Select)
+		if selErr == nil && selPlan != nil && selPlan.Root != nil {
+			var op *Insert
+			if p.store != nil {
+				// REQ001129: store-backed INSERT...SELECT needs
+				// a store-backed Insert operator.
+				op, selErr = NewInsertWithStore(p.store, s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+				if selErr != nil {
+					return nil
+				}
+			} else {
+				op = NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+			}
 			op.selectPlan = selPlan.Root
 			propagatePlanner(selPlan.Root, p)
 			return op

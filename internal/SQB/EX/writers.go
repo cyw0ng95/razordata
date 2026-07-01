@@ -357,6 +357,18 @@ func (i *Insert) nextFromStore(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
+		// REQ001128: when the PK was NULL (ExtractPK generated a
+		// synthetic rowid), update the row data so the stored value
+		// matches the generated ID instead of NULL. SQLite's INTEGER
+		// PRIMARY KEY behavior auto-fills NULL with the rowid.
+		if pkInt, ok := pk.(int64); ok && i.schema.Pk != "" {
+			for pi, pc := range i.schema.Cols {
+				if pc == i.schema.Pk && pi < len(out.Data) && out.Data[pi].Kind == KindNull {
+					out.Data[pi] = DT.NewIntValue(pkInt)
+					break
+				}
+			}
+		}
 		buf, err := OP.EncodeRow(i.schema, out)
 		if err != nil {
 			return Row{}, err
@@ -413,6 +425,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 	if ss, ok := DT.SchemaFor(i.table); ok {
 		cschema = ss
 	}
+	prefix := OP.TablePrefix(i.table)
 
 	// Execute SELECT first (outside the lock to avoid deadlock)
 	var selectRows []Row
@@ -438,7 +451,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 	pending := make(map[string]struct{})
 	lookup := inMemoryLookup(i.table)
 
-	for _, row := range selectRows {
+		for _, row := range selectRows {
 		// Build insert row from SELECT result
 		out, err := buildInsertRowFromSelect(schema, i.cols, row)
 		if err != nil {
@@ -458,9 +471,43 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 				}
 				return Row{}, err
 			}
+			// REQ001129: store-backed INSERT...SELECT must write to
+			// the store engine, not just the in-memory table map.
+			if i.store != nil {
+				pk, pkErr := OP.ExtractPK(cschema, out)
+				if pkErr != nil {
+					return Row{}, pkErr
+				}
+				// REQ001128: when PK is NULL, update the row data to
+				// match the auto-generated rowid.
+				if pkInt, ok := pk.(int64); ok && cschema.Pk != "" {
+					for pi, pc := range cschema.Cols {
+						if pc == cschema.Pk && pi < len(out.Data) && out.Data[pi].Kind == KindNull {
+							out.Data[pi] = DT.NewIntValue(pkInt)
+							break
+						}
+					}
+				}
+				buf, err := OP.EncodeRow(cschema, out)
+				if err != nil {
+					return Row{}, err
+				}
+				key := OP.RowKey(prefix, pk)
+				if err := i.store.Insert(key, buf); err != nil {
+					return Row{}, err
+				}
+				if i.txWriter != nil {
+					i.txWriter.RecordWrite(key, buf)
+				}
+				// Maintain secondary indexes (iter-22).
+				if err := OP.MaintainIndexesOnInsert(i.store, i.table, cschema, out); err != nil {
+					return Row{}, err
+				}
+			}
 		}
-
-		existing = append(existing, out)
+		if i.store == nil {
+			existing = append(existing, out)
+		}
 		i.rows++
 		if i.execCtx != nil {
 			i.execCtx.LastChanges++
