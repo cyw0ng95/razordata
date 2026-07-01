@@ -1,6 +1,7 @@
 package RE
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -1302,4 +1303,79 @@ func TestConstantFoldBinary_NullPropagation(t *testing.T) {
 			t.Errorf("Rewrite(%q): expected fold", c.sql)
 		}
 	}
+}
+
+func TestRewrite_DoesNotMutateInput(t *testing.T) {
+	// REQ001164: Rewrite must not mutate the original AST.
+	// The original statement's slices must remain unchanged after Rewrite.
+
+	t.Run("Insert", func(t *testing.T) {
+		stmt := mustParse(t, "INSERT INTO t VALUES (1 + 2, 3 * 4)").(*PS.Insert)
+		origVals := make([][]PS.Expr, len(stmt.Values))
+		for i, row := range stmt.Values {
+			origVals[i] = append([]PS.Expr(nil), row...)
+		}
+		_, err := Rewrite(stmt)
+		if err != nil {
+			t.Fatalf("Rewrite error: %v", err)
+		}
+		// Verify original Values are unchanged
+		for i, row := range stmt.Values {
+			if len(row) != len(origVals[i]) {
+				t.Errorf("Values[%d]: length changed from %d to %d", i, len(origVals[i]), len(row))
+				continue
+			}
+			for j, expr := range row {
+				if fmt.Sprintf("%T", expr) != fmt.Sprintf("%T", origVals[i][j]) {
+					t.Errorf("Values[%d][%d]: type changed from %T to %T",
+						i, j, origVals[i][j], expr)
+				}
+			}
+		}
+	})
+
+	t.Run("Update", func(t *testing.T) {
+		stmt := mustParse(t, "UPDATE t SET a = 1 + 2 WHERE b = 3 * 4").(*PS.Update)
+		origSet := make([]PS.Pair, len(stmt.Set))
+		copy(origSet, stmt.Set)
+		origWhere := stmt.Where
+		_, err := Rewrite(stmt)
+		if err != nil {
+			t.Fatalf("Rewrite error: %v", err)
+		}
+		// Verify original Set is unchanged
+		for i, p := range stmt.Set {
+			if p.Col != origSet[i].Col {
+				t.Errorf("Set[%d].Col changed from %q to %q", i, origSet[i].Col, p.Col)
+			}
+			if fmt.Sprintf("%T", p.Val) != fmt.Sprintf("%T", origSet[i].Val) {
+				t.Errorf("Set[%d].Val type changed from %T to %T",
+					i, origSet[i].Val, p.Val)
+			}
+		}
+		// Verify original Where is unchanged
+		if fmt.Sprintf("%T", stmt.Where) != fmt.Sprintf("%T", origWhere) {
+			t.Errorf("Where type changed from %T to %T", origWhere, stmt.Where)
+		}
+	})
+
+	t.Run("CreateTable", func(t *testing.T) {
+		stmt := mustParse(t, "CREATE TABLE t (a INTEGER DEFAULT 1 + 2, b TEXT)").(*PS.CreateTable)
+		origCols := make([]PS.ColDef, len(stmt.Cols))
+		copy(origCols, stmt.Cols)
+		_, err := Rewrite(stmt)
+		if err != nil {
+			t.Fatalf("Rewrite error: %v", err)
+		}
+		// Verify original Cols are unchanged
+		for i, c := range stmt.Cols {
+			if c.Name != origCols[i].Name {
+				t.Errorf("Cols[%d].Name changed from %q to %q", i, origCols[i].Name, c.Name)
+			}
+			if fmt.Sprintf("%T", c.Default) != fmt.Sprintf("%T", origCols[i].Default) {
+				t.Errorf("Cols[%d].Default type changed from %T to %T",
+					i, origCols[i].Default, c.Default)
+			}
+		}
+	})
 }

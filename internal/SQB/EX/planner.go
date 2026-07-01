@@ -397,7 +397,12 @@ func (p *Planner) RegisterIndex(table, index string, cols []string) {
 }
 
 func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
-	key := pl.SerializeKey(stmt)
+	rewritten, err := RE.Rewrite(stmt)
+	if err != nil {
+		return nil, err
+	}
+
+	key := pl.SerializeKey(rewritten)
 	p.mu.Lock()
 	if cached, ok := p.memo[key]; ok {
 		p.mu.Unlock()
@@ -406,11 +411,6 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	p.mu.Unlock()
 
 	var root Operator
-
-	rewritten, err := RE.Rewrite(stmt)
-	if err != nil {
-		return nil, err
-	}
 
 	switch s := rewritten.(type) {
 	case *PS.Select:

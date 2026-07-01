@@ -69,6 +69,7 @@ func rewriteCompound(s *PS.CompoundStmt) (PS.Stmt, error) {
 func rewriteInsert(s *PS.Insert) *PS.Insert {
 	out := *s
 	out.Cols = append([]string(nil), s.Cols...)
+	out.Values = make([][]PS.Expr, len(s.Values))
 	for i, row := range s.Values {
 		cp := make([]PS.Expr, len(row))
 		for j, c := range row {
@@ -82,6 +83,7 @@ func rewriteInsert(s *PS.Insert) *PS.Insert {
 func rewriteUpdate(s *PS.Update) *PS.Update {
 	out := *s
 	out.Where = RewriteExpr(s.Where)
+	out.Set = make([]PS.Pair, len(s.Set))
 	for i, p := range s.Set {
 		out.Set[i] = PS.Pair{Col: p.Col, Val: RewriteExpr(p.Val)}
 	}
@@ -96,6 +98,7 @@ func rewriteDelete(s *PS.Delete) *PS.Delete {
 
 func rewriteCreateTable(s *PS.CreateTable) *PS.CreateTable {
 	out := *s
+	out.Cols = make([]PS.ColDef, len(s.Cols))
 	for i, c := range s.Cols {
 		cp := c
 		cp.Default = RewriteExpr(c.Default)
