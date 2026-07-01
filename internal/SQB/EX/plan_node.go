@@ -19,7 +19,7 @@ import (
 // It mirrors the Operator tree but captures descriptive metadata for
 // human-readable rendering.
 type PlanNode struct {
-	Type        string          // "SeqScan", "IndexScan", "Filter", etc.
+	Type        string          // "OP.SeqScan", "OP.IndexScan", "OP.Filter", etc.
 	Table       string          // for scan nodes
 	Index       string          // for index nodes
 	Cost        float64         // estimated cost
@@ -155,7 +155,7 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 	}
 
 	switch v := op.(type) {
-	case *IndexScan:
+	case *OP.IndexScan:
 		node.Table = v.Table()
 		node.Index = v.Idx()
 		node.Cost = 0.1
@@ -178,7 +178,7 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		}
 		node.Detail = detail
 
-	case *SeqScan:
+	case *OP.SeqScan:
 		node.Table = v.Table()
 		node.Cost = 1.0
 		node.Rows = int64(planner.estimateRowCount(v.Table(), nil))
@@ -191,7 +191,7 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		}
 		node.Detail = detail
 
-	case *Filter:
+	case *OP.Filter:
 		node.Detail = "WHERE"
 		if v.Predicate() != nil {
 			node.Detail = "WHERE " + RE.FormatExpr(v.Predicate())
@@ -200,15 +200,15 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		var ts *TableStats
 		if planner != nil && v.Child() != nil {
 			// Try to extract table name from child.
-			if seq, ok := v.Child().(*SeqScan); ok {
+			if seq, ok := v.Child().(*OP.SeqScan); ok {
 				ts = planner.getTableStats(seq.Table())
-			} else if idx, ok := v.Child().(*IndexScan); ok {
+			} else if idx, ok := v.Child().(*OP.IndexScan); ok {
 				ts = planner.getTableStats(idx.Table())
 			}
 		}
 		node.Cost = estimateFilterCost(v, ts)
 
-	case *Project:
+	case *OP.Project:
 		node.Detail = "PROJECT"
 		if len(v.Cols()) > 0 {
 			var parts []string
@@ -219,7 +219,7 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		}
 		node.Cost = estimateProjectCost(v)
 
-	case *Sort:
+	case *OP.Sort:
 		node.Detail = "ORDER BY"
 		if len(v.Keys()) > 0 {
 			var parts []string
@@ -235,22 +235,22 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		// REQ000787: get table stats from child operator's table.
 		var ts *TableStats
 		if planner != nil && v.Child() != nil {
-			if seq, ok := v.Child().(*SeqScan); ok {
+			if seq, ok := v.Child().(*OP.SeqScan); ok {
 				ts = planner.getTableStats(seq.Table())
-			} else if idx, ok := v.Child().(*IndexScan); ok {
+			} else if idx, ok := v.Child().(*OP.IndexScan); ok {
 				ts = planner.getTableStats(idx.Table())
 			}
 		}
 		node.Cost = estimateSortCost(v, ts)
 
-	case *Limit:
+	case *OP.Limit:
 		node.Detail = "LIMIT"
 		if v.LimitValue() > 0 {
 			node.Detail = fmt.Sprintf("LIMIT %d", v.LimitValue())
 		}
 		node.Cost = estimateLimitCost(v)
 
-	case *Offset:
+	case *OP.Offset:
 		node.Detail = "OFFSET"
 		node.Cost = estimateOffsetCost(v)
 
@@ -259,9 +259,9 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		// REQ000787: get table stats from child operator's table.
 		var ts *TableStats
 		if planner != nil && v.Child() != nil {
-			if seq, ok := v.Child().(*SeqScan); ok {
+			if seq, ok := v.Child().(*OP.SeqScan); ok {
 				ts = planner.getTableStats(seq.Table())
-			} else if idx, ok := v.Child().(*IndexScan); ok {
+			} else if idx, ok := v.Child().(*OP.IndexScan); ok {
 				ts = planner.getTableStats(idx.Table())
 			}
 		}
@@ -272,15 +272,15 @@ func buildPlanNodeTree(op Operator, planner *Planner) *PlanNode {
 		// REQ000787: get table stats from child operator's table.
 		var ts *TableStats
 		if planner != nil && v.Child() != nil {
-			if seq, ok := v.Child().(*SeqScan); ok {
+			if seq, ok := v.Child().(*OP.SeqScan); ok {
 				ts = planner.getTableStats(seq.Table())
-			} else if idx, ok := v.Child().(*IndexScan); ok {
+			} else if idx, ok := v.Child().(*OP.IndexScan); ok {
 				ts = planner.getTableStats(idx.Table())
 			}
 		}
 		node.Cost = estimateAggregateCost(v, ts)
 
-case *NestedLoopJoin:
+case *OP.NestedLoopJoin:
 		node.Detail = fmt.Sprintf("JOIN %s", v.RightTbl())
 		var leftTS, rightTS *TableStats
 		if planner != nil {
@@ -344,11 +344,11 @@ case *NestedLoopJoin:
 		node.Detail = "ANALYZE"
 		node.Cost = 10.0
 
-	case *Vacuum:
+	case *UT.Vacuum:
 		node.Detail = "VACUUM"
 		node.Cost = 50.0
 
-	case *IntegrityCheck:
+	case *UT.IntegrityCheck:
 		node.Detail = "INTEGRITY_CHECK"
 		node.Cost = 10.0
 
@@ -380,11 +380,11 @@ case *NestedLoopJoin:
 		node.Detail = fmt.Sprintf("WINDOW %s", v.FuncName())
 		node.Cost = 10.0
 
-	case *CompoundOp:
+	case *OP.CompoundOp:
 		node.Detail = "COMPOUND"
 		node.Cost = 5.0
 
-	case *ValuesRows:
+	case *OP.ValuesRows:
 		node.Detail = fmt.Sprintf("VALUES %d rows", len(v.Rows()))
 		node.Cost = 1.0
 
@@ -407,7 +407,7 @@ case *NestedLoopJoin:
 
 	// Handle multi-child operators
 	switch v := op.(type) {
-	case *NestedLoopJoin:
+	case *OP.NestedLoopJoin:
 		if v.LeftChild() != nil {
 			node.Add(buildPlanNodeTree(v.LeftChild(), planner))
 		}
@@ -429,7 +429,7 @@ case *NestedLoopJoin:
 		if v.RightChild() != nil {
 			node.Add(buildPlanNodeTree(v.RightChild(), planner))
 		}
-	case *CompoundOp:
+	case *OP.CompoundOp:
 		if v.LeftChild() != nil {
 			node.Add(buildPlanNodeTree(v.LeftChild(), planner))
 		}
@@ -455,42 +455,42 @@ func operatorType(op Operator) string {
 		return operatorType(aop.Inner)
 	}
 	switch op.(type) {
-	case *SeqScan:
+	case *OP.SeqScan:
 		return "Scan"
-	case *IndexScan:
+	case *OP.IndexScan:
 		return "Search"
 	case *OP.BitmapHeapScan:
-		return "BitmapHeapScan" // REQ001106
+		return "OP.BitmapHeapScan" // REQ001106
 	case *OP.IndexOnlyScan:
-		return "IndexOnlyScan" // REQ001107
-	case *Filter:
-		return "Filter"
-	case *Project:
-		return "Project"
-	case *Sort:
-		return "Sort"
-	case *Limit:
-		return "Limit"
-	case *Offset:
-		return "Offset"
+		return "OP.IndexOnlyScan" // REQ001107
+	case *OP.Filter:
+		return "OP.Filter"
+	case *OP.Project:
+		return "OP.Project"
+	case *OP.Sort:
+		return "OP.Sort"
+	case *OP.Limit:
+		return "OP.Limit"
+	case *OP.Offset:
+		return "OP.Offset"
 	case *OP.Distinct:
 		return "OP.Distinct"
 	case *AG.Aggregate:
 		return "Aggregate"
 	case *AG.HashAggregate:
 		return "HashAggregate"
-	case *NestedLoopJoin:
+	case *OP.NestedLoopJoin:
 		return "Join"
 	case *OP.HashJoin:
 		return "OP.HashJoin"
 	case *AG.WindowOperator:
 		return "Window"
-	case *CompoundOp:
+	case *OP.CompoundOp:
 		return "Compound"
-	case *Values:
-		return "Values"
-	case *ValuesRows:
-		return "ValuesRows"
+	case *OP.Values:
+		return "OP.Values"
+	case *OP.ValuesRows:
+		return "OP.ValuesRows"
 	case *Insert:
 		return "Insert"
 	case *Update:
@@ -517,12 +517,12 @@ func operatorType(op Operator) string {
 		return "AlterTable"
 	case *Pragma:
 		return "Pragma"
-	case *Analyze:
+	case *UT.Analyze:
 		return "Analyze"
-	case *Vacuum:
-		return "Vacuum"
-	case *IntegrityCheck:
-		return "IntegrityCheck"
+	case *UT.Vacuum:
+		return "UT.Vacuum"
+	case *UT.IntegrityCheck:
+		return "UT.IntegrityCheck"
 	case *Truncate:
 		return "Truncate"
 	case *Reindex:
@@ -732,7 +732,7 @@ func identifyBottleneck(node *PlanNode) *BottleneckInfo {
 	}
 
 	// Check for sequential scan on large table.
-	if node.Type == "SeqScan" && node.Analyze.RowsReturned > 1000 {
+	if node.Type == "OP.SeqScan" && node.Analyze.RowsReturned > 1000 {
 		if bn.Severity == "" {
 			bn.Severity = "medium"
 		}
@@ -744,7 +744,7 @@ func identifyBottleneck(node *PlanNode) *BottleneckInfo {
 	}
 
 	// Check for sort on large input.
-	if node.Type == "Sort" && node.Analyze.TimeNS > 1000000 { // > 1ms
+	if node.Type == "OP.Sort" && node.Analyze.TimeNS > 1000000 { // > 1ms
 		if bn.Severity == "" {
 			bn.Severity = "low"
 		}
@@ -777,21 +777,21 @@ func explainQueryPlanDetail(n *PlanNode) string {
 		return "JOIN " + n.Table
 	case "OP.HashJoin":
 		return "HASH JOIN " + n.Table
-	case "Filter":
+	case "OP.Filter":
 		return "FILTER"
-	case "Project":
+	case "OP.Project":
 		return "PROJECT"
-	case "Sort":
+	case "OP.Sort":
 		return "SORT"
 	case "OP.Distinct":
 		return "DISTINCT"
 	case "Aggregate":
 		return "AGGREGATE"
-	case "Limit":
+	case "OP.Limit":
 		return "LIMIT"
-	case "Offset":
+	case "OP.Offset":
 		return "OFFSET"
-	case "Values":
+	case "OP.Values":
 		return "VALUES"
 	case "Insert":
 		return "INSERT"
@@ -808,7 +808,7 @@ func explainQueryPlanDetail(n *PlanNode) string {
 
 // estimateFilterCost estimates the cost of a filter operator.
 // REQ000787: uses column statistics to estimate selectivity when available.
-func estimateFilterCost(f *Filter, ts *TableStats) float64 {
+func estimateFilterCost(f *OP.Filter, ts *TableStats) float64 {
 	if f.Child() == nil {
 		return 1.0
 	}
@@ -819,14 +819,14 @@ func estimateFilterCost(f *Filter, ts *TableStats) float64 {
 	return selectivity
 }
 
-func estimateProjectCost(p *Project) float64 {
+func estimateProjectCost(p *OP.Project) float64 {
 	if p.Child() == nil {
 		return 1.0
 	}
 	return 1.0
 }
 
-func estimateSortCost(s *Sort, ts *TableStats) float64 {
+func estimateSortCost(s *OP.Sort, ts *TableStats) float64 {
 	if s.Child() == nil {
 		return 1.0
 	}
@@ -837,14 +837,14 @@ func estimateSortCost(s *Sort, ts *TableStats) float64 {
 	return 10.0 * (1 + math.Log2(inputRows+1))
 }
 
-func estimateLimitCost(l *Limit) float64 {
+func estimateLimitCost(l *OP.Limit) float64 {
 	if l.Child() == nil {
 		return 1.0
 	}
 	return 1.0
 }
 
-func estimateOffsetCost(o *Offset) float64 {
+func estimateOffsetCost(o *OP.Offset) float64 {
 	if o.Child() == nil {
 		return 1.0
 	}
@@ -902,7 +902,7 @@ func estimateIndexCost(ts *TableStats, indexCols []string) float64 {
 
 // estimateJoinCost estimates the cost of a nested-loop join.
 // REQ000787: uses table statistics to estimate join cardinality.
-func estimateJoinCost(j *NestedLoopJoin, leftTS, rightTS *TableStats) float64 {
+func estimateJoinCost(j *OP.NestedLoopJoin, leftTS, rightTS *TableStats) float64 {
 	leftCost := 1.0
 	rightCost := 1.0
 	if j.LeftChild() != nil {
