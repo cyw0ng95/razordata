@@ -612,32 +612,120 @@ func equalLiteral(a, b PS.Expr) bool {
 	return false
 }
 
-// flattenSubquery returns the literal list if the subquery is a
-// 'SELECT <literals> FROM <no-outer-refs> WHERE <no-outer-refs>'
-// and the literal list is known statically. Otherwise returns
-// ok=false and the planner falls back to runtime evaluation.
+// flattenSubquery returns the literal list if the subquery is known to
+// evaluate to a static literal set. Otherwise returns ok=false and the
+// planner falls back to runtime evaluation.
+//
+// Recognized shapes (REQ001168):
+//   - SELECT <literals> with no FROM and no WHERE          (returns the literal list)
+//   - SELECT <literals> FROM (VALUES <row>, <row>, ...)     (returns flattened VALUES rows —
+//     currently dead code: parser does not yet accept VALUES as a FROM subquery.
+//     Retained for the day the parser is extended; the SubqueryFrom field is wired.)
+//   - SELECT <literals> FROM <t> WHERE <known-false>       (returns empty list, ok=true)
+//
+// Not recognized (returns ok=false; falls back to runtime):
+//   - SELECT with non-literal projections
+//   - SELECT with joins, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET
+//   - PK-equality flattening (would require schema context; not in scope here).
 func flattenSubquery(stmt PS.Stmt) ([]PS.Expr, bool) {
 	sel, ok := stmt.(*PS.Select)
 	if !ok {
 		return nil, false
 	}
-	if sel.From != "" {
+	if hasNonTrivialClauses(sel) {
 		return nil, false
 	}
-	if sel.Where != nil {
-		return nil, false
+	if sel.From == "" && sel.Where == nil {
+		return flattenLiterals(sel.Cols)
 	}
+	if vs, isValues := sel.SubqueryFrom.(*PS.ValuesStmt); isValues && sel.From == "" {
+		return flattenValues(vs)
+	}
+	if sel.From != "" && sel.Where != nil && isKnownFalse(sel.Where) {
+		return []PS.Expr{}, true
+	}
+	return nil, false
+}
+
+// hasNonTrivialClauses reports whether the SELECT has clauses that prevent
+// literal flattening (joins, grouping, ordering, limits, distinct).
+func hasNonTrivialClauses(sel *PS.Select) bool {
 	if sel.FromAlias != "" {
-		return nil, false
+		return true
 	}
-	out := make([]PS.Expr, 0, len(sel.Cols))
-	for _, c := range sel.Cols {
+	if len(sel.Joins) > 0 {
+		return true
+	}
+	if sel.Distinct {
+		return true
+	}
+	if len(sel.GroupBy) > 0 || sel.Having != nil {
+		return true
+	}
+	if len(sel.OrderBy) > 0 || sel.Limit != nil || sel.Offset != nil {
+		return true
+	}
+	return false
+}
+
+// flattenLiterals returns the literal projection list, or ok=false if any
+// column is not a literal.
+func flattenLiterals(cols []PS.Expr) ([]PS.Expr, bool) {
+	out := make([]PS.Expr, 0, len(cols))
+	for _, c := range cols {
 		if !isLiteral(c) {
 			return nil, false
 		}
 		out = append(out, c)
 	}
 	return out, true
+}
+
+// flattenValues extracts a flat literal list from a `FROM (VALUES ...)` clause.
+// Each VALUES row must produce exactly one literal; multi-column VALUES rows
+// are rejected to avoid silently reshaping the projection arity.
+func flattenValues(vs *PS.ValuesStmt) ([]PS.Expr, bool) {
+	if len(vs.Rows) == 0 {
+		return []PS.Expr{}, true
+	}
+	out := make([]PS.Expr, 0, len(vs.Rows))
+	for _, row := range vs.Rows {
+		if len(row) != 1 || !isLiteral(row[0]) {
+			return nil, false
+		}
+		out = append(out, row[0])
+	}
+	return out, true
+}
+
+// isKnownFalse reports whether the WHERE expression is statically false
+// after constant folding. Recognized shapes: `1=0`, `0=1`, `1<>1`, `0<>0`,
+// `FALSE`, `NOT TRUE`. Anything else (including unknown identifiers) is
+// treated as not-known-false to avoid false positives.
+func isKnownFalse(e PS.Expr) bool {
+	switch v := e.(type) {
+	case *PS.BoolLiteral:
+		return !v.Val
+	case *PS.UnaryExpr:
+		if v.Op == LX.T_NOT {
+			if inner, ok := v.Operand.(*PS.BoolLiteral); ok {
+				return inner.Val
+			}
+		}
+	case *PS.BinaryExpr:
+		if v.Op != LX.T_EQ && v.Op != LX.T_NE {
+			return false
+		}
+		ln, lok := v.Left.(*PS.NumberLiteral)
+		rn, rok := v.Right.(*PS.NumberLiteral)
+		if lok && rok {
+			if v.Op == LX.T_EQ {
+				return ln.Val != rn.Val
+			}
+			return ln.Val == rn.Val
+		}
+	}
+	return false
 }
 
 // SplitAnd returns the top-level AND conjuncts of e. If e is not

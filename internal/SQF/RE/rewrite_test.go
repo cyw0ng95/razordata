@@ -168,6 +168,64 @@ func TestRewriteFlattenSubquery(t *testing.T) {
 	}
 }
 
+// REQ001168: Extend flattenSubquery to recognize known-false WHERE.
+// VALUES-subquery flattening is wired into the function but currently
+// unreachable: the parser does not accept `FROM (VALUES (...))` syntax.
+// PK-equality requires schema context and is out of scope.
+
+func TestFlattenSubquery_WhereFalse(t *testing.T) {
+	cases := []string{
+		"SELECT * FROM t WHERE id IN (SELECT 1 FROM u WHERE 1=0)",
+		"SELECT * FROM t WHERE id IN (SELECT 1 FROM u WHERE 0=1)",
+		"SELECT * FROM t WHERE id IN (SELECT 1 FROM u WHERE 1<>1)",
+		"SELECT * FROM t WHERE id IN (SELECT 1 FROM u WHERE FALSE)",
+		"SELECT * FROM t WHERE id IN (SELECT 1 FROM u WHERE NOT TRUE)",
+	}
+	for _, sql := range cases {
+		t.Run(sql, func(t *testing.T) {
+			out := mustRewrite(t, sql).(*PS.Select)
+			in, ok := out.Where.(*PS.InExpr)
+			if !ok {
+				t.Fatalf("expected InExpr, got %T", out.Where)
+			}
+			if len(in.List) != 0 {
+				t.Errorf("list len: got %d, want 0", len(in.List))
+			}
+			if in.Subquery != nil {
+				t.Errorf("Subquery should be nil after flatten (empty list)")
+			}
+		})
+	}
+}
+
+func TestFlattenSubquery_NotFlattened(t *testing.T) {
+	// Cases that must NOT flatten — guards against false positives.
+	cases := []string{
+		// Non-literal column in SELECT.
+		"SELECT * FROM t WHERE id IN (SELECT id FROM u)",
+		// Join in subquery.
+		"SELECT * FROM t WHERE id IN (SELECT a.a FROM u a JOIN v b ON a.x=b.x)",
+		// GROUP BY in subquery.
+		"SELECT * FROM t WHERE id IN (SELECT a FROM u GROUP BY a)",
+		// ORDER BY + LIMIT in subquery.
+		"SELECT * FROM t WHERE id IN (SELECT a FROM u ORDER BY a LIMIT 1)",
+		// DISTINCT in subquery.
+		"SELECT * FROM t WHERE id IN (SELECT DISTINCT a FROM u)",
+	}
+	for _, sql := range cases {
+		t.Run(sql, func(t *testing.T) {
+			out := mustRewrite(t, sql).(*PS.Select)
+			in, ok := out.Where.(*PS.InExpr)
+			if !ok {
+				t.Fatalf("expected InExpr, got %T", out.Where)
+			}
+			if in.Subquery == nil {
+				t.Errorf("Subquery should NOT be flattened: %s", sql)
+			}
+		})
+	}
+}
+
 func TestSplitAnd(t *testing.T) {
 	cases := []struct {
 		sql string
