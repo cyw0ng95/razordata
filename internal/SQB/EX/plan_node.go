@@ -3,6 +3,7 @@ package EX
 import (
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"fmt"
 	"math"
 	"strings"
@@ -306,39 +307,39 @@ case *OP.NestedLoopJoin:
 		node.Cost = 1.0
 
 	case *CreateTable:
-		node.Detail = fmt.Sprintf("CREATE TABLE %s", v.stmt.Name)
+		node.Detail = fmt.Sprintf("CREATE TABLE %s", v.Stmt.Name)
 		node.Cost = 1.0
 
 	case *DropTable:
-		node.Detail = fmt.Sprintf("DROP TABLE %s", v.stmt.Name)
+		node.Detail = fmt.Sprintf("DROP TABLE %s", v.Stmt.Name)
 		node.Cost = 1.0
 
 	case *CreateIndex:
-		node.Detail = fmt.Sprintf("CREATE INDEX %s", v.stmt.Name)
+		node.Detail = fmt.Sprintf("CREATE INDEX %s", v.Stmt.Name)
 		node.Cost = 5.0
 
 	case *DropIndex:
-		node.Detail = fmt.Sprintf("DROP INDEX %s", v.stmt.Name)
+		node.Detail = fmt.Sprintf("DROP INDEX %s", v.Stmt.Name)
 		node.Cost = 1.0
 
-	case *CreateViewOperator:
-		node.Detail = fmt.Sprintf("CREATE VIEW %s", v.stmt.Name)
+	case *WT.CreateViewOperator:
+		node.Detail = fmt.Sprintf("CREATE VIEW %s", v.Stmt.Name)
 		node.Cost = 1.0
 
 	case *DropView:
-		node.Detail = fmt.Sprintf("DROP VIEW %s", v.stmt.Name)
+		node.Detail = fmt.Sprintf("DROP VIEW %s", v.Stmt.Name)
 		node.Cost = 1.0
 
 	case *DropTrigger:
-		node.Detail = fmt.Sprintf("DROP TRIGGER %s", v.stmt.Name)
+		node.Detail = fmt.Sprintf("DROP TRIGGER %s", v.Stmt.Name)
 		node.Cost = 1.0
 
-	case *AlterTable:
-		node.Detail = fmt.Sprintf("ALTER TABLE %s", v.stmt.Table)
+	case *WT.AlterTable:
+		node.Detail = fmt.Sprintf("ALTER TABLE %s", v.Stmt.Table)
 		node.Cost = 2.0
 
 	case *Pragma:
-		node.Detail = fmt.Sprintf("PRAGMA %s", v.stmt.Name)
+		node.Detail = fmt.Sprintf("PRAGMA %s", v.Stmt.Name)
 		node.Cost = 0.5
 
 	case *UT.Analyze:
@@ -354,22 +355,22 @@ case *OP.NestedLoopJoin:
 		node.Cost = 10.0
 
 	case *Truncate:
-		node.Detail = fmt.Sprintf("TRUNCATE %s", v.stmt.Table)
+		node.Detail = fmt.Sprintf("TRUNCATE %s", v.Stmt.Table)
 		node.Cost = 1.0
 
 	case *Reindex:
-		node.Detail = fmt.Sprintf("REINDEX %s", v.stmt.Target)
+		node.Detail = fmt.Sprintf("REINDEX %s", v.Stmt.Target)
 		node.Cost = 2.0
 
-	case *CreateMatViewOperator:
+	case *WT.CreateMatViewOperator:
 		node.Detail = fmt.Sprintf("CREATE MATERIALIZED VIEW %s", v.Name)
 		node.Cost = 10.0
 
-	case *RefreshMatViewOperator:
+	case *WT.RefreshMatViewOperator:
 		node.Detail = fmt.Sprintf("REFRESH MATERIALIZED VIEW %s", v.Name)
 		node.Cost = 10.0
 
-	case *DropMatViewOperator:
+	case *WT.DropMatViewOperator:
 		node.Detail = fmt.Sprintf("DROP MATERIALIZED VIEW %s", v.Name)
 		node.Cost = 1.0
 
@@ -506,7 +507,7 @@ func operatorType(op DT.Operator) string {
 		return "CreateIndex"
 	case *DropIndex:
 		return "DropIndex"
-	case *CreateViewOperator:
+	case *WT.CreateViewOperator:
 		return "CreateView"
 	case *DropView:
 		return "DropView"
@@ -514,7 +515,7 @@ func operatorType(op DT.Operator) string {
 		return "CreateTrigger"
 	case *DropTrigger:
 		return "DropTrigger"
-	case *AlterTable:
+	case *WT.AlterTable:
 		return "AlterTable"
 	case *Pragma:
 		return "Pragma"
@@ -528,11 +529,11 @@ func operatorType(op DT.Operator) string {
 		return "Truncate"
 	case *Reindex:
 		return "Reindex"
-	case *CreateMatViewOperator:
+	case *WT.CreateMatViewOperator:
 		return "CreateMatView"
-	case *RefreshMatViewOperator:
+	case *WT.RefreshMatViewOperator:
 		return "RefreshMatView"
-	case *DropMatViewOperator:
+	case *WT.DropMatViewOperator:
 		return "DropMatView"
 	case *ExplainStmtOp:
 		return "Explain"

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -13,7 +14,7 @@ func TestCreateMatViewOperator(t *testing.T) {
 	defer UnregisterAll()
 
 	sel := &PS.Select{From: "t1", Cols: []PS.Expr{&PS.Ident{Name: "a"}}}
-	op := NewCreateMatView("mv_test", sel, nil)
+	op := WT.NewCreateMatView("mv_test", sel, nil)
 
 	ctx := context.Background()
 	row, err := op.Next(ctx)
@@ -41,7 +42,7 @@ func TestDropMatViewOperator(t *testing.T) {
 	sel := &PS.Select{From: "t1", Cols: []PS.Expr{&PS.Ident{Name: "a"}}}
 	DT.RegisterMatView("mv_drop", sel)
 
-	op := NewDropMatView("mv_drop", nil)
+	op := WT.NewDropMatView("mv_drop", nil)
 	ctx := context.Background()
 	row, err := op.Next(ctx)
 	if err != nil {
@@ -60,7 +61,7 @@ func TestDropMatView_NotFound(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	op := NewDropMatView("nonexistent", nil)
+	op := WT.NewDropMatView("nonexistent", nil)
 	_, err := op.Next(context.Background())
 	if err == nil {
 		t.Fatal("expected error for nonexistent mat view")
@@ -86,7 +87,7 @@ func TestRefreshMatViewOperator(t *testing.T) {
 		cols: []DT.ColInfo{{Name: "id", Typ: 0}},
 	}
 
-	op := NewRefreshMatView("mv_ref", sel, nil, planner)
+	op := WT.NewRefreshMatView("mv_ref", sel, nil, planner)
 	ctx := context.Background()
 	row, err := op.Next(ctx)
 	if err != nil {
@@ -109,7 +110,7 @@ func TestRefreshMatView_NotFound(t *testing.T) {
 	defer UnregisterAll()
 
 	planner := NewPlanner()
-	op := NewRefreshMatView("nonexistent", nil, nil, planner)
+	op := WT.NewRefreshMatView("nonexistent", nil, nil, planner)
 	_, err := op.Next(context.Background())
 	if err == nil {
 		t.Fatal("expected error for nonexistent mat view")
@@ -117,14 +118,14 @@ func TestRefreshMatView_NotFound(t *testing.T) {
 }
 
 func TestMatViewMetaKey(t *testing.T) {
-	key := MatViewMetaKey("test")
+	key := WT.MatViewMetaKey("test")
 	if string(key) != "_matview:test:meta" {
 		t.Errorf("unexpected meta key: %s", key)
 	}
 }
 
 func TestMatViewDataPrefix(t *testing.T) {
-	prefix := MatViewDataPrefix("test")
+	prefix := WT.MatViewDataPrefix("test")
 	if string(prefix) != "_matview:test:data:" {
 		t.Errorf("unexpected data prefix: %s", prefix)
 	}
@@ -135,7 +136,7 @@ func TestEncodeMatViewRow(t *testing.T) {
 		Cols: []string{"id", "name", "score"},
 		Data: []DT.Value{NewIntValue(int64(42)), NewTextValue("hello"), NewFloatValue(float64(42))},
 	}
-	encoded := encodeMatViewRow(row)
+	encoded := WT.EncodeMatViewRow(row)
 	if len(encoded) == 0 {
 		t.Error("encoded row should not be empty")
 	}
@@ -147,7 +148,7 @@ func TestCreateMatView_WithStore(t *testing.T) {
 
 	sel := &PS.Select{From: "t1", Cols: []PS.Expr{&PS.Ident{Name: "a"}}}
 	store := newMemStore()
-	op := NewCreateMatView("mv_store", sel, store)
+	op := WT.NewCreateMatView("mv_store", sel, store)
 
 	ctx := context.Background()
 	_, err := op.Next(ctx)
@@ -155,7 +156,7 @@ func TestCreateMatView_WithStore(t *testing.T) {
 		t.Fatalf("Next: %v", err)
 	}
 
-	metaKey := MatViewMetaKey("mv_store")
+	metaKey := WT.MatViewMetaKey("mv_store")
 	val, found, err := store.Get(metaKey)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -178,10 +179,10 @@ func TestDropMatView_WithStore(t *testing.T) {
 
 	store := newMemStore()
 	DT.RegisterMatView("mv_drop_store", &PS.Select{From: "t1"})
-	_ = store.Insert(MatViewMetaKey("mv_drop_store"), []byte("1"))
-	_ = store.Insert(MatViewDataPrefix("mv_drop_store"), []byte("data"))
+	_ = store.Insert(WT.MatViewMetaKey("mv_drop_store"), []byte("1"))
+	_ = store.Insert(WT.MatViewDataPrefix("mv_drop_store"), []byte("data"))
 
-	op := NewDropMatView("mv_drop_store", store)
+	op := WT.NewDropMatView("mv_drop_store", store)
 	_, err := op.Next(context.Background())
 	if err != nil {
 		t.Fatalf("Next: %v", err)
@@ -191,7 +192,7 @@ func TestDropMatView_WithStore(t *testing.T) {
 		t.Error("mat view should be unregistered")
 	}
 
-	_, found, err := store.Get(MatViewMetaKey("mv_drop_store"))
+	_, found, err := store.Get(WT.MatViewMetaKey("mv_drop_store"))
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -201,18 +202,18 @@ func TestDropMatView_WithStore(t *testing.T) {
 }
 
 func TestMatViewClose(t *testing.T) {
-	create := NewCreateMatView("mv", &PS.Select{}, nil)
+	create := WT.NewCreateMatView("mv", &PS.Select{}, nil)
 	if err := create.Close(); err != nil {
 		t.Errorf("CreateMatView Close: %v", err)
 	}
 
-	drop := NewDropMatView("mv", nil)
+	drop := WT.NewDropMatView("mv", nil)
 	if err := drop.Close(); err != nil {
 		t.Errorf("DropMatView Close: %v", err)
 	}
 
 	planner := NewPlanner()
-	refresh := NewRefreshMatView("mv", nil, nil, planner)
+	refresh := WT.NewRefreshMatView("mv", nil, nil, planner)
 	if err := refresh.Close(); err != nil {
 		t.Errorf("RefreshMatView Close: %v", err)
 	}

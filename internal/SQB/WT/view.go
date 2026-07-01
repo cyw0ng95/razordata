@@ -11,13 +11,13 @@ import (
 
 // CreateViewOperator registers a view definition (REQ000240).
 type CreateViewOperator struct {
-	stmt *PS.CreateViewStmt
+	Stmt *PS.CreateViewStmt
 	done bool
 }
 
 // NewCreateView creates a CreateView operator.
 func NewCreateView(stmt *PS.CreateViewStmt) *CreateViewOperator {
-	return &CreateViewOperator{stmt: stmt}
+	return &CreateViewOperator{Stmt: stmt}
 }
 
 func (c *CreateViewOperator) Next(_ context.Context) (DT.Row, error) {
@@ -27,15 +27,15 @@ func (c *CreateViewOperator) Next(_ context.Context) (DT.Row, error) {
 	c.done = true
 
 	// REQ000825: reject duplicate view names.
-	if DT.LookupView(c.stmt.Name) != nil {
-		return DT.Row{}, fmt.Errorf("ex: view %q already exists", c.stmt.Name)
+	if DT.LookupView(c.Stmt.Name) != nil {
+		return DT.Row{}, fmt.Errorf("ex: view %q already exists", c.Stmt.Name)
 	}
 
-	sel, ok := c.stmt.As.(*PS.Select)
+	sel, ok := c.Stmt.As.(*PS.Select)
 	if !ok {
 		return DT.Row{}, EV.ErrEval
 	}
-	DT.RegisterView(c.stmt.Name, sel)
+	DT.RegisterView(c.Stmt.Name, sel)
 
 	return DT.Row{
 		Cols: []string{"result"},

@@ -14,7 +14,7 @@ import (
 // AlterTable implements ALTER TABLE DDL operations.
 // REQ000244: ALTER TABLE executor (online schema migration).
 type AlterTable struct {
-	stmt *PS.AlterTableStmt
+	Stmt *PS.AlterTableStmt
 }
 
 // catalogMu guards catalog operations. A separate mutex avoids
@@ -22,11 +22,11 @@ type AlterTable struct {
 var catalogMu sync.Mutex
 
 func NewAlterTable(stmt *PS.AlterTableStmt) *AlterTable {
-	return &AlterTable{stmt: stmt}
+	return &AlterTable{Stmt: stmt}
 }
 
 func (a *AlterTable) Next(ctx context.Context) (DT.Row, error) {
-	switch a.stmt.Action {
+	switch a.Stmt.Action {
 	case "ADD COLUMN":
 		return DT.Row{}, a.execAddColumn()
 	case "DROP COLUMN":
@@ -36,7 +36,7 @@ func (a *AlterTable) Next(ctx context.Context) (DT.Row, error) {
 	case "RENAME COLUMN":
 		return DT.Row{}, a.execRenameColumn()
 	default:
-		return DT.Row{}, fmt.Errorf("ex: unknown ALTER TABLE action: %s", a.stmt.Action)
+		return DT.Row{}, fmt.Errorf("ex: unknown ALTER TABLE action: %s", a.Stmt.Action)
 	}
 }
 
@@ -45,12 +45,12 @@ func (a *AlterTable) Close() error {
 }
 
 func (a *AlterTable) execAddColumn() error {
-	if a.stmt.NewCol == nil {
+	if a.Stmt.NewCol == nil {
 		return fmt.Errorf("ex: ADD COLUMN requires column definition")
 	}
 
 	DT.StoreMu.Lock()
-	tableID, ok := DT.TableIDs[a.stmt.Table]
+	tableID, ok := DT.TableIDs[a.Stmt.Table]
 	if !ok {
 		// In-memory mode: release DT.StoreMu first; the in-memory
 		// helper re-acquires it (sync.Mutex is not reentrant).
@@ -61,19 +61,19 @@ func (a *AlterTable) execAddColumn() error {
 
 	ss, ok := DT.StoreSchemas[tableID]
 	if !ok {
-		return fmt.Errorf("ex: table schema for %q not found", a.stmt.Table)
+		return fmt.Errorf("ex: table schema for %q not found", a.Stmt.Table)
 	}
 
 	// Check duplicate column name
 	for _, c := range ss.Cols {
-		if c == a.stmt.NewCol.Name {
-			return fmt.Errorf("ex: column %q already exists", a.stmt.NewCol.Name)
+		if c == a.Stmt.NewCol.Name {
+			return fmt.Errorf("ex: column %q already exists", a.Stmt.NewCol.Name)
 		}
 	}
 
 	// Re-register the complete updated schema (idempotent)
-	newCols := append(append([]string(nil), ss.Cols...), a.stmt.NewCol.Name)
-	newNullable := append(append([]bool(nil), ss.Nullable...), a.stmt.NewCol.Nullable)
+	newCols := append(append([]string(nil), ss.Cols...), a.Stmt.NewCol.Name)
+	newNullable := append(append([]bool(nil), ss.Nullable...), a.Stmt.NewCol.Nullable)
 
 	// Pad parallel slices that may be nil or shorter than ss.Cols.
 	// The loop produces slices aligned to the new schema length.
@@ -85,7 +85,7 @@ func (a *AlterTable) execAddColumn() error {
 			newDefaults = append(newDefaults, nil)
 		}
 	}
-	newDefaults = append(newDefaults, a.stmt.NewCol.Default)
+	newDefaults = append(newDefaults, a.Stmt.NewCol.Default)
 
 	var newTypes []LX.TokenType
 	for i := range ss.Cols {
@@ -95,7 +95,7 @@ func (a *AlterTable) execAddColumn() error {
 			newTypes = append(newTypes, LX.TokenType(0))
 		}
 	}
-	newTypes = append(newTypes, a.stmt.NewCol.Type)
+	newTypes = append(newTypes, a.Stmt.NewCol.Type)
 
 	var newPrecision []int
 	for i := range ss.Cols {
@@ -105,7 +105,7 @@ func (a *AlterTable) execAddColumn() error {
 			newPrecision = append(newPrecision, 0)
 		}
 	}
-	newPrecision = append(newPrecision, a.stmt.NewCol.Precision)
+	newPrecision = append(newPrecision, a.Stmt.NewCol.Precision)
 
 	var newScale []int
 	for i := range ss.Cols {
@@ -115,7 +115,7 @@ func (a *AlterTable) execAddColumn() error {
 			newScale = append(newScale, 0)
 		}
 	}
-	newScale = append(newScale, a.stmt.NewCol.Scale)
+	newScale = append(newScale, a.Stmt.NewCol.Scale)
 
 	var newGenerated []PS.Expr
 	for i := range ss.Cols {
@@ -125,7 +125,7 @@ func (a *AlterTable) execAddColumn() error {
 			newGenerated = append(newGenerated, nil)
 		}
 	}
-	newGenerated = append(newGenerated, a.stmt.NewCol.Generated)
+	newGenerated = append(newGenerated, a.Stmt.NewCol.Generated)
 
 	// Rebuild unique keys with updated column indices
 	newUnique := make([]DT.UniqueKey, len(ss.Unique))
@@ -148,7 +148,7 @@ func (a *AlterTable) execAddColumn() error {
 		}
 	}
 
-	DT.RegisterStoreSchemaWithFKLocked(a.stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.Pk, newFKs)
+	DT.RegisterStoreSchemaWithFKLocked(a.Stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.Pk, newFKs)
 
 	// Update colTypes, precision, scale and generated inline
 	ss.ColTypes = newTypes
@@ -178,19 +178,19 @@ func (a *AlterTable) execAddColumn() error {
 			newEntry.Columns[i] = c
 		}
 		newEntry.Columns[len(entry.Columns)] = ls.CatalogColumn{
-			Name:     a.stmt.NewCol.Name,
-			Type:     a.stmt.NewCol.Type,
-			Nullable: a.stmt.NewCol.Nullable,
+			Name:     a.Stmt.NewCol.Name,
+			Type:     a.Stmt.NewCol.Type,
+			Nullable: a.Stmt.NewCol.Nullable,
 		}
 		if err := catalog.Put(newEntry); err != nil {
-			return fmt.Errorf("ex: catalog put %q: %w", a.stmt.Table, err)
+			return fmt.Errorf("ex: catalog put %q: %w", a.Stmt.Table, err)
 		}
 	}
 
 	// Also update in-memory schema (for planner consistency)
 	DT.TablesMu.Lock()
 	defer DT.TablesMu.Unlock()
-	DT.Schemas[a.stmt.Table] = newCols
+	DT.Schemas[a.Stmt.Table] = newCols
 
 	return nil
 }
@@ -199,32 +199,32 @@ func (a *AlterTable) execAddColumnInMemory() error {
 	DT.TablesMu.Lock()
 	defer DT.TablesMu.Unlock()
 
-	cols, ok := DT.Schemas[a.stmt.Table]
+	cols, ok := DT.Schemas[a.Stmt.Table]
 	if !ok {
-		return fmt.Errorf("ex: table %q not found", a.stmt.Table)
+		return fmt.Errorf("ex: table %q not found", a.Stmt.Table)
 	}
 
 	// Check duplicate
 	for _, c := range cols {
-		if c == a.stmt.NewCol.Name {
-			return fmt.Errorf("ex: column %q already exists", a.stmt.NewCol.Name)
+		if c == a.Stmt.NewCol.Name {
+			return fmt.Errorf("ex: column %q already exists", a.Stmt.NewCol.Name)
 		}
 	}
 
 	// Update in-memory schema
-	newCols := append(append([]string(nil), cols...), a.stmt.NewCol.Name)
-	DT.Schemas[a.stmt.Table] = newCols
+	newCols := append(append([]string(nil), cols...), a.Stmt.NewCol.Name)
+	DT.Schemas[a.Stmt.Table] = newCols
 
 	// DT.RegisterStoreSchema takes DT.StoreMu internally; the helper
 	// must not be called with DT.StoreMu already held.
-	DT.RegisterStoreSchema(a.stmt.Table, newCols, "")
+	DT.RegisterStoreSchema(a.Stmt.Table, newCols, "")
 
 	return nil
 }
 
 func (a *AlterTable) execDropColumn() error {
 	DT.StoreMu.Lock()
-	tableID, ok := DT.TableIDs[a.stmt.Table]
+	tableID, ok := DT.TableIDs[a.Stmt.Table]
 	if !ok {
 		DT.StoreMu.Unlock()
 		return a.execDropColumnInMemory()
@@ -233,24 +233,24 @@ func (a *AlterTable) execDropColumn() error {
 
 	ss, ok := DT.StoreSchemas[tableID]
 	if !ok {
-		return fmt.Errorf("ex: table schema for %q not found", a.stmt.Table)
+		return fmt.Errorf("ex: table schema for %q not found", a.Stmt.Table)
 	}
 
 	// Find column index
 	idx := -1
 	for i, c := range ss.Cols {
-		if c == a.stmt.Column {
+		if c == a.Stmt.Column {
 			idx = i
 			break
 		}
 	}
 	if idx < 0 {
-		return fmt.Errorf("ex: column %q not found in table %q", a.stmt.Column, a.stmt.Table)
+		return fmt.Errorf("ex: column %q not found in table %q", a.Stmt.Column, a.Stmt.Table)
 	}
 
 	// Cannot drop the primary key column
-	if ss.Pk == a.stmt.Column {
-		return fmt.Errorf("ex: cannot drop primary key column %q", a.stmt.Column)
+	if ss.Pk == a.Stmt.Column {
+		return fmt.Errorf("ex: cannot drop primary key column %q", a.Stmt.Column)
 	}
 
 	// Rebuild without the dropped column
@@ -329,7 +329,7 @@ func (a *AlterTable) execDropColumn() error {
 	for _, fk := range ss.ForeignKeys {
 		skip := false
 		for _, col := range fk.Columns {
-			if col == a.stmt.Column {
+			if col == a.Stmt.Column {
 				skip = true
 				break
 			}
@@ -346,7 +346,7 @@ func (a *AlterTable) execDropColumn() error {
 		})
 	}
 
-	DT.RegisterStoreSchemaWithFKLocked(a.stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.Pk, newFKs)
+	DT.RegisterStoreSchemaWithFKLocked(a.Stmt.Table, newCols, newNullable, newDefaults, newUnique, ss.Pk, newFKs)
 
 	// Update colTypes, precision, scale and generated inline
 	ss.ColTypes = newTypes
@@ -378,17 +378,17 @@ func (a *AlterTable) execDropColumn() error {
 			}
 		}
 		if err := catalog.Put(newEntry); err != nil {
-			return fmt.Errorf("ex: catalog put %q: %w", a.stmt.Table, err)
+			return fmt.Errorf("ex: catalog put %q: %w", a.Stmt.Table, err)
 		}
 	}
 
 	// Also update in-memory schema
 	DT.TablesMu.Lock()
 	defer DT.TablesMu.Unlock()
-	DT.Schemas[a.stmt.Table] = newCols
+	DT.Schemas[a.Stmt.Table] = newCols
 
 	// Update existing row data to remove the dropped column
-	if existing, ok := DT.Tables[a.stmt.Table]; ok {
+	if existing, ok := DT.Tables[a.Stmt.Table]; ok {
 		updated := make([]DT.Row, len(existing))
 		for i, row := range existing {
 			newData := make([]DT.Value, 0, len(row.Data)-1)
@@ -403,7 +403,7 @@ func (a *AlterTable) execDropColumn() error {
 			}
 			updated[i] = DT.Row{Cols: newRowCols, Types: row.Types, Data: newData, Outer: row.Outer}
 		}
-		DT.Tables[a.stmt.Table] = updated
+		DT.Tables[a.Stmt.Table] = updated
 	}
 
 	return nil
@@ -413,20 +413,20 @@ func (a *AlterTable) execDropColumnInMemory() error {
 	DT.TablesMu.Lock()
 	defer DT.TablesMu.Unlock()
 
-	cols, ok := DT.Schemas[a.stmt.Table]
+	cols, ok := DT.Schemas[a.Stmt.Table]
 	if !ok {
-		return fmt.Errorf("ex: table %q not found", a.stmt.Table)
+		return fmt.Errorf("ex: table %q not found", a.Stmt.Table)
 	}
 
 	idx := -1
 	for i, c := range cols {
-		if c == a.stmt.Column {
+		if c == a.Stmt.Column {
 			idx = i
 			break
 		}
 	}
 	if idx < 0 {
-		return fmt.Errorf("ex: column %q not found in table %q", a.stmt.Column, a.stmt.Table)
+		return fmt.Errorf("ex: column %q not found in table %q", a.Stmt.Column, a.Stmt.Table)
 	}
 
 	newCols := make([]string, 0, len(cols)-1)
@@ -435,10 +435,10 @@ func (a *AlterTable) execDropColumnInMemory() error {
 			newCols = append(newCols, c)
 		}
 	}
-	DT.Schemas[a.stmt.Table] = newCols
+	DT.Schemas[a.Stmt.Table] = newCols
 
 	// Update existing row data to remove the dropped column
-	if existing, ok := DT.Tables[a.stmt.Table]; ok {
+	if existing, ok := DT.Tables[a.Stmt.Table]; ok {
 		updated := make([]DT.Row, len(existing))
 		for i, row := range existing {
 			newData := make([]DT.Value, 0, len(row.Data)-1)
@@ -453,17 +453,17 @@ func (a *AlterTable) execDropColumnInMemory() error {
 			}
 			updated[i] = DT.Row{Cols: newRowCols, Types: row.Types, Data: newData, Outer: row.Outer}
 		}
-		DT.Tables[a.stmt.Table] = updated
+		DT.Tables[a.Stmt.Table] = updated
 	}
 
-	DT.RegisterStoreSchema(a.stmt.Table, newCols, "")
+	DT.RegisterStoreSchema(a.Stmt.Table, newCols, "")
 
 	return nil
 }
 
 func (a *AlterTable) execRename() error {
-	oldName := a.stmt.Table
-	newName := a.stmt.Column
+	oldName := a.Stmt.Table
+	newName := a.Stmt.Column
 
 	DT.StoreMu.Lock()
 	tableID, ok := DT.TableIDs[oldName]
@@ -606,8 +606,8 @@ func newUniqueForCatalog(unique []DT.UniqueKey, cols []string) []ls.CatalogUniqu
 // execRenameColumn handles ALTER TABLE t RENAME COLUMN old TO new.
 // REQ000498: renames a column in the in-memory schema and store schema.
 func (a *AlterTable) execRenameColumn() error {
-	oldCol := a.stmt.Column
-	newCol := a.stmt.NewName
+	oldCol := a.Stmt.Column
+	newCol := a.Stmt.NewName
 	if oldCol == "" || newCol == "" {
 		return fmt.Errorf("ex: RENAME COLUMN requires old and new column names")
 	}
@@ -615,9 +615,9 @@ func (a *AlterTable) execRenameColumn() error {
 	DT.TablesMu.Lock()
 	defer DT.TablesMu.Unlock()
 
-	cols, ok := DT.Schemas[a.stmt.Table]
+	cols, ok := DT.Schemas[a.Stmt.Table]
 	if !ok {
-		return fmt.Errorf("ex: table %q not found", a.stmt.Table)
+		return fmt.Errorf("ex: table %q not found", a.Stmt.Table)
 	}
 
 	// Find the column
@@ -629,13 +629,13 @@ func (a *AlterTable) execRenameColumn() error {
 		}
 	}
 	if idx < 0 {
-		return fmt.Errorf("ex: column %q not found in table %q", oldCol, a.stmt.Table)
+		return fmt.Errorf("ex: column %q not found in table %q", oldCol, a.Stmt.Table)
 	}
 
 	// Check new name doesn't already exist
 	for _, c := range cols {
 		if c == newCol {
-			return fmt.Errorf("ex: column %q already exists in table %q", newCol, a.stmt.Table)
+			return fmt.Errorf("ex: column %q already exists in table %q", newCol, a.Stmt.Table)
 		}
 	}
 
@@ -643,11 +643,11 @@ func (a *AlterTable) execRenameColumn() error {
 	newCols := make([]string, len(cols))
 	copy(newCols, cols)
 	newCols[idx] = newCol
-	DT.Schemas[a.stmt.Table] = newCols
+	DT.Schemas[a.Stmt.Table] = newCols
 
 	// Also update store DT.Schemas
 	DT.StoreMu.Lock()
-	if id, ok := DT.TableIDs[a.stmt.Table]; ok {
+	if id, ok := DT.TableIDs[a.Stmt.Table]; ok {
 		if ss, ok := DT.StoreSchemas[id]; ok {
 			newStoreCols := make([]string, len(ss.Cols))
 			copy(newStoreCols, ss.Cols)

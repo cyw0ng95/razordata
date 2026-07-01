@@ -10,7 +10,8 @@ import (
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
-	"github.com/cyw0ng95/razordata/internal/SQB/OP"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
@@ -1045,13 +1046,13 @@ func (d *Delete) RowsAffected() int64 {
 // The trigger is registered in the package-level trigger registry
 // so future INSERT/UPDATE/DELETE statements can fire it.
 type Trigger struct {
-	stmt *PS.TriggerStmt
+	Stmt *PS.TriggerStmt
 	done bool
 	err  error
 }
 
 func NewTrigger(stmt *PS.TriggerStmt) *Trigger {
-	t := &Trigger{stmt: stmt}
+	t := &Trigger{Stmt: stmt}
 	if stmt != nil {
 		if e := registerTrigger(stmt); e != nil {
 			t.err = e
@@ -1076,7 +1077,7 @@ func (t *Trigger) WithParams(p []any) DT.Operator { return t }
 func (t *Trigger) RowsAffected() int64         { return 0 }
 
 type CreateTable struct {
-	stmt       *PS.CreateTable
+	Stmt       *PS.CreateTable
 	done       bool
 	selectPlan DT.Operator // non-nil for CREATE TABLE AS SELECT (REQ000520)
 }
@@ -1241,14 +1242,14 @@ func persistToCatalog(stmt *PS.CreateTable, cols []string, nullable []bool, colT
 }
 
 func NewCreateTable(stmt *PS.CreateTable) *CreateTable {
-	return &CreateTable{stmt: stmt}
+	return &CreateTable{Stmt: stmt}
 }
 
 // NewCreateTableAs builds a CREATE TABLE AS SELECT operator. The
 // selectPlan is the planned SELECT tree that produces the rows to
 // insert into the new table. REQ000520.
 func NewCreateTableAs(stmt *PS.CreateTable, selectPlan DT.Operator) *CreateTable {
-	return &CreateTable{stmt: stmt, selectPlan: selectPlan}
+	return &CreateTable{Stmt: stmt, selectPlan: selectPlan}
 }
 
 func (c *CreateTable) Next(ctx context.Context) (DT.Row, error) {
@@ -1258,26 +1259,26 @@ func (c *CreateTable) Next(ctx context.Context) (DT.Row, error) {
 	c.done = true
 
 	// REQ000910: WITHOUT ROWID storage is not yet implemented.
-	if c.stmt.WithoutRowid {
+	if c.Stmt.WithoutRowid {
 		return DT.Row{}, errors.New("ex: WITHOUT ROWID not yet supported")
 	}
 
 	// CREATE TABLE AS SELECT (REQ000520): the schema comes from
 	// the SELECT output. Register the table, run the SELECT, and
 	// insert rows.
-	if c.stmt.Select != nil && c.selectPlan != nil {
+	if c.Stmt.Select != nil && c.selectPlan != nil {
 		return c.nextAsSelect(ctx)
 	}
 
 	// Extract column metadata and register the table.
-	cols, nullable, defaults, colTypes, precisions, scales, err := registerTableSchema(c.stmt)
+	cols, nullable, defaults, colTypes, precisions, scales, err := registerTableSchema(c.Stmt)
 	if err != nil {
 		return DT.Row{}, err
 	}
 
 	var pk string
-	if c.stmt.PK != nil {
-		pk = *c.stmt.PK
+	if c.Stmt.PK != nil {
+		pk = *c.Stmt.PK
 	}
 	// PRIMARY KEY implies NOT NULL. If PK is one of the cols, flip its
 	// nullable bit so validateRow rejects NULL PK inserts.
@@ -1290,12 +1291,12 @@ func (c *CreateTable) Next(ctx context.Context) (DT.Row, error) {
 	}
 
 	// Build constraints.
-	unique := buildUniqueConstraints(cols, c.stmt)
-	fks := buildFKConstraints(c.stmt)
-	generated := buildGeneratedColumns(c.stmt)
-	checks := buildCheckConstraints(c.stmt)
+	unique := buildUniqueConstraints(cols, c.Stmt)
+	fks := buildFKConstraints(c.Stmt)
+	generated := buildGeneratedColumns(c.Stmt)
+	checks := buildCheckConstraints(c.Stmt)
 
-	id := DT.RegisterStoreSchemaWithFK(c.stmt.Name, cols, nullable, defaults, unique, pk, fks)
+	id := DT.RegisterStoreSchemaWithFK(c.Stmt.Name, cols, nullable, defaults, unique, pk, fks)
 	// R16-3: record each column's SQL type token alongside the
 	// schema so ExtractParamTypes can resolve `column = ?`
 	// placeholders to their column type at Prepare time.
@@ -1318,7 +1319,7 @@ func (c *CreateTable) Next(ctx context.Context) (DT.Row, error) {
 	DT.StoreMu.Unlock()
 
 	// Persist to the system catalog if one is wired in (iter-12).
-	persistToCatalog(c.stmt, cols, nullable, colTypes, unique, pk)
+	persistToCatalog(c.Stmt, cols, nullable, colTypes, unique, pk)
 
 	return DT.Row{}, DT.ErrNoRows
 }
@@ -1339,8 +1340,8 @@ func (c *CreateTable) nextAsSelect(ctx context.Context) (DT.Row, error) {
 		if err == DT.ErrNoRows {
 			// Empty SELECT: register table with no columns.
 			DT.TablesMu.Lock()
-			DT.Tables[c.stmt.Name] = []DT.Row{}
-			DT.Schemas[c.stmt.Name] = nil
+			DT.Tables[c.Stmt.Name] = []DT.Row{}
+			DT.Schemas[c.Stmt.Name] = nil
 			DT.TablesMu.Unlock()
 			return DT.Row{}, DT.ErrNoRows
 		}
@@ -1348,12 +1349,12 @@ func (c *CreateTable) nextAsSelect(ctx context.Context) (DT.Row, error) {
 	}
 	cols := append([]string(nil), firstRow.Cols...)
 	DT.TablesMu.Lock()
-	if _, ok := DT.Tables[c.stmt.Name]; ok {
+	if _, ok := DT.Tables[c.Stmt.Name]; ok {
 		DT.TablesMu.Unlock()
 		return DT.Row{}, DT.ErrTableExists
 	}
-	DT.Tables[c.stmt.Name] = []DT.Row{firstRow}
-	DT.Schemas[c.stmt.Name] = cols
+	DT.Tables[c.Stmt.Name] = []DT.Row{firstRow}
+	DT.Schemas[c.Stmt.Name] = cols
 	DT.TablesMu.Unlock()
 	// Drain remaining rows.
 	for {
@@ -1365,20 +1366,20 @@ func (c *CreateTable) nextAsSelect(ctx context.Context) (DT.Row, error) {
 			return DT.Row{}, err
 		}
 		DT.TablesMu.Lock()
-		DT.Tables[c.stmt.Name] = append(DT.Tables[c.stmt.Name], row)
+		DT.Tables[c.Stmt.Name] = append(DT.Tables[c.Stmt.Name], row)
 		DT.TablesMu.Unlock()
 	}
 	return DT.Row{}, DT.ErrNoRows
 }
 
 type DropTable struct {
-	stmt *PS.DropTable
+	Stmt *PS.DropTable
 	done bool
 	rows int64
 }
 
 func NewDropTable(stmt *PS.DropTable) *DropTable {
-	return &DropTable{stmt: stmt}
+	return &DropTable{Stmt: stmt}
 }
 
 func (d *DropTable) Next(ctx context.Context) (DT.Row, error) {
@@ -1388,35 +1389,35 @@ func (d *DropTable) Next(ctx context.Context) (DT.Row, error) {
 	d.done = true
 
 	DT.TablesMu.Lock()
-	existing, tableOk := DT.Tables[d.stmt.Name]
-	if !tableOk && !d.stmt.IfExists {
+	existing, tableOk := DT.Tables[d.Stmt.Name]
+	if !tableOk && !d.Stmt.IfExists {
 		DT.TablesMu.Unlock()
-		return DT.Row{}, fmt.Errorf("ex: no such table: %s", d.stmt.Name)
+		return DT.Row{}, fmt.Errorf("ex: no such table: %s", d.Stmt.Name)
 	}
 	if tableOk {
 		d.rows = int64(len(existing))
-		delete(DT.Tables, d.stmt.Name)
+		delete(DT.Tables, d.Stmt.Name)
 	}
 	DT.TablesMu.Unlock()
 
 	// Drop the store schema mapping.
 	DT.StoreMu.Lock()
-	id, idOk := DT.TableIDs[d.stmt.Name]
+	id, idOk := DT.TableIDs[d.Stmt.Name]
 	if idOk {
 		delete(DT.StoreSchemas, id)
-		delete(DT.TableIDs, d.stmt.Name)
+		delete(DT.TableIDs, d.Stmt.Name)
 	}
 	// Drop indexes associated with this table (REQ000828).
-	delete(DT.RegisteredIndexes, d.stmt.Name)
+	delete(DT.RegisteredIndexes, d.Stmt.Name)
 	DT.StoreMu.Unlock()
 
 	// Drop triggers associated with this table (REQ000828).
 	triggerMu.Lock()
-	if triggers, ok := tableTriggers[d.stmt.Name]; ok {
+	if triggers, ok := tableTriggers[d.Stmt.Name]; ok {
 		for _, t := range triggers {
 			delete(triggerReg, t.Name)
 		}
-		delete(tableTriggers, d.stmt.Name)
+		delete(tableTriggers, d.Stmt.Name)
 	}
 	triggerMu.Unlock()
 
@@ -1536,13 +1537,13 @@ func (d *DropTable) RowsAffected() int64 {
 // It registers the index in the EX layer (for writer maintenance)
 // and persists the metadata to the catalog.
 type CreateIndex struct {
-	stmt    *PS.CreateIndexStmt
+	Stmt    *PS.CreateIndexStmt
 	done    bool
 	rowsAff int64
 }
 
 func NewCreateIndex(stmt *PS.CreateIndexStmt) *CreateIndex {
-	return &CreateIndex{stmt: stmt}
+	return &CreateIndex{Stmt: stmt}
 }
 
 func (c *CreateIndex) Next(ctx context.Context) (DT.Row, error) {
@@ -1551,12 +1552,12 @@ func (c *CreateIndex) Next(ctx context.Context) (DT.Row, error) {
 	}
 	c.done = true
 	// REQ000479: IF NOT EXISTS — skip if index already exists
-	if c.stmt.IfExists {
+	if c.Stmt.IfExists {
 		exists := false
 		DT.StoreMu.Lock()
 		for _, idxs := range DT.RegisteredIndexes {
 			for _, idx := range idxs {
-				if idx.Name == c.stmt.Name {
+				if idx.Name == c.Stmt.Name {
 					exists = true
 					break
 				}
@@ -1571,25 +1572,25 @@ func (c *CreateIndex) Next(ctx context.Context) (DT.Row, error) {
 		}
 	}
 	// extract column name strings from IndexedColumns
-	indexCols := make([]string, len(c.stmt.IndexedColumns))
-	for i, ic := range c.stmt.IndexedColumns {
+	indexCols := make([]string, len(c.Stmt.IndexedColumns))
+	for i, ic := range c.Stmt.IndexedColumns {
 		indexCols[i] = ic.Name
 	}
 	// Register for writer maintenance
-	DT.RegisterIndexWithID(c.stmt.Table, DT.RegisteredIndex{
-		Name:    c.stmt.Name,
+	DT.RegisterIndexWithID(c.Stmt.Table, DT.RegisteredIndex{
+		Name:    c.Stmt.Name,
 		Columns: indexCols,
-		Unique:  c.stmt.Unique,
+		Unique:  c.Stmt.Unique,
 	})
 	// Persist to catalog if available
 	if cat := DT.Catalog(); cat != nil {
 		// Find the tableID
-		if tableID, ok := DT.TableIDFor(c.stmt.Table); ok {
+		if tableID, ok := DT.TableIDFor(c.Stmt.Table); ok {
 			idx := ls.CatalogIndex{
-				Name:      c.stmt.Name,
+				Name:      c.Stmt.Name,
 				Columns:   indexCols,
-				Unique:    c.stmt.Unique,
-				CreateSQL: "CREATE INDEX " + c.stmt.Name + " ON " + c.stmt.Table + " (" + joinStrings(indexCols, ", ") + ")",
+				Unique:    c.Stmt.Unique,
+				CreateSQL: "CREATE INDEX " + c.Stmt.Name + " ON " + c.Stmt.Table + " (" + joinStrings(indexCols, ", ") + ")",
 			}
 			if err := cat.PutIndex(tableID, idx); err != nil {
 				// Duplicate or other error — surface it.
@@ -1606,13 +1607,13 @@ func (c *CreateIndex) RowsAffected() int64 { return c.rowsAff }
 
 // DropIndex is the DDL operator for DROP INDEX. iter-22.
 type DropIndex struct {
-	stmt    *PS.DropIndexStmt
+	Stmt    *PS.DropIndexStmt
 	done    bool
 	rowsAff int64
 }
 
 func NewDropIndex(stmt *PS.DropIndexStmt) *DropIndex {
-	return &DropIndex{stmt: stmt}
+	return &DropIndex{Stmt: stmt}
 }
 
 func (d *DropIndex) Next(ctx context.Context) (DT.Row, error) {
@@ -1626,7 +1627,7 @@ func (d *DropIndex) Next(ctx context.Context) (DT.Row, error) {
 	indexFound := false
 	for _, idxs := range DT.RegisteredIndexes {
 		for _, idx := range idxs {
-			if idx.Name == d.stmt.Name {
+			if idx.Name == d.Stmt.Name {
 				indexFound = true
 				break
 			}
@@ -1635,16 +1636,16 @@ func (d *DropIndex) Next(ctx context.Context) (DT.Row, error) {
 			break
 		}
 	}
-	if !indexFound && !d.stmt.IfExists {
+	if !indexFound && !d.Stmt.IfExists {
 		DT.StoreMu.Unlock()
-		return DT.Row{}, fmt.Errorf("ex: no such index: %s", d.stmt.Name)
+		return DT.Row{}, fmt.Errorf("ex: no such index: %s", d.Stmt.Name)
 	}
 
 	// Remove from DT.RegisteredIndexes.
 	for table, idxs := range DT.RegisteredIndexes {
 		filtered := idxs[:0]
 		for _, idx := range idxs {
-			if idx.Name != d.stmt.Name {
+			if idx.Name != d.Stmt.Name {
 				filtered = append(filtered, idx)
 			}
 		}
@@ -1662,7 +1663,7 @@ func (d *DropIndex) Next(ctx context.Context) (DT.Row, error) {
 	// Remove from catalog
 	if cat := DT.Catalog(); cat != nil {
 		for _, tableID := range snapshot {
-			if err := cat.DeleteIndex(tableID, d.stmt.Name); err == nil {
+			if err := cat.DeleteIndex(tableID, d.Stmt.Name); err == nil {
 				break
 			}
 		}
@@ -1676,14 +1677,14 @@ func (d *DropIndex) RowsAffected() int64 { return d.rowsAff }
 
 // Pragma is a writer-op stub for PRAGMA name [= value]. REQ000490.
 type Pragma struct {
-	stmt  *PS.PragmaStmt
+	Stmt  *PS.PragmaStmt
 	store DT.Store
 	done  bool
 	rows  []DT.Row
 	idx   int
 }
 
-func NewPragma(stmt *PS.PragmaStmt) *Pragma { return &Pragma{stmt: stmt} }
+func NewPragma(stmt *PS.PragmaStmt) *Pragma { return &Pragma{Stmt: stmt} }
 
 func (p *Pragma) WithStore(s DT.Store) DT.Operator {
 	p.store = s
@@ -1696,7 +1697,7 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 	}
 
 	// Handle PRAGMA table_info(table_name)
-	if p.stmt.Name == "table_info" && p.stmt.Value != "" {
+	if p.Stmt.Name == "table_info" && p.Stmt.Value != "" {
 		if !p.done {
 			p.done = true
 			if err := p.loadTableInfo(); err != nil {
@@ -1712,7 +1713,7 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 	}
 
 	// Handle PRAGMA database_list (REQ000730)
-	if p.stmt.Name == "database_list" {
+	if p.Stmt.Name == "database_list" {
 		if !p.done {
 			p.done = true
 			p.rows = append(p.rows, DT.Row{
@@ -1729,7 +1730,7 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 	}
 
 	// Handle PRAGMA index_list(table_name) (REQ000731)
-	if p.stmt.Name == "index_list" && p.stmt.Value != "" {
+	if p.Stmt.Name == "index_list" && p.Stmt.Value != "" {
 		if !p.done {
 			p.done = true
 			p.loadIndexList()
@@ -1743,7 +1744,7 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 	}
 
 	// Handle PRAGMA table_list (REQ000732)
-	if p.stmt.Name == "table_list" {
+	if p.Stmt.Name == "table_list" {
 		if !p.done {
 			p.done = true
 			p.loadTableList()
@@ -1757,7 +1758,7 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 	}
 
 	// Handle PRAGMA foreign_key_list(table_name) (REQ000733)
-	if p.stmt.Name == "foreign_key_list" && p.stmt.Value != "" {
+	if p.Stmt.Name == "foreign_key_list" && p.Stmt.Value != "" {
 		if !p.done {
 			p.done = true
 			p.loadForeignKeyList()
@@ -1771,7 +1772,7 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 	}
 
 	// Handle PRAGMA wal_checkpoint (REQ000735)
-	if p.stmt.Name == "wal_checkpoint" || p.stmt.Name == "wal_autocheckpoint" {
+	if p.Stmt.Name == "wal_checkpoint" || p.Stmt.Name == "wal_autocheckpoint" {
 		if !p.done {
 			p.done = true
 			// Return checkpoint status: busy, log, checkpointed
@@ -1789,12 +1790,12 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 	}
 
 	// Handle PRAGMA foreign_keys [= ON|OFF] (REQ000905)
-	if p.stmt.Name == "foreign_keys" {
+	if p.Stmt.Name == "foreign_keys" {
 		if !p.done {
 			p.done = true
-			if p.stmt.Value != "" {
+			if p.Stmt.Value != "" {
 				// Write: set the toggle
-				val := strings.ToUpper(p.stmt.Value)
+				val := strings.ToUpper(p.Stmt.Value)
 				DT.SetForeignKeysEnabled(val == "ON" || val == "1" || val == "TRUE")
 			}
 			// Read: return current value
@@ -1816,7 +1817,7 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 	}
 
 	// Handle PRAGMA foreign_key_check[(table_name)] (REQ000906)
-	if p.stmt.Name == "foreign_key_check" {
+	if p.Stmt.Name == "foreign_key_check" {
 		if !p.done {
 			p.done = true
 			p.loadForeignKeyCheck()
@@ -1833,8 +1834,8 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 	if !p.done {
 		p.done = true
 		// If value is set, this is a write pragma — notify listeners
-		if p.stmt.Value != "" {
-			UT.NotifyPragmaChange(p.stmt.Name, p.stmt.Value)
+		if p.Stmt.Value != "" {
+			UT.NotifyPragmaChange(p.Stmt.Name, p.Stmt.Value)
 		}
 		return DT.Row{}, DT.ErrNoRows
 	}
@@ -1842,7 +1843,7 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 }
 
 func (p *Pragma) loadTableInfo() error {
-	tableName := p.stmt.Value
+	tableName := p.Stmt.Value
 	ss, ok := DT.SchemaFor(tableName)
 	if !ok {
 		return nil
@@ -1895,7 +1896,7 @@ func colTypeName(t LX.TokenType) string {
 // loadIndexList populates rows for PRAGMA index_list(table_name) (REQ000731).
 // Returns columns: seq, name, unique, origin, partial
 func (p *Pragma) loadIndexList() {
-	tableName := p.stmt.Value
+	tableName := p.Stmt.Value
 	// Check if table exists
 	if _, ok := DT.SchemaFor(tableName); !ok {
 		return
@@ -1920,7 +1921,7 @@ func (p *Pragma) loadTableList() {
 // loadForeignKeyList populates rows for PRAGMA foreign_key_list(table_name) (REQ000733).
 // Returns columns: id, seq, table, from, to, on_update, on_delete, match
 func (p *Pragma) loadForeignKeyList() {
-	tableName := p.stmt.Value
+	tableName := p.Stmt.Value
 	ss, ok := DT.SchemaFor(tableName)
 	if !ok || len(ss.ForeignKeys) == 0 {
 		return
@@ -1939,7 +1940,7 @@ func (p *Pragma) loadForeignKeyList() {
 // Returns columns: table, rowid, parent, fkid per SQLite convention.
 // An empty result means no violations.
 func (p *Pragma) loadForeignKeyCheck() {
-	targetTable := p.stmt.Value
+	targetTable := p.Stmt.Value
 	names := DT.AllTableNames()
 	for _, name := range names {
 		if targetTable != "" && name != targetTable {
@@ -2037,17 +2038,17 @@ func (p *Pragma) RowsAffected() int64         { return 0 }
 // Explain runs the inner plan and returns a textual description of it
 // as a single-row result. REQ000481, REQ000500.
 type Explain struct {
-	stmt   *PS.ExplainStmt
+	Stmt   *PS.ExplainStmt
 	plan   DT.Operator
 	done   bool
 	rowOut bool
 	desc   string
 }
 
-func NewExplain(stmt *PS.ExplainStmt) *Explain { return &Explain{stmt: stmt} }
+func NewExplain(stmt *PS.ExplainStmt) *Explain { return &Explain{Stmt: stmt} }
 
 func (e *Explain) WithPlanner(p pl.QueryPlanner) DT.Operator {
-	if e.stmt != nil && e.stmt.Inner != nil {
+	if e.Stmt != nil && e.Stmt.Inner != nil {
 		// The inner statement has already been planned by buildWriterOp or
 		// the caller. Stash the planner so the EXPLAIN text can mention
 		// the planner name.
@@ -2074,10 +2075,10 @@ func (e *Explain) Next(ctx context.Context) (DT.Row, error) {
 }
 
 func (e *Explain) explain() string {
-	if e.stmt == nil || e.stmt.Inner == nil {
+	if e.Stmt == nil || e.Stmt.Inner == nil {
 		return "EXPLAIN: no statement"
 	}
-	switch s := e.stmt.Inner.(type) {
+	switch s := e.Stmt.Inner.(type) {
 	case *PS.Select:
 		return fmt.Sprintf("EXPLAIN: SELECT from %s", s.From)
 	case *PS.Insert:
@@ -2087,7 +2088,7 @@ func (e *Explain) explain() string {
 	case *PS.Delete:
 		return fmt.Sprintf("EXPLAIN: DELETE FROM %s", s.Table)
 	default:
-		return fmt.Sprintf("EXPLAIN: %T", e.stmt.Inner)
+		return fmt.Sprintf("EXPLAIN: %T", e.Stmt.Inner)
 	}
 }
 
@@ -2097,12 +2098,12 @@ func (e *Explain) RowsAffected() int64         { return 0 }
 
 // Truncate is a writer-op stub for TRUNCATE [TABLE] name. REQ000476.
 type Truncate struct {
-	stmt *PS.TruncateStmt
+	Stmt *PS.TruncateStmt
 	done bool
 	rows int64
 }
 
-func NewTruncate(stmt *PS.TruncateStmt) *Truncate { return &Truncate{stmt: stmt} }
+func NewTruncate(stmt *PS.TruncateStmt) *Truncate { return &Truncate{Stmt: stmt} }
 
 func (t *Truncate) Next(ctx context.Context) (DT.Row, error) {
 	if t.done {
@@ -2110,12 +2111,12 @@ func (t *Truncate) Next(ctx context.Context) (DT.Row, error) {
 	}
 	t.done = true
 	// Truncate = DELETE without WHERE; reuse the in-memory delete path.
-	if DT.Schema(t.stmt.Table) != nil {
+	if DT.Schema(t.Stmt.Table) != nil {
 		DT.TablesMu.Lock()
-		if existing, ok := DT.Tables[t.stmt.Table]; ok {
+		if existing, ok := DT.Tables[t.Stmt.Table]; ok {
 			t.rows = int64(len(existing))
 		}
-		DT.Tables[t.stmt.Table] = nil
+		DT.Tables[t.Stmt.Table] = nil
 		DT.TablesMu.Unlock()
 	}
 	return DT.Row{}, DT.ErrNoRows
@@ -2127,11 +2128,11 @@ func (t *Truncate) RowsAffected() int64         { return t.rows }
 
 // Reindex is a writer-op stub for REINDEX. REQ000478.
 type Reindex struct {
-	stmt *PS.ReindexStmt
+	Stmt *PS.ReindexStmt
 	done bool
 }
 
-func NewReindex(stmt *PS.ReindexStmt) *Reindex { return &Reindex{stmt: stmt} }
+func NewReindex(stmt *PS.ReindexStmt) *Reindex { return &Reindex{Stmt: stmt} }
 
 func (r *Reindex) Next(ctx context.Context) (DT.Row, error) {
 	if r.done {
@@ -2145,13 +2146,13 @@ func (r *Reindex) Next(ctx context.Context) (DT.Row, error) {
 	// rebuilds all indexes on that table). We treat both the index
 	// lookup and the table lookup as success paths — if the target
 	// matches either, the statement succeeds.
-	if r.stmt.Target != "" {
+	if r.Stmt.Target != "" {
 		DT.StoreMu.Lock()
 		found := false
 		// Check if target is a known index.
 		for _, idxs := range DT.RegisteredIndexes {
 			for _, idx := range idxs {
-				if idx.Name == r.stmt.Target {
+				if idx.Name == r.Stmt.Target {
 					found = true
 					break
 				}
@@ -2164,13 +2165,13 @@ func (r *Reindex) Next(ctx context.Context) (DT.Row, error) {
 		// SQLite treats REINDEX tblname as a successful no-op when
 		// the table has no indexes.
 		if !found {
-			if _, ok := DT.Schemas[r.stmt.Target]; ok {
+			if _, ok := DT.Schemas[r.Stmt.Target]; ok {
 				found = true
 			}
 		}
 		DT.StoreMu.Unlock()
 		if !found {
-			return DT.Row{}, fmt.Errorf("ex: no such index: %s", r.stmt.Target)
+			return DT.Row{}, fmt.Errorf("ex: no such index: %s", r.Stmt.Target)
 		}
 	}
 	return DT.Row{}, DT.ErrNoRows
@@ -2182,23 +2183,23 @@ func (r *Reindex) RowsAffected() int64         { return 0 }
 
 // DropView is a writer-op for DROP VIEW [IF EXISTS] name. REQ000494.
 type DropView struct {
-	stmt *PS.DropViewStmt
+	Stmt *PS.DropViewStmt
 	done bool
 }
 
-func NewDropView(stmt *PS.DropViewStmt) *DropView { return &DropView{stmt: stmt} }
+func NewDropView(stmt *PS.DropViewStmt) *DropView { return &DropView{Stmt: stmt} }
 
 func (d *DropView) Next(ctx context.Context) (DT.Row, error) {
 	if d.done {
 		return DT.Row{}, DT.ErrNoRows
 	}
 	d.done = true
-	if d.stmt == nil {
+	if d.Stmt == nil {
 		return DT.Row{}, DT.ErrNoRows
 	}
-	existed := DT.UnregisterView(d.stmt.Name)
-	if !existed && !d.stmt.IfExists {
-		return DT.Row{}, fmt.Errorf("ex: view %s does not exist", d.stmt.Name)
+	existed := DT.UnregisterView(d.Stmt.Name)
+	if !existed && !d.Stmt.IfExists {
+		return DT.Row{}, fmt.Errorf("ex: view %s does not exist", d.Stmt.Name)
 	}
 	return DT.Row{}, DT.ErrNoRows
 }
@@ -2209,12 +2210,12 @@ func (d *DropView) RowsAffected() int64         { return 0 }
 
 // DropTrigger is a writer-op for DROP TRIGGER [IF EXISTS] name. REQ000496.
 type DropTrigger struct {
-	stmt *PS.DropTriggerStmt
+	Stmt *PS.DropTriggerStmt
 	done bool
 }
 
 func NewDropTrigger(stmt *PS.DropTriggerStmt) *DropTrigger {
-	return &DropTrigger{stmt: stmt}
+	return &DropTrigger{Stmt: stmt}
 }
 
 func (d *DropTrigger) Next(ctx context.Context) (DT.Row, error) {
@@ -2222,12 +2223,12 @@ func (d *DropTrigger) Next(ctx context.Context) (DT.Row, error) {
 		return DT.Row{}, DT.ErrNoRows
 	}
 	d.done = true
-	if d.stmt == nil {
+	if d.Stmt == nil {
 		return DT.Row{}, DT.ErrNoRows
 	}
-	existed := unregisterTrigger(d.stmt.Name)
-	if !existed && !d.stmt.IfExists {
-		return DT.Row{}, fmt.Errorf("ex: trigger %s does not exist", d.stmt.Name)
+	existed := unregisterTrigger(d.Stmt.Name)
+	if !existed && !d.Stmt.IfExists {
+		return DT.Row{}, fmt.Errorf("ex: trigger %s does not exist", d.Stmt.Name)
 	}
 	return DT.Row{}, DT.ErrNoRows
 }
@@ -2384,13 +2385,13 @@ func evalReturning(exprs []PS.Expr, row *DT.Row, params []any, resultRows *[]DT.
 // rejection until Next() so the planner/executor pipeline surfaces
 // the error in a uniform location.
 type UnsupportedOp struct {
-	err  error
-	done bool
-	stmt PS.Stmt
+	err    error
+	done   bool
+	Stmt   PS.Stmt
 }
 
 func NewUnsupportedOp(stmt PS.Stmt, msg string) *UnsupportedOp {
-	return &UnsupportedOp{err: errors.New(msg), stmt: stmt}
+	return &UnsupportedOp{err: errors.New(msg), Stmt: stmt}
 }
 
 func (u *UnsupportedOp) Next(ctx context.Context) (DT.Row, error) {
@@ -2531,7 +2532,7 @@ func refreshMatViewData(name string, sel *PS.Select, store DT.Store) error {
 	// and write results to the matview data prefix
 
 	// For now, we just clear old data and mark the view as needing refresh
-	matPrefix := MatViewDataPrefix(name)
+	matPrefix := WT.MatViewDataPrefix(name)
 	if store != nil {
 		it := store.NewIterator(matPrefix)
 		for it.Next() {

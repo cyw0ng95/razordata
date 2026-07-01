@@ -10,6 +10,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -1481,18 +1482,18 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 	case *PS.DropIndexStmt:
 		return NewDropIndex(s), nil
 	case *PS.CreateViewStmt:
-		return NewCreateView(s), nil
+		return WT.NewCreateView(s), nil
 	case *PS.CreateMatViewStmt:
-		return NewCreateMatView(s.Name, s.As, e.store), nil
+		return WT.NewCreateMatView(s.Name, s.As, e.store), nil
 	case *PS.DropMatViewStmt:
-		return NewDropMatView(s.Name, e.store), nil
+		return WT.NewDropMatView(s.Name, e.store), nil
 	case *PS.RefreshMatViewStmt:
 		// Lookup the matview definition from registry
 		sel := DT.LookupMatView(s.Name)
 		if sel == nil {
 			return nil, fmt.Errorf("ex: materialized view %q not found", s.Name)
 		}
-		return NewRefreshMatView(s.Name, sel, e.store, e.planner), nil
+		return WT.NewRefreshMatView(s.Name, sel, e.store, e.planner), nil
 	case *PS.VacuumStmt:
 		return UT.NewVacuum(s), nil
 	case *PS.AnalyzeStmt:
