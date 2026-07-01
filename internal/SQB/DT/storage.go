@@ -499,3 +499,203 @@ func IndexValueFromKey(key []byte, prefix []byte) []byte {
 	}
 	return key[len(prefix):]
 }
+
+// TableHandle bundles a Store, StoreSchema, and the table's cached
+// storage-key prefix into a single value that callers (INSERT/UPDATE/
+// DELETE writers, FK validation, and any future operator that needs to
+// read or write rows of a specific table) can use without repeating the
+// TablePrefix → RowKey → EncodeRow → store.{Put,Get,Delete} dance at
+// every call site. REQ000987.
+//
+// TableHandle is the single source of truth for "where do rows of
+// table T live in the engine and how do I encode them". Prior to
+// REQ000987 this logic was inlined in writers.go at 8 sites and in
+// fk.go at 1 site; see writers.go commit history.
+type TableHandle struct {
+	// Store is the engine store to read/write through. May be nil
+	// for in-memory tests that only exercise TableHandle.EncodeRow.
+	Store Store
+	// Schema describes the row layout (column order, PK column, NULL
+	// constraints, generated columns, secondary indexes).
+	Schema *StoreSchema
+	// Table is the table name. Cached here so callers don't need to
+	// carry it alongside the handle (writers.go uses it for
+	// MaintainIndexesOn{Insert,Update,Delete} which need a name).
+	Table string
+	// prefix is the table's storage key prefix. Cached at OpenTable
+	// time so InsertRow/UpdateRow/DeleteRow/GetRow can avoid the
+	// per-call TablePrefix lookup + TableIDFor mutex.
+	prefix []byte
+}
+
+// OpenTable returns a TableHandle for `table` using `store`. Returns
+// ErrTableNotRegisteredForStorage if the table has no registered
+// schema or no assigned tableID (i.e. it was never registered with
+// the engine, even via the in-memory fallback).
+//
+// OpenTable is the canonical entry point for the REQ000987
+// abstraction: writers that previously did
+// `prefix := DT.TablePrefix(t); ss := DT.SchemaFor(t); pk, _ := DT.ExtractPK(ss, row)`
+// now do `h, err := DT.OpenTable(store, t); err := h.InsertRow(row)`.
+func OpenTable(store Store, table string) (*TableHandle, error) {
+	ss, ok := SchemaFor(table)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+	}
+	prefix := TablePrefix(table)
+	if prefix == nil {
+		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
+	}
+	return &TableHandle{
+		Store:  store,
+		Schema: ss,
+		Table:  table,
+		prefix: prefix,
+	}, nil
+}
+
+// Prefix returns the storage key prefix for this table's rows.
+// Exposed for callers that need to do prefix-scoped scans.
+func (h *TableHandle) Prefix() []byte { return h.prefix }
+
+// InsertRow encodes `row`, builds the row key, writes it through the
+// store, and maintains secondary indexes on success. On PK NULL
+// with a declared PK column (REQ001128), the synthesized synthetic
+// rowid is written back into row.Data so the persisted cell value
+// matches the generated ID, matching SQLite's INTEGER PRIMARY KEY
+// auto-fill behavior.
+//
+// InsertRow returns the storage key and encoded buffer alongside the
+// error so callers that need to feed a TxWriter (transaction rollback
+// log) don't have to re-extract the PK and re-encode the row. The
+// returned key/buf are byte-stable for the lifetime of the call.
+//
+// InsertRow is the single replacement for the 8-call-site pattern
+// that previously appeared in writers.go Insert/Update/Delete paths.
+func (h *TableHandle) InsertRow(row Row) (key []byte, buf []byte, err error) {
+	pk, err := ExtractPK(h.Schema, row)
+	if err != nil {
+		return nil, nil, err
+	}
+	// REQ001128: when PK was NULL (ExtractPK generated a synthetic
+	// rowid), update the row data so the stored value matches the
+	// generated ID instead of NULL. Mirrors SQLite's INTEGER PRIMARY
+	// KEY auto-fill.
+	if pkInt, ok := pk.(int64); ok && h.Schema.Pk != "" {
+		for pi, pc := range h.Schema.Cols {
+			if pc == h.Schema.Pk && pi < len(row.Data) && row.Data[pi].Kind == KindNull {
+				row.Data[pi] = NewIntValue(pkInt)
+				break
+			}
+		}
+	}
+	buf, err = EncodeRow(h.Schema, row)
+	if err != nil {
+		return nil, nil, err
+	}
+	key = RowKey(h.prefix, pk)
+	if err := h.Store.Insert(key, buf); err != nil {
+		return nil, nil, err
+	}
+	if err := MaintainIndexesOnInsert(h.Store, h.Table, h.Schema, row); err != nil {
+		return key, buf, err
+	}
+	return key, buf, nil
+}
+
+// MustInsertRow is a convenience wrapper for callers that don't need
+// the returned key/buf (e.g. tests or non-transactional writers).
+func (h *TableHandle) MustInsertRow(row Row) error {
+	_, _, err := h.InsertRow(row)
+	return err
+}
+
+// UpdateRow is like InsertRow but extracts the PK from `oldRow`
+// (preserving the original key for hidden-PK tables per REQ000501)
+// and maintains secondary indexes for the change.
+//
+// `newRow` is the row to encode and write; `oldRow` is the
+// pre-update row used for PK extraction and old-index removal.
+func (h *TableHandle) UpdateRow(oldRow, newRow Row) (key []byte, buf []byte, err error) {
+	pk, err := ExtractPKForUpdate(h.Schema, oldRow, h.prefix)
+	if err != nil {
+		return nil, nil, err
+	}
+	buf, err = EncodeRow(h.Schema, newRow)
+	if err != nil {
+		return nil, nil, err
+	}
+	key = RowKey(h.prefix, pk)
+	if err := h.Store.Insert(key, buf); err != nil {
+		return nil, nil, err
+	}
+	if err := MaintainIndexesOnUpdate(h.Store, h.Table, h.Schema, oldRow, newRow, pk); err != nil {
+		return key, buf, err
+	}
+	return key, buf, nil
+}
+
+// MustUpdateRow is a convenience wrapper for callers that don't need
+// the returned key/buf (e.g. tests or non-transactional writers).
+func (h *TableHandle) MustUpdateRow(oldRow, newRow Row) error {
+	_, _, err := h.UpdateRow(oldRow, newRow)
+	return err
+}
+
+// DeleteRow extracts the PK from `row` (preserving the original key
+// for hidden-PK tables) and removes both the primary row entry and
+// any secondary index entries. Returns ErrNoPKForStorage if the
+// row has no extractable PK.
+//
+// DeleteRow returns the storage key alongside the error so TxWriter
+// callers can log the delete without re-extracting the PK.
+func (h *TableHandle) DeleteRow(row Row) (key []byte, err error) {
+	pk, err := ExtractPKForUpdate(h.Schema, row, h.prefix)
+	if err != nil {
+		return nil, err
+	}
+	key = RowKey(h.prefix, pk)
+	if err := h.Store.Delete(key); err != nil {
+		return nil, err
+	}
+	if err := MaintainIndexesOnDelete(h.Store, h.Table, h.Schema, row); err != nil {
+		return key, err
+	}
+	return key, nil
+}
+
+// MustDeleteRow is a convenience wrapper for callers that don't need
+// the returned key (e.g. tests or non-transactional writers).
+func (h *TableHandle) MustDeleteRow(row Row) error {
+	_, err := h.DeleteRow(row)
+	return err
+}
+
+// GetRow reads the encoded row bytes for `pk` and decodes them.
+// Returns (Row{}, false, nil) if the key is not present.
+// This wraps Store.Get with the schema decode step so callers
+// don't have to repeat the RowKey + DecodeRow dance at every
+// call site.
+func (h *TableHandle) GetRow(pk any) (Row, bool, error) {
+	key := RowKey(h.prefix, pk)
+	buf, found, err := h.Store.Get(key)
+	if err != nil || !found {
+		return Row{}, false, err
+	}
+	row, err := DecodeRow(buf, h.Schema)
+	if err != nil {
+		return Row{}, false, err
+	}
+	// Tag the row with its storage key so a subsequent UpdateRow
+	// can reuse the same PK even for hidden-PK tables.
+	row.StoreKey = append([]byte(nil), key...)
+	return row, true, nil
+}
+
+// Exists reports whether a row with PK `pk` is present in the store.
+// Convenience wrapper around GetRow for callers that only need the
+// boolean (e.g. INSERT OR IGNORE conflict detection).
+func (h *TableHandle) Exists(pk any) (bool, error) {
+	_, found, err := h.Store.Get(RowKey(h.prefix, pk))
+	return found, err
+}

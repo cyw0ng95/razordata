@@ -264,7 +264,12 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 		return DT.Row{}, DT.ErrNoRows
 	}
 
-	prefix := OP.TablePrefix(i.table)
+	// REQ000987: build a TableHandle so InsertRow/DeleteRow encapsulate
+	// the repeated TablePrefix/RowKey/EncodeRow/MaintainIndexes pattern.
+	h, hErr := DT.OpenTable(i.store, i.table)
+	if hErr != nil {
+		return DT.Row{}, hErr
+	}
 	var pending map[string]struct{}
 	var iterValues [][]PS.Expr
 	if i.defaultValues {
@@ -280,16 +285,10 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 	var lookupFn WT.UniqueLookup
 	if i.conflictAction != PS.ConflictActionUnspecified {
 		lookupFn = func(cols []int, vals []any) (bool, error) {
-			if i.store == nil || len(vals) == 0 {
+			if h == nil || len(vals) == 0 {
 				return false, nil
 			}
-			prefix := OP.TablePrefix(i.table)
-			if prefix == nil {
-				return false, nil
-			}
-			pk := vals[0]
-			key := OP.RowKey(prefix, pk)
-			_, found, err := i.store.Get(key)
+			found, err := h.Exists(vals[0])
 			return found, err
 		}
 	} else {
@@ -330,11 +329,11 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 		}
 		if err := WT.CheckUnique(i.schema, out, pending, DT.Row{}, lookupFn); err != nil {
 			if i.conflictAction == PS.ConflictActionReplace {
-				// Delete the existing row, then fall through to insert
-				pk, pkErr := OP.ExtractPK(i.schema, out)
-				if pkErr == nil {
-					key := OP.RowKey(prefix, pk)
-					_ = i.store.Delete(key)
+				// Delete the existing row via the handle, then fall
+				// through to insert below. REQ000987: InsertRow already
+				// maintains indexes on success; the delete path uses
+				// the row from `out` for PK extraction.
+				if _, derr := h.DeleteRow(out); derr == nil {
 					i.rows++
 					if i.execCtx != nil {
 						i.execCtx.LastChanges++
@@ -354,36 +353,16 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 				return DT.Row{}, err
 			}
 		}
-		pk, err := OP.ExtractPK(i.schema, out)
+		// REQ000987: TableHandle.InsertRow handles PK extraction +
+		// REQ001128 rowid auto-fill + EncodeRow + Store.Insert +
+		// secondary index maintenance in one call, returning the
+		// (key, buf) pair so TxWriter can log it without re-encoding.
+		key, buf, err := h.InsertRow(out)
 		if err != nil {
-			return DT.Row{}, err
-		}
-		// REQ001128: when the PK was NULL (ExtractPK generated a
-		// synthetic rowid), update the row data so the stored value
-		// matches the generated ID instead of NULL. SQLite's INTEGER
-		// PRIMARY KEY behavior auto-fills NULL with the rowid.
-		if pkInt, ok := pk.(int64); ok && i.schema.Pk != "" {
-			for pi, pc := range i.schema.Cols {
-				if pc == i.schema.Pk && pi < len(out.Data) && out.Data[pi].Kind == KindNull {
-					out.Data[pi] = DT.NewIntValue(pkInt)
-					break
-				}
-			}
-		}
-		buf, err := OP.EncodeRow(i.schema, out)
-		if err != nil {
-			return DT.Row{}, err
-		}
-		key := OP.RowKey(prefix, pk)
-		if err := i.store.Insert(key, buf); err != nil {
 			return DT.Row{}, err
 		}
 		if i.txWriter != nil {
 			i.txWriter.RecordWrite(key, buf)
-		}
-		// Maintain secondary indexes (iter-22).
-		if err := OP.MaintainIndexesOnInsert(i.store, i.table, i.schema, out); err != nil {
-			return DT.Row{}, err
 		}
 		i.rows++
 		if i.execCtx != nil {
@@ -426,7 +405,6 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 	if ss, ok := DT.SchemaFor(i.table); ok {
 		cschema = ss
 	}
-	prefix := OP.TablePrefix(i.table)
 
 	// Execute SELECT first (outside the lock to avoid deadlock)
 	var selectRows []DT.Row
@@ -447,6 +425,18 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 	existing := DT.Tables[i.table]
 	if tw := DT.CurrentTxWriter(); tw != nil {
 		tw.RecordInMemoryTable(i.table, DT.SnapshotInMemoryTable(i.table))
+	}
+
+	// REQ000987: build a TableHandle for the store-backed write path
+	// so InsertRow encapsulates ExtractPK/EncodeRow/Store.Insert/
+	// MaintainIndexesOnInsert. nil when no store is wired.
+	var hsel *DT.TableHandle
+	if i.store != nil && cschema != nil {
+		var herr error
+		hsel, herr = DT.OpenTable(i.store, i.table)
+		if herr != nil {
+			return DT.Row{}, herr
+		}
 	}
 
 	pending := make(map[string]struct{})
@@ -474,35 +464,17 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 			}
 			// REQ001129: store-backed INSERT...SELECT must write to
 			// the store engine, not just the in-memory table map.
-			if i.store != nil {
-				pk, pkErr := OP.ExtractPK(cschema, out)
-				if pkErr != nil {
-					return DT.Row{}, pkErr
-				}
-				// REQ001128: when PK is NULL, update the row data to
-				// match the auto-generated rowid.
-				if pkInt, ok := pk.(int64); ok && cschema.Pk != "" {
-					for pi, pc := range cschema.Cols {
-						if pc == cschema.Pk && pi < len(out.Data) && out.Data[pi].Kind == KindNull {
-							out.Data[pi] = DT.NewIntValue(pkInt)
-							break
-						}
-					}
-				}
-				buf, err := OP.EncodeRow(cschema, out)
-				if err != nil {
-					return DT.Row{}, err
-				}
-				key := OP.RowKey(prefix, pk)
-				if err := i.store.Insert(key, buf); err != nil {
-					return DT.Row{}, err
+			// REQ000987: route through TableHandle.InsertRow so the
+			// PK extract + REQ001128 rowid auto-fill + EncodeRow +
+			// Store.Insert + MaintainIndexesOnInsert sequence is
+			// encapsulated in a single call.
+			if hsel != nil {
+				key, buf, ierr := hsel.InsertRow(out)
+				if ierr != nil {
+					return DT.Row{}, ierr
 				}
 				if i.txWriter != nil {
 					i.txWriter.RecordWrite(key, buf)
-				}
-				// Maintain secondary indexes (iter-22).
-				if err := OP.MaintainIndexesOnInsert(i.store, i.table, cschema, out); err != nil {
-					return DT.Row{}, err
 				}
 			}
 		}
@@ -742,6 +714,13 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 	}
 
 	prefix := OP.TablePrefix(u.table)
+	// REQ000987: build a TableHandle so UpdateRow encapsulates the
+	// ExtractPKForUpdate + EncodeRow + Store.Insert +
+	// MaintainIndexesOnUpdate sequence.
+	h, hErr := DT.OpenTable(u.store, u.table)
+	if hErr != nil {
+		return DT.Row{}, hErr
+	}
 	for {
 		row, err := u.iter.Next(ctx)
 		if err != nil {
@@ -769,23 +748,16 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 		if err := WT.CheckUnique(u.schema, row, nil, DT.Row{}, noopLookup); err != nil {
 			return DT.Row{}, err
 		}
-		pk, err := OP.ExtractPKForUpdate(u.schema, oldRow, prefix)
+		// REQ000987: route through TableHandle.UpdateRow. The returned
+		// (key, buf) feeds the TxWriter without re-extracting the PK
+		// or re-encoding the row.
+		key, buf, err := h.UpdateRow(oldRow, row)
 		if err != nil {
 			return DT.Row{}, err
 		}
-		buf, err := OP.EncodeRow(u.schema, row)
-		if err != nil {
-			return DT.Row{}, err
-		}
-		key := OP.RowKey(prefix, pk)
-		if err := u.store.Insert(key, buf); err != nil {
-			return DT.Row{}, err
-		}
+		_ = prefix // retained for any future callers; UpdateRow uses h.Prefix().
 		if u.txWriter != nil {
 			u.txWriter.RecordWrite(key, buf)
-		}
-		if err := OP.MaintainIndexesOnUpdate(u.store, u.table, u.schema, oldRow, row, pk); err != nil {
-			return DT.Row{}, err
 		}
 		u.rows++
 		if u.execCtx != nil {
@@ -985,6 +957,13 @@ func (d *Delete) nextFromStore(ctx context.Context) (DT.Row, error) {
 	}
 
 	prefix := OP.TablePrefix(d.table)
+	// REQ000987: build a TableHandle so DeleteRow encapsulates the
+	// ExtractPKForUpdate + RowKey + Store.Delete + MaintainIndexesOnDelete
+	// sequence (and returns the storage key for TxWriter logging).
+	h, hErr := DT.OpenTable(d.store, d.table)
+	if hErr != nil {
+		return DT.Row{}, hErr
+	}
 	for {
 		row, err := d.iter.Next(ctx)
 		if err != nil {
@@ -1000,14 +979,11 @@ func (d *Delete) nextFromStore(ctx context.Context) (DT.Row, error) {
 			}
 		}
 
-		pk, err := OP.ExtractPKForUpdate(d.schema, row, prefix)
+		key, err := h.DeleteRow(row)
 		if err != nil {
 			return DT.Row{}, err
 		}
-		key := OP.RowKey(prefix, pk)
-		if err := d.store.Delete(key); err != nil {
-			return DT.Row{}, err
-		}
+		_ = prefix // retained for any future callers; DeleteRow uses h.Prefix().
 		if d.txWriter != nil {
 			d.txWriter.RecordWrite(key, nil)
 		}
