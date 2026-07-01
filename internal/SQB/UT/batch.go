@@ -347,3 +347,29 @@ func (b *Batch) LogicalSize() int {
 	}
 	return b.Size
 }
+
+// BatchValueAt extracts the i-th value from a column.
+func BatchValueAt(col Column, i int) any {
+	if col.Nulls != nil && i < len(col.Nulls) && col.Nulls[i] {
+		return nil
+	}
+	switch col.Type {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		if i < len(col.Data.Ints) {
+			return col.Data.Ints[i]
+		}
+	case LX.T_FLOAT_KW:
+		if i < len(col.Data.Floats) {
+			return col.Data.Floats[i]
+		}
+	case LX.T_BOOL:
+		if i < len(col.Data.Bools) {
+			return col.Data.Bools[i]
+		}
+	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+		if i < len(col.Data.Strs) {
+			return col.Data.Strs[i]
+		}
+	}
+	return nil
+}

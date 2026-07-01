@@ -3,6 +3,8 @@ package EX
 import (
 	"context"
 	"testing"
+
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
 
 // REQ000725: Multi-table implicit cross join (4+ DT.Tables) returns 0
@@ -37,7 +39,7 @@ func TestREQ000725_ImplicitCrossJoin(t *testing.T) {
 		{"t55", []any{1, 40}},
 	}
 	for _, r := range rows {
-		_, err := ex.Exec(ctx, "INSERT INTO "+r.t+" VALUES ("+itoaSimple(r.cols[0].(int))+", "+itoaSimple(r.cols[1].(int))+")")
+		_, err := ex.Exec(ctx, "INSERT INTO "+r.t+" VALUES ("+OP.ItoaSimple(r.cols[0].(int))+", "+OP.ItoaSimple(r.cols[1].(int))+")")
 		if err != nil {
 			t.Fatalf("insert %s: %v", r.t, err)
 		}

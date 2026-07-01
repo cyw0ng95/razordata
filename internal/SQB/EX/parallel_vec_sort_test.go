@@ -608,8 +608,8 @@ func TestParallelSort_Sequential(t *testing.T) {
 	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	keys := []SortKey{{ColName: "id", Order: AscOrder}}
-	sortOp := NewParallelSort(scan, keys, nil) // nil pool = sequential
+	keys := []OP.SortKey{{ColName: "id", Order: OP.AscOrder}}
+	sortOp := OP.NewParallelSort(scan, keys, nil) // nil pool = sequential
 	defer sortOp.Close()
 
 	batch, err := sortOp.NextBatch(context.Background())
@@ -641,8 +641,8 @@ func TestParallelSort_Descending(t *testing.T) {
 	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	keys := []SortKey{{ColName: "id", Order: DescOrder}}
-	sortOp := NewParallelSort(scan, keys, nil)
+	keys := []OP.SortKey{{ColName: "id", Order: OP.DescOrder}}
+	sortOp := OP.NewParallelSort(scan, keys, nil)
 	defer sortOp.Close()
 
 	batch, err := sortOp.NextBatch(context.Background())
@@ -671,12 +671,12 @@ func TestParallelSort_LargeDataset(t *testing.T) {
 	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	keys := []SortKey{{ColName: "id", Order: AscOrder}}
+	keys := []OP.SortKey{{ColName: "id", Order: OP.AscOrder}}
 	pool :=
 		UT.NewWorkerPool(4)
 	defer pool.Close()
 
-	sortOp := NewParallelSort(scan, keys, pool)
+	sortOp := OP.NewParallelSort(scan, keys, pool)
 	defer sortOp.Close()
 
 	batch, err := sortOp.NextBatch(context.Background())
@@ -699,22 +699,22 @@ func TestParallelSort_LargeDataset(t *testing.T) {
 
 // TestCompareValues tests the value comparison function.
 func TestCompareValues(t *testing.T) {
-	if compareValues(int64(1), int64(2)) >= 0 {
+	if OP.CompareValues(int64(1), int64(2)) >= 0 {
 		t.Error("1 < 2 expected")
 	}
-	if compareValues(int64(2), int64(1)) <= 0 {
+	if OP.CompareValues(int64(2), int64(1)) <= 0 {
 		t.Error("2 > 1 expected")
 	}
-	if compareValues(int64(1), int64(1)) != 0 {
+	if OP.CompareValues(int64(1), int64(1)) != 0 {
 		t.Error("1 == 1 expected")
 	}
-	if compareValues(nil, int64(1)) >= 0 {
+	if OP.CompareValues(nil, int64(1)) >= 0 {
 		t.Error("nil < 1 expected")
 	}
-	if compareValues("abc", "abd") >= 0 {
+	if OP.CompareValues("abc", "abd") >= 0 {
 		t.Error("abc < abd expected")
 	}
-	if compareValues(1.0, 2.0) >= 0 {
+	if OP.CompareValues(1.0, 2.0) >= 0 {
 		t.Error("1.0 < 2.0 expected")
 	}
 }
@@ -725,14 +725,14 @@ func TestLessRow(t *testing.T) {
 	row2 := DT.Row{Cols: []string{"a", "b"}, Data: []DT.Value{NewIntValue(int64(1)), NewIntValue(int64(3))}}
 	row3 := DT.Row{Cols: []string{"a", "b"}, Data: []DT.Value{NewIntValue(int64(2)), NewIntValue(int64(1))}}
 
-	keys := []SortKey{{ColName: "a", Order: AscOrder}, {ColName: "b", Order: AscOrder}}
-	if !lessRow(row1, row2, keys) {
+	keys := []OP.SortKey{{ColName: "a", Order: OP.AscOrder}, {ColName: "b", Order: OP.AscOrder}}
+	if !OP.LessRow(row1, row2, keys) {
 		t.Error("row1 < row2 (by b) expected")
 	}
-	if lessRow(row2, row1, keys) {
+	if OP.LessRow(row2, row1, keys) {
 		t.Error("row2 not < row1 expected")
 	}
-	if !lessRow(row2, row3, keys) {
+	if !OP.LessRow(row2, row3, keys) {
 		t.Error("row2 < row3 (by a) expected")
 	}
 }
@@ -747,8 +747,8 @@ func TestParallelSort_MultiBatch(t *testing.T) {
 	scan := OP.NewVectorizedSeqScan(src, schema, types)
 	defer scan.Close()
 
-	keys := []SortKey{{ColName: "id", Order: AscOrder}}
-	sortOp := NewParallelSort(scan, keys, nil)
+	keys := []OP.SortKey{{ColName: "id", Order: OP.AscOrder}}
+	sortOp := OP.NewParallelSort(scan, keys, nil)
 	defer sortOp.Close()
 
 	var allRows []int64
@@ -784,7 +784,7 @@ func BenchmarkParallelSort_Large(b *testing.B) {
 	rows := makeSortTestRows(10 * 1024)
 	schema := []string{"id"}
 	types := []LX.TokenType{LX.T_INT_KW}
-	keys := []SortKey{{ColName: "id", Order: AscOrder}}
+	keys := []OP.SortKey{{ColName: "id", Order: OP.AscOrder}}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -792,7 +792,7 @@ func BenchmarkParallelSort_Large(b *testing.B) {
 		scan := OP.NewVectorizedSeqScan(src, schema, types)
 		pool :=
 			UT.NewWorkerPool(4)
-		sortOp := NewParallelSort(scan, keys, pool)
+		sortOp := OP.NewParallelSort(scan, keys, pool)
 		for {
 			batch, _ := sortOp.NextBatch(context.Background())
 			if batch == nil {
@@ -808,39 +808,39 @@ func BenchmarkParallelSort_Large(b *testing.B) {
 // BenchmarkSequentialSort measures sequential sort for comparison.
 func BenchmarkSequentialSort(b *testing.B) {
 	rows := makeSortTestRows(10 * 1024)
-	keys := []SortKey{{ColName: "id", Order: AscOrder}}
+	keys := []OP.SortKey{{ColName: "id", Order: OP.AscOrder}}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Materialize + sort
-		sortOp := NewParallelSort(nil, keys, nil)
-		sortOp.rows = make([]DT.Row, len(rows))
-		copy(sortOp.rows, rows)
-		sortOp.sequentialSort()
+		sortOp := OP.NewParallelSort(nil, keys, nil)
+		sortOp.Rows = make([]DT.Row, len(rows))
+		copy(sortOp.Rows, rows)
+		sortOp.SequentialSort()
 	}
 }
 
-// BenchmarkSort_KeyLookup verifies that lessRowIdx (pre-computed
+// BenchmarkSort_KeyLookup verifies that OP.LessRowIdx (pre-computed
 // column indices) provides O(1) per-comparison access without
 // map lookups. REQ001018.
 func BenchmarkSort_KeyLookup(b *testing.B) {
 	rows := makeSortTestRows(1024)
-	keys := []SortKey{{ColName: "id", Order: AscOrder}, {ColName: "val", Order: AscOrder}}
+	keys := []OP.SortKey{{ColName: "id", Order: OP.AscOrder}, {ColName: "val", Order: OP.AscOrder}}
 
-	b.Run("lessRow", func(b *testing.B) {
+	b.Run("OP.LessRow", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			for j := 1; j < len(rows); j++ {
-				_ = lessRow(rows[j-1], rows[j], keys)
+				_ = OP.LessRow(rows[j-1], rows[j], keys)
 			}
 		}
 	})
-	b.Run("lessRowIdx", func(b *testing.B) {
-		indices := buildKeyIndices(keys, rows[0])
+	b.Run("OP.LessRowIdx", func(b *testing.B) {
+		indices := OP.BuildKeyIndices(keys, rows[0])
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			for j := 1; j < len(rows); j++ {
-				_ = lessRowIdx(rows[j-1], rows[j], keys, indices)
+				_ = OP.LessRowIdx(rows[j-1], rows[j], keys, indices)
 			}
 		}
 	})
