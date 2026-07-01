@@ -340,7 +340,7 @@ case *OP.NestedLoopJoin:
 		node.Detail = fmt.Sprintf("PRAGMA %s", v.stmt.Name)
 		node.Cost = 0.5
 
-	case *Analyze:
+	case *UT.Analyze:
 		node.Detail = "ANALYZE"
 		node.Cost = 10.0
 

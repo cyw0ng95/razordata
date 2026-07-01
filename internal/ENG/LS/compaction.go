@@ -450,16 +450,15 @@ type compactionManager struct {
 // subCompactionThreshold is the input-file count at which the
 // compaction loop dispatches through SubCompactor. Below the
 // threshold the serial path is faster (no goroutine overhead).
-// REQ001048.
+// REQ001048, REQ001157.
 //
-// NOTE: the SubCompactor implementation parallelizes sub-range
-// merges but currently reuses compactionJob.Run per sub-job, which
-// each write to the shared manifest — a data race. Until the
-// per-sub-job partial output + coordinator merge path lands, the
-// dispatcher stays at the unit-test-only level (SubCompactor's
-// pivotKeys < 2 fallback is correct). Setting this to a large
-// value forces every compaction through the serial path while
-// keeping the SubCompactor API exercised by tests.
+// REQ001157: SubCompactor now uses a two-phase approach —
+// Phase 1 runs compactionJob.RunPartial in parallel (each sub-job
+// writes a partial SST to its own tmpPath, no manifest touch);
+// Phase 2 merges all partial outputs and applies a single manifest
+// update in serial. This eliminates the manifest data race that
+// existed when parallel sub-jobs each called compactionJob.Run.
+// The threshold is safe at 4 for production use.
 const subCompactionThreshold = 4
 
 func newCompactionManager(dir string, manifest *manifest) *compactionManager {

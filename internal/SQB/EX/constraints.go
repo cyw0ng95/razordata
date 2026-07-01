@@ -274,8 +274,8 @@ func checkUnique(schema *DT.StoreSchema, row Row, pending map[string]struct{}, s
 			}
 		}
 		if pkIdx >= 0 {
-			keys = append([]UniqueKey(nil), keys...)
-			keys = append(keys, UniqueKey{Cols: []int{pkIdx}})
+			keys = append([]DT.UniqueKey(nil), keys...)
+			keys = append(keys, DT.UniqueKey{Cols: []int{pkIdx}})
 		}
 	}
 	for _, uk := range keys {
@@ -520,8 +520,8 @@ func removeConflicting(existing []Row, schema *DT.StoreSchema, out Row) ([]Row, 
 			}
 		}
 		if pkIdx >= 0 {
-			keys = append([]UniqueKey(nil), keys...)
-			keys = append(keys, UniqueKey{Cols: []int{pkIdx}})
+			keys = append([]DT.UniqueKey(nil), keys...)
+			keys = append(keys, DT.UniqueKey{Cols: []int{pkIdx}})
 		}
 	}
 	filtered := make([]Row, 0, len(existing))

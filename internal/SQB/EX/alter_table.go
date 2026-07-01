@@ -128,9 +128,9 @@ func (a *AlterTable) execAddColumn() error {
 	newGenerated = append(newGenerated, a.stmt.NewCol.Generated)
 
 	// Rebuild unique keys with updated column indices
-	newUnique := make([]UniqueKey, len(ss.Unique))
+	newUnique := make([]DT.UniqueKey, len(ss.Unique))
 	for i, u := range ss.Unique {
-		newUnique[i] = UniqueKey{Cols: append([]int(nil), u.Cols...)}
+		newUnique[i] = DT.UniqueKey{Cols: append([]int(nil), u.Cols...)}
 	}
 
 	// Copy FK constraints
@@ -300,7 +300,7 @@ func (a *AlterTable) execDropColumn() error {
 	}
 
 	// Rebuild unique keys: remove any UNIQUE constraint that includes the dropped column
-	var newUnique []UniqueKey
+	var newUnique []DT.UniqueKey
 	for _, u := range ss.Unique {
 		skip := false
 		for _, ci := range u.Cols {
@@ -321,7 +321,7 @@ func (a *AlterTable) execDropColumn() error {
 				adj[j] = ci
 			}
 		}
-		newUnique = append(newUnique, UniqueKey{Cols: adj})
+		newUnique = append(newUnique, DT.UniqueKey{Cols: adj})
 	}
 
 	// Rebuild FK constraints: remove any FK that references the dropped column
@@ -487,9 +487,9 @@ func (a *AlterTable) execRename() error {
 	newNullable := append([]bool(nil), ss.Nullable...)
 	newDefaults := make([]PS.Expr, len(ss.Defaults))
 	copy(newDefaults, ss.Defaults)
-	newUnique := make([]UniqueKey, len(ss.Unique))
+	newUnique := make([]DT.UniqueKey, len(ss.Unique))
 	for i, u := range ss.Unique {
-		newUnique[i] = UniqueKey{Cols: append([]int(nil), u.Cols...)}
+		newUnique[i] = DT.UniqueKey{Cols: append([]int(nil), u.Cols...)}
 	}
 	var newFKs []DT.ForeignKeyConstraint
 	if ss.ForeignKeys != nil {
@@ -589,9 +589,9 @@ func (a *AlterTable) execRenameInMemory(oldName, newName string) error {
 	return nil
 }
 
-// newUniqueForCatalog converts EX-layer UniqueKey indices back
+// newUniqueForCatalog converts EX-layer DT.UniqueKey indices back
 // to CatalogUnique column-name format.
-func newUniqueForCatalog(unique []UniqueKey, cols []string) []ls.CatalogUnique {
+func newUniqueForCatalog(unique []DT.UniqueKey, cols []string) []ls.CatalogUnique {
 	result := make([]ls.CatalogUnique, 0, len(unique))
 	for _, u := range unique {
 		cu := ls.CatalogUnique{Cols: make([]int, len(u.Cols))}

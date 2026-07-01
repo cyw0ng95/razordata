@@ -268,7 +268,7 @@ type Planner struct {
 
 type tableInfo struct {
 	name    string
-	cols    []ColInfo
+	cols    []DT.ColInfo
 	pk      string
 	indexes map[string][]string
 }
@@ -381,7 +381,7 @@ func (p *Planner) getTableStats(table string) *TableStats {
 	return ts
 }
 
-func (p *Planner) RegisterTable(name string, cols []ColInfo, pk string) {
+func (p *Planner) RegisterTable(name string, cols []DT.ColInfo, pk string) {
 	p.catalog[name] = &tableInfo{
 		name:    name,
 		cols:    cols,
@@ -3782,9 +3782,9 @@ func (p *Planner) planWith(w *PS.WithStmt) Operator {
 		}
 		DT.RegisterTable(cte.Name, rows)
 
-		var colInfos []ColInfo
+		var colInfos []DT.ColInfo
 		for _, c := range DT.Schemas[cte.Name] {
-			colInfos = append(colInfos, ColInfo{Name: c})
+			colInfos = append(colInfos, DT.ColInfo{Name: c})
 		}
 		p.RegisterTable(cte.Name, colInfos, "")
 	}
@@ -3834,9 +3834,9 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 
 	// Register CTE in the planner catalog so the recursive arm can
 	// be planned (OP.SeqScan for the CTE name needs catalog metadata).
-	colInfos := make([]ColInfo, len(canonicalCols))
+	colInfos := make([]DT.ColInfo, len(canonicalCols))
 	for i, cn := range canonicalCols {
-		colInfos[i] = ColInfo{Name: cn}
+		colInfos[i] = DT.ColInfo{Name: cn}
 	}
 	p.RegisterTable(cte.Name, colInfos, "")
 

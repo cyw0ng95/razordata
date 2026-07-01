@@ -21,13 +21,9 @@ import (
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
-// SessionCounterAccessor is the session counter provider interface.
-// Re-exported from DT for backward compatibility.
-type SessionCounterAccessor = DT.SessionCounterAccessor
-
-// Eval error re-exports for backward compatibility with SYS packages.
-// Aliased to EV versions so identity matches.
-// (ErrEval re-export removed; callers use EV.ErrEval directly.)
+// Value is a tagged-union that stores SQL values inline without boxing.
+// EX.Value IS PL.Value (type alias); no conversion needed at package boundaries.
+type Value = DT.Value
 
 // currentTxWriter is the package-level current TxWriter. Set by
 // Executor.SetTxWriter and read by Insert/Update/Delete operators
@@ -73,13 +69,6 @@ func CurrentTxWriter() TxWriter {
 
 var ErrNotImplemented = errors.New("ex: not implemented")
 var ErrClosed = errors.New("ex: operator closed")
-
-// Value is a tagged-union that stores SQL values inline without boxing.
-// EX.Value IS PL.Value (type alias); no conversion needed at package boundaries.
-type Value = DT.Value
-
-// ValueKind is the type discriminator for Value.
-type ValueKind = DT.ValueKind
 
 // Value kind constants — aliased from PL for zero-cost interop.
 const (
@@ -175,8 +164,6 @@ func ValueSliceToAny(v []Value) []any { return valueSliceToAny(v) }
 
 // Operator is the core execution interface. Aliased from PL.
 type Operator = DT.Operator
-
-// Row is a single row of data with column metadata. Aliased from PL.
 type Row = DT.Row
 type ExecContext = DT.ExecContext
 
@@ -192,37 +179,8 @@ type Rows struct {
 	Types []LX.TokenType
 }
 
-// ColInfo describes a single column in a table schema. Aliased from PL.
 type ColInfo = DT.ColInfo
-
-// Backward-compat aliases for types moved to OP.
-type SeqScan = OP.SeqScan
-type IndexScan = OP.IndexScan
-type BitmapHeapScan = OP.BitmapHeapScan // REQ001106
-type IndexOnlyScan = OP.IndexOnlyScan   // REQ001107
-type Filter = OP.Filter
-type Project = OP.Project
-type Sort = OP.Sort
-type Limit = OP.Limit
-type Offset = OP.Offset
-type NestedLoopJoin = OP.NestedLoopJoin
-type JoinKind = OP.JoinKind
-type VectorizedSeqScan = OP.VectorizedSeqScan
-type VectorizedFilter = OP.VectorizedFilter
-type CompoundOp = OP.CompoundOp
-type Values = OP.Values
-type ValuesRows = OP.ValuesRows
-type IntegrityCheck = UT.IntegrityCheck
-type Analyze = UT.Analyze
-type Vacuum = UT.Vacuum
-
-// Backward-compat type aliases formerly in EX/store.go.
 type Store = DT.Store
-type StoreSchema = DT.StoreSchema
-type StatsCatalog = DT.StatsCatalog
-type UniqueKey = DT.UniqueKey
-type ForeignKeyConstraint = DT.ForeignKeyConstraint
-type RegisteredIndex = DT.RegisteredIndex
 
 // Backward-compat function aliases for types/functions moved to OP.
 
@@ -301,9 +259,8 @@ type Executor struct {
 // write. Aliased from PL.
 type TxWriter = DT.TxWriter
 
-// InMemoryTxWriter is the optional hook for in-memory table
-// rollback support. Aliased from PL.
-type InMemoryTxWriter = DT.InMemoryTxWriter
+// TxWriter interface — no backward-compat alias needed for InMemoryTxWriter.
+// Callers use DT.InMemoryTxWriter directly.
 
 // SetTxWriter installs w as the current transaction's write hook. Pass
 // nil to disable. Not safe to call concurrently with Exec; the
@@ -1195,10 +1152,10 @@ func propagateExecContext(root Operator, ec *ExecContext) {
 	if root == nil || ec == nil {
 		return
 	}
-	if f, ok := root.(*Filter); ok {
+	if f, ok := root.(*OP.Filter); ok {
 		f.SetExecCtx(ec)
 	}
-	if p, ok := root.(*Project); ok {
+	if p, ok := root.(*OP.Project); ok {
 		p.SetExecCtx(ec)
 	}
 	if ins, ok := root.(*Insert); ok {
@@ -1210,7 +1167,7 @@ func propagateExecContext(root Operator, ec *ExecContext) {
 	if del, ok := root.(*Delete); ok {
 		del.execCtx = ec
 	}
-	if val, ok := root.(*Values); ok {
+	if val, ok := root.(*OP.Values); ok {
 		val.SetExecCtx(ec)
 	}
 	type childer interface {
