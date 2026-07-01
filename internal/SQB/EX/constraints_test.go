@@ -21,7 +21,7 @@ func ptr(s string) *string { return &s }
 func TestConstraints_NotNull_InsertOK(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -32,7 +32,7 @@ func TestConstraints_NotNull_InsertOK(t *testing.T) {
 	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
-	ins, err := NewInsertWithStore(nil, "t", []string{"id", "name"}, [][]PS.Expr{
+	ins, err := WT.NewInsertWithStore(nil, "t", []string{"id", "name"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "alice"}},
 	}, nil, nil)
 	if err != nil {
@@ -48,7 +48,7 @@ func TestConstraints_NotNull_InsertOK(t *testing.T) {
 func TestConstraints_NotNull_InsertMissingValue_Rejected(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -60,7 +60,7 @@ func TestConstraints_NotNull_InsertMissingValue_Rejected(t *testing.T) {
 		t.Fatalf("CREATE: %v", err)
 	}
 	// Omit the `name` column.
-	ins, err := NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
+	ins, err := WT.NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}},
 	}, nil, nil)
 	if err != nil {
@@ -81,7 +81,7 @@ func TestConstraints_NotNull_InsertMissingValue_Rejected(t *testing.T) {
 func TestConstraints_Default_InsertFills(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -107,7 +107,7 @@ func TestConstraints_NotNull_PrimaryKey_Implied(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	// Don't set Nullable=false explicitly; let PRIMARY KEY imply it.
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, PK: true},
@@ -118,7 +118,7 @@ func TestConstraints_NotNull_PrimaryKey_Implied(t *testing.T) {
 		t.Fatalf("CREATE: %v", err)
 	}
 	// Omit the PK column entirely.
-	ins, err := NewInsertWithStore(nil, "t", []string{}, [][]PS.Expr{
+	ins, err := WT.NewInsertWithStore(nil, "t", []string{}, [][]PS.Expr{
 		{nil},
 	}, nil, nil)
 	if err != nil {
@@ -135,7 +135,7 @@ func TestConstraints_NotNull_PrimaryKey_Implied(t *testing.T) {
 func TestConstraints_Nullable_ColumnAcceptsNull(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -146,7 +146,7 @@ func TestConstraints_Nullable_ColumnAcceptsNull(t *testing.T) {
 	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
-	ins, err := NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
+	ins, err := WT.NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}},
 	}, nil, nil)
 	if err != nil {
@@ -162,7 +162,7 @@ func TestConstraints_Nullable_ColumnAcceptsNull(t *testing.T) {
 func TestConstraints_Update_NotNull(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -174,7 +174,7 @@ func TestConstraints_Update_NotNull(t *testing.T) {
 		t.Fatalf("CREATE: %v", err)
 	}
 	// Seed a row.
-	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "name"}, [][]PS.Expr{
+	ins, _ := WT.NewInsertWithStore(nil, "t", []string{"id", "name"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "a"}},
 	}, nil, nil)
 	if _, err := ins.Next(context.Background()); err != nil && err != DT.ErrNoRows {
@@ -182,7 +182,7 @@ func TestConstraints_Update_NotNull(t *testing.T) {
 	}
 	// Attempt to set name = NULL via UPDATE.
 	scan := OP.NewSeqScan("t")
-	upd := NewUpdate("t", []PS.Pair{
+	upd := WT.NewUpdate("t", []PS.Pair{
 		{Col: "name", Val: &PS.NullLiteral{}},
 	}, nil, scan, nil)
 	_, err := upd.Next(context.Background())
@@ -321,7 +321,7 @@ func TestConstraints_E2E_CreateTable_PropagatesConstraints(t *testing.T) {
 func TestUnique_ColumnLevel_DuplicateRejected(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -332,7 +332,7 @@ func TestUnique_ColumnLevel_DuplicateRejected(t *testing.T) {
 	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
-	ins, err := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
+	ins, err := WT.NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "a@x"}},
 	}, nil, nil)
 	if err != nil {
@@ -342,7 +342,7 @@ func TestUnique_ColumnLevel_DuplicateRejected(t *testing.T) {
 		t.Fatalf("first INSERT: %v", err)
 	}
 	// Second insert with same email → ErrConstraint.
-	ins2, _ := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
+	ins2, _ := WT.NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 2}, &PS.StringLiteral{Val: "a@x"}},
 	}, nil, nil)
 	_, err = ins2.Next(context.Background())
@@ -356,7 +356,7 @@ func TestUnique_ColumnLevel_DuplicateRejected(t *testing.T) {
 func TestUnique_ColumnLevel_DistinctValuesOK(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -367,7 +367,7 @@ func TestUnique_ColumnLevel_DistinctValuesOK(t *testing.T) {
 	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
-	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
+	ins, _ := WT.NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "a@x"}},
 		{&PS.NumberLiteral{Val: 2}, &PS.StringLiteral{Val: "b@x"}},
 	}, nil, nil)
@@ -381,7 +381,7 @@ func TestUnique_ColumnLevel_DistinctValuesOK(t *testing.T) {
 func TestUnique_Composite_PartialMatchAllowed(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -411,7 +411,7 @@ func TestUnique_Composite_PartialMatchAllowed(t *testing.T) {
 func TestUnique_Composite_FullMatchRejected(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -424,7 +424,7 @@ func TestUnique_Composite_FullMatchRejected(t *testing.T) {
 	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
-	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "a", "b"}, [][]PS.Expr{
+	ins, _ := WT.NewInsertWithStore(nil, "t", []string{"id", "a", "b"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "x"}},
 		{&PS.NumberLiteral{Val: 2}, &PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "x"}},
 	}, nil, nil)
@@ -439,7 +439,7 @@ func TestUnique_Composite_FullMatchRejected(t *testing.T) {
 func TestUnique_WithinStatement(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -450,7 +450,7 @@ func TestUnique_WithinStatement(t *testing.T) {
 	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
-	ins, _ := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
+	ins, _ := WT.NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}, &PS.StringLiteral{Val: "a@x"}},
 		{&PS.NumberLiteral{Val: 2}, &PS.StringLiteral{Val: "a@x"}}, // dup within batch
 	}, nil, nil)
@@ -465,7 +465,7 @@ func TestUnique_WithinStatement(t *testing.T) {
 func TestUnique_PrimaryKeyImplied(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -475,7 +475,7 @@ func TestUnique_PrimaryKeyImplied(t *testing.T) {
 	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
-	ins, _ := NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
+	ins, _ := WT.NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}},
 		{&PS.NumberLiteral{Val: 1}}, // duplicate PK
 	}, nil, nil)
@@ -490,7 +490,7 @@ func TestUnique_PrimaryKeyImplied(t *testing.T) {
 func TestUnique_NullSkipped(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -501,7 +501,7 @@ func TestUnique_NullSkipped(t *testing.T) {
 	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CREATE: %v", err)
 	}
-	ins, _ := NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
+	ins, _ := WT.NewInsertWithStore(nil, "t", []string{"id"}, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}}, // tag omitted → NULL
 		{&PS.NumberLiteral{Val: 2}}, // tag omitted → NULL (allowed)
 	}, nil, nil)

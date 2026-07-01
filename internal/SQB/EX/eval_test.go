@@ -1,6 +1,7 @@
 package EX
 
 import (
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"context"
 	"testing"
 
@@ -387,7 +388,7 @@ func TestInsertAppendsRows(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	DT.RegisterTable("t", []DT.Row{{Cols: []string{"a"}, Data: []DT.Value{NewIntValue(int64(0))}}})
-	insert := NewInsert("t", nil, [][]PS.Expr{
+	insert := WT.NewInsert("t", nil, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}},
 		{&PS.NumberLiteral{Val: 2}},
 	}, nil, nil)
@@ -413,7 +414,7 @@ func TestUpdateModifiesRows(t *testing.T) {
 		{Cols: []string{"a", "b"}, Data: []DT.Value{NewIntValue(int64(2)), NewTextValue("y")}},
 	})
 	scan := OP.NewSeqScan("t")
-	update := NewUpdate("t", []PS.Pair{{Col: "b", Val: &PS.StringLiteral{Val: "z"}}}, nil, scan, nil)
+	update := WT.NewUpdate("t", []PS.Pair{{Col: "b", Val: &PS.StringLiteral{Val: "z"}}}, nil, scan, nil)
 	_, err := update.Next(context.Background())
 	if err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
@@ -442,7 +443,7 @@ func TestDeleteRemovesMatching(t *testing.T) {
 	filter := OP.NewFilter(scan, &PS.BinaryExpr{
 		Op: LX.T_GT, Left: &PS.Ident{Name: "a"}, Right: &PS.NumberLiteral{Val: 1},
 	})
-	del := NewDelete("t", nil, filter, nil)
+	del := WT.NewDelete("t", nil, filter, nil)
 	_, err := del.Next(context.Background())
 	if err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
@@ -547,7 +548,7 @@ func TestUpdate_BackToBackMatchingRows(t *testing.T) {
 func TestCreateAndDropTable(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{Name: "new", Cols: []PS.ColDef{{Name: "a", Type: LX.T_INT_KW}}})
+	ct := WT.NewCreateTable(&PS.CreateTable{Name: "new", Cols: []PS.ColDef{{Name: "a", Type: LX.T_INT_KW}}})
 	_, err := ct.Next(context.Background())
 	if err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)
@@ -557,7 +558,7 @@ func TestCreateAndDropTable(t *testing.T) {
 		t.Error("expected table to be created")
 	}
 	DT.TablesMu.RUnlock()
-	dt := NewDropTable(&PS.DropTable{Name: "new"})
+	dt := WT.NewDropTable(&PS.DropTable{Name: "new"})
 	_, err = dt.Next(context.Background())
 	if err != DT.ErrNoRows {
 		t.Errorf("expected ErrNoRows, got %v", err)

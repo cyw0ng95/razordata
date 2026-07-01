@@ -1,6 +1,7 @@
 package EX
 
 import (
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"context"
 	"testing"
 
@@ -45,7 +46,7 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 		},
 		PK: strPtr("id"),
 	}
-	op := NewCreateTable(stmt)
+	op := WT.NewCreateTable(stmt)
 	row, err := op.Next(ctx)
 	if err != DT.ErrNoRows {
 		t.Fatalf("CreateTable.Next() unexpected error = %v", err)
@@ -77,7 +78,7 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 			{Cols: []string{"id", "value"}},
 		},
 	}
-	op2 := NewCreateTable(stmt2)
+	op2 := WT.NewCreateTable(stmt2)
 	row2, err := op2.Next(ctx)
 	if err != DT.ErrNoRows {
 		t.Fatalf("CreateTable.Next() error for test2 = %v", err)
@@ -100,7 +101,7 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 			{Columns: []string{"ref_id"}, RefTable: "test1", RefColumns: []string{"id"}},
 		},
 	}
-	op3 := NewCreateTable(stmt3)
+	op3 := WT.NewCreateTable(stmt3)
 	_, err = op3.Next(ctx)
 	if err != DT.ErrNoRows {
 		t.Fatalf("CreateTable.Next() error for test3 = %v", err)
@@ -118,7 +119,7 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 			}},
 		},
 	}
-	op4 := NewCreateTable(stmt4)
+	op4 := WT.NewCreateTable(stmt4)
 	_, err = op4.Next(ctx)
 	if err != DT.ErrNoRows {
 		t.Fatalf("CreateTable.Next() error for test4 = %v", err)
@@ -131,7 +132,7 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 			{Name: "id", Type: LX.T_INT_KW},
 		},
 	}
-	op5 := NewCreateTable(stmt5)
+	op5 := WT.NewCreateTable(stmt5)
 	_, err = op5.Next(ctx)
 	if err != DT.ErrTableExists {
 		t.Errorf("Expected DT.ErrTableExists for duplicate table, got: %v", err)
@@ -145,7 +146,7 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 		},
 		WithoutRowid: true,
 	}
-	op6 := NewCreateTable(stmt6)
+	op6 := WT.NewCreateTable(stmt6)
 	_, err = op6.Next(ctx)
 	if err == nil {
 		t.Error("Expected error for WITHOUT ROWID, got nil")

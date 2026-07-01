@@ -1,6 +1,7 @@
 package EX
 
 import (
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"context"
 	"path/filepath"
 	"sync"
@@ -29,7 +30,7 @@ func TestCatalog_Integration_CreateSurvivesClose(t *testing.T) {
 	})
 
 	stmt := newCreateTable("users", []string{"id", "name"}, "id")
-	ct := NewCreateTable(stmt)
+	ct := WT.NewCreateTable(stmt)
 	_, err = ct.Next(context.Background())
 	if err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CreateTable.Next: %v", err)
@@ -77,11 +78,11 @@ func TestCatalog_Integration_DropSurvivesClose(t *testing.T) {
 		_ = cat.Close()
 	})
 
-	ct := NewCreateTable(newCreateTable("t", []string{"id"}, "id"))
+	ct := WT.NewCreateTable(newCreateTable("t", []string{"id"}, "id"))
 	if _, err := ct.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("CreateTable: %v", err)
 	}
-	dt := NewDropTable(&PS.DropTable{Name: "t"})
+	dt := WT.NewDropTable(&PS.DropTable{Name: "t"})
 	if _, err := dt.Next(context.Background()); err != nil && err != DT.ErrNoRows {
 		t.Fatalf("DropTable: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestCatalog_Integration_ConcurrentCreate(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < perWorker; i++ {
 				name := tableName(w, i)
-				ct := NewCreateTable(newCreateTable(name, []string{"id"}, "id"))
+				ct := WT.NewCreateTable(newCreateTable(name, []string{"id"}, "id"))
 				_, _ = ct.Next(context.Background())
 			}
 		}(w)

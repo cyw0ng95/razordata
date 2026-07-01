@@ -1,6 +1,7 @@
 package EX
 
 import (
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"context"
 	"fmt"
 	"testing"
@@ -256,7 +257,7 @@ func BenchmarkConstraintsInsert(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		UnregisterAll()
-		ct := NewCreateTable(&PS.CreateTable{
+		ct := WT.NewCreateTable(&PS.CreateTable{
 			Name: "t",
 			Cols: []PS.ColDef{
 				{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -266,7 +267,7 @@ func BenchmarkConstraintsInsert(b *testing.B) {
 			PK: stringPtr("id"),
 		})
 		_, _ = ct.Next(context.Background())
-		ins, err := NewInsertWithStore(nil, "t", []string{"id", "name"}, [][]PS.Expr{
+		ins, err := WT.NewInsertWithStore(nil, "t", []string{"id", "name"}, [][]PS.Expr{
 			{&PS.NumberLiteral{Val: int64(i)}, &PS.StringLiteral{Val: "x"}},
 		}, nil, nil)
 		if err != nil {
@@ -284,7 +285,7 @@ func stringPtr(s string) *string { return &s }
 // engine path is a no-op lookup in v1 (deferred to REQ000045).
 func BenchmarkUniqueInsert(b *testing.B) {
 	UnregisterAll()
-	ct := NewCreateTable(&PS.CreateTable{
+	ct := WT.NewCreateTable(&PS.CreateTable{
 		Name: "t",
 		Cols: []PS.ColDef{
 			{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -299,7 +300,7 @@ func BenchmarkUniqueInsert(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		UnregisterAll()
-		ct := NewCreateTable(&PS.CreateTable{
+		ct := WT.NewCreateTable(&PS.CreateTable{
 			Name: "t",
 			Cols: []PS.ColDef{
 				{Name: "id", Type: 1, Nullable: false, PK: true},
@@ -308,7 +309,7 @@ func BenchmarkUniqueInsert(b *testing.B) {
 			PK: stringPtr("id"),
 		})
 		_, _ = ct.Next(context.Background())
-		ins, err := NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
+		ins, err := WT.NewInsertWithStore(nil, "t", []string{"id", "email"}, [][]PS.Expr{
 			{&PS.NumberLiteral{Val: int64(i)}, &PS.StringLiteral{Val: "u@x"}},
 		}, nil, nil)
 		if err != nil {

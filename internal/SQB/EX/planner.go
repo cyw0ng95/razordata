@@ -491,7 +491,7 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	// DDL/DML operators (Insert/Update/Delete/CreateTable/DropTable)
 	// are typically one-shot and don't benefit from ADQC.
 	switch root.(type) {
-	case *Insert, *Update, *Delete, *CreateTable, *DropTable:
+	case *WT.Insert, *WT.Update, *WT.Delete, *WT.CreateTable, *WT.DropTable:
 		// no adaptive wrapper for DDL/DML
 	default:
 		root = AD.NewAdaptiveOp(root, key)
@@ -802,7 +802,7 @@ func (p *Planner) estimateCostLegacy(op DT.Operator) float64 {
 			rightCost = 1
 		}
 		return leftCost + rightCost + 1
-	case *Insert, *Update, *Delete, *CreateTable, *DropTable:
+	case *WT.Insert, *WT.Update, *WT.Delete, *WT.CreateTable, *WT.DropTable:
 		// Writer operators: cost ~ 1 (single mutation).
 		return 1.0
 	default:
@@ -896,7 +896,7 @@ func (p *Planner) estimateCostWithParams(op DT.Operator, cp CostParams) float64 
 			rightCost = 1
 		}
 		return leftCost + rightCost + cp.CPUTupleCost
-	case *Insert, *Update, *Delete, *CreateTable, *DropTable:
+	case *WT.Insert, *WT.Update, *WT.Delete, *WT.CreateTable, *WT.DropTable:
 		return 1.0
 	default:
 		return 1.0
@@ -3706,46 +3706,46 @@ func (p *Planner) planInsert(s *PS.Insert) DT.Operator {
 	if s.Select != nil {
 		selPlan, selErr := p.Plan(s.Select)
 		if selErr == nil && selPlan != nil && selPlan.Root != nil {
-			var op *Insert
+			var op *WT.Insert
 			if p.store != nil {
 				// REQ001129: store-backed INSERT...SELECT needs
 				// a store-backed Insert operator.
-				op, selErr = NewInsertWithStore(p.store, s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+				op, selErr = WT.NewInsertWithStore(p.store, s.Table, s.Cols, nil, s.Returning, s.OnConflict)
 				if selErr != nil {
 					return nil
 				}
 			} else {
-				op = NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+				op = WT.NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
 			}
-			op.selectPlan = selPlan.Root
+			op.SetSelectPlan(selPlan.Root)
 			propagatePlanner(selPlan.Root, p)
 			return op
 		}
 	}
 
-	var op *Insert
+	var op *WT.Insert
 	if p.store != nil {
 		var err error
-		op, err = NewInsertWithStore(p.store, s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
+		op, err = WT.NewInsertWithStore(p.store, s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
 		if err == nil {
-			op.defaultValues = s.DefaultValues
+			op.SetDefaultValues(s.DefaultValues)
 			return op
 		}
 	}
-	op = NewInsert(s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
-	op.defaultValues = s.DefaultValues
+	op = WT.NewInsert(s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
+	op.SetDefaultValues(s.DefaultValues)
 	return op
 }
 
 func (p *Planner) planUpdate(s *PS.Update) DT.Operator {
 	if DT.LookupView(s.Table) != nil {
-		return NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
+		return WT.NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
 	}
 	if p.store != nil {
 		scan, err := OP.NewSeqScanWithStore(p.store, s.Table)
 		if err == nil {
 			filter := OP.NewFilter(scan, s.Where)
-			op, err := NewUpdateWithStore(p.store, s.Table, s.Set, s.Where, filter, s.Returning)
+			op, err := WT.NewUpdateWithStore(p.store, s.Table, s.Set, s.Where, filter, s.Returning)
 			if err == nil {
 				return op
 			}
@@ -3753,18 +3753,18 @@ func (p *Planner) planUpdate(s *PS.Update) DT.Operator {
 	}
 	scan := OP.NewSeqScan(s.Table)
 	filter := OP.NewFilter(scan, s.Where)
-	return NewUpdate(s.Table, s.Set, s.Where, filter, s.Returning)
+	return WT.NewUpdate(s.Table, s.Set, s.Where, filter, s.Returning)
 }
 
 func (p *Planner) planDelete(s *PS.Delete) DT.Operator {
 	if DT.LookupView(s.Table) != nil {
-		return NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
+		return WT.NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
 	}
 	if p.store != nil {
 		scan, err := OP.NewSeqScanWithStore(p.store, s.Table)
 		if err == nil {
 			filter := OP.NewFilter(scan, s.Where)
-			op, err := NewDeleteWithStore(p.store, s.Table, s.Where, filter, s.Returning)
+			op, err := WT.NewDeleteWithStore(p.store, s.Table, s.Where, filter, s.Returning)
 			if err == nil {
 				return op
 			}
@@ -3772,7 +3772,7 @@ func (p *Planner) planDelete(s *PS.Delete) DT.Operator {
 	}
 	scan := OP.NewSeqScan(s.Table)
 	filter := OP.NewFilter(scan, s.Where)
-	return NewDelete(s.Table, s.Where, filter, s.Returning)
+	return WT.NewDelete(s.Table, s.Where, filter, s.Returning)
 }
 
 func (p *Planner) planCreateTable(s *PS.CreateTable) DT.Operator {
@@ -3781,14 +3781,14 @@ func (p *Planner) planCreateTable(s *PS.CreateTable) DT.Operator {
 		// wrap both in a CreateTable operator. REQ000520.
 		innerPlan, innerErr := p.Plan(s.Select)
 		if innerErr == nil && innerPlan != nil && innerPlan.Root != nil {
-			return NewCreateTableAs(s, innerPlan.Root)
+			return WT.NewCreateTableAs(s, innerPlan.Root)
 		}
 	}
-	return NewCreateTable(s)
+	return WT.NewCreateTable(s)
 }
 
 func (p *Planner) planDropTable(s *PS.DropTable) DT.Operator {
-	return NewDropTable(s)
+	return WT.NewDropTable(s)
 }
 
 func (p *Planner) planExplain(s *PS.ExplainStmt) DT.Operator {
@@ -5206,12 +5206,12 @@ func hasWriterIndex(table, indexName string) bool {
 // the planner cannot rely on the index for query plans
 // triggered by CREATE INDEX.
 func (p *Planner) planCreateIndex(s *PS.CreateIndexStmt) DT.Operator {
-	return NewCreateIndex(s)
+	return WT.NewCreateIndex(s)
 }
 
 // planDropIndex removes a secondary index. iter-22.
 func (p *Planner) planDropIndex(s *PS.DropIndexStmt) DT.Operator {
-	return NewDropIndex(s)
+	return WT.NewDropIndex(s)
 }
 
 // planPragma handles PRAGMA statements. REQ000261.
@@ -5225,7 +5225,7 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 	case "foreign_keys", "foreign_key_check":
 		// REQ000905/REQ000906: these are handled by the Pragma operator
 		// which needs access to the store for FK introspection.
-		return NewPragma(s).WithStore(p.store)
+		return WT.NewPragma(s).WithStore(p.store)
 	default:
 		return OP.NewSeqScan("__pragma_unknown__")
 	}

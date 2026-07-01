@@ -1,6 +1,7 @@
 package EX
 
 import (
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"context"
 	"testing"
 
@@ -113,10 +114,10 @@ func TestPragma_ForeignKeyCheck_NoViolations(t *testing.T) {
 		{Cols: []string{"id", "pid"}, Data: []DT.Value{NewIntValue(20), NewIntValue(2)}},
 	}
 
-	p := NewPragma(&PS.PragmaStmt{Name: "foreign_key_check"})
-	p.loadForeignKeyCheck()
-	if len(p.rows) != 0 {
-		t.Fatalf("expected 0 violations, got %d", len(p.rows))
+	p := WT.NewPragma(&PS.PragmaStmt{Name: "foreign_key_check"})
+	p.LoadForeignKeyCheck()
+	if len(p.Rows()) != 0 {
+		t.Fatalf("expected 0 violations, got %d", len(p.Rows()))
 	}
 }
 
@@ -145,12 +146,12 @@ func TestPragma_ForeignKeyCheck_Violation(t *testing.T) {
 		{Cols: []string{"id", "pid"}, Data: []DT.Value{NewIntValue(10), NewIntValue(99)}},
 	}
 
-	p := NewPragma(&PS.PragmaStmt{Name: "foreign_key_check"})
-	p.loadForeignKeyCheck()
-	if len(p.rows) != 1 {
-		t.Fatalf("expected 1 violation, got %d", len(p.rows))
+	p := WT.NewPragma(&PS.PragmaStmt{Name: "foreign_key_check"})
+	p.LoadForeignKeyCheck()
+	if len(p.Rows()) != 1 {
+		t.Fatalf("expected 1 violation, got %d", len(p.Rows()))
 	}
-	row := p.rows[0]
+	row := p.Rows()[0]
 	if row.Cols[0] != "table" || row.Data[0].ToAny() != "c" {
 		t.Fatalf("expected table='c', got %v", row.Data[0].ToAny())
 	}
@@ -181,17 +182,17 @@ func TestPragma_ForeignKeyCheck_SpecificTable(t *testing.T) {
 	}
 
 	// Check only table "p" — no FK constraints on it, so 0 violations.
-	p := NewPragma(&PS.PragmaStmt{Name: "foreign_key_check", Value: "p"})
-	p.loadForeignKeyCheck()
-	if len(p.rows) != 0 {
-		t.Fatalf("expected 0 violations for table 'p', got %d", len(p.rows))
+	p := WT.NewPragma(&PS.PragmaStmt{Name: "foreign_key_check", Value: "p"})
+	p.LoadForeignKeyCheck()
+	if len(p.Rows()) != 0 {
+		t.Fatalf("expected 0 violations for table 'p', got %d", len(p.Rows()))
 	}
 
 	// Check table "c" — has violation.
-	p2 := NewPragma(&PS.PragmaStmt{Name: "foreign_key_check", Value: "c"})
-	p2.loadForeignKeyCheck()
-	if len(p2.rows) != 1 {
-		t.Fatalf("expected 1 violation for table 'c', got %d", len(p2.rows))
+	p2 := WT.NewPragma(&PS.PragmaStmt{Name: "foreign_key_check", Value: "c"})
+	p2.LoadForeignKeyCheck()
+	if len(p2.Rows()) != 1 {
+		t.Fatalf("expected 1 violation for table 'c', got %d", len(p2.Rows()))
 	}
 }
 
@@ -220,9 +221,9 @@ func TestPragma_ForeignKeyCheck_NullFKColumns(t *testing.T) {
 		{Cols: []string{"id", "pid"}, Data: []DT.Value{NewIntValue(10), NullValue()}},
 	}
 
-	p := NewPragma(&PS.PragmaStmt{Name: "foreign_key_check"})
-	p.loadForeignKeyCheck()
-	if len(p.rows) != 0 {
-		t.Fatalf("expected 0 violations for NULL FK, got %d", len(p.rows))
+	p := WT.NewPragma(&PS.PragmaStmt{Name: "foreign_key_check"})
+	p.LoadForeignKeyCheck()
+	if len(p.Rows()) != 0 {
+		t.Fatalf("expected 0 violations for NULL FK, got %d", len(p.Rows()))
 	}
 }

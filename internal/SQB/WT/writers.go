@@ -1,4 +1,4 @@
-package EX
+package WT
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
-	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
@@ -31,14 +30,38 @@ type Insert struct {
 	schema         *DT.StoreSchema
 	txWriter       DT.TxWriter
 	rows           int64
-	done           bool
-	params         []any
-	resultRows     []DT.Row
-	resultPos      int
-	execCtx        *DT.ExecContext // REQ000812
-}
+		done           bool
+		params         []any
+		resultRows     []DT.Row
+		resultPos      int
+		execCtx        *DT.ExecContext // REQ000812
+	}
 
-// WithParams propagates the bound `?` placeholders (R16-1..2).
+	// SetExecCtx sets the execution context. Used by EX.propagateExecContext.
+	func (i *Insert) SetExecCtx(ec *DT.ExecContext) { i.execCtx = ec }
+
+	// SetSelectPlan sets the selectPlan for INSERT INTO ... SELECT.
+	func (i *Insert) SetSelectPlan(op DT.Operator) { i.selectPlan = op }
+
+	// SetConflictAction sets the conflict resolution action.
+	func (i *Insert) SetConflictAction(a PS.ConflictAction) { i.conflictAction = a }
+
+	// SetDefaultValues sets the DEFAULT VALUES flag.
+	func (i *Insert) SetDefaultValues(v bool) { i.defaultValues = v }
+
+	// Table returns the target table name.
+	func (i *Insert) Table() string { return i.table }
+
+	// SetExecCtx sets the execution context. Used by EX.propagateExecContext.
+	func (d *Delete) SetExecCtx(ec *DT.ExecContext) { d.execCtx = ec }
+
+	// Table returns the target table name.
+	func (d *Delete) Table() string { return d.table }
+
+	// Iter returns the input iterator. Used by EX.plan_node.
+	func (d *Delete) Iter() DT.Operator { return d.iter }
+
+	// WithParams propagates the bound `?` placeholders (R16-1..2).
 func (i *Insert) WithParams(p []any) DT.Operator {
 	i.params = p
 	return i
@@ -127,7 +150,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 		pending = make(map[string]struct{}, len(i.values))
 		iterValues = i.values
 	}
-	lookup := WT.InMemoryLookup(i.table)
+	lookup := InMemoryLookup(i.table)
 	// REQ001030: pre-compute colIdx once for all rows.
 	colIdx := make([]int, len(i.cols))
 	for ci, nm := range i.cols {
@@ -147,28 +170,28 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 			out = DT.Row{Cols: schema}
 			out.Data = make([]DT.Value, len(schema))
 		} else {
-			out, err = WT.BuildInsertRow(schema, i.cols, colIdx, row, i.params)
+			out, err = BuildInsertRow(schema, i.cols, colIdx, row, i.params)
 			if err != nil {
 				return DT.Row{}, err
 			}
 		}
 		if cschema != nil {
-			if out, err = WT.FillDefaults(cschema, out); err != nil {
+			if out, err = FillDefaults(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := WT.ValidateRow(cschema, out); err != nil {
+			if err := ValidateRow(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := WT.ValidateDecimal(cschema, out); err != nil {
+			if err := ValidateDecimal(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := WT.ValidateCheck(cschema, out); err != nil {
+			if err := ValidateCheck(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := WT.CheckUnique(cschema, out, pending, DT.Row{}, WT.AsUniqueLookup(lookup)); err != nil {
+			if err := CheckUnique(cschema, out, pending, DT.Row{}, AsUniqueLookup(lookup)); err != nil {
 				if i.conflictAction == PS.ConflictActionReplace {
 					var removed int
-					existing, removed = WT.RemoveConflicting(existing, cschema, out)
+					existing, removed = RemoveConflicting(existing, cschema, out)
 					i.rows += int64(removed)
 					if i.execCtx != nil {
 						i.execCtx.LastChanges += int64(removed)
@@ -191,7 +214,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 				// DO UPDATE: locate the conflicting row and apply
 				// the SET clauses. We re-use the lookup closure
 				// to find the existing row and mutate it in place.
-				if apply, ok := lookup.(WT.UniqueLookupWithApply); ok {
+				if apply, ok := lookup.(UniqueLookupWithApply); ok {
 					if err := applyConflictUpdate(cschema, existing, out, i.onConflict.SetClauses, i.params, apply); err != nil {
 						return DT.Row{}, err
 					}
@@ -203,7 +226,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 					continue
 				}
 				// Fallback: no mutating lookup available — silently
-				// skip the row. The in-memory WT.UniqueLookup does
+				// skip the row. The in-memory UniqueLookup does
 				// support the apply path above, so this branch is
 				// only hit in degenerate cases.
 				continue
@@ -214,7 +237,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 		if i.conflictAction == PS.ConflictActionReplace && cschema == nil {
 			pkName := DT.TablePKs[i.table]
 			var removed int
-			existing, removed = WT.RemoveConflictingInMemory(existing, schema, pkName, out)
+			existing, removed = RemoveConflictingInMemory(existing, schema, pkName, out)
 			i.rows += int64(removed)
 			if i.execCtx != nil {
 				i.execCtx.LastChanges += int64(removed)
@@ -224,7 +247,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 		}
 		// REQ000126/REQ000905: FK validation on INSERT (skipped when PRAGMA foreign_keys = OFF)
 		if DT.IsForeignKeysEnabled() && cschema != nil && len(cschema.ForeignKeys) > 0 {
-			if err := UT.ValidateForeignKeyInsert(cschema, valueSliceToAny(out.Data), i.store); err != nil {
+			if err := UT.ValidateForeignKeyInsert(cschema, DT.ValueSliceToAny(out.Data), i.store); err != nil {
 				return DT.Row{}, err
 			}
 		}
@@ -282,7 +305,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 	// In the engine path, use store-based lookup for PK uniqueness
 	// only when conflict action is specified (INSERT OR IGNORE/REPLACE).
 	// For plain INSERT, silently overwrite (consistent with LSM semantics).
-	var lookupFn WT.UniqueLookup
+	var lookupFn UniqueLookup
 	if i.conflictAction != PS.ConflictActionUnspecified {
 		lookupFn = func(cols []int, vals []any) (bool, error) {
 			if h == nil || len(vals) == 0 {
@@ -313,21 +336,21 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 			out = DT.Row{Cols: i.schema.Cols}
 			out.Data = make([]DT.Value, len(i.schema.Cols))
 		} else {
-			out, err = WT.BuildInsertRow(i.schema.Cols, i.cols, colIdx, row, i.params)
+			out, err = BuildInsertRow(i.schema.Cols, i.cols, colIdx, row, i.params)
 		}
-		if out, err = WT.FillDefaults(i.schema, out); err != nil {
+		if out, err = FillDefaults(i.schema, out); err != nil {
 			return DT.Row{}, err
 		}
-		if err := WT.ValidateRow(i.schema, out); err != nil {
+		if err := ValidateRow(i.schema, out); err != nil {
 			return DT.Row{}, err
 		}
-		if err := WT.ValidateDecimal(i.schema, out); err != nil {
+		if err := ValidateDecimal(i.schema, out); err != nil {
 			return DT.Row{}, err
 		}
-		if err := WT.ValidateCheck(i.schema, out); err != nil {
+		if err := ValidateCheck(i.schema, out); err != nil {
 			return DT.Row{}, err
 		}
-		if err := WT.CheckUnique(i.schema, out, pending, DT.Row{}, lookupFn); err != nil {
+		if err := CheckUnique(i.schema, out, pending, DT.Row{}, lookupFn); err != nil {
 			if i.conflictAction == PS.ConflictActionReplace {
 				// Delete the existing row via the handle, then fall
 				// through to insert below. REQ000987: InsertRow already
@@ -349,7 +372,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 		}
 		// REQ000126/REQ000905: FK validation on INSERT (store path, skipped when PRAGMA foreign_keys = OFF)
 		if DT.IsForeignKeysEnabled() && len(i.schema.ForeignKeys) > 0 {
-			if err := UT.ValidateForeignKeyInsert(i.schema, valueSliceToAny(out.Data), i.store); err != nil {
+			if err := UT.ValidateForeignKeyInsert(i.schema, DT.ValueSliceToAny(out.Data), i.store); err != nil {
 				return DT.Row{}, err
 			}
 		}
@@ -440,7 +463,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 	}
 
 	pending := make(map[string]struct{})
-	lookup := WT.InMemoryLookup(i.table)
+	lookup := InMemoryLookup(i.table)
 
 		for _, row := range selectRows {
 		// Build insert row from SELECT result
@@ -450,13 +473,13 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 		}
 
 		if cschema != nil {
-			if out, err = WT.FillDefaults(cschema, out); err != nil {
+			if out, err = FillDefaults(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := WT.ValidateRow(cschema, out); err != nil {
+			if err := ValidateRow(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := WT.CheckUnique(cschema, out, pending, DT.Row{}, WT.AsUniqueLookup(lookup)); err != nil {
+			if err := CheckUnique(cschema, out, pending, DT.Row{}, AsUniqueLookup(lookup)); err != nil {
 				if i.conflictAction == PS.ConflictActionIgnore {
 					continue
 				}
@@ -556,7 +579,16 @@ type Update struct {
 	execCtx    *DT.ExecContext // REQ000812
 }
 
-// REQ000714: expose child for execCtx/params propagation.
+	// SetExecCtx sets the execution context. Used by EX.propagateExecContext.
+	func (u *Update) SetExecCtx(ec *DT.ExecContext) { u.execCtx = ec }
+
+	// Table returns the target table name.
+	func (u *Update) Table() string { return u.table }
+
+	// Iter returns the input iterator. Used by EX.plan_node.
+	func (u *Update) Iter() DT.Operator { return u.iter }
+
+	// REQ000714: expose child for execCtx/params propagation.
 func (u *Update) Child() DT.Operator { return u.iter }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -636,25 +668,25 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 		// source table. Deep-copy Data before applyUpdate mutates it
 		// in-place, otherwise the source row is corrupted.
 		row.Data = append([]DT.Value(nil), row.Data...)
-		if err := WT.ApplyUpdate(&row, u.set, u.params); err != nil {
+		if err := ApplyUpdate(&row, u.set, u.params); err != nil {
 			return DT.Row{}, err
 		}
 		if cschema != nil {
-			if row, err = WT.FillDefaults(cschema, row); err != nil {
+			if row, err = FillDefaults(cschema, row); err != nil {
 				return DT.Row{}, err
 			}
-			if err := WT.ValidateRow(cschema, row); err != nil {
+			if err := ValidateRow(cschema, row); err != nil {
 				return DT.Row{}, err
 			}
-			if err := WT.ValidateDecimal(cschema, row); err != nil {
+			if err := ValidateDecimal(cschema, row); err != nil {
 				return DT.Row{}, err
 			}
-			if err := WT.ValidateCheck(cschema, row); err != nil {
+			if err := ValidateCheck(cschema, row); err != nil {
 				return DT.Row{}, err
 			}
 			// REQ000513/REQ000905: FK re-validation when FK columns are updated.
 			if DT.IsForeignKeysEnabled() {
-				if err := UT.ValidateForeignKeyUpdateInMemory(cschema, valueSliceToAny(snapshot.Data), valueSliceToAny(row.Data)); err != nil {
+				if err := UT.ValidateForeignKeyUpdateInMemory(cschema, DT.ValueSliceToAny(snapshot.Data), DT.ValueSliceToAny(row.Data)); err != nil {
 					return DT.Row{}, err
 				}
 			}
@@ -664,8 +696,8 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 			// row's UNIQUE key is caught.  The snapshot is passed
 			// to checkUnique for self-exclusion.
 			DT.TablesMu.RLock()
-			ul := WT.InMemoryLookup(u.table).Lookup
-			uidErr := WT.CheckUnique(cschema, row, nil, snapshot, ul)
+			ul := InMemoryLookup(u.table).Lookup
+			uidErr := CheckUnique(cschema, row, nil, snapshot, ul)
 			DT.TablesMu.RUnlock()
 			if uidErr != nil {
 				return DT.Row{}, uidErr
@@ -730,22 +762,22 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 			return DT.Row{}, err
 		}
 		oldRow := DT.CloneRow(row)
-		if err := WT.ApplyUpdate(&row, u.set, u.params); err != nil {
+		if err := ApplyUpdate(&row, u.set, u.params); err != nil {
 			return DT.Row{}, err
 		}
-		if row, err = WT.FillDefaults(u.schema, row); err != nil {
+		if row, err = FillDefaults(u.schema, row); err != nil {
 			return DT.Row{}, err
 		}
-		if err := WT.ValidateRow(u.schema, row); err != nil {
+		if err := ValidateRow(u.schema, row); err != nil {
 			return DT.Row{}, err
 		}
-		if err := WT.ValidateCheck(u.schema, row); err != nil {
+		if err := ValidateCheck(u.schema, row); err != nil {
 			return DT.Row{}, err
 		}
 		// Engine-path unique: best-effort no-op (correct UNIQUE in the
 		// engine path requires a real index, deferred to REQ000045).
 		noopLookup := func(cols []int, vals []any) (bool, error) { return false, nil }
-		if err := WT.CheckUnique(u.schema, row, nil, DT.Row{}, noopLookup); err != nil {
+		if err := CheckUnique(u.schema, row, nil, DT.Row{}, noopLookup); err != nil {
 			return DT.Row{}, err
 		}
 		// REQ000987: route through TableHandle.UpdateRow. The returned
@@ -886,7 +918,7 @@ func (d *Delete) Next(ctx context.Context) (DT.Row, error) {
 		idx, ok := DT.RowIndex(d.table, row)
 		if ok {
 			toDelete[idx] = true
-			fkRows = append(fkRows, valueSliceToAny(row.Data))
+			fkRows = append(fkRows, DT.ValueSliceToAny(row.Data))
 
 			// Evaluate RETURNING expressions before deleting (REQ000518: expand *)
 			if len(d.returning) > 0 {
@@ -1030,7 +1062,7 @@ type Trigger struct {
 func NewTrigger(stmt *PS.TriggerStmt) *Trigger {
 	t := &Trigger{Stmt: stmt}
 	if stmt != nil {
-		if e := WT.RegisterTrigger(stmt); e != nil {
+		if e := RegisterTrigger(stmt); e != nil {
 			t.err = e
 		}
 	}
@@ -1257,7 +1289,7 @@ func (c *CreateTable) Next(ctx context.Context) (DT.Row, error) {
 		pk = *c.Stmt.PK
 	}
 	// PRIMARY KEY implies NOT NULL. If PK is one of the cols, flip its
-	// nullable bit so WT.ValidateRow rejects NULL PK inserts.
+	// nullable bit so ValidateRow rejects NULL PK inserts.
 	if pk != "" {
 		for i, n := range cols {
 			if n == pk {
@@ -1388,7 +1420,7 @@ func (d *DropTable) Next(ctx context.Context) (DT.Row, error) {
 	DT.StoreMu.Unlock()
 
 	// Drop triggers associated with this table (REQ000828).
-	WT.DropTriggersForTable(d.Stmt.Name)
+	DropTriggersForTable(d.Stmt.Name)
 
 	// Persist the drop to the system catalog.
 	if idOk {
@@ -1655,6 +1687,13 @@ type Pragma struct {
 
 func NewPragma(stmt *PS.PragmaStmt) *Pragma { return &Pragma{Stmt: stmt} }
 
+// Rows returns the rows produced by this pragma. Used by tests.
+func (p *Pragma) Rows() []DT.Row { return p.rows }
+
+// LoadForeignKeyCheck executes foreign_key_check and populates rows.
+func (p *Pragma) LoadForeignKeyCheck() { p.loadForeignKeyCheck() }
+
+// WithStore sets the store for this pragma operator.
 func (p *Pragma) WithStore(s DT.Store) DT.Operator {
 	p.store = s
 	return p
@@ -1687,7 +1726,7 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 			p.done = true
 			p.rows = append(p.rows, DT.Row{
 				Cols: []string{"seq", "name", "file"},
-				Data: []DT.Value{NewIntValue(0), NewTextValue("main"), NullValue()},
+				Data: []DT.Value{DT.NewIntValue(0), DT.NewTextValue("main"), DT.NullValue()},
 			})
 		}
 		if p.idx >= len(p.rows) {
@@ -1747,7 +1786,7 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 			// Return checkpoint status: busy, log, checkpointed
 			p.rows = append(p.rows, DT.Row{
 				Cols: []string{"busy", "log", "checkpointed"},
-				Data: []DT.Value{NewIntValue(0), NewIntValue(0), NewIntValue(0)},
+				Data: []DT.Value{DT.NewIntValue(0), DT.NewIntValue(0), DT.NewIntValue(0)},
 			})
 		}
 		if p.idx >= len(p.rows) {
@@ -1774,7 +1813,7 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 			}
 			p.rows = append(p.rows, DT.Row{
 				Cols: []string{"foreign_keys"},
-				Data: []DT.Value{NewIntValue(int64(v))},
+				Data: []DT.Value{DT.NewIntValue(int64(v))},
 			})
 		}
 		if p.idx >= len(p.rows) {
@@ -1841,7 +1880,7 @@ func (p *Pragma) loadTableInfo() error {
 		}
 		p.rows = append(p.rows, DT.Row{
 			Cols: []string{"cid", "name", "type", "notnull", "dflt_value", "pk"},
-			Data: []DT.Value{NewIntValue(int64(i)), NewTextValue(colName), NewTextValue(colTypeName(colType)), NewIntValue(notNull), NullValue(), NewIntValue(pk)},
+			Data: []DT.Value{DT.NewIntValue(int64(i)), DT.NewTextValue(colName), DT.NewTextValue(colTypeName(colType)), DT.NewIntValue(notNull), DT.NullValue(), DT.NewIntValue(pk)},
 		})
 	}
 	return nil
@@ -1882,7 +1921,7 @@ func (p *Pragma) loadTableList() {
 	for _, name := range names {
 		p.rows = append(p.rows, DT.Row{
 			Cols: []string{"type", "name", "tbl_name", "rootpage", "sql"},
-			Data: []DT.Value{NewTextValue("table"), NewTextValue(name), NewTextValue(name), NewIntValue(0), NullValue()},
+			Data: []DT.Value{DT.NewTextValue("table"), DT.NewTextValue(name), DT.NewTextValue(name), DT.NewIntValue(0), DT.NullValue()},
 		})
 	}
 }
@@ -1899,7 +1938,7 @@ func (p *Pragma) loadForeignKeyList() {
 		for seq, col := range fk.Columns {
 			p.rows = append(p.rows, DT.Row{
 				Cols: []string{"id", "seq", "table", "from", "to", "on_update", "on_delete", "match"},
-				Data: []DT.Value{NewIntValue(int64(id)), NewIntValue(int64(seq)), NewTextValue(fk.RefTable), NewTextValue(col), NewTextValue(fk.RefColumns[seq]), NewTextValue(fk.OnUpdate), NewTextValue(fk.OnDelete), NewTextValue("NONE")},
+				Data: []DT.Value{DT.NewIntValue(int64(id)), DT.NewIntValue(int64(seq)), DT.NewTextValue(fk.RefTable), DT.NewTextValue(col), DT.NewTextValue(fk.RefColumns[seq]), DT.NewTextValue(fk.OnUpdate), DT.NewTextValue(fk.OnDelete), DT.NewTextValue("NONE")},
 			})
 		}
 	}
@@ -2036,7 +2075,7 @@ func (e *Explain) Next(ctx context.Context) (DT.Row, error) {
 		return DT.Row{
 			Cols:  []string{"plan"},
 			Types: []LX.TokenType{LX.T_TEXT},
-			Data:  []DT.Value{NewTextValue(e.desc)},
+			Data:  []DT.Value{DT.NewTextValue(e.desc)},
 		}, nil
 	}
 	e.rowOut = true
@@ -2195,7 +2234,7 @@ func (d *DropTrigger) Next(ctx context.Context) (DT.Row, error) {
 	if d.Stmt == nil {
 		return DT.Row{}, DT.ErrNoRows
 	}
-	existed := WT.UnregisterTrigger(d.Stmt.Name)
+	existed := UnregisterTrigger(d.Stmt.Name)
 	if !existed && !d.Stmt.IfExists {
 		return DT.Row{}, fmt.Errorf("ex: trigger %s does not exist", d.Stmt.Name)
 	}
@@ -2209,7 +2248,7 @@ func (d *DropTrigger) RowsAffected() int64         { return 0 }
 // applyConflictUpdate locates the conflicting row by unique-key match
 // and applies the SET clauses. Used by INSERT ... ON CONFLICT DO
 // UPDATE. REQ000511.
-func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, sets []PS.Pair, params []any, apply WT.UniqueLookupWithApply) error {
+func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, sets []PS.Pair, params []any, apply UniqueLookupWithApply) error {
 	if apply == nil {
 		return nil
 	}
@@ -2220,7 +2259,7 @@ func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, 
 	if err != nil {
 		return err
 	}
-	rowIdx, ok, err := apply.FindAndLock(idxs, valueSliceToAny(vals))
+	rowIdx, ok, err := apply.FindAndLock(idxs, DT.ValueSliceToAny(vals))
 	if err != nil {
 		return err
 	}
@@ -2378,15 +2417,15 @@ func (u *UnsupportedOp) RowsAffected() int64         { return 0 }
 // AttachOp implements ATTACH DATABASE by recording the name→path
 // mapping on the Executor. REQ000908.
 type AttachOp struct {
-	ex     *Executor
+	amgr   DT.DBAttachManager
 	name   string
 	path   string
 	done   bool
 	closed bool
 }
 
-func NewAttachOp(ex *Executor, name, path string) *AttachOp {
-	return &AttachOp{ex: ex, name: name, path: path}
+func NewAttachOp(amgr DT.DBAttachManager, name, path string) *AttachOp {
+	return &AttachOp{amgr: amgr, name: name, path: path}
 }
 
 func (a *AttachOp) Next(ctx context.Context) (DT.Row, error) {
@@ -2395,11 +2434,11 @@ func (a *AttachOp) Next(ctx context.Context) (DT.Row, error) {
 	}
 	a.done = true
 	if a.closed {
-		return DT.Row{}, errors.New("ex: attach op is closed")
+		return DT.Row{}, errors.New("wt: attach op is closed")
 	}
 	// For v1, cross-database queries (SELECT * FROM attached.t) are
 	// rejected at the planner level by the qualified-name resolver.
-	a.ex.attachedDBs[a.name] = a.path
+	a.amgr.AttachDB(a.name, a.path)
 	return DT.Row{}, nil
 }
 
@@ -2413,14 +2452,14 @@ func (a *AttachOp) RowsAffected() int64         { return 0 }
 // DetachOp implements DETACH DATABASE by removing the name→path
 // mapping from the Executor. REQ000908.
 type DetachOp struct {
-	ex     *Executor
+	amgr   DT.DBAttachManager
 	name   string
 	done   bool
 	closed bool
 }
 
-func NewDetachOp(ex *Executor, name string) *DetachOp {
-	return &DetachOp{ex: ex, name: name}
+func NewDetachOp(amgr DT.DBAttachManager, name string) *DetachOp {
+	return &DetachOp{amgr: amgr, name: name}
 }
 
 func (d *DetachOp) Next(ctx context.Context) (DT.Row, error) {
@@ -2429,9 +2468,9 @@ func (d *DetachOp) Next(ctx context.Context) (DT.Row, error) {
 	}
 	d.done = true
 	if d.closed {
-		return DT.Row{}, errors.New("ex: detach op is closed")
+		return DT.Row{}, errors.New("wt: detach op is closed")
 	}
-	delete(d.ex.attachedDBs, d.name)
+	d.amgr.DetachDB(d.name)
 	return DT.Row{}, nil
 }
 
@@ -2445,7 +2484,7 @@ func (d *DetachOp) RowsAffected() int64         { return 0 }
 // ErrMultiDatabaseNotSupported is returned when a query attempts to
 // reference an attached database. Full cross-database query support
 // (SELECT from attached.t, etc.) is deferred. REQ000908.
-var ErrMultiDatabaseNotSupported = errors.New("ex: cross-database queries not supported in v1")
+var ErrMultiDatabaseNotSupported = errors.New("wt: cross-database queries not supported in v1")
 
 // fireInsertTriggers fires all AFTER INSERT triggers for the given table.
 // The new row is passed as the context for trigger execution.
@@ -2467,7 +2506,7 @@ func fireInsertTriggers(table string, newRow *DT.Row, params []any, store DT.Sto
 		return nil
 	}
 
-	return WT.FireTriggers(table, "AFTER", "INSERT", nil, newRow, params, exec)
+	return FireTriggers(table, "AFTER", "INSERT", nil, newRow, params, exec)
 }
 
 // executeRefreshMatViewSQL executes a REFRESH MATERIALIZED VIEW statement.
@@ -2501,7 +2540,7 @@ func refreshMatViewData(name string, sel *PS.Select, store DT.Store) error {
 	// and write results to the matview data prefix
 
 	// For now, we just clear old data and mark the view as needing refresh
-	matPrefix := WT.MatViewDataPrefix(name)
+	matPrefix := MatViewDataPrefix(name)
 	if store != nil {
 		it := store.NewIterator(matPrefix)
 		for it.Next() {
@@ -2527,7 +2566,7 @@ func fireUpdateTriggers(table string, oldRow *DT.Row, newRow *DT.Row, params []a
 		return nil
 	}
 
-	return WT.FireTriggers(table, "AFTER", "UPDATE", oldRow, newRow, params, exec)
+	return FireTriggers(table, "AFTER", "UPDATE", oldRow, newRow, params, exec)
 }
 
 // fireDeleteTriggers fires all AFTER DELETE triggers for the given table.
@@ -2544,5 +2583,5 @@ func fireDeleteTriggers(table string, oldRow *DT.Row, params []any, store DT.Sto
 		return nil
 	}
 
-	return WT.FireTriggers(table, "AFTER", "DELETE", oldRow, nil, params, exec)
+	return FireTriggers(table, "AFTER", "DELETE", oldRow, nil, params, exec)
 }

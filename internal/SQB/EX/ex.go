@@ -26,6 +26,9 @@ import (
 var ErrNotImplemented = errors.New("ex: not implemented")
 var ErrClosed = errors.New("ex: operator closed")
 
+// Re-export for SYS/SE backward compatibility (moved to WT).
+var ErrMultiDatabaseNotSupported = WT.ErrMultiDatabaseNotSupported
+
 // Value kind constants — aliased from PL for zero-cost interop.
 const (
 	KindNull  = DT.KindNull
@@ -204,6 +207,21 @@ func (e *Executor) SetTxWriter(w DT.TxWriter) {
 func (e *Executor) ClearTxWriter() {
 	e.txWriter = nil
 	DT.SetCurrentTxWriter(nil)
+}
+
+// AttachDB implements DT.DBAttachManager.
+func (e *Executor) AttachDB(name, path string) {
+	e.attachedDBs[name] = path
+}
+
+// DetachDB implements DT.DBAttachManager.
+func (e *Executor) DetachDB(name string) {
+	delete(e.attachedDBs, name)
+}
+
+// GetAttachedDBs implements DT.DBAttachManager.
+func (e *Executor) GetAttachedDBs() map[string]string {
+	return e.attachedDBs
 }
 
 // ShallowCopy returns a new Executor that shares Planner and Store with the
@@ -1088,14 +1106,14 @@ func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 	if p, ok := root.(*OP.Project); ok {
 		p.SetExecCtx(ec)
 	}
-	if ins, ok := root.(*Insert); ok {
-		ins.execCtx = ec
+	if ins, ok := root.(*WT.Insert); ok {
+		ins.SetExecCtx(ec)
 	}
-	if upd, ok := root.(*Update); ok {
-		upd.execCtx = ec
+	if upd, ok := root.(*WT.Update); ok {
+		upd.SetExecCtx(ec)
 	}
-	if del, ok := root.(*Delete); ok {
-		del.execCtx = ec
+	if del, ok := root.(*WT.Delete); ok {
+		del.SetExecCtx(ec)
 	}
 	if val, ok := root.(*OP.Values); ok {
 		val.SetExecCtx(ec)
@@ -1315,32 +1333,32 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 			// REQ001129: store-backed INSERT...SELECT needs a
 			// store-backed Insert operator so the rows are written
 			// to the engine, not just the in-memory table map.
-			var op *Insert
+			var op *WT.Insert
 			if e.store != nil {
-				op, err = NewInsertWithStore(e.store, s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+				op, err = WT.NewInsertWithStore(e.store, s.Table, s.Cols, nil, s.Returning, s.OnConflict)
 				if err != nil {
 					return nil, err
 				}
 			} else {
-				op = NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+				op = WT.NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
 			}
-			op.selectPlan = selPlan.Root
-			op.conflictAction = s.ConflictAction
+			op.SetSelectPlan(selPlan.Root)
+			op.SetConflictAction(s.ConflictAction)
 			propagatePlanner(selPlan.Root, e.planner)
 			return op, nil
 		}
 
-		op, iErr := func() (*Insert, error) {
+		op, iErr := func() (*WT.Insert, error) {
 			if e.store != nil {
-				return NewInsertWithStore(e.store, s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
+				return WT.NewInsertWithStore(e.store, s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
 			}
-			return NewInsert(s.Table, s.Cols, s.Values, s.Returning, s.OnConflict), nil
+			return WT.NewInsert(s.Table, s.Cols, s.Values, s.Returning, s.OnConflict), nil
 		}()
 		if iErr != nil {
 			return nil, iErr
 		}
-		op.conflictAction = s.ConflictAction
-		op.defaultValues = s.DefaultValues
+		op.SetConflictAction(s.ConflictAction)
+		op.SetDefaultValues(s.DefaultValues)
 		return op, nil
 	case *PS.Update:
 		targetTable := s.Table
@@ -1393,13 +1411,13 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 			}
 		}
 		if e.store != nil {
-			op, err := NewUpdateWithStore(e.store, targetTable, s.Set, s.Where, current, s.Returning)
+			op, err := WT.NewUpdateWithStore(e.store, targetTable, s.Set, s.Where, current, s.Returning)
 			if err != nil {
 				return nil, err
 			}
 			return op, nil
 		}
-		return NewUpdate(targetTable, s.Set, s.Where, current, s.Returning), nil
+		return WT.NewUpdate(targetTable, s.Set, s.Where, current, s.Returning), nil
 	case *PS.Delete:
 		tableName := s.Table
 		if viewSel := DT.LookupView(tableName); viewSel != nil {
@@ -1448,13 +1466,13 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 			}
 		}
 		if e.store != nil {
-			op, err := NewDeleteWithStore(e.store, tableName, s.Where, current, s.Returning)
+			op, err := WT.NewDeleteWithStore(e.store, tableName, s.Where, current, s.Returning)
 			if err != nil {
 				return nil, err
 			}
 			return op, nil
 		}
-		return NewDelete(tableName, s.Where, current, s.Returning), nil
+		return WT.NewDelete(tableName, s.Where, current, s.Returning), nil
 	case *PS.CreateTable:
 		if s.Select != nil {
 			// CREATE TABLE AS SELECT needs the planner to
@@ -1468,9 +1486,9 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 			}
 			return op.Root, nil
 		}
-		return NewCreateTable(s), nil
+		return WT.NewCreateTable(s), nil
 	case *PS.DropTable:
-		return NewDropTable(s), nil
+		return WT.NewDropTable(s), nil
 	case *PS.CreateIndexStmt:
 		// Note: the planner's cost-based selection (REQ000156)
 		// is keyed off ex.RegisterIndex, not CREATE INDEX.
@@ -1478,9 +1496,9 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 		// maintenance; it does not backfill existing rows into
 		// the index keyspace. Tests that want cost-based
 		// selection should call ex.RegisterIndex explicitly.
-		return NewCreateIndex(s), nil
+		return WT.NewCreateIndex(s), nil
 	case *PS.DropIndexStmt:
-		return NewDropIndex(s), nil
+		return WT.NewDropIndex(s), nil
 	case *PS.CreateViewStmt:
 		return WT.NewCreateView(s), nil
 	case *PS.CreateMatViewStmt:
@@ -1507,21 +1525,21 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 	case *PS.AlterTableStmt:
 		return WT.NewAlterTable(s), nil
 	case *PS.TriggerStmt:
-		return NewTrigger(s), nil
+		return WT.NewTrigger(s), nil
 	case *PS.DropViewStmt:
-		return NewDropView(s), nil
+		return WT.NewDropView(s), nil
 	case *PS.DropTriggerStmt:
-		return NewDropTrigger(s), nil
+		return WT.NewDropTrigger(s), nil
 	case *PS.PragmaStmt:
-		return NewPragma(s), nil
+		return WT.NewPragma(s), nil
 	case *PS.ExplainStmt:
-		return NewExplain(s), nil
+		return WT.NewExplain(s), nil
 	case *PS.TruncateStmt:
-		return NewTruncate(s), nil
+		return WT.NewTruncate(s), nil
 	case *PS.ReindexStmt:
-		return NewReindex(s), nil
+		return WT.NewReindex(s), nil
 	case *PS.CreateVirtualTableStmt:
-		return NewUnsupportedOp(s, "ex: virtual table module not supported in v1: "+s.Module), nil
+		return WT.NewUnsupportedOp(s, "ex: virtual table module not supported in v1: "+s.Module), nil
 	case *PS.BeginTX:
 		return NewNoop(), nil
 	case *PS.CommitTX:
@@ -1533,9 +1551,9 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 		if err != nil {
 			return nil, err
 		}
-		return NewAttachOp(e, s.Name, path), nil
+		return WT.NewAttachOp(e, s.Name, path), nil
 	case *PS.DetachStmt:
-		return NewDetachOp(e, s.Name), nil
+		return WT.NewDetachOp(e, s.Name), nil
 	}
 	return nil, errors.New("ex: not a writable statement")
 }

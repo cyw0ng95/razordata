@@ -146,6 +146,14 @@ type SessionCounterAccessor interface {
 	TotalChangesCount(sessionID uint64) int64
 }
 
+// DBAttachManager provides cross-database attachment management.
+// Used by WT.AttachOp/DetachOp without requiring *EX.Executor.
+type DBAttachManager interface {
+	AttachDB(name, path string)
+	DetachDB(name string)
+	GetAttachedDBs() map[string]string
+}
+
 var (
 	SessionCounterMu       sync.RWMutex
 	SessionCounterAccessor_ SessionCounterAccessor

@@ -291,34 +291,34 @@ case *OP.NestedLoopJoin:
 		}
 		node.Cost = estimateJoinCost(v, leftTS, rightTS)
 
-	case *Insert:
-		node.Table = v.table
-		node.Detail = fmt.Sprintf("INSERT INTO %s", v.table)
+	case *WT.Insert:
+		node.Table = v.Table()
+		node.Detail = fmt.Sprintf("INSERT INTO %s", v.Table())
 		node.Cost = 1.0
 
-	case *Update:
-		node.Table = v.table
-		node.Detail = fmt.Sprintf("UPDATE %s", v.table)
+	case *WT.Update:
+		node.Table = v.Table()
+		node.Detail = fmt.Sprintf("UPDATE %s", v.Table())
 		node.Cost = 1.0
 
-	case *Delete:
-		node.Table = v.table
-		node.Detail = fmt.Sprintf("DELETE FROM %s", v.table)
+	case *WT.Delete:
+		node.Table = v.Table()
+		node.Detail = fmt.Sprintf("DELETE FROM %s", v.Table())
 		node.Cost = 1.0
 
-	case *CreateTable:
+	case *WT.CreateTable:
 		node.Detail = fmt.Sprintf("CREATE TABLE %s", v.Stmt.Name)
 		node.Cost = 1.0
 
-	case *DropTable:
+	case *WT.DropTable:
 		node.Detail = fmt.Sprintf("DROP TABLE %s", v.Stmt.Name)
 		node.Cost = 1.0
 
-	case *CreateIndex:
+	case *WT.CreateIndex:
 		node.Detail = fmt.Sprintf("CREATE INDEX %s", v.Stmt.Name)
 		node.Cost = 5.0
 
-	case *DropIndex:
+	case *WT.DropIndex:
 		node.Detail = fmt.Sprintf("DROP INDEX %s", v.Stmt.Name)
 		node.Cost = 1.0
 
@@ -326,11 +326,11 @@ case *OP.NestedLoopJoin:
 		node.Detail = fmt.Sprintf("CREATE VIEW %s", v.Stmt.Name)
 		node.Cost = 1.0
 
-	case *DropView:
+	case *WT.DropView:
 		node.Detail = fmt.Sprintf("DROP VIEW %s", v.Stmt.Name)
 		node.Cost = 1.0
 
-	case *DropTrigger:
+	case *WT.DropTrigger:
 		node.Detail = fmt.Sprintf("DROP TRIGGER %s", v.Stmt.Name)
 		node.Cost = 1.0
 
@@ -338,7 +338,7 @@ case *OP.NestedLoopJoin:
 		node.Detail = fmt.Sprintf("ALTER TABLE %s", v.Stmt.Table)
 		node.Cost = 2.0
 
-	case *Pragma:
+	case *WT.Pragma:
 		node.Detail = fmt.Sprintf("PRAGMA %s", v.Stmt.Name)
 		node.Cost = 0.5
 
@@ -354,11 +354,11 @@ case *OP.NestedLoopJoin:
 		node.Detail = "INTEGRITY_CHECK"
 		node.Cost = 10.0
 
-	case *Truncate:
+	case *WT.Truncate:
 		node.Detail = fmt.Sprintf("TRUNCATE %s", v.Stmt.Table)
 		node.Cost = 1.0
 
-	case *Reindex:
+	case *WT.Reindex:
 		node.Detail = fmt.Sprintf("REINDEX %s", v.Stmt.Target)
 		node.Cost = 2.0
 
@@ -416,13 +416,13 @@ case *OP.NestedLoopJoin:
 		if v.RightChild() != nil {
 			node.Add(buildPlanNodeTree(v.RightChild(), planner))
 		}
-	case *Update:
-		if v.iter != nil {
-			node.Add(buildPlanNodeTree(v.iter, planner))
+	case *WT.Update:
+		if v.Iter() != nil {
+			node.Add(buildPlanNodeTree(v.Iter(), planner))
 		}
-	case *Delete:
-		if v.iter != nil {
-			node.Add(buildPlanNodeTree(v.iter, planner))
+	case *WT.Delete:
+		if v.Iter() != nil {
+			node.Add(buildPlanNodeTree(v.Iter(), planner))
 		}
 	case *OP.HashJoin:
 		if v.LeftChild() != nil {
@@ -493,31 +493,31 @@ func operatorType(op DT.Operator) string {
 		return "OP.Values"
 	case *OP.ValuesRows:
 		return "OP.ValuesRows"
-	case *Insert:
+	case *WT.Insert:
 		return "Insert"
-	case *Update:
+	case *WT.Update:
 		return "Update"
-	case *Delete:
+	case *WT.Delete:
 		return "Delete"
-	case *CreateTable:
+	case *WT.CreateTable:
 		return "CreateTable"
-	case *DropTable:
+	case *WT.DropTable:
 		return "DropTable"
-	case *CreateIndex:
+	case *WT.CreateIndex:
 		return "CreateIndex"
-	case *DropIndex:
+	case *WT.DropIndex:
 		return "DropIndex"
 	case *WT.CreateViewOperator:
 		return "CreateView"
-	case *DropView:
+	case *WT.DropView:
 		return "DropView"
-	case *Trigger:
+	case *WT.Trigger:
 		return "CreateTrigger"
-	case *DropTrigger:
+	case *WT.DropTrigger:
 		return "DropTrigger"
 	case *WT.AlterTable:
 		return "AlterTable"
-	case *Pragma:
+	case *WT.Pragma:
 		return "Pragma"
 	case *UT.Analyze:
 		return "Analyze"
@@ -525,9 +525,9 @@ func operatorType(op DT.Operator) string {
 		return "UT.Vacuum"
 	case *UT.IntegrityCheck:
 		return "UT.IntegrityCheck"
-	case *Truncate:
+	case *WT.Truncate:
 		return "Truncate"
-	case *Reindex:
+	case *WT.Reindex:
 		return "Reindex"
 	case *WT.CreateMatViewOperator:
 		return "CreateMatView"
