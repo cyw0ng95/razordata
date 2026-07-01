@@ -554,8 +554,8 @@ func (p *Planner) estimateMemoryPressure(op Operator) (estimated int64, budget i
 		budget = 64 << 20 // 64 MB default
 	}
 	switch v := op.(type) {
-	case *Sort:
-		// Sort materializes all rows. Estimate ~120 bytes per row
+	case *OP.Sort:
+		// OP.Sort materializes all rows. Estimate ~120 bytes per row
 		// (covers up to ~30 columns).
 		const estBytesPerRow = 120
 		if rows := p.estimateRowCountFromOp(v.Child()); rows > 0 {
@@ -612,7 +612,7 @@ func (p *Planner) estimateRowCountFromOp(op Operator) float64 {
 		return 0
 	}
 	switch v := op.(type) {
-	case *SeqScan:
+	case *OP.SeqScan:
 		return float64(p.estimateRowCount(v.Table(), nil))
 	}
 	if aop, ok := op.(*AD.AdaptiveOp); ok {
@@ -640,7 +640,7 @@ func (p *Planner) estimateCost(op Operator) float64 {
 	// REQ001104: when CostParams are explicitly set, use the
 	// PostgreSQL-style cost formulas (rows × page cost, etc).
 	// When unset, fall back to the legacy per-operator heuristic
-	// (1.0 for SeqScan, 0.05/0.1 for IndexScan, etc.) so existing
+	// (1.0 for OP.SeqScan, 0.05/0.1 for OP.IndexScan, etc.) so existing
 	// tests and behavior remain stable.
 	cp := p.costParams()
 	if p.costParamsX != nil {
@@ -661,41 +661,41 @@ func (p *Planner) estimateCostLegacy(op Operator) float64 {
 		return p.estimateCostLegacy(aop.Inner)
 	}
 	switch v := op.(type) {
-	case *SeqScan:
+	case *OP.SeqScan:
 		// In v1 we don't track row counts; assume 1.0 per row.
 		return 1.0
-	case *IndexScan:
+	case *OP.IndexScan:
 		// REQ000156 (iter-27): the cost depends on the scan
 		// mode. Real index seek (indexMode=true) is the
 		// cheapest; range seek is slightly more expensive;
 		// full prefix read is the most expensive of the
-		// index paths but still cheaper than SeqScan.
+		// index paths but still cheaper than OP.SeqScan.
 		if v.IndexMode() {
 			return 0.05
 		}
 		return 0.1
-	case *BitmapHeapScan:
+	case *OP.BitmapHeapScan:
 		// REQ001106: bitmap heap scan cost = sum of child
 		// index seek costs + a single heap-fanout pass. We
 		// model each child as a real seek (0.05) and add a
 		// fixed bookkeeping factor so a 2-child bitmap is
-		// cheaper than 2 separate IndexScans+Filter stacks.
+		// cheaper than 2 separate IndexScans+OP.Filter stacks.
 		return 0.05*float64(len(v.IndexScans())) + 0.05
-	case *IndexOnlyScan:
+	case *OP.IndexOnlyScan:
 		// REQ001107: index-only scan is the cheapest path —
 		// no heap fetch, just index entry emission.
 		return 0.03
-	case *Filter:
+	case *OP.Filter:
 		return p.estimateCostLegacy(v.Child()) * p.estimatePredicateSelectivity(v.Predicate())
-	case *Project:
+	case *OP.Project:
 		return p.estimateCostLegacy(v.Child())
-	case *Limit:
+	case *OP.Limit:
 		return p.estimateCostLegacy(v.Child())
-	case *Offset:
+	case *OP.Offset:
 		return p.estimateCostLegacy(v.Child())
 	case *OP.Distinct:
 		return p.estimateCostLegacy(v.Child())
-	case *Sort:
+	case *OP.Sort:
 		childCost := p.estimateCostLegacy(v.Child())
 		if childCost < 1 {
 			childCost = 1
@@ -703,7 +703,7 @@ func (p *Planner) estimateCostLegacy(op Operator) float64 {
 		return childCost * (1 + log2ish(childCost))
 	case *AG.Aggregate:
 		return p.estimateCostLegacy(v.Child()) + 1
-	case *NestedLoopJoin:
+	case *OP.NestedLoopJoin:
 		leftCost := p.estimateCostLegacy(v.LeftChild())
 		rightCost := p.estimateCostLegacy(v.RightChild())
 		return leftCost * rightCost
@@ -759,14 +759,14 @@ func (p *Planner) estimateCostWithParams(op Operator, cp CostParams) float64 {
 		return p.estimateCostWithParams(aop.Inner, cp)
 	}
 	switch v := op.(type) {
-	case *SeqScan:
+	case *OP.SeqScan:
 		rows := p.estimateRowCount(v.Table(), nil)
 		cost := float64(rows) * cp.SeqPageCost
 		if cost < 1.0 {
 			cost = 1.0
 		}
 		return cost
-	case *IndexScan:
+	case *OP.IndexScan:
 		rows := p.estimateRowCount(v.Table(), nil)
 		base := float64(rows) * cp.CPUIndexTupleCost
 		indexIO := float64(rows) * cp.RandomPageCost / 100
@@ -774,18 +774,18 @@ func (p *Planner) estimateCostWithParams(op Operator, cp CostParams) float64 {
 			return base + indexIO
 		}
 		return 2*base + 2*indexIO
-	case *Filter:
+	case *OP.Filter:
 		childCost := p.estimateCostWithParams(v.Child(), cp)
 		return childCost + childCost*p.estimatePredicateSelectivity(v.Predicate())*cp.CPUOperatorCost
-	case *Project:
+	case *OP.Project:
 		return p.estimateCostWithParams(v.Child(), cp) + cp.CPUTupleCost
-	case *Limit:
+	case *OP.Limit:
 		return p.estimateCostWithParams(v.Child(), cp)
-	case *Offset:
+	case *OP.Offset:
 		return p.estimateCostWithParams(v.Child(), cp)
 	case *OP.Distinct:
 		return p.estimateCostWithParams(v.Child(), cp) + cp.CPUTupleCost
-	case *Sort:
+	case *OP.Sort:
 		childCost := p.estimateCostWithParams(v.Child(), cp)
 		if childCost < 1 {
 			childCost = 1
@@ -793,7 +793,7 @@ func (p *Planner) estimateCostWithParams(op Operator, cp CostParams) float64 {
 		return childCost*(1+log2ish(childCost)) + childCost*cp.CPUOperatorCost
 	case *AG.Aggregate:
 		return p.estimateCostWithParams(v.Child(), cp) + 1
-	case *NestedLoopJoin:
+	case *OP.NestedLoopJoin:
 		leftCost := p.estimateCostWithParams(v.LeftChild(), cp)
 		rightCost := p.estimateCostWithParams(v.RightChild(), cp)
 		if leftCost < 1 {
@@ -1339,9 +1339,9 @@ func isColumnLiteralPair(a, b PS.Expr) bool {
 
 // tryApplyPointLookup checks if pred is a col IN (literal, ...) or
 // col = literal expression and sets up point-lookup on the scan.
-// REQ000820: only applies to in-memory SeqScan operators.
+// REQ000820: only applies to in-memory OP.SeqScan operators.
 func tryApplyPointLookup(scan Operator, pred PS.Expr) {
-	ss, ok := scan.(*SeqScan)
+	ss, ok := scan.(*OP.SeqScan)
 	if !ok || ss.Store() != nil {
 		return // only for in-memory tables
 	}
@@ -1563,7 +1563,7 @@ func collectReferencedColNames(s *PS.Select) []string {
 		// reference outer table columns via QualifiedName.
 		// walkExpr skips subqueries (they have their own scope), so the
 		// outer table's columns used only inside subqueries would be
-		// pruned away — the outer SeqScan wouldn't read them and the
+		// pruned away — the outer OP.SeqScan wouldn't read them and the
 		// EvalValue fallback would resolve the QualifiedName to the
 		// inner row instead. Walk subqueries explicitly to collect
 		// QualifiedName references that reference outer tables.
@@ -1917,27 +1917,27 @@ func deriveJoinSchema(left, right Operator) ([]string, []LX.TokenType, map[strin
 // computed projections).
 func colsOf(op Operator) []string {
 	switch o := op.(type) {
-	case *SeqScan:
+	case *OP.SeqScan:
 		if o.Schema() != nil {
 			return o.Schema().Cols
 		}
 		return nil
-	case *IndexScan:
+	case *OP.IndexScan:
 		if o.Schema() != nil {
 			return o.Schema().Cols
 		}
 		return nil
-	case *NestedLoopJoin:
+	case *OP.NestedLoopJoin:
 		return o.SharedCols()
 	case *OP.HashJoin:
 		return o.SharedCols()
 	case *OP.HashCrossJoin:
 		return o.SharedCols()
-	case *Filter:
+	case *OP.Filter:
 		return colsOf(o.Child())
-	case *Project:
+	case *OP.Project:
 		return colsOf(o.Child())
-	case *Sort:
+	case *OP.Sort:
 		return colsOf(o.Child())
 	}
 	return nil
@@ -1946,27 +1946,27 @@ func colsOf(op Operator) []string {
 // typesOf extracts the column types similarly to colsOf.
 func typesOf(op Operator) []LX.TokenType {
 	switch o := op.(type) {
-	case *SeqScan:
+	case *OP.SeqScan:
 		if o.Schema() != nil {
 			return o.Schema().ColTypes
 		}
 		return nil
-	case *IndexScan:
+	case *OP.IndexScan:
 		if o.Schema() != nil {
 			return o.Schema().ColTypes
 		}
 		return nil
-	case *NestedLoopJoin:
+	case *OP.NestedLoopJoin:
 		return o.SharedTypes()
 	case *OP.HashJoin:
 		return o.SharedTypes()
 	case *OP.HashCrossJoin:
 		return o.SharedTypes()
-	case *Filter:
+	case *OP.Filter:
 		return typesOf(o.Child())
-	case *Project:
+	case *OP.Project:
 		return typesOf(o.Child())
-	case *Sort:
+	case *OP.Sort:
 		return typesOf(o.Child())
 	}
 	return nil
@@ -1979,7 +1979,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	}
 
 	// REQ000357 (iter-27): SELECT without FROM clause (e.g. `SELECT 1+1`).
-	// Create a Values operator that evaluates expressions over a single
+	// Create a OP.Values operator that evaluates expressions over a single
 	// virtual row and returns exactly one result row. Also apply the WHERE
 	// filter when present (REQ000458).
 	//
@@ -2024,14 +2024,14 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	}
 
 	// REQ001106: bitmap heap scan for multi-index OR/AND predicates
-	// REQ001107: covering-index detection (IndexOnlyScan) on any scan path
+	// REQ001107: covering-index detection (OP.IndexOnlyScan) on any scan path
 	if scan != nil {
 		if whereExpr != nil {
 			if bitmap := p.tryBitmapHeapScan(s, whereExpr); bitmap != nil {
 				scan = bitmap
 			}
 		}
-		if _, ok := scan.(*IndexScan); ok {
+		if _, ok := scan.(*OP.IndexScan); ok {
 			if cover := p.tryIndexOnlyScan(s, whereExpr, scan); cover != nil {
 				scan = cover
 			}
@@ -2039,7 +2039,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	}
 
 	// REQ000156 (iter-27): cost-based scan selection. If the
-	// planner produced a SeqScan but an IndexScan on the
+	// planner produced a OP.SeqScan but an OP.IndexScan on the
 	// predicate column would be cheaper, swap the scan.
 	if whereExpr != nil && s.From != "" {
 		if alt, ok := p.pickCheaperScan(s.From, whereExpr, scan); ok && alt != nil {
@@ -2053,7 +2053,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	// columns, or queries with window functions we skip pruning.
 	if len(s.Joins) == 0 && !hasAnyWindowFunc(s.Cols) {
 		if usedNames := collectReferencedColNames(s); usedNames != nil {
-			if ss, ok := scan.(*SeqScan); ok {
+			if ss, ok := scan.(*OP.SeqScan); ok {
 				ss.WithUsedCols(usedNames)
 			}
 		}
@@ -2063,9 +2063,9 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 
 	// Set table alias on the scan operator so correlated subquery
 	// eval can resolve qualified names like x.col. Must happen
-	// BEFORE predicate pushdown (which wraps scan in a Filter).
+	// BEFORE predicate pushdown (which wraps scan in a OP.Filter).
 	if s.FromAlias != "" {
-		if ss, ok := scan.(*SeqScan); ok {
+		if ss, ok := scan.(*OP.SeqScan); ok {
 			ss.WithAlias(s.FromAlias)
 		}
 	}
@@ -2097,7 +2097,7 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 	filteredScan := current
 
 	// REQ000XXX: For multi-table implicit JOINs, extract equi-join
-	// conditions from WHERE and use OP.HashJoin instead of NestedLoopJoin.
+	// conditions from WHERE and use OP.HashJoin instead of OP.NestedLoopJoin.
 	var crossTableConjuncts []PS.Expr
 	if whereExpr != nil && len(s.Joins) > 0 {
 		crossTableConjuncts = RE.SplitAnd(whereExpr)
@@ -2308,7 +2308,7 @@ func (p *Planner) resolveView(s *PS.Select, viewSel *PS.Select) Operator {
 			if s.Where != nil {
 				innerOp = OP.NewFilter(innerOp, s.Where)
 			}
-			// Project the outer query's columns over the view's output
+			// OP.Project the outer query's columns over the view's output
 			return OP.NewProject(innerOp, s.Cols)
 		}
 	}
@@ -2416,7 +2416,7 @@ func (p *Planner) planSelectSubquery(s *PS.Select) Operator {
 		}
 		current = so
 	}
-	// Limit is handled separately if needed
+	// OP.Limit is handled separately if needed
 	return current
 }
 
@@ -2463,7 +2463,7 @@ func (p *Planner) resolveAliasesAndFold(whereExpr PS.Expr) PS.Expr {
 	return whereExpr
 }
 
-// planSelectScan creates the scan operator (IndexScan or SeqScan) for
+// planSelectScan creates the scan operator (OP.IndexScan or OP.SeqScan) for
 // the FROM table, trying index seeks first.
 // REQ000981: extracted from planSelect.
 func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (Operator, PS.Expr) {
@@ -2472,18 +2472,18 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (Operator, PS.
 	if p.store == nil {
 		return nil, remaining
 	}
-	// Try IndexScan first when the WHERE references an indexed column.
+	// Try OP.IndexScan first when the WHERE references an indexed column.
 	// iter-22: prefer NewIndexScanWithIndex (real seek) over the
 	// prefix-scan fallback when the predicate is an equality on
 	// the indexed column AND the index is registered for writer
 	// maintenance (i.e. the index keyspace is populated).
 	if whereExpr != nil {
 		// REQ001108: decompose WHERE into residual
-		// (pushed into scan) and extra (outer Filter).
+		// (pushed into scan) and extra (outer OP.Filter).
 		// Only decompose for real index seeks (EQ/range/LIKE).
 		// The prefix-scan fallback (NewIndexScanWithStore) cannot
 		// use decomposition because it returns ALL rows (table
-		// prefix, not index prefix); the old Filter behavior
+		// prefix, not index prefix); the old OP.Filter behavior
 		// must be preserved for that path.
 		//
 		// hasWriterIndex guard: the index must be registered
@@ -2570,7 +2570,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (Operator, PS.
 						// REQ001108: NewIndexScanWithStore is a table
 						// prefix scan (returns ALL rows), not a real
 						// index seek. Decomposition is not applicable;
-						// the full WHERE must remain as Filter.
+						// the full WHERE must remain as OP.Filter.
 						if whereExpr != nil {
 							scan = OP.NewFilter(isc, whereExpr)
 						} else {
@@ -2590,14 +2590,14 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (Operator, PS.
 }
 
 // tryBitmapHeapScan combines multiple index conditions on
-// distinct indexed columns into a BitmapHeapScan. Returns nil if
+// distinct indexed columns into a OP.BitmapHeapScan. Returns nil if
 // the predicate is not eligible (e.g. only one indexed column,
 // or columns lack registered indexes). REQ001106.
 //
 // Detects the top-level OR-of-equality shape: at least two
 // operands each carry an indexed-column equality on a distinct
 // column whose index is registered. Each child becomes an
-// IndexScan; the result bitmap is fetched once per row via the
+// OP.IndexScan; the result bitmap is fetched once per row via the
 // heap.
 func (p *Planner) tryBitmapHeapScan(s *PS.Select, whereExpr PS.Expr) Operator {
 	if s == nil || whereExpr == nil || p.store == nil {
@@ -2638,7 +2638,7 @@ func (p *Planner) tryBitmapHeapScan(s *PS.Select, whereExpr PS.Expr) Operator {
 // Returns the columns and their indexed-key bytes, in order. Only
 // the simplest shape — `col1 = lit1 OR col2 = lit2` (or
 // OR-chains) — is recognised. Deeper expressions fall through
-// to the IndexScan/SeqScan path.
+// to the OP.IndexScan/OP.SeqScan path.
 func extractOrIndexedEqColumns(e PS.Expr) ([]string, [][]byte, bool) {
 	b, ok := e.(*PS.BinaryExpr)
 	if !ok || b.Op != LX.T_OR {
@@ -2659,7 +2659,7 @@ func extractOrIndexedEqColumns(e PS.Expr) ([]string, [][]byte, bool) {
 			return nil, nil, false
 		}
 		if _, dup := seen[col]; dup {
-			// Same column twice → simple IndexScan path is enough;
+			// Same column twice → simple OP.IndexScan path is enough;
 			// bitmap doesn't help.
 			return nil, nil, false
 		}
@@ -2692,21 +2692,21 @@ func flattenOr(e PS.Expr) []PS.Expr {
 	return out
 }
 
-// tryIndexOnlyScan wraps an IndexScan in IndexOnlyScan when the
+// tryIndexOnlyScan wraps an OP.IndexScan in OP.IndexOnlyScan when the
 // projected columns are entirely covered by the index columns
 // (plus optionally the primary key). Returns nil if not
 // eligible. REQ001107.
 //
 // Conservative guard: we refuse to wrap when the projection is
 // empty or `*` (i.e. SELECT 1 or SELECT *). Those cases already
-// work via IndexScan — wrapping them in IndexOnlyScan breaks
+// work via OP.IndexScan — wrapping them in OP.IndexOnlyScan breaks
 // correlated-subquery machinery that inspects the inner scan
 // type. Only concrete column projections trigger the path.
 func (p *Planner) tryIndexOnlyScan(s *PS.Select, whereExpr PS.Expr, scan Operator) Operator {
 	if s == nil || scan == nil {
 		return nil
 	}
-	isc, ok := scan.(*IndexScan)
+	isc, ok := scan.(*OP.IndexScan)
 	if !ok || isc == nil {
 		return nil
 	}
@@ -2780,7 +2780,7 @@ func (p *Planner) indexColumns(table, idx string) ([]string, bool) {
 }
 func propagateLimitToNLJ(op Operator, n int64) {
 	switch t := op.(type) {
-	case *NestedLoopJoin:
+	case *OP.NestedLoopJoin:
 		t.SetLimit(n)
 	case *AD.AdaptiveOp:
 		propagateLimitToNLJ(t.Inner, n)
@@ -2801,7 +2801,7 @@ func propagateLimitToNLJ(op Operator, n int64) {
 
 // pkOrderMatches reports whether orderBy is a single ascending reference
 // to the table's primary key column. When true, the planner can drop the
-// Sort operator and rely on the scan's natural key order.
+// OP.Sort operator and rely on the scan's natural key order.
 func (p *Planner) pkOrderMatches(table string, orderBy []PS.OrderItem) bool {
 	if len(orderBy) != 1 {
 		return false
@@ -3176,14 +3176,14 @@ func isStarExpr(cols []PS.Expr) bool {
 	return ok
 }
 
-// NewIndexOrSeqScan picks an IndexScan when the WHERE
+// NewIndexOrSeqScan picks an OP.IndexScan when the WHERE
 // references a single column with an index on it;
-// otherwise falls back to a SeqScan. IndexScan currently
-// behaves like a SeqScan for the in-memory source; the
+// otherwise falls back to a OP.SeqScan. OP.IndexScan currently
+// behaves like a OP.SeqScan for the in-memory source; the
 // selection is the planner decision and the smoke test
 // asserts which operator was chosen.
 // ParallelThreshold is the minimum number of estimated table rows
-// before the planner emits a ParallelSeqScan instead of SeqScan.
+// before the planner emits a ParallelSeqScan instead of OP.SeqScan.
 // REQ001043.
 const ParallelThreshold = 10000
 
@@ -3269,8 +3269,8 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 			}
 		}
 		// REQ001070: check for LIKE with constant prefix on an indexed column.
-		// Uses IndexScan with range [prefix, prefix+0xff) to seek to matching
-		// entries, then the Filter on top applies the full LIKE match.
+		// Uses OP.IndexScan with range [prefix, prefix+0xff) to seek to matching
+		// entries, then the OP.Filter on top applies the full LIKE match.
 		if col, prefix, ok := indexedColumnLikePrefix(where); ok {
 			if idx, found := p.selectIndex(table, col); found {
 				if hasWriterIndex(table, idx) {
@@ -3295,25 +3295,25 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 
 // pickCheaperScan returns a cheaper scan alternative for the
 // given WHERE predicate, if one exists. The function builds
-// both a SeqScan and an IndexScan candidate and returns the
+// both a OP.SeqScan and an OP.IndexScan candidate and returns the
 // lower-cost one. REQ000156 (iter-27).
 // The cost model is simple but effective:
-//   - SeqScan: 1.0 unit per row
-//   - IndexScan: 0.1 unit per row, multiplied by predicate
+//   - OP.SeqScan: 1.0 unit per row
+//   - OP.IndexScan: 0.1 unit per row, multiplied by predicate
 //     selectivity (so a high-selectivity predicate on an
-//     indexed column strongly prefers IndexScan)
+//     indexed column strongly prefers OP.IndexScan)
 //
 // If no index exists on the WHERE column, the function
 // returns the original scan unchanged. If the cost of the
 // index scan is not lower, the original scan is returned.
 func (p *Planner) pickCheaperScan(table string, where PS.Expr, current Operator) (Operator, bool) {
 	// REQ001106/107: don't downgrade a bitmap/index-only scan
-	// back to a plain IndexScan via the cost model — the new
+	// back to a plain OP.IndexScan via the cost model — the new
 	// operators are explicit planner choices, not cost fallback.
-	if _, isBitmap := current.(*BitmapHeapScan); isBitmap {
+	if _, isBitmap := current.(*OP.BitmapHeapScan); isBitmap {
 		return current, false
 	}
-	if _, isCover := current.(*IndexOnlyScan); isCover {
+	if _, isCover := current.(*OP.IndexOnlyScan); isCover {
 		return current, false
 	}
 	// REQ000156 (iter-27): cost-based scan selection. The
@@ -3331,13 +3331,13 @@ func (p *Planner) pickCheaperScan(table string, where PS.Expr, current Operator)
 	}
 	// REQ000156 (iter-27): only swap to the index path if the
 	// index is also registered for writer maintenance. This
-	// avoids picking an IndexScan whose keyspace has not been
+	// avoids picking an OP.IndexScan whose keyspace has not been
 	// backfilled (the existing planSelect code already uses
 	// hasWriterIndex for the same reason).
 	if !hasWriterIndex(table, idx) {
 		return current, false
 	}
-	// Build a candidate IndexScan.
+	// Build a candidate OP.IndexScan.
 	var indexScan Operator
 	if p.store != nil {
 		if isc, err := OP.NewIndexScanWithStore(p.store, table, idx); err == nil {
@@ -3350,7 +3350,7 @@ func (p *Planner) pickCheaperScan(table string, where PS.Expr, current Operator)
 	if indexScan == nil {
 		return current, false
 	}
-	// Wrap both scans in a Filter so the cost reflects the
+	// Wrap both scans in a OP.Filter so the cost reflects the
 	// post-filter work, matching how they will actually run.
 	seqCandidate := OP.NewFilter(current, where)
 	idxCandidate := OP.NewFilter(indexScan, where)
@@ -3833,7 +3833,7 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 	}
 
 	// Register CTE in the planner catalog so the recursive arm can
-	// be planned (SeqScan for the CTE name needs catalog metadata).
+	// be planned (OP.SeqScan for the CTE name needs catalog metadata).
 	colInfos := make([]ColInfo, len(canonicalCols))
 	for i, cn := range canonicalCols {
 		colInfos[i] = ColInfo{Name: cn}
@@ -4161,7 +4161,7 @@ func (p *Planner) joinPredSel(pred PS.Expr, rowCount float64) float64 {
 }
 
 // estimateInListSelectivity computes the selectivity of an IN-list
-// predicate using Most-Common-Values stats when available.
+// predicate using Most-Common-OP.Values stats when available.
 //
 // REQ001057b: matches CockroachDB / PostgreSQL semantics — when MCVs
 // are known, the per-element frequency is used for matching values,
@@ -4396,7 +4396,7 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 	}
 	// REQ000909: also factor in pushed-down predicates for each table
 	// (these are the single-table predicates that were already pushed
-	// to SeqScan/IndexScan before n3JoinOrdering is called).
+	// to OP.SeqScan/OP.IndexScan before n3JoinOrdering is called).
 	if pushedPredicates != nil {
 		for _, jt := range joinTables {
 			if preds, ok := pushedPredicates[jt.name]; ok && len(preds) > 0 {
@@ -5562,15 +5562,15 @@ func collectIdentsFromExpr(e PS.Expr) []string {
 // operatorProducesSorted returns true when op is guaranteed to emit
 // rows sorted ascending on the given key columns. REQ001102: used by
 // the planner to detect when MergeJoin is applicable. Currently
-// recognized: Sort with matching keys. IndexScan recognition is
+// recognized: OP.Sort with matching keys. OP.IndexScan recognition is
 // deferred to a future iteration because the planner doesn't expose
 // the indexed column name through the operator interface.
 func operatorProducesSorted(op Operator, keys []string) bool {
 	if op == nil || len(keys) == 0 {
 		return false
 	}
-	if s, ok := op.(*Sort); ok {
-		// Match Sort's keys (in order) against the join keys.
+	if s, ok := op.(*OP.Sort); ok {
+		// Match OP.Sort's keys (in order) against the join keys.
 		if len(s.Keys()) < len(keys) {
 			return false
 		}
@@ -5597,7 +5597,7 @@ func operatorProducesSorted(op Operator, keys []string) bool {
 // tryMergeJoin returns a MergeJoin operator if BOTH the left and right
 // sides are already sorted on the equi-join keys; otherwise nil.
 // REQ001102. Left/Right/Full outer joins are supported via WithKind.
-func (p *Planner) tryMergeJoin(left, right Operator, leftTbl, rightTbl string, leftKeys, rightKeys []string, kind JoinKind) Operator {
+func (p *Planner) tryMergeJoin(left, right Operator, leftTbl, rightTbl string, leftKeys, rightKeys []string, kind OP.JoinKind) Operator {
 	if len(leftKeys) == 0 || len(rightKeys) == 0 {
 		return nil
 	}
@@ -5653,7 +5653,7 @@ func (p *Planner) planAggregation(s *PS.Select, current Operator) Operator {
 	return current
 }
 
-// planOrdering handles ORDER BY resolution, Sort operator creation,
+// planOrdering handles ORDER BY resolution, OP.Sort operator creation,
 // window functions, projection, and DISTINCT.
 // REQ000981: extracted from planSelect.
 func (p *Planner) planOrdering(s *PS.Select, current Operator) Operator {
@@ -5807,7 +5807,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			groupCounts[t]++
 		}
 		joinedTables := map[string]bool{}
-		// Filter out predicates already consumed by earlier groups.
+		// OP.Filter out predicates already consumed by earlier groups.
 		// Also filter to only include predicates where both sides
 		// reference tables in the current group — cross-group equi-join
 		// keys must be left for the merge phase. REQ001113.
@@ -5860,7 +5860,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			if baseCi, ok := joinClauseIdx[baseTable]; ok {
 				jc := joinClauses[baseCi]
 				if jc.RightAlias != "" {
-					if ss, ok := baseOp.(*SeqScan); ok {
+					if ss, ok := baseOp.(*OP.SeqScan); ok {
 						ss.WithAlias(jc.RightAlias)
 					}
 					leftTbl = jc.RightAlias
@@ -5907,7 +5907,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 			if j.Right != tbl {
 				continue
 			}
-			kind := JoinKind(j.Kind)
+			kind := OP.JoinKind(j.Kind)
 			rightTbl := j.Right
 			if j.RightAlias != "" {
 				rightTbl = j.RightAlias
@@ -5917,7 +5917,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 				rightScan = ssc
 			}
 			if j.RightAlias != "" {
-				if ss, ok := rightScan.(*SeqScan); ok {
+				if ss, ok := rightScan.(*OP.SeqScan); ok {
 					ss.WithAlias(j.RightAlias)
 				}
 			}
@@ -6173,7 +6173,7 @@ func rebuildAnd(exprs []PS.Expr) PS.Expr {
 //	             col IS NOT NULL). These supplement the seek.
 //	extra     — conjuncts that reference other columns or
 //	             multiple columns. These must stay in an outer
-//	             Filter because the index path cannot evaluate
+//	             OP.Filter because the index path cannot evaluate
 //	             them.
 //
 // The first indexable conjunct that carries a bound (eq or
