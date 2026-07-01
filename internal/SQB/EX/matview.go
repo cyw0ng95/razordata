@@ -117,11 +117,11 @@ func (r *RefreshMatViewOperator) Close() error { return nil }
 
 type DropMatViewOperator struct {
 	Name  string
-	Store Store
+	Store DT.Store
 	done  bool
 }
 
-func NewDropMatView(name string, store Store) *DropMatViewOperator {
+func NewDropMatView(name string, store DT.Store) *DropMatViewOperator {
 	return &DropMatViewOperator{Name: name, Store: store}
 }
 

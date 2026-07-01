@@ -29,7 +29,7 @@ type Value = DT.Value
 // Executor.SetTxWriter and read by Insert/Update/Delete operators
 // (both in-memory and store-backed) so that transactions can
 // capture pre-write state for rollback. REQ000588.
-var currentTxWriter atomic.Pointer[TxWriter]
+var currentTxWriter atomic.Pointer[DT.TxWriter]
 
 // foreignKeysEnabled controls whether FK constraint enforcement is
 // active. PRAGMA foreign_keys = ON/OFF toggles this per-session.
@@ -51,8 +51,8 @@ func IsForeignKeysEnabled() bool {
 }
 
 // SetCurrentTxWriter stores w in the package-level slot.
-func SetCurrentTxWriter(w TxWriter) {
-	var boxed *TxWriter
+func SetCurrentTxWriter(w DT.TxWriter) {
+	var boxed *DT.TxWriter
 	if w != nil {
 		boxed = &w
 	}
@@ -60,7 +60,7 @@ func SetCurrentTxWriter(w TxWriter) {
 }
 
 // CurrentTxWriter returns the package-level current TxWriter.
-func CurrentTxWriter() TxWriter {
+func CurrentTxWriter() DT.TxWriter {
 	if p := currentTxWriter.Load(); p != nil {
 		return *p
 	}
@@ -165,7 +165,6 @@ func ValueSliceToAny(v []Value) []any { return valueSliceToAny(v) }
 // Operator is the core execution interface. Aliased from PL.
 type Operator = DT.Operator
 type Row = DT.Row
-type ExecContext = DT.ExecContext
 
 // Result holds the outcome of an Exec call.
 type Result struct {
@@ -178,9 +177,6 @@ type Rows struct {
 	Cols  []string
 	Types []LX.TokenType
 }
-
-type ColInfo = DT.ColInfo
-type Store = DT.Store
 
 // Backward-compat function aliases for types/functions moved to OP.
 
@@ -199,8 +195,8 @@ type planCacheEntry struct {
 // Executor holds the core execution state.
 type Executor struct {
 	planner    *Planner
-	store      Store
-	txWriter   TxWriter
+	store      DT.Store
+	txWriter   DT.TxWriter
 	snapshotTS uint64 // REQ000255: per-statement snapshot timestamp for read-committed
 	sessionID  uint64 // REQ000385/394/411: current session ID for counter access
 	// lastChanges tracks rows modified by the most recent DML statement.
@@ -208,7 +204,7 @@ type Executor struct {
 	// value even after intervening non-DML statements (REQ000812).
 	lastChanges int64
 	// totalChanges tracks cumulative DML row count across all statements
-	// in the session. Copied into/out of ExecContext for each Exec/Query
+	// in the session. Copied into/out of DT.ExecContext for each Exec/Query
 	// call so TOTAL_CHANGES() is correct across statements (REQ000812).
 	totalChanges int64
 	// maxParallelism controls the maximum number of workers per query.
@@ -257,15 +253,7 @@ type Executor struct {
 
 // TxWriter is the optional hook an Executor notifies on every key
 // write. Aliased from PL.
-type TxWriter = DT.TxWriter
-
-// TxWriter interface — no backward-compat alias needed for InMemoryTxWriter.
-// Callers use DT.InMemoryTxWriter directly.
-
-// SetTxWriter installs w as the current transaction's write hook. Pass
-// nil to disable. Not safe to call concurrently with Exec; the
-// caller (a Session) is responsible for serialization.
-func (e *Executor) SetTxWriter(w TxWriter) {
+func (e *Executor) SetTxWriter(w DT.TxWriter) {
 	e.txWriter = w
 	SetCurrentTxWriter(w)
 }
@@ -375,7 +363,7 @@ func NewExecutorWithPlanner(pl *Planner) *Executor {
 }
 
 // NewExecutorWithEngine creates an Executor with a store engine.
-func NewExecutorWithEngine(store Store) *Executor {
+func NewExecutorWithEngine(store DT.Store) *Executor {
 	e := &Executor{
 		planner:        NewPlannerWithStore(store),
 		store:          store,
@@ -774,9 +762,9 @@ func lxTokenToColumnType(tok LX.TokenType) int {
 }
 
 func (e *Executor) RegisterTable(name string, schema []string) {
-	cols := make([]ColInfo, len(schema))
+	cols := make([]DT.ColInfo, len(schema))
 	for i, n := range schema {
-		cols[i] = ColInfo{Name: n, Typ: 1}
+		cols[i] = DT.ColInfo{Name: n, Typ: 1}
 	}
 	e.planner.RegisterTable(name, cols, "")
 	DT.RegisterTableSchema(name, schema)
@@ -795,9 +783,9 @@ func (e *Executor) RegisterTable(name string, schema []string) {
 }
 
 func (e *Executor) RegisterTableWithPK(name string, schema []string, pk string) {
-	cols := make([]ColInfo, len(schema))
+	cols := make([]DT.ColInfo, len(schema))
 	for i, n := range schema {
-		cols[i] = ColInfo{Name: n, Typ: 1}
+		cols[i] = DT.ColInfo{Name: n, Typ: 1}
 	}
 	e.planner.RegisterTable(name, cols, pk)
 	DT.RegisterTableSchema(name, schema)
@@ -847,7 +835,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 			}
 			propagateParams(op, args)
 			propagatePlanner(op, e.planner)
-			execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
+			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 			propagateExecContext(op, execCtx)
 			defer op.Close()
 			if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
@@ -900,7 +888,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	// support placeholders (e.g. INSERT ... VALUES (?,?)).
 	propagateParams(op, args)
 	propagatePlanner(op, e.planner)
-	execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
+	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 	propagateExecContext(op, execCtx)
 	defer op.Close()
 	if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
@@ -963,7 +951,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 			}
 			propagateParams(plan.Root, args)
 			propagatePlanner(plan.Root, e.planner)
-			execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			propagateExecContext(plan.Root, execCtx)
 			defer plan.Root.Close()
 			row, err := plan.Root.Next(ctx)
@@ -1025,7 +1013,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	// placeholders resolve during Eval.
 	propagateParams(plan.Root, args)
 	propagatePlanner(plan.Root, e.planner)
-	execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
 	defer plan.Root.Close()
 	row, err := plan.Root.Next(ctx)
@@ -1054,7 +1042,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 			}
 			propagateParams(plan.Root, args)
 			propagatePlanner(plan.Root, e.planner)
-			execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			propagateExecContext(plan.Root, execCtx)
 			defer plan.Root.Close()
 			var out []Row
@@ -1095,9 +1083,9 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]Row
 	// depth-first walk that calls WithPlanner on every node
 	// that supports it.
 	propagatePlanner(plan.Root, e.planner)
-	// REQ000586: thread ExecContext through rows to eliminate
+	// REQ000586: thread DT.ExecContext through rows to eliminate
 	// the global currentSubqueryPlanner.
-	execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
 	defer plan.Root.Close()
 	var out []Row
@@ -1145,10 +1133,10 @@ func propagatePlanner(root Operator, p *Planner) {
 
 // propagateExecContext walks the operator tree and sets execCtx
 // on operators that evaluate expressions (Filter, Project, etc.)
-// so that subquery eval can find the planner via ExecContextFromRow.
+// so that subquery eval can find the planner via DT.ExecContextFromRow.
 // Also propagates execCtx to Insert/Update/Delete for change
 // tracking (REQ000812).
-func propagateExecContext(root Operator, ec *ExecContext) {
+func propagateExecContext(root Operator, ec *DT.ExecContext) {
 	if root == nil || ec == nil {
 		return
 	}
@@ -1735,8 +1723,8 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	}
 	propagateParams(plan.Root, args)
 	propagatePlanner(plan.Root, e.planner)
-	// REQ000586: thread ExecContext to eliminate global.
-	execCtx := &ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+	// REQ000586: thread DT.ExecContext to eliminate global.
+	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
 
 	// Read first row to discover schema

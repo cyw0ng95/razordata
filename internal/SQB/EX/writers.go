@@ -28,13 +28,13 @@ type Insert struct {
 	defaultValues  bool // REQ000563: INSERT INTO t DEFAULT VALUES
 	store          DT.Store
 	schema         *DT.StoreSchema
-	txWriter       TxWriter
+	txWriter       DT.TxWriter
 	rows           int64
 	done           bool
 	params         []any
 	resultRows     []Row
 	resultPos      int
-	execCtx        *ExecContext // REQ000812
+	execCtx        *DT.ExecContext // REQ000812
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -574,13 +574,13 @@ type Update struct {
 	iter       Operator
 	store      DT.Store
 	schema     *DT.StoreSchema
-	txWriter   TxWriter
+	txWriter   DT.TxWriter
 	rows       int64
 	done       bool
 	params     []any
 	resultRows []Row
 	resultPos  int
-	execCtx    *ExecContext // REQ000812
+	execCtx    *DT.ExecContext // REQ000812
 }
 
 // REQ000714: expose child for execCtx/params propagation.
@@ -829,13 +829,13 @@ type Delete struct {
 	iter       Operator
 	store      DT.Store
 	schema     *DT.StoreSchema
-	txWriter   TxWriter
+	txWriter   DT.TxWriter
 	rows       int64
 	done       bool
 	params     []any
 	resultRows []Row
 	resultPos  int
-	execCtx    *ExecContext // REQ000812
+	execCtx    *DT.ExecContext // REQ000812
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -849,7 +849,7 @@ func (d *Delete) WithParams(p []any) Operator {
 	return d
 }
 
-// REQ000714: expose iter as a child so propagateExecContext and
+// REQ000714: expose iter as a child so propagateDT.ExecContext and
 // propagateParams walk into the input chain (OP.Filter/OP.SeqScan) where
 // the WHERE predicate (and any correlated subquery) is evaluated.
 func (d *Delete) Child() Operator { return d.iter }

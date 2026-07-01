@@ -247,7 +247,7 @@ type Planner struct {
 	memoHead  int // index of oldest entry in memoOrder
 	memoSize  int // number of valid entries in memoOrder
 	catalog   map[string]*tableInfo
-	store     Store
+	store     DT.Store
 	// statsCatalog provides access to column statistics for
 	// histogram-based selectivity estimation. REQ000085.
 	statsCatalog pl.StatsCatalog
@@ -310,7 +310,7 @@ func (p *Planner) InvalidateCache() {
 
 // NewPlannerWithStore returns a planner that routes its leaf operators
 // through store. The store may be nil to fall back to in-memory mode.
-func NewPlannerWithStore(store Store) *Planner {
+func NewPlannerWithStore(store DT.Store) *Planner {
 	return &Planner{
 		memo:      make(map[string]*plan),
 		memoOrder: make([]string, maxPlanCacheSize),
@@ -321,7 +321,7 @@ func NewPlannerWithStore(store Store) *Planner {
 
 // NewPlannerWithStats returns a planner with store and stats catalog
 // wired. Used by SYS.Open when a stats catalog is available.
-func NewPlannerWithStats(store Store, statsCatalog DT.StatsCatalog) *Planner {
+func NewPlannerWithStats(store DT.Store, statsCatalog DT.StatsCatalog) *Planner {
 	return &Planner{
 		memo:         make(map[string]*plan),
 		catalog:      make(map[string]*tableInfo),
@@ -2489,7 +2489,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (Operator, PS.
 		// hasWriterIndex guard: the index must be registered
 		// with DT.RegisteredIndexes for the writer to maintain
 		// it. If the test populates the index manually (e.g.
-		// idxStore.Insert), hasWriterIndex returns false and
+		// idxDT.Store.Insert), hasWriterIndex returns false and
 		// we use the prefix-scan fallback.
 		if col, val, ok := indexedColumnEq(whereExpr); ok {
 			idx, found := p.selectIndex(s.From, col)
