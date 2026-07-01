@@ -13,7 +13,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
 
-// TestIndexScan_RangeSeek_GT exercises REQ000074: IndexScan real
+// TestIndexScan_RangeSeek_GT exercises REQ000074: OP.IndexScan real
 // range seek via the secondary index keyspace. Predicate
 // `WHERE a > 5` should use seek-based iteration, not the prefix
 // scan over the table.
@@ -186,7 +186,7 @@ func TestIndexScan_RangeSeek_Planner(t *testing.T) {
 }
 
 // TestIndexScan_RangeSeek_PlannerExplains verifies the plan text
-// for a range predicate includes IndexScan (not SeqScan fallback).
+// for a range predicate includes OP.IndexScan (not OP.SeqScan fallback).
 func TestIndexScan_RangeSeek_PlannerExplains(t *testing.T) {
 	ResetForTest(t)
 	dir := t.TempDir()
@@ -201,12 +201,12 @@ func TestIndexScan_RangeSeek_PlannerExplains(t *testing.T) {
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 1)")
 	ex.Exec(ctx, "INSERT INTO t VALUES (2, 2)")
 
-	// `EXPLAIN` should show IndexScan for the indexed column.
+	// `EXPLAIN` should show OP.IndexScan for the indexed column.
 	plan, err := ex.Explain("SELECT id FROM t WHERE a > 0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(plan, "Search") {
-		t.Errorf("plan did not include Search (IndexScan):\n%s", plan)
+		t.Errorf("plan did not include Search (OP.IndexScan):\n%s", plan)
 	}
 }

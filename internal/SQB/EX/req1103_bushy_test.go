@@ -29,15 +29,15 @@ import (
 func TestPlanner_BushyJoin_StarSchema(t *testing.T) {
 	t.Run("four_table_star_join_plans", func(t *testing.T) {
 		p := NewPlanner()
-		p.RegisterTable("F", []ColInfo{
+		p.RegisterTable("F", []DT.ColInfo{
 			{Name: "id", Typ: 1},
 			{Name: "d1k", Typ: 1},
 			{Name: "d2k", Typ: 1},
 			{Name: "d3k", Typ: 1},
 		}, "id")
-		p.RegisterTable("D1", []ColInfo{{Name: "k", Typ: 1}, {Name: "v1", Typ: 1}}, "k")
-		p.RegisterTable("D2", []ColInfo{{Name: "k", Typ: 1}, {Name: "v2", Typ: 1}}, "k")
-		p.RegisterTable("D3", []ColInfo{{Name: "k", Typ: 1}, {Name: "v3", Typ: 1}}, "k")
+		p.RegisterTable("D1", []DT.ColInfo{{Name: "k", Typ: 1}, {Name: "v1", Typ: 1}}, "k")
+		p.RegisterTable("D2", []DT.ColInfo{{Name: "k", Typ: 1}, {Name: "v2", Typ: 1}}, "k")
+		p.RegisterTable("D3", []DT.ColInfo{{Name: "k", Typ: 1}, {Name: "v3", Typ: 1}}, "k")
 
 		plan, err := p.ParseAndPlan(
 			`SELECT F.id, D1.v1, D2.v2, D3.v3
@@ -85,9 +85,9 @@ func TestPlanner_BushyJoin_StarSchema(t *testing.T) {
 		// nil path (which would otherwise drop the join clauses).
 		ResetForTest(t)
 		p := NewPlanner()
-		p.RegisterTable("A", []ColInfo{{Name: "id", Typ: 1}, {Name: "x", Typ: 1}}, "id")
-		p.RegisterTable("B", []ColInfo{{Name: "aid", Typ: 1}, {Name: "y", Typ: 1}}, "aid")
-		p.RegisterTable("C", []ColInfo{{Name: "bid", Typ: 1}, {Name: "z", Typ: 1}}, "bid")
+		p.RegisterTable("A", []DT.ColInfo{{Name: "id", Typ: 1}, {Name: "x", Typ: 1}}, "id")
+		p.RegisterTable("B", []DT.ColInfo{{Name: "aid", Typ: 1}, {Name: "y", Typ: 1}}, "aid")
+		p.RegisterTable("C", []DT.ColInfo{{Name: "bid", Typ: 1}, {Name: "z", Typ: 1}}, "bid")
 		plan, err := p.ParseAndPlan(
 			`SELECT * FROM A
 			 JOIN B ON A.id = B.aid
@@ -101,7 +101,7 @@ func TestPlanner_BushyJoin_StarSchema(t *testing.T) {
 		}
 		if !planHasJoinOp(root) {
 			t.Logf("plan tree:\n%s", planTreeDump(root, 0))
-			t.Fatalf("expected HashJoin or NestedLoopJoin in plan tree")
+			t.Fatalf("expected HashJoin or OP.NestedLoopJoin in plan tree")
 		}
 	})
 	t.Run("independent_subjoins_partition", func(t *testing.T) {
@@ -140,12 +140,12 @@ func TestPlanner_BushyJoin_StarSchema(t *testing.T) {
 }
 
 // planHasJoinOp walks the plan tree and returns true if any operator
-// is a *NestedLoopJoin, *OP.HashJoin, *OP.HashCrossJoin, or *OP.MergeJoin.
+// is a *OP.NestedLoopJoin, *OP.HashJoin, *OP.HashCrossJoin, or *OP.MergeJoin.
 func planHasJoinOp(op Operator) bool {
 	if op == nil {
 		return false
 	}
-	if _, ok := op.(*NestedLoopJoin); ok {
+	if _, ok := op.(*OP.NestedLoopJoin); ok {
 		return true
 	}
 	if _, ok := op.(*OP.HashJoin); ok {

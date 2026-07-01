@@ -321,7 +321,7 @@ func NewPlannerWithStore(store Store) *Planner {
 
 // NewPlannerWithStats returns a planner with store and stats catalog
 // wired. Used by SYS.Open when a stats catalog is available.
-func NewPlannerWithStats(store Store, statsCatalog StatsCatalog) *Planner {
+func NewPlannerWithStats(store Store, statsCatalog DT.StatsCatalog) *Planner {
 	return &Planner{
 		memo:         make(map[string]*plan),
 		catalog:      make(map[string]*tableInfo),

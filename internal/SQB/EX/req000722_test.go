@@ -4,14 +4,14 @@ import (
 	"context"
 	"strconv"
 	"testing"
-)
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
 
 // REQ000722: WHERE with comparison on indexed DT.Tables returning 0
 // rows via driver path. This REQ describes a bug that, as of this
 // iteration, I cannot reproduce in any of the available harnesses:
 //
 //  1. In-memory executor: returns 60/7/10 rows depending on data shape
-//  2. Store-path executor (real engine): returns matching row counts
+//  2. DT.Store-path executor (real engine): returns matching row counts
 //  3. SLT-replica: with the exact 8 INSERTs from
 //     index/in/10/slt_good_0.test L348, returns 7 rows matching the
 //     SQLite reference

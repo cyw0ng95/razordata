@@ -8,33 +8,33 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
-)
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
 
 func TestPlanner_EstimateCost_PerOperator(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 
-	// SeqScan: 1.0
+	// OP.SeqScan: 1.0
 	if got := p.estimateCost(OP.NewSeqScan("t")); got != 1.0 {
-		t.Errorf("SeqScan cost = %v, want 1.0", got)
+		t.Errorf("OP.SeqScan cost = %v, want 1.0", got)
 	}
-	// IndexScan: 0.1
+	// OP.IndexScan: 0.1
 	if got := p.estimateCost(OP.NewIndexScan("t", "idx", nil, nil)); got != 0.1 {
-		t.Errorf("IndexScan cost = %v, want 0.1", got)
+		t.Errorf("OP.IndexScan cost = %v, want 0.1", got)
 	}
-	// Project, Limit, Offset: pass-through to child cost
+	// OP.Project, OP.Limit, OP.Offset: pass-through to child cost
 	scan := OP.NewSeqScan("t")
 	proj := OP.NewProject(scan, nil)
 	if got := p.estimateCost(proj); got != 1.0 {
-		t.Errorf("Project cost = %v, want 1.0 (child SeqScan)", got)
+		t.Errorf("OP.Project cost = %v, want 1.0 (child OP.SeqScan)", got)
 	}
 	lim := OP.NewLimit(scan, 10)
 	if got := p.estimateCost(lim); got != 1.0 {
-		t.Errorf("Limit cost = %v, want 1.0 (child SeqScan)", got)
+		t.Errorf("OP.Limit cost = %v, want 1.0 (child OP.SeqScan)", got)
 	}
 	off := OP.NewOffset(scan, 5)
 	if got := p.estimateCost(off); got != 1.0 {
-		t.Errorf("Offset cost = %v, want 1.0 (child SeqScan)", got)
+		t.Errorf("OP.Offset cost = %v, want 1.0 (child OP.SeqScan)", got)
 	}
 }
 
@@ -48,7 +48,7 @@ func TestPlanner_EstimateCost_FilterSelectivity(t *testing.T) {
 		Right: &PS.NumberLiteral{Val: 1},
 	})
 	if got := p.estimateCost(filterEQ); got != 0.5 {
-		t.Errorf("Filter(col=lit) cost = %v, want 0.5 (no stats)", got)
+		t.Errorf("OP.Filter(col=lit) cost = %v, want 0.5 (no stats)", got)
 	}
 	// generic predicate: 0.5
 	filterGeneric := OP.NewFilter(scan, &PS.BinaryExpr{
@@ -57,7 +57,7 @@ func TestPlanner_EstimateCost_FilterSelectivity(t *testing.T) {
 		Right: &PS.Ident{Name: "b"},
 	})
 	if got := p.estimateCost(filterGeneric); got != 0.5 {
-		t.Errorf("Filter(generic) cost = %v, want 0.5", got)
+		t.Errorf("OP.Filter(generic) cost = %v, want 0.5", got)
 	}
 }
 
@@ -67,7 +67,7 @@ func TestPlanner_EstimateCost_Sort(t *testing.T) {
 	sort := OP.NewSort(scan, []PS.OrderItem{{Expr: &PS.Ident{Name: "a"}, Desc: false}})
 	// child = 1.0, log2(1) = 0, so 1 * (1 + 0) = 1
 	if got := p.estimateCost(sort); got != 1.0 {
-		t.Errorf("Sort cost = %v, want 1.0", got)
+		t.Errorf("OP.Sort cost = %v, want 1.0", got)
 	}
 }
 
@@ -92,7 +92,7 @@ func TestIndexScan_WithStore_ReadsRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(plan, "Search") {
-		t.Errorf("expected Search (IndexScan) in plan, got:\n%s", plan)
+		t.Errorf("expected Search (OP.IndexScan) in plan, got:\n%s", plan)
 	}
 	rows, err := ex.QueryAll(ctx, "SELECT id FROM t WHERE a = 'x'")
 	if err != nil {

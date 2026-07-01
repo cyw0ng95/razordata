@@ -3,7 +3,7 @@ package EX
 import (
 	"context"
 	"testing"
-)
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
 
 // REQ000725: Multi-table implicit cross join (4+ DT.Tables) returns 0
 // rows. The planner only handles explicit JOINs; comma-separated

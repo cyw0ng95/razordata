@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"testing"
-)
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP")
 
-// TestCompoundOp_CloseResetsState verifies that CompoundOp.Close() resets
+// TestCompoundOp_CloseResetsState verifies that OP.CompoundOp.Close() resets
 // all internal state so that the same operator can be reused after close.
-// This is critical for memo-cached plan trees where the same CompoundOp
+// This is critical for memo-cached plan trees where the same OP.CompoundOp
 // instance is returned for repeated executions of the same query.
 // REQ001058.
 func TestCompoundOp_CloseResetsState(t *testing.T) {
@@ -26,7 +26,7 @@ func TestCompoundOp_CloseResetsState(t *testing.T) {
 
 	// Execute the same UNION ALL query twice through the executor.
 	// The memo should cache the plan, so the second execution reuses
-	// the same CompoundOp instance. Close() must reset state so the
+	// the same OP.CompoundOp instance. Close() must reset state so the
 	// second execution returns rows instead of 0.
 	sql := "SELECT x FROM t1 UNION ALL SELECT x FROM t2 ORDER BY x"
 

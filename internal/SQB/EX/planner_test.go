@@ -11,7 +11,7 @@ import (
 
 func TestPlannerPlan(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 	cases := []struct {
 		name string
 		sql  string
@@ -47,7 +47,7 @@ func TestPlannerPlan(t *testing.T) {
 func TestPlannerMemoization(t *testing.T) {
 	p :=
 		NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 	sql := "SELECT * FROM t"
 	plan1, err := p.ParseAndPlan(sql)
 	if err != nil {
@@ -67,7 +67,7 @@ func TestPlannerMemoization(t *testing.T) {
 func TestPlannerMemoizationDistinctAST(t *testing.T) {
 	p :=
 		NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 	cases := []struct {
 		name string
 		sql1 string
@@ -103,7 +103,7 @@ func TestPlannerMemoizationDistinctAST(t *testing.T) {
 func TestPlannerMemoizationSameAST(t *testing.T) {
 	p :=
 		NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 	cases := []struct {
 		name string
 		sql  string
@@ -144,7 +144,7 @@ func TestPlannerEstimateCost(t *testing.T) {
 func TestPlannerAggregate(t *testing.T) {
 	p :=
 		NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "x", Typ: 1}}, "x")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "x", Typ: 1}}, "x")
 	cases := []struct {
 		name string
 		sql  string
@@ -171,7 +171,7 @@ func TestPlannerAggregate(t *testing.T) {
 func TestSelectIndex(t *testing.T) {
 	p :=
 		NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 	p.RegisterIndex("t", "idx_b", []string{"b"})
 	idx, ok := p.selectIndex("t", "b")
 	if !ok {
@@ -190,31 +190,31 @@ func TestSelectIndex(t *testing.T) {
 func TestPlanner_ConstantFolding(t *testing.T) {
 	p :=
 		NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 	t.Run("tautology_1_eq_1_removes_filter", func(t *testing.T) {
 		plan, err := p.ParseAndPlan("SELECT * FROM t WHERE 1 = 1")
 		if err != nil {
 			t.Fatalf("plan error: %v", err)
 		}
 		// The constant fold should remove the WHERE clause entirely,
-		// so no Filter operator appears in the plan tree.
-		// Instead, the Plan tree directly wraps the SeqScan in an AdaptiveOp.
+		// so no OP.Filter operator appears in the plan tree.
+		// Instead, the Plan tree directly wraps the OP.SeqScan in an AdaptiveOp.
 		op := plan.Root
 		// Unwrap AdaptiveOp (always wraps query plans).
 		if aop, ok := op.(*AD.AdaptiveOp); ok {
 			op = aop.Inner
 		}
-		if _, ok := op.(*SeqScan); !ok {
-			// The top-level should be SeqScan (or Project -> SeqScan if star expr)
-			// If it's a Project (for star expansion), check the child.
-			if proj, ok2 := op.(*Project); ok2 {
-				if ss, ok3 := proj.Child().(*SeqScan); ok3 {
+		if _, ok := op.(*OP.SeqScan); !ok {
+			// The top-level should be OP.SeqScan (or OP.Project -> OP.SeqScan if star expr)
+			// If it's a OP.Project (for star expansion), check the child.
+			if proj, ok2 := op.(*OP.Project); ok2 {
+				if ss, ok3 := proj.Child().(*OP.SeqScan); ok3 {
 					_ = ss
 				} else {
-					t.Fatalf("expected SeqScan after unfolding Project, got %T", proj.Child())
+					t.Fatalf("expected OP.SeqScan after unfolding OP.Project, got %T", proj.Child())
 				}
 			} else {
-				t.Fatalf("expected SeqScan or Project as root, got %T", op)
+				t.Fatalf("expected OP.SeqScan or OP.Project as root, got %T", op)
 			}
 		}
 	})
@@ -251,7 +251,7 @@ func TestPlanner_ConstantFolding(t *testing.T) {
 func TestPlanner_CSE(t *testing.T) {
 	p :=
 		NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}, {Name: "c", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}, {Name: "c", Typ: 1}}, "a")
 
 	// Common subexpression elimination: identical conjuncts should be
 	// deduplicated. `WHERE (a + b) > 10 AND (a + b) < 20` has two
@@ -282,8 +282,8 @@ func TestPlanner_JoinElimination(t *testing.T) {
 	p :=
 		NewPlanner()
 	// Register t1 and t2 with the same columns.
-	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
-	p.RegisterTable("t2", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+	p.RegisterTable("t1", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+	p.RegisterTable("t2", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 	t.Run("unreferenced_join_table_eliminated", func(t *testing.T) {
 		plan, err := p.ParseAndPlan("SELECT t1.a FROM t1 JOIN t2 ON t1.a = t2.a")
 		if err != nil {
@@ -316,7 +316,7 @@ func TestPlanner_JoinElimination(t *testing.T) {
 func TestPlanner_ColumnPruning(t *testing.T) {
 	p :=
 		NewPlanner()
-	p.RegisterTable("t", []ColInfo{
+	p.RegisterTable("t", []DT.ColInfo{
 		{Name: "a", Typ: 1},
 		{Name: "b", Typ: 1},
 		{Name: "c", Typ: 1},
@@ -336,17 +336,17 @@ func TestPlanner_ColumnPruning(t *testing.T) {
 		if aop, ok := op.(*AD.AdaptiveOp); ok {
 			op = aop.Inner
 		}
-		// Expect: Project -> SeqScan with usedCols set
-		proj, ok := op.(*Project)
+		// Expect: OP.Project -> OP.SeqScan with usedCols set
+		proj, ok := op.(*OP.Project)
 		if !ok {
-			t.Fatalf("expected Project, got %T", op)
+			t.Fatalf("expected OP.Project, got %T", op)
 		}
-		ss, ok := proj.Child().(*SeqScan)
+		ss, ok := proj.Child().(*OP.SeqScan)
 		if !ok {
-			t.Fatalf("expected SeqScan under Project, got %T", proj.Child())
+			t.Fatalf("expected OP.SeqScan under OP.Project, got %T", proj.Child())
 		}
 		if len(ss.UsedCols()) == 0 {
-			t.Error("expected non-empty usedCols on SeqScan")
+			t.Error("expected non-empty usedCols on OP.SeqScan")
 		}
 		hasA := false
 		for _, c := range ss.UsedCols() {
@@ -375,11 +375,11 @@ func TestPlanner_ColumnPruning(t *testing.T) {
 		if aop, ok := op.(*AD.AdaptiveOp); ok {
 			op = aop.Inner
 		}
-		// Star expands to Project, but star causes usedCols to be nil.
-		if proj, ok := op.(*Project); ok {
-			if ss, ok2 := proj.Child().(*SeqScan); ok2 {
+		// Star expands to OP.Project, but star causes usedCols to be nil.
+		if proj, ok := op.(*OP.Project); ok {
+			if ss, ok2 := proj.Child().(*OP.SeqScan); ok2 {
 				if ss.UsedCols() != nil {
-					t.Logf("SeqScan has usedCols=%v (ok for star, pruning is optional)", ss.UsedCols())
+					t.Logf("OP.SeqScan has usedCols=%v (ok for star, pruning is optional)", ss.UsedCols())
 				}
 			}
 		}
@@ -399,11 +399,11 @@ func TestPlanner_ColumnPruning(t *testing.T) {
 func TestPlanner_N3JoinOrdering_EmptyHeapFallback(t *testing.T) {
 	p :=
 		NewPlanner()
-	p.RegisterTable("t0", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t2", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t3", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t4", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t0", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t1", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t2", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t3", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t4", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 	plan, err := p.ParseAndPlan(`SELECT * FROM t0 CROSS JOIN t1 CROSS JOIN t2 CROSS JOIN t3 CROSS JOIN t4`)
 	if err != nil {
 		t.Fatalf("unexpected plan error: %v", err)
@@ -421,14 +421,14 @@ func TestPlanner_N3JoinOrdering_EmptyHeapFallback(t *testing.T) {
 // REQ001092.
 func TestPlanner_CrossJoinPredicatePushdown(t *testing.T) {
 	// Verify plan structure: each table should have its
-	// per-table predicate pushed as a Filter.
+	// per-table predicate pushed as a OP.Filter.
 	p :=
 		NewPlanner()
-	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t2", []ColInfo{{Name: "b", Typ: 1}}, "b")
-	p.RegisterTable("t3", []ColInfo{{Name: "c", Typ: 1}}, "c")
-	p.RegisterTable("t4", []ColInfo{{Name: "d", Typ: 1}}, "d")
-	p.RegisterTable("t5", []ColInfo{{Name: "e", Typ: 1}}, "e")
+	p.RegisterTable("t1", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t2", []DT.ColInfo{{Name: "b", Typ: 1}}, "b")
+	p.RegisterTable("t3", []DT.ColInfo{{Name: "c", Typ: 1}}, "c")
+	p.RegisterTable("t4", []DT.ColInfo{{Name: "d", Typ: 1}}, "d")
+	p.RegisterTable("t5", []DT.ColInfo{{Name: "e", Typ: 1}}, "e")
 	plan, err := p.ParseAndPlan(`SELECT * FROM t1, t2, t3, t4, t5 
 		WHERE a = 1 AND b = 3 AND c = 5 AND d = 7 AND e = 9`)
 	if err != nil {
@@ -438,24 +438,24 @@ func TestPlanner_CrossJoinPredicatePushdown(t *testing.T) {
 		t.Fatal("plan is nil")
 	}
 
-	// Walk the plan and verify each table scan has a Filter operator
+	// Walk the plan and verify each table scan has a OP.Filter operator
 	// from predicate pushdown. Each of the 5 SeqScans must have a
-	// pushed-down predicate Filter.
+	// pushed-down predicate OP.Filter.
 	filterCount := 0
 	totalScanCount := 0
 	walkOpTreeDebug(plan.Root, func(op Operator, depth int) {
 		switch op.(type) {
-		case *Filter:
+		case *OP.Filter:
 			filterCount++
-		case *SeqScan:
+		case *OP.SeqScan:
 			totalScanCount++
 		}
 	}, 0)
 	if totalScanCount != 5 {
-		t.Fatalf("expected 5 SeqScan operators, got %d", totalScanCount)
+		t.Fatalf("expected 5 OP.SeqScan operators, got %d", totalScanCount)
 	}
 	if filterCount != 5 {
-		t.Fatalf("expected 5 Filter operators (one per table pushed predicate), got %d", filterCount)
+		t.Fatalf("expected 5 OP.Filter operators (one per table pushed predicate), got %d", filterCount)
 	}
 }
 
@@ -466,18 +466,18 @@ func walkOpTreeDebug(op Operator, fn func(Operator, int), depth int) {
 	}
 	fn(op, depth)
 	switch v := op.(type) {
-	case *Filter:
+	case *OP.Filter:
 		walkOpTreeDebug(v.Child(), fn, depth+1)
-	case *NestedLoopJoin:
+	case *OP.NestedLoopJoin:
 		walkOpTreeDebug(v.LeftChild(), fn, depth+1)
 		walkOpTreeDebug(v.RightChild(), fn, depth+1)
 	case *OP.HashJoin:
 		walkOpTreeDebug(v.LeftChild(), fn, depth+1)
-	case *Project:
+	case *OP.Project:
 		walkOpTreeDebug(v.Child(), fn, depth+1)
-	case *SeqScan:
-	case *IndexScan:
-	case *Sort:
+	case *OP.SeqScan:
+	case *OP.IndexScan:
+	case *OP.Sort:
 		walkOpTreeDebug(v.Child(), fn, depth+1)
 	case *AD.AdaptiveOp:
 		walkOpTreeDebug(v.Child(), fn, depth+1)
@@ -572,14 +572,14 @@ func TestPlanner_CrossJoinColdStart_Pushdown(t *testing.T) {
 	scanCount := 0
 	walkOpTreeDebug(plan.Root, func(op Operator, depth int) {
 		switch op.(type) {
-		case *Filter:
+		case *OP.Filter:
 			filterCount++
-		case *SeqScan:
+		case *OP.SeqScan:
 			scanCount++
 		}
 	}, 0)
 	if scanCount != 5 {
-		t.Fatalf("expected 5 SeqScan, got %d", scanCount)
+		t.Fatalf("expected 5 OP.SeqScan, got %d", scanCount)
 	}
 	if filterCount < 5 {
 		t.Fatalf("expected at least 5 Filters (pushed predicates), got %d — cold-start pushdown failing", filterCount)

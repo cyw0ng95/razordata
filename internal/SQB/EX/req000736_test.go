@@ -5,7 +5,8 @@ import (
 	"testing"
 
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-)
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
 
 func TestREQ000736_ParserCheck(t *testing.T) {
 	// Verify the parser produces the correct NullsOrder
@@ -29,9 +30,9 @@ func TestREQ000736_ParserCheck(t *testing.T) {
 	}
 	t.Logf("Parser produces: OrderBy[0].NullsOrder=%d", sel.OrderBy[0].NullsOrder)
 
-	// Verify planner creates Sort with NullsOrder preserved
+	// Verify planner creates OP.Sort with NullsOrder preserved
 	planner := NewPlanner()
-	planner.RegisterTable("t", []ColInfo{{Name: "v", Typ: 1}}, "")
+	planner.RegisterTable("t", []DT.ColInfo{{Name: "v", Typ: 1}}, "")
 	plann, err := planner.Plan(stmt)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -42,9 +43,9 @@ func TestREQ000736_ParserCheck(t *testing.T) {
 	found := false
 	var walk func(Operator)
 	walk = func(op Operator) {
-		if s, ok := op.(*Sort); ok {
+		if s, ok := op.(*OP.Sort); ok {
 			found = true
-			t.Logf("Sort has %d keys, NullsOrder[0]=%d", len(s.Keys()), s.Keys()[0].NullsOrder)
+			t.Logf("OP.Sort has %d keys, NullsOrder[0]=%d", len(s.Keys()), s.Keys()[0].NullsOrder)
 		}
 		if c, ok := op.(interface{ Child() Operator }); ok {
 			c2 := c.Child()
@@ -55,7 +56,7 @@ func TestREQ000736_ParserCheck(t *testing.T) {
 	}
 	walk(plann.Root)
 	if !found {
-		t.Fatal("Sort operator not found in plan")
+		t.Fatal("OP.Sort operator not found in plan")
 	}
 }
 

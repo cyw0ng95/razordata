@@ -30,7 +30,7 @@ func TestJoinStrategy_InterfaceConformance(t *testing.T) {
 // strategies return ErrNoRows when the underlying operators are
 // exhausted. This is the common "end of input" behavior; the
 // strategies in the JoinStrategy interface are markers and the
-// production code paths live in NestedLoopJoin.{hash,block,
+// production code paths live in OP.NestedLoopJoin.{hash,block,
 // leftOuter,rightOuter,hashCross}Mode.
 func TestJoinStrategy_EmptyStreamsReturnNoRows(t *testing.T) {
 	strategies := []JoinStrategy{

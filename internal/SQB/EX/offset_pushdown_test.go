@@ -104,8 +104,8 @@ func TestPlanSelect_OrderByPKDropsSort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(plan, "Sort") {
-		t.Errorf("expected no Sort for ORDER BY pk, got plan:\n%s", plan)
+	if strings.Contains(plan, "OP.Sort") {
+		t.Errorf("expected no OP.Sort for ORDER BY pk, got plan:\n%s", plan)
 	}
 }
 
@@ -126,8 +126,8 @@ func TestPlanSelect_OrderByNonPKKeepsSort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan, "Sort") {
-		t.Errorf("expected Sort for ORDER BY non-pk, got plan:\n%s", plan)
+	if !strings.Contains(plan, "OP.Sort") {
+		t.Errorf("expected OP.Sort for ORDER BY non-pk, got plan:\n%s", plan)
 	}
 }
 
@@ -139,8 +139,8 @@ func TestPlanSelect_OrderByPKDescKeepsSort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan, "Sort") {
-		t.Errorf("expected Sort for ORDER BY pk DESC (engine does not yield reverse order), got plan:\n%s", plan)
+	if !strings.Contains(plan, "OP.Sort") {
+		t.Errorf("expected OP.Sort for ORDER BY pk DESC (engine does not yield reverse order), got plan:\n%s", plan)
 	}
 }
 

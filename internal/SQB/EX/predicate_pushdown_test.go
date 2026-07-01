@@ -5,13 +5,14 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 // TestHashJoin_ImplicitCrossJoin verifies that implicit CROSS JOINs
 // (comma-separated FROM) with equi-join conditions in WHERE use
-// HashJoin instead of NestedLoopJoin.
+// HashJoin instead of OP.NestedLoopJoin.
 func TestHashJoin_ImplicitCrossJoin(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()

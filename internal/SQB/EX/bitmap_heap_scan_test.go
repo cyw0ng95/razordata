@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-)
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP")
 
 // TestBitmapHeapScan_OrConditions verifies REQ001106: a WHERE
 // clause with `col1 = lit1 OR col2 = lit2` on indexed columns
-// produces a BitmapHeapScan plan. Both columns must have
+// produces a OP.BitmapHeapScan plan. Both columns must have
 // registered indexes for the bitmap path to trigger; without
-// them the planner falls back to SeqScan.
+// them the planner falls back to OP.SeqScan.
 //
 // We use a unique table name per test because the EX package
 // shares a global RegisteredIndexes cache (keyed by table).
@@ -66,19 +66,19 @@ func TestBitmapHeapScan_AndConditions(t *testing.T) {
 }
 
 // TestBitmapHeapScan_ExplainsLabel verifies the operator type
-// renders as "BitmapHeapScan" via operatorType (not "Unknown"
+// renders as "OP.BitmapHeapScan" via operatorType (not "Unknown"
 // or "Scan"). This guards the operatorType switch in
 // plan_node.go. Full EXPLAIN rendering is exercised by the
 // existing explain_test.go suite.
 func TestBitmapHeapScan_ExplainsLabel(t *testing.T) {
-	bhs := &BitmapHeapScan{}
-	if got := operatorType(bhs); got != "BitmapHeapScan" {
-		t.Fatalf("operatorType(BitmapHeapScan) = %q, want %q", got, "BitmapHeapScan")
+	bhs := &OP.BitmapHeapScan{}
+	if got := operatorType(bhs); got != "OP.BitmapHeapScan" {
+		t.Fatalf("operatorType(OP.BitmapHeapScan) = %q, want %q", got, "OP.BitmapHeapScan")
 	}
 }
 
 // findBitmapInTree walks the operator tree depth-first and
-// returns true when a *BitmapHeapScan is found.
+// returns true when a *OP.BitmapHeapScan is found.
 func findBitmapInTree(op Operator) (Operator, bool) {
 	var found Operator
 	var walk func(o Operator) bool
@@ -86,7 +86,7 @@ func findBitmapInTree(op Operator) (Operator, bool) {
 		if o == nil {
 			return false
 		}
-		if _, ok := o.(*BitmapHeapScan); ok {
+		if _, ok := o.(*OP.BitmapHeapScan); ok {
 			found = o
 			return true
 		}

@@ -132,7 +132,7 @@ func TestParallelIndexRangeScan_MultiCol(t *testing.T) {
 	schema := []string{"id", "name"}
 	types := []LX.TokenType{LX.T_INT_KW, LX.T_TEXT}
 
-	// Filter by id IN (2, 5, 8)
+	// OP.Filter by id IN (2, 5, 8)
 	ps := OP.NewParallelIndexRangeScan(rows, schema, types, "id",
 		[]any{int64(2), int64(5), int64(8)}, pool)
 	defer ps.Close()

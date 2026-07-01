@@ -13,7 +13,7 @@ import (
 // becomes `SELECT x FROM t WHERE x > 10` and uses the same scan path.
 func TestPlanner_SubqueryFlattening(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 
 	t.Run("simple_flatten", func(t *testing.T) {
 		// WHERE-only flattening: subquery is a single-table SELECT
@@ -80,8 +80,8 @@ func TestPlanner_SubqueryFlattening(t *testing.T) {
 		// Subquery + JOIN: can't flatten because the JOIN uses
 		// the subquery as one side.
 		p2 := NewPlanner()
-		p2.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
-		p2.RegisterTable("t2", []ColInfo{{Name: "a", Typ: 1}}, "a")
+		p2.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
+		p2.RegisterTable("t2", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 		plan, err := p2.ParseAndPlan(
 			"SELECT * FROM (SELECT a FROM t) sub JOIN t2 ON sub.a = t2.a")
 		if err != nil {

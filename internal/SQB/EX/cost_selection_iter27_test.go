@@ -15,29 +15,29 @@ import (
 
 // TestCost_BasedScanSelection_PrefersIndex verifies REQ000156:
 // when an index exists on a WHERE column, the planner should
-// prefer IndexScan (lower cost) over SeqScan.
+// prefer OP.IndexScan (lower cost) over OP.SeqScan.
 func TestCost_BasedScanSelection_PrefersIndex(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
 	defer eng.Close()
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	ex.RegisterIndex("t", "idx_a", []string{"a"})
-	DT.RegisterIndexWithID("t", RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
+	DT.RegisterIndexWithID("t", DT.RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
 	plan, err := ex.Explain("SELECT * FROM t WHERE a = 'x'")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(plan, "Search") {
-		t.Errorf("expected Search (IndexScan) in plan, got:\n%s", plan)
+		t.Errorf("expected Search (OP.IndexScan) in plan, got:\n%s", plan)
 	}
 	if strings.Contains(plan, "Scan") {
-		t.Errorf("did not expect Scan (SeqScan) in plan, got:\n%s", plan)
+		t.Errorf("did not expect Scan (OP.SeqScan) in plan, got:\n%s", plan)
 	}
 }
 
 // TestCost_BasedScanSelection_NoIndexOnColumn verifies REQ000156:
 // when no index exists on the WHERE column, the planner falls
-// back to SeqScan.
+// back to OP.SeqScan.
 func TestCost_BasedScanSelection_NoIndexOnColumn(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
@@ -48,29 +48,29 @@ func TestCost_BasedScanSelection_NoIndexOnColumn(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(plan, "Scan") {
-		t.Errorf("expected Scan (SeqScan) in plan, got:\n%s", plan)
+		t.Errorf("expected Scan (OP.SeqScan) in plan, got:\n%s", plan)
 	}
 	if strings.Contains(plan, "Search") {
-		t.Errorf("did not expect Search (IndexScan) in plan (no index), got:\n%s", plan)
+		t.Errorf("did not expect Search (OP.IndexScan) in plan (no index), got:\n%s", plan)
 	}
 }
 
 // TestCost_BasedScanSelection_HighSelectivityRange verifies REQ000156:
 // range predicates (>, <, BETWEEN) on an indexed column also
-// prefer IndexScan via the cost model.
+// prefer OP.IndexScan via the cost model.
 func TestCost_BasedScanSelection_HighSelectivityRange(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
 	defer eng.Close()
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	ex.RegisterIndex("t", "idx_a", []string{"a"})
-	DT.RegisterIndexWithID("t", RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
+	DT.RegisterIndexWithID("t", DT.RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
 	plan, err := ex.Explain("SELECT * FROM t WHERE a BETWEEN 1 AND 10")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(plan, "Search") {
-		t.Errorf("expected Search (IndexScan) for BETWEEN on indexed column, got:\n%s", plan)
+		t.Errorf("expected Search (OP.IndexScan) for BETWEEN on indexed column, got:\n%s", plan)
 	}
 }
 
@@ -78,7 +78,7 @@ func TestCost_BasedScanSelection_HighSelectivityRange(t *testing.T) {
 // original scan when no index exists.
 func TestPickCheaperScan_NoIndex(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a"}}, "")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a"}}, "")
 	seq := OP.NewSeqScan("t")
 	where := &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "a"},
@@ -95,12 +95,12 @@ func TestPickCheaperScan_NoIndex(t *testing.T) {
 }
 
 // TestPickCheaperScan_WithIndex verifies the helper returns the
-// IndexScan when one is cheaper.
+// OP.IndexScan when one is cheaper.
 func TestPickCheaperScan_WithIndex(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a"}}, "")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a"}}, "")
 	p.RegisterIndex("t", "idx_a", []string{"a"})
-	DT.RegisterIndexWithID("t", RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
+	DT.RegisterIndexWithID("t", DT.RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
 	defer func() {
 		DT.StoreMu.Lock()
 		delete(DT.RegisteredIndexes, "t")
@@ -119,18 +119,18 @@ func TestPickCheaperScan_WithIndex(t *testing.T) {
 	if alt == seq {
 		t.Error("expected a different (cheaper) scan to be returned")
 	}
-	if !strings.Contains(fmt.Sprintf("%T", alt), "IndexScan") {
-		t.Errorf("expected IndexScan type, got %T", alt)
+	if !strings.Contains(fmt.Sprintf("%T", alt), "OP.IndexScan") {
+		t.Errorf("expected OP.IndexScan type, got %T", alt)
 	}
 }
 
 // TestPickCheaperScan_HighSelectivityRange verifies the helper
-// returns the IndexScan for a range predicate on an indexed column.
+// returns the OP.IndexScan for a range predicate on an indexed column.
 func TestPickCheaperScan_HighSelectivityRange(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a"}}, "")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a"}}, "")
 	p.RegisterIndex("t", "idx_a", []string{"a"})
-	DT.RegisterIndexWithID("t", RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
+	DT.RegisterIndexWithID("t", DT.RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
 	defer func() {
 		DT.StoreMu.Lock()
 		delete(DT.RegisteredIndexes, "t")

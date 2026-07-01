@@ -30,7 +30,7 @@ func (m *memOp) WithParams(p []any) Operator { return m }
 func (m *memOp) Close() error                { return nil }
 
 // BenchmarkCompoundOrderBy_EvalCost verifies that the Schwartzian
-// transform in CompoundOp reduces per-comparison expression
+// transform in OP.CompoundOp reduces per-comparison expression
 // evaluations. REQ001019.
 func BenchmarkCompoundOrderBy_EvalCost(b *testing.B) {
 	b.Run("expr-per-row", func(b *testing.B) {

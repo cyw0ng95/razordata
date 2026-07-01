@@ -195,7 +195,7 @@ func TestConstraints_Update_NotNull(t *testing.T) {
 func TestConstraints_FillDefaults_LiteralInt(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ss := &StoreSchema{
+	ss := &DT.StoreSchema{
 		Cols:     []string{"a", "b"},
 		Pk:       "",
 		Nullable: []bool{true, true},
@@ -217,7 +217,7 @@ func TestConstraints_FillDefaults_LiteralInt(t *testing.T) {
 func TestConstraints_FillDefaults_NullLiteral(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ss := &StoreSchema{
+	ss := &DT.StoreSchema{
 		Cols:     []string{"a"},
 		Pk:       "",
 		Nullable: []bool{true},
@@ -238,7 +238,7 @@ func TestConstraints_FillDefaults_NullLiteral(t *testing.T) {
 func TestConstraints_FillDefaults_NilSchema(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ss := &StoreSchema{Cols: []string{"a"}, Nullable: []bool{true}}
+	ss := &DT.StoreSchema{Cols: []string{"a"}, Nullable: []bool{true}}
 	row := Row{Data: []Value{NewIntValue(int64(1))}}
 	out, err := fillDefaults(ss, row)
 	if err != nil {
@@ -254,7 +254,7 @@ func TestConstraints_FillDefaults_NilSchema(t *testing.T) {
 func TestConstraints_ValidateRow_RejectsNullNotNull(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ss := &StoreSchema{
+	ss := &DT.StoreSchema{
 		Cols:     []string{"a", "b"},
 		Pk:       "",
 		Nullable: []bool{false, true},
@@ -275,7 +275,7 @@ func TestConstraints_ValidateRow_RejectsNullNotNull(t *testing.T) {
 func TestConstraints_ValidateRow_AcceptsNullNullable(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ss := &StoreSchema{
+	ss := &DT.StoreSchema{
 		Cols:     []string{"a", "b"},
 		Pk:       "",
 		Nullable: []bool{true, true},
@@ -287,7 +287,7 @@ func TestConstraints_ValidateRow_AcceptsNullNullable(t *testing.T) {
 }
 
 // TestConstraints_E2E_CreateTable_PropagatesConstraints: SQL DDL via the
-// executor should produce a StoreSchema with the right NOT NULL/DEFAULT
+// executor should produce a DT.StoreSchema with the right NOT NULL/DEFAULT
 // fields.
 func TestConstraints_E2E_CreateTable_PropagatesConstraints(t *testing.T) {
 	UnregisterAll()

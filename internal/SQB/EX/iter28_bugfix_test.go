@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
@@ -63,8 +64,8 @@ func TestBugfix_Explain_ReturnsPlan(t *testing.T) {
 		t.Fatal("EXPLAIN: got 0 rows, want >= 1")
 	}
 	// EXPLAIN returns {id, parent, notused, detail} — last column is
-	// the operator description. The planner renders "SeqScan" or
-	// "Scan t" depending on whether the inner plan is a SeqScan.
+	// the operator description. The planner renders "OP.SeqScan" or
+	// "Scan t" depending on whether the inner plan is a OP.SeqScan.
 	detail := toString(rows[len(rows)-1].Data[3])
 	if !strings.Contains(detail, "t") {
 		t.Errorf("EXPLAIN detail = %q, want substring t", detail)
@@ -372,11 +373,11 @@ func TestBugfix_FKOnUpdate(t *testing.T) {
 	defer UnregisterAll()
 
 	// Build parent + child schemas.
-	parent := &StoreSchema{Cols: []string{"id"}, Pk: "id"}
-	child := &StoreSchema{
+	parent := &DT.StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &DT.StoreSchema{
 		Cols:        []string{"id", "pid"},
 		Pk:          "id",
-		ForeignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+		ForeignKeys: []DT.ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
 	}
 	DT.StoreSchemas[1] = parent
 	DT.StoreSchemas[2] = child
@@ -430,11 +431,11 @@ func TestBugfix_FKOnDelete(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	parent := &StoreSchema{Cols: []string{"id"}, Pk: "id"}
-	child := &StoreSchema{
+	parent := &DT.StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &DT.StoreSchema{
 		Cols:        []string{"id", "pid"},
 		Pk:          "id",
-		ForeignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+		ForeignKeys: []DT.ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
 	}
 	DT.StoreSchemas[10] = parent
 	DT.StoreSchemas[11] = child
@@ -518,7 +519,7 @@ func TestBugfix_ExecReturningCount(t *testing.T) {
 
 // TestBugfix_CorrelatedSubqueryWithIndex covers REQ000525: when the
 // inner table of a correlated subquery has a registered index, the
-// planner may choose IndexScan. injectOuter must handle IndexScan to
+// planner may choose OP.IndexScan. injectOuter must handle OP.IndexScan to
 // inject the outer row reference.
 func TestBugfix_CorrelatedSubqueryWithIndex(t *testing.T) {
 	UnregisterAll()
@@ -573,7 +574,7 @@ func TestBugfix_UniqueOnUpdate(t *testing.T) {
 		[]string{"id", "email"},
 		[]bool{false, false},
 		nil,
-		[]UniqueKey{{Cols: []int{1}}}, // UNIQUE on email
+		[]DT.UniqueKey{{Cols: []int{1}}}, // UNIQUE on email
 		"id",
 	)
 	ctx := context.Background()
@@ -1304,7 +1305,7 @@ func TestBugfix_GLOB_Operator(t *testing.T) {
 	if len(rows) != 3 {
 		t.Errorf("SELECT *: got %d rows, want 3", len(rows))
 	}
-	// TODO: fix GLOB via WHERE clause (column resolution in Filter)
+	// TODO: fix GLOB via WHERE clause (column resolution in OP.Filter)
 }
 
 // REQ000731: Bitwise shift operators << and >>.

@@ -4,7 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
-)
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
 
 func TestExplain_BasicSelect(t *testing.T) {
 	UnregisterAll()
@@ -369,8 +370,8 @@ func TestExplain_Format_Tree(t *testing.T) {
 	t.Logf("Tree output:\n%s", output)
 
 	// Verify tree contains expected elements
-	if !strings.Contains(output, "Sort") && !strings.Contains(output, "Filter") && !strings.Contains(output, "Scan") {
-		t.Errorf("expected Scan/Filter/Sort in tree output, got: %s", output)
+	if !strings.Contains(output, "OP.Sort") && !strings.Contains(output, "OP.Filter") && !strings.Contains(output, "Scan") {
+		t.Errorf("expected Scan/OP.Filter/OP.Sort in tree output, got: %s", output)
 	}
 	if !strings.Contains(output, "t") {
 		t.Errorf("expected table name 't' in tree output, got: %s", output)

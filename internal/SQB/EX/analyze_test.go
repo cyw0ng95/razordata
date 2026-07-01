@@ -42,7 +42,7 @@ func TestVacuum_Integration(t *testing.T) {
 		t.Fatalf("expected ErrNoRows, got %v", err)
 	}
 
-	// Vacuum without store still returns success
+	// UT.Vacuum without store still returns success
 	_ = op
 }
 
@@ -94,7 +94,7 @@ func TestVacuum_WithStore(t *testing.T) {
 	ctx := context.Background()
 	_, err = vacuum.Next(ctx)
 	if err != DT.ErrNoRows {
-		t.Fatalf("Vacuum Next failed: %v", err)
+		t.Fatalf("UT.Vacuum Next failed: %v", err)
 	}
 
 	if vacuum.RowsAffected() != 1 {

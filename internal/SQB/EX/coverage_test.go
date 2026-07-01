@@ -106,7 +106,7 @@ func TestCoverage_Vacuum_WithParams(t *testing.T) {
 }
 
 func TestCoverage_newUniqueForCatalog(t *testing.T) {
-	unique := []UniqueKey{
+	unique := []DT.UniqueKey{
 		{Cols: []int{0, 1}},
 		{Cols: []int{2}},
 	}

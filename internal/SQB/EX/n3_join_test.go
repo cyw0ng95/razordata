@@ -12,7 +12,7 @@ import (
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
-// mockStatsCatalog is an in-memory StatsCatalog for tests. REQ000948.
+// mockStatsCatalog is an in-memory DT.StatsCatalog for tests. REQ000948.
 type mockStatsCatalog struct {
 	stats map[string]map[string]ls.ColumnStats
 }
@@ -53,8 +53,8 @@ func TestN3JoinOrdering_NoJoins(t *testing.T) {
 
 func TestN3JoinOrdering_SingleJoin(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t1", []ColInfo{{Name: "id", Typ: 1}}, "id")
-	p.RegisterTable("t2", []ColInfo{{Name: "id", Typ: 1}}, "id")
+	p.RegisterTable("t1", []DT.ColInfo{{Name: "id", Typ: 1}}, "id")
+	p.RegisterTable("t2", []DT.ColInfo{{Name: "id", Typ: 1}}, "id")
 
 	joinTables := []joinTableInfo{{name: "t2"}}
 	order, _ := p.n3JoinOrdering("t1", joinTables, nil, nil)
@@ -65,9 +65,9 @@ func TestN3JoinOrdering_SingleJoin(t *testing.T) {
 
 func TestN3JoinOrdering_ThreeTablesDefault(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t1", []ColInfo{{Name: "id", Typ: 1}}, "id")
-	p.RegisterTable("t2", []ColInfo{{Name: "id", Typ: 1}}, "id")
-	p.RegisterTable("t3", []ColInfo{{Name: "id", Typ: 1}}, "id")
+	p.RegisterTable("t1", []DT.ColInfo{{Name: "id", Typ: 1}}, "id")
+	p.RegisterTable("t2", []DT.ColInfo{{Name: "id", Typ: 1}}, "id")
+	p.RegisterTable("t3", []DT.ColInfo{{Name: "id", Typ: 1}}, "id")
 
 	joinTables := []joinTableInfo{{name: "t2"}, {name: "t3"}}
 	order, _ := p.n3JoinOrdering("t1", joinTables, nil, nil)
@@ -151,9 +151,9 @@ func TestEstimateJoinPredicateSelectivity(t *testing.T) {
 // order slices, n3JoinOrdering must not panic and must fall back to raw order.
 func TestN3JoinOrdering_EmptyOrderFallback(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t2", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t3", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t1", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t2", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t3", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 
 	// Simulate a self-join scenario with same table aliases.
 	joinTables := []joinTableInfo{
@@ -179,7 +179,7 @@ func TestN3JoinOrdering_EmptyOrderFallback(t *testing.T) {
 // REQ000914: 3-way self-join must not panic.
 func TestN3JoinOrdering_SelfJoinNoPanic(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("tab0", []ColInfo{
+	p.RegisterTable("tab0", []DT.ColInfo{
 		{Name: "pk", Typ: 1},
 		{Name: "col0", Typ: 1},
 	}, "pk")
@@ -309,7 +309,7 @@ func TestJoinPredSel_ColEqLiteral(t *testing.T) {
 func TestJoinPredSel_UnqualifiedColumn(t *testing.T) {
 	p := NewPlanner()
 	p.SetStatsCatalog(newMockStatsCatalog())
-	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t1", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 	p.statsCatalog.(*mockStatsCatalog).setStats("t1", "a", ls.ColumnStats{
 		DistinctCount: 200,
 		RowCount:      200,
@@ -333,9 +333,9 @@ func TestJoinPredSel_UnqualifiedColumn(t *testing.T) {
 // DT.Tables) when one candidate is much more expensive than another.
 func TestN3JoinOrdering_PruneThreshold_ThreeTables(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t2", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t3", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t1", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t2", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t3", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 
 	// Large asymmetry via different selectivity predicates.
 	// t1 has no filter (100 rows), t2 has heavy filter (2 rows),
@@ -383,7 +383,7 @@ func TestN3PruneMultiplier_Default(t *testing.T) {
 func TestN3JoinOrdering_PruneThreshold_FiveTables(t *testing.T) {
 	p := NewPlanner()
 	for i := 1; i <= 5; i++ {
-		p.RegisterTable(fmt.Sprintf("t%d", i), []ColInfo{{Name: "id", Typ: 1}}, "id")
+		p.RegisterTable(fmt.Sprintf("t%d", i), []DT.ColInfo{{Name: "id", Typ: 1}}, "id")
 	}
 	joinTables := []joinTableInfo{
 		{name: "t2"}, {name: "t3"}, {name: "t4"}, {name: "t5"},
@@ -419,9 +419,9 @@ func TestN3JoinOrdering_PruneThreshold_FiveTables(t *testing.T) {
 // is 10 × 10 = 100 for the first join. Multi-start should pick t2.
 func TestN3JoinOrdering_MultiStart_PicksSmallerBase(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t2", []ColInfo{{Name: "a", Typ: 1}}, "a")
-	p.RegisterTable("t3", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t1", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t2", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t3", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 
 	// Use a custom row count via the in-memory `DT.Tables` map.
 	DT.TablesMu.Lock()
@@ -462,7 +462,7 @@ func TestN3JoinOrdering_MultiStart_PicksSmallerBase(t *testing.T) {
 func TestN3JoinOrdering_MultiStart_ValidOrder(t *testing.T) {
 	p := NewPlanner()
 	for i := 1; i <= 4; i++ {
-		p.RegisterTable(fmt.Sprintf("t%d", i), []ColInfo{{Name: "id", Typ: 1}}, "id")
+		p.RegisterTable(fmt.Sprintf("t%d", i), []DT.ColInfo{{Name: "id", Typ: 1}}, "id")
 	}
 	joinTables := []joinTableInfo{
 		{name: "t2"}, {name: "t3"}, {name: "t4"},
@@ -562,7 +562,7 @@ func TestN3JoinOrdering_MultiStart_K8(t *testing.T) {
 	p := NewPlanner()
 	for i := 1; i <= 8; i++ {
 		name := fmt.Sprintf("t%d", i)
-		p.RegisterTable(name, []ColInfo{{Name: "id", Typ: 1}}, "id")
+		p.RegisterTable(name, []DT.ColInfo{{Name: "id", Typ: 1}}, "id")
 	}
 	joinTables := []joinTableInfo{}
 	for i := 2; i <= 8; i++ {
@@ -594,7 +594,7 @@ func TestN3JoinOrdering_MultiStart_PicksSmallBaseAtK8(t *testing.T) {
 	p := NewPlanner()
 	for i := 1; i <= 8; i++ {
 		name := fmt.Sprintf("t%d", i)
-		p.RegisterTable(name, []ColInfo{{Name: "id", Typ: 1}}, "id")
+		p.RegisterTable(name, []DT.ColInfo{{Name: "id", Typ: 1}}, "id")
 	}
 	DT.TablesMu.Lock()
 	// t1 is huge; everything else is tiny. A cost-aware planner
@@ -639,7 +639,7 @@ func TestN3JoinOrdering_MultiStart_BoundedPlanningTime(t *testing.T) {
 	p := NewPlanner()
 	for i := 1; i <= 8; i++ {
 		name := fmt.Sprintf("t%d", i)
-		p.RegisterTable(name, []ColInfo{{Name: "id", Typ: 1}}, "id")
+		p.RegisterTable(name, []DT.ColInfo{{Name: "id", Typ: 1}}, "id")
 	}
 	DT.TablesMu.Lock()
 	for i := 1; i <= 8; i++ {
@@ -671,7 +671,7 @@ func TestN3JoinOrdering_MultiStart_BoundedPlanningTime(t *testing.T) {
 		t.Fatal("multi-start N3 with K=8 exceeded 2s planning budget")
 	}
 }
-// REQ001057b: MCV-based IN-list selectivity. With Most-Common-Values
+// REQ001057b: MCV-based IN-list selectivity. With Most-Common-OP.Values
 // stats, the selectivity formula is 1 - ∏(1 - pᵢ) over matched MCVs
 // plus a uniform tail for non-MCV items. When MCVs are absent, the
 // legacy uniform formula is used.
@@ -764,7 +764,7 @@ func TestEstimateInListSelectivity_Empty(t *testing.T) {
 // 1/100 = 0.01.
 func TestJoinPredSel_INList_UsesMCVs(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t1", []ColInfo{{Name: "id", Typ: 1}, {Name: "e8", Typ: 1}}, "id")
+	p.RegisterTable("t1", []DT.ColInfo{{Name: "id", Typ: 1}, {Name: "e8", Typ: 1}}, "id")
 	// Wire a mock stats catalog with MCVs.
 	cat := newMockStatsCatalog()
 	cat.setStats("t1", "e8", ls.ColumnStats{

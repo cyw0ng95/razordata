@@ -353,7 +353,7 @@ func TestVectorizedFilter_AllMatch(t *testing.T) {
 	scan := OP.NewVectorizedSeqScan(src, []string{"id"}, []LX.TokenType{LX.T_INT_KW})
 	defer scan.Close()
 
-	// Filter: id >= 0 (all rows match)
+	// OP.Filter: id >= 0 (all rows match)
 	filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
 		Op:    LX.T_GE,
@@ -386,7 +386,7 @@ func TestVectorizedFilter_NoMatch(t *testing.T) {
 	scan := OP.NewVectorizedSeqScan(src, []string{"id"}, []LX.TokenType{LX.T_INT_KW})
 	defer scan.Close()
 
-	// Filter: id > 100 (no rows match)
+	// OP.Filter: id > 100 (no rows match)
 	filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
 		Op:    LX.T_GT,
@@ -411,7 +411,7 @@ func TestVectorizedFilter_PartialMatch(t *testing.T) {
 	scan := OP.NewVectorizedSeqScan(src, []string{"id"}, []LX.TokenType{LX.T_INT_KW})
 	defer scan.Close()
 
-	// Filter: id < 5 (matches 0, 1, 2, 3, 4)
+	// OP.Filter: id < 5 (matches 0, 1, 2, 3, 4)
 	filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
 		Op:    LX.T_LT,
@@ -440,7 +440,7 @@ func TestVectorizedFilter_MultiBatch(t *testing.T) {
 	scan := OP.NewVectorizedSeqScan(src, []string{"id"}, []LX.TokenType{LX.T_INT_KW})
 	defer scan.Close()
 
-	// Filter: id >= 1000
+	// OP.Filter: id >= 1000
 	filter := OP.NewVectorizedFilter(scan, &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "id"},
 		Op:    LX.T_GE,

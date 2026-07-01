@@ -92,11 +92,11 @@ func TestPragma_ForeignKeyCheck_NoViolations(t *testing.T) {
 	UT.UnregisterAllPragmaListeners()
 	defer UT.UnregisterAllPragmaListeners()
 
-	parent := &StoreSchema{Cols: []string{"id"}, Pk: "id"}
-	child := &StoreSchema{
+	parent := &DT.StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &DT.StoreSchema{
 		Cols:        []string{"id", "pid"},
 		Pk:          "id",
-		ForeignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+		ForeignKeys: []DT.ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
 	}
 	DT.StoreSchemas[1] = parent
 	DT.StoreSchemas[2] = child
@@ -126,11 +126,11 @@ func TestPragma_ForeignKeyCheck_Violation(t *testing.T) {
 	UT.UnregisterAllPragmaListeners()
 	defer UT.UnregisterAllPragmaListeners()
 
-	parent := &StoreSchema{Cols: []string{"id"}, Pk: "id"}
-	child := &StoreSchema{
+	parent := &DT.StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &DT.StoreSchema{
 		Cols:        []string{"id", "pid"},
 		Pk:          "id",
-		ForeignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+		ForeignKeys: []DT.ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
 	}
 	DT.StoreSchemas[1] = parent
 	DT.StoreSchemas[2] = child
@@ -162,11 +162,11 @@ func TestPragma_ForeignKeyCheck_SpecificTable(t *testing.T) {
 	UT.UnregisterAllPragmaListeners()
 	defer UT.UnregisterAllPragmaListeners()
 
-	parent := &StoreSchema{Cols: []string{"id"}, Pk: "id"}
-	child := &StoreSchema{
+	parent := &DT.StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &DT.StoreSchema{
 		Cols:        []string{"id", "pid"},
 		Pk:          "id",
-		ForeignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+		ForeignKeys: []DT.ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
 	}
 	DT.StoreSchemas[1] = parent
 	DT.StoreSchemas[2] = child
@@ -201,11 +201,11 @@ func TestPragma_ForeignKeyCheck_NullFKColumns(t *testing.T) {
 	UT.UnregisterAllPragmaListeners()
 	defer UT.UnregisterAllPragmaListeners()
 
-	parent := &StoreSchema{Cols: []string{"id"}, Pk: "id"}
-	child := &StoreSchema{
+	parent := &DT.StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &DT.StoreSchema{
 		Cols:        []string{"id", "pid"},
 		Pk:          "id",
-		ForeignKeys: []ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
+		ForeignKeys: []DT.ForeignKeyConstraint{{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "RESTRICT"}},
 	}
 	DT.StoreSchemas[1] = parent
 	DT.StoreSchemas[2] = child

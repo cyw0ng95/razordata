@@ -291,15 +291,15 @@ func TestShallowCopy_Independent(t *testing.T) {
 	}
 }
 
-// REQ000638: SeqScan.Close on uninitialized scan does not panic or error.
+// REQ000638: OP.SeqScan.Close on uninitialized scan does not panic or error.
 func TestSeqScan_CloseUninitialized(t *testing.T) {
 	s := OP.NewSeqScan("test")
 	if err := s.Close(); err != nil {
-		t.Errorf("Close on uninitialized SeqScan: %v", err)
+		t.Errorf("Close on uninitialized OP.SeqScan: %v", err)
 	}
 }
 
-// REQ000638: SeqScan double-close is idempotent.
+// REQ000638: OP.SeqScan double-close is idempotent.
 func TestSeqScan_CloseDouble(t *testing.T) {
 	s := OP.NewSeqScan("test")
 	err1 := s.Close()

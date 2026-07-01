@@ -7,12 +7,12 @@ import (
 	"testing"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-)
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP")
 
 // TestIndexOnlyScan_CoveringQuery verifies REQ001107: when the
 // projected columns are entirely covered by the index columns
 // plus optionally the primary key, the planner wraps the
-// IndexScan in IndexOnlyScan so the heap is not fetched.
+// OP.IndexScan in OP.IndexOnlyScan so the heap is not fetched.
 func TestIndexOnlyScan_CoveringQuery(t *testing.T) {
 	ex := newBitmapTestExecutor(t)
 	ctx := context.Background()
@@ -36,9 +36,9 @@ func TestIndexOnlyScan_CoveringQuery(t *testing.T) {
 }
 
 // TestIndexOnlyScan_NonCoveringQuery verifies the planner does
-// NOT take the IndexOnlyScan path when the projection includes a
+// NOT take the OP.IndexOnlyScan path when the projection includes a
 // column absent from the index. Coverage check must reject
-// such queries so the planner falls back to IndexScan + heap
+// such queries so the planner falls back to OP.IndexScan + heap
 // fetch.
 func TestIndexOnlyScan_NonCoveringQuery(t *testing.T) {
 	ex := newBitmapTestExecutor(t)
@@ -49,7 +49,7 @@ func TestIndexOnlyScan_NonCoveringQuery(t *testing.T) {
 
 	mustExecBitmap(t, ex, ctx, "INSERT INTO ios_noncover VALUES (1, 10, 100)")
 
-	// Project b — not in index idx_a — so heap fetch is required.
+	// OP.Project b — not in index idx_a — so heap fetch is required.
 	rows, err := ex.QueryAll(ctx, "SELECT b FROM ios_noncover WHERE a = 10")
 	if err != nil {
 		t.Fatalf("QueryAll: %v", err)
@@ -62,9 +62,9 @@ func TestIndexOnlyScan_NonCoveringQuery(t *testing.T) {
 // TestIndexOnlyScan_ExplainsLabel is a unit check on the
 // operatorType switch in plan_node.go.
 func TestIndexOnlyScan_ExplainsLabel(t *testing.T) {
-	ios := &IndexOnlyScan{}
-	if got := operatorType(ios); got != "IndexOnlyScan" {
-		t.Fatalf("operatorType(IndexOnlyScan) = %q, want %q", got, "IndexOnlyScan")
+	ios := &OP.IndexOnlyScan{}
+	if got := operatorType(ios); got != "OP.IndexOnlyScan" {
+		t.Fatalf("operatorType(OP.IndexOnlyScan) = %q, want %q", got, "OP.IndexOnlyScan")
 	}
 }
 
@@ -72,7 +72,7 @@ func TestIndexOnlyScan_ExplainsLabel(t *testing.T) {
 // REQ001107: the covering query should be measurably cheaper
 // than a query that requires a heap fetch. We benchmark the
 // planner-side decision only — backend row decode cost is
-// shared with SeqScan and not part of this test.
+// shared with OP.SeqScan and not part of this test.
 func BenchmarkIndexOnlyScan_VsHeapScan(b *testing.B) {
 	if testing.Short() {
 		b.Skip("short mode")
@@ -165,13 +165,13 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
-// findIndexOnlyInTree reports whether any *IndexOnlyScan is in
+// findIndexOnlyInTree reports whether any *OP.IndexOnlyScan is in
 // the operator tree.
 func findIndexOnlyInTree(op Operator) bool {
 	if op == nil {
 		return false
 	}
-	if _, ok := op.(*IndexOnlyScan); ok {
+	if _, ok := op.(*OP.IndexOnlyScan); ok {
 		return true
 	}
 	if c, ok := op.(interface{ Child() Operator }); ok {

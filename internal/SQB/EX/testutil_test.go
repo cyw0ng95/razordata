@@ -4,7 +4,7 @@ package EX
 
 import (
 	"testing"
-)
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
 
 // ResetForTest clears the package-level DT.Tables and schemas
 // maps and arranges a Cleanup that re-clears after the test

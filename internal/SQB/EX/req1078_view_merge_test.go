@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -18,7 +19,7 @@ func TestPlanner_ViewMerging(t *testing.T) {
 		// Direct planner+view registration — no engine needed.
 		ResetForTest(t)
 		p := NewPlanner()
-		p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+		p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 		viewSel := &PS.Select{
 			From:  "t",
 			Cols:  []PS.Expr{&PS.QualifiedName{Name: "a"}, &PS.QualifiedName{Name: "b"}},
@@ -38,7 +39,7 @@ func TestPlanner_ViewMerging(t *testing.T) {
 		// Views with aggregation must NOT be merged.
 		ResetForTest(t)
 		p := NewPlanner()
-		p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+		p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 		viewSel := &PS.Select{
 			From: "t",
 			Cols: []PS.Expr{
@@ -59,7 +60,7 @@ func TestPlanner_ViewMerging(t *testing.T) {
 	t.Run("non_mergeable_view_with_order_by", func(t *testing.T) {
 		ResetForTest(t)
 		p := NewPlanner()
-		p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+		p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 		viewSel := &PS.Select{
 			From:    "t",
 			Cols:    []PS.Expr{&PS.QualifiedName{Name: "a"}},
@@ -77,7 +78,7 @@ func TestPlanner_ViewMerging(t *testing.T) {
 	t.Run("non_mergeable_view_with_distinct", func(t *testing.T) {
 		ResetForTest(t)
 		p := NewPlanner()
-		p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+		p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 		viewSel := &PS.Select{
 			From:     "t",
 			Cols:     []PS.Expr{&PS.QualifiedName{Name: "a"}},
@@ -95,11 +96,11 @@ func TestPlanner_ViewMerging(t *testing.T) {
 	t.Run("non_mergeable_view_with_limit", func(t *testing.T) {
 		ResetForTest(t)
 		p := NewPlanner()
-		p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+		p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 		viewSel := &PS.Select{
 			From:  "t",
 			Cols:  []PS.Expr{&PS.QualifiedName{Name: "a"}},
-			Limit: &PS.NumberLiteral{Val: int64(10)},
+			OP.Limit: &PS.NumberLiteral{Val: int64(10)},
 		}
 		DT.RegisterView("v", viewSel)
 		plan, err := p.ParseAndPlan("SELECT a FROM v WHERE a > 5")
@@ -114,7 +115,7 @@ func TestPlanner_ViewMerging(t *testing.T) {
 		// View whose FROM is itself a derived table — not mergeable.
 		ResetForTest(t)
 		p := NewPlanner()
-		p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+		p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
 		viewSel := &PS.Select{
 			From:         "t",
 			SubqueryFrom: &PS.Select{From: "t", Cols: []PS.Expr{&PS.QualifiedName{Name: "a"}}},
@@ -139,8 +140,8 @@ func TestPlanner_ViewMerging(t *testing.T) {
 		selDistinct := &PS.Select{From: "t", Distinct: true}
 		selGroupBy := &PS.Select{From: "t", GroupBy: []PS.Expr{&PS.QualifiedName{Name: "a"}}}
 		selOrderBy := &PS.Select{From: "t", OrderBy: []PS.OrderItem{{Expr: &PS.QualifiedName{Name: "a"}}}}
-		selLimit := &PS.Select{From: "t", Limit: &PS.NumberLiteral{Val: int64(10)}}
-		selOffset := &PS.Select{From: "t", Offset: &PS.NumberLiteral{Val: int64(0)}}
+		selLimit := &PS.Select{From: "t", OP.Limit: &PS.NumberLiteral{Val: int64(10)}}
+		selOffset := &PS.Select{From: "t", OP.Offset: &PS.NumberLiteral{Val: int64(0)}}
 		selHaving := &PS.Select{From: "t", Having: &PS.NumberLiteral{Val: int64(1)}}
 		// Computed column (e.g. v * 2 AS doubled) — not mergeable.
 		selComputed := &PS.Select{

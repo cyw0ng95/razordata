@@ -6,7 +6,7 @@ import (
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-)
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
 
 // TestCostModel_Parameters verifies REQ001104: the CostParams struct
 // is exposed, defaults match PostgreSQL conventions, and SetCostParams
@@ -51,23 +51,23 @@ func TestCostModel_Parameters(t *testing.T) {
 		// per-operator heuristic must be used (preserves existing
 		// test expectations and behavior).
 		p := NewPlanner()
-		p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+		p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 		if got := p.estimateCost(OP.NewSeqScan("t")); got != 1.0 {
-			t.Errorf("SeqScan cost (legacy) = %v, want 1.0", got)
+			t.Errorf("OP.SeqScan cost (legacy) = %v, want 1.0", got)
 		}
 	})
 }
 
 // TestCostModel_SeqScan verifies REQ001104: with CostParams set,
-// SeqScan cost = rows × SeqPageCost (≥ 1.0 floor for empty tables).
+// OP.SeqScan cost = rows × SeqPageCost (≥ 1.0 floor for empty tables).
 func TestCostModel_SeqScan(t *testing.T) {
 	p := NewPlanner()
 	p.SetCostParams(DefaultCostParams())
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 	scan := OP.NewSeqScan("t")
 	cost := p.estimateCost(scan)
 	if cost < 1.0 {
-		t.Errorf("SeqScan cost = %v, want >= 1.0", cost)
+		t.Errorf("OP.SeqScan cost = %v, want >= 1.0", cost)
 	}
 }
 
@@ -87,7 +87,7 @@ func TestCostModel_NLJ(t *testing.T) {
 			CPUIndexTupleCost: 0.005,
 			CPUOperatorCost:   0.001,
 		})
-		p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+		p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 		cost := p.estimateCost(nlj)
 		if cost < 1.0 {
 			t.Errorf("NLJ cost (low cpu) = %v, want >= 1.0", cost)
@@ -102,7 +102,7 @@ func TestCostModel_NLJ(t *testing.T) {
 			CPUIndexTupleCost: 0.005,
 			CPUOperatorCost:   0.1,
 		})
-		p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+		p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 		highCost := p.estimateCost(nlj)
 		if highCost < 1.0 {
 			t.Errorf("NLJ cost (high cpu) = %v, want >= 1.0", highCost)
@@ -115,7 +115,7 @@ func TestCostModel_NLJ(t *testing.T) {
 func TestCostModel_HashJoin(t *testing.T) {
 	p := NewPlanner()
 	p.SetCostParams(DefaultCostParams())
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 	left := OP.NewSeqScan("t")
 	right := OP.NewSeqScan("t")
 	hj := OP.NewHashJoin(left, right, "l", "r", []string{"a"}, []string{"a"}, 0)
@@ -131,7 +131,7 @@ func TestCostModel_HashJoin(t *testing.T) {
 func TestCostModel_MemoryPressure(t *testing.T) {
 	p := NewPlanner()
 	p.SetMaxMemoryPerQuery(16 << 20) // 16 MB
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 
 	t.Run("sort_under_budget", func(t *testing.T) {
 		scan := OP.NewSeqScan("t")
@@ -155,7 +155,7 @@ func TestCostModel_MemoryPressure(t *testing.T) {
 	})
 	t.Run("default_budget_when_unset", func(t *testing.T) {
 		p2 := NewPlanner()
-		p2.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+		p2.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 		scan := OP.NewSeqScan("t")
 		sort := OP.NewSort(scan, []PS.OrderItem{{Expr: &PS.QualifiedName{Name: "a"}, Desc: false}})
 		_, budget := p2.estimateMemoryPressure(sort)
@@ -167,20 +167,20 @@ func TestCostModel_MemoryPressure(t *testing.T) {
 }
 
 // TestCostModel_LegacyStillWorks ensures that cost_indexscan_test's
-// hard-coded legacy expectations (1.0 for SeqScan, 0.05/0.1 for
-// IndexScan, etc.) continue to pass. Run alongside the new tests
+// hard-coded legacy expectations (1.0 for OP.SeqScan, 0.05/0.1 for
+// OP.IndexScan, etc.) continue to pass. Run alongside the new tests
 // to verify the two-path cost model.
 func TestCostModel_LegacyStillWorks(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 	scan := OP.NewSeqScan("t")
-	// Legacy SeqScan = 1.0.
+	// Legacy OP.SeqScan = 1.0.
 	if got := p.estimateCost(scan); got != 1.0 {
-		t.Errorf("Legacy SeqScan = %v, want 1.0", got)
+		t.Errorf("Legacy OP.SeqScan = %v, want 1.0", got)
 	}
-	// Legacy Project = 1.0 (passes through to child).
+	// Legacy OP.Project = 1.0 (passes through to child).
 	if got := p.estimateCost(OP.NewProject(scan, nil)); got != 1.0 {
-		t.Errorf("Legacy Project = %v, want 1.0", got)
+		t.Errorf("Legacy OP.Project = %v, want 1.0", got)
 	}
 }
 

@@ -39,7 +39,7 @@ func (s *engineStoreWithGet) ManualCompact() error {
 
 // TestIndexScan_WithIndexSeek exercises the iter-22 real index
 // seek path. We insert rows into a table, build a secondary
-// index, then run an IndexScan that uses the index to seek.
+// index, then run an OP.IndexScan that uses the index to seek.
 func TestIndexScan_WithIndexSeek(t *testing.T) {
 	dir := t.TempDir()
 	eng, err := ls.Open(dir)
@@ -82,7 +82,7 @@ func TestIndexScan_WithIndexSeek(t *testing.T) {
 		}
 	}
 
-	// Build an IndexScan that seeks for "bob@x.com"
+	// Build an OP.IndexScan that seeks for "bob@x.com"
 	scan, err := OP.NewIndexScanWithIndex(store, id, "users", "idx_email", []byte("bob@x.com"), nil)
 	if err != nil {
 		t.Fatalf("NewIndexScanWithIndex: %v", err)

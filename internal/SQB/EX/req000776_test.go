@@ -7,6 +7,7 @@ import (
 
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -119,7 +120,7 @@ func TestNumericArithValue(t *testing.T) {
 // decodeRow correctly serialize and deserialize a blob column as
 // KindBlob (not KindText as it was previously).
 func TestEncodeDecodeBlobRoundTrip(t *testing.T) {
-	schema := &StoreSchema{
+	schema := &DT.StoreSchema{
 		Cols: []string{"data"},
 	}
 	original := Row{

@@ -83,7 +83,7 @@ func TestRefreshMatViewOperator(t *testing.T) {
 	planner := NewPlanner()
 	planner.catalog["t1"] = &tableInfo{
 		name: "t1",
-		cols: []ColInfo{{Name: "id", Typ: 0}},
+		cols: []DT.ColInfo{{Name: "id", Typ: 0}},
 	}
 
 	op := NewRefreshMatView("mv_ref", sel, nil, planner)

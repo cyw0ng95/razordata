@@ -4,10 +4,10 @@ import (
 	"context"
 	"strconv"
 	"testing"
-)
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP")
 
 // REQ000714: store-path DELETE with self-referencing subquery. The
-// subquery's SeqScan runs against the same table being deleted from;
+// subquery's OP.SeqScan runs against the same table being deleted from;
 // it must observe a pre-mutation snapshot, not the in-progress mutation.
 func TestREQ000714_StoreDeleteSelfSubquery(t *testing.T) {
 	UnregisterAll()

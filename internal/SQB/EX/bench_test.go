@@ -391,7 +391,7 @@ func BenchmarkJ4_Cross(b *testing.B) {
 }
 
 // BenchmarkFilter_ADQC_Cache measures the benefit of global predicate
-// caching. CacheHit reuses a compiled predicate across Filter instances;
+// caching. CacheHit reuses a compiled predicate across OP.Filter instances;
 // CacheMiss uses a different predicate each time (compilation on every
 // call). REQ000802+.
 func BenchmarkFilter_ADQC_Cache(b *testing.B) {

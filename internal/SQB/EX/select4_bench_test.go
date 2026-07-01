@@ -3,13 +3,14 @@ package EX
 import (
 	"context"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"fmt"
 	"testing"
 )
 
 // setupSelect4TablesN is a variant of setupSelect4Tables that
 // creates 9 DT.Tables (t1-t9) with n rows each and 5 int columns
-// [a, b, c, d, e]. Values: a%1000, b%900, c%800, d%700, e%600.
+// [a, b, c, d, e]. OP.Values: a%1000, b%900, c%800, d%700, e%600.
 // REQ000844: used for select4 slow-case benchmarks with smaller
 // data sizes (15-30 rows instead of 100).
 func setupSelect4TablesN(b *testing.B, n int) {

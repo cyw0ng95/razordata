@@ -5,11 +5,11 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
-)
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
 
 // TestCheckConstraintValidateCheckFunc tests the validateCheck function directly (REQ000211).
 func TestCheckConstraintValidateCheckFunc(t *testing.T) {
-	schema := &StoreSchema{
+	schema := &DT.StoreSchema{
 		Cols: []string{"x"},
 		Checks: []PS.Expr{
 			&PS.BinaryExpr{Op: LX.T_GT, Left: &PS.Ident{Name: "x"}, Right: &PS.NumberLiteral{Val: 0}},
@@ -37,7 +37,7 @@ func TestCheckConstraintValidateCheckFunc(t *testing.T) {
 
 // TestCheckConstraintMultiple checks multiple CHECK constraints.
 func TestCheckConstraintMultiple(t *testing.T) {
-	schema := &StoreSchema{
+	schema := &DT.StoreSchema{
 		Cols: []string{"score"},
 		Checks: []PS.Expr{
 			&PS.BinaryExpr{Op: LX.T_GE, Left: &PS.Ident{Name: "score"}, Right: &PS.NumberLiteral{Val: 0}},
@@ -66,7 +66,7 @@ func TestCheckConstraintMultiple(t *testing.T) {
 
 // TestCheckConstraintNilExpr verifies nil CHECK expressions are skipped.
 func TestCheckConstraintNilExpr(t *testing.T) {
-	schema := &StoreSchema{
+	schema := &DT.StoreSchema{
 		Cols:   []string{"x"},
 		Checks: []PS.Expr{nil},
 	}
@@ -86,7 +86,7 @@ func TestCheckConstraintWithAnd(t *testing.T) {
 		Right: &PS.BinaryExpr{Op: LX.T_LT, Left: &PS.Ident{Name: "price"}, Right: &PS.NumberLiteral{Val: 1000}},
 	}
 
-	schema := &StoreSchema{
+	schema := &DT.StoreSchema{
 		Cols:   []string{"price"},
 		Checks: []PS.Expr{andExpr},
 	}

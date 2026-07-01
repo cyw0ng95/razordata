@@ -6,7 +6,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-)
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
 
 // TestPlanner_TransitiveEquality verifies REQ001077: WHERE a = b AND b = c
 // implies a = c. The planner must infer the missing equality so downstream
@@ -14,9 +14,9 @@ import (
 // index condition.
 func TestPlanner_TransitiveEquality(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t1", []ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
-	p.RegisterTable("t2", []ColInfo{{Name: "c", Typ: 1}, {Name: "d", Typ: 1}}, "c")
-	p.RegisterTable("t3", []ColInfo{{Name: "e", Typ: 1}, {Name: "f", Typ: 1}}, "e")
+	p.RegisterTable("t1", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
+	p.RegisterTable("t2", []DT.ColInfo{{Name: "c", Typ: 1}, {Name: "d", Typ: 1}}, "c")
+	p.RegisterTable("t3", []DT.ColInfo{{Name: "e", Typ: 1}, {Name: "f", Typ: 1}}, "e")
 
 	t.Run("plans_with_transitive_chain", func(t *testing.T) {
 		// a = b and b = c implies a = c. The plan must succeed.
