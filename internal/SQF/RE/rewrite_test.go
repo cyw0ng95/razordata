@@ -18,6 +18,16 @@ func mustParse(t *testing.T, sql string) PS.Stmt {
 	return stmt
 }
 
+func mustParseB(b *testing.B, sql string) PS.Stmt {
+	b.Helper()
+	p := PS.NewParser(sql)
+	stmt, err := p.Parse()
+	if err != nil {
+		b.Fatalf("parse: %v", err)
+	}
+	return stmt
+}
+
 func mustRewrite(t *testing.T, sql string) PS.Stmt {
 	t.Helper()
 	stmt := mustParse(t, sql)
@@ -1378,4 +1388,71 @@ func TestRewrite_DoesNotMutateInput(t *testing.T) {
 			}
 		}
 	})
+}
+
+func BenchmarkRewrite_SelectSimple(b *testing.B) {
+	stmt := mustParseB(b, "SELECT a FROM t WHERE a = 1")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Rewrite(stmt)
+	}
+}
+
+func BenchmarkRewrite_SelectComplex(b *testing.B) {
+	stmt := mustParseB(b, "SELECT a, b FROM t WHERE a = 1 AND b = 2 OR c = 3 AND d = 4")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Rewrite(stmt)
+	}
+}
+
+func BenchmarkRewrite_Insert(b *testing.B) {
+	stmt := mustParseB(b, "INSERT INTO t VALUES (1, 2, 3, 4, 5)")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Rewrite(stmt)
+	}
+}
+
+func BenchmarkRewrite_Update(b *testing.B) {
+	stmt := mustParseB(b, "UPDATE t SET a = 1, b = 2 WHERE c = 3")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Rewrite(stmt)
+	}
+}
+
+func BenchmarkRewrite_Delete(b *testing.B) {
+	stmt := mustParseB(b, "DELETE FROM t WHERE a = 1")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Rewrite(stmt)
+	}
+}
+
+func BenchmarkRewriteExpr_ConstantFold(b *testing.B) {
+	stmt := mustParseB(b, "SELECT 1 + 2 * 3 - 4 / 2 FROM t")
+	selectStmt := stmt.(*PS.Select)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = RewriteExpr(selectStmt.Cols[0])
+	}
+}
+
+func BenchmarkRewriteExpr_DeepTree(b *testing.B) {
+	stmt := mustParseB(b, "SELECT ((1 + 2) * (3 + 4)) / (5 + 6) FROM t")
+	selectStmt := stmt.(*PS.Select)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = RewriteExpr(selectStmt.Cols[0])
+	}
+}
+
+func BenchmarkSplitAnd_LargeConjuncts(b *testing.B) {
+	stmt := mustParseB(b, "SELECT * FROM t WHERE a = 1 AND b = 2 AND c = 3 AND d = 4 AND e = 5 AND f = 6 AND g = 7 AND h = 8")
+	selectStmt := stmt.(*PS.Select)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = SplitAnd(selectStmt.Where)
+	}
 }
