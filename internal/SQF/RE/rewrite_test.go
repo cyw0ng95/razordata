@@ -1456,3 +1456,17 @@ func BenchmarkSplitAnd_LargeConjuncts(b *testing.B) {
 		_ = SplitAnd(selectStmt.Where)
 	}
 }
+
+func BenchmarkSplitAnd_RepeatedCalls(b *testing.B) {
+	stmt := mustParseB(b, "SELECT * FROM t WHERE a = 1 AND b = 2 AND c = 3 AND d = 4 AND e = 5 AND f = 6 AND g = 7 AND h = 8")
+	selectStmt := stmt.(*PS.Select)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Simulate planner calling SplitAnd multiple times (REQ001167)
+		_ = SplitAnd(selectStmt.Where)
+		_ = SplitAnd(selectStmt.Where)
+		_ = SplitAnd(selectStmt.Where)
+		_ = SplitAnd(selectStmt.Where)
+		_ = SplitAnd(selectStmt.Where)
+	}
+}
