@@ -70,9 +70,9 @@ func UnregisterAll() {
 	DT.Tables = map[string][]Row{}
 	DT.Schemas = map[string][]string{}
 	DT.StoreMu.Lock()
-	DT.StoreSchemas = map[uint64]*StoreSchema{}
+	DT.StoreSchemas = map[uint64]*DT.StoreSchema{}
 	DT.TableIDs = map[string]uint64{}
-	DT.InMemSchemas = map[string]*StoreSchema{}
+	DT.InMemSchemas = map[string]*DT.StoreSchema{}
 	DT.TableIDSeq = 0
 	DT.CurrentCatalog.Store(nil)
 	DT.RegisteredIndexes = map[string][]RegisteredIndex{}

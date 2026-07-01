@@ -2,6 +2,7 @@ package EX
 
 import (
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
 
 // ShapeSpecializer detects common operator patterns and returns
@@ -10,8 +11,8 @@ import (
 // capturing the pattern as a small specialized Go function.
 //
 // This is a "shape-driven specialization" — not full JIT. Each
-// shape captures a specific operator combination (e.g., Filter
-// with int64 equality, Project with fixed columns) and returns
+// shape captures a specific operator combination (e.g., OP.Filter
+// with int64 equality, OP.Project with fixed columns) and returns
 // a closure that executes the pattern without the generic eval
 // machinery.
 
@@ -20,8 +21,8 @@ type ShapeKind int
 
 const (
 	ShapeNone          ShapeKind = iota
-	ShapeFilterInt64Eq           // Filter{col = int64_lit}
-	ShapeProjectFixed            // Project{cols = fixed set}
+	ShapeFilterInt64Eq           // OP.Filter{col = int64_lit}
+	ShapeProjectFixed            // OP.Project{cols = fixed set}
 	ShapeHashAggInt64            // HashAggregate{group_by = int64}
 )
 
@@ -29,11 +30,11 @@ const (
 // shape, or ShapeNone if no specialization is available.
 func DetectShape(op Operator) ShapeKind {
 	switch o := op.(type) {
-	case *Filter:
+	case *OP.Filter:
 		if isInt64EqPredicate(o.Predicate()) {
 			return ShapeFilterInt64Eq
 		}
-	case *Project:
+	case *OP.Project:
 		if isFixedCols(o) {
 			return ShapeProjectFixed
 		}
@@ -52,7 +53,7 @@ func isInt64EqPredicate(expr interface{}) bool {
 }
 
 // isFixedCols checks if the project has a fixed set of columns.
-func isFixedCols(p *Project) bool {
+func isFixedCols(p *OP.Project) bool {
 	return len(p.Cols()) > 0 && len(p.Cols()) <= 8
 }
 

@@ -11,11 +11,11 @@ import (
 type CreateMatViewOperator struct {
 	Name  string
 	Query *PS.Select
-	Store Store
+	Store DT.Store
 	done  bool
 }
 
-func NewCreateMatView(name string, query *PS.Select, store Store) *CreateMatViewOperator {
+func NewCreateMatView(name string, query *PS.Select, store DT.Store) *CreateMatViewOperator {
 	return &CreateMatViewOperator{Name: name, Query: query, Store: store}
 }
 
@@ -50,12 +50,12 @@ func (c *CreateMatViewOperator) Close() error { return nil }
 type RefreshMatViewOperator struct {
 	Name    string
 	Query   *PS.Select
-	Store   Store
+	Store   DT.Store
 	Planner *Planner
 	done    bool
 }
 
-func NewRefreshMatView(name string, query *PS.Select, store Store, planner *Planner) *RefreshMatViewOperator {
+func NewRefreshMatView(name string, query *PS.Select, store DT.Store, planner *Planner) *RefreshMatViewOperator {
 	return &RefreshMatViewOperator{Name: name, Query: query, Store: store, Planner: planner}
 }
 
