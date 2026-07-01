@@ -9,6 +9,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
@@ -35,7 +36,7 @@ type SortKey struct {
 // avoid partition overhead.
 // REQ000145 satisfied (partial): Parallel sort via sample sort.
 type ParallelSort struct {
-	source     *VectorizedSeqScan
+	source     *OP.VectorizedSeqScan
 	keys       []SortKey
 	keyIndices []int
 	pool       *UT.WorkerPool
@@ -46,7 +47,7 @@ type ParallelSort struct {
 
 // NewParallelSort creates a parallel sort. If pool is nil,
 // uses sequential sort.
-func NewParallelSort(source *VectorizedSeqScan, keys []SortKey, pool *UT.WorkerPool) *ParallelSort {
+func NewParallelSort(source *OP.VectorizedSeqScan, keys []SortKey, pool *UT.WorkerPool) *ParallelSort {
 	return &ParallelSort{
 		source: source,
 		keys:   keys,
@@ -80,7 +81,7 @@ func (s *ParallelSort) NextBatch(ctx context.Context) (*UT.Batch, error) {
 			batch.Put()
 		}
 
-		// Sort (parallel or sequential)
+		// OP.Sort (parallel or sequential)
 		if s.pool != nil && len(s.rows) > 1024 {
 			s.parallelSort()
 		} else {
@@ -125,7 +126,7 @@ func (s *ParallelSort) parallelSort() {
 			samples = append(samples, s.rows[idx])
 		}
 	}
-	// Sort the samples
+	// OP.Sort the samples
 	sortSample(samples, s.keys, s.keyIndices)
 
 	// 2. Pick splitters (every 4th sample)
@@ -137,7 +138,7 @@ func (s *ParallelSort) parallelSort() {
 	// 3. Partition by splitters
 	partitions := partitionBySplitters(s.rows, splitters, s.keys, s.keyIndices)
 
-	// 4. Sort each partition in parallel
+	// 4. OP.Sort each partition in parallel
 	sorted := make([][]Row, len(partitions))
 	var wg sync.WaitGroup
 	for i, p := range partitions {

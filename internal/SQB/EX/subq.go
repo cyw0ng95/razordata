@@ -33,9 +33,9 @@ func (o *outerInjector) Close() error {
 	return o.child.Close()
 }
 
-// injectOuter walks the operator tree and wraps every SeqScan
-// and IndexScan so that rows produced inside the subquery have
-// Outer set before any Filter/Project sees them. Returns the
+// injectOuter walks the operator tree and wraps every OP.SeqScan
+// and OP.IndexScan so that rows produced inside the subquery have
+// Outer set before any OP.Filter/OP.Project sees them. Returns the
 // (possibly new) root.
 func injectOuter(op Operator, outer *Row) Operator {
 	if outer == nil {
@@ -57,20 +57,20 @@ func injectOuter(op Operator, outer *Row) Operator {
 	case *AD.AdaptiveOp:
 		v.Inner = injectOuter(v.Inner, outer)
 		return v
-	case *SeqScan:
+	case *OP.SeqScan:
 		return &outerInjector{child: v, outer: outer}
-	case *IndexScan:
+	case *OP.IndexScan:
 		return &outerInjector{child: v, outer: outer}
-	case *Filter:
+	case *OP.Filter:
 		v.SetChild(injectOuter(v.Child(), outer))
 		return v
-	case *Project:
+	case *OP.Project:
 		v.SetChild(injectOuter(v.Child(), outer))
 		return v
-	case *Sort:
+	case *OP.Sort:
 		v.SetChild(injectOuter(v.Child(), outer))
 		return v
-	case *Limit:
+	case *OP.Limit:
 		v.SetChild(injectOuter(v.Child(), outer))
 		return v
 	case *OP.Distinct:
@@ -79,7 +79,7 @@ func injectOuter(op Operator, outer *Row) Operator {
 	case *AG.Aggregate:
 		injectOuter(v.Child(), outer)
 		return v
-	case *NestedLoopJoin:
+	case *OP.NestedLoopJoin:
 		v.SetLeft(injectOuter(v.LeftChild(), outer))
 		v.SetRight(injectOuter(v.RightChild(), outer))
 		return v

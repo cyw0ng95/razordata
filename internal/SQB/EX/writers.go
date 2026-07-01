@@ -26,8 +26,8 @@ type Insert struct {
 	onConflict     *PS.OnConflict
 	conflictAction PS.ConflictAction
 	defaultValues  bool // REQ000563: INSERT INTO t DEFAULT VALUES
-	store          Store
-	schema         *StoreSchema
+	store          DT.Store
+	schema         *DT.StoreSchema
 	txWriter       TxWriter
 	rows           int64
 	done           bool
@@ -60,7 +60,7 @@ func (i *Insert) Child() Operator { return i.selectPlan }
 // NewInsertWithStore builds an Insert that writes through the engine. The
 // table must have been registered. REQ000367: DT.Tables without a declared
 // PRIMARY KEY get a synthetic int64 rowid and remain writable.
-func NewInsertWithStore(store Store, table string, cols []string, values [][]PS.Expr, returning []PS.Expr, onConflict *PS.OnConflict) (*Insert, error) {
+func NewInsertWithStore(store DT.Store, table string, cols []string, values [][]PS.Expr, returning []PS.Expr, onConflict *PS.OnConflict) (*Insert, error) {
 	ss, ok := DT.SchemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
@@ -106,7 +106,7 @@ func (i *Insert) Next(ctx context.Context) (Row, error) {
 	}
 	// Resolve the constraint-aware schema for NOT NULL / DEFAULT
 	// enforcement. Falls back to nil for ad-hoc DT.Schemas.
-	var cschema *StoreSchema
+	var cschema *DT.StoreSchema
 	if ss, ok := DT.SchemaFor(i.table); ok {
 		cschema = ss
 	}
@@ -421,7 +421,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (Row, error) {
 	if schema == nil && len(i.cols) > 0 {
 		schema = i.cols
 	}
-	var cschema *StoreSchema
+	var cschema *DT.StoreSchema
 	if ss, ok := DT.SchemaFor(i.table); ok {
 		cschema = ss
 	}
@@ -572,8 +572,8 @@ type Update struct {
 	where      PS.Expr
 	returning  []PS.Expr
 	iter       Operator
-	store      Store
-	schema     *StoreSchema
+	store      DT.Store
+	schema     *DT.StoreSchema
 	txWriter   TxWriter
 	rows       int64
 	done       bool
@@ -604,7 +604,7 @@ func NewUpdate(table string, set []PS.Pair, where PS.Expr, iter Operator, return
 // NewUpdateWithStore builds an Update that reads the old row via the engine
 // iterator and writes the new version through engine.Insert. REQ000367:
 // DT.Tables without a declared PRIMARY KEY are writable via synthetic rowid.
-func NewUpdateWithStore(store Store, table string, set []PS.Pair, where PS.Expr, iter Operator, returning []PS.Expr) (*Update, error) {
+func NewUpdateWithStore(store DT.Store, table string, set []PS.Pair, where PS.Expr, iter Operator, returning []PS.Expr) (*Update, error) {
 	ss, ok := DT.SchemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
@@ -640,7 +640,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 	}
 	// Resolve the constraint-aware schema for NOT NULL / DEFAULT
 	// enforcement on the new row.
-	var cschema *StoreSchema
+	var cschema *DT.StoreSchema
 	if ss, ok := DT.SchemaFor(u.table); ok {
 		cschema = ss
 	}
@@ -659,7 +659,7 @@ func (u *Update) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		snapshot := DT.CloneRow(row)
-		// REQ000840: SeqScan may return rows that share Data with the
+		// REQ000840: OP.SeqScan may return rows that share Data with the
 		// source table. Deep-copy Data before applyUpdate mutates it
 		// in-place, otherwise the source row is corrupted.
 		row.Data = append([]Value(nil), row.Data...)
@@ -827,8 +827,8 @@ type Delete struct {
 	where      PS.Expr
 	returning  []PS.Expr
 	iter       Operator
-	store      Store
-	schema     *StoreSchema
+	store      DT.Store
+	schema     *DT.StoreSchema
 	txWriter   TxWriter
 	rows       int64
 	done       bool
@@ -850,7 +850,7 @@ func (d *Delete) WithParams(p []any) Operator {
 }
 
 // REQ000714: expose iter as a child so propagateExecContext and
-// propagateParams walk into the input chain (Filter/SeqScan) where
+// propagateParams walk into the input chain (OP.Filter/OP.SeqScan) where
 // the WHERE predicate (and any correlated subquery) is evaluated.
 func (d *Delete) Child() Operator { return d.iter }
 
@@ -861,7 +861,7 @@ func NewDelete(table string, where PS.Expr, iter Operator, returning []PS.Expr) 
 // NewDeleteWithStore builds a Delete that removes rows through engine.Delete.
 // REQ000367: DT.Tables without a declared PRIMARY KEY are deletable via
 // the synthetic rowid.
-func NewDeleteWithStore(store Store, table string, where PS.Expr, iter Operator, returning []PS.Expr) (*Delete, error) {
+func NewDeleteWithStore(store DT.Store, table string, where PS.Expr, iter Operator, returning []PS.Expr) (*Delete, error) {
 	ss, ok := DT.SchemaFor(table)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
@@ -896,7 +896,7 @@ func (d *Delete) Next(ctx context.Context) (Row, error) {
 	}
 	// REQ000514: resolve the schema for FK validation, then
 	// collect to-be-deleted row indices and run FK checks.
-	var dschema *StoreSchema
+	var dschema *DT.StoreSchema
 	if ss, ok := DT.SchemaFor(d.table); ok {
 		dschema = ss
 	}
@@ -1109,11 +1109,11 @@ func registerTableSchema(stmt *PS.CreateTable) ([]string, []bool, []PS.Expr, []L
 	return cols, nullable, defaults, colTypes, precisions, scales, nil
 }
 
-// buildUniqueConstraints builds a list of UniqueKey constraints from
+// buildUniqueConstraints builds a list of DT.UniqueKey constraints from
 // column-level ColDef.Unique and table-level UniqueConstraints.
 // REQ000982: extracted from CreateTable.Next.
-func buildUniqueConstraints(cols []string, stmt *PS.CreateTable) []UniqueKey {
-	var unique []UniqueKey
+func buildUniqueConstraints(cols []string, stmt *PS.CreateTable) []DT.UniqueKey {
+	var unique []DT.UniqueKey
 	colIndex := make(map[string]int, len(cols))
 	for i, n := range cols {
 		colIndex[n] = i
@@ -1121,7 +1121,7 @@ func buildUniqueConstraints(cols []string, stmt *PS.CreateTable) []UniqueKey {
 	for _, col := range stmt.Cols {
 		if col.Unique {
 			if idx, ok := colIndex[col.Name]; ok {
-				unique = append(unique, UniqueKey{Cols: []int{idx}})
+				unique = append(unique, DT.UniqueKey{Cols: []int{idx}})
 			}
 		}
 	}
@@ -1137,20 +1137,20 @@ func buildUniqueConstraints(cols []string, stmt *PS.CreateTable) []UniqueKey {
 			idxs = append(idxs, idx)
 		}
 		if allFound && len(idxs) > 0 {
-			unique = append(unique, UniqueKey{Cols: idxs})
+			unique = append(unique, DT.UniqueKey{Cols: idxs})
 		}
 	}
 	return unique
 }
 
-// buildFKConstraints extracts ForeignKeyConstraint from column-level
+// buildFKConstraints extracts DT.ForeignKeyConstraint from column-level
 // and table-level foreign key definitions.
 // REQ000982: extracted from CreateTable.Next.
-func buildFKConstraints(stmt *PS.CreateTable) []ForeignKeyConstraint {
-	var fks []ForeignKeyConstraint
+func buildFKConstraints(stmt *PS.CreateTable) []DT.ForeignKeyConstraint {
+	var fks []DT.ForeignKeyConstraint
 	for _, col := range stmt.Cols {
 		if col.ReferencesTable != "" {
-			fk := ForeignKeyConstraint{
+			fk := DT.ForeignKeyConstraint{
 				Columns:    []string{col.Name},
 				RefTable:   col.ReferencesTable,
 				RefColumns: []string{col.ReferencesColumn},
@@ -1167,7 +1167,7 @@ func buildFKConstraints(stmt *PS.CreateTable) []ForeignKeyConstraint {
 		}
 	}
 	for _, fkAST := range stmt.ForeignKeys {
-		fk := ForeignKeyConstraint{
+		fk := DT.ForeignKeyConstraint{
 			Columns:    fkAST.Columns,
 			RefTable:   fkAST.RefTable,
 			RefColumns: fkAST.RefColumns,
@@ -1213,7 +1213,7 @@ func buildGeneratedColumns(stmt *PS.CreateTable) []PS.Expr {
 // The catalog write is best-effort: a failure does not roll back
 // the in-memory registration.
 // REQ000982: extracted from CreateTable.Next.
-func persistToCatalog(stmt *PS.CreateTable, cols []string, nullable []bool, colTypes []LX.TokenType, unique []UniqueKey, pk string) {
+func persistToCatalog(stmt *PS.CreateTable, cols []string, nullable []bool, colTypes []LX.TokenType, unique []DT.UniqueKey, pk string) {
 	cat := DT.Catalog()
 	if cat == nil {
 		return
@@ -1576,7 +1576,7 @@ func (c *CreateIndex) Next(ctx context.Context) (Row, error) {
 		indexCols[i] = ic.Name
 	}
 	// Register for writer maintenance
-	DT.RegisterIndexWithID(c.stmt.Table, RegisteredIndex{
+	DT.RegisterIndexWithID(c.stmt.Table, DT.RegisteredIndex{
 		Name:    c.stmt.Name,
 		Columns: indexCols,
 		Unique:  c.stmt.Unique,
@@ -1677,7 +1677,7 @@ func (d *DropIndex) RowsAffected() int64 { return d.rowsAff }
 // Pragma is a writer-op stub for PRAGMA name [= value]. REQ000490.
 type Pragma struct {
 	stmt  *PS.PragmaStmt
-	store Store
+	store DT.Store
 	done  bool
 	rows  []Row
 	idx   int
@@ -1685,7 +1685,7 @@ type Pragma struct {
 
 func NewPragma(stmt *PS.PragmaStmt) *Pragma { return &Pragma{stmt: stmt} }
 
-func (p *Pragma) WithStore(s Store) Operator {
+func (p *Pragma) WithStore(s DT.Store) Operator {
 	p.store = s
 	return p
 }
@@ -2239,7 +2239,7 @@ func (d *DropTrigger) RowsAffected() int64         { return 0 }
 // applyConflictUpdate locates the conflicting row by unique-key match
 // and applies the SET clauses. Used by INSERT ... ON CONFLICT DO
 // UPDATE. REQ000511.
-func applyConflictUpdate(schema *StoreSchema, existing []Row, out Row, sets []PS.Pair, params []any, apply uniqueLookupWithApply) error {
+func applyConflictUpdate(schema *DT.StoreSchema, existing []Row, out Row, sets []PS.Pair, params []any, apply uniqueLookupWithApply) error {
 	if apply == nil {
 		return nil
 	}
@@ -2289,7 +2289,7 @@ func applyConflictUpdate(schema *StoreSchema, existing []Row, out Row, sets []PS
 // conflictKey returns the column indices and values used to look up
 // a row for ON CONFLICT. If the schema has a PK, that is the conflict
 // target. Otherwise the first unique key is used. REQ000511.
-func conflictKey(schema *StoreSchema, row Row) ([]int, []Value, error) {
+func conflictKey(schema *DT.StoreSchema, row Row) ([]int, []Value, error) {
 	if schema.Pk != "" {
 		for i, c := range schema.Cols {
 			if c == schema.Pk {
@@ -2479,7 +2479,7 @@ var ErrMultiDatabaseNotSupported = errors.New("ex: cross-database queries not su
 
 // fireInsertTriggers fires all AFTER INSERT triggers for the given table.
 // The new row is passed as the context for trigger execution.
-func fireInsertTriggers(table string, newRow *Row, params []any, store Store) error {
+func fireInsertTriggers(table string, newRow *Row, params []any, store DT.Store) error {
 	// Build a minimal executor callback for trigger SQL execution
 	exec := func(sql string) error {
 		parser := PS.NewParser(sql)
@@ -2501,7 +2501,7 @@ func fireInsertTriggers(table string, newRow *Row, params []any, store Store) er
 }
 
 // executeRefreshMatViewSQL executes a REFRESH MATERIALIZED VIEW statement.
-func executeRefreshMatViewSQL(sql string, store Store) error {
+func executeRefreshMatViewSQL(sql string, store DT.Store) error {
 	parser := PS.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
@@ -2525,7 +2525,7 @@ func executeRefreshMatViewSQL(sql string, store Store) error {
 }
 
 // refreshMatViewData re-executes the matview query and updates the stored data.
-func refreshMatViewData(name string, sel *PS.Select, store Store) error {
+func refreshMatViewData(name string, sel *PS.Select, store DT.Store) error {
 	// This is a simplified implementation that re-runs the query
 	// A full implementation would use the planner to build an execution plan
 	// and write results to the matview data prefix
@@ -2544,7 +2544,7 @@ func refreshMatViewData(name string, sel *PS.Select, store Store) error {
 }
 
 // fireUpdateTriggers fires all AFTER UPDATE triggers for the given table.
-func fireUpdateTriggers(table string, oldRow *Row, newRow *Row, params []any, store Store) error {
+func fireUpdateTriggers(table string, oldRow *Row, newRow *Row, params []any, store DT.Store) error {
 	exec := func(sql string) error {
 		parser := PS.NewParser(sql)
 		stmt, err := parser.Parse()
@@ -2561,7 +2561,7 @@ func fireUpdateTriggers(table string, oldRow *Row, newRow *Row, params []any, st
 }
 
 // fireDeleteTriggers fires all AFTER DELETE triggers for the given table.
-func fireDeleteTriggers(table string, oldRow *Row, params []any, store Store) error {
+func fireDeleteTriggers(table string, oldRow *Row, params []any, store DT.Store) error {
 	exec := func(sql string) error {
 		parser := PS.NewParser(sql)
 		stmt, err := parser.Parse()
