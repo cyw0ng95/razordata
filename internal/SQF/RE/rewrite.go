@@ -415,56 +415,63 @@ func constantFoldBinary(op LX.TokenType, left, right PS.Expr) PS.Expr {
 	if !isLiteral(left) || !isLiteral(right) {
 		return nil
 	}
-	ln, li := left.(*PS.NumberLiteral)
-	lf, lfok := left.(*PS.FloatLiteral)
-	ls, lsok := left.(*PS.StringLiteral)
-	lb, lbok := left.(*PS.BoolLiteral)
-	_, lnRnil := right.(*PS.NullLiteral)
-	_, lnil := left.(*PS.NullLiteral)
-	if lnil || lnRnil {
+	// Single type switch on left, then nested switch on right.
+	// Reduces type assertions from 8 to 2. REQ001166.
+	switch l := left.(type) {
+	case *PS.NullLiteral:
 		return nil
+	case *PS.NumberLiteral:
+		switch r := right.(type) {
+		case *PS.NullLiteral:
+			return nil
+		case *PS.NumberLiteral:
+			switch op {
+			case LX.T_PLUS, LX.T_MINUS, LX.T_STAR, LX.T_SLASH:
+				return foldIntInt(op, l.Val, r.Val)
+			case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
+				return foldCompare(op, left, right, l, nil, nil, nil, r, nil, nil, nil)
+			}
+		case *PS.FloatLiteral:
+			switch op {
+			case LX.T_PLUS, LX.T_MINUS, LX.T_STAR, LX.T_SLASH:
+				return foldFloatFloat(op, float64(l.Val), r.Val)
+			case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
+				return foldCompare(op, left, right, l, nil, nil, nil, nil, r, nil, nil)
+			}
+		}
+	case *PS.FloatLiteral:
+		switch right.(type) {
+		case *PS.NullLiteral:
+			return nil
+		}
+	case *PS.StringLiteral:
+		switch r := right.(type) {
+		case *PS.NullLiteral:
+			return nil
+		case *PS.StringLiteral:
+			switch op {
+			case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
+				return foldCompare(op, left, right, nil, nil, l, nil, nil, nil, r, nil)
+			}
+		}
+	case *PS.BoolLiteral:
+		switch r := right.(type) {
+		case *PS.NullLiteral:
+			return nil
+		case *PS.BoolLiteral:
+			switch op {
+			case LX.T_AND:
+				return &PS.BoolLiteral{Val: l.Val && r.Val}
+			case LX.T_OR:
+				return &PS.BoolLiteral{Val: l.Val || r.Val}
+			case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
+				return foldCompare(op, left, right, nil, nil, nil, l, nil, nil, nil, r)
+			}
+		}
 	}
-	rn, ri := right.(*PS.NumberLiteral)
-	rf, rfok := right.(*PS.FloatLiteral)
-	rs, rsok := right.(*PS.StringLiteral)
-	rb, rbok := right.(*PS.BoolLiteral)
-	_ = ri
-	_ = li
-	switch op {
-	case LX.T_PLUS, LX.T_MINUS, LX.T_STAR, LX.T_SLASH:
-		if ln != nil && rn != nil {
-			return foldIntInt(op, ln.Val, rn.Val)
-		}
-		if (ln != nil && rfok) || (lfok && rn != nil) || (lfok && rfok) {
-			var a, b float64
-			if ln != nil {
-				a = float64(ln.Val)
-			} else {
-				a = lf.Val
-			}
-			if rn != nil {
-				b = float64(rn.Val)
-			} else {
-				b = rf.Val
-			}
-			return foldFloatFloat(op, a, b)
-		}
-	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
-		return foldCompare(op, left, right, ln, lf, ls, lb, rn, rf, rs, rb)
-	case LX.T_AND, LX.T_OR:
-		if lbok && rbok {
-			if op == LX.T_AND {
-				return &PS.BoolLiteral{Val: lb.Val && rb.Val}
-			}
-			return &PS.BoolLiteral{Val: lb.Val || rb.Val}
-		}
-	}
-	_ = lsok
-	_ = rsok
 	return nil
 }
-
-func foldIntInt(op LX.TokenType, a, b int64) PS.Expr {
+	func foldIntInt(op LX.TokenType, a, b int64) PS.Expr {
 	switch op {
 	case LX.T_PLUS:
 		return &PS.NumberLiteral{Val: a + b}
