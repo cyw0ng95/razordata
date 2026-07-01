@@ -956,7 +956,7 @@ func (d *Delete) Next(ctx context.Context) (DT.Row, error) {
 		// For in-memory path, we fire triggers for each deleted row
 		// This is a simplified implementation; full implementation would pass old row data
 		for _, rowData := range fkRows {
-			oldRow := DT.Row{Data: valueFromAnySlice(rowData)}
+			oldRow := DT.Row{Data: DT.ValueFromAnySlice(rowData)}
 			if err := fireDeleteTriggers(d.table, &oldRow, d.params, nil); err != nil {
 				return DT.Row{}, err
 			}
@@ -2013,10 +2013,10 @@ func (p *Pragma) loadForeignKeyCheck() {
 					p.rows = append(p.rows, DT.Row{
 						Cols: []string{"table", "rowid", "parent", "fkid"},
 						Data: []DT.Value{
-							NewTextValue(name),
-							NewIntValue(int64(rowIdx)),
-							NewTextValue(fk.RefTable),
-							NewIntValue(int64(fkID)),
+							DT.NewTextValue(name),
+							DT.NewIntValue(int64(rowIdx)),
+							DT.NewTextValue(fk.RefTable),
+							DT.NewIntValue(int64(fkID)),
 						},
 					})
 				}

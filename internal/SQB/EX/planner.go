@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"reflect"
 	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"slices"
@@ -264,6 +265,15 @@ type Planner struct {
 	// costParamsX holds the cost-model coefficients used by
 	// estimateCost. nil = use DefaultCostParams. REQ001104.
 	costParamsX *CostParams
+
+	// splitAndCache caches the result of RE.SplitAnd for expression
+	// nodes. REQ001167: `SplitAnd` was called repeatedly on the same
+	// WHERE expression during a single Plan() call — up to 5 times
+	// per SELECT — causing redundant AND-tree traversals. The cache
+	// is keyed by `reflect.ValueOf(e).Pointer()` and cleared at the
+	// start of every Plan() call (PlanResult cache invalidation is
+	// handled separately).
+	splitAndCache map[uintptr][]PS.Expr
 }
 
 type tableInfo struct {
@@ -296,7 +306,30 @@ func (p *Planner) SetJoinBufferSize(v int64) { p.joinBufferSize = v }
 // 0 = unlimited. REQ001057.
 func (p *Planner) SetMaxMemoryPerQuery(v int64) { p.maxMemoryPerQuery = v }
 
-// InvalidateCache clears the plan cache. REQ000846: called when DDL
+// splitAnd returns the conjuncts of an AND expression, using a local
+// per-plan cache to avoid redundant tree traversals. REQ001167.
+// The cache is keyed by the Go pointer of the expression value and is
+// valid only for the duration of a single Plan() call.
+func (p *Planner) splitAnd(expr PS.Expr) []PS.Expr {
+	if expr == nil {
+		return nil
+	}
+	if b, ok := expr.(*PS.BinaryExpr); !ok || b.Op != LX.T_AND {
+		return []PS.Expr{expr}
+	}
+	if p.splitAndCache == nil {
+		p.splitAndCache = make(map[uintptr][]PS.Expr, 8)
+	}
+	key := reflect.ValueOf(expr).Pointer()
+	if v, ok := p.splitAndCache[key]; ok {
+		return v
+	}
+	conjuncts := RE.SplitAnd(expr)
+	p.splitAndCache[key] = conjuncts
+	return conjuncts
+}
+
+// InvalidateCache clears the plan cache. REQ000846: called when DTL
 // changes the schema (CREATE/DROP/ALTER TABLE) so cached plans that
 // reference the old schema are not reused.
 func (p *Planner) InvalidateCache() {
@@ -305,6 +338,7 @@ func (p *Planner) InvalidateCache() {
 	p.memoOrder = make([]string, maxPlanCacheSize)
 	p.memoHead = 0
 	p.memoSize = 0
+	p.splitAndCache = nil
 	p.mu.Unlock()
 }
 
@@ -397,6 +431,9 @@ func (p *Planner) RegisterIndex(table, index string, cols []string) {
 }
 
 func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
+	// Clear per-plan cache at start of every Plan() call.
+	// REQ001167: SplitAnd cache is only valid for one Plan() call.
+	p.splitAndCache = nil
 	rewritten, err := RE.Rewrite(stmt)
 	if err != nil {
 		return nil, err
@@ -2076,7 +2113,7 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	var pushedPredicates map[string][]PS.Expr
 	var crossTablePredicates []PS.Expr
 	if whereExpr != nil && (len(s.Joins) > 0 || s.From != "") {
-		conjuncts := RE.SplitAnd(whereExpr)
+		conjuncts := p.splitAnd(whereExpr)
 		allTables := []string{s.From}
 		for _, j := range s.Joins {
 			allTables = append(allTables, j.Right)
@@ -2100,7 +2137,9 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	// conditions from WHERE and use OP.HashJoin instead of OP.NestedLoopJoin.
 	var crossTableConjuncts []PS.Expr
 	if whereExpr != nil && len(s.Joins) > 0 {
-		crossTableConjuncts = RE.SplitAnd(whereExpr)
+		// REQ000XXX: For multi-table implicit JOINs, extract equi-join
+		// conditions from WHERE and use OP.HashJoin instead of OP.NestedLoopJoin.
+		crossTableConjuncts = p.splitAnd(whereExpr)
 		// REQ001077: transitive equality inference. For
 		// `WHERE a = b AND b = c`, infer `a = c` so downstream
 		// join planning can use any of the inferred equalities
@@ -2168,7 +2207,7 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 			}
 		} else if pushedPredicates == nil {
 			// No predicate pushdown — apply full WHERE as before.
-			conjuncts := RE.SplitAnd(whereExpr)
+			conjuncts := p.splitAnd(whereExpr)
 			current = OP.NewFilter(current, conjuncts[0])
 			for _, c := range conjuncts[1:] {
 				current = OP.NewFilter(current, c)
@@ -5766,7 +5805,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 	}
 	costPredicates := crossTablePredicates
 	if costPredicates == nil && s.Where != nil {
-		costPredicates = RE.SplitAnd(s.Where)
+		costPredicates = p.splitAnd(s.Where)
 	}
 	const reorderJoinsLimit = 8
 	joinOrder := []string(nil)
@@ -6182,7 +6221,7 @@ func rebuildAnd(exprs []PS.Expr) PS.Expr {
 //
 // REQ001108.
 func (p *Planner) decomposeForIndexScan(whereExpr PS.Expr, scanCol string) (residual, extra []PS.Expr) {
-	conjuncts := RE.SplitAnd(whereExpr)
+	conjuncts := p.splitAnd(whereExpr)
 	if len(conjuncts) == 0 {
 		return nil, nil
 	}

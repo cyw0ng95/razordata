@@ -6,6 +6,9 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
 	"testing"
 )
 
@@ -670,6 +673,58 @@ func BenchmarkSelect4_CrossJoinColdStart(b *testing.B) {
 		}
 		if len(rows) == 0 {
 			b.Fatal("expected rows")
+		}
+	}
+}
+
+// BenchmarkSplitAnd_Cached measures the overhead of calling
+// splitAnd on the same WHERE expression multiple times within a single
+// Plan() call. REQ001167. The first call traverses the AND tree,
+// subsequent calls hit the cache.
+func BenchmarkSplitAnd_Cached(b *testing.B) {
+	// Build a 10-conjunct AND expression: a=1 AND b=2 AND ... AND j=10
+	var expr PS.Expr
+	for i := 0; i < 10; i++ {
+		col := &PS.Ident{Name: string(rune('a' + i))}
+		num := &PS.NumberLiteral{Val: int64(i + 1)}
+		cond := &PS.BinaryExpr{Left: col, Op: LX.T_EQ, Right: num}
+		if expr == nil {
+			expr = cond
+		} else {
+			expr = &PS.BinaryExpr{Left: expr, Op: LX.T_AND, Right: cond}
+		}
+	}
+
+	p := NewPlanner()
+	p.splitAndCache = make(map[uintptr][]PS.Expr, 8)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 10; j++ {
+			_ = p.splitAnd(expr)
+		}
+	}
+}
+
+// BenchmarkSplitAnd_NoCacheBaseline measures bare RE.SplitAnd calls
+// with no planner cache for comparison.
+func BenchmarkSplitAnd_NoCacheBaseline(b *testing.B) {
+	var expr PS.Expr
+	for i := 0; i < 10; i++ {
+		col := &PS.Ident{Name: string(rune('a' + i))}
+		num := &PS.NumberLiteral{Val: int64(i + 1)}
+		cond := &PS.BinaryExpr{Left: col, Op: LX.T_EQ, Right: num}
+		if expr == nil {
+			expr = cond
+		} else {
+			expr = &PS.BinaryExpr{Left: expr, Op: LX.T_AND, Right: cond}
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 10; j++ {
+			_ = RE.SplitAnd(expr)
 		}
 	}
 }
