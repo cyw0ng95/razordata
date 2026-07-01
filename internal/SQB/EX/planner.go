@@ -1737,6 +1737,36 @@ func collectTablesFromExpr(e PS.Expr, tables map[string]bool, hasUnqualified *bo
 	})
 }
 
+// joinOnReferences reports whether a join's ON clause references any
+// of the given table names. Used by REQ001155 to decide whether a join
+// can be safely eliminated when SELECT/WHERE/ORDER/GROUP/HAVING do not
+// reference the joined table. The ON clause is part of the query's
+// semantic contract: if it references a table, dropping the join
+// changes the result set.
+func joinOnReferences(j PS.JoinClause, tableNames ...string) bool {
+	if j.On == nil {
+		return false
+	}
+	wanted := make(map[string]bool, len(tableNames))
+	for _, n := range tableNames {
+		if n != "" {
+			wanted[n] = true
+		}
+	}
+	if len(wanted) == 0 {
+		return false
+	}
+	referenced := false
+	walkExpr(j.On, func(node PS.Expr) {
+		if qn, ok := node.(*PS.QualifiedName); ok {
+			if wanted[qn.Table] {
+				referenced = true
+			}
+		}
+	})
+	return referenced
+}
+
 func log2ish(x float64) float64 {
 	if x <= 1 {
 		return 0
@@ -2097,6 +2127,15 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 					// REQ000835/836: when the same table is used
 					// with different aliases (e.g. tab0 a, tab0 b),
 					// check both the physical name and the alias.
+					filtered = append(filtered, j)
+				} else if joinOnReferences(j, j.Right, j.RightAlias, s.From, s.FromAlias) {
+					// REQ001155: a join's ON clause may reference the
+					// joined table even when SELECT/WHERE/ORDER/GROUP/
+					// HAVING do not. The ON clause constrains which
+					// rows survive the join, so dropping the join
+					// changes the result set. Preserve the join when
+					// its ON references either side (right name,
+					// right alias, left name, left alias).
 					filtered = append(filtered, j)
 				}
 			}
