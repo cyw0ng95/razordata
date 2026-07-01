@@ -115,3 +115,39 @@ func RunSubqueryPlan(ctx context.Context, pl *pl.PlanResult, outer *DT.Row, para
 	}
 	return out, nil
 }
+
+// RunSubqueryFirstMatch is the REQ001073 short-circuit variant of
+// RunSubqueryPlan. Instead of materializing all rows, it stops after
+// the first row and returns (true, nil). If the subquery produces
+// zero rows it returns (false, nil). This is the "semi-join stops
+// scanning after the first match" optimization applied to the
+// existential subquery path.
+//
+// Callers MUST close pl.Root independently — this function does not
+// take ownership of pl.
+func RunSubqueryFirstMatch(ctx context.Context, pl *pl.PlanResult, outer *DT.Row, params []any) (bool, error) {
+	if pl == nil || pl.Root == nil {
+		return false, EV.ErrSubquery
+	}
+	if outer != nil {
+		pl.Root = injectOuter(pl.Root, outer)
+	}
+	// Drain until the first row — that's all we need for an
+	// existential check. Returns immediately on the first hit.
+	for {
+		if err := ctx.Err(); err != nil {
+			// Close on context error so the caller doesn't leak.
+			pl.Root.Close()
+			return false, err
+		}
+		_, err := pl.Root.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				return false, nil
+			}
+			return false, err
+		}
+		// Found at least one matching row — short-circuit.
+		return true, nil
+	}
+}

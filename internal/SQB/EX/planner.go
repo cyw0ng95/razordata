@@ -534,6 +534,31 @@ func (p *Planner) ExecuteSubquery(ctx context.Context, stmt PS.Stmt, outer *DT.R
 	return WT.RunSubqueryPlan(ctx, planResult, outer, params)
 }
 
+// ExecuteSubqueryFirstMatch is the REQ001073 short-circuit variant:
+// plans the subquery and returns (true, nil) if at least one row
+// matches, (false, nil) otherwise, stopping the scan at the first
+// match instead of materializing all rows. Implements the "semi-join
+// stops scanning after the first match" optimization.
+//
+// This is NOT part of the pl.QueryPlanner interface; evalExists calls
+// it via a type assertion so existing QueryPlanner implementations
+// that lack this method fall back to the legacy materialization path.
+func (p *Planner) ExecuteSubqueryFirstMatch(ctx context.Context, stmt PS.Stmt, outer *DT.Row, params []any) (bool, error) {
+	sel, ok := stmt.(*PS.Select)
+	if !ok {
+		return false, EV.ErrSubquery
+	}
+	planResult, err := p.Plan(sel)
+	if err != nil {
+		return false, err
+	}
+	// Close the plan after probing for the first match so the
+	// memoized plan's outerInjector does not leak a stale outer
+	// reference across per-row calls (REQ000366).
+	defer planResult.Root.Close()
+	return WT.RunSubqueryFirstMatch(ctx, planResult, outer, params)
+}
+
 // estimateCost returns a unitless cost for the operator tree rooted at op.
 // The model uses uniform distribution: each row is 1.0 unit, filters and
 // joins apply selectivity, sort adds a log(n) factor. Real statistics land

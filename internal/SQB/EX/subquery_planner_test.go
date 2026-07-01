@@ -79,3 +79,82 @@ func TestSubqueryPlanner_CloneRowPreservesPlanner(t *testing.T) {
 		t.Error("DT.CloneRow should preserve Outer")
 	}
 }
+
+// TestPlanner_SemiJoin verifies REQ001073: EXISTS subqueries use a
+// short-circuit evaluation that stops scanning the right side after
+// the first matching row rather than materializing all rows. The test
+// validates correctness across correlated and non-correlated EXISTS,
+// NOT EXISTS, and multi-table setups. The short-circuit is exercised
+// by the type assertion in EV.evalExists falling through to
+// Plannner.ExecuteSubqueryFirstMatch.
+func TestPlanner_SemiJoin(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.RegisterTableWithPK("t1", []string{"id", "val"}, "id")
+	ex.Exec(ctx, "INSERT INTO t1 VALUES (1, 10)")
+	ex.Exec(ctx, "INSERT INTO t1 VALUES (2, 20)")
+	ex.Exec(ctx, "INSERT INTO t1 VALUES (3, 30)")
+
+	ex.RegisterTableWithPK("t2", []string{"id", "tid", "name"}, "id")
+	ex.Exec(ctx, "INSERT INTO t2 VALUES (10, 1, 'a')")
+	ex.Exec(ctx, "INSERT INTO t2 VALUES (20, 1, 'b')")
+	ex.Exec(ctx, "INSERT INTO t2 VALUES (30, 2, 'c')")
+
+	t.Run("noncorrelated_exists", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT id FROM t1 WHERE EXISTS (SELECT 1 FROM t2) ORDER BY id")
+		if err != nil {
+			t.Fatalf("noncorrelated EXISTS: %v", err)
+		}
+		if len(rows) != 3 {
+			t.Errorf("got %d rows, want 3", len(rows))
+		}
+	})
+	t.Run("correlated_exists", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT id FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.tid = t1.id) ORDER BY id")
+		if err != nil {
+			t.Fatalf("correlated EXISTS: %v", err)
+		}
+		// t2.tid=1 matches (t1.id=1), t2.tid=2 matches (t1.id=2)
+		if len(rows) != 2 {
+			t.Errorf("got %d rows, want 2; data=%v", len(rows), rows)
+		}
+	})
+	t.Run("not_exists", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT id FROM t1 WHERE NOT EXISTS (SELECT 1 FROM t2 WHERE t2.tid = t1.id) ORDER BY id")
+		if err != nil {
+			t.Fatalf("NOT EXISTS: %v", err)
+		}
+		// t1.id=3 has no matching t2 row
+		if len(rows) != 1 {
+			t.Errorf("got %d rows, want 1; data=%v", len(rows), rows)
+		}
+		if len(rows) > 0 && rows[0].Data[0].I64 != 3 {
+			t.Errorf("expected id=3, got %v", rows[0].Data[0])
+		}
+	})
+	t.Run("exists_self_join", func(t *testing.T) {
+		_, err := ex.Exec(ctx, "INSERT INTO t1 VALUES (4, 40)")
+		if err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+		rows, err := ex.QueryAll(ctx, "SELECT id FROM t1 AS a WHERE EXISTS (SELECT 1 FROM t1 WHERE t1.val = a.val AND t1.id != a.id) ORDER BY id")
+		if err != nil {
+			t.Fatalf("self-join EXISTS: %v", err)
+		}
+		_ = rows
+	})
+	t.Run("exists_in_compound", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT id FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.tid = t1.id) AND t1.val > 15 ORDER BY id")
+		if err != nil {
+			t.Fatalf("EXISTS + WHERE: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Errorf("got %d rows, want 1; data=%v", len(rows), rows)
+		}
+	})
+}

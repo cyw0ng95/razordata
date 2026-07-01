@@ -665,6 +665,16 @@ func evalExists(e *PS.ExistsExpr, outer *Row, params []any) (any, error) {
 	if pl == nil {
 		return nil, ErrSubquery
 	}
+	// REQ001073: short-circuit existential check — stop scanning the
+	// subquery after the first matching row instead of materializing
+	// all rows. The type assertion checks for the Planner's
+	// ExecuteSubqueryFirstMatch method (which lives in EX/planner.go);
+	// non-EX planners fall through to the legacy materialization path.
+	if sc, ok := pl.(interface {
+		ExecuteSubqueryFirstMatch(ctx context.Context, stmt PS.Stmt, outer *Row, params []any) (bool, error)
+	}); ok {
+		return sc.ExecuteSubqueryFirstMatch(context.Background(), e.Subquery, outer, params)
+	}
 	rows, err := pl.ExecuteSubquery(context.Background(), e.Subquery, outer, params)
 	if err != nil {
 		return nil, err
