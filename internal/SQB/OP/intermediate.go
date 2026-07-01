@@ -35,6 +35,25 @@ var batchBufPool = sync.Pool{
 	},
 }
 
+// REQ001091: projectDataBufPool reuses Project.dataBuf slices across
+// queries. Each Project carves a non-overlapping sub-slice [off:off:off+dataPerRow]
+// from dataBuf for every output row. Allocating a fresh 64*dataPerRow
+// buffer per query dominates allocations in workloads like select4
+// (~3857 allocs per run); pooling cuts the per-query allocation to
+// zero when the pool is warm. Chunk size 64*8=512 values matches the
+// common 8-column output of REQ000802's Project fast-path.
+var projectDataBufPool = sync.Pool{
+	New: func() any {
+		b := make([]Value, 0, projectDataBufChunkSize)
+		return &b
+	},
+}
+
+// projectDataBufChunkSize is the initial capacity (in values) of a
+// pooled Project.dataBuf. 512 values covers 64 rows × 8 cols which is
+// the modal Project output shape. REQ001091.
+const projectDataBufChunkSize = 512
+
 // isNullValue checks if a value represents SQL NULL.
 // Handles both raw nil and Value{Kind: KindNull}.
 func isNullValue(v any) bool {
@@ -306,6 +325,16 @@ func (p *Project) Cols() []PS.Expr { return p.cols }
 func (p *Project) SetExecCtx(ec *pl.ExecContext) { p.execCtx = ec }
 
 func NewProject(child Operator, cols []PS.Expr) *Project {
+	// REQ001091: acquire the data buffer from the pool so concurrent
+	// Projects share a backing array across queries. If the pool is
+	// empty or returns the wrong type, fall back to a fresh allocation.
+	dataBufPtr, _ := projectDataBufPool.Get().(*[]Value)
+	var dataBuf []Value
+	if dataBufPtr != nil {
+		dataBuf = (*dataBufPtr)[:0]
+	} else {
+		dataBufPtr = new([]Value)
+	}
 	// Pre-compute column names once (they're the same for every row).
 	prefixCols := make([]string, len(cols))
 	for i, c := range cols {
@@ -349,6 +378,7 @@ func NewProject(child Operator, cols []PS.Expr) *Project {
 		cols:       cols,
 		prefixCols: prefixCols,
 		colIndex:   colIndex,
+		dataBuf:    dataBuf,
 	}
 }
 
@@ -377,6 +407,10 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 	// REQ000802+: use pre-allocated data buffer to eliminate
 	// per-row make([]Value) allocations. Each row gets a
 	// non-overlapping sub-slice from the shared buffer.
+	// REQ001091: dataBuf is acquired from projectDataBufPool in
+	// NewProject, so the lazy-init branch is no longer needed for
+	// the common path. Keep a defensive fallback in case the buffer
+	// is nil (e.g. Project constructed directly without NewProject).
 	if p.dataBuf == nil {
 		p.dataPerRow = len(p.cols)
 		// REQ000872: start with smaller initial capacity (64 rows)
@@ -450,6 +484,14 @@ func findColumn(row Row, name string) (any, error) {
 }
 
 func (p *Project) Close() error {
+	// REQ001091: return the data buffer to the pool so the next
+	// Project can reuse the backing array. Only return buffers
+	// that grew to a meaningful size to avoid wasting pool slots
+	// on degenerate empty Projects.
+	if cap(p.dataBuf) >= projectDataBufChunkSize {
+		buf := p.dataBuf[:0]
+		projectDataBufPool.Put(&buf)
+	}
 	p.dataBuf = nil
 	p.dataPerRow = 0
 	return p.child.Close()
