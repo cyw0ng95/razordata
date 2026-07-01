@@ -21,7 +21,7 @@ var ErrConstraint = ap.ErrConstraint
 // their nil. The row is returned with the same Data slice length.
 // Returns a wrapped ErrConstraint on DEFAULT evaluation failure.
 // REQ000515: type coercion applied to match the column's declared type.
-func fillDefaults(schema *StoreSchema, row Row) (Row, error) {
+func fillDefaults(schema *DT.StoreSchema, row Row) (Row, error) {
 	if schema.Defaults == nil {
 		return row, nil
 	}
@@ -126,7 +126,7 @@ func coerceDefault(v Value, colType LX.TokenType) Value {
 // in row.Data. Columns with a DEFAULT are allowed to be nil at this
 // stage (fillDefaults runs first). Returns a wrapped ErrConstraint on
 // violation.
-func validateRow(schema *StoreSchema, row Row) error {
+func validateRow(schema *DT.StoreSchema, row Row) error {
 	for i, col := range schema.Cols {
 		if row.Data[i].IsNull() && !schema.Nullable[i] {
 			// REQ000713: INTEGER PRIMARY KEY allows NULL —
@@ -153,7 +153,7 @@ func isIntegerType(colTypes []LX.TokenType, i int) bool {
 
 // validateDecimal checks that values in DECIMAL/NUMERIC columns respect
 // the column's precision and scale. REQ000568.
-func validateDecimal(schema *StoreSchema, row Row) error {
+func validateDecimal(schema *DT.StoreSchema, row Row) error {
 	if schema.Precision == nil || schema.Scale == nil {
 		return nil
 	}
@@ -196,7 +196,7 @@ type uniqueLookupWithApply interface {
 // defined on the table. Returns a wrapped ErrConstraint on violation.
 // REQ000986: CHECK expressions are pre-compiled on first use and
 // cached in schema.CompiledChecks to avoid per-row AST re-evaluation.
-func validateCheck(schema *StoreSchema, row Row) error {
+func validateCheck(schema *DT.StoreSchema, row Row) error {
 	// Lazy-compile CHECK expressions on first call.
 	if schema.CompiledChecks == nil && len(schema.Checks) > 0 {
 		schema.CompiledChecks = make([]func(*Row) (bool, error), len(schema.Checks))
@@ -259,7 +259,7 @@ func validateCheck(schema *StoreSchema, row Row) error {
 // non-nil, each unique key's old value is compared: if the old value
 // equals the new value, the check is skipped (no-op self-match) so
 // `UPDATE t SET a = a` does not self-conflict. REQ000516.
-func checkUnique(schema *StoreSchema, row Row, pending map[string]struct{}, snapshot Row, lookup uniqueLookup) error {
+func checkUnique(schema *DT.StoreSchema, row Row, pending map[string]struct{}, snapshot Row, lookup uniqueLookup) error {
 	if lookup == nil {
 		return nil
 	}
@@ -509,7 +509,7 @@ func valueEqual(a, b any) bool {
 
 // removeConflicting removes rows from existing that conflict with out
 // on any unique key (including implicit PK). Returns the filtered slice.
-func removeConflicting(existing []Row, schema *StoreSchema, out Row) ([]Row, int) {
+func removeConflicting(existing []Row, schema *DT.StoreSchema, out Row) ([]Row, int) {
 	keys := schema.Unique
 	if schema.Pk != "" {
 		pkIdx := -1

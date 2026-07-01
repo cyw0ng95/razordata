@@ -134,11 +134,11 @@ func (a *AlterTable) execAddColumn() error {
 	}
 
 	// Copy FK constraints
-	var newFKs []ForeignKeyConstraint
+	var newFKs []DT.ForeignKeyConstraint
 	if ss.ForeignKeys != nil {
-		newFKs = make([]ForeignKeyConstraint, len(ss.ForeignKeys))
+		newFKs = make([]DT.ForeignKeyConstraint, len(ss.ForeignKeys))
 		for i, fk := range ss.ForeignKeys {
-			newFKs[i] = ForeignKeyConstraint{
+			newFKs[i] = DT.ForeignKeyConstraint{
 				Columns:    append([]string(nil), fk.Columns...),
 				RefTable:   fk.RefTable,
 				RefColumns: append([]string(nil), fk.RefColumns...),
@@ -325,7 +325,7 @@ func (a *AlterTable) execDropColumn() error {
 	}
 
 	// Rebuild FK constraints: remove any FK that references the dropped column
-	var newFKs []ForeignKeyConstraint
+	var newFKs []DT.ForeignKeyConstraint
 	for _, fk := range ss.ForeignKeys {
 		skip := false
 		for _, col := range fk.Columns {
@@ -337,7 +337,7 @@ func (a *AlterTable) execDropColumn() error {
 		if skip {
 			continue
 		}
-		newFKs = append(newFKs, ForeignKeyConstraint{
+		newFKs = append(newFKs, DT.ForeignKeyConstraint{
 			Columns:    append([]string(nil), fk.Columns...),
 			RefTable:   fk.RefTable,
 			RefColumns: append([]string(nil), fk.RefColumns...),
@@ -491,11 +491,11 @@ func (a *AlterTable) execRename() error {
 	for i, u := range ss.Unique {
 		newUnique[i] = UniqueKey{Cols: append([]int(nil), u.Cols...)}
 	}
-	var newFKs []ForeignKeyConstraint
+	var newFKs []DT.ForeignKeyConstraint
 	if ss.ForeignKeys != nil {
-		newFKs = make([]ForeignKeyConstraint, len(ss.ForeignKeys))
+		newFKs = make([]DT.ForeignKeyConstraint, len(ss.ForeignKeys))
 		for i, fk := range ss.ForeignKeys {
-			newFKs[i] = ForeignKeyConstraint{
+			newFKs[i] = DT.ForeignKeyConstraint{
 				Columns:    append([]string(nil), fk.Columns...),
 				RefTable:   fk.RefTable,
 				RefColumns: append([]string(nil), fk.RefColumns...),

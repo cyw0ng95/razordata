@@ -75,7 +75,7 @@ func UnregisterAll() {
 	DT.InMemSchemas = map[string]*DT.StoreSchema{}
 	DT.TableIDSeq = 0
 	DT.CurrentCatalog.Store(nil)
-	DT.RegisteredIndexes = map[string][]RegisteredIndex{}
+	DT.RegisteredIndexes = map[string][]DT.RegisteredIndex{}
 	DT.ViewRegistry = map[string]*PS.Select{}
 	DT.MatViewRegistry = map[string]*PS.Select{}
 	DT.StoreMu.Unlock()
