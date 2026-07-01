@@ -2,10 +2,13 @@ package ls
 
 import (
 	"bytes"
+	"container/heap"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
 	"golang.org/x/sync/errgroup"
@@ -51,12 +54,11 @@ type CompactionJobResult struct {
 }
 
 // RunSubCompaction splits inputs into parallel sub-range compaction jobs.
-// Each sub-job inherits the parent job's overlap, rate limiter, and
-// placement policy so the merged output is equivalent to a single
-// serial compactionJob over the full input range. REQ001048.
-//
-// If `inputs` is too small to benefit from partitioning (pivots < 2),
-// it falls back to a serial compactionJob.Run for simplicity.
+// REQ001157: two-phase approach — each sub-job writes a partial SST to
+// its own tmpPath (no manifest touch), then the coordinator merges all
+// partial outputs and applies a single manifest update. This eliminates
+// the manifest data race that occurred when parallel sub-jobs each
+// called compactionJob.Run independently.
 func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, inputs []SSTFileMeta, opts SubCompactionOptions) (*CompactionJobResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -73,9 +75,6 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 			rateLimiter:     opts.RateLimiter,
 			placementPolicy: opts.PlacementPolicy,
 		}
-		// REQ001048: even in single-job fallback, set a unique
-		// tmpPath so the legacy hard-coded name doesn't race with
-		// future parallel sub-jobs sharing the same temp dir.
 		if job.tmpPath == "" {
 			tp, err := uniqueSubTempPath(sc.dir)
 			if err != nil {
@@ -107,9 +106,6 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 		if len(subInputs) == 0 {
 			continue
 		}
-		// REQ001048: each sub-job sees only the overlap files whose
-		// key range intersects this sub-range. Filtering prevents
-		// double-counting overlap data across sub-jobs.
 		var subOverlap []SSTFileMeta
 		for _, ov := range opts.Overlap {
 			if bytes.Compare(ov.MaxKey, lo) < 0 || bytes.Compare(ov.MinKey, hi) >= 0 {
@@ -117,11 +113,6 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 			}
 			subOverlap = append(subOverlap, ov)
 		}
-		// REQ001048: each sub-job gets a unique tmpPath so parallel
-		// goroutines don't collide on the shared compaction.tmp
-		// filename inside compactionJob.Run. We use os.CreateTemp
-		// to guarantee uniqueness; the file is closed and removed
-		// immediately — compactionJob.Run will recreate it.
 		subTmp, err := uniqueSubTempPath(sc.dir)
 		if err != nil {
 			return nil, err
@@ -130,6 +121,9 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 			minKey: append([]byte(nil), lo...),
 			maxKey: append([]byte(nil), hi...),
 			job: &compactionJob{
+				// REQ001157: two-phase compaction — each sub-job writes a partial
+				// SST to its own tmpPath, then the coordinator merges all partial
+				// outputs and applies a single manifest update.
 				level:           sourceLevel,
 				inputs:          subInputs,
 				overlap:         subOverlap,
@@ -140,6 +134,8 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 		})
 	}
 
+	// REQ001157: Phase 1 — parallel partial SST writes (no manifest touch)
+	partialResults := make([]*partialResult, len(subs))
 	g, _ := errgroup.WithContext(ctx)
 	g.SetLimit(sc.concurrency)
 	for i := range subs {
@@ -148,13 +144,27 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 				release := nm.PinWorker()
 				defer release()
 			}
-			if err := subs[i].job.Run(sc.manifest, sc.dir); err != nil {
+			pr, err := subs[i].job.RunPartial(sc.dir)
+			if err != nil {
 				return err
 			}
+			partialResults[i] = pr
 			return nil
 		})
 	}
 	if err := g.Wait(); err != nil {
+		// Clean up partial temp files on failure
+		for _, pr := range partialResults {
+			if pr != nil {
+				_ = os.Remove(pr.tmpPath)
+			}
+		}
+		return nil, err
+	}
+
+	// REQ001157: Phase 2 — coordinator merges all partial outputs
+	// and applies a single manifest update (serial, no race)
+	if err := sc.mergePartials(partialResults, sc.manifest, sc.dir); err != nil {
 		return nil, err
 	}
 
@@ -162,6 +172,152 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 		SourceLevel: sourceLevel,
 		Inputs:      inputs,
 	}, nil
+}
+
+// mergePartials merges all partial SST outputs into a single SST file
+// and applies a single manifest update. REQ001157: coordinator phase.
+func (sc *SubCompactor) mergePartials(partials []*partialResult, manifest *manifest, dir string) error {
+	if len(partials) == 0 {
+		return ErrNoFilesToCompact
+	}
+
+	allInputs := make([]SSTFileMeta, 0, len(partials))
+	allOverlap := make([]SSTFileMeta, 0, len(partials))
+	for _, p := range partials {
+		allInputs = append(allInputs, p.inputs...)
+		allOverlap = append(allOverlap, p.overlap...)
+	}
+
+	outputLevel := partials[0].inputs[0].Level + 1
+	outputDir := sc.dir // sub-compaction outputs to same dir as inputs
+
+	// Merge all partial SSTs into a single SST
+	tmpFile, err := os.CreateTemp(outputDir, "merge-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+	defer tmpFile.Close()
+
+	w := acquireSSTWriter()
+	defer releaseSSTWriter(w)
+
+	iters := make([]*sstIterator, 0, len(partials))
+	for _, p := range partials {
+		reader, err := openSSTLazy(p.tmpPath)
+		if err != nil {
+			closeIterators(iters)
+			return err
+		}
+		iters = append(iters, reader.Iterator())
+	}
+
+	h := &keyHeap{items: iters}
+	heap.Init(h)
+
+	for h.Len() > 0 {
+		minItem := heap.Pop(h).(*sstIterator)
+		k := minItem.Key()
+		v := minItem.Value()
+		w.Add(k, v)
+		if minItem.Next() {
+			heap.Push(h, minItem)
+		}
+	}
+
+	closeIterators(iters)
+
+	sstData, err := w.Finish()
+	if err != nil {
+		return err
+	}
+
+	if _, err := tmpFile.Write(sstData); err != nil {
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+
+	// Determine global min/max key
+	globalMin := partials[0].minKey
+	globalMax := partials[0].maxKey
+	for _, p := range partials[1:] {
+		if bytes.Compare(p.minKey, globalMin) < 0 {
+			globalMin = p.minKey
+		}
+		if bytes.Compare(p.maxKey, globalMax) > 0 {
+			globalMax = p.maxKey
+		}
+	}
+
+	newFileID := nextFileID()
+	newFileName := fileName(&SSTFileMeta{
+		FileID:    newFileID,
+		Level:     outputLevel,
+		MinKey:    globalMin,
+		MaxKey:    globalMax,
+		Size:      int64(len(sstData)),
+		BloomBits: 10,
+	})
+	newPath := filepath.Join(outputDir, newFileName)
+	if err := os.Rename(tmpPath, newPath); err != nil {
+		return err
+	}
+
+	// Apply manifest update (single, serial — no race)
+	newLevels := make([][]SSTFileMeta, len(manifest.Current().levels))
+	copy(newLevels, manifest.Current().levels)
+
+	newLevels[partials[0].inputs[0].Level] = removeFiles(newLevels[partials[0].inputs[0].Level], allInputs)
+	newLevels[outputLevel] = removeFiles(newLevels[outputLevel], allOverlap)
+	newLevels[outputLevel] = append(newLevels[outputLevel], SSTFileMeta{
+		FileID:    newFileID,
+		Level:     outputLevel,
+		MinKey:    globalMin,
+		MaxKey:    globalMax,
+		Size:      int64(len(sstData)),
+		BloomBits: 10,
+	})
+
+	v := Version{
+		num:     manifest.Current().num + 1,
+		levels:  newLevels,
+		created: time.Now(),
+	}
+
+	if err := manifest.Apply(v); err != nil {
+		_ = os.Remove(newPath)
+		return err
+	}
+
+	// Remove input files
+	for _, input := range allInputs {
+		sstPath := filepath.Join(dir, fileName(&input))
+		if err := os.Remove(sstPath); err != nil && !os.IsNotExist(err) {
+			slog.Warn("compaction: remove input SST", "path", sstPath, "err", err)
+		}
+	}
+
+	for _, ov := range allOverlap {
+		sstPath := filepath.Join(dir, fileName(&ov))
+		if err := os.Remove(sstPath); err != nil && !os.IsNotExist(err) {
+			slog.Warn("compaction: remove overlap SST", "path", sstPath, "err", err)
+		}
+	}
+
+	// Remove partial temp files
+	for _, p := range partials {
+		if err := os.Remove(p.tmpPath); err != nil && !os.IsNotExist(err) {
+			slog.Warn("compaction: remove partial tmp", "path", p.tmpPath, "err", err)
+		}
+	}
+
+	return nil
 }
 
 // pivotKeys returns n+1 boundary keys for partitioning.

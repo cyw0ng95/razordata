@@ -397,7 +397,12 @@ func (p *Planner) RegisterIndex(table, index string, cols []string) {
 }
 
 func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
-	key := pl.SerializeKey(stmt)
+	rewritten, err := RE.Rewrite(stmt)
+	if err != nil {
+		return nil, err
+	}
+
+	key := pl.SerializeKey(rewritten)
 	p.mu.Lock()
 	if cached, ok := p.memo[key]; ok {
 		p.mu.Unlock()
@@ -406,11 +411,6 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	p.mu.Unlock()
 
 	var root Operator
-
-	rewritten, err := RE.Rewrite(stmt)
-	if err != nil {
-		return nil, err
-	}
 
 	switch s := rewritten.(type) {
 	case *PS.Select:
@@ -674,6 +674,17 @@ func (p *Planner) estimateCostLegacy(op Operator) float64 {
 			return 0.05
 		}
 		return 0.1
+	case *BitmapHeapScan:
+		// REQ001106: bitmap heap scan cost = sum of child
+		// index seek costs + a single heap-fanout pass. We
+		// model each child as a real seek (0.05) and add a
+		// fixed bookkeeping factor so a 2-child bitmap is
+		// cheaper than 2 separate IndexScans+Filter stacks.
+		return 0.05*float64(len(v.IndexScans())) + 0.05
+	case *IndexOnlyScan:
+		// REQ001107: index-only scan is the cheapest path —
+		// no heap fetch, just index entry emission.
+		return 0.03
 	case *Filter:
 		return p.estimateCostLegacy(v.Child()) * p.estimatePredicateSelectivity(v.Predicate())
 	case *Project:
@@ -1726,6 +1737,36 @@ func collectTablesFromExpr(e PS.Expr, tables map[string]bool, hasUnqualified *bo
 	})
 }
 
+// joinOnReferences reports whether a join's ON clause references any
+// of the given table names. Used by REQ001155 to decide whether a join
+// can be safely eliminated when SELECT/WHERE/ORDER/GROUP/HAVING do not
+// reference the joined table. The ON clause is part of the query's
+// semantic contract: if it references a table, dropping the join
+// changes the result set.
+func joinOnReferences(j PS.JoinClause, tableNames ...string) bool {
+	if j.On == nil {
+		return false
+	}
+	wanted := make(map[string]bool, len(tableNames))
+	for _, n := range tableNames {
+		if n != "" {
+			wanted[n] = true
+		}
+	}
+	if len(wanted) == 0 {
+		return false
+	}
+	referenced := false
+	walkExpr(j.On, func(node PS.Expr) {
+		if qn, ok := node.(*PS.QualifiedName); ok {
+			if wanted[qn.Table] {
+				referenced = true
+			}
+		}
+	})
+	return referenced
+}
+
 func log2ish(x float64) float64 {
 	if x <= 1 {
 		return 0
@@ -1976,10 +2017,25 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 
 	var scan Operator
 	if p.store != nil {
-		scan = p.planSelectScan(s, whereExpr)
+		scan, whereExpr = p.planSelectScan(s, whereExpr)
 	}
 	if scan == nil {
 		scan = NewIndexOrSeqScan(s.From, whereExpr, p)
+	}
+
+	// REQ001106: bitmap heap scan for multi-index OR/AND predicates
+	// REQ001107: covering-index detection (IndexOnlyScan) on any scan path
+	if scan != nil {
+		if whereExpr != nil {
+			if bitmap := p.tryBitmapHeapScan(s, whereExpr); bitmap != nil {
+				scan = bitmap
+			}
+		}
+		if _, ok := scan.(*IndexScan); ok {
+			if cover := p.tryIndexOnlyScan(s, whereExpr, scan); cover != nil {
+				scan = cover
+			}
+		}
 	}
 
 	// REQ000156 (iter-27): cost-based scan selection. If the
@@ -2071,6 +2127,15 @@ func (p *Planner) planSelect(s *PS.Select) Operator {
 					// REQ000835/836: when the same table is used
 					// with different aliases (e.g. tab0 a, tab0 b),
 					// check both the physical name and the alias.
+					filtered = append(filtered, j)
+				} else if joinOnReferences(j, j.Right, j.RightAlias, s.From, s.FromAlias) {
+					// REQ001155: a join's ON clause may reference the
+					// joined table even when SELECT/WHERE/ORDER/GROUP/
+					// HAVING do not. The ON clause constrains which
+					// rows survive the join, so dropping the join
+					// changes the result set. Preserve the join when
+					// its ON references either side (right name,
+					// right alias, left name, left alias).
 					filtered = append(filtered, j)
 				}
 			}
@@ -2401,10 +2466,11 @@ func (p *Planner) resolveAliasesAndFold(whereExpr PS.Expr) PS.Expr {
 // planSelectScan creates the scan operator (IndexScan or SeqScan) for
 // the FROM table, trying index seeks first.
 // REQ000981: extracted from planSelect.
-func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
+func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (Operator, PS.Expr) {
 	var scan Operator
+	remaining := whereExpr
 	if p.store == nil {
-		return nil
+		return nil, remaining
 	}
 	// Try IndexScan first when the WHERE references an indexed column.
 	// iter-22: prefer NewIndexScanWithIndex (real seek) over the
@@ -2412,15 +2478,34 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 	// the indexed column AND the index is registered for writer
 	// maintenance (i.e. the index keyspace is populated).
 	if whereExpr != nil {
+		// REQ001108: decompose WHERE into residual
+		// (pushed into scan) and extra (outer Filter).
+		// Only decompose for real index seeks (EQ/range/LIKE).
+		// The prefix-scan fallback (NewIndexScanWithStore) cannot
+		// use decomposition because it returns ALL rows (table
+		// prefix, not index prefix); the old Filter behavior
+		// must be preserved for that path.
+		//
+		// hasWriterIndex guard: the index must be registered
+		// with DT.RegisteredIndexes for the writer to maintain
+		// it. If the test populates the index manually (e.g.
+		// idxStore.Insert), hasWriterIndex returns false and
+		// we use the prefix-scan fallback.
 		if col, val, ok := indexedColumnEq(whereExpr); ok {
 			idx, found := p.selectIndex(s.From, col)
 			if found && hasWriterIndex(s.From, idx) {
 				tableID, _ := DT.TableIDFor(s.From)
 				if isc, err := OP.NewIndexScanWithIndex(p.store, tableID, s.From, idx, val, nil); err == nil {
-					if whereExpr != nil {
-						scan = OP.NewFilter(isc, whereExpr)
+					residual, extra := p.decomposeForIndexScan(whereExpr, col)
+					if len(residual) > 0 {
+						isc.WithResidual(residual)
+					}
+					if len(extra) > 0 {
+						scan = OP.NewFilter(isc, rebuildAnd(extra))
+						remaining = rebuildAnd(extra)
 					} else {
 						scan = isc
+						remaining = nil
 					}
 				}
 			}
@@ -2435,9 +2520,18 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 				if found && hasWriterIndex(s.From, idx) {
 					tableID, _ := DT.TableIDFor(s.From)
 					if isc, err := OP.NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
-						scan = isc
-						if whereExpr != nil {
-							scan = OP.NewFilter(scan, whereExpr)
+						// REQ001108: decompose WHERE into residual
+						// and extra.
+						residual, extra := p.decomposeForIndexScan(whereExpr, col)
+						if len(residual) > 0 {
+							isc.WithResidual(residual)
+						}
+						if len(extra) > 0 {
+							scan = OP.NewFilter(isc, rebuildAnd(extra))
+							remaining = rebuildAnd(extra)
+						} else {
+							scan = isc
+							remaining = nil
 						}
 					}
 				}
@@ -2453,9 +2547,17 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 					copy(upper, prefix)
 					upper[len(prefix)] = 0xff
 					if isc, err := OP.NewIndexScanWithRange(p.store, tableID, s.From, idx, prefix, true, upper, false); err == nil {
-						scan = isc
-						if whereExpr != nil {
-							scan = OP.NewFilter(scan, whereExpr)
+						// REQ001108: decompose WHERE.
+						residual, extra := p.decomposeForIndexScan(whereExpr, col)
+						if len(residual) > 0 {
+							isc.WithResidual(residual)
+						}
+						if len(extra) > 0 {
+							scan = OP.NewFilter(isc, rebuildAnd(extra))
+							remaining = rebuildAnd(extra)
+						} else {
+							scan = isc
+							remaining = nil
 						}
 					}
 				}
@@ -2465,9 +2567,14 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 			if col, ok := indexedColumn(whereExpr); ok {
 				if idx, found := p.selectIndex(s.From, col); found {
 					if isc, err := OP.NewIndexScanWithStore(p.store, s.From, idx); err == nil {
-						scan = isc
+						// REQ001108: NewIndexScanWithStore is a table
+						// prefix scan (returns ALL rows), not a real
+						// index seek. Decomposition is not applicable;
+						// the full WHERE must remain as Filter.
 						if whereExpr != nil {
-							scan = OP.NewFilter(scan, whereExpr)
+							scan = OP.NewFilter(isc, whereExpr)
+						} else {
+							scan = isc
 						}
 					}
 				}
@@ -2479,7 +2586,197 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) Operator {
 			scan = ssc
 		}
 	}
-	return scan
+	return scan, remaining
+}
+
+// tryBitmapHeapScan combines multiple index conditions on
+// distinct indexed columns into a BitmapHeapScan. Returns nil if
+// the predicate is not eligible (e.g. only one indexed column,
+// or columns lack registered indexes). REQ001106.
+//
+// Detects the top-level OR-of-equality shape: at least two
+// operands each carry an indexed-column equality on a distinct
+// column whose index is registered. Each child becomes an
+// IndexScan; the result bitmap is fetched once per row via the
+// heap.
+func (p *Planner) tryBitmapHeapScan(s *PS.Select, whereExpr PS.Expr) Operator {
+	if s == nil || whereExpr == nil || p.store == nil {
+		return nil
+	}
+	cols, lits, ok := extractOrIndexedEqColumns(whereExpr)
+	if !ok || len(cols) < 2 {
+		return nil
+	}
+	if len(cols) != len(lits) {
+		return nil
+	}
+	children := make([]Operator, 0, len(cols))
+	for i, col := range cols {
+		idx, found := p.selectIndex(s.From, col)
+		if !found || !hasWriterIndex(s.From, idx) {
+			return nil
+		}
+		tableID, _ := DT.TableIDFor(s.From)
+		isc, err := OP.NewIndexScanWithIndex(p.store, tableID, s.From, idx, lits[i], nil)
+		if err != nil {
+			return nil
+		}
+		children = append(children, isc)
+	}
+	if len(children) < 2 {
+		return nil
+	}
+	bhs := OP.NewBitmapHeapScan(s.From, p.store, children)
+	if whereExpr != nil {
+		return OP.NewFilter(bhs, whereExpr)
+	}
+	return bhs
+}
+
+// extractOrIndexedEqColumns recognises top-level OR whose
+// branches are indexed-column equalities on distinct columns.
+// Returns the columns and their indexed-key bytes, in order. Only
+// the simplest shape — `col1 = lit1 OR col2 = lit2` (or
+// OR-chains) — is recognised. Deeper expressions fall through
+// to the IndexScan/SeqScan path.
+func extractOrIndexedEqColumns(e PS.Expr) ([]string, [][]byte, bool) {
+	b, ok := e.(*PS.BinaryExpr)
+	if !ok || b.Op != LX.T_OR {
+		// also handle top-level BinaryExpr that wraps a single AND-of-OR?
+		// For Step 3b we keep scope tight: OR only.
+		return nil, nil, false
+	}
+	branches := flattenOr(b)
+	if len(branches) < 2 {
+		return nil, nil, false
+	}
+	cols := make([]string, 0, len(branches))
+	lits := make([][]byte, 0, len(branches))
+	seen := make(map[string]struct{}, len(branches))
+	for _, br := range branches {
+		col, lit, ok := indexedColumnEq(br)
+		if !ok {
+			return nil, nil, false
+		}
+		if _, dup := seen[col]; dup {
+			// Same column twice → simple IndexScan path is enough;
+			// bitmap doesn't help.
+			return nil, nil, false
+		}
+		seen[col] = struct{}{}
+		cols = append(cols, col)
+		lits = append(lits, lit)
+	}
+	return cols, lits, true
+}
+
+// flattenOr returns the leaves of a top-level chain of OR
+// BinaryExprs. The leaves preserve the order they appear in the
+// predicate so the bitmap ordering is stable across calls.
+func flattenOr(e PS.Expr) []PS.Expr {
+	var out []PS.Expr
+	var walk func(PS.Expr)
+	walk = func(x PS.Expr) {
+		if x == nil {
+			return
+		}
+		b, ok := x.(*PS.BinaryExpr)
+		if ok && b.Op == LX.T_OR {
+			walk(b.Left)
+			walk(b.Right)
+			return
+		}
+		out = append(out, x)
+	}
+	walk(e)
+	return out
+}
+
+// tryIndexOnlyScan wraps an IndexScan in IndexOnlyScan when the
+// projected columns are entirely covered by the index columns
+// (plus optionally the primary key). Returns nil if not
+// eligible. REQ001107.
+//
+// Conservative guard: we refuse to wrap when the projection is
+// empty or `*` (i.e. SELECT 1 or SELECT *). Those cases already
+// work via IndexScan — wrapping them in IndexOnlyScan breaks
+// correlated-subquery machinery that inspects the inner scan
+// type. Only concrete column projections trigger the path.
+func (p *Planner) tryIndexOnlyScan(s *PS.Select, whereExpr PS.Expr, scan Operator) Operator {
+	if s == nil || scan == nil {
+		return nil
+	}
+	isc, ok := scan.(*IndexScan)
+	if !ok || isc == nil {
+		return nil
+	}
+	pk := p.tablePK(s.From)
+	idxCols, ok := p.indexColumns(s.From, isc.Idx())
+	if !ok {
+		return nil
+	}
+	projected := projectColumns(s)
+	if len(projected) == 0 {
+		return nil
+	}
+	if !OP.IsCoveringIndex(projected, idxCols, pk) {
+		return nil
+	}
+	_ = whereExpr
+	return OP.NewIndexOnlyScan(isc)
+}
+
+// projectColumns returns the projected column names from a
+// Select. StarExpr maps to nil so IsCoveringIndex rejects
+// covering evaluation gracefully (it returns true only for
+// empty projection).
+func projectColumns(s *PS.Select) []string {
+	if s == nil || len(s.Cols) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(s.Cols))
+	for _, c := range s.Cols {
+		switch v := c.(type) {
+		case *PS.StarExpr:
+			return nil // any column → not covering
+		case *PS.Ident:
+			out = append(out, v.Name)
+		default:
+			return nil
+		}
+	}
+	return out
+}
+
+// tablePK looks up the primary key column for a registered
+// table. Empty string when unknown — IsCoveringIndex treats an
+// empty pk as "no pk cover" and falls back to index-column
+// coverage only.
+func (p *Planner) tablePK(table string) string {
+	if p.catalog == nil {
+		return ""
+	}
+	if t, ok := p.catalog[table]; ok && t != nil {
+		return t.pk
+	}
+	return ""
+}
+
+// indexColumns returns the columns a registered index covers
+// and whether the index exists.
+func (p *Planner) indexColumns(table, idx string) ([]string, bool) {
+	if p.catalog == nil {
+		return nil, false
+	}
+	t, ok := p.catalog[table]
+	if !ok || t == nil {
+		return nil, false
+	}
+	cols, ok := t.indexes[idx]
+	if !ok {
+		return nil, false
+	}
+	return append([]string(nil), cols...), true
 }
 func propagateLimitToNLJ(op Operator, n int64) {
 	switch t := op.(type) {
@@ -3010,6 +3307,15 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) Operator {
 // returns the original scan unchanged. If the cost of the
 // index scan is not lower, the original scan is returned.
 func (p *Planner) pickCheaperScan(table string, where PS.Expr, current Operator) (Operator, bool) {
+	// REQ001106/107: don't downgrade a bitmap/index-only scan
+	// back to a plain IndexScan via the cost model — the new
+	// operators are explicit planner choices, not cost fallback.
+	if _, isBitmap := current.(*BitmapHeapScan); isBitmap {
+		return current, false
+	}
+	if _, isCover := current.(*IndexOnlyScan); isCover {
+		return current, false
+	}
 	// REQ000156 (iter-27): cost-based scan selection. The
 	// function looks at the WHERE predicate to discover the
 	// indexed column. We accept both simple equality
@@ -3333,9 +3639,19 @@ func limitInt64(e PS.Expr) (int64, bool) {
 func (p *Planner) planInsert(s *PS.Insert) Operator {
 	// REQ000707: INSERT INTO t SELECT ...
 	if s.Select != nil {
-		selPlan, err := p.Plan(s.Select)
-		if err == nil && selPlan != nil && selPlan.Root != nil {
-			op := NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+		selPlan, selErr := p.Plan(s.Select)
+		if selErr == nil && selPlan != nil && selPlan.Root != nil {
+			var op *Insert
+			if p.store != nil {
+				// REQ001129: store-backed INSERT...SELECT needs
+				// a store-backed Insert operator.
+				op, selErr = NewInsertWithStore(p.store, s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+				if selErr != nil {
+					return nil
+				}
+			} else {
+				op = NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+			}
 			op.selectPlan = selPlan.Root
 			propagatePlanner(selPlan.Root, p)
 			return op
@@ -5771,4 +6087,128 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan Operator, pushedPre
 		}
 	}
 	return current
+}
+
+// collectColRefs gathers all unqualified column names referenced
+// in the expression. For index-decomposition we only need the
+// names; we don't trace qualified/table-prefixed refs yet.
+func collectColRefs(e PS.Expr) []string {
+	if e == nil {
+		return nil
+	}
+	switch n := e.(type) {
+	case *PS.Ident:
+		return []string{n.Name}
+	case *PS.BinaryExpr:
+		return append(collectColRefs(n.Left), collectColRefs(n.Right)...)
+	case *PS.UnaryExpr:
+		return collectColRefs(n.Operand)
+	case *PS.AliasedExpr:
+		return collectColRefs(n.Expr)
+	case *PS.CastExpr:
+		return collectColRefs(n.Expr)
+	case *PS.FunctionCall:
+		var refs []string
+		for _, a := range n.Args {
+			refs = append(refs, collectColRefs(a)...)
+		}
+		return refs
+	case *PS.BetweenExpr:
+		return append(
+			append(collectColRefs(n.Expr), collectColRefs(n.Low)...),
+			collectColRefs(n.High)...)
+	case *PS.InExpr:
+		var refs []string
+		refs = append(refs, collectColRefs(n.Expr)...)
+		for _, a := range n.List {
+			refs = append(refs, collectColRefs(a)...)
+		}
+		return refs
+	case *PS.ListExpr:
+		var refs []string
+		for _, a := range n.Items {
+			refs = append(refs, collectColRefs(a)...)
+		}
+		return refs
+	case *PS.CaseExpr:
+		var refs []string
+		refs = append(refs, collectColRefs(n.Expr)...)
+		for _, w := range n.WhenList {
+			refs = append(refs, collectColRefs(w.Cond)...)
+			refs = append(refs, collectColRefs(w.Then)...)
+		}
+		refs = append(refs, collectColRefs(n.Else)...)
+		return refs
+	}
+	return nil
+}
+
+// rebuildAnd constructs a left-deep AND tree from a slice of
+// expressions. An empty/nil slice returns nil. A single-element
+// slice returns that element unwrapped.
+func rebuildAnd(exprs []PS.Expr) PS.Expr {
+	if len(exprs) == 0 {
+		return nil
+	}
+	if len(exprs) == 1 {
+		return exprs[0]
+	}
+	acc := exprs[0]
+	for i := 1; i < len(exprs); i++ {
+		acc = &PS.BinaryExpr{Op: LX.T_AND, Left: acc, Right: exprs[i]}
+	}
+	return acc
+}
+
+// decomposeForIndexScan splits the WHERE expression into three
+// groups relative to the scanColumn that is used as the index
+// seek key. The split is:
+//
+//	indexable — conjuncts that reference ONLY scanColumn AND are
+//	             already matched by the index seek (e.g. col=5
+//	             or col BETWEEN 1 AND 10). These are NOT added
+//	             as residual or filter; the seek handles them.
+//	residual  — conjuncts that reference ONLY scanColumn but are
+//	             NOT the primary seek condition (e.g. col>0 or
+//	             col IS NOT NULL). These supplement the seek.
+//	extra     — conjuncts that reference other columns or
+//	             multiple columns. These must stay in an outer
+//	             Filter because the index path cannot evaluate
+//	             them.
+//
+// The first indexable conjunct that carries a bound (eq or
+// range) is selected as the seek condition; subsequent ones
+// become residual.
+//
+// REQ001108.
+func (p *Planner) decomposeForIndexScan(whereExpr PS.Expr, scanCol string) (residual, extra []PS.Expr) {
+	conjuncts := RE.SplitAnd(whereExpr)
+	if len(conjuncts) == 0 {
+		return nil, nil
+	}
+	// The seek condition is the first indexable conjunct with
+	// a concrete bound. We detect it by checking indexedColumnEq
+	// and indexedColumnRange patterns. Everything else is extra
+	// or residual.
+	seekFound := false
+	for _, c := range conjuncts {
+		refs := collectColRefs(c)
+		scanColOnly := len(refs) == 1 && refs[0] == scanCol
+		if !scanColOnly {
+			extra = append(extra, c)
+			continue
+		}
+		if !seekFound {
+			if col, _, ok := indexedColumnEq(c); ok && col == scanCol {
+				seekFound = true
+				continue
+			}
+			if col, _, _, _, _, ok := indexedColumnRange(c); ok && col == scanCol {
+				seekFound = true
+				continue
+			}
+		}
+		residual = append(residual, c)
+	}
+	return residual, extra
 }

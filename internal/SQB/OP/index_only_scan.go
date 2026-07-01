@@ -60,11 +60,11 @@ func (s *IndexOnlyScan) Close() error {
 	return s.inner.Close()
 }
 
-// isCoveringIndex returns true when the supplied projected columns
+// IsCoveringIndex returns true when the supplied projected columns
 // are all covered by the index columns (plus optionally the
 // primary key). REQ001107. Empty projection is treated as a
 // covering query (no columns needed).
-func isCoveringIndex(projected []string, indexCols []string, pk string) bool {
+func IsCoveringIndex(projected []string, indexCols []string, pk string) bool {
 	if len(projected) == 0 {
 		return true
 	}

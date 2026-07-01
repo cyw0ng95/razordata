@@ -188,6 +188,7 @@ func TestIndexScan_RangeSeek_Planner(t *testing.T) {
 // TestIndexScan_RangeSeek_PlannerExplains verifies the plan text
 // for a range predicate includes IndexScan (not SeqScan fallback).
 func TestIndexScan_RangeSeek_PlannerExplains(t *testing.T) {
+	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()

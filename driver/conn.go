@@ -30,9 +30,13 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	if c == nil || c.session == nil {
 		return nil, AP.ErrNotOpen
 	}
-	vals := make([]driver.Value, len(args))
+	// REQ001125: route through the session so the per-session
+	// counter for CHANGES() and TOTAL_CHANGES() is maintained. The
+	// Prepare+stmt.Exec path goes through ST.Stmt.Exec which calls
+	// s.engine.Executor() and bypasses the session layer.
+	anyArgs := make([]any, len(args))
 	for i, a := range args {
-		vals[i] = a.Value
+		anyArgs[i] = a.Value
 	}
 	sess, ok := c.session.(*SE.Session)
 	if !ok || !sess.HasActiveTxn() {
@@ -40,35 +44,25 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		if err != nil {
 			return nil, err
 		}
-		stmt, err := Prepare(c, query)
-		if err != nil {
-			_ = tx.Rollback(ctx)
-			return nil, err
-		}
-		res, err := stmt.Exec(vals)
-		if err != nil {
-			_ = stmt.Close()
-			_ = tx.Rollback(ctx)
-			return nil, err
-		}
-		if err := stmt.Close(); err != nil {
-			_ = tx.Rollback(ctx)
-			return nil, err
-		}
-		if err := tx.Commit(ctx); err != nil {
+		// Roll back the auto-begin so Session.Exec sees an inactive
+		// txn path (it acquires the session lock itself).
+		if err := tx.Rollback(ctx); err != nil {
 			return nil, err
 		}
 		sess.ClearTxn()
-		return res, nil
+		res, err := c.session.Exec(ctx, query, anyArgs...)
+		if err != nil {
+			return nil, err
+		}
+		return Result{lastID: int64(res.LastInsertID), n: res.RowsAffected}, nil
 	}
 	sess.SetTxWriterForTxn()
 	defer sess.ClearTxWriter()
-	stmt, err := Prepare(c, query)
+	res, err := c.session.Exec(ctx, query, anyArgs...)
 	if err != nil {
 		return nil, err
 	}
-	defer stmt.Close()
-	return stmt.Exec(vals)
+	return Result{lastID: int64(res.LastInsertID), n: res.RowsAffected}, nil
 }
 
 func (c *Conn) Exec(query string, args []driver.Value) (driver.Result, error) {

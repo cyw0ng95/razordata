@@ -869,6 +869,14 @@ func compileFilterExpr(e PS.Expr) func(*Row) (bool, error) {
 		return compileInExpr(v)
 	case *PS.UnaryExpr:
 		if v.Op == LX.T_NOT {
+			// REQ001127: NOT InExpr requires NULL-aware three-valued
+			// logic that the compiled (bool,error) path cannot express
+			// (NULL IN list is NULL, not FALSE, so NOT NULL is NULL,
+			// not TRUE). Fall back to the per-row Eval path which
+			// handles NULL correctly.
+			if _, ok := v.Operand.(*PS.InExpr); ok {
+				return nil
+			}
 			inner := compileFilterExpr(v.Operand)
 			if inner == nil {
 				return nil

@@ -13,9 +13,11 @@ import (
 var crc32Koopman = crc32.MakeTable(crc32.Koopman) // REQ000588: pre-allocated
 
 const (
-	sstBlockSize  = 4 * 1024
-	sstFooterSize = 28
-	sstMagic      = 0x52545453
+	sstBlockSize             = 4 * 1024
+	sstFooterSize            = 44 // REQ001008: extended from 28 to 44 (added range tombstone offset/size + version)
+	sstFooterSizeOld         = 28 // legacy footer size for backward compatibility
+	sstMagic                 = 0x52545453
+	sstVersionRangeTombstone = 1 // REQ001008: SST version with range tombstone support
 )
 
 var (
@@ -30,11 +32,14 @@ type indexEntry struct {
 }
 
 type sstWriter struct {
-	blocks             [][]byte
-	indexEntries       []indexEntry
-	bloom              []byte
-	prefixBloom        []byte
-	keys               [][]byte
+	blocks       [][]byte
+	indexEntries []indexEntry
+	bloom        []byte
+	prefixBloom  []byte
+	keys         [][]byte
+	// REQ001008: range tombstones stored as [start, end) pairs.
+	// Sorted by start key. Written to a separate block in the SST.
+	rangeTombstones    [][]byte // interleaved: start1, end1, start2, end2, ...
 	keyCount           int
 	minKey             []byte
 	maxKey             []byte
@@ -45,9 +50,10 @@ type sstWriter struct {
 var sstWriterPool = sync.Pool{
 	New: func() any {
 		return &sstWriter{
-			blocks:       make([][]byte, 0, 16),
-			indexEntries: make([]indexEntry, 0, 16),
-			keys:         make([][]byte, 0, 256),
+			blocks:          make([][]byte, 0, 16),
+			indexEntries:    make([]indexEntry, 0, 16),
+			keys:            make([][]byte, 0, 256),
+			rangeTombstones: make([][]byte, 0, 16),
 		}
 	},
 }
@@ -63,9 +69,10 @@ func releaseSSTWriter(w *sstWriter) {
 
 func newSSTWriter() *sstWriter {
 	return &sstWriter{
-		blocks:       make([][]byte, 0, 16),
-		indexEntries: make([]indexEntry, 0, 16),
-		keys:         make([][]byte, 0, 256),
+		blocks:          make([][]byte, 0, 16),
+		indexEntries:    make([]indexEntry, 0, 16),
+		keys:            make([][]byte, 0, 256),
+		rangeTombstones: make([][]byte, 0, 16),
 	}
 }
 
@@ -79,6 +86,7 @@ func bloomSizeFor(n int) int {
 // bloomSizeForPow2 returns a byte count that is a power of 2,
 // large enough to hold bloomSizeFor(n) bytes.
 func bloomSizeForPow2(n int) int {
+	// REQ001008: range tombstones should suppress keys in the range
 	base := bloomSizeFor(n)
 	return int(nextPow2(uint32(base)))
 }
@@ -118,6 +126,13 @@ func (w *sstWriter) Add(key, value []byte) {
 	w.keyCount++
 	w.keys = append(w.keys, append([]byte(nil), key...))
 	w.lastKey = append(w.lastKey[:0], key...)
+}
+
+// AddRangeTombstone adds a range tombstone covering [start, end).
+// REQ001008: range tombstones suppress all keys in the range.
+func (w *sstWriter) AddRangeTombstone(start, end []byte) {
+	w.rangeTombstones = append(w.rangeTombstones, append([]byte(nil), start...))
+	w.rangeTombstones = append(w.rangeTombstones, append([]byte(nil), end...))
 }
 
 func (w *sstWriter) setBloomBitForSize(key []byte, size int) {
@@ -173,7 +188,7 @@ func (w *sstWriter) finishCurrentBlock() {
 }
 
 func (w *sstWriter) Finish() ([]byte, error) {
-	if len(w.blocks) == 0 {
+	if len(w.blocks) == 0 && len(w.rangeTombstones) == 0 {
 		return nil, nil
 	}
 
@@ -196,6 +211,7 @@ func (w *sstWriter) Finish() ([]byte, error) {
 
 	var buf bytes.Buffer
 
+	// Write compressed data blocks
 	sharedDict := trainSSTDict(w.blocks, 4096)
 	compressedOffsets := make([]int, len(w.blocks))
 	for i, block := range w.blocks {
@@ -218,8 +234,24 @@ func (w *sstWriter) Finish() ([]byte, error) {
 		w.indexEntries[i].blockSize = end - start
 	}
 
-	indexOffset := buf.Len()
+	// REQ001008: write range tombstone block after data blocks, before index
+	rangeTombstoneOffset := 0
+	rangeTombstoneSize := 0
+	if len(w.rangeTombstones) > 0 {
+		rangeTombstoneOffset = buf.Len()
+		for i := 0; i < len(w.rangeTombstones); i += 2 {
+			start := w.rangeTombstones[i]
+			end := w.rangeTombstones[i+1]
+			buf.Write(encodeVarint(int64(len(start))))
+			buf.Write(start)
+			buf.Write(encodeVarint(int64(len(end))))
+			buf.Write(end)
+		}
+		rangeTombstoneSize = buf.Len() - rangeTombstoneOffset
+	}
 
+	// Write index block
+	indexOffset := buf.Len()
 	offsetBuf := make([]byte, 8)
 	sizeBuf := make([]byte, 8)
 	for _, entry := range w.indexEntries {
@@ -231,20 +263,32 @@ func (w *sstWriter) Finish() ([]byte, error) {
 		binary.LittleEndian.PutUint64(sizeBuf, uint64(entry.blockSize))
 		buf.Write(sizeBuf)
 	}
-
 	indexSize := buf.Len() - indexOffset
 
+	// Write bloom filters
 	bloomOffset := buf.Len()
 	buf.Write(w.bloom)
-
 	buf.Write(w.prefixBloom)
 
+	// REQ001008: write 44-byte footer with range tombstone metadata
 	footer := make([]byte, sstFooterSize)
+	// [0:8] index_offset
 	binary.LittleEndian.PutUint64(footer[0:8], uint64(indexOffset))
+	// [8:12] index_size
 	binary.LittleEndian.PutUint32(footer[8:12], uint32(indexSize))
+	// [12:20] bloom_offset
 	binary.LittleEndian.PutUint64(footer[12:20], uint64(bloomOffset))
+	// [20:24] bloom_size
 	binary.LittleEndian.PutUint32(footer[20:24], uint32(bloomSize))
-	binary.LittleEndian.PutUint32(footer[24:28], sstMagic)
+	// [24:32] range_tombstone_offset
+	binary.LittleEndian.PutUint64(footer[24:32], uint64(rangeTombstoneOffset))
+	// [32:36] range_tombstone_size
+	binary.LittleEndian.PutUint32(footer[32:36], uint32(rangeTombstoneSize))
+	// [36:40] magic
+	binary.LittleEndian.PutUint32(footer[36:40], sstMagic)
+	// [40:44] version
+	// REQ001008: range tombstones should suppress keys in the range
+	binary.LittleEndian.PutUint32(footer[40:44], sstVersionRangeTombstone)
 	buf.Write(footer)
 
 	return buf.Bytes(), nil
@@ -259,6 +303,7 @@ func (w *sstWriter) Reset() {
 	w.keyCount = 0
 	w.minKey = w.minKey[:0]
 	w.maxKey = w.maxKey[:0]
+	w.rangeTombstones = w.rangeTombstones[:0]
 }
 
 // compressBlock compresses a data block using flate (REQ000271).

@@ -218,10 +218,10 @@ type entryItem struct {
 	src   int
 }
 
-func (h entryHeap) Len() int            { return len(h) }
-func (h entryHeap) Less(i, j int) bool  { return bytes.Compare(h[i].key, h[j].key) < 0 }
-func (h entryHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *entryHeap) Push(x any)         { *h = append(*h, x.(entryItem)) }
+func (h entryHeap) Len() int           { return len(h) }
+func (h entryHeap) Less(i, j int) bool { return bytes.Compare(h[i].key, h[j].key) < 0 }
+func (h entryHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *entryHeap) Push(x any)        { *h = append(*h, x.(entryItem)) }
 func (h *entryHeap) Pop() any {
 	old := *h
 	n := len(old)

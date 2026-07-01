@@ -198,6 +198,8 @@ type ColInfo = DT.ColInfo
 // Backward-compat aliases for types moved to OP.
 type SeqScan = OP.SeqScan
 type IndexScan = OP.IndexScan
+type BitmapHeapScan = OP.BitmapHeapScan // REQ001106
+type IndexOnlyScan = OP.IndexOnlyScan   // REQ001107
 type Filter = OP.Filter
 type Project = OP.Project
 type Sort = OP.Sort
@@ -1423,7 +1425,18 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (Operator, error) {
 			if selPlan == nil || selPlan.Root == nil {
 				return nil, fmt.Errorf("ex: INSERT SELECT: plan produced no root")
 			}
-			op := NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+			// REQ001129: store-backed INSERT...SELECT needs a
+			// store-backed Insert operator so the rows are written
+			// to the engine, not just the in-memory table map.
+			var op *Insert
+			if e.store != nil {
+				op, err = NewInsertWithStore(e.store, s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				op = NewInsert(s.Table, s.Cols, nil, s.Returning, s.OnConflict)
+			}
 			op.selectPlan = selPlan.Root
 			op.conflictAction = s.ConflictAction
 			propagatePlanner(selPlan.Root, e.planner)

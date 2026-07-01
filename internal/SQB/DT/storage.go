@@ -256,11 +256,22 @@ func ExtractPK(schema *StoreSchema, row Row) (any, error) {
 		if c == schema.Pk {
 			if row.Data[i].IsNull() {
 				if !schema.HiddenPK {
+					// Need the generated ID to be > all existing PKs.
+					// NextRowID already tracks the max seen so far;
+					// the Add(1) below will give max+1.
 					schema.HiddenPK = true
 				}
 				id := schema.NextRowID.Add(1)
 				return id, nil
 			}
+			// Track the max PK value so NULL -> auto-generated values
+			// are always > existing values (REQ001128).
+			if !schema.HiddenPK {
+				if row.Data[i].Kind == KindInt && row.Data[i].I64 >= schema.NextRowID.Load() {
+					schema.NextRowID.Store(row.Data[i].I64)
+				}
+			}
+			return row.Data[i], nil
 			return row.Data[i], nil
 		}
 	}
