@@ -10,10 +10,10 @@ func TestSubqueryPlanner_SeesStoreTables(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	DT.RegisterTable("t1", []Row{
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("b")}},
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(3)), NewTextValue("c")}},
+	DT.RegisterTable("t1", []DT.Row{
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("a")}},
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(2)), NewTextValue("b")}},
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(3)), NewTextValue("c")}},
 	})
 
 	e := NewExecutor()
@@ -44,13 +44,13 @@ func TestSubqueryPlanner_StorePropagationAfterClone(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	DT.RegisterTable("t1", []Row{
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("x")}},
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("y")}},
+	DT.RegisterTable("t1", []DT.Row{
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("x")}},
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(2)), NewTextValue("y")}},
 	})
-	DT.RegisterTable("t2", []Row{
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("alice")}},
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("bob")}},
+	DT.RegisterTable("t2", []DT.Row{
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("alice")}},
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("bob")}},
 	})
 
 	e := NewExecutor()
@@ -69,7 +69,7 @@ func TestSubqueryPlanner_StorePropagationAfterClone(t *testing.T) {
 
 func TestSubqueryPlanner_CloneRowPreservesPlanner(t *testing.T) {
 	pl := NewPlannerWithStore(nil)
-	src := Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(1))}}
+	src := DT.Row{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(int64(1))}}
 	src.Planner = pl
 	cloned := DT.CloneRow(src)
 	if cloned.Planner != pl {

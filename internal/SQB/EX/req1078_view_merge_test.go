@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -100,7 +99,7 @@ func TestPlanner_ViewMerging(t *testing.T) {
 		viewSel := &PS.Select{
 			From:  "t",
 			Cols:  []PS.Expr{&PS.QualifiedName{Name: "a"}},
-			OP.Limit: &PS.NumberLiteral{Val: int64(10)},
+			Limit: &PS.NumberLiteral{Val: int64(10)},
 		}
 		DT.RegisterView("v", viewSel)
 		plan, err := p.ParseAndPlan("SELECT a FROM v WHERE a > 5")
@@ -140,8 +139,8 @@ func TestPlanner_ViewMerging(t *testing.T) {
 		selDistinct := &PS.Select{From: "t", Distinct: true}
 		selGroupBy := &PS.Select{From: "t", GroupBy: []PS.Expr{&PS.QualifiedName{Name: "a"}}}
 		selOrderBy := &PS.Select{From: "t", OrderBy: []PS.OrderItem{{Expr: &PS.QualifiedName{Name: "a"}}}}
-		selLimit := &PS.Select{From: "t", OP.Limit: &PS.NumberLiteral{Val: int64(10)}}
-		selOffset := &PS.Select{From: "t", OP.Offset: &PS.NumberLiteral{Val: int64(0)}}
+		selLimit := &PS.Select{From: "t", Limit: &PS.NumberLiteral{Val: int64(10)}}
+		selOffset := &PS.Select{From: "t", Offset: &PS.NumberLiteral{Val: int64(0)}}
 		selHaving := &PS.Select{From: "t", Having: &PS.NumberLiteral{Val: int64(1)}}
 		// Computed column (e.g. v * 2 AS doubled) — not mergeable.
 		selComputed := &PS.Select{

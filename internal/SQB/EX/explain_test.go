@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
 
 func TestExplain_BasicSelect(t *testing.T) {
@@ -235,7 +234,7 @@ func TestExplain_UnifiedRendering(t *testing.T) {
 	}
 
 	// Verify all modes produce the same schema: (id, parent, notused, detail)
-	for i, rows := range [][]Row{rowsNorm, rowsQP, rowsAn} {
+	for i, rows := range [][]DT.Row{rowsNorm, rowsQP, rowsAn} {
 		modeNames := []string{"normal", "query_plan", "analyze"}
 		for _, r := range rows {
 			if len(r.Cols) != 4 {

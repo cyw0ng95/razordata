@@ -4,7 +4,7 @@ import (
 	"context"
 	"strconv"
 	"testing"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP")
+)
 
 // REQ000714: store-path DELETE with self-referencing subquery. The
 // subquery's OP.SeqScan runs against the same table being deleted from;

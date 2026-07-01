@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	ap "github.com/cyw0ng95/razordata/internal/SYS/AP"
@@ -385,11 +384,11 @@ func TestBugfix_FKOnUpdate(t *testing.T) {
 	DT.TableIDs["c"] = 2
 
 	// Seed in-memory table for parent: id=1, id=2.
-	DT.Tables["p"] = []Row{
-		{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}},
+	DT.Tables["p"] = []DT.Row{
+		{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(1)}},
 	}
-	DT.Tables["c"] = []Row{
-		{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(10), NewIntValue(1)}},
+	DT.Tables["c"] = []DT.Row{
+		{Cols: []string{"id", "pid"}, Data: []DT.Value{NewIntValue(10), NewIntValue(1)}},
 	}
 
 	// Update child's pid from 1 to 99 — should fail since parent
@@ -442,8 +441,8 @@ func TestBugfix_FKOnDelete(t *testing.T) {
 	DT.TableIDs["p"] = 10
 	DT.TableIDs["c"] = 11
 
-	DT.Tables["p"] = []Row{{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}}}
-	DT.Tables["c"] = []Row{{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(100), NewIntValue(1)}}}
+	DT.Tables["p"] = []DT.Row{{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(1)}}}
+	DT.Tables["c"] = []DT.Row{{Cols: []string{"id", "pid"}, Data: []DT.Value{NewIntValue(100), NewIntValue(1)}}}
 
 	// Deleting parent id=1 must fail because child (100, 1) references it.
 	err := UT.ValidateForeignKeyDeleteInMemory("p",

@@ -88,9 +88,9 @@ func setupSelect5Tables(tb testing.TB) {
 		DT.RegisterTableSchema(name, []string{fmt.Sprintf("a%d", i), fmt.Sprintf("b%d", i), fmt.Sprintf("x%d", i)})
 		DT.TablesMu.Lock()
 		for j := 0; j < 10; j++ {
-			DT.Tables[name] = append(DT.Tables[name], Row{
+			DT.Tables[name] = append(DT.Tables[name], DT.Row{
 				Cols: []string{fmt.Sprintf("a%d", i), fmt.Sprintf("b%d", i), fmt.Sprintf("x%d", i)},
-				Data: []Value{
+				Data: []DT.Value{
 					NewIntValue(int64(j + 1)),
 					NewIntValue(bVals[i][j]),
 					NewTextValue(fmt.Sprintf("table t%d row %d", i, j+1)),

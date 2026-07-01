@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -47,8 +46,8 @@ func TestWalkExprForTables_UsesSchemas(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	DT.RegisterTable("t1", []Row{
-		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
+	DT.RegisterTable("t1", []DT.Row{
+		{Cols: []string{"a", "b"}, Data: []DT.Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 
 	p := NewPlanner()
@@ -71,11 +70,11 @@ func TestEquiJoinKey_BasicDetection(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	DT.RegisterTable("t1", []Row{
-		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
+	DT.RegisterTable("t1", []DT.Row{
+		{Cols: []string{"a", "b"}, Data: []DT.Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
-	DT.RegisterTable("t2", []Row{
-		{Cols: []string{"c", "d"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
+	DT.RegisterTable("t2", []DT.Row{
+		{Cols: []string{"c", "d"}, Data: []DT.Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 
 	p := NewPlanner()
@@ -109,14 +108,14 @@ func TestEquiJoinKey_CrossTableInMultiJoin(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	DT.RegisterTable("t1", []Row{
-		{Cols: []string{"a1"}, Data: []Value{NewIntValue(int64(1))}},
+	DT.RegisterTable("t1", []DT.Row{
+		{Cols: []string{"a1"}, Data: []DT.Value{NewIntValue(int64(1))}},
 	})
-	DT.RegisterTable("t2", []Row{
-		{Cols: []string{"b9"}, Data: []Value{NewIntValue(int64(1))}},
+	DT.RegisterTable("t2", []DT.Row{
+		{Cols: []string{"b9"}, Data: []DT.Value{NewIntValue(int64(1))}},
 	})
-	DT.RegisterTable("t3", []Row{
-		{Cols: []string{"a3"}, Data: []Value{NewIntValue(int64(1))}},
+	DT.RegisterTable("t3", []DT.Row{
+		{Cols: []string{"a3"}, Data: []DT.Value{NewIntValue(int64(1))}},
 	})
 
 	p := NewPlanner()
@@ -139,11 +138,11 @@ func TestSplitPredicatesByTable(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	DT.RegisterTable("t1", []Row{
-		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
+	DT.RegisterTable("t1", []DT.Row{
+		{Cols: []string{"a", "b"}, Data: []DT.Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
-	DT.RegisterTable("t2", []Row{
-		{Cols: []string{"c", "d"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
+	DT.RegisterTable("t2", []DT.Row{
+		{Cols: []string{"c", "d"}, Data: []DT.Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 
 	p := NewPlanner()
@@ -329,14 +328,14 @@ func TestJoinPlanStructure(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	DT.RegisterTable("t1", []Row{
-		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
+	DT.RegisterTable("t1", []DT.Row{
+		{Cols: []string{"a", "b"}, Data: []DT.Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
-	DT.RegisterTable("t2", []Row{
-		{Cols: []string{"c", "d"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
+	DT.RegisterTable("t2", []DT.Row{
+		{Cols: []string{"c", "d"}, Data: []DT.Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
-	DT.RegisterTable("t3", []Row{
-		{Cols: []string{"e", "f"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
+	DT.RegisterTable("t3", []DT.Row{
+		{Cols: []string{"e", "f"}, Data: []DT.Value{NewIntValue(int64(1)), NewIntValue(int64(2))}},
 	})
 
 	p := NewPlanner()

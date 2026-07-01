@@ -236,7 +236,7 @@ func TestVectorizedMax_Basic(t *testing.T) {
 // TestVectorizedSum_LargeBatch verifies unrolling correctness.
 func TestVectorizedSum_LargeBatch(t *testing.T) {
 	const n = 1024
-	rows := make([]Row, n)
+	rows := make([]DT.Row, n)
 	expected := int64(0)
 	for i := 0; i < n; i++ {
 		rows[i] = pl.Row{
@@ -274,7 +274,7 @@ func TestVectorizedSum_LargeBatch(t *testing.T) {
 // BenchmarkVectorizedSum_Int64 measures SUM throughput.
 func BenchmarkVectorizedSum_Int64(b *testing.B) {
 	const n = 10 * 1024
-	rows := make([]Row, n)
+	rows := make([]DT.Row, n)
 	for i := 0; i < n; i++ {
 		rows[i] = pl.Row{
 			Cols:  []string{"x"},
@@ -306,7 +306,7 @@ func BenchmarkVectorizedSum_Int64(b *testing.B) {
 // BenchmarkRowSum_Fallback measures row-at-a-time SUM for comparison.
 func BenchmarkRowSum_Fallback(b *testing.B) {
 	const n = 10 * 1024
-	rows := make([]Row, n)
+	rows := make([]DT.Row, n)
 	for i := 0; i < n; i++ {
 		rows[i] = pl.Row{
 			Cols:  []string{"x"},

@@ -16,7 +16,7 @@ func TestEvalRound_Int64FastPath(t *testing.T) {
 
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
-	DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(42))}})
+	DT.Tables["t"] = append(DT.Tables["t"], DT.Row{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(int64(42))}})
 	DT.TablesMu.Unlock()
 
 	e := NewExecutor()
@@ -30,7 +30,7 @@ func TestEvalRound_Int64FastPath(t *testing.T) {
 	if len(rows) != 1 || len(rows[0].Data) != 1 {
 		t.Fatalf("expected 1 row × 1 col, got %d×%d", len(rows), len(rows[0].Data))
 	}
-	// Result must be int64 (same type as input).
+	// DT.Result must be int64 (same type as input).
 	v, ok := rows[0].Data[0].ToAny().(int64)
 	if !ok {
 		t.Fatalf("ROUND(int64) returned %s, want int64", rows[0].Data[0].Kind)
@@ -49,7 +49,7 @@ func TestEvalSign_Int64FastPath(t *testing.T) {
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
 	for _, v := range []int64{-5, 0, 7} {
-		DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(v)}})
+		DT.Tables["t"] = append(DT.Tables["t"], DT.Row{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(v)}})
 	}
 	DT.TablesMu.Unlock()
 
@@ -83,7 +83,7 @@ func TestEvalRound_NullPreserved(t *testing.T) {
 
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
-	DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NullValue()}})
+	DT.Tables["t"] = append(DT.Tables["t"], DT.Row{Cols: []string{"id"}, Data: []DT.Value{NullValue()}})
 	DT.TablesMu.Unlock()
 
 	e := NewExecutor()
@@ -106,7 +106,7 @@ func TestEvalSign_NullPreserved(t *testing.T) {
 
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
-	DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NullValue()}})
+	DT.Tables["t"] = append(DT.Tables["t"], DT.Row{Cols: []string{"id"}, Data: []DT.Value{NullValue()}})
 	DT.TablesMu.Unlock()
 
 	e := NewExecutor()
@@ -130,7 +130,7 @@ func BenchmarkEvalRound_Int64(b *testing.B) {
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
 	for i := 0; i < 1000; i++ {
-		DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
+		DT.Tables["t"] = append(DT.Tables["t"], DT.Row{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(int64(i))}})
 	}
 	DT.TablesMu.Unlock()
 
@@ -151,7 +151,7 @@ func BenchmarkEvalSign_Int64(b *testing.B) {
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
 	for i := 0; i < 1000; i++ {
-		DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
+		DT.Tables["t"] = append(DT.Tables["t"], DT.Row{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(int64(i))}})
 	}
 	DT.TablesMu.Unlock()
 

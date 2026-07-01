@@ -97,10 +97,10 @@ func TestFunctionRegistry_DispatchReachesImpl(t *testing.T) {
 // TestFunctionRegistry_AggregateDispatch verifies aggregate
 // dispatch via the registry.
 func TestFunctionRegistry_AggregateDispatch(t *testing.T) {
-	rows := []Row{
-		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{DT.NewIntValue(10)}},
-		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{DT.NewIntValue(20)}},
-		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{DT.NewIntValue(30)}},
+	rows := []DT.Row{
+		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{DT.NewIntValue(10)}},
+		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{DT.NewIntValue(20)}},
+		{Cols: []string{"x"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{DT.NewIntValue(30)}},
 	}
 	t.Run("COUNT", func(t *testing.T) {
 		agg := &PS.AggregateFunc{Name: "COUNT", Arg: &PS.StarExpr{}}

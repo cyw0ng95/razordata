@@ -201,7 +201,7 @@ func TestConstraints_FillDefaults_LiteralInt(t *testing.T) {
 		Nullable: []bool{true, true},
 		Defaults: []PS.Expr{nil, &PS.NumberLiteral{Val: 99}},
 	}
-	row := Row{Data: []Value{NewIntValue(int64(1)), NullValue()}}
+	row := DT.Row{Data: []DT.Value{NewIntValue(int64(1)), NullValue()}}
 	out, err := fillDefaults(ss, row)
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
@@ -223,7 +223,7 @@ func TestConstraints_FillDefaults_NullLiteral(t *testing.T) {
 		Nullable: []bool{true},
 		Defaults: []PS.Expr{&PS.NullLiteral{}},
 	}
-	row := Row{Data: []Value{NullValue()}}
+	row := DT.Row{Data: []DT.Value{NullValue()}}
 	out, err := fillDefaults(ss, row)
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
@@ -239,7 +239,7 @@ func TestConstraints_FillDefaults_NilSchema(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 	ss := &DT.StoreSchema{Cols: []string{"a"}, Nullable: []bool{true}}
-	row := Row{Data: []Value{NewIntValue(int64(1))}}
+	row := DT.Row{Data: []DT.Value{NewIntValue(int64(1))}}
 	out, err := fillDefaults(ss, row)
 	if err != nil {
 		t.Fatalf("fillDefaults: %v", err)
@@ -260,7 +260,7 @@ func TestConstraints_ValidateRow_RejectsNullNotNull(t *testing.T) {
 		Nullable: []bool{false, true},
 		Defaults: nil,
 	}
-	row := Row{Data: []Value{NullValue(), NewIntValue(int64(2))}}
+	row := DT.Row{Data: []DT.Value{NullValue(), NewIntValue(int64(2))}}
 	err := validateRow(ss, row)
 	if !errors.Is(err, ap.ErrConstraint) {
 		t.Errorf("validateRow: got %v, want ErrConstraint", err)
@@ -280,7 +280,7 @@ func TestConstraints_ValidateRow_AcceptsNullNullable(t *testing.T) {
 		Pk:       "",
 		Nullable: []bool{true, true},
 	}
-	row := Row{Data: []Value{NullValue(), NewIntValue(int64(2))}}
+	row := DT.Row{Data: []DT.Value{NullValue(), NewIntValue(int64(2))}}
 	if err := validateRow(ss, row); err != nil {
 		t.Errorf("validateRow: %v", err)
 	}

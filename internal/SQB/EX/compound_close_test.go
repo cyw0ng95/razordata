@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP")
+)
 
 // TestCompoundOp_CloseResetsState verifies that OP.CompoundOp.Close() resets
 // all internal state so that the same operator can be reused after close.

@@ -8,7 +8,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	"github.com/cyw0ng95/razordata/internal/SQF/RE"
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
+)
 
 // TestExprHash_DistinctINPredicates verifies REQ001111: two IN predicates
 // that reference different columns and different value lists produce

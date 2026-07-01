@@ -13,11 +13,11 @@ import (
 )
 
 // TestCompareValue verifies REQ000776: compareValue operates directly
-// on Value types via Kind switching (no interface conversion).
+// on DT.Value types via Kind switching (no interface conversion).
 func TestCompareValue(t *testing.T) {
 	tests := []struct {
 		name string
-		a, b Value
+		a, b DT.Value
 		want int
 	}{
 		{"int_int_equal", NewIntValue(5), NewIntValue(5), 0},
@@ -54,7 +54,7 @@ func TestCompareValue(t *testing.T) {
 func TestEqualValueValue(t *testing.T) {
 	tests := []struct {
 		name string
-		a, b Value
+		a, b DT.Value
 		want bool
 	}{
 		{"int_eq", NewIntValue(5), NewIntValue(5), true},
@@ -82,13 +82,13 @@ func TestEqualValueValue(t *testing.T) {
 }
 
 // TestNumericArithValue verifies REQ000776: numericArithValue operates
-// on Value directly and returns Value.
+// on DT.Value directly and returns DT.Value.
 func TestNumericArithValue(t *testing.T) {
 	tests := []struct {
 		name string
-		a, b Value
+		a, b DT.Value
 		op   rune
-		want Value
+		want DT.Value
 	}{
 		{"int_add", NewIntValue(2), NewIntValue(3), '+', NewIntValue(5)},
 		{"int_sub", NewIntValue(10), NewIntValue(3), '-', NewIntValue(7)},
@@ -123,9 +123,9 @@ func TestEncodeDecodeBlobRoundTrip(t *testing.T) {
 	schema := &DT.StoreSchema{
 		Cols: []string{"data"},
 	}
-	original := Row{
+	original := DT.Row{
 		Cols: []string{"data"},
-		Data: []Value{NewBlobValue([]byte{0x00, 0x01, 0x02, 0xff, 0xfe})},
+		Data: []DT.Value{NewBlobValue([]byte{0x00, 0x01, 0x02, 0xff, 0xfe})},
 	}
 	encoded, err := OP.EncodeRow(schema, original)
 	if err != nil {
@@ -206,7 +206,7 @@ func TestEvalInValue(t *testing.T) {
 }
 
 // TestEvalInHash_Int64Only verifies REQ000817: int64-only IN-lists
-// use an int64-keyed map to avoid Value boxing.
+// use an int64-keyed map to avoid DT.Value boxing.
 func TestEvalInHash_Int64Only(t *testing.T) {
 	// Clear the cache to ensure we test fresh state.
 	delete(

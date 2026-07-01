@@ -33,17 +33,17 @@ func TestEstimateRowCount(t *testing.T) {
 // produces the same results as Aggregate for small datasets
 // (REQ000196 - equivalence).
 func TestHashAggregate_AggregateEquivalence(t *testing.T) {
-	rows := []Row{
+	rows := []DT.Row{
 		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
-			Data: []Value{DT.NewTextValue("A"), DT.NewIntValue(int64(10))}},
+			Data: []DT.Value{DT.NewTextValue("A"), DT.NewIntValue(int64(10))}},
 		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
-			Data: []Value{DT.NewTextValue("A"), DT.NewIntValue(int64(20))}},
+			Data: []DT.Value{DT.NewTextValue("A"), DT.NewIntValue(int64(20))}},
 		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
-			Data: []Value{DT.NewTextValue("B"), DT.NewIntValue(int64(5))}},
+			Data: []DT.Value{DT.NewTextValue("B"), DT.NewIntValue(int64(5))}},
 		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
-			Data: []Value{DT.NewTextValue("B"), DT.NewIntValue(int64(15))}},
+			Data: []DT.Value{DT.NewTextValue("B"), DT.NewIntValue(int64(15))}},
 		{Cols: []string{"category", "value"}, Types: []LX.TokenType{LX.T_TEXT, LX.T_INT_KW},
-			Data: []Value{DT.NewTextValue("A"), DT.NewIntValue(int64(30))}},
+			Data: []DT.Value{DT.NewTextValue("A"), DT.NewIntValue(int64(30))}},
 	}
 	DT.RegisterTable("equivalence_test", rows)
 	defer UnregisterAll()

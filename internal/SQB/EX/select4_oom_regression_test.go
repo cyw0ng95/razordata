@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
+)
 
 // TestSelect4Plan5Table_NoOOM is the end-to-end regression test for
 // REQ001111: select4-style 5-table cross-joins with single-table

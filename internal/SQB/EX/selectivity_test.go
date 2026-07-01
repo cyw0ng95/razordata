@@ -28,7 +28,7 @@ func TestEstimateEqSelectivity_Histogram(t *testing.T) {
 			{LowerBound: []byte("200"), UpperBound: []byte("300"), Count: 200},
 		},
 	}
-	// Value "150" falls in second bucket (50/1000 = 0.05)
+	// DT.Value "150" falls in second bucket (50/1000 = 0.05)
 	sel := estimateEqSelectivity(stats, []byte("150"))
 	if sel != 0.05 {
 		t.Errorf("expected 0.05, got %f", sel)
@@ -42,7 +42,7 @@ func TestEstimateEqSelectivity_NoMatch(t *testing.T) {
 			{LowerBound: []byte("0"), UpperBound: []byte("100"), Count: 100},
 		},
 	}
-	// Value "500" doesn't fall in any bucket
+	// DT.Value "500" doesn't fall in any bucket
 	sel := estimateEqSelectivity(stats, []byte("500"))
 	if sel != 0.0 {
 		t.Errorf("expected 0.0, got %f", sel)

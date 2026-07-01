@@ -133,7 +133,7 @@ func TestPlannerMemoizationSameAST(t *testing.T) {
 
 func TestMemo_CacheHitOnConstantFoldedQueries(t *testing.T) {
 	p := NewPlanner()
-	p.RegisterTable("t", []ColInfo{{Name: "a", Typ: 1}}, "a")
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 
 	// Two semantically equivalent queries that rewrite to identical ASTs
 	// should share the same memo key after REQ001163.
@@ -482,7 +482,7 @@ func TestPlanner_CrossJoinPredicatePushdown(t *testing.T) {
 	// pushed-down predicate OP.Filter.
 	filterCount := 0
 	totalScanCount := 0
-	walkOpTreeDebug(plan.Root, func(op Operator, depth int) {
+	walkOpTreeDebug(plan.Root, func(op DT.Operator, depth int) {
 		switch op.(type) {
 		case *OP.Filter:
 			filterCount++
@@ -499,7 +499,7 @@ func TestPlanner_CrossJoinPredicatePushdown(t *testing.T) {
 }
 
 // walkOpTreeDebug recursively walks and prints the operator tree.
-func walkOpTreeDebug(op Operator, fn func(Operator, int), depth int) {
+func walkOpTreeDebug(op DT.Operator, fn func(DT.Operator, int), depth int) {
 	if op == nil {
 		return
 	}
@@ -537,11 +537,11 @@ func TestPlanner_CrossJoinPredicatePushdownINList(t *testing.T) {
 	for i := 1; i <= 5; i++ {
 		colName := string(rune('a' + i - 1)) // a, b, c, d, e
 		cols := []string{colName}
-		var rows []Row
+		var rows []DT.Row
 		for r := 0; r < 100; r++ {
-			rows = append(rows, Row{
+			rows = append(rows, DT.Row{
 				Cols: cols,
-				Data: []Value{NewIntValue(int64(r))},
+				Data: []DT.Value{NewIntValue(int64(r))},
 			})
 		}
 		DT.RegisterTable(fmt.Sprintf("t%d", i), rows)
@@ -582,11 +582,11 @@ func TestPlanner_CrossJoinColdStart_Pushdown(t *testing.T) {
 	for i := 1; i <= 5; i++ {
 		colName := string(rune('a' + i - 1))
 		cols := []string{colName}
-		var rows []Row
+		var rows []DT.Row
 		for r := 0; r < 100; r++ {
-			rows = append(rows, Row{
+			rows = append(rows, DT.Row{
 				Cols: cols,
-				Data: []Value{NewIntValue(int64(r))},
+				Data: []DT.Value{NewIntValue(int64(r))},
 			})
 		}
 		DT.RegisterTable(fmt.Sprintf("t%d", i), rows)
@@ -609,7 +609,7 @@ func TestPlanner_CrossJoinColdStart_Pushdown(t *testing.T) {
 	// Walk plan: expect 5 SeqScans + 5 Filters (pushed predicates).
 	filterCount := 0
 	scanCount := 0
-	walkOpTreeDebug(plan.Root, func(op Operator, depth int) {
+	walkOpTreeDebug(plan.Root, func(op DT.Operator, depth int) {
 		switch op.(type) {
 		case *OP.Filter:
 			filterCount++
@@ -634,11 +634,11 @@ func BenchmarkSelect4_CrossJoinColdStart(b *testing.B) {
 	for i := 1; i <= 5; i++ {
 		colName := string(rune('a' + i - 1))
 		cols := []string{colName}
-		var rows []Row
+		var rows []DT.Row
 		for r := 0; r < 100; r++ {
-			rows = append(rows, Row{
+			rows = append(rows, DT.Row{
 				Cols: cols,
-				Data: []Value{NewIntValue(int64(r))},
+				Data: []DT.Value{NewIntValue(int64(r))},
 			})
 		}
 		DT.RegisterTable(fmt.Sprintf("t%d", i), rows)
@@ -653,11 +653,11 @@ func BenchmarkSelect4_CrossJoinColdStart(b *testing.B) {
 		for j := 1; j <= 5; j++ {
 			colName := string(rune('a' + j - 1))
 			cols := []string{colName}
-			var rs []Row
+			var rs []DT.Row
 			for r := 0; r < 100; r++ {
-				rs = append(rs, Row{
+				rs = append(rs, DT.Row{
 					Cols: cols,
-					Data: []Value{NewIntValue(int64(r))},
+					Data: []DT.Value{NewIntValue(int64(r))},
 				})
 			}
 			DT.RegisterTable(fmt.Sprintf("t%d", j), rs)

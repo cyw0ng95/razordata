@@ -300,9 +300,9 @@ func TestSeqScanEmpty(t *testing.T) {
 func TestFilterPassesThrough(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	DT.RegisterTable("t", []Row{
-		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(1))}},
-		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(2))}},
+	DT.RegisterTable("t", []DT.Row{
+		{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(1))}},
+		{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(2))}},
 	})
 	scan := OP.NewSeqScan("t")
 	filter := OP.NewFilter(scan, &PS.NumberLiteral{Val: 1})
@@ -318,8 +318,8 @@ func TestFilterPassesThrough(t *testing.T) {
 func TestProjectStarPassesThrough(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	DT.RegisterTable("t", []Row{
-		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(7))}},
+	DT.RegisterTable("t", []DT.Row{
+		{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(7))}},
 	})
 	scan := OP.NewSeqScan("t")
 	project := OP.NewProject(scan, []PS.Expr{&PS.StarExpr{}})
@@ -335,10 +335,10 @@ func TestProjectStarPassesThrough(t *testing.T) {
 func TestSortThenIterate(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	DT.RegisterTable("t", []Row{
-		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(3))}},
-		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(1))}},
-		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(2))}},
+	DT.RegisterTable("t", []DT.Row{
+		{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(3))}},
+		{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(1))}},
+		{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(2))}},
 	})
 	scan := OP.NewSeqScan("t")
 	s := OP.NewSort(scan, []PS.OrderItem{{Expr: &PS.Ident{Name: "x"}, Desc: false}})
@@ -360,10 +360,10 @@ func TestSortThenIterate(t *testing.T) {
 func TestLimitStops(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	DT.RegisterTable("t", []Row{
-		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(1))}},
-		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(2))}},
-		{Cols: []string{"x"}, Data: []Value{NewIntValue(int64(3))}},
+	DT.RegisterTable("t", []DT.Row{
+		{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(1))}},
+		{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(2))}},
+		{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(3))}},
 	})
 	scan := OP.NewSeqScan("t")
 	l := OP.NewLimit(scan, 2)
@@ -386,7 +386,7 @@ func TestLimitStops(t *testing.T) {
 func TestInsertAppendsRows(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	DT.RegisterTable("t", []Row{{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(0))}}})
+	DT.RegisterTable("t", []DT.Row{{Cols: []string{"a"}, Data: []DT.Value{NewIntValue(int64(0))}}})
 	insert := NewInsert("t", nil, [][]PS.Expr{
 		{&PS.NumberLiteral{Val: 1}},
 		{&PS.NumberLiteral{Val: 2}},
@@ -408,9 +408,9 @@ func TestInsertAppendsRows(t *testing.T) {
 func TestUpdateModifiesRows(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	DT.RegisterTable("t", []Row{
-		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("x")}},
-		{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("y")}},
+	DT.RegisterTable("t", []DT.Row{
+		{Cols: []string{"a", "b"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("x")}},
+		{Cols: []string{"a", "b"}, Data: []DT.Value{NewIntValue(int64(2)), NewTextValue("y")}},
 	})
 	scan := OP.NewSeqScan("t")
 	update := NewUpdate("t", []PS.Pair{{Col: "b", Val: &PS.StringLiteral{Val: "z"}}}, nil, scan, nil)
@@ -433,10 +433,10 @@ func TestUpdateModifiesRows(t *testing.T) {
 func TestDeleteRemovesMatching(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	DT.RegisterTable("t", []Row{
-		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(1))}},
-		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(2))}},
-		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(3))}},
+	DT.RegisterTable("t", []DT.Row{
+		{Cols: []string{"a"}, Data: []DT.Value{NewIntValue(int64(1))}},
+		{Cols: []string{"a"}, Data: []DT.Value{NewIntValue(int64(2))}},
+		{Cols: []string{"a"}, Data: []DT.Value{NewIntValue(int64(3))}},
 	})
 	scan := OP.NewSeqScan("t")
 	filter := OP.NewFilter(scan, &PS.BinaryExpr{

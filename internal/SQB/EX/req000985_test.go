@@ -14,8 +14,8 @@ import (
 func TestStore_EncodeRowNoAlloc(t *testing.T) {
 	_ = DT.RegisterStoreSchema("enc_test", []string{"id", "name", "val"}, "id")
 	ss, _ := DT.SchemaFor("enc_test")
-	row := Row{
-		Data: []Value{
+	row := DT.Row{
+		Data: []DT.Value{
 			NewIntValue(42),
 			NewTextValue("hello"),
 			NewFloatValue(3.14),

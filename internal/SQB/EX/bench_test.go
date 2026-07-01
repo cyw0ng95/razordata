@@ -19,9 +19,9 @@ func benchFixture(rows int) {
 	DT.TablesMu.Lock()
 	existing := DT.Tables["t"]
 	for i := 0; i < rows; i++ {
-		out := Row{
+		out := DT.Row{
 			Cols: []string{"id", "name", "age"},
-			Data: []Value{NewIntValue(int64(i)), NewTextValue(fmt.Sprintf("u%d", i)), NewIntValue(int64(20 + (i % 50)))},
+			Data: []DT.Value{NewIntValue(int64(i)), NewTextValue(fmt.Sprintf("u%d", i)), NewIntValue(int64(20 + (i % 50)))},
 		}
 		existing = append(existing, out)
 	}
@@ -98,28 +98,28 @@ func BenchmarkNumericArithValue_IntAdd(b *testing.B) {
 }
 
 // BenchmarkEvalBinaryComparison compares the old any-based compare
-// path with the new Value-based compareValue (REQ000776).
+// path with the new DT.Value-based compareValue (REQ000776).
 func BenchmarkEvalBinaryComparison(b *testing.B) {
 	// Pre-build rows with int64 values.
-	rows := make([]Row, 100)
+	rows := make([]DT.Row, 100)
 	for i := range rows {
-		rows[i] = Row{
+		rows[i] = DT.Row{
 			Cols: []string{"x"},
-			Data: []Value{NewIntValue(int64(i))},
+			Data: []DT.Value{NewIntValue(int64(i))},
 		}
 	}
 	target := NewIntValue(50)
 
 	// Old path: any-based compare (still goes through interface dispatch).
-	oldFn := func(row *Row) any {
+	oldFn := func(row *DT.Row) any {
 		v, _ := row.Lookup("x")
 		r := DT.Compare(v, int64(50))
 		return r < 0
 	}
-	// New path: Value-based compareValue (REQ000776 — direct Kind switch).
-	newFn := func(row *Row) any {
+	// New path: DT.Value-based compareValue (REQ000776 — direct Kind switch).
+	newFn := func(row *DT.Row) any {
 		v, _ := row.Lookup("x")
-		vv, _ := v.(Value)
+		vv, _ := v.(DT.Value)
 		return pl.CompareValue(vv, target) < 0
 	}
 
@@ -332,17 +332,17 @@ func setupJ3Tables(b *testing.B, n int) {
 	DT.TablesMu.Lock()
 	for i := 0; i < n; i++ {
 		v := int64(i)
-		DT.Tables["t1"] = append(DT.Tables["t1"], Row{
+		DT.Tables["t1"] = append(DT.Tables["t1"], DT.Row{
 			Cols: []string{"id", "a", "b", "c", "d"},
-			Data: []Value{NewIntValue(v), NewIntValue(v % 100), NewIntValue(v % 50), NewIntValue(v % 25), NewIntValue(v % 10)},
+			Data: []DT.Value{NewIntValue(v), NewIntValue(v % 100), NewIntValue(v % 50), NewIntValue(v % 25), NewIntValue(v % 10)},
 		})
-		DT.Tables["t2"] = append(DT.Tables["t2"], Row{
+		DT.Tables["t2"] = append(DT.Tables["t2"], DT.Row{
 			Cols: []string{"id", "a", "b", "c", "d"},
-			Data: []Value{NewIntValue(v), NewIntValue(v % 100), NewIntValue(v % 50), NewIntValue(v % 25), NewIntValue(v % 10)},
+			Data: []DT.Value{NewIntValue(v), NewIntValue(v % 100), NewIntValue(v % 50), NewIntValue(v % 25), NewIntValue(v % 10)},
 		})
-		DT.Tables["t3"] = append(DT.Tables["t3"], Row{
+		DT.Tables["t3"] = append(DT.Tables["t3"], DT.Row{
 			Cols: []string{"id", "a", "b", "c", "d"},
-			Data: []Value{NewIntValue(v), NewIntValue(v % 100), NewIntValue(v % 50), NewIntValue(v % 25), NewIntValue(v % 10)},
+			Data: []DT.Value{NewIntValue(v), NewIntValue(v % 100), NewIntValue(v % 50), NewIntValue(v % 25), NewIntValue(v % 10)},
 		})
 	}
 	DT.TablesMu.Unlock()
@@ -409,11 +409,11 @@ func BenchmarkFilter_ADQC_Cache(b *testing.B) {
 		},
 	}
 
-	rows := make([]Row, 100)
+	rows := make([]DT.Row, 100)
 	for i := 0; i < 100; i++ {
-		rows[i] = Row{
+		rows[i] = DT.Row{
 			Cols: []string{"t1.a", "t2.b"},
-			Data: []Value{NewIntValue(int64(i % 100)), NewIntValue(int64(i % 50))},
+			Data: []DT.Value{NewIntValue(int64(i % 100)), NewIntValue(int64(i % 50))},
 		}
 	}
 
@@ -487,13 +487,13 @@ func BenchmarkFilter_ADQC_Cache(b *testing.B) {
 
 // sliceRowOp is a simple operator that yields rows from a pre-built slice.
 type sliceRowOp struct {
-	rows []Row
+	rows []DT.Row
 	pos  int
 }
 
-func (s *sliceRowOp) Next(_ context.Context) (Row, error) {
+func (s *sliceRowOp) Next(_ context.Context) (DT.Row, error) {
 	if s.pos >= len(s.rows) {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	r := s.rows[s.pos]
 	s.pos++
@@ -534,9 +534,9 @@ func setupSelect4Tables(b *testing.B, n int) {
 		for _, name := range names {
 			for j := 0; j < n; j++ {
 				v := int64(j)
-				DT.Tables[name] = append(DT.Tables[name], Row{
+				DT.Tables[name] = append(DT.Tables[name], DT.Row{
 					Cols: []string{"a", "b", "c", "d", "e"},
-					Data: []Value{
+					Data: []DT.Value{
 						NewIntValue(v % 1000),
 						NewIntValue(v % 900),
 						NewIntValue(v % 800),
@@ -552,9 +552,9 @@ func setupSelect4Tables(b *testing.B, n int) {
 	DT.TablesMu.Lock()
 	for j := 0; j < n; j++ {
 		v := int64(j)
-		DT.Tables["t4"] = append(DT.Tables["t4"], Row{
+		DT.Tables["t4"] = append(DT.Tables["t4"], DT.Row{
 			Cols: []string{"a", "b", "c", "d", "e"},
-			Data: []Value{
+			Data: []DT.Value{
 				NewIntValue(v % 1000),
 				NewIntValue(v % 900),
 				NewIntValue(v % 800),
@@ -678,7 +678,7 @@ func BenchmarkSelect4_NotInChain(b *testing.B) {
 }
 
 // BenchmarkEvalInHash_Int_Value vs BenchmarkEvalInHash_Int_Legacy compare
-// the Value-typed hash set (evalInHashValue) against the legacy any-typed
+// the DT.Value-typed hash set (evalInHashValue) against the legacy any-typed
 // hash set (evalInHash) for IN-list probing (REQ000776).
 func BenchmarkEvalInHash_Int_Value(b *testing.B) {
 	expr := &PS.InExpr{
@@ -831,10 +831,10 @@ func BenchmarkPlanner_N3SingleStart(b *testing.B) {
 	}
 }
 
-// BenchmarkValueStringConversion measures the cost of Value.String()
+// BenchmarkValueStringConversion measures the cost of DT.Value.String()
 // vs the old ToAny()+fmt.Sprint pattern. REQ001066.
 func BenchmarkValueStringConversion(b *testing.B) {
-	vals := []Value{
+	vals := []DT.Value{
 		NewIntValue(12345),
 		NewFloatValue(3.14159),
 		NewTextValue("hello world"),
@@ -849,7 +849,7 @@ func BenchmarkValueStringConversion(b *testing.B) {
 
 // BenchmarkValueToStringLegacy measures the old approach for comparison.
 func BenchmarkValueToStringLegacy(b *testing.B) {
-	vals := []Value{
+	vals := []DT.Value{
 		NewIntValue(12345),
 		NewFloatValue(3.14159),
 		NewTextValue("hello world"),

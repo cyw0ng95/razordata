@@ -26,7 +26,7 @@ func (s *staticOperator) Next(_ context.Context) (pl.Row, error) {
 
 func (s *staticOperator) Close() error { return nil }
 
-func makeRow(cols []string, data []any) Row {
+func makeRow(cols []string, data []any) DT.Row {
 	return pl.Row{Cols: cols, Data: valueFromAnySlice(data)}
 }
 
@@ -226,11 +226,11 @@ func TestWindow_RangeFrame(t *testing.T) {
 		AG.NewWindowOperator(input, "SUM", []PS.Expr{&PS.Ident{Name: "val"}}, spec, []string{"id", "val"})
 
 	// RANGE UNBOUNDED PRECEDING to CURRENT ROW:
-	// Row 1 (val=1): peers=[1,1], SUM=2
-	// Row 2 (val=1): peers=[1,1], SUM=2
-	// Row 3 (val=2): peers=[1,1,2], SUM=4
-	// Row 4 (val=3): peers=[1,1,2,3,3], SUM=10
-	// Row 5 (val=3): peers=[1,1,2,3,3], SUM=10
+	// DT.Row 1 (val=1): peers=[1,1], SUM=2
+	// DT.Row 2 (val=1): peers=[1,1], SUM=2
+	// DT.Row 3 (val=2): peers=[1,1,2], SUM=4
+	// DT.Row 4 (val=3): peers=[1,1,2,3,3], SUM=10
+	// DT.Row 5 (val=3): peers=[1,1,2,3,3], SUM=10
 	// Note: WindowOperator.Next() reuses outData buffer, so we must
 	// check values during iteration, not after collecting all rows.
 	// SUM returns float64.

@@ -3,7 +3,6 @@ package EX
 import (
 	"context"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"fmt"
 	"testing"
 )
@@ -32,9 +31,9 @@ func setupSelect4TablesN(b *testing.B, n int) {
 		for _, name := range names {
 			for j := 0; j < n; j++ {
 				v := int64(j)
-				DT.Tables[name] = append(DT.Tables[name], Row{
+				DT.Tables[name] = append(DT.Tables[name], DT.Row{
 					Cols: []string{"a", "b", "c", "d", "e"},
-					Data: []Value{
+					Data: []DT.Value{
 						NewIntValue(v % 1000),
 						NewIntValue(v % 900),
 						NewIntValue(v % 800),

@@ -20,9 +20,9 @@ func BenchmarkStmtCache_ParsedVsCached(b *testing.B) {
 	DT.RegisterTableSchema("t", []string{"id", "name"})
 	DT.TablesMu.Lock()
 	for i := 0; i < 100; i++ {
-		DT.Tables["t"] = append(DT.Tables["t"], Row{
+		DT.Tables["t"] = append(DT.Tables["t"], DT.Row{
 			Cols: []string{"id", "name"},
-			Data: []Value{NewIntValue(int64(i)), NewTextValue("u")},
+			Data: []DT.Value{NewIntValue(int64(i)), NewTextValue("u")},
 		})
 	}
 	DT.TablesMu.Unlock()
@@ -80,7 +80,7 @@ func TestStmtCache_QueryStream(t *testing.T) {
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
 	for i := 0; i < 10; i++ {
-		DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
+		DT.Tables["t"] = append(DT.Tables["t"], DT.Row{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(int64(i))}})
 	}
 	DT.TablesMu.Unlock()
 
@@ -158,7 +158,7 @@ func TestStmtCache_DDLInvalidates(t *testing.T) {
 
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
-	DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(1))}})
+	DT.Tables["t"] = append(DT.Tables["t"], DT.Row{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(int64(1))}})
 	DT.TablesMu.Unlock()
 
 	ex := NewExecutor()
@@ -209,7 +209,7 @@ func TestQueryStreamFromAST_BypassParser(t *testing.T) {
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
 	for i := 0; i < 3; i++ {
-		DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(i))}})
+		DT.Tables["t"] = append(DT.Tables["t"], DT.Row{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(int64(i))}})
 	}
 	DT.TablesMu.Unlock()
 
@@ -252,7 +252,7 @@ func TestPreparedCache_HitRate(t *testing.T) {
 	DT.RegisterTableSchema("t", []string{"id", "name"})
 	DT.TablesMu.Lock()
 	for i := 0; i < 10; i++ {
-		DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id", "name"}, Data: []Value{NewIntValue(int64(i)), NewTextValue("u")}})
+		DT.Tables["t"] = append(DT.Tables["t"], DT.Row{Cols: []string{"id", "name"}, Data: []DT.Value{NewIntValue(int64(i)), NewTextValue("u")}})
 	}
 	DT.TablesMu.Unlock()
 
@@ -358,7 +358,7 @@ func TestPreparedCache_DDLInvalidates(t *testing.T) {
 
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
-	DT.Tables["t"] = append(DT.Tables["t"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(1))}})
+	DT.Tables["t"] = append(DT.Tables["t"], DT.Row{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(int64(1))}})
 	DT.TablesMu.Unlock()
 
 	ex := NewExecutor()
@@ -447,7 +447,7 @@ func TestPreparedCache_EdgeCases(t *testing.T) {
 
 		DT.RegisterTableSchema("d", []string{"x"})
 		DT.TablesMu.Lock()
-		DT.Tables["d"] = append(DT.Tables["d"], Row{Cols: []string{"x"}, Data: []Value{NewIntValue(42)}})
+		DT.Tables["d"] = append(DT.Tables["d"], DT.Row{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(42)}})
 		DT.TablesMu.Unlock()
 
 		// Create executor but don't enable plan cache.
@@ -471,7 +471,7 @@ func TestPreparedCache_EdgeCases(t *testing.T) {
 
 		DT.RegisterTableSchema("e", []string{"id"})
 		DT.TablesMu.Lock()
-		DT.Tables["e"] = append(DT.Tables["e"], Row{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}})
+		DT.Tables["e"] = append(DT.Tables["e"], DT.Row{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(1)}})
 		DT.TablesMu.Unlock()
 
 		// Use a tiny max size to force eviction.
@@ -503,9 +503,9 @@ func BenchmarkPreparedCache_HitVsMiss(b *testing.B) {
 	DT.RegisterTableSchema("t", []string{"id", "name", "value"})
 	DT.TablesMu.Lock()
 	for i := 0; i < 1000; i++ {
-		DT.Tables["t"] = append(DT.Tables["t"], Row{
+		DT.Tables["t"] = append(DT.Tables["t"], DT.Row{
 			Cols: []string{"id", "name", "value"},
-			Data: []Value{NewIntValue(int64(i)), NewTextValue("u"), NewIntValue(int64(i * 2))},
+			Data: []DT.Value{NewIntValue(int64(i)), NewTextValue("u"), NewIntValue(int64(i * 2))},
 		})
 	}
 	DT.TablesMu.Unlock()

@@ -56,17 +56,17 @@ func TestPlanner_BushyJoin_StarSchema(t *testing.T) {
 		// End-to-end: seed DT registry directly and verify the
 		// 4-table join query completes successfully.
 		ResetForTest(t)
-		seedRows(t, "F", []string{"id", "d1k", "d2k", "d3k"}, []Row{
-			{Cols: []string{"id", "d1k", "d2k", "d3k"}, Data: []Value{NewIntValue(1), NewIntValue(10), NewIntValue(20), NewIntValue(30)}},
+		seedRows(t, "F", []string{"id", "d1k", "d2k", "d3k"}, []DT.Row{
+			{Cols: []string{"id", "d1k", "d2k", "d3k"}, Data: []DT.Value{NewIntValue(1), NewIntValue(10), NewIntValue(20), NewIntValue(30)}},
 		})
-		seedRows(t, "D1", []string{"k", "v1"}, []Row{
-			{Cols: []string{"k", "v1"}, Data: []Value{NewIntValue(10), NewIntValue(100)}},
+		seedRows(t, "D1", []string{"k", "v1"}, []DT.Row{
+			{Cols: []string{"k", "v1"}, Data: []DT.Value{NewIntValue(10), NewIntValue(100)}},
 		})
-		seedRows(t, "D2", []string{"k", "v2"}, []Row{
-			{Cols: []string{"k", "v2"}, Data: []Value{NewIntValue(20), NewIntValue(200)}},
+		seedRows(t, "D2", []string{"k", "v2"}, []DT.Row{
+			{Cols: []string{"k", "v2"}, Data: []DT.Value{NewIntValue(20), NewIntValue(200)}},
 		})
-		seedRows(t, "D3", []string{"k", "v3"}, []Row{
-			{Cols: []string{"k", "v3"}, Data: []Value{NewIntValue(30), NewIntValue(300)}},
+		seedRows(t, "D3", []string{"k", "v3"}, []DT.Row{
+			{Cols: []string{"k", "v3"}, Data: []DT.Value{NewIntValue(30), NewIntValue(300)}},
 		})
 		ex := NewExecutor()
 		defer UnregisterAll()
@@ -141,7 +141,7 @@ func TestPlanner_BushyJoin_StarSchema(t *testing.T) {
 
 // planHasJoinOp walks the plan tree and returns true if any operator
 // is a *OP.NestedLoopJoin, *OP.HashJoin, *OP.HashCrossJoin, or *OP.MergeJoin.
-func planHasJoinOp(op Operator) bool {
+func planHasJoinOp(op DT.Operator) bool {
 	if op == nil {
 		return false
 	}
@@ -161,14 +161,14 @@ func planHasJoinOp(op Operator) bool {
 		return planHasJoinOp(aop.Inner)
 	}
 	type childProvider interface {
-		LeftChild() Operator
-		RightChild() Operator
+		LeftChild() DT.Operator
+		RightChild() DT.Operator
 	}
 	if cp, ok := op.(childProvider); ok {
 		return planHasJoinOp(cp.LeftChild()) || planHasJoinOp(cp.RightChild())
 	}
 	type singleChild interface {
-		Child() Operator
+		Child() DT.Operator
 	}
 	if sc, ok := op.(singleChild); ok {
 		return planHasJoinOp(sc.Child())
@@ -177,7 +177,7 @@ func planHasJoinOp(op Operator) bool {
 }
 
 // planTreeDump prints the operator tree for debug visibility.
-func planTreeDump(op Operator, depth int) string {
+func planTreeDump(op DT.Operator, depth int) string {
 	if op == nil {
 		return "<nil>"
 	}
@@ -188,8 +188,8 @@ func planTreeDump(op Operator, depth int) string {
 		return s
 	}
 	type childProvider interface {
-		LeftChild() Operator
-		RightChild() Operator
+		LeftChild() DT.Operator
+		RightChild() DT.Operator
 	}
 	if cp, ok := op.(childProvider); ok {
 		s += planTreeDump(cp.LeftChild(), depth+1)
@@ -197,7 +197,7 @@ func planTreeDump(op Operator, depth int) string {
 		return s
 	}
 	type singleChild interface {
-		Child() Operator
+		Child() DT.Operator
 	}
 	if sc, ok := op.(singleChild); ok {
 		s += planTreeDump(sc.Child(), depth+1)
@@ -255,7 +255,7 @@ func stringsIndexByte(s string, c byte) int {
 }
 
 // seedRows registers a table with the DT registry.
-func seedRows(t *testing.T, name string, cols []string, rows []Row) {
+func seedRows(t *testing.T, name string, cols []string, rows []DT.Row) {
 	t.Helper()
 	DT.RegisterTable(name, rows)
 	_ = cols

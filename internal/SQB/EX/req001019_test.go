@@ -13,21 +13,21 @@ import (
 
 // memOp is a simple in-memory operator that returns rows from a slice.
 type memOp struct {
-	rows []Row
+	rows []DT.Row
 	pos  int
 }
 
-func (m *memOp) Next(ctx context.Context) (Row, error) {
+func (m *memOp) Next(ctx context.Context) (DT.Row, error) {
 	if m.pos >= len(m.rows) {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	r := m.rows[m.pos]
 	m.pos++
 	return r, nil
 }
 
-func (m *memOp) WithParams(p []any) Operator { return m }
-func (m *memOp) Close() error                { return nil }
+func (m *memOp) WithParams(p []any) DT.Operator { return m }
+func (m *memOp) Close() error                   { return nil }
 
 // BenchmarkCompoundOrderBy_EvalCost verifies that the Schwartzian
 // transform in OP.CompoundOp reduces per-comparison expression
@@ -35,11 +35,11 @@ func (m *memOp) Close() error                { return nil }
 func BenchmarkCompoundOrderBy_EvalCost(b *testing.B) {
 	b.Run("expr-per-row", func(b *testing.B) {
 		n := 512
-		rows := make([]Row, n)
+		rows := make([]DT.Row, n)
 		for i := range rows {
-			rows[i] = Row{
+			rows[i] = DT.Row{
 				Cols: []string{"val"},
-				Data: []Value{{Kind: KindInt, I64: int64(n - i)}},
+				Data: []DT.Value{{Kind: KindInt, I64: int64(n - i)}},
 			}
 		}
 		orderBy := []PS.OrderItem{
@@ -49,7 +49,7 @@ func BenchmarkCompoundOrderBy_EvalCost(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			// Simulate the OLD approach: EvalValue per comparison
-			result := make([]Row, n)
+			result := make([]DT.Row, n)
 			copy(result, rows)
 			_ = result
 			_ = orderBy
@@ -63,11 +63,11 @@ func BenchmarkCompoundOrderBy_EvalCost(b *testing.B) {
 
 	b.Run("decorate-sort-undecorate", func(b *testing.B) {
 		n := 512
-		rows := make([]Row, n)
+		rows := make([]DT.Row, n)
 		for i := range rows {
-			rows[i] = Row{
+			rows[i] = DT.Row{
 				Cols: []string{"val"},
-				Data: []Value{{Kind: KindInt, I64: int64(n - i)}},
+				Data: []DT.Value{{Kind: KindInt, I64: int64(n - i)}},
 			}
 		}
 		orderBy := []PS.OrderItem{
@@ -75,19 +75,19 @@ func BenchmarkCompoundOrderBy_EvalCost(b *testing.B) {
 		}
 
 		type decoratedRow struct {
-			row  Row
-			keys []Value
+			row  DT.Row
+			keys []DT.Value
 		}
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			result := make([]Row, n)
+			result := make([]DT.Row, n)
 			copy(result, rows)
 
 			// Decorate: K * N EvalValue calls, NOT K * N log N.
 			decorated := make([]decoratedRow, n)
 			for j := range result {
-				vals := make([]Value, len(orderBy))
+				vals := make([]DT.Value, len(orderBy))
 				for k, o := range orderBy {
 					v, _ := EV.EvalValue(o.Expr, &result[j], nil)
 					vals[k] = v
@@ -121,17 +121,17 @@ func BenchmarkCompoundOrderBy_ActualSort(b *testing.B) {
 			}
 
 			type decoratedRow struct {
-				row  Row
-				keys []Value
+				row  DT.Row
+				keys []DT.Value
 			}
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				rows := make([]Row, n)
+				rows := make([]DT.Row, n)
 				for j := range rows {
-					rows[j] = Row{
+					rows[j] = DT.Row{
 						Cols: []string{"id", "val"},
-						Data: []Value{
+						Data: []DT.Value{
 							{Kind: KindInt, I64: int64(n - j)},
 							{Kind: KindText, S: fmt.Sprintf("v%d", n-j)},
 						},
@@ -140,7 +140,7 @@ func BenchmarkCompoundOrderBy_ActualSort(b *testing.B) {
 
 				decorated := make([]decoratedRow, n)
 				for j := range rows {
-					vals := make([]Value, len(orderBy))
+					vals := make([]DT.Value, len(orderBy))
 					for k, o := range orderBy {
 						v, _ := EV.EvalValue(o.Expr, &rows[j], nil)
 						vals[k] = v
@@ -161,16 +161,16 @@ func TestCompoundOrderBy_Schwartzian(t *testing.T) {
 	ctx := context.Background()
 
 	left := &memOp{
-		rows: []Row{
-			{Cols: []string{"val"}, Data: []Value{{Kind: KindInt, I64: 30}}},
-			{Cols: []string{"val"}, Data: []Value{{Kind: KindInt, I64: 10}}},
-			{Cols: []string{"val"}, Data: []Value{{Kind: KindInt, I64: 20}}},
+		rows: []DT.Row{
+			{Cols: []string{"val"}, Data: []DT.Value{{Kind: KindInt, I64: 30}}},
+			{Cols: []string{"val"}, Data: []DT.Value{{Kind: KindInt, I64: 10}}},
+			{Cols: []string{"val"}, Data: []DT.Value{{Kind: KindInt, I64: 20}}},
 		},
 	}
 	right := &memOp{
-		rows: []Row{
-			{Cols: []string{"val"}, Data: []Value{{Kind: KindInt, I64: 15}}},
-			{Cols: []string{"val"}, Data: []Value{{Kind: KindInt, I64: 25}}},
+		rows: []DT.Row{
+			{Cols: []string{"val"}, Data: []DT.Value{{Kind: KindInt, I64: 15}}},
+			{Cols: []string{"val"}, Data: []DT.Value{{Kind: KindInt, I64: 25}}},
 		},
 	}
 
@@ -207,14 +207,14 @@ func TestCompoundOrderBy_Desc(t *testing.T) {
 	ctx := context.Background()
 
 	left := &memOp{
-		rows: []Row{
-			{Cols: []string{"val"}, Data: []Value{{Kind: KindInt, I64: 10}}},
-			{Cols: []string{"val"}, Data: []Value{{Kind: KindInt, I64: 30}}},
+		rows: []DT.Row{
+			{Cols: []string{"val"}, Data: []DT.Value{{Kind: KindInt, I64: 10}}},
+			{Cols: []string{"val"}, Data: []DT.Value{{Kind: KindInt, I64: 30}}},
 		},
 	}
 	right := &memOp{
-		rows: []Row{
-			{Cols: []string{"val"}, Data: []Value{{Kind: KindInt, I64: 20}}},
+		rows: []DT.Row{
+			{Cols: []string{"val"}, Data: []DT.Value{{Kind: KindInt, I64: 20}}},
 		},
 	}
 

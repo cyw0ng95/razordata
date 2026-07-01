@@ -493,11 +493,11 @@ func TestN3JoinOrdering_MultiStart_NoJoins(t *testing.T) {
 	}
 }
 
-// makeRows creates a slice of n empty Rows for in-memory table setup.
-func makeRows(n int) []Row {
-	rows := make([]Row, n)
+// makeRows creates a slice of n empty DT.Rows for in-memory table setup.
+func makeRows(n int) []DT.Row {
+	rows := make([]DT.Row, n)
 	for i := range rows {
-		rows[i] = Row{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(0)}}
+		rows[i] = DT.Row{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(0)}}
 	}
 	return rows
 }
@@ -779,9 +779,9 @@ func TestJoinPredSel_INList_UsesMCVs(t *testing.T) {
 	// Make findTableForColumn work — it scans the in-memory `DT.Tables`
 	// map for a column name. Add t1 with one row containing e8.
 	DT.TablesMu.Lock()
-	DT.Tables["t1"] = []Row{{
+	DT.Tables["t1"] = []DT.Row{{
 		Cols: []string{"id", "e8"},
-		Data: []Value{NewIntValue(1), NewIntValue(846)},
+		Data: []DT.Value{NewIntValue(1), NewIntValue(846)},
 	}}
 	DT.TablesMu.Unlock()
 	defer func() {

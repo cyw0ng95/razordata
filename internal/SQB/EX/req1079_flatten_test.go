@@ -30,10 +30,10 @@ func TestPlanner_SubqueryFlattening(t *testing.T) {
 		// End-to-end correctness via the executor: insert rows,
 		// flatten the query, verify the result matches a non-flattened
 		// reference query.
-		DT.RegisterTable("u", []Row{
-			{Cols: []string{"k", "v"}, Data: []Value{NewIntValue(1), NewIntValue(10)}},
-			{Cols: []string{"k", "v"}, Data: []Value{NewIntValue(2), NewIntValue(20)}},
-			{Cols: []string{"k", "v"}, Data: []Value{NewIntValue(3), NewIntValue(30)}},
+		DT.RegisterTable("u", []DT.Row{
+			{Cols: []string{"k", "v"}, Data: []DT.Value{NewIntValue(1), NewIntValue(10)}},
+			{Cols: []string{"k", "v"}, Data: []DT.Value{NewIntValue(2), NewIntValue(20)}},
+			{Cols: []string{"k", "v"}, Data: []DT.Value{NewIntValue(3), NewIntValue(30)}},
 		})
 		ex := NewExecutor()
 		ctx := context.Background()

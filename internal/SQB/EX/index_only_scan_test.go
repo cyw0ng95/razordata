@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP")
 
@@ -167,21 +168,21 @@ func itoa(n int) string {
 
 // findIndexOnlyInTree reports whether any *OP.IndexOnlyScan is in
 // the operator tree.
-func findIndexOnlyInTree(op Operator) bool {
+func findIndexOnlyInTree(op DT.Operator) bool {
 	if op == nil {
 		return false
 	}
 	if _, ok := op.(*OP.IndexOnlyScan); ok {
 		return true
 	}
-	if c, ok := op.(interface{ Child() Operator }); ok {
+	if c, ok := op.(interface{ Child() DT.Operator }); ok {
 		if findIndexOnlyInTree(c.Child()) {
 			return true
 		}
 	}
 	if lr, ok := op.(interface {
-		LeftChild() Operator
-		RightChild() Operator
+		LeftChild() DT.Operator
+		RightChild() DT.Operator
 	}); ok {
 		if findIndexOnlyInTree(lr.LeftChild()) {
 			return true

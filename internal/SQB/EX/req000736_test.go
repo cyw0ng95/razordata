@@ -41,13 +41,13 @@ func TestREQ000736_ParserCheck(t *testing.T) {
 		t.Fatalf("nil plan")
 	}
 	found := false
-	var walk func(Operator)
-	walk = func(op Operator) {
+	var walk func(DT.Operator)
+	walk = func(op DT.Operator) {
 		if s, ok := op.(*OP.Sort); ok {
 			found = true
 			t.Logf("OP.Sort has %d keys, NullsOrder[0]=%d", len(s.Keys()), s.Keys()[0].NullsOrder)
 		}
-		if c, ok := op.(interface{ Child() Operator }); ok {
+		if c, ok := op.(interface{ Child() DT.Operator }); ok {
 			c2 := c.Child()
 			if c2 != nil {
 				walk(c2)

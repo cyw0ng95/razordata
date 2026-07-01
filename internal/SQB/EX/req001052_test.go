@@ -87,7 +87,7 @@ func TestParallelUnionAll_EmptySides(t *testing.T) {
 	}
 }
 
-// arrayScan is a simple Operator that yields rows from a slice.
+// arrayScan is a simple DT.Operator that yields rows from a slice.
 type arrayScan struct {
 	rows []pl.Row
 	pos  int

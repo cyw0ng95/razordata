@@ -8,6 +8,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
 // REQ001051: ParallelIndexRangeScan filters IN-list values correctly.
@@ -16,9 +17,9 @@ func TestParallelIndexRangeScan_Basic(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 
-	rows := make([]Row, 20)
+	rows := make([]DT.Row, 20)
 	for i := range rows {
-		rows[i] = Row{Data: []Value{{Kind: KindInt, I64: int64(i)}}}
+		rows[i] = DT.Row{Data: []DT.Value{{Kind: KindInt, I64: int64(i)}}}
 	}
 	schema := []string{"val"}
 	types := []LX.TokenType{LX.T_INT_KW}
@@ -71,7 +72,7 @@ func TestParallelIndexRangeScan_EmptyValues(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 
-	rows := []Row{{Data: []Value{{Kind: KindInt, I64: 1}}}}
+	rows := []DT.Row{{Data: []DT.Value{{Kind: KindInt, I64: 1}}}}
 	ps := OP.NewParallelIndexRangeScan(rows, []string{"val"}, []LX.TokenType{LX.T_INT_KW}, "val", nil, pool)
 	defer ps.Close()
 
@@ -88,12 +89,12 @@ func TestParallelIndexRangeScan_String(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 
-	rows := []Row{
-		{Data: []Value{{Kind: KindText, S: "a"}}},
-		{Data: []Value{{Kind: KindText, S: "b"}}},
-		{Data: []Value{{Kind: KindText, S: "c"}}},
-		{Data: []Value{{Kind: KindText, S: "b"}}},
-		{Data: []Value{{Kind: KindText, S: "d"}}},
+	rows := []DT.Row{
+		{Data: []DT.Value{{Kind: KindText, S: "a"}}},
+		{Data: []DT.Value{{Kind: KindText, S: "b"}}},
+		{Data: []DT.Value{{Kind: KindText, S: "c"}}},
+		{Data: []DT.Value{{Kind: KindText, S: "b"}}},
+		{Data: []DT.Value{{Kind: KindText, S: "d"}}},
 	}
 	schema := []string{"s"}
 	types := []LX.TokenType{LX.T_TEXT}
@@ -122,9 +123,9 @@ func TestParallelIndexRangeScan_MultiCol(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 
-	rows := make([]Row, 10)
+	rows := make([]DT.Row, 10)
 	for i := range rows {
-		rows[i] = Row{Data: []Value{
+		rows[i] = DT.Row{Data: []DT.Value{
 			{Kind: KindInt, I64: int64(i)},
 			{Kind: KindText, S: fmt.Sprintf("val%d", i)},
 		}}
@@ -163,9 +164,9 @@ func TestParallelIndexRangeScan_NoMatch(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 
-	rows := []Row{
-		{Data: []Value{{Kind: KindInt, I64: 1}}},
-		{Data: []Value{{Kind: KindInt, I64: 2}}},
+	rows := []DT.Row{
+		{Data: []DT.Value{{Kind: KindInt, I64: 1}}},
+		{Data: []DT.Value{{Kind: KindInt, I64: 2}}},
 	}
 	ps := OP.NewParallelIndexRangeScan(rows, []string{"val"}, []LX.TokenType{LX.T_INT_KW}, "val",
 		[]any{int64(99), int64(100)}, pool)
@@ -184,9 +185,9 @@ func TestParallelIndexRangeScan_SingleWorker(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 
-	rows := make([]Row, 50)
+	rows := make([]DT.Row, 50)
 	for i := range rows {
-		rows[i] = Row{Data: []Value{{Kind: KindInt, I64: int64(i)}}}
+		rows[i] = DT.Row{Data: []DT.Value{{Kind: KindInt, I64: int64(i)}}}
 	}
 	ps := OP.NewParallelIndexRangeScan(rows, []string{"val"}, []LX.TokenType{LX.T_INT_KW}, "val",
 		[]any{int64(0), int64(25), int64(49)}, pool)
@@ -213,9 +214,9 @@ func BenchmarkParallelIndexRangeScan_100Values(b *testing.B) {
 	ctx := context.Background()
 
 	n := 10000
-	rows := make([]Row, n)
+	rows := make([]DT.Row, n)
 	for i := range rows {
-		rows[i] = Row{Data: []Value{{Kind: KindInt, I64: int64(i)}}}
+		rows[i] = DT.Row{Data: []DT.Value{{Kind: KindInt, I64: int64(i)}}}
 	}
 
 	values := make([]any, 100)

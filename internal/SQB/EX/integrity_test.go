@@ -93,7 +93,7 @@ func TestIntegrityCheck_Integration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Next failed: %v", err)
 		}
-		t.Logf("Row: %+v", row)
+		t.Logf("DT.Row: %+v", row)
 		count++
 	}
 

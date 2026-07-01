@@ -19,10 +19,10 @@ import (
 func makeParallelTestRows(n int) []pl.Row {
 	rows := make([]pl.Row, n)
 	for i := 0; i < n; i++ {
-		rows[i] = Row{
+		rows[i] = DT.Row{
 			Cols:  []string{"id", "value"},
 			Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT},
-			Data:  []Value{NewIntValue(int64(i)), DT.NewTextValue("row")},
+			Data:  []DT.Value{NewIntValue(int64(i)), DT.NewTextValue("row")},
 		}
 	}
 	return rows
@@ -252,13 +252,13 @@ func BenchmarkParallelSeqScanScaling(b *testing.B) {
 
 // rowSourceForTest is a simple in-memory row iterator for tests.
 type rowSourceForTest struct {
-	rows []Row
+	rows []DT.Row
 	pos  int
 }
 
-func (r *rowSourceForTest) Next(ctx context.Context) (Row, error) {
+func (r *rowSourceForTest) Next(ctx context.Context) (DT.Row, error) {
 	if r.pos >= len(r.rows) {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	row := r.rows[r.pos]
 	r.pos++
@@ -268,13 +268,13 @@ func (r *rowSourceForTest) Next(ctx context.Context) (Row, error) {
 func (r *rowSourceForTest) Close() error { return nil }
 
 // makeTestRows creates N rows with id=0..N-1 and value="row_i".
-func makeTestRows(n int) []Row {
-	rows := make([]Row, n)
+func makeTestRows(n int) []DT.Row {
+	rows := make([]DT.Row, n)
 	for i := 0; i < n; i++ {
-		rows[i] = Row{
+		rows[i] = DT.Row{
 			Cols:  []string{"id", "value"},
 			Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT},
-			Data:  []Value{NewIntValue(int64(i)), NewTextValue("row")},
+			Data:  []DT.Value{NewIntValue(int64(i)), NewTextValue("row")},
 		}
 	}
 	return rows
@@ -536,12 +536,12 @@ func BenchmarkRowFilter_Fallback(b *testing.B) {
 // over the row-at-a-time fallback for the Eval-based path.
 func BenchmarkVectorizedFilter_MultiBatch(b *testing.B) {
 	const n = 10 * 1024
-	rows := make([]Row, n)
+	rows := make([]DT.Row, n)
 	for i := 0; i < n; i++ {
-		rows[i] = Row{
+		rows[i] = DT.Row{
 			Cols:  []string{"id"},
 			Types: []LX.TokenType{LX.T_INT_KW},
-			Data:  []Value{NewIntValue(int64(i))},
+			Data:  []DT.Value{NewIntValue(int64(i))},
 		}
 	}
 	schema := []string{"id"}
@@ -593,7 +593,7 @@ func makeSortTestRows(n int) []pl.Row {
 		rows[i] = pl.Row{
 			Cols:  []string{"id"},
 			Types: []LX.TokenType{LX.T_INT_KW},
-			Data:  []Value{NewIntValue(int64(n - 1 - i))},
+			Data:  []DT.Value{NewIntValue(int64(n - 1 - i))},
 		}
 	}
 	return rows
@@ -721,9 +721,9 @@ func TestCompareValues(t *testing.T) {
 
 // TestLessRow tests multi-key row comparison.
 func TestLessRow(t *testing.T) {
-	row1 := Row{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(2))}}
-	row2 := Row{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(1)), NewIntValue(int64(3))}}
-	row3 := Row{Cols: []string{"a", "b"}, Data: []Value{NewIntValue(int64(2)), NewIntValue(int64(1))}}
+	row1 := DT.Row{Cols: []string{"a", "b"}, Data: []DT.Value{NewIntValue(int64(1)), NewIntValue(int64(2))}}
+	row2 := DT.Row{Cols: []string{"a", "b"}, Data: []DT.Value{NewIntValue(int64(1)), NewIntValue(int64(3))}}
+	row3 := DT.Row{Cols: []string{"a", "b"}, Data: []DT.Value{NewIntValue(int64(2)), NewIntValue(int64(1))}}
 
 	keys := []SortKey{{ColName: "a", Order: AscOrder}, {ColName: "b", Order: AscOrder}}
 	if !lessRow(row1, row2, keys) {
@@ -814,7 +814,7 @@ func BenchmarkSequentialSort(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		// Materialize + sort
 		sortOp := NewParallelSort(nil, keys, nil)
-		sortOp.rows = make([]Row, len(rows))
+		sortOp.rows = make([]DT.Row, len(rows))
 		copy(sortOp.rows, rows)
 		sortOp.sequentialSort()
 	}

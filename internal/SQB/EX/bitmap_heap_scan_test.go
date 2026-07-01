@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP")
 
@@ -79,10 +80,10 @@ func TestBitmapHeapScan_ExplainsLabel(t *testing.T) {
 
 // findBitmapInTree walks the operator tree depth-first and
 // returns true when a *OP.BitmapHeapScan is found.
-func findBitmapInTree(op Operator) (Operator, bool) {
-	var found Operator
-	var walk func(o Operator) bool
-	walk = func(o Operator) bool {
+func findBitmapInTree(op DT.Operator) (DT.Operator, bool) {
+	var found DT.Operator
+	var walk func(o DT.Operator) bool
+	walk = func(o DT.Operator) bool {
 		if o == nil {
 			return false
 		}
@@ -90,14 +91,14 @@ func findBitmapInTree(op Operator) (Operator, bool) {
 			found = o
 			return true
 		}
-		if c, ok := o.(interface{ Child() Operator }); ok {
+		if c, ok := o.(interface{ Child() DT.Operator }); ok {
 			if walk(c.Child()) {
 				return true
 			}
 		}
 		if lr, ok := o.(interface {
-			LeftChild() Operator
-			RightChild() Operator
+			LeftChild() DT.Operator
+			RightChild() DT.Operator
 		}); ok {
 			if walk(lr.LeftChild()) {
 				return true

@@ -17,9 +17,9 @@ func TestParallelSeqScanRow_Basic(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 
-	rows := make([]Row, 100)
+	rows := make([]DT.Row, 100)
 	for i := range rows {
-		rows[i] = Row{Data: []Value{{Kind: KindInt, I64: int64(i)}}}
+		rows[i] = DT.Row{Data: []DT.Value{{Kind: KindInt, I64: int64(i)}}}
 	}
 	schema := []string{"val"}
 	types := []LX.TokenType{LX.T_INT_KW}
@@ -48,9 +48,9 @@ func TestParallelSeqScanRow_Values(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 
-	rows := make([]Row, 10)
+	rows := make([]DT.Row, 10)
 	for i := range rows {
-		rows[i] = Row{Data: []Value{
+		rows[i] = DT.Row{Data: []DT.Value{
 			{Kind: KindInt, I64: int64(i)},
 			{Kind: KindText, S: fmt.Sprintf("v%d", i)},
 		}}
@@ -120,9 +120,9 @@ func TestParallelSeqScanRow_MultiWorker(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 
-	rows := make([]Row, 50)
+	rows := make([]DT.Row, 50)
 	for i := range rows {
-		rows[i] = Row{Data: []Value{{Kind: KindInt, I64: int64(i)}}}
+		rows[i] = DT.Row{Data: []DT.Value{{Kind: KindInt, I64: int64(i)}}}
 	}
 	schema := []string{"v"}
 	types := []LX.TokenType{LX.T_INT_KW}

@@ -296,7 +296,7 @@ func mustExec(t *testing.T, exec *Executor, ctx context.Context, sql string) {
 	}
 }
 
-func mustQueryAll(t *testing.T, exec *Executor, ctx context.Context, sql string) []Row {
+func mustQueryAll(t *testing.T, exec *Executor, ctx context.Context, sql string) []DT.Row {
 	t.Helper()
 	rows, err := exec.QueryAll(ctx, sql)
 	if err != nil {

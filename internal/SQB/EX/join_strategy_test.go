@@ -55,14 +55,14 @@ func TestJoinStrategy_EmptyStreamsReturnNoRows(t *testing.T) {
 // a tiny in-memory scan pair (2x3) and verifies the cartesian
 // product is produced correctly.
 func TestJoinStrategy_InnerNLJ_Smoke(t *testing.T) {
-	left := &memScan{rows: []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(1)}},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(2)}},
+	left := &memScan{rows: []DT.Row{
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(1)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(2)}},
 	}}
-	right := &memScan{rows: []Row{
-		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(10)}},
-		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(20)}},
-		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(30)}},
+	right := &memScan{rows: []DT.Row{
+		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(10)}},
+		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(20)}},
+		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(30)}},
 	}}
 	strat := NewInnerNLJStrategy(left, right, nil)
 	defer strat.Close()
@@ -89,14 +89,14 @@ func TestJoinStrategy_InnerNLJ_Smoke(t *testing.T) {
 // TestJoinStrategy_InnerNLJ_Limit verifies the SetLimit budget
 // caps emission.
 func TestJoinStrategy_InnerNLJ_Limit(t *testing.T) {
-	left := &memScan{rows: []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(1)}},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(2)}},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(3)}},
+	left := &memScan{rows: []DT.Row{
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(1)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(2)}},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(3)}},
 	}}
-	right := &memScan{rows: []Row{
-		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(10)}},
-		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(20)}},
+	right := &memScan{rows: []DT.Row{
+		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(10)}},
+		{Cols: []string{"b"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(20)}},
 	}}
 	strat := NewInnerNLJStrategy(left, right, nil)
 	strat.SetLimit(3)
@@ -122,16 +122,16 @@ func TestJoinStrategy_InnerNLJ_Limit(t *testing.T) {
 // tests. It satisfies the pl.Operator interface (Next, Close,
 // WithParams).
 type memScan struct {
-	rows []Row
+	rows []DT.Row
 	pos  int
 }
 
-func (m *memScan) Next(ctx context.Context) (Row, error) {
+func (m *memScan) Next(ctx context.Context) (DT.Row, error) {
 	if err := ctx.Err(); err != nil {
-		return Row{}, err
+		return DT.Row{}, err
 	}
 	if m.pos >= len(m.rows) {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	r := m.rows[m.pos]
 	m.pos++
@@ -146,11 +146,11 @@ func (m *memScan) WithParams(p []any) pl.Operator { m.rows = nil; return m }
 // is used to drive strategy boundary cases.
 type emptyOp struct{}
 
-func (emptyOp) Next(ctx context.Context) (Row, error) {
+func (emptyOp) Next(ctx context.Context) (DT.Row, error) {
 	if err := ctx.Err(); err != nil {
-		return Row{}, err
+		return DT.Row{}, err
 	}
-	return Row{}, DT.ErrNoRows
+	return DT.Row{}, DT.ErrNoRows
 }
 func (emptyOp) Close() error                   { return nil }
 func (emptyOp) WithParams(p []any) pl.Operator { return emptyOp{} }

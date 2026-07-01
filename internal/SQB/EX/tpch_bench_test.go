@@ -10,18 +10,19 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
 // makeTPCHLikeRows creates N rows simulating TPC-H lineitem schema:
 // l_orderkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax
-func makeTPCHLikeRows(n int, seed int64) []Row {
+func makeTPCHLikeRows(n int, seed int64) []DT.Row {
 	rng := rand.New(rand.NewPCG(uint64(seed), uint64(seed+1)))
-	rows := make([]Row, n)
+	rows := make([]DT.Row, n)
 	for i := 0; i < n; i++ {
-		rows[i] = Row{
+		rows[i] = DT.Row{
 			Cols:  []string{"l_orderkey", "l_linenumber", "l_quantity", "l_extendedprice", "l_discount", "l_tax"},
 			Types: []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW, LX.T_FLOAT_KW, LX.T_FLOAT_KW, LX.T_FLOAT_KW, LX.T_FLOAT_KW},
-			Data:  []Value{NewIntValue(int64(rng.IntN(1000000))), NewIntValue(int64(rng.IntN(7) + 1)), NewFloatValue(float64(rng.IntN(50) + 1)), NewFloatValue(float64(rng.IntN(100000)) / 100.), NewFloatValue(float64(rng.IntN(10)) / 100.), NewFloatValue(float64(rng.IntN(8)) / 100.)},
+			Data:  []DT.Value{NewIntValue(int64(rng.IntN(1000000))), NewIntValue(int64(rng.IntN(7) + 1)), NewFloatValue(float64(rng.IntN(50) + 1)), NewFloatValue(float64(rng.IntN(100000)) / 100.), NewFloatValue(float64(rng.IntN(10)) / 100.), NewFloatValue(float64(rng.IntN(8)) / 100.)},
 		}
 	}
 	return rows

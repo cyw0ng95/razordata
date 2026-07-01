@@ -14,23 +14,23 @@ import (
 func TestPragma_ForeignKeys_Toggle(t *testing.T) {
 	UT.UnregisterAllPragmaListeners()
 	defer UT.UnregisterAllPragmaListeners()
-	defer SetForeignKeysEnabled(true) // restore default
+	defer DT.SetForeignKeysEnabled(true) // restore default
 
 	// Verify default is ON.
-	if !IsForeignKeysEnabled() {
+	if !DT.IsForeignKeysEnabled() {
 		t.Fatal("expected default foreign_keys=ON")
 	}
 
 	// Toggle OFF.
-	SetForeignKeysEnabled(false)
-	if IsForeignKeysEnabled() {
-		t.Fatal("expected IsForeignKeysEnabled()=false after OFF")
+	DT.SetForeignKeysEnabled(false)
+	if DT.IsForeignKeysEnabled() {
+		t.Fatal("expected DT.IsForeignKeysEnabled()=false after OFF")
 	}
 
 	// Toggle ON.
-	SetForeignKeysEnabled(true)
-	if !IsForeignKeysEnabled() {
-		t.Fatal("expected IsForeignKeysEnabled()=true after ON")
+	DT.SetForeignKeysEnabled(true)
+	if !DT.IsForeignKeysEnabled() {
+		t.Fatal("expected DT.IsForeignKeysEnabled()=true after ON")
 	}
 }
 
@@ -38,7 +38,7 @@ func TestPragma_ForeignKeys_Toggle(t *testing.T) {
 func TestPragma_ForeignKeys_ReadWrite(t *testing.T) {
 	UT.UnregisterAllPragmaListeners()
 	defer UT.UnregisterAllPragmaListeners()
-	defer SetForeignKeysEnabled(true) // restore default
+	defer DT.SetForeignKeysEnabled(true) // restore default
 
 	e := NewExecutorWithEngine(nil)
 	ctx := context.Background()
@@ -60,7 +60,7 @@ func TestPragma_ForeignKeys_ReadWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if IsForeignKeysEnabled() {
+	if DT.IsForeignKeysEnabled() {
 		t.Fatal("expected foreign_keys=OFF after PRAGMA")
 	}
 
@@ -81,7 +81,7 @@ func TestPragma_ForeignKeys_ReadWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !IsForeignKeysEnabled() {
+	if !DT.IsForeignKeysEnabled() {
 		t.Fatal("expected foreign_keys=ON after PRAGMA")
 	}
 }
@@ -104,13 +104,13 @@ func TestPragma_ForeignKeyCheck_NoViolations(t *testing.T) {
 	DT.TableIDs["c"] = 2
 
 	// Parent has id=1,2,3. Child references valid parent ids.
-	DT.Tables["p"] = []Row{
-		{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}},
-		{Cols: []string{"id"}, Data: []Value{NewIntValue(2)}},
+	DT.Tables["p"] = []DT.Row{
+		{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(1)}},
+		{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(2)}},
 	}
-	DT.Tables["c"] = []Row{
-		{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(10), NewIntValue(1)}},
-		{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(20), NewIntValue(2)}},
+	DT.Tables["c"] = []DT.Row{
+		{Cols: []string{"id", "pid"}, Data: []DT.Value{NewIntValue(10), NewIntValue(1)}},
+		{Cols: []string{"id", "pid"}, Data: []DT.Value{NewIntValue(20), NewIntValue(2)}},
 	}
 
 	p := NewPragma(&PS.PragmaStmt{Name: "foreign_key_check"})
@@ -137,12 +137,12 @@ func TestPragma_ForeignKeyCheck_Violation(t *testing.T) {
 	DT.TableIDs["p"] = 1
 	DT.TableIDs["c"] = 2
 
-	DT.Tables["p"] = []Row{
-		{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}},
+	DT.Tables["p"] = []DT.Row{
+		{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(1)}},
 	}
 	// Child has pid=99 which does NOT exist in parent.
-	DT.Tables["c"] = []Row{
-		{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(10), NewIntValue(99)}},
+	DT.Tables["c"] = []DT.Row{
+		{Cols: []string{"id", "pid"}, Data: []DT.Value{NewIntValue(10), NewIntValue(99)}},
 	}
 
 	p := NewPragma(&PS.PragmaStmt{Name: "foreign_key_check"})
@@ -173,11 +173,11 @@ func TestPragma_ForeignKeyCheck_SpecificTable(t *testing.T) {
 	DT.TableIDs["p"] = 1
 	DT.TableIDs["c"] = 2
 
-	DT.Tables["p"] = []Row{
-		{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}},
+	DT.Tables["p"] = []DT.Row{
+		{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(1)}},
 	}
-	DT.Tables["c"] = []Row{
-		{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(10), NewIntValue(99)}},
+	DT.Tables["c"] = []DT.Row{
+		{Cols: []string{"id", "pid"}, Data: []DT.Value{NewIntValue(10), NewIntValue(99)}},
 	}
 
 	// Check only table "p" — no FK constraints on it, so 0 violations.
@@ -212,12 +212,12 @@ func TestPragma_ForeignKeyCheck_NullFKColumns(t *testing.T) {
 	DT.TableIDs["p"] = 1
 	DT.TableIDs["c"] = 2
 
-	DT.Tables["p"] = []Row{
-		{Cols: []string{"id"}, Data: []Value{NewIntValue(1)}},
+	DT.Tables["p"] = []DT.Row{
+		{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(1)}},
 	}
 	// Child has NULL pid — should not be a violation (SQL standard).
-	DT.Tables["c"] = []Row{
-		{Cols: []string{"id", "pid"}, Data: []Value{NewIntValue(10), NullValue()}},
+	DT.Tables["c"] = []DT.Row{
+		{Cols: []string{"id", "pid"}, Data: []DT.Value{NewIntValue(10), NullValue()}},
 	}
 
 	p := NewPragma(&PS.PragmaStmt{Name: "foreign_key_check"})

@@ -21,10 +21,10 @@ func TestExecutorEndToEnd(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	DT.RegisterTable("users", []Row{
-		{Cols: []string{"id", "name", "age"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1)), NewTextValue("alice"), NewIntValue(int64(30))}},
-		{Cols: []string{"id", "name", "age"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2)), NewTextValue("bob"), NewIntValue(int64(25))}},
-		{Cols: []string{"id", "name", "age"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}, Data: []Value{NewIntValue(int64(3)), NewTextValue("carol"), NewIntValue(int64(40))}},
+	DT.RegisterTable("users", []DT.Row{
+		{Cols: []string{"id", "name", "age"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("alice"), NewIntValue(int64(30))}},
+		{Cols: []string{"id", "name", "age"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(2)), NewTextValue("bob"), NewIntValue(int64(25))}},
+		{Cols: []string{"id", "name", "age"}, Types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(3)), NewTextValue("carol"), NewIntValue(int64(40))}},
 	})
 
 	cases := []runCase{
@@ -176,14 +176,14 @@ func TestExecutorEndToEnd(t *testing.T) {
 	}
 }
 
-func buildPlan(t *testing.T, stmt PS.Stmt) Operator {
+func buildPlan(t *testing.T, stmt PS.Stmt) DT.Operator {
 	t.Helper()
 	sel, ok := stmt.(*PS.Select)
 	if !ok {
 		t.Fatalf("expected *Select, got %T", stmt)
 	}
 	scan := OP.NewSeqScan(sel.From)
-	var current Operator = scan
+	var current DT.Operator = scan
 	if sel.Where != nil {
 		current = OP.NewFilter(current, sel.Where)
 	}
@@ -248,7 +248,7 @@ func limitInt64Public(e PS.Expr) (int64, bool) {
 	return 0, false
 }
 
-func drain(t *testing.T, op Operator) [][]any {
+func drain(t *testing.T, op DT.Operator) [][]any {
 	t.Helper()
 	ctx := context.Background()
 	var out [][]any

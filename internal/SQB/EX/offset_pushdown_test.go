@@ -9,11 +9,11 @@ import (
 )
 
 func TestOffset_Operator(t *testing.T) {
-	src := &sliceOp{rows: []Row{
-		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(1))}},
-		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(2))}},
-		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(3))}},
-		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(4))}},
+	src := &sliceOp{rows: []DT.Row{
+		{Cols: []string{"a"}, Data: []DT.Value{NewIntValue(int64(1))}},
+		{Cols: []string{"a"}, Data: []DT.Value{NewIntValue(int64(2))}},
+		{Cols: []string{"a"}, Data: []DT.Value{NewIntValue(int64(3))}},
+		{Cols: []string{"a"}, Data: []DT.Value{NewIntValue(int64(4))}},
 	}}
 	off := OP.NewOffset(src, 2)
 	defer off.Close()
@@ -41,8 +41,8 @@ func TestOffset_Operator(t *testing.T) {
 }
 
 func TestOffset_ExceedingRows(t *testing.T) {
-	src := &sliceOp{rows: []Row{
-		{Cols: []string{"a"}, Data: []Value{NewIntValue(int64(1))}},
+	src := &sliceOp{rows: []DT.Row{
+		{Cols: []string{"a"}, Data: []DT.Value{NewIntValue(int64(1))}},
 	}}
 	off := OP.NewOffset(src, 5)
 	defer off.Close()
@@ -145,13 +145,13 @@ func TestPlanSelect_OrderByPKDescKeepsSort(t *testing.T) {
 }
 
 type sliceOp struct {
-	rows []Row
+	rows []DT.Row
 	pos  int
 }
 
-func (s *sliceOp) Next(ctx context.Context) (Row, error) {
+func (s *sliceOp) Next(ctx context.Context) (DT.Row, error) {
 	if s.pos >= len(s.rows) {
-		return Row{}, DT.ErrNoRows
+		return DT.Row{}, DT.ErrNoRows
 	}
 	r := s.rows[s.pos]
 	s.pos++

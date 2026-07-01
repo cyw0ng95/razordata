@@ -71,9 +71,9 @@ func TestRefreshMatViewOperator(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	leftRows := []Row{
-		{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(1))}},
-		{Cols: []string{"id"}, Data: []Value{NewIntValue(int64(2))}},
+	leftRows := []DT.Row{
+		{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(int64(1))}},
+		{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(int64(2))}},
 	}
 	DT.RegisterTable("t1", leftRows)
 
@@ -131,9 +131,9 @@ func TestMatViewDataPrefix(t *testing.T) {
 }
 
 func TestEncodeMatViewRow(t *testing.T) {
-	row := Row{
+	row := DT.Row{
 		Cols: []string{"id", "name", "score"},
-		Data: []Value{NewIntValue(int64(42)), NewTextValue("hello"), NewFloatValue(float64(42))},
+		Data: []DT.Value{NewIntValue(int64(42)), NewTextValue("hello"), NewFloatValue(float64(42))},
 	}
 	encoded := encodeMatViewRow(row)
 	if len(encoded) == 0 {

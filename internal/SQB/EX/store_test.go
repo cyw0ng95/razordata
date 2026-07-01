@@ -301,8 +301,8 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 	// Build and insert encoded rows via the engine.
 	ss, _ := DT.SchemaFor("bench")
 	for i := 0; i < rowCount; i++ {
-		row := Row{
-			Data: []Value{
+		row := DT.Row{
+			Data: []DT.Value{
 				NewIntValue(int64(i)),
 				NewTextValue("name_" + strconv.Itoa(i)),
 				NewFloatValue(float64(i) * 1.5),
@@ -421,8 +421,8 @@ func BenchmarkSeqScan_FullScan(b *testing.B) {
 
 	ss, _ := DT.SchemaFor("bench")
 	for i := 0; i < rowCount; i++ {
-		row := Row{
-			Data: []Value{
+		row := DT.Row{
+			Data: []DT.Value{
 				NewIntValue(int64(i)),
 				NewTextValue("name_" + strconv.Itoa(i)),
 				NewFloatValue(float64(i) * 1.5),

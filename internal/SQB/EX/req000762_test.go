@@ -9,7 +9,7 @@ import (
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
 
-func anyToValue(a any) Value {
+func anyToValue(a any) DT.Value {
 	switch v := a.(type) {
 		case nil:
 			return DT.NullValue()

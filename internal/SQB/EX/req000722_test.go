@@ -4,7 +4,7 @@ import (
 	"context"
 	"strconv"
 	"testing"
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT")
+)
 
 // REQ000722: WHERE with comparison on indexed DT.Tables returning 0
 // rows via driver path. This REQ describes a bug that, as of this

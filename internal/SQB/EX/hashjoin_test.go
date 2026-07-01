@@ -23,8 +23,8 @@ func TestHashJoin_Empty(t *testing.T) {
 	ex.Exec(ctx, "INSERT INTO right VALUES (1, 'x')")
 
 	// Build small in-memory operators.
-	rows := []Row{
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
+	rows := []DT.Row{
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("a")}},
 	}
 	left := OP.NewSeqScan("left")
 	_ = left
@@ -136,15 +136,15 @@ func TestHashJoin_BuildAndProbe(t *testing.T) {
 func TestHashJoin_MultiMatch(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	leftRows := []Row{
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("b")}},
+	leftRows := []DT.Row{
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("a")}},
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(2)), NewTextValue("b")}},
 	}
-	rightRows := []Row{
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("x")}},
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("y")}},
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("z")}},
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("w")}},
+	rightRows := []DT.Row{
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("x")}},
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("y")}},
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("z")}},
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(2)), NewTextValue("w")}},
 	}
 	DT.RegisterTable("l", leftRows)
 	DT.RegisterTable("r", rightRows)
@@ -183,13 +183,13 @@ func TestHashJoin_MultiMatch(t *testing.T) {
 func TestHashJoin_NoMatch(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	leftRows := []Row{
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("b")}},
+	leftRows := []DT.Row{
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("a")}},
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(2)), NewTextValue("b")}},
 	}
-	rightRows := []Row{
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(3)), NewTextValue("x")}},
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(4)), NewTextValue("y")}},
+	rightRows := []DT.Row{
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(3)), NewTextValue("x")}},
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(4)), NewTextValue("y")}},
 	}
 	DT.RegisterTable("l", leftRows)
 	DT.RegisterTable("r", rightRows)
@@ -220,14 +220,14 @@ func TestHashJoin_NoMatch(t *testing.T) {
 func TestHashJoin_AllMatch(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	leftRows := []Row{
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("b")}},
+	leftRows := []DT.Row{
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("a")}},
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("b")}},
 	}
-	rightRows := []Row{
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("x")}},
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("y")}},
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("z")}},
+	rightRows := []DT.Row{
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("x")}},
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("y")}},
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("z")}},
 	}
 	DT.RegisterTable("l", leftRows)
 	DT.RegisterTable("r", rightRows)
@@ -260,14 +260,14 @@ func TestHashJoin_AllMatch(t *testing.T) {
 func TestHashJoin_JoinBufferSize(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	leftRows := []Row{
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("a")}},
-		{Cols: []string{"id", "val"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("b")}},
+	leftRows := []DT.Row{
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("a")}},
+		{Cols: []string{"id", "val"}, Data: []DT.Value{NewIntValue(int64(2)), NewTextValue("b")}},
 	}
-	rightRows := []Row{
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("x")}},
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(1)), NewTextValue("y")}},
-		{Cols: []string{"ref", "name"}, Data: []Value{NewIntValue(int64(2)), NewTextValue("z")}},
+	rightRows := []DT.Row{
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("x")}},
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(1)), NewTextValue("y")}},
+		{Cols: []string{"ref", "name"}, Data: []DT.Value{NewIntValue(int64(2)), NewTextValue("z")}},
 	}
 	DT.RegisterTable("l", leftRows)
 	DT.RegisterTable("r", rightRows)
@@ -292,15 +292,15 @@ func TestHashJoin_JoinBufferSize(t *testing.T) {
 // column and probes each left row's bucket.
 func TestHashCrossJoin_BasicEquiJoin(t *testing.T) {
 	defer UnregisterAll()
-	left := newTestSeqScan(t, "t1", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t1"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, TableName: "t1"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(3))}, TableName: "t1"},
+	left := newTestSeqScan(t, "t1", []DT.Row{
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(1))}, TableName: "t1"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(2))}, TableName: "t1"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(3))}, TableName: "t1"},
 	})
-	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, TableName: "t2"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(3))}, TableName: "t2"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, TableName: "t2"},
+	right := newTestSeqScan(t, "t2", []DT.Row{
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(2))}, TableName: "t2"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(3))}, TableName: "t2"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(2))}, TableName: "t2"},
 	})
 
 	j :=
@@ -342,8 +342,8 @@ func TestHashCrossJoin_BasicEquiJoin(t *testing.T) {
 func TestHashCrossJoin_EmptySides(t *testing.T) {
 	defer UnregisterAll()
 	left := newTestSeqScan(t, "t1", nil)
-	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t2"},
+	right := newTestSeqScan(t, "t2", []DT.Row{
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(1))}, TableName: "t2"},
 	})
 
 	j :=
@@ -371,14 +371,14 @@ func TestHashCrossJoin_EmptySides(t *testing.T) {
 // Cartesian product for full-match keys.
 func TestHashCrossJoin_AllMatch(t *testing.T) {
 	defer UnregisterAll()
-	left := newTestSeqScan(t, "t1", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t1"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, TableName: "t1"},
+	left := newTestSeqScan(t, "t1", []DT.Row{
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(1))}, TableName: "t1"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(2))}, TableName: "t1"},
 	})
-	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t2"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(2))}, TableName: "t2"},
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewIntValue(int64(1))}, TableName: "t2"},
+	right := newTestSeqScan(t, "t2", []DT.Row{
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(1))}, TableName: "t2"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(2))}, TableName: "t2"},
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewIntValue(int64(1))}, TableName: "t2"},
 	})
 
 	j :=
@@ -406,14 +406,14 @@ func TestHashCrossJoin_AllMatch(t *testing.T) {
 // TestHashCrossJoin_StringKey verifies REQ000800 supports string keys.
 func TestHashCrossJoin_StringKey(t *testing.T) {
 	defer UnregisterAll()
-	left := newTestSeqScan(t, "t1", []Row{
-		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("x")}, TableName: "t1"},
-		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("y")}, TableName: "t1"},
+	left := newTestSeqScan(t, "t1", []DT.Row{
+		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewTextValue("x")}, TableName: "t1"},
+		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewTextValue("y")}, TableName: "t1"},
 	})
-	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("x")}, TableName: "t2"},
-		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("x")}, TableName: "t2"},
-		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NewTextValue("z")}, TableName: "t2"},
+	right := newTestSeqScan(t, "t2", []DT.Row{
+		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewTextValue("x")}, TableName: "t2"},
+		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewTextValue("x")}, TableName: "t2"},
+		{Cols: []string{"k"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NewTextValue("z")}, TableName: "t2"},
 	})
 
 	j :=
@@ -442,11 +442,11 @@ func TestHashCrossJoin_StringKey(t *testing.T) {
 // each other (NULL ≠ NULL in SQL semantics).
 func TestHashCrossJoin_NullKey(t *testing.T) {
 	defer UnregisterAll()
-	left := newTestSeqScan(t, "t1", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NullValue()}, TableName: "t1"},
+	left := newTestSeqScan(t, "t1", []DT.Row{
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NullValue()}, TableName: "t1"},
 	})
-	right := newTestSeqScan(t, "t2", []Row{
-		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{NullValue()}, TableName: "t2"},
+	right := newTestSeqScan(t, "t2", []DT.Row{
+		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []DT.Value{NullValue()}, TableName: "t2"},
 	})
 
 	j :=
@@ -476,7 +476,7 @@ func TestHashCrossJoin_NullKey(t *testing.T) {
 // touching the engine. Tables remain registered until the caller
 // invokes UnregisterAll (typically via defer in the outer test).
 // Does NOT call UnregisterAll so multiple DT.Tables can coexist.
-func newTestSeqScan(t *testing.T, table string, rows []Row) *OP.SeqScan {
+func newTestSeqScan(t *testing.T, table string, rows []DT.Row) *OP.SeqScan {
 	t.Helper()
 	DT.TablesMu.Lock()
 	DT.Tables[table] = rows
@@ -524,12 +524,12 @@ func BenchmarkHashCrossJoin_SmallTables(b *testing.B) {
 }
 
 func newBenchSeqScan(table string, n int) *OP.SeqScan {
-	rows := make([]Row, n)
+	rows := make([]DT.Row, n)
 	for i := 0; i < n; i++ {
-		rows[i] = Row{
+		rows[i] = DT.Row{
 			Cols:      []string{"a"},
 			Types:     []LX.TokenType{LX.T_INT_KW},
-			Data:      []Value{NewIntValue(int64(i % 50))},
+			Data:      []DT.Value{NewIntValue(int64(i % 50))},
 			TableName: table,
 		}
 	}
