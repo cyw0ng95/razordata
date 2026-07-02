@@ -168,7 +168,7 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		node.Detail = fmt.Sprintf("VALUES %d rows", len(v.Rows()))
 		node.Cost = 1.0
 
-	case *ExplainStmtOp:
+	case *AD.ExplainStmtOp:
 		node.Detail = "EXPLAIN"
 		node.Cost = 0
 
@@ -212,9 +212,9 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		if v.Child() != nil {
 			node.Add(buildPlanNodeTree(v.Child(), planner))
 		}
-	case *ExplainStmtOp:
-		if v.root != nil {
-			node.Add(buildPlanNodeTree(v.root, planner))
+	case *AD.ExplainStmtOp:
+		if v.Root != nil {
+			node.Add(buildPlanNodeTree(v.Root, planner))
 		}
 	}
 
@@ -305,7 +305,7 @@ func operatorType(op DT.Operator) string {
 		return "RefreshMatView"
 	case *WT.DropMatViewOperator:
 		return "DropMatView"
-	case *ExplainStmtOp:
+	case *AD.ExplainStmtOp:
 		return "Explain"
 	case *Noop:
 		return "Noop"

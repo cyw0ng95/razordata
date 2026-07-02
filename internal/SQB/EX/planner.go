@@ -3803,11 +3803,11 @@ func (p *Planner) planExplain(s *PS.ExplainStmt) DT.Operator {
 	planNode := buildPlanNodeTree(innerPlan.Root, p)
 
 	// Return an ExplainStmt operator that renders the plan
-	return &ExplainStmtOp{
-		mode:     s.Mode,
-		format:   s.Format,
-		planNode: planNode,
-		root:     innerPlan.Root,
+	return &AD.ExplainStmtOp{
+		Mode:     s.Mode,
+		Format:   s.Format,
+		PlanNode: planNode,
+		Root:     innerPlan.Root,
 	}
 }
 

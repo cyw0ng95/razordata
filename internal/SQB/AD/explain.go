@@ -1,14 +1,9 @@
-// Package EX's explain.go renders an operator tree as a human-readable
-// description. EXPLAIN is not part of the v1 MVP scope per
-// docs/design/ARCH.md but the implementation is retained in v1.1 because
-// it is the primary debugging surface for the executor.
-package EX
+package AD
 
 import (
 	"context"
 	"time"
 
-	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -18,12 +13,12 @@ import (
 // ExplainStmtOp is an operator that produces EXPLAIN output.
 // It wraps a planned inner statement and renders its plan tree.
 type ExplainStmtOp struct {
-	mode     PS.ExplainMode
-	format   PS.ExplainFormat
-	planNode *AD.PlanNode
-	root     DT.Operator
+	Mode     PS.ExplainMode
+	Format   PS.ExplainFormat
+	PlanNode *PlanNode
+	Root     DT.Operator
 	rows     []DT.Row
-	treeText string // cached tree/DOT/JSON output
+	treeText string
 	pos      int
 	done     bool
 }
@@ -34,25 +29,25 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (DT.Row, error) {
 	}
 
 	if e.rows == nil && e.treeText == "" {
-		if e.mode == PS.ExplainAnalyze {
+		if e.Mode == PS.ExplainAnalyze {
 			// REQ000783: execute and collect runtime stats.
-			if err := executeAndCollectStats(ctx, e.root, e.planNode); err != nil {
+			if err := executeAndCollectStats(ctx, e.Root, e.PlanNode); err != nil {
 				return DT.Row{}, err
 			}
 			// REQ000788: analyze for bottlenecks after execution.
-			AD.AnalyzePlanForBottlenecks(e.planNode)
+			AnalyzePlanForBottlenecks(e.PlanNode)
 		}
 
 		// Handle different output formats
-		switch e.format {
+		switch e.Format {
 		case PS.ExplainFormatText:
-			e.rows = AD.FormatPlanTree(e.planNode, e.mode)
+			e.rows = FormatPlanTree(e.PlanNode, e.Mode)
 		case PS.ExplainFormatTree:
-			e.treeText = e.planNode.ToTree()
+			e.treeText = e.PlanNode.ToTree()
 		case PS.ExplainFormatJSON:
-			e.treeText = e.planNode.ToJSON()
+			e.treeText = e.PlanNode.ToJSON()
 		case PS.ExplainFormatDOT:
-			e.treeText = e.planNode.ToDOT()
+			e.treeText = e.PlanNode.ToDOT()
 		}
 	}
 
@@ -79,7 +74,7 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (DT.Row, error) {
 
 // executeAndCollectStats drains the operator tree, collects total stats,
 // and closes the inner plan to reset iterator state (memo may reuse it).
-func executeAndCollectStats(ctx context.Context, root DT.Operator, pn *AD.PlanNode) error {
+func executeAndCollectStats(ctx context.Context, root DT.Operator, pn *PlanNode) error {
 	start := time.Now()
 	var rows int64
 	for {
@@ -95,7 +90,7 @@ func executeAndCollectStats(ctx context.Context, root DT.Operator, pn *AD.PlanNo
 	root.Close()
 	elapsed := time.Since(start)
 	if pn.Analyze == nil {
-		pn.Analyze = &AD.AnalyzeStats{}
+		pn.Analyze = &AnalyzeStats{}
 	}
 	pn.Analyze.RowsReturned = rows
 	pn.Analyze.TimeNS = elapsed.Nanoseconds()
