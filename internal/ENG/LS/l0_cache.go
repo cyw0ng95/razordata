@@ -2,15 +2,23 @@ package ls
 
 import (
 	"container/list"
+	"runtime"
 	"sync"
 )
 
 // l0Cache is a dedicated LRU for recently-read L0 SST blocks (REQ000540).
+// Sharded by GOMAXPROCS to reduce contention under concurrent reads.
 type l0Cache struct {
-	mu       sync.Mutex
-	capacity int
-	items    map[uint64]*list.Element
-	lru      *list.List
+	shards []*l0CacheShard
+	nshard uint32
+	cap    int
+}
+
+type l0CacheShard struct {
+	mu    sync.Mutex
+	items map[uint64]*list.Element
+	lru   *list.List
+	cap   int
 }
 
 type cacheEntry struct {
@@ -18,60 +26,90 @@ type cacheEntry struct {
 	data    []byte
 }
 
-// newL0Cache creates an L0 block cache with the given capacity.
 func newL0Cache(capacity int) *l0Cache {
-	if capacity <= 0 {
-		capacity = 1
+	nshard := uint32(runtime.GOMAXPROCS(0))
+	if nshard == 0 {
+		nshard = 1
 	}
+	perShard := capacity / int(nshard)
+	if perShard == 0 {
+		perShard = 1
+	}
+
+	shards := make([]*l0CacheShard, nshard)
+	for i := range shards {
+		shards[i] = &l0CacheShard{
+			items: make(map[uint64]*list.Element),
+			lru:   list.New(),
+			cap:   perShard,
+		}
+	}
+
 	return &l0Cache{
-		capacity: capacity,
-		items:    make(map[uint64]*list.Element, capacity),
-		lru:      list.New(),
+		shards: shards,
+		nshard: nshard,
+		cap:    capacity,
 	}
 }
 
-// Get returns the cached block for blockID.
-func (c *l0Cache) Get(blockID uint64) ([]byte, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	elem, ok := c.items[blockID]
+func (c *l0Cache) shard(blockID uint64) *l0CacheShard {
+	return c.shards[blockID%uint64(c.nshard)]
+}
+
+func (c *l0Cache) Get(blockID uint64) (data []byte, hit bool) {
+	s := c.shard(blockID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	elem, ok := s.items[blockID]
 	if !ok {
 		return nil, false
 	}
-	c.lru.MoveToFront(elem)
+
+	s.lru.MoveToFront(elem)
 	return elem.Value.(*cacheEntry).data, true
 }
 
-// Put inserts or refreshes a block in the cache.
 func (c *l0Cache) Put(blockID uint64, data []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if elem, ok := c.items[blockID]; ok {
+	s := c.shard(blockID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	elem, ok := s.items[blockID]
+	if ok {
 		entry := elem.Value.(*cacheEntry)
 		entry.data = data
-		c.lru.MoveToFront(elem)
+		s.lru.MoveToFront(elem)
 		return
 	}
+
 	entry := &cacheEntry{blockID: blockID, data: data}
-	elem := c.lru.PushFront(entry)
-	c.items[blockID] = elem
-	for c.lru.Len() > c.capacity {
-		c.evictBack()
+	s.items[blockID] = s.lru.PushFront(entry)
+	for s.lru.Len() > s.cap {
+		s.evictBack()
 	}
 }
 
 func (c *l0Cache) Size() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return len(c.items)
+	total := 0
+	for _, s := range c.shards {
+		s.mu.Lock()
+		total += s.lru.Len()
+		s.mu.Unlock()
+	}
+	return total
 }
 
-func (c *l0Cache) evictBack() {
-	elem := c.lru.Back()
-	if elem == nil {
+func (c *l0Cache) NShard() uint32 {
+	return c.nshard
+}
+
+func (s *l0CacheShard) evictBack() {
+	back := s.lru.Back()
+	if back == nil {
 		return
 	}
-	entry := elem.Value.(*cacheEntry)
-	c.lru.Remove(elem)
-	delete(c.items, entry.blockID)
+	entry := back.Value.(*cacheEntry)
+	s.lru.Remove(back)
+	delete(s.items, entry.blockID)
 }

@@ -36,6 +36,7 @@ type SSTFileMeta struct {
 }
 
 type manifest struct {
+	fs      FS
 	version atomic.Int64
 	current atomic.Pointer[Version]
 	dir     string
@@ -43,7 +44,12 @@ type manifest struct {
 }
 
 func newManifest(dir string) (*manifest, error) {
+	return newManifestWithFS(dir, DefaultFS())
+}
+
+func newManifestWithFS(dir string, fs FS) (*manifest, error) {
 	m := &manifest{
+		fs:      fs,
 		dir:     dir,
 		changes: make(chan Version, 10),
 	}
@@ -57,7 +63,7 @@ func newManifest(dir string) (*manifest, error) {
 	m.current.Store(current)
 
 	manifestPath := filepath.Join(dir, "manifest")
-	data, err := os.ReadFile(manifestPath)
+	data, err := fs.ReadFile(manifestPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return m, nil
@@ -91,7 +97,7 @@ func (m *manifest) Apply(v Version) error {
 	}
 
 	tmpPath := filepath.Join(m.dir, "manifest.tmp")
-	f, err := os.Create(tmpPath)
+	f, err := m.fs.Create(tmpPath)
 	if err != nil {
 		return err
 	}
@@ -100,19 +106,19 @@ func (m *manifest) Apply(v Version) error {
 		return err
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	if err := f.Close(); err != nil {
 		return err
 	}
 
-	if err := os.Rename(tmpPath, filepath.Join(m.dir, "manifest")); err != nil {
+	if err := m.fs.Rename(tmpPath, filepath.Join(m.dir, "manifest")); err != nil {
 		return err
 	}
 
 	// Fsync the parent directory to ensure the rename is durable.
-	dirf, err := os.Open(m.dir)
+	dirf, err := m.fs.Open(m.dir)
 	if err != nil {
 		return err
 	}

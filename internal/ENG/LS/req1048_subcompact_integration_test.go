@@ -74,7 +74,7 @@ func TestSubCompactor_ThresholdFallback(t *testing.T) {
 	m.Apply(*v)
 
 	meta := writeSST(t, dir, 1, 0, [][2]string{{"a", "v"}})
-	sc := NewSubCompactor(dir, m, 4)
+	sc := NewSubCompactor(DefaultFS(), dir, m, 4)
 	if _, err := sc.RunSubCompaction(context.Background(), 0, []SSTFileMeta{meta}, SubCompactionOptions{}); err != nil {
 		t.Fatalf("RunSubCompaction (single input): %v", err)
 	}
@@ -101,7 +101,7 @@ func TestSubCompactor_Dispatch(t *testing.T) {
 	v.levels = make([][]SSTFileMeta, 3)
 	m.Apply(*v)
 
-	cm := newCompactionManager(dir, m)
+	cm := newCompactionManager(DefaultFS(), dir, m)
 	defer func() { _ = cm.Close() }()
 
 	// Verify SubCompactor is wired in and threshold is 4.
@@ -122,7 +122,7 @@ func TestSubCompactor_Dispatch(t *testing.T) {
 		})
 		inputs = append(inputs, meta)
 	}
-	job := &compactionJob{level: 0, inputs: inputs}
+	job := &compactionJob{fs: DefaultFS(), placementPolicy: nil, level: 0, inputs: inputs}
 	cm.runJob(job)
 
 	v = m.Current()
@@ -152,7 +152,7 @@ func TestSubCompactor_OptionsPropagate(t *testing.T) {
 
 	meta := writeSST(t, dir, 1, 0, [][2]string{{"a", "v"}})
 	rl := NewRateLimiter(1<<30, 1<<30) // effectively unlimited
-	sc := NewSubCompactor(dir, m, 1)
+	sc := NewSubCompactor(DefaultFS(), dir, m, 1)
 	if _, err := sc.RunSubCompaction(context.Background(), 0, []SSTFileMeta{meta}, SubCompactionOptions{
 		Overlap:     nil,
 		RateLimiter: rl,
@@ -180,7 +180,7 @@ func TestSubCompactor_SetConcurrency(t *testing.T) {
 	v.levels = make([][]SSTFileMeta, 3)
 	m.Apply(*v)
 
-	cm := newCompactionManager(dir, m)
+	cm := newCompactionManager(DefaultFS(), dir, m)
 	defer func() { _ = cm.Close() }()
 	cm.SetSubCompactorConcurrency(1)
 	if cm.subCompactor == nil {
@@ -216,9 +216,9 @@ func BenchmarkCompaction_Serial(b *testing.B) {
 		inputs = append(inputs, meta)
 	}
 
-	cm := newCompactionManager(dir, m)
+	cm := newCompactionManager(DefaultFS(), dir, m)
 	defer func() { _ = cm.Close() }()
-	job := &compactionJob{level: 0, inputs: inputs}
+	job := &compactionJob{fs: DefaultFS(), placementPolicy: nil, level: 0, inputs: inputs}
 	ctx := context.Background()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -257,7 +257,7 @@ func TestSubCompactor_Parallel_NoManifestRace(t *testing.T) {
 		inputs = append(inputs, meta)
 	}
 
-	sc := NewSubCompactor(dir, m, 4)
+	sc := NewSubCompactor(DefaultFS(), dir, m, 4)
 	ctx := context.Background()
 
 	// Run sub-compaction — should use two-phase approach

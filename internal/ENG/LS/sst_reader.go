@@ -5,11 +5,11 @@ import (
 	"encoding/binary"
 	"hash/crc32"
 	"io"
-	"os"
 	"unsafe"
 )
 
 type sstReader struct {
+	fs              FS // REQ001172: virtual filesystem
 	data            []byte
 	indexBlock      []indexEntry
 	bloom           []byte
@@ -102,7 +102,12 @@ func openSSTWithPath(data []byte, path string) (*sstReader, error) {
 // bloom filter are read upfront. Data blocks are read on demand via readRaw.
 // This avoids loading entire SST files into memory during compaction.
 func openSSTLazy(path string) (*sstReader, error) {
-	f, err := os.Open(path)
+	return openSSTLazyWithFS(DefaultFS(), path)
+}
+
+// openSSTLazyWithFS is like openSSTLazy but uses the provided FS.
+func openSSTLazyWithFS(fs FS, path string) (*sstReader, error) {
+	f, err := fs.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +166,7 @@ func openSSTLazy(path string) (*sstReader, error) {
 	bloomOffset := binary.LittleEndian.Uint64(footer[12:])
 	bloomSize := binary.LittleEndian.Uint32(footer[20:])
 
-	r := &sstReader{filePath: path}
+	r := &sstReader{fs: fs, filePath: path}
 
 	// Read index block
 	if indexOffset > 0 {
@@ -441,7 +446,7 @@ func (r *sstReader) readRaw(offset, size int) []byte {
 }
 
 func (r *sstReader) readFromFile(offset, size int) []byte {
-	f, err := os.Open(r.filePath)
+	f, err := r.fs.Open(r.filePath)
 	if err != nil {
 		return nil
 	}
@@ -583,20 +588,40 @@ func (it *sstIterator) loadBlock(blockIdx int) bool {
 }
 
 func (it *sstIterator) Next() bool {
-	if it.pairs == nil {
-		if !it.loadBlock(0) {
+	for {
+		if it.pairs == nil {
+			if !it.loadBlock(0) {
+				return false
+			}
+			it.pairIdx = 0
+		} else if it.pairIdx+1 < len(it.pairs) {
+			it.pairIdx++
+		} else if !it.loadBlock(it.blockIdx+1) {
 			return false
+		} else {
+			it.pairIdx = 0
 		}
-		return it.pairIdx < len(it.pairs)
-	}
-	if it.pairIdx+1 < len(it.pairs) {
-		it.pairIdx++
+
+		if it.pairs == nil || it.pairIdx >= len(it.pairs) {
+			continue
+		}
+
+		kv := it.pairs[it.pairIdx]
+		if isTombstone(kv.value) {
+			it.pairIdx++
+			continue
+		}
+		if len(kv.value) == 0 {
+			it.pairIdx++
+			continue
+		}
+		if it.reader.isInRangeTombstone(kv.key) {
+			it.pairIdx++
+			continue
+		}
+
 		return true
 	}
-	if !it.loadBlock(it.blockIdx + 1) {
-		return false
-	}
-	return it.pairIdx < len(it.pairs)
 }
 
 func (it *sstIterator) Key() []byte {

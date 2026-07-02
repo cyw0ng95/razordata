@@ -20,17 +20,18 @@ import (
 // sub-compaction produces equivalent state to serial compaction but
 // in parallel sub-ranges. REQ001048.
 type SubCompactor struct {
+	fs          FS
 	dir         string
 	manifest    *manifest
 	concurrency int
 }
 
 // NewSubCompactor creates a sub-compactor with the given concurrency.
-func NewSubCompactor(dir string, m *manifest, concurrency int) *SubCompactor {
+func NewSubCompactor(fs FS, dir string, m *manifest, concurrency int) *SubCompactor {
 	if concurrency < 1 {
 		concurrency = 1
 	}
-	return &SubCompactor{dir: dir, manifest: m, concurrency: concurrency}
+	return &SubCompactor{fs: fs, dir: dir, manifest: m, concurrency: concurrency}
 }
 
 // SubCompactionOptions carries the cross-cutting compaction settings
@@ -69,6 +70,7 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 	pivots := pivotKeys(inputs, sc.concurrency)
 	if len(pivots) < 2 {
 		job := &compactionJob{
+			fs:         sc.fs,
 			level:           sourceLevel,
 			inputs:          inputs,
 			overlap:         opts.Overlap,
@@ -76,7 +78,7 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 			placementPolicy: opts.PlacementPolicy,
 		}
 		if job.tmpPath == "" {
-			tp, err := uniqueSubTempPath(sc.dir)
+			tp, err := uniqueSubTempPath(sc.fs, sc.dir)
 			if err != nil {
 				return nil, err
 			}
@@ -113,7 +115,7 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 			}
 			subOverlap = append(subOverlap, ov)
 		}
-		subTmp, err := uniqueSubTempPath(sc.dir)
+		subTmp, err := uniqueSubTempPath(sc.fs, sc.dir)
 		if err != nil {
 			return nil, err
 		}
@@ -121,6 +123,7 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 			minKey: append([]byte(nil), lo...),
 			maxKey: append([]byte(nil), hi...),
 			job: &compactionJob{
+				fs:            sc.fs,
 				// REQ001157: two-phase compaction — each sub-job writes a partial
 				// SST to its own tmpPath, then the coordinator merges all partial
 				// outputs and applies a single manifest update.
@@ -156,7 +159,7 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 		// Clean up partial temp files on failure
 		for _, pr := range partialResults {
 			if pr != nil {
-				_ = os.Remove(pr.tmpPath)
+				_ = sc.fs.Remove(pr.tmpPath)
 			}
 		}
 		return nil, err
@@ -192,13 +195,13 @@ func (sc *SubCompactor) mergePartials(partials []*partialResult, manifest *manif
 	outputDir := sc.dir // sub-compaction outputs to same dir as inputs
 
 	// Merge all partial SSTs into a single SST
-	tmpFile, err := os.CreateTemp(outputDir, "merge-*.tmp")
+	f, tmpPath, err := sc.fs.CreateTemp(outputDir, "merge-*.tmp")
 	if err != nil {
 		return err
 	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-	defer tmpFile.Close()
+	
+	defer sc.fs.Remove(tmpPath)
+	defer f.Close()
 
 	w := acquireSSTWriter()
 	defer releaseSSTWriter(w)
@@ -233,13 +236,13 @@ func (sc *SubCompactor) mergePartials(partials []*partialResult, manifest *manif
 		return err
 	}
 
-	if _, err := tmpFile.Write(sstData); err != nil {
+	if _, err := f.Write(sstData); err != nil {
 		return err
 	}
-	if err := tmpFile.Sync(); err != nil {
+	if err := f.Sync(); err != nil {
 		return err
 	}
-	if err := tmpFile.Close(); err != nil {
+	if err := f.Close(); err != nil {
 		return err
 	}
 
@@ -265,7 +268,7 @@ func (sc *SubCompactor) mergePartials(partials []*partialResult, manifest *manif
 		BloomBits: 10,
 	})
 	newPath := filepath.Join(outputDir, newFileName)
-	if err := os.Rename(tmpPath, newPath); err != nil {
+	if err := sc.fs.Rename(tmpPath, newPath); err != nil {
 		return err
 	}
 
@@ -291,28 +294,28 @@ func (sc *SubCompactor) mergePartials(partials []*partialResult, manifest *manif
 	}
 
 	if err := manifest.Apply(v); err != nil {
-		_ = os.Remove(newPath)
+		_ = sc.fs.Remove(newPath)
 		return err
 	}
 
 	// Remove input files
 	for _, input := range allInputs {
 		sstPath := filepath.Join(dir, fileName(&input))
-		if err := os.Remove(sstPath); err != nil && !os.IsNotExist(err) {
+		if err := sc.fs.Remove(sstPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove input SST", "path", sstPath, "err", err)
 		}
 	}
 
 	for _, ov := range allOverlap {
 		sstPath := filepath.Join(dir, fileName(&ov))
-		if err := os.Remove(sstPath); err != nil && !os.IsNotExist(err) {
+		if err := sc.fs.Remove(sstPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove overlap SST", "path", sstPath, "err", err)
 		}
 	}
 
 	// Remove partial temp files
 	for _, p := range partials {
-		if err := os.Remove(p.tmpPath); err != nil && !os.IsNotExist(err) {
+		if err := sc.fs.Remove(p.tmpPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove partial tmp", "path", p.tmpPath, "err", err)
 		}
 	}
@@ -366,19 +369,19 @@ func subTempPath(dir string) string {
 // suitable for use as a sub-job's compaction.tmp. The file is
 // created (to claim the name) and immediately removed — callers
 // must recreate it themselves. REQ001048.
-func uniqueSubTempPath(dir string) (string, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+func uniqueSubTempPath(fs FS, dir string) (string, error) {
+	if err := fs.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
-	f, err := os.CreateTemp(dir, "subcompact-*.tmp")
+	f, path, err := fs.CreateTemp(dir, "subcompact-*.tmp")
 	if err != nil {
 		return "", err
 	}
-	path := f.Name()
+	// path is already returned from CreateTemp
 	if err := f.Close(); err != nil {
 		return "", err
 	}
-	if err := os.Remove(path); err != nil {
+	if err := fs.Remove(path); err != nil {
 		return "", err
 	}
 	return path, nil

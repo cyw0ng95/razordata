@@ -48,6 +48,7 @@ func (lb levelBudget) budgetFor(level int) int64 {
 
 type compactionJob struct {
 	level           int
+	fs              FS // REQ001172: virtual filesystem
 	inputs          []SSTFileMeta
 	outputs         []SSTFileMeta
 	overlap         []SSTFileMeta
@@ -67,7 +68,7 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	}
 
 	outputDir := cj.placementPolicy.DeviceDir(cj.level+1, dir)
-	if err := os.MkdirAll(filepath.Join(outputDir, "sst"), 0755); err != nil {
+	if err := cj.fs.MkdirAll(filepath.Join(outputDir, "sst"), 0755); err != nil {
 		return err
 	}
 
@@ -80,11 +81,11 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 		tmpPath = filepath.Join(outputDir, "compaction.tmp")
 	}
 	outputPath := tmpPath
-	tmpFile, err := os.Create(outputPath)
+	tmpFile, err := cj.fs.Create(outputPath)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(outputPath)
+	defer cj.fs.Remove(outputPath)
 	defer tmpFile.Close()
 
 	w := acquireSSTWriter()
@@ -93,7 +94,7 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	iters := make([]*sstIterator, 0, len(cj.inputs)+len(cj.overlap))
 	for _, input := range cj.inputs {
 		sstPath := filepath.Join(dir, fileName(&input))
-		reader, err := openSSTLazy(sstPath)
+		reader, err := openSSTLazyWithFS(cj.fs, sstPath)
 		if err != nil {
 			closeIterators(iters)
 			return err
@@ -103,7 +104,7 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 
 	for _, ov := range cj.overlap {
 		sstPath := filepath.Join(dir, fileName(&ov))
-		reader, err := openSSTLazy(sstPath)
+		reader, err := openSSTLazyWithFS(cj.fs, sstPath)
 		if err != nil {
 			closeIterators(iters)
 			return err
@@ -161,22 +162,22 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	})
 	newPath := filepath.Join(outputDir, newFileName)
 	if outputDir == dir {
-		if err := os.Rename(outputPath, newPath); err != nil {
+		if err := cj.fs.Rename(outputPath, newPath); err != nil {
 			return err
 		}
 	} else {
 		// Cross-device: copy instead of rename, then create symlink.
-		if err := copyFile(outputPath, newPath); err != nil {
+		if err := copyFileWithFS(cj.fs, outputPath, newPath); err != nil {
 			return err
 		}
-		if err := os.Remove(outputPath); err != nil {
+		if err := cj.fs.Remove(outputPath); err != nil {
 			slog.Warn("compaction: remove temp output", "path", outputPath, "err", err)
 		}
 		enginePath := filepath.Join(dir, newFileName)
-		if err := os.Remove(enginePath); err != nil && !os.IsNotExist(err) {
+		if err := cj.fs.Remove(enginePath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove old engine path", "path", enginePath, "err", err)
 		}
-		if err := os.Symlink(newPath, enginePath); err != nil {
+		if err := cj.fs.Symlink(newPath, enginePath); err != nil {
 			return err
 		}
 	}
@@ -202,20 +203,20 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	}
 
 	if err := manifest.Apply(v); err != nil {
-		_ = os.Remove(newPath)
+		_ = cj.fs.Remove(newPath)
 		return err
 	}
 
 	for _, input := range cj.inputs {
 		sstPath := filepath.Join(dir, fileName(&input))
-		if err := os.Remove(sstPath); err != nil && !os.IsNotExist(err) {
+		if err := cj.fs.Remove(sstPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove input SST", "path", sstPath, "err", err)
 		}
 	}
 
 	for _, ov := range cj.overlap {
 		sstPath := filepath.Join(dir, fileName(&ov))
-		if err := os.Remove(sstPath); err != nil && !os.IsNotExist(err) {
+		if err := cj.fs.Remove(sstPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove overlap SST", "path", sstPath, "err", err)
 		}
 	}
@@ -245,7 +246,7 @@ func (cj *compactionJob) RunPartial(dir string) (*partialResult, error) {
 	}
 
 	outputDir := cj.placementPolicy.DeviceDir(cj.level+1, dir)
-	if err := os.MkdirAll(filepath.Join(outputDir, "sst"), 0755); err != nil {
+	if err := cj.fs.MkdirAll(filepath.Join(outputDir, "sst"), 0755); err != nil {
 		return nil, err
 	}
 
@@ -254,7 +255,7 @@ func (cj *compactionJob) RunPartial(dir string) (*partialResult, error) {
 		tmpPath = filepath.Join(outputDir, "compaction.tmp")
 	}
 
-	tmpFile, err := os.Create(tmpPath)
+	tmpFile, err := cj.fs.Create(tmpPath)
 	if err != nil {
 		return nil, err
 	}
@@ -265,11 +266,11 @@ func (cj *compactionJob) RunPartial(dir string) (*partialResult, error) {
 	iters := make([]*sstIterator, 0, len(cj.inputs)+len(cj.overlap))
 	for _, input := range cj.inputs {
 		sstPath := filepath.Join(dir, fileName(&input))
-		reader, err := openSSTLazy(sstPath)
+		reader, err := openSSTLazyWithFS(cj.fs, sstPath)
 		if err != nil {
 			closeIterators(iters)
 			tmpFile.Close()
-			os.Remove(tmpPath)
+			cj.fs.Remove(tmpPath)
 			return nil, err
 		}
 		iters = append(iters, reader.Iterator())
@@ -277,11 +278,11 @@ func (cj *compactionJob) RunPartial(dir string) (*partialResult, error) {
 
 	for _, ov := range cj.overlap {
 		sstPath := filepath.Join(dir, fileName(&ov))
-		reader, err := openSSTLazy(sstPath)
+		reader, err := openSSTLazyWithFS(cj.fs, sstPath)
 		if err != nil {
 			closeIterators(iters)
 			tmpFile.Close()
-			os.Remove(tmpPath)
+			cj.fs.Remove(tmpPath)
 			return nil, err
 		}
 		iters = append(iters, reader.Iterator())
@@ -310,7 +311,7 @@ func (cj *compactionJob) RunPartial(dir string) (*partialResult, error) {
 	sstData, err := w.Finish()
 	if err != nil {
 		tmpFile.Close()
-		os.Remove(tmpPath)
+		cj.fs.Remove(tmpPath)
 		return nil, err
 	}
 
@@ -320,16 +321,16 @@ func (cj *compactionJob) RunPartial(dir string) (*partialResult, error) {
 
 	if _, err := tmpFile.Write(sstData); err != nil {
 		tmpFile.Close()
-		os.Remove(tmpPath)
+		cj.fs.Remove(tmpPath)
 		return nil, err
 	}
 	if err := tmpFile.Sync(); err != nil {
 		tmpFile.Close()
-		os.Remove(tmpPath)
+		cj.fs.Remove(tmpPath)
 		return nil, err
 	}
 	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpPath)
+		cj.fs.Remove(tmpPath)
 		return nil, err
 	}
 
@@ -343,14 +344,14 @@ func (cj *compactionJob) RunPartial(dir string) (*partialResult, error) {
 	}, nil
 }
 
-func copyFile(src, dst string) error {
-	sf, err := os.Open(src)
+func copyFileWithFS(fs FS, src, dst string) error {
+	sf, err := fs.Open(src)
 	if err != nil {
 		return err
 	}
 	defer sf.Close()
 
-	df, err := os.Create(dst)
+	df, err := fs.Create(dst)
 	if err != nil {
 		return err
 	}
@@ -428,6 +429,7 @@ func removeFiles(files []SSTFileMeta, toRemove []SSTFileMeta) []SSTFileMeta {
 }
 
 type compactionManager struct {
+	fs              FS // REQ001172: virtual filesystem
 	manifest        *manifest
 	dir             string
 	budget          levelBudget
@@ -445,6 +447,9 @@ type compactionManager struct {
 	// REQ001048: SubCompactor wires parallel sub-compaction into
 	// the compaction loop. nil for tests that bypass compaction.
 	subCompactor *SubCompactor
+	debts        map[int]int64
+	// REQ001175: per-level rate limiter with debt-aware throttling.
+	perLevelRL atomic.Pointer[PerLevelRateLimiter]
 }
 
 // subCompactionThreshold is the input-file count at which the
@@ -461,8 +466,9 @@ type compactionManager struct {
 // The threshold is safe at 4 for production use.
 const subCompactionThreshold = 4
 
-func newCompactionManager(dir string, manifest *manifest) *compactionManager {
+func newCompactionManager(fs FS, dir string, manifest *manifest) *compactionManager {
 	cm := &compactionManager{
+		fs:              fs,
 		manifest:        manifest,
 		dir:             dir,
 		budget:          defaultBudget,
@@ -473,7 +479,8 @@ func newCompactionManager(dir string, manifest *manifest) *compactionManager {
 		// compaction manager; concurrency defaults to 4 (matching
 		// the subcompaction threshold) and can be tuned via
 		// SetSubCompactorConcurrency.
-		subCompactor: NewSubCompactor(dir, manifest, 4),
+		subCompactor: NewSubCompactor(fs, dir, manifest, 4),
+		debts:        make(map[int]int64),
 	}
 	cm.wg.Add(1)
 	go cm.compactionLoop()
@@ -486,7 +493,25 @@ func newCompactionManager(dir string, manifest *manifest) *compactionManager {
 func (cm *compactionManager) SetSubCompactorConcurrency(n int) {
 	cm.compactionMu.Lock()
 	defer cm.compactionMu.Unlock()
-	cm.subCompactor = NewSubCompactor(cm.dir, cm.manifest, n)
+	cm.subCompactor = NewSubCompactor(cm.fs, cm.dir, cm.manifest, n)
+}
+
+// recalculateDebts recomputes per-level compaction debt.
+// debt = max(0, totalSize - budget) per level. REQ001171.
+func (cm *compactionManager) recalculateDebts() {
+	v := cm.manifest.Current()
+	for level, files := range v.levels {
+		var totalSize int64
+		for _, f := range files {
+			totalSize += f.Size
+		}
+		budget := cm.budget.budgetFor(level)
+		debt := totalSize - budget
+		if debt < 0 {
+			debt = 0
+		}
+		cm.debts[level] = debt
+	}
 }
 
 func (cm *compactionManager) compactionLoop() {
@@ -498,6 +523,7 @@ func (cm *compactionManager) compactionLoop() {
 			return
 		case job := <-cm.compactionQueue:
 			cm.runJob(job)
+			cm.recalculateDebts()
 			if cm.manualDone != nil {
 				close(cm.manualDone)
 				cm.manualDone = nil
@@ -554,19 +580,43 @@ func (cm *compactionManager) MaybeCompact() {
 		return
 	}
 
+	cm.recalculateDebts()
+
+	bestLevel := -1
+	bestUrgency := 0.0
+
 	style := CompactionStyle(cm.style.Load())
 	v := cm.manifest.Current()
 	for level := range len(v.levels) - 1 {
 		files := v.levels[level]
+		if len(files) == 0 {
+			continue
+		}
+
 		totalSize := int64(0)
 		for _, f := range files {
 			totalSize += f.Size
 		}
 
-		if style.shouldCompact(level, len(files), totalSize) {
-			cm.requestCompaction(level)
-			return
+		if !style.shouldCompact(level, len(files), totalSize) {
+			continue
 		}
+
+		budget := cm.budget.budgetFor(level)
+		if budget <= 0 {
+			budget = 1
+		}
+		urgency := float64(cm.debts[level]) / float64(budget)
+		urgency *= (1.0 + 0.5*float64(level))
+
+		if urgency > bestUrgency {
+			bestUrgency = urgency
+			bestLevel = level
+		}
+	}
+
+	if bestLevel >= 0 {
+		cm.requestCompaction(bestLevel)
 	}
 }
 
@@ -627,11 +677,23 @@ func (cm *compactionManager) requestCompaction(level int) bool {
 
 	job := &compactionJob{
 		level:           level,
+		fs:              cm.fs,
 		inputs:          inputs,
 		outputs:         nil,
 		overlap:         overlap,
 		rateLimiter:     cm.rateLimiter.Load(),
 		placementPolicy: cm.placementPolicy,
+	}
+
+	// REQ001175: prefer per-level rate limiter when available.
+	plrl := cm.perLevelRL.Load()
+	if plrl != nil {
+		plrl.mu.RLock()
+		lr := plrl.levels[level]
+		plrl.mu.RUnlock()
+		if lr != nil {
+			job.rateLimiter = lr
+		}
 	}
 
 	cm.compacting.Store(true)
@@ -667,17 +729,17 @@ func (cm *compactionManager) MergePartials(partials []*partialResult, manifest *
 	// Determine output directory from the first partial
 	outputDir := partials[0].inputs[0].Level + 1
 	outputDirPath := cm.placementPolicy.DeviceDir(outputDir, dir)
-	if err := os.MkdirAll(filepath.Join(outputDirPath, "sst"), 0755); err != nil {
+	if err := cm.fs.MkdirAll(filepath.Join(outputDirPath, "sst"), 0755); err != nil {
 		return err
 	}
 
 	// Merge all partial SSTs into a single SST
-	tmpFile, err := os.CreateTemp(outputDirPath, "merge-*.tmp")
+	tmpFile, err := cm.fs.Create(filepath.Join(outputDirPath, "merge-*.tmp"))
 	if err != nil {
 		return err
 	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	tmpPath := filepath.Join(outputDirPath, "merge-*.tmp")
+	defer cm.fs.Remove(tmpPath)
 	defer tmpFile.Close()
 
 	w := acquireSSTWriter()
@@ -685,7 +747,7 @@ func (cm *compactionManager) MergePartials(partials []*partialResult, manifest *
 
 	iters := make([]*sstIterator, 0, len(partials))
 	for _, p := range partials {
-		reader, err := openSSTLazy(p.tmpPath)
+		reader, err := openSSTLazyWithFS(cm.fs, p.tmpPath)
 		if err != nil {
 			closeIterators(iters)
 			return err
@@ -746,21 +808,21 @@ func (cm *compactionManager) MergePartials(partials []*partialResult, manifest *
 	})
 	newPath := filepath.Join(outputDirPath, newFileName)
 	if outputDirPath == dir {
-		if err := os.Rename(tmpPath, newPath); err != nil {
+		if err := cm.fs.Rename(tmpPath, newPath); err != nil {
 			return err
 		}
 	} else {
-		if err := copyFile(tmpPath, newPath); err != nil {
+		if err := copyFileWithFS(cm.fs, tmpPath, newPath); err != nil {
 			return err
 		}
-		if err := os.Remove(tmpPath); err != nil {
+		if err := cm.fs.Remove(tmpPath); err != nil {
 			slog.Warn("compaction: remove temp output", "path", tmpPath, "err", err)
 		}
 		enginePath := filepath.Join(dir, newFileName)
-		if err := os.Remove(enginePath); err != nil && !os.IsNotExist(err) {
+		if err := cm.fs.Remove(enginePath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove old engine path", "path", enginePath, "err", err)
 		}
-		if err := os.Symlink(newPath, enginePath); err != nil {
+		if err := cm.fs.Symlink(newPath, enginePath); err != nil {
 			return err
 		}
 	}
@@ -787,28 +849,28 @@ func (cm *compactionManager) MergePartials(partials []*partialResult, manifest *
 	}
 
 	if err := manifest.Apply(v); err != nil {
-		_ = os.Remove(newPath)
+		_ = cm.fs.Remove(newPath)
 		return err
 	}
 
 	// Remove input files
 	for _, input := range allInputs {
 		sstPath := filepath.Join(dir, fileName(&input))
-		if err := os.Remove(sstPath); err != nil && !os.IsNotExist(err) {
+		if err := cm.fs.Remove(sstPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove input SST", "path", sstPath, "err", err)
 		}
 	}
 
 	for _, ov := range allOverlap {
 		sstPath := filepath.Join(dir, fileName(&ov))
-		if err := os.Remove(sstPath); err != nil && !os.IsNotExist(err) {
+		if err := cm.fs.Remove(sstPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove overlap SST", "path", sstPath, "err", err)
 		}
 	}
 
 	// Remove partial temp files
 	for _, p := range partials {
-		if err := os.Remove(p.tmpPath); err != nil && !os.IsNotExist(err) {
+		if err := cm.fs.Remove(p.tmpPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove partial tmp", "path", p.tmpPath, "err", err)
 		}
 	}
