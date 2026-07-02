@@ -286,31 +286,6 @@ func TestReq499_AlterTableDropColumn(t *testing.T) {
 	// This is existing Eval behavior for without-FROM queries.
 }
 
-// Test helpers
-
-func mustExec(t *testing.T, exec *Executor, ctx context.Context, sql string) {
-	t.Helper()
-	_, err := exec.Exec(ctx, sql)
-	if err != nil {
-		t.Fatalf("exec %q: %v", sql, err)
-	}
-}
-
-func mustQueryAll(t *testing.T, exec *Executor, ctx context.Context, sql string) []DT.Row {
-	t.Helper()
-	rows, err := exec.QueryAll(ctx, sql)
-	if err != nil {
-		t.Fatalf("query %q: %v", sql, err)
-	}
-	return rows
-}
-
-func cleanupTest(table string) {
-	exec := NewExecutor()
-	ctx := context.Background()
-	exec.Exec(ctx, "DROP TABLE IF EXISTS "+table)
-}
-
 func TestReq563_InsertDefaultValues(t *testing.T) {
 	exec := NewExecutor()
 	ctx := context.Background()

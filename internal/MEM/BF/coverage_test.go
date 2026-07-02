@@ -239,27 +239,6 @@ func TestUpsert_ExistingSlot_OverwritesAndClearsLoading(t *testing.T) {
 
 // --- Round 2: more MEM/BF coverage ---
 
-// TestGet_BlockIDZero covers the ErrInvalidBlockID short-circuit at
-// the top of Get.
-func TestGet_BlockIDZero(t *testing.T) {
-	tmp := t.TempDir()
-	bd, err := df.Create(filepath.Join(tmp, "zero.razor"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer bd.Close()
-
-	bp, err := New(4, "", bd, newMockSyncPool())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer bp.Close()
-
-	if _, _, err := bp.Get(context.Background(), 0); !errors.Is(err, ErrInvalidBlockID) {
-		t.Errorf("Get(0): want ErrInvalidBlockID, got %v", err)
-	}
-}
-
 // TestUpsert_NilPage covers the nil-page short-circuit in Upsert.
 func TestUpsert_NilPage(t *testing.T) {
 	tmp := t.TempDir()

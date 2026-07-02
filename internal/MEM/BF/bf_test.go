@@ -1087,34 +1087,6 @@ func TestWarmNilHintPath(t *testing.T) {
 	}
 }
 
-// TestCloseIdempotentBF verifies Close is safe to call multiple times.
-func TestCloseIdempotentBF(t *testing.T) {
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "idempotent.block")
-
-	bd, err := df.Create(path)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	defer bd.Close()
-
-	hintPath := filepath.Join(tmp, "hint.bin")
-	bp, err := New(10, hintPath, bd, newMockSyncPool())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	// First close
-	if err := bp.Close(); err != nil {
-		t.Fatalf("first Close failed: %v", err)
-	}
-
-	// Second close should be safe
-	if err := bp.Close(); err != nil {
-		t.Fatalf("second Close failed: %v", err)
-	}
-}
-
 // TestCloseWithHintPathAndLogger tests Close with invalid hint path and logger.
 // This exercises the error logging path when writeHintFile fails.
 func TestCloseWithHintPathAndLogger(t *testing.T) {

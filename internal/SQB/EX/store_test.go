@@ -2,7 +2,6 @@ package EX
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -11,41 +10,6 @@ import (
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
-
-// engineStore adapts an *ls.Engine to the EX.Store interface.
-type engineStore struct {
-	eng *ls.Engine
-}
-
-func (s *engineStore) Insert(k, v []byte) error { return s.eng.Insert(k, v) }
-func (s *engineStore) Delete(k []byte) error    { return s.eng.Delete(k) }
-func (s *engineStore) Get(k []byte) ([]byte, bool, error) {
-	v, err := s.eng.Get(k)
-	if err != nil {
-		if errors.Is(err, ls.ErrNotFound) {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	return v, true, nil
-}
-func (s *engineStore) NewIterator(prefix []byte) ls.RangeIter {
-	return s.eng.NewIterator(prefix)
-}
-func (s *engineStore) ManualCompact() error {
-	return s.eng.ManualCompact()
-}
-
-func newEngineExecutor(t *testing.T) (*Executor, *ls.Engine) {
-	t.Helper()
-	dir := t.TempDir()
-	eng, err := ls.Open(filepath.Join(dir, "db"))
-	if err != nil {
-		t.Fatalf("ls.Open: %v", err)
-	}
-	ex := NewExecutorWithEngine(&engineStore{eng: eng})
-	return ex, eng
-}
 
 func TestSeqScan_AgainstRealStore(t *testing.T) {
 	ex, eng := newEngineExecutor(t)

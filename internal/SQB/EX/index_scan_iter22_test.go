@@ -3,7 +3,6 @@ package EX
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 
@@ -12,30 +11,6 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
-
-// engineStoreWithGet extends engineStore with a real Get.
-type engineStoreWithGet struct {
-	eng *ls.Engine
-}
-
-func (s *engineStoreWithGet) Insert(k, v []byte) error { return s.eng.Insert(k, v) }
-func (s *engineStoreWithGet) Delete(k []byte) error    { return s.eng.Delete(k) }
-func (s *engineStoreWithGet) Get(k []byte) ([]byte, bool, error) {
-	v, err := s.eng.Get(k)
-	if err != nil {
-		if errors.Is(err, ls.ErrNotFound) {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	return v, true, nil
-}
-func (s *engineStoreWithGet) NewIterator(prefix []byte) ls.RangeIter {
-	return s.eng.NewIterator(prefix)
-}
-func (s *engineStoreWithGet) ManualCompact() error {
-	return s.eng.ManualCompact()
-}
 
 // TestIndexScan_WithIndexSeek exercises the iter-22 real index
 // seek path. We insert rows into a table, build a secondary
@@ -48,7 +23,7 @@ func TestIndexScan_WithIndexSeek(t *testing.T) {
 	}
 	defer eng.Close()
 
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 
 	// Register table and a real secondary index
@@ -145,7 +120,7 @@ func TestIndexScan_WithStore_Fallback(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t_fallback", []string{"id", "a"}, "id")
 	ex.RegisterIndex("t_fallback", "idx_a", []string{"a"})
@@ -176,7 +151,7 @@ func TestIndexScan_CloseWithIndex(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	id, _ := DT.TableIDFor("t")

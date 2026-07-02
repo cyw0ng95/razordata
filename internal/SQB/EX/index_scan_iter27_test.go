@@ -24,7 +24,7 @@ func TestIndexScan_RangeSeek_GT(t *testing.T) {
 		t.Fatalf("ls.Open: %v", err)
 	}
 	defer eng.Close()
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
@@ -77,7 +77,7 @@ func TestIndexScan_RangeSeek_GE(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	id, _ := DT.TableIDFor("t")
@@ -112,7 +112,7 @@ func TestIndexScan_RangeSeek_Between(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	id, _ := DT.TableIDFor("t")
@@ -151,7 +151,7 @@ func TestIndexScan_RangeSeek_Planner(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	ex.RegisterIndex("t", "idx_a", []string{"a"})
@@ -192,7 +192,7 @@ func TestIndexScan_RangeSeek_PlannerExplains(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	ex.RegisterIndex("t", "idx_a", []string{"a"})

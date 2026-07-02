@@ -6,7 +6,8 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP")
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+)
 
 // TestBitmapHeapScan_OrConditions verifies REQ001106: a WHERE
 // clause with `col1 = lit1 OR col2 = lit2` on indexed columns
@@ -20,13 +21,13 @@ func TestBitmapHeapScan_OrConditions(t *testing.T) {
 	ex := newBitmapTestExecutor(t)
 	ctx := context.Background()
 
-	mustExecBitmap(t, ex, ctx, "CREATE TABLE bhs_or (pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER)")
-	mustExecBitmap(t, ex, ctx, "CREATE INDEX idx_bhs_or_a ON bhs_or (a)")
-	mustExecBitmap(t, ex, ctx, "CREATE INDEX idx_bhs_or_b ON bhs_or (b)")
+	mustExec(t, ex, ctx, "CREATE TABLE bhs_or (pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER)")
+	mustExec(t, ex, ctx, "CREATE INDEX idx_bhs_or_a ON bhs_or (a)")
+	mustExec(t, ex, ctx, "CREATE INDEX idx_bhs_or_b ON bhs_or (b)")
 
-	mustExecBitmap(t, ex, ctx, "INSERT INTO bhs_or VALUES (1, 10, 20)")
-	mustExecBitmap(t, ex, ctx, "INSERT INTO bhs_or VALUES (2, 30, 40)")
-	mustExecBitmap(t, ex, ctx, "INSERT INTO bhs_or VALUES (3, 50, 60)")
+	mustExec(t, ex, ctx, "INSERT INTO bhs_or VALUES (1, 10, 20)")
+	mustExec(t, ex, ctx, "INSERT INTO bhs_or VALUES (2, 30, 40)")
+	mustExec(t, ex, ctx, "INSERT INTO bhs_or VALUES (3, 50, 60)")
 
 	// Bitmap path: a = 10 OR b = 60 should hit two index seeks.
 	// We only assert ≥ 1 row reached to keep this test focused on
@@ -49,12 +50,12 @@ func TestBitmapHeapScan_AndConditions(t *testing.T) {
 	ex := newBitmapTestExecutor(t)
 	ctx := context.Background()
 
-	mustExecBitmap(t, ex, ctx, "CREATE TABLE bhs_and (pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER)")
-	mustExecBitmap(t, ex, ctx, "CREATE INDEX idx_bhs_and_a ON bhs_and (a)")
-	mustExecBitmap(t, ex, ctx, "CREATE INDEX idx_bhs_and_b ON bhs_and (b)")
+	mustExec(t, ex, ctx, "CREATE TABLE bhs_and (pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER)")
+	mustExec(t, ex, ctx, "CREATE INDEX idx_bhs_and_a ON bhs_and (a)")
+	mustExec(t, ex, ctx, "CREATE INDEX idx_bhs_and_b ON bhs_and (b)")
 
-	mustExecBitmap(t, ex, ctx, "INSERT INTO bhs_and VALUES (1, 10, 20)")
-	mustExecBitmap(t, ex, ctx, "INSERT INTO bhs_and VALUES (2, 10, 99)")
+	mustExec(t, ex, ctx, "INSERT INTO bhs_and VALUES (1, 10, 20)")
+	mustExec(t, ex, ctx, "INSERT INTO bhs_and VALUES (2, 10, 99)")
 
 	// AND: a = 10 AND b = 20 — only row 1 matches.
 	rows, err := ex.QueryAll(ctx, "SELECT pk FROM bhs_and WHERE a = 10 AND b = 20")
@@ -124,14 +125,6 @@ func newBitmapTestExecutor(t *testing.T) *Executor {
 		t.Fatalf("open engine: %v", err)
 	}
 	t.Cleanup(func() { eng.Close() })
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	return NewExecutorWithEngine(store)
-}
-
-// mustExec runs a statement and fails on error.
-func mustExecBitmap(t *testing.T, ex *Executor, ctx context.Context, sql string) {
-	t.Helper()
-	if _, err := ex.Exec(ctx, sql); err != nil {
-		t.Fatalf("Exec(%q): %v", sql, err)
-	}
 }

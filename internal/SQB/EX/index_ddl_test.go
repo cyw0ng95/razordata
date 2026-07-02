@@ -14,7 +14,7 @@ func TestCreateIndex_Registers(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "email"}, "id")
 
@@ -35,7 +35,7 @@ func TestCreateIndex_PopulatesOnInsert(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "email"}, "id")
 	_, err := ex.Exec(context.Background(),
@@ -61,7 +61,7 @@ func TestCreateIndex_Duplicate(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "email"}, "id")
 	_, err := ex.Exec(context.Background(),
@@ -89,7 +89,7 @@ func TestDropIndex_RemovesFromRegistry(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "email"}, "id")
 	_, err := ex.Exec(context.Background(),
@@ -170,7 +170,7 @@ func TestDropIndex_FullFlow(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "email"}, "id")
 	if _, err := ex.Exec(context.Background(),

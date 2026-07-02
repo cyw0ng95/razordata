@@ -94,7 +94,7 @@ func TestPlanner_PlanSelect_PrefersIndexSeek(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("users", []string{"id", "email"}, "id")
 

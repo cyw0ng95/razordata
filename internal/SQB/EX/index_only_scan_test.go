@@ -8,7 +8,8 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP")
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+)
 
 // TestIndexOnlyScan_CoveringQuery verifies REQ001107: when the
 // projected columns are entirely covered by the index columns
@@ -19,11 +20,11 @@ func TestIndexOnlyScan_CoveringQuery(t *testing.T) {
 	ctx := context.Background()
 
 	// Table with pk + a. Index on (a) — covers pk + a queries.
-	mustExecBitmap(t, ex, ctx, "CREATE TABLE ios_cover (pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER)")
-	mustExecBitmap(t, ex, ctx, "CREATE INDEX idx_ios_cover_a ON ios_cover (a)")
+	mustExec(t, ex, ctx, "CREATE TABLE ios_cover (pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER)")
+	mustExec(t, ex, ctx, "CREATE INDEX idx_ios_cover_a ON ios_cover (a)")
 
-	mustExecBitmap(t, ex, ctx, "INSERT INTO ios_cover VALUES (1, 10, 100)")
-	mustExecBitmap(t, ex, ctx, "INSERT INTO ios_cover VALUES (2, 20, 200)")
+	mustExec(t, ex, ctx, "INSERT INTO ios_cover VALUES (1, 10, 100)")
+	mustExec(t, ex, ctx, "INSERT INTO ios_cover VALUES (2, 20, 200)")
 
 	// Projecting only pk (covered by primary key) and a
 	// (covered by index). Heap fetch is unnecessary.
@@ -45,10 +46,10 @@ func TestIndexOnlyScan_NonCoveringQuery(t *testing.T) {
 	ex := newBitmapTestExecutor(t)
 	ctx := context.Background()
 
-	mustExecBitmap(t, ex, ctx, "CREATE TABLE ios_noncover (pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER)")
-	mustExecBitmap(t, ex, ctx, "CREATE INDEX idx_ios_noncover_a ON ios_noncover (a)")
+	mustExec(t, ex, ctx, "CREATE TABLE ios_noncover (pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER)")
+	mustExec(t, ex, ctx, "CREATE INDEX idx_ios_noncover_a ON ios_noncover (a)")
 
-	mustExecBitmap(t, ex, ctx, "INSERT INTO ios_noncover VALUES (1, 10, 100)")
+	mustExec(t, ex, ctx, "INSERT INTO ios_noncover VALUES (1, 10, 100)")
 
 	// OP.Project b — not in index idx_a — so heap fetch is required.
 	rows, err := ex.QueryAll(ctx, "SELECT b FROM ios_noncover WHERE a = 10")
@@ -91,10 +92,10 @@ func BenchmarkIndexOnlyScan_VsHeapScan(b *testing.B) {
 		if _, err := ex.Exec(ctx, "DROP TABLE IF EXISTS "+tblCover); err != nil {
 			b.Skipf("pre-clean failed (catalog collision in shared DT state): %v", err)
 		}
-		mustExecBitmapB(b, ex, ctx, "CREATE TABLE "+tblCover+" (pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER)")
-		mustExecBitmapB(b, ex, ctx, "CREATE INDEX "+idxCover+" ON "+tblCover+" (a)")
+		mustExecB(b, ex, ctx, "CREATE TABLE "+tblCover+" (pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER)")
+		mustExecB(b, ex, ctx, "CREATE INDEX "+idxCover+" ON "+tblCover+" (a)")
 		for i := 0; i < 1000; i++ {
-			mustExecBitmapB(b, ex, ctx, "INSERT INTO "+tblCover+" VALUES ("+
+			mustExecB(b, ex, ctx, "INSERT INTO "+tblCover+" VALUES ("+
 				itoa(i)+", "+itoa(i%100)+", "+itoa(i%1000)+")")
 		}
 		b.ResetTimer()
@@ -110,10 +111,10 @@ func BenchmarkIndexOnlyScan_VsHeapScan(b *testing.B) {
 		if _, err := ex.Exec(ctx, "DROP TABLE IF EXISTS "+tblNon); err != nil {
 			b.Skipf("pre-clean failed (catalog collision in shared DT state): %v", err)
 		}
-		mustExecBitmapB(b, ex, ctx, "CREATE TABLE "+tblNon+" (pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER)")
-		mustExecBitmapB(b, ex, ctx, "CREATE INDEX "+idxNon+" ON "+tblNon+" (a)")
+		mustExecB(b, ex, ctx, "CREATE TABLE "+tblNon+" (pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER)")
+		mustExecB(b, ex, ctx, "CREATE INDEX "+idxNon+" ON "+tblNon+" (a)")
 		for i := 0; i < 1000; i++ {
-			mustExecBitmapB(b, ex, ctx, "INSERT INTO "+tblNon+" VALUES ("+
+			mustExecB(b, ex, ctx, "INSERT INTO "+tblNon+" VALUES ("+
 				itoa(i)+", "+itoa(i%100)+", "+itoa(i%1000)+")")
 		}
 		b.ResetTimer()
@@ -141,11 +142,11 @@ func newBitmapTestExecutorB(b *testing.B) *Executor {
 		b.Fatalf("open engine: %v", err)
 	}
 	b.Cleanup(func() { eng.Close() })
-	store := &engineStoreWithGet{eng: eng}
+	store := &engineStore{eng: eng}
 	return NewExecutorWithEngine(store)
 }
 
-func mustExecBitmapB(b *testing.B, ex *Executor, ctx context.Context, sql string) {
+func mustExecB(b *testing.B, ex *Executor, ctx context.Context, sql string) {
 	b.Helper()
 	if _, err := ex.Exec(ctx, sql); err != nil {
 		b.Fatalf("Exec(%q): %v", sql, err)
