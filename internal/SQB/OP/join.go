@@ -638,6 +638,7 @@ func (j *NestedLoopJoin) Close() error {
 	j.cachedRightCols = nil
 	j.cachedRightTypes = nil
 	j.rightCached = false
+	j.sharedBuilt = false
 	j.outerSharedCols = nil
 	j.outerSharedTypes = nil
 	j.outerSharedColIndex = nil
