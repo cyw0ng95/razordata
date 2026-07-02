@@ -18,6 +18,7 @@ type codeEntry struct {
 }
 
 var codeTable = map[Kind]codeEntry{
+	// stable since v0.9.0
 	KindNotFound:          {"RZR-SQL-001", "02000"},
 	KindDuplicateKey:      {"RZR-SQL-002", "23000"},
 	KindTypeMismatch:      {"RZR-SQL-003", "22005"},
@@ -36,6 +37,7 @@ var codeTable = map[Kind]codeEntry{
 	KindInternal:          {"RZR-INT-001", "58000"},
 	KindNotImplemented:    {"RZR-INT-002", "0A000"},
 	KindConflict:          {"RZR-INT-003", "40001"},
+	// stable since v0.9.0
 	KindResourceExhausted: {"RZR-INT-004", "54000"},
 }
 

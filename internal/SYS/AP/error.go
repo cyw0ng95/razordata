@@ -1,6 +1,7 @@
 package AP
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -256,4 +257,61 @@ func LayerOf(err error) Layer {
 		return target.Layer
 	}
 	return ""
+}
+
+// ---- JSON marshaling ----
+
+// errorJSON is the wire representation of Error.
+type errorJSON struct {
+	Kind     string            `json:"kind"`
+	Code     string            `json:"code"`
+	SQLSTATE string            `json:"sqlstate"`
+	Module   string            `json:"module,omitempty"`
+	Layer    string            `json:"layer,omitempty"`
+	Op       string            `json:"op,omitempty"`
+	Message  string            `json:"message"`
+	Fields   map[string]string `json:"fields,omitempty"`
+	Cause    string            `json:"cause,omitempty"`
+}
+
+func (e *Error) MarshalJSON() ([]byte, error) {
+	ej := errorJSON{
+		Kind:     e.Kind.String(),
+		Code:     string(e.Code),
+		SQLSTATE: string(e.SQLSTATE),
+		Module:   string(e.Module),
+		Layer:    string(e.Layer),
+		Op:       e.Op,
+		Message:  e.Message,
+		Fields:   e.Fields,
+	}
+	if e.wrapped != nil {
+		ej.Cause = e.wrapped.Error()
+	}
+	return json.Marshal(ej)
+}
+
+func (e *Error) UnmarshalJSON(data []byte) error {
+	var ej errorJSON
+	if err := json.Unmarshal(data, &ej); err != nil {
+		return err
+	}
+	e.Kind = kindFromString(ej.Kind)
+	e.Code = Code(ej.Code)
+	e.SQLSTATE = SQLSTATE(ej.SQLSTATE)
+	e.Module = Module(ej.Module)
+	e.Layer = Layer(ej.Layer)
+	e.Op = ej.Op
+	e.Message = ej.Message
+	e.Fields = ej.Fields
+	return nil
+}
+
+func kindFromString(s string) Kind {
+	for k := KindNotFound; k <= KindParse; k++ {
+		if k.String() == s {
+			return k
+		}
+	}
+	return KindInternal
 }

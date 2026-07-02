@@ -13,7 +13,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SYS/BK"
 )
 
-const Version = "0.8.1"
+const Version = "0.9.0"
 
 type Options struct {
 	Dir                string
