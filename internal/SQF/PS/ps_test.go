@@ -2043,26 +2043,6 @@ func TestParseSelect_All(t *testing.T) {
 	}
 }
 
-// REQ000716: DIV integer division operator.
-func TestParseExpr_DIV(t *testing.T) {
-	p := NewParser("SELECT 47 DIV 5 FROM t")
-	stmt, err := p.Parse()
-	if err != nil {
-		t.Fatalf("Parse() failed: %v", err)
-	}
-	sel := stmt.(*Select)
-	if len(sel.Cols) != 1 {
-		t.Fatalf("expected 1 column, got %d", len(sel.Cols))
-	}
-	bin, ok := sel.Cols[0].(*BinaryExpr)
-	if !ok {
-		t.Fatalf("expected BinaryExpr, got %T", sel.Cols[0])
-	}
-	if bin.Op != LX.T_DIV {
-		t.Errorf("expected T_DIV, got %d", bin.Op)
-	}
-}
-
 // REQ000729: GLOB operator.
 func TestParseExpr_GLOB(t *testing.T) {
 	p := NewParser("SELECT * FROM t WHERE name GLOB '*.txt'")

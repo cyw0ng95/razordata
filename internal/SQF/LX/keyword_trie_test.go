@@ -15,7 +15,7 @@ func TestKeywordTrie_AllKeywordsFound(t *testing.T) {
 		"SELECT": T_SELECT, "FROM": T_FROM, "WHERE": T_WHERE,
 		"AND": T_AND, "OR": T_OR, "NOT": T_NOT, "IN": T_IN,
 		"BETWEEN": T_BETWEEN, "LIKE": T_LIKE, "GLOB": T_GLOB,
-		"DIV": T_DIV, "IS": T_IS, "NULL": T_NULL,
+		"IS": T_IS, "NULL": T_NULL,
 		"BEGIN": T_BEGIN, "COMMIT": T_COMMIT, "ROLLBACK": T_ROLLBACK,
 		"AS": T_AS, "BY": T_BY, "ASC": T_ASC, "DESC": T_DESC,
 		"LIMIT": T_LIMIT, "OFFSET": T_OFFSET,

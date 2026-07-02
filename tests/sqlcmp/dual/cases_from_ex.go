@@ -75,12 +75,7 @@ var divByZeroCases = []dualCase{
 	},
 	{
 		Name:  "mod_zero",
-		Query: "SELECT 1 % 0",
-		Want:  [][]any{{nil}},
-	},
-	{
-		Name:  "div_by_zero_keyword",
-		Query: "SELECT 1 DIV 0",
+		Query: 		"SELECT 1 % 0",
 		Want:  [][]any{{nil}},
 	},
 }

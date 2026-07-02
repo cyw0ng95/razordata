@@ -1255,28 +1255,6 @@ func TestBugfix_NestedScalarSubquery(t *testing.T) {
 	})
 }
 
-// REQ000716: DIV integer division operator.
-func TestBugfix_DIV_Operator(t *testing.T) {
-	ResetForTest(t)
-	ex := NewExecutor()
-	defer UnregisterAll()
-	ctx := context.Background()
-
-	ex.RegisterTable("t", []string{"v"})
-	ex.Exec(ctx, "INSERT INTO t VALUES (10)")
-
-	rows, err := ex.QueryAll(ctx, "SELECT 47 DIV 5 FROM t")
-	if err != nil {
-		t.Fatalf("DIV: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("got %d rows, want 1", len(rows))
-	}
-	if !rows[0].Data[0].Equal(NewIntValue(int64(9))) {
-		t.Errorf("47 DIV 5: got %v, want 9", rows[0].Data[0])
-	}
-}
-
 // REQ000729: GLOB operator.
 func TestBugfix_GLOB_Operator(t *testing.T) {
 	ResetForTest(t)

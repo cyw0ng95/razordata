@@ -1450,8 +1450,7 @@ func compileRowExpr(e PS.Expr) func(*Row) Value {
 // into a function that reads directly from the input row.
 func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 	if v.Op != LX.T_PLUS && v.Op != LX.T_MINUS &&
-		v.Op != LX.T_STAR && v.Op != LX.T_SLASH &&
-		v.Op != LX.T_DIV {
+		v.Op != LX.T_STAR && v.Op != LX.T_SLASH {
 		return nil
 	}
 	left := compileRowExpr(v.Left)
@@ -1510,25 +1509,6 @@ func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 				return Value{Kind: KindInt, I64: a.I64 / b.I64}
 			}
 			return Value{Kind: KindFloat, F64: valueToFloat(a) / valueToFloat(b)}
-		}
-	case LX.T_DIV:
-		return func(row *Row) Value {
-			a, b := left(row), right(row)
-			if a.IsNull() || b.IsNull() {
-				return Value{Kind: KindNull}
-			}
-			if a.Kind == KindInt && b.Kind == KindInt {
-				if b.I64 == 0 {
-					return Value{Kind: KindNull}
-				}
-				return Value{Kind: KindInt, I64: a.I64 / b.I64}
-			}
-			af := valueToFloat(a)
-			bf := valueToFloat(b)
-			if bf == 0 {
-				return Value{Kind: KindNull}
-			}
-			return Value{Kind: KindInt, I64: int64(af / bf)}
 		}
 	}
 	return nil

@@ -433,8 +433,6 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 		return likeValue(left, right, esc)
 	case LX.T_GLOB:
 		return GlobValue(left, right)
-	case LX.T_DIV:
-		return intdivValue(left, right)
 	case LX.T_IS:
 		// `x IS NOT NULL` parses as BinaryExpr{T_IS, x, UnaryExpr{T_NOT, NULL}}.
 		if u, ok := e.Right.(*PS.UnaryExpr); ok && u.Op == LX.T_NOT {
@@ -2087,27 +2085,6 @@ func GlobValue(a, b Value) (Value, error) {
 		return DT.NullValue(), fmt.Errorf("ex: GLOB operand must be string, got Kind %d", b.Kind)
 	}
 	return DT.NewBoolValue(globMatch(a.S, b.S)), nil
-}
-
-func intdivValue(a, b Value) (Value, error) {
-	if a.Kind == KindNull || b.Kind == KindNull {
-		return DT.NullValue(), nil
-	}
-	if a.Kind == KindInt && b.Kind == KindInt {
-		if b.I64 == 0 {
-			return DT.NullValue(), nil
-		}
-		return DT.NewIntValue(a.I64 / b.I64), nil
-	}
-	af, aok := toFloat64(a)
-	bf, bok := toFloat64(b)
-	if !aok || !bok {
-		return DT.NullValue(), fmt.Errorf("ex: DIV requires numeric operands")
-	}
-	if bf == 0 {
-		return DT.NullValue(), nil
-	}
-	return DT.NewIntValue(int64(af / bf)), nil
 }
 
 func isValue(a, b Value) (Value, error) {
