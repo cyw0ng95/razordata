@@ -181,7 +181,7 @@ func BenchmarkFlushMemtableToSST(b *testing.B) {
 	defer func() {
 		_ = manifest.Close()
 	}()
-	fm := newFlushManager(tmp, 1<<20, manifest)
+	fm := newFlushManager(DefaultFS(), tmp, 1<<20, manifest)
 	defer func() {
 		_ = fm.Close()
 	}()

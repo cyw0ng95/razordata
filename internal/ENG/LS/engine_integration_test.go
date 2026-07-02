@@ -201,6 +201,7 @@ func TestEngineReadFromSSTFile(t *testing.T) {
 	e.activeMem.Freeze()
 	for _, shard := range e.activeMem.shards() {
 		job := &flushJob{
+			fs:         e.fs,
 			memtable:   shard,
 			outputPath: filepath.Join(dir, "sst"),
 			manifest:   e.manifest,
@@ -318,6 +319,7 @@ func TestEngineMayContainInSST(t *testing.T) {
 	e.activeMem.Freeze()
 	for _, shard := range e.activeMem.shards() {
 		job := &flushJob{
+			fs:         e.fs,
 			memtable:   shard,
 			outputPath: filepath.Join(dir, "sst"),
 			manifest:   e.manifest,
@@ -356,6 +358,7 @@ func TestEngineReadFromSSTFull(t *testing.T) {
 	e.activeMem.Freeze()
 	for _, shard := range e.activeMem.shards() {
 		job := &flushJob{
+			fs:         e.fs,
 			memtable:   shard,
 			outputPath: filepath.Join(dir, "sst"),
 			manifest:   e.manifest,

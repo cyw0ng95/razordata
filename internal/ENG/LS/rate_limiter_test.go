@@ -61,7 +61,7 @@ func TestCompactionManager_RateLimiter(t *testing.T) {
 	cur.levels = make([][]SSTFileMeta, 6)
 	mfst.current.Store(cur)
 
-	cm := newCompactionManager(dir, mfst)
+	cm := newCompactionManager(DefaultFS(), dir, mfst)
 	defer cm.Stop(context.Background())
 
 	// Default: no limiter.

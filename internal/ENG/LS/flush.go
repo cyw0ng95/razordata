@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -20,6 +19,7 @@ var (
 )
 
 type flushJob struct {
+	fs         FS
 	memtable   *memtable
 	outputPath string
 	manifest   *manifest
@@ -41,19 +41,19 @@ func (fj *flushJob) Run() error {
 	tmpName.WriteString(strconv.FormatInt(time.Now().UnixNano(), 10))
 	tmpName.WriteString(".sst")
 	tmpPath := filepath.Join(sstDir, tmpName.String())
-	if err := os.MkdirAll(sstDir, 0o755); err != nil {
+	if err := fj.fs.MkdirAll(sstDir, 0o755); err != nil {
 		return err
 	}
 	sstData, err := fj.flushToSST()
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(tmpPath, sstData, 0o644); err != nil {
+	if err := fj.fs.WriteFile(tmpPath, sstData, 0o644); err != nil {
 		return err
 	}
 
 	if err := fj.updateManifest(tmpPath); err != nil {
-		_ = os.Remove(tmpPath)
+		_ = fj.fs.Remove(tmpPath)
 		return err
 	}
 
@@ -78,7 +78,7 @@ func (fj *flushJob) flushToSST() ([]byte, error) {
 }
 
 func (fj *flushJob) updateManifest(tmpPath string) error {
-	stat, err := os.Stat(tmpPath)
+	fi, err := fj.fs.Stat(tmpPath)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func (fj *flushJob) updateManifest(tmpPath string) error {
 
 	if keyCount == 0 {
 		// Nothing to flush; drop the temp file and skip manifest update.
-		_ = os.Remove(tmpPath)
+		_ = fj.fs.Remove(tmpPath)
 		return nil
 	}
 
@@ -105,13 +105,13 @@ func (fj *flushJob) updateManifest(tmpPath string) error {
 		Level:     fj.level,
 		MinKey:    minKey,
 		MaxKey:    maxKey,
-		Size:      stat.Size(),
+		Size:      fi.Size(),
 		BloomBits: 10,
 	}
 
 	engineDir := filepath.Dir(filepath.Dir(tmpPath))
 	finalPath := filepath.Join(engineDir, fileName(&meta))
-	if err := os.Rename(tmpPath, finalPath); err != nil {
+	if err := fj.fs.Rename(tmpPath, finalPath); err != nil {
 		return err
 	}
 
@@ -134,13 +134,14 @@ func (fj *flushJob) updateManifest(tmpPath string) error {
 	}
 
 	if err := fj.manifest.Apply(v); err != nil {
-		_ = os.Remove(finalPath)
+		_ = fj.fs.Remove(finalPath)
 		return err
 	}
 	return nil
 }
 
 type flushManager struct {
+	fs             FS
 	activeMemtable atomic.Pointer[memtable]
 	manifest       *manifest
 	dir            string
@@ -156,8 +157,9 @@ type flushManager struct {
 	enqueueMu      sync.Mutex
 }
 
-func newFlushManager(dir string, maxMemSize int64, manifest *manifest) *flushManager {
+func newFlushManager(fs FS, dir string, maxMemSize int64, manifest *manifest) *flushManager {
 	fm := &flushManager{
+		fs:           fs,
 		dir:        dir,
 		maxMemSize: maxMemSize,
 		manifest:   manifest,
@@ -167,7 +169,7 @@ func newFlushManager(dir string, maxMemSize int64, manifest *manifest) *flushMan
 	}
 	fm.targetSize.Store(maxMemSize) // REQ000552: initialize adaptive target
 
-	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0o755); err != nil {
+	if err := fs.MkdirAll(filepath.Join(dir, "sst"), 0o755); err != nil {
 		slog.Warn("flush: mkdir sst", "err", err)
 	}
 
@@ -246,6 +248,7 @@ func (fm *flushManager) requestFlush(m *memtable) {
 
 	id := nextFileID()
 	job := &flushJob{
+		fs:         fm.fs,
 		memtable:   m,
 		outputPath: filepath.Join(fm.dir, "sst"),
 		manifest:   fm.manifest,

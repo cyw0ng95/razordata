@@ -98,7 +98,7 @@ func TestFlushManager_RequestFlush(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	fm := newFlushManager(dir, 64*1024*1024, manifest)
+	fm := newFlushManager(DefaultFS(), dir, 64*1024*1024, manifest)
 	defer fm.Close()
 
 	mt := newMemtable(1024 * 1024)
@@ -129,7 +129,7 @@ func TestFlushManager_RequestFlush_IDConsistency(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	fm := newFlushManager(dir, 64*1024*1024, manifest)
+	fm := newFlushManager(DefaultFS(), dir, 64*1024*1024, manifest)
 	defer fm.Close()
 
 	mt := newMemtable(1024 * 1024)
@@ -175,7 +175,7 @@ func TestFlushToCompactionPathVisible(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	fm := newFlushManager(dir, 64*1024*1024, manifest)
+	fm := newFlushManager(DefaultFS(), dir, 64*1024*1024, manifest)
 	defer fm.Close()
 
 	mt := newMemtable(1024 * 1024)
@@ -247,7 +247,7 @@ func TestCompactionManager_MaybeCompact(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 	defer cm.Close()
 
 	cm.MaybeCompact()
@@ -263,7 +263,7 @@ func TestCompactionManager_RequestCompaction(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 	defer cm.Close()
 
 	cm.requestCompaction(0)
@@ -279,7 +279,7 @@ func TestMaybeCompact_WhenAlreadyCompacting(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 	defer cm.Close()
 
 	v := manifest.Current()
@@ -304,7 +304,7 @@ func TestRequestCompaction_WhenAlreadyCompacting(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 	defer cm.Close()
 
 	v := manifest.Current()
@@ -329,7 +329,7 @@ func TestRequestCompaction_InvalidLevel(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 	defer cm.Close()
 
 	cm.requestCompaction(999)
@@ -345,7 +345,7 @@ func TestRequestCompaction_EmptyLevel(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 	defer cm.Close()
 
 	v := manifest.Current()
@@ -367,7 +367,7 @@ func TestCompactionManager_CloseIdempotent(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 
 	if err := cm.Close(); err != nil {
 		t.Fatalf("first close failed: %v", err)
@@ -388,7 +388,7 @@ func TestMaybeCompact_BudgetExceeded(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 	defer cm.Close()
 
 	// MaybeCompact kicks off a background compaction when budget is

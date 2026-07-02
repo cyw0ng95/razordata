@@ -17,7 +17,7 @@ func TestCompactionManager_BudgetExceeded(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 	defer cm.Close()
 
 	// MaybeCompact kicks off a background compaction when budget is
@@ -58,6 +58,8 @@ func TestCompactionJob_Run(t *testing.T) {
 	}
 
 	job := &compactionJob{
+			fs:         DefaultFS(),
+			placementPolicy: nil,
 		level: 0,
 		inputs: []SSTFileMeta{
 			{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: int64(len(sstData)), BloomBits: 10},
@@ -95,6 +97,8 @@ func TestCompactionJob_RunReadFileError(t *testing.T) {
 	manifest.Apply(*v)
 
 	job := &compactionJob{
+			fs:         DefaultFS(),
+			placementPolicy: nil,
 		level: 0,
 		inputs: []SSTFileMeta{
 			{FileID: 999, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 100, BloomBits: 10},
@@ -133,6 +137,8 @@ func TestCompactionJob_RunOpenSSTError(t *testing.T) {
 	}
 
 	job := &compactionJob{
+			fs:         DefaultFS(),
+			placementPolicy: nil,
 		level: 0,
 		inputs: []SSTFileMeta{
 			{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 100, BloomBits: 10},
@@ -178,6 +184,8 @@ func TestCompactionJob_RunWriteError(t *testing.T) {
 	}
 
 	job := &compactionJob{
+			fs:         DefaultFS(),
+			placementPolicy: nil,
 		level: 0,
 		inputs: []SSTFileMeta{
 			{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: int64(len(sstData)), BloomBits: 10},
@@ -208,7 +216,7 @@ func TestCompactionManager_NoOpWhenNoFiles(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 	defer cm.Close()
 
 	cm.MaybeCompact()
@@ -224,7 +232,7 @@ func TestCompactionManager_Close(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 	if err := cm.Close(); err != nil {
 		t.Fatalf("failed to close compaction manager: %v", err)
 	}
@@ -240,7 +248,7 @@ func TestCompactionManager_RequestCompaction_EmptyLevel(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 	defer cm.Close()
 
 	cm.requestCompaction(0)
@@ -335,7 +343,7 @@ func TestCompactionManager_ManualCompact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newManifest failed: %v", err)
 	}
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 	defer cm.Close()
 
 	// ManualCompact should not panic when no files exist
@@ -351,7 +359,7 @@ func TestCompactionManager_ManualCompact_Concurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newManifest failed: %v", err)
 	}
-	cm := newCompactionManager(dir, manifest)
+	cm := newCompactionManager(DefaultFS(), dir, manifest)
 	defer cm.Close()
 
 	// First call may start compaction
@@ -419,6 +427,8 @@ func TestCompactionJob_RunRemovesOverlapFiles(t *testing.T) {
 	}
 
 	job := &compactionJob{
+			fs:         DefaultFS(),
+			placementPolicy: nil,
 		level:   0,
 		inputs:  []SSTFileMeta{input},
 		outputs: nil,

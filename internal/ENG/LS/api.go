@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"container/heap"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync/atomic"
 )
@@ -98,7 +97,7 @@ func (eng *Engine) NewIterator(prefix []byte) RangeIter {
 	manifest := e.manifest
 	dir := e.dir
 	e.mu.RUnlock()
-	return newMergeIterator(memtables, manifest, dir, prefix)
+	return newMergeIterator(memtables, manifest, dir, e.fs, prefix)
 }
 
 // Close releases engine resources. Calling Close twice is a no-op.
@@ -209,6 +208,7 @@ func (h *iterHeap) Pop() any {
 // Zero-copy optimization for SST blocks is achieved via borrowed pointers
 // in sst_reader.go (decodeBlock returns pointers into the SST data).
 type mergeIterator struct {
+	fs FS
 	manifest *manifest
 	dir      string
 	prefix   []byte
@@ -220,8 +220,9 @@ type mergeIterator struct {
 	closed   atomic.Bool
 }
 
-func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, prefix []byte) *mergeIterator {
+func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, fs FS, prefix []byte) *mergeIterator {
 	mi := &mergeIterator{
+		fs:         fs,
 		manifest: manifest,
 		dir:      dir,
 		prefix:   append([]byte(nil), prefix...),
@@ -247,7 +248,7 @@ func (mi *mergeIterator) init(memtables []*memtable) {
 					continue
 				}
 				sstPath := filepath.Join(mi.dir, fileName(&f))
-				data, err := os.ReadFile(sstPath)
+				data, err := mi.fs.ReadFile(sstPath)
 				if err != nil {
 					continue
 				}

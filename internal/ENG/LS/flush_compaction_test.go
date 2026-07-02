@@ -30,6 +30,7 @@ func TestFlushJob_Run(t *testing.T) {
 	// job writes a temp file there and renames to fileName(meta).
 	sstDir := filepath.Join(dir, "sst")
 	job := &flushJob{
+		fs:         DefaultFS(),
 		memtable:   mt,
 		outputPath: sstDir,
 		manifest:   manifest,
@@ -66,6 +67,7 @@ func TestFlushJob_RunNotFrozen(t *testing.T) {
 	mt.Insert([]byte("key1"), []byte("value1"))
 
 	job := &flushJob{
+		fs:         DefaultFS(),
 		memtable:   mt,
 		outputPath: filepath.Join(dir, "L0_1.sst"),
 		manifest:   manifest,
@@ -94,6 +96,7 @@ func TestFlushJob_flushToSST(t *testing.T) {
 	mt.Freeze()
 
 	job := &flushJob{
+		fs:         DefaultFS(),
 		memtable:   mt,
 		outputPath: filepath.Join(dir, "L0_1.sst"),
 		manifest:   manifest,
@@ -140,6 +143,7 @@ func TestFlushJob_updateManifest(t *testing.T) {
 	}
 
 	job := &flushJob{
+		fs:         DefaultFS(),
 		memtable:   mt,
 		outputPath: tmpPath,
 		manifest:   manifest,
@@ -167,7 +171,7 @@ func TestFlushManager_ActiveMemtable_v2(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	fm := newFlushManager(dir, 1024*1024, manifest)
+	fm := newFlushManager(DefaultFS(), dir, 1024*1024, manifest)
 	defer fm.Close()
 
 	active := fm.ActiveMemtable()
@@ -186,7 +190,7 @@ func TestFlushManager_Close_v2(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	fm := newFlushManager(dir, 1024*1024, manifest)
+	fm := newFlushManager(DefaultFS(), dir, 1024*1024, manifest)
 
 	if err := fm.Close(); err != nil {
 		t.Fatalf("first close failed: %v", err)
@@ -207,7 +211,7 @@ func TestFlushManager_QueueFlush(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	fm := newFlushManager(dir, 1024*1024, manifest)
+	fm := newFlushManager(DefaultFS(), dir, 1024*1024, manifest)
 	defer fm.Close()
 
 	mt := newMemtable(1024)
@@ -422,6 +426,8 @@ func TestCompactionJob_RunNoFiles(t *testing.T) {
 	manifest.Apply(*v)
 
 	job := &compactionJob{
+		fs:              DefaultFS(),
+		placementPolicy: nil,
 		level:  0,
 		inputs: []SSTFileMeta{},
 	}
@@ -474,6 +480,8 @@ func TestCompactionJob_RunWithOverlap(t *testing.T) {
 	}
 
 	job := &compactionJob{
+		fs:              DefaultFS(),
+		placementPolicy: nil,
 		level: 0,
 		inputs: []SSTFileMeta{
 			{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: int64(len(sstData1)), BloomBits: 10},

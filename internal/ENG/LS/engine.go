@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -46,6 +45,7 @@ type memtableIface interface {
 type Options struct {
 	MemTableShards int
 	MemTableSize   int64
+	FS             FS // REQ001172: virtual filesystem for testability
 }
 
 func DefaultOptions() Options {
@@ -67,6 +67,7 @@ type engine struct {
 	fm        *flushManager
 	pageCache *PageCache
 	opts      Options
+	fs        FS // REQ001172: virtual filesystem
 	stats     struct {
 		MemtableHits atomic.Int64
 		SSTHits      atomic.Int64
@@ -82,29 +83,34 @@ func newEngine(dir string) (*engine, error) {
 }
 
 func newEngineWithOptions(dir string, opts Options) (*engine, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, err
-	}
-	sstDir := filepath.Join(dir, "sst")
-	if err := os.MkdirAll(sstDir, 0755); err != nil {
-		return nil, err
-	}
-	manifest, err := newManifest(dir)
-	if err != nil {
-		return nil, err
-	}
-	activeMem := newShardedMemtable(opts.MemTableSize, opts.MemTableShards)
 	e := &engine{
 		dir:       dir,
 		memtables: make([]memtableIface, 0, 4),
-		activeMem: activeMem,
-		manifest:  manifest,
-		pageCache: NewPageCache(DefaultPageCacheSize),
 		opts:      opts,
+		fs:        opts.FS,
 		log:       slog.Default(),
 	}
-	e.cm = newCompactionManager(dir, manifest)
-	e.fm = newFlushManager(dir, opts.MemTableSize, manifest)
+	if e.fs == nil {
+		e.fs = DefaultFS()
+	}
+	activeMem := newShardedMemtable(opts.MemTableSize, opts.MemTableShards)
+	e.activeMem = activeMem
+	e.pageCache = NewPageCache(DefaultPageCacheSize)
+
+	if err := e.fs.MkdirAll(dir, 0755); err != nil {
+		return nil, err
+	}
+	sstDir := filepath.Join(dir, "sst")
+	if err := e.fs.MkdirAll(sstDir, 0755); err != nil {
+		return nil, err
+	}
+	manifest, err := newManifestWithFS(dir, e.fs)
+	if err != nil {
+		return nil, err
+	}
+	e.manifest = manifest
+	e.cm = newCompactionManager(e.fs, dir, manifest)
+	e.fm = newFlushManager(e.fs, dir, opts.MemTableSize, manifest)
 	return e, nil
 }
 
@@ -238,7 +244,7 @@ func (e *engine) getSSTReader(fileID uint64, path string) (*sstReader, error) {
 }
 
 func (e *engine) loadSSTMeta(fileID uint64, path string) ([]byte, error) {
-	fi, err := os.Stat(path)
+	fi, err := e.fs.Stat(path)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +253,7 @@ func (e *engine) loadSSTMeta(fileID uint64, path string) ([]byte, error) {
 		return nil, ErrInvalidSSTFormat
 	}
 
-	f, err := os.Open(path)
+	f, err := e.fs.Open(path)
 	if err != nil {
 		return nil, err
 	}
