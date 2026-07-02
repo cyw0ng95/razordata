@@ -56,7 +56,6 @@ func (osFS) Open(name string) (File, error) {
 }
 
 func (osFS) Create(name string) (File, error) {
-	_ = os.MkdirAll(filepath.Dir(name), 0755)
 	f, err := os.Create(name)
 	if err != nil {
 		return nil, err
@@ -93,7 +92,6 @@ func (osFS) ReadFile(name string) ([]byte, error) {
 }
 
 func (osFS) WriteFile(name string, data []byte, perm os.FileMode) error {
-	_ = os.MkdirAll(filepath.Dir(name), 0755)
 	return os.WriteFile(name, data, perm)
 }
 
@@ -195,16 +193,6 @@ func (f *inMemFS) MkdirAll(path string, _ os.FileMode) error {
 	return nil
 }
 
-func (f *inMemFS) MmkdirAll(path string, _ os.FileMode) error {
-	path = filepath.Clean(path)
-	if path == "." {
-		return nil
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.files[path] = &memFile{dir: true}
-	return nil
-}
 
 func (f *inMemFS) Remove(name string) error {
 	f.mu.Lock()
