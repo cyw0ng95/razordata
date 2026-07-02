@@ -448,6 +448,8 @@ type compactionManager struct {
 	// the compaction loop. nil for tests that bypass compaction.
 	subCompactor *SubCompactor
 	debts        map[int]int64
+	// REQ001175: per-level rate limiter with debt-aware throttling.
+	perLevelRL atomic.Pointer[PerLevelRateLimiter]
 }
 
 // subCompactionThreshold is the input-file count at which the
@@ -681,6 +683,17 @@ func (cm *compactionManager) requestCompaction(level int) bool {
 		overlap:         overlap,
 		rateLimiter:     cm.rateLimiter.Load(),
 		placementPolicy: cm.placementPolicy,
+	}
+
+	// REQ001175: prefer per-level rate limiter when available.
+	plrl := cm.perLevelRL.Load()
+	if plrl != nil {
+		plrl.mu.RLock()
+		lr := plrl.levels[level]
+		plrl.mu.RUnlock()
+		if lr != nil {
+			job.rateLimiter = lr
+		}
 	}
 
 	cm.compacting.Store(true)
