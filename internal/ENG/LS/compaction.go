@@ -217,7 +217,7 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	for _, ov := range cj.overlap {
 		sstPath := filepath.Join(dir, fileName(&ov))
 		if err := cj.fs.Remove(sstPath); err != nil && !os.IsNotExist(err) {
-			 slog.Warn("compaction: remove overlap SST", "path", sstPath, "err", err)
+			slog.Warn("compaction: remove overlap SST", "path", sstPath, "err", err)
 		}
 	}
 
@@ -447,6 +447,7 @@ type compactionManager struct {
 	// REQ001048: SubCompactor wires parallel sub-compaction into
 	// the compaction loop. nil for tests that bypass compaction.
 	subCompactor *SubCompactor
+	debts        map[int]int64
 }
 
 // subCompactionThreshold is the input-file count at which the
@@ -477,6 +478,7 @@ func newCompactionManager(fs FS, dir string, manifest *manifest) *compactionMana
 		// the subcompaction threshold) and can be tuned via
 		// SetSubCompactorConcurrency.
 		subCompactor: NewSubCompactor(fs, dir, manifest, 4),
+		debts:        make(map[int]int64),
 	}
 	cm.wg.Add(1)
 	go cm.compactionLoop()
@@ -492,6 +494,24 @@ func (cm *compactionManager) SetSubCompactorConcurrency(n int) {
 	cm.subCompactor = NewSubCompactor(cm.fs, cm.dir, cm.manifest, n)
 }
 
+// recalculateDebts recomputes per-level compaction debt.
+// debt = max(0, totalSize - budget) per level. REQ001171.
+func (cm *compactionManager) recalculateDebts() {
+	v := cm.manifest.Current()
+	for level, files := range v.levels {
+		var totalSize int64
+		for _, f := range files {
+			totalSize += f.Size
+		}
+		budget := cm.budget.budgetFor(level)
+		debt := totalSize - budget
+		if debt < 0 {
+			debt = 0
+		}
+		cm.debts[level] = debt
+	}
+}
+
 func (cm *compactionManager) compactionLoop() {
 	defer cm.wg.Done()
 	defer close(cm.loopDone)
@@ -501,6 +521,7 @@ func (cm *compactionManager) compactionLoop() {
 			return
 		case job := <-cm.compactionQueue:
 			cm.runJob(job)
+			cm.recalculateDebts()
 			if cm.manualDone != nil {
 				close(cm.manualDone)
 				cm.manualDone = nil
@@ -557,19 +578,43 @@ func (cm *compactionManager) MaybeCompact() {
 		return
 	}
 
+	cm.recalculateDebts()
+
+	bestLevel := -1
+	bestUrgency := 0.0
+
 	style := CompactionStyle(cm.style.Load())
 	v := cm.manifest.Current()
 	for level := range len(v.levels) - 1 {
 		files := v.levels[level]
+		if len(files) == 0 {
+			continue
+		}
+
 		totalSize := int64(0)
 		for _, f := range files {
 			totalSize += f.Size
 		}
 
-		if style.shouldCompact(level, len(files), totalSize) {
-			cm.requestCompaction(level)
-			return
+		if !style.shouldCompact(level, len(files), totalSize) {
+			continue
 		}
+
+		budget := cm.budget.budgetFor(level)
+		if budget <= 0 {
+			budget = 1
+		}
+		urgency := float64(cm.debts[level]) / float64(budget)
+		urgency *= (1.0 + 0.5*float64(level))
+
+		if urgency > bestUrgency {
+			bestUrgency = urgency
+			bestLevel = level
+		}
+	}
+
+	if bestLevel >= 0 {
+		cm.requestCompaction(bestLevel)
 	}
 }
 
