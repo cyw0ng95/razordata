@@ -6,7 +6,6 @@ package WT
 
 import (
 	"context"
-	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -54,9 +53,6 @@ func injectOuter(op DT.Operator, outer *DT.Row) DT.Operator {
 		return inj
 	}
 	switch v := op.(type) {
-	case *AD.AdaptiveOp:
-		v.Inner = injectOuter(v.Inner, outer)
-		return v
 	case *OP.SeqScan:
 		return &outerInjector{child: v, outer: outer}
 	case *OP.IndexScan:
@@ -86,6 +82,12 @@ func injectOuter(op DT.Operator, outer *DT.Row) DT.Operator {
 	case *OP.HashJoin:
 		// HashJoin children are read-only via accessors. Return as-is;
 		// correlated subqueries over HashJoin fall back to literal.
+		return op
+	default:
+		if c, ok := op.(interface{ Child() DT.Operator; SetChild(DT.Operator) }); ok {
+			c.SetChild(injectOuter(c.Child(), outer))
+			return op
+		}
 		return op
 	}
 	return op

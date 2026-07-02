@@ -1541,9 +1541,9 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 	case *PS.CreateVirtualTableStmt:
 		return WT.NewUnsupportedOp(s, "ex: virtual table module not supported in v1: "+s.Module), nil
 	case *PS.BeginTX:
-		return NewNoop(), nil
+		return AD.NewNoop(), nil
 	case *PS.CommitTX:
-		return NewNoop(), nil
+		return AD.NewNoop(), nil
 	case *PS.ValuesStmt:
 		return OP.NewValuesRowsOp(s.Rows), nil
 	case *PS.AttachStmt:
@@ -1785,34 +1785,6 @@ func (s *streamIterator) Close() error {
 		return s.closer()
 	}
 	return nil
-}
-
-// Noop is a no-op operator that returns ErrNoRows on Next.
-// Used for statements like BEGIN that affect state but produce no results.
-type Noop struct{}
-
-var _ DT.Operator = (*Noop)(nil)
-
-func NewNoop() *Noop {
-	return &Noop{}
-}
-
-func (n *Noop) Next(ctx context.Context) (DT.Row, error) {
-	return DT.Row{}, DT.ErrNoRows
-}
-
-func (n *Noop) Close() error {
-	return nil
-}
-
-func (n *Noop) WithParams(p []any) DT.Operator {
-	return n
-}
-
-// TxnDebugger returns the executor's transaction debugger.
-// REQ000792: MVCC debugging.
-func (e *Executor) TxnDebugger() *UT.TxnDebugger {
-	return e.txnDebugger
 }
 
 // StmtCacheStats returns the statement cache statistics.

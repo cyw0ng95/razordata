@@ -172,7 +172,7 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		node.Detail = "EXPLAIN"
 		node.Cost = 0
 
-	case *Noop:
+	case *AD.Noop:
 		node.Detail = "NOOP"
 		node.Cost = 0
 	}
@@ -307,7 +307,7 @@ func operatorType(op DT.Operator) string {
 		return "DropMatView"
 	case *AD.ExplainStmtOp:
 		return "Explain"
-	case *Noop:
+	case *AD.Noop:
 		return "Noop"
 	case *AD.FallbackOp:
 		return "Fallback"

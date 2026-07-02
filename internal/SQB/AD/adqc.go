@@ -196,6 +196,7 @@ func (a *AdaptiveOp) WithParams(p []any) DT.Operator {
 // Child returns the inner operator for parameter propagation
 // and EXPLAIN tree walking.
 func (a *AdaptiveOp) Child() DT.Operator { return a.Inner }
+func (a *AdaptiveOp) SetChild(c DT.Operator) { a.Inner = c }
 
 // GlobalAdqcCache is the process-wide adaptive compilation cache.
 var GlobalAdqcCache = NewAdqcCache(256)

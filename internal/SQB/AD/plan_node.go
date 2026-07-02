@@ -1,6 +1,7 @@
 package AD
 
 import (
+	"context"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"fmt"
 	"math"
@@ -15,120 +16,94 @@ import (
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
-// PlanNode represents a node in the query plan tree for EXPLAIN output.
-// It mirrors the DT.Operator tree but captures descriptive metadata for
-// human-readable rendering.
 type PlanNode struct {
-	Type        string          // "OP.SeqScan", "OP.IndexScan", "OP.Filter", etc.
-	Table       string          // for scan nodes
-	Index       string          // for index nodes
-	Cost        float64         // estimated cost
-	Rows        int64           // estimated row count
-	Width       int             // avg row width (bytes)
-	Detail      string          // extra info (filter expr, order by, etc.)
-	Children    []*PlanNode     // child nodes
-	Analyze     *AnalyzeStats   // REQ000783: runtime stats from EXPLAIN ANALYZE
-	Bottleneck  *BottleneckInfo // REQ000788: bottleneck analysis
-	IndexHint   *IndexHint      // REQ000790: index diagnostics
-	Subquery    *SubqueryInfo   // REQ000791: subquery optimization analysis
-	TxnDebug    *UT.TxnDebugInfo   // REQ000792: transaction/MVCC debugging
-	Cache       *CacheInfo      // REQ000793: plan cache analysis
+	Type        string
+	Table       string
+	Index       string
+	Cost        float64
+	Rows        int64
+	Width       int
+	Detail      string
+	Children    []*PlanNode
+	Analyze     *AnalyzeStats
+	Bottleneck  *BottleneckInfo
+	IndexHint   *IndexHint
+	Subquery    *SubqueryInfo
+	TxnDebug    *UT.TxnDebugInfo
+	Cache       *CacheInfo
 }
 
-// AnalyzeStats holds runtime statistics for EXPLAIN ANALYZE.
 type AnalyzeStats struct {
 	RowsReturned int64
 	TimeNS       int64
 	Allocs       int64
 }
 
-// TableStats aggregates column-level statistics for a table, used by
-// the planner for statistics-driven cost estimation (REQ000787).
 type TableStats struct {
 	RowCount      int64
-	ColStats      map[string]*ls.ColumnStats // colName -> ColumnStats
-	TotalWidth    int                        // avg row width in bytes
-	LastAnalyzed  int64                      // unix nanos
+	ColStats      map[string]*ls.ColumnStats
+	TotalWidth    int
+	LastAnalyzed  int64
 }
 
-// BottleneckInfo captures identified performance bottlenecks in a query plan
-// (REQ000788). It is attached to PlanNode for EXPLAIN ANALYZE output.
 type BottleneckInfo struct {
-	Severity     string   // "low", "medium", "high", "critical"
-	Type         string   // "seq_scan", "large_sort", "hash_join_fallback", "high_allocs", "skew"
-	Details      string   // human-readable description
-	Recommendations []string // suggested fixes
-	ActualRows   int64
-	EstimatedRows int64
-	ActualTimeNS int64
-	CostRatio    float64 // actual/estimated cost ratio
+	Severity        string
+	Type           string
+	Details        string
+	Recommendations []string
+	ActualRows     int64
+	EstimatedRows  int64
+	ActualTimeNS   int64
+	CostRatio      float64
 }
 
-// IndexHint provides index diagnostic information for a PlanNode.
-// REQ000790: Index diagnostics in EXPLAIN output.
 type IndexHint struct {
-	Used         bool     // whether an index was used
-	IndexName    string   // name of index used (if Used=true)
-	AvailableIdx []string // available indexes on the table
-	MissingCols  []string // columns that could benefit from an index
-	Reason       string   // why index was skipped or recommended
+	Used         bool
+	IndexName    string
+	AvailableIdx []string
+	MissingCols  []string
+	Reason       string
 }
 
-// SubqueryInfo provides subquery optimization analysis.
-// REQ000791: Subquery optimization analysis in EXPLAIN output.
 type SubqueryInfo struct {
-	Type           string // "correlated", "uncorrelated", "semi-join", "anti-join"
-	Unnested       bool   // whether the subquery was unnested/flattened
-	ExecutionCount int64  // number of times the subquery was executed
-	Method         string // "naive", "semi-join", "hash-join", "flattened"
+	Type           string
+	Unnested       bool
+	ExecutionCount int64
+	Method         string
 }
 
-// CacheInfo provides plan cache analysis information.
-// REQ000793: Plan cache analysis in EXPLAIN output.
 type CacheInfo struct {
-	Hit       bool    // whether this plan was a cache hit
-	HitRate   float64 // overall cache hit rate percentage
-	Hits      int64   // total hits
-	Misses    int64   // total misses
-	Evictions int64   // total evictions
+	Hit       bool
+	HitRate   float64
+	Hits      int64
+	Misses    int64
+	Evictions int64
 }
 
-// Add appends a child node to this PlanNode.
 func (n *PlanNode) Add(child *PlanNode) {
 	n.Children = append(n.Children, child)
 }
 
-// SetBottleneck attaches bottleneck analysis to this node (REQ000788).
 func (n *PlanNode) SetBottleneck(bn *BottleneckInfo) {
 	n.Bottleneck = bn
 }
 
-// SetIndexHint attaches index diagnostic information to this node (REQ000790).
 func (n *PlanNode) SetIndexHint(ih *IndexHint) {
 	n.IndexHint = ih
 }
 
-// SetSubquery attaches subquery optimization analysis to this node (REQ000791).
 func (n *PlanNode) SetSubquery(sq *SubqueryInfo) {
 	n.Subquery = sq
 }
 
-// SetTxnDebug attaches transaction debugging information to this node (REQ000792).
 func (n *PlanNode) SetTxnDebug(td *UT.TxnDebugInfo) {
 	n.TxnDebug = td
 }
 
-// SetCache attaches plan cache analysis to this node (REQ000793).
 func (n *PlanNode) SetCache(ci *CacheInfo) {
 	n.Cache = ci
 }
 
-// formatPlanTree renders a PlanNode tree as SQLite-compatible EXPLAIN output.
-// Schema: (id, parent, notused, detail)
-// The mode parameter controls verbosity:
-//   - ExplainNormal: full detail including expressions, costs, and row estimates
-//   - ExplainQueryPlan: simplified output (SCAN/SEARCH/JOIN style)
-//   - ExplainAnalyze: same as mode but with actual runtime stats appended
 func FormatPlanTree(n *PlanNode, mode PS.ExplainMode) []DT.Row {
 	if n == nil {
 		return nil
@@ -148,10 +123,8 @@ func FormatPlanTree(n *PlanNode, mode PS.ExplainMode) []DT.Row {
 		var detail string
 		switch mode {
 		case PS.ExplainQueryPlan:
-			// Simplified SQLite-style output: SCAN, SEARCH, JOIN
 			detail = explainQueryPlanDetail(node)
 		default:
-			// Full detail: type, table, index, expressions, costs, row estimates
 			detail = node.Detail
 			if detail == "" {
 				detail = node.Type
@@ -162,7 +135,6 @@ func FormatPlanTree(n *PlanNode, mode PS.ExplainMode) []DT.Row {
 			if node.Index != "" {
 				detail += " USING INDEX " + node.Index
 			}
-			// Include cost and row estimates for verbose modes
 			if node.Cost > 0 {
 				detail += fmt.Sprintf(" cost=%.2f", node.Cost)
 			}
@@ -171,12 +143,9 @@ func FormatPlanTree(n *PlanNode, mode PS.ExplainMode) []DT.Row {
 			}
 		}
 
-		// REQ000783: append EXPLAIN ANALYZE runtime stats.
 		if a := node.Analyze; a != nil {
 			detail += fmt.Sprintf(" (actual rows=%d time=%dns allocs=%d)", a.RowsReturned, a.TimeNS, a.Allocs)
 		}
-
-		// REQ000788: append bottleneck analysis if present.
 		if bn := node.Bottleneck; bn != nil {
 			detail += fmt.Sprintf(" [BOTTLENECK: %s severity=%s]", bn.Type, bn.Severity)
 			if bn.Details != "" {
@@ -186,8 +155,6 @@ func FormatPlanTree(n *PlanNode, mode PS.ExplainMode) []DT.Row {
 				detail += fmt.Sprintf(" recommend: %s", strings.Join(bn.Recommendations, "; "))
 			}
 		}
-
-		// REQ000790: append index hint if present.
 		if ih := node.IndexHint; ih != nil {
 			if ih.Used {
 				detail += fmt.Sprintf(" [INDEX: %s used]", ih.IndexName)
@@ -198,8 +165,6 @@ func FormatPlanTree(n *PlanNode, mode PS.ExplainMode) []DT.Row {
 				}
 			}
 		}
-
-		// REQ000791: append subquery info if present.
 		if sq := node.Subquery; sq != nil {
 			if sq.Unnested {
 				detail += fmt.Sprintf(" [SUBQUERY: unnested → %s]", sq.Method)
@@ -210,16 +175,12 @@ func FormatPlanTree(n *PlanNode, mode PS.ExplainMode) []DT.Row {
 				}
 			}
 		}
-
-		// REQ000792: append txn debug info if present.
 		if td := node.TxnDebug; td != nil {
 			detail += fmt.Sprintf(" [MVCC: visible=%d hidden=%d snapshot=%d]", td.VisibleRows, td.HiddenByMVCC, td.SnapshotTS)
 			if td.LockWaitTimeNS > 0 {
 				detail += fmt.Sprintf(" lock_wait=%dns", td.LockWaitTimeNS)
 			}
 		}
-
-		// REQ000793: append cache info if present.
 		if ci := node.Cache; ci != nil {
 			if ci.Hit {
 				detail += fmt.Sprintf(" [CACHE: hit (rate=%.1f%%)]", ci.HitRate)
@@ -243,8 +204,6 @@ func FormatPlanTree(n *PlanNode, mode PS.ExplainMode) []DT.Row {
 	return rows
 }
 
-// AnalyzePlanForBottlenecks walks the plan tree and identifies performance
-// bottlenecks based on runtime statistics and cost estimates (REQ000788).
 func AnalyzePlanForBottlenecks(root *PlanNode) []*BottleneckInfo {
 	var bottlenecks []*BottleneckInfo
 	if root == nil {
@@ -256,94 +215,63 @@ func AnalyzePlanForBottlenecks(root *PlanNode) []*BottleneckInfo {
 		if node == nil {
 			return
 		}
-
-		bn := identifyBottleneck(node)
-		if bn != nil {
-			node.SetBottleneck(bn)
+		if bn := identifyBottleneck(node); bn != nil {
+			node.Bottleneck = bn
 			bottlenecks = append(bottlenecks, bn)
 		}
-
 		for _, child := range node.Children {
 			walk(child)
 		}
 	}
 	walk(root)
-
 	return bottlenecks
 }
 
-// identifyBottleneck examines a single plan node and returns a BottleneckInfo
-// if a performance issue is detected (REQ000788).
 func identifyBottleneck(node *PlanNode) *BottleneckInfo {
 	if node.Analyze == nil {
 		return nil
 	}
-
+	var costRatio float64
+	if node.Cost > 0 {
+		costRatio = float64(node.Analyze.TimeNS) / node.Cost
+	} else {
+		costRatio = float64(node.Analyze.TimeNS) / 1000
+	}
 	bn := &BottleneckInfo{
-		ActualRows:    node.Analyze.RowsReturned,
+		Severity:     "low",
+		Type:         "general",
+		ActualRows:   node.Analyze.RowsReturned,
 		EstimatedRows: node.Rows,
-		ActualTimeNS:  node.Analyze.TimeNS,
+		ActualTimeNS: node.Analyze.TimeNS,
+		CostRatio:    costRatio,
 	}
-
-	// Check for high actual vs estimated row ratio (cardinality misestimate).
-	if node.Rows > 0 && node.Analyze.RowsReturned > 0 {
-		bn.CostRatio = float64(node.Analyze.RowsReturned) / float64(node.Rows)
-		if bn.CostRatio > 5.0 {
-			bn.Severity = "high"
-			bn.Type = "cardinality_misestimate"
-			bn.Details = fmt.Sprintf("actual rows (%d) >> estimated rows (%d)", node.Analyze.RowsReturned, node.Rows)
-			bn.Recommendations = []string{"run ANALYZE to refresh statistics", "consider adding indexes on filter columns"}
-		} else if bn.CostRatio > 2.0 {
-			bn.Severity = "medium"
-			bn.Type = "cardinality_misestimate"
-			bn.Details = fmt.Sprintf("actual rows (%d) > estimated rows (%d)", node.Analyze.RowsReturned, node.Rows)
-			bn.Recommendations = []string{"run ANALYZE to refresh statistics"}
-		}
-	}
-
-	// Check for high allocation count (memory pressure).
-	if node.Analyze.Allocs > 100 {
-		if bn.Severity == "" {
-			bn.Severity = "medium"
-		}
-		bn.Type = "high_allocs"
-		bn.Details = fmt.Sprintf("high allocation count (%d)", node.Analyze.Allocs)
-		bn.Recommendations = append(bn.Recommendations, "consider vectorized execution or pre-allocated buffers")
-	}
-
-	// Check for sequential scan on large table.
-	if node.Type == "OP.SeqScan" && node.Analyze.RowsReturned > 1000 {
-		if bn.Severity == "" {
-			bn.Severity = "medium"
-		}
-		if bn.Type == "" {
+	if costRatio > 1000 {
+		bn.Severity = "critical"
+		if node.Type == "Scan" {
 			bn.Type = "seq_scan"
+			bn.Details = fmt.Sprintf("Seq scan on %s took %dns", node.Table, node.Analyze.TimeNS)
+			bn.Recommendations = []string{"Consider adding an index"}
+		} else if node.Type == "Join" || node.Type == "OP.HashJoin" {
+			bn.Type = "hash_join_fallback"
+			bn.Details = fmt.Sprintf("HashJoin on %s took %dns", node.Table, node.Analyze.TimeNS)
+			bn.Recommendations = []string{"Consider increasing work_mem", "Check join ordering"}
+		} else {
+			bn.Details = fmt.Sprintf("High execution time: %dns", node.Analyze.TimeNS)
+			bn.Recommendations = []string{"Review query plan for optimization opportunities"}
 		}
-		bn.Details = fmt.Sprintf("sequential scan processed %d rows", node.Analyze.RowsReturned)
-		bn.Recommendations = append(bn.Recommendations, "consider adding an index on filter/join columns")
-	}
-
-	// Check for sort on large input.
-	if node.Type == "OP.Sort" && node.Analyze.TimeNS > 1000000 { // > 1ms
-		if bn.Severity == "" {
-			bn.Severity = "low"
+	} else if costRatio > 100 {
+		bn.Severity = "high"
+		bn.Details = fmt.Sprintf("Elevated execution time: %dns", node.Analyze.TimeNS)
+		if node.Type == "Sort" {
+			bn.Type = "large_sort"
+			bn.Recommendations = []string{"Consider adding an index to avoid sort"}
 		}
-		bn.Type = "large_sort"
-		bn.Details = fmt.Sprintf("sort took %d ns on %d rows", node.Analyze.TimeNS, node.Analyze.RowsReturned)
-		bn.Recommendations = append(bn.Recommendations, "consider adding an index to avoid sort")
-	}
-
-	if bn.Type == "" {
-		return nil
-	}
-	if bn.Severity == "" {
-		bn.Severity = "low"
+	} else if costRatio > 10 {
+		bn.Severity = "medium"
 	}
 	return bn
 }
 
-// explainQueryPlanDetail produces simplified SQLite-style output for EXPLAIN QUERY PLAN.
-// Maps internal operator types to SCAN/SEARCH/JOIN verbs.
 func explainQueryPlanDetail(n *PlanNode) string {
 	switch n.Type {
 	case "Scan":
@@ -384,10 +312,6 @@ func explainQueryPlanDetail(n *PlanNode) string {
 	}
 }
 
-// Cost estimation helpers
-
-// estimateFilterCost estimates the cost of a filter operator.
-// REQ000787: uses column statistics to estimate selectivity when available.
 func EstimateFilterCost(f *OP.Filter, ts *TableStats) float64 {
 	if f.Child() == nil {
 		return 1.0
@@ -431,8 +355,6 @@ func EstimateOffsetCost(o *OP.Offset) float64 {
 	return 1.0
 }
 
-// estimateDistinctCost estimates the cost of a distinct operator.
-// REQ000787: uses table statistics to estimate deduplication cost.
 func EstimateDistinctCost(d *OP.Distinct, ts *TableStats) float64 {
 	if d.Child() == nil {
 		return 1.0
@@ -441,11 +363,9 @@ func EstimateDistinctCost(d *OP.Distinct, ts *TableStats) float64 {
 	if ts != nil && ts.RowCount > 0 {
 		inputRows = float64(ts.RowCount)
 	}
-	return 2.0 + inputRows // deduplication requires hashing/sorting
+	return 2.0 + inputRows
 }
 
-// estimateAggregateCost estimates the cost of an aggregation operator.
-// REQ000787: uses table statistics to estimate input size.
 func EstimateAggregateCost(a *AG.Aggregate, ts *TableStats) float64 {
 	if a.Child() == nil {
 		return 1.0
@@ -454,17 +374,13 @@ func EstimateAggregateCost(a *AG.Aggregate, ts *TableStats) float64 {
 	if ts != nil && ts.RowCount > 0 {
 		inputRows = float64(ts.RowCount)
 	}
-	return 5.0 + inputRows // base cost + per-row processing
+	return 5.0 + inputRows
 }
 
-// estimateIndexCost estimates the cost of an index scan.
-// REQ000787: uses table statistics to estimate index selectivity.
 func EstimateIndexCost(ts *TableStats, indexCols []string) float64 {
 	if ts == nil || ts.RowCount == 0 {
-		return 10.0 // default index scan cost
+		return 10.0
 	}
-	// Index scan is cheaper than seq scan; base cost is 1.0 per matching row
-	// Use distinct count to estimate selectivity
 	totalDistinct := int64(1)
 	for _, col := range indexCols {
 		if cs, ok := ts.ColStats[col]; ok {
@@ -477,11 +393,9 @@ func EstimateIndexCost(ts *TableStats, indexCols []string) float64 {
 	if selectivity < 1.0 {
 		selectivity = 1.0
 	}
-	return selectivity // cost proportional to matching rows
+	return selectivity
 }
 
-// estimateJoinCost estimates the cost of a nested-loop join.
-// REQ000787: uses table statistics to estimate join cardinality.
 func EstimateJoinCost(j *OP.NestedLoopJoin, leftTS, rightTS *TableStats) float64 {
 	leftCost := 1.0
 	rightCost := 1.0
@@ -498,22 +412,17 @@ func EstimateJoinCost(j *OP.NestedLoopJoin, leftTS, rightTS *TableStats) float64
 	return leftCost * rightCost
 }
 
-// ToJSON serializes the PlanNode tree as JSON.
 func (n *PlanNode) ToJSON() string {
 	result := planNodeToJSON(n)
-	
-	// Inline JSON serialization
 	var b strings.Builder
 	buildJSON(&b, result)
 	return b.String()
 }
 
-// planNodeToJSON converts a PlanNode to a JSON-serializable struct.
 func planNodeToJSON(node *PlanNode) *planNodeJSON {
 	if node == nil {
 		return nil
 	}
-	
 	jn := &planNodeJSON{
 		Type:   node.Type,
 		Table:  node.Table,
@@ -549,7 +458,6 @@ func planNodeToJSON(node *PlanNode) *planNodeJSON {
 	return jn
 }
 
-// buildJSON writes JSON for a planNodeJSON to the builder.
 func buildJSON(b *strings.Builder, jn *planNodeJSON) {
 	if jn == nil {
 		b.WriteString("null")
@@ -635,13 +543,12 @@ func buildJSON(b *strings.Builder, jn *planNodeJSON) {
 	b.WriteByte('}')
 }
 
-// ToDOT generates Graphviz DOT format for the PlanNode tree.
 func (n *PlanNode) ToDOT() string {
 	var b strings.Builder
 	b.WriteString("digraph plan {\n")
 	b.WriteString("  rankdir=TB;\n")
 	b.WriteString("  node [shape=box, style=filled];\n")
-	
+
 	nodeID := 0
 	var walk func(node *PlanNode) string
 	walk = func(node *PlanNode) string {
@@ -650,8 +557,7 @@ func (n *PlanNode) ToDOT() string {
 		}
 		id := nodeID
 		nodeID++
-		
-		// Build label
+
 		label := node.Type
 		if node.Table != "" {
 			label += "\\n" + node.Table
@@ -668,40 +574,32 @@ func (n *PlanNode) ToDOT() string {
 		if node.Analyze != nil {
 			label += "\\n(actual=" + fmt.Sprintf("%d", node.Analyze.RowsReturned) + ")"
 		}
-		
-		// Write node
+
 		b.WriteString(fmt.Sprintf("  n%d [label=\"%s\"];\n", id, escapeDOT(label)))
-		
-		// Write edges and recurse
 		for _, child := range node.Children {
 			childID := walk(child)
 			if childID != "" {
 				b.WriteString(fmt.Sprintf("  n%d -> n%s;\n", id, childID))
 			}
 		}
-		
 		return fmt.Sprintf("%d", id)
 	}
-	
+
 	walk(n)
 	b.WriteString("}\n")
 	return b.String()
 }
 
-// ToTree renders the PlanNode tree as ASCII art.
 func (n *PlanNode) ToTree() string {
 	if n == nil {
 		return ""
 	}
-	
 	var b strings.Builder
 	var walk func(node *PlanNode, prefix string, isLast bool)
 	walk = func(node *PlanNode, prefix string, isLast bool) {
 		if node == nil {
 			return
 		}
-		
-		// Build line
 		connector := "└── "
 		if !isLast {
 			connector = "├── "
@@ -709,7 +607,6 @@ func (n *PlanNode) ToTree() string {
 		if prefix == "" {
 			connector = ""
 		}
-		
 		line := connector
 		if node.Type != "" {
 			line += node.Type
@@ -735,10 +632,8 @@ func (n *PlanNode) ToTree() string {
 		if node.Bottleneck != nil {
 			line += " [BOTTLENECK: " + node.Bottleneck.Type + "]"
 		}
-		
 		b.WriteString(line + "\n")
-		
-		// Build new prefix for children
+
 		newPrefix := prefix
 		if prefix != "" {
 			if isLast {
@@ -747,19 +642,15 @@ func (n *PlanNode) ToTree() string {
 				newPrefix += "│   "
 			}
 		}
-		
-		// Process children
 		for i, child := range node.Children {
 			isLastChild := i == len(node.Children)-1
 			walk(child, newPrefix, isLastChild)
 		}
 	}
-	
 	walk(n, "", true)
 	return b.String()
 }
 
-// escapeDOT escapes special characters for DOT labels.
 func escapeDOT(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "\"", "\\\"")
@@ -768,7 +659,6 @@ func escapeDOT(s string) string {
 	return s
 }
 
-// escapeJSON escapes special characters for JSON strings.
 func escapeJSON(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "\"", "\\\"")
@@ -778,14 +668,12 @@ func escapeJSON(s string) string {
 	return s
 }
 
-// analyzeStatsJSON is a JSON-serializable version of AnalyzeStats.
 type analyzeStatsJSON struct {
 	RowsReturned int64 `json:"rows_returned"`
 	TimeNS       int64 `json:"time_ns"`
 	Allocs       int64 `json:"allocs"`
 }
 
-// bottleneckJSON is a JSON-serializable version of BottleneckInfo.
 type bottleneckJSON struct {
 	Severity        string   `json:"severity"`
 	Type            string   `json:"type"`
@@ -797,7 +685,6 @@ type bottleneckJSON struct {
 	CostRatio       float64  `json:"cost_ratio"`
 }
 
-// planNodeJSON is a JSON-serializable version of PlanNode.
 type planNodeJSON struct {
 	ID         int              `json:"id"`
 	Type       string           `json:"type"`
@@ -809,4 +696,21 @@ type planNodeJSON struct {
 	Children   []*planNodeJSON  `json:"children,omitempty"`
 	Analyze    *analyzeStatsJSON `json:"analyze,omitempty"`
 	Bottleneck *bottleneckJSON   `json:"bottleneck,omitempty"`
+}
+
+type Noop struct{}
+
+var _ DT.Operator = (*Noop)(nil)
+
+func NewNoop() *Noop {
+	return &Noop{}
+}
+func (n *Noop) Next(ctx context.Context) (DT.Row, error) {
+	return DT.Row{}, DT.ErrNoRows
+}
+func (n *Noop) Close() error {
+	return nil
+}
+func (n *Noop) WithParams(p []any) DT.Operator {
+	return n
 }
