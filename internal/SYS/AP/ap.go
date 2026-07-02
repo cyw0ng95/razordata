@@ -227,21 +227,36 @@ type SessionStats struct {
 }
 
 var (
-	ErrNotFound         = New(KindNotFound, "key not found")
-	ErrDuplicateKey     = New(KindDuplicateKey, "duplicate key")
-	ErrLocked           = New(KindLocked, "resource locked")
-	ErrCorrupt          = New(KindCorrupt, "data corrupt")
-	ErrSyntax           = New(KindSyntax, "syntax error")
-	ErrTypeMismatch     = New(KindTypeMismatch, "type mismatch")
-	ErrTxAborted        = New(KindTxAborted, "transaction aborted")
-	ErrIO               = New(KindIO, "I/O error")
-	ErrUpgradeRequired  = New(KindUpgradeRequired, "upgrade required")
-	ErrReadOnly         = New(KindReadOnly, "read-only")
+	// Deprecated: Use AP.IsKind(err, AP.KindNotFound) instead.
+	ErrNotFound = New(KindNotFound, "key not found")
+	// Deprecated: Use AP.IsKind(err, AP.KindDuplicateKey) instead.
+	ErrDuplicateKey = New(KindDuplicateKey, "duplicate key")
+	// Deprecated: Use AP.IsKind(err, AP.KindLocked) instead.
+	ErrLocked = New(KindLocked, "resource locked")
+	// Deprecated: Use AP.IsKind(err, AP.KindCorrupt) instead.
+	ErrCorrupt = New(KindCorrupt, "data corrupt")
+	// Deprecated: Use AP.IsKind(err, AP.KindSyntax) instead.
+	ErrSyntax = New(KindSyntax, "syntax error")
+	// Deprecated: Use AP.IsKind(err, AP.KindTypeMismatch) instead.
+	ErrTypeMismatch = New(KindTypeMismatch, "type mismatch")
+	// Deprecated: Use AP.IsKind(err, AP.KindTxAborted) instead.
+	ErrTxAborted = New(KindTxAborted, "transaction aborted")
+	// Deprecated: Use AP.IsKind(err, AP.KindIO) instead.
+	ErrIO = New(KindIO, "I/O error")
+	// Deprecated: Use AP.IsKind(err, AP.KindUpgradeRequired) instead.
+	ErrUpgradeRequired = New(KindUpgradeRequired, "upgrade required")
+	// Deprecated: Use AP.IsKind(err, AP.KindReadOnly) instead.
+	ErrReadOnly = New(KindReadOnly, "read-only")
+	// Deprecated: Use AP.IsKind(err, AP.KindDeadlineExceeded) instead.
 	ErrDeadlineExceeded = New(KindDeadlineExceeded, "deadline exceeded")
-	ErrAlreadyOpen      = New(KindInvalidOptions, "engine already open")
-	ErrNotOpen          = New(KindClosed, "engine not open")
-	ErrClosed           = New(KindClosed, "engine closed")
-	ErrInvalidOptions   = New(KindInvalidOptions, "invalid options")
+	// Deprecated: Use AP.IsKind(err, AP.KindInvalidOptions) instead.
+	ErrAlreadyOpen = New(KindInvalidOptions, "engine already open")
+	// Deprecated: Use AP.IsKind(err, AP.KindClosed) instead.
+	ErrNotOpen = New(KindClosed, "engine not open")
+	// Deprecated: Use AP.IsKind(err, AP.KindClosed) instead.
+	ErrClosed = New(KindClosed, "engine closed")
+	// Deprecated: Use AP.IsKind(err, AP.KindInvalidOptions) instead.
+	ErrInvalidOptions = New(KindInvalidOptions, "invalid options")
 	ErrNoActiveTxn      = New(KindConstraint, "no active transaction")
 	ErrUnknownSavepoint = New(KindConstraint, "unknown savepoint")
 	ErrConstraint       = New(KindConstraint, "constraint violation")
