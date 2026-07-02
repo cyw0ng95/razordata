@@ -16,21 +16,21 @@ func TestAP_RetryableAndFatal(t *testing.T) {
 		retryable bool
 		fatal     bool
 	}{
-		{"io", ErrIO, true, false},
-		{"locked", ErrLocked, true, false},
-		{"syntax", ErrSyntax, false, true},
-		{"corrupt", ErrCorrupt, false, true},
-		{"type_mismatch", ErrTypeMismatch, false, true},
-		{"tx_aborted", ErrTxAborted, false, true},
-		{"upgrade_required", ErrUpgradeRequired, false, true},
-		{"read_only", ErrReadOnly, false, true},
-		{"deadline", ErrDeadlineExceeded, false, true},
-		{"not_found", ErrNotFound, false, true},
-		{"duplicate_key", ErrDuplicateKey, false, true},
-		{"already_open", ErrAlreadyOpen, false, true},
-		{"not_open", ErrNotOpen, false, true},
-		{"closed", ErrClosed, false, true},
-		{"invalid_options", ErrInvalidOptions, false, true},
+		{"io", New(KindIO, "I/O error"), true, false},
+		{"locked", New(KindLocked, "locked"), true, false},
+		{"syntax", New(KindSyntax, "syntax"), false, true},
+		{"corrupt", New(KindCorrupt, "corrupt"), false, true},
+		{"type_mismatch", New(KindTypeMismatch, "type mismatch"), false, true},
+		{"tx_aborted", New(KindTxAborted, "aborted"), false, true},
+		{"upgrade_required", New(KindUpgradeRequired, "upgrade"), false, true},
+		{"read_only", New(KindReadOnly, "read-only"), false, true},
+		{"deadline", New(KindDeadlineExceeded, "deadline"), false, true},
+		{"not_found", New(KindNotFound, "not found"), false, true},
+		{"duplicate_key", New(KindDuplicateKey, "dup"), false, true},
+		{"already_open", New(KindInvalidOptions, "already open"), false, true},
+		{"not_open", New(KindClosed, "not open"), false, true},
+		{"closed", New(KindClosed, "closed"), false, true},
+		{"invalid_options", New(KindInvalidOptions, "invalid"), false, true},
 		{"no_active_txn", ErrNoActiveTxn, false, true},
 		{"unknown_savepoint", ErrUnknownSavepoint, false, true},
 		{"constraint", ErrConstraint, false, true},
@@ -51,18 +51,18 @@ func TestAP_RetryableAndFatal(t *testing.T) {
 // errors.Is (per ap.go doc: "Wrapped errors are unwrapped via
 // errors.Is").
 func TestAP_Retryable_WrappedError(t *testing.T) {
-	wrapped := fmt.Errorf("outer context: %w", ErrIO)
+	wrapped := fmt.Errorf("outer context: %w", New(KindIO, "I/O error"))
 	if !IsRetryable(wrapped) {
 		t.Errorf("IsRetryable should catch %%w-wrapped IO error")
 	}
-	properly := errors.Join(errors.New("context"), ErrSyntax)
+	properly := errors.Join(errors.New("context"), New(KindSyntax, "syntax"))
 	if !IsFatal(properly) {
 		t.Errorf("errors.Join with ErrSyntax should be classified as fatal")
 	}
 	// Plain errors.New does not unwrap to the sentinel; this is by
 	// design — only errors that explicitly chain the sentinel are
 	// classified.
-	plain := errors.New("context: " + ErrIO.Error())
+	plain := errors.New("context: " + New(KindIO, "I/O error").Error())
 	if IsRetryable(plain) {
 		t.Errorf("IsRetryable should NOT match text-only error (use %%w or errors.Join)")
 	}

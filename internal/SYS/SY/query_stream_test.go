@@ -2,11 +2,11 @@ package SY
 
 import (
 	"context"
-	"errors"
-	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
-	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"path/filepath"
 	"testing"
+
+	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
+	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
 func TestQueryStreaming(t *testing.T) {
@@ -66,7 +66,7 @@ func TestQueryStreaming(t *testing.T) {
 	for {
 		row, err := rows.Next()
 		if err != nil {
-			if errors.Is(err, AP.ErrNoRows) {
+			if AP.IsKind(err, AP.KindNotFound) {
 				break
 			}
 			t.Fatalf("Next: %v", err)

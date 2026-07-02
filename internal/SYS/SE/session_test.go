@@ -2,7 +2,6 @@ package SE
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -56,7 +55,7 @@ func TestSession_ErrLockedOnDoubleBegin(t *testing.T) {
 		t.Fatalf("first Begin: %v", err)
 	}
 	_, err = s.Begin(ctx)
-	if !errors.Is(err, AP.ErrLocked) {
+	if !AP.IsKind(err, AP.KindLocked) {
 		t.Errorf("second Begin: got %v, want ErrLocked", err)
 	}
 	// Clean up the active transaction to avoid shutdown delay
@@ -73,10 +72,10 @@ func TestSession_CommitRollbackWithoutTxn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Commit(ctx); !errors.Is(err, AP.ErrNoActiveTxn) {
+	if err := s.Commit(ctx); !AP.IsKind(err, AP.KindConstraint) {
 		t.Errorf("Commit without txn: got %v, want ErrNoActiveTxn", err)
 	}
-	if err := s.Rollback(ctx); !errors.Is(err, AP.ErrNoActiveTxn) {
+	if err := s.Rollback(ctx); !AP.IsKind(err, AP.KindConstraint) {
 		t.Errorf("Rollback without txn: got %v, want ErrNoActiveTxn", err)
 	}
 }
@@ -146,7 +145,7 @@ func TestSession_SetDeadline(t *testing.T) {
 	// Wait past the deadline; subsequent Exec/Query should fail.
 	time.Sleep(50 * time.Millisecond)
 	_, err := s.Exec(ctx, "INSERT INTO users VALUES (100, 'late')")
-	if !errors.Is(err, AP.ErrDeadlineExceeded) {
+	if !AP.IsKind(err, AP.KindDeadlineExceeded) {
 		t.Errorf("Exec after deadline: got %v, want ErrDeadlineExceeded", err)
 	}
 }

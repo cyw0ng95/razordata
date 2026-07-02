@@ -2,7 +2,6 @@ package SY
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -54,13 +53,13 @@ func resetExecutorRegistry() {
 
 // TestR05_OpenValidation covers negative option cases.
 func TestR05_OpenValidation(t *testing.T) {
-	if _, err := Open(context.Background(), "", AP.Options{}); !errors.Is(err, AP.ErrInvalidOptions) {
+	if _, err := Open(context.Background(), "", AP.Options{}); !AP.IsKind(err, AP.KindInvalidOptions) {
 		t.Errorf("empty dir: want ErrInvalidOptions, got %v", err)
 	}
-	if _, err := Open(context.Background(), "/tmp", AP.Options{PageSize: 7}); !errors.Is(err, AP.ErrInvalidOptions) {
+	if _, err := Open(context.Background(), "/tmp", AP.Options{PageSize: 7}); !AP.IsKind(err, AP.KindInvalidOptions) {
 		t.Errorf("non-power-of-two pagesize: want ErrInvalidOptions, got %v", err)
 	}
-	if _, err := Open(context.Background(), "/tmp", AP.Options{BufferPoolMB: -1}); !errors.Is(err, AP.ErrInvalidOptions) {
+	if _, err := Open(context.Background(), "/tmp", AP.Options{BufferPoolMB: -1}); !AP.IsKind(err, AP.KindInvalidOptions) {
 		t.Errorf("negative bufferpool: want ErrInvalidOptions, got %v", err)
 	}
 }
@@ -290,16 +289,16 @@ func TestR10_VersionAndStats(t *testing.T) {
 // TestR03_ErrorClassification confirms the retryable/fatal helpers
 // classify sentinels.
 func TestR03_ErrorClassification(t *testing.T) {
-	if !AP.IsRetryable(AP.ErrIO) || !AP.IsRetryable(AP.ErrLocked) {
+	if !AP.IsRetryable(AP.New(AP.KindIO, "I/O error")) || !AP.IsRetryable(AP.New(AP.KindLocked, "locked")) {
 		t.Error("IO and Locked must be retryable")
 	}
-	if AP.IsRetryable(AP.ErrSyntax) {
+	if AP.IsRetryable(AP.New(AP.KindSyntax, "syntax")) {
 		t.Error("Syntax must not be retryable")
 	}
-	if !AP.IsFatal(AP.ErrSyntax) || !AP.IsFatal(AP.ErrCorrupt) {
+	if !AP.IsFatal(AP.New(AP.KindSyntax, "syntax")) || !AP.IsFatal(AP.New(AP.KindCorrupt, "corrupt")) {
 		t.Error("Syntax and Corrupt must be fatal")
 	}
-	if AP.IsFatal(AP.ErrIO) {
+	if AP.IsFatal(AP.New(AP.KindIO, "I/O error")) {
 		t.Error("IO must not be fatal")
 	}
 }

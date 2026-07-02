@@ -52,7 +52,7 @@ type Engine struct {
 
 func Open(ctx context.Context, dir string, opts AP.Options) (*Engine, error) {
 	if !opts.InMemory && dir == "" {
-		return nil, fmt.Errorf("%w: dir is required", AP.ErrInvalidOptions)
+		return nil, fmt.Errorf("%w: dir is required", AP.New(AP.KindInvalidOptions, "invalid options"))
 	}
 	opts.Dir = dir
 	applyDefaults(&opts)
@@ -95,7 +95,7 @@ func (e *Engine) open(ctx context.Context) (err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.opened.Load() {
-		return AP.ErrAlreadyOpen
+		return AP.New(AP.KindInvalidOptions, "engine already open")
 	}
 	executor.UnregisterAll()
 	if e.opts.InMemory {
@@ -307,13 +307,13 @@ func RegisterSession(fn func(e *Engine) AP.Session) { sessionConstructor = fn }
 
 func (e *Engine) Begin(ctx context.Context) (AP.Session, error) {
 	if !e.opened.Load() {
-		return nil, AP.ErrNotOpen
+		return nil, AP.New(AP.KindClosed, "engine not open")
 	}
 	if e.closed.Load() {
-		return nil, AP.ErrClosed
+		return nil, AP.New(AP.KindClosed, "engine closed")
 	}
 	if sessionConstructor == nil {
-		return nil, AP.ErrClosed
+		return nil, AP.New(AP.KindClosed, "engine closed")
 	}
 	return sessionConstructor(e), nil
 }
@@ -323,12 +323,12 @@ func (e *Engine) IsReadOnly() bool { return e.opts.ReadOnly }
 
 func (e *Engine) Open(ctx context.Context, dir string, opts AP.Options) error {
 	if e.closed.Load() {
-		return AP.ErrClosed
+		return AP.New(AP.KindClosed, "engine closed")
 	}
 	if e.opened.Load() {
-		return AP.ErrAlreadyOpen
+		return AP.New(AP.KindInvalidOptions, "engine already open")
 	}
-	return AP.ErrNotOpen
+	return AP.New(AP.KindClosed, "engine not open")
 }
 
 func (e *Engine) Stats() AP.EngineStats {
@@ -424,7 +424,7 @@ func (e *Engine) Logger() lg.Logger            { return e.log }
 
 func (e *Engine) BeginTxn(ctx context.Context) (AP.Transaction, error) {
 	if e.closed.Load() {
-		return nil, AP.ErrClosed
+		return nil, AP.New(AP.KindClosed, "engine closed")
 	}
 	if e.txn == nil {
 		return nil, fmt.Errorf("txn manager not initialized")

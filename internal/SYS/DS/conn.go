@@ -41,7 +41,7 @@ func (c *Conn) Close() error {
 // Begin starts a transaction.
 func (c *Conn) Begin() (driver.Tx, error) {
 	if c == nil || c.eng == nil {
-		return nil, AP.ErrNotOpen
+		return nil, AP.New(AP.KindClosed, "engine not open")
 	}
 	tx, err := c.session.Begin(context.Background())
 	if err != nil {
@@ -57,7 +57,7 @@ func (c *Conn) Begin() (driver.Tx, error) {
 // pre-tx snapshots for rollback. REQ000641.
 func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	if c == nil || c.eng == nil {
-		return nil, AP.ErrNotOpen
+		return nil, AP.New(AP.KindClosed, "engine not open")
 	}
 	sess, ok := c.session.(*SE.Session)
 	if ok && sess.HasActiveTxn() {

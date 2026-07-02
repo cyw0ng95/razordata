@@ -2,7 +2,6 @@ package AP
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"strconv"
 	"sync/atomic"
@@ -13,7 +12,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SYS/BK"
 )
 
-const Version = "0.8.1"
+const Version = "0.9.0"
 
 type Options struct {
 	Dir                string
@@ -144,18 +143,19 @@ func (r *Rows) Types() []LX.TokenType { return r.types }
 
 func (r *Rows) Next() (Row, error) {
 	if r == nil {
-		return Row{}, ErrNoRows
+		return Row{}, New(KindNotFound, "no more rows")
 	}
 	if r.closed.Load() {
-		return Row{}, ErrNoRows
+		return Row{}, New(KindNotFound, "no more rows")
 	}
 	if r.next == nil {
 		r.closed.Store(true)
-		return Row{}, ErrNoRows
+		return Row{}, New(KindNotFound, "no more rows")
 	}
 	row, err := r.next()
 	if err != nil {
-		if err == ErrNoRows {
+		noRows := New(KindNotFound, "no more rows")
+		if err.Error() == noRows.Message && IsKind(err, KindNotFound) {
 			r.closed.Store(true)
 		}
 		return Row{}, err
@@ -173,8 +173,6 @@ func (r *Rows) Close() error {
 	r.closed.Store(true)
 	return nil
 }
-
-var ErrNoRows = errors.New("ap: no more rows")
 
 type EngineStats struct {
 	Version      string
@@ -227,21 +225,6 @@ type SessionStats struct {
 }
 
 var (
-	ErrNotFound         = New(KindNotFound, "key not found")
-	ErrDuplicateKey     = New(KindDuplicateKey, "duplicate key")
-	ErrLocked           = New(KindLocked, "resource locked")
-	ErrCorrupt          = New(KindCorrupt, "data corrupt")
-	ErrSyntax           = New(KindSyntax, "syntax error")
-	ErrTypeMismatch     = New(KindTypeMismatch, "type mismatch")
-	ErrTxAborted        = New(KindTxAborted, "transaction aborted")
-	ErrIO               = New(KindIO, "I/O error")
-	ErrUpgradeRequired  = New(KindUpgradeRequired, "upgrade required")
-	ErrReadOnly         = New(KindReadOnly, "read-only")
-	ErrDeadlineExceeded = New(KindDeadlineExceeded, "deadline exceeded")
-	ErrAlreadyOpen      = New(KindInvalidOptions, "engine already open")
-	ErrNotOpen          = New(KindClosed, "engine not open")
-	ErrClosed           = New(KindClosed, "engine closed")
-	ErrInvalidOptions   = New(KindInvalidOptions, "invalid options")
 	ErrNoActiveTxn      = New(KindConstraint, "no active transaction")
 	ErrUnknownSavepoint = New(KindConstraint, "unknown savepoint")
 	ErrConstraint       = New(KindConstraint, "constraint violation")

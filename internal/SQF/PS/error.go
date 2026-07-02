@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
 // ErrSyntax is the sentinel error for all syntax errors.
@@ -17,9 +19,13 @@ type SyntaxError struct {
 	Expected string
 	Got      string
 	Lexeme   string
+	Msg      string
 }
 
 func (e *SyntaxError) Error() string {
+	if e.Msg != "" {
+		return e.Msg
+	}
 	expected := e.Expected
 	if expected == "" {
 		expected = "expression"
@@ -37,6 +43,19 @@ func (e *SyntaxError) Error() string {
 
 func (e *SyntaxError) Unwrap() error {
 	return ErrSyntax
+}
+
+// ToAPError converts to a structured AP.Error with KindParse.
+func (e *SyntaxError) ToAPError() *AP.Error {
+	msg := e.Error()
+	ae := AP.New(AP.KindParse, msg)
+	ae.Module = "SQF/PS"
+	ae.Layer = AP.LayerSQL
+	ae.Fields = map[string]string{
+		"line": fmt.Sprintf("%d", e.Line),
+		"col":  fmt.Sprintf("%d", e.Col),
+	}
+	return ae
 }
 
 func renderCaret(input string, line, col uint32) string {

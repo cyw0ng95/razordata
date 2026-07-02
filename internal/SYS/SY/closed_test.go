@@ -2,7 +2,6 @@ package SY
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -70,7 +69,7 @@ func TestBeginAfterClose(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 	s, err := eng.Begin(context.Background())
-	if !errors.Is(err, AP.ErrClosed) {
+	if !AP.IsKind(err, AP.KindClosed) {
 		t.Fatalf("Begin after Close: want ErrClosed, got %v", err)
 	}
 	if s != nil {
@@ -86,7 +85,7 @@ func TestEngineOpenMethodAfterClose(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 	err := eng.Open(context.Background(), "/tmp", AP.Options{})
-	if !errors.Is(err, AP.ErrClosed) {
+	if !AP.IsKind(err, AP.KindClosed) {
 		t.Fatalf("Engine.Open after Close: want ErrClosed, got %v", err)
 	}
 }
@@ -130,7 +129,7 @@ func TestSessionMethodsAfterClose(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.call()
-			if !errors.Is(err, AP.ErrClosed) {
+			if !AP.IsKind(err, AP.KindClosed) {
 				t.Errorf("%s after Close: want ErrClosed, got %v", tc.name, err)
 			}
 		})
@@ -182,7 +181,7 @@ func TestTransactionMethodsAfterClose(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.call()
-			if !errors.Is(err, AP.ErrClosed) {
+			if !AP.IsKind(err, AP.KindClosed) {
 				t.Errorf("%s after Close: want ErrClosed, got %v", tc.name, err)
 			}
 		})

@@ -187,7 +187,7 @@ func toDriverValue(v any) driver.Value {
 
 func Prepare(conn *Conn, query string) (driver.Stmt, error) {
 	if conn == nil || conn.eng == nil {
-		return nil, AP.ErrNotOpen
+		return nil, AP.New(AP.KindClosed, "engine not open")
 	}
 	stmt, err := ST.Prepare(conn.eng, query)
 	if err != nil {

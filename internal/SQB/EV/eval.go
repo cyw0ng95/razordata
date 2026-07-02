@@ -123,7 +123,7 @@ func serializeOuterRow(row *Row) string {
 }
 
 var ErrEval = errors.New("ex: eval error")
-var ErrDivByZero = errors.New("ex: division by zero")
+var ErrEvalDivByZero = errors.New("ex: division by zero")
 var ErrTypeMismatch = errors.New("ex: type mismatch")
 var ErrSubquery = errors.New("ex: subquery not supported here")
 var ErrIgnoreRow = errors.New("ex: ignore row")

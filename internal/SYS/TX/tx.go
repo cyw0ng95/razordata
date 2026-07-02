@@ -75,12 +75,12 @@ func (t *Transaction) SetIsolationLevel(level ap.IsolationLevel) {
 
 func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.Rows, error) {
 	if t.engine.IsClosed() {
-		return nil, ap.ErrClosed
+		return nil, ap.New(ap.KindClosed, "engine closed")
 	}
 	t.mu.Lock()
 	if t.finished {
 		t.mu.Unlock()
-		return nil, ap.ErrTxAborted
+		return nil, ap.New(ap.KindTxAborted, "transaction aborted")
 	}
 	t.mu.Unlock()
 	exe := t.engine.Executor()
@@ -97,7 +97,7 @@ func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.R
 		row, err := stream.Next()
 		if err != nil {
 			if err == DT.ErrNoRows {
-				return ap.Row{}, ap.ErrNoRows
+				return ap.Row{}, ap.New(ap.KindNotFound, "no more rows")
 			}
 			return ap.Row{}, err
 		}
@@ -111,12 +111,12 @@ func (t *Transaction) Query(ctx context.Context, sql string, args ...any) (*ap.R
 
 func (t *Transaction) Exec(ctx context.Context, sql string, args ...any) (ap.Result, error) {
 	if t.engine.IsClosed() {
-		return ap.Result{}, ap.ErrClosed
+		return ap.Result{}, ap.New(ap.KindClosed, "engine closed")
 	}
 	t.mu.Lock()
 	if t.finished {
 		t.mu.Unlock()
-		return ap.Result{}, ap.ErrTxAborted
+		return ap.Result{}, ap.New(ap.KindTxAborted, "transaction aborted")
 	}
 	t.mu.Unlock()
 
@@ -180,12 +180,12 @@ func (t *Transaction) RecordInMemoryTable(table string, snapshot []DT.Row) {
 
 func (t *Transaction) Commit(ctx context.Context) error {
 	if t.engine.IsClosed() {
-		return ap.ErrClosed
+		return ap.New(ap.KindClosed, "engine closed")
 	}
 	t.mu.Lock()
 	if t.finished {
 		t.mu.Unlock()
-		return ap.ErrTxAborted
+		return ap.New(ap.KindTxAborted, "transaction aborted")
 	}
 	if err := t.tx.Commit(ctx); err != nil {
 		t.mu.Unlock()
@@ -206,12 +206,12 @@ func (t *Transaction) Commit(ctx context.Context) error {
 // Rollback aborts the transaction.
 func (t *Transaction) Rollback(ctx context.Context) error {
 	if t.engine.IsClosed() {
-		return ap.ErrClosed
+		return ap.New(ap.KindClosed, "engine closed")
 	}
 	t.mu.Lock()
 	if t.finished {
 		t.mu.Unlock()
-		return ap.ErrTxAborted
+		return ap.New(ap.KindTxAborted, "transaction aborted")
 	}
 	// REQ000617: persist the abort WAL record (RTRollback) first so a
 	// crash during engine state restoration is recoverable.
@@ -257,15 +257,15 @@ func (t *Transaction) Rollback(ctx context.Context) error {
 
 func (t *Transaction) Savepoint(ctx context.Context, name string) error {
 	if t.engine.IsClosed() {
-		return ap.ErrClosed
+		return ap.New(ap.KindClosed, "engine closed")
 	}
 	if name == "" {
-		return ap.ErrUnknownSavepoint
+		return ap.New(ap.KindConstraint, "unknown savepoint")
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.finished {
-		return ap.ErrTxAborted
+		return ap.New(ap.KindTxAborted, "transaction aborted")
 	}
 	snap := make(map[string]writeEntry, len(t.writeSet))
 	for k, v := range t.writeSet {
@@ -277,15 +277,15 @@ func (t *Transaction) Savepoint(ctx context.Context, name string) error {
 
 func (t *Transaction) ReleaseSavepoint(ctx context.Context, name string) error {
 	if t.engine.IsClosed() {
-		return ap.ErrClosed
+		return ap.New(ap.KindClosed, "engine closed")
 	}
 	if name == "" {
-		return ap.ErrUnknownSavepoint
+		return ap.New(ap.KindConstraint, "unknown savepoint")
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.finished {
-		return ap.ErrTxAborted
+		return ap.New(ap.KindTxAborted, "transaction aborted")
 	}
 	idx := -1
 	for i := len(t.savepoints) - 1; i >= 0; i-- {
@@ -295,7 +295,7 @@ func (t *Transaction) ReleaseSavepoint(ctx context.Context, name string) error {
 		}
 	}
 	if idx < 0 {
-		return ap.ErrUnknownSavepoint
+		return ap.New(ap.KindConstraint, "unknown savepoint")
 	}
 	t.savepoints = t.savepoints[:idx]
 	return nil
@@ -303,12 +303,12 @@ func (t *Transaction) ReleaseSavepoint(ctx context.Context, name string) error {
 
 func (t *Transaction) RollbackTo(ctx context.Context, name string) error {
 	if t.engine.IsClosed() {
-		return ap.ErrClosed
+		return ap.New(ap.KindClosed, "engine closed")
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.finished {
-		return ap.ErrTxAborted
+		return ap.New(ap.KindTxAborted, "transaction aborted")
 	}
 	idx := -1
 	for i := len(t.savepoints) - 1; i >= 0; i-- {
@@ -318,7 +318,7 @@ func (t *Transaction) RollbackTo(ctx context.Context, name string) error {
 		}
 	}
 	if idx < 0 {
-		return ap.ErrUnknownSavepoint
+		return ap.New(ap.KindConstraint, "unknown savepoint")
 	}
 	target := t.savepoints[idx].writeSet
 	eng := t.engine.Engine()
