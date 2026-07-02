@@ -2,7 +2,6 @@ package SY
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -29,7 +28,7 @@ func TestEngine_DoubleClose(t *testing.T) {
 func TestEngine_BeginAfterClose(t *testing.T) {
 	eng, _ := testEngine(t)
 	_ = eng.Close(context.Background())
-	if _, err := eng.Begin(context.Background()); !errors.Is(err, AP.ErrClosed) {
+	if _, err := eng.Begin(context.Background()); !AP.IsKind(err, AP.KindClosed) {
 		t.Errorf("Begin after Close: got %v, want ErrClosed", err)
 	}
 }
@@ -38,7 +37,7 @@ func TestEngine_BeginAfterClose(t *testing.T) {
 // already-constructed engine returns AP.ErrAlreadyOpen.
 func TestEngine_OpenMethodNoOp(t *testing.T) {
 	eng, _ := testEngine(t)
-	if err := eng.Open(context.Background(), "/tmp", AP.Options{}); !errors.Is(err, AP.ErrAlreadyOpen) {
+	if err := eng.Open(context.Background(), "/tmp", AP.Options{}); !AP.IsKind(err, AP.KindInvalidOptions) {
 		t.Errorf("Open on running engine: got %v, want ErrAlreadyOpen", err)
 	}
 }

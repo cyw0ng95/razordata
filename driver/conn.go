@@ -28,7 +28,7 @@ func (c *Conn) Close() error {
 
 func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	if c == nil || c.session == nil {
-		return nil, AP.ErrNotOpen
+		return nil, AP.New(AP.KindClosed, "engine not open")
 	}
 	// REQ001125: route through the session so the per-session
 	// counter for CHANGES() and TOTAL_CHANGES() is maintained. The
@@ -75,7 +75,7 @@ func (c *Conn) Exec(query string, args []driver.Value) (driver.Result, error) {
 
 func (c *Conn) Begin() (driver.Tx, error) {
 	if c == nil || c.session == nil {
-		return nil, AP.ErrNotOpen
+		return nil, AP.New(AP.KindClosed, "engine not open")
 	}
 	tx, err := c.session.Begin(context.Background())
 	if err != nil {

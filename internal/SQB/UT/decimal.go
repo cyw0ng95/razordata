@@ -25,8 +25,6 @@ var ErrDecimalScale = errors.New("ex: invalid decimal scale")
 
 // ErrDecimalDivByZero is returned when dividing by zero.
 var ErrDecimalDivByZero = errors.New("ex: division by zero")
-// Deprecated: Use ErrDecimalDivByZero instead.
-var ErrDivByZero = ErrDecimalDivByZero
 
 // NewDecimal constructs a Decimal from a string with given precision/scale.
 func NewDecimal(s string, precision, scale int) (*Decimal, error) {
@@ -169,7 +167,7 @@ func (d *Decimal) Div(other *Decimal) (*Decimal, error) {
 		return nil, errors.New("ex: nil decimal in Div")
 	}
 	if other.Value.Sign() == 0 {
-		return nil, ErrDivByZero
+		return nil, ErrDecimalDivByZero
 	}
 	result := new(big.Float).Quo(d.Value, other.Value)
 	scale := d.Scale + other.Precision + 1

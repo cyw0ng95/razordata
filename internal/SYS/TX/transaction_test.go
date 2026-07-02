@@ -2,7 +2,6 @@ package TX
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"testing"
 
@@ -56,7 +55,7 @@ func TestTransaction_DoubleCommit(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := tx.Commit(ctx); !errors.Is(err, AP.ErrTxAborted) {
+	if err := tx.Commit(ctx); !AP.IsKind(err, AP.KindTxAborted) {
 		t.Errorf("double Commit: got %v, want ErrTxAborted", err)
 	}
 }
@@ -71,7 +70,7 @@ func TestTransaction_CommitAfterRollback(t *testing.T) {
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := tx.Commit(ctx); !errors.Is(err, AP.ErrTxAborted) {
+	if err := tx.Commit(ctx); !AP.IsKind(err, AP.KindTxAborted) {
 		t.Errorf("Commit after Rollback: got %v, want ErrTxAborted", err)
 	}
 }
@@ -111,7 +110,7 @@ func TestTransaction_RollbackToUnknownSavepoint(t *testing.T) {
 	s, _ := eng.Begin(ctx)
 	tx, _ := s.Begin(ctx)
 	_, _ = tx.Exec(ctx, "INSERT INTO users VALUES (1, 'a')")
-	if err := tx.RollbackTo(ctx, "missing"); !errors.Is(err, AP.ErrUnknownSavepoint) {
+	if err := tx.RollbackTo(ctx, "missing"); !AP.IsKind(err, AP.KindConstraint) {
 		t.Errorf("RollbackTo unknown: got %v, want ErrUnknownSavepoint", err)
 	}
 	// Clean up the active transaction to avoid shutdown delay
@@ -126,7 +125,7 @@ func TestTransaction_SavepointEmptyName(t *testing.T) {
 	eng, ctx := testEngine(t)
 	s, _ := eng.Begin(ctx)
 	tx, _ := s.Begin(ctx)
-	if err := tx.Savepoint(ctx, ""); !errors.Is(err, AP.ErrUnknownSavepoint) {
+	if err := tx.Savepoint(ctx, ""); !AP.IsKind(err, AP.KindConstraint) {
 		t.Errorf("Savepoint empty: got %v, want ErrUnknownSavepoint", err)
 	}
 	// Clean up the active transaction to avoid shutdown delay
@@ -168,16 +167,16 @@ func TestTransaction_NoOpsOnFinished(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, "INSERT INTO users VALUES (1, 'a')"); !errors.Is(err, AP.ErrTxAborted) {
+	if _, err := tx.Exec(ctx, "INSERT INTO users VALUES (1, 'a')"); !AP.IsKind(err, AP.KindTxAborted) {
 		t.Errorf("Exec after Commit: got %v, want ErrTxAborted", err)
 	}
-	if err := tx.Savepoint(ctx, "sp"); !errors.Is(err, AP.ErrTxAborted) {
+	if err := tx.Savepoint(ctx, "sp"); !AP.IsKind(err, AP.KindTxAborted) {
 		t.Errorf("Savepoint after Commit: got %v, want ErrTxAborted", err)
 	}
-	if err := tx.RollbackTo(ctx, "sp"); !errors.Is(err, AP.ErrTxAborted) {
+	if err := tx.RollbackTo(ctx, "sp"); !AP.IsKind(err, AP.KindTxAborted) {
 		t.Errorf("RollbackTo after Commit: got %v, want ErrTxAborted", err)
 	}
-	if _, err := tx.Query(ctx, "SELECT * FROM users"); !errors.Is(err, AP.ErrTxAborted) {
+	if _, err := tx.Query(ctx, "SELECT * FROM users"); !AP.IsKind(err, AP.KindTxAborted) {
 		t.Errorf("Query after Commit: got %v, want ErrTxAborted", err)
 	}
 }
@@ -193,7 +192,7 @@ func TestTransaction_FinishedReport(t *testing.T) {
 	// tx is the interface type, so Finished() is not directly
 	// visible. The ErrTxAborted returned by subsequent ops is the
 	// observable contract.
-	if _, err := tx.Exec(ctx, "INSERT INTO users VALUES (1, 'a')"); !errors.Is(err, AP.ErrTxAborted) {
+	if _, err := tx.Exec(ctx, "INSERT INTO users VALUES (1, 'a')"); !AP.IsKind(err, AP.KindTxAborted) {
 		t.Errorf("Exec after Commit: got %v, want ErrTxAborted", err)
 	}
 }
@@ -207,7 +206,7 @@ func TestTransaction_DoubleRollback(t *testing.T) {
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := tx.Rollback(ctx); !errors.Is(err, AP.ErrTxAborted) {
+	if err := tx.Rollback(ctx); !AP.IsKind(err, AP.KindTxAborted) {
 		t.Errorf("double Rollback: got %v, want ErrTxAborted", err)
 	}
 }

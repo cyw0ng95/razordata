@@ -24,10 +24,10 @@ type Stmt struct {
 
 func Prepare(engine *SY.Engine, sql string) (*Stmt, error) {
 	if engine == nil {
-		return nil, AP.ErrNotOpen
+		return nil, AP.New(AP.KindClosed, "engine not open")
 	}
 	if sql == "" {
-		return nil, AP.ErrSyntax
+		return nil, AP.New(AP.KindSyntax, "syntax error")
 	}
 	s := &Stmt{engine: engine, sql: sql}
 	s.paramTypes = extractParamTypes(engine, sql)
@@ -36,11 +36,11 @@ func Prepare(engine *SY.Engine, sql string) (*Stmt, error) {
 
 func PrepareFromInterface(e AP.Engine, sql string) (*Stmt, error) {
 	if e == nil {
-		return nil, AP.ErrNotOpen
+		return nil, AP.New(AP.KindClosed, "engine not open")
 	}
 	syEng, ok := e.(*SY.Engine)
 	if !ok {
-		return nil, AP.ErrNotOpen
+		return nil, AP.New(AP.KindClosed, "engine not open")
 	}
 	return Prepare(syEng, sql)
 }
@@ -125,12 +125,12 @@ func extractParamTypes(engine *SY.Engine, sql string) []int {
 
 func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 	if s.engine.IsClosed() {
-		return nil, AP.ErrClosed
+		return nil, AP.New(AP.KindClosed, "engine closed")
 	}
 	s.mu.Lock()
 	if s.closed.Load() {
 		s.mu.Unlock()
-		return nil, AP.ErrClosed
+		return nil, AP.New(AP.KindClosed, "engine closed")
 	}
 	s.mu.Unlock()
 	if err := validateArgTypes(args, s.paramTypes); err != nil {
@@ -145,7 +145,7 @@ func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 		row, err := stream.Next()
 		if err != nil {
 			if err == DT.ErrNoRows {
-				return AP.Row{}, AP.ErrNoRows
+				return AP.Row{}, AP.New(AP.KindNotFound, "no more rows")
 			}
 			return AP.Row{}, err
 		}
@@ -159,12 +159,12 @@ func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 
 func (s *Stmt) Exec(ctx context.Context, args ...any) (AP.Result, error) {
 	if s.engine.IsClosed() {
-		return AP.Result{}, AP.ErrClosed
+		return AP.Result{}, AP.New(AP.KindClosed, "engine closed")
 	}
 	s.mu.Lock()
 	if s.closed.Load() {
 		s.mu.Unlock()
-		return AP.Result{}, AP.ErrClosed
+		return AP.Result{}, AP.New(AP.KindClosed, "engine closed")
 	}
 	s.mu.Unlock()
 	if err := validateArgTypes(args, s.paramTypes); err != nil {

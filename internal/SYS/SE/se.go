@@ -105,7 +105,7 @@ func wrapEXError(err error) error {
 	}
 	switch {
 	case errors.Is(err, DT.ErrNoRows):
-		return AP.ErrNoRows
+		return AP.New(AP.KindNotFound, "no more rows")
 	case errors.Is(err, EV.ErrEval):
 		return AP.WrapAt(AP.KindSyntax, "SYS/SE", AP.LayerSQL, err)
 	case errors.Is(err, EV.ErrEvalDivByZero):
@@ -137,7 +137,7 @@ func wrapEXError(err error) error {
 
 func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows, error) {
 	if s.engine.IsClosed() {
-		return nil, AP.ErrClosed
+		return nil, AP.New(AP.KindClosed, "engine closed")
 	}
 	if err := s.lock(ctx); err != nil {
 		return nil, err
@@ -154,7 +154,7 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 		row, err := stream.Next()
 		if err != nil {
 			if err == DT.ErrNoRows {
-				return AP.Row{}, AP.ErrNoRows
+				return AP.Row{}, AP.New(AP.KindNotFound, "no more rows")
 			}
 			return AP.Row{}, wrapEXError(err)
 		}
@@ -171,7 +171,7 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 		next = func() (AP.Row, error) {
 			rowCount++
 			if rowCount > limit {
-				return AP.Row{}, AP.ErrNoRows
+				return AP.Row{}, AP.New(AP.KindNotFound, "no more rows")
 			}
 			return origNext()
 		}
@@ -181,10 +181,10 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 
 func (s *Session) Exec(ctx context.Context, sql string, args ...any) (AP.Result, error) {
 	if s.engine.IsClosed() {
-		return AP.Result{}, AP.ErrClosed
+		return AP.Result{}, AP.New(AP.KindClosed, "engine closed")
 	}
 	if s.engine.IsReadOnly() {
-		return AP.Result{}, AP.ErrReadOnly
+		return AP.Result{}, AP.New(AP.KindReadOnly, "read-only")
 	}
 	if err := s.lock(ctx); err != nil {
 		return AP.Result{}, err
@@ -210,14 +210,14 @@ func (s *Session) Exec(ctx context.Context, sql string, args ...any) (AP.Result,
 
 func (s *Session) Begin(ctx context.Context) (AP.Transaction, error) {
 	if s.engine.IsClosed() {
-		return nil, AP.ErrClosed
+		return nil, AP.New(AP.KindClosed, "engine closed")
 	}
 	if err := s.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer s.mu.Unlock()
 	if s.txn != nil {
-		return nil, AP.ErrLocked
+		return nil, AP.New(AP.KindLocked, "resource locked")
 	}
 	t, err := s.engine.BeginTxn(ctx)
 	if err != nil {
@@ -256,14 +256,14 @@ func (s *Session) ClearTxWriter() {
 
 func (s *Session) Commit(ctx context.Context) error {
 	if s.engine.IsClosed() {
-		return AP.ErrClosed
+		return AP.New(AP.KindClosed, "engine closed")
 	}
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
 	defer s.mu.Unlock()
 	if s.txn == nil {
-		return AP.ErrNoActiveTxn
+		return AP.New(AP.KindConstraint, "no active transaction")
 	}
 	if err := s.txn.Commit(ctx); err != nil {
 		return wrapEXError(err)
@@ -274,14 +274,14 @@ func (s *Session) Commit(ctx context.Context) error {
 
 func (s *Session) Rollback(ctx context.Context) error {
 	if s.engine.IsClosed() {
-		return AP.ErrClosed
+		return AP.New(AP.KindClosed, "engine closed")
 	}
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
 	defer s.mu.Unlock()
 	if s.txn == nil {
-		return AP.ErrNoActiveTxn
+		return AP.New(AP.KindConstraint, "no active transaction")
 	}
 	if err := s.txn.Rollback(ctx); err != nil {
 		return wrapEXError(err)
@@ -300,42 +300,42 @@ func (s *Session) ClearTxn() {
 
 func (s *Session) Savepoint(ctx context.Context, name string) error {
 	if s.engine.IsClosed() {
-		return AP.ErrClosed
+		return AP.New(AP.KindClosed, "engine closed")
 	}
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
 	defer s.mu.Unlock()
 	if s.txn == nil {
-		return AP.ErrNoActiveTxn
+		return AP.New(AP.KindConstraint, "no active transaction")
 	}
 	return wrapEXError(s.txn.Savepoint(ctx, name))
 }
 
 func (s *Session) ReleaseSavepoint(ctx context.Context, name string) error {
 	if s.engine.IsClosed() {
-		return AP.ErrClosed
+		return AP.New(AP.KindClosed, "engine closed")
 	}
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
 	defer s.mu.Unlock()
 	if s.txn == nil {
-		return AP.ErrNoActiveTxn
+		return AP.New(AP.KindConstraint, "no active transaction")
 	}
 	return wrapEXError(s.txn.ReleaseSavepoint(ctx, name))
 }
 
 func (s *Session) RollbackTo(ctx context.Context, name string) error {
 	if s.engine.IsClosed() {
-		return AP.ErrClosed
+		return AP.New(AP.KindClosed, "engine closed")
 	}
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
 	defer s.mu.Unlock()
 	if s.txn == nil {
-		return AP.ErrNoActiveTxn
+		return AP.New(AP.KindConstraint, "no active transaction")
 	}
 	return wrapEXError(s.txn.RollbackTo(ctx, name))
 }
@@ -385,17 +385,17 @@ func (s *Session) SetSnapshot(ts uint64) { s.engine.SetSnapshot(ts) }
 
 func (s *Session) lock(ctx context.Context) error {
 	if dl, _ := s.deadline.Load().(time.Time); !dl.IsZero() && time.Now().After(dl) {
-		return AP.ErrDeadlineExceeded
+		return AP.New(AP.KindDeadlineExceeded, "deadline exceeded")
 	}
 	s.mu.Lock()
 	if dl, _ := s.deadline.Load().(time.Time); !dl.IsZero() && time.Now().After(dl) {
 		s.mu.Unlock()
-		return AP.ErrDeadlineExceeded
+		return AP.New(AP.KindDeadlineExceeded, "deadline exceeded")
 	}
 	if err := ctx.Err(); err != nil {
 		s.mu.Unlock()
 		if errors.Is(err, context.DeadlineExceeded) {
-			return AP.ErrDeadlineExceeded
+			return AP.New(AP.KindDeadlineExceeded, "deadline exceeded")
 		}
 		if errors.Is(err, context.Canceled) {
 			return AP.Wrap(AP.KindIO, err)

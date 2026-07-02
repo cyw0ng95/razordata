@@ -97,15 +97,12 @@ func TestIsKind(t *testing.T) {
 }
 
 func TestIsKind_BackwardCompat(t *testing.T) {
-	// Sentinels created via New should match with errors.Is
-	if !errors.Is(ErrNotFound, ErrNotFound) {
-		t.Error("errors.Is(ErrNotFound, ErrNotFound) should be true")
+	e := New(KindNotFound, "key not found")
+	if !IsKind(e, KindNotFound) {
+		t.Error("IsKind(New(KindNotFound), KindNotFound) should be true")
 	}
-	// Wrapped sentinel should still match
-	wrapped := fmt.Errorf("wrap: %w", ErrNotFound)
-	if !errors.Is(wrapped, ErrNotFound) {
-		t.Error("errors.Is(wrapped, ErrNotFound) should be true")
-	}
+	// Wrapped *AP.Error should still match
+	wrapped := fmt.Errorf("wrap: %w", e)
 	if !IsKind(wrapped, KindNotFound) {
 		t.Error("IsKind(wrapped, KindNotFound) should be true")
 	}
@@ -116,13 +113,13 @@ func TestIsRetryable(t *testing.T) {
 		err   error
 		retry bool
 	}{
-		{ErrIO, true},
-		{ErrLocked, true},
-		{ErrNotFound, false},
-		{ErrCorrupt, false},
-		{ErrClosed, false},
-		{fmt.Errorf("wrap: %w", ErrIO), true},
-		{fmt.Errorf("wrap: %w", ErrLocked), true},
+		{New(KindIO, "I/O error"), true},
+		{New(KindLocked, "locked"), true},
+		{New(KindNotFound, "not found"), false},
+		{New(KindCorrupt, "corrupt"), false},
+		{New(KindClosed, "closed"), false},
+		{fmt.Errorf("wrap: %w", New(KindIO, "I/O error")), true},
+		{fmt.Errorf("wrap: %w", New(KindLocked, "locked")), true},
 		{nil, false},
 		{fmt.Errorf("unknown"), false},
 	}
@@ -138,12 +135,12 @@ func TestIsFatal(t *testing.T) {
 		err   error
 		fatal bool
 	}{
-		{ErrIO, false},
-		{ErrLocked, false},
-		{ErrNotFound, true},
-		{ErrCorrupt, true},
-		{ErrClosed, true},
-		{fmt.Errorf("wrap: %w", ErrCorrupt), true},
+		{New(KindIO, "I/O error"), false},
+		{New(KindLocked, "locked"), false},
+		{New(KindNotFound, "not found"), true},
+		{New(KindCorrupt, "corrupt"), true},
+		{New(KindClosed, "closed"), true},
+		{fmt.Errorf("wrap: %w", New(KindCorrupt, "corrupt")), true},
 		{nil, false},
 		{fmt.Errorf("unknown"), true},
 	}
@@ -155,31 +152,29 @@ func TestIsFatal(t *testing.T) {
 }
 
 func TestSentinel_KindMatch(t *testing.T) {
-	// Every sentinel should have the correct Kind
-	cases := []struct {
+	errs := []struct {
 		err  *Error
 		kind Kind
 	}{
-		{ErrNotFound, KindNotFound},
-		{ErrDuplicateKey, KindDuplicateKey},
-		{ErrLocked, KindLocked},
-		{ErrCorrupt, KindCorrupt},
-		{ErrSyntax, KindSyntax},
-		{ErrTypeMismatch, KindTypeMismatch},
-		{ErrTxAborted, KindTxAborted},
-		{ErrIO, KindIO},
-		{ErrUpgradeRequired, KindUpgradeRequired},
-		{ErrReadOnly, KindReadOnly},
-		{ErrDeadlineExceeded, KindDeadlineExceeded},
-		{ErrAlreadyOpen, KindInvalidOptions},
-		{ErrNotOpen, KindClosed},
-		{ErrClosed, KindClosed},
-		{ErrInvalidOptions, KindInvalidOptions},
+		{New(KindNotFound, "not found"), KindNotFound},
+		{New(KindDuplicateKey, "dup"), KindDuplicateKey},
+		{New(KindLocked, "locked"), KindLocked},
+		{New(KindCorrupt, "corrupt"), KindCorrupt},
+		{New(KindSyntax, "syntax"), KindSyntax},
+		{New(KindTypeMismatch, "type"), KindTypeMismatch},
+		{New(KindTxAborted, "aborted"), KindTxAborted},
+		{New(KindIO, "I/O"), KindIO},
+		{New(KindUpgradeRequired, "upgrade"), KindUpgradeRequired},
+		{New(KindReadOnly, "read-only"), KindReadOnly},
+		{New(KindDeadlineExceeded, "deadline"), KindDeadlineExceeded},
+		{New(KindConstraint, "constraint"), KindConstraint},
+		{New(KindClosed, "closed"), KindClosed},
+		{New(KindInvalidOptions, "invalid"), KindInvalidOptions},
 		{ErrNoActiveTxn, KindConstraint},
 		{ErrUnknownSavepoint, KindConstraint},
 		{ErrConstraint, KindConstraint},
 	}
-	for _, tc := range cases {
+	for _, tc := range errs {
 		if tc.err.Kind != tc.kind {
 			t.Errorf("%v.Kind = %v, want %v", tc.err, tc.err.Kind, tc.kind)
 		}
@@ -256,11 +251,11 @@ func TestClassify(t *testing.T) {
 		retryable  bool
 		fatal      bool
 	}{
-		{ErrNotFound, KindNotFound, "RZR-SQL-001", "02000", false, true},
-		{ErrIO, KindIO, "RZR-IO-001", "08006", true, false},
-		{ErrLocked, KindLocked, "RZR-SQL-007", "40001", true, false},
-		{ErrCorrupt, KindCorrupt, "RZR-IO-002", "08001", false, true},
-		{fmt.Errorf("wrap: %w", ErrIO), KindIO, "RZR-IO-001", "08006", true, false},
+		{New(KindNotFound, "not found"), KindNotFound, "RZR-SQL-001", "02000", false, true},
+		{New(KindIO, "I/O error"), KindIO, "RZR-IO-001", "08006", true, false},
+		{New(KindLocked, "locked"), KindLocked, "RZR-SQL-007", "40001", true, false},
+		{New(KindCorrupt, "corrupt"), KindCorrupt, "RZR-IO-002", "08001", false, true},
+		{fmt.Errorf("wrap: %w", New(KindIO, "I/O error")), KindIO, "RZR-IO-001", "08006", true, false},
 		{nil, 0, "", "", false, false},
 		{fmt.Errorf("raw"), KindInternal, "RZR-INT-001", "58000", false, true},
 	}
@@ -309,19 +304,6 @@ func TestError_SQLStateMethod(t *testing.T) {
 	e := New(KindDuplicateKey, "dup")
 	if got := e.SQLState(); got != "23000" {
 		t.Errorf("SQLState() = %q, want %q", got, "23000")
-	}
-}
-
-func TestLegacySentinel_StillUsable(t *testing.T) {
-	if !errors.Is(ErrNotFound, ErrNotFound) {
-		t.Error("errors.Is(ErrNotFound, ErrNotFound) should work")
-	}
-	if !IsKind(ErrNotFound, KindNotFound) {
-		t.Error("IsKind(ErrNotFound, KindNotFound) should work")
-	}
-	wrapped := fmt.Errorf("wrap: %w", ErrNotFound)
-	if !errors.Is(wrapped, ErrNotFound) {
-		t.Error("errors.Is(wrapped, ErrNotFound) should work")
 	}
 }
 
@@ -440,39 +422,6 @@ func TestWrapAt(t *testing.T) {
 func TestWrapAt_Nil(t *testing.T) {
 	if got := WrapAt(KindIO, "ENG/LS", LayerENG, nil); got != nil {
 		t.Errorf("WrapAt(nil) should return nil, got %v", got)
-	}
-}
-
-func TestFromSentinel(t *testing.T) {
-	wrapped := FromSentinel(ErrNotFound, "SYS/SE", LayerSQL)
-	if wrapped == nil {
-		t.Fatal("FromSentinel returned nil")
-	}
-	if wrapped.Kind != KindNotFound {
-		t.Errorf("Kind = %v, want KindNotFound", wrapped.Kind)
-	}
-	if wrapped.Module != "SYS/SE" {
-		t.Errorf("Module = %q", wrapped.Module)
-	}
-	if !errors.Is(wrapped, ErrNotFound) {
-		t.Error("errors.Is should traverse FromSentinel")
-	}
-}
-
-func TestFromSentinel_Nil(t *testing.T) {
-	if got := FromSentinel(nil, "SYS/SE", LayerSQL); got != nil {
-		t.Errorf("FromSentinel(nil) should return nil, got %v", got)
-	}
-}
-
-func TestFromSentinel_Unknown(t *testing.T) {
-	unknown := fmt.Errorf("unknown sentinel")
-	wrapped := FromSentinel(unknown, "SYS/SE", LayerSQL)
-	if wrapped == nil {
-		t.Fatal("FromSentinel(unknown) returned nil")
-	}
-	if wrapped.Kind != KindInternal {
-		t.Errorf("Kind = %v, want KindInternal for unknown", wrapped.Kind)
 	}
 }
 

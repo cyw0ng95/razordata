@@ -1,7 +1,6 @@
 package SY
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,7 +70,7 @@ func TestValidateOptions_Bounds(t *testing.T) {
 				}
 				return
 			}
-			if !errors.Is(err, AP.ErrInvalidOptions) {
+			if !AP.IsKind(err, AP.KindInvalidOptions) {
 				t.Fatalf("validateOptions: want ErrInvalidOptions, got %v", err)
 			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
@@ -128,7 +127,7 @@ func TestValidateOptions_PathIsFile(t *testing.T) {
 		MaxLevel:     3,
 	}
 	err := validateOptions(o)
-	if !errors.Is(err, AP.ErrInvalidOptions) {
+	if !AP.IsKind(err, AP.KindInvalidOptions) {
 		t.Fatalf("want ErrInvalidOptions, got %v", err)
 	}
 	if !strings.Contains(err.Error(), "not a directory") {
@@ -141,7 +140,7 @@ func TestValidateOptions_PathIsFile(t *testing.T) {
 // reflect/interface boundaries; the normal Open path does not.
 func TestValidateOptions_NilOptions(t *testing.T) {
 	err := validateOptions(nil)
-	if !errors.Is(err, AP.ErrInvalidOptions) {
+	if !AP.IsKind(err, AP.KindInvalidOptions) {
 		t.Fatalf("want ErrInvalidOptions, got %v", err)
 	}
 }

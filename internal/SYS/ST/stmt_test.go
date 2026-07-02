@@ -90,10 +90,10 @@ func TestStmt_ExecAfterClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = stmt.Close()
-	if _, err := stmt.Exec(ctx); !errors.Is(err, AP.ErrClosed) {
+	if _, err := stmt.Exec(ctx); !AP.IsKind(err, AP.KindClosed) {
 		t.Errorf("Exec after Close: got %v, want ErrClosed", err)
 	}
-	if _, err := stmt.Query(ctx); !errors.Is(err, AP.ErrClosed) {
+	if _, err := stmt.Query(ctx); !AP.IsKind(err, AP.KindClosed) {
 		t.Errorf("Query after Close: got %v, want ErrClosed", err)
 	}
 }
@@ -102,7 +102,7 @@ func TestStmt_ExecAfterClose(t *testing.T) {
 func TestStmt_PrepareEmptySQL(t *testing.T) {
 	eng, _ := testEngine(t)
 	_, err := PrepareFromInterface(eng, "")
-	if !errors.Is(err, AP.ErrSyntax) {
+	if !AP.IsKind(err, AP.KindSyntax) {
 		t.Errorf("empty SQL: got %v, want ErrSyntax", err)
 	}
 }
@@ -110,7 +110,7 @@ func TestStmt_PrepareEmptySQL(t *testing.T) {
 // TestStmt_PrepareNilEngine — AP.ErrNotOpen.
 func TestStmt_PrepareNilEngine(t *testing.T) {
 	_, err := PrepareFromInterface(nil, "SELECT 1")
-	if !errors.Is(err, AP.ErrNotOpen) {
+	if !AP.IsKind(err, AP.KindClosed) {
 		t.Errorf("nil engine: got %v, want ErrNotOpen", err)
 	}
 }
