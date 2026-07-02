@@ -1267,7 +1267,7 @@ func resolveTableForColumn(col string) string {
 		return ""
 	}
 	for _, c := range cols {
-		if c == base {
+		if c == col {
 			return tbl
 		}
 	}
