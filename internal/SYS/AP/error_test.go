@@ -475,3 +475,40 @@ func TestFromSentinel_Unknown(t *testing.T) {
 		t.Errorf("Kind = %v, want KindInternal for unknown", wrapped.Kind)
 	}
 }
+
+func TestOp_AllConstants(t *testing.T) {
+	cases := []struct {
+		op   string
+		want string
+	}{
+		{OpSelect, "SELECT"},
+		{OpInsert, "INSERT"},
+		{OpUpdate, "UPDATE"},
+		{OpDelete, "DELETE"},
+		{OpCreate, "CREATE"},
+		{OpDrop, "DROP"},
+		{OpAlter, "ALTER"},
+		{OpBegin, "BEGIN"},
+		{OpCommit, "COMMIT"},
+		{OpRollback, "ROLLBACK"},
+		{OpSavepoint, "SAVEPOINT"},
+		{OpReplay, "REPLAY"},
+		{OpFlush, "FLUSH"},
+		{OpCompact, "COMPACT"},
+		{OpCheckpoint, "CHECKPOINT"},
+		{OpBackup, "BACKUP"},
+		{OpRestore, "RESTORE"},
+	}
+	for _, tc := range cases {
+		if tc.op != tc.want {
+			t.Errorf("op constant = %q, want %q", tc.op, tc.want)
+		}
+	}
+}
+
+func TestError_WithOp(t *testing.T) {
+	e := New(KindNotFound, "test").WithOp(OpSelect)
+	if e.Op != OpSelect {
+		t.Errorf("Op = %q, want %q", e.Op, OpSelect)
+	}
+}

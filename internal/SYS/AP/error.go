@@ -47,14 +47,33 @@ type Error struct {
 	SQLSTATE SQLSTATE
 	Module   Module
 	Layer    Layer
+	Op       string
 	Message  string
 	Fields   map[string]string
 	Cause    error
 	wrapped  error
-
-	// Op is set in Phase 3; reserved here for field ordering.
-	_ struct{}
 }
+
+// Predefined operation constants for the Op field.
+const (
+	OpSelect     = "SELECT"
+	OpInsert     = "INSERT"
+	OpUpdate     = "UPDATE"
+	OpDelete     = "DELETE"
+	OpCreate     = "CREATE"
+	OpDrop       = "DROP"
+	OpAlter      = "ALTER"
+	OpBegin      = "BEGIN"
+	OpCommit     = "COMMIT"
+	OpRollback   = "ROLLBACK"
+	OpSavepoint  = "SAVEPOINT"
+	OpReplay     = "REPLAY"
+	OpFlush      = "FLUSH"
+	OpCompact    = "COMPACT"
+	OpCheckpoint = "CHECKPOINT"
+	OpBackup     = "BACKUP"
+	OpRestore    = "RESTORE"
+)
 
 func (e *Error) Error() string {
 	prefix := ""
@@ -190,9 +209,10 @@ func (e *Error) WithLayer(l Layer) *Error {
 	return e
 }
 
-// WithOp sets the operation name via Fields["op"].
+// WithOp sets the operation name.
 func (e *Error) WithOp(op string) *Error {
-	return e.WithField("op", op)
+	e.Op = op
+	return e
 }
 
 // ---- helpers ----
