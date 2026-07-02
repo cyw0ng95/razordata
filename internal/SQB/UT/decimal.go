@@ -23,8 +23,10 @@ var ErrDecimalOverflow = errors.New("ex: decimal overflow")
 // ErrDecimalScale is returned when scale is invalid (negative or exceeds precision).
 var ErrDecimalScale = errors.New("ex: invalid decimal scale")
 
-// ErrDivByZero is returned when dividing by zero.
-var ErrDivByZero = errors.New("ex: division by zero")
+// ErrDecimalDivByZero is returned when dividing by zero.
+var ErrDecimalDivByZero = errors.New("ex: division by zero")
+// Deprecated: Use ErrDecimalDivByZero instead.
+var ErrDivByZero = ErrDecimalDivByZero
 
 // NewDecimal constructs a Decimal from a string with given precision/scale.
 func NewDecimal(s string, precision, scale int) (*Decimal, error) {

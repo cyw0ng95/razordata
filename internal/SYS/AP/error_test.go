@@ -416,3 +416,62 @@ func TestModuleOfLayerOf(t *testing.T) {
 		t.Errorf("LayerOf = %v", LayerOf(e))
 	}
 }
+
+func TestWrapAt(t *testing.T) {
+	inner := New(KindNotFound, "base")
+	wrapped := WrapAt(KindIO, "ENG/LS", LayerENG, inner)
+	if wrapped == nil {
+		t.Fatal("WrapAt returned nil")
+	}
+	if wrapped.Module != "ENG/LS" {
+		t.Errorf("Module = %q, want %q", wrapped.Module, "ENG/LS")
+	}
+	if wrapped.Layer != LayerENG {
+		t.Errorf("Layer = %v, want %v", wrapped.Layer, LayerENG)
+	}
+	if !errors.Is(wrapped, inner) {
+		t.Error("errors.Is should traverse WrapAt")
+	}
+	if !IsKind(wrapped, KindNotFound) {
+		t.Error("IsKind should traverse WrapAt chain")
+	}
+}
+
+func TestWrapAt_Nil(t *testing.T) {
+	if got := WrapAt(KindIO, "ENG/LS", LayerENG, nil); got != nil {
+		t.Errorf("WrapAt(nil) should return nil, got %v", got)
+	}
+}
+
+func TestFromSentinel(t *testing.T) {
+	wrapped := FromSentinel(ErrNotFound, "SYS/SE", LayerSQL)
+	if wrapped == nil {
+		t.Fatal("FromSentinel returned nil")
+	}
+	if wrapped.Kind != KindNotFound {
+		t.Errorf("Kind = %v, want KindNotFound", wrapped.Kind)
+	}
+	if wrapped.Module != "SYS/SE" {
+		t.Errorf("Module = %q", wrapped.Module)
+	}
+	if !errors.Is(wrapped, ErrNotFound) {
+		t.Error("errors.Is should traverse FromSentinel")
+	}
+}
+
+func TestFromSentinel_Nil(t *testing.T) {
+	if got := FromSentinel(nil, "SYS/SE", LayerSQL); got != nil {
+		t.Errorf("FromSentinel(nil) should return nil, got %v", got)
+	}
+}
+
+func TestFromSentinel_Unknown(t *testing.T) {
+	unknown := fmt.Errorf("unknown sentinel")
+	wrapped := FromSentinel(unknown, "SYS/SE", LayerSQL)
+	if wrapped == nil {
+		t.Fatal("FromSentinel(unknown) returned nil")
+	}
+	if wrapped.Kind != KindInternal {
+		t.Errorf("Kind = %v, want KindInternal for unknown", wrapped.Kind)
+	}
+}

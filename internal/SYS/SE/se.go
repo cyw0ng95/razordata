@@ -107,31 +107,31 @@ func wrapEXError(err error) error {
 	case errors.Is(err, DT.ErrNoRows):
 		return AP.ErrNoRows
 	case errors.Is(err, EV.ErrEval):
-		return AP.Wrap(AP.KindSyntax, err)
-	case errors.Is(err, EV.ErrDivByZero):
-		return AP.Wrap(AP.KindTypeMismatch, err)
+		return AP.WrapAt(AP.KindSyntax, "SYS/SE", AP.LayerSQL, err)
+	case errors.Is(err, EV.ErrEvalDivByZero):
+		return AP.WrapAt(AP.KindTypeMismatch, "SYS/SE", AP.LayerSQL, err)
 	case errors.Is(err, EV.ErrTypeMismatch):
-		return AP.Wrap(AP.KindTypeMismatch, err)
+		return AP.WrapAt(AP.KindTypeMismatch, "SYS/SE", AP.LayerSQL, err)
 	case errors.Is(err, EX.ErrClosed):
-		return AP.Wrap(AP.KindClosed, err)
+		return AP.WrapAt(AP.KindClosed, "SYS/SE", AP.LayerSQL, err)
 	case errors.Is(err, OP.ErrTableNotRegisteredForStorage):
-		return AP.Wrap(AP.KindNotFound, err)
+		return AP.WrapAt(AP.KindNotFound, "SYS/SE", AP.LayerSQL, err)
 	case errors.Is(err, OP.ErrNoPKForStorage):
-		return AP.Wrap(AP.KindConstraint, err)
+		return AP.WrapAt(AP.KindConstraint, "SYS/SE", AP.LayerSQL, err)
 	case errors.Is(err, EV.ErrSubquery):
-		return AP.Wrap(AP.KindSyntax, err)
+		return AP.WrapAt(AP.KindSyntax, "SYS/SE", AP.LayerSQL, err)
 	case errors.Is(err, EV.ErrTriggerAbort):
-		return AP.Wrap(AP.KindConstraint, err)
+		return AP.WrapAt(AP.KindConstraint, "SYS/SE", AP.LayerSQL, err)
 	case errors.Is(err, EX.ErrMultiDatabaseNotSupported):
-		return AP.Wrap(AP.KindInvalidOptions, err)
+		return AP.WrapAt(AP.KindInvalidOptions, "SYS/SE", AP.LayerSQL, err)
 	case errors.Is(err, OP.ErrNoEngine):
-		return AP.Wrap(AP.KindClosed, err)
+		return AP.WrapAt(AP.KindClosed, "SYS/SE", AP.LayerSQL, err)
 	case errors.Is(err, UT.ErrDecimalOverflow):
-		return AP.Wrap(AP.KindTypeMismatch, err)
+		return AP.WrapAt(AP.KindTypeMismatch, "SYS/SE", AP.LayerSQL, err)
 	case errors.Is(err, UT.ErrDecimalScale):
-		return AP.Wrap(AP.KindTypeMismatch, err)
+		return AP.WrapAt(AP.KindTypeMismatch, "SYS/SE", AP.LayerSQL, err)
 	default:
-		return AP.Wrap(AP.KindIO, err)
+		return AP.WrapAt(AP.KindIO, "SYS/SE", AP.LayerSQL, err)
 	}
 }
 
