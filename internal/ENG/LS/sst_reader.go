@@ -588,20 +588,40 @@ func (it *sstIterator) loadBlock(blockIdx int) bool {
 }
 
 func (it *sstIterator) Next() bool {
-	if it.pairs == nil {
-		if !it.loadBlock(0) {
+	for {
+		if it.pairs == nil {
+			if !it.loadBlock(0) {
+				return false
+			}
+			it.pairIdx = 0
+		} else if it.pairIdx+1 < len(it.pairs) {
+			it.pairIdx++
+		} else if !it.loadBlock(it.blockIdx+1) {
 			return false
+		} else {
+			it.pairIdx = 0
 		}
-		return it.pairIdx < len(it.pairs)
-	}
-	if it.pairIdx+1 < len(it.pairs) {
-		it.pairIdx++
+
+		if it.pairs == nil || it.pairIdx >= len(it.pairs) {
+			continue
+		}
+
+		kv := it.pairs[it.pairIdx]
+		if isTombstone(kv.value) {
+			it.pairIdx++
+			continue
+		}
+		if len(kv.value) == 0 {
+			it.pairIdx++
+			continue
+		}
+		if it.reader.isInRangeTombstone(kv.key) {
+			it.pairIdx++
+			continue
+		}
+
 		return true
 	}
-	if !it.loadBlock(it.blockIdx + 1) {
-		return false
-	}
-	return it.pairIdx < len(it.pairs)
 }
 
 func (it *sstIterator) Key() []byte {
