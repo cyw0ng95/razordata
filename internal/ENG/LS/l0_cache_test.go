@@ -2,6 +2,7 @@ package ls
 
 import (
 	"bytes"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -32,23 +33,31 @@ func TestL0Cache_MissReturnsFalse(t *testing.T) {
 }
 
 func TestL0Cache_GetPromotesLRU(t *testing.T) {
-	c := newL0Cache(2)
-	c.Put(1, []byte("a"))
-	c.Put(2, []byte("b"))
-	if got, _ := c.Get(1); !bytes.Equal(got, []byte("a")) {
-		t.Fatalf("unexpected get(1): %q", got)
+	// Need per-shard capacity >= 2 to exercise intra-shard LRU promotion.
+	tmp := newL0Cache(1)
+	capacity := int(tmp.NShard()) * 2
+	c := newL0Cache(capacity)
+	perShard := c.shards[0].cap
+	if perShard < 2 {
+		t.Skipf("per-shard capacity %d < 2", perShard)
 	}
+	nshard := c.NShard()
+	b1, b2, b3 := uint64(0), uint64(nshard), uint64(2*nshard) // all shard 0
+c.Put(b1, []byte("a"))
+	c.Put(b2, []byte("b"))
+	if got, _ := c.Get(b1); !bytes.Equal(got, []byte("a")) {
+		t.Fatalf("unexpected get(%d): %q", b1, got)
+	}
+	c.Put(b3, []byte("c"))
 
-	c.Put(3, []byte("c"))
-
-	if _, ok := c.Get(2); ok {
-		t.Fatal("expected blockID 2 to be evicted after Get(1) promoted 1 to front")
+	if _, ok := c.Get(b2); ok {
+		t.Fatal("expected b2 to be evicted after Get(b1) promoted b1 to front")
 	}
-	if got, ok := c.Get(1); !ok || !bytes.Equal(got, []byte("a")) {
-		t.Fatalf("expected blockID 1 to survive: ok=%v got=%q", ok, got)
+	if got, ok := c.Get(b1); !ok || !bytes.Equal(got, []byte("a")) {
+		t.Fatalf("expected b1 to survive: ok=%v got=%q", ok, got)
 	}
-	if got, ok := c.Get(3); !ok || !bytes.Equal(got, []byte("c")) {
-		t.Fatalf("expected blockID 3 to be present: ok=%v got=%q", ok, got)
+	if got, ok := c.Get(b3); !ok || !bytes.Equal(got, []byte("c")) {
+		t.Fatalf("expected b3 to be present: ok=%v got=%q", ok, got)
 	}
 }
 
@@ -70,19 +79,23 @@ func TestL0Cache_PutRefreshesExisting(t *testing.T) {
 }
 
 func TestL0Cache_EvictsLRUAtCapacity(t *testing.T) {
-	c := newL0Cache(2)
-	c.Put(1, []byte("a"))
-	c.Put(2, []byte("b"))
-	c.Put(3, []byte("c"))
+	tmp := newL0Cache(1)
+	capacity := int(tmp.NShard()) * 2 // per-shard cap = 2
+	c := newL0Cache(capacity)
+	nshard := c.NShard()
+	b1, b2, b3 := uint64(0), uint64(nshard), uint64(2*nshard) // all shard 0
+c.Put(b1, []byte("a"))
+	c.Put(b2, []byte("b"))
+	c.Put(b3, []byte("c"))
 
-	if _, ok := c.Get(1); ok {
-		t.Fatal("expected blockID 1 to be evicted (LRU)")
+	if _, ok := c.Get(b1); ok {
+		t.Fatal("expected b1 to be evicted (LRU)")
 	}
-	if _, ok := c.Get(2); !ok {
-		t.Fatal("blockID 2 should still be present")
+	if _, ok := c.Get(b2); !ok {
+		t.Fatal("b2 should still be present")
 	}
-	if _, ok := c.Get(3); !ok {
-		t.Fatal("blockID 3 should still be present")
+	if _, ok := c.Get(b3); !ok {
+		t.Fatal("b3 should still be present")
 	}
 	if got := c.Size(); got != 2 {
 		t.Fatalf("expected size 2, got %d", got)
@@ -91,14 +104,15 @@ func TestL0Cache_EvictsLRUAtCapacity(t *testing.T) {
 
 func TestL0Cache_ZeroCapacityDefaultsToOne(t *testing.T) {
 	c := newL0Cache(0)
-	c.Put(1, []byte("a"))
-	c.Put(2, []byte("b"))
+	n := uint64(c.NShard())
+c.Put(0*n, []byte("a"))
+	c.Put(1*n, []byte("b"))
 
-	if _, ok := c.Get(1); ok {
-		t.Fatal("blockID 1 should have been evicted at capacity 1")
+	if _, ok := c.Get(0*n); ok {
+		t.Fatal("block 0*n should have been evicted at capacity 1")
 	}
-	if _, ok := c.Get(2); !ok {
-		t.Fatal("blockID 2 should be present")
+	if _, ok := c.Get(1*n); !ok {
+		t.Fatal("block 1*n should be present")
 	}
 	if got := c.Size(); got != 1 {
 		t.Fatalf("expected size 1, got %d", got)
@@ -107,11 +121,12 @@ func TestL0Cache_ZeroCapacityDefaultsToOne(t *testing.T) {
 
 func TestL0Cache_NegativeCapacityDefaultsToOne(t *testing.T) {
 	c := newL0Cache(-5)
-	c.Put(1, []byte("a"))
-	c.Put(2, []byte("b"))
+	n := uint64(c.NShard())
+	c.Put(0*n, []byte("a"))
+	c.Put(1*n, []byte("b")) // same shard 0, should evict "a"
 
-	if _, ok := c.Get(1); ok {
-		t.Fatal("blockID 1 should have been evicted at clamped capacity 1")
+	if _, ok := c.Get(0*n); ok {
+		t.Fatal("block 0*n should have been evicted at clamped capacity 1")
 	}
 	if got := c.Size(); got != 1 {
 		t.Fatalf("expected size 1, got %d", got)
@@ -203,13 +218,35 @@ func TestL0Cache_ConcurrentSameKey(t *testing.T) {
 
 func TestL0Cache_GetAfterEvictionReturnsMiss(t *testing.T) {
 	c := newL0Cache(1)
-	c.Put(1, []byte("a"))
-	c.Put(2, []byte("b"))
+	n := uint64(c.NShard())
+	c.Put(0*n, []byte("a"))
+	c.Put(1*n, []byte("b"))
 
-	if _, ok := c.Get(1); ok {
-		t.Fatal("expected miss on evicted blockID")
+	if _, ok := c.Get(0*n); ok {
+		t.Fatal("expected miss on evicted blockID 0*n")
 	}
-	if _, ok := c.Get(2); !ok {
-		t.Fatal("expected hit on most-recent blockID")
+	if _, ok := c.Get(1*n); !ok {
+		t.Fatal("expected hit on most-recent blockID 1*n")
+	}
+}
+
+func TestL0Cache_ShardsMatchGOMAXPROCS(t *testing.T) {
+	c := newL0Cache(64)
+	n := runtime.GOMAXPROCS(0)
+	if int(c.NShard()) != n {
+		t.Fatalf("expected %d shards, got %d", n, c.NShard())
+	}
+}
+
+func TestL0Cache_PerShardCapacity(t *testing.T) {
+	total := 100
+	c := newL0Cache(total)
+	n := c.NShard()
+	perShard := total / int(n)
+	if perShard == 0 {
+		perShard = 1
+	}
+	if c.shards[0].cap != perShard {
+		t.Fatalf("expected per-shard cap %d, got %d", perShard, c.shards[0].cap)
 	}
 }
