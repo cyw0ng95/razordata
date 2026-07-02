@@ -376,11 +376,11 @@ func (p *Planner) SetStatsCatalog(statsCatalog pl.StatsCatalog) {
 // getTableStats returns aggregated TableStats for a table, combining
 // column statistics from the stats catalog with in-memory table data.
 // REQ000787.
-func (p *Planner) getTableStats(table string) *TableStats {
+func (p *Planner) getTableStats(table string) *AD.TableStats {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	ts := &TableStats{
+	ts := &AD.TableStats{
 		ColStats:     make(map[string]*ls.ColumnStats),
 		RowCount:     0,
 		TotalWidth:   0,

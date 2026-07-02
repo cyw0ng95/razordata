@@ -1198,8 +1198,8 @@ func (e *Executor) Explain(sql string) (string, error) {
 	// Use formatPlanTree with default ExplainNormal mode for text output
 	nodes := buildPlanNodeTree(plan.Root, e.planner)
 	var b strings.Builder
-	var walk func(node *PlanNode, depth int)
-	walk = func(node *PlanNode, depth int) {
+	var walk func(node *AD.PlanNode, depth int)
+	walk = func(node *AD.PlanNode, depth int) {
 		if node == nil {
 			return
 		}

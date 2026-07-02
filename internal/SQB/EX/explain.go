@@ -8,9 +8,11 @@ import (
 	"context"
 	"time"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
 // ExplainStmtOp is an operator that produces EXPLAIN output.
@@ -18,7 +20,7 @@ import (
 type ExplainStmtOp struct {
 	mode     PS.ExplainMode
 	format   PS.ExplainFormat
-	planNode *PlanNode
+	planNode *AD.PlanNode
 	root     DT.Operator
 	rows     []DT.Row
 	treeText string // cached tree/DOT/JSON output
@@ -38,13 +40,13 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (DT.Row, error) {
 				return DT.Row{}, err
 			}
 			// REQ000788: analyze for bottlenecks after execution.
-			AnalyzePlanForBottlenecks(e.planNode)
+			AD.AnalyzePlanForBottlenecks(e.planNode)
 		}
 
 		// Handle different output formats
 		switch e.format {
 		case PS.ExplainFormatText:
-			e.rows = formatPlanTree(e.planNode, e.mode)
+			e.rows = AD.FormatPlanTree(e.planNode, e.mode)
 		case PS.ExplainFormatTree:
 			e.treeText = e.planNode.ToTree()
 		case PS.ExplainFormatJSON:
@@ -59,7 +61,7 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (DT.Row, error) {
 		row := DT.Row{
 			Cols:  []string{"explain_output"},
 			Types: []LX.TokenType{LX.T_TEXT},
-			Data:  []DT.Value{NewTextValue(e.treeText)},
+			Data:  []DT.Value{AP.NewTextValue(e.treeText)},
 		}
 		e.done = true
 		return row, nil
@@ -77,7 +79,7 @@ func (e *ExplainStmtOp) Next(ctx context.Context) (DT.Row, error) {
 
 // executeAndCollectStats drains the operator tree, collects total stats,
 // and closes the inner plan to reset iterator state (memo may reuse it).
-func executeAndCollectStats(ctx context.Context, root DT.Operator, pn *PlanNode) error {
+func executeAndCollectStats(ctx context.Context, root DT.Operator, pn *AD.PlanNode) error {
 	start := time.Now()
 	var rows int64
 	for {
@@ -93,7 +95,7 @@ func executeAndCollectStats(ctx context.Context, root DT.Operator, pn *PlanNode)
 	root.Close()
 	elapsed := time.Since(start)
 	if pn.Analyze == nil {
-		pn.Analyze = &AnalyzeStats{}
+		pn.Analyze = &AD.AnalyzeStats{}
 	}
 	pn.Analyze.RowsReturned = rows
 	pn.Analyze.TimeNS = elapsed.Nanoseconds()
