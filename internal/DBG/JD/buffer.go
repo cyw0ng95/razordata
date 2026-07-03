@@ -31,7 +31,11 @@ func (b *Buffer) Append(e JoinEvent) bool {
 	idx := pos & (b.capacity - 1)
 	b.events[idx] = e
 	b.head.Add(1)
-	return pos >= b.capacity
+	overwritten := pos >= b.capacity
+	if overwritten {
+		b.dropped.Add(1)
+	}
+	return overwritten
 }
 
 func (b *Buffer) Flush() []JoinEvent {
