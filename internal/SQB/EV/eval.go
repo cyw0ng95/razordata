@@ -405,6 +405,8 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 		return r, nil
 	case LX.T_MOD:
 		return modValue(left, right)
+	case LX.T_DIV:
+		return divValue(left, right)
 	case LX.T_BITAND:
 		return bitandValue(left, right)
 	case LX.T_BITOR:
@@ -2019,6 +2021,29 @@ func modValue(a, b Value) (Value, error) {
 		return DT.NullValue(), nil
 	}
 	return DT.NewFloatValue(math.Mod(af, bf)), nil
+}
+
+// divValue implements integer division (DIV). REQ001193.
+// Returns NULL for NULL inputs or division by zero.
+func divValue(a, b Value) (Value, error) {
+	if a.Kind == KindNull || b.Kind == KindNull {
+		return DT.NullValue(), nil
+	}
+	if a.Kind == KindInt && b.Kind == KindInt {
+		if b.I64 == 0 {
+			return DT.NullValue(), nil
+		}
+		return DT.NewIntValue(a.I64 / b.I64), nil
+	}
+	af, aok := toFloat64(a)
+	bf, bok := toFloat64(b)
+	if !aok || !bok {
+		return DT.NullValue(), nil
+	}
+	if bf == 0 {
+		return DT.NullValue(), nil
+	}
+	return DT.NewIntValue(int64(af / bf)), nil
 }
 
 func toFloat64(v Value) (float64, bool) {

@@ -315,7 +315,7 @@ func isBinaryOp(typ LX.TokenType) bool {
 		LX.T_LIKE, LX.T_GLOB, LX.T_IS,
 		LX.T_BITAND, LX.T_BITOR, LX.T_BITXOR,
 		LX.T_LSHIFT, LX.T_RSHIFT,
-		LX.T_MOD, LX.T_CONCAT:
+		LX.T_MOD, LX.T_DIV, LX.T_CONCAT:
 		return true
 	}
 	return false
@@ -339,7 +339,7 @@ func precedence(typ LX.TokenType) int {
 		return 7
 	case LX.T_PLUS, LX.T_MINUS, LX.T_LSHIFT, LX.T_RSHIFT:
 		return 8
-	case LX.T_STAR, LX.T_SLASH, LX.T_MOD:
+	case LX.T_STAR, LX.T_SLASH, LX.T_MOD, LX.T_DIV:
 		return 9
 	}
 	return 0

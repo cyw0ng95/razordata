@@ -128,6 +128,8 @@ func binaryOpString(b *PS.BinaryExpr) string {
 		opStr = "^"
 	case LX.T_MOD:
 		opStr = "%"
+	case LX.T_DIV:
+		opStr = "DIV"
 	case LX.T_CONCAT:
 		opStr = "||"
 	default:

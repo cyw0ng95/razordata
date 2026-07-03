@@ -243,6 +243,7 @@ func buildKeywordTrie() *keywordNode {
 		{"RETURNING", T_RETURNING},
 		{"CONFLICT", T_CONFLICT},
 		{"DO", T_DO},
+		{"DIV", T_DIV},
 		{"NOTHING", T_NOTHING},
 		{"EXCLUDED", T_EXCLUDED},
 		{"WITH", T_WITH},

@@ -186,6 +186,7 @@ const (
 	T_RSHIFT
 	T_MOD
 	T_CONCAT
+	T_DIV    // REQ001193: integer division (DIV)
 	T_COALESCE
 	T_NULLIF
 	T_UNION
@@ -439,6 +440,7 @@ var tokenTypeNames = [...]string{
 	T_RSHIFT:        "RSHIFT",
 	T_MOD:           "MOD",
 	T_CONCAT:        "CONCAT",
+	T_DIV:           "DIV",
 	T_COALESCE:      "COALESCE",
 	T_NULLIF:        "NULLIF",
 	T_UNION:         "UNION",
