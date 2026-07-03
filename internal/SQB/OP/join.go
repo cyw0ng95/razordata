@@ -131,6 +131,9 @@ type NestedLoopJoin struct {
 	cachedRightCols  []string // pre-built prefixed cols for cached rows
 	cachedRightTypes []int    // pre-built types for cached rows
 	rightCached      bool     // true once the cache is populated
+	// rowID counter for debug tracing — incremented for each row
+	// processed by the join operator.
+	rowID uint64
 	// REQ000870: pre-computed shared Cols/Types/colIndex for outer-join
 	// emit paths. Computed lazily from the first left+right row pair.
 	// Used by joinRowsLLWithCols to avoid per-row make([]string) and
@@ -360,6 +363,7 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 	// once per batch, reducing scans from N to N/32.
 	if !j.blockMode && j.leftRow == nil && len(j.blkLeftBatch) == 0 {
 		j.blockMode = true
+		nljDebugStrategy("nested_loop", "no equi-join keys", 0)
 	}
 	if j.blockMode {
 		return j.nextBlock(ctx)
@@ -384,6 +388,8 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 				prefixed.Cols = append([]string(nil), row.Cols...)
 			}
 			j.leftRow = &prefixed
+			j.rowID++
+			nljDebugRowFlow(j.leftTbl, j.rowID, true)
 			// REQ000368: drive the right side through its own
 			// operator rather than the in-memory `DT.Tables` map.
 			// The in-memory map is empty for store-backed
@@ -416,16 +422,21 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 			inner.Cols = prefixCols(inner.Cols, j.rightTbl)
 		}
 		inner.Outer = j.leftRow
+		j.rowID++
+		nljDebugRowFlow(j.rightTbl, j.rowID, true)
 		if j.on != nil {
 			ok, err := j.on(j.leftRow, &inner)
 			if err != nil {
 				return Row{}, err
 			}
+			nljDebugPredicate("on", j.rowID-1, j.rowID, ok)
 			if !ok {
 				continue
 			}
 		}
 		j.matched = true
+		j.rowID++
+		nljDebugRowFlow("output", j.rowID, false)
 		return j.emitLimitCheck(j.outerJoinRows(j.leftRow, &inner)), nil
 	}
 }
@@ -803,18 +814,27 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 	j.blkDataBuf = j.blkDataBuf[:0]
 	for _, l := range j.blkLeftBatch {
 		matched := false
+		j.rowID++
+		leftID := j.rowID
+		nljDebugRowFlow(j.leftTbl, leftID, true)
 		for _, r := range j.blkRightRows {
 			r.Outer = &l
+			j.rowID++
+			rightID := j.rowID
+			nljDebugRowFlow(j.rightTbl, rightID, true)
 			if j.on != nil {
 				ok, err := j.on(&l, &r)
 				if err != nil {
 					return Row{}, err
 				}
+				nljDebugPredicate("on", leftID, rightID, ok)
 				if !ok {
 					continue
 				}
 			}
 			matched = true
+			j.rowID++
+			nljDebugRowFlow("output", j.rowID, false)
 			// Extend buffer by exactly blkDataPerRow for this row.
 			off := len(j.blkDataBuf)
 			j.blkDataBuf = j.blkDataBuf[:off+blkDataPerRow]
@@ -860,6 +880,7 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 		}
 	}
 matchDone:
+	nljDebugCorrelation(1, []string{j.leftTbl, j.rightTbl}, int64(len(j.blkResultBuf)))
 
 	if len(j.blkResultBuf) == 0 {
 		// No matches in this batch — try next batch.
