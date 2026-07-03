@@ -271,15 +271,19 @@ func (j *HashJoin) nextMatched() (pl.Row, int, int, int, bool) {
 	for j.curLeftIdx < len(j.leftRows) {
 		l := j.leftInfos[j.curLeftIdx]
 		bucket := j.buckets[l.idx]
+		hashJoinDebugRowFlow(j.leftTbl, uint64(j.curLeftIdx), true)
 		for j.curRightIdx < len(bucket.hashes) {
 			k := j.curRightIdx
 			j.curRightIdx++
-			if bucket.hashes[k] == l.hash && ValuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys, j.keyBuf)) {
+			matched := bucket.hashes[k] == l.hash && ValuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys, j.keyBuf))
+			hashJoinDebugPredicate("equi-join", uint64(j.curLeftIdx), uint64(k), matched)
+			if matched {
 				right := bucket.rightRows[k]
 				leftData := j.leftRows[j.curLeftIdx].Data
 				outData := make([]pl.Value, j.dataPerRow)
 				copy(outData, leftData)
 				copy(outData[len(leftData):], right.Data)
+				hashJoinDebugRowFlow(j.leftTbl, uint64(j.curLeftIdx), false)
 				return pl.Row{
 					Cols:     j.sharedCols,
 					Types:    j.sharedTypes,
@@ -288,6 +292,7 @@ func (j *HashJoin) nextMatched() (pl.Row, int, int, int, bool) {
 				}, j.curLeftIdx, l.idx, k, true
 			}
 		}
+		hashJoinDebugRowFlow(j.leftTbl, uint64(j.curLeftIdx), false)
 		j.curRightIdx = 0
 		j.curLeftIdx++
 	}
@@ -411,6 +416,13 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		j.buckets[idx].rightRows = append(j.buckets[idx].rightRows, row)
 		j.buckets[idx].hashes = append(j.buckets[idx].hashes, hash)
 	}
+	// Debug: emit strategy event after build phase completes.
+	rightTotal := 0
+	for i := range j.buckets {
+		rightTotal += len(j.buckets[i].rightRows)
+	}
+	hashJoinDebugStrategy("hash", "equi-join", float64(rightTotal))
+
 	// REQ000865: close right side immediately — rows live in buckets.
 	if j.right != nil {
 		_ = j.right.Close()
