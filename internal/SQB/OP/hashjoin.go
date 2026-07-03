@@ -345,6 +345,8 @@ func (j *HashJoin) Close() error {
 	j.sharedCols = nil
 	j.sharedTypes = nil
 	j.sharedColIndex = nil
+	j.leftMatched = nil
+	j.matchedRight = nil
 	if j.left != nil {
 		_ = j.left.Close()
 	}
