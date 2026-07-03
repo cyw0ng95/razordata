@@ -72,8 +72,8 @@ func (noopProfile) DumpProfile(_ string, _ time.Duration) (string, error) {
 	return "", nil
 }
 
-// DefaultEventSink is the default no-op event sink.
-var DefaultEventSink EventSink = noopSink{}
+// DefaultSink is the default no-op event sink.
+var DefaultSink EventSink = noopSink{}
 
 // DefaultMetricSink is the default no-op metric sink.
 var DefaultMetricSink MetricSink = noopMetricSink{}
