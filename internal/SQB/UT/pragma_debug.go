@@ -86,6 +86,75 @@ func HandleDebugPragma(pragma string, args []string) (string, error) {
 			fmt.Fprintf(&b, "%s\n", e.String())
 		}
 		return b.String(), nil
+	case "debug_join_filter":
+		if len(args) == 0 {
+			return "usage: debug_join_filter(operator=<name>)", nil
+		}
+		tr := jd.GetJoinTracer()
+		if tr == nil {
+			return "no active join tracer", nil
+		}
+		buffered, ok := tr.(*jd.BufferedTracer)
+		if !ok {
+			return "tracer does not support filter", nil
+		}
+		events := buffered.Flush()
+		filterOp := strings.TrimPrefix(args[0], "operator=")
+		var b strings.Builder
+		count := 0
+		for _, e := range events {
+			if filterOp == "" || strings.EqualFold(e.Op, filterOp) {
+				fmt.Fprintf(&b, "%s\n", e.String())
+				count++
+			}
+		}
+		fmt.Fprintf(&b, "--- %d events matching filter ---\n", count)
+		return b.String(), nil
+	case "debug_join_summary":
+		tr := jd.GetJoinTracer()
+		if tr == nil {
+			return "no active join tracer", nil
+		}
+		buffered, ok := tr.(*jd.BufferedTracer)
+		if !ok {
+			return "tracer does not support summary", nil
+		}
+		events := buffered.Flush()
+		// Aggregate stats
+		operatorRows := map[string]int64{}
+		predicatePass := map[string]int64{}
+		predicateFail := map[string]int64{}
+		columnMismatches := 0
+		for _, e := range events {
+			switch e.Type {
+			case jd.EventRowFlow:
+				if !e.Entering {
+					operatorRows[e.Op]++
+				}
+			case jd.EventPredicate:
+				if e.Passed {
+					predicatePass[e.Op]++
+				} else {
+					predicateFail[e.Op]++
+				}
+			case jd.EventColumnOffset:
+				if e.ExpectedCols != e.ActualCols {
+					columnMismatches++
+				}
+			}
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "=== Join Debug Summary ===\n")
+		fmt.Fprintf(&b, "Rows per operator:\n")
+		for op, rows := range operatorRows {
+			fmt.Fprintf(&b, "  %s: %d\n", op, rows)
+		}
+		fmt.Fprintf(&b, "Predicate results:\n")
+		for op := range predicatePass {
+			fmt.Fprintf(&b, "  %s: %d pass, %d fail\n", op, predicatePass[op], predicateFail[op])
+		}
+		fmt.Fprintf(&b, "Column offset mismatches: %d\n", columnMismatches)
+		return b.String(), nil
 	default:
 		return "", fmt.Errorf("unknown debug pragma: %s", pragma)
 	}

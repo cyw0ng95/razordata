@@ -95,6 +95,7 @@ type Filter struct {
 	batchEmit     []Row
 	batchEmitPos  int
 	batchRefilled bool
+	rowID         uint64 // debug: tracks rows through filter
 }
 
 // Child returns the filter's child operator. Used by
@@ -199,7 +200,9 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
-		if DT.IsValueTruthy(v) {
+passed := DT.IsValueTruthy(v)
+		f.rowID++
+		if passed {
 			return f.curRow, nil
 		}
 	}
@@ -466,6 +469,8 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 		}
 		out.Data[i] = v.(Value)
 	}
+	// Debug: validate column count matches expectation
+	projectDebugOffset("Project", len(p.cols), len(out.Data), "")
 	return out, nil
 }
 

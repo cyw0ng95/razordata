@@ -94,8 +94,76 @@ func Dispatch(line string) string {
 			fmt.Fprintf(&b, "%s\n", e.String())
 		}
 		return b.String()
+	case "debug_join_filter":
+		if len(parts) < 2 {
+			return "usage: debug_join_filter <operator>"
+		}
+		tr := jd.GetJoinTracer()
+		if tr == nil {
+			return "no active join tracer"
+		}
+		buffered, ok := tr.(*jd.BufferedTracer)
+		if !ok {
+			return "tracer does not support filter"
+		}
+		events := buffered.Flush()
+		filterOp := parts[1]
+		var b strings.Builder
+		count := 0
+		for _, e := range events {
+			if strings.EqualFold(e.Op, filterOp) {
+				fmt.Fprintf(&b, "%s\n", e.String())
+				count++
+			}
+		}
+		fmt.Fprintf(&b, "--- %d events matching %s ---\n", count, filterOp)
+		return b.String()
+	case "debug_join_summary":
+		tr := jd.GetJoinTracer()
+		if tr == nil {
+			return "no active join tracer"
+		}
+		buffered, ok := tr.(*jd.BufferedTracer)
+		if !ok {
+			return "tracer does not support summary"
+		}
+		events := buffered.Flush()
+		operatorRows := map[string]int64{}
+		predicatePass := map[string]int64{}
+		predicateFail := map[string]int64{}
+		columnMismatches := 0
+		for _, e := range events {
+			switch e.Type {
+			case jd.EventRowFlow:
+				if !e.Entering {
+					operatorRows[e.Op]++
+				}
+			case jd.EventPredicate:
+				if e.Passed {
+					predicatePass[e.Op]++
+				} else {
+					predicateFail[e.Op]++
+				}
+			case jd.EventColumnOffset:
+				if e.ExpectedCols != e.ActualCols {
+					columnMismatches++
+				}
+			}
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "=== Join Debug Summary ===\n")
+		fmt.Fprintf(&b, "Rows per operator:\n")
+		for op, rows := range operatorRows {
+			fmt.Fprintf(&b, "  %s: %d\n", op, rows)
+		}
+		fmt.Fprintf(&b, "Predicate results:\n")
+		for op := range predicatePass {
+			fmt.Fprintf(&b, "  %s: %d pass, %d fail\n", op, predicatePass[op], predicateFail[op])
+		}
+		fmt.Fprintf(&b, "Column offset mismatches: %d\n", columnMismatches)
+		return b.String()
 	case "help":
-		return "commands: heap, cpu N, goroutine, stats, gc, debug_join on|off|summary|detailed|full, debug_join_flush, help"
+		return "commands: heap, cpu N, goroutine, stats, gc, debug_join on|off|summary|detailed|full, debug_join_flush, debug_join_filter <op>, debug_join_summary, help"
 	default:
 		return fmt.Sprintf("ERROR unknown command: %s", cmd)
 	}
