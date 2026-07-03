@@ -2,7 +2,6 @@
 
 package hk
 
-func init() {
-	// DefaultSink and DefaultMetricSink are swapped by DBG init() at startup.
-	// This file exists so that the debug build compiles the real DBG packages.
-}
+// This file is intentionally empty when built with the debug tag.
+// Global swapping (DefaultSink, DefaultMetricSink) is done by DBG/dbg.go
+// at startup to avoid import cycles (LOG/HK → DBG/CT → LOG/HK).
