@@ -124,7 +124,7 @@ var nullHandlingCases = []dualCase{
 		},
 		Query: "SELECT * FROM t929 WHERE col1 NOT BETWEEN NULL AND -col1",
 		Want:  [][]any{},
-	},
+},
 	{
 		Name: "cast_null_decimal",
 		Setup: []string{
@@ -187,15 +187,6 @@ var nullHandlingCases = []dualCase{
 		},
 		Query: "SELECT col0 FROM t913 WHERE ((col1 < 71.25)) OR (col3 IN (53,42,27,44) OR (col3 IS NULL)) AND (col0 >= 42)",
 		Want:  [][]any{{int64(1)}, {int64(3)}},
-	},
-	{
-		Name: "sum_distinct_text_negation",
-		Setup: []string{
-			"CREATE TABLE t918 (id INTEGER PRIMARY KEY, col2 TEXT)",
-			"INSERT INTO t918 VALUES (1, 'a'), (2, 'b'), (3, 'a')",
-		},
-		Query: "SELECT SUM(DISTINCT -col2) FROM t918",
-		Want:  [][]any{{nil}},
 	},
 }
 

@@ -162,3 +162,74 @@ func TestQualifiedName_OuterChain(t *testing.T) {
 		t.Errorf("x.b < t1.b: got %v, want FALSE", v)
 	}
 }
+
+// REQ001182: NOT BETWEEN NULL AND expr — three-valued NULL AND FALSE = FALSE.
+func TestNotBetween_NullPropagation(t *testing.T) {
+	row := &Row{Data: []Value{DT.NewIntValue(1)}, Cols: []string{"col1"}}
+	// col1 NOT BETWEEN NULL AND -col1
+	// = NOT(col1 BETWEEN NULL AND -col1)
+	// col1 BETWEEN NULL AND -col1: col1 >= NULL is NULL, col1 <= -col1 is FALSE
+	// NULL AND FALSE = FALSE, so BETWEEN = FALSE, NOT FALSE = TRUE
+	// Therefore the row should NOT be filtered out.
+	nb := &PS.UnaryExpr{
+		Op: LX.T_NOT,
+		Operand: &PS.BetweenExpr{
+			Expr: &PS.Ident{Name: "col1"},
+			Low:  &PS.NullLiteral{},
+			High: &PS.UnaryExpr{Op: LX.T_MINUS, Operand: &PS.Ident{Name: "col1"}},
+		},
+	}
+	v, err := EvalValue(nb, row, nil)
+	if err != nil {
+		t.Fatalf("NOT BETWEEN: %v", err)
+	}
+	if v.Kind != KindBool || !v.Bo {
+		t.Errorf("NOT BETWEEN NULL AND -col1 for col1=1: got %v, want TRUE", v)
+	}
+
+	// col1 BETWEEN 0 AND NULL: col1 >= 0 is TRUE, col1 <= NULL is NULL
+	// TRUE AND NULL = NULL — verify BETWEEN with only ONE NULL produces NULL.
+	b := &PS.BetweenExpr{
+		Expr: &PS.Ident{Name: "col1"},
+		Low:  &PS.NumberLiteral{Val: 0},
+		High: &PS.NullLiteral{},
+	}
+	v, err = EvalValue(b, row, nil)
+	if err != nil {
+		t.Fatalf("BETWEEN 0 AND NULL: %v", err)
+	}
+	if v.Kind != KindNull {
+		t.Errorf("BETWEEN 0 AND NULL for col1=1: got %v, want NULL", v)
+	}
+
+	// col1 BETWEEN NULL AND 10: col1 >= NULL is NULL, col1 <= 10 is TRUE
+	// NULL AND TRUE = NULL — verify both-non-FALSE with one NULL yields NULL.
+	b2 := &PS.BetweenExpr{
+		Expr: &PS.Ident{Name: "col1"},
+		Low:  &PS.NullLiteral{},
+		High: &PS.NumberLiteral{Val: 10},
+	}
+	v, err = EvalValue(b2, row, nil)
+	if err != nil {
+		t.Fatalf("BETWEEN NULL AND 10: %v", err)
+	}
+	if v.Kind != KindNull {
+		t.Errorf("BETWEEN NULL AND 10 for col1=1: got %v, want NULL", v)
+	}
+}
+
+// REQ001183: unary minus on TEXT returns NULL.
+func TestUnaryMinus_TextReturnsNull(t *testing.T) {
+	row := &Row{Data: []Value{DT.NewTextValue("a")}, Cols: []string{"col2"}}
+	um := &PS.UnaryExpr{
+		Op:      LX.T_MINUS,
+		Operand: &PS.Ident{Name: "col2"},
+	}
+	v, err := EvalValue(um, row, nil)
+	if err != nil {
+		t.Fatalf("unary minus on TEXT: %v", err)
+	}
+	if v.Kind != KindNull {
+		t.Errorf("unary minus on TEXT: got %v, want NULL", v)
+	}
+}

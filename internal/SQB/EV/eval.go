@@ -461,12 +461,28 @@ func evalBetween(e *PS.BetweenExpr, row *Row, params []any) (Value, error) {
 	if err != nil {
 		return DT.NullValue(), err
 	}
-	if expr.Kind == KindNull || low.Kind == KindNull || high.Kind == KindNull {
-		return DT.NullValue(), nil
+	// Three-valued logic for BETWEEN: x BETWEEN y AND z = x >= y AND x <= z.
+	// NULL AND FALSE = FALSE; NULL AND TRUE = NULL; TRUE AND TRUE = TRUE.
+	var lowOk, highOk bool
+	var lowGE, highLE bool
+	if expr.Kind != KindNull && low.Kind != KindNull {
+		lowOk = true
+		lowGE = PL.CompareValue(expr, low) >= 0
 	}
-	cmpLow := PL.CompareValue(expr, low)
-	cmpHigh := PL.CompareValue(expr, high)
-	return DT.NewBoolValue(cmpLow >= 0 && cmpHigh <= 0), nil
+	if expr.Kind != KindNull && high.Kind != KindNull {
+		highOk = true
+		highLE = PL.CompareValue(expr, high) <= 0
+	}
+	if lowOk && !lowGE {
+		return DT.NewBoolValue(false), nil
+	}
+	if highOk && !highLE {
+		return DT.NewBoolValue(false), nil
+	}
+	if lowOk && highOk {
+		return DT.NewBoolValue(true), nil
+	}
+	return DT.NullValue(), nil
 }
 
 

@@ -66,6 +66,18 @@ var razorOnlyCases = []dualCase{
 		// 3 * 2 = 6 rows (t2.b > 15: 20, 30)
 		Want: [][]any{{int64(1)}, {int64(1)}, {int64(2)}, {int64(2)}, {int64(3)}, {int64(3)}},
 	},
+	// sum_distinct_text_negation: SQLite coerces TEXT 'a' to 0 for
+	// arithmetic, returning 0. Razor correctly returns NULL (unary
+	// minus on TEXT is a type mismatch). Cannot be verified by oracle.
+	{
+		Name: "sum_distinct_text_negation",
+		Setup: []string{
+			"CREATE TABLE t918 (id INTEGER PRIMARY KEY, col2 TEXT)",
+			"INSERT INTO t918 VALUES (1, 'a'), (2, 'b'), (3, 'a')",
+		},
+		Query: "SELECT SUM(DISTINCT -col2) FROM t918",
+		Want:  [][]any{{nil}},
+	},
 }
 
 func TestRazorOnly_AllCases(t *testing.T) {
