@@ -187,6 +187,33 @@ cd tests/sqlcmp && RAZOR_SLT_ROOT=../corpus/test \
 
 The runner reports pass/fail per file. Logged `first failure context` in the verbose output shows the first 5 failing records and their diagnostics. A test always passes even when records fail — the pass/fail counts are informational until a threshold is enforced.
 
+## Debugging
+
+See `docs/development/DEBUG.md` for the comprehensive debug manual covering:
+- Building with `-tags debug`
+- Runtime PRAGMA commands for log levels, trace classes, and JOIN debugging
+- Socket-based debugging via `razor debug <dbdir> <command>`
+- JOIN debugging workflow (enable → run query → flush → analyze)
+- Verbosity levels and performance considerations
+
+**Quick reference for JOIN debugging:**
+```bash
+# Build with debug tag
+go build -tags debug ./cmd/razor
+
+# Enable join tracing (via PRAGMA)
+PRAGMA debug_join_tracing = detailed;
+
+# Run problematic query
+SELECT ... FROM t1, t2, t3 WHERE ...;
+
+# Flush and examine events
+PRAGMA debug_join_flush;
+
+# Disable when done
+PRAGMA debug_join_tracing = off;
+```
+
 ## Design Protection
 
 All files under `docs/design/` are the authoritative source of truth for the database. They define the formal subsystem/function-cluster system, architecture, data structures, and implementation plans.
