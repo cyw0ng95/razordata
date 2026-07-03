@@ -1321,6 +1321,10 @@ func hasAggFunc(expr PS.Expr) bool {
 func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 	switch s := stmt.(type) {
 	case *PS.Insert:
+		// REQ001191: DML on views is not allowed.
+		if DT.LookupView(s.Table) != nil {
+			return nil, fmt.Errorf("ex: cannot modify view %s", s.Table)
+		}
 		// REQ000707: INSERT INTO t SELECT ...
 		if s.Select != nil {
 			selPlan, err := e.planner.Plan(s.Select)
@@ -1363,14 +1367,10 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 	case *PS.Update:
 		targetTable := s.Table
 		if viewSel := DT.LookupView(targetTable); viewSel != nil {
-			// REQ001061: DML on non-updatable views is not allowed.
-			// A view is updatable only if it's a simple single-table
-			// select without aggregation, DISTINCT, GROUP BY, HAVING,
-			// ORDER BY, LIMIT, or subqueries.
-			if !isUpdatableView(viewSel) {
-				return nil, fmt.Errorf("ex: cannot modify view %s", targetTable)
-			}
-			targetTable = viewSel.From
+			// REQ001191: DML on views is not allowed (views are
+			// read-only in SQLite unless they have INSTEAD OF triggers,
+			// which we don't support yet).
+			return nil, fmt.Errorf("ex: cannot modify view %s", targetTable)
 		}
 		var scan DT.Operator = OP.NewSeqScan(targetTable)
 		if e.store != nil {
@@ -1421,11 +1421,9 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 	case *PS.Delete:
 		tableName := s.Table
 		if viewSel := DT.LookupView(tableName); viewSel != nil {
-			// REQ001061: DML on non-updatable views is not allowed.
-			if !isUpdatableView(viewSel) {
-				return nil, fmt.Errorf("ex: cannot modify view %s", tableName)
-			}
-			tableName = viewSel.From
+			// REQ001191: DML on views is not allowed (views are
+			// read-only in SQLite unless they have INSTEAD OF triggers).
+			return nil, fmt.Errorf("ex: cannot modify view %s", tableName)
 		}
 		var scan DT.Operator = OP.NewSeqScan(tableName)
 		if e.store != nil {
