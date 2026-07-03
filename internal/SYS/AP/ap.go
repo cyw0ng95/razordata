@@ -32,6 +32,13 @@ type Options struct {
 	MaxMemoryPerQuery  int64         // REQ001056: per-query memory cap, 0 = unlimited
 	JoinBufferSize     int64         // REQ001056: per-hash-join memory cap, 0 = unlimited
 	MaxResultRows      int64         // REQ001056: per-query result row cap, 0 = unlimited
+
+	// Debug options — parsed but only acted on with -tags debug.
+	DebugDir           string
+	EnableDebugSocket  bool
+	EnableDebugSignals bool
+	TraceEventCapacity int
+	SlowQueryThreshold time.Duration
 }
 
 const (

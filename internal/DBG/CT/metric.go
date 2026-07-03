@@ -4,6 +4,7 @@ package ct
 
 import (
 	"expvar"
+	"sync"
 	"time"
 
 	"github.com/cyw0ng95/razordata/internal/LOG/HK"
@@ -17,11 +18,15 @@ var histograms = map[string]*LatencyHist{
 	"compaction_latency": {},
 }
 
+var expvarOnce sync.Once
+
 type hook struct{}
 
 // NewMetricHook returns a MetricSink backed by GlobalStats + expvar.
 func NewMetricHook() hk.MetricSink {
-	expvar.Publish("razordata", &GlobalStats)
+	expvarOnce.Do(func() {
+		expvar.Publish("razordata", &GlobalStats)
+	})
 	return &hook{}
 }
 

@@ -41,6 +41,7 @@ type Engine struct {
 	txn     *vl.Manager
 	exe     *executor.Executor
 	catalog *ls.Catalog
+	debugger interface{} // core.Debugger when debug tag active, nil otherwise
 
 	mu           sync.Mutex
 	closed       atomic.Bool
@@ -180,6 +181,7 @@ func (e *Engine) open(ctx context.Context) (err error) {
 	if err := e.openCatalog(); err != nil {
 		return err
 	}
+	e.initDebugger()
 	e.started = time.Now()
 	e.opened.Store(true)
 	success = true
