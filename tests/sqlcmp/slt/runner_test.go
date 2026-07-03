@@ -4,6 +4,7 @@ package slt
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -206,6 +207,75 @@ func (c *countingDriver) Close(_ context.Context) error          { return nil }
 func (c *countingDriver) Exec(_ context.Context, _ string) error { return nil }
 func (c *countingDriver) Query(ctx context.Context, sql string) (*ResultSet, error) {
 	return c.queryFn(ctx, sql)
+}
+
+// TestRunner_SplitRange verifies RAZOR_SLT_RANGE gating.
+func TestRunner_SplitRange(t *testing.T) {
+	// Build 5 query records, each expecting different values.
+	script := `query I
+SELECT 1
+----
+1
+
+query I
+SELECT 2
+----
+2
+
+query I
+SELECT 3
+----
+3
+
+query I
+SELECT 4
+----
+4
+
+query I
+SELECT 5
+----
+5
+`
+	// mockDriver that returns results matching SELECT N queries.
+	queryResult := func(ctx context.Context, sql string) (*ResultSet, error) {
+		var val int64
+		_, _ = fmt.Sscanf(sql, "SELECT %d", &val)
+		return &ResultSet{Rows: [][]Value{{Value{Kind: TypeInteger, Int: val}}}}, nil
+	}
+
+	tests := []struct {
+		name     string
+		env      string
+		wantPass int
+		wantSkip int
+		wantFail int
+	}{
+		{"no range", "", 5, 0, 0},
+		{"range 2:4", "2:4", 3, 1, 0},
+		{"range 1:1", "1:1", 1, 0, 0},
+		{"range 5:5", "5:5", 1, 4, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.env != "" {
+				t.Setenv("RAZOR_SLT_RANGE", tt.env)
+			}
+				d := &countingDriver{queryFn: queryResult}
+			r := NewRunner(d, nil, "")
+			recs, _ := Parse(strings.NewReader(script))
+			stats := r.Run(context.Background(), recs)
+			if stats.Passed != tt.wantPass {
+				t.Errorf("passed: got %d, want %d", stats.Passed, tt.wantPass)
+			}
+			if stats.Skipped != tt.wantSkip {
+				t.Errorf("skipped: got %d, want %d", stats.Skipped, tt.wantSkip)
+			}
+			if stats.Failed != tt.wantFail {
+				t.Errorf("failed: got %d, want %d", stats.Failed, tt.wantFail)
+			}
+		})
+	}
 }
 
 type fixedClassifier struct{ verdict Verdict }

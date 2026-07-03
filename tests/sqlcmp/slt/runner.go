@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -62,6 +63,17 @@ type Runner struct {
 	// haltOnFailure is set when FailFast is true and a record fails.
 	// Subsequent records are skipped (fast-fail on first failure).
 	haltOnFailure bool
+
+	// splitStart/splitEnd gate executable records to a 1-indexed
+	// inclusive range [splitStart, splitEnd]. Parsed from
+	// RAZOR_SLT_RANGE="start:end". Non-executable records
+	// (skipif, onlyif, hash-threshold) are always processed to
+	// maintain correct state. Halt before the split range is
+	// skipped. When splitStart and splitEnd are both 0, splitting
+	// is disabled and all records run normally.
+	splitStart int
+	splitEnd   int
+	execCount  int // counts executed executable records within range
 }
 
 // NewRunner constructs a runner bound to a driver. The classifier
@@ -78,6 +90,18 @@ func NewRunner(driver Driver, classifier Classifier, engineName string) *Runner 
 	if v := os.Getenv("RAZOR_SLT_PROFILE"); v == "1" || strings.EqualFold(v, "true") {
 		profileOn = true
 	}
+	splitStart, splitEnd := 0, 0
+	if v := os.Getenv("RAZOR_SLT_RANGE"); v != "" {
+		parts := strings.SplitN(v, ":", 2)
+		if len(parts) == 2 {
+			if a, err := strconv.Atoi(parts[0]); err == nil {
+				splitStart = a
+			}
+			if b, err := strconv.Atoi(parts[1]); err == nil {
+				splitEnd = b
+			}
+		}
+	}
 	return &Runner{
 		driver:        driver,
 		classifier:    classifier,
@@ -86,6 +110,8 @@ func NewRunner(driver Driver, classifier Classifier, engineName string) *Runner 
 		hashThreshold: 0,
 		profileOn:     profileOn,
 		FailFast:      os.Getenv("RAZOR_SLT_FAILFAST") == "1",
+		splitStart:    splitStart,
+		splitEnd:      splitEnd,
 	}
 }
 
@@ -126,6 +152,27 @@ func (r *Runner) Run(ctx context.Context, records []Record) Stats {
 			// and do not let it cascade (a gated skipif must
 			// not set the next pendingSkip).
 			continue
+		}
+		// REQ001xxx: RAZOR_SLT_RANGE gating. Only executable records
+		// within [splitStart, splitEnd] are executed. Non-executable
+		// records (skipif, onlyif, hash-threshold) are always
+		// processed to maintain correct state. Halt before the split
+		// range is skipped.
+		if r.splitStart > 0 || r.splitEnd > 0 {
+			if isExecutable(rec.Kind) {
+				r.execCount++
+				if r.splitStart > 0 && r.execCount < r.splitStart {
+					r.stats.Skipped++
+					continue
+				}
+				if r.splitEnd > 0 && r.execCount > r.splitEnd {
+					return r.finalize()
+				}
+			} else if rec.Kind == RecordHalt {
+				if r.splitStart > 0 && r.execCount < r.splitStart {
+					continue // skip halt before range
+				}
+			}
 		}
 		// REQ000840: record wall-clock time for each record when profiling.
 		var recStart time.Time

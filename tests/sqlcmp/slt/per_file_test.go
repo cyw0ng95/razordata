@@ -15,7 +15,8 @@ import (
 // and runs each as an isolated subtest with its own engine. This is
 // the primary ergonomic entry point for SLT development:
 //
-//	Run all files:
+// Run all files:
+//
 //	    go test -v -run TestSLT_PerFile ./tests/sqlcmp/slt/...
 //
 //	Run one file:
@@ -24,13 +25,17 @@ import (
 //	Run files matching a pattern:
 //	    go test -v -run 'TestSLT_PerFile/evidence' ./tests/sqlcmp/slt/...
 //
-// Override corpus location:
+//	Override corpus location:
 //
-//	RAZOR_SLT_ROOT=/path/to/corpus/test go test -v -run TestSLT_PerFile ./tests/sqlcmp/slt/...
+//		RAZOR_SLT_ROOT=/path/to/corpus/test go test -v -run TestSLT_PerFile ./tests/sqlcmp/slt/...
 //
-// Short mode skips the full corpus scan:
+//	Run a range of executable records within a single file (1-indexed):
 //
-//	go test -short -run TestSLT_PerFile ./tests/sqlcmp/slt/...
+//		RAZOR_SLT_RANGE=100:200 go test -v -run 'TestSLT_PerFile/select4' ./tests/sqlcmp/slt/...
+//
+//	Short mode skips the full corpus scan:
+//
+//		go test -short -run TestSLT_PerFile ./tests/sqlcmp/slt/...
 func TestSLT_PerFile(t *testing.T) {
 	if testing.Short() {
 		t.Skip("slt: skipping per-file corpus in short mode")

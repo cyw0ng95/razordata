@@ -50,6 +50,13 @@ func NewDistinct(child pl.Operator) *Distinct {
 
 func (d *Distinct) Next(ctx context.Context) (pl.Row, error) {
 	if d.buf == nil {
+		// Re-initialize seen map if it was cleared by Close().
+		// REQ001xxx: Close() sets d.seen = nil, but the operator
+		// may be reused after Close() (e.g., via adaptive exec).
+		// Without this, d.seen[key] = true panics on nil map.
+		if d.seen == nil {
+			d.seen = make(map[string]bool)
+		}
 		for {
 			row, err := d.child.Next(ctx)
 			if err != nil {
