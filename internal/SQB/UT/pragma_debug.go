@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	jd "github.com/cyw0ng95/razordata/internal/DBG/JD"
 	"github.com/cyw0ng95/razordata/internal/DBG/CT"
 	"github.com/cyw0ng95/razordata/internal/DBG/IN"
 )
@@ -44,6 +45,45 @@ func HandleDebugPragma(pragma string, args []string) (string, error) {
 		var b strings.Builder
 		for k, v := range snap {
 			fmt.Fprintf(&b, "%s: %d\n", k, v)
+		}
+		return b.String(), nil
+	case "debug_join_tracing":
+		if len(args) == 0 {
+			return fmt.Sprintf("debug_join_tracing verbosity=%d", jd.GetVerbosity()), nil
+		}
+		switch strings.ToLower(args[0]) {
+		case "off", "0":
+			jd.SetJoinTracer(nil)
+			jd.SetVerbosity(jd.LevelOff)
+			return "OK debug_join_tracing disabled", nil
+		case "summary", "1":
+			jd.SetJoinTracer(jd.NewBufferedTracer(4096, jd.LevelSummary))
+			jd.SetVerbosity(jd.LevelSummary)
+			return "OK debug_join_tracing level=summary", nil
+		case "detailed", "2":
+			jd.SetJoinTracer(jd.NewBufferedTracer(4096, jd.LevelDetailed))
+			jd.SetVerbosity(jd.LevelDetailed)
+			return "OK debug_join_tracing level=detailed", nil
+		case "full", "3":
+			jd.SetJoinTracer(jd.NewBufferedTracer(4096, jd.LevelFull))
+			jd.SetVerbosity(jd.LevelFull)
+			return "OK debug_join_tracing level=full", nil
+		default:
+			return "", fmt.Errorf("unknown verbosity level: %s", args[0])
+		}
+	case "debug_join_flush":
+		tr := jd.GetJoinTracer()
+		if tr == nil {
+			return "no active join tracer", nil
+		}
+		buffered, ok := tr.(*jd.BufferedTracer)
+		if !ok {
+			return "tracer does not support flush", nil
+		}
+		events := buffered.Flush()
+		var b strings.Builder
+		for _, e := range events {
+			fmt.Fprintf(&b, "%s\n", e.String())
 		}
 		return b.String(), nil
 	default:

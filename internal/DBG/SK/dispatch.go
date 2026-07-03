@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	jd "github.com/cyw0ng95/razordata/internal/DBG/JD"
 	"github.com/cyw0ng95/razordata/internal/DBG/CT"
 	"github.com/cyw0ng95/razordata/internal/DBG/PR"
 )
@@ -53,8 +54,48 @@ func Dispatch(line string) string {
 	case "gc":
 		runtime.GC()
 		return "OK gc performed"
+	case "debug_join":
+		if len(parts) < 2 {
+			return "usage: debug_join on|off|summary|detailed|full"
+		}
+		level := strings.ToLower(parts[1])
+		switch level {
+		case "off":
+			jd.SetJoinTracer(nil)
+			jd.SetVerbosity(jd.LevelOff)
+			return "OK debug_join tracing disabled"
+		case "on", "summary":
+			jd.SetJoinTracer(jd.NewBufferedTracer(4096, jd.LevelSummary))
+			jd.SetVerbosity(jd.LevelSummary)
+			return "OK debug_join level=summary"
+		case "detailed":
+			jd.SetJoinTracer(jd.NewBufferedTracer(4096, jd.LevelDetailed))
+			jd.SetVerbosity(jd.LevelDetailed)
+			return "OK debug_join level=detailed"
+		case "full":
+			jd.SetJoinTracer(jd.NewBufferedTracer(4096, jd.LevelFull))
+			jd.SetVerbosity(jd.LevelFull)
+			return "OK debug_join level=full"
+		default:
+			return fmt.Sprintf("ERROR unknown level: %s", level)
+		}
+	case "debug_join_flush":
+		tr := jd.GetJoinTracer()
+		if tr == nil {
+			return "no active join tracer"
+		}
+		buffered, ok := tr.(*jd.BufferedTracer)
+		if !ok {
+			return "tracer does not support flush"
+		}
+		events := buffered.Flush()
+		var b strings.Builder
+		for _, e := range events {
+			fmt.Fprintf(&b, "%s\n", e.String())
+		}
+		return b.String()
 	case "help":
-		return "commands: heap, cpu N, goroutine, stats, gc, help"
+		return "commands: heap, cpu N, goroutine, stats, gc, debug_join on|off|summary|detailed|full, debug_join_flush, help"
 	default:
 		return fmt.Sprintf("ERROR unknown command: %s", cmd)
 	}
