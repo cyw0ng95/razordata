@@ -176,11 +176,16 @@ func TestREQ641_DeleteFromView(t *testing.T) {
 		t.Fatalf("view has %v rows, want 3", rows[0].Data[0])
 	}
 
-	mustExec(t, ex, ctx, `DELETE FROM v_test WHERE id = 1`)
+	// REQ001191: DELETE on views is not allowed (views are read-only).
+	_, err := ex.Exec(ctx, `DELETE FROM v_test WHERE id = 1`)
+	if err == nil {
+		t.Fatal("DELETE on view should fail")
+	}
 
+	// Base table should be unchanged.
 	rows = mustQueryAll(t, ex, ctx, `SELECT count(*) FROM t_base`)
-	if !rows[0].Data[0].Equal(NewIntValue(int64(2))) {
-		t.Fatalf("base has %v rows after delete, want 2", rows[0].Data[0])
+	if !rows[0].Data[0].Equal(NewIntValue(int64(3))) {
+		t.Fatalf("base has %v rows after failed delete, want 3", rows[0].Data[0])
 	}
 }
 

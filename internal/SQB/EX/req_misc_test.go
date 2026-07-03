@@ -126,8 +126,10 @@ func TestREQ001061_DMLOnView(t *testing.T) {
 	}{
 		{"UPDATE agg view", "UPDATE v_agg SET val='x'", true},
 		{"DELETE from agg view", "DELETE FROM v_agg", true},
-		{"UPDATE simple view", "UPDATE v_simple SET val='x'", false},
-		{"DELETE from simple view", "DELETE FROM v_simple", false},
+		// REQ001191: ALL views are read-only (SQLite semantics).
+		// Simple views without INSTEAD OF triggers cannot be modified.
+		{"UPDATE simple view", "UPDATE v_simple SET val='x'", true},
+		{"DELETE from simple view", "DELETE FROM v_simple", true},
 		{"UPDATE table", "UPDATE t SET val='x'", false},
 		{"DELETE from table", "DELETE FROM t", false},
 	}
