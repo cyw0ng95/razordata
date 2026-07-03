@@ -4044,7 +4044,10 @@ func recCTESelectRefs(s *PS.Select, name string) bool {
 // REQ000787: now uses TableStats from the catalog when available.
 func (p *Planner) estimateRowCount(table string, where PS.Expr) int {
 	// REQ000780: return actual row count for in-memory tables.
-	if rows, ok := DT.Tables[table]; ok {
+	// REQ001192: skip 0-row entries — CREATE TABLE registers an empty
+	// slice in DT.Tables, but actual data lives in the LSM store.
+	// Returning 0 causes the planner to emit plans that produce no rows.
+	if rows, ok := DT.Tables[table]; ok && len(rows) > 0 {
 		return len(rows)
 	}
 	// REQ000787: use statistics-driven estimate from catalog.
@@ -4060,7 +4063,8 @@ func (p *Planner) estimateRowCount(table string, where PS.Expr) int {
 // Uses the global in-memory tables map first, then falls back to
 // the statistics catalog, and finally to a default of 100.
 func (p *Planner) getTableRowCount(table string) float64 {
-	if rows, ok := DT.Tables[table]; ok {
+	// REQ001192: skip 0-row entries — same as estimateRowCount.
+	if rows, ok := DT.Tables[table]; ok && len(rows) > 0 {
 		return float64(len(rows))
 	}
 	if cat := DT.Catalog(); cat != nil {
@@ -5040,6 +5044,56 @@ func (p *Planner) joinResultRows(leftRows, rightRows float64, predicates []PS.Ex
 	return result
 }
 
+// isConnectedGraph checks if all tables in joinOrder form a single
+// connected component via equi-join predicates. REQ001192.
+func isConnectedGraph(joinOrder []string, crossTablePredicates []PS.Expr) bool {
+	if len(joinOrder) <= 1 {
+		return true
+	}
+	// Build adjacency from equi-join predicates.
+	adj := map[string]map[string]bool{}
+	for _, pred := range crossTablePredicates {
+		bin, ok := pred.(*PS.BinaryExpr)
+		if !ok || bin.Op != LX.T_EQ {
+			continue
+		}
+		lTable, _ := extractTableColumn(bin.Left)
+		rTable, _ := extractTableColumn(bin.Right)
+		if lTable == "" || rTable == "" || lTable == rTable {
+			continue
+		}
+		if adj[lTable] == nil {
+			adj[lTable] = map[string]bool{}
+		}
+		adj[lTable][rTable] = true
+		if adj[rTable] == nil {
+			adj[rTable] = map[string]bool{}
+		}
+		adj[rTable][lTable] = true
+	}
+	// BFS from first table to check connectivity.
+	visited := map[string]bool{}
+	queue := []string{joinOrder[0]}
+	visited[joinOrder[0]] = true
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for nb := range adj[cur] {
+			if !visited[nb] {
+				visited[nb] = true
+				queue = append(queue, nb)
+			}
+		}
+	}
+	// All tables in joinOrder must be reachable.
+	for _, tbl := range joinOrder {
+		if !visited[tbl] {
+			return false
+		}
+	}
+	return true
+}
+
 // groupBushyJoins detects independent equi-join pairs in the join
 // order and groups them for bushy plan execution. A pair of tables
 // is "independent" when their equi-join keys share no columns.
@@ -5050,6 +5104,17 @@ func groupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates 
 		// 2-3 tables: left-deep is fine, no bushy benefit.
 		return [][]string{joinOrder}
 	}
+
+	// REQ001192: detect connected equi-join graphs. If all tables
+	// form a single connected component via equi-join predicates,
+	// bushy grouping may split the chain incorrectly — the merge
+	// phase can't find cross-group equi-join keys. Return a single
+	// left-deep group for connected graphs.
+	if isConnectedGraph(joinOrder, crossTablePredicates) {
+		return [][]string{joinOrder}
+	}
+
+	// Extract equi-join column sets for each consecutive pair in the order.
 
 	// Extract equi-join column sets for each consecutive pair in the order.
 	type pairKey struct {
