@@ -71,3 +71,47 @@ func TestIsEnabled(t *testing.T) {
 		t.Fatal("should be enabled when tracer is set and verbosity > 0")
 	}
 }
+
+func TestBufferedTracer_RowFlow(t *testing.T) {
+	tr := NewBufferedTracer(64, LevelSummary)
+	tr.RowFlow("HashJoin", "t1", 1, true)
+	tr.RowFlow("HashJoin", "t1", 1, false)
+	events := tr.Flush()
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if events[0].Type != EventRowFlow || !events[0].Entering {
+		t.Errorf("unexpected first event: %+v", events[0])
+	}
+	if events[1].Entering {
+		t.Errorf("expected leaving event")
+	}
+}
+
+func TestBufferedTracer_Predicate(t *testing.T) {
+	tr := NewBufferedTracer(64, LevelDetailed)
+	tr.Predicate("HashJoin", "t1.id = t2.id", 1, 2, true)
+	tr.Predicate("HashJoin", "t1.val > 10", 1, 3, false)
+	events := tr.Flush()
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if !events[0].Passed {
+		t.Error("expected first predicate to pass")
+	}
+	if events[1].Passed {
+		t.Error("expected second predicate to fail")
+	}
+}
+
+func TestBufferedTracer_VerbosityFiltering(t *testing.T) {
+	tr := NewBufferedTracer(64, LevelOff)
+	tr.RowFlow("HashJoin", "t1", 1, true)
+	tr.Predicate("HashJoin", "expr", 1, 2, true)
+	tr.Strategy("HashJoin", "hash", "reason", 100)
+	tr.Correlation(1, []string{"t1"}, 10)
+	events := tr.Flush()
+	if len(events) != 0 {
+		t.Fatalf("expected 0 events at LevelOff, got %d", len(events))
+	}
+}

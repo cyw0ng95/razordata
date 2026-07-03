@@ -2,7 +2,10 @@
 
 package JD
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+	"time"
+)
 
 // Verbosity level constants.
 const (
@@ -60,4 +63,93 @@ func GetVerbosity() int {
 // IsEnabled returns true if a tracer is set and verbosity is above zero.
 func IsEnabled() bool {
 	return globalTracer != nil && verbosity.Load() > 0
+}
+
+// BufferedTracer captures join events into a ring buffer.
+type BufferedTracer struct {
+	buf       *Buffer
+	verbosity int
+}
+
+// NewBufferedTracer creates a tracer with the given capacity and verbosity.
+func NewBufferedTracer(capacity, verbosity int) *BufferedTracer {
+	return &BufferedTracer{buf: NewBuffer(capacity), verbosity: verbosity}
+}
+
+func (t *BufferedTracer) RowFlow(operator, table string, rowID uint64, entering bool) {
+	if t.verbosity < LevelSummary {
+		return
+	}
+	t.buf.Append(JoinEvent{
+		Type:     EventRowFlow,
+		Time:     time.Now(),
+		Op:       operator,
+		Table:    table,
+		RowID:    rowID,
+		Entering: entering,
+	})
+}
+
+func (t *BufferedTracer) Predicate(operator, expr string, leftRowID, rightRowID uint64, passed bool) {
+	if t.verbosity < LevelDetailed {
+		return
+	}
+	t.buf.Append(JoinEvent{
+		Type:       EventPredicate,
+		Time:       time.Now(),
+		Op:         operator,
+		Expr:       expr,
+		LeftRowID:  leftRowID,
+		RightRowID: rightRowID,
+		Passed:     passed,
+	})
+}
+
+func (t *BufferedTracer) ColumnOffset(operator string, expected, actual int, colName string) {
+	if t.verbosity < LevelDetailed {
+		return
+	}
+	t.buf.Append(JoinEvent{
+		Type:         EventColumnOffset,
+		Time:         time.Now(),
+		Op:           operator,
+		ExpectedCols: expected,
+		ActualCols:   actual,
+		ColName:      colName,
+	})
+}
+
+func (t *BufferedTracer) Strategy(operator, chosen, reason string, estimatedCost float64) {
+	if t.verbosity < LevelSummary {
+		return
+	}
+	t.buf.Append(JoinEvent{
+		Type:          EventStrategy,
+		Time:          time.Now(),
+		Op:            operator,
+		Chosen:        chosen,
+		Reason:        reason,
+		EstimatedCost: estimatedCost,
+	})
+}
+
+func (t *BufferedTracer) Correlation(stage int, tables []string, rowCount int64) {
+	if t.verbosity < LevelSummary {
+		return
+	}
+	t.buf.Append(JoinEvent{
+		Type:     EventCorrelation,
+		Time:     time.Now(),
+		Stage:    stage,
+		Tables:   tables,
+		RowCount: rowCount,
+	})
+}
+
+// Flush returns all buffered events.
+func (t *BufferedTracer) Flush() []JoinEvent { return t.buf.Flush() }
+
+// Stats returns buffer statistics.
+func (t *BufferedTracer) Stats() (cap int, used int64, dropped int64) {
+	return t.buf.Stats()
 }
