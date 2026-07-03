@@ -850,13 +850,15 @@ func evalCase(e *PS.CaseExpr, row *Row, params []any) (Value, error) {
 		if err != nil {
 			return DT.NullValue(), err
 		}
-		for _, w := range e.WhenList {
-			v, err := EvalValue(w.Cond, row, params)
-			if err != nil {
-				return DT.NullValue(), err
-			}
-			if PL.EqualValueValue(target, v) {
-				return EvalValue(w.Then, row, params)
+		if target.Kind != KindNull {
+			for _, w := range e.WhenList {
+				v, err := EvalValue(w.Cond, row, params)
+				if err != nil {
+					return DT.NullValue(), err
+				}
+				if PL.EqualValueValue(target, v) {
+					return EvalValue(w.Then, row, params)
+				}
 			}
 		}
 	} else {
