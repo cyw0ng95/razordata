@@ -198,3 +198,40 @@ func TestHashJoin_RightEmptyLeft(t *testing.T) {
 		t.Errorf("row 0 first cell NULL, expected a right-side value")
 	}
 }
+
+// REQ001190: Close() must reset all state fields so a reused HashJoin
+// starts clean. Verify by running a LEFT join (which sets leftMatched,
+// phase, etc.), closing, then checking fields are zero/nil.
+func TestHashJoin_CloseResetsState(t *testing.T) {
+	left := newMemOp([]pl.Row{kvr(1, 10), kvr(2, 20)})
+	right := newMemOp([]pl.Row{kvr(1, 100)})
+	hj := NewHashJoin(left, right, "l", "r", []string{"k"}, []string{"k"}, 0).WithKind(JoinKindLeft)
+	_ = collectHashJoin(t, hj)
+	// After Next() exhausts, phase should be 3 (done), leftMatched non-nil.
+	if hj.phase != 3 {
+		t.Fatalf("expected phase=3 after exhaustion, got %d", hj.phase)
+	}
+	if hj.leftMatched == nil {
+		t.Fatal("expected leftMatched non-nil after LEFT join")
+	}
+	hj.Close()
+	// After Close(), all state must be reset.
+	if hj.phase != 0 {
+		t.Errorf("phase not reset: got %d", hj.phase)
+	}
+	if hj.leftMatched != nil {
+		t.Error("leftMatched not reset to nil")
+	}
+	if hj.matchedRight != nil {
+		t.Error("matchedRight not reset to nil")
+	}
+	if hj.unmatchedLeftIdx != 0 {
+		t.Errorf("unmatchedLeftIdx not reset: got %d", hj.unmatchedLeftIdx)
+	}
+	if hj.unmatchedRightBucket != 0 {
+		t.Errorf("unmatchedRightBucket not reset: got %d", hj.unmatchedRightBucket)
+	}
+	if hj.unmatchedRightIdx != 0 {
+		t.Errorf("unmatchedRightIdx not reset: got %d", hj.unmatchedRightIdx)
+	}
+}

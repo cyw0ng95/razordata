@@ -347,12 +347,15 @@ func (j *HashJoin) Close() error {
 	j.sharedColIndex = nil
 	j.leftMatched = nil
 	j.matchedRight = nil
+	j.phase = 0
+	j.unmatchedLeftIdx = 0
+	j.unmatchedRightBucket = 0
+	j.unmatchedRightIdx = 0
 	if j.left != nil {
 		_ = j.left.Close()
 	}
-	if j.right != nil {
-		return j.right.Close()
-	}
+	// Note: j.right is already closed in buildAndProbe() after the
+	// build phase. Do not close it again here (double-close bug).
 	return nil
 }
 
