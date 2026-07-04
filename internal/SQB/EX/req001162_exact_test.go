@@ -1,3 +1,5 @@
+//go:build slt_corpus
+
 package EX
 
 import (
