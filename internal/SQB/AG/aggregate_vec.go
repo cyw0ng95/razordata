@@ -2,6 +2,7 @@ package AG
 
 import (
 	"context"
+	"fmt"
 
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -648,16 +649,16 @@ type aggPayload struct {
 }
 
 // VectorizedHashAggregate is a vectorized hash aggregate that
-// supports GROUP BY on a single int64 key column. It drains
+// supports GROUP BY on multiple int64 key columns. It drains
 // all child batches, builds a hash table, and returns one result
 // batch with group keys (if grouped) followed by aggregate columns.
 type VectorizedHashAggregate struct {
-	child    UT.BatchProducer
-	groupCol int // -1 = no GROUP BY (all rows in one group)
-	aggDefs  []AggDef
-	ht       *UT.HashTable
-	payloads []aggPayload
-	done     bool
+	child      UT.BatchProducer
+	groupCols  []int // column indices for GROUP BY (nil = no GROUP BY)
+	aggDefs    []AggDef
+	ht         *UT.HashTable
+	payloads   []aggPayload
+	done       bool
 }
 
 // hashInt64 computes a uint64 hash of an int64 key using
@@ -668,13 +669,13 @@ func hashInt64(x int64) uint64 {
 }
 
 // NewVectorizedHashAggregate creates a new vectorized hash aggregate.
-// groupCol is the column index for GROUP BY (-1 for no grouping).
+// groupCols are column indices for GROUP BY (nil for no grouping).
 // defs specifies the aggregate operations.
-func NewVectorizedHashAggregate(child UT.BatchProducer, groupCol int, defs []AggDef) *VectorizedHashAggregate {
+func NewVectorizedHashAggregate(child UT.BatchProducer, groupCols []int, defs []AggDef) *VectorizedHashAggregate {
 	return &VectorizedHashAggregate{
-		child:    child,
-		groupCol: groupCol,
-		aggDefs:  defs,
+		child:     child,
+		groupCols: groupCols,
+		aggDefs:   defs,
 	}
 }
 
@@ -688,7 +689,12 @@ func (a *VectorizedHashAggregate) NextBatch(ctx context.Context) (*UT.Batch, err
 		return nil, err
 	}
 
-	a.ht = UT.NewHashTable(64)
+	stride := len(a.groupCols)
+	if stride == 0 {
+		a.ht = UT.NewHashTable(64)
+	} else {
+		a.ht = UT.NewHashTableWithCols(64, stride)
+	}
 	a.payloads = make([]aggPayload, a.ht.Capacity)
 
 	// Drain child batches
@@ -715,7 +721,8 @@ func (a *VectorizedHashAggregate) processBatch(batch *UT.Batch) {
 		return
 	}
 
-	if a.groupCol < 0 {
+	stride := len(a.groupCols)
+	if stride == 0 {
 		// No GROUP BY: all rows accumulate at slot 0
 		for row := 0; row < n; row++ {
 			src := row
@@ -727,43 +734,63 @@ func (a *VectorizedHashAggregate) processBatch(batch *UT.Batch) {
 		return
 	}
 
-	// Grouped: extract keys and probe hash table
-	if a.groupCol >= len(batch.Cols) {
-		return
-	}
-	col := batch.Cols[a.groupCol]
-	if col.Data.Ints == nil {
-		return
-	}
+	// Multi-column GROUP BY: build flat-packed keys
+	keys := make([]int64, n*stride)
+	hashes := make([]uint64, n)
+	validRows := make([]int, 0, n) // src indices for valid (non-NULL) rows
 
-	// Build keys, hashes, and valid-row arrays for ProbeInt64.
-	// NULL keys are excluded from the probe.
-	keys := make([]int64, 0, n)
-	hashes := make([]uint64, 0, n)
-	sources := make([]int, 0, n)
 	for row := 0; row < n; row++ {
 		src := row
 		if batch.Sel != nil {
 			src = int(batch.Sel[row])
 		}
-		// Skip NULL keys
-		if col.Nulls != nil && src < len(col.Nulls) && col.Nulls[src] {
+		// Check for NULL in any group column
+		hasNull := false
+		for _, colIdx := range a.groupCols {
+			if colIdx >= len(batch.Cols) {
+				hasNull = true
+				break
+			}
+			col := batch.Cols[colIdx]
+			if col.Nulls != nil && src < len(col.Nulls) && col.Nulls[src] {
+				hasNull = true
+				break
+			}
+			if src >= len(col.Data.Ints) {
+				hasNull = true
+				break
+			}
+		}
+		if hasNull {
 			continue
 		}
-		if src < len(col.Data.Ints) {
-			k := col.Data.Ints[src]
-			keys = append(keys, k)
-			hashes = append(hashes, hashInt64(k))
-			sources = append(sources, src)
+		validRows = append(validRows, src)
+		// Index at the new validRows position (0-based, so last added index = len-1)
+		k := (len(validRows) - 1) * stride
+		for c, colIdx := range a.groupCols {
+			col := batch.Cols[colIdx]
+			keys[k+c] = col.Data.Ints[src]
 		}
 	}
 
-	if len(keys) == 0 {
+	if len(validRows) == 0 {
 		return
 	}
 
-	a.ht.ProbeInt64(keys, hashes, len(keys), func(idx int, row int) {
-		a.updateAggregates(batch, sources[row], idx)
+	// Compute hashes for each valid row
+	for i := 0; i < len(validRows); i++ {
+		k := i * stride
+		hashes[i] = UT.HashComposite(keys[k : k+stride])
+	}
+
+	// Probe hash table
+	keysToPass := make([]int64, len(validRows)*stride)
+	hashesToPass := make([]uint64, len(validRows))
+	copy(keysToPass, keys[:len(validRows)*stride])
+	copy(hashesToPass, hashes[:len(validRows)])
+
+	a.ht.Probe(keysToPass, hashesToPass, len(validRows), func(idx int, row int) {
+		a.updateAggregates(batch, validRows[row], idx)
 	})
 
 	// Resize payloads if hash table grew
@@ -783,7 +810,6 @@ func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot in
 	for di, def := range a.aggDefs {
 		_ = di
 		if def.Kind == AggCount {
-			// COUNT(*) or COUNT(col) — already incremented above
 			continue
 		}
 		if def.Col < 0 || def.Col >= len(batch.Cols) {
@@ -793,7 +819,6 @@ func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot in
 		if col.Data.Ints == nil || src >= len(col.Data.Ints) {
 			continue
 		}
-		// Skip NULL values for non-count aggregates
 		if col.Nulls != nil && src < len(col.Nulls) && col.Nulls[src] {
 			continue
 		}
@@ -819,29 +844,22 @@ func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot in
 
 // buildResultBatch constructs the output batch from the hash table.
 func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
-	hasGroup := a.groupCol >= 0
-
-	// Column layout: [groupCol (if grouped), agg0, agg1, ...]
-	ncols := len(a.aggDefs)
-	if hasGroup {
-		ncols++ // group key column
-	}
+	stride := len(a.groupCols)
+	ncols := stride + len(a.aggDefs)
 	if ncols == 0 {
-		ncols = 1 // at least one column
+		ncols = 1
 	}
 
 	batch := UT.GetBatch(ncols)
 	colIdx := 0
 
-	// Group key column
-	if hasGroup {
-		batch.SetColumnName(colIdx, "group_key")
+	for c := 0; c < stride; c++ {
+		batch.SetColumnName(colIdx, fmt.Sprintf("group_%d", c))
 		batch.Cols[colIdx].Type = LX.T_INT_KW
 		batch.Cols[colIdx].Data.Ints = make([]int64, 0)
 		colIdx++
 	}
 
-	// Aggregate result columns
 	for _, def := range a.aggDefs {
 		switch def.Kind {
 		case AggCount:
@@ -855,13 +873,13 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 		case AggAvg:
 			batch.SetColumnName(colIdx, "avg")
 		}
+		
 		batch.Cols[colIdx].Type = LX.T_INT_KW
 		batch.Cols[colIdx].Data.Ints = make([]int64, 0)
 		colIdx++
 	}
 
-	if !hasGroup {
-		// No GROUP BY: single row from payloads[0]
+	if stride == 0 {
 		p := &a.payloads[0]
 		colIdx = 0
 		for _, def := range a.aggDefs {
@@ -881,9 +899,11 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 				}
 			case AggAvg:
 				if p.Count > 0 {
+                    
 					val = p.Sum / p.Count
 				}
 			}
+			
 			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, val)
 			colIdx++
 		}
@@ -891,21 +911,19 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 		return batch, nil
 	}
 
-	// Grouped: iterate hash table bitmap, one row per occupied slot
+	hashStride := a.ht.NumCols
 	for i := uint32(0); i < a.ht.Capacity; i++ {
-		occupied := (a.ht.Bitmap[i/64] >> (i % 64)) & 1
-		if occupied == 0 {
+		if (a.ht.Bitmap[i/64]>>(i%64))&1 == 0 {
 			continue
 		}
-
 		colIdx = 0
 		p := a.payloads[i]
-
-		// Group key
-		batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, a.ht.Keys[i])
-		colIdx++
-
-		// Aggregates
+        
+		base := int(i) * hashStride
+		for c := 0; c < stride; c++ {
+			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, a.ht.Keys[base+c])
+			colIdx++
+		}
 		for _, def := range a.aggDefs {
 			var val int64
 			switch def.Kind {
@@ -919,13 +937,17 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 				}
 			case AggMax:
 				if p.HasValue {
+					
 					val = p.Max
 				}
 			case AggAvg:
 				if p.Count > 0 {
+					
 					val = p.Sum / p.Count
 				}
 			}
+			
+			
 			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, val)
 			colIdx++
 		}
@@ -933,19 +955,34 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 		batch.AdvanceSize()
 	}
 
-	// If empty result, return single row with NULLs
 	if batch.Size == 0 {
 		colIdx = 0
-		batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, 0)
-		batch.Cols[colIdx].Nulls = make([]bool, 1)
-		batch.Cols[colIdx].Nulls[0] = true
-		colIdx++
+		for c := 0; c < stride; c++ {
+			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, 0)
+			if batch.Cols[colIdx].Nulls == nil {
+				
+				batch.Cols[colIdx].Nulls = make([]bool, 1)
+			} else if len(batch.Cols[colIdx].Nulls) < 1 {
+				batch.Cols[colIdx].Nulls = append(batch.Cols[colIdx].Nulls, false)
+			}
+			
+			batch.Cols[colIdx].Nulls[0] = true
+			
+			colIdx++
+		}
 		for range a.aggDefs {
 			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, 0)
-			batch.Cols[colIdx].Nulls = make([]bool, 1)
+			if batch.Cols[colIdx].Nulls == nil {
+				
+				batch.Cols[colIdx].Nulls = make([]bool, 1)
+			} else if len(batch.Cols[colIdx].Nulls) < 1 {
+				batch.Cols[colIdx].Nulls = append(batch.Cols[colIdx].Nulls, false)
+			}
+			
 			batch.Cols[colIdx].Nulls[0] = true
 			colIdx++
 		}
+		
 		batch.AdvanceSize()
 	}
 

@@ -51,9 +51,9 @@ func hashInt64(x int64) uint64 {
 	return u*0x9e3779b97f4a7c15 ^ (u >> 31)
 }
 
-// hashComposite combines N per-column FNV-1a hashes using
+// HashComposite combines N per-column FNV-1a hashes using
 // FNV-1a iteration (non-commutative, so (a,b) != (b,a)).
-func hashComposite(cols []int64) uint64 {
+func HashComposite(cols []int64) uint64 {
 	var h uint64 = 14695981039346656037 // FNV offset basis
 	for _, c := range cols {
 		h ^= hashInt64(c)

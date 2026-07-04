@@ -59,8 +59,7 @@ func TestVectorizedHashAggregate_CountStar(t *testing.T) {
 			makeIntBatch([]int64{1, 2, 3, 4, 5}),
 		},
 	}
-	agg := NewVectorizedHashAggregate(src, -1, []AggDef{{Kind: AggCount, Col: -1}})
-	defer agg.Close()
+	agg := NewVectorizedHashAggregate(src, nil, []AggDef{{Kind: AggCount, Col: -1}})
 
 	batch, err := agg.NextBatch(context.Background())
 	if err != nil {
@@ -92,7 +91,7 @@ func TestVectorizedHashAggregate_SumInt64(t *testing.T) {
 			makeIntBatch([]int64{10, 20, 30}),
 		},
 	}
-	agg := NewVectorizedHashAggregate(src, -1, []AggDef{{Kind: AggSum, Col: 0}})
+	agg := NewVectorizedHashAggregate(src, nil, []AggDef{{Kind: AggSum, Col: 0}})
 	defer agg.Close()
 
 	batch, err := agg.NextBatch(context.Background())
@@ -117,7 +116,7 @@ func TestVectorizedHashAggregate_GroupByCount(t *testing.T) {
 			makeGroupBatch([]int64{1, 1, 2, 2, 2, 3}, []int64{10, 20, 30, 40, 50, 60}),
 		},
 	}
-	agg := NewVectorizedHashAggregate(src, 0, []AggDef{{Kind: AggCount, Col: -1}})
+	agg := NewVectorizedHashAggregate(src, []int{0}, []AggDef{{Kind: AggCount, Col: -1}})
 	defer agg.Close()
 
 	batch, err := agg.NextBatch(context.Background())
@@ -153,8 +152,7 @@ func TestVectorizedHashAggregate_EmptyInput(t *testing.T) {
 	src := &testBatchSource{
 		batches: []*UT.Batch{},
 	}
-	agg := NewVectorizedHashAggregate(src, -1, []AggDef{{Kind: AggCount, Col: -1}})
-	defer agg.Close()
+	agg := NewVectorizedHashAggregate(src, nil, []AggDef{{Kind: AggCount, Col: -1}})
 
 	batch, err := agg.NextBatch(context.Background())
 	if err != nil {
@@ -184,7 +182,7 @@ func TestVectorizedHashAggregate_NullGroupKey(t *testing.T) {
 	batch.Cols[0].Nulls = make([]bool, 3)
 	batch.Cols[0].Nulls[1] = true // row 1 has NULL group key
 
-	agg := NewVectorizedHashAggregate(src, 0, []AggDef{{Kind: AggCount, Col: -1}})
+	agg := NewVectorizedHashAggregate(src, []int{0}, []AggDef{{Kind: AggCount, Col: -1}})
 	defer agg.Close()
 
 	result, err := agg.NextBatch(context.Background())
@@ -206,7 +204,7 @@ func TestVectorizedHashAggregate_MultipleAggregates(t *testing.T) {
 			makeIntBatch([]int64{5, 10, 15}),
 		},
 	}
-	agg := NewVectorizedHashAggregate(src, -1, []AggDef{
+	agg := NewVectorizedHashAggregate(src, nil, []AggDef{
 		{Kind: AggCount, Col: -1},
 		{Kind: AggSum, Col: 0},
 		{Kind: AggMin, Col: 0},
@@ -244,7 +242,7 @@ func TestVectorizedHashAggregate_GroupBySum(t *testing.T) {
 			makeGroupBatch([]int64{1, 1, 2, 2, 2}, []int64{10, 20, 30, 40, 50}),
 		},
 	}
-	agg := NewVectorizedHashAggregate(src, 0, []AggDef{{Kind: AggSum, Col: 1}})
+	agg := NewVectorizedHashAggregate(src, []int{0}, []AggDef{{Kind: AggSum, Col: 1}})
 	defer agg.Close()
 
 	batch, err := agg.NextBatch(context.Background())
@@ -278,7 +276,7 @@ func TestVectorizedHashAggregate_Close(t *testing.T) {
 			makeIntBatch([]int64{1}),
 		},
 	}
-	agg := NewVectorizedHashAggregate(src, -1, []AggDef{{Kind: AggCount, Col: -1}})
+	agg := NewVectorizedHashAggregate(src, nil, []AggDef{{Kind: AggCount, Col: -1}})
 	if err := agg.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +289,7 @@ func TestVectorizedHashAggregate_MultipleBatches(t *testing.T) {
 			makeGroupBatch([]int64{1, 2}, []int64{30, 40}),
 		},
 	}
-	agg := NewVectorizedHashAggregate(src, 0, []AggDef{{Kind: AggSum, Col: 1}})
+	agg := NewVectorizedHashAggregate(src, []int{0}, []AggDef{{Kind: AggSum, Col: 1}})
 	defer agg.Close()
 
 	batch, err := agg.NextBatch(context.Background())
@@ -315,6 +313,168 @@ func TestVectorizedHashAggregate_MultipleBatches(t *testing.T) {
 		t.Fatalf("expected group 1 SUM=40, got %d", result[1])
 	}
 	if result[2] != 60 {
+		
 		t.Fatalf("expected group 2 SUM=60, got %d", result[2])
+	}
+}
+
+// makeGroupBatch3 creates a 3-column batch: col 0 = group key 0 (INT),
+// col 1 = group key 1 (INT), col 2 = value (INT).
+func makeGroupBatch3(keys0, keys1, values []int64) *UT.Batch {
+	if len(keys0) != len(keys1) || len(keys0) != len(values) {
+		panic("length mismatch")
+	}
+	b := UT.GetBatch(3)
+	b.SetColumnName(0, "g0")
+	b.SetColumnName(1, "g1")
+	b.SetColumnName(2, "v")
+	b.Cols[0].Type = LX.T_INT_KW
+	b.Cols[0].Data.Ints = make([]int64, len(keys0))
+	copy(b.Cols[0].Data.Ints, keys0)
+	b.Cols[1].Type = LX.T_INT_KW
+	b.Cols[1].Data.Ints = make([]int64, len(keys1))
+	copy(b.Cols[1].Data.Ints, keys1)
+	b.Cols[2].Type = LX.T_INT_KW
+	b.Cols[2].Data.Ints = make([]int64, len(values))
+	copy(b.Cols[2].Data.Ints, values)
+	b.Size = len(keys0)
+	return b
+}
+
+func TestVectorizedHashAggregate_GroupByMultipleColumns(t *testing.T) {
+	src := &testBatchSource{
+		batches: []*UT.Batch{
+			makeGroupBatch3(
+				[]int64{1, 1, 2, 2, 1},
+				[]int64{10, 20, 10, 20, 10},
+				[]int64{100, 200, 300, 400, 500},
+			),
+		},
+	}
+	// GROUP BY g0, g1: (1,10)→2 rows, (1,20)→1 row, (2,10)→1 row, (2,20)→1 row
+	// Expected COUNT per group:
+	//   (1,10) → 2
+	//   (1,20) → 1
+	//   (2,10) → 1
+	//   (2,20) → 1
+	agg := NewVectorizedHashAggregate(src, []int{0, 1}, []AggDef{{Kind: AggCount, Col: -1}})
+	defer agg.Close()
+
+	batch, err := agg.NextBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch == nil {
+		t.Fatal("expected result batch, got nil")
+	}
+	if batch.Size != 4 {
+		t.Fatalf("expected 4 groups, got %d", batch.Size)
+	}
+
+	// Build result map: (g0,g1) -> count
+	results := make(map[[2]int64]int64)
+	for i := range batch.Size {
+		
+		g0 := batch.Value(0, i).(int64)
+		g1 := batch.Value(1, i).(int64)
+		count := batch.Value(2, i).(int64)
+		results[[2]int64{g0, g1}] = count
+	}
+
+	tests := map[[2]int64]int64{
+		{1, 10}: 2,
+		{1, 20}: 1,
+		{2, 10}: 1,
+		{2, 20}: 1,
+	}
+	for key, expected := range tests {
+		actual, ok := results[key]
+		if !ok {
+			t.Fatalf("expected group (%d, %d) not found", key[0], key[1])
+		}
+		if actual != expected {
+			t.Fatalf("expected group (%d, %d) COUNT=%d, got %d", key[0], key[1], expected, actual)
+		}
+	}
+}
+
+func TestVectorizedHashAggregate_GroupByMultipleColumns_SUM(t *testing.T) {
+	src := &testBatchSource{
+		batches: []*UT.Batch{
+			makeGroupBatch3(
+				[]int64{1, 1, 2, 2},
+				[]int64{10, 20, 10, 20},
+                []int64{100, 200, 300, 400},
+			),
+		},
+	}
+	// GROUP BY g0, g1, SUM(v):
+	//   (1,10) → SUM=100
+	//   (1,20) → SUM=200
+	//   (2,10) → SUM=300
+	//   (2,20) → SUM=400
+	agg := NewVectorizedHashAggregate(src, []int{0, 1}, []AggDef{{Kind: AggSum, Col: 2}})
+	defer agg.Close()
+
+	batch, err := agg.NextBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch == nil {
+		t.Fatal("expected result batch, got nil")
+	}
+	if batch.Size != 4 {
+		t.Fatalf("expected 4 groups, got %d", batch.Size)
+	}
+
+	sumResults := make(map[[2]int64]int64)
+	for i := range batch.Size {
+		
+		g0 := batch.Value(0, i).(int64)
+		g1 := batch.Value(1, i).(int64)
+		sum := batch.Value(2, i).(int64)
+		sumResults[[2]int64{g0, g1}] = sum
+	}
+
+	expected := map[[2]int64]int64{
+		{1, 10}: 100,
+		{1, 20}: 200,
+		{2, 10}: 300,
+		{2, 20}: 400,
+	}
+	for key, exp := range expected {
+		
+		actual, ok := sumResults[key]
+		if !ok {
+			t.Fatalf("expected group (%d, %d) not found", key[0], key[1])
+		}
+		if actual != exp {
+			t.Fatalf("expected group (%d, %d) SUM=%d, got %d", key[0], key[1], exp, actual)
+		}
+	}
+}
+
+func TestVectorizedHashAggregate_NoGroupBy(t *testing.T) {
+	src := &testBatchSource{
+		batches: []*UT.Batch{
+			makeIntBatch([]int64{1, 2, 3}),
+		},
+	}
+	agg := NewVectorizedHashAggregate(src, nil, []AggDef{{Kind: AggCount, Col: -1}})
+	defer agg.Close()
+
+	batch, err := agg.NextBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch == nil {
+		t.Fatal("expected result batch, got nil")
+	}
+	if batch.Size != 1 {
+		t.Fatalf("expected 1 row (no GROUP BY), got %d", batch.Size)
+	}
+	if batch.Value(0, 0) != int64(3) {
+		
+		t.Fatalf("expected COUNT=3, got %v", batch.Value(0, 0))
 	}
 }

@@ -160,19 +160,25 @@ func exprName(e PS.Expr) string {
 // transformAggregate converts a row Aggregate to VectorizedHashAggregate.
 func transformAggregate(a *AG.Aggregate, bp UT.BatchProducer) *AG.VectorizedHashAggregate {
 	groupCols := a.GroupCols()
-	if len(groupCols) > 1 {
-		return nil
-	}
-	groupCol := -1
-	if len(groupCols) == 1 {
-		if _, ok := groupCols[0].(*PS.Ident); !ok {
-			return nil
+	// Multi-column GROUP BY: each column must be a simple Ident.
+	if len(groupCols) > 0 {
+	for _, gc := range groupCols {
+		if _, ok := gc.(*PS.Ident); !ok {
+			return nil // fallback to row-based for non-ident group cols
 		}
+	}
 	}
 	aggs := a.Aggs()
 	if len(aggs) == 0 {
 		return nil
 	}
 	defs := []AG.AggDef{{Kind: AG.AggCount}}
-	return AG.NewVectorizedHashAggregate(bp, groupCol, defs)
+	groupColIdxs := make([]int, len(groupCols))
+	for i := range groupCols {
+		groupColIdxs[i] = i
+	}
+	if len(groupCols) == 0 {
+		groupColIdxs = nil
+	}
+	return AG.NewVectorizedHashAggregate(bp, groupColIdxs, defs)
 }
