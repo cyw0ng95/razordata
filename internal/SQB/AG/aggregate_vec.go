@@ -3,8 +3,8 @@ package AG
 import (
 	"context"
 
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // VectorizedCount accumulates the count of matching rows across
@@ -623,6 +623,346 @@ func (a *VectorizedMax) finalBatch() (*UT.Batch, error) {
 
 // Close releases resources.
 func (a *VectorizedMax) Close() error {
+	if a.child != nil {
+		return a.child.Close()
+	}
+	return nil
+}
+
+// AggKind identifies the type of aggregate operation.
+type AggKind int
+
+const (
+	AggSum   AggKind = 0
+	AggCount AggKind = 1
+	AggMin   AggKind = 2
+	AggMax   AggKind = 3
+	AggAvg   AggKind = 4
+)
+
+// AggDef describes one aggregate column. Kind is the operation,
+// Col is the source column index in the input batch (use -1 for COUNT(*)).
+type AggDef struct {
+	Kind AggKind
+	Col  int
+}
+
+// aggPayload holds the accumulator state for one hash table slot.
+type aggPayload struct {
+	Count    int64
+	Sum      int64
+	Min      int64
+	Max      int64
+	HasValue bool
+}
+
+// VectorizedHashAggregate is a vectorized hash aggregate that
+// supports GROUP BY on a single int64 key column. It drains
+// all child batches, builds a hash table, and returns one result
+// batch with group keys (if grouped) followed by aggregate columns.
+type VectorizedHashAggregate struct {
+	child    BatchProducer
+	groupCol int // -1 = no GROUP BY (all rows in one group)
+	aggDefs  []AggDef
+	ht       *UT.HashTable
+	payloads []aggPayload
+	done     bool
+}
+
+// hashInt64 computes a uint64 hash of an int64 key using
+// FNV-1a mixing (same as hashjoin.go).
+func hashInt64(x int64) uint64 {
+	u := uint64(x)
+	return u*0x9e3779b97f4a7c15 ^ (u >> 31)
+}
+
+// NewVectorizedHashAggregate creates a new vectorized hash aggregate.
+// groupCol is the column index for GROUP BY (-1 for no grouping).
+// defs specifies the aggregate operations.
+func NewVectorizedHashAggregate(child BatchProducer, groupCol int, defs []AggDef) *VectorizedHashAggregate {
+	return &VectorizedHashAggregate{
+		child:    child,
+		groupCol: groupCol,
+		aggDefs:  defs,
+	}
+}
+
+// NextBatch drains all child batches and returns a single result
+// batch. Subsequent calls return nil (EOF).
+func (a *VectorizedHashAggregate) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if a.done {
+		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	a.ht = UT.NewHashTable(64)
+	a.payloads = make([]aggPayload, a.ht.Capacity)
+
+	// Drain child batches
+	for {
+		batch, err := a.child.NextBatch(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if batch == nil {
+			break
+		}
+		a.processBatch(batch)
+		batch.Put()
+	}
+
+	a.done = true
+	return a.buildResultBatch()
+}
+
+// processBatch accumulates one batch into the hash table.
+func (a *VectorizedHashAggregate) processBatch(batch *UT.Batch) {
+	n := batch.LogicalSize()
+	if n == 0 {
+		return
+	}
+
+	if a.groupCol < 0 {
+		// No GROUP BY: all rows accumulate at slot 0
+		for row := 0; row < n; row++ {
+			src := row
+			if batch.Sel != nil {
+				src = int(batch.Sel[row])
+			}
+			a.updateAggregates(batch, src, 0)
+		}
+		return
+	}
+
+	// Grouped: extract keys and probe hash table
+	if a.groupCol >= len(batch.Cols) {
+		return
+	}
+	col := batch.Cols[a.groupCol]
+	if col.Data.Ints == nil {
+		return
+	}
+
+	// Build keys, hashes, and valid-row arrays for ProbeInt64.
+	// NULL keys are excluded from the probe.
+	keys := make([]int64, 0, n)
+	hashes := make([]uint64, 0, n)
+	sources := make([]int, 0, n)
+	for row := 0; row < n; row++ {
+		src := row
+		if batch.Sel != nil {
+			src = int(batch.Sel[row])
+		}
+		// Skip NULL keys
+		if col.Nulls != nil && src < len(col.Nulls) && col.Nulls[src] {
+			continue
+		}
+		if src < len(col.Data.Ints) {
+			k := col.Data.Ints[src]
+			keys = append(keys, k)
+			hashes = append(hashes, hashInt64(k))
+			sources = append(sources, src)
+		}
+	}
+
+	if len(keys) == 0 {
+		return
+	}
+
+	a.ht.ProbeInt64(keys, hashes, len(keys), func(idx int, row int) {
+		a.updateAggregates(batch, sources[row], idx)
+	})
+
+	// Resize payloads if hash table grew
+	if len(a.payloads) < int(a.ht.Capacity) {
+		old := a.payloads
+		a.payloads = make([]aggPayload, a.ht.Capacity)
+		copy(a.payloads, old)
+	}
+}
+
+// updateAggregates updates aggregate accumulators for one row at the
+// given hash table slot.
+func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot int) {
+	p := &a.payloads[slot]
+	p.Count++
+
+	for di, def := range a.aggDefs {
+		_ = di
+		if def.Kind == AggCount {
+			// COUNT(*) or COUNT(col) — already incremented above
+			continue
+		}
+		if def.Col < 0 || def.Col >= len(batch.Cols) {
+			continue
+		}
+		col := batch.Cols[def.Col]
+		if col.Data.Ints == nil || src >= len(col.Data.Ints) {
+			continue
+		}
+		// Skip NULL values for non-count aggregates
+		if col.Nulls != nil && src < len(col.Nulls) && col.Nulls[src] {
+			continue
+		}
+		val := col.Data.Ints[src]
+		switch def.Kind {
+		case AggSum:
+			p.Sum += val
+		case AggMin:
+			if !p.HasValue || val < p.Min {
+				p.Min = val
+				p.HasValue = true
+			}
+		case AggMax:
+			if !p.HasValue || val > p.Max {
+				p.Max = val
+				p.HasValue = true
+			}
+		case AggAvg:
+			p.Sum += val
+		}
+	}
+}
+
+// buildResultBatch constructs the output batch from the hash table.
+func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
+	hasGroup := a.groupCol >= 0
+
+	// Column layout: [groupCol (if grouped), agg0, agg1, ...]
+	ncols := len(a.aggDefs)
+	if hasGroup {
+		ncols++ // group key column
+	}
+	if ncols == 0 {
+		ncols = 1 // at least one column
+	}
+
+	batch := UT.GetBatch(ncols)
+	colIdx := 0
+
+	// Group key column
+	if hasGroup {
+		batch.SetColumnName(colIdx, "group_key")
+		batch.Cols[colIdx].Type = LX.T_INT_KW
+		batch.Cols[colIdx].Data.Ints = make([]int64, 0)
+		colIdx++
+	}
+
+	// Aggregate result columns
+	for _, def := range a.aggDefs {
+		switch def.Kind {
+		case AggCount:
+			batch.SetColumnName(colIdx, "count")
+		case AggSum:
+			batch.SetColumnName(colIdx, "sum")
+		case AggMin:
+			batch.SetColumnName(colIdx, "min")
+		case AggMax:
+			batch.SetColumnName(colIdx, "max")
+		case AggAvg:
+			batch.SetColumnName(colIdx, "avg")
+		}
+		batch.Cols[colIdx].Type = LX.T_INT_KW
+		batch.Cols[colIdx].Data.Ints = make([]int64, 0)
+		colIdx++
+	}
+
+	if !hasGroup {
+		// No GROUP BY: single row from payloads[0]
+		p := &a.payloads[0]
+		colIdx = 0
+		for _, def := range a.aggDefs {
+			var val int64
+			switch def.Kind {
+			case AggCount:
+				val = p.Count
+			case AggSum:
+				val = p.Sum
+			case AggMin:
+				if p.HasValue {
+					val = p.Min
+				}
+			case AggMax:
+				if p.HasValue {
+					val = p.Max
+				}
+			case AggAvg:
+				if p.Count > 0 {
+					val = p.Sum / p.Count
+				}
+			}
+			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, val)
+			colIdx++
+		}
+		batch.AdvanceSize()
+		return batch, nil
+	}
+
+	// Grouped: iterate hash table bitmap, one row per occupied slot
+	for i := uint32(0); i < a.ht.Capacity; i++ {
+		occupied := (a.ht.Bitmap[i/64] >> (i % 64)) & 1
+		if occupied == 0 {
+			continue
+		}
+
+		colIdx = 0
+		p := a.payloads[i]
+
+		// Group key
+		batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, a.ht.Keys[i])
+		colIdx++
+
+		// Aggregates
+		for _, def := range a.aggDefs {
+			var val int64
+			switch def.Kind {
+			case AggCount:
+				val = p.Count
+			case AggSum:
+				val = p.Sum
+			case AggMin:
+				if p.HasValue {
+					val = p.Min
+				}
+			case AggMax:
+				if p.HasValue {
+					val = p.Max
+				}
+			case AggAvg:
+				if p.Count > 0 {
+					val = p.Sum / p.Count
+				}
+			}
+			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, val)
+			colIdx++
+		}
+
+		batch.AdvanceSize()
+	}
+
+	// If empty result, return single row with NULLs
+	if batch.Size == 0 {
+		colIdx = 0
+		batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, 0)
+		batch.Cols[colIdx].Nulls = make([]bool, 1)
+		batch.Cols[colIdx].Nulls[0] = true
+		colIdx++
+		for range a.aggDefs {
+			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, 0)
+			batch.Cols[colIdx].Nulls = make([]bool, 1)
+			batch.Cols[colIdx].Nulls[0] = true
+			colIdx++
+		}
+		batch.AdvanceSize()
+	}
+
+	return batch, nil
+}
+
+// Close releases resources.
+func (a *VectorizedHashAggregate) Close() error {
 	if a.child != nil {
 		return a.child.Close()
 	}
