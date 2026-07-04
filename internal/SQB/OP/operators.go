@@ -576,6 +576,12 @@ func (s *SeqScan) Close() error {
 	s.rows = nil
 	s.decodeBuf = nil
 	s.decodeBufPos = 0
+	// REQ001195: clear point-lookup state so plan cache reuse
+	// with different literal values triggers a fresh scan instead
+	// of using stale pre-computed row indices.
+	s.pointLookupRows = nil
+	s.pointLookupOnce = false
+	s.pointLookupPos = 0
 	return nil
 }
 
