@@ -191,24 +191,19 @@ func evalNow(args []PS.Expr, row *Row, params []any) (Value, error) {
 
 // evalChangesNative returns the row count of the most recent INSERT/UPDATE/DELETE.
 func evalChangesNative(args []PS.Expr, row *Row, params []any) (Value, error) {
-	sid := DT.GetCurrentSessionID()
 	ec := DT.ExecContextFromRow(row)
-	ecLast := int64(-1)
+	if ec != nil && ec.LastChanges > 0 {
+		return DT.NewIntValue(ec.LastChanges), nil
+	}
+	if acc := DT.GetSessionCounterAccessor(); acc != nil {
+		if v := acc.ChangesCount(DT.GetCurrentSessionID()); v > 0 {
+			return DT.NewIntValue(v), nil
+		}
+	}
 	if ec != nil {
-		ecLast = ec.LastChanges
+		return DT.NewIntValue(ec.LastChanges), nil
 	}
-	var accChanges int64 = -1
-	if acc := DT.GetSessionCounterAccessor(); acc != nil {
-		accChanges = acc.ChangesCount(sid)
-	}
-	_, _, _ = ecLast, accChanges, sid
-	if acc := DT.GetSessionCounterAccessor(); acc != nil {
-		return DT.NewIntValue(acc.ChangesCount(DT.GetCurrentSessionID())), nil
-	}
-	if ec == nil {
-		return DT.NewIntValue(0), nil
-	}
-	return DT.NewIntValue(ec.LastChanges), nil
+	return DT.NewIntValue(0), nil
 }
 
 // evalLastInsertRowIDNative returns the most recent successful INSERT rowid.
@@ -223,14 +218,19 @@ func evalLastInsertRowIDNative(args []PS.Expr, row *Row, params []any) (Value, e
 // evalTotalChangesNative returns the cumulative row count of all
 // INSERT/UPDATE/DELETE statements since the connection opened.
 func evalTotalChangesNative(args []PS.Expr, row *Row, params []any) (Value, error) {
-	if acc := DT.GetSessionCounterAccessor(); acc != nil {
-		return DT.NewIntValue(acc.TotalChangesCount(DT.GetCurrentSessionID())), nil
-	}
 	ec := DT.ExecContextFromRow(row)
-	if ec == nil {
-		return DT.NewIntValue(0), nil
+	if ec != nil && ec.TotalChanges > 0 {
+		return DT.NewIntValue(ec.TotalChanges), nil
 	}
-	return DT.NewIntValue(ec.TotalChanges), nil
+	if acc := DT.GetSessionCounterAccessor(); acc != nil {
+		if v := acc.TotalChangesCount(DT.GetCurrentSessionID()); v > 0 {
+			return DT.NewIntValue(v), nil
+		}
+	}
+	if ec != nil {
+		return DT.NewIntValue(ec.TotalChanges), nil
+	}
+	return DT.NewIntValue(0), nil
 }
 
 // evalSubstrNative returns the substring of a string.
