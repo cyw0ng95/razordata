@@ -36,6 +36,7 @@ type sstWriter struct {
 	indexEntries []indexEntry
 	bloom        []byte
 	prefixBloom  []byte
+	ribbon       []byte // REQ001169: Ribbon filter (v2 SSTs)
 	keys         [][]byte
 	// REQ001008: range tombstones stored as [start, end) pairs.
 	// Sorted by start key. Written to a separate block in the SST.
@@ -45,6 +46,7 @@ type sstWriter struct {
 	maxKey             []byte
 	lastKey            []byte
 	currentBlockOffset int
+	version            int // REQ001169: SST format version
 }
 
 var sstWriterPool = sync.Pool{
@@ -194,19 +196,35 @@ func (w *sstWriter) Finish() ([]byte, error) {
 
 	w.finishCurrentBlock()
 
-	bloomSize := bloomSizeForPow2(w.keyCount)
-	w.bloom = make([]byte, bloomSize)
+	// REQ001169: default to Ribbon filter (v2) for new SSTs.
+	// Old Bloom (v1) is kept for backward compat via explicit version.
+	if w.version == 0 {
+		w.version = sstVersionRibbon
+	}
 
-	prefixBloomSize := bloomSizeForPow2(w.keyCount)
-	w.prefixBloom = make([]byte, prefixBloomSize)
+	if w.version >= sstVersionRibbon {
+		// Build Ribbon filter instead of double-bloom.
+		ribbonSize := ribbonSizeForPow2(w.keyCount)
+		w.ribbon = buildRibbonFilterWithSize(w.keys, ribbonSize*8)
+		// No prefix bloom needed; Ribbon filter covers all queries.
+		w.prefixBloom = nil
+	} else {
+		// Legacy Bloom filter path (v1).
+		bloomSize := bloomSizeForPow2(w.keyCount)
+		w.bloom = make([]byte, bloomSize)
 
-	for _, k := range w.keys {
-		w.setBloomBitForSize(k, bloomSize)
-		prefix := k
-		if len(prefix) > 8 {
-			prefix = prefix[:8]
+		prefixBloomSize := bloomSizeForPow2(w.keyCount)
+		w.prefixBloom = make([]byte, prefixBloomSize)
+
+		for _, k := range w.keys {
+			w.setBloomBitForSize(k, bloomSize)
+			prefix := k
+			if len(prefix) > 8 {
+				prefix = prefix[:8]
+			}
+			w.setPrefixBloomBit(prefix, prefixBloomSize)
 		}
-		w.setPrefixBloomBit(prefix, prefixBloomSize)
+		w.ribbon = nil
 	}
 
 	var buf bytes.Buffer
@@ -265,12 +283,17 @@ func (w *sstWriter) Finish() ([]byte, error) {
 	}
 	indexSize := buf.Len() - indexOffset
 
-	// Write bloom filters
+	// Write bloom filters (or Ribbon filter for v2).
 	bloomOffset := buf.Len()
-	buf.Write(w.bloom)
-	buf.Write(w.prefixBloom)
+	if w.version >= sstVersionRibbon {
+		buf.Write(w.ribbon)
+		// No prefix bloom for v2.
+	} else {
+		buf.Write(w.bloom)
+		buf.Write(w.prefixBloom)
+	}
 
-	// REQ001008: write 44-byte footer with range tombstone metadata
+	// REQ001008: write footer with range tombstone metadata.
 	footer := make([]byte, sstFooterSize)
 	// [0:8] index_offset
 	binary.LittleEndian.PutUint64(footer[0:8], uint64(indexOffset))
@@ -278,8 +301,12 @@ func (w *sstWriter) Finish() ([]byte, error) {
 	binary.LittleEndian.PutUint32(footer[8:12], uint32(indexSize))
 	// [12:20] bloom_offset
 	binary.LittleEndian.PutUint64(footer[12:20], uint64(bloomOffset))
-	// [20:24] bloom_size
-	binary.LittleEndian.PutUint32(footer[20:24], uint32(bloomSize))
+	// [20:24] bloom_size — for v2 this is the ribbon filter size.
+	if w.version >= sstVersionRibbon {
+		binary.LittleEndian.PutUint32(footer[20:24], uint32(len(w.ribbon)))
+	} else {
+		binary.LittleEndian.PutUint32(footer[20:24], uint32(bloomSizeForPow2(w.keyCount)))
+	}
 	// [24:32] range_tombstone_offset
 	binary.LittleEndian.PutUint64(footer[24:32], uint64(rangeTombstoneOffset))
 	// [32:36] range_tombstone_size
@@ -287,8 +314,7 @@ func (w *sstWriter) Finish() ([]byte, error) {
 	// [36:40] magic
 	binary.LittleEndian.PutUint32(footer[36:40], sstMagic)
 	// [40:44] version
-	// REQ001008: range tombstones should suppress keys in the range
-	binary.LittleEndian.PutUint32(footer[40:44], sstVersionRangeTombstone)
+	binary.LittleEndian.PutUint32(footer[40:44], uint32(w.version))
 	buf.Write(footer)
 
 	return buf.Bytes(), nil
@@ -300,10 +326,12 @@ func (w *sstWriter) Reset() {
 	w.keys = w.keys[:0]
 	w.bloom = nil
 	w.prefixBloom = nil
+	w.ribbon = nil
 	w.keyCount = 0
 	w.minKey = w.minKey[:0]
 	w.maxKey = w.maxKey[:0]
 	w.rangeTombstones = w.rangeTombstones[:0]
+	w.version = 0
 }
 
 // compressBlock compresses a data block using flate (REQ000271).

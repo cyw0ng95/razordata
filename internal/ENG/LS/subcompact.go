@@ -70,7 +70,7 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 	pivots := pivotKeys(inputs, sc.concurrency)
 	if len(pivots) < 2 {
 		job := &compactionJob{
-			fs:         sc.fs,
+			fs:              sc.fs,
 			level:           sourceLevel,
 			inputs:          inputs,
 			overlap:         opts.Overlap,
@@ -123,7 +123,7 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 			minKey: append([]byte(nil), lo...),
 			maxKey: append([]byte(nil), hi...),
 			job: &compactionJob{
-				fs:            sc.fs,
+				fs: sc.fs,
 				// REQ001157: two-phase compaction — each sub-job writes a partial
 				// SST to its own tmpPath, then the coordinator merges all partial
 				// outputs and applies a single manifest update.
@@ -199,7 +199,7 @@ func (sc *SubCompactor) mergePartials(partials []*partialResult, manifest *manif
 	if err != nil {
 		return err
 	}
-	
+
 	defer sc.fs.Remove(tmpPath)
 	defer f.Close()
 

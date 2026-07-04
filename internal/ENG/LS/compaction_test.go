@@ -58,9 +58,9 @@ func TestCompactionJob_Run(t *testing.T) {
 	}
 
 	job := &compactionJob{
-			fs:         DefaultFS(),
-			placementPolicy: nil,
-		level: 0,
+		fs:              DefaultFS(),
+		placementPolicy: nil,
+		level:           0,
 		inputs: []SSTFileMeta{
 			{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: int64(len(sstData)), BloomBits: 10},
 		},
@@ -97,9 +97,9 @@ func TestCompactionJob_RunReadFileError(t *testing.T) {
 	manifest.Apply(*v)
 
 	job := &compactionJob{
-			fs:         DefaultFS(),
-			placementPolicy: nil,
-		level: 0,
+		fs:              DefaultFS(),
+		placementPolicy: nil,
+		level:           0,
 		inputs: []SSTFileMeta{
 			{FileID: 999, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 100, BloomBits: 10},
 		},
@@ -137,9 +137,9 @@ func TestCompactionJob_RunOpenSSTError(t *testing.T) {
 	}
 
 	job := &compactionJob{
-			fs:         DefaultFS(),
-			placementPolicy: nil,
-		level: 0,
+		fs:              DefaultFS(),
+		placementPolicy: nil,
+		level:           0,
 		inputs: []SSTFileMeta{
 			{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 100, BloomBits: 10},
 		},
@@ -184,9 +184,9 @@ func TestCompactionJob_RunWriteError(t *testing.T) {
 	}
 
 	job := &compactionJob{
-			fs:         DefaultFS(),
-			placementPolicy: nil,
-		level: 0,
+		fs:              DefaultFS(),
+		placementPolicy: nil,
+		level:           0,
 		inputs: []SSTFileMeta{
 			{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: int64(len(sstData)), BloomBits: 10},
 		},
@@ -427,12 +427,12 @@ func TestCompactionJob_RunRemovesOverlapFiles(t *testing.T) {
 	}
 
 	job := &compactionJob{
-			fs:         DefaultFS(),
-			placementPolicy: nil,
-		level:   0,
-		inputs:  []SSTFileMeta{input},
-		outputs: nil,
-		overlap: []SSTFileMeta{overlap},
+		fs:              DefaultFS(),
+		placementPolicy: nil,
+		level:           0,
+		inputs:          []SSTFileMeta{input},
+		outputs:         nil,
+		overlap:         []SSTFileMeta{overlap},
 	}
 
 	if err := job.Run(mfst, dir); err != nil {

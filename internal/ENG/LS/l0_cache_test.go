@@ -43,7 +43,7 @@ func TestL0Cache_GetPromotesLRU(t *testing.T) {
 	}
 	nshard := c.NShard()
 	b1, b2, b3 := uint64(0), uint64(nshard), uint64(2*nshard) // all shard 0
-c.Put(b1, []byte("a"))
+	c.Put(b1, []byte("a"))
 	c.Put(b2, []byte("b"))
 	if got, _ := c.Get(b1); !bytes.Equal(got, []byte("a")) {
 		t.Fatalf("unexpected get(%d): %q", b1, got)
@@ -84,7 +84,7 @@ func TestL0Cache_EvictsLRUAtCapacity(t *testing.T) {
 	c := newL0Cache(capacity)
 	nshard := c.NShard()
 	b1, b2, b3 := uint64(0), uint64(nshard), uint64(2*nshard) // all shard 0
-c.Put(b1, []byte("a"))
+	c.Put(b1, []byte("a"))
 	c.Put(b2, []byte("b"))
 	c.Put(b3, []byte("c"))
 
@@ -105,13 +105,13 @@ c.Put(b1, []byte("a"))
 func TestL0Cache_ZeroCapacityDefaultsToOne(t *testing.T) {
 	c := newL0Cache(0)
 	n := uint64(c.NShard())
-c.Put(0*n, []byte("a"))
+	c.Put(0*n, []byte("a"))
 	c.Put(1*n, []byte("b"))
 
-	if _, ok := c.Get(0*n); ok {
+	if _, ok := c.Get(0 * n); ok {
 		t.Fatal("block 0*n should have been evicted at capacity 1")
 	}
-	if _, ok := c.Get(1*n); !ok {
+	if _, ok := c.Get(1 * n); !ok {
 		t.Fatal("block 1*n should be present")
 	}
 	if got := c.Size(); got != 1 {
@@ -125,7 +125,7 @@ func TestL0Cache_NegativeCapacityDefaultsToOne(t *testing.T) {
 	c.Put(0*n, []byte("a"))
 	c.Put(1*n, []byte("b")) // same shard 0, should evict "a"
 
-	if _, ok := c.Get(0*n); ok {
+	if _, ok := c.Get(0 * n); ok {
 		t.Fatal("block 0*n should have been evicted at clamped capacity 1")
 	}
 	if got := c.Size(); got != 1 {
@@ -222,10 +222,10 @@ func TestL0Cache_GetAfterEvictionReturnsMiss(t *testing.T) {
 	c.Put(0*n, []byte("a"))
 	c.Put(1*n, []byte("b"))
 
-	if _, ok := c.Get(0*n); ok {
+	if _, ok := c.Get(0 * n); ok {
 		t.Fatal("expected miss on evicted blockID 0*n")
 	}
-	if _, ok := c.Get(1*n); !ok {
+	if _, ok := c.Get(1 * n); !ok {
 		t.Fatal("expected hit on most-recent blockID 1*n")
 	}
 }

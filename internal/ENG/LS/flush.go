@@ -159,7 +159,7 @@ type flushManager struct {
 
 func newFlushManager(fs FS, dir string, maxMemSize int64, manifest *manifest) *flushManager {
 	fm := &flushManager{
-		fs:           fs,
+		fs:         fs,
 		dir:        dir,
 		maxMemSize: maxMemSize,
 		manifest:   manifest,

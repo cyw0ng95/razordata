@@ -89,7 +89,7 @@ func TestRangeTombstoneConversion_ReverseScan(t *testing.T) {
 		if it.blockIdx == 0 {
 			break
 		}
-		if !it.loadBlock(it.blockIdx-1) {
+		if !it.loadBlock(it.blockIdx - 1) {
 			break
 		}
 	}

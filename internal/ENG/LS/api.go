@@ -208,7 +208,7 @@ func (h *iterHeap) Pop() any {
 // Zero-copy optimization for SST blocks is achieved via borrowed pointers
 // in sst_reader.go (decodeBlock returns pointers into the SST data).
 type mergeIterator struct {
-	fs FS
+	fs       FS
 	manifest *manifest
 	dir      string
 	prefix   []byte
@@ -222,7 +222,7 @@ type mergeIterator struct {
 
 func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, fs FS, prefix []byte) *mergeIterator {
 	mi := &mergeIterator{
-		fs:         fs,
+		fs:       fs,
 		manifest: manifest,
 		dir:      dir,
 		prefix:   append([]byte(nil), prefix...),

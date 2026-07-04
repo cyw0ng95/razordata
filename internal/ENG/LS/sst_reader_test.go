@@ -283,9 +283,9 @@ func TestSSTReader_MayContainPrefix_NoFalseNegatives(t *testing.T) {
 	}
 	defer reader.Close()
 
-	// Sanity: prefix bloom should be non-empty.
-	if len(reader.prefixBloom) == 0 {
-		t.Fatal("prefix bloom is empty; test setup is invalid")
+	// Sanity: prefix bloom or ribbon should be non-empty.
+	if len(reader.prefixBloom) == 0 && len(reader.ribbon) == 0 {
+		t.Fatal("prefix bloom and ribbon are both empty; test setup is invalid")
 	}
 
 	// Every inserted key's 8-byte prefix (truncated from key)

@@ -9,7 +9,7 @@ import (
 
 func TestVFS_InMemPutGet(t *testing.T) {
 	fs := newInMemFS()
- dir := "/testdir"
+	dir := "/testdir"
 	if err := fs.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -28,68 +28,68 @@ func TestVFS_InMemPutGet(t *testing.T) {
 	}
 
 	// Read back
-    f2, err := fs.Open(filepath.Join(dir, "hello.txt"))
-    if err != nil {
-        t.Fatal(err)
-    }
-    defer f2.Close()
-    data, err := f2.ReadAll()
-    if err != nil {
-        t.Fatal(err)
-    }
-    if string(data) != "hello vfs" {
-        t.Fatalf("got %q, want %q", data, "hello vfs")
-    }
+	f2, err := fs.Open(filepath.Join(dir, "hello.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f2.Close()
+	data, err := f2.ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "hello vfs" {
+		t.Fatalf("got %q, want %q", data, "hello vfs")
+	}
 
-    // Stat
-    fi, err := fs.Stat(filepath.Join(dir, "hello.txt"))
-    if err != nil {
-        t.Fatal(err)
-    }
+	// Stat
+	fi, err := fs.Stat(filepath.Join(dir, "hello.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if fi.Size() != 9 {
 		t.Fatalf("Stat.Size = %d, want 9", fi.Size())
 	}
 
-    // Remove
-    if err := fs.Remove(filepath.Join(dir, "hello.txt")); err != nil {
-        t.Fatal(err)
-    }
-    if _, err := fs.Open(filepath.Join(dir, "hello.txt")); !os.IsNotExist(err) {
-        t.Fatalf("expected IsNotExist, got %v", err)
-    }
+	// Remove
+	if err := fs.Remove(filepath.Join(dir, "hello.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Open(filepath.Join(dir, "hello.txt")); !os.IsNotExist(err) {
+		t.Fatalf("expected IsNotExist, got %v", err)
+	}
 }
 
 func TestVFS_CrashRecovery(t *testing.T) {
-    fs := newInMemFS()
-    fs.InjectFailure(os.ErrNotExist, 0.5) // fail 50% of Opens
+	fs := newInMemFS()
+	fs.InjectFailure(os.ErrNotExist, 0.5) // fail 50% of Opens
 
-    // Write should succeed
-    f, err := fs.Create("/test.txt")
-    if err != nil {
-        t.Fatal(err)
-    }
-    f.Write([]byte("data"))
-    f.Close()
+	// Write should succeed
+	f, err := fs.Create("/test.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write([]byte("data"))
+	f.Close()
 
-    // Read might fail due to injection
-    f2, err := fs.Open("/test.txt")
-    if err == nil {
-        f2.Close()
-        t.Log("read succeeded despite injection")
-    } else {
-        t.Logf("read correctly failed: %v", err)
-    }
+	// Read might fail due to injection
+	f2, err := fs.Open("/test.txt")
+	if err == nil {
+		f2.Close()
+		t.Log("read succeeded despite injection")
+	} else {
+		t.Logf("read correctly failed: %v", err)
+	}
 
-    // Reset injection
-    fs.InjectFailure(nil, 0)
-    f3, err := fs.Open("/test.txt")
-    if err != nil {
-        t.Fatal(err)
-    }
-    data, _ := f3.ReadAll()
-    if string(data) != "data" {
-        t.Fatalf("got %q", data)
-    }
+	// Reset injection
+	fs.InjectFailure(nil, 0)
+	f3, err := fs.Open("/test.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := f3.ReadAll()
+	if string(data) != "data" {
+		t.Fatalf("got %q", data)
+	}
 }
 
 func TestVFS_OsFS_OpenCreate(t *testing.T) {
@@ -173,24 +173,24 @@ func TestVFS_InMemFS_Rename(t *testing.T) {
 		t.Fatal(err)
 	}
 
-    // Source should be gone
-    if _, err := fs.Open("/src.txt"); !os.IsNotExist(err) {
-        t.Fatalf("source should not exist")
-    }
+	// Source should be gone
+	if _, err := fs.Open("/src.txt"); !os.IsNotExist(err) {
+		t.Fatalf("source should not exist")
+	}
 
-    // Destination should exist with content
-    f2, err := fs.Open("/dst.txt")
-    if err != nil {
-        t.Fatal(err)
-    }
-    defer f2.Close()
-    data, err := f2.ReadAll()
-    if err != nil {
-        t.Fatal(err)
-    }
-    if string(data) != "renamed" {
-        t.Fatalf("got %q, want %q", data, "renamed")
-    }
+	// Destination should exist with content
+	f2, err := fs.Open("/dst.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f2.Close()
+	data, err := f2.ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "renamed" {
+		t.Fatalf("got %q, want %q", data, "renamed")
+	}
 }
 
 func TestVFS_InMemFS_SymlinkNotSupported(t *testing.T) {

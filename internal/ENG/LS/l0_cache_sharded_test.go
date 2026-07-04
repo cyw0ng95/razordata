@@ -90,13 +90,13 @@ func TestL0Cache_CapacityEviction(t *testing.T) {
 	cache.Put(uint64(capacity)*nshard, extraData)
 
 	// Block 0*nshard should be evicted (oldest in shard 0)
-	_, hit := cache.Get(0*nshard)
+	_, hit := cache.Get(0 * nshard)
 	if hit {
 		t.Error("expected block 0*nshard to be evicted after capacity exceeded")
 	}
 
 	// The newly inserted block should still be present
-	_, hit = cache.Get(uint64(capacity)*nshard)
+	_, hit = cache.Get(uint64(capacity) * nshard)
 	if !hit {
 		t.Errorf("expected block %d*n to be present after insert", capacity)
 	}

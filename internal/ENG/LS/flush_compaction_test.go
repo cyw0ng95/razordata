@@ -428,8 +428,8 @@ func TestCompactionJob_RunNoFiles(t *testing.T) {
 	job := &compactionJob{
 		fs:              DefaultFS(),
 		placementPolicy: nil,
-		level:  0,
-		inputs: []SSTFileMeta{},
+		level:           0,
+		inputs:          []SSTFileMeta{},
 	}
 
 	err = job.Run(manifest, dir)
@@ -482,7 +482,7 @@ func TestCompactionJob_RunWithOverlap(t *testing.T) {
 	job := &compactionJob{
 		fs:              DefaultFS(),
 		placementPolicy: nil,
-		level: 0,
+		level:           0,
 		inputs: []SSTFileMeta{
 			{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: int64(len(sstData1)), BloomBits: 10},
 		},

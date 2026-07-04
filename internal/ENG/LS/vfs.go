@@ -33,7 +33,7 @@ type File interface {
 	io.Writer // convenience: sequential write
 	Sync() error
 	Stat() (FileInfo, error)
-	ReadAll() ([ ]byte, error)
+	ReadAll() ([]byte, error)
 }
 
 // FileInfo abstracts os.FileInfo.
@@ -192,7 +192,6 @@ func (f *inMemFS) MkdirAll(path string, _ os.FileMode) error {
 	f.files[path] = &memFile{dir: true}
 	return nil
 }
-
 
 func (f *inMemFS) Remove(name string) error {
 	f.mu.Lock()

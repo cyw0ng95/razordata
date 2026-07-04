@@ -9,13 +9,16 @@ import (
 )
 
 type sstReader struct {
-	fs              FS // REQ001172: virtual filesystem
-	data            []byte
-	indexBlock      []indexEntry
-	bloom           []byte
-	prefixBloom     []byte
-	rangeTombstones []kvPair // REQ001008: sorted [start, end) pairs
-	filePath        string   // non-empty for lazy readers (REQ000997)
+	fs               FS // REQ001172: virtual filesystem
+	data             []byte
+	indexBlock       []indexEntry
+	bloom            []byte
+	prefixBloom      []byte
+	ribbon           []byte   // REQ001169: Ribbon filter (v2+ SSTs)
+	rangeTombstones  []kvPair // REQ001008: sorted [start, end) pairs
+	filePath         string   // non-empty for lazy readers (REQ000997)
+	version          int      // REQ001169: SST format version from footer
+	useInterpolation bool     // REQ001170: enable interpolation search for uniform keys
 }
 
 func openSST(data []byte) (*sstReader, error) {
@@ -49,6 +52,11 @@ func openSSTWithPath(data []byte, path string) (*sstReader, error) {
 		return nil, ErrInvalidSSTFormat
 	}
 
+	// REQ001169: read SST format version from footer
+	if footerSize == sstFooterSize {
+		r.version = int(binary.LittleEndian.Uint32(data[footerStart+40:]))
+	}
+
 	indexOffset := binary.LittleEndian.Uint64(data[footerStart:])
 	indexSize := binary.LittleEndian.Uint32(data[footerStart+8:])
 	bloomOffset := binary.LittleEndian.Uint64(data[footerStart+12:])
@@ -61,6 +69,8 @@ func openSSTWithPath(data []byte, path string) (*sstReader, error) {
 		}
 		indexData := data[indexOffset : indexOffset+uint64(indexSize)]
 		r.indexBlock = parseIndexBlock(indexData)
+		// REQ001170: detect key uniformity for interpolation search.
+		r.useInterpolation = detectKeyUniformity(r.indexBlock)
 	}
 
 	if bloomOffset > 0 {
@@ -71,13 +81,18 @@ func openSSTWithPath(data []byte, path string) (*sstReader, error) {
 			// index must come before bloom in the file
 			return nil, ErrInvalidSSTFormat
 		}
-		r.bloom = data[bloomOffset : bloomOffset+uint64(bloomSize)]
-		// REQ000047: prefix bloom is stored right after the regular bloom
-		prefixBloomStart := bloomOffset + uint64(bloomSize)
-		if prefixBloomStart < dataLen {
-			remaining := dataLen - prefixBloomStart - uint64(footerSize)
-			if remaining > 0 && remaining < dataLen && prefixBloomStart+remaining <= dataLen {
-				r.prefixBloom = data[prefixBloomStart : prefixBloomStart+remaining]
+		// REQ001169: for Ribbon (v2+) SSTs, use ribbon filter instead of bloom.
+		if r.version >= sstVersionRibbon {
+			r.ribbon = data[bloomOffset : bloomOffset+uint64(bloomSize)]
+		} else {
+			r.bloom = data[bloomOffset : bloomOffset+uint64(bloomSize)]
+			// REQ000047: prefix bloom is stored right after the regular bloom
+			prefixBloomStart := bloomOffset + uint64(bloomSize)
+			if prefixBloomStart < dataLen {
+				remaining := dataLen - prefixBloomStart - uint64(footerSize)
+				if remaining > 0 && remaining < dataLen && prefixBloomStart+remaining <= dataLen {
+					r.prefixBloom = data[prefixBloomStart : prefixBloomStart+remaining]
+				}
 			}
 		}
 	}
@@ -168,6 +183,11 @@ func openSSTLazyWithFS(fs FS, path string) (*sstReader, error) {
 
 	r := &sstReader{fs: fs, filePath: path}
 
+	// REQ001169: read SST format version from footer
+	if footerSize == sstFooterSize {
+		r.version = int(binary.LittleEndian.Uint32(footer[40:]))
+	}
+
 	// Read index block
 	if indexOffset > 0 {
 		if indexOffset >= uint64(fileSize) || indexOffset+uint64(indexSize) > uint64(fileSize) {
@@ -179,9 +199,11 @@ func openSSTLazyWithFS(fs FS, path string) (*sstReader, error) {
 			return nil, err
 		}
 		r.indexBlock = parseIndexBlock(indexData)
+		// REQ001170: detect key uniformity for interpolation search.
+		r.useInterpolation = detectKeyUniformity(r.indexBlock)
 	}
 
-	// Read bloom filter
+	// Read bloom filter (or Ribbon filter for v2+).
 	if bloomOffset > 0 {
 		if bloomOffset >= uint64(fileSize) || bloomOffset+uint64(bloomSize) > uint64(fileSize) {
 			return nil, ErrInvalidSSTFormat
@@ -193,18 +215,23 @@ func openSSTLazyWithFS(fs FS, path string) (*sstReader, error) {
 		if _, err := f.ReadAt(bloomData, int64(bloomOffset)); err != nil {
 			return nil, err
 		}
-		r.bloom = bloomData
+		// REQ001169: store as ribbon filter for v2+ SSTs.
+		if r.version >= sstVersionRibbon {
+			r.ribbon = bloomData
+		} else {
+			r.bloom = bloomData
 
-		// Read prefix bloom
-		prefixBloomStart := bloomOffset + uint64(bloomSize)
-		if prefixBloomStart < uint64(fileSize) {
-			remaining := uint64(fileSize) - prefixBloomStart - uint64(footerSize)
-			if remaining > 0 && remaining < uint64(fileSize) && prefixBloomStart+remaining <= uint64(fileSize) {
-				prefixBloomData := make([]byte, remaining)
-				if _, err := f.ReadAt(prefixBloomData, int64(prefixBloomStart)); err != nil {
-					return nil, err
+			// Read prefix bloom
+			prefixBloomStart := bloomOffset + uint64(bloomSize)
+			if prefixBloomStart < uint64(fileSize) {
+				remaining := uint64(fileSize) - prefixBloomStart - uint64(footerSize)
+				if remaining > 0 && remaining < uint64(fileSize) && prefixBloomStart+remaining <= uint64(fileSize) {
+					prefixBloomData := make([]byte, remaining)
+					if _, err := f.ReadAt(prefixBloomData, int64(prefixBloomStart)); err != nil {
+						return nil, err
+					}
+					r.prefixBloom = prefixBloomData
 				}
-				r.prefixBloom = prefixBloomData
 			}
 		}
 	}
@@ -303,6 +330,11 @@ func parseRangeTombstones(data []byte) []kvPair {
 }
 
 func (r *sstReader) mayContain(key []byte) bool {
+	// REQ001169: use Ribbon filter for v2+ SSTs.
+	if len(r.ribbon) > 0 {
+		return mayContainRibbon(r.ribbon, key, ribbonWidth)
+	}
+
 	if len(r.bloom) == 0 {
 		return true
 	}
@@ -321,7 +353,16 @@ func (r *sstReader) mayContain(key []byte) bool {
 
 // MayContainPrefix checks if the SST might contain a key with the given prefix.
 // REQ000047, REQ000599: modulus is byte count, not bit count.
+// REQ001169: for v2+ SSTs, uses Ribbon filter instead of prefix bloom.
 func (r *sstReader) MayContainPrefix(prefix []byte) bool {
+	// REQ001169: Ribbon filter covers both exact-key and prefix queries.
+	if len(r.ribbon) > 0 {
+		if len(prefix) > 8 {
+			prefix = prefix[:8]
+		}
+		return mayContainRibbon(r.ribbon, prefix, ribbonWidth)
+	}
+
 	if len(r.prefixBloom) == 0 {
 		return true
 	}
@@ -393,6 +434,16 @@ func (r *sstReader) searchIndex(key []byte) int {
 		return -1
 	}
 
+	// REQ001170: use interpolation search when keys are uniformly distributed.
+	if r.useInterpolation && len(r.indexBlock) > 4 {
+		return r.searchIndexInterpolation(key)
+	}
+
+	return r.searchIndexBinary(key)
+}
+
+// searchIndexBinary performs standard binary search on the index block.
+func (r *sstReader) searchIndexBinary(key []byte) int {
 	lo, hi := 0, len(r.indexBlock)-1
 
 	for lo <= hi {
@@ -405,15 +456,138 @@ func (r *sstReader) searchIndex(key []byte) int {
 		}
 	}
 
+	return r.clampIndex(lo)
+}
+
+// searchIndexInterpolation performs interpolation search on the index block.
+// For uniformly distributed keys, interpolation search probes closer to the
+// expected position, reducing the number of comparisons.
+//
+// REQ001170: falls back to binary search if the probe is outside the current
+// search bounds (non-uniform segment within a uniform data set).
+func (r *sstReader) searchIndexInterpolation(key []byte) int {
+	n := len(r.indexBlock)
+	lo, hi := 0, n-1
+
+	firstNumeric := keyToNumeric(r.indexBlock[0].largestKey)
+	lastNumeric := keyToNumeric(r.indexBlock[hi].largestKey)
+
+	for lo <= hi {
+		// If search range is small, use binary search.
+		if hi-lo < 8 {
+			for i := lo; i <= hi; i++ {
+				if bytes.Compare(r.indexBlock[i].largestKey, key) >= 0 {
+					return r.clampIndex(i)
+				}
+			}
+			return r.clampIndex(hi + 1)
+		}
+
+		rangeVal := lastNumeric - firstNumeric
+		if rangeVal == 0 {
+			mid := (lo + hi) / 2
+			cmp := bytes.Compare(r.indexBlock[mid].largestKey, key)
+			if cmp >= 0 {
+				hi = mid - 1
+			} else {
+				lo = mid + 1
+			}
+			continue
+		}
+
+		probeNumeric := keyToNumeric(key)
+
+		// Compute interpolation probe position.
+		probe := lo + int(float64(hi-lo)*float64(probeNumeric-firstNumeric)/float64(rangeVal))
+
+		// Clamp to current search range.
+		if probe < lo {
+			probe = lo
+		}
+		if probe > hi {
+			probe = hi
+		}
+
+		cmp := bytes.Compare(r.indexBlock[probe].largestKey, key)
+		if cmp >= 0 {
+			hi = probe - 1
+			lastNumeric = keyToNumeric(r.indexBlock[min(hi, n-1)].largestKey)
+		} else {
+			lo = probe + 1
+			firstNumeric = keyToNumeric(r.indexBlock[lo].largestKey)
+		}
+	}
+
+	return r.clampIndex(lo)
+}
+
+// clampIndex clamps the index to a valid range.
+func (r *sstReader) clampIndex(lo int) int {
 	if lo >= len(r.indexBlock) {
 		return len(r.indexBlock) - 1
 	}
-
 	if lo < 0 {
 		return 0
 	}
-
 	return lo
+}
+
+// keyToNumeric converts the first 8 bytes of a key to a uint64 for
+// interpolation estimation. Keys shorter than 8 bytes are right-padded
+// with zeros.
+func keyToNumeric(key []byte) uint64 {
+	if len(key) >= 8 {
+		return binary.LittleEndian.Uint64(key[:8])
+	}
+	var buf [8]byte
+	copy(buf[:], key)
+	return binary.LittleEndian.Uint64(buf[:])
+}
+
+// detectKeyUniformity checks if the index block keys are uniformly distributed
+// by computing the coefficient of variation (CV) of key lengths.
+// A CV below 0.3 indicates uniform key sizes and enables interpolation search.
+//
+// REQ001170.
+func detectKeyUniformity(indexBlock []indexEntry) bool {
+	if len(indexBlock) < 4 {
+		return false
+	}
+
+	var sumLen, sumSq float64
+	n := float64(len(indexBlock))
+	for _, e := range indexBlock {
+		l := float64(len(e.largestKey))
+		sumLen += l
+		sumSq += l * l
+	}
+
+	mean := sumLen / n
+	if mean < 1 {
+		return false
+	}
+
+	variance := sumSq/n - mean*mean
+	if variance < 0 {
+		variance = 0
+	}
+
+	sd := sqrtFloat64(variance)
+	cv := sd / mean
+
+	return cv > 0 && cv < 0.3
+}
+
+// sqrtFloat64 computes sqrt(x) using Newton's method.
+func sqrtFloat64(x float64) float64 {
+	if x <= 0 {
+		return 0
+	}
+	z := x
+	for range 15 {
+		z = (z + x/z) * 0.5
+	}
+	return z
 }
 
 func (r *sstReader) readBlock(offset, size int) []byte {
@@ -596,7 +770,7 @@ func (it *sstIterator) Next() bool {
 			it.pairIdx = 0
 		} else if it.pairIdx+1 < len(it.pairs) {
 			it.pairIdx++
-		} else if !it.loadBlock(it.blockIdx+1) {
+		} else if !it.loadBlock(it.blockIdx + 1) {
 			return false
 		} else {
 			it.pairIdx = 0
