@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"reflect"
 	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -440,11 +440,19 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 		return nil, err
 	}
 
-	key := pl.SerializeKey(rewritten)
+	// REQ001202: parameterized memo key using NormalizeForMemo so
+	// structurally identical queries with different literal values
+	// share a cache entry. On cache hit, substitute the current
+	// query's literal values into the cached operator tree via
+	// replaceLiteralsOnTree (same mechanism as the executor cache).
+	paramRewritten, params := pl.NormalizeForMemo(rewritten)
+	key := pl.SerializeKey(paramRewritten)
 	p.mu.Lock()
 	if cached, ok := p.memo[key]; ok {
+		replaceLiteralsOnTree(cached.root, params)
+		result := &pl.PlanResult{Root: cached.root, Cost: cached.cost, MemoKey: cached.memoKey}
 		p.mu.Unlock()
-		return &pl.PlanResult{Root: cached.root, Cost: cached.cost, MemoKey: cached.memoKey}, nil
+		return result, nil
 	}
 	p.mu.Unlock()
 

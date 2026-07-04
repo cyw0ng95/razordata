@@ -77,7 +77,9 @@ func TestPlannerMemoizationDistinctAST(t *testing.T) {
 		sql2 string
 	}{
 		{"different_table", "SELECT * FROM t", "SELECT * FROM t2"},
-		{"different_where", "SELECT * FROM t WHERE a = 1", "SELECT * FROM t WHERE a = 2"},
+		// REQ001202: WHERE literals are parameterized — structurally
+		// identical queries with different comparison values share
+		// the same memo key. Tested in SameAST.
 		{"different_limit", "SELECT * FROM t LIMIT 1", "SELECT * FROM t LIMIT 2"},
 		{"different_orderby", "SELECT * FROM t ORDER BY a", "SELECT * FROM t ORDER BY a DESC"},
 		{"different_distinct", "SELECT * FROM t", "SELECT DISTINCT * FROM t"},
@@ -109,26 +111,34 @@ func TestPlannerMemoizationSameAST(t *testing.T) {
 	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
 	cases := []struct {
 		name string
-		sql  string
+		sql1 string
+		sql2 string // if set, compare two different SQLs; otherwise same as sql1
 	}{
-		{"select_star", "SELECT * FROM t"},
-		{"select_where", "SELECT * FROM t WHERE a = 1"},
-		{"insert", "INSERT INTO t VALUES (1)"},
-		{"update", "UPDATE t SET a = 1 WHERE a = 1"},
+		{"select_star", "SELECT * FROM t", ""},
+		{"select_where", "SELECT * FROM t WHERE a = 1", ""},
+		{"insert", "INSERT INTO t VALUES (1)", ""},
+		{"update", "UPDATE t SET a = 1 WHERE a = 1", ""},
+		// REQ001202: parameterized memo key — different literal values
+		// produce the same key for structurally identical queries.
+		{"parameterized_where", "SELECT * FROM t WHERE a = 1", "SELECT * FROM t WHERE a = 2"},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			plan1, err := p.ParseAndPlan(c.sql)
+			sql2 := c.sql2
+			if sql2 == "" {
+				sql2 = c.sql1
+			}
+			plan1, err := p.ParseAndPlan(c.sql1)
 			if err != nil {
 				t.Fatalf("plan1 error: %v", err)
 			}
-			plan2, err := p.ParseAndPlan(c.sql)
+			plan2, err := p.ParseAndPlan(sql2)
 			if err != nil {
 				t.Fatalf("plan2 error: %v", err)
 			}
 			if plan1.MemoKey != plan2.MemoKey {
-				t.Errorf("expected identical memo key for two parses of %q", c.sql)
+				t.Errorf("expected identical memo key\n  %q\n  %q\nboth: %s", c.sql1, sql2, plan1.MemoKey)
 			}
 		})
 	}
