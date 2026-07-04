@@ -975,6 +975,8 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	propagatePlanner(plan.Root, e.planner)
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
+	// Attempt vectorized execution for eligible query plans.
+	plan.Root = tryVectorizePlan(plan.Root)
 	defer plan.Root.Close()
 	row, err := plan.Root.Next(ctx)
 	if err != nil {
@@ -1684,6 +1686,8 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	// REQ000586: thread DT.ExecContext to eliminate global.
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
+	// Attempt vectorized execution for eligible query plans.
+	plan.Root = tryVectorizePlan(plan.Root)
 
 	// Read first row to discover schema
 	row, err := plan.Root.Next(ctx)
