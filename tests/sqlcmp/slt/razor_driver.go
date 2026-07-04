@@ -17,6 +17,10 @@ import (
 	v1 "github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
 
+// sltVerbose controls per-query debug output. Default off.
+// Set RAZOR_SLT_VERBOSE=1 to see QUERY_START/QUERY_END stderr lines.
+var sltVerbose = os.Getenv("RAZOR_SLT_VERBOSE") == "1" || os.Getenv("RAZOR_SLT_VERBOSE") == "true"
+
 // RazorDriver implements Driver against a live Razordata engine
 // via the database/sql "razor" driver. Each Connect creates a
 // fresh on-disk database in a temp directory. Close removes
@@ -181,7 +185,9 @@ func (d *RazorDriver) Exec(ctx context.Context, sql string) error {
 		if len(trunc) > 100 {
 			trunc = trunc[:100]
 		}
-		fmt.Fprintf(os.Stderr, "SLOW_EXEC[%v] %s\n", dur, trunc)
+		if sltVerbose {
+			fmt.Fprintf(os.Stderr, "SLOW_EXEC[%v] %s\n", dur, trunc)
+		}
 	}
 	return err
 }
@@ -197,10 +203,14 @@ func (d *RazorDriver) Query(ctx context.Context, sql string) (*ResultSet, error)
 	if len(trunc) > 80 {
 		trunc = trunc[:80]
 	}
-	fmt.Fprintf(os.Stderr, "QUERY_START: %s\n", trunc)
+	if sltVerbose {
+		fmt.Fprintf(os.Stderr, "QUERY_START: %s\n", trunc)
+	}
 	t0 := time.Now()
 	rs, err := d.queryContext(ctx, sql)
-	fmt.Fprintf(os.Stderr, "QUERY_END[%v]: %s\n", time.Since(t0), trunc)
+	if sltVerbose {
+		fmt.Fprintf(os.Stderr, "QUERY_END[%v]: %s\n", time.Since(t0), trunc)
+	}
 	return rs, err
 }
 
