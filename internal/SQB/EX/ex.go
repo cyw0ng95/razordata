@@ -518,10 +518,19 @@ func (e *Executor) clearPlanCache() {
 // planWithCache returns a compiled plan for stmt, checking the plan
 // cache first. On cache miss, plans via Planner.Plan and caches the
 // result. REQ001011.
+// REQ001195: parameterized cache key so queries with the same
+// structure but different literal values share a single cache entry.
+// On cache hit, comparison-literals in the plan tree are replaced
+// via replaceLiteralsOnTree using the current query's extracted values.
 func (e *Executor) planWithCache(stmt PS.Stmt) (*pl.PlanResult, error) {
 	if e.planCache.entries != nil {
-		key := pl.SerializeKey(stmt)
+		paramStmt, params := pl.NormalizeForMemo(stmt)
+		if paramStmt == nil {
+			paramStmt = stmt
+		}
+		key := pl.SerializeKey(paramStmt)
 		if cached := e.getCachedPlan(key); cached != nil {
+			replaceLiteralsOnTree(cached.Root, params)
 			return cached, nil
 		}
 		plan, err := e.planner.Plan(stmt)
@@ -1134,6 +1143,43 @@ func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 		propagateExecContext(lr.LeftChild(), ec)
 		propagateExecContext(lr.RightChild(), ec)
 	}
+}
+
+// replaceLiteralsOnTree walks the operator tree and calls
+// ReplaceLiterals on every node with comparison-literals (Filter).
+// Params are consumed in DFS tree-walk order, matching the
+// extraction order of NormalizeForMemo. REQ001195.
+func replaceLiteralsOnTree(root DT.Operator, vals []any) {
+	type filterNode interface {
+		CountComparisonLiterals() int
+		ReplaceLiterals([]any)
+	}
+	var walk func(DT.Operator, *[]any)
+	walk = func(op DT.Operator, remaining *[]any) {
+		if op == nil || len(*remaining) == 0 {
+			return
+		}
+		if fn, ok := op.(filterNode); ok {
+			n := fn.CountComparisonLiterals()
+			if n > 0 && n <= len(*remaining) {
+				fn.ReplaceLiterals((*remaining)[:n])
+				*remaining = (*remaining)[n:]
+			}
+		}
+		type childer interface{ Child() DT.Operator }
+		if c, ok := op.(childer); ok {
+			walk(c.Child(), remaining)
+		}
+		type leftRighter interface {
+			LeftChild() DT.Operator
+			RightChild() DT.Operator
+		}
+		if lr, ok := op.(leftRighter); ok {
+			walk(lr.LeftChild(), remaining)
+			walk(lr.RightChild(), remaining)
+		}
+	}
+	walk(root, &vals)
 }
 
 // propagateParams walks the operator tree rooted at root and
