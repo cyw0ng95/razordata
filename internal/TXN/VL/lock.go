@@ -87,7 +87,7 @@ func (wq *waitQueue) grant(txnID uint64) {
 	}
 	node.granted = true
 	delete(wq.heads, txnID)
-	// Signal the condition variable to wake up the waiter.
+	close(node.done)
 	wq.cond.Signal()
 }
 

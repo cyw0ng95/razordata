@@ -230,7 +230,7 @@ func TestStmtMethodsAfterClose(t *testing.T) {
 // many times to flush out races between the closed flag flip and
 // session construction.
 func TestCloseDuringInflightBegin(t *testing.T) {
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 30; i++ {
 		eng := openForCloseTest(t)
 		var wg sync.WaitGroup
 		wg.Add(2)

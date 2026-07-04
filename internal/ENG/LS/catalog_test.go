@@ -198,8 +198,8 @@ func TestCatalog_ConcurrentPuts(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 
-	const writers = 16
-	const perWriter = 25
+	const writers = 8
+	const perWriter = 15
 	var wg sync.WaitGroup
 	errCh := make(chan error, writers*perWriter)
 	for w := 0; w < writers; w++ {

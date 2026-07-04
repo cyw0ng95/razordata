@@ -19,7 +19,7 @@ func TestRateLimiter_PerLevelThrottle(t *testing.T) {
 	defaultBudget = levelBudget{
 		l0: 1024,
 		l1: 1024 * 10,
-		l2: 1024 * 100,
+		l2: 1024 * 10,
 	}
 	t.Cleanup(func() { defaultBudget = origBudget })
 
@@ -70,7 +70,7 @@ func TestRateLimiter_PerLevelThrottle_MultipleLevels(t *testing.T) {
 	defaultBudget = levelBudget{
 		l0: 1024,
 		l1: 1024 * 10,
-		l2: 1024 * 100,
+		l2: 1024 * 10,
 	}
 	t.Cleanup(func() { defaultBudget = origBudget })
 

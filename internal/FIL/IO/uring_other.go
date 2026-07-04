@@ -1,4 +1,4 @@
-//go:build !linux || no_uring
+//go:build !linux
 
 // Package uring provides a non-Linux fallback that exposes the
 // same interface as the Linux io_uring wrapper. On non-Linux

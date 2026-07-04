@@ -1,4 +1,4 @@
-//go:build linux && !no_uring
+//go:build linux
 
 // Package uring provides a Linux io_uring wrapper (REQ000295).
 package uring
@@ -18,6 +18,8 @@ const (
 	IORING_OP_FSYNC       = 3
 	IORING_OP_READ_FIXED  = 7
 	IORING_OP_WRITE_FIXED = 8
+	IORING_OP_READ        = 22
+	IORING_OP_WRITE       = 23
 )
 
 const (
@@ -45,6 +47,12 @@ const (
 const sqeSize = 64
 const cqeSize = 16
 
+const (
+	ioringOffSqRing = 0
+	ioringOffCqRing = 0x8000000
+	ioringOffSqes   = 0x10000000
+)
+
 type uring_sqe struct {
 	opcode   uint8  // 0
 	flags    uint8  // 1
@@ -69,17 +77,16 @@ type uring_cqe struct {
 }
 
 type uring_params struct {
-	sqEntries    uint32    // 0-3
-	cqEntries    uint32    // 4-7
-	flags        uint32    // 8-11
-	sqThreadIdle uint32    // 12-15
-	sqThreadCpu  uint32    // 16-19
-	features     uint32    // 20-23
-	wqFd         uint32    // 24-27
-	resv         [4]uint32 // 28-43
-	sqOff        [8]uint32 // 44-75
-	cqOff        [8]uint32 // 76-107
-	resv2        [3]uint32 // 108-119
+	sqEntries    uint32     // 0-3
+	cqEntries    uint32     // 4-7
+	flags        uint32     // 8-11
+	sqThreadCpu  uint32     // 12-15
+	sqThreadIdle uint32     // 16-19
+	features     uint32     // 20-23
+	wqFd         uint32     // 24-27
+	resv         [3]uint32  // 28-39
+	sqOff        [10]uint32 // 40-79
+	cqOff        [10]uint32 // 80-119
 }
 
 const sizeofParams = 120
@@ -106,7 +113,7 @@ type Ring struct {
 func mmap(fd int, offset int64, length int) ([]byte, syscall.Errno) {
 	area, err := syscall.Mmap(fd, offset, length,
 		syscall.PROT_READ|syscall.PROT_WRITE,
-		syscall.MAP_SHARED|syscall.MAP_POPULATE)
+		syscall.MAP_SHARED)
 	if err != nil {
 		return nil, err.(syscall.Errno)
 	}
@@ -135,16 +142,15 @@ func New(entries int) (*Ring, error) {
 	}
 
 	sqRingSize := int(params.sqOff[6]) + int(params.sqEntries)*4
-	sqArea, sqErrno := mmap(int(fd), 0, sqRingSize)
+	sqArea, sqErrno := mmap(int(fd), ioringOffSqRing, sqRingSize)
 	if sqErrno != 0 {
 		syscall.Close(int(fd))
 		return nil, fmt.Errorf("uring: mmap sq: %w", sqErrno)
 	}
 	r.mmapSq = sqArea
 
-	sqeOff := params.sqOff[7]
 	sqeBytes := int(params.sqEntries) * sqeSize
-	r.sqeRing, errno = mmap(int(fd), int64(sqeOff), sqeBytes)
+	r.sqeRing, errno = mmap(int(fd), ioringOffSqes, sqeBytes)
 	if errno != 0 {
 		syscall.Munmap(r.mmapSq)
 		syscall.Close(int(fd))
@@ -152,8 +158,8 @@ func New(entries int) (*Ring, error) {
 	}
 
 	if params.cqOff[0] != params.sqOff[0] {
-		cqRingSize := int(params.cqOff[4]) + int(params.cqEntries)*cqeSize
-		r.mmapCq, errno = mmap(int(fd), 0, cqRingSize)
+		cqRingSize := int(params.cqOff[5]) + int(params.cqEntries)*cqeSize
+		r.mmapCq, errno = mmap(int(fd), ioringOffCqRing, cqRingSize)
 		if errno != 0 {
 			syscall.Munmap(r.mmapSq)
 			if &r.sqeRing[0] != &r.mmapSq[0] {
@@ -163,12 +169,20 @@ func New(entries int) (*Ring, error) {
 			return nil, fmt.Errorf("uring: mmap cq: %w", errno)
 		}
 	} else {
+		cqRingSize := int(params.cqOff[5]) + int(params.cqEntries)*cqeSize
+		if cqRingSize > sqRingSize {
+			sqRingSize = cqRingSize
+		}
 		r.mmapCq = r.mmapSq
 	}
 
 	r.sqHead = (*uint32)(unsafe.Pointer(&r.mmapSq[params.sqOff[0]]))
 	r.sqTail = (*uint32)(unsafe.Pointer(&r.mmapSq[params.sqOff[1]]))
 	r.sqArray = (*uint32)(unsafe.Pointer(&r.mmapSq[params.sqOff[6]]))
+
+	for i := uint32(0); i < params.sqEntries; i++ {
+		atomic.StoreUint32((*uint32)(unsafe.Pointer(&r.mmapSq[params.sqOff[6]+i*4])), i)
+	}
 
 	r.cqHead = (*uint32)(unsafe.Pointer(&r.mmapCq[params.cqOff[0]]))
 	r.cqTail = (*uint32)(unsafe.Pointer(&r.mmapCq[params.cqOff[1]]))
@@ -206,7 +220,7 @@ func (r *Ring) Close() error {
 
 func (r *Ring) Fd() int { return r.fd }
 
-// SubmitWait submits pending SQEs and waits for completions.
+// SubmitWait submits pending SQEs and waits for at least want completions.
 func (r *Ring) SubmitWait(want int) (int, error) {
 	if r.closed.Load() {
 		return 0, errors.New("uring: ring is closed")
@@ -232,6 +246,37 @@ func (r *Ring) SubmitWait(want int) (int, error) {
 	return r.cqAvailable(), nil
 }
 
+// SubmitAndWait submits up to sqes pending SQEs and waits for at least wantCQEs
+// completions in a single io_uring_enter syscall (REQ001206).
+func (r *Ring) SubmitAndWait(sqes int, wantCQEs int) (int, error) {
+	if r.closed.Load() {
+		return 0, errors.New("uring: ring is closed")
+	}
+	tail := atomic.LoadUint32(r.sqTail)
+	head := atomic.LoadUint32(r.sqHead)
+	available := int(tail - head)
+	toSubmit := available
+	if sqes < toSubmit {
+		toSubmit = sqes
+	}
+	if toSubmit == 0 && wantCQEs == 0 {
+		return 0, nil
+	}
+	var flags uintptr
+	if wantCQEs > 0 {
+		flags = uintptr(IORING_ENTER_GETEVENTS)
+	}
+	_, _, errno := syscall.Syscall6(
+		sysIoUringEnter, uintptr(r.fd),
+		uintptr(toSubmit), uintptr(wantCQEs),
+		flags, 0, 0,
+	)
+	if errno != 0 {
+		return 0, fmt.Errorf("uring: enter: %w", syscall.Errno(errno))
+	}
+	return r.cqAvailable(), nil
+}
+
 // Sqe returns a pointer to an SQE slot.
 func (r *Ring) Sqe() (*uring_sqe, error) {
 	if r.closed.Load() {
@@ -241,13 +286,12 @@ func (r *Ring) Sqe() (*uring_sqe, error) {
 		tail := atomic.LoadUint32(r.sqTail)
 		head := atomic.LoadUint32(r.sqHead)
 		if tail-head >= r.entries {
-			if _, err := r.SubmitWait(1); err != nil {
-				return nil, err
-			}
-			continue
+			return nil, errors.New("uring: ring full")
 		}
 		if atomic.CompareAndSwapUint32(r.sqTail, tail, tail+1) {
 			idx := tail & r.ringMask
+			sqArr := (*uint32)(unsafe.Pointer(uintptr(unsafe.Pointer(r.sqArray)) + uintptr(idx)*4))
+			atomic.StoreUint32(sqArr, idx)
 			base := uintptr(unsafe.Pointer(&r.sqeRing[0]))
 			entry := (*uring_sqe)(unsafe.Pointer(base + uintptr(idx)*sqeSize))
 			*entry = uring_sqe{}
@@ -256,8 +300,52 @@ func (r *Ring) Sqe() (*uring_sqe, error) {
 	}
 }
 
+// Flush submits pending SQEs without blocking for completions.
+func (r *Ring) Flush() error {
+	if r.closed.Load() {
+		return errors.New("uring: ring is closed")
+	}
+	tail := atomic.LoadUint32(r.sqTail)
+	head := atomic.LoadUint32(r.sqHead)
+	need := tail - head
+	if need == 0 {
+		return nil
+	}
+	_, _, errno := syscall.Syscall6(
+		sysIoUringEnter, uintptr(r.fd),
+		uintptr(need), 0,
+		0, 0, 0,
+	)
+	if errno != 0 {
+		return fmt.Errorf("uring: enter: %w", syscall.Errno(errno))
+	}
+	return nil
+}
+
+// Validate submits a NOP to verify the ring is operational.
+func (r *Ring) Validate() error {
+	sqe, err := r.Sqe()
+	if err != nil {
+		return err
+	}
+	sqe.opcode = IORING_OP_NOP
+	sqe.SetUserData(1)
+	if _, err := r.SubmitWait(1); err != nil {
+		return err
+	}
+	cqe, ok := r.PeekCqe()
+	if !ok {
+		return errors.New("uring: ring validation timeout")
+	}
+	r.ConsumeCqe()
+	if cqe.Res < 0 {
+		return fmt.Errorf("uring: NOP failed with %d", cqe.Res)
+	}
+	return nil
+}
+
 func (s *uring_sqe) PrepRead(fd int, buf []byte, offset int64) {
-	s.opcode = IORING_OP_READV
+	s.opcode = IORING_OP_READ
 	s.fd = int32(fd)
 	s.off = uint64(offset)
 	s.addr = uint64(uintptr(unsafe.Pointer(&buf[0])))
@@ -265,7 +353,7 @@ func (s *uring_sqe) PrepRead(fd int, buf []byte, offset int64) {
 }
 
 func (s *uring_sqe) PrepWrite(fd int, buf []byte, offset int64) {
-	s.opcode = IORING_OP_WRITEV
+	s.opcode = IORING_OP_WRITE
 	s.fd = int32(fd)
 	s.off = uint64(offset)
 	s.addr = uint64(uintptr(unsafe.Pointer(&buf[0])))
