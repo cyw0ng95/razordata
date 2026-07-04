@@ -83,6 +83,7 @@ func (d *Distinct) Next(ctx context.Context) (pl.Row, error) {
 func (d *Distinct) Close() error {
 	d.buf = nil
 	d.seen = nil
+	d.pos = 0
 	return d.child.Close()
 }
 

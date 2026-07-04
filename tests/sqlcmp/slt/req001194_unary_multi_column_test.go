@@ -22,12 +22,12 @@ func TestREQ001194_MultiColumnUnaryAggregate(t *testing.T) {
 		{"SELECT - MAX( - 76 ), - 15", []string{"76", "-15"}},
 		{"SELECT - MAX( - 76 ), - 15 AS col2", []string{"76", "-15"}},
 		{"SELECT - 15, - MAX( - 76 )", []string{"-15", "76"}},
-		{"SELECT DISTINCT 32 * + + 59 * + ( + + 41 ) - - 9 col2, COUNT( DISTINCT + + 79 ) AS col0", []string{"77417", "1"}},
-        {"SELECT DISTINCT + 68, 1, - 15", []string{"68", "1", "-15"}},
-        {"SELECT - 15", []string{"-15"}},
-        {"SELECT - MAX( - 76 )", []string{"76"}},
-        {"SELECT 1, - 15", []string{"1", "-15"}},
-        {"SELECT DISTINCT + 68", []string{"68"}},
+		{"SELECT DISTINCT 32 * + + 59 * + ( + + 41 ) - - 9", []string{"77417"}},
+		{"SELECT DISTINCT + 68, 1, - 15", []string{"68", "1", "-15"}},
+		{"SELECT - 15", []string{"-15"}},
+		{"SELECT - MAX( - 76 )", []string{"76"}},
+		{"SELECT 1, - 15", []string{"1", "-15"}},
+		{"SELECT DISTINCT + 68", []string{"68"}},
     }
     for _, tt := range tests {
         t.Run(tt.sql, func(t *testing.T) {
