@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"runtime"
 	"sync"
 	"syscall"
 	"unsafe"
 
+	"github.com/cyw0ng95/razordata/internal/FIL/IO"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"golang.org/x/sys/unix"
 )
@@ -69,6 +71,8 @@ type BlockDevice struct {
 	mmapBuf []byte
 	log     lg.Logger
 	mu      sync.RWMutex // protects fd: concurrent-close protection (REQ000600)
+	Ring    *uring.Ring  // io_uring ring (REQ001202), nil on unsupported platforms
+	ringMu  sync.Mutex   // serializes ring I/O operations
 }
 
 func Open(path string, log ...lg.Logger) (*BlockDevice, error) {
@@ -136,6 +140,22 @@ func openFile(path string, readOnly, create bool, logs []lg.Logger) (*BlockDevic
 		}
 	}
 
+	if runtime.GOOS == "linux" {
+		ring, err := uring.New(256)
+		if err != nil {
+			if log != nil {
+				log.Info("df.open", "path", path, "msg", "io_uring unavailable, using synchronous I/O", "err", err)
+			}
+		} else if err := ring.Validate(); err != nil {
+			ring.Close()
+			if log != nil {
+				log.Info("df.open", "path", path, "msg", "io_uring validation failed, using synchronous I/O", "err", err)
+			}
+		} else {
+			bd.Ring = ring
+		}
+	}
+
 	return bd, nil
 }
 
@@ -146,6 +166,99 @@ func supportsODirect() bool {
 		return true
 	}
 	return false
+}
+
+func (d *BlockDevice) readAt(fd int, buf []byte, offset int64) (int, error) {
+	if d.Ring == nil {
+		return unix.Pread(fd, buf, offset)
+	}
+	d.ringMu.Lock()
+	defer d.ringMu.Unlock()
+
+	sqe, err := d.Ring.Sqe()
+	if err != nil {
+		d.Ring.Close()
+		d.Ring = nil
+		return unix.Pread(fd, buf, offset)
+	}
+	sqe.PrepRead(fd, buf, offset)
+
+	if err := d.Ring.Flush(); err != nil {
+		d.Ring.Close()
+		d.Ring = nil
+		return unix.Pread(fd, buf, offset)
+	}
+
+	for retries := 0; retries < 1000; retries++ {
+		if err := d.Ring.Flush(); err != nil {
+			d.Ring.Close()
+			d.Ring = nil
+			return unix.Pread(fd, buf, offset)
+		}
+		cqe, ok := d.Ring.PeekCqe()
+		if ok {
+			d.Ring.ConsumeCqe()
+			if cqe.Res < 0 {
+				return 0, syscall.Errno(-cqe.Res)
+			}
+			return int(cqe.Res), nil
+		}
+	}
+	d.Ring.Close()
+	d.Ring = nil
+	return unix.Pread(fd, buf, offset)
+}
+
+func (d *BlockDevice) writeAt(fd int, buf []byte, offset int64) (int, error) {
+	if d.Ring == nil {
+		return unix.Pwrite(fd, buf, offset)
+	}
+	d.ringMu.Lock()
+	defer d.ringMu.Unlock()
+
+	sqe, err := d.Ring.Sqe()
+	if err != nil {
+		d.Ring.Close()
+		d.Ring = nil
+		return unix.Pwrite(fd, buf, offset)
+	}
+	sqe.PrepWrite(fd, buf, offset)
+
+	if err := d.Ring.Flush(); err != nil {
+		d.Ring.Close()
+		d.Ring = nil
+		return unix.Pwrite(fd, buf, offset)
+	}
+
+	for retries := 0; retries < 1000; retries++ {
+		if err := d.Ring.Flush(); err != nil {
+			d.Ring.Close()
+			d.Ring = nil
+			return unix.Pwrite(fd, buf, offset)
+		}
+		cqe, ok := d.Ring.PeekCqe()
+		if ok {
+			d.Ring.ConsumeCqe()
+			if cqe.Res < 0 {
+				return 0, syscall.Errno(-cqe.Res)
+			}
+			return int(cqe.Res), nil
+		}
+	}
+	d.Ring.Close()
+	d.Ring = nil
+	return unix.Pwrite(fd, buf, offset)
+}
+
+// SubmitBatch submits count pre-staged SQEs to the ring and waits for
+// count completions with a single io_uring_enter syscall.
+func (d *BlockDevice) SubmitBatch(count int) (int, error) {
+	if d.Ring == nil {
+		return 0, uring.ErrUnsupported
+	}
+	d.ringMu.Lock()
+	defer d.ringMu.Unlock()
+	return d.Ring.SubmitWait(count)
 }
 
 // ReadBlock reads block blockID into buf.
@@ -173,7 +286,7 @@ func (d *BlockDevice) ReadBlock(_ context.Context, blockID uint64, n int, buf []
 		}
 		copy(tmp, d.mmapBuf[off:off+int64(len(tmp))])
 	} else {
-		nn, err := unix.Pread(fd, tmp, int64(offset))
+		nn, err := d.readAt(fd, tmp, int64(offset))
 		if err != nil {
 			if d.log != nil {
 				d.log.Error("df.read_block", "blockID", blockID, "err", err)
@@ -219,7 +332,7 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 		sum := crc32.ChecksumIEEE(poolBuf[:n])
 		binary.LittleEndian.PutUint32(poolBuf[DataLen-ChecksumLen:DataLen], sum)
 
-		_, err := unix.Pwrite(fd, poolBuf[:], int64(offset))
+		_, err := d.writeAt(fd, poolBuf[:], int64(offset))
 		if err != nil {
 			if d.log != nil {
 				d.log.Error("df.write_block", "blockID", blockID, "err", err)
@@ -239,7 +352,7 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 	sum := crc32.ChecksumIEEE(tmp[:n])
 	binary.LittleEndian.PutUint32(tmp[DataLen-ChecksumLen:DataLen], sum)
 
-	_, err := unix.Pwrite(fd, tmp[:], int64(offset))
+	_, err := d.writeAt(fd, tmp[:], int64(offset))
 	if err != nil {
 		if d.log != nil {
 			d.log.Error("df.write_block", "blockID", blockID, "err", err)
@@ -264,7 +377,7 @@ func (d *BlockDevice) ReadBlockFull(blockID uint64, buf []byte) error {
 	tmp := borrowTempBuf()
 	defer returnTempBuf(tmp)
 
-	nn, err := unix.Pread(fd, tmp, int64(offset))
+	nn, err := d.readAt(fd, tmp, int64(offset))
 	if err != nil {
 		if d.log != nil {
 			d.log.Error("df.read_block_full", "blockID", blockID, "err", err)
@@ -307,6 +420,10 @@ func (d *BlockDevice) Close() error {
 	if d.mmapBuf != nil {
 		_ = munmapBlock(d.mmapBuf)
 		d.mmapBuf = nil
+	}
+	if d.Ring != nil {
+		_ = d.Ring.Close()
+		d.Ring = nil
 	}
 	if d.fd == -1 {
 		return nil

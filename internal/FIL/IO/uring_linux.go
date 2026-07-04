@@ -1,4 +1,4 @@
-//go:build linux && !no_uring
+//go:build linux
 
 // Package uring provides a Linux io_uring wrapper (REQ000295).
 package uring
@@ -44,6 +44,12 @@ const (
 
 const sqeSize = 64
 const cqeSize = 16
+
+const (
+	ioringOffSqRing = 0
+	ioringOffCqRing = 0x8000000
+	ioringOffSqes   = 0x10000000
+)
 
 type uring_sqe struct {
 	opcode   uint8  // 0
@@ -106,7 +112,7 @@ type Ring struct {
 func mmap(fd int, offset int64, length int) ([]byte, syscall.Errno) {
 	area, err := syscall.Mmap(fd, offset, length,
 		syscall.PROT_READ|syscall.PROT_WRITE,
-		syscall.MAP_SHARED|syscall.MAP_POPULATE)
+		syscall.MAP_SHARED)
 	if err != nil {
 		return nil, err.(syscall.Errno)
 	}
@@ -135,16 +141,15 @@ func New(entries int) (*Ring, error) {
 	}
 
 	sqRingSize := int(params.sqOff[6]) + int(params.sqEntries)*4
-	sqArea, sqErrno := mmap(int(fd), 0, sqRingSize)
+	sqArea, sqErrno := mmap(int(fd), ioringOffSqRing, sqRingSize)
 	if sqErrno != 0 {
 		syscall.Close(int(fd))
 		return nil, fmt.Errorf("uring: mmap sq: %w", sqErrno)
 	}
 	r.mmapSq = sqArea
 
-	sqeOff := params.sqOff[7]
 	sqeBytes := int(params.sqEntries) * sqeSize
-	r.sqeRing, errno = mmap(int(fd), int64(sqeOff), sqeBytes)
+	r.sqeRing, errno = mmap(int(fd), ioringOffSqes, sqeBytes)
 	if errno != 0 {
 		syscall.Munmap(r.mmapSq)
 		syscall.Close(int(fd))
@@ -152,8 +157,8 @@ func New(entries int) (*Ring, error) {
 	}
 
 	if params.cqOff[0] != params.sqOff[0] {
-		cqRingSize := int(params.cqOff[4]) + int(params.cqEntries)*cqeSize
-		r.mmapCq, errno = mmap(int(fd), 0, cqRingSize)
+		cqRingSize := int(params.cqOff[5]) + int(params.cqEntries)*cqeSize
+		r.mmapCq, errno = mmap(int(fd), ioringOffCqRing, cqRingSize)
 		if errno != 0 {
 			syscall.Munmap(r.mmapSq)
 			if &r.sqeRing[0] != &r.mmapSq[0] {
@@ -163,6 +168,10 @@ func New(entries int) (*Ring, error) {
 			return nil, fmt.Errorf("uring: mmap cq: %w", errno)
 		}
 	} else {
+		cqRingSize := int(params.cqOff[5]) + int(params.cqEntries)*cqeSize
+		if cqRingSize > sqRingSize {
+			sqRingSize = cqRingSize
+		}
 		r.mmapCq = r.mmapSq
 	}
 
@@ -241,10 +250,7 @@ func (r *Ring) Sqe() (*uring_sqe, error) {
 		tail := atomic.LoadUint32(r.sqTail)
 		head := atomic.LoadUint32(r.sqHead)
 		if tail-head >= r.entries {
-			if _, err := r.SubmitWait(1); err != nil {
-				return nil, err
-			}
-			continue
+			return nil, errors.New("uring: ring full")
 		}
 		if atomic.CompareAndSwapUint32(r.sqTail, tail, tail+1) {
 			idx := tail & r.ringMask
@@ -254,6 +260,54 @@ func (r *Ring) Sqe() (*uring_sqe, error) {
 			return entry, nil
 		}
 	}
+}
+
+// Flush submits pending SQEs without blocking for completions.
+func (r *Ring) Flush() error {
+	if r.closed.Load() {
+		return errors.New("uring: ring is closed")
+	}
+	tail := atomic.LoadUint32(r.sqTail)
+	head := atomic.LoadUint32(r.sqHead)
+	need := tail - head
+	if need == 0 {
+		return nil
+	}
+	_, _, errno := syscall.Syscall6(
+		sysIoUringEnter, uintptr(r.fd),
+		uintptr(need), 0,
+		0, 0, 0,
+	)
+	if errno != 0 {
+		return fmt.Errorf("uring: enter: %w", syscall.Errno(errno))
+	}
+	return nil
+}
+
+// Validate submits a NOP to verify the ring is operational.
+func (r *Ring) Validate() error {
+	sqe, err := r.Sqe()
+	if err != nil {
+		return err
+	}
+	sqe.SetUserData(1)
+	if err := r.Flush(); err != nil {
+		return err
+	}
+	for retries := 0; retries < 1000; retries++ {
+		if err := r.Flush(); err != nil {
+			return err
+		}
+		cqe, ok := r.PeekCqe()
+		if ok {
+			r.ConsumeCqe()
+			if cqe.Res < 0 {
+				return fmt.Errorf("uring: NOP failed with %d", cqe.Res)
+			}
+			return nil
+		}
+	}
+	return errors.New("uring: ring validation timeout")
 }
 
 func (s *uring_sqe) PrepRead(fd int, buf []byte, offset int64) {
