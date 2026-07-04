@@ -1054,7 +1054,8 @@ func evalArithBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) UT.Column {
 				op = func(a, b int64) int64 { return a / b }
 			}
 			if op != nil {
-				return evalArithIntBatch(leftCol, rightCol, batch, op)
+				isDiv := e.Op == LX.T_SLASH || e.Op == LX.T_DIV
+				return evalArithIntBatch(leftCol, rightCol, batch, op, isDiv)
 			}
 		}
 	}
@@ -1086,9 +1087,15 @@ func isFloatType(typ LX.TokenType) bool {
 	return typ == LX.T_FLOAT_KW
 }
 
+// isTextColumn reports whether a column is one of the text-compatible types.
+func isTextColumn(col UT.Column) bool {
+	return col.Type == LX.T_TEXT || col.Type == LX.T_VARCHAR || col.Type == LX.T_BLOB
+}
+
 // evalArithIntBatch evaluates an int64 binary arithmetic expression over
 // two columns, respecting the batch's selection vector and propagating NULLs.
-func evalArithIntBatch(left, right UT.Column, batch *UT.Batch, op func(a, b int64) int64) UT.Column {
+// When isDiv is true, zero divisors produce NULL in the output.
+func evalArithIntBatch(left, right UT.Column, batch *UT.Batch, op func(a, b int64) int64, isDiv bool) UT.Column {
 	n := batch.LogicalSize()
 	out := UT.Column{
 		Name: "",
@@ -1109,11 +1116,25 @@ func evalArithIntBatch(left, right UT.Column, batch *UT.Batch, op func(a, b int6
 				out.Nulls[i] = true
 				continue
 			}
+			if isDiv && right.Data.Ints[i] == 0 {
+				if out.Nulls == nil {
+					out.Nulls = make([]bool, batch.Size)
+				}
+				out.Nulls[i] = true
+				continue
+			}
 			out.Data.Ints[i] = op(left.Data.Ints[i], right.Data.Ints[i])
 		}
 	} else {
 		for i := 0; i < n; i++ {
 			if isNull(left, i) || isNull(right, i) {
+				if out.Nulls == nil {
+					out.Nulls = make([]bool, batch.Size)
+				}
+				out.Nulls[i] = true
+				continue
+			}
+			if isDiv && right.Data.Ints[i] == 0 {
 				if out.Nulls == nil {
 					out.Nulls = make([]bool, batch.Size)
 				}
@@ -1190,9 +1211,16 @@ func evalArithFloatBatch(left, right UT.Column, batch *UT.Batch, op func(a, b fl
 }
 
 // evalConcatBatchExpr evaluates string concatenation over a batch.
+// If either operand column is not a text type (TEXT/VARCHAR/BLOB), falls
+// back to row-at-a-time evaluation to avoid silent "" conversion for
+// non-string columns (REQ001210).
 func evalConcatBatchExpr(e *PS.BinaryExpr, batch *UT.Batch, params []any) UT.Column {
 	leftCol := EvalBatchExpr(e.Left, batch, params)
 	rightCol := EvalBatchExpr(e.Right, batch, params)
+	// Non-text columns cannot be concatenated via the batch kernel.
+	if !isTextColumn(leftCol) || !isTextColumn(rightCol) {
+		return evalRowFallbackColumn(e, batch, params)
+	}
 	return evalConcatBatch(leftCol, rightCol, batch)
 }
 
@@ -1247,6 +1275,7 @@ func evalConcatBatch(left, right UT.Column, batch *UT.Batch) UT.Column {
 // evalComparisonBatch evaluates comparison operators (EQ/NE/LT/LE/GT/GE)
 // over a batch by delegating to EvalBatch (which produces a selection vector)
 // and converting the result to a boolean column.
+// REQ000608: rows where either operand is NULL produce NULL in the output.
 func evalComparisonBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) UT.Column {
 	sel := EvalBatch(e, batch, params)
 	n := batch.Size
@@ -1262,11 +1291,35 @@ func evalComparisonBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) UT.Col
 				out.Data.Bools[i] = true
 			}
 		}
-		return out
+	} else {
+		for _, idx := range sel {
+			out.Data.Bools[idx] = true
+		}
 	}
-	for _, idx := range sel {
-		out.Data.Bools[idx] = true
+
+	// Scan for NULL operands. For column-based comparisons, rows where
+	// either operand column has NULL must yield NULL, not false.
+	leftCol, leftIsCol := extractColumnRef(e.Left, batch)
+	rightCol, rightIsCol := extractColumnRef(e.Right, batch)
+	if leftIsCol || rightIsCol {
+		for i := 0; i < n; i++ {
+			isNullRow := false
+			if leftIsCol && isNull(leftCol, i) {
+				isNullRow = true
+			}
+			if rightIsCol && isNull(rightCol, i) {
+				isNullRow = true
+			}
+			if isNullRow {
+				if out.Nulls == nil {
+					out.Nulls = make([]bool, n)
+				}
+				out.Nulls[i] = true
+				out.Data.Bools[i] = false
+			}
+		}
 	}
+
 	return out
 }
 

@@ -139,14 +139,26 @@ func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 	return v.ToAny(), nil
 }
 
-// EvalValue evaluates an expression against a single row by packaging the
-// row into a synthetic 1-row batch, delegating to EvalBatchExpr, and
-// extracting the single result value. REQ001210.
+// EvalValue evaluates an expression against a single row. For simple
+// expressions (literals, column references, unary ops, aliases) it calls
+// evalFallbackEvalValue directly to avoid the overhead of batch allocation.
+// For binary expressions that benefit from vectorized evaluation, it
+// packages the row into a synthetic 1-row batch and delegates to
+// EvalBatchExpr. REQ001210.
 func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 	if expr == nil {
 		return DT.NullValue(), nil
 	}
 	if row == nil || row.Outer != nil {
+		return evalFallbackEvalValue(expr, row, params)
+	}
+	// Simple expressions: bypass batch allocation and call the row-at-a-time
+	// evaluator directly. This avoids rowToBatch overhead for the common case
+	// of column reads, literals, and unary ops.
+	switch expr.(type) {
+	case *PS.Ident, *PS.NumberLiteral, *PS.FloatLiteral,
+		*PS.StringLiteral, *PS.BoolLiteral, *PS.NullLiteral,
+		*PS.Param, *PS.StarExpr, *PS.UnaryExpr, *PS.AliasedExpr:
 		return evalFallbackEvalValue(expr, row, params)
 	}
 	b := rowToBatch(row)
