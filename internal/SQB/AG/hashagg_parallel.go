@@ -6,8 +6,8 @@ import (
 	"sync"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 // ParallelHashAggregate partitions input by group key hash, builds
@@ -68,12 +68,12 @@ func (a *ParallelHashAggregate) Close() error {
 
 // partialAgg holds a worker's partial aggregation state.
 type partialAgg struct {
-	key   Row
-	rows  int
-	count int64
-	sum   float64
-	min   float64
-	max   float64
+	key    Row
+	rows   int
+	count  int64
+	sum    float64
+	min    float64
+	max    float64
 	hasVal bool
 }
 
@@ -141,10 +141,10 @@ func (a *ParallelHashAggregate) parallelAgg(ctx context.Context, rows []Row, wor
 	}
 
 	type partResult struct {
-		idx   int
-		order []string
+		idx     int
+		order   []string
 		buckets map[string][]Row
-		err    error
+		err     error
 	}
 	resultCh := make(chan partResult, workers)
 	var wg sync.WaitGroup

@@ -313,7 +313,7 @@ func TestVectorizedHashAggregate_MultipleBatches(t *testing.T) {
 		t.Fatalf("expected group 1 SUM=40, got %d", result[1])
 	}
 	if result[2] != 60 {
-		
+
 		t.Fatalf("expected group 2 SUM=60, got %d", result[2])
 	}
 }
@@ -374,7 +374,7 @@ func TestVectorizedHashAggregate_GroupByMultipleColumns(t *testing.T) {
 	// Build result map: (g0,g1) -> count
 	results := make(map[[2]int64]int64)
 	for i := range batch.Size {
-		
+
 		g0 := batch.Value(0, i).(int64)
 		g1 := batch.Value(1, i).(int64)
 		count := batch.Value(2, i).(int64)
@@ -404,7 +404,7 @@ func TestVectorizedHashAggregate_GroupByMultipleColumns_SUM(t *testing.T) {
 			makeGroupBatch3(
 				[]int64{1, 1, 2, 2},
 				[]int64{10, 20, 10, 20},
-                []int64{100, 200, 300, 400},
+				[]int64{100, 200, 300, 400},
 			),
 		},
 	}
@@ -429,7 +429,7 @@ func TestVectorizedHashAggregate_GroupByMultipleColumns_SUM(t *testing.T) {
 
 	sumResults := make(map[[2]int64]int64)
 	for i := range batch.Size {
-		
+
 		g0 := batch.Value(0, i).(int64)
 		g1 := batch.Value(1, i).(int64)
 		sum := batch.Value(2, i).(int64)
@@ -443,7 +443,7 @@ func TestVectorizedHashAggregate_GroupByMultipleColumns_SUM(t *testing.T) {
 		{2, 20}: 400,
 	}
 	for key, exp := range expected {
-		
+
 		actual, ok := sumResults[key]
 		if !ok {
 			t.Fatalf("expected group (%d, %d) not found", key[0], key[1])
@@ -474,7 +474,7 @@ func TestVectorizedHashAggregate_NoGroupBy(t *testing.T) {
 		t.Fatalf("expected 1 row (no GROUP BY), got %d", batch.Size)
 	}
 	if batch.Value(0, 0) != int64(3) {
-		
+
 		t.Fatalf("expected COUNT=3, got %v", batch.Value(0, 0))
 	}
 }

@@ -436,7 +436,19 @@ func EvalAggregateOver(e PS.Expr, rows []Row, params []any) (any, error) {
 			}
 			return v.ToAny(), nil
 		}
-		return nil, nil
+		// REQ001194: expression does not contain any aggregate
+		// (e.g. pure constant or column reference in aggregate
+		// list). Evaluate once against the first input row (or
+		// nil for scalar aggregates with no input rows).
+		var evalRow *Row
+		if len(rows) > 0 {
+			evalRow = &rows[0]
+		}
+		v, err := EV.EvalValue(e, evalRow, params)
+		if err != nil {
+			return nil, err
+		}
+		return v.ToAny(), nil
 	}
 	// REQ000978: registry-based aggregate dispatch. Adding a new
 	// aggregate is a one-line registration in

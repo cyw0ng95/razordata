@@ -653,12 +653,12 @@ type aggPayload struct {
 // all child batches, builds a hash table, and returns one result
 // batch with group keys (if grouped) followed by aggregate columns.
 type VectorizedHashAggregate struct {
-	child      UT.BatchProducer
-	groupCols  []int // column indices for GROUP BY (nil = no GROUP BY)
-	aggDefs    []AggDef
-	ht         *UT.HashTable
-	payloads   []aggPayload
-	done       bool
+	child     UT.BatchProducer
+	groupCols []int // column indices for GROUP BY (nil = no GROUP BY)
+	aggDefs   []AggDef
+	ht        *UT.HashTable
+	payloads  []aggPayload
+	done      bool
 }
 
 // hashInt64 computes a uint64 hash of an int64 key using
@@ -873,7 +873,7 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 		case AggAvg:
 			batch.SetColumnName(colIdx, "avg")
 		}
-		
+
 		batch.Cols[colIdx].Type = LX.T_INT_KW
 		batch.Cols[colIdx].Data.Ints = make([]int64, 0)
 		colIdx++
@@ -899,11 +899,11 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 				}
 			case AggAvg:
 				if p.Count > 0 {
-                    
+
 					val = p.Sum / p.Count
 				}
 			}
-			
+
 			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, val)
 			colIdx++
 		}
@@ -918,7 +918,7 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 		}
 		colIdx = 0
 		p := a.payloads[i]
-        
+
 		base := int(i) * hashStride
 		for c := 0; c < stride; c++ {
 			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, a.ht.Keys[base+c])
@@ -937,17 +937,16 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 				}
 			case AggMax:
 				if p.HasValue {
-					
+
 					val = p.Max
 				}
 			case AggAvg:
 				if p.Count > 0 {
-					
+
 					val = p.Sum / p.Count
 				}
 			}
-			
-			
+
 			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, val)
 			colIdx++
 		}
@@ -960,29 +959,29 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 		for c := 0; c < stride; c++ {
 			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, 0)
 			if batch.Cols[colIdx].Nulls == nil {
-				
+
 				batch.Cols[colIdx].Nulls = make([]bool, 1)
 			} else if len(batch.Cols[colIdx].Nulls) < 1 {
 				batch.Cols[colIdx].Nulls = append(batch.Cols[colIdx].Nulls, false)
 			}
-			
+
 			batch.Cols[colIdx].Nulls[0] = true
-			
+
 			colIdx++
 		}
 		for range a.aggDefs {
 			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, 0)
 			if batch.Cols[colIdx].Nulls == nil {
-				
+
 				batch.Cols[colIdx].Nulls = make([]bool, 1)
 			} else if len(batch.Cols[colIdx].Nulls) < 1 {
 				batch.Cols[colIdx].Nulls = append(batch.Cols[colIdx].Nulls, false)
 			}
-			
+
 			batch.Cols[colIdx].Nulls[0] = true
 			colIdx++
 		}
-		
+
 		batch.AdvanceSize()
 	}
 
