@@ -6,7 +6,7 @@
 
 | Subsystem | Clusters | Function Domains |
 |---|---|---|
-| `LOG` | `LG`, `HK` | `LG` — slog wrapper, log levels, rotation. `HK` — async event hooks: trace, metrics, profiling. |
+| `LOG` | `LG`, `HK`, `EC` | `LG` — slog wrapper, log levels, rotation. `HK` — async event hooks: trace, metrics, profiling. `EC` — structured error types: Error/Kind/SQLSTATE/Code, classification, wrapping. All subsystems import LOG/EC. |
 | `FIL` | `DF`, `MF`, `LF`, `FS`, `IO` | `DF` — block I/O (pread/pwrite), O_DIRECT, checksum. `MF` — meta.razor read/write, magic/version. `LF` — WAL segment files, handle pool. `FS` — directory management, path validation. `IO` — Linux io_uring async I/O for data files (AIO poll-based, batched CQEs). |
 | `MEM` | `BF`, `PC`, `SP`, `OF` | `BF` — buffer pool: clock-sweep LRU, pin/unpin, O(1) hash lookup. `PC` — page slots, checksum verification, warm hint file. `SP` — sync.Pool for page buffers and iterators. `OF` — overflow block handling for large values exceeding page size. |
 | `WAL` | `WR`, `FL`, `RP` | `WR` — sequential append, LSN allocation, segment rotation, columnar WAL encoding, LZ4 compression. `FL` — fsync on commit, batch flush, write barrier. `RP` — WAL replay on startup, checkpoint detection, segment truncation, parallel replay. |
@@ -39,10 +39,24 @@ type Iterator interface {
 type Tx interface {
     Get(ctx context.Context, key []byte) ([]byte, error)
     Insert(ctx context.Context, key, value []byte) error
-    Delete(ctx context.Context, key []byte) error
+    Delete(ctx context.Context, key, value []byte) error
     Commit(ctx context.Context) error
     Rollback(ctx context.Context) error
 }
+
+// LOG/EC — Structured error (single source of truth, all subsystems import LOG/EC)
+type Error struct {
+    Kind    Kind     // KindIO, KindCorrupt, KindSyntax, etc.
+    Code    Code     // e.g. "RZR-IO-001"
+    Message string
+    Cause   error    // wrapped underlying error
+}
+
+// Kind enumerates error classifications
+type Kind int
+
+// Code is the human-readable error code string
+type Code string
 
 // SQB/DT — Operator interface (defined in SQB/DT, consumed by SQF/PL and every SQB cluster)
 //
@@ -56,7 +70,7 @@ type Operator interface {
 
 ## Error Contract
 
-All user-facing errors are classified by `AP.Kind` and wrapped into `AP.Error` at subsystem boundaries. Lower layers define their own sentinels for internal use but must wrap into `AP.Error` when propagating to higher layers.
+All user-facing errors are defined in `LOG/EC` (Error Codes cluster). The `LOG/EC` cluster is the single source of truth for `Error`, `Kind`, `Code`, `SQLSTATE`, `Wrap`, `IsKind`, and `Classification`. Every subsystem imports `LOG/EC` directly — never `SYS/AP.Error`.
 
 **Cross-layer wrapping rule:** When an error crosses a subsystem boundary (e.g., ENG → SYS, SQF → SQB), the receiving layer wraps it:
 ```go
@@ -66,7 +80,7 @@ if err != nil {
 }
 ```
 
-**Classification:** `AP.IsKind(err, kind)` uses `errors.As` to traverse the chain, matching errors from any layer. This replaces per-sentinel `errors.Is` checks for classification purposes.
+**Classification:** `ec.IsKind(err, kind)` uses `errors.As` to traverse the chain, matching errors from any layer. This replaces per-sentinel `errors.Is` checks for classification purposes.
 
 **Per-package sentinels** (internal use, not exposed to callers):
 - `ENG/LS`: `ErrNotFound`, `ErrClosed`, `ErrBloomMiss`, `ErrCatalogCorrupt`, etc.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The foundation of the entire database. Every other subsystem depends on this. Provides structured internal logging via `log/slog` with log level control, log rotation, and async event hooks.
+The foundation of the entire database. Every other subsystem depends on this. Provides structured internal logging via `log/slog` with log level control, log rotation, async event hooks, and **structured error types** (`Error`, `Kind`, `SQLSTATE`, `Wrap`, `Classification`) that all subsystems import directly.
 
 ## Dependencies
 
@@ -125,6 +125,82 @@ type logEvent struct {
 - `MetricHook` collects counters (queries, rows, bytes) and histograms (latency) in a lock-free way.
 - `ProfileHook` is triggered by `Error` level events; dumps CPU and heap profiles.
 
+## Error Contract
+
+### Error (EC cluster)
+
+```go
+type Error struct {
+    Kind    Kind
+    Code    Code
+    Message string
+    Module  Module
+    Layer   Layer
+    SQLSTATE SQLSTATE
+    Cause   error
+    Fields  map[string]string
+}
+```
+
+**Kind** enumerates error classifications: `KindNotFound`, `KindDuplicateKey`, `KindLocked`, `KindCorrupt`, `KindSyntax`, `KindTypeMismatch`, `KindTxAborted`, `KindIO`, `KindUpgradeRequired`, `KindReadOnly`, `KindDeadlineExceeded`, `KindConstraint`, `KindClosed`, `KindInvalidOptions`, `KindInternal`, `KindNotImplemented`, `KindConflict`, `KindResourceExhausted`, `KindParse`.
+
+**Code** is a human-readable code like `RZR-IO-001`. `SQLSTATE` maps to standard SQLSTATE codes (e.g., `08006` for `KindLocked`, `42000` for `KindSyntax`).
+
+**Wrap function:**
+```go
+func Wrap(kind Kind, err error) *Error
+func WrapAt(kind Kind, module Module, layer Layer, err error) *Error
+```
+
+**Classification:**
+```go
+func Classify(err error) Classification
+func IsKind(err error, kind Kind) bool
+func IsRetryable(err error) bool
+func IsFatal(err error) bool
+```
+
+All subsystems import `internal/LOG/EC` directly. Error types from low-level subsystems are wrapped by higher-level subsystems into `*EC.Error` at boundary crossings. Per-package sentinel errors (`ENG/LS.ErrNotFound`, `WAL/WR.ErrCorrupt`) remain for internal use.
+
+### Layer (EC cluster)
+
+```go
+type Layer string
+
+const (
+    LayerSQL    Layer = "sql"
+    LayerTXN    Layer = "txn"
+    LayerENG    Layer = "eng"
+    LayerWAL    Layer = "wal"
+    LayerFIL    Layer = "fil"
+    LayerMEM    Layer = "mem"
+    LayerLOG    Layer = "log"
+    LayerIO     Layer = "io"
+    LayerConfig Layer = "config"
+    LayerINT    Layer = "int" // internal errors
+)
+```
+
+### Module (EC cluster)
+
+```go
+type Module string // e.g. "SQB/EV", "TXN/VL"
+```
+
+### SQLSTATE (EC cluster)
+
+```go
+type SQLSTATE string // e.g. "08006"
+```
+
+## Function Clusters
+
+| Cluster | Responsibility |
+|---|---|
+| `LG` | Logger: `slog` wrapper, level control, structured key-value output, log rotation |
+| `HK` | Hook: event hooks registry, async dispatch, TraceHook, MetricHook, ProfileHook |
+| `EC` | Error Codes: Error/Kind/Code/SQLSTATE types, Wrap, Classify, IsKind, IsRetryable, IsFatal |
+
 ## Implementation Plan
 
 1. **`internal/LOG/LG/logger.go`** — implement `Logger` with `slog` wrapper, atomic level, and rotation. Use `slog.NewJSONHandler` or `slog.NewTextHandler` based on `Options.LogFormat`.
@@ -133,7 +209,11 @@ type logEvent struct {
 4. **`internal/LOG/HK/trace.go`** — implement `TraceHook`: listen for SQL start/end events, emit structured trace.
 5. **`internal/LOG/HK/metric.go`** — implement `MetricHook`: lock-free counters and histogram using `sync/atomic`.
 6. **`internal/LOG/HK/profile.go`** — implement `ProfileHook`: `pprof.Lookup("heap").WriteTo` on `Error` events.
-7. **Tests:** `logger_test.go` (concurrent logging, level filtering, rotation), `hook_test.go` (hook registration, event delivery, drop-on-overflow).
+7. **`internal/LOG/EC/error.go`** — implement `Error` struct, `Error()`/`Unwrap()`/`Format()`, JSON marshal/unmarshal.
+8. **`internal/LOG/EC/kind.go`** — implement `Kind` enum (19 types) with `String()` method and `layerForKind` mapping.
+9. **`internal/LOG/EC/wrap.go`** — implement `Wrap`/`WrapAt` functions with auto-filled Code/SQLSTATE from Kind.
+10. **`internal/LOG/EC/classify.go`** — implement `Classify`/`IsKind`/`IsRetryable`/`IsFatal`/`AsError`.
+11. **Tests:** `logger_test.go` (concurrent logging, level filtering, rotation), `hook_test.go` (hook registration, event delivery, drop-on-overflow), `error_test.go` (wrap/unwrap chain, kind classification, SQLSTATE mapping), `classification_test.go` (retryable/fatal flags, chain traversal).
 
 ## Shipped Requirements
 
