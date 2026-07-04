@@ -161,7 +161,9 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 		*PS.Param, *PS.StarExpr, *PS.UnaryExpr, *PS.AliasedExpr,
 		*PS.FunctionCall, *PS.AggregateFunc, *PS.WindowFunc,
 		*PS.CastExpr, *PS.CaseExpr, *PS.BetweenExpr,
-		*PS.InExpr, *PS.ListExpr, *PS.IntervalLiteral:
+		*PS.InExpr, *PS.ListExpr, *PS.IntervalLiteral,
+		*PS.ExistsExpr, *PS.SubqueryExpr, *PS.RaiseFunc,
+		*PS.BinaryExpr:
 		return evalFallbackEvalValue(expr, row, params)
 	}
 	b := rowToBatch(row)
