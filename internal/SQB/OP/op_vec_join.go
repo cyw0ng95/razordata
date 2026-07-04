@@ -205,7 +205,7 @@ func (j *VectorizedHashJoin) probeCurrentRow() {
 	}
 	key := keyColVal(keyCol, j.probeRow)
 	hash := utHashInt64(key)
-	idx, found, _ := j.ht.Lookup(key, hash)
+	idx, found, _ := j.ht.Lookup([]int64{key}, hash)
 	if found {
 		j.pending = append(j.pending[:0], j.rowIDs[idx]...)
 	}

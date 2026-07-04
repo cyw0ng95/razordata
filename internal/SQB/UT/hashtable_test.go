@@ -9,11 +9,12 @@ func TestHashTable_InsertAndLookup(t *testing.T) {
 	ht := NewHashTable(16)
 	key := int64(42)
 	hash := uint64(42)
-	idx, found, ok := ht.Lookup(key, hash)
+	idx, found, ok := ht.Lookup([]int64{key}, hash)
 	if found {
 		t.Fatal("expected not found on empty table")
 	}
 	if !ok {
+		_ = ok
 		t.Fatal("expected ok (slot available for insert)")
 	}
 	// Simulate insert: store key at idx with bitmap
@@ -23,7 +24,7 @@ func TestHashTable_InsertAndLookup(t *testing.T) {
 	ht.Occupied++
 
 	// Lookup again
-	idx2, found2, ok2 := ht.Lookup(key, hash)
+	idx2, found2, ok2 := ht.Lookup([]int64{key}, hash)
 	if !found2 {
 		t.Fatal("expected found after insert")
 	}
@@ -41,7 +42,8 @@ func TestHashTable_Collision(t *testing.T) {
 	k1, h1 := int64(0), uint64(0)
 	k2, h2 := int64(16), uint64(16) // hash=16, 16&15=0
 
-	idx1, _, ok := ht.Lookup(k1, h1)
+	idx1, _, ok := ht.Lookup([]int64{k1}, h1)
+	_ = ok
 	if !ok {
 		t.Fatal("slot should be available")
 	}
@@ -50,7 +52,8 @@ func TestHashTable_Collision(t *testing.T) {
 	ht.Bitmap[idx1/64] |= 1 << (idx1 % 64)
 	ht.Occupied++
 
-	idx2, _, ok := ht.Lookup(k2, h2)
+	idx2, _, ok := ht.Lookup([]int64{k2}, h2)
+	_ = ok
 	if !ok {
 		t.Fatal("slot should be available after collision")
 	}
@@ -63,8 +66,8 @@ func TestHashTable_Collision(t *testing.T) {
 	ht.Occupied++
 
 	// Both should be findable
-	_, f1, _ := ht.Lookup(k1, h1)
-	_, f2, _ := ht.Lookup(k2, h2)
+	_, f1, _ := ht.Lookup([]int64{k1}, h1)
+	_, f2, _ := ht.Lookup([]int64{k2}, h2)
 	if !f1 || !f2 {
 		t.Fatal("both keys should be findable after collision")
 	}
@@ -74,7 +77,8 @@ func TestHashTable_Resize(t *testing.T) {
 	ht := NewHashTable(16)
 	for i := int64(0); i < 12; i++ {
 		h := uint64(i)
-		idx, _, ok := ht.Lookup(i, h)
+		idx, _, ok := ht.Lookup([]int64{i}, h)
+		_ = ok
 		if !ok {
 			t.Fatal("no available slot before resize")
 		}
@@ -84,19 +88,22 @@ func TestHashTable_Resize(t *testing.T) {
 		ht.Occupied++
 	}
 	// Trigger resize — Lookup returns ok=false (probe limit at cap/8), caller must resize
-	_, _, ok := ht.Lookup(int64(99), uint64(99))
+	_, _, ok := ht.Lookup([]int64{99}, uint64(99))
+	_ = ok
 	if ok {
 		t.Fatal("expected full before resize")
 	}
 	ht.resize()
 	// After resize (cap=32), key 16 hashes to slot 16 which is empty in first probe
-	_, _, ok = ht.Lookup(int64(16), uint64(16))
+	_, _, ok = ht.Lookup([]int64{16}, uint64(16))
+	_ = ok
 	if !ok {
 		t.Fatal("resize should make room")
 	}
 	// Verify all 12 original keys still findable
 	for i := int64(0); i < 12; i++ {
-		_, f, _ := ht.Lookup(i, uint64(i))
+		_, f, _ := ht.Lookup([]int64{i}, uint64(i))
+		_ = f
 		if !f {
 			t.Fatalf("key %d lost after resize", i)
 		}
@@ -128,7 +135,8 @@ func TestHashTable_ProbeInt64(t *testing.T) {
 
 func TestHashTable_Empty(t *testing.T) {
 	ht := NewHashTable(16)
-	_, found, _ := ht.Lookup(0, 0)
+	_, found, _ := ht.Lookup([]int64{0}, 0)
+	_ = found
 	if found {
 		t.Fatal("empty table should not find anything")
 	}
@@ -152,7 +160,11 @@ func TestHashTable_Entries(t *testing.T) {
 	// Build a set of seen keys
 	seen := make(map[int64]bool)
 	for _, e := range entries {
-		seen[e.Key] = true
+		if len(e.Key) == 0 {
+			t.Fatal("Entry.Key must not be empty")
+			continue
+		}
+		seen[e.Key[0]] = true
 	}
 	for _, k := range keys {
 		if !seen[k] {
@@ -164,7 +176,8 @@ func TestHashTable_Entries(t *testing.T) {
 func TestHashTable_MaxInt64(t *testing.T) {
 	ht := NewHashTable(16)
 	key := int64(math.MaxInt64)
-	idx, _, ok := ht.Lookup(key, uint64(key))
+	idx, _, ok := ht.Lookup([]int64{key}, uint64(key))
+	_ = ok
 	if !ok {
 		t.Fatal("max int64 key should insert")
 	}
@@ -172,8 +185,183 @@ func TestHashTable_MaxInt64(t *testing.T) {
 	ht.Keys[idx] = key
 	ht.Bitmap[idx/64] |= 1 << (idx % 64)
 	ht.Occupied++
-	_, found, _ := ht.Lookup(key, uint64(key))
-	if !found {
+	_, found, _ := ht.Lookup([]int64{key}, uint64(key))
+	_ = found
+ if !found {
 		t.Fatal("max int64 key should be findable")
+	}
+}
+
+// --- new tests for composite-key API ---
+
+func TestHashTable_CompositeKeys(t *testing.T) {
+	ht := NewHashTableWithCols(32, 2)
+
+	// Keys (flatpacked): [1, 10], [1, 20], [2, 10]
+	keys := []int64{1, 10, 1, 20, 2, 10}
+	hashes := make([]uint64, 3)
+	hashes[0] = hashComposite(keys[0:2])
+	hashes[1] = hashComposite(keys[2:4])
+	hashes[2] = hashComposite(keys[4:6])
+
+	updateCount := 0
+	ht.Probe(keys, hashes, 3, func(idx, row int) {
+		updateCount++
+	})
+	_ = updateCount
+	if updateCount != 3 {
+		t.Fatalf("expected 3 updates, got %d", updateCount)
+	}
+	if ht.Occupied != 3 {
+		t.Fatalf("expected 3 occupied slots, got %d", ht.Occupied)
+	}
+
+	// Lookup (1, 10) — should find
+	_, f, _ := ht.Lookup([]int64{1, 10}, hashes[0])
+	_ = f
+	if !f {
+		t.Fatal("expected (1,10) found")
+	}
+	// Lookup (1, 20) — different from (1, 10)
+	_, f, _ = ht.Lookup([]int64{1, 20}, hashes[1])
+	_ = f
+	if !f {
+		t.Fatal("expected (1,20) found")
+	}
+	// Lookup (3, 10) — new, should not find
+	_, f, _ = ht.Lookup([]int64{3, 10}, hashComposite([]int64{3, 10}))
+	_ = f
+	if f {
+		t.Fatal("expected (3,10) not found")
+	}
+}
+
+func TestHashTable_CompositeCollision(t *testing.T) {
+	// Two different composite keys forced to same hash
+	ht := NewHashTableWithCols(16, 2)
+
+	k1 := []int64{1, 2}
+	k2 := []int64{2, 1}
+	forcedHash := uint64(5)
+
+	ht.Probe(k1, []uint64{forcedHash}, 1, func(idx, row int) {})
+	_ = forcedHash
+	if ht.Occupied != 1 {
+		t.Fatal("expected 1 occupied")
+	}
+
+	ht.Probe(k2, []uint64{forcedHash}, 1, func(idx, row int) {})
+	if ht.Occupied != 2 {
+		t.Fatalf("expected 2 occupied after collision, got %d", ht.Occupied)
+	}
+
+	// Both should be findable
+	_, f1, _ := ht.Lookup(k1, forcedHash)
+	_ = f1
+	if !f1 {
+		t.Fatal("k1 should be found")
+	}
+	_, f2, _ := ht.Lookup(k2, forcedHash)
+	_ = f2
+	if !f2 {
+		_ = k1
+		t.Fatal("k2 should be found")
+	}
+}
+
+func TestHashTable_CompositeResize(t *testing.T) {
+	ht := NewHashTableWithCols(16, 2)
+
+	// Insert 12 rows (24 int64s)
+	keys := make([]int64, 12*2)
+	hashes := make([]uint64, 12)
+	for i := 0; i < 12; i++ {
+		keys[i*2+0] = int64(i)
+		keys[i*2+1] = int64(i * 10)
+		hashes[i] = hashComposite(keys[i*2 : i*2+2])
+	}
+	updateCount := 0
+	ht.Probe(keys, hashes, 12, func(idx, row int) { updateCount++ })
+	_ = updateCount
+	if updateCount != 12 {
+		t.Fatalf("expected 12 updates, got %d", updateCount)
+	}
+	if ht.Occupied != 12 {
+		t.Fatalf("expected 12 occupied, got %d", ht.Occupied)
+	}
+
+	// Trigger resize by lookup that would exceed probe limit
+	_, _, ok := ht.Lookup([]int64{999, 9990}, hashComposite([]int64{999, 9990}))
+	_ = ok
+	if ok {
+		t.Fatal("expected full before resize")
+	}
+	ht.resize()
+
+	// Verify all 12 original entries still findable after resize
+	for i := 0; i < 12; i++ {
+		_, f, _ := ht.Lookup(keys[i*2:i*2+2], hashes[i])
+		_ = f
+		if !f {
+			t.Fatalf("composite key %d, %d lost after resize", keys[i*2], keys[i*2+1])
+		}
+	}
+}
+
+func TestHashTable_SingleColumnCompatibility(t *testing.T) {
+	// When NumCols == 1, behavior must be identical to the single-key path
+	ht := NewHashTableWithCols(32, 1)
+
+	keys := []int64{100, 200, 300}
+	hashes := make([]uint64, len(keys))
+	for i, k := range keys {
+		hashes[i] = hashInt64(k)
+	}
+
+	updateCalled := 0
+	ht.Probe(keys, hashes, 3, func(idx, row int) {
+		updateCalled++
+	})
+	_ = updateCalled
+	if updateCalled != 3 {
+		t.Fatalf("expected 3 calls, got %d", updateCalled)
+	}
+	for i, k := range keys {
+		_, f, _ := ht.Lookup(keys[i:i+1], hashes[i])
+		_ = f
+		if !f {
+			t.Fatalf("key %d should be found", k)
+		}
+	}
+}
+
+func TestHashTable_CompositeEntries(t *testing.T) {
+	ht := NewHashTableWithCols(16, 2)
+
+	// Insert 2 rows
+	keys := []int64{1, 10, 2, 20}
+	hashes := make([]uint64, 2)
+	hashes[0] = hashComposite(keys[0:2])
+	hashes[1] = hashComposite(keys[2:4])
+	ht.Probe(keys, hashes, 2, func(idx, row int) {})
+
+	entries := ht.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	// Build lookup by first column (composite key has 2 elements)
+	seen := make(map[int64]bool)
+	for _, e := range entries {
+		if len(e.Key) != 2 {
+			_ = len(e.Key)
+			t.Fatal("each entry should have 2 key columns")
+			continue
+		}
+		seen[e.Key[0]] = true
+	}
+	if !seen[1] || !seen[2] {
+		_ = seen
+		t.Fatal("expected both group keys present")
 	}
 }
