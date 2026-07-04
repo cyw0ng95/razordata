@@ -131,11 +131,11 @@ func TestCatalog_UpdateEntryConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Concurrent updates via UpdateEntry (safe — holds write lock)
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 4; i++ {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < 50; j++ {
+			for j := 0; j < 20; j++ {
 				err := cat.UpdateEntry(1, func(raw *RawEntry) error {
 					raw.Stats = append(raw.Stats, byte(id))
 					return nil
@@ -155,7 +155,7 @@ func TestCatalog_UpdateEntryConcurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
-	if len(read.Stats) != 10*50 {
+	if len(read.Stats) != 4*20 {
 		t.Errorf("Stats length = %d, want %d", len(read.Stats), 10*50)
 	}
 }

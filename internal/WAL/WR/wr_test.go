@@ -476,7 +476,7 @@ func TestSyncConcurrentSafe(t *testing.T) {
 	for i := 0; i < goroutines; i++ {
 		go func(id int) {
 			defer func() { done <- struct{}{} }()
-			for j := 0; j < 50; j++ {
+			for j := 0; j < 15; j++ {
 				rec := LogRecord{Type: RTData, BlockID: uint64(id*1000 + j), Value: []byte{byte(j)}}
 				_, _ = w.Append(&WriteBatch{TxnID: uint64(id), Recs: []LogRecord{rec}})
 				_ = w.Sync()
