@@ -136,6 +136,31 @@ func TestHashTable_Empty(t *testing.T) {
 	ht.ProbeInt64(nil, nil, 0, func(idx, row int) { t.Fatal("should not be called") })
 }
 
+func TestHashTable_Entries(t *testing.T) {
+	ht := NewHashTable(16)
+	// Insert 3 keys via ProbeInt64
+	keys := []int64{100, 200, 300}
+	hashes := []uint64{100, 200, 300}
+	ht.ProbeInt64(keys, hashes, 3, func(idx, row int) {
+		ht.Hashes[idx] = hashes[row]
+		ht.Keys[idx] = keys[row]
+	})
+	entries := ht.Entries()
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
+	}
+	// Build a set of seen keys
+	seen := make(map[int64]bool)
+	for _, e := range entries {
+		seen[e.Key] = true
+	}
+	for _, k := range keys {
+		if !seen[k] {
+			t.Fatalf("key %d missing from Entries()", k)
+		}
+	}
+}
+
 func TestHashTable_MaxInt64(t *testing.T) {
 	ht := NewHashTable(16)
 	key := int64(math.MaxInt64)

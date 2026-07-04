@@ -65,6 +65,9 @@ func (ht *HashTable) resize() {
 	oldBitmap := ht.Bitmap
 
 	newCap := oldCap * 2
+	if newCap < oldCap {
+		panic("hashtable: capacity overflow")
+	}
 	ht.Capacity = newCap
 	ht.Hashes = make([]uint64, newCap)
 	ht.Keys = make([]int64, newCap)
@@ -93,6 +96,25 @@ func (ht *HashTable) resize() {
 			}
 		}
 	}
+}
+
+// HashEntry represents a key/hash pair stored in the hash table.
+type HashEntry struct {
+	Key  int64
+	Hash uint64
+}
+
+// Entries iterates all occupied slots and returns the key/hash pairs.
+func (ht *HashTable) Entries() []HashEntry {
+	entries := make([]HashEntry, 0, ht.Occupied)
+	for i := uint32(0); i < ht.Capacity; i++ {
+		occupied := (ht.Bitmap[i/64]>>(i%64))&1 == 1
+		if !occupied {
+			continue
+		}
+		entries = append(entries, HashEntry{Key: ht.Keys[i], Hash: ht.Hashes[i]})
+	}
+	return entries
 }
 
 // ProbeInt64 processes n rows of (keys, hashes) pairs, calling update(idx, row)
