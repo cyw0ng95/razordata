@@ -138,3 +138,30 @@ func intToStr(n int) string {
 	}
 	return s
 }
+
+func TestPageCache_Eviction_BoundaryCases(t *testing.T) {
+	cases := []struct {
+		name     string
+		capPages int
+		putCount int
+		wantMax  int
+	}{
+		{"cap1_put2", 1, 2, 1},
+		{"cap2_put3", 2, 3, 2},
+		{"cap10_put15", 10, 15, 10},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewPageCache(PageSize * tc.capPages)
+			for i := 0; i < tc.putCount; i++ {
+				d := bytes.Repeat([]byte{byte(i + 1)}, PageSize)
+				c.Put(uint64(i+1), 0, d)
+			}
+			got := c.Len()
+			if got > tc.wantMax {
+				t.Fatalf("capacity %d: after %d inserts got %d entries, want at most %d",
+					tc.capPages, tc.putCount, got, tc.wantMax)
+			}
+		})
+	}
+}

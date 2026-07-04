@@ -47,7 +47,17 @@ func NewPageCache(capacityBytes int) *PageCache {
 	if n < 1 {
 		n = 1
 	}
-	capPerShard := (capacityBytes / PageSize) / n
+	capacityInPages := capacityBytes / PageSize
+	if capacityInPages < 1 {
+		capacityInPages = 1
+	}
+	// Clamp shard count so total slots never exceeds capacityInPages.
+	// Without this, capPerShard rounds down to 1 while n stays large,
+	// inflating total slots beyond the requested capacity.
+	if n > capacityInPages {
+		n = capacityInPages
+	}
+	capPerShard := capacityInPages / n
 	if capPerShard < 1 {
 		capPerShard = 1
 	}
