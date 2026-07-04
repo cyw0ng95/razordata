@@ -101,6 +101,11 @@ func (v *VectorizedSeqScan) Close() error {
 	return nil
 }
 
+// Child returns the underlying row operator (the source).
+func (v *VectorizedSeqScan) Child() Operator {
+	return v.source
+}
+
 // VectorizedFilter applies a predicate to batches from a child
 // vectorized source, producing filtered batches with selection
 // vectors. Uses EvalBatch for batch-level predicate evaluation.
