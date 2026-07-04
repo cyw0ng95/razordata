@@ -15,67 +15,83 @@ func makeTestPLRL(globalRate int64, levelRates map[int]int64) (*PerLevelRateLimi
 }
 
 func TestRateLimiter_PerLevelThrottle(t *testing.T) {
-	plrl, dm := makeTestPLRL(100*1024*1024, map[int]int64{
-		0: 100 * 1024 * 1024, // L0: 100MB/s
-		1: 50 * 1024 * 1024,  // L1: 50MB/s
-		2: 10 * 1024 * 1024,  // L2: 10MB/s
-	})
-
-	// Set L2 debt to 200% of budget (640MB debt on 320MB budget)
-	dm.set(2, defaultBudget.l2*2)
-
-	// L2 should be throttled more aggressively
-	startTime := time.Now()
-	plrl.WaitWithLevel(2, 1024*1024)
-	l2Time := time.Since(startTime)
-
-	// Reset debt
-	dm.set(2, 0)
-	startTime = time.Now()
-	plrl.WaitWithLevel(2, 1024*1024)
-	l2NormalTime := time.Since(startTime)
-
-	// L2 with debt should take longer (throttled)
-	if l2Time <= l2NormalTime {
-		t.Errorf("L2 with debt should be slower: throttled=%v normal=%v", l2Time, l2NormalTime)
+	origBudget := defaultBudget
+	defaultBudget = levelBudget{
+		l0: 1024,
+		l1: 1024 * 10,
+		l2: 1024 * 100,
 	}
-}
+	t.Cleanup(func() { defaultBudget = origBudget })
 
-func TestRateLimiter_NoStallUnderNormalLoad(t *testing.T) {
-	rl := NewRateLimiter(1000*1024*1024, 100*1024*1024) // 1GB/s
-	if rl == nil {
-		t.Fatal("RateLimiter should not be nil")
-	}
-
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		rl.Wait(1024 * 1024)
-	}
-	// If we get here without stalling for more than 5s, throughput is OK
-}
-
-func TestRateLimiter_PerLevelThrottle_MultipleLevels(t *testing.T) {
 	plrl, dm := makeTestPLRL(100*1024*1024, map[int]int64{
 		0: 100 * 1024 * 1024,
 		1: 50 * 1024 * 1024,
 		2: 10 * 1024 * 1024,
 	})
 
-	// Set L2 debt high, L0 debt low
-	dm.set(2, defaultBudget.l2*2) // 200% — throttled
-	dm.set(0, defaultBudget.l0/2) // 50% — normal
+	dm.set(2, defaultBudget.l2*2)
 
-	// L0 should NOT be throttled
+	startTime := time.Now()
+	plrl.WaitWithLevel(2, 1024*1024)
+	l2Time := time.Since(startTime)
+
+	dm.set(2, 0)
+	startTime = time.Now()
+	plrl.WaitWithLevel(2, 1024*1024)
+	l2NormalTime := time.Since(startTime)
+
+	if l2Time <= l2NormalTime {
+		t.Errorf("L2 with debt should be slower: throttled=%v normal=%v", l2Time, l2NormalTime)
+	}
+}
+
+func TestRateLimiter_NoStallUnderNormalLoad(t *testing.T) {
+	// Burst is rate/10 = 100MB. Each call consumes 1MB, so after 100
+	// calls the burst is exhausted and subsequent calls sleep ~1ms.
+	// Run 100 iterations: they should complete well under 50ms.
+	rl := NewRateLimiter(1000*1024*1024, 100*1024*1024) // 1GB/s, 100MB burst
+	if rl == nil {
+		t.Fatal("RateLimiter should not be nil")
+	}
+
+	const iters = 100
+	start := time.Now()
+	for i := 0; i < iters; i++ {
+		rl.Wait(1024 * 1024)
+	}
+	elapsed := time.Since(start)
+	if elapsed > 50*time.Millisecond {
+		t.Errorf("%d iterations took %v, expected <50ms", iters, elapsed)
+	}
+}
+
+func TestRateLimiter_PerLevelThrottle_MultipleLevels(t *testing.T) {
+	origBudget := defaultBudget
+	defaultBudget = levelBudget{
+		l0: 1024,
+		l1: 1024 * 10,
+		l2: 1024 * 100,
+	}
+	t.Cleanup(func() { defaultBudget = origBudget })
+
+	plrl, dm := makeTestPLRL(100*1024*1024, map[int]int64{
+		0: 100 * 1024 * 1024,
+		1: 50 * 1024 * 1024,
+		2: 10 * 1024 * 1024,
+	})
+
+	dm.set(2, defaultBudget.l2*2)
+	dm.set(0, defaultBudget.l0/2)
+
 	startTime := time.Now()
 	plrl.WaitWithLevel(0, 1024*1024)
 	l0Time := time.Since(startTime)
 
-	// L2 should be throttled
 	startTime = time.Now()
+	dm.set(2, defaultBudget.l2*2)
 	plrl.WaitWithLevel(2, 1024*1024)
 	l2Time := time.Since(startTime)
 
-	// L2 should take longer than L0
 	if l2Time <= l0Time {
 		t.Errorf("L2 (high debt) should be slower than L0 (low debt): L2=%v L0=%v", l2Time, l0Time)
 	}
@@ -83,11 +99,9 @@ func TestRateLimiter_PerLevelThrottle_MultipleLevels(t *testing.T) {
 
 func TestRateLimiter_FallbackToGlobal(t *testing.T) {
 	plrl, _ := makeTestPLRL(100*1024*1024, map[int]int64{
-		0: 100 * 1024 * 1024, // only L0 has per-level limiter
+		0: 100 * 1024 * 1024,
 	})
 
-	// L1 has no per-level limiter — should fall back to global
-	// No debt means no extra sleep, so this should be fast.
 	start := time.Now()
 	plrl.WaitWithLevel(1, 1024*1024)
 	elapsed := time.Since(start)
@@ -139,7 +153,6 @@ func TestRateLimiter_ConcurrentAccess(t *testing.T) {
 
 func TestPerLevelRateLimiter_NilReceiver(t *testing.T) {
 	var plrl *PerLevelRateLimiter
-	// Should not panic
 	plrl.WaitWithLevel(0, 1024)
 	plrl2 := (*PerLevelRateLimiter)(nil)
 	plrl2.WaitWithLevel(0, 1024)

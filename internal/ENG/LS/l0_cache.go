@@ -27,6 +27,9 @@ type cacheEntry struct {
 }
 
 func newL0Cache(capacity int) *l0Cache {
+	if capacity <= 0 {
+		capacity = 1
+	}
 	nshard := uint32(runtime.GOMAXPROCS(0))
 	if nshard == 0 {
 		nshard = 1
