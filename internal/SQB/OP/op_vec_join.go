@@ -10,8 +10,8 @@ import (
 // VectorizedHashJoin implements an inner equi-join between two batch
 // streams using a hash table on the build-side key.
 type VectorizedHashJoin struct {
-	build    BatchProducer
-	probe    BatchProducer
+	build    UT.BatchProducer
+	probe    UT.BatchProducer
 	buildKey int
 	probeKey int
 
@@ -34,7 +34,7 @@ type VectorizedHashJoin struct {
 }
 
 // NewVectorizedHashJoin creates a vectorized inner hash join.
-func NewVectorizedHashJoin(build, probe BatchProducer, buildKey, probeKey int) *VectorizedHashJoin {
+func NewVectorizedHashJoin(build, probe UT.BatchProducer, buildKey, probeKey int) *VectorizedHashJoin {
 	return &VectorizedHashJoin{
 		build:    build,
 		probe:    probe,

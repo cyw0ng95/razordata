@@ -174,28 +174,20 @@ func SchemaFromRowSchema(types []LX.TokenType) []LX.TokenType {
 	return append([]LX.TokenType(nil), types...)
 }
 
-// BatchProducer is the interface for any operator that can
-// produce batches. This includes VectorizedSeqScan, VectorizedFilter,
-// VectorizedProject, and any future batch-based operator.
-type BatchProducer interface {
-	NextBatch(ctx context.Context) (*UT.Batch, error)
-	Close() error
-}
-
 // VectorizedProject applies expression projections to batches from
 // a child BatchProducer, producing a new batch with the projected
 // columns. Each expression is evaluated over the child batch to
 // produce one output column.
 // REQ001212 satisfied: vectorized projection operator.
 type VectorizedProject struct {
-	child BatchProducer
+	child UT.BatchProducer
 	exprs []PS.Expr
 	names []string
 	done  bool
 }
 
 // NewVectorizedProject creates a vectorized projection operator.
-func NewVectorizedProject(child BatchProducer, exprs []PS.Expr, names []string) *VectorizedProject {
+func NewVectorizedProject(child UT.BatchProducer, exprs []PS.Expr, names []string) *VectorizedProject {
 	return &VectorizedProject{
 		child: child,
 		exprs: exprs,

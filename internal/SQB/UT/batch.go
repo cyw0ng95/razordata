@@ -15,6 +15,17 @@ type Value = pl.Value
 type Store = DT.Store
 type StoreSchema = DT.StoreSchema
 
+// ValueKind aliases so downstream packages can switch on Value.Kind
+// without importing PL directly.
+const (
+	KindNull  = pl.KindNull
+	KindInt   = pl.KindInt
+	KindFloat = pl.KindFloat
+	KindText  = pl.KindText
+	KindBlob  = pl.KindBlob
+	KindBool  = pl.KindBool
+)
+
 // ErrNoRows signals end-of-stream from operators.
 var ErrNoRows = pl.ErrNoRows
 

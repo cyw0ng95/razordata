@@ -12,22 +12,13 @@ import (
 // increment for L1 cache efficiency.
 // REQ000157 satisfied (partial): SIMD-accelerated COUNT aggregate.
 type VectorizedCount struct {
-	child BatchProducer
+	child UT.BatchProducer
 	total int64
 	done  bool
 }
 
-// BatchProducer is the interface for any operator that can
-// produce batches. This includes VectorizedSeqScan, VectorizedFilter,
-// and any future batch-based operator. It allows building chains
-// like: scan -> filter -> aggregate.
-type BatchProducer interface {
-	NextBatch(ctx context.Context) (*UT.Batch, error)
-	Close() error
-}
-
 // NewVectorizedCount creates a vectorized COUNT aggregate.
-func NewVectorizedCount(child BatchProducer) *VectorizedCount {
+func NewVectorizedCount(child UT.BatchProducer) *VectorizedCount {
 	return &VectorizedCount{child: child}
 }
 
@@ -85,7 +76,7 @@ func (a *VectorizedCount) Close() error {
 // across all batches. Uses 4-wide unrolled accumulation.
 // REQ000157 satisfied (partial): SIMD-accelerated SUM aggregate.
 type VectorizedSum struct {
-	child    BatchProducer
+	child    UT.BatchProducer
 	colIdx   int
 	isFloat  bool
 	intSum   int64
@@ -97,7 +88,7 @@ type VectorizedSum struct {
 // NewVectorizedSum creates a vectorized SUM aggregate for the
 // specified column index. The column type is inferred from the
 // batch (int64 or float64).
-func NewVectorizedSum(child BatchProducer, colIdx int) *VectorizedSum {
+func NewVectorizedSum(child UT.BatchProducer, colIdx int) *VectorizedSum {
 	return &VectorizedSum{child: child, colIdx: colIdx}
 }
 
@@ -230,7 +221,7 @@ type VectorizedAvg struct {
 }
 
 // NewVectorizedAvg creates a vectorized AVG aggregate.
-func NewVectorizedAvg(child BatchProducer, colIdx int) *VectorizedAvg {
+func NewVectorizedAvg(child UT.BatchProducer, colIdx int) *VectorizedAvg {
 	return &VectorizedAvg{
 		sum: NewVectorizedSum(child, colIdx),
 		cnt: NewVectorizedCount(child),
@@ -299,7 +290,7 @@ func (a *VectorizedAvg) Close() error {
 // VectorizedMin finds the minimum value of a column. 4-wide
 // unrolled min reduction.
 type VectorizedMin struct {
-	child    BatchProducer
+	child    UT.BatchProducer
 	colIdx   int
 	intMin   int64
 	floatMin float64
@@ -309,7 +300,7 @@ type VectorizedMin struct {
 }
 
 // NewVectorizedMin creates a vectorized MIN aggregate.
-func NewVectorizedMin(child BatchProducer, colIdx int) *VectorizedMin {
+func NewVectorizedMin(child UT.BatchProducer, colIdx int) *VectorizedMin {
 	return &VectorizedMin{child: child, colIdx: colIdx}
 }
 
@@ -465,7 +456,7 @@ func (a *VectorizedMin) Close() error {
 
 // VectorizedMax is the same as Min but for maximum values.
 type VectorizedMax struct {
-	child    BatchProducer
+	child    UT.BatchProducer
 	colIdx   int
 	intMax   int64
 	floatMax float64
@@ -475,7 +466,7 @@ type VectorizedMax struct {
 }
 
 // NewVectorizedMax creates a vectorized MAX aggregate.
-func NewVectorizedMax(child BatchProducer, colIdx int) *VectorizedMax {
+func NewVectorizedMax(child UT.BatchProducer, colIdx int) *VectorizedMax {
 	return &VectorizedMax{child: child, colIdx: colIdx}
 }
 
@@ -661,7 +652,7 @@ type aggPayload struct {
 // all child batches, builds a hash table, and returns one result
 // batch with group keys (if grouped) followed by aggregate columns.
 type VectorizedHashAggregate struct {
-	child    BatchProducer
+	child    UT.BatchProducer
 	groupCol int // -1 = no GROUP BY (all rows in one group)
 	aggDefs  []AggDef
 	ht       *UT.HashTable
@@ -679,7 +670,7 @@ func hashInt64(x int64) uint64 {
 // NewVectorizedHashAggregate creates a new vectorized hash aggregate.
 // groupCol is the column index for GROUP BY (-1 for no grouping).
 // defs specifies the aggregate operations.
-func NewVectorizedHashAggregate(child BatchProducer, groupCol int, defs []AggDef) *VectorizedHashAggregate {
+func NewVectorizedHashAggregate(child UT.BatchProducer, groupCol int, defs []AggDef) *VectorizedHashAggregate {
 	return &VectorizedHashAggregate{
 		child:    child,
 		groupCol: groupCol,
