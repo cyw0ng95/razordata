@@ -35,6 +35,12 @@ func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
 // Child returns the input operator feeding this aggregate.
 func (a *Aggregate) Child() Operator { return a.child }
 
+// GroupCols returns the group-by columns.
+func (a *Aggregate) GroupCols() []PS.Expr { return a.groupCols }
+
+// Aggs returns the aggregate expressions.
+func (a *Aggregate) Aggs() []PS.Expr { return a.aggs }
+
 // SetExpandStar enables full-row output for SELECT * with GROUP BY.
 // Non-GROUP BY and non-aggregate columns take their value from the
 // first row in each group.

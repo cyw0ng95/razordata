@@ -107,13 +107,13 @@ func (v *VectorizedSeqScan) Close() error {
 // REQ000144 satisfied: Vectorized Filter that processes batches
 // using selection vectors (no data copying).
 type VectorizedFilter struct {
-	child  *VectorizedSeqScan
+	child  UT.BatchProducer
 	pred   PS.Expr
 	params []any
 }
 
 // NewVectorizedFilter creates a vectorized filter.
-func NewVectorizedFilter(child *VectorizedSeqScan, pred PS.Expr) *VectorizedFilter {
+func NewVectorizedFilter(child UT.BatchProducer, pred PS.Expr) *VectorizedFilter {
 	return &VectorizedFilter{child: child, pred: pred}
 }
 
