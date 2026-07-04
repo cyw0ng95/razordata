@@ -135,6 +135,173 @@ func (f *Filter) WithParams(p []any) Operator {
 	return f
 }
 
+// isComparisonOp reports whether op is a comparison operator. REQ001195.
+func isComparisonOp(op LX.TokenType) bool {
+	return op == LX.T_EQ || op == LX.T_NE || op == LX.T_LT || op == LX.T_LE || op == LX.T_GT || op == LX.T_GE
+}
+
+// isColumnRef reports whether expr is a column reference. REQ001195.
+func isColumnRef(expr PS.Expr) bool {
+	_, ok := expr.(*PS.Ident)
+	if ok {
+		return true
+	}
+	_, ok = expr.(*PS.QualifiedName)
+	return ok
+}
+
+// isLiteralNode reports whether expr is a literal value. REQ001195.
+func isLiteralNode(expr PS.Expr) bool {
+	switch expr.(type) {
+	case *PS.NumberLiteral, *PS.FloatLiteral, *PS.StringLiteral, *PS.BoolLiteral:
+		return true
+	}
+	return false
+}
+
+// anyToLiteral converts a Go value back to a PS literal AST node. REQ001195.
+func anyToLiteral(val any) PS.Expr {
+	switch v := val.(type) {
+	case int64:
+		return &PS.NumberLiteral{Val: v}
+	case float64:
+		return &PS.FloatLiteral{Val: v}
+	case string:
+		return &PS.StringLiteral{Val: v}
+	case bool:
+		return &PS.BoolLiteral{Val: v}
+	case nil:
+		return &PS.NullLiteral{}
+	}
+	return &PS.NullLiteral{}
+}
+
+// replaceComparisonLiterals walks expr and replaces literal values at
+// comparison positions (column OP literal) with values from vals in
+// tree-walk order. Must match the walk order of cloneExprForMemo in
+// PL/memo.go. REQ001195.
+func replaceComparisonLiterals(expr PS.Expr, vals *[]any) PS.Expr {
+	if expr == nil || len(*vals) == 0 {
+		return expr
+	}
+	switch v := expr.(type) {
+	case *PS.BinaryExpr:
+		if isComparisonOp(v.Op) {
+			if isColumnRef(v.Left) && isLiteralNode(v.Right) && len(*vals) > 0 {
+				val := (*vals)[0]
+				*vals = (*vals)[1:]
+				return &PS.BinaryExpr{Op: v.Op, Left: v.Left, Right: anyToLiteral(val)}
+			}
+			if isLiteralNode(v.Left) && isColumnRef(v.Right) && len(*vals) > 0 {
+				val := (*vals)[0]
+				*vals = (*vals)[1:]
+				return &PS.BinaryExpr{Op: v.Op, Left: anyToLiteral(val), Right: v.Right}
+			}
+		}
+		return &PS.BinaryExpr{Op: v.Op, Left: replaceComparisonLiterals(v.Left, vals), Right: replaceComparisonLiterals(v.Right, vals)}
+	case *PS.InExpr:
+		items := make([]PS.Expr, len(v.List))
+		for i, item := range v.List {
+			items[i] = replaceComparisonLiterals(item, vals)
+		}
+		return &PS.InExpr{Expr: replaceComparisonLiterals(v.Expr, vals), List: items, Subquery: v.Subquery}
+	case *PS.BetweenExpr:
+		return &PS.BetweenExpr{Expr: replaceComparisonLiterals(v.Expr, vals), Low: replaceComparisonLiterals(v.Low, vals), High: replaceComparisonLiterals(v.High, vals)}
+	case *PS.UnaryExpr:
+		return &PS.UnaryExpr{Op: v.Op, Operand: replaceComparisonLiterals(v.Operand, vals)}
+	case *PS.FunctionCall:
+		args := make([]PS.Expr, len(v.Args))
+		for i, a := range v.Args {
+			args[i] = replaceComparisonLiterals(a, vals)
+		}
+		return &PS.FunctionCall{Name: v.Name, Args: args}
+	case *PS.CaseExpr:
+		wl := make([]PS.WhenClause, len(v.WhenList))
+		for i, w := range v.WhenList {
+			wl[i] = PS.WhenClause{Cond: replaceComparisonLiterals(w.Cond, vals), Then: replaceComparisonLiterals(w.Then, vals)}
+		}
+		return &PS.CaseExpr{Expr: replaceComparisonLiterals(v.Expr, vals), WhenList: wl, Else: replaceComparisonLiterals(v.Else, vals)}
+	case *PS.CastExpr:
+		return &PS.CastExpr{Expr: replaceComparisonLiterals(v.Expr, vals), Type: v.Type}
+	case *PS.ListExpr:
+		items := make([]PS.Expr, len(v.Items))
+		for i, item := range v.Items {
+			items[i] = replaceComparisonLiterals(item, vals)
+		}
+		return &PS.ListExpr{Items: items}
+	case *PS.AliasedExpr:
+		return &PS.AliasedExpr{Expr: replaceComparisonLiterals(v.Expr, vals), Alias: v.Alias}
+	}
+	return expr
+}
+
+// countComparisonLiteralsWalk counts comparison-literal positions in expr. REQ001195.
+func countComparisonLiteralsWalk(expr PS.Expr, count *int) {
+	if expr == nil {
+		return
+	}
+	switch v := expr.(type) {
+	case *PS.BinaryExpr:
+		if isComparisonOp(v.Op) {
+			if (isColumnRef(v.Left) && isLiteralNode(v.Right)) || (isLiteralNode(v.Left) && isColumnRef(v.Right)) {
+				*count++
+				return
+			}
+		}
+		countComparisonLiteralsWalk(v.Left, count)
+		countComparisonLiteralsWalk(v.Right, count)
+	case *PS.InExpr:
+		countComparisonLiteralsWalk(v.Expr, count)
+		for _, item := range v.List {
+			countComparisonLiteralsWalk(item, count)
+		}
+	case *PS.BetweenExpr:
+		countComparisonLiteralsWalk(v.Expr, count)
+		countComparisonLiteralsWalk(v.Low, count)
+		countComparisonLiteralsWalk(v.High, count)
+	case *PS.UnaryExpr:
+		countComparisonLiteralsWalk(v.Operand, count)
+	case *PS.FunctionCall:
+		for _, a := range v.Args {
+			countComparisonLiteralsWalk(a, count)
+		}
+	case *PS.CaseExpr:
+		countComparisonLiteralsWalk(v.Expr, count)
+		for _, w := range v.WhenList {
+			countComparisonLiteralsWalk(w.Cond, count)
+			countComparisonLiteralsWalk(w.Then, count)
+		}
+		countComparisonLiteralsWalk(v.Else, count)
+	}
+}
+
+// CountComparisonLiterals returns how many comparison-literal values
+// this Filter's predicate would consume when normalized. REQ001195.
+func (f *Filter) CountComparisonLiterals() int {
+	var count int
+	countComparisonLiteralsWalk(f.predicate, &count)
+	return count
+}
+
+// ReplaceLiterals replaces comparison-literal values in the predicate
+// with values from vals. Only the first n values are consumed where
+// n = CountComparisonLiterals(). REQ001195.
+func (f *Filter) ReplaceLiterals(vals []any) {
+	n := f.CountComparisonLiterals()
+	if n > len(vals) {
+		n = len(vals)
+	}
+	remaining := vals[:n]
+	f.predicate = replaceComparisonLiterals(f.predicate, &remaining)
+	// Force recompile on next Next() call
+	f.compiledOnce = false
+	f.compiledFilterFn = nil
+	// REQ000822: clear batch buffer so stale compiled rows are not reused
+	f.batchEmit = f.batchEmit[:0]
+	f.batchEmitPos = 0
+	f.batchRefilled = false
+}
+
 func (f *Filter) Next(ctx context.Context) (Row, error) {
 	for {
 		if err := ctx.Err(); err != nil {

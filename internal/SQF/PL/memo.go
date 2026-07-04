@@ -544,3 +544,221 @@ func BumpDefaultSchemaVersion() uint64 {
 func SchemaVersion() uint64 {
 	return defaultMemoSchemaVersion.Load()
 }
+
+// isComparisonOp reports whether op is a comparison operator
+// (=, !=, <, >, <=, >=) that can be safely parameterized.
+func isComparisonOp(op LX.TokenType) bool {
+	switch op {
+	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
+		return true
+	}
+	return false
+}
+
+// isColumnRef reports whether expr is a column reference
+// (Ident or QualifiedName) that could appear on one side of
+// a comparison predicate.
+func isColumnRef(expr PS.Expr) bool {
+	switch expr.(type) {
+	case *PS.Ident, *PS.QualifiedName:
+		return true
+	}
+	return false
+}
+
+// isLiteral reports whether expr is a literal value that can
+// be replaced with a PS.Param placeholder.
+func isLiteral(expr PS.Expr) bool {
+	switch expr.(type) {
+	case *PS.NumberLiteral, *PS.FloatLiteral, *PS.StringLiteral, *PS.BoolLiteral:
+		return true
+	}
+	return false
+}
+
+// literalToAny extracts the Go value from a literal AST node.
+func literalToAny(expr PS.Expr) any {
+	switch v := expr.(type) {
+	case *PS.NumberLiteral:
+		return v.Val
+	case *PS.FloatLiteral:
+		return v.Val
+	case *PS.StringLiteral:
+		return v.Val
+	case *PS.BoolLiteral:
+		return v.Val
+	}
+	return nil
+}
+
+// cloneExprForMemo returns a shallow clone of expr with literals
+// in comparison predicates replaced by PS.Param nodes. Original
+// values are appended to params. REQ001195.
+//
+// This is used ONLY for memo key generation — the original AST
+// is still used for plan building. The parameterized key captures
+// "same join structure + same comparison operators + same column
+// references" regardless of constant values.
+func cloneExprForMemo(expr PS.Expr, params *[]any) PS.Expr {
+	if expr == nil {
+		return nil
+	}
+	switch v := expr.(type) {
+	case *PS.BinaryExpr:
+		if isComparisonOp(v.Op) {
+			// column = literal → column = Param
+			if isColumnRef(v.Left) && isLiteral(v.Right) {
+				idx := len(*params)
+				*params = append(*params, literalToAny(v.Right))
+				return &PS.BinaryExpr{
+					Op:    v.Op,
+					Left:  v.Left,
+					Right: &PS.Param{Index: idx},
+				}
+			}
+			// literal = column → Param = column
+			if isLiteral(v.Left) && isColumnRef(v.Right) {
+				idx := len(*params)
+				*params = append(*params, literalToAny(v.Left))
+				return &PS.BinaryExpr{
+					Op:    v.Op,
+					Left:  &PS.Param{Index: idx},
+					Right: v.Right,
+				}
+			}
+		}
+		// Recurse into both sides for nested comparisons
+		return &PS.BinaryExpr{
+			Op:    v.Op,
+			Left:  cloneExprForMemo(v.Left, params),
+			Right: cloneExprForMemo(v.Right, params),
+		}
+	case *PS.UnaryExpr:
+		return &PS.UnaryExpr{
+			Op:      v.Op,
+			Operand: cloneExprForMemo(v.Operand, params),
+		}
+	case *PS.InExpr:
+		items := make([]PS.Expr, len(v.List))
+		for i, item := range v.List {
+			items[i] = cloneExprForMemo(item, params)
+		}
+		return &PS.InExpr{
+			Expr:     cloneExprForMemo(v.Expr, params),
+			List:     items,
+			Subquery: v.Subquery, // subqueries handled separately
+		}
+	case *PS.BetweenExpr:
+		return &PS.BetweenExpr{
+			Expr: cloneExprForMemo(v.Expr, params),
+			Low:  cloneExprForMemo(v.Low, params),
+			High: cloneExprForMemo(v.High, params),
+		}
+	case *PS.FunctionCall:
+		args := make([]PS.Expr, len(v.Args))
+		for i, a := range v.Args {
+			args[i] = cloneExprForMemo(a, params)
+		}
+		return &PS.FunctionCall{Name: v.Name, Args: args}
+	case *PS.CaseExpr:
+		whenList := make([]PS.WhenClause, len(v.WhenList))
+		for i, w := range v.WhenList {
+			whenList[i] = PS.WhenClause{
+				Cond: cloneExprForMemo(w.Cond, params),
+				Then: cloneExprForMemo(w.Then, params),
+			}
+		}
+		return &PS.CaseExpr{
+			Expr:     cloneExprForMemo(v.Expr, params),
+			WhenList: whenList,
+			Else:     cloneExprForMemo(v.Else, params),
+		}
+	case *PS.CastExpr:
+		return &PS.CastExpr{
+			Expr: cloneExprForMemo(v.Expr, params),
+			Type: v.Type,
+		}
+	case *PS.ListExpr:
+		items := make([]PS.Expr, len(v.Items))
+		for i, item := range v.Items {
+			items[i] = cloneExprForMemo(item, params)
+		}
+		return &PS.ListExpr{Items: items}
+	case *PS.AliasedExpr:
+		return &PS.AliasedExpr{
+			Expr:  cloneExprForMemo(v.Expr, params),
+			Alias: v.Alias,
+		}
+	case *PS.SubqueryExpr:
+		return v // subqueries are structure, not parameterizable
+	case *PS.ExistsExpr:
+		return v
+	}
+	// Ident, QualifiedName, Param, StarExpr, literals not in comparison — pass through
+	return expr
+}
+
+// cloneStmtForMemo clones a SELECT statement with literals in
+// comparison predicates replaced by PS.Param nodes. Returns the
+// parameterized statement and the extracted literal values in
+// walk order. REQ001195.
+func cloneStmtForMemo(stmt PS.Stmt, params *[]any) PS.Stmt {
+	if stmt == nil {
+		return nil
+	}
+	switch v := stmt.(type) {
+	case *PS.Select:
+		cols := make([]PS.Expr, len(v.Cols))
+		for i, c := range v.Cols {
+			cols[i] = cloneExprForMemo(c, params)
+		}
+		joins := make([]PS.JoinClause, len(v.Joins))
+		for i, j := range v.Joins {
+			joins[i] = PS.JoinClause{
+				Kind:  j.Kind,
+				Right: j.Right,
+				On:    cloneExprForMemo(j.On, params),
+			}
+		}
+		groupBy := make([]PS.Expr, len(v.GroupBy))
+		for i, g := range v.GroupBy {
+			groupBy[i] = cloneExprForMemo(g, params)
+		}
+		return &PS.Select{
+			Distinct:      v.Distinct,
+			Cols:          cols,
+			From:          v.From,
+			FromAlias:     v.FromAlias,
+			Where:         cloneExprForMemo(v.Where, params),
+			OrderBy:       v.OrderBy, // ORDER BY exprs not parameterized
+			Joins:         joins,
+			GroupBy:       groupBy,
+			Having:        cloneExprForMemo(v.Having, params),
+			SubqueryFrom:  cloneStmtForMemo(v.SubqueryFrom, params),
+			Limit:         cloneExprForMemo(v.Limit, params),
+			Offset:        cloneExprForMemo(v.Offset, params),
+		}
+	case *PS.CompoundStmt:
+		left := cloneStmtForMemo(v.Left, params)
+		right := cloneStmtForMemo(v.Right, params)
+		return &PS.CompoundStmt{
+			Op:    v.Op,
+			Left:  left,
+			Right: right,
+		}
+	}
+	return stmt // INSERT/UPDATE/DELETE — not parameterized
+}
+
+// NormalizeForMemo produces a parameterized version of stmt where
+// literals in comparison predicates (WHERE, HAVING, ON) are replaced
+// with PS.Param placeholders. The original literal values are returned
+// in walk order. REQ001195.
+//
+// Use the parameterized stmt ONLY for memo key generation via
+// SerializeKey(paramStmt). The original stmt is used for plan building.
+func NormalizeForMemo(stmt PS.Stmt) (PS.Stmt, []any) {
+	var params []any
+	cloned := cloneStmtForMemo(stmt, &params)
+	return cloned, params
+}
