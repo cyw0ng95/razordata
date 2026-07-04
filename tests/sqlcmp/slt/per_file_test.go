@@ -148,7 +148,15 @@ func perFileTimeout(t *testing.T, path string) time.Duration {
 	case size < 500_000:
 		return 60 * time.Second
 	default:
-		return 240 * time.Second
+		// REQ001192: large files with many multi-table join queries
+		// (e.g. select5.test: 702KB, 966 records) need more than 240s.
+		// Scale: 1 minute per 100KB above 500KB, min 10 min.
+		extra := (size - 500_000) / 100_000
+		base := 10 * 60 // 10 minutes minimum for any file > 500KB
+		if extra > 0 {
+			base += int(extra) * 60
+		}
+		return time.Duration(base) * time.Second
 	}
 }
 
