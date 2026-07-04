@@ -66,7 +66,7 @@ func TestRing_PlatformAwareness(t *testing.T) {
 	defer r.Close()
 }
 
-func TestRing_RegisterFixedFile(t *testing.T) {
+func TestRing_RegisterFiles(t *testing.T) {
 	r, err := New(8)
 	if err != nil {
 		t.Skipf("io_uring unavailable: %v", err)
@@ -84,18 +84,28 @@ func TestRing_RegisterFixedFile(t *testing.T) {
 		t.Skipf("uring fd=%d", r.Fd())
 	}
 
-	idx, err := r.RegisterFixedFile(int(f.Fd()))
+	err = r.RegisterFiles([]int{int(f.Fd())})
 	if err != nil {
-		t.Logf("RegisterFixedFile err=%v (acceptable)", err)
-		return
-	}
-	if idx < 0 {
-		t.Errorf("RegisterFixedFile returned negative index: %d", idx)
+		t.Logf("RegisterFiles err=%v (acceptable on constrained kernels)", err)
 		return
 	}
 
-	if err := r.UnregisterFixedFile(idx); err != nil {
-		t.Errorf("UnregisterFixedFile(%d): %v", idx, err)
+	if err := r.UnregisterFiles(); err != nil {
+		t.Errorf("UnregisterFiles: %v", err)
+	}
+}
+
+func TestRing_RegisterFiles_Empty(t *testing.T) {
+	r, err := New(8)
+	if err != nil {
+		t.Skipf("io_uring unavailable: %v", err)
+	}
+	defer r.Close()
+	if err := r.RegisterFiles(nil); err != nil {
+		t.Errorf("RegisterFiles(nil): %v", err)
+	}
+	if err := r.RegisterFiles([]int{}); err != nil {
+		t.Errorf("RegisterFiles([]int{}): %v", err)
 	}
 }
 
@@ -286,6 +296,25 @@ func TestConstants(t *testing.T) {
 	}
 }
 
+func TestRegisterConstants_Kernel66(t *testing.T) {
+	// io_uring_register opcodes from kernel 6.6 headers.
+	if IORING_REGISTER_BUFFERS != 0 {
+		t.Errorf("IORING_REGISTER_BUFFERS=%d, want 0", IORING_REGISTER_BUFFERS)
+	}
+	if IORING_UNREGISTER_BUFFERS != 1 {
+		t.Errorf("IORING_UNREGISTER_BUFFERS=%d, want 1", IORING_UNREGISTER_BUFFERS)
+	}
+	if IORING_REGISTER_FILES != 2 {
+		t.Errorf("IORING_REGISTER_FILES=%d, want 2", IORING_REGISTER_FILES)
+	}
+	if IORING_UNREGISTER_FILES != 3 {
+		t.Errorf("IORING_UNREGISTER_FILES=%d, want 3", IORING_UNREGISTER_FILES)
+	}
+	if IORING_REGISTER_FILES_UPDATE != 6 {
+		t.Errorf("IORING_REGISTER_FILES_UPDATE=%d, want 6", IORING_REGISTER_FILES_UPDATE)
+	}
+}
+
 func TestRing_Sqe_ClosedRing(t *testing.T) {
 	r, err := New(8)
 	if err != nil {
@@ -310,27 +339,27 @@ func TestRing_SubmitWait_ClosedRing(t *testing.T) {
 	}
 }
 
-func TestRing_RegisterFixedFile_Closed(t *testing.T) {
+func TestRing_RegisterFiles_Closed(t *testing.T) {
 	r, err := New(8)
 	if err != nil {
 		t.Skipf("io_uring unavailable: %v", err)
 	}
 	r.Close()
-	_, err = r.RegisterFixedFile(3)
+	err = r.RegisterFiles([]int{3})
 	if err == nil {
-		t.Error("RegisterFixedFile on closed ring: want error")
+		t.Error("RegisterFiles on closed ring: want error")
 	}
 }
 
-func TestRing_UnregisterFixedFile_Closed(t *testing.T) {
+func TestRing_UnregisterFiles_Closed(t *testing.T) {
 	r, err := New(8)
 	if err != nil {
 		t.Skipf("io_uring unavailable: %v", err)
 	}
 	r.Close()
-	err = r.UnregisterFixedFile(0)
+	err = r.UnregisterFiles()
 	if err == nil {
-		t.Error("UnregisterFixedFile on closed ring: want error")
+		t.Error("UnregisterFiles on closed ring: want error")
 	}
 }
 

@@ -32,16 +32,22 @@ const (
 const IORING_FSYNC_DATASYNC = 1
 
 const (
-	IORING_ENTER_GETEVENTS       = 1
-	IORING_REGISTER_FIXED_FILE   = 4
-	IORING_UNREGISTER_FIXED_FILE = 5
-	IORING_UNREGISTER_FILES      = 11
+	IORING_ENTER_GETEVENTS = 1
 )
 
 const (
 	sysIoUringSetup    = 425
 	sysIoUringEnter    = 426
 	sysIoUringRegister = 427
+)
+
+// io_uring_register opcodes (kernel 6.6).
+const (
+	IORING_REGISTER_BUFFERS      = 0
+	IORING_UNREGISTER_BUFFERS    = 1
+	IORING_REGISTER_FILES        = 2
+	IORING_UNREGISTER_FILES      = 3
+	IORING_REGISTER_FILES_UPDATE = 6
 )
 
 const sqeSize = 64
@@ -402,41 +408,41 @@ func (r *Ring) ConsumeCqe() {
 	atomic.AddUint32(r.cqHead, 1)
 }
 
-// RegisterFixedFile registers a process fd with the io_uring instance.
-func (r *Ring) RegisterFixedFile(fd int) (int, error) {
-	if r.closed.Load() {
-		return -1, errors.New("uring: ring is closed")
-	}
-	var index uint32
-	_, _, errno := syscall.Syscall6(
-		sysIoUringRegister, uintptr(r.fd),
-		uintptr(IORING_REGISTER_FIXED_FILE),
-		uintptr(unsafe.Pointer(&fd)),
-		uintptr(1),
-		uintptr(unsafe.Pointer(&index)),
-		0,
-	)
-	if errno != 0 {
-		return -1, fmt.Errorf("uring: register fixed file: %w", syscall.Errno(errno))
-	}
-	return int(index), nil
-}
-
-// UnregisterFixedFile removes a previously-registered fixed file.
-func (r *Ring) UnregisterFixedFile(index int) error {
+// RegisterFiles registers a set of file descriptors with the io_uring
+// instance. After registration, SQEs can reference fds by array index
+// using the IOSQE_FIXED_FILE flag.
+func (r *Ring) RegisterFiles(fds []int) error {
 	if r.closed.Load() {
 		return errors.New("uring: ring is closed")
 	}
-	var idx uint32 = uint32(index)
+	if len(fds) == 0 {
+		return nil
+	}
 	_, _, errno := syscall.Syscall6(
 		sysIoUringRegister, uintptr(r.fd),
-		uintptr(IORING_UNREGISTER_FIXED_FILE),
-		uintptr(unsafe.Pointer(&idx)),
-		uintptr(1),
+		uintptr(IORING_REGISTER_FILES),
+		uintptr(unsafe.Pointer(&fds[0])),
+		uintptr(len(fds)),
 		0, 0,
 	)
 	if errno != 0 {
-		return fmt.Errorf("uring: unregister fixed file: %w", syscall.Errno(errno))
+		return fmt.Errorf("uring: register files: %w", syscall.Errno(errno))
+	}
+	return nil
+}
+
+// UnregisterFiles removes all previously-registered fixed fds.
+func (r *Ring) UnregisterFiles() error {
+	if r.closed.Load() {
+		return errors.New("uring: ring is closed")
+	}
+	_, _, errno := syscall.Syscall6(
+		sysIoUringRegister, uintptr(r.fd),
+		uintptr(IORING_UNREGISTER_FILES),
+		0, 0, 0, 0,
+	)
+	if errno != 0 {
+		return fmt.Errorf("uring: unregister files: %w", syscall.Errno(errno))
 	}
 	return nil
 }
