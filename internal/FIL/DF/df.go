@@ -183,30 +183,23 @@ func (d *BlockDevice) readAt(fd int, buf []byte, offset int64) (int, error) {
 	}
 	sqe.PrepRead(fd, buf, offset)
 
-	if err := d.Ring.Flush(); err != nil {
+	if _, err := d.Ring.SubmitWait(1); err != nil {
 		d.Ring.Close()
 		d.Ring = nil
 		return unix.Pread(fd, buf, offset)
 	}
 
-	for retries := 0; retries < 1000; retries++ {
-		if err := d.Ring.Flush(); err != nil {
-			d.Ring.Close()
-			d.Ring = nil
-			return unix.Pread(fd, buf, offset)
-		}
-		cqe, ok := d.Ring.PeekCqe()
-		if ok {
-			d.Ring.ConsumeCqe()
-			if cqe.Res < 0 {
-				return 0, syscall.Errno(-cqe.Res)
-			}
-			return int(cqe.Res), nil
-		}
+	cqe, ok := d.Ring.PeekCqe()
+	if !ok {
+		d.Ring.Close()
+		d.Ring = nil
+		return unix.Pread(fd, buf, offset)
 	}
-	d.Ring.Close()
-	d.Ring = nil
-	return unix.Pread(fd, buf, offset)
+	d.Ring.ConsumeCqe()
+	if cqe.Res < 0 {
+		return 0, syscall.Errno(-cqe.Res)
+	}
+	return int(cqe.Res), nil
 }
 
 func (d *BlockDevice) writeAt(fd int, buf []byte, offset int64) (int, error) {
@@ -224,34 +217,28 @@ func (d *BlockDevice) writeAt(fd int, buf []byte, offset int64) (int, error) {
 	}
 	sqe.PrepWrite(fd, buf, offset)
 
-	if err := d.Ring.Flush(); err != nil {
+	if _, err := d.Ring.SubmitWait(1); err != nil {
 		d.Ring.Close()
 		d.Ring = nil
 		return unix.Pwrite(fd, buf, offset)
 	}
 
-	for retries := 0; retries < 1000; retries++ {
-		if err := d.Ring.Flush(); err != nil {
-			d.Ring.Close()
-			d.Ring = nil
-			return unix.Pwrite(fd, buf, offset)
-		}
-		cqe, ok := d.Ring.PeekCqe()
-		if ok {
-			d.Ring.ConsumeCqe()
-			if cqe.Res < 0 {
-				return 0, syscall.Errno(-cqe.Res)
-			}
-			return int(cqe.Res), nil
-		}
+	cqe, ok := d.Ring.PeekCqe()
+	if !ok {
+		d.Ring.Close()
+		d.Ring = nil
+		return unix.Pwrite(fd, buf, offset)
 	}
-	d.Ring.Close()
-	d.Ring = nil
-	return unix.Pwrite(fd, buf, offset)
+	d.Ring.ConsumeCqe()
+	if cqe.Res < 0 {
+		return 0, syscall.Errno(-cqe.Res)
+	}
+	return int(cqe.Res), nil
 }
 
-// SubmitBatch submits count pre-staged SQEs to the ring and waits for
-// count completions with a single io_uring_enter syscall.
+// SubmitBatch submits pending SQEs and waits for count completions with a
+// single io_uring_enter syscall. Callers pre-stage SQEs via d.Ring.Sqe()
+// before calling SubmitBatch.
 func (d *BlockDevice) SubmitBatch(count int) (int, error) {
 	if d.Ring == nil {
 		return 0, uring.ErrUnsupported

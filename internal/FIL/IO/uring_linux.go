@@ -220,7 +220,7 @@ func (r *Ring) Close() error {
 
 func (r *Ring) Fd() int { return r.fd }
 
-// SubmitWait submits pending SQEs and waits for completions.
+// SubmitWait submits pending SQEs and waits for at least want completions.
 func (r *Ring) SubmitWait(want int) (int, error) {
 	if r.closed.Load() {
 		return 0, errors.New("uring: ring is closed")
@@ -238,6 +238,37 @@ func (r *Ring) SubmitWait(want int) (int, error) {
 	_, _, errno := syscall.Syscall6(
 		sysIoUringEnter, uintptr(r.fd),
 		uintptr(need), uintptr(want),
+		flags, 0, 0,
+	)
+	if errno != 0 {
+		return 0, fmt.Errorf("uring: enter: %w", syscall.Errno(errno))
+	}
+	return r.cqAvailable(), nil
+}
+
+// SubmitAndWait submits up to sqes pending SQEs and waits for at least wantCQEs
+// completions in a single io_uring_enter syscall (REQ001206).
+func (r *Ring) SubmitAndWait(sqes int, wantCQEs int) (int, error) {
+	if r.closed.Load() {
+		return 0, errors.New("uring: ring is closed")
+	}
+	tail := atomic.LoadUint32(r.sqTail)
+	head := atomic.LoadUint32(r.sqHead)
+	available := int(tail - head)
+	toSubmit := available
+	if sqes < toSubmit {
+		toSubmit = sqes
+	}
+	if toSubmit == 0 && wantCQEs == 0 {
+		return 0, nil
+	}
+	var flags uintptr
+	if wantCQEs > 0 {
+		flags = uintptr(IORING_ENTER_GETEVENTS)
+	}
+	_, _, errno := syscall.Syscall6(
+		sysIoUringEnter, uintptr(r.fd),
+		uintptr(toSubmit), uintptr(wantCQEs),
 		flags, 0, 0,
 	)
 	if errno != 0 {
@@ -297,24 +328,20 @@ func (r *Ring) Validate() error {
 	if err != nil {
 		return err
 	}
+	sqe.opcode = IORING_OP_NOP
 	sqe.SetUserData(1)
-	if err := r.Flush(); err != nil {
+	if _, err := r.SubmitWait(1); err != nil {
 		return err
 	}
-	for retries := 0; retries < 1000; retries++ {
-		if err := r.Flush(); err != nil {
-			return err
-		}
-		cqe, ok := r.PeekCqe()
-		if ok {
-			r.ConsumeCqe()
-			if cqe.Res < 0 {
-				return fmt.Errorf("uring: NOP failed with %d", cqe.Res)
-			}
-			return nil
-		}
+	cqe, ok := r.PeekCqe()
+	if !ok {
+		return errors.New("uring: ring validation timeout")
 	}
-	return errors.New("uring: ring validation timeout")
+	r.ConsumeCqe()
+	if cqe.Res < 0 {
+		return fmt.Errorf("uring: NOP failed with %d", cqe.Res)
+	}
+	return nil
 }
 
 func (s *uring_sqe) PrepRead(fd int, buf []byte, offset int64) {

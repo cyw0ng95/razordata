@@ -443,3 +443,98 @@ func TestSqSize(t *testing.T) {
 		t.Errorf("uring_params size=%d, want 120", unsafe.Sizeof(uring_params{}))
 	}
 }
+
+func BenchmarkUringRead(b *testing.B) {
+	f, err := os.CreateTemp("", "uring-bench-*")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	content := make([]byte, 4096)
+	for i := range content {
+		content[i] = byte(i)
+	}
+	f.Write(content)
+	f.Sync()
+
+	r, err := New(256)
+	if err != nil {
+		b.Skipf("io_uring unavailable: %v", err)
+	}
+	defer r.Close()
+
+	buf := make([]byte, len(content))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sqe, _ := r.Sqe()
+		sqe.PrepRead(int(f.Fd()), buf, 0)
+		r.SubmitWait(1)
+		cqe, _ := r.PeekCqe()
+		r.ConsumeCqe()
+		if cqe.Res < 0 {
+			b.Fatalf("read failed: %d", cqe.Res)
+		}
+	}
+}
+
+func BenchmarkUringWrite(b *testing.B) {
+	f, err := os.CreateTemp("", "uring-bench-*")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+
+	r, err := New(256)
+	if err != nil {
+		b.Skipf("io_uring unavailable: %v", err)
+	}
+	defer r.Close()
+
+	content := make([]byte, 4096)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sqe, _ := r.Sqe()
+		sqe.PrepWrite(int(f.Fd()), content, 0)
+		r.SubmitWait(1)
+		cqe, _ := r.PeekCqe()
+		r.ConsumeCqe()
+		if cqe.Res < 0 {
+			b.Fatalf("write failed: %d", cqe.Res)
+		}
+	}
+}
+
+func TestSubmitAndWait(t *testing.T) {
+	r, err := New(8)
+	if err != nil {
+		t.Skipf("io_uring unavailable: %v", err)
+	}
+	defer r.Close()
+
+	sqe, err := r.Sqe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqe.opcode = IORING_OP_NOP
+	sqe.SetUserData(99)
+
+	n, err := r.SubmitAndWait(1, 1)
+	if err != nil {
+		t.Fatalf("SubmitAndWait: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("expected at least 1 CQE, got %d", n)
+	}
+
+	cqe, ok := r.PeekCqe()
+	if !ok {
+		t.Fatal("no CQE available")
+	}
+	if cqe.UserData != 99 {
+		t.Errorf("userData=%d, want 99", cqe.UserData)
+	}
+	if cqe.Res != 0 {
+		t.Errorf("res=%d, want 0", cqe.Res)
+	}
+	r.ConsumeCqe()
+}
