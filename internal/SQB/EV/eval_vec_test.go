@@ -145,3 +145,45 @@ func TestEvalBatchExpr_ConcatNonString(t *testing.T) {
 		}
 	}
 }
+
+// TestBatchToRow_PreservesNullColumns verifies REQ001210: batchToRow
+// must include pure-NULL columns in the reconstructed row. Before the
+// fix, NULL-only columns were silently dropped because all Data slices
+// were nil, causing scalar functions to see missing columns instead of
+// NULL and return 0 instead of NULL.
+func TestBatchToRow_PreservesNullColumns(t *testing.T) {
+	// Build a batch with two columns: "id" (int) and "val" (pure NULL).
+	b := UT.GetBatch(2)
+	b.Cols[0].Name = "id"
+	b.Cols[1].Name = "val"
+	// Row 0: id=1, val=NULL
+	b.AppendRow(0, LX.T_INT_KW, int64(1), false)
+	b.AppendRow(1, LX.T_NULL, nil, true)
+	b.AdvanceSize()
+	b.Pooled = false
+
+	row := batchToRow(b, 0)
+
+	// The reconstructed row must have both columns.
+	if len(row.Cols) != 2 {
+		t.Fatalf("batchToRow dropped columns: got %d cols, want 2 (cols=%v)", len(row.Cols), row.Cols)
+	}
+	// val must be NULL, not missing.
+	valIdx := -1
+	for i, c := range row.Cols {
+		if c == "val" {
+			valIdx = i
+			break
+		}
+	}
+	if valIdx < 0 {
+		t.Fatal("batchToRow dropped the pure-NULL 'val' column")
+	}
+	if row.Data[valIdx].Kind != KindNull {
+		t.Errorf("val column should be NULL, got kind=%v val=%v", row.Data[valIdx].Kind, row.Data[valIdx].ToAny())
+	}
+	// id must be 1.
+	if row.Data[0].I64 != 1 {
+		t.Errorf("id should be 1, got %v", row.Data[0].ToAny())
+	}
+}

@@ -5,9 +5,9 @@ import (
 	"slices"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // EvalBatch evaluates a predicate expression over an entire batch,
@@ -953,11 +953,22 @@ func batchToRow(batch *UT.Batch, idx int) *Row {
 		Data: make([]Value, 0, len(batch.Cols)),
 	}
 	for c := range batch.Cols {
-		d := batch.Cols[c].Data
+		col := &batch.Cols[c]
+		d := col.Data
 		if d.Ints == nil && d.Floats == nil && d.Strs == nil && d.Bools == nil {
+			// REQ001210: Even when all data slices are nil (pure-NULL
+			// column), include the column in the reconstructed row so
+			// that row.Lookup finds it and returns NULL. Without this,
+			// NULL-only columns are silently dropped, causing scalar
+			// functions like ROUND/SIGN/ABS to receive a missing column
+			// instead of NULL, producing 0 instead of NULL.
+			if col.Nulls != nil && idx < len(col.Nulls) && col.Nulls[idx] {
+				row.Cols = append(row.Cols, col.Name)
+				row.Data = append(row.Data, DT.NullValue())
+			}
 			continue
 		}
-		row.Cols = append(row.Cols, batch.Cols[c].Name)
+		row.Cols = append(row.Cols, col.Name)
 		row.Data = append(row.Data, DT.ValueFromAny(BatchValueAt(batch.Cols[c], idx)))
 	}
 	return row
@@ -1644,6 +1655,7 @@ func makeTestBatch(n int) *UT.Batch {
 	b.SetColMap(map[string]int{"x": 0, "y": 1, "z": 2})
 	return b
 }
+
 // evalInListBatch runs a vectorized IN-list membership test (REQ000554).
 // The list is materialized once and reused across all rows. For int64
 // columns + int64 list: sort the list and binary search. For string
