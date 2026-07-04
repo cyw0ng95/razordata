@@ -66,6 +66,31 @@ func (sm *SegmentManager) CreateSegment(n uint64) (*FileHandle, error) {
 	return h, nil
 }
 
+// CreateSegmentDirect opens a WAL segment with O_DIRECT and pre-allocates
+// disk space for the entire segment up to size. Returns EINVAL when O_DIRECT
+// is not supported by the underlying filesystem.
+func (sm *SegmentManager) CreateSegmentDirect(n uint64, size int64) (*FileHandle, error) {
+	path := sm.segmentPath(n)
+
+	fd, err := unix.Open(path, unix.O_RDWR|unix.O_CREAT|unix.O_DIRECT, 0600)
+	if err != nil {
+		if sm.log != nil {
+			sm.log.Error("lf.create_segment_direct", "path", path, "err", err)
+		}
+		return nil, err
+	}
+
+	if err := unix.Fallocate(fd, 0, 0, size); err != nil {
+		unix.Close(fd)
+		return nil, err
+	}
+
+	h := &FileHandle{Path: path, FD: fd}
+	h.Refs.Store(1)
+	sm.pool.Store(n, h)
+	return h, nil
+}
+
 func (sm *SegmentManager) Segment(n uint64) (*FileHandle, error) {
 	if h, ok := sm.pool.Load(n); ok {
 		fh := h.(*FileHandle)

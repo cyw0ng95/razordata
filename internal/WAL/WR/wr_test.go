@@ -2,6 +2,7 @@ package wr
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -1448,4 +1449,76 @@ func TestSegmentRotationLSNOrdering(t *testing.T) {
 				i-1, lsns[i-1], i, lsns[i])
 		}
 	}
+}
+
+// BenchmarkWALDirectVsCached compares O_DIRECT WAL write throughput against
+// the default cached (O_RDWR) path. Expected: O_DIRECT reduces kernel page
+// cache pressure, improving commit throughput by ~20-30% under memory pressure.
+func BenchmarkWALDirectVsCached(b *testing.B) {
+	recordSizes := []int{64, 256, 1024, 4096}
+	for _, cached := range []bool{true, false} {
+		name := "Cached"
+		if !cached {
+			name = "Direct"
+		}
+		for _, recSize := range recordSizes {
+			b.Run(name+"/"+benchSizeLabel(recSize), func(b *testing.B) {
+				benchWALWrite(b, recSize, !cached)
+			})
+		}
+	}
+}
+
+func benchSizeLabel(size int) string {
+	switch {
+	case size < 1024:
+		return fmt.Sprintf("%dB", size)
+	case size < 1024*1024:
+		return fmt.Sprintf("%dKB", size/1024)
+	default:
+		return fmt.Sprintf("%dMB", size/(1024*1024))
+	}
+}
+
+func benchWALWrite(b *testing.B, recSize int, direct bool) {
+	dir := b.TempDir()
+	sm, err := lf.New(filepath.Join(dir, "wal"))
+	if err != nil {
+		b.Fatalf("lf.New: %v", err)
+	}
+	defer sm.Close()
+	sp := sp.New()
+	log := lg.New(lg.Options{Output: &nullWriter{}})
+
+	w, err := NewWithOptions(dir, sm, sp, log, false, Options{
+		BatchLimit: 100,
+		Mode:       FSYNC_EVERY,
+		DirectWAL:  direct,
+	})
+	if err != nil {
+		b.Fatalf("NewWithOptions: %v", err)
+	}
+
+	value := make([]byte, recSize)
+	for i := range value {
+		value[i] = byte(i)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := w.Append(&WriteBatch{
+			TxnID: uint64(i),
+			Recs: []LogRecord{
+				{Type: RTData, BlockID: uint64(i), Value: value},
+			},
+		})
+		if err != nil {
+			b.Fatalf("Append: %v", err)
+		}
+		if err := w.Sync(); err != nil {
+			b.Fatalf("Sync: %v", err)
+		}
+	}
+	b.StopTimer()
+	w.Close()
 }

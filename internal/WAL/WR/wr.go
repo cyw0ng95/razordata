@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+	"syscall"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/LF"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
@@ -13,12 +14,15 @@ import (
 
 const SegSize = int64(64 * 1024 * 1024)
 
+const directIOSize = 512
+
 var (
-	ErrWriterClosed      = errors.New("wr: writer is closed")
-	ErrReadOnly          = errors.New("wr: read-only mode")
-	ErrRecordExceedsSeg  = errors.New("wr: single record exceeds SegSize")
-	ErrSyncPoolNilBuffer = errors.New("wr: SyncPool returned nil buffer")
-	ErrShortPwrite       = errors.New("wr: short pwrite")
+	ErrWriterClosed       = errors.New("wr: writer is closed")
+	ErrReadOnly           = errors.New("wr: read-only mode")
+	ErrRecordExceedsSeg   = errors.New("wr: single record exceeds SegSize")
+	ErrSyncPoolNilBuffer  = errors.New("wr: SyncPool returned nil buffer")
+	ErrShortPwrite        = errors.New("wr: short pwrite")
+	ErrDirectNotSupported = errors.New("wr: O_DIRECT not supported by filesystem")
 )
 
 type LSN = uint64
@@ -92,10 +96,12 @@ type Writer interface {
 }
 
 type logSegment struct {
-	number   uint64
-	fh       *lf.FileHandle
-	writeOff int64
-	buf      []byte
+	number    uint64
+	fh        *lf.FileHandle
+	writeOff  int64
+	buf       []byte
+	aligned   bool
+	alignedOf int64
 }
 
 // cmdType enumerates worker command kinds.
@@ -134,6 +140,7 @@ type writer struct {
 	mode       WALMode
 	batchLimit int
 	compress   bool
+	directWAL  bool
 
 	ch   chan cmd
 	wg   sync.WaitGroup
@@ -154,6 +161,7 @@ type Options struct {
 	LSNCounter LSNCounter
 	Mode       WALMode
 	BatchLimit int
+	DirectWAL  bool
 }
 
 type LSNCounter interface {
@@ -185,6 +193,7 @@ func NewWithOptions(dir string, sm *lf.SegmentManager, spPool sp.SyncPool, log l
 		log:        log,
 		readOnly:   readOnly,
 		compress:   opts.Compress,
+		directWAL:  opts.DirectWAL,
 		lsn:        opts.LSNCounter,
 		mode:       opts.Mode,
 		batchLimit: bl,
@@ -436,6 +445,11 @@ func (w *writer) handleStop() {
 	if hadBuffer {
 		recordErr("flush", w.flushBuffer())
 	}
+
+	if w.seg.aligned && w.seg.fh.FD >= 0 {
+		recordErr("ftruncate", unix.Ftruncate(w.seg.fh.FD, w.seg.writeOff))
+	}
+
 	if pendingEnd > int64(WALHeaderSize) {
 		recordErr("fsync", unix.Fsync(w.seg.fh.FD))
 		syncedLSN := LSNFor(w.seg.number, uint64(pendingEnd))
@@ -503,13 +517,39 @@ func (w *writer) openSegment() error {
 	if w.seg != nil {
 		n = w.seg.number + 1
 	}
-	fh, err := w.sm.CreateSegment(n)
-	if err != nil {
-		if w.log != nil {
-			w.log.Error("wr.open_segment", "n", n, "err", err)
+
+	var (
+		fh      *lf.FileHandle
+		err     error
+		segSize = SegSize
+	)
+	if w.directWAL {
+		fh, err = w.sm.CreateSegmentDirect(n, segSize)
+		if err != nil {
+			if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.ENOSYS) {
+				w.directWAL = false
+				if w.log != nil {
+					w.log.Warn("wr.open_segment.direct_fallback", "n", n, "err", err)
+				}
+				fh, err = w.sm.CreateSegment(n)
+			}
+			if err != nil {
+				if w.log != nil {
+					w.log.Error("wr.open_segment", "n", n, "err", err)
+				}
+				return err
+			}
 		}
-		return err
+	} else {
+		fh, err = w.sm.CreateSegment(n)
+		if err != nil {
+			if w.log != nil {
+				w.log.Error("wr.open_segment", "n", n, "err", err)
+			}
+			return err
+		}
 	}
+
 	buf := w.sp.Get(int(sp.WALBufSize))
 	if buf == nil {
 		_ = fh.Close()
@@ -522,15 +562,29 @@ func (w *writer) openSegment() error {
 	if w.compress {
 		headerFlags = FlagCompressionLZ4
 	}
-	if err := writeSegmentHeaderWithFlags(fh.FD, headerFlags); err != nil {
-		_ = fh.Close()
-		return err
+	writeOff := int64(WALHeaderSize)
+	if w.directWAL {
+		headerFlags |= FlagDirectIO
+		if err := writePaddedHeader(fh.FD, headerFlags); err != nil {
+			_ = fh.Close()
+			w.sp.Put(buf)
+			return err
+		}
+		writeOff = directBlockSize
+	} else {
+		if err := writeSegmentHeaderWithFlags(fh.FD, headerFlags); err != nil {
+			_ = fh.Close()
+			w.sp.Put(buf)
+			return err
+		}
 	}
 	w.seg = &logSegment{
-		number:   n,
-		fh:       fh,
-		writeOff: WALHeaderSize,
-		buf:      buf[:0],
+		number:    n,
+		fh:        fh,
+		writeOff:  writeOff,
+		buf:       buf[:0],
+		aligned:   w.directWAL,
+		alignedOf: writeOff,
 	}
 	return nil
 }
@@ -538,6 +592,9 @@ func (w *writer) openSegment() error {
 func (w *writer) flushBuffer() error {
 	if w.seg == nil || len(w.seg.buf) == 0 {
 		return nil
+	}
+	if w.directWAL {
+		return w.flushDirect()
 	}
 	off := w.seg.writeOff - int64(len(w.seg.buf))
 	n, err := unix.Pwrite(w.seg.fh.FD, w.seg.buf, off)
@@ -554,8 +611,81 @@ func (w *writer) flushBuffer() error {
 	return nil
 }
 
+func (w *writer) flushDirect() error {
+	if w.seg == nil || len(w.seg.buf) == 0 {
+		return nil
+	}
+	dataLen := len(w.seg.buf)
+	paddedLen := ((dataLen + directBlockSize - 1) / directBlockSize) * directBlockSize
+
+	aligned := getAlignedBuf(paddedLen)
+	if len(aligned) < paddedLen {
+		aligned = makeAlignedBuf(paddedLen)
+		putAlignedBuf(aligned)
+	}
+	copy(aligned, w.seg.buf)
+	for i := dataLen; i < paddedLen; i++ {
+		aligned[i] = 0
+	}
+
+	n, err := unix.Pwrite(w.seg.fh.FD, aligned[:paddedLen], w.seg.alignedOf)
+	if err != nil {
+		if w.log != nil {
+			w.log.Error("wr.flush_direct", "seg", w.seg.number, "off", w.seg.alignedOf, "err", err)
+		}
+		return err
+	}
+	if n != paddedLen {
+		return ErrShortPwrite
+	}
+	w.seg.alignedOf += int64(paddedLen)
+	w.seg.buf = w.seg.buf[:0]
+	return nil
+}
+
+var (
+	alignedBufPool   = make(map[int][]byte)
+	alignedBufPoolMu sync.Mutex
+)
+
+func getAlignedBuf(size int) []byte {
+	alignedBufPoolMu.Lock()
+	b, ok := alignedBufPool[size]
+	if ok {
+		delete(alignedBufPool, size)
+	}
+	alignedBufPoolMu.Unlock()
+	if ok {
+		return b
+	}
+	return nil
+}
+
+func putAlignedBuf(b []byte) {
+	alignedBufPoolMu.Lock()
+	alignedBufPool[len(b)] = b
+	alignedBufPoolMu.Unlock()
+}
+
+func makeAlignedBuf(size int) []byte {
+	b, err := unix.Mmap(-1, 0, size, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_PRIVATE|unix.MAP_ANONYMOUS)
+	if err != nil {
+		b = make([]byte, size)
+	}
+	return b
+}
+
+func freeAlignedBuf(b []byte) {
+	if len(b) > 0 {
+		_ = unix.Munmap(b)
+	}
+}
+
 func (w *writer) rotate() error {
 	if w.seg != nil {
+		if w.seg.aligned && w.seg.fh.FD >= 0 {
+			_ = unix.Ftruncate(w.seg.fh.FD, w.seg.writeOff)
+		}
 		if w.seg.buf != nil {
 			w.sp.Put(w.seg.buf)
 		}

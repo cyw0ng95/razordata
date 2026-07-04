@@ -188,7 +188,12 @@ func (r *replayer) forEachRecord(segNum uint64, fn func(rec *wr.LogRecord, recLS
 	}
 
 	r.compressed = headerBuf[5]&wr.FlagCompressionLZ4 != 0
-	offset := int64(wr.WALHeaderSize)
+	isDirect := headerBuf[5]&wr.FlagDirectIO != 0
+	dataOffset := int64(wr.WALHeaderSize)
+	if isDirect {
+		dataOffset = wr.DirectDataOffset()
+	}
+	offset := dataOffset
 	remaining := fileSize - offset
 	if remaining <= 0 {
 		return nil

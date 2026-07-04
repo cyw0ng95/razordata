@@ -22,9 +22,19 @@ const (
 
 const (
 	FlagCompressionLZ4 uint8 = 0x01
+	FlagDirectIO       uint8 = 0x02
 )
 
+const directBlockSize = 512
+
 const maxSupportedVersion = WALVersionV1
+
+// DirectDataOffset returns the file offset where WAL record data begins
+// in O_DIRECT segments. The 12-byte header is padded to directBlockSize,
+// so record data starts at directBlockSize rather than WALHeaderSize.
+func DirectDataOffset() int64 {
+	return directBlockSize
+}
 
 var headerEncode = func() []byte {
 	b := make([]byte, WALHeaderSize)
@@ -59,6 +69,33 @@ func writeSegmentHeaderWithFlags(fd int, flags uint8) error {
 	}
 	if n != WALHeaderSize {
 		return fmt.Errorf("wr: short header write: %d/%d", n, WALHeaderSize)
+	}
+	return nil
+}
+
+// writePaddedHeader writes the 12-byte WAL header padded to directBlockSize
+// for O_DIRECT segments. Uses mmap to obtain a page-aligned buffer satisfying
+// O_DIRECT alignment requirements.
+func writePaddedHeader(fd int, flags uint8) error {
+	buf, err := unix.Mmap(-1, 0, directBlockSize,
+		unix.PROT_READ|unix.PROT_WRITE,
+		unix.MAP_PRIVATE|unix.MAP_ANONYMOUS)
+	if err != nil {
+		return fmt.Errorf("wr: allocate aligned header buf: %w", err)
+	}
+	defer unix.Munmap(buf)
+	if flags&FlagCompressionLZ4 != 0 {
+		copy(buf, headerEncodeCompressed)
+	} else {
+		copy(buf, headerEncode)
+	}
+	buf[5] = flags
+	n, err := unix.Pwrite(fd, buf, 0)
+	if err != nil {
+		return fmt.Errorf("wr: write padded header: %w", err)
+	}
+	if n != directBlockSize {
+		return fmt.Errorf("wr: short padded header write: %d/%d", n, directBlockSize)
 	}
 	return nil
 }
