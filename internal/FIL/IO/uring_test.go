@@ -366,7 +366,7 @@ func TestPrepRead_Basic(t *testing.T) {
 	buf := []byte("test")
 	sqe := uring_sqe{}
 	sqe.PrepRead(7, buf, 100)
-	if sqe.opcode != IORING_OP_READV {
+	if sqe.opcode != IORING_OP_READ {
 		t.Errorf("opcode=%d", sqe.opcode)
 	}
 	if sqe.fd != 7 {
@@ -384,7 +384,7 @@ func TestPrepWrite_Basic(t *testing.T) {
 	buf := []byte("test")
 	sqe := uring_sqe{}
 	sqe.PrepWrite(11, buf, 200)
-	if sqe.opcode != IORING_OP_WRITEV {
+	if sqe.opcode != IORING_OP_WRITE {
 		t.Errorf("opcode=%d", sqe.opcode)
 	}
 	if sqe.fd != 11 {

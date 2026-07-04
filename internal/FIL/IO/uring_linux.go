@@ -18,6 +18,8 @@ const (
 	IORING_OP_FSYNC       = 3
 	IORING_OP_READ_FIXED  = 7
 	IORING_OP_WRITE_FIXED = 8
+	IORING_OP_READ        = 22
+	IORING_OP_WRITE       = 23
 )
 
 const (
@@ -75,17 +77,16 @@ type uring_cqe struct {
 }
 
 type uring_params struct {
-	sqEntries    uint32    // 0-3
-	cqEntries    uint32    // 4-7
-	flags        uint32    // 8-11
-	sqThreadIdle uint32    // 12-15
-	sqThreadCpu  uint32    // 16-19
-	features     uint32    // 20-23
-	wqFd         uint32    // 24-27
-	resv         [4]uint32 // 28-43
-	sqOff        [8]uint32 // 44-75
-	cqOff        [8]uint32 // 76-107
-	resv2        [3]uint32 // 108-119
+	sqEntries    uint32     // 0-3
+	cqEntries    uint32     // 4-7
+	flags        uint32     // 8-11
+	sqThreadCpu  uint32     // 12-15
+	sqThreadIdle uint32     // 16-19
+	features     uint32     // 20-23
+	wqFd         uint32     // 24-27
+	resv         [3]uint32  // 28-39
+	sqOff        [10]uint32 // 40-79
+	cqOff        [10]uint32 // 80-119
 }
 
 const sizeofParams = 120
@@ -179,6 +180,10 @@ func New(entries int) (*Ring, error) {
 	r.sqTail = (*uint32)(unsafe.Pointer(&r.mmapSq[params.sqOff[1]]))
 	r.sqArray = (*uint32)(unsafe.Pointer(&r.mmapSq[params.sqOff[6]]))
 
+	for i := uint32(0); i < params.sqEntries; i++ {
+		atomic.StoreUint32((*uint32)(unsafe.Pointer(&r.mmapSq[params.sqOff[6]+i*4])), i)
+	}
+
 	r.cqHead = (*uint32)(unsafe.Pointer(&r.mmapCq[params.cqOff[0]]))
 	r.cqTail = (*uint32)(unsafe.Pointer(&r.mmapCq[params.cqOff[1]]))
 	r.cqOverflow = (*uint32)(unsafe.Pointer(&r.mmapCq[params.cqOff[4]]))
@@ -254,6 +259,8 @@ func (r *Ring) Sqe() (*uring_sqe, error) {
 		}
 		if atomic.CompareAndSwapUint32(r.sqTail, tail, tail+1) {
 			idx := tail & r.ringMask
+			sqArr := (*uint32)(unsafe.Pointer(uintptr(unsafe.Pointer(r.sqArray)) + uintptr(idx)*4))
+			atomic.StoreUint32(sqArr, idx)
 			base := uintptr(unsafe.Pointer(&r.sqeRing[0]))
 			entry := (*uring_sqe)(unsafe.Pointer(base + uintptr(idx)*sqeSize))
 			*entry = uring_sqe{}
@@ -311,7 +318,7 @@ func (r *Ring) Validate() error {
 }
 
 func (s *uring_sqe) PrepRead(fd int, buf []byte, offset int64) {
-	s.opcode = IORING_OP_READV
+	s.opcode = IORING_OP_READ
 	s.fd = int32(fd)
 	s.off = uint64(offset)
 	s.addr = uint64(uintptr(unsafe.Pointer(&buf[0])))
@@ -319,7 +326,7 @@ func (s *uring_sqe) PrepRead(fd int, buf []byte, offset int64) {
 }
 
 func (s *uring_sqe) PrepWrite(fd int, buf []byte, offset int64) {
-	s.opcode = IORING_OP_WRITEV
+	s.opcode = IORING_OP_WRITE
 	s.fd = int32(fd)
 	s.off = uint64(offset)
 	s.addr = uint64(uintptr(unsafe.Pointer(&buf[0])))
