@@ -33,6 +33,9 @@ type Options struct {
 	JoinBufferSize     int64         // REQ001056: per-hash-join memory cap, 0 = unlimited
 	MaxResultRows      int64         // REQ001056: per-query result row cap, 0 = unlimited
 
+	// Performance tuning
+	EnableHugePages bool // REQ001207: use 2MB hugetlbfs for buffer pool
+
 	// Debug options — parsed but only acted on with -tags debug.
 	DebugDir           string
 	EnableDebugSocket  bool

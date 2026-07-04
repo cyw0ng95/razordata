@@ -151,7 +151,7 @@ func (e *Engine) open(ctx context.Context) (err error) {
 			return err
 		}
 	}
-	e.sp = sp.New()
+	e.sp = sp.NewWithOptions(sp.Options{EnableHugePages: e.opts.EnableHugePages})
 	bpCapacity := int64(e.opts.BufferPoolMB) * 1024 * 1024
 	if e.bp, err = bf.New(bpCapacity, filepath.Join(e.dir, "bp.hint"), e.df, e.sp, e.log); err != nil {
 		return err
@@ -196,7 +196,7 @@ func (e *Engine) openInMemory() (err error) {
 			e.closeBestEffort()
 		}
 	}()
-	e.sp = sp.New()
+	e.sp = sp.NewWithOptions(sp.Options{EnableHugePages: e.opts.EnableHugePages})
 	e.exe = executor.NewExecutor()
 	e.exe.WithMemoryBudget(e.opts.MaxMemoryPerQuery, e.opts.JoinBufferSize)
 	if e.opts.MaxResultRows > 0 {
