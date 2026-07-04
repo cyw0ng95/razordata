@@ -1,9 +1,11 @@
 package EV
 
 import (
+	"fmt"
 	"sort"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	"github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -538,6 +540,317 @@ func assertUint16Slice(t *testing.T, got, want []uint16) {
 		if got[i] != want[i] {
 			t.Errorf("got %v, want %v", got, want)
 			return
+		}
+	}
+}
+
+// TestEvalBatchExpr_ColumnRef verifies that a column reference returns
+// a shallow copy of the source column data.
+func TestEvalBatchExpr_ColumnRef(t *testing.T) {
+	b := makeTestBatch(5)
+	expr := &PS.Ident{Name: "x"}
+	col := EvalBatchExpr(expr, b, nil)
+	if col.Type != LX.T_INT_KW {
+		t.Errorf("expected INT_KW type, got %v", col.Type)
+	}
+	if len(col.Data.Ints) < 5 {
+		t.Fatalf("expected at least 5 ints, got %d", len(col.Data.Ints))
+	}
+	for i := 0; i < 5; i++ {
+		if col.Data.Ints[i] != int64(i) {
+			t.Errorf("col.Data.Ints[%d] = %d, want %d", i, col.Data.Ints[i], i)
+		}
+	}
+}
+
+// TestEvalBatchExpr_IntLiteral verifies that a number literal fills the column.
+func TestEvalBatchExpr_IntLiteral(t *testing.T) {
+	b := makeTestBatch(4)
+	expr := &PS.NumberLiteral{Val: 42}
+	col := EvalBatchExpr(expr, b, nil)
+	if col.Type != LX.T_INT_KW {
+		t.Errorf("expected INT_KW type, got %v", col.Type)
+	}
+	if len(col.Data.Ints) < 4 {
+		t.Fatalf("expected at least 4 ints, got %d", len(col.Data.Ints))
+	}
+	for i := 0; i < 4; i++ {
+		if col.Data.Ints[i] != 42 {
+			t.Errorf("col.Data.Ints[%d] = %d, want 42", i, col.Data.Ints[i])
+		}
+	}
+}
+
+// TestEvalBatchExpr_AddInt64 verifies int64 addition over a batch.
+func TestEvalBatchExpr_AddInt64(t *testing.T) {
+	b := makeTestBatch(5)
+	// x + 10
+	expr := &PS.BinaryExpr{
+		Op:    LX.T_PLUS,
+		Left:  &PS.Ident{Name: "x"},
+		Right: &PS.NumberLiteral{Val: 10},
+	}
+	col := EvalBatchExpr(expr, b, nil)
+	if col.Type != LX.T_INT_KW {
+		t.Errorf("expected INT_KW type, got %v", col.Type)
+	}
+	for i := 0; i < 5; i++ {
+		want := int64(i) + 10
+		if col.Data.Ints[i] != want {
+			t.Errorf("[%d]: got %d, want %d", i, col.Data.Ints[i], want)
+		}
+	}
+}
+
+// TestEvalBatchExpr_MulInt64WithSel verifies int64 multiplication
+// with a selection vector applied to the batch.
+func TestEvalBatchExpr_MulInt64WithSel(t *testing.T) {
+	b := makeTestBatch(5)
+	b.Sel = []uint16{0, 2, 4} // only rows 0, 2, 4 are valid
+
+	// x * 3
+	expr := &PS.BinaryExpr{
+		Op:    LX.T_STAR,
+		Left:  &PS.Ident{Name: "x"},
+		Right: &PS.NumberLiteral{Val: 3},
+	}
+	col := EvalBatchExpr(expr, b, nil)
+	if col.Type != LX.T_INT_KW {
+		t.Errorf("expected INT_KW type, got %v", col.Type)
+	}
+	// Selected rows: x[0]=0*3=0, x[2]=2*3=6, x[4]=4*3=12
+	expected := []int64{0, 0, 6, 0, 12}
+	for i := 0; i < 5; i++ {
+		if col.Data.Ints[i] != expected[i] {
+			t.Errorf("[%d]: got %d, want %d", i, col.Data.Ints[i], expected[i])
+		}
+	}
+}
+
+// TestEvalBatchExpr_FloatMul verifies float64 multiplication over a batch.
+func TestEvalBatchExpr_FloatMul(t *testing.T) {
+	b := makeTestBatch(4)
+	// y * 2.0
+	expr := &PS.BinaryExpr{
+		Op:    LX.T_STAR,
+		Left:  &PS.Ident{Name: "y"},
+		Right: &PS.FloatLiteral{Val: 2.0},
+	}
+	col := EvalBatchExpr(expr, b, nil)
+	if col.Type != LX.T_FLOAT_KW {
+		t.Errorf("expected FLOAT_KW type, got %v", col.Type)
+	}
+	for i := 0; i < 4; i++ {
+		want := float64(i) * 1.5 * 2.0
+		if col.Data.Floats[i] != want {
+			t.Errorf("[%d]: got %f, want %f", i, col.Data.Floats[i], want)
+		}
+	}
+}
+
+// TestEvalBatchExpr_ConcatString verifies string concatenation over a batch.
+func TestEvalBatchExpr_ConcatString(t *testing.T) {
+	b := makeTestBatch(4)
+	// z || '_suffix'
+	expr := &PS.BinaryExpr{
+		Op:    LX.T_CONCAT,
+		Left:  &PS.Ident{Name: "z"},
+		Right: &PS.StringLiteral{Val: "_suffix"},
+	}
+	col := EvalBatchExpr(expr, b, nil)
+	if col.Type != LX.T_TEXT {
+		t.Errorf("expected TEXT type, got %v", col.Type)
+	}
+	for i := 0; i < 4; i++ {
+		want := fmt.Sprintf("s%d_suffix", i)
+		if col.Data.Strs[i] != want {
+			t.Errorf("[%d]: got %q, want %q", i, col.Data.Strs[i], want)
+		}
+	}
+}
+
+// TestEvalBatchExpr_NullPropagation verifies that NULL on either side
+// of an arithmetic expression produces NULL in the output.
+func TestEvalBatchExpr_NullPropagation(t *testing.T) {
+	b := makeTestBatch(4)
+	// Mark row 1 of x as NULL, row 2 of y as NULL
+	b.Cols[0].Nulls = make([]bool, 4)
+	b.Cols[0].Nulls[1] = true
+	b.Cols[1].Nulls = make([]bool, 4)
+	b.Cols[1].Nulls[2] = true
+
+	// x + y
+	expr := &PS.BinaryExpr{
+		Op:    LX.T_PLUS,
+		Left:  &PS.Ident{Name: "x"},
+		Right: &PS.Ident{Name: "y"},
+	}
+	col := EvalBatchExpr(expr, b, nil)
+	// Row 0: 0 + 0.0 = 0.0 (float)
+	// Row 1: NULL x → NULL
+	// Row 2: x[2]=2 + NULL y → NULL
+	// Row 3: 3 + 4.5 = 7.5 (float)
+
+	if col.Nulls == nil {
+		t.Fatal("expected non-nil Nulls slice")
+	}
+	if !col.Nulls[1] {
+		t.Errorf("expected null at index 1 (left is null), but it's not null")
+	}
+	if !col.Nulls[2] {
+		t.Errorf("expected null at index 2 (right is null), but it's not null")
+	}
+	if col.Nulls[0] {
+		t.Errorf("index 0 should not be null")
+	}
+	if col.Nulls[3] {
+		t.Errorf("index 3 should not be null")
+	}
+	// Row 0: 0 + 0.0 = 0.0
+	if col.Data.Floats[0] != 0.0 {
+		t.Errorf("[0]: got %f, want 0.0", col.Data.Floats[0])
+	}
+}
+
+// TestEvalValueViaEvalBatchExpr verifies that the new EvalValue (which
+// wraps EvalBatchExpr) produces identical results to the original
+// evalFallbackEvalValue for a variety of expression types.
+func TestEvalValueViaEvalBatchExpr(t *testing.T) {
+	tests := []struct {
+		name   string
+		expr   PS.Expr
+		row    *Row
+		params []any
+	}{
+		{
+			name: "int literal",
+			expr: &PS.NumberLiteral{Val: 42},
+			row:  &Row{Cols: []string{"a"}, Data: []Value{DT.NewIntValue(10)}},
+		},
+		{
+			name: "float literal",
+			expr: &PS.FloatLiteral{Val: 3.14},
+			row:  &Row{Cols: []string{"a"}, Data: []Value{DT.NewIntValue(10)}},
+		},
+		{
+			name: "string literal",
+			expr: &PS.StringLiteral{Val: "hello"},
+			row:  &Row{Cols: []string{"a"}, Data: []Value{DT.NewIntValue(10)}},
+		},
+		{
+			name: "bool literal",
+			expr: &PS.BoolLiteral{Val: true},
+			row:  &Row{Cols: []string{"a"}, Data: []Value{DT.NewIntValue(10)}},
+		},
+		{
+			name: "null literal",
+			expr: &PS.NullLiteral{},
+			row:  &Row{Cols: []string{"a"}, Data: []Value{DT.NewIntValue(10)}},
+		},
+		{
+			name: "column ref",
+			expr: &PS.Ident{Name: "a"},
+			row:  &Row{Cols: []string{"a"}, Data: []Value{DT.NewIntValue(99)}},
+		},
+		{
+			name: "add",
+			expr: &PS.BinaryExpr{
+				Op:    LX.T_PLUS,
+				Left:  &PS.NumberLiteral{Val: 5},
+				Right: &PS.NumberLiteral{Val: 3},
+			},
+			row: &Row{Cols: []string{"a"}, Data: []Value{DT.NewIntValue(10)}},
+		},
+		{
+			name: "concat",
+			expr: &PS.BinaryExpr{
+				Op:    LX.T_CONCAT,
+				Left:  &PS.StringLiteral{Val: "hello "},
+				Right: &PS.StringLiteral{Val: "world"},
+			},
+			row: &Row{Cols: []string{"a"}, Data: []Value{DT.NewIntValue(10)}},
+		},
+		{
+			name: "equals comparison",
+			expr: &PS.BinaryExpr{
+				Op:    LX.T_EQ,
+				Left:  &PS.NumberLiteral{Val: 5},
+				Right: &PS.NumberLiteral{Val: 5},
+			},
+			row: &Row{Cols: []string{"a"}, Data: []Value{DT.NewIntValue(10)}},
+		},
+		{
+			name: "param",
+			expr: &PS.Param{Index: 0},
+			row:  &Row{Cols: []string{"a"}, Data: []Value{DT.NewIntValue(10)}},
+			params: []any{int64(100)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, gotErr := EvalValue(tt.expr, tt.row, tt.params)
+			want, wantErr := evalFallbackEvalValue(tt.expr, tt.row, tt.params)
+
+			if gotErr != nil && wantErr == nil {
+				t.Errorf("EvalValue returned error %v, want nil", gotErr)
+			}
+			if gotErr == nil && wantErr != nil {
+				t.Errorf("EvalValue returned nil, want error %v", wantErr)
+			}
+			if got.Kind != want.Kind {
+				t.Errorf("kind mismatch: got %v, want %v", got.Kind, want.Kind)
+			}
+			if got.Kind == KindInt && got.I64 != want.I64 {
+				t.Errorf("int64 mismatch: got %d, want %d", got.I64, want.I64)
+			}
+			if got.Kind == KindFloat && got.F64 != want.F64 {
+				t.Errorf("float mismatch: got %f, want %f", got.F64, want.F64)
+			}
+			if got.Kind == KindText && got.S != want.S {
+				t.Errorf("text mismatch: got %q, want %q", got.S, want.S)
+			}
+			if got.Kind == KindBool && got.Bo != want.Bo {
+				t.Errorf("bool mismatch: got %v, want %v", got.Bo, want.Bo)
+			}
+		})
+	}
+}
+
+// TestEvalBatchExpr_Param verifies param resolution.
+func TestEvalBatchExpr_Param(t *testing.T) {
+	b := makeTestBatch(3)
+	expr := &PS.Param{Index: 0}
+	params := []any{int64(77)}
+	col := EvalBatchExpr(expr, b, params)
+	if col.Type != LX.T_INT_KW {
+		t.Errorf("expected INT_KW, got %v", col.Type)
+	}
+	for i := 0; i < 3; i++ {
+		if col.Data.Ints[i] != 77 {
+			t.Errorf("[%d]: got %d, want 77", i, col.Data.Ints[i])
+		}
+	}
+}
+
+// TestEvalBatchExpr_Comparison verifies that comparison operators produce
+// boolean columns with correct results.
+func TestEvalBatchExpr_Comparison(t *testing.T) {
+	b := makeTestBatch(5)
+	// x > 2
+	expr := &PS.BinaryExpr{
+		Op:    LX.T_GT,
+		Left:  &PS.Ident{Name: "x"},
+		Right: &PS.NumberLiteral{Val: 2},
+	}
+	col := EvalBatchExpr(expr, b, nil)
+	if col.Type != LX.T_BOOL {
+		t.Errorf("expected BOOL type, got %v", col.Type)
+	}
+	expected := []bool{false, false, false, true, true}
+	for i := 0; i < 5; i++ {
+		if col.Data.Bools[i] != expected[i] {
+			t.Errorf("[%d]: got %v, want %v", i, col.Data.Bools[i], expected[i])
 		}
 	}
 }

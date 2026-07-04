@@ -139,10 +139,26 @@ func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 	return v.ToAny(), nil
 }
 
-// EvalValue is the canonical evaluator. Returns inline Value structs
-// instead of boxed any, avoiding convT64 overhead in the hot
-// evaluation path. REQ000776.
+// EvalValue evaluates an expression against a single row by packaging the
+// row into a synthetic 1-row batch, delegating to EvalBatchExpr, and
+// extracting the single result value. REQ001210.
 func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
+	if expr == nil {
+		return DT.NullValue(), nil
+	}
+	if row == nil || row.Outer != nil {
+		return evalFallbackEvalValue(expr, row, params)
+	}
+	b := rowToBatch(row)
+	col := EvalBatchExpr(expr, b, params)
+	v := columnValueAt(col, 0)
+	return v, nil
+}
+
+// evalFallbackEvalValue is the original row-at-a-time evaluator.
+// Returns inline Value structs instead of boxed any, avoiding convT64
+// overhead in the hot evaluation path. REQ000776.
+func evalFallbackEvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 	if expr == nil {
 		return DT.NullValue(), nil
 	}
@@ -240,7 +256,7 @@ func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 	case *PS.CastExpr:
 		return evalCast(e, row, params)
 	case *PS.AliasedExpr:
-		return EvalValue(e.Expr, row, params)
+		return evalFallbackEvalValue(e.Expr, row, params)
 	default:
 		return DT.NullValue(), ErrEval
 	}
@@ -256,7 +272,7 @@ func evalWindowFunc(e *PS.WindowFunc, row *Row, params []any) (Value, error) {
 // short-circuit evaluation (REQ000776). Right side is only evaluated
 // when the left side does not determine the result.
 func evalBinaryShortCircuit(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
-	left, err := EvalValue(e.Left, row, params)
+	left, err := evalFallbackEvalValue(e.Left, row, params)
 	if err != nil {
 		return DT.NullValue(), err
 	}
@@ -265,7 +281,7 @@ func evalBinaryShortCircuit(e *PS.BinaryExpr, row *Row, params []any) (Value, er
 		if left.Kind == KindBool && !left.Bo {
 			return DT.NewBoolValue(false), nil
 		}
-		right, err := EvalValue(e.Right, row, params)
+		right, err := evalFallbackEvalValue(e.Right, row, params)
 		if err != nil {
 			return DT.NullValue(), err
 		}
@@ -274,7 +290,7 @@ func evalBinaryShortCircuit(e *PS.BinaryExpr, row *Row, params []any) (Value, er
 		if left.Kind == KindBool && left.Bo {
 			return DT.NewBoolValue(true), nil
 		}
-		right, err := EvalValue(e.Right, row, params)
+		right, err := evalFallbackEvalValue(e.Right, row, params)
 		if err != nil {
 			return DT.NullValue(), err
 		}
@@ -287,7 +303,7 @@ func evalBinaryShortCircuit(e *PS.BinaryExpr, row *Row, params []any) (Value, er
 // evalUnaryValue is the Value-typed fast path for unary operators
 // (REQ000776). It calls EvalValue and dispatches via Kind switch.
 func evalUnaryValue(e *PS.UnaryExpr, row *Row, params []any) (Value, error) {
-	operand, err := EvalValue(e.Operand, row, params)
+	operand, err := evalFallbackEvalValue(e.Operand, row, params)
 	if err != nil {
 		return DT.NullValue(), err
 	}
@@ -347,11 +363,11 @@ func isValueTruthy(v Value) bool {
 // Value-based helpers (compareValue, equalValueValue,
 // numericArithValue) to avoid interface conversion.
 func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
-	left, err := EvalValue(e.Left, row, params)
+	left, err := evalFallbackEvalValue(e.Left, row, params)
 	if err != nil {
 		return DT.NullValue(), err
 	}
-	right, err := EvalValue(e.Right, row, params)
+	right, err := evalFallbackEvalValue(e.Right, row, params)
 	if err != nil {
 		return DT.NullValue(), err
 	}
@@ -422,7 +438,7 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 	case LX.T_LIKE:
 		var esc string
 		if e.Escape != nil {
-			v, err := EvalValue(e.Escape, row, params)
+			v, err := evalFallbackEvalValue(e.Escape, row, params)
 			if err != nil {
 				return DT.NullValue(), err
 			}
@@ -451,15 +467,15 @@ func evalBinaryValue(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
 }
 
 func evalBetween(e *PS.BetweenExpr, row *Row, params []any) (Value, error) {
-	expr, err := EvalValue(e.Expr, row, params)
+	expr, err := evalFallbackEvalValue(e.Expr, row, params)
 	if err != nil {
 		return DT.NullValue(), err
 	}
-	low, err := EvalValue(e.Low, row, params)
+	low, err := evalFallbackEvalValue(e.Low, row, params)
 	if err != nil {
 		return DT.NullValue(), err
 	}
-	high, err := EvalValue(e.High, row, params)
+	high, err := evalFallbackEvalValue(e.High, row, params)
 	if err != nil {
 		return DT.NullValue(), err
 	}
@@ -494,7 +510,7 @@ func evalBetween(e *PS.BetweenExpr, row *Row, params []any) (Value, error) {
 // lists, routes through evalInHashValue which uses per-kind
 // hash sets (int64/float64/string) for zero-boxing O(1) probing.
 func EvalInValue(e *PS.InExpr, row *Row, params []any) (Value, error) {
-	target, err := EvalValue(e.Expr, row, params)
+	target, err := evalFallbackEvalValue(e.Expr, row, params)
 	if err != nil {
 		return DT.NullValue(), err
 	}
@@ -520,7 +536,7 @@ func EvalInValue(e *PS.InExpr, row *Row, params []any) (Value, error) {
 	// Linear-scan path for short lists.
 	hadNull := false
 	for _, item := range e.List {
-		v, err := EvalValue(item, row, params)
+		v, err := evalFallbackEvalValue(item, row, params)
 		if err != nil {
 			return DT.NullValue(), err
 		}
@@ -572,7 +588,7 @@ func EvalInHash(e *PS.InExpr, target any, row *Row, params []any) (any, error) {
 		}
 		int64Only := true
 		for _, item := range e.List {
-			v, err := EvalValue(item, row, params)
+			v, err := evalFallbackEvalValue(item, row, params)
 			if err != nil {
 				return nil, err
 			}
@@ -758,7 +774,7 @@ func evalInterval(e *PS.IntervalLiteral) (any, error) {
 }
 
 func evalCast(e *PS.CastExpr, row *Row, params []any) (Value, error) {
-	v, err := EvalValue(e.Expr, row, params)
+	v, err := evalFallbackEvalValue(e.Expr, row, params)
 	if err != nil {
 		return DT.NullValue(), err
 	}
@@ -848,34 +864,34 @@ func castToBoolValue(v Value) bool {
 
 func evalCase(e *PS.CaseExpr, row *Row, params []any) (Value, error) {
 	if e.Expr != nil {
-		target, err := EvalValue(e.Expr, row, params)
+		target, err := evalFallbackEvalValue(e.Expr, row, params)
 		if err != nil {
 			return DT.NullValue(), err
 		}
 		if target.Kind != KindNull {
 			for _, w := range e.WhenList {
-				v, err := EvalValue(w.Cond, row, params)
+				v, err := evalFallbackEvalValue(w.Cond, row, params)
 				if err != nil {
 					return DT.NullValue(), err
 				}
 				if PL.EqualValueValue(target, v) {
-					return EvalValue(w.Then, row, params)
+					return evalFallbackEvalValue(w.Then, row, params)
 				}
 			}
 		}
 	} else {
 		for _, w := range e.WhenList {
-			cond, err := EvalValue(w.Cond, row, params)
+			cond, err := evalFallbackEvalValue(w.Cond, row, params)
 			if err != nil {
 				return DT.NullValue(), err
 			}
 			if isValueTruthy(cond) {
-				return EvalValue(w.Then, row, params)
+				return evalFallbackEvalValue(w.Then, row, params)
 			}
 		}
 	}
 	if e.Else != nil {
-		return EvalValue(e.Else, row, params)
+		return evalFallbackEvalValue(e.Else, row, params)
 	}
 	return DT.NullValue(), nil
 }
@@ -982,7 +998,7 @@ func EvalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
 	if UT.IsDateTimeFunc(e.Name) {
 		args := make([]any, len(e.Args))
 		for i, arg := range e.Args {
-			v, err := EvalValue(arg, row, params)
+			v, err := evalFallbackEvalValue(arg, row, params)
 			if err != nil {
 				return DT.NullValue(), err
 			}
@@ -997,7 +1013,7 @@ func EvalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
 	if UT.IsJSONFunc(e.Name) {
 		args := make([]any, len(e.Args))
 		for i, arg := range e.Args {
-			v, err := EvalValue(arg, row, params)
+			v, err := evalFallbackEvalValue(arg, row, params)
 			if err != nil {
 				return DT.NullValue(), err
 			}
@@ -1024,7 +1040,7 @@ func evalRaise(e *PS.RaiseFunc, row *Row, params []any) (Value, error) {
 	}
 	var msg string
 	if e.Message != nil {
-		v, err := EvalValue(e.Message, row, params)
+		v, err := evalFallbackEvalValue(e.Message, row, params)
 		if err != nil {
 			return DT.NullValue(), err
 		}
@@ -1052,7 +1068,7 @@ func EvalAbs(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := EvalValue(args[0], row, params)
+	v, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1081,7 +1097,7 @@ func evalHex(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := EvalValue(args[0], row, params)
+	v, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1154,7 +1170,7 @@ func evalRound(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 || len(args) > 2 {
 		return nil, ErrEval
 	}
-	v, err := EvalValue(args[0], row, params)
+	v, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1183,7 +1199,7 @@ func evalRound(args []PS.Expr, row *Row, params []any) (any, error) {
 	}
 	places := int64(0)
 	if len(args) == 2 {
-		pv, err := EvalValue(args[1], row, params)
+		pv, err := evalFallbackEvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
@@ -1216,7 +1232,7 @@ func evalSubstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 2 {
 		return nil, ErrEval
 	}
-	rawStr, err := EvalValue(args[0], row, params)
+	rawStr, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1235,7 +1251,7 @@ func evalSubstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	default:
 		s = rawStr.String()
 	}
-	startV, err := EvalValue(args[1], row, params)
+	startV, err := evalFallbackEvalValue(args[1], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1268,7 +1284,7 @@ func evalSubstr(args []PS.Expr, row *Row, params []any) (any, error) {
 		return "", nil
 	}
 	if len(args) >= 3 {
-		lenV, err := EvalValue(args[2], row, params)
+		lenV, err := evalFallbackEvalValue(args[2], row, params)
 		if err != nil {
 			return nil, err
 		}
@@ -1304,7 +1320,7 @@ func evalChar(args []PS.Expr, row *Row, params []any) (any, error) {
 	}
 	var sb strings.Builder
 	for _, arg := range args {
-		v, err := EvalValue(arg, row, params)
+		v, err := evalFallbackEvalValue(arg, row, params)
 		if err != nil {
 			return nil, err
 		}
@@ -1332,7 +1348,7 @@ func evalChar(args []PS.Expr, row *Row, params []any) (any, error) {
 func evalConcat(args []PS.Expr, row *Row, params []any) (any, error) {
 	var sb strings.Builder
 	for _, arg := range args {
-		v, err := EvalValue(arg, row, params)
+		v, err := evalFallbackEvalValue(arg, row, params)
 		if err != nil {
 			return nil, err
 		}
@@ -1350,7 +1366,7 @@ func evalConcatWS(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 2 {
 		return nil, ErrEval
 	}
-	sep, err := EvalValue(args[0], row, params)
+	sep, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1361,7 +1377,7 @@ func evalConcatWS(args []PS.Expr, row *Row, params []any) (any, error) {
 	var sb strings.Builder
 	first := true
 	for i := 1; i < len(args); i++ {
-		v, err := EvalValue(args[i], row, params)
+		v, err := evalFallbackEvalValue(args[i], row, params)
 		if err != nil {
 			return nil, err
 		}
@@ -1382,7 +1398,7 @@ func evalFormat(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, ErrEval
 	}
-	fmtV, err := EvalValue(args[0], row, params)
+	fmtV, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1396,7 +1412,7 @@ func evalFormat(args []PS.Expr, row *Row, params []any) (any, error) {
 	// Convert remaining args to any for fmt.Sprintf
 	fmtArgs := make([]any, len(args)-1)
 	for i := 1; i < len(args); i++ {
-		v, err := EvalValue(args[i], row, params)
+		v, err := evalFallbackEvalValue(args[i], row, params)
 		if err != nil {
 			return nil, err
 		}
@@ -1411,7 +1427,7 @@ func evalLtrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, ErrEval
 	}
-	v, err := EvalValue(args[0], row, params)
+	v, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1420,7 +1436,7 @@ func evalLtrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	}
 	s := DT.ValueToString(v)
 	if len(args) >= 2 {
-		trimV, err := EvalValue(args[1], row, params)
+		trimV, err := evalFallbackEvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
@@ -1437,7 +1453,7 @@ func evalRtrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, ErrEval
 	}
-	v, err := EvalValue(args[0], row, params)
+	v, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1446,7 +1462,7 @@ func evalRtrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	}
 	s := DT.ValueToString(v)
 	if len(args) >= 2 {
-		trimV, err := EvalValue(args[1], row, params)
+		trimV, err := evalFallbackEvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
@@ -1463,7 +1479,7 @@ func evalTrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, ErrEval
 	}
-	v, err := EvalValue(args[0], row, params)
+	v, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1472,7 +1488,7 @@ func evalTrim(args []PS.Expr, row *Row, params []any) (any, error) {
 	}
 	s := DT.ValueToString(v)
 	if len(args) >= 2 {
-		trimV, err := EvalValue(args[1], row, params)
+		trimV, err := evalFallbackEvalValue(args[1], row, params)
 		if err != nil {
 			return nil, err
 		}
@@ -1489,18 +1505,18 @@ func evalReplace(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 3 {
 		return nil, ErrEval
 	}
-	x, err := EvalValue(args[0], row, params)
+	x, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
 	if x.Kind == KindNull {
 		return nil, nil
 	}
-	y, err := EvalValue(args[1], row, params)
+	y, err := evalFallbackEvalValue(args[1], row, params)
 	if err != nil {
 		return nil, err
 	}
-	z, err := EvalValue(args[2], row, params)
+	z, err := evalFallbackEvalValue(args[2], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1523,7 +1539,7 @@ func evalQuote(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := EvalValue(args[0], row, params)
+	v, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1549,7 +1565,7 @@ func evalTypeof(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := EvalValue(args[0], row, params)
+	v, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1576,7 +1592,7 @@ func evalOctetLength(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := EvalValue(args[0], row, params)
+	v, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1602,7 +1618,7 @@ func evalUnicode(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := EvalValue(args[0], row, params)
+	v, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1635,14 +1651,14 @@ func evalIIF(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 3 {
 		return nil, ErrEval
 	}
-	cond, err := EvalValue(args[0], row, params)
+	cond, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
 	if isValueTruthy(cond) {
-		return EvalValue(args[1], row, params)
+		return evalFallbackEvalValue(args[1], row, params)
 	}
-	return EvalValue(args[2], row, params)
+	return evalFallbackEvalValue(args[2], row, params)
 }
 
 // evalInstr returns the 1-based position of Y in X, or 0 if not found.
@@ -1651,7 +1667,7 @@ func evalInstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 2 {
 		return nil, ErrEval
 	}
-	x, err := EvalValue(args[0], row, params)
+	x, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1659,7 +1675,7 @@ func evalInstr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if x.Kind == KindNull {
 		return nil, nil
 	}
-	y, err := EvalValue(args[1], row, params)
+	y, err := evalFallbackEvalValue(args[1], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1684,7 +1700,7 @@ func evalSign(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	v, err := EvalValue(args[0], row, params)
+	v, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1722,7 +1738,7 @@ func evalMaxScalar(args []PS.Expr, row *Row, params []any) (any, error) {
 	}
 	var maxV any
 	for _, arg := range args {
-		v, err := EvalValue(arg, row, params)
+		v, err := evalFallbackEvalValue(arg, row, params)
 		if err != nil {
 			return nil, err
 		}
@@ -1750,7 +1766,7 @@ func evalMinScalar(args []PS.Expr, row *Row, params []any) (any, error) {
 	}
 	var minV any
 	for _, arg := range args {
-		v, err := EvalValue(arg, row, params)
+		v, err := evalFallbackEvalValue(arg, row, params)
 		if err != nil {
 			return nil, err
 		}
@@ -1783,7 +1799,7 @@ func evalRandomBlob(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	nV, err := EvalValue(args[0], row, params)
+	nV, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1810,7 +1826,7 @@ func evalZeroblob(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 1 {
 		return nil, ErrEval
 	}
-	nV, err := EvalValue(args[0], row, params)
+	nV, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2306,14 +2322,14 @@ func evalGlob(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("glob requires 2 args")
 	}
-	pattern, err := EvalValue(args[0], row, params)
+	pattern, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
 	if pattern.Kind == KindNull {
 		return nil, nil
 	}
-	str, err := EvalValue(args[1], row, params)
+	str, err := evalFallbackEvalValue(args[1], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2427,7 +2443,7 @@ func evalLikelihood(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
-	return EvalValue(args[0], row, params)
+	return evalFallbackEvalValue(args[0], row, params)
 }
 
 // evalLikely implements likely(X) — no-op pass-through.
@@ -2436,7 +2452,7 @@ func evalLikely(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
-	return EvalValue(args[0], row, params)
+	return evalFallbackEvalValue(args[0], row, params)
 }
 
 // evalSoundex implements soundex(X) — 4-char phonetic encoding.
@@ -2458,7 +2474,7 @@ func evalSoundex(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
-	val, err := EvalValue(args[0], row, params)
+	val, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2524,7 +2540,7 @@ func evalUnhex(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
-	val, err := EvalValue(args[0], row, params)
+	val, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2573,7 +2589,7 @@ func evalUnistr(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
-	val, err := EvalValue(args[0], row, params)
+	val, err := evalFallbackEvalValue(args[0], row, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2689,7 +2705,7 @@ func evalUnlikely(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, nil
 	}
-	return EvalValue(args[0], row, params)
+	return evalFallbackEvalValue(args[0], row, params)
 }
 
 // Local comparison helpers.
