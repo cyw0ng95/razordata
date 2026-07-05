@@ -106,7 +106,7 @@ func newEngineWithOptions(dir string, opts Options) (*engine, error) {
 
 	// REQ001242: initialize block cache (default 1024 blocks)
 	cacheSize := opts.BlockCacheSize
-	if cacheSize <= 0 {
+	if cacheSize < 0 {
 		cacheSize = 1024
 	}
 	e.blockCache = NewBlockCache(cacheSize)
