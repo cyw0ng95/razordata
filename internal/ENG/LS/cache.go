@@ -51,8 +51,9 @@ func (c *BlockCache) Get(key string) ([]byte, bool) {
 	return out, true
 }
 
-// Put inserts or updates a block in the cache. If the cache is at capacity,
-// the least-recently-used entry is evicted first.
+// Put stores data in the cache. The cache takes ownership of the data slice —
+// the caller must NOT retain or modify it after calling Put. If the cache is
+// at capacity, the least-recently-used entry is evicted first.
 func (c *BlockCache) Put(key string, data []byte) {
 	if c.capacity == 0 {
 		return

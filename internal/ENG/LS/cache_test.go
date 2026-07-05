@@ -97,6 +97,17 @@ func TestBlockCache_Concurrent(t *testing.T) {
 	wg.Wait()
 }
 
+func BenchmarkBlockCache_GetPut(b *testing.B) {
+	c := NewBlockCache(1024)
+	val := make([]byte, 4096)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		key := fmt.Sprintf("bench.razor:%d", i%1024)
+		c.Put(key, val)
+		c.Get(key)
+	}
+}
+
 func TestBlockCache_CapacityZero(t *testing.T) {
 	c := NewBlockCache(0)
 
