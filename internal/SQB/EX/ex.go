@@ -540,10 +540,18 @@ func (e *Executor) planWithCache(stmt PS.Stmt) (*pl.PlanResult, error) {
 		if plan == nil || plan.Root == nil {
 			return nil, errors.New("ex: plan produced no root")
 		}
+		ResolvePlanSlots(plan.Root)
 		e.putCachedPlan(key, plan)
 		return plan, nil
 	}
-	return e.planner.Plan(stmt)
+	plan, err := e.planner.Plan(stmt)
+	if err != nil {
+		return nil, err
+	}
+	if plan != nil && plan.Root != nil {
+		ResolvePlanSlots(plan.Root)
+	}
+	return plan, nil
 }
 
 // ExtractParamTypes parses sql and returns the SQL column type

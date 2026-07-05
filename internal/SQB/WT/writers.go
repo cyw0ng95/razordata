@@ -2342,7 +2342,7 @@ func expandReturningStar(exprs []PS.Expr, colNames []string) []PS.Expr {
 	for _, e := range exprs {
 		if _, ok := e.(*PS.StarExpr); ok {
 			for _, name := range colNames {
-				out = append(out, &PS.Ident{Name: name})
+				out = append(out, &PS.Ident{Name: name, SlotIdx: -1})
 			}
 		} else {
 			out = append(out, e)

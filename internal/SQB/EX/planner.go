@@ -32,9 +32,9 @@ func cloneExpr(e PS.Expr) PS.Expr {
 	}
 	switch x := e.(type) {
 	case *PS.Ident:
-		return &PS.Ident{Name: x.Name}
+		return &PS.Ident{Name: x.Name, SlotIdx: x.SlotIdx}
 	case *PS.QualifiedName:
-		return &PS.QualifiedName{Table: x.Table, Name: x.Name}
+		return &PS.QualifiedName{Table: x.Table, Name: x.Name, SlotIdx: x.SlotIdx}
 	case *PS.NumberLiteral:
 		return &PS.NumberLiteral{Val: x.Val}
 	case *PS.FloatLiteral:
@@ -5565,9 +5565,9 @@ func canonicalColRef(e PS.Expr) string {
 // the canonical "Table.Name" form (or just "Name" for unqualified cols).
 func colRefFromCanonical(canonical string) PS.Expr {
 	if idx := strings.Index(canonical, "."); idx >= 0 {
-		return &PS.QualifiedName{Table: canonical[:idx], Name: canonical[idx+1:]}
+		return &PS.QualifiedName{Table: canonical[:idx], Name: canonical[idx+1:], SlotIdx: -1}
 	}
-	return &PS.Ident{Name: canonical}
+	return &PS.Ident{Name: canonical, SlotIdx: -1}
 }
 
 // inferTransitiveEqualities builds equivalence classes from

@@ -193,6 +193,12 @@ func evalFallbackEvalValue(expr PS.Expr, row *Row, params []any) (Value, error) 
 		return DT.NullValue(), nil
 	case *PS.Ident:
 		if row != nil {
+			// REQ001202: pre-resolved SlotIdx — direct access, skip Lookup.
+			if e.SlotIdx >= 0 && e.SlotIdx < len(row.Data) && e.SlotIdx < len(row.Cols) {
+				if strings.EqualFold(row.Cols[e.SlotIdx], e.Name) {
+					return row.Data[e.SlotIdx], nil
+				}
+			}
 			if v, ok := row.Lookup(e.Name); ok {
 				return DT.ValueFromAny(v), nil
 			}
@@ -200,6 +206,21 @@ func evalFallbackEvalValue(expr PS.Expr, row *Row, params []any) (Value, error) 
 		return DT.NewTextValue(e.Name), nil
 	case *PS.QualifiedName:
 		if row != nil {
+			// REQ001202: pre-resolved SlotIdx — direct access.
+			// For qualified names, only use SlotIdx when the column
+			// at that index matches the FULL qualified name. This
+			// prevents incorrectly reading from the inner row when
+			// a correlated subquery's QN references an outer column
+			// that happens to share the same bare name.
+			if e.SlotIdx >= 0 && e.SlotIdx < len(row.Data) && e.SlotIdx < len(row.Cols) {
+				full := e.Table + "." + e.Name
+				if strings.EqualFold(row.Cols[e.SlotIdx], full) {
+					return row.Data[e.SlotIdx], nil
+				}
+				if e.Table == "" && strings.EqualFold(row.Cols[e.SlotIdx], e.Name) {
+					return row.Data[e.SlotIdx], nil
+				}
+			}
 			if e.CachedKey == "" {
 				e.CachedKey = e.Table + "." + e.Name
 			}

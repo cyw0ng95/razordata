@@ -90,14 +90,14 @@ func (p *Parser) parsePrimary() (Expr, error) {
 				}
 				col := strings.ToLower(p.current.Lexeme)
 				p.advance()
-				return &QualifiedName{Loc: loc, Database: name, Table: mid, Name: col}, nil
+				return &QualifiedName{Loc: loc, Database: name, Table: mid, Name: col, SlotIdx: -1}, nil
 			}
-			return &QualifiedName{Loc: loc, Table: name, Name: mid}, nil
+			return &QualifiedName{Loc: loc, Table: name, Name: mid, SlotIdx: -1}, nil
 		}
 		if p.current.Type == LX.T_LPAREN {
 			return p.parseFunctionCall(name)
 		}
-		return &Ident{Loc: loc, Name: name}, nil
+		return &Ident{Loc: loc, Name: name, SlotIdx: -1}, nil
 	case LX.T_GLOB:
 		// REQ000729: GLOB can be used as a function call GLOB(pattern, string)
 		// or as a binary operator expr GLOB pattern.
@@ -109,7 +109,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		}
 		// Not followed by '(' — treat as identifier for binary operator
 		// parsing in parsePostfix.
-		return &Ident{Loc: loc, Name: name}, nil
+		return &Ident{Loc: loc, Name: name, SlotIdx: -1}, nil
 	case LX.T_RAISE:
 		// RAISE(ABORT, 'message') or RAISE(IGNORE) (REQ000560)
 		loc := p.loc()

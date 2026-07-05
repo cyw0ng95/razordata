@@ -54,7 +54,8 @@ func (n *NullLiteral) exprNode() {}
 
 type Ident struct {
 	Loc
-	Name string
+	Name    string
+	SlotIdx int // -1 = not resolved; 0+ = index into row.Data for direct access
 }
 
 func (i *Ident) exprNode() {}
@@ -65,6 +66,7 @@ type QualifiedName struct {
 	Table      string
 	Name       string
 	CachedKey  string
+	SlotIdx    int // -1 = not resolved; 0+ = index into row.Data for direct access
 }
 
 func (q *QualifiedName) exprNode() {}

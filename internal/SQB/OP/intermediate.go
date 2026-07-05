@@ -1606,9 +1606,9 @@ func (p *Project) compileProjectExprs() {
 func compileRowExpr(e PS.Expr) func(*Row) Value {
 	switch v := e.(type) {
 	case *PS.QualifiedName:
-		return compileColRef(v.Table + "." + v.Name)
+		return compileColRef(v.Table+"."+v.Name, v.SlotIdx)
 	case *PS.Ident:
-		return compileColRef(v.Name)
+		return compileColRef(v.Name, v.SlotIdx)
 	case *PS.AliasedExpr:
 		return compileRowExpr(v.Expr)
 	case *PS.BinaryExpr:
@@ -1725,7 +1725,7 @@ func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 // into a function that reads directly from row.Data.
 // REQ000898: caches the column index on first lookup so repeated
 // calls (across rows in a batch) use O(1) direct index access.
-func compileColRef(name string) func(*Row) Value {
+func compileColRef(name string, slotIdx int) func(*Row) Value {
 	lower := strings.ToLower(name)
 	bareName := name
 	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
@@ -1733,6 +1733,21 @@ func compileColRef(name string) func(*Row) Value {
 	}
 	bareLower := strings.ToLower(bareName)
 	return func(row *Row) Value {
+		// REQ001202: pre-resolved SlotIdx fast path. Verify that the
+		// column at slotIdx matches the expected name (handles the
+		// REQ001084 cross-join case where row schemas vary).
+		if slotIdx >= 0 && slotIdx < len(row.Data) && slotIdx < len(row.Cols) {
+			cl := row.Cols[slotIdx]
+			if len(cl) > 0 {
+				clLower := cl
+				if cl[0] >= 'A' && cl[0] <= 'Z' {
+					clLower = strings.ToLower(cl)
+				}
+				if clLower == lower || clLower == bareLower {
+					return row.Data[slotIdx]
+				}
+			}
+		}
 		// REQ001084: recompute idx per row. Cross-join output rows
 		// may have different Cols; a cached idx from a previous row
 		// would read from the wrong column. This is the same bug as
