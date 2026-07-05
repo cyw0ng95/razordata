@@ -3,6 +3,7 @@ package OP
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -132,10 +133,8 @@ type SeqScan struct {
 	usedColSet map[string]bool
 	usedColIdx []int // index into the full schema
 
-	// REQ001101: decodeBuf is a reusable buffer for row.Data slices,
-	// avoiding per-row make([]Value, N) in nextFromStore.
-	decodeBuf    []Value
-	decodeBufPos int
+	// REQ001221: rowArena replaces decodeBuf for bump-pointer
+	rowArena *DT.RowArena
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -531,39 +530,26 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 	return Row{}, ErrNoRows
 }
 
-// decodeRowBuffered decodes a row into a reusable buffer slice.
-// REQ001101: amortizes the make([]Value, N) allocation across
-// defaultScanRowBuf (64) rows by growing the buffer as needed.
+// decodeRowBuffered decodes a row using the arena allocator.
+// REQ001221: replaces per-row make([]Value, N) with RowArena bump
+// allocation. The arena is reset in Close(), freeing all rows at once.
 func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
-	row, err := DecodeRow(data, s.schema)
+	if s.rowArena == nil {
+		s.rowArena = &DT.RowArena{}
+	}
+	n := len(s.schema.Cols)
+	if n == 0 {
+		return Row{}, nil
+	}
+	row := s.rowArena.AllocRow(n, s.schema)
+	if row == nil {
+		return Row{}, errors.New("op: arena alloc failed")
+	}
+	err := DT.DecodeRowInto(row, data, s.schema)
 	if err != nil {
 		return Row{}, err
 	}
-	n := len(row.Data)
-	if n == 0 {
-		return row, nil
-	}
-	if cap(s.decodeBuf) < n*defaultScanRowBuf {
-		s.decodeBuf = make([]Value, n*defaultScanRowBuf)
-		s.decodeBufPos = 0
-	}
-	start := s.decodeBufPos
-	end := start + n
-	s.decodeBufPos = end
-	if s.decodeBufPos > cap(s.decodeBuf) {
-		// Grow buffer instead of wrapping — wrapping corrupts previously
-		// decoded rows when the caller materializes them (e.g. Sort).
-		newCap := cap(s.decodeBuf) * 2
-		if newCap < cap(s.decodeBuf)+n {
-			newCap = cap(s.decodeBuf) + n
-		}
-		newBuf := make([]Value, s.decodeBufPos, newCap)
-		copy(newBuf, s.decodeBuf)
-		s.decodeBuf = newBuf
-	}
-	copy(s.decodeBuf[start:end], row.Data)
-	row.Data = s.decodeBuf[start:end]
-	return row, nil
+	return *row, nil
 }
 
 func (s *SeqScan) Close() error {
@@ -574,8 +560,9 @@ func (s *SeqScan) Close() error {
 	}
 	s.pos = 0
 	s.rows = nil
-	s.decodeBuf = nil
-	s.decodeBufPos = 0
+	if s.rowArena != nil {
+		s.rowArena.Reset()
+	}
 	// REQ001195: clear point-lookup state so plan cache reuse
 	// with different literal values triggers a fresh scan instead
 	// of using stale pre-computed row indices.

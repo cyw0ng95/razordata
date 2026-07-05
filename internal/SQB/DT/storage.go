@@ -272,7 +272,6 @@ func ExtractPK(schema *StoreSchema, row Row) (any, error) {
 				}
 			}
 			return row.Data[i], nil
-			return row.Data[i], nil
 		}
 	}
 	return nil, fmt.Errorf("DT: pk column %q not in schema", schema.Pk)
