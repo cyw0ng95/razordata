@@ -141,7 +141,7 @@ func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 	if err != nil {
 		return nil, err
 	}
-		next := func() (AP.Row, error) {
+	next := func() (AP.Row, error) {
 		row, err := stream.Next()
 		if err != nil {
 			if err == DT.ErrNoRows {

@@ -61,17 +61,17 @@ type ReadStats struct {
 }
 
 type engine struct {
-	dir       string
-	memtables []memtableIface
-	activeMem *shardedMemtable
-	manifest  *manifest
-	cm        *compactionManager
-	fm        *flushManager
-	pageCache *PageCache
+	dir        string
+	memtables  []memtableIface
+	activeMem  *shardedMemtable
+	manifest   *manifest
+	cm         *compactionManager
+	fm         *flushManager
+	pageCache  *PageCache
 	blockCache *BlockCache
 	opts       Options
 	fs         FS // REQ001172: virtual filesystem
-	stats     struct {
+	stats      struct {
 		MemtableHits atomic.Int64
 		SSTHits      atomic.Int64
 		DiskReads    atomic.Int64

@@ -59,7 +59,7 @@ type compactionJob struct {
 	// created by SubCompactor set a unique tmpPath so parallel
 	// sub-runs don't collide on the shared temp filename.
 	// REQ001048.
-	tmpPath   string
+	tmpPath    string
 	blockCache *BlockCache // REQ001242: evict stale entries on compaction
 }
 
