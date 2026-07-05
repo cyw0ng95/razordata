@@ -731,16 +731,49 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 		// keyCache slice, then sort an index array in-place.
 		// Eliminates the sortRow allocation and double-buffering.
 		// REQ001025: use a flat buffer to avoid N allocations.
+		// REQ001202+: pre-analyze sort key expressions for direct
+		// SlotIdx access, bypassing EvalValue call + type switch +
+		// bounds check + EqualFold in the hot inner loop.
 		n := len(s.buf)
 		numKeys := len(s.keys)
+		keyAccess := make([]struct {
+			isSlot  bool
+			slotIdx int
+		}, numKeys)
+		if n > 0 {
+			for j, k := range s.keys {
+				switch e := k.Expr.(type) {
+				case *PS.Ident:
+					if e.SlotIdx >= 0 && e.SlotIdx < len(s.buf[0].Data) {
+						keyAccess[j] = struct {
+							isSlot  bool
+							slotIdx int
+						}{isSlot: true, slotIdx: e.SlotIdx}
+					}
+				case *PS.QualifiedName:
+					if e.SlotIdx >= 0 && e.SlotIdx < len(s.buf[0].Data) {
+						keyAccess[j] = struct {
+							isSlot  bool
+							slotIdx int
+						}{isSlot: true, slotIdx: e.SlotIdx}
+					}
+				}
+			}
+		}
 		keyCache := make([][]Value, n)
 		flatKeys := make([]Value, n*numKeys)
 		for i, r := range s.buf {
 			sk := flatKeys[i*numKeys : (i+1)*numKeys]
+			var err error
 			for j, k := range s.keys {
-				v, err := EV.EvalValue(k.Expr, &r, s.params)
-				if err != nil {
-					return Row{}, err
+				var v Value
+				if keyAccess[j].isSlot {
+					v = r.Data[keyAccess[j].slotIdx]
+				} else {
+					v, err = EV.EvalValue(k.Expr, &r, s.params)
+					if err != nil {
+						return Row{}, err
+					}
 				}
 				sk[j] = v
 			}

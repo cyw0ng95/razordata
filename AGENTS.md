@@ -336,10 +336,25 @@ overflow_test.go, tpch_bench_test.go, operators_vec_test.go
   (index prefix iteration + rowKey-based Store.Get). Removed spurious
   btreeIt.Next() calls from non-B-tree paths.
 
+### Commit `27f2512` — REQ001202 column reference pre-resolution (SlotIdx)
+- PS.Ident/QualifiedName: SlotIdx field, post-plan resolver (resolve_slots.go)
+- compileColRef + evalFallbackEvalValue: SlotIdx fast path (skip ColIndex map)
+- BenchmarkIdentLookup 63.17 ns -> SlotIdx 31.00 ns/op (2.04x)
+- select1 pprof: compileColRef 320ms 37% -> 10ms 1.27% (97% reduction),
+  evalFallbackEvalValue 820ms 96% -> 320ms 41% (61% reduction)
+
+### Commitment — Sort key column reference inline
+- Pre-analyze sort keys for direct SlotIdx access before materialization loop
+- Inner loop reads `r.Data[slotIdx]` directly, bypassing EvalValue
+- BenchmarkSortExtractKeys: 4976 ns -> 1696 ns (2.93x), alloc 44 -> 14 (68%)
+- 2-key sort: 5711 ns -> 1957 ns (2.92x), alloc 50 -> 14 (72%)
+- 100-row sort: 48906 ns -> 17125 ns (2.86x), alloc 404 -> 104 (74%)
+
 ### Current Status
 - All 8 pre-existing test failures fixed (6 plan-string + 1 EXISTS + 1 IndexScan)
 - 5 remaining pre-existing failures (TestBugfix_BuildWriterOp, Reindex_NoOp,
   DropView_Unknown, DropTrigger_Unknown, TestReq489_ReindexRouting) —
   these were masked by the 8 original failures, not introduced by recent changes.
 - 156 Eval() call sites migrated to EvalValue()
+- REQ001202 (SlotIdx) + Sort key inline implemented
 - 0 new regressions
