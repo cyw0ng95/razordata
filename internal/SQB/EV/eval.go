@@ -3,7 +3,6 @@ package EV
 import (
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
-	"container/list"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -47,74 +46,164 @@ func cachedSubqueryKey(e *PS.SubqueryExpr) string {
 	return key
 }
 
+// subqueryColRefCache memoizes the correlated column references for each
+// *PS.SubqueryExpr. extractCorrelatedColumns is an O(n) AST traversal;
+// caching per pointer avoids repeated analysis.
+var subqueryColRefCache sync.Map
+
+// cachedCorrelatedCols returns the memoized list of correlated column
+// names for the given SubqueryExpr.
+func cachedCorrelatedCols(e *PS.SubqueryExpr) []string {
+	if v, ok := subqueryColRefCache.Load(e); ok {
+		return v.([]string)
+	}
+	cols := extractCorrelatedColumns(e.Subquery.(*PS.Select))
+	subqueryColRefCache.Store(e, cols)
+	return cols
+}
+
+// extractCorrelatedColumns walks the subquery's WHERE AST and returns
+// the list of outer-column references. An Ident is treated as
+// correlated if it is NOT resolved by the subquery's FROM table.
+// QualifiedName references are correlated when their Table does not
+// match the subquery's FROM table.
+func extractCorrelatedColumns(sel *PS.Select) []string {
+	if sel.Where == nil {
+		return nil
+	}
+	subqAlias := sel.FromAlias
+	subqFrom := sel.From
+	seen := map[string]bool{}
+	correlated := []string{}
+	var walk func(PS.Expr)
+	walk = func(expr PS.Expr) {
+		if expr == nil {
+			return
+		}
+		switch e := expr.(type) {
+		case *PS.BinaryExpr:
+			walk(e.Left)
+			walk(e.Right)
+		case *PS.UnaryExpr:
+			walk(e.Operand)
+		case *PS.Ident:
+			// A bare Ident is correlated unless it resolves to the
+			// subquery's own FROM table.
+			if subqFrom != "" {
+				correlated = append(correlated, e.Name)
+			}
+		case *PS.QualifiedName:
+			// QualifiedName: correlated if Table doesn't match the
+			// subquery's FROM or its alias.
+			if subqFrom != "" && e.Table != subqFrom && e.Table != subqAlias {
+				if !seen[e.Name] {
+					correlated = append(correlated, e.Name)
+					seen[e.Name] = true
+				}
+			}
+		case *PS.FunctionCall:
+			for _, arg := range e.Args {
+				walk(arg)
+			}
+		case *PS.BetweenExpr:
+			walk(e.Expr)
+			walk(e.Low)
+			walk(e.High)
+		case *PS.InExpr:
+			walk(e.Expr)
+			for _, arg := range e.List {
+				walk(arg)
+			}
+		case *PS.AliasedExpr:
+			walk(e.Expr)
+		}
+	}
+	walk(sel.Where)
+	return correlated
+}
+
 // correlatedSubqueryCache is an LRU cache for correlated scalar subqueries.
 // Key = "planKey:outerPKValues" (e.g., "SELECT...:1,5,10").
 // Values are cached subquery results (any).
 // Max size 256 entries to bound memory.
-var correlatedSubqueryCache = newLRUCache(256)
+var correlatedSubqueryCache = newCorrelatedLRU(256)
 
-// lruCache is a simple thread-safe LRU cache.
-type lruCache struct {
-	mu        sync.Mutex
-	items     map[string]*list.Element
-	order     *list.List
-	maxSize   int
+// correlatedLRU is a thread-safe LRU cache that stores DT.Value
+// results directly (no any boxing). Uses sync.RWMutex for read
+// performance and a map[string]uint64 for LRU ordering.
+type correlatedLRU struct {
+	mu        sync.RWMutex
+	items     map[string]DT.Value
+	order     map[string]uint64
+	access    uint64
 	evictions int64
+	maxSize   int
 }
 
-type lruEntry struct {
-	key   string
-	value any
-}
-
-func newLRUCache(maxSize int) *lruCache {
-	return &lruCache{
-		items:   make(map[string]*list.Element),
-		order:   list.New(),
+func newCorrelatedLRU(maxSize int) *correlatedLRU {
+	return &correlatedLRU{
+		items:   make(map[string]DT.Value),
+		order:   make(map[string]uint64),
 		maxSize: maxSize,
 	}
 }
 
-func (c *lruCache) Get(key string) (any, bool) {
+func (c *correlatedLRU) Get(key string) (DT.Value, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	elem, ok := c.items[key]
+	val, ok := c.items[key]
 	if !ok {
-		return nil, false
+		return DT.NullValue(), false
 	}
-	// REQ001038: O(1) move-to-end using container/list.
-	c.order.MoveToBack(elem)
-	entry := elem.Value.(*lruEntry)
-	return entry.value, true
+	c.access++
+	c.order[key] = c.access
+	return val, true
 }
 
-func (c *lruCache) Put(key string, value any) {
+func (c *correlatedLRU) Put(key string, val DT.Value) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if elem, ok := c.items[key]; ok {
-		elem.Value.(*lruEntry).value = value
-		// REQ001038: O(1) move-to-end using container/list.
-		c.order.MoveToBack(elem)
-		return
-	}
-	// Evict if at capacity
-	if len(c.items) >= c.maxSize {
-		oldest := c.order.Front()
-		if oldest != nil {
-			entry := oldest.Value.(*lruEntry)
-			c.order.Remove(oldest)
-			delete(c.items, entry.key)
+	_, exists := c.items[key]
+	if !exists && len(c.items) >= c.maxSize {
+		if c.evict() {
 			c.evictions++
 		}
 	}
-	entry := &lruEntry{key: key, value: value}
-	elem := c.order.PushBack(entry)
-	c.items[key] = elem
+	c.items[key] = val
+	// Update access counter for LRU ordering
+	c.access++
+	c.order[key] = c.access
 }
 
-func (c *lruCache) Stats() (size int, evictions int64) {
+func (c *correlatedLRU) evict() bool {
+	minKey := ""
+	var minOrder uint64 = ^uint64(0)
+	for k, o := range c.order {
+		if o < minOrder {
+			minOrder = o
+			minKey = k
+		}
+	}
+	if minKey != "" {
+		delete(c.items, minKey)
+		delete(c.order, minKey)
+		return true
+	}
+	return false
+}
+
+func (c *correlatedLRU) Clear() {
+	// REQ001228: Clear the cache (per-statement invalidation).
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	clear(c.items)
+	clear(c.order)
+	c.access = 0
+}
+
+func (c *correlatedLRU) Stats() (size int, evictions int64) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return len(c.items), c.evictions
 }
 
@@ -122,18 +211,18 @@ func (c *lruCache) Stats() (size int, evictions int64) {
 // Called by UnregisterAll() for test isolation.
 func ClearSubqueryCaches() {
 	globalSubqueryCache = sync.Map{}
-	correlatedSubqueryCache = newLRUCache(256)
+	correlatedSubqueryCache.Clear()
 }
 
-// serializeOuterRow serializes the outer row's column values for use
-// as a cache key component in correlated subquery caching.
-// Format: "col1Val1,col2Val2,..." using normalized string representation.
-func serializeOuterRow(row *Row) string {
-	if row == nil || len(row.Cols) == 0 {
+// serializeCorrelatedValues serializes only the specified column values
+// from the outer row, used as the cache key for correlated subqueries.
+// REQ001228: fine-grained keying based on correlated columns only.
+func serializeCorrelatedValues(row *Row, cols []string) string {
+	if row == nil || len(cols) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(row.Cols))
-	for _, col := range row.Cols {
+	parts := make([]string, 0, len(cols))
+	for _, col := range cols {
 		if v, ok := row.LookupValue(col); ok {
 			parts = append(parts, DT.ValueToString(v))
 		} else {
@@ -295,7 +384,7 @@ func evalFallbackEvalValue(expr PS.Expr, row *Row, params []any) (Value, error) 
 		if err != nil {
 			return DT.NullValue(), err
 		}
-		return DT.ValueFromAny(v), nil
+		return v, nil
 	case *PS.IntervalLiteral:
 		v, err := evalInterval(e)
 		if err != nil {
@@ -773,9 +862,9 @@ func evalExists(e *PS.ExistsExpr, outer *Row, params []any) (any, error) {
 	return len(rows) > 0, nil
 }
 
-func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (any, error) {
+func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (Value, error) {
 	if _, ok := e.Subquery.(*PS.Select); !ok {
-		return nil, ErrSubquery
+		return DT.NullValue(), ErrSubquery
 	}
 
 	// Compute cache key from the serialized statement.
@@ -789,38 +878,59 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (any, erro
 	// (no outer columns the subquery could reference).
 	if outer == nil {
 		if cached, ok := globalSubqueryCache.Load(key); ok {
-			return cached, nil
+			if v, ok := cached.(Value); ok {
+				return v, nil
+			}
+			return DT.ValueFromAny(cached), nil
 		}
 	} else {
-		// P0-1: Try correlated subquery LRU cache.
-		// Key = planKey + outer row values (e.g., "SELECT...:1,5,10").
-		correlatedKey := key + ":" + serializeOuterRow(outer)
-		if cached, ok := correlatedSubqueryCache.Get(correlatedKey); ok {
-			return cached, nil
+		// REQ001228: Correlated subquery cache — keyed by planKey
+		// + the values of only the correlated columns.
+		correlatedCols := cachedCorrelatedCols(e)
+		if len(correlatedCols) > 0 {
+			correlatedKey := key + ":" + serializeCorrelatedValues(outer, correlatedCols)
+			if v, ok := correlatedSubqueryCache.Get(correlatedKey); ok {
+				return v, nil
+			}
+		} else {
+			// No correlated columns detected — same result for all
+			// outer rows, cache globally.
+			if cached, ok := globalSubqueryCache.Load(key); ok {
+				if v, ok := cached.(Value); ok {
+					return v, nil
+				}
+				return DT.ValueFromAny(cached), nil
+			}
 		}
 	}
 
 	pl := getSubqueryPlanner(outer)
 	if pl == nil {
-		return nil, ErrSubquery
+		return DT.NullValue(), ErrSubquery
 	}
 	rows, err := pl.ExecuteSubquery(context.Background(), e.Subquery, outer, params)
 	if err != nil {
-		return nil, err
+		return DT.NullValue(), err
 	}
-	var result any
-	if len(rows) == 0 {
-		result = nil
-	} else if len(rows[0].Data) == 0 {
-		result = nil
+	var result Value
+	if len(rows) == 0 || len(rows[0].Data) == 0 {
+		result = DT.NullValue()
 	} else {
-		result = rows[0].Data[0].ToAny()
+		result = rows[0].Data[0]
 	}
 	// Cache the result: globally for non-correlated, LRU for correlated.
 	if outer == nil {
 		globalSubqueryCache.Store(key, result)
 	} else {
-		correlatedSubqueryCache.Put(key+":"+serializeOuterRow(outer), result)
+		correlatedCols := cachedCorrelatedCols(e)
+		if len(correlatedCols) > 0 {
+			// Correlated subquery cache with fine-grained keying
+			correlatedKey := key + ":" + serializeCorrelatedValues(outer, correlatedCols)
+			correlatedSubqueryCache.Put(correlatedKey, result)
+		} else {
+			// Non-correlated: cache globally
+			globalSubqueryCache.Store(key, result)
+		}
 	}
 	return result, nil
 }
