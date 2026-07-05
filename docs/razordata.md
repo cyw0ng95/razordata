@@ -22,12 +22,14 @@ Razordata keeps SQLite's ergonomic model — one directory, zero configuration, 
 | Single `go.mod` | No nested modules. Flat, auditable dependency graph. |
 | Page size: 4 KB | Matches OS page size for `O_DIRECT` alignment and `mmap` efficiency. |
 
-## 3. Architecture: The Eight-Layer Stack
+## 3. Architecture: The Ten-Subsystem Stack
 
-Razordata is organized as eight subsystems with strict dependency ordering. No layer may depend on a layer above it — this is enforced by the build graph:
+Razordata is organized as ten subsystems with strict dependency ordering. No layer may depend on a layer above it — this is enforced by the build graph:
 
 ```
-LOG → FIL → MEM → WAL → ENG → TXN → SQL → SYS
+LOG → FIL → MEM → WAL → ENG → TXN → SQF → SQB → SYS
+                                       ↗
+                                   DBG (build-tagged, lateral)
 ```
 
 Each layer exposes interfaces consumed by the layer above. The subsystems are:
@@ -35,13 +37,15 @@ Each layer exposes interfaces consumed by the layer above. The subsystems are:
 | Subsystem | Responsibility | Function Clusters |
 |---|---|---|
 | `LOG` | Structured logging, async hook dispatch | `LG` (slog wrapper, levels, rotation), `HK` (trace/metric/profile hooks) |
-| `FIL` | Block I/O, file management, meta page | `DF` (pread/pwrite, O_DIRECT), `MF` (meta.razor), `LF` (WAL segments), `FS` (path validation) |
-| `MEM` | Buffer pool, sync.Pool, hint file | `BF` (clock-sweep LRU), `PC` (page slots, checksum), `SP` (object pooling) |
-| `WAL` | Write-ahead log, durability | `WR` (append, rotation, LSN), `FL` (fsync, batch commit), `RP` (replay, checkpoint) |
-| `ENG` | LSM tree, SST, compaction, manifest | `LS` (memtable, SST, bloom, compaction, manifest), `ID` (index), `TB` (table DDL), `SC` (schema), `DP` (encoding) |
+| `FIL` | Block I/O, file management, meta page | `DF` (pread/pwrite, O_DIRECT, mmap, fadvise), `MF` (meta.razor), `LF` (WAL segments), `FS` (path validation), `IO` (io_uring wrapper) |
+| `MEM` | Buffer pool, sync.Pool, hint file | `BF` (clock-sweep LRU, W-TinyLFU admission, sharded pool, pmem spill), `PC` (page slots, checksum), `SP` (object pooling), `OF` (off-heap large-object pool) |
+| `WAL` | Write-ahead log, durability | `WR` (append, rotation, LSN, LZ4 compression), `FL` (fsync, batch commit), `RP` (replay, checkpoint) |
+| `ENG` | LSM tree, SST, compaction, manifest | `LS` (memtable, SST, bloom, compaction, manifest), `ID` (index), `TB` (table DDL), `SC` (schema), `DP` (encoding), `CT` (persistent catalog), `NM` (NUMA topology) |
 | `TXN` | MVCC, version chains, transactions | `MV` (version chain, arena), `LC` (hazard pointers, epoch), `SN` (read view), `VL` (commit protocol, conflict detection) |
-| `SQL` | SQL parsing, planning, execution | `LX` (lexer), `PS` (parser), `PL` (planner), `EX` (executor), `RE` (rewriter) |
-| `SYS` | Lifecycle, public API, sessions | `SY` (init, shutdown, stats), `AP` (Engine/Session API), `SE` (session), `TX` (transaction), `ST` (statement) |
+| `SQF` | SQL frontend (parse/rewrite) | `LX` (lexer with keyword trie), `PS` (LL(1) parser, 722-line AST), `PL` (planner types, memo, learned selectivity model), `RE` (rewriter, SQL formatter) |
+| `SQB` | SQL backend (execute) | `AD` (adaptive query compilation), `AG` (aggregation/window), `DT` (data types/schema), `EV` (expression evaluation, vectorized batch eval), `EX` (executor, cost-based planner), `OP` (operators), `UT` (batch/vectorized utilities, parallel worker pool, hash table, SIMD dispatch), `WT` (write operators, triggers, views, materialized views, ALTER TABLE) |
+| `DBG` | Debug observability (build-tagged) | `CT` (counters/histograms), `DC` (dynamic runtime control), `DI` (debugger), `IN` (page inspection), `JD` (JOIN tracer), `PR` (profiler), `SK` (socket command server), `TE` (trace ring buffer) |
+| `SYS` | Lifecycle, public API, sessions | `SY` (init, shutdown, stats), `AP` (Engine/Session API, structured error system), `SE` (session), `TX` (transaction), `ST` (statement), `DS` (`database/sql` driver), `BK` (online backup/restore) |
 
 ### 3.1 LOG — Structured Logging
 
@@ -61,6 +65,12 @@ The lowest I/O layer. All disk access flows through here.
 **Block I/O via `pread`/`pwrite`:** Positional reads/writes without seeking. Each block is addressed by `(fd, blockID * BlockSize)`. This avoids shared file offset state and enables concurrent reads on the same file descriptor.
 
 **`O_DIRECT` with fallback:** On Linux, data files are opened with `O_DIRECT` to bypass the OS page cache. If the kernel rejects it (`EINVAL`), Razordata falls back to buffered I/O. WAL segments always use buffered I/O — `fsync` handles durability.
+
+**`mmap` for direct page mapping:** On Linux, SST data blocks can be mapped directly into the process address space via `syscall.Mmap`. This eliminates copy-on-read overhead — the application reads from the page cache without a `pread` system call. Combined with `O_DIRECT` for writes, this gives zero-copy reads with bypass-the-cache writes.
+
+**`fadvise` read-ahead hints:** `fadviseSequential` and `fadviseWillNeed` via `golang.org/x/sys/unix` hint the kernel to prefetch upcoming SST blocks during sequential scans. This overlaps I/O with CPU work for large table scans.
+
+**io_uring wrapper:** Linux io_uring provides submission/completion queue pairs (SQE/CQE rings) for asynchronous I/O. Registered buffers and files avoid per-syscall setup. This is the foundation for future async read/write paths.
 
 **CRC32 checksums:** Every 4 KB block carries a 4-byte IEEE CRC32 in its last 4 bytes. Reads verify the checksum; mismatches return `ErrCorrupt` without attempting recovery.
 
@@ -126,6 +136,14 @@ The clock-sweep algorithm is a classical approximation of LRU:
 3. Eviction scans slots: if `refKey < hand - N` (N = clock interval) and `pinCount == 0`, the slot is evicted.
 4. The hash table uses a sharded mutex (`sync.RWMutex`) — `RLock` for reads, `Lock` for eviction/insertion.
 
+**W-TinyLFU admission:** A frequency-based admission policy tracks block access counts via a compact count-min sketch. When a new block is loaded, it competes against the eviction candidate — the loser is rejected. This prevents cache pollution from sequential scans that would otherwise evict hot blocks. The count-min sketch uses 4-bit counters (0–15) and a 1M-entry table, consuming ~500 KB.
+
+**Sharded buffer pool:** The global hash table is split into 32 independent shards (power-of-2). Each shard has its own clock-sweep hand and mutex. This eliminates global mutex contention under concurrent reads — multiple goroutines can load and evict blocks in different shards simultaneously. Shard selection: `blockID % numShards`.
+
+**Persistent memory spill:** For databases larger than the buffer pool, cold pages can be spilled to a persistent memory file (`pmem`). This avoids re-reading from disk for pages that were recently evicted but may be needed again. The pmem file is memory-mapped and uses a simple LRU for its own pages.
+
+**Off-heap large-object pool:** A 16-class size-binned pool (64KB to 4MB) for large allocations that would otherwise cause GC pressure. Each class has its own `sync.Pool`. Allocations are rounded up to the nearest size class.
+
 The `loading` flag on each slot prevents duplicate loads: only one goroutine loads a block from disk; others wait on the `wait` channel. This eliminates redundant I/O for concurrent reads of the same block.
 
 **`sync.Pool` for zero-allocation hot paths:**
@@ -166,6 +184,8 @@ The sole write path for durability. All mutations are serialized to the WAL befo
 | `RTRollback` | 2 | (empty) — discards uncommitted write set |
 | `RTCheckpoint` | 3 | `[checkpointLSN:8][catalogRootPtr:8][manifestChecksum:4][activeTXNs:varint...]` |
 | `RTMerge` | 4 | `[newVersion:8][deletedFiles:varint...][addedFiles:varint...]` — LSM version transition |
+
+**LZ4 compression:** WAL records can be LZ4-compressed before writing. A pure-Go LZ4 block-format codec (greedy hash-chain match finder) compresses `RTData` payloads. Compression ratio depends on data entropy — typically 2–4x for text-heavy rows. The compression flag is stored in the record type byte.
 
 **Segment rotation:** WAL segments are 64 MB files named `wal.000`, `wal.001`, ... (zero-padded to 3 digits for lexicographic sorting). When a segment fills, it is closed and a new one is created. A pre-allocated 256 KB `writeBuffer` avoids per-record allocation — records are appended via `binary.LittleEndian` directly into the buffer.
 
@@ -261,6 +281,10 @@ write to temp file → fsync temp → rename to final path → fsync directory
 The manifest is the single source of truth for which SST files are live. `Version` is immutable once created — new versions are produced by applying a `VersionDiff`. The manifest stores: file ID, level, key range, size, and bloom bit count for every live SST.
 
 **System catalog:** The catalog is a special LSM tree stored under `sst/catalog/`. Schema data is key-value pairs: `__catalog:<tableID>` → MessagePack-encoded `TableSchema`. The catalog root pointer is stored in the meta page.
+
+**Persistent catalog (ENG/CT):** A binary catalog file (`catalog.dat`) with `RCAT` magic bytes stores table schemas in a versioned format (V1/V2). Entries are serialized via encode/decode callbacks, with atomic persistence via temp-file + fsync + rename. Supports schema upgrade paths with `ErrUpgradeRequired` for forward-versioned files.
+
+**NUMA topology (ENG/NM):** Detects NUMA node layout by reading `/sys/devices/system/node`. Caches node count and provides `NodeForCPU` for CPU-to-NUMA-node mapping. Used by the parallel worker pool to pin workers to local NUMA nodes, minimizing cross-node memory access.
 
 **Row encoding:** Fixed-width columns stored inline: `INT` (8 bytes), `BIGINT` (8 bytes), `FLOAT` (8 bytes), `BOOL` (1 byte). Variable-length columns: `[length:varint][data:blob]`. Null values: a null bitmap in the row header, one bit per column.
 
@@ -367,9 +391,10 @@ SQL text → Lexer (tokens) → Parser (AST) → Rewriter (normalized AST) → P
 
 **Parser:**
 
-- LL(1) recursive descent. `parseSelect()`, `parseInsert()`, `parseUpdate()`, `parseDelete()`, `parseCreateTable()`, `parseDropTable()`.
+- LL(1) recursive descent. `parseSelect()`, `parseInsert()`, `parseUpdate()`, `parseDelete()`, `parseCreateTable()`, `parseDropTable()`, plus dedicated parsers for window functions, transactions, EXPLAIN, VALUES, and virtual tables.
 - Expression parsing uses operator precedence: comparison > add/sub > mul/div > unary > primary.
 - AST nodes are concrete structs with no interface fields (except the `Expr` and `Stmt` marker interfaces). This avoids interface dispatch overhead in the rewriter and planner.
+- Full 722-line AST (`ast.go`) with `Loc` position tracking on every node for precise error reporting. Visitor pattern for tree traversal.
 
 **Rewriter:**
 
@@ -380,9 +405,12 @@ SQL text → Lexer (tokens) → Parser (AST) → Rewriter (normalized AST) → P
 **Planner:**
 
 - Cost-based: estimates I/O cost from key selectivity (uniform distribution initially, histogram support via `ANALYZE`).
-- Index selection: if a `WHERE` column has an index, `IndexScan`; otherwise `SeqScan`.
-- Plan memoization: equivalent query shapes share sub-plans. Memo key = `SHA256(canonical_binary_encoding(AST))`.
+- Index selection: if a `WHERE` column has an index, `IndexScan`; otherwise `SeqScan`. Strategy pattern (`ScanStrategy`) replaces the 5-mode god-struct with pluggable strategies: `InMemoryScan`, `SeekScan`, `BTreeScan`, etc.
+- Join ordering: N3 optimizer with bushy/left-deep join enumeration, cost model with selectivity estimation per predicate type.
+- Plan memoization: equivalent query shapes share sub-plans. Memo key = `SHA256(canonical_binary_encoding(AST))`. Parameterized plans (`NormalizeForMemo`) separate planning decisions from operator-tree literals.
 - Sort ordering: if `ORDER BY` matches primary key order, the explicit sort is eliminated.
+- Slot resolution: post-plan optimizer pass resolves column references to ordinal indices (`SlotIdx`), enabling O(1) runtime access via `row.Data[slotIdx]` instead of per-row string lookup.
+- Learned selectivity model: tracks per-column-pair correlations, trains predicate feature vectors from histogram selectivity + row count + distinct count + null count for improved cardinality estimation.
 
 **Executor (streaming operator tree):**
 
@@ -395,24 +423,43 @@ type Operator interface {
 
 The executor is a pull-based tree traverser. Parent calls `child.Next()`, processes the row, yields to its parent. There is no bytecode VM, no code generation — pure Go struct interpretation.
 
-Operators shipped: `SeqScan`, `IndexScan`, `Filter`, `Project`, `Sort`, `Limit`, `Aggregate`, `HashAggregate`, `NestedLoopJoin` (INNER/CROSS/LEFT/RIGHT/FULL), `Distinct`, `Insert`, `Update`, `Delete`, `WindowOperator`.
+**Operators shipped:**
 
-**SIMD vectorized execution:**
+| Category | Operators |
+|---|---|
+| Scan | `SeqScan`, `IndexScan` (with strategy pattern), `BitmapHeapScan`, `IndexOnlyScan`, `SqliteMaster` (virtual table) |
+| Filter/Project | `Filter`, `Project`, `Distinct` |
+| Join | `NestedLoopJoin` (INNER/CROSS/LEFT/RIGHT/FULL), `HashJoin` (radix-partitioned, INNER/LEFT/RIGHT/FULL), `ParallelHashJoin`, `HashCrossJoin` (small tables ≤1024 rows), `MergeJoin` (sort-merge) |
+| Aggregate/Window | `Aggregate`, `HashAggregate`, `ParallelHashAggregate`, `WindowOperator`, `GROUP_CONCAT` |
+| Sort | `Sort`, `ParallelSort` (sample-sort with N-way parallel partition) |
+| Limit | `Limit` |
+| Compound | `CompoundOp` (UNION/UNION ALL/INTERSECT/EXCEPT with streaming fast-path) |
+| Write | `Insert`, `Update`, `Delete`, `Upsert` (ON CONFLICT DO NOTHING/UPDATE) |
+| DDL | `CreateTable`, `DropTable`, `CreateIndex`, `DropIndex`, `CreateView`, `DropView`, `CreateMaterializedView`, `DropMaterializedView`, `RefreshMaterializedView`, `CreateTrigger`, `DropTrigger`, `AlterTable`, `TruncateTable`, `Reindex` |
+| Debug | `PragmaResult` (single-row PRAGMA output) |
 
-For filter-heavy queries, operators process 1024-row columnar batches:
+**Vectorized execution:**
+
+For filter-heavy queries, operators process columnar batches (default 64 rows, configurable):
 
 ```
-Batch layout: columnar arrays ([]int64, []float64, []string)
-Evaluation: 4-wide manual unrolling for cache-line-friendly batch evaluation
-Selection vectors: []uint16 mask which rows pass the filter
-Adaptive threshold: auto-fallback to row-at-a-time for tables < 100K rows
+Batch layout: columnar arrays ([]int64, []float64, []string) via sync.Pool
+Evaluation: 4-wide/8-wide manual unrolling for L1 cache-friendly batch evaluation
+Selection vectors: SelRange compact mask for contiguous filtered rows
+Adaptive threshold: auto-fallback to row-at-a-time for small tables
 ```
+
+**Vectorized operators:** `VectorizedSeqScan`, `VectorizedFilter`, `VectorizedProject`, `VectorizedHashJoin`, `VectorizedCount`, `VectorizedSum`, `VectorizedAvg`, `VectorizedMin`, `VectorizedMax`. Automatic eligibility checking via `tryVectorizePlan` transforms eligible operator trees into batch-processing pipelines. `BatchToRowAdapter` and `RowOperatorAdapter` bridge between batch and row-at-a-time domains.
+
+**Adaptive query compilation (ADQC):** The `AdaptiveOp` wrapper hot-swaps from interpreted to specialized batch execution after a configurable invocation threshold. Plans are compiled once and cached in an LRU `AdqcCache` (256 entries, keyed by plan hash + schema version). `FallbackOp` provides panic-safe fallback to the interpreted path. Telemetry counters track specialization rate, fallbacks, and invalidations.
 
 **Parallel execution:**
 
 - Table scans are split into key-range partitions, each processed by a worker.
-- Worker pool sized to `runtime.GOMAXPROCS(0)`.
-- Parallel sort: sample sort for top-k, external merge sort for large datasets.
+- NUMA-aware worker pool: detects NUMA topology and pins workers to local nodes, minimizing cross-node memory access. Pool sized to `runtime.GOMAXPROCS(0)`.
+- Parallel sort: sample-sort with N-way parallel partition sort via worker pool.
+- Parallel hash join: right-side hash table built in parallel across workers (per-partition mutex), single-threaded probe.
+- Parallel hash aggregate: input partitioned by group-key hash, N partial hash tables built concurrently, merged at the end.
 - Results merged via bounded channels (non-blocking send, drop on overflow).
 
 ### 3.8 SYS — System Layer
@@ -439,14 +486,11 @@ Close → set closed flag → flush pending writes → stop background goroutine
 
 **Read-only mode:** When `Options.ReadOnly = true`, WAL writes are skipped, data files are opened with `O_RDONLY`, and DML returns `ErrReadOnly`.
 
-**Error taxonomy:**
+**Structured error system:** The `Error` type carries Kind (18 kinds: NotFound, Constraint, DuplicateKey, etc.), Code (SQLSTATE), Module, Layer, Op, Fields map, and wrapped cause. Predefined operation constants cover all SQL and engine operations. Errors serialize to JSON for logging and diagnostics. `ConstraintError` provides structured constraint violation details (table, constraint name, columns, values, operation).
 
-```
-retryable = []error{ErrIO, ErrLocked}
-fatal     = []error{ErrTxAborted, ErrCorrupt, ErrSyntax, ErrTypeMismatch, ErrUpgradeRequired, ErrReadOnly}
-```
+**Database/sql driver:** Registers as the `"razor"` driver. DSN-based engine cache with reference counting implements `driver.Driver`/`Connector`/`Conn`/`Stmt`/`Rows`/`Tx`. Enables standard `database/sql` usage with connection pooling.
 
-All errors wrap: I/O errors → structural errors → API-level errors. Messages are lowercase, no trailing punctuation. Errors are wrapped with `fmt.Errorf("razordata: %w", err)` to preserve the error chain. Callers should retry on `retryable` errors (with exponential backoff for `ErrLocked`); `fatal` errors must not be retried.
+**Online backup/restore:** Point-in-time consistent backup via read-lock acquisition, file copy, and integrity verification.
 
 ## 4. Concurrency Model
 
@@ -460,36 +504,44 @@ All errors wrap: I/O errors → structural errors → API-level errors. Messages
 
 ## 5. What's Shipped vs. Planned
 
-### Shipped (v0.25.1)
+### Shipped
 
-**DDL:** CREATE TABLE, DROP TABLE, CREATE INDEX, DROP INDEX
+**DDL:** CREATE TABLE, DROP TABLE, CREATE INDEX, DROP INDEX, CREATE VIEW, DROP VIEW, CREATE MATERIALIZED VIEW, DROP MATERIALIZED VIEW, REFRESH MATERIALIZED VIEW, CREATE TRIGGER, DROP TRIGGER, ALTER TABLE (ADD/DROP/RENAME COLUMN), TRUNCATE TABLE, REINDEX, ATTACH/DETACH DATABASE, CREATE VIRTUAL TABLE
 
-**DML:** INSERT (with ON CONFLICT DO NOTHING/UPDATE), UPDATE, DELETE, RETURNING
+**DML:** INSERT (with ON CONFLICT DO NOTHING/UPDATE), INSERT OR REPLACE/IGNORE/ROLLBACK/ABORT/FAIL, UPDATE (with FROM), DELETE, RETURNING, UPSERT
 
-**Queries:** SELECT, WHERE, ORDER BY, LIMIT/OFFSET, GROUP BY, HAVING, DISTINCT, EXPLAIN, EXPLAIN QUERY PLAN
+**Queries:** SELECT, WHERE, ORDER BY (with NULLS FIRST/LAST), LIMIT/OFFSET (FETCH FIRST syntax), GROUP BY, HAVING, DISTINCT, EXPLAIN, EXPLAIN ANALYZE, EXPLAIN FORMAT (TEXT/TREE/JSON/DOT), SELECT ... VALUES
 
-**Joins:** INNER, CROSS, LEFT/RIGHT/FULL OUTER
+**Joins:** INNER, CROSS, LEFT/RIGHT/FULL OUTER, hash join (radix-partitioned), merge join, parallel hash join
 
-**Subqueries:** IN, EXISTS, scalar, CTE (WITH)
+**Subqueries:** IN, EXISTS, scalar, CTE (WITH, WITH RECURSIVE)
 
-**Window functions:** ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, SUM/AVG OVER with PARTITION BY, ORDER BY, ROWS frame
+**Window functions:** ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, SUM/AVG/COUNT/MIN/MAX OVER with PARTITION BY, ORDER BY, ROWS/RANGE frame, EXCLUDE clause, FILTER clause
 
-**Types:** INTEGER, BIGINT, FLOAT, DECIMAL, BOOLEAN, TEXT, VARCHAR, BLOB, DATE, TIME, TIMESTAMP, JSON
+**Types:** INTEGER, BIGINT, FLOAT, DECIMAL(P,S), BOOLEAN, TEXT, VARCHAR, BLOB, DATE, TIME, TIMESTAMP, JSON
 
-**Constraints:** PRIMARY KEY, NOT NULL, DEFAULT, CHECK, UNIQUE
+**Constraints:** PRIMARY KEY, NOT NULL, DEFAULT, CHECK, UNIQUE, FOREIGN KEY (ON DELETE/UPDATE CASCADE, RESTRICT, SET NULL, SET DEFAULT, NO ACTION), stored generated columns
 
-**Transactions:** BEGIN, COMMIT, ROLLBACK, SAVEPOINT, RELEASE, ROLLBACK TO
+**Aggregate functions:** COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT (with SEPARATOR)
 
-**Utilities:** VACUUM, ANALYZE, integrity_check, backup/restore, pragma, `razor` CLI
+**JSON functions:** json_extract, json_object, json_array, json_type, and more
+
+**Date/time functions:** NOW, date/time parsing and formatting
+
+**Transactions:** BEGIN, COMMIT, ROLLBACK, SAVEPOINT, RELEASE, ROLLBACK TO, SET TRANSACTION
+
+**Utilities:** VACUUM, ANALYZE (with reservoir sampling and histogram persistence), integrity_check, backup/restore, PRAGMA (with listener system), `razor` CLI
 
 **Testing:** SQLite Compatibility Test Suite (pure-Go SQLLogicTest driver, dual-runner with modernc.org/sqlite)
 
 ### Planned / Known Gaps
 
-- WAL commit durability (`RTCommit` records not yet written to WAL — REQ000171)
-- Hazard pointer publication to all slots instead of single slot (REQ000175)
-- Epoch manager goroutine ID tracking (REQ000181)
-- Foreign keys, ALTER TABLE, CREATE VIEW, triggers
+- OR-to-IN predicate conversion for point lookups (REQ001218)
+- N3 cost model OR selectivity (REQ001219)
+- 3-table+ comma-join output column shuffling (REQ001162)
+- Recursive CTE iteration bugs (REQ001184, REQ001185, REQ001186)
+- Executor cache sharing for per-query allocation reduction (REQ001220)
+- Row arena allocation for decode buffer optimization (REQ001221)
 
 ## 6. Key Design Trade-offs
 
@@ -500,8 +552,13 @@ All errors wrap: I/O errors → structural errors → API-level errors. Messages
 | Per-transaction arenas | Zero GC pressure, O(1) rollback | More frequent allocation under high concurrency |
 | Directory-based storage | WAL independent of data, atomic manifest rename, warm-start hints | Less portable than single-file |
 | Pull-based executor (no VM) | Simple, debuggable, Go-native | No JIT/codegen optimization |
+| Adaptive query compilation | Hot-swap interpreted→specialized after threshold | Compilation overhead on first invocation; cache memory |
+| Vectorized execution | 4-8x throughput for batch-friendly operators | Adapter overhead when mixing batch and row-at-a-time |
 | Parallel execution by default | Scales with cores | Coordination overhead on small tables (auto-fallback at <100K rows) |
+| NUMA-aware worker pool | Minimizes cross-node memory access | Platform-specific (Linux only); adds complexity |
+| W-TinyLFU admission | Prevents scan pollution of hot blocks | 500 KB memory overhead for count-min sketch |
 | Bounded log channel | Never blocks DB operations | Events dropped under hook overload |
+| Structured error system | Rich diagnostics, JSON serialization, operation tracking | More code than simple error strings |
 
 ## 7. Comparative Analysis: Razordata vs. SQLite
 
@@ -510,14 +567,16 @@ All errors wrap: I/O errors → structural errors → API-level errors. Messages
 | **Storage engine** | B-tree | LSM tree (skiplist memtable + SST + leveled compaction) |
 | **Write concurrency** | Single writer | Multiple concurrent writers via MVCC |
 | **Read concurrency** | Parallel in WAL mode | Parallel via MVCC version chains |
-| **Isolation** | Serializable (WAL) | Read-uncommitted (v1); read-committed planned |
+| **Isolation** | Serializable (WAL) | Snapshot isolation (MVCC) |
 | **Language** | C (~150K LOC) | Go |
 | **Memory safety** | Manual | GC-managed; arenas for hot paths |
-| **Vectorization** | None | 4-wide unrolling, columnar batches, selection vectors |
-| **Parallelism** | None | Parallel scan, parallel sort, worker pool |
-| **Observability** | Extension-dependent | Built-in: tracing, metrics, profiling |
-| **File format** | Single `.sqlite` file | Directory: `meta.razor`, `wal/`, `sst/`, `manifest` |
+| **Vectorization** | None | Columnar batches, 4-8x unrolling, selection vectors, adaptive compilation |
+| **Parallelism** | None | Parallel scan, sort, hash join, hash aggregate; NUMA-aware worker pool |
+| **Join algorithms** | Nested loop only | Nested loop, hash join (radix-partitioned), merge join, parallel hash join |
+| **Observability** | Extension-dependent | Built-in: tracing, metrics, profiling, JOIN tracer, debug socket |
+| **File format** | Single `.sqlite` file | Directory: `meta.razor`, `wal/`, `sst/`, `manifest`, `catalog.dat` |
 | **Build** | C compiler, platform-specific | Go toolchain only |
+| **SQL surface** | Full SQLite dialect |大部分 SQLite dialect (CTEs, window functions, triggers, views, materialized views, UPSERT, ALTER TABLE) |
 
 ### Where SQLite Wins
 - **Maturity:** 25+ years of production hardening.
@@ -529,9 +588,12 @@ All errors wrap: I/O errors → structural errors → API-level errors. Messages
 - **Write throughput under concurrency:** Lock-free skiplist + MVCC eliminates writer serialization.
 - **Large dataset performance:** LSM trees excel at write-heavy workloads with large datasets.
 - **Concurrent read-write:** Readers never block writers, writers never block readers.
-- **Embedded parallelism:** SIMD vectorization and parallel query execution designed in from the start.
-- **Go ecosystem integration:** No CGO. Native Go types. Goroutine-safe by construction.
-- **Observability:** First-class structured logging, metrics, profiling — not add-ons.
+- **Embedded parallelism:** Vectorized execution, parallel hash join/sort/aggregate, NUMA-aware worker pool.
+- **Rich join algorithms:** Hash join (radix-partitioned), merge join, parallel hash join — not just nested loop.
+- **Adaptive query compilation:** Hot-swap from interpreted to specialized batch execution for repeated queries.
+- **Go ecosystem integration:** No CGO. Native Go types. Goroutine-safe by construction. `database/sql` driver.
+- **Observability:** First-class structured logging, metrics, profiling, JOIN tracer, debug socket — not add-ons.
+- **Modern SQL:** CTEs (recursive), window functions (with FILTER/EXCLUDE), triggers, materialized views, UPSERT, JSON functions.
 
 ## 8. Testing Methodology
 
@@ -540,12 +602,15 @@ All errors wrap: I/O errors → structural errors → API-level errors. Messages
 - Property-based tests for storage (crash/recovery).
 - Every storage component requires benchmarks.
 - Error paths, edge cases, and boundary conditions tested as aggressively as happy paths.
-- SQLite Compatibility Test Suite validates SQL correctness against a reference implementation.
+- SQLite Compatibility Test Suite (622+ test files) validates SQL correctness against a reference implementation.
+- Dual-runner mode: runs each SLT test against both Razordata and `modernc.org/sqlite`, comparing results.
+- Fuzz tests for lexer and parser to catch edge cases in SQL input.
+- Debug build tag (`-tags debug`) enables additional instrumentation: JOIN tracing, CTE tracing, page inspection, runtime knob toggling.
 
 ## 9. Conclusion
 
 Razordata is not a SQLite replacement — it is a different tool for a different problem. SQLite excels at simple, reliable, single-file embedded storage. Razordata targets the space where write concurrency, parallel execution, and modern language ergonomics matter more than battle-tested maturity.
 
-The eight-layer architecture, lock-free MVCC, LSM storage engine, and SIMD vectorized executor represent a deliberate set of trade-offs: complexity in exchange for concurrency, GC integration in exchange for memory safety, directory-based storage in exchange for richer metadata.
+The ten-subsystem architecture (LOG → FIL → MEM → WAL → ENG → TXN → SQF → SQB → DBG → SYS), lock-free MVCC, LSM storage engine, vectorized executor with adaptive compilation, and NUMA-aware parallel execution represent a deliberate set of trade-offs: complexity in exchange for concurrency, GC integration in exchange for memory safety, directory-based storage in exchange for richer metadata.
 
 The project is pre-1.0 and has known gaps. But the foundation is sound, the architecture is auditable, and the build order ensures that each new feature integrates cleanly with what came before.
