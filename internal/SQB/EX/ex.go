@@ -137,6 +137,24 @@ type planCacheEntry struct {
 	result *pl.PlanResult
 }
 
+// stmtCache is a thread-safe LRU cache for parsed statements.
+// REQ001220: shared across ShallowCopy clones via pointer.
+type stmtCache struct {
+	mu      sync.Mutex
+	entries map[string]*stmtCacheEntry
+	lru     []*stmtCacheEntry
+	maxSize int
+}
+
+// planCache is a thread-safe LRU cache for compiled plan trees.
+// REQ001220: shared across ShallowCopy clones via pointer.
+type planCache struct {
+	mu      sync.Mutex
+	entries map[string]*planCacheEntry
+	lru     []*planCacheEntry
+	maxSize int
+}
+
 // Executor holds the core execution state.
 type Executor struct {
 	planner    *Planner
@@ -160,21 +178,13 @@ type Executor struct {
 	txnDebugger *UT.TxnDebugger
 	// stmtCache caches parsed statements keyed by SQL text to avoid
 	// re-parsing on repeated queries. LRU eviction, default 256 entries.
-	stmtCache struct {
-		mu      sync.Mutex
-		entries map[string]*stmtCacheEntry
-		lru     []*stmtCacheEntry
-		maxSize int
-	}
+	// Pointer shared across ShallowCopy clones (REQ001220).
+	stmtCache *stmtCache
 	// planCache caches compiled plan trees keyed by AST fingerprint
 	// (memo key) to avoid re-planning on repeated queries. LRU eviction,
-	// default 128 entries. REQ001011.
-	planCache struct {
-		mu      sync.Mutex
-		entries map[string]*planCacheEntry
-		lru     []*planCacheEntry
-		maxSize int
-	}
+	// default 128 entries. Pointer shared across ShallowCopy clones
+	// (REQ001220).
+	planCache *planCache
 	// pool is the shared WorkerPool for parallel operator execution.
 	// Created in NewExecutor and sized to GOMAXPROCS. Shared across
 	// ShallowCopy clones via pointer. Shut down in Close().
@@ -224,23 +234,25 @@ func (e *Executor) GetAttachedDBs() map[string]string {
 	return e.attachedDBs
 }
 
-// ShallowCopy returns a new Executor that shares Planner and Store with the
-// original but has its own per-request mutable state (txWriter, snapshotTS,
-// sessionID). Callers use this to avoid races when the shared Executor is
-// used concurrently by multiple sessions (REQ000611).
-// The statement cache is re-initialized (not shared) since it contains a Mutex.
+// ShallowCopy returns a new Executor that shares Planner, Store, and stmtCache
+// with the original. Each clone has its own per-request mutable state (txWriter,
+// snapshotTS, sessionID) and its own planCache (REQ001011 plan results contain
+// mutable operator trees that are unsafe for concurrent replaceLiteralsOnTree).
+// Callers use this to avoid races when the shared Executor is used concurrently
+// by multiple sessions (REQ000611).
+// The stmtCache is shared via pointer — thread-safe LRU with mutex (REQ001220).
 // Memory budget fields are inherited from the original. REQ001056.
 func (e *Executor) ShallowCopy() *Executor {
 	e2 := &Executor{
 		planner:           e.planner,
 		store:             e.store,
+		stmtCache:         e.stmtCache, // shared — thread-safe LRU with mutex
 		txnDebugger:       UT.NewTxnDebugger(),
 		pool:              e.pool, // shared — pool is thread-safe
 		maxMemoryPerQuery: e.maxMemoryPerQuery,
 		joinBufferSize:    e.joinBufferSize,
 		maxResultRows:     e.maxResultRows,
 	}
-	e2.initStmtCache(e.stmtCache.maxSize)
 	e2.initPlanCache(e.planCache.maxSize)
 	return e2
 }
@@ -383,9 +395,11 @@ func (e *Executor) initStmtCache(maxSize int) {
 	if maxSize <= 0 {
 		maxSize = 256
 	}
-	e.stmtCache.entries = make(map[string]*stmtCacheEntry, maxSize)
-	e.stmtCache.lru = make([]*stmtCacheEntry, 0, maxSize)
-	e.stmtCache.maxSize = maxSize
+	e.stmtCache = &stmtCache{
+		entries: make(map[string]*stmtCacheEntry, maxSize),
+		lru:     make([]*stmtCacheEntry, 0, maxSize),
+		maxSize: maxSize,
+	}
 }
 
 // getCachedStmt looks up a cached parsed statement. Returns nil if not found.
@@ -452,9 +466,11 @@ func (e *Executor) initPlanCache(maxSize int) {
 	if maxSize <= 0 {
 		maxSize = 128
 	}
-	e.planCache.entries = make(map[string]*planCacheEntry, maxSize)
-	e.planCache.lru = make([]*planCacheEntry, 0, maxSize)
-	e.planCache.maxSize = maxSize
+	e.planCache = &planCache{
+		entries: make(map[string]*planCacheEntry, maxSize),
+		lru:     make([]*planCacheEntry, 0, maxSize),
+		maxSize: maxSize,
+	}
 }
 
 // getCachedPlan looks up a cached compiled plan by memo key.

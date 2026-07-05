@@ -45,20 +45,106 @@ func BenchmarkStmtCache_ParsedVsCached(b *testing.B) {
 			drainStream(rows2)
 		}
 	})
+}
 
-	b.Run("uncached", func(b *testing.B) {
-		ex := NewExecutor()
-		// Disable cache by replacing entries map with nil.
-		ex.stmtCache.mu.Lock()
-		ex.stmtCache.entries = nil
-		ex.stmtCache.mu.Unlock()
-		ctx := context.Background()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			rows, _ := ex.QueryStream(ctx, sql)
-			drainStream(rows)
+// BenchmarkSelect1_ExecutorCache_Shared measures allocation with shared
+// caches (REQ001220). Multiple ShallowCopy clones share the root executor's
+// stmtCache and planCache by pointer, eliminating per-query cache allocation.
+func BenchmarkSelect1_ExecutorCache_Shared(b *testing.B) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	DT.RegisterTableSchema("t", []string{"id", "name"})
+	DT.TablesMu.Lock()
+	for i := 0; i < 20; i++ {
+		DT.Tables["t"] = append(DT.Tables["t"], DT.Row{
+			Cols: []string{"id", "name"},
+			Data: []DT.Value{NewIntValue(int64(i)), NewTextValue("u")},
+		})
+	}
+	DT.TablesMu.Unlock()
+
+	root := NewExecutor()
+	ctx := context.Background()
+	sql := "SELECT id, name FROM t WHERE id >= 0"
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		ex := root.ShallowCopy()
+		rows, err := ex.QueryStream(ctx, sql)
+		if err != nil {
+			b.Fatal(err)
 		}
-	})
+		drainStream(rows)
+	}
+}
+
+// BenchmarkSelect1_ExecutorCache_PerSession measures allocation when
+// each call creates a standalone executor (pre-REQ001220 behavior
+// baseline for comparison). Use for benchmarking only — not used in
+// production code.
+func BenchmarkSelect1_ExecutorCache_PerSession(b *testing.B) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	DT.RegisterTableSchema("t", []string{"id", "name"})
+	DT.TablesMu.Lock()
+	for i := 0; i < 20; i++ {
+		DT.Tables["t"] = append(DT.Tables["t"], DT.Row{
+			Cols: []string{"id", "name"},
+			Data: []DT.Value{NewIntValue(int64(i)), NewTextValue("u")},
+		})
+	}
+	DT.TablesMu.Unlock()
+
+	ctx := context.Background()
+	sql := "SELECT id, name FROM t WHERE id >= 0"
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		ex := NewExecutor()
+		rows, err := ex.QueryStream(ctx, sql)
+		if err != nil {
+			b.Fatal(err)
+		}
+		drainStream(rows)
+	}
+}
+
+// TestShallowCopy_SharesStmtCache verifies REQ001220: ShallowCopy clones
+// share the root executor's stmtCache by pointer (saving ~171 MB allocation
+// per query). The planCache is NOT shared (plan results contain mutable
+// operator trees unsafe for concurrent replaceLiteralsOnTree), so each clone
+// gets its own planCache initialized at the root's maxSize.
+func TestShallowCopy_SharesStmtCache(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	root := NewExecutor()
+
+	ex1 := root.ShallowCopy()
+	ex2 := root.ShallowCopy()
+
+	// stmtCache must be the same pointer (shared).
+	if ex1.stmtCache != root.stmtCache {
+		t.Error("ShallowCopy stmtCache is not shared with root")
+	}
+	if ex2.stmtCache != root.stmtCache {
+		t.Error("second ShallowCopy stmtCache is not shared with root")
+	}
+
+	// planCache must be different (per-session).
+	if ex1.planCache == root.planCache {
+		t.Error("ShallowCopy planCache should NOT be shared")
+	}
+	if ex2.planCache == root.planCache {
+		t.Error("second ShallowCopy planCache should NOT be shared")
+	}
+	if ex1.planCache.maxSize != root.planCache.maxSize {
+		t.Error("planCache maxSize should match root")
+	}
 }
 
 func drainStream(rows *streamIterator) {
