@@ -1,6 +1,88 @@
 ## TBD
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 | --- | --- | --- | --- | --- | --- | --- |
+| REQ001261 | LOG/EC + DBG | **DBG_ASSERT — runtime assertion with Cases diagnostic chain (BUG_ON/WARN_ON/PANIC_ON).** Linux kernel `BUG_ON`/`WARN_ON` pattern adapted for Razordata: compile-time-gated invariant checks that, on failure, trigger a registered "Cases" diagnostic chain for automated evidence gathering. **Design:**
+1. **All assert code in `LOG/EC`** — no separate DBG cluster. LOG/EC is already imported by every subsystem. No reverse dependency, zero new import edges.
+2. **Build-tag gated** — two files at `internal/LOG/EC/`:
+   - `assert_stub.go` (`//go:build !debug`): no-op `WARN_ON(cond, msg, args...)`, `BUG_ON(cond, msg, args...)`, `PANIC_ON(cond, msg, args...)` + empty `[]AssertCase` registry + no-op `RegisterAssertCase`. Compiler inlines to zero instructions.
+   - `assert_debug.go` (`//go:build debug`): real assertion functions + `type AssertContext struct { Caller string; Message string; Stack string; StartedAt time.Time }` + `var assertCases []AssertCase` + `RegisterAssertCase(fn)`.
+3. **Three severity levels**:
+   | Level | Condition true → | Use case |
+   |-------|------------------|---------|
+   | `WARN_ON` | buildCtx + run Cases chain + slog.Warn + continue | Non-fatal invariant violation, caller can recover |
+   | `BUG_ON` | buildCtx + run Cases chain + slog.Error + os.Exit(1) | Fatal invariant violation, process integrity compromised |
+   | `PANIC_ON` | buildCtx + run Cases chain + runtime.Stack + panic() | Fatal + wants stack-unwind recovery by recover() |
+4. **Cases diagnostic chain**: `func(AssertContext)` functions registered via `RegisterAssertCase`. Built-in cases registered by DBG/DI at `NewDebugger` time (not init — ensures sinks are ready):
+   - `case_01_stack` — `debug.Stack()` print to stderr (pure stdlib, no dep)
+   - `case_02_trace_flush` — flush HK.DefaultSink ring buffer to stderr (uses existing global, nil-safe)
+   - `case_03_counter_snapshot` — print HK.DefaultMetricSink.Snapshot() (uses existing global, nil-safe)
+   - `case_04_engine_stats` — if Debugger is available, dump EngineStats (via optional callback registered by DBG)
+   - `case_05_active_txns` — if Debugger is available, dump active transactions (same optional callback)
+5. **Per-call-site invocation**: callers write `DBG_ASSERT.BUG_ON(ptr == nil, "nil table handle for %s", name)`. Under `!debug`, zero code. Under `debug`, condition check → case chain.
+6. **Location independence**: callable from any subsystem via `LOG/EC` import — every subsystem already imports `LOG/EC` for structured errors. No new import required.
+7. **Implementation order**: (1) `LOG/EC/assert_stub.go` and `LOG/EC/assert_debug.go` — AssertContext + stub/real assert functions + case registry. (2) Built-in cases in `assert_debug.go` (no separate cases file). (3) DBG/DI registers cases at `NewDebugger` time. (4) Verification: `go test -tags debug` passes all existing tests, zero new test failures. (5) Binary size delta verified: zero bytes without `-tags debug`, ~1.5KB added with `-tags debug`. (6) Test: `TestDBG_ASSERT_WARN_ON` — triggers WARN_ON on false condition, verifies slog.Warn called and execution continues. `TestDBG_ASSERT_BUG_ON` — triggers BUG_ON, verifies os.Exit(1). `TestDBG_ASSERT_PANIC_ON` — triggers PANIC_ON, verifies panic. `TestDBG_ASSERT_CasesChain` — trigger and verify each built-in case produces output. `TestDBG_ASSERT_StubNoop` — build without `debug` tag, verify all three are linkable and produce zero code (verify via `go tool objdump` or build size). `TestDBG_ASSERT_RegisterExtend` — register custom case, trigger, verify custom case ran. | medium | small | none | LOG/EC/assert_stub.go, LOG/EC/assert_debug.go, DBG/DI/di.go |
+| REQ001262 | FIL/DF | **DBG_ASSERT placement in FIL — short write, checksum mismatch, double close, O_DIRECT alignment.** Insert WARN_ON/BUG_ON calls at critical I/O invariant checks in FIL/DF, FIL/MF, FIL/LF, FIL/FS. **Placements:**
+- DF/data.go WriteBlock: BUG_ON(written != blockSize) — short write is unrecoverable data loss.
+- DF/data.go ReadBlock: BUG_ON(storedCRC != computedCRC) — silent corruption must never propagate.
+- DF/data.go WriteBlock/ReadBlock: WARN_ON(buf % blockSize != 0) — alignment violation causes EINVAL.
+- LF/lf.go Close: WARN_ON(fd == -1) — detect double-close bugs.
+- MF/meta.go WriteMeta: BUG_ON(written != MetaSize) — meta corruption renders db unopenable.
+- FS/fs.go ValidatePath: WARN_ON(hasDotDot(path)) — security boundary.
+**Test:** TestFIL_Assert_ShortWrite, TestFIL_Assert_Checksum, TestFIL_Assert_DoubleClose, TestFIL_Assert_StubNoop. | high | small | REQ001261 | FIL/DF/data.go, FIL/LF/lf.go, FIL/MF/meta.go, FIL/FS/fs.go |
+| REQ001263 | MEM/BF | **DBG_ASSERT placement in MEM — pinCount underflow, double-pin, loading barrier leak, eviction invariant.** Insert WARN_ON/BUG_ON calls in MEM/BF, MEM/PC, MEM/SP. **Placements:**
+- BF/bf.go Pin: BUG_ON(prev < 0) — pinCount underflow leads to use-after-free.
+- BF/bf.go Unpin: WARN_ON(newCount < 0) — double-unpin detection.
+- BF/bf.go evictOne: WARN_ON(slot.pinCount.Load() > 0) — eviction of pinned page violates safety.
+- PC/pc.go loadBlock: BUG_ON(slot.loading && slot.wait == nil) — loading barrier corruption.
+- PC/pc.go loadBlock: WARN_ON(close(slot.wait) panics) — channel double-close.
+- SP/sp.go Get/Put: BUG_ON(len(buf) != BlockSize) — buffer size mismatch corrupts I/O.
+**Test:** TestMEM_Assert_PinUnderflow, TestMEM_Assert_EvictPinned, TestMEM_Assert_WrongSize. | high | small | REQ001261 | MEM/BF/bf.go, MEM/PC/pc.go, MEM/SP/sp.go |
+| REQ001264 | WAL/WR + WAL/RP | **DBG_ASSERT placement in WAL — LSN regression, segment boundary straddle, mid-segment corruption, fsync ordering.** Insert WARN_ON/BUG_ON calls in WAL/WR, WAL/FL, WAL/RP. **Placements:**
+- WR/writer.go Append: BUG_ON(lsn <= lastLSN) — LSN non-monotonicity breaks recovery ordering.
+- WR/writer.go Append: WARN_ON(seg.writeOff + recordSize > SegmentSize) — record must not straddle segment.
+- WR/writer.go rotateSegment: BUG_ON(seg.writeOff < SegmentSize && seg.writeOff > 0) — partial segment rotation.
+- FL/flusher.go Flush: WARN_ON(flushedLSN < lastAssignedLSN) — fsync barrier violation.
+- RP/replayer.go replaySegment: BUG_ON(crc != computed && !isTailRecord) — mid-segment corruption unrecoverable.
+- WR/header.go ReadHeader: BUG_ON(magic != WALMagic) — header corruption.
+**Test:** TestWAL_Assert_LSNRegression, TestWAL_Assert_MidSegmentCorrupt, TestWAL_Assert_SegmentBoundary. | high | small | REQ001261 | WAL/WR/writer.go, WAL/FL/flusher.go, WAL/RP/replayer.go, WAL/WR/header.go |
+| REQ001265 | ENG/LS + ENG/ID | **DBG_ASSERT placement in ENG — SST key ordering, frozen memtable write, L1+ SST overlap, btree node integrity, compaction key coverage.** Insert WARN_ON/BUG_ON calls in ENG/LS, ENG/ID, ENG/TB, ENG/CT. **Placements:**
+- LS/sst.go ReadBlock: BUG_ON(blockIdx > 0 && bytes.Compare(prev.LargestKey, block.LargestKey) >= 0) — SST index key ordering determines binary-search correctness.
+- LS/memtable.go Insert: BUG_ON(mt.frozen.Load()) — writing to frozen memtable loses data.
+- LS/version.go validateVersion: WARN_ON(level > 0 && overlap(files[i-1], files[i])) — L1+ overlap violates LSM invariant.
+- LS/compaction.go compact: WARN_ON(!coversAllInputKeys(output, inputs)) — compaction must not drop keys.
+- ID/btree.go insertIntoNode: BUG_ON(bytes.Equal(node.keys[i], key)) — duplicate key violates UNIQUE constraint.
+- ID/btree.go seek: BUG_ON(cursor.pos < 0 || cursor.pos > node.keyCount) — cursor bounds violation.
+- TB/ddl.go DropTable: WARN_ON(catalog.Lookup(tableName) == nil) — double-drop or stale reference.
+**Test:** TestENG_Assert_SSTKeyOrder, TestENG_Assert_FrozenMemtableInsert, TestENG_Assert_BtreeDuplicateKey. | high | small | REQ001261 | ENG/LS/sst.go, ENG/LS/memtable.go, ENG/LS/version.go, ENG/LS/compaction.go, ENG/ID/btree.go |
+| REQ001266 | TXN/MV + TXN/LC + TXN/VL | **DBG_ASSERT placement in TXN — version chain LSN ordering, epoch monotonicity, commit protocol sequence, hazard pointer safety.** Insert WARN_ON/BUG_ON calls in TXN/MV, TXN/LC, TXN/SN, TXN/VL. **Placements:**
+- MV/version.go findVisibleVersion: BUG_ON(node.endTS < node.beginTS) — version chain corruption makes MVCC incorrect.
+- MV/version.go appendVersion: WARN_ON(newNode.beginTS < head.beginTS) — version chain must be descending.
+- LC/epoch.go EnterEpoch: BUG_ON(rec.epoch > currentEpoch) — epoch violation causes premature reclamation.
+- LC/epoch.go ExitEpoch: WARN_ON(currentEpoch - rec.epoch > 1) — lagging thread prevents GC progress.
+- VL/commit.go Commit: BUG_ON(slot.status != StatusActive) — commit protocol state machine violation.
+- VL/commit.go Commit: BUG_ON(commitTS <= tx.beginTS) — commit timestamp regression breaks snapshot isolation.
+- SN/snapshot.go CreateSnapshot: WARN_ON(readTS < lastCommittedTS-1) — snapshot lag indicator.
+**Test:** TestTXN_Assert_VersionChainOrder, TestTXN_Assert_CommitStateMachine, TestTXN_Assert_EpochMonotonic. | high | small | REQ001261 | TXN/MV/version.go, TXN/LC/epoch.go, TXN/VL/commit.go, TXN/SN/snapshot.go |
+| REQ001267 | SQB/EV + SQB/OP + SQB/EX | **DBG_ASSERT placement in SQB — operator close-after-use, column offset bounds, expression type consistency, lock order, nil row/value propagation.** Insert WARN_ON/BUG_ON calls in SQB/EV, SQB/OP, SQB/EX, SQB/DT, SQB/AG. **Placements:**
+- All operators: BUG_ON(s.closed.Load(), "%T.Next() after Close()") — operator state machine.
+- EV/eval.go evalColumnRef: BUG_ON(idx < 0 || idx >= len(row.Data)) — column offset bounds violation.
+- EV/eval.go EvalValue: WARN_ON(row == nil && !isTrivialExpr(e)) — nil row detection.
+- DT/types.go Row.Clone: BUG_ON(len(r.Data) != len(r.Types)) — row structural integrity.
+- AG/aggregate.go computeAggregate: BUG_ON(groupIdx < 0 || groupIdx >= len(groups)) — group bounds.
+- EX/ex.go ShallowCopy: WARN_ON(ex.closed.Load()) — executor lifecycle violation.
+- OP/hashjoin.go buildAndProbe: WARN_ON(len(buildRows)==0 && len(probeRows)>0) — suspicious join state.
+**Test:** TestSQB_Assert_OperatorUseAfterClose, TestSQB_Assert_ColOffsetBounds, TestSQB_Assert_RowIntegrity. | high | small | REQ001261 | SQB/EV/eval.go, SQB/OP/operators.go, SQB/DT/types.go, SQB/AG/aggregate.go, SQB/EX/ex.go, SQB/OP/hashjoin.go |
+| REQ001268 | SQF/PL + SYS/SY | **DBG_ASSERT placement in SQF/SYS — planner cost model bounds, memo key validity, engine lifecycle guards, session state machine, shutdown phase ordering.** Insert WARN_ON/BUG_ON calls in SQF/PL, SQF/RE, SYS/SY, SYS/SE, SYS/ST. **Placements:**
+- PL/planner.go estimateCost: BUG_ON(math.IsNaN(cost) || cost < 0 || math.IsInf(cost, 0)) — NaN/Inf cost produces incorrect index selection.
+- PL/planner.go buildMemoKey: BUG_ON(len(key) == 0) — empty memo key causes cache collisions.
+- PL/planner.go planJoin: WARN_ON(left.rows < 0 || right.rows < 0) — negative row estimates.
+- SY/sy.go Open: BUG_ON(engine != nil) — double Open without Close.
+- SY/sy.go Close: BUG_ON(!e.closed.Load() && phase != Phase1) — shutdown phase ordering.
+- SY/sy.go Begin: WARN_ON(e.closed.Load()) — use-after-close on engine.
+- SE/session.go Begin: BUG_ON(s.txn != nil) — Begin on already-active transaction.
+- SE/session.go close: WARN_ON(s.txn != nil) — pool leak detection.
+- ST/prepare.go Prepare: BUG_ON(s.closed.Load()) — prepared statement lifecycle.
+**Test:** TestSQF_Assert_CostBounds, TestSYS_Assert_DoubleOpen, TestSYS_Assert_SessionBeginWithTxn, TestSYS_Assert_ShutdownPhaseOrder. | high | small | REQ001261 | SQF/PL/planner.go, SYS/SY/sy.go, SYS/SE/session.go, SYS/ST/prepare.go |
 | REQ001113 | EX/join | **Multi-table cross-join (implicit comma-join) with equality predicates produces incorrect cardinality — 25/3857 select4 records fail after e00d132 + REQ001155.** select4.test: 351/3857 fail at start of e00d132. After e00d132 fixed groupBushyJoins (REQ001156) and bare-column resolution, drops to 25/3857. After REQ001155 fixed ON-only join elimination, 25/3857 (no further drop; remaining failures are not ON-only). Remaining 25 are all 3-table+ comma-joins with constant-equality predicates on all sides. Symptom: got [NULL | NULL] in row 0 — join output is zero rows or zero-column output. Example: L39860 SELECT x8, e9+131 FROM t8, t9 WHERE e9=383 AND 561=e8 expects 1 row, observed 0. **Progress:** 2-table sub-items verified fixed by req001113_2table_test.go (3 tests pass). **Remaining:** 3-table+ multi-table cross-joins produce zero surviving rows when they should produce ≥1. Suspected in HashJoin.buildAndProbe, NestedLoopJoin.Next, or Project output column offsets after multi-table joins. **Fix:** (1) TestMultiTableJoin_3Table_AllPermutations — 5 representative 3-table select4 cases × 6 table-order permutations, all permutations must match. (2) TestHashJoin_CrossPredicateEnforcement and TestNestedLoopJoin_CrossPredicateEnforcement. (3) TestProject_ColumnOffset_MultiTableJoin verifying projection column offset survives 2-way and 3-way joins. (4) Run all 25 currently-failing select4 queries through fixed executor, expect 0 failures. | high | large | REQ001092, REQ001093, REQ001111, REQ001156 | SQB/OP/join.go, SQB/OP/hashjoin.go, SQB/OP/intermediate.go |
 | REQ001162 | EX/join | **3-table+ implicit comma-join returns zero rows for SLT select4 cases — HashJoin/NLJ output column shuffling.** Discovered while shipping REQ001113: even after e00d132 + REQ001155 closed, select4.test still has 25/3857 failing records, all 3-table+ comma-joins. Symptom: SLT rowsort output is got [NULL | NULL] in row 0 (e.g., L39860 SELECT x8, e9+131 FROM t8, t9 WHERE e9=383 AND 561=e8 → 0 rows, want 1). Both tables have matching per-table-filtered rows but the join produces no output. Suspected: (a) HashJoin.buildAndProbe drops the cross-table equality predicate when both sides are already per-table-filtered; (b) NestedLoopJoin.Next iterates row pairs but never evaluates the join predicate; (c) Project output column offsets are misaligned after multi-table joins, so x8 and e9+131 map to wrong scan columns. **Fix:** (1) Reproduce minimal 3-table case with hand-seeded data, isolate which operator produces zero rows. (2) Add TestHashJoin_CrossPredicateEnforcement and TestNestedLoopJoin_CrossPredicateEnforcement with both sides single-table-filtered + cross-table predicate. (3) Add TestProject_ColumnOffset_MultiTableJoin verifying the projection column offset survives 2-way and 3-way joins. (4) Run all 25 currently-failing select4 queries through the fixed executor and verify zero failures. **Touches:** SQB/OP/hashjoin.go, SQB/OP/join.go, SQB/OP/intermediate.go. See REQ001113 Gap Analysis Bug 1. | high | large | REQ001113, REQ001155 | SQB/OP/hashjoin.go, SQB/OP/join.go, SQB/OP/intermediate.go |
 | REQ001184 | SQB/EX | **Recursive CTE UNION ALL stops after 2 iterations — `x+1` recursion fails to propagate beyond second step.** Query `WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt WHERE x<5) SELECT x FROM cnt` (`cases_from_ex.go:819`) returns `[[1] [5] [5] [5] [5]]` instead of `[[1] [2] [3] [4] [5]]`. The base case produces 1, the recursive step produces 5 (the bound value), and then repeats 5 repeatedly. This suggests the recursive step is evaluating `x+1` against the bound `x<5` predicate but not iterating the CTE variable through successive steps — the step from 1→2 works, then 2→3 and beyond fail to advance. **Fix:** (1) Isolate the recursive CTE evaluation loop in the executor — ensure the CTE's working table is updated with the new iteration's rows before each recursive step. (2) Add `TestRecursiveCTE_Arithmetic` verifying correct iteration count and arithmetic progression. (3) Verify dual tests `recursive_cte_basic`, `recursive_cte_union_dedup`, and `recursive_cte_fibonacci` all pass. | high | medium | none | SQB/EX/ex.go, SQB/OP/intermediate.go |
