@@ -168,7 +168,11 @@ func (e *Engine) open(ctx context.Context) (err error) {
 	if err := e.rp.Replay(); err != nil && !errors.Is(err, os.ErrNotExist) {
 		e.log.Warn("wal.replay", "err", err)
 	}
-	if e.eng, err = ls.OpenWithOptions(filepath.Join(e.dir, "eng"), ls.Options{MmapFiles: e.opts.MmapFiles}); err != nil {
+	if e.eng, err = ls.OpenWithOptions(filepath.Join(e.dir, "eng"), ls.Options{
+		MemTableShards: ls.DefaultMemTableShards,
+		MemTableSize:   ls.DefaultMemTableSize,
+		MmapFiles:      e.opts.MmapFiles,
+	}); err != nil {
 		return err
 	}
 	e.txn = vl.NewManager()
