@@ -2,8 +2,11 @@ package EX
 
 import (
 	"context"
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"fmt"
+	"strings"
 	"testing"
+
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
 func TestSubqueryPlanner_SeesStoreTables(t *testing.T) {
@@ -157,4 +160,66 @@ func TestPlanner_SemiJoin(t *testing.T) {
 			t.Errorf("got %d rows, want 1; data=%v", len(rows), rows)
 		}
 	})
+	t.Run("exists_in_or_chain", func(t *testing.T) {
+		// EXISTS inside OR must NOT be decorrelated — the semi-join
+		// would change semantics. Verify fallback to per-row eval
+		// by checking the plan does NOT contain "SEMI JOIN".
+		explain, err := ex.Explain("SELECT id FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.tid = t1.id) OR t1.val > 25 ORDER BY id")
+		if err != nil {
+			t.Fatalf("Explain: %v", err)
+		}
+		if strings.Contains(explain, "SEMI JOIN") {
+			t.Errorf("OR-chain EXISTS produced SEMI JOIN plan, expected per-row eval filter\n%s", explain)
+		}
+	})
+}
+
+// BenchmarkExistsDecorrelation_Select1 measures the EXISTS decorrelation
+// path performance. The correlated EXISTS subquery should be rewritten
+// as a semi-join, avoiding per-row subquery re-planning. REQ001235.
+func BenchmarkExistsDecorrelation_Select1(b *testing.B) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	ex, eng := newEngineExecutor(b)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.RegisterTableWithPK("t1", []string{"id", "val"}, "id")
+	for i := 0; i < 30; i++ {
+		if _, err := ex.Exec(ctx, fmt.Sprintf("INSERT INTO t1 VALUES (%d, %d)", i, i*10)); err != nil {
+			b.Fatalf("seed t1: %v", err)
+		}
+	}
+	ex.RegisterTableWithPK("t2", []string{"id", "tid", "name"}, "id")
+	for _, stmt := range []string{
+		"INSERT INTO t2 VALUES (10, 1, 'a')",
+		"INSERT INTO t2 VALUES (20, 1, 'b')",
+		"INSERT INTO t2 VALUES (30, 2, 'c')",
+	} {
+		if _, err := ex.Exec(ctx, stmt); err != nil {
+			b.Fatalf("seed t2: %v", err)
+		}
+	}
+
+	ex.RegisterTableWithPK("t1", []string{"id", "val"}, "id")
+	for i := 0; i < 30; i++ {
+		ex.Exec(ctx, fmt.Sprintf("INSERT INTO t1 VALUES (%d, %d)", i, i*10))
+	}
+	ex.RegisterTableWithPK("t2", []string{"id", "tid", "name"}, "id")
+	ex.Exec(ctx, "INSERT INTO t2 VALUES (10, 1, 'a')")
+	ex.Exec(ctx, "INSERT INTO t2 VALUES (20, 1, 'b')")
+	ex.Exec(ctx, "INSERT INTO t2 VALUES (30, 2, 'c')")
+
+	sql := "SELECT id FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.tid = t1.id) ORDER BY id"
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for b.Loop() {
+		rows, err := ex.QueryAll(ctx, sql)
+		if err != nil {
+			b.Fatal(err)
+		}
+		_ = rows
+	}
 }

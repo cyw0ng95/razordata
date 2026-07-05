@@ -45,7 +45,8 @@ func (s *engineStore) NewIterator(prefix []byte) ls.RangeIter {
 func (s *engineStore) ManualCompact() error { return s.eng.ManualCompact() }
 
 // newEngineExecutor creates an Executor backed by a real LSM engine.
-func newEngineExecutor(t *testing.T) (*Executor, *ls.Engine) {
+// Accepts testing.TB so both tests (*testing.T) and benchmarks (*testing.B) can use it.
+func newEngineExecutor(t testing.TB) (*Executor, *ls.Engine) {
 	t.Helper()
 	dir := t.TempDir()
 	eng, err := ls.Open(filepath.Join(dir, "db"))
