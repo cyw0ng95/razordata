@@ -47,6 +47,7 @@ type Options struct {
 	MemTableSize   int64
 	FS             FS   // REQ001172: virtual filesystem for testability
 	MmapFiles      bool // REQ001227: zero-copy reads via mmap
+	BlockCacheSize int  // REQ001242: decompressed SST block cache, 0 = disabled
 }
 
 func DefaultOptions() Options {
@@ -67,8 +68,9 @@ type engine struct {
 	cm        *compactionManager
 	fm        *flushManager
 	pageCache *PageCache
-	opts      Options
-	fs        FS // REQ001172: virtual filesystem
+	blockCache *BlockCache
+	opts       Options
+	fs         FS // REQ001172: virtual filesystem
 	stats     struct {
 		MemtableHits atomic.Int64
 		SSTHits      atomic.Int64
@@ -101,6 +103,13 @@ func newEngineWithOptions(dir string, opts Options) (*engine, error) {
 	activeMem := newShardedMemtable(opts.MemTableSize, opts.MemTableShards)
 	e.activeMem = activeMem
 	e.pageCache = NewPageCache(DefaultPageCacheSize)
+
+	// REQ001242: initialize block cache (default 1024 blocks)
+	cacheSize := opts.BlockCacheSize
+	if cacheSize <= 0 {
+		cacheSize = 1024
+	}
+	e.blockCache = NewBlockCache(cacheSize)
 
 	if err := e.fs.MkdirAll(dir, 0755); err != nil {
 		return nil, err
@@ -246,11 +255,17 @@ func (e *engine) getSSTReader(fileID uint64, path string) (*sstReader, error) {
 				return nil, err
 			}
 			r.mmap = data
+			r.blockCache = e.blockCache // REQ001242
 			return r, nil
 		}
 	}
 	if cached, ok := e.pageCache.Get(fileID, 0); ok {
-		return openSSTWithPath(cached, path)
+		r, err := openSSTWithPath(cached, path)
+		if err != nil {
+			return nil, err
+		}
+		r.blockCache = e.blockCache // REQ001242
+		return r, nil
 	}
 	data, err := e.loadSSTMeta(fileID, path)
 	if err != nil {
@@ -266,6 +281,7 @@ func (e *engine) getSSTReader(fileID uint64, path string) (*sstReader, error) {
 			r.mmap = mmapData
 		}
 	}
+	r.blockCache = e.blockCache // REQ001242
 	return r, nil
 }
 

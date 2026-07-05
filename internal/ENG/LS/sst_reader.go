@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"hash/crc32"
 	"io"
+	"strconv"
 	"unsafe"
 )
 
@@ -23,6 +24,9 @@ type sstReader struct {
 	// REQ001227: mmap-backed zero-copy reads
 	mmap     []byte // memory-mapped file region (read-only)
 	mmapSize int64
+
+	// REQ001242: shared block cache for decompressed SST blocks
+	blockCache *BlockCache
 }
 
 func openSST(data []byte) (*sstReader, error) {
@@ -398,7 +402,7 @@ func (r *sstReader) Find(key []byte) ([]byte, bool) {
 		return nil, false
 	}
 
-	blockData := r.readBlock(r.indexBlock[blockIdx].blockOffset, r.indexBlock[blockIdx].blockSize)
+	blockData := r.readBlock(r.indexBlock[blockIdx].blockOffset, r.indexBlock[blockIdx].blockSize, blockIdx)
 	if blockData == nil {
 		return nil, false
 	}
@@ -594,7 +598,14 @@ func sqrtFloat64(x float64) float64 {
 	return z
 }
 
-func (r *sstReader) readBlock(offset, size int) []byte {
+func (r *sstReader) readBlock(offset, size int, blockIdx int) []byte {
+	// REQ001242: check block cache before decompressing
+	if r.blockCache != nil && r.filePath != "" {
+		key := r.filePath + ":" + strconv.Itoa(blockIdx)
+		if data, ok := r.blockCache.Get(key); ok {
+			return data
+		}
+	}
 	raw := r.readRaw(offset, size)
 	if raw == nil {
 		return nil
@@ -602,9 +613,15 @@ func (r *sstReader) readBlock(offset, size int) []byte {
 	decompressed, err := decompressBlockDict(raw)
 	if err != nil {
 		if d2, err2 := decompressBlock(raw); err2 == nil {
-			return d2
+			decompressed = d2
+		} else {
+			decompressed = raw // fallback to raw data
 		}
-		return raw // fallback to raw data
+	}
+	// REQ001242: store in cache
+	if r.blockCache != nil && r.filePath != "" {
+		key := r.filePath + ":" + strconv.Itoa(blockIdx)
+		r.blockCache.Put(key, decompressed)
 	}
 	return decompressed
 }
@@ -764,7 +781,7 @@ func (it *sstIterator) loadBlock(blockIdx int) bool {
 		return false
 	}
 	entry := it.reader.indexBlock[blockIdx]
-	blockData := it.reader.readBlock(entry.blockOffset, entry.blockSize)
+	blockData := it.reader.readBlock(entry.blockOffset, entry.blockSize, blockIdx)
 	pairs, err := decodeBlock(blockData)
 	if err != nil {
 		it.pairs = nil

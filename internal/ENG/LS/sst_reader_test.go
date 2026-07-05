@@ -57,7 +57,7 @@ func TestSSTReader_readBlock(t *testing.T) {
 		t.Fatalf("openSST failed: %v", err)
 	}
 
-	block := reader.readBlock(0, 100)
+	block := reader.readBlock(0, 100, 0)
 	if block == nil {
 		t.Fatal("expected non-nil block data")
 	}
@@ -323,7 +323,7 @@ func TestReadBlock_DictCompressed(t *testing.T) {
 	if len(reader.indexBlock) == 0 {
 		t.Fatal("no index entries")
 	}
-	block := reader.readBlock(reader.indexBlock[0].blockOffset, reader.indexBlock[0].blockSize)
+	block := reader.readBlock(reader.indexBlock[0].blockOffset, reader.indexBlock[0].blockSize, 0)
 	if block == nil {
 		t.Fatal("readBlock returned nil")
 	}
@@ -442,7 +442,7 @@ func TestSSTReader_LazyOpen(t *testing.T) {
 		if k != string('a'+byte(i)) {
 			// Use byte arithmetic for 'a', 'b', 'c'
 			expected := string('a' + byte(i))
-			loader := reader.readBlock(reader.indexBlock[0].blockOffset, reader.indexBlock[0].blockSize)
+			loader := reader.readBlock(reader.indexBlock[0].blockOffset, reader.indexBlock[0].blockSize, 0)
 			t.Logf("blockData len: %d", len(loader))
 			t.Errorf("Iterator key[%d] = %q, want %q", i, k, expected)
 		}

@@ -37,6 +37,7 @@ type Options struct {
 	// Performance tuning
 	EnableHugePages bool // REQ001207: use 2MB hugetlbfs for buffer pool
 	MmapFiles       bool // REQ001227: zero-copy reads via mmap
+	BlockCacheSize  int  // REQ001242: decompressed SST block cache, 0 = disabled
 
 	// Debug options — parsed but only acted on with -tags debug.
 	DebugDir           string

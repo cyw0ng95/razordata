@@ -97,7 +97,7 @@ func (eng *Engine) NewIterator(prefix []byte) RangeIter {
 	manifest := e.manifest
 	dir := e.dir
 	e.mu.RUnlock()
-	return newMergeIterator(memtables, manifest, dir, e.fs, prefix)
+	return newMergeIterator(memtables, manifest, dir, e.fs, prefix, e.blockCache)
 }
 
 // Close releases engine resources. Calling Close twice is a no-op.
@@ -208,24 +208,26 @@ func (h *iterHeap) Pop() any {
 // Zero-copy optimization for SST blocks is achieved via borrowed pointers
 // in sst_reader.go (decodeBlock returns pointers into the SST data).
 type mergeIterator struct {
-	fs       FS
-	manifest *manifest
-	dir      string
-	prefix   []byte
-	sources  []RangeIter
-	h        iterHeap
-	curKey   []byte // owned copy (nil if none)
-	curVal   []byte // owned copy (nil if none)
-	err      error
-	closed   atomic.Bool
+	fs         FS
+	manifest   *manifest
+	dir        string
+	prefix     []byte
+	sources    []RangeIter
+	h          iterHeap
+	curKey     []byte // owned copy (nil if none)
+	curVal     []byte // owned copy (nil if none)
+	err        error
+	closed     atomic.Bool
+	blockCache *BlockCache // REQ001242
 }
 
-func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, fs FS, prefix []byte) *mergeIterator {
+func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, fs FS, prefix []byte, blockCache *BlockCache) *mergeIterator {
 	mi := &mergeIterator{
-		fs:       fs,
-		manifest: manifest,
-		dir:      dir,
-		prefix:   append([]byte(nil), prefix...),
+		fs:         fs,
+		manifest:   manifest,
+		dir:        dir,
+		prefix:     append([]byte(nil), prefix...),
+		blockCache: blockCache,
 	}
 	mi.init(memtables)
 	return mi
@@ -252,11 +254,12 @@ func (mi *mergeIterator) init(memtables []*memtable) {
 				if err != nil {
 					continue
 				}
-				reader, err := openSST(data)
-				if err != nil {
-					continue
-				}
-				// Store the data in the source so it stays alive
+			reader, err := openSST(data)
+			if err != nil {
+				continue
+			}
+			reader.blockCache = mi.blockCache // REQ001242
+			// Store the data in the source so it stays alive
 				// The sstIter holds a reference to the reader which holds the data
 				mi.sources = append(mi.sources, &sstIter{it: reader.Iterator(), data: data})
 			}
