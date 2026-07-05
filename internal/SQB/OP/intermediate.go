@@ -107,7 +107,23 @@ func (f *Filter) SetExecCtx(ec *pl.ExecContext) { f.execCtx = ec }
 // Predicate returns the filter's predicate expression.
 func (f *Filter) Predicate() PS.Expr { return f.predicate }
 
-func NewFilter(child Operator, predicate PS.Expr) *Filter {
+func NewFilter(child Operator, predicate PS.Expr, schema *DT.StoreSchema) *Filter {
+	// REQ001225: if schema is nil, try to get it from the child operator.
+	if schema == nil {
+		schema = operatorSchema(child)
+	}
+	if schema != nil {
+		rawFilter := CompileRawByteFilter(predicate, schema)
+		if rawFilter != nil {
+			switch c := child.(type) {
+			case *SeqScan:
+				c.SetRawByteFilter(rawFilter)
+			case *IndexScan:
+				c.SetRawByteFilter(rawFilter)
+			}
+		}
+	}
+
 	// REQ000869: try to reuse batch buffers from the pool.
 	buf, _ := batchBufPool.Get().(*[]Row)
 	emit, _ := batchBufPool.Get().(*[]Row)
@@ -127,6 +143,26 @@ func NewFilter(child Operator, predicate PS.Expr) *Filter {
 		batchBuf:  *buf,
 		batchEmit: *emit,
 	}
+}
+
+// operatorSchema extracts the *DT.StoreSchema from an operator,
+// walking through Filter/Project/Sort wrappers to find the underlying scan.
+func operatorSchema(op Operator) *DT.StoreSchema {
+	switch o := op.(type) {
+	case *SeqScan:
+		return o.Schema()
+	case *IndexScan:
+		return o.Schema()
+	case *Filter:
+		return operatorSchema(o.Child())
+	case *Project:
+		return operatorSchema(o.Child())
+	case *Sort:
+		return operatorSchema(o.Child())
+	case *Limit:
+		return operatorSchema(o.Child())
+	}
+	return nil
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).

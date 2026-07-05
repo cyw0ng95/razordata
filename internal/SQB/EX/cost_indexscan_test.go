@@ -46,7 +46,7 @@ func TestPlanner_EstimateCost_FilterSelectivity(t *testing.T) {
 		Op:    LX.T_EQ,
 		Left:  &PS.Ident{Name: "a"},
 		Right: &PS.NumberLiteral{Val: 1},
-	})
+	}, nil)
 	if got := p.estimateCost(filterEQ); got != 0.5 {
 		t.Errorf("OP.Filter(col=lit) cost = %v, want 0.5 (no stats)", got)
 	}
@@ -55,7 +55,7 @@ func TestPlanner_EstimateCost_FilterSelectivity(t *testing.T) {
 		Op:    LX.T_GT,
 		Left:  &PS.Ident{Name: "a"},
 		Right: &PS.Ident{Name: "b"},
-	})
+	}, nil)
 	if got := p.estimateCost(filterGeneric); got != 0.5 {
 		t.Errorf("OP.Filter(generic) cost = %v, want 0.5", got)
 	}

@@ -73,7 +73,7 @@ func TestTryVectorizePlan_SeqScanFilter(t *testing.T) {
 		Right: &PS.NumberLiteral{Val: 42},
 		Op:    LX.T_EQ,
 	}
-	filt := OP.NewFilter(ss, pred)
+	filt := OP.NewFilter(ss, pred, nil)
 	result := tryVectorizePlan(filt)
 	if result == filt {
 		t.Fatal("expected wrapped operator, not original Filter")
@@ -119,8 +119,8 @@ func TestTryVectorizePlan_FilterChainIneligible(t *testing.T) {
 		Right: &PS.NumberLiteral{Val: 42},
 		Op:    LX.T_EQ,
 	}
-	inner := OP.NewFilter(ss, pred)
-	outer := OP.NewFilter(inner, pred)
+	inner := OP.NewFilter(ss, pred, nil)
+	outer := OP.NewFilter(inner, pred, nil)
 	result := tryVectorizePlan(outer)
 	if result != outer {
 		t.Fatal("expected original Filter chain returned unchanged (ineligible)")

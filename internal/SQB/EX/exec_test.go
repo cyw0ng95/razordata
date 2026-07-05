@@ -185,7 +185,7 @@ func buildPlan(t *testing.T, stmt PS.Stmt) DT.Operator {
 	scan := OP.NewSeqScan(sel.From)
 	var current DT.Operator = scan
 	if sel.Where != nil {
-		current = OP.NewFilter(current, sel.Where)
+		current = OP.NewFilter(current, sel.Where, nil)
 	}
 	hasAgg := hasAggregatePublic(sel.Cols)
 	if hasAgg {

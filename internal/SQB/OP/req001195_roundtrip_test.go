@@ -22,7 +22,7 @@ func TestREQ001195_Roundtrip_SingleComparison(t *testing.T) {
 	if len(params) != 1 {
 		t.Fatalf("expected 1 param, got %d", len(params))
 	}
-	f := NewFilter(nil, pred)
+	f := NewFilter(nil, pred, nil)
 	litCount := f.CountComparisonLiterals()
 	if litCount != 1 {
 		t.Fatalf("CountComparisonLiterals = %d, want 1", litCount)
@@ -63,7 +63,7 @@ func TestREQ001195_Roundtrip_MultipleComparisons(t *testing.T) {
 	if len(params) != 2 {
 		t.Fatalf("expected 2 params, got %d", len(params))
 	}
-	f := NewFilter(nil, pred)
+	f := NewFilter(nil, pred, nil)
 	litCount := f.CountComparisonLiterals()
 	if litCount != 2 {
 		t.Fatalf("CountComparisonLiterals = %d, want 2", litCount)
@@ -153,7 +153,7 @@ func TestREQ001195_Roundtrip_StringLiteral(t *testing.T) {
 	if len(params) != 1 {
 		t.Fatalf("expected 1 param, got %d", len(params))
 	}
-	f := NewFilter(nil, pred)
+	f := NewFilter(nil, pred, nil)
 	f.ReplaceLiterals(params)
 	replaced := f.Predicate().(*PS.BinaryExpr)
 	lit := replaced.Right.(*PS.StringLiteral)
@@ -176,7 +176,7 @@ func TestREQ001195_Roundtrip_BoolLiteral(t *testing.T) {
 	if len(params) != 1 {
 		t.Fatalf("expected 1 param, got %d", len(params))
 	}
-	f := NewFilter(nil, pred)
+	f := NewFilter(nil, pred, nil)
 	f.ReplaceLiterals(params)
 	replaced := f.Predicate().(*PS.BinaryExpr)
 	lit := replaced.Right.(*PS.BoolLiteral)
@@ -202,7 +202,7 @@ func TestREQ001195_Roundtrip_NullLiteral(t *testing.T) {
 	if len(params) != 0 {
 		t.Fatalf("expected 0 params (NullLiteral not parameterized), got %d", len(params))
 	}
-	f := NewFilter(nil, pred)
+	f := NewFilter(nil, pred, nil)
 	f.ReplaceLiterals(nil)
 	replaced := f.Predicate().(*PS.BinaryExpr)
 	if _, ok := replaced.Right.(*PS.NullLiteral); !ok {
@@ -224,7 +224,7 @@ func TestREQ001195_Roundtrip_FloatLiteral(t *testing.T) {
 	if len(params) != 1 {
 		t.Fatalf("expected 1 param, got %d", len(params))
 	}
-	f := NewFilter(nil, pred)
+	f := NewFilter(nil, pred, nil)
 	f.ReplaceLiterals(params)
 	replaced := f.Predicate().(*PS.BinaryExpr)
 	lit := replaced.Right.(*PS.FloatLiteral)
@@ -247,7 +247,7 @@ func TestREQ001195_Roundtrip_LiteralOnLeft(t *testing.T) {
 	if len(params) != 1 {
 		t.Fatalf("expected 1 param, got %d", len(params))
 	}
-	f := NewFilter(nil, pred)
+	f := NewFilter(nil, pred, nil)
 	f.ReplaceLiterals(params)
 	replaced := f.Predicate().(*PS.BinaryExpr)
 	lit := replaced.Left.(*PS.NumberLiteral)
@@ -270,7 +270,7 @@ func TestREQ001195_Roundtrip_NonComparisonPreserved(t *testing.T) {
 	if len(params) != 0 {
 		t.Fatalf("expected 0 params for non-comparison op, got %d", len(params))
 	}
-	f := NewFilter(nil, pred)
+	f := NewFilter(nil, pred, nil)
 	f.ReplaceLiterals(nil)
 	replaced := f.Predicate().(*PS.BinaryExpr)
 	if replaced.Right.(*PS.NumberLiteral).Val != 1 {
@@ -295,7 +295,7 @@ func TestREQ001195_Roundtrip_InExpr(t *testing.T) {
 	if len(params) != 0 {
 		t.Fatalf("InExpr list items are not parameterized (no col=literal pattern), got %d params", len(params))
 	}
-	f := NewFilter(nil, pred)
+	f := NewFilter(nil, pred, nil)
 	f.ReplaceLiterals(nil)
 	replaced := f.Predicate().(*PS.InExpr)
 	if len(replaced.List) != 3 {
@@ -323,7 +323,7 @@ func TestREQ001195_Roundtrip_BetweenExpr(t *testing.T) {
 	if len(params) != 0 {
 		t.Fatalf("BETWEEN bounds are not parameterized (no col=literal pattern), got %d params", len(params))
 	}
-	f := NewFilter(nil, pred)
+	f := NewFilter(nil, pred, nil)
 	f.ReplaceLiterals(nil)
 	replaced := f.Predicate().(*PS.BetweenExpr)
 	low := replaced.Low.(*PS.NumberLiteral)
@@ -357,7 +357,7 @@ func TestREQ001195_Roundtrip_NestedInComparison(t *testing.T) {
 	if len(params) != 1 {
 		t.Fatalf("expected 1 param (only x=100 is a BinaryExpr comparison), got %d", len(params))
 	}
-	f := NewFilter(nil, pred)
+	f := NewFilter(nil, pred, nil)
 	f.ReplaceLiterals(params)
 	replaced := f.Predicate().(*PS.BinaryExpr)
 	left := replaced.Left.(*PS.BinaryExpr)
@@ -420,7 +420,7 @@ func TestREQ001195_Roundtrip_CountMatchParams(t *testing.T) {
 			if len(params) != tt.wantCount {
 				t.Fatalf("NormalizeForMemo params = %d, want %d", len(params), tt.wantCount)
 			}
-			f := NewFilter(nil, tt.predicate)
+			f := NewFilter(nil, tt.predicate, nil)
 			litCount := f.CountComparisonLiterals()
 			if litCount != tt.wantCount {
 				t.Errorf("CountComparisonLiterals = %d, want %d", litCount, tt.wantCount)

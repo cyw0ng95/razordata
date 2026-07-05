@@ -423,7 +423,7 @@ func BenchmarkFilter_ADQC_Cache(b *testing.B) {
 	b.Run("CacheHit", func(b *testing.B) {
 		// Warm the cache with one full pass.
 		warm := &sliceRowOp{rows: rows}
-		wf := OP.NewFilter(warm, pred)
+		wf := OP.NewFilter(warm, pred, nil)
 		for {
 			_, err := wf.Next(ctx)
 			if err == DT.ErrNoRows {
@@ -439,7 +439,7 @@ func BenchmarkFilter_ADQC_Cache(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			child := &sliceRowOp{rows: rows}
-			f := OP.NewFilter(child, pred)
+			f := OP.NewFilter(child, pred, nil)
 			for {
 				_, err := f.Next(ctx)
 				if err == DT.ErrNoRows {
@@ -471,7 +471,7 @@ func BenchmarkFilter_ADQC_Cache(b *testing.B) {
 				},
 			}
 			child := &sliceRowOp{rows: rows}
-			f := OP.NewFilter(child, p)
+			f := OP.NewFilter(child, p, nil)
 			for {
 				_, err := f.Next(ctx)
 				if err == DT.ErrNoRows {

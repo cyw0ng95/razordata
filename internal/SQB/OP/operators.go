@@ -135,6 +135,16 @@ type SeqScan struct {
 
 	// REQ001221: rowArena replaces decodeBuf for bump-pointer
 	rowArena *DT.RowArena
+
+	// REQ001225: rawByteFilter is a predicate compiled from a filter
+	// conjunct that can be evaluated on raw encoded bytes without
+	// decoding the row. Set by NewFilter when pushdown is possible.
+	rawByteFilter func([]byte) bool
+}
+
+// SetRawByteFilter sets a raw-byte predicate filter. REQ001225.
+func (s *SeqScan) SetRawByteFilter(f func([]byte) bool) {
+	s.rawByteFilter = f
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -499,19 +509,24 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 	if s.it == nil {
 		return Row{}, ErrNoRows
 	}
-	if s.it.Next() {
+	for s.it.Next() {
 		// REQ001042: check ctx.Err() every 1024 rows to reduce overhead.
 		s.ctxCheckCounter++
 		if s.ctxCheckCounter >= 1024 {
 			s.ctxCheckCounter = 0
 			if err := ctx.Err(); err != nil {
-				return Row{}, err
-			}
+                return Row{}, err
+            }
 		}
 		// REQ000501: save the raw key so Update/Delete can
 		// preserve the original row key for hidden-PK DT.Tables.
 		s.currentKey = s.it.Key()
 		v := s.it.Value()
+		// REQ001225: apply raw-byte filter before decoding to avoid
+		// unnecessary DecodeRowInto work for rows that will be filtered.
+		if s.rawByteFilter != nil && !s.rawByteFilter(v) {
+			continue
+		}
 		// REQ001101: decode into reusable buffer to avoid per-row
 		// make([]Value, N) for every row scanned from the store.
 		row, err := s.decodeRowBuffered(v)
@@ -698,6 +713,16 @@ type IndexScan struct {
 	// other columns) and pushes the residuals here so the
 	// outer Filter is unnecessary.
 	residual []PS.Expr
+
+	// REQ001225: rawByteFilter is a predicate compiled from a filter
+	// conjunct that can be evaluated on raw encoded bytes without
+	// decoding the row. Set by NewFilter when pushdown is possible.
+	rawByteFilter func([]byte) bool
+}
+
+// SetRawByteFilter sets a raw-byte predicate filter. REQ001225.
+func (i *IndexScan) SetRawByteFilter(f func([]byte) bool) {
+	i.rawByteFilter = f
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -880,6 +905,10 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		v := i.it.Value()
+		// REQ001225: apply raw-byte filter before decoding.
+		if i.rawByteFilter != nil && !i.rawByteFilter(v) {
+			continue
+		}
 		row, err := DecodeRow(v, i.schema)
 		if err != nil {
 			return Row{}, err
@@ -970,6 +999,10 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		if !found {
+			continue
+		}
+		// REQ001225: apply raw-byte filter before decoding.
+		if i.rawByteFilter != nil && !i.rawByteFilter(rowBytes) {
 			continue
 		}
 		row, err := DecodeRow(rowBytes, i.schema)

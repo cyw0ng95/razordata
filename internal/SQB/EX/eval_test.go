@@ -267,7 +267,7 @@ func TestOperators(t *testing.T) {
 		t.Fatal("NewSeqScan returned nil")
 	}
 
-	filter := OP.NewFilter(scan, nil)
+	filter := OP.NewFilter(scan, nil, nil)
 	if filter == nil {
 		t.Fatal("NewFilter returned nil")
 	}
@@ -306,7 +306,7 @@ func TestFilterPassesThrough(t *testing.T) {
 		{Cols: []string{"x"}, Data: []DT.Value{NewIntValue(int64(2))}},
 	})
 	scan := OP.NewSeqScan("t")
-	filter := OP.NewFilter(scan, &PS.NumberLiteral{Val: 1})
+	filter := OP.NewFilter(scan, &PS.NumberLiteral{Val: 1}, nil)
 	row, err := filter.Next(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -442,7 +442,7 @@ func TestDeleteRemovesMatching(t *testing.T) {
 	scan := OP.NewSeqScan("t")
 	filter := OP.NewFilter(scan, &PS.BinaryExpr{
 		Op: LX.T_GT, Left: &PS.Ident{Name: "a"}, Right: &PS.NumberLiteral{Val: 1},
-	})
+	}, nil)
 	del := WT.NewDelete("t", nil, filter, nil)
 	_, err := del.Next(context.Background())
 	if err != DT.ErrNoRows {

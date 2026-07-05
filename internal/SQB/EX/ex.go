@@ -1455,7 +1455,7 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 			}
 			scan = ssc
 		}
-		filter := OP.NewFilter(scan, s.Where)
+		filter := OP.NewFilter(scan, s.Where, nil)
 		// REQ000558: apply ORDER BY / LIMIT / OFFSET to the row
 		// selection before updating.
 		var current DT.Operator = filter
@@ -1508,7 +1508,7 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 			}
 			scan = ssc
 		}
-		filter := OP.NewFilter(scan, s.Where)
+		filter := OP.NewFilter(scan, s.Where, nil)
 		// REQ000475: apply ORDER BY / LIMIT / OFFSET to the row
 		// selection before deleting.
 		var current DT.Operator = filter
