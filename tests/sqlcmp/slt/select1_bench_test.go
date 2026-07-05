@@ -118,6 +118,31 @@ func BenchmarkSelect1_Prepared(b *testing.B) {
 	}
 }
 
+// BenchmarkSelect1_BlockCache measures query performance with the block cache
+// warmed up (REQ001242). Compare with BenchmarkSelect1_Queries/star to see the
+// improvement from cached SST blocks.
+func BenchmarkSelect1_BlockCache(b *testing.B) {
+	db := setupSelect1(b)
+	ctx := context.Background()
+
+	// Warm up: run query once to populate the block cache.
+	rows, _ := db.QueryContext(ctx, "SELECT * FROM t1")
+	for rows.Next() {
+	}
+	rows.Close()
+
+	b.ResetTimer()
+	for b.Loop() {
+		rows, err := db.QueryContext(ctx, "SELECT * FROM t1")
+		if err != nil {
+			b.Fatal(err)
+		}
+		for rows.Next() {
+		}
+		rows.Close()
+	}
+}
+
 // BenchmarkSelect1_Throughput measures total queries/second.
 func BenchmarkSelect1_Throughput(b *testing.B) {
 	db := setupSelect1(b)

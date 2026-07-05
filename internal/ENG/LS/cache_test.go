@@ -3,6 +3,7 @@ package ls
 import (
 	"bytes"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -106,6 +107,66 @@ func BenchmarkBlockCache_GetPut(b *testing.B) {
 		c.Put(key, val)
 		c.Get(key)
 	}
+}
+
+// TestBlockCache_Integration verifies the cache is populated after reading
+// from SST files (REQ001242). Uses MmapFiles so the SST reader path works.
+func TestBlockCache_Integration(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_cache_integration")
+
+	// Phase 1: write data and flush to SST.
+	e, err := newEngineWithOptions(dir, Options{BlockCacheSize: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 20 {
+		key := []byte(fmt.Sprintf("key%03d", i))
+		val := []byte(fmt.Sprintf("value%03d", i))
+		if err := e.Write(key, val); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Phase 2: reopen with block cache + mmap enabled. No memtables survive
+	// restart, so all reads must go through SST files, populating the cache.
+	e2, err := newEngineWithOptions(dir, Options{BlockCacheSize: 1024, MmapFiles: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e2.Close()
+
+	if e2.blockCache == nil {
+		t.Fatal("blockCache is nil")
+	}
+	if e2.blockCache.Len() != 0 {
+		t.Fatalf("expected empty cache after open, got %d entries", e2.blockCache.Len())
+	}
+
+	// Read all keys — these must go through the SST + block cache path.
+	for i := range 20 {
+		key := []byte(fmt.Sprintf("key%03d", i))
+		val, err := e2.Read(key)
+		if err != nil {
+			t.Fatalf("Read(%s): %v", key, err)
+		}
+		want := fmt.Sprintf("value%03d", i)
+		if string(val) != want {
+			t.Fatalf("Read(%s) = %q, want %q", key, val, want)
+		}
+	}
+
+	// Verify cache is populated.
+	if e2.blockCache.Len() == 0 {
+		t.Fatal("expected cache to be populated after SST reads, got 0 entries")
+	}
+	t.Logf("block cache populated with %d entries after reading 20 keys", e2.blockCache.Len())
 }
 
 func TestBlockCache_CapacityZero(t *testing.T) {
