@@ -2383,7 +2383,56 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	current = p.planOrdering(s, current)
 	current = p.planLimitOffset(s, current)
 
+	// REQ001231: Filter-Project fusion — detect Project(Filter(scan))
+	// and replace with FilterProject(scan) to eliminate one virtual call
+	// per row. Skip when expressions contain subqueries or aggregates
+	// (those need the full eval machinery).
+	current = fuseFilterProject(current)
+
 	return current
+}
+
+// fuseFilterProject detects Project(Filter(child)) and fuses them into
+// FilterProject(child). This eliminates one virtual call per row by
+// evaluating both predicate and projection in a single Next() loop.
+// Skips fusion when either the predicate or any projection expression
+// contains subqueries or aggregates. REQ001231.
+func fuseFilterProject(op DT.Operator) DT.Operator {
+	proj, ok := op.(*OP.Project)
+	if !ok {
+		return op
+	}
+	filter, ok := proj.Child().(*OP.Filter)
+	if !ok {
+		return op
+	}
+	// Skip if predicate or projection expressions contain subqueries
+	// or aggregates — those need the separate eval machinery.
+	if containsSubqueryOrAggregate(filter.Predicate()) {
+		return op
+	}
+	for _, c := range proj.Cols() {
+		if containsSubqueryOrAggregate(c) {
+			return op
+		}
+	}
+	return OP.NewFilterProject(filter.Child(), filter.Predicate(), proj.Cols())
+}
+
+// containsSubqueryOrAggregate checks whether an expression tree contains
+// any SubqueryExpr, ExistsExpr, or AggregateFunc node. REQ001231.
+func containsSubqueryOrAggregate(e PS.Expr) bool {
+	if e == nil {
+		return false
+	}
+	has := false
+	walkExpr(e, func(n PS.Expr) {
+		switch n.(type) {
+		case *PS.SubqueryExpr, *PS.ExistsExpr, *PS.AggregateFunc:
+			has = true
+		}
+	})
+	return has
 }
 
 // existsReplacement records a decorrelated EXISTS conjunct that should

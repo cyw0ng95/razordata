@@ -1151,6 +1151,9 @@ func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 	if f, ok := root.(*OP.Filter); ok {
 		f.SetExecCtx(ec)
 	}
+	if fp, ok := root.(*OP.FilterProject); ok {
+		fp.SetExecCtx(ec)
+	}
 	if p, ok := root.(*OP.Project); ok {
 		p.SetExecCtx(ec)
 	}

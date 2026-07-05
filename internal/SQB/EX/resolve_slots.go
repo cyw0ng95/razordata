@@ -31,6 +31,13 @@ func resolveExprs(op DT.Operator, schema []string) {
 		if o.Predicate() != nil {
 			resolveExprSlots(o.Predicate(), schema)
 		}
+	case *OP.FilterProject:
+		if o.Predicate() != nil {
+			resolveExprSlots(o.Predicate(), schema)
+		}
+		for _, c := range o.Cols() {
+			resolveExprSlots(c, schema)
+		}
 	case *OP.Sort:
 		for _, k := range o.Keys() {
 			if k.Expr != nil {
@@ -89,6 +96,12 @@ func computeSchema(op DT.Operator) []string {
 		childSchema := computeSchema(childOf(o))
 		resolveExprs(o, childSchema)
 		return childSchema
+
+	case *OP.FilterProject:
+		childSchema := computeSchema(childOf(o))
+		resolveExprs(o, childSchema)
+		// Output schema is defined by projection expressions.
+		return projectColNames(o.Cols())
 
 	case *OP.Sort:
 		childSchema := computeSchema(childOf(o))

@@ -96,6 +96,31 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		}
 		node.Cost = AD.EstimateFilterCost(v, ts)
 
+	case *OP.FilterProject:
+		node.Detail = "PROJECT+WHERE"
+		if v.Predicate() != nil {
+			node.Detail = "WHERE " + RE.FormatExpr(v.Predicate())
+		}
+		if len(v.Cols()) > 0 {
+			var parts []string
+			for _, c := range v.Cols() {
+				parts = append(parts, RE.FormatExpr(c))
+			}
+			if node.Detail == "PROJECT+WHERE" {
+				node.Detail = "PROJECT " + strings.Join(parts, ", ")
+			} else {
+				node.Detail = node.Detail + " PROJECT " + strings.Join(parts, ", ")
+			}
+		}
+		// Simple cost: estimate rows * (filter selectivity ~10% + cost of projection)
+		inputRows := float64(node.Rows)
+		if inputRows == 0 {
+			inputRows = 100.0
+		}
+		node.Cost = inputRows * 0.1 // filter selectivity
+		node.Cost += inputRows       // projection cost
+		node.Rows = int64(inputRows * 0.1)
+
 	case *OP.Project:
 		node.Detail = "PROJECT"
 		if len(v.Cols()) > 0 {
@@ -241,6 +266,8 @@ func operatorType(op DT.Operator) string {
 		return "OP.IndexOnlyScan"
 	case *OP.Filter:
 		return "OP.Filter"
+	case *OP.FilterProject:
+		return "OP.FilterProject"
 	case *OP.Project:
 		return "OP.Project"
 	case *OP.Sort:
