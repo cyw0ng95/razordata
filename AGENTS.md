@@ -356,5 +356,6 @@ overflow_test.go, tpch_bench_test.go, operators_vec_test.go
   DropView_Unknown, DropTrigger_Unknown, TestReq489_ReindexRouting) —
   these were masked by the 8 original failures, not introduced by recent changes.
 - 156 Eval() call sites migrated to EvalValue()
-- REQ001202 (SlotIdx) + Sort key inline implemented
+- REQ001202 (SlotIdx) + Sort key inline + subquery key cache implemented
+- REQ001218 + REQ001219 (OR-to-IN + joinPredSel T_OR) implemented
 - 0 new regressions

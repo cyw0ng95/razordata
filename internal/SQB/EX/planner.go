@@ -1408,15 +1408,24 @@ func isColumnLiteralPair(a, b PS.Expr) bool {
 	return false
 }
 
-// tryApplyPointLookup checks if pred is a col IN (literal, ...) or
-// col = literal expression and sets up point-lookup on the scan.
-// REQ000820: only applies to in-memory OP.SeqScan operators.
+// tryApplyPointLookup checks if pred is a col IN (literal, ...),
+// col = literal, or same-column OR-chain of equalities, and if so,
+// sets up SeqScan point-lookup so we skip the row-by-row filter
+// and read only matching rows directly.
+// REQ000820 + REQ001218.
 func tryApplyPointLookup(scan DT.Operator, pred PS.Expr) {
 	ss, ok := scan.(*OP.SeqScan)
 	if !ok || ss.Store() != nil {
 		return // only for in-memory tables
 	}
 	col, values, ok := extractInListValues(pred)
+	if ok && len(values) > 0 {
+		ss.WithPointLookup(col, values)
+		return
+	}
+	// REQ001218: same-column OR-chain of equalities — synthesize
+	// the equivalent IN-list and use point-lookup.
+	col, values, ok = extractOrChainEquality(pred)
 	if ok && len(values) > 0 {
 		ss.WithPointLookup(col, values)
 		return
@@ -1430,22 +1439,44 @@ func tryApplyPointLookup(scan DT.Operator, pred PS.Expr) {
 
 // extractInListValues extracts (columnName, values, ok) from a
 // predicate of the form "col IN (val1, val2, ...)" where all values
-// are literals. Only succeeds for Ident columns.
+// are literals. Handles both `*PS.InExpr` (parser output for
+// `col IN (...)`) and `*PS.BinaryExpr{Op: T_IN}` (legacy form).
+// REQ001218: now also accepts the InExpr form that the parser
+// actually produces — the previous BinaryExpr-only check made
+// point-lookup for IN-lists dead code.
 func extractInListValues(pred PS.Expr) (string, []any, bool) {
-	bin, ok := pred.(*PS.BinaryExpr)
-	if !ok || bin.Op != LX.T_IN {
+	var col *PS.Ident
+	var items []PS.Expr
+	switch p := pred.(type) {
+	case *PS.InExpr:
+		ident, ok := p.Expr.(*PS.Ident)
+		if !ok {
+			return "", nil, false
+		}
+		col = ident
+		items = p.List
+	case *PS.BinaryExpr:
+		if p.Op != LX.T_IN {
+			return "", nil, false
+		}
+		ident, ok := p.Left.(*PS.Ident)
+		if !ok {
+			return "", nil, false
+		}
+		col = ident
+		list, ok := p.Right.(*PS.ListExpr)
+		if !ok {
+			return "", nil, false
+		}
+		items = list.Items
+	default:
 		return "", nil, false
 	}
-	col, ok := bin.Left.(*PS.Ident)
-	if !ok {
+	if len(items) == 0 {
 		return "", nil, false
 	}
-	list, ok := bin.Right.(*PS.ListExpr)
-	if !ok || len(list.Items) == 0 {
-		return "", nil, false
-	}
-	values := make([]any, 0, len(list.Items))
-	for _, item := range list.Items {
+	values := make([]any, 0, len(items))
+	for _, item := range items {
 		switch v := item.(type) {
 		case *PS.NumberLiteral:
 			values = append(values, v.Val)
@@ -1462,38 +1493,89 @@ func extractInListValues(pred PS.Expr) (string, []any, bool) {
 	return col.Name, values, true
 }
 
+// extractOrChainEquality extracts (columnName, values, ok) from a
+// same-column OR-chain of equality predicates, e.g.
+// `(e8=180 OR e8=333 OR e8=38 OR e8=349)` or
+// `(180=e8 OR 333=e8 OR e8=38 OR e8=349)` (literals can appear on
+// either side). Returns (colName, [val1, val2, ...], true) when all
+// leaves are `col = literal` on the same column; otherwise
+// ("", nil, false). REQ001218.
+func extractOrChainEquality(pred PS.Expr) (string, []any, bool) {
+	leaves := flattenOr(pred)
+	if len(leaves) < 2 {
+		// single equality: leave it to extractSingleEquality
+		return "", nil, false
+	}
+	var colName string
+	values := make([]any, 0, len(leaves))
+	for _, leaf := range leaves {
+		c, v, ok := extractEqualityAnySide(leaf)
+		if !ok {
+			return "", nil, false
+		}
+		if colName == "" {
+			colName = c
+		} else if !strings.EqualFold(colName, c) {
+			return "", nil, false
+		}
+		values = append(values, v)
+	}
+	return colName, values, true
+}
+
+// extractEqualityAnySide extracts (columnName, value, ok) from
+// `col = literal` OR `literal = col`. Both operands may be the
+// column reference. Used by extractOrChainEquality.
+func extractEqualityAnySide(pred PS.Expr) (string, any, bool) {
+	bin, ok := pred.(*PS.BinaryExpr)
+	if !ok || bin.Op != LX.T_EQ {
+		return "", nil, false
+	}
+	if col, ok := bin.Left.(*PS.Ident); ok {
+		if v, ok := literalValue(bin.Right); ok {
+			return col.Name, v, true
+		}
+	}
+	if col, ok := bin.Right.(*PS.Ident); ok {
+		if v, ok := literalValue(bin.Left); ok {
+			return col.Name, v, true
+		}
+	}
+	return "", nil, false
+}
+
+// literalValue extracts a typed value from a literal expression.
+// Returns (val, true) for NumberLiteral/StringLiteral/BoolLiteral,
+// (_, false) otherwise.
+func literalValue(e PS.Expr) (any, bool) {
+	switch v := e.(type) {
+	case *PS.NumberLiteral:
+		return v.Val, true
+	case *PS.StringLiteral:
+		return v.Val, true
+	case *PS.BoolLiteral:
+		return v.Val, true
+	}
+	return nil, false
+}
+
 // extractSingleEquality extracts (columnName, value, ok) from a
-// predicate of the form "col = literal".
+// predicate of the form "col = literal". Accepts either side as the
+// column reference (`col = literal` or `literal = col`).
 func extractSingleEquality(pred PS.Expr) (string, any, bool) {
 	bin, ok := pred.(*PS.BinaryExpr)
 	if !ok || bin.Op != LX.T_EQ {
 		return "", nil, false
 	}
-	col, ok := bin.Left.(*PS.Ident)
-	if !ok {
-		col, ok = bin.Right.(*PS.Ident)
-		if !ok {
-			return "", nil, false
+	if col, ok := bin.Left.(*PS.Ident); ok {
+		if v, ok := literalValue(bin.Right); ok {
+			return col.Name, v, true
 		}
-		// col = literal form: right is the literal
-		switch v := bin.Left.(type) {
-		case *PS.NumberLiteral:
-			return col.Name, v.Val, true
-		case *PS.StringLiteral:
-			return col.Name, v.Val, true
-		case *PS.BoolLiteral:
-			return col.Name, v.Val, true
-		}
-		return "", nil, false
 	}
-	// col = literal: left is the ident
-	switch v := bin.Right.(type) {
-	case *PS.NumberLiteral:
-		return col.Name, v.Val, true
-	case *PS.StringLiteral:
-		return col.Name, v.Val, true
-	case *PS.BoolLiteral:
-		return col.Name, v.Val, true
+	if col, ok := bin.Right.(*PS.Ident); ok {
+		if v, ok := literalValue(bin.Left); ok {
+			return col.Name, v, true
+		}
 	}
 	return "", nil, false
 }
@@ -4232,6 +4314,93 @@ func (p *Planner) joinPredSel(pred PS.Expr, rowCount float64) float64 {
 			nullFrac = 0
 		}
 		return (1.0 - nullFrac) / 3.0
+	case LX.T_OR:
+		// REQ001219: OR-chain selectivity.
+		// Same-column equality chain (a=1 OR a=2 OR ...) → group by
+		// column and use 1 - ∏(1 - 1/ndv) per column. For multi-column
+		// OR (no shared column), multiply per-column selectivities
+		// (independence assumption).
+		leaves := flattenOr(pred)
+		if len(leaves) < 2 {
+			return 0.5
+		}
+// Group equalities by column.
+		type colEq struct {
+			col   string
+			ndv   float64
+			count int // number of OR leaves that reference this column
+		}
+		var groups []colEq
+		seen := make(map[string]int) // colName -> index into groups
+		hasNonEq := false
+		for _, leaf := range leaves {
+			c, _, ok := extractEqualityAnySide(leaf)
+			if !ok {
+				hasNonEq = true
+				continue
+			}
+			if idx, ok := seen[c]; ok {
+				groups[idx].count++
+				continue
+			}
+			ndv := p.ndvFromExpr(&PS.Ident{Name: c})
+			if ndv <= 0 {
+				if rowCount > 0 {
+					ndv = rowCount
+				} else {
+					ndv = 100
+				}
+			}
+			seen[c] = len(groups)
+			groups = append(groups, colEq{col: c, ndv: ndv, count: 1})
+		}
+		// Compute per-column selectivity = 1 - (1 - 1/ndv)^k where k is
+		// the number of equalities on this column (count, not unique
+		// columns — duplicates would harm but are rare in practice).
+		colSels := make([]float64, 0, len(groups))
+		for _, g := range groups {
+			k := g.count
+			if k == 0 {
+				k = 1
+			}
+			pMiss := 1.0 - 1.0/g.ndv
+			miss := 1.0
+			for j := 0; j < k; j++ {
+				miss *= pMiss
+			}
+			colSels = append(colSels, 1.0-miss)
+		}
+		// Combine: multi-column OR (rare but possible) → multiply sels.
+		sel := 1.0
+		for _, s := range colSels {
+			sel *= s
+		}
+		if hasNonEq {
+			sel *= 0.5 // dilate for any non-equality OR leaf
+		}
+		// Floor: selectivity can't be less than 1/rowCount.
+		if rowCount > 0 {
+			floor := 1.0 / rowCount
+			if floor < 0.0001 {
+				floor = 0.0001
+			}
+			if sel < floor {
+				sel = floor
+			}
+		}
+		if sel <= 0 {
+			sel = 0.5
+		}
+		if sel > 1 {
+			sel = 1
+		}
+		return sel
+	case LX.T_AND:
+		// REQ001219: T_AND rarely reaches joinPredSel because
+		// splitPredicatesByTable splits AND-conjuncts upstream and the
+		// caller multiplies per-predicate selectivities. Keep a
+		// conservative fallback if it ever does.
+		return 0.5
 	default:
 		return 0.5
 	}
