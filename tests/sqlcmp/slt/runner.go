@@ -2,8 +2,7 @@ package slt
 
 import (
 	"context"
-	"crypto/md5"
-	"fmt"
+	"hash"
 	"io"
 	"os"
 	"sort"
@@ -332,6 +331,11 @@ func (r *Runner) runQuery(ctx context.Context, rec *Record) {
 // Used to compare queries that share a label.
 func resultHash(rs *ResultSet, mode SortMode) string {
 	rows := rs.Rows
+	h := md5Pool.Get().(hash.Hash)
+	defer func() {
+		h.Reset()
+		md5Pool.Put(h)
+	}()
 	if mode == RowSort || mode == ValueSort {
 		idx := make([]int, len(rows))
 		for i := range idx {
@@ -352,7 +356,6 @@ func resultHash(rs *ResultSet, mode SortMode) string {
 				return len(a) < len(b)
 			})
 		}
-		h := md5.New()
 		for _, i := range idx {
 			for j, cell := range rows[i] {
 				if j > 0 {
@@ -362,9 +365,8 @@ func resultHash(rs *ResultSet, mode SortMode) string {
 			}
 			io.WriteString(h, "\n")
 		}
-		return fmt.Sprintf("%x", h.Sum(nil))
+		return bytehex(h.Sum(nil))
 	}
-	h := md5.New()
 	for _, row := range rows {
 		for i, cell := range row {
 			if i > 0 {
@@ -374,7 +376,7 @@ func resultHash(rs *ResultSet, mode SortMode) string {
 		}
 		io.WriteString(h, "\n")
 	}
-	return fmt.Sprintf("%x", h.Sum(nil))
+	return bytehex(h.Sum(nil))
 }
 
 // HashSorted is the public form of the hash used for

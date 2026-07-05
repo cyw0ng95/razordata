@@ -87,19 +87,32 @@ func extractCorrelatedColumns(sel *PS.Select) []string {
 		case *PS.UnaryExpr:
 			walk(e.Operand)
 		case *PS.Ident:
-			// A bare Ident is correlated unless it resolves to the
-			// subquery's own FROM table.
-			if subqFrom != "" {
-				correlated = append(correlated, e.Name)
-			}
+			// A bare Ident in the subquery's WHERE without table qualifier.
+			// Without schema info, we cannot determine if it resolves to
+			// the inner table or the outer table. Conservatively treat it
+			// as NOT correlated (inner table) — correct, but no caching
+			// benefit for these queries.
 		case *PS.QualifiedName:
-			// QualifiedName: correlated if Table doesn't match the
-			// subquery's FROM or its alias.
-			if subqFrom != "" && e.Table != subqFrom && e.Table != subqAlias {
-				if !seen[e.Name] {
-					correlated = append(correlated, e.Name)
-					seen[e.Name] = true
-				}
+			// QualifiedName: correlated only when the table qualifier
+			// refers to the OUTER table, not the subquery's own FROM.
+			if subqFrom == "" {
+				break
+			}
+			// If subquery has an alias and the qualifier matches it →
+			// inner table reference → NOT correlated.
+			if subqAlias != "" && e.Table == subqAlias {
+				break
+			}
+			// No alias and qualifier matches the FROM table →
+			// inner table reference (ambiguous, safe default) → NOT correlated.
+			if subqAlias == "" && e.Table == subqFrom {
+				break
+			}
+			// Everything else: outer table (e.g. t1.b when inner is "t1 AS x")
+			// or a different table entirely → IS correlated.
+			if !seen[e.Name] {
+				correlated = append(correlated, e.Name)
+				seen[e.Name] = true
 			}
 		case *PS.FunctionCall:
 			for _, arg := range e.Args {

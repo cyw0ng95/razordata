@@ -2,6 +2,7 @@ package slt
 
 import (
 	"fmt"
+	"hash"
 	"sort"
 	"strings"
 )
@@ -32,6 +33,22 @@ func DiffResultSets(actual *ResultSet, rec *Record) string {
 	// Otherwise sort the actual result in-place (no copy needed;
 	// the result set is not reused after diff).
 	got := actual.Rows
+	// Early exact-match: for sorted queries, try O(n) in-order
+	// comparison before the O(n log n) sort. When results already
+	// match in order, this eliminates sorting entirely — common
+	// for queries whose output happens to arrive in sort order.
+	if rec.Sort != NoSort && len(got) == len(expected) {
+		allMatch := true
+		for i := range got {
+			if !rowsEqual(got[i], expected[i], rec.TypeString) {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch {
+			return ""
+		}
+	}
 	if rec.Sort == RowSort {
 		sortRows(got, false)
 	}
@@ -142,19 +159,16 @@ func rowString(row []Value) string {
 }
 
 func hashValues(vs []Value) string {
-	var b strings.Builder
+	h := md5Pool.Get().(hash.Hash)
+	defer func() {
+		h.Reset()
+		md5Pool.Put(h)
+	}()
 	for _, v := range vs {
-		b.WriteString(v.String())
-		b.WriteByte('\n')
+		h.Write([]byte(v.String()))
+		h.Write([]byte{'\n'})
 	}
-	return md5hex(b.String())
-}
-
-// md5hex is a thin wrapper that avoids importing crypto/md5 in
-// diff.go's hot path indirectly.
-func md5hex(s string) string {
-	sum := md5sum(s)
-	return fmt.Sprintf("%x", sum)
+	return bytehex(h.Sum(nil))
 }
 
 // rowsEqual compares two rows column-by-column, with type-aware
