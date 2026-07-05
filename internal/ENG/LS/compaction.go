@@ -887,6 +887,9 @@ func (cm *compactionManager) MergePartials(partials []*partialResult, manifest *
 
 	// Remove partial temp files
 	for _, p := range partials {
+		if cm.blockCache != nil {
+			cm.blockCache.Evict(p.tmpPath)
+		}
 		if err := cm.fs.Remove(p.tmpPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove partial tmp", "path", p.tmpPath, "err", err)
 		}
