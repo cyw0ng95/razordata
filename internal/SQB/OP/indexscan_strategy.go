@@ -75,10 +75,11 @@ func (s *InMemoryScan) Close() error { return nil }
 // is the default strategy when no secondary index is available
 // but the engine store is.
 type StorePrefixScan struct {
-	store  Store
-	prefix []byte
-	schema *StoreSchema
-	it     storeIter
+	store         Store
+	prefix        []byte
+	schema        *StoreSchema
+	it            storeIter
+	lastDataSlice []Value // REQ001226: pooled []Value tracking
 }
 
 // storeIter is the interface StorePrefixScan expects from
@@ -115,6 +116,12 @@ func (s *StorePrefixScan) Next(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
+		// REQ001226: return previous slice to pool.
+		if s.lastDataSlice != nil {
+			DT.PutValueSlice(s.lastDataSlice)
+			s.lastDataSlice = nil
+		}
+		s.lastDataSlice = row.Data
 		return row, nil
 	}
 	return Row{}, ErrNoRows
@@ -122,11 +129,16 @@ func (s *StorePrefixScan) Next(ctx context.Context) (Row, error) {
 
 // Close releases the underlying iterator.
 func (s *StorePrefixScan) Close() error {
-	if s.it == nil {
-		return nil
+	var err error
+	if s.it != nil {
+		err = s.it.Close()
+		s.it = nil
 	}
-	err := s.it.Close()
-	s.it = nil
+	// REQ001226: return any remaining pooled slice.
+	if s.lastDataSlice != nil {
+		DT.PutValueSlice(s.lastDataSlice)
+		s.lastDataSlice = nil
+	}
 	return err
 }
 
@@ -135,18 +147,19 @@ func (s *StorePrefixScan) Close() error {
 // via store.Get. Supports exact-match (seekValue) and range seeks
 // (rangeLower, rangeUpper).
 type IndexSeekScan struct {
-	store        Store
-	schema       *StoreSchema
-	prefix       []byte
-	indexTableID uint64
-	indexName    string
-	seekValue    []byte
-	rangeLower   []byte
-	rangeLowerExcl bool
-	rangeUpper     []byte
-	rangeUpperIncl bool
-	prefixIdxKey []byte
-	it           storeIter
+	store            Store
+	schema           *StoreSchema
+	prefix           []byte
+	indexTableID     uint64
+	indexName        string
+	seekValue        []byte
+	rangeLower       []byte
+	rangeLowerExcl   bool
+	rangeUpper       []byte
+	rangeUpperIncl   bool
+	prefixIdxKey     []byte
+	it               storeIter
+	lastDataSlice    []Value // REQ001226: pooled []Value tracking
 }
 
 // NewIndexSeekScan builds an index-seek strategy. seekValue is the
@@ -228,17 +241,28 @@ func (s *IndexSeekScan) Next(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
+		// REQ001226: return previous slice to pool.
+		if s.lastDataSlice != nil {
+			DT.PutValueSlice(s.lastDataSlice)
+			s.lastDataSlice = nil
+		}
+		s.lastDataSlice = row.Data
 		return row, nil
 	}
 }
 
 // Close releases the index iterator.
 func (s *IndexSeekScan) Close() error {
-	if s.it == nil {
-		return nil
+	var err error
+	if s.it != nil {
+		err = s.it.Close()
+		s.it = nil
 	}
-	err := s.it.Close()
-	s.it = nil
+	// REQ001226: return any remaining pooled slice.
+	if s.lastDataSlice != nil {
+		DT.PutValueSlice(s.lastDataSlice)
+		s.lastDataSlice = nil
+	}
 	return err
 }
 
@@ -246,12 +270,13 @@ func (s *IndexSeekScan) Close() error {
 // in-memory B-tree to look up primary keys and fetches the
 // corresponding rows from the store.
 type BTreeScan struct {
-	btree    *id.BTree
-	store    Store
-	prefix   []byte
-	schema   *StoreSchema
-	cursor   *id.Cursor
-	done     bool
+	btree         *id.BTree
+	store         Store
+	prefix        []byte
+	schema        *StoreSchema
+	cursor        *id.Cursor
+	done          bool
+	lastDataSlice []Value // REQ001226: pooled []Value tracking
 }
 
 // NewBTreeScan builds a B-tree-backed scan strategy.
@@ -298,6 +323,12 @@ func (s *BTreeScan) Next(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
+		// REQ001226: return previous slice to pool.
+		if s.lastDataSlice != nil {
+			DT.PutValueSlice(s.lastDataSlice)
+			s.lastDataSlice = nil
+		}
+		s.lastDataSlice = row.Data
 		s.cursor.Next()
 		return row, nil
 	}
@@ -308,6 +339,11 @@ func (s *BTreeScan) Next(ctx context.Context) (Row, error) {
 func (s *BTreeScan) Close() error {
 	s.cursor = nil
 	s.done = true
+	// REQ001226: return any remaining pooled slice.
+	if s.lastDataSlice != nil {
+		DT.PutValueSlice(s.lastDataSlice)
+		s.lastDataSlice = nil
+	}
 	return nil
 }
 

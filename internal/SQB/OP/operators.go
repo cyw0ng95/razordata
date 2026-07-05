@@ -718,6 +718,11 @@ type IndexScan struct {
 	// conjunct that can be evaluated on raw encoded bytes without
 	// decoding the row. Set by NewFilter when pushdown is possible.
 	rawByteFilter func([]byte) bool
+
+	// REQ001226: lastDataSlice tracks the []Value from the previous
+	// DecodeRow call so it can be returned to valueSlicePool on the
+	// next iteration, eliminating per-row make([]Value, N) allocations.
+	lastDataSlice []Value
 }
 
 // SetRawByteFilter sets a raw-byte predicate filter. REQ001225.
@@ -913,6 +918,12 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
+		// REQ001226: return previous slice to pool.
+		if i.lastDataSlice != nil {
+			DT.PutValueSlice(i.lastDataSlice)
+			i.lastDataSlice = nil
+		}
+		i.lastDataSlice = row.Data
 		row.TableName = i.table
 
 		// REQ000790: record index usage for diagnostics.
@@ -1009,6 +1020,12 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
+		// REQ001226: return previous slice to pool.
+		if i.lastDataSlice != nil {
+			DT.PutValueSlice(i.lastDataSlice)
+			i.lastDataSlice = nil
+		}
+		i.lastDataSlice = row.Data
 		row.TableName = i.table
 		// REQ001108: residual predicates. Skip rows that don't
 		// match; the next loop iteration fetches the next index
@@ -1142,8 +1159,13 @@ func (i *IndexScan) Close() error {
 		}
 	}
 	i.btreeIt = nil
-	i.pos = 0
+ i.pos = 0
 	i.rows = nil
+	// REQ001226: return any remaining pooled slice.
+	if i.lastDataSlice != nil {
+		DT.PutValueSlice(i.lastDataSlice)
+		i.lastDataSlice = nil
+	}
 	return nil
 }
 
@@ -1185,6 +1207,12 @@ func (i *IndexScan) nextFromBTree(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
+		// REQ001226: return previous slice to pool.
+		if i.lastDataSlice != nil {
+			DT.PutValueSlice(i.lastDataSlice)
+			i.lastDataSlice = nil
+		}
+		i.lastDataSlice = row.Data
 		row.TableName = i.table
 
 		// REQ000790: record index usage for diagnostics.

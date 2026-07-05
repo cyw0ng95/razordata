@@ -46,6 +46,31 @@ var encodeRowBufPool = sync.Pool{
 	},
 }
 
+// valueSlicePool is a sync.Pool for reusable Value slices in DecodeRow.
+// REQ001226: eliminates per-row make([]Value, N) on the hot path.
+var valueSlicePool = sync.Pool{
+	New: func() any {
+		return make([]Value, 0, 16)
+	},
+}
+
+// PoolValueSlice retrieves a []Value from the pool, growing if needed.
+func PoolValueSlice(n int) []Value {
+	slice := valueSlicePool.Get().([]Value)
+	if cap(slice) < n {
+		slice = make([]Value, 0, n)
+	}
+	return slice[:n]
+}
+
+// PutValueSlice returns a Value slice to the pool for reuse.
+// Callers should invoke this when a decoded row's Data is no longer needed.
+func PutValueSlice(s []Value) {
+	if cap(s) <= 128 {
+		valueSlicePool.Put(s[:0])
+	}
+}
+
 // TablePrefix returns the storage key prefix for a table, or nil if the
 // table is not registered.
 func TablePrefix(name string) []byte {
@@ -147,7 +172,7 @@ func DecodeRow(data []byte, schema *StoreSchema) (Row, error) {
 	if int(n) != len(schema.Cols) {
 		return Row{}, fmt.Errorf("DT: row has %d cols, schema %d", n, len(schema.Cols))
 	}
-	dataSlice := make([]Value, len(schema.Cols))
+	dataSlice := PoolValueSlice(len(schema.Cols))
 	row := Row{
 		Cols:     schema.Cols, // share schema's cols slice (immutable)
 		Data:     dataSlice,
