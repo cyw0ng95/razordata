@@ -153,7 +153,11 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		node.Cost = 5.0
 
 	case *OP.NestedLoopJoin:
-		node.Detail = "JOIN"
+		if v.Kind() == OP.JoinKindSemi {
+			node.Detail = "SEMI JOIN"
+		} else {
+			node.Detail = "JOIN"
+		}
 		node.Cost = 5.0
 
 	case *OP.HashJoin:

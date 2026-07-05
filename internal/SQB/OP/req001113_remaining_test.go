@@ -183,10 +183,87 @@ func collectNLJ(t *testing.T, nlj *NestedLoopJoin) []pl.Row {
 		if errors.Is(err, pl.ErrNoRows) {
 			break
 		}
-		if err != nil {
-			t.Fatalf("Next: %v", err)
+if err != nil {
+		t.Fatalf("Next: %v", err)
 		}
 		out = append(out, row)
 	}
 	return out
+}
+
+// TestNestedLoopJoin_SemiJoin verifies that JoinKindSemi returns each
+// left row at most once — the first match short-circuits further right
+// probes for that left row. REQ001235.
+func TestNestedLoopJoin_SemiJoin(t *testing.T) {
+	// Left: 3 rows with keys 1, 2, 3
+	left := newMemOp([]pl.Row{
+		rowWithCols("l", []string{"k", "v"}, []int64{1, 10}),
+		rowWithCols("l", []string{"k", "v"}, []int64{2, 20}),
+		rowWithCols("l", []string{"k", "v"}, []int64{3, 30}),
+	})
+	// Right: 5 rows, keys 1, 1, 2, 3, 4 (key=1 has two matches)
+	right := newMemOp([]pl.Row{
+		rowWithCols("r", []string{"k", "v"}, []int64{1, 100}),
+		rowWithCols("r", []string{"k", "v"}, []int64{1, 101}),
+		rowWithCols("r", []string{"k", "v"}, []int64{2, 200}),
+		rowWithCols("r", []string{"k", "v"}, []int64{3, 300}),
+		rowWithCols("r", []string{"k", "v"}, []int64{4, 400}),
+	})
+	on := func(outer, inner *pl.Row) (bool, error) {
+		ok := colVal(t, outer, "l.k") == colVal(t, inner, "r.k")
+		return ok, nil
+	}
+	nlj := NewNestedLoopJoin(left, right, "l", "r", on, JoinKindSemi)
+	ctx := context.Background()
+	var count int
+	for {
+		_, err := nlj.Next(ctx)
+		if err != nil {
+			if err == pl.ErrNoRows {
+				break
+			}
+			t.Fatalf("Next: %v", err)
+		}
+		count++
+	}
+	// Expected: 3 rows (keys 1, 2, 3 each once) — key=1 appears only once
+	// despite having two matches on the right side.
+	if count != 3 {
+		t.Fatalf("semi-join: got %d rows, want 3 (left keys 1,2,3)", count)
+	}
+}
+
+// TestNestedLoopJoin_SemiJoin_NoMatch verifies that left rows with no
+// matching right row are excluded from the semi-join result.
+func TestNestedLoopJoin_SemiJoin_NoMatch(t *testing.T) {
+	left := newMemOp([]pl.Row{
+		rowWithCols("l", []string{"k", "v"}, []int64{1, 10}),
+		rowWithCols("l", []string{"k", "v"}, []int64{2, 20}),
+		rowWithCols("l", []string{"k", "v"}, []int64{5, 50}),
+	})
+	right := newMemOp([]pl.Row{
+		rowWithCols("r", []string{"k", "v"}, []int64{1, 100}),
+		rowWithCols("r", []string{"k", "v"}, []int64{2, 200}),
+		rowWithCols("r", []string{"k", "v"}, []int64{3, 300}),
+	})
+	on := func(outer, inner *pl.Row) (bool, error) {
+		return colVal(t, outer, "l.k") == colVal(t, inner, "r.k"), nil
+	}
+	nlj := NewNestedLoopJoin(left, right, "l", "r", on, JoinKindSemi)
+	ctx := context.Background()
+	var keys []int64
+	for {
+		row, err := nlj.Next(ctx)
+		if err != nil {
+			if err == pl.ErrNoRows {
+				break
+			}
+			t.Fatalf("Next: %v", err)
+		}
+		keys = append(keys, colVal(t, &row, "l.k"))
+	}
+	// Expected: 2 rows (keys 1, 2) — key=5 has no match
+	if len(keys) != 2 || keys[0] != 1 || keys[1] != 2 {
+		t.Fatalf("semi-join no-match: got keys %v, want [1 2]", keys)
+	}
 }

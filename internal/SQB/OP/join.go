@@ -21,6 +21,7 @@ const (
 	JoinKindRight JoinKind = "RIGHT"
 	JoinKindFull  JoinKind = "FULL"
 	JoinKindCross JoinKind = "CROSS"
+	JoinKindSemi  JoinKind = "SEMI"
 )
 
 type NestedLoopJoin struct {
@@ -263,6 +264,9 @@ func (j *NestedLoopJoin) LeftTbl() string { return j.leftTbl }
 
 func (j *NestedLoopJoin) RightTbl() string { return j.rightTbl }
 
+// Kind returns the join kind (INNER, LEFT, RIGHT, FULL, CROSS, SEMI).
+func (j *NestedLoopJoin) Kind() JoinKind { return j.kind }
+
 func (j *NestedLoopJoin) SharedCols() []string { return j.sharedCols }
 
 func (j *NestedLoopJoin) SharedTypes() []LX.TokenType { return j.sharedTypes }
@@ -273,6 +277,49 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 	}
 	if j.limitRemaining > 0 && j.totalEmitted >= j.limitRemaining {
 		return Row{}, ErrNoRows
+	}
+	// REQ001235: semi-join — for each left row, probe the right side
+	// until a match is found, then return the left row immediately.
+	// Unlike INNER/LEFT/RIGHT/FULL, semi-join does NOT concatenate
+	// left and right columns — it emits only the left row.
+	if j.kind == JoinKindSemi {
+		for {
+			if j.leftRow == nil {
+				row, err := j.left.Next(ctx)
+				if err != nil {
+					if err == ErrNoRows {
+						return Row{}, ErrNoRows
+					}
+					return Row{}, err
+				}
+				j.leftRow = &row
+			}
+			// Probe the right side for this left row
+			for {
+				r, err := j.right.Next(ctx)
+				if err != nil {
+					if err == ErrNoRows {
+						// Exhausted right — advance to next left row
+						j.leftRow = nil
+						break
+					}
+					return Row{}, err
+				}
+				if j.on != nil {
+					ok, oerr := j.on(j.leftRow, &r)
+					if oerr != nil {
+						return Row{}, oerr
+					}
+					if !ok {
+						continue
+					}
+				}
+				// Match found — return left row, re-enter right on next call
+				result := *j.leftRow
+				j.leftRow = nil
+				return j.emitLimitCheck(result), nil
+			}
+		}
 	}
 	// REQ000743/744: for RIGHT/FULL OUTER JOIN, materialize the right
 	// side on first call so we can track which rows matched.
