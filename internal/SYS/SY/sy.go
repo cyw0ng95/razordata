@@ -173,6 +173,7 @@ func (e *Engine) open(ctx context.Context) (err error) {
 		MemTableSize:   ls.DefaultMemTableSize,
 		MmapFiles:      e.opts.MmapFiles,
 		BlockCacheSize: e.opts.BlockCacheSize,
+		SmallTableRows: int64(e.opts.SmallTableRows),
 	}); err != nil {
 		return err
 	}

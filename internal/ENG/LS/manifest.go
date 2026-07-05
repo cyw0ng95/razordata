@@ -33,6 +33,7 @@ type SSTFileMeta struct {
 	MaxKey    []byte
 	Size      int64
 	BloomBits int
+	RowCount  int64 // REQ001244: number of keys in this SST file
 }
 
 type manifest struct {
@@ -183,6 +184,8 @@ func encodeManifest(v *Version) ([]byte, error) {
 			buf.Write(b8[:])
 			binary.LittleEndian.PutUint64(b8[:], uint64(file.BloomBits))
 			buf.Write(b8[:])
+			binary.LittleEndian.PutUint64(b8[:], uint64(file.RowCount))
+			buf.Write(b8[:])
 		}
 	}
 
@@ -255,6 +258,12 @@ func parseManifest(data []byte) (*Version, error) {
 			}
 			v.levels[i][j].BloomBits = int(int64(binary.LittleEndian.Uint64(data[offset:])))
 			offset += 8
+
+			// REQ001244: RowCount — backward compatible (missing field = 0)
+			if offset+8 <= len(data) {
+				v.levels[i][j].RowCount = int64(binary.LittleEndian.Uint64(data[offset:]))
+				offset += 8
+			}
 		}
 	}
 

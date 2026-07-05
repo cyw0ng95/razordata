@@ -48,6 +48,7 @@ type Options struct {
 	FS             FS   // REQ001172: virtual filesystem for testability
 	MmapFiles      bool // REQ001227: zero-copy reads via mmap
 	BlockCacheSize int  // REQ001242: decompressed SST block cache, 0 = disabled
+	SmallTableRows int64 // REQ001244: skip SST reads for tables with ≤N rows
 }
 
 func DefaultOptions() Options {

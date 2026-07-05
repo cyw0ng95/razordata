@@ -96,8 +96,10 @@ func (eng *Engine) NewIterator(prefix []byte) RangeIter {
 
 	manifest := e.manifest
 	dir := e.dir
+	// REQ001244: check if all SST files have RowCount ≤ SmallTableRows
+	smallTableRows := e.opts.SmallTableRows
 	e.mu.RUnlock()
-	return newMergeIterator(memtables, manifest, dir, e.fs, prefix, e.blockCache)
+	return newMergeIterator(memtables, manifest, dir, e.fs, prefix, e.blockCache, smallTableRows)
 }
 
 // Close releases engine resources. Calling Close twice is a no-op.
@@ -221,7 +223,7 @@ type mergeIterator struct {
 	blockCache *BlockCache // REQ001242
 }
 
-func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, fs FS, prefix []byte, blockCache *BlockCache) *mergeIterator {
+func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, fs FS, prefix []byte, blockCache *BlockCache, smallTableRows int64) *mergeIterator {
 	mi := &mergeIterator{
 		fs:         fs,
 		manifest:   manifest,
@@ -229,11 +231,12 @@ func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, fs 
 		prefix:     append([]byte(nil), prefix...),
 		blockCache: blockCache,
 	}
-	mi.init(memtables)
+	skipSST := smallTableRows > 0 && manifestAllSmall(manifest, smallTableRows)
+	mi.init(memtables, skipSST)
 	return mi
 }
 
-func (mi *mergeIterator) init(memtables []*memtable) {
+func (mi *mergeIterator) init(memtables []*memtable, skipSST bool) {
 	activeMem := memtables[len(memtables)-1]
 
 	mi.sources = append(mi.sources, &memtableIter{it: activeMem.Iterator()})
@@ -242,7 +245,7 @@ func (mi *mergeIterator) init(memtables []*memtable) {
 		mi.sources = append(mi.sources, &memtableIter{it: mt.Iterator()})
 	}
 	v := mi.manifest.Current()
-	if v != nil {
+	if v != nil && !skipSST {
 		upper := prefixUpperBound(mi.prefix)
 		for _, level := range v.levels {
 			for _, f := range level {
@@ -275,6 +278,24 @@ func (mi *mergeIterator) init(memtables []*memtable) {
 			})
 		}
 	}
+}
+
+// manifestAllSmall returns true if the manifest has SST files and every
+// one of them has RowCount ≤ limit. Used by REQ001244 to skip SST reads
+// for small tables whose data lives entirely in frozen memtables.
+func manifestAllSmall(m *manifest, limit int64) bool {
+	v := m.Current()
+	if v == nil || len(v.levels) == 0 {
+		return false
+	}
+	for _, level := range v.levels {
+		for _, f := range level {
+			if f.RowCount > limit {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func fileOverlapsPrefix(minKey, maxKey, prefix, upper []byte) bool {

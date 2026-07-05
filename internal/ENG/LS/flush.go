@@ -107,6 +107,7 @@ func (fj *flushJob) updateManifest(tmpPath string) error {
 		MaxKey:    maxKey,
 		Size:      fi.Size(),
 		BloomBits: 10,
+		RowCount:  keyCount,
 	}
 
 	engineDir := filepath.Dir(filepath.Dir(tmpPath))

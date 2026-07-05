@@ -38,6 +38,7 @@ type Options struct {
 	EnableHugePages bool // REQ001207: use 2MB hugetlbfs for buffer pool
 	MmapFiles       bool // REQ001227: zero-copy reads via mmap
 	BlockCacheSize  int  // REQ001242: decompressed SST block cache; 0 = disabled, negative = default (1024)
+	SmallTableRows  int  // REQ001244: tables with ≤N rows served from memtables only; 0 = disabled, negative = default (256)
 
 	// Debug options — parsed but only acted on with -tags debug.
 	DebugDir           string

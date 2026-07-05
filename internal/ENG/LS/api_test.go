@@ -249,7 +249,7 @@ func TestMergeIterator_MemtableOnly(t *testing.T) {
 		t.Fatalf("newManifest: %v", err)
 	}
 
-	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil)
+	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
 	defer mi.Close()
 
 	var got []string
@@ -277,7 +277,7 @@ func TestMergeIterator_SkipsTombstones(t *testing.T) {
 		t.Fatalf("newManifest: %v", err)
 	}
 
-	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil)
+	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
 	defer mi.Close()
 
 	var got []string
@@ -307,7 +307,7 @@ func TestMergeIterator_Dedup(t *testing.T) {
 	}
 
 	// mt2 is "active" (last in slice → sources[0]) and wins dedup
-	mi := newMergeIterator([]*memtable{mt1, mt2}, m, dir, DefaultFS(), nil, nil)
+	mi := newMergeIterator([]*memtable{mt1, mt2}, m, dir, DefaultFS(), nil, nil, 0)
 	defer mi.Close()
 
 	var got []string
@@ -373,7 +373,7 @@ func TestMergeIterator_NextAfterClose(t *testing.T) {
 		t.Fatalf("newManifest: %v", err)
 	}
 
-	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil)
+	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
 	mi.Close()
 	if mi.Next() {
 		t.Error("Next() after Close returned true, want false")
