@@ -26,6 +26,27 @@ import (
 // This eliminates O(N) subquery re-evaluations for N-row result sets.
 var globalSubqueryCache sync.Map
 
+// subqueryKeyCache memoizes the serialized cache key for each
+// *PS.SubqueryExpr pointer. PL.SerializeKey hashes the full AST on
+// every call; for Sort key extraction that re-evaluates the same
+// subquery for every row, this saves repeated serializations.
+// REQ001202-idx.
+var subqueryKeyCache sync.Map
+
+// cachedSubqueryKey returns the cached serialized cache key for the
+// given SubqueryExpr, computing it on first use. Safe for concurrent
+// use; multiple callers may compute the same key concurrently but
+// only one value is stored. REQ001202-idx.
+func cachedSubqueryKey(e *PS.SubqueryExpr) string {
+	if v, ok := subqueryKeyCache.Load(e); ok {
+		return v.(string)
+	}
+	sel := e.Subquery.(*PS.Select)
+	key := PL.SerializeKey(sel)
+	subqueryKeyCache.Store(e, key)
+	return key
+}
+
 // correlatedSubqueryCache is an LRU cache for correlated scalar subqueries.
 // Key = "planKey:outerPKValues" (e.g., "SELECT...:1,5,10").
 // Values are cached subquery results (any).
@@ -753,15 +774,16 @@ func evalExists(e *PS.ExistsExpr, outer *Row, params []any) (any, error) {
 }
 
 func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (any, error) {
-	sel, ok := e.Subquery.(*PS.Select)
-	if !ok {
+	if _, ok := e.Subquery.(*PS.Select); !ok {
 		return nil, ErrSubquery
 	}
 
 	// Compute cache key from the serialized statement.
 	// Non-correlated subqueries (no outer column references)
 	// are cached globally to avoid O(N) re-evaluations.
-	key := PL.SerializeKey(sel)
+	// REQ001202-idx: cachedSubqueryKey memoizes the serialized key
+	// per SubqueryExpr pointer, avoiding repeated AST hashing.
+	key := cachedSubqueryKey(e)
 
 	// Try global cache first — only safe when outer is nil
 	// (no outer columns the subquery could reference).
