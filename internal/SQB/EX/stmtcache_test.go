@@ -15,7 +15,9 @@ import (
 // the cache hit path to skip the parser and AST allocator.
 func BenchmarkStmtCache_ParsedVsCached(b *testing.B) {
 	UnregisterAll()
+	ResetGlobalStmtCache()
 	defer UnregisterAll()
+	ResetGlobalStmtCache()
 
 	DT.RegisterTableSchema("t", []string{"id", "name"})
 	DT.TablesMu.Lock()
@@ -52,7 +54,9 @@ func BenchmarkStmtCache_ParsedVsCached(b *testing.B) {
 // stmtCache and planCache by pointer, eliminating per-query cache allocation.
 func BenchmarkSelect1_ExecutorCache_Shared(b *testing.B) {
 	UnregisterAll()
+	ResetGlobalStmtCache()
 	defer UnregisterAll()
+	ResetGlobalStmtCache()
 
 	DT.RegisterTableSchema("t", []string{"id", "name"})
 	DT.TablesMu.Lock()
@@ -86,7 +90,9 @@ func BenchmarkSelect1_ExecutorCache_Shared(b *testing.B) {
 // production code.
 func BenchmarkSelect1_ExecutorCache_PerSession(b *testing.B) {
 	UnregisterAll()
+	ResetGlobalStmtCache()
 	defer UnregisterAll()
+	ResetGlobalStmtCache()
 
 	DT.RegisterTableSchema("t", []string{"id", "name"})
 	DT.TablesMu.Lock()
@@ -120,7 +126,9 @@ func BenchmarkSelect1_ExecutorCache_PerSession(b *testing.B) {
 // gets its own planCache initialized at the root's maxSize.
 func TestShallowCopy_SharesStmtCache(t *testing.T) {
 	UnregisterAll()
+	ResetGlobalStmtCache()
 	defer UnregisterAll()
+	ResetGlobalStmtCache()
 
 	root := NewExecutor()
 
@@ -161,7 +169,9 @@ func drainStream(rows *streamIterator) {
 // the cache on repeated identical SQL.
 func TestStmtCache_QueryStream(t *testing.T) {
 	UnregisterAll()
+	ResetGlobalStmtCache()
 	defer UnregisterAll()
+	ResetGlobalStmtCache()
 
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
@@ -212,6 +222,7 @@ func TestStmtCache_QueryStream(t *testing.T) {
 // never end up in the cache.
 func TestStmtCache_InvalidationOnError(t *testing.T) {
 	UnregisterAll()
+	ResetGlobalStmtCache()
 	defer UnregisterAll()
 
 	ex := NewExecutor()
@@ -240,7 +251,9 @@ func TestStmtCache_InvalidationOnError(t *testing.T) {
 // non-existent table.
 func TestStmtCache_DDLInvalidates(t *testing.T) {
 	UnregisterAll()
+	ResetGlobalStmtCache()
 	defer UnregisterAll()
+	ResetGlobalStmtCache()
 
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
@@ -290,7 +303,9 @@ func TestStmtCache_DDLInvalidates(t *testing.T) {
 // the AST comes from a higher-level cache.
 func TestQueryStreamFromAST_BypassParser(t *testing.T) {
 	UnregisterAll()
+	ResetGlobalStmtCache()
 	defer UnregisterAll()
+	ResetGlobalStmtCache()
 
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
@@ -333,7 +348,9 @@ func TestQueryStreamFromAST_BypassParser(t *testing.T) {
 // after the first query and hit on subsequent identical queries.
 func TestPreparedCache_HitRate(t *testing.T) {
 	UnregisterAll()
+	ResetGlobalStmtCache()
 	defer UnregisterAll()
+	ResetGlobalStmtCache()
 
 	DT.RegisterTableSchema("t", []string{"id", "name"})
 	DT.TablesMu.Lock()
@@ -440,7 +457,9 @@ func TestPreparedCache_HitRate(t *testing.T) {
 // invalidate cached plans (schema version change changes the memo key).
 func TestPreparedCache_DDLInvalidates(t *testing.T) {
 	UnregisterAll()
+	ResetGlobalStmtCache()
 	defer UnregisterAll()
+	ResetGlobalStmtCache()
 
 	DT.RegisterTableSchema("t", []string{"id"})
 	DT.TablesMu.Lock()
@@ -490,7 +509,9 @@ func TestPreparedCache_DDLInvalidates(t *testing.T) {
 func TestPreparedCache_EdgeCases(t *testing.T) {
 	t.Run("empty_result", func(t *testing.T) {
 		UnregisterAll()
+		ResetGlobalStmtCache()
 		defer UnregisterAll()
+		ResetGlobalStmtCache()
 
 		DT.RegisterTableSchema("t", []string{"id"})
 		ex := NewExecutor()
@@ -508,7 +529,9 @@ func TestPreparedCache_EdgeCases(t *testing.T) {
 
 	t.Run("invalid_sql_not_cached", func(t *testing.T) {
 		UnregisterAll()
+		ResetGlobalStmtCache()
 		defer UnregisterAll()
+		ResetGlobalStmtCache()
 
 		ex := NewExecutor()
 		ctx := context.Background()
@@ -529,7 +552,9 @@ func TestPreparedCache_EdgeCases(t *testing.T) {
 
 	t.Run("disabled_cache", func(t *testing.T) {
 		UnregisterAll()
+		ResetGlobalStmtCache()
 		defer UnregisterAll()
+		ResetGlobalStmtCache()
 
 		DT.RegisterTableSchema("d", []string{"x"})
 		DT.TablesMu.Lock()
@@ -553,7 +578,9 @@ func TestPreparedCache_EdgeCases(t *testing.T) {
 
 	t.Run("cache_lru_eviction", func(t *testing.T) {
 		UnregisterAll()
+		ResetGlobalStmtCache()
 		defer UnregisterAll()
+		ResetGlobalStmtCache()
 
 		DT.RegisterTableSchema("e", []string{"id"})
 		DT.TablesMu.Lock()
@@ -584,7 +611,9 @@ func TestPreparedCache_EdgeCases(t *testing.T) {
 // between plan cache hits and misses. REQ001011.
 func BenchmarkPreparedCache_HitVsMiss(b *testing.B) {
 	UnregisterAll()
+	ResetGlobalStmtCache()
 	defer UnregisterAll()
+	ResetGlobalStmtCache()
 
 	DT.RegisterTableSchema("t", []string{"id", "name", "value"})
 	DT.TablesMu.Lock()
@@ -633,4 +662,31 @@ func BenchmarkPreparedCache_HitVsMiss(b *testing.B) {
 			}
 		}
 	})
+}
+
+func BenchmarkPrepare_GlobalCache(b *testing.B) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ResetGlobalStmtCache()
+
+	DT.RegisterTableSchema("t", []string{"id"})
+	DT.TablesMu.Lock()
+	for i := 0; i < 10; i++ {
+		DT.Tables["t"] = append(DT.Tables["t"], DT.Row{Cols: []string{"id"}, Data: []DT.Value{NewIntValue(int64(i))}})
+	}
+	DT.TablesMu.Unlock()
+
+	ctx := context.Background()
+	sql := "SELECT id FROM t"
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		ex := NewExecutor()
+		rows, err := ex.QueryStream(ctx, sql)
+		if err != nil {
+			b.Fatal(err)
+		}
+		drainStream(rows)
+	}
 }

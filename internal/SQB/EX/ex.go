@@ -137,6 +137,15 @@ type planCacheEntry struct {
 	result *pl.PlanResult
 }
 
+// globalStmtCache is the shared statement cache across all Executors.
+// REQ001223: eliminates per-Executor stmtCache allocation (171 MB per query).
+// Initialized lazily on first NewExecutor call.
+var globalStmtCache = &stmtCache{
+	entries: make(map[string]*stmtCacheEntry, 1024),
+	lru:     make([]*stmtCacheEntry, 0, 1024),
+	maxSize: 1024,
+}
+
 // stmtCache is a thread-safe LRU cache for parsed statements.
 // REQ001220: shared across ShallowCopy clones via pointer.
 type stmtCache struct {
@@ -392,14 +401,8 @@ func (e *Executor) WithMaxResultRows(limit int64) *Executor {
 
 // initStmtCache initializes the statement cache. Must be called before use.
 func (e *Executor) initStmtCache(maxSize int) {
-	if maxSize <= 0 {
-		maxSize = 256
-	}
-	e.stmtCache = &stmtCache{
-		entries: make(map[string]*stmtCacheEntry, maxSize),
-		lru:     make([]*stmtCacheEntry, 0, maxSize),
-		maxSize: maxSize,
-	}
+	// REQ001223: use globalStmtCache across all Executors.
+	e.stmtCache = globalStmtCache
 }
 
 // getCachedStmt looks up a cached parsed statement. Returns nil if not found.
@@ -1872,4 +1875,13 @@ func (e *Executor) StmtCacheStats() *AD.CacheStats {
 		Evictions: 0,
 		MaxSize:   size,
 	}
+}
+
+// ResetGlobalStmtCache clears the global shared statement cache.
+// Used in tests to prevent cross-test contamination. REQ001223.
+func ResetGlobalStmtCache() {
+	globalStmtCache.mu.Lock()
+	defer globalStmtCache.mu.Unlock()
+	globalStmtCache.entries = make(map[string]*stmtCacheEntry, 1024)
+	globalStmtCache.lru = make([]*stmtCacheEntry, 0, 1024)
 }
