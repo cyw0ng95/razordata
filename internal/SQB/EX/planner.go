@@ -2169,6 +2169,21 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	// and simplify tautologies/contradictions.
 	whereExpr = p.resolveAliasesAndFold(whereExpr)
 
+	// REQ001234: cross-clause CSE — detect common subexpressions across
+	// SELECT, WHERE, and ORDER BY; rewrite to reference precomputed slots.
+	cse := p.analyzeCrossClauseCSE(s)
+	if cse != nil {
+		if whereExpr != nil {
+			whereExpr = cse.rewriteExprWithCSE(cloneExpr(whereExpr))
+		}
+		for i := range s.Cols {
+			s.Cols[i] = cse.rewriteExprWithCSE(cloneExpr(s.Cols[i]))
+		}
+		for i := range s.OrderBy {
+			s.OrderBy[i].Expr = cse.rewriteExprWithCSE(cloneExpr(s.OrderBy[i].Expr))
+		}
+	}
+
 	var scan DT.Operator
 	if p.store != nil {
 		scan, whereExpr = p.planSelectScan(s, whereExpr)
@@ -2322,6 +2337,17 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 
 	if len(s.Joins) > 0 {
 		current = p.planSelectJoins(s, filteredScan, pushedPredicates, crossTableConjuncts, crossTablePredicates, extractedPreds)
+	}
+
+	// REQ001234: insert precompute operator for common subexpressions.
+	if cse != nil {
+		preCols := make([]PS.Expr, len(cse.commonExprs))
+		for i, e := range cse.commonExprs {
+			h := exprHash(e)
+			alias := cse.slotAliases[h]
+			preCols[i] = &PS.AliasedExpr{Expr: e, Alias: alias}
+		}
+		current = OP.NewProject(current, preCols)
 	}
 
 	if whereExpr != nil {
@@ -3506,6 +3532,290 @@ func eliminateCommonSubexpressions(where PS.Expr) PS.Expr {
 		}
 	}
 	return result
+}
+
+// ---------------------------------------------------------------------------
+// Cross-clause Common Subexpression Elimination (CSE) — REQ001234
+// ---------------------------------------------------------------------------
+
+type cseClause int
+
+const (
+	cseClauseNone   cseClause = 0
+	cseClauseSelect cseClause = 1
+	cseClauseWhere  cseClause = 2
+	cseClauseOrderBy cseClause = 4
+)
+
+type csePlan struct {
+	commonExprs []PS.Expr
+	slotAliases map[string]string
+}
+
+// analyzeCrossClauseCSE finds subexpressions that appear in 2+ clauses
+// (SELECT, WHERE, ORDER BY). Each common expression will be precomputed
+// once, and downstream expressions are rewritten to reference it.
+func (p *Planner) analyzeCrossClauseCSE(s *PS.Select) *csePlan {
+	hashClauses := make(map[string]cseClause)
+	hashExpr := make(map[string]PS.Expr)
+
+	// walk registers the root expression e and then descends into its children.
+	// clause indicates which clause e belongs to.
+	var walk func(PS.Expr, cseClause)
+	walk = func(e PS.Expr, clause cseClause) {
+		if e == nil {
+			return
+		}
+		switch x := e.(type) {
+		case *PS.BinaryExpr:
+			// Register the compound expression, then walk children
+			if _, ok := hashExpr[exprHash(e)]; ok {
+				hashClauses[exprHash(e)] |= clause
+			} else {
+				hashExpr[exprHash(e)] = e
+				hashClauses[exprHash(e)] = clause
+			}
+			walk(x.Left, clause)
+			walk(x.Right, clause)
+		case *PS.UnaryExpr:
+			// Register and descend into operand
+			if _, ok := hashExpr[exprHash(e)]; ok {
+				hashClauses[exprHash(e)] |= clause
+			} else {
+				hashExpr[exprHash(e)] = e
+				hashClauses[exprHash(e)] = clause
+			}
+			walk(x.Operand, clause)
+		case *PS.FunctionCall:
+			if _, ok := hashExpr[exprHash(e)]; ok {
+				hashClauses[exprHash(e)] |= clause
+			} else {
+				hashExpr[exprHash(e)] = e
+				hashClauses[exprHash(e)] = clause
+			}
+			for _, a := range x.Args {
+				// For function args, only descend if the arg is compound
+				switch a.(type) {
+				case *PS.BinaryExpr, *PS.UnaryExpr, *PS.FunctionCall,
+					*PS.CastExpr, *PS.BetweenExpr, *PS.CaseExpr,
+					*PS.AliasedExpr:
+					walk(a, clause)
+				}
+			}
+		case *PS.CastExpr:
+			if _, ok := hashExpr[exprHash(e)]; ok {
+				hashClauses[exprHash(e)] |= clause
+			} else {
+				hashExpr[exprHash(e)] = e
+				hashClauses[exprHash(e)] = clause
+			}
+			walk(x.Expr, clause)
+		case *PS.InExpr:
+			if _, ok := hashExpr[exprHash(e)]; ok {
+				hashClauses[exprHash(e)] |= clause
+			} else {
+				hashExpr[exprHash(e)] = e
+				hashClauses[exprHash(e)] = clause
+			}
+			walk(x.Expr, clause)
+			for _, a := range x.List {
+				switch a.(type) {
+				case *PS.BinaryExpr, *PS.UnaryExpr, *PS.FunctionCall,
+					*PS.CastExpr, *PS.BetweenExpr, *PS.CaseExpr,
+					*PS.AliasedExpr:
+					walk(a, clause)
+				}
+			}
+		case *PS.BetweenExpr:
+			if _, ok := hashExpr[exprHash(e)]; ok {
+				hashClauses[exprHash(e)] |= clause
+			} else {
+				hashExpr[exprHash(e)] = e
+				hashClauses[exprHash(e)] = clause
+			}
+			walk(x.Expr, clause)
+			walk(x.Low, clause)
+			walk(x.High, clause)
+		case *PS.CaseExpr:
+			if _, ok := hashExpr[exprHash(e)]; ok {
+				hashClauses[exprHash(e)] |= clause
+			} else {
+				hashExpr[exprHash(e)] = e
+				hashClauses[exprHash(e)] = clause
+			}
+			walk(x.Expr, clause)
+			for _, w := range x.WhenList {
+				walk(w.Cond, clause)
+				walk(w.Then, clause)
+			}
+			walk(x.Else, clause)
+		case *PS.ListExpr:
+			for _, a := range x.Items {
+				switch a.(type) {
+				// For list items, only descend into compound expressions
+				case *PS.BinaryExpr, *PS.UnaryExpr, *PS.FunctionCall,
+					*PS.CastExpr, *PS.BetweenExpr, *PS.CaseExpr,
+					*PS.AliasedExpr:
+					walk(a, clause)
+				}
+			}
+		case *PS.AliasedExpr:
+			if _, ok := hashExpr[exprHash(e)]; ok {
+				hashClauses[exprHash(e)] |= clause
+			} else {
+				hashExpr[exprHash(e)] = e
+				hashClauses[exprHash(e)] = clause
+			}
+			walk(x.Expr, clause)
+		case *PS.AggregateFunc:
+			// Skip aggregates — they have their own evaluation semantics
+		case *PS.ExistsExpr, *PS.SubqueryExpr:
+			// Skip subqueries — they are PS.Stmt, not PS.Expr
+		}
+	}
+
+	// Walk each clause's expression trees
+	for _, e := range s.Cols {
+		walk(e, cseClauseSelect)
+	}
+	if s.Where != nil {
+		conjuncts := RE.SplitAnd(s.Where)
+		for _, c := range conjuncts {
+			walk(c, cseClauseWhere)
+		}
+	}
+	for _, oi := range s.OrderBy {
+		walk(oi.Expr, cseClauseOrderBy)
+	}
+
+	// Collect common subexpressions
+	var commonExprs []PS.Expr
+	slotAliases := make(map[string]string)
+	idx := 0
+	for h, clauses := range hashClauses {
+		if clauses == 0 {
+			continue
+		}
+		// Must appear in 2+ clauses
+		bits := 0
+		if clauses&cseClauseSelect != 0 {
+			bits++
+		}
+		if clauses&cseClauseWhere != 0 {
+			// The WHERE conjunct we walked IS the expression; it's
+			// already counted above via hashClauses.
+			bits++
+		}
+		if clauses&cseClauseOrderBy != 0 {
+			// Same for ORDER BY.
+			// NOTE: For an expression to be "shared" across clauses,
+			// it must appear in the SELECT list AND in WHERE or ORDER BY.
+			// The bits count correctly handles this.
+			bits++
+		}
+		if bits < 2 {
+			continue
+		}
+		// Skip simple identifiers and literals
+		switch hashExpr[h].(type) {
+		case *PS.Ident, *PS.QualifiedName, *PS.NumberLiteral, *PS.FloatLiteral,
+			*PS.StringLiteral, *PS.BoolLiteral, *PS.NullLiteral, *PS.StarExpr:
+			continue
+		}
+		alias := fmt.Sprintf("__cse%d", idx)
+		slotAliases[h] = alias
+		commonExprs = append(commonExprs, hashExpr[h])
+		idx++
+	}
+
+	if len(commonExprs) == 0 {
+		return nil
+	}
+	return &csePlan{
+		commonExprs: commonExprs,
+		slotAliases: slotAliases,
+	}
+}
+
+// rewriteExprWithCSE replaces common subexpressions with slot references
+// in an expression tree.
+func (p *csePlan) rewriteExprWithCSE(e PS.Expr) PS.Expr {
+	if e == nil {
+		return nil
+	}
+	// Check if this entire expression is a common subexpression
+	h := exprHash(e)
+	if alias, ok := p.slotAliases[h]; ok {
+		return &PS.Ident{Name: alias}
+	}
+	switch x := e.(type) {
+	case *PS.BinaryExpr:
+		return &PS.BinaryExpr{
+			Left:  p.rewriteExprWithCSE(x.Left),
+			Op:    x.Op,
+			Right: p.rewriteExprWithCSE(x.Right),
+		}
+	case *PS.UnaryExpr:
+		return &PS.UnaryExpr{Op: x.Op, Operand: p.rewriteExprWithCSE(x.Operand)}
+	case *PS.FunctionCall:
+		args := make([]PS.Expr, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = p.rewriteExprWithCSE(a)
+		}
+		return &PS.FunctionCall{Name: x.Name, Args: args}
+	case *PS.CastExpr:
+		// Cast: the entire cast might be a CSE, or its operand might be
+		return &PS.CastExpr{Expr: p.rewriteExprWithCSE(x.Expr), Type: x.Type}
+	case *PS.InExpr:
+		return &PS.InExpr{
+			Expr: p.rewriteExprWithCSE(x.Expr),
+			List: func() []PS.Expr {
+				list := make([]PS.Expr, len(x.List))
+				for i, a := range x.List {
+					list[i] = p.rewriteExprWithCSE(a)
+				}
+				return list
+			}(),
+		}
+	case *PS.BetweenExpr:
+		return &PS.BetweenExpr{
+			Expr: p.rewriteExprWithCSE(x.Expr),
+			Low:  p.rewriteExprWithCSE(x.Low),
+			High: p.rewriteExprWithCSE(x.High),
+		}
+	case *PS.CaseExpr:
+		return &PS.CaseExpr{
+			Expr: p.rewriteExprWithCSE(x.Expr),
+			WhenList: func() []PS.WhenClause {
+				wl := make([]PS.WhenClause, len(x.WhenList))
+				for i, w := range x.WhenList {
+					wl[i] = PS.WhenClause{
+						Cond: p.rewriteExprWithCSE(w.Cond),
+						Then: p.rewriteExprWithCSE(w.Then),
+					}
+				}
+				return wl
+			}(),
+			Else: p.rewriteExprWithCSE(x.Else),
+		}
+	case *PS.ListExpr:
+		return &PS.ListExpr{
+			Items: func() []PS.Expr {
+				items := make([]PS.Expr, len(x.Items))
+				for i, a := range x.Items {
+					items[i] = p.rewriteExprWithCSE(a)
+				}
+				return items
+			}(),
+		}
+	case *PS.AliasedExpr:
+		return &PS.AliasedExpr{
+			Expr:  p.rewriteExprWithCSE(x.Expr),
+			Alias: x.Alias,
+		}
+	default:
+		return x
+	}
 }
 
 // hasAnyAggregate checks if any column in the select list contains
