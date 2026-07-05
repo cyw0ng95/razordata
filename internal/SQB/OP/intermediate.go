@@ -1008,64 +1008,125 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 				}
 			}
 		}
-		keyCache := make([][]Value, n)
-		flatKeys := make([]Value, n*numKeys)
-		for i, r := range s.buf {
-			sk := flatKeys[i*numKeys : (i+1)*numKeys]
-			var err error
-			for j, k := range s.keys {
-				var v Value
-				if keyAccess[j].isSlot {
-					v = r.Data[keyAccess[j].slotIdx]
-				} else {
-					v, err = EV.EvalValue(k.Expr, &r, s.params)
-					if err != nil {
-						return Row{}, err
+		// REQ001232: detect int-only sort keys for direct int64 compare
+		allIntKeys := false
+		if n > 0 && numKeys > 0 {
+			allIntKeys = true
+			for j := range s.keys {
+				if !keyAccess[j].isSlot {
+					allIntKeys = false
+					break
+				}
+				idx := keyAccess[j].slotIdx
+				if idx >= 0 && idx < len(s.buf[0].Types) {
+					t := s.buf[0].Types[idx]
+					if t == LX.T_INT_KW || t == LX.T_BIGINT {
+						continue
 					}
 				}
-				sk[j] = v
+				allIntKeys = false
+				break
 			}
-			keyCache[i] = sk
 		}
 
-		// REQ001050: parallel sort when pool is available and > threshold
-		if s.pool != nil && n > 10000 {
-			if err := s.parallelSort(ctx, keyCache); err != nil {
-				return Row{}, err
+		if allIntKeys {
+			// Int-only path: extract int64 keys directly, compare with <
+			flatIntKeys := make([]int64, n*numKeys)
+			intKeyCache := make([][]int64, n)
+			for i, r := range s.buf {
+				ik := flatIntKeys[i*numKeys : (i+1)*numKeys]
+				for j := range s.keys {
+					ik[j] = r.Data[keyAccess[j].slotIdx].I64
+				}
+				intKeyCache[i] = ik
 			}
-		} else {
 			indices := make([]int, n)
 			for i := range indices {
 				indices[i] = i
 			}
 			slices.SortStableFunc(indices, func(ai, bi int) int {
-				ka, kb := keyCache[ai], keyCache[bi]
+				ka, kb := intKeyCache[ai], intKeyCache[bi]
 				for ki := range ka {
-					if s.keys[ki].NullsOrder != 0 {
-						if ka[ki].IsNull() && !kb[ki].IsNull() {
-							return -int(s.keys[ki].NullsOrder)
+					if ka[ki] < kb[ki] {
+						if s.keys[ki].Desc {
+							return 1
 						}
-						if kb[ki].IsNull() && !ka[ki].IsNull() {
-							return int(s.keys[ki].NullsOrder)
+						return -1
+					}
+					if ka[ki] > kb[ki] {
+						if s.keys[ki].Desc {
+							return -1
 						}
+						return 1
 					}
-					c := pl.CompareValue(ka[ki], kb[ki])
-					if c == 0 {
-						continue
-					}
-					if s.keys[ki].Desc {
-						return -c
-					}
-					return c
 				}
 				return 0
 			})
-
 			reordered := make([]Row, n)
 			for i, idx := range indices {
 				reordered[i] = s.buf[idx]
 			}
 			s.buf = reordered
+		} else {
+			keyCache := make([][]Value, n)
+			flatKeys := make([]Value, n*numKeys)
+			for i, r := range s.buf {
+				sk := flatKeys[i*numKeys : (i+1)*numKeys]
+				var err error
+				for j, k := range s.keys {
+					var v Value
+					if keyAccess[j].isSlot {
+						v = r.Data[keyAccess[j].slotIdx]
+					} else {
+						v, err = EV.EvalValue(k.Expr, &r, s.params)
+						if err != nil {
+							return Row{}, err
+						}
+					}
+					sk[j] = v
+				}
+				keyCache[i] = sk
+			}
+
+			// REQ001050: parallel sort when pool is available and > threshold
+			if s.pool != nil && n > 10000 {
+				if err := s.parallelSort(ctx, keyCache); err != nil {
+					return Row{}, err
+				}
+			} else {
+				indices := make([]int, n)
+				for i := range indices {
+					indices[i] = i
+				}
+				slices.SortStableFunc(indices, func(ai, bi int) int {
+					ka, kb := keyCache[ai], keyCache[bi]
+					for ki := range ka {
+						if s.keys[ki].NullsOrder != 0 {
+							if ka[ki].IsNull() && !kb[ki].IsNull() {
+								return -int(s.keys[ki].NullsOrder)
+							}
+							if kb[ki].IsNull() && !ka[ki].IsNull() {
+								return int(s.keys[ki].NullsOrder)
+							}
+						}
+						c := pl.CompareValue(ka[ki], kb[ki])
+						if c == 0 {
+							continue
+						}
+						if s.keys[ki].Desc {
+							return -c
+						}
+						return c
+					}
+					return 0
+				})
+
+				reordered := make([]Row, n)
+				for i, idx := range indices {
+					reordered[i] = s.buf[idx]
+				}
+				s.buf = reordered
+			}
 		}
 		s.materialized = true
 	}

@@ -6332,6 +6332,17 @@ func (p *Planner) planLimitOffset(s *PS.Select, current DT.Operator) DT.Operator
 			}
 			current = OP.NewLimit(current, n)
 			propagateLimitToNLJ(current, n)
+
+			// REQ001230: detect Sort + Limit pattern → replace with TopNSort.
+			// Only applies to simple ORDER BY + LIMIT (no offset wrapping).
+			if s.Offset == nil || s.OffsetFirst {
+				if lim, ok := current.(*OP.Limit); ok {
+					inner := lim.Child()
+					if sort, ok := inner.(*OP.Sort); ok {
+						current = OP.NewTopNSort(sort.Child(), sort.Keys(), n)
+					}
+				}
+			}
 		}
 	}
 	return current

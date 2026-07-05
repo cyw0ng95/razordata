@@ -511,7 +511,8 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 		// mutated after INSERT, and downstream operators (Filter, Project,
 		// Join) read from Data but never write to it in-place.
 		if !s.shallow {
-			out.Data = append([]Value(nil), r.Data...)
+			out.Data = getRowData(len(r.Data))
+			copy(out.Data, r.Data)
 		}
 		// REQ001080: prune unused columns from the output row.
 		if s.usedCols != nil && !s.shallow {
