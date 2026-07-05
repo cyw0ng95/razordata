@@ -3,8 +3,8 @@ package EX
 import (
 	"strings"
 
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -69,6 +69,16 @@ func computeSchema(op DT.Operator) []string {
 	case *OP.SeqScan:
 		// Get schema from table metadata
 		schema := tableSchema(o.Table())
+		// REQ001229: when RequestedCols is set, return the narrowed
+		// schema so upstream operators resolve SlotIdx correctly.
+		if schema != nil && o.GetRequestedCols() != nil {
+			rc := o.GetRequestedCols()
+			narrowed := make([]string, len(rc))
+			for i, idx := range rc {
+				narrowed[i] = schema[idx]
+			}
+			return narrowed
+		}
 		return schema
 
 	case *OP.IndexScan:

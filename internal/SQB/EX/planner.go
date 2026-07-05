@@ -2208,6 +2208,22 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	if len(s.Joins) == 0 && !hasAnyWindowFunc(s.Cols) {
 		if usedNames := collectReferencedColNames(s); usedNames != nil {
 			if ss, ok := scan.(*OP.SeqScan); ok {
+				// REQ001229: projection pushdown — compute column indices
+				// so cloneRow decodes only the requested columns.
+				if tblCols := tableSchema(ss.Table()); tblCols != nil {
+					indices := make([]int, 0, len(usedNames))
+					for _, name := range usedNames {
+						for j, col := range tblCols {
+							if strings.EqualFold(col, name) {
+								indices = append(indices, j)
+								break
+							}
+						}
+					}
+					if len(indices) > 0 {
+						ss.RequestedCols = indices
+					}
+				}
 				ss.WithUsedCols(usedNames)
 			}
 		}
@@ -4529,7 +4545,7 @@ func (p *Planner) joinPredSel(pred PS.Expr, rowCount float64) float64 {
 		if len(leaves) < 2 {
 			return 0.5
 		}
-// Group equalities by column.
+		// Group equalities by column.
 		type colEq struct {
 			col   string
 			ndv   float64

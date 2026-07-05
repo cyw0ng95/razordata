@@ -133,6 +133,10 @@ type SeqScan struct {
 	usedColSet map[string]bool
 	usedColIdx []int // index into the full schema
 
+	// REQ001229: projection pushdown — when set, only these column indices
+	// are decoded from the row by cloneRow. Nil means all columns.
+	RequestedCols []int
+
 	// REQ001221: rowArena replaces decodeBuf for bump-pointer
 	rowArena *DT.RowArena
 
@@ -476,12 +480,43 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 		TableName: s.table,
 		ColIndex:  schema.colIndex,
 	}
-	// REQ000840: when shallow, reuse source row Data without copying.
-	// Safe for read-only queries — source rows in DT.Tables[] are never
-	// mutated after INSERT, and downstream operators (Filter, Project,
-	// Join) read from Data but never write to it in-place.
-	if !s.shallow {
-		out.Data = append([]Value(nil), r.Data...)
+	// REQ001229: projection pushdown — when RequestedCols is set, build
+	// the output row with only the requested column indices. This avoids
+	// decoding all columns only to prune them afterwards.
+	if s.RequestedCols != nil {
+		cols := schema.cols
+		types := schema.types
+		rc := s.RequestedCols
+		newCols := make([]string, len(rc))
+		newTypes := make([]LX.TokenType, len(rc))
+		newData := make([]Value, len(rc))
+		for i, idx := range rc {
+			newCols[i] = cols[idx]
+			if idx < len(types) {
+				newTypes[i] = types[idx]
+			}
+			newData[i] = r.Data[idx]
+		}
+		newIndex := make(map[string]int, len(rc)*2)
+		for i, c := range newCols {
+			newIndex[c] = i
+		}
+		out.Cols = newCols
+		out.Types = newTypes
+		out.Data = newData
+		out.ColIndex = newIndex
+	} else {
+		// REQ000840: when shallow, reuse source row Data without copying.
+		// Safe for read-only queries — source rows in DT.Tables[] are never
+		// mutated after INSERT, and downstream operators (Filter, Project,
+		// Join) read from Data but never write to it in-place.
+		if !s.shallow {
+			out.Data = append([]Value(nil), r.Data...)
+		}
+		// REQ001080: prune unused columns from the output row.
+		if s.usedCols != nil && !s.shallow {
+			out = pruneRowCols(out, s.usedCols, s.usedColSet)
+		}
 	}
 	if s.planner != nil {
 		out.Planner = s.planner
@@ -494,10 +529,6 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 			out = prefixRowCols(out, s.alias)
 		}
 		out.TableName = s.alias
-	}
-	// REQ001080: prune unused columns from the output row.
-	if s.usedCols != nil && !s.shallow {
-		out = pruneRowCols(out, s.usedCols, s.usedColSet)
 	}
 	return out
 }
@@ -1315,6 +1346,7 @@ func (s *SeqScan) Store() DT.Store             { return s.store }
 func (s *SeqScan) Schema() *DT.StoreSchema     { return s.schema }
 func (s *SeqScan) UsedCols() []string          { return s.usedCols }
 func (s *SeqScan) UsedColSet() map[string]bool { return s.usedColSet }
+func (s *SeqScan) GetRequestedCols() []int    { return s.RequestedCols }
 func (s *SeqScan) Btree() *id.BTree            { return nil } // SeqScan has no B-tree
 
 // Accessor methods for IndexScan fields used by EX plan_node and strategy.
