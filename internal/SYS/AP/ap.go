@@ -8,6 +8,7 @@ import (
 	"time"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SYS/BK"
 )
@@ -148,7 +149,7 @@ func NewRows(cols []string, types []LX.TokenType, next func() (Row, error), clos
 	return &Rows{cols: cols, types: types, next: next, closer: closer}
 }
 
-func (r *Rows) Cols() []string { return r.cols }
+func (r *Rows) Cols() []string        { return r.cols }
 func (r *Rows) Types() []LX.TokenType { return r.types }
 
 func (r *Rows) Next() (Row, error) {
@@ -234,13 +235,123 @@ type SessionStats struct {
 	ActiveTXN    bool
 }
 
+// Deprecated: re-exported from LOG/EC for backward compatibility.
 var (
-	ErrNoActiveTxn      = New(KindConstraint, "no active transaction")
-	ErrUnknownSavepoint = New(KindConstraint, "unknown savepoint")
-	ErrConstraint       = New(KindConstraint, "constraint violation")
+	ErrNoActiveTxn      = EC.New(EC.KindConstraint, "no active transaction")
+	ErrUnknownSavepoint = EC.New(EC.KindConstraint, "unknown savepoint")
+	ErrConstraint       = EC.New(EC.KindConstraint, "constraint violation")
 )
 
 func (r *Row) Len() int { return len(r.Cols) }
+
+// Re-exported error types from LOG/EC for backward compatibility.
+// New code should import LOG/EC directly.
+type Error = EC.Error
+type Kind = EC.Kind
+type Code = EC.Code
+type SQLSTATE = EC.SQLSTATE
+type Module = EC.Module
+type Layer = EC.Layer
+type Classification = EC.Classification
+
+// Re-exported Kind constants from LOG/EC.
+const (
+	// Deprecated: use EC.Kind* directly.
+	KindNotFound          Kind = EC.KindNotFound
+	KindDuplicateKey      Kind = EC.KindDuplicateKey
+	KindLocked            Kind = EC.KindLocked
+	KindCorrupt           Kind = EC.KindCorrupt
+	KindSyntax            Kind = EC.KindSyntax
+	KindTypeMismatch      Kind = EC.KindTypeMismatch
+	KindTxAborted         Kind = EC.KindTxAborted
+	KindIO                Kind = EC.KindIO
+	KindUpgradeRequired   Kind = EC.KindUpgradeRequired
+	KindReadOnly          Kind = EC.KindReadOnly
+	KindDeadlineExceeded  Kind = EC.KindDeadlineExceeded
+	KindConstraint        Kind = EC.KindConstraint
+	KindClosed            Kind = EC.KindClosed
+	KindInvalidOptions    Kind = EC.KindInvalidOptions
+	KindInternal          Kind = EC.KindInternal
+	KindNotImplemented    Kind = EC.KindNotImplemented
+	KindConflict          Kind = EC.KindConflict
+	KindResourceExhausted Kind = EC.KindResourceExhausted
+	KindParse             Kind = EC.KindParse
+)
+
+// Re-exported Entity constants from LOG/EC.
+const (
+	EntityTable      = EC.EntityTable
+	EntityColumn     = EC.EntityColumn
+	EntityKey        = EC.EntityKey
+	EntitySavepoint  = EC.EntitySavepoint
+	EntityIndex      = EC.EntityIndex
+	EntityView       = EC.EntityView
+	EntityTrigger    = EC.EntityTrigger
+	EntityConstraint = EC.EntityConstraint
+	EntityRow        = EC.EntityRow
+)
+
+// Re-exported Layer constants from LOG/EC.
+const (
+	LayerSQL    Layer = EC.LayerSQL
+	LayerTXN    Layer = EC.LayerTXN
+	LayerENG    Layer = EC.LayerENG
+	LayerWAL    Layer = EC.LayerWAL
+	LayerFIL    Layer = EC.LayerFIL
+	LayerMEM    Layer = EC.LayerMEM
+	LayerLOG    Layer = EC.LayerLOG
+	LayerIO     Layer = EC.LayerIO
+	LayerConfig Layer = EC.LayerConfig
+	LayerINT    Layer = EC.LayerINT
+)
+
+// Re-exported Op constants from LOG/EC.
+const (
+	OpSelect     = EC.OpSelect
+	OpInsert     = EC.OpInsert
+	OpUpdate     = EC.OpUpdate
+	OpDelete     = EC.OpDelete
+	OpCreate     = EC.OpCreate
+	OpDrop       = EC.OpDrop
+	OpAlter      = EC.OpAlter
+	OpBegin      = EC.OpBegin
+	OpCommit     = EC.OpCommit
+	OpRollback   = EC.OpRollback
+	OpSavepoint  = EC.OpSavepoint
+	OpReplay     = EC.OpReplay
+	OpFlush      = EC.OpFlush
+	OpCompact    = EC.OpCompact
+	OpCheckpoint = EC.OpCheckpoint
+	OpBackup     = EC.OpBackup
+	OpRestore    = EC.OpRestore
+)
+
+// Re-exported constructors from LOG/EC.
+// Deprecated: import LOG/EC directly.
+func New(kind Kind, msg string) *Error                  { return EC.New(kind, msg) }
+func Newf(kind Kind, format string, args ...any) *Error { return EC.Newf(kind, format, args...) }
+func Wrap(kind Kind, err error) *Error                  { return EC.Wrap(kind, err) }
+func Wrapf(kind Kind, err error, format string, args ...any) *Error {
+	return EC.Wrapf(kind, err, format, args...)
+}
+func WrapAt(kind Kind, module Module, layer Layer, err error) *Error {
+	return EC.WrapAt(kind, module, layer, err)
+}
+func SetEmit(fn func(*Error))    { EC.SetEmit(fn) }
+func CodeOf(k Kind) Code         { return EC.CodeOf(k) }
+func SQLStateOf(k Kind) SQLSTATE { return EC.SQLStateOf(k) }
+
+// Re-exported helpers from LOG/EC.
+// Deprecated: import LOG/EC directly.
+func IsKind(err error, kind Kind) bool          { return EC.IsKind(err, kind) }
+func IsCode(err error, code Code) bool          { return EC.IsCode(err, code) }
+func IsSQLState(err error, state SQLSTATE) bool { return EC.IsSQLState(err, state) }
+func ModuleOf(err error) Module                 { return EC.ModuleOf(err) }
+func LayerOf(err error) Layer                   { return EC.LayerOf(err) }
+func Classify(err error) Classification         { return EC.Classify(err) }
+func IsRetryable(err error) bool                { return EC.IsRetryable(err) }
+func IsFatal(err error) bool                    { return EC.IsFatal(err) }
+func AsError(err error, target **Error) bool    { return EC.AsError(err, target) }
 
 // Value kind constants for the tagged-union Value type (REQ000776/REQ000862).
 const (
