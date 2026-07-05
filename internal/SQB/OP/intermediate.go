@@ -8,12 +8,12 @@ import (
 	"strings"
 	"sync"
 
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 // REQ001088: predicateCache is now best-effort. The Filter struct caches
@@ -100,8 +100,8 @@ type Filter struct {
 
 // Child returns the filter's child operator. Used by
 // propagateParams to walk the operator tree.
-func (f *Filter) Child() Operator { return f.child }
-func (f *Filter) SetChild(c Operator) { f.child = c }
+func (f *Filter) Child() Operator               { return f.child }
+func (f *Filter) SetChild(c Operator)           { f.child = c }
 func (f *Filter) SetExecCtx(ec *pl.ExecContext) { f.execCtx = ec }
 
 // Predicate returns the filter's predicate expression.
@@ -403,7 +403,7 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
-passed := DT.IsValueTruthy(v)
+		passed := DT.IsValueTruthy(v)
 		f.rowID++
 		if passed {
 			return f.curRow, nil
@@ -476,6 +476,14 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 			}
 			r.Cols = sharedCols
 			r.Types = sharedTypes
+			if f.execCtx != nil {
+				if arena, ok := f.execCtx.RowArena.(*DT.RowArena); ok && arena != nil {
+					// REQ001233: batch clone row via arena instead of per-row alloc
+					cloned := arena.CloneRowsBatch([]DT.Row{r})
+					f.batchEmit = append(f.batchEmit, cloned...)
+					continue
+				}
+			}
 			// Only Data needs a per-row deep copy (it varies per row).
 			if r.Data != nil {
 				r.Data = append([]Value(nil), r.Data...)
@@ -525,9 +533,9 @@ type Project struct {
 }
 
 // Child returns the project's child operator.
-func (p *Project) Child() Operator { return p.child }
-func (p *Project) SetChild(c Operator) { p.child = c }
-func (p *Project) Cols() []PS.Expr { return p.cols }
+func (p *Project) Child() Operator               { return p.child }
+func (p *Project) SetChild(c Operator)           { p.child = c }
+func (p *Project) Cols() []PS.Expr               { return p.cols }
 func (p *Project) SetExecCtx(ec *pl.ExecContext) { p.execCtx = ec }
 
 func NewProject(child Operator, cols []PS.Expr) *Project {
@@ -723,8 +731,8 @@ type Sort struct {
 }
 
 // Child returns the sort's child operator.
-func (s *Sort) Child() Operator { return s.child }
-func (s *Sort) SetChild(c Operator) { s.child = c }
+func (s *Sort) Child() Operator      { return s.child }
+func (s *Sort) SetChild(c Operator)  { s.child = c }
 func (s *Sort) Keys() []PS.OrderItem { return s.keys }
 
 func NewSort(child Operator, keys []PS.OrderItem) *Sort {
@@ -1028,7 +1036,7 @@ type Limit struct {
 }
 
 // Child returns the limit's child operator.
-func (l *Limit) Child() Operator { return l.child }
+func (l *Limit) Child() Operator     { return l.child }
 func (l *Limit) SetChild(c Operator) { l.child = c }
 
 // LimitValue returns the limit value.
@@ -1072,7 +1080,7 @@ type Offset struct {
 }
 
 // Child returns the offset's child operator.
-func (o *Offset) Child() Operator { return o.child }
+func (o *Offset) Child() Operator     { return o.child }
 func (o *Offset) SetChild(c Operator) { o.child = c }
 
 func NewOffset(child Operator, n int64) *Offset {

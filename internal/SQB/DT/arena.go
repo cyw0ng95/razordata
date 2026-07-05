@@ -144,3 +144,52 @@ var arenaSlabPool = sync.Pool{
 		return make([]byte, arenaSlabSize)
 	},
 }
+
+// CloneRow clones an existing row into the arena. The returned row
+// has Cols/Types/ColIndex shared with the input, but Data is copied
+// into the arena's bump allocator. REQ001233.
+func (a *RowArena) CloneRow(r Row) Row {
+	if r.Data == nil {
+		return r
+	}
+	n := len(r.Data)
+	if n == 0 {
+		return r
+	}
+	needed := a.offset + n*valueSize
+	if needed > a.slabCap {
+		a.grow(needed)
+	}
+	start := a.offset
+	a.offset += n * valueSize
+	dst := (*[1 << 30]Value)(unsafe.Pointer(&a.slab[start]))[:n:n]
+	for i := 0; i < n; i++ {
+		dst[i] = r.Data[i]
+	}
+	return Row{
+		Cols:     r.Cols,
+		Types:    r.Types,
+		ColIndex: r.ColIndex,
+		Data:     dst,
+	}
+}
+
+// CloneRowsBatch clones multiple rows into the arena. Returns a slice
+// of cloned rows. All rows share the same Cols/Types slices (from the
+// first row) and Data slices are copied into the arena. REQ001233.
+func (a *RowArena) CloneRowsBatch(rows []Row) []Row {
+	if len(rows) == 0 {
+		return nil
+	}
+	// Shared Cols/Types from first row
+	sharedCols := rows[0].Cols
+	sharedTypes := rows[0].Types
+	out := make([]Row, 0, len(rows))
+	for _, r := range rows {
+		cloned := a.CloneRow(r)
+		cloned.Cols = sharedCols
+		cloned.Types = sharedTypes
+		out = append(out, cloned)
+	}
+	return out
+}

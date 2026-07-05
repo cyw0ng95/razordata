@@ -833,6 +833,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 			propagatePlanner(op, e.planner)
 			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 			propagateExecContext(op, execCtx)
+			defer resetRowArena(execCtx)
 			defer op.Close()
 			if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
 				return Result{}, err
@@ -886,7 +887,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	propagatePlanner(op, e.planner)
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 	propagateExecContext(op, execCtx)
-	defer op.Close()
+	defer resetRowArena(execCtx)
 	if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
 		return Result{}, err
 	}
@@ -949,6 +950,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 			propagatePlanner(plan.Root, e.planner)
 			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			propagateExecContext(plan.Root, execCtx)
+			defer resetRowArena(execCtx)
 			defer plan.Root.Close()
 			row, err := plan.Root.Next(ctx)
 			if err != nil {
@@ -1011,6 +1013,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	propagatePlanner(plan.Root, e.planner)
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
+	defer resetRowArena(execCtx)
 	// Attempt vectorized execution for eligible query plans.
 	plan.Root = tryVectorizePlan(plan.Root)
 	defer plan.Root.Close()
@@ -1042,6 +1045,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 			propagatePlanner(plan.Root, e.planner)
 			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			propagateExecContext(plan.Root, execCtx)
+			defer resetRowArena(execCtx)
 			defer plan.Root.Close()
 			var out []DT.Row
 			for {
@@ -1085,6 +1089,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 	// the global currentSubqueryPlanner.
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
+	defer resetRowArena(execCtx)
 	defer plan.Root.Close()
 	var out []DT.Row
 	for {
@@ -1138,6 +1143,11 @@ func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 	if root == nil || ec == nil {
 		return
 	}
+	// REQ001233: create RowArena once per query, shared across all
+	// operators in the tree.
+	if ec.RowArena == nil {
+		ec.RowArena = &DT.RowArena{}
+	}
 	if f, ok := root.(*OP.Filter); ok {
 		f.SetExecCtx(ec)
 	}
@@ -1169,6 +1179,17 @@ func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 	if lr, ok := root.(leftRighter); ok {
 		propagateExecContext(lr.LeftChild(), ec)
 		propagateExecContext(lr.RightChild(), ec)
+	}
+}
+
+// resetRowArena resets the RowArena in the ExecContext. Called
+// via defer at the end of each query execution. REQ001233.
+func resetRowArena(ec *DT.ExecContext) {
+	if ec == nil {
+		return
+	}
+	if arena, ok := ec.RowArena.(*DT.RowArena); ok {
+		arena.Reset()
 	}
 }
 
@@ -1759,6 +1780,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	// REQ000586: thread DT.ExecContext to eliminate global.
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
+	defer resetRowArena(execCtx)
 	// Attempt vectorized execution for eligible query plans.
 	plan.Root = tryVectorizePlan(plan.Root)
 

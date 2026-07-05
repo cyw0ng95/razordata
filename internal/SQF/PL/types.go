@@ -198,6 +198,12 @@ type ExecContext struct {
 	LastChanges   int64
 	TotalChanges  int64
 	SubqueryCache map[string]any
+	// REQ001233: rowArena is a bump-pointer allocator shared across
+	// all operators in a query. Created once per query execution in
+	// propagateExecContext. Stored as any to avoid DT→PL import cycle
+	// (DT imports PL, so PL cannot import DT). Type-assert to
+	// *DT.RowArena at usage sites.
+	RowArena any // *DT.RowArena
 }
 
 // PlanResult is the planner-side container for a memoized plan.

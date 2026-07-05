@@ -25,14 +25,14 @@ const (
 )
 
 type NestedLoopJoin struct {
-	left      Operator
-	right     Operator
-	leftTbl   string
-	rightTbl  string
-	on        func(outer, inner *Row) (bool, error)
-	kind      JoinKind
-	leftOuter bool // REQ000685: true for LEFT/LEFT OUTER JOIN
-	// REQ000743: true for RIGHT/RIGHT OUTER JOIN
+	left       Operator
+	right      Operator
+	leftTbl    string
+	rightTbl   string
+	on         func(outer, inner *Row) (bool, error)
+	kind       JoinKind
+	execCtx    *DT.ExecContext // REQ001233: exec context for arena allocation
+	leftOuter  bool            // REQ000685: true for LEFT/LEFT OUTER JOIN
 	rightOuter bool
 	// rightMode indicates the right side has been materialized for
 	// RIGHT/FULL OUTER JOIN processing. When true, j.rightRows holds
@@ -253,6 +253,9 @@ func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on fu
 // SetLimit sets a row limit on this join. After producing `n` rows,
 // Next() returns ErrNoRows. REQ000847.
 func (j *NestedLoopJoin) SetLimit(n int64) { j.limitRemaining = n }
+
+// SetExecCtx sets the ExecContext on this join operator. REQ001233.
+func (j *NestedLoopJoin) SetExecCtx(ec *DT.ExecContext) { j.execCtx = ec }
 
 func (j *NestedLoopJoin) LeftChild() Operator { return j.left }
 func (j *NestedLoopJoin) SetLeft(c Operator)  { j.left = c }

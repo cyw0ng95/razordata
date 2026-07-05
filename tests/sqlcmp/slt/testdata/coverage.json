@@ -18,15 +18,15 @@
     },
     "../corpus/test/evidence/slt_lang_createview.test": {
       "total": 37,
-      "passed": 9,
-      "failed": 6,
+      "passed": 11,
+      "failed": 4,
       "skipped": 10,
       "parse_errors": 0
     },
     "../corpus/test/evidence/slt_lang_dropview.test": {
       "total": 13,
-      "passed": 11,
-      "failed": 2,
+      "passed": 9,
+      "failed": 4,
       "skipped": 0,
       "parse_errors": 0
     },
@@ -39,8 +39,8 @@
     },
     "../corpus/test/index/between/1/slt_good_0.test": {
       "total": 10022,
-      "passed": 6707,
-      "failed": 3312,
+      "passed": 9881,
+      "failed": 138,
       "skipped": 3,
       "parse_errors": 0
     },
@@ -60,19 +60,20 @@
     },
     "../corpus/test/select4.test": {
       "total": 3857,
-      "passed": 2367,
-      "failed": 1489,
+      "passed": 2431,
+      "failed": 1425,
       "skipped": 1,
       "parse_errors": 0
     }
   },
   "totals": {
     "Total": 16057,
-    "Passed": 9268,
-    "Failed": 6755,
+    "Passed": 12506,
+    "Failed": 3517,
     "Skipped": 15,
     "ParseErrors": 0,
-    "Duration": 24573,
-    "Slowest": null
+    "Duration": 75453,
+    "Slowest": null,
+    "FailFastTriggered": false
   }
 }
