@@ -2229,8 +2229,29 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	// joins. This reduces intermediate row counts for cross joins.
 	var pushedPredicates map[string][]PS.Expr
 	var crossTablePredicates []PS.Expr
+	// REQ001235: track EXISTS conjuncts that have been decorrelated into
+	// semi-joins, so they are skipped by the normal filter path.
+	existsReplaced := make(map[int]bool)
+	// REQ001235: pointer-based set of actually-replaced ExistsExpr nodes
+	// so the cross-table predicate loop skips only those, not non-decorrelated EXISTS.
+	existsReplacedPtr := make(map[*PS.ExistsExpr]bool)
 	if whereExpr != nil && (len(s.Joins) > 0 || s.From != "") {
 		conjuncts := p.splitAnd(whereExpr)
+		// REQ001235: correlated EXISTS decorrelation → semi-join.
+		// Scan conjuncts before predicate pushdown. If a conjunct is a
+		// correlated EXISTS subquery that can be rewritten as a semi-join,
+		// replace it now and mark the conjunct index as replaced.
+		for i, c := range conjuncts {
+			if existsExpr, ok := c.(*PS.ExistsExpr); ok && existsExpr.Subquery != nil {
+				if replacement, ok := p.decorrelateExists(existsExpr, s.From, scan); ok {
+					existsReplaced[i] = true
+					existsReplacedPtr[existsExpr] = true
+					// Wrap the current operator as the left side of the
+					// semi-join. Multiple EXISTS may chain.
+					current = replacement
+				}
+			}
+		}
 		allTables := []string{s.From}
 		for _, j := range s.Joins {
 			allTables = append(allTables, j.Right)
@@ -2315,18 +2336,28 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 		// OP.HashJoin (REQ000794) — they're already enforced and
 		// re-applying them as Filters gives wrong results because
 		// column prefixes change through the operator chain.
+		// REQ001235: skip EXISTS conjuncts already decorrelated.
+		// Use a pointer-based set of replaced ExistsExpr nodes so we
+		// don't skip non-decorrelated EXISTS (bare-name correlations).
+		existsReplacedPtr := make(map[*PS.ExistsExpr]bool)
 		if len(crossTablePredicates) > 0 {
 			for i, c := range crossTablePredicates {
 				if extractedPreds[i] {
+					continue
+				}
+				if ee, ok := c.(*PS.ExistsExpr); ok && existsReplacedPtr[ee] {
 					continue
 				}
 				current = OP.NewFilter(current, c, nil)
 			}
 		} else if pushedPredicates == nil {
 			// No predicate pushdown — apply full WHERE as before.
+			// REQ001235: skip EXISTS conjuncts already decorrelated.
 			conjuncts := p.splitAnd(whereExpr)
-			current = OP.NewFilter(current, conjuncts[0], nil)
-			for _, c := range conjuncts[1:] {
+			for idx, c := range conjuncts {
+				if existsReplaced[idx] {
+					continue
+				}
 				current = OP.NewFilter(current, c, nil)
 			}
 		}
@@ -2337,6 +2368,179 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	current = p.planLimitOffset(s, current)
 
 	return current
+}
+
+// existsReplacement records a decorrelated EXISTS conjunct that should
+// replace the original Filter(scan) with a semi-join operator.
+type existsReplacement struct {
+	index       int
+	replacement DT.Operator
+}
+
+// decorrelateExists checks if an EXISTS expression is a correlated
+// subquery suitable for semi-join rewrite. Returns (semiJoinOp, true)
+// when the rewrite is safe, (nil, false) to fall back to per-row eval.
+//
+// Detection criteria:
+//  1. EXISTS subquery is a single-table SELECT (no joins, aggregates, etc.)
+//  2. WHERE clause contains a correlation predicate: inner.col <op> outer.col
+//  3. No OR, GROUP BY, HAVING, DISTINCT, LIMIT, ORDER BY, window functions
+func (p *Planner) decorrelateExists(existsExpr *PS.ExistsExpr, outerTable string, outerScan DT.Operator) (DT.Operator, bool) {
+	subq, ok := existsExpr.Subquery.(*PS.Select)
+	if !ok {
+		return nil, false
+	}
+	// Must be a single-table subquery
+	if subq.From == "" || len(subq.Joins) > 0 || subq.SubqueryFrom != nil {
+		return nil, false
+	}
+	// No aggregates, DISTINCT, GROUP BY, HAVING, LIMIT, ORDER BY, window funcs
+	if subq.Distinct || len(subq.GroupBy) > 0 || subq.Having != nil || subq.Limit != nil || len(subq.OrderBy) > 0 {
+		return nil, false
+	}
+	if hasAnyWindowFunc(subq.Cols) {
+		return nil, false
+	}
+	// Check SELECT list for aggregate functions
+	for _, col := range subq.Cols {
+		if col != nil && hasAggFunc(col) {
+			return nil, false
+		}
+	}
+	// Inner WHERE must exist and contain at least one correlation predicate
+	if subq.Where == nil {
+		return nil, false
+	}
+	innerConjuncts := RE.SplitAnd(subq.Where)
+	if len(innerConjuncts) == 0 {
+		return nil, false
+	}
+	// Find a correlation predicate: inner.col <op> outer.col or vice versa
+	var correlationPred PS.Expr
+	innerTable := subq.From
+	for _, c := range innerConjuncts {
+		bin, ok := c.(*PS.BinaryExpr)
+		if !ok {
+			continue
+		}
+		// Check left=Ident + right=QualifiedName(outer)
+		if _, ok := bin.Left.(*PS.Ident); ok {
+			if qn, ok := bin.Right.(*PS.QualifiedName); ok && qn.Table == outerTable {
+				correlationPred = bin
+				break
+			}
+		}
+		// Check left=QualifiedName(outer) + right=Ident
+		if qn, ok := bin.Left.(*PS.QualifiedName); ok && qn.Table == outerTable {
+			if _, ok := bin.Right.(*PS.Ident); ok {
+				correlationPred = bin
+				break
+			}
+		}
+		// Both sides QualifiedName: one outer, one inner
+		if lqn, ok := bin.Left.(*PS.QualifiedName); ok {
+			if rqn, ok := bin.Right.(*PS.QualifiedName); ok {
+				if (lqn.Table == outerTable && rqn.Table == innerTable) ||
+					(lqn.Table == innerTable && rqn.Table == outerTable) {
+					correlationPred = bin
+					break
+				}
+			}
+		}
+	}
+	if correlationPred == nil {
+		return nil, false
+	}
+	// Build inner scan with non-correlation filters applied
+	var innerScan DT.Operator
+	if p.store != nil {
+		ssc, err := OP.NewSeqScanWithStore(p.store, innerTable)
+		if err == nil {
+			innerScan = ssc
+		}
+	}
+	if innerScan == nil {
+		innerScan = NewIndexOrSeqScan(innerTable, nil, p)
+	}
+	for _, c := range innerConjuncts {
+		if c != correlationPred {
+			innerScan = OP.NewFilter(innerScan, c, nil)
+		}
+	}
+	// Build correlation ON predicate function
+	on := buildCorrelationFunc(correlationPred.(*PS.BinaryExpr), innerTable, outerTable)
+	// Create semi-join: outerScan (probe) × innerScan (build, first-match)
+	semiJoin := OP.NewNestedLoopJoin(outerScan, innerScan, outerTable, innerTable, on, OP.JoinKindSemi)
+	return semiJoin, true
+}
+
+// buildCorrelationFunc creates the ON predicate function for the semi-join
+// from the extracted correlation predicate expression. The returned closure
+// is used by NestedLoopJoin to test left-right row pairs at runtime.
+func buildCorrelationFunc(bin *PS.BinaryExpr, innerTable, outerTable string) func(outer, inner *DT.Row) (bool, error) {
+	op := bin.Op
+	// Extract column names from both sides of the comparison
+	var outerCol, innerCol string
+	switch l := bin.Left.(type) {
+	case *PS.QualifiedName:
+		if l.Table == outerTable {
+			outerCol = l.Name
+		} else {
+			innerCol = l.Name
+		}
+	case *PS.Ident:
+		innerCol = l.Name
+	}
+	switch r := bin.Right.(type) {
+	case *PS.QualifiedName:
+		if r.Table == outerTable {
+			outerCol = r.Name
+		} else {
+			innerCol = r.Name
+		}
+	case *PS.Ident:
+		innerCol = r.Name
+	}
+
+	return func(outer, inner *DT.Row) (bool, error) {
+		// Find column indices by scanning Cols slices
+		outerIdx := -1
+		for i, c := range outer.Cols {
+			if strings.EqualFold(c, outerCol) || strings.HasSuffix(c, "."+outerCol) {
+				outerIdx = i
+				break
+			}
+		}
+		innerIdx := -1
+		for i, c := range inner.Cols {
+			if strings.EqualFold(c, innerCol) || strings.HasSuffix(c, "."+innerCol) {
+				innerIdx = i
+				break
+			}
+		}
+		if outerIdx < 0 || innerIdx < 0 {
+			return false, fmt.Errorf("semi-join: cannot find column %s/%s in semi-join rows", outerCol, innerCol)
+		}
+		outerVal := outer.Data[outerIdx]
+		innerVal := inner.Data[innerIdx]
+		cmp := DT.Compare(outerVal, innerVal)
+		switch op {
+		case LX.T_EQ:
+			return cmp == 0, nil
+		case LX.T_NE:
+			return cmp != 0, nil
+		case LX.T_LT:
+			return cmp < 0, nil
+		case LX.T_LE:
+			return cmp <= 0, nil
+		case LX.T_GT:
+			return cmp > 0, nil
+		case LX.T_GE:
+			return cmp >= 0, nil
+		default:
+			return false, fmt.Errorf("semi-join: unsupported operator %v", op)
+		}
+	}
 }
 
 // isViewMergeable returns true when the view's underlying SELECT is a
