@@ -174,7 +174,7 @@ func decompressFlateOnly(data []byte) ([]byte, error) {
 		decompressBufPool.Put(bufPtr)
 		return nil, err
 	}
-	result := make([]byte, buf.Len())
+	result := decompressSlicePoolGet(buf.Len())
 	copy(result, buf.Bytes())
 	buf.Reset()
 	decompressBufPool.Put(bufPtr)
@@ -193,7 +193,7 @@ func decompressFlateWithDict(data, dict []byte) ([]byte, error) {
 		decompressBufPool.Put(bufPtr)
 		return nil, err
 	}
-	result := make([]byte, buf.Len())
+	result := decompressSlicePoolGet(buf.Len())
 	copy(result, buf.Bytes())
 	buf.Reset()
 	decompressBufPool.Put(bufPtr)
@@ -205,6 +205,35 @@ var decompressBufPool = sync.Pool{
 	New: func() any {
 		return &bytes.Buffer{}
 	},
+}
+
+// REQ001243: pool for decompressed block output slices.
+// Each block is ~4 KB uncompressed. Pool returns slices with cap >= n.
+var decompressSlicePool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, 64*1024) // 64 KB initial capacity
+		return &b
+	},
+}
+
+func decompressSlicePoolGet(n int) []byte {
+	bp := decompressSlicePool.Get().(*[]byte)
+	b := *bp
+	if cap(b) >= n {
+		return b[:n]
+	}
+	// Pool slice too small — allocate fresh and discard the old one.
+	return make([]byte, n)
+}
+
+// decompressSlicePoolPut returns a slice to the pool.
+// The caller must NOT retain or reference the slice after calling this.
+func decompressSlicePoolPut(b []byte) {
+	if cap(b) == 0 {
+		return
+	}
+	b = b[:0]
+	decompressSlicePool.Put(&b)
 }
 
 var _ = binary.MaxVarintLen64
