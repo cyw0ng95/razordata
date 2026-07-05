@@ -536,7 +536,7 @@ func TestPragma_BatchSize_ReadWrite(t *testing.T) {
 	e := NewExecutorWithEngine(nil)
 	ctx := context.Background()
 
-	// Default should be 256.
+	// Default should be 512.
 	rows, err := e.QueryAll(ctx, "PRAGMA batch_size")
 	if err != nil {
 		t.Fatal(err)
@@ -545,17 +545,17 @@ func TestPragma_BatchSize_ReadWrite(t *testing.T) {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
 	got := rows[0].Data[0].S
-	if got != "256" {
-		t.Fatalf("expected batch_size=256, got %q", got)
+	if got != "512" {
+		t.Fatalf("expected batch_size=512, got %q", got)
 	}
 
-	// Set to 512.
-	_, err = e.Exec(ctx, "PRAGMA batch_size = 512")
+	// Set to 256.
+	_, err = e.Exec(ctx, "PRAGMA batch_size = 256")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if OP.EngineBatchSize() != 512 {
-		t.Fatalf("expected engineBatchSize=512, got %d", OP.EngineBatchSize())
+	if OP.EngineBatchSize() != 256 {
+		t.Fatalf("expected engineBatchSize=256, got %d", OP.EngineBatchSize())
 	}
 
 	// Read back via a new executor (avoid stmt cache reuse).
@@ -568,7 +568,7 @@ func TestPragma_BatchSize_ReadWrite(t *testing.T) {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
 	got = rows[0].Data[0].S
-	if got != "512" {
-		t.Fatalf("expected batch_size=512, got %q", got)
+	if got != "256" {
+		t.Fatalf("expected batch_size=256, got %q", got)
 	}
 }

@@ -50,7 +50,7 @@ const (
 
 // DefaultMaxMemoEntries is the default upper bound for memoized plans.
 // REQ000584: bounded growth via LRU eviction.
-const DefaultMaxMemoEntries = 1024
+const DefaultMaxMemoEntries = 4096
 
 // Plan is the planner-side container for a memoized plan. EX wraps it
 // with its own concrete root operator; PL only owns the metadata.

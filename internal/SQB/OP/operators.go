@@ -284,7 +284,7 @@ func NewSeqScanWithStore(store Store, table string) (*SeqScan, error) {
 // LSM engine. 256 balances iterator overhead with per-batch memory
 // (fits in L1 cache). Increased from 64 for improved full-scan
 // throughput (REQ001224).
-var engineBatchSize = 256
+var engineBatchSize = 512
 
 // EngineBatchSize returns the current batch size for SeqScan.NextBatch.
 func EngineBatchSize() int { return engineBatchSize }

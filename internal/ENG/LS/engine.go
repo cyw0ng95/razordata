@@ -20,7 +20,7 @@ var (
 
 const (
 	DefaultMemTableShards = 1
-	DefaultMemTableSize   = 64 * 1024 * 1024
+	DefaultMemTableSize   = 128 * 1024 * 1024
 )
 
 type memtableAdapter struct{ *memtable }

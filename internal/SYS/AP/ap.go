@@ -50,9 +50,9 @@ type Options struct {
 
 const (
 	DefaultPageSize        = 4096
-	DefaultMemTableSize    = 64 * 1024 * 1024
-	DefaultBufferPoolMB    = 256
-	DefaultWALSizeMB       = 64
+	DefaultMemTableSize    = 128 * 1024 * 1024
+	DefaultBufferPoolMB    = 512
+	DefaultWALSizeMB       = 256
 	DefaultMaxLevel        = 7
 	DefaultShutdownTimeout = 30 * time.Second // REQ000687
 )

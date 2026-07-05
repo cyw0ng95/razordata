@@ -73,14 +73,14 @@ func TestAP_OptionsDefaults(t *testing.T) {
 	if DefaultPageSize != 4096 {
 		t.Errorf("DefaultPageSize = %d, want 4096", DefaultPageSize)
 	}
-	if DefaultMemTableSize != 64*1024*1024 {
-		t.Errorf("DefaultMemTableSize = %d, want 64MB", DefaultMemTableSize)
+	if DefaultMemTableSize != 128*1024*1024 {
+		t.Errorf("DefaultMemTableSize = %d, want 128MB", DefaultMemTableSize)
 	}
-	if DefaultBufferPoolMB != 256 {
-		t.Errorf("DefaultBufferPoolMB = %d, want 256", DefaultBufferPoolMB)
+	if DefaultBufferPoolMB != 512 {
+		t.Errorf("DefaultBufferPoolMB = %d, want 512", DefaultBufferPoolMB)
 	}
-	if DefaultWALSizeMB != 64 {
-		t.Errorf("DefaultWALSizeMB = %d, want 64", DefaultWALSizeMB)
+	if DefaultWALSizeMB != 256 {
+		t.Errorf("DefaultWALSizeMB = %d, want 256", DefaultWALSizeMB)
 	}
 	if DefaultMaxLevel != 7 {
 		t.Errorf("DefaultMaxLevel = %d, want 7", DefaultMaxLevel)

@@ -86,8 +86,8 @@ func TestMemo_DefaultCapacityMatchesSpec(t *testing.T) {
 	if m.MaxEntries() != DefaultMaxMemoEntries {
 		t.Errorf("default MaxEntries = %d, want %d", m.MaxEntries(), DefaultMaxMemoEntries)
 	}
-	if DefaultMaxMemoEntries != 1024 {
-		t.Errorf("DefaultMaxMemoEntries = %d, want 1024", DefaultMaxMemoEntries)
+	if DefaultMaxMemoEntries != 4096 {
+		t.Errorf("DefaultMaxMemoEntries = %d, want 4096", DefaultMaxMemoEntries)
 	}
 }
 

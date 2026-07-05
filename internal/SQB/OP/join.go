@@ -230,7 +230,7 @@ func (j *NestedLoopJoin) WithSharedSchema(cols []string, types []LX.TokenType, c
 }
 
 func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on func(outer, inner *Row) (bool, error), kind JoinKind) *NestedLoopJoin {
-	const batchSize = 32
+	const batchSize = 128
 	return &NestedLoopJoin{
 		left:       left,
 		right:      right,
@@ -246,7 +246,7 @@ func NewNestedLoopJoin(left, right Operator, leftTable, rightTable string, on fu
 		blkLeftBatch: make([]Row, 0, batchSize),
 		blkRightRows: make([]Row, 0, batchSize),
 		blkResultBuf: make([]Row, 0, batchSize),
-		blkDataBuf:   make([]Value, 0, 64),
+		blkDataBuf:   make([]Value, 0, 256),
 	}
 }
 
@@ -712,7 +712,7 @@ func (j *NestedLoopJoin) Close() error {
 // Output rows carry the shared colIndex so downstream Lookup can
 // skip per-row BuildColIndex (REQ000816).
 func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
-	const batchSize = 64
+	const batchSize = 256
 	// REQ000847: early exit — if limit is already satisfied, skip
 	// all batch setup (fill left, materialize right, build shared
 	// cols). Without this, LIMIT 10 over a 5-table cross still

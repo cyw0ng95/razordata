@@ -622,7 +622,7 @@ func (f *Filter) Next(ctx context.Context) (Row, error) {
 // predicates that return only a handful of matches. Tuned against
 // the select4 6-table cross-product profile where a 100×100×100
 // join is the typical workload.
-const filterBatchSize = 1024
+const filterBatchSize = 2048
 
 // refillBatch pulls up to filterBatchSize rows from the child,
 // evaluates the compiled predicate in a tight loop, and stages the
