@@ -123,7 +123,7 @@ func newEngineWithOptions(dir string, opts Options) (*engine, error) {
 		return nil, err
 	}
 	e.manifest = manifest
-	e.cm = newCompactionManager(e.fs, dir, manifest)
+	e.cm = newCompactionManager(e.fs, dir, manifest, e.blockCache)
 	e.fm = newFlushManager(e.fs, dir, opts.MemTableSize, manifest)
 	return e, nil
 }

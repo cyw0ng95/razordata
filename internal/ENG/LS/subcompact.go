@@ -24,14 +24,15 @@ type SubCompactor struct {
 	dir         string
 	manifest    *manifest
 	concurrency int
+	blockCache  *BlockCache // REQ001242
 }
 
 // NewSubCompactor creates a sub-compactor with the given concurrency.
-func NewSubCompactor(fs FS, dir string, m *manifest, concurrency int) *SubCompactor {
+func NewSubCompactor(fs FS, dir string, m *manifest, concurrency int, blockCache *BlockCache) *SubCompactor {
 	if concurrency < 1 {
 		concurrency = 1
 	}
-	return &SubCompactor{fs: fs, dir: dir, manifest: m, concurrency: concurrency}
+	return &SubCompactor{fs: fs, dir: dir, manifest: m, concurrency: concurrency, blockCache: blockCache}
 }
 
 // SubCompactionOptions carries the cross-cutting compaction settings
@@ -76,6 +77,7 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 			overlap:         opts.Overlap,
 			rateLimiter:     opts.RateLimiter,
 			placementPolicy: opts.PlacementPolicy,
+			blockCache:      sc.blockCache, // REQ001242
 		}
 		if job.tmpPath == "" {
 			tp, err := uniqueSubTempPath(sc.fs, sc.dir)
@@ -133,6 +135,7 @@ func (sc *SubCompactor) RunSubCompaction(ctx context.Context, sourceLevel int, i
 				rateLimiter:     opts.RateLimiter,
 				placementPolicy: opts.PlacementPolicy,
 				tmpPath:         subTmp,
+				blockCache:      sc.blockCache, // REQ001242
 			},
 		})
 	}
@@ -301,6 +304,9 @@ func (sc *SubCompactor) mergePartials(partials []*partialResult, manifest *manif
 	// Remove input files
 	for _, input := range allInputs {
 		sstPath := filepath.Join(dir, fileName(&input))
+		if sc.blockCache != nil {
+			sc.blockCache.Evict(sstPath)
+		}
 		if err := sc.fs.Remove(sstPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove input SST", "path", sstPath, "err", err)
 		}
@@ -308,6 +314,9 @@ func (sc *SubCompactor) mergePartials(partials []*partialResult, manifest *manif
 
 	for _, ov := range allOverlap {
 		sstPath := filepath.Join(dir, fileName(&ov))
+		if sc.blockCache != nil {
+			sc.blockCache.Evict(sstPath)
+		}
 		if err := sc.fs.Remove(sstPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove overlap SST", "path", sstPath, "err", err)
 		}

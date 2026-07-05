@@ -18,7 +18,7 @@ func TestCompactionStop_Graceful(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newManifest: %v", err)
 	}
-	cm := newCompactionManager(DefaultFS(), dir, mf)
+	cm := newCompactionManager(DefaultFS(), dir, mf, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := cm.Stop(ctx); err != nil {
@@ -39,7 +39,7 @@ func TestCompactionStop_AlreadyCancelled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newManifest: %v", err)
 	}
-	cm := newCompactionManager(DefaultFS(), dir, mf)
+	cm := newCompactionManager(DefaultFS(), dir, mf, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err = cm.Stop(ctx)
@@ -58,7 +58,7 @@ func TestCompactionStop_GoroutineExits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newManifest: %v", err)
 	}
-	cm := newCompactionManager(DefaultFS(), dir, mf)
+	cm := newCompactionManager(DefaultFS(), dir, mf, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := cm.Stop(ctx); err != nil {

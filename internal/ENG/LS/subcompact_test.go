@@ -49,11 +49,11 @@ func TestPivotKeys_SingleInput(t *testing.T) {
 // TestNewSubCompactor_Defaults verifies concurrency is clamped to
 // >= 1.
 func TestNewSubCompactor_Defaults(t *testing.T) {
-	sc := NewSubCompactor(DefaultFS(), "/tmp", &manifest{}, 0)
+	sc := NewSubCompactor(DefaultFS(), "/tmp", &manifest{}, 0, nil)
 	if sc.concurrency != 1 {
 		t.Errorf("expected concurrency=1, got %d", sc.concurrency)
 	}
-	sc2 := NewSubCompactor(DefaultFS(), "/tmp", &manifest{}, 8)
+	sc2 := NewSubCompactor(DefaultFS(), "/tmp", &manifest{}, 8, nil)
 	if sc2.concurrency != 8 {
 		t.Errorf("expected concurrency=8, got %d", sc2.concurrency)
 	}
@@ -69,7 +69,7 @@ func TestRunSubCompactionEmpty(t *testing.T) {
 	}
 	defer m.Close()
 
-	sc := NewSubCompactor(DefaultFS(), dir, m, 2)
+	sc := NewSubCompactor(DefaultFS(), dir, m, 2, nil)
 	_, err = sc.RunSubCompaction(context.Background(), 0, nil, SubCompactionOptions{})
 	if err != ErrNoFilesToCompact {
 		t.Fatalf("expected ErrNoFilesToCompact for nil, got %v", err)
@@ -91,7 +91,7 @@ func TestRunSubCompactionCancelledContext(t *testing.T) {
 	}
 	defer m.Close()
 
-	sc := NewSubCompactor(DefaultFS(), dir, m, 2)
+	sc := NewSubCompactor(DefaultFS(), dir, m, 2, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 

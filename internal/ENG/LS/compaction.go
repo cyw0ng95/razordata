@@ -59,7 +59,8 @@ type compactionJob struct {
 	// created by SubCompactor set a unique tmpPath so parallel
 	// sub-runs don't collide on the shared temp filename.
 	// REQ001048.
-	tmpPath string
+	tmpPath   string
+	blockCache *BlockCache // REQ001242: evict stale entries on compaction
 }
 
 func (cj *compactionJob) Run(manifest *manifest, dir string) error {
@@ -209,6 +210,9 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 
 	for _, input := range cj.inputs {
 		sstPath := filepath.Join(dir, fileName(&input))
+		if cj.blockCache != nil {
+			cj.blockCache.Evict(sstPath)
+		}
 		if err := cj.fs.Remove(sstPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove input SST", "path", sstPath, "err", err)
 		}
@@ -216,6 +220,9 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 
 	for _, ov := range cj.overlap {
 		sstPath := filepath.Join(dir, fileName(&ov))
+		if cj.blockCache != nil {
+			cj.blockCache.Evict(sstPath)
+		}
 		if err := cj.fs.Remove(sstPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove overlap SST", "path", sstPath, "err", err)
 		}
@@ -450,6 +457,8 @@ type compactionManager struct {
 	debts        map[int]int64
 	// REQ001175: per-level rate limiter with debt-aware throttling.
 	perLevelRL atomic.Pointer[PerLevelRateLimiter]
+	// REQ001242: block cache for evicting stale entries after compaction.
+	blockCache *BlockCache
 }
 
 // subCompactionThreshold is the input-file count at which the
@@ -466,7 +475,7 @@ type compactionManager struct {
 // The threshold is safe at 4 for production use.
 const subCompactionThreshold = 4
 
-func newCompactionManager(fs FS, dir string, manifest *manifest) *compactionManager {
+func newCompactionManager(fs FS, dir string, manifest *manifest, blockCache *BlockCache) *compactionManager {
 	cm := &compactionManager{
 		fs:              fs,
 		manifest:        manifest,
@@ -479,8 +488,9 @@ func newCompactionManager(fs FS, dir string, manifest *manifest) *compactionMana
 		// compaction manager; concurrency defaults to 4 (matching
 		// the subcompaction threshold) and can be tuned via
 		// SetSubCompactorConcurrency.
-		subCompactor: NewSubCompactor(fs, dir, manifest, 4),
+		subCompactor: NewSubCompactor(fs, dir, manifest, 4, blockCache),
 		debts:        make(map[int]int64),
+		blockCache:   blockCache,
 	}
 	cm.wg.Add(1)
 	go cm.compactionLoop()
@@ -493,7 +503,7 @@ func newCompactionManager(fs FS, dir string, manifest *manifest) *compactionMana
 func (cm *compactionManager) SetSubCompactorConcurrency(n int) {
 	cm.compactionMu.Lock()
 	defer cm.compactionMu.Unlock()
-	cm.subCompactor = NewSubCompactor(cm.fs, cm.dir, cm.manifest, n)
+	cm.subCompactor = NewSubCompactor(cm.fs, cm.dir, cm.manifest, n, cm.blockCache)
 }
 
 // recalculateDebts recomputes per-level compaction debt.
@@ -683,6 +693,7 @@ func (cm *compactionManager) requestCompaction(level int) bool {
 		overlap:         overlap,
 		rateLimiter:     cm.rateLimiter.Load(),
 		placementPolicy: cm.placementPolicy,
+		blockCache:      cm.blockCache, // REQ001242
 	}
 
 	// REQ001175: prefer per-level rate limiter when available.
@@ -856,6 +867,9 @@ func (cm *compactionManager) MergePartials(partials []*partialResult, manifest *
 	// Remove input files
 	for _, input := range allInputs {
 		sstPath := filepath.Join(dir, fileName(&input))
+		if cm.blockCache != nil {
+			cm.blockCache.Evict(sstPath)
+		}
 		if err := cm.fs.Remove(sstPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove input SST", "path", sstPath, "err", err)
 		}
@@ -863,6 +877,9 @@ func (cm *compactionManager) MergePartials(partials []*partialResult, manifest *
 
 	for _, ov := range allOverlap {
 		sstPath := filepath.Join(dir, fileName(&ov))
+		if cm.blockCache != nil {
+			cm.blockCache.Evict(sstPath)
+		}
 		if err := cm.fs.Remove(sstPath); err != nil && !os.IsNotExist(err) {
 			slog.Warn("compaction: remove overlap SST", "path", sstPath, "err", err)
 		}

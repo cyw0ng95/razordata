@@ -85,7 +85,7 @@ func TestCompactionManager_CompactionStyle(t *testing.T) {
 	cur.levels = make([][]SSTFileMeta, 6)
 	mfst.current.Store(cur)
 
-	cm := newCompactionManager(DefaultFS(), dir, mfst)
+	cm := newCompactionManager(DefaultFS(), dir, mfst, nil)
 	defer cm.Stop(context.Background())
 
 	if cm.CompactionStyle() != CompactionStyleLeveled {
