@@ -45,7 +45,8 @@ type memtableIface interface {
 type Options struct {
 	MemTableShards int
 	MemTableSize   int64
-	FS             FS // REQ001172: virtual filesystem for testability
+	FS             FS   // REQ001172: virtual filesystem for testability
+	MmapFiles      bool // REQ001227: zero-copy reads via mmap
 }
 
 func DefaultOptions() Options {
@@ -76,6 +77,10 @@ type engine struct {
 	mu     sync.RWMutex
 	closed atomic.Bool
 	log    *slog.Logger
+
+	// REQ001227: mmap cache for zero-copy SST reads
+	mmapCache map[string][]byte // file path → mmap'd []byte
+	mmapMu    sync.RWMutex
 }
 
 func newEngine(dir string) (*engine, error) {
@@ -233,6 +238,17 @@ func (e *engine) readFromSSTWithVersion(key []byte, version *Version) ([]byte, e
 }
 
 func (e *engine) getSSTReader(fileID uint64, path string) (*sstReader, error) {
+	// REQ001227: try mmap cache first for zero-copy reads
+	if e.opts.MmapFiles {
+		if data, ok := e.getMmapData(path); ok {
+			r, err := openSSTWithPath(data, path)
+			if err != nil {
+				return nil, err
+			}
+			r.mmap = data
+			return r, nil
+		}
+	}
 	if cached, ok := e.pageCache.Get(fileID, 0); ok {
 		return openSSTWithPath(cached, path)
 	}
@@ -240,7 +256,65 @@ func (e *engine) getSSTReader(fileID uint64, path string) (*sstReader, error) {
 	if err != nil {
 		return nil, err
 	}
-	return openSSTWithPath(data, path)
+	r, err := openSSTWithPath(data, path)
+	if err != nil {
+		return nil, err
+	}
+	if e.opts.MmapFiles && len(r.mmap) == 0 {
+		// loadSSTMeta already mmap'd and cached, set mmap on reader
+		if mmapData, ok := e.getMmapData(path); ok {
+			r.mmap = mmapData
+		}
+	}
+	return r, nil
+}
+
+// getMmapData returns mmap'd data for a file path, if available.
+func (e *engine) getMmapData(path string) ([]byte, bool) {
+	if e.mmapCache == nil {
+		return nil, false
+	}
+	e.mmapMu.RLock()
+	defer e.mmapMu.RUnlock()
+	data, ok := e.mmapCache[path]
+	return data, ok
+}
+
+// setMmapData stores mmap'd data for a file path.
+func (e *engine) setMmapData(path string, data []byte) {
+	if e.mmapCache == nil {
+		e.mmapCache = make(map[string][]byte)
+	}
+	e.mmapMu.Lock()
+	defer e.mmapMu.Unlock()
+	e.mmapCache[path] = data
+}
+
+// delMmapData removes and unmmaps data for a file path.
+func (e *engine) delMmapData(path string) {
+	if e.mmapCache == nil {
+		return
+	}
+	e.mmapMu.Lock()
+	defer e.mmapMu.Unlock()
+	if data, ok := e.mmapCache[path]; ok {
+		delete(e.mmapCache, path)
+		munmapFile(data)
+	}
+}
+
+// unmapAll unmmaps all cached mmap'd SST files. Called on engine close.
+func (e *engine) unmapAll() {
+	if e.mmapCache == nil {
+		return
+	}
+	e.mmapMu.Lock()
+	defer e.mmapMu.Unlock()
+	for path, data := range e.mmapCache {
+		munmapFile(data)
+		delete(e.mmapCache, path)
+	}
+	e.mmapCache = nil
 }
 
 func (e *engine) loadSSTMeta(fileID uint64, path string) ([]byte, error) {
@@ -251,6 +325,19 @@ func (e *engine) loadSSTMeta(fileID uint64, path string) ([]byte, error) {
 	fileSize := int(fi.Size())
 	if fileSize < 32 {
 		return nil, ErrInvalidSSTFormat
+	}
+
+	// REQ001227: use mmap for zero-copy reads when enabled
+	if e.opts.MmapFiles {
+		if data := mmapFile(path, int64(fileSize)); data != nil {
+			e.setMmapData(path, data)
+			if len(data) < sstFooterSizeOld {
+				munmapFile(data)
+				e.delMmapData(path)
+				return nil, ErrInvalidSSTFormat
+			}
+			return data, nil
+		}
 	}
 
 	f, err := e.fs.Open(path)
@@ -362,6 +449,7 @@ func (e *engine) Close() error {
 	if e.closed.Swap(true) {
 		return nil
 	}
+	e.unmapAll() // REQ001227: clean up mmap'd SST files
 	if e.cm != nil {
 		if err := e.cm.Close(); err != nil {
 			return err

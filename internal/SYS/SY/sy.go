@@ -26,21 +26,21 @@ import (
 )
 
 type Engine struct {
-	dir     string
-	opts    AP.Options
-	log     lg.Logger
-	fs      *fs.FileManager
-	lf      *lf.SegmentManager
-	df      *df.BlockDevice
-	sp      sp.SyncPool
-	bp      bf.BufferPool
-	wr      wr.Writer
-	fl      fl.Flusher
-	rp      rp.Replayer
-	eng     *ls.Engine
-	txn     *vl.Manager
-	exe     *executor.Executor
-	catalog *ls.Catalog
+	dir      string
+	opts     AP.Options
+	log      lg.Logger
+	fs       *fs.FileManager
+	lf       *lf.SegmentManager
+	df       *df.BlockDevice
+	sp       sp.SyncPool
+	bp       bf.BufferPool
+	wr       wr.Writer
+	fl       fl.Flusher
+	rp       rp.Replayer
+	eng      *ls.Engine
+	txn      *vl.Manager
+	exe      *executor.Executor
+	catalog  *ls.Catalog
 	debugger interface{} // core.Debugger when debug tag active, nil otherwise
 
 	mu           sync.Mutex
@@ -168,7 +168,7 @@ func (e *Engine) open(ctx context.Context) (err error) {
 	if err := e.rp.Replay(); err != nil && !errors.Is(err, os.ErrNotExist) {
 		e.log.Warn("wal.replay", "err", err)
 	}
-	if e.eng, err = ls.Open(filepath.Join(e.dir, "eng")); err != nil {
+	if e.eng, err = ls.OpenWithOptions(filepath.Join(e.dir, "eng"), ls.Options{MmapFiles: e.opts.MmapFiles}); err != nil {
 		return err
 	}
 	e.txn = vl.NewManager()

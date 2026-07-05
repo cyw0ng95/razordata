@@ -19,6 +19,10 @@ type sstReader struct {
 	filePath         string   // non-empty for lazy readers (REQ000997)
 	version          int      // REQ001169: SST format version from footer
 	useInterpolation bool     // REQ001170: enable interpolation search for uniform keys
+
+	// REQ001227: mmap-backed zero-copy reads
+	mmap     []byte // memory-mapped file region (read-only)
+	mmapSize int64
 }
 
 func openSST(data []byte) (*sstReader, error) {
@@ -606,6 +610,17 @@ func (r *sstReader) readBlock(offset, size int) []byte {
 }
 
 func (r *sstReader) readRaw(offset, size int) []byte {
+	// REQ001227: prefer mmap for zero-copy reads
+	if len(r.mmap) > 0 {
+		if offset < 0 || offset >= len(r.mmap) {
+			return nil
+		}
+		end := offset + size
+		if end > len(r.mmap) {
+			end = len(r.mmap)
+		}
+		return r.mmap[offset:end]
+	}
 	if offset < 0 || offset >= len(r.data) {
 		if r.filePath == "" {
 			return nil
@@ -823,5 +838,9 @@ func (it *sstIterator) Err() error {
 var _ io.Closer = (*sstReader)(nil)
 
 func (r *sstReader) Close() error {
+	// REQ001227: unmap mmap'd region
+	if len(r.mmap) > 0 {
+		return munmapFile(r.mmap)
+	}
 	return nil
 }
