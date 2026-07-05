@@ -254,12 +254,12 @@ func (mi *mergeIterator) init(memtables []*memtable) {
 				if err != nil {
 					continue
 				}
-			reader, err := openSST(data)
-			if err != nil {
-				continue
-			}
-			reader.blockCache = mi.blockCache // REQ001242
-			// Store the data in the source so it stays alive
+				reader, err := openSST(data)
+				if err != nil {
+					continue
+				}
+				reader.blockCache = mi.blockCache // REQ001242
+				// Store the data in the source so it stays alive
 				// The sstIter holds a reference to the reader which holds the data
 				mi.sources = append(mi.sources, &sstIter{it: reader.Iterator(), data: data})
 			}
