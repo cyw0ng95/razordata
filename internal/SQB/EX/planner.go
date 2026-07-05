@@ -9,6 +9,7 @@ import (
 	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -5464,6 +5465,14 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 	case "cache_size", "journal_mode", "synchronous", "user_version":
 		// REQ000242: return pragma value as a single-row result
 		return OP.NewPragmaResult(s.Name, s.Value)
+	case "batch_size":
+		if s.Value != "" {
+			// PRAGMA batch_size = N — set the batch size
+			if n, err := strconv.Atoi(s.Value); err == nil {
+				OP.SetEngineBatchSize(n)
+			}
+		}
+		return OP.NewPragmaResult("batch_size", strconv.Itoa(OP.EngineBatchSize()))
 	case "foreign_keys", "foreign_key_check":
 		// REQ000905/REQ000906: these are handled by the Pragma operator
 		// which needs access to the store for FK introspection.

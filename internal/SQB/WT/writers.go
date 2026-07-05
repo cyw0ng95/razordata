@@ -1797,6 +1797,30 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 		return row, nil
 	}
 
+	// Handle PRAGMA batch_size [= N] (REQ001224)
+	if p.Stmt.Name == "batch_size" {
+		if !p.done {
+			p.done = true
+			if p.Stmt.Value != "" {
+				// Write: set the batch size
+				if n, err := strconv.Atoi(p.Stmt.Value); err == nil {
+					OP.SetEngineBatchSize(n)
+				}
+			}
+			// Read: return current value
+			p.rows = append(p.rows, DT.Row{
+				Cols: []string{"batch_size"},
+				Data: []DT.Value{DT.NewTextValue(strconv.Itoa(OP.EngineBatchSize()))},
+			})
+		}
+		if p.idx >= len(p.rows) {
+			return DT.Row{}, DT.ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
 	// Handle PRAGMA foreign_keys [= ON|OFF] (REQ000905)
 	if p.Stmt.Name == "foreign_keys" {
 		if !p.done {

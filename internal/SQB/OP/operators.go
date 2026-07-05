@@ -267,9 +267,27 @@ func NewSeqScanWithStore(store Store, table string) (*SeqScan, error) {
 }
 
 // engineBatchSize is the number of rows to fetch per batch from the
-// LSM engine. 64 balances iterator overhead with per-batch memory
-// (fits in L1 cache). REQ001064.
-const engineBatchSize = 64
+// LSM engine. 256 balances iterator overhead with per-batch memory
+// (fits in L1 cache). Increased from 64 for improved full-scan
+// throughput (REQ001224).
+var engineBatchSize = 256
+
+// EngineBatchSize returns the current batch size for SeqScan.NextBatch.
+func EngineBatchSize() int { return engineBatchSize }
+
+// SetEngineBatchSize sets the batch size for SeqScan.NextBatch.
+// Returns the previous value. Clamped to [1, 4096].
+func SetEngineBatchSize(n int) int {
+	prev := engineBatchSize
+	if n < 1 {
+		n = 1
+	}
+	if n > 4096 {
+		n = 4096
+	}
+	engineBatchSize = n
+	return prev
+}
 
 // defaultScanRowBuf is the number of rows to buffer in nextFromStore
 // for reuse of decoded Value slices. REQ001101: reduces per-row
@@ -316,6 +334,11 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		return nil, nil
 	}
 
+	// Use engineBatchSize directly (mutable for PRAGMA batch_size).
+	bs := engineBatchSize
+	if bs <= 0 {
+		bs = 256
+	}
 	nCols := len(s.schema.Cols)
 	cols := s.schema.Cols
 	if s.alias != "" && s.prefixedCols != nil {
@@ -328,7 +351,7 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	}
 	batch.SetColMap(s.schema.ColIndex)
 
-	for batch.Size < engineBatchSize {
+	for batch.Size < bs {
 		if !s.it.Next() {
 			if err := s.it.Err(); err != nil {
 				batch.Put()

@@ -9,6 +9,7 @@ import (
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 func TestSeqScan_AgainstRealStore(t *testing.T) {
@@ -428,5 +429,146 @@ func BenchmarkSeqScan_FullScan(b *testing.B) {
 		if count != rowCount {
 			b.Fatalf("expected %d rows, got %d", rowCount, count)
 		}
+	}
+}
+
+// BenchmarkSelect1_VecPath compares row-based vs vectorized SeqScan
+// throughput for a simple SELECT * scan. REQ001224.
+func BenchmarkSelect1_VecPath(b *testing.B) {
+	const rowCount = 100000
+	dir := b.TempDir()
+	eng, err := ls.Open(filepath.Join(dir, "db"))
+	if err != nil {
+		b.Fatalf("ls.Open: %v", err)
+	}
+	defer eng.Close()
+
+	s := &engineStore{eng: eng}
+	schema := []string{"id", "name", "val"}
+	_ = DT.RegisterStoreSchema("bench", schema, "id")
+
+	ss, _ := DT.SchemaFor("bench")
+	// Set ColTypes for vectorized path (RegisterStoreSchema doesn't set types).
+	ss.ColTypes = []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_FLOAT_KW}
+
+	for i := 0; i < rowCount; i++ {
+		row := DT.Row{
+			Data: []DT.Value{
+				NewIntValue(int64(i)),
+				NewTextValue("name_" + strconv.Itoa(i)),
+				NewFloatValue(float64(i) * 1.5),
+			},
+		}
+		encoded, err := OP.EncodeRow(ss, row)
+		if err != nil {
+			b.Fatalf("EncodeRow: %v", err)
+		}
+		key := OP.RowKey(OP.TablePrefix("bench"), NewIntValue(int64(i)))
+		if err := s.Insert(key, encoded); err != nil {
+			b.Fatalf("Insert: %v", err)
+		}
+	}
+	if err := s.ManualCompact(); err != nil {
+		b.Fatalf("ManualCompact: %v", err)
+	}
+
+	ctx := context.Background()
+
+	b.Run("RowPath", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			scan, err := OP.NewSeqScanWithStore(s, "bench")
+			if err != nil {
+				b.Fatalf("NewSeqScanWithStore: %v", err)
+			}
+			var count int
+			for {
+				_, err := scan.Next(ctx)
+				if err != nil {
+					if err == DT.ErrNoRows {
+						break
+					}
+					b.Fatalf("Next: %v", err)
+				}
+				count++
+			}
+			scan.Close()
+			if count != rowCount {
+				b.Fatalf("expected %d rows, got %d", rowCount, count)
+			}
+		}
+	})
+
+	b.Run("VecPath", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			scan, err := OP.NewSeqScanWithStore(s, "bench")
+			if err != nil {
+				b.Fatalf("NewSeqScanWithStore: %v", err)
+			}
+			// Wrap in vectorized path via tryVectorizePlan
+			root := tryVectorizePlan(scan)
+			var count int
+			for {
+				_, err := root.Next(ctx)
+				if err != nil {
+					if err == DT.ErrNoRows {
+						break
+					}
+					b.Fatalf("Next: %v", err)
+				}
+				count++
+			}
+			root.Close()
+			if count != rowCount {
+				b.Fatalf("expected %d rows, got %d", rowCount, count)
+			}
+		}
+	})
+}
+
+// TestPragma_BatchSize_ReadWrite verifies PRAGMA batch_size reads and
+// writes the engine batch size. REQ001224.
+func TestPragma_BatchSize_ReadWrite(t *testing.T) {
+	prev := OP.EngineBatchSize()
+	defer OP.SetEngineBatchSize(prev)
+
+	e := NewExecutorWithEngine(nil)
+	ctx := context.Background()
+
+	// Default should be 256.
+	rows, err := e.QueryAll(ctx, "PRAGMA batch_size")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	got := rows[0].Data[0].S
+	if got != "256" {
+		t.Fatalf("expected batch_size=256, got %q", got)
+	}
+
+	// Set to 512.
+	_, err = e.Exec(ctx, "PRAGMA batch_size = 512")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if OP.EngineBatchSize() != 512 {
+		t.Fatalf("expected engineBatchSize=512, got %d", OP.EngineBatchSize())
+	}
+
+	// Read back via a new executor (avoid stmt cache reuse).
+	e2 := NewExecutorWithEngine(nil)
+	rows, err = e2.QueryAll(ctx, "PRAGMA batch_size")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	got = rows[0].Data[0].S
+	if got != "512" {
+		t.Fatalf("expected batch_size=512, got %q", got)
 	}
 }
