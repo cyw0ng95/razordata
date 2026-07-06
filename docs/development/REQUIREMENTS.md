@@ -1,40 +1,19 @@
 ## TBD
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 | --- | --- | --- | --- | --- | --- | --- |
-| REQ001263 | MEM/BF | **DBG_ASSERT placement in MEM — pinCount underflow, double-pin, loading barrier leak, eviction invariant.** Insert WARN_ON/BUG_ON calls in MEM/BF, MEM/PC, MEM/SP. **Placements:**
-- BF/bf.go Pin: BUG_ON(prev < 0) — pinCount underflow leads to use-after-free.
-- BF/bf.go Unpin: WARN_ON(newCount < 0) — double-unpin detection.
-- BF/bf.go evictOne: WARN_ON(slot.pinCount.Load() > 0) — eviction of pinned page violates safety.
-- PC/pc.go loadBlock: BUG_ON(slot.loading && slot.wait == nil) — loading barrier corruption.
-- PC/pc.go loadBlock: WARN_ON(close(slot.wait) panics) — channel double-close.
-- SP/sp.go Get/Put: BUG_ON(len(buf) != BlockSize) — buffer size mismatch corrupts I/O.
-**Test:** TestMEM_Assert_PinUnderflow, TestMEM_Assert_EvictPinned, TestMEM_Assert_WrongSize. | high | small | REQ001261 | MEM/BF/bf.go, MEM/PC/pc.go, MEM/SP/sp.go |
-| REQ001264 | WAL/WR + WAL/RP | **DBG_ASSERT placement in WAL — LSN regression, segment boundary straddle, mid-segment corruption, fsync ordering.** Insert WARN_ON/BUG_ON calls in WAL/WR, WAL/FL, WAL/RP. **Placements:**
-- WR/writer.go Append: BUG_ON(lsn <= lastLSN) — LSN non-monotonicity breaks recovery ordering.
-- WR/writer.go Append: WARN_ON(seg.writeOff + recordSize > SegmentSize) — record must not straddle segment.
-- WR/writer.go rotateSegment: BUG_ON(seg.writeOff < SegmentSize && seg.writeOff > 0) — partial segment rotation.
-- FL/flusher.go Flush: WARN_ON(flushedLSN < lastAssignedLSN) — fsync barrier violation.
-- RP/replayer.go replaySegment: BUG_ON(crc != computed && !isTailRecord) — mid-segment corruption unrecoverable.
-- WR/header.go ReadHeader: BUG_ON(magic != WALMagic) — header corruption.
-**Test:** TestWAL_Assert_LSNRegression, TestWAL_Assert_MidSegmentCorrupt, TestWAL_Assert_SegmentBoundary. | high | small | REQ001261 | WAL/WR/writer.go, WAL/FL/flusher.go, WAL/RP/replayer.go, WAL/WR/header.go |
-| REQ001265 | ENG/LS + ENG/ID | **DBG_ASSERT placement in ENG — SST key ordering, frozen memtable write, L1+ SST overlap, btree node integrity, compaction key coverage.** Insert WARN_ON/BUG_ON calls in ENG/LS, ENG/ID, ENG/TB, ENG/CT. **Placements:**
-- LS/sst.go ReadBlock: BUG_ON(blockIdx > 0 && bytes.Compare(prev.LargestKey, block.LargestKey) >= 0) — SST index key ordering determines binary-search correctness.
-- LS/memtable.go Insert: BUG_ON(mt.frozen.Load()) — writing to frozen memtable loses data.
-- LS/version.go validateVersion: WARN_ON(level > 0 && overlap(files[i-1], files[i])) — L1+ overlap violates LSM invariant.
-- LS/compaction.go compact: WARN_ON(!coversAllInputKeys(output, inputs)) — compaction must not drop keys.
-- ID/btree.go insertIntoNode: BUG_ON(bytes.Equal(node.keys[i], key)) — duplicate key violates UNIQUE constraint.
-- ID/btree.go seek: BUG_ON(cursor.pos < 0 || cursor.pos > node.keyCount) — cursor bounds violation.
-- TB/ddl.go DropTable: WARN_ON(catalog.Lookup(tableName) == nil) — double-drop or stale reference.
-**Test:** TestENG_Assert_SSTKeyOrder, TestENG_Assert_FrozenMemtableInsert, TestENG_Assert_BtreeDuplicateKey. | high | small | REQ001261 | ENG/LS/sst.go, ENG/LS/memtable.go, ENG/LS/version.go, ENG/LS/compaction.go, ENG/ID/btree.go |
-| REQ001266 | TXN/MV + TXN/LC + TXN/VL | **DBG_ASSERT placement in TXN — version chain LSN ordering, epoch monotonicity, commit protocol sequence, hazard pointer safety.** Insert WARN_ON/BUG_ON calls in TXN/MV, TXN/LC, TXN/SN, TXN/VL. **Placements:**
-- MV/version.go findVisibleVersion: BUG_ON(node.endTS < node.beginTS) — version chain corruption makes MVCC incorrect.
-- MV/version.go appendVersion: WARN_ON(newNode.beginTS < head.beginTS) — version chain must be descending.
-- LC/epoch.go EnterEpoch: BUG_ON(rec.epoch > currentEpoch) — epoch violation causes premature reclamation.
-- LC/epoch.go ExitEpoch: WARN_ON(currentEpoch - rec.epoch > 1) — lagging thread prevents GC progress.
-- VL/commit.go Commit: BUG_ON(slot.status != StatusActive) — commit protocol state machine violation.
-- VL/commit.go Commit: BUG_ON(commitTS <= tx.beginTS) — commit timestamp regression breaks snapshot isolation.
-- SN/snapshot.go CreateSnapshot: WARN_ON(readTS < lastCommittedTS-1) — snapshot lag indicator.
-**Test:** TestTXN_Assert_VersionChainOrder, TestTXN_Assert_CommitStateMachine, TestTXN_Assert_EpochMonotonic. | high | small | REQ001261 | TXN/MV/version.go, TXN/LC/epoch.go, TXN/VL/commit.go, TXN/SN/snapshot.go |
+| REQ001265 | ENG/LS + ENG/ID | **DBG_ASSERT placement in ENG — SST key ordering, frozen memtable write, L1+ SST overlap, btree node integrity, compaction key coverage.** Insert WARN_ON/BUG_ON calls in ENG/LS, ENG/ID. **Done placements:**
+- LS/sst_reader.go parseIndexBlock: BUG_ON(bytes.Compare(prev, key) >= 0) — SST index key ordering.
+- LS/memtable.go Insert: BUG_ON(mt.frozen.Load()) — writing to frozen memtable.
+- ID/id.go insertNonFull: BUG_ON(bytes.Equal(node.keys[i], key)) — duplicate key.
+- ID/cursor.go seekTo: BUG_ON(p == nil) — nil page guard.
+- ID/cursor.go Next: BUG_ON(len(c.indices) != len(c.path)) — path/indices parity.
+- ID/cursor.go descendLeftmost: BUG_ON(p == nil) — nil page guard.
+- LS/table.go DropTable: WARN_ON(len(schema.Name) == 0) — empty name guard.
+**Not implemented** (spec functions/files don't exist in codebase):
+- LS/version.go validateVersion: WARN_ON(level > 0 && overlap) — file doesn't exist.
+- LS/compaction.go coversAllInputKeys: WARN_ON(!coversAllInputKeys) — function doesn't exist.
+- ID/btree.go seek: BUG_ON(cursor.bounds) — cursor.pos field doesn't exist.
+**Test:** TestENG_Assert_FrozenMemtableInsert, TestENG_Assert_BtreeDuplicateKey. TestENG_Assert_SSTKeyOrder missing. | high | small | REQ001261 | ENG/LS/sst_reader.go, ENG/LS/memtable.go, ENG/LS/compaction.go, ENG/ID/id.go, ENG/ID/cursor.go, ENG/LS/table.go |
 
 | REQ001270 | SQB/EX (compound) | **Compound set-operation failures — all 7 remaining select4 records fail with UNION/EXCEPT/UNION ALL queries containing NOT predicates. Every failure under-counts (got < want rows or cells).** Research report (select4-join-research.md) confirms all 7 select4 failures are compound set-operation queries, not joins. Pattern: multi-arm UNION/EXCEPT/UNION ALL with NOT predicates in WHERE clauses. All 7 under-count — rows dropped or incorrectly deduplicated. None involve join operators. Failing queries: L3766 (EXCEPT/UNION/EXCEPT, got 5 rows vs 6), L3924 (UNION/EXCEPT, got 39 cells vs 41), L4724 (UNION ALL/UNION, got 38 cells vs 39), L4784 (UNION/EXCEPT, got 41 cells vs 42), L4869 (UNION/EXCEPT, got 0 rows vs 1), L5013 (UNION ALL/EXCEPT, got 16 cells vs 19), L5065 (UNION ALL/EXCEPT, got 7 rows vs 8). Suspected root cause: NOT predicate handling in compound operator row filter — rows with NOT conditions are incorrectly eliminated during UNION/EXCEPT merge. **Fix:** (1) Reproduce each failing query individually with hand-seeded data (4 tables from select4: t5, t8, t7). (2) Isolate whether the bug is in compound row deduplication, NOT predicate pushdown, or EXCEPT set-difference logic. (3) Add TestCompound_EXCEPT_Negation, TestCompound_UNION_WithNOT, TestCompound_UNIONALL_EXCEPT reproducing each pattern. (4) Fix root cause in compound operator execution path. (5) Verify all 7 select4 queries pass. | high | large | REQ001271 | SQB/EX/ex.go, SQB/OP/intermediate.go, SQB/EV/eval.go |
 | REQ001271 | DBG/DC | **SQL PRAGMAs for debug tracing orphaned — HandleDebugPragma defined in pragma_debug.go but never wired into the PRAGMA dispatch path. Join tracing only works via socket commands.** The code for debug_join_tracing, debug_join_flush, debug_join_filter, debug_join_summary PRAGMAs exists in UT/pragma_debug.go (HandleDebugPragma) but is never called from the PRAGMA dispatch path in WT.Pragma.Next(). This means all the debug infrastructure (JoinTracer, BufferedTracer, 5 event types, 3 verbosity levels) is inaccessible via SQL — developers can only use socket commands (nc -U <dbdir>/.debug/debug.sock). Missing //go:build !debug stub for HandleDebugPragma also prevents compilation without debug tag. **Fix:** (1) Wire HandleDebugPragma into the PRAGMA dispatch path in WT.Pragma.Next() — route recognized debug PRAGMAs to DC.Control.EnableTrace and the BufferedTracer. (2) Add //go:build !debug stub file pragma_nodebug.go returning ErrRequiresDebugBuild. (3) Add TestDebugPragma_JoinTracing_OnOff and TestDebugPragma_JoinTracing_Flush verifying PRAGMAs work end-to-end. (4) Update docs/development/DEBUG.md SQL PRAGMA examples. | high | small | none | SQB/UT/pragma_debug.go, SQB/UT/pragma_nodebug.go (new), SQB/WT/pragma.go |
