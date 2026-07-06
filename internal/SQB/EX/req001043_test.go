@@ -3,6 +3,7 @@ package EX
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -89,8 +90,18 @@ func TestPlanner_ParallelScanSelection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	for i := 0; i < ParallelThreshold; i++ {
-		_, err := e.Exec(ctx, fmt.Sprintf("INSERT INTO big VALUES (%d, %d)", i, i))
+	batchSize := 100
+	for i := 0; i < ParallelThreshold; i += batchSize {
+		end := min(i+batchSize, ParallelThreshold)
+		var sb strings.Builder
+		sb.WriteString("INSERT INTO big VALUES ")
+		for j := i; j < end; j++ {
+			if j > i {
+				sb.WriteString(", ")
+			}
+			fmt.Fprintf(&sb, "(%d, %d)", j, j)
+		}
+		_, err := e.Exec(ctx, sb.String())
 		if err != nil {
 			t.Fatalf("insert: %v", err)
 		}

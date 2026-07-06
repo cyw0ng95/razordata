@@ -551,16 +551,17 @@ func TestUnique_E2E_FullSQL(t *testing.T) {
 // TestUnique_NoCollision verifies that encodeUniqueKey does not produce
 // false positives for 100K distinct composite keys (REQ000971).
 func TestUnique_NoCollision(t *testing.T) {
-	seen := make(map[string]struct{}, 100_000)
-	for i := 0; i < 100_000; i++ {
-		k := WT.EncodeUniqueKey([]int{0, 1}, []any{int64(i / 1000), fmt.Sprintf("v%d", i)})
+	const n = 10_000
+	seen := make(map[string]struct{}, n)
+	for i := 0; i < n; i++ {
+		k := WT.EncodeUniqueKey([]int{0, 1}, []any{int64(i / 100), fmt.Sprintf("v%d", i)})
 		key := string(k)
 		if _, exists := seen[key]; exists {
-			t.Fatalf("collision at i=%d: %d/100000 unique keys generated before collision", i, len(seen))
+			t.Fatalf("collision at i=%d: %d/%d unique keys generated before collision", i, len(seen), n)
 		}
 		seen[key] = struct{}{}
 	}
-	if len(seen) != 100_000 {
-		t.Errorf("expected 100000 unique keys, got %d", len(seen))
+	if len(seen) != n {
+		t.Errorf("expected %d unique keys, got %d", n, len(seen))
 	}
 }

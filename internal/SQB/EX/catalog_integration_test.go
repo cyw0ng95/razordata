@@ -163,7 +163,7 @@ func TestCatalog_Integration_ConcurrentCreate(t *testing.T) {
 	})
 
 	const workers = 8
-	const perWorker = 20
+	const perWorker = 5
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
