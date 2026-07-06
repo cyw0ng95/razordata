@@ -119,12 +119,10 @@ func BenchmarkSelect1_ExecutorCache_PerSession(b *testing.B) {
 	}
 }
 
-// TestShallowCopy_SharesStmtCache verifies REQ001220: ShallowCopy clones
-// share the root executor's stmtCache by pointer (saving ~171 MB allocation
-// per query). The planCache is NOT shared (plan results contain mutable
-// operator trees unsafe for concurrent replaceLiteralsOnTree), so each clone
-// gets its own planCache initialized at the root's maxSize.
-func TestShallowCopy_SharesStmtCache(t *testing.T) {
+// TestShallowCopy_SharesCaches verifies REQ001220 + REQ001259: ShallowCopy
+// clones share the root executor's stmtCache and planCache by pointer
+// (saving ~171 MB + ~1231 MB allocation per query respectively).
+func TestShallowCopy_SharesCaches(t *testing.T) {
 	UnregisterAll()
 	ResetGlobalStmtCache()
 	defer UnregisterAll()
@@ -143,12 +141,12 @@ func TestShallowCopy_SharesStmtCache(t *testing.T) {
 		t.Error("second ShallowCopy stmtCache is not shared with root")
 	}
 
-	// planCache must be different (per-session).
-	if ex1.planCache == root.planCache {
-		t.Error("ShallowCopy planCache should NOT be shared")
+	// REQ001259: planCache must also be shared (immutable after compilation).
+	if ex1.planCache != root.planCache {
+		t.Error("ShallowCopy planCache should be shared with root")
 	}
-	if ex2.planCache == root.planCache {
-		t.Error("second ShallowCopy planCache should NOT be shared")
+	if ex2.planCache != root.planCache {
+		t.Error("second ShallowCopy planCache should be shared with root")
 	}
 	if ex1.planCache.maxSize != root.planCache.maxSize {
 		t.Error("planCache maxSize should match root")

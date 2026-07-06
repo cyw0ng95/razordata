@@ -16,6 +16,25 @@ type RowArena struct {
 	slabCap int
 }
 
+// Init pre-allocates a slab large enough for estimatedRows rows of
+// colsPerRow columns, reducing the number of grow() calls during
+// execution. REQ001260.
+func (a *RowArena) Init(estimatedRows, colsPerRow int) {
+	needed := estimatedRows * colsPerRow * valueSize
+	if needed <= 0 {
+		return
+	}
+	// Add 25% margin for overhead.
+	needed = needed + needed/4
+	if needed < arenaSlabSize {
+		needed = arenaSlabSize
+	}
+	s := make([]byte, needed)
+	a.slab = s
+	a.offset = 0
+	a.slabCap = needed
+}
+
 func (a *RowArena) Reset() {
 	for _, s := range a.slabs {
 		arenaSlabPool.Put(s)

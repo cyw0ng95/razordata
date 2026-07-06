@@ -608,9 +608,11 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 // decodeRowBuffered decodes a row using the arena allocator.
 // REQ001221: replaces per-row make([]Value, N) with RowArena bump
 // allocation. The arena is reset in Close(), freeing all rows at once.
+// REQ001260: pre-size arena to engineBatchSize rows to reduce grow calls.
 func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
 	if s.rowArena == nil {
 		s.rowArena = &DT.RowArena{}
+		s.rowArena.Init(engineBatchSize, len(s.schema.Cols))
 	}
 	n := len(s.schema.Cols)
 	if n == 0 {

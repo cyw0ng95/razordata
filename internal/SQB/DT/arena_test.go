@@ -157,3 +157,85 @@ func BenchmarkSeqScan_ArenaVsSlice(b *testing.B) {
 		arena.Reset()
 	})
 }
+
+// TestRowArena_Presize verifies REQ001260: Init pre-allocates a slab
+// so that AllocRow calls within the estimated range do not trigger grow.
+func TestRowArena_Presize(t *testing.T) {
+	schema := &StoreSchema{
+		Cols:     []string{"a", "b", "c"},
+		ColIndex: map[string]int{"a": 0, "b": 1, "c": 2},
+	}
+
+	// Pre-size for 100 rows of 3 columns each.
+	arena := &RowArena{}
+	arena.Init(100, 3)
+
+	// AllocRow should not trigger grow for 100 rows.
+	for i := 0; i < 100; i++ {
+		row := arena.AllocRow(3, schema)
+		if row == nil {
+			t.Fatalf("AllocRow %d returned nil", i)
+		}
+		if len(row.Data) != 3 {
+			t.Fatalf("row %d: Data len = %d, want 3", i, len(row.Data))
+		}
+		row.Data[0] = NewIntValue(int64(i))
+		row.Data[1] = NewFloatValue(float64(i))
+		row.Data[2] = NewTextValue("x")
+	}
+	arena.Reset()
+}
+
+// TestRowArena_PresizeGrowFallback verifies that Init with zero
+// estimates still allows AllocRow to work via grow.
+func TestRowArena_PresizeGrowFallback(t *testing.T) {
+	schema := &StoreSchema{
+		Cols:     []string{"a"},
+		ColIndex: map[string]int{"a": 0},
+	}
+
+	arena := &RowArena{}
+	arena.Init(0, 0) // zero estimate — should not crash
+
+	// Should still work via grow fallback.
+	for i := 0; i < 10; i++ {
+		row := arena.AllocRow(1, schema)
+		if row == nil {
+			t.Fatalf("AllocRow %d returned nil", i)
+		}
+	}
+	arena.Reset()
+}
+
+// BenchmarkRowArena_Presize measures the allocation reduction from Init.
+// With 10000 rows of 5 columns, the arena would grow 6+ times without Init.
+func BenchmarkRowArena_Presize(b *testing.B) {
+	schema := &StoreSchema{
+		Cols:     []string{"a", "b", "c", "d", "e"},
+		ColIndex: map[string]int{"a": 0, "b": 1, "c": 2, "d": 3, "e": 4},
+	}
+	const rows = 10000
+
+	b.Run("NoInit", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			arena := &RowArena{}
+			for j := 0; j < rows; j++ {
+				arena.AllocRow(5, schema)
+			}
+			arena.Reset()
+		}
+	})
+
+	b.Run("WithInit", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			arena := &RowArena{}
+			arena.Init(rows, 5)
+			for j := 0; j < rows; j++ {
+				arena.AllocRow(5, schema)
+			}
+			arena.Reset()
+		}
+	})
+}
