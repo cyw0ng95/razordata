@@ -3,7 +3,9 @@
 package di
 
 import (
+	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/DBG/PR"
 	"github.com/cyw0ng95/razordata/internal/DBG/SK"
 	"github.com/cyw0ng95/razordata/internal/DBG/TE"
+	ec "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/LOG/HK"
 )
 
@@ -68,6 +71,21 @@ func NewDebugger(opts Options) (Debugger, error) {
 	}
 
 	pr.SetProfileDir(opts.DebugDir)
+
+	ec.RegisterBuiltinAssertCases()
+	ec.SetEngineStatsCallback(func() string {
+		snap := ct.GlobalStats.Snapshot()
+		keys := make([]string, 0, len(snap))
+		for k := range snap {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var s string
+		for _, k := range keys {
+			s += fmt.Sprintf("  %s = %d\n", k, snap[k])
+		}
+		return s
+	})
 
 	return d, nil
 }
