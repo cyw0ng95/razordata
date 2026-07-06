@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 )
 
 var (
@@ -117,11 +119,15 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	heap.Init(h)
 
 	rl := cj.rateLimiter
-
+	var firstKey, lastKey []byte
 	for h.Len() > 0 {
 		minItem := heap.Pop(h).(*sstIterator)
 		k := minItem.Key()
 		v := minItem.Value()
+		if firstKey == nil {
+			firstKey = k
+		}
+		lastKey = k
 		if rl != nil {
 			rl.Wait(int64(len(k) + len(v)))
 		}
@@ -136,6 +142,18 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 	sstData, err := w.Finish()
 	if err != nil {
 		return err
+	}
+	EC.WARN_ON(len(sstData) == 0 && len(cj.inputs) > 0, "compaction.Run: output SST empty with non-empty inputs — keys may have been dropped")
+	// Verify the new SST covers all input key ranges.
+	if firstKey != nil {
+		expectedMin := cj.inputs[0].MinKey
+		expectedMax := cj.inputs[len(cj.inputs)-1].MaxKey
+		if bytes.Compare(firstKey, expectedMin) < 0 {
+			EC.WARN_ON(true, "compaction.Run: new SST first key %q < expected min %q", firstKey, expectedMin)
+		}
+		if bytes.Compare(lastKey, expectedMax) > 0 {
+			EC.WARN_ON(true, "compaction.Run: new SST last key %q > expected max %q", lastKey, expectedMax)
+		}
 	}
 
 	if rl != nil {

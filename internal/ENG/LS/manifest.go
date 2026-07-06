@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"time"
+
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 )
 
 var (
@@ -91,6 +93,19 @@ func (m *manifest) Apply(v Version) error {
 		v.num = m.version.Load() + 1
 	}
 	v.created = time.Now()
+
+	// L1+ invariant: SST files within a level must not overlap by key range.
+	for level := 1; level < len(v.levels); level++ {
+		files := v.levels[level]
+		for i := 0; i < len(files)-1; i++ {
+			if bytes.Compare(files[i].MaxKey, files[i+1].MinKey) > 0 {
+				EC.WARN_ON(true, "manifest.Apply: L%d SST %d and SST %d overlap [%s,%s] / [%s,%s]",
+					level, files[i].FileID, files[i+1].FileID,
+					files[i].MinKey, files[i].MaxKey,
+					files[i+1].MinKey, files[i+1].MaxKey)
+			}
+		}
+	}
 
 	data, err := encodeManifest(&v)
 	if err != nil {

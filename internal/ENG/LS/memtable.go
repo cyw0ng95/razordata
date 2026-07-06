@@ -2,6 +2,8 @@ package ls
 
 import (
 	"sync/atomic"
+
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 )
 
 type memtable struct {
@@ -20,6 +22,7 @@ func newMemtable(maxSize int64) *memtable {
 }
 
 func (m *memtable) Insert(key, value []byte) error {
+	EC.BUG_ON(m.frozen.Load(), "memtable.Insert: writing to frozen memtable — data loss risk")
 	if err := m.skiplist.Insert(key, value); err != nil {
 		return err
 	}

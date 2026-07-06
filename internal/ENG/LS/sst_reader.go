@@ -7,6 +7,8 @@ import (
 	"io"
 	"strconv"
 	"unsafe"
+
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 )
 
 type sstReader struct {
@@ -294,6 +296,10 @@ func parseIndexBlock(data []byte) []indexEntry {
 			// REQ001008: range tombstones should suppress keys in the range
 			blockSize: int(blockSize),
 		})
+		if len(entries) > 1 {
+			prev := entries[len(entries)-2].largestKey
+			EC.BUG_ON(bytes.Compare(prev, key) >= 0, "sst.parseIndexBlock: SST index key ordering violation, prev=%q >= curr=%q", prev, key)
+		}
 	}
 
 	return entries
