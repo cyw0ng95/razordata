@@ -171,65 +171,6 @@ func (d *RazorDriver) Close(ctx context.Context) error {
 	return firstErr
 }
 
-// ResetSchema drops all user tables so the driver can be reused for the
-// next corpus file. This avoids creating a fresh engine per file.
-// Internal/system tables (sqlite_*) are preserved.
-func (d *RazorDriver) ResetSchema(ctx context.Context) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.db == nil {
-		return errors.New("slt: razor: not connected")
-	}
-	// Query sqlite_master for user tables.
-	rows, err := d.db.QueryContext(ctx,
-		"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-	if err != nil {
-		return fmt.Errorf("query sqlite_master: %w", err)
-	}
-	defer rows.Close()
-
-	var tables []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return fmt.Errorf("scan table name: %w", err)
-		}
-		tables = append(tables, name)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iter sqlite_master: %w", err)
-	}
-
-	// Drop each table.
-	for _, name := range tables {
-		if _, err := d.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+name); err != nil {
-			return fmt.Errorf("drop %s: %w", name, err)
-		}
-	}
-	return nil
-}
-
-// verifyEmptySchema checks that no user tables remain in the database.
-// Used as a pollution guard between corpus files.
-func (d *RazorDriver) verifyEmptySchema(ctx context.Context) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.db == nil {
-		return errors.New("slt: razor: not connected")
-	}
-	var count int
-	err := d.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").
-		Scan(&count)
-	if err != nil {
-		return fmt.Errorf("count tables: %w", err)
-	}
-	if count > 0 {
-		return fmt.Errorf("found %d user tables after reset", count)
-	}
-	return nil
-}
-
 // Exec runs a DDL/DML statement via database/sql.
 func (d *RazorDriver) Exec(ctx context.Context, sql string) error {
 	d.mu.Lock()
