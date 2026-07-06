@@ -2,6 +2,7 @@ package OP
 
 import (
 	"context"
+	"encoding/binary"
 	"strconv"
 	"sync"
 
@@ -90,6 +91,10 @@ func (d *Distinct) Close() error {
 // Child returns the wrapped child operator.
 func (d *Distinct) Child() pl.Operator { return d.child }
 
+// DistinctKey builds a string key for a Row that uniquely identifies the
+// row's values across all types. REQ001284: each value is prefixed with a
+// Kind tag (I/F/T/B/N/L) to prevent collisions between different types that
+// produce the same string representation (e.g., Int(1) vs Float(1.0)).
 func DistinctKey(row pl.Row) string {
 	if len(row.Data) == 0 {
 		return ""
@@ -98,26 +103,34 @@ func DistinctKey(row pl.Row) string {
 	out := (*bp)[:0]
 	for i, d := range row.Data {
 		if i > 0 {
-			out = append(out, 0)
+			out = append(out, 1) // \x01 column separator
 		}
 		switch d.Kind {
 		case KindNull:
-			out = append(out, "N"...)
+			out = append(out, 'N')
 		case KindInt:
+			out = append(out, 'I')
 			out = strconv.AppendInt(out, d.I64, 10)
 		case KindFloat:
+			out = append(out, 'F')
 			out = strconv.AppendFloat(out, d.F64, 'g', -1, 64)
 		case KindText:
-			out = append(out, "S"...)
+			out = append(out, 'T', 1) // marker + \x01 sentinel
+			out = binary.AppendUvarint(out, uint64(len(d.S)))
 			out = append(out, d.S...)
+		case KindBlob:
+			out = append(out, 'L', 1) // marker + \x01 sentinel
+			out = binary.AppendUvarint(out, uint64(len(d.B)))
+			out = append(out, d.B...)
 		case KindBool:
+			out = append(out, 'B')
 			if d.Bo {
-				out = append(out, "T"...)
+				out = append(out, '1')
 			} else {
-				out = append(out, "F"...)
+				out = append(out, '0')
 			}
 		default:
-			out = append(out, "O"...)
+			out = append(out, 'O')
 		}
 	}
 	key := string(out)

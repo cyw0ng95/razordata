@@ -2,6 +2,7 @@ package DT
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -238,4 +239,29 @@ func BenchmarkRowArena_Presize(b *testing.B) {
 			arena.Reset()
 		}
 	})
+}
+
+// BenchmarkRowArena_Init_Pool measures allocation reduction from the
+// size-bucketed slab cache for 1K, 10K, and 100K row workloads.
+// REQ001289.
+func BenchmarkRowArena_Init_Pool(b *testing.B) {
+	schema := &StoreSchema{
+		Cols:     []string{"a", "b", "c", "d", "e"},
+		ColIndex: map[string]int{"a": 0, "b": 1, "c": 2, "d": 3, "e": 4},
+	}
+
+	for _, rows := range []int{1000, 10000, 100000} {
+		rows := rows
+		b.Run(fmt.Sprintf("Rows%d", rows), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				arena := &RowArena{}
+				arena.Init(rows, 5)
+				for j := 0; j < rows; j++ {
+					arena.AllocRow(5, schema)
+				}
+				arena.Reset()
+			}
+		})
+	}
 }

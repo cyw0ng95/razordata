@@ -29,19 +29,19 @@ func (a *RowArena) Init(estimatedRows, colsPerRow int) {
 	if needed < arenaSlabSize {
 		needed = arenaSlabSize
 	}
-	s := make([]byte, needed)
-	a.slab = s
+	// REQ001289: try size-bucketed cache first before allocating fresh.
+	a.slab = getSlab(needed)
 	a.offset = 0
-	a.slabCap = needed
+	a.slabCap = len(a.slab)
 }
 
 func (a *RowArena) Reset() {
 	for _, s := range a.slabs {
-		arenaSlabPool.Put(s)
+		putSlab(s)
 	}
 	a.slabs = a.slabs[:0]
 	if a.slab != nil {
-		arenaSlabPool.Put(a.slab)
+		putSlab(a.slab)
 		a.slab = nil
 	}
 	a.offset = 0
@@ -163,10 +163,74 @@ func DecodeRowInto(row *Row, data []byte, schema *StoreSchema) error {
 	return nil
 }
 
-var arenaSlabPool = sync.Pool{
-	New: func() any {
-		return make([]byte, arenaSlabSize)
-	},
+// sizeBuckets defines the fixed slab size classes for the pool.
+// REQ001289: size-bucketed slab cache to avoid re-allocating large slabs on Init.
+var sizeBuckets = []int{
+	64 * 1024,       // 64 KB
+	256 * 1024,      // 256 KB
+	1024 * 1024,     // 1 MB
+	4 * 1024 * 1024, // 4 MB
+}
+
+// sizeBucketIndex returns the index of the smallest bucket >= n.
+// Returns -1 if n exceeds the largest bucket.
+func sizeBucketIndex(n int) int {
+	for i, sz := range sizeBuckets {
+		if n <= sz {
+			return i
+		}
+	}
+	return -1
+}
+
+// slabCache is a size-bucketed slab cache keyed by size class.
+// Each bucket is a sync.Pool to allow lock-free concurrent reuse.
+var slabCache struct {
+	mu    sync.Mutex
+	pools map[int]*sync.Pool
+}
+
+func init() {
+	slabCache.pools = make(map[int]*sync.Pool, len(sizeBuckets))
+	for _, sz := range sizeBuckets {
+		sz := sz
+		slabCache.pools[sz] = &sync.Pool{
+			New: func() any { return make([]byte, sz) },
+		}
+	}
+}
+
+// getSlab returns a slab from the cache with capacity >= minSize,
+// or allocates a fresh one if no cached slab is large enough.
+func getSlab(minSize int) []byte {
+	idx := sizeBucketIndex(minSize)
+	if idx >= 0 {
+		sz := sizeBuckets[idx]
+		slabCache.mu.Lock()
+		pool := slabCache.pools[sz]
+		slabCache.mu.Unlock()
+		if s := pool.Get(); s != nil {
+			buf := s.([]byte)
+			if len(buf) >= minSize {
+				return buf
+			}
+		}
+	}
+	return make([]byte, minSize)
+}
+
+// putSlab returns a slab to the appropriate size bucket.
+func putSlab(slab []byte) {
+	n := len(slab)
+	idx := sizeBucketIndex(n)
+	if idx < 0 {
+		return // too large, let GC handle it
+	}
+	sz := sizeBuckets[idx]
+	slabCache.mu.Lock()
+	pool := slabCache.pools[sz]
+	slabCache.mu.Unlock()
+	pool.Put(slab)
 }
 
 // CloneRow clones an existing row into the arena. The returned row
