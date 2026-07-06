@@ -3,6 +3,7 @@ package wr
 import (
 	"fmt"
 
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"golang.org/x/sys/unix"
 )
 
@@ -115,6 +116,7 @@ func ValidateSegmentHeader(buf []byte) error {
 	if len(buf) < WALHeaderSize {
 		return fmt.Errorf("%w: header shorter than %d bytes", ErrCorrupt, WALHeaderSize)
 	}
+	EC.BUG_ON(string(buf[0:4]) != WALMagic, "wr.ValidateSegmentHeader: bad segment magic, got %q", string(buf[0:4]))
 	if string(buf[0:4]) != WALMagic {
 		return fmt.Errorf("%w: bad segment magic", ErrCorrupt)
 	}

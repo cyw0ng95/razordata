@@ -10,6 +10,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/FIL/FS"
 	"github.com/cyw0ng95/razordata/internal/FIL/LF"
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 )
 
@@ -125,6 +126,8 @@ func (f *flusher) Sync() error {
 		done: make(chan struct{}),
 		lsn:  f.lsn.Current(),
 	}
+
+	EC.WARN_ON(req.lsn == 0 && !f.closed.isSet(), "fl.Sync: fsync barrier violation — zero LSN synced")
 
 	// Submit to group commit pipeline.
 	f.gc.Submit(req)

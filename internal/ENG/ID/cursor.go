@@ -2,6 +2,8 @@ package id
 
 import (
 	"bytes"
+
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 )
 
 // Cursor provides ordered traversal of B-tree entries.
@@ -47,6 +49,7 @@ func (c *Cursor) Seek(key []byte) bool {
 
 func (c *Cursor) seekTo(id uint32, key []byte) {
 	p := c.bt.getPage(id)
+	EC.BUG_ON(p == nil, "cursor.seekTo: nil page for id %d", id)
 	if p == nil {
 		return
 	}
@@ -99,6 +102,7 @@ func (c *Cursor) Next() bool {
 	}
 
 	// Walk up the tree to find the next leaf
+	EC.BUG_ON(len(c.indices) != len(c.path), "cursor.Next: path/indices length mismatch %d != %d", len(c.path), len(c.indices))
 	for len(c.path) > 1 {
 		// Pop current leaf
 		c.path = c.path[:len(c.path)-1]
@@ -136,6 +140,7 @@ func (c *Cursor) Next() bool {
 // descendLeftmost follows the leftmost path from the given page to a leaf.
 func (c *Cursor) descendLeftmost(id uint32) {
 	p := c.bt.getPage(id)
+	EC.BUG_ON(p == nil, "cursor.descendLeftmost: nil page for id %d", id)
 	if p == nil {
 		return
 	}

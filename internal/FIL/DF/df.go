@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/IO"
+	"github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"golang.org/x/sys/unix"
 )
@@ -287,6 +288,7 @@ func (d *BlockDevice) ReadBlock(_ context.Context, blockID uint64, n int, buf []
 
 	storedSum := binary.LittleEndian.Uint32(tmp[DataLen-ChecksumLen:])
 	computedSum := crc32.ChecksumIEEE(tmp[:n])
+	EC.BUG_ON(storedSum != computedSum, "df.ReadBlock: CRC mismatch block %d, stored=%08x computed=%08x", blockID, storedSum, computedSum)
 	if storedSum != computedSum {
 		return ErrCorrupt
 	}
@@ -319,7 +321,8 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 		sum := crc32.ChecksumIEEE(poolBuf[:n])
 		binary.LittleEndian.PutUint32(poolBuf[DataLen-ChecksumLen:DataLen], sum)
 
-		_, err := d.writeAt(fd, poolBuf[:], int64(offset))
+		written, err := d.writeAt(fd, poolBuf[:], int64(offset))
+		EC.BUG_ON(err == nil && written != DefaultBlockSize, "df.WriteBlock: short write block %d, wrote %d bytes, want %d", blockID, written, DefaultBlockSize)
 		if err != nil {
 			if d.log != nil {
 				d.log.Error("df.write_block", "blockID", blockID, "err", err)
@@ -339,7 +342,8 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 	sum := crc32.ChecksumIEEE(tmp[:n])
 	binary.LittleEndian.PutUint32(tmp[DataLen-ChecksumLen:DataLen], sum)
 
-	_, err := d.writeAt(fd, tmp[:], int64(offset))
+	written, err := d.writeAt(fd, tmp[:], int64(offset))
+	EC.BUG_ON(err == nil && written != DefaultBlockSize, "df.WriteBlock: short write block %d, wrote %d bytes, want %d", blockID, written, DefaultBlockSize)
 	if err != nil {
 		if d.log != nil {
 			d.log.Error("df.write_block", "blockID", blockID, "err", err)

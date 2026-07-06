@@ -1,14 +1,6 @@
 ## TBD
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 | --- | --- | --- | --- | --- | --- | --- |
-| REQ001262 | FIL/DF | **DBG_ASSERT placement in FIL — short write, checksum mismatch, double close, O_DIRECT alignment.** Insert WARN_ON/BUG_ON calls at critical I/O invariant checks in FIL/DF, FIL/MF, FIL/LF, FIL/FS. **Placements:**
-- DF/data.go WriteBlock: BUG_ON(written != blockSize) — short write is unrecoverable data loss.
-- DF/data.go ReadBlock: BUG_ON(storedCRC != computedCRC) — silent corruption must never propagate.
-- DF/data.go WriteBlock/ReadBlock: WARN_ON(buf % blockSize != 0) — alignment violation causes EINVAL.
-- LF/lf.go Close: WARN_ON(fd == -1) — detect double-close bugs.
-- MF/meta.go WriteMeta: BUG_ON(written != MetaSize) — meta corruption renders db unopenable.
-- FS/fs.go ValidatePath: WARN_ON(hasDotDot(path)) — security boundary.
-**Test:** TestFIL_Assert_ShortWrite, TestFIL_Assert_Checksum, TestFIL_Assert_DoubleClose, TestFIL_Assert_StubNoop. | high | small | REQ001261 | FIL/DF/data.go, FIL/LF/lf.go, FIL/MF/meta.go, FIL/FS/fs.go |
 | REQ001263 | MEM/BF | **DBG_ASSERT placement in MEM — pinCount underflow, double-pin, loading barrier leak, eviction invariant.** Insert WARN_ON/BUG_ON calls in MEM/BF, MEM/PC, MEM/SP. **Placements:**
 - BF/bf.go Pin: BUG_ON(prev < 0) — pinCount underflow leads to use-after-free.
 - BF/bf.go Unpin: WARN_ON(newCount < 0) — double-unpin detection.

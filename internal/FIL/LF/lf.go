@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"golang.org/x/sys/unix"
 )
@@ -221,6 +222,7 @@ func (sm *SegmentManager) Close() error {
 	sm.pool.Range(func(key, value any) bool {
 		h := value.(*FileHandle)
 		h.mu.Lock()
+		EC.WARN_ON(h.FD == -1, "lf.Close: double-close detected for segment %v", key)
 		if h.FD != -1 {
 			if err := unix.Close(h.FD); err != nil {
 				last = err

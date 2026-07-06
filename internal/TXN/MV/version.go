@@ -3,6 +3,8 @@ package MV
 import (
 	"math"
 	"sync/atomic"
+
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 )
 
 // VersionNode is a single version entry in a version chain.
@@ -104,8 +106,11 @@ func (vc *VersionChain) Head() *VersionNode {
 // Insert prepends a node to the head of the chain using CAS. Returns true
 // on success.
 func (vc *VersionChain) Insert(node *VersionNode) bool {
+	EC.BUG_ON(node == nil, "mv.VersionChain.Insert: nil node")
+	EC.BUG_ON(node.beginTS == 0, "mv.VersionChain.Insert: zero beginTS")
 	for {
 		oldHead := vc.head.Load()
+		EC.WARN_ON(oldHead != nil && node.beginTS < oldHead.beginTS, "mv.VersionChain.Insert: version chain must be descending")
 		node.next.Store(oldHead)
 		if vc.head.CompareAndSwap(oldHead, node) {
 			return true
@@ -143,6 +148,7 @@ func (vc *VersionChain) Commit(node *VersionNode, commitTS uint64) bool {
 // at readTS, or nil if none matches.
 func (vc *VersionChain) FindVisible(readTS uint64) *VersionNode {
 	for node := vc.Head(); node != nil; node = node.next.Load() {
+		EC.BUG_ON(node.endTS.Load() < node.beginTS, "mv.FindVisible: version chain corruption — endTS %d < beginTS %d", node.endTS.Load(), node.beginTS)
 		if node.IsUncommitted() {
 			continue
 		}

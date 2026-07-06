@@ -7,6 +7,7 @@ import (
 	"time"
 	"unsafe"
 
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/TXN/MV"
 )
 
@@ -57,16 +58,22 @@ func (em *epochManager) EnterEpoch() uint64 {
 	goid := getGoroutineID()
 	em.RegisterThread(goid)
 	epoch := em.epoch.Load()
+	EC.BUG_ON(epoch < 0, "epoch.EnterEpoch: negative epoch %d", epoch)
 	record, ok := em.threads.Load(goid)
 	if ok {
-		record.(*threadRecord).enteredAt.Store(epoch)
+		rec := record.(*threadRecord)
+		EC.BUG_ON(rec.enteredAt.Load() > epoch, "epoch.EnterEpoch: epoch violation — rec.enteredAt %d > currentEpoch %d", rec.enteredAt.Load(), epoch)
+		rec.enteredAt.Store(epoch)
 	}
 	return uint64(epoch)
 }
 
 func (em *epochManager) ExitEpoch(goroutineID uint64) {
 	if record, ok := em.threads.Load(goroutineID); ok {
-		record.(*threadRecord).enteredAt.Store(0)
+		rec := record.(*threadRecord)
+		currentEpoch := em.epoch.Load()
+		EC.WARN_ON(currentEpoch-rec.enteredAt.Load() > 1, "epoch.ExitEpoch: lagging thread goid=%d entered=%d current=%d", goroutineID, rec.enteredAt.Load(), currentEpoch)
+		rec.enteredAt.Store(0)
 	}
 }
 

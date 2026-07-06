@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	df "github.com/cyw0ng95/razordata/internal/FIL/DF"
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 )
 
 const (
@@ -116,19 +117,26 @@ func NewWithOptions(opts Options) *syncPool {
 
 // Get returns a buffer of at least size bytes.
 func (sp *syncPool) Get(size int) []byte {
+	EC.BUG_ON(size <= 0, "sp.Get: non-positive size %d", size)
 	if size <= BlockSize {
 		if p := sp.pagePool.Get(); p != nil {
-			return (*p.(*[]byte))[:size]
+			b := *p.(*[]byte)
+			EC.BUG_ON(len(b) != BlockSize, "sp.Get: page pool returned buffer with len %d, want %d", len(b), BlockSize)
+			return b[:size]
 		}
 	}
 	if size <= IterBufferSize {
 		if p := sp.iterPool.Get(); p != nil {
-			return (*p.(*[]byte))[:size]
+			b := *p.(*[]byte)
+			EC.BUG_ON(len(b) != IterBufferSize, "sp.Get: iter pool returned buffer with len %d, want %d", len(b), IterBufferSize)
+			return b[:size]
 		}
 	}
 	if size <= WALBufSize {
 		if p := sp.walPool.Get(); p != nil {
-			return (*p.(*[]byte))[:size]
+			b := *p.(*[]byte)
+			EC.BUG_ON(len(b) != WALBufSize, "sp.Get: WAL pool returned buffer with len %d, want %d", len(b), WALBufSize)
+			return b[:size]
 		}
 	}
 	return make([]byte, size)
@@ -136,6 +144,8 @@ func (sp *syncPool) Get(size int) []byte {
 
 // Put returns buf to the pool.
 func (sp *syncPool) Put(buf []byte) {
+	EC.BUG_ON(len(buf) == 0, "sp.Put: zero-length buffer")
+	EC.WARN_ON(cap(buf) != BlockSize && cap(buf) != IterBufferSize && cap(buf) != WALBufSize, "sp.Put: unexpected buffer capacity %d", cap(buf))
 	switch cap(buf) {
 	case BlockSize:
 		b := buf[:BlockSize]

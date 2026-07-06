@@ -3,6 +3,8 @@ package bf
 import (
 	"sync"
 	"sync/atomic"
+
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 )
 
 // shardedBufferPool splits the global buffer pool into N shards,
@@ -222,6 +224,7 @@ func (sbp *shardedBufferPool) evictOne(pass int, shard *bufferShard, idx int) ([
 	}
 	if found {
 		victim := shard.slots[victimID]
+		EC.WARN_ON(victim.pinCount.Load() > 0, "bf.evictOne: evicting pinned page %d", victimID)
 		delete(shard.slots, victimID)
 		sbp.totalUsed.Add(-1)
 		return victim.data, true

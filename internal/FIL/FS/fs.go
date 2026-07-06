@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"golang.org/x/sys/unix"
 )
@@ -36,6 +37,7 @@ func (v *pathValidator) Validate(path string) error {
 		return ErrNotAbsolute
 	}
 	if strings.Contains(path, "..") {
+		EC.WARN_ON(true, "fs.Validate: path traversal attempt detected: %q", path)
 		return ErrPathTraversal
 	}
 	return nil

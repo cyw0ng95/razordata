@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/TXN/MV"
 	"github.com/cyw0ng95/razordata/internal/TXN/SN"
 	walwr "github.com/cyw0ng95/razordata/internal/WAL/WR"
@@ -201,6 +202,8 @@ func (t *tx) Commit(ctx context.Context) error {
 	if t.finished {
 		return ErrTxFinished
 	}
+	EC.BUG_ON(t.slot == nil, "tx.Commit: nil slot")
+	EC.BUG_ON(t.slot.status.Load() != int32(SlotActive), "tx.Commit: commit protocol state machine violation — status %d != SlotActive", t.slot.status.Load())
 	t.setPhase(PhasePreCommit)
 	if !t.sm.Validate(t.slot) {
 		t.setPhase(PhaseAborted)
@@ -212,6 +215,7 @@ func (t *tx) Commit(ctx context.Context) error {
 	}
 
 	commitTS := NextTS()
+	EC.BUG_ON(commitTS <= t.slot.beginTS, "tx.Commit: commit timestamp %d regression <= beginTS %d", commitTS, t.slot.beginTS)
 
 	t.setPhase(PhaseCommit) // REQ000573: WAL write before chain commit
 	if t.wal != nil {
@@ -269,7 +273,7 @@ func (t *tx) Commit(ctx context.Context) error {
 	if t.manager != nil {
 		// REQ000995: clear savepoints on commit.
 		t.savepoints = nil
-		t.manager.recordCommit()
+		t.manager.recordCommit(commitTS)
 	}
 	return nil
 }

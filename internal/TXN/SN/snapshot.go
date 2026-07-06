@@ -4,12 +4,24 @@ import (
 	"sync"
 	"sync/atomic"
 
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/TXN/MV"
 )
 
 type VersionChainSnapshot struct {
 	Key  []byte
 	Head *MV.VersionNode
+}
+
+func NewReadView(mv *MV.MV, readTS, maxCommittedTS uint64) *ReadView {
+	EC.BUG_ON(mv == nil, "sn.NewReadView: nil MV")
+	EC.WARN_ON(readTS == 0, "sn.NewReadView: zero readTS — snapshot may be invalid")
+	EC.WARN_ON(readTS+1 < maxCommittedTS, "sn.NewReadView: readTS %d is %d behind latest commit %d — snapshot lag", readTS, maxCommittedTS-readTS, maxCommittedTS)
+	return &ReadView{
+		readTS:   readTS,
+		snapshot: make(map[string]*VersionChainSnapshot),
+		mv:       mv,
+	}
 }
 
 type ReadView struct {
@@ -19,14 +31,6 @@ type ReadView struct {
 	mv       *MV.MV
 	closed   atomic.Bool
 	mu       sync.Mutex
-}
-
-func NewReadView(mv *MV.MV, readTS uint64) *ReadView {
-	return &ReadView{
-		readTS:   readTS,
-		snapshot: make(map[string]*VersionChainSnapshot),
-		mv:       mv,
-	}
 }
 
 func (rv *ReadView) addSnapshot(key []byte, head *MV.VersionNode) {

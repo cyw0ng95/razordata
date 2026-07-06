@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/LF"
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"github.com/cyw0ng95/razordata/internal/MEM/BF"
 	"github.com/cyw0ng95/razordata/internal/WAL/WR"
@@ -231,11 +232,6 @@ func (r *replayer) forEachRecord(segNum uint64, fn func(rec *wr.LogRecord, recLS
 				return fmt.Errorf("rp: segment %d offset %d: %w",
 					segNum, offset+int64(off), ErrCorrupt)
 			}
-			if rec.PayCRCFail {
-				r.stats.CorruptionFailures++
-				return fmt.Errorf("rp: segment %d inner RTData CRC: %w",
-					segNum, ErrCorrupt)
-			}
 			_ = rec
 			resyncWindow := int64(wr.MaxRecordLen)
 			if resyncWindow > int64(len(buf)-off) {
@@ -252,6 +248,7 @@ func (r *replayer) forEachRecord(segNum uint64, fn func(rec *wr.LogRecord, recLS
 		}
 		if rec.PayCRCFail {
 			r.stats.CorruptionFailures++
+			EC.BUG_ON(true, "rp.replaySegment: mid-segment CRC corruption at segment %d offset %d", segNum, offset+int64(off))
 			return fmt.Errorf("rp: segment %d inner RTData CRC: %w",
 				segNum, ErrCorrupt)
 		}

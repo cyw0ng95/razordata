@@ -6,6 +6,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/ENG/SC"
 	tb "github.com/cyw0ng95/razordata/internal/ENG/TB"
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 )
 
 var (
@@ -84,6 +85,8 @@ func (c *catalog) DropTable(tableID uint64) error {
 	if err := c.registry.Drop(tableID); err != nil {
 		return err
 	}
+
+	EC.WARN_ON(len(schema.Name) == 0, "DropTable: table %d has empty name — index delete may be incorrect", tableID)
 
 	if !c.index.Delete([]byte(schema.Name)) {
 		slog.Warn("index delete failed for dropped table", "table", schema.Name)

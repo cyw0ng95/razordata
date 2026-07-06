@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/LF"
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"github.com/cyw0ng95/razordata/internal/MEM/SP"
 	"golang.org/x/sys/unix"
@@ -310,6 +311,7 @@ func (w *writer) handleAppend(c cmd) cmdResult {
 		if recLen > maxRec {
 			return cmdResult{lsn: lastLSN, err: ErrRecordExceedsSeg}
 		}
+		EC.WARN_ON(w.seg.writeOff+recLen > SegSize, "wr.handleAppend: record %d straddles segment boundary, seg.writeOff=%d recLen=%d", i, w.seg.writeOff, recLen)
 		if w.seg.writeOff+recLen > SegSize {
 			if err := w.flushBuffer(); err != nil {
 				return cmdResult{lsn: lastLSN, err: err}
@@ -320,6 +322,7 @@ func (w *writer) handleAppend(c cmd) cmdResult {
 		}
 
 		lsn := LSNFor(w.seg.number, uint64(w.seg.writeOff))
+		EC.BUG_ON(lsn <= lastLSN, "wr.handleAppend: LSN regression %d <= %d", lsn, lastLSN)
 
 		if int64(cap(w.seg.buf))-int64(len(w.seg.buf)) < recLen {
 			if err := w.flushBuffer(); err != nil {
@@ -683,6 +686,7 @@ func freeAlignedBuf(b []byte) {
 
 func (w *writer) rotate() error {
 	if w.seg != nil {
+		EC.WARN_ON(w.seg.writeOff < SegSize && w.seg.writeOff > 0, "wr.rotate: partial segment rotation, seg=%d writeOff=%d", w.seg.number, w.seg.writeOff)
 		if w.seg.aligned && w.seg.fh.FD >= 0 {
 			_ = unix.Ftruncate(w.seg.fh.FD, w.seg.writeOff)
 		}

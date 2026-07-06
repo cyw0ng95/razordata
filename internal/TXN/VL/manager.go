@@ -29,12 +29,13 @@ type TxnManager interface {
 
 // Manager is the default TxnManager implementation.
 type Manager struct {
-	sm        *slotManager
-	mv        *MV.MV
-	lt        *LockTable
-	committed atomic.Int64
-	aborted   atomic.Int64
-	closed    atomic.Bool
+	sm             *slotManager
+	mv             *MV.MV
+	lt             *LockTable
+	committed      atomic.Int64
+	aborted        atomic.Int64
+	maxCommittedTS atomic.Uint64
+	closed         atomic.Bool
 }
 
 // NewManager constructs a Manager with its own private slot pool and MV.
@@ -74,7 +75,7 @@ func (m *Manager) Begin(ctx context.Context) (Tx, error) {
 	slot.beginTS = ts
 	slot.status.Store(int32(SlotActive))
 
-	readView := SN.NewReadView(m.mv, slot.beginTS)
+	readView := SN.NewReadView(m.mv, slot.beginTS, m.maxCommittedTS.Load())
 
 	return &tx{
 		sm:         m.sm,
@@ -104,8 +105,15 @@ func (m *Manager) Close() error {
 	return nil
 }
 
-func (m *Manager) recordCommit() {
+func (m *Manager) recordCommit(commitTS uint64) {
 	m.committed.Add(1)
+	// Track the highest committed timestamp for snapshot-lag detection.
+	for {
+		cur := m.maxCommittedTS.Load()
+		if commitTS <= cur || m.maxCommittedTS.CompareAndSwap(cur, commitTS) {
+			break
+		}
+	}
 }
 
 func (m *Manager) recordAbort() {

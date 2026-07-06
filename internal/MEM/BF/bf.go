@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/cyw0ng95/razordata/internal/FIL/DF"
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 )
 
@@ -155,6 +156,17 @@ func NewWithOptions(capacity int64, hintPath string, bd *df.BlockDevice, sp Sync
 	return b, nil
 }
 
+// closeWaitCh closes a loading-barrier channel safely. It recovers
+// from panic if the channel is already closed (double-close detection).
+func closeWaitCh(ch chan struct{}, blockID uint64) {
+	defer func() {
+		if r := recover(); r != nil {
+			EC.WARN_ON(true, "bf.closeWaitCh: panic closing slot.wait for block %d: %v", blockID, r)
+		}
+	}()
+	close(ch)
+}
+
 // Get implements BufferPool.
 func (b *bp) Get(ctx context.Context, blockID uint64) (*Page, bool, error) {
 	if blockID == 0 {
@@ -173,6 +185,7 @@ func (b *bp) Get(ctx context.Context, blockID uint64) (*Page, bool, error) {
 	}
 	if slot != nil {
 		// Block exists but is loading; wait for it.
+		EC.BUG_ON(slot.wait == nil, "bf.Get: loading slot %d has nil wait channel", blockID)
 		waitCh := slot.wait
 		for {
 			select {
@@ -205,6 +218,7 @@ func (b *bp) Get(ctx context.Context, blockID uint64) (*Page, bool, error) {
 	slot, ok := shard.slots[blockID]
 	if ok {
 		if slot.loading.Load() {
+			EC.BUG_ON(slot.wait == nil, "bf.Get: double-check loading slot %d has nil wait channel", blockID)
 			waitCh := slot.wait
 			shard.mu.Unlock()
 			select {
@@ -279,14 +293,14 @@ allocated:
 		b.sp.Put(data)
 
 		slot.loading.Store(false)
-		close(slot.wait)
+		closeWaitCh(slot.wait, blockID)
 
 		return nil, false, err
 	}
 
 	slot.loading.Store(false)
 	slot.refKey.Store(shard.hand.Add(1))
-	close(slot.wait)
+	closeWaitCh(slot.wait, blockID)
 
 	b.misses.Add(1)
 	return &Page{ID: blockID, Data: slot.data, Dirty: false}, false, nil
@@ -310,6 +324,7 @@ func (b *bp) GetWithTS(ctx context.Context, blockID uint64, readTS uint64) (*Pag
 func (b *bp) Pin(page *Page) {
 	slot := b.sbp.Slot(page.ID)
 	if slot != nil {
+		EC.BUG_ON(slot.pinCount.Load() < 0, "bf.Pin: pinCount underflow for page %d", page.ID)
 		slot.pinCount.Add(1)
 		b.pins.Add(1)
 	}
@@ -319,7 +334,8 @@ func (b *bp) Pin(page *Page) {
 func (b *bp) Unpin(page *Page) {
 	slot := b.sbp.Slot(page.ID)
 	if slot != nil {
-		slot.pinCount.Add(-1)
+		newCount := slot.pinCount.Add(-1)
+		EC.WARN_ON(newCount < 0, "bf.Unpin: double-unpin for page %d", page.ID)
 	}
 }
 

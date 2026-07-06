@@ -11,7 +11,7 @@ import (
 
 func TestNewReadView(t *testing.T) {
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	if rv.readTS != 100 {
 		t.Errorf("expected readTS 100, got %d", rv.readTS)
@@ -25,7 +25,7 @@ func TestNewReadView(t *testing.T) {
 func TestReadViewGetFromChain(t *testing.T) {
 	arena := MV.NewArena()
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	key := []byte("testkey")
 	node := MV.NewVersionNode(arena, 1, 10, key, []byte("value1"), false)
@@ -43,7 +43,7 @@ func TestReadViewGetFromChain(t *testing.T) {
 
 func TestReadViewGetNotFound(t *testing.T) {
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	val, err := rv.Get([]byte("nonexistent"))
 	if err != MV.ErrNotFound {
@@ -57,7 +57,7 @@ func TestReadViewGetNotFound(t *testing.T) {
 func TestReadViewGetDeleted(t *testing.T) {
 	arena := MV.NewArena()
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	key := []byte("testkey")
 	node := MV.NewVersionNode(arena, 1, 10, key, []byte(""), true)
@@ -76,7 +76,7 @@ func TestReadViewGetDeleted(t *testing.T) {
 func TestReadViewGetFromSnapshot(t *testing.T) {
 	arena := MV.NewArena()
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	key := []byte("testkey")
 	node := MV.NewVersionNode(arena, 1, 10, key, []byte("value1"), false)
@@ -98,7 +98,7 @@ func TestReadViewGetFromSnapshot(t *testing.T) {
 
 func TestReadViewGetAfterClose(t *testing.T) {
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	rv.Close()
 
@@ -110,7 +110,7 @@ func TestReadViewGetAfterClose(t *testing.T) {
 
 func TestReadViewClose(t *testing.T) {
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	if rv.IsClosed() {
 		t.Error("should not be closed initially")
@@ -125,7 +125,7 @@ func TestReadViewClose(t *testing.T) {
 
 func TestReadViewCloseIdempotent(t *testing.T) {
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	rv.Close()
 	rv.Close()
@@ -139,7 +139,7 @@ func TestReadViewCloseIdempotent(t *testing.T) {
 func TestReadViewGetVisibleVersion(t *testing.T) {
 	arena := MV.NewArena()
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 50)
+	rv := NewReadView(mv, 50, 0)
 
 	key := []byte("testkey")
 
@@ -162,7 +162,7 @@ func TestReadViewGetVisibleVersion(t *testing.T) {
 func TestReadViewGetCommittedVersion(t *testing.T) {
 	arena := MV.NewArena()
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	key := []byte("testkey")
 
@@ -187,7 +187,7 @@ func TestReadViewGetCommittedVersion(t *testing.T) {
 func TestReadViewGetUncommittedNotVisible(t *testing.T) {
 	arena := MV.NewArena()
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 25)
+	rv := NewReadView(mv, 25, 0)
 
 	key := []byte("testkey")
 
@@ -207,7 +207,7 @@ func TestReadViewGetUncommittedNotVisible(t *testing.T) {
 func TestReadViewMultipleKeys(t *testing.T) {
 	arena := MV.NewArena()
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	key1 := []byte("key1")
 	key2 := []byte("key2")
@@ -241,7 +241,7 @@ func TestReadViewMultipleKeys(t *testing.T) {
 func TestReadViewSnapshotUpdated(t *testing.T) {
 	arena := MV.NewArena()
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	key := []byte("testkey")
 	chain := mv.EnsureVersionChain(key)
@@ -268,7 +268,7 @@ func TestReadViewSnapshotUpdated(t *testing.T) {
 func TestReadViewConcurrency(t *testing.T) {
 	arena := MV.NewArena()
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	key := []byte("testkey")
 	node := MV.NewVersionNode(arena, 1, 10, key, []byte("value1"), false)
@@ -292,7 +292,7 @@ func TestReadViewConcurrency(t *testing.T) {
 func TestVersionChainSnapshot(t *testing.T) {
 	arena := MV.NewArena()
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	key := []byte("testkey")
 	chain := mv.EnsureVersionChain(key)
@@ -320,7 +320,7 @@ func TestVersionChainSnapshot(t *testing.T) {
 func TestReadView_LookupLatency(t *testing.T) {
 	arena := MV.NewArena()
 	mv := MV.NewMV()
-	rv := NewReadView(mv, 100)
+	rv := NewReadView(mv, 100, 0)
 
 	// Populate 1000 distinct keys (arena young=16KB + old=1MB, ~1K fits comfortably)
 	keys := make([][]byte, 1000)

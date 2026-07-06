@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"syscall"
 
+	"github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"golang.org/x/sys/unix"
 )
@@ -183,7 +184,8 @@ func writeMeta(fd int, p *MetaPage) error {
 	sum := crc32.ChecksumIEEE(data[:metaPageSize-4])
 	binary.LittleEndian.PutUint32(data[metaPageSize-4:metaPageSize], sum)
 
-	_, err = unix.Pwrite(fd, data[:metaPageSize], 0)
+	written, err := unix.Pwrite(fd, data[:metaPageSize], 0)
+	EC.BUG_ON(err == nil && written != metaPageSize, "mf.writeMeta: short write, wrote %d bytes, want %d", written, metaPageSize)
 	if err != nil {
 		return wrapWriteError(err)
 	}
