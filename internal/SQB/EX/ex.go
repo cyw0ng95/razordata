@@ -128,8 +128,10 @@ type Rows struct {
 }
 
 // stmtCacheEntry holds a cached parsed statement with LRU metadata.
+// REQ001286: lastAccess tracks recency via a monotonic counter.
 type stmtCacheEntry struct {
-	stmt PS.Stmt
+	stmt       PS.Stmt
+	lastAccess uint64
 }
 
 // planCacheEntry holds a cached compiled plan with LRU metadata.
@@ -143,17 +145,17 @@ type planCacheEntry struct {
 // Initialized lazily on first NewExecutor call.
 var globalStmtCache = &stmtCache{
 	entries: make(map[string]*stmtCacheEntry, 1024),
-	lru:     make([]*stmtCacheEntry, 0, 1024),
 	maxSize: 1024,
 }
 
 // stmtCache is a thread-safe LRU cache for parsed statements.
 // REQ001220: shared across ShallowCopy clones via pointer.
+// REQ001286: monotonic access counter for allocation-free LRU.
 type stmtCache struct {
-	mu      sync.Mutex
-	entries map[string]*stmtCacheEntry
-	lru     []*stmtCacheEntry
-	maxSize int
+	mu            sync.Mutex
+	entries       map[string]*stmtCacheEntry
+	accessCounter uint64
+	maxSize       int
 }
 
 // planCache is a thread-safe LRU cache for compiled plan trees.
@@ -414,6 +416,7 @@ func (e *Executor) initStmtCache(maxSize int) {
 }
 
 // getCachedStmt looks up a cached parsed statement. Returns nil if not found.
+// REQ001286: allocation-free hot path — one map lookup + counter increment.
 func (e *Executor) getCachedStmt(sql string) PS.Stmt {
 	e.stmtCache.mu.Lock()
 	defer e.stmtCache.mu.Unlock()
@@ -421,14 +424,8 @@ func (e *Executor) getCachedStmt(sql string) PS.Stmt {
 	if !ok {
 		return nil
 	}
-	// Move to front of LRU
-	for i, entry := range e.stmtCache.lru {
-		if entry == ent {
-			e.stmtCache.lru = append(e.stmtCache.lru[:i], e.stmtCache.lru[i+1:]...)
-			break
-		}
-	}
-	e.stmtCache.lru = append([]*stmtCacheEntry{ent}, e.stmtCache.lru...)
+	e.stmtCache.accessCounter++
+	ent.lastAccess = e.stmtCache.accessCounter
 	return ent.stmt
 }
 
@@ -437,29 +434,24 @@ func (e *Executor) putCachedStmt(sql string, stmt PS.Stmt) {
 	e.stmtCache.mu.Lock()
 	defer e.stmtCache.mu.Unlock()
 	if ent, ok := e.stmtCache.entries[sql]; ok {
-		// Already cached, move to front
-		for i, entry := range e.stmtCache.lru {
-			if entry == ent {
-				e.stmtCache.lru = append(e.stmtCache.lru[:i], e.stmtCache.lru[i+1:]...)
-				break
-			}
-		}
-		e.stmtCache.lru = append([]*stmtCacheEntry{ent}, e.stmtCache.lru...)
+		ent.stmt = stmt
+		e.stmtCache.accessCounter++
+		ent.lastAccess = e.stmtCache.accessCounter
 		return
 	}
-	ent := &stmtCacheEntry{stmt: stmt}
+	e.stmtCache.accessCounter++
+	ent := &stmtCacheEntry{stmt: stmt, lastAccess: e.stmtCache.accessCounter}
 	e.stmtCache.entries[sql] = ent
-	e.stmtCache.lru = append([]*stmtCacheEntry{ent}, e.stmtCache.lru...)
-	// Evict LRU if over capacity
-	for len(e.stmtCache.lru) > e.stmtCache.maxSize {
-		oldest := e.stmtCache.lru[len(e.stmtCache.lru)-1]
-		e.stmtCache.lru = e.stmtCache.lru[:len(e.stmtCache.lru)-1]
-		for key, val := range e.stmtCache.entries {
-			if val == oldest {
-				delete(e.stmtCache.entries, key)
-				break
+	if len(e.stmtCache.entries) > e.stmtCache.maxSize {
+		var oldestKey string
+		var oldestAccess uint64 = ^uint64(0)
+		for k, v := range e.stmtCache.entries {
+			if v.lastAccess < oldestAccess {
+				oldestAccess = v.lastAccess
+				oldestKey = k
 			}
 		}
+		delete(e.stmtCache.entries, oldestKey)
 	}
 }
 
@@ -467,8 +459,8 @@ func (e *Executor) putCachedStmt(sql string, stmt PS.Stmt) {
 func (e *Executor) clearStmtCache() {
 	e.stmtCache.mu.Lock()
 	defer e.stmtCache.mu.Unlock()
-	e.stmtCache.entries = nil
-	e.stmtCache.lru = nil
+	e.stmtCache.entries = make(map[string]*stmtCacheEntry, 1024)
+	e.stmtCache.accessCounter = 0
 }
 
 // initPlanCache initializes the plan cache. Must be called before use.
@@ -1707,5 +1699,5 @@ func ResetGlobalStmtCache() {
 	globalStmtCache.mu.Lock()
 	defer globalStmtCache.mu.Unlock()
 	globalStmtCache.entries = make(map[string]*stmtCacheEntry, 1024)
-	globalStmtCache.lru = make([]*stmtCacheEntry, 0, 1024)
+	globalStmtCache.accessCounter = 0
 }
