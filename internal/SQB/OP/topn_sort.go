@@ -143,16 +143,9 @@ type topNHeap struct {
 func (h *topNHeap) Len() int { return len(h.rows) }
 
 func (h *topNHeap) Less(i, j int) bool {
-	// For ASC (max-heap): root should be the "worst" (largest).
-	// We want root at index 0, so Less(i,j) returns true when i should
-	// be nearer to the root than j.
-	// "Worst" = comes later in sort order.
-	// If keys[i] > keys[j] in sort order, i is "worse" → i should be nearer root.
 	c := compareKeySets(h.keyCache[i], h.keyCache[j], h.keys)
-	// For ASC: positive c means i > j → i is worse → Less returns true.
-	// For DESC: negative c means i < j → i is worse (we want smaller closer to root).
 	if h.desc {
-		return c < 0
+		return c > 0
 	}
 	return c > 0
 }
@@ -186,7 +179,7 @@ func (h *topNHeap) isBetterThanWorst(keys []Value) bool {
 	// For ASC: "better" = smaller (c < 0). Root is the largest.
 	// For DESC: "better" = larger (c > 0). Root is the smallest.
 	if h.desc {
-		return c > 0
+		return c < 0
 	}
 	return c < 0
 }

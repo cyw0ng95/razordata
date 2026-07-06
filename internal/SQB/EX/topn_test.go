@@ -38,7 +38,7 @@ func TestTopNSort_Asc(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Next #%d: %v", i, err)
 		}
-		if v, ok := row.Data[0].Int64(); !ok || v != w {
+		if v := row.Data[0].AsInt(); v != w {
 			t.Errorf("row %d: expected %d, got %v", i, w, row.Data[0])
 		}
 	}
@@ -79,7 +79,7 @@ func TestTopNSort_Desc(t *testing.T) {
 			_ = topn.Close()
 			t.Fatalf("Next #%d: %v", i, err)
 		}
-		if v, ok := row.Data[0].Int64(); !ok || v != w {
+		if v := row.Data[0].AsInt(); v != w {
 			t.Errorf("row %d: expected %d, got %v", i, w, row.Data[0])
 		}
 	}
@@ -115,7 +115,7 @@ func TestTopNSort_SmallDataset(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Next #%d: %v", i, err)
 		}
-		if v, ok := row.Data[0].Int64(); !ok || v != w {
+		if v := row.Data[0].AsInt(); v != w {
 			t.Errorf("row %d: expected %d, got %v", i, w, row.Data[0])
 		}
 	}
