@@ -72,12 +72,15 @@ func (a *RowArena) grow(needed int) {
 	if a.slab != nil {
 		a.slabs = append(a.slabs, a.slab) // keep alive for GC tracing
 	}
+	// REQ001285: geometric growth — double the slab each time to reduce
+	// grow() frequency. For 10K rows × 6 cols × 48B = 2.88MB, fixed
+	// 64KB slabs require ~44 grows; geometric doubling needs ~6.
 	cap := arenaSlabSize
+	if a.slabCap > 0 {
+		cap = a.slabCap * 2
+	}
 	if needed > cap {
 		cap = needed
-		if cap < arenaSlabSize*2 {
-			cap = arenaSlabSize * 2
-		}
 	}
 	s := make([]byte, cap)
 	a.slab = s
