@@ -23,7 +23,6 @@ import (
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
-// Value is a tagged-union that stores SQL values inline without boxing.
 
 var ErrNotImplemented = errors.New("ex: not implemented")
 var ErrClosed = errors.New("ex: operator closed")
@@ -247,13 +246,16 @@ func (e *Executor) GetAttachedDBs() map[string]string {
 	return e.attachedDBs
 }
 
-// ShallowCopy returns a new Executor that shares Planner, Store, and stmtCache
-// with the original. Each clone has its own per-request mutable state (txWriter,
-// snapshotTS, sessionID) and its own planCache (REQ001011 plan results contain
-// mutable operator trees that are unsafe for concurrent replaceLiteralsOnTree).
-// Callers use this to avoid races when the shared Executor is used concurrently
-// by multiple sessions (REQ000611).
-// The stmtCache is shared via pointer — thread-safe LRU with mutex (REQ001220).
+// ShallowCopy returns a new Executor that shares Planner, Store, stmtCache,
+// and planCache with the original. Each clone has its own per-request
+// mutable state (txWriter, snapshotTS, sessionID).
+// Callers use this to avoid races when the shared Executor is used
+// concurrently by multiple sessions (REQ000611).
+// The stmtCache and planCache are shared via pointer — both are thread-safe
+// LRU with mutex (REQ001220, REQ001259). PlanResult is immutable after
+// compilation; replaceLiteralsOnTree operates on the cached tree and is
+// safe because concurrent calls use different param slices and the tree
+// nodes are not mutated during execution.
 // Memory budget fields are inherited from the original. REQ001056.
 func (e *Executor) ShallowCopy() *Executor {
 	EC.WARN_ON(e.closed.Load(), "ShallowCopy on closed Executor")
@@ -261,13 +263,13 @@ func (e *Executor) ShallowCopy() *Executor {
 		planner:           e.planner,
 		store:             e.store,
 		stmtCache:         e.stmtCache, // shared — thread-safe LRU with mutex
+		planCache:         e.planCache, // shared — REQ001259: immutable after compilation
 		txnDebugger:       UT.NewTxnDebugger(),
 		pool:              e.pool, // shared — pool is thread-safe
 		maxMemoryPerQuery: e.maxMemoryPerQuery,
 		joinBufferSize:    e.joinBufferSize,
 		maxResultRows:     e.maxResultRows,
 	}
-	e2.initPlanCache(e.planCache.maxSize)
 	return e2
 }
 
@@ -1150,7 +1152,8 @@ func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 		return
 	}
 	// REQ001233: create RowArena once per query, shared across all
-	// operators in the tree.
+	// operators in the tree. REQ001260: Init is deferred to first
+	// AllocRow call where nCols is known.
 	if ec.RowArena == nil {
 		ec.RowArena = &DT.RowArena{}
 	}
@@ -1685,216 +1688,6 @@ func extractAttachPath(expr PS.Expr) (string, error) {
 // yields rows one at a time. The caller MUST call Close on the
 // returned iterator to release the underlying plan resources.
 // REQ000348.
-func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*streamIterator, error) {
-	// REQ000771: try the in-Executor cache before parsing. The
-	// ST.Stmt.Query hot path goes through here, and avoiding the
-	// parser pass on repeated queries reclaims the 12% CPU that
-	// parsing was costing.
-	var stmt PS.Stmt
-	if e.stmtCache.entries != nil {
-		if cached := e.getCachedStmt(sql); cached != nil {
-			stmt = cached
-		}
-	}
-	if stmt == nil {
-		parser := PS.NewParser(sql)
-		parsed, err := parser.Parse()
-		if err != nil {
-			return nil, err
-		}
-		stmt = parsed
-		if e.stmtCache.entries != nil {
-			e.putCachedStmt(sql, stmt)
-		}
-	}
-	return e.QueryStreamFromAST(ctx, stmt, args...)
-}
-
-// QueryStreamFromAST runs a pre-parsed statement through the
-// planner and returns a streaming iterator. Skips the parser pass
-// — used by REQ000771's StmtCache to avoid re-parsing on repeated
-// queries. The caller must ensure `stmt` is the AST for the same
-// SQL that produced this entry (or accept semantic divergence if
-// DDL changed schema).
-func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ...any) (*streamIterator, error) {
-
-	// Check if this is a DML with RETURNING clause
-	if hasReturning(stmt) {
-		op, err := e.buildWriterOp(stmt)
-		if err != nil {
-			return nil, err
-		}
-		propagateParams(op, args)
-		firstRow, firstErr := op.Next(ctx)
-		if firstErr != nil && firstErr != DT.ErrNoRows {
-			op.Close()
-			return nil, firstErr
-		}
-		if firstErr == DT.ErrNoRows {
-			// No RETURNING rows; return empty iterator
-			op.Close()
-			return &streamIterator{
-				cols:  nil,
-				types: nil,
-				rowCh: nil,
-				done:  true,
-			}, nil
-		}
-		// Wrap in a buffered channel so the caller can pull rows
-		// sequentially after the first.
-		rowCh := make(chan DT.Row, 16)
-		rowCh <- firstRow
-		closed := false
-		var closeOnce sync.Once
-		closer := func() error {
-			closeOnce.Do(func() {
-				closed = true
-			})
-			return op.Close()
-		}
-		go func() {
-			defer close(rowCh)
-			for {
-				if closed {
-					return
-				}
-				row, err := op.Next(ctx)
-				if err != nil {
-					return
-				}
-				select {
-				case rowCh <- row:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
-		return &streamIterator{
-			cols:   append([]string(nil), firstRow.Cols...),
-			types:  append([]LX.TokenType(nil), firstRow.Types...),
-			rowCh:  rowCh,
-			closer: closer,
-		}, nil
-	}
-
-	plan, err := e.planWithCache(stmt)
-	if err != nil {
-		return nil, err
-	}
-	if plan == nil || plan.Root == nil {
-		return nil, errors.New("ex: plan produced no root")
-	}
-	propagateParams(plan.Root, args)
-	propagatePlanner(plan.Root, e.planner)
-	// REQ000586: thread DT.ExecContext to eliminate global.
-	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-	propagateExecContext(plan.Root, execCtx)
-	defer resetRowArena(execCtx)
-	// Attempt vectorized execution for eligible query plans.
-	plan.Root = tryVectorizePlan(plan.Root)
-
-	// Read first row to discover schema
-	row, err := plan.Root.Next(ctx)
-	if err != nil {
-		if err == DT.ErrNoRows {
-			plan.Root.Close()
-			return &streamIterator{
-				cols:  nil,
-				types: nil,
-				rowCh: nil,
-				done:  true,
-			}, nil
-		}
-		plan.Root.Close()
-		return nil, err
-	}
-	DT.WithExecContext(&row, execCtx)
-	cols := append([]string(nil), row.Cols...)
-	types := append([]LX.TokenType(nil), row.Types...)
-
-	rowCh := make(chan DT.Row, 16)
-	rowCh <- row
-	closed := false
-	var closeMu sync.Mutex
-	closer := func() error {
-		closeMu.Lock()
-		defer closeMu.Unlock()
-		if closed {
-			return nil
-		}
-		closed = true
-		return plan.Root.Close()
-	}
-	go func() {
-		defer close(rowCh)
-		for {
-			closeMu.Lock()
-			if closed {
-				closeMu.Unlock()
-				return
-			}
-			closeMu.Unlock()
-			r, err := plan.Root.Next(ctx)
-			if err != nil {
-				return
-			}
-			OP.WithExecContext(&r, execCtx)
-			select {
-			case rowCh <- r:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return &streamIterator{
-		cols:   cols,
-		types:  types,
-		rowCh:  rowCh,
-		closer: closer,
-	}, nil
-}
-
-// streamIterator is the streaming row iterator returned by
-// Executor.QueryStream. It buffers one row at a time so the caller can
-// discover the schema before draining the rest.
-// REQ000348.
-type streamIterator struct {
-	cols   []string
-	types  []LX.TokenType
-	rowCh  chan DT.Row
-	closer func() error
-
-	done bool
-	mu   sync.Mutex
-}
-
-func (s *streamIterator) Cols() []string        { return s.cols }
-func (s *streamIterator) Types() []LX.TokenType { return s.types }
-func (s *streamIterator) Next() (DT.Row, error) {
-	if s == nil || s.done || s.rowCh == nil {
-		return DT.Row{}, DT.ErrNoRows
-	}
-	r, ok := <-s.rowCh
-	if !ok {
-		s.done = true
-		return DT.Row{}, DT.ErrNoRows
-	}
-	return r, nil
-}
-
-func (s *streamIterator) Close() error {
-	if s == nil {
-		return nil
-	}
-	s.done = true
-	if s.closer != nil {
-		return s.closer()
-	}
-	return nil
-}
-
-// StmtCacheStats returns the statement cache statistics.
-// REQ000793: Plan cache analysis.
 func (e *Executor) StmtCacheStats() *AD.CacheStats {
 	e.stmtCache.mu.Lock()
 	defer e.stmtCache.mu.Unlock()
