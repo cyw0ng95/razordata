@@ -15,6 +15,7 @@ import (
 	df "github.com/cyw0ng95/razordata/internal/FIL/DF"
 	fs "github.com/cyw0ng95/razordata/internal/FIL/FS"
 	lf "github.com/cyw0ng95/razordata/internal/FIL/LF"
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	lg "github.com/cyw0ng95/razordata/internal/LOG/LG"
 	bf "github.com/cyw0ng95/razordata/internal/MEM/BF"
 	sp "github.com/cyw0ng95/razordata/internal/MEM/SP"
@@ -96,6 +97,7 @@ func applyDefaults(o *AP.Options) {
 func (e *Engine) open(ctx context.Context) (err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	EC.BUG_ON(e.opened.Load(), "engine.open: double open without Close")
 	if e.opened.Load() {
 		return AP.New(AP.KindInvalidOptions, "engine already open")
 	}
@@ -318,6 +320,7 @@ func (e *Engine) Begin(ctx context.Context) (AP.Session, error) {
 	if !e.opened.Load() {
 		return nil, AP.New(AP.KindClosed, "engine not open")
 	}
+	EC.WARN_ON(e.closed.Load(), "engine.Begin: use-after-close")
 	if e.closed.Load() {
 		return nil, AP.New(AP.KindClosed, "engine closed")
 	}
@@ -334,6 +337,7 @@ func (e *Engine) Open(ctx context.Context, dir string, opts AP.Options) error {
 	if e.closed.Load() {
 		return AP.New(AP.KindClosed, "engine closed")
 	}
+	EC.BUG_ON(e.opened.Load(), "engine.Open: double open without Close")
 	if e.opened.Load() {
 		return AP.New(AP.KindInvalidOptions, "engine already open")
 	}

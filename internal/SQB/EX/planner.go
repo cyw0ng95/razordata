@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
+	"math"
 	"reflect"
 	"slices"
 	"strconv"
@@ -15,10 +13,14 @@ import (
 	"unicode"
 
 	"github.com/cyw0ng95/razordata/internal/ENG/LS"
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
+	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -710,15 +712,19 @@ func (p *Planner) estimateCost(op DT.Operator) float64 {
 		return 0
 	}
 	// REQ001104: when CostParams are explicitly set, use the
-	// PostgreSQL-style cost formulas (rows × page cost, etc).
+	// PostgreSQL-style cost formulas (rows x page cost, etc).
 	// When unset, fall back to the legacy per-operator heuristic
 	// (1.0 for OP.SeqScan, 0.05/0.1 for OP.IndexScan, etc.) so existing
 	// tests and behavior remain stable.
 	cp := p.costParams()
+	var cost float64
 	if p.costParamsX != nil {
-		return p.estimateCostWithParams(op, cp)
+		cost = p.estimateCostWithParams(op, cp)
+	} else {
+		cost = p.estimateCostLegacy(op)
 	}
-	return p.estimateCostLegacy(op)
+	EC.BUG_ON(math.IsNaN(cost) || cost < 0 || math.IsInf(cost, 0), "planner.estimateCost: invalid cost")
+	return cost
 }
 
 // estimateCostLegacy is the original per-operator heuristic. Kept

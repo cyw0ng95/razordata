@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
@@ -127,6 +128,7 @@ func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 	if s.engine.IsClosed() {
 		return nil, AP.New(AP.KindClosed, "engine closed")
 	}
+	EC.BUG_ON(s.closed.Load(), "stmt.Query: use-after-close")
 	s.mu.Lock()
 	if s.closed.Load() {
 		s.mu.Unlock()
@@ -161,6 +163,7 @@ func (s *Stmt) Exec(ctx context.Context, args ...any) (AP.Result, error) {
 	if s.engine.IsClosed() {
 		return AP.Result{}, AP.New(AP.KindClosed, "engine closed")
 	}
+	EC.BUG_ON(s.closed.Load(), "stmt.Exec: use-after-close")
 	s.mu.Lock()
 	if s.closed.Load() {
 		s.mu.Unlock()

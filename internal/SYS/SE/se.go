@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQB/EX"
@@ -82,6 +83,7 @@ func NewSession(engine *SY.Engine) *Session {
 }
 
 func (s *Session) reset(engine *SY.Engine) {
+	EC.WARN_ON(s.txn != nil, "session.reset: leaked transaction (pool leak)")
 	s.engine = engine
 	s.id = sessionIDSeq.Add(1)
 	s.txn = nil
@@ -216,6 +218,7 @@ func (s *Session) Begin(ctx context.Context) (AP.Transaction, error) {
 		return nil, err
 	}
 	defer s.mu.Unlock()
+	EC.BUG_ON(s.txn != nil, "session.Begin: active transaction exists")
 	if s.txn != nil {
 		return nil, AP.New(AP.KindLocked, "resource locked")
 	}
