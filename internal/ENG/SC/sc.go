@@ -3,8 +3,6 @@ package sc
 import (
 	"errors"
 	"math"
-
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 var (
@@ -36,17 +34,17 @@ type ColumnDef struct {
 	PrimaryKey bool
 }
 
-type ColumnType LX.TokenType
+type ColumnType TokenType
 
 const (
-	CTInt       ColumnType = 0
-	CTBigInt    ColumnType = 1
-	CTVarchar   ColumnType = 2
-	CTFloat     ColumnType = 3
-	CTBool      ColumnType = 4
-	CTText      ColumnType = 5
-	CTBlob      ColumnType = 6
-	CTTimestamp ColumnType = 7
+	CTInt       ColumnType = 58
+	CTBigInt    ColumnType = 59
+	CTVarchar   ColumnType = 64
+	CTFloat     ColumnType = 60
+	CTBool      ColumnType = 61
+	CTText      ColumnType = 62
+	CTBlob      ColumnType = 63
+	CTTimestamp ColumnType = 65
 )
 
 // ValidateRow checks every column in row against the schema. Returns

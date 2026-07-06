@@ -84,7 +84,10 @@ func injectOuter(op DT.Operator, outer *DT.Row) DT.Operator {
 		// correlated subqueries over HashJoin fall back to literal.
 		return op
 	default:
-		if c, ok := op.(interface{ Child() DT.Operator; SetChild(DT.Operator) }); ok {
+		if c, ok := op.(interface {
+			Child() DT.Operator
+			SetChild(DT.Operator)
+		}); ok {
 			c.SetChild(injectOuter(c.Child(), outer))
 			return op
 		}

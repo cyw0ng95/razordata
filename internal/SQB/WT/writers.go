@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -30,38 +31,38 @@ type Insert struct {
 	schema         *DT.StoreSchema
 	txWriter       DT.TxWriter
 	rows           int64
-		done           bool
-		params         []any
-		resultRows     []DT.Row
-		resultPos      int
-		execCtx        *DT.ExecContext // REQ000812
-	}
+	done           bool
+	params         []any
+	resultRows     []DT.Row
+	resultPos      int
+	execCtx        *DT.ExecContext // REQ000812
+}
 
-	// SetExecCtx sets the execution context. Used by EX.propagateExecContext.
-	func (i *Insert) SetExecCtx(ec *DT.ExecContext) { i.execCtx = ec }
+// SetExecCtx sets the execution context. Used by EX.propagateExecContext.
+func (i *Insert) SetExecCtx(ec *DT.ExecContext) { i.execCtx = ec }
 
-	// SetSelectPlan sets the selectPlan for INSERT INTO ... SELECT.
-	func (i *Insert) SetSelectPlan(op DT.Operator) { i.selectPlan = op }
+// SetSelectPlan sets the selectPlan for INSERT INTO ... SELECT.
+func (i *Insert) SetSelectPlan(op DT.Operator) { i.selectPlan = op }
 
-	// SetConflictAction sets the conflict resolution action.
-	func (i *Insert) SetConflictAction(a PS.ConflictAction) { i.conflictAction = a }
+// SetConflictAction sets the conflict resolution action.
+func (i *Insert) SetConflictAction(a PS.ConflictAction) { i.conflictAction = a }
 
-	// SetDefaultValues sets the DEFAULT VALUES flag.
-	func (i *Insert) SetDefaultValues(v bool) { i.defaultValues = v }
+// SetDefaultValues sets the DEFAULT VALUES flag.
+func (i *Insert) SetDefaultValues(v bool) { i.defaultValues = v }
 
-	// Table returns the target table name.
-	func (i *Insert) Table() string { return i.table }
+// Table returns the target table name.
+func (i *Insert) Table() string { return i.table }
 
-	// SetExecCtx sets the execution context. Used by EX.propagateExecContext.
-	func (d *Delete) SetExecCtx(ec *DT.ExecContext) { d.execCtx = ec }
+// SetExecCtx sets the execution context. Used by EX.propagateExecContext.
+func (d *Delete) SetExecCtx(ec *DT.ExecContext) { d.execCtx = ec }
 
-	// Table returns the target table name.
-	func (d *Delete) Table() string { return d.table }
+// Table returns the target table name.
+func (d *Delete) Table() string { return d.table }
 
-	// Iter returns the input iterator. Used by EX.plan_node.
-	func (d *Delete) Iter() DT.Operator { return d.iter }
+// Iter returns the input iterator. Used by EX.plan_node.
+func (d *Delete) Iter() DT.Operator { return d.iter }
 
-	// WithParams propagates the bound `?` placeholders (R16-1..2).
+// WithParams propagates the bound `?` placeholders (R16-1..2).
 func (i *Insert) WithParams(p []any) DT.Operator {
 	i.params = p
 	return i
@@ -465,7 +466,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 	pending := make(map[string]struct{})
 	lookup := InMemoryLookup(i.table)
 
-		for _, row := range selectRows {
+	for _, row := range selectRows {
 		// Build insert row from SELECT result
 		out, err := buildInsertRowFromSelect(schema, i.cols, row)
 		if err != nil {
@@ -579,16 +580,16 @@ type Update struct {
 	execCtx    *DT.ExecContext // REQ000812
 }
 
-	// SetExecCtx sets the execution context. Used by EX.propagateExecContext.
-	func (u *Update) SetExecCtx(ec *DT.ExecContext) { u.execCtx = ec }
+// SetExecCtx sets the execution context. Used by EX.propagateExecContext.
+func (u *Update) SetExecCtx(ec *DT.ExecContext) { u.execCtx = ec }
 
-	// Table returns the target table name.
-	func (u *Update) Table() string { return u.table }
+// Table returns the target table name.
+func (u *Update) Table() string { return u.table }
 
-	// Iter returns the input iterator. Used by EX.plan_node.
-	func (u *Update) Iter() DT.Operator { return u.iter }
+// Iter returns the input iterator. Used by EX.plan_node.
+func (u *Update) Iter() DT.Operator { return u.iter }
 
-	// REQ000714: expose child for execCtx/params propagation.
+// REQ000714: expose child for execCtx/params propagation.
 func (u *Update) Child() DT.Operator { return u.iter }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -1080,9 +1081,9 @@ func (t *Trigger) Next(ctx context.Context) (DT.Row, error) {
 	return DT.Row{}, DT.ErrNoRows
 }
 
-func (t *Trigger) Close() error                { return nil }
+func (t *Trigger) Close() error                   { return nil }
 func (t *Trigger) WithParams(p []any) DT.Operator { return t }
-func (t *Trigger) RowsAffected() int64         { return 0 }
+func (t *Trigger) RowsAffected() int64            { return 0 }
 
 type CreateTable struct {
 	Stmt       *PS.CreateTable
@@ -1229,7 +1230,7 @@ func persistToCatalog(stmt *PS.CreateTable, cols []string, nullable []bool, colT
 	}
 	catCols := make([]ls.CatalogColumn, len(cols))
 	for i, n := range cols {
-		catCols[i] = ls.CatalogColumn{Name: n, Type: colTypes[i], Nullable: nullable[i]}
+		catCols[i] = ls.CatalogColumn{Name: n, Type: sc.TokenType(colTypes[i]), Nullable: nullable[i]}
 	}
 	catUnique := make([]ls.CatalogUnique, len(unique))
 	for i, u := range unique {
@@ -2065,7 +2066,7 @@ func (p *Pragma) Close() error {
 	return nil
 }
 func (p *Pragma) WithParams(_ []any) DT.Operator { return p }
-func (p *Pragma) RowsAffected() int64         { return 0 }
+func (p *Pragma) RowsAffected() int64            { return 0 }
 
 // Explain runs the inner plan and returns a textual description of it
 // as a single-row result. REQ000481, REQ000500.
@@ -2124,9 +2125,9 @@ func (e *Explain) explain() string {
 	}
 }
 
-func (e *Explain) Close() error                { return nil }
+func (e *Explain) Close() error                   { return nil }
 func (e *Explain) WithParams(_ []any) DT.Operator { return e }
-func (e *Explain) RowsAffected() int64         { return 0 }
+func (e *Explain) RowsAffected() int64            { return 0 }
 
 // Truncate is a writer-op stub for TRUNCATE [TABLE] name. REQ000476.
 type Truncate struct {
@@ -2154,9 +2155,9 @@ func (t *Truncate) Next(ctx context.Context) (DT.Row, error) {
 	return DT.Row{}, DT.ErrNoRows
 }
 
-func (t *Truncate) Close() error                { return nil }
+func (t *Truncate) Close() error                   { return nil }
 func (t *Truncate) WithParams(_ []any) DT.Operator { return t }
-func (t *Truncate) RowsAffected() int64         { return t.rows }
+func (t *Truncate) RowsAffected() int64            { return t.rows }
 
 // Reindex is a writer-op stub for REINDEX. REQ000478.
 type Reindex struct {
@@ -2209,9 +2210,9 @@ func (r *Reindex) Next(ctx context.Context) (DT.Row, error) {
 	return DT.Row{}, DT.ErrNoRows
 }
 
-func (r *Reindex) Close() error                { return nil }
+func (r *Reindex) Close() error                   { return nil }
 func (r *Reindex) WithParams(_ []any) DT.Operator { return r }
-func (r *Reindex) RowsAffected() int64         { return 0 }
+func (r *Reindex) RowsAffected() int64            { return 0 }
 
 // DropView is a writer-op for DROP VIEW [IF EXISTS] name. REQ000494.
 type DropView struct {
@@ -2236,9 +2237,9 @@ func (d *DropView) Next(ctx context.Context) (DT.Row, error) {
 	return DT.Row{}, DT.ErrNoRows
 }
 
-func (d *DropView) Close() error                { return nil }
+func (d *DropView) Close() error                   { return nil }
 func (d *DropView) WithParams(_ []any) DT.Operator { return d }
-func (d *DropView) RowsAffected() int64         { return 0 }
+func (d *DropView) RowsAffected() int64            { return 0 }
 
 // DropTrigger is a writer-op for DROP TRIGGER [IF EXISTS] name. REQ000496.
 type DropTrigger struct {
@@ -2265,9 +2266,9 @@ func (d *DropTrigger) Next(ctx context.Context) (DT.Row, error) {
 	return DT.Row{}, DT.ErrNoRows
 }
 
-func (d *DropTrigger) Close() error                { return nil }
+func (d *DropTrigger) Close() error                   { return nil }
 func (d *DropTrigger) WithParams(_ []any) DT.Operator { return d }
-func (d *DropTrigger) RowsAffected() int64         { return 0 }
+func (d *DropTrigger) RowsAffected() int64            { return 0 }
 
 // applyConflictUpdate locates the conflicting row by unique-key match
 // and applies the SET clauses. Used by INSERT ... ON CONFLICT DO
@@ -2417,9 +2418,9 @@ func evalReturning(exprs []PS.Expr, row *DT.Row, params []any, resultRows *[]DT.
 // rejection until Next() so the planner/executor pipeline surfaces
 // the error in a uniform location.
 type UnsupportedOp struct {
-	err    error
-	done   bool
-	Stmt   PS.Stmt
+	err  error
+	done bool
+	Stmt PS.Stmt
 }
 
 func NewUnsupportedOp(stmt PS.Stmt, msg string) *UnsupportedOp {
@@ -2434,9 +2435,9 @@ func (u *UnsupportedOp) Next(ctx context.Context) (DT.Row, error) {
 	return DT.Row{}, u.err
 }
 
-func (u *UnsupportedOp) Close() error                { return nil }
+func (u *UnsupportedOp) Close() error                   { return nil }
 func (u *UnsupportedOp) WithParams(_ []any) DT.Operator { return u }
-func (u *UnsupportedOp) RowsAffected() int64         { return 0 }
+func (u *UnsupportedOp) RowsAffected() int64            { return 0 }
 
 // AttachOp implements ATTACH DATABASE by recording the name→path
 // mapping on the Executor. REQ000908.
@@ -2471,7 +2472,7 @@ func (a *AttachOp) Close() error {
 	return nil
 }
 func (a *AttachOp) WithParams(_ []any) DT.Operator { return a }
-func (a *AttachOp) RowsAffected() int64         { return 0 }
+func (a *AttachOp) RowsAffected() int64            { return 0 }
 
 // DetachOp implements DETACH DATABASE by removing the name→path
 // mapping from the Executor. REQ000908.
@@ -2503,7 +2504,7 @@ func (d *DetachOp) Close() error {
 	return nil
 }
 func (d *DetachOp) WithParams(_ []any) DT.Operator { return d }
-func (d *DetachOp) RowsAffected() int64         { return 0 }
+func (d *DetachOp) RowsAffected() int64            { return 0 }
 
 // ErrMultiDatabaseNotSupported is returned when a query attempts to
 // reference an attached database. Full cross-database query support

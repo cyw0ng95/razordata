@@ -12,8 +12,6 @@ import (
 
 	ct "github.com/cyw0ng95/razordata/internal/ENG/CT"
 	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
-
-	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // Constants re-exported from the shared catalog package.
@@ -42,7 +40,7 @@ var (
 // CatalogColumn represents a column in the on-disk catalog.
 type CatalogColumn struct {
 	Name     string
-	Type     LX.TokenType
+	Type     sc.TokenType
 	Nullable bool
 }
 
@@ -738,13 +736,13 @@ func lsDecodeEntry(data []byte, off int, re *ct.RawEntry) (int, error) {
 		}
 		name := string(data[off : off+int(cn)])
 		off += int(cn)
-		var colType LX.TokenType
+		var colType sc.TokenType
 		if off+1 > len(data) {
-			colType = LX.T_TEXT
+			colType = sc.T_Text
 		} else {
-			colType = LX.TokenType(data[off])
+			colType = sc.TokenType(data[off])
 			if colType == 0 {
-				colType = LX.T_TEXT
+				colType = sc.T_Text
 			}
 			off++
 		}

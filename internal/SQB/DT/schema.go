@@ -29,7 +29,7 @@ type StoreSchema struct {
 	Checks   []PS.Expr   // parallel to CHECK constraints
 	// REQ000986: pre-compiled CHECK expressions evaluated per row.
 	CompiledChecks []func(*Row) (bool, error)
-	ColTypes []LX.TokenType
+	ColTypes       []LX.TokenType
 	// REQ000568: DECIMAL(P,S) Precision and Scale per column.
 	// Only meaningful when ColTypes[i] is T_DECIMAL or T_NUMERIC.
 	Precision []int
@@ -467,7 +467,7 @@ func RegisterFromCatalog(entry *ls.CatalogEntry) error {
 	for i, c := range entry.Columns {
 		Cols[i] = c.Name
 		Nullable[i] = c.Nullable
-		ColTypes[i] = c.Type
+		ColTypes[i] = LX.TokenType(c.Type)
 		ColIndex[c.Name] = i
 	}
 	// PRIMARY KEY implies NOT NULL.

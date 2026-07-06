@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 
-	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -155,7 +155,7 @@ type DBAttachManager interface {
 }
 
 var (
-	SessionCounterMu       sync.RWMutex
+	SessionCounterMu        sync.RWMutex
 	SessionCounterAccessor_ SessionCounterAccessor
 )
 

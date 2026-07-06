@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -179,7 +180,7 @@ func (a *AlterTable) execAddColumn() error {
 		}
 		newEntry.Columns[len(entry.Columns)] = ls.CatalogColumn{
 			Name:     a.Stmt.NewCol.Name,
-			Type:     a.Stmt.NewCol.Type,
+			Type:     sc.TokenType(a.Stmt.NewCol.Type),
 			Nullable: a.Stmt.NewCol.Nullable,
 		}
 		if err := catalog.Put(newEntry); err != nil {

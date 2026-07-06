@@ -6,17 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
 	"github.com/cyw0ng95/razordata/internal/FIL/DF"
 )
 
 // TestBufferPool_SlotNodeID_DefaultsToZero verifies the REQ000309
-// per-slot node id is set on insert. On non-NUMA hosts (NodeCount
-// == 1) the tag is always 0.
+// per-slot node id is set on insert. When GetNode is nil (non-NUMA),
+// the tag is always 0.
 func TestBufferPool_SlotNodeID_DefaultsToZero(t *testing.T) {
-	if nm.NodeCount() != 1 {
-		t.Skip("test only runs on non-NUMA hosts (single-socket)")
-	}
 	dir := t.TempDir()
 	bd, err := df.Create(filepath.Join(dir, "data.razor"))
 	if err != nil {
@@ -24,9 +20,9 @@ func TestBufferPool_SlotNodeID_DefaultsToZero(t *testing.T) {
 	}
 	defer bd.Close()
 
-	bp, err := New(16, filepath.Join(dir, "hint"), bd, newMockSyncPool())
+	bp, err := NewWithOptions(16, filepath.Join(dir, "hint"), bd, newMockSyncPool(), Options{GetNode: func() int { return 0 }}, nil)
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("NewWithOptions: %v", err)
 	}
 	defer bp.Close()
 

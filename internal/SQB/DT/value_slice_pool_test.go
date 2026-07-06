@@ -149,7 +149,7 @@ func BenchmarkPoolValueSlice(b *testing.B) {
 
 func BenchmarkPoolValueSlice_Varying(b *testing.B) {
 	sizes := []int{4, 8, 16, 32, 64}
-for _, size := range sizes {
+	for _, size := range sizes {
 		b.Run("size="+strconv.Itoa(size), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				s := PoolValueSlice(size)
@@ -181,7 +181,7 @@ func BenchmarkDecodeRow_Pooled(b *testing.B) {
 func encodeTestRow(a int64, b float64, c string) []byte {
 	var buf []byte
 	buf = binary.AppendUvarint(buf, 3) // 3 columns
-	buf = append(buf, 0x01) // rvInt
+	buf = append(buf, 0x01)            // rvInt
 	buf = append(buf, bigEndianUint64(uint64(a))...)
 	buf = append(buf, 0x04) // rvFloat
 	buf = append(buf, bigEndianUint64(math.Float64bits(b))...)

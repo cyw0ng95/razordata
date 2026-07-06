@@ -274,6 +274,8 @@ func operatorType(op DT.Operator) string {
 		return "OP.Sort"
 	case *OP.Limit:
 		return "OP.Limit"
+	case *OP.TopNSort:
+		return "TopN"
 	case *OP.Offset:
 		return "OP.Offset"
 	case *OP.Distinct:

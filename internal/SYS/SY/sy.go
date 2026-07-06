@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
 	df "github.com/cyw0ng95/razordata/internal/FIL/DF"
 	fs "github.com/cyw0ng95/razordata/internal/FIL/FS"
 	lf "github.com/cyw0ng95/razordata/internal/FIL/LF"
@@ -153,7 +154,7 @@ func (e *Engine) open(ctx context.Context) (err error) {
 	}
 	e.sp = sp.NewWithOptions(sp.Options{EnableHugePages: e.opts.EnableHugePages})
 	bpCapacity := int64(e.opts.BufferPoolMB) * 1024 * 1024
-	if e.bp, err = bf.New(bpCapacity, filepath.Join(e.dir, "bp.hint"), e.df, e.sp, e.log); err != nil {
+	if e.bp, err = bf.NewWithOptions(bpCapacity, filepath.Join(e.dir, "bp.hint"), e.df, e.sp, bf.Options{GetNode: nm.CurrentNode}, e.log); err != nil {
 		return err
 	}
 	if e.wr, err = wr.New(walDir, e.lf, e.sp, e.log, e.opts.ReadOnly); err != nil {

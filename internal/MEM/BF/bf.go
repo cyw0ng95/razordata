@@ -8,7 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/cyw0ng95/razordata/internal/ENG/NM"
 	"github.com/cyw0ng95/razordata/internal/FIL/DF"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 )
@@ -52,6 +51,12 @@ type SyncPool interface {
 // Options configures the buffer pool.
 type Options struct {
 	ShardCount int // number of shards; default 32
+	// NumaNodes is the number of NUMA nodes on the host; 0 means
+	// NUMA is disabled (REQ001201).
+	NumaNodes int
+	// GetNode returns the current NUMA node id; nil disables NUMA
+	// tagging (REQ001201).
+	GetNode func() int
 }
 
 // BufferPool manages in-memory block caching.
@@ -114,7 +119,8 @@ type bp struct {
 
 	// REQ000302: optional PMem file for cold-page spill. When nil,
 	// all pages are cached in DRAM only.
-	pmem *PMemFile
+	pmem    *PMemFile
+	getNode func() int // REQ001201: NUMA node getter from options
 }
 
 var _ BufferPool = (*bp)(nil)
@@ -143,6 +149,7 @@ func NewWithOptions(capacity int64, hintPath string, bd *df.BlockDevice, sp Sync
 		log:      l,
 		sbp:      sbp,
 		capacity: capacity,
+		getNode:  opts.GetNode,
 	}
 
 	return b, nil
@@ -257,7 +264,7 @@ allocated:
 	// REQ000309 (iter-27): tag the slot with the current
 	// NUMA node so the engine can later report placement
 	// statistics. On non-NUMA hosts, this is always 0.
-	slot.nodeID.Store(int32(nm.CurrentNode()))
+	slot.nodeID.Store(b.nodeID())
 	shard.slots[blockID] = slot
 	b.sbp.totalUsed.Add(1)
 	shard.mu.Unlock()
@@ -371,6 +378,15 @@ insert:
 // SetCapacity implements BufferPool. Deferred to v2.
 func (b *bp) SetCapacity(n int64) error {
 	return ErrCapacityExceeded
+}
+
+// nodeID returns the current NUMA node (REQ001201). Defaults to 0 if no
+// GetNode function is configured.
+func (b *bp) nodeID() int32 {
+	if b.getNode != nil {
+		return int32(b.getNode())
+	}
+	return 0
 }
 
 // Stats implements BufferPool.

@@ -10,7 +10,6 @@ import (
 
 	ct "github.com/cyw0ng95/razordata/internal/ENG/CT"
 	sc "github.com/cyw0ng95/razordata/internal/ENG/SC"
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // Constants re-exported from the shared catalog package.
@@ -38,7 +37,7 @@ var (
 
 type Column struct {
 	Name     string
-	Type     LX.TokenType
+	Type     sc.ColumnType
 	Nullable bool
 }
 
@@ -152,7 +151,7 @@ func tbEntryToRaw(e *Entry) *ct.RawEntry {
 	for _, c := range e.Columns {
 		raw.Columns = append(raw.Columns, ct.RawColumn{
 			Name:     c.Name,
-			Type:     c.Type,
+			Type:     sc.TokenType(c.Type),
 			Nullable: c.Nullable,
 		})
 	}
@@ -184,7 +183,7 @@ func tbRawToEntry(raw *ct.RawEntry) *Entry {
 	for _, c := range raw.Columns {
 		e.Columns = append(e.Columns, Column{
 			Name:     c.Name,
-			Type:     c.Type,
+			Type:     sc.ColumnType(c.Type),
 			Nullable: c.Nullable,
 		})
 	}
@@ -336,7 +335,7 @@ func tbDecodeEntry(data []byte, off int, re *ct.RawEntry) (int, error) {
 		}
 		nullable := data[off] != 0
 		off++
-		re.Columns[i] = ct.RawColumn{Name: cname, Type: LX.TokenType(colType), Nullable: nullable}
+		re.Columns[i] = ct.RawColumn{Name: cname, Type: sc.TokenType(colType), Nullable: nullable}
 	}
 	uniqCount, n := binary.Uvarint(data[off:])
 	if n <= 0 {
@@ -384,7 +383,7 @@ func entryFromSC(schema *sc.TableSchema, createSQL string) Entry {
 	for _, col := range schema.Columns {
 		e.Columns = append(e.Columns, Column{
 			Name:     col.Name,
-			Type:     LX.TokenType(col.Type),
+			Type:     col.Type,
 			Nullable: col.Nullable,
 		})
 	}

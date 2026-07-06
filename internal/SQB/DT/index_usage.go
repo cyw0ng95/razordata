@@ -9,10 +9,10 @@ import (
 // IndexUsage tracks index usage statistics across query execution.
 // REQ000790: Index diagnostics for EXPLAIN output.
 type IndexUsage struct {
-	mu            sync.Mutex
-	IndexUsed     map[string]int64  // idxName -> usage count
-	IndexSkipped  map[string]int64  // idxName -> skip count (SeqScan on indexed col)
-	TableIndexes  map[string][]string // tableName -> available index names
+	mu           sync.Mutex
+	IndexUsed    map[string]int64    // idxName -> usage count
+	IndexSkipped map[string]int64    // idxName -> skip count (SeqScan on indexed col)
+	TableIndexes map[string][]string // tableName -> available index names
 }
 
 // NewIndexUsage creates a new IndexUsage tracker.
