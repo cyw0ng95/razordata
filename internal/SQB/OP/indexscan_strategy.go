@@ -67,8 +67,13 @@ func (s *InMemoryScan) Next(ctx context.Context) (Row, error) {
 	return r, nil
 }
 
-// Close is a no-op for the in-memory strategy.
-func (s *InMemoryScan) Close() error { return nil }
+// Close resets the iterator position so the strategy can be reused
+// after plan cache hits. Without this, the second execution of a
+// cached plan immediately returns ErrNoRows. REQ001162.
+func (s *InMemoryScan) Close() error {
+	s.pos = 0
+	return nil
+}
 
 // StorePrefixScan is the store-prefix scan strategy. It opens a
 // store iterator over a table prefix and decodes each value. This
