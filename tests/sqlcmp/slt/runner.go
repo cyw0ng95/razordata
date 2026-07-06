@@ -2,6 +2,7 @@ package slt
 
 import (
 	"context"
+	"fmt"
 	"hash"
 	"io"
 	"os"
@@ -290,6 +291,10 @@ func (r *Runner) runQuery(ctx context.Context, rec *Record) {
 		// also time out in a cascade, wasting wall-clock time.
 		if isContextDeadlineExceeded(err) {
 			r.stats.Failed++
+			r.stats.FailureContext = append(r.stats.FailureContext, FailureContext{
+				Line: rec.Line, Kind: rec.Kind, SQL: rec.SQL,
+				Diag: fmt.Sprintf("query error: %v", err),
+			})
 			r.haltOnTimeout = true
 			return
 		}
@@ -298,11 +303,21 @@ func (r *Runner) runQuery(ctx context.Context, rec *Record) {
 			r.stats.Skipped++
 		default:
 			r.stats.Failed++
+			r.stats.FailureContext = append(r.stats.FailureContext, FailureContext{
+				Line: rec.Line, Kind: rec.Kind, SQL: rec.SQL,
+				Diag: fmt.Sprintf("query error: %v", err),
+			})
 		}
 		return
 	}
 	if diff := DiffResultSets(rs, rec); diff != "" {
 		r.stats.Failed++
+		r.stats.FailureContext = append(r.stats.FailureContext, FailureContext{
+			Line: rec.Line,
+			Kind: rec.Kind,
+			SQL:  rec.SQL,
+			Diag: fmt.Sprintf("result mismatch:\n%s", diff),
+		})
 		if r.FailFast {
 			r.haltOnFailure = true
 		}

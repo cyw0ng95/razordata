@@ -217,6 +217,16 @@ type Stats struct {
 	Slowest     []SlowRecord // populated when RAZOR_SLT_PROFILE=1
 	// FailFastTriggered is set when FailFast mode stopped the run early.
 	FailFastTriggered bool
+	// FailureContext captures diagnostic info for each failed record.
+	FailureContext []FailureContext
+}
+
+// FailureContext captures diagnostic info for a failed query record.
+type FailureContext struct {
+	Line int
+	Kind RecordKind
+	SQL  string
+	Diag string // diagnostic from DiffResultSets or error message
 }
 
 // SlowRecord captures the wall-clock time of a single SLT record
