@@ -43,15 +43,7 @@
 - VL/commit.go Commit: BUG_ON(commitTS <= tx.beginTS) — commit timestamp regression breaks snapshot isolation.
 - SN/snapshot.go CreateSnapshot: WARN_ON(readTS < lastCommittedTS-1) — snapshot lag indicator.
 **Test:** TestTXN_Assert_VersionChainOrder, TestTXN_Assert_CommitStateMachine, TestTXN_Assert_EpochMonotonic. | high | small | REQ001261 | TXN/MV/version.go, TXN/LC/epoch.go, TXN/VL/commit.go, TXN/SN/snapshot.go |
-| REQ001267 | SQB/EV + SQB/OP + SQB/EX | **DBG_ASSERT placement in SQB — operator close-after-use, column offset bounds, expression type consistency, lock order, nil row/value propagation.** Insert WARN_ON/BUG_ON calls in SQB/EV, SQB/OP, SQB/EX, SQB/DT, SQB/AG. **Placements:**
-- All operators: BUG_ON(s.closed.Load(), "%T.Next() after Close()") — operator state machine.
-- EV/eval.go evalColumnRef: BUG_ON(idx < 0 || idx >= len(row.Data)) — column offset bounds violation.
-- EV/eval.go EvalValue: WARN_ON(row == nil && !isTrivialExpr(e)) — nil row detection.
-- DT/types.go Row.Clone: BUG_ON(len(r.Data) != len(r.Types)) — row structural integrity.
-- AG/aggregate.go computeAggregate: BUG_ON(groupIdx < 0 || groupIdx >= len(groups)) — group bounds.
-- EX/ex.go ShallowCopy: WARN_ON(ex.closed.Load()) — executor lifecycle violation.
-- OP/hashjoin.go buildAndProbe: WARN_ON(len(buildRows)==0 && len(probeRows)>0) — suspicious join state.
-**Test:** TestSQB_Assert_OperatorUseAfterClose, TestSQB_Assert_ColOffsetBounds, TestSQB_Assert_RowIntegrity. | high | small | REQ001261 | SQB/EV/eval.go, SQB/OP/operators.go, SQB/DT/types.go, SQB/AG/aggregate.go, SQB/EX/ex.go, SQB/OP/hashjoin.go |
+
 | REQ001268 | SQF/PL + SYS/SY | **DBG_ASSERT placement in SQF/SYS — planner cost model bounds, memo key validity, engine lifecycle guards, session state machine, shutdown phase ordering.** Insert WARN_ON/BUG_ON calls in SQF/PL, SQF/RE, SYS/SY, SYS/SE, SYS/ST. **Placements:**
 - PL/planner.go estimateCost: BUG_ON(math.IsNaN(cost) || cost < 0 || math.IsInf(cost, 0)) — NaN/Inf cost produces incorrect index selection.
 - PL/planner.go buildMemoKey: BUG_ON(len(key) == 0) — empty memo key causes cache collisions.

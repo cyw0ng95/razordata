@@ -15,6 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -268,10 +269,20 @@ func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 // For binary expressions that benefit from vectorized evaluation, it
 // packages the row into a synthetic 1-row batch and delegates to
 // EvalBatchExpr. REQ001210.
+func isTrivialExpr(e PS.Expr) bool {
+	switch e.(type) {
+	case *PS.NumberLiteral, *PS.FloatLiteral, *PS.StringLiteral,
+		*PS.BoolLiteral, *PS.NullLiteral, *PS.IntervalLiteral:
+		return true
+	}
+	return false
+}
+
 func EvalValue(expr PS.Expr, row *Row, params []any) (Value, error) {
 	if expr == nil {
 		return DT.NullValue(), nil
 	}
+	EC.WARN_ON(row == nil && !isTrivialExpr(expr), "EvalValue with nil row for %T", expr)
 	if row == nil || row.Outer != nil {
 		return evalFallbackEvalValue(expr, row, params)
 	}
@@ -317,6 +328,9 @@ func evalFallbackEvalValue(expr PS.Expr, row *Row, params []any) (Value, error) 
 	case *PS.Ident:
 		if row != nil {
 			// REQ001202: pre-resolved SlotIdx — direct access, skip Lookup.
+			if e.SlotIdx >= 0 {
+				EC.BUG_ON(e.SlotIdx >= len(row.Data), "column ref %q: SlotIdx %d out of bounds (Data len=%d)", e.Name, e.SlotIdx, len(row.Data))
+			}
 			if e.SlotIdx >= 0 && e.SlotIdx < len(row.Data) && e.SlotIdx < len(row.Cols) {
 				if strings.EqualFold(row.Cols[e.SlotIdx], e.Name) {
 					return row.Data[e.SlotIdx], nil
@@ -335,6 +349,9 @@ func evalFallbackEvalValue(expr PS.Expr, row *Row, params []any) (Value, error) 
 			// prevents incorrectly reading from the inner row when
 			// a correlated subquery's QN references an outer column
 			// that happens to share the same bare name.
+			if e.SlotIdx >= 0 {
+				EC.BUG_ON(e.SlotIdx >= len(row.Data), "qualified column ref %q.%q: SlotIdx %d out of bounds (Data len=%d)", e.Table, e.Name, e.SlotIdx, len(row.Data))
+			}
 			if e.SlotIdx >= 0 && e.SlotIdx < len(row.Data) && e.SlotIdx < len(row.Cols) {
 				full := e.Table + "." + e.Name
 				if strings.EqualFold(row.Cols[e.SlotIdx], full) {

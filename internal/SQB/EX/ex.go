@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -15,6 +16,7 @@ import (
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -213,6 +215,8 @@ type Executor struct {
 	// 0 means unlimited (backward compatible). REQ001056.
 	// Prevents OOM from unbounded cross-join result accumulation.
 	maxResultRows int64
+
+	closed atomic.Bool
 }
 
 // TxWriter is the optional hook an Executor notifies on every key
@@ -252,6 +256,7 @@ func (e *Executor) GetAttachedDBs() map[string]string {
 // The stmtCache is shared via pointer — thread-safe LRU with mutex (REQ001220).
 // Memory budget fields are inherited from the original. REQ001056.
 func (e *Executor) ShallowCopy() *Executor {
+	EC.WARN_ON(e.closed.Load(), "ShallowCopy on closed Executor")
 	e2 := &Executor{
 		planner:           e.planner,
 		store:             e.store,
@@ -269,6 +274,7 @@ func (e *Executor) ShallowCopy() *Executor {
 // Close shuts down the executor's WorkerPool. Idempotent.
 // REQ001044: WorkerPool lifecycle management.
 func (e *Executor) Close() {
+	e.closed.Store(true)
 	if e.pool != nil {
 		e.pool.Close()
 	}

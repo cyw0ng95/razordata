@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"hash/maphash"
 	"strings"
+	"sync/atomic"
 
+	ec "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
@@ -92,6 +94,8 @@ type HashJoin struct {
 	unmatchedLeftIdx     int
 	unmatchedRightBucket int
 	unmatchedRightIdx    int
+
+	closed atomic.Bool
 }
 
 type hashBucket struct {
@@ -180,6 +184,7 @@ func (j *HashJoin) Kind() JoinKind { return j.kind }
 // calls return pre-built rows from the data buffer.
 // ErrNoRows when done.
 func (j *HashJoin) Next(ctx context.Context) (pl.Row, error) {
+	ec.BUG_ON(j.closed.Load(), fmt.Sprintf("%T.Next() after Close()", j))
 	if j.done {
 		return pl.Row{}, ErrNoRows
 	}
@@ -330,6 +335,7 @@ func (j *HashJoin) emitUnmatchedRight(bucketIdx, rowInBucket int) pl.Row {
 }
 
 func (j *HashJoin) Close() error {
+	j.closed.Store(true)
 	for i := range j.buckets {
 		j.buckets[i].rightRows = j.buckets[i].rightRows[:0]
 		j.buckets[i].hashes = j.buckets[i].hashes[:0]
@@ -554,6 +560,7 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	if len(j.leftRows) == 0 && rightCount == 0 {
 		return nil
 	}
+	ec.WARN_ON(len(j.leftRows) > 0 && rightCount == 0, "HashJoin.buildAndProbe: %d probe rows but 0 build rows (empty hash table)", len(j.leftRows))
 	if len(j.leftRows) > 0 {
 		j.leftInfos = leftInfos
 		j.curLeftIdx = 0

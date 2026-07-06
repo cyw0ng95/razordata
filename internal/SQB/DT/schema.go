@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -584,6 +585,7 @@ func UnregisterTable(name string) {
 
 // CloneRow creates a deep copy of a Row.
 func CloneRow(r Row) Row {
+	EC.BUG_ON(len(r.Data) != len(r.Types), "CloneRow row integrity: Data len %d != Types len %d", len(r.Data), len(r.Types))
 	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]LX.TokenType(nil), r.Types...), Outer: r.Outer, Planner: r.Planner, StoreKey: r.StoreKey, TableName: r.TableName}
 	if r.Data != nil {
 		out.Data = append([]Value(nil), r.Data...)
