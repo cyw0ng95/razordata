@@ -549,7 +549,15 @@ func (p *Planner) planUpdate(s *PS.Update) DT.Operator {
 	if p.store != nil {
 		scan, err := OP.NewSeqScanWithStore(p.store, s.Table)
 		if err == nil {
-			filter := OP.NewFilter(scan, s.Where, nil)
+			// REQ001248: split AND, reorder by cost, build filter chain.
+			conjuncts := p.splitAnd(s.Where)
+			if order := reorderIndices(conjuncts); order != nil {
+				conjuncts = orderSlice(conjuncts, order)
+			}
+			var filter DT.Operator = scan
+			for _, c := range conjuncts {
+				filter = OP.NewFilter(filter, c, nil)
+			}
 			op, err := WT.NewUpdateWithStore(p.store, s.Table, s.Set, s.Where, filter, s.Returning)
 			if err == nil {
 				return op
@@ -557,7 +565,15 @@ func (p *Planner) planUpdate(s *PS.Update) DT.Operator {
 		}
 	}
 	scan := OP.NewSeqScan(s.Table)
-	filter := OP.NewFilter(scan, s.Where, nil)
+	// REQ001248: split AND, reorder by cost, build filter chain.
+	conjuncts := p.splitAnd(s.Where)
+	if order := reorderIndices(conjuncts); order != nil {
+		conjuncts = orderSlice(conjuncts, order)
+	}
+	var filter DT.Operator = scan
+	for _, c := range conjuncts {
+		filter = OP.NewFilter(filter, c, nil)
+	}
 	return WT.NewUpdate(s.Table, s.Set, s.Where, filter, s.Returning)
 }
 
@@ -568,7 +584,15 @@ func (p *Planner) planDelete(s *PS.Delete) DT.Operator {
 	if p.store != nil {
 		scan, err := OP.NewSeqScanWithStore(p.store, s.Table)
 		if err == nil {
-			filter := OP.NewFilter(scan, s.Where, nil)
+			// REQ001248: split AND, reorder by cost, build filter chain.
+			conjuncts := p.splitAnd(s.Where)
+			if order := reorderIndices(conjuncts); order != nil {
+				conjuncts = orderSlice(conjuncts, order)
+			}
+			var filter DT.Operator = scan
+			for _, c := range conjuncts {
+				filter = OP.NewFilter(filter, c, nil)
+			}
 			op, err := WT.NewDeleteWithStore(p.store, s.Table, s.Where, filter, s.Returning)
 			if err == nil {
 				return op
@@ -576,7 +600,15 @@ func (p *Planner) planDelete(s *PS.Delete) DT.Operator {
 		}
 	}
 	scan := OP.NewSeqScan(s.Table)
-	filter := OP.NewFilter(scan, s.Where, nil)
+	// REQ001248: split AND, reorder by cost, build filter chain.
+	conjuncts := p.splitAnd(s.Where)
+	if order := reorderIndices(conjuncts); order != nil {
+		conjuncts = orderSlice(conjuncts, order)
+	}
+	var filter DT.Operator = scan
+	for _, c := range conjuncts {
+		filter = OP.NewFilter(filter, c, nil)
+	}
 	return WT.NewDelete(s.Table, s.Where, filter, s.Returning)
 }
 

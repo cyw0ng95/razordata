@@ -162,7 +162,12 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 		pushedPredicates, crossTablePredicates = p.splitPredicatesByTable(conjuncts, allTables)
 		// Push predicates for the first table onto its scan.
 		// REQ000820: also set up point-lookup for IN-list predicates.
+		// REQ001248: reorder predicates by ascending cost so cheap
+		// predicates short-circuit before expensive ones.
 		if firstPreds := pushedPredicates[s.From]; len(firstPreds) > 0 {
+			if order := reorderIndices(firstPreds); order != nil {
+				firstPreds = orderSlice(firstPreds, order)
+			}
 			for _, pred := range firstPreds {
 				current = OP.NewFilter(current, pred, nil)
 				tryApplyPointLookup(scan, pred)
@@ -242,13 +247,29 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 		// REQ001235: skip EXISTS conjuncts already decorrelated.
 		// Use a pointer-based set of replaced ExistsExpr nodes so we
 		// don't skip non-decorrelated EXISTS (bare-name correlations).
-		existsReplacedPtr := make(map[*PS.ExistsExpr]bool)
 		if len(crossTablePredicates) > 0 {
+			// REQ001248: reorder by ascending cost so cheap
+			// predicates short-circuit before expensive ones.
+			if order := reorderIndices(crossTablePredicates); order != nil {
+				crossTablePredicates = orderSlice(crossTablePredicates, order)
+			}
+			// Build pointer-based skip sets after reordering (indices
+			// no longer match extractedPreds). extractedPreds used
+			// indices into the original crossTablePredicates slice
+			// before reordering; now use the expressions themselves.
+			extractedPtrs := make(map[PS.Expr]bool)
 			for i, c := range crossTablePredicates {
 				if extractedPreds[i] {
+					extractedPtrs[c] = true
+				}
+			}
+			for _, c := range crossTablePredicates {
+				// Skip predicates already extracted by hash joins.
+				if extractedPtrs[c] {
 					continue
 				}
 				if ee, ok := c.(*PS.ExistsExpr); ok && existsReplacedPtr[ee] {
+					// Skip EXISTS conjuncts already decorrelated.
 					continue
 				}
 				current = OP.NewFilter(current, c, nil)
@@ -257,8 +278,23 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 			// No predicate pushdown — apply full WHERE as before.
 			// REQ001235: skip EXISTS conjuncts already decorrelated.
 			conjuncts := p.splitAnd(whereExpr)
-			for idx, c := range conjuncts {
-				if existsReplaced[idx] {
+			// REQ001248: reorder by ascending cost.
+			if order := reorderIndices(conjuncts); order != nil {
+				conjuncts = orderSlice(conjuncts, order)
+			}
+			// Reorder changes indices; rebuild a pointer-based set
+			// for replaced existsExpr nodes that survives reordering.
+			// existsReplaced was keyed by index in the original
+			// conjuncts slice (line 142). After reordering the
+			// indices no longer match, so we skip by pointer instead.
+			existsReplacedPt := make(map[*PS.ExistsExpr]bool)
+			for _, c := range conjuncts {
+				if ee, ok := c.(*PS.ExistsExpr); ok && existsReplacedPtr[ee] {
+					existsReplacedPt[ee] = true
+				}
+			}
+			for _, c := range conjuncts {
+				if ee, ok := c.(*PS.ExistsExpr); ok && existsReplacedPt[ee] {
 					continue
 				}
 				current = OP.NewFilter(current, c, nil)
@@ -958,12 +994,17 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 					leftTbl = jc.RightAlias
 				}
 			}
-			if basePreds := pushedPredicates[baseTable]; len(basePreds) > 0 {
-				for _, pred := range basePreds {
-					tryApplyPointLookup(baseOp, pred)
-					baseOp = OP.NewFilter(baseOp, pred, nil)
-				}
+		if basePreds := pushedPredicates[baseTable]; len(basePreds) > 0 {
+			// REQ001248: reorder by ascending cost so cheap
+			// predicates short-circuit before expensive ones.
+			if order := reorderIndices(basePreds); order != nil {
+				basePreds = orderSlice(basePreds, order)
 			}
+			for _, pred := range basePreds {
+				tryApplyPointLookup(baseOp, pred)
+				baseOp = OP.NewFilter(baseOp, pred, nil)
+			}
+		}
 			current = baseOp
 			if leftTbl == "" {
 				leftTbl = baseTable
@@ -1013,12 +1054,16 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 					ss.WithAlias(j.RightAlias)
 				}
 			}
-			if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
-				for _, pred := range rightPreds {
-					tryApplyPointLookup(rightScan, pred)
-					rightScan = OP.NewFilter(rightScan, pred, nil)
-				}
+		if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
+			// REQ001248: reorder by ascending cost.
+			if order := reorderIndices(rightPreds); order != nil {
+				rightPreds = orderSlice(rightPreds, order)
 			}
+			for _, pred := range rightPreds {
+                tryApplyPointLookup(rightScan, pred)
+                rightScan = OP.NewFilter(rightScan, pred, nil)
+            }
+        }
 			var joinOp DT.Operator
 			if (kind == OP.JoinKindInner || kind == OP.JoinKindCross) && len(localConjuncts) > 0 {
 				lk, rk, remaining := p.extractEquiJoinKeys(localConjuncts, joinedTables, j.Right)
