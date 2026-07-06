@@ -2,7 +2,6 @@ package ls
 
 import (
 	"bytes"
-	"container/heap"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -64,8 +63,9 @@ func (mi *mergeIterator) reset() {
 		mi.sources[i] = nil
 	}
 	mi.sources = mi.sources[:0]
-	// Clear heap; keep backing array capacity.
-	mi.h = mi.h[:0]
+	// Clear heap; keep backing array capacity. REQ001261.
+	mi.h.n = 0
+	mi.h.items = mi.h.items[:0]
 	// Clear per-source key/value ring slots in place — keep
 	// backing array capacity. REQ001258.
 	for i := range mi.sourceKeys {
@@ -303,6 +303,10 @@ type iterHeapItem struct {
 
 type iterHeap []iterHeapItem
 
+// iterHeap is kept for the legacy TestIterHeapPushPop test which
+// uses container/heap. Production code uses mergeHeap (see below).
+// REQ001261.
+
 func (h iterHeap) Len() int { return len(h) }
 func (h iterHeap) Less(i, j int) bool {
 	return bytes.Compare(h[i].key, h[j].key) < 0
@@ -315,6 +319,108 @@ func (h *iterHeap) Pop() any {
 	x := old[n-1]
 	*h = old[:n-1]
 	return x
+}
+
+// mergeHeap is a manual min-heap of iterHeapItem that avoids
+// the `any`-boxing imposed by container/heap. The backing array
+// is pre-allocated to a known capacity (typically len(sources))
+// and grown geometrically when exceeded. REQ001261.
+type mergeHeap struct {
+	items []iterHeapItem
+	n     int // number of valid items in items[0:n]
+}
+
+// init prepares the heap for a fresh session with a backing
+// array of at least capHint items. Existing capacity is reused.
+// REQ001261.
+func (h *mergeHeap) init(capHint int) {
+	if cap(h.items) < capHint {
+		h.items = make([]iterHeapItem, 0, capHint)
+	} else {
+		h.items = h.items[:0]
+	}
+	h.n = 0
+}
+
+// Len returns the number of items in the heap.
+func (h *mergeHeap) Len() int { return h.n }
+
+// push adds an item to the heap, growing the backing array if
+// necessary. REQ001261.
+func (h *mergeHeap) push(item iterHeapItem) {
+	if h.n >= cap(h.items) {
+		// Grow geometrically. First grow goes to capHint if
+		// the slice was empty, otherwise double.
+		newCap := cap(h.items) * 2
+		if newCap == 0 {
+			newCap = 4
+		}
+		newItems := make([]iterHeapItem, h.n, newCap)
+		copy(newItems, h.items[:h.n])
+		h.items = newItems
+	}
+	// Use direct array assignment for the common case (no grow).
+	if h.n < len(h.items) {
+		h.items[h.n] = item
+	} else {
+		h.items = append(h.items, item)
+	}
+	h.n++
+	h.siftUp(h.n - 1)
+}
+
+// pop removes and returns the minimum item. The caller is
+// responsible for ensuring Len() > 0. REQ001261.
+func (h *mergeHeap) pop() iterHeapItem {
+	item := h.items[0]
+	h.n--
+	if h.n > 0 {
+		h.items[0] = h.items[h.n]
+		h.siftDown(0)
+	}
+	// Note: we do NOT zero items[h.n] — the slot will be
+	// overwritten on the next push. This is safe because the
+	// next push writes a new iterHeapItem.
+	return item
+}
+
+// siftUp restores the heap property by moving items[i] up while
+// it is smaller than its parent. REQ001261.
+func (h *mergeHeap) siftUp(i int) {
+	for i > 0 {
+		parent := (i - 1) / 2
+		if !h.less(i, parent) {
+			return
+		}
+		h.items[i], h.items[parent] = h.items[parent], h.items[i]
+		i = parent
+	}
+}
+
+// siftDown restores the heap property by moving items[i] down
+// while it is larger than either child. n is the heap size
+// (excludes the slot being sifted). REQ001261.
+func (h *mergeHeap) siftDown(i int) {
+	for {
+		left := 2*i + 1
+		if left >= h.n {
+			return
+		}
+		smallest := left
+		right := left + 1
+		if right < h.n && h.less(right, left) {
+			smallest = right
+		}
+		if !h.less(smallest, i) {
+			return
+		}
+		h.items[i], h.items[smallest] = h.items[smallest], h.items[i]
+		i = smallest
+	}
+}
+
+func (h *mergeHeap) less(i, j int) bool {
+	return bytes.Compare(h.items[i].key, h.items[j].key) < 0
 }
 
 // mergeIterator merges all sources filtered by prefix (REQ000598).
@@ -331,7 +437,7 @@ type mergeIterator struct {
 	dir        string
 	prefix     []byte
 	sources    []RangeIter
-	h          iterHeap
+	h          mergeHeap // REQ001261 — manual min-heap, no any-boxing
 	curKey     []byte // owned copy (nil if none)
 	curVal     []byte // owned copy (nil if none)
 	err        error
@@ -404,13 +510,16 @@ func (mi *mergeIterator) init(memtables []*memtable, skipSST bool) {
 	}
 	// REQ001258: pre-allocate per-source key/value slots.
 	mi.initSourceSlots(len(mi.sources))
+	// REQ001261: pre-allocate the manual min-heap. Typical
+	// heap size is bounded by len(sources).
+	mi.h.init(len(mi.sources))
 	for i, src := range mi.sources {
 		if src.Next() {
 			// Copy the source's first key/value into its
 			// pre-allocated ring slot. The iterHeapItem
 			// references the slot — no allocation.
 			mi.copySourceSlot(i, src)
-			heap.Push(&mi.h, iterHeapItem{
+			mi.h.push(iterHeapItem{
 				key:   mi.sourceKeys[i],
 				value: mi.sourceVals[i],
 				src:   i,
@@ -504,8 +613,7 @@ func (mi *mergeIterator) Next() bool {
 	mi.curVal = nil
 
 	for mi.h.Len() > 0 {
-		top := mi.h[0]
-		heap.Pop(&mi.h)
+		top := mi.h.pop() // REQ001261 — manual heap pop, no any-boxing
 		// Note: top.key/top.value reference mi.sourceKeys[top.src]
 		// — a slice whose backing array will be reused by the
 		// next copySourceSlot call below. We must NOT use them
@@ -516,13 +624,14 @@ func (mi *mergeIterator) Next() bool {
 		// Deduplicate: remove all other sources with the same key.
 		// We must check dedup BEFORE advancing, because the
 		// dedup comparison uses the popped item's key, which is
-		// invalidated by the next copySourceSlot call.
-		for mi.h.Len() > 0 && bytes.Equal(top.key, mi.h[0].key) {
-			dup := heap.Pop(&mi.h).(iterHeapItem)
+		// invalidated by the next copySourceSlot call. REQ001261:
+		// the heap top is mi.h.items[0]; peek before pop.
+		for mi.h.Len() > 0 && bytes.Equal(top.key, mi.h.items[0].key) {
+			dup := mi.h.pop()
 			dupSrc := mi.sources[dup.src]
 			if dupSrc.Next() {
 				mi.copySourceSlot(dup.src, dupSrc)
-				heap.Push(&mi.h, iterHeapItem{
+				mi.h.push(iterHeapItem{
 					key:   mi.sourceKeys[dup.src],
 					value: mi.sourceVals[dup.src],
 					src:   dup.src,
@@ -536,7 +645,7 @@ func (mi *mergeIterator) Next() bool {
 			// Skip: advance the source and re-loop.
 			if src.Next() {
 				mi.copySourceSlot(srcIdx, src)
-				heap.Push(&mi.h, iterHeapItem{
+				mi.h.push(iterHeapItem{
 					key:   mi.sourceKeys[srcIdx],
 					value: mi.sourceVals[srcIdx],
 					src:   srcIdx,
@@ -547,7 +656,7 @@ func (mi *mergeIterator) Next() bool {
 		if isTombstone(top.value) {
 			if src.Next() {
 				mi.copySourceSlot(srcIdx, src)
-				heap.Push(&mi.h, iterHeapItem{
+				mi.h.push(iterHeapItem{
 					key:   mi.sourceKeys[srcIdx],
 					value: mi.sourceVals[srcIdx],
 					src:   srcIdx,
@@ -565,7 +674,7 @@ func (mi *mergeIterator) Next() bool {
 		// Now safe to advance the source for the next round.
 		if src.Next() {
 			mi.copySourceSlot(srcIdx, src)
-			heap.Push(&mi.h, iterHeapItem{
+			mi.h.push(iterHeapItem{
 				key:   mi.sourceKeys[srcIdx],
 				value: mi.sourceVals[srcIdx],
 				src:   srcIdx,
@@ -601,9 +710,9 @@ func (mi *mergeIterator) Close() error {
 	}
 	mi.closed.Store(true)
 
-	// Clear heap (owned copies, no need to free)
+	// Clear heap (REQ001261 — manual min-heap, no any-boxing).
 	for mi.h.Len() > 0 {
-		heap.Pop(&mi.h)
+		_ = mi.h.pop()
 	}
 
 	// Close all sources and return sub-iterators to the pool.

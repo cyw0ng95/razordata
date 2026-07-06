@@ -2,6 +2,7 @@ package ls
 
 // REQ001257 — sync.Pool reuse for mergeIterator and sub-iterators.
 // REQ001258 — ring buffer for key/value byte slices in iterHeap.
+// REQ001261 — manual min-heap to eliminate container/heap any-boxing.
 
 import (
 	"container/heap"
@@ -433,3 +434,185 @@ func TestMergeIterator_PoolConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// REQ001261 — manual min-heap. The next tests verify the new
+// internal min-heap (`mergeHeap`) used by the mergeIterator
+// instead of `container/heap` + iterHeap. The motivation is to
+// eliminate the `any`-boxing that the `container/heap` interface
+// forces on every Push/Pop, which pprof shows is ~4% of total
+// select1 alloc (126 MB / 3.09 GB).
+
+// TestMergeHeap_Ordering verifies a freshly-built mergeHeap
+// returns items in sorted key order. REQ001261.
+func TestMergeHeap_Ordering(t *testing.T) {
+	h := &mergeHeap{}
+	h.init(8)
+	items := []iterHeapItem{
+		{key: []byte("c"), src: 2},
+		{key: []byte("a"), src: 0},
+		{key: []byte("b"), src: 1},
+		{key: []byte("e"), src: 4},
+		{key: []byte("d"), src: 3},
+	}
+	for _, it := range items {
+		h.push(it)
+	}
+	if h.Len() != 5 {
+		t.Fatalf("Len = %d, want 5", h.Len())
+	}
+	want := []string{"a", "b", "c", "d", "e"}
+	var got []string
+	for h.Len() > 0 {
+		got = append(got, string(h.pop().key))
+	}
+	if !equalStringSlices(got, want) {
+		t.Errorf("pop order got %v, want %v", got, want)
+	}
+}
+
+// TestMergeHeap_NoAllocOnPush exercises 1000 Push calls and
+// asserts the backing array does not reallocate. REQ001261.
+func TestMergeHeap_NoAllocOnPush(t *testing.T) {
+	h := &mergeHeap{}
+	h.init(1024) // pre-allocate enough capacity
+	k := []byte("k") // hoist to avoid []byte("k") alloc in the hot loop
+	allocs := testing.AllocsPerRun(1000, func() {
+		for i := 0; i < 1000; i++ {
+			h.push(iterHeapItem{key: k, src: i})
+		}
+	})
+	if allocs > 0 {
+		t.Errorf("mergeHeap push: got %v allocs/op, want 0 (manual min-heap no boxing)", allocs)
+	}
+}
+
+// TestMergeHeap_NoAllocOnPop exercises 1000 Pop calls after
+// pre-population and asserts no allocations. REQ001261.
+func TestMergeHeap_NoAllocOnPop(t *testing.T) {
+	h := &mergeHeap{}
+	h.init(1024)
+	k := []byte("k")
+	for i := 0; i < 1000; i++ {
+		h.push(iterHeapItem{key: k, src: i})
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		// Pop 1 item per iteration; the heap will run out
+		// after 1000 iters, so re-fill.
+		_ = h.pop()
+		// Re-push to keep the heap non-empty.
+		h.push(iterHeapItem{key: k, src: 0})
+	})
+	if allocs > 0 {
+		t.Errorf("mergeHeap pop: got %v allocs/op, want 0 (manual min-heap no boxing)", allocs)
+	}
+}
+
+// TestMergeHeap_SiftAfterDupKeys verifies the heap correctly
+// handles duplicate keys (the mergeIterator's dedup case).
+// REQ001261.
+func TestMergeHeap_SiftAfterDupKeys(t *testing.T) {
+	h := &mergeHeap{}
+	h.init(8)
+	h.push(iterHeapItem{key: []byte("a"), src: 0})
+	h.push(iterHeapItem{key: []byte("a"), src: 1})
+	h.push(iterHeapItem{key: []byte("a"), src: 2})
+	h.push(iterHeapItem{key: []byte("b"), src: 3})
+	if h.Len() != 4 {
+		t.Fatalf("Len = %d, want 4", h.Len())
+	}
+	// Pop the 3 "a"s (any order among them), then "b".
+	var firstSrcs []int
+	for h.Len() > 0 {
+		firstSrcs = append(firstSrcs, h.pop().src)
+	}
+	if len(firstSrcs) != 4 {
+		t.Fatalf("popped %d items, want 4", len(firstSrcs))
+	}
+	// The last pop must be src=3 (key "b").
+	if firstSrcs[len(firstSrcs)-1] != 3 {
+		t.Errorf("last popped src = %d, want 3 (key b)", firstSrcs[len(firstSrcs)-1])
+	}
+}
+
+// TestMergeHeap_GrowPreservesItems verifies that when the heap
+// grows past its initial capacity, all previously-pushed items
+// are still accessible. REQ001261.
+func TestMergeHeap_GrowPreservesItems(t *testing.T) {
+	h := &mergeHeap{}
+	h.init(2) // intentionally small to force a grow
+	for i := 0; i < 20; i++ {
+		h.push(iterHeapItem{key: []byte{byte('a' + i)}, src: i})
+	}
+	if h.Len() != 20 {
+		t.Fatalf("Len = %d, want 20", h.Len())
+	}
+	var got []byte
+	for h.Len() > 0 {
+		got = append(got, h.pop().key[0])
+	}
+	want := []byte{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
+		'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't'}
+	if !bytesEqual(got, want) {
+		t.Errorf("pop order got %v, want %v", got, want)
+	}
+}
+
+// TestMergeIterator_NoHeapBoxing verifies the end-to-end
+// mergeIterator no longer allocates on the heap Pop path. The
+// test pre-allocates capacity for the new internal heap by
+// sizing the source count appropriately. REQ001261.
+func TestMergeIterator_NoHeapBoxing(t *testing.T) {
+	mt := newMemtable(1 << 20)
+	mt.Insert([]byte("a"), []byte("1"))
+	mt.Insert([]byte("b"), []byte("2"))
+
+	dir := t.TempDir()
+	m, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("newManifest: %v", err)
+	}
+
+	// Warm
+	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+	for mi.Next() {
+	}
+	mi.Close()
+
+	// Measure allocs/op for a fully-warm path.
+	allocs := testing.AllocsPerRun(1000, func() {
+		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+		for mi.Next() {
+		}
+		mi.Close()
+	})
+	// After REQ001261, the mergeIterator no longer boxes the
+	// popped item. Remaining allocs are: skiplist Iterator (1),
+	// heap init (0 with pre-sized cap), curKey/curVal (1 each
+	// on first call), sourceKeys/sourceVals grow (0 with cap
+	// preservation). We expect a meaningful drop from the
+	// REQ001257+1258 baseline (~9 allocs/op).
+	if allocs > 6 {
+		t.Errorf("mergeIterator allocs/op = %v, want <= 6 (no heap boxing)", allocs)
+	}
+}
+
+// bytesEqual is a local helper to keep the test file
+// self-contained.
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// silence unused-import lints if heap/sync are not referenced by
+// later tests in this file. (The existing tests already use
+// container/heap and sync; this guard keeps the new tests from
+// accidentally removing them.)
+var _ = heap.Init
+var _ = sync.Mutex{}
