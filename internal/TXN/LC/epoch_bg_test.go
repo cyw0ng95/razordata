@@ -13,7 +13,7 @@ func TestEpochManager_BackgroundAdvances(t *testing.T) {
 	em.Start()
 	defer em.Stop()
 	ep1 := em.epoch.Load()
-	time.Sleep(250 * time.Millisecond) // ~2 ticks
+	time.Sleep(120 * time.Millisecond) // ~1 tick + buffer
 	ep2 := em.epoch.Load()
 	if ep2 <= ep1 {
 		t.Errorf("expected epoch to advance: ep1=%d ep2=%d", ep1, ep2)

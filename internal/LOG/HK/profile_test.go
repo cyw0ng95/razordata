@@ -78,7 +78,7 @@ func TestProfileHook_RateLimit(t *testing.T) {
 	}
 
 	// Wait for rate limit to expire
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(110 * time.Millisecond)
 	ph.OnLog(slog.LevelError, "err 3 (after wait)", nil)
 	if ph.DumpCount() < 1 {
 		t.Errorf("expected dump after rate limit expired")

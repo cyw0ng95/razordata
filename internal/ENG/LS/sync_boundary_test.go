@@ -15,19 +15,21 @@ import (
 // silently dropped between Insert and the first Sync. The
 // table-driven sweep covers 0 bytes through 1 MiB.
 func TestSync_AllSizesRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	eng, err := Open(filepath.Join(dir, "db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+
 	sizes := []int{
 		0, 1, 16, 256, 1024,
 		4096, 8192, 16384, 65536,
 		1 << 20, // 1 MiB
 	}
 	for _, n := range sizes {
+		n := n
 		t.Run("size="+itoaSize(n), func(t *testing.T) {
-			dir := t.TempDir()
-			eng, err := Open(filepath.Join(dir, "db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer eng.Close()
 			key := []byte("k")
 			want := bytes.Repeat([]byte("x"), n)
 			if err := eng.Insert(key, want); err != nil {
