@@ -3,49 +3,24 @@
 package slt
 
 import (
-	"context"
 	"fmt"
 	"strings"
 )
 
-// diagnoseFailures re-runs the records and prints the first n
-// failed ones. The runner is sequential and tolerant; a single
-// failure does not abort the run, so we re-iterate the records
-// ourselves to surface the failing SQL alongside its verdict.
-// Only RecordQuery records are re-run — RecordStatementOK records
-// are skipped to avoid side effects (e.g., duplicate INSERTs,
-// "table already exists" errors) that would corrupt the diagnosis.
-func diagnoseFailures(ctx context.Context, driver Driver, recs []Record, n int) string {
+// diagnoseFailures formats cached diagnostic output from the runner's first
+// pass. No re-execution of queries is needed — the runner captures diff
+// output in Stats.FailureContext during runQuery.
+func diagnoseFailures(stats Stats, n int) string {
 	if n <= 0 {
 		return ""
 	}
 	var b strings.Builder
-	failed := 0
-	for i := range recs {
-		if failed >= n {
+	for i, fc := range stats.FailureContext {
+		if i >= n {
 			break
 		}
-		rec := &recs[i]
-		if rec.Kind != RecordQuery {
-			continue
-		}
-		var err error
-		rs, qerr := driver.Query(ctx, rec.SQL)
-		if qerr == nil {
-			if diff := DiffResultSets(rs, rec); diff != "" {
-				err = fmt.Errorf("result mismatch:\n%s", diff)
-			}
-		} else {
-			err = qerr
-		}
-		if err == nil {
-			rs = nil
-			continue
-		}
-		failed++
-		fmt.Fprintf(&b, "  L%-5d %s\n    SQL: %s\n    ERR: %v\n",
-			rec.Line, rec.Kind, truncate(rec.SQL, 200), err)
-		rs = nil
+		fmt.Fprintf(&b, "  L%-5d %s\n    SQL: %s\n    DIAG: %s\n",
+			fc.Line, fc.Kind, truncate(fc.SQL, 200), fc.Diag)
 	}
 	return b.String()
 }

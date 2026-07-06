@@ -98,7 +98,7 @@ func TestSLT_PerFile(t *testing.T) {
 			}
 
 			if stats.Failed > 0 {
-				diag := diagnoseFailures(ctx, driver, recs, 500)
+				diag := diagnoseFailures(stats, 500)
 				if diag != "" {
 					t.Logf("first failures:\n%s", diag)
 				}
