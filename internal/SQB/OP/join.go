@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 
+	ec "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
@@ -146,6 +148,8 @@ type NestedLoopJoin struct {
 	// per call in nullRightRow/nullLeftRow.
 	nullRightRowCache *Row
 	nullLeftRowCache  *Row
+
+	closed atomic.Bool
 }
 
 // emitLimitCheck is called before returning a row from Next().
@@ -275,6 +279,7 @@ func (j *NestedLoopJoin) SharedCols() []string { return j.sharedCols }
 func (j *NestedLoopJoin) SharedTypes() []LX.TokenType { return j.sharedTypes }
 
 func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
+	ec.BUG_ON(j.closed.Load(), "NestedLoopJoin.Next() after Close()")
 	if err := ctx.Err(); err != nil {
 		return Row{}, err
 	}
@@ -662,6 +667,7 @@ func (j *NestedLoopJoin) emitUnmatchedRight() Row {
 }
 
 func (j *NestedLoopJoin) Close() error {
+	j.closed.Store(true)
 	j.hashMode = false
 	j.hashAttempted = false
 	j.leftRow = nil

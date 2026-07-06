@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
+	ec "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -45,6 +47,8 @@ type FilterProject struct {
 	colIndex      map[string]int
 	dataBuf       []Value
 	dataPerRow    int
+
+	closed atomic.Bool
 }
 
 func (fp *FilterProject) Child() Operator               { return fp.child }
@@ -104,6 +108,7 @@ func NewFilterProject(child Operator, predicate PS.Expr, cols []PS.Expr) *Filter
 }
 
 func (fp *FilterProject) Next(ctx context.Context) (Row, error) {
+	ec.BUG_ON(fp.closed.Load(), "FilterProject.Next() after Close()")
 	for {
 		if err := ctx.Err(); err != nil {
 			return Row{}, err
@@ -199,6 +204,7 @@ func (fp *FilterProject) Next(ctx context.Context) (Row, error) {
 }
 
 func (fp *FilterProject) Close() error {
+	fp.closed.Store(true)
 	fp.dataBuf = nil
 	fp.dataPerRow = 0
 	return fp.child.Close()
@@ -298,6 +304,8 @@ type Filter struct {
 	batchEmitPos  int
 	batchRefilled bool
 	rowID         uint64 // debug: tracks rows through filter
+
+	closed atomic.Bool
 }
 
 // Child returns the filter's child operator. Used by
@@ -543,6 +551,7 @@ func (f *Filter) ReplaceLiterals(vals []any) {
 }
 
 func (f *Filter) Next(ctx context.Context) (Row, error) {
+	ec.BUG_ON(f.closed.Load(), "Filter.Next() after Close()")
 	for {
 		if err := ctx.Err(); err != nil {
 			return Row{}, err
@@ -699,6 +708,7 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 }
 
 func (f *Filter) Close() error {
+	f.closed.Store(true)
 	// REQ000869: return batch buffers to the pool for reuse.
 	if cap(f.batchBuf) >= filterBatchSize {
 		f.batchBuf = f.batchBuf[:0]
@@ -734,6 +744,8 @@ type Project struct {
 	// execCtx carries per-execution state (planner, session ID,
 	// tx writer, change counters) to eval functions. REQ000812.
 	execCtx *pl.ExecContext
+
+	closed atomic.Bool
 }
 
 // Child returns the project's child operator.
@@ -810,6 +822,7 @@ func (p *Project) WithParams(p2 []any) Operator {
 }
 
 func (p *Project) Next(ctx context.Context) (Row, error) {
+	ec.BUG_ON(p.closed.Load(), "Project.Next() after Close()")
 	row, err := p.child.Next(ctx)
 	if err != nil {
 		return Row{}, err
@@ -907,6 +920,7 @@ func findColumn(row Row, name string) (any, error) {
 }
 
 func (p *Project) Close() error {
+	p.closed.Store(true)
 	// REQ001091: return the data buffer to the pool so the next
 	// Project can reuse the backing array. Only return buffers
 	// that grew to a meaningful size to avoid wasting pool slots
@@ -932,6 +946,8 @@ type Sort struct {
 	// sortBufferSize caps the number of rows materialized before
 	// sorting. 0 = unlimited. REQ001065.
 	sortBufferSize int64
+
+	closed atomic.Bool
 }
 
 // Child returns the sort's child operator.
@@ -963,6 +979,7 @@ func (s *Sort) WithParams(p []any) Operator {
 }
 
 func (s *Sort) Next(ctx context.Context) (Row, error) {
+	ec.BUG_ON(s.closed.Load(), "Sort.Next() after Close()")
 	if !s.materialized {
 		for {
 			row, err := s.child.Next(ctx)
@@ -1287,6 +1304,7 @@ func (s *Sort) cmpKeys(a, b []Value) int {
 }
 
 func (s *Sort) Close() error {
+	s.closed.Store(true)
 	s.buf = nil
 	s.pos = 0
 	s.materialized = false
@@ -1298,6 +1316,8 @@ type Limit struct {
 	limit  int64
 	seen   int64
 	params []any
+
+	closed atomic.Bool
 }
 
 // Child returns the limit's child operator.
@@ -1318,6 +1338,7 @@ func (l *Limit) WithParams(p []any) Operator {
 }
 
 func (l *Limit) Next(ctx context.Context) (Row, error) {
+	ec.BUG_ON(l.closed.Load(), "Limit.Next() after Close()")
 	if l.seen >= l.limit {
 		return Row{}, ErrNoRows
 	}
@@ -1330,6 +1351,7 @@ func (l *Limit) Next(ctx context.Context) (Row, error) {
 }
 
 func (l *Limit) Close() error {
+	l.closed.Store(true)
 	l.seen = 0
 	return l.child.Close()
 }
@@ -1342,6 +1364,8 @@ type Offset struct {
 	offset  int64
 	skipped int64
 	params  []any
+
+	closed atomic.Bool
 }
 
 // Child returns the offset's child operator.
@@ -1362,6 +1386,7 @@ func (o *Offset) WithParams(p []any) Operator {
 }
 
 func (o *Offset) Next(ctx context.Context) (Row, error) {
+	ec.BUG_ON(o.closed.Load(), "Offset.Next() after Close()")
 	for o.skipped < o.offset {
 		if err := ctx.Err(); err != nil {
 			return Row{}, err
@@ -1375,6 +1400,7 @@ func (o *Offset) Next(ctx context.Context) (Row, error) {
 }
 
 func (o *Offset) Close() error {
+	o.closed.Store(true)
 	o.skipped = 0
 	if o.child == nil {
 		return nil

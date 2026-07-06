@@ -2,7 +2,9 @@ package OP
 
 import (
 	"context"
+	"sync/atomic"
 
+	ec "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
@@ -22,7 +24,8 @@ import (
 // tests can plug in a custom index-scan stub to verify behaviour
 // without touching the heap.
 type IndexOnlyScan struct {
-	inner pl.Operator
+	inner  pl.Operator
+	closed atomic.Bool
 }
 
 // NewIndexOnlyScan wraps any operator that emits index rows. The
@@ -49,6 +52,7 @@ func (s *IndexOnlyScan) Next(ctx context.Context) (pl.Row, error) {
 	if s == nil || s.inner == nil {
 		return pl.Row{}, pl.ErrNoRows
 	}
+	ec.BUG_ON(s.closed.Load(), "IndexOnlyScan.Next() after Close()")
 	return s.inner.Next(ctx)
 }
 
@@ -57,6 +61,7 @@ func (s *IndexOnlyScan) Close() error {
 	if s == nil || s.inner == nil {
 		return nil
 	}
+	s.closed.Store(true)
 	return s.inner.Close()
 }
 

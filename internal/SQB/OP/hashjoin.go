@@ -184,7 +184,7 @@ func (j *HashJoin) Kind() JoinKind { return j.kind }
 // calls return pre-built rows from the data buffer.
 // ErrNoRows when done.
 func (j *HashJoin) Next(ctx context.Context) (pl.Row, error) {
-	ec.BUG_ON(j.closed.Load(), fmt.Sprintf("%T.Next() after Close()", j))
+	ec.BUG_ON(j.closed.Load(), "HashJoin.Next() after Close()")
 	if j.done {
 		return pl.Row{}, ErrNoRows
 	}

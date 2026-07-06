@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	id "github.com/cyw0ng95/razordata/internal/ENG/ID"
+	ec "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -144,6 +146,8 @@ type SeqScan struct {
 	// conjunct that can be evaluated on raw encoded bytes without
 	// decoding the row. Set by NewFilter when pushdown is possible.
 	rawByteFilter func([]byte) bool
+
+	closed atomic.Bool
 }
 
 // SetRawByteFilter sets a raw-byte predicate filter. REQ001225.
@@ -422,6 +426,7 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 }
 
 func (s *SeqScan) Next(ctx context.Context) (Row, error) {
+	ec.BUG_ON(s.closed.Load(), "SeqScan.Next() after Close()")
 	if err := ctx.Err(); err != nil {
 		return Row{}, err
 	}
@@ -547,8 +552,8 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		if s.ctxCheckCounter >= 1024 {
 			s.ctxCheckCounter = 0
 			if err := ctx.Err(); err != nil {
-                return Row{}, err
-            }
+				return Row{}, err
+			}
 		}
 		// REQ000501: save the raw key so Update/Delete can
 		// preserve the original row key for hidden-PK DT.Tables.
@@ -623,6 +628,7 @@ func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
 }
 
 func (s *SeqScan) Close() error {
+	s.closed.Store(true)
 	if s.it != nil {
 		err := s.it.Close()
 		s.it = nil
@@ -755,6 +761,8 @@ type IndexScan struct {
 	// DecodeRow call so it can be returned to valueSlicePool on the
 	// next iteration, eliminating per-row make([]Value, N) allocations.
 	lastDataSlice []Value
+
+	closed atomic.Bool
 }
 
 // SetRawByteFilter sets a raw-byte predicate filter. REQ001225.
@@ -1140,6 +1148,7 @@ func (i *IndexScan) openIndexIter() interface {
 }
 
 func (i *IndexScan) Next(ctx context.Context) (Row, error) {
+	ec.BUG_ON(i.closed.Load(), "IndexScan.Next() after Close()")
 	if err := ctx.Err(); err != nil {
 		return Row{}, err
 	}
@@ -1176,6 +1185,7 @@ func (i *IndexScan) Next(ctx context.Context) (Row, error) {
 }
 
 func (i *IndexScan) Close() error {
+	i.closed.Store(true)
 	if i.it != nil {
 		err := i.it.Close()
 		i.it = nil
@@ -1191,7 +1201,7 @@ func (i *IndexScan) Close() error {
 		}
 	}
 	i.btreeIt = nil
- i.pos = 0
+	i.pos = 0
 	i.rows = nil
 	// REQ001226: return any remaining pooled slice.
 	if i.lastDataSlice != nil {
@@ -1347,7 +1357,7 @@ func (s *SeqScan) Store() DT.Store             { return s.store }
 func (s *SeqScan) Schema() *DT.StoreSchema     { return s.schema }
 func (s *SeqScan) UsedCols() []string          { return s.usedCols }
 func (s *SeqScan) UsedColSet() map[string]bool { return s.usedColSet }
-func (s *SeqScan) GetRequestedCols() []int    { return s.RequestedCols }
+func (s *SeqScan) GetRequestedCols() []int     { return s.RequestedCols }
 func (s *SeqScan) Btree() *id.BTree            { return nil } // SeqScan has no B-tree
 
 // Accessor methods for IndexScan fields used by EX plan_node and strategy.
