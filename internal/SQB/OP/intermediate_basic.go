@@ -1610,11 +1610,8 @@ func compileColRef(name string, slotIdx int) func(*Row) Value {
 		if slotIdx >= 0 && slotIdx < len(row.Data) && slotIdx < len(row.Cols) {
 			cl := row.Cols[slotIdx]
 			if len(cl) > 0 {
-				clLower := cl
-				if cl[0] >= 'A' && cl[0] <= 'Z' {
-					clLower = strings.ToLower(cl)
-				}
-				if clLower == lower || clLower == bareLower {
+				// REQ001274: strings.EqualFold avoids allocation vs strings.ToLower.
+				if strings.EqualFold(cl, lower) || strings.EqualFold(cl, bareLower) {
 					return row.Data[slotIdx]
 				}
 			}

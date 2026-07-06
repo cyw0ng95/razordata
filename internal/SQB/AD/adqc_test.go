@@ -441,3 +441,44 @@ func (p *paramTestOp) WithParams(args []any) DT.Operator {
 	p.paramsReceived = true
 	return p
 }
+
+// TestAdaptiveOp_DirectBypass verifies that after tryAttempted=true,
+// the direct bool bypass avoids the atomic state.Load() and calls
+// Inner.Next() directly. REQ001275.
+func TestAdaptiveOp_DirectBypass(t *testing.T) {
+	op := NewAdaptiveOp(&testOp{}, "test_hash")
+	if op.direct {
+		t.Error("direct should be false before tryCompile")
+	}
+	_, _ = op.Next(context.Background())
+	if !op.direct {
+		t.Error("direct should be true after tryCompile")
+	}
+}
+
+// BenchmarkAdaptiveOp_DirectBypass measures Next() throughput when
+// the direct bypass is active (after tryAttempted). REQ001275.
+func BenchmarkAdaptiveOp_DirectBypass(b *testing.B) {
+	op := NewAdaptiveOp(&testOp{}, "bench_hash")
+	_, _ = op.Next(context.Background()) // prime: trigger tryCompile
+	if !op.direct {
+		b.Fatal("direct not set after tryCompile")
+	}
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = op.Next(ctx)
+	}
+}
+
+// BenchmarkAdaptiveOp_BeforeBypass measures Next() throughput when
+// the atomic state.Load() path is taken (before tryAttempted).
+// REQ001275 baseline.
+func BenchmarkAdaptiveOp_BeforeBypass(b *testing.B) {
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		op := NewAdaptiveOp(&testOp{}, "bench_hash2")
+		_, _ = op.Next(ctx)
+	}
+}

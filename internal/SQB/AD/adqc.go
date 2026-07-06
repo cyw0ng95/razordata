@@ -82,6 +82,11 @@ type AdaptiveOp struct {
 	// take the direct inner.Next() fast path without going through
 	// the counter.Inc() and lock acquisition.
 	tryAttempted bool
+	// REQ001275: when true, Next() skips atomic state.Load() entirely.
+	// Set by tryCompile after its first (and only) invocation, since
+	// once tryAttempted is true, the state never changes from the
+	// outcome tryCompile left it at.
+	direct bool
 }
 
 // NewAdaptiveOp wraps an operator with adaptive compilation.
@@ -99,7 +104,15 @@ func NewAdaptiveOp(inner DT.Operator, planHash string) *AdaptiveOp {
 // After the threshold, it attempts to swap to the compiled path.
 // REQ000845: once tryCompile has run without success, subsequent
 // calls skip the counter/lock and call inner.Next() directly.
+// REQ001275: the direct bool bypass avoids the atomic state.Load()
+// entirely when tryAttempted is true.
 func (a *AdaptiveOp) Next(ctx context.Context) (DT.Row, error) {
+	// REQ001275: fast path — once tryCompile has run (whether successful
+	// or not), the state is stable and the atomic load is pure overhead.
+	if a.direct {
+		return a.Inner.Next(ctx)
+	}
+
 	state := AdqcState(a.state.Load())
 
 	if state == AdqcCompiled {
@@ -129,6 +142,7 @@ func (a *AdaptiveOp) tryCompile(ctx context.Context) {
 
 	if AdqcState(a.state.Load()) != AdqcInterpreted {
 		a.tryAttempted = true
+		a.direct = true
 		return
 	}
 
@@ -137,6 +151,7 @@ func (a *AdaptiveOp) tryCompile(ctx context.Context) {
 		a.compiledFn = cached.Fn
 		a.state.Store(uint32(AdqcCompiled))
 		a.tryAttempted = true
+		a.direct = true
 		slog.Debug("adqc: plan restored from cache",
 			"planHash", a.planHash,
 			"opType", cached.OpType,
@@ -150,6 +165,7 @@ func (a *AdaptiveOp) tryCompile(ctx context.Context) {
 	// call. No compiled function is available, so interpreted path
 	// is the only path for this plan.
 	a.tryAttempted = true
+	a.direct = true
 	slog.Debug("adqc: fallback",
 		"planHash", a.planHash,
 		"opType", opType,
