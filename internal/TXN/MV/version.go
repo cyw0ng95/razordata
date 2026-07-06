@@ -3,7 +3,6 @@ package MV
 import (
 	"math"
 	"sync/atomic"
-	"unsafe"
 )
 
 // VersionNode is a single version entry in a version chain.
@@ -17,30 +16,12 @@ type VersionNode struct {
 	next    atomic.Pointer[VersionNode]
 }
 
-// noescape hides a pointer from escape analysis (REQ000306).
-//
-//go:nosplit
-func noescape(p unsafe.Pointer) unsafe.Pointer {
-	x := uintptr(p)
-	return unsafe.Pointer(x ^ 0)
-}
-
-// NewVersionNode allocates a VersionNode out of the supplied arena.
+// NewVersionNode allocates a VersionNode on the heap.
+// REQ001269: always heap-allocate to prevent use-after-arena-recycle.
+// The arena parameter is retained for API compatibility but no longer used.
 func NewVersionNode(arena *Arena, txnID, beginTS uint64, key, value []byte, deleted bool) *VersionNode {
-	size := int(unsafe.Sizeof(VersionNode{}))
-	mem := arena.Alloc(size)
-	if mem == nil {
-		var n VersionNode
-		node := &n
-		node.txnID = txnID
-		node.beginTS = beginTS
-		node.endTS.Store(math.MaxUint64)
-		node.key = key
-		node.value = value
-		node.deleted = deleted
-		return node
-	}
-	node := (*VersionNode)(unsafe.Pointer(&mem[0]))
+	var n VersionNode
+	node := &n
 	node.txnID = txnID
 	node.beginTS = beginTS
 	node.endTS.Store(math.MaxUint64)
@@ -56,7 +37,8 @@ func (n *VersionNode) IsUncommitted() bool {
 	return n.endTS.Load() == math.MaxUint64
 }
 
-// NewVersionNodeStack allocates a VersionNode on the caller's stack (REQ000306).
+// NewVersionNodeStack allocates a VersionNode on the heap.
+// REQ001269: noescape removed; stack escape was the root cause of GC crashes.
 func NewVersionNodeStack(txnID, beginTS uint64, key, value []byte, deleted bool) *VersionNode {
 	var n VersionNode
 	n.txnID = txnID
@@ -65,7 +47,7 @@ func NewVersionNodeStack(txnID, beginTS uint64, key, value []byte, deleted bool)
 	n.key = key
 	n.value = value
 	n.deleted = deleted
-	return (*VersionNode)(noescape(unsafe.Pointer(&n)))
+	return &n
 }
 
 // IsVisible returns true if the node is visible at the given read timestamp.

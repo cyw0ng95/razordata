@@ -10,15 +10,17 @@ import (
 )
 
 type RowArena struct {
-	slab    []byte
+	slabs   [][]byte // all slabs ever allocated — kept alive for GC tracing
+	slab    []byte   // current active slab
 	offset  int
 	slabCap int
 }
 
-const arenaSlabSize = 64 * 1024
-const valueSize = int(unsafe.Sizeof(Value{}))
-
 func (a *RowArena) Reset() {
+	for _, s := range a.slabs {
+		arenaSlabPool.Put(s)
+	}
+	a.slabs = a.slabs[:0]
 	if a.slab != nil {
 		arenaSlabPool.Put(a.slab)
 		a.slab = nil
@@ -49,7 +51,7 @@ func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) *Row {
 
 func (a *RowArena) grow(needed int) {
 	if a.slab != nil {
-		arenaSlabPool.Put(a.slab)
+		a.slabs = append(a.slabs, a.slab) // keep alive for GC tracing
 	}
 	cap := arenaSlabSize
 	if needed > cap {
@@ -58,14 +60,14 @@ func (a *RowArena) grow(needed int) {
 			cap = arenaSlabSize * 2
 		}
 	}
-	s := arenaSlabPool.Get().([]byte)
-	if len(s) < cap {
-		s = make([]byte, cap)
-	}
+	s := make([]byte, cap)
 	a.slab = s
 	a.offset = 0
 	a.slabCap = cap
 }
+
+const arenaSlabSize = 64 * 1024
+const valueSize = int(unsafe.Sizeof(Value{}))
 
 func DecodeRowInto(row *Row, data []byte, schema *StoreSchema) error {
 	nCols := len(schema.Cols)
