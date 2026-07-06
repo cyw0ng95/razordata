@@ -5,10 +5,122 @@ import (
 	"container/heap"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 )
 
 var tombstoneValue = []byte{0xDE, 0xAD, 0xBE, 0xEF}
+
+// REQ001257: sync.Pool for mergeIterator and sub-iterators.
+// Pool returns a struct that is reset (cleared mutable state) on
+// acquire and the caller returns the struct to the pool via the
+// corresponding release* helper. The pool does not guarantee
+// pointer identity — functional reuse is the contract.
+var (
+	mergeIteratorPool = sync.Pool{
+		New: func() any { return &mergeIterator{} },
+	}
+	memtableIterPool = sync.Pool{
+		New: func() any { return &memtableIter{} },
+	}
+	sstIterPool = sync.Pool{
+		New: func() any { return &sstIter{} },
+	}
+)
+
+// acquireMergeIterator returns a zeroed mergeIterator from the pool.
+// REQ001257.
+func acquireMergeIterator() *mergeIterator {
+	mi := mergeIteratorPool.Get().(*mergeIterator)
+	mi.reset()
+	return mi
+}
+
+// releaseMergeIterator returns a mergeIterator to the pool after
+// the caller has closed all sources. The pool will hand the same
+// (or a different) struct to a future acquirer with all mutable
+// state cleared. REQ001257.
+func releaseMergeIterator(mi *mergeIterator) {
+	if mi == nil {
+		return
+	}
+	mi.reset()
+	mergeIteratorPool.Put(mi)
+}
+
+// reset clears mutable state of a mergeIterator so it can be
+// handed back to the pool without leaking references to closed
+// sources or stale heap entries. The fixed configuration
+// (fs/manifest/dir/blockCache) is set per-init and not reset.
+// Slices keep their backing array capacity for reuse. REQ001257
+// + REQ001258.
+func (mi *mergeIterator) reset() {
+	mi.closed.Store(false)
+	mi.curKey = nil
+	mi.curVal = nil
+	mi.err = nil
+	// Detach sources slice — keep capacity for reuse.
+	for i := range mi.sources {
+		mi.sources[i] = nil
+	}
+	mi.sources = mi.sources[:0]
+	// Clear heap; keep backing array capacity.
+	mi.h = mi.h[:0]
+	// Clear per-source key/value ring slots in place — keep
+	// backing array capacity. REQ001258.
+	for i := range mi.sourceKeys {
+		mi.sourceKeys[i] = mi.sourceKeys[i][:0]
+		mi.sourceVals[i] = mi.sourceVals[i][:0]
+	}
+	mi.sourceKeys = mi.sourceKeys[:0]
+	mi.sourceVals = mi.sourceVals[:0]
+}
+
+// acquireMemtableIter returns a zeroed memtableIter from the pool.
+// REQ001257.
+func acquireMemtableIter() *memtableIter {
+	mi := memtableIterPool.Get().(*memtableIter)
+	mi.it = nil
+	return mi
+}
+
+// releaseMemtableIter returns a memtableIter to the pool after
+// its underlying Iterator has been exhausted or closed. REQ001257.
+func releaseMemtableIter(m *memtableIter) {
+	if m == nil {
+		return
+	}
+	m.it = nil
+	memtableIterPool.Put(m)
+}
+
+// resetMemtableIter clears the iter field so the pooled struct
+// can be safely reused. Exported for tests.
+func resetMemtableIter(m *memtableIter) {
+	if m == nil {
+		return
+	}
+	m.it = nil
+}
+
+// acquireSSTIter returns a zeroed sstIter from the pool. REQ001257.
+func acquireSSTIter() *sstIter {
+	si := sstIterPool.Get().(*sstIter)
+	si.it = nil
+	si.data = nil
+	return si
+}
+
+// releaseSSTIter returns an sstIter to the pool after its
+// underlying iterator has been exhausted or closed. REQ001257.
+func releaseSSTIter(s *sstIter) {
+	if s == nil {
+		return
+	}
+	s.it = nil
+	s.data = nil
+	sstIterPool.Put(s)
+}
 
 func isTombstone(v []byte) bool {
 	return bytes.Equal(v, tombstoneValue)
@@ -184,8 +296,8 @@ func (s *sstIter) Err() error    { return s.it.Err() }
 func (s *sstIter) Close() error  { return s.it.Close() }
 
 type iterHeapItem struct {
-	key   []byte // owned copy (required because iterator values are invalidated on Next())
-	value []byte // owned copy
+	key   []byte // borrowed from mergeIterator.sourceKeys[src] (REQ001258)
+	value []byte // borrowed from mergeIterator.sourceVals[src] (REQ001258)
 	src   int
 }
 
@@ -209,6 +321,10 @@ func (h *iterHeap) Pop() any {
 // It uses owned copies in the heap to avoid iterator invalidation.
 // Zero-copy optimization for SST blocks is achieved via borrowed pointers
 // in sst_reader.go (decodeBlock returns pointers into the SST data).
+//
+// REQ001257: struct is reused via sync.Pool (mergeIteratorPool).
+// REQ001258: key/value byte slices for heap entries are drawn from
+// a pre-allocated per-source ring buffer (sourceKeys/sourceVals).
 type mergeIterator struct {
 	fs         FS
 	manifest   *manifest
@@ -221,16 +337,27 @@ type mergeIterator struct {
 	err        error
 	closed     atomic.Bool
 	blockCache *BlockCache // REQ001242
+
+	// REQ001258: per-source ring buffer slots. sourceKeys[i] and
+	// sourceVals[i] hold the current key/value for the i-th
+	// source — the entry currently in the heap for that source.
+	// On each Push for source i, the slot is overwritten with
+	// the new key/value, avoiding per-push byte-slice allocation.
+	sourceKeys [][]byte
+	sourceVals [][]byte
+	// curKey/curVal are dedicated owned-copy slices for the
+	// winner row exposed via Key()/Value(). The copy is made
+	// exactly once per Next() call that returns true, so the
+	// user can read curKey/curVal safely until the next Next().
 }
 
 func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, fs FS, prefix []byte, blockCache *BlockCache, smallTableRows int64) *mergeIterator {
-	mi := &mergeIterator{
-		fs:         fs,
-		manifest:   manifest,
-		dir:        dir,
-		prefix:     append([]byte(nil), prefix...),
-		blockCache: blockCache,
-	}
+	mi := acquireMergeIterator()
+	mi.fs = fs
+	mi.manifest = manifest
+	mi.dir = dir
+	mi.prefix = append(mi.prefix[:0], prefix...)
+	mi.blockCache = blockCache
 	skipSST := smallTableRows > 0 && manifestAllSmall(manifest, smallTableRows)
 	mi.init(memtables, skipSST)
 	return mi
@@ -239,10 +366,15 @@ func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, fs 
 func (mi *mergeIterator) init(memtables []*memtable, skipSST bool) {
 	activeMem := memtables[len(memtables)-1]
 
-	mi.sources = append(mi.sources, &memtableIter{it: activeMem.Iterator()})
+	// REQ001257: pull sub-iterators from the pool.
+	mti := acquireMemtableIter()
+	mti.it = activeMem.Iterator()
+	mi.sources = append(mi.sources, mti)
 	for i := len(memtables) - 2; i >= 0; i-- {
 		mt := memtables[i]
-		mi.sources = append(mi.sources, &memtableIter{it: mt.Iterator()})
+		mti2 := acquireMemtableIter()
+		mti2.it = mt.Iterator()
+		mi.sources = append(mi.sources, mti2)
 	}
 	v := mi.manifest.Current()
 	if v != nil && !skipSST {
@@ -262,22 +394,58 @@ func (mi *mergeIterator) init(memtables []*memtable, skipSST bool) {
 					continue
 				}
 				reader.blockCache = mi.blockCache // REQ001242
-				// Store the data in the source so it stays alive
-				// The sstIter holds a reference to the reader which holds the data
-				mi.sources = append(mi.sources, &sstIter{it: reader.Iterator(), data: data})
+				// REQ001257: pull sstIter from the pool.
+				si := acquireSSTIter()
+				si.it = reader.Iterator()
+				si.data = data
+				mi.sources = append(mi.sources, si)
 			}
 		}
 	}
+	// REQ001258: pre-allocate per-source key/value slots.
+	mi.initSourceSlots(len(mi.sources))
 	for i, src := range mi.sources {
 		if src.Next() {
-			// Push owned copies to heap (required because iterator values are invalidated on Next())
+			// Copy the source's first key/value into its
+			// pre-allocated ring slot. The iterHeapItem
+			// references the slot — no allocation.
+			mi.copySourceSlot(i, src)
 			heap.Push(&mi.h, iterHeapItem{
-				key:   append([]byte(nil), src.Key()...),
-				value: append([]byte(nil), src.Value()...),
+				key:   mi.sourceKeys[i],
+				value: mi.sourceVals[i],
 				src:   i,
 			})
 		}
 	}
+}
+
+// initSourceSlots resets the per-source key/value ring buffer
+// for a fresh mergeIterator session. The buffer is sized to n
+// slots; on reuse, existing backing arrays are kept. REQ001258.
+func (mi *mergeIterator) initSourceSlots(n int) {
+	if n == 0 {
+		mi.sourceKeys = nil
+		mi.sourceVals = nil
+		return
+	}
+	if cap(mi.sourceKeys) < n {
+		mi.sourceKeys = make([][]byte, n)
+		mi.sourceVals = make([][]byte, n)
+	} else {
+		mi.sourceKeys = mi.sourceKeys[:n]
+		mi.sourceVals = mi.sourceVals[:n]
+		for i := range mi.sourceKeys {
+			mi.sourceKeys[i] = mi.sourceKeys[i][:0]
+			mi.sourceVals[i] = mi.sourceVals[i][:0]
+		}
+	}
+}
+
+// copySourceSlot copies the source's current key/value into its
+// pre-allocated slot. REQ001258.
+func (mi *mergeIterator) copySourceSlot(srcIdx int, src RangeIter) {
+	mi.sourceKeys[srcIdx] = append(mi.sourceKeys[srcIdx][:0], src.Key()...)
+	mi.sourceVals[srcIdx] = append(mi.sourceVals[srcIdx][:0], src.Value()...)
 }
 
 // manifestAllSmall returns true if the manifest has SST files and every
@@ -330,50 +498,79 @@ func (mi *mergeIterator) Next() bool {
 	if mi.closed.Load() {
 		return false
 	}
-	// Clear previous key/value (they were owned copies, no need to free)
+	// Clear the previous winner's reference. The underlying
+	// curKey/curVal slices are reused on the next copy.
 	mi.curKey = nil
 	mi.curVal = nil
 
 	for mi.h.Len() > 0 {
 		top := mi.h[0]
 		heap.Pop(&mi.h)
+		// Note: top.key/top.value reference mi.sourceKeys[top.src]
+		// — a slice whose backing array will be reused by the
+		// next copySourceSlot call below. We must NOT use them
+		// after the next iteration of this loop. REQ001258.
 		srcIdx := top.src
 		src := mi.sources[srcIdx]
 
-		// Advance the source and push next item if available
-		if src.Next() {
-			heap.Push(&mi.h, iterHeapItem{
-				key:   append([]byte(nil), src.Key()...),
-				value: append([]byte(nil), src.Value()...),
-				src:   srcIdx,
-			})
-		}
-
-		// Deduplicate: remove all other sources with the same key
+		// Deduplicate: remove all other sources with the same key.
+		// We must check dedup BEFORE advancing, because the
+		// dedup comparison uses the popped item's key, which is
+		// invalidated by the next copySourceSlot call.
 		for mi.h.Len() > 0 && bytes.Equal(top.key, mi.h[0].key) {
 			dup := heap.Pop(&mi.h).(iterHeapItem)
-			// Advance the duplicate source
 			dupSrc := mi.sources[dup.src]
 			if dupSrc.Next() {
+				mi.copySourceSlot(dup.src, dupSrc)
 				heap.Push(&mi.h, iterHeapItem{
-					key:   append([]byte(nil), dupSrc.Key()...),
-					value: append([]byte(nil), dupSrc.Value()...),
+					key:   mi.sourceKeys[dup.src],
+					value: mi.sourceVals[dup.src],
 					src:   dup.src,
 				})
 			}
 		}
 
-		// Check prefix and tombstone
+		// Check prefix and tombstone — must be done before
+		// advancing the source.
 		if !bytes.HasPrefix(top.key, mi.prefix) {
+			// Skip: advance the source and re-loop.
+			if src.Next() {
+				mi.copySourceSlot(srcIdx, src)
+				heap.Push(&mi.h, iterHeapItem{
+					key:   mi.sourceKeys[srcIdx],
+					value: mi.sourceVals[srcIdx],
+					src:   srcIdx,
+				})
+			}
 			continue
 		}
 		if isTombstone(top.value) {
+			if src.Next() {
+				mi.copySourceSlot(srcIdx, src)
+				heap.Push(&mi.h, iterHeapItem{
+					key:   mi.sourceKeys[srcIdx],
+					value: mi.sourceVals[srcIdx],
+					src:   srcIdx,
+				})
+			}
 			continue
 		}
 
-		// Keep the owned copies for this row
-		mi.curKey = top.key
-		mi.curVal = top.value
+		// Winner. Copy the popped item's key/value into the
+		// dedicated curKey/curVal slices BEFORE advancing the
+		// source. REQ001258 — one copy per Next call.
+		mi.curKey = append(mi.curKey[:0], top.key...)
+		mi.curVal = append(mi.curVal[:0], top.value...)
+
+		// Now safe to advance the source for the next round.
+		if src.Next() {
+			mi.copySourceSlot(srcIdx, src)
+			heap.Push(&mi.h, iterHeapItem{
+				key:   mi.sourceKeys[srcIdx],
+				value: mi.sourceVals[srcIdx],
+				src:   srcIdx,
+			})
+		}
 		return true
 	}
 	return false
@@ -409,11 +606,20 @@ func (mi *mergeIterator) Close() error {
 		heap.Pop(&mi.h)
 	}
 
-	// Close all sources
+	// Close all sources and return sub-iterators to the pool.
+	// REQ001257.
 	for _, src := range mi.sources {
 		src.Close()
+		switch s := src.(type) {
+		case *memtableIter:
+			releaseMemtableIter(s)
+		case *sstIter:
+			releaseSSTIter(s)
+		}
 	}
 
+	// REQ001257: return the mergeIterator itself to the pool.
+	releaseMergeIterator(mi)
 	return nil
 }
 

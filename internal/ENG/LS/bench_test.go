@@ -205,3 +205,62 @@ func BenchmarkFlushMemtableToSST(b *testing.B) {
 		fm.WaitForFlush()
 	}
 }
+
+// BenchmarkSelect1_MergeIterator measures the mergeIterator
+// read path on a small in-memory memtable (the dominant case
+// for select1 with no flushed data). REQ001257 + REQ001258.
+//
+// Each iteration creates a fresh mergeIterator via the pool
+// and scans all rows. The pool + ring-buffer optimizations
+// should keep allocs/op near zero (excluding the skiplist
+// iterator returned by memtable.Iterator()).
+func BenchmarkSelect1_MergeIterator(b *testing.B) {
+	mt := newMemtable(1 << 20)
+	for i := 0; i < 20; i++ {
+		key := []byte(fmt.Sprintf("key%02d", i))
+		val := []byte(fmt.Sprintf("val%02d", i))
+		mt.Insert(key, val)
+	}
+	dir := b.TempDir()
+	m, err := newManifest(dir)
+	if err != nil {
+		b.Fatalf("newManifest: %v", err)
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+		for mi.Next() {
+		}
+		_ = mi.Close()
+	}
+}
+
+// BenchmarkSelect1_HeapBufferReuse measures the per-Push
+// allocation cost of the iterHeap. REQ001258.
+//
+// Each iteration pushes a single item (the minimum) so the
+// bench is sensitive to the per-push alloc cost.
+func BenchmarkSelect1_HeapBufferReuse(b *testing.B) {
+	mt := newMemtable(1 << 20)
+	mt.Insert([]byte("a"), []byte("1"))
+	mt.Insert([]byte("b"), []byte("2"))
+	mt.Insert([]byte("c"), []byte("3"))
+	mt.Insert([]byte("d"), []byte("4"))
+	mt.Insert([]byte("e"), []byte("5"))
+
+	dir := b.TempDir()
+	m, err := newManifest(dir)
+	if err != nil {
+		b.Fatalf("newManifest: %v", err)
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+		for mi.Next() {
+		}
+		_ = mi.Close()
+	}
+}
+
