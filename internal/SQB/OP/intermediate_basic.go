@@ -298,6 +298,12 @@ type Filter struct {
 	batchEmitPos  int
 	batchRefilled bool
 	rowID         uint64 // debug: tracks rows through filter
+	// REQ001277: only check ctx.Err() every 64 iterations to reduce
+	// overhead on the per-row fallback path. Mirrors the pattern in
+	// SeqScan (REQ001042) which batches at 1024. The fallback path
+	// is already slow (no compiled predicate), so a coarser batch
+	// is safe and avoids ~10K goroutine-scheduled checks per select1.
+	ctxCheckCounter uint64
 
 	closed atomic.Bool
 }
@@ -547,8 +553,13 @@ func (f *Filter) ReplaceLiterals(vals []any) {
 func (f *Filter) Next(ctx context.Context) (Row, error) {
 	ec.BUG_ON(f.closed.Load(), "Filter.Next() after Close()")
 	for {
-		if err := ctx.Err(); err != nil {
-			return Row{}, err
+		// REQ001277: batch ctx.Err() check — skip on most iterations.
+		f.ctxCheckCounter++
+		if f.ctxCheckCounter >= 64 {
+			f.ctxCheckCounter = 0
+			if err := ctx.Err(); err != nil {
+				return Row{}, err
+			}
 		}
 		if f.predicate == nil {
 			r, err := f.child.Next(ctx)
