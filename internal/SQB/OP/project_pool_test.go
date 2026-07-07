@@ -2,10 +2,12 @@ package OP
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 	"unsafe"
 
+	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -126,6 +128,50 @@ func TestProject_DataBufCloseNilSafe(t *testing.T) {
 	p := NewProject(scan, cols)
 	if err := p.Close(); err != nil {
 		t.Errorf("Close on never-used Project: %v", err)
+	}
+}
+
+// BenchmarkProject_LargeResultSet measures dataBuf allocation overhead
+// for a Project processing 10K rows. REQ001282.
+func BenchmarkProject_LargeResultSet(b *testing.B) {
+	// Build 10K rows with 5 columns each
+	nRows := 10000
+	nCols := 5
+	rows := make([]DT.Row, nRows)
+	for i := range rows {
+		data := make([]DT.Value, nCols)
+		for j := 0; j < nCols; j++ {
+			data[j] = DT.Value{Kind: AP.KindInt, I64: int64(i*100 + j)}
+		}
+		cols := make([]string, nCols)
+		for j := 0; j < nCols; j++ {
+			cols[j] = fmt.Sprintf("c%d", j)
+		}
+		rows[i] = DT.Row{Data: data, Cols: cols}
+	}
+
+	cols := []PS.Expr{
+		&PS.QualifiedName{Table: "t", Name: "c0"},
+		&PS.QualifiedName{Table: "t", Name: "c1"},
+		&PS.QualifiedName{Table: "t", Name: "c2"},
+		&PS.QualifiedName{Table: "t", Name: "c3"},
+		&PS.QualifiedName{Table: "t", Name: "c4"},
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		scan := &sliceScan{rows: rows}
+		proj := NewProject(scan, cols)
+		ctx := context.Background()
+		for {
+			_, err := proj.Next(ctx)
+			if err != nil {
+				break
+			}
+		}
+		proj.Close()
 	}
 }
 

@@ -1540,9 +1540,6 @@ func compileRowExpr(e PS.Expr) func(*Row) Value {
 func (p *Project) compileProjectExprs() {
 	p.compiledExprs = make([]func(*Row) (Value, error), len(p.cols))
 	for i, c := range p.cols {
-		// For FunctionCall and CaseExpr, use projection-specific compilers
-		// that return (Value, error). For all other types, delegate to
-		// compileRowExpr and wrap the result with nil error. REQ001291.
 		switch e := c.(type) {
 		case *PS.FunctionCall:
 			p.compiledExprs[i] = compileProjectFuncCall(e)
@@ -1550,13 +1547,50 @@ func (p *Project) compileProjectExprs() {
 			p.compiledExprs[i] = compileProjectCaseExpr(e)
 		default:
 			if fn := compileRowExpr(c); fn != nil {
-				fn2 := fn // capture
+				fn2 := fn
 				p.compiledExprs[i] = func(row *Row) (Value, error) {
 					return fn2(row), nil
 				}
 			}
 		}
 	}
+	// REQ001282: pre-allocate dataBuf to child's estimated row count
+	// to avoid repeated doubling reallocations for large result sets.
+	if est := estimateChildRowCount(p.child); est > 0 {
+		needed := int(est) * p.dataPerRow
+		if cap(p.dataBuf) < needed {
+			newBuf := make([]Value, len(p.dataBuf), needed)
+			copy(newBuf, p.dataBuf)
+			p.dataBuf = newBuf
+		}
+	}
+}
+
+// estimateChildRowCount returns an approximate row count from the
+// child operator, or -1 if unknown. For SeqScan with a store, it
+// counts keys by iterating the store once. REQ001282.
+func estimateChildRowCount(child Operator) int {
+	ss, ok := child.(*SeqScan)
+	if !ok || ss == nil {
+		return -1
+	}
+	store := ss.Store()
+	if store == nil {
+		return -1
+	}
+	iter := store.NewIterator(nil)
+	if iter == nil {
+		return -1
+	}
+	defer iter.Close()
+	count := 0
+	for iter.Next() {
+		count++
+	}
+	if err := iter.Err(); err != nil {
+		return -1
+	}
+	return count
 }
 
 // compileBinaryArith compiles a binary arithmetic expression (+-*/ and DIV)
