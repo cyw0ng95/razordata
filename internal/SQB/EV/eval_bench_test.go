@@ -97,3 +97,48 @@ func BenchmarkIdentLookup_Last(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkIdentColIndex measures Ident column reference evaluation via
+// the ColIndex map fallback (REQ001283) — path between SlotIdx miss
+// and linear-scan Lookup. Simulates a Project output row with ColIndex.
+func BenchmarkIdentColIndex(b *testing.B) {
+	row := &Row{
+		Cols: []string{"a", "b", "c", "d", "e"},
+		Data: []Value{
+			DT.NewIntValue(1), DT.NewIntValue(2), DT.NewIntValue(3), DT.NewIntValue(4), DT.NewIntValue(5),
+		},
+		ColIndex: map[string]int{"c": 2},
+	}
+	expr := &PS.Ident{Name: "c", SlotIdx: -1}
+	b.ResetTimer()
+	for range b.N {
+		v, err := EvalValue(expr, row, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if v.Kind != KindInt || v.I64 != 3 {
+			b.Fatalf("got %v, want 3", v)
+		}
+	}
+}
+
+func BenchmarkIdentColIndex_Last(b *testing.B) {
+	row := &Row{
+		Cols: []string{"a", "b", "c", "d", "e"},
+		Data: []Value{
+			DT.NewIntValue(1), DT.NewIntValue(2), DT.NewIntValue(3), DT.NewIntValue(4), DT.NewIntValue(5),
+		},
+		ColIndex: map[string]int{"e": 4},
+	}
+	expr := &PS.Ident{Name: "e", SlotIdx: -1}
+	b.ResetTimer()
+	for range b.N {
+		v, err := EvalValue(expr, row, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if v.Kind != KindInt || v.I64 != 5 {
+			b.Fatalf("got %v, want 5", v)
+		}
+	}
+}

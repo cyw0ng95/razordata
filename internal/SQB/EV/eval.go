@@ -332,6 +332,12 @@ func evalFallbackEvalValue(expr PS.Expr, row *Row, params []any) (Value, error) 
 					return row.Data[e.SlotIdx], nil
 				}
 			}
+			// REQ001283: use ColIndex map when available (set by Project).
+			if row.ColIndex != nil {
+				if i, ok := row.ColIndex[strings.ToLower(e.Name)]; ok && i >= 0 && i < len(row.Data) {
+					return row.Data[i], nil
+				}
+			}
 			if v, ok := row.Lookup(e.Name); ok {
 				return DT.ValueFromAny(v), nil
 			}
