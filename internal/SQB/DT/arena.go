@@ -108,9 +108,16 @@ func DecodeRowInto(row *Row, data []byte, schema *StoreSchema) error {
 		off += n
 		return v, nil
 	}
-	colCount, err := readVarint()
-	if err != nil {
-		return err
+	// REQ001279: fixed-width column count for tables < 255 columns.
+	// First byte < 255 is the column count directly; 255 escapes to varint.
+	colCount := uint64(data[off])
+	off++
+	if colCount == 255 {
+		var err error
+		colCount, err = readVarint()
+		if err != nil {
+			return err
+		}
 	}
 	if int(colCount) != nCols {
 		return fmt.Errorf("DT: row has %d cols, schema %d", colCount, nCols)

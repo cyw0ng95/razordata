@@ -231,15 +231,20 @@ func serializeCorrelatedValues(row *Row, cols []string) string {
 	if row == nil || len(cols) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(cols))
-	for _, col := range cols {
+	// REQ001281: use strings.Builder instead of []string + strings.Join
+	// to avoid intermediate allocation of the parts slice.
+	var sb strings.Builder
+	for i, col := range cols {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
 		if v, ok := row.LookupValue(col); ok {
-			parts = append(parts, DT.ValueToString(v))
+			sb.WriteString(DT.ValueToString(v))
 		} else {
-			parts = append(parts, "NULL")
+			sb.WriteString("NULL")
 		}
 	}
-	return strings.Join(parts, ",")
+	return sb.String()
 }
 
 var ErrEval = errors.New("ex: eval error")
@@ -451,7 +456,203 @@ func evalWindowFunc(e *PS.WindowFunc, row *Row, params []any) (Value, error) {
 // evalBinaryShortCircuit handles AND/OR with three-valued logic and
 // short-circuit evaluation (REQ000776). Right side is only evaluated
 // when the left side does not determine the result.
+// tryCompileShortCircuit attempts to compile an AND/OR expression
+// where both sides are simple column-vs-literal comparisons into a
+// fast inline function that avoids EvalValue dispatch (REQ001280).
+func tryCompileShortCircuit(e *PS.BinaryExpr) func(*Row) (Value, error) {
+	if e.Op != LX.T_AND && e.Op != LX.T_OR {
+		return nil
+	}
+	leftFn := compileCmp(e.Left)
+	rightFn := compileCmp(e.Right)
+	if leftFn == nil || rightFn == nil {
+		return nil
+	}
+	if e.Op == LX.T_AND {
+		return func(row *Row) (Value, error) {
+			ok, err := leftFn(row)
+			if err != nil || !ok {
+				return DT.NewBoolValue(false), nil
+			}
+			ok, err = rightFn(row)
+			if err != nil || !ok {
+				return DT.NewBoolValue(false), nil
+			}
+			return DT.NewBoolValue(true), nil
+		}
+	}
+	return func(row *Row) (Value, error) {
+		ok, err := leftFn(row)
+		if err != nil || ok {
+			return DT.NewBoolValue(true), nil
+		}
+		ok, err = rightFn(row)
+		if err != nil || ok {
+			return DT.NewBoolValue(true), nil
+		}
+		return DT.NewBoolValue(false), nil
+	}
+}
+
+// compileCmp compiles a BinaryExpr comparison (col OP literal) into a
+// func(*Row) (bool, error). Returns nil if the expression is not a
+// simple column-vs-literal comparison. REQ001280.
+func compileCmp(expr PS.Expr) func(*Row) (bool, error) {
+	be, ok := expr.(*PS.BinaryExpr)
+	if !ok {
+		return nil
+	}
+	col, lit, ok := extractColLitPair(be)
+	if !ok {
+		return nil
+	}
+	litVal := ValueFromAny(lit)
+	colLower := strings.ToLower(col)
+	bareCol := colLower
+	if dot := strings.LastIndexByte(colLower, '.'); dot >= 0 {
+		bareCol = colLower[dot+1:]
+	}
+	return func(row *Row) (bool, error) {
+		idx := findColIndex(row, colLower, bareCol)
+		if idx < 0 || idx >= len(row.Data) {
+			return false, nil
+		}
+		if isNullValueValue(row.Data[idx]) || isNullValueValue(litVal) {
+			return false, nil
+		}
+		return compareValues(row.Data[idx], litVal, be.Op), nil
+	}
+}
+
+// extractColLitPair extracts (colName, literalValue, ok) from a
+// BinaryExpr where one side is a column reference and the other is
+// a literal. REQ001280.
+func extractColLitPair(e *PS.BinaryExpr) (string, any, bool) {
+	col, ok := colRefName(e.Left)
+	if ok {
+		lit, litOK := litValue(e.Right)
+		if litOK {
+			return col, lit, true
+		}
+	}
+	col, ok = colRefName(e.Right)
+	if ok {
+		lit, litOK := litValue(e.Left)
+		if litOK {
+			return col, lit, true
+		}
+	}
+	return "", nil, false
+}
+
+// colRefName extracts a column name from an Ident or QualifiedName.
+func colRefName(e PS.Expr) (string, bool) {
+	switch expr := e.(type) {
+	case *PS.Ident:
+		return expr.Name, true
+	case *PS.QualifiedName:
+		return expr.Table + "." + expr.Name, true
+	}
+	return "", false
+}
+
+// litValue extracts a Go value from a literal expression node.
+func litValue(e PS.Expr) (any, bool) {
+	switch expr := e.(type) {
+	case *PS.NumberLiteral:
+		return expr.Val, true
+	case *PS.FloatLiteral:
+		return expr.Val, true
+	case *PS.StringLiteral:
+		return expr.Val, true
+	case *PS.BoolLiteral:
+		return expr.Val, true
+	case *PS.NullLiteral:
+		return nil, true
+	}
+	return nil, false
+}
+
+// findColIndex finds a column index by name in a row, trying
+// qualified name first, then bare name, then suffix match.
+func findColIndex(row *Row, qualified, bare string) int {
+	for i, c := range row.Cols {
+		if i < len(row.Data) && strings.EqualFold(c, qualified) {
+			return i
+		}
+	}
+	for i, c := range row.Cols {
+		if i < len(row.Data) && strings.EqualFold(c, bare) {
+			return i
+		}
+	}
+	lk := bare
+	for i, c := range row.Cols {
+		if i < len(row.Data) && strings.HasSuffix(strings.ToLower(c), "."+lk) {
+			return i
+		}
+	}
+	if row.ColIndex != nil {
+		if i, ok := row.ColIndex[lk]; ok && i >= 0 && i < len(row.Data) {
+			return i
+		}
+	}
+	return -1
+}
+
+// compareValues compares two Values using the given operator.
+func compareValues(a, b Value, op LX.TokenType) bool {
+	switch op {
+	case LX.T_EQ:
+		return DT.EqualValueAny(a, b)
+	case LX.T_NE:
+		return !DT.EqualValueAny(a, b)
+	case LX.T_GT:
+		return DT.Compare(a, b) > 0
+	case LX.T_GE:
+		return DT.Compare(a, b) >= 0
+	case LX.T_LT:
+		return DT.Compare(a, b) < 0
+	case LX.T_LE:
+		return DT.Compare(a, b) <= 0
+	}
+	return false
+}
+
+// isNullValueValue checks if a Value is SQL NULL.
+func isNullValueValue(v Value) bool {
+	return v.Kind == KindNull
+}
+
+// ValueFromAny converts a Go value to a Value.
+func ValueFromAny(v any) Value {
+	switch val := v.(type) {
+	case int64:
+		return DT.NewIntValue(val)
+	case float64:
+		return DT.NewFloatValue(val)
+	case string:
+		return DT.NewTextValue(val)
+	case bool:
+		return DT.NewBoolValue(val)
+	default:
+		if val == nil {
+			return DT.NullValue()
+		}
+		// Check if it's already a Value
+		if vv, ok := val.(Value); ok {
+			return vv
+		}
+		return DT.ValueFromAny(v)
+	}
+}
+
 func evalBinaryShortCircuit(e *PS.BinaryExpr, row *Row, params []any) (Value, error) {
+	// REQ001280: inline compiled fast path for simple comparisons.
+	if fn := tryCompileShortCircuit(e); fn != nil {
+		return fn(row)
+	}
+
 	left, err := evalFallbackEvalValue(e.Left, row, params)
 	if err != nil {
 		return DT.NullValue(), err
@@ -867,19 +1068,43 @@ func getSubqueryPlanner(outer *Row) PL.QueryPlanner {
 }
 
 func evalExists(e *PS.ExistsExpr, outer *Row, params []any) (any, error) {
+	// REQ001281: correlated cache for EXISTS subqueries.
+	// Only cache when correlated columns are explicitly detected — bare
+	// idents in WHERE may be outer references that extractCorrelatedColumns
+	// cannot detect (treats bare idents as inner).
+	sel, ok := e.Subquery.(*PS.Select)
+	if ok && outer != nil {
+		correlatedCols := extractCorrelatedColumns(sel)
+		if len(correlatedCols) > 0 {
+			key := PL.SerializeKey(sel)
+			correlatedKey := key + ":" + serializeCorrelatedValues(outer, correlatedCols)
+			if v, ok := correlatedSubqueryCache.Get(correlatedKey); ok {
+				return v.ToAny(), nil
+			}
+		}
+	}
+
 	pl := getSubqueryPlanner(outer)
 	if pl == nil {
 		return nil, ErrSubquery
 	}
-	// REQ001073: short-circuit existential check — stop scanning the
-	// subquery after the first matching row instead of materializing
-	// all rows. The type assertion checks for the Planner's
-	// ExecuteSubqueryFirstMatch method (which lives in EX/planner.go);
-	// non-EX planners fall through to the legacy materialization path.
+	// REQ001073: short-circuit existential check.
 	if sc, ok := pl.(interface {
 		ExecuteSubqueryFirstMatch(ctx context.Context, stmt PS.Stmt, outer *Row, params []any) (bool, error)
 	}); ok {
-		return sc.ExecuteSubqueryFirstMatch(context.Background(), e.Subquery, outer, params)
+		result, err := sc.ExecuteSubqueryFirstMatch(context.Background(), e.Subquery, outer, params)
+		if err != nil {
+			return nil, err
+		}
+		if sel != nil && outer != nil {
+			correlatedCols := extractCorrelatedColumns(sel)
+			if len(correlatedCols) > 0 {
+				key := PL.SerializeKey(sel)
+				correlatedKey := key + ":" + serializeCorrelatedValues(outer, correlatedCols)
+				correlatedSubqueryCache.Put(correlatedKey, DT.NewBoolValue(result))
+			}
+		}
+		return result, nil
 	}
 	rows, err := pl.ExecuteSubquery(context.Background(), e.Subquery, outer, params)
 	if err != nil {

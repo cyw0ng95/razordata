@@ -106,7 +106,13 @@ func EncodeRow(schema *StoreSchema, row Row) ([]byte, error) {
 	if cap(buf) < 9*len(schema.Cols)+8 {
 		buf = make([]byte, 0, 9*len(schema.Cols)+8)
 	}
-	buf = binary.AppendUvarint(buf, uint64(len(schema.Cols)))
+	// REQ001279: use fixed-width single byte for column count when < 255.
+	if len(schema.Cols) < 255 {
+		buf = append(buf, byte(len(schema.Cols)))
+	} else {
+		buf = append(buf, 255)
+		buf = binary.AppendUvarint(buf, uint64(len(schema.Cols)))
+	}
 	for i, v := range row.Data {
 		if v.IsNull() {
 			buf = append(buf, rvNull)
