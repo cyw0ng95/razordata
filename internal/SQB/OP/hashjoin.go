@@ -49,15 +49,11 @@ type HashJoin struct {
 	buckets    []hashBucket
 	leftRows   []pl.Row
 	leftInfos  []leftInfo
-	// REQ0011XX: streaming match emission. Instead of pre-computing
-	// all matches into a []Row slice (which OOMs for large cross-joins),
-	// we track the current left/right probe position and emit one match
-	// per Next() call. emitBuf is a reusable data buffer for the
-	// current match (size dataPerRow).
 	curLeftIdx  int
 	curRightIdx int
 	emitBuf     []pl.Value
 	dataPerRow  int
+	leftLen     int // REQ001272: fixed left-side column count for emitUnmatchedRight
 	done        bool
 	// sharedCols, sharedTypes and sharedColIndex are built once
 	// from the first output row's column layout and shared across
@@ -320,7 +316,8 @@ func (j *HashJoin) emitUnmatchedLeft(li int) pl.Row {
 }
 
 // emitUnmatchedRight produces a row with the right side's data
-// and NULL left columns. REQ001020.
+// and NULL left columns. leftLen is a fixed value computed from
+// the shared schema at join construction time (REQ001272).
 func (j *HashJoin) emitUnmatchedRight(bucketIdx, rowInBucket int) pl.Row {
 	out := pl.Row{
 		Cols:     j.sharedCols,
@@ -329,7 +326,7 @@ func (j *HashJoin) emitUnmatchedRight(bucketIdx, rowInBucket int) pl.Row {
 		Data:     make([]pl.Value, j.dataPerRow),
 	}
 	right := j.buckets[bucketIdx].rightRows[rowInBucket]
-	leftLen := j.dataPerRow - len(right.Data)
+	leftLen := j.leftLen
 	copy(out.Data[leftLen:], right.Data)
 	return out
 }
@@ -569,6 +566,7 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	if rightCount > 0 && len(j.leftRows) > 0 {
 		dataPerRow := len(j.leftRows[0].Data) + len(firstRightData)
 		j.dataPerRow = dataPerRow
+		j.leftLen = len(j.leftRows[0].Data) // REQ001272: fixed left column count
 		j.emitBuf = make([]pl.Value, dataPerRow)
 	}
 
@@ -599,6 +597,7 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		}
 		width := leftW + rightW
 		j.dataPerRow = width
+		j.leftLen = leftW // REQ001272: fixed left column count
 		j.emitBuf = make([]pl.Value, width)
 	}
 	return nil

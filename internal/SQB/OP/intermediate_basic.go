@@ -1365,17 +1365,31 @@ func extractColColPair(e *PS.BinaryExpr) (string, string, bool) {
 // makeCompiledColColCmp builds a compiled comparison function for
 // two column references. It handles both bare names ("a") and
 // qualified names ("t1.a"), with fallbacks for prefixed rows.
+// REQ001273: revalidates cached column indices on each call to
+// handle rows with varying column layouts (cross-join output).
 func makeCompiledColColCmp(leftCol, rightCol string, op LX.TokenType) func(*Row) (bool, error) {
-	// Pre-resolve indices on the first call to avoid repeated linear scans.
 	var leftIdx, rightIdx int = -1, -1
+	var lastLeftRowLen, lastRightRowLen int
 
 	return func(row *Row) (bool, error) {
-		// Resolve column indices lazily.
+		// Revalidate cached indices if row layout changed.
+		if leftIdx >= 0 && (leftIdx >= len(row.Data) || len(row.Data) != lastLeftRowLen) {
+			leftIdx = findColIndex(row, leftCol)
+		}
+		if rightIdx >= 0 && (rightIdx >= len(row.Data) || len(row.Data) != lastRightRowLen) {
+			rightIdx = findColIndex(row, rightCol)
+		}
 		if leftIdx < 0 {
 			leftIdx = findColIndex(row, leftCol)
 		}
 		if rightIdx < 0 {
 			rightIdx = findColIndex(row, rightCol)
+		}
+		if leftIdx >= 0 {
+			lastLeftRowLen = len(row.Data)
+		}
+		if rightIdx >= 0 {
+			lastRightRowLen = len(row.Data)
 		}
 
 		// If either column is not found, the comparison yields false.
