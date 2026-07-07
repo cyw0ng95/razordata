@@ -49,6 +49,12 @@ func TestRewriteConstantFoldArithmetic(t *testing.T) {
 		{"SELECT 10 / 2 FROM t", 5},
 		{"SELECT 1 + 2 * 3 FROM t", 7},
 		{"SELECT (1 + 2) * 3 FROM t", 9},
+		{"SELECT 10 % 3 FROM t", 1},
+		{"SELECT 100 % 7 FROM t", 2},
+		{"SELECT 7 % 7 FROM t", 0},
+		{"SELECT 1 + 2 + 3 FROM t", 6},
+		{"SELECT 2 * 3 + 4 FROM t", 10},
+		{"SELECT (2 + 3) * (4 - 1) FROM t", 15},
 	}
 	for _, c := range cases {
 		t.Run(c.sql, func(t *testing.T) {

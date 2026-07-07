@@ -428,6 +428,11 @@ func constantFoldBinary(op LX.TokenType, left, right PS.Expr) PS.Expr {
 			switch op {
 			case LX.T_PLUS, LX.T_MINUS, LX.T_STAR, LX.T_SLASH:
 				return foldIntInt(op, l.Val, r.Val)
+			case LX.T_MOD:
+				if r.Val == 0 {
+					return nil
+				}
+				return &PS.NumberLiteral{Val: l.Val % r.Val}
 			case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
 				return foldCompare(op, left, right, l, nil, nil, nil, r, nil, nil, nil)
 			}
