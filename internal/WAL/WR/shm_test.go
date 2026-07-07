@@ -1,6 +1,7 @@
 package wr
 
 import (
+	"sync"
 	"testing"
 )
 
@@ -20,10 +21,10 @@ func TestWalLockByteSize(t *testing.T) {
 	}
 }
 
-// TestWalHashDeterministic confirms a few canonical page numbers
-// land in the slot index range [0, WalHashTableNslot*WalHashTableR).
-// REQ001299 — slot addressing must be deterministic and total.
-func TestWalHashDeterministic(t *testing.T) {
+// TestWalIndexHash confirms canonical page numbers land in the slot
+// index range [0, WalHashTableNslot*WalHashTableR) with deterministic
+// addressing. REQ001297 — slot addressing must be deterministic and total.
+func TestWalIndexHash(t *testing.T) {
 	cases := []struct {
 		page, salt1, salt2 uint32
 	}{
@@ -88,5 +89,168 @@ func TestWalIndexSnapshotSizeReturnsCanonicalCount(t *testing.T) {
 	idx := NewWalIndexSnapshot()
 	if got, want := idx.Size(), WalHashTableR*WalHashTableNslot; got != want {
 		t.Fatalf("Size() = %d, want %d", got, want)
+	}
+}
+
+// TestWalAcquireReadLock verifies read lock acquisition and release
+// across available slots. REQ001299.
+func TestWalAcquireReadLock(t *testing.T) {
+	idx := NewWalIndex()
+
+	// Acquire all N read locks.
+	var slots []int
+	for i := 0; i < WalNReadLock; i++ {
+		s, err := idx.AcquireReadLock()
+		if err != nil {
+			t.Fatalf("AcquireReadLock %d: %v", i, err)
+		}
+		slots = append(slots, s)
+	}
+
+	// Next acquire must fail — all slots busy.
+	if _, err := idx.AcquireReadLock(); err != ErrWalBusy {
+		t.Fatalf("expected ErrWalBusy when all read locks held, got %v", err)
+	}
+
+	// Release one slot.
+	idx.ReleaseReadLock(slots[2])
+
+	// Acquire should succeed now.
+	s, err := idx.AcquireReadLock()
+	if err != nil {
+		t.Fatalf("re-acquire after release: %v", err)
+	}
+	idx.ReleaseReadLock(s)
+}
+
+// TestWalBeginWrite verifies write lock acquisition blocks when readers
+// are active, and succeeds when no readers are active. REQ001299.
+func TestWalBeginWrite(t *testing.T) {
+	idx := NewWalIndex()
+
+	// Acquire write lock when no readers — should succeed.
+	if err := idx.TryAcquireWriteLock(); err != nil {
+		t.Fatalf("TryAcquireWriteLock (no readers): %v", err)
+	}
+	idx.ReleaseWriteLock()
+
+	// Acquire a read lock, then try write — should fail.
+	r, err := idx.AcquireReadLock()
+	if err != nil {
+		t.Fatalf("AcquireReadLock: %v", err)
+	}
+	if err := idx.TryAcquireWriteLock(); err != ErrWalBusy {
+		t.Fatalf("expected ErrWalBusy with reader active, got %v", err)
+	}
+	idx.ReleaseReadLock(r)
+
+	// After releasing reader, write should succeed.
+	if err := idx.TryAcquireWriteLock(); err != nil {
+		t.Fatalf("TryAcquireWriteLock after reader release: %v", err)
+	}
+	idx.ReleaseWriteLock()
+}
+
+// TestWalConcurrency_TwoReadersOneWriter verifies that two readers
+// can proceed concurrently while a writer is blocked, and that the
+// writer proceeds once all readers finish. REQ001299.
+func TestWalConcurrency_TwoReadersOneWriter(t *testing.T) {
+	idx := NewWalIndex()
+	var wg sync.WaitGroup
+	readerSlots := make(chan int, 2)
+
+	// Reader 1 acquires lock and holds it.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		r1, err := idx.AcquireReadLock()
+		if err != nil {
+			t.Errorf("reader-1 acquire: %v", err)
+			return
+		}
+		readerSlots <- r1
+	}()
+
+	// Reader 2 acquires a different read lock.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		r2, err := idx.AcquireReadLock()
+		if err != nil {
+			t.Errorf("reader-2 acquire: %v", err)
+			return
+		}
+		readerSlots <- r2
+	}()
+
+	wg.Wait()
+	close(readerSlots)
+
+	slots := make([]int, 0, 2)
+	for s := range readerSlots {
+		slots = append(slots, s)
+	}
+	if len(slots) != 2 {
+		t.Fatalf("expected 2 readers, got %d", len(slots))
+	}
+
+	// Verify readers got different slots.
+	if slots[0] == slots[1] {
+		t.Fatalf("both readers got the same slot %d", slots[0])
+	}
+	for _, s := range slots {
+		if s < 0 || s >= WalNReadLock {
+			t.Fatalf("slot %d out of range [0,%d)", s, WalNReadLock)
+		}
+	}
+
+	// Writer must be blocked while 2 readers hold locks.
+	if err := idx.TryAcquireWriteLock(); err != ErrWalBusy {
+		t.Fatalf("expected ErrWalBusy with 2 readers, got %v", err)
+	}
+
+	// Release both readers.
+	idx.ReleaseReadLock(slots[0])
+	idx.ReleaseReadLock(slots[1])
+
+	// Writer should now succeed.
+	if err := idx.TryAcquireWriteLock(); err != nil {
+		t.Fatalf("TryAcquireWriteLock after all readers released: %v", err)
+	}
+	idx.ReleaseWriteLock()
+}
+
+// TestWalConcurrency_WriterBlocksReaders verifies that once a writer
+// holds the write lock, new readers are blocked. REQ001299.
+func TestWalConcurrency_WriterBlocksReaders(t *testing.T) {
+	idx := NewWalIndex()
+
+	// Writer acquires write lock.
+	if err := idx.TryAcquireWriteLock(); err != nil {
+		t.Fatalf("TryAcquireWriteLock: %v", err)
+	}
+
+	// Readers must be blocked.
+	if _, err := idx.AcquireReadLock(); err != ErrWalBusy {
+		t.Fatalf("expected ErrWalBusy with writer active, got %v", err)
+	}
+
+	// Release writer.
+	idx.ReleaseWriteLock()
+
+	// Reader should succeed now.
+	r, err := idx.AcquireReadLock()
+	if err != nil {
+		t.Fatalf("AcquireReadLock after writer release: %v", err)
+	}
+	idx.ReleaseReadLock(r)
+}
+
+// TestWalShmSize verifies the total -shm file size calculation. REQ001299.
+func TestWalShmSize(t *testing.T) {
+	got := WalShmSize()
+	want := WalLockByteSize() + WalIndexHdrSize + WalIndexSize()
+	if got != want {
+		t.Fatalf("WalShmSize = %d, want %d", got, want)
 	}
 }

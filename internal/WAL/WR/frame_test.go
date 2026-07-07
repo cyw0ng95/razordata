@@ -8,7 +8,111 @@ import (
 	"testing"
 )
 
-// TestWalFrameHeaderSize pins the SQLite journal layout constants.
+// TestWalFrameFormat verifies the full WAL frame layout from header
+// through multi-frame commit to commit marker. REQ001297.
+//
+// Layout (SQLite-style):
+//
+//	[0..24)    WAL header (magic, version, pageSize, checkpointSeq, salt1, salt2)
+//	[24..48)   Frame-1 header (pageNo, dbSizeAfterCommit, salt1, salt2, checksum1, checksum2)
+//	[48..4144) Frame-1 page body (4096 bytes)
+//	[4144..4168) Frame-2 header
+//	[4168..8264) Frame-2 page body
+//	[8264..8280) Commit marker (salt1, frameCount, checksum1, checksum2)
+func TestWalFrameFormat(t *testing.T) {
+	const salt1, salt2 uint32 = 0xC0FFEE01, 0xBADC0DE2
+	hdr := WalHdr{
+		Magic:         WalMagic,
+		Version:       WalVersionV1,
+		PageSize:      WalPageSize,
+		CheckpointSeq: 1,
+		Salt1:         salt1,
+		Salt2:         salt2,
+	}
+
+	// Encode WAL header.
+	walHdrBlob := EncodeWalHdr(hdr)
+	if len(walHdrBlob) != WalHdrSize {
+		t.Fatalf("WAL header size = %d, want %d", len(walHdrBlob), WalHdrSize)
+	}
+
+	// Build page content.
+	page1 := bytes.Repeat([]byte{0xAA}, WalPageSize)
+	page2 := bytes.Repeat([]byte{0xBB}, WalPageSize)
+
+	// Append frames (AppendFrame does NOT include the WAL header).
+	// Frames begin at offset 0 in the buffer.
+	var buf []byte
+	buf = AppendFrame(buf, page1, 1, 10, salt1, salt2)
+	buf = AppendFrame(buf, page2, 2, 10, salt1, salt2)
+
+	// Layout offsets (header is separate, not in buf):
+	//   frame-1 starts at 0
+	frame1Start := 0
+	frame2Start := WalFrameHdrSize + WalPageSize // 4120
+	markerStart := frame2Start + WalFrameHdrSize + WalPageSize // 8240
+
+	// Verify frame-1 header at correct offset.
+	f1Hdr, err := DecodeFrameHdr(buf[frame1Start : frame1Start+WalFrameHdrSize])
+	if err != nil {
+		t.Fatalf("decode frame-1 header: %v", err)
+	}
+	if f1Hdr.PageNo != 1 {
+		t.Errorf("frame-1 PageNo = %d, want 1", f1Hdr.PageNo)
+	}
+	if f1Hdr.DbSizeAfterCommit != 10 {
+		t.Errorf("frame-1 DbSizeAfterCommit = %d, want 10", f1Hdr.DbSizeAfterCommit)
+	}
+	if f1Hdr.Salt1 != salt1 || f1Hdr.Salt2 != salt2 {
+		t.Errorf("frame-1 salt mismatch: (%08x,%08x) want (%08x,%08x)",
+			f1Hdr.Salt1, f1Hdr.Salt2, salt1, salt2)
+	}
+	// Checksums must be non-zero (written by AppendFrame).
+	if f1Hdr.Checksum1 == 0 && f1Hdr.Checksum2 == 0 {
+		t.Error("frame-1 checksums are both zero — expected non-zero")
+	}
+
+	// Verify frame-1 page body.
+	f1Body := buf[frame1Start+WalFrameHdrSize : frame1Start+WalFrameHdrSize+WalPageSize]
+	if !bytes.Equal(f1Body, page1) {
+		t.Error("frame-1 page body mismatch")
+	}
+
+	// Verify frame-2 header and body.
+	f2Hdr, err := DecodeFrameHdr(buf[frame2Start : frame2Start+WalFrameHdrSize])
+	if err != nil {
+		t.Fatalf("decode frame-2 header: %v", err)
+	}
+	if f2Hdr.PageNo != 2 {
+		t.Errorf("frame-2 PageNo = %d, want 2", f2Hdr.PageNo)
+	}
+	// Checksums must be different from frame-1 (different page content).
+	if f2Hdr.Checksum1 == f1Hdr.Checksum1 && f2Hdr.Checksum2 == f1Hdr.Checksum2 {
+		t.Error("frame-2 checksums identical to frame-1 — expected different")
+	}
+
+	f2Body := buf[frame2Start+WalFrameHdrSize : frame2Start+WalFrameHdrSize+WalPageSize]
+	if !bytes.Equal(f2Body, page2) {
+		t.Error("frame-2 page body mismatch")
+	}
+
+	// Append commit marker and verify.
+	buf = EncodeCommitMarker(buf, salt1, 2)
+	if len(buf) < markerStart+16 {
+		t.Fatalf("buffer too short for commit marker: %d < %d", len(buf), markerStart+16)
+	}
+	if err := VerifyCommitMarker(buf[markerStart : markerStart+16]); err != nil {
+		t.Fatalf("verify commit marker: %v", err)
+	}
+
+	// Verify frame checksums via VerifyFrame.
+	if err := VerifyFrame(f1Hdr, page1); err != nil {
+		t.Errorf("verify frame-1: %v", err)
+	}
+	if err := VerifyFrame(f2Hdr, page2); err != nil {
+		t.Errorf("verify frame-2: %v", err)
+	}
+}
 // Bumping these without a coordinated format migration means reader
 // and writer disagree on offsets and silent corruption becomes
 // possible. REQ001297.
