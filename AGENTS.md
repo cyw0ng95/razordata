@@ -2,13 +2,9 @@
 
 > No network server. No external C deps. Go 1.26+. Single `go.mod`.
 
-## Directory Structure
+## Design (Architecture)
 
-See `docs/design/ARCH.md` for the full directory layout (subsystem → cluster → code).
-
-## Build Order
-
-See `docs/design/ARCH.md` for the full build order (8 steps: LOG → FIL → MEM → WAL → ENG → TXN → SQL → SYS).
+See `docs/design/ARCH.md` for directory layout, build order, SQL surface, and API shape.
 
 ## Integration
 
@@ -16,10 +12,6 @@ Each iteration must integrate with already implemented parts. Before implementin
 - Existing subsystem interfaces and concrete types for compatibility.
 - File layouts, error types, and naming conventions for consistency.
 - Any required adjustments to prior iterations (e.g., missing methods on existing types) and document them in the iteration plan's gap analysis.
-
-## SQL Surface (MVP)
-
-See `docs/design/ARCH.md` for the full SQL surface and API shape.
 
 ## Performance Rules
 
@@ -37,17 +29,10 @@ See `docs/design/ARCH.md` for the full SQL surface and API shape.
 - `sync.Pool` for reusable page buffers.
 - All public API methods must be goroutine-safe.
 
-## Error Handling
+## Code Standards
 
-- All errors returned as `error` — no panic in library code.
-- Internal panics caught, logged, returned as wrapped errors.
-- Messages: lowercase, no trailing punctuation.
-- Wrap chain: I/O → structural → API.
-
-## Logging
-
-- `log/slog` only. No `fmt.Printf` or `log.Printf`.
-- Levels: `Error`, `Warn`, `Info`, `Debug`.
+- **Errors**: return `error`, no panic. Messages: lowercase, no trailing punctuation. Wrap: I/O → structural → API.
+- **Logging**: `log/slog` only. No `fmt.Printf`. Levels: `Error`, `Warn`, `Info`, `Debug`.
 
 ## File Format
 
@@ -95,7 +80,6 @@ The `TBD` backlog is the source of truth — bare prose mentions are not accepta
 
 ```bash
 go vet ./...           # zero warnings
-gfmt -s -l .          # no drift
 golangci-lint run     # or staticcheck
 go test ./... -race -count=1
 ```
@@ -136,15 +120,10 @@ See `docs/development/DEBUG.md` for full debug manual (build tags, PRAGMA, socke
 
 Quick: `go build -tags debug ./cmd/razor` → `PRAGMA debug_join_tracing = detailed` → query → `PRAGMA debug_join_flush`.
 
-## Design Protection
+## Protection Rules
 
-`docs/design/` files are authoritative — human-only edits. When a design change is requested,
-describe it fully and let the human apply it, or ask the human to edit directly.
-
-## SLT Corpus Protection
-
-`corpus/test/` is read-only. Agents may run tests against it, but must never
-add, modify, or delete corpus files.
+- **Design**: `docs/design/` files are authoritative — human-only edits. Describe changes, let human apply.
+- **SLT Corpus**: `corpus/test/` is read-only. Agents may run tests but must never modify corpus files.
 
 ## Compatibility
 
