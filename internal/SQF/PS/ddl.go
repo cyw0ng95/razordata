@@ -786,6 +786,46 @@ func (p *Parser) parseAlterTable() (*AlterTableStmt, error) {
 		p.advance()
 		return &AlterTableStmt{Table: table, Action: "DROP COLUMN", Column: col}, nil
 
+	case LX.T_ALTER:
+		// REQ001322/1323: ALTER TABLE t ALTER [COLUMN] c SET/DROP DEFAULT expr
+		p.advance() // consume ALTER
+		if p.current.Type == LX.T_COLUMN {
+			p.advance() // consume COLUMN (optional)
+		}
+		if err := p.expect(LX.T_IDENT); err != nil {
+			return nil, err
+		}
+		colName := p.current.Lexeme
+		p.advance()
+		switch p.current.Type {
+		case LX.T_SET:
+			p.advance() // consume SET
+			if err := p.expect(LX.T_DEFAULT); err != nil {
+				return nil, err
+			}
+			p.advance() // consume DEFAULT
+			expr, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			return &AlterTableStmt{Table: table, Action: "ALTER COLUMN SET DEFAULT", Column: colName, NewExpr: expr}, nil
+		case LX.T_DROP:
+			p.advance() // consume DROP
+			if err := p.expect(LX.T_DEFAULT); err != nil {
+				return nil, err
+			}
+			p.advance() // consume DEFAULT
+			return &AlterTableStmt{Table: table, Action: "ALTER COLUMN DROP DEFAULT", Column: colName}, nil
+		default:
+			return nil, &SyntaxError{
+				Input:  p.lex.Input(),
+				Line:   p.current.Line,
+				Col:    p.current.Col,
+				Got:    tokenName(p.current.Type),
+				Lexeme: p.current.Lexeme,
+			}
+		}
+
 	case LX.T_RENAME:
 		p.advance() // consume RENAME
 		// REQ000498: ALTER TABLE t RENAME COLUMN old TO new

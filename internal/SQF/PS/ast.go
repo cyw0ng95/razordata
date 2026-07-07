@@ -62,11 +62,11 @@ func (i *Ident) exprNode() {}
 
 type QualifiedName struct {
 	Loc
-	Database   string
-	Table      string
-	Name       string
-	CachedKey  string
-	SlotIdx    int // -1 = not resolved; 0+ = index into row.Data for direct access
+	Database  string
+	Table     string
+	Name      string
+	CachedKey string
+	SlotIdx   int // -1 = not resolved; 0+ = index into row.Data for direct access
 }
 
 func (q *QualifiedName) exprNode() {}
@@ -613,6 +613,7 @@ type AlterTableStmt struct {
 	Column   string
 	NewCol   *ColDef
 	NewName  string
+	NewExpr  Expr // REQ001322: SET DEFAULT expression payload
 	IfExists bool
 }
 
