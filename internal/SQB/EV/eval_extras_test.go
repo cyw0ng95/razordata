@@ -233,3 +233,146 @@ func TestUnaryMinus_TextReturnsNull(t *testing.T) {
 		t.Errorf("unary minus on TEXT: got %v, want NULL", v)
 	}
 }
+
+func TestSpecialForms(t *testing.T) {
+	tests := []struct {
+		sql  string
+		want any
+	}{
+		{"SELECT COALESCE(NULL, NULL, 3, 'x')", int64(3)},
+		{"SELECT COALESCE(NULL, 42)", int64(42)},
+		{"SELECT COALESCE('first', NULL, 'third')", "first"},
+		{"SELECT NULLIF(5, 5)", nil},
+		{"SELECT NULLIF(5, 6)", int64(5)},
+		{"SELECT NULLIF('abc', 'abc')", nil},
+		{"SELECT NULLIF('abc', 'def')", "abc"},
+	}
+
+	_ = tests
+	for _, tt := range tests {
+		_ = tt
+		t.Run(tt.sql, func(t *testing.T) {
+			parser := PS.NewParser(tt.sql)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			sel := stmt.(*PS.Select)
+			got, err := EvalValue(sel.Cols[0], nil, nil)
+			if err != nil {
+				t.Fatalf("Eval error: %v", err)
+			}
+			if got.ToAny() != tt.want {
+				t.Fatalf("Got %v (%T), want %v (%T)", got.ToAny(), got.ToAny(), tt.want, tt.want)
+			}
+		})
+	}
+}
+
+func TestSpecialForms_NoParens(t *testing.T) {
+	tests := []struct {
+		sql  string
+		want any
+	}{
+		{"SELECT COALESCE NULL, 42", int64(42)},
+		{"SELECT NULLIF 5, 5", nil},
+	}
+
+	for _, tt := range tests {
+		_ = tt
+		t.Run(tt.sql, func(t *testing.T) {
+			parser := PS.NewParser(tt.sql)
+			stmt, err := parser.Parse()
+			_ = stmt
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			sel := stmt.(*PS.Select)
+			got, err := EvalValue(sel.Cols[0], nil, nil)
+			_ = got
+			if err != nil {
+				t.Fatalf("Eval error: %v", err)
+			}
+			if got.ToAny() != tt.want {
+				t.Fatalf("Got %v (%T), want %v (%T)", got.ToAny(), got.ToAny(), tt.want, tt.want)
+			}
+		})
+	}
+}
+
+func TestOperators_Bitwise(t *testing.T) {
+	tests := []struct {
+		sql  string
+		want any
+	}{
+		{"SELECT 5 & 3", int64(1)},
+		{"SELECT 5 | 3", int64(7)},
+		{"SELECT 5 ^ 3", int64(6)},
+		{"SELECT ~5", int64(-6)},
+		{"SELECT 5 % 3", int64(2)},
+		{"SELECT 10 % 3", int64(1)},
+		{"SELECT 'Hello' || ' World'", "Hello World"},
+		{"SELECT 'a' || 'b' || 'c'", "abc"},
+		{"SELECT 12 & 10 | 3", int64(12&10 | 3)},
+		{"SELECT 255 ^ 255", int64(0)},
+		{"SELECT ~0", int64(-1)},
+	}
+
+	for _, tt := range tests {
+		_ = tt
+		t.Run(tt.sql, func(t *testing.T) {
+			parser := PS.NewParser(tt.sql)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			sel := stmt.(*PS.Select)
+			got, err := EvalValue(sel.Cols[0], nil, nil)
+			if err != nil {
+				t.Fatalf("Eval error: %v", err)
+			}
+			if got.ToAny() != tt.want {
+				t.Fatalf("Got %v (%T), want %v (%T)", got.ToAny(), got.ToAny(), tt.want, tt.want)
+			}
+		})
+	}
+}
+
+func TestNumericOverflow(t *testing.T) {
+	tests := []struct {
+		sql  string
+		want any
+	}{
+		{"SELECT 5 * 3", int64(15)},
+		{"SELECT -5 * 3", int64(-15)},
+		{"SELECT 0 * 100", int64(0)},
+		{"SELECT 9223372036854775807 * 2", nil},
+		{"SELECT 1000000000 * 10000000000", nil},
+		{"SELECT (-9223372036854775807) * -1", int64(9223372036854775807)},
+		{"SELECT 9999999999 * 9999999999", nil},
+		{"SELECT 1000000 * 1000000", int64(1000000000000)},
+		{"SELECT 46341 * 46341", int64(2147488281)},
+	}
+
+	for _, tt := range tests {
+		_ = tt
+		t.Run(tt.sql, func(t *testing.T) {
+			parser := PS.NewParser(tt.sql)
+			stmt, err := parser.Parse()
+			_ = stmt
+			if err != nil {
+				_ = stmt
+				t.Fatalf("Parse error: %v", err)
+			}
+			sel := stmt.(*PS.Select)
+			got, err := EvalValue(sel.Cols[0], nil, nil)
+			if err != nil {
+				t.Fatalf("Eval error: %v", err)
+			}
+			if got.ToAny() != tt.want {
+               		_ = got
+				t.Fatalf("Got %v (%T), want %v (%T)", got.ToAny(), got.ToAny(), tt.want, tt.want)
+			}
+		})
+	}
+}

@@ -347,3 +347,20 @@ func TestNUMA_PinWorkerInPool(t *testing.T) {
 		}
 	}
 }
+
+// TestDetectFeatures_AnyArch returns a feature set appropriate
+// for the current GOARCH. REQ000310.
+func TestDetectFeatures_AnyArch(t *testing.T) {
+	f := DetectFeatures()
+	t.Logf("features: %+v", f)
+	switch runtime.GOARCH {
+	case "amd64":
+		if !f.HasAVX2 {
+			t.Errorf("amd64 should report HasAVX2")
+		}
+	case "arm64":
+		if !f.HasNEON {
+			t.Errorf("arm64 should report HasNEON")
+		}
+	}
+}
