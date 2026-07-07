@@ -58,6 +58,7 @@ type CompoundOp struct {
 
 func (c *CompoundOp) LeftChild() Operator { return c.left }
 func (c *CompoundOp) RightChild() Operator { return c.right }
+func (c *CompoundOp) CompoundOpType() PS.CompoundOp { return c.op }
 
 func NewCompoundOp(left, right Operator, op PS.CompoundOp, orderBy []PS.OrderItem, limit, offset PS.Expr) *CompoundOp {
 	return &CompoundOp{

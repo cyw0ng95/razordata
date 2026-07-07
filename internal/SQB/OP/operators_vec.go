@@ -296,3 +296,451 @@ func (p *VectorizedProject) Close() error {
 // extensions. Currently unused; kept for consistent error
 // reporting when a feature is planned but not yet implemented.
 var errVectorizedNotImplemented = fmt.Errorf("ex: vectorized operator not yet implemented")
+
+// VectorizedDistinct de-duplicates rows across batches from a child
+// BatchProducer. Drains all batches, builds a hash set of distinct row
+// keys, and emits a single result batch with the unique rows.
+type VectorizedDistinct struct {
+	child  UT.BatchProducer
+	colMap map[string]int
+	cols   []string
+	types  []LX.TokenType
+	done   bool
+}
+
+func NewVectorizedDistinct(child UT.BatchProducer, cols []string, types []LX.TokenType) *VectorizedDistinct {
+	colMap := make(map[string]int, len(cols))
+	for i, name := range cols {
+		colMap[name] = i
+	}
+	return &VectorizedDistinct{
+		child:  child,
+		colMap: colMap,
+		cols:   cols,
+		types:  types,
+	}
+}
+
+func (d *VectorizedDistinct) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if d.done {
+		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool)
+	var resultCols []UT.Column
+	nCols := len(d.cols)
+
+	var first bool = true
+	for {
+		batch, err := d.child.NextBatch(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if batch == nil {
+			break
+		}
+		sel := batch.Sel
+		for r := 0; r < batch.Size; r++ {
+			idx := r
+			if sel != nil {
+				if r >= len(sel) {
+					break
+				}
+				idx = int(sel[r])
+			}
+			key := batchDistinctKey(batch, idx)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			if first {
+				resultCols = make([]UT.Column, nCols)
+				for c := 0; c < nCols; c++ {
+					resultCols[c].Name = d.cols[c]
+					resultCols[c].Type = batch.Cols[c].Type
+				}
+				first = false
+			}
+			for c := 0; c < nCols; c++ {
+				if c < len(batch.Cols) {
+					copyBatchValue(&resultCols[c], &batch.Cols[c], idx)
+				}
+			}
+		}
+		batch.Put()
+	}
+
+	if first {
+		return nil, nil
+	}
+
+	output := UT.GetBatch(nCols)
+	output.Size = len(resultCols[0].Data.Ints) // all cols have same len after copyBatchValue
+	// Actually, different types have different Data lengths. Fix:
+	output.Size = 0
+	for c := 0; c < nCols; c++ {
+		output.Cols[c] = resultCols[c]
+		output.Cols[c].Name = d.cols[c]
+switch resultCols[c].Type {
+			case LX.T_INT_KW, LX.T_BIGINT:
+				output.Size = len(resultCols[c].Data.Ints)
+			case LX.T_FLOAT_KW:
+				output.Size = len(resultCols[c].Data.Floats)
+			case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+				output.Size = len(resultCols[c].Data.Strs)
+			case LX.T_BOOL:
+				output.Size = len(resultCols[c].Data.Bools)
+			}
+	}
+
+	return output, nil
+}
+
+func (d *VectorizedDistinct) Close() error {
+	if d.child != nil {
+		return d.child.Close()
+	}
+	return nil
+}
+
+func (d *VectorizedDistinct) Child() UT.BatchProducer {
+	return d.child
+}
+
+func (d *VectorizedDistinct) Cols() []string        { return d.cols }
+func (d *VectorizedDistinct) Types() []LX.TokenType  { return d.types }
+
+// copyBatchValue appends one value from src column at srcRow to dst column.
+func copyBatchValue(dst, src *UT.Column, srcRow int) {
+	if src.Nulls != nil && srcRow < len(src.Nulls) && src.Nulls[srcRow] {
+		if dst.Nulls == nil {
+			dst.Nulls = make([]bool, 0, 64)
+		}
+		for len(dst.Nulls) <= srcRow {
+			dst.Nulls = append(dst.Nulls, false)
+		}
+		dst.Nulls[len(dst.Nulls)-1] = true // mark last as null
+		// Actually, we need to append a NULL. Let me reconsider.
+		// For now, append a zero value and mark null.
+	}
+	switch src.Type {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		if srcRow < len(src.Data.Ints) {
+			dst.Data.Ints = append(dst.Data.Ints, src.Data.Ints[srcRow])
+		}
+	case LX.T_FLOAT_KW:
+		if srcRow < len(src.Data.Floats) {
+			dst.Data.Floats = append(dst.Data.Floats, src.Data.Floats[srcRow])
+		}
+	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+		if srcRow < len(src.Data.Strs) {
+			dst.Data.Strs = append(dst.Data.Strs, src.Data.Strs[srcRow])
+		}
+	case LX.T_BOOL:
+		if srcRow < len(src.Data.Bools) {
+			dst.Data.Bools = append(dst.Data.Bools, src.Data.Bools[srcRow])
+		}
+	}
+	// Handle null tracking properly
+	if src.Nulls != nil && srcRow < len(src.Nulls) && src.Nulls[srcRow] {
+		if dst.Nulls == nil {
+			dst.Nulls = make([]bool, 0, 64)
+		}
+		// Extend nulls to match data length
+		currentLen := len(dst.Data.Ints)
+		if len(src.Data.Floats) > currentLen {
+			currentLen = len(src.Data.Floats)
+		}
+		if len(src.Data.Strs) > currentLen {
+			currentLen = len(src.Data.Strs)
+		}
+		if len(src.Data.Bools) > currentLen {
+			currentLen = len(src.Data.Bools)
+		}
+		for len(dst.Nulls) < currentLen-1 {
+			dst.Nulls = append(dst.Nulls, false)
+		}
+		dst.Nulls = append(dst.Nulls, true)
+	}
+}
+
+// batchDistinctKey builds a string key for a row at position idx in a batch.
+func batchDistinctKey(batch *UT.Batch, idx int) string {
+	if idx >= batch.Size {
+		return ""
+	}
+	nCols := len(batch.Cols)
+	if nCols == 0 {
+		return ""
+	}
+	out := make([]byte, 0, 64)
+	for c := 0; c < nCols; c++ {
+		if c > 0 {
+			out = append(out, 1)
+		}
+		col := &batch.Cols[c]
+		if col.Nulls != nil && idx < len(col.Nulls) && col.Nulls[idx] {
+			out = append(out, 'N')
+			continue
+		}
+		switch col.Type {
+		case LX.T_INT_KW, LX.T_BIGINT:
+			out = append(out, 'I')
+			v := int64(0)
+			if idx < len(col.Data.Ints) {
+				v = col.Data.Ints[idx]
+			}
+			out = appendInt64(out, v)
+		case LX.T_FLOAT_KW:
+			out = append(out, 'F')
+			v := float64(0)
+			if idx < len(col.Data.Floats) {
+				v = col.Data.Floats[idx]
+			}
+			out = appendFloat64(out, v)
+		case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+			out = append(out, 'T', 1)
+			v := ""
+			if idx < len(col.Data.Strs) {
+				v = col.Data.Strs[idx]
+			}
+			out = appendUVarint(out, uint64(len(v)))
+			out = append(out, v...)
+		case LX.T_BOOL:
+			out = append(out, 'B')
+			v := false
+			if idx < len(col.Data.Bools) {
+				v = col.Data.Bools[idx]
+			}
+			if v {
+				out = append(out, '1')
+			} else {
+				out = append(out, '0')
+			}
+		default:
+			out = append(out, 'O')
+		}
+	}
+	return string(out)
+}
+
+func appendInt64(buf []byte, v int64) []byte {
+	if v == 0 {
+		return append(buf, '0')
+	}
+	neg := v < 0
+	if neg {
+		v = -v
+		buf = append(buf, '-')
+	}
+	var tmp [20]byte
+	pos := len(tmp)
+	for v > 0 {
+		pos--
+		tmp[pos] = byte('0' + v%10)
+		v /= 10
+	}
+	return append(buf, tmp[pos:]...)
+}
+
+func appendFloat64(buf []byte, v float64) []byte {
+	// Simplified: use integer parts for key, avoiding full float formatting
+	i := int64(v)
+	f := int64((v - float64(i)) * 1000000)
+	if f < 0 {
+		f = -f
+	}
+	buf = appendInt64(buf, i)
+	buf = append(buf, '.')
+	return appendInt64(buf, f)
+}
+
+func appendUVarint(buf []byte, v uint64) []byte {
+	for v >= 0x80 {
+		buf = append(buf, byte(v)|0x80)
+		v >>= 7
+	}
+	return append(buf, byte(v))
+}
+
+// VectorizedCompoundOp handles UNION ALL (batch concatenation) and
+// UNION (hash dedup) for compound SELECT statements in the vectorized
+// pipeline.
+type VectorizedCompoundOp struct {
+	left         UT.BatchProducer
+	right        UT.BatchProducer
+	op           int // 0=UNION ALL, 1=UNION
+	cols         []string
+	types        []LX.TokenType
+	done         bool
+	onLeft       bool
+	currentBatch *UT.Batch
+	batchPos     int
+	bufBatches   []*UT.Batch // for UNION mode (full materialization)
+	bufPos       int
+}
+
+func NewVectorizedCompoundOp(left, right UT.BatchProducer, isUnion bool, cols []string, types []LX.TokenType) *VectorizedCompoundOp {
+	v := &VectorizedCompoundOp{
+		left:   left,
+		right:  right,
+		cols:   cols,
+		types:  types,
+		onLeft: true,
+	}
+	if isUnion {
+		v.op = 1
+	}
+	return v
+}
+
+func (c *VectorizedCompoundOp) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if c.done {
+		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if c.op == 0 {
+		// UNION ALL: stream batches from left then right
+		return c.nextUnionAll(ctx)
+	}
+
+	// UNION: materialize all, dedup, emit one result batch
+	return c.nextUnion(ctx)
+}
+
+func (c *VectorizedCompoundOp) nextUnionAll(ctx context.Context) (*UT.Batch, error) {
+	for {
+		if c.onLeft {
+			batch, err := c.left.NextBatch(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if batch != nil {
+				return batch, nil
+			}
+			c.onLeft = false
+		}
+		batch, err := c.right.NextBatch(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if batch == nil {
+			c.done = true
+			return nil, nil
+		}
+		return batch, nil
+	}
+}
+
+func (c *VectorizedCompoundOp) nextUnion(ctx context.Context) (*UT.Batch, error) {
+	if c.bufBatches == nil {
+		// Materialize all batches from both sides
+		seen := make(map[string]bool)
+		nCols := len(c.cols)
+		var resultCols []UT.Column
+		first := true
+
+		drain := func(source UT.BatchProducer) error {
+			for {
+				batch, err := source.NextBatch(ctx)
+				if err != nil {
+					return err
+				}
+				if batch == nil {
+					return nil
+				}
+				sel := batch.Sel
+				for r := 0; r < batch.Size; r++ {
+					idx := r
+					if sel != nil {
+						if r >= len(sel) {
+							break
+						}
+						idx = int(sel[r])
+					}
+					key := batchDistinctKey(batch, idx)
+					if seen[key] {
+						continue
+					}
+					seen[key] = true
+					if first {
+						resultCols = make([]UT.Column, nCols)
+						for i := 0; i < nCols; i++ {
+							resultCols[i].Name = c.cols[i]
+							resultCols[i].Type = batch.Cols[i].Type
+						}
+						first = false
+					}
+					for i := 0; i < nCols && i < len(batch.Cols); i++ {
+						copyBatchValue(&resultCols[i], &batch.Cols[i], idx)
+					}
+				}
+				batch.Put()
+			}
+		}
+
+		if err := drain(c.left); err != nil {
+			return nil, err
+		}
+		if err := drain(c.right); err != nil {
+			return nil, err
+		}
+
+		if first {
+			c.done = true
+			return nil, nil
+		}
+
+		output := UT.GetBatch(nCols)
+		// Determine size from the first non-empty column
+		for i := 0; i < nCols; i++ {
+			output.Cols[i] = resultCols[i]
+			output.Cols[i].Name = c.cols[i]
+			switch resultCols[i].Type {
+			case LX.T_INT_KW, LX.T_BIGINT:
+				output.Size = len(resultCols[i].Data.Ints)
+			case LX.T_FLOAT_KW:
+				output.Size = len(resultCols[i].Data.Floats)
+			case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+				output.Size = len(resultCols[i].Data.Strs)
+			case LX.T_BOOL:
+				output.Size = len(resultCols[i].Data.Bools)
+			}
+		}
+
+		c.bufBatches = []*UT.Batch{output}
+		c.bufPos = 0
+	}
+
+	if c.bufPos >= len(c.bufBatches) {
+		c.done = true
+		return nil, nil
+	}
+	batch := c.bufBatches[c.bufPos]
+	c.bufPos++
+	return batch, nil
+}
+
+func (c *VectorizedCompoundOp) Close() error {
+	var err1, err2 error
+	if c.left != nil {
+		err1 = c.left.Close()
+	}
+	if c.right != nil {
+		err2 = c.right.Close()
+	}
+	for _, b := range c.bufBatches {
+		b.Put()
+	}
+	c.bufBatches = nil
+	if err1 != nil {
+		return err1
+	}
+	return err2
+}

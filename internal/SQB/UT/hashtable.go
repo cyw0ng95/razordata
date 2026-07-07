@@ -13,15 +13,13 @@ type HashTable struct {
 	Hashes   []uint64
 	Keys     []int64   // Capacity * NumCols int64s, flat-packed
 	Bitmap   []uint64 // occupancy bitmap (1 bit per slot)
+	// PayloadIdx maps slot → index into Payloads. During resize,
+	// PayloadIdx is remapped to new slots, keeping payload index
+	// stable (REQ001255). Payloads is managed by the caller.
+	PayloadIdx []int
+	Payloads   []any
 }
 
-// NewHashTable creates a hash table with at least minCapacity slots,
-// rounded up to the next power of 2 (minimum 16), single-column keys.
-func NewHashTable(minCapacity uint32) *HashTable {
-	return NewHashTableWithCols(minCapacity, 1)
-}
-
-// NewHashTableWithCols creates a hash table with multi-column keys.
 func NewHashTableWithCols(minCapacity uint32, numCols int) *HashTable {
 	if numCols < 1 {
 		numCols = 1
@@ -29,12 +27,19 @@ func NewHashTableWithCols(minCapacity uint32, numCols int) *HashTable {
 	cap := nextPow2(max(minCapacity, 16))
 	nwords := (cap + 63) / 64
 	return &HashTable{
-		Capacity: cap,
-		NumCols:  numCols,
-		Hashes:   make([]uint64, cap),
-		Keys:     make([]int64, int(cap)*numCols),
-		Bitmap:   make([]uint64, nwords),
+		Capacity:   cap,
+		NumCols:    numCols,
+		Hashes:     make([]uint64, cap),
+		Keys:       make([]int64, int(cap)*numCols),
+		Bitmap:     make([]uint64, nwords),
+		PayloadIdx: make([]int, cap),
 	}
+}
+
+// NewHashTable creates a hash table with at least minCapacity slots,
+// rounded up to the next power of 2 (minimum 16), single-column keys.
+func NewHashTable(minCapacity uint32) *HashTable {
+	return NewHashTableWithCols(minCapacity, 1)
 }
 
 func nextPow2(v uint32) uint32 {
@@ -96,13 +101,16 @@ func (ht *HashTable) Lookup(cols []int64, hash uint64) (idx int, found bool, ok 
 	return 0, false, false
 }
 
-// resize doubles capacity and re-inserts all existing entries using the bitmap.
+// resize doubles capacity and re-inserts all existing entries using
+// the bitmap. PayloadIdx is remapped to new slots so the payload
+// index stays stable (REQ001255).
 func (ht *HashTable) resize() {
 	oldCap := ht.Capacity
 	oldNumCols := ht.NumCols
 	oldHashes := ht.Hashes
 	oldKeys := ht.Keys
 	oldBitmap := ht.Bitmap
+	oldPayloadIdx := ht.PayloadIdx
 
 	newCap := oldCap * 2
 	if newCap < oldCap {
@@ -113,6 +121,7 @@ func (ht *HashTable) resize() {
 	ht.Keys = make([]int64, int(newCap)*oldNumCols)
 	nwords := (newCap + 63) / 64
 	ht.Bitmap = make([]uint64, nwords)
+	ht.PayloadIdx = make([]int, newCap)
 	ht.Occupied = 0
 
 	mask := uint64(newCap - 1)
@@ -129,14 +138,17 @@ func (ht *HashTable) resize() {
 				ht.Hashes[s] = hash
 				ht.Bitmap[s/64] |= 1 << (s % 64)
 				newBase := s * oldNumCols
-                for c := 0; c < oldNumCols; c++ {
+				for c := 0; c < oldNumCols; c++ {
 					ht.Keys[newBase+c] = oldKeys[oldBase+c]
 				}
+				if int(i) < len(oldPayloadIdx) {
+					ht.PayloadIdx[s] = oldPayloadIdx[i]
+				}
 				ht.Occupied++
-                break
-            }
-        }
-    }
+				break
+			}
+		}
+	}
 }
 
 // HashEntry represents a key/hash pair stored in the hash table.
@@ -181,6 +193,10 @@ func (ht *HashTable) ProbeInt64(keys []int64, hashes []uint64, n int, update fun
 				ht.Keys[s] = key
 				ht.Bitmap[s/64] |= 1 << (s % 64)
 				ht.Occupied++
+				if ht.Payloads != nil {
+					ht.PayloadIdx[s] = len(ht.Payloads)
+					ht.Payloads = append(ht.Payloads, nil)
+				}
 				update(s, row)
 				break
 			}
@@ -216,9 +232,13 @@ func (ht *HashTable) Probe(keys []int64, hashes []uint64, n int, update func(idx
 				ht.Bitmap[s/64] |= 1 << (s % 64)
 				base := s * stride
 				for c := 0; c < stride; c++ {
-                    ht.Keys[base+c] = keySlice[c]
+					ht.Keys[base+c] = keySlice[c]
 				}
 				ht.Occupied++
+				if ht.Payloads != nil {
+					ht.PayloadIdx[s] = len(ht.Payloads)
+					ht.Payloads = append(ht.Payloads, nil)
+				}
 				update(s, row)
 				break
 			}
@@ -227,21 +247,21 @@ func (ht *HashTable) Probe(keys []int64, hashes []uint64, n int, update func(idx
 				match := true
 				for c := 0; c < stride; c++ {
 					if ht.Keys[base+c] != keySlice[c] {
-                        match = false
-                        break
-                    }
-                }
-                if match {
-                    update(s, row)
-                    break
-                }
-            }
-            if i >= int(ht.Capacity)/8 {
-                ht.resize()
-                mask = uint64(ht.Capacity - 1)
-                slot = int(hash & mask)
-                i = -1
-            }
-        }
-    }
+						match = false
+						break
+					}
+				}
+				if match {
+					update(s, row)
+					break
+				}
+			}
+			if i >= int(ht.Capacity)/8 {
+				ht.resize()
+				mask = uint64(ht.Capacity - 1)
+				slot = int(hash & mask)
+				i = -1
+			}
+		}
+	}
 }

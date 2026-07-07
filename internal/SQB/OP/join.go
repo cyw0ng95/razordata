@@ -274,6 +274,9 @@ func (j *NestedLoopJoin) RightTbl() string { return j.rightTbl }
 // Kind returns the join kind (INNER, LEFT, RIGHT, FULL, CROSS, SEMI).
 func (j *NestedLoopJoin) Kind() JoinKind { return j.kind }
 
+// OnFunc returns the join predicate function.
+func (j *NestedLoopJoin) OnFunc() func(outer, inner *Row) (bool, error) { return j.on }
+
 func (j *NestedLoopJoin) SharedCols() []string { return j.sharedCols }
 
 func (j *NestedLoopJoin) SharedTypes() []LX.TokenType { return j.sharedTypes }

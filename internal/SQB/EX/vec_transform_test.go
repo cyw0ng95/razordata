@@ -49,8 +49,8 @@ func TestTryVectorizePlan_IneligibleDistinct(t *testing.T) {
 	child := OP.NewSeqScan("t1")
 	dist := OP.NewDistinct(child)
 	result := tryVectorizePlan(dist)
-	if result != dist {
-		t.Fatal("expected original Distinct root returned unchanged")
+	if result == dist {
+		t.Fatal("expected Distinct to be wrapped in BatchToRowAdapter")
 	}
 }
 
@@ -136,9 +136,11 @@ func TestTransformOp_Nil(t *testing.T) {
 func TestTransformOp_UnknownType(t *testing.T) {
 	ss := OP.NewSeqScan("t1")
 	dist := OP.NewDistinct(ss)
-	if transformOp(dist) != nil {
-		t.Fatal("transformOp(Distinct) should return nil")
+	result := transformOp(dist)
+	if result == nil {
+		t.Fatal("transformOp(Distinct) should produce a vectorized operator")
 	}
+	t.Logf("transformOp(Distinct) = %T", result)
 }
 
 func TestTransformOp_HashJoin(t *testing.T) {

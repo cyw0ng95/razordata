@@ -100,8 +100,16 @@ func isEligible(root DT.Operator) bool {
 				return false
 			}
 			return true
-		case *OP.NestedLoopJoin, *OP.Distinct, *OP.CompoundOp:
-			return false
+		case *OP.NestedLoopJoin:
+			return true
+		case *OP.Distinct:
+			return true
+		case *OP.CompoundOp:
+			// Only UNION ALL and UNION are supported.
+			// INTERSECT/EXCEPT would require set-semantics that are
+			// harder to express purely in batch operations.
+			return o.CompoundOpType() == PS.CompoundUnionAll ||
+				o.CompoundOpType() == PS.CompoundUnion
 		default:
 			return false
 		}
@@ -148,6 +156,12 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		return result
 	case *OP.HashJoin:
 		return transformHashJoin(o)
+	case *OP.NestedLoopJoin:
+		return transformNestedLoopJoin(o)
+	case *OP.Distinct:
+		return transformDistinct(o)
+	case *OP.CompoundOp:
+		return transformCompoundOp(o)
 	}
 	return nil
 }
@@ -333,4 +347,69 @@ func exprName(e PS.Expr) string {
 	default:
 		return "expr"
 	}
+}
+
+// transformNestedLoopJoin converts a row NestedLoopJoin to
+// VectorizedNestedLoopJoin. Both children must be eligible.
+// INNER and CROSS joins are supported.
+func transformNestedLoopJoin(nlj *OP.NestedLoopJoin) UT.BatchProducer {
+	left := transformOp(nlj.LeftChild())
+	if left == nil {
+		return nil
+	}
+	right := transformOp(nlj.RightChild())
+	if right == nil {
+		return nil
+	}
+	return OP.NewVectorizedNestedLoopJoin(left, right, nlj.OnFunc(), nlj.Kind())
+}
+
+// transformDistinct converts a row Distinct to VectorizedDistinct.
+func transformDistinct(d *OP.Distinct) UT.BatchProducer {
+	child := transformOp(d.Child())
+	if child == nil {
+		return nil
+	}
+	cols, types := extractSchemaFromOp(d.Child())
+	return OP.NewVectorizedDistinct(child, cols, types)
+}
+
+// transformCompoundOp converts a row CompoundOp to VectorizedCompoundOp.
+// Only UNION ALL and UNION are supported (INTERSECT/EXCEPT fall back).
+func transformCompoundOp(co *OP.CompoundOp) UT.BatchProducer {
+	left := transformOp(co.LeftChild())
+	if left == nil {
+		return nil
+	}
+	right := transformOp(co.RightChild())
+	if right == nil {
+		return nil
+	}
+	cols, types := extractSchemaFromOp(co.LeftChild())
+	return OP.NewVectorizedCompoundOp(left, right,
+		co.CompoundOpType() == PS.CompoundUnion, cols, types)
+}
+
+// extractSchemaFromOp extracts column schema from any eligible operator,
+// walking down to the leaf SeqScan to find column names and types.
+func extractSchemaFromOp(op DT.Operator) ([]string, []LX.TokenType) {
+	switch o := op.(type) {
+	case *OP.SeqScan:
+		return extractSchema(o), extractTypes(o)
+	case *OP.Filter:
+		return extractSchemaFromOp(o.Child())
+	case *OP.Project:
+		return extractSchemaFromOp(o.Child())
+	case *AG.Aggregate:
+		return nil, nil
+	case *OP.Distinct:
+		return extractSchemaFromOp(o.Child())
+	case *OP.CompoundOp:
+		return extractSchemaFromOp(o.LeftChild())
+	case *OP.NestedLoopJoin:
+		return extractSchemaFromOp(o.LeftChild())
+	case *OP.HashJoin:
+		return extractSchemaFromOp(o.LeftChild())
+	}
+	return nil, nil
 }

@@ -653,12 +653,12 @@ type aggPayload struct {
 // all child batches, builds a hash table, and returns one result
 // batch with group keys (if grouped) followed by aggregate columns.
 type VectorizedHashAggregate struct {
-	child     UT.BatchProducer
-	groupCols []int // column indices for GROUP BY (nil = no GROUP BY)
-	aggDefs   []AggDef
-	ht        *UT.HashTable
-	payloads  []aggPayload
-	done      bool
+	child          UT.BatchProducer
+	groupCols      []int // column indices for GROUP BY (nil = no GROUP BY)
+	aggDefs        []AggDef
+	ht             *UT.HashTable
+	noGroupPayload *aggPayload // for no-GROUP-BY case (stride==0)
+	done           bool
 }
 
 // hashInt64 computes a uint64 hash of an int64 key using
@@ -695,7 +695,7 @@ func (a *VectorizedHashAggregate) NextBatch(ctx context.Context) (*UT.Batch, err
 	} else {
 		a.ht = UT.NewHashTableWithCols(64, stride)
 	}
-	a.payloads = make([]aggPayload, a.ht.Capacity)
+	a.ht.Payloads = make([]any, 0, 64)
 
 	// Drain child batches
 	for {
@@ -789,22 +789,69 @@ func (a *VectorizedHashAggregate) processBatch(batch *UT.Batch) {
 	copy(keysToPass, keys[:len(validRows)*stride])
 	copy(hashesToPass, hashes[:len(validRows)])
 
-	a.ht.Probe(keysToPass, hashesToPass, len(validRows), func(idx int, row int) {
+a.ht.Probe(keysToPass, hashesToPass, len(validRows), func(idx int, row int) {
 		a.updateAggregates(batch, validRows[row], idx)
 	})
-
-	// Resize payloads if hash table grew
-	if len(a.payloads) < int(a.ht.Capacity) {
-		old := a.payloads
-		a.payloads = make([]aggPayload, a.ht.Capacity)
-		copy(a.payloads, old)
-	}
 }
 
 // updateAggregates updates aggregate accumulators for one row at the
 // given hash table slot.
 func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot int) {
-	p := &a.payloads[slot]
+	// No-GROUP-BY path: accumulate in noGroupPayload
+	if len(a.groupCols) == 0 {
+		if a.noGroupPayload == nil {
+			a.noGroupPayload = &aggPayload{}
+		}
+		p := a.noGroupPayload
+		p.Count++
+		for di, def := range a.aggDefs {
+			_ = di
+			if def.Kind == AggCount {
+				continue
+			}
+			if def.Col < 0 || def.Col >= len(batch.Cols) {
+				continue
+			}
+			col := batch.Cols[def.Col]
+			if col.Data.Ints == nil || src >= len(col.Data.Ints) {
+				continue
+			}
+			if col.Nulls != nil && src < len(col.Nulls) && col.Nulls[src] {
+				continue
+			}
+			val := col.Data.Ints[src]
+			switch def.Kind {
+			case AggSum:
+				p.Sum += val
+			case AggMin:
+				if !p.HasValue || val < p.Min {
+					p.Min = val
+					p.HasValue = true
+				}
+			case AggMax:
+				if !p.HasValue || val > p.Max {
+					p.Max = val
+					p.HasValue = true
+				}
+			case AggAvg:
+				p.Sum += val
+			}
+		}
+		return
+	}
+
+	// GROUP BY path: use PayloadIdx
+	if slot < 0 || slot >= len(a.ht.PayloadIdx) {
+		return
+	}
+	pIdx := a.ht.PayloadIdx[slot]
+	if pIdx < 0 || pIdx >= len(a.ht.Payloads) {
+		return
+	}
+	if a.ht.Payloads[pIdx] == nil {
+		a.ht.Payloads[pIdx] = &aggPayload{}
+	}
+	p := a.ht.Payloads[pIdx].(*aggPayload)
 	p.Count++
 
 	for di, def := range a.aggDefs {
@@ -880,7 +927,10 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 	}
 
 	if stride == 0 {
-		p := &a.payloads[0]
+		if a.noGroupPayload == nil {
+			a.noGroupPayload = &aggPayload{}
+		}
+		p := a.noGroupPayload
 		colIdx = 0
 		for _, def := range a.aggDefs {
 			var val int64
@@ -917,7 +967,13 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 			continue
 		}
 		colIdx = 0
-		p := a.payloads[i]
+		pIdx := a.ht.PayloadIdx[i]
+		var p aggPayload
+		if pIdx >= 0 && pIdx < len(a.ht.Payloads) {
+			if pp, ok := a.ht.Payloads[pIdx].(*aggPayload); ok && pp != nil {
+				p = *pp
+			}
+		}
 
 		base := int(i) * hashStride
 		for c := 0; c < stride; c++ {

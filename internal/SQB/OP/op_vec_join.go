@@ -359,3 +359,400 @@ func utHashInt64(v int64) uint64 {
 	h ^= h >> 31
 	return h
 }
+
+// VectorizedNestedLoopJoin implements a batch-based nested loop join.
+// INNER and CROSS joins are supported. The build (right) side is fully
+// materialized; the probe (left) side is streamed batch-by-batch.
+type VectorizedNestedLoopJoin struct {
+	left      UT.BatchProducer
+	right     UT.BatchProducer
+	on        func(*Row, *Row) (bool, error)
+	kind      JoinKind
+
+	// Materialized build (right) side
+	buildCols []UT.Column
+	buildN    int
+	buildDone bool
+	nBuildRow int
+
+	// Probe (left) side streaming
+	probeBatch *UT.Batch
+	probeRow   int
+
+	// Pending match pairs for current probe row
+	pending struct {
+		l []uint32 // left row index (in current probe batch)
+		r []uint32 // paired right row index
+	}
+	pendingPos int
+
+	// Schema
+	leftNames  []string
+	leftTypes  []LX.TokenType
+	leftN      int
+	rightNames []string
+	rightTypes []LX.TokenType
+	rightN     int
+
+	done bool
+}
+
+func NewVectorizedNestedLoopJoin(left, right UT.BatchProducer, on func(*Row, *Row) (bool, error), kind JoinKind) *VectorizedNestedLoopJoin {
+	return &VectorizedNestedLoopJoin{
+		left:  left,
+		right: right,
+		on:    on,
+		kind:  kind,
+	}
+}
+
+func (j *VectorizedNestedLoopJoin) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if j.done {
+		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !j.buildDone {
+		if err := j.materializeBuild(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if j.buildN == 0 || j.nBuildRow == 0 {
+		j.done = true
+		return nil, nil
+	}
+	if j.kind == JoinKindCross {
+		return j.nextCrossBatch(ctx)
+	}
+	return j.nextInnerBatch(ctx)
+}
+
+func (j *VectorizedNestedLoopJoin) materializeBuild(ctx context.Context) error {
+	var batches []*UT.Batch
+	defer func() {
+		for _, b := range batches {
+			b.Put()
+		}
+	}()
+
+	for {
+		batch, err := j.right.NextBatch(ctx)
+		if err != nil {
+			return err
+		}
+		if batch == nil {
+			break
+		}
+		batches = append(batches, batch)
+	}
+
+	nCols := meaningfulCols(batches)
+	j.buildN = nCols
+	j.buildCols = make([]UT.Column, nCols)
+	j.rightNames = make([]string, nCols)
+	j.rightTypes = make([]LX.TokenType, nCols)
+	for i := 0; i < nCols; i++ {
+		j.rightNames[i] = batches[0].Cols[i].Name
+		j.rightTypes[i] = batches[0].Cols[i].Type
+	}
+
+	totalRows := 0
+	for _, b := range batches {
+		totalRows += b.Size
+	}
+	if totalRows == 0 {
+		j.buildDone = true
+		j.nBuildRow = 0
+		return nil
+	}
+
+	for i := range j.buildCols {
+		allocateColData(&j.buildCols[i], totalRows, j.rightTypes[i])
+	}
+	row := 0
+	for _, b := range batches {
+		for r := 0; r < b.Size; r++ {
+			for c := range j.buildCols {
+				copyRowToColumn(&j.buildCols[c], &b.Cols[c], row, r)
+			}
+			row++
+		}
+	}
+
+	j.nBuildRow = totalRows
+	j.buildDone = true
+	return nil
+}
+
+func (j *VectorizedNestedLoopJoin) nextInnerBatch(ctx context.Context) (*UT.Batch, error) {
+	nBuild := j.buildN
+
+	if j.probeBatch == nil {
+		if !j.refillBuildProbe(ctx) {
+			return nil, nil
+		}
+	}
+
+	leftN, leftNames, leftTypes := j.probeNamesTypes()
+	nCols := leftN + nBuild
+	output := UT.GetBatch(nCols)
+	for i := 0; i < leftN; i++ {
+		allocateColData(&output.Cols[i], UT.BatchSize, leftTypes[i])
+		output.Cols[i].Name = leftNames[i]
+	}
+	for i := 0; i < nBuild; i++ {
+		allocateColData(&output.Cols[leftN+i], UT.BatchSize, j.rightTypes[i])
+		output.Cols[leftN+i].Name = j.rightNames[i]
+	}
+
+	for output.Size < UT.BatchSize {
+		// Drain pending matches first
+		for j.pendingPos < len(j.pending.l) && output.Size < UT.BatchSize {
+			lr := int(j.pending.l[j.pendingPos])
+			rr := int(j.pending.r[j.pendingPos])
+			j.pendingPos++
+			emitNLJRow(output, j.probeBatch, &j.buildCols, lr, rr, leftN, j.probeRow)
+		}
+		if output.Size >= UT.BatchSize {
+			break
+		}
+
+		// Advance probe
+		j.probeRow++
+		if j.probeRow >= j.probeBatch.Size {
+			if !j.refillBuildProbe(ctx) {
+				break
+			}
+		}
+
+		// Probe against all build rows
+		j.drainPending()
+	}
+
+	if output.Size == 0 {
+		output.Put()
+		j.done = true
+		return nil, nil
+	}
+	return output, nil
+}
+
+func (j *VectorizedNestedLoopJoin) drainPending() {
+	// For the current probe row, scan all build rows
+	leftRow := batchRowForProbe(j.probeBatch, j.probeRow)
+	leftRowLen := len(j.leftNames)
+	if j.leftNames != nil {
+		leftRowLen = len(j.leftNames)
+	}
+	_ = leftRowLen
+
+	for b := 0; b < j.nBuildRow; b++ {
+		buildRow := buildRowForMatch(&j.buildCols, b, j.rightTypes)
+
+		if j.on != nil {
+			ok, err := j.on(&leftRow, &buildRow)
+			if err != nil {
+				continue
+			}
+			if !ok {
+				continue
+			}
+		}
+
+		j.pending.l = append(j.pending.l, uint32(j.probeRow))
+		j.pending.r = append(j.pending.r, uint32(b))
+	}
+}
+
+func (j *VectorizedNestedLoopJoin) refillBuildProbe(ctx context.Context) bool {
+	if j.probeBatch != nil {
+		j.probeBatch.Put()
+		j.probeBatch = nil
+	}
+	batch, err := j.left.NextBatch(ctx)
+	if err != nil || batch == nil {
+		j.done = true
+		return false
+	}
+	j.probeBatch = batch
+	j.probeRow = -1
+	if j.leftNames == nil {
+		j.leftN = meaningfulCols([]*UT.Batch{batch})
+		j.leftNames = make([]string, j.leftN)
+		j.leftTypes = make([]LX.TokenType, j.leftN)
+		for i := 0; i < j.leftN; i++ {
+			j.leftNames[i] = batch.Cols[i].Name
+			j.leftTypes[i] = batch.Cols[i].Type
+		}
+	}
+	j.pending.l = j.pending.l[:0]
+	j.pending.r = j.pending.r[:0]
+	j.pendingPos = 0
+	return true
+}
+
+func (j *VectorizedNestedLoopJoin) probeNamesTypes() (int, []string, []LX.TokenType) {
+	if j.leftNames != nil {
+		return j.leftN, j.leftNames, j.leftTypes
+	}
+	if j.probeBatch != nil {
+		n := meaningfulCols([]*UT.Batch{j.probeBatch})
+		return n, nil, nil
+	}
+	return 0, nil, nil
+}
+
+func (j *VectorizedNestedLoopJoin) nextCrossBatch(ctx context.Context) (*UT.Batch, error) {
+	nBuild := j.buildN
+
+	if j.probeBatch == nil {
+		if !j.refillBuildProbe(ctx) {
+			return nil, nil
+		}
+	}
+
+	leftN := j.leftN
+	if j.leftNames != nil {
+		leftN = len(j.leftNames)
+	}
+
+	nCols := leftN + nBuild
+	output := UT.GetBatch(nCols)
+	for i := 0; i < leftN; i++ {
+		allocateColData(&output.Cols[i], UT.BatchSize, j.leftTypes[i])
+		output.Cols[i].Name = j.leftNames[i]
+	}
+	for i := 0; i < nBuild; i++ {
+		allocateColData(&output.Cols[leftN+i], UT.BatchSize, j.rightTypes[i])
+		output.Cols[leftN+i].Name = j.rightNames[i]
+	}
+
+	for output.Size < UT.BatchSize {
+		// Drain pending
+		for j.pendingPos < len(j.pending.l) && output.Size < UT.BatchSize {
+			lr := int(j.pending.l[j.pendingPos])
+			rr := int(j.pending.r[j.pendingPos])
+			j.pendingPos++
+			emitNLJRow(output, j.probeBatch, &j.buildCols, lr, rr, leftN, j.probeRow)
+		}
+		if output.Size >= UT.BatchSize {
+			break
+		}
+
+		j.probeRow++
+		if j.probeRow >= j.probeBatch.Size {
+			if !j.refillBuildProbe(ctx) {
+				break
+			}
+		}
+
+		// Cross join: every build row matches
+		for b := 0; b < j.nBuildRow; b++ {
+			j.pending.l = append(j.pending.l, uint32(j.probeRow))
+			j.pending.r = append(j.pending.r, uint32(b))
+		}
+	}
+
+	if output.Size == 0 {
+		output.Put()
+		j.done = true
+		return nil, nil
+	}
+	return output, nil
+}
+
+func (j *VectorizedNestedLoopJoin) Close() error {
+	if j.probeBatch != nil {
+		j.probeBatch.Put()
+		j.probeBatch = nil
+	}
+	if j.left != nil {
+		_ = j.left.Close()
+	}
+	if j.right != nil {
+		return j.right.Close()
+	}
+	return nil
+}
+
+func emitNLJRow(output *UT.Batch, probeBatch *UT.Batch, buildCols *[]UT.Column, leftRow, rightRow, leftN int, _ int) {
+	outRow := output.Size
+	for c := 0; c < leftN; c++ {
+		if c < len(probeBatch.Cols) {
+			copyRowToColumn(&output.Cols[c], &probeBatch.Cols[c], outRow, leftRow)
+		}
+	}
+	for c := 0; c < len(*buildCols); c++ {
+		copyRowToColumn(&output.Cols[leftN+c], &(*buildCols)[c], outRow, rightRow)
+	}
+	output.Size++
+}
+
+// batchRowForProbe constructs a Row from a probe batch at position idx.
+func batchRowForProbe(batch *UT.Batch, idx int) Row {
+	n := meaningfulCols([]*UT.Batch{batch})
+	data := make([]Value, n)
+	cols := make([]string, n)
+	types := make([]LX.TokenType, n)
+	for c := 0; c < n; c++ {
+		cols[c] = batch.Cols[c].Name
+		types[c] = batch.Cols[c].Type
+		if batch.Cols[c].Nulls != nil && idx < len(batch.Cols[c].Nulls) && batch.Cols[c].Nulls[idx] {
+			data[c] = Value{Kind: KindNull}
+			continue
+		}
+		switch batch.Cols[c].Type {
+		case LX.T_INT_KW, LX.T_BIGINT:
+			if idx < len(batch.Cols[c].Data.Ints) {
+				data[c] = Value{Kind: KindInt, I64: batch.Cols[c].Data.Ints[idx]}
+			}
+		case LX.T_FLOAT_KW:
+			if idx < len(batch.Cols[c].Data.Floats) {
+				data[c] = Value{Kind: KindFloat, F64: batch.Cols[c].Data.Floats[idx]}
+			}
+		case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+			if idx < len(batch.Cols[c].Data.Strs) {
+				data[c] = Value{Kind: KindText, S: batch.Cols[c].Data.Strs[idx]}
+			}
+		case LX.T_BOOL:
+			if idx < len(batch.Cols[c].Data.Bools) {
+				data[c] = Value{Kind: KindBool, Bo: batch.Cols[c].Data.Bools[idx]}
+			}
+		}
+	}
+	return Row{Data: data, Cols: cols, Types: types}
+}
+
+// buildRowForMatch constructs a Row from the materialized build columns.
+func buildRowForMatch(buildCols *[]UT.Column, idx int, types []LX.TokenType) Row {
+	n := len(*buildCols)
+	data := make([]Value, n)
+	cols := make([]string, n)
+	for c := 0; c < n; c++ {
+		cols[c] = (*buildCols)[c].Name
+		if (*buildCols)[c].Nulls != nil && idx < len((*buildCols)[c].Nulls) && (*buildCols)[c].Nulls[idx] {
+			data[c] = Value{Kind: KindNull}
+			continue
+		}
+		switch (*buildCols)[c].Type {
+		case LX.T_INT_KW, LX.T_BIGINT:
+			if idx < len((*buildCols)[c].Data.Ints) {
+				data[c] = Value{Kind: KindInt, I64: (*buildCols)[c].Data.Ints[idx]}
+			}
+		case LX.T_FLOAT_KW:
+			if idx < len((*buildCols)[c].Data.Floats) {
+				data[c] = Value{Kind: KindFloat, F64: (*buildCols)[c].Data.Floats[idx]}
+			}
+		case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+			if idx < len((*buildCols)[c].Data.Strs) {
+				data[c] = Value{Kind: KindText, S: (*buildCols)[c].Data.Strs[idx]}
+			}
+		case LX.T_BOOL:
+			if idx < len((*buildCols)[c].Data.Bools) {
+				data[c] = Value{Kind: KindBool, Bo: (*buildCols)[c].Data.Bools[idx]}
+			}
+		}
+	}
+	return Row{Data: data, Cols: cols, Types: types}
+}
