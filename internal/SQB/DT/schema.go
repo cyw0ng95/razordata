@@ -70,6 +70,13 @@ type RegisteredIndex struct {
 	Unique  bool
 }
 
+// TriggerInfo stores metadata about a trigger for sqlite_master.
+type TriggerInfo struct {
+	Name    string
+	OnTable string
+	SQL     string
+}
+
 var (
 	StoreMu      sync.Mutex
 	TableIDSeq   uint64
@@ -101,6 +108,11 @@ var (
 
 	// MatViewMu protects MatViewRegistry.
 	MatViewMu sync.RWMutex
+
+	// TriggerRegistry stores trigger definitions. Keyed by trigger
+	// name. Used by sqlite_master introspection (REQ001388).
+	TriggerRegistry = map[string]TriggerInfo{}
+	TriggerMu sync.RWMutex
 )
 
 // In-memory table state (from source.go).
@@ -243,6 +255,38 @@ func GetRegisteredIndexes(table string) []RegisteredIndex {
 		}
 	}
 	return out
+}
+
+// AllTriggers returns a snapshot of the trigger registry.
+func AllTriggers() []TriggerInfo {
+	TriggerMu.RLock()
+	defer TriggerMu.RUnlock()
+	out := make([]TriggerInfo, 0, len(TriggerRegistry))
+	for _, ti := range TriggerRegistry {
+		out = append(out, ti)
+	}
+	return out
+}
+
+// RegisterTrigger adds a trigger to the registry.
+func RegisterTrigger(ti TriggerInfo) {
+	TriggerMu.Lock()
+	defer TriggerMu.Unlock()
+	TriggerRegistry[ti.Name] = ti
+}
+
+// UnregisterTrigger removes a trigger by name.
+func UnregisterTrigger(name string) {
+	TriggerMu.Lock()
+	defer TriggerMu.Unlock()
+	delete(TriggerRegistry, name)
+}
+
+// UnregisterAllTriggers clears the trigger registry.
+func UnregisterAllTriggers() {
+	TriggerMu.Lock()
+	defer TriggerMu.Unlock()
+	TriggerRegistry = map[string]TriggerInfo{}
 }
 
 // nextTableID allocates a new table ID. The id is stable for the lifetime

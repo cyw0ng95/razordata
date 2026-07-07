@@ -27,6 +27,11 @@ func RegisterTrigger(t *PS.TriggerStmt) error {
 	}
 	triggerReg[t.Name] = t
 	tableTriggers[t.OnTable] = append(tableTriggers[t.OnTable], t)
+	// REQ001388: expose to sqlite_master via DT trigger registry.
+	DT.RegisterTrigger(DT.TriggerInfo{
+		Name:    t.Name,
+		OnTable: t.OnTable,
+	})
 	return nil
 }
 
@@ -53,6 +58,7 @@ func UnregisterTrigger(name string) bool {
 			tableTriggers[t.OnTable] = filtered
 		}
 	}
+	DT.UnregisterTrigger(name)
 	return true
 }
 

@@ -312,3 +312,61 @@ func TestCreateVirtualTable_StubRegistration(t *testing.T) {
 		t.Fatalf("sqlite_master query: %v", err)
 	}
 }
+// TestSqliteMaster_AllTypes verifies that sqlite_master exposes all
+// four object types: table, view, index, trigger. REQ001388.
+func TestSqliteMaster_AllTypes(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.Exec(ctx, "CREATE TABLE t1 (id INT)")
+	ex.Exec(ctx, "CREATE VIEW v1 AS SELECT * FROM t1")
+	ex.Exec(ctx, "CREATE INDEX idx1 ON t1 (id)")
+	ex.Exec(ctx, "CREATE TRIGGER tr1 AFTER INSERT ON t1 BEGIN SELECT 1; END")
+
+	rows, err := ex.QueryAll(ctx, "SELECT type, name, tbl_name FROM sqlite_master ORDER BY type, name")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) < 4 {
+		t.Fatalf("got %d rows, want at least 4 (table, view, index, trigger)", len(rows))
+	}
+	// Check that all four types are present.
+	types := make(map[string]bool)
+	for _, row := range rows {
+		if typ, ok := row.Data[0].ToAny().(string); ok {
+			types[typ] = true
+		}
+	}
+	for _, want := range []string{"table", "view", "index", "trigger"} {
+		if !types[want] {
+			t.Errorf("missing type %q in sqlite_master", want)
+		}
+	}
+}
+
+// TestSqliteSchema_MatchesSqliteMaster verifies sqlite_schema returns
+// the same results as sqlite_master. REQ001389.
+func TestSqliteSchema_MatchesSqliteMaster(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.Exec(ctx, "CREATE TABLE t (id INT)")
+
+	master, err := ex.QueryAll(ctx, "SELECT count(*) FROM sqlite_master")
+	if err != nil {
+		t.Fatalf("sqlite_master: %v", err)
+	}
+	schema, err := ex.QueryAll(ctx, "SELECT count(*) FROM sqlite_schema")
+	if err != nil {
+		t.Fatalf("sqlite_schema: %v", err)
+	}
+	mCnt, _ := master[0].Data[0].ToAny().(int64)
+	sCnt, _ := schema[0].Data[0].ToAny().(int64)
+	if mCnt != sCnt {
+		t.Errorf("sqlite_master count=%d, sqlite_schema count=%d, want equal", mCnt, sCnt)
+	}
+}
