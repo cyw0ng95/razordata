@@ -314,8 +314,10 @@ func (d *DropTable) stmtNode() {}
 
 type OnConflict struct {
 	Columns    []string
+	TargetWhere Expr // REQ001364: partial-index WHERE on the conflict target
 	DoNothing  bool
 	SetClauses []Pair
+	UpdateWhere Expr // REQ001365: WHERE on DO UPDATE
 }
 
 type ConflictAction int
@@ -475,6 +477,7 @@ type JoinClause struct {
 	Right      string
 	RightAlias string
 	On         Expr
+	Using      []string // REQ001361: JOIN .. USING (col1, col2, ...)
 }
 
 type Select struct {

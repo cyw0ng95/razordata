@@ -253,3 +253,250 @@ func TestWindow_RangeFrame(t *testing.T) {
 		t.Errorf("expected ErrNoRows, got %v", err)
 	}
 }
+
+// REQ001348: PERCENT_RANK = (rank-1)/(rows-1).
+// Ties share a rank; per-row ties collapse to zero.
+func TestWindow_PercentRank(t *testing.T) {
+	input := &staticOperator{}
+	input.rows = []pl.Row{
+		makeRow([]string{"score"}, []any{int64(100)}),
+		makeRow([]string{"score"}, []any{int64(90)}),
+		makeRow([]string{"score"}, []any{int64(90)}),
+		makeRow([]string{"score"}, []any{int64(80)}),
+	}
+	for i := range input.rows {
+		input.rows[i].Cols = []string{"score"}
+	}
+	spec := &PS.WindowSpec{
+		OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "score"}, Desc: true}},
+	}
+	op := AG.NewWindowOperator(input, "PERCENT_RANK", nil, spec, []string{"score"})
+	// ranks: 1, 2, 2, 4 → percent_rank: 0/3, 1/3, 1/3, 3/3
+	expected := []float64{0, 1.0 / 3, 1.0 / 3, 1.0}
+	for i, want := range expected {
+		row, err := op.Next(context.Background())
+		if err != nil {
+			t.Fatalf("row %d: %v", i, err)
+		}
+		got, ok := row.Data[len(row.Data)-1].ToAny().(float64)
+		if !ok {
+			t.Fatalf("row %d: expected float64, got %s", i, row.Data[len(row.Data)-1].Kind)
+		}
+		if got != want {
+			t.Errorf("row %d: got %v, want %v", i, got, want)
+		}
+	}
+}
+
+// REQ001349: CUME_DIST = (# value <= current) / total.
+func TestWindow_CumeDist(t *testing.T) {
+	input := &staticOperator{}
+	input.rows = []pl.Row{
+		makeRow([]string{"v"}, []any{int64(10)}),
+		makeRow([]string{"v"}, []any{int64(20)}),
+		makeRow([]string{"v"}, []any{int64(20)}),
+		makeRow([]string{"v"}, []any{int64(30)}),
+	}
+	for i := range input.rows {
+		input.rows[i].Cols = []string{"v"}
+	}
+	spec := &PS.WindowSpec{
+		OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "v"}}},
+	}
+	op := AG.NewWindowOperator(input, "CUME_DIST", nil, spec, []string{"v"})
+	// 10 → 1/4, 20/20 → 3/4, 30 → 4/4
+	expected := []float64{0.25, 0.75, 0.75, 1.0}
+	for i, want := range expected {
+		row, err := op.Next(context.Background())
+		if err != nil {
+			t.Fatalf("row %d: %v", i, err)
+		}
+		got, ok := row.Data[len(row.Data)-1].ToAny().(float64)
+		if !ok {
+			t.Fatalf("row %d: expected float64, got %s", i, row.Data[len(row.Data)-1].Kind)
+		}
+		if got != want {
+			t.Errorf("row %d: got %v, want %v", i, got, want)
+		}
+	}
+}
+
+// REQ001350: NTILE(n) distributes rows into n buckets evenly.
+func TestWindow_Ntile(t *testing.T) {
+	input := &staticOperator{}
+	input.rows = []pl.Row{
+		makeRow([]string{"id"}, []any{int64(1)}),
+		makeRow([]string{"id"}, []any{int64(2)}),
+		makeRow([]string{"id"}, []any{int64(3)}),
+		makeRow([]string{"id"}, []any{int64(4)}),
+		makeRow([]string{"id"}, []any{int64(5)}),
+	}
+	for i := range input.rows {
+		input.rows[i].Cols = []string{"id"}
+	}
+	spec := &PS.WindowSpec{
+		OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "id"}}},
+	}
+	op := AG.NewWindowOperator(input, "NTILE",
+		[]PS.Expr{&PS.NumberLiteral{Val: 3}},
+		spec, []string{"id"})
+	// ceil(rank * 3 / 5): rank 1→1, 2→2, 3→2, 4→3, 5→3
+	expected := []int64{1, 2, 2, 3, 3}
+	for i, want := range expected {
+		row, err := op.Next(context.Background())
+		if err != nil {
+			t.Fatalf("row %d: %v", i, err)
+		}
+		got, ok := row.Data[len(row.Data)-1].ToAny().(int64)
+		if !ok {
+			t.Fatalf("row %d: expected int64, got %s", i, row.Data[len(row.Data)-1].Kind)
+		}
+		if got != want {
+			t.Errorf("row %d: got %v, want %v", i, got, want)
+		}
+	}
+}
+
+// REQ001351: FIRST_VALUE over the default (whole-partition) frame.
+func TestWindow_FirstValue(t *testing.T) {
+	input := &staticOperator{}
+	input.rows = []pl.Row{
+		makeRow([]string{"v"}, []any{int64(10)}),
+		makeRow([]string{"v"}, []any{int64(20)}),
+		makeRow([]string{"v"}, []any{int64(30)}),
+	}
+	for i := range input.rows {
+		input.rows[i].Cols = []string{"v"}
+	}
+	spec := &PS.WindowSpec{
+		OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "v"}}},
+	}
+	op := AG.NewWindowOperator(input, "FIRST_VALUE",
+		[]PS.Expr{&PS.Ident{Name: "v"}}, spec, []string{"v"})
+	for i := 0; i < 3; i++ {
+		row, err := op.Next(context.Background())
+		if err != nil {
+			t.Fatalf("row %d: %v", i, err)
+		}
+		if got, _ := row.Data[len(row.Data)-1].ToAny().(int64); got != 10 {
+			t.Errorf("row %d: got %v, want 10", i, got)
+		}
+	}
+}
+
+// REQ001352: NTH_VALUE returns the value at the n-th position in the frame.
+func TestWindow_NthValue(t *testing.T) {
+	makeInput := func() *staticOperator {
+		in := &staticOperator{}
+		in.rows = []pl.Row{
+			makeRow([]string{"v"}, []any{int64(10)}),
+			makeRow([]string{"v"}, []any{int64(20)}),
+			makeRow([]string{"v"}, []any{int64(30)}),
+		}
+		for i := range in.rows {
+			in.rows[i].Cols = []string{"v"}
+		}
+		return in
+	}
+	spec := &PS.WindowSpec{
+		OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "v"}}},
+	}
+	t.Run("in_range", func(t *testing.T) {
+		op := AG.NewWindowOperator(makeInput(), "NTH_VALUE",
+			[]PS.Expr{&PS.Ident{Name: "v"}, &PS.NumberLiteral{Val: 2}},
+			spec, []string{"v"})
+		row, err := op.Next(context.Background())
+		if err != nil {
+			t.Fatalf("row 0: %v", err)
+		}
+		// All rows see the 2nd value (20) because the default frame is the
+		// whole partition.
+		if got, _ := row.Data[len(row.Data)-1].ToAny().(int64); got != 20 {
+			t.Errorf("row 0: got %v, want 20", got)
+		}
+	})
+	t.Run("out_of_range", func(t *testing.T) {
+		op := AG.NewWindowOperator(makeInput(), "NTH_VALUE",
+			[]PS.Expr{&PS.Ident{Name: "v"}, &PS.NumberLiteral{Val: 5}},
+			spec, []string{"v"})
+		row, err := op.Next(context.Background())
+		if err != nil {
+			t.Fatalf("row 0: %v", err)
+		}
+		if row.Data[len(row.Data)-1].ToAny() != nil {
+			t.Errorf("row 0: expected NULL, got %v", row.Data[len(row.Data)-1])
+		}
+	})
+}
+
+// REQ001353: GROUPS frame unit — offsets count peer groups.
+func TestWindow_GroupsFrame(t *testing.T) {
+	input := &staticOperator{}
+	input.rows = []pl.Row{
+		makeRow([]string{"v"}, []any{int64(10)}),
+		makeRow([]string{"v"}, []any{int64(10)}),
+		makeRow([]string{"v"}, []any{int64(20)}),
+		makeRow([]string{"v"}, []any{int64(20)}),
+	}
+	for i := range input.rows {
+		input.rows[i].Cols = []string{"v"}
+	}
+	spec := &PS.WindowSpec{
+		OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "v"}}},
+		Frame: &PS.WindowFrame{
+			Type: "GROUPS",
+			Start: PS.FrameBound{Type: "PRECEDING", Offset: &PS.NumberLiteral{Val: 1}},
+			End:   PS.FrameBound{Type: "CURRENT_ROW"},
+		},
+	}
+	op := AG.NewWindowOperator(input, "SUM",
+		[]PS.Expr{&PS.Ident{Name: "v"}}, spec, []string{"v"})
+	// Group1=[10,10] sum=20; Group2=[20,20] sum=40.
+	// GROUPS 1 PRECEDING..CURRENT_ROW: rows in {prev group, current group}.
+	expected := []float64{20, 20, 60, 60}
+	for i, want := range expected {
+		row, err := op.Next(context.Background())
+		if err != nil {
+			t.Fatalf("row %d: %v", i, err)
+		}
+		got, ok := row.Data[len(row.Data)-1].ToAny().(float64)
+		if !ok {
+			t.Fatalf("row %d: expected float64, got %s", i, row.Data[len(row.Data)-1].Kind)
+		}
+		if got != want {
+			t.Errorf("row %d: got %v, want %v", i, got, want)
+		}
+	}
+}
+
+// REQ001354: EXCLUDE CURRENT_ROW inside a window frame.
+func TestWindow_ExcludeCurrentRow(t *testing.T) {
+	input := &staticOperator{}
+	input.rows = []pl.Row{
+		makeRow([]string{"v"}, []any{int64(10)}),
+		makeRow([]string{"v"}, []any{int64(20)}),
+	}
+	for i := range input.rows {
+		input.rows[i].Cols = []string{"v"}
+	}
+	spec := &PS.WindowSpec{
+		OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "v"}}},
+		Frame: &PS.WindowFrame{
+			Type:    "ROWS",
+			Start:   PS.FrameBound{Type: "UNBOUNDED_PRECEDING"},
+			End:     PS.FrameBound{Type: "UNBOUNDED_FOLLOWING"},
+			Exclude: "CURRENT_ROW",
+		},
+	}
+	op := AG.NewWindowOperator(input, "FIRST_VALUE",
+		[]PS.Expr{&PS.Ident{Name: "v"}}, spec, []string{"v"})
+	row, err := op.Next(context.Background())
+	if err != nil {
+		t.Fatalf("row 0: %v", err)
+	}
+	// For row 0 (v=10): excluding CURRENT_ROW leaves only row 1 in the
+	// frame, so FIRST_VALUE returns 20.
+	if got, _ := row.Data[len(row.Data)-1].ToAny().(int64); got != 20 {
+		t.Errorf("row 0: got %v, want 20", got)
+	}
+}

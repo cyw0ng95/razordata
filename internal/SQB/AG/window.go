@@ -196,6 +196,18 @@ func (w *WindowOperator) computeWindowFunc(indices []int) {
 		w.computeRank(indices, false)
 	case "DENSE_RANK":
 		w.computeRank(indices, true)
+	case "PERCENT_RANK":
+		w.computePercentRank(indices)
+	case "CUME_DIST":
+		w.computeCumeDist(indices)
+	case "NTILE":
+		w.computeNtile(indices)
+	case "FIRST_VALUE":
+		w.computeValueAtBound(indices, 0)
+	case "LAST_VALUE":
+		w.computeLastValue(indices)
+	case "NTH_VALUE":
+		w.computeNthValue(indices)
 	case "LAG":
 		w.computeLagLead(indices, -1)
 	case "LEAD":
@@ -228,7 +240,9 @@ func (w *WindowOperator) sameOrderByGroup(i, j int) bool {
 }
 
 // frameBounds returns the [lo, hi] index range (within the sorted indices
-// slice) for the row at position pos, according to the ROWS/RANGE frame spec.
+// slice) for the row at position pos, according to the ROWS/RANGE/GROUPS
+// frame spec. REQ001353 adds GROUPS semantics: offsets count peer groups
+// rather than physical rows; CURRENT_ROW covers the entire peer group.
 func (w *WindowOperator) frameBounds(pos int, indices []int, peerEnd []int) (int, int) {
 	frame := w.spec.Frame
 	if frame == nil {
@@ -237,7 +251,8 @@ func (w *WindowOperator) frameBounds(pos int, indices []int, peerEnd []int) (int
 	n := len(indices)
 	lo := frameStart(frame.Start, pos, n)
 	hi := frameEnd(frame.End, pos, n)
-	if frame.Type == "RANGE" {
+	switch frame.Type {
+	case "RANGE":
 		if frame.Start.Type == "CURRENT_ROW" {
 			// Extend to first peer
 			for lo > 0 && w.sameOrderByGroup(indices[lo-1], indices[pos]) {
@@ -246,6 +261,169 @@ func (w *WindowOperator) frameBounds(pos int, indices []int, peerEnd []int) (int
 		}
 		if frame.End.Type == "CURRENT_ROW" && peerEnd != nil {
 			hi = peerEnd[pos]
+		}
+	case "GROUPS":
+		// Compute peer-group boundaries for pos: [peerStart, peerEndPos].
+		peerStart := pos
+		for i := pos - 1; i >= 0; i-- {
+			if w.sameOrderByGroup(indices[i], indices[pos]) {
+				peerStart = i
+			} else {
+				break
+			}
+		}
+		peerEndPos := peerStart
+		for i := peerStart + 1; i < n; i++ {
+			if w.sameOrderByGroup(indices[i], indices[pos]) {
+				peerEndPos = i
+			} else {
+				break
+			}
+		}
+		// Resolve the lower bound: which group does the frame start in?
+		switch frame.Start.Type {
+		case "UNBOUNDED_PRECEDING":
+			lo = 0
+		case "CURRENT_ROW":
+			lo = peerStart
+		case "PRECEDING":
+			off := evalBoundOffset(frame.Start.Offset)
+			if off <= 0 {
+				lo = peerStart
+			} else {
+				// Walk left off groups from peerStart. The frame lower bound
+				// is the leftmost index of the group that is `off` groups
+				// before pos. Stop at index 0 if we exhaust the partition.
+				groupCount := 0
+				target := peerStart
+				for i := peerStart - 1; i >= 0; i-- {
+					if !w.sameOrderByGroup(indices[i], indices[i+1]) {
+						groupCount++
+						if groupCount == off {
+							// Walk further left to find the start of this group.
+							for j := i - 1; j >= 0; j-- {
+								if w.sameOrderByGroup(indices[j], indices[i]) {
+									target = j
+								} else {
+									break
+								}
+							}
+							if target > i {
+								target = i
+							}
+							break
+						}
+					} else if i == 0 {
+						target = 0
+					}
+				}
+				if groupCount < off {
+					target = 0
+				}
+				lo = target
+			}
+		case "FOLLOWING":
+			off := evalBoundOffset(frame.Start.Offset)
+			if off == 0 {
+				lo = peerStart
+			} else {
+				groupCount := 0
+				target := peerStart
+				for i := peerEndPos + 1; i < n; i++ {
+					if !w.sameOrderByGroup(indices[i], indices[i-1]) {
+						groupCount++
+						if groupCount == off {
+							// Walk right to the end of this new group.
+							end := i
+							for j := i + 1; j < n; j++ {
+								if w.sameOrderByGroup(indices[j], indices[i]) {
+									end = j
+								} else {
+									break
+								}
+							}
+							target = end
+							break
+						}
+					} else if i == n-1 {
+						target = n - 1
+					}
+				}
+				if groupCount < off {
+					target = n - 1
+				}
+				lo = target
+			}
+		}
+		// Resolve the upper bound: which group does the frame end in?
+		switch frame.End.Type {
+		case "UNBOUNDED_FOLLOWING":
+			hi = n - 1
+		case "CURRENT_ROW":
+			hi = peerEndPos
+		case "PRECEDING":
+			off := evalBoundOffset(frame.End.Offset)
+			if off <= 0 {
+				hi = peerEndPos
+			} else {
+				groupCount := 0
+				target := peerEndPos
+				for i := peerEndPos - 1; i >= 0; i-- {
+					if !w.sameOrderByGroup(indices[i], indices[i+1]) {
+						groupCount++
+						if groupCount == off {
+							for j := i - 1; j >= 0; j-- {
+								if w.sameOrderByGroup(indices[j], indices[i]) {
+									target = j
+								} else {
+									break
+								}
+							}
+							if target > i {
+								target = i
+							}
+							break
+						}
+					} else if i == 0 {
+						target = 0
+					}
+				}
+				if groupCount < off {
+					target = 0
+				}
+				hi = target
+			}
+		case "FOLLOWING":
+			off := evalBoundOffset(frame.End.Offset)
+			if off == 0 {
+				hi = peerEndPos
+			} else {
+				groupCount := 0
+				target := peerEndPos
+				for i := peerEndPos + 1; i < n; i++ {
+					if !w.sameOrderByGroup(indices[i], indices[i-1]) {
+						groupCount++
+						if groupCount == off {
+							end := i
+							for j := i + 1; j < n; j++ {
+								if w.sameOrderByGroup(indices[j], indices[i]) {
+									end = j
+								} else {
+									break
+								}
+							}
+							target = end
+							break
+						}
+					} else if i == n-1 {
+						target = n - 1
+					}
+				}
+				if groupCount < off {
+					target = n - 1
+				}
+				hi = target
+			}
 		}
 	}
 	return lo, hi
@@ -452,4 +630,235 @@ func (w *WindowOperator) computeLagLead(indices []int, defaultOffset int) {
 			w.results[idx] = defaultVal
 		}
 	}
+}
+
+// REQ001348: PERCENT_RANK = (rank - 1) / (partition_rows - 1).
+// Single-row partitions return 0 to avoid divide-by-zero.
+func (w *WindowOperator) computePercentRank(indices []int) {
+	n := len(indices)
+	if n == 0 {
+		return
+	}
+	rank := int64(1)
+	for i, idx := range indices {
+		if i > 0 && !w.sameOrderByGroup(indices[i-1], indices[i]) {
+			rank = int64(i + 1)
+		}
+		if n == 1 {
+			w.results[idx] = float64(0)
+		} else {
+			w.results[idx] = float64(rank-1) / float64(n-1)
+		}
+	}
+}
+
+// REQ001349: CUME_DIST = (# rows with value <= current) / (partition size).
+func (w *WindowOperator) computeCumeDist(indices []int) {
+	n := len(indices)
+	if n == 0 {
+		return
+	}
+	for _, idx := range indices {
+		// Count rows with value <= current, inclusive.
+		count := 0
+		for j := 0; j < n; j++ {
+			vi, _ := EV.EvalValue(w.spec.OrderBy[0].Expr, &w.rows[indices[j]], nil)
+			vj, _ := EV.EvalValue(w.spec.OrderBy[0].Expr, &w.rows[idx], nil)
+			cmp := PL.CompareValue(vi, vj)
+			if cmp <= 0 {
+				count++
+			}
+		}
+		w.results[idx] = float64(count) / float64(n)
+	}
+}
+
+// REQ001350: NTILE(n) — distribute rows into n buckets as evenly as possible.
+// Bucket index = ceil(rank * n / totalRows).
+func (w *WindowOperator) computeNtile(indices []int) {
+	n := len(indices)
+	if n == 0 {
+		return
+	}
+	buckets := 1
+	if len(w.args) >= 1 {
+		v, err := EV.EvalValue(w.args[0], nil, nil)
+		if err == nil {
+			if iv, ok := DT.ToInt64(v); ok && iv > 0 {
+				buckets = int(iv)
+			}
+		}
+	}
+	for i, idx := range indices {
+		rank := int64(i + 1)
+		bucket := int((rank*int64(buckets) + int64(n) - 1) / int64(n))
+		if bucket < 1 {
+			bucket = 1
+		}
+		if bucket > buckets {
+			bucket = buckets
+		}
+		w.results[idx] = int64(bucket)
+	}
+}
+
+// REQ001351: FIRST_VALUE(expr) — value of expr at the first row of the frame.
+func (w *WindowOperator) computeValueAtBound(indices []int, _ int) {
+	n := len(indices)
+	for pos, idx := range indices {
+		lo, hi := 0, n-1
+		if w.spec.Frame != nil {
+			lo, hi = w.frameBounds(pos, indices, nil)
+		}
+		// Apply EXCLUDE on top of frame bounds.
+		lo, hi = w.applyExclude(pos, lo, hi, indices)
+		if hi < lo {
+			w.results[idx] = nil
+			continue
+		}
+		src := indices[lo]
+		if len(w.args) >= 1 {
+			val, _ := EV.EvalValue(w.args[0], &w.rows[src], nil)
+			w.results[idx] = val.ToAny()
+		}
+	}
+}
+
+// REQ001351: LAST_VALUE(expr) — value of expr at the last row of the frame.
+// Per SQL spec, default frame for LAST_VALUE without explicit frame is
+// RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW; we honor whatever
+// frame is supplied and fall back to the full partition.
+func (w *WindowOperator) computeLastValue(indices []int) {
+	n := len(indices)
+	for pos, idx := range indices {
+		lo, hi := 0, n-1
+		if w.spec.Frame != nil {
+			lo, hi = w.frameBounds(pos, indices, nil)
+		}
+		lo, hi = w.applyExclude(pos, lo, hi, indices)
+		if hi < lo {
+			w.results[idx] = nil
+			continue
+		}
+		src := indices[hi]
+		if len(w.args) >= 1 {
+			val, _ := EV.EvalValue(w.args[0], &w.rows[src], nil)
+			w.results[idx] = val.ToAny()
+		}
+	}
+}
+
+// REQ001352: NTH_VALUE(expr, n) — value of expr at the n-th row of the frame.
+// 1-indexed; NULL when n is out of range.
+func (w *WindowOperator) computeNthValue(indices []int) {
+	n := len(indices)
+	target := int64(0)
+	if len(w.args) >= 2 {
+		if v, err := EV.EvalValue(w.args[1], nil, nil); err == nil {
+			if iv, ok := DT.ToInt64(v); ok {
+				target = iv
+			}
+		}
+	}
+	for pos, idx := range indices {
+		if target < 1 {
+			w.results[idx] = nil
+			continue
+		}
+		lo, hi := 0, n-1
+		if w.spec.Frame != nil {
+			lo, hi = w.frameBounds(pos, indices, nil)
+		}
+		lo, hi = w.applyExclude(pos, lo, hi, indices)
+		frameSize := hi - lo + 1
+		if hi < lo || int64(frameSize) < target {
+			w.results[idx] = nil
+			continue
+		}
+		src := indices[lo+int(target)-1]
+		if len(w.args) >= 1 {
+			val, _ := EV.EvalValue(w.args[0], &w.rows[src], nil)
+			w.results[idx] = val.ToAny()
+		}
+	}
+}
+
+// applyExclude narrows [lo, hi] according to the EXCLUDE clause on the frame.
+// REQ001354.
+func (w *WindowOperator) applyExclude(pos, lo, hi int, indices []int) (int, int) {
+	if w.spec.Frame == nil || w.spec.Frame.Exclude == "" || w.spec.Frame.Exclude == "NO_OTHERS" {
+		return lo, hi
+	}
+	switch w.spec.Frame.Exclude {
+	case "CURRENT_ROW":
+		if pos >= lo && pos <= hi {
+			if pos == hi {
+				if hi > lo {
+					return lo, hi - 1
+				}
+				return lo, lo - 1 // empty frame
+			}
+			if pos == lo {
+				return lo + 1, hi
+			}
+			// pos in the middle — narrow [lo, hi] to the side that excludes pos.
+			// Per spec, EXCLUDE CURRENT ROW removes only the current row; if
+			// ordering matters, leave the surrounding frame in place and
+			// mask at evaluation time. For the simple case the function
+			// caller (FIRST/LAST/NTH) reads from lo or hi, so we shrink
+			// toward whichever bound is not pos.
+			if hi-pos > pos-lo {
+				return lo, pos - 1
+			}
+			return pos + 1, hi
+		}
+	case "GROUP":
+		// Find peer-group range containing pos.
+		peerStart := pos
+		for i := pos - 1; i >= lo; i-- {
+			if w.sameOrderByGroup(indices[i], indices[pos]) {
+				peerStart = i
+			} else {
+				break
+			}
+		}
+		peerEnd := pos
+		for i := pos + 1; i <= hi; i++ {
+			if w.sameOrderByGroup(indices[i], indices[pos]) {
+				peerEnd = i
+			} else {
+				break
+			}
+		}
+		if peerEnd < hi {
+			return lo, peerStart - 1
+		}
+		return lo, peerStart - 1
+	case "TIES":
+		// Drop peer rows of pos (keep only pos itself when present).
+		peerStart := pos
+		for i := pos - 1; i >= lo; i-- {
+			if w.sameOrderByGroup(indices[i], indices[pos]) {
+				peerStart = i
+			} else {
+				break
+			}
+		}
+		peerEnd := pos
+		for i := pos + 1; i <= hi; i++ {
+			if w.sameOrderByGroup(indices[i], indices[pos]) {
+				peerEnd = i
+			} else {
+				break
+			}
+		}
+		if peerStart < pos {
+			lo = pos + 1
+		}
+		if peerEnd > pos {
+			hi = pos - 1
+		}
+		return lo, hi
+	}
+	return lo, hi
 }

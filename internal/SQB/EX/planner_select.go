@@ -890,6 +890,36 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 	joinInfos := make([]joinTableInfo, 0, len(s.Joins))
 	joinClauses := make([]PS.JoinClause, 0, len(s.Joins))
 	for _, j := range s.Joins {
+		// REQ001361: synthesize ON clause from USING columns.
+		if len(j.Using) > 0 && j.On == nil {
+			leftTbl := s.From
+			if s.FromAlias != "" {
+				leftTbl = s.FromAlias
+			}
+			if len(joinClauses) > 0 {
+				last := joinClauses[len(joinClauses)-1]
+				leftTbl = last.Right
+				if last.RightAlias != "" {
+					leftTbl = last.RightAlias
+				}
+			}
+			rightTbl := j.Right
+			if j.RightAlias != "" {
+				rightTbl = j.RightAlias
+			}
+			var combined PS.Expr
+			for _, col := range j.Using {
+				leftRef := &PS.QualifiedName{Table: leftTbl, Name: col, SlotIdx: -1}
+				rightRef := &PS.QualifiedName{Table: rightTbl, Name: col, SlotIdx: -1}
+				eq := &PS.BinaryExpr{Left: leftRef, Op: LX.T_EQ, Right: rightRef}
+				if combined == nil {
+					combined = eq
+				} else {
+					combined = &PS.BinaryExpr{Left: combined, Op: LX.T_AND, Right: eq}
+				}
+			}
+			j.On = combined
+		}
 		if j.Kind != "INNER" && j.Kind != "LEFT" && j.Kind != "RIGHT" && j.Kind != "FULL" && j.Kind != "CROSS" {
 			continue
 		}

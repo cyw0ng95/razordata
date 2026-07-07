@@ -422,6 +422,7 @@ func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinC
 			p.advance()
 		}
 		var on Expr
+		var usingCols []string
 		if p.current.Type == LX.T_ON {
 			p.advance()
 			e, err2 := p.parseExpr()
@@ -430,8 +431,33 @@ func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinC
 				return
 			}
 			on = e
+		} else if p.current.Type == LX.T_USING {
+			// REQ001361: JOIN ... USING (col1, col2, ...)
+			p.advance()
+			if err2 := p.expect(LX.T_LPAREN); err2 != nil {
+				err = err2
+				return
+			}
+			p.advance()
+			for {
+				if err2 := p.expect(LX.T_IDENT); err2 != nil {
+					err = err2
+					return
+				}
+				usingCols = append(usingCols, strings.ToLower(p.current.Lexeme))
+				p.advance()
+				if p.current.Type != LX.T_COMMA {
+					break
+				}
+				p.advance()
+			}
+			if err2 := p.expect(LX.T_RPAREN); err2 != nil {
+				err = err2
+				return
+			}
+			p.advance()
 		}
-		joins = append(joins, JoinClause{Kind: kind, Right: rightRef, RightAlias: rightAlias, On: on})
+		joins = append(joins, JoinClause{Kind: kind, Right: rightRef, RightAlias: rightAlias, On: on, Using: usingCols})
 	}
 
 	if p.parenTableExpr {

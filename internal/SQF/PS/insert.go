@@ -200,6 +200,17 @@ func (p *Parser) parseOnConflict() (*OnConflict, error) {
 		p.advance()
 	}
 
+	// REQ001364: optional WHERE on the conflict target (partial-index WHERE).
+	var targetWhere Expr
+	if p.current.Type == LX.T_WHERE {
+		p.advance()
+		pred, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		targetWhere = pred
+	}
+
 	// DO NOTHING or DO UPDATE SET
 	if err := p.expect(LX.T_DO); err != nil {
 		return nil, err
@@ -208,7 +219,7 @@ func (p *Parser) parseOnConflict() (*OnConflict, error) {
 
 	if p.current.Type == LX.T_NOTHING {
 		p.advance()
-		return &OnConflict{Columns: columns, DoNothing: true}, nil
+		return &OnConflict{Columns: columns, TargetWhere: targetWhere, DoNothing: true}, nil
 	}
 
 	if err := p.expect(LX.T_UPDATE); err != nil {
@@ -246,7 +257,23 @@ func (p *Parser) parseOnConflict() (*OnConflict, error) {
 		p.advance()
 	}
 
-	return &OnConflict{Columns: columns, SetClauses: setClauses}, nil
+	// REQ001365: optional WHERE on DO UPDATE.
+	var updateWhere Expr
+	if p.current.Type == LX.T_WHERE {
+		p.advance()
+		pred, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		updateWhere = pred
+	}
+
+	return &OnConflict{
+		Columns:     columns,
+		TargetWhere: targetWhere,
+		SetClauses:  setClauses,
+		UpdateWhere: updateWhere,
+	}, nil
 }
 
 func (p *Parser) parseReturning() ([]Expr, error) {

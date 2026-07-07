@@ -212,8 +212,24 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 				// the SET clauses. We re-use the lookup closure
 				// to find the existing row and mutate it in place.
 				if apply, ok := lookup.(UniqueLookupWithApply); ok {
-					if err := applyConflictUpdate(cschema, existing, out, i.onConflict.SetClauses, i.params, apply); err != nil {
-						return DT.Row{}, err
+					if cerr := applyConflictUpdate(cschema, existing, out, i.onConflict, i.params, apply); cerr != nil {
+						if errors.Is(cerr, ErrTargetWhereFalse) {
+							// REQ001364: partial-index WHERE on the
+							// conflict target evaluated false — treat
+							// the row as non-conflicting. Remove the
+							// existing row and fall through to normal
+							// insertion (doInsertReplace).
+							var removed int
+							existing, removed = RemoveConflicting(existing, cschema, out)
+							i.rows += int64(removed)
+							if i.execCtx != nil {
+								i.execCtx.LastChanges += int64(removed)
+								i.execCtx.TotalChanges += int64(removed)
+							}
+							pending = make(map[string]struct{}, len(i.values))
+							goto doInsertReplace
+						}
+						return DT.Row{}, cerr
 					}
 					// Note: we already counted the row's impact in
 					// applyConflictUpdate (it updated an existing
@@ -1098,9 +1114,21 @@ func evalReturning(exprs []PS.Expr, row *DT.Row, params []any, resultRows *[]DT.
 	*resultRows = append(*resultRows, resultRow)
 	return nil
 }
-func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, sets []PS.Pair, params []any, apply UniqueLookupWithApply) error {
-	if apply == nil {
+// ErrTargetWhereFalse is returned by applyConflictUpdate when the
+// partial-index WHERE on the conflict target evaluates false,
+// signaling the caller to treat the row as non-conflicting. REQ001364.
+var ErrTargetWhereFalse = errors.New("wt: ON CONFLICT partial-index WHERE false")
+
+func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, onConflict *PS.OnConflict, params []any, apply UniqueLookupWithApply) error {
+	if apply == nil || onConflict == nil {
 		return nil
+	}
+	// REQ001365: if DO UPDATE has a WHERE clause and the predicate is
+	// false against the existing target row, fall through to DO NOTHING
+	// for this conflict.
+	if onConflict.UpdateWhere != nil && apply != nil {
+		// We need the existing row first to evaluate WHERE — defer the
+		// predicate check until we have located it below.
 	}
 	// Build the lookup key from the PK column (we use PK as the
 	// canonical conflict target when OnConflict.Columns is empty,
@@ -1119,9 +1147,29 @@ func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, 
 		return nil
 	}
 	_ = existing
-	return apply.Mutate(rowIdx, func(target DT.Row) DT.Row {
+	var targetWhereFalse bool
+	merr := apply.Mutate(rowIdx, func(target DT.Row) DT.Row {
+		// REQ001364: if TargetWhere is set and evaluates to false
+		// against the existing row, skip the UPSERT.
+		if onConflict.TargetWhere != nil {
+			pred, perr := EV.EvalValue(onConflict.TargetWhere, &target, nil)
+			if perr == nil && !DT.IsValueTruthy(pred) {
+				targetWhereFalse = true
+				return target
+			}
+		}
+		// REQ001365: evaluate UpdateWhere against the existing target
+		// row; if the predicate is false, return target unchanged.
+		if onConflict.UpdateWhere != nil {
+			pred, perr := EV.EvalValue(onConflict.UpdateWhere, &target, params)
+			if perr == nil {
+				if !DT.IsValueTruthy(pred) {
+					return target
+				}
+			}
+		}
 		updated := DT.CloneRow(target)
-		for _, p := range sets {
+		for _, p := range onConflict.SetClauses {
 			ci := -1
 			for i, c := range schema.Cols {
 				if c == p.Col {
@@ -1132,9 +1180,8 @@ func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, 
 			if ci < 0 {
 				continue
 			}
-			v, err := EV.EvalValue(p.Val, &out, params)
+			v, err := evalUpsertValue(p.Val, &out, params)
 			if err != nil {
-				// Best-effort: leave column unchanged on eval error.
 				continue
 			}
 			if ci < len(updated.Data) {
@@ -1143,6 +1190,35 @@ func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, 
 		}
 		return updated
 	})
+	if merr != nil {
+		return merr
+	}
+	if targetWhereFalse {
+		return ErrTargetWhereFalse
+	}
+	return nil
+}
+
+// evalUpsertValue evaluates the SET-clause RHS, resolving EXCLUDED.col
+// against the new (would-be-inserted) row. EXCLUDED.col maps to
+// QualifiedName{Table: "excluded", Name: col}; we intercept this case
+// and look up the bare column name in the new row, falling back to the
+// generic EV.EvalValue for everything else (literals, arithmetic,
+// nested expressions). REQ001363.
+func evalUpsertValue(expr PS.Expr, excluded *DT.Row, params []any) (DT.Value, error) {
+	if qn, ok := expr.(*PS.QualifiedName); ok && strings.EqualFold(qn.Table, "excluded") {
+		if excluded != nil {
+			for i, c := range excluded.Cols {
+				if strings.EqualFold(c, qn.Name) && i < len(excluded.Data) {
+					return excluded.Data[i], nil
+				}
+			}
+		}
+		// EXCLUDED.col referenced but column not in the new row —
+		// surface as NULL rather than silently substituting text.
+		return DT.NullValue(), nil
+	}
+	return EV.EvalValue(expr, excluded, params)
 }
 
 // conflictKey returns the column indices and values used to look up

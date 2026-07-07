@@ -174,3 +174,68 @@ func TestRecursiveCTEParsing(t *testing.T) {
 		t.Errorf("CTE name: %q", with.CTEs[0].Name)
 	}
 }
+
+// ── JOIN USING (REQ001361) ──────────────────────────────────────────────
+
+func TestJoinUsing_Parses(t *testing.T) {
+	input := "SELECT * FROM t1 JOIN t2 USING (id)"
+	p := NewParser(input)
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	sel, ok := stmt.(*Select)
+	if !ok {
+		t.Fatalf("expected *Select, got %T", stmt)
+	}
+	if len(sel.Joins) != 1 {
+		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
+	}
+	j := sel.Joins[0]
+	if len(j.Using) != 1 || j.Using[0] != "id" {
+		t.Fatalf("Using = %v, want [id]", j.Using)
+	}
+	if j.On != nil {
+		t.Errorf("On should be nil when USING is present, got %+v", j.On)
+	}
+}
+
+func TestJoinUsing_MultiCol(t *testing.T) {
+	input := "SELECT * FROM t1 INNER JOIN t2 USING (a, b, c)"
+	p := NewParser(input)
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	sel := stmt.(*Select)
+	if len(sel.Joins) != 1 {
+		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
+	}
+	j := sel.Joins[0]
+	if len(j.Using) != 3 || j.Using[0] != "a" || j.Using[1] != "b" || j.Using[2] != "c" {
+		t.Fatalf("Using = %v, want [a b c]", j.Using)
+	}
+	if j.Kind != "INNER" {
+		t.Errorf("Kind = %q, want INNER", j.Kind)
+	}
+}
+
+func TestJoinUsing_LeftJoin(t *testing.T) {
+	input := "SELECT a, b FROM t1 LEFT JOIN t2 USING (id)"
+	p := NewParser(input)
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	sel := stmt.(*Select)
+	if len(sel.Joins) != 1 {
+		t.Fatalf("expected 1 join, got %d", len(sel.Joins))
+	}
+	j := sel.Joins[0]
+	if j.Kind != "LEFT" {
+		t.Errorf("Kind = %q, want LEFT", j.Kind)
+	}
+	if len(j.Using) != 1 || j.Using[0] != "id" {
+		t.Fatalf("Using = %v, want [id]", j.Using)
+	}
+}
