@@ -241,6 +241,9 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 
 	switch s := rewritten.(type) {
 	case *PS.Select:
+		// REQ001293: execute non-correlated scalar subqueries at
+		// plan time and replace with constants.
+		p.constantFoldSubqueries(context.Background(), s)
 		root = p.planSelect(s)
 	case *PS.CompoundStmt:
 		root = p.planCompound(s)
@@ -307,6 +310,86 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	p.mu.Unlock()
 
 	return &pl.PlanResult{Root: root, Cost: result.cost, MemoKey: key}, nil
+}
+
+// constantFoldSubqueries walks the SELECT expression tree and replaces
+// non-correlated scalar subqueries with their evaluated constants.
+// REQ001293.
+func (p *Planner) constantFoldSubqueries(ctx context.Context, s *PS.Select) {
+	for i, col := range s.Cols {
+		if sub, ok := col.(*PS.SubqueryExpr); ok {
+			if sub.Subquery == nil {
+				continue
+			}
+			if hasOuterRefInStmt(sub.Subquery) {
+				continue
+			}
+			// Non-correlated: execute now at plan time.
+			rows, err := p.ExecuteSubquery(ctx, sub.Subquery, nil, nil)
+			if err != nil || len(rows) == 0 {
+				continue
+			}
+			val := rows[0].Data[0]
+			if iv, ok := val.ToAny().(int64); ok {
+				s.Cols[i] = &PS.NumberLiteral{Val: iv}
+			} else if fv, ok := val.ToAny().(float64); ok {
+				s.Cols[i] = &PS.FloatLiteral{Val: fv}
+			} else if sv, ok := val.ToAny().(string); ok {
+				s.Cols[i] = &PS.StringLiteral{Val: sv}
+			}
+		}
+	}
+}
+
+// hasOuterRef checks whether an expression references an outer row.
+func hasOuterRef(e PS.Expr) bool {
+	if e == nil {
+		return false
+	}
+	switch v := e.(type) {
+	case *PS.QualifiedName:
+		return true
+	case *PS.BinaryExpr:
+		return hasOuterRef(v.Left) || hasOuterRef(v.Right)
+	case *PS.UnaryExpr:
+		return hasOuterRef(v.Operand)
+	case *PS.FunctionCall:
+		for _, a := range v.Args {
+			if hasOuterRef(a) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasOuterRefInCols checks a list of SELECT columns for outer refs.
+func hasOuterRefInCols(cols []PS.Expr) bool {
+	for _, c := range cols {
+		if ae, ok := c.(*PS.AliasedExpr); ok {
+			if hasOuterRef(ae.Expr) {
+				return true
+			}
+		}
+		if hasOuterRef(c) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasOuterRefInStmt checks if a statement contains any outer column
+// references, simplified to checking SELECT columns + WHERE clause.
+func hasOuterRefInStmt(stmt PS.Stmt) bool {
+	if sel, ok := stmt.(*PS.Select); ok {
+		if hasOuterRefInCols(sel.Cols) {
+			return true
+		}
+		if sel.Where != nil && hasOuterRef(sel.Where) {
+			return true
+		}
+	}
+	return false
 }
 
 // ExecuteSubquery plans a subquery select statement and collects all

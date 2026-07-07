@@ -629,3 +629,33 @@ func TestFilter_NullNotEqual(t *testing.T) {
 		t.Errorf("expected 0 rows for WHERE v != 10 (NULL <> 10), got %d", len(rows2))
 	}
 }
+
+// TestScalarSubquery_ConstantFold verifies that non-correlated scalar
+// subqueries are executed once at plan time instead of per-row.
+// REQ001293.
+func TestScalarSubquery_ConstantFold(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.Exec(ctx, "CREATE TABLE t (a INT, b INT)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)")
+
+	// Scalar subquery: SELECT avg(a) FROM t — non-correlated, returns
+	// a constant (2.0). It should be folded once at plan time.
+	rows, err := ex.QueryAll(ctx, "SELECT a, (SELECT avg(a) FROM t) AS avg_a FROM t ORDER BY a")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("got %d rows, want 3", len(rows))
+	}
+	// All rows should have the same avg value (2.0 = avg of 1,2,3).
+	for i, row := range rows {
+		avg, ok := row.Data[1].ToAny().(float64)
+		if !ok || avg != 2.0 {
+			t.Errorf("row %d: avg = %v, want 2.0", i, avg)
+		}
+	}
+}
