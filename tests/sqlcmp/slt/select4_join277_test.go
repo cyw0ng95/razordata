@@ -108,7 +108,15 @@ func TestSelect4_Join277_HashMismatch(t *testing.T) {
 	const wantRows = 21
 	const wantHash = "34325f84dd0efa600c0be4e8e0770bc3"
 	if len(rs.Rows) != wantRows {
+		// Log first few rows for debugging
 		t.Errorf("row count: got %d, want %d", len(rs.Rows), wantRows)
+		n := len(rs.Rows)
+		if n > 21 {
+			n = 21
+		}
+		for i := 0; i < n; i++ {
+			t.Logf("  row %d: %v", i, rs.Rows[i])
+		}
 	}
 	gotHash := resultHash(rs, RowSort)
 	if gotHash != wantHash {

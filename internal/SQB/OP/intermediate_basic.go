@@ -675,6 +675,21 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 		if f.execCtx != nil {
 			r.ExecCtx = f.execCtx
 		}
+		// REQ001408: clone Data eagerly before appending to
+		// batchBuf. Some child operators (IndexScan, See
+		// SQB/DT/storage.go PoolValueSlice) return a row whose
+		// Data slice is reused across Next() calls via the
+		// valueSlicePool. Without this clone, the next
+		// child.Next() would overwrite the underlying array
+		// and corrupt every entry currently in batchBuf,
+		// causing the predicate evaluation below to see the
+		// same (last) row's values for every slot. SLT
+		// select4.test L39784 reproduces this: 14 rows returned
+		// instead of 21, hash b752b9c6... vs expected
+		// 34325f84dd0efa600c0be4e8e0770bc3.
+		if r.Data != nil {
+			r.Data = append([]DT.Value(nil), r.Data...)
+		}
 		f.batchBuf = append(f.batchBuf, r)
 	}
 	// Tight loop: predicate evaluation, no per-row Eval dispatch.
