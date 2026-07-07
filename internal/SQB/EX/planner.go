@@ -738,6 +738,9 @@ func (p *Planner) planExplain(s *PS.ExplainStmt) DT.Operator {
 	// Build the PlanNode tree for structured output
 	planNode := buildPlanNodeTree(innerPlan.Root, p)
 
+	// REQ001344: add subquery plan nodes as children to the root.
+	p.addSubqueryPlanNodes(planNode, s.Inner)
+
 	// Return an ExplainStmt operator that renders the plan
 	return &AD.ExplainStmtOp{
 		Mode:     s.Mode,

@@ -104,3 +104,27 @@ func (e *ExplainStmtOp) Close() error {
 	e.done = false
 	return nil
 }
+
+// ScalarSubqueryOp holds a fully-planned scalar subquery for EXPLAIN
+// rendering. REQ001344: its child plan is rendered indented under
+// the parent operator.
+type ScalarSubqueryOp struct {
+	Root DT.Operator
+}
+
+// ExistsOp holds a fully-planned EXISTS subquery for EXPLAIN
+// rendering. REQ001344: its child plan is rendered indented under
+// the parent operator.
+type ExistsOp struct {
+	Root DT.Operator
+}
+
+func (o *ScalarSubqueryOp) Next(ctx context.Context) (DT.Row, error) {
+	return DT.Row{}, DT.ErrNoRows
+}
+func (o *ScalarSubqueryOp) Close() error { return nil }
+
+func (o *ExistsOp) Next(ctx context.Context) (DT.Row, error) {
+	return DT.Row{}, DT.ErrNoRows
+}
+func (o *ExistsOp) Close() error { return nil }

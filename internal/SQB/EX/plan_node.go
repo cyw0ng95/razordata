@@ -49,6 +49,10 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		node.Table = v.Table()
 		node.Index = v.Idx()
 		node.Cost = 0.1
+		// REQ001342: populate row estimate for IndexScan.
+		if planner != nil {
+			node.Rows = int64(planner.estimateRowCount(v.Table(), nil))
+		}
 		detail := fmt.Sprintf("idx=%s", v.Idx())
 		if v.Btree() != nil {
 			detail += " [btree]"
@@ -289,6 +293,14 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		node.Detail = "EXPLAIN"
 		node.Cost = 0
 
+	case *AD.ScalarSubqueryOp:
+		node.Detail = "SCALAR SUBQUERY"
+		node.Cost = 0
+
+	case *AD.ExistsOp:
+		node.Detail = "EXISTS SUBQUERY"
+		node.Cost = 0
+
 	case *AD.Noop:
 		node.Detail = "NOOP"
 		node.Cost = 0
@@ -344,6 +356,14 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 			node.Add(buildPlanNodeTree(v.Child(), planner))
 		}
 	case *AD.ExplainStmtOp:
+		if v.Root != nil {
+			node.Add(buildPlanNodeTree(v.Root, planner))
+		}
+	case *AD.ScalarSubqueryOp:
+		if v.Root != nil {
+			node.Add(buildPlanNodeTree(v.Root, planner))
+		}
+	case *AD.ExistsOp:
 		if v.Root != nil {
 			node.Add(buildPlanNodeTree(v.Root, planner))
 		}
@@ -450,6 +470,10 @@ func operatorType(op DT.Operator) string {
 		return "Noop"
 	case *AD.FallbackOp:
 		return "Fallback"
+	case *AD.ScalarSubqueryOp:
+		return "ScalarSubquery"
+	case *AD.ExistsOp:
+		return "ExistsSubquery"
 	}
 	return "Unknown"
 }
