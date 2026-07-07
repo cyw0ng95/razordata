@@ -65,17 +65,31 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	}
 
 	// REQ001106: bitmap heap scan for multi-index OR/AND predicates
-	// REQ001107: covering-index detection (OP.IndexOnlyScan) on any scan path
+	// REQ001107: covering-index detection (OP.IndexOnlyScan) on the
+	// raw OP.IndexScan path.
+	// REQ001254: also accept a Filter/FilterProject wrapping an
+	// OP.IndexScan (the common case after predicate decomposition).
 	if scan != nil {
 		if whereExpr != nil {
 			if bitmap := p.tryBitmapHeapScan(s, whereExpr); bitmap != nil {
 				scan = bitmap
 			}
 		}
-		if _, ok := scan.(*OP.IndexScan); ok {
+		if isIndexOrWrappedScan(scan) {
 			if cover := p.tryIndexOnlyScan(s, whereExpr, scan); cover != nil {
 				scan = cover
 			}
+		}
+		// REQ001247: MIN(col) single index seek when the column is
+		// indexed. Replaces SeqScan+Aggregate with IndexScan+Limit(1).
+		// When the rewriter returns non-nil, the plan is already
+		// MIN-optimized; skip downstream Filter/aggregation paths.
+		if mm := p.tryMinMaxIndexScan(s); mm != nil {
+			var current DT.Operator = mm
+			if s.Having != nil {
+				current = OP.NewFilter(current, s.Having, nil)
+			}
+			return current
 		}
 	}
 
@@ -373,6 +387,30 @@ type existsReplacement struct {
 //  1. EXISTS subquery is a single-table SELECT (no joins, aggregates, etc.)
 //  2. WHERE clause contains a correlation predicate: inner.col <op> outer.col
 //  3. No OR, GROUP BY, HAVING, DISTINCT, LIMIT, ORDER BY, window functions
+
+// isIndexOrWrappedScan reports whether `scan` is an OP.IndexScan
+// or a Filter/FilterProject that directly wraps an OP.IndexScan.
+// REQ001254: predicate decomposition (REQ001108) often wraps
+// the scan in a residual Filter before planSelect sees it; we
+// still want the covering-index upgrade to apply.
+func isIndexOrWrappedScan(scan DT.Operator) bool {
+	if scan == nil {
+		return false
+	}
+	if _, ok := scan.(*OP.IndexScan); ok {
+		return true
+	}
+	if f, ok := scan.(*OP.Filter); ok {
+		_, ok = f.Child().(*OP.IndexScan)
+		return ok
+	}
+	if fp, ok := scan.(*OP.FilterProject); ok {
+		_, ok = fp.Child().(*OP.IndexScan)
+		return ok
+	}
+	return false
+}
+
 func (p *Planner) planSelectNoFrom(s *PS.Select) DT.Operator {
 	if hasAnyAggregate(s.Cols) {
 		dummy := OP.NewValuesOp([]PS.Expr{&PS.NumberLiteral{Val: int64(1)}})
@@ -1092,7 +1130,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 					ss.WithAlias(j.RightAlias)
 				}
 			}
-		if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
+        if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
 			// REQ001248: reorder by ascending cost.
 			if order := reorderIndices(rightPreds); order != nil {
 				rightPreds = orderSlice(rightPreds, order)
@@ -1102,6 +1140,17 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
                 rightScan = OP.NewFilter(rightScan, pred, nil)
             }
         }
+		// REQ001252: stats-driven range filter on the right side
+		// when the join equality has known stats on the left side.
+		// The filter is applied BEFORE the join so the right-side
+		// rows are pruned before row-hash lookup. We extract a
+		// single equi-join key from j.On; for multi-column joins
+		// the propagation is conservative and skipped.
+		if j.On != nil {
+			if propFilter := p.statsRangeFilterForJoin(j.On, leftTbl, j.Right); propFilter != nil {
+				rightScan = OP.NewFilter(rightScan, propFilter, nil)
+			}
+		}
 			var joinOp DT.Operator
 			if (kind == OP.JoinKindInner || kind == OP.JoinKindCross) && len(localConjuncts) > 0 {
 				lk, rk, remaining := p.extractEquiJoinKeys(localConjuncts, joinedTables, j.Right)

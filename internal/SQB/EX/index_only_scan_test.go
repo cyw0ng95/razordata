@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -193,6 +194,147 @@ func findIndexOnlyInTree(op DT.Operator) bool {
 		}
 	}
 	return false
+}
+
+// TestAutoCoveringIndex_Basic — REQ001254: when SELECT columns ⊆
+// index columns ∪ {PK}, planner auto-wraps IndexScan in IndexOnlyScan.
+// Verifies the wrapping happens WITHOUT manual annotation by wiring
+// up a real executor with a single-column index.
+func TestAutoCoveringIndex_Basic(t *testing.T) {
+	ResetForTest(t)
+	dir := t.TempDir()
+	eng, err := ls.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	store := &engineStore{eng: eng}
+	ex := NewExecutorWithEngine(store)
+	ex.RegisterTableWithPK("aci_basic", []string{"pk", "a", "z"}, "pk")
+	ex.RegisterIndex("aci_basic", "idx_a", []string{"a"})
+	id, _ := DT.TableIDFor("aci_basic")
+
+	ctx := context.Background()
+	for i := range 5 {
+		if _, err := ex.Exec(ctx, fmt.Sprintf("INSERT INTO aci_basic VALUES (%d, %d, %d)", i+1, i*10, i*1000)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	idxStore := ls.NewIndexStore(eng, id, "idx_a")
+	for i := range 5 {
+		idxStore.Insert([]byte(fmt.Sprintf("%d", i*10)), []byte(fmt.Sprintf("%d", i*10)))
+	}
+
+	// Path 1: SELECT pk,a WHERE a = 10 → covering (pk is pk, a is in index).
+	// Use ParseAndPlan to inspect the operator tree directly.
+	p := ex.planner
+	result, err := p.ParseAndPlan("SELECT pk, a FROM aci_basic WHERE a = 10")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if !findIndexOnlyInTree(result.Root) {
+		t.Fatalf("expected IndexOnlyScan for covering query; tree=%v", result.Root)
+	}
+
+	// Non-covering: SELECT z (not in index, not pk) → must NOT use IndexOnly.
+	result2, err := p.ParseAndPlan("SELECT z FROM aci_basic WHERE a = 10")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if findIndexOnlyInTree(result2.Root) {
+		t.Fatalf("IndexOnlyScan incorrectly selected for non-covering projection; tree=%v", result2.Root)
+	}
+}
+
+// TestAutoCoveringIndex_MultiCol — REQ001254 with a multi-column
+// composite index on (a, b). A SELECT projecting only a and b
+// should hit the covering path.
+func TestAutoCoveringIndex_MultiCol(t *testing.T) {
+	ResetForTest(t)
+	dir := t.TempDir()
+	eng, err := ls.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	store := &engineStore{eng: eng}
+	ex := NewExecutorWithEngine(store)
+	ex.RegisterTableWithPK("aci_multi", []string{"pk", "a", "b", "c"}, "pk")
+	ex.RegisterIndex("aci_multi", "idx_ab", []string{"a", "b"})
+	id, _ := DT.TableIDFor("aci_multi")
+
+	ctx := context.Background()
+	for i := range 5 {
+		if _, err := ex.Exec(ctx, fmt.Sprintf("INSERT INTO aci_multi VALUES (%d, %d, %d, %d)", i+1, i*10, i*100, i*1000)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	idxStore := ls.NewIndexStore(eng, id, "idx_ab")
+	for i := range 5 {
+		key := []byte(fmt.Sprintf("%d/%d", i*10, i*100))
+		val := []byte(fmt.Sprintf("%d/%d", i*10, i*100))
+		idxStore.Insert(key, val)
+	}
+
+	// Covering: project a, b (leftmost prefix of composite index).
+	p := ex.planner
+	result, err := p.ParseAndPlan("SELECT a, b FROM aci_multi WHERE a = 10")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if !findIndexOnlyInTree(result.Root) {
+		t.Fatalf("expected IndexOnlyScan for covering-leftmost query; tree=%v", result.Root)
+	}
+
+	// Non-covering: project c — not in index → no IndexOnlyScan.
+	result2, err := p.ParseAndPlan("SELECT c FROM aci_multi WHERE a = 10")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if findIndexOnlyInTree(result2.Root) {
+		t.Fatalf("IndexOnlyScan incorrectly selected for non-covering c projection; tree=%v", result2.Root)
+	}
+}
+
+// TestAutoCoveringIndex_ExplainContainsAnnotated — the EXPLAIN
+// output must show "[covering]" or the IndexOnlyScan name when the
+// covering path is selected. This is the user-visible contract.
+func TestAutoCoveringIndex_ExplainContainsAnnotated(t *testing.T) {
+	ResetForTest(t)
+	dir := t.TempDir()
+	eng, err := ls.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	store := &engineStore{eng: eng}
+	ex := NewExecutorWithEngine(store)
+	ex.RegisterTableWithPK("aci_explain", []string{"pk", "a"}, "pk")
+	ex.RegisterIndex("aci_explain", "idx_a", []string{"a"})
+	id, _ := DT.TableIDFor("aci_explain")
+
+	ctx := context.Background()
+	if _, err := ex.Exec(ctx, "INSERT INTO aci_explain VALUES (1, 100)"); err != nil {
+		t.Fatal(err)
+	}
+	idxStore := ls.NewIndexStore(eng, id, "idx_a")
+	idxStore.Insert([]byte("100"), []byte("100"))
+
+	rows, err := ex.QueryAll(ctx, "EXPLAIN SELECT pk, a FROM aci_explain WHERE a = 100")
+	if err != nil {
+		t.Fatalf("EXPLAIN: %v", err)
+	}
+	var dump strings.Builder
+	for _, r := range rows {
+		if len(r.Data) >= 4 {
+			dump.WriteString(r.Data[3].ToAny().(string))
+			dump.WriteByte('\n')
+		}
+	}
+	t.Logf("EXPLAIN:\n%s", dump.String())
+	if !strings.Contains(dump.String(), "IndexOnlyScan") && !strings.Contains(dump.String(), "covering") {
+		t.Errorf("expected IndexOnlyScan/[covering] in EXPLAIN output for covering query")
+	}
 }
 
 // _ = context.Background reserved for future ExecAll-style tests.

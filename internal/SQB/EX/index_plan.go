@@ -111,11 +111,15 @@ func flattenOr(e PS.Expr) []PS.Expr {
 // work via OP.IndexScan — wrapping them in OP.IndexOnlyScan breaks
 // correlated-subquery machinery that inspects the inner scan
 // type. Only concrete column projections trigger the path.
+//
+// REQ001254: also accepts a Filter/FilterProject wrapping an
+// OP.IndexScan; the wrapper is preserved on top of the new
+// IndexOnlyScan so the residual predicate still applies.
 func (p *Planner) tryIndexOnlyScan(s *PS.Select, whereExpr PS.Expr, scan DT.Operator) DT.Operator {
 	if s == nil || scan == nil {
 		return nil
 	}
-	isc, ok := scan.(*OP.IndexScan)
+	isc, wrapper, ok := unwrapIndexScan(scan)
 	if !ok || isc == nil {
 		return nil
 	}
@@ -132,7 +136,46 @@ func (p *Planner) tryIndexOnlyScan(s *PS.Select, whereExpr PS.Expr, scan DT.Oper
 		return nil
 	}
 	_ = whereExpr
-	return OP.NewIndexOnlyScan(isc)
+	ios := OP.NewIndexOnlyScan(isc)
+	if wrapper == nil {
+		return ios
+	}
+	// Re-attach the wrapper so the residual predicate still runs.
+	switch w := wrapper.(type) {
+	case *OP.Filter:
+		w.SetChild(ios)
+		return w
+	case *OP.FilterProject:
+		w.SetChild(ios)
+		return w
+	default:
+		return ios
+	}
+}
+
+// unwrapIndexScan returns the underlying OP.IndexScan plus the
+// optional outer wrapper (Filter or FilterProject). The boolean
+// is true on success. Used by tryIndexOnlyScan to handle plans
+// where predicate decomposition has wrapped the scan in a
+// residual Filter. REQ001254.
+func unwrapIndexScan(scan DT.Operator) (*OP.IndexScan, DT.Operator, bool) {
+	if scan == nil {
+		return nil, nil, false
+	}
+	if isc, ok := scan.(*OP.IndexScan); ok {
+		return isc, nil, true
+	}
+	if f, ok := scan.(*OP.Filter); ok {
+		if isc, ok := f.Child().(*OP.IndexScan); ok {
+			return isc, f, true
+		}
+	}
+	if fp, ok := scan.(*OP.FilterProject); ok {
+		if isc, ok := fp.Child().(*OP.IndexScan); ok {
+			return isc, fp, true
+		}
+	}
+	return nil, nil, false
 }
 
 // projectColumns returns the projected column names from a
