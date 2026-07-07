@@ -38,6 +38,7 @@ type FilterProject struct {
 	// Compiled projection expressions (from Project)
 	compiledExprs []func(in *Row) Value
 	prefixCols    []string
+	prefixTypes   []LX.TokenType // REQ001184: output row type metadata
 	colIndex      map[string]int
 	dataBuf       []Value
 	dataPerRow    int
@@ -166,7 +167,7 @@ func (fp *FilterProject) Next(ctx context.Context) (Row, error) {
 		} else {
 			fp.dataBuf = fp.dataBuf[:required]
 		}
-		dataSlice := fp.dataBuf[off : off+fp.dataPerRow : off+fp.dataPerRow]
+	dataSlice := fp.dataBuf[off : off+fp.dataPerRow : off+fp.dataPerRow]
 		out := Row{
 			Cols:     fp.prefixCols,
 			Data:     dataSlice,
@@ -193,6 +194,16 @@ func (fp *FilterProject) Next(ctx context.Context) (Row, error) {
 			}
 			out.Data[i] = v.(Value)
 		}
+		// REQ001184: infer and cache types from evaluated data.
+		if fp.prefixTypes == nil {
+			fp.prefixTypes = make([]LX.TokenType, len(fp.cols))
+		}
+		for i := range out.Data {
+			if fp.prefixTypes[i] == 0 {
+				fp.prefixTypes[i] = inferProjectType(out.Data[i].ToAny())
+			}
+		}
+		out.Types = fp.prefixTypes
 		return out, nil
 	}
 }
@@ -727,30 +738,17 @@ func (f *Filter) Close() error {
 }
 
 type Project struct {
-	child  Operator
-	cols   []PS.Expr
-	params []any
-	// REQ000756: pre-allocated column names (same for every row).
-	prefixCols []string
-	// REQ000816: pre-built colIndex map shared across all output
-	// rows. Avoids per-row BuildColIndex in Lookup (pprof: 23.45%
-	// cum, 1.06s in j3_mixed).
-	colIndex map[string]int
-	// REQ000802: compiled expression evaluators. On the first call
-	// to Next(), each SELECT expression is compiled into a function
-	// that reads directly from the input row's Data, bypassing
-	// Eval dispatch and Value<->any boxing.
-	compiledExprs []func(in *Row) (Value, error)
-	// REQ000802+: pre-allocated data buffer for output rows.
-	// Each row gets a non-overlapping sub-slice [off:off:off+dataPerRow]
-	// from this shared buffer, eliminating per-row make([]Value) allocations.
-	dataBuf    []Value
-	dataPerRow int
-	// execCtx carries per-execution state (planner, session ID,
-	// tx writer, change counters) to eval functions. REQ000812.
-	execCtx *pl.ExecContext
-
-	closed atomic.Bool
+	child     Operator
+	cols      []PS.Expr
+	params    []any
+	prefixCols  []string
+	prefixTypes []LX.TokenType // REQ001184: output row type metadata
+	colIndex    map[string]int
+	compiledExprs  []func(in *Row) (Value, error)
+	dataBuf         []Value
+	dataPerRow      int
+	execCtx    *pl.ExecContext
+	closed    atomic.Bool
 }
 
 func (p *Project) Child() Operator               { return p.child }
@@ -885,10 +883,20 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 	// Carve sub-slice pointing to the newly added space.
 	dataSlice := p.dataBuf[off : off+p.dataPerRow : off+p.dataPerRow]
 	out := Row{
-		Cols:     p.prefixCols, // shared, no copy needed
+		Cols:     p.prefixCols,
 		Data:     dataSlice,
 		ColIndex: p.colIndex,
 	}
+	// REQ001184: infer and cache types from evaluated data.
+	if p.prefixTypes == nil {
+		p.prefixTypes = make([]LX.TokenType, len(p.cols))
+	}
+	for i := range out.Data {
+		if p.prefixTypes[i] == 0 {
+			p.prefixTypes[i] = inferProjectType(out.Data[i].ToAny())
+		}
+	}
+	out.Types = p.prefixTypes
 	// Fill the data slice directly.
 	for i, c := range p.cols {
 		fn := p.compiledExprs[i]
@@ -967,6 +975,27 @@ func lookupOrCompilePredicate(e PS.Expr) func(*Row) (bool, error) {
 		predicateCache.Store(key, fn)
 	}
 	return fn
+}
+
+// inferProjectType infers the token type from a Go value.
+// REQ001184: mirrors Values.inferType for Project output rows.
+func inferProjectType(v any) LX.TokenType {
+	if v == nil {
+		return LX.TokenType(-1)
+	}
+	switch v.(type) {
+	case int64, int, int32:
+		return LX.T_INT_KW
+	case float64, float32:
+		return LX.T_FLOAT_KW
+	case bool:
+		return LX.T_BOOL
+	case string:
+		return LX.T_TEXT
+	case []byte:
+		return LX.T_BLOB
+	}
+	return LX.T_TEXT
 }
 
 // compileFilterExpr compiles a simple Filter predicate into a
