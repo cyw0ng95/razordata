@@ -5,11 +5,151 @@ import (
 	"errors"
 	"sync"
 
+	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
+
+const syncStreamRowThreshold = 100
+
+// isEligibleForSyncStream checks if a query is simple enough to use
+// the synchronous caller-pull path (no goroutine/channel overhead).
+// Small queries where channel sync dominates actual execution work
+// benefit from the sync path.
+func isEligibleForSyncStream(stmt PS.Stmt, plan *pl.PlanResult, p *Planner) bool {
+	sel, ok := stmt.(*PS.Select)
+	if !ok {
+		return false
+	}
+	// No explicit joins
+	if len(sel.Joins) > 0 {
+		return false
+	}
+	// No subquery in FROM
+	if sel.SubqueryFrom != nil {
+		return false
+	}
+	// No subquery in SELECT list
+	els := hasSubqueryInSelect(sel.Cols)
+	if els {
+		return false
+	}
+	// No complex operators in plan tree
+	if hasComplexOperator(plan.Root) {
+		return false
+	}
+	// Estimate row count below threshold
+	estimatedRows := estimateRowCount(sel, p)
+	if estimatedRows >= syncStreamRowThreshold {
+		return false
+	}
+	return true
+}
+
+// hasSubqueryInSelect walks the SELECT list for subquery expressions.
+func hasSubqueryInSelect(cols []PS.Expr) bool {
+	for _, c := range cols {
+		if hasSubqueryExpr(c) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasSubqueryExpr checks if an expression contains a subquery.
+func hasSubqueryExpr(e PS.Expr) bool {
+	switch ex := e.(type) {
+	case *PS.SubqueryExpr:
+		return true
+	case *PS.ExistsExpr:
+		return true
+	case *PS.InExpr:
+		return ex.Subquery != nil
+	case *PS.BinaryExpr:
+		return hasSubqueryExpr(ex.Left) || hasSubqueryExpr(ex.Right)
+	case *PS.UnaryExpr:
+		return hasSubqueryExpr(ex.Operand)
+	case *PS.FunctionCall:
+		for _, arg := range ex.Args {
+			if hasSubqueryExpr(arg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasComplexOperator walks the operator tree for join, aggregate, or sort
+// operators that would make the sync path inappropriate.
+func hasComplexOperator(op DT.Operator) bool {
+	switch op.(type) {
+	case *OP.NestedLoopJoin, *OP.HashJoin:
+		return true
+	case *AG.Aggregate:
+		return true
+	case *OP.Sort:
+		return true
+	}
+	for _, child := range childrenOf(op) {
+		if hasComplexOperator(child) {
+			return true
+		}
+	}
+	return false
+}
+
+// childrenOf returns direct children of an operator.
+func childrenOf(op DT.Operator) []DT.Operator {
+	switch o := op.(type) {
+	case interface{ Child() DT.Operator }:
+		c := o.Child()
+		if c != nil {
+			return []DT.Operator{c}
+		}
+	}
+	return nil
+}
+
+// estimateRowCount estimates the result row count using planner stats
+// and simple predicate selectivity.
+func estimateRowCount(sel *PS.Select, p *Planner) int64 {
+	if sel.From == "" {
+		// SELECT without FROM — single virtual row (possibly filtered)
+		if sel.Where != nil {
+			return 1 // single row, may be filtered to 0
+		}
+		return 1
+	}
+	ts := p.getTableStats(sel.From)
+	if ts == nil || ts.RowCount <= 0 {
+		return 100 // unknown; use threshold boundary
+	}
+	// Apply simple selectivity factors for WHERE predicates
+	selectivity := estimateWhereSelectivity(sel.Where)
+	estimated := int64(float64(ts.RowCount) * selectivity)
+	if estimated <= 0 {
+		estimated = 1
+	}
+	return estimated
+}
+
+// estimateWhereSelectivity returns a multiplier (0.0 - 1.0) for WHERE
+// predicates. Returns 1.0 (no filtering) when selectivity cannot be
+// estimated. Handles AND recursively.
+func estimateWhereSelectivity(e PS.Expr) float64 {
+	if e == nil {
+		return 1.0
+	}
+	if bin, ok := e.(*PS.BinaryExpr); ok {
+		if bin.Op == LX.T_AND {
+			return estimateWhereSelectivity(bin.Left) * estimateWhereSelectivity(bin.Right)
+		}
+	}
+	return estimateSelectivity(e)
+}
 
 func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*streamIterator, error) {
 	// REQ000771: try the in-Executor cache before parsing. The
@@ -115,73 +255,105 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	// REQ000586: thread DT.ExecContext to eliminate global.
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
-	// REQ001410: do NOT defer resetRowArena here — the goroutine
-	// launched below continues reading from plan.Root after this
-	// function returns. The arena must survive until the goroutine
-	// finishes. resetRowArena is called in the goroutine's deferred
-	// cleanup (after close(rowCh)) instead.
 	// Attempt vectorized execution for eligible query plans.
 	plan.Root = tryVectorizePlan(plan.Root)
 
 	// Read first row to discover schema
-	row, err := plan.Root.Next(ctx)
-	if err != nil {
-		if err == DT.ErrNoRows {
+	firstRow, firstErr := plan.Root.Next(ctx)
+	if firstErr != nil {
+		if firstErr == DT.ErrNoRows {
 			plan.Root.Close()
 			return &streamIterator{
-				cols:  nil,
-				types: nil,
-				rowCh: nil,
-				done:  true,
-			}, nil
-		}
-		plan.Root.Close()
-		return nil, err
-	}
-	DT.WithExecContext(&row, execCtx)
-	cols := append([]string(nil), row.Cols...)
-	types := append([]LX.TokenType(nil), row.Types...)
+                cols:  nil,
+                types: nil,
+                done:  true,
+            }, nil
+        }
+        plan.Root.Close()
+        return nil, firstErr
+    }
+    DT.WithExecContext(&firstRow, execCtx)
+    cols := append([]string(nil), firstRow.Cols...)
+    types := append([]LX.TokenType(nil), firstRow.Types...)
 
-	rowCh := make(chan DT.Row, 16)
-	rowCh <- row
-	closed := false
-	var closeMu sync.Mutex
-	closer := func() error {
-		closeMu.Lock()
-		defer closeMu.Unlock()
-		if closed {
-			return nil
-		}
-		closed = true
-		return plan.Root.Close()
-	}
-	go func() {
-		defer close(rowCh)
-		defer resetRowArena(execCtx)
-		for {
-			closeMu.Lock()
-			if closed {
-				closeMu.Unlock()
-				return
-			}
-			closeMu.Unlock()
-			r, err := plan.Root.Next(ctx)
-			if err != nil {
-				return
-			}
-			OP.WithExecContext(&r, execCtx)
-			select {
-			case rowCh <- r:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+    // REQ001409: for simple small queries, use synchronous caller-pull path
+    // to avoid goroutine stack + channel sync overhead.
+    if isEligibleForSyncStream(stmt, plan, e.planner) {
+        return e.syncStreamPath(ctx, plan, execCtx, firstRow, cols, types)
+    }
+
+    // REQ001410: do NOT defer resetRowArena here — the goroutine
+    // launched below continues reading from plan.Root after this
+    // function returns. The arena must survive until the goroutine
+    // finishes. resetRowArena is called in the goroutine's deferred
+    // cleanup (after close(rowCh)) instead.
+    rowCh := make(chan DT.Row, 16)
+    rowCh <- firstRow
+    closed := false
+    var closeMu sync.Mutex
+    closer := func() error {
+        closeMu.Lock()
+        defer closeMu.Unlock()
+        if closed {
+            return nil
+        }
+        closed = true
+        return plan.Root.Close()
+    }
+    go func() {
+        defer close(rowCh)
+        defer resetRowArena(execCtx)
+        for {
+            closeMu.Lock()
+            if closed {
+                closeMu.Unlock()
+                return
+            }
+            closeMu.Unlock()
+            r, err := plan.Root.Next(ctx)
+            if err != nil {
+                return
+            }
+            OP.WithExecContext(&r, execCtx)
+            select {
+            case rowCh <- r:
+            case <-ctx.Done():
+                return
+            }
+        }
+    }()
+    return &streamIterator{
+        cols:   cols,
+        types:  types,
+        rowCh:  rowCh,
+        closer: closer,
+    }, nil
+}
+
+// syncStreamPath accumulates all rows into a slice synchronously and
+// returns a slice-backed streamIterator. No goroutine or channel needed.
+func (e *Executor) syncStreamPath(ctx context.Context, plan *pl.PlanResult, execCtx *DT.ExecContext, firstRow DT.Row, cols []string, types []LX.TokenType) (*streamIterator, error) {
+    rows := []DT.Row{firstRow}
+    for {
+        r, err := plan.Root.Next(ctx)
+        if err != nil {
+            if err == DT.ErrNoRows {
+                break
+            }
+            plan.Root.Close()
+            resetRowArena(execCtx)
+            return nil, err
+        }
+        OP.WithExecContext(&r, execCtx)
+        rows = append(rows, r)
+    }
+    plan.Root.Close()
+    resetRowArena(execCtx)
 	return &streamIterator{
-		cols:   cols,
-		types:  types,
-		rowCh:  rowCh,
-		closer: closer,
+		cols: cols,
+		types: types,
+		rows: rows,
+		idx:  0, // start from firstRow
 	}, nil
 }
 
@@ -189,37 +361,57 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 // Executor.QueryStream. It buffers one row at a time so the caller can
 // discover the schema before draining the rest.
 // REQ000348.
+// REQ001409: supports two backends — channel-based streaming (rowCh)
+// for large/complex queries, and slice-based sync (rows/idx) for small
+// queries to avoid goroutine + channel overhead.
 type streamIterator struct {
-	cols   []string
-	types  []LX.TokenType
-	rowCh  chan DT.Row
-	closer func() error
+    cols   []string
+    types  []LX.TokenType
+    rowCh  chan DT.Row
+    closer func() error
+    rows   []DT.Row
+    idx    int
 
-	done bool
-	mu   sync.Mutex
+    done bool
+    mu   sync.Mutex
 }
 
 func (s *streamIterator) Cols() []string        { return s.cols }
 func (s *streamIterator) Types() []LX.TokenType { return s.types }
 func (s *streamIterator) Next() (DT.Row, error) {
-	if s == nil || s.done || s.rowCh == nil {
-		return DT.Row{}, DT.ErrNoRows
-	}
-	r, ok := <-s.rowCh
-	if !ok {
-		s.done = true
-		return DT.Row{}, DT.ErrNoRows
-	}
-	return r, nil
+    if s == nil || s.done {
+        return DT.Row{}, DT.ErrNoRows
+    }
+    // Sync (slice-backed) path
+    if s.rows != nil {
+        if s.idx >= len(s.rows) {
+            s.done = true
+            return DT.Row{}, DT.ErrNoRows
+        }
+        r := s.rows[s.idx]
+        s.idx++
+        return r, nil
+    }
+    // Channel path
+    if s.rowCh == nil {
+        s.done = true
+        return DT.Row{}, DT.ErrNoRows
+    }
+    r, ok := <-s.rowCh
+    if !ok {
+        s.done = true
+        return DT.Row{}, DT.ErrNoRows
+    }
+    return r, nil
 }
 
 func (s *streamIterator) Close() error {
-	if s == nil {
-		return nil
-	}
-	s.done = true
-	if s.closer != nil {
-		return s.closer()
-	}
-	return nil
+    if s == nil {
+        return nil
+    }
+    s.done = true
+    if s.closer != nil {
+        return s.closer()
+    }
+    return nil
 }
