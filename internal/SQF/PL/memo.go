@@ -7,7 +7,6 @@ package PL
 import (
 	"container/list"
 	"encoding/binary"
-	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -360,16 +359,8 @@ func (e *enc) writeStmt(s PS.Stmt) {
 			e.writeExpr(o.Expr)
 			e.writeBool(o.Desc)
 		}
-		// REQ001086: sort joins by Right name so that different
-		// FROM-orderings (e.g. FROM t1,t2 vs FROM t2,t1) produce
-		// the same memo key. The planner reorders joins anyway,
-		// so plan equivalence is independent of input order.
-		sortedJoins := append([]PS.JoinClause(nil), v.Joins...)
-		sort.Slice(sortedJoins, func(i, j int) bool {
-			return sortedJoins[i].Right < sortedJoins[j].Right
-		})
-		e.writeUvarint(uint64(len(sortedJoins)))
-		for _, j := range sortedJoins {
+		e.writeUvarint(uint64(len(v.Joins)))
+		for _, j := range v.Joins {
 			e.writeString(j.Kind)
 			e.writeString(j.Right)
 			e.writeExpr(j.On)
