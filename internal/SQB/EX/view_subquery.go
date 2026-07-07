@@ -407,6 +407,8 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 		}
 	}
 
+	cteTraceSeed(cte.Name, len(allRows))
+
 	if len(allRows) == 0 {
 		DT.RegisterTable(cte.Name, nil)
 		return
@@ -429,6 +431,7 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 
 	// Safety limit: prevent infinite loops from malformed recursive CTEs.
 	const maxRecIters = 10000
+	maxReached := false
 	for iter := 0; iter < maxRecIters; iter++ {
 		// Bypass plan cache so re-planning produces a fresh operator tree.
 		p.mu.Lock()
@@ -468,10 +471,17 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 			break
 		}
 
+		cteTraceIteration(cte.Name, iter+1, len(iterRows), len(newRows))
+
 		allRows = append(allRows, newRows...)
 		iterRows = newRows
 
 		DT.RegisterTable(cte.Name, allRows)
+		maxReached = (iter == maxRecIters-1)
+	}
+
+	if maxReached {
+		cteTraceMaxIterations(cte.Name)
 	}
 
 	DT.RegisterTable(cte.Name, allRows)
