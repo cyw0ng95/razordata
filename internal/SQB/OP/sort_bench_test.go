@@ -93,3 +93,59 @@ func BenchmarkSortExtractKeys(b *testing.B) {
 	benchBigKeyExtract("SlotIdx-100rows",
 		[]PS.OrderItem{{Expr: &PS.Ident{Name: "c", SlotIdx: 2}}}, b)
 }
+
+func TestSort_PreOrdered_Skip(t *testing.T) {
+	// Create a simple child that returns 3 rows
+	child := &sliceScan{
+		rows: []Row{
+			{Cols: []string{"a"}, Data: []Value{{Kind: KindInt, I64: 1}}},
+			{Cols: []string{"a"}, Data: []Value{{Kind: KindInt, I64: 2}}},
+			{Cols: []string{"a"}, Data: []Value{{Kind: KindInt, I64: 3}}},
+		},
+	}
+
+	s := NewSort(child, []PS.OrderItem{{Expr: &PS.Ident{Name: "a"}}})
+	s.SetPreOrdered()
+
+	ctx := context.Background()
+	for i := 1; i <= 3; i++ {
+		row, err := s.Next(ctx)
+		if err != nil {
+			t.Fatalf("unexpected error at row %d: %v", i, err)
+		}
+		if row.Data[0].I64 != int64(i) {
+			t.Errorf("row %d: got %d, want %d", i, row.Data[0].I64, i)
+		}
+	}
+	_, err := s.Next(ctx)
+	if err != ErrNoRows {
+		t.Fatalf("expected ErrNoRows, got %v", err)
+	}
+}
+
+func BenchmarkSort_PreOrdered(b *testing.B) {
+	rows := make([]Row, 1000)
+	for i := range rows {
+		rows[i] = Row{
+			Cols: []string{"a", "b"},
+			Data: []Value{{Kind: KindInt, I64: int64(i)}, {Kind: KindInt, I64: int64(i * 2)}},
+		}
+	}
+	child := &sliceScan{rows: rows}
+	s := NewSort(child, []PS.OrderItem{{Expr: &PS.Ident{Name: "a"}}})
+	s.SetPreOrdered()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		// Reset child position
+		child.pos = 0
+		ctx := context.Background()
+		for {
+			_, err := s.Next(ctx)
+			if err != nil {
+				break
+			}
+		}
+	}
+}

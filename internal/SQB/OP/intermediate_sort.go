@@ -23,9 +23,10 @@ type Sort struct {
 	materialized bool
 	params       []any
 	pool         *UT.WorkerPool // REQ001050: parallel sort support
-	// sortBufferSize caps the number of rows materialized before
-	// sorting. 0 = unlimited. REQ001065.
 	sortBufferSize int64
+	// REQ001278: when true, data is already in sort order (e.g. ORDER BY
+	// primary key on SeqScan output). Skip materialization + sort.
+	preOrdered bool
 
 	closed atomic.Bool
 }
@@ -37,6 +38,13 @@ func (s *Sort) Keys() []PS.OrderItem { return s.keys }
 
 func NewSort(child Operator, keys []PS.OrderItem) *Sort {
 	return &Sort{child: child, keys: keys}
+}
+
+// SetPreOrdered marks this sort as unnecessary — the child already
+// produces rows in the correct order. REQ001278.
+func (s *Sort) SetPreOrdered() *Sort {
+	s.preOrdered = true
+	return s
 }
 
 // WithPool attaches a WorkerPool for parallel sort. REQ001050.
@@ -60,6 +68,12 @@ func (s *Sort) WithParams(p []any) Operator {
 
 func (s *Sort) Next(ctx context.Context) (Row, error) {
 	ec.BUG_ON(s.closed.Load(), "Sort.Next() after Close()")
+
+	// REQ001278: pre-ordered fast path — rows are already in correct order.
+	if s.preOrdered {
+		return s.child.Next(ctx)
+	}
+
 	if !s.materialized {
 		for {
 			row, err := s.child.Next(ctx)

@@ -452,6 +452,10 @@ func (p *Planner) planSelectSubquery(s *PS.Select) DT.Operator {
 		if p.pool != nil {
 			so.WithPool(p.pool.(*UT.WorkerPool))
 		}
+		// REQ001278: detect ORDER BY pk ASC on SeqScan — skip sort.
+		if isPreOrdered(current, s.OrderBy) {
+			so.SetPreOrdered()
+		}
 		current = so
 	}
 	// OP.Limit is handled separately if needed
@@ -1348,4 +1352,34 @@ func (p *Planner) decomposeForIndexScan(whereExpr PS.Expr, scanCol string) (resi
 		residual = append(residual, c)
 	}
 	return residual, extra
+}
+
+// isPreOrdered checks whether a Sort on `op` with sort keys `orderBy`
+// is unnecessary because the child already produces rows in the
+// correct order. Currently detects ORDER BY pk ASC on a SeqScan.
+// REQ001278.
+func isPreOrdered(op DT.Operator, orderBy []PS.OrderItem) bool {
+	if len(orderBy) != 1 {
+		return false
+	}
+	if orderBy[0].Desc {
+		return false
+	}
+	ss, ok := op.(*OP.SeqScan)
+	if !ok || ss == nil {
+		return false
+	}
+	schema := ss.Schema()
+	if schema == nil || schema.Pk == "" {
+		return false
+	}
+	// Check that ORDER BY is on the PK column (bare name or qualified).
+	col := orderBy[0].Expr
+	switch e := col.(type) {
+	case *PS.Ident:
+		return strings.EqualFold(e.Name, schema.Pk)
+	case *PS.QualifiedName:
+		return strings.EqualFold(e.Name, schema.Pk)
+	}
+	return false
 }
