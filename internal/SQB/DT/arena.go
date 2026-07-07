@@ -183,54 +183,80 @@ func sizeBucketIndex(n int) int {
 	return -1
 }
 
-// slabCache is a size-bucketed slab cache keyed by size class.
-// Each bucket is a sync.Pool to allow lock-free concurrent reuse.
-var slabCache struct {
-	mu    sync.Mutex
-	pools map[int]*sync.Pool
+// slabStack is a LIFO stack of slabs for one size class.
+type slabStack struct {
+	slabs [][]byte
 }
 
+// slabCache is a size-bucketed manual slab cache keyed by size class.
+// Replaces sync.Pool which drops items between GC cycles. REQ001290.
+var slabCache struct {
+	mu        sync.Mutex
+	stacks    [4]slabStack
+	total     int64
+	highWater int64
+}
+
+const defaultHighWater = 16 * 1024 * 1024 // 16 MB
+
 func init() {
-	slabCache.pools = make(map[int]*sync.Pool, len(sizeBuckets))
-	for _, sz := range sizeBuckets {
-		sz := sz
-		slabCache.pools[sz] = &sync.Pool{
-			New: func() any { return make([]byte, sz) },
-		}
-	}
+	slabCache.highWater = defaultHighWater
 }
 
 // getSlab returns a slab from the cache with capacity >= minSize,
 // or allocates a fresh one if no cached slab is large enough.
 func getSlab(minSize int) []byte {
 	idx := sizeBucketIndex(minSize)
-	if idx >= 0 {
-		sz := sizeBuckets[idx]
-		slabCache.mu.Lock()
-		pool := slabCache.pools[sz]
-		slabCache.mu.Unlock()
-		if s := pool.Get(); s != nil {
-			buf := s.([]byte)
-			if len(buf) >= minSize {
-				return buf
-			}
-		}
+	if idx < 0 {
+		return make([]byte, minSize)
 	}
-	return make([]byte, minSize)
+	slabCache.mu.Lock()
+	st := &slabCache.stacks[idx]
+	if len(st.slabs) > 0 {
+		last := len(st.slabs) - 1
+		buf := st.slabs[last]
+		st.slabs = st.slabs[:last]
+		slabCache.total -= int64(cap(buf))
+		slabCache.mu.Unlock()
+		return buf
+	}
+	slabCache.mu.Unlock()
+	return make([]byte, sizeBuckets[idx])
 }
 
 // putSlab returns a slab to the appropriate size bucket.
+// Trims oldest slabs when total exceeds high-water mark.
 func putSlab(slab []byte) {
-	n := len(slab)
+	n := cap(slab)
 	idx := sizeBucketIndex(n)
 	if idx < 0 {
 		return // too large, let GC handle it
 	}
-	sz := sizeBuckets[idx]
 	slabCache.mu.Lock()
-	pool := slabCache.pools[sz]
+	slabCache.total += int64(n)
+	st := &slabCache.stacks[idx]
+	st.slabs = append(st.slabs, slab[:n])
+	// Trim oldest slabs when high-water mark exceeded.
+	for slabCache.total > slabCache.highWater {
+		// Find the size class with the most slabs.
+		maxIdx := 0
+		maxLen := len(slabCache.stacks[0].slabs)
+		for i := 1; i < 4; i++ {
+			if len(slabCache.stacks[i].slabs) > maxLen {
+				maxIdx = i
+				maxLen = len(slabCache.stacks[i].slabs)
+			}
+		}
+		if maxLen == 0 {
+			break
+		}
+		st := &slabCache.stacks[maxIdx]
+		last := len(st.slabs) - 1
+		discarded := cap(st.slabs[last])
+		st.slabs = st.slabs[:last]
+		slabCache.total -= int64(discarded)
+	}
 	slabCache.mu.Unlock()
-	pool.Put(slab)
 }
 
 // CloneRow clones an existing row into the arena. The returned row

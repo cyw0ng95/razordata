@@ -740,7 +740,7 @@ type Project struct {
 	// to Next(), each SELECT expression is compiled into a function
 	// that reads directly from the input row's Data, bypassing
 	// Eval dispatch and Value<->any boxing.
-	compiledExprs []func(in *Row) Value
+	compiledExprs []func(in *Row) (Value, error)
 	// REQ000802+: pre-allocated data buffer for output rows.
 	// Each row gets a non-overlapping sub-slice [off:off:off+dataPerRow]
 	// from this shared buffer, eliminating per-row make([]Value) allocations.
@@ -893,7 +893,11 @@ func (p *Project) Next(ctx context.Context) (Row, error) {
 	for i, c := range p.cols {
 		fn := p.compiledExprs[i]
 		if fn != nil {
-			out.Data[i] = fn(&row)
+			var err error
+			out.Data[i], err = fn(&row)
+			if err != nil {
+				return Row{}, err
+			}
 			continue
 		}
 		// Fallback to Eval for complex or unrecognized expressions.
@@ -1483,16 +1487,6 @@ func findColIndexInRow(row *Row, name string) int {
 	return -1
 }
 
-// compileProjectExprs compiles SELECT expressions into fast-path
-// evaluators that read directly from row.Data, bypassing Eval
-// dispatch and Value↔any boxing. REQ000802.
-func (p *Project) compileProjectExprs() {
-	p.compiledExprs = make([]func(*Row) Value, len(p.cols))
-	for i, c := range p.cols {
-		p.compiledExprs[i] = compileRowExpr(c)
-	}
-}
-
 // compileRowExpr compiles a single SELECT expression into a function
 // that reads directly from the input row and returns a Value.
 // Returns nil for unrecognized patterns (caller falls back to Eval).
@@ -1511,6 +1505,31 @@ func compileRowExpr(e PS.Expr) func(*Row) Value {
 	}
 }
 
+// compileProjectExprs compiles SELECT expressions into fast-path
+// evaluators that read directly from row.Data, bypassing Eval
+// dispatch and Value↔any boxing. REQ000802.
+func (p *Project) compileProjectExprs() {
+	p.compiledExprs = make([]func(*Row) (Value, error), len(p.cols))
+	for i, c := range p.cols {
+		// For FunctionCall and CaseExpr, use projection-specific compilers
+		// that return (Value, error). For all other types, delegate to
+		// compileRowExpr and wrap the result with nil error. REQ001291.
+		switch e := c.(type) {
+		case *PS.FunctionCall:
+			p.compiledExprs[i] = compileProjectFuncCall(e)
+		case *PS.CaseExpr:
+			p.compiledExprs[i] = compileProjectCaseExpr(e)
+		default:
+			if fn := compileRowExpr(c); fn != nil {
+				fn2 := fn // capture
+				p.compiledExprs[i] = func(row *Row) (Value, error) {
+					return fn2(row), nil
+				}
+			}
+		}
+	}
+}
+
 // compileBinaryArith compiles a binary arithmetic expression (+-*/ and DIV)
 // into a function that reads directly from the input row.
 func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
@@ -1523,7 +1542,7 @@ func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 	if left == nil || right == nil {
 		return nil
 	}
-	switch v.Op {
+switch v.Op {
 	case LX.T_PLUS:
 		return func(row *Row) Value {
 			a, b := left(row), right(row)
@@ -1570,7 +1589,6 @@ func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 				return Value{Kind: KindNull}
 			}
 			if a.Kind == KindInt && b.Kind == KindInt {
-				// REQ000932: int / int = int (integer division), matching SQLite.
 				return Value{Kind: KindInt, I64: a.I64 / b.I64}
 			}
 			return Value{Kind: KindFloat, F64: valueToFloat(a) / valueToFloat(b)}
@@ -1587,7 +1605,6 @@ func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 			if b.Kind == KindFloat && b.F64 == 0 {
 				return Value{Kind: KindNull}
 			}
-			// REQ001193: DIV is integer division — result is always int64.
 			var ai, bi int64
 			switch a.Kind {
 			case KindInt:
@@ -1626,29 +1643,19 @@ func compileColRef(name string, slotIdx int) func(*Row) Value {
 	}
 	bareLower := strings.ToLower(bareName)
 	return func(row *Row) Value {
-		// REQ001202: pre-resolved SlotIdx fast path. Verify that the
-		// column at slotIdx matches the expected name (handles the
-		// REQ001084 cross-join case where row schemas vary).
 		if slotIdx >= 0 && slotIdx < len(row.Data) && slotIdx < len(row.Cols) {
 			cl := row.Cols[slotIdx]
 			if len(cl) > 0 {
-				// REQ001274: strings.EqualFold avoids allocation vs strings.ToLower.
 				if strings.EqualFold(cl, lower) || strings.EqualFold(cl, bareLower) {
 					return row.Data[slotIdx]
 				}
 			}
 		}
-		// REQ001084: recompute idx per row. Cross-join output rows
-		// may have different Cols; a cached idx from a previous row
-		// would read from the wrong column. This is the same bug as
-		// makeCompiledCmp (REQ001084) but in the Project column refs.
-		// Fast path: use colIndex if available (avoids linear scan).
 		if row.ColIndex != nil {
 			if i, ok := row.ColIndex[lower]; ok && i < len(row.Data) {
 				return row.Data[i]
 			}
 		}
-		// Linear scan with suffix/prefix handling.
 		for i, c := range row.Cols {
 			cl := strings.ToLower(c)
 			if cl == lower || cl == bareLower {
@@ -1658,13 +1665,29 @@ func compileColRef(name string, slotIdx int) func(*Row) Value {
 				return Value{Kind: KindNull}
 			}
 		}
-		// Suffix match for bare names on prefixed rows.
 		for i, c := range row.Cols {
 			if strings.HasSuffix(strings.ToLower(c), "."+bareLower) && i < len(row.Data) {
 				return row.Data[i]
 			}
 		}
 		return Value{Kind: KindNull}
+	}
+}
+
+// compileProjectFuncCall compiles a function call expression into a
+// closure that calls EvalFunction directly, bypassing the top-level
+// EvalValue type-switch. REQ001291.
+func compileProjectFuncCall(e *PS.FunctionCall) func(*Row) (Value, error) {
+	return func(row *Row) (Value, error) {
+		return EV.EvalFunction(e, row, nil)
+	}
+}
+
+// compileProjectCaseExpr compiles a CASE expression into a closure
+// that evaluates it directly. REQ001291.
+func compileProjectCaseExpr(e *PS.CaseExpr) func(*Row) (Value, error) {
+	return func(row *Row) (Value, error) {
+		return EV.EvalValue(e, row, nil)
 	}
 }
 
