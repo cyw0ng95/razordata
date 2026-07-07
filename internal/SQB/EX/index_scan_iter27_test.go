@@ -148,6 +148,7 @@ func TestIndexScan_RangeSeek_Between(t *testing.T) {
 // seek, not prefix-scan fallback). The query result must still
 // be correct.
 func TestIndexScan_RangeSeek_Planner(t *testing.T) {
+	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
 	defer eng.Close()
@@ -155,7 +156,12 @@ func TestIndexScan_RangeSeek_Planner(t *testing.T) {
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	ex.RegisterIndex("t", "idx_a", []string{"a"})
-	id, _ := DT.TableIDFor("t")
+	// Register the index for writer maintenance so inserts
+	// auto-populate the index keyspace and the planner picks
+	// the real range-seek path (instead of the prefix-scan
+	// fallback). REQ001108: DT.RegisterIndexWithID hooks the
+	// index into MaintainIndexesOnInsert.
+	DT.RegisterIndexWithID("t", DT.RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
 
 	ctx := context.Background()
 	for _, v := range []int64{1, 3, 5, 7, 9} {
@@ -163,12 +169,6 @@ func TestIndexScan_RangeSeek_Planner(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Populate the index keyspace
-	idxStore := ls.NewIndexStore(eng, id, "idx_a")
-	for _, v := range []int64{1, 3, 5, 7, 9} {
-		idxStore.Insert(int64ToBytes(v), int64ToBytes(v))
-	}
-
 	// Use a query that requires range seek to verify the planner
 	// actually picks the real seek path.
 	rows, err := ex.QueryAll(ctx, "SELECT id FROM t WHERE a > 5 ORDER BY id")
