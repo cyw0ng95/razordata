@@ -115,7 +115,11 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	// REQ000586: thread DT.ExecContext to eliminate global.
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	propagateExecContext(plan.Root, execCtx)
-	defer resetRowArena(execCtx)
+	// REQ001410: do NOT defer resetRowArena here — the goroutine
+	// launched below continues reading from plan.Root after this
+	// function returns. The arena must survive until the goroutine
+	// finishes. resetRowArena is called in the goroutine's deferred
+	// cleanup (after close(rowCh)) instead.
 	// Attempt vectorized execution for eligible query plans.
 	plan.Root = tryVectorizePlan(plan.Root)
 
@@ -153,6 +157,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	}
 	go func() {
 		defer close(rowCh)
+		defer resetRowArena(execCtx)
 		for {
 			closeMu.Lock()
 			if closed {
