@@ -778,6 +778,10 @@ func (p *Planner) planAggregation(s *PS.Select, current DT.Operator) DT.Operator
 // window functions, projection, and DISTINCT.
 // REQ000981: extracted from planSelect.
 func (p *Planner) planOrdering(s *PS.Select, current DT.Operator) DT.Operator {
+	// REQ001362: expand star for USING joins — coalesce common columns.
+	if isStarExpr(s.Cols) && len(s.Joins) > 0 {
+		p.expandStarForUsing(s)
+	}
 	if len(s.OrderBy) > 0 {
 		selectExprs := make([]PS.Expr, 0, len(s.Cols))
 		for _, col := range s.Cols {
@@ -1412,4 +1416,45 @@ func isPreOrdered(op DT.Operator, orderBy []PS.OrderItem) bool {
 		return strings.EqualFold(e.Name, schema.Pk)
 	}
 	return false
+}
+
+// expandStarForUsing replaces the `*` SELECT list with explicit column
+// references, coalescing the common columns listed in USING clauses so
+// they appear only once. REQ001362.
+func (p *Planner) expandStarForUsing(s *PS.Select) {
+	cols := schemaCols(s.From, s.FromAlias)
+	used := make(map[string]bool)
+	for _, c := range cols {
+		used[c] = true
+	}
+	for _, j := range s.Joins {
+		rightCols := schemaCols(j.Right, j.RightAlias)
+		usingSet := make(map[string]bool, len(j.Using))
+		for _, u := range j.Using {
+			usingSet[u] = true
+		}
+		for _, c := range rightCols {
+			if !usingSet[c] && !used[c] {
+				cols = append(cols, c)
+				used[c] = true
+			}
+		}
+	}
+	exprs := make([]PS.Expr, len(cols))
+	for i, c := range cols {
+		exprs[i] = &PS.Ident{Name: c}
+	}
+	s.Cols = exprs
+}
+
+// schemaCols returns the column names for a table given its name.
+func schemaCols(table, alias string) []string {
+	if schema, ok := DT.SchemaFor(table); ok {
+		return schema.Cols
+	}
+	cols := DT.Schema(table)
+	if len(cols) > 0 {
+		return cols
+	}
+	return nil
 }

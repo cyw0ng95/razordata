@@ -625,12 +625,13 @@ func TestJoinUsing_StarExpands(t *testing.T) {
 		if len(rows) != 2 {
 			t.Fatalf("got %d rows, want 2", len(rows))
 		}
-		// Verify the join matched correctly. Column layout depends
-		// on star-expansion (REQ001362 handles coalescing).
+		// Star-expansion coalesces the USING column, so layout
+		// is [id, v, x] (3 columns).
+		id1, _ := rows[0].Data[0].ToAny().(int64)
 		v1, _ := rows[0].Data[1].ToAny().(int64)
-		x1, _ := rows[0].Data[3].ToAny().(int64)
-		if v1 != 10 || x1 != 100 {
-			t.Errorf("row 0: got (v=%d, x=%d), want (10, 100)", v1, x1)
+		x1, _ := rows[0].Data[2].ToAny().(int64)
+		if id1 != 1 || v1 != 10 || x1 != 100 {
+			t.Errorf("row 0: got (%d, %d, %d), want (1, 10, 100)", id1, v1, x1)
 		}
 	})
 	t.Run("explicit SELECT", func(t *testing.T) {
