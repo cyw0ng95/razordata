@@ -212,6 +212,22 @@ func (p *Planner) RegisterIndex(table, index string, cols []string) {
 	}
 }
 
+// availableIndexes returns the index names registered for a table.
+// REQ001296: used by buildPlanNodeTree to annotate SeqScan nodes.
+func (p *Planner) availableIndexes(table string) []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	t, ok := p.catalog[table]
+	if !ok {
+		return nil
+	}
+	var names []string
+	for name := range t.indexes {
+		names = append(names, name)
+	}
+	return names
+}
+
 func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	// Clear per-plan cache at start of every Plan() call.
 	// REQ001167: SplitAnd cache is only valid for one Plan() call.

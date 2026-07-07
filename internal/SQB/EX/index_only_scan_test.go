@@ -65,8 +65,8 @@ func TestIndexOnlyScan_NonCoveringQuery(t *testing.T) {
 // operatorType switch in plan_node.go.
 func TestIndexOnlyScan_ExplainsLabel(t *testing.T) {
 	ios := &OP.IndexOnlyScan{}
-	if got := operatorType(ios); got != "OP.IndexOnlyScan" {
-		t.Fatalf("operatorType(OP.IndexOnlyScan) = %q, want %q", got, "OP.IndexOnlyScan")
+	if got := operatorType(ios); got != "IndexOnlyScan" {
+		t.Fatalf("operatorType(OP.IndexOnlyScan) = %q, want %q", got, "IndexOnlyScan")
 	}
 }
 

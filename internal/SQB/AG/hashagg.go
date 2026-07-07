@@ -37,6 +37,9 @@ func (h *HashAggregate) Child() Operator { return h.child }
 // GroupCols returns the group-by columns.
 func (h *HashAggregate) GroupCols() []PS.Expr { return h.groupCols }
 
+// Aggs returns the aggregate expressions.
+func (h *HashAggregate) Aggs() []PS.Expr { return h.aggs }
+
 // SetExpandStar enables full-row output for SELECT * with GROUP BY.
 func (a *HashAggregate) SetExpandStar() { a.expandStar = true }
 

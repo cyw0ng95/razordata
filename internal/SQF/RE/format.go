@@ -226,6 +226,11 @@ func exprString(e PS.Expr) string {
 		return "NULL"
 	case *PS.Ident:
 		return expr.Name
+	case *PS.QualifiedName:
+		if expr.Table != "" {
+			return expr.Table + "." + expr.Name
+		}
+		return expr.Name
 	case *PS.AliasedExpr:
 		return fmt.Sprintf("%s AS %s", exprString(expr.Expr), expr.Alias)
 	case *PS.Param:

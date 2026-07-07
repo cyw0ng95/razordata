@@ -285,6 +285,12 @@ func explainQueryPlanDetail(n *PlanNode) string {
 		return "JOIN " + n.Table
 	case "OP.HashJoin":
 		return "HASH JOIN " + n.Table
+	case "MergeJoin":
+		return "MERGE JOIN " + n.Table
+	case "HashCrossJoin":
+		return "HASH CROSS JOIN " + n.Table
+	case "IndexOnlyScan":
+		return "INDEX ONLY SCAN " + n.Table
 	case "OP.Filter":
 		return "FILTER"
 	case "OP.Project":

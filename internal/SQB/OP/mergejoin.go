@@ -99,6 +99,9 @@ func (j *MergeJoin) WithKind(k JoinKind) *MergeJoin {
 	return j
 }
 
+// Kind returns the join kind. REQ001294.
+func (j *MergeJoin) Kind() JoinKind { return j.kind }
+
 // WithProjection sets the projected columns. Currently a no-op
 // because the planner's column-pruning pass runs after the join;
 // kept for API symmetry with HashJoin/NestedLoopJoin.

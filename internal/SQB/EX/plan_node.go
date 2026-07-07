@@ -66,6 +66,13 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		} else {
 			detail += " [memory]"
 		}
+		// REQ001296: show seek range in detail.
+		if len(v.IndexSeek()) > 0 {
+			detail += fmt.Sprintf(" seek=%s", formatBytes(v.IndexSeek()))
+		}
+		if len(v.IndexLower()) > 0 || len(v.IndexUpper()) > 0 {
+			detail += fmt.Sprintf(" range=[%s, %s)", formatBytes(v.IndexLower()), formatBytes(v.IndexUpper()))
+		}
 		node.Detail = detail
 
 	case *OP.SeqScan:
@@ -74,12 +81,27 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		node.Rows = int64(planner.estimateRowCount(v.Table(), nil))
 		node.Width = 100
 		detail := fmt.Sprintf("rows=%d", node.Rows)
+		// REQ001296: annotate SeqScan with index availability.
+		if planner != nil {
+			if indexes := planner.availableIndexes(v.Table()); len(indexes) > 0 {
+				detail += fmt.Sprintf(" [index available: %s]", strings.Join(indexes, ", "))
+			} else {
+				detail += " [no index]"
+			}
+		}
 		if v.Store() != nil {
 			detail += " [store]"
 		} else {
 			detail += " [memory]"
 		}
 		node.Detail = detail
+
+	case *OP.IndexOnlyScan:
+		node.Type = "IndexOnlyScan"
+		node.Detail = "[covering]"
+		if v.Inner() != nil {
+			node.Add(buildPlanNodeTree(v.Inner(), planner))
+		}
 
 	case *OP.Filter:
 		node.Detail = "WHERE"
@@ -168,25 +190,91 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 	case *AG.Aggregate:
 		node.Detail = "AGGREGATE"
 		node.Cost = AD.EstimateAggregateCost(v, nil)
+		// REQ001294: extract aggregate function names and GROUP BY columns.
+		if aggs := v.Aggs(); len(aggs) > 0 {
+			var names []string
+			for _, a := range aggs {
+				names = append(names, RE.FormatExpr(a))
+			}
+			node.Detail = "AGGREGATE (" + strings.Join(names, ", ") + ")"
+		}
+		if gc := v.GroupCols(); len(gc) > 0 {
+			var cols []string
+			for _, c := range gc {
+				cols = append(cols, RE.FormatExpr(c))
+			}
+			node.Detail += " GROUP BY (" + strings.Join(cols, ", ") + ")"
+		}
 
 	case *AG.HashAggregate:
 		node.Detail = "HASH AGGREGATE"
 		node.Cost = 5.0
+		// REQ001294: extract aggregate function names and GROUP BY columns.
+		if aggs := v.Aggs(); len(aggs) > 0 {
+			var names []string
+			for _, a := range aggs {
+				names = append(names, RE.FormatExpr(a))
+			}
+			node.Detail = "HASH AGGREGATE (" + strings.Join(names, ", ") + ")"
+		}
+		if gc := v.GroupCols(); len(gc) > 0 {
+			var cols []string
+			for _, c := range gc {
+				cols = append(cols, RE.FormatExpr(c))
+			}
+			node.Detail += " GROUP BY (" + strings.Join(cols, ", ") + ")"
+		}
 
 	case *AG.WindowOperator:
 		node.Detail = "WINDOW"
 		node.Cost = 5.0
 
 	case *OP.NestedLoopJoin:
-		if v.Kind() == OP.JoinKindSemi {
+		// REQ001294: show join type metadata (INNER/LEFT/RIGHT/FULL/SEMI).
+		switch v.Kind() {
+		case OP.JoinKindLeft:
+			node.Detail = "LEFT OUTER JOIN"
+		case OP.JoinKindRight:
+			node.Detail = "RIGHT OUTER JOIN"
+		case OP.JoinKindFull:
+			node.Detail = "FULL OUTER JOIN"
+		case OP.JoinKindSemi:
 			node.Detail = "SEMI JOIN"
-		} else {
-			node.Detail = "JOIN"
+		default:
+			node.Detail = "INNER JOIN"
 		}
 		node.Cost = 5.0
 
 	case *OP.HashJoin:
-		node.Detail = "HASH JOIN"
+		// REQ001294: show join type metadata (INNER/LEFT/RIGHT/FULL).
+		switch v.Kind() {
+		case OP.JoinKindLeft:
+			node.Detail = "LEFT OUTER HASH JOIN"
+		case OP.JoinKindRight:
+			node.Detail = "RIGHT OUTER HASH JOIN"
+		case OP.JoinKindFull:
+			node.Detail = "FULL OUTER HASH JOIN"
+		default:
+			node.Detail = "HASH JOIN"
+		}
+		node.Cost = 5.0
+
+	case *OP.MergeJoin:
+		// REQ001294: show join type metadata for merge joins.
+		switch v.Kind() {
+		case OP.JoinKindLeft:
+			node.Detail = "LEFT OUTER MERGE JOIN"
+		case OP.JoinKindRight:
+			node.Detail = "RIGHT OUTER MERGE JOIN"
+		case OP.JoinKindFull:
+			node.Detail = "FULL OUTER MERGE JOIN"
+		default:
+			node.Detail = "MERGE JOIN"
+		}
+		node.Cost = 5.0
+
+	case *OP.HashCrossJoin:
+		node.Detail = "HASH CROSS JOIN"
 		node.Cost = 5.0
 
 	case *OP.CompoundOp:
@@ -237,6 +325,20 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		if v.RightChild() != nil {
 			node.Add(buildPlanNodeTree(v.RightChild(), planner))
 		}
+	case *OP.MergeJoin:
+		if v.LeftChild() != nil {
+			node.Add(buildPlanNodeTree(v.LeftChild(), planner))
+		}
+		if v.RightChild() != nil {
+			node.Add(buildPlanNodeTree(v.RightChild(), planner))
+		}
+	case *OP.HashCrossJoin:
+		if v.LeftChild() != nil {
+			node.Add(buildPlanNodeTree(v.LeftChild(), planner))
+		}
+		if v.RightChild() != nil {
+			node.Add(buildPlanNodeTree(v.RightChild(), planner))
+		}
 	case *AG.HashAggregate:
 		if v.Child() != nil {
 			node.Add(buildPlanNodeTree(v.Child(), planner))
@@ -263,7 +365,7 @@ func operatorType(op DT.Operator) string {
 	case *OP.BitmapHeapScan:
 		return "OP.BitmapHeapScan"
 	case *OP.IndexOnlyScan:
-		return "OP.IndexOnlyScan"
+		return "IndexOnlyScan"
 	case *OP.Filter:
 		return "OP.Filter"
 	case *OP.FilterProject:
@@ -287,7 +389,11 @@ func operatorType(op DT.Operator) string {
 	case *OP.NestedLoopJoin:
 		return "Join"
 	case *OP.HashJoin:
-		return "OP.HashJoin"
+		return "HashJoin"
+	case *OP.MergeJoin:
+		return "MergeJoin"
+	case *OP.HashCrossJoin:
+		return "HashCrossJoin"
 	case *AG.WindowOperator:
 		return "Window"
 	case *OP.CompoundOp:
@@ -346,4 +452,12 @@ func operatorType(op DT.Operator) string {
 		return "Fallback"
 	}
 	return "Unknown"
+}
+
+// formatBytes renders a byte slice as a hex string for EXPLAIN output.
+func formatBytes(b []byte) string {
+	if len(b) == 0 {
+		return "nil"
+	}
+	return fmt.Sprintf("%x", b)
 }
