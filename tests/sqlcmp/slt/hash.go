@@ -1,24 +1,24 @@
 package slt
 
 import (
+	"crypto/md5"
 	"hash"
 	"sync"
-
-	"github.com/cespare/xxhash/v2"
 )
 
-// hashPool reuses a non-cryptographic hash (xxhash) across resultHash
-// and hashValues. xxhash is 5-10x faster than MD5 for this use case
-// (intra-process comparison, no security requirement).
-var hashPool = sync.Pool{
-	New: func() any { return xxhash.New() },
+// md5Pool is a sync.Pool of hash.Hash (md5) reused across resultHash
+// and hashValues to eliminate per-call allocation of the hasher.
+var md5Pool = sync.Pool{
+	New: func() any { return md5.New() },
 }
 
-func pooledHash(s string) string {
-	h := hashPool.Get().(hash.Hash)
+// pooledMD5 returns the hex-encoded MD5 digest of s, using the
+// package-level md5Pool to avoid allocating a new hasher per call.
+func pooledMD5(s string) string {
+	h := md5Pool.Get().(hash.Hash)
 	defer func() {
 		h.Reset()
-		hashPool.Put(h)
+		md5Pool.Put(h)
 	}()
 	h.Write([]byte(s))
 	sum := h.Sum(nil)

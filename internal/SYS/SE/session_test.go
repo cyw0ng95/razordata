@@ -9,6 +9,7 @@ import (
 	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
+	_ "github.com/cyw0ng95/razordata/internal/SYS/TX"
 )
 
 func testEngine(t *testing.T) (AP.Engine, context.Context) {

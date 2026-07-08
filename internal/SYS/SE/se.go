@@ -15,7 +15,6 @@ import (
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
-	"github.com/cyw0ng95/razordata/internal/SYS/TX"
 	vl "github.com/cyw0ng95/razordata/internal/TXN/VL"
 )
 
@@ -227,7 +226,12 @@ func (s *Session) Begin(ctx context.Context) (AP.Transaction, error) {
 		return nil, wrapEXError(err)
 	}
 	s.txn = t
-	if tx, ok := t.(*TX.Transaction); ok {
+	// Use an inline interface to avoid importing TX directly
+	// (which would create a cycle when TX tests need SE).
+	if tx, ok := t.(interface {
+		SetIsolationLevel(AP.IsolationLevel)
+		SetOnFinish(func())
+	}); ok {
 		tx.SetIsolationLevel(s.isolationLevel)
 		tx.SetOnFinish(func() { s.ClearTxn() })
 	}
@@ -407,8 +411,6 @@ func (s *Session) lock(ctx context.Context) error {
 	}
 	return nil
 }
-
-var _ = (*TX.Transaction)(nil)
 
 func init() {
 	SY.RegisterSession(func(e *SY.Engine) AP.Session { return NewSession(e) })
