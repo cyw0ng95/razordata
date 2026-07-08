@@ -657,8 +657,13 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		}
 	}
 	if scan == nil {
-		if ssc, err := OP.NewSeqScanWithStore(p.store, s.From); err == nil {
-			scan = ssc
+		// REQ001317: if the table is not in the planner's catalog
+		// (e.g. system tables like razor_stat1), fall through to
+		// NewIndexOrSeqScan which reads from DT.Tables directly.
+		if _, ok := p.catalog[s.From]; ok {
+			if ssc, err := OP.NewSeqScanWithStore(p.store, s.From); err == nil {
+				scan = ssc
+			}
 		}
 	}
 	return scan, remaining

@@ -25,6 +25,16 @@ type Analyze struct {
 	rowsAff int64
 }
 
+// analyzeColInfo holds per-column statistics collected during ANALYZE.
+type analyzeColInfo struct {
+	nullCount  int64
+	distinct   map[string]struct{}
+	minValue   []byte
+	maxValue   []byte
+	reservoir  [][]byte
+	reservoirN int64
+}
+
 func NewAnalyze(stmt *PS.AnalyzeStmt) *Analyze {
 	return &Analyze{stmt: stmt}
 }
@@ -72,27 +82,6 @@ func (a *Analyze) WithParams(p []any) Operator { return a }
 // analyzeTable performs reservoir sampling on a single table
 // and builds column statistics. REQ000258.
 func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
-	cat := DT.Catalog()
-	if cat == nil {
-		return nil
-	}
-
-	// Look up the catalog's table ID for this table (the EX-layer's
-	// tableID is not the same as the catalog's internal table ID).
-	var catTableID uint64
-	var catIDFound bool
-	for _, e := range cat.List() {
-		if e.Name == tableName {
-			catTableID = e.TableID
-			catIDFound = true
-			break
-		}
-	}
-	if !catIDFound {
-		// Table not registered in the catalog — can't persist stats.
-		return nil
-	}
-
 	ss, ok := DT.SchemaFor(tableName)
 	if !ok {
 		return DT.ErrTableNotRegisteredForStorage
@@ -106,15 +95,7 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano()+1)))
 
 	nCols := len(ss.Cols)
-	type colInfo struct {
-		nullCount  int64
-		distinct   map[string]struct{}
-		minValue   []byte
-		maxValue   []byte
-		reservoir  [][]byte
-		reservoirN int64
-	}
-	cols := make([]colInfo, nCols)
+	cols := make([]analyzeColInfo, nCols)
 	for i := range cols {
 		cols[i].distinct = make(map[string]struct{})
 		cols[i].reservoir = make([][]byte, 0, sampleSize)
@@ -183,19 +164,34 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 		return err
 	}
 
-	for i, colName := range ss.Cols {
-		ci := &cols[i]
-		stats := ls.ColumnStats{
-			DistinctCount: int64(len(ci.distinct)),
-			NullCount:     ci.nullCount,
-			MinValue:      ci.minValue,
-			MaxValue:      ci.maxValue,
-			Histogram:     buildHistogram(ci.reservoir, 256),
-			RowCount:      rowCount,
+	// Persist stats to catalog blob (if catalog is available).
+	cat := DT.Catalog()
+	if cat != nil {
+		var catTableID uint64
+		for _, e := range cat.List() {
+			if e.Name == tableName {
+				catTableID = e.TableID
+				break
+			}
 		}
-		if err := cat.PutStats(catTableID, colName, stats); err != nil {
-			return err
+		for i, colName := range ss.Cols {
+			ci := &cols[i]
+			stats := ls.ColumnStats{
+				DistinctCount: int64(len(ci.distinct)),
+				NullCount:     ci.nullCount,
+				MinValue:      ci.minValue,
+				MaxValue:      ci.maxValue,
+				Histogram:     buildHistogram(ci.reservoir, 256),
+				RowCount:      rowCount,
+			}
+			_ = cat.PutStats(catTableID, colName, stats)
 		}
+	}
+
+	// REQ001317: persist stats to razor_stat1 SQL table so they are
+	// queryable via SQL (not just the Go catalog API).
+	if err := a.persistStat1(tableName, ss.Cols, rowCount, cols); err != nil {
+		return err
 	}
 
 	lm := PL.Learned()
@@ -307,6 +303,63 @@ func sortBytes(data [][]byte) {
 		}
 		data[j+1] = key
 	}
+}
+
+// stat1Cols is the column list for the razor_stat1 system table.
+var stat1Cols = []string{"tbl", "col_name", "ndv", "rowcount", "null_count", "min_val", "max_val"}
+
+// ensureStat1Table registers the razor_stat1 schema and initializes
+// the in-memory table if it doesn't exist. Idempotent. REQ001317.
+func ensureStat1Table() {
+	DT.RegisterStoreSchema("razor_stat1", stat1Cols, "")
+	if _, ok := DT.Tables["razor_stat1"]; !ok {
+		DT.Tables["razor_stat1"] = []DT.Row{}
+	}
+}
+
+// deleteStat1Rows removes all existing stats for the given table
+// from razor_stat1. Caller must hold DT.TablesMu or be single-threaded.
+func deleteStat1Rows(tableName string) {
+	rows := DT.Tables["razor_stat1"]
+	n := 0
+	for _, r := range rows {
+		if len(r.Data) > 0 && r.Data[0].S != tableName {
+			rows[n] = r
+			n++
+		}
+	}
+	DT.Tables["razor_stat1"] = rows[:n]
+}
+
+// insertStat1Row appends a single stats row to razor_stat1.
+func insertStat1Row(table, col string, rowCount, ndv, nullCount int64, minVal, maxVal []byte) {
+	DT.Tables["razor_stat1"] = append(DT.Tables["razor_stat1"], DT.Row{
+		Cols: stat1Cols,
+		Data: []DT.Value{
+			DT.NewTextValue(table),
+			DT.NewTextValue(col),
+			DT.NewIntValue(ndv),
+			DT.NewIntValue(rowCount),
+			DT.NewIntValue(nullCount),
+			DT.NewBlobValue(minVal),
+			DT.NewBlobValue(maxVal),
+		},
+	})
+}
+
+// persistStat1 writes all column stats to the razor_stat1 system
+// table. Called after cat.PutStats() in analyzeTable. REQ001317.
+func (a *Analyze) persistStat1(tableName string, colNames []string, rowCount int64, cols []analyzeColInfo) error {
+	ensureStat1Table()
+	DT.TablesMu.Lock()
+	defer DT.TablesMu.Unlock()
+	deleteStat1Rows(tableName)
+	for i, colName := range colNames {
+		ci := &cols[i]
+		insertStat1Row(tableName, colName, rowCount,
+			int64(len(ci.distinct)), ci.nullCount, ci.minValue, ci.maxValue)
+	}
+	return nil
 }
 
 // Vacuum is the DDL operator for VACUUM. REQ000257.
