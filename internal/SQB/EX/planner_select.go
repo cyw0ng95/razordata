@@ -567,7 +567,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		// idxDT.Store.Insert), hasWriterIndex returns false and
 		// we use the prefix-scan fallback.
 		if col, val, ok := indexedColumnEq(whereExpr); ok {
-			idx, found := p.selectIndex(s.From, col)
+			idx, found := p.selectIndexWithHint(s.From, col, s.IndexHint)
 			if found && hasWriterIndex(s.From, idx) {
 				tableID, _ := DT.TableIDFor(s.From)
 				if isc, err := OP.NewIndexScanWithIndex(p.store, tableID, s.From, idx, val, nil); err == nil {
@@ -591,7 +591,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		// for `col > X`, `col BETWEEN X AND Y`, etc.
 		if scan == nil {
 			if col, lo, loIncl, up, upIncl, ok := indexedColumnRange(whereExpr); ok {
-				idx, found := p.selectIndex(s.From, col)
+				idx, found := p.selectIndexWithHint(s.From, col, s.IndexHint)
 				if found && hasWriterIndex(s.From, idx) {
 					tableID, _ := DT.TableIDFor(s.From)
 					if isc, err := OP.NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
@@ -615,7 +615,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		// REQ001070: LIKE prefix range seek on an indexed column.
 		if scan == nil {
 			if col, prefix, ok := indexedColumnLikePrefix(whereExpr); ok {
-				idx, found := p.selectIndex(s.From, col)
+				idx, found := p.selectIndexWithHint(s.From, col, s.IndexHint)
 				if found && hasWriterIndex(s.From, idx) {
 					tableID, _ := DT.TableIDFor(s.From)
 					upper := make([]byte, len(prefix)+1)
@@ -640,7 +640,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		}
 		if scan == nil {
 			if col, ok := indexedColumn(whereExpr); ok {
-				if idx, found := p.selectIndex(s.From, col); found {
+				if idx, found := p.selectIndexWithHint(s.From, col, s.IndexHint); found {
 					if isc, err := OP.NewIndexScanWithStore(p.store, s.From, idx); err == nil {
 						// REQ001108: NewIndexScanWithStore is a table
 						// prefix scan (returns ALL rows), not a real

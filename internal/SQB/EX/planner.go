@@ -255,6 +255,11 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 
 	var root DT.Operator
 
+	// REQ001371: validate INDEXED BY hint before planning.
+	if err := p.validateIndexHint(rewritten); err != nil {
+		return nil, err
+	}
+
 	switch s := rewritten.(type) {
 	case *PS.Select:
 		// REQ001293: execute non-correlated scalar subqueries at

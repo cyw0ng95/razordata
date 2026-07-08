@@ -1,6 +1,7 @@
 package EX
 
 import (
+	"fmt"
 	"strings"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -496,6 +497,54 @@ func (p *Planner) selectIndex(table, col string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// selectIndexWithHint wraps selectIndex and enforces the INDEXED BY
+// hint. If the hint specifies an index name, only that index is
+// considered. If the hint is NOT INDEXED (empty IndexedBy on non-nil
+// IndexHint), no index is used. REQ001371.
+func (p *Planner) selectIndexWithHint(table, col string, hint *PS.IndexHint) (string, bool) {
+	if hint != nil {
+		if hint.IndexedBy == "" {
+			// NOT INDEXED — force sequential scan
+			return "", false
+		}
+		// INDEXED BY idx_name — verify the index exists on this table
+		t, ok := p.catalog[table]
+		if !ok {
+			return "", false
+		}
+		if _, found := t.indexes[hint.IndexedBy]; found {
+			return hint.IndexedBy, true
+		}
+		return "", false
+	}
+	return p.selectIndex(table, col)
+}
+
+// validateIndexHint checks that an INDEXED BY hint references a valid
+// index. Returns an error for invalid index names. REQ001371.
+func (p *Planner) validateIndexHint(stmt PS.Stmt) error {
+	var table string
+	var hint *PS.IndexHint
+	switch s := stmt.(type) {
+	case *PS.Select:
+		table, hint = s.From, s.IndexHint
+	case *PS.Update:
+		table, hint = s.Table, s.IndexHint
+	case *PS.Delete:
+		table, hint = s.Table, s.IndexHint
+	default:
+		return nil
+	}
+	if hint == nil || hint.IndexedBy == "" {
+		return nil
+	}
+	t, ok := p.catalog[table]
+	if !ok || t.indexes[hint.IndexedBy] == nil {
+		return fmt.Errorf("no such index: %s", hint.IndexedBy)
+	}
+	return nil
 }
 
 // extractViewAliases returns a set of column alias names from a

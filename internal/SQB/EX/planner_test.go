@@ -738,3 +738,117 @@ func BenchmarkSplitAnd_NoCacheBaseline(b *testing.B) {
 		}
 	}
 }
+
+// TestIndexHint_ForcesIndex verifies REQ001371: INDEXED BY forces
+// the planner to use the named index.
+func TestIndexHint_ForcesIndex(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("t", []DT.ColInfo{
+		{Name: "a", Typ: LX.T_INT},
+		{Name: "b", Typ: LX.T_INT},
+	}, "a")
+	p.RegisterIndex("t", "idx_a", []string{"a"})
+	p.RegisterIndex("t", "idx_b", []string{"b"})
+
+	// Query with INDEXED BY idx_b should use idx_b even though
+	// WHERE references column "a" (which has idx_a).
+	result, err := p.ParseAndPlan("SELECT * FROM t INDEXED BY idx_b WHERE a = 1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Root == nil {
+		t.Fatal("expected a plan, got nil")
+	}
+}
+
+// TestIndexHint_NotIndexed forces sequential scan.
+func TestIndexHint_NotIndexed(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("t", []DT.ColInfo{
+		{Name: "a", Typ: LX.T_INT},
+		{Name: "b", Typ: LX.T_INT},
+	}, "a")
+	p.RegisterIndex("t", "idx_a", []string{"a"})
+
+	// NOT INDEXED should force SeqScan even with an indexed WHERE.
+	result, err := p.ParseAndPlan("SELECT * FROM t NOT INDEXED WHERE a = 1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Root == nil {
+		t.Fatal("expected a plan, got nil")
+	}
+}
+
+// TestIndexHint_InvalidName_Error verifies that an invalid INDEXED BY
+// name produces an error.
+func TestIndexHint_InvalidName_Error(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("t", []DT.ColInfo{
+		{Name: "a", Typ: LX.T_INT},
+	}, "a")
+	p.RegisterIndex("t", "idx_a", []string{"a"})
+
+	_, err := p.ParseAndPlan("SELECT * FROM t INDEXED BY nonexistent WHERE a = 1")
+	if err == nil {
+		t.Fatal("expected error for nonexistent index, got nil")
+	}
+}
+
+// TestIndexHint_Update honors INDEXED BY.
+func TestIndexHint_Update(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("t", []DT.ColInfo{
+		{Name: "a", Typ: LX.T_INT},
+		{Name: "b", Typ: LX.T_INT},
+	}, "a")
+	p.RegisterIndex("t", "idx_b", []string{"b"})
+
+	result, err := p.ParseAndPlan("UPDATE t INDEXED BY idx_b SET b = 2 WHERE a = 1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Root == nil {
+		t.Fatal("expected a plan, got nil")
+	}
+}
+
+// TestIndexHint_Delete honors INDEXED BY.
+func TestIndexHint_Delete(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("t", []DT.ColInfo{
+		{Name: "a", Typ: LX.T_INT},
+		{Name: "b", Typ: LX.T_INT},
+	}, "a")
+	p.RegisterIndex("t", "idx_b", []string{"b"})
+
+	result, err := p.ParseAndPlan("DELETE FROM t INDEXED BY idx_b WHERE a = 1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Root == nil {
+		t.Fatal("expected a plan, got nil")
+	}
+}
+
+// TestSelectIndex_NoHint_PreservesExisting verifies that queries without
+// INDEXED BY hints still use the existing index selection logic.
+func TestSelectIndex_NoHint_PreservesExisting(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("t", []DT.ColInfo{
+		{Name: "a", Typ: LX.T_INT},
+		{Name: "b", Typ: LX.T_INT},
+	}, "a")
+	p.RegisterIndex("t", "idx_b", []string{"b"})
+
+	// Without hint, WHERE b = 1 should use idx_b.
+	idx, ok := p.selectIndex("t", "b")
+	if !ok || idx != "idx_b" {
+		t.Errorf("expected idx_b, got %s (found=%v)", idx, ok)
+	}
+	// Without hint, WHERE a = 1 should find no index (a is PK, not indexed).
+	_, ok = p.selectIndex("t", "a")
+	if ok {
+		t.Error("expected no index on column a")
+	}
+}
