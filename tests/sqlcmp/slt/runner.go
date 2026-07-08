@@ -346,10 +346,10 @@ func (r *Runner) runQuery(ctx context.Context, rec *Record) {
 // Used to compare queries that share a label.
 func resultHash(rs *ResultSet, mode SortMode) string {
 	rows := rs.Rows
-	h := md5Pool.Get().(hash.Hash)
+	h := hashPool.Get().(hash.Hash)
 	defer func() {
 		h.Reset()
-		md5Pool.Put(h)
+		hashPool.Put(h)
 	}()
 	if mode == RowSort || mode == ValueSort {
 		idx := make([]int, len(rows))
