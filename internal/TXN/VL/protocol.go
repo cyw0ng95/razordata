@@ -96,7 +96,7 @@ func (t *tx) Get(ctx context.Context, key []byte) ([]byte, error) {
 	}
 	// REQ000994: acquire shared lock on read.
 	if t.manager != nil && t.manager.lt != nil {
-		if err := t.manager.lt.Lock(t.slot.txnID, key, LockModeShared); err != nil {
+		if err := t.manager.lt.busyLock(t.slot.txnID, key, LockModeShared); err != nil {
 			return nil, err
 		}
 	}
@@ -157,7 +157,7 @@ func (t *tx) Insert(ctx context.Context, key, value []byte) error {
 	t.setPhase(PhaseWrite)
 	// REQ000994: acquire exclusive lock on write.
 	if t.manager != nil && t.manager.lt != nil {
-		if err := t.manager.lt.Lock(t.slot.txnID, key, LockModeExclusive); err != nil {
+		if err := t.manager.lt.busyLock(t.slot.txnID, key, LockModeExclusive); err != nil {
 			return err
 		}
 	}
@@ -181,7 +181,7 @@ func (t *tx) Delete(ctx context.Context, key []byte) error {
 	t.setPhase(PhaseWrite)
 	// REQ000994: acquire exclusive lock on write.
 	if t.manager != nil && t.manager.lt != nil {
-		if err := t.manager.lt.Lock(t.slot.txnID, key, LockModeExclusive); err != nil {
+		if err := t.manager.lt.busyLock(t.slot.txnID, key, LockModeExclusive); err != nil {
 			return err
 		}
 	}

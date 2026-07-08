@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	VL "github.com/cyw0ng95/razordata/internal/TXN/VL"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -155,13 +157,90 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 	}
 
 	// Handle PRAGMA wal_checkpoint (REQ000735)
-	if p.Stmt.Name == "wal_checkpoint" || p.Stmt.Name == "wal_autocheckpoint" {
+	if p.Stmt.Name == "wal_checkpoint" {
 		if !p.done {
 			p.done = true
 			// Return checkpoint status: busy, log, checkpointed
 			p.rows = append(p.rows, DT.Row{
 				Cols: []string{"busy", "log", "checkpointed"},
 				Data: []DT.Value{DT.NewIntValue(0), DT.NewIntValue(0), DT.NewIntValue(0)},
+			})
+		}
+		if p.idx >= len(p.rows) {
+			return DT.Row{}, DT.ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
+	// Handle PRAGMA wal_autocheckpoint = N (REQ001300)
+	if p.Stmt.Name == "wal_autocheckpoint" {
+		if !p.done {
+			p.done = true
+			if p.Stmt.Value != "" {
+				if n, err := strconv.ParseInt(p.Stmt.Value, 10, 64); err == nil {
+					DT.SetWalAutocheckpoint(n)
+				}
+			}
+			val := DT.GetWalAutocheckpoint()
+			p.rows = append(p.rows, DT.Row{
+				Cols: []string{"wal_autocheckpoint"},
+				Data: []DT.Value{DT.NewIntValue(val)},
+			})
+		}
+		if p.idx >= len(p.rows) {
+			return DT.Row{}, DT.ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
+	// Handle PRAGMA busy_timeout = N (REQ001301)
+	if p.Stmt.Name == "busy_timeout" {
+		if !p.done {
+			p.done = true
+			if p.Stmt.Value != "" {
+				if n, err := strconv.ParseInt(p.Stmt.Value, 10, 64); err == nil {
+					DT.SetBusyTimeout(n)
+				}
+			}
+			val := DT.GetBusyTimeout()
+			p.rows = append(p.rows, DT.Row{
+				Cols: []string{"busy_timeout"},
+				Data: []DT.Value{DT.NewIntValue(val)},
+			})
+		}
+		if p.idx >= len(p.rows) {
+			return DT.Row{}, DT.ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
+	// Handle PRAGMA busy_handler = name (REQ001302)
+	if p.Stmt.Name == "busy_handler" {
+		if !p.done {
+			p.done = true
+			// Match the foreign_keys pattern: only write when Value is
+			// non-empty. Reading the PRAGMA (no = clause) leaves state
+			// untouched. To clear, the embedder can use the Go-level
+			// DT.SetBusyHandler("", nil) hook — SQL cannot unambiguously
+			// distinguish "clear" from "read".
+			if p.Stmt.Value != "" {
+				name := p.Stmt.Value
+				// Register a callback under the given name that maps
+				// the SQL PRAGMA setting onto the VL busyHandler hook.
+				// The callback honors busy_timeout as its wait budget.
+				DT.SetBusyHandler(name, busyHandlerAdapter(name))
+				VL.SetBusyHandler(adaptBusyHandler(name))
+			}
+			cur, _ := DT.GetBusyHandler()
+			p.rows = append(p.rows, DT.Row{
+				Cols: []string{"busy_handler"},
+				Data: []DT.Value{DT.NewTextValue(cur)},
 			})
 		}
 		if p.idx >= len(p.rows) {
@@ -763,3 +842,46 @@ func (d *DetachOp) RowsAffected() int64            { return 0 }
 // reference an attached database. Full cross-database query support
 // (SELECT from attached.t, etc.) is deferred. REQ000908.
 var ErrMultiDatabaseNotSupported = errors.New("wt: cross-database queries not supported in v1")
+
+// busyHandlerAdapter returns a DT.BusyHandlerFunc that uses the
+// active busy_timeout as its retry budget and returns false after
+// the budget elapses. REQ001302.
+func busyHandlerAdapter(_ string) DT.BusyHandlerFunc {
+	return func(attempt int) bool {
+		budget := time.Duration(DT.GetBusyTimeout()) * time.Millisecond
+		if budget <= 0 {
+			return false
+		}
+		// back-off: 1ms, 2ms, 4ms, ... capped at 50ms; return true
+		// until the budget is exhausted.
+		wait := time.Duration(1<<min(attempt-1, 6)) * time.Millisecond
+		if wait > 50*time.Millisecond {
+			wait = 50 * time.Millisecond
+		}
+		time.Sleep(wait)
+		return time.Duration(attempt)*wait <= budget
+	}
+}
+
+// adaptBusyHandler returns a VL-shaped busy handler that honors the
+// registered DT-level handler. We bridge by re-using the DT-level
+// callback's retry decision and computing the wait duration locally.
+// REQ001302.
+func adaptBusyHandler(name string) func(attempt int) (time.Duration, bool) {
+	return func(attempt int) (time.Duration, bool) {
+		_, fn := DT.GetBusyHandler()
+		if fn == nil {
+			return 0, false
+		}
+		ok := fn(attempt)
+		if !ok {
+			return 0, false
+		}
+		wait := time.Duration(1<<min(attempt-1, 6)) * time.Millisecond
+		if wait > 50*time.Millisecond {
+			wait = 50 * time.Millisecond
+		}
+		_ = name
+		return wait, true
+	}
+}
