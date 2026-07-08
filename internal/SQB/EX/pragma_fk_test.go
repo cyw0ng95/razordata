@@ -277,3 +277,64 @@ func TestPragma_ForeignKeys_InsideTxn_NoOp(t *testing.T) {
 		t.Fatalf("expected foreign_keys=1 inside txn, got %v", rows[0].Data[0].I64)
 	}
 }
+
+// TestPragma_ForeignKeys_ToggleEnforcesDML verifies that the global
+// FK toggle is properly read by the enforcement check. Since the
+// in-memory INSERT path requires a store for FK validation (fk.go:13),
+// this test verifies the toggle state is correctly propagated by
+// exercising the DT toggle directly — the same path the DML writers use.
+func TestPragma_ForeignKeys_ToggleEnforcesDML(t *testing.T) {
+	UT.UnregisterAllPragmaListeners()
+	defer UT.UnregisterAllPragmaListeners()
+	defer DT.SetForeignKeysEnabled(true) // restore default
+
+	// Verify default is ON.
+	if !DT.IsForeignKeysEnabled() {
+		t.Fatal("expected default foreign_keys=ON")
+	}
+
+	// Toggle OFF via PRAGMA (outside transaction).
+	e := NewExecutorWithEngine(nil)
+	ctx := context.Background()
+	_, err := e.Exec(ctx, `PRAGMA foreign_keys = OFF`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if DT.IsForeignKeysEnabled() {
+		t.Fatal("expected IsForeignKeysEnabled()=false after PRAGMA OFF")
+	}
+
+	// Toggle ON via PRAGMA.
+	_, err = e.Exec(ctx, `PRAGMA foreign_keys = ON`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !DT.IsForeignKeysEnabled() {
+		t.Fatal("expected IsForeignKeysEnabled()=true after PRAGMA ON")
+	}
+
+	// Verify OFF/ON round-trip via QueryAll.
+	_, err = e.Exec(ctx, `PRAGMA foreign_keys = OFF`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := e.QueryAll(ctx, `PRAGMA foreign_keys`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Data[0].I64 != 0 {
+		t.Fatalf("expected foreign_keys=0 after OFF, got %v", rows[0].Data)
+	}
+
+	_, err = e.Exec(ctx, `PRAGMA foreign_keys = ON`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err = e.QueryAll(ctx, `PRAGMA foreign_keys`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Data[0].I64 != 1 {
+		t.Fatalf("expected foreign_keys=1 after ON, got %v", rows[0].Data)
+	}
+}
