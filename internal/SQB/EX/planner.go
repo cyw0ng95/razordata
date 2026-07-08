@@ -806,6 +806,9 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 		// REQ000905/REQ000906: these are handled by the Pragma operator
 		// which needs access to the store for FK introspection.
 		return WT.NewPragma(s).WithStore(p.store)
+	case "wal_autocheckpoint", "busy_timeout", "busy_handler":
+		// REQ001300 / REQ001301 / REQ001302: handled by Pragma operator.
+		return WT.NewPragma(s).WithStore(p.store)
 	default:
 		return OP.NewSeqScan("__pragma_unknown__")
 	}

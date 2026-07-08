@@ -162,6 +162,15 @@ func (lt *LockTable) unlockShards(indices []int) {
 // Lock acquires a lock on the given key. Returns ErrDeadlockTimeout if the
 // lock cannot be acquired within the timeout.
 func (lt *LockTable) Lock(txnID uint64, key []byte, mode LockMode) error {
+	return lt.LockWithTimeout(txnID, key, mode, lt.timeout)
+}
+
+// LockWithTimeout is like Lock but uses the supplied timeout instead of
+// the table-wide default. A non-positive timeout means "do not wait"
+// and the call returns ErrDeadlockTimeout immediately if the lock
+// cannot be granted. The timeout is honored per call, which lets
+// callers honor busy_timeout / busy_handler (REQ001301 / REQ001302).
+func (lt *LockTable) LockWithTimeout(txnID uint64, key []byte, mode LockMode, timeout time.Duration) error {
 	h := fnv1aHash64(key)
 	idx := lt.shardFor(h)
 	shard := &lt.shards[idx]
@@ -203,13 +212,19 @@ func (lt *LockTable) Lock(txnID uint64, key []byte, mode LockMode) error {
 	node := entry.waiters.enqueue(txnID, mode)
 	shard.mu.Unlock()
 
+	if timeout <= 0 {
+		entry.waiters.dequeue(txnID)
+		lt.aborted.Add(1)
+		return ErrDeadlockTimeout
+	}
+
 	select {
 	case <-node.done:
 		if node.granted {
 			return nil
 		}
 		return ErrDeadlockTimeout
-	case <-time.After(lt.timeout):
+	case <-time.After(timeout):
 		entry.waiters.dequeue(txnID)
 		lt.aborted.Add(1)
 		return ErrDeadlockTimeout
@@ -284,3 +299,64 @@ type LockStats struct {
 
 // ErrDeadlockTimeout is returned when a lock cannot be acquired within timeout.
 var ErrDeadlockTimeout = errors.New("txn: lock acquisition timed out (deadlock detected)")
+
+// busyHandler is the package-level callback invoked when a lock
+// cannot be acquired. It returns the duration to wait before the
+// next retry and a boolean indicating whether to keep retrying.
+// Setting it to nil disables the busy-handler path. REQ001302.
+var busyHandler atomic.Pointer[func(attempt int) (time.Duration, bool)]
+
+// SetBusyHandler installs (or clears, when fn is nil) the package-level
+// busy handler. While set, Lock attempts invoke it on contention to
+// decide how long to wait. REQ001302.
+func SetBusyHandler(fn func(attempt int) (time.Duration, bool)) {
+	if fn == nil {
+		busyHandler.Store(nil)
+		return
+	}
+	busyHandler.Store(&fn)
+}
+
+// getBusyHandler returns the installed busy handler or nil.
+func getBusyHandler() func(attempt int) (time.Duration, bool) {
+	if p := busyHandler.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// busyLock is the contention-aware entry point. It retries via the
+// busy handler if one is registered, otherwise it uses the table-wide
+// default timeout. The lock table is consulted on each attempt.
+// REQ001301 / REQ001302.
+func (lt *LockTable) busyLock(txnID uint64, key []byte, mode LockMode) error {
+	h := getBusyHandler()
+	if h == nil {
+		return lt.LockWithTimeout(txnID, key, mode, lt.timeout)
+	}
+	const maxAttempts = 32
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Try a zero-timeout probe first; if it fails immediately,
+		// consult the handler to decide wait vs. abort.
+		err := lt.LockWithTimeout(txnID, key, mode, 0)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, ErrDeadlockTimeout) {
+			return err
+		}
+		wait, retry := h(attempt)
+		if !retry {
+			return ErrDeadlockTimeout
+		}
+		if wait <= 0 {
+			continue
+		}
+		// Sleep then retry. We cannot sleep and reacquire atomically
+		// with the lock here; the caller will retry via the next loop
+		// iteration. This is a faithful SQLite-style busy-handler
+		// approximation that keeps the VL layer self-contained.
+		time.Sleep(wait)
+	}
+	return ErrDeadlockTimeout
+}

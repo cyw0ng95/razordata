@@ -273,6 +273,82 @@ func TestParseCreateIndex_WhereNoParen(t *testing.T) {
 	}
 }
 
+// TestParseCreateIndex_MultiWhere verifies REQ001385: the partial
+// index WHERE clause accepts AND/OR-joined conjuncts. SQLite allows
+// `WHERE cond1 AND cond2 AND cond3`. The single `parseExpr` call in
+// parseCreateIndex already handles conjunctions because parseExpr
+// descends through AND/OR via precedence (ps.go isBinaryOp). These
+// tests pin that behavior so a future refactor doesn't accidentally
+// restrict WHERE to a single predicate.
+func TestParseCreateIndex_MultiWhere(t *testing.T) {
+	cases := []struct {
+		name  string
+		sql   string
+		op    LX.TokenType
+		nestL LX.TokenType // expected op on the left side of the top-level
+		nestR LX.TokenType // expected op on the right side of the top-level
+	}{
+		{
+			name:  "two_and",
+			sql:   "CREATE INDEX idx ON t (a) WHERE a > 0 AND b < 5",
+			op:    LX.T_AND,
+			nestL: LX.T_GT,
+			nestR: LX.T_LT,
+		},
+		{
+			name:  "three_and",
+			sql:   "CREATE INDEX idx ON t (a) WHERE a > 0 AND b < 5 AND c = 1",
+			op:    LX.T_AND,
+			nestL: LX.T_AND,
+			nestR: LX.T_EQ,
+		},
+		{
+			name:  "and_or",
+			sql:   "CREATE INDEX idx ON t (a) WHERE a > 0 OR b < 5",
+			op:    LX.T_OR,
+			nestL: LX.T_GT,
+			nestR: LX.T_LT,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewParser(tc.sql)
+			stmt, err := p.Parse()
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			ci, ok := stmt.(*CreateIndexStmt)
+			if !ok {
+				t.Fatalf("got %T, want *CreateIndexStmt", stmt)
+			}
+			if ci.Where == nil {
+				t.Fatal("expected non-nil Where")
+			}
+			top, ok := ci.Where.(*BinaryExpr)
+			if !ok {
+				t.Fatalf("top-level expr = %T, want *BinaryExpr", ci.Where)
+			}
+			if top.Op != tc.op {
+				t.Errorf("top-level Op = %d, want %d", top.Op, tc.op)
+			}
+			// Left side: for a 3-clause WHERE the left is itself a
+			// BinaryExpr(AND). For 2-clause it is a comparison.
+			if be, ok := top.Left.(*BinaryExpr); ok {
+				if be.Op != tc.nestL {
+					t.Errorf("Left.Op = %d, want %d", be.Op, tc.nestL)
+				}
+			} else if tc.nestL != LX.T_GT && tc.nestL != LX.T_LT && tc.nestL != LX.T_EQ {
+				t.Errorf("Left = %T, want BinaryExpr", top.Left)
+			}
+			if be, ok := top.Right.(*BinaryExpr); ok {
+				if be.Op != tc.nestR {
+					t.Errorf("Right.Op = %d, want %d", be.Op, tc.nestR)
+				}
+			}
+		})
+	}
+}
+
 // ── FOREIGN KEY ──────────────────────────────────────────────────────
 
 func TestParse_CreateTable_InlineFK(t *testing.T) {
