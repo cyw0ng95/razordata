@@ -275,14 +275,17 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 		return row, nil
 	}
 
-	// Handle PRAGMA foreign_keys [= ON|OFF] (REQ000905)
+	// Handle PRAGMA foreign_keys [= ON|OFF] (REQ000905, REQ001307)
 	if p.Stmt.Name == "foreign_keys" {
 		if !p.done {
 			p.done = true
 			if p.Stmt.Value != "" {
-				// Write: set the toggle
-				val := strings.ToUpper(p.Stmt.Value)
-				DT.SetForeignKeysEnabled(val == "ON" || val == "1" || val == "TRUE")
+				// REQ001307: PRAGMA foreign_keys is a no-op inside a transaction.
+				// SQLite requires this to be set outside a transaction.
+				if DT.CurrentTxWriter() == nil {
+					val := strings.ToUpper(p.Stmt.Value)
+					DT.SetForeignKeysEnabled(val == "ON" || val == "1" || val == "TRUE")
+				}
 			}
 			// Read: return current value
 			v := 0
