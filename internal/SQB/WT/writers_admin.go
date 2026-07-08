@@ -237,6 +237,32 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 		return row, nil
 	}
 
+	// REQ001271: route debug_* PRAGMAs to HandleDebugPragma.
+	name := p.Stmt.Name
+	if strings.HasPrefix(name, "debug_") {
+		if !p.done {
+			p.done = true
+			var args []string
+			if p.Stmt.Value != "" {
+				args = []string{p.Stmt.Value}
+			}
+			result, err := UT.HandleDebugPragma(name, args)
+			if err != nil {
+				return DT.Row{}, err
+			}
+			p.rows = append(p.rows, DT.Row{
+				Cols: []string{name},
+				Data: []DT.Value{DT.NewTextValue(result)},
+			})
+		}
+		if p.idx >= len(p.rows) {
+			return DT.Row{}, DT.ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
 	// Default: handle PRAGMA name = value (write) and notify listeners
 	if !p.done {
 		p.done = true

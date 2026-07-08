@@ -136,6 +136,7 @@ var (
 	ErrNotImplemented = errors.New("ex: not implemented")
 	ErrNoRows         = pl.ErrNoRows
 	ErrClosed         = errors.New("ex: operator closed")
+	ErrRequiresDebugBuild = errors.New("ex: requires debug build (-tags debug)")
 )
 
 // SessionCounterAccessor is an optional callback set by SYS/SE to
