@@ -4,20 +4,26 @@
 
 The 8-table join in `select4.test` L39784 returns **14 rows** instead of the expected **21 rows**. The bug is **table-order-dependent**: some FROM clause orderings produce correct results (21 rows), others produce wrong results (14 or 0 rows).
 
-## Status (2026-07-08 05:50 UTC)
+## Status (2026-07-08 07:15 UTC)
 
-**Partially resolved** — Planner fix applied (architecturally correct). NLJ merge bug root cause identified but not yet fixed.
+**Open** — REQ001414 applied (architectural refactor). 14/21 bug **not yet fixed**.
 
 ## What was applied
 
-### Fix 1 (applied): crossTableConjuncts single-table filter
-**File:** `internal/SQB/EX/planner_select.go` (+31 lines)
+### Fix 1 (REQ001414): Replace crossTableConjuncts with crossTablePredicates
+**File:** `internal/SQB/EX/planner_select.go` (net -4 lines)
+**Status:** Applied, no regression, but does NOT fix the 14/21 bug.
 
-The `crossTableConjuncts` slice (used by the bushy join group builder) was previously populated with ALL WHERE conjuncts, including single-table predicates that had already been pushed to individual table scans via `splitPredicatesByTable`. These single-table predicates cannot be extracted as equi-join keys, so they became unconsumed residuals in the `localConjuncts` of each group, causing the merge-phase NLJ to apply them incorrectly.
+Removed the `crossTableConjuncts` variable (which held ALL WHERE conjuncts) and changed `localConjuncts`, `groupBushyJoins`, and `planSelectJoins` to use `crossTablePredicates` (only cross-table predicates from `splitPredicatesByTable`). Transitive equality inference moved from `crossTableConjuncts` to `crossTablePredicates` with a `len(tables) > 1` guard.
 
-**Fix:** Added a filter that removes single-table predicates (those that `canPushDown` to a single table) from `crossTableConjuncts`. After the filter, `crossTableConjuncts` contains only truly cross-table predicates.
+**Verified:**
+- All `internal/SQB/EX` tests pass (no regression)
+- `TestREQ001414_BushyGroup_SingleTablePredLeak` passes
+- `TestSelect4_Join277_HashMismatch` still fails (14 vs 21 rows) — same hash `b752b9c6989de2d8c5999f7b2787af7f`
 
-**Verified:** CrossTableConjuncts now correctly holds 3 predicates (instead of 8). Group `localConjuncts` are now 0 (instead of 2-5). No regression in `internal/SQB/EX` or `internal/SQB/OP` test suites.
+**Why this did NOT fix the bug:** The `localConjuncts` filter at line 1030 (`allInGroup`) already excludes cross-table predicates that reference tables outside the group. Single-table predicates that pass the filter are stored in `gr.preds` but never used as NLJ ON clauses — the merge-phase NLJ passes `nil` for the ON clause (line 1296), and the group-internal NLJ ON comes from `j.On` (line 1208), not from `localConjuncts`. The single-table predicates in `localConjuncts` are discarded by the merge phase.
+
+The fix is still valuable: it removes a latent risk where single-table predicates could leak into join planning if the `allInGroup` filter were ever relaxed.
 
 ## Investigation Log
 
@@ -56,15 +62,28 @@ The `crossTableConjuncts` slice (used by the bushy join group builder) was previ
 - `cachedRightRows` shallow copy is safe at the Data level
 - **This is a dead end — root cause is elsewhere**
 
-### Phase 6: Predicate flow trace (current)
+### Phase 6: Predicate flow trace
 - Traced `localConjuncts` construction in planner_select.go lines 1050-1214
 - For group 1 `{t4,t9,t1,t8,t6}`: three cross-table predicates (b4=d6, e8=c9, a1=d8)
 - `extractEquiJoinKeys` consumes ALL 3 as HashJoin keys → `gr.preds` empty
 - Merge phase creates cross-join NLJs (no ON clause) — correct
 - **Row loss happens inside group 1's internal join tree**: produces 2 rows instead of expected 3
-- Next: run plan tree diagnostic test to pinpoint which operator drops rows
 
-## Root cause hypothesis
+### Phase 7: REQ001414 Option C refactor
+- Applied architectural refactor: crossTableConjuncts removed, crossTablePredicates used everywhere
+- All EX tests pass, no regression
+- **14/21 bug NOT fixed by this change** — hash unchanged (`b752b9c6989de2d8c5999f7b2787af7f`)
+- Conclusion: planner-level predicate routing is NOT the root cause
+
+### Phase 8: Ruled-out hypotheses (REQ001414 verification)
+- `groupBushyJoins` only uses equi-join BinaryExprs (T_EQ); IN-list predicates are filtered out by `bin.Op != LX.T_EQ` check. Changing data source from crossTableConjuncts to crossTablePredicates does not change bushy grouping output.
+- `localConjuncts` `allInGroup` filter excludes cross-table predicates referencing tables outside the group.
+- Single-table predicates in `localConjuncts` are stored in `gr.preds` but discarded by merge phase (`_ = remaining` at planner_select.go:1280).
+- Merge-phase NLJ passes `nil` for ON clause (planner_select.go:1296).
+- Group-internal NLJ ON comes from `j.On` (planner_select.go:1208), not from `localConjuncts`.
+- **The bug is in the operator-level join tree construction, not the planner.**
+
+## Root cause hypothesis (REVISED)
 
 The row loss occurs within the group 1 internal join tree `{t4,t9,t1,t8,t6}`. The group builder creates a left-deep join tree:
 1. NLJ(t4, t9) — cross join (no equi-join keys between t4 and t9)
@@ -72,23 +91,33 @@ The row loss occurs within the group 1 internal join tree `{t4,t9,t1,t8,t6}`. Th
 3. HashJoin(result, t8) on e8=c9, a1=d8
 4. HashJoin(result, t6) on b4=d6
 
-The 3 expected t4/t6 pairs are: d6=924, d6=901, d6=469. Only 2 appear in the result. The `d6=469` pair is the dropped one. This suggests the HashJoin on b4=d6 (step 4) loses 1 of 3 matches, likely due to incorrect equi-join key extraction or predicate evaluation within the group.
+The 3 expected t4/t6 pairs are: d6=924, d6=901, d6=469. Only 2 appear in the result. The `d6=469` pair is the dropped one.
 
-## Files modified
+**The bug is in step 4 (HashJoin on b4=d6) or the interaction between steps 1-3 and step 4.** Possible causes:
+- HashJoin key extraction for the 5-column left row (t4, t9, t1, t8) fails for the d6=469 case
+- NLJ block mode in steps 1-2 produces rows with corrupted data that HashJoin in step 3-4 cannot match
+- The left-deep construction order causes the d6=469 pair to be consumed before HashJoin step 4 runs
 
-- `internal/SQB/EX/planner_select.go` — added single-table filter to `crossTableConjuncts`
-- `doc/development/select4-fix-status.md` — this document
+**This is an operator-level bug, not a planner-level bug.** REQ001414's refactor is architecturally correct but addresses the wrong layer.
+
+## Files modified (REQ001414)
+
+- `internal/SQB/EX/planner_select.go` — removed `crossTableConjuncts`, updated `planSelectJoins` signature and call sites, updated `groupBushyJoins` and `localConjuncts` to use `crossTablePredicates`
+- `internal/SQB/EX/req001414_test.go` — new regression test for single-table predicate leak
+- `docs/development/REQUIREMENTS.md` — REQ001414 added
+- `docs/development/select4-fix-status.md` — this document updated
 
 ## Files for future investigation
 
 - `internal/SQB/EX/join_order.go` — `groupBushyJoins()` and `isConnectedGraph()` may need improvement
-- `internal/SQB/OP/hashjoin.go` — HashJoin `nextMatched()` correctness during reuse
-- `internal/SQB/OP/join.go` — NLJ block mode `nextBlock()` `cachedRightRows` reuse
-- `internal/SQB/EX/planner_select.go` lines 1186-1216 — `extractEquiJoinKeys` and HashJoin creation within group builder
+- `internal/SQB/OP/hashjoin.go` — HashJoin `nextMatched()` correctness during reuse; key extraction for multi-column left rows from NLJ block mode
+- `internal/SQB/OP/join.go` — NLJ block mode `nextBlock()` interaction with downstream HashJoin; `cachedRightRows` reuse
+- `internal/SQB/EX/planner_select.go` lines 1186-1216 — `extractEquiJoinKeys` and HashJoin creation within group builder; consider alternative join tree shapes (bushy within group, not just left-deep)
 
 ## Current test status
 
 - `TestSelect4_Join277_HashMismatch` still fails (14 vs 21 rows) — expected, bug not fully fixed
+- `TestREQ001414_BushyGroup_SingleTablePredLeak` passes — REQ001414 refactor verified
 - All other tests pass without regression:
   - `internal/SQB/EX` tests pass
   - `internal/SQB/OP` tests pass

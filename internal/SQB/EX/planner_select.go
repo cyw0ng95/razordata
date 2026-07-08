@@ -174,6 +174,17 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 			allTables = append(allTables, j.Right)
 		}
 		pushedPredicates, crossTablePredicates = p.splitPredicatesByTable(conjuncts, allTables)
+		// REQ001077: transitive equality inference on cross-table
+		// predicates only. Previously applied to crossTableConjuncts
+		// (all WHERE conjuncts), which leaked single-table predicates
+		// into localConjuncts and NLJ ON clauses. REQ001414.
+		if inferred := p.inferTransitiveEqualities(crossTablePredicates); len(inferred) > 0 {
+			for _, ie := range inferred {
+				if tables := p.extractTablesFromExpr(ie); len(tables) > 1 {
+					crossTablePredicates = append(crossTablePredicates, ie)
+				}
+			}
+		}
 		// Push predicates for the first table onto its scan.
 		// REQ000820: also set up point-lookup for IN-list predicates.
 		// REQ001248: reorder predicates by ascending cost so cheap
@@ -192,22 +203,6 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	// REQ000821: save the filtered scan after predicate pushdown
 	// so bushy groups reuse the filter-wrapped operator.
 	filteredScan := current
-
-	// REQ000XXX: For multi-table implicit JOINs, extract equi-join
-	// conditions from WHERE and use OP.HashJoin instead of OP.NestedLoopJoin.
-	var crossTableConjuncts []PS.Expr
-	if whereExpr != nil && len(s.Joins) > 0 {
-		// REQ000XXX: For multi-table implicit JOINs, extract equi-join
-		// conditions from WHERE and use OP.HashJoin instead of OP.NestedLoopJoin.
-		crossTableConjuncts = p.splitAnd(whereExpr)
-		// REQ001077: transitive equality inference. For
-		// `WHERE a = b AND b = c`, infer `a = c` so downstream
-		// join planning can use any of the inferred equalities
-		// as a join key.
-		if inferred := p.inferTransitiveEqualities(crossTableConjuncts); len(inferred) > 0 {
-			crossTableConjuncts = append(crossTableConjuncts, inferred...)
-		}
-	}
 
 	// REQ000799: Join elimination — remove tables from the join
 	// that are not referenced in SELECT/WHERE/ORDER BY/GROUP BY/HAVING.
@@ -243,7 +238,7 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	}
 
 	if len(s.Joins) > 0 {
-		current = p.planSelectJoins(s, filteredScan, pushedPredicates, crossTableConjuncts, crossTablePredicates, extractedPreds)
+		current = p.planSelectJoins(s, filteredScan, pushedPredicates, crossTablePredicates, extractedPreds)
 	}
 
 	if whereExpr != nil {
@@ -928,7 +923,7 @@ func (p *Planner) planLimitOffset(s *PS.Select, current DT.Operator) DT.Operator
 
 // planSelectJoins handles join planning: N3 join ordering, bushy join tree
 // construction, and join operator creation. REQ000981: extracted from planSelect.
-func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushedPredicates map[string][]PS.Expr, crossTableConjuncts, crossTablePredicates []PS.Expr, extractedPreds map[int]bool) DT.Operator {
+func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushedPredicates map[string][]PS.Expr, crossTablePredicates []PS.Expr, extractedPreds map[int]bool) DT.Operator {
 	joinInfos := make([]joinTableInfo, 0, len(s.Joins))
 	joinClauses := make([]PS.JoinClause, 0, len(s.Joins))
 	for _, j := range s.Joins {
@@ -988,7 +983,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			projectedCols = append(projectedCols, c)
 		}
 	}
-	joinGroups := groupBushyJoins(s.From, joinOrder, crossTableConjuncts)
+	joinGroups := groupBushyJoins(s.From, joinOrder, crossTablePredicates)
 	type groupResult struct {
 		op    DT.Operator
 		tbl   string
@@ -1020,7 +1015,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			groupTableSet[t] = true
 		}
 		var localConjuncts []PS.Expr
-		for _, c := range crossTableConjuncts {
+		for _, c := range crossTablePredicates {
 			if consumedPreds[c] {
 				continue
 			}
