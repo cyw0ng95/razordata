@@ -265,6 +265,53 @@ func (eng *Engine) ManualCompact() error {
 	return eng.e.cm.ManualCompact()
 }
 
+// VerifySSTFiles walks every SST file in the manifest and verifies
+// each block's CRC32 checksum. Returns up to 10 error messages; an
+// empty slice means all blocks passed. REQ001380.
+func (eng *Engine) VerifySSTFiles() []string {
+	if eng == nil || eng.e == nil {
+		return []string{"engine: closed"}
+	}
+	var errs []string
+	v := eng.e.manifest.Current()
+	if v == nil {
+		return nil
+	}
+	for _, level := range v.levels {
+		for _, f := range level {
+			path := filepath.Join(eng.e.dir, fileName(&f))
+			data, err := eng.e.fs.ReadFile(path)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("sst %s: read error: %v", fileName(&f), err))
+				if len(errs) >= 10 {
+					return errs
+				}
+				continue
+			}
+			r, err := openSST(data)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("sst %s: open error: %v", fileName(&f), err))
+				if len(errs) >= 10 {
+					return errs
+				}
+				continue
+			}
+			for i, entry := range r.indexBlock {
+				blockData := r.readBlock(entry.blockOffset, entry.blockSize, i)
+				if blockData == nil {
+					errs = append(errs, fmt.Sprintf("sst %s block %d: nil block data", fileName(&f), i))
+				} else if err := VerifyBlockCRC(blockData); err != nil {
+					errs = append(errs, fmt.Sprintf("sst %s block %d: CRC mismatch", fileName(&f), i))
+				}
+				if len(errs) >= 10 {
+					return errs
+				}
+			}
+		}
+	}
+	return errs
+}
+
 // RangeIter is an iterator over a sorted range of keys.
 type RangeIter interface {
 	Next() bool
