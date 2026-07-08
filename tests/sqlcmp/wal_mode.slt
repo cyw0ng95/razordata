@@ -1,0 +1,76 @@
+# 2026-07-08: Razordata WAL-mode test suite (local, not in submodule).
+#
+# These tests verify basic SQL semantics when the engine is running
+# in journal_mode=WAL. Gated by slt_corpus build tag.
+#
+# REQ001391: locally-managed SLT file — do NOT move to corpus/test/.
+# Note: SQL statements in SLT format do NOT use trailing semicolons.
+
+# ── Setup ──────────────────────────────────────────────────────────
+statement ok
+CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT, c REAL)
+
+statement ok
+INSERT INTO t1 VALUES (1, 'one', 1.0)
+
+statement ok
+INSERT INTO t1 VALUES (2, 'two', 2.0)
+
+statement ok
+INSERT INTO t1 VALUES (3, 'three', 3.0)
+
+# ── Basic SELECT ────────────────────────────────────────────────────
+query III rowsort
+SELECT * FROM t1
+----
+1
+one
+1.0
+2
+two
+2.0
+3
+three
+3.0
+
+query I rowsort
+SELECT count(*) FROM t1
+----
+3
+
+# ── PRAGMA journal_mode read (returns current default) ──────────────
+# REQ001392 will wire this to return the actual active journal mode.
+query T
+PRAGMA journal_mode
+----
+(default)
+
+# ── Transactional insert + SELECT ──────────────────────────────────
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO t1 VALUES (4, 'four', 4.0)
+
+statement ok
+COMMIT
+
+query I rowsort
+SELECT count(*) FROM t1
+----
+4
+
+# ── Simple WHERE predicate ─────────────────────────────────────────
+query I rowsort
+SELECT a FROM t1 WHERE b = 'two'
+----
+2
+
+query T rowsort
+SELECT b FROM t1 WHERE a = 3
+----
+three
+
+# ── Cleanup ────────────────────────────────────────────────────────
+statement ok
+DROP TABLE t1
