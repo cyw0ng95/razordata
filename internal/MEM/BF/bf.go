@@ -5,6 +5,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -19,6 +20,15 @@ var (
 	ErrCapacityExceeded = errors.New("buffer pool at capacity")
 	ErrInvalidBlockID   = errors.New("invalid block ID")
 )
+
+// bufferSlotPool reuses bufferSlot structs to reduce GC pressure on cache misses.
+var bufferSlotPool = sync.Pool{
+	New: func() any {
+		return &bufferSlot{
+			wait: make(chan struct{}),
+		}
+	},
+}
 
 const (
 	BlockSize      = df.DefaultBlockSize
@@ -457,7 +467,8 @@ func (b *bp) Close() error {
 	return b.closeErr
 }
 
-// Warm implements BufferPool. Reads hint file and eagerly loads blocks.
+// Warm implements BufferPool. Reads hint file and eagerly loads blocks
+// using a bounded worker pool for parallel I/O.
 func (b *bp) Warm(ctx context.Context) error {
 	if b.hintPath == "" {
 		return nil
@@ -466,7 +477,7 @@ func (b *bp) Warm(ctx context.Context) error {
 	entries, err := readHintFile(b.hintPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // no hint file, start cold
+			return nil
 		}
 		if b.log != nil {
 			b.log.Warn("bf.warm", "err", err)
@@ -474,20 +485,44 @@ func (b *bp) Warm(ctx context.Context) error {
 		return err
 	}
 
+	if len(entries) == 0 {
+		return nil
+	}
+
+	workerCount := min(4*runtime.GOMAXPROCS(0), len(entries))
+	sem := make(chan struct{}, workerCount)
+	var wg sync.WaitGroup
+	var firstErr atomic.Pointer[error]
+
 	for _, e := range entries {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
-		_, _, err := b.Get(ctx, e.BlockID)
-		if err != nil {
-			if b.log != nil {
-				b.log.Warn("bf.warm", "blockID", e.BlockID, "err", err)
+
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(blockID uint64) {
+			defer func() {
+				<-sem
+				wg.Done()
+			}()
+			_, _, loadErr := b.Get(ctx, blockID)
+			if loadErr != nil && firstErr.Load() == nil {
+				var ePtr error = loadErr
+				firstErr.CompareAndSwap(nil, &ePtr)
+				if b.log != nil {
+					b.log.Warn("bf.warm", "blockID", blockID, "err", loadErr)
+				}
 			}
-		}
+		}(e.BlockID)
 	}
 
+	wg.Wait()
+	if firstErr.Load() != nil {
+		return *firstErr.Load()
+	}
 	return nil
 }
 

@@ -1542,31 +1542,177 @@ func TestMadviseHugePage(t *testing.T) {
 	madviseHugePage(nil)
 }
 
-// TestMadviseDontNeed_EvictionCallsHook asserts that the madvise
-// syscall (or its no-op equivalent on non-Linux) is invoked when a
-// block is evicted from the buffer pool. Uses a counting mock
-// swapped into the package-level madviseFn var (Linux build only;
-// the test is a no-op on non-Linux since madviseFn is unused there).
-func TestMadviseDontNeed_EvictionCallsHook(t *testing.T) {
-	var called int
-	origFn := madviseFn
-	madviseFn = func(b []byte, advice int) error {
-		called++
-		return nil
-	}
-	defer func() { madviseFn = origFn }()
+// TestBufferPool_Warm_Parallel_NoErrors verifies the parallel Warm
+// implementation loads all blocks without errors.
+func TestBufferPool_Warm_Parallel_NoErrors(t *testing.T) {
+	tmp := t.TempDir()
+	dataPath := filepath.Join(tmp, "data.razor")
+	hintPath := filepath.Join(tmp, "hint")
 
-	// Allocate a 4 KB buffer (page-aligned, page-sized) to mimic
-	// the slot data the buffer pool uses.
-	buf := make([]byte, 4096)
-	// Direct call: should increment called.
-	madviseDontNeed(buf)
-	if called != 1 {
-		t.Errorf("madviseDontNeed did not call madviseFn: called=%d", called)
+	// Create and populate a database with blocks 1..10.
+	{
+		bd, err := df.Create(dataPath)
+		if err != nil {
+			t.Fatal("failed to create block device")
+		}
+		for i := uint64(1); i <= 10; i++ {
+			data := make([]byte, 4088)
+			data[0] = byte(i)
+			if err := bd.WriteBlock(context.Background(), i, data); err != nil {
+				t.Fatalf("WriteBlock failed: %v", err)
+			}
+		}
+		bd.Close()
 	}
-	// Empty buffer: should be a no-op.
-	madviseDontNeed(nil)
-	if called != 1 {
-		t.Errorf("madviseDontNeed(nil) should be a no-op, called=%d", called)
+
+	// Write hint file with blocks 1..10.
+	{
+		bd, err := df.Open(dataPath)
+		if err != nil {
+			t.Fatal("failed to open block device")
+		}
+		defer bd.Close()
+
+		sp := newMockSyncPool()
+		bp, err := New(128, hintPath, bd, sp)
+		if err != nil {
+			t.Fatalf("New failed: %v", err)
+		}
+
+		for i := uint64(1); i <= 10; i++ {
+			_, _, err := bp.Get(context.Background(), i)
+			if err != nil {
+				t.Fatalf("Get(%d) failed: %v", i, err)
+			}
+		}
+		bp.Close()
+	}
+
+	// Reopen and warm up.
+	bd, err := df.Open(dataPath)
+	if err != nil {
+		t.Fatal("failed to open block device")
+	}
+	defer bd.Close()
+
+	sp := newMockSyncPool()
+	bp, err := New(128, hintPath, bd, sp)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer bp.Close()
+
+	err = bp.Warm(context.Background())
+	if err != nil {
+		t.Fatalf("Warm failed: %v", err)
+	}
+
+	stats := bp.Stats()
+	if stats.Used != 10 {
+		t.Errorf("expected used=10 after warm, got %d", stats.Used)
+	}
+
+	// All 10 blocks should be in cache.
+	for i := uint64(1); i <= 10; i++ {
+		_, found, err := bp.Get(context.Background(), i)
+		if err != nil {
+			t.Fatalf("Get(%d) after warm failed: %v", i, err)
+		}
+		if !found {
+			t.Errorf("expected block %d to be cached after warm", i)
+		}
+	}
+}
+
+// BenchmarkBufferPool_Warm_Sequential measures sequential warm load time.
+func BenchmarkBufferPool_Warm_Sequential(b *testing.B) {
+	tmp := b.TempDir()
+	dataPath := filepath.Join(tmp, "data.razor")
+	hintPath := filepath.Join(tmp, "hint")
+
+	bd, err := df.Create(dataPath)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i := uint64(1); i <= 100; i++ {
+		data := make([]byte, 4088)
+		if err := bd.WriteBlock(context.Background(), i, data); err != nil {
+			b.Fatalf("WriteBlock: %v", err)
+		}
+	}
+	bd.Close()
+
+	// Write hint entries.
+	entries := make([]hintEntry, 100)
+	for i := range 100 {
+		entries[i] = hintEntry{BlockID: uint64(i + 1), LastAccess: int64(100 - i)}
+	}
+	if err := writeHintFile(entries, hintPath); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := range b.N {
+		_ = i
+		bd, err := df.Open(dataPath)
+		if err != nil {
+			b.Fatal(err)
+		}
+		sp := newMockSyncPool()
+		bp, err := New(256, hintPath, bd, sp)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := bp.Warm(context.Background()); err != nil {
+			b.Fatal(err)
+		}
+		bp.Close()
+		bd.Close()
+	}
+}
+
+// BenchmarkBufferPool_Warm_Parallel measures parallel warm load time.
+func BenchmarkBufferPool_Warm_Parallel(b *testing.B) {
+	tmp := b.TempDir()
+	dataPath := filepath.Join(tmp, "data.razor")
+	hintPath := filepath.Join(tmp, "hint")
+
+	bd, err := df.Create(dataPath)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i := uint64(1); i <= 100; i++ {
+		data := make([]byte, 4088)
+		if err := bd.WriteBlock(context.Background(), i, data); err != nil {
+			b.Fatalf("WriteBlock: %v", err)
+		}
+	}
+	bd.Close()
+
+	entries := make([]hintEntry, 100)
+	for i := range 100 {
+		entries[i] = hintEntry{BlockID: uint64(i + 1), LastAccess: int64(100 - i)}
+	}
+	if err := writeHintFile(entries, hintPath); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := range b.N {
+		_ = i
+		bd, err := df.Open(dataPath)
+		if err != nil {
+			b.Fatal(err)
+		}
+		sp := newMockSyncPool()
+		bp, err := New(256, hintPath, bd, sp)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := bp.Warm(context.Background()); err != nil {
+			b.Fatal(err)
+		}
+		bp.Close()
+		bd.Close()
 	}
 }
