@@ -14,6 +14,7 @@ import (
 	v1 "github.com/cyw0ng95/razordata/internal/SYS/SY"
 
 	_ "github.com/cyw0ng95/razordata/internal/SYS/SE"
+	_ "github.com/cyw0ng95/razordata/internal/SYS/TX"
 )
 
 func init() { sql.Register("razor", &Driver{}) }
