@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/maphash"
+	"os"
 	"strings"
 	"sync/atomic"
 
@@ -92,6 +93,12 @@ type HashJoin struct {
 	unmatchedRightIdx    int
 
 	closed atomic.Bool
+
+	// REQ001410 debug: per-operator counters and label for tracing
+	// row flow through the join tree. Set via WithDebugID.
+	debugID    string
+	rightBuilt int   // count of right-side rows materialized in build phase
+	matchCount int64 // count of emitted matched pairs (incremented in Next)
 }
 
 type hashBucket struct {
@@ -164,6 +171,12 @@ func (j *HashJoin) WithProjection(cols []string) *HashJoin {
 	return j
 }
 
+// WithDebugID sets a label for debug tracing. REQ001410.
+func (j *HashJoin) WithDebugID(id string) *HashJoin {
+	j.debugID = id
+	return j
+}
+
 // WithKind selects the join kind (Inner/Left/Right/Full). REQ001020.
 // Defaults to JoinKindInner. Pass any other JoinKind value to
 // enable outer semantics.
@@ -192,6 +205,16 @@ func (j *HashJoin) Next(ctx context.Context) (pl.Row, error) {
 			return pl.Row{}, err
 		}
 		j.built = true
+		// REQ001410 debug: print per-operator row counts at the end of build/probe.
+		if j.debugID != "" {
+			fmt.Fprintf(os.Stderr, "[HJ %s] built: left=%d right=%d matches=%d\n",
+				j.debugID, len(j.leftRows), j.rightBuilt, j.matchCount)
+		}
+	}
+	// REQ001410 debug: print emitted count when starting emission.
+	if j.debugID != "" && j.matchCount == 0 && len(j.leftRows) > 0 {
+		fmt.Fprintf(os.Stderr, "[HJ %s] emit start: left=%d right=%d\n",
+			j.debugID, len(j.leftRows), j.rightBuilt)
 	}
 	// REQ001020: three-phase emission. Phase 0 = matched pairs
 	// (always). Phase 1 = unmatched-left for LEFT/FULL. Phase 2
@@ -205,6 +228,7 @@ func (j *HashJoin) Next(ctx context.Context) (pl.Row, error) {
 			if bucketIdx >= 0 && rightIdx >= 0 && j.matchedRight != nil && bucketIdx < len(j.matchedRight) && rightIdx < len(j.matchedRight[bucketIdx]) {
 				j.matchedRight[bucketIdx][rightIdx] = true
 			}
+			j.matchCount++
 			return row, nil
 		}
 		// Phase 0 exhausted. Decide next phase based on join kind.
@@ -260,6 +284,11 @@ func (j *HashJoin) Next(ctx context.Context) (pl.Row, error) {
 		j.phase = 3
 	}
 	j.done = true
+	// REQ001410 debug: print final emission count.
+	if j.debugID != "" {
+		fmt.Fprintf(os.Stderr, "[HJ %s] done: left=%d right=%d emitted=%d\n",
+			j.debugID, len(j.leftRows), j.rightBuilt, j.matchCount)
+	}
 	return pl.Row{}, ErrNoRows
 }
 
@@ -273,10 +302,21 @@ func (j *HashJoin) nextMatched() (pl.Row, int, int, int, bool) {
 		l := j.leftInfos[j.curLeftIdx]
 		bucket := j.buckets[l.idx]
 		hashJoinDebugRowFlow(j.leftTbl, uint64(j.curLeftIdx), true)
+		// REQ001410 debug: print left key values for first few rows.
+		if j.debugID != "" && j.curLeftIdx < 5 {
+			fmt.Fprintf(os.Stderr, "[HJ %s] left[%d] lk=%v hash=%d bucket=%d\n",
+				j.debugID, j.curLeftIdx, l.lk, l.hash, l.idx)
+		}
 		for j.curRightIdx < len(bucket.hashes) {
 			k := j.curRightIdx
 			j.curRightIdx++
 			matched := bucket.hashes[k] == l.hash && ValuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys, j.keyBuf))
+			// REQ001410 debug: print right key values for first few probes.
+			if j.debugID != "" && j.matchCount < 12 {
+				rk := lookupKeys(bucket.rightRows[k], j.rightKeys, j.keyBuf)
+				fmt.Fprintf(os.Stderr, "[HJ %s] emit#%d left[%d] vs right[%d]: lk=%v rk=%v match=%v\n",
+					j.debugID, j.matchCount, j.curLeftIdx, k, l.lk, rk, matched)
+			}
 			hashJoinDebugPredicate("equi-join", uint64(j.curLeftIdx), uint64(k), matched)
 			if matched {
 				right := bucket.rightRows[k]
@@ -404,6 +444,7 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 			firstRightTypes = row.Types
 			firstRightData = row.Data
 		}
+		j.rightBuilt++
 		rightCount++
 		// REQ0011XX: check budget BEFORE append. Use half the budget
 		// to leave headroom for the matches slice and dataBuf.

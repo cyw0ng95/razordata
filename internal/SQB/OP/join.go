@@ -6,6 +6,8 @@ package OP
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"sync/atomic"
 
@@ -119,6 +121,14 @@ type NestedLoopJoin struct {
 	// Used in conjunction with limitRemaining to stop batch loops
 	// early. REQ000847.
 	totalEmitted int64
+
+	// REQ001410 debug: per-operator counters and label for tracing
+	// row flow through the join tree. Set via WithDebugID.
+	debugID       string
+	leftConsumed  int   // left rows pulled from left child
+	rightConsumed int   // right rows pulled from right child (per batch, block mode)
+	emitCount     int64 // total rows emitted
+
 	// REQ000863: pre-computed prefixed column lists. Computed once
 	// on first nextBlock/Next call and reused across all batches,
 	// eliminating the per-row/ per-batch hasAnyPrefix + prefixCols
@@ -159,7 +169,14 @@ func (j *NestedLoopJoin) emitLimitCheck(row Row) Row {
 	if j.limitRemaining > 0 {
 		j.totalEmitted++
 	}
+	j.emitCount++
 	return row
+}
+
+// WithDebugID sets a label for debug tracing. REQ001410.
+func (j *NestedLoopJoin) WithDebugID(id string) *NestedLoopJoin {
+	j.debugID = id
+	return j
 }
 
 // outerJoinRows is a convenience wrapper that calls ensureOuterShared
@@ -750,7 +767,12 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 			} else {
 				j.leftPrefixedCols = append([]string(nil), firstRow.Cols...)
 			}
-			prefixed := Row{Types: firstRow.Types, Data: firstRow.Data, Outer: firstRow.Outer}
+			// REQ001410: deep-copy Data to prevent aliasing (see loop below).
+			var dataCopy []Value
+			if firstRow.Data != nil {
+				dataCopy = append([]Value(nil), firstRow.Data...)
+			}
+			prefixed := Row{Types: firstRow.Types, Data: dataCopy, Outer: firstRow.Outer}
 			prefixed.TableName = firstRow.TableName
 			prefixed.Cols = j.leftPrefixedCols
 			j.blkLeftBatch = append(j.blkLeftBatch, prefixed)
@@ -764,7 +786,17 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 			}
 			return Row{}, err
 		}
-		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
+		// REQ001410: deep-copy Data when caching left batch. The child
+		// operator (especially a child NLJ in block mode) reuses its
+		// blkDataBuf across batches (reset at join.go:894). Storing a
+		// shallow Data reference would alias all batch entries to the
+		// same backing array, causing downstream HashJoin to read
+		// corrupted values (row loss) or crash with use-after-free.
+		var dataCopy []Value
+		if row.Data != nil {
+			dataCopy = append([]Value(nil), row.Data...)
+		}
+		prefixed := Row{Types: row.Types, Data: dataCopy, Outer: row.Outer}
 		prefixed.TableName = row.TableName
 		prefixed.Cols = j.leftPrefixedCols
 		j.blkLeftBatch = append(j.blkLeftBatch, prefixed)
@@ -940,6 +972,11 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 	}
 matchDone:
 	nljDebugCorrelation(1, []string{j.leftTbl, j.rightTbl}, int64(len(j.blkResultBuf)))
+	// REQ001410 debug: print per-batch row counts.
+	if j.debugID != "" {
+		fmt.Fprintf(os.Stderr, "[NLJ %s] batch: left=%d right=%d matches=%d totalEmitted=%d\n",
+			j.debugID, len(j.blkLeftBatch), len(j.blkRightRows), len(j.blkResultBuf), j.emitCount)
+	}
 
 	if len(j.blkResultBuf) == 0 {
 		// No matches in this batch — try next batch.

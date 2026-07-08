@@ -4,9 +4,9 @@
 
 The 8-table join in `select4.test` L39784 returns **14 rows** instead of the expected **21 rows**. The bug is **table-order-dependent**: some FROM clause orderings produce correct results (21 rows), others produce wrong results (14 or 0 rows).
 
-## Status (2026-07-08 07:15 UTC)
+## Status (2026-07-08 07:30 UTC)
 
-**Open** — REQ001414 applied (architectural refactor). 14/21 bug **not yet fixed**.
+**Open** — REQ001414 applied (architectural refactor). NLJ block mode deep-copy applied (prevents crash). 14/21 bug **not yet fixed**.
 
 ## What was applied
 
@@ -82,6 +82,32 @@ The fix is still valuable: it removes a latent risk where single-table predicate
 - Merge-phase NLJ passes `nil` for ON clause (planner_select.go:1296).
 - Group-internal NLJ ON comes from `j.On` (planner_select.go:1208), not from `localConjuncts`.
 - **The bug is in the operator-level join tree construction, not the planner.**
+
+### Phase 9: Per-operator debug tracing
+- Added `WithDebugID` to HashJoin and NestedLoopJoin, wired into planner.
+- Added per-operator counters: `rightBuilt`, `matchCount` (HashJoin); `emitCount` (NLJ).
+- Added per-batch NLJ print: `[NLJ id] batch: left=N right=M matches=K totalEmitted=T`.
+- Added final HashJoin print: `[HJ id] done: left=N right=M emitted=K`.
+- Added key-value probe print for first few rows: `[HJ id] probe left[i] vs right[k]: lk=[..] rk=[..] match=true/false`.
+
+### Phase 10: Findings from real corpus (select4 L39784)
+- **g1-t9t1** (NLJ cross-join): produces 67045 rows in 3 batches (32768 + 32767 + 19712). Expected: 111 × 6 × 128 = 85248 rows. **Row loss: 18203 rows.**
+- **g1-t1t8** (HashJoin on e8=c9, a1=d8): left=67045, right=109. No crash (NLJ fix prevents it). But row loss upstream means wrong rows enter.
+- The 14/21 bug persists with hash `b752b9c6989de2d8c5999f7b2787af7f` — unchanged from baseline.
+
+### Phase 11: NLJ block mode deep-copy fix (partial)
+- Applied deep-copy of `Data` when storing rows in `blkLeftBatch` (join.go:770, 797).
+- **Effect:** Prevents "marked free object" crash when NLJ block mode feeds into HashJoin with large data.
+- **Did NOT fix 14/21 bug:** The row loss is upstream of the NLJ block mode — it occurs in `g1-t9t1` itself (produces 67045 instead of 85248).
+
+### Phase 12: Root cause REVISED (Phase 11)
+The row loss occurs in the NLJ's `nextBlock` matching loop, NOT in the batch filling. The `g1-t9t1` NLJ processes 256 left rows × 128 right rows per batch. Expected matches: 256 × 128 = 32768. Actual: 32768 (first batch correct). But the NLJ's `blkDataBuf` is reused across batches — the second batch (32767 rows) and third batch (19712 rows) suggest that the matching loop is not correctly producing all expected rows when the left batch is filled from a child NLJ in block mode.
+
+**Suspect:** The matching loop at join.go:874-940 uses `r.Outer = &l` to set the outer reference. If `l` is from `blkLeftBatch` and the batch is reused (via `j.blkLeftBatch = j.blkLeftBatch[:0]` at line 789), then `&l` points to a recycled row. But this only affects the `Outer` field, not the Data.
+
+**More likely suspect:** The `limitRemaining` check at line 936-938 stops filling `blkResultBuf` early. If `limitRemaining` is incorrectly set, the NLJ stops before producing all matches.
+
+**Next investigation:** Check `limitRemaining` propagation in the planner. The post-join WHERE filter (`a3 in (...)`, `d6 in (...)`, etc.) is applied AFTER the join tree. If `limitRemaining` is set based on the WHERE filter (not the final result), the NLJ might stop early.
 
 ## Root cause hypothesis (REVISED)
 
