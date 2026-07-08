@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 
+	"github.com/cyw0ng95/razordata/internal/SYS/ST"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SE"
 	v1 "github.com/cyw0ng95/razordata/internal/SYS/SY"
@@ -24,6 +25,31 @@ func (c *Conn) Close() error {
 	c.session = nil
 	c.eng = nil
 	return nil
+}
+
+// QueryContext implements driver.QueryerContext. It internally
+// prepares the query and executes it directly, bypassing the
+// stdlib's Prepare → Stmt.Query wrapping to reduce per-query
+// overhead from the connection acquire, retry, and statement cache
+// paths in database/sql (REQ001419).
+func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	if c == nil || c.session == nil {
+		return nil, AP.New(AP.KindClosed, "engine not open")
+	}
+	stmt, err := ST.Prepare(c.eng, query)
+	if err != nil {
+		return nil, err
+	}
+	anyArgs := make([]any, len(args))
+	for i, a := range args {
+		anyArgs[i] = a.Value
+	}
+	apRows, err := stmt.Query(ctx, anyArgs...)
+	if err != nil {
+		stmt.Close()
+		return nil, err
+	}
+	return newRows(apRows, stmt), nil
 }
 
 func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {

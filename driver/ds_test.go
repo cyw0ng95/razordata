@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -190,4 +191,69 @@ func TestDS_DSNParse(t *testing.T) {
 			t.Errorf("parseDSN(%q).Path = %q, want %q", tc.in, got.Path, tc.want)
 		}
 	}
+}
+
+func BenchmarkSLT_QueryContext_vs_StmtQuery(b *testing.B) {
+	db, err := sql.Open("razor", ":memory:")
+	if err != nil {
+		b.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)"); err != nil {
+		b.Fatalf("CREATE: %v", err)
+	}
+	for i := 1; i <= 10; i++ {
+		if _, err := db.Exec("INSERT INTO t VALUES (?, ?)", i, "hello"); err != nil {
+			b.Fatalf("INSERT: %v", err)
+		}
+	}
+
+	query := "SELECT id, val FROM t ORDER BY id"
+	ctx := context.Background()
+
+	// DB_Query goes through sql.DB.QueryContext, which detects
+	// QueryerContext on the driver Conn and calls Conn.QueryContext
+	// directly, bypassing the stdlib's Prepare + Stmt.Query path.
+	b.Run("DB_Query", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			rows, err := db.QueryContext(ctx, query)
+			if err != nil {
+				b.Fatalf("QueryContext: %v", err)
+			}
+			for rows.Next() {
+				var id int64
+				var val string
+				if err := rows.Scan(&id, &val); err != nil {
+					b.Fatalf("Scan: %v", err)
+				}
+			}
+			rows.Close()
+		}
+	})
+
+	// DB_Prepare_Query goes through the old path: Prepare → Stmt.Query.
+	// This simulates the behavior before QueryerContext was available.
+	b.Run("DB_Prepare_Query", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			stmt, err := db.PrepareContext(ctx, query)
+			if err != nil {
+				b.Fatalf("Prepare: %v", err)
+			}
+			rows, err := stmt.QueryContext(ctx)
+			if err != nil {
+				stmt.Close()
+				b.Fatalf("Stmt.Query: %v", err)
+			}
+			for rows.Next() {
+				var id int64
+				var val string
+				if err := rows.Scan(&id, &val); err != nil {
+					b.Fatalf("Scan: %v", err)
+				}
+			}
+			rows.Close()
+			stmt.Close()
+		}
+	})
 }
