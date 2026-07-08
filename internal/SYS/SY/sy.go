@@ -394,6 +394,7 @@ func (a *executorStoreAdapter) NewIterator(prefix []byte) ls.RangeIter {
 	return a.eng.NewIterator(prefix)
 }
 func (a *executorStoreAdapter) ManualCompact() error  { return a.eng.ManualCompact() }
+func (a *executorStoreAdapter) VerifySSTFiles() []string { return a.eng.VerifySSTFiles() }
 func (a *executorStoreAdapter) SetSnapshot(ts uint64) { a.snapshotTS = ts }
 
 func (e *Engine) walStats() AP.WALStats {

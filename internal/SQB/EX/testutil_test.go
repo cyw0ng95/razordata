@@ -42,7 +42,8 @@ func (s *engineStore) Get(k []byte) ([]byte, bool, error) {
 func (s *engineStore) NewIterator(prefix []byte) ls.RangeIter {
 	return s.eng.NewIterator(prefix)
 }
-func (s *engineStore) ManualCompact() error { return s.eng.ManualCompact() }
+func (s *engineStore) ManualCompact() error  { return s.eng.ManualCompact() }
+func (s *engineStore) VerifySSTFiles() []string { return s.eng.VerifySSTFiles() }
 
 // newEngineExecutor creates an Executor backed by a real LSM engine.
 // Accepts testing.TB so both tests (*testing.T) and benchmarks (*testing.B) can use it.

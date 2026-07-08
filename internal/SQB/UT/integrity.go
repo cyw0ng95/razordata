@@ -3,11 +3,16 @@ package UT
 import (
 	"context"
 	"fmt"
-	"hash/crc32"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 )
+
+// sstVerifier is the optional interface for SST-level integrity checks.
+// The store (typically ls.Engine or its adapter) may implement this.
+type sstVerifier interface {
+	VerifySSTFiles() []string
+}
 
 // IntegrityCheck is the executor for PRAGMA integrity_check. REQ000261.
 // It performs consistency checks on the database and returns any errors found.
@@ -55,6 +60,11 @@ func (ic *IntegrityCheck) Next(ctx context.Context) (Row, error) {
 		if err := ic.checkStore(); err != nil {
 			errors = append(errors, err.Error())
 		}
+	}
+
+	// Check 3: SST file CRC32 checksums (REQ001380)
+	if sstEng, ok := ic.store.(sstVerifier); ok {
+		errors = append(errors, sstEng.VerifySSTFiles()...)
 	}
 
 	// Convert errors to result rows
@@ -136,16 +146,6 @@ func (ic *IntegrityCheck) checkStore() error {
 		count++
 		if err := it.Err(); err != nil {
 			return fmt.Errorf("store: iterator error at key %q: %v", string(it.Key()), err)
-		}
-
-		// Verify value CRC if value is present
-		value := it.Value()
-		if len(value) >= 4 {
-			// Last 4 bytes are CRC
-			storedCRC := crc32.ChecksumIEEE(value[:len(value)-4])
-			// Note: This assumes values have embedded CRC
-			// Actual implementation would match the storage format
-			_ = storedCRC
 		}
 	}
 	if err := it.Err(); err != nil {

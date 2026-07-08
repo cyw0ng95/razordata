@@ -693,19 +693,27 @@ func kvPairFromData(data []byte, keyOffset, keyLen int, valOffset, valLen int) k
 	}
 }
 
-func decodeBlock(data []byte) ([]kvPair, error) {
+// VerifyBlockCRC checks the CRC32 (Koopman) checksum of a decoded
+// SST block. Returns nil if valid, ErrInvalidSSTFormat on mismatch.
+func VerifyBlockCRC(data []byte) error {
 	if len(data) < 8 {
-		return nil, ErrInvalidSSTFormat
+		return ErrInvalidSSTFormat
 	}
-
 	checksum := binary.LittleEndian.Uint32(data[len(data)-4:])
 	blockData := data[:len(data)-8]
+	computed := crc32.Checksum(blockData, crc32Koopman)
+	if computed != checksum {
+		return ErrInvalidSSTFormat
+	}
+	return nil
+}
 
-	computedChecksum := crc32.Checksum(blockData, crc32Koopman)
-	if computedChecksum != checksum {
-		return nil, ErrInvalidSSTFormat
+func decodeBlock(data []byte) ([]kvPair, error) {
+	if err := VerifyBlockCRC(data); err != nil {
+		return nil, err
 	}
 
+	blockData := data[:len(data)-8]
 	restartCountPos := len(data) - 8
 	restartCount := int(binary.LittleEndian.Uint32(data[restartCountPos:]))
 	restartOffset := len(data) - 8 - restartCount*4
