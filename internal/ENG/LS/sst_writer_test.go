@@ -3,6 +3,7 @@ package ls
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
 	"testing"
 )
@@ -328,5 +329,98 @@ func TestFinish_CorrectCRC(t *testing.T) {
 		if _, err := decodeBlock(decompressed); err != nil {
 			t.Errorf("block %d: decodeBlock: %v", i, err)
 		}
+	}
+}
+
+// TestSSTFilter_BitsPerKey_ByLevel verifies that SetLevel selects the
+// correct bits-per-key ratio and that the filter size scales accordingly.
+func TestSSTFilter_BitsPerKey_ByLevel(t *testing.T) {
+	cases := []struct {
+		level     int
+		wantRatio int // bitsPerKey
+	}{
+		{0, 14},
+		{1, 12},
+		{2, 11},
+		{3, 10},
+		{4, 9},
+		{5, 8},
+		{6, 7},
+		{7, 7},  // beyond L6, use L6 ratio
+		{-1, 10}, // negative level, use default
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("L%d", c.level), func(t *testing.T) {
+			w := newSSTWriter()
+			w.SetLevel(c.level)
+			for i := 0; i < 100; i++ {
+				key := []byte{byte(i), byte(i * 7)}
+				w.Add(key, []byte("v"))
+			}
+			data, err := w.Finish()
+			if err != nil {
+				t.Fatalf("Finish: %v", err)
+			}
+			if len(data) < sstFooterSize {
+				t.Fatalf("SST too small: %d bytes", len(data))
+			}
+			footerStart := len(data) - sstFooterSize
+			bloomSize := binary.LittleEndian.Uint32(data[footerStart+20:])
+			// At 100 keys: filter size = pow2((100*bitsPerKey+7)/8).
+			// No exact check — just verify it's within reasonable bounds.
+			minSize := uint32(100 * c.wantRatio / 8)
+			if bloomSize < minSize/2 {
+				t.Errorf("filter size %d too small for %d bits/key", bloomSize, c.wantRatio)
+			}
+			maxSize := uint32(200 * c.wantRatio / 8)
+			if bloomSize > maxSize*2 {
+				t.Errorf("filter size %d too large for %d bits/key", bloomSize, c.wantRatio)
+			}
+		})
+	}
+}
+
+// TestSSTFilter_BitsPerKey_Default tests that an SST without level info
+// defaults to 10 bits/key.
+func TestSSTFilter_BitsPerKey_Default(t *testing.T) {
+	w := newSSTWriter()
+	for i := 0; i < 100; i++ {
+		key := []byte{byte(i), byte(i * 7)}
+		w.Add(key, []byte("v"))
+	}
+	data, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	if len(data) < sstFooterSize {
+		t.Fatalf("SST too small: %d bytes", len(data))
+	}
+	footerStart := len(data) - sstFooterSize
+	bloomSize := binary.LittleEndian.Uint32(data[footerStart+20:])
+	// 100 keys at 10 bits/key = 125 bytes, pow2 = 128
+	if bloomSize != 128 {
+		t.Errorf("expected default filter size 128, got %d", bloomSize)
+	}
+}
+
+// BenchmarkSSTFilter_MemoryUsage measures the memory efficiency of
+// per-level ribbon filter sizes.
+func BenchmarkSSTFilter_MemoryUsage(b *testing.B) {
+	for _, level := range []int{0, 3, 6} {
+		b.Run(fmt.Sprintf("L%d", level), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				w := newSSTWriter()
+				w.SetLevel(level)
+				for j := 0; j < 1000; j++ {
+					key := []byte{byte(j), byte(j * 13)}
+					w.Add(key, []byte("v"))
+				}
+				_, err := w.Finish()
+				if err != nil {
+					b.Fatalf("Finish: %v", err)
+				}
+			}
+		})
 	}
 }

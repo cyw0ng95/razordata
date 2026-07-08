@@ -60,16 +60,34 @@ func mayContainRibbon(bits []byte, key []byte, _ int) bool {
 
 // ribbonSizeFor returns the byte count for a Ribbon filter with n keys
 // at 10 bits/key.
-func ribbonSizeFor(n int) int {
+// levelBitsPerKey is the per-level bits/key ratio for Ribbon filters.
+// L0 gets the most bits (lowest FPR) since it's queried most frequently;
+// deeper levels use fewer bits since their SSTs are larger and FPR
+// tolerance is higher.
+var levelBitsPerKey = [7]int{14, 12, 11, 10, 9, 8, 7}
+
+// bitsPerKeyForLevel returns the bits/key ratio for the given level.
+// Levels beyond L6 use L6's ratio. Returns 10 for negative levels.
+func bitsPerKeyForLevel(level int) int {
+	if level < 0 {
+		return 10
+	}
+	if level >= len(levelBitsPerKey) {
+		return levelBitsPerKey[len(levelBitsPerKey)-1]
+	}
+	return levelBitsPerKey[level]
+}
+
+func ribbonSizeFor(n int, bitsPerKey int) int {
 	if n <= 0 {
 		return 1
 	}
-	return (n*10 + 7) / 8
+	return (n*bitsPerKey + 7) / 8
 }
 
 // ribbonSizeForPow2 returns a byte count that is a power of 2,
 // large enough to hold ribbonSizeFor(n) bytes.
-func ribbonSizeForPow2(n int) int {
-	base := ribbonSizeFor(n)
+func ribbonSizeForPow2(n int, bitsPerKey int) int {
+	base := ribbonSizeFor(n, bitsPerKey)
 	return int(nextPow2(uint32(base)))
 }

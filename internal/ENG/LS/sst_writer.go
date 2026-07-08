@@ -47,6 +47,7 @@ type sstWriter struct {
 	lastKey            []byte
 	currentBlockOffset int
 	version            int // REQ001169: SST format version
+	bitsPerKey         int // REQ001401: per-level bits/key for Ribbon filter
 }
 
 var sstWriterPool = sync.Pool{
@@ -91,6 +92,12 @@ func bloomSizeForPow2(n int) int {
 	// REQ001008: range tombstones should suppress keys in the range
 	base := bloomSizeFor(n)
 	return int(nextPow2(uint32(base)))
+}
+
+// SetLevel configures the SST writer for a specific LSM level.
+// This determines the bits-per-key ratio used for the Ribbon filter.
+func (w *sstWriter) SetLevel(level int) {
+	w.bitsPerKey = bitsPerKeyForLevel(level)
 }
 
 func (w *sstWriter) Add(key, value []byte) {
@@ -196,15 +203,21 @@ func (w *sstWriter) Finish() ([]byte, error) {
 
 	w.finishCurrentBlock()
 
-	// REQ001169: default to Ribbon filter (v2) for new SSTs.
+// REQ001169: default to Ribbon filter (v2) for new SSTs.
 	// Old Bloom (v1) is kept for backward compat via explicit version.
 	if w.version == 0 {
 		w.version = sstVersionRibbon
 	}
 
+	// Use level-based bits-per-key if set, otherwise default to 10.
+	bpk := w.bitsPerKey
+	if bpk <= 0 {
+		bpk = 10
+	}
+
 	if w.version >= sstVersionRibbon {
 		// Build Ribbon filter instead of double-bloom.
-		ribbonSize := ribbonSizeForPow2(w.keyCount)
+		ribbonSize := ribbonSizeForPow2(w.keyCount, bpk)
 		w.ribbon = buildRibbonFilterWithSize(w.keys, ribbonSize*8)
 		// No prefix bloom needed; Ribbon filter covers all queries.
 		w.prefixBloom = nil
@@ -332,6 +345,7 @@ func (w *sstWriter) Reset() {
 	w.maxKey = w.maxKey[:0]
 	w.rangeTombstones = w.rangeTombstones[:0]
 	w.version = 0
+	w.bitsPerKey = 0
 }
 
 // compressBlock compresses a data block using flate (REQ000271).

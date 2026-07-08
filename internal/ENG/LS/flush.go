@@ -63,6 +63,7 @@ func (fj *flushJob) Run() error {
 func (fj *flushJob) flushToSST() ([]byte, error) {
 	w := acquireSSTWriter()
 	defer releaseSSTWriter(w)
+	w.SetLevel(0) // memtable flush always goes to L0
 
 	it := fj.memtable.Iterator()
 	for it.Next() {

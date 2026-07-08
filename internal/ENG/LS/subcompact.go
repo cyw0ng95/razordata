@@ -208,6 +208,7 @@ func (sc *SubCompactor) mergePartials(partials []*partialResult, manifest *manif
 
 	w := acquireSSTWriter()
 	defer releaseSSTWriter(w)
+	w.SetLevel(outputLevel)
 
 	iters := make([]*sstIterator, 0, len(partials))
 	for _, p := range partials {

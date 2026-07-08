@@ -93,6 +93,7 @@ func (cj *compactionJob) Run(manifest *manifest, dir string) error {
 
 	w := acquireSSTWriter()
 	defer releaseSSTWriter(w)
+	w.SetLevel(cj.level + 1)
 
 	iters := make([]*sstIterator, 0, len(cj.inputs)+len(cj.overlap))
 	for _, input := range cj.inputs {
@@ -287,6 +288,7 @@ func (cj *compactionJob) RunPartial(dir string) (*partialResult, error) {
 
 	w := acquireSSTWriter()
 	defer releaseSSTWriter(w)
+	w.SetLevel(cj.level + 1)
 
 	iters := make([]*sstIterator, 0, len(cj.inputs)+len(cj.overlap))
 	for _, input := range cj.inputs {
@@ -771,8 +773,10 @@ func (cm *compactionManager) MergePartials(partials []*partialResult, manifest *
 	defer cm.fs.Remove(tmpPath)
 	defer tmpFile.Close()
 
+	outputLevel := partials[0].inputs[0].Level + 1
 	w := acquireSSTWriter()
 	defer releaseSSTWriter(w)
+	w.SetLevel(outputLevel)
 
 	iters := make([]*sstIterator, 0, len(partials))
 	for _, p := range partials {
