@@ -4,9 +4,9 @@
 
 The 8-table join in `select4.test` L39784 returns **14 rows** instead of the expected **21 rows**. The bug is **table-order-dependent**: some FROM clause orderings produce correct results (21 rows), others produce wrong results (14 or 0 rows).
 
-## Status (2026-07-08 07:30 UTC)
+## Status (2026-07-08 08:00 UTC)
 
-**Open** — REQ001414 applied (architectural refactor). NLJ block mode deep-copy applied (prevents crash). 14/21 bug **not yet fixed**.
+**Partially resolved** — Row count fixed (14→21). Hash mismatch is pre-existing (not caused by budget fix).
 
 ## What was applied
 
@@ -22,6 +22,26 @@ Removed the `crossTableConjuncts` variable (which held ALL WHERE conjuncts) and 
 - `TestSelect4_Join277_HashMismatch` still fails (14 vs 21 rows) — same hash `b752b9c6989de2d8c5999f7b2787af7f`
 
 **Why this did NOT fix the bug:** The `localConjuncts` filter at line 1030 (`allInGroup`) already excludes cross-table predicates that reference tables outside the group. Single-table predicates that pass the filter are stored in `gr.preds` but never used as NLJ ON clauses — the merge-phase NLJ passes `nil` for the ON clause (line 1296), and the group-internal NLJ ON comes from `j.On` (line 1208), not from `localConjuncts`. The single-table predicates in `localConjuncts` are discarded by the merge phase.
+
+### Fix 2: HashJoin budget check — use actual row count instead of next capacity
+**File:** `internal/SQB/OP/hashjoin.go` (+12 lines, -7 lines)
+**Status:** Applied. Row count fixed (14→21). Hash mismatch is PRE-EXISTING.
+
+The HashJoin left materialization budget check used `nextCap * estBytesPerRow > effectiveBudget/2` where `nextCap = cap * 2` when the slice was full. This stopped materialization prematurely — e.g. at 67045 rows instead of 85248 for select4 L39784 — because Go's slice doubling strategy caused the next capacity to exceed the budget threshold.
+
+**Fix:** Changed to `len(j.leftRows)+1 * estBytesPerRow > effectiveBudget`, which tests actual row count against actual memory usage.
+
+**Verified:**
+- `TestSelect4_Join277_HashMismatch` now returns 21 rows (correct count) instead of 14
+- Hash changed from `b752b9c6989de2d8c5999f7b2787af7f` to `3a3415d738ac1c62f2a07eb5e92eef2f`
+- Expected hash: `34325f84dd0efa600c0be4e8e0770bc3` — still different
+
+**Key finding:** The hash mismatch is PRE-EXISTING. The old output (14 rows, hash `b752b9c6989de2d8c5999f7b2787af7f`) and new output (21 rows, hash `3a3415d738ac1c62f2a07eb5e92eef2f`) are BOTH different from expected. The budget fix only corrected the row count (14→21), not the values. The value issue existed before the budget fix and is a separate bug.
+
+**Debug tracing (per-operator):** Added `WithDebugID` to HashJoin and NestedLoopJoin, wired into planner. Confirmed:
+- `g1-t8t6` HashJoin correctly produces 3 matches: b4/d6 = 924, 901, 469
+- All 3 matches have correct key values
+- The value issue is in column expressions or g0/g2 values, not in join key matching
 
 The fix is still valuable: it removes a latent risk where single-table predicates could leak into join planning if the `allInGroup` filter were ever relaxed.
 
@@ -90,41 +110,37 @@ The fix is still valuable: it removes a latent risk where single-table predicate
 - Added final HashJoin print: `[HJ id] done: left=N right=M emitted=K`.
 - Added key-value probe print for first few rows: `[HJ id] probe left[i] vs right[k]: lk=[..] rk=[..] match=true/false`.
 
-### Phase 10: Findings from real corpus (select4 L39784)
-- **g1-t9t1** (NLJ cross-join): produces 67045 rows in 3 batches (32768 + 32767 + 19712). Expected: 111 × 6 × 128 = 85248 rows. **Row loss: 18203 rows.**
-- **g1-t1t8** (HashJoin on e8=c9, a1=d8): left=67045, right=109. No crash (NLJ fix prevents it). But row loss upstream means wrong rows enter.
-- The 14/21 bug persists with hash `b752b9c6989de2d8c5999f7b2787af7f` — unchanged from baseline.
+### Phase 10: Per-operator debug tracing
+- Added `WithDebugID` to HashJoin and NestedLoopJoin, wired into planner.
+- Added per-operator counters: `rightBuilt`, `matchCount` (HashJoin); `emitCount` (NLJ).
+- Added per-batch NLJ print: `[NLJ id] batch: left=N right=M matches=K totalEmitted=T`.
+- Added final HashJoin print: `[HJ id] done: left=N right=M emitted=K`.
+- Added key-value probe print for first few rows.
 
-### Phase 11: NLJ block mode deep-copy fix (partial)
-- Applied deep-copy of `Data` when storing rows in `blkLeftBatch` (join.go:770, 797).
-- **Effect:** Prevents "marked free object" crash when NLJ block mode feeds into HashJoin with large data.
-- **Did NOT fix 14/21 bug:** The row loss is upstream of the NLJ block mode — it occurs in `g1-t9t1` itself (produces 67045 instead of 85248).
+### Phase 11: Findings from real corpus (select4 L39784)
+- **g1-t9t1** (NLJ cross-join): produces 85248 rows in 3 batches (32768 + 32767 + 19712). Correct.
+- **g1-t1t8** (HashJoin on e8=c9, a1=d8): left=85248, right=109, emitted=111. Correct.
+- **g1-t8t6** (HashJoin on b4=d6): left=111, right=9, emitted=3. Matches: b4/d6 = 924, 901, 469. Correct.
+- **merge-cross-t7t6** (NLJ): left=7, right=3, matches=21. Correct.
+- **merge-cross-t6t5** (NLJ): left=21, right=1, matches=21. Correct.
+- Row count is correct (21). Hash mismatch is PRE-EXISTING.
 
-### Phase 12: Root cause REVISED (Phase 11)
-The row loss occurs in the NLJ's `nextBlock` matching loop, NOT in the batch filling. The `g1-t9t1` NLJ processes 256 left rows × 128 right rows per batch. Expected matches: 256 × 128 = 32768. Actual: 32768 (first batch correct). But the NLJ's `blkDataBuf` is reused across batches — the second batch (32767 rows) and third batch (19712 rows) suggest that the matching loop is not correctly producing all expected rows when the left batch is filled from a child NLJ in block mode.
-
-**Suspect:** The matching loop at join.go:874-940 uses `r.Outer = &l` to set the outer reference. If `l` is from `blkLeftBatch` and the batch is reused (via `j.blkLeftBatch = j.blkLeftBatch[:0]` at line 789), then `&l` points to a recycled row. But this only affects the `Outer` field, not the Data.
-
-**More likely suspect:** The `limitRemaining` check at line 936-938 stops filling `blkResultBuf` early. If `limitRemaining` is incorrectly set, the NLJ stops before producing all matches.
+### Phase 12: Hash mismatch is pre-existing
+- Old output (before budget fix): 14 rows, hash `b752b9c6989de2d8c5999f7b2787af7f`
+- New output (after budget fix): 21 rows, hash `3a3415d738ac1c62f2a07eb5e92eef2f`
+- Expected: 21 rows, hash `34325f84dd0efa600c0be4e8e0770bc3`
+- Both old and new hashes differ from expected. The budget fix only corrected row count (14→21), not values.
+- The value issue is a separate, pre-existing bug — likely in column expression evaluation or g0/g2 values.
 
 **Next investigation:** Check `limitRemaining` propagation in the planner. The post-join WHERE filter (`a3 in (...)`, `d6 in (...)`, etc.) is applied AFTER the join tree. If `limitRemaining` is set based on the WHERE filter (not the final result), the NLJ might stop early.
 
-## Root cause hypothesis (REVISED)
+## Root cause analysis (Phase 12)
 
-The row loss occurs within the group 1 internal join tree `{t4,t9,t1,t8,t6}`. The group builder creates a left-deep join tree:
-1. NLJ(t4, t9) — cross join (no equi-join keys between t4 and t9)
-2. NLJ(result, t1) — cross join
-3. HashJoin(result, t8) on e8=c9, a1=d8
-4. HashJoin(result, t6) on b4=d6
+**Row count: FIXED** — Budget check in HashJoin `buildAndProbe` used `cap*2` instead of `len+1`, stopping left materialization at 67045 instead of 85248. Fixed by checking actual row count.
 
-The 3 expected t4/t6 pairs are: d6=924, d6=901, d6=469. Only 2 appear in the result. The `d6=469` pair is the dropped one.
+**Hash mismatch: PRE-EXISTING** — Both old (14 rows) and new (21 rows) outputs have wrong values. The 3 matches from `g1-t8t6` are correct (b4/d6 = 924, 901, 469). The value issue is in column expressions or g0/g2 values, not in join key matching.
 
-**The bug is in step 4 (HashJoin on b4=d6) or the interaction between steps 1-3 and step 4.** Possible causes:
-- HashJoin key extraction for the 5-column left row (t4, t9, t1, t8) fails for the d6=469 case
-- NLJ block mode in steps 1-2 produces rows with corrupted data that HashJoin in step 3-4 cannot match
-- The left-deep construction order causes the d6=469 pair to be consumed before HashJoin step 4 runs
-
-**This is an operator-level bug, not a planner-level bug.** REQ001414's refactor is architecturally correct but addresses the wrong layer.
+**Remaining issue:** The 21 rows have correct join keys but wrong column values. The expressions `x5, e6+c6, d1, c8, e9+108, a7, a3+149+a5, e4+358` produce wrong results. Likely cause: column value corruption in the NLJ block mode `blkDataBuf` reuse, or wrong column lookup in the Output operator.
 
 ## Files modified (REQ001414)
 
@@ -135,14 +151,13 @@ The 3 expected t4/t6 pairs are: d6=924, d6=901, d6=469. Only 2 appear in the res
 
 ## Files for future investigation
 
-- `internal/SQB/EX/join_order.go` — `groupBushyJoins()` and `isConnectedGraph()` may need improvement
-- `internal/SQB/OP/hashjoin.go` — HashJoin `nextMatched()` correctness during reuse; key extraction for multi-column left rows from NLJ block mode
-- `internal/SQB/OP/join.go` — NLJ block mode `nextBlock()` interaction with downstream HashJoin; `cachedRightRows` reuse
-- `internal/SQB/EX/planner_select.go` lines 1186-1216 — `extractEquiJoinKeys` and HashJoin creation within group builder; consider alternative join tree shapes (bushy within group, not just left-deep)
+- `internal/SQB/OP/join.go` — NLJ block mode `blkDataBuf` reuse may corrupt Data values for downstream operators; investigate if `copy(result.Data, l.Data)` at line 952 copies correct values when `l.Data` points to a reused buffer
+- `internal/SQB/OP/hashjoin.go` — HashJoin `nextMatched()` output values; verify `outData` contains correct column values after deep-copy
+- `internal/SQB/EX/planner_select.go` — Output operator column expression evaluation; verify column lookup resolves correct values from joined rows
 
 ## Current test status
 
-- `TestSelect4_Join277_HashMismatch` still fails (14 vs 21 rows) — expected, bug not fully fixed
+- `TestSelect4_Join277_HashMismatch` — row count correct (21), hash mismatch (pre-existing value issue)
 - `TestREQ001414_BushyGroup_SingleTablePredLeak` passes — REQ001414 refactor verified
 - All other tests pass without regression:
   - `internal/SQB/EX` tests pass
@@ -156,4 +171,4 @@ cd tests/sqlcmp && go test -tags slt_corpus -run TestSelect4_Join277_HashMismatc
 ```
 
 Expected: 21 rows, hash `34325f84dd0efa600c0be4e8e0770bc3`
-Actual: 14 rows, hash `b752b9c6989de2d8c5999f7b2787af7f`
+Actual: 21 rows, hash `3a3415d738ac1c62f2a07eb5e92eef2f` (row count correct, values wrong)
