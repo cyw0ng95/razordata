@@ -104,3 +104,53 @@ func TestQSBR_ConcurrentReaders(t *testing.T) {
 		t.Error("expected quiescent after all readers exit")
 	}
 }
+
+// BenchmarkQSBR_ShardDistribution measures shard distribution quality
+// when registering 1024 sequential goroutines. After fixing gid&mask to
+// maphash-based hashing, max shard load ratio should be < 2x (vs ~64x
+// before).
+func BenchmarkQSBR_ShardDistribution(b *testing.B) {
+	q := newQSBRManager()
+	defer q.Stop()
+
+	const numGoroutines = 1024
+	shardCounts := make([]int, qsbrShardCount)
+
+	b.ResetTimer()
+	for i := range b.N {
+		_ = i
+		// Reset counts.
+		for j := range shardCounts {
+			shardCounts[j] = 0
+		}
+
+		var wg sync.WaitGroup
+		for j := 0; j < numGoroutines; j++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, shard := q.Enter()
+				shardCounts[shard]++
+				q.Exit(shard)
+			}()
+		}
+		wg.Wait()
+	}
+	b.StopTimer()
+
+	min, maxLoad := numGoroutines, 0
+	for _, c := range shardCounts {
+		if c < min {
+			min = c
+		}
+		if c > maxLoad {
+			maxLoad = c
+		}
+	}
+	if min == 0 {
+		min = 1
+	}
+	ratio := float64(maxLoad) / float64(min)
+	b.ReportMetric(float64(maxLoad), "max_shard_load")
+	b.ReportMetric(ratio, "max_min_ratio")
+}

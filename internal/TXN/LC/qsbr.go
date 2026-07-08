@@ -1,6 +1,8 @@
 package LC
 
 import (
+	"encoding/binary"
+	"hash/maphash"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -22,16 +24,30 @@ type qsbrManager struct {
 	generation  atomic.Uint64
 	stopCh      chan struct{}
 	wg          sync.WaitGroup
+	hashSeed    maphash.Seed
+	hashPool    sync.Pool
 }
 
 func newQSBRManager() *qsbrManager {
 	return &qsbrManager{
-		stopCh: make(chan struct{}),
+		stopCh:   make(chan struct{}),
+		hashSeed: maphash.MakeSeed(),
+		hashPool: sync.Pool{
+			New: func() any { return &maphash.Hash{} },
+		},
 	}
 }
 
 func (q *qsbrManager) shardFor(gid uint64) int {
-	return int(gid & qsbrShardMask)
+	h := q.hashPool.Get().(*maphash.Hash)
+	h.SetSeed(q.hashSeed)
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], gid)
+	_, _ = h.Write(buf[:])
+	sum := h.Sum64()
+	h.Reset()
+	q.hashPool.Put(h)
+	return int(sum & qsbrShardMask)
 }
 
 // Enter is called by a reader when entering a critical section.

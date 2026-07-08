@@ -11,6 +11,8 @@ import (
 	"github.com/cyw0ng95/razordata/internal/TXN/MV"
 )
 
+const MaxThreads = 256
+
 var goroutineID atomic.Uint64
 
 func getGoroutineID() uint64 {
@@ -23,11 +25,13 @@ func getGoroutineID() uint64 {
 type threadRecord struct {
 	goroutineID uint64
 	enteredAt   atomic.Int64
+	inUse       atomic.Bool
 }
 
 type epochManager struct {
 	epoch   atomic.Int64
-	threads sync.Map
+	threads [MaxThreads]threadRecord
+	active  atomic.Int64
 	drainCh chan struct{}
 	stopCh  chan struct{}
 	wg      sync.WaitGroup
@@ -43,37 +47,72 @@ func newEpochManager() *epochManager {
 }
 
 func (em *epochManager) RegisterThread(goroutineID uint64) {
-	record := &threadRecord{
-		goroutineID: goroutineID,
+	for i := range em.threads {
+		rec := &em.threads[i]
+		if !rec.inUse.Load() {
+			if rec.inUse.CompareAndSwap(false, true) {
+				rec.goroutineID = goroutineID
+				rec.enteredAt.Store(em.epoch.Load())
+				em.active.Add(1)
+				return
+			}
+		}
 	}
-	record.enteredAt.Store(em.epoch.Load())
-	em.threads.Store(goroutineID, record)
 }
 
 func (em *epochManager) UnregisterThread(goroutineID uint64) {
-	em.threads.Delete(goroutineID)
+	for i := range em.threads {
+		rec := &em.threads[i]
+		if rec.inUse.Load() && rec.goroutineID == goroutineID {
+			rec.goroutineID = 0
+			rec.enteredAt.Store(0)
+			rec.inUse.Store(false)
+			em.active.Add(-1)
+			return
+		}
+	}
 }
 
 func (em *epochManager) EnterEpoch() uint64 {
 	goid := getGoroutineID()
-	em.RegisterThread(goid)
+	// Find existing record or register new one.
+	found := false
+	for i := range em.threads {
+		rec := &em.threads[i]
+		if rec.inUse.Load() && rec.goroutineID == goid {
+			found = true
+			epoch := em.epoch.Load()
+			EC.BUG_ON(epoch < 0, "epoch.EnterEpoch: negative epoch %d", epoch)
+			EC.BUG_ON(rec.enteredAt.Load() > epoch, "epoch.EnterEpoch: epoch violation — rec.enteredAt %d > currentEpoch %d", rec.enteredAt.Load(), epoch)
+			rec.enteredAt.Store(epoch)
+			return uint64(epoch)
+		}
+	}
+	if !found {
+		em.RegisterThread(goid)
+	}
 	epoch := em.epoch.Load()
 	EC.BUG_ON(epoch < 0, "epoch.EnterEpoch: negative epoch %d", epoch)
-	record, ok := em.threads.Load(goid)
-	if ok {
-		rec := record.(*threadRecord)
-		EC.BUG_ON(rec.enteredAt.Load() > epoch, "epoch.EnterEpoch: epoch violation — rec.enteredAt %d > currentEpoch %d", rec.enteredAt.Load(), epoch)
-		rec.enteredAt.Store(epoch)
+	// For newly registered, set enteredAt after registration.
+	for i := range em.threads {
+		rec := &em.threads[i]
+		if rec.inUse.Load() && rec.goroutineID == goid {
+			rec.enteredAt.Store(epoch)
+			break
+		}
 	}
 	return uint64(epoch)
 }
 
 func (em *epochManager) ExitEpoch(goroutineID uint64) {
-	if record, ok := em.threads.Load(goroutineID); ok {
-		rec := record.(*threadRecord)
-		currentEpoch := em.epoch.Load()
-		EC.WARN_ON(currentEpoch-rec.enteredAt.Load() > 1, "epoch.ExitEpoch: lagging thread goid=%d entered=%d current=%d", goroutineID, rec.enteredAt.Load(), currentEpoch)
-		rec.enteredAt.Store(0)
+	for i := range em.threads {
+		rec := &em.threads[i]
+		if rec.inUse.Load() && rec.goroutineID == goroutineID {
+			currentEpoch := em.epoch.Load()
+			EC.WARN_ON(currentEpoch-rec.enteredAt.Load() > 1, "epoch.ExitEpoch: lagging thread goid=%d entered=%d current=%d", goroutineID, rec.enteredAt.Load(), currentEpoch)
+			rec.enteredAt.Store(0)
+			return
+		}
 	}
 }
 
@@ -137,17 +176,32 @@ func (em *epochManager) WaitForDrain(maxSpins int) bool {
 }
 
 func (em *epochManager) allStale(threshold int64) bool {
-	stale := true
-	em.threads.Range(func(_, value any) bool {
-		record := value.(*threadRecord)
-		enteredAt := record.enteredAt.Load()
-		if enteredAt != 0 && enteredAt >= threshold {
-			stale = false
+	// A reader is stale if its enteredAt is 0 (has exited or never entered).
+	// active.Load() == 0 is a fast-path shortcut: no registered threads
+	// means no readers can be active.
+	if em.active.Load() == 0 {
+		return true
+	}
+	for i := range em.threads {
+		rec := &em.threads[i]
+		if rec.inUse.Load() && rec.enteredAt.Load() != 0 {
 			return false
 		}
-		return true
-	})
-	return stale
+	}
+	return true
+}
+
+func (em *epochManager) allAged(threshold int64) bool {
+	for i := range em.threads {
+		rec := &em.threads[i]
+		if rec.inUse.Load() {
+			enteredAt := rec.enteredAt.Load()
+			if enteredAt != 0 && enteredAt >= threshold {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func runtime_Gosched() { runtime_GoschedFn() }

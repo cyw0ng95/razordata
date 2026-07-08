@@ -378,3 +378,25 @@ func TestArena_OldNotReclaimedWithoutPromotion(t *testing.T) {
 		t.Error("pending list should be empty when no promotion occurred")
 	}
 }
+
+// BenchmarkArena_Promote_Contention measures CPU utilization under
+// high CAS contention. 8 goroutines all call Alloc on the same arena,
+// triggering concurrent promote() with CAS backoff.
+func BenchmarkArena_Promote_Contention(b *testing.B) {
+	b.ResetTimer()
+	for i := range b.N {
+		_ = i
+		a := newArena()
+		// Fill young to near-promotion threshold.
+		_ = a.Alloc(promotionThreshold - 8)
+		var wg sync.WaitGroup
+		for j := 0; j < 8; j++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = a.Alloc(8)
+			}()
+		}
+		wg.Wait()
+	}
+}

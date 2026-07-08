@@ -138,12 +138,12 @@ func TestEpochManagerRegisterThread(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	found := false
-	em.threads.Range(func(key, value any) bool {
-		if key.(uint64) == 1 {
+	for i := range em.threads {
+		if em.threads[i].inUse.Load() && em.threads[i].goroutineID == 1 {
 			found = true
+			break
 		}
-		return true
-	})
+	}
 
 	if !found {
 		t.Error("thread 1 should be registered")
@@ -157,12 +157,12 @@ func TestEpochManagerUnregisterThread(t *testing.T) {
 	em.UnregisterThread(1)
 
 	found := false
-	em.threads.Range(func(key, value any) bool {
-		if key.(uint64) == 1 {
+	for i := range em.threads {
+		if em.threads[i].inUse.Load() && em.threads[i].goroutineID == 1 {
 			found = true
+			break
 		}
-		return true
-	})
+	}
 
 	if found {
 		t.Error("thread 1 should be unregistered")
@@ -189,11 +189,18 @@ func TestEpochManagerExitEpoch(t *testing.T) {
 	em.RegisterThread(testGoid)
 	em.ExitEpoch(testGoid)
 
-	record, ok := em.threads.Load(testGoid)
+	record, ok := func() (*threadRecord, bool) {
+	for i := range em.threads {
+		if em.threads[i].inUse.Load() && em.threads[i].goroutineID == testGoid {
+			return &em.threads[i], true
+		}
+	}
+	return nil, false
+}()
 	if !ok {
 		t.Fatal("thread should be registered")
 	}
-	if record.(*threadRecord).enteredAt.Load() != 0 {
+	if record.enteredAt.Load() != 0 {
 		t.Error("enteredAt should be 0 after ExitEpoch")
 	}
 }

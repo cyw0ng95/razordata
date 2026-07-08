@@ -1,8 +1,10 @@
 package MV
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
 )
@@ -96,32 +98,47 @@ func (a *Arena) promote() {
 	// and promote the new delta. This closes the TOCTOU window between
 	// the youngOff load and the Store(0) (REQ000588).
 	var promotedYoung int64
+	var casFails int
 	for {
 		currentYoungOff := a.youngOff.Load()
 		if currentYoungOff == 0 {
-			// Another promote() sealed young. Nothing to do.
 			a.promoted.Store(true)
 			return
 		}
 		youngDelta := currentYoungOff - promotedYoung
+		oldOff := a.oldOff.Load()
+		new := oldOff + youngDelta
 		if youngDelta == 0 {
 			if a.youngOff.CompareAndSwap(currentYoungOff, 0) {
 				a.promoted.Store(true)
 				return
 			}
+			casFails++
+			if casFails >= 16 {
+				runtime.Gosched()
+				time.Sleep(1 * time.Microsecond)
+			} else if casFails >= 4 {
+				runtime.Gosched()
+			}
 			continue
 		}
-		oldOff := a.oldOff.Load()
-		new := oldOff + youngDelta
 		if new > oldSize {
 			a.promoted.Store(true)
 			return
 		}
 		if !a.oldOff.CompareAndSwap(oldOff, new) {
+			casFails++
+			if casFails >= 16 {
+				runtime.Gosched()
+				time.Sleep(1 * time.Microsecond)
+			} else if casFails >= 4 {
+				runtime.Gosched()
+			}
 			continue
 		}
 		copy(a.old[oldOff:new], a.young[promotedYoung:currentYoungOff])
 		promotedYoung = currentYoungOff
+		casFails = 0
 	}
 }
 
