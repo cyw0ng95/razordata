@@ -657,10 +657,10 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		}
 	}
 	if scan == nil {
-		// REQ001317: if the table is not in the planner's catalog
-		// (e.g. system tables like razor_stat1), fall through to
-		// NewIndexOrSeqScan which reads from DT.Tables directly.
-		if _, ok := p.catalog[s.From]; ok {
+		// REQ001425: Use DT.SchemaFor to detect any registered table —
+		// covers both planner-registered (RegisterTableWithPK) and
+		// DDL-created tables (via CreateTable → DT.RegisterStoreSchema).
+		if _, ok := DT.SchemaFor(s.From); ok {
 			if ssc, err := OP.NewSeqScanWithStore(p.store, s.From); err == nil {
 				scan = ssc
 			}

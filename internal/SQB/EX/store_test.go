@@ -572,3 +572,36 @@ func TestPragma_BatchSize_ReadWrite(t *testing.T) {
 		t.Fatalf("expected batch_size=256, got %q", got)
 	}
 }
+
+// TestStore_InsertThenSelect verifies the core write-then-read round-trip:
+// CREATE TABLE via SQL DDL, INSERT rows, SELECT them back. REQ001425 regression.
+func TestStore_InsertThenSelect(t *testing.T) {
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	if _, err := ex.Exec(ctx, "CREATE TABLE rt (id INTEGER PRIMARY KEY, val TEXT)"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	for i := range 5 {
+		if _, err := ex.Exec(ctx, "INSERT INTO rt VALUES (?, ?)", int64(i), "v"+strconv.Itoa(i)); err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+
+	rows, err := ex.QueryAll(ctx, "SELECT id, val FROM rt ORDER BY id")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(rows))
+	}
+	for i, row := range rows {
+		if !row.Data[0].Equal(NewIntValue(int64(i))) {
+			t.Errorf("row %d: id=%v, want %d", i, row.Data[0].ToAny(), i)
+		}
+		if !row.Data[1].Equal(NewTextValue("v" + strconv.Itoa(i))) {
+			t.Errorf("row %d: val=%v, want %q", i, row.Data[1].ToAny(), "v"+strconv.Itoa(i))
+		}
+	}
+}
