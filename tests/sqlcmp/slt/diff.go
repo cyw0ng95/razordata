@@ -159,10 +159,10 @@ func rowString(row []Value) string {
 }
 
 func hashValues(vs []Value) string {
-	h := md5Pool.Get().(hash.Hash)
+	h := hashPool.Get().(hash.Hash)
 	defer func() {
 		h.Reset()
-		md5Pool.Put(h)
+		hashPool.Put(h)
 	}()
 	for _, v := range vs {
 		h.Write([]byte(v.String()))
