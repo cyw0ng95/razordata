@@ -4,8 +4,11 @@ package slt
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -121,5 +124,27 @@ func TestSelect4_Join277_HashMismatch(t *testing.T) {
 	gotHash := resultHash(rs, RowSort)
 	if gotHash != wantHash {
 		t.Errorf("hash mismatch: got %s, want %s (rowsort)", gotHash, wantHash)
+		rows := rs.Rows
+		idx := make([]int, len(rows))
+		for i := range idx {
+			idx[i] = i
+		}
+		sort.Slice(idx, func(i, j int) bool {
+			a, b := rows[idx[i]], rows[idx[j]]
+			for k := 0; k < len(a) && k < len(b); k++ {
+				if c := valueLess(a[k], b[k]); c != 0 {
+					return c < 0
+				}
+			}
+			return len(a) < len(b)
+		})
+		t.Logf("Sorted output (kind:string):")
+		for _, i := range idx {
+			parts := make([]string, len(rows[i]))
+			for j, cell := range rows[i] {
+				parts[j] = fmt.Sprintf("%d:%s", cell.Kind, cell.String())
+			}
+			t.Logf("  %s", strings.Join(parts, "\t"))
+		}
 	}
 }

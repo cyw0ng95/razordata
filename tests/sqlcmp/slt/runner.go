@@ -361,42 +361,37 @@ func resultHash(rs *ResultSet, mode SortMode) string {
 				return rowString(rows[idx[i]]) < rowString(rows[idx[j]])
 			})
 		} else {
+			// RowSort: lexicographic order on tab-joined row string,
+			// matching the canonical SQLLogicTest C code's strcmp-based
+			// column-by-column comparison. Using valueLess here breaks
+			// hash compatibility because valueLess compares integers
+			// numerically while the canonical tool uses strcmp
+			// (e.g. "1254" < "223" lexicographically but 223 < 1254
+			// numerically).
 			sort.Slice(idx, func(i, j int) bool {
-				a, b := rows[idx[i]], rows[idx[j]]
-				for k := 0; k < len(a) && k < len(b); k++ {
-					if c := valueLess(a[k], b[k]); c != 0 {
-						return c < 0
-					}
-				}
-				return len(a) < len(b)
+				return rowString(rows[idx[i]]) < rowString(rows[idx[j]])
 			})
 		}
 		for _, i := range idx {
-			for j, cell := range rows[i] {
-				if j > 0 {
-					io.WriteString(h, "\t")
-				}
+			for _, cell := range rows[i] {
 				io.WriteString(h, cell.String())
+				io.WriteString(h, "\n")
 			}
-			io.WriteString(h, "\n")
 		}
 		return bytehex(h.Sum(nil))
 	}
 	for _, row := range rows {
-		for i, cell := range row {
-			if i > 0 {
-				io.WriteString(h, "\t")
-			}
+		for _, cell := range row {
 			io.WriteString(h, cell.String())
+			io.WriteString(h, "\n")
 		}
-		io.WriteString(h, "\n")
 	}
 	return bytehex(h.Sum(nil))
 }
 
 // HashSorted is the public form of the hash used for
 // "values hashing to" markers. The corpus computes an MD5 over
-// the tab-joined string forms of the values in sorted order.
+// the string forms of the values in sorted order, each followed by '\n'.
 func HashSorted(vs []Value) string {
 	sorted := make([]Value, len(vs))
 	copy(sorted, vs)
