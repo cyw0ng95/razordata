@@ -604,17 +604,19 @@ func findColIndex(row *Row, qualified, bare string) int {
 func compareValues(a, b Value, op LX.TokenType) bool {
 	switch op {
 	case LX.T_EQ:
-		return DT.EqualValueAny(a, b)
+		eq, _ := DT.EqualValue(a, b)
+		return eq
 	case LX.T_NE:
-		return !DT.EqualValueAny(a, b)
+		eq, _ := DT.EqualValue(a, b)
+		return !eq
 	case LX.T_GT:
-		return DT.Compare(a, b) > 0
+		return DT.CompareValue(a, b) > 0
 	case LX.T_GE:
-		return DT.Compare(a, b) >= 0
+		return DT.CompareValue(a, b) >= 0
 	case LX.T_LT:
-		return DT.Compare(a, b) < 0
+		return DT.CompareValue(a, b) < 0
 	case LX.T_LE:
-		return DT.Compare(a, b) <= 0
+		return DT.CompareValue(a, b) <= 0
 	}
 	return false
 }

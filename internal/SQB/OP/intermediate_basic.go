@@ -1421,17 +1421,19 @@ func makeCompiledColColCmp(leftCol, rightCol string, op LX.TokenType) func(*Row)
 
 		switch op {
 		case LX.T_EQ:
-			return DT.EqualValueAny(a, b), nil
+			eq, _ := DT.EqualValue(a, b)
+			return eq, nil
 		case LX.T_NE:
-			return !DT.EqualValueAny(a, b), nil
+			eq, _ := DT.EqualValue(a, b)
+			return !eq, nil
 		case LX.T_GT:
-			return DT.Compare(a, b) > 0, nil
+			return DT.CompareValue(a, b) > 0, nil
 		case LX.T_GE:
-			return DT.Compare(a, b) >= 0, nil
+			return DT.CompareValue(a, b) >= 0, nil
 		case LX.T_LT:
-			return DT.Compare(a, b) < 0, nil
+			return DT.CompareValue(a, b) < 0, nil
 		case LX.T_LE:
-			return DT.Compare(a, b) <= 0, nil
+			return DT.CompareValue(a, b) <= 0, nil
 		}
 		return false, nil
 	}

@@ -271,7 +271,7 @@ func (s *Sort) parallelSort(ctx context.Context, keyCache [][]Value) error {
 	slices.SortStableFunc(samples, func(a, b int) int {
 		ka, kb := keyCache[a], keyCache[b]
 		for ki := range ka {
-			c := DT.Compare(ka[ki], kb[ki])
+			c := DT.CompareValue(ka[ki], kb[ki])
 			if c == 0 {
 				continue
 			}
@@ -385,7 +385,7 @@ func (s *Sort) cmpKeys(a, b []Value) int {
 				return int(s.keys[ki].NullsOrder)
 			}
 		}
-		c := DT.Compare(a[ki], b[ki])
+		c := DT.CompareValue(a[ki], b[ki])
 		if c == 0 {
 			continue
 		}

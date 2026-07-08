@@ -154,7 +154,7 @@ func buildCorrelationFunc(bin *PS.BinaryExpr, innerTable, outerTable string) fun
 		}
 		outerVal := outer.Data[outerIdx]
 		innerVal := inner.Data[innerIdx]
-		cmp := DT.Compare(outerVal, innerVal)
+		cmp := DT.CompareValue(outerVal, innerVal)
 		switch op {
 		case LX.T_EQ:
 			return cmp == 0, nil

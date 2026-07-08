@@ -660,7 +660,7 @@ func RowEqual(a, b Row) bool {
 		return false
 	}
 	for i := range a.Cols {
-		if !EqualValue(a.Data[i], b.Data[i]) {
+		if !equalValue(a.Data[i], b.Data[i]) {
 			return false
 		}
 	}
@@ -681,8 +681,8 @@ func ReplaceBySnapshot(table string, snapshot, updated Row) error {
 	return nil
 }
 
-// EqualValue compares two Values for equality.
-func EqualValue(a, b Value) bool {
+// equalValue compares two Values for equality (NULL == NULL is true).
+func equalValue(a, b Value) bool {
 	if a.Kind != b.Kind {
 		return false
 	}

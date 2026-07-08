@@ -1,6 +1,7 @@
 package DT
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 
@@ -199,69 +200,114 @@ func ToInt64(v any) (int64, bool) {
 	return 0, false
 }
 
-// Compare returns -1/0/1 comparing two any values (or Values). NULLs
-// sort less than non-NULLs; two NULLs compare equal.
-func Compare(a, b any) int {
-	if av, ok := a.(Value); ok {
-		a = av.ToAny()
-	}
-	if bv, ok := b.(Value); ok {
-		b = bv.ToAny()
-	}
-	if a == nil && b == nil {
+// CompareValue compares two Value values directly without boxing into any.
+// Returns -1 if a < b, 0 if a == b, 1 if a > b. NULLs sort less than
+// non-NULLs; two NULLs compare equal.
+func CompareValue(a, b Value) int {
+	if a.Kind == KindNull && b.Kind == KindNull {
 		return 0
 	}
-	if a == nil {
+	if a.Kind == KindNull {
 		return -1
 	}
-	if b == nil {
+	if b.Kind == KindNull {
 		return 1
 	}
-	switch ax := a.(type) {
-	case string:
-		if bs, ok := b.(string); ok {
-			return strings.Compare(ax, bs)
-		}
-	case int64:
-		switch bx := b.(type) {
-		case int64:
-			if ax < bx {
+	switch a.Kind {
+	case KindInt:
+		switch b.Kind {
+		case KindInt:
+			if a.I64 < b.I64 {
 				return -1
 			}
-			if ax > bx {
+			if a.I64 > b.I64 {
 				return 1
 			}
 			return 0
-		case float64:
-			if float64(ax) < bx {
+		case KindFloat:
+			if float64(a.I64) < b.F64 {
 				return -1
 			}
-			if float64(ax) > bx {
+			if float64(a.I64) > b.F64 {
 				return 1
 			}
 			return 0
 		}
-	case float64:
-		if bf, ok := b.(float64); ok {
-			if ax < bf {
+	case KindFloat:
+		switch b.Kind {
+		case KindFloat:
+			if a.F64 < b.F64 {
 				return -1
 			}
-			if ax > bf {
+			if a.F64 > b.F64 {
+				return 1
+			}
+			return 0
+		case KindInt:
+			if a.F64 < float64(b.I64) {
+				return -1
+			}
+			if a.F64 > float64(b.I64) {
 				return 1
 			}
 			return 0
 		}
-		if bi, ok := b.(int64); ok {
-			if ax < float64(bi) {
+	case KindText:
+		if b.Kind == KindText {
+			return strings.Compare(a.S, b.S)
+		}
+	case KindBlob:
+		if b.Kind == KindBlob {
+			return bytes.Compare(a.B, b.B)
+		}
+	case KindBool:
+		if b.Kind == KindBool {
+			if !a.Bo && b.Bo {
 				return -1
 			}
-			if ax > float64(bi) {
+			if a.Bo && !b.Bo {
 				return 1
 			}
 			return 0
 		}
 	}
 	return 0
+}
+
+// EqualValue compares two Value values for equality directly without boxing.
+// Returns (false, nil) if either value is NULL (SQL three-valued logic).
+func EqualValue(a, b Value) (bool, error) {
+	if a.Kind == KindNull || b.Kind == KindNull {
+		return false, nil
+	}
+	if a.Kind == KindInt && b.Kind == KindFloat {
+		return float64(a.I64) == b.F64, nil
+	}
+	if a.Kind == KindFloat && b.Kind == KindInt {
+		return a.F64 == float64(b.I64), nil
+	}
+	if a.Kind != b.Kind {
+		return false, nil
+	}
+	switch a.Kind {
+	case KindInt:
+		return a.I64 == b.I64, nil
+	case KindFloat:
+		return a.F64 == b.F64, nil
+	case KindText:
+		return a.S == b.S, nil
+	case KindBlob:
+		return bytes.Equal(a.B, b.B), nil
+	case KindBool:
+		return a.Bo == b.Bo, nil
+	}
+	return false, nil
+}
+
+// Compare is a backward-compatible wrapper that converts any arguments to
+// Value and calls CompareValue.
+func Compare(a, b any) int {
+	return CompareValue(ValueFromAny(a), ValueFromAny(b))
 }
 
 // IsValueTruthy reports whether a Value should be treated as true in
@@ -290,49 +336,11 @@ type Result struct {
 	LastInsertID uint64
 }
 
-// EqualValueAny compares two any values for equality after unwrapping
-// any Value to its underlying Go type. If either side is nil, returns false.
+// EqualValueAny is a backward-compatible wrapper that converts any
+// arguments to Value and calls EqualValue.
 func EqualValueAny(a, b any) bool {
-	if av, ok := a.(Value); ok {
-		a = av.ToAny()
-	}
-	if bv, ok := b.(Value); ok {
-		b = bv.ToAny()
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	if ai, aok := a.(int64); aok {
-		if bi, bok := b.(int64); bok {
-			return ai == bi
-		}
-		if bf, bok := b.(float64); bok {
-			return float64(ai) == bf
-		}
-		if bi, bok := b.(int); bok {
-			return ai == int64(bi)
-		}
-		return false
-	}
-	if af, aok := a.(float64); aok {
-		if bf, bok := b.(float64); bok {
-			return af == bf
-		}
-		return false
-	}
-	if as, aok := a.(string); aok {
-		if bs, bok := b.(string); bok {
-			return as == bs
-		}
-		return false
-	}
-	if ab, aok := a.(bool); aok {
-		if bb, bok := b.(bool); bok {
-			return ab == bb
-		}
-		return false
-	}
-	return a == b
+	eq, _ := EqualValue(ValueFromAny(a), ValueFromAny(b))
+	return eq
 }
 
 // Rows describes the columns of a query result.
