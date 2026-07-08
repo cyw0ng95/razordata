@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+const (
+	idleTimerCap    = 1 * time.Millisecond
+	activeTimeout   = 50 * time.Microsecond
+	idleThreshold   = 1 * time.Millisecond
+)
+
 // groupCommitReq represents a single Sync request waiting in the group
 // commit pipeline.
 type groupCommitReq struct {
@@ -29,6 +35,10 @@ type groupCommit struct {
 	// stats
 	groupsFlushed atomic.Int64
 	batchSizeHist atomic.Int64 // histogram bucket counter
+
+	// lastRequestTime is the unix nano timestamp of the last submitted
+	// request, used for idle backoff of the commit timer.
+	lastRequestTime atomic.Int64
 }
 
 // groupCommitOptions configures the group commit pipeline.
@@ -39,12 +49,13 @@ type groupCommitOptions struct {
 // newGroupCommit creates a new group commit coordinator.
 func newGroupCommit(opts groupCommitOptions) *groupCommit {
 	if opts.Timeout == 0 {
-		opts.Timeout = 50 * time.Microsecond
+		opts.Timeout = activeTimeout
 	}
 	gc := &groupCommit{
 		reqCh:    make(chan *groupCommitReq, 1024),
 		closedCh: make(chan struct{}),
 	}
+	gc.lastRequestTime.Store(time.Now().UnixNano())
 	go gc.run(opts.Timeout)
 	return gc
 }
@@ -52,14 +63,17 @@ func newGroupCommit(opts groupCommitOptions) *groupCommit {
 // run is the background group commit loop. It collects pending Sync
 // requests and dispatches a single fsync when the deadline fires.
 // All requests that arrive during the batching window share one fsync.
-func (gc *groupCommit) run(timeout time.Duration) {
+// Implements adaptive timer: idle periods lengthen the timeout to
+// reduce wakeups; new requests immediately shrink it back.
+func (gc *groupCommit) run(baseTimeout time.Duration) {
 	var pending []*groupCommitReq
-	timer := time.NewTimer(timeout)
+	timer := time.NewTimer(baseTimeout)
 	defer timer.Stop()
 
 	for {
 		select {
 		case req := <-gc.reqCh:
+			gc.lastRequestTime.Store(time.Now().UnixNano())
 			pending = append(pending, req)
 			if !timer.Stop() {
 				select {
@@ -67,13 +81,25 @@ func (gc *groupCommit) run(timeout time.Duration) {
 				default:
 				}
 			}
-			timer.Reset(timeout)
+			timer.Reset(baseTimeout)
 		case <-timer.C:
 			if len(pending) > 0 {
 				gc.flush(pending)
 				pending = pending[:0]
 			}
-			timer.Reset(timeout)
+			// Adaptive timer: if no request arrived for >1ms, back off.
+			last := gc.lastRequestTime.Load()
+			nextTimeout := baseTimeout
+			if last > 0 && time.Since(time.Unix(0, last)) > idleThreshold {
+				nextTimeout = idleTimerCap
+			}
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(nextTimeout)
 		case <-gc.closedCh:
 			// Pending requests that have not yet been dispatched
 			// are drained with ErrFlusherClosed. Do not flush —
