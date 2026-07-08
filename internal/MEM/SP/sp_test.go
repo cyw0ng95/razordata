@@ -271,3 +271,21 @@ func BenchmarkGetPutWAL(b *testing.B) {
 		sp.Put(buf)
 	}
 }
+
+// BenchmarkSP_WALBufSize_Reuse benchmarks WALBufSize buffer reuse.
+func BenchmarkSP_WALBufSize_Reuse(b *testing.B) {
+	sp := New()
+	bufs := make([][]byte, 100)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 100; j++ {
+			bufs[j] = sp.Get(WALBufSize)
+		}
+		for j := 0; j < 100; j++ {
+			sp.Put(bufs[j])
+		}
+	}
+}

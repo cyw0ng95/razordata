@@ -42,10 +42,6 @@ func New() *syncPool {
 		b := make([]byte, WALBufSize)
 		return &b
 	}
-	sp.walPool.New = func() any {
-		b := make([]byte, WALBufSize)
-		return &b
-	}
 	return sp
 }
 
@@ -154,6 +150,7 @@ func (sp *syncPool) Put(buf []byte) {
 		b := buf[:IterBufferSize]
 		sp.iterPool.Put(&b)
 	case WALBufSize:
-		// Intentionally not returned — avoid memory leak of WAL scratch buffers.
+		b := buf[:WALBufSize]
+		sp.walPool.Put(&b)
 	}
 }
