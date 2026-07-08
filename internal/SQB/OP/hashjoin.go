@@ -515,13 +515,18 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		if effectiveBudget <= 0 {
 			effectiveBudget = 64 << 20 // 64 MB default
 		}
-		nextCap := cap(j.leftRows)
-		if len(j.leftRows) == nextCap {
-			nextCap *= 2
-		} else {
-			nextCap = len(j.leftRows) + 1
-		}
-		if int64(nextCap)*estBytesPerRow > effectiveBudget/2 {
+		// REQ001410: check budget based on ACTUAL row count. The previous
+		// check used `nextCap = cap * 2` which stopped materialization
+		// prematurely when the slice was full and about to double,
+		// losing rows (e.g. 18203 rows lost in select4 L39784, causing
+		// 14/21 row bug). We check `len * estBytesPerRow` against the
+		// full budget (not budget/2) since cap may be much larger than
+		// len and the doubling is Go's internal growth strategy.
+		if int64(len(j.leftRows)+1)*estBytesPerRow > effectiveBudget {
+			if j.debugID != "" {
+				fmt.Fprintf(os.Stderr, "[HJ %s] left materialization budget hit at %d rows (budget=%d)\n",
+					j.debugID, len(j.leftRows), effectiveBudget)
+			}
 			break
 		}
 		// Deep-copy Data — same reason as the right-side build above.
