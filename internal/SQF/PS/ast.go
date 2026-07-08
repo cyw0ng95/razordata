@@ -478,6 +478,7 @@ type JoinClause struct {
 	RightAlias string
 	On         Expr
 	Using      []string // REQ001361: JOIN .. USING (col1, col2, ...)
+	Natural    bool     // REQ001359: NATURAL JOIN (auto-equijoin on common columns)
 }
 
 type Select struct {

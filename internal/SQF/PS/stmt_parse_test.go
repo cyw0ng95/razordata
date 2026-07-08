@@ -350,3 +350,53 @@ func TestReq001193_DivParsing(t *testing.T) {
 		})
 	}
 }
+
+// ── NATURAL JOIN (REQ001359) ─────────────────────────────────────────
+
+func TestNaturalJoin_Inner_Parses(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		sql      string
+		wantKind string
+	}{
+		{"natural_join", "SELECT * FROM t1 NATURAL JOIN t2", "INNER"},
+		{"natural_left", "SELECT * FROM t1 NATURAL LEFT JOIN t2", "LEFT"},
+		{"natural_right", "SELECT * FROM t1 NATURAL RIGHT JOIN t2", "RIGHT"},
+		{"natural_left_outer", "SELECT * FROM t1 NATURAL LEFT OUTER JOIN t2", "LEFT"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewParser(tc.sql)
+			stmt, err := p.Parse()
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			sel := stmt.(*Select)
+			if len(sel.Joins) != 1 {
+				t.Fatalf("expected 1 join, got %d", len(sel.Joins))
+			}
+			j := sel.Joins[0]
+			if !j.Natural {
+				t.Fatal("expected Natural=true")
+			}
+			if j.Kind != tc.wantKind {
+				t.Errorf("Kind = %q, want %q", j.Kind, tc.wantKind)
+			}
+			if j.On != nil {
+				t.Errorf("On should be nil (planner synthesizes), got %+v", j.On)
+			}
+		})
+	}
+}
+
+func TestNaturalJoin_NoCommonCols_Cross(t *testing.T) {
+	p := NewParser("SELECT * FROM t1 NATURAL JOIN t2")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	sel := stmt.(*Select)
+	j := sel.Joins[0]
+	if !j.Natural {
+		t.Fatal("expected Natural=true")
+	}
+}
