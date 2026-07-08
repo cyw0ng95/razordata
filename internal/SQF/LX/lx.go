@@ -262,6 +262,7 @@ func buildKeywordTrie() *keywordNode {
 		{"COLLATE", T_COLLATE},
 		{"ATTACH", T_ATTACH},
 		{"DETACH", T_DETACH},
+		{"NATURAL", T_NATURAL},
 		{"MATERIALIZED", T_MATERIALIZED},
 		{"REFRESH", T_REFRESH},
 		{"FILTER", T_FILTER},

@@ -957,6 +957,42 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			}
 			j.On = combined
 		}
+		// REQ001359: synthesize ON clause from NATURAL common columns.
+		if j.Natural && j.On == nil && len(j.Using) == 0 {
+			leftTbl := s.From
+			if s.FromAlias != "" {
+				leftTbl = s.FromAlias
+			}
+			if len(joinClauses) > 0 {
+				last := joinClauses[len(joinClauses)-1]
+				leftTbl = last.Right
+				if last.RightAlias != "" {
+					leftTbl = last.RightAlias
+				}
+			}
+			rightTbl := j.Right
+			if j.RightAlias != "" {
+				rightTbl = j.RightAlias
+			}
+			// Resolve common columns from schema.
+			leftCols := schemaCols(s.From, s.FromAlias)
+			rightCols := schemaCols(j.Right, j.RightAlias)
+			common := commonColumns(leftCols, rightCols)
+			if len(common) > 0 {
+				var combined PS.Expr
+				for _, col := range common {
+					leftRef := &PS.QualifiedName{Table: leftTbl, Name: col, SlotIdx: -1}
+					rightRef := &PS.QualifiedName{Table: rightTbl, Name: col, SlotIdx: -1}
+					eq := &PS.BinaryExpr{Left: leftRef, Op: LX.T_EQ, Right: rightRef}
+					if combined == nil {
+						combined = eq
+					} else {
+						combined = &PS.BinaryExpr{Left: combined, Op: LX.T_AND, Right: eq}
+					}
+				}
+				j.On = combined
+			}
+		}
 		if j.Kind != "INNER" && j.Kind != "LEFT" && j.Kind != "RIGHT" && j.Kind != "FULL" && j.Kind != "CROSS" {
 			continue
 		}
@@ -1501,4 +1537,23 @@ func schemaCols(table, alias string) []string {
 		return cols
 	}
 	return nil
+}
+
+// commonColumns returns the intersection of two column name slices.
+// Both slices are expected to be lowercased. REQ001359.
+func commonColumns(a, b []string) []string {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(b))
+	for _, col := range b {
+		set[col] = true
+	}
+	var out []string
+	for _, col := range a {
+		if set[col] {
+			out = append(out, col)
+		}
+	}
+	return out
 }

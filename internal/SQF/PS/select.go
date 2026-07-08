@@ -388,7 +388,12 @@ func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinC
 
 	for p.current.Type == LX.T_JOIN || p.current.Type == LX.T_LEFT ||
 		p.current.Type == LX.T_RIGHT || p.current.Type == LX.T_INNER ||
-		p.current.Type == LX.T_CROSS {
+		p.current.Type == LX.T_CROSS || p.current.Type == LX.T_NATURAL {
+		natural := false
+		if p.current.Type == LX.T_NATURAL {
+			natural = true
+			p.advance()
+		}
 		kind := "INNER"
 		switch p.current.Type {
 		case LX.T_LEFT:
@@ -397,6 +402,11 @@ func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinC
 			kind = "RIGHT"
 		case LX.T_CROSS:
 			kind = "CROSS"
+		}
+		if !natural || p.current.Type != LX.T_JOIN {
+			if kind == "INNER" && p.current.Type != LX.T_CROSS {
+				// natural alone without LEFT/RIGHT/etc implies INNER
+			}
 		}
 		p.advance()
 		if p.current.Type == LX.T_OUTER {
@@ -423,7 +433,10 @@ func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinC
 		}
 		var on Expr
 		var usingCols []string
-		if p.current.Type == LX.T_ON {
+		if natural {
+			// NATURAL JOIN — ON/USING not allowed; planner synthesizes
+			// the equi-join from common column names.
+		} else if p.current.Type == LX.T_ON {
 			p.advance()
 			e, err2 := p.parseExpr()
 			if err2 != nil {
@@ -457,7 +470,7 @@ func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinC
 			}
 			p.advance()
 		}
-		joins = append(joins, JoinClause{Kind: kind, Right: rightRef, RightAlias: rightAlias, On: on, Using: usingCols})
+		joins = append(joins, JoinClause{Kind: kind, Right: rightRef, RightAlias: rightAlias, On: on, Using: usingCols, Natural: natural})
 	}
 
 	if p.parenTableExpr {
