@@ -7,6 +7,7 @@ import (
 
 	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
+	_ "github.com/cyw0ng95/razordata/internal/SYS/SE"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
 
