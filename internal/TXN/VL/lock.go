@@ -15,6 +15,8 @@ const (
 	LockModeExclusive                 // X-lock: for writes
 )
 
+const lockTableShardCount = 64
+
 // LockEntry represents a single lock on a key.
 type LockEntry struct {
 	key     []byte
@@ -91,19 +93,69 @@ func (wq *waitQueue) grant(txnID uint64) {
 	wq.cond.Signal()
 }
 
-// LockTable is the central lock manager.
+// lockTableShard is one shard of the sharded lock table.
+type lockTableShard struct {
+	mu    sync.RWMutex
+	locks map[uint64]*LockEntry
+}
+
+// LockTable is the central lock manager with sharded locking.
 type LockTable struct {
-	mu      sync.RWMutex
-	locks   map[uint64]*LockEntry // FNV-1a hash -> LockEntry
+	shards  [lockTableShardCount]lockTableShard
 	timeout time.Duration
-	aborted atomic.Int64 // count of timeout-aborted transactions
+	aborted atomic.Int64
+}
+
+// shardFor computes the shard index for a given key hash.
+func (lt *LockTable) shardFor(h uint64) int {
+	return int(h & (lockTableShardCount - 1))
 }
 
 // NewLockTable creates a new lock table with the given timeout.
 func NewLockTable(timeout time.Duration) *LockTable {
-	return &LockTable{
-		locks:   make(map[uint64]*LockEntry),
+	lt := &LockTable{
 		timeout: timeout,
+	}
+	for i := range lockTableShardCount {
+		lt.shards[i].locks = make(map[uint64]*LockEntry)
+	}
+	return lt
+}
+
+// lockShards locks the shards for the given hashes in ascending order.
+func (lt *LockTable) lockShards(hashes []uint64) []int {
+	indices := make([]int, len(hashes))
+	for i, h := range hashes {
+		indices[i] = lt.shardFor(h)
+	}
+	// Sort unique indices ascending
+	for i := 0; i < len(indices); i++ {
+		for j := i + 1; j < len(indices); j++ {
+			if indices[j] < indices[i] {
+				indices[i], indices[j] = indices[j], indices[i]
+			}
+		}
+	}
+	// Deduplicate
+	prev := -1
+	for _, idx := range indices {
+		if idx != prev {
+			lt.shards[idx].mu.Lock()
+			prev = idx
+		}
+	}
+	return indices
+}
+
+// unlockShards unlocks the shards locked by lockShards (reversed order).
+func (lt *LockTable) unlockShards(indices []int) {
+	prev := -1
+	for i := len(indices) - 1; i >= 0; i-- {
+		idx := indices[i]
+		if idx != prev {
+			lt.shards[idx].mu.Unlock()
+			prev = idx
+		}
 	}
 }
 
@@ -111,53 +163,46 @@ func NewLockTable(timeout time.Duration) *LockTable {
 // lock cannot be acquired within the timeout.
 func (lt *LockTable) Lock(txnID uint64, key []byte, mode LockMode) error {
 	h := fnv1aHash64(key)
+	idx := lt.shardFor(h)
+	shard := &lt.shards[idx]
 
-	lt.mu.Lock()
-	entry, ok := lt.locks[h]
+	shard.mu.Lock()
+	entry, ok := shard.locks[h]
 	if !ok {
-		// No existing lock — create and grant immediately.
 		entry = &LockEntry{
 			key:     key,
 			mode:    mode,
 			holders: map[uint64]LockMode{txnID: mode},
 			waiters: newWaitQueue(),
 		}
-		lt.locks[h] = entry
-		lt.mu.Unlock()
+		shard.locks[h] = entry
+		shard.mu.Unlock()
 		return nil
 	}
 
-	// Lock exists — check compatibility.
 	if _, held := entry.holders[txnID]; held {
-		// Same transaction already holds a lock.
 		if mode == LockModeExclusive && entry.mode == LockModeShared {
-			// Upgrade S->X: check no other holders.
 			if len(entry.holders) == 1 {
 				entry.mode = LockModeExclusive
 				entry.holders[txnID] = LockModeExclusive
-				lt.mu.Unlock()
+				shard.mu.Unlock()
 				return nil
 			}
-			// Other holders exist — need to wait for upgrade.
 		} else {
-			lt.mu.Unlock()
+			shard.mu.Unlock()
 			return nil
 		}
 	}
 
-	// Check compatibility with existing holders.
 	if mode == LockModeShared && entry.mode == LockModeShared {
-		// S-lock compatible with existing S-locks.
 		entry.holders[txnID] = LockModeShared
-		lt.mu.Unlock()
+		shard.mu.Unlock()
 		return nil
 	}
 
-	// Incompatible — enqueue waiter.
 	node := entry.waiters.enqueue(txnID, mode)
-	lt.mu.Unlock()
+	shard.mu.Unlock()
 
-	// Wait with timeout.
 	select {
 	case <-node.done:
 		if node.granted {
@@ -165,7 +210,6 @@ func (lt *LockTable) Lock(txnID uint64, key []byte, mode LockMode) error {
 		}
 		return ErrDeadlockTimeout
 	case <-time.After(lt.timeout):
-		// Timeout — remove from queue and abort.
 		entry.waiters.dequeue(txnID)
 		lt.aborted.Add(1)
 		return ErrDeadlockTimeout
@@ -174,48 +218,60 @@ func (lt *LockTable) Lock(txnID uint64, key []byte, mode LockMode) error {
 
 // Unlock releases all locks held by the given transaction.
 func (lt *LockTable) Unlock(txnID uint64) {
-	lt.mu.Lock()
-	defer lt.mu.Unlock()
+	// Lock all shards in ascending order.
+	for i := range lockTableShardCount {
+		lt.shards[i].mu.Lock()
+	}
 
-	for h, entry := range lt.locks {
-		if _, held := entry.holders[txnID]; held {
-			delete(entry.holders, txnID)
+	for i := range lockTableShardCount {
+		shard := &lt.shards[i]
+		for h, entry := range shard.locks {
+			if _, held := entry.holders[txnID]; held {
+				delete(entry.holders, txnID)
 
-			if len(entry.holders) == 0 {
-				// No more holders — grant to next waiter if any.
-				if len(entry.waiters.heads) > 0 {
-					for _, node := range entry.waiters.heads {
-						entry.holders[node.txnID] = node.mode
-						entry.mode = node.mode
-						entry.waiters.grant(node.txnID)
-						break
+				if len(entry.holders) == 0 {
+					if len(entry.waiters.heads) > 0 {
+						for _, node := range entry.waiters.heads {
+							entry.holders[node.txnID] = node.mode
+							entry.mode = node.mode
+							entry.waiters.grant(node.txnID)
+							break
+						}
+					} else {
+						delete(shard.locks, h)
 					}
-				} else {
-					delete(lt.locks, h)
-				}
-			} else if entry.mode == LockModeExclusive && len(entry.holders) > 0 {
-				// Check if all remaining holders are S-locks.
-				allShared := true
-				for _, m := range entry.holders {
-					if m == LockModeExclusive {
-						allShared = false
-						break
+				} else if entry.mode == LockModeExclusive && len(entry.holders) > 0 {
+					allShared := true
+					for _, m := range entry.holders {
+						if m == LockModeExclusive {
+							allShared = false
+							break
+						}
 					}
-				}
-				if allShared {
-					entry.mode = LockModeShared
+					if allShared {
+						entry.mode = LockModeShared
+					}
 				}
 			}
 		}
+	}
+
+	// Unlock in reverse order.
+	for i := lockTableShardCount - 1; i >= 0; i-- {
+		lt.shards[i].mu.Unlock()
 	}
 }
 
 // Stats returns lock table statistics.
 func (lt *LockTable) Stats() LockStats {
-	lt.mu.RLock()
-	defer lt.mu.RUnlock()
+	var total int64
+	for i := range lockTableShardCount {
+		lt.shards[i].mu.RLock()
+		total += int64(len(lt.shards[i].locks))
+		lt.shards[i].mu.RUnlock()
+	}
 	return LockStats{
-		ActiveLocks: int64(len(lt.locks)),
+		ActiveLocks: total,
 		Aborted:     lt.aborted.Load(),
 	}
 }

@@ -25,11 +25,9 @@ func TestLockManager_BasicLockUnlock(t *testing.T) {
 	lt.Unlock(1)
 
 	// Lock table should be empty.
-	lt.mu.RLock()
-	if len(lt.locks) != 0 {
-		t.Errorf("expected 0 locks, got %d", len(lt.locks))
+	if stats := lt.Stats(); stats.ActiveLocks != 0 {
+		t.Errorf("expected 0 locks, got %d", stats.ActiveLocks)
 	}
-	lt.mu.RUnlock()
 }
 
 func TestLockManager_SharedLocks(t *testing.T) {
@@ -47,11 +45,9 @@ func TestLockManager_SharedLocks(t *testing.T) {
 	lt.Unlock(1)
 	lt.Unlock(2)
 
-	lt.mu.RLock()
-	if len(lt.locks) != 0 {
-		t.Errorf("expected 0 locks, got %d", len(lt.locks))
+	if stats := lt.Stats(); stats.ActiveLocks != 0 {
+		t.Errorf("expected 0 locks, got %d", stats.ActiveLocks)
 	}
-	lt.mu.RUnlock()
 }
 
 func TestLockManager_ExclusiveBlocksShared(t *testing.T) {
