@@ -71,6 +71,121 @@ func TestCoreFunctions_Eval(t *testing.T) {
 	}
 }
 
+// TestFormat_AllSpecifiers verifies REQ001376: FORMAT() accepts the
+// standard printf conversion specifiers. SQLite verbs %i (signed int
+// alias) and %u (unsigned decimal) are translated to their Go
+// equivalents before fmt.Sprintf. REQ001378 %q wraps the value in
+// single quotes with SQL-style escaping (not Go's double-quote
+// %q). Width / precision / zero-pad / left-justify (REQ001377) flow
+// through to fmt unchanged.
+func TestFormat_AllSpecifiers(t *testing.T) {
+	tests := []struct {
+		sql  string
+		want any
+	}{
+		{"SELECT FORMAT('%d', 42)", "42"},
+		{"SELECT FORMAT('%i', -7)", "-7"},
+		{"SELECT FORMAT('%o', 8)", "10"},
+		{"SELECT FORMAT('%u', 42)", "42"},
+		{"SELECT FORMAT('%x', 255)", "ff"},
+		{"SELECT FORMAT('%X', 255)", "FF"},
+		{"SELECT FORMAT('%f', 3.14)", "3.140000"},
+		{"SELECT FORMAT('%e', 3.14)", "3.140000e+00"},
+		{"SELECT FORMAT('%g', 3.14)", "3.14"},
+		{"SELECT FORMAT('%s', 'hello')", "hello"},
+		{"SELECT FORMAT('%c', 65)", "A"},
+		// REQ001377 — width / precision / left-justify / zero-pad
+		{"SELECT FORMAT('%5d', 42)", "   42"},
+		{"SELECT FORMAT('%.2f', 3.14159)", "3.14"},
+		{"SELECT FORMAT('%-10s|', 'hi')", "hi        |"},
+		{"SELECT FORMAT('%05d', 42)", "00042"},
+		// REQ001378 — %q with single-quote SQL escaping.
+		{"SELECT FORMAT('%q', 'hi')", "'hi'"},
+		{"SELECT FORMAT('%q', 'it''s')", "'it''s'"},
+		{"SELECT FORMAT('%q', 42)", "'42'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.sql, func(t *testing.T) {
+			parser := PS.NewParser(tt.sql)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			sel := stmt.(*PS.Select)
+			got, err := EvalValue(sel.Cols[0], nil, nil)
+			if err != nil {
+				t.Fatalf("Eval error: %v", err)
+			}
+			if got.ToAny() != tt.want {
+				t.Fatalf("got %v, want %v", got.ToAny(), tt.want)
+			}
+		})
+	}
+}
+
+// TestFormat_Q_SingleQuotes verifies REQ001378: %q wraps in single
+// quotes with SQL-style escaping (not Go's %q which is double
+// quotes).
+func TestFormat_Q_SingleQuotes(t *testing.T) {
+	tests := []struct {
+		sql  string
+		want any
+	}{
+		{"SELECT FORMAT('%q', 'hi')", "'hi'"},
+		{"SELECT FORMAT('%q', 'it''s')", "'it''s'"},
+		{"SELECT FORMAT('%q', 42)", "'42'"},
+		{"SELECT FORMAT('%q', NULL)", "NULL"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.sql, func(t *testing.T) {
+			parser := PS.NewParser(tt.sql)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			sel := stmt.(*PS.Select)
+			got, err := EvalValue(sel.Cols[0], nil, nil)
+			if err != nil {
+				t.Fatalf("Eval error: %v", err)
+			}
+			if got.ToAny() != tt.want {
+				t.Fatalf("got %v, want %v", got.ToAny(), tt.want)
+			}
+		})
+	}
+}
+
+// TestFormat_I_And_U verifies REQ001376: %i (signed int alias for
+// %d) and %u (unsigned decimal).
+func TestFormat_I_And_U(t *testing.T) {
+	tests := []struct {
+		sql  string
+		want string
+	}{
+		{"SELECT FORMAT('%i', -7)", "-7"},
+		{"SELECT FORMAT('%i', 0)", "0"},
+		{"SELECT FORMAT('%u', 42)", "42"},
+		{"SELECT FORMAT('%u', 0)", "0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.sql, func(t *testing.T) {
+			parser := PS.NewParser(tt.sql)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			sel := stmt.(*PS.Select)
+			got, err := EvalValue(sel.Cols[0], nil, nil)
+			if err != nil {
+				t.Fatalf("Eval error: %v", err)
+			}
+			if got.ToAny() != tt.want {
+				t.Fatalf("got %v, want %v", got.ToAny(), tt.want)
+			}
+		})
+	}
+}
+
 func TestZeroblob_Eval(t *testing.T) {
 	parser := PS.NewParser("SELECT ZEROBLOB(8)")
 	stmt, err := parser.Parse()

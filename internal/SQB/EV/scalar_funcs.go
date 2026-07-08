@@ -343,7 +343,21 @@ func evalConcatWS(args []PS.Expr, row *Row, params []any) (any, error) {
 	return sb.String(), nil
 }
 
-// evalFormat implements printf-style formatting. REQ000389.
+// evalFormat implements printf-style formatting. REQ000389 / REQ001376
+// / REQ001377 / REQ001378.
+//
+// SQLite's FORMAT() is printf-like with these verbs:
+//   %d %i %o %u %x %X %f %e %g %s %c %q %w
+//
+// Go's fmt natively supports %d %o %x %X %f %e %g %s %c. The
+// differences: SQLite's %i is a synonym for %d (signed decimal),
+// %u is unsigned decimal (Go has no native verb; we coerce the
+// argument to uint64 and use %d), and %q wraps the argument in
+// single quotes with SQL-style escaping (Go's %q uses double quotes
+// and Go-syntax escapes — we implement our own).
+//
+// Width / precision modifiers (%5d, %.2f, %-10s, %05d) are passed
+// through to fmt.Sprintf unchanged.
 func evalFormat(args []PS.Expr, row *Row, params []any) (any, error) {
 	if len(args) < 1 {
 		return nil, ErrEval
@@ -359,7 +373,7 @@ func evalFormat(args []PS.Expr, row *Row, params []any) (any, error) {
 	if fmtV.Kind != KindText {
 		fmtStr = fmtV.String()
 	}
-	// Convert remaining args to any for fmt.Sprintf
+	// Convert remaining args to any for fmt.Sprintf.
 	fmtArgs := make([]any, len(args)-1)
 	for i := 1; i < len(args); i++ {
 		v, err := evalFallbackEvalValue(args[i], row, params)
@@ -368,7 +382,201 @@ func evalFormat(args []PS.Expr, row *Row, params []any) (any, error) {
 		}
 		fmtArgs[i-1] = v.ToAny()
 	}
-	return fmt.Sprintf(fmtStr, fmtArgs...), nil
+	// Two-pass: first handle %q (variable-width, can't be a fmt
+	// verb because the arg is escaped differently), then translate
+	// %i → %d and %u → %d for fmt.Sprintf.
+	rewritten, qIndices, qValues, err := sqliteFormatRewrite(fmtStr, fmtArgs)
+	if err != nil {
+		return nil, err
+	}
+	if len(qIndices) == 0 {
+		return fmt.Sprintf(rewritten, fmtArgs...), nil
+	}
+	// Apply %q substitutions in arg order, then call Sprintf.
+	out := fmt.Sprintf(rewritten, qValues...)
+	_ = qIndices
+	return out, nil
+}
+
+// sqliteFormatRewrite returns a format string and arg slice adjusted
+// for SQLite-specific verbs. It extracts %q arguments (which Go's
+// fmt cannot render with single-quote SQL escaping) and substitutes
+// the SQLite verbs %i / %u with Go-compatible %d. Width and
+// precision modifiers are preserved.
+//
+// Returns the rewritten format, a list of positions in the original
+// arg slice that were %q (currently unused but reserved for future
+// diagnostic output), and the corresponding formatted SQL-quoted
+// strings (in argument order so the caller can pass them as the
+// positional args to Sprintf).
+func sqliteFormatRewrite(s string, args []any) (string, []int, []any, error) {
+	// Phase 1: extract %q arguments. Each %q takes the next arg from
+	// `args` and renders it as a SQL single-quoted string. Replace
+	// the verb in-place with a literal %s so fmt.Sprintf renders the
+	// pre-quoted value.
+	var out strings.Builder
+	out.Grow(len(s))
+	argIdx := 0
+	var qIdx []int
+	var qVals []any
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c != '%' {
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		// Parse %[flags][width][.precision]verb
+		j := i + 1
+		for j < len(s) && (s[j] == '-' || s[j] == '+' || s[j] == ' ' || s[j] == '#' || s[j] == '0') {
+			j++
+		}
+		// width
+		for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+			j++
+		}
+		// .precision
+		if j < len(s) && s[j] == '.' {
+			j++
+			for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+				j++
+			}
+		}
+		if j >= len(s) {
+			// Trailing '%' with no verb — copy verbatim.
+			out.WriteString(s[i:])
+			break
+		}
+		verb := s[j]
+		switch verb {
+		case 'q':
+			if argIdx >= len(args) {
+				return "", nil, nil, fmt.Errorf("format: not enough arguments for %%q at offset %d", i)
+			}
+			qIdx = append(qIdx, argIdx)
+			qVals = append(qVals, sqliteQuoteString(args[argIdx]))
+			argIdx++
+			// Render the pre-quoted value with %s; preserve any
+			// width/precision modifiers from the original spec.
+			out.WriteByte('%')
+			out.WriteString(s[i+1 : j])
+			out.WriteByte('s')
+			i = j + 1
+		case 'i':
+			// %i ≡ %d for our purposes (both signed decimal int).
+			out.WriteString(s[i : j])
+			out.WriteByte('d')
+			if argIdx < len(args) {
+				argIdx++
+			}
+			i = j + 1
+		case 'u':
+			// %u is unsigned decimal; coerce the corresponding arg
+			// to uint64 and keep %d as the verb. We mutate the slice
+			// in place below.
+			out.WriteString(s[i : j])
+			out.WriteByte('d')
+			if argIdx < len(args) {
+				args[argIdx] = coerceToUnsigned(args[argIdx])
+				argIdx++
+			}
+			i = j + 1
+		default:
+			// All other verbs (%d %o %x %X %f %e %g %s %c etc.)
+			// are passed through unchanged.
+			out.WriteString(s[i : j+1])
+			if verb != '%' && argIdx < len(args) {
+				argIdx++
+			}
+			i = j + 1
+		}
+	}
+	return out.String(), qIdx, qVals, nil
+}
+
+// sqliteQuoteString renders v as a SQL single-quoted string with
+// embedded single quotes escaped by doubling. REQ001378.
+func sqliteQuoteString(v any) string {
+	if v == nil {
+		return "NULL"
+	}
+	s := fmt.Sprintf("%v", v)
+	var b strings.Builder
+	b.Grow(len(s) + 2)
+	b.WriteByte('\'')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\'' {
+			b.WriteString("''")
+			continue
+		}
+		b.WriteByte(c)
+	}
+	b.WriteByte('\'')
+	return b.String()
+}
+
+// coerceToUnsigned best-effort conversion to a Go unsigned integer
+// value so that %u renders the magnitude regardless of input sign.
+// Negative inputs render as math.MaxUint64 + n + 1 (modular wrap),
+// matching SQLite's printf behavior.
+func coerceToUnsigned(v any) any {
+	switch x := v.(type) {
+	case int:
+		if x < 0 {
+			return uint64(math.MaxUint64) + uint64(x) + 1
+		}
+		return uint64(x)
+	case int8:
+		if x < 0 {
+			return uint64(math.MaxUint64) + uint64(x) + 1
+		}
+		return uint64(x)
+	case int16:
+		if x < 0 {
+			return uint64(math.MaxUint64) + uint64(x) + 1
+		}
+		return uint64(x)
+	case int32:
+		if x < 0 {
+			return uint64(math.MaxUint64) + uint64(x) + 1
+		}
+		return uint64(x)
+	case int64:
+		if x < 0 {
+			return uint64(math.MaxUint64) + uint64(x) + 1
+		}
+		return uint64(x)
+	case uint:
+		return uint64(x)
+	case uint8:
+		return uint64(x)
+	case uint16:
+		return uint64(x)
+	case uint32:
+		return uint64(x)
+	case uint64:
+		return x
+	case float32:
+		if x < 0 {
+			return uint64(math.MaxUint64) + uint64(int64(x)) + 1
+		}
+		return uint64(x)
+	case float64:
+		if x < 0 {
+			return uint64(math.MaxUint64) + uint64(int64(x)) + 1
+		}
+		return uint64(x)
+	}
+	// Fallback: stringify then parse.
+	s := strings.TrimSpace(fmt.Sprintf("%v", v))
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		if n < 0 {
+			return uint64(math.MaxUint64) + uint64(n) + 1
+		}
+		return uint64(n)
+	}
+	return v
 }
 
 // evalLtrim trims leading characters. Default trim chars are spaces.
