@@ -260,3 +260,16 @@ func ExecuteTriggerStmt(stmt PS.Stmt, ctx *TriggerContext) error {
 	}
 	return nil
 }
+
+// FindInsteadOfTrigger returns the INSTEAD OF trigger for the given
+// table and event, or nil if none exists. REQ001366-8.
+func FindInsteadOfTrigger(table, event string) *PS.TriggerStmt {
+	triggerMu.RLock()
+	defer triggerMu.RUnlock()
+	for _, t := range tableTriggers[table] {
+		if strings.EqualFold(t.Time, "INSTEAD OF") && strings.EqualFold(t.Event, event) {
+			return t
+		}
+	}
+	return nil
+}

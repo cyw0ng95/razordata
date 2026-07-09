@@ -611,6 +611,13 @@ func (p *Planner) estimateCost(op DT.Operator) float64 {
 
 // estimateCostLegacy is the original per-operator heuristic. Kept
 func (p *Planner) planInsert(s *PS.Insert) DT.Operator {
+	// REQ001366: INSTEAD OF INSERT trigger on view.
+	if DT.LookupView(s.Table) != nil {
+		if trig := WT.FindInsteadOfTrigger(s.Table, "INSERT"); trig != nil {
+			return WT.NewInsteadOfInsert(s.Table, trig)
+		}
+		return WT.NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
+	}
 	// REQ000707: INSERT INTO t SELECT ...
 	if s.Select != nil {
 		selPlan, selErr := p.Plan(s.Select)
@@ -648,6 +655,9 @@ func (p *Planner) planInsert(s *PS.Insert) DT.Operator {
 
 func (p *Planner) planUpdate(s *PS.Update) DT.Operator {
 	if DT.LookupView(s.Table) != nil {
+		if trig := WT.FindInsteadOfTrigger(s.Table, "UPDATE"); trig != nil {
+			return WT.NewInsteadOfUpdate(s.Table, trig)
+		}
 		return WT.NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
 	}
 	if p.store != nil {
@@ -683,6 +693,9 @@ func (p *Planner) planUpdate(s *PS.Update) DT.Operator {
 
 func (p *Planner) planDelete(s *PS.Delete) DT.Operator {
 	if DT.LookupView(s.Table) != nil {
+		if trig := WT.FindInsteadOfTrigger(s.Table, "DELETE"); trig != nil {
+			return WT.NewInsteadOfDelete(s.Table, trig)
+		}
 		return WT.NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
 	}
 	if p.store != nil {

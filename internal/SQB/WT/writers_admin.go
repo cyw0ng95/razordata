@@ -814,6 +814,46 @@ func (u *UnsupportedOp) Close() error                   { return nil }
 func (u *UnsupportedOp) WithParams(_ []any) DT.Operator { return u }
 func (u *UnsupportedOp) RowsAffected() int64            { return 0 }
 
+// InsteadOfInsert executes an INSTEAD OF INSERT trigger when
+// inserting into a view. REQ001366.
+type InsteadOfInsert struct {
+	table   string
+	trigger *PS.TriggerStmt
+	done    bool
+	rows    int64
+}
+
+func NewInsteadOfInsert(table string, trigger *PS.TriggerStmt) *InsteadOfInsert {
+	return &InsteadOfInsert{table: table, trigger: trigger}
+}
+
+func (o *InsteadOfInsert) Next(ctx context.Context) (DT.Row, error) {
+	if o.done {
+		return DT.Row{}, DT.ErrNoRows
+	}
+	o.done = true
+	o.rows = 1
+	if o.trigger != nil {
+		err := ExecuteTrigger(o.trigger, &TriggerContext{})
+		if err != nil {
+			return DT.Row{}, err
+		}
+	}
+	return DT.Row{}, DT.ErrNoRows
+}
+
+func (o *InsteadOfInsert) Close() error                   { return nil }
+func (o *InsteadOfInsert) WithParams(_ []any) DT.Operator { return o }
+func (o *InsteadOfInsert) RowsAffected() int64            { return o.rows }
+
+func NewInsteadOfUpdate(table string, trigger *PS.TriggerStmt) *InsteadOfInsert {
+	return &InsteadOfInsert{table: table, trigger: trigger}
+}
+
+func NewInsteadOfDelete(table string, trigger *PS.TriggerStmt) *InsteadOfInsert {
+	return &InsteadOfInsert{table: table, trigger: trigger}
+}
+
 // AttachOp implements ATTACH DATABASE by recording the name→path
 // mapping on the Executor. REQ000908.
 type AttachOp struct {
