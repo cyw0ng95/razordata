@@ -206,6 +206,9 @@ func ExecuteTrigger(trigger *PS.TriggerStmt, ctx *TriggerContext) error {
 
 	for _, stmt := range trigger.Body {
 		if err := ExecuteTriggerStmt(stmt, ctx); err != nil {
+			if errors.Is(err, EV.ErrIgnoreRow) {
+				return nil
+			}
 			return err
 		}
 	}
