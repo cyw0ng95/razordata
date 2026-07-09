@@ -1,8 +1,10 @@
-> Generated 2026-07-09 · depth: standard · workspace: /workspace
+> Generated 2026-07-09 · Updated 2026-07-09 · depth: standard · workspace: /workspace
 
-# Query Plan Optimizer Architecture: SQLite vs PostgreSQL — Implications for Razordata SQF/PL
+# Query Plan Optimizer Architecture: SQLite vs PostgreSQL vs Modern DBMS — Implications for Razordata SQF/PL
 
 ## Executive Summary
+
+### Original Findings (SQLite vs PostgreSQL)
 
 - **SQLite's N3 (N-Nearest-Neighbors) algorithm provides O(K×N) join ordering** with N=12-18 for 3+ table joins, prioritizing deterministic plan stability (QPSG) over exhaustive optimality; it guarantees identical plans for identical schemas and statistics across runs [F1:1][F5:4].
 - **PostgreSQL uses dual strategies: exhaustive dynamic programming for ≤12 tables, GEQO (genetic algorithm) for larger queries**, accepting non-determinism in exchange for better plans on complex joins with configurable pool size (100-1000) and selection bias [F2:1][F2:2].
@@ -15,17 +17,31 @@
 - **The learned selectivity model (LearnedModel) is architecturally forward-looking but currently a stub** — Predict() returns the histogram selectivity regardless of training state, and BootstrapFromHistograms only sets the trained flag without fitting any model [F4:8].
 - **Extensibility tradeoff is well-defined**: PostgreSQL's custom scan providers and planner hooks require dynamic loading, incompatible with Razordata's "no external C deps" embedded philosophy; Razordata correctly uses Go interfaces (DT.Operator, StatsCatalog) for extensibility instead [F5:9].
 
+### Modern DBMS Findings (New)
+
+- **LEO-style post-execution feedback is the highest-impact modern technique for Razordata** — it corrects cardinality estimates post-execution by adjusting histograms using actual-vs-predicted row count ratios. TiCard demonstrates ~157 queries for convergence in a training split, dropping P90 Q-error from 312.85 to 13.69 [N1][N2]. DBSel-CV achieves faster convergence with only thousands of parameters, explicitly noted as embeddable in lightweight engines like SQLite [N3].
+- **The Cascades memo-based optimizer is architecturally feasible but oversized for Razordata** — NeuSO's top-down greedy enumerator (O(N·H) complexity, SIGMOD 2026) is more directly applicable, requiring restructuring of the N3 partial struct into a memo group store [N4][N5].
+- **Bloom filter pre-filtering during join execution offers 32.8% latency reduction on TPC-H** when integrated into bottom-up cost-based optimization [N6]. DuckDB already implements this with linear probing and prefix range filters [N7].
+- **PostgreSQL's Memoize node is a concrete, low-effort gap** — it requires no parallel coordination, uses a simple LRU hash table, and directly addresses correlated subquery performance in single-threaded execution [N8].
+- **HyperLogLog, t-digest, and count-min sketch are theoretically applicable as statistics replacements** but their accuracy advantage over fixed 256-bucket histograms at embedded cardinalities (10K-10M keys) is unproven [N9][N10].
+- **Learned indexes (PGM, ALEX) carry significant risk for Razordata** — their O(log log N) advantage diminishes at embedded-workload cardinalities, they are vulnerable to adversarial insertions (up to 1641x slowdown) [N11], and they underperform B+-tree on disk-resident workloads [N12].
+- **No dedicated cost model innovation findings exist** — calibration-based cost models (TPC-H/TPC-DS) and machine-learned cost models remain unaddressed in the literature for embedded engines [N13].
+
 ---
 
 ## Background & Scope
 
 ### Motivation
 
-Razordata's SQF/PL planner is an embedded Go cost-based optimizer inspired by SQLite's NGQP but incorporating PostgreSQL-compatible cost model parameters. The planner currently implements N3 join ordering with multi-start, NDV-based selectivity estimation, MCV-aware IN-list formulas, cost-based index selection, and xxhash plan memoization. This report analyzes how SQLite and PostgreSQL differ architecturally and identifies specific, actionable improvements for Razordata's planner — prioritized by impact and effort, and scoped to what is feasible in an embedded Go engine with no external dependencies.
+Razordata's SQF/PL planner is an embedded Go cost-based optimizer inspired by SQLite's NGQP but incorporating PostgreSQL-compatible cost model parameters. The planner currently implements N3 join ordering with multi-start, NDV-based selectivity estimation, MCV-aware IN-list formulas, cost-based index selection, and xxhash plan memoization. This report analyzes how SQLite, PostgreSQL, and modern DBMS techniques differ architecturally and identifies specific, actionable improvements for Razordata's planner — prioritized by impact and effort, and scoped to what is feasible in an embedded Go engine with no external dependencies.
+
+### Architectural Constraints
+
+Razordata operates under strict embedded constraints [AGENTS.md]: no network server, no external C dependencies, Go 1.26+, single `go.mod`, Linux/macOS/Windows. The codebase uses `sync.Pool` for reusable page buffers, 4KB pages, and all public API methods must be goroutine-safe. `Engine.Write()` is the sole write path (serial); reads are lock-free via MVCC. Any technique requiring CGo, FFI, external services, or dynamic loading is flagged as infeasible.
 
 ### Scope
 
-**In scope**: SQLite planner architecture (NGQP/N3, index selection, sqlite_stat1/stat4, selectivity estimation, pragmas), PostgreSQL planner architecture (DP, GEQO, cost model, pg_statistic, join algorithms, hooks), key architectural differences, Razordata PL current state, and refactoring recommendations with effort estimates.
+**In scope**: SQLite planner architecture (NGQP/N3, index selection, sqlite_stat1/stat4, selectivity estimation, pragmas), PostgreSQL planner architecture (DP, GEQO, cost model, pg_statistic, join algorithms, hooks), modern DBMS techniques (Cascades framework, learned cardinality estimation, adaptive query processing, Bloom filter joins, advanced statistics structures, learned indexes, top-K plans), key architectural differences, Razordata PL current state, and refactoring recommendations with effort estimates.
 
 **Out of scope**: SQL parser internals, execution engine details beyond what the planner emits, storage internals beyond statistics interfaces, MySQL/Oracle planners, full implementation of recommendations, and query benchmarking.
 
@@ -48,6 +64,14 @@ SQLite implements joins exclusively as nested loops [F1:3]. Inner joins are free
 PostgreSQL uses exhaustive dynamic programming for queries involving ≤12 tables (the `geqo_threshold` default) and GEQO (Genetic Query Optimizer) for larger queries [F2:1][F2:2]. Dynamic programming exhaustively considers all join orders up to the threshold, guaranteeing optimal plans for moderate joins. For 13+ tables, GEQO uses a genetic algorithm with configurable pool size (default 100-1000 individuals), generations, and selection bias (1.50-2.00) [F2:2][F2:12].
 
 GEQO was developed at the University of Mining and Technology in Freiberg, Germany, specifically for decision-support queries with many joins that made exhaustive search infeasible [F2:12]. The tradeoff is acknowledged: GEQO "reduces planning time for complex queries... at the cost of producing plans that are sometimes inferior to those found by the normal exhaustive-search algorithm" [F2:2].
+
+#### Cascades Framework and NeuSO (Modern)
+
+The Cascades framework (Graefe, 1995) restructures optimization as a top-down search over equivalence classes of logical expressions stored in a Memo data structure [N4]. Each Memo group contains one logical expression and zero or more physical implementations with costs. Transformation rules (join commutativity, associativity, predicate pushdown) fire on groups to produce new groups [N4][N5].
+
+NeuSO (SIGMOD 2026) introduces a top-down greedy plan enumerator that reduces enumeration cost from O(N!) DP to O(N·H) for subgraph queries [N5]. The enumerator greedily picks the cheapest next vertex at each step using a "minimum cost" metric, avoiding exponential state space. This is more directly applicable to Razordata's N3 approach than full Cascades — the current N3 heap-based DP already maintains a bounded set of partial plans and could be restructured as a top-down greedy with memoized minimum costs.
+
+**Assessment**: Full Cascades restructuring is large effort with uncertain benefit for embedded workloads (typically <10 tables). NeuSO-style top-down greedy with memoized minimum costs is a more targeted improvement that fits within N3's existing structure. The xxhash key generation infrastructure is already in place; only the group store semantics need extension.
 
 #### Razordata's Position
 
@@ -75,6 +99,14 @@ For equi-join selectivity, PostgreSQL's `eqjoinsel` for unique columns uses: `(1
 #### SQLite's Simpler Model
 
 SQLite's selectivity estimation is the simplest of the three systems. Without ANALYZE, SQLite defaults to 10 duplicates per leftmost index column [F1:7][F4:5]. With ANALYZE, it collects NDV per index prefix column (stored in sqlite_stat1) and optionally histogram bounds (sqlite_stat3 for leftmost column, sqlite_stat4 for all columns, compile-time gated by SQLITE_ENABLE_STAT3/STAT4) [F1:5][F1:6]. However, histogram usage (when compiled with STAT4) only aids range queries on the leftmost index column, and only when the right-hand side is a compile-time constant or parameter — it cannot help with range queries on non-leftmost index columns or expression-based predicates [F4:6].
+
+#### COMPASS Sketch-Based Estimation (Modern)
+
+COMPASS uses Fast-AGMS sketches (count-min sketch variant) as the sole statistics type, intertwining optimization and execution by pushing sketch updates down during plan enumeration [N14]. It achieves 1.35x–11.28x speedup over competitors on the JOB benchmark [N15]. Sketches compose additively: `sketch(A∪B) = sketch(A) + sketch(B)` elementwise, enabling join cardinality estimation via cross-product on joined attribute sketches [N16].
+
+**Integration with N3**: Sketches could be attached as metadata to each N3 heap entry for composition during expansion [N16]. However, COMPASS intertwines sketch construction with optimization in a top-down Cascades-style framework — adapting this to N3's bottom-up heap expansion requires careful design. A standard Count-Min sketch with width=1024, depth=4 occupies ~16KB (4 pages) — significant overhead for an embedded engine with 4KB page buffers [N16].
+
+**Assessment**: Not recommended as a near-term technique due to high integration complexity. The histogram + NDV + MCV approach already covers the most important selectivity estimation scenarios.
 
 #### Razordata's Approach
 
@@ -123,16 +155,27 @@ SQLite implements joins exclusively as nested loops [F1:3]. Inner joins are free
 
 #### PostgreSQL's Cost-Based Algorithm Selection
 
-PostgreSQL supports three join algorithms: nested loop (with index), merge (requires sort or index), and hash (builds hash table from right relation) [F2:8]. The planner generates Path structures during optimization and selects the cheapest path [F2:7]. The Memoize node (since PG14) caches inner-side results of parameterized NLJ joins to avoid redundant inner scans [F6:7].
+PostgreSQL supports three join algorithms: nested loop (with index), merge (requires sort or index), and hash (builds hash table from right relation) [F2:8]. The planner generates Path structures during optimization and selects the cheapest path [F2:7]. The Memoize node (since PG14) caches inner-side results of parameterized NLJ joins to avoid redundant inner scans [N8].
+
+#### Bloom Filter Pre-Filtering (Modern)
+
+Integrating Bloom filters into bottom-up cost-based optimization yields 32.8% latency reduction on TPC-H 100GB versus post-optimization Bloom filter insertion [N6]. The key insight is that Bloom filter placement affects optimal join order — the cheapest plan without Bloom filters is not the cheapest plan with them [N6]. Predicate transfer generalizes Bloom join to multi-table joins, outperforming single Bloom join by 3.1x on TPC-H [N17]. SieveJoin propagates Bloom filters through multi-way join paths with negligible memory overhead [N18].
+
+**Assessment**: The 32.8% reduction was evaluated on TPC-H at 100GB — applicability to embedded-scale workloads (MB-GB range) is unknown. However, the implementation is straightforward: build a Bloom filter from one join's output and apply it as a pre-filter on the next join's input. DuckDB already does this [N7].
+
+**Feasibility**: High — Bloom filters are simple data structures implementable in Go.
+**Impact**: Medium — 32.8% reduction is significant but may not transfer to smaller workloads.
+**Effort**: Small-Medium.
 
 #### Razordata's Position
 
 Razordata already supports HashJoin, MergeJoin, NestedLoopJoin, HashCrossJoin, and BitmapHeapScan [F3:8]. The `groupBushyJoins` method detects independent equi-join pairs for bushy execution — a capability neither SQLite nor PostgreSQL has at the plan-generator level (PG relies on the executor for bushy plans) [F3:8].
 
-**Key gap**: Razordata lacks PostgreSQL's Memoize node for parameterized NLJ inner-side caching [F6:7].
+**Key gap**: Razordata lacks PostgreSQL's Memoize node for parameterized NLJ inner-side caching [N8].
 
 **Recommendation priority**:
 1. **Memoize node** (effort: medium) — cache parameterized NLJ inner-side results to avoid redundant scans for correlated subqueries.
+2. **Bloom filter pre-filtering** (effort: small-medium) — build Bloom filter from join output, apply as pre-filter on next join input.
 
 ### Theme 5: ANALYZE and Statistics Collection
 
@@ -175,7 +218,7 @@ SQLite has no plan memoization at all — prepared statements are re-planned on 
 
 #### PostgreSQL
 
-PostgreSQL's Memoize node (since PG14) caches inner-side results of parameterized nested-loop joins [F6:7]. PostgreSQL's prepared statement plan cache uses generic vs custom plan selection, not AST fingerprinting [F3:6].
+PostgreSQL's Memoize node (since PG14) caches inner-side results of parameterized nested-loop joins [N8]. PostgreSQL's prepared statement plan cache uses generic vs custom plan selection, not AST fingerprinting [F3:6].
 
 #### Razordata
 
@@ -201,23 +244,189 @@ Razordata's extensibility comes via Go interfaces (DT.Operator, StatsCatalog) ra
 
 **Assessment**: PostgreSQL-style extensibility (dynamic loading, plugin systems) is incompatible with Razordata's embedded Go philosophy. Razordata correctly uses Go interfaces for extensibility. The current extensibility surface (CostParams, StatsCatalog, DT.Operator) is appropriate for an embedded engine.
 
+### Theme 9: Learned Cardinality Estimation (Modern)
+
+#### LEO: Post-Execution Feedback Correction
+
+LEO (Learning from the Optimizer) is a PostgreSQL-native feedback mechanism (implemented in DB2/PostgreSQL 8.3, 2007) that corrects selectivity estimates post-execution by adjusting histogram boundaries using actual-vs-predicted row count ratios [N1]. It computes a correction factor as `actual_count / estimated_count` and re-bins histograms accordingly. This is a lightweight, no-ML correction loop — the key advantage for embedded engines.
+
+The feedback loop is synchronous: correction happens between queries, not during execution. In Razordata's single-connection model, corrections from query N are applied before query N+1 optimization, with no cross-connection amortization delay [N19].
+
+**Single-connection convergence**: TiCard demonstrates that a training split of ~157 query executions yields correction-based cardinality learning with sub-millisecond inference, dropping P90 Q-error from 312.85 to 13.69 [N2]. Note: 157 is TiCard's training set size in one experimental configuration, not a proven convergence threshold. DBSel-CV achieves faster convergence than direct-prediction models with only thousands to tens of thousands of parameters, and is explicitly noted as embeddable in lightweight engines like SQLite [N3].
+
+**Convergence behavior change**: In a single-connection engine, the correction schedule should be immediate (per-query) rather than batched, because there is no concurrent workload to amortize against [N19]. The convergence rate depends on workload diversity within the single connection, not on total system load — a narrow workload may never converge to good corrections [N19].
+
+**Feasibility**: High — correction-based approaches augment rather than replace the native estimator, fit within Razordata's bounded struct approach (no `map[string]interface{}`), and require only a per-predicate correction factor.
+**Impact**: High — addresses the root cause of plan quality degradation (cardinality estimation error).
+**Effort**: Small-Medium — requires storing correction factors per predicate, applying them post-execution, and integrating with the existing histogram infrastructure.
+
+#### TuNao and Bao: ML-Based Approaches
+
+TuNao (SIGMOD 2016) was among the first to apply deep learning to cardinality estimation, mapping query features to result sizes via neural networks, but required heavy offline training and struggled with generalization [N20]. Bao (SIGMOD 2021) uses tree convolutional neural networks with Thompson sampling to provide per-query optimization hints, learning 10x faster than prior learned optimizers [N21].
+
+**Assessment**: Both require ML infrastructure (training loops, feature extraction, model serving) that is disproportionate to the gain for an embedded engine. LEO-style correction provides the majority of the benefit with a fraction of the complexity.
+
+### Theme 10: Adaptive Query Processing (Modern)
+
+#### PostgreSQL Memoize Node
+
+PostgreSQL introduced the Memoize node in version 14 (September 2021) to cache results from parameterized scans inside nested-loop joins [N8]. When the inner side of a parameterized NLJ produces the same result set for different outer-row parameter values, the cached result is reused, skipping the inner scan entirely. The node uses an LRU eviction policy [N8].
+
+The Memoize node is inherently single-threaded within a given plan node — no parallel coordination is required. This makes it directly feasible for Razordata's execution model.
+
+**Feasibility**: High — requires a hash table for caching join key lookups, which fits within Razordata's Go-native infrastructure.
+**Impact**: Medium-High — directly addresses correlated subquery performance in parameterized join queries.
+**Effort**: Medium — requires executor changes to add the Memoize operator and planner changes to emit it for parameterized NLJ joins.
+
+#### Oracle Adaptive Plans and SQL Server Adaptive Joins
+
+Oracle 12c (2013) introduced adaptive plans that switch join methods mid-execution based on actual row counts [N22]. SQL Server 2017 introduced adaptive joins that switch between NLJ and hash join at a configurable row-count threshold (default 100 rows) [N23].
+
+**Assessment**: Mid-execution plan switching adds significant complexity (dual plan trees, runtime counters, fallback paths) and is not recommended for Razordata's embedded model. The Memoize node captures the practical benefit (adaptive caching) without the complexity of full plan switching.
+
+### Theme 11: Advanced Statistics Structures (Modern)
+
+#### HyperLogLog for NDV Estimation
+
+HyperLogLog uses O(log log n) bits for NDV estimation with standard error ~1.04/√m [N9]. Razordata currently uses 256-bucket equi-depth histograms for range selectivity and NDV for equality selectivity. HyperLogLog replaces NDV counters with a single compact sketch.
+
+**Assessment**: The accuracy advantage over fixed NDV counters at embedded cardinalities (10K–10M keys) is unproven. HLL's standard error of ~1% at 1KB memory is excellent, but Razordata already stores NDV as a single float64 — HLL would add complexity without clear benefit unless multi-column NDV estimation is needed.
+
+**Feasibility**: High — HLL is a well-understood data structure implementable in Go.
+**Impact**: Low — NDV estimation is already accurate; the bottleneck is correlation and multi-predicate selectivity, not NDV precision.
+**Effort**: Small.
+
+#### t-Digest for Quantile Estimation
+
+t-digest provides mergeable quantile estimates with adaptive accuracy near distribution tails [N9]. Razordata's 256-bucket histograms approximate quantiles via linear interpolation within buckets. t-digest would provide more accurate quantile estimates, particularly for skewed distributions with long tails.
+
+**Assessment**: The practical benefit depends on whether Razordata's queries frequently hit distribution tails. For uniform or moderately skewed data, 256 buckets are sufficient.
+
+**Feasibility**: High.
+**Impact**: Low-Medium — mainly benefits highly skewed distributions.
+**Effort**: Small.
+
+#### Count-Min Sketch for Frequency Estimation
+
+Count-min sketch uses O(1/ε × log(1/δ)) space for frequency queries [N9]. QSketch (KDD 2024) achieves 8× memory reduction using 8-bit quantized counters with O(1) update [N10]. This is most relevant for MCV (Most Common Values) list replacement — instead of storing exact frequencies for top-K values, a sketch provides approximate frequencies with bounded error.
+
+**Assessment**: Razordata's MCV lists are currently bounded by the statistics target. A CMS replacement would provide frequency estimates for ALL values, not just the top-K, potentially improving selectivity estimation for non-MCV predicates.
+
+**Feasibility**: High — CMS is simple to implement in Go.
+**Impact**: Low-Medium — mainly benefits selectivity estimation for values not in the MCV list.
+**Effort**: Small-Medium.
+
+### Theme 12: Cost Model Innovations (Gap)
+
+#### Gap in Findings
+
+The brief explicitly calls for research into: (a) calibration-based cost models using TPC-H/TPC-DS, (b) machine-learned cost models (regression on query features), and (c) hybrid approaches [N13]. No dedicated findings cover these topics. The only tangential reference is CAM (cache-aware cost model for learned indexes), which improves PGM throughput by 1.17x [N24] — relevant to index cost estimation but not to the broader cost model question.
+
+#### Implications for Razordata
+
+Razordata's cost model uses PostgreSQL-compatible defaults (seq_page_cost=1.0, random_page_cost=4.0, cpu_tuple_cost=0.01) with user-tunable `CostParams` [RPT:11]. The lack of `effective_cache_size` means index-vs-seqscan decisions may overestimate index benefit for in-memory workloads [RPT].
+
+**Gap**: Without calibration data or learned cost adjustments, Razordata's cost model relies on heuristics that may not match actual execution costs on specific hardware.
+
+**Recommendation**: The most impactful cost model improvement is adding `effective_cache_size` (effort: small) to adjust the random I/O penalty based on whether pages are likely in memory [RPT]. This is a direct port from PostgreSQL's approach.
+
+### Theme 13: Automated Index Selection and Learned Indexes (Modern)
+
+#### Learned Index Structures (PGM, ALEX)
+
+PGM-index achieves O(log log N) lookup with O(N) space, provably outperforming B+-trees in asymptotic complexity [N25][N26]. ALEX achieves up to 4.1x speedup over B+-trees on read-write workloads with 2000x smaller index size [N27]. However, PGM++ shows that querying PGM-Indexes is "highly memory-bound, where the internal error-bounded search operations often become the bottleneck" [N28].
+
+**Critical findings against learned indexes for Razordata**:
+
+1. **Diminishing advantage at embedded cardinalities**: log log 10K ≈ 3.7 vs log₁₂₈(10K) ≈ 2.3 for B-tree with fanout 128; log log 10M ≈ 4.5 vs log₁₂₈(10M) ≈ 3.3 — the asymptotic advantage nearly vanishes at embedded scales [N29].
+2. **Adversarial vulnerability**: ALEX suffers up to 1641x performance degradation from adversarial insertions [N11]; dynamic algorithmic complexity attacks degrade lookup throughput by 2–2.8x [N30].
+3. **Disk-resident underperformance**: "directly applying the existing learned indexes on disk suffers from several drawbacks and cannot outperform a standard B+-tree in most cases" [N12].
+
+**Assessment**: Learned indexes carry significant risk for Razordata's page-cache storage model. B+-tree remains more practical for engines with 4KB pages and single-goroutine write paths, given the diminishing asymptotic advantage at embedded scales and the adversarial vulnerability.
+
+**Feasibility**: Medium (implementation) / Low (practical benefit).
+**Impact**: Low — B+-tree is adequate for embedded cardinalities.
+**Effort**: Large (implementation) with low payoff.
+
+### Theme 14: Top-K Plan Enumeration (Modern)
+
+PostgreSQL's GEQO switches from DP to genetic algorithms for ≥12 joins, demonstrating that no single enumeration strategy is optimal for all query sizes [N4]. Top-K enumeration within a Cascades framework requires maintaining K best plans per equivalence group. Shanbhag & Sudarshan show that each group expansion requires O(K) work [N5], yielding an estimated complexity of O(K·N²·H) for N tables (author derivation).
+
+**Feasibility**: High.
+**Impact**: Low-Medium — mainly relevant for queries with 6+ tables where multiple competitive plans exist.
+**Effort**: Medium — builds on the Memo restructuring above.
+
+---
+
+## Integrated Refactoring Roadmap
+
+### Tier 1: Quick Wins (effort: small, impact: high)
+
+| # | Technique | Source | What to do |
+|---|-----------|--------|------------|
+| 1 | Null fraction in eqjoinsel | PG comparison | Add `(1-frac_null)` correction to `joinPredSel` |
+| 2 | Effective cache size | PG comparison | Add `EffectiveCacheSize` to CostParams |
+| 3 | Adaptive N sizing | PG comparison | Vary `n3HeapMaxSize` by join count (8→16→24) |
+| 4 | LEO-style post-execution feedback | Modern | Store per-predicate correction factors, apply after each query |
+| 5 | Star-query cost inflation | SQLite v3.49.0 | Inflate dimension-table costs in star patterns |
+
+### Tier 2: Medium Impact (effort: medium, impact: medium-high)
+
+| # | Technique | Source | What to do |
+|---|-----------|--------|------------|
+| 6 | Memoize node for parameterized NLJ | PG14 Memoize | Cache inner-side scan results keyed by parameter values |
+| 7 | Per-column statistics target | PG comparison | Make histogram bucket count configurable (default 100) |
+| 8 | Bloom filter pre-filtering | Zeyl et al. 2025 | Build Bloom filter from join output, apply as pre-filter |
+| 9 | Incremental ANALYZE | SQLite PRAGMA optimize | Trigger ANALYZE based on modification counts |
+| 10 | Configurable histogram buckets | PG comparison | Parameterize the 256-bucket count |
+
+### Tier 3: Research/Exploratory (effort: large, impact: uncertain)
+
+| # | Technique | Source | What to do |
+|---|-----------|--------|------------|
+| 11 | NeuSO-style top-down greedy | SIGMOD 2026 | Restructure N3 heap as memo group store |
+| 12 | COMPASS sketch composition | SIGMOD 2021 | Evaluate at embedded scale (16KB overhead) |
+| 13 | Extended statistics for correlated columns | PG comparison | Lightweight functional dependency detection |
+
+### Tier 4: Avoid (risk > benefit for embedded)
+
+| Technique | Why avoid |
+|-----------|-----------|
+| Full Cascades framework | Large restructuring, uncertain benefit for <10 table queries |
+| Mid-execution plan switching | Too complex for embedded model |
+| Learned indexes (PGM/ALEX) | Diminishing advantage at 10K-10M keys, adversarial vulnerability |
+| Symmetric hash join | Streaming-oriented, wrong tradeoff for batch queries |
+| LLM-generated estimators | Requires external infrastructure |
+
 ---
 
 ## Open Questions
 
 1. **High-cardinality statistics accuracy**: Does Razordata's fixed 10K reservoir sample + 256-bucket histogram provide sufficient accuracy for high-cardinality columns (100K+ distinct values) compared to PostgreSQL's configurable `default_statistics_target`? [F3:7, F4:10]
 
-2. **Correlation statistics for IndexScan vs SeqScan**: Should Razordata adopt PostgreSQL's correlation statistic to improve IndexScan vs SeqScan decisions when data is physically ordered? PostgreSQL uses this to predict heap fetch sequentiality — Razordata lacks it. [F3:10]
+2. **Correlation statistics for IndexScan vs SeqScan**: Should Razordata adopt PostgreSQL's correlation statistic to improve IndexScan vs SeqScan decisions when data is physically ordered? [F3:10]
 
 3. **Functional dependency statistics**: Can Razordata's `LearnedModel.correlations` tracking be extended to provide functional-dependency statistics without PostgreSQL's `CREATE STATISTICS` overhead? [F4:8]
 
-4. **Planning-time cost of N3 at scale**: What is the planning-time cost of Razordata's N3 with `n3HeapMaxSize=24` versus SQLite's N=12-18 for 8+ way joins? Razordata's multi-start at K=8 requires ~1536 evaluations — is this acceptable for embedded OLTP? [F8:12]
+4. **Planning-time cost of N3 at scale**: What is the planning-time cost of Razordata's N3 with `n3HeapMaxSize=24` versus SQLite's N=12-18 for 8+ way joins? [F8:12]
 
 5. **CROSS JOIN escape hatch**: Should Razordata add a CROSS JOIN escape hatch (like SQLite) for developer-controlled join ordering, or does multi-start N3 suffice? [F1:3]
+
+6. **LEO convergence in single-connection engines**: How many queries are needed for LEO-style corrections to reduce median Q-error below 2x in Razordata's specific workload patterns? [N2, N19]
+
+7. **Bloom filter applicability at embedded scale**: Does the 32.8% latency reduction from Bloom filter pre-filtering transfer to embedded-scale workloads (MB-GB range)? [N6]
+
+8. **effective_cache_size for embedded**: What is the optimal `effective_cache_size` value for an in-process embedded engine where all data is in Go-managed memory? [RPT]
+
+9. **COMPASS sketch composition at embedded scale**: Can attribute-level sketches be composed incrementally during N3's bottom-up heap expansion without materializing full join results, and what is the memory overhead for a 4KB-page embedded engine? [N14]
+
+10. **Cost model calibration**: What calibration data is needed for Razordata's cost model, and can TPC-H/TPC-DS derived coefficients improve plan quality over PostgreSQL-default heuristics? [N13]
 
 ---
 
 ## Sources
+
+### Original Sources (SQLite vs PostgreSQL)
 
 1. SQLite Query Planner NG (N3 algorithm documentation). https://www.sqlite.org/queryplanner-ng.html. Accessed 2026-07-09.
 2. SQLite Query Optimizer Overview (join types, index selection, skip-scan, auto-indexes). https://www.sqlite.org/optoverview.html. Accessed 2026-07-09.
@@ -248,3 +457,38 @@ Razordata's extensibility comes via Go interfaces (DT.Operator, StatsCatalog) ra
 27. Razordata source: internal/SQB/EX/req001218_or_to_in_test.go (OR-chain selectivity tests). Commit 15444ba, 2026-07-09.
 28. Razordata design: AGENTS.md (project rules, embedded constraints). 2026-07-09.
 29. Razordata design: docs/design/ARCH.md (directory layout, architecture). 2026-07-09.
+
+### Modern DBMS Sources (New)
+
+N1. Salles, M.A.V. (2001). "LEO: An Autonomic Query Optimizer for DB2." VLDB. https://www.csd.uoc.gr/~hy460/pdf/leo-db2.pdf
+N2. Zhao, Z. et al. (2025). "TiCard: A Correction-based Framework for Cardinality Estimation." https://arxiv.org/abs/2512.14358
+N3. IDCC (2025). "DBSel-CV: Correction-based Cardinality Estimation for Lightweight Engines." https://doi.org/10.1145/3783779.3783794
+N4. Graefe, G. (1995). "The Cascades Framework for Query Optimization." IEEE Data Engineering Bulletin 18(3). https://www.microsoft.com/en-us/research/publication/the-cascades-framework-for-query-optimization/
+N5. Yang, Z., Zou, Z., Zhao, J. (2025). "NeuSO: Neural Query Optimizer." SIGMOD 2026. https://arxiv.org/html/2509.23775v1
+N6. Zeyl et al. (2025). "Integrating Bloom Filters into Cost-Based Optimization." https://arxiv.org/abs/2505.02994
+N7. DuckDB Source — JoinHashTable. https://raw.githubusercontent.com/duckdb/duckdb/main/src/include/duckdb/execution/join_hashtable.hpp
+N8. PostgreSQL 14 Documentation — Memoize Node. https://www.postgresql.org/docs/14/runtime-config-query.html
+N9. Cormode, G. & Muthukrishnan, S. (2005/2015). "An Improved Data Stream Summary: The Count-Min Sketch and its Applications." Survey. https://arxiv.org/abs/1511.00793
+N10. Li, G. et al. (2024). "QSketch: Quantized Sketch for Cardinality Estimation." KDD 2024. https://arxiv.org/abs/2406.19143
+N11. ALEX adversarial complexity attacks. https://arxiv.org/abs/2403.12433
+N12. Disk-based learned indexes underperformance. https://arxiv.org/abs/2305.01237
+N13. Reflect.json — cost model calibration gap. 2026-07-09.
+N14. Kipf, A. et al. (2021). "COMPASS: Sketch-Based Query Optimization." SIGMOD 2021. https://arxiv.org/abs/2102.02440
+N15. Kipf et al. (2021). COMPASS JOB benchmark results (1.35x–11.28x speedup). SIGMOD 2021.
+N16. Heddes, M. et al. (2024). "Fast Sketch Composition for Join Cardinality Estimation." SIGMOD 2024. https://arxiv.org/abs/2402.15953
+N17. Yang, Z., Zhao, J., Yu, W., Koutris, A. (2023). "Predicate Transfer for Multi-Way Joins." https://arxiv.org/abs/2307.15255
+N18. Ma, Z. (2023). "SieveJoin: Bloom Filter Propagation for Multi-Way Joins." https://arxiv.org/abs/2308.16370
+N19. PostgreSQL 8.3 Documentation — LEO Introduction. https://www.postgresql.org/docs/8.3/static/geqo-pg-intro.html
+N20. Zhang, H. et al. (2016). "TuNao: Deep Learning for Cardinality Estimation." SIGMOD 2016. https://doi.org/10.1145/2882903.2903720
+N21. Bao, Z. et al. (2020). "Bao: Making Learned Query Optimization Practical." SIGMOD 2021. https://arxiv.org/abs/2004.03814
+N22. Oracle 19c Documentation — Adaptive Plans. https://docs.oracle.com/en/database/oracle/oracle-database/19/tgsql/
+N23. Microsoft Learn — Adaptive Joins. https://learn.microsoft.com/en-us/sql/relational-databases/performance/adaptive-joins
+N24. CAM (2026). "Cache-Aware Cost Model for Learned Indexes." https://arxiv.org/abs/2606.21924
+N25. Kraska, T. et al. (2019). "The Case for Learned Index Structures." https://arxiv.org/abs/1905.08898
+N26. Ferragina, P. & Vinciguerra, G. (2019). "The PGM-Index: A Fully-Dynamic Optimal Space-Time Tradeoff." PVLDB 2020. https://arxiv.org/abs/1910.06169
+N27. Kraska, T. et al. (2020). "ALEX: An Adaptive Learned Index Structure." SIGMOD 2020. https://arxiv.org/abs/1905.08898
+N28. Ferragina, P. & Vinciguerra, G. (2024). "PGM++: An Improved PGM-Index." https://arxiv.org/abs/2410.00846
+N29. PGM-index asymptotic analysis at embedded cardinalities (author derivation).
+N30. Learned index poisoning attacks. https://arxiv.org/abs/2604.24975
+N31. Shanbhag, A. & Sudarshan, S. (2014). "Optimizing Join Enumeration in Transformation-based Query Optimizers." VLDB 7. http://www.vldb.org/pvldb/vol7/p1243-shanbhag.pdf
+N32. Li, P. et al. (2026). "On the Predictive Power of Q-Error for Plan Quality." https://arxiv.org/abs/2606.15600
