@@ -272,3 +272,130 @@ func TestRightJoin_CrossJoinFallback(t *testing.T) {
 		t.Fatalf("got %d rows, want 2 (all right rows with cross join)", len(results))
 	}
 }
+
+func TestFullJoin_NLJ_Basic(t *testing.T) {
+	leftRows := []pl.Row{
+		{Cols: []string{"id", "v"}, Data: []Value{DT.NewIntValue(1), DT.NewTextValue("a")}},
+		{Cols: []string{"id", "v"}, Data: []Value{DT.NewIntValue(2), DT.NewTextValue("b")}},
+		{Cols: []string{"id", "v"}, Data: []Value{DT.NewIntValue(3), DT.NewTextValue("c")}},
+	}
+	rightRows := []pl.Row{
+		{Cols: []string{"id", "x"}, Data: []Value{DT.NewIntValue(2), DT.NewTextValue("x2")}},
+		{Cols: []string{"id", "x"}, Data: []Value{DT.NewIntValue(4), DT.NewTextValue("x4")}},
+	}
+
+	leftOp := &testRowsOp{rows: leftRows}
+	rightOp := &testRowsOp{rows: rightRows}
+
+	join := NewNestedLoopJoin(leftOp, rightOp, "l", "r", func(outer, inner *pl.Row) (bool, error) {
+		return outer.Data[0].I64 == inner.Data[0].I64, nil
+	}, JoinKindFull)
+
+	ctx := context.Background()
+	var results []pl.Row
+	for {
+		row, err := join.Next(ctx)
+		if err == pl.ErrNoRows {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		results = append(results, row)
+	}
+
+	// Expected: 1 matched (2+b,2+x2), 2 unmatched left (1, 3), 1 unmatched right (4)
+	// Total: 4 rows
+	if len(results) != 4 {
+		t.Fatalf("got %d rows, want 4 (1 matched + 2 unmatched left + 1 unmatched right)", len(results))
+	}
+}
+
+func TestFullJoin_NLJ_LeftEmpty(t *testing.T) {
+	rightRows := []pl.Row{
+		{Cols: []string{"id", "x"}, Data: []Value{DT.NewIntValue(1), DT.NewTextValue("x1")}},
+		{Cols: []string{"id", "x"}, Data: []Value{DT.NewIntValue(2), DT.NewTextValue("x2")}},
+	}
+
+	leftOp := &testRowsOp{rows: nil}
+	rightOp := &testRowsOp{rows: rightRows}
+
+	join := NewNestedLoopJoin(leftOp, rightOp, "l", "r", nil, JoinKindFull)
+
+	ctx := context.Background()
+	var results []pl.Row
+	for {
+		row, err := join.Next(ctx)
+		if err == pl.ErrNoRows {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		results = append(results, row)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d rows, want 2 (all right rows unmatched)", len(results))
+	}
+}
+
+func TestFullJoin_NLJ_RightEmpty(t *testing.T) {
+	leftRows := []pl.Row{
+		{Cols: []string{"id", "v"}, Data: []Value{DT.NewIntValue(1), DT.NewTextValue("a")}},
+		{Cols: []string{"id", "v"}, Data: []Value{DT.NewIntValue(2), DT.NewTextValue("b")}},
+	}
+
+	leftOp := &testRowsOp{rows: leftRows}
+	rightOp := &testRowsOp{rows: nil}
+
+	join := NewNestedLoopJoin(leftOp, rightOp, "l", "r", nil, JoinKindFull)
+
+	ctx := context.Background()
+	var results []pl.Row
+	for {
+		row, err := join.Next(ctx)
+		if err == pl.ErrNoRows {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		results = append(results, row)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d rows, want 2 (all left rows unmatched)", len(results))
+	}
+}
+
+func TestFullJoin_NLJ_NoMatch(t *testing.T) {
+	leftRows := []pl.Row{
+		{Cols: []string{"id"}, Data: []Value{DT.NewIntValue(1)}},
+	}
+	rightRows := []pl.Row{
+		{Cols: []string{"id", "x"}, Data: []Value{DT.NewIntValue(2), DT.NewTextValue("x2")}},
+	}
+
+	leftOp := &testRowsOp{rows: leftRows}
+	rightOp := &testRowsOp{rows: rightRows}
+
+	join := NewNestedLoopJoin(leftOp, rightOp, "l", "r", func(outer, inner *pl.Row) (bool, error) {
+		return outer.Data[0].I64 == inner.Data[0].I64, nil
+	}, JoinKindFull)
+
+	ctx := context.Background()
+	var results []pl.Row
+	for {
+		row, err := join.Next(ctx)
+		if err == pl.ErrNoRows {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		results = append(results, row)
+	}
+	// Expected: 1 unmatched left (1) + 1 unmatched right (2) = 2
+	if len(results) != 2 {
+		t.Fatalf("got %d rows, want 2 (1 unmatched left + 1 unmatched right)", len(results))
+	}
+}
