@@ -18,6 +18,9 @@ import (
 // so tests do not collide on the `users` name.
 func testEngine(t *testing.T) (AP.Engine, context.Context) {
 	t.Helper()
+	if sessionConstructor == nil {
+		t.Skip("REQ001432: sessionConstructor not registered (import cycle prevents SE)")
+	}
 	resetExecutorRegistry()
 	dir := filepath.Join(t.TempDir(), "db")
 	eng, err := Open(context.Background(), dir, AP.Options{

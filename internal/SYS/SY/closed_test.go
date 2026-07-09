@@ -17,11 +17,14 @@ import (
 func openForCloseTest(t *testing.T) AP.Engine {
 	t.Helper()
 	executor.UnregisterAll()
-	// REQ001431: ensure sessionConstructor is registered (import cycle
-	// prevents importing SE, so register a dummy here).
+	// REQ001431: register a dummy session constructor for closed-guard
+	// tests. Save and restore the original to avoid leaking into CRUD
+	// tests that need real sessions.
+	origSC := sessionConstructor
 	if sessionConstructor == nil {
 		RegisterSession(func(e *Engine) AP.Session { return &dummySession{eng: e} })
 	}
+	t.Cleanup(func() { sessionConstructor = origSC })
 	dir := filepath.Join(t.TempDir(), "db")
 	eng, err := Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
