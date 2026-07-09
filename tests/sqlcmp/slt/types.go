@@ -130,16 +130,33 @@ func (v Value) String() string {
 // escapeText replaces non-printable characters with '@', matching
 // the SLT corpus rendering rule.
 func escapeText(s string) string {
+	// REQ001424: fast-path — if no control characters, return as-is
+	// with zero allocation. SLT corpus data is predominantly ASCII.
+	if !containsControl(s) {
+		return s
+	}
 	var b strings.Builder
 	b.Grow(len(s))
-	for _, r := range s {
-		if r < 0x20 || r == 0x7f {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x20 || c == 0x7f {
 			b.WriteByte('@')
 		} else {
-			b.WriteRune(r)
+			b.WriteByte(c)
 		}
 	}
 	return b.String()
+}
+
+// containsControl reports whether s contains any control characters
+// (bytes < 0x20 or == 0x7f). REQ001424.
+func containsControl(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 // ParseValue decodes a single token from a result row according to
