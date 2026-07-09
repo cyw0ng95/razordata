@@ -400,6 +400,8 @@ func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinC
 			kind = "LEFT"
 		case LX.T_RIGHT:
 			kind = "RIGHT"
+		case LX.T_FULL:
+			kind = "FULL"
 		case LX.T_CROSS:
 			kind = "CROSS"
 		}

@@ -363,6 +363,8 @@ func TestNaturalJoin_Inner_Parses(t *testing.T) {
 		{"natural_left", "SELECT * FROM t1 NATURAL LEFT JOIN t2", "LEFT"},
 		{"natural_right", "SELECT * FROM t1 NATURAL RIGHT JOIN t2", "RIGHT"},
 		{"natural_left_outer", "SELECT * FROM t1 NATURAL LEFT OUTER JOIN t2", "LEFT"},
+		{"natural_full", "SELECT * FROM t1 NATURAL FULL JOIN t2", "FULL"},
+		{"natural_full_outer", "SELECT * FROM t1 NATURAL FULL OUTER JOIN t2", "FULL"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := NewParser(tc.sql)
