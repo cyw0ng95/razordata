@@ -367,9 +367,13 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 		// right-outer emission phase.
 		row, lerr := j.left.Next(ctx)
 		if lerr != nil {
-			if lerr == ErrNoRows {
-				return j.emitUnmatchedRight(), nil
+	if lerr == ErrNoRows {
+			row := j.emitUnmatchedRight()
+			if j.rightEmitted {
+				return Row{}, ErrNoRows
 			}
+			return row, nil
+		}
 			return Row{}, lerr
 		}
 		prefixed := Row{Types: row.Types, Data: row.Data, Outer: row.Outer}
@@ -398,7 +402,9 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 			}
 			j.matched = true
 			j.rightMatched[j.rightPos-1] = true
-			return j.emitLimitCheck(j.outerJoinRows(j.leftRow, &r)), nil
+			result := j.outerJoinRows(j.leftRow, &r)
+			j.leftRow = nil
+			return j.emitLimitCheck(result), nil
 		}
 		// No matches for this left row.
 		if j.leftOuter && !j.matched {
