@@ -40,10 +40,27 @@ var busyHandlerRegistry sync.Map // map[string]BusyHandlerFunc
 // surface ErrBusy. REQ001302.
 type BusyHandlerFunc func(attempt int) bool
 
+// autoCompactMode controls whether automatic LSM compaction is
+// triggered after commits. 0=none, 1=incremental, 2=full. REQ001304.
+var autoCompactMode atomic.Int64
+
 func init() {
 	foreignKeysEnabled.Store(true)
 	walAutocheckpointPages.Store(1000)
 	busyHandlerNameStr.Store("")
+	autoCompactMode.Store(0) // none
+}
+
+// SetAutoCompactMode stores the auto-compaction mode.
+// 0=none, 1=incremental, 2=full. REQ001304.
+func SetAutoCompactMode(mode int64) {
+	autoCompactMode.Store(mode)
+}
+
+// AutoCompactMode returns the current auto-compaction mode.
+// 0=none, 1=incremental, 2=full. REQ001304.
+func AutoCompactMode() int64 {
+	return autoCompactMode.Load()
 }
 
 // SetForeignKeysEnabled stores the FK enforcement toggle.

@@ -830,6 +830,9 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 	case "cell_size_check", "quick_check":
 		// REQ001387 / REQ001379: handled by Pragma operator.
 		return WT.NewPragma(s).WithStore(p.store)
+	case "auto_compact":
+		// REQ001304: handled by Pragma operator.
+		return WT.NewPragma(s).WithStore(p.store)
 	default:
 		return OP.NewSeqScan("__pragma_unknown__")
 	}

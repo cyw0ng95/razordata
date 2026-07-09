@@ -385,6 +385,41 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 		return row, nil
 	}
 
+	// Handle PRAGMA auto_compact = none|incremental|full (REQ001304)
+	if p.Stmt.Name == "auto_compact" {
+		if !p.done {
+			p.done = true
+			if p.Stmt.Value != "" {
+				val := strings.ToLower(p.Stmt.Value)
+				switch val {
+				case "none", "0":
+					DT.SetAutoCompactMode(0)
+				case "incremental", "1":
+					DT.SetAutoCompactMode(1)
+				case "full", "2":
+					DT.SetAutoCompactMode(2)
+				}
+			}
+			mode := DT.AutoCompactMode()
+			modeStr := "none"
+			if mode == 1 {
+				modeStr = "incremental"
+			} else if mode == 2 {
+				modeStr = "full"
+			}
+			p.rows = append(p.rows, DT.Row{
+				Cols: []string{"auto_compact"},
+				Data: []DT.Value{DT.NewTextValue(modeStr)},
+			})
+		}
+		if p.idx >= len(p.rows) {
+			return DT.Row{}, DT.ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
 	// Default: handle PRAGMA name = value (write) and notify listeners
 	if !p.done {
 		p.done = true
