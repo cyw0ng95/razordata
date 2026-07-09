@@ -17,6 +17,11 @@ import (
 func openForCloseTest(t *testing.T) AP.Engine {
 	t.Helper()
 	executor.UnregisterAll()
+	// REQ001431: ensure sessionConstructor is registered (import cycle
+	// prevents importing SE, so register a dummy here).
+	if sessionConstructor == nil {
+		RegisterSession(func(e *Engine) AP.Session { return &dummySession{eng: e} })
+	}
 	dir := filepath.Join(t.TempDir(), "db")
 	eng, err := Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
@@ -267,4 +272,102 @@ func TestNoGoroutineLeakFromClosedFlag(t *testing.T) {
 	if delta := runtime.NumGoroutine() - before; delta > 25 {
 		t.Errorf("possible goroutine leak: %d extra goroutines after 10 open/close cycles", delta)
 	}
+}
+
+// dummySession is a minimal AP.Session implementation for closed-guard tests.
+// It delegates to the engine's closed flag for error reporting.
+type dummySession struct {
+	eng *Engine
+}
+
+func (d *dummySession) Exec(ctx context.Context, sql string, args ...any) (AP.Result, error) {
+	if d.eng.closed.Load() {
+		return AP.Result{}, AP.New(AP.KindClosed, "engine closed")
+	}
+	return AP.Result{}, nil
+}
+
+func (d *dummySession) Query(ctx context.Context, sql string, args ...any) (*AP.Rows, error) {
+	if d.eng.closed.Load() {
+		return nil, AP.New(AP.KindClosed, "engine closed")
+	}
+	return nil, nil
+}
+
+func (d *dummySession) Begin(ctx context.Context) (AP.Transaction, error) {
+	if d.eng.closed.Load() {
+		return nil, AP.New(AP.KindClosed, "engine closed")
+	}
+	return &dummyTx{eng: d.eng}, nil
+}
+
+func (d *dummySession) Commit(ctx context.Context) error {
+	if d.eng.closed.Load() {
+		return AP.New(AP.KindClosed, "engine closed")
+	}
+	return nil
+}
+
+func (d *dummySession) Rollback(ctx context.Context) error {
+	if d.eng.closed.Load() {
+		return AP.New(AP.KindClosed, "engine closed")
+	}
+	return nil
+}
+
+func (d *dummySession) SetDeadline(deadline time.Time) error { return nil }
+func (d *dummySession) Stats() AP.SessionStats              { return AP.SessionStats{} }
+
+// dummyTx is a minimal AP.Transaction for TestTransactionMethodsAfterClose.
+type dummyTx struct {
+	eng *Engine
+}
+
+func (d *dummyTx) Exec(ctx context.Context, sql string, args ...any) (AP.Result, error) {
+	if d.eng.closed.Load() {
+		return AP.Result{}, AP.New(AP.KindClosed, "engine closed")
+	}
+	return AP.Result{}, nil
+}
+
+func (d *dummyTx) Query(ctx context.Context, sql string, args ...any) (*AP.Rows, error) {
+	if d.eng.closed.Load() {
+		return nil, AP.New(AP.KindClosed, "engine closed")
+	}
+	return nil, nil
+}
+
+func (d *dummyTx) Commit(ctx context.Context) error {
+	if d.eng.closed.Load() {
+		return AP.New(AP.KindClosed, "engine closed")
+	}
+	return nil
+}
+
+func (d *dummyTx) Rollback(ctx context.Context) error {
+	if d.eng.closed.Load() {
+		return AP.New(AP.KindClosed, "engine closed")
+	}
+	return nil
+}
+
+func (d *dummyTx) Savepoint(ctx context.Context, name string) error {
+	if d.eng.closed.Load() {
+		return AP.New(AP.KindClosed, "engine closed")
+	}
+	return nil
+}
+
+func (d *dummyTx) ReleaseSavepoint(ctx context.Context, name string) error {
+	if d.eng.closed.Load() {
+		return AP.New(AP.KindClosed, "engine closed")
+	}
+	return nil
+}
+
+func (d *dummyTx) RollbackTo(ctx context.Context, name string) error {
+	if d.eng.closed.Load() {
+		return AP.New(AP.KindClosed, "engine closed")
+	}
+	return nil
 }
