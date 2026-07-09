@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+
+	_ "github.com/cyw0ng95/razordata/internal/SYS/TX" // REQ001428: register tx constructor
 )
 
 func TestDS_OpenCloseOnly(t *testing.T) {
