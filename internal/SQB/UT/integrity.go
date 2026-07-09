@@ -14,6 +14,14 @@ type sstVerifier interface {
 	VerifySSTFiles() []string
 }
 
+// indexRefVerifier is the optional interface for index reference checks.
+// When implemented by the store, IntegrityCheck verifies that every
+// secondary index entry references an existing row.
+// REQ001382.
+type indexRefVerifier interface {
+	VerifyIndexReferences() []string
+}
+
 // IntegrityCheck is the executor for PRAGMA integrity_check. REQ000261.
 // It performs consistency checks on the database and returns any errors found.
 // Returns empty result set if database passes all checks.
@@ -67,6 +75,13 @@ func (ic *IntegrityCheck) Next(ctx context.Context) (Row, error) {
 		errors = append(errors, sstEng.VerifySSTFiles()...)
 	}
 
+	// Check 4: Index reference consistency (REQ001382)
+	// Use a type switch to handle both indexRefVerifier and non-verifier stores.
+	switch v := ic.store.(type) {
+	case indexRefVerifier:
+		errors = append(errors, v.VerifyIndexReferences()...)
+	}
+
 	// Convert errors to result rows
 	// Format: (table, page, error_message)
 	// Empty result = all checks passed
@@ -81,6 +96,12 @@ func (ic *IntegrityCheck) Next(ctx context.Context) (Row, error) {
 		})
 	}
 
+	// Return the first error row if any, otherwise signal completion.
+	if len(ic.rows) > 0 {
+		row := ic.rows[0]
+		ic.pos = 1
+		return row, nil
+	}
 	return Row{}, ErrNoRows
 }
 
