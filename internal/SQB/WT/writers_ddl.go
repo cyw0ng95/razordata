@@ -140,7 +140,7 @@ func buildCheckConstraints(stmt *PS.CreateTable) []PS.Expr {
 func buildGeneratedColumns(stmt *PS.CreateTable) []PS.Expr {
 	generated := make([]PS.Expr, len(stmt.Cols))
 	for i, col := range stmt.Cols {
-		if !col.Virtual && col.Generated != nil {
+		if col.Generated != nil {
 			generated[i] = col.Generated
 		}
 	}

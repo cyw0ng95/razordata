@@ -471,7 +471,11 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 		s.iu.RecordIndexSkip(s.availableIdx[0], s.table, "SeqScan used instead of IndexScan")
 	}
 
-	return s.cloneRow(r, schema), nil
+	row := s.cloneRow(r, schema)
+	if ss, ok := DT.SchemaFor(s.table); ok {
+		evalVirtualCols(&row, ss)
+	}
+	return row, nil
 }
 
 func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
@@ -597,6 +601,9 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 			row = pruneRowCols(row, s.usedCols, s.usedColSet)
 		}
 
+		// REQ001338: evaluate VIRTUAL generated column expressions.
+		evalVirtualCols(&row, s.schema)
+
 		return row, nil
 	}
 	if err := s.it.Err(); err != nil {
@@ -648,6 +655,28 @@ func (s *SeqScan) Close() error {
 	s.pointLookupOnce = false
 	s.pointLookupPos = 0
 	return nil
+}
+
+// evalVirtualCols evaluates VIRTUAL generated column expressions for
+// the given row. The schema's Generated field has the expression for
+// each column; non-nil entries are evaluated against the row's other
+// columns. REQ001338.
+func evalVirtualCols(row *Row, schema *DT.StoreSchema) {
+	if schema == nil || len(schema.Generated) == 0 {
+		return
+	}
+	for i, expr := range schema.Generated {
+		if expr == nil {
+			continue
+		}
+		if i >= len(row.Data) {
+			continue
+		}
+		v, err := EV.EvalValue(expr, row, nil)
+		if err == nil {
+			row.Data[i] = v
+		}
+	}
 }
 
 // prefixRowCols returns a copy of r with each column name prefixed
