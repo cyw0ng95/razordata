@@ -89,3 +89,31 @@ func TestRaise_ActionCaseInsensitive(t *testing.T) {
 		t.Fatalf("err = %v, want ErrIgnoreRow (case-insensitive action)", err)
 	}
 }
+
+func TestRaise_Rollback_ReturnsSentinel(t *testing.T) {
+	parser := PS.NewParser("SELECT RAISE(ROLLBACK)")
+	stmt, err := parser.Parse()
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	sel := stmt.(*PS.Select)
+	rf := sel.Cols[0].(*PS.RaiseFunc)
+	_, err = evalRaise(rf, nil, nil)
+	if !errors.Is(err, ErrRaiseRollback) {
+		t.Fatalf("err = %v, want ErrRaiseRollback", err)
+	}
+}
+
+func TestRaise_Fail_ReturnsSentinel(t *testing.T) {
+	parser := PS.NewParser("SELECT RAISE(FAIL)")
+	stmt, err := parser.Parse()
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	sel := stmt.(*PS.Select)
+	rf := sel.Cols[0].(*PS.RaiseFunc)
+	_, err = evalRaise(rf, nil, nil)
+	if !errors.Is(err, ErrRaiseFail) {
+		t.Fatalf("err = %v, want ErrRaiseFail", err)
+	}
+}

@@ -111,15 +111,17 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		// parsing in parsePostfix.
 		return &Ident{Loc: loc, Name: name, SlotIdx: -1}, nil
 	case LX.T_RAISE:
-		// RAISE(ABORT, 'message') or RAISE(IGNORE) (REQ000560)
+		// RAISE(ABORT, 'message'), RAISE(IGNORE), RAISE(ROLLBACK), RAISE(FAIL)
+		// REQ000560, REQ001374-5
 		loc := p.loc()
 		p.advance()
 		if err := p.expect(LX.T_LPAREN); err != nil {
 			return nil, err
 		}
 		p.advance()
-		if err := p.expect(LX.T_IDENT); err != nil {
-			return nil, err
+		// Accept T_IDENT or T_ROLLBACK as the action name.
+		if p.current.Type != LX.T_IDENT && p.current.Type != LX.T_ROLLBACK {
+			return nil, fmt.Errorf("expected identifier or ROLLBACK, got %v", p.current.Type)
 		}
 		action := p.current.Lexeme
 		p.advance()

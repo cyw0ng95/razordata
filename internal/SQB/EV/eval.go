@@ -331,6 +331,15 @@ var ErrTypeMismatch = errors.New("ex: type mismatch")
 var ErrSubquery = errors.New("ex: subquery not supported here")
 var ErrIgnoreRow = errors.New("ex: ignore row")
 
+// ErrRaiseRollback is returned by RAISE(ROLLBACK) evaluation to
+// signal that the transaction should be aborted. REQ001374.
+var ErrRaiseRollback = errors.New("ex: raise rollback")
+
+// ErrRaiseFail is returned by RAISE(FAIL) evaluation to signal that
+// the current statement should be aborted but the transaction should
+// continue. REQ001375.
+var ErrRaiseFail = errors.New("ex: raise fail")
+
 func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 	if expr == nil {
 		return nil, nil
@@ -1549,8 +1558,13 @@ var ErrTriggerAbort = errors.New("ex: trigger abort")
 
 func evalRaise(e *PS.RaiseFunc, row *Row, params []any) (Value, error) {
 	action := strings.ToUpper(e.Action)
-	if action == "IGNORE" {
+	switch action {
+	case "IGNORE":
 		return DT.NullValue(), ErrIgnoreRow
+	case "ROLLBACK":
+		return DT.NullValue(), ErrRaiseRollback
+	case "FAIL":
+		return DT.NullValue(), ErrRaiseFail
 	}
 	var msg string
 	if e.Message != nil {
