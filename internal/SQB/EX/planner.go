@@ -833,6 +833,9 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 	case "auto_compact":
 		// REQ001304: handled by Pragma operator.
 		return WT.NewPragma(s).WithStore(p.store)
+	case "incremental_vacuum":
+		// REQ001306: handled by Pragma operator.
+		return WT.NewPragma(s).WithStore(p.store)
 	default:
 		return OP.NewSeqScan("__pragma_unknown__")
 	}

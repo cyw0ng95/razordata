@@ -24,42 +24,6 @@ type cellSizeVerifier interface {
 	VerifyCellSizes() []string
 }
 
-// Trigger is a stub operator for CREATE TRIGGER. REQ000435.
-// The body is parsed and stored; executor surface is a no-op that
-// returns ErrNoRows after one iteration (similar to AlterTable).
-// The trigger is registered in the package-level trigger registry
-// so future INSERT/UPDATE/DELETE statements can fire it.
-type Trigger struct {
-	Stmt *PS.TriggerStmt
-	done bool
-	err  error
-}
-
-func NewTrigger(stmt *PS.TriggerStmt) *Trigger {
-	t := &Trigger{Stmt: stmt}
-	if stmt != nil {
-		if e := RegisterTrigger(stmt); e != nil {
-			t.err = e
-		}
-	}
-	return t
-}
-
-func (t *Trigger) Next(ctx context.Context) (DT.Row, error) {
-	if t.done {
-		return DT.Row{}, DT.ErrNoRows
-	}
-	t.done = true
-	if t.err != nil {
-		return DT.Row{}, t.err
-	}
-	return DT.Row{}, DT.ErrNoRows
-}
-
-func (t *Trigger) Close() error                   { return nil }
-func (t *Trigger) WithParams(p []any) DT.Operator { return t }
-func (t *Trigger) RowsAffected() int64            { return 0 }
-
 // Pragma is a writer-op stub for PRAGMA name [= value]. REQ000490.
 type Pragma struct {
 	Stmt  *PS.PragmaStmt
@@ -385,7 +349,7 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 		return row, nil
 	}
 
-	// Handle PRAGMA auto_compact = none|incremental|full (REQ001304)
+// Handle PRAGMA auto_compact = none|incremental|full (REQ001304)
 	if p.Stmt.Name == "auto_compact" {
 		if !p.done {
 			p.done = true
@@ -410,6 +374,26 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 			p.rows = append(p.rows, DT.Row{
 				Cols: []string{"auto_compact"},
 				Data: []DT.Value{DT.NewTextValue(modeStr)},
+			})
+		}
+		if p.idx >= len(p.rows) {
+			return DT.Row{}, DT.ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
+	// Handle PRAGMA incremental_vacuum(N) (REQ001306)
+	if p.Stmt.Name == "incremental_vacuum" {
+		if !p.done {
+			p.done = true
+			if p.store != nil {
+				_ = p.store.ManualCompact()
+			}
+			p.rows = append(p.rows, DT.Row{
+				Cols: []string{"incremental_vacuum"},
+				Data: []DT.Value{DT.NewIntValue(0)},
 			})
 		}
 		if p.idx >= len(p.rows) {
