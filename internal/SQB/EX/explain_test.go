@@ -251,10 +251,10 @@ func TestExplain_UnifiedRendering(t *testing.T) {
 // TestExplain_CostEstimationWithStats verifies REQ000787: cost estimation
 // uses TableStats from the catalog when available.
 func TestExplain_CostEstimationWithStats(t *testing.T) {
-	UnregisterAll()
-	defer UnregisterAll()
-	ex := NewExecutor()
-	ex.RegisterTable("t", []string{"id", "v"})
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 
 	ctx := context.Background()
 	// Insert enough rows to make statistics meaningful.
@@ -296,10 +296,10 @@ func TestExplain_CostEstimationWithStats(t *testing.T) {
 // TestExplainAnalyze_BottleneckDetection verifies REQ000788: EXPLAIN ANALYZE
 // identifies bottlenecks and provides recommendations for slow queries.
 func TestExplainAnalyze_BottleneckDetection(t *testing.T) {
-	UnregisterAll()
-	defer UnregisterAll()
-	ex := NewExecutor()
-	ex.RegisterTable("t", []string{"id", "v", "data"})
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ex.RegisterTableWithPK("t", []string{"id", "v", "data"}, "id")
 
 	ctx := context.Background()
 	// Insert many rows to trigger bottleneck detection.

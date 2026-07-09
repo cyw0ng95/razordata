@@ -657,10 +657,11 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		}
 	}
 	if scan == nil {
-		// REQ001425: Use DT.SchemaFor to detect any registered table —
-		// covers both planner-registered (RegisterTableWithPK) and
-		// DDL-created tables (via CreateTable → DT.RegisterStoreSchema).
-		if _, ok := DT.SchemaFor(s.From); ok {
+		// REQ001425: Use DT.TableIDFor to detect DDL-created tables that
+		// have a store-backed entry. System tables like razor_stat1 are
+		// in InMemSchemas only (no TableIDs entry) and must use the
+		// in-memory SeqScan path.
+		if _, ok := DT.TableIDFor(s.From); ok {
 			if ssc, err := OP.NewSeqScanWithStore(p.store, s.From); err == nil {
 				scan = ssc
 			}

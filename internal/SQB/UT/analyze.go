@@ -311,7 +311,7 @@ var stat1Cols = []string{"tbl", "col_name", "ndv", "rowcount", "null_count", "mi
 // ensureStat1Table registers the razor_stat1 schema and initializes
 // the in-memory table if it doesn't exist. Idempotent. REQ001317.
 func ensureStat1Table() {
-	DT.RegisterStoreSchema("razor_stat1", stat1Cols, "")
+	DT.RegisterInMemorySchema("razor_stat1", stat1Cols, "")
 	if _, ok := DT.Tables["razor_stat1"]; !ok {
 		DT.Tables["razor_stat1"] = []DT.Row{}
 	}
