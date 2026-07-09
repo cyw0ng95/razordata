@@ -47,8 +47,13 @@ internal/SQO/
 ├── SL/    Selectivity          (predicate → row-count estimation)
 ├── JN/    Join ordering        (N3, bushy join detection, multi-start)
 ├── MM/    Memoization          (xxhash64 LRU plan cache + LEO learned feedback)
-└── RW/    Rewriting            (predicate pushdown, subquery flatten, constant fold)
+├── RW/    Rewriting            (predicate pushdown, subquery flatten, constant fold)
+└── CO/    COre/Orchestrator    (Optimizer interface, Plan entry, SELECT/DML/DDL dispatch)
 ```
+
+**Note**: All Go files live under a cluster directory — no `.go` files directly
+under `internal/SQO/`. This matches the convention used by `SQF/`, `SQB/`, `SYS/`
+and every other subsystem (see `ARCH.md`).
 
 ### Cluster Responsibilities
 
@@ -205,12 +210,12 @@ func FoldConstants(expr PS.Expr) PS.Expr
 Currently lives in `internal/SQF/RE/` and `internal/SQB/EX/predicate.go` —
 migration consolidates them here.
 
-### Top-level: `SQO/qpo.go`
+### Top-level: `SQO/CO/`
 
 The orchestrator. Defines the public `Optimizer` interface consumed by `SQB/EX`:
 
 ```go
-package SQO
+package CO
 
 type Optimizer interface {
     Plan(stmt PS.Stmt) (DT.Operator, error)
@@ -238,7 +243,7 @@ internal/SQO/
   JN → SL   (join order uses selectivity)
   RW → SL   (rewriting uses selectivity)
   MM        (no SQO deps; uses SQB/DT types only)
-  qpo.go → CM, SL, JN, MM, RW  (orchestrates all)
+  CO → CM, SL, JN, MM, RW  (orchestrates all)
 ```
 
 External dependencies:
@@ -349,7 +354,7 @@ than PG's generic/custom plan approach and simpler to reason about.
 
 | Old location | New location | Cluster |
 |---|---|---|
-| `SQF/PL/pl.go` (Planner struct, Plan) | `SQO/qpo.go` | top-level |
+| `SQF/PL/pl.go` (Planner struct, Plan) | `SQO/CO/optimizer.go` | CO |
 | `SQF/PL/memo.go` (xxhash64, LRU) | `SQO/MM/memo.go` | MM |
 | `SQF/PL/learned.go` (LearnedModel stub) | `SQO/MM/learned.go` | MM |
 | `SQF/PL/predicate_cache.go` | `SQO/MM/predicate_cache.go` | MM |
