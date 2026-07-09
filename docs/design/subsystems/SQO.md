@@ -350,6 +350,25 @@ The current xxhash64 + LRU memo (REQ000584) is preserved. Schema version bump
 on DDL invalidates all cached plans via key mismatch — this is more aggressive
 than PG's generic/custom plan approach and simpler to reason about.
 
+### D6: Clusters are NOT recursive
+
+**Rule**: All Go files live directly under a cluster directory at the subsystem
+root. Clusters cannot be subdivided into sub-clusters.
+
+| Correct | Wrong |
+|---|---|
+| `SQO/CO/optimizer.go` | `SQO/CO/plan/select.go` (recursive) |
+| `SQB/OP/nljoin.go`, `mergejoin.go` | `SQB/OP/join/nljoin.go` (recursive) |
+| `SQB/OP/{seq,index,bitmap}_scan.go` | `SQB/OP/scan/seq_scan.go` (recursive) |
+| `SQB/EX/executor_factory.go`, `runtime.go` | `SQB/EX/CO/factory.go`, `RT/runtime.go` (recursive) |
+
+**Rationale**: ARCH.md uses 2-letter cluster codes (LG, HK, EX, OP, ...) directly
+under subsystem roots. Introducing sub-clusters would create infinite nesting
+(why stop at one level?). The convention is "split large files into
+descriptive filenames, all under one cluster". For SQO, the 7 clusters (CP,
+CM, SL, JN, MM, RW, CO) are the leaf level — files like `CO/optimizer.go`,
+`CO/select_plan.go` all live in the same directory.
+
 ## Subsystem Mapping Summary
 
 | Old location | New location | Cluster |
@@ -370,7 +389,7 @@ than PG's generic/custom plan approach and simpler to reason about.
 | `SQB/EX/cost.go:627-703` (estimateInListSelectivity) | `SQO/SL/in_list.go` | SL |
 | `SQB/EX/cost.go:731-792` (NDV/null helpers) | `SQO/SL/stats_helpers.go` | SL |
 | `SQB/EX/join_order.go` (all 813 lines) | `SQO/JN/n3.go`, `multi_start.go`, `bushy.go` | JN |
-| `SQB/EX/planner_select.go` (1565 lines) | `SQO/plan/select.go` | top-level |
+| `SQB/EX/planner_select.go` (1565 lines) | `SQO/CO/select_plan.go` | CO |
 | `SQB/EX/planner_stats_propagation.go` | `SQO/CP/stats_propagation.go` | CP |
 | `SQB/EX/predicate.go` (selectivity helpers) | `SQO/SL/util.go` | SL |
 
