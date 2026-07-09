@@ -53,9 +53,14 @@ func DiffResultSets(actual *ResultSet, rec *Record) string {
 		sortRows(got, false)
 	}
 	// ValueSort: sort rows as tab-separated strings (SQLite convention).
+	// REQ001421: precompute strings to avoid O(n log n) redundant conversions.
 	if rec.Sort == ValueSort {
+		gotStrs := make([]string, len(got))
+		for i, row := range got {
+			gotStrs[i] = rowString(row)
+		}
 		sort.Slice(got, func(i, j int) bool {
-			return rowString(got[i]) < rowString(got[j])
+			return gotStrs[i] < gotStrs[j]
 		})
 	}
 	// "Expected" is already in source order. The corpus emits
@@ -77,8 +82,13 @@ func DiffResultSets(actual *ResultSet, rec *Record) string {
 			return len(a) < len(b)
 		})
 	} else if rec.Sort == ValueSort {
+		// REQ001421: precompute expected row strings.
+		wantStrs := make([]string, len(expected))
+		for i, row := range expected {
+			wantStrs[i] = rowString(row)
+		}
 		sort.Slice(wantIdx, func(i, j int) bool {
-			return rowString(expected[wantIdx[i]]) < rowString(expected[wantIdx[j]])
+			return wantStrs[wantIdx[i]] < wantStrs[wantIdx[j]]
 		})
 	}
 	if len(got) != len(wantIdx) {
@@ -123,13 +133,18 @@ func diffHashed(actual *ResultSet, marker string, sortMode SortMode) string {
 			flat = append(flat, row...)
 		}
 	} else {
-		// Sort rows as tab-separated strings (SQLite sqllogictest convention).
+		// REQ001421: precompute row strings to avoid O(n log n) redundant
+		// string conversions during sort.
+		rowStrs := make([]string, len(actual.Rows))
+		for i, row := range actual.Rows {
+			rowStrs[i] = rowString(row)
+		}
 		idx := make([]int, len(actual.Rows))
 		for i := range idx {
 			idx[i] = i
 		}
 		sort.Slice(idx, func(i, j int) bool {
-			return rowString(actual.Rows[idx[i]]) < rowString(actual.Rows[idx[j]])
+			return rowStrs[idx[i]] < rowStrs[idx[j]]
 		})
 		for _, i := range idx {
 			flat = append(flat, actual.Rows[i]...)
