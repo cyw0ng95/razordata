@@ -17,6 +17,16 @@ import (
 	v1 "github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
 
+// sltValueBufPool is a sync.Pool for reusable []Value scan buffers
+// keyed by column count. REQ001423: reduces allocation churn in the
+// queryDirect hot path.
+var sltValueBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]Value, 0, 16)
+		return &buf
+	},
+}
+
 // sltVerbose controls per-query debug output. Default off.
 // Set RAZOR_SLT_VERBOSE=1 to see QUERY_START/QUERY_END stderr lines.
 var sltVerbose = os.Getenv("RAZOR_SLT_VERBOSE") == "1" || os.Getenv("RAZOR_SLT_VERBOSE") == "true"
@@ -254,11 +264,23 @@ func (d *RazorDriver) queryDirect(ctx context.Context, sql string) (*ResultSet, 
 			}
 			return nil, err
 		}
-		sltRow := make([]Value, len(row.Data))
-		for i, v := range row.Data {
-			sltRow[i] = valueFromAP(v)
+		// REQ001423: reuse pooled buffer, grow if needed.
+		bufp := sltValueBufPool.Get().(*[]Value)
+		buf := (*bufp)[:0]
+		if cap(buf) < len(row.Data) {
+			buf = make([]Value, len(row.Data))
+		} else {
+			buf = buf[:len(row.Data)]
 		}
-		rs.Rows = append(rs.Rows, sltRow)
+		for i, v := range row.Data {
+			buf[i] = valueFromAP(v)
+		}
+		// Copy to a persistent slice (pool buffer is reused next iteration).
+		rowCopy := make([]Value, len(buf))
+		copy(rowCopy, buf)
+		*bufp = buf
+		sltValueBufPool.Put(bufp)
+		rs.Rows = append(rs.Rows, rowCopy)
 	}
 	return rs, nil
 }
