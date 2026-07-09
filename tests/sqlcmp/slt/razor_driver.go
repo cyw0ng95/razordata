@@ -215,7 +215,56 @@ func (d *RazorDriver) Query(ctx context.Context, sql string) (*ResultSet, error)
 }
 
 // queryContext is the internal query path (unlocked).
+// REQ001420: tries the direct engine path first to bypass database/sql
+// overhead (~25% CPU, ~70% memory on select4.test). Falls back to the
+// sql.DB path for statements that need the full stdlib stack.
 func (d *RazorDriver) queryContext(ctx context.Context, sql string) (*ResultSet, error) {
+	if d.engine != nil {
+		if rs, err := d.queryDirect(ctx, sql); err == nil {
+			return rs, nil
+		}
+		// Fall through to sql.DB path on error (e.g. PRAGMA, DDL).
+	}
+	return d.querySQL(ctx, sql)
+}
+
+// queryDirect bypasses database/sql by calling the engine's session
+// query path directly. Returns the result set with zero boxing overhead.
+func (d *RazorDriver) queryDirect(ctx context.Context, sql string) (*ResultSet, error) {
+	sess, err := d.engine.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer sess.Rollback(ctx)
+
+	apRows, err := sess.Query(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	defer apRows.Close()
+
+	cols := apRows.Cols()
+	rs := &ResultSet{Columns: cols}
+
+	for {
+		row, err := apRows.Next()
+		if err != nil {
+			if AP.IsKind(err, AP.KindNotFound) {
+				break
+			}
+			return nil, err
+		}
+		sltRow := make([]Value, len(row.Data))
+		for i, v := range row.Data {
+			sltRow[i] = valueFromAP(v)
+		}
+		rs.Rows = append(rs.Rows, sltRow)
+	}
+	return rs, nil
+}
+
+// querySQL is the database/sql fallback path (original behavior).
+func (d *RazorDriver) querySQL(ctx context.Context, sql string) (*ResultSet, error) {
 	rows, err := d.db.QueryContext(ctx, sql)
 	if err != nil {
 		return nil, err
@@ -262,6 +311,33 @@ type EngineSyncer interface {
 
 func (d *RazorDriver) engineAccessor() (EngineSyncer, bool) {
 	return d.EngineAccessor()
+}
+
+// valueFromAP converts an engine-native AP.Value to an SLT Value
+// with zero boxing overhead. REQ001420.
+func valueFromAP(v AP.Value) Value {
+	switch v.Kind {
+	case AP.KindNull:
+		return Value{Kind: TypeNull}
+	case AP.KindInt:
+		return Value{Kind: TypeInteger, Int: v.I64}
+	case AP.KindFloat:
+		if v.F64 == float64(int64(v.F64)) && v.F64 >= -1e15 && v.F64 <= 1e15 {
+			return Value{Kind: TypeInteger, Int: int64(v.F64)}
+		}
+		return Value{Kind: TypeReal, Real: v.F64}
+	case AP.KindText:
+		return Value{Kind: TypeText, Text: v.S}
+	case AP.KindBlob:
+		return Value{Kind: TypeBlob, Text: hex.EncodeToString(v.B)}
+	case AP.KindBool:
+		if v.Bo {
+			return Value{Kind: TypeInteger, Int: 1}
+		}
+		return Value{Kind: TypeInteger, Int: 0}
+	default:
+		return Value{Kind: TypeText, Text: fmt.Sprintf("%v", v)}
+	}
 }
 
 // valueFromAny normalizes database/sql values to SLT Value.

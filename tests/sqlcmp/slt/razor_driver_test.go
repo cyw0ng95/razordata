@@ -99,3 +99,50 @@ type stringErr string
 func (e stringErr) Error() string { return string(e) }
 
 func errFromString(s string) error { return stringErr(s) }
+
+// BenchmarkSLT_QueryDirect_vs_DatabaseSQL measures the ns/op and alloc/op
+// difference between the direct engine path and the database/sql path.
+// REQ001420.
+func BenchmarkSLT_QueryDirect_vs_DatabaseSQL(b *testing.B) {
+	ctx := context.Background()
+	d := NewRazorDriver()
+	if err := d.Connect(ctx); err != nil {
+		b.Fatalf("Connect: %v", err)
+	}
+	defer d.Close(ctx)
+
+	d.mu.Lock()
+	if _, err := d.db.ExecContext(ctx, "CREATE TABLE bench (id INTEGER PRIMARY KEY, val TEXT)"); err != nil {
+		d.mu.Unlock()
+		b.Fatalf("create: %v", err)
+	}
+	for i := range 100 {
+		if _, err := d.db.ExecContext(ctx, "INSERT INTO bench VALUES (?, ?)", i, "v"+strings.Repeat("x", 50)); err != nil {
+			d.mu.Unlock()
+			b.Fatalf("insert: %v", err)
+		}
+	}
+	d.mu.Unlock()
+
+	b.Run("Direct", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			rs, err := d.queryDirect(ctx, "SELECT id, val FROM bench WHERE id > 50 ORDER BY id")
+			if err != nil {
+				b.Fatal(err)
+			}
+			_ = rs
+		}
+	})
+
+	b.Run("DatabaseSQL", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			rs, err := d.querySQL(ctx, "SELECT id, val FROM bench WHERE id > 50 ORDER BY id")
+			if err != nil {
+				b.Fatal(err)
+			}
+			_ = rs
+		}
+	})
+}
