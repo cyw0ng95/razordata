@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -141,4 +142,45 @@ func BenchmarkIdentColIndex_Last(b *testing.B) {
 			b.Fatalf("got %v, want 5", v)
 		}
 	}
+}
+
+// BenchmarkEvalScalarSubquery_CorrelatedCache measures correlated
+// subquery cache hit vs miss performance. REQ001292.
+func BenchmarkEvalScalarSubquery_CorrelatedCache(b *testing.B) {
+	row := &Row{
+		Cols: []string{"id", "name"},
+		Data: []Value{DT.NewIntValue(1), DT.NewTextValue("alice")},
+	}
+	expr := &PS.SubqueryExpr{Subquery: &PS.Select{
+		Cols: []PS.Expr{&PS.NumberLiteral{Val: 1}},
+		From: "t",
+		Where: &PS.BinaryExpr{
+			Left: &PS.QualifiedName{
+				Table: "t",
+				Name:  "id",
+			},
+			Op:    LX.T_EQ,
+			Right: &PS.QualifiedName{Table: "outer", Name: "id"},
+		},
+		FromAlias: "t",
+	}}
+
+	b.Run("cache_hit", func(b *testing.B) {
+		for i := 0; i < 5; i++ {
+			_, _ = evalScalarSubquery(expr, row, nil)
+		}
+		b.ResetTimer()
+		for range b.N {
+			_, _ = evalScalarSubquery(expr, row, nil)
+		}
+	})
+
+	b.Run("serialize_only", func(b *testing.B) {
+		cols := cachedCorrelatedCols(expr)
+		idxs := resolveColIndices(row, cols)
+		b.ResetTimer()
+		for range b.N {
+			_ = serializeCorrelatedValuesWithIndices(row, idxs)
+		}
+	})
 }
