@@ -43,6 +43,11 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 		return p.planSelectSqliteMaster(s)
 	}
 
+	// REQ001390: sqlite_sequence virtual table
+	if s.From == "sqlite_sequence" {
+		return p.planSelectSqliteSequence(s)
+	}
+
 	// REQ000858: resolve column aliases in WHERE before creating filters.
 	// SQLite allows SELECT aliases to be referenced in WHERE (e.g.
 	// `SELECT v AS value FROM t WHERE value > 15`). Build an alias map
@@ -499,6 +504,15 @@ func (p *Planner) planSelectSubquery(s *PS.Select) DT.Operator {
 // REQ000981: extracted from planSelect.
 func (p *Planner) planSelectSqliteMaster(s *PS.Select) DT.Operator {
 	var scan DT.Operator = OP.NewSqliteMaster()
+	if s.Where != nil {
+		scan = OP.NewFilter(scan, s.Where, nil)
+	}
+	return scan
+}
+
+// planSelectSqliteSequence handles SELECT FROM sqlite_sequence. REQ001390.
+func (p *Planner) planSelectSqliteSequence(s *PS.Select) DT.Operator {
+	var scan DT.Operator = OP.NewSqliteSequence()
 	if s.Where != nil {
 		scan = OP.NewFilter(scan, s.Where, nil)
 	}

@@ -77,3 +77,49 @@ func (s *SqliteMaster) loadRows() {
 
 func (s *SqliteMaster) Close() error                  { return nil }
 func (s *SqliteMaster) WithParams(_ []any) pl.Operator { return s }
+
+// SqliteSequence is a virtual table that returns the last used ROWID
+// for each AUTOINCREMENT table, matching the sqlite_sequence schema:
+// (name TEXT, seq INTEGER). REQ001390.
+type SqliteSequence struct {
+	rows []Row
+	idx  int
+}
+
+func NewSqliteSequence() *SqliteSequence {
+	return &SqliteSequence{}
+}
+
+func (s *SqliteSequence) Next(_ context.Context) (Row, error) {
+	if s.rows == nil {
+		s.loadRows()
+	}
+	if s.idx >= len(s.rows) {
+		return Row{}, ErrNoRows
+	}
+	row := s.rows[s.idx]
+	s.idx++
+	return row, nil
+}
+
+func (s *SqliteSequence) loadRows() {
+	names := DT.AllTableNames()
+	for _, name := range names {
+		ss, ok := DT.SchemaFor(name)
+		if !ok || ss == nil {
+			continue
+		}
+		// NextRowID is the last assigned ROWID (pre-incremented by Add(1)).
+		seq := ss.NextRowID.Load()
+		if seq < 1 {
+			continue
+		}
+		s.rows = append(s.rows, Row{
+			Cols: []string{"name", "seq"},
+			Data: []Value{DT.NewTextValue(name), DT.NewIntValue(seq)},
+		})
+	}
+}
+
+func (s *SqliteSequence) Close() error                  { return nil }
+func (s *SqliteSequence) WithParams(_ []any) pl.Operator { return s }

@@ -370,3 +370,113 @@ func TestSqliteSchema_MatchesSqliteMaster(t *testing.T) {
 		t.Errorf("sqlite_master count=%d, sqlite_schema count=%d, want equal", mCnt, sCnt)
 	}
 }
+
+func TestSqliteSequence_Basic(t *testing.T) {
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	_, err := ex.Exec(ctx, "CREATE TABLE t_seq (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE: %v", err)
+	}
+
+	_, err = ex.Exec(ctx, "INSERT INTO t_seq (v) VALUES ('a')")
+	if err != nil {
+		t.Fatalf("INSERT: %v", err)
+	}
+
+	rows, err := ex.QueryAll(ctx, "SELECT name, seq FROM sqlite_sequence")
+	if err != nil {
+		t.Fatalf("SELECT FROM sqlite_sequence: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("sqlite_sequence returned 0 rows")
+	}
+	if len(rows) > 0 && rows[0].Data[0].S != "t_seq" {
+		t.Errorf("name = %q, want 't_seq'", rows[0].Data[0].S)
+	}
+	if len(rows) > 0 && rows[0].Data[1].I64 < 1 {
+		t.Errorf("seq = %d, want >= 1", rows[0].Data[1].I64)
+	}
+}
+
+func TestSqliteSequence_MultipleInserts(t *testing.T) {
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	_, err := ex.Exec(ctx, "CREATE TABLE t_multi (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		_, err = ex.Exec(ctx, "INSERT INTO t_multi (v) VALUES ('x')")
+		if err != nil {
+			t.Fatalf("INSERT %d: %v", i, err)
+		}
+	}
+
+	rows, err := ex.QueryAll(ctx, "SELECT name, seq FROM sqlite_sequence WHERE name = 't_multi'")
+	if err != nil {
+		t.Fatalf("SELECT: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("sqlite_sequence returned 0 rows for t_multi")
+	}
+	if rows[0].Data[1].I64 < 1 {
+		t.Errorf("seq = %d, want >= 1", rows[0].Data[1].I64)
+	}
+}
+
+func TestSqliteSequence_NoAutoIncrement(t *testing.T) {
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	_, err := ex.Exec(ctx, "CREATE TABLE t_noinc (id INTEGER PRIMARY KEY, v TEXT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE: %v", err)
+	}
+
+	_, err = ex.Exec(ctx, "INSERT INTO t_noinc VALUES (10, 'a')")
+	if err != nil {
+		t.Fatalf("INSERT: %v", err)
+	}
+
+	rows, err := ex.QueryAll(ctx, "SELECT count(*) FROM sqlite_sequence")
+	if err != nil {
+		t.Fatalf("SELECT: %v", err)
+	}
+	if len(rows) == 1 && rows[0].Data[0].I64 != 0 {
+		t.Errorf("sqlite_sequence has %d rows for non-AUTOINCREMENT table", rows[0].Data[0].I64)
+	}
+}
+
+func TestSqliteSequence_WhereClause(t *testing.T) {
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	_, err := ex.Exec(ctx, "CREATE TABLE t_where (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE: %v", err)
+	}
+	_, err = ex.Exec(ctx, "INSERT INTO t_where (v) VALUES ('a')")
+	if err != nil {
+		t.Fatalf("INSERT: %v", err)
+	}
+
+	// Verify sqlite_sequence is queryable with a WHERE clause
+	rows, err := ex.QueryAll(ctx, "SELECT name, seq FROM sqlite_sequence WHERE name = 't_where'")
+	if err != nil {
+		t.Fatalf("SELECT with WHERE: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("sqlite_sequence WHERE returned 0 rows")
+	}
+	if rows[0].Data[0].S != "t_where" {
+		t.Errorf("name = %q, want 't_where'", rows[0].Data[0].S)
+	}
+}
