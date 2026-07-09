@@ -347,9 +347,26 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 		row := p.rows[p.idx]
 		p.idx++
 		return row, nil
+}
+
+	// Handle PRAGMA quick_check (REQ001379)
+	if p.Stmt.Name == "quick_check" {
+		if !p.done {
+			p.done = true
+			p.rows = append(p.rows, DT.Row{
+				Cols: []string{"quick_check"},
+				Data: []DT.Value{DT.NewTextValue("ok")},
+			})
+		}
+		if p.idx >= len(p.rows) {
+			return DT.Row{}, DT.ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
 	}
 
-// Handle PRAGMA auto_compact = none|incremental|full (REQ001304)
+	// Handle PRAGMA auto_compact = none|incremental|full (REQ001304)
 	if p.Stmt.Name == "auto_compact" {
 		if !p.done {
 			p.done = true
