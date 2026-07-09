@@ -93,6 +93,9 @@ type Catalog struct {
 	closed      atomic.Bool
 	encodeEntry EncodeFunc
 	decodeEntry DecodeFunc
+	// ddlVersion increments on every DDL change (Put/Delete).
+	// Saved by SAVEPOINT for DDL rollback detection. REQ001319.
+	ddlVersion atomic.Uint64
 }
 
 // NewCatalog opens or creates a catalog rooted at dir. The encode
@@ -178,6 +181,18 @@ func (c *Catalog) NextID() (uint64, error) {
 	return id, nil
 }
 
+// DDLVersion returns the current DDL version counter. Incremented on
+// every Put/UpdateEntry/Delete. REQ001319.
+func (c *Catalog) DDLVersion() uint64 {
+	return c.ddlVersion.Load()
+}
+
+// CheckpointVersion returns a snapshot of the current DDL version for
+// savepoint/rollback tracking. REQ001319.
+func (c *Catalog) CheckpointVersion() uint64 {
+	return c.ddlVersion.Load()
+}
+
 // PutRaw registers a new entry. The catalog is rewritten atomically.
 func (c *Catalog) PutRaw(entry *RawEntry) error {
 	if entry.Name == "" {
@@ -201,6 +216,7 @@ func (c *Catalog) PutRaw(entry *RawEntry) error {
 	}
 	c.cache[entry.TableID] = entry
 	c.byName[entry.Name] = entry.TableID
+	c.ddlVersion.Add(1)
 	if err := c.flushLocked(); err != nil {
 		delete(c.cache, entry.TableID)
 		delete(c.byName, entry.Name)
@@ -222,6 +238,7 @@ func (c *Catalog) Delete(tableID uint64) error {
 	}
 	delete(c.cache, tableID)
 	delete(c.byName, entry.Name)
+	c.ddlVersion.Add(1)
 	if err := c.flushLocked(); err != nil {
 		c.cache[tableID] = entry
 		c.byName[entry.Name] = tableID
@@ -275,6 +292,7 @@ func (c *Catalog) UpdateEntry(tableID uint64, fn func(*RawEntry) error) error {
 		entry.Unique = origUnique
 		return err
 	}
+	c.ddlVersion.Add(1)
 	return nil
 }
 

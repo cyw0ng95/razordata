@@ -159,3 +159,83 @@ func TestCatalog_UpdateEntryConcurrent(t *testing.T) {
 		t.Errorf("Stats length = %d, want %d", len(read.Stats), 10*50)
 	}
 }
+
+func TestCatalog_DDLVersionOnPut(t *testing.T) {
+	dir := t.TempDir()
+	cat, err := NewCatalog(dir, testEncodeEntry, testDecodeEntry)
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	defer cat.Close()
+
+	v0 := cat.DDLVersion()
+	if v0 != 0 {
+		t.Fatalf("initial DDLVersion = %d, want 0", v0)
+	}
+
+	entry := &RawEntry{TableID: 1, Name: "t1", CreateSQL: "CREATE TABLE t1 (a INT)"}
+	if err := cat.PutRaw(entry); err != nil {
+		t.Fatalf("PutRaw: %v", err)
+	}
+	v1 := cat.DDLVersion()
+	if v1 != v0+1 {
+		t.Errorf("after Put: DDLVersion = %d, want %d", v1, v0+1)
+	}
+
+	// UpdateEntry also increments
+	if err := cat.UpdateEntry(1, func(e *RawEntry) error {
+		e.CreateSQL = "CREATE TABLE t1 (a INT, b INT)"
+		return nil
+	}); err != nil {
+		t.Fatalf("UpdateEntry: %v", err)
+	}
+	v2 := cat.DDLVersion()
+	if v2 != v1+1 {
+		t.Errorf("after UpdateEntry: DDLVersion = %d, want %d", v2, v1+1)
+	}
+
+	// Delete also increments
+	if err := cat.Delete(1); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	v3 := cat.DDLVersion()
+	if v3 != v2+1 {
+		t.Errorf("after Delete: DDLVersion = %d, want %d", v3, v2+1)
+	}
+}
+
+func TestCatalog_DDLVersionCheckpointSame(t *testing.T) {
+	dir := t.TempDir()
+	cat, err := NewCatalog(dir, testEncodeEntry, testDecodeEntry)
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	defer cat.Close()
+
+	cp := cat.CheckpointVersion()
+	v := cat.DDLVersion()
+	if cp != v {
+		t.Errorf("CheckpointVersion = %d, DDLVersion = %d, want equal", cp, v)
+	}
+}
+
+func TestCatalog_DDLVersionCheckpointAfterPut(t *testing.T) {
+	dir := t.TempDir()
+	cat, err := NewCatalog(dir, testEncodeEntry, testDecodeEntry)
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	defer cat.Close()
+
+	cp0 := cat.CheckpointVersion()
+
+	entry := &RawEntry{TableID: 1, Name: "t1", CreateSQL: "CREATE TABLE t1 (a INT)"}
+	if err := cat.PutRaw(entry); err != nil {
+		t.Fatalf("PutRaw: %v", err)
+	}
+
+	cp1 := cat.CheckpointVersion()
+	if cp1 != cp0+1 {
+		t.Errorf("CheckpointVersion after Put = %d, want %d", cp1, cp0+1)
+	}
+}
