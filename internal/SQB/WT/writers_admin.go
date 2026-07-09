@@ -799,6 +799,30 @@ func (d *DropView) Close() error                   { return nil }
 func (d *DropView) WithParams(_ []any) DT.Operator { return d }
 func (d *DropView) RowsAffected() int64            { return 0 }
 
+// Trigger is a writer-op for CREATE TRIGGER. REQ000435. It registers
+// the trigger and returns success.
+type Trigger struct {
+	Stmt *PS.TriggerStmt
+	done bool
+}
+
+func NewTrigger(stmt *PS.TriggerStmt) *Trigger {
+	RegisterTrigger(stmt)
+	return &Trigger{Stmt: stmt}
+}
+
+func (t *Trigger) Next(ctx context.Context) (DT.Row, error) {
+	if t.done {
+		return DT.Row{}, DT.ErrNoRows
+	}
+	t.done = true
+	return DT.Row{}, nil
+}
+
+func (t *Trigger) Close() error                   { return nil }
+func (t *Trigger) WithParams(_ []any) DT.Operator { return t }
+func (t *Trigger) RowsAffected() int64            { return 0 }
+
 // DropTrigger is a writer-op for DROP TRIGGER [IF EXISTS] name. REQ000496.
 type DropTrigger struct {
 	Stmt *PS.DropTriggerStmt
