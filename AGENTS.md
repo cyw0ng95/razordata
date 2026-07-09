@@ -6,6 +6,12 @@
 
 See `docs/design/ARCH.md` for directory layout, build order, SQL surface, and API shape.
 
+Subsystem-level design lives in `docs/design/subsystems/<NAME>.md` — one per
+subsystem (LOG, FIL, MEM, WAL, ENG, TXN, SQF, SQO, SQB, SYS, DBG). The optimizer
+subsystem `SQO` is currently **planned but not implemented** — see
+`docs/design/subsystems/SQO.md` for the migration roadmap and tracked by
+REQ001473-REQ001481.
+
 ## Integration
 
 Each iteration must integrate with already implemented parts. Before implementing, cross-check:
