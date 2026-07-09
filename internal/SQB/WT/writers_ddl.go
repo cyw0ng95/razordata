@@ -244,6 +244,8 @@ func (c *CreateTable) Next(ctx context.Context) (DT.Row, error) {
 		ss.Scale = append([]int(nil), scales...)
 		ss.Generated = generated
 		ss.Checks = append([]PS.Expr(nil), checks...)
+		// REQ001369: STRICT table type enforcement.
+		ss.Strict = c.Stmt.Strict
 		// REQ000367: DT.Tables without a PRIMARY KEY that are
 		// registered for storage get a synthetic int64 rowid.
 		// This makes them writable to the engine store while

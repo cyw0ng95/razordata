@@ -47,6 +47,10 @@ type StoreSchema struct {
 	// and uses it as the LSM key suffix; the user-visible schema
 	// is unchanged (no rowid column appears in SELECT *).
 	HiddenPK  bool
+	// Strict indicates the table uses strict type enforcement.
+	// When true, INSERT validates that each value's type matches
+	// the declared column affinity. REQ001369.
+	Strict    bool
 	NextRowID atomic.Int64
 	// ColIndex is a pre-built O(1) column name -> index map.
 	// Built once at schema creation and shared across all rows.

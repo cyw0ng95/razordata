@@ -249,6 +249,61 @@ func ValidateCheck(schema *DT.StoreSchema, row DT.Row) error {
 	return nil
 }
 
+// ValidateStrictRow checks that each value's type matches the declared
+// column affinity when the table uses STRICT mode. REQ001369.
+// SQLite strict mode: INTEGER→INT, REAL→REAL, TEXT→TEXT, BLOB→BLOB.
+// NULL is always allowed. ANY affinity allows any type.
+func ValidateStrictRow(schema *DT.StoreSchema, row DT.Row) error {
+	if !schema.Strict {
+		return nil
+	}
+	for i, v := range row.Data {
+		if i >= len(schema.ColTypes) {
+			break
+		}
+		if v.Kind == DT.KindNull {
+			continue
+		}
+		colType := schema.ColTypes[i]
+		switch colType {
+		case LX.T_INT_KW, LX.T_BIGINT, LX.T_BOOL:
+			if v.Kind != DT.KindInt {
+				return fmt.Errorf("%w: STRICT type mismatch for column %q: expected INTEGER, got %s", ErrConstraint, schema.Cols[i], kindName(v.Kind))
+			}
+		case LX.T_FLOAT_KW:
+			if v.Kind != DT.KindFloat && v.Kind != DT.KindInt {
+				return fmt.Errorf("%w: STRICT type mismatch for column %q: expected REAL, got %s", ErrConstraint, schema.Cols[i], kindName(v.Kind))
+			}
+		case LX.T_TEXT, LX.T_VARCHAR, LX.T_TIMESTAMP, LX.T_DATE, LX.T_TIME, LX.T_JSON, LX.T_DECIMAL, LX.T_NUMERIC:
+			if v.Kind != DT.KindText {
+				return fmt.Errorf("%w: STRICT type mismatch for column %q: expected TEXT, got %s", ErrConstraint, schema.Cols[i], kindName(v.Kind))
+			}
+		case LX.T_BLOB:
+			if v.Kind != DT.KindBlob {
+				return fmt.Errorf("%w: STRICT type mismatch for column %q: expected BLOB, got %s", ErrConstraint, schema.Cols[i], kindName(v.Kind))
+			}
+		}
+	}
+	return nil
+}
+
+func kindName(k DT.ValueKind) string {
+	switch k {
+	case DT.KindNull:
+		return "NULL"
+	case DT.KindInt:
+		return "INTEGER"
+	case DT.KindFloat:
+		return "REAL"
+	case DT.KindText:
+		return "TEXT"
+	case DT.KindBlob:
+		return "BLOB"
+	default:
+		return "UNKNOWN"
+	}
+}
+
 // checkUnique verifies that row's values for each UNIQUE key do not
 // collide with existing rows. The pending set carries encoded unique
 // keys from earlier rows in the same statement (multi-row INSERT

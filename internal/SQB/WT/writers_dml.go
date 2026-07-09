@@ -357,6 +357,9 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 		if err := ValidateRow(i.schema, out); err != nil {
 			return DT.Row{}, err
 		}
+		if err := ValidateStrictRow(i.schema, out); err != nil {
+			return DT.Row{}, err
+		}
 		if err := ValidateDecimal(i.schema, out); err != nil {
 			return DT.Row{}, err
 		}
@@ -490,6 +493,9 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 				return DT.Row{}, err
 			}
 			if err := ValidateRow(cschema, out); err != nil {
+				return DT.Row{}, err
+			}
+			if err := ValidateStrictRow(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
 			if err := CheckUnique(cschema, out, pending, DT.Row{}, AsUniqueLookup(lookup)); err != nil {
