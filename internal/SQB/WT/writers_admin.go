@@ -17,6 +17,13 @@ import (
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
+// cellSizeVerifier is the optional interface for cell_size_check.
+// The store adapter may implement this to verify SST block sizes.
+// REQ001387.
+type cellSizeVerifier interface {
+	VerifyCellSizes() []string
+}
+
 // Trigger is a stub operator for CREATE TRIGGER. REQ000435.
 // The body is parsed and stored; executor surface is a no-op that
 // returns ErrNoRows after one iteration (similar to AlterTable).
@@ -336,6 +343,39 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 				Cols: []string{name},
 				Data: []DT.Value{DT.NewTextValue(result)},
 			})
+		}
+		if p.idx >= len(p.rows) {
+			return DT.Row{}, DT.ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
+	// Handle PRAGMA cell_size_check (REQ001387)
+	if p.Stmt.Name == "cell_size_check" {
+		if !p.done {
+			p.done = true
+			if v, ok := p.store.(cellSizeVerifier); ok {
+				errors := v.VerifyCellSizes()
+				for _, errMsg := range errors {
+					p.rows = append(p.rows, DT.Row{
+						Cols: []string{"cell_size_check"},
+						Data: []DT.Value{DT.NewTextValue(errMsg)},
+					})
+				}
+				if len(p.rows) == 0 {
+					p.rows = append(p.rows, DT.Row{
+						Cols: []string{"cell_size_check"},
+						Data: []DT.Value{DT.NewTextValue("ok")},
+					})
+				}
+			} else {
+				p.rows = append(p.rows, DT.Row{
+					Cols: []string{"cell_size_check"},
+					Data: []DT.Value{DT.NewTextValue("ok")},
+				})
+			}
 		}
 		if p.idx >= len(p.rows) {
 			return DT.Row{}, DT.ErrNoRows
