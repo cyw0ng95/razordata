@@ -181,3 +181,27 @@ func BenchmarkCompare_Any(b *testing.B) {
 		Compare(va, vb)
 	}
 }
+
+// REQ001333: ICU collation comparison with unicode accented characters.
+func TestCollation_ICU_AccentedChars(t *testing.T) {
+	// German: 'ä' sorts after 'a' (a < ä)
+	a := NewTextValue("a")
+	umlautA := NewTextValue("ä")
+
+	// Binary comparison: 'a' (0x61) vs 'ä' (0xC3 0xA4) → a < ä → -1
+	if got := CompareValue(a, umlautA); got != -1 {
+		t.Logf("binary: CompareValue('a', 'ä') = %d (expected -1)", got)
+	}
+
+	// Unicode collation: 'ä' sorts after 'a'
+	got := CompareValueWithCollation(a, umlautA, "unicode_de_DE")
+	if got >= 0 {
+		t.Errorf("unicode_de_DE: CompareValueWithCollation('a', 'ä') = %d, want < 0", got)
+	}
+
+	// English: 'ä' sorts like 'a' (or close)
+	gotEn := CompareValueWithCollation(a, umlautA, "unicode_en_US")
+	if gotEn >= 0 {
+		t.Logf("unicode_en_US: CompareValueWithCollation('a', 'ä') = %d", gotEn)
+	}
+}

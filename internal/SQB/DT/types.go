@@ -4,14 +4,16 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
-	"strings"
-	"sync"
-	"sync/atomic"
+	"golang.org/x/text/collate"
+	"golang.org/x/text/language"
 )
 
 // Value is a tagged-union that stores SQL values inline without boxing.
@@ -418,4 +420,39 @@ func ExecContextFromRow(row *pl.Row) *pl.ExecContext {
 		}
 	}
 	return nil
+}
+
+// ── Collation support (REQ001333) ──────────────────────────────────
+
+var (
+	collationMu    sync.RWMutex
+	collationCache = map[string]*collate.Collator{}
+)
+
+func init() {
+	RegisterCollation("unicode", collate.New(language.Und))
+	RegisterCollation("unicode_en_US", collate.New(language.AmericanEnglish))
+	RegisterCollation("unicode_de_DE", collate.New(language.German))
+	RegisterCollation("unicode_zh_CN", collate.New(language.Chinese))
+}
+
+// RegisterCollation stores a named collator. REQ001333.
+func RegisterCollation(name string, c *collate.Collator) {
+	collationMu.Lock()
+	defer collationMu.Unlock()
+	collationCache[name] = c
+}
+
+// CompareValueWithCollation compares two Values using the named collation.
+// Empty name falls back to binary CompareValue. REQ001333.
+func CompareValueWithCollation(a, b Value, collation string) int {
+	if collation != "" {
+		collationMu.RLock()
+		c, ok := collationCache[collation]
+		collationMu.RUnlock()
+		if ok && a.Kind == KindText && b.Kind == KindText {
+			return c.CompareString(a.S, b.S)
+		}
+	}
+	return CompareValue(a, b)
 }
