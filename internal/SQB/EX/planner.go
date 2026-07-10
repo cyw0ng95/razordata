@@ -169,9 +169,17 @@ func (p *Planner) getTableStats(table string) *AD.TableStats {
 		LastAnalyzed: 0,
 	}
 
-	// First, try to get row count from in-memory tables.
-	if rows, ok := DT.Tables[table]; ok {
-		ts.RowCount = int64(len(rows))
+	// First, try to get row count from in-memory tables (REQ001326: check TempTables first).
+	DT.TablesMu.RLock()
+	rows := DT.Tables[table]
+	if tempRows, ok := DT.TempTables[table]; ok {
+		rows = tempRows
+	}
+	hasRows := rows != nil
+	rowCount := int64(len(rows))
+	DT.TablesMu.RUnlock()
+	if hasRows {
+		ts.RowCount = rowCount
 		ts.TotalWidth = 100 // default width
 	}
 

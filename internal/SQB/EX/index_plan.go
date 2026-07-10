@@ -236,6 +236,9 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) DT.Operator {
 	if p != nil && p.pool != nil {
 		DT.TablesMu.RLock()
 		src := DT.Tables[table]
+		if tempRows, ok := DT.TempTables[table]; ok {
+			src = tempRows
+		}
 		rowCount := len(src)
 		DT.TablesMu.RUnlock()
 		if rowCount >= ParallelThreshold {

@@ -310,7 +310,7 @@ func (p *Parser) parseForeignKeyConstraint(names []string) (ForeignKeyConstraint
 
 // parseCreateTableAsSelect parses CREATE TABLE <name> AS SELECT ...
 // REQ001001: extracted from parseCreateTable.
-func (p *Parser) parseCreateTableAsSelect(name string) (*CreateTable, error) {
+func (p *Parser) parseCreateTableAsSelect(name string, temporary bool) (*CreateTable, error) {
 	p.advance() // consume AS
 	raw, err := p.parseSelect()
 	if err != nil {
@@ -326,11 +326,16 @@ func (p *Parser) parseCreateTableAsSelect(name string) (*CreateTable, error) {
 			Got:      fmt.Sprintf("%T", raw),
 		}
 	}
-	return &CreateTable{Name: name, Select: sel}, nil
+	return &CreateTable{Name: name, Select: sel, Temporary: temporary}, nil
 }
 
 func (p *Parser) parseCreateTable() (*CreateTable, error) {
 	p.advance()
+	temporary := false
+	if p.current.Type == LX.T_TEMP || p.current.Type == LX.T_TEMPORARY {
+		temporary = true
+		p.advance()
+	}
 	if err := p.expect(LX.T_TABLE); err != nil {
 		return nil, err
 	}
@@ -342,7 +347,7 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 	p.advance()
 
 	if p.current.Type == LX.T_AS {
-		return p.parseCreateTableAsSelect(name)
+		return p.parseCreateTableAsSelect(name, temporary)
 	}
 
 	if err := p.expect(LX.T_LPAREN); err != nil {
@@ -421,7 +426,7 @@ func (p *Parser) parseCreateTable() (*CreateTable, error) {
 		}
 	}
 
-	return &CreateTable{Name: name, Cols: cols, PK: pk, UniqueConstraints: uniqueConstraints, ForeignKeys: foreignKeys, WithoutRowid: withoutRowid, Strict: strict}, nil
+	return &CreateTable{Name: name, Cols: cols, PK: pk, UniqueConstraints: uniqueConstraints, ForeignKeys: foreignKeys, WithoutRowid: withoutRowid, Strict: strict, Temporary: temporary}, nil
 }
 
 // parseFKAction parses CASCADE / RESTRICT / SET NULL / SET DEFAULT / NO ACTION.

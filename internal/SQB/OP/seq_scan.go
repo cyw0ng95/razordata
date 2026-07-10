@@ -386,6 +386,9 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 	DT.TablesMu.RLock()
 	defer DT.TablesMu.RUnlock()
 	src := DT.Tables[s.table]
+	if tempRows, ok := DT.TempTables[s.table]; ok {
+		src = tempRows
+	}
 
 	// REQ000820: if pointLookup is set, build the value→row-index map
 	// lazily and iterate only over matching rows.

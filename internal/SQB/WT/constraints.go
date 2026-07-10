@@ -501,6 +501,9 @@ func AsUniqueLookup(apply UniqueLookupWithApply) UniqueLookup {
 // checkUnique which are called under tablesMu).
 func (m *memLookup) FindAndLock(cols []int, vals []any) (int, bool, error) {
 	rows := DT.Tables[m.table]
+	if tempRows, ok := DT.TempTables[m.table]; ok {
+		rows = tempRows
+	}
 	for i, existing := range rows {
 		if rowMatchesUnique(existing.Data, cols, vals) {
 			return i, true, nil
@@ -513,11 +516,18 @@ func (m *memLookup) FindAndLock(cols []int, vals []any) (int, bool, error) {
 // hold tablesMu.
 func (m *memLookup) Mutate(idx int, fn func(DT.Row) DT.Row) error {
 	rows := DT.Tables[m.table]
+	if tempRows, ok := DT.TempTables[m.table]; ok {
+		rows = tempRows
+	}
 	if idx < 0 || idx >= len(rows) {
 		return fmt.Errorf("ex: mutate out of range %d", idx)
 	}
 	rows[idx] = fn(rows[idx])
-	DT.Tables[m.table] = rows
+	if _, tempOk := DT.TempTables[m.table]; tempOk {
+		DT.TempTables[m.table] = rows
+	} else {
+		DT.Tables[m.table] = rows
+	}
 	return nil
 }
 

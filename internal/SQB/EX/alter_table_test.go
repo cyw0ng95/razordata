@@ -597,3 +597,143 @@ func TestDropColumn_MultipleCascades(t *testing.T) {
 		t.Errorf("generated: got %d entries, want 2 (base and derived removed)", len(mss.Generated))
 	}
 }
+
+// REQ001326: CREATE TEMP TABLE creates a session-scoped in-memory table
+// that shadows any main table of the same name.
+func TestTempTable_CreatedInSession(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	DT.ClearTempTables()
+	defer DT.ClearTempTables()
+
+	e := NewExecutor()
+	ctx := context.Background()
+
+	// Create a normal table.
+	if _, err := e.Exec(ctx, "CREATE TABLE t (id INT, val TEXT)"); err != nil {
+		t.Fatalf("create main: %v", err)
+	}
+	if _, err := e.Exec(ctx, "INSERT INTO t VALUES (1, 'main')"); err != nil {
+		t.Fatalf("insert main: %v", err)
+	}
+
+	// Create a temp table with the same name — should shadow the main table.
+	if _, err := e.Exec(ctx, "CREATE TEMP TABLE t (id INT, val TEXT)"); err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	if _, err := e.Exec(ctx, "INSERT INTO t VALUES (2, 'temp')"); err != nil {
+		t.Fatalf("insert temp: %v", err)
+	}
+
+	// Query should see the temp table's data, not the main table's.
+	rows, err := e.QueryAll(ctx, "SELECT * FROM t")
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1 (temp table only)", len(rows))
+	}
+	val := toString(rows[0].Data[1])
+	if val != "temp" {
+		t.Errorf("val = %q, want %q", val, "temp")
+	}
+
+	// Verify temp table is tracked.
+	if !DT.IsTempTable("t") {
+		t.Error("expected IsTempTable('t') = true")
+	}
+}
+
+// REQ001326: TEMP table is dropped on session end (ClearTempTables).
+func TestTempTable_DroppedOnSessionEnd(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	DT.ClearTempTables()
+	defer DT.ClearTempTables()
+
+	e := NewExecutor()
+	ctx := context.Background()
+
+	// Create a main table and a temp table.
+	if _, err := e.Exec(ctx, "CREATE TABLE main (id INT)"); err != nil {
+		t.Fatalf("create main: %v", err)
+	}
+	if _, err := e.Exec(ctx, "INSERT INTO main VALUES (1)"); err != nil {
+		t.Fatalf("insert main: %v", err)
+	}
+	if _, err := e.Exec(ctx, "CREATE TEMP TABLE main (id INT)"); err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	if _, err := e.Exec(ctx, "INSERT INTO main VALUES (99)"); err != nil {
+		t.Fatalf("insert temp: %v", err)
+	}
+
+	// Simulate session end: clear temp tables.
+	DT.ClearTempTables()
+
+	// After cleanup, the main table should still be visible.
+	rows, err := e.QueryAll(ctx, "SELECT * FROM main")
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1 (main table only)", len(rows))
+	}
+	val, _ := rows[0].Data[0].ToAny().(int64)
+	if val != 1 {
+		t.Errorf("val = %d, want 1", val)
+	}
+}
+
+// REQ001326: TEMP TABLE with the same name as a main table shadows it.
+func TestTempTable_SameNameAsMain_Shadows(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	DT.ClearTempTables()
+	defer DT.ClearTempTables()
+
+	e := NewExecutor()
+	ctx := context.Background()
+
+	// Create main table.
+	if _, err := e.Exec(ctx, "CREATE TABLE shadow (id INT, src TEXT)"); err != nil {
+		t.Fatalf("create main: %v", err)
+	}
+	if _, err := e.Exec(ctx, "INSERT INTO shadow VALUES (1, 'main')"); err != nil {
+		t.Fatalf("insert main: %v", err)
+	}
+	if _, err := e.Exec(ctx, "INSERT INTO shadow VALUES (2, 'main')"); err != nil {
+		t.Fatalf("insert main2: %v", err)
+	}
+
+	// Create temp table with same name.
+	if _, err := e.Exec(ctx, "CREATE TEMP TABLE shadow (id INT, src TEXT)"); err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	if _, err := e.Exec(ctx, "INSERT INTO shadow VALUES (3, 'temp')"); err != nil {
+		t.Fatalf("insert temp: %v", err)
+	}
+
+	// Query sees only temp data.
+	rows, err := e.QueryAll(ctx, "SELECT src FROM shadow ORDER BY id")
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1 (temp only)", len(rows))
+	}
+	val := toString(rows[0].Data[0])
+	if val != "temp" {
+		t.Errorf("val = %q, want %q", val, "temp")
+	}
+
+	// After clearing temp, main table is visible again.
+	DT.ClearTempTables()
+	rows, err = e.QueryAll(ctx, "SELECT src FROM shadow ORDER BY id")
+	if err != nil {
+		t.Fatalf("select after clear: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2 (main only)", len(rows))
+	}
+}

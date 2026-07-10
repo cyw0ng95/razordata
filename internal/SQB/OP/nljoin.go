@@ -615,6 +615,9 @@ func (j *NestedLoopJoin) nullRightRow() Row {
 	}
 	DT.TablesMu.RLock()
 	rightSchema := DT.Tables[j.rightTbl]
+	if rtemp, ok := DT.TempTables[j.rightTbl]; ok {
+		rightSchema = rtemp
+	}
 	DT.TablesMu.RUnlock()
 
 	nullRow := Row{
@@ -636,6 +639,9 @@ func (j *NestedLoopJoin) nullLeftRow() Row {
 	}
 	DT.TablesMu.RLock()
 	leftSchema := DT.Tables[j.leftTbl]
+	if ltemp, ok := DT.TempTables[j.leftTbl]; ok {
+		leftSchema = ltemp
+	}
 	DT.TablesMu.RUnlock()
 
 	nullRow := Row{

@@ -337,6 +337,10 @@ func (p *Planner) estimateRowCount(table string, where PS.Expr) int {
 	if rows, ok := DT.Tables[table]; ok && len(rows) > 0 {
 		return len(rows)
 	}
+	// REQ001326: check temp table row count.
+	if tempRows, ok := DT.TempTables[table]; ok && len(tempRows) > 0 {
+		return len(tempRows)
+	}
 	// REQ000787: use statistics-driven estimate from catalog.
 	if cat := DT.Catalog(); cat != nil {
 		if ts := cat.TableStats(table); ts != nil && ts.RowCount > 0 {
@@ -353,6 +357,10 @@ func (p *Planner) getTableRowCount(table string) float64 {
 	// REQ001192: skip 0-row entries — same as estimateRowCount.
 	if rows, ok := DT.Tables[table]; ok && len(rows) > 0 {
 		return float64(len(rows))
+	}
+	// REQ001326: check temp table row count.
+	if tempRows, ok := DT.TempTables[table]; ok && len(tempRows) > 0 {
+		return float64(len(tempRows))
 	}
 	if cat := DT.Catalog(); cat != nil {
 		if ts := cat.TableStats(table); ts != nil && ts.RowCount > 0 {

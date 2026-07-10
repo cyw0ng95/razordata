@@ -126,6 +126,13 @@ var (
 	Tables   = map[string][]Row{}
 	Schemas  = map[string][]string{}
 	TablePKs = map[string]string{} // in-memory table primary key column name
+
+	// REQ001326: TempTables are session-scoped in-memory tables that
+	// shadow main tables of the same name. Lookup via GetTableData /
+	// GetTableSchema checks TempTables first.
+	TempTables  = map[string][]Row{}
+	TempSchemas = map[string][]string{}
+	TempTableNames = map[string]bool{} // set of all temp table names for cleanup
 )
 
 // BuildColIndex (re)builds a column name -> index map from the schema's
@@ -600,6 +607,9 @@ func Schema(name string) []string {
 // REQ000641.
 func SnapshotInMemoryTable(table string) []Row {
 	src := Tables[table]
+	if tempRows, ok := TempTables[table]; ok {
+		src = tempRows
+	}
 	if src == nil {
 		return nil
 	}
@@ -702,4 +712,55 @@ func equalValue(a, b Value) bool {
 		return a.S == b.S
 	}
 	return false
+}
+
+// RegisterTempTable registers a temporary table in the in-memory schema.
+// Temp tables shadow main tables of the same name. REQ001326.
+func RegisterTempTable(name string, cols []string) {
+	TablesMu.Lock()
+	defer TablesMu.Unlock()
+	TempTables[name] = []Row{}
+	TempSchemas[name] = append([]string(nil), cols...)
+	TempTableNames[name] = true
+}
+
+// GetTableData returns rows for the given table name, checking temp
+// tables first. REQ001326.
+func GetTableData(name string) []Row {
+	TablesMu.RLock()
+	defer TablesMu.RUnlock()
+	if rows, ok := TempTables[name]; ok {
+		return rows
+	}
+	return Tables[name]
+}
+
+// GetTableSchema returns column names for the given table, checking
+// temp tables first. REQ001326.
+func GetTableSchema(name string) []string {
+	TablesMu.RLock()
+	defer TablesMu.RUnlock()
+	if s, ok := TempSchemas[name]; ok {
+		return s
+	}
+	return Schemas[name]
+}
+
+// IsTempTable reports whether the given table name is a temp table.
+func IsTempTable(name string) bool {
+	TablesMu.RLock()
+	defer TablesMu.RUnlock()
+	return TempTableNames[name]
+}
+
+// ClearTempTables removes all temp tables from the in-memory schema.
+// Called at session end. REQ001326.
+func ClearTempTables() {
+	TablesMu.Lock()
+	defer TablesMu.Unlock()
+	for name := range TempTableNames {
+		delete(TempTables, name)
+		delete(TempSchemas, name)
+	}
+	TempTableNames = map[string]bool{}
 }

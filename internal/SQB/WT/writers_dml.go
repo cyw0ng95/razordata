@@ -134,6 +134,9 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 	DT.TablesMu.Lock()
 	defer DT.TablesMu.Unlock()
 	existing := DT.Tables[i.table]
+	if tempRows, ok := DT.TempTables[i.table]; ok {
+		existing = tempRows
+	}
 	// REQ000641: snapshot the table before first mutation for rollback.
 	if tw := DT.CurrentTxWriter(); tw != nil {
 		tw.RecordInMemoryTable(i.table, DT.SnapshotInMemoryTable(i.table))
@@ -286,7 +289,11 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 			}
 		}
 	}
-	DT.Tables[i.table] = existing
+	if _, tempOk := DT.TempTables[i.table]; tempOk {
+		DT.TempTables[i.table] = existing
+	} else {
+		DT.Tables[i.table] = existing
+	}
 
 	// Return first RETURNING result if any
 	if len(i.resultRows) > 0 {
@@ -470,6 +477,9 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 	DT.TablesMu.Lock()
 	defer DT.TablesMu.Unlock()
 	existing := DT.Tables[i.table]
+	if tempRows, ok := DT.TempTables[i.table]; ok {
+		existing = tempRows
+	}
 	if tw := DT.CurrentTxWriter(); tw != nil {
 		tw.RecordInMemoryTable(i.table, DT.SnapshotInMemoryTable(i.table))
 	}
@@ -543,7 +553,11 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 			}
 		}
 	}
-	DT.Tables[i.table] = existing
+	if _, tempOk := DT.TempTables[i.table]; tempOk {
+		DT.TempTables[i.table] = existing
+	} else {
+		DT.Tables[i.table] = existing
+	}
 
 	if len(i.resultRows) > 0 {
 		row := i.resultRows[0]
@@ -971,13 +985,20 @@ func (d *Delete) Next(ctx context.Context) (DT.Row, error) {
 			tw.RecordInMemoryTable(d.table, DT.SnapshotInMemoryTable(d.table))
 		}
 		existing := DT.Tables[d.table]
+		if tempRows, ok := DT.TempTables[d.table]; ok {
+			existing = tempRows
+		}
 		out := existing[:0]
 		for i, r := range existing {
 			if !toDelete[i] {
 				out = append(out, r)
 			}
 		}
-		DT.Tables[d.table] = out
+		if _, tempOk := DT.TempTables[d.table]; tempOk {
+			DT.TempTables[d.table] = out
+		} else {
+			DT.Tables[d.table] = out
+		}
 		d.rows = int64(len(toDelete))
 		if d.execCtx != nil {
 			d.execCtx.LastChanges = int64(len(toDelete))

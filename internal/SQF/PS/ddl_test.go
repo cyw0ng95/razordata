@@ -498,11 +498,44 @@ func TestParse_CreateTempView(t *testing.T) {
 }
 
 func TestParse_CreateTempView_TableNotView(t *testing.T) {
-	// CREATE TEMP TABLE should not parse as CREATE VIEW
+	// CREATE TEMP TABLE parses as CreateTable with Temporary=true
 	p := NewParser("CREATE TEMP TABLE t (id INT)")
-	_, err := p.Parse()
-	if err == nil {
-		t.Fatal("expected error for CREATE TEMP TABLE (TEMP TABLE not supported)")
+	stmt, err := p.Parse()
+	if err != nil {
+		t.Fatalf("unexpected error for CREATE TEMP TABLE: %v", err)
+	}
+	ct, ok := stmt.(*CreateTable)
+	if !ok {
+		t.Fatalf("expected *CreateTable, got %T", stmt)
+	}
+	if !ct.Temporary {
+		t.Error("expected Temporary=true")
+	}
+	if ct.Name != "t" {
+		t.Errorf("Name = %q, want %q", ct.Name, "t")
+	}
+	if len(ct.Cols) != 1 || ct.Cols[0].Name != "id" {
+		t.Errorf("Cols = %+v, want [id]", ct.Cols)
+	}
+
+	// Also verify TEMPORARY keyword works
+	p2 := NewParser("CREATE TEMPORARY TABLE tmp (a TEXT, b INT)")
+	stmt2, err := p2.Parse()
+	if err != nil {
+		t.Fatalf("unexpected error for CREATE TEMPORARY TABLE: %v", err)
+	}
+	ct2, ok := stmt2.(*CreateTable)
+	if !ok {
+		t.Fatalf("expected *CreateTable, got %T", stmt2)
+	}
+	if !ct2.Temporary {
+		t.Error("expected Temporary=true for TEMPORARY")
+	}
+	if ct2.Name != "tmp" {
+		t.Errorf("Name = %q, want %q", ct2.Name, "tmp")
+	}
+	if len(ct2.Cols) != 2 {
+		t.Errorf("Cols = %d, want 2", len(ct2.Cols))
 	}
 }
 

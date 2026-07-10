@@ -415,6 +415,9 @@ func (i *IndexScan) ensureInMemoryRows() []Row {
 	}
 	DT.TablesMu.RLock()
 	src := DT.Tables[i.table]
+	if tempRows, ok := DT.TempTables[i.table]; ok {
+		src = tempRows
+	}
 	out := make([]Row, len(src))
 	for k, r := range src {
 		out[k] = DT.CloneRow(r)

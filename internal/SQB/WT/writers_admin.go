@@ -702,12 +702,16 @@ func (t *Truncate) Next(ctx context.Context) (DT.Row, error) {
 	}
 	t.done = true
 	// Truncate = DELETE without WHERE; reuse the in-memory delete path.
-	if DT.Schema(t.Stmt.Table) != nil {
+	if DT.Schema(t.Stmt.Table) != nil || DT.IsTempTable(t.Stmt.Table) {
 		DT.TablesMu.Lock()
 		if existing, ok := DT.Tables[t.Stmt.Table]; ok {
 			t.rows = int64(len(existing))
+			DT.Tables[t.Stmt.Table] = nil
 		}
-		DT.Tables[t.Stmt.Table] = nil
+		if tempExisting, ok := DT.TempTables[t.Stmt.Table]; ok {
+			t.rows = int64(len(tempExisting))
+			DT.TempTables[t.Stmt.Table] = nil
+		}
 		DT.TablesMu.Unlock()
 	}
 	return DT.Row{}, DT.ErrNoRows

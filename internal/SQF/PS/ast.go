@@ -279,6 +279,7 @@ type CreateTable struct {
 	Select            *Select
 	WithoutRowid      bool
 	Strict            bool
+	Temporary         bool // REQ001326: CREATE TEMP/TEMPORARY TABLE
 }
 
 type ForeignKeyConstraint struct {

@@ -496,6 +496,9 @@ func (i *IndexScan) Next(ctx context.Context) (Row, error) {
 	if i.rows == nil {
 		DT.TablesMu.RLock()
 		src := DT.Tables[i.table]
+		if tempRows, ok := DT.TempTables[i.table]; ok {
+			src = tempRows
+		}
 		out := make([]Row, len(src))
 		for k, r := range src {
 			out[k] = DT.CloneRow(r)

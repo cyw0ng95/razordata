@@ -195,6 +195,21 @@ func (c *CreateTable) Next(ctx context.Context) (DT.Row, error) {
 	}
 	c.done = true
 
+	// REQ001326: TEMP/TEMPORARY TABLE — register in-memory only,
+	// no persistent storage or catalog entry.
+	if c.Stmt.Temporary {
+		cols := make([]string, len(c.Stmt.Cols))
+		for i, col := range c.Stmt.Cols {
+			cols[i] = col.Name
+		}
+		if len(cols) == 0 && c.Stmt.Select != nil && c.selectPlan != nil {
+			// CREATE TEMP TABLE AS SELECT — schema from SELECT output.
+			return c.nextAsSelectTemp(ctx)
+		}
+		DT.RegisterTempTable(c.Stmt.Name, cols)
+		return DT.Row{}, DT.ErrNoRows
+	}
+
 	// REQ000910: WITHOUT ROWID storage is not yet implemented.
 	if c.Stmt.WithoutRowid {
 		return DT.Row{}, errors.New("ex: WITHOUT ROWID not yet supported")
@@ -311,6 +326,42 @@ func (c *CreateTable) nextAsSelect(ctx context.Context) (DT.Row, error) {
 	return DT.Row{}, DT.ErrNoRows
 }
 
+// nextAsSelectTemp implements CREATE TEMP TABLE AS SELECT. REQ001326.
+func (c *CreateTable) nextAsSelectTemp(ctx context.Context) (DT.Row, error) {
+	// Read first row to discover schema.
+	firstRow, err := c.selectPlan.Next(ctx)
+	if err != nil {
+		if err == DT.ErrNoRows {
+			DT.TablesMu.Lock()
+			DT.TempTables[c.Stmt.Name] = []DT.Row{}
+			DT.TempSchemas[c.Stmt.Name] = nil
+			DT.TempTableNames[c.Stmt.Name] = true
+			DT.TablesMu.Unlock()
+			return DT.Row{}, DT.ErrNoRows
+		}
+		return DT.Row{}, err
+	}
+	cols := append([]string(nil), firstRow.Cols...)
+	DT.TablesMu.Lock()
+	DT.TempTables[c.Stmt.Name] = []DT.Row{firstRow}
+	DT.TempSchemas[c.Stmt.Name] = cols
+	DT.TempTableNames[c.Stmt.Name] = true
+	DT.TablesMu.Unlock()
+	for {
+		row, err := c.selectPlan.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				break
+			}
+			return DT.Row{}, err
+		}
+		DT.TablesMu.Lock()
+		DT.TempTables[c.Stmt.Name] = append(DT.TempTables[c.Stmt.Name], row)
+		DT.TablesMu.Unlock()
+	}
+	return DT.Row{}, DT.ErrNoRows
+}
+
 type DropTable struct {
 	Stmt *PS.DropTable
 	done bool
@@ -329,13 +380,23 @@ func (d *DropTable) Next(ctx context.Context) (DT.Row, error) {
 
 	DT.TablesMu.Lock()
 	existing, tableOk := DT.Tables[d.Stmt.Name]
-	if !tableOk && !d.Stmt.IfExists {
+	_, tempOk := DT.TempTables[d.Stmt.Name]
+	if !tableOk && !tempOk && !d.Stmt.IfExists {
 		DT.TablesMu.Unlock()
 		return DT.Row{}, fmt.Errorf("ex: no such table: %s", d.Stmt.Name)
 	}
 	if tableOk {
 		d.rows = int64(len(existing))
 		delete(DT.Tables, d.Stmt.Name)
+		delete(DT.Schemas, d.Stmt.Name)
+		delete(DT.TablePKs, d.Stmt.Name)
+		delete(DT.TempTableNames, d.Stmt.Name)
+	}
+	if tempOk {
+		d.rows = int64(len(DT.TempTables[d.Stmt.Name]))
+		delete(DT.TempTables, d.Stmt.Name)
+		delete(DT.TempSchemas, d.Stmt.Name)
+		delete(DT.TempTableNames, d.Stmt.Name)
 	}
 	DT.TablesMu.Unlock()
 
