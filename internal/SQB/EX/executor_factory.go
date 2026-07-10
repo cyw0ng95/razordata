@@ -271,6 +271,10 @@ func (e *Executor) RegisterIndex(table, index string, cols []string) {
 	e.planner.RegisterIndex(table, index, cols)
 }
 
+func (e *Executor) RegisterIndexWithPredicate(table, index string, cols []string, predicate string) {
+	e.planner.RegisterIndexWithPredicate(table, index, cols, predicate)
+}
+
 // QueryStream runs a SELECT and returns a streaming iterator that
 // yields rows one at a time. The caller MUST call Close on the
 // returned iterator to release the underlying plan resources.

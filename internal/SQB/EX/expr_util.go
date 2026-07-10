@@ -2,12 +2,14 @@ package EX
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
 )
 
 func cloneExpr(e PS.Expr) PS.Expr {
@@ -497,6 +499,93 @@ func (p *Planner) selectIndex(table, col string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// canUsePartialIndex checks whether a partial index's predicate is
+// implied by the query WHERE clause. A full (non-partial) index always
+// passes. REQ001386.
+func (p *Planner) canUsePartialIndex(table, idxName string, whereExpr PS.Expr) bool {
+	t, ok := p.catalog[table]
+	if !ok {
+		return false
+	}
+	pred, hasPred := t.indexPredicates[idxName]
+	if !hasPred || pred == "" {
+		return true
+	}
+	if whereExpr == nil {
+		return false
+	}
+	conjuncts := RE.SplitAnd(whereExpr)
+	for _, c := range conjuncts {
+		if pred == simplifyExpr(c) {
+			return true
+		}
+	}
+	return false
+}
+
+// simplifyExpr serializes a PS.Expr to text for partial index
+// predicate comparison. Must produce the same output as WT.sprintWhere
+// for equivalent expressions. REQ001386.
+func simplifyExpr(e PS.Expr) string {
+	if e == nil {
+		return ""
+	}
+	switch x := e.(type) {
+	case *PS.BinaryExpr:
+		op := ""
+		switch x.Op {
+		case LX.T_EQ:
+			op = "="
+		case LX.T_NE:
+			op = "!="
+		case LX.T_LT:
+			op = "<"
+		case LX.T_GT:
+			op = ">"
+		case LX.T_LE:
+			op = "<="
+		case LX.T_GE:
+			op = ">="
+		case LX.T_AND:
+			op = "AND"
+		case LX.T_OR:
+			op = "OR"
+		case LX.T_IS:
+			op = "IS"
+		case LX.T_NOT:
+			op = "NOT"
+		case LX.T_IN:
+			op = "IN"
+		case LX.T_LIKE:
+			op = "LIKE"
+		default:
+			return "(" + simplifyExpr(x.Left) + " " + fmt.Sprintf("%v", x.Op) + " " + simplifyExpr(x.Right) + ")"
+		}
+		return "(" + simplifyExpr(x.Left) + " " + op + " " + simplifyExpr(x.Right) + ")"
+	case *PS.UnaryExpr:
+		return fmt.Sprintf("%v", x.Op) + " " + simplifyExpr(x.Operand)
+	case *PS.Ident:
+		return x.Name
+	case *PS.NumberLiteral:
+		return strconv.FormatInt(x.Val, 10)
+	case *PS.FloatLiteral:
+		return strconv.FormatFloat(x.Val, 'g', -1, 64)
+	case *PS.StringLiteral:
+		return "'" + x.Val + "'"
+	case *PS.BoolLiteral:
+		if x.Val {
+			return "1"
+		}
+		return "0"
+	case *PS.NullLiteral:
+		return "NULL"
+	case *PS.Param:
+		return "?"
+	default:
+		return fmt.Sprintf("(%v)", e)
+	}
 }
 
 // selectIndexWithHint wraps selectIndex and enforces the INDEXED BY

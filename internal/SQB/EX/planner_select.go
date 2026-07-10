@@ -582,7 +582,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		// we use the prefix-scan fallback.
 		if col, val, ok := indexedColumnEq(whereExpr); ok {
 			idx, found := p.selectIndexWithHint(s.From, col, s.IndexHint)
-			if found && hasWriterIndex(s.From, idx) {
+			if found && hasWriterIndex(s.From, idx) && p.canUsePartialIndex(s.From, idx, whereExpr) {
 				tableID, _ := DT.TableIDFor(s.From)
 				if isc, err := OP.NewIndexScanWithIndex(p.store, tableID, s.From, idx, val, nil); err == nil {
 					residual, extra := p.decomposeForIndexScan(whereExpr, col)
@@ -606,7 +606,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		if scan == nil {
 			if col, lo, loIncl, up, upIncl, ok := indexedColumnRange(whereExpr); ok {
 				idx, found := p.selectIndexWithHint(s.From, col, s.IndexHint)
-				if found && hasWriterIndex(s.From, idx) {
+				if found && hasWriterIndex(s.From, idx) && p.canUsePartialIndex(s.From, idx, whereExpr) {
 					tableID, _ := DT.TableIDFor(s.From)
 					if isc, err := OP.NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
 						// REQ001108: decompose WHERE into residual
@@ -630,7 +630,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		if scan == nil {
 			if col, prefix, ok := indexedColumnLikePrefix(whereExpr); ok {
 				idx, found := p.selectIndexWithHint(s.From, col, s.IndexHint)
-				if found && hasWriterIndex(s.From, idx) {
+				if found && hasWriterIndex(s.From, idx) && p.canUsePartialIndex(s.From, idx, whereExpr) {
 					tableID, _ := DT.TableIDFor(s.From)
 					upper := make([]byte, len(prefix)+1)
 					copy(upper, prefix)
@@ -654,7 +654,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		}
 		if scan == nil {
 			if col, ok := indexedColumn(whereExpr); ok {
-				if idx, found := p.selectIndexWithHint(s.From, col, s.IndexHint); found {
+				if idx, found := p.selectIndexWithHint(s.From, col, s.IndexHint); found && p.canUsePartialIndex(s.From, idx, whereExpr) {
 					if isc, err := OP.NewIndexScanWithStore(p.store, s.From, idx); err == nil {
 						// REQ001108: NewIndexScanWithStore is a table
 						// prefix scan (returns ALL rows), not a real

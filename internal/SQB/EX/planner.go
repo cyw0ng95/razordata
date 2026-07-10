@@ -82,10 +82,11 @@ type Planner struct {
 }
 
 type tableInfo struct {
-	name    string
-	cols    []DT.ColInfo
-	pk      string
-	indexes map[string][]string
+	name             string
+	cols             []DT.ColInfo
+	pk               string
+	indexes          map[string][]string
+	indexPredicates  map[string]string // REQ001386: partial index WHERE clause text
 }
 
 func NewPlanner() *Planner {
@@ -207,8 +208,18 @@ func (p *Planner) RegisterTable(name string, cols []DT.ColInfo, pk string) {
 }
 
 func (p *Planner) RegisterIndex(table, index string, cols []string) {
+	p.RegisterIndexWithPredicate(table, index, cols, "")
+}
+
+func (p *Planner) RegisterIndexWithPredicate(table, index string, cols []string, predicate string) {
 	if t, ok := p.catalog[table]; ok {
 		t.indexes[index] = cols
+		if predicate != "" {
+			if t.indexPredicates == nil {
+				t.indexPredicates = make(map[string]string)
+			}
+			t.indexPredicates[index] = predicate
+		}
 	}
 }
 

@@ -69,9 +69,10 @@ type ForeignKeyConstraint struct {
 
 // RegisteredIndex is one entry in the EX-layer's index registry.
 type RegisteredIndex struct {
-	Name    string
-	Columns []string
-	Unique  bool
+	Name      string
+	Columns   []string
+	Unique    bool
+	Predicate string // REQ001386: partial index WHERE clause text
 }
 
 // TriggerInfo stores metadata about a trigger for sqlite_master.

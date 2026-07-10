@@ -508,11 +508,17 @@ func (c *CreateIndex) Next(ctx context.Context) (DT.Row, error) {
 	for i, ic := range c.Stmt.IndexedColumns {
 		indexCols[i] = ic.Name
 	}
+	// REQ001386: serialize partial index WHERE clause as predicate text.
+	predText := ""
+	if c.Stmt.Where != nil {
+		predText = sprintWhere(c.Stmt.Where)
+	}
 	// Register for writer maintenance
 	DT.RegisterIndexWithID(c.Stmt.Table, DT.RegisteredIndex{
-		Name:    c.Stmt.Name,
-		Columns: indexCols,
-		Unique:  c.Stmt.Unique,
+		Name:      c.Stmt.Name,
+		Columns:   indexCols,
+		Unique:    c.Stmt.Unique,
+		Predicate: predText,
 	})
 	// Persist to catalog if available
 	if cat := DT.Catalog(); cat != nil {
@@ -615,4 +621,66 @@ func joinStrings(s []string, sep string) string {
 		out += sep + s[i]
 	}
 	return out
+}
+
+// sprintWhere serializes a partial index WHERE expression to SQL text
+// for storage in RegisteredIndex.Predicate. REQ001386.
+func sprintWhere(e PS.Expr) string {
+	if e == nil {
+		return ""
+	}
+	switch x := e.(type) {
+	case *PS.BinaryExpr:
+		op := ""
+		switch x.Op {
+		case LX.T_EQ:
+			op = "="
+		case LX.T_NE:
+			op = "!="
+		case LX.T_LT:
+			op = "<"
+		case LX.T_GT:
+			op = ">"
+		case LX.T_LE:
+			op = "<="
+		case LX.T_GE:
+			op = ">="
+		case LX.T_AND:
+			op = "AND"
+		case LX.T_OR:
+			op = "OR"
+		case LX.T_IS:
+			op = "IS"
+		case LX.T_NOT:
+			op = "NOT"
+		case LX.T_IN:
+			op = "IN"
+		case LX.T_LIKE:
+			op = "LIKE"
+		default:
+			return "(" + sprintWhere(x.Left) + " " + fmt.Sprintf("%v", x.Op) + " " + sprintWhere(x.Right) + ")"
+		}
+		return "(" + sprintWhere(x.Left) + " " + op + " " + sprintWhere(x.Right) + ")"
+	case *PS.UnaryExpr:
+		return fmt.Sprintf("%v", x.Op) + " " + sprintWhere(x.Operand)
+	case *PS.Ident:
+		return x.Name
+	case *PS.NumberLiteral:
+		return strconv.FormatInt(x.Val, 10)
+	case *PS.FloatLiteral:
+		return strconv.FormatFloat(x.Val, 'g', -1, 64)
+	case *PS.StringLiteral:
+		return "'" + x.Val + "'"
+	case *PS.BoolLiteral:
+		if x.Val {
+			return "1"
+		}
+		return "0"
+	case *PS.NullLiteral:
+		return "NULL"
+	case *PS.Param:
+		return "?"
+	default:
+		return fmt.Sprintf("(%v)", e)
+	}
 }

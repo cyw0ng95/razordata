@@ -1633,3 +1633,69 @@ func TestUpsert_DoUpdate_Where_AppliesUpdate(t *testing.T) {
 		t.Errorf("v = %d, want 99 (WHERE true should have applied the update)", v)
 	}
 }
+
+// TestREQ001386_PartialIndex_WhereClause verifies that a partial
+// index (CREATE INDEX ... WHERE predicate) is only selected by the
+// planner when the query's WHERE clause implies the index predicate.
+func TestREQ001386_PartialIndex_WhereClause(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTable("t", []string{"id", "val", "active"})
+	// Register partial index with predicate: CREATE INDEX idx_active ON t(val) WHERE active = 1
+	ex.RegisterIndexWithPredicate("t", "idx_active", []string{"val"}, "(active = 1)")
+
+	ctx := context.Background()
+	for _, s := range []string{
+		"INSERT INTO t VALUES (1, 'a', 1)",
+		"INSERT INTO t VALUES (2, 'b', 1)",
+		"INSERT INTO t VALUES (3, 'c', 0)",
+	} {
+		if _, err := ex.Exec(ctx, s); err != nil {
+			t.Fatalf("seed: %s: %v", s, err)
+		}
+	}
+
+	// Case 1: WHERE val = 'a' AND active = 1 → index predicate implied
+	rows, err := ex.QueryAll(ctx, "EXPLAIN SELECT * FROM t WHERE val = 'a' AND active = 1")
+	if err != nil {
+		t.Fatalf("explain match: %v", err)
+	}
+	allDetails := ""
+	for _, r := range rows {
+		if len(r.Data) > 3 {
+			allDetails += r.Data[3].ToAny().(string) + "\n"
+		}
+	}
+	t.Logf("EXPLAIN (predicate match):\n%s", allDetails)
+	if !strings.Contains(allDetails, "idx=") {
+		t.Errorf("expected idx= in plan when predicate matches, got:\n%s", allDetails)
+	}
+
+	// Case 2: WHERE val = 'a' only → no active = 1, predicate not implied
+	ex.planner.InvalidateCache()
+	ex.clearPlanCache()
+	rows, err = ex.QueryAll(ctx, "EXPLAIN SELECT * FROM t WHERE val = 'a'")
+	if err != nil {
+		t.Fatalf("explain no match: %v", err)
+	}
+	allDetails = ""
+	for _, r := range rows {
+		if len(r.Data) > 3 {
+			allDetails += r.Data[3].ToAny().(string) + "\n"
+		}
+	}
+	t.Logf("EXPLAIN (no predicate match):\n%s", allDetails)
+	if strings.Contains(allDetails, "idx=") {
+		t.Errorf("did not expect idx= in plan when predicate not matched, got:\n%s", allDetails)
+	}
+
+	// Case 3: Data correctness — query should return correct rows regardless of index selection
+	rows, err = ex.QueryAll(ctx, "SELECT * FROM t WHERE val = 'a' AND active = 1")
+	if err != nil {
+		t.Fatalf("query match: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+}

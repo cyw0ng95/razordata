@@ -22,7 +22,7 @@ func (p *Planner) tryBitmapHeapScan(s *PS.Select, whereExpr PS.Expr) DT.Operator
 	children := make([]DT.Operator, 0, len(cols))
 	for i, col := range cols {
 		idx, found := p.selectIndex(s.From, col)
-		if !found || !hasWriterIndex(s.From, idx) {
+		if !found || !hasWriterIndex(s.From, idx) || !p.canUsePartialIndex(s.From, idx, whereExpr) {
 			return nil
 		}
 		tableID, _ := DT.TableIDFor(s.From)
@@ -272,7 +272,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) DT.Operator {
 	}
 	if p != nil && where != nil {
 		if col, ok := indexedColumn(where); ok {
-			if idx, found := p.selectIndex(table, col); found {
+			if idx, found := p.selectIndex(table, col); found && p.canUsePartialIndex(table, idx, where) {
 				if p.store != nil {
 					if isc, err := OP.NewIndexScanWithStore(p.store, table, idx); err == nil {
 						return isc
@@ -283,7 +283,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) DT.Operator {
 		}
 		// REQ001068: check for equality predicate (col = ?) on an indexed column.
 		if col, seekValue, ok := indexedColumnEq(where); ok {
-			if idx, found := p.selectIndex(table, col); found {
+			if idx, found := p.selectIndex(table, col); found && p.canUsePartialIndex(table, idx, where) {
 				if hasWriterIndex(table, idx) {
 					if p.store != nil {
 						if tableID, ok := DT.TableIDFor(table); ok {
@@ -298,7 +298,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) DT.Operator {
 		}
 		// REQ001069: check for range predicate (col > ? / col < ? / BETWEEN) on an indexed column.
 		if col, lower, lowerIncl, upper, upperIncl, ok := indexedColumnRange(where); ok {
-			if idx, found := p.selectIndex(table, col); found {
+			if idx, found := p.selectIndex(table, col); found && p.canUsePartialIndex(table, idx, where) {
 				if hasWriterIndex(table, idx) {
 					if p.store != nil {
 						if tableID, ok := DT.TableIDFor(table); ok {
@@ -315,7 +315,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) DT.Operator {
 		// Uses OP.IndexScan with range [prefix, prefix+0xff) to seek to matching
 		// entries, then the OP.Filter on top applies the full LIKE match.
 		if col, prefix, ok := indexedColumnLikePrefix(where); ok {
-			if idx, found := p.selectIndex(table, col); found {
+			if idx, found := p.selectIndex(table, col); found && p.canUsePartialIndex(table, idx, where) {
 				if hasWriterIndex(table, idx) {
 					// Upper bound: prefix + 0xff (highest char) for prefix match.
 					upper := make([]byte, len(prefix)+1)
