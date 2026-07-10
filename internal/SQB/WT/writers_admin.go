@@ -268,6 +268,26 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 		return row, nil
 	}
 
+	// Handle PRAGMA journal_mode [= delete|wal|memory|truncate|persist|off] (REQ001392)
+	if p.Stmt.Name == "journal_mode" {
+		if !p.done {
+			p.done = true
+			if p.Stmt.Value != "" {
+				DT.SetJournalMode(p.Stmt.Value)
+			}
+			p.rows = append(p.rows, DT.Row{
+				Cols: []string{"journal_mode"},
+				Data: []DT.Value{DT.NewTextValue(DT.JournalMode())},
+			})
+		}
+		if p.idx >= len(p.rows) {
+			return DT.Row{}, DT.ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
 	// Handle PRAGMA foreign_keys [= ON|OFF] (REQ000905, REQ001307)
 	if p.Stmt.Name == "foreign_keys" {
 		if !p.done {

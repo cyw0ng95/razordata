@@ -774,3 +774,21 @@ func TempStoreMode() int { return int(atomic.LoadInt32(&tempStoreMode)) }
 
 // SetTempStoreMode sets the temp_store mode (0, 1, or 2). REQ001327.
 func SetTempStoreMode(mode int) { atomic.StoreInt32(&tempStoreMode, int32(mode)) }
+
+// REQ001392: journal_mode state.
+var (
+	journalModeMu sync.RWMutex
+	journalMode   = "delete"
+)
+
+func JournalMode() string {
+	journalModeMu.RLock()
+	defer journalModeMu.RUnlock()
+	return journalMode
+}
+
+func SetJournalMode(mode string) {
+	journalModeMu.Lock()
+	defer journalModeMu.Unlock()
+	journalMode = mode
+}

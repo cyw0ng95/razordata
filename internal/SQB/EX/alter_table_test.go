@@ -902,3 +902,51 @@ func TestGenerated_Virtual_IndexLookup(t *testing.T) {
 		t.Errorf("id = %d, want 2", got)
 	}
 }
+
+// REQ001392: PRAGMA journal_mode read/write round-trip.
+func TestPragma_JournalMode_ReadWriteRoundTrip(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	orig := DT.JournalMode()
+	defer DT.SetJournalMode(orig)
+
+	e := NewExecutor()
+	ctx := context.Background()
+
+	// Read default.
+	rows, err := e.QueryAll(ctx, "PRAGMA journal_mode")
+	if err != nil {
+		t.Fatalf("PRAGMA journal_mode: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0].Data[0].S != "delete" {
+		t.Errorf("default journal_mode = %q, want delete", rows[0].Data[0].S)
+	}
+
+	// Write journal_mode = WAL.
+	if _, err := e.Exec(ctx, "PRAGMA journal_mode = WAL"); err != nil {
+		t.Fatalf("PRAGMA journal_mode = WAL: %v", err)
+	}
+	if got := DT.JournalMode(); got != "WAL" {
+		t.Errorf("journal_mode = %q, want WAL", got)
+	}
+
+	// Write journal_mode = MEMORY.
+	if _, err := e.Exec(ctx, "PRAGMA journal_mode = MEMORY"); err != nil {
+		t.Fatalf("PRAGMA journal_mode = MEMORY: %v", err)
+	}
+	if got := DT.JournalMode(); got != "MEMORY" {
+		t.Errorf("journal_mode = %q, want MEMORY", got)
+	}
+
+	// Write journal_mode = OFF.
+	if _, err := e.Exec(ctx, "PRAGMA journal_mode = OFF"); err != nil {
+		t.Fatalf("PRAGMA journal_mode = OFF: %v", err)
+	}
+	if got := DT.JournalMode(); got != "OFF" {
+		t.Errorf("journal_mode = %q, want OFF", got)
+	}
+}

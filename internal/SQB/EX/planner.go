@@ -828,7 +828,7 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 	switch s.Name {
 	case "integrity_check":
 		return UT.NewIntegrityCheckWithStore(p.store)
-	case "cache_size", "journal_mode", "synchronous", "user_version":
+	case "cache_size", "synchronous", "user_version":
 		// REQ000242: return pragma value as a single-row result
 		return OP.NewPragmaResult(s.Name, s.Value)
 	case "batch_size":
@@ -856,6 +856,9 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 			}
 		}
 		return OP.NewPragmaResult("temp_store", strconv.Itoa(DT.TempStoreMode()))
+	case "journal_mode":
+		// REQ001392: handled by Pragma operator for state management.
+		return WT.NewPragma(s).WithStore(p.store)
 	case "auto_compact":
 		// REQ001304: handled by Pragma operator.
 		return WT.NewPragma(s).WithStore(p.store)
