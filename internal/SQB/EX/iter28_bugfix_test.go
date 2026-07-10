@@ -247,6 +247,124 @@ func TestBugfix_InsertOnConflictDoUpdate(t *testing.T) {
 	}
 }
 
+// TestBugfix_UpsertDoUpdateReturning covers REQ001383: RETURNING
+// clause on UPSERT — DO UPDATE returns the updated row.
+func TestBugfix_UpsertDoUpdateReturning(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	DT.RegisterStoreSchema("t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)"); err != nil {
+		t.Fatalf("seed insert: %v", err)
+	}
+
+	// DO UPDATE with RETURNING — should return the post-update row.
+	rows, err := ex.QueryAll(ctx,
+		"INSERT INTO t VALUES (1, 99) ON CONFLICT (id) DO UPDATE SET v = EXCLUDED.v RETURNING *")
+	if err != nil {
+		t.Fatalf("upsert returning: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if len(rows[0].Cols) != 2 {
+		t.Errorf("expected 2 cols, got %d", len(rows[0].Cols))
+	}
+	idVal, _ := rows[0].Data[0].ToAny().(int64)
+	if idVal != 1 {
+		t.Errorf("id = %d, want 1", idVal)
+	}
+	vVal, _ := rows[0].Data[1].ToAny().(int64)
+	if vVal != 99 {
+		t.Errorf("v = %d, want 99 (should be post-update value)", vVal)
+	}
+
+	// Row in table should also be updated.
+	checkRows, err := ex.QueryAll(ctx, "SELECT v FROM t WHERE id = 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checkRows) != 1 {
+		t.Fatalf("expected 1 row in table, got %d", len(checkRows))
+	}
+	if v, _ := checkRows[0].Data[0].ToAny().(int64); v != 99 {
+		t.Errorf("table v = %d, want 99", v)
+	}
+}
+
+// TestBugfix_UpsertDoNothingReturning covers REQ001383: RETURNING
+// clause on UPSERT — DO NOTHING returns zero rows (no row modified).
+func TestBugfix_UpsertDoNothingReturning(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	DT.RegisterStoreSchema("t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)"); err != nil {
+		t.Fatalf("seed insert: %v", err)
+	}
+
+	// DO NOTHING with RETURNING — should return zero rows.
+	rows, err := ex.QueryAll(ctx,
+		"INSERT INTO t VALUES (1, 99) ON CONFLICT (id) DO NOTHING RETURNING *")
+	if err != nil {
+		t.Fatalf("upsert returning: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("expected 0 rows from DO NOTHING RETURNING, got %d", len(rows))
+	}
+
+	// Table row should be unchanged.
+	checkRows, err := ex.QueryAll(ctx, "SELECT v FROM t WHERE id = 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checkRows) != 1 {
+		t.Fatalf("expected 1 row in table, got %d", len(checkRows))
+	}
+	if v, _ := checkRows[0].Data[0].ToAny().(int64); v != 10 {
+		t.Errorf("table v = %d, want 10 (DO NOTHING should not change row)", v)
+	}
+}
+
+// TestBugfix_UpsertNoConflictReturning covers REQ001383: UPSERT
+// RETURNING when there is no conflict — returns the new row.
+func TestBugfix_UpsertNoConflictReturning(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	DT.RegisterStoreSchema("t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)"); err != nil {
+		t.Fatalf("seed insert: %v", err)
+	}
+
+	// No conflict on id=2 — new row inserted, RETURNING returns it.
+	rows, err := ex.QueryAll(ctx,
+		"INSERT INTO t VALUES (2, 20) ON CONFLICT (id) DO UPDATE SET v = EXCLUDED.v RETURNING *")
+	if err != nil {
+		t.Fatalf("upsert returning: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	idVal, _ := rows[0].Data[0].ToAny().(int64)
+	if idVal != 2 {
+		t.Errorf("id = %d, want 2", idVal)
+	}
+	vVal, _ := rows[0].Data[1].ToAny().(int64)
+	if vVal != 20 {
+		t.Errorf("v = %d, want 20", vVal)
+	}
+}
+
 // TestBugfix_InsertOnConflictDoNothing covers REQ000511 DO NOTHING:
 // duplicate row is silently dropped, no error.
 func TestBugfix_InsertOnConflictDoNothing(t *testing.T) {

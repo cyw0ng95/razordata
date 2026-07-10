@@ -212,7 +212,8 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 				// the SET clauses. We re-use the lookup closure
 				// to find the existing row and mutate it in place.
 				if apply, ok := lookup.(UniqueLookupWithApply); ok {
-					if cerr := applyConflictUpdate(cschema, existing, out, i.onConflict, i.params, apply); cerr != nil {
+					updatedRow, cerr := applyConflictUpdate(cschema, existing, out, i.onConflict, i.params, apply)
+					if cerr != nil {
 						if errors.Is(cerr, ErrTargetWhereFalse) {
 							// REQ001364: partial-index WHERE on the
 							// conflict target evaluated false — treat
@@ -230,6 +231,13 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 							goto doInsertReplace
 						}
 						return DT.Row{}, cerr
+					}
+					// REQ001383: RETURNING for DO UPDATE — return the
+					// post-update row when RETURNING is requested.
+					if len(i.returning) > 0 && len(updatedRow.Cols) > 0 {
+						if err := evalReturning(i.returning, &updatedRow, i.params, &i.resultRows); err != nil {
+							return DT.Row{}, err
+						}
 					}
 					// Note: we already counted the row's impact in
 					// applyConflictUpdate (it updated an existing
@@ -1125,9 +1133,9 @@ func evalReturning(exprs []PS.Expr, row *DT.Row, params []any, resultRows *[]DT.
 // signaling the caller to treat the row as non-conflicting. REQ001364.
 var ErrTargetWhereFalse = errors.New("wt: ON CONFLICT partial-index WHERE false")
 
-func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, onConflict *PS.OnConflict, params []any, apply UniqueLookupWithApply) error {
+func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, onConflict *PS.OnConflict, params []any, apply UniqueLookupWithApply) (DT.Row, error) {
 	if apply == nil || onConflict == nil {
-		return nil
+		return DT.Row{}, nil
 	}
 	// REQ001365: if DO UPDATE has a WHERE clause and the predicate is
 	// false against the existing target row, fall through to DO NOTHING
@@ -1141,19 +1149,20 @@ func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, 
 	// matching the most common SQLite UPSERT pattern).
 	idxs, vals, err := conflictKey(schema, out)
 	if err != nil {
-		return err
+		return DT.Row{}, err
 	}
 	rowIdx, ok, err := apply.FindAndLock(idxs, DT.ValueSliceToAny(vals))
 	if err != nil {
-		return err
+		return DT.Row{}, err
 	}
 	if !ok {
 		// No matching row found (race with another writer).
 		// Skip silently per UPSERT semantics.
-		return nil
+		return DT.Row{}, nil
 	}
 	_ = existing
 	var targetWhereFalse bool
+	var result DT.Row
 	merr := apply.Mutate(rowIdx, func(target DT.Row) DT.Row {
 		// REQ001364: if TargetWhere is set and evaluates to false
 		// against the existing row, skip the UPSERT.
@@ -1194,15 +1203,16 @@ func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, 
 				updated.Data[ci] = v
 			}
 		}
+		result = updated
 		return updated
 	})
 	if merr != nil {
-		return merr
+		return DT.Row{}, merr
 	}
 	if targetWhereFalse {
-		return ErrTargetWhereFalse
+		return DT.Row{}, ErrTargetWhereFalse
 	}
-	return nil
+	return result, nil
 }
 
 // evalUpsertValue evaluates the SET-clause RHS, resolving EXCLUDED.col

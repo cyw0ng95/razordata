@@ -513,6 +513,36 @@ func TestParse_InsertReturningCols(t *testing.T) {
 	}
 }
 
+func TestParse_InsertOnConflictDoUpdateReturning(t *testing.T) {
+	stmt := mustParse(t,
+		"INSERT INTO t (a) VALUES (1) ON CONFLICT (a) DO UPDATE SET a = EXCLUDED.a RETURNING *")
+	ins := stmt.(*Insert)
+	if ins.OnConflict == nil {
+		t.Fatal("expected OnConflict")
+	}
+	if len(ins.OnConflict.SetClauses) == 0 {
+		t.Error("expected SET clauses")
+	}
+	if len(ins.Returning) != 1 {
+		t.Errorf("returning=%d, want 1", len(ins.Returning))
+	}
+}
+
+func TestParse_InsertOnConflictDoNothingReturning(t *testing.T) {
+	stmt := mustParse(t,
+		"INSERT INTO t (a) VALUES (1) ON CONFLICT (a) DO NOTHING RETURNING *")
+	ins := stmt.(*Insert)
+	if ins.OnConflict == nil {
+		t.Fatal("expected OnConflict")
+	}
+	if !ins.OnConflict.DoNothing {
+		t.Error("expected DoNothing=true")
+	}
+	if len(ins.Returning) != 1 {
+		t.Errorf("returning=%d, want 1", len(ins.Returning))
+	}
+}
+
 func TestParse_UpdateReturning(t *testing.T) {
 	stmt := mustParse(t, "UPDATE t SET a = 1 RETURNING *")
 	_ = stmt

@@ -148,22 +148,23 @@ func (p *Parser) parseInsertTail(action ConflictAction) (*Insert, error) {
 		p.advance()
 	}
 
-	returning, err := p.parseReturning()
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse ON CONFLICT clause if present
+	// Parse ON CONFLICT clause if present (before RETURNING per REQ001383).
 	var onConflict *OnConflict
+	var parseErr error
 	if p.current.Type == LX.T_ON {
 		// Peek to check if this is ON CONFLICT (not ON for JOIN)
 		next := p.lex.Peek()
 		if next.Type == LX.T_CONFLICT {
-			onConflict, err = p.parseOnConflict()
-			if err != nil {
-				return nil, err
+			onConflict, parseErr = p.parseOnConflict()
+			if parseErr != nil {
+				return nil, parseErr
 			}
 		}
+	}
+
+	returning, err := p.parseReturning()
+	if err != nil {
+		return nil, err
 	}
 
 	return &Insert{Table: table, Cols: cols, Values: values, Returning: returning, OnConflict: onConflict, ConflictAction: action}, nil
