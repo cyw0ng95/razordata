@@ -849,6 +849,13 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 	case "cell_size_check", "quick_check":
 		// REQ001387 / REQ001379: handled by Pragma operator.
 		return WT.NewPragma(s).WithStore(p.store)
+	case "temp_store":
+		if s.Value != "" {
+			if n, err := strconv.Atoi(s.Value); err == nil && (n == 0 || n == 1 || n == 2) {
+				DT.SetTempStoreMode(n)
+			}
+		}
+		return OP.NewPragmaResult("temp_store", strconv.Itoa(DT.TempStoreMode()))
 	case "auto_compact":
 		// REQ001304: handled by Pragma operator.
 		return WT.NewPragma(s).WithStore(p.store)

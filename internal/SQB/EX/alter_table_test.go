@@ -800,3 +800,52 @@ func TestTempTrigger_DroppedOnSessionEnd(t *testing.T) {
 		t.Error("temp trigger should be gone after ClearTempTriggers")
 	}
 }
+
+// REQ001327: PRAGMA temp_store read/write round-trip.
+func TestPragma_TempStore_ReadWriteRoundTrip(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	// Save and restore the original mode.
+	orig := DT.TempStoreMode()
+	defer DT.SetTempStoreMode(orig)
+
+	e := NewExecutor()
+	ctx := context.Background()
+
+	// Read default (2 = MEMORY).
+	rows, err := e.QueryAll(ctx, "PRAGMA temp_store")
+	if err != nil {
+		t.Fatalf("PRAGMA temp_store: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0].Data[0].S != "2" {
+		t.Errorf("default temp_store = %q, want 2", rows[0].Data[0].S)
+	}
+
+	// Write temp_store = 0 (DEFAULT).
+	if _, err := e.Exec(ctx, "PRAGMA temp_store = 0"); err != nil {
+		t.Fatalf("PRAGMA temp_store = 0: %v", err)
+	}
+	if got := DT.TempStoreMode(); got != 0 {
+		t.Errorf("temp_store = %d, want 0", got)
+	}
+
+	// Write temp_store = 1 (FILE).
+	if _, err := e.Exec(ctx, "PRAGMA temp_store = 1"); err != nil {
+		t.Fatalf("PRAGMA temp_store = 1: %v", err)
+	}
+	if got := DT.TempStoreMode(); got != 1 {
+		t.Errorf("temp_store = %d, want 1", got)
+	}
+
+	// Write temp_store = 2 (MEMORY).
+	if _, err := e.Exec(ctx, "PRAGMA temp_store = 2"); err != nil {
+		t.Fatalf("PRAGMA temp_store = 2: %v", err)
+	}
+	if got := DT.TempStoreMode(); got != 2 {
+		t.Errorf("temp_store = %d, want 2", got)
+	}
+}

@@ -764,3 +764,13 @@ func ClearTempTables() {
 	}
 	TempTableNames = map[string]bool{}
 }
+
+// tempStoreMode controls where temp data is stored.
+// 0=DEFAULT, 1=FILE, 2=MEMORY. Default MEMORY per REQ001327.
+var tempStoreMode int32 = 2
+
+// TempStoreMode returns the current temp_store mode.
+func TempStoreMode() int { return int(atomic.LoadInt32(&tempStoreMode)) }
+
+// SetTempStoreMode sets the temp_store mode (0, 1, or 2). REQ001327.
+func SetTempStoreMode(mode int) { atomic.StoreInt32(&tempStoreMode, int32(mode)) }

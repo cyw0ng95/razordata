@@ -246,6 +246,28 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 		return row, nil
 	}
 
+	// Handle PRAGMA temp_store [= 0|1|2] (REQ001327)
+	if p.Stmt.Name == "temp_store" {
+		if !p.done {
+			p.done = true
+			if p.Stmt.Value != "" {
+				if n, err := strconv.Atoi(p.Stmt.Value); err == nil && (n == 0 || n == 1 || n == 2) {
+					DT.SetTempStoreMode(n)
+				}
+			}
+			p.rows = append(p.rows, DT.Row{
+				Cols: []string{"temp_store"},
+				Data: []DT.Value{DT.NewIntValue(int64(DT.TempStoreMode()))},
+			})
+		}
+		if p.idx >= len(p.rows) {
+			return DT.Row{}, DT.ErrNoRows
+		}
+		row := p.rows[p.idx]
+		p.idx++
+		return row, nil
+	}
+
 	// Handle PRAGMA foreign_keys [= ON|OFF] (REQ000905, REQ001307)
 	if p.Stmt.Name == "foreign_keys" {
 		if !p.done {
