@@ -2,7 +2,7 @@
 
 ## Overview
 
-Receives raw SQL text, tokenizes it, builds an AST, rewrites and plans it, then produces an operator tree for the backend (`SQB/EX`) to execute. Never touches the disk directly — calls down into `TXN` and `ENG`. Depends on `TXN`, `ENG`, and `LOG`. The `Operator` interface it produces is defined in `SQB/EX` (soft split; a future phase will move it to `SQF/PL`).
+Receives raw SQL text, tokenizes it, builds an AST, rewrites and plans it, then produces an operator tree for the backend (`SQB/EX`) to execute. Never touches the disk directly — calls down into `TXN` and `ENG`. Depends on `TXN`, `ENG`, and `LOG`. Core types (`Operator` interface, `Row` struct) are defined in `SQF/PL` and aliased by each SQB cluster (`SQB/DT` uses `type Operator = pl.Operator`). `Value` is defined in `SYS/AP` and aliased through `SQF/PL` → `SQB/DT` → cluster-specific type aliases.
 
 ## Dependencies
 
@@ -32,9 +32,11 @@ type Result struct {
 }
 ```
 
-The `Operator` interface and `Row`/`Value` types are defined in `SQB/EX`
-(soft split). `SQF/PL` imports them from `SQB/EX` when constructing
-operator trees.
+The `Operator` interface and `Row`/`Value` types are defined in `SQF/PL` and
+`SYS/AP` (not `SQB/EX`). Each SQB cluster aliases them through
+`SQB/DT` → `SQF/PL` and `SQF/PL` → `SYS/AP`. This layering is forced by
+import cycles — `Operator`/`Row`/`Value` cannot move into any SQB or SQO
+package because they are imported by 45+ files across DT, OP, EX, EV, AG, UT, WT, AD and SQO.
 
 ## Data Structures
 
@@ -134,7 +136,6 @@ type RollbackTX struct{}
 
 - Node types are concrete structs with no interface fields.
 - Every node type implements `exprNode()` or `stmtNode()` — no shared mutable state.
-- Visitor pattern: `Visitor` interface with `Visit*` methods for all Expr and Stmt types.
 
 ### Rewriter (`RE`)
 
@@ -149,34 +150,36 @@ func flattenSubquery(e *InExpr) (Expr, bool)
 - **Predicate pushdown:** move `WHERE` conditions as close to the data source as possible.
 - **Subquery flattening:** merge single-row subqueries in `WHERE IN` into a join or a list lookup.
 
-### Planner (`PL`)
+### Planner (`PL` — slimmed)
 
 ```go
-type plan struct {
-    root    Operator
-    params  []string
-    cost    float64
-    memoKey string
-}
-
-func plan(stmt Stmt) (*plan, error)
+// Core types only — planner logic migrated to SQO/CO.
+type Operator interface { ... }
+type Row struct { ... }
+// Value defined in SYS/AP, aliased here
 ```
 
-- **Plan memoization:** equivalent query shapes share sub-plans. Memo key = SHA256 of canonical AST binary encoding.
-- **Cost model:** estimates I/O cost based on key selectivity (from statistics, initially uniform distribution).
-- **Index selection:** if a `WHERE` column has an index, prefer `IndexScan`; otherwise `SeqScan`.
-- **N3 join ordering:** heap-based N3 algorithm inspired by SQLite's NGQP. Multi-start variant tries each FROM-list table as the candidate base (limited to K≤4 for performance). Prune threshold: `bestCost × 2` (MySQL's `optimizer_prune_level` heuristic).
-- **Selectivity estimation:** NDV-based for equi-joins (`1/max(ndv_left, ndv_right)`), range predicates use `(1 - null_frac) / 3`. Falls back to hardcoded constants (0.1/0.3/0.5) when stats unavailable.
-- **Hash agg planning:** hash-based aggregation for GROUP BY queries (1000-row threshold).
-- **`LIMIT` pushdown,** sort ordering, cost-based scan selection.
+PL no longer contains the query planner. All planning logic (cost estimation,
+join ordering, index selection, memoization) moved to the `SQO/CO` optimizer
+subsystem in the post-SQO migration. PL now hosts only:
+- Core executor types (`Operator`, `Row`, `ExecContext`, `QueryPlanner`, `TxWriter`,
+  `ColInfo`, `StatsCatalog`, `WorkerPool`)
+- `CompareValue` / `EqualValueValue` (used by EV, OP, AG)
+- `LearnedModel` (used by SQB/UT/analyze.go)
+- `SerializeKey` / `NormalizeForMemo` / AST encoding helpers (shared with SQO/MM)
+- `PRAGMA` type constants
+
+PL cannot be fully deleted: its core types are imported by 45+ files across all
+SQB clusters and SQO, and moving them would create import cycles between
+DT/OP/EX/EV/AG/UT/WT/AD.
 
 ## Function Clusters
 
 | Cluster | Responsibility |
 |---|---|
 | `LX` | Lexer: tokenization, keyword lookup, error recovery |
-| `PS` | Parser: recursive descent, AST construction with visitor pattern, syntax error reporting, CTE/recursive CTE, window function, ALTER TABLE, subquery parsing |
-| `PL` | Planner: query planning, cost estimation, N3 join ordering, index selection, plan memoization, selectivity estimation, hash agg planning |
+| `PS` | Parser: recursive descent, AST construction, syntax error reporting, CTE/recursive CTE, window function, ALTER TABLE, subquery parsing |
+| `PL` | Core types: Operator/Row/Value aliases, ExecContext, QueryPlanner, TxWriter, ColInfo, StatsCatalog, CompareValue, LearnedModel, memo encoding helpers (planning logic moved to SQO/CO) |
 | `RE` | Rewriter: AST normalization, constant folding, predicate pushdown, subquery flattening, join reorder |
 
 ## Clusters
@@ -206,17 +209,18 @@ func plan(stmt Stmt) (*plan, error)
 - **Error reporting:** each parse function returns `(node, error)` with Line/Col.
 - **SQLite compatibility:** full coverage for SQLite dialect features.
 
-### PL — Planner
+### PL — Core Types (slimmed, planner migrated to SQO/CO)
 
-**Responsibility:** Query planning, cost estimation, N3 join ordering, NDV-based selectivity, index selection, plan memoization, hash agg planning.
+**Responsibility:** Core executor types shared across all SQB clusters and SQO.
+Planning logic migrated to `SQO/CO/optimizer.go`.
 
 **Key behaviors:**
-- `Plan(stmt Stmt) (*plan, error)`: build an operator tree from an AST.
-- `n3JoinOrdering` / `n3JoinOrderingMultiStart`: N3 algorithm for join ordering.
-- `joinPredSel`: NDV-based predicate selectivity estimation.
-- `estimateJoinCost`: cost model for join ordering.
-- Plan memoization: SHA256-based plan fingerprinting.
-- Cost-based scan selection: `pickCheaperScan`.
+- `Operator` interface, `Row` struct, `ExecContext`, `QueryPlanner`, `TxWriter`
+- `ColInfo`, `StatsCatalog`, `WorkerPool`
+- `CompareValue` / `EqualValueValue`: row-value comparison for EV, OP, AG
+- `LearnedModel`: stats-cache used by SQB/UT/analyze.go
+- `SerializeKey` / `NormalizeForMemo`: AST encoding shared with SQO/MM/memo.go
+- `PRAGMA` type constants
 
 ### RE — Rewriter
 
@@ -233,14 +237,20 @@ func plan(stmt Stmt) (*plan, error)
 1. **`internal/SQF/LX/lx.go`** — Lexer: `Next()`, `peek()`, `advance()`, keyword map.
 2. **`internal/SQF/LX/token.go`** — Token struct, token type constants.
 3. **`internal/SQF/PS/ps.go`** — Parser: recursive descent for all statement types.
-4. **`internal/SQF/PS/visitor.go`** — Visitor pattern for AST traversal.
-5. **`internal/SQF/RE/re.go`** — Rewrite, ConstantFold, PredicatePushdown, FlattenSubquery.
-6. **`internal/SQF/PL/pl.go`** — Planner: Plan, memoize, estimateCost, selectIndex, selectivity.
+4. **`internal/SQF/RE/re.go`** — Rewrite, ConstantFold, PredicatePushdown, FlattenSubquery.
+5. **`internal/SQF/PL/types.go`** — Core types: Operator, Row, Value, ExecContext,
+   QueryPlanner, TxWriter, ColInfo, StatsCatalog, WorkerPool, CompareValue,
+   LearnedModel, memo encoding helpers.
 
 ## Open Issues
 
-- Operator/Row types live in SQB/EX (soft split). Moving them to SQF/PL would
-  break the import cycle between SQB clusters and is tracked for a follow-up.
+- Operator/Row types live in SQF/PL, Value in SYS/AP aliased through PL. This
+  layering is forced by import cycles and is the final destination — not a "soft
+  split" to be resolved later. PL's planner logic was migrated to SQO/CO in
+  2026Q1; core types remain in PL permanently.
+- SQF/RE remains fully alive (RE.Rewrite/RE.FormatExpr/RE.SplitAnd used by SQB/EX).
+- PS visitor pattern (`SQF/PS/visitor.go`) was deleted in 2026Q1 post-SQO
+  cleanup (REQ001493) — zero external consumers.
 - PRAGMA configuration lives in SQB/EX/pragma_config.go (see SQB.md).
 - Open issues from the original SQL.md (RANGE window, multi-key hash join,
   LEFT OUTER JOIN) are tracked in the issue tracker.
