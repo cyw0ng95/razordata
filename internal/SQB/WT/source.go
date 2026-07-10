@@ -13,9 +13,11 @@ import (
 
 // triggerMu guards the package-level trigger registry. REQ000435.
 var (
-	triggerMu     sync.RWMutex
-	triggerReg    = map[string]*PS.TriggerStmt{}   // by trigger name
-	tableTriggers = map[string][]*PS.TriggerStmt{} // by table name
+	triggerMu       sync.RWMutex
+	triggerReg      = map[string]*PS.TriggerStmt{}   // by trigger name
+	tableTriggers   = map[string][]*PS.TriggerStmt{} // by table name
+	tempTriggerReg  = map[string]*PS.TriggerStmt{}   // REQ001370: temp trigger by name
+	tempTableTriggers = map[string][]*PS.TriggerStmt{} // REQ001370: temp trigger by table
 )
 
 // RegisterTrigger registers a trigger. Returns error if name already exists.
@@ -25,13 +27,21 @@ func RegisterTrigger(t *PS.TriggerStmt) error {
 	if _, exists := triggerReg[t.Name]; exists {
 		return fmt.Errorf("ex: trigger %q already exists", t.Name)
 	}
-	triggerReg[t.Name] = t
-	tableTriggers[t.OnTable] = append(tableTriggers[t.OnTable], t)
-	// REQ001388: expose to sqlite_master via DT trigger registry.
-	DT.RegisterTrigger(DT.TriggerInfo{
-		Name:    t.Name,
-		OnTable: t.OnTable,
-	})
+	if _, exists := tempTriggerReg[t.Name]; exists {
+		return fmt.Errorf("ex: trigger %q already exists", t.Name)
+	}
+	if t.Temporary {
+		tempTriggerReg[t.Name] = t
+		tempTableTriggers[t.OnTable] = append(tempTableTriggers[t.OnTable], t)
+	} else {
+		triggerReg[t.Name] = t
+		tableTriggers[t.OnTable] = append(tableTriggers[t.OnTable], t)
+		// REQ001388: expose to sqlite_master via DT trigger registry.
+		DT.RegisterTrigger(DT.TriggerInfo{
+			Name:    t.Name,
+			OnTable: t.OnTable,
+		})
+	}
 	return nil
 }
 
@@ -42,7 +52,26 @@ func UnregisterTrigger(name string) bool {
 	defer triggerMu.Unlock()
 	t, ok := triggerReg[name]
 	if !ok {
-		return false
+		// Check temp triggers.
+		tt, tempOk := tempTriggerReg[name]
+		if !tempOk {
+			return false
+		}
+		delete(tempTriggerReg, name)
+		if list, ok := tempTableTriggers[tt.OnTable]; ok {
+			filtered := list[:0]
+			for _, x := range list {
+				if x.Name != tt.Name {
+					filtered = append(filtered, x)
+				}
+			}
+			if len(filtered) == 0 {
+				delete(tempTableTriggers, tt.OnTable)
+			} else {
+				tempTableTriggers[tt.OnTable] = filtered
+			}
+		}
+		return true
 	}
 	delete(triggerReg, name)
 	if list, ok := tableTriggers[t.OnTable]; ok {
@@ -76,6 +105,16 @@ func ClearTriggerState() {
 	triggerMu.Lock()
 	triggerReg = map[string]*PS.TriggerStmt{}
 	tableTriggers = map[string][]*PS.TriggerStmt{}
+	tempTriggerReg = map[string]*PS.TriggerStmt{}
+	tempTableTriggers = map[string][]*PS.TriggerStmt{}
+	triggerMu.Unlock()
+}
+
+// ClearTempTriggers clears all temp triggers for session end. REQ001370.
+func ClearTempTriggers() {
+	triggerMu.Lock()
+	tempTriggerReg = map[string]*PS.TriggerStmt{}
+	tempTableTriggers = map[string][]*PS.TriggerStmt{}
 	triggerMu.Unlock()
 }
 
@@ -89,6 +128,12 @@ func DropTriggersForTable(tableName string) {
 		}
 		delete(tableTriggers, tableName)
 	}
+	if tempTriggers, ok := tempTableTriggers[tableName]; ok {
+		for _, t := range tempTriggers {
+			delete(tempTriggerReg, t.Name)
+		}
+		delete(tempTableTriggers, tableName)
+	}
 }
 
 // IsTriggerRegistered checks if a trigger with the given name is registered.
@@ -96,6 +141,10 @@ func IsTriggerRegistered(name string) bool {
 	triggerMu.RLock()
 	defer triggerMu.RUnlock()
 	_, ok := triggerReg[name]
+	if ok {
+		return true
+	}
+	_, ok = tempTriggerReg[name]
 	return ok
 }
 
@@ -163,8 +212,14 @@ type TriggerContext struct {
 // FireTriggers executes all triggers for the given table, time, and event.
 func FireTriggers(table string, time string, event string, oldRow *DT.Row, newRow *DT.Row, params []any, exec func(sql string) error) error {
 	triggerMu.RLock()
-	triggers := make([]*PS.TriggerStmt, 0, len(tableTriggers[table]))
+	triggers := make([]*PS.TriggerStmt, 0, len(tableTriggers[table])+len(tempTableTriggers[table]))
 	for _, t := range tableTriggers[table] {
+		if strings.EqualFold(t.OnTable, table) && strings.EqualFold(t.Event, event) && strings.EqualFold(t.Time, time) {
+			triggers = append(triggers, t)
+		}
+	}
+	// REQ001370: temp triggers also fire for the same table.
+	for _, t := range tempTableTriggers[table] {
 		if strings.EqualFold(t.OnTable, table) && strings.EqualFold(t.Event, event) && strings.EqualFold(t.Time, time) {
 			triggers = append(triggers, t)
 		}

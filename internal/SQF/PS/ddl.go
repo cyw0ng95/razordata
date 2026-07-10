@@ -880,12 +880,17 @@ func (p *Parser) parseAlterTable() (*AlterTableStmt, error) {
 // On entry, current token is CREATE.
 func (p *Parser) parseCreateTrigger() (*TriggerStmt, error) {
 	p.advance() // consume CREATE
+	temporary := false
+	if p.current.Type == LX.T_TEMP || p.current.Type == LX.T_TEMPORARY {
+		temporary = true
+		p.advance() // consume TEMP/TEMPORARY
+	}
 	if err := p.expect(LX.T_TRIGGER); err != nil {
 		return nil, err
 	}
 	p.advance() // consume TRIGGER
 
-	trigger := &TriggerStmt{Time: "BEFORE", Event: "INSERT", ForEach: "FOR EACH ROW"}
+	trigger := &TriggerStmt{Time: "BEFORE", Event: "INSERT", ForEach: "FOR EACH ROW", Temporary: temporary}
 
 	ifNotExists, err := p.parseIfNotExistsStrict()
 	if err != nil {

@@ -490,6 +490,9 @@ func (p *Parser) parseCreateDispatch() (Stmt, error) {
 		if peek2.Type == LX.T_VIEW {
 			return p.parseCreateView()
 		}
+		if peek2.Type == LX.T_TRIGGER {
+			return p.parseCreateTrigger()
+		}
 		return p.parseCreateTable()
 	}
 	if nextType == LX.T_IDENT && strings.EqualFold(next.Lexeme, "VIRTUAL") {

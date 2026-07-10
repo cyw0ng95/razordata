@@ -400,6 +400,7 @@ type TriggerStmt struct {
 	IfNotExists bool
 	When        Expr
 	OfCols      []string
+	Temporary   bool // REQ001370: CREATE TEMP TRIGGER
 }
 
 func (t *TriggerStmt) stmtNode() {}

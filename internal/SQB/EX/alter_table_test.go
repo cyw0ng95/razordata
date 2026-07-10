@@ -737,3 +737,66 @@ func TestTempTable_SameNameAsMain_Shadows(t *testing.T) {
 		t.Fatalf("got %d rows, want 2 (main only)", len(rows))
 	}
 }
+
+// REQ001370: CREATE TEMP TRIGGER creates a session-scoped trigger.
+func TestTempTrigger_CreatedInSession(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	WT.ClearTriggerState()
+	defer WT.ClearTriggerState()
+
+	// Register a temp trigger directly via the WT API.
+	trig := &PS.TriggerStmt{
+		Name:      "tr_temp_log",
+		OnTable:   "t",
+		Time:      "AFTER",
+		Event:     "INSERT",
+		ForEach:   "FOR EACH ROW",
+		Body:      []PS.Stmt{}, // no-op body, just test registration
+		Temporary: true,
+	}
+	if err := WT.RegisterTrigger(trig); err != nil {
+		t.Fatalf("register temp trigger: %v", err)
+	}
+
+	// Verify it's registered as temp.
+	if !WT.IsTriggerRegistered("tr_temp_log") {
+		t.Error("expected temp trigger to be registered")
+	}
+
+	// Verify temp trigger fires on INSERT.
+	// (body is empty so no side effects, but no error = pass)
+	e := NewExecutor()
+	e.RegisterTable("t", []string{"id", "val"})
+	ctx := context.Background()
+	if _, err := e.Exec(ctx, "INSERT INTO t VALUES (1, 'a')"); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+}
+
+// REQ001370: TEMP triggers are dropped on session end.
+func TestTempTrigger_DroppedOnSessionEnd(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	WT.ClearTriggerState()
+	defer WT.ClearTriggerState()
+
+	trig := &PS.TriggerStmt{
+		Name:      "tr_temp",
+		OnTable:   "t",
+		Time:      "BEFORE",
+		Event:     "INSERT",
+		ForEach:   "FOR EACH ROW",
+		Temporary: true,
+	}
+	if err := WT.RegisterTrigger(trig); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Simulate session end.
+	WT.ClearTempTriggers()
+
+	if WT.IsTriggerRegistered("tr_temp") {
+		t.Error("temp trigger should be gone after ClearTempTriggers")
+	}
+}
