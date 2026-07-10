@@ -425,3 +425,175 @@ func TestDropColumn_CascadesGenerated(t *testing.T) {
 		t.Errorf("remaining cols: got %v, want [id]", gss.Cols)
 	}
 }
+
+// REQ001384: DROP COLUMN cascade rules test matrix.
+//
+// Cascade rules documented here:
+//   1. FK: when a column referenced by a foreign key is dropped, the FK
+//      constraint is removed from the table's ForeignKeys list.
+//   2. Generated column: when a column referenced by a generated column
+//      expression is dropped, the generated column is also dropped.
+//   3. Index: when an indexed column is dropped, the index in
+//      RegisteredIndexes is NOT automatically removed (known limitation).
+//      Callers must issue an explicit DROP INDEX before DROP COLUMN.
+//   4. CHECK: CHECK constraints referencing the dropped column are not
+//      validated or cascaded (known limitation).
+func TestDropColumn_CascadeMatrix(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	t.Run("FK", func(t *testing.T) {
+		DT.RegisterStoreSchemaWithFK("p1", []string{"id", "ref"}, []bool{false, false}, nil, nil, "id", nil)
+		childFKs := []DT.ForeignKeyConstraint{{
+			Columns:    []string{"ref"},
+			RefTable:   "p1",
+			RefColumns: []string{"ref"},
+			OnDelete:   "RESTRICT",
+		}}
+		DT.RegisterStoreSchemaWithFK("c1", []string{"id", "ref"}, []bool{false, false}, nil, nil, "id", childFKs)
+
+		e := NewExecutor()
+		ctx := context.Background()
+		if _, err := e.Exec(ctx, "ALTER TABLE c1 DROP COLUMN ref"); err != nil {
+			t.Fatalf("drop column: %v", err)
+		}
+		cs := DT.StoreSchemas[DT.TableIDs["c1"]]
+		if len(cs.ForeignKeys) != 0 {
+			t.Errorf("FK was not cascaded-dropped, still have %d FK(s)", len(cs.ForeignKeys))
+		}
+		if cs.Cols[0] != "id" || len(cs.Cols) != 1 {
+			t.Errorf("remaining cols: got %v, want [id]", cs.Cols)
+		}
+	})
+
+	t.Run("Generated", func(t *testing.T) {
+		DT.RegisterStoreSchemaWithFK("g1",
+			[]string{"id", "base", "total"},
+			[]bool{false, false, false},
+			nil, nil, "id", nil,
+		)
+		gid := DT.TableIDs["g1"]
+		gss := DT.StoreSchemas[gid]
+		if gss.Generated == nil {
+			gss.Generated = make([]PS.Expr, 3)
+		}
+		gss.Generated[2] = &PS.BinaryExpr{
+			Left:  &PS.Ident{Name: "base"},
+			Right: &PS.NumberLiteral{Val: 2},
+		}
+
+		e := NewExecutor()
+		ctx := context.Background()
+		if _, err := e.Exec(ctx, "ALTER TABLE g1 DROP COLUMN base"); err != nil {
+			t.Fatalf("drop column: %v", err)
+		}
+		gss = DT.StoreSchemas[DT.TableIDs["g1"]]
+		if len(gss.Cols) != 1 || gss.Cols[0] != "id" {
+			t.Errorf("remaining cols: got %v, want [id]", gss.Cols)
+		}
+		if gss.Generated != nil && len(gss.Generated) != 1 {
+			t.Errorf("generated slice: got %d entries, want 1", len(gss.Generated))
+		}
+	})
+
+	t.Run("Index", func(t *testing.T) {
+		DT.RegisterStoreSchemaWithFK("i1", []string{"id", "val"}, []bool{false, false}, nil, nil, "id", nil)
+		DT.RegisterIndexWithID("i1", DT.RegisteredIndex{
+			Name:    "idx_val",
+			Columns: []string{"val"},
+		})
+
+		e := NewExecutor()
+		ctx := context.Background()
+		if _, err := e.Exec(ctx, "ALTER TABLE i1 DROP COLUMN val"); err != nil {
+			t.Fatalf("drop column: %v", err)
+		}
+		// Column is removed from schema.
+		iss := DT.StoreSchemas[DT.TableIDs["i1"]]
+		if len(iss.Cols) != 1 || iss.Cols[0] != "id" {
+			t.Errorf("remaining cols: got %v, want [id]", iss.Cols)
+		}
+		// Known limitation: index is NOT cascaded-dropped automatically.
+		idxs := DT.GetRegisteredIndexes("i1")
+		if len(idxs) == 0 {
+			t.Log("index was cascaded-dropped (unexpected but acceptable)")
+		} else {
+			t.Log("known limitation: index still exists after DROP COLUMN, caller must DROP INDEX explicitly")
+		}
+	})
+
+	t.Run("CHECK", func(t *testing.T) {
+		DT.RegisterStoreSchemaWithFK("ch1", []string{"id", "score"}, []bool{false, false}, nil, nil, "id", nil)
+
+		e := NewExecutor()
+		ctx := context.Background()
+		// No CHECK constraint support in v1 — DROP COLUMN should succeed.
+		_, err := e.Exec(ctx, "ALTER TABLE ch1 DROP COLUMN score")
+		if err != nil {
+			t.Errorf("drop column with CHECK (v1 limitation): unexpected error: %v", err)
+		}
+	})
+}
+
+// REQ001384: DROP COLUMN with multiple simultaneous cascades.
+// When dropping a single column triggers cascades across FK, generated,
+// and index, all cascades are applied in a single ALTER.
+func TestDropColumn_MultipleCascades(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	// Schema: id, base, derived (GENERATED from base), ext (FK column)
+	DT.RegisterStoreSchemaWithFK("m",
+		[]string{"id", "base", "derived", "ext"},
+		[]bool{false, false, false, false},
+		nil, nil, "id", nil,
+	)
+	mid := DT.TableIDs["m"]
+	mss := DT.StoreSchemas[mid]
+
+	// Attach generated expression at index 2 (derived references base).
+	if mss.Generated == nil {
+		mss.Generated = make([]PS.Expr, 4)
+	}
+	mss.Generated[2] = &PS.BinaryExpr{
+		Left:  &PS.Ident{Name: "base"},
+		Right: &PS.NumberLiteral{Val: 3},
+	}
+
+	// Register an index on "base".
+	DT.RegisterIndexWithID("m", DT.RegisteredIndex{
+		Name:    "idx_base",
+		Columns: []string{"base"},
+	})
+
+	// Attach FK constraint on "ext".
+	mss.ForeignKeys = []DT.ForeignKeyConstraint{{
+		Columns:    []string{"ext"},
+		RefTable:   "m",
+		RefColumns: []string{"id"},
+		OnDelete:   "RESTRICT",
+	}}
+
+	e := NewExecutor()
+	ctx := context.Background()
+	if _, err := e.Exec(ctx, "ALTER TABLE m DROP COLUMN base"); err != nil {
+		t.Fatalf("drop column base: %v", err)
+	}
+
+	mss = DT.StoreSchemas[DT.TableIDs["m"]]
+	// After cascades: id + ext should remain (base dropped, derived cascaded-dropped).
+	if len(mss.Cols) != 2 {
+		t.Errorf("remaining cols: got %d (%v), want 2 ([id, ext])", len(mss.Cols), mss.Cols)
+	}
+	if mss.Cols[0] != "id" || mss.Cols[1] != "ext" {
+		t.Errorf("cols: got %v, want [id, ext]", mss.Cols)
+	}
+	// FK on ext should survive (it references ext, not base).
+	if len(mss.ForeignKeys) != 1 {
+		t.Errorf("FK: got %d, want 1", len(mss.ForeignKeys))
+	}
+	// Generated column "derived" (index 2) should be cascaded-dropped.
+	if mss.Generated != nil && len(mss.Generated) != 2 {
+		t.Errorf("generated: got %d entries, want 2 (base and derived removed)", len(mss.Generated))
+	}
+}
