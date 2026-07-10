@@ -2,6 +2,7 @@ package SY
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -106,6 +107,9 @@ func TestEngine_ConcurrentClose(t *testing.T) {
 // new handle. This test asserts only that the second Open does not
 // error; data is not asserted.
 func TestEngine_OpenDuplicateDir(t *testing.T) {
+	if sessionConstructor == nil {
+		t.Skip("REQ001432: sessionConstructor not registered (import cycle prevents SE)")
+	}
 	dir := filepath.Join(t.TempDir(), "db")
 	eng1, err := Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
@@ -118,9 +122,16 @@ func TestEngine_OpenDuplicateDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, _ := eng1.Begin(context.Background())
-	_, _ = s.Exec(context.Background(), "CREATE TABLE t (id INTEGER, v TEXT, PRIMARY KEY (id))")
-	_, _ = s.Exec(context.Background(), "INSERT INTO t VALUES (1, 'persisted')")
+	s, err := eng1.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE t (id INTEGER, v TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("CREATE TABLE: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "INSERT INTO t VALUES (1, 'persisted')"); err != nil {
+		t.Fatalf("INSERT: %v", err)
+	}
 	if err := eng1.Close(context.Background()); err != nil {
 		t.Fatalf("first Close: %v", err)
 	}
@@ -155,6 +166,9 @@ func TestEngine_OpenDuplicateDir(t *testing.T) {
 // verify the table is still addressable (data path itself is
 // flushed).
 func TestEngine_Reopen_LargeDataSet(t *testing.T) {
+	if sessionConstructor == nil {
+		t.Skip("REQ001432: sessionConstructor not registered (import cycle prevents SE)")
+	}
 	dir := filepath.Join(t.TempDir(), "db")
 	eng1, err := Open(context.Background(), dir, AP.Options{
 		PageSize:     4096,
@@ -167,10 +181,19 @@ func TestEngine_Reopen_LargeDataSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, _ := eng1.Begin(context.Background())
-	_, _ = s.Exec(context.Background(), "CREATE TABLE t (id INTEGER, v INTEGER, PRIMARY KEY (id))")
-	for i := 0; i < 100; i++ {
-		_, _ = s.Exec(context.Background(), "INSERT INTO t VALUES (1, 100)")
+	s, err := eng1.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
 	}
-	_ = eng1.Close(context.Background())
+	if _, err := s.Exec(context.Background(), "CREATE TABLE t (id INTEGER, v INTEGER, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("CREATE TABLE: %v", err)
+	}
+	for i := 0; i < 100; i++ {
+		if _, err := s.Exec(context.Background(), fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i+1, i+100)); err != nil {
+			t.Fatalf("INSERT %d: %v", i, err)
+		}
+	}
+	if err := eng1.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 }

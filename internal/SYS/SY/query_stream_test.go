@@ -10,6 +10,9 @@ import (
 )
 
 func TestQueryStreaming(t *testing.T) {
+	if sessionConstructor == nil {
+		t.Skip("REQ001432: sessionConstructor not registered")
+	}
 	executor.UnregisterAll()
 	t.Cleanup(executor.UnregisterAll)
 

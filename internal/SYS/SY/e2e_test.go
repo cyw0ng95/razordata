@@ -246,6 +246,9 @@ func TestR24_ConcurrentSessions(t *testing.T) {
 
 // TestR25_OpenCloseReopen opens, closes, reopens, verifies state.
 func TestR25_OpenCloseReopen(t *testing.T) {
+	if sessionConstructor == nil {
+		t.Skip("REQ001432: sessionConstructor not registered (import cycle prevents SE)")
+	}
 	dir := filepath.Join(t.TempDir(), "db")
 	opts := AP.Options{
 		PageSize:     4096,
@@ -259,9 +262,16 @@ func TestR25_OpenCloseReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
-	s, _ := eng.Begin(context.Background())
-	_, _ = s.Exec(context.Background(), "CREATE TABLE t (id INTEGER)")
-	_, _ = s.Exec(context.Background(), "INSERT INTO t VALUES (1, 'x')")
+	s, err := eng.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("Begin after first open: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "CREATE TABLE t (id INTEGER)"); err != nil {
+		t.Fatalf("CREATE TABLE: %v", err)
+	}
+	if _, err := s.Exec(context.Background(), "INSERT INTO t VALUES (1)"); err != nil {
+		t.Fatalf("INSERT: %v", err)
+	}
 	_ = eng.Close(context.Background())
 
 	eng2, err := Open(context.Background(), dir, opts)

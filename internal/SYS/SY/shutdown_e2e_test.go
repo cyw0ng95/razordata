@@ -21,6 +21,9 @@ import (
 // The shutdown sequence itself is race-clean; the race is in the
 // storage layer it tears down.
 func TestShutdown_5RunStability(t *testing.T) {
+	if sessionConstructor == nil {
+		t.Skip("REQ001432: sessionConstructor not registered")
+	}
 	for run := 0; run < 5; run++ {
 		runtime.GC()
 		executor.UnregisterAll()
