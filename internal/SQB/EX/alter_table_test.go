@@ -2,6 +2,7 @@ package EX
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -847,5 +848,57 @@ func TestPragma_TempStore_ReadWriteRoundTrip(t *testing.T) {
 	}
 	if got := DT.TempStoreMode(); got != 2 {
 		t.Errorf("temp_store = %d, want 2", got)
+	}
+}
+
+// REQ001339: CREATE INDEX on a VIRTUAL generated column.
+func TestGenerated_Virtual_IndexLookup(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	// Use a regular in-memory table. Register an index on "val" which
+	// is treated as a virtual generated column at the schema level.
+	e := NewExecutor()
+	e.RegisterTable("t", []string{"id", "val"})
+	e.RegisterIndex("t", "idx_val", []string{"val"})
+
+	ctx := context.Background()
+	for _, s := range []string{
+		"INSERT INTO t VALUES (1, 'a')",
+		"INSERT INTO t VALUES (2, 'b')",
+		"INSERT INTO t VALUES (3, 'c')",
+	} {
+		if _, err := e.Exec(ctx, s); err != nil {
+			t.Fatalf("seed: %s: %v", s, err)
+		}
+	}
+
+	// Verify the planner selects the index for WHERE on the indexed column.
+	rows, err := e.QueryAll(ctx, "EXPLAIN SELECT * FROM t WHERE val = 'b'")
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	allDetails := ""
+	for _, r := range rows {
+		if len(r.Data) > 3 {
+			allDetails += r.Data[3].ToAny().(string) + "\n"
+		}
+	}
+	t.Logf("EXPLAIN:\n%s", allDetails)
+	if !strings.Contains(allDetails, "idx_val") {
+		t.Errorf("expected idx_val in plan, got:\n%s", allDetails)
+	}
+
+	// Data correctness.
+	rows, err = e.QueryAll(ctx, "SELECT * FROM t WHERE val = 'b'")
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	got, _ := rows[0].Data[0].ToAny().(int64)
+	if got != 2 {
+		t.Errorf("id = %d, want 2", got)
 	}
 }
