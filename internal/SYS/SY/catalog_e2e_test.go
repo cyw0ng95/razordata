@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
@@ -187,6 +188,182 @@ func TestR12_Catalog_MultipleTablesPersisted(t *testing.T) {
 		if err := queryOnEngine(eng2, context.Background(), "SELECT v FROM "+n); err != nil {
 			t.Fatalf("post-restart SELECT %s: %v", n, err)
 		}
+	}
+}
+
+// TestR12_Catalog_StatsWireAfterAnalyze — REQ001318 sanity:
+// ColumnStats are present in the catalog right after ANALYZE and
+// survive close+reopen.
+func TestR12_Catalog_StatsWireAfterAnalyze(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "db")
+	ctx := context.Background()
+
+	eng1, err := Open(ctx, dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 64,
+		WALSizeMB:    16,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+
+	if err := execOnEngine(eng1, ctx,
+		"CREATE TABLE st_wire2 (id INTEGER, v INTEGER, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("CREATE: %v", err)
+	}
+	for i := int64(1); i <= 10; i++ {
+		if err := execOnEngine(eng1, ctx,
+			"INSERT INTO st_wire2 VALUES (?, ?)", i, i*10); err != nil {
+			t.Fatalf("INSERT %d: %v", i, err)
+		}
+	}
+	if err := execOnEngine(eng1, ctx, "ANALYZE st_wire2"); err != nil {
+		t.Fatalf("ANALYZE: %v", err)
+	}
+
+	// Stats must be in the on-disk catalog after ANALYZE.
+	idStats := eng1.catalog.ColumnStatsByName("st_wire2", "id")
+	if idStats == nil {
+		t.Fatal("expected st_wire2.id ColumnStats in catalog after ANALYZE")
+	}
+	if idStats.RowCount != 10 {
+		t.Errorf("st_wire2.id RowCount = %d, want 10", idStats.RowCount)
+	}
+	if err := eng1.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	resetExecutorRegistry()
+
+	eng2, err := Open(ctx, dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 64,
+		WALSizeMB:    16,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	defer eng2.Close(ctx)
+
+	// Stats must survive restart in the catalog.
+	entries2 := eng2.catalog.List()
+	var found *ls.CatalogEntry
+	for _, e := range entries2 {
+		if e.Name == "st_wire2" {
+			found = e
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("st_wire2 not found in catalog after restart")
+	}
+	if len(found.ColumnStats) == 0 {
+		t.Fatal("REQ001318: ColumnStats lost after restart — catalog persisted zero stats entries")
+	}
+	for _, se := range found.ColumnStats {
+		t.Logf("surviving stat: col=%s ndv=%d rows=%d min=%x max=%x",
+			se.Column, se.Stats.DistinctCount, se.Stats.RowCount,
+			se.Stats.MinValue, se.Stats.MaxValue)
+	}
+	idStats2 := eng2.catalog.ColumnStatsByName("st_wire2", "id")
+	if idStats2 == nil {
+		t.Fatal("REQ001318: column stats lost after restart — catalog may not persist Stats blob")
+	}
+	if idStats2.RowCount != 10 {
+		t.Errorf("st_wire2.id RowCount after restart = %d, want 10", idStats2.RowCount)
+	}
+
+	// Verify query works through the executor (implicitly uses wired StatsCatalog).
+	if err := queryOnEngine(eng2, ctx, "SELECT v FROM st_wire2 WHERE id = 5"); err != nil {
+		t.Fatalf("SELECT after restart: %v", err)
+	}
+}
+
+// TestR12_Catalog_StatsWiredOnOpen — REQ001318: after ANALYZE,
+// stats survive restart in the on-disk catalog and the planner's
+// StatsCatalog is wired at engine open so queries can use them.
+func TestR12_Catalog_StatsWiredOnOpen(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "db")
+	ctx := context.Background()
+
+	eng1, err := Open(ctx, dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 64,
+		WALSizeMB:    16,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+
+	if err := execOnEngine(eng1, ctx,
+		"CREATE TABLE st_wire (id INTEGER, v INTEGER, PRIMARY KEY (id))"); err != nil {
+		t.Fatalf("CREATE: %v", err)
+	}
+	for i := int64(1); i <= 10; i++ {
+		if err := execOnEngine(eng1, ctx,
+			"INSERT INTO st_wire VALUES (?, ?)", i, i*10); err != nil {
+			t.Fatalf("INSERT %d: %v", i, err)
+		}
+	}
+	if err := execOnEngine(eng1, ctx, "ANALYZE st_wire"); err != nil {
+		t.Fatalf("ANALYZE: %v", err)
+	}
+
+	// Stats must be in the on-disk catalog after ANALYZE.
+	idStats := eng1.catalog.ColumnStatsByName("st_wire", "id")
+	if idStats == nil {
+		t.Fatal("expected st_wire.id ColumnStats in catalog after ANALYZE")
+	}
+	if idStats.RowCount != 10 {
+		t.Errorf("st_wire.id RowCount = %d, want 10", idStats.RowCount)
+	}
+	vStats := eng1.catalog.ColumnStatsByName("st_wire", "v")
+	if vStats == nil {
+		t.Fatal("expected st_wire.v ColumnStats in catalog after ANALYZE")
+	}
+
+	if err := eng1.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	resetExecutorRegistry()
+
+	eng2, err := Open(ctx, dir, AP.Options{
+		PageSize:     4096,
+		MemTableSize: 1024 * 1024,
+		BufferPoolMB: 64,
+		WALSizeMB:    16,
+		MaxLevel:     3,
+		LogLevel:     8,
+		LogFormat:    "text",
+	})
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	defer eng2.Close(ctx)
+
+	// Stats must survive restart in the catalog.
+	idStats2 := eng2.catalog.ColumnStatsByName("st_wire", "id")
+	if idStats2 == nil {
+		t.Fatal("expected st_wire.id ColumnStats after restart (REQ001318)")
+	}
+	if idStats2.RowCount != 10 {
+		t.Errorf("st_wire.id RowCount after restart = %d, want 10", idStats2.RowCount)
+	}
+
+	// Verify the executor can query — implicitly uses wired StatsCatalog.
+	if err := queryOnEngine(eng2, ctx, "SELECT v FROM st_wire WHERE id = 5"); err != nil {
+		t.Fatalf("SELECT after restart: %v", err)
 	}
 }
 

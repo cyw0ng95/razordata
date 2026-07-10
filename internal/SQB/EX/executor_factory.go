@@ -17,6 +17,12 @@ func (e *Executor) SetTxWriter(w DT.TxWriter) {
 	DT.SetCurrentTxWriter(w)
 }
 
+// SetStatsCatalog wires a stats catalog into the executor's planner.
+// REQ001318: load persisted stats at open.
+func (e *Executor) SetStatsCatalog(cat DT.StatsCatalog) {
+	e.planner.SetStatsCatalog(cat)
+}
+
 // ClearTxWriter resets the write hook to nil. Pair with SetTxWriter.
 func (e *Executor) ClearTxWriter() {
 	e.txWriter = nil

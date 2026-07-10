@@ -190,6 +190,10 @@ func (e *Engine) open(ctx context.Context) (err error) {
 	if err := e.openCatalog(); err != nil {
 		return err
 	}
+	// REQ001318: wire persisted stats from catalog into planner.
+	if e.catalog != nil {
+		e.exe.SetStatsCatalog(e.catalog)
+	}
 	e.initDebugger()
 	e.started = time.Now()
 	e.opened.Store(true)
