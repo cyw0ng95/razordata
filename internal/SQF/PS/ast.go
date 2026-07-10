@@ -298,10 +298,6 @@ type UniqueKey struct {
 
 func (u UniqueKey) stmtNode() {}
 
-func UniqueKeyFromName(name string) UniqueKey {
-	return UniqueKey{Cols: []string{name}}
-}
-
 func (c *CreateTable) stmtNode() {}
 
 type DropTable struct {

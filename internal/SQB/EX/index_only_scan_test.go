@@ -147,12 +147,7 @@ func newBitmapTestExecutorB(b *testing.B) *Executor {
 	return NewExecutorWithEngine(store)
 }
 
-func mustExecB(b *testing.B, ex *Executor, ctx context.Context, sql string) {
-	b.Helper()
-	if _, err := ex.Exec(ctx, sql); err != nil {
-		b.Fatalf("Exec(%q): %v", sql, err)
-	}
-}
+
 
 func itoa(n int) string {
 	if n == 0 {

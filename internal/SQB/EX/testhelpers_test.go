@@ -76,6 +76,14 @@ func mustQueryAll(t *testing.T, exec *Executor, ctx context.Context, sql string)
 	return rows
 }
 
+// mustExecB is the benchmark variant of mustExec.
+func mustExecB(b *testing.B, ex *Executor, ctx context.Context, sql string) {
+	b.Helper()
+	if _, err := ex.Exec(ctx, sql); err != nil {
+		b.Fatalf("Exec(%q): %v", sql, err)
+	}
+}
+
 // cleanupTest drops a table if it exists (for deferred cleanup).
 func cleanupTest(table string) {
 	exec := NewExecutor()

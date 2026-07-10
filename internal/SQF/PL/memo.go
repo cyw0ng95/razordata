@@ -5,9 +5,7 @@
 package PL
 
 import (
-	"container/list"
 	"encoding/binary"
-	"sync"
 	"sync/atomic"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -49,139 +47,6 @@ const (
 
 // DefaultMaxMemoEntries is the default upper bound for memoized plans.
 // REQ000584: bounded growth via LRU eviction.
-const DefaultMaxMemoEntries = 4096
-
-// Plan is the planner-side container for a memoized plan. EX wraps it
-// with its own concrete root operator; PL only owns the metadata.
-type Plan struct {
-	Cost    float64
-	MemoKey string
-}
-
-// lruNode is one entry in the LRU list. The list element value
-// references the same key+plan stored in entries so eviction is O(1).
-// REQ000584.
-type lruNode struct {
-	key  string
-	plan Plan
-}
-
-// Memo caches plans keyed by AST fingerprint with bounded LRU
-// eviction and schema-version-aware invalidation. REQ000584.
-// Schema invalidation: SchemaVersion() returns the current version,
-// and BumpSchemaVersion() increments it. SerializeKey() mixes the
-// version into the memo key, so DDL (which calls
-// BumpSchemaVersion) implicitly invalidates every cached plan
-// because their keys no longer match.
-type Memo struct {
-	mu            sync.RWMutex
-	schemaVersion uint64
-	entries       map[string]*list.Element
-	lru           *list.List
-	maxEntries    int
-}
-
-// NewMemo returns an empty memo with the default LRU capacity.
-func NewMemo() *Memo {
-	return NewMemoWithCapacity(DefaultMaxMemoEntries)
-}
-
-// NewMemoWithCapacity returns an empty memo with the given LRU
-// capacity. A non-positive capacity falls back to
-// DefaultMaxMemoEntries.
-func NewMemoWithCapacity(maxEntries int) *Memo {
-	if maxEntries <= 0 {
-		maxEntries = DefaultMaxMemoEntries
-	}
-	return &Memo{
-		entries:    make(map[string]*list.Element),
-		lru:        list.New(),
-		maxEntries: maxEntries,
-	}
-}
-
-// SchemaVersion returns the current schema version. Mixed into
-// SerializeKey output so DDL invalidates cached plans. REQ000584.
-func (m *Memo) SchemaVersion() uint64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.schemaVersion
-}
-
-// BumpSchemaVersion increments the schema version. Caller should
-// invoke this on CREATE/DROP/ALTER TABLE/INDEX. REQ000584.
-func (m *Memo) BumpSchemaVersion() uint64 {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.schemaVersion++
-	return m.schemaVersion
-}
-
-// Get returns a cached plan and whether it was present. A hit
-// promotes the entry to most-recently-used.
-func (m *Memo) Get(key string) (Plan, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	el, ok := m.entries[key]
-	if !ok {
-		return Plan{}, false
-	}
-	m.lru.MoveToFront(el)
-	return el.Value.(*lruNode).plan, true
-}
-
-// Put stores a plan, evicting the least-recently-used entry if the
-// cache is full. Re-Put of an existing key updates the plan and
-// promotes the entry.
-func (m *Memo) Put(key string, p Plan) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if el, ok := m.entries[key]; ok {
-		el.Value.(*lruNode).plan = p
-		m.lru.MoveToFront(el)
-		return
-	}
-	el := m.lru.PushFront(&lruNode{key: key, plan: p})
-	m.entries[key] = el
-	if m.lru.Len() > m.maxEntries {
-		m.evictOldestLocked()
-	}
-}
-
-// Len returns the number of memoized plans.
-func (m *Memo) Len() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return len(m.entries)
-}
-
-// MaxEntries returns the configured LRU capacity.
-func (m *Memo) MaxEntries() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.maxEntries
-}
-
-// Clear drops all cached plans. Callers (e.g. DDL paths that do
-// not want to rely on schema-version invalidation) can invoke
-// this directly. REQ000584.
-func (m *Memo) Clear() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.entries = make(map[string]*list.Element)
-	m.lru.Init()
-}
-
-func (m *Memo) evictOldestLocked() {
-	el := m.lru.Back()
-	if el == nil {
-		return
-	}
-	node := el.Value.(*lruNode)
-	delete(m.entries, node.key)
-	m.lru.Remove(el)
-}
-
 type enc struct {
 	buf []byte
 }
