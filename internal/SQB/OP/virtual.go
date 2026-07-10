@@ -78,6 +78,48 @@ func (s *SqliteMaster) loadRows() {
 func (s *SqliteMaster) Close() error                  { return nil }
 func (s *SqliteMaster) WithParams(_ []any) pl.Operator { return s }
 
+// SqliteTempMaster is a virtual table that returns temp table/view/trigger
+// metadata, matching the sqlite_temp_master schema. REQ001328.
+type SqliteTempMaster struct {
+	rows []Row
+	idx  int
+}
+
+// NewSqliteTempMaster creates a sqlite_temp_master virtual table operator.
+func NewSqliteTempMaster() *SqliteTempMaster {
+	return &SqliteTempMaster{}
+}
+
+func (s *SqliteTempMaster) Next(_ context.Context) (Row, error) {
+	if s.rows == nil {
+		s.loadRows()
+	}
+	if s.idx >= len(s.rows) {
+		return Row{}, ErrNoRows
+	}
+	row := s.rows[s.idx]
+	s.idx++
+	return row, nil
+}
+
+func (s *SqliteTempMaster) loadRows() {
+	DT.TablesMu.RLock()
+	names := make([]string, 0, len(DT.TempTableNames))
+	for name := range DT.TempTableNames {
+		names = append(names, name)
+	}
+	DT.TablesMu.RUnlock()
+	for _, name := range names {
+		s.rows = append(s.rows, Row{
+			Cols: []string{"type", "name", "tbl_name", "rootpage", "sql"},
+			Data: []Value{DT.NewTextValue("table"), DT.NewTextValue(name), DT.NewTextValue(name), DT.NewIntValue(0), DT.NullValue()},
+		})
+	}
+}
+
+func (s *SqliteTempMaster) Close() error                  { return nil }
+func (s *SqliteTempMaster) WithParams(_ []any) pl.Operator { return s }
+
 // SqliteSequence is a virtual table that returns the last used ROWID
 // for each AUTOINCREMENT table, matching the sqlite_sequence schema:
 // (name TEXT, seq INTEGER). REQ001390.

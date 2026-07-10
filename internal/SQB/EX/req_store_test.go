@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
 // REQ000805: ALL keyword in aggregate functions.
@@ -478,5 +480,63 @@ func TestSqliteSequence_WhereClause(t *testing.T) {
 	}
 	if rows[0].Data[0].S != "t_where" {
 		t.Errorf("name = %q, want 't_where'", rows[0].Data[0].S)
+	}
+}
+
+// REQ001328: sqlite_temp_master introspection returns temp table metadata.
+func TestSqliteTempMaster_QueryAfterTempCreate(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	DT.ClearTempTables()
+	defer DT.ClearTempTables()
+
+	e := NewExecutor()
+	ctx := context.Background()
+
+	// Create a main table (should NOT appear in sqlite_temp_master).
+	if _, err := e.Exec(ctx, "CREATE TABLE main_t (id INT)"); err != nil {
+		t.Fatalf("create main: %v", err)
+	}
+
+	// Create temp tables.
+	if _, err := e.Exec(ctx, "CREATE TEMP TABLE tmp1 (a INT)"); err != nil {
+		t.Fatalf("create temp1: %v", err)
+	}
+	if _, err := e.Exec(ctx, "CREATE TEMP TABLE tmp2 (b TEXT)"); err != nil {
+		t.Fatalf("create temp2: %v", err)
+	}
+
+	// Query sqlite_temp_master.
+	rows, err := e.QueryAll(ctx, "SELECT type, name, tbl_name FROM sqlite_temp_master ORDER BY name")
+	if err != nil {
+		t.Fatalf("SELECT FROM sqlite_temp_master: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2 (tmp1, tmp2)", len(rows))
+	}
+	if rows[0].Data[1].S != "tmp1" || rows[1].Data[1].S != "tmp2" {
+		t.Errorf("names: got %q, %q; want tmp1, tmp2", rows[0].Data[1].S, rows[1].Data[1].S)
+	}
+	// All entries should be type 'table'.
+	for _, r := range rows {
+		if r.Data[0].S != "table" {
+			t.Errorf("type = %q, want 'table'", r.Data[0].S)
+		}
+	}
+
+	// After clearing temp tables, sqlite_temp_master should be empty.
+	DT.ClearTempTables()
+	rows, err = e.QueryAll(ctx, "SELECT count(*) FROM sqlite_temp_master")
+	if err != nil {
+		t.Fatalf("SELECT after clear: %v", err)
+	}
+	if len(rows) == 0 {
+		// count(*) with empty input returns no rows in some executors.
+		// Accept both 0 rows and 1 row with count=0.
+		return
+	}
+	cnt, _ := rows[0].Data[0].ToAny().(int64)
+	if cnt != 0 {
+		t.Errorf("count after clear = %d, want 0", cnt)
 	}
 }

@@ -42,6 +42,14 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	if s.From == "sqlite_master" || s.From == "sqlite_schema" {
 		return p.planSelectSqliteMaster(s)
 	}
+	// REQ001328: sqlite_temp_master virtual table
+	if s.From == "sqlite_temp_master" {
+		var scan DT.Operator = OP.NewSqliteTempMaster()
+		if s.Where != nil {
+			scan = OP.NewFilter(scan, s.Where, nil)
+		}
+		return scan
+	}
 
 	// REQ001390: sqlite_sequence virtual table
 	if s.From == "sqlite_sequence" {
