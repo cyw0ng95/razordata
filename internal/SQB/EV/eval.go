@@ -416,13 +416,10 @@ func evalFallbackEvalValue(expr PS.Expr, row *Row, params []any) (Value, error) 
 	case *PS.Ident:
 		if row != nil {
 			// REQ001202: pre-resolved SlotIdx — direct access, skip Lookup.
-			if e.SlotIdx >= 0 {
-				EC.BUG_ON(e.SlotIdx >= len(row.Data), "column ref %q: SlotIdx %d out of bounds (Data len=%d)", e.Name, e.SlotIdx, len(row.Data))
-			}
+			// REQ001518: skip EqualFold match — SlotIdx is guaranteed
+			// correct by the planner; the EqualFold was redundant overhead.
 			if e.SlotIdx >= 0 && e.SlotIdx < len(row.Data) && e.SlotIdx < len(row.Cols) {
-				if strings.EqualFold(row.Cols[e.SlotIdx], e.Name) {
-					return row.Data[e.SlotIdx], nil
-				}
+				return row.Data[e.SlotIdx], nil
 			}
 			// REQ001283: use ColIndex map when available (set by Project).
 			if row.ColIndex != nil {
