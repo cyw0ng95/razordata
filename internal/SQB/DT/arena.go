@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
@@ -35,6 +37,11 @@ func (a *RowArena) Init(estimatedRows, colsPerRow int) {
 	a.slabCap = len(a.slab)
 }
 
+// Reset recycles all slabs back to the size-bucketed global cache
+// and resets the arena so the NEXT Init() or AllocRow() gets a fresh
+// slab. When a SeqScan is reused via plan cache (rowArena stays alive),
+// the caller (decodeRowBuffered) checks NeedsInit() and calls Init()
+// again to pop from the global cache instead of doing a raw make().
 func (a *RowArena) Reset() {
 	for _, s := range a.slabs {
 		putSlab(s)
@@ -47,6 +54,14 @@ func (a *RowArena) Reset() {
 	a.offset = 0
 	a.slabCap = 0
 }
+
+// NeedsInit returns true when the arena has no active slab and the
+// caller should call Init() before AllocRow. Plan-cached SeqScan
+// reuse skips the !rowArena.IsNil() guard, so this method bridges
+// the gap: after Reset sets slab=nil, the NEXT execution detects
+// the stale arena and re-Inits from the size-bucketed cache.
+// REQ001516.
+func (a *RowArena) NeedsInit() bool { return a.slab == nil && a.slabCap == 0 }
 
 func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) *Row {
 	if nCols <= 0 {
@@ -207,6 +222,9 @@ var slabCache struct {
 	stacks    [numSizeBuckets]slabStack
 	total     int64
 	highWater int64
+	hit       int64 // REQ001516: diagnostic counters
+	miss      int64
+	put       int64
 }
 
 const defaultHighWater = 384 * 1024 * 1024 // 384 MB
@@ -215,11 +233,52 @@ func init() {
 	slabCache.highWater = defaultHighWater
 }
 
+// SlabCacheHit returns the number of getSlab cache hits (REQ001516).
+func SlabCacheHit() int64 { return atomic.LoadInt64(&slabCache.hit) }
+
+// SlabCacheMiss returns the number of getSlab cache misses (REQ001516).
+func SlabCacheMiss() int64 { return atomic.LoadInt64(&slabCache.miss) }
+
+// SlabCachePut returns the number of putSlab calls (REQ001516).
+func SlabCachePut() int64 { return atomic.LoadInt64(&slabCache.put) }
+
+// ResetSlabCacheStats zeros diagnostic counters (REQ001516).
+func ResetSlabCacheStats() {
+	atomic.StoreInt64(&slabCache.hit, 0)
+	atomic.StoreInt64(&slabCache.miss, 0)
+	atomic.StoreInt64(&slabCache.put, 0)
+}
+
+// ClearSlabCache empties all size buckets and resets total to zero.
+// Used by tests to get a clean baseline. REQ001516.
+func ClearSlabCache() {
+	slabCache.mu.Lock()
+	defer slabCache.mu.Unlock()
+	for i := range slabCache.stacks {
+		slabCache.stacks[i].slabs = slabCache.stacks[i].slabs[:0]
+	}
+	slabCache.total = 0
+}
+
+// SlabCacheDebug returns a summary of the current slab cache state.
+// Used by diagnostic logging in SLT tests. REQ001516.
+func SlabCacheDebug() string {
+	slabCache.mu.Lock()
+	defer slabCache.mu.Unlock()
+	var b strings.Builder
+	fmt.Fprintf(&b, "total=%d/%d put=%d", slabCache.total, slabCache.highWater, slabCache.put)
+	for i, st := range slabCache.stacks {
+		fmt.Fprintf(&b, " b%d=%d", i, len(st.slabs))
+	}
+	return b.String()
+}
+
 // getSlab returns a slab from the cache with capacity >= minSize,
 // or allocates a fresh one if no cached slab is large enough.
 func getSlab(minSize int) []byte {
 	idx := sizeBucketIndex(minSize)
 	if idx < 0 {
+		slabCache.miss++ // REQ001516
 		return make([]byte, minSize)
 	}
 	slabCache.mu.Lock()
@@ -230,15 +289,18 @@ func getSlab(minSize int) []byte {
 		st.slabs = st.slabs[:last]
 		slabCache.total -= int64(cap(buf))
 		slabCache.mu.Unlock()
+		slabCache.hit++ // REQ001516
 		return buf
 	}
 	slabCache.mu.Unlock()
+	slabCache.miss++ // REQ001516
 	return make([]byte, sizeBuckets[idx])
 }
 
 // putSlab returns a slab to the appropriate size bucket.
 // Trims oldest slabs when total exceeds high-water mark.
 func putSlab(slab []byte) {
+	atomic.AddInt64(&slabCache.put, 1) // REQ001516
 	n := cap(slab)
 	idx := sizeBucketIndex(n)
 	if idx < 0 {

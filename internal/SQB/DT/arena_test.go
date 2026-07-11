@@ -330,3 +330,38 @@ func BenchmarkRowArena_Init_Pool(b *testing.B) {
 		})
 	}
 }
+
+// TestRowArena_SlabCacheReuse verifies REQ001516: after Reset, subsequent
+// Init calls hit the slab cache instead of allocating fresh.
+func TestRowArena_SlabCacheReuse(t *testing.T) {
+	schema := &StoreSchema{
+		Cols:     []string{"a", "b", "c", "d", "e"},
+		ColIndex: map[string]int{"a": 0, "b": 1, "c": 2, "d": 3, "e": 4},
+	}
+
+	ClearSlabCache()
+	ResetSlabCacheStats()
+
+	for i := 0; i < 10; i++ {
+		arena := &RowArena{}
+		arena.Init(512, 5)
+		for j := 0; j < 30; j++ {
+			arena.AllocRow(5, schema)
+		}
+		arena.Reset()
+		if !arena.NeedsInit() {
+			t.Fatalf("iter %d: NeedsInit false after Reset", i)
+		}
+	}
+
+	hit := SlabCacheHit()
+	miss := SlabCacheMiss()
+	t.Logf("slab cache: hit=%d miss=%d ratio=%.1f%%", hit, miss, float64(hit)/float64(hit+miss)*100)
+
+	if miss != 1 {
+		t.Errorf("expected 1 miss (first init), got %d", miss)
+	}
+	if hit < 9 {
+		t.Errorf("expected >=9 hits, got %d", hit)
+	}
+}

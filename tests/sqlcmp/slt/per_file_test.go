@@ -105,6 +105,7 @@ func TestSLT_PerFile(t *testing.T) {
 				t.Errorf("%s: %d/%d records failed", name, stats.Failed, stats.Total)
 			}
 		})
+		})
 	}
 }
 

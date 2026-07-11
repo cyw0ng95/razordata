@@ -570,8 +570,10 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 // allocation. The arena is reset in Close(), freeing all rows at once.
 // REQ001260: pre-size arena to engineBatchSize rows to reduce grow calls.
 func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
-	if s.rowArena == nil {
-		s.rowArena = &DT.RowArena{}
+	if s.rowArena == nil || s.rowArena.NeedsInit() {
+		if s.rowArena == nil {
+			s.rowArena = &DT.RowArena{}
+		}
 		s.rowArena.Init(engineBatchSize, len(s.schema.Cols))
 	}
 	n := len(s.schema.Cols)
@@ -592,9 +594,8 @@ func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
 func (s *SeqScan) Close() error {
 	s.closed.Store(true)
 	if s.it != nil {
-		err := s.it.Close()
+		_ = s.it.Close()
 		s.it = nil
-		return err
 	}
 	s.pos = 0
 	s.rows = nil
