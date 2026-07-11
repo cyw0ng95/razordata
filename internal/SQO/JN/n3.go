@@ -58,7 +58,8 @@ func N3(baseTable string, joinTables []JoinTableInfo, wherePredicates []PS.Expr,
 		}
 	}
 
-	heap := make([]partial, 0, N3HeapMaxSize)
+	heapSize := N3HeapMaxSizeForJoins(k)
+	heap := make([]partial, 0, heapSize)
 
 	baseRows := sp.TableRowCount(baseTable)
 	if pushedPredicates != nil {
@@ -103,7 +104,7 @@ func N3(baseTable string, joinTables []JoinTableInfo, wherePredicates []PS.Expr,
 			allTables = append(allTables, jt.Name)
 		}
 
-		nextHeap := make([]candidate, 0, N3HeapMaxSize)
+		nextHeap := make([]candidate, 0, heapSize)
 
 		var bestCost float64
 		if len(heap) > 0 {
@@ -164,7 +165,7 @@ func N3(baseTable string, joinTables []JoinTableInfo, wherePredicates []PS.Expr,
 					continue
 				}
 
-				if len(nextHeap) < N3HeapMaxSize {
+				if len(nextHeap) < heapSize {
 					nextHeap = append(nextHeap, cand)
 					for i := len(nextHeap) - 1; i > 0; i-- {
 						parent := (i - 1) / 2

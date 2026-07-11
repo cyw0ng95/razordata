@@ -32,3 +32,13 @@ const (
 	N3HeapMaxSize      = 24
 	N3PruneMultiplier  = 2.0
 )
+
+// N3HeapMaxSizeForJoins returns the heap size for the N3 algorithm
+// based on the join count K. For small joins (≤4), use a smaller
+// heap (8); for larger joins, use the default 24. REQ001504.
+func N3HeapMaxSizeForJoins(K int) int {
+	if K <= 4 {
+		return 8
+	}
+	return N3HeapMaxSize
+}
