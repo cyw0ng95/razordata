@@ -574,7 +574,14 @@ func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
 		if s.rowArena == nil {
 			s.rowArena = &DT.RowArena{}
 		}
-		s.rowArena.Init(engineBatchSize, len(s.schema.Cols))
+		// REQ001513: when usedCols prunes columns, allocate arena
+		// for the pruned count so the row Data has the right size
+		// from the start, eliminating per-row pruneRowCols calls.
+		nCols := len(s.schema.Cols)
+		if s.usedCols != nil && len(s.usedCols) < nCols {
+			nCols = len(s.usedCols)
+		}
+		s.rowArena.Init(engineBatchSize, nCols)
 	}
 	n := len(s.schema.Cols)
 	if n == 0 {
@@ -709,7 +716,7 @@ func pruneRowCols(row Row, usedCols []string, usedSet map[string]bool) Row {
 				continue
 			}
 		}
-		if idx < 0 || idx >= len(row.Data) {
+if idx < 0 || idx >= len(row.Data) {
 			continue
 		}
 		newCols = append(newCols, row.Cols[idx])
@@ -743,8 +750,6 @@ func pruneRowCols(row Row, usedCols []string, usedSet map[string]bool) Row {
 	row.ColIndex = newIndex
 	return row
 }
-
-// Accessor methods for SeqScan fields used by EX plan_node and parallel operators.
 func (s *SeqScan) Table() string               { return s.table }
 func (s *SeqScan) Store() DT.Store             { return s.store }
 func (s *SeqScan) Schema() *DT.StoreSchema     { return s.schema }
