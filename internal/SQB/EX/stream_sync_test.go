@@ -151,6 +151,61 @@ func TestStream_SyncPath_NoJoins(t *testing.T) {
     }
 }
 
+// TestStream_RowLifetimeAfterClose verifies REQ001511: rows returned by
+// streamIterator remain valid after Close() (which resets the SeqScan
+// RowArena). Reads rows after Close() on the sync path.
+func TestStream_RowLifetimeAfterClose(t *testing.T) {
+	UnregisterAll()
+	ResetForTest(t)
+
+	DT.RegisterTableSchema("t", []string{"id", "val"})
+	DT.TablesMu.Lock()
+	for i := 0; i < 20; i++ {
+		DT.Tables["t"] = append(DT.Tables["t"], DT.Row{
+			Cols: []string{"id", "val"},
+			Data: []DT.Value{NewIntValue(int64(i)), NewTextValue("x")},
+		})
+	}
+	DT.TablesMu.Unlock()
+
+	ex := NewExecutor()
+	ctx := context.Background()
+
+	iter, err := ex.QueryStream(ctx, "SELECT id, val FROM t")
+	if err != nil {
+		t.Fatalf("QueryStream: %v", err)
+	}
+
+	// Read all rows first
+	var rows []DT.Row
+	for {
+		r, err := iter.Next()
+		if err != nil {
+			break
+		}
+		rows = append(rows, r)
+	}
+	if len(rows) != 20 {
+		t.Fatalf("expected 20 rows, got %d", len(rows))
+	}
+
+	// Close the iterator — this resets the RowArena
+	iter.Close()
+
+	// REQ001511: rows should still have valid Data after Close()
+	for i, r := range rows {
+		if len(r.Data) != 2 {
+			t.Fatalf("row %d: Data len = %d, want 2", i, len(r.Data))
+		}
+		if r.Data[0].Kind != DT.KindInt {
+			t.Fatalf("row %d col 0: Kind = %v, want KindInt", i, r.Data[0].Kind)
+		}
+		if r.Data[0].I64 != int64(i) {
+			t.Fatalf("row %d col 0: I64 = %d, want %d", i, r.Data[0].I64, i)
+		}
+	}
+}
+
 // BenchmarkSelect1_SyncPath benchmarks small queries using the
 // synchronous slice-backed path (goroutine-free).
 func BenchmarkSelect1_SyncPath(b *testing.B) {

@@ -209,7 +209,8 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 		// Wrap in a buffered channel so the caller can pull rows
 		// sequentially after the first.
 		rowCh := make(chan DT.Row, 16)
-		rowCh <- firstRow
+		// REQ001511: clone firstRow to heap
+		rowCh <- cloneRowToHeap(firstRow)
 		closed := false
 		var closeOnce sync.Once
 		closer := func() error {
@@ -228,8 +229,10 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 				if err != nil {
 					return
 				}
+				// REQ001511: clone to heap so Data survives op.Close()
+				cloned := cloneRowToHeap(row)
 				select {
-				case rowCh <- row:
+				case rowCh <- cloned:
 				case <-ctx.Done():
 					return
 				}
@@ -288,7 +291,9 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
     // finishes. resetRowArena is called in the goroutine's deferred
     // cleanup (after close(rowCh)) instead.
     rowCh := make(chan DT.Row, 16)
-    rowCh <- firstRow
+    // REQ001511: clone firstRow to heap — it comes from plan.Root.Next()
+    // and references SeqScan arena memory that may be reset.
+    rowCh <- cloneRowToHeap(firstRow)
     closed := false
     var closeMu sync.Mutex
     closer := func() error {
@@ -315,8 +320,11 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
                 return
             }
             OP.WithExecContext(&r, execCtx)
+            // REQ001511: clone to heap so Data survives plan.Root.Close()
+            // (called by closer, which resets SeqScan's RowArena).
+            cloned := cloneRowToHeap(r)
             select {
-            case rowCh <- r:
+            case rowCh <- cloned:
             case <-ctx.Done():
                 return
             }
@@ -347,14 +355,38 @@ func (e *Executor) syncStreamPath(ctx context.Context, plan *pl.PlanResult, exec
         OP.WithExecContext(&r, execCtx)
         rows = append(rows, r)
     }
+    // REQ001511: clone rows before closing plan — plan.Root.Close()
+    // cascades to SeqScan.Close() → RowArena.Reset(), invalidating
+    // Row.Data pointers into the arena slab.
+    cloneArena := &DT.RowArena{}
+    rows = cloneArena.CloneRowsBatch(rows)
+
     plan.Root.Close()
     resetRowArena(execCtx)
-	return &streamIterator{
-		cols: cols,
-		types: types,
-		rows: rows,
-		idx:  0, // start from firstRow
-	}, nil
+    return &streamIterator{
+        cols:       cols,
+        types:      types,
+        rows:       rows,
+        idx:        0,
+        cloneArena: cloneArena, // keep backing memory alive
+    }, nil
+}
+
+// cloneRowToHeap creates a heap copy of a DT.Row whose Data slice
+// is backed by independent heap memory, safe to use after the origin
+// arena is reset. REQ001511.
+func cloneRowToHeap(r DT.Row) DT.Row {
+    if len(r.Data) == 0 {
+        return r
+    }
+    data := make([]DT.Value, len(r.Data))
+    copy(data, r.Data)
+    return DT.Row{
+        Cols:     r.Cols,
+        Types:    r.Types,
+        ColIndex: r.ColIndex,
+        Data:     data,
+    }
 }
 
 // streamIterator is the streaming row iterator returned by
@@ -364,6 +396,8 @@ func (e *Executor) syncStreamPath(ctx context.Context, plan *pl.PlanResult, exec
 // REQ001409: supports two backends — channel-based streaming (rowCh)
 // for large/complex queries, and slice-based sync (rows/idx) for small
 // queries to avoid goroutine + channel overhead.
+// REQ001511: cloneArena keeps the cloned-row backing memory alive for
+// the sync path; the channel path uses cloneRowToHeap per row.
 type streamIterator struct {
     cols   []string
     types  []LX.TokenType
@@ -372,8 +406,9 @@ type streamIterator struct {
     rows   []DT.Row
     idx    int
 
-    done bool
-    mu   sync.Mutex
+    done       bool
+    mu         sync.Mutex
+    cloneArena *DT.RowArena // REQ001511: keeps clone backing memory alive
 }
 
 func (s *streamIterator) Cols() []string        { return s.cols }

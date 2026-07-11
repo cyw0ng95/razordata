@@ -173,10 +173,12 @@ func DecodeRowInto(row *Row, data []byte, schema *StoreSchema) error {
 // sizeBuckets defines the fixed slab size classes for the pool.
 // REQ001289: size-bucketed slab cache to avoid re-allocating large slabs on Init.
 var sizeBuckets = []int{
-	64 * 1024,       // 64 KB
-	256 * 1024,      // 256 KB
-	1024 * 1024,     // 1 MB
-	4 * 1024 * 1024, // 4 MB
+	64 * 1024,         // 64 KB
+	256 * 1024,        // 256 KB
+	1024 * 1024,       // 1 MB
+	4 * 1024 * 1024,   // 4 MB
+	64 * 1024 * 1024,  // 64 MB
+	256 * 1024 * 1024, // 256 MB
 }
 
 // sizeBucketIndex returns the index of the smallest bucket >= n.
@@ -195,16 +197,19 @@ type slabStack struct {
 	slabs [][]byte
 }
 
+// numSizeBuckets is the number of size bucket classes. Must equal len(sizeBuckets).
+const numSizeBuckets = 6
+
 // slabCache is a size-bucketed manual slab cache keyed by size class.
 // Replaces sync.Pool which drops items between GC cycles. REQ001290.
 var slabCache struct {
 	mu        sync.Mutex
-	stacks    [4]slabStack
+	stacks    [numSizeBuckets]slabStack
 	total     int64
 	highWater int64
 }
 
-const defaultHighWater = 16 * 1024 * 1024 // 16 MB
+const defaultHighWater = 384 * 1024 * 1024 // 384 MB
 
 func init() {
 	slabCache.highWater = defaultHighWater
@@ -248,7 +253,7 @@ func putSlab(slab []byte) {
 		// Find the size class with the most slabs.
 		maxIdx := 0
 		maxLen := len(slabCache.stacks[0].slabs)
-		for i := 1; i < 4; i++ {
+		for i := 1; i < len(slabCache.stacks); i++ {
 			if len(slabCache.stacks[i].slabs) > maxLen {
 				maxIdx = i
 				maxLen = len(slabCache.stacks[i].slabs)

@@ -241,6 +241,71 @@ func BenchmarkRowArena_Presize(b *testing.B) {
 	})
 }
 
+// TestRowArena_LargeSlabCacheHit verifies REQ001510: getSlab for sizes >4MB
+// returns a cached slab on the second call instead of allocating fresh.
+func TestRowArena_LargeSlabCacheHit(t *testing.T) {
+	// First call: allocate a large slab. This should go into the 64MB bucket.
+	slab1 := getSlab(32 * 1024 * 1024)
+	if len(slab1) < 32*1024*1024 {
+		t.Fatalf("slab1 len = %d, want >= 32MB", len(slab1))
+	}
+	if cap(slab1) < 32*1024*1024 {
+		t.Fatalf("slab1 cap = %d, want >= 32MB", cap(slab1))
+	}
+	// Write into slab so the backing array is actually allocated
+	slab1[0] = 1
+	slab1[len(slab1)-1] = 2
+
+	// Return to cache
+	putSlab(slab1)
+
+	// Check total cached (must be >0 after put)
+	slabCache.mu.Lock()
+	totalAfterPut := slabCache.total
+	slabCache.mu.Unlock()
+	if totalAfterPut == 0 {
+		t.Fatal("slabCache.total == 0 after putSlab of 32MB slab; large slabs not cached")
+	}
+
+	// Second call: should get the cached slab (same capacity)
+	slab2 := getSlab(32 * 1024 * 1024)
+	if cap(slab2) < 32*1024*1024 {
+		t.Fatalf("cached slab2 cap = %d, want >= 32MB", cap(slab2))
+	}
+	_ = slab2
+}
+
+// TestRowArena_LargeSlabGrow verifies REQ001510: RowArena growth above 4MB
+// yields slabs that are cached and reusable on next Init.
+func TestRowArena_LargeSlabGrow(t *testing.T) {
+	schema := &StoreSchema{
+		Cols:     []string{"a", "b", "c", "d", "e"},
+		ColIndex: map[string]int{"a": 0, "b": 1, "c": 2, "d": 3, "e": 4},
+	}
+
+	// Large init: should allocate a slab >4MB (triggers new bucket)
+	arena1 := &RowArena{}
+	arena1.Init(500_000, 5) // ~120MB initial slab
+	for i := 0; i < 500_000; i++ {
+		row := arena1.AllocRow(5, schema)
+		if row == nil {
+			t.Fatalf("AllocRow %d returned nil", i)
+		}
+	}
+	arena1.Reset()
+
+	// Second init with the same dimensions should reuse cached slab
+	arena2 := &RowArena{}
+	arena2.Init(500_000, 5)
+	for i := 0; i < 500_000; i++ {
+		row := arena2.AllocRow(5, schema)
+		if row == nil {
+			t.Fatalf("AllocRow %d returned nil (second arena)", i)
+		}
+	}
+	arena2.Reset()
+}
+
 // BenchmarkRowArena_Init_Pool measures allocation reduction from the
 // size-bucketed slab cache for 1K, 10K, and 100K row workloads.
 // REQ001289.
