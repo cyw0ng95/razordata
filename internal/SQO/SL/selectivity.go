@@ -137,9 +137,31 @@ func EstimateRangeSelectivity(stats *ls.ColumnStats, low, high []byte, inclusive
 	return sel
 }
 
-// EstimateJoinPredicateSelectivity estimates selectivity of a join predicate.
+// EstimateJoinPredicateSelectivity returns the selectivity of a single
+// join predicate expression. rowCount is the estimated number of rows
+// in the table the predicate applies to; used for IN-list selectivity
+// scaling. Pass 0 to use the default NDV of 100. REQ000819.
 func EstimateJoinPredicateSelectivity(pred PS.Expr, rowCount float64) float64 {
-	return EstimateSelectivity(pred)
+	if pred == nil {
+		return 1.0
+	}
+	if in, ok := pred.(*PS.InExpr); ok && len(in.List) > 0 {
+		return EstimateInListSelectivity(in.List, rowCount, nil, nil)
+	}
+	bin, ok := pred.(*PS.BinaryExpr)
+	if !ok {
+		return 0.5
+	}
+	isColCol := IsColumnColumnPair(bin.Left, bin.Right) || IsColumnColumnPair(bin.Right, bin.Left)
+	switch bin.Op {
+	case LX.T_EQ:
+		_ = isColCol // for future NDV-based selectivity
+		return 0.1
+	case LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
+		return 0.3
+	default:
+		return 0.5
+	}
 }
 
 // EstimateInListSelectivity estimates selectivity of an IN-list with MCVs.
@@ -206,29 +228,32 @@ func EstimateInListSelectivity(list []PS.Expr, rowCount float64, mcvs [][]byte, 
 func InListLiteralKey(item PS.Expr) (string, bool) {
 	switch v := item.(type) {
 	case *PS.NumberLiteral:
-		return fmt.Sprintf("int:%d", v.Val), true
+		return fmt.Sprintf("I:%d", v.Val), true
 	case *PS.FloatLiteral:
-		return fmt.Sprintf("float:%f", v.Val), true
+		return fmt.Sprintf("F:%v", v.Val), true
 	case *PS.StringLiteral:
-		return "str:" + v.Val, true
+		return "S:" + v.Val, true
+	case *PS.BoolLiteral:
+		return fmt.Sprintf("B:%v", v.Val), true
 	case *PS.NullLiteral:
 		return "null", true
 	}
 	return "", false
 }
 
+// IsColumnColumnPair returns true when both sides of the expression
+// are column references (Ident or QualifiedName). Used to detect
+// equi-join predicates like t1.a = t2.b.
+func IsColumnColumnPair(a, b PS.Expr) bool {
+	_, aIsCol := a.(*PS.Ident)
+	_, aIsQn := a.(*PS.QualifiedName)
+	_, bIsCol := b.(*PS.Ident)
+	_, bIsQn := b.(*PS.QualifiedName)
+	return (aIsCol || aIsQn) && (bIsCol || bIsQn)
+}
+
 func isColumnColumnPair(a, b PS.Expr) bool {
-	_, ok1 := a.(*PS.Ident)
-	_, ok2 := b.(*PS.Ident)
-	if ok1 && ok2 {
-		return true
-	}
-	qn1, ok1 := a.(*PS.QualifiedName)
-	qn2, ok2 := b.(*PS.QualifiedName)
-	if ok1 && ok2 && qn1.Table != "" && qn2.Table != "" && qn1.Table != qn2.Table {
-		return true
-	}
-	return false
+	return IsColumnColumnPair(a, b)
 }
 
 func isColumnLiteralPair(a, b PS.Expr) bool {
@@ -242,7 +267,10 @@ func isColumnLiteralPair(a, b PS.Expr) bool {
 	return false
 }
 
-func extractColumnLiteral(v *PS.BinaryExpr) (col string, lit []byte, ok bool) {
+// ExtractColumnLiteral extracts the column name and literal bytes from a
+// binary expression of the form `column OP literal`. Returns ("", nil, false)
+// if the expression does not match this pattern. REQ001494.
+func ExtractColumnLiteral(v *PS.BinaryExpr) (col string, lit []byte, ok bool) {
 	if v == nil {
 		return "", nil, false
 	}
@@ -250,6 +278,10 @@ func extractColumnLiteral(v *PS.BinaryExpr) (col string, lit []byte, ok bool) {
 		return
 	}
 	return oneSide(v.Right, v.Left)
+}
+
+func extractColumnLiteral(v *PS.BinaryExpr) (col string, lit []byte, ok bool) {
+	return ExtractColumnLiteral(v)
 }
 
 func oneSide(a, b PS.Expr) (string, []byte, bool) {
