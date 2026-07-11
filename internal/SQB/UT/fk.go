@@ -11,7 +11,7 @@ import (
 // validateForeignKeyInsert checks that all FK-referenced rows exist
 // in the referenced table. REQ000126.
 func ValidateForeignKeyInsert(schema *DT.StoreSchema, row []any, store DT.Store) error {
-	if store == nil || schema == nil {
+	if schema == nil {
 		return nil
 	}
 	for _, fk := range schema.ForeignKeys {
@@ -34,6 +34,14 @@ func ValidateForeignKeyInsert(schema *DT.StoreSchema, row []any, store DT.Store)
 			}
 		}
 		if allNull {
+			continue
+		}
+		if skip, err := checkFKMatch(fk.Match, localVals); err != nil {
+			return err
+		} else if skip {
+			continue
+		}
+		if store == nil {
 			continue
 		}
 		if err := checkReferencedRowExists(fk.RefTable, fk.RefColumns, localVals, store); err != nil {
@@ -223,6 +231,11 @@ func ValidateForeignKeyUpdateInMemory(schema *DT.StoreSchema, oldRow, newRow []a
 			continue
 		}
 		if newAllNull {
+			continue
+		}
+		if skip, err := checkFKMatch(fk.Match, newVals); err != nil {
+			return err
+		} else if skip {
 			continue
 		}
 		if !rowExistsInMemory(fk.RefTable, fk.RefColumns, newVals) {
@@ -595,6 +608,38 @@ func setTableRows(name string, rows []DT.Row) {
 		DT.TempTables[name] = rows
 	} else {
 		DT.Tables[name] = rows
+	}
+}
+
+// checkFKMatch validates FK column NULL pattern per MATCH mode (REQ001310).
+// Returns (allNull, err). allNull=true means caller should skip FK check.
+func checkFKMatch(match string, vals []any) (bool, error) {
+	hasNull := false
+	hasNonNull := false
+	for _, v := range vals {
+		if v == nil {
+			hasNull = true
+		} else {
+			hasNonNull = true
+		}
+	}
+	switch match {
+	case "FULL":
+		if hasNull && hasNonNull {
+			return false, fmt.Errorf("%w: MATCH FULL: mixed NULL and NOT NULL in FK columns",
+				ap.ErrConstraint)
+		}
+		return !hasNonNull, nil
+	case "PARTIAL":
+		if !hasNonNull {
+			return true, nil
+		}
+		return false, nil
+	default: // SIMPLE
+		if hasNull {
+			return true, nil
+		}
+		return false, nil
 	}
 }
 

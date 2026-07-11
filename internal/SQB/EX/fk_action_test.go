@@ -399,3 +399,160 @@ func TestGenerated_Virtual_FKTarget(t *testing.T) {
 		t.Errorf("err = %v, want wrap of ErrConstraint", err)
 	}
 }
+
+// TestFK_MatchSimple_NullAllowed verifies REQ001310: MATCH SIMPLE (default)
+// allows NULL in any FK column — FK check is skipped.
+func TestFK_MatchSimple_NullAllowed(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	parent := &DT.StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &DT.StoreSchema{
+		Cols: []string{"id", "pid"},
+		Pk:   "id",
+		ForeignKeys: []DT.ForeignKeyConstraint{
+			{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"}, OnDelete: "NO ACTION", OnUpdate: "NO ACTION"},
+		},
+	}
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
+
+	err := UT.ValidateForeignKeyInsert(child, []any{int64(1), nil}, nil)
+	if err != nil {
+		t.Fatalf("expected SIMPLE NULL to be allowed, got: %v", err)
+	}
+}
+
+// TestFK_MatchFull_MixedNull_Error verifies REQ001310: MATCH FULL rejects
+// mixed NULL/NOT NULL in FK columns.
+func TestFK_MatchFull_MixedNull_Error(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	parent := &DT.StoreSchema{Cols: []string{"a", "b"}, Pk: "a"}
+	child := &DT.StoreSchema{
+		Cols: []string{"id", "ref_a", "ref_b"},
+		Pk:   "id",
+		ForeignKeys: []DT.ForeignKeyConstraint{
+			{
+				Columns:    []string{"ref_a", "ref_b"},
+				RefTable:   "p",
+				RefColumns: []string{"a", "b"},
+				OnDelete:   "NO ACTION",
+				OnUpdate:   "NO ACTION",
+				Match:      "FULL",
+			},
+		},
+	}
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
+
+	err := UT.ValidateForeignKeyInsert(child, []any{int64(1), int64(10), nil}, nil)
+	if err == nil {
+		t.Fatal("expected MATCH FULL error for mixed NULL/NOT NULL, got nil")
+	}
+	if !errors.Is(err, ap.ErrConstraint) {
+		t.Errorf("err = %v, want wrap of ErrConstraint", err)
+	}
+
+	err = UT.ValidateForeignKeyInsert(child, []any{int64(2), nil, nil}, nil)
+	if err != nil {
+		t.Fatalf("expected MATCH FULL all-NULL to be allowed, got: %v", err)
+	}
+
+	// All NOT NULL should pass the MATCH check (no store means no existence check).
+	err = UT.ValidateForeignKeyInsert(child, []any{int64(3), int64(10), int64(20)}, nil)
+	if err != nil {
+		t.Fatalf("expected all-NOT NULL to pass MATCH check, got: %v", err)
+	}
+}
+
+// TestFK_MatchPartial_PartialNull_Allowed verifies REQ001310: MATCH PARTIAL
+// allows partial NULL only if at least one NOT NULL.
+func TestFK_MatchPartial_PartialNull_Allowed(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	parent := &DT.StoreSchema{Cols: []string{"a", "b"}, Pk: "a"}
+	child := &DT.StoreSchema{
+		Cols: []string{"id", "ref_a", "ref_b"},
+		Pk:   "id",
+		ForeignKeys: []DT.ForeignKeyConstraint{
+			{
+				Columns:    []string{"ref_a", "ref_b"},
+				RefTable:   "p",
+				RefColumns: []string{"a", "b"},
+				OnDelete:   "NO ACTION",
+				OnUpdate:   "NO ACTION",
+				Match:      "PARTIAL",
+			},
+		},
+	}
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
+
+	// All NULL should be allowed (skip FK check).
+	err := UT.ValidateForeignKeyInsert(child, []any{int64(1), nil, nil}, nil)
+	if err != nil {
+		t.Fatalf("expected PARTIAL all-NULL to be allowed, got: %v", err)
+	}
+
+	// One NULL, one NOT NULL should also be allowed (PARTIAL allows it).
+	// No store means no parent existence check, so no error.
+	err = UT.ValidateForeignKeyInsert(child, []any{int64(2), int64(10), nil}, nil)
+	if err != nil {
+		t.Fatalf("expected PARTIAL partial-NULL to be allowed, got: %v", err)
+	}
+}
+
+// TestFK_MatchUpdate_MixedNull_Error verifies REQ001310: MATCH FULL on UPDATE
+// rejects mixed NULL/NOT NULL.
+func TestFK_MatchUpdate_MixedNull_Error(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	parent := &DT.StoreSchema{Cols: []string{"a", "b"}, Pk: "a"}
+	child := &DT.StoreSchema{
+		Cols: []string{"id", "ref_a", "ref_b"},
+		Pk:   "id",
+		ForeignKeys: []DT.ForeignKeyConstraint{
+			{
+				Columns:    []string{"ref_a", "ref_b"},
+				RefTable:   "p",
+				RefColumns: []string{"a", "b"},
+				OnDelete:   "NO ACTION",
+				OnUpdate:   "NO ACTION",
+				Match:      "FULL",
+			},
+		},
+	}
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
+
+	DT.Tables["p"] = []DT.Row{
+		{Cols: []string{"a", "b"}, Data: []DT.Value{DT.NewIntValue(10), DT.NewIntValue(20)}},
+	}
+
+	// Valid all-null update should pass.
+	err := UT.ValidateForeignKeyUpdateInMemory(child, nil, []any{int64(1), nil, nil})
+	if err != nil {
+		t.Fatalf("expected MATCH FULL all-NULL update to be allowed, got: %v", err)
+	}
+
+	// Mixed update should error.
+	err = UT.ValidateForeignKeyUpdateInMemory(child, nil, []any{int64(1), int64(10), nil})
+	if err == nil {
+		t.Fatal("expected MATCH FULL error for mixed NULL/NOT NULL update, got nil")
+	}
+	if !errors.Is(err, ap.ErrConstraint) {
+		t.Errorf("err = %v, want wrap of ErrConstraint", err)
+	}
+}

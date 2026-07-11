@@ -65,6 +65,7 @@ type ForeignKeyConstraint struct {
 	RefColumns []string // referenced columns
 	OnDelete   string   // CASCADE, RESTRICT, SET NULL, SET DEFAULT, NO ACTION
 	OnUpdate   string   // same set
+	Match      string   // MATCH SIMPLE (default), FULL, or PARTIAL
 }
 
 // RegisteredIndex is one entry in the EX-layer's index registry.

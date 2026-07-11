@@ -86,15 +86,16 @@ func buildUniqueConstraints(cols []string, stmt *PS.CreateTable) []DT.UniqueKey 
 // REQ000982: extracted from CreateTable.Next.
 func buildFKConstraints(stmt *PS.CreateTable) []DT.ForeignKeyConstraint {
 	var fks []DT.ForeignKeyConstraint
-	for _, col := range stmt.Cols {
-		if col.ReferencesTable != "" {
-			fk := DT.ForeignKeyConstraint{
-				Columns:    []string{col.Name},
-				RefTable:   col.ReferencesTable,
-				RefColumns: []string{col.ReferencesColumn},
-				OnDelete:   col.OnDelete,
-				OnUpdate:   col.OnUpdate,
-			}
+		for _, col := range stmt.Cols {
+			if col.ReferencesTable != "" {
+				fk := DT.ForeignKeyConstraint{
+					Columns:    []string{col.Name},
+					RefTable:   col.ReferencesTable,
+					RefColumns: []string{col.ReferencesColumn},
+					OnDelete:   col.OnDelete,
+					OnUpdate:   col.OnUpdate,
+					Match:      col.Match,
+				}
 			if fk.OnDelete == "" {
 				fk.OnDelete = "NO ACTION"
 			}
@@ -111,6 +112,7 @@ func buildFKConstraints(stmt *PS.CreateTable) []DT.ForeignKeyConstraint {
 			RefColumns: fkAST.RefColumns,
 			OnDelete:   fkAST.OnDelete,
 			OnUpdate:   fkAST.OnUpdate,
+			Match:      fkAST.Match,
 		}
 		if fk.OnDelete == "" {
 			fk.OnDelete = "NO ACTION"
