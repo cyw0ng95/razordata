@@ -5,6 +5,7 @@ import (
 	"context"
 	"testing"
 
+	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -745,5 +746,72 @@ func TestScalarSubquery_LazyAggregateWithWhere(t *testing.T) {
 	avg := rows[0].Data[0].ToAny().(float64)
 	if avg != 4.0 {
 		t.Errorf("avg(a WHERE a>2) = %v, want 4.0", avg)
+	}
+}
+
+// TestScalarSubquery_StatsCountShortcut exercises REQ001514: when
+// ANALYZE-style stats are present, count(*) / count(non-null-col)
+// reads n_tuples directly with zero I/O.
+func TestScalarSubquery_StatsCountShortcut(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.Exec(ctx, "CREATE TABLE t (a INT, b INT)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)")
+
+	// Wire stats: 5 rows total, no NULLs in either column.
+	cat := newMockStatsCatalog()
+	cat.setStats("t", "a", ls.ColumnStats{RowCount: 5, NullCount: 0, DistinctCount: 5})
+	cat.setStats("t", "b", ls.ColumnStats{RowCount: 5, NullCount: 0, DistinctCount: 5})
+	ex.SetStatsCatalog(cat)
+
+	// count(*) should return RowCount = 5.
+	rows, err := ex.QueryAll(ctx, "SELECT (SELECT count(*) FROM t) AS r")
+	if err != nil {
+		t.Fatalf("count(*): %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("count(*): got %d rows, want 1", len(rows))
+	}
+	if got := rows[0].Data[0].I64; got != 5 {
+		t.Errorf("count(*) = %d, want 5", got)
+	}
+
+	// count(non-null col) — both columns are non-null.
+	rows, err = ex.QueryAll(ctx, "SELECT (SELECT count(a) FROM t) AS r")
+	if err != nil {
+		t.Fatalf("count(a): %v", err)
+	}
+	if got := rows[0].Data[0].I64; got != 5 {
+		t.Errorf("count(a) = %d, want 5", got)
+	}
+}
+
+// TestScalarSubquery_StatsCountShortcutNullableCol verifies REQ001514
+// falls back to the SeqScan iteration when NULLs are present.
+func TestScalarSubquery_StatsCountShortcutNullableCol(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.Exec(ctx, "CREATE TABLE t (a INT, b INT)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10), (2, NULL), (3, 30), (4, NULL), (5, 50)")
+
+	cat := newMockStatsCatalog()
+	// Column b has 2 NULLs → count(b) must iterate the Scan to count
+	// non-null values (3), not use RowCount=5.
+	cat.setStats("t", "a", ls.ColumnStats{RowCount: 5, NullCount: 0})
+	cat.setStats("t", "b", ls.ColumnStats{RowCount: 5, NullCount: 2})
+	ex.SetStatsCatalog(cat)
+
+	rows, err := ex.QueryAll(ctx, "SELECT (SELECT count(b) FROM t) AS r")
+	if err != nil {
+		t.Fatalf("count(b): %v", err)
+	}
+	if got := rows[0].Data[0].I64; got != 3 {
+		t.Errorf("count(b) = %d, want 3 (correct count skips NULLs)", got)
 	}
 }

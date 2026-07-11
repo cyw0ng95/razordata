@@ -492,6 +492,13 @@ func (p *Planner) tryTrivialAggregateSubquery(ctx context.Context, sel *PS.Selec
 		return nil, false, nil
 	}
 
+	// REQ001514: stats-aware shortcut for COUNT(*)/COUNT(non-null-col).
+	// If ANALYZE-stats for the table cover the aggregate argument and
+	// no NULLs would change the answer, return the n_tuples directly.
+	if rows, used, ok := p.tryStatsCountShortcut(sel, agg); ok {
+		return rows, used, nil
+	}
+
 	var scan DT.Operator
 	if p.store != nil {
 		s, err := OP.NewSeqScanWithStore(p.store, sel.From)
@@ -506,6 +513,61 @@ func (p *Planner) tryTrivialAggregateSubquery(ctx context.Context, sel *PS.Selec
 
 	aggName := strings.ToLower(agg.Name)
 	return computeLazyAggregate(ctx, scan, aggName, agg.Arg, outer, params)
+}
+
+// tryStatsCountShortcut returns the n_tuples constant value for
+// `COUNT(*)` or `COUNT(col)` queries when ANALYZE stats are
+// available and cover the aggregate argument. REQ001514.
+//
+// Returns (rows, used, true) when the shortcut applies.
+// Returns (nil, false, false) when stats are unavailable or the
+// aggregate argument cannot be answered from stats alone — caller
+// should fall through to the SeqScan iteration path.
+func (p *Planner) tryStatsCountShortcut(sel *PS.Select, agg *PS.AggregateFunc) ([]DT.Row, bool, bool) {
+	if strings.ToLower(agg.Name) != "count" {
+		return nil, false, false
+	}
+	if p.statsCatalog == nil {
+		return nil, false, false
+	}
+
+	var cs *ls.ColumnStats
+	switch a := agg.Arg.(type) {
+	case *PS.StarExpr:
+		// Use the first registered column's stats — every column
+		// stores the same RowCount (collected during ANALYZE).
+		if t, ok := p.catalog[sel.From]; ok && t != nil && len(t.cols) > 0 {
+			cs = p.statsCatalog.ColumnStatsByName(sel.From, t.cols[0].Name)
+		}
+	case *PS.Ident:
+		cs = p.statsCatalog.ColumnStatsByName(sel.From, a.Name)
+	default:
+		return nil, false, false
+	}
+	if cs == nil || cs.RowCount <= 0 {
+		return nil, false, false
+	}
+	// COUNT(col) needs to know whether NULLs would change the answer.
+	// If the column has no NULLs in the sample (NullCount==0), the
+	// answer equals RowCount. Otherwise fall back.
+	if _, isStar := agg.Arg.(*PS.StarExpr); !isStar {
+		if cs.NullCount > 0 {
+			return nil, false, false
+		}
+	}
+
+	result := DT.Row{Cols: []string{colNameForAgg(agg)}, Data: []DT.Value{DT.NewIntValue(cs.RowCount)}}
+	return []DT.Row{result}, true, true
+}
+
+func colNameForAgg(agg *PS.AggregateFunc) string {
+	switch a := agg.Arg.(type) {
+	case *PS.Ident:
+		return a.Name
+	case *PS.StarExpr:
+		return "*"
+	}
+	return ""
 }
 
 // computeLazyAggregate runs a single pass over scan, evaluating argExpr
