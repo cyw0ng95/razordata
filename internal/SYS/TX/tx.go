@@ -187,6 +187,11 @@ func (t *Transaction) Commit(ctx context.Context) error {
 		t.mu.Unlock()
 		return ap.New(ap.KindTxAborted, "transaction aborted")
 	}
+	// REQ001311: flush deferred FK checks before committing.
+	if err := DT.FlushDeferredFKChecks(); err != nil {
+		t.mu.Unlock()
+		return err
+	}
 	if err := t.tx.Commit(ctx); err != nil {
 		t.mu.Unlock()
 		return err
@@ -213,6 +218,8 @@ func (t *Transaction) Rollback(ctx context.Context) error {
 		t.mu.Unlock()
 		return ap.New(ap.KindTxAborted, "transaction aborted")
 	}
+	// REQ001311: clear deferred FK checks on rollback.
+	DT.ClearDeferredFKChecks()
 	// REQ000617: persist the abort WAL record (RTRollback) first so a
 	// crash during engine state restoration is recoverable.
 	if err := t.tx.Abort(ctx); err != nil {

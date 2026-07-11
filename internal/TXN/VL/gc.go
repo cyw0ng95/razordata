@@ -62,6 +62,15 @@ func (em *epochManager) Stop(ctx context.Context) error {
 	em.stopOnce.Do(func() {
 		close(em.stopCh)
 	})
+	// Check ctx cancellation before starting the wait goroutine.
+	// Without this, a cancelled ctx races with the finished channel
+	// because em.wg.Wait may return before the outer select picks
+	// ctx.Done().
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 	finished := make(chan struct{})
 	go func() {
 		em.wg.Wait()

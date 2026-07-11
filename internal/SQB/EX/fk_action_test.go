@@ -556,3 +556,179 @@ func TestFK_MatchUpdate_MixedNull_Error(t *testing.T) {
 		t.Errorf("err = %v, want wrap of ErrConstraint", err)
 	}
 }
+
+// TestFK_Deferred_CollectsUntilCommit verifies REQ001311: DEFERRED INITIALLY
+// DEFERRED FK violations are collected and only fail at COMMIT (Flush).
+func TestFK_Deferred_CollectsUntilCommit(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	parent := &DT.StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &DT.StoreSchema{
+		Cols: []string{"id", "pid"},
+		Pk:   "id",
+		ForeignKeys: []DT.ForeignKeyConstraint{
+			{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"},
+				OnDelete: "NO ACTION", OnUpdate: "NO ACTION",
+				Deferrable: "DEFERRABLE", Initially: "DEFERRED"},
+		},
+	}
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
+
+	// No parent rows exist. Inserting child with non-null FK to non-existent parent
+	// should SUCCEED because the FK is INITIALLY DEFERRED.
+	err := UT.ValidateForeignKeyInsert(child, []any{int64(1), int64(99)}, nil)
+	if err != nil {
+		t.Fatalf("expected DEFERRED FK insert to succeed, got: %v", err)
+	}
+
+	// At COMMIT time, the deferred check should fail.
+	err = DT.FlushDeferredFKChecks()
+	if err == nil {
+		t.Fatal("expected deferred FK check to fail at COMMIT, got nil")
+	}
+}
+
+// TestFK_Deferred_ActionOnCommit verifies REQ001311: insert with DEFERRED FK
+// succeeds if parent row exists at COMMIT time (not at insert time).
+func TestFK_Deferred_ActionOnCommit(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	parent := &DT.StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &DT.StoreSchema{
+		Cols: []string{"id", "pid"},
+		Pk:   "id",
+		ForeignKeys: []DT.ForeignKeyConstraint{
+			{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"},
+				OnDelete: "NO ACTION", OnUpdate: "NO ACTION",
+				Deferrable: "DEFERRABLE", Initially: "DEFERRED"},
+		},
+	}
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
+
+	// Insert child referencing non-existent parent (deferred, should succeed).
+	err := UT.ValidateForeignKeyInsert(child, []any{int64(1), int64(99)}, nil)
+	if err != nil {
+		t.Fatalf("expected DEFERRED FK insert to succeed, got: %v", err)
+	}
+
+	// Now add the parent row (simulating another statement in the same txn).
+	DT.Tables["p"] = append(DT.Tables["p"], DT.Row{
+		Cols: []string{"id"}, Data: []DT.Value{DT.NewIntValue(99)},
+	})
+
+	// At COMMIT, the parent exists, so the deferred check should pass.
+	err = DT.FlushDeferredFKChecks()
+	if err != nil {
+		t.Fatalf("expected deferred FK check to pass (parent exists now), got: %v", err)
+	}
+}
+
+// TestFK_Deferred_RollbackClearsQueue verifies REQ001311: ROLLBACK clears
+// pending deferred FK checks.
+func TestFK_Deferred_RollbackClearsQueue(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	parent := &DT.StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &DT.StoreSchema{
+		Cols: []string{"id", "pid"},
+		Pk:   "id",
+		ForeignKeys: []DT.ForeignKeyConstraint{
+			{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"},
+				OnDelete: "NO ACTION", OnUpdate: "NO ACTION",
+				Deferrable: "DEFERRABLE", Initially: "DEFERRED"},
+		},
+	}
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
+
+	// Insert with deferred FK (succeeds).
+	_ = UT.ValidateForeignKeyInsert(child, []any{int64(1), int64(99)}, nil)
+
+	// ROLLBACK: clear the queue.
+	DT.ClearDeferredFKChecks()
+
+	// Now FLUSH should succeed (queue is empty).
+	err := DT.FlushDeferredFKChecks()
+	if err != nil {
+		t.Fatalf("expected flush after rollback to succeed, got: %v", err)
+	}
+}
+
+// TestFK_Deferred_Update verifies REQ001311: DEFERRED FK on UPDATE path.
+func TestFK_Deferred_Update(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	parent := &DT.StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &DT.StoreSchema{
+		Cols: []string{"id", "pid"},
+		Pk:   "id",
+		ForeignKeys: []DT.ForeignKeyConstraint{
+			{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"},
+				OnDelete: "NO ACTION", OnUpdate: "NO ACTION",
+				Deferrable: "DEFERRABLE", Initially: "DEFERRED"},
+		},
+	}
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
+
+	// Update child pid to non-existent parent — should succeed (deferred).
+	err := UT.ValidateForeignKeyUpdateInMemory(child,
+		[]any{int64(1), int64(0)},
+		[]any{int64(1), int64(99)},
+	)
+	if err != nil {
+		t.Fatalf("expected DEFERRED FK update to succeed, got: %v", err)
+	}
+
+	// At COMMIT, the deferred check should fail (no parent row with id=99).
+	err = DT.FlushDeferredFKChecks()
+	if err == nil {
+		t.Fatal("expected deferred FK update check to fail at COMMIT, got nil")
+	}
+}
+
+// TestFK_Immediate_StillChecksAtInsert verifies REQ001311: IMMEDIATE FKs
+// continue to check at INSERT time (no deferral).
+func TestFK_Immediate_StillChecksAtInsert(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+
+	parent := &DT.StoreSchema{Cols: []string{"id"}, Pk: "id"}
+	child := &DT.StoreSchema{
+		Cols: []string{"id", "pid"},
+		Pk:   "id",
+		ForeignKeys: []DT.ForeignKeyConstraint{
+			{Columns: []string{"pid"}, RefTable: "p", RefColumns: []string{"id"},
+				OnDelete: "NO ACTION", OnUpdate: "NO ACTION",
+				Deferrable: "NOT DEFERRABLE", Initially: "IMMEDIATE"},
+		},
+	}
+	DT.StoreSchemas[1] = parent
+	DT.StoreSchemas[2] = child
+	DT.TableIDs["p"] = 1
+	DT.TableIDs["c"] = 2
+
+	// IMMEDIATE FK with nil store skips existence check (pre-existing behavior).
+	// But it must NOT enqueue a deferred check.
+	err := UT.ValidateForeignKeyInsert(child, []any{int64(1), int64(99)}, nil)
+	if err != nil {
+		t.Fatalf("expected IMMEDIATE FK insert with nil store to succeed, got: %v", err)
+	}
+	if DT.HasDeferredFKChecks() {
+		t.Fatal("expected IMMEDIATE FK to NOT enqueue a deferred check")
+	}
+}

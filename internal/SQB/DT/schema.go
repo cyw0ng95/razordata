@@ -66,6 +66,8 @@ type ForeignKeyConstraint struct {
 	OnDelete   string   // CASCADE, RESTRICT, SET NULL, SET DEFAULT, NO ACTION
 	OnUpdate   string   // same set
 	Match      string   // MATCH SIMPLE (default), FULL, or PARTIAL
+	Deferrable string   // "DEFERRABLE", "NOT DEFERRABLE", or "" (default NOT DEFERRABLE)
+	Initially  string   // "DEFERRED", "IMMEDIATE", or "" (default IMMEDIATE)
 }
 
 // RegisteredIndex is one entry in the EX-layer's index registry.

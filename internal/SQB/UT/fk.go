@@ -41,6 +41,23 @@ func ValidateForeignKeyInsert(schema *DT.StoreSchema, row []any, store DT.Store)
 		} else if skip {
 			continue
 		}
+		if fk.Initially == "DEFERRED" {
+			refTable := fk.RefTable
+			refCols := fk.RefColumns
+			vals := copyAnySlice(localVals)
+			s := store
+			DT.EnqueueDeferredFKCheck(func() error {
+				if s == nil {
+					if !rowExistsInMemory(refTable, refCols, vals) {
+						return fmt.Errorf("%w: foreign key violation on table referencing %s",
+							ap.ErrConstraint, refTable)
+					}
+					return nil
+				}
+				return checkReferencedRowExists(refTable, refCols, vals, s)
+			})
+			continue
+		}
 		if store == nil {
 			continue
 		}
@@ -236,6 +253,19 @@ func ValidateForeignKeyUpdateInMemory(schema *DT.StoreSchema, oldRow, newRow []a
 		if skip, err := checkFKMatch(fk.Match, newVals); err != nil {
 			return err
 		} else if skip {
+			continue
+		}
+		if fk.Initially == "DEFERRED" {
+			refTable := fk.RefTable
+			refCols := fk.RefColumns
+			vals := copyAnySlice(newVals)
+			DT.EnqueueDeferredFKCheck(func() error {
+				if !rowExistsInMemory(refTable, refCols, vals) {
+					return fmt.Errorf("%w: foreign key update on table referencing %s",
+						ap.ErrConstraint, refTable)
+				}
+				return nil
+			})
 			continue
 		}
 		if !rowExistsInMemory(fk.RefTable, fk.RefColumns, newVals) {
@@ -650,4 +680,11 @@ func dtValuesToAny(vals []DT.Value) []any {
 		out[i] = v.ToAny()
 	}
 	return out
+}
+
+// copyAnySlice returns a shallow copy of a []any slice.
+func copyAnySlice(src []any) []any {
+	dst := make([]any, len(src))
+	copy(dst, src)
+	return dst
 }
