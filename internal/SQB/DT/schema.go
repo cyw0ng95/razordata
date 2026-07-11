@@ -47,6 +47,10 @@ type StoreSchema struct {
 	// and uses it as the LSM key suffix; the user-visible schema
 	// is unchanged (no rowid column appears in SELECT *).
 	HiddenPK  bool
+	// REQ001312: WithoutRowid indicates the table uses the PK
+	// value(s) directly as the LSM row key instead of a synthetic
+	// rowid. The PK column(s) define the storage key.
+	WithoutRowid bool
 	// Strict indicates the table uses strict type enforcement.
 	// When true, INSERT validates that each value's type matches
 	// the declared column affinity. REQ001369.
@@ -569,6 +573,110 @@ func RegisterFromCatalog(entry *ls.CatalogEntry) error {
 	StoreMu.Unlock()
 	TablesMu.Unlock()
 	return nil
+}
+
+// Read-only catalog state.
+
+// CatalogSnapshot captures the DDL catalog state at a savepoint for
+// ROLLBACK TO restore. REQ001320.
+type CatalogSnapshot struct {
+	TableIDs          map[string]uint64
+	StoreSchemas      map[uint64]*StoreSchema
+	RegisteredIndexes map[string][]RegisteredIndex
+	TriggerRegistry   map[string]TriggerInfo
+	Tables            map[string][]Row
+	Schemas           map[string][]string
+}
+
+// CaptureDDLSnapshot takes a deep-ish snapshot of the in-memory
+// catalog state. Caller must hold TablesMu (read) + StoreMu (read).
+func CaptureDDLSnapshot() CatalogSnapshot {
+	snap := CatalogSnapshot{
+		TableIDs:          make(map[string]uint64, len(TableIDs)),
+		StoreSchemas:      make(map[uint64]*StoreSchema, len(StoreSchemas)),
+		RegisteredIndexes: make(map[string][]RegisteredIndex, len(RegisteredIndexes)),
+		TriggerRegistry:   make(map[string]TriggerInfo, len(TriggerRegistry)),
+		Tables:            make(map[string][]Row, len(Tables)),
+		Schemas:           make(map[string][]string, len(Schemas)),
+	}
+	for k, v := range TableIDs {
+		snap.TableIDs[k] = v
+	}
+	for k, v := range StoreSchemas {
+		cp := *v
+		snap.StoreSchemas[k] = &cp
+	}
+	for k, v := range RegisteredIndexes {
+		snap.RegisteredIndexes[k] = append([]RegisteredIndex(nil), v...)
+	}
+	for k, v := range TriggerRegistry {
+		snap.TriggerRegistry[k] = v
+	}
+	for k, v := range Tables {
+		cp := make([]Row, len(v))
+		for i, r := range v {
+			cp[i] = CloneRow(r)
+		}
+		snap.Tables[k] = cp
+	}
+	for k, v := range Schemas {
+		snap.Schemas[k] = append([]string(nil), v...)
+	}
+	return snap
+}
+
+// RestoreDDLSnapshot replaces the in-memory catalog state with a
+// previously captured snapshot, undoing all DDL (and DML in the
+// in-memory path) performed after the savepoint. Caller must hold
+// TablesMu (write) + StoreMu (write).
+func RestoreDDLSnapshot(snap CatalogSnapshot) {
+	// Clear and restore TableIDs.
+	for k := range TableIDs {
+		delete(TableIDs, k)
+	}
+	for k, v := range snap.TableIDs {
+		TableIDs[k] = v
+	}
+	// Clear and restore StoreSchemas.
+	for k := range StoreSchemas {
+		delete(StoreSchemas, k)
+	}
+	for k, v := range snap.StoreSchemas {
+		cp := *v
+		StoreSchemas[k] = &cp
+	}
+	// Clear and restore RegisteredIndexes.
+	for k := range RegisteredIndexes {
+		delete(RegisteredIndexes, k)
+	}
+	for k, v := range snap.RegisteredIndexes {
+		RegisteredIndexes[k] = append([]RegisteredIndex(nil), v...)
+	}
+	// Clear and restore TriggerRegistry.
+	for k := range TriggerRegistry {
+		delete(TriggerRegistry, k)
+	}
+	for k, v := range snap.TriggerRegistry {
+		TriggerRegistry[k] = v
+	}
+	// Clear and restore Tables.
+	for k := range Tables {
+		delete(Tables, k)
+	}
+	for k, v := range snap.Tables {
+		cp := make([]Row, len(v))
+		for i, r := range v {
+			cp[i] = CloneRow(r)
+		}
+		Tables[k] = cp
+	}
+	// Clear and restore Schemas.
+	for k := range Schemas {
+		delete(Schemas, k)
+	}
+	for k, v := range snap.Schemas {
+		Schemas[k] = append([]string(nil), v...)
+	}
 }
 
 // RegisterTable registers a table with rows in the in-memory registry.

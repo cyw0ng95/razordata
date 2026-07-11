@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	_ "github.com/cyw0ng95/razordata/internal/SYS/SE"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
@@ -238,6 +239,82 @@ func TestTransaction_OwnWritesVisible(t *testing.T) {
 	}
 	if len(rs.Cols()) == 0 {
 		t.Error("expected column metadata from own-write SELECT")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDDLSavepoint_RollbackToDropsAddedTable verifies that ROLLBACK TO
+// a savepoint undoes CREATE TABLE (in-memory catalog state). REQ001320.
+func TestDDLSavepoint_RollbackToDropsAddedTable(t *testing.T) {
+	eng, ctx := testEngine(t)
+	s, _ := eng.Begin(ctx)
+	tx, _ := s.Begin(ctx)
+
+	// Create first table.
+	if _, err := tx.Exec(ctx, "CREATE TABLE t1 (id INTEGER, val TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Savepoint(ctx, "sp1"); err != nil {
+		t.Fatalf("Savepoint: %v", err)
+	}
+	// Create second table after savepoint.
+	if _, err := tx.Exec(ctx, "CREATE TABLE t2 (id INTEGER, val TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatal(err)
+	}
+	// Verify t2 exists before rollback.
+	_, err := s.Query(ctx, "SELECT name FROM sqlite_master WHERE name='t2'")
+	if err != nil {
+		t.Fatalf("query before rollback: %v", err)
+	}
+
+	if err := tx.RollbackTo(ctx, "sp1"); err != nil {
+		t.Fatalf("RollbackTo: %v", err)
+	}
+	// After rollback, t2 should no longer exist in the catalog.
+	rows, err := s.Query(ctx, "SELECT name FROM sqlite_master WHERE name='t2'")
+	if err != nil {
+		t.Fatalf("query after rollback: %v", err)
+	}
+	if len(rows.Cols()) > 0 {
+		t.Errorf("table t2 still exists after ROLLBACK TO savepoint")
+	}
+	// t1 should still exist.
+	rows, err = s.Query(ctx, "SELECT name FROM sqlite_master WHERE name='t1'")
+	if err != nil {
+		t.Fatalf("query t1: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDDLSavepoint_RollbackToDropsAddedIndex verifies that ROLLBACK TO
+// a savepoint undoes CREATE INDEX. REQ001320.
+func TestDDLSavepoint_RollbackToDropsAddedIndex(t *testing.T) {
+	eng, ctx := testEngine(t)
+	s, _ := eng.Begin(ctx)
+	tx, _ := s.Begin(ctx)
+
+	if _, err := tx.Exec(ctx, "CREATE TABLE t (id INTEGER, val TEXT, PRIMARY KEY (id))"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Savepoint(ctx, "sp1"); err != nil {
+		t.Fatalf("Savepoint: %v", err)
+	}
+	if _, err := tx.Exec(ctx, "CREATE INDEX idx_val ON t(val)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.RollbackTo(ctx, "sp1"); err != nil {
+		t.Fatalf("RollbackTo: %v", err)
+	}
+	// After rollback, the index should be gone.
+	indexes := DT.GetRegisteredIndexes("t")
+	for _, idx := range indexes {
+		if idx.Name == "idx_val" {
+			t.Error("index idx_val still exists after ROLLBACK TO savepoint")
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)

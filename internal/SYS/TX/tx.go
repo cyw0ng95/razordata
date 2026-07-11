@@ -43,8 +43,9 @@ type writeEntry struct {
 }
 
 type savepoint struct {
-	name     string
-	writeSet map[string]writeEntry
+	name      string
+	writeSet  map[string]writeEntry
+	ddlSnap   *DT.CatalogSnapshot // REQ001320: DDL state snapshot
 }
 
 // NewTransaction binds a freshly-allocated VL Tx to a session for SQL
@@ -278,7 +279,13 @@ func (t *Transaction) Savepoint(ctx context.Context, name string) error {
 	for k, v := range t.writeSet {
 		snap[k] = v
 	}
-	t.savepoints = append(t.savepoints, savepoint{name: name, writeSet: snap})
+	// REQ001320: capture DDL catalog state for ROLLBACK TO restore.
+	DT.TablesMu.RLock()
+	DT.StoreMu.Lock()
+	ddlSnap := DT.CaptureDDLSnapshot()
+	DT.StoreMu.Unlock()
+	DT.TablesMu.RUnlock()
+	t.savepoints = append(t.savepoints, savepoint{name: name, writeSet: snap, ddlSnap: &ddlSnap})
 	return nil
 }
 
@@ -327,7 +334,8 @@ func (t *Transaction) RollbackTo(ctx context.Context, name string) error {
 	if idx < 0 {
 		return ap.New(ap.KindConstraint, "unknown savepoint")
 	}
-	target := t.savepoints[idx].writeSet
+	sp := t.savepoints[idx]
+	target := sp.writeSet
 	eng := t.engine.Engine()
 	for k, entry := range t.writeSet {
 		if _, ok := target[k]; ok {
@@ -342,6 +350,14 @@ func (t *Transaction) RollbackTo(ctx context.Context, name string) error {
 				return err
 			}
 		}
+	}
+	// REQ001320: restore DDL catalog state to savepoint snapshot.
+	if sp.ddlSnap != nil {
+		DT.TablesMu.Lock()
+		DT.StoreMu.Lock()
+		DT.RestoreDDLSnapshot(*sp.ddlSnap)
+		DT.StoreMu.Unlock()
+		DT.TablesMu.Unlock()
 	}
 	t.writeSet = target
 	t.savepoints = t.savepoints[:idx]

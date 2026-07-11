@@ -176,6 +176,123 @@ func TestTableHandle_InsertRowAutoRowID(t *testing.T) {
 	}
 }
 
+// TestTableHandle_WithoutRowid_BasicInsertSelect verifies that a
+// WITHOUT ROWID table stores rows keyed by the PK value directly
+// (no synthetic rowid). REQ001312.
+func TestTableHandle_WithoutRowid_BasicInsertSelect(t *testing.T) {
+	store := newMemStore()
+	ss := registerTestTable(t, "t_wr1", []string{"id", "val"}, "id")
+	ss.WithoutRowid = true
+	defer UnregisterTable("t_wr1")
+
+	h, err := OpenTable(store, "t_wr1")
+	if err != nil {
+		t.Fatalf("OpenTable: %v", err)
+	}
+	row := Row{
+		Cols: []string{"id", "val"},
+		Data: []Value{NewIntValue(10), NewTextValue("ten")},
+	}
+	key, _, err := h.InsertRow(row)
+	if err != nil {
+		t.Fatalf("InsertRow: %v", err)
+	}
+	// GetRow using the PK value directly.
+	got, found, err := h.GetRow(int64(10))
+	if err != nil || !found {
+		t.Fatalf("GetRow(10): found=%v err=%v", found, err)
+	}
+	if got.Data[0].I64 != 10 || got.Data[1].S != "ten" {
+		t.Errorf("round-trip mismatch: got %v", got.Data)
+	}
+	// Verify the row key starts with the table prefix and contains
+	// the PK value. For WITHOUT ROWID, the key is prefix + pk_bytes.
+	if !startsWith(key, h.Prefix()) {
+		t.Errorf("InsertRow key %x does not start with prefix %x", key, h.Prefix())
+	}
+}
+
+// TestTableHandle_WithoutRowid_UpdateChangesPK verifies that updating
+// the PK of a WITHOUT ROWID table deletes the old row and inserts the
+// new row (rather than overwriting in place). REQ001312.
+func TestTableHandle_WithoutRowid_UpdateChangesPK(t *testing.T) {
+	store := newMemStore()
+	ss := registerTestTable(t, "t_wr2", []string{"id", "val"}, "id")
+	ss.WithoutRowid = true
+	defer UnregisterTable("t_wr2")
+
+	h, err := OpenTable(store, "t_wr2")
+	if err != nil {
+		t.Fatalf("OpenTable: %v", err)
+	}
+	oldRow := Row{
+		Cols: []string{"id", "val"},
+		Data: []Value{NewIntValue(1), NewIntValue(100)},
+	}
+	if _, _, err := h.InsertRow(oldRow); err != nil {
+		t.Fatalf("InsertRow: %v", err)
+	}
+	// Update with new PK value.
+	newRow := Row{
+		Cols: []string{"id", "val"},
+		Data: []Value{NewIntValue(2), NewIntValue(200)},
+	}
+	if _, _, err := h.UpdateRow(oldRow, newRow); err != nil {
+		t.Fatalf("UpdateRow (PK change): %v", err)
+	}
+	// Old key should be gone.
+	ex, _ := h.Exists(int64(1))
+	if ex {
+		t.Errorf("old PK(1) still exists after PK change update")
+	}
+	// New key should exist.
+	got, found, err := h.GetRow(int64(2))
+	if err != nil || !found {
+		t.Fatalf("GetRow(2): found=%v err=%v", found, err)
+	}
+	if got.Data[0].I64 != 2 || got.Data[1].I64 != 200 {
+		t.Errorf("new row mismatch: got %v", got.Data)
+	}
+}
+
+// TestTableHandle_WithoutRowid_UpdateSamePK verifies that updating a
+// WITHOUT ROWID table without changing the PK still works (overwrites
+// in place).
+func TestTableHandle_WithoutRowid_UpdateSamePK(t *testing.T) {
+	store := newMemStore()
+	ss := registerTestTable(t, "t_wr3", []string{"id", "val"}, "id")
+	ss.WithoutRowid = true
+	defer UnregisterTable("t_wr3")
+
+	h, err := OpenTable(store, "t_wr3")
+	if err != nil {
+		t.Fatalf("OpenTable: %v", err)
+	}
+	oldRow := Row{
+		Cols: []string{"id", "val"},
+		Data: []Value{NewIntValue(5), NewIntValue(50)},
+	}
+	if _, _, err := h.InsertRow(oldRow); err != nil {
+		t.Fatalf("InsertRow: %v", err)
+	}
+	// Update same PK, different values.
+	newRow := Row{
+		Cols: []string{"id", "val"},
+		Data: []Value{NewIntValue(5), NewIntValue(99)},
+	}
+	if _, _, err := h.UpdateRow(oldRow, newRow); err != nil {
+		t.Fatalf("UpdateRow (same PK): %v", err)
+	}
+	// Same PK should still exist with new values.
+	got, found, err := h.GetRow(int64(5))
+	if err != nil || !found {
+		t.Fatalf("GetRow(5): found=%v err=%v", found, err)
+	}
+	if got.Data[1].I64 != 99 {
+		t.Errorf("expected val=99, got %v", got.Data[1])
+	}
+}
+
 // startsWith is a tiny helper to avoid importing bytes just for one
 // equality check in tests.
 func startsWith(s, prefix []byte) bool {

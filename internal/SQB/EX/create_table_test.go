@@ -138,18 +138,28 @@ func TestCreateTable_SchemaRegistration(t *testing.T) {
 		t.Errorf("Expected DT.ErrTableExists for duplicate table, got: %v", err)
 	}
 
-	// Test 6: WITHOUT ROWID should fail
+	// Test 6: WITHOUT ROWID table creation (REQ001312)
 	stmt6 := &PS.CreateTable{
 		Name: "test6",
 		Cols: []PS.ColDef{
-			{Name: "id", Type: LX.T_INT_KW},
+			{Name: "id", Type: LX.T_INT_KW, Nullable: false},
+			{Name: "val", Type: LX.T_TEXT, Nullable: true},
 		},
+		PK:           strPtr("id"),
 		WithoutRowid: true,
 	}
 	op6 := WT.NewCreateTable(stmt6)
 	_, err = op6.Next(ctx)
-	if err == nil {
-		t.Error("Expected error for WITHOUT ROWID, got nil")
+	if err != DT.ErrNoRows {
+		t.Fatalf("CreateTable WITHOUT ROWID unexpected error = %v", err)
+	}
+	// Verify the flag was propagated to StoreSchema.
+	ss, ok := DT.SchemaFor("test6")
+	if !ok {
+		t.Fatal("SchemaFor(test6) not found")
+	}
+	if !ss.WithoutRowid {
+		t.Error("StoreSchema.WithoutRowid = false, want true")
 	}
 }
 

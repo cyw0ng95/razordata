@@ -2,7 +2,6 @@ package WT
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 
@@ -216,11 +215,6 @@ func (c *CreateTable) Next(ctx context.Context) (DT.Row, error) {
 		return DT.Row{}, DT.ErrNoRows
 	}
 
-	// REQ000910: WITHOUT ROWID storage is not yet implemented.
-	if c.Stmt.WithoutRowid {
-		return DT.Row{}, errors.New("ex: WITHOUT ROWID not yet supported")
-	}
-
 	// CREATE TABLE AS SELECT (REQ000520): the schema comes from
 	// the SELECT output. Register the table, run the SELECT, and
 	// insert rows.
@@ -274,6 +268,8 @@ func (c *CreateTable) Next(ctx context.Context) (DT.Row, error) {
 		if pk == "" {
 			ss.HiddenPK = true
 		}
+		// REQ001312: propagate WITHOUT ROWID flag to store schema.
+		ss.WithoutRowid = c.Stmt.WithoutRowid
 	}
 	_ = ctx
 	DT.StoreMu.Unlock()
@@ -473,6 +469,9 @@ func buildCreateSQL(stmt *PS.CreateTable) string {
 		b = append(b, ')')
 	}
 	b = append(b, ')')
+	if stmt.WithoutRowid {
+		b = append(b, []byte(" WITHOUT ROWID")...)
+	}
 	return string(b)
 }
 

@@ -646,11 +646,46 @@ func (h *TableHandle) MustInsertRow(row Row) error {
 //
 // `newRow` is the row to encode and write; `oldRow` is the
 // pre-update row used for PK extraction and old-index removal.
+//
+// For WITHOUT ROWID tables (REQ001312), if the PK column value
+// changes, UpdateRow performs a delete of the old key followed by
+// an insert of the new key (since the LSM key itself changed).
 func (h *TableHandle) UpdateRow(oldRow, newRow Row) (key []byte, buf []byte, err error) {
 	pk, err := ExtractPKForUpdate(h.Schema, oldRow, h.prefix)
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// REQ001312: WITHOUT ROWID — detect PK change, do delete+insert.
+	if h.Schema.WithoutRowid {
+		newPK, err := ExtractPK(h.Schema, newRow)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !pkValuesEqual(pk, newPK) {
+			oldKey := RowKey(h.prefix, pk)
+			if err := h.Store.Delete(oldKey); err != nil {
+				return nil, nil, err
+			}
+			buf, err = EncodeRow(h.Schema, newRow)
+			if err != nil {
+				return nil, nil, err
+			}
+			key = RowKey(h.prefix, newPK)
+			if err := h.Store.Insert(key, buf); err != nil {
+				return nil, nil, err
+			}
+			// Rebuild all indexes for the new PK.
+			if err := MaintainIndexesOnDelete(h.Store, h.Table, h.Schema, oldRow); err != nil {
+				return key, buf, err
+			}
+			if err := MaintainIndexesOnInsert(h.Store, h.Table, h.Schema, newRow); err != nil {
+				return key, buf, err
+			}
+			return key, buf, nil
+		}
+	}
+
 	buf, err = EncodeRow(h.Schema, newRow)
 	if err != nil {
 		return nil, nil, err
@@ -728,4 +763,32 @@ func (h *TableHandle) GetRow(pk any) (Row, bool, error) {
 func (h *TableHandle) Exists(pk any) (bool, error) {
 	_, found, err := h.Store.Get(RowKey(h.prefix, pk))
 	return found, err
+}
+
+// pkValuesEqual compares two PK values (boxed as any, typically
+// DT.Value) for equality. Used by UpdateRow to detect WITHOUT ROWID
+// PK changes. REQ001312.
+func pkValuesEqual(a, b any) bool {
+	av := toValue(a)
+	bv := toValue(b)
+	return equalValue(av, bv)
+}
+
+// toValue converts an any-typed PK to DT.Value for comparison.
+func toValue(v any) Value {
+	if val, ok := v.(Value); ok {
+		return val
+	}
+	switch val := v.(type) {
+	case int64:
+		return NewIntValue(val)
+	case string:
+		return NewTextValue(val)
+	case float64:
+		return NewFloatValue(val)
+	case bool:
+		return NewBoolValue(val)
+	default:
+		return Value{Kind: KindNull}
+	}
 }
