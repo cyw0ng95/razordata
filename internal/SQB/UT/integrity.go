@@ -82,6 +82,10 @@ func (ic *IntegrityCheck) Next(ctx context.Context) (Row, error) {
 		errors = append(errors, v.VerifyIndexReferences()...)
 	}
 
+	// Check 5: FK consistency (REQ001381)
+	fkErrors := ic.checkForeignKeyConsistency()
+	errors = append(errors, fkErrors...)
+
 	// Convert errors to result rows
 	// Format: (table, page, error_message)
 	// Empty result = all checks passed
@@ -177,4 +181,92 @@ func (ic *IntegrityCheck) checkStore() error {
 	// (handled by store implementation, but we can sanity-check)
 
 	return nil
+}
+
+// checkForeignKeyConsistency verifies FK references for all in-memory
+// tables. Returns a list of error messages; empty means all pass.
+// REQ001381.
+func (ic *IntegrityCheck) checkForeignKeyConsistency() []string {
+	// Collect table names that have FK constraints.
+	type fkEntry struct {
+		childName string
+		schema    *DT.StoreSchema
+	}
+	DT.StoreMu.Lock()
+	var entries []fkEntry
+	for _, ss := range DT.StoreSchemas {
+		if len(ss.ForeignKeys) == 0 {
+			continue
+		}
+		childName := ""
+		for n, id := range DT.TableIDs {
+			if DT.StoreSchemas[id] == ss {
+				childName = n
+				break
+			}
+		}
+		if childName != "" {
+			entries = append(entries, fkEntry{childName: childName, schema: ss})
+		}
+	}
+	DT.StoreMu.Unlock()
+
+	var errs []string
+	for _, e := range entries {
+		DT.TablesMu.RLock()
+		rows := DT.Tables[e.childName]
+		DT.TablesMu.RUnlock()
+	outer:
+		for _, r := range rows {
+			for _, fk := range e.schema.ForeignKeys {
+				localVals := make([]any, len(fk.Columns))
+				allNull := true
+				for i, col := range fk.Columns {
+					ci, ok := e.schema.ColIndex[col]
+					if !ok || ci >= len(r.Data) {
+						continue
+					}
+					localVals[i] = r.Data[ci].ToAny()
+					if localVals[i] != nil {
+						allNull = false
+					}
+				}
+				if allNull {
+					continue
+				}
+				refSchema, ok := DT.SchemaFor(fk.RefTable)
+				if !ok {
+					continue
+				}
+				found := false
+				DT.TablesMu.RLock()
+				parentRows := DT.Tables[fk.RefTable]
+				for _, pr := range parentRows {
+					match := true
+					for i, refCol := range fk.RefColumns {
+						ci, ok := refSchema.ColIndex[refCol]
+						if !ok || ci >= len(pr.Data) {
+							match = false
+							break
+						}
+						if !DT.EqualValueAny(pr.Data[ci], localVals[i]) {
+							match = false
+							break
+						}
+					}
+					if match {
+						found = true
+						break
+					}
+				}
+				DT.TablesMu.RUnlock()
+				if !found {
+					errs = append(errs, fmt.Sprintf("foreign key check: row in %s missing referenced row in %s",
+						e.childName, fk.RefTable))
+					break outer
+				}
+			}
+		}
+	}
+	return errs
 }

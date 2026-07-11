@@ -743,6 +743,14 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 			if uidErr != nil {
 				return DT.Row{}, uidErr
 			}
+			// REQ001309: FK ON UPDATE actions — parent-side cascade.
+			if DT.IsForeignKeysEnabled() {
+				if err := UT.ApplyForeignKeyOnUpdateInMemory(u.table,
+					DT.ValueSliceToAny(snapshot.Data),
+					DT.ValueSliceToAny(row.Data)); err != nil {
+					return DT.Row{}, err
+				}
+			}
 		}
 		if err := DT.ReplaceBySnapshot(u.table, snapshot, row); err != nil {
 			return DT.Row{}, err

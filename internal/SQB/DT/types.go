@@ -437,6 +437,11 @@ func init() {
 }
 
 // RegisterCollation stores a named collator. REQ001333.
+// EvalVirtualColumn is set by WT at startup to evaluate VIRTUAL
+// generated column expressions. UT reads it to handle VIRTUAL FK
+// targets without importing EV directly. REQ001340.
+var EvalVirtualColumn func(schema *StoreSchema, idx int, row *Row) Value
+
 func RegisterCollation(name string, c *collate.Collator) {
 	collationMu.Lock()
 	defer collationMu.Unlock()
