@@ -257,6 +257,9 @@ type ColDef struct {
 	Autoincrement    bool
 	Match            string
 	Deferrable       string
+	// REQ001507: per-column statistics target for histogram size.
+	// 0 means use the default (100).
+	StatisticsTarget int
 	Initially        string
 }
 

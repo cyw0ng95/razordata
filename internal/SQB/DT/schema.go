@@ -35,6 +35,9 @@ type StoreSchema struct {
 	// Only meaningful when ColTypes[i] is T_DECIMAL or T_NUMERIC.
 	Precision []int
 	Scale     []int
+	// REQ001507: per-column statistics target for ANALYZE histogram
+	// size. 0 means use default (100 buckets). Parallel to Cols.
+	StatsTarget []int
 	// REQ000248/249: parallel to Cols; non-nil means column is a
 	// STORED Generated column. The expression is evaluated on
 	// INSERT/UPDATE and the result is stored as the cell value.

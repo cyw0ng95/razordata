@@ -176,12 +176,16 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 		}
 		for i, colName := range ss.Cols {
 			ci := &cols[i]
+			target := 256 // default histogram buckets
+			if i < len(ss.StatsTarget) && ss.StatsTarget[i] > 0 {
+				target = ss.StatsTarget[i]
+			}
 			stats := ls.ColumnStats{
 				DistinctCount: int64(len(ci.distinct)),
 				NullCount:     ci.nullCount,
 				MinValue:      ci.minValue,
 				MaxValue:      ci.maxValue,
-				Histogram:     buildHistogram(ci.reservoir, 256),
+				Histogram:     buildHistogram(ci.reservoir, target),
 				RowCount:      rowCount,
 			}
 			_ = cat.PutStats(catTableID, colName, stats)
