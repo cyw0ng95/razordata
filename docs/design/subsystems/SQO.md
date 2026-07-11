@@ -1,6 +1,6 @@
 # SQO — SQL Query Optimizer
 
-> **Status**: Designed but not yet implemented. See REQ001473-REQ001481 in `docs/development/REQUIREMENTS.md`.
+> **Status**: 7 clusters scaffolded (`internal/SQO/{CP,CM,SL,JN,MM,RW,CO}/` exist with implementation files). `Optimizer` interface and `Executor.RegisterOptimizer` injection seam wired (commit `2168426`). **Production planner remains `SQB/EX/planner.go`** — no production caller invokes `RegisterOptimizer` yet. The migration is tracked by REQ001473-REQ001481 (with follow-on REQs REQ001494-REQ001509 in `REQUIREMENTS_FUTURE.md`).
 
 ## Overview
 
@@ -38,13 +38,13 @@ This split has caused structural problems:
   (`seq_page_cost=1.0`, `random_page_cost=4.0`) that cannot be auto-calibrated
   against actual execution time.
 
-## Architecture: 6 Clusters
+## Architecture: 7 Clusters
 
 ```
 internal/SQO/
 ├── CP/    Cost Params          (CostParams struct, defaults, calibration harness)
 ├── CM/    Cost Models          (per-operator cost formulas, dispatch)
-├── SL/    Selectivity          (predicate → row-count estimation)
+├── SL/    Selectivity          (predicate → row-count estimation; hosts the StatsCatalog interface)
 ├── JN/    Join ordering        (N3, bushy join detection, multi-start)
 ├── MM/    Memoization          (xxhash64 LRU plan cache + LEO learned feedback)
 ├── RW/    Rewriting            (predicate pushdown, subquery flatten, constant fold)
@@ -220,15 +220,16 @@ package CO
 type Optimizer interface {
     Plan(stmt PS.Stmt) (DT.Operator, error)
     SetCostParams(cp CP.CostParams)
-    SetStatsCatalog(stats StatsCatalog)
+    SetStatsCatalog(stats SL.StatsCatalog)  // StatsCatalog is defined in SQO/SL/selectivity.go
     InvalidateCache()
 }
 
-type StatsCatalog interface {
-    TableStats(table string) *TableStats
-    ColumnStats(table, col string) *ColumnStats
-    Invalidate(schemaVersion uint64)
-}
+// SL.StatsCatalog interface — defined in SQO/SL/selectivity.go, consumed by CO.
+// type StatsCatalog interface {
+//     TableStats(table string) *TableStats
+//     ColumnStats(table, col string) *ColumnStats
+//     Invalidate(schemaVersion uint64)
+// }
 
 func New(store DT.Store) Optimizer
 func NewWithOptions(opts Options) Optimizer

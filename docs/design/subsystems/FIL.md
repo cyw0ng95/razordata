@@ -135,7 +135,7 @@ All files follow these conventions under the database root `<name>.razor/`:
 
 | Cluster | Responsibility |
 |---|---|
-| `DF` | DataFile: block read/write via pread/pwrite, O_DIRECT support, checksum |
+| `DF` | DataFile: block read/write via pread/pwrite, O_DIRECT support, checksum, `fadvise` read-ahead hints (`fadvise_linux.go` / `fadvise_other.go`), `mmap` BlockDevice for SST reads (`mmap_linux.go` / `mmap_other.go`) |
 | `MF` | MetaFile: meta.razor read/write, magic validation |
 | `LF` | LogFile: WAL segment creation, rotation, handle pool |
 | `FS` | FileSystem: directory management, path validation, SyncDir |

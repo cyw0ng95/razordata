@@ -112,9 +112,7 @@ type writeBuffer struct {
 - `records` is pre-allocated once per active segment at 256 KB. Small batches are copied into the buffer without allocation; if the buffer is full, a new segment is created (the 64 MB segment size handles the large case, the 256 KB buffer handles per-record overhead).
 - Records are appended to `records` via `binary.LittleEndian` — no intermediate allocations.
 - `Sync()` calls `fsync` on the segment FD, then updates `synced`.
-- Batch commit: multiple transactions can be grouped into one `fsync` call via a `sync.WaitGroup` and a single write barrier.
-
-**Implementation gap (REQ000176, REQ000184):** The current `WAL/FL/fl.go` has stub implementations of `Sync()` and `BatchSync()` that return `nil` without doing anything. The `writeBuffer` struct is also missing. This is a known gap to be addressed in a future phase.
+- Batch commit: multiple transactions can be grouped into one `fsync` call via a `sync.WaitGroup` and a single write barrier (`internal/WAL/FL/group_commit.go:25-178` — `groupCommit` struct with `Submit`/`Close`/`Stats`/`SetFsyncFn`; returns `ErrGroupCommitTimeout` on timeout).
 
 ### Checkpoint
 
@@ -176,12 +174,14 @@ type replayer struct {
 
 ### FL — Flusher
 
-**Responsibility:** `fsync` on commit, batch flush, write barrier coordination, LSN counter.
+**Responsibility:** `fsync` on commit, batch flush, write barrier coordination, LSN counter, group commit.
 
 **Key behaviors:**
-- `Sync()`: flush write buffer to OS page cache, call `fsync` on segment FD, update `synced`.
-- Batch commit: `BatchSync()` waits for multiple transactions, then does a single `fsync`.
+- `Sync()`: flush write buffer to OS page cache, call `fsync` on segment FD, update `synced`. Backed by the `groupCommit` struct in `internal/WAL/FL/group_commit.go`.
+- `writeBuffer` (`internal/WAL/FL/fl.go:55-79`): 256 KB pre-allocated buffer with `Reset`/`Available`/`Write`/`Bytes` methods. Avoids per-record `make` calls.
+- Batch commit: `BatchSync()` waits for multiple transactions, then does a single `fsync` via the `groupCommit.Submit` queue.
 - `SyncDir()`: after `fsync` on WAL, call `fsync` on the WAL directory to ensure directory entries are durable.
+- **Async fsync (REQ000301):** `AsyncSyncResult`, `inflightFsyncs` WaitGroup, `Close` blocks on in-flight fsyncs.
 
 ### RP — Replay
 

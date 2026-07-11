@@ -2,7 +2,7 @@
 
 ## Overview
 
-The core of the database. Implements the LSM tree: a lock-free skiplist memtable that flushes to SST files on disk, leveled compaction, bloom filters, and a file manifest. Manages schemas and row encoding. All reads and writes go through here; it calls down into `WAL` for durability and `MEM` for buffering. Depends on `MEM`, `WAL`, and `LOG`.
+The core of the database. Implements the LSM tree: a sharded lock-free skiplist memtable that flushes to SST files on disk, leveled compaction with subcompact, Ribbon filters (v2 SST) with Bloom (v1) backward compat, an L0 page cache, and an atomic file manifest. Manages schemas (incl. STRICT and WITHOUT ROWID), the persistent RCAT catalog, secondary B-tree indexes, NUMA topology, and row encoding. All reads and writes go through here; it calls down into `WAL` for durability and `MEM` for buffering. Depends on `MEM`, `WAL`, and `LOG`.
 
 ## Dependencies
 
@@ -101,16 +101,17 @@ type node struct {
 - **IndexBlock:**
   - One entry per data block: `[largestKey:varint][blockOffset:varint][blockSize:varint]`
   - Sorted by `largestKey`. Binary search for the target block.
-- **BloomFilter:**
-  - **Structure:** `[]byte` bitset with 10 bits per key (expected). For N keys, bit array size = `(N * 10 + 7) / 8` bytes.
-  - **Hash functions:** Double hashing using two independent FNV-1a hashes with different seeds.
-  - **Query:** Check both bit positions. If either bit is 0, key is definitely not present. If both bits are 1, key is probably present.
-  - **False positive rate:** With 10 bits per key and 2 hash functions, expected false positive rate ≈ 1%.
-  - On read: check bloom filter first. If bloom says "definitely not present", skip the SST file entirely.
+- **RibbonFilter (v2 SST, primary):**
+  - Implemented in `internal/ENG/LS/ribbon.go` (`sstVersionRibbon = 2`). Ribbon is a successor to Bloom filters that achieves comparable false-positive rate at ~30% less space.
+  - **False positive rate:** ≈ 0.39% at default sizing (vs ≈ 1.5% for Bloom at 10 bits/key).
+  - **Query:** 4-probe lookup. If the filter rejects, the SST file is skipped without a block read.
+  - **v1 Bloom compatibility:** legacy Bloom filters remain readable (`sst_version = 1`); new SSTs default to Ribbon (`sst_writer.go:209` sets `w.version = sstVersionRibbon`).
+  - On read: check filter first. If filter says "definitely not present", skip the SST file entirely.
 - **Footer (28 bytes):**
   ```
-  [indexOffset:8][indexSize:4][bloomOffset:8][bloomSize:4][magic:4]
+  [indexOffset:8][indexSize:4][filterOffset:8][filterSize:4][magic:4]
   ```
+  (`bloomOffset`/`bloomSize` is the legacy v1 name; the byte layout is shared between Bloom and Ribbon.)
 - **File naming:** `L<level>_<minKeyHex>_<maxKeyHex>_<fileID>.sst`
 - **Columnar layout:** SST blocks can be written in column-major layout (all keys packed, then all values). Block layout is detected by first byte (0=row-major, 1=columnar). Saves 50%+ I/O for key-only scans.
 
@@ -235,9 +236,9 @@ type PageCache struct {
 
 | Cluster | Responsibility |
 |---|---|
-| `LS` | LSM tree: memtable, SST writer, SST reader, bloom filter, leveled/tiered/hybrid compaction, rate-limited compaction, columnar SST block layout, per-block dictionary compression, subcompaction for L4+, storage policy with tiered device placement, SST page cache |
+| `LS` | LSM tree: sharded lock-free skiplist memtable, SST writer/reader, Ribbon filter (v2) + Bloom (v1), leveled/tiered/hybrid compaction with rate limiter, columnar SST block layout with per-block dictionary compression, subcompaction for L4+, storage policy with tiered device placement, SST page cache, **L0 cache** (`l0_cache.go`), borrowed/epoch iterators, secondary-index store, page cache |
 | `ID` | Index: persistent B-tree for secondary indexes (btree.razor), cursor-based scan, page-level CRC |
-| `TB` | Table: create/drop/alter table, foreign key enforcement, views, triggers. Delegates catalog persistence to CT. |
+| `TB` | Table: create/drop/alter table metadata. **FK enforcement delegated to `SQB/UT/fk.go` + `SQB/DT/fk_queue.go` (DEFERRABLE queue); views and triggers to `SQB/WT/`.** Catalog persistence in CT. |
 | `CT` | Catalog: persistent table metadata storage, schema versioning, bootstrap, encode/decode. Shared by TB and LS. |
 | `SC` | Schema: column types, constraints (NOT NULL, DEFAULT, PRIMARY KEY, UNIQUE, CHECK, FOREIGN KEY), table definitions, integrity checks |
 | `DP` | Deparser: row serialization, SST block encoding, value encoding, delta-key encoding in blocks |
@@ -247,11 +248,11 @@ type PageCache struct {
 
 ### LS — LSM Tree
 
-**Responsibility:** Memtable, SST flush, leveled/tiered/hybrid compaction, bloom filter, file manifest, columnar SST, rate limiter, subcompaction, storage policy, page cache.
+**Responsibility:** Memtable, SST flush, leveled/tiered/hybrid compaction, Ribbon filter (v2) + Bloom (v1), file manifest, columnar SST, rate limiter, subcompaction, storage policy, page cache, L0 cache.
 
 **Key behaviors:**
 - `Insert`: write to active memtable. If memtable is frozen, create a new active memtable and write there.
-- `Get`: check active memtable → frozen memtables (newest first) → L0 (newest first) → L1+ (binary search via index + bloom). Page cache consulted before file read.
+- `Get`: check active memtable → frozen memtables (newest first) → L0 cache → L0 SSTs (newest first) → L1+ (binary search via index + Ribbon/Bloom filter). Page cache consulted before file read.
 - `NewIterator`: merge iterators from all sources (memtable + all SST files) in sorted key order using a min-heap.
 - `Flush`: freeze active memtable, write it as an SST to L0, update manifest.
 - `Compact`: trigger background compaction goroutine. Runs in a separate goroutine, rate-limited via `RateLimiter`.
@@ -274,16 +275,15 @@ type PageCache struct {
 
 ### TB — Table
 
-**Responsibility:** Table metadata operations: `CREATE TABLE`, `DROP TABLE`, `ALTER TABLE`, schema management, foreign key enforcement, views, triggers.
+**Responsibility:** Table metadata operations: `CREATE TABLE`, `DROP TABLE`, `ALTER TABLE`, schema management.
 
 **Key behaviors:**
-- `CREATE TABLE`: allocate `tableID`, serialize `TableSchema`, insert into system catalog LSM.
+- `CREATE TABLE`: allocate `tableID`, serialize `TableSchema`, insert into system catalog LSM. Supports `STRICT` table type (REQ001369) and `WITHOUT ROWID` (rejected at this layer — REQ001312 deferred).
 - `DROP TABLE`: mark the table's key range as deleted (tombstone) in the system catalog, remove schema from registry.
-- `ALTER TABLE`: `ADD COLUMN`, `DROP COLUMN`, `RENAME TO`, `RENAME COLUMN` — online schema migration without table copy.
+- `ALTER TABLE`: `ADD COLUMN`, `DROP COLUMN` (with cascade rules — REQ001384), `RENAME TO`, `RENAME COLUMN`, `ALTER SET/DROP DEFAULT` — online schema migration without table copy.
 - `GetSchema(tableID)`: look up from in-memory `map[tableID]*TableSchema`, or load from catalog if not cached.
-- Foreign key validation is delegated to `SQL/EX/fk.go`.
-- Views are materialized as stored `SELECT` queries resolved at query planning time.
-- Triggers are stored as named action definitions (BEFORE/AFTER INSERT/UPDATE/DELETE) and fired by the executor.
+- **Foreign key validation** (MATCH FULL/PARTIAL/SIMPLE, all 5 reference actions, DEFERRABLE queue): delegated to `internal/SQB/UT/fk.go` and `internal/SQB/DT/fk_queue.go`.
+- **Views and triggers:** delegated to `internal/SQB/WT/` (`view.go`, `matview.go`, `writers_dml.go`). Triggers are stored as named action definitions (BEFORE/AFTER/INSTEAD OF INSERT/UPDATE/DELETE) and fired by the executor; TEMP triggers are supported (REQ001370).
 
 ### SC — Schema
 
@@ -320,8 +320,12 @@ type PageCache struct {
 
 1. **`internal/ENG/LS/skiplist.go`** — lock-free skiplist: `Insert`, `Find`, `Iterator`. Test against a reference implementation.
 2. **`internal/ENG/LS/memtable.go`** — `Memtable` struct: `Insert`, `Get`, `Iterator`, size tracking, freeze trigger.
-3. **`internal/ENG/LS/sst_writer.go`** — SST file writer: block encoding with restart points, bloom filter, footer.
-4. **`internal/ENG/LS/sst_reader.go`** — SST file reader: block decoding, bloom check, index binary search.
+3. **`internal/ENG/LS/sst_writer.go`** — SST file writer: block encoding with restart points, Ribbon filter (v2) with Bloom (v1) fallback, footer.
+4. **`internal/ENG/LS/sst_reader.go`** — SST file reader: block decoding, Ribbon/Bloom filter check, index binary search.
+5. **`internal/ENG/LS/ribbon.go`** — Ribbon filter implementation (4 probes, ~30% less space than Bloom at the same FPR).
+6. **`internal/ENG/LS/l0_cache.go`** — L0 page cache for hot L0 SSTs.
+7. **`internal/ENG/LS/sharded_memtable.go`** — sharded lock-free skiplist memtable.
+8. **`internal/ENG/LS/borrowed_iter.go`**, **`epoch_iter.go`**, **`index_store.go`** — iterator variants and secondary-index store.
 5. **`internal/ENG/LS/manifest.go`** — `Manifest`: versioning, apply diff, atomic rename, checkpoint.
 6. **`internal/ENG/LS/flush.go`** — memtable flush: freeze, write SST, update manifest.
 7. **`internal/ENG/LS/compaction.go`** — leveled compaction: pick job, merge sort, write output, update manifest.

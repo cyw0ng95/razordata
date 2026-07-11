@@ -150,7 +150,10 @@ type DebugStats struct {
 | `IN` | Inspectors: page dumps, buffer pool state, active transactions | `debug` |
 | `PR` | Profiling: on-demand CPU/heap/goroutine/mutex/block/trace profiles | `debug`; mutex/block requires `dbg_profiling` |
 | `DC` | Dynamic Control: per-subsystem log level, trace class enable/disable | `debug` |
-| `SK` | Socket: UNIX domain socket command server, protocol dispatch | `debug` |
+| `SK` | Socket: UNIX domain socket command server, protocol dispatch (`heap`, `cpu N`, `goroutine`, `debug_join`, `debug_join_flush`, `debug_join_filter`, `debug_join_summary`) | `debug` |
+| `CD` | Causal Debug / correlation tracer: buffered events for cross-subsystem correlation | `debug` |
+| `DI` | Debugger interface: `NewDebugger()` factory struct | `debug` |
+| `JD` | JOIN Debug tracer: backs `PRAGMA debug_join_tracing`, ring buffer for join-level event capture | `debug` |
 
 ### TE — Trace Events
 
@@ -169,6 +172,25 @@ State inspection commands:
 - `BufferPool()` — snapshot page cache state
 - `ActiveTxns()` — snapshot in-flight transactions
 - Backs PRAGMA `buffer_pool`, `active_txns`, `dump_page`, `sst_stats`
+
+### CD — Causal Debug
+
+Correlation tracer (`internal/DBG/CD/{buffer,event,tracer}.go`).  Buffers events
+across subsystem boundaries so a single correlation ID can be followed through
+log → SQB → WAL → ENG.
+
+### DI — Debugger
+
+Debugger interface struct (`internal/DBG/DI/di.go`).  `NewDebugger()` factory
+returns a configured `Debugger` that combines a tracer, counters, and inspectors.
+
+### JD — JOIN Debug
+
+Join-level tracer (`internal/DBG/JD/{buffer,event,tracer,e2e_test}.go`).  Backs
+the `PRAGMA debug_join_tracing = detailed|basic|off` family and the SK socket
+commands `debug_join`, `debug_join_flush`, `debug_join_filter`,
+`debug_join_summary`.  Ring buffer per join group; selected events flow to the
+trace ring buffer (`TE`) for unified inspection.
 
 ### PR — Profiling
 

@@ -11,8 +11,7 @@ DT ← EX, EV, AG, AD, OP, UT (terminal)
         ↑
 EV ← AG (aggregate needs EvalValue)
 OP ← AD (planner constructs OP operators), AG (planner constructs AG operators), EX (executor owns planner and operators)
-EX ← AD (planner currently lives in EX, will move to AD in SQB finalization)
-```
+EX ← AD (planner lives in EX; AD owns plan_node/explain; SQO/CO injection seam wired but production still uses EX.Planner)
 
 No cycles; clusters are extracted one at a time.
 
@@ -52,13 +51,13 @@ type Value = AP.Value
 | Cluster | Responsibility |
 |---|---|
 | `DT` | **Shared data types.** Row/Value/Operator/ExecContext/Store/StatsCatalog types + aliases; schema registry (Tables/Schemas/StoreSchemas/InMemSchemas/TableIDs/TablePKs/RegisteredIndexes); view/matview/catalog registries (ViewRegistry/MatViewRegistry/CurrentCatalog); session counters (SessionCounterAccessor interface, CurrentSessionID atomic); AST traversal helpers (ContainsAggregate, ContainsWindowFunc); value conversion utilities (ValueFromAny, ValueToString, ValueFromAnySlice, ValueSliceToAny, Compare, ToInt64, EqualValueAny, IsValueTruthy). Imported by every other SQB cluster; does not import EX/EV/AG. |
-| `EX` | Executor factory: `Executor.Exec`/`Query`/`QueryStream`, statement cache, session lifecycle, subq.go (injectOuter + runSubqueryPlan helpers used by `(*Planner).ExecuteSubquery`), plan_node.go (PlanNode tree for EXPLAIN), shape_specialize.go (DetectShape), matview.go (CreateMatView/RefreshMatView/DropMatView). Re-exports `SessionCounterAccessor`, `SetSessionCounterAccessor`, `SetCatalog`, `RegisterFromCatalog`, `RestoreInMemoryTables`, and the `ErrEval`/`ErrDivByZero`/`ErrTypeMismatch`/`ErrSubquery`/`ErrTriggerAbort` error sentinels from EV for SYS callers. Several operator files still reside in EX pending SQB finalization (`operators.go`, `intermediate.go`, `join.go`, `operators_parallel.go`, `operators_vec.go`, `compound.go`, `planner.go`, `plan_node.go`, `shape_specialize.go`, `writers.go`, `source.go`, `store.go`, `alter_table.go`, `fk.go`, `view.go`, `constraints.go`, `analyze.go`, `integrity.go`, `explain.go`, `sort_parallel.go`, `pipeline.go`, `values.go`). |
-| `OP` | Operators. `Distinct`, `HashJoin`, `HashCrossJoin` (already present before the SQB/WT extraction). the SQB/WT extraction leaf operators moved from EX: `PragmaResult` (single-row PRAGMA row), `SqliteMaster` (sqlite_master virtual table). Operators.go (SeqScan, IndexScan), intermediate.go (Filter, Project, Sort, Limit, Offset), join.go (NestedLoopJoin), operators_parallel.go (ParallelSeqScan/ParallelIndexScan/ParallelUnionAll), operators_vec.go (VectorizedSeqScan/VectorizedFilter), compound.go (CompoundOp for UNION/INTERSECT/EXCEPT), values.go (Values/ValuesRows) are scheduled to move to OP in SQB finalization. |
+| `EX` | Executor factory: `Executor.Exec`/`Query`/`QueryStream`, statement cache, session lifecycle, subq.go (injectOuter + runSubqueryPlan helpers used by `(*Planner).ExecuteSubquery`), `dispatch.go`, `stream.go`, `executor_factory.go`. Re-exports `SessionCounterAccessor`, `SetSessionCounterAccessor`, `SetCatalog`, `RegisterFromCatalog`, `RestoreInMemoryTables`, and the `ErrEval`/`ErrDivByZero`/`ErrTypeMismatch`/`ErrSubquery`/`ErrTriggerAbort` error sentinels from EV for SYS callers. Houses the **active planner** (`planner.go`, 917 lines, plus `cost.go` 822 lines, `join_order.go` 813 lines, `predicate.go`, `view_subquery.go`, `index_plan.go`) — production path until SQO migration completes. |
+| `OP` | Operators. Fully extracted library: `seq_scan.go`, `index_scan.go`, `index_only_scan.go`, `bitmap_scan.go`, `filter.go`, `project.go`, `sort_parallel.go`, `topn_sort.go`, `nljoin.go`, `hashjoin.go`, `mergejoin.go`, `parallel_hashjoin.go`, `hashcrossjoin.go`, `distinct.go`, `pragma.go` (PragmaResult), `values.go`, `virtual.go` (SqliteMaster, SqliteTempMaster, SqliteSequence), `rowpool.go`. Vectorized variants: `VectorizedSeqScan`, `VectorizedFilter`, `VectorizedProject`, `VectorizedDistinct`, `VectorizedCompoundOp`, `VectorizedHashJoin`, `VectorizedNestedLoopJoin`. Parallel scans (ParallelSeqScan, ParallelIndexScan, ParallelIndexRangeScan, ParallelHashJoin, ParallelUnionAll) ship here. |
 | `EV` | Expression evaluation. `eval.go` (`EvalValue` entry point, all eval functions: evalBinaryValue, evalUnaryValue, evalBetween, evalCast, evalCase, evalInValue, evalInHashValue, evalBinaryShortCircuit, evalAggregate, evalFunction, evalWindowFunc, evalRaise, 33 scalar functions via bridges), `eval_vec.go` (`EvalBatch` vectorized batch predicate, hoisted operators `CompareFloat64ColLit`/`CompareInt64ColLit`/`CompareInt64Cols`/`CompareStringColLit`, `SwapOp`, `InvertSelection`, `BatchValueAt`), `function_registry.go` (`ScalarFuncRegistry` map of native scalar functions: LENGTH, UPPER, LOWER, IFNULL, COALESCE, NULLIF, NOW). Public exports `EvalValue`/`EvalForTest`/`EvalBatch`/`ClearSubqueryCaches`/`ScalarFuncRegistry`; error sentinels `ErrEval`, `ErrDivByZero`, `ErrTypeMismatch`, `ErrSubquery`, `ErrIgnoreRow`, `ErrTriggerAbort`. |
 | `AG` | Aggregation. `aggregate.go` (`Aggregate` operator, `EvalAggregateOver`), `aggregate_vec.go`, `hashagg.go` (`HashAggregate` + `Child()`/`GroupCols()` accessors), `hashagg_parallel.go` (ParallelHashAggregate), `window.go` (`WindowOperator` + `Input()`/`FuncName()` accessors), `aggregate_registry.go` (`AggregateFuncRegistry` map: sumImpl, avgImpl, minImpl, maxImpl, countImpl, plus four `*Distinct` variants). AG depends on `EV.EvalValue`. |
-| `AD` | ADQC and cache. `adqc.go` (`AdaptiveOp`), `adqc_cache.go` (`AdqcCache` LRU, 256 entries), `adqc_fallback.go` (`FallbackOp` safe-fallback wrapper), `adqc_telemetry.go` (telemetry), `cache_stats.go` (cache statistics), `index_usage.go` (index-skip tracking). `planner.go` (~4900 lines: `Planner`, `plan`/`joinPlan`/`tableInfo`/`joinTableInfo`, `NewPlanner`, `planInsert`/`planUpdate`/`planDelete`/`planSelect*`/`planCompound`/`planAggregation`/`planOrdering`/`planLimitOffset`, `*Planner.Plan`, `*Planner.ExecuteSubquery`, memoization, cost estimation, N3 join ordering, selectivity), `plan_node.go` (PlanNode tree), and `shape_specialize.go` are currently still in EX and scheduled to migrate to AD in SQB finalization — blocked only on moving the operator types SeqScan/IndexScan/Filter/Project/Sort/Limit/Offset/NestedLoopJoin out of EX first (currently direct field access keeps the planner tied to EX). |
-| `WT` | Write operators. **Planned but not yet created** — directory `internal/SQB/WT/` does not yet exist. Will host (currently in EX): `writers.go` (Insert/Update/Delete/Trigger/CreateTable/DropTable/CreateIndex/DropIndex/Pragma/Explain/Truncate/Reindex/DropView/DropTrigger/UnsupportedOp/AttachOp/DetachOp + buildWriterOp dispatcher, ~2500 lines), `source.go` (buildInsertRow/applyUpdate/evalTriggerWhen/UnregisterAll), `store.go` (key encoding, encodeRow/decodeRow, extractPK/maintainIndexesOnInsert-Delete-Update), `alter_table.go` (AlterTable operator), `fk.go` (FK validation), `view.go` (CreateViewOperator), `constraints.go` (memLookup/uniqueLookupWithApply/validateCheck). Iter-37 plans this move. WT will depend on DT, EV (for `EV.EvalValue` in DEFAULT), OP (operators from writers), and AG (none). It will NOT depend on EX. |
-| `UT` | Utilities. Already in place: `coerce.go` (Go type → SQL type coercion), `decimal.go`, `datetime.go`, `json.go`, `parallel.go` (`WorkerPool`), `batch.go` (`Batch` + `Column` for columnar evaluation), `pipeline.go`, `simd_dispatch.go`, `string_column.go`, `txn_debug.go`, plus a small `pragma.go` that hosts the `PragmaListener` interface (`OnPragmaChange`, `RegisterPragmaListener`, `UnregisterAllPragmaListeners`, `NotifyPragmaChange`) — distinct from `SQB/OP/PragmaResult` (single-row PRAGMA row operator) and `SQB/EX/Pragma` (the actual PRAGMA operator under SQB finalization). Still in EX pending SQB finalization: `analyze.go`, `integrity.go`, `explain.go`, `sort_parallel.go`, `pipeline.go`, `view.go` (actually planned for WT), `matview.go` (planned for UT as a utility). |
+| `AD` | ADQC and cache. `adqc.go` (`AdaptiveOp`), `adqc_cache.go` (`AdqcCache` LRU, 256 entries), `adqc_fallback.go` (`FallbackOp` safe-fallback wrapper), `adqc_telemetry.go` (telemetry), `cache_stats.go` (cache statistics), `index_usage.go` (index-skip tracking), `plan_node.go` (PlanNode tree, 721 lines — migrated from EX), `explain.go` (migrated from EX). The production planner **remains in EX** (`SQB/EX/planner.go` + `cost.go` + `join_order.go`) until the SQO migration wires an `SQO/CO` optimizer through the `Executor.RegisterOptimizer` seam. |
+| `WT` | Write operators and DDL. **Shipped.** `internal/SQB/WT/` hosts 18 files: `writers_admin.go` (PRAGMA dispatch — `journal_mode`, `temp_store`, `auto_compact`, `quick_check`, `incremental_vacuum`, `wal_checkpoint`, `busy_timeout`, `foreign_keys`, `cell_size_check`, `database_list`, `table_list`, `index_list`, `foreign_key_list`, `table_info`), `writers_ddl.go` (CREATE/DROP/ALTER/TRUNCATE/REINDEX/ATTACH-DETACH), `writers_dml.go` (INSERT/UPDATE/DELETE/UPSERT/RETURNING/TRIGGER), `alter_table.go`, `constraints.go`, `view.go`, `matview.go`, `virtual_init.go`, `source.go`. WT depends on DT, EV, OP, and UT. It does NOT depend on EX. |
+| `UT` | Utilities. `coerce.go`, `decimal.go`, `datetime.go`, `json.go`, `parallel.go` (`WorkerPool`), `batch.go` (`Batch` + `Column` for columnar evaluation), `pipeline.go`, `simd_dispatch.go`, `string_column.go`, `txn_debug.go`, `pragma.go` (`PragmaListener` interface — `OnPragmaChange`, `RegisterPragmaListener`, `UnregisterAllPragmaListeners`, `NotifyPragmaChange`), `fk.go` (FK validation incl. MATCH FULL/PARTIAL/SIMPLE), `analyze.go` (ANALYZE with reservoir sampling + histogram persistence), `integrity.go`. |
 
 ### DT — Shared Data Types
 
@@ -87,9 +86,22 @@ type Value = AP.Value
 - `subq.go`: `injectOuter` (walks operator trees wrapping `SeqScan`/`IndexScan`/`Filter`/`Project`/`Sort`/`Limit`/`Offset`/`NestedLoopJoin`/`Aggregate` in `outerInjector` for correlated subqueries) and `runSubqueryPlan` (drives a `*pl.PlanResult` and collects rows). Used by `(*Planner).ExecuteSubquery`.
 - `plan_node.go`: PlanNode tree used by EXPLAIN output. Recurses through `*Filter`/`*Project`/`*Sort`/`*Limit`/`*NestedLoopJoin`/`*SeqScan`/`*IndexScan`/`*Value`/`*Aggregate`/`*HashAggregate`/`*WindowOperator`/`*HashJoin`/`*HashCrossJoin`/`*CompoundOp`/etc. References `AG.Aggregate.Child()`, `AG.WindowOperator.Input()`/`FuncName()`, `AG.HashAggregate.Child()`/`GroupCols()` via accessor methods — replaced direct field access so cross-package callers cannot reach `unexported` fields.
 - `shape_specialize.go`: pattern detection (e.g. `ShapeHashAggInt64`); uses `AG.HashAggregate.GroupCols()` accessor.
-- `matview.go`: `CreateMatViewOperator`, `RefreshMatViewOperator`, `DropMatViewOperator`.
+- `matview.go`: `CreateMatViewOperator`, `RefreshMatViewOperator`, `DropMatViewOperator` (moved to `WT/matview.go` for the canonical location; EX retains a thin re-export).
 
-**Pending SQB finalization split (these remain in EX until SQB finalization ships):** `planner.go`, `operators.go` (SeqScan, IndexScan, tableSchemaEntry), `intermediate.go` (Filter, Project, Sort, Limit, Offset), `join.go` (NestedLoopJoin), `join_strategy.go`, `operators_parallel.go` (ParallelSeqScan, ParallelIndexScan, ParallelUnionAll), `operators_vec.go` (VectorizedSeqScan, VectorizedFilter), `compound.go` (CompoundOp), `constraints.go` (memLookup, uniqueLookupWithApply), `values.go` (Values, ValuesRows), `explain.go` (ExplainStmtOp), `pipeline.go` (operatorPipelineAdapter), `analyze.go`, `integrity.go`, `sort_parallel.go`, `fk.go`, `view.go`, `store.go`, `source.go`, `writers.go`, `alter_table.go`, `indexscan_strategy.go`. These will move to OP, AD, UT, and WT in subsequent SQB cluster fills.
+**EX residual after the SQB/WT extraction and SQB/OP finalization (moved out):**
+- Operators (`seq_scan.go`, `index_scan.go`, `filter.go`, `project.go`, `nljoin.go`, `hashjoin.go`, `mergejoin.go`, `parallel_hashjoin.go`, `hashcrossjoin.go`, `distinct.go`, `pragma.go`, `values.go`, `virtual.go`, `sort_parallel.go`, `topn_sort.go`) → `OP/`.
+- Writers (`writers_admin.go`, `writers_ddl.go`, `writers_dml.go`, `alter_table.go`, `constraints.go`, `view.go`, `virtual_init.go`) → `WT/`.
+- `matview.go` → `WT/matview.go`.
+- `explain.go` (EX's), `plan_node.go` (canonical PlanNode tree) → `AD/`.
+- `analyze.go`, `integrity.go`, `fk.go` → `UT/`.
+- `indexscan_strategy.go` → `OP/`.
+
+**Remaining in EX (intentionally):**
+- `ex.go`, `dispatch.go`, `stream.go`, `executor_factory.go` — executor glue.
+- `planner.go`, `cost.go`, `join_order.go`, `predicate.go`, `view_subquery.go`, `index_plan.go`, `resolve_slots.go`, `expr_util.go`, `fold_cse.go`, `plan_subquery_explain.go`, `plan_node.go` (dispatcher subtree), `vec_transform.go`, `function_registry.go` (re-export) — active planner.
+- `subq.go` (correlated-subquery injection).
+- `source.go` (re-export).
+- `constraint_error.go` (re-export).
 
 ### OP — Operators
 
@@ -112,21 +124,21 @@ type HashCrossJoin  struct{ left, right Operator; leftTbl, rightTbl, leftKey, ri
 type PragmaResult   struct{ name, value string; done bool }
 type SqliteMaster   struct{ rows []Row; idx int }
 
-// Leaf operators scheduled to move from EX in SQB finalization
+// Leaf operators (now in OP)
 type SeqScan   struct{ table string; filter Expr; schema *TableSchema; iter Iterator }
 type IndexScan struct{ ... }
 
-// Intermediate operators scheduled to move from EX in SQB finalization
+// Intermediate operators (now in OP)
 type Filter    struct{ child Operator; predicate Expr }
 type Project   struct{ child Operator; cols []string }
 type Sort      struct{ child Operator; keys []Expr; asc []bool }
 type Limit     struct{ child Operator; n int64 }
 type Offset    struct{ child Operator; n int64 }
 
-// Join operators scheduled to move from EX in SQB finalization
+// Join operators (now in OP)
 type NestedLoopJoin struct{ left, right Operator; cond Expr }
 
-// Compound + parallel + vectorized (still in EX; scheduled SQB finalization)
+// Compound + parallel + vectorized (now in OP)
 type CompoundOp struct{ ... }
 type ParallelSeqScan struct{ ... }
 type ParallelIndexScan struct{ ... }
@@ -206,7 +218,7 @@ type VectorizedFilter struct{ ... }
 - `index_usage.go`: index-skip tracking (used by SeqScan to record when an available index was bypassed).
 
 **Still in EX (pending SQB finalization):**
-- `planner.go` (~4900 lines): `Planner`, `plan`, `joinPlan`, `tableInfo`, `joinTableInfo`, `planInsert`, `planUpdate`, `planDelete`, `planCreateTable`, `planDropTable`, `planSelect`, `planSelectScan`, `planSelectJoins`, `planSelectSubquery`, `planSelectSqliteMaster`, `planCompound`, `planAggregation`, `planOrdering`, `planLimitOffset`, `*Planner.Plan`, `*Planner.ExecuteSubquery`, `*Planner.SetPool`, `*Planner.SetStatsCatalog`, `*Planner.InvalidateCache`, `*Planner.SetJoinBufferSize`, `*Planner.SetMaxMemoryPerQuery`, `NewPlanner`, `ParallelThreshold`, `estimateCost`, `estimatePredicateSelectivity`, `estimateRowCount`, `findTableForColumn`, `extractTablesFromExpr`, `walkExprForTables`, `canPushDown`, `splitPredicatesByTable`, `equiJoinKey`, `extractEquiJoinKeys`, `extractSingleOnEquiKey`, `selectIndex`, `n3JoinOrdering`, `n3JoinOrderingMultiStart`, `exhaustiveJoinOrder`, `estimateJoinOrderCost`, `findPredicatesForPair`, `findPredicatesForSet`, `hasIndexOnTable`, `joinResultRows`, `populatePlan`, `propagatePlanner`, `propagateExecContext`, `hasAnyWindowFunc`, `isStarExpr`. The `planner.go` split to AD is blocked on moving `SeqScan`, `IndexScan`, `Filter`, `Project`, `Sort`, `Limit`, `Offset`, `NestedLoopJoin` operators out of EX. Until then, direct field access (`v.child`, `v.funcName`, `v.groupCols`) keeps planner.go's imports confined to EX.
+- `planner.go` (917 lines): `Planner`, `plan`, `joinPlan`, `tableInfo`, `joinTableInfo`, `planInsert`, `planUpdate`, `planDelete`, `planCreateTable`, `planDropTable`, `planSelect`, `planSelectScan`, `planSelectJoins`, `planSelectSubquery`, `planSelectSqliteMaster`, `planCompound`, `planAggregation`, `planOrdering`, `planLimitOffset`, `*Planner.Plan`, `*Planner.ExecuteSubquery`, `*Planner.SetPool`, `*Planner.SetStatsCatalog`, `*Planner.InvalidateCache`, `*Planner.SetJoinBufferSize`, `*Planner.SetMaxMemoryPerQuery`, `NewPlanner`, `ParallelThreshold`, `estimateCost`, `estimatePredicateSelectivity`, `estimateRowCount`, `findTableForColumn`, `extractTablesFromExpr`, `walkExprForTables`, `canPushDown`, `splitPredicatesByTable`, `equiJoinKey`, `extractEquiJoinKeys`, `extractSingleOnEquiKey`, `selectIndex`, `n3JoinOrdering`, `n3JoinOrderingMultiStart`, `exhaustiveJoinOrder`, `estimateJoinOrderCost`, `findPredicatesForPair`, `findPredicatesForSet`, `hasIndexOnTable`, `joinResultRows`, `populatePlan`, `propagatePlanner`, `propagateExecContext`, `hasAnyWindowFunc`, `isStarExpr`. Plan-node and explain-output code has migrated to `AD/plan_node.go` (721 lines) and `AD/explain.go`. The production planner stays in EX until the SQO/CO optimizer is wired via `Executor.RegisterOptimizer` (REQ001473-1481).
 - `shape_specialize.go`: `DetectShape` and `isInt64GroupBy` use `AG.HashAggregate.GroupCols()` accessor; this file is the smallest of the three and could move independently once `_` references to EX types are eliminated.
 - `plan_node.go`: `PlanNode` tree (in `EX`, will move to AD with the planner) — currently in EX because its `buildNode` recursively walks `*SeqScan`/`*Filter`/`*Aggregate`/etc.
 
@@ -225,18 +237,19 @@ type VectorizedFilter struct{ ... }
 
 **Responsibility:** Write operators, source operators, store operations, DDL executors, FK, CTE, views, triggers.
 
-**Status:** **Cluster pending.** Directory `internal/SQB/WT/` does not yet exist. Files remain in `internal/SQB/EX/` until SQB finalization ships.
+**Status:** **Shipped.** Directory `internal/SQB/WT/` hosts 18 files:
 
-- `writers.go` (~2500 lines): `Insert`, `Update`, `Delete`, `Trigger`, `CreateTable`, `DropTable`, `CreateIndex`, `DropIndex`, `Pragma`, `Explain`, `Truncate`, `Reindex`, `DropView`, `DropTrigger`, `UnsupportedOp`, `AttachOp`, `DetachOp` operators; `buildWriterOp` dispatcher.
-- `source.go`: `buildInsertRow`, `applyUpdate`, `evalTriggerWhen`, `UnregisterAll` (test reset).
-- `store.go`: key encoding (`rowKey`, `pkToBytes`, `int64ToBytesBigEndian`), `encodeRow`/`decodeRow`, `extractPK`, `extractPKForUpdate`, `maintainIndexesOnInsert/Delete/Update`, `indexValueFor`, `tablePrefix`, `encodeTablePrefix`.
-- `alter_table.go`: `AlterTable` operator (`ADD COLUMN`, `DROP COLUMN`, `RENAME TO`, `RENAME COLUMN`).
-- `fk.go`: FK validation during writes (`applyFKCheck`, `validateFKOnDelete`, `validateFKOnInsert`, `validateFKOnUpdate`).
-- `view.go`: `CreateViewOperator`.
+- `writers_admin.go` (~80 funcs/types): PRAGMA dispatch — `journal_mode`, `temp_store`, `auto_compact`, `quick_check`, `incremental_vacuum`, `wal_checkpoint`, `wal_autocheckpoint`, `busy_timeout`, `busy_handler`, `batch_size`, `foreign_keys`, `foreign_key_check`, `cell_size_check`, `database_list`, `table_list`, `index_list`, `foreign_key_list`, `table_info`, plus debug_*.
+- `writers_ddl.go`: `CREATE TABLE`/`DROP TABLE`/`CREATE INDEX`/`DROP INDEX`/`CREATE VIEW`/`DROP VIEW`/`CREATE MATERIALIZED VIEW`/`DROP MATERIALIZED VIEW`/`REFRESH MATERIALIZED VIEW [CONCURRENTLY]`/`CREATE TRIGGER [TEMP]`/`DROP TRIGGER`/`ALTER TABLE`/`TRUNCATE TABLE`/`REINDEX`/`ATTACH`/`DETACH`/`CREATE VIRTUAL TABLE`.
+- `writers_dml.go`: `Insert`, `Update`, `Delete`, `Upsert` (all 5 conflict actions), `RETURNING`, TRIGGER fire logic.
+- `alter_table.go`: `AlterTable` operator (`ADD COLUMN`, `DROP COLUMN` with cascade rules — REQ001384, `RENAME TO`, `RENAME COLUMN`, `ALTER SET/DROP DEFAULT`).
 - `constraints.go`: `memLookup`, `memLookupAdapter`, `uniqueLookupWithApply`, `validateCheck`, `fillDefaults`.
-- `indexscan_strategy.go`: index-scan strategy helpers (`ScanStrategy`, `storeIter` interface); consumed by writers during secondary index maintenance.
+- `view.go`: `CreateViewOperator`.
+- `matview.go`: `CreateMatViewOperator`, `RefreshMatViewOperator`, `DropMatViewOperator`.
+- `virtual_init.go`: virtual-table initialization.
+- `source.go`: `buildInsertRow`, `applyUpdate`, `evalTriggerWhen`, `UnregisterAll` (test reset).
 
-**Cross-package dependencies (when WT is created):** WT will depend on DT (Row/Value/Schema registry), EV (`EV.EvalValue` for DEFAULT expressions), OP (it constructs `OP.NewSqliteMaster` and consumes other OP operators), and AG (`Trigger`/REWRITE actions can use Aggregate operators). It will NOT depend on EX.
+**Cross-package dependencies:** WT depends on DT (Row/Value/Schema registry), EV (`EV.EvalValue` for DEFAULT expressions), OP (constructs `OP.NewSqliteMaster` and consumes other OP operators), and UT (FK validation, PragmaListener). It does NOT depend on EX.
 
 ### UT — Utilities
 
@@ -283,20 +296,17 @@ SIMD-dispatched scalar functions.
 #### Batch (`batch.go`)
 Batch + Column types for columnar evaluation; canonical home in UT. `Batch.Pool()`/`GetBatch`/`Put` use `sync.Pool` to avoid per-batch GC pressure.
 
-## the SQB/WT extraction Outcome (2026-06-29)
+## SQB cluster extraction Outcome (2026-Q2 → 2026-Q3)
 
-- EX shrank from 37 files / 48,907 LOC to 27 files / ≈38,000 LOC.
-- Net delta: ~10,900 LOC moved out of EX into DT, EV, AG, OP (over three commits).
-- DT grew to ≈1100 LOC (was 137 LOC). Carries the entire schema-registry and view/matview/catalog lifecycle plus the utilities needed by EV and AG (ValueFromAny, Compare, ToInt64, EqualValueAny, IsValueTruthy, ContainsAggregate, ContainsWindowFunc, SessionCounterAccessor, GetCurrentSessionID, etc.).
-- 0 new test regressions; all SQB tests pass with `-race`. Pre-existing `SYS/SY/TestShutdown_NoGoroutineLeak` failure unchanged.
-- 156 `Eval()` → `EvalValue()` migration sites (from prior SQL split prior work) all kept working through the package moves.
-- Lock-order invariant `TablesMu → StoreMu` preserved by `UnregisterAll`; verified by `TestLockOrder_TablesMuBeforeStoreMu` (no test regression).
-- Cycle breaking for `planner.go` ⇄ `aggregate.go`: `containsAggregate`/`containsWindowFunc` moved to DT; `planner.go` now calls `DT.ContainsAggregate`/`DT.ContainsWindowFunc`.
-- Cycle breaking for `eval.go` ⇄ `planner.go`: added `ExecuteSubquery(ctx, stmt, outer, params) ([]Row, error)` method to `pl.QueryPlanner`; `eval.go` reads `ExecContext.Planner` and calls `planner.ExecuteSubquery(...)`. `(*EX.Planner).ExecuteSubquery` is the concrete implementation; it stays in EX until the planner migrates to AD.
-- Cycle breaking for `eval.go` ⇄ `aggregate.go`: `evalWindowFunc` (placeholder returning "requires WindowOperator execution") was moved from AG/window.go to EV/eval.go to prevent AG ↔ EV cycling.
-- Accessor methods added so cross-package field access is gated: `AG.Aggregate.Child()`, `AG.HashAggregate.Child()`, `AG.HashAggregate.GroupCols()`, `AG.WindowOperator.Input()`, `AG.WindowOperator.FuncName()`.
-- Cross-package helper functions exported (lowercase → CapitalCase) only where EX tests required it: `NumericArithValue`, `CompareInt64ColLit`, `CompareInt64Cols`, `CompareFloat64ColLit`, `CompareStringColLit`, `SwapOp`, `InvertSelection`, `BatchValueAt`, `MatchLike`, `GlobValue`, `ConcatValue`, `EvalAbs`, `EvalInHashValue`, `EvalInValue`, `EvalAggregateOver` (the latter via AG re-export), `ScalarFuncRegistry`, `InHashCache`, `InHashCache.Int64Set`. The lowercase names are not in the package's public surface; EX test calls were updated to the exported names.
-- New `DT` public utilities consumed by EX: `DT.Compare` (`Compare`), `DT.EqualValueAny` (`EqualValueAny`), `DT.ToInt64` (`ToInt64`), `DT.IsValueTruthy` (`IsValueTruthy`), `DT.ValueFromAny` (`ValueFromAny`), `DT.ValueToString` (`ValueToString`), `DT.NullValue`, `DT.New*Value` (`NewIntValue`, etc.).
+The original SQB/WT extraction (2026-06-29) shrank EX from 37 files / 48,907 LOC to 27 files / ≈38,000 LOC. Subsequent work continued the split:
+
+- WT cluster created at `internal/SQB/WT/` with 18 files (`writers_admin.go`, `writers_ddl.go`, `writers_dml.go`, `alter_table.go`, `constraints.go`, `view.go`, `matview.go`, `virtual_init.go`, `source.go`, …). WT owns all DDL/DML/trigger/pragma dispatch.
+- OP cluster fully extracted: `seq_scan.go`, `index_scan.go`, `index_only_scan.go`, `bitmap_scan.go`, `filter.go`, `project.go`, `sort_parallel.go`, `topn_sort.go`, `nljoin.go`, `hashjoin.go`, `mergejoin.go`, `parallel_hashjoin.go`, `hashcrossjoin.go`, `distinct.go`, `pragma.go`, `values.go`, `virtual.go`, `rowpool.go`, plus vectorized variants.
+- AD absorbed `plan_node.go` (721 lines) and `explain.go` from EX.
+- UT absorbed `analyze.go`, `integrity.go`, `fk.go` from EX (plus the original `coerce.go`, `decimal.go`, `datetime.go`, `json.go`, `parallel.go`, `batch.go`, `pipeline.go`, `simd_dispatch.go`, `string_column.go`, `txn_debug.go`, `pragma.go`).
+- DT grew to ≈1100 LOC (was 137 LOC) and now hosts `fk_queue.go` (DEFERRABLE queue), `index_usage.go` (mirror of `AD/index_usage.go`), `storage.go` (key encoding + row storage moved from EX/store.go), `table_handle.go`, plus the schema-registry and view/matview/catalog lifecycle.
+- The planner remains in EX (`planner.go` 917 lines + `cost.go` 822 lines + `join_order.go` 813 lines + `predicate.go` + `view_subquery.go` + `index_plan.go`) — production path until SQO/CO wires in via `Executor.RegisterOptimizer`.
+- 0 new test regressions across the splits; all SQB tests pass with `-race`.
 
 ### Lock-order policy
 
@@ -318,13 +328,11 @@ SYS/SE imports `EX.SetSessionCounterAccessor`. This remains unchanged through th
 
 ### Residual files still in `internal/SQB/EX/`
 
-The following files remain in EX and have not yet been migrated:
+The following files remain in EX as the active production path:
 
-- Executor factory and glue: `ex.go`, `subq.go`, `matview.go`, `plan_node.go`, `shape_specialize.go` (the latter three paired with the planner for SQB finalization).
-- Operators awaiting OP migration: `operators.go` (SeqScan, IndexScan, tableSchemaEntry), `intermediate.go` (Filter, Project, Sort, Limit, Offset), `join.go` (NestedLoopJoin), `join_strategy.go`, `operators_parallel.go`, `operators_vec.go`, `compound.go` (CompoundOp), `values.go` (Values, ValuesRows).
-- Writes awaiting WT creation: `writers.go`, `source.go`, `store.go`, `alter_table.go`, `fk.go`, `view.go`, `constraints.go`, `indexscan_strategy.go`.
-- Utilities awaiting UT migration: `analyze.go`, `integrity.go`, `explain.go`, `sort_parallel.go`, `pipeline.go`.
-- Planner waiting on the above to land: `planner.go` (~4900 lines).
+- Executor factory and glue: `ex.go`, `dispatch.go`, `stream.go`, `subq.go`, `executor_factory.go`, `source.go` (re-export), `constraint_error.go` (re-export).
+- Active planner: `planner.go` (917 lines), `cost.go` (822 lines), `join_order.go` (813 lines), `predicate.go`, `view_subquery.go`, `index_plan.go`, `resolve_slots.go`, `expr_util.go`, `fold_cse.go`, `vec_transform.go`, `function_registry.go` (re-export), `plan_subquery_explain.go`, `plan_node.go` (dispatcher subtree, 111 lines — the canonical PlanNode tree is in `AD/plan_node.go`, 721 lines).
+- The full SQO/CO migration is gated on `Executor.RegisterOptimizer` wiring a production caller (REQ001473-1481). Until that lands, EX.Planner remains the live code path.
 
 ## Open Issues
 

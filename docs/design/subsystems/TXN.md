@@ -215,7 +215,7 @@ type transactionSlot struct {
 | `MV` | MVCC: version chain, CAS insertion, version format, per-transaction arena with per-NUMA pools, GC of obsolete versions |
 | `LC` | Lock: hazard pointers, epoch-based reclamation, QSBR protocol, reclaim pool for deferred cleanup, goid tracking, epoch gosched for cooperative yielding |
 | `SN` | Snapshot: read view management per session, epoch registration, per-thread arena, version stack for multi-key reads |
-| `VL` | Validation: commit protocol, write-write conflict detection, transaction slot management, savepoint support |
+| `VL` | Validation: commit protocol, write-write conflict detection, transaction slot management, savepoint support, deadlock detection (`deadlock_error.go`), condition variables (`cond.go`) |
 
 ## Clusters
 
@@ -253,7 +253,7 @@ type transactionSlot struct {
 
 ### VL — Validation
 
-**Responsibility:** Commit protocol, write-write conflict detection, transaction slot management.
+**Responsibility:** Commit protocol, write-write conflict detection, transaction slot management, deadlock detection.
 
 **Key behaviors:**
 - `Begin()`: allocate slot from lock-free Treiber stack, assign beginTS, create read view.
@@ -261,6 +261,7 @@ type transactionSlot struct {
 - `Commit()`: assign commitTS, update version nodes.
 - `Abort()`: mark slot as aborted, return slot to free list.
 - Savepoint: nested transaction markers with `Savepoint`/`RollbackTo`.
+- **Deadlock detection:** `internal/TXN/VL/deadlock_error.go` defines `ErrDeadlock`; `cond.go` provides condition variables for lock-busy / lock-wait coordination. Tests: `lock_busy_test.go`, `lock_wait_test.go`.
 
 ## Implementation Plan
 

@@ -117,33 +117,36 @@ type hintEntry struct {
 - Each entry: `[blockID:varint][lastAccess:varint]`
 - Both fields are varint-encoded (1-10 bytes each), making the file compact.
 - No checksum on the hint file — it is advisory only. On corruption, the buffer pool starts cold.
-- **When to compress:** compress only if the hint file exceeds 1 MB. Use gzip with level 6. Compression is done lazily on the next write; the old uncompressed file is removed after the compressed version is written.
+- **Compression:** not yet implemented in the current code (`internal/MEM/BF/bf.go:472-603` writes raw binary). The REQ000024 row in the shipped table should be moved to FUTURE until gzip-on-write lands.
 - Written on clean `Close()` via `Engine.Close`.
-- On startup, read from `<name>.razor/hint` (decompress if `.gz` suffix exists) and eagerly loaded into the buffer pool before serving queries.
+- On startup, read from `<name>.razor/hint` and eagerly loaded into the buffer pool before serving queries.
 
 ## Function Clusters
 
 | Cluster | Responsibility |
 |---|---|
-| `BF` | Buffer pool: LRU eviction (clock-sweep), pin/unpin, hash table lookup, bloomtinyllfu hybrid cache (REQ000303), NUMA-aware pmem (REQ000309) |
-| `PC` | Page cache: block slot management, checksum verification on read, hint file |
+| `BF` | Buffer pool: sharded clock-sweep eviction, W-TinyLFU admission (4-row count-min sketch, REQ000303), pin/unpin, O(1) hash lookup, NUMA-aware shard allocation (REQ000309), warm-start hint file |
 | `SP` | Sync pool: goroutine-safe object pooling for pages and iterators |
 | `OF` | Overflow: handling values that exceed page size via overflow blocks chained in the WAL (REQ000308) |
+
+> **Note:** The `PC` cluster listed in earlier revisions was folded into `BF` after the page-slot logic, checksum verification, and hint-file routines were unified under the buffer pool implementation (`internal/MEM/BF/`). No separate `internal/MEM/PC/` directory exists in the current code.
 
 ## Clusters
 
 ### BF — Buffer Pool
 
-**Responsibility:** LRU eviction, clock-sweep, pin/unpin, hash table lookup, bloomtinyllfu hybrid cache, NUMA awareness.
+**Responsibility:** Sharded clock-sweep eviction, W-TinyLFU admission, pin/unpin, hash table lookup, NUMA-aware allocation, warm-start hint file.
 
 **Key behaviors:**
-- `Get`: look up in hash table. If found and not loading, return immediately. If not found, load from `FIL/DF` (via `BlockDevice.ReadBlock`), insert into hash table, return.
+- **Sharded hash table:** global table split into N independent shards (default 32). Each shard has its own clock-sweep hand and `sync.RWMutex`. Shard selection: `blockID % numShards`. This eliminates global mutex contention under concurrent reads.
+- `Get`: look up in shard-local hash table. If found and not loading, return immediately. If not found, load from `FIL/DF` (via `BlockDevice.ReadBlock`), insert into hash table, return.
 - `Pin`: increment `pinCount`. Page cannot be evicted while `pinCount > 0`.
 - `Unpin`: decrement `pinCount`. Eviction may proceed once `pinCount == 0`.
 - `SetCapacity`: resize the slot ring. If shrinking, evict oldest clean slots.
 - `Stats`: `Hits` / `Misses` ratio, `Pins`, `Evicts`, capacity, used.
-- **bloomtinyllfu (REQ000303):** Hybrid cache combining a Cuckoo filter (fast membership test) with TinyLFU (approximate frequency tracking) for admission control. Pages that fail the bloom filter admission are not inserted into the buffer pool, reducing eviction pressure.
-- **pmem / NUMA (REQ000309):** On Linux, `pmem.go` uses `mmap` with `MAP_POPULATE` for persistent memory; `sys_linux.go` / `sys_other.go` provide platform-specific NUMA node detection and first-touch policies.
+- **W-TinyLFU admission (REQ000303):** Implemented in `internal/MEM/BF/wtinylfu.go`. Frequency tracking via a 4-row Count-Min Sketch with 4-bit counters; admission compares the new block's CMS frequency against the eviction candidate's. (The "Cuckoo filter + TinyLFU hybrid" wording in earlier revisions is incorrect — W-TinyLFU uses only the CMS, no Cuckoo filter.)
+- **NUMA-aware (REQ000309):** On Linux, `internal/MEM/BF/sharded_bp.go` reads NUMA topology from `internal/ENG/NM/numa.go` and uses first-touch allocation so each shard's pages land on its home NUMA node.
+- **Warm-start hint file:** `internal/MEM/BF/bf.go:472-603` (`Warm`, `writeHintFile`, `readHintFile`) — serializes cached block IDs + last-access timestamps to `<name>.razor/hint` on clean shutdown; on startup, eagerly loads them into the buffer pool.
 
 ### OF — Overflow
 
@@ -153,12 +156,6 @@ type hintEntry struct {
 - Values larger than `PageSize` (4 KB) are split into overflow blocks.
 - The primary row stores a pointer to the first overflow block; subsequent blocks are chained via the WAL.
 - `of.go` manages overflow block allocation, chain traversal, and cleanup on delete.
-
-**Key behaviors:**
-- When a block is loaded from disk, its checksum is verified against the stored CRC32.
-- On checksum mismatch, the block is returned as `ErrCorrupt` and the slot is marked invalid.
-- Hint file: on clean close, serialize all slots with `LastAccess > 0` to `<name>.razor/hint`.
-- On startup: read hint file, call `Get` for each `BlockID` to eagerly load into buffer pool.
 
 ### SP — Sync Pool
 
@@ -172,10 +169,12 @@ type hintEntry struct {
 ## Implementation Plan
 
 1. **`internal/MEM/SP/sp.go`** — `SyncPool` implementation with `sync.Pool` for page-sized and iterator-sized buffers.
-2. **`internal/MEM/BF/bf.go`** — buffer pool with hash table, clock-sweep eviction, `Get`/`Pin`/`Unpin`/`SetCapacity`/`Stats`.
-3. **`internal/MEM/PC/pc.go`** — page slot management, checksum verification, hint file serialization/deserialization.
-4. **`internal/MEM/BF/bf_bench.go`** — benchmarks: concurrent `Get`/`Pin`/`Unpin`, eviction rate under pressure.
-5. **Tests:** `bf_test.go` (concurrent pin/unpin, eviction correctness), `pc_test.go` (hint file round-trip, checksum), `sp_test.go` (pool bounds).
+2. **`internal/MEM/BF/bf.go`** — buffer pool with hash table, clock-sweep eviction, `Get`/`Pin`/`Unpin`/`SetCapacity`/`Stats`, hint file routines (`writeHintFile`, `readHintFile`, `Warm`).
+3. **`internal/MEM/BF/sharded_bp.go`** — sharded buffer pool with NUMA-aware shard allocation.
+4. **`internal/MEM/BF/wtinylfu.go`** — W-TinyLFU admission policy (CMS + window LRU).
+5. **`internal/MEM/OF/of.go`** — overflow block allocation, chain traversal, cleanup on delete.
+6. **`internal/MEM/BF/bf_bench.go`** — benchmarks: concurrent `Get`/`Pin`/`Unpin`, eviction rate under pressure.
+7. **Tests:** `bf_test.go` (concurrent pin/unpin, eviction correctness), `wtinylfu_test.go`, `sharded_bp_test.go`, `sp_test.go` (pool bounds), `of_test.go`.
 
 ## Shipped Requirements
 
@@ -190,7 +189,7 @@ The following requirements have been implemented and shipped; they are now part 
 | REQ000021 | Atomic `Pin`/`Unpin` with eviction gating | shipped |
 | REQ000022 | O(1) hash table lookup by `blockID` | shipped |
 | REQ000023 | Hint file for warm startup | shipped |
-| REQ000024 | Hint file compression (gzip) when > 1 MB | shipped |
+| REQ000024 | Hint file compression (gzip) when > 1 MB | **deferred** — current code writes raw binary; gzip-on-write not yet implemented |
 | REQ000025 | `sync.Pool` for page/iterator buffers | shipped |
 | REQ000161 | Clock-sweep integration details (atomic hand, refKey update, eviction gating) | shipped |
 | REQ000199 | Sharded buffer pool mutex (reduce hash table contention) | shipped |
