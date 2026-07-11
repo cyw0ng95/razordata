@@ -364,31 +364,36 @@ func (p *Planner) joinPredSel(pred PS.Expr, rowCount float64) float64 {
 	switch bin.Op {
 	case LX.T_EQ:
 		// REQ000948: equi-join (col = col) uses NDV of both sides.
-		// REQ000948: equi-join (col = literal) uses NDV of the column.
+		// REQ001501: multiply by (1 - null_frac) × (1 - null_frac).
 		ndvL, ndvR := p.ndvFromExpr(bin.Left), p.ndvFromExpr(bin.Right)
+		sel := 0.1
 		if ndvL > 0 && ndvR > 0 {
 			if ndvL > ndvR {
-				return 1.0 / ndvL
+				sel = 1.0 / ndvL
+			} else {
+				sel = 1.0 / ndvR
 			}
-			return 1.0 / ndvR
-		}
-		if ndvL > 0 {
-			return 1.0 / ndvL
-		}
-		if ndvR > 0 {
-			return 1.0 / ndvR
-		}
-		// REQ001095: when stats are unavailable, use the table's row
-		// count as NDV proxy (col = literal hits 1/rows of the table).
-		if rowCount > 0 {
-			sel := 1.0 / rowCount
+		} else if ndvL > 0 {
+			sel = 1.0 / ndvL
+		} else if ndvR > 0 {
+			sel = 1.0 / ndvR
+		} else if rowCount > 0 {
+			sel = 1.0 / rowCount
 			if sel < 0.01 {
-				sel = 0.01 // floor at 1% to avoid over-optimism
+				sel = 0.01
 			}
-			return sel
 		}
-		// No stats — fall back to default.
-		return 0.1
+		// REQ001501: null fraction correction
+		nullFracL := p.nullFracFromExpr(bin.Left)
+		nullFracR := p.nullFracFromExpr(bin.Right)
+		if nullFracL < 0 {
+			nullFracL = 0
+		}
+		if nullFracR < 0 {
+			nullFracR = 0
+		}
+		sel *= (1.0 - nullFracL) * (1.0 - nullFracR)
+		return sel
 	case LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
 		// Range predicate: use (1 - null_frac) / 3 (uniform).
 		nullFrac := p.nullFracFromExpr(bin.Left)
