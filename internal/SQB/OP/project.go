@@ -62,17 +62,11 @@ func NewProject(child Operator, cols []PS.Expr) *Project {
 	} else {
 		dataBufPtr = new([]Value)
 	}
-	// REQ001288: pre-allocate to hold at least 1024 rows worth of data
-	// to avoid growth allocations for typical queries. The pool provides
-	// capacity 512, which may be insufficient for larger result sets.
-	dataPerRow := len(cols)
-	preallocSize := dataPerRow * 1024
-	if preallocSize < projectDataBufChunkSize {
-		preallocSize = projectDataBufChunkSize
-	}
-	if cap(dataBuf) < preallocSize {
-		dataBuf = make([]Value, 0, preallocSize)
-	}
+	// REQ001288: trust the pool's default capacity (512 values).
+	// This covers most queries without growth; larger result sets
+	// grow by doubling via Next(). The old dataPerRow × 1024
+	// prealloc wasted ~170MB on multi-column queries with small
+	// result sets (select2).
 	// Pre-compute column names once (they're the same for every row).
 	prefixCols := make([]string, len(cols))
 	for i, c := range cols {
