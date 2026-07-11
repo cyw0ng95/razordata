@@ -7,8 +7,11 @@ import (
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
+	CO_CP "github.com/cyw0ng95/razordata/internal/SQO/CP"
+	CO_SL "github.com/cyw0ng95/razordata/internal/SQO/SL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 type runCase struct {
@@ -326,3 +329,41 @@ func rowsEqual(got, want [][]any) bool {
 	}
 	return true
 }
+
+// TestExecutor_RegisterOptimizer_Injection verifies REQ001499: when an
+// external CO.Optimizer is registered via RegisterOptimizer, the Executor
+// delegates Plan() calls to it instead of the internal Planner.
+func TestExecutor_RegisterOptimizer_Injection(t *testing.T) {
+	ResetForTest(t)
+	ctx := context.Background()
+	e := NewExecutor()
+	e.RegisterTable("t", []string{"a", "b"})
+
+	// Register a mock optimizer that returns a fixed operator.
+	mockOpt := &mockOptimizer{}
+	e.RegisterOptimizer(mockOpt)
+
+	_, err := e.QueryAll(ctx, "SELECT * FROM t")
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if !mockOpt.called {
+		t.Fatal("expected mock Optimizer.Plan to be called")
+	}
+}
+
+// mockOptimizer implements CO.Optimizer for testing REQ001499.
+type mockOptimizer struct {
+	called bool
+}
+
+func (m *mockOptimizer) Plan(stmt PS.Stmt) (DT.Operator, error) {
+	m.called = true
+	return OP.NewSeqScan("t"), nil
+}
+func (m *mockOptimizer) SetCostParams(cp CO_CP.CostParams) {}
+func (m *mockOptimizer) SetStatsCatalog(stats CO_SL.StatsCatalog) {}
+func (m *mockOptimizer) InvalidateCache() {}
+func (m *mockOptimizer) RegisterTable(name string, cols []DT.ColInfo, pk string) {}
+func (m *mockOptimizer) RegisterIndex(table, index string, cols []string) {}
+func (m *mockOptimizer) SetBuilder(builder CO.PlanBuilder) {}
