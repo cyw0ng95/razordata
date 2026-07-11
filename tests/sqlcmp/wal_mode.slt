@@ -39,11 +39,11 @@ SELECT count(*) FROM t1
 3
 
 # ── PRAGMA journal_mode read (returns current default) ──────────────
-# REQ001392 will wire this to return the actual active journal mode.
+# REQ001392: PRAGMA journal_mode returns the current journal mode.
 query T
 PRAGMA journal_mode
 ----
-(default)
+delete
 
 # ── Transactional insert + SELECT ──────────────────────────────────
 statement ok

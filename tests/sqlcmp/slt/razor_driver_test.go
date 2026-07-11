@@ -146,3 +146,52 @@ func BenchmarkSLT_QueryDirect_vs_DatabaseSQL(b *testing.B) {
 		}
 	})
 }
+
+// REQ001393: SLT driver journal_mode dispatch round-trip.
+func TestSLTDriver_JournalMode_Dispatch(t *testing.T) {
+	if os.Getenv("SKIP_RAZOR_DRIVER") != "" {
+		t.Skip("SKIP_RAZOR_DRIVER set")
+	}
+	ctx := context.Background()
+	d := NewRazorDriver()
+	if err := d.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close(ctx) })
+
+	// Read default.
+	rs, err := d.Query(ctx, "PRAGMA journal_mode")
+	if err != nil {
+		t.Fatalf("PRAGMA journal_mode: %v", err)
+	}
+	if len(rs.Rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rs.Rows))
+	}
+	if rs.Rows[0][0].Text != "delete" {
+		t.Errorf("default journal_mode = %q, want delete", rs.Rows[0][0].Text)
+	}
+
+	// Write journal_mode = WAL and read back.
+	if err := d.Exec(ctx, "PRAGMA journal_mode = WAL"); err != nil {
+		t.Fatalf("PRAGMA journal_mode = WAL: %v", err)
+	}
+	rs, err = d.Query(ctx, "PRAGMA journal_mode")
+	if err != nil {
+		t.Fatalf("PRAGMA journal_mode after WAL: %v", err)
+	}
+	if rs.Rows[0][0].Text != "WAL" {
+		t.Errorf("journal_mode = %q, want WAL", rs.Rows[0][0].Text)
+	}
+
+	// Write MEMORY (not a keyword).
+	if err := d.Exec(ctx, "PRAGMA journal_mode = MEMORY"); err != nil {
+		t.Fatalf("PRAGMA journal_mode = MEMORY: %v", err)
+	}
+	rs, err = d.Query(ctx, "PRAGMA journal_mode")
+	if err != nil {
+		t.Fatalf("PRAGMA journal_mode after MEMORY: %v", err)
+	}
+	if rs.Rows[0][0].Text != "MEMORY" {
+		t.Errorf("journal_mode = %q, want MEMORY", rs.Rows[0][0].Text)
+	}
+}
