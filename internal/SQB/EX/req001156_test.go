@@ -36,7 +36,7 @@ func TestGroupBushyJoins_ChainEquiJoin_OneGroup(t *testing.T) {
 	// 4-table chain-equi-join pattern from the REQ001156 description.
 	// Each column is qualified so extractTableColumn returns the right
 	// table without depending on SLT naming resolution.
-	sql := `SELECT count(*) FROM t1, t2, t3, t4 WHERE a1=b3 AND a2=b1 AND b4=a3`
+	sql := `SELECT count(*) FROM t1, t2, t3, t4 WHERE t1.a=t3.b AND t1.a=t2.b AND t3.b=t4.a`
 	stmt, err := PS.NewParser(sql).Parse()
 	if err != nil {
 		t.Fatalf("parse: %v", err)
