@@ -2,6 +2,7 @@ package OP
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -14,6 +15,10 @@ import (
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
+
+// ErrSortTooManyRows is returned by Sort.Next when the materialization
+// buffer exceeds sortBufferSize. REQ001512.
+var ErrSortTooManyRows = errors.New("sort: materialization buffer exceeded")
 
 type Sort struct {
 	child        Operator
@@ -82,6 +87,9 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 					break
 				}
 				return Row{}, err
+			}
+			if s.sortBufferSize > 0 && len(s.buf) >= int(s.sortBufferSize) {
+				return Row{}, ErrSortTooManyRows
 			}
 			s.buf = append(s.buf, row)
 		}

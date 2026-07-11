@@ -577,7 +577,11 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 		// selection before updating.
 		var current DT.Operator = filter
 		if len(s.OrderBy) > 0 {
-			current = OP.NewSort(current, s.OrderBy)
+			so := OP.NewSort(current, s.OrderBy)
+			if e.planner.sortBufferSize > 0 {
+				so.WithSortBufferSize(e.planner.sortBufferSize)
+			}
+			current = so
 		}
 		if s.OffsetFirst {
 			if s.Limit != nil {
@@ -630,7 +634,11 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 		// selection before deleting.
 		var current DT.Operator = filter
 		if len(s.OrderBy) > 0 {
-			current = OP.NewSort(current, s.OrderBy)
+			so := OP.NewSort(current, s.OrderBy)
+			if e.planner.sortBufferSize > 0 {
+				so.WithSortBufferSize(e.planner.sortBufferSize)
+			}
+			current = so
 		}
 		if s.OffsetFirst {
 			if s.Limit != nil {

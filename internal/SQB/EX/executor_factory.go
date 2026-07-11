@@ -206,8 +206,13 @@ func (e *Executor) MaxResultRows() int64 { return e.maxResultRows }
 // SELECT query. 0 means unlimited. REQ001056.
 // Also sets the compound operator drain cap (REQ001057) to the same
 // value to prevent OOM on deep UNION/EXCEPT/INTERSECT chains.
+// Also propagates to planner as sortBufferSize for Sort operators.
+// REQ001512.
 func (e *Executor) WithMaxResultRows(limit int64) *Executor {
 	e.maxResultRows = limit
+	if e.planner != nil {
+		e.planner.SetSortBufferSize(limit)
+	}
 	return e
 }
 

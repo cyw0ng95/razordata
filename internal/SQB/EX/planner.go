@@ -67,6 +67,9 @@ type Planner struct {
 	// maxMemoryPerQuery caps total memory per query. 0 = unlimited.
 	// Set by Executor.WithMemoryBudget. REQ001057.
 	maxMemoryPerQuery int64
+	// sortBufferSize caps per-Sort materialization. 0 = unlimited.
+	// Propagated from Executor.maxResultRows. REQ001512.
+	sortBufferSize int64
 	// costParamsX holds the cost-model coefficients used by
 	// estimateCost. nil = use DefaultCostParams. REQ001104.
 	costParamsX *CostParams
@@ -111,6 +114,10 @@ func (p *Planner) SetJoinBufferSize(v int64) { p.joinBufferSize = v }
 // SetMaxMemoryPerQuery sets the per-query memory cap.
 // 0 = unlimited. REQ001057.
 func (p *Planner) SetMaxMemoryPerQuery(v int64) { p.maxMemoryPerQuery = v }
+
+// SetSortBufferSize sets the per-Sort materialization cap.
+// 0 = unlimited. REQ001512.
+func (p *Planner) SetSortBufferSize(v int64) { p.sortBufferSize = v }
 
 // InvalidateCache clears the plan cache. REQ000846: called when DTL
 // changes the schema (CREATE/DROP/ALTER TABLE) so cached plans that

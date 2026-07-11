@@ -498,6 +498,9 @@ func (p *Planner) planSelectSubquery(s *PS.Select) DT.Operator {
 		if p.pool != nil {
 			so.WithPool(p.pool.(*UT.WorkerPool))
 		}
+		if p.sortBufferSize > 0 {
+			so.WithSortBufferSize(p.sortBufferSize)
+		}
 		// REQ001278: detect ORDER BY pk ASC on SeqScan — skip sort.
 		if isPreOrdered(current, s.OrderBy) {
 			so.SetPreOrdered()
@@ -866,6 +869,9 @@ func (p *Planner) planOrdering(s *PS.Select, current DT.Operator) DT.Operator {
 			sort := OP.NewSort(current, s.OrderBy)
 			if p.pool != nil {
 				sort.WithPool(p.pool.(*UT.WorkerPool))
+			}
+			if p.sortBufferSize > 0 {
+				sort.WithSortBufferSize(p.sortBufferSize)
 			}
 			current = sort
 		}
