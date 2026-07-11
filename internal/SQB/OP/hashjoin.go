@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	ec "github.com/cyw0ng95/razordata/internal/LOG/EC"
+	"github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
@@ -93,6 +94,12 @@ type HashJoin struct {
 	unmatchedRightIdx    int
 
 	closed atomic.Bool
+
+	// REQ001506: bloom filter for pre-filtering right-side probes.
+	// Built from right-side keys after build phase; checked in
+	// nextMatched before the full key comparison. Reduces probe
+	// overhead for large right-side builds.
+	bloomFilter *UT.BloomFilter
 
 	// REQ001410 debug: per-operator counters and label for tracing
 	// row flow through the join tree. Set via WithDebugID.
@@ -300,6 +307,13 @@ func (j *HashJoin) Next(ctx context.Context) (pl.Row, error) {
 func (j *HashJoin) nextMatched() (pl.Row, int, int, int, bool) {
 	for j.curLeftIdx < len(j.leftRows) {
 		l := j.leftInfos[j.curLeftIdx]
+		// REQ001506: bloom filter pre-filter — skip left row if its
+		// hash is definitely NOT in the right-side set.
+		if j.bloomFilter != nil && !j.bloomFilter.MaybeContains(l.hash) {
+			j.curLeftIdx++
+			j.curRightIdx = 0
+			continue
+		}
 		bucket := j.buckets[l.idx]
 		hashJoinDebugRowFlow(j.leftTbl, uint64(j.curLeftIdx), true)
 		// REQ001410 debug: print left key values for first few rows.
@@ -471,6 +485,18 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		rightTotal += len(j.buckets[i].rightRows)
 	}
 	hashJoinDebugStrategy("hash", "equi-join", float64(rightTotal))
+
+	// REQ001506: build bloom filter from right-side hashes for
+	// pre-filtering probes. Skip for tiny builds where the
+	// bloom filter overhead exceeds the probe savings.
+	if rightTotal >= 64 {
+		j.bloomFilter = UT.NewBloomFilter(rightTotal)
+		for i := range j.buckets {
+			for _, h := range j.buckets[i].hashes {
+				j.bloomFilter.Add(h)
+			}
+		}
+	}
 
 	// REQ000865: close right side immediately — rows live in buckets.
 	if j.right != nil {
