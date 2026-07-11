@@ -181,11 +181,7 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 				}
 				return 0
 			})
-			reordered := make([]Row, n)
-			for i, idx := range indices {
-				reordered[i] = s.buf[idx]
-			}
-			s.buf = reordered
+			reorderBufInPlace(s.buf, indices)
 		} else {
 			keyCache := make([][]Value, n)
 			flatKeys := make([]Value, n*numKeys)
@@ -240,11 +236,7 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 					return 0
 				})
 
-				reordered := make([]Row, n)
-				for i, idx := range indices {
-					reordered[i] = s.buf[idx]
-				}
-				s.buf = reordered
+				reorderBufInPlace(s.buf, indices)
 			}
 		}
 		s.materialized = true
@@ -411,4 +403,33 @@ func (s *Sort) Close() error {
 	s.pos = 0
 	s.materialized = false
 	return s.child.Close()
+}
+
+// reorderBufInPlace permutes buf in-place according to the sorted
+// indices array using cycle-following. Eliminates the reordered[]
+// allocation. REQ001517.
+//
+// indices[i] = original position of the element that should be at i
+// (after sorting). The algorithm follows cycles: for each unvisited
+// position, it walks the cycle, rotating elements in-place.
+func reorderBufInPlace(buf []Row, indices []int) {
+	n := len(buf)
+	for i := 0; i < n; i++ {
+		if indices[i] == i {
+			continue
+		}
+		cur := i
+		saved := buf[cur]
+		for {
+			next := indices[cur]
+			if next == i {
+				buf[cur] = saved
+				indices[cur] = cur
+				break
+			}
+			buf[cur] = buf[next]
+			indices[cur] = cur
+			cur = next
+		}
+	}
 }
