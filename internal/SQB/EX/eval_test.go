@@ -655,7 +655,95 @@ func TestScalarSubquery_ConstantFold(t *testing.T) {
 	for i, row := range rows {
 		avg, ok := row.Data[1].ToAny().(float64)
 		if !ok || avg != 2.0 {
-			t.Errorf("row %d: avg = %v, want 2.0", i, avg)
+			t.Errorf("row %d: avg = %v, want 2.0", i, row.Data[1].ToAny())
 		}
+	}
+}
+
+// TestScalarSubquery_LazyAggregate exercises REQ001515: trivial
+// aggregate subqueries (no WHERE, no ORDER BY, no GROUP BY, no JOIN)
+// use the direct aggregate-over-Scan path that bypasses the full
+// plan tree.
+func TestScalarSubquery_LazyAggregate(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.Exec(ctx, "CREATE TABLE t (a INT, b INT)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)")
+
+	cases := []struct {
+		expr string
+		want any
+	}{
+		{"(SELECT count(*) FROM t)", int64(5)},
+		{"(SELECT count(a) FROM t)", int64(5)},
+		{"(SELECT sum(a) FROM t)", int64(15)},
+		{"(SELECT avg(a) FROM t)", float64(3)},
+		{"(SELECT min(a) FROM t)", int64(1)},
+		{"(SELECT max(a) FROM t)", int64(5)},
+	}
+	for _, tc := range cases {
+		sql := "SELECT " + tc.expr + " AS r"
+		rows, err := ex.QueryAll(ctx, sql)
+		if err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("%s: got %d rows, want 1", sql, len(rows))
+		}
+		got := rows[0].Data[0].ToAny()
+		if got != tc.want {
+			t.Errorf("%s: got %v (%T), want %v (%T)", sql, got, got, tc.want, tc.want)
+		}
+	}
+}
+
+// TestScalarSubquery_LazyAggregateEmpty verifies REQ001515 on an empty
+// table — aggregates should return NULL or 0 per SQL semantics.
+func TestScalarSubquery_LazyAggregateEmpty(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.Exec(ctx, "CREATE TABLE t (a INT)")
+	// Empty table
+
+	rows, err := ex.QueryAll(ctx, "SELECT (SELECT avg(a) FROM t) AS r")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	got := rows[0].Data[0]
+	if !got.IsNull() {
+		t.Errorf("avg on empty should be NULL, got %v (%T)", got.ToAny(), got.ToAny())
+	}
+}
+
+// TestScalarSubquery_LazyAggregateWithWhere confirms REQ001515 falls
+// back to the full plan path when a WHERE clause is present.
+func TestScalarSubquery_LazyAggregateWithWhere(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.Exec(ctx, "CREATE TABLE t (a INT)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (1), (2), (3), (4), (5)")
+
+	rows, err := ex.QueryAll(ctx, "SELECT (SELECT avg(a) FROM t WHERE a > 2) AS r")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	avg := rows[0].Data[0].ToAny().(float64)
+	if avg != 4.0 {
+		t.Errorf("avg(a WHERE a>2) = %v, want 4.0", avg)
 	}
 }

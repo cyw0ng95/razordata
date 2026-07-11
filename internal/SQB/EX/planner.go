@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
@@ -441,16 +442,245 @@ func hasOuterRefInStmt(stmt PS.Stmt) bool {
 
 // ExecuteSubquery plans a subquery select statement and collects all
 // results in a single slice. Implements pl.QueryPlanner.
+//
+// REQ001515: For trivial aggregate subqueries like
+// `(SELECT avg(c) FROM t1)` (single FROM, no WHERE, no JOIN,
+// no ORDER BY, no GROUP BY), we bypass the full plan tree
+// (SeqScan → Aggregate → memoization → injector) and compute the
+// aggregate in a single pass over the underlying SeqScan.
 func (p *Planner) ExecuteSubquery(ctx context.Context, stmt PS.Stmt, outer *DT.Row, params []any) ([]DT.Row, error) {
 	sel, ok := stmt.(*PS.Select)
 	if !ok {
 		return nil, EV.ErrSubquery
+	}
+	if rows, used, err := p.tryTrivialAggregateSubquery(ctx, sel, outer, params); used || err != nil {
+		return rows, err
 	}
 	planResult, err := p.Plan(sel)
 	if err != nil {
 		return nil, err
 	}
 	return WT.RunSubqueryPlan(ctx, planResult, outer, params)
+}
+
+// tryTrivialAggregateSubquery detects single-aggregate-of-single-table
+// subqueries and computes the aggregate in a single pass over the
+// SeqScan without building the full plan tree. Returns used=true
+// when the path was taken; used=false (and rows=nil) defers to the
+// full plan path.
+func (p *Planner) tryTrivialAggregateSubquery(ctx context.Context, sel *PS.Select, outer *DT.Row, params []any) (rows []DT.Row, used bool, err error) {
+	if sel.From == "" || len(sel.Joins) != 0 ||
+		sel.Where != nil || len(sel.OrderBy) != 0 ||
+		sel.Limit != nil || sel.Offset != nil ||
+		len(sel.GroupBy) != 0 || sel.Having != nil ||
+		len(sel.Cols) != 1 {
+		return nil, false, nil
+	}
+	agg, ok := sel.Cols[0].(*PS.AggregateFunc)
+	if !ok || agg.Name == "" {
+		return nil, false, nil
+	}
+	if _, isCol := agg.Arg.(*PS.Ident); !isCol {
+		if _, isStar := agg.Arg.(*PS.StarExpr); !isStar {
+			return nil, false, nil
+		}
+	}
+	if agg.Filter != nil {
+		return nil, false, nil
+	}
+	if agg.Separator != nil {
+		return nil, false, nil
+	}
+
+	var scan DT.Operator
+	if p.store != nil {
+		s, err := OP.NewSeqScanWithStore(p.store, sel.From)
+		if err != nil {
+			return nil, false, nil
+		}
+		scan = s
+	} else {
+		scan = OP.NewSeqScan(sel.From)
+	}
+	defer scan.Close()
+
+	aggName := strings.ToLower(agg.Name)
+	return computeLazyAggregate(ctx, scan, aggName, agg.Arg, outer, params)
+}
+
+// computeLazyAggregate runs a single pass over scan, evaluating argExpr
+// (or treating the row as a unit for COUNT(*)) and reducing to a
+// single scalar result using the named aggregate.
+func computeLazyAggregate(ctx context.Context, scan DT.Operator, name string, arg PS.Expr, outer *DT.Row, params []any) ([]DT.Row, bool, error) {
+	var count int64
+	var sumI int64
+	var sumF float64
+	useFloat := false
+	var minV, maxV *DT.Value
+	hasMin, hasMax := false, false
+	colName := ""
+	switch e := arg.(type) {
+	case *PS.Ident:
+		colName = e.Name
+	case *PS.StarExpr:
+		colName = "*"
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, true, err
+		}
+		row, err := scan.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				break
+			}
+			return nil, true, err
+		}
+		if outer != nil {
+			row.Outer = outer
+		}
+		var val DT.Value
+		switch arg.(type) {
+		case *PS.StarExpr:
+			val = DT.NewIntValue(1)
+		default:
+			v, err := EV.EvalValue(arg, &row, params)
+			if err != nil {
+				return nil, true, err
+			}
+			if v.IsNull() {
+				continue
+			}
+			val = v
+		}
+		switch name {
+		case "count":
+			count++
+		case "sum", "avg":
+			if val.Kind == DT.KindFloat || val.Kind == DT.KindBool {
+				useFloat = true
+				sumF += toFloat(val)
+			} else if val.Kind == DT.KindInt {
+				sumI += val.I64
+			}
+			count++
+		case "min":
+			if !hasMin || compareLT(val, *minV) {
+				minV = &val
+				hasMin = true
+			}
+		case "max":
+			if !hasMax || compareGT(val, *maxV) {
+				maxV = &val
+				hasMax = true
+			}
+		default:
+			return nil, false, nil
+		}
+	}
+
+	var result DT.Value
+	switch name {
+	case "count":
+		result = DT.NewIntValue(count)
+	case "sum":
+		if count == 0 {
+			result = DT.NullValue()
+		} else if useFloat {
+			result = DT.NewFloatValue(sumF)
+		} else {
+			result = DT.NewIntValue(sumI)
+		}
+	case "avg":
+		if count == 0 {
+			result = DT.NullValue()
+		} else if useFloat {
+			result = DT.NewFloatValue(sumF / float64(count))
+		} else {
+			result = DT.NewFloatValue(float64(sumI) / float64(count))
+		}
+	case "min":
+		if !hasMin {
+			result = DT.NullValue()
+		} else {
+			result = *minV
+		}
+	case "max":
+		if !hasMax {
+			result = DT.NullValue()
+		} else {
+			result = *maxV
+		}
+	default:
+		return nil, false, nil
+	}
+
+	out := DT.Row{Cols: []string{colName}, Data: []DT.Value{result}}
+	return []DT.Row{out}, true, nil
+}
+
+func toFloat(v DT.Value) float64 {
+	switch v.Kind {
+	case DT.KindFloat:
+		return v.F64
+	case DT.KindInt:
+		return float64(v.I64)
+	case DT.KindBool:
+		if v.Bo {
+			return 1
+		}
+		return 0
+	}
+	return 0
+}
+
+func compareLT(a, b DT.Value) bool {
+	switch a.Kind {
+	case DT.KindInt:
+		if b.Kind == DT.KindInt {
+			return a.I64 < b.I64
+		}
+		if b.Kind == DT.KindFloat {
+			return float64(a.I64) < b.F64
+		}
+	case DT.KindFloat:
+		if b.Kind == DT.KindFloat {
+			return a.F64 < b.F64
+		}
+		if b.Kind == DT.KindInt {
+			return a.F64 < float64(b.I64)
+		}
+	case DT.KindText:
+		if b.Kind == DT.KindText {
+			return a.S < b.S
+		}
+	}
+	return false
+}
+
+func compareGT(a, b DT.Value) bool {
+	switch a.Kind {
+	case DT.KindInt:
+		if b.Kind == DT.KindInt {
+			return a.I64 > b.I64
+		}
+		if b.Kind == DT.KindFloat {
+			return float64(a.I64) > b.F64
+		}
+	case DT.KindFloat:
+		if b.Kind == DT.KindFloat {
+			return a.F64 > b.F64
+		}
+		if b.Kind == DT.KindInt {
+			return a.F64 > float64(b.I64)
+		}
+	case DT.KindText:
+		if b.Kind == DT.KindText {
+			return a.S > b.S
+		}
+	}
+	return false
 }
 
 // ExecuteSubqueryFirstMatch is the REQ001073 short-circuit variant:
