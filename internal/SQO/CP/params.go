@@ -24,6 +24,13 @@ type CostParams struct {
 	CPUIndexTupleCost float64
 	CPUOperatorCost   float64
 
+	// EffectiveCacheSize is the expected buffer cache size in bytes.
+	// Used to adjust random_page_cost by cache-hit probability:
+	//   effective_random_page_cost = random_page_cost *
+	//     (1 - min(1, effective_cache_size / total_data_size))
+	// Default 4 GB (PostgreSQL convention). REQ001502.
+	EffectiveCacheSize uint64
+
 	// Absolute-time units (target).
 	SeqScanNanos   time.Duration
 	IndexNanos     time.Duration
@@ -41,10 +48,11 @@ type CostParams struct {
 // REQ001104.
 func Default() CostParams {
 	return CostParams{
-		SeqPageCost:       1.0,
-		RandomPageCost:    4.0,
-		CPUTupleCost:      0.01,
-		CPUIndexTupleCost: 0.005,
-		CPUOperatorCost:   0.0025,
+		SeqPageCost:        1.0,
+		RandomPageCost:     2.0, // REQ001503: lowered from 4.0 (modern SSDs)
+		CPUTupleCost:       0.01,
+		CPUIndexTupleCost:  0.005,
+		CPUOperatorCost:    0.0025,
+		EffectiveCacheSize: 4 * 1024 * 1024 * 1024, // 4 GB
 	}
 }
