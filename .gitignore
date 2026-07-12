@@ -82,3 +82,5 @@ tmp/
 # Home directory artifacts
 ${HOME}/
 .worktrees/
+*.razor*
+.engine

@@ -92,6 +92,9 @@ type SeqScan struct {
 	// REQ001221: rowArena replaces decodeBuf for bump-pointer
 	rowArena *DT.RowArena
 
+	// REQ001533: exec context for pipeline arena sharing.
+	execCtx *pl.ExecContext
+
 	// REQ001225: rawByteFilter is a predicate compiled from a filter
 	// conjunct that can be evaluated on raw encoded bytes without
 	// decoding the row. Set by NewFilter when pushdown is possible.
@@ -122,6 +125,10 @@ func (s *SeqScan) WithPlanner(p pl.QueryPlanner) pl.Operator {
 // WithAlias sets a table alias so produced rows have column names
 // prefixed with "alias.". Used for correlated subqueries.
 // REQ000760: pre-compute prefixed cols once to avoid per-row allocation.
+// SetExecCtx stores the exec context for pipeline arena sharing.
+// Only used when the pipeline arena already has an active slab. REQ001533.
+func (s *SeqScan) SetExecCtx(ec *pl.ExecContext) { s.execCtx = ec }
+
 func (s *SeqScan) WithAlias(alias string) *SeqScan {
 	s.alias = alias
 	// Pre-compute prefixed column names from the schema.
@@ -569,7 +576,29 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 // REQ001221: replaces per-row make([]Value, N) with RowArena bump
 // allocation. The arena is reset in Close(), freeing all rows at once.
 // REQ001260: pre-size arena to engineBatchSize rows to reduce grow calls.
+// REQ001533: use pipeline RowArena when it already has an active slab,
+// so multi-operator queries (e.g., join_equi) share one arena across
+// SeqScan + HashJoin instead of each allocating their own slab.
 func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
+	n := len(s.schema.Cols)
+	if n == 0 {
+		return Row{}, nil
+	}
+	// Use pipeline arena when it already has an active slab (NeedsInit==false).
+	// This avoids allocating a separate slab per SeqScan when other operators
+	// (Sort, HashJoin, etc.) have already initialized the pipeline arena.
+	if s.execCtx != nil {
+		if arena, ok := s.execCtx.RowArena.(*DT.RowArena); ok && arena != nil && !arena.NeedsInit() {
+			row := arena.AllocRow(n, s.schema)
+			if row != nil {
+				err := DT.DecodeRowInto(row, data, s.schema)
+				if err != nil {
+					return Row{}, err
+				}
+				return *row, nil
+			}
+		}
+	}
 	if s.rowArena == nil || s.rowArena.NeedsInit() {
 		if s.rowArena == nil {
 			s.rowArena = &DT.RowArena{}
@@ -582,10 +611,6 @@ func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
 			nCols = len(s.usedCols)
 		}
 		s.rowArena.Init(engineBatchSize, nCols)
-	}
-	n := len(s.schema.Cols)
-	if n == 0 {
-		return Row{}, nil
 	}
 	row := s.rowArena.AllocRow(n, s.schema)
 	if row == nil {
