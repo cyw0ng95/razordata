@@ -596,12 +596,229 @@ func compileRowExpr(e PS.Expr) func(*Row) Value {
 		return compileColRef(v.Table+"."+v.Name, v.SlotIdx)
 	case *PS.Ident:
 		return compileColRef(v.Name, v.SlotIdx)
+	case *PS.NumberLiteral:
+		return compileConstInt(v.Val)
 	case *PS.AliasedExpr:
 		return compileRowExpr(v.Expr)
 	case *PS.BinaryExpr:
 		return compileBinaryArith(v)
 	default:
 		return nil
+	}
+}
+
+// compileConstInt compiles a constant integer literal.
+func compileConstInt(val int64) func(*Row) Value {
+	return func(*Row) Value {
+		return Value{Kind: KindInt, I64: val}
+	}
+}
+
+// compileProjectBool compiles an expression to a bool-returning closure
+// suitable for CASE WHEN conditions. NULL values return false.
+func compileProjectBool(e PS.Expr) func(*Row) bool {
+	switch v := e.(type) {
+	case *PS.BinaryExpr:
+		switch v.Op {
+		case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
+			return compileProjectCmp(v)
+		case LX.T_AND:
+			return compileProjectAnd(v)
+		case LX.T_OR:
+			return compileProjectOr(v)
+		}
+	case *PS.NumberLiteral:
+		// Non-zero constant is always true (SQL truthiness)
+		if v.Val != 0 {
+			return func(*Row) bool { return true }
+		}
+		return func(*Row) bool { return false }
+	}
+	return nil
+}
+
+// compileProjectCmp compiles a comparison binary expression (col OP literal,
+// col OP col, or general expr OP expr) into a bool closure. NULL → false.
+func compileProjectCmp(v *PS.BinaryExpr) func(*Row) bool {
+	col, lit, ok := extractColLiteralPair(v)
+	if ok {
+		return makeProjectCmp(col, lit, v.Op)
+	}
+	leftCol, rightCol, ok := extractColColPair(v)
+	if ok {
+		return makeProjectColColCmp(leftCol, rightCol, v.Op)
+	}
+	// General case: compile both sides as Value expressions, compare results.
+	// Handles patterns like a<b-3 where one side is an arithmetic expression.
+	left := compileRowExpr(v.Left)
+	right := compileRowExpr(v.Right)
+	if left == nil || right == nil {
+		return nil
+	}
+	return makeProjectExprCmp(left, right, v.Op)
+}
+
+// makeProjectCmp compiles col OP literal comparison.
+func makeProjectCmp(colName string, litVal any, op LX.TokenType) func(*Row) bool {
+	litValue := DT.ValueFromAny(litVal)
+	return func(row *Row) bool {
+		idx := findColIndex(row, colName)
+		if idx < 0 || idx >= len(row.Data) {
+			return false
+		}
+		v := row.Data[idx]
+		if v.IsNull() || litValue.IsNull() {
+			return false
+		}
+		switch op {
+		case LX.T_EQ:
+			eq, _ := DT.EqualValue(v, litValue)
+			return eq
+		case LX.T_NE:
+			eq, _ := DT.EqualValue(v, litValue)
+			return !eq
+		case LX.T_LT:
+			return DT.CompareValue(v, litValue) < 0
+		case LX.T_LE:
+			return DT.CompareValue(v, litValue) <= 0
+		case LX.T_GT:
+			return DT.CompareValue(v, litValue) > 0
+		case LX.T_GE:
+			return DT.CompareValue(v, litValue) >= 0
+		}
+		return false
+	}
+}
+
+// makeProjectColColCmp compiles col OP col comparison.
+func makeProjectColColCmp(leftCol, rightCol string, op LX.TokenType) func(*Row) bool {
+	return func(row *Row) bool {
+		leftIdx := findColIndex(row, leftCol)
+		rightIdx := findColIndex(row, rightCol)
+		if leftIdx < 0 || rightIdx < 0 || leftIdx >= len(row.Data) || rightIdx >= len(row.Data) {
+			return false
+		}
+		a, b := row.Data[leftIdx], row.Data[rightIdx]
+		if a.IsNull() || b.IsNull() {
+			return false
+		}
+		switch op {
+		case LX.T_EQ:
+			eq, _ := DT.EqualValue(a, b)
+			return eq
+		case LX.T_NE:
+			eq, _ := DT.EqualValue(a, b)
+			return !eq
+		case LX.T_LT:
+			return DT.CompareValue(a, b) < 0
+		case LX.T_LE:
+			return DT.CompareValue(a, b) <= 0
+		case LX.T_GT:
+			return DT.CompareValue(a, b) > 0
+		case LX.T_GE:
+			return DT.CompareValue(a, b) >= 0
+		}
+		return false
+	}
+}
+
+// compileProjectAnd compiles AND by chaining two bool closures.
+func compileProjectAnd(v *PS.BinaryExpr) func(*Row) bool {
+	left := compileProjectBool(v.Left)
+	right := compileProjectBool(v.Right)
+	if left == nil || right == nil {
+		return nil
+	}
+	return func(row *Row) bool {
+		return left(row) && right(row)
+	}
+}
+
+// compileProjectOr compiles OR by chaining two bool closures.
+func compileProjectOr(v *PS.BinaryExpr) func(*Row) bool {
+	left := compileProjectBool(v.Left)
+	right := compileProjectBool(v.Right)
+	if left == nil || right == nil {
+		return nil
+	}
+	return func(row *Row) bool {
+		return left(row) || right(row)
+	}
+}
+
+// makeProjectExprCmp compares two Value expressions. Handles patterns like
+// a<b-3 where each side is a compiled row expression.
+func makeProjectExprCmp(left, right func(*Row) Value, op LX.TokenType) func(*Row) bool {
+	return func(row *Row) bool {
+		a, b := left(row), right(row)
+		if a.IsNull() || b.IsNull() {
+			return false
+		}
+		switch op {
+		case LX.T_EQ:
+			eq, _ := DT.EqualValue(a, b)
+			return eq
+		case LX.T_NE:
+			eq, _ := DT.EqualValue(a, b)
+			return !eq
+		case LX.T_LT:
+			return DT.CompareValue(a, b) < 0
+		case LX.T_LE:
+			return DT.CompareValue(a, b) <= 0
+		case LX.T_GT:
+			return DT.CompareValue(a, b) > 0
+		case LX.T_GE:
+			return DT.CompareValue(a, b) >= 0
+		}
+		return false
+	}
+}
+
+// compileProjectCaseExpr compiles CASE WHEN to a closure chain.
+// Falls back to Eval for complex patterns (simple CASE with Expr, subqueries).
+func compileProjectCaseExpr(e *PS.CaseExpr) func(*Row) (Value, error) {
+	// Simple CASE (CASE x WHEN a THEN b) — fall back to Eval for now.
+	if e.Expr != nil {
+		return compileProjectCaseFallback(e)
+	}
+	type whenClause struct {
+		cond func(*Row) bool
+		then func(*Row) Value
+	}
+	clauses := make([]whenClause, 0, len(e.WhenList))
+	for _, w := range e.WhenList {
+		cond := compileProjectBool(w.Cond)
+		then := compileRowExpr(w.Then)
+		if cond == nil || then == nil {
+			return compileProjectCaseFallback(e)
+		}
+		clauses = append(clauses, whenClause{cond, then})
+	}
+	var elseFn func(*Row) Value
+	if e.Else != nil {
+		elseFn = compileRowExpr(e.Else)
+		if elseFn == nil {
+			return compileProjectCaseFallback(e)
+		}
+	}
+	return func(row *Row) (Value, error) {
+		for _, c := range clauses {
+			if c.cond(row) {
+				return c.then(row), nil
+			}
+		}
+		if elseFn != nil {
+			return elseFn(row), nil
+		}
+		return Value{}, nil
+	}
+}
+
+// compileProjectCaseFallback returns a closure that uses EV.EvalValue
+// for CASE expressions that cannot be compiled.
+func compileProjectCaseFallback(e *PS.CaseExpr) func(*Row) (Value, error) {
+	return func(row *Row) (Value, error) {
+		return EV.EvalValue(e, row, nil)
 	}
 }
 
@@ -814,14 +1031,6 @@ func compileColRef(name string, slotIdx int) func(*Row) Value {
 func compileProjectFuncCall(e *PS.FunctionCall) func(*Row) (Value, error) {
 	return func(row *Row) (Value, error) {
 		return EV.EvalFunction(e, row, nil)
-	}
-}
-
-// compileProjectCaseExpr compiles a CASE expression into a closure
-// that evaluates it directly. REQ001291.
-func compileProjectCaseExpr(e *PS.CaseExpr) func(*Row) (Value, error) {
-	return func(row *Row) (Value, error) {
-		return EV.EvalValue(e, row, nil)
 	}
 }
 
