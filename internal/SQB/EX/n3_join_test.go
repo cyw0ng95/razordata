@@ -799,3 +799,50 @@ func TestJoinPredSel_INList_UsesMCVs(t *testing.T) {
 		t.Fatalf("expected MCV-aware selectivity ~0.5, got %v", sel)
 	}
 }
+// REQ001550: hasIndexOnTable must not panic when `table` is not
+// registered in p.catalog. Both empty-catalog and unknown-table cases
+// must return false (no index) so N3 / MultiStart can fall back to NLJ.
+func TestHasIndexOnTable_NilUnregistered(t *testing.T) {
+	p := NewPlanner()
+	// Empty catalog: lookup of any name returns false, not panic.
+	if p.hasIndexOnTable("nope") {
+		t.Fatalf("expected false on empty catalog, got true")
+	}
+
+	// Register one table; an unregistered name still must not panic.
+	p.RegisterTable("t1", []DT.ColInfo{{Name: "pk", Typ: 1}}, "pk")
+	if p.hasIndexOnTable("ghost") {
+		t.Fatalf("expected false for unregistered ghost table, got true")
+	}
+	if p.hasIndexOnTable("t1") {
+		t.Fatalf("expected false for t1 (no secondary index registered), got true")
+	}
+	p.RegisterIndex("t1", "idx_pk", []string{"pk"})
+	if !p.hasIndexOnTable("t1") {
+		t.Fatalf("expected true for t1 after idx_pk registered, got false")
+	}
+}
+
+// REQ001550: N3 path that previously crashed select4.test / select5.test.
+// Trigger hasIndexOnTable indirectly via plannerAsStatsProvider.HasIndex on
+// a joinTable whose name does NOT match any registered base table. Must
+// complete without panic and produce a deterministic order.
+func TestN3_NoPanicOnUnknownJoinedTable(t *testing.T) {
+	p := NewPlanner()
+	// Register only `tab0`; the N3 call below references `missing` — a
+	// table not in catalog. Before the fix, the optimizer crashed at
+	// hasIndexOnTable ("missing") with SIGSEGV at offset 0x38.
+	p.RegisterTable("tab0", []DT.ColInfo{
+		{Name: "pk", Typ: 1},
+		{Name: "col0", Typ: 1},
+	}, "pk")
+
+	joinTables := []joinTableInfo{
+		{name: "missing"}, // not registered
+	}
+
+	order, _ := p.n3JoinOrdering("tab0", joinTables, nil, nil)
+	if len(order) != 2 {
+		t.Fatalf("expected 2 tables in order (tab0 + missing), got %d: %v", len(order), order)
+	}
+}

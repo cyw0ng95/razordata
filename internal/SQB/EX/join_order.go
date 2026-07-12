@@ -65,8 +65,17 @@ type joinTableInfo struct {
 }
 
 // hasIndexOnTable checks whether the table has any registered index.
+// REQ001550: nil-guard. `p.catalog[table]` returns nil for unregistered
+// tables; N3 may invoke this during cost-based enumeration with a base
+// table that has been aliased/substituted and is not yet in the
+// planner's catalog (e.g., SLT select4.test / select5.test panics).
+// Treat missing table as "no index" so N3 falls back to NLJ.
 func (p *Planner) hasIndexOnTable(table string) bool {
-	return len(p.catalog[table].indexes) > 0
+	t, ok := p.catalog[table]
+	if !ok || t == nil {
+		return false
+	}
+	return len(t.indexes) > 0
 }
 
 // joinResultRows estimates the number of output rows from a join.
