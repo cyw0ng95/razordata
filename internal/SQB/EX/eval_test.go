@@ -815,3 +815,202 @@ func TestScalarSubquery_StatsCountShortcutNullableCol(t *testing.T) {
 		t.Errorf("count(b) = %d, want 3 (correct count skips NULLs)", got)
 	}
 }
+
+// TestTopLevelLazyAggregateFolding verifies REQ001528: trivial
+// single-table aggregates (count/min/max/sum/avg) are folded into
+// a single SeqScan pass when ANALYZE stats are not available,
+// matching the same results as the normal full operator tree.
+func TestTopLevelLazyAggregateFolding(t *testing.T) {
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.Exec(ctx, "CREATE TABLE t (a INT, b TEXT)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 'x'), (2, 'y'), (3, 'z'), (NULL, 'w')")
+
+	t.Run("count_star", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT count(*) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rows[0].Data[0].I64; got != 4 {
+			t.Errorf("count(*) = %d, want 4", got)
+		}
+	})
+	t.Run("count_col", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT count(a) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rows[0].Data[0].I64; got != 3 {
+			t.Errorf("count(a) = %d, want 3", got)
+		}
+	})
+	t.Run("min_int", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT min(a) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rows[0].Data[0].I64; got != 1 {
+			t.Errorf("min(a) = %d, want 1", got)
+		}
+	})
+	t.Run("max_int", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT max(a) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rows[0].Data[0].I64; got != 3 {
+			t.Errorf("max(a) = %d, want 3", got)
+		}
+	})
+	t.Run("sum_int", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT sum(a) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rows[0].Data[0].I64; got != 6 {
+			t.Errorf("sum(a) = %d, want 6", got)
+		}
+	})
+	t.Run("avg_int", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT avg(a) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rows[0].Data[0].F64; got != 2.0 {
+			t.Errorf("avg(a) = %0.1f, want 2.0", got)
+		}
+	})
+	t.Run("min_text", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT min(b) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rows[0].Data[0].S; got != "w" {
+			t.Errorf("min(b) = %q, want \"w\"", got)
+		}
+	})
+	t.Run("max_text", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT max(b) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rows[0].Data[0].S; got != "z" {
+			t.Errorf("max(b) = %q, want \"z\"", got)
+		}
+	})
+}
+
+// TestTopLevelLazyAggregateFolding_Empty verifies REQ001528 handles
+// empty tables correctly (count=0, min/max/sum/avg=NULL).
+func TestTopLevelLazyAggregateFolding_Empty(t *testing.T) {
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.Exec(ctx, "CREATE TABLE t (a INT)")
+	// No rows inserted — table is empty.
+
+	t.Run("count_star", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT count(*) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rows[0].Data[0].I64; got != 0 {
+			t.Errorf("count(*) = %d, want 0", got)
+		}
+	})
+	t.Run("min_null", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT min(a) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !rows[0].Data[0].IsNull() {
+			t.Errorf("min(a) = %v, want NULL", rows[0].Data[0])
+		}
+	})
+	t.Run("max_null", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT max(a) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !rows[0].Data[0].IsNull() {
+			t.Errorf("max(a) = %v, want NULL", rows[0].Data[0])
+		}
+	})
+	t.Run("sum_null", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT sum(a) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !rows[0].Data[0].IsNull() {
+			t.Errorf("sum(a) = %v, want NULL", rows[0].Data[0])
+		}
+	})
+	t.Run("avg_null", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT avg(a) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !rows[0].Data[0].IsNull() {
+			t.Errorf("avg(a) = %v, want NULL", rows[0].Data[0])
+		}
+	})
+}
+
+// TestTopLevelLazyAggregateFolding_NotApplicable verifies REQ001528
+// does NOT fire when conditions are not met (DISTINCT, WHERE clause,
+// multiple columns, non-aggregate SELECT).
+func TestTopLevelLazyAggregateFolding_NotApplicable(t *testing.T) {
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	ctx := context.Background()
+
+	ex.Exec(ctx, "CREATE TABLE t (a INT, b INT)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)")
+
+	// DISTINCT aggregate must use full HashAggregate.
+	t.Run("distinct_not_folded", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT count(DISTINCT a) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rows[0].Data[0].I64; got != 3 {
+			t.Errorf("count(DISTINCT a) = %d, want 3", got)
+		}
+	})
+	// WHERE clause must fall through to normal planning.
+	t.Run("where_not_folded", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT count(*) FROM t WHERE a > 1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rows[0].Data[0].I64; got != 2 {
+			t.Errorf("count(*) WHERE a>1 = %d, want 2", got)
+		}
+	})
+	// Multiple columns in SELECT list.
+	t.Run("multi_col_not_folded", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT count(*), sum(a) FROM t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rows[0].Data[0].I64; got != 3 {
+			t.Errorf("count(*) = %d, want 3", got)
+		}
+		if got := rows[0].Data[1].I64; got != 6 {
+			t.Errorf("sum(a) = %d, want 6", got)
+		}
+	})
+	// Non-aggregate SELECT.
+	t.Run("plain_select_not_folded", func(t *testing.T) {
+		rows, err := ex.QueryAll(ctx, "SELECT a FROM t ORDER BY a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 3 {
+			t.Errorf("got %d rows, want 3", len(rows))
+		}
+	})
+}

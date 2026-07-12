@@ -13,12 +13,13 @@ import (
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
-const syncStreamRowThreshold = 100
+const syncStreamRowThreshold = 1000
 
 // isEligibleForSyncStream checks if a query is simple enough to use
 // the synchronous caller-pull path (no goroutine/channel overhead).
 // Small queries where channel sync dominates actual execution work
-// benefit from the sync path.
+// benefit from the sync path. REQ001529: threshold raised to 1000,
+// complex operators ignored for tiny result sets (< 200 rows).
 func isEligibleForSyncStream(stmt PS.Stmt, plan *pl.PlanResult, p *Planner) bool {
 	sel, ok := stmt.(*PS.Select)
 	if !ok {
@@ -38,13 +39,19 @@ func isEligibleForSyncStream(stmt PS.Stmt, plan *pl.PlanResult, p *Planner) bool
 	if hasSubqueryInSelect(sel.Cols) && !allSelectSubqueriesCacheable(sel.Cols) {
 		return false
 	}
-	// No complex operators in plan tree
-	if hasComplexOperator(plan.Root) {
-		return false
-	}
 	// Estimate row count below threshold
 	estimatedRows := estimateRowCount(sel, p)
 	if estimatedRows >= syncStreamRowThreshold {
+		return false
+	}
+	// REQ001529: for very small result sets (estimated < 200 rows),
+	// the goroutine overhead dominates — use sync path even with
+	// complex operators (Aggregate, Sort, etc.).
+	if estimatedRows < 200 {
+		return true
+	}
+	// No complex operators in plan tree
+	if hasComplexOperator(plan.Root) {
 		return false
 	}
 	return true

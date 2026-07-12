@@ -64,46 +64,46 @@ func TestStream_SyncPath_LargeFallback(t *testing.T) {
 
     DT.RegisterTableSchema("big", []string{"id", "val"})
     DT.TablesMu.Lock()
-    // Create a table with >100 rows — should exceed sync threshold.
-    for i := 0; i < 200; i++ {
-        DT.Tables["big"] = append(DT.Tables["big"], DT.Row{
-            Cols: []string{"id", "val"},
-            Data: []DT.Value{NewIntValue(int64(i)), NewTextValue("x")},
-        })
-    }
-    DT.TablesMu.Unlock()
+	// Create a table with 2000 rows — should exceed sync threshold.
+	for i := 0; i < 2000; i++ {
+		DT.Tables["big"] = append(DT.Tables["big"], DT.Row{
+			Cols: []string{"id", "val"},
+			Data: []DT.Value{NewIntValue(int64(i)), NewTextValue("x")},
+		})
+	}
+	DT.TablesMu.Unlock()
 
-    ex := NewExecutor()
-    ctx := context.Background()
+	ex := NewExecutor()
+	ctx := context.Background()
 
-    // Large table — should NOT use sync path.
-    iter, err := ex.QueryStream(ctx, "SELECT id FROM big")
-    if err != nil {
-        t.Fatalf("QueryStream: %v", err)
-    }
+	// Large table — should NOT use sync path.
+	iter, err := ex.QueryStream(ctx, "SELECT id FROM big")
+	if err != nil {
+		t.Fatalf("QueryStream: %v", err)
+	}
 
-    // Should use channel path (rows nil, rowCh non-nil).
-    if iter.rows != nil {
-        t.Fatal("expected channel path (rows == nil) for large query")
-    }
-    if iter.rowCh == nil {
-        t.Fatal("expected channel path (rowCh != nil) for large query")
-    }
+	// Should use channel path (rows nil, rowCh non-nil).
+	if iter.rows != nil {
+		t.Fatal("expected channel path (rows == nil) for large query")
+	}
+	if iter.rowCh == nil {
+		t.Fatal("expected channel path (rowCh != nil) for large query")
+	}
 
-    // Drain all rows.
-    count := 0
-    for {
-        _, err := iter.Next()
-        if err != nil {
-            break
-        }
-        count++
-    }
-    iter.Close()
+	// Drain all rows.
+	count := 0
+	for {
+		_, err := iter.Next()
+		if err != nil {
+			break
+		}
+		count++
+	}
+	iter.Close()
 
-    if count != 200 {
-        t.Fatalf("expected 200 rows, got %d", count)
-    }
+	if count != 2000 {
+		t.Fatalf("expected 2000 rows, got %d", count)
+	}
 }
 
 // TestStream_SyncPath_NoJoins verifies that queries with joins always
@@ -293,8 +293,8 @@ func BenchmarkSelect1_ChannelPath(b *testing.B) {
     UnregisterAll()
     DT.RegisterTableSchema("t", []string{"id", "name", "age"})
     DT.TablesMu.Lock()
-    // 200 rows to exceed sync threshold (100) and force channel path.
-    for i := 0; i < 200; i++ {
+    // 2000 rows to exceed sync threshold (1000) and force channel path.
+    for i := 0; i < 2000; i++ {
         DT.Tables["t"] = append(DT.Tables["t"], DT.Row{
             Cols: []string{"id", "name", "age"},
             Data: []DT.Value{NewIntValue(int64(i)), NewTextValue("u"), NewIntValue(int64(20 + i%50))},

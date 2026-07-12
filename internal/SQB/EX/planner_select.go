@@ -1,6 +1,7 @@
 package EX
 
 import (
+	"context"
 	"strings"
 
 	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
@@ -68,6 +69,18 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 			if rows, _, ok := p.tryStatsCountShortcut(s, agg); ok {
 				countVal := rows[0].Data[0].AsInt()
 				return OP.NewValuesOp([]PS.Expr{&PS.NumberLiteral{Val: countVal}})
+			}
+		}
+		// REQ001528: fold trivial aggregate into single SeqScan pass
+		// when stats are unavailable. For count(*)/min(col)/max(col)/
+		// sum(col)/avg(col) on a single table without filtering/grouping,
+		// iterate the scan and compute the aggregate directly.
+		if agg2, ok2 := s.Cols[0].(*PS.AggregateFunc); ok2 &&
+			!agg2.Distinct && agg2.Filter == nil && agg2.Separator == nil {
+			if _, isStar := agg2.Arg.(*PS.StarExpr); isStar || isAggIdentArg(agg2.Arg) {
+				if op, err := p.tryLazyAggregateTopLevel(s, agg2); err == nil && op != nil {
+					return op
+				}
 			}
 		}
 	}
@@ -1606,4 +1619,57 @@ func commonColumns(a, b []string) []string {
 		}
 	}
 	return out
+}
+
+// tryLazyAggregateTopLevel handles SELECT count(*)/min(col)/max(col)/
+// sum(col)/avg(col) FROM t1 by scanning the table in a single pass
+// and computing the aggregate inline, bypassing the full operator tree.
+// Returns (op, nil) on success, (nil, nil) if the aggregate cannot be
+// handled lazily (caller should fall through to normal planning).
+// REQ001528.
+func (p *Planner) tryLazyAggregateTopLevel(s *PS.Select, agg *PS.AggregateFunc) (DT.Operator, error) {
+	var scan DT.Operator
+	if p.store != nil {
+		s2, err := OP.NewSeqScanWithStore(p.store, s.From)
+		if err != nil {
+			return nil, err
+		}
+		scan = s2
+	} else {
+		scan = OP.NewSeqScan(s.From)
+	}
+	defer scan.Close()
+
+	rows, ok, err := computeLazyAggregate(context.Background(), scan, strings.ToLower(agg.Name), agg.Arg, nil, nil)
+	if err != nil || !ok || len(rows) == 0 {
+		return nil, nil
+	}
+
+	val := rows[0].Data[0]
+	return OP.NewValuesOp([]PS.Expr{litFromValue(val)}), nil
+}
+
+// litFromValue creates a PS.Expr literal from a DT.Value.
+func litFromValue(v DT.Value) PS.Expr {
+	if v.IsNull() {
+		return &PS.NullLiteral{}
+	}
+	switch v.Kind {
+	case DT.KindInt:
+		return &PS.NumberLiteral{Val: v.I64}
+	case DT.KindFloat:
+		return &PS.FloatLiteral{Val: v.F64}
+	case DT.KindText:
+		return &PS.StringLiteral{Val: v.S}
+	case DT.KindBool:
+		return &PS.BoolLiteral{Val: v.Bo}
+	default:
+		return &PS.NullLiteral{}
+	}
+}
+
+// isAggIdentArg returns true when the expression is a bare Ident (bare column ref).
+func isAggIdentArg(e PS.Expr) bool {
+	_, ok := e.(*PS.Ident)
+	return ok
 }
