@@ -212,8 +212,14 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 			}
 		}
 		allTables := []string{s.From}
+		if s.FromAlias != "" {
+			allTables = append(allTables, s.FromAlias)
+		}
 		for _, j := range s.Joins {
 			allTables = append(allTables, j.Right)
+			if j.RightAlias != "" {
+				allTables = append(allTables, j.RightAlias)
+			}
 		}
 		pushedPredicates, crossTablePredicates = p.splitPredicatesByTable(conjuncts, allTables)
 		// REQ001077: transitive equality inference on cross-table
@@ -1059,7 +1065,11 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 		if j.Kind != "INNER" && j.Kind != "LEFT" && j.Kind != "RIGHT" && j.Kind != "FULL" && j.Kind != "CROSS" {
 			continue
 		}
-		joinInfos = append(joinInfos, joinTableInfo{name: j.Right, join: j})
+		jName := j.Right
+		if j.RightAlias != "" {
+			jName = j.RightAlias
+		}
+		joinInfos = append(joinInfos, joinTableInfo{name: jName, join: j})
 		joinClauses = append(joinClauses, j)
 	}
 	costPredicates := crossTablePredicates
@@ -1141,7 +1151,11 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 		tableOccurrence := make(map[string]int, len(group))
 		joinClauseIdx := make(map[string]int, len(joinClauses))
 		for ci, jc := range joinClauses {
-			joinClauseIdx[jc.Right] = ci
+			jName := jc.Right
+			if jc.RightAlias != "" {
+				jName = jc.RightAlias
+			}
+			joinClauseIdx[jName] = ci
 		}
 		if gi == 0 {
 			current = filteredScan
@@ -1207,7 +1221,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 				}
 			}
 			j := joinClauses[ci]
-			if j.Right != tbl {
+			if j.Right != tbl && j.RightAlias != tbl {
 				continue
 			}
 			kind := OP.JoinKind(j.Kind)
@@ -1247,7 +1261,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 		}
 			var joinOp DT.Operator
 			if (kind == OP.JoinKindInner || kind == OP.JoinKindCross) && len(localConjuncts) > 0 {
-				lk, rk, remaining := p.extractEquiJoinKeys(localConjuncts, joinedTables, j.Right)
+				lk, rk, remaining := p.extractEquiJoinKeys(localConjuncts, joinedTables, rightTbl)
 				if len(lk) > 0 {
 					for _, orig := range localConjuncts {
 						found := false
