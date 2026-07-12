@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	ec "github.com/cyw0ng95/razordata/internal/LOG/EC"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
@@ -75,6 +76,9 @@ type HashJoin struct {
 	// materialization. 0 = unlimited. Set by Planner from
 	// Executor.WithMemoryBudget. REQ001056.
 	joinBufferSize int64
+
+	// REQ001527: exec context for RowArena allocation.
+	execCtx *DT.ExecContext
 
 	// REQ001020: outer-join state. kind selects INNER (default),
 	// LEFT, RIGHT, or FULL. matchedRight[bucketIdx][rowIdx] tracks
@@ -163,6 +167,19 @@ func (j *HashJoin) Partitions() int { return j.partitions }
 
 // JoinBufferSize returns the per-hash-join memory cap.
 func (j *HashJoin) JoinBufferSize() int64 { return j.joinBufferSize }
+
+// SetExecCtx stores the exec context for arena allocation. REQ001527.
+func (j *HashJoin) SetExecCtx(ec *DT.ExecContext) { j.execCtx = ec }
+
+// arena returns the RowArena from the exec context, or nil.
+func (j *HashJoin) arena() *DT.RowArena {
+	if j.execCtx != nil {
+		if a, ok := j.execCtx.RowArena.(*DT.RowArena); ok {
+			return a
+		}
+	}
+	return nil
+}
 
 // WithJoinBufferSize sets the per-hash-join memory cap
 // (right-side + left-side materialization). 0 = unlimited.
@@ -335,7 +352,12 @@ func (j *HashJoin) nextMatched() (pl.Row, int, int, int, bool) {
 			if matched {
 				right := bucket.rightRows[k]
 				leftData := j.leftRows[j.curLeftIdx].Data
-				outData := make([]pl.Value, j.dataPerRow)
+				var outData []pl.Value
+				if arena := j.arena(); arena != nil {
+					outData = arena.AllocData(j.dataPerRow)
+				} else {
+					outData = make([]pl.Value, j.dataPerRow)
+				}
 				copy(outData, leftData)
 				copy(outData[len(leftData):], right.Data)
 				hashJoinDebugRowFlow(j.leftTbl, uint64(j.curLeftIdx), false)
@@ -358,11 +380,17 @@ func (j *HashJoin) nextMatched() (pl.Row, int, int, int, bool) {
 // NULL right columns. REQ001020. Returns a fresh Data slice so
 // the emitBuf backing array can be reused without aliasing.
 func (j *HashJoin) emitUnmatchedLeft(li int) pl.Row {
+	var data []pl.Value
+	if arena := j.arena(); arena != nil {
+		data = arena.AllocData(j.dataPerRow)
+	} else {
+		data = make([]pl.Value, j.dataPerRow)
+	}
 	out := pl.Row{
 		Cols:     j.sharedCols,
 		Types:    j.sharedTypes,
 		ColIndex: j.sharedColIndex,
-		Data:     make([]pl.Value, j.dataPerRow),
+		Data:     data,
 	}
 	leftData := j.leftRows[li].Data
 	copy(out.Data, leftData)
@@ -373,11 +401,17 @@ func (j *HashJoin) emitUnmatchedLeft(li int) pl.Row {
 // and NULL left columns. leftLen is a fixed value computed from
 // the shared schema at join construction time (REQ001272).
 func (j *HashJoin) emitUnmatchedRight(bucketIdx, rowInBucket int) pl.Row {
+	var data []pl.Value
+	if arena := j.arena(); arena != nil {
+		data = arena.AllocData(j.dataPerRow)
+	} else {
+		data = make([]pl.Value, j.dataPerRow)
+	}
 	out := pl.Row{
 		Cols:     j.sharedCols,
 		Types:    j.sharedTypes,
 		ColIndex: j.sharedColIndex,
-		Data:     make([]pl.Value, j.dataPerRow),
+		Data:     data,
 	}
 	right := j.buckets[bucketIdx].rightRows[rowInBucket]
 	leftLen := j.leftLen
@@ -475,7 +509,13 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		// Deep-copy Data — the child operator may reuse its emitBuf
 		// across Next() calls, and storing the slice header alone
 		// would alias all rows to the same backing array.
-		row.Data = append([]pl.Value(nil), row.Data...)
+		if arena := j.arena(); arena != nil {
+			newData := arena.AllocData(len(row.Data))
+			copy(newData, row.Data)
+			row.Data = newData
+		} else {
+			row.Data = append([]pl.Value(nil), row.Data...)
+		}
 		j.buckets[idx].rightRows = append(j.buckets[idx].rightRows, row)
 		j.buckets[idx].hashes = append(j.buckets[idx].hashes, hash)
 	}
@@ -556,7 +596,13 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 			break
 		}
 		// Deep-copy Data — same reason as the right-side build above.
-		row.Data = append([]pl.Value(nil), row.Data...)
+		if arena := j.arena(); arena != nil {
+			newData := arena.AllocData(len(row.Data))
+			copy(newData, row.Data)
+			row.Data = newData
+		} else {
+			row.Data = append([]pl.Value(nil), row.Data...)
+		}
 		j.leftRows = append(j.leftRows, row)
 	}
 

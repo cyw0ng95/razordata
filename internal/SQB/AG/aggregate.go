@@ -26,6 +26,29 @@ type Aggregate struct {
 	pos        int
 	params     []any
 	expandStar bool
+	execCtx    *PL.ExecContext // REQ001527: exec context for RowArena
+}
+
+// SetExecCtx stores the exec context for arena allocation. REQ001527.
+func (a *Aggregate) SetExecCtx(ec *PL.ExecContext) { a.execCtx = ec }
+
+// allocData returns a []Value of length n, either from the arena or
+// via make() as fallback. REQ001527.
+func (a *Aggregate) allocData(n int) []Value {
+	if arena := a.arena(); arena != nil {
+		return arena.AllocData(n)
+	}
+	return make([]Value, n)
+}
+
+// arena returns the RowArena from the exec context, or nil. REQ001527.
+func (a *Aggregate) arena() *DT.RowArena {
+	if a.execCtx != nil {
+		if ar, ok := a.execCtx.RowArena.(*DT.RowArena); ok {
+			return ar
+		}
+	}
+	return nil
 }
 
 func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
@@ -97,7 +120,7 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 			}
 			return err
 		}
-		key, err := evalGroupKey(a.groupCols, &row, a.params)
+		key, err := evalGroupKey(a.groupCols, &row, a.params, a.arena())
 		if err != nil {
 			return err
 		}
@@ -124,14 +147,18 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 	})
 	for _, g := range groups {
 		var out Row
+		var off int
 		if a.expandStar && len(g.rows) > 0 {
 			firstRow := g.rows[0]
+			nData := len(firstRow.Data) + len(a.aggs)
 			out = Row{
 				Cols: make([]string, len(firstRow.Cols), len(firstRow.Cols)+len(a.aggs)),
-				Data: make([]Value, len(firstRow.Data), len(firstRow.Data)+len(a.aggs)),
+				Data: a.allocData(nData),
 			}
 			copy(out.Cols, firstRow.Cols)
-			copy(out.Data, firstRow.Data)
+			if nData > 0 {
+				copy(out.Data, firstRow.Data)
+			}
 			for i, gc := range a.groupCols {
 				name := groupColName(gc)
 				for j, c := range out.Cols {
@@ -141,12 +168,18 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 					}
 				}
 			}
+			off = len(firstRow.Data)
 		} else {
-			out = Row{Cols: make([]string, 0, len(a.groupCols)+len(a.aggs))}
+			nData := len(a.groupCols) + len(a.aggs)
+			out = Row{
+				Cols: make([]string, 0, nData),
+				Data: a.allocData(nData),
+			}
 			for i, gc := range a.groupCols {
 				out.Cols = append(out.Cols, groupColName(gc))
-				out.Data = append(out.Data, g.key[i])
+				out.Data[i] = g.key[i]
 			}
+			off = len(a.groupCols)
 		}
 		for _, ag := range a.aggs {
 			v, err := EvalAggregateOver(ag, g.rows, a.params)
@@ -155,18 +188,24 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 			}
 			name := aggregateColName(ag)
 			out.Cols = append(out.Cols, name)
-			out.Data = append(out.Data, DT.ValueFromAny(v))
+			out.Data[off] = DT.ValueFromAny(v)
+			off++
 		}
 		a.buf = append(a.buf, out)
 	}
 	return nil
 }
 
-func evalGroupKey(cols []PS.Expr, row *Row, params []any) ([]Value, error) {
+func evalGroupKey(cols []PS.Expr, row *Row, params []any, arena *DT.RowArena) ([]Value, error) {
 	if len(cols) == 0 {
 		return nil, nil
 	}
-	out := make([]Value, len(cols))
+	var out []Value
+	if arena != nil {
+		out = arena.AllocData(len(cols))
+	} else {
+		out = make([]Value, len(cols))
+	}
 	for i, c := range cols {
 		v, err := EV.EvalValue(c, row, params)
 		if err != nil {

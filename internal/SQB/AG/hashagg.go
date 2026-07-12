@@ -89,7 +89,7 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 			}
 			return err
 		}
-		key, err := evalGroupKey(a.groupCols, &row, a.params)
+		key, err := evalGroupKey(a.groupCols, &row, a.params, nil)
 		if err != nil {
 			return err
 		}
@@ -117,7 +117,7 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 			}
 			copy(out.Cols, firstRow.Cols)
 			copy(out.Data, firstRow.Data)
-			keyVals, _ := evalGroupKey(a.groupCols, &firstRow, a.params)
+			keyVals, _ := evalGroupKey(a.groupCols, &firstRow, a.params, nil)
 			for i, gc := range a.groupCols {
 				name := groupColName(gc)
 				for j, c := range out.Cols {
@@ -129,7 +129,7 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 			}
 		} else {
 			key := rows[0]
-			keyVals, _ := evalGroupKey(a.groupCols, &key, a.params)
+			keyVals, _ := evalGroupKey(a.groupCols, &key, a.params, nil)
 			out = Row{}
 			for i, gc := range a.groupCols {
 				out.Cols = append(out.Cols, groupColName(gc))

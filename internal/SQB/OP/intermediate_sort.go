@@ -32,7 +32,8 @@ type Sort struct {
 	// REQ001278: when true, data is already in sort order (e.g. ORDER BY
 	// primary key on SeqScan output). Skip materialization + sort.
 	preOrdered bool
-
+	// REQ001527: exec context for RowArena allocation.
+	execCtx *pl.ExecContext
 	closed atomic.Bool
 }
 
@@ -43,6 +44,19 @@ func (s *Sort) Keys() []PS.OrderItem { return s.keys }
 
 func NewSort(child Operator, keys []PS.OrderItem) *Sort {
 	return &Sort{child: child, keys: keys}
+}
+
+// SetExecCtx stores the exec context for arena allocation. REQ001527.
+func (s *Sort) SetExecCtx(ec *pl.ExecContext) { s.execCtx = ec }
+
+// arena returns the RowArena from the exec context, or nil.
+func (s *Sort) arena() *DT.RowArena {
+	if s.execCtx != nil {
+		if a, ok := s.execCtx.RowArena.(*DT.RowArena); ok {
+			return a
+		}
+	}
+	return nil
 }
 
 // SetPreOrdered marks this sort as unnecessary — the child already
@@ -245,7 +259,12 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 			reorderBufInPlace(s.buf, indices)
 		} else {
 			keyCache := make([][]Value, n)
-			flatKeys := make([]Value, n*numKeys)
+			var flatKeys []Value
+			if arena := s.arena(); arena != nil {
+				flatKeys = arena.AllocData(n * numKeys)
+			} else {
+				flatKeys = make([]Value, n*numKeys)
+			}
 			for i, r := range s.buf {
 				sk := flatKeys[i*numKeys : (i+1)*numKeys]
 				var err error

@@ -70,17 +70,34 @@ func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) *Row {
 			ColIndex: schema.ColIndex,
 		}
 	}
+	start, _ := a.alloc(nCols)
+	return &Row{
+		Cols:     schema.Cols,
+		Data:     (*[1 << 30]Value)(unsafe.Pointer(&a.slab[start]))[:nCols:nCols],
+		ColIndex: schema.ColIndex,
+	}
+}
+
+// AllocData allocates a []Value of length nCols from the arena slab,
+// without requiring a StoreSchema. Used by per-operator output rows
+// that set Cols/Types independently. REQ001527.
+func (a *RowArena) AllocData(nCols int) []Value {
+	if nCols <= 0 {
+		return nil
+	}
+	start, _ := a.alloc(nCols)
+	return (*[1 << 30]Value)(unsafe.Pointer(&a.slab[start]))[:nCols:nCols]
+}
+
+// alloc is the shared slab allocation helper for AllocRow and AllocData.
+func (a *RowArena) alloc(nCols int) (int, int) {
 	needed := a.offset + nCols*valueSize
 	if needed > a.slabCap {
 		a.grow(needed)
 	}
 	start := a.offset
 	a.offset += nCols * valueSize
-	return &Row{
-		Cols:     schema.Cols,
-		Data:     (*[1 << 30]Value)(unsafe.Pointer(&a.slab[start]))[:nCols:nCols],
-		ColIndex: schema.ColIndex,
-	}
+	return start, nCols
 }
 
 func (a *RowArena) grow(needed int) {
@@ -97,10 +114,12 @@ func (a *RowArena) grow(needed int) {
 	if needed > cap {
 		cap = needed
 	}
-	s := make([]byte, cap)
+	// REQ001527: use slab cache instead of raw make() so that slabs
+	// returned by Reset() are reused across benchmark iterations.
+	s := getSlab(cap)
 	a.slab = s
 	a.offset = 0
-	a.slabCap = cap
+	a.slabCap = len(s)
 }
 
 const arenaSlabSize = 64 * 1024

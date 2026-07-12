@@ -114,7 +114,7 @@ func (a *ParallelHashAggregate) sequentialAgg(rows []Row) error {
 	m := make(map[string][]Row)
 	var order []string
 	for _, r := range rows {
-		key, err := evalGroupKey(a.groupCols, &r, a.params)
+		key, err := evalGroupKey(a.groupCols, &r, a.params, nil)
 		if err != nil {
 			return err
 		}
@@ -132,7 +132,7 @@ func (a *ParallelHashAggregate) parallelAgg(ctx context.Context, rows []Row, wor
 	// Partition rows by hash of group key
 	partitions := make([][]Row, workers)
 	for _, r := range rows {
-		key, err := evalGroupKey(a.groupCols, &r, a.params)
+		key, err := evalGroupKey(a.groupCols, &r, a.params, nil)
 		if err != nil {
 			return err
 		}
@@ -160,7 +160,7 @@ func (a *ParallelHashAggregate) parallelAgg(ctx context.Context, rows []Row, wor
 			buckets := make(map[string][]Row)
 			var order []string
 			for _, r := range part2 {
-				key, err := evalGroupKey(a.groupCols, &r, a.params)
+				key, err := evalGroupKey(a.groupCols, &r, a.params, nil)
 				if err != nil {
 					resultCh <- partResult{idx: i2, err: err}
 					return err
@@ -209,7 +209,7 @@ func (a *ParallelHashAggregate) parallelAgg(ctx context.Context, rows []Row, wor
 	for _, ks := range mergedOrder {
 		rows := merged[ks]
 		key := rows[0]
-		keyVals, _ := evalGroupKey(a.groupCols, &key, a.params)
+		keyVals, _ := evalGroupKey(a.groupCols, &key, a.params, nil)
 		out := Row{}
 		for i, gc := range a.groupCols {
 			out.Cols = append(out.Cols, groupColName(gc))
@@ -237,7 +237,7 @@ func (a *ParallelHashAggregate) buildResults(order []string, buckets map[string]
 	for _, ks := range order {
 		rows := buckets[ks]
 		key := rows[0]
-		keyVals, _ := evalGroupKey(a.groupCols, &key, a.params)
+		keyVals, _ := evalGroupKey(a.groupCols, &key, a.params, nil)
 		out := Row{}
 		for i, gc := range a.groupCols {
 			out.Cols = append(out.Cols, groupColName(gc))

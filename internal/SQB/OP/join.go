@@ -3,6 +3,7 @@ package OP
 import (
 	"strings"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
@@ -12,7 +13,7 @@ import (
 // per row (REQ000816). Passing nil for colIndex is allowed but
 // forces a per-row colIndex build downstream.
 func joinRowsLL(a, b *Row) Row {
-	return joinRowsLLWithCols(a, b, nil, nil, nil)
+	return joinRowsLLWithCols(a, b, nil, nil, nil, nil)
 }
 
 // joinRowsLLWithCols is the full-form variant: caller supplies
@@ -20,7 +21,7 @@ func joinRowsLL(a, b *Row) Row {
 // per-row allocation in the hot NLJ/HashCrossJoin path. When
 // sharedCols is non-nil, out.Cols/Types share the slice (no copy).
 // Data is always freshly allocated since it's per-row payload.
-func joinRowsLLWithCols(a, b *Row, sharedCols []string, sharedTypes []LX.TokenType, sharedColIndex map[string]int) Row {
+func joinRowsLLWithCols(a, b *Row, sharedCols []string, sharedTypes []LX.TokenType, sharedColIndex map[string]int, arena *DT.RowArena) Row {
 	out := Row{
 		ColIndex: sharedColIndex,
 	}
@@ -41,7 +42,11 @@ func joinRowsLLWithCols(a, b *Row, sharedCols []string, sharedTypes []LX.TokenTy
 		out.Types = append(out.Types, b.Types...)
 	}
 	nData := len(a.Data) + len(b.Data)
-	out.Data = make([]Value, 0, nData)
+	if arena != nil {
+		out.Data = arena.AllocData(nData)
+	} else {
+		out.Data = make([]Value, 0, nData)
+	}
 	out.Data = append(out.Data, a.Data...)
 	out.Data = append(out.Data, b.Data...)
 	return out

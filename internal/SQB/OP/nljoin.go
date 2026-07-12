@@ -187,7 +187,7 @@ func (j *NestedLoopJoin) outerJoinRows(a, b *Row) Row {
 	if j.outerSharedCols == nil {
 		j.ensureOuterShared(a, b)
 	}
-	return joinRowsLLWithCols(a, b, j.outerSharedCols, j.outerSharedTypes, j.outerSharedColIndex)
+	return joinRowsLLWithCols(a, b, j.outerSharedCols, j.outerSharedTypes, j.outerSharedColIndex, j.arena())
 }
 
 // ensureOuterShared builds pre-computed shared Cols/Types/colIndex
@@ -277,6 +277,16 @@ func (j *NestedLoopJoin) SetLimit(n int64) { j.limitRemaining = n }
 
 // SetExecCtx sets the ExecContext on this join operator. REQ001233.
 func (j *NestedLoopJoin) SetExecCtx(ec *DT.ExecContext) { j.execCtx = ec }
+
+// arena returns the RowArena from the exec context, or nil. REQ001527.
+func (j *NestedLoopJoin) arena() *DT.RowArena {
+	if j.execCtx != nil {
+		if a, ok := j.execCtx.RowArena.(*DT.RowArena); ok {
+			return a
+		}
+	}
+	return nil
+}
 
 func (j *NestedLoopJoin) LeftChild() Operator { return j.left }
 func (j *NestedLoopJoin) SetLeft(c Operator)  { j.left = c }

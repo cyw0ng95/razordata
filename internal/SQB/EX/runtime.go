@@ -1,8 +1,6 @@
 package EX
 
 import (
-	"github.com/cyw0ng95/razordata/internal/SQB/OP"
-	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
@@ -50,26 +48,10 @@ func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 	if ec.RowArena == nil {
 		ec.RowArena = &DT.RowArena{}
 	}
-	if f, ok := root.(*OP.Filter); ok {
-		f.SetExecCtx(ec)
-	}
-	if fp, ok := root.(*OP.FilterProject); ok {
-		fp.SetExecCtx(ec)
-	}
-	if p, ok := root.(*OP.Project); ok {
-		p.SetExecCtx(ec)
-	}
-	if ins, ok := root.(*WT.Insert); ok {
-		ins.SetExecCtx(ec)
-	}
-	if upd, ok := root.(*WT.Update); ok {
-		upd.SetExecCtx(ec)
-	}
-	if del, ok := root.(*WT.Delete); ok {
-		del.SetExecCtx(ec)
-	}
-	if val, ok := root.(*OP.Values); ok {
-		val.SetExecCtx(ec)
+	// REQ001527: use generic interface check so any operator with
+	// SetExecCtx gets the exec context. Replaces per-type assertions.
+	if setter, ok := root.(interface{ SetExecCtx(*DT.ExecContext) }); ok {
+		setter.SetExecCtx(ec)
 	}
 	type childer interface {
 		Child() DT.Operator
