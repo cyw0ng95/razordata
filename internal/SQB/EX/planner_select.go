@@ -56,6 +56,22 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 		return p.planSelectSqliteSequence(s)
 	}
 
+	// REQ001524: count(*) / count(col) via table stats shortcut.
+	// When SELECT is a single-table aggregate without WHERE/GROUP BY/
+	// JOIN/ORDER BY/LIMIT/DISTINCT, short-circuit to a Values operator
+	// using ANALYZE stats instead of SeqScan+Aggregate.
+	if s.From != "" && len(s.Joins) == 0 && s.Where == nil &&
+		s.GroupBy == nil && s.Having == nil && s.Limit == nil &&
+		s.Offset == nil && len(s.OrderBy) == 0 && !s.Distinct &&
+		len(s.Cols) == 1 {
+		if agg, ok := s.Cols[0].(*PS.AggregateFunc); ok {
+			if rows, _, ok := p.tryStatsCountShortcut(s, agg); ok {
+				countVal := rows[0].Data[0].AsInt()
+				return OP.NewValuesOp([]PS.Expr{&PS.NumberLiteral{Val: countVal}})
+			}
+		}
+	}
+
 	// REQ000858: resolve column aliases in WHERE before creating filters.
 	// SQLite allows SELECT aliases to be referenced in WHERE (e.g.
 	// `SELECT v AS value FROM t WHERE value > 15`). Build an alias map

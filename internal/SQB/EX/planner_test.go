@@ -3,6 +3,7 @@ package EX
 import (
 	"context"
 	"fmt"
+	"github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -218,6 +219,85 @@ func TestPlannerAggregate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSelectCountShortcutViaStats(t *testing.T) {
+	p := NewPlanner()
+	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}}, "a")
+
+	stats := &mockStatsCatalog{
+		stats: map[string]map[string]ls.ColumnStats{
+			"t": {
+				"a": {RowCount: 10000, NullCount: 0},
+			},
+		},
+	}
+	p.statsCatalog = stats
+
+	ctx := context.Background()
+
+	t.Run("count_star", func(t *testing.T) {
+		plan, err := p.ParseAndPlan("SELECT count(*) FROM t")
+		if err != nil {
+			t.Fatalf("plan error: %v", err)
+		}
+		op := plan.Root
+		row, err := op.Next(ctx)
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if len(row.Data) != 1 {
+			t.Fatalf("expected 1 col, got %d", len(row.Data))
+		}
+		if got := row.Data[0].AsInt(); got != 10000 {
+			t.Fatalf("expected 10000, got %d", got)
+		}
+		if _, err = op.Next(ctx); err != OP.ErrNoRows {
+			t.Fatalf("expected ErrNoRows, got %v", err)
+		}
+	})
+
+	t.Run("count_col", func(t *testing.T) {
+		plan, err := p.ParseAndPlan("SELECT count(a) FROM t")
+		if err != nil {
+			t.Fatalf("plan error: %v", err)
+		}
+		op := plan.Root
+		row, err := op.Next(ctx)
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if len(row.Data) != 1 {
+			t.Fatalf("expected 1 col, got %d", len(row.Data))
+		}
+		if got := row.Data[0].AsInt(); got != 10000 {
+			t.Fatalf("expected 10000, got %d", got)
+		}
+		if _, err = op.Next(ctx); err != OP.ErrNoRows {
+			t.Fatalf("expected ErrNoRows, got %v", err)
+		}
+	})
+
+	t.Run("no_shortcut_with_where", func(t *testing.T) {
+		// WHERE clause should prevent shortcut; the query must still work
+		// (will produce 0 rows since the in-memory table has no rows).
+		plan, err := p.ParseAndPlan("SELECT count(*) FROM t WHERE a > 0")
+		if err != nil {
+			t.Fatalf("plan error: %v", err)
+		}
+		op := plan.Root
+		row, err := op.Next(ctx)
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if len(row.Data) != 1 {
+			t.Fatalf("expected 1 col, got %d", len(row.Data))
+		}
+		// Without store, SeqScan+Aggregate on empty DT.Tables returns 0
+		if got := row.Data[0].AsInt(); got != 0 {
+			t.Fatalf("expected 0, got %d", got)
+		}
+	})
 }
 
 func TestSelectIndex(t *testing.T) {
