@@ -206,6 +206,53 @@ func TestStream_RowLifetimeAfterClose(t *testing.T) {
 	}
 }
 
+// TestStream_SyncPath_CacheableSubquery verifies REQ001523: queries
+// with a non-correlated single-table aggregate subquery in SELECT
+// use the sync path (no goroutine/channel overhead).
+func TestStream_SyncPath_CacheableSubquery(t *testing.T) {
+	UnregisterAll()
+	ResetForTest(t)
+
+	DT.RegisterTableSchema("t", []string{"id", "val"})
+	DT.TablesMu.Lock()
+	for i := 0; i < 10; i++ {
+		DT.Tables["t"] = append(DT.Tables["t"], DT.Row{
+			Cols: []string{"id", "val"},
+			Data: []DT.Value{NewIntValue(int64(i)), NewTextValue("x")},
+		})
+	}
+	DT.TablesMu.Unlock()
+
+	ex := NewExecutor()
+	ctx := context.Background()
+
+	// Subquery is single-table aggregate (avg(id)) with no WHERE/GROUP BY
+	// — qualifies as cacheable. Should use sync path.
+	iter, err := ex.QueryStream(ctx, "SELECT (SELECT avg(id) FROM t) FROM t")
+	if err != nil {
+		t.Fatalf("QueryStream: %v", err)
+	}
+
+	// Should use sync path despite subquery in SELECT list.
+	if iter.rows == nil {
+		t.Fatal("expected sync path (rows != nil) for cacheable subquery")
+	}
+
+	// Verify all rows are returned.
+	count := 0
+	for {
+		_, err := iter.Next()
+		if err != nil {
+			break
+		}
+		count++
+	}
+	iter.Close()
+	if count != 10 {
+		t.Fatalf("expected 10 rows, got %d", count)
+	}
+}
+
 // BenchmarkSelect1_SyncPath benchmarks small queries using the
 // synchronous slice-backed path (goroutine-free).
 func BenchmarkSelect1_SyncPath(b *testing.B) {

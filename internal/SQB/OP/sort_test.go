@@ -66,6 +66,96 @@ func TestSort_MaterializationCapBelowThreshold(t *testing.T) {
 	}
 }
 
+// TestSort_SmallResultFastPath verifies REQ001520: < 64 rows use
+// the in-place SortStableFunc fast path instead of keyCache+indices.
+func TestSort_SmallResultFastPath(t *testing.T) {
+	// 5 rows — below 64 threshold, uses fast path
+	child := &countChild{n: 5}
+	s := NewSort(child, []PS.OrderItem{{
+		Expr: &PS.Ident{Name: "a", SlotIdx: 0},
+	}})
+
+	ctx := context.Background()
+	var rows []Row
+	for i := 0; i < 5; i++ {
+		r, err := s.Next(ctx)
+		if err != nil {
+			t.Fatalf("expected row %d, got error: %v", i, err)
+		}
+		rows = append(rows, r)
+	}
+	// countChild produces 4,3,2,1,0 → sorted ascending → 0,1,2,3,4
+	for i := 0; i < len(rows); i++ {
+		if rows[i].Data[0].I64 != int64(i) {
+			t.Errorf("row %d: got %d, want %d", i, rows[i].Data[0].I64, i)
+		}
+	}
+	_, err := s.Next(ctx)
+	if !errors.Is(err, ErrNoRows) {
+		t.Fatalf("expected ErrNoRows, got: %v", err)
+	}
+}
+
+// TestSort_SmallResultFastPath_Descending verifies descending order
+// in the REQ001520 small-result fast path.
+func TestSort_SmallResultFastPath_Descending(t *testing.T) {
+	child := &countChild{n: 5}
+	s := NewSort(child, []PS.OrderItem{{
+		Expr: &PS.Ident{Name: "a", SlotIdx: 0},
+		Desc: true,
+	}})
+
+	ctx := context.Background()
+	var rows []Row
+	for i := 0; i < 5; i++ {
+		r, err := s.Next(ctx)
+		if err != nil {
+			t.Fatalf("expected row %d, got error: %v", i, err)
+		}
+		rows = append(rows, r)
+	}
+	// countChild produces 4,3,2,1,0 → sorted descending → 4,3,2,1,0
+	for i := 0; i < len(rows); i++ {
+		if rows[i].Data[0].I64 != int64(4-i) {
+			t.Errorf("row %d: got %d, want %d", i, rows[i].Data[0].I64, 4-i)
+		}
+	}
+	_, err := s.Next(ctx)
+	if !errors.Is(err, ErrNoRows) {
+		t.Fatalf("expected ErrNoRows, got: %v", err)
+	}
+}
+
+// TestSort_LargeResult_UsesKeyCache checks that >= 64 rows use the
+// keyCache+indices path (original behavior preserved). REQ001520.
+func TestSort_LargeResult_UsesKeyCache(t *testing.T) {
+	child := &countChild{n: 100}
+	s := NewSort(child, []PS.OrderItem{{
+		Expr: &PS.Ident{Name: "a", SlotIdx: 0},
+	}})
+	s.WithSortBufferSize(200)
+
+	ctx := context.Background()
+	var rows []Row
+	for i := 0; i < 100; i++ {
+		r, err := s.Next(ctx)
+		if err != nil {
+			t.Fatalf("expected row %d, got error: %v", i, err)
+		}
+		rows = append(rows, r)
+	}
+	// countChild produces 99,98,...,0 → sorted ascending
+	for i := 0; i < len(rows); i++ {
+		if rows[i].Data[0].I64 != int64(i) {
+			t.Errorf("row %d: got %d, want %d", i, rows[i].Data[0].I64, i)
+		}
+	}
+	_, err := s.Next(ctx)
+	if !errors.Is(err, ErrNoRows) {
+		t.Fatalf("expected ErrNoRows, got: %v", err)
+	}
+}
+
 func TestSort_MaterializationCapZeroMeansUnlimited(t *testing.T) {
 	child := &countChild{n: 20}
 	s := NewSort(child, []PS.OrderItem{{

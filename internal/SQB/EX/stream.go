@@ -32,9 +32,10 @@ func isEligibleForSyncStream(stmt PS.Stmt, plan *pl.PlanResult, p *Planner) bool
 	if sel.SubqueryFrom != nil {
 		return false
 	}
-	// No subquery in SELECT list
-	els := hasSubqueryInSelect(sel.Cols)
-	if els {
+	// REQ001523: allow sync path when all subqueries in SELECT are
+	// non-correlated single-table aggregates that would be globally
+	// cached after first evaluation.
+	if hasSubqueryInSelect(sel.Cols) && !allSelectSubqueriesCacheable(sel.Cols) {
 		return false
 	}
 	// No complex operators in plan tree
@@ -80,6 +81,77 @@ func hasSubqueryExpr(e PS.Expr) bool {
 		}
 	}
 	return false
+}
+
+// REQ001523: allSelectSubqueriesCacheable checks that every subquery
+// in the SELECT list is a non-correlated single-table aggregate that
+// would be globally cached after first evaluation. When true, the
+// sync path is safe because after the first row each subquery is
+// just a globalSubqueryCache lookup (no goroutine overhead needed).
+func allSelectSubqueriesCacheable(cols []PS.Expr) bool {
+	for _, c := range cols {
+		if !subqueryExprCacheable(c) {
+			return false
+		}
+	}
+	return true
+}
+
+func subqueryExprCacheable(e PS.Expr) bool {
+	switch ex := e.(type) {
+	case *PS.BinaryExpr:
+		return subqueryExprCacheable(ex.Left) && subqueryExprCacheable(ex.Right)
+	case *PS.UnaryExpr:
+		return subqueryExprCacheable(ex.Operand)
+	case *PS.FunctionCall:
+		for _, arg := range ex.Args {
+			if !subqueryExprCacheable(arg) {
+				return false
+			}
+		}
+		return true
+	case *PS.SubqueryExpr:
+		return isCacheableSubquery(ex.Subquery)
+	case *PS.ExistsExpr:
+		return isCacheableSubquery(ex.Subquery)
+	case *PS.InExpr:
+		if ex.Subquery != nil {
+			return isCacheableSubquery(ex.Subquery)
+		}
+		return true // IN with literal list is fine
+	default:
+		return true // other expression types are not subqueries
+	}
+}
+
+// isCacheableSubquery checks whether a subquery statement is a non-correlated
+// single-table aggregate that would be globally cached.
+func isCacheableSubquery(stmt PS.Stmt) bool {
+	sel, ok := stmt.(*PS.Select)
+	if !ok {
+		return false
+	}
+	return isCacheableSelect(sel)
+}
+
+// isCacheableSelect returns true when sel is a single-table aggregate
+// with no WHERE/GROUP BY/HAVING/ORDER BY/LIMIT. Such subqueries are
+// non-correlated (no WHERE means no outer column refs) and the global
+// cache covers them after first evaluation.
+func isCacheableSelect(sel *PS.Select) bool {
+	if sel.From == "" || len(sel.Joins) != 0 {
+		return false
+	}
+	if sel.Where != nil || len(sel.OrderBy) != 0 ||
+		sel.Limit != nil || sel.Offset != nil ||
+		len(sel.GroupBy) != 0 || sel.Having != nil {
+		return false
+	}
+	if len(sel.Cols) != 1 {
+		return false
+	}
+	_, ok := sel.Cols[0].(*PS.AggregateFunc)
+	return ok
 }
 
 // hasComplexOperator walks the operator tree for join, aggregate, or sort

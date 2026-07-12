@@ -127,6 +127,7 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 				}
 			}
 		}
+
 		// REQ001232: detect int-only sort keys for direct int64 compare
 		allIntKeys := false
 		if n > 0 && numKeys > 0 {
@@ -148,7 +149,67 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 			}
 		}
 
-		if allIntKeys {
+		// REQ001520: small-result fast path — in-place comparison sort
+		// directly on s.buf, no keyCache/indices/flatKeys allocation.
+		if n > 0 && n < 64 {
+			if allIntKeys {
+				slices.SortStableFunc(s.buf, func(a, b Row) int {
+					for j, k := range s.keys {
+						ka, kb := a.Data[keyAccess[j].slotIdx].I64, b.Data[keyAccess[j].slotIdx].I64
+						if ka < kb {
+							if k.Desc {
+								return 1
+							}
+							return -1
+						}
+						if ka > kb {
+							if k.Desc {
+								return -1
+							}
+							return 1
+						}
+					}
+					return 0
+				})
+			} else {
+				slices.SortStableFunc(s.buf, func(a, b Row) int {
+					for j, k := range s.keys {
+						var va, vb Value
+						if keyAccess[j].isSlot {
+							va, vb = a.Data[keyAccess[j].slotIdx], b.Data[keyAccess[j].slotIdx]
+						} else {
+							var err error
+							va, err = EV.EvalValue(k.Expr, &a, s.params)
+							if err != nil {
+								return 0
+							}
+							vb, err = EV.EvalValue(k.Expr, &b, s.params)
+							if err != nil {
+								return 0
+							}
+						}
+						if k.NullsOrder != 0 {
+							if va.IsNull() && !vb.IsNull() {
+								return -int(k.NullsOrder)
+							}
+							if vb.IsNull() && !va.IsNull() {
+								return int(k.NullsOrder)
+							}
+						}
+						c := pl.CompareValue(va, vb)
+						if c == 0 {
+							continue
+						}
+						if k.Desc {
+							return -c
+						}
+						return c
+					}
+					return 0
+				})
+			}
+			s.materialized = true
+		} else if allIntKeys {
 			// Int-only path: extract int64 keys directly, compare with <
 			flatIntKeys := make([]int64, n*numKeys)
 			intKeyCache := make([][]int64, n)
