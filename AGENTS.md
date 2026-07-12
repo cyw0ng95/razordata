@@ -120,6 +120,21 @@ RAZOR_SLT_ROOT=../corpus/test go test -tags slt_corpus -run TestSLT_PerFile -v .
 Per-file pass/fail is reported. `first failure context` shows first 5 failures with diagnostics.
 Use `sqlite3` to verify expected behavior when troubleshooting.
 
+## Running Razor vs SQLite Benchmarks
+
+```bash
+# 100 rows, 10 iterations per query, 20 query patterns
+go test -bench=BenchmarkRazorVsSqlite -benchtime=10x -benchmem -run=^$ ./tests/sqlcmp/
+
+# Quick smoke test (fewer queries)
+go test -bench='BenchmarkRazorVsSqlite/(star|where|order|count_star|subquery)' -benchtime=10x -benchmem -run=^$ ./tests/sqlcmp/
+```
+
+Reports per-query timing, allocs/op, B/op for both engines. Key gaps:
+- Simple scans/aggregates: 2-5x slower, 100-300x allocs.
+- `join_equi` (self-join NLJ): up to 65x slower.
+- `count_star/count_col`: 6-7x (sqlite has per-page row count shortcut).
+
 ## Debugging
 
 See `docs/development/DEBUG.md` for full debug manual (build tags, PRAGMA, socket, verbosity).
