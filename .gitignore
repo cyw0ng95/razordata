@@ -84,3 +84,6 @@ ${HOME}/
 .worktrees/
 *.razor*
 .engine
+# Razordata engine-created databases accidentally rooted at the repo root
+# when `razor` is invoked with a path that contains `?` or query-string-like args.
+file:*
