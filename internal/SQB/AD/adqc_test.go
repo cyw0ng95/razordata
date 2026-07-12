@@ -2,7 +2,9 @@ package AD
 
 import (
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"context"
+	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -481,4 +483,192 @@ func BenchmarkAdaptiveOp_BeforeBypass(b *testing.B) {
 		op := NewAdaptiveOp(&testOp{}, "bench_hash2")
 		_, _ = op.Next(ctx)
 	}
+}
+
+// --- REQ001536: registry wire-up tests ---
+
+// fakeSpecializableOp satisfies DT.Operator and has a stable type name
+// that registry tests use to register/lookup specializations.
+type fakeSpecializableOp struct{ name string }
+
+func (f *fakeSpecializableOp) Next(ctx context.Context) (DT.Row, error) {
+	return DT.Row{}, nil
+}
+func (f *fakeSpecializableOp) Close() error { return nil }
+
+const fakeSpecializableOpType = "*AD.fakeSpecializableOp"
+
+func TestRegistry_RegisterLookup(t *testing.T) {
+	r := newRegistry()
+	called := false
+	fn := func(op any) (CompiledFn, error) {
+		called = true
+		_, ok := op.(*fakeSpecializableOp)
+		if !ok {
+			t.Errorf("expected *fakeSpecializableOp, got %T", op)
+		}
+		return func(ctx context.Context, batch *UT.Batch, params []any) (*UT.Batch, error) {
+			return batch, nil
+		}, nil
+	}
+	r.Register(fakeSpecializableOpType, fn)
+	if r.Len() != 1 {
+		t.Errorf("expected 1 entry, got %d", r.Len())
+	}
+	got, ok := r.Get(fakeSpecializableOpType)
+	if !ok {
+		t.Fatal("expected lookup hit, got miss")
+	}
+	if got == nil {
+		t.Fatal("expected non-nil compile fn")
+	}
+	out, opType, err := r.Compile(&fakeSpecializableOp{name: "x"})
+	if err != nil {
+		t.Fatalf("Compile err: %v", err)
+	}
+	if opType != fakeSpecializableOpType {
+		t.Errorf("expected opType %q, got %q", fakeSpecializableOpType, opType)
+	}
+	if out == nil {
+		t.Fatal("expected non-nil compiled fn")
+	}
+	if !called {
+		t.Error("compile fn was not invoked")
+	}
+}
+
+func TestRegistry_MissReturnsNil(t *testing.T) {
+	r := newRegistry()
+	out, opType, err := r.Compile(&fakeSpecializableOp{name: "x"})
+	if err != nil {
+		t.Fatalf("Compile err: %v", err)
+	}
+	if out != nil {
+		t.Error("expected nil compiled fn on miss")
+	}
+	if opType != fakeSpecializableOpType {
+		t.Errorf("expected opType reported even on miss, got %q", opType)
+	}
+}
+
+func TestRegistry_RegisterErrPropagates(t *testing.T) {
+	r := newRegistry()
+	r.Register(fakeSpecializableOpType, func(op any) (CompiledFn, error) {
+		return nil, fmt.Errorf("boom")
+	})
+	out, _, err := r.Compile(&fakeSpecializableOp{name: "x"})
+	if err == nil {
+		t.Fatal("expected error from compile fn")
+	}
+	if out != nil {
+		t.Error("expected nil compiled fn on error")
+	}
+}
+
+// TestAdaptiveOp_CompiledState_AfterRegister verifies the registry
+// wire-up: when a specialization is registered for the inner operator's
+// type, AdaptiveOp.tryCompile flips state to AdqcCompiled instead of
+// falling through to "no codegen fn registered".
+func TestAdaptiveOp_CompiledState_AfterRegister(t *testing.T) {
+	// Use a dedicated registry so we don't disturb GlobalRegistry state
+	// in the parallel package init order.
+	saved := GlobalRegistry
+	defer func() { GlobalRegistry = saved }()
+	GlobalRegistry = newRegistry()
+
+	const opType = "*AD.fakeSpecializableOp"
+	called := false
+	Register(opType, func(op any) (CompiledFn, error) {
+		called = true
+		return func(ctx context.Context, batch *UT.Batch, params []any) (*UT.Batch, error) {
+			return batch, nil
+		}, nil
+	})
+
+	// Sanity: confirmed registered.
+	_, ok := GlobalRegistry.Get(opType)
+	if !ok {
+		t.Fatal("registration did not land in GlobalRegistry")
+	}
+
+	inner := &fakeSpecializableOp{name: "x"}
+	op := NewAdaptiveOp(inner, "plan-with-registry")
+	if op.State() != AdqcInterpreted {
+		t.Fatalf("expected interpreted start, got %d", op.State())
+	}
+
+	// Drive Next once so the counter hits threshold and tryCompile fires.
+	ctx := context.Background()
+	_, err := op.Next(ctx)
+	if err != nil {
+		t.Fatalf("Next err: %v", err)
+	}
+
+	if !called {
+		t.Error("compile fn was not invoked — registry lookup missed")
+	}
+	if op.State() != AdqcCompiled {
+		t.Errorf("expected AdqcCompiled after registry hit, got %d", op.State())
+	}
+	if op.compiledFn == nil {
+		t.Error("expected compiledFn to be set after compile")
+	}
+}
+
+// TestAdaptiveOp_FallbackWhenNoRegistration ensures the existing
+// fallback path still works when no specialization is registered.
+// This is the regression guard for the registry wire-up.
+func TestAdaptiveOp_FallbackWhenNoRegistration(t *testing.T) {
+	saved := GlobalRegistry
+	defer func() { GlobalRegistry = saved }()
+	GlobalRegistry = newRegistry()
+
+	inner := &fakeSpecializableOp{name: "x"}
+	op := NewAdaptiveOp(inner, "plan-fallback")
+	ctx := context.Background()
+	_, err := op.Next(ctx)
+	if err != nil {
+		t.Fatalf("Next err: %v", err)
+	}
+	if op.State() != AdqcInterpreted {
+		t.Errorf("expected fallback to AdqcInterpreted, got %d", op.State())
+	}
+	if op.compiledFn != nil {
+		t.Error("expected nil compiledFn on fallback path")
+	}
+}
+
+// BenchmarkAdaptiveOp_CompiledVsInterpreted measures the cost of an
+// AdaptiveOp Next() call in two modes:
+//   - interpreted (no registry entry)
+//   - compiled (registry hit)
+//
+// REQ001536: this is the proof that the registry swap actually routes
+// execution through the compiledFn.
+func BenchmarkAdaptiveOp_CompiledVsInterpreted(b *testing.B) {
+	saved := GlobalRegistry
+	defer func() { GlobalRegistry = saved }()
+	GlobalRegistry = newRegistry()
+
+	const opType = "*AD.fakeSpecializableOp"
+	Register(opType, func(op any) (CompiledFn, error) {
+		return func(ctx context.Context, batch *UT.Batch, params []any) (*UT.Batch, error) {
+			return batch, nil
+		}, nil
+	})
+
+	ctx := context.Background()
+
+	b.Run("interpreted", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			op := NewAdaptiveOp(&fakeSpecializableOp{name: "x"}, "bench-int")
+			_, _ = op.Next(ctx)
+		}
+	})
+	b.Run("compiled", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			op := NewAdaptiveOp(&fakeSpecializableOp{name: "x"}, "bench-comp")
+			_, _ = op.Next(ctx)
+		}
+	})
 }

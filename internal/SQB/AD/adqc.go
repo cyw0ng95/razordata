@@ -4,7 +4,6 @@ import (
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"context"
 	"log/slog"
-	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -159,7 +158,35 @@ func (a *AdaptiveOp) tryCompile(ctx context.Context) {
 		return
 	}
 
-	opType := fmt.Sprintf("%T", a.Inner)
+	// REQ001536: consult the compile-fn registry before falling back to
+	// interpreted. The registry is populated via AD.Register() from init()
+	// or main(); on a hit, store the closure in compiledFn and flip state
+	// to AdqcCompiled. On miss, the original fallback path below runs.
+	compiled, opType, err := GlobalRegistry.Compile(a.Inner)
+	if err != nil {
+		slog.Debug("adqc: compile failed, falling back",
+			"planHash", a.planHash,
+			"opType", opType,
+			"err", err,
+		)
+	} else if compiled != nil {
+		a.compiledFn = compiled
+		a.state.Store(uint32(AdqcCompiled))
+		a.tryAttempted = true
+		a.direct = true
+		// Cache the compiled fn so subsequent executor creations reuse it.
+		GlobalAdqcCache.Put(a.planHash, 0, &SpecializedPlan{
+			Fn:       compiled,
+			OpType:   opType,
+			PlanHash: a.planHash,
+		})
+		slog.Debug("adqc: plan compiled and cached",
+			"planHash", a.planHash,
+			"opType", opType,
+		)
+		return
+	}
+
 	a.state.Store(uint32(AdqcInterpreted))
 	// REQ000845: mark as attempted so we don't retry on every Next()
 	// call. No compiled function is available, so interpreted path
