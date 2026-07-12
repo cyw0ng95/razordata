@@ -816,7 +816,112 @@ func cloneStmtForMemo(stmt PS.Stmt, params *[]any) PS.Stmt {
 }
 
 func NormalizeForMemo(stmt PS.Stmt) (PS.Stmt, []any) {
+	// REQ001532: fast path — if no literal nodes exist, skip the
+	// full AST clone + serialization entirely. The original stmt
+	// is already unique by SQL text for literal-free queries.
+	if !hasLiteralNodes(stmt) {
+		return stmt, nil
+	}
 	var params []any
 	cloned := cloneStmtForMemo(stmt, &params)
 	return cloned, params
+}
+
+// hasLiteralNodes returns true when the statement contains any literal
+// expression node that NormalizeForMemo would replace with a placeholder.
+// This is a lightweight pre-scan that avoids the full AST clone overhead.
+func hasLiteralNodes(stmt PS.Stmt) bool {
+	switch v := stmt.(type) {
+	case *PS.Select:
+		for _, c := range v.Cols {
+			if exprHasLiteral(c) {
+				return true
+			}
+		}
+		if v.Where != nil && exprHasLiteral(v.Where) {
+			return true
+		}
+		if v.Having != nil && exprHasLiteral(v.Having) {
+			return true
+		}
+		for _, g := range v.GroupBy {
+			if exprHasLiteral(g) {
+				return true
+			}
+		}
+		for _, j := range v.Joins {
+			if j.On != nil && exprHasLiteral(j.On) {
+				return true
+			}
+		}
+		if v.Limit != nil && exprHasLiteral(v.Limit) {
+			return true
+		}
+		if v.Offset != nil && exprHasLiteral(v.Offset) {
+			return true
+		}
+		if v.SubqueryFrom != nil && hasLiteralNodes(v.SubqueryFrom) {
+			return true
+		}
+		return false
+	case *PS.CompoundStmt:
+		return hasLiteralNodes(v.Left) || hasLiteralNodes(v.Right)
+	}
+	return false
+}
+
+// exprHasLiteral returns true when the expression tree contains a literal
+// node that NormalizeForMemo would replace. REQ001532.
+func exprHasLiteral(e PS.Expr) bool {
+	switch e := e.(type) {
+	case *PS.NumberLiteral, *PS.FloatLiteral, *PS.StringLiteral, *PS.BoolLiteral:
+		return true
+	case *PS.UnaryExpr:
+		return exprHasLiteral(e.Operand)
+	case *PS.BinaryExpr:
+		return exprHasLiteral(e.Left) || exprHasLiteral(e.Right)
+	case *PS.CastExpr:
+		return exprHasLiteral(e.Expr)
+	case *PS.BetweenExpr:
+		return exprHasLiteral(e.Expr) || exprHasLiteral(e.Low) || exprHasLiteral(e.High)
+	case *PS.InExpr:
+		if exprHasLiteral(e.Expr) {
+			return true
+		}
+		for _, item := range e.List {
+			if exprHasLiteral(item) {
+				return true
+			}
+		}
+		return e.Subquery != nil && hasLiteralNodes(e.Subquery)
+	case *PS.CaseExpr:
+		if exprHasLiteral(e.Expr) {
+			return true
+		}
+		for _, w := range e.WhenList {
+			if exprHasLiteral(w.Cond) || exprHasLiteral(w.Then) {
+				return true
+			}
+		}
+		return e.Else != nil && exprHasLiteral(e.Else)
+	case *PS.AliasedExpr:
+		return exprHasLiteral(e.Expr)
+	case *PS.FunctionCall:
+		for _, a := range e.Args {
+			if exprHasLiteral(a) {
+				return true
+			}
+		}
+		return false
+	case *PS.AggregateFunc:
+		return e.Arg != nil && exprHasLiteral(e.Arg)
+	case *PS.ListExpr:
+		for _, item := range e.Items {
+			if exprHasLiteral(item) {
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
