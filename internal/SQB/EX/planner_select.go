@@ -1641,31 +1641,78 @@ func (p *Planner) tryLazyAggregateTopLevel(s *PS.Select, agg *PS.AggregateFunc) 
 	defer scan.Close()
 
 	rows, ok, err := computeLazyAggregate(context.Background(), scan, strings.ToLower(agg.Name), agg.Arg, nil, nil)
-	if err != nil || !ok || len(rows) == 0 {
+	if err != nil {
+		return nil, err
+	}
+	if !ok || len(rows) == 0 {
 		return nil, nil
 	}
 
 	val := rows[0].Data[0]
-	return OP.NewValuesOp([]PS.Expr{litFromValue(val)}), nil
+	return &lazyAggResult{
+		col:  aggColName(agg),
+		val:  val,
+		typ:  inferValueType(val),
+	}, nil
 }
 
-// litFromValue creates a PS.Expr literal from a DT.Value.
-func litFromValue(v DT.Value) PS.Expr {
-	if v.IsNull() {
-		return &PS.NullLiteral{}
+// aggColName returns the canonical column name for an aggregate function,
+// e.g. "count(*)", "min(a)", "sum(val)". Matches the naming from
+// AG/aggregate.go's aggregateColName.
+func aggColName(agg *PS.AggregateFunc) string {
+	if _, ok := agg.Arg.(*PS.StarExpr); ok {
+		return agg.Name + "(*)"
 	}
+	if ident, ok := agg.Arg.(*PS.Ident); ok {
+		return agg.Name + "(" + ident.Name + ")"
+	}
+	return agg.Name
+}
+
+// inferValueType maps a DT.Value Kind to the corresponding LX.TokenType.
+func inferValueType(v DT.Value) LX.TokenType {
 	switch v.Kind {
 	case DT.KindInt:
-		return &PS.NumberLiteral{Val: v.I64}
+		return LX.T_INT
 	case DT.KindFloat:
-		return &PS.FloatLiteral{Val: v.F64}
+		return LX.T_FLOAT
 	case DT.KindText:
-		return &PS.StringLiteral{Val: v.S}
+		return LX.T_TEXT
 	case DT.KindBool:
-		return &PS.BoolLiteral{Val: v.Bo}
+		return LX.T_BOOL
+	case DT.KindNull:
+		return LX.T_NULL
 	default:
-		return &PS.NullLiteral{}
+		return LX.T_NULL
 	}
+}
+
+// lazyAggResult is a single-row operator that returns the pre-computed
+// aggregate result with the correct column name, avoiding the column-name
+// loss that would occur if we went through ValuesOp+literal expressions.
+// REQ001528.
+type lazyAggResult struct {
+	col  string
+	val  DT.Value
+	typ  LX.TokenType
+	done bool
+}
+
+func (r *lazyAggResult) Next(_ context.Context) (DT.Row, error) {
+	if r.done {
+		return DT.Row{}, DT.ErrNoRows
+	}
+	r.done = true
+	return DT.Row{
+		Cols:  []string{r.col},
+		Data:  []DT.Value{r.val},
+		Types: []LX.TokenType{r.typ},
+	}, nil
+}
+
+func (r *lazyAggResult) Close() error {
+	r.done = false
+	return nil
 }
 
 // isAggIdentArg returns true when the expression is a bare Ident (bare column ref).

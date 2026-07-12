@@ -836,6 +836,9 @@ func TestTopLevelLazyAggregateFolding(t *testing.T) {
 		if got := rows[0].Data[0].I64; got != 4 {
 			t.Errorf("count(*) = %d, want 4", got)
 		}
+		if len(rows[0].Cols) != 1 || rows[0].Cols[0] != "COUNT(*)" {
+			t.Errorf("col name = %q, want \"COUNT(*)\"", rows[0].Cols[0])
+		}
 	})
 	t.Run("count_col", func(t *testing.T) {
 		rows, err := ex.QueryAll(ctx, "SELECT count(a) FROM t")
@@ -844,6 +847,9 @@ func TestTopLevelLazyAggregateFolding(t *testing.T) {
 		}
 		if got := rows[0].Data[0].I64; got != 3 {
 			t.Errorf("count(a) = %d, want 3", got)
+		}
+		if len(rows[0].Cols) != 1 || rows[0].Cols[0] != "COUNT(a)" {
+			t.Errorf("col name = %q, want \"COUNT(a)\"", rows[0].Cols[0])
 		}
 	})
 	t.Run("min_int", func(t *testing.T) {
@@ -854,6 +860,9 @@ func TestTopLevelLazyAggregateFolding(t *testing.T) {
 		if got := rows[0].Data[0].I64; got != 1 {
 			t.Errorf("min(a) = %d, want 1", got)
 		}
+		if len(rows[0].Cols) != 1 || rows[0].Cols[0] != "MIN(a)" {
+			t.Errorf("col name = %q, want \"MIN(a)\"", rows[0].Cols[0])
+		}
 	})
 	t.Run("max_int", func(t *testing.T) {
 		rows, err := ex.QueryAll(ctx, "SELECT max(a) FROM t")
@@ -862,6 +871,9 @@ func TestTopLevelLazyAggregateFolding(t *testing.T) {
 		}
 		if got := rows[0].Data[0].I64; got != 3 {
 			t.Errorf("max(a) = %d, want 3", got)
+		}
+		if len(rows[0].Cols) != 1 || rows[0].Cols[0] != "MAX(a)" {
+			t.Errorf("col name = %q, want \"MAX(a)\"", rows[0].Cols[0])
 		}
 	})
 	t.Run("sum_int", func(t *testing.T) {
@@ -872,6 +884,9 @@ func TestTopLevelLazyAggregateFolding(t *testing.T) {
 		if got := rows[0].Data[0].I64; got != 6 {
 			t.Errorf("sum(a) = %d, want 6", got)
 		}
+		if len(rows[0].Cols) != 1 || rows[0].Cols[0] != "SUM(a)" {
+			t.Errorf("col name = %q, want \"SUM(a)\"", rows[0].Cols[0])
+		}
 	})
 	t.Run("avg_int", func(t *testing.T) {
 		rows, err := ex.QueryAll(ctx, "SELECT avg(a) FROM t")
@@ -880,6 +895,9 @@ func TestTopLevelLazyAggregateFolding(t *testing.T) {
 		}
 		if got := rows[0].Data[0].F64; got != 2.0 {
 			t.Errorf("avg(a) = %0.1f, want 2.0", got)
+		}
+		if len(rows[0].Cols) != 1 || rows[0].Cols[0] != "AVG(a)" {
+			t.Errorf("col name = %q, want \"AVG(a)\"", rows[0].Cols[0])
 		}
 	})
 	t.Run("min_text", func(t *testing.T) {
@@ -890,6 +908,9 @@ func TestTopLevelLazyAggregateFolding(t *testing.T) {
 		if got := rows[0].Data[0].S; got != "w" {
 			t.Errorf("min(b) = %q, want \"w\"", got)
 		}
+		if len(rows[0].Cols) != 1 || rows[0].Cols[0] != "MIN(b)" {
+			t.Errorf("col name = %q, want \"MIN(b)\"", rows[0].Cols[0])
+		}
 	})
 	t.Run("max_text", func(t *testing.T) {
 		rows, err := ex.QueryAll(ctx, "SELECT max(b) FROM t")
@@ -898,6 +919,9 @@ func TestTopLevelLazyAggregateFolding(t *testing.T) {
 		}
 		if got := rows[0].Data[0].S; got != "z" {
 			t.Errorf("max(b) = %q, want \"z\"", got)
+		}
+		if len(rows[0].Cols) != 1 || rows[0].Cols[0] != "MAX(b)" {
+			t.Errorf("col name = %q, want \"MAX(b)\"", rows[0].Cols[0])
 		}
 	})
 }
