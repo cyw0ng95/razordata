@@ -90,9 +90,32 @@ func cpuToNode(cpu int) int {
 	return n
 }
 
+// singleNodeFastPath is set once via sync.Once on the first
+// CurrentNode() call. When true (the typical case — single-socket
+// servers, containers, dev laptops), CurrentNode bypasses
+// /proc/self/stat + sysfs reads and returns 0. The single-node
+// detection reuses cachedNumNodes so the actual probe happens
+// at most once per process.
+//
+// REQ001421 (alloc reduction): the original 4.85x INSERT gap vs
+// modernc.org/sqlite is dominated by /proc/self/stat reads on
+// every AcquireArena/PutArena call (~308 MB of 961 MB total
+// per-INSERT-iteration allocations). Short-circuiting here
+// collapses that to zero on single-node hosts.
+var singleNodeFastPath atomic.Bool
+var singleNodeFastPathOnce sync.Once
+
 // CurrentNode returns the NUMA node id of the calling goroutine (REQ000309).
-// Detects via /proc/self/stat (current CPU) + sysfs CPU→node mapping.
+// On single-node hosts (the dominant case) this is a single atomic
+// load returning 0. Multi-node hosts fall back to currentCPU +
+// cpuToNode (one /proc + one sysfs read per call).
 func CurrentNode() int {
+	singleNodeFastPathOnce.Do(func() {
+		singleNodeFastPath.Store(NodeCount() <= 1)
+	})
+	if singleNodeFastPath.Load() {
+		return 0
+	}
 	cpu := currentCPU()
 	if cpu < 0 {
 		return 0
