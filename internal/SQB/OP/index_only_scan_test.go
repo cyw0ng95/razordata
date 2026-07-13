@@ -92,9 +92,9 @@ func (c *countingIndexScan) Close() error { return nil }
 // wraps an inner IndexScan and forwards Next/Close to it.
 func TestIndexOnlyScan_WrapsInner(t *testing.T) {
 	inner := &countingIndexScan{keys: []string{"x", "y", "z"}}
-	s := NewIndexOnlyScan(toIndexScan(inner))
+	s := NewIndexOnlyScanPassthrough(toIndexScan(inner))
 	if s == nil {
-		t.Fatal("NewIndexOnlyScan returned nil for non-nil inner")
+		t.Fatal("NewIndexOnlyScanPassthrough returned nil for non-nil inner")
 	}
 	defer s.Close()
 
@@ -116,8 +116,11 @@ func TestIndexOnlyScan_WrapsInner(t *testing.T) {
 }
 
 func TestIndexOnlyScan_NilInner(t *testing.T) {
-	if NewIndexOnlyScan(nil) != nil {
+	if NewIndexOnlyScan(nil, nil, nil, "") != nil {
 		t.Fatal("NewIndexOnlyScan(nil) must return nil")
+	}
+	if NewIndexOnlyScanPassthrough(nil) != nil {
+		t.Fatal("NewIndexOnlyScanPassthrough(nil) must return nil")
 	}
 	if s := (*IndexOnlyScan)(nil); s != nil {
 		_ = s.Close() // exercises the nil-receiver guard
@@ -128,7 +131,7 @@ func TestIndexOnlyScan_NilInner(t *testing.T) {
 // index scan surfaces ErrNoRows on the first Next() call.
 func TestIndexOnlyScan_EmptyIndex(t *testing.T) {
 	inner := &countingIndexScan{keys: nil}
-	s := NewIndexOnlyScan(toIndexScan(inner))
+	s := NewIndexOnlyScanPassthrough(toIndexScan(inner))
 	defer s.Close()
 	_, err := s.Next(context.Background())
 	if !errors.Is(err, pl.ErrNoRows) {
@@ -140,7 +143,7 @@ func TestIndexOnlyScan_EmptyIndex(t *testing.T) {
 // propagates to the wrapped scan.
 func TestIndexOnlyScan_CloseReleasesInner(t *testing.T) {
 	inner := &countingIndexScan{keys: []string{"a"}}
-	s := NewIndexOnlyScan(toIndexScan(inner))
+	s := NewIndexOnlyScanPassthrough(toIndexScan(inner))
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}

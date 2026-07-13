@@ -135,8 +135,23 @@ func (p *Planner) tryIndexOnlyScan(s *PS.Select, whereExpr PS.Expr, scan DT.Oper
 	if !OP.IsCoveringIndex(projected, idxCols, pk) {
 		return nil
 	}
-	_ = whereExpr
-	ios := OP.NewIndexOnlyScan(isc)
+	// REQ001249: a covering scan never fetches the heap row, so any
+	// predicate referencing a column that is NOT in (index ∪ PK)
+	// would silently produce zero matches (NULL comparisons). Only
+	// safe to enable covering mode when every column referenced by
+	// the WHERE expression is covered, and the planner did not split
+	// off any residual predicates (those evaluate against the row).
+	if len(isc.Residual()) > 0 {
+		return nil
+	}
+	if whereExpr != nil && !allColumnsCovered(whereExpr, idxCols, pk) {
+		return nil
+	}
+	idxTypes, ok := p.indexColumnTypes(s.From, isc.Idx())
+	if !ok {
+		return nil
+	}
+	ios := OP.NewIndexOnlyScan(isc, idxCols, idxTypes, pk)
 	if wrapper == nil {
 		return ios
 	}
@@ -147,11 +162,103 @@ func (p *Planner) tryIndexOnlyScan(s *PS.Select, whereExpr PS.Expr, scan DT.Oper
 		return w
 	case *OP.FilterProject:
 		w.SetChild(ios)
-		return w
+		return ios
 	default:
 		return ios
 	}
 }
+
+// allColumnsCovered returns true when every unqualified column
+// reference in expr resolves to a column in idxCols (or is the PK).
+// REQ001249 guarding predicate: covering scan cannot evaluate
+// predicates whose columns are absent from the synthesised Row.
+func allColumnsCovered(expr PS.Expr, idxCols []string, pk string) bool {
+	covered := make(map[string]bool, len(idxCols)+1)
+	for _, c := range idxCols {
+		covered[c] = true
+	}
+	if pk != "" {
+		covered[pk] = true
+	}
+	for _, c := range collectExprColumns(expr) {
+		if !covered[c] {
+			return false
+		}
+	}
+	return true
+}
+
+// collectExprColumns returns every unqualified column name
+// referenced anywhere within expr. Used by allColumnsCovered to
+// enforce covering-index safety at plan time. REQ001249.
+func collectExprColumns(expr PS.Expr) []string {
+	out := []string{}
+	if expr == nil {
+		return out
+	}
+	switch v := expr.(type) {
+	case *PS.Ident:
+		out = append(out, v.Name)
+	case *PS.QualifiedName:
+		out = append(out, v.Name)
+	default:
+		for _, c := range exprChildren(v) {
+			out = append(out, collectExprColumns(c)...)
+		}
+	}
+	return out
+}
+
+// exprChildren returns the child expressions of any node that has
+// sub-expressions. Ident/literal nodes yield nil; unknown concrete
+// types yield nil as well so the helper is safe across parser
+// evolution. LIKE / IS NULL share the BinaryExpr shape with
+// T_LIKE / T_IS operators (no dedicated LikeExpr / IsNullExpr
+// node type exists in PS). REQ001249.
+func exprChildren(e PS.Expr) []PS.Expr {
+	switch v := e.(type) {
+	case *PS.BinaryExpr:
+		return []PS.Expr{v.Left, v.Right}
+	case *PS.UnaryExpr:
+		return []PS.Expr{v.Operand}
+	case *PS.BetweenExpr:
+		return []PS.Expr{v.Expr, v.Low, v.High}
+	case *PS.InExpr:
+		out := make([]PS.Expr, 0, 1+len(v.List))
+		out = append(out, v.Expr)
+		out = append(out, v.List...)
+		return out
+	case *PS.CaseExpr:
+		out := make([]PS.Expr, 0, 2*len(v.WhenList)+2)
+		if v.Expr != nil {
+			out = append(out, v.Expr)
+		}
+		for _, w := range v.WhenList {
+			out = append(out, w.Cond, w.Then)
+		}
+		if v.Else != nil {
+			out = append(out, v.Else)
+		}
+		return out
+	case *PS.FunctionCall:
+		out := make([]PS.Expr, 0, len(v.Args))
+		for _, a := range v.Args {
+			out = append(out, a)
+		}
+		return out
+	case *PS.AggregateFunc:
+		out := []PS.Expr{v.Arg}
+		if v.Separator != nil {
+			out = append(out, v.Separator)
+		}
+		if v.Filter != nil {
+			out = append(out, v.Filter)
+		}
+		return out
+	}
+	return nil
+}
+
 
 // unwrapIndexScan returns the underlying OP.IndexScan plus the
 // optional outer wrapper (Filter or FilterProject). The boolean
@@ -229,6 +336,33 @@ func (p *Planner) indexColumns(table, idx string) ([]string, bool) {
 		return nil, false
 	}
 	return append([]string(nil), cols...), true
+}
+
+// indexColumnTypes returns the LX types for each indexed column
+// on table.idx, in the same order as indexColumns. Used by the
+// covering-index planner to decode the encoded index suffix back
+// into typed Values. REQ001249.
+func (p *Planner) indexColumnTypes(table, idx string) ([]LX.TokenType, bool) {
+	if p.catalog == nil {
+		return nil, false
+	}
+	t, ok := p.catalog[table]
+	if !ok || t == nil {
+		return nil, false
+	}
+	cols, ok := t.indexes[idx]
+	if !ok {
+		return nil, false
+	}
+	types := make([]LX.TokenType, 0, len(cols))
+	colTypeByName := make(map[string]LX.TokenType, len(t.cols))
+	for _, c := range t.cols {
+		colTypeByName[c.Name] = c.Typ
+	}
+	for _, name := range cols {
+		types = append(types, colTypeByName[name])
+	}
+	return types, true
 }
 func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) DT.Operator {
 	// REQ001043: emit ParallelSeqScan when pool is available and

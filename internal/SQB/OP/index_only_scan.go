@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 
 	ec "github.com/cyw0ng95/razordata/internal/LOG/EC"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
@@ -19,19 +20,43 @@ import (
 // key), the planner wires IndexOnlyScan instead of IndexScan to
 // skip the heap fetch.
 //
-// The current implementation forwards Next/Close to any
-// pl.Operator. The planner enforces the covering-index invariant;
-// tests can plug in a custom index-scan stub to verify behaviour
-// without touching the heap.
+// When the inner operator is a *IndexScan, NewIndexOnlyScan also
+// activates the scan's covering-mode fast path (REQ001249): the
+// next-row loop builds the result Row directly from the encoded
+// index value + primary key, eliminating the per-row Store.Get
+// syscall. Tests that wrap a non-IndexScan operator skip this
+// optimisation and continue to exercise the basic wrapper.
 type IndexOnlyScan struct {
 	inner  pl.Operator
 	closed atomic.Bool
 }
 
-// NewIndexOnlyScan wraps any operator that emits index rows. The
-// caller (planner) is responsible for selecting an operator whose
-// output already covers the projected columns.
-func NewIndexOnlyScan(inner pl.Operator) *IndexOnlyScan {
+// NewIndexOnlyScan wraps an operator that emits index rows. When
+// the underlying operator is an *IndexScan the scan is switched to
+// covering mode via SetCovering, which causes nextFromIndex to
+// skip the heap fetch and synthesize the Row from the encoded
+// index value plus primary key. idxCols / idxTypes must describe
+// the index column order/types so the encoded suffix can be
+// decoded back into typed Values. pk is the column whose raw
+// bytes are stored as the index entry's value; pass "" if the
+// projected Row does not require the primary key (the planner
+// only enters this branch when the projection includes PK,
+// otherwise covering-index candidates are not selected at all).
+// REQ001107 / REQ001249.
+func NewIndexOnlyScan(inner pl.Operator, idxCols []string, idxTypes []LX.TokenType, pk string) *IndexOnlyScan {
+	if inner == nil {
+		return nil
+	}
+	if isc, ok := inner.(*IndexScan); ok {
+		isc.SetCovering(idxCols, idxTypes, pk)
+	}
+	return &IndexOnlyScan{inner: inner}
+}
+
+// NewIndexOnlyScanPassthrough wraps any operator without enabling
+// the covering-mode fast path. Useful for tests that wire a stub
+// IndexScan with their own Next semantics. REQ001107.
+func NewIndexOnlyScanPassthrough(inner pl.Operator) *IndexOnlyScan {
 	if inner == nil {
 		return nil
 	}

@@ -764,8 +764,43 @@ type IndexScan struct {
 	// next iteration, eliminating per-row make([]Value, N) allocations.
 	lastDataSlice []Value
 
+	// REQ001249: covering-index fields. When coveringMode is true,
+	// nextFromIndex skips the heap fetch and builds the Row from the
+	// secondary index's stored values. coverIdxCols / coverIdxTypes
+	// describe the encoded index suffix; coverPK is the column whose
+	// value is stored as the index entry's payload.
+	coveringMode    bool
+	coverIdxCols    []string
+	coverIdxTypes   []LX.TokenType
+	coverPK         string
+
 	closed atomic.Bool
 }
+
+// SetCovering marks the IndexScan as a covering scan: its output Row
+// is built directly from the secondary-index entry's encoded value
+// (multi-column index payload) and primary key, without fetching the
+// heap row. idxCols describes the column order in the encoded index
+// suffix; idxTypes provides per-column LX type information used to
+// decode fixed-width (int = 8B BE) versus variable-length (text until
+// 0x00 separator) segments. pk is the column whose raw bytes are
+// stored as the index payload; pass "" if the query does not need the
+// primary key in the projected Row. REQ001249.
+func (i *IndexScan) SetCovering(idxCols []string, idxTypes []LX.TokenType, pk string) {
+	if len(idxCols) == 0 {
+		return
+	}
+	if len(idxTypes) != len(idxCols) {
+		return
+	}
+	i.coveringMode = true
+	i.coverIdxCols = append([]string(nil), idxCols...)
+	i.coverIdxTypes = append([]LX.TokenType(nil), idxTypes...)
+	i.coverPK = pk
+}
+
+// Covering reports whether this scan is in covering-index mode.
+func (i *IndexScan) Covering() bool { return i.coveringMode }
 
 // SetRawByteFilter sets a raw-byte predicate filter. REQ001225.
 func (i *IndexScan) SetRawByteFilter(f func([]byte) bool) {
@@ -1046,6 +1081,22 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 		}
 		// Extract primary key and fetch the row.
 		pk := i.indexIt.Value()
+
+		// REQ001249: covering-index path. Build the Row from the
+		// encoded index value + primary key without touching the
+		// heap. Residual predicates are still evaluated against the
+		// synthesized Row afterwards.
+		if i.coveringMode {
+			row, err := coveringBuildRow(i.schema, i.table, i.coverIdxCols, i.coverIdxTypes, idxVal, pk, i.coverPK)
+			if err != nil {
+				return Row{}, err
+			}
+			if !i.matchResidual(&row) {
+				continue
+			}
+			return row, nil
+		}
+
 		RowKey := append(append([]byte{}, i.prefix...), pk...)
 		rowBytes, found, err := i.store.Get(RowKey)
 		if err != nil {
