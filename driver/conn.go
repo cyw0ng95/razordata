@@ -28,7 +28,7 @@ func (c *Conn) Close() error {
 
 func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	if c == nil || c.session == nil {
-		return nil, AP.New(AP.KindClosed, "engine not open")
+		return nil, AP.New(AP.KindClosed, "engine closed")
 	}
 	anyArgs := make([]any, len(args))
 	for i, a := range args {
@@ -38,24 +38,6 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	// counter for CHANGES() and TOTAL_CHANGES() is maintained.
 	// REQ001419: Session.Exec internally handles TxWriter for active
 	// transactions; no driver-level SetTxWriterForTxn needed.
-	sess, ok := c.session.(*SE.Session)
-	if !ok || !sess.HasActiveTxn() {
-		tx, err := c.session.Begin(ctx)
-		if err != nil {
-			return nil, err
-		}
-		// Roll back the auto-begin so Session.Exec sees an inactive
-		// txn path (it acquires the session lock itself).
-		if err := tx.Rollback(ctx); err != nil {
-			return nil, err
-		}
-		sess.ClearTxn()
-		res, err := c.session.Exec(ctx, query, anyArgs...)
-		if err != nil {
-			return nil, err
-		}
-		return Result{lastID: int64(res.LastInsertID), n: res.RowsAffected}, nil
-	}
 	res, err := c.session.Exec(ctx, query, anyArgs...)
 	if err != nil {
 		return nil, err
