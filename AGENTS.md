@@ -76,6 +76,15 @@ reference source doc in `Touches`.
 
 The `TBD` backlog is the source of truth — bare prose mentions are not acceptable.
 
+## Pre-commit Gate
+
+**Must run `./before-commit-cases.sh` before every commit.** This script runs:
+
+- `go test ./internal/...` — core engine tests
+- SLT select1, select2, select3, select4 — corpus regression suite
+
+All must pass. Commit only when the script exits 0.
+
 ## CI / Linting
 
 ```bash
