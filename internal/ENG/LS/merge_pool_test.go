@@ -33,7 +33,7 @@ func TestMergeIterator_PoolReuse(t *testing.T) {
 			t.Fatalf("newManifest: %v", err)
 		}
 
-		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 		if mi == nil {
 			t.Fatalf("round %d: newMergeIterator returned nil", round)
 		}
@@ -146,7 +146,7 @@ func TestMergeIterator_PoolAllocs(t *testing.T) {
 	}
 
 	// Warm the pool: first iteration may allocate.
-	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 	for mi.Next() {
 	}
 	mi.Close()
@@ -154,7 +154,7 @@ func TestMergeIterator_PoolAllocs(t *testing.T) {
 	// Measure allocations for the next N iterations.
 	const n = 1000
 	allocs := testing.AllocsPerRun(n, func() {
-		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 		for mi.Next() {
 		}
 		mi.Close()
@@ -182,7 +182,7 @@ func TestIterHeap_RingBufferReuse(t *testing.T) {
 		t.Fatalf("newManifest: %v", err)
 	}
 
-	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 	defer mi.Close()
 
 	// Iterate fully and record the key/value sequence.
@@ -222,7 +222,7 @@ func TestIterHeap_RingBuffer_NoAllocOnPush(t *testing.T) {
 		t.Fatalf("newManifest: %v", err)
 	}
 
-	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 	defer mi.Close()
 
 	// Walk all rows once to confirm correctness.
@@ -254,7 +254,7 @@ func TestIterHeap_SortAfterReuse(t *testing.T) {
 		t.Fatalf("newManifest: %v", err)
 	}
 
-	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 	defer mi.Close()
 
 	prev := ""
@@ -288,7 +288,7 @@ func TestIterHeap_PopReturnsValidKeys(t *testing.T) {
 		t.Fatalf("newManifest: %v", err)
 	}
 
-	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 	defer mi.Close()
 
 	// Drive a Next → call into Key/Value/Next three times.
@@ -344,7 +344,7 @@ func TestMergeIterator_MultipleRoundsNoLeak(t *testing.T) {
 	}
 
 	for r := 0; r < rounds; r++ {
-		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 		count := 0
 		for mi.Next() {
 			count++
@@ -420,7 +420,7 @@ func TestMergeIterator_PoolConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < iters; i++ {
-				mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+				mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 				count := 0
 				for mi.Next() {
 					count++
@@ -573,14 +573,14 @@ func TestMergeIterator_NoHeapBoxing(t *testing.T) {
 	}
 
 	// Warm
-	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+	mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 	for mi.Next() {
 	}
 	mi.Close()
 
 	// Measure allocs/op for a fully-warm path.
 	allocs := testing.AllocsPerRun(1000, func() {
-		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 		for mi.Next() {
 		}
 		mi.Close()

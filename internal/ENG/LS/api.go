@@ -210,8 +210,9 @@ func (eng *Engine) NewIterator(prefix []byte) RangeIter {
 	dir := e.dir
 	// REQ001244: check if all SST files have RowCount ≤ SmallTableRows
 	smallTableRows := e.opts.SmallTableRows
+	mmapCache := e.mmapCache
 	e.mu.RUnlock()
-	return newMergeIterator(memtables, manifest, dir, e.fs, prefix, e.blockCache, smallTableRows)
+	return newMergeIterator(memtables, manifest, dir, e.fs, prefix, e.blockCache, smallTableRows, mmapCache)
 }
 
 // Close releases engine resources. Calling Close twice is a no-op.
@@ -444,6 +445,12 @@ type mergeIterator struct {
 	closed     atomic.Bool
 	blockCache *BlockCache // REQ001242
 
+	// mmapCache maps SST file paths to their mmap'd data.
+	// When non-nil and a path entry exists, init() constructs
+	// the SST reader from the mmap slice (zero-copy) instead
+	// of calling fs.ReadFile (which copies the entire file).
+	mmapCache map[string][]byte
+
 	// REQ001258: per-source ring buffer slots. sourceKeys[i] and
 	// sourceVals[i] hold the current key/value for the i-th
 	// source — the entry currently in the heap for that source.
@@ -457,13 +464,14 @@ type mergeIterator struct {
 	// user can read curKey/curVal safely until the next Next().
 }
 
-func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, fs FS, prefix []byte, blockCache *BlockCache, smallTableRows int64) *mergeIterator {
+func newMergeIterator(memtables []*memtable, manifest *manifest, dir string, fs FS, prefix []byte, blockCache *BlockCache, smallTableRows int64, mmapCache map[string][]byte) *mergeIterator {
 	mi := acquireMergeIterator()
 	mi.fs = fs
 	mi.manifest = manifest
 	mi.dir = dir
 	mi.prefix = append(mi.prefix[:0], prefix...)
 	mi.blockCache = blockCache
+	mi.mmapCache = mmapCache
 	skipSST := smallTableRows > 0 && manifestAllSmall(manifest, smallTableRows)
 	mi.init(memtables, skipSST)
 	return mi
@@ -490,21 +498,34 @@ func (mi *mergeIterator) init(memtables []*memtable, skipSST bool) {
 				if !fileOverlapsPrefix(f.MinKey, f.MaxKey, mi.prefix, upper) {
 					continue
 				}
-				sstPath := filepath.Join(mi.dir, fileName(&f))
-				data, err := mi.fs.ReadFile(sstPath)
+			sstPath := filepath.Join(mi.dir, fileName(&f))
+			var reader *sstReader
+			var sstData []byte
+			if mmapData, ok := mi.mmapCache[sstPath]; ok {
+				var err error
+				reader, err = openSSTWithPath(mmapData, sstPath)
 				if err != nil {
 					continue
 				}
-				reader, err := openSST(data)
+				reader.mmap = mmapData
+				sstData = mmapData
+			} else {
+				var err error
+				sstData, err = mi.fs.ReadFile(sstPath)
 				if err != nil {
 					continue
 				}
-				reader.blockCache = mi.blockCache // REQ001242
-				// REQ001257: pull sstIter from the pool.
-				si := acquireSSTIter()
-				si.it = reader.Iterator()
-				si.data = data
-				mi.sources = append(mi.sources, si)
+				reader, err = openSST(sstData)
+				if err != nil {
+					continue
+				}
+			}
+			reader.blockCache = mi.blockCache // REQ001242
+			// REQ001257: pull sstIter from the pool.
+			si := acquireSSTIter()
+			si.it = reader.Iterator()
+			si.data = sstData
+			mi.sources = append(mi.sources, si)
 			}
 		}
 	}

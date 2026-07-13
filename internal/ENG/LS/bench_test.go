@@ -229,7 +229,7 @@ func BenchmarkSelect1_MergeIterator(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 		for mi.Next() {
 		}
 		_ = mi.Close()
@@ -257,7 +257,7 @@ func BenchmarkSelect1_HeapBufferReuse(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0)
+		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 		for mi.Next() {
 		}
 		_ = mi.Close()
