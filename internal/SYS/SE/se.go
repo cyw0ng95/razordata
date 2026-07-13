@@ -25,6 +25,7 @@ type Session struct {
 	engine         *SY.Engine
 	id             uint64
 	txn            AP.Transaction
+	exe            *EX.Executor // cached Executor (REQ001419: session-level reuse)
 	mu             sync.Mutex
 	deadline       atomic.Value
 	isolationLevel AP.IsolationLevel
@@ -34,6 +35,29 @@ type Session struct {
 		bytesRead    atomic.Int64
 		bytesWritten atomic.Int64
 	}
+}
+
+// executor returns the session's cached Executor, creating it on first use.
+// REQ001419: eliminates per-query ShallowCopy allocation.
+func (s *Session) executor() *EX.Executor {
+	if s.exe == nil {
+		s.exe = s.engine.Executor()
+	}
+	return s.exe
+}
+
+// resetExecutor zeroes the Executor's per-request mutable fields so it is
+// ready for the next call. The shared fields (planner, store, caches, pool)
+// are untouched. REQ001419: safe because Session.mu serializes all calls.
+// TxWriter is always cleared here; the caller (Exec/Query) re-sets it after
+// this call if a transaction is active.
+func (s *Session) resetExecutor() {
+	if s.exe == nil {
+		return
+	}
+	s.exe.SetSessionID(s.id)
+	s.exe.SetTxWriter(nil)
+	s.exe.SetSnapshot(0)
 }
 
 var sessionIDSeq atomic.Uint64
@@ -146,9 +170,22 @@ func (s *Session) Query(ctx context.Context, sql string, args ...any) (*AP.Rows,
 	}
 	defer s.mu.Unlock()
 	s.stats.queryCount.Add(1)
-	exe := s.engine.Executor()
-	exe.SetSessionID(s.id)
+	s.resetExecutor()
+	// REQ001419: set TxWriter on the cached executor when a transaction is
+	// active, so writers see the rollback hook via DT.CurrentTxWriter().
+	// Must be cleared after the call so subsequent statements are not affected.
+	twSet := false
+	if s.txn != nil {
+		if tw, ok := s.txn.(DT.TxWriter); ok {
+			s.exe.SetTxWriter(tw)
+			twSet = true
+		}
+	}
+	exe := s.executor()
 	stream, err := exe.QueryStream(ctx, sql, args...)
+	if twSet {
+		exe.ClearTxWriter()
+	}
 	if err != nil {
 		return nil, wrapEXError(err)
 	}
@@ -193,9 +230,22 @@ func (s *Session) Exec(ctx context.Context, sql string, args ...any) (AP.Result,
 	}
 	defer s.mu.Unlock()
 	s.stats.queryCount.Add(1)
-	exe := s.engine.Executor()
-	exe.SetSessionID(s.id)
+	s.resetExecutor()
+	// REQ001419: set TxWriter on the cached executor when a transaction is
+	// active, so writers see the rollback hook via DT.CurrentTxWriter().
+	// Must be cleared after the call so subsequent statements are not affected.
+	twSet := false
+	if s.txn != nil {
+		if tw, ok := s.txn.(DT.TxWriter); ok {
+			s.exe.SetTxWriter(tw)
+			twSet = true
+		}
+	}
+	exe := s.executor()
 	res, err := exe.Exec(ctx, sql, args...)
+	if twSet {
+		exe.ClearTxWriter()
+	}
 	if err != nil {
 		return AP.Result{}, wrapEXError(err)
 	}
@@ -246,15 +296,13 @@ func (s *Session) SetTxWriterForTxn() {
 	s.mu.Unlock()
 	if txn != nil {
 		if tw, ok := txn.(DT.TxWriter); ok {
-			exe := s.engine.Executor()
-			exe.SetTxWriter(tw)
+			s.executor().SetTxWriter(tw)
 		}
 	}
 }
 
 func (s *Session) ClearTxWriter() {
-	exe := s.engine.Executor()
-	exe.ClearTxWriter()
+	s.executor().ClearTxWriter()
 }
 
 func (s *Session) Commit(ctx context.Context) error {

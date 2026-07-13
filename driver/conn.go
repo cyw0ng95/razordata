@@ -30,14 +30,14 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	if c == nil || c.session == nil {
 		return nil, AP.New(AP.KindClosed, "engine not open")
 	}
-	// REQ001125: route through the session so the per-session
-	// counter for CHANGES() and TOTAL_CHANGES() is maintained. The
-	// Prepare+stmt.Exec path goes through ST.Stmt.Exec which calls
-	// s.engine.Executor() and bypasses the session layer.
 	anyArgs := make([]any, len(args))
 	for i, a := range args {
 		anyArgs[i] = a.Value
 	}
+	// REQ001125: route through the session so the per-session
+	// counter for CHANGES() and TOTAL_CHANGES() is maintained.
+	// REQ001419: Session.Exec internally handles TxWriter for active
+	// transactions; no driver-level SetTxWriterForTxn needed.
 	sess, ok := c.session.(*SE.Session)
 	if !ok || !sess.HasActiveTxn() {
 		tx, err := c.session.Begin(ctx)
@@ -56,8 +56,6 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		}
 		return Result{lastID: int64(res.LastInsertID), n: res.RowsAffected}, nil
 	}
-	sess.SetTxWriterForTxn()
-	defer sess.ClearTxWriter()
 	res, err := c.session.Exec(ctx, query, anyArgs...)
 	if err != nil {
 		return nil, err
