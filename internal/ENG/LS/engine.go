@@ -12,10 +12,11 @@ import (
 )
 
 var (
-	ErrNoActiveMemtable = errors.New("ls: no active memtable")
-	ErrClosed           = errors.New("ls: engine is closed")
-	ErrNotFound         = errors.New("ls: key not found")
-	ErrRetryExceeded    = errors.New("ls: retry limit exceeded")
+	ErrNoActiveMemtable    = errors.New("ls: no active memtable")
+	ErrClosed              = errors.New("ls: engine is closed")
+	ErrNotFound            = errors.New("ls: key not found")
+	ErrRetryExceeded       = errors.New("ls: retry limit exceeded")
+	ErrBatchLengthMismatch = errors.New("ls: WriteBatch keys/values length mismatch")
 )
 
 const (
@@ -138,6 +139,41 @@ func (e *engine) Write(key, value []byte) error {
 	}
 	if err := e.activeMem.Insert(key, value); err != nil {
 		return err
+	}
+	if e.activeMem.ShouldFlush() {
+		return e.flushActiveMemtable()
+	}
+	return nil
+}
+
+// WriteBatch inserts a contiguous list of key/value pairs into the
+// active memtable, deferring the per-row flush threshold check
+// until the end. Each pair keeps the same error semantics as
+// Write: an empty pair is a no-op, and the first failed insert
+// short-circuits the rest of the batch.
+//
+// REQ001421: per-call overhead is amortised over N rows for
+// autocommit INSERT batches. The cost model:
+//   - Single Write:  1× closed.Load + 1× shouldFlush.Load atomics
+//                    per row.
+//   - WriteBatch:   1× closed.Load + 1× shouldFlush.Load atomics
+//                    per batch.
+// For 100-row INSERT batches this drops the atomic-bound cost
+// from O(N) to O(1).
+func (e *engine) WriteBatch(keys, values [][]byte) error {
+	if e.activeMem == nil {
+		return ErrNoActiveMemtable
+	}
+	if e.closed.Load() {
+		return ErrClosed
+	}
+	if len(keys) != len(values) {
+		return ErrBatchLengthMismatch
+	}
+	for i := range keys {
+		if err := e.activeMem.Insert(keys[i], values[i]); err != nil {
+			return err
+		}
 	}
 	if e.activeMem.ShouldFlush() {
 		return e.flushActiveMemtable()

@@ -173,6 +173,20 @@ func (eng *Engine) Get(key []byte) ([]byte, error) {
 	return v, nil
 }
 
+// WriteBatch inserts a contiguous list of key/value pairs into the
+// active memtable. The per-row atomic checks (closed state, flush
+// threshold) are amortised over the batch — the engine pays the
+// closed.Load cost once and only re-evaluates ShouldFlush after
+// every row succeeds. Each pair keeps Write's error semantics:
+// an empty pair is a no-op, and the first failed insert
+// short-circuits the rest of the batch. REQ001421.
+func (eng *Engine) WriteBatch(keys, values [][]byte) error {
+	if eng == nil || eng.e == nil {
+		return ErrClosed
+	}
+	return eng.e.WriteBatch(keys, values)
+}
+
 // Delete writes a tombstone for key.
 func (eng *Engine) Delete(key []byte) error {
 	if eng == nil || eng.e == nil {

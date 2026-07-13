@@ -122,6 +122,16 @@ type Store interface {
 	ManualCompact() error
 }
 
+// BatchStore is an optional extension of Store supporting bulk
+// writes. Store implementations that can amortise per-row overhead
+// (LS engine) implement this interface; executor code type-asserts
+// and uses WriteBatch when available, falling back to per-row
+// Insert otherwise. REQ001421.
+type BatchStore interface {
+	Store
+	WriteBatch(keys, values [][]byte) error
+}
+
 // StatsCatalog provides access to column statistics for
 // histogram-based selectivity estimation.
 type StatsCatalog interface {
