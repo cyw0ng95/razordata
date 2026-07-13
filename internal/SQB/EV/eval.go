@@ -1,6 +1,7 @@
 package EV
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -57,6 +58,60 @@ func cachedCorrelatedCols(e *PS.SubqueryExpr) []string {
 	cols := extractCorrelatedColumns(e.Subquery.(*PS.Select))
 	subqueryColRefCache.Store(e, cols)
 	return cols
+}
+
+// correlatedColIndicesCache memoizes, per SubqueryExpr pointer, the
+// outer-row column indices for each correlated column name. The
+// indices are stable for the lifetime of the query (the outer table
+// schema does not change between rows), so resolving them once per
+// subquery avoids per-row name lookups via Row.LookupValue. REQ001292.
+var correlatedColIndicesCache sync.Map
+
+// cachedCorrelatedColIndices resolves the correlated column names to
+// outer-row indices using row's ColIndex (or a linear scan over
+// row.Cols as a fallback). The first call walks the correlated names
+// and the row schema in one pass; subsequent calls return the cached
+// slice. Returns nil when no correlated columns exist. REQ001292.
+func cachedCorrelatedColIndices(e *PS.SubqueryExpr, row *Row) []int {
+	if v, ok := correlatedColIndicesCache.Load(e); ok {
+		return v.([]int)
+	}
+	names := cachedCorrelatedCols(e)
+	if len(names) == 0 || row == nil {
+		correlatedColIndicesCache.Store(e, []int(nil))
+		return nil
+	}
+	idxs := resolveColIndices(row, names)
+	correlatedColIndicesCache.Store(e, idxs)
+	return idxs
+}
+
+// resolveColIndices maps a list of column names against row.Cols /
+// row.ColIndex. The first call pays for any ColIndex build; the
+// behaviour mirrors Row.LookupValue without the per-name scan (we
+// index once and cache). REQ001292.
+func resolveColIndices(row *Row, names []string) []int {
+	idxs := make([]int, len(names))
+	for i, n := range names {
+		idxs[i] = -1
+		if row.ColIndex != nil {
+			if idx, ok := row.ColIndex[n]; ok {
+				if idx < len(row.Data) {
+					idxs[i] = idx
+				}
+			}
+		} else {
+			for j, c := range row.Cols {
+				if c == n {
+					if j < len(row.Data) {
+						idxs[i] = j
+					}
+					break
+				}
+			}
+		}
+	}
+	return idxs
 }
 
 // extractCorrelatedColumns walks the subquery's WHERE AST and returns
@@ -224,27 +279,70 @@ func ClearSubqueryCaches() {
 	correlatedSubqueryCache.Clear()
 }
 
-// serializeCorrelatedValues serializes only the specified column values
-// from the outer row, used as the cache key for correlated subqueries.
+// serializeCorrelatedValues serializes the values at the given row
+// column indices, used as the cache key for correlated subqueries.
 // REQ001228: fine-grained keying based on correlated columns only.
-func serializeCorrelatedValues(row *Row, cols []string) string {
-	if row == nil || len(cols) == 0 {
+// REQ001292: takes pre-resolved column indices so the hot path
+// indexes row.Data directly, skipping per-row name lookup. The
+// backing bytes.Buffer is borrowed from a sync.Pool — the first
+// grow amortises over all subsequent calls for the same query.
+// REQ001292: bytes.Buffer pool replaces strings.Builder to amortise
+// the buffer allocation (and matches the REQ's stated intent).
+func serializeCorrelatedValues(row *Row, idxs []int) string {
+	if row == nil || len(idxs) == 0 {
 		return ""
 	}
-	// REQ001281: use strings.Builder instead of []string + strings.Join
-	// to avoid intermediate allocation of the parts slice.
-	var sb strings.Builder
-	for i, col := range cols {
+	bufPtr := correlatedKeyBufPool.Get().(*bytes.Buffer)
+	buf := bufPtr
+	buf.Reset()
+	defer correlatedKeyBufPool.Put(bufPtr)
+	for i, idx := range idxs {
 		if i > 0 {
-			sb.WriteByte(',')
+			buf.WriteByte(',')
 		}
-		if v, ok := row.LookupValue(col); ok {
-			sb.WriteString(DT.ValueToString(v))
+		if idx >= 0 && idx < len(row.Data) {
+			serializeValueInto(row.Data[idx], buf)
 		} else {
-			sb.WriteString("NULL")
+			buf.WriteString("NULL")
 		}
 	}
-	return sb.String()
+	return buf.String()
+}
+
+// correlatedKeyBufPool keeps reusable bytes.Buffers for the
+// correlated-key encoder. REQ001292.
+var correlatedKeyBufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
+// serializeValueInto writes a compact textual representation of v
+// into buf using kind dispatch. REQ001292.
+func serializeValueInto(v DT.Value, buf *bytes.Buffer) {
+	switch v.Kind {
+	case DT.KindNull:
+		buf.WriteString("NULL")
+	case DT.KindInt:
+		var tmp [20]byte
+		b := strconv.AppendInt(tmp[:0], v.I64, 10)
+		buf.Write(b)
+	case DT.KindFloat:
+		var tmp [32]byte
+		b := strconv.AppendFloat(tmp[:0], v.F64, 'g', -1, 64)
+		buf.Write(b)
+	case DT.KindText:
+		buf.WriteString(v.S)
+	case DT.KindBlob:
+		buf.WriteByte('x')
+		var tmp [4]byte
+		b := strconv.AppendUint(tmp[:0], uint64(len(v.B)), 16)
+		buf.Write(b)
+	case DT.KindBool:
+		if v.Bo {
+			buf.WriteByte('1')
+		} else {
+			buf.WriteByte('0')
+		}
+	}
 }
 
 var ErrEval = errors.New("ex: eval error")
@@ -1074,12 +1172,23 @@ func evalExists(e *PS.ExistsExpr, outer *Row, params []any) (any, error) {
 	// Only cache when correlated columns are explicitly detected — bare
 	// idents in WHERE may be outer references that extractCorrelatedColumns
 	// cannot detect (treats bare idents as inner).
+	// REQ001292: resolve correlated columns to outer-row indices once
+	// per ExistsExpr, then index row.Data directly.
 	sel, ok := e.Subquery.(*PS.Select)
+	correlatedColIdx := []int(nil)
 	if ok && outer != nil {
-		correlatedCols := extractCorrelatedColumns(sel)
-		if len(correlatedCols) > 0 {
+		if v, hit := existsColIdxCache.Load(e); hit {
+			correlatedColIdx = v.([]int)
+		} else {
+			names := extractCorrelatedColumns(sel)
+			if len(names) > 0 {
+				correlatedColIdx = resolveColIndices(outer, names)
+			}
+			existsColIdxCache.Store(e, correlatedColIdx)
+		}
+		if len(correlatedColIdx) > 0 {
 			key := PL.SerializeKey(sel)
-			correlatedKey := key + ":" + serializeCorrelatedValues(outer, correlatedCols)
+			correlatedKey := key + ":" + serializeCorrelatedValues(outer, correlatedColIdx)
 			if v, ok := correlatedSubqueryCache.Get(correlatedKey); ok {
 				return v.ToAny(), nil
 			}
@@ -1098,13 +1207,10 @@ func evalExists(e *PS.ExistsExpr, outer *Row, params []any) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if sel != nil && outer != nil {
-			correlatedCols := extractCorrelatedColumns(sel)
-			if len(correlatedCols) > 0 {
-				key := PL.SerializeKey(sel)
-				correlatedKey := key + ":" + serializeCorrelatedValues(outer, correlatedCols)
-				correlatedSubqueryCache.Put(correlatedKey, DT.NewBoolValue(result))
-			}
+		if len(correlatedColIdx) > 0 {
+			key := PL.SerializeKey(sel)
+			correlatedKey := key + ":" + serializeCorrelatedValues(outer, correlatedColIdx)
+			correlatedSubqueryCache.Put(correlatedKey, DT.NewBoolValue(result))
 		}
 		return result, nil
 	}
@@ -1114,6 +1220,10 @@ func evalExists(e *PS.ExistsExpr, outer *Row, params []any) (any, error) {
 	}
 	return len(rows) > 0, nil
 }
+
+// existsColIdxCache memoizes, per ExistsExpr pointer, the outer-row
+// column indices of its correlated columns. REQ001292.
+var existsColIdxCache sync.Map
 
 func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (Value, error) {
 	if _, ok := e.Subquery.(*PS.Select); !ok {
@@ -1139,9 +1249,11 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (Value, er
 	} else {
 		// REQ001228: Correlated subquery cache — keyed by planKey
 		// + the values of only the correlated columns.
-		correlatedCols := cachedCorrelatedCols(e)
-		if len(correlatedCols) > 0 {
-			correlatedKey := key + ":" + serializeCorrelatedValues(outer, correlatedCols)
+		// REQ001292: pre-resolve correlated columns to outer-row
+		// indices once per query, then index row.Data directly on
+		// subsequent calls.
+		if correlatedColIdx := cachedCorrelatedColIndices(e, outer); len(correlatedColIdx) > 0 {
+			correlatedKey := key + ":" + serializeCorrelatedValues(outer, correlatedColIdx)
 			if v, ok := correlatedSubqueryCache.Get(correlatedKey); ok {
 				return v, nil
 			}
@@ -1174,16 +1286,11 @@ func evalScalarSubquery(e *PS.SubqueryExpr, outer *Row, params []any) (Value, er
 	// Cache the result: globally for non-correlated, LRU for correlated.
 	if outer == nil {
 		globalSubqueryCache.Store(key, result)
+	} else if correlatedColIdx := cachedCorrelatedColIndices(e, outer); len(correlatedColIdx) > 0 {
+		correlatedKey := key + ":" + serializeCorrelatedValues(outer, correlatedColIdx)
+		correlatedSubqueryCache.Put(correlatedKey, result)
 	} else {
-		correlatedCols := cachedCorrelatedCols(e)
-		if len(correlatedCols) > 0 {
-			// Correlated subquery cache with fine-grained keying
-			correlatedKey := key + ":" + serializeCorrelatedValues(outer, correlatedCols)
-			correlatedSubqueryCache.Put(correlatedKey, result)
-		} else {
-			// Non-correlated: cache globally
-			globalSubqueryCache.Store(key, result)
-		}
+		globalSubqueryCache.Store(key, result)
 	}
 	return result, nil
 }
