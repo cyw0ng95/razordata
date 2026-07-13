@@ -228,6 +228,9 @@ type QueryPlanner interface {
 	SetMaxMemoryPerQuery(v int64)
 	InvalidateCache()
 	SetStatsCatalog(statsCatalog StatsCatalog)
+	// REQ001420: row count metadata for COUNT(*) optimization.
+	UpdateTableRowCount(table string, delta int64)
+	GetTableRowCount(table string) int64
 }
 
 // ColInfo describes a single column in a table schema.

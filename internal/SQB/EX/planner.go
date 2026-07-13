@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
@@ -86,6 +87,20 @@ type tableInfo struct {
 	cols    []DT.ColInfo
 	pk      string
 	indexes map[string][]string
+	// REQ001420: atomic row count for COUNT(*) optimization.
+	// Updated by the executor after INSERT/DELETE; read by the planner
+	// for simple COUNT(*) queries with no WHERE/GROUP BY/DISTINCT.
+	rowCount atomic.Int64
+}
+
+// RowCount returns the cached row count for a table (REQ001420).
+func (t *tableInfo) GetRowCount() int64 {
+	return t.rowCount.Load()
+}
+
+// AddRowCount atomically adjusts the cached row count (REQ001420).
+func (t *tableInfo) AddRowCount(delta int64) {
+	t.rowCount.Add(delta)
 }
 
 func NewPlanner() *Planner {
@@ -116,12 +131,17 @@ func (p *Planner) SetMaxMemoryPerQuery(v int64) { p.maxMemoryPerQuery = v }
 // reference the old schema are not reused.
 func (p *Planner) InvalidateCache() {
 	p.mu.Lock()
+	p.clearMemoLocked()
+	p.mu.Unlock()
+}
+
+// clearMemoLocked clears the plan cache. Caller must hold p.mu.
+func (p *Planner) clearMemoLocked() {
 	p.memo = make(map[string]*plan, maxPlanCacheSize)
 	p.memoOrder = make([]string, maxPlanCacheSize)
 	p.memoHead = 0
 	p.memoSize = 0
 	p.splitAndCache = nil
-	p.mu.Unlock()
 }
 
 // NewPlannerWithStore returns a planner that routes its leaf operators
@@ -210,6 +230,36 @@ func (p *Planner) RegisterIndex(table, index string, cols []string) {
 	if t, ok := p.catalog[table]; ok {
 		t.indexes[index] = cols
 	}
+}
+
+// UpdateTableRowCount adjusts the cached row count for a table (REQ001420).
+// Called by the executor after INSERT/DELETE to maintain approximate counts.
+// Also invalidates the plan cache so COUNT(*) fast-path plans are rebuilt
+// with the current count on the next query.
+func (p *Planner) UpdateTableRowCount(table string, delta int64) {
+	p.mu.Lock()
+	t, ok := p.catalog[table]
+	if !ok {
+		p.mu.Unlock()
+		return
+	}
+	t.AddRowCount(delta)
+	// Invalidate the plan cache so COUNT(*) fast-path plans are rebuilt
+	// with the updated count on the next query.
+	p.clearMemoLocked()
+	p.mu.Unlock()
+}
+
+// GetTableRowCount returns the cached row count for a table (REQ001420).
+// Returns 0 if the table is not registered.
+func (p *Planner) GetTableRowCount(table string) int64 {
+	p.mu.Lock()
+	t, ok := p.catalog[table]
+	p.mu.Unlock()
+	if !ok {
+		return 0
+	}
+	return t.GetRowCount()
 }
 
 // availableIndexes returns the index names registered for a table.

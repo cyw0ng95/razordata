@@ -6,6 +6,7 @@ package OP
 
 import (
 	"context"
+	"strings"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
@@ -104,6 +105,16 @@ func exprString(e PS.Expr) string {
 		return unaryOpString(x)
 	case *PS.FunctionCall:
 		return x.Name + "(...)"
+	case *PS.AliasedExpr:
+		return x.Alias
+	case *PS.AggregateFunc:
+		// REQ001420: render COUNT(*) as "COUNT(*)" for column naming.
+		if x.Arg != nil {
+			if _, ok := x.Arg.(*PS.StarExpr); ok {
+				return strings.ToUpper(x.Name) + "(*)"
+			}
+		}
+		return strings.ToUpper(x.Name) + "(?)"
 	default:
 		return "?"
 	}

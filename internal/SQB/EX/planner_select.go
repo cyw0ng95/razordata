@@ -43,6 +43,12 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 		return p.planSelectSqliteMaster(s)
 	}
 
+	// REQ001420: COUNT(*) fast path — return cached row count when
+	// SELECT COUNT(*) FROM t has no WHERE, GROUP BY, DISTINCT, or HAVING.
+	if op := p.tryCountStarFastPath(s); op != nil {
+		return op
+	}
+
 	// REQ000858: resolve column aliases in WHERE before creating filters.
 	// SQLite allows SELECT aliases to be referenced in WHERE (e.g.
 	// `SELECT v AS value FROM t WHERE value > 15`). Build an alias map
@@ -1492,6 +1498,54 @@ func (p *Planner) expandStarForUsing(s *PS.Select) {
 }
 
 // schemaCols returns the column names for a table given its name.
+// tryCountStarFastPath detects SELECT COUNT(*) FROM t with no WHERE,
+// GROUP BY, DISTINCT, or HAVING clauses and returns a single-row Values
+// operator with the cached row count (REQ001420). Returns nil when the
+// fast path does not apply, falling through to the normal plan path.
+func (p *Planner) tryCountStarFastPath(s *PS.Select) DT.Operator {
+	if s.Where != nil || len(s.GroupBy) > 0 || s.Distinct || s.Having != nil {
+		return nil
+	}
+	if len(s.Cols) != 1 {
+		return nil
+	}
+	col := s.Cols[0]
+	// Unwrap AliasedExpr to check the underlying aggregate.
+	if ae, ok := col.(*PS.AliasedExpr); ok {
+		col = ae.Expr
+	}
+	af, ok := col.(*PS.AggregateFunc)
+	if !ok {
+		return nil
+	}
+	if !strings.EqualFold(af.Name, "count") || af.Distinct {
+		return nil
+	}
+	// Must be COUNT(*) or COUNT(1) — no column reference.
+	if af.Arg != nil {
+		if _, isStar := af.Arg.(*PS.StarExpr); !isStar {
+			if _, isOne := af.Arg.(*PS.NumberLiteral); !isOne {
+				return nil
+			}
+		}
+	}
+	// Get the row count: first check in-memory tables, then fall back to
+	// the planner's cached count (maintained by the executor after DML).
+	var count int64
+	if rows, ok := DT.Tables[s.From]; ok {
+		count = int64(len(rows))
+	} else {
+		count = p.GetTableRowCount(s.From)
+	}
+	// If we don't know the row count (count == 0 could mean either
+	// empty table or unknown), fall through to the normal scan path.
+	if count == 0 {
+		return nil
+	}
+	// Create a ValuesOp that returns the cached count.
+	return OP.NewValuesOp([]PS.Expr{&PS.NumberLiteral{Val: count}}).WithPlanner(p)
+}
+
 func schemaCols(table, alias string) []string {
 	if schema, ok := DT.SchemaFor(table); ok {
 		return schema.Cols

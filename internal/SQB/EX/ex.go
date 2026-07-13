@@ -840,7 +840,11 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 			}
 			e.lastChanges = execCtx.LastChanges
 			e.totalChanges = execCtx.TotalChanges
-			return extractResult(op)
+			res, err := extractResult(op)
+			if err == nil {
+				updateTableRowCount(op, e.planner)
+			}
+			return res, err
 		}
 	}
 
@@ -893,7 +897,11 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	}
 	e.lastChanges = execCtx.LastChanges
 	e.totalChanges = execCtx.TotalChanges
-	return extractResult(op)
+	res, err := extractResult(op)
+	if err == nil {
+		updateTableRowCount(op, e.planner)
+	}
+	return res, err
 }
 
 // hasReturning reports whether the statement has a RETURNING clause.
@@ -1664,6 +1672,37 @@ func extractResult(op DT.Operator) (Result, error) {
 		return Result{RowsAffected: a.RowsAffected()}, nil
 	}
 	return Result{}, nil
+}
+
+// updateTableRowCount adjusts the planner's cached row count after DML
+// execution (REQ001420). For INSERT the count increases; for DELETE it
+// decreases; for UPDATE the count is unchanged.
+func updateTableRowCount(op DT.Operator, planner pl.QueryPlanner) {
+	if planner == nil || op == nil {
+		return
+	}
+	type tableNamed interface {
+		Table() string
+	}
+	type rowCounter interface {
+		RowsAffected() int64
+	}
+	tn, hasTable := op.(tableNamed)
+	rc, hasRows := op.(rowCounter)
+	if !hasTable || !hasRows {
+		return
+	}
+	delta := rc.RowsAffected()
+	if delta <= 0 {
+		return
+	}
+	switch op.(type) {
+	case *WT.Insert:
+		planner.UpdateTableRowCount(tn.Table(), delta)
+	case *WT.Delete:
+		planner.UpdateTableRowCount(tn.Table(), -delta)
+		// UPDATE: row count does not change.
+	}
 }
 
 // extractAttachPath extracts the path string from an ATTACH expression.
