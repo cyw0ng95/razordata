@@ -560,7 +560,12 @@ func (e *Executor) planWithCache(stmt PS.Stmt) (*pl.PlanResult, error) {
 			return nil, errors.New("ex: plan produced no root")
 		}
 		ResolvePlanSlots(plan.Root)
-		e.putCachedPlan(key, plan)
+		// REQ001420: skip executor cache for ConstRow (COUNT(*) fast path)
+		// since it's trivially cheap to create and caching shares the
+		// same operator tree across calls, causing races on mutable state.
+		if plan.Root != nil && !isConstRowPlan(plan.Root) {
+			e.putCachedPlan(key, plan)
+		}
 		return plan, nil
 	}
 	plan, err := e.planner.Plan(stmt)

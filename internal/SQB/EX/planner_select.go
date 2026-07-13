@@ -1542,8 +1542,11 @@ func (p *Planner) tryCountStarFastPath(s *PS.Select) DT.Operator {
 	if count == 0 {
 		return nil
 	}
-	// Create a ValuesOp that returns the cached count.
-	return OP.NewValuesOp([]PS.Expr{&PS.NumberLiteral{Val: count}}).WithPlanner(p)
+	// Create a ConstRow operator with the cached count. ConstRow is
+	// stateless and safe to use with the memo cache (no Close() side
+	// effects), so the memo cache can safely share it across goroutines.
+	val := DT.NewIntValue(count)
+	return OP.NewConstRow([]string{"COUNT(*)"}, []DT.Value{val}, []LX.TokenType{LX.T_INT_KW})
 }
 
 func schemaCols(table, alias string) []string {

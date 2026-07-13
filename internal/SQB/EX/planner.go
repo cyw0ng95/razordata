@@ -362,16 +362,23 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	}
 
 	p.mu.Lock()
-	p.memo[key] = result
-	// REQ000989: LRU ring-buffer eviction. When the cache exceeds
-	// maxPlanCacheSize, evict the oldest entry (memoOrder[memoHead])
-	// and advance the head pointer. O(1) per eviction vs O(n) scan.
-	p.memoOrder[(p.memoHead+p.memoSize)%maxPlanCacheSize] = key
-	p.memoSize++
-	if p.memoSize > maxPlanCacheSize {
-		oldest := p.memoOrder[p.memoHead]
-		delete(p.memo, oldest)
-		p.memoHead = (p.memoHead + 1) % maxPlanCacheSize
+	// REQ001420: skip memoization for ConstRow operators (COUNT(*)
+	// fast path). The plan is trivially cheap to create and ConstRow
+	// is shared via the memo cache — skipping storage avoids races
+	// between concurrent Next/Close calls on the shared instance.
+	// ConstRow may be wrapped in AdaptiveOp, so check the inner type.
+	if !isConstRowPlan(root) {
+		p.memo[key] = result
+		// REQ000989: LRU ring-buffer eviction. When the cache exceeds
+		// maxPlanCacheSize, evict the oldest entry (memoOrder[memoHead])
+		// and advance the head pointer. O(1) per eviction vs O(n) scan.
+		p.memoOrder[(p.memoHead+p.memoSize)%maxPlanCacheSize] = key
+		p.memoSize++
+		if p.memoSize > maxPlanCacheSize {
+			oldest := p.memoOrder[p.memoHead]
+			delete(p.memo, oldest)
+			p.memoHead = (p.memoHead + 1) % maxPlanCacheSize
+		}
 	}
 	p.mu.Unlock()
 
@@ -909,3 +916,18 @@ func (p *Planner) planSubStmt(stmt PS.Stmt) DT.Operator {
 // no aggregation, no DISTINCT, no GROUP BY, no LIMIT, no OFFSET, and
 // no ORDER BY — pushing predicates into such subqueries is semantically
 // safe and reduces intermediate row counts. REQ001072.
+
+// isConstRowPlan reports whether the operator tree is a ConstRow (possibly
+// wrapped in AdaptiveOp). REQ001420: used to skip memoization for the
+// COUNT(*) fast path since ConstRow is trivially cheap to create.
+func isConstRowPlan(op DT.Operator) bool {
+	if _, ok := op.(*OP.ConstRow); ok {
+		return true
+	}
+	if ad, ok := op.(*AD.AdaptiveOp); ok {
+		if _, ok := ad.Inner.(*OP.ConstRow); ok {
+			return true
+		}
+	}
+	return false
+}

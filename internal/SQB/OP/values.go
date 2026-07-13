@@ -7,12 +7,49 @@ package OP
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
+
+// ConstRow is a one-shot operator that returns a single row with constant
+// values (REQ001420). Unlike Values, it has no mutable state — Close() is
+// a no-op, so it is safe to call from any goroutine. Used by the COUNT(*)
+// fast path where the planner returns a cached row count.
+type ConstRow struct {
+	cols   []string
+	values []Value
+	types  []LX.TokenType
+	done   atomic.Bool
+}
+
+var _ Operator = (*ConstRow)(nil)
+
+// NewConstRow creates a ConstRow with the given column names, values, and types.
+func NewConstRow(cols []string, values []Value, types []LX.TokenType) *ConstRow {
+	return &ConstRow{cols: cols, values: values, types: types}
+}
+
+func (c *ConstRow) Next(ctx context.Context) (Row, error) {
+	if c.done.Load() {
+		return Row{}, ErrNoRows
+	}
+	c.done.Store(true)
+	// Return copies of slices to avoid aliasing.
+	cols := make([]string, len(c.cols))
+	copy(cols, c.cols)
+	vals := make([]Value, len(c.values))
+	copy(vals, c.values)
+	typs := make([]LX.TokenType, len(c.types))
+	copy(typs, c.types)
+	return Row{Cols: cols, Types: typs, Data: vals}, nil
+}
+
+func (c *ConstRow) Close() error { return nil } // no-op: no mutable state; memo skips ConstRow
+func (c *ConstRow) WithParams(p []any) Operator { return c }
 
 // Values implements a single-row operator that evaluates scalar
 // expressions without a FROM source. Used for `SELECT expr[,expr...]`.
