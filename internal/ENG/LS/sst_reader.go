@@ -29,6 +29,8 @@ type sstReader struct {
 
 	// REQ001242: shared block cache for decompressed SST blocks
 	blockCache *BlockCache
+
+	lazyFD File // cached fd for lazy readers, nil if using mmap/data
 }
 
 func openSST(data []byte) (*sstReader, error) {
@@ -136,14 +138,17 @@ func openSSTLazyWithFS(fs FS, path string) (*sstReader, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	// f is closed on error paths below; on success it is stored
+	// in the reader and closed via sstReader.Close().
 
 	stat, err := f.Stat()
 	if err != nil {
+		f.Close()
 		return nil, err
 	}
 	fileSize := stat.Size()
 	if fileSize < sstFooterSizeOld {
+		f.Close()
 		return nil, ErrInvalidSSTFormat
 	}
 
@@ -154,6 +159,7 @@ func openSSTLazyWithFS(fs FS, path string) (*sstReader, error) {
 	}
 	footerBuf := make([]byte, readSize)
 	if _, err := f.ReadAt(footerBuf, fileSize-int64(readSize)); err != nil {
+		f.Close()
 		return nil, err
 	}
 
@@ -177,12 +183,14 @@ func openSSTLazyWithFS(fs FS, path string) (*sstReader, error) {
 		footerSize = sstFooterSizeOld
 		footerStart = fileSize - int64(footerSize)
 	} else {
+		f.Close()
 		return nil, ErrInvalidSSTFormat
 	}
 
 	// Read full footer
 	footer := make([]byte, footerSize)
 	if _, err := f.ReadAt(footer, footerStart); err != nil {
+		f.Close()
 		return nil, err
 	}
 
@@ -191,7 +199,7 @@ func openSSTLazyWithFS(fs FS, path string) (*sstReader, error) {
 	bloomOffset := binary.LittleEndian.Uint64(footer[12:])
 	bloomSize := binary.LittleEndian.Uint32(footer[20:])
 
-	r := &sstReader{fs: fs, filePath: path}
+	r := &sstReader{fs: fs, filePath: path, lazyFD: f}
 
 	// REQ001169: read SST format version from footer
 	if footerSize == sstFooterSize {
@@ -201,43 +209,45 @@ func openSSTLazyWithFS(fs FS, path string) (*sstReader, error) {
 	// Read index block
 	if indexOffset > 0 {
 		if indexOffset >= uint64(fileSize) || indexOffset+uint64(indexSize) > uint64(fileSize) {
-			// REQ001008: range tombstones should suppress keys in the range
+			f.Close()
 			return nil, ErrInvalidSSTFormat
 		}
 		indexData := make([]byte, indexSize)
 		if _, err := f.ReadAt(indexData, int64(indexOffset)); err != nil {
+			f.Close()
 			return nil, err
 		}
 		r.indexBlock = parseIndexBlock(indexData)
-		// REQ001170: detect key uniformity for interpolation search.
 		r.useInterpolation = detectKeyUniformity(r.indexBlock)
 	}
 
 	// Read bloom filter (or Ribbon filter for v2+).
 	if bloomOffset > 0 {
 		if bloomOffset >= uint64(fileSize) || bloomOffset+uint64(bloomSize) > uint64(fileSize) {
+			f.Close()
 			return nil, ErrInvalidSSTFormat
 		}
 		if indexOffset > 0 && indexOffset+uint64(indexSize) > bloomOffset {
+			f.Close()
 			return nil, ErrInvalidSSTFormat
 		}
 		bloomData := make([]byte, bloomSize)
 		if _, err := f.ReadAt(bloomData, int64(bloomOffset)); err != nil {
+			f.Close()
 			return nil, err
 		}
-		// REQ001169: store as ribbon filter for v2+ SSTs.
 		if r.version >= sstVersionRibbon {
 			r.ribbon = bloomData
 		} else {
 			r.bloom = bloomData
 
-			// Read prefix bloom
 			prefixBloomStart := bloomOffset + uint64(bloomSize)
 			if prefixBloomStart < uint64(fileSize) {
 				remaining := uint64(fileSize) - prefixBloomStart - uint64(footerSize)
 				if remaining > 0 && remaining < uint64(fileSize) && prefixBloomStart+remaining <= uint64(fileSize) {
 					prefixBloomData := make([]byte, remaining)
 					if _, err := f.ReadAt(prefixBloomData, int64(prefixBloomStart)); err != nil {
+						f.Close()
 						return nil, err
 					}
 					r.prefixBloom = prefixBloomData
@@ -252,10 +262,12 @@ func openSSTLazyWithFS(fs FS, path string) (*sstReader, error) {
 		rangeTombstoneSize := binary.LittleEndian.Uint32(footer[32:])
 		if rangeTombstoneOffset > 0 && rangeTombstoneSize > 0 {
 			if rangeTombstoneOffset >= uint64(fileSize) || rangeTombstoneOffset+uint64(rangeTombstoneSize) > uint64(fileSize) {
+				f.Close()
 				return nil, ErrInvalidSSTFormat
 			}
 			rtData := make([]byte, rangeTombstoneSize)
 			if _, err := f.ReadAt(rtData, int64(rangeTombstoneOffset)); err != nil {
+				f.Close()
 				return nil, err
 			}
 			r.rangeTombstones = parseRangeTombstones(rtData)
@@ -658,13 +670,11 @@ func (r *sstReader) readRaw(offset, size int) []byte {
 }
 
 func (r *sstReader) readFromFile(offset, size int) []byte {
-	f, err := r.fs.Open(r.filePath)
-	if err != nil {
+	if r.lazyFD == nil {
 		return nil
 	}
-	defer f.Close()
 	buf := make([]byte, size)
-	n, err := f.ReadAt(buf, int64(offset))
+	n, err := r.lazyFD.ReadAt(buf, int64(offset))
 	if err != nil || n < size {
 		return nil
 	}
@@ -861,9 +871,13 @@ func (it *sstIterator) Err() error {
 var _ io.Closer = (*sstReader)(nil)
 
 func (r *sstReader) Close() error {
-	// REQ001227: unmap mmap'd region
 	if len(r.mmap) > 0 {
 		return munmapFile(r.mmap)
+	}
+	if r.lazyFD != nil {
+		err := r.lazyFD.Close()
+		r.lazyFD = nil
+		return err
 	}
 	return nil
 }
