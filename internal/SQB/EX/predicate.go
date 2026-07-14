@@ -3,7 +3,6 @@ package EX
 import (
 	"fmt"
 	"reflect"
-	"slices"
 	"strings"
 	"unicode"
 
@@ -51,40 +50,11 @@ func caseExprCost(e *PS.CaseExpr) int {
 //
 // Returns nil when n <= 1 (no reordering needed).
 func reorderIndices(predicates []PS.Expr) []int {
-	n := len(predicates)
-	if n <= 1 {
-		return nil
-	}
-	indices := make([]int, n)
-	for i := range indices {
-		indices[i] = i
-	}
-	slices.SortStableFunc(indices, func(a, b int) int {
-		ci := predicateCost(predicates[a])
-		cj := predicateCost(predicates[b])
-		if ci < cj {
-			return -1
-		}
-		if ci > cj {
-			return 1
-		}
-		return 0
-	})
-	return indices
+	return CO.ReorderIndices(predicates)
 }
 
-// orderSlice returns a new slice with elements in the order specified by
-// indices. indices must be a permutation of 0..len(predicates)-1.
-// REQ001248.
 func orderSlice(predicates []PS.Expr, indices []int) []PS.Expr {
-	if len(indices) != len(predicates) {
-		return predicates // safety: don't corrupt
-	}
-	ordered := make([]PS.Expr, len(predicates))
-	for i, idx := range indices {
-		ordered[i] = predicates[idx]
-	}
-	return ordered
+	return CO.OrderSlice(predicates, indices)
 }
 
 func (p *Planner) splitAnd(expr PS.Expr) []PS.Expr {
