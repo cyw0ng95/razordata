@@ -89,6 +89,10 @@ type Planner struct {
 	// the field exists only to establish the SQF → SQO → SQB
 	// dependency order.
 	optimizer *OC.Optimizer
+	// REQ001448: outerAliases are the table names of the OUTER query
+	// passed to SubPlanner.PlanSubquery so candidate-join-key logic
+	// avoids columns belonging to the outer side. nil = no outer query.
+	outerAliases []string
 }
 
 type tableInfo struct {
@@ -121,6 +125,7 @@ func NewPlanner() *Planner {
 		// column pruning, predicate pushdown, limit pushdown (TopN fusion).
 		optimizer: OC.New().
 			AddPass(&PF.ConstantFoldingPass{}).
+			AddPass(&PF.SubqueryDecorrelationPass{}).
 			AddPass(&PF.IndexSelectionPass{}).
 			AddPass(&PF.ColumnPruningPass{}).
 			AddPass(&PF.PredicatePushdownPass{}).
@@ -136,9 +141,10 @@ func (p *Planner) runSQOPasses(op DT.Operator, stmt PS.Stmt) DT.Operator {
 		return op
 	}
 	ctx := &OC.Context{
-		Factory:  OP.Factory(),
-		Tables:   p.buildTableSchema(),
-		Catalog:  &exCatalogReader{catalog: p.catalog},
+		Factory:    OP.Factory(),
+		Tables:     p.buildTableSchema(),
+		Catalog:    &exCatalogReader{catalog: p.catalog},
+		SubPlanner: &exSubPlanner{p: p},
 	}
 	plan := &OC.Plan{Root: op, Stmt: stmt}
 	result, err := p.optimizer.Optimize(plan, ctx)
@@ -174,6 +180,15 @@ func (p *Planner) SetPool(pool pl.WorkerPool) { p.pool = pool }
 
 // Pool returns the attached WorkerPool (may be nil). REQ001044.
 func (p *Planner) Pool() pl.WorkerPool { return p.pool }
+
+// SetOuterAliases sets the outer-query table aliases that the next
+// Plan() call should treat as OUTER (not INNER) — used by REQ001448
+// subquery decorrelation so the planned subtree does not bind columns
+// belonging to the outer side.
+func (p *Planner) SetOuterAliases(aliases []string) { p.outerAliases = aliases }
+
+// OuterAliases returns the currently set outer aliases (or nil).
+func (p *Planner) OuterAliases() []string { return p.outerAliases }
 
 // SetJoinBufferSize sets the per-hash-join memory cap.
 // 0 = unlimited. REQ001056.
@@ -211,6 +226,7 @@ func NewPlannerWithStore(store DT.Store) *Planner {
 		store:     store,
 		optimizer: OC.New().
 			AddPass(&PF.ConstantFoldingPass{}).
+			AddPass(&PF.SubqueryDecorrelationPass{}).
 			AddPass(&PF.IndexSelectionPass{}).
 			AddPass(&PF.ColumnPruningPass{}).
 			AddPass(&PF.PredicatePushdownPass{}).
@@ -228,6 +244,7 @@ func NewPlannerWithStats(store DT.Store, statsCatalog DT.StatsCatalog) *Planner 
 		statsCatalog: statsCatalog,
 		optimizer: OC.New().
 			AddPass(&PF.ConstantFoldingPass{}).
+			AddPass(&PF.SubqueryDecorrelationPass{}).
 			AddPass(&PF.IndexSelectionPass{}).
 			AddPass(&PF.ColumnPruningPass{}).
 			AddPass(&PF.PredicatePushdownPass{}).

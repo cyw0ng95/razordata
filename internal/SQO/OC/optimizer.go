@@ -27,9 +27,10 @@ type Plan struct {
 }
 
 // Context carries the side-tables a pass needs: catalog, stats,
-// per-table schema, and the OperatorFactory for tree rewrites.
-// It is the only place SQO touches the storage engine — through
-// the CatalogReader and StatsReader interfaces.
+// per-table schema, OperatorFactory for tree rewrites, and a
+// SubPlanner for subquery decorrelation. It is the only place
+// SQO touches the storage engine — through the CatalogReader
+// and StatsReader interfaces.
 type Context struct {
 	Catalog CatalogReader
 	Stats   StatsReader
@@ -40,6 +41,24 @@ type Context struct {
 	// that need to know which columns exist. The concrete value is
 	// supplied by SQB/EX; SQO does not import SQB.
 	Tables map[string]TableSchema
+	// SubPlanner plans a SELECT subquery as an operator subtree.
+	// REQ001448: SubqueryDecorrelation uses this to convert
+	// uncorrelated EXISTS / IN (subq) into semi-joins. May be nil
+	// for passes that do not need subquery planning; in that case
+	// the pass leaves the subquery as an in-line predicate.
+	SubPlanner SubPlanner
+}
+
+// SubPlanner plans a SELECT statement into a pl.Operator subtree.
+// Implementations live in SQB/EX (a thin adapter over Planner.Plan)
+// and are passed in via Context.SubPlanner at optimize time.
+// REQ001448.
+type SubPlanner interface {
+	// PlanSubquery plans a subquery and returns its root operator.
+	// The aliases are the names of tables in the OUTER query that
+	// the subquery should NOT reference (i.e., correlated ones).
+	// Uncorrelated subqueries can be decorrelated.
+	PlanSubquery(stmt PS.Stmt, outerAliases []string) (pl.Operator, error)
 }
 
 // TableSchema is the column/PK info a pass needs to make
