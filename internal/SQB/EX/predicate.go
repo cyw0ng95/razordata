@@ -1,7 +1,6 @@
 package EX
 
 import (
-	"strings"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -199,66 +198,14 @@ func (p *Planner) splitPredicatesByTable(conjuncts []PS.Expr, tables []string) (
 }
 
 // resolveSingleTablePredicate attempts to find which single table
-// a predicate references, using findTableInSchemas (which includes
-// the SLT naming-convention fallback via resolveTableForColumn).
-// Returns the table name if the predicate references exactly one
-// table from the candidate set, or "" if it references multiple
-// tables (cross-table) or cannot be resolved. REQ001092.
+// a predicate references. Delegates to CO.ResolveSingleTablePredicate.
+// REQ001092.
 func resolveSingleTablePredicate(e PS.Expr, candidates []string) string {
-	// Collect all column references.
-	var cols []string
-	walkExpr(e, func(node PS.Expr) {
-		switch v := node.(type) {
-		case *PS.Ident:
-			if v.Name != "" {
-				cols = append(cols, v.Name)
-			}
-		case *PS.QualifiedName:
-			cols = append(cols, v.Table+"."+v.Name)
-		}
-	})
-	if len(cols) == 0 {
-		return "" // constant expression, no table to push to
-	}
-	// Resolve each column to a table.
-	var resolvedTables []string
-	for _, col := range cols {
-		var tbl string
-		if dotIdx := strings.IndexByte(col, '.'); dotIdx >= 0 {
-			tbl = col[:dotIdx]
-		} else {
-			tbl = findTableInSchemas(col)
-		}
-		if tbl == "" {
-			return "" // unresolvable column
-		}
-		resolvedTables = append(resolvedTables, tbl)
-	}
-	// All columns must resolve to the same table.
-	first := resolvedTables[0]
-	for _, t := range resolvedTables[1:] {
-		if t != first {
-			return "" // cross-table predicate
-		}
-	}
-	// Verify the table is in the candidate set.
-	for _, c := range candidates {
-		if c == first {
-			return first
-		}
-	}
-	return ""
+	return CO.ResolveSingleTablePredicate(e, candidates, findTableInSchemas)
 }
 
 func isColumnLiteralPair(a, b PS.Expr) bool {
-	if _, ok := a.(*PS.Ident); !ok {
-		return false
-	}
-	switch b.(type) {
-	case *PS.NumberLiteral, *PS.StringLiteral, *PS.BoolLiteral, *PS.NullLiteral:
-		return true
-	}
-	return false
+	return CO.IsColumnLiteralPair(a, b)
 }
 
 // tryApplyPointLookup checks if pred is a col IN (literal, ...),
@@ -269,22 +216,19 @@ func isColumnLiteralPair(a, b PS.Expr) bool {
 func tryApplyPointLookup(scan DT.Operator, pred PS.Expr) {
 	ss, ok := scan.(*OP.SeqScan)
 	if !ok || ss.Store() != nil {
-		return // only for in-memory tables
+		return
 	}
-	col, values, ok := extractInListValues(pred)
+	col, values, ok := CO.ExtractInListValues(pred)
 	if ok && len(values) > 0 {
 		ss.WithPointLookup(col, values)
 		return
 	}
-	// REQ001218: same-column OR-chain of equalities — synthesize
-	// the equivalent IN-list and use point-lookup.
-	col, values, ok = extractOrChainEquality(pred)
+	col, values, ok = CO.ExtractOrChainEquality(pred, flattenOr)
 	if ok && len(values) > 0 {
 		ss.WithPointLookup(col, values)
 		return
 	}
-	// Single equality: col = literal
-	col, val, ok := extractSingleEquality(pred)
+	col, val, ok := CO.ExtractSingleEquality(pred)
 	if ok {
 		ss.WithPointLookup(col, []any{val})
 	}
@@ -298,139 +242,23 @@ func tryApplyPointLookup(scan DT.Operator, pred PS.Expr) {
 // actually produces — the previous BinaryExpr-only check made
 // point-lookup for IN-lists dead code.
 func extractInListValues(pred PS.Expr) (string, []any, bool) {
-	var col *PS.Ident
-	var items []PS.Expr
-	switch p := pred.(type) {
-	case *PS.InExpr:
-		ident, ok := p.Expr.(*PS.Ident)
-		if !ok {
-			return "", nil, false
-		}
-		col = ident
-		items = p.List
-	case *PS.BinaryExpr:
-		if p.Op != LX.T_IN {
-			return "", nil, false
-		}
-		ident, ok := p.Left.(*PS.Ident)
-		if !ok {
-			return "", nil, false
-		}
-		col = ident
-		list, ok := p.Right.(*PS.ListExpr)
-		if !ok {
-			return "", nil, false
-		}
-		items = list.Items
-	default:
-		return "", nil, false
-	}
-	if len(items) == 0 {
-		return "", nil, false
-	}
-	values := make([]any, 0, len(items))
-	for _, item := range items {
-		switch v := item.(type) {
-		case *PS.NumberLiteral:
-			values = append(values, v.Val)
-		case *PS.StringLiteral:
-			values = append(values, v.Val)
-		case *PS.BoolLiteral:
-			values = append(values, v.Val)
-		case *PS.NullLiteral:
-			// skip NULLs — NULL IN (...) is always UNKNOWN
-		default:
-			return "", nil, false // non-literal value, can't pre-filter
-		}
-	}
-	return col.Name, values, true
+	return CO.ExtractInListValues(pred)
 }
 
-// extractOrChainEquality extracts (columnName, values, ok) from a
-// same-column OR-chain of equality predicates, e.g.
-// `(e8=180 OR e8=333 OR e8=38 OR e8=349)` or
-// `(180=e8 OR 333=e8 OR e8=38 OR e8=349)` (literals can appear on
-// either side). Returns (colName, [val1, val2, ...], true) when all
-// leaves are `col = literal` on the same column; otherwise
-// ("", nil, false). REQ001218.
 func extractOrChainEquality(pred PS.Expr) (string, []any, bool) {
-	leaves := flattenOr(pred)
-	if len(leaves) < 2 {
-		// single equality: leave it to extractSingleEquality
-		return "", nil, false
-	}
-	var colName string
-	values := make([]any, 0, len(leaves))
-	for _, leaf := range leaves {
-		c, v, ok := extractEqualityAnySide(leaf)
-		if !ok {
-			return "", nil, false
-		}
-		if colName == "" {
-			colName = c
-		} else if !strings.EqualFold(colName, c) {
-			return "", nil, false
-		}
-		values = append(values, v)
-	}
-	return colName, values, true
+	return CO.ExtractOrChainEquality(pred, flattenOr)
 }
 
-// extractEqualityAnySide extracts (columnName, value, ok) from
-// `col = literal` OR `literal = col`. Both operands may be the
-// column reference. Used by extractOrChainEquality.
 func extractEqualityAnySide(pred PS.Expr) (string, any, bool) {
-	bin, ok := pred.(*PS.BinaryExpr)
-	if !ok || bin.Op != LX.T_EQ {
-		return "", nil, false
-	}
-	if col, ok := bin.Left.(*PS.Ident); ok {
-		if v, ok := literalValue(bin.Right); ok {
-			return col.Name, v, true
-		}
-	}
-	if col, ok := bin.Right.(*PS.Ident); ok {
-		if v, ok := literalValue(bin.Left); ok {
-			return col.Name, v, true
-		}
-	}
-	return "", nil, false
+	return CO.ExtractEqualityAnySide(pred)
 }
 
-// literalValue extracts a typed value from a literal expression.
-// Returns (val, true) for NumberLiteral/StringLiteral/BoolLiteral,
-// (_, false) otherwise.
 func literalValue(e PS.Expr) (any, bool) {
-	switch v := e.(type) {
-	case *PS.NumberLiteral:
-		return v.Val, true
-	case *PS.StringLiteral:
-		return v.Val, true
-	case *PS.BoolLiteral:
-		return v.Val, true
-	}
-	return nil, false
+	return CO.LiteralValue(e)
 }
 
-// extractSingleEquality extracts (columnName, value, ok) from a
-// predicate of the form "col = literal". Accepts either side as the
-// column reference (`col = literal` or `literal = col`).
 func extractSingleEquality(pred PS.Expr) (string, any, bool) {
-	bin, ok := pred.(*PS.BinaryExpr)
-	if !ok || bin.Op != LX.T_EQ {
-		return "", nil, false
-	}
-	if col, ok := bin.Left.(*PS.Ident); ok {
-		if v, ok := literalValue(bin.Right); ok {
-			return col.Name, v, true
-		}
-	}
-	if col, ok := bin.Right.(*PS.Ident); ok {
-		if v, ok := literalValue(bin.Left); ok {
-			return col.Name, v, true
-		}
-	}
-	return "", nil, false
+	return CO.ExtractSingleEquality(pred)
 }
 
 // equiJoinKey checks if an expression is an equi-join condition
@@ -463,36 +291,17 @@ func (p *Planner) equiJoinKey(e PS.Expr, joinedTables map[string]bool, rightTbl 
 
 // allInSet returns true when every key in m is present in set.
 func allInSet(m, set map[string]bool) bool {
-	if len(m) == 0 {
-		return false
-	}
-	for k := range m {
-		if !set[k] {
-			return false
-		}
-	}
-	return true
+	return CO.AllInSet(m, set)
 }
 
-// colNameFromExpr extracts a column name from an expression.
-// Handles both Ident (bare column) and QualifiedName (table.col).
 func colNameFromExpr(e PS.Expr) string {
-	switch v := e.(type) {
-	case *PS.Ident:
-		return v.Name
-	case *PS.QualifiedName:
-		// Return fully qualified name (table.col) so the
-		// OP.HashJoin lookupKeys can find the correct column
-		// when multiple tables share the same column name.
-		// REQ000794: multi-table equi-join fix.
-		return v.Table + "." + v.Name
-	}
-	return ""
+	return CO.ColNameFromExpr(e)
 }
 
-// extractEquiJoinKeys finds equi-join conditions between any table
-// in the left side and the rightTbl from the cross-table conjuncts.
-// This handles multi-table joins where the left side is already a join.
+func (p *Planner) extractSingleOnEquiKey(on PS.Expr, leftTbl, rightTbl string) (string, string, bool) {
+	return CO.ExtractSingleOnEquiKey(on, leftTbl, rightTbl)
+}
+
 func (p *Planner) extractEquiJoinKeys(crossTable []PS.Expr, joinedTables map[string]bool, rightTbl string) (leftKeys, rightKeys []string, remaining []PS.Expr) {
 	for _, c := range crossTable {
 		lc, rc := p.equiJoinKey(c, joinedTables, rightTbl)
@@ -504,33 +313,6 @@ func (p *Planner) extractEquiJoinKeys(crossTable []PS.Expr, joinedTables map[str
 		}
 	}
 	return leftKeys, rightKeys, remaining
-}
-
-// extractSingleOnEquiKey returns (leftKey, rightKey, true) when ON
-// is a simple equality of one column from leftTbl and one from
-// rightTbl. Output is normalized so the first column is always
-// from leftTbl and the second from rightTbl, regardless of the
-// ON-clause order. Returns false for compound conditions, non-equi
-// predicates, or keys from tables other than leftTbl/rightTbl.
-// REQ000800.
-func (p *Planner) extractSingleOnEquiKey(on PS.Expr, leftTbl, rightTbl string) (string, string, bool) {
-	bin, ok := on.(*PS.BinaryExpr)
-	if !ok || bin.Op != LX.T_EQ {
-		return "", "", false
-	}
-	a, aok := bin.Left.(*PS.QualifiedName)
-	b, bok := bin.Right.(*PS.QualifiedName)
-	if !aok || !bok {
-		return "", "", false
-	}
-	// Normalize: first return = column from leftTbl, second from rightTbl.
-	if a.Table == leftTbl && b.Table == rightTbl {
-		return a.Name, b.Name, true
-	}
-	if a.Table == rightTbl && b.Table == leftTbl {
-		return b.Name, a.Name, true
-	}
-	return "", "", false
 }
 
 // collectReferencedTables returns the set of table names referenced
