@@ -1,6 +1,7 @@
 package EX
 
 import (
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"context"
 	"fmt"
 	"math"
@@ -771,8 +772,8 @@ func (p *Planner) planUpdate(s *PS.Update) DT.Operator {
 		if err == nil {
 			// REQ001248: split AND, reorder by cost, build filter chain.
 			conjuncts := p.splitAnd(s.Where)
-			if order := reorderIndices(conjuncts); order != nil {
-				conjuncts = orderSlice(conjuncts, order)
+			if order := CO.ReorderIndices(conjuncts); order != nil {
+				conjuncts = CO.OrderSlice(conjuncts, order)
 			}
 			var filter DT.Operator = scan
 			for _, c := range conjuncts {
@@ -787,8 +788,8 @@ func (p *Planner) planUpdate(s *PS.Update) DT.Operator {
 	scan := OP.NewSeqScan(s.Table)
 	// REQ001248: split AND, reorder by cost, build filter chain.
 	conjuncts := p.splitAnd(s.Where)
-	if order := reorderIndices(conjuncts); order != nil {
-		conjuncts = orderSlice(conjuncts, order)
+	if order := CO.ReorderIndices(conjuncts); order != nil {
+		conjuncts = CO.OrderSlice(conjuncts, order)
 	}
 	var filter DT.Operator = scan
 	for _, c := range conjuncts {
@@ -806,8 +807,8 @@ func (p *Planner) planDelete(s *PS.Delete) DT.Operator {
 		if err == nil {
 			// REQ001248: split AND, reorder by cost, build filter chain.
 			conjuncts := p.splitAnd(s.Where)
-			if order := reorderIndices(conjuncts); order != nil {
-				conjuncts = orderSlice(conjuncts, order)
+			if order := CO.ReorderIndices(conjuncts); order != nil {
+				conjuncts = CO.OrderSlice(conjuncts, order)
 			}
 			var filter DT.Operator = scan
 			for _, c := range conjuncts {
@@ -822,8 +823,8 @@ func (p *Planner) planDelete(s *PS.Delete) DT.Operator {
 	scan := OP.NewSeqScan(s.Table)
 	// REQ001248: split AND, reorder by cost, build filter chain.
 	conjuncts := p.splitAnd(s.Where)
-	if order := reorderIndices(conjuncts); order != nil {
-		conjuncts = orderSlice(conjuncts, order)
+	if order := CO.ReorderIndices(conjuncts); order != nil {
+		conjuncts = CO.OrderSlice(conjuncts, order)
 	}
 	var filter DT.Operator = scan
 	for _, c := range conjuncts {

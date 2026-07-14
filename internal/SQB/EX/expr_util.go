@@ -1,6 +1,7 @@
 package EX
 
 import (
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"strings"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -181,7 +182,7 @@ func resolveAliases(expr PS.Expr, aliases map[string]PS.Expr) PS.Expr {
 func collectReferencedColNames(s *PS.Select) []string {
 	cols := make(map[string]bool)
 	addCol := func(e PS.Expr) {
-		walkExpr(e, func(node PS.Expr) {
+		CO.WalkExpr(e, func(node PS.Expr) {
 			switch v := node.(type) {
 			case *PS.Ident:
 				cols[v.Name] = true
@@ -291,7 +292,7 @@ func collectQualifiedFromSubquery(stmt PS.Stmt, cols map[string]bool) {
 		if e == nil {
 			return
 		}
-		walkExpr(e, func(node PS.Expr) {
+		CO.WalkExpr(e, func(node PS.Expr) {
 			if qn, ok := node.(*PS.QualifiedName); ok {
 				cols[qn.Name] = true
 			}
@@ -369,7 +370,7 @@ func collectReferencedTables(s *PS.Select) map[string]bool {
 // table names. Sets hasUnqualified when a bare column name is found
 // (we can't determine which table it belongs to).
 func collectTablesFromExpr(e PS.Expr, tables map[string]bool, hasUnqualified *bool) {
-	walkExpr(e, func(node PS.Expr) {
+	CO.WalkExpr(e, func(node PS.Expr) {
 		switch v := node.(type) {
 		case *PS.QualifiedName:
 			tables[v.Table] = true
@@ -399,7 +400,7 @@ func joinOnReferences(j PS.JoinClause, tableNames ...string) bool {
 		return false
 	}
 	referenced := false
-	walkExpr(j.On, func(node PS.Expr) {
+	CO.WalkExpr(j.On, func(node PS.Expr) {
 		if qn, ok := node.(*PS.QualifiedName); ok {
 			if wanted[qn.Table] {
 				referenced = true
@@ -473,7 +474,7 @@ func collectReferencedColumns(s *PS.Select) map[string]bool {
 // collectColsFromExpr walks an expression and adds qualified column
 // names (Table.Name). Sets hasUnqualified on bare Ident or *.
 func collectColsFromExpr(e PS.Expr, cols map[string]bool, hasUnqualified *bool) {
-	walkExpr(e, func(node PS.Expr) {
+	CO.WalkExpr(e, func(node PS.Expr) {
 		switch v := node.(type) {
 		case *PS.QualifiedName:
 			cols[v.Table+"."+v.Name] = true

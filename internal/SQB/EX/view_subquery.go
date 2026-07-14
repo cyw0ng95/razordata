@@ -1,6 +1,7 @@
 package EX
 
 import (
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"context"
 	"fmt"
 	"strings"
@@ -90,8 +91,8 @@ func (p *Planner) decorrelateExists(existsExpr *PS.ExistsExpr, outerTable string
 	if innerScan == nil {
 		innerScan = NewIndexOrSeqScan(innerTable, nil, p)
 	}
-	if order := reorderIndices(innerConjuncts); order != nil {
-		innerConjuncts = orderSlice(innerConjuncts, order)
+	if order := CO.ReorderIndices(innerConjuncts); order != nil {
+		innerConjuncts = CO.OrderSlice(innerConjuncts, order)
 	}
 	for _, c := range innerConjuncts {
 		if c != correlationPred {
@@ -730,7 +731,7 @@ func exprReferencesTable(e PS.Expr, tbl string) bool {
 		return false
 	}
 	hit := false
-	walkExpr(e, func(n PS.Expr) {
+	CO.WalkExpr(e, func(n PS.Expr) {
 		if hit {
 			return
 		}
@@ -909,7 +910,7 @@ func referencesOnlySubqueryCols(e PS.Expr, subCols map[string]bool) bool {
 // collectIdentsFromExpr returns all Ident names referenced in an expression.
 func collectIdentsFromExpr(e PS.Expr) []string {
 	var result []string
-	walkExpr(e, func(inner PS.Expr) {
+	CO.WalkExpr(e, func(inner PS.Expr) {
 		if id, ok := inner.(*PS.Ident); ok {
 			result = append(result, id.Name)
 		}

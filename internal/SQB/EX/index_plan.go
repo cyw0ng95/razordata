@@ -1,6 +1,7 @@
 package EX
 
 import (
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -390,7 +391,7 @@ func NewIndexOrSeqScan(table string, where PS.Expr, p *Planner) DT.Operator {
 		// REQ001051: detect IN-list on any column with > 10 values
 		// and fan out filtered scans across workers.
 		if where != nil {
-			if colName, inValues, ok := extractInListValues(where); ok && len(inValues) >= 10 {
+			if colName, inValues, ok := CO.ExtractInListValues(where); ok && len(inValues) >= 10 {
 				ti := p.catalog[table]
 				if ti != nil && len(ti.cols) > 0 && rowCount > 0 {
 					schema := make([]string, len(ti.cols))

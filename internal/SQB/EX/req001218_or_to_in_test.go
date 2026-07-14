@@ -1,6 +1,7 @@
 package EX
 
 import (
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"context"
 	"testing"
 
@@ -31,7 +32,7 @@ func TestExtractInListValues_InExpr(t *testing.T) {
 			&PS.NumberLiteral{Val: 3},
 		},
 	}
-	col, vals, ok := extractInListValues(pred)
+	col, vals, ok := CO.ExtractInListValues(pred)
 	if !ok {
 		t.Fatal("expected ok=true for InExpr (regression: previously only BinaryExpr matched)")
 	}

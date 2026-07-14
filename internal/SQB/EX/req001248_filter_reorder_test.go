@@ -1,6 +1,7 @@
 package EX
 
 import (
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -171,9 +172,9 @@ func TestFilterReorder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cost := predicateCost(tt.expr)
+			cost := CO.Cost(tt.expr)
 			if cost != tt.expCost {
-				t.Errorf("predicateCost(%T) = %d, want %d", tt.expr, cost, tt.expCost)
+				t.Errorf("CO.Cost(%T) = %d, want %d", tt.expr, cost, tt.expCost)
 			}
 		})
 	}
@@ -194,16 +195,16 @@ func TestFilterReorderIndices(t *testing.T) {
 	t.Run("cost ordering", func(t *testing.T) {
 		// Reverse order, worst case for AST ordering.
 		preds := []PS.Expr{expensive, cheap, medium}
-		indices := reorderIndices(preds)
+		indices := CO.ReorderIndices(preds)
 		if indices == nil {
 			t.Fatal("reorderIndices returned nil for 3 predicates")
 		}
-		ordered := orderSlice(preds, indices)
+		ordered := CO.OrderSlice(preds, indices)
 
 		got := []int{
-			predicateCost(ordered[0]),
-			predicateCost(ordered[1]),
-			predicateCost(ordered[2]),
+			CO.Cost(ordered[0]),
+			CO.Cost(ordered[1]),
+			CO.Cost(ordered[2]),
 		}
 		want := []int{4, 8, 12}
 		for i := range want {
@@ -220,11 +221,11 @@ func TestFilterReorderIndices(t *testing.T) {
 		p3 := &PS.BinaryExpr{Op: LX.T_EQ, Left: &PS.Ident{Name: "c"}, Right: &PS.NumberLiteral{Val: 3}}
 
 		preds := []PS.Expr{p3, p1, p2}
-		indices := reorderIndices(preds)
+		indices := CO.ReorderIndices(preds)
 		if indices == nil {
 			t.Fatal("returned nil")
 		}
-		ordered := orderSlice(preds, indices)
+		ordered := CO.OrderSlice(preds, indices)
 
 		if ordered[0] != p3 || ordered[1] != p1 || ordered[2] != p2 {
 			t.Error("stable sort should preserve original order for equal cost")
@@ -232,13 +233,13 @@ func TestFilterReorderIndices(t *testing.T) {
 	})
 
 	t.Run("single element", func(t *testing.T) {
-		if indices := reorderIndices([]PS.Expr{cheap}); indices != nil {
+		if indices := CO.ReorderIndices([]PS.Expr{cheap}); indices != nil {
 			t.Error("expected nil for single element")
 		}
 	})
 
 	t.Run("empty slice", func(t *testing.T) {
-		if indices := reorderIndices([]PS.Expr{}); indices != nil {
+		if indices := CO.ReorderIndices([]PS.Expr{}); indices != nil {
 			t.Error("expected nil for empty slice")
 		}
 	})
@@ -259,11 +260,11 @@ func TestFilterReorder_Logic(t *testing.T) {
 		}
 
 		preds := []PS.Expr{p1, p2, p3}
-		indices := reorderIndices(preds)
+		indices := CO.ReorderIndices(preds)
 		if indices == nil {
 			t.Fatal("reorderIndices returned nil")
 		}
-		ordered := orderSlice(preds, indices)
+		ordered := CO.OrderSlice(preds, indices)
 
 		// All 3 must survive reordering.
 		if len(ordered) != 3 {
@@ -292,11 +293,11 @@ func TestFilterReorder_Logic(t *testing.T) {
 		}
 
 		preds := []PS.Expr{expensive, cheap}
-		indices := reorderIndices(preds)
+		indices := CO.ReorderIndices(preds)
 		if indices == nil {
 			t.Fatal("reorderIndices returned nil")
 		}
-		ordered := orderSlice(preds, indices)
+		ordered := CO.OrderSlice(preds, indices)
 
 		if ordered[0] != cheap {
 			t.Error("cheap predicate should be first")
@@ -323,11 +324,11 @@ func BenchmarkFilterReorder(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		indices := reorderIndices(preds)
+		indices := CO.ReorderIndices(preds)
 		if indices == nil {
 			b.Fatal("reorderIndices returned nil")
 		}
-		_ = orderSlice(preds, indices)
+		_ = CO.OrderSlice(preds, indices)
 	}
 }
 
@@ -359,8 +360,8 @@ func BenchmarkFilterReorder_Mixed(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		conjuncts := pl.splitAnd(expr)
-		if order := reorderIndices(conjuncts); order != nil {
-			conjuncts = orderSlice(conjuncts, order)
+		if order := CO.ReorderIndices(conjuncts); order != nil {
+			conjuncts = CO.OrderSlice(conjuncts, order)
 		}
 		var op DT.Operator = OP.NewSeqScan("bench")
 		for _, c := range conjuncts {

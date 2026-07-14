@@ -1,6 +1,7 @@
 package EX
 
 import (
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"testing"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
@@ -12,7 +13,7 @@ func TestEstimateEqSelectivity_Uniform(t *testing.T) {
 		DistinctCount: 100,
 		RowCount:      1000,
 	}
-	sel := estimateEqSelectivity(stats, []byte("42"))
+	sel := CO.EstimateEqSelectivity(stats, []byte("42"))
 	expected := 1.0 / 100.0
 	if sel != expected {
 		t.Errorf("expected %f, got %f", expected, sel)
@@ -29,7 +30,7 @@ func TestEstimateEqSelectivity_Histogram(t *testing.T) {
 		},
 	}
 	// DT.Value "150" falls in second bucket (50/1000 = 0.05)
-	sel := estimateEqSelectivity(stats, []byte("150"))
+	sel := CO.EstimateEqSelectivity(stats, []byte("150"))
 	if sel != 0.05 {
 		t.Errorf("expected 0.05, got %f", sel)
 	}
@@ -43,7 +44,7 @@ func TestEstimateEqSelectivity_NoMatch(t *testing.T) {
 		},
 	}
 	// DT.Value "500" doesn't fall in any bucket
-	sel := estimateEqSelectivity(stats, []byte("500"))
+	sel := CO.EstimateEqSelectivity(stats, []byte("500"))
 	if sel != 0.0 {
 		t.Errorf("expected 0.0, got %f", sel)
 	}
@@ -60,7 +61,7 @@ func TestEstimateRangeSelectivity_LessThan(t *testing.T) {
 	}
 	// "col < 150" matches first bucket fully (200) + half of second (~150) = 350
 	// Without interpolation: 200/1000 = 0.2
-	sel := estimateRangeSelectivity(stats, nil, []byte("150"), false)
+	sel := CO.EstimateRangeSelectivity(stats, nil, []byte("150"))
 	if sel < 0.1 || sel > 0.5 {
 		t.Errorf("expected reasonable selectivity, got %f", sel)
 	}
@@ -75,7 +76,7 @@ func TestEstimateRangeSelectivity_GreaterThan(t *testing.T) {
 		},
 	}
 	// "col > 150" matches 0 from first bucket + part of second = some fraction
-	sel := estimateRangeSelectivity(stats, []byte("150"), nil, false)
+	sel := CO.EstimateRangeSelectivity(stats, []byte("150"), nil)
 	if sel < 0.0 || sel > 1.0 {
 		t.Errorf("expected valid selectivity, got %f", sel)
 	}
@@ -91,7 +92,7 @@ func TestExtractColumnLiteral(t *testing.T) {
 			Val: 25,
 		},
 	}
-	col, lit, ok := extractColumnLiteral(expr)
+	col, lit, ok := CO.ExtractColumnLiteral(expr)
 	if !ok {
 		t.Fatal("expected successful extraction")
 	}
@@ -116,7 +117,7 @@ func TestLiteralToBytes(t *testing.T) {
 		{&PS.NullLiteral{}, "", false},
 	}
 	for _, c := range cases {
-		got, ok := literalToBytes(c.expr)
+		got, ok := CO.LiteralToBytes(c.expr)
 		if ok != c.wantOk {
 			t.Errorf("ok: got %v, want %v", ok, c.wantOk)
 		}

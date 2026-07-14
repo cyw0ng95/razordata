@@ -4,7 +4,6 @@ import (
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
-	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 // ResolvePlanSlots walks the operator tree and resolves Ident/QualifiedName
@@ -28,24 +27,24 @@ func resolveExprs(op DT.Operator, schema []string) {
 	switch o := op.(type) {
 	case *OP.Filter:
 		if o.Predicate() != nil {
-			resolveExprSlots(o.Predicate(), schema)
+			CO.ResolveExprSlots(o.Predicate(), schema)
 		}
 	case *OP.FilterProject:
 		if o.Predicate() != nil {
-			resolveExprSlots(o.Predicate(), schema)
+			CO.ResolveExprSlots(o.Predicate(), schema)
 		}
 		for _, c := range o.Cols() {
-			resolveExprSlots(c, schema)
+			CO.ResolveExprSlots(c, schema)
 		}
 	case *OP.Sort:
 		for _, k := range o.Keys() {
 			if k.Expr != nil {
-				resolveExprSlots(k.Expr, schema)
+				CO.ResolveExprSlots(k.Expr, schema)
 			}
 		}
 	case *OP.Project:
 		for _, c := range o.Cols() {
-			resolveExprSlots(c, schema)
+			CO.ResolveExprSlots(c, schema)
 		}
 	case *OP.NestedLoopJoin:
 		// For join conditions, we don't resolve (too complex with dual schemas).
@@ -100,7 +99,7 @@ func computeSchema(op DT.Operator) []string {
 		childSchema := computeSchema(childOf(o))
 		resolveExprs(o, childSchema)
 		// Output schema is defined by projection expressions.
-		return projectColNames(o.Cols())
+		return CO.ProjectColNames(o.Cols())
 
 	case *OP.Sort:
 		childSchema := computeSchema(childOf(o))
@@ -115,7 +114,7 @@ func computeSchema(op DT.Operator) []string {
 		childSchema := computeSchema(childOf(o))
 		resolveExprs(o, childSchema)
 		// Project changes the schema — its output is defined by col expressions.
-		return projectColNames(o.Cols())
+		return CO.ProjectColNames(o.Cols())
 
 	case *OP.NestedLoopJoin:
 		leftSchema := computeSchema(o.LeftChild())
@@ -161,13 +160,4 @@ func secondChild(op DT.Operator) DT.Operator {
 	return nil
 }
 
-// projectColNames extracts output column names from a list of projection
-// expressions. For Ident and QualifiedName it uses the name directly;
-// for other expression types it falls back to a placeholder.
-func projectColNames(cols []PS.Expr) []string {
-	return CO.ProjectColNames(cols)
-}
 
-func resolveExprSlots(expr PS.Expr, schema []string) {
-	CO.ResolveExprSlots(expr, schema)
-}

@@ -1,6 +1,7 @@
 package EX
 
 import (
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"context"
 	"fmt"
 	"testing"
@@ -141,7 +142,7 @@ func TestGetTableRowCount_Default(t *testing.T) {
 
 func TestEstimateJoinPredicateSelectivity(t *testing.T) {
 	// Nil predicate.
-	sel := estimateJoinPredicateSelectivity(nil, 0)
+	sel := CO.EstimateJoinPredicateSelectivity(nil, 0)
 	if sel != 1.0 {
 		t.Fatalf("expected 1.0, got %v", sel)
 	}
@@ -683,7 +684,7 @@ func TestEstimateInListSelectivity_NoMCVs(t *testing.T) {
 		&PS.NumberLiteral{Val: 3},
 	}
 	// rowCount=100, list=3 → 3/100 = 0.03
-	sel := estimateInListSelectivity(list, 100, nil, nil)
+	sel := CO.EstimateInListSelectivity(list, 100, nil, nil)
 	if sel <= 0 || sel > 0.05 {
 		t.Fatalf("expected ~0.03, got %v", sel)
 	}
@@ -704,7 +705,7 @@ func TestEstimateInListSelectivity_WithMCVs(t *testing.T) {
 		[]byte("I:972"),
 	}
 	freqs := []float64{0.5, 0.5}
-	sel := estimateInListSelectivity(list, 100, mcvs, freqs)
+	sel := CO.EstimateInListSelectivity(list, 100, mcvs, freqs)
 	// MCV-matched: 1 - (1-0.5)*(1-0.5) = 0.75
 	// Tail (1 rare): 1 / max(1, 100 - 2) = 1/98 ≈ 0.0102
 	// Total: ≈ 0.7602
@@ -725,7 +726,7 @@ func TestEstimateInListSelectivity_AllMCV(t *testing.T) {
 		[]byte("I:972"),
 	}
 	freqs := []float64{0.1, 0.2}
-	sel := estimateInListSelectivity(list, 100, mcvs, freqs)
+	sel := CO.EstimateInListSelectivity(list, 100, mcvs, freqs)
 	// 1 - (1-0.1)*(1-0.2) = 1 - 0.9*0.8 = 1 - 0.72 = 0.28
 	if sel < 0.27 || sel > 0.29 {
 		t.Fatalf("expected ~0.28, got %v", sel)
@@ -742,7 +743,7 @@ func TestEstimateInListSelectivity_ClampsToOne(t *testing.T) {
 	}
 	mcvs := [][]byte{[]byte("I:1"), []byte("I:2")}
 	freqs := []float64{0.5, 0.5}
-	sel := estimateInListSelectivity(list, 10, mcvs, freqs)
+	sel := CO.EstimateInListSelectivity(list, 10, mcvs, freqs)
 	if sel < 0 || sel > 1.0 {
 		t.Fatalf("expected clamped to [0,1], got %v", sel)
 	}
@@ -751,7 +752,7 @@ func TestEstimateInListSelectivity_ClampsToOne(t *testing.T) {
 // REQ001057b: Empty IN-list returns selectivity 1.0 (matches nothing
 // in the model — degenerate but safe default).
 func TestEstimateInListSelectivity_Empty(t *testing.T) {
-	sel := estimateInListSelectivity(nil, 100, nil, nil)
+	sel := CO.EstimateInListSelectivity(nil, 100, nil, nil)
 	if sel != 1.0 {
 		t.Fatalf("expected 1.0 for empty list, got %v", sel)
 	}

@@ -1,6 +1,7 @@
 package EX
 
 import (
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"strings"
 
 	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
@@ -196,8 +197,8 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 		// REQ001248: reorder predicates by ascending cost so cheap
 		// predicates short-circuit before expensive ones.
 		if firstPreds := pushedPredicates[s.From]; len(firstPreds) > 0 {
-			if order := reorderIndices(firstPreds); order != nil {
-				firstPreds = orderSlice(firstPreds, order)
+			if order := CO.ReorderIndices(firstPreds); order != nil {
+				firstPreds = CO.OrderSlice(firstPreds, order)
 			}
 			for _, pred := range firstPreds {
 				current = OP.NewFilter(current, pred, nil)
@@ -265,8 +266,8 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 		if len(crossTablePredicates) > 0 {
 			// REQ001248: reorder by ascending cost so cheap
 			// predicates short-circuit before expensive ones.
-			if order := reorderIndices(crossTablePredicates); order != nil {
-				crossTablePredicates = orderSlice(crossTablePredicates, order)
+			if order := CO.ReorderIndices(crossTablePredicates); order != nil {
+				crossTablePredicates = CO.OrderSlice(crossTablePredicates, order)
 			}
 			// Build pointer-based skip sets after reordering (indices
 			// no longer match extractedPreds). extractedPreds used
@@ -294,8 +295,8 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 			// REQ001235: skip EXISTS conjuncts already decorrelated.
 			conjuncts := p.splitAnd(whereExpr)
 			// REQ001248: reorder by ascending cost.
-			if order := reorderIndices(conjuncts); order != nil {
-				conjuncts = orderSlice(conjuncts, order)
+			if order := CO.ReorderIndices(conjuncts); order != nil {
+				conjuncts = CO.OrderSlice(conjuncts, order)
 			}
 			// Reorder changes indices; rebuild a pointer-based set
 			// for replaced existsExpr nodes that survives reordering.
@@ -369,7 +370,7 @@ func containsSubqueryOrAggregate(e PS.Expr) bool {
 		return false
 	}
 	has := false
-	walkExpr(e, func(n PS.Expr) {
+	CO.WalkExpr(e, func(n PS.Expr) {
 		switch n.(type) {
 		case *PS.SubqueryExpr, *PS.ExistsExpr, *PS.AggregateFunc:
 			has = true
@@ -1079,8 +1080,8 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 		if basePreds := pushedPredicates[baseTable]; len(basePreds) > 0 {
 			// REQ001248: reorder by ascending cost so cheap
 			// predicates short-circuit before expensive ones.
-			if order := reorderIndices(basePreds); order != nil {
-				basePreds = orderSlice(basePreds, order)
+			if order := CO.ReorderIndices(basePreds); order != nil {
+				basePreds = CO.OrderSlice(basePreds, order)
 			}
 			for _, pred := range basePreds {
 				tryApplyPointLookup(baseOp, pred)
@@ -1138,8 +1139,8 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			}
         if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
 			// REQ001248: reorder by ascending cost.
-			if order := reorderIndices(rightPreds); order != nil {
-				rightPreds = orderSlice(rightPreds, order)
+			if order := CO.ReorderIndices(rightPreds); order != nil {
+				rightPreds = CO.OrderSlice(rightPreds, order)
 			}
 			for _, pred := range rightPreds {
                 tryApplyPointLookup(rightScan, pred)
@@ -1193,7 +1194,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			}
 			if joinOp == nil {
 				if kind == OP.JoinKindInner && j.On != nil {
-					if lk, rk, ok := p.extractSingleOnEquiKey(j.On, leftTbl, rightTbl); ok {
+					if lk, rk, ok := CO.ExtractSingleOnEquiKey(j.On, leftTbl, rightTbl); ok {
 						joinOp = OP.NewHashCrossJoin(current, rightScan, leftTbl, rightTbl, lk, rk)
 						if projectedCols != nil {
 							if hcj, ok := joinOp.(*OP.HashCrossJoin); ok {
@@ -1206,7 +1207,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 					// REQ001102: try MergeJoin when both sides are
 					// already sorted on the join keys. Falls back to
 					// NLJ if not applicable.
-					if lk, rk, ok := p.extractSingleOnEquiKey(j.On, leftTbl, rightTbl); ok && j.On != nil {
+					if lk, rk, ok := CO.ExtractSingleOnEquiKey(j.On, leftTbl, rightTbl); ok && j.On != nil {
 						if mj := p.tryMergeJoin(current, rightScan, leftTbl, rightTbl, []string{lk}, []string{rk}, kind); mj != nil {
 							joinOp = mj
 						}

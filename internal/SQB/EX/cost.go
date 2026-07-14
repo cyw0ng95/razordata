@@ -1,7 +1,6 @@
 package EX
 
 import (
-	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -198,41 +197,6 @@ func (p *Planner) estimateCostWithParams(op DT.Operator, cp CostParams) float64 
 	default:
 		return 1.0
 	}
-}
-
-func estimateSelectivity(e PS.Expr) float64 {
-	return CO.EstimateSelectivity(e)
-}
-
-// estimateSelectivityWithStats computes selectivity using column
-// histograms when available, falling back to uniform distribution.
-// REQ000085.
-// The function recognizes:
-//   - column = literal  → 1 / distinctCount
-//   - column < literal  → bucket fraction below literal
-//   - column > literal  → bucket fraction above literal
-//   - column BETWEEN a AND b → bucket fraction between a and b
-//   - IS NULL → nullCount / rowCount
-//   - IS NOT NULL → (rowCount - nullCount) / rowCount
-func estimateSelectivityWithStats(e PS.Expr, stats *ls.ColumnStats) float64 {
-	return CO.EstimateSelectivityWithStats(e, stats)
-}
-
-// estimateEqSelectivity returns selectivity for column = literal.
-func estimateEqSelectivity(stats *ls.ColumnStats, lit []byte) float64 {
-	return CO.EstimateEqSelectivity(stats, lit)
-}
-
-func estimateRangeSelectivity(stats *ls.ColumnStats, low, high []byte, _ bool) float64 {
-	return CO.EstimateRangeSelectivity(stats, low, high)
-}
-
-func estimateJoinPredicateSelectivity(pred PS.Expr, rowCount float64) float64 {
-	return CO.EstimateJoinPredicateSelectivity(pred, rowCount)
-}
-
-func estimateInListSelectivity(list []PS.Expr, rowCount float64, mcvs [][]byte, freqs []float64) float64 {
-	return CO.EstimateInListSelectivity(list, rowCount, mcvs, freqs)
 }
 
 func (p *Planner) estimateRowCount(table string, _ PS.Expr) int {

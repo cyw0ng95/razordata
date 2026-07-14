@@ -143,7 +143,7 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 					continue
 				}
 				// REQ001096: cache lookup by sorted tables-set + tbl.
-				cacheKey := n3PredCacheKey(pp.tablesSet, tbl)
+				cacheKey := CO.N3PredCacheKey(pp.tablesSet, tbl)
 				preds, ok := predCache[cacheKey]
 				if !ok {
 					preds = p.findPredicatesForSet(pp.tablesSet, tbl, wherePredicates)
@@ -528,13 +528,6 @@ func (p *Planner) estimateJoinOrderCost(order []string, predicates []PS.Expr) fl
 type joinTableInfo struct {
 	name string
 	join PS.JoinClause
-}
-
-// n3PredCacheKey returns a deterministic string key for the
-// (joined-set, candidate) pair. REQ001096: sorts the set entries
-// so different iteration orders produce the same key.
-func n3PredCacheKey(joined map[string]bool, candidate string) string {
-	return CO.N3PredCacheKey(joined, candidate)
 }
 
 // findPredicatesForPair finds the subset of WHERE predicates that

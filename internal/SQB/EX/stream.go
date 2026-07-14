@@ -1,6 +1,7 @@
 package EX
 
 import (
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"context"
 	"errors"
 	"sync"
@@ -148,7 +149,7 @@ func estimateWhereSelectivity(e PS.Expr) float64 {
 			return estimateWhereSelectivity(bin.Left) * estimateWhereSelectivity(bin.Right)
 		}
 	}
-	return estimateSelectivity(e)
+	return CO.EstimateSelectivity(e)
 }
 
 func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*streamIterator, error) {
