@@ -2,7 +2,6 @@ package EX
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 	"unicode"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
 )
 
 // predicateCost returns a heuristic cost for evaluating a predicate
@@ -58,22 +56,10 @@ func orderSlice(predicates []PS.Expr, indices []int) []PS.Expr {
 }
 
 func (p *Planner) splitAnd(expr PS.Expr) []PS.Expr {
-	if expr == nil {
-		return nil
-	}
-	if b, ok := expr.(*PS.BinaryExpr); !ok || b.Op != LX.T_AND {
-		return []PS.Expr{expr}
-	}
 	if p.splitAndCache == nil {
 		p.splitAndCache = make(map[uintptr][]PS.Expr, 8)
 	}
-	key := reflect.ValueOf(expr).Pointer()
-	if v, ok := p.splitAndCache[key]; ok {
-		return v
-	}
-	conjuncts := RE.SplitAnd(expr)
-	p.splitAndCache[key] = conjuncts
-	return conjuncts
+	return CO.SplitAnd(expr, p.splitAndCache)
 }
 
 // InvalidateCache clears the plan cache. REQ000846: called when DTL
