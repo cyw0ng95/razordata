@@ -2,7 +2,6 @@ package EX
 
 import (
 	"strings"
-	"unicode"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -131,59 +130,7 @@ func (p *Planner) walkExprForTables(e PS.Expr, tables map[string]bool) {
 // walkExpr is a generic expression tree walker that calls fn for each
 // expression node. REQ000983: replaces three duplicate walkers.
 func walkExpr(e PS.Expr, fn func(PS.Expr)) {
-	if e == nil {
-		return
-	}
-	fn(e)
-	switch v := e.(type) {
-	case *PS.BinaryExpr:
-		walkExpr(v.Left, fn)
-		walkExpr(v.Right, fn)
-	case *PS.UnaryExpr:
-		walkExpr(v.Operand, fn)
-	case *PS.ListExpr:
-		for _, item := range v.Items {
-			walkExpr(item, fn)
-		}
-	case *PS.InExpr:
-		walkExpr(v.Expr, fn)
-		for _, item := range v.List {
-			walkExpr(item, fn)
-		}
-	case *PS.BetweenExpr:
-		walkExpr(v.Expr, fn)
-		walkExpr(v.Low, fn)
-		walkExpr(v.High, fn)
-	case *PS.AggregateFunc:
-		if v.Arg != nil {
-			walkExpr(v.Arg, fn)
-		}
-	case *PS.CaseExpr:
-		if v.Expr != nil {
-			walkExpr(v.Expr, fn)
-		}
-		for _, w := range v.WhenList {
-			walkExpr(w.Cond, fn)
-			walkExpr(w.Then, fn)
-		}
-		if v.Else != nil {
-			walkExpr(v.Else, fn)
-		}
-	case *PS.FunctionCall:
-		for _, arg := range v.Args {
-			walkExpr(arg, fn)
-		}
-	case *PS.WindowFunc:
-		for _, arg := range v.Args {
-			walkExpr(arg, fn)
-		}
-	case *PS.CastExpr:
-		walkExpr(v.Expr, fn)
-	case *PS.AliasedExpr:
-		walkExpr(v.Expr, fn)
-	case *PS.SubqueryExpr, *PS.ExistsExpr:
-		// Subqueries have their own scope — don't walk.
-	}
+	CO.WalkExpr(e, fn)
 }
 
 // canPushDown checks if a predicate can be pushed down to a
@@ -199,45 +146,14 @@ func (p *Planner) canPushDown(e PS.Expr, table string) bool {
 // splitAlphaNum splits "e8" into ("e", "8").
 // Returns ("", "") if the string doesn't match {letters}{digits}.
 func splitAlphaNum(s string) (string, string) {
-	if s == "" {
-		return "", ""
-	}
-	// Find where digits start.
-	i := 0
-	for i < len(s) && unicode.IsLetter(rune(s[i])) {
-		i++
-	}
-	if i == 0 || i == len(s) {
-		return "", ""
-	}
-	// Verify the rest is all digits.
-	for j := i; j < len(s); j++ {
-		if !unicode.IsDigit(rune(s[j])) {
-			return "", ""
-		}
-	}
-	return s[:i], s[i:]
+	return CO.SplitAlphaNum(s)
 }
 
 // resolveTableForColumn tries to resolve a column name using the
 // SLT naming convention: "e8" => column "e" of table "t8".
 // Must be called under tablesMu.RLock.
 func resolveTableForColumn(col string) string {
-	base, numStr := splitAlphaNum(col)
-	if base == "" {
-		return ""
-	}
-	tbl := "t" + numStr
-	cols, ok := DT.Schemas[tbl]
-	if !ok {
-		return ""
-	}
-	for _, c := range cols {
-		if c == base {
-			return tbl
-		}
-	}
-	return ""
+	return CO.ResolveTableForColumn(col, DT.Schemas)
 }
 
 // findTableInSchemas searches the in-memory schemas (populated
@@ -246,18 +162,7 @@ func resolveTableForColumn(col string) string {
 func findTableInSchemas(col string) string {
 	DT.TablesMu.RLock()
 	defer DT.TablesMu.RUnlock()
-	for tbl, cols := range DT.Schemas {
-		for _, c := range cols {
-			if c == col {
-				return tbl
-			}
-		}
-	}
-	// Fallback: try SLT naming convention (e8 => t8.e)
-	if tbl := resolveTableForColumn(col); tbl != "" {
-		return tbl
-	}
-	return ""
+	return CO.FindTableInSchemas(col, DT.Schemas)
 }
 
 // splitPredicatesByTable splits WHERE conjuncts into per-table
