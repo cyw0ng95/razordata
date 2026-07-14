@@ -45,7 +45,7 @@ func (p *Planner) estimateCostLegacy(op DT.Operator) float64 {
 		// no heap fetch, just index entry emission.
 		return 0.03
 	case *OP.Filter:
-		return p.estimateCostLegacy(v.Child()) * p.estimatePredicateSelectivity(v.Predicate())
+		return p.estimateCostLegacy(v.Child()) * CO.EstimatePredicateSelectivity(v.Predicate(), p.findTableForColumn, p.statsCatalog, CO.EstimateSelectivityWithStats)
 	case *OP.Project:
 		return p.estimateCostLegacy(v.Child())
 	case *OP.Limit:
@@ -135,7 +135,7 @@ func (p *Planner) estimateCostWithParams(op DT.Operator, cp CostParams) float64 
 		return 2*base + 2*indexIO
 	case *OP.Filter:
 		childCost := p.estimateCostWithParams(v.Child(), cp)
-		return childCost + childCost*p.estimatePredicateSelectivity(v.Predicate())*cp.CPUOperatorCost
+		return childCost + childCost*CO.EstimatePredicateSelectivity(v.Predicate(), p.findTableForColumn, p.statsCatalog, CO.EstimateSelectivityWithStats)*cp.CPUOperatorCost
 	case *OP.Project:
 		return p.estimateCostWithParams(v.Child(), cp) + cp.CPUTupleCost
 	case *OP.Limit:

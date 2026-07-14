@@ -593,10 +593,6 @@ func (p *Planner) joinResultRows(leftRows, rightRows float64, predicates []PS.Ex
 	return result
 }
 
-func groupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates []PS.Expr) [][]string {
-	return CO.GroupBushyJoins(baseTable, joinOrder, crossTablePredicates, extractTableColumn)
-}
-
 // extractTableColumn extracts (table, column) from an expression
 // that is an Ident or QualifiedName. For bare Idents (implicit
 // comma-join columns like "d6"), resolves the table via the SLT

@@ -9,6 +9,7 @@ import (
 	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -219,7 +220,7 @@ func callGroupBushyJoins(baseTable string, joinOrder []string, preds []PS_ExprBu
 	for _, p := range preds {
 		exprs = append(exprs, buildBinaryExpr(p.F, p.Op, p.R))
 	}
-	return groupBushyJoins(baseTable, joinOrder, exprs)
+	return CO.GroupBushyJoins(baseTable, joinOrder, exprs, extractTableColumn)
 }
 
 func buildBinaryExpr(left, op, right string) PS.Expr {

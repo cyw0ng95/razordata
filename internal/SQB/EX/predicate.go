@@ -19,9 +19,6 @@ func (p *Planner) splitAnd(expr PS.Expr) []PS.Expr {
 // InvalidateCache clears the plan cache. REQ000846: called when DTL
 // changes the schema (CREATE/DROP/ALTER TABLE) so cached plans that
 // reference the old schema are not reused.
-func (p *Planner) estimatePredicateSelectivity(e PS.Expr) float64 {
-	return CO.EstimatePredicateSelectivity(e, p.findTableForColumn, p.statsCatalog, CO.EstimateSelectivityWithStats)
-}
 
 // findTableForColumn returns the first table name that has the
 // given column registered.
@@ -36,7 +33,7 @@ func (p *Planner) findTableForColumn(col string) string {
 	// Fallback: try SLT naming convention (e8 => t8.e).
 	DT.TablesMu.RLock()
 	defer DT.TablesMu.RUnlock()
-	if tbl := resolveTableForColumn(col); tbl != "" {
+	if tbl := CO.ResolveTableForColumn(col, DT.Schemas); tbl != "" {
 		return tbl
 	}
 	return ""
@@ -82,13 +79,6 @@ func (p *Planner) canPushDown(e PS.Expr, table string) bool {
 	return len(tables) == 1 && tables[table]
 }
 
-// resolveTableForColumn tries to resolve a column name using the
-// SLT naming convention: "e8" => column "e" of table "t8".
-// Must be called under tablesMu.RLock.
-func resolveTableForColumn(col string) string {
-	return CO.ResolveTableForColumn(col, DT.Schemas)
-}
-
 // findTableInSchemas searches the in-memory schemas (populated
 // by CREATE TABLE) to find which table owns the given column.
 // Returns empty string if not found.
@@ -121,7 +111,7 @@ func (p *Planner) splitPredicatesByTable(conjuncts []PS.Expr, tables []string) (
 			// canPushDown failed to recognize (e.g., cold-start
 			// catalog). Try the naming-convention-based resolver
 			// (findTableInSchemas -> resolveTableForColumn).
-			if tbl := resolveSingleTablePredicate(c, tables); tbl != "" {
+			if tbl := CO.ResolveSingleTablePredicate(c, tables, findTableInSchemas); tbl != "" {
 				perTable[tbl] = append(perTable[tbl], c)
 			} else {
 				crossTable = append(crossTable, c)
@@ -129,13 +119,6 @@ func (p *Planner) splitPredicatesByTable(conjuncts []PS.Expr, tables []string) (
 		}
 	}
 	return perTable, crossTable
-}
-
-// resolveSingleTablePredicate attempts to find which single table
-// a predicate references. Delegates to CO.ResolveSingleTablePredicate.
-// REQ001092.
-func resolveSingleTablePredicate(e PS.Expr, candidates []string) string {
-	return CO.ResolveSingleTablePredicate(e, candidates, findTableInSchemas)
 }
 
 // tryApplyPointLookup checks if pred is a col IN (literal, ...),
@@ -162,10 +145,6 @@ func tryApplyPointLookup(scan DT.Operator, pred PS.Expr) {
 	if ok {
 		ss.WithPointLookup(col, []any{val})
 	}
-}
-
-func extractOrChainEquality(pred PS.Expr) (string, []any, bool) {
-	return CO.ExtractOrChainEquality(pred, flattenOr)
 }
 
 // equiJoinKey checks if an expression is an equi-join condition

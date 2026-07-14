@@ -73,7 +73,7 @@ func TestExtractOrChainEquality_ColEqLits(t *testing.T) {
 			},
 		},
 	}
-	col, vals, ok := extractOrChainEquality(pred)
+	col, vals, ok := CO.ExtractOrChainEquality(pred, flattenOr)
 	if !ok {
 		t.Fatal("expected ok=true for same-column OR chain")
 	}
@@ -108,7 +108,7 @@ func TestExtractOrChainEquality_LitEqCol(t *testing.T) {
 			Right: &PS.Ident{Name: "e8"},
 		},
 	}
-	col, vals, ok := extractOrChainEquality(pred)
+	col, vals, ok := CO.ExtractOrChainEquality(pred, flattenOr)
 	if !ok {
 		t.Fatal("expected ok=true for lit=col OR chain")
 	}
@@ -136,7 +136,7 @@ func TestExtractOrChainEquality_DifferentCols(t *testing.T) {
 			Right: &PS.NumberLiteral{Val: 2},
 		},
 	}
-	_, _, ok := extractOrChainEquality(pred)
+	_, _, ok := CO.ExtractOrChainEquality(pred, flattenOr)
 	if ok {
 		t.Fatal("expected ok=false for cross-column OR chain")
 	}
@@ -150,7 +150,7 @@ func TestExtractOrChainEquality_SingleEq(t *testing.T) {
 		Left:  &PS.Ident{Name: "a"},
 		Right: &PS.NumberLiteral{Val: 1},
 	}
-	_, _, ok := extractOrChainEquality(pred)
+	_, _, ok := CO.ExtractOrChainEquality(pred, flattenOr)
 	if ok {
 		t.Fatal("expected ok=false for single equality")
 	}
@@ -172,7 +172,7 @@ func TestExtractOrChainEquality_NonLiteral(t *testing.T) {
 			Right: &PS.Ident{Name: "b"}, // not a literal
 		},
 	}
-	_, _, ok := extractOrChainEquality(pred)
+	_, _, ok := CO.ExtractOrChainEquality(pred, flattenOr)
 	if ok {
 		t.Fatal("expected ok=false for OR chain with non-literal leaf")
 	}

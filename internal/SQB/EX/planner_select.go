@@ -995,7 +995,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			projectedCols = append(projectedCols, c)
 		}
 	}
-	joinGroups := groupBushyJoins(s.From, joinOrder, crossTablePredicates)
+	joinGroups := CO.GroupBushyJoins(s.From, joinOrder, crossTablePredicates, extractTableColumn)
 	type groupResult struct {
 		op    DT.Operator
 		tbl   string

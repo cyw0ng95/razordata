@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
 )
@@ -50,7 +51,7 @@ func TestGroupBushyJoins_ChainEquiJoin_OneGroup(t *testing.T) {
 	// groupBushyJoins requires k > 3 to enter the bushy path. Use
 	// 4 tables to ensure we're testing the bushy heuristic.
 	joinOrder := []string{"t1", "t2", "t3", "t4"}
-	groups := groupBushyJoins("t1", joinOrder, conjuncts)
+	groups := CO.GroupBushyJoins("t1", joinOrder, conjuncts, extractTableColumn)
 
 	t.Logf("groups: %v", groups)
 
@@ -95,7 +96,7 @@ func TestGroupBushyJoins_StarSchema_TwoGroups(t *testing.T) {
 	}
 
 	joinOrder := []string{"t1", "t2", "t3", "t4"}
-	groups := groupBushyJoins("t1", joinOrder, conjuncts)
+	groups := CO.GroupBushyJoins("t1", joinOrder, conjuncts, extractTableColumn)
 
 	t.Logf("star schema groups: %v", groups)
 
