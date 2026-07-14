@@ -167,7 +167,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 			out = DT.Row{Cols: schema}
 			out.Data = make([]DT.Value, len(schema))
 		} else {
-			out, err = BuildInsertRow(schema, i.cols, colIdx, row, i.params)
+			out, err = BuildInsertRow(schema, i.cols, colIdx, row, i.params, nil)
 			if err != nil {
 				return DT.Row{}, err
 			}
@@ -330,7 +330,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 	} else {
 		lookupFn = func(cols []int, vals []any) (bool, error) { return false, nil }
 	}
-	// REQ001030: pre-compute colIdx once for all rows.
+// REQ001030: pre-compute colIdx once for all rows.
 	colIdx := make([]int, len(i.cols))
 	for ci, nm := range i.cols {
 		idx := -1
@@ -342,14 +342,33 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 		}
 		colIdx[ci] = idx
 	}
-	for _, row := range iterValues {
+	// REQ001426: pre-allocate all rows' Data from one contiguous slice
+	// to eliminate per-row make([]Value, N) — for 100-row INSERT this
+	// replaces 100 small allocs with 1 larger one.
+	nRows := len(iterValues)
+	nCols := len(i.schema.Cols)
+	var bigBuf []DT.Value
+	if i.schema != nil && nRows > 1 && nCols > 0 {
+		bigBuf = make([]DT.Value, nRows*nCols)
+	}
+	for ri, row := range iterValues {
 		var out DT.Row
 		var err error
+		// REQ001426: use pre-allocated bigBuf slot when available.
+		var dataBuf []DT.Value
+		if bigBuf != nil {
+			off := ri * nCols
+			dataBuf = bigBuf[off : off : off+nCols]
+		}
 		if row == nil && i.defaultValues {
 			out = DT.Row{Cols: i.schema.Cols}
-			out.Data = make([]DT.Value, len(i.schema.Cols))
+			if dataBuf != nil {
+				out.Data = dataBuf
+			} else {
+				out.Data = make([]DT.Value, nCols)
+			}
 		} else {
-			out, err = BuildInsertRow(i.schema.Cols, i.cols, colIdx, row, i.params)
+			out, err = BuildInsertRow(i.schema.Cols, i.cols, colIdx, row, i.params, dataBuf)
 		}
 		if out, err = FillDefaults(i.schema, out); err != nil {
 			return DT.Row{}, err

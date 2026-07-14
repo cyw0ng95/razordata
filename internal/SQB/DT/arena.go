@@ -68,6 +68,29 @@ func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) *Row {
 	}
 }
 
+// BumpValues reserves `n` Value slots in the current slab and
+// returns the byte offset. Used by callers that want to fill the
+// slots directly without going through AllocRow's schema-bound
+// Row allocation. REQ001426 (INSERT batch arena path).
+func (a *RowArena) BumpValues(n int) (int, bool) {
+	if n <= 0 {
+		return 0, true
+	}
+	needed := a.offset + n*valueSize
+	if needed > a.slabCap {
+		a.grow(needed)
+	}
+	start := a.offset
+	a.offset += n * valueSize
+	return start, true
+}
+
+// SliceAt returns the value-slice covering the given byte offset
+// + length. Caller is responsible for the offset being in range.
+func (a *RowArena) SliceAt(start, n int) []Value {
+	return (*[1 << 30]Value)(unsafe.Pointer(&a.slab[start]))[:n:n]
+}
+
 func (a *RowArena) grow(needed int) {
 	if a.slab != nil {
 		a.slabs = append(a.slabs, a.slab) // keep alive for GC tracing

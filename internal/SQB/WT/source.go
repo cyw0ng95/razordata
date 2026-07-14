@@ -16,6 +16,13 @@ var (
 	triggerMu     sync.RWMutex
 	triggerReg    = map[string]*PS.TriggerStmt{}   // by trigger name
 	tableTriggers = map[string][]*PS.TriggerStmt{} // by table name
+
+	// insertDataPool holds reusable []Value slices for BuildInsertRow.
+	// Each slice is pre-sized for the row width. REQ001426: eliminates
+	// per-row make([]Value, N) in the hot path for multi-row INSERT.
+	insertDataPool = sync.Pool{
+		New: func() any { return make([]DT.Value, 0, 64) },
+	}
 )
 
 // RegisterTrigger registers a trigger. Returns error if name already exists.
@@ -102,11 +109,17 @@ func IsTriggerRegistered(name string) bool {
 // BuildInsertRow materializes an INSERT row from values. The
 // params slice is forwarded to Eval for `?` placeholder
 // resolution (R16-1..2).
-func BuildInsertRow(schema []string, cols []string, colIdx []int, values []PS.Expr, params []any) (DT.Row, error) {
-	// REQ001029: share schema slice across all rows.
+// BuildInsertRow constructs a Row from INSERT value expressions. When
+// dataBuf is non-nil and has capacity >= len(schema), it is used as the
+// Data slice backing array instead of allocating a new one. REQ001426.
+func BuildInsertRow(schema []string, cols []string, colIdx []int, values []PS.Expr, params []any, dataBuf []DT.Value) (DT.Row, error) {
 	out := DT.Row{Cols: schema}
 	if len(cols) == 0 {
-		out.Data = make([]DT.Value, len(values))
+		if cap(dataBuf) >= len(values) {
+			out.Data = dataBuf[:len(values)]
+		} else {
+			out.Data = make([]DT.Value, len(values))
+		}
 		for i, v := range values {
 			val, err := EV.EvalValue(v, nil, params)
 			if err != nil {
@@ -116,7 +129,11 @@ func BuildInsertRow(schema []string, cols []string, colIdx []int, values []PS.Ex
 		}
 		return out, nil
 	}
-	out.Data = make([]DT.Value, len(schema))
+	if cap(dataBuf) >= len(schema) {
+		out.Data = dataBuf[:len(schema)]
+	} else {
+		out.Data = make([]DT.Value, len(schema))
+	}
 	for i := range cols {
 		val, err := EV.EvalValue(values[i], nil, params)
 		if err != nil {
