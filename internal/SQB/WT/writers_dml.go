@@ -698,6 +698,18 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 		tw.RecordInMemoryTable(u.table, DT.SnapshotInMemoryTable(u.table))
 		DT.TablesMu.RUnlock()
 	}
+	// REQ001424: pre-size the RowArena so the apply-update/fill/validate
+	// path doesn't repeatedly grow the slab.
+	if u.execCtx != nil {
+		if arena, ok := u.execCtx.RowArena.(*DT.RowArena); ok && arena != nil && !arena.Initialized() {
+			ss, ok := DT.SchemaFor(u.table)
+			nCols := 8
+			if ok && ss != nil {
+				nCols = len(ss.Cols)
+			}
+			arena.Init(256, nCols)
+		}
+	}
 	for {
 		row, err := u.iter.Next(ctx)
 		if err != nil {
@@ -947,6 +959,16 @@ func (d *Delete) Next(ctx context.Context) (DT.Row, error) {
 	var dschema *DT.StoreSchema
 	if ss, ok := DT.SchemaFor(d.table); ok {
 		dschema = ss
+	}
+	// REQ001424: pre-size the RowArena for the delete loop.
+	if d.execCtx != nil {
+		if arena, ok := d.execCtx.RowArena.(*DT.RowArena); ok && arena != nil && !arena.Initialized() {
+			nCols := 8
+			if dschema != nil {
+				nCols = len(dschema.Cols)
+			}
+			arena.Init(256, nCols)
+		}
 	}
 	toDelete := map[int]bool{}
 	var fkRows [][]any

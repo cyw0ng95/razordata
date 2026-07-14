@@ -13,12 +13,17 @@ type RowArena struct {
 	slab    []Value   // current active slab
 	offset  int
 	slabCap int
+	// REQ001424: initialized is set after the first Init so writer code
+	// can skip redundant Init() calls when the same arena is reused
+	// across multiple UPDATE/DELETE statements.
+	initialized bool
 }
 
 // Init pre-allocates a slab large enough for estimatedRows rows of
 // colsPerRow columns, reducing the number of grow() calls during
 // execution. REQ001260.
 func (a *RowArena) Init(estimatedRows, colsPerRow int) {
+	a.initialized = true
 	needed := estimatedRows * colsPerRow
 	if needed <= 0 {
 		return
@@ -33,10 +38,14 @@ func (a *RowArena) Init(estimatedRows, colsPerRow int) {
 	a.slabCap = len(a.slab)
 }
 
+// Initialized reports whether Init has been called on this arena.
+func (a *RowArena) Initialized() bool { return a.initialized }
+
 func (a *RowArena) Reset() {
 	// Let GC collect slabs naturally. Old Row.Data sub-slices
 	// created by AllocRow keep the slabs alive through normal
 	// GC tracing — no unsafe.Pointer overlay needed.
+	a.initialized = false
 	a.slabs = a.slabs[:0]
 	a.slab = nil
 	a.offset = 0
