@@ -2,6 +2,8 @@ package PL
 
 import (
 	"context"
+
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 // OperatorFactory builds operator trees. SQO uses it to construct
@@ -104,8 +106,6 @@ type Children2 interface {
 type ColPrunable interface {
 	UsedCols() []string
 	SetUsedCols(cols []string)
-	RequestedCols() []string
-	SetRequestedCols(cols []string)
 }
 
 // PredicateCarrier — operator that holds a WHERE-style predicate
@@ -120,7 +120,6 @@ type PredicateCarrier interface {
 // Used by index_selection pass to look up indexes.
 type RelationSource interface {
 	Table() string
-	Schema() []string
 }
 
 // IndexInfo — operator that reads from a secondary index.
@@ -132,9 +131,11 @@ type IndexInfo interface {
 }
 
 // AggregateInfo — operator that performs GROUP BY aggregation.
-// Used by column_pruning / aggregate fusion passes.
+// Used by column_pruning / aggregate fusion passes. GroupCols
+// returns []PS.Expr to match the AG-side storage shape; passes
+// that need column names project via SQF/PS helper functions.
 type AggregateInfo interface {
-	GroupCols() []string
+	GroupCols() []PS.Expr
 	Aggregates() []AggregateSpec
 }
 
