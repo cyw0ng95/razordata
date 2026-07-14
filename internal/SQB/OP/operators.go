@@ -139,6 +139,16 @@ type SeqScan struct {
 	// are decoded from the row by cloneRow. Nil means all columns.
 	RequestedCols []int
 
+	// REQ001421: pre-allocated prune buffers to avoid per-row make
+	// in pruneRowCols. Initialized by WithUsedCols; reused across
+	// all rows of the same scan. The index map is rebuilt each time
+	// (slice-backed map, ~10ns for <8 keys), but the slice backing
+	// arrays are pre-sized.
+	pruneBufCols  []string
+	pruneBufTypes []LX.TokenType
+	pruneBufData  []Value
+	pruneBufIndex map[string]int
+
 	// REQ001221: rowArena replaces decodeBuf for bump-pointer
 	rowArena *DT.RowArena
 
@@ -224,14 +234,19 @@ func (s *SeqScan) WithPointLookup(col string, values []any) *SeqScan {
 // SeqScan will only populate these columns in returned rows.
 // REQ001080.
 func (s *SeqScan) WithUsedCols(cols []string) *SeqScan {
-	if len(cols) == 0 {
-		return s
-	}
 	s.usedCols = cols
 	s.usedColSet = make(map[string]bool, len(cols))
 	for _, c := range cols {
 		s.usedColSet[c] = true
 	}
+	// REQ001421: pre-allocate prune buffers at plan time to avoid
+	// per-row make([]Value, N) in the hot path. The index map
+	// is rebuilt each call (~10ns for small maps), but the slice
+	// backing arrays are pre-sized.
+	s.pruneBufCols = make([]string, 0, len(cols))
+	s.pruneBufTypes = make([]LX.TokenType, 0, len(cols))
+	s.pruneBufData = make([]Value, 0, len(cols))
+	s.pruneBufIndex = make(map[string]int, len(cols)*2)
 	return s
 }
 
@@ -521,7 +536,17 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 		}
 		// REQ001080: prune unused columns from the output row.
 		if s.usedCols != nil && !s.shallow {
-			out = pruneRowCols(out, s.usedCols, s.usedColSet)
+			out = pruneRowCols(out, s.usedCols, s.usedColSet, s)
+			if len(out.Data) > 0 {
+				dst := make([]Value, len(out.Data))
+				copy(dst, out.Data)
+				out.Data = dst
+			}
+			if len(out.Cols) > 0 {
+				dst := make([]string, len(out.Cols))
+				copy(dst, out.Cols)
+				out.Cols = dst
+			}
 		}
 	}
 	if s.planner != nil {
@@ -594,7 +619,23 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 
 		// REQ001080: prune unused columns from the store-backed row.
 		if s.usedCols != nil {
-			row = pruneRowCols(row, s.usedCols, s.usedColSet)
+			row = pruneRowCols(row, s.usedCols, s.usedColSet, s)
+			// Copy Data out of the shared prune buffer so later
+			// prune calls don't overwrite this row's values.
+			// The prune buffer reuses backing arrays across all
+			// rows of the same scan; allocate an independent copy
+			// for the returned row.
+			if len(row.Data) > 0 {
+				dst := make([]Value, len(row.Data))
+				copy(dst, row.Data)
+				row.Data = dst
+			}
+			// Same for Cols — it points into the shared buffer.
+			if len(row.Cols) > 0 {
+				dst := make([]string, len(row.Cols))
+				copy(dst, row.Cols)
+				row.Cols = dst
+			}
 		}
 
 		return row, nil
@@ -641,6 +682,12 @@ func (s *SeqScan) Close() error {
 	if s.rowArena != nil {
 		s.rowArena.Reset()
 	}
+	// REQ001421: clear prune buffers so next user of the cached
+	// SeqScan starts fresh.
+	clear(s.pruneBufIndex)
+	s.pruneBufCols = s.pruneBufCols[:0]
+	s.pruneBufTypes = s.pruneBufTypes[:0]
+	s.pruneBufData = s.pruneBufData[:0]
 	// REQ001195: clear point-lookup state so plan cache reuse
 	// with different literal values triggers a fresh scan instead
 	// of using stale pre-computed row indices.
@@ -1326,7 +1373,7 @@ func (i *IndexScan) nextFromBTree(ctx context.Context) (Row, error) {
 
 // pruneRowCols filters row Data/Cols/Types to only include columns
 // in usedCols. Returns the pruned row. REQ001080.
-func pruneRowCols(row Row, usedCols []string, usedSet map[string]bool) Row {
+func pruneRowCols(row Row, usedCols []string, usedSet map[string]bool, seq *SeqScan) Row {
 	if len(usedSet) == 0 || len(row.Cols) == 0 {
 		return row
 	}
@@ -1341,10 +1388,28 @@ func pruneRowCols(row Row, usedCols []string, usedSet map[string]bool) Row {
 	if allUsed {
 		return row
 	}
-	newCols := make([]string, 0, len(usedCols))
-	newTypes := make([]LX.TokenType, 0, len(usedCols))
-	newData := make([]Value, 0, len(usedCols))
-	newIndex := make(map[string]int, len(usedCols)*2)
+
+	var newCols []string
+	var newTypes []LX.TokenType
+	var newData []Value
+	var newIndex map[string]int
+
+	if seq != nil && seq.pruneBufCols != nil {
+		newCols = seq.pruneBufCols[:0]
+		newTypes = seq.pruneBufTypes[:0]
+		newData = seq.pruneBufData[:0]
+		newIndex = seq.pruneBufIndex
+		// Clear the index map for reuse.
+		for k := range newIndex {
+			delete(newIndex, k)
+		}
+	} else {
+		newCols = make([]string, 0, len(usedCols))
+		newTypes = make([]LX.TokenType, 0, len(usedCols))
+		newData = make([]Value, 0, len(usedCols))
+		newIndex = make(map[string]int, len(usedCols)*2)
+	}
+
 	// Build colIndex from scratch if nil.
 	colIndex := row.ColIndex
 	if colIndex == nil {
