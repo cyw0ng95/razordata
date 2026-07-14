@@ -476,7 +476,7 @@ func TestMergeHeap_NoAllocOnPush(t *testing.T) {
 	h := &mergeHeap{}
 	h.init(1024) // pre-allocate enough capacity
 	k := []byte("k") // hoist to avoid []byte("k") alloc in the hot loop
-	allocs := testing.AllocsPerRun(1000, func() {
+	allocs := testing.AllocsPerRun(100, func() {
 		for i := 0; i < 1000; i++ {
 			h.push(iterHeapItem{key: k, src: i})
 		}

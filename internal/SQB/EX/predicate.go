@@ -1,7 +1,6 @@
 package EX
 
 import (
-	"fmt"
 	"strings"
 	"unicode"
 
@@ -66,35 +65,17 @@ func (p *Planner) splitAnd(expr PS.Expr) []PS.Expr {
 // changes the schema (CREATE/DROP/ALTER TABLE) so cached plans that
 // reference the old schema are not reused.
 func extractColumnLiteral(v *PS.BinaryExpr) (string, []byte, bool) {
-	col, ok := v.Left.(*PS.Ident)
-	if !ok {
-		return "", nil, false
-	}
-	lit, ok := literalToBytes(v.Right)
-	if !ok {
-		return "", nil, false
-	}
-	return col.Name, lit, true
+	return CO.ExtractColumnLiteral(v)
 }
 
-// literalToBytes extracts byte representation from a literal expression.
 func literalToBytes(e PS.Expr) ([]byte, bool) {
-	switch v := e.(type) {
-	case *PS.NumberLiteral:
-		return []byte(fmt.Sprintf("%d", v.Val)), true
-	case *PS.StringLiteral:
-		return []byte(v.Val), true
-	case *PS.BoolLiteral:
-		if v.Val {
-			return []byte("true"), true
-		}
-		return []byte("false"), true
-	}
-	return nil, false
+	return CO.LiteralToBytes(e)
 }
 
-// estimatePredicateSelectivity returns the selectivity of a
-// predicate, using column histograms when available. REQ000085.
+func extractColumnLiteralExpr(e PS.Expr) (string, []byte, bool) {
+	return CO.ExtractColumnLiteralExpr(e)
+}
+
 func (p *Planner) estimatePredicateSelectivity(e PS.Expr) float64 {
 	if e == nil {
 		return 1.0
@@ -412,16 +393,6 @@ func resolveSingleTablePredicate(e PS.Expr, candidates []string) string {
 		}
 	}
 	return ""
-}
-
-// extractColumnLiteralExpr is a safe variant of extractColumnLiteral
-// that accepts any expression.
-func extractColumnLiteralExpr(e PS.Expr) (string, []byte, bool) {
-	v, ok := e.(*PS.BinaryExpr)
-	if !ok {
-		return "", nil, false
-	}
-	return extractColumnLiteral(v)
 }
 
 func isColumnLiteralPair(a, b PS.Expr) bool {

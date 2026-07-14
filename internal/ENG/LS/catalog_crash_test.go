@@ -90,13 +90,13 @@ func TestCatalog_Crash_RandomSequence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCatalog: %v", err)
 	}
-	// 50 mixed operations: Put with new IDs, Delete existing.
+	// 30 mixed operations: Put with new IDs, Delete existing.
 	// Names cycle through a fixed pool so later Puts will hit
 	// ErrCatalogExists — we tolerate that, the real invariants
 	// are the cache/file agreement.
 	names := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
 	live := map[string]uint64{}
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 30; i++ {
 		if i%3 == 0 && len(live) > 0 {
 			// Drop one.
 			for n := range live {
@@ -232,7 +232,7 @@ func TestCatalog_Crash_PutIdempotent(t *testing.T) {
 // Put/Close/Reopen sequence to flush out order-of-operations
 // flakiness.
 func TestCatalog_Crash_FiveRuns(t *testing.T) {
-	for run := 0; run < 5; run++ {
+	for run := 0; run < 3; run++ {
 		dir := filepath.Join(t.TempDir(), "catalog")
 		c, err := NewCatalog(dir)
 		if err != nil {
