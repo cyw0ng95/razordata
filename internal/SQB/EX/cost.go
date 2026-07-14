@@ -227,16 +227,8 @@ func estimateRangeSelectivity(stats *ls.ColumnStats, low, high []byte, _ bool) f
 	return CO.EstimateRangeSelectivity(stats, low, high)
 }
 
-func isColumnColumnPair(a, b PS.Expr) bool {
-	return CO.IsColumnColumnPair(a, b)
-}
-
 func estimateJoinPredicateSelectivity(pred PS.Expr, rowCount float64) float64 {
 	return CO.EstimateJoinPredicateSelectivity(pred, rowCount)
-}
-
-func inListLiteralKey(item PS.Expr) (string, bool) {
-	return CO.InListLiteralKey(item)
 }
 
 func estimateInListSelectivity(list []PS.Expr, rowCount float64, mcvs [][]byte, freqs []float64) float64 {

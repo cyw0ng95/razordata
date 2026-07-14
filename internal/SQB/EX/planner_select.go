@@ -327,6 +327,11 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	// (those need the full eval machinery).
 	current = fuseFilterProject(current)
 
+	// REQ001450: run SQO optimizer passes (column pruning, predicate
+	// pushdown, limit pushdown). Wraps the operator tree into an
+	// OC.Plan, runs the pass chain, and unwraps the result.
+	current = p.runSQOPasses(current, s)
+
 	return current
 }
 

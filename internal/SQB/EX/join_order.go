@@ -600,12 +600,6 @@ func (p *Planner) joinResultRows(leftRows, rightRows float64, predicates []PS.Ex
 	return result
 }
 
-// isConnectedGraph checks if all tables in joinOrder form a single
-// connected component via equi-join predicates. REQ001192.
-func isConnectedGraph(joinOrder []string, crossTablePredicates []PS.Expr) bool {
-	return CO.IsConnectedGraph(joinOrder, crossTablePredicates, extractTableColumn)
-}
-
 func groupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates []PS.Expr) [][]string {
 	return CO.GroupBushyJoins(baseTable, joinOrder, crossTablePredicates, extractTableColumn)
 }

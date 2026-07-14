@@ -30,14 +30,6 @@ func predicateCost(e PS.Expr) int {
 	return CO.Cost(e)
 }
 
-func funcArgCost(args []PS.Expr) int {
-	return CO.FuncArgCost(args)
-}
-
-func caseExprCost(e *PS.CaseExpr) int {
-	return CO.CaseExprCost(e)
-}
-
 // reorderIndices returns indices 0..n-1 sorted by the cost of
 // predicates[indices[i]] ascending. Equal-cost predicates preserve
 // original order (stable sort). REQ001248.
@@ -67,10 +59,6 @@ func extractColumnLiteral(v *PS.BinaryExpr) (string, []byte, bool) {
 
 func literalToBytes(e PS.Expr) ([]byte, bool) {
 	return CO.LiteralToBytes(e)
-}
-
-func extractColumnLiteralExpr(e PS.Expr) (string, []byte, bool) {
-	return CO.ExtractColumnLiteralExpr(e)
 }
 
 func (p *Planner) estimatePredicateSelectivity(e PS.Expr) float64 {
@@ -142,12 +130,6 @@ func (p *Planner) canPushDown(e PS.Expr, table string) bool {
 	return len(tables) == 1 && tables[table]
 }
 
-// splitAlphaNum splits "e8" into ("e", "8").
-// Returns ("", "") if the string doesn't match {letters}{digits}.
-func splitAlphaNum(s string) (string, string) {
-	return CO.SplitAlphaNum(s)
-}
-
 // resolveTableForColumn tries to resolve a column name using the
 // SLT naming convention: "e8" => column "e" of table "t8".
 // Must be called under tablesMu.RLock.
@@ -204,10 +186,6 @@ func resolveSingleTablePredicate(e PS.Expr, candidates []string) string {
 	return CO.ResolveSingleTablePredicate(e, candidates, findTableInSchemas)
 }
 
-func isColumnLiteralPair(a, b PS.Expr) bool {
-	return CO.IsColumnLiteralPair(a, b)
-}
-
 // tryApplyPointLookup checks if pred is a col IN (literal, ...),
 // col = literal, or same-column OR-chain of equalities, and if so,
 // sets up SeqScan point-lookup so we skip the row-by-row filter
@@ -247,18 +225,6 @@ func extractInListValues(pred PS.Expr) (string, []any, bool) {
 
 func extractOrChainEquality(pred PS.Expr) (string, []any, bool) {
 	return CO.ExtractOrChainEquality(pred, flattenOr)
-}
-
-func extractEqualityAnySide(pred PS.Expr) (string, any, bool) {
-	return CO.ExtractEqualityAnySide(pred)
-}
-
-func literalValue(e PS.Expr) (any, bool) {
-	return CO.LiteralValue(e)
-}
-
-func extractSingleEquality(pred PS.Expr) (string, any, bool) {
-	return CO.ExtractSingleEquality(pred)
 }
 
 // equiJoinKey checks if an expression is an equi-join condition

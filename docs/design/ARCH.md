@@ -12,7 +12,8 @@
 | `WAL` | `WR`, `FL`, `RP` | `WR` — sequential append, LSN allocation, segment rotation, columnar WAL encoding, LZ4 compression. `FL` — fsync on commit, batch flush, write barrier. `RP` — WAL replay on startup, checkpoint detection, segment truncation, parallel replay. |
 | `ENG` | `LS`, `ID`, `TB`, `CT`, `SC`, `DP`, `NM` | `LS` — LSM tree: skiplist memtable, SST writer/reader, bloom filter, leveled/tiered/hybrid compaction, rate-limited compaction, columnar SST block layout, per-block dictionary compression, subcompaction for L4+, storage policy with tiered device placement, SST page cache. `ID` — B-tree persistent index for secondary indexes (btree.razor), cursor-based scan. `TB` — create/drop/alter table, foreign key enforcement, views, triggers. `CT` — persistent catalog storage, schema versioning, bootstrap, encode/decode. Shared by TB and LS. `SC` — column types, constraints (NOT NULL, DEFAULT, PRIMARY KEY, UNIQUE, CHECK, FOREIGN KEY), table definitions, integrity checks. `DP` — row serialization, SST block encoding, value encoding. `NM` — NUMA topology detection, worker pinning for first-touch allocation. |
 | `TXN` | `MV`, `LC`, `SN`, `VL` | `MV` — version chain (lock-free skip list), CAS insertion, per-transaction arena with per-NUMA pools, GC of obsolete versions. `LC` — hazard pointers, epoch-based reclamation, QSBR protocol, reclaim pool for deferred cleanup, goid tracking via atomic counter, epoch gosched for cooperative yielding. `SN` — read view, epoch registration, thread-local arena, version stack for multi-key reads. `VL` — commit protocol, write-write conflict detection, transaction slots, savepoint support. |
-| `SQF` | `LX`, `PS`, `RE`, `PL` | `LX` — tokenization, keyword lookup, error recovery. `PS` — recursive-descent parser, AST construction with visitor pattern, CTE/recursive CTE parsing, window function parsing, ALTER TABLE parsing, subquery parsing. `PL` — query planning, cost estimation, index selection, plan memoization, selectivity estimation, hash agg planning, N3 join ordering, NDV-based selectivity. `RE` — constant folding, predicate pushdown, subquery flattening, join reorder. |
+| `SQF` | `LX`, `PS`, `RE`, `PL` | `LX` — tokenization, keyword lookup, error recovery. `PS` — recursive-descent parser, AST construction with visitor pattern, CTE/recursive CTE parsing, window function parsing, ALTER TABLE parsing, subquery parsing. `PL` — query planning, cost estimation, index selection, plan memoization, selectivity estimation, hash agg planning, N3 join ordering, NDV-based selectivity. `RE` — AST-level rewriting: constant folding, boolean simplification, subquery flattening, format. |
+| `SQO` | `OC`, `PF`, `CO`, `JO`, `RS` | `OC` — optimizer core: Plan, Context, Optimizer, Pass registry, CatalogReader/StatsReader interfaces. `PF` — pass framework: WalkOp tree traversal, optimization passes (column pruning, predicate pushdown, limit pushdown/TopN, filter-project fusion). `CO` — code objects: pure-function extraction from SQB/EX (predicate analysis, cost estimation, selectivity, join helpers, table resolution, split-and/or). `JO` — join ordering (extracted from EX, planned). `RS` — resolve slots (extracted from EX, planned). All SQO clusters import `SQF/PL` for operator interfaces; none import `SQB/` directly. |
 | `SQB` | `EX`, `OP`, `EV`, `AG`, `AD`, `WT`, `UT`, `DT` | `DT` — shared data types: Row/Value/Operator/ExecContext/Store/StatsCatalog types, schema registry, view/matview/index/catalog registries, session counters (SessionCounterAccessor), AST traversal helpers (ContainsAggregate, ContainsWindowFunc), value conversion utilities (ValueFromAny, ValueToString, Compare, ToInt64, EqualValueAny, IsValueTruthy). `EX` — executor factory, Executor, subq.go (injectOuter + runSubqueryPlan), plan_node.go (PlanNode tree for EXPLAIN), shape_specialize.go, matview.go. `OP` — operators: Distinct, HashJoin, HashCrossJoin, PragmaResult, SqliteMaster (leaf operators continuing to move from EX: SeqScan, IndexScan, Filter, Project, Sort, Limit, Offset, NestedLoopJoin, Compound are scheduled for SQB finalization). `EV` — evaluation: eval.go, eval_vec.go, function_registry.go, all scalar functions. `AG` — aggregation: aggregate.go, aggregate_registry.go, hashagg.go, hashagg_parallel.go, window.go, aggregate_vec.go. `AD` — ADQC and cache: adqc*.go, cache_stats.go, index_usage.go; planner.go still in EX pending SQB finalization. `WT` — write operators: writers.go, source.go, store.go, alter_table.go, fk.go (planned; directory does not yet exist). `UT` — utilities: coerce.go, integrity.go, decimal.go, datetime.go, json.go, parallel.go, batch.go, pipeline.go, simd_dispatch.go, string_column.go, txn_debug.go, pragma listener. |
 | `SYS` | `SY`, `AP`, `SE`, `TX`, `ST` | `SY` — init, config validation, graceful shutdown (6-phase), version, stats aggregation, signal handling. `AP` — public API: Engine/Session/Transaction/Stmt, Options, error types. `SE` — session lifecycle, goroutine-safety, deadline, session stats. `TX` — transaction context, commit/rollback, savepoints. `ST` — statement preparation, parameter binding, type coercion, prepared statement pool. |
 | `DBG` | `TE`, `CT`, `IN`, `PR`, `DC`, `SK` | **Build-tag gated** — all files carry `//go:build debug`. Zero code compiled without `-tags debug`. `TE` — structured trace events with ring buffer, per-class enable/disable. `CT` — atomic counters, latency histograms, expvar export. `IN` — page/segment/buffer/txn inspectors. `PR` — on-demand pprof/trace/fgprof profiling via socket, signal, or error trigger. `DC` — per-subsystem runtime log level and trace class control. `SK` — UNIX domain socket command server for interactive debugging. Callers (LOG/HK, LOG/LG) provide always-compiled no-op stubs swapped by DBG init() when `debug` tag is active. |
@@ -20,7 +21,7 @@
 ## Dependency Order
 
 ```
-LOG → FIL → MEM → WAL → ENG → TXN → SQF → SQB → SYS → DBG
+LOG → FIL → MEM → WAL → ENG → TXN → SQF → SQO → SQB → SYS → DBG
 ```
 
 ## Cross-Subsystem Interfaces
@@ -67,6 +68,58 @@ type Operator interface {
     Close() error
 }
 ```
+
+## SQO — SQL Optimizer Subsystem
+
+`SQO` sits between `SQF` (AST/planning) and `SQB` (execution), breaking the original monolithic planner in `SQB/EX` into an optimizer pipeline. SQO clusters operate exclusively through `SQF/PL` operator interfaces, never importing `SQB/` concrete types — this prevents cyclic imports and enables independent testing.
+
+### Dependency Rule
+
+```
+SQF → SQO → SQB
+```
+
+`SQO/OC` defines `Plan`, `Context`, `Optimizer`, and `Pass` types. `SQO/PF` implements optimization passes that probe operators via PL capability interfaces (`ColPrunable`, `PredicateCarrier`, `ProjectInfo`, `LimitInfo`, `SortInfo`, `Children2`, `Parent`, `SingleChild`). `SQO/CO` holds pure functions extracted from `SQB/EX` that require no planner state. `SQO/JO` and `SQO/RS` are scoped for future extraction of join ordering and slot resolution.
+
+### SQF/PL — Planning Layer (Interface Hub)
+
+`SQF/PL` bridges `SQO` and `SQB` by owning the operator type definitions and capability interfaces:
+
+```go
+// SQF/PL/types.go — canonical operator types (aliased by SQB/DT)
+type Operator interface {
+    Next(ctx context.Context) (Row, error)
+    Close() error
+}
+
+// SQF/PL/operator.go — capability interfaces probed by SQO passes
+type Parent interface { ... }
+type Children2 interface { ... }
+type ColPrunable interface { ... }
+type PredicateCarrier interface { ... }
+type ProjectInfo interface { ... }
+type LimitInfo interface { ... }
+type SortInfo interface { ... }
+
+// SQF/PL/factory.go — operator factory (implemented by SQB/OP)
+type OperatorFactory interface {
+    NewSeqScan(...) Operator
+    NewFilter(...) Operator
+    NewProject(...) Operator
+    // ... ~15 methods, one per operator type
+}
+```
+
+This pattern allows SQO to construct and transform operator trees without importing `SQB/OP` or `SQB/EX`.
+
+### SQO/PF Pass Chain (execution order in planSelect)
+
+1. **FilterProjectFusionPass** — merge adjacent `Filter{Project{...}}` into `FilterProject`
+2. **PredicatePushdownPass** — split WHERE conjuncts, push single-table predicates into scan nodes
+3. **ColumnPruningPass** — top-down column propagation, set `UsedCols` on scans
+4. **LimitPushdownPass** — detect `Sort → Limit` pattern, mark Sort as TopN, eliminate Limit
+
+Additional passes (index selection, subquery decorrelation, constant folding) are scoped for future implementation.
 
 ## Error Contract
 
@@ -124,6 +177,7 @@ internal/
 ├── ENG/   # Storage engine (LS, ID, TB, CT, SC, DP, NM)
 ├── TXN/   # Transaction (MV, LC, SN, VL)
 ├── SQF/   # SQL Frontend (LX, PS, RE, PL)
+├── SQO/   # SQL Optimizer (OC, PF, CO, JO, RS)
 ├── SQB/   # SQL Backend  (EX, OP, EV, AG, AD, WT, UT)
 ├── SYS/   # System layer (SY, AP, SE, TX, ST)
 └── DBG/   # Debug        (TE, CT, IN, PR, DC, SK)

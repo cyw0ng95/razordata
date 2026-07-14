@@ -27,11 +27,15 @@ type Plan struct {
 }
 
 // Context carries the side-tables a pass needs: catalog, stats,
-// per-table schema. It is the only place SQO touches the storage
-// engine — through the CatalogReader and StatsReader interfaces.
+// per-table schema, and the OperatorFactory for tree rewrites.
+// It is the only place SQO touches the storage engine — through
+// the CatalogReader and StatsReader interfaces.
 type Context struct {
 	Catalog CatalogReader
 	Stats   StatsReader
+	// Factory creates new operator nodes (e.g. FilterProject during
+	// fusion, IndexScan during index selection). Set by the planner.
+	Factory pl.OperatorFactory
 	// Tables exposes per-table schema (column list, PK) for passes
 	// that need to know which columns exist. The concrete value is
 	// supplied by SQB/EX; SQO does not import SQB.

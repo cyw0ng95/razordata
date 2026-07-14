@@ -161,6 +161,12 @@ type ColumnSchema interface {
 	ColumnIndex(name string) int
 }
 
+// ProjectInfo — operator that projects output expressions.
+// Used by FilterProjectFusion to extract columns and exprs.
+type ProjectInfo interface {
+	Cols() []PS.Expr
+}
+
 // Compile-time checks: the optional interfaces are empty
 // placeholders until REQ001435. These constants are unused
 // until then; they exist so the types are part of the PL
@@ -176,6 +182,7 @@ var (
 	_ SortInfo       = (SortInfo)(nil)
 	_ LimitInfo      = (LimitInfo)(nil)
 	_ ColumnSchema   = (ColumnSchema)(nil)
+	_ ProjectInfo    = (ProjectInfo)(nil)
 )
 
 // Ensure unused-import suppression if all these stubs are

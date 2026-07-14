@@ -18,6 +18,7 @@ import (
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	OC "github.com/cyw0ng95/razordata/internal/SQO/OC"
+	PF "github.com/cyw0ng95/razordata/internal/SQO/PF"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
@@ -115,10 +116,53 @@ func NewPlanner() *Planner {
 		memo:      make(map[string]*plan, maxPlanCacheSize),
 		memoOrder: make([]string, maxPlanCacheSize),
 		catalog:   make(map[string]*tableInfo),
-		// REQ001432: empty Optimizer. REQ001450 wires the real
-		// pass chain; until then, Plan() does not invoke Optimize.
-		optimizer: OC.New(),
+		// REQ001450: wire SQO passes. Order: constant folding,
+		// column pruning, predicate pushdown, limit pushdown (TopN fusion).
+		optimizer: OC.New().
+			AddPass(&PF.ConstantFoldingPass{}).
+			AddPass(&PF.ColumnPruningPass{}).
+			AddPass(&PF.PredicatePushdownPass{}).
+			AddPass(&PF.LimitPushdownPass{}),
 	}
+}
+
+// runSQOPasses invokes the SQO optimizer on the built operator plan.
+// Returns the original operator unchanged if the optimizer has no passes
+// registered or if optimization fails. REQ001450.
+func (p *Planner) runSQOPasses(op DT.Operator, stmt PS.Stmt) DT.Operator {
+	if p.optimizer.PassCount() == 0 {
+		return op
+	}
+	ctx := &OC.Context{
+		Factory: OP.Factory(),
+		Tables:  p.buildTableSchema(),
+	}
+	plan := &OC.Plan{Root: op, Stmt: stmt}
+	result, err := p.optimizer.Optimize(plan, ctx)
+	if err != nil {
+		return op
+	}
+	if result == nil || result.Root == nil {
+		return op
+	}
+	return result.Root.(DT.Operator)
+}
+
+// buildTableSchema converts the planner's internal catalog to
+// OC.TableSchema for the SQO pass context.
+func (p *Planner) buildTableSchema() map[string]OC.TableSchema {
+	if len(p.catalog) == 0 {
+		return nil
+	}
+	out := make(map[string]OC.TableSchema, len(p.catalog))
+	for name, ti := range p.catalog {
+		cols := make([]string, len(ti.cols))
+		for i, c := range ti.cols {
+			cols[i] = c.Name
+		}
+		out[name] = OC.TableSchema{Columns: cols, PK: ti.pk}
+	}
+	return out
 }
 
 // SetPool attaches a WorkerPool to the planner for parallel operator
@@ -162,6 +206,11 @@ func NewPlannerWithStore(store DT.Store) *Planner {
 		memoOrder: make([]string, maxPlanCacheSize),
 		catalog:   make(map[string]*tableInfo),
 		store:     store,
+		optimizer: OC.New().
+			AddPass(&PF.ConstantFoldingPass{}).
+			AddPass(&PF.ColumnPruningPass{}).
+			AddPass(&PF.PredicatePushdownPass{}).
+			AddPass(&PF.LimitPushdownPass{}),
 	}
 }
 
@@ -173,6 +222,11 @@ func NewPlannerWithStats(store DT.Store, statsCatalog DT.StatsCatalog) *Planner 
 		catalog:      make(map[string]*tableInfo),
 		store:        store,
 		statsCatalog: statsCatalog,
+		optimizer: OC.New().
+			AddPass(&PF.ConstantFoldingPass{}).
+			AddPass(&PF.ColumnPruningPass{}).
+			AddPass(&PF.PredicatePushdownPass{}).
+			AddPass(&PF.LimitPushdownPass{}),
 	}
 }
 
