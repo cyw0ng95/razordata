@@ -17,6 +17,7 @@ import (
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
+	OC "github.com/cyw0ng95/razordata/internal/SQO/OC"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
@@ -80,6 +81,12 @@ type Planner struct {
 	// start of every Plan() call (PlanResult cache invalidation is
 	// handled separately).
 	splitAndCache map[uintptr][]PS.Expr
+	// REQ001432: optimizer is the SQO/OC Optimizer instance. Created
+	// empty in NewPlanner; the full pass chain is wired in REQ001450.
+	// Until then, Plan() does not invoke optimizer.Optimize() —
+	// the field exists only to establish the SQF → SQO → SQB
+	// dependency order.
+	optimizer *OC.Optimizer
 }
 
 type tableInfo struct {
@@ -108,6 +115,9 @@ func NewPlanner() *Planner {
 		memo:      make(map[string]*plan, maxPlanCacheSize),
 		memoOrder: make([]string, maxPlanCacheSize),
 		catalog:   make(map[string]*tableInfo),
+		// REQ001432: empty Optimizer. REQ001450 wires the real
+		// pass chain; until then, Plan() does not invoke Optimize.
+		optimizer: OC.New(),
 	}
 }
 
