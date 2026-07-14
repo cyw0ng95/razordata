@@ -278,8 +278,11 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 
     // REQ001409: for simple small queries, use synchronous caller-pull path
     // to avoid goroutine stack + channel sync overhead.
+    // REQ001425: use lazy streaming from the operator tree instead of
+    // pre-buffering all rows into a slice. Eliminates the append+slice
+    // growth per query for small result sets.
     if isEligibleForSyncStream(stmt, plan, e.planner) {
-        return e.syncStreamPath(ctx, plan, execCtx, firstRow, cols, types)
+        return e.streamFromOperator(ctx, plan, execCtx, firstRow, true, cols, types), nil
     }
 
     // REQ001410: do NOT defer resetRowArena here — the goroutine
@@ -332,6 +335,8 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 
 // syncStreamPath accumulates all rows into a slice synchronously and
 // returns a slice-backed streamIterator. No goroutine or channel needed.
+// For very small result sets this is optimal because the caller can
+// iterate over the slice without operator tree overhead.
 func (e *Executor) syncStreamPath(ctx context.Context, plan *pl.PlanResult, execCtx *DT.ExecContext, firstRow DT.Row, cols []string, types []LX.TokenType) (*streamIterator, error) {
     rows := []DT.Row{firstRow}
     for {
@@ -357,6 +362,30 @@ func (e *Executor) syncStreamPath(ctx context.Context, plan *pl.PlanResult, exec
 	}, nil
 }
 
+// streamFromOperator wraps a live operator tree in a streamIterator,
+// pulling rows on demand instead of pre-buffering. The operator tree
+// is kept open until the caller drains or closes the iterator.
+// REQ001425: eliminates the per-query syncStreamPath append+slice
+// growth for the common case of small result sets (select1 pattern).
+func (e *Executor) streamFromOperator(ctx context.Context, plan *pl.PlanResult, execCtx *DT.ExecContext, firstRow DT.Row, firstRowFetched bool, cols []string, types []LX.TokenType) *streamIterator {
+	si := &streamIterator{
+		cols:  cols,
+		types: types,
+		closer: func() error {
+			plan.Root.Close()
+			resetRowArena(execCtx)
+			return nil
+		},
+	}
+	if firstRowFetched {
+		si.lazyRow = &firstRow
+	}
+	si.lazyPlan = plan
+	si.lazyCtx = ctx
+	si.lazyExecCtx = execCtx
+	return si
+}
+
 // streamIterator is the streaming row iterator returned by
 // Executor.QueryStream. It buffers one row at a time so the caller can
 // discover the schema before draining the rest.
@@ -372,6 +401,13 @@ type streamIterator struct {
     rows   []DT.Row
     idx    int
 
+    // REQ001425: lazy stream path — pulls from operator tree on demand
+    // instead of pre-buffering all rows. Set by streamFromOperator.
+    lazyRow      *DT.Row      // first row (already fetched)
+    lazyPlan     *pl.PlanResult
+    lazyCtx      context.Context
+    lazyExecCtx  *DT.ExecContext
+
     done bool
     mu   sync.Mutex
 }
@@ -381,6 +417,32 @@ func (s *streamIterator) Types() []LX.TokenType { return s.types }
 func (s *streamIterator) Next() (DT.Row, error) {
     if s == nil || s.done {
         return DT.Row{}, DT.ErrNoRows
+    }
+    // Lazy (operator-pull) path: stream without pre-buffering.
+    if s.lazyPlan != nil {
+        // Return the already-fetched first row.
+        if s.lazyRow != nil {
+            r := *s.lazyRow
+            s.lazyRow = nil
+            return r, nil
+        }
+        r, err := s.lazyPlan.Root.Next(s.lazyCtx)
+        if err != nil {
+            if err == DT.ErrNoRows {
+                s.done = true
+                if s.closer != nil {
+                    s.closer()
+                }
+                return DT.Row{}, DT.ErrNoRows
+            }
+            s.done = true
+            if s.closer != nil {
+                s.closer()
+            }
+            return DT.Row{}, err
+        }
+        OP.WithExecContext(&r, s.lazyExecCtx)
+        return r, nil
     }
     // Sync (slice-backed) path
     if s.rows != nil {

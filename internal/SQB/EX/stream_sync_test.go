@@ -8,7 +8,8 @@ import (
 )
 
 // TestStream_SyncPath_SmallResult verifies REQ001409: small queries
-// use the synchronous slice-backed path (no goroutine/channel).
+// use the synchronous path (no goroutine/channel). The path may be
+// slice-backed (syncStreamPath) or lazy operator-pull (streamFromOperator).
 func TestStream_SyncPath_SmallResult(t *testing.T) {
     UnregisterAll()
     ResetForTest(t)
@@ -32,14 +33,11 @@ func TestStream_SyncPath_SmallResult(t *testing.T) {
         t.Fatalf("QueryStream: %v", err)
     }
 
-    // Verify sync path: rows should be pre-accumulated (rows field non-nil).
-    if iter.rows == nil {
-        t.Fatal("expected sync path (rows != nil) for small query")
+    // Verify sync path: rows may be pre-accumulated (slice-backed)
+    // or lazy-pull (operator tree-backed). Both achieve the same result.
+    if iter.rows == nil && iter.lazyPlan == nil {
+        t.Fatal("expected sync path (rows or lazyPlan) for small query")
     }
-    if len(iter.rows) != 20 {
-        t.Fatalf("expected 20 rows in sync buffer, got %d", len(iter.rows))
-    }
-
     // Drain and verify all rows.
     count := 0
     for {
