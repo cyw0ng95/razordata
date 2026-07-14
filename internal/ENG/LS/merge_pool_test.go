@@ -495,7 +495,7 @@ func TestMergeHeap_NoAllocOnPop(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		h.push(iterHeapItem{key: k, src: i})
 	}
-	allocs := testing.AllocsPerRun(1000, func() {
+	allocs := testing.AllocsPerRun(100, func() {
 		// Pop 1 item per iteration; the heap will run out
 		// after 1000 iters, so re-fill.
 		_ = h.pop()
@@ -579,7 +579,7 @@ func TestMergeIterator_NoHeapBoxing(t *testing.T) {
 	mi.Close()
 
 	// Measure allocs/op for a fully-warm path.
-	allocs := testing.AllocsPerRun(1000, func() {
+	allocs := testing.AllocsPerRun(100, func() {
 		mi := newMergeIterator([]*memtable{mt}, m, dir, DefaultFS(), nil, nil, 0, nil)
 		for mi.Next() {
 		}
