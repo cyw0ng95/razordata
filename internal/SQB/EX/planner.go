@@ -121,6 +121,7 @@ func NewPlanner() *Planner {
 		// column pruning, predicate pushdown, limit pushdown (TopN fusion).
 		optimizer: OC.New().
 			AddPass(&PF.ConstantFoldingPass{}).
+			AddPass(&PF.IndexSelectionPass{}).
 			AddPass(&PF.ColumnPruningPass{}).
 			AddPass(&PF.PredicatePushdownPass{}).
 			AddPass(&PF.LimitPushdownPass{}),
@@ -210,6 +211,7 @@ func NewPlannerWithStore(store DT.Store) *Planner {
 		store:     store,
 		optimizer: OC.New().
 			AddPass(&PF.ConstantFoldingPass{}).
+			AddPass(&PF.IndexSelectionPass{}).
 			AddPass(&PF.ColumnPruningPass{}).
 			AddPass(&PF.PredicatePushdownPass{}).
 			AddPass(&PF.LimitPushdownPass{}),
@@ -226,6 +228,7 @@ func NewPlannerWithStats(store DT.Store, statsCatalog DT.StatsCatalog) *Planner 
 		statsCatalog: statsCatalog,
 		optimizer: OC.New().
 			AddPass(&PF.ConstantFoldingPass{}).
+			AddPass(&PF.IndexSelectionPass{}).
 			AddPass(&PF.ColumnPruningPass{}).
 			AddPass(&PF.PredicatePushdownPass{}).
 			AddPass(&PF.LimitPushdownPass{}),
