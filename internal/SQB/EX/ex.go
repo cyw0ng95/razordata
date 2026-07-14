@@ -1159,8 +1159,14 @@ func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 	// REQ001233: create RowArena once per query, shared across all
 	// operators in the tree. REQ001260: Init is deferred to first
 	// AllocRow call where nCols is known.
+	// REQ001421: pre-size to engineBatchSize rows × 8 columns to
+	// eliminate per-query geometric grow cycles (6+ grows per query
+	// without Init for 50-row UPDATE/Scan workloads).
 	if ec.RowArena == nil {
 		ec.RowArena = &DT.RowArena{}
+		if arena, ok := ec.RowArena.(*DT.RowArena); ok {
+			arena.Init(OP.EngineBatchSize(), 8)
+		}
 	}
 	if f, ok := root.(*OP.Filter); ok {
 		f.SetExecCtx(ec)
