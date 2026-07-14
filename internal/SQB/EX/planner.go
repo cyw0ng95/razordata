@@ -135,8 +135,9 @@ func (p *Planner) runSQOPasses(op DT.Operator, stmt PS.Stmt) DT.Operator {
 		return op
 	}
 	ctx := &OC.Context{
-		Factory: OP.Factory(),
-		Tables:  p.buildTableSchema(),
+		Factory:  OP.Factory(),
+		Tables:   p.buildTableSchema(),
+		Catalog:  &exCatalogReader{catalog: p.catalog},
 	}
 	plan := &OC.Plan{Root: op, Stmt: stmt}
 	result, err := p.optimizer.Optimize(plan, ctx)
