@@ -254,6 +254,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	propagatePlanner(plan.Root, e.planner)
 	// REQ000586: thread DT.ExecContext to eliminate global.
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(plan.Root, execCtx)
 	// Attempt vectorized execution for eligible query plans.
 	plan.Root = tryVectorizePlan(plan.Root)
@@ -305,7 +306,6 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
     }
     go func() {
         defer close(rowCh)
-        defer resetRowArena(execCtx)
         for {
             closeMu.Lock()
             if closed {
@@ -346,14 +346,12 @@ func (e *Executor) syncStreamPath(ctx context.Context, plan *pl.PlanResult, exec
                 break
             }
             plan.Root.Close()
-            resetRowArena(execCtx)
             return nil, err
         }
         OP.WithExecContext(&r, execCtx)
         rows = append(rows, r)
     }
     plan.Root.Close()
-    resetRowArena(execCtx)
 	return &streamIterator{
 		cols: cols,
 		types: types,
@@ -373,7 +371,6 @@ func (e *Executor) streamFromOperator(ctx context.Context, plan *pl.PlanResult, 
 		types: types,
 		closer: func() error {
 			plan.Root.Close()
-			resetRowArena(execCtx)
 			return nil
 		},
 	}

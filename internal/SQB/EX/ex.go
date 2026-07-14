@@ -217,6 +217,12 @@ type Executor struct {
 	// Prevents OOM from unbounded cross-join result accumulation.
 	maxResultRows int64
 
+	// rowArena is a double-pointer to the persistent RowArena owned by
+	// the Engine. All ShallowCopy clones point to the same location so
+	// arena writes propagate to the Engine's field and persist across
+	// queries without per-query slab allocation (REQ001419).
+	rowArena **DT.RowArena
+
 	closed atomic.Bool
 }
 
@@ -271,6 +277,7 @@ func (e *Executor) ShallowCopy() *Executor {
 		maxMemoryPerQuery: e.maxMemoryPerQuery,
 		joinBufferSize:    e.joinBufferSize,
 		maxResultRows:     e.maxResultRows,
+		rowArena:          e.rowArena, // shared — REQ001419: points to Engine's field
 	}
 	return e2
 }
@@ -286,6 +293,25 @@ func (e *Executor) Close() {
 
 // Pool returns the shared WorkerPool (may be nil). REQ001044.
 func (e *Executor) Pool() *UT.WorkerPool { return e.pool }
+
+// SetRowArena links the persistent RowArena from the Engine into this
+// Executor. All ShallowCopy clones inherit the same double-pointer so
+// arena writes propagate to the Engine's field (REQ001419).
+func (e *Executor) SetRowArena(ptr **DT.RowArena) { e.rowArena = ptr }
+
+// ensureArena returns the persistent RowArena (REQ001419), creating it
+// on first call. The arena is stored on the Engine via the rowArena
+// double-pointer, so it persists across ShallowCopy clones. Returns nil
+// if no persistent arena is configured (e.g. standalone Executor tests).
+func (e *Executor) ensureArena() *DT.RowArena {
+	if e.rowArena == nil {
+		return nil
+	}
+	if *e.rowArena == nil {
+		*e.rowArena = &DT.RowArena{}
+	}
+	return *e.rowArena
+}
 
 // SetSnapshot sets the per-statement snapshot timestamp for read-committed
 // isolation (REQ000255). When non-zero, reads filter to versions visible at
@@ -837,8 +863,8 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 			propagateParams(op, args)
 			propagatePlanner(op, e.planner)
 			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
+			execCtx.RowArena = e.ensureArena()
 			propagateExecContext(op, execCtx)
-			defer resetRowArena(execCtx)
 			defer op.Close()
 			if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
 				return Result{}, err
@@ -895,8 +921,9 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	propagateParams(op, args)
 	propagatePlanner(op, e.planner)
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
+	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(op, execCtx)
-	defer resetRowArena(execCtx)
+	
 	if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
 		return Result{}, err
 	}
@@ -962,8 +989,8 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 			propagateParams(plan.Root, args)
 			propagatePlanner(plan.Root, e.planner)
 			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+			execCtx.RowArena = e.ensureArena()
 			propagateExecContext(plan.Root, execCtx)
-			defer resetRowArena(execCtx)
 			defer plan.Root.Close()
 			row, err := plan.Root.Next(ctx)
 			if err != nil {
@@ -1025,8 +1052,8 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	propagateParams(plan.Root, args)
 	propagatePlanner(plan.Root, e.planner)
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(plan.Root, execCtx)
-	defer resetRowArena(execCtx)
 	// Attempt vectorized execution for eligible query plans.
 	plan.Root = tryVectorizePlan(plan.Root)
 	defer plan.Root.Close()
@@ -1057,8 +1084,8 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 			propagateParams(plan.Root, args)
 			propagatePlanner(plan.Root, e.planner)
 			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+			execCtx.RowArena = e.ensureArena()
 			propagateExecContext(plan.Root, execCtx)
-			defer resetRowArena(execCtx)
 			defer plan.Root.Close()
 			var out []DT.Row
 			for {
@@ -1101,8 +1128,8 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 	// REQ000586: thread DT.ExecContext through rows to eliminate
 	// the global currentSubqueryPlanner.
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(plan.Root, execCtx)
-	defer resetRowArena(execCtx)
 	defer plan.Root.Close()
 	var out []DT.Row
 	for {
@@ -1162,11 +1189,16 @@ func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 	// REQ001421: pre-size to engineBatchSize rows × 8 columns to
 	// eliminate per-query geometric grow cycles (6+ grows per query
 	// without Init for 50-row UPDATE/Scan workloads).
+	// REQ001419: if the ExecContext already carries a persistent
+	// RowArena (from the Engine), reuse it — just reset the offset
+	// instead of allocating a fresh slab and Init.
 	if ec.RowArena == nil {
 		ec.RowArena = &DT.RowArena{}
 		if arena, ok := ec.RowArena.(*DT.RowArena); ok {
 			arena.Init(OP.EngineBatchSize(), 8)
 		}
+	} else if arena, ok := ec.RowArena.(*DT.RowArena); ok && arena != nil {
+		arena.ResetOffset()
 	}
 	if f, ok := root.(*OP.Filter); ok {
 		f.SetExecCtx(ec)

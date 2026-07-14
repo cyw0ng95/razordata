@@ -20,6 +20,7 @@ import (
 	bf "github.com/cyw0ng95/razordata/internal/MEM/BF"
 	sp "github.com/cyw0ng95/razordata/internal/MEM/SP"
 	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	vl "github.com/cyw0ng95/razordata/internal/TXN/VL"
 	fl "github.com/cyw0ng95/razordata/internal/WAL/FL"
@@ -44,6 +45,12 @@ type Engine struct {
 	exe      *executor.Executor
 	catalog  *ls.Catalog
 	debugger interface{} // core.Debugger when debug tag active, nil otherwise
+
+	// rowArena is a persistent bump-pointer allocator reused across all
+	// queries in this Engine. Stored as a pointer so Executor ShallowCopy
+	// clones can share it via a double-pointer (REQ001419). Eliminates
+	// per-query 1 MB slab allocation that was 80% of SELECT WHERE memory.
+	rowArena *DT.RowArena
 
 	mu           sync.Mutex
 	closed       atomic.Bool
@@ -183,6 +190,7 @@ func (e *Engine) open(ctx context.Context) (err error) {
 	e.txn = vl.NewManager()
 	e.exeAdapter = &executorStoreAdapter{eng: e.eng}
 	e.exe = executor.NewExecutorWithEngine(e.exeAdapter)
+	e.exe.SetRowArena(&e.rowArena)
 	e.exe.WithMemoryBudget(e.opts.MaxMemoryPerQuery, e.opts.JoinBufferSize)
 	if e.opts.MaxResultRows > 0 {
 		e.exe.WithMaxResultRows(e.opts.MaxResultRows)
@@ -207,6 +215,7 @@ func (e *Engine) openInMemory() (err error) {
 	}()
 	e.sp = sp.NewWithOptions(sp.Options{EnableHugePages: e.opts.EnableHugePages})
 	e.exe = executor.NewExecutor()
+	e.exe.SetRowArena(&e.rowArena)
 	e.exe.WithMemoryBudget(e.opts.MaxMemoryPerQuery, e.opts.JoinBufferSize)
 	if e.opts.MaxResultRows > 0 {
 		e.exe.WithMaxResultRows(e.opts.MaxResultRows)

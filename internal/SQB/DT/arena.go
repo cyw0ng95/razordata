@@ -48,6 +48,13 @@ func (a *RowArena) Reset() {
 	a.slabCap = 0
 }
 
+// ResetOffset resets the bump pointer without returning the slab to the
+// cache. Used by REQ001419 (persistent Engine arena) to reuse the same
+// slab across queries without per-query allocation.
+func (a *RowArena) ResetOffset() {
+	a.offset = 0
+}
+
 func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) *Row {
 	if nCols <= 0 {
 		return &Row{
