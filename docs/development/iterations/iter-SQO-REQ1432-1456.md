@@ -1,6 +1,6 @@
 # Iteration — REQ001432 ~ REQ001456 (SQO Subsystem Extraction)
 
-> **Status**: partial — completed through REQ001446 (index selection), REQ001449 (constant folding), REQ001451 (wrapper cleanup, 24 deleted of 36), REQ001452 (ARCH.md), REQ001455 (GC crash bug filed). Remaining: REQ001448 (subquery decorrelation — blocked on ExprVisitor machinery).
+> **Status**: partial — completed through REQ001446 (index selection), REQ001448 (subquery decorrelation), REQ001449 (constant folding), REQ001451 (wrapper cleanup, 24 deleted), REQ001452 (ARCH.md), REQ001455 (GC crash bug filed). No remaining SQO REQs in TBD.
 > **Spec**: `docs/compose/specs/sqo-subsystem/`
 > (requirements.md, design.md, tasklist.md)
 > **Outcome**: 6 optimizer passes shipped (IndexSelection, ColumnPruning, FilterProjectFusion, PredicatePushdown, LimitPushdown, ConstantFolding). 24 EX wrappers deleted; 12 callback-currying wrappers remain EX-bound. ~7,500 lines migrated from SQB/EX → SQO/CO + SQO/PF. SQO subsystem live: OC, PF, CO clusters active (JO, RS scoped). No SQB imports in SQO/.
@@ -58,7 +58,7 @@ All importers compile at each phase; no commit breaks the build.
 | REQ001442 | 2 pure slot-resolver functions | SQB/EX → SQO/CO | Done. 6 resolver functions with OP.* refs stay in EX |
 | **Total** | **39 exported names moved** | — | **All to SQO/CO, none import SQB/**. |
 
-### Optimizer Passes (Step 5) — PARTIAL
+### Optimizer Passes (Step 5) — ALL SHIPPED
 | REQ | Pass | Destination | Status |
 |-----|------|-------------|--------|
 | REQ001443 | Column pruning | SQO/PF/column_pruning.go | **Done.** Top-down `ColPrunable` propagation, `FilterBySchema` per join side |
@@ -66,7 +66,7 @@ All importers compile at each phase; no commit breaks the build.
 | REQ001445 | Predicate pushdown | SQO/PF/predicate_pushdown.go | **Done.** Single-table predicate → scan |
 | REQ001446 | Index selection | SQO/PF/index_selection.go | **Done.** Walks tree, finds `PredicateCarrier + RelationSource`, matches predicate col against index leading col via `CO.WalkExpr`, calls `Factory.NewIndexScan()`. Wired in all 3 Planner constructors after ConstantFoldingPass. Requires `exCatalogReader` adapter (REQ001432 Phase 2). |
 | REQ001447 | Limit pushdown (TopN) | SQO/PF/limit_pushdown.go | **Done.** `Sort → Limit` → TopN mark |
-| REQ001448 | Subquery decorrelation | SQO/PF/subquery_decorrelation.go | **NOT STARTED.** Needs `ExprVisitor` (REQ001433 built but unwired) or expr-clone machinery in SQF/PS |
+| REQ001448 | Subquery decorrelation | SQO/PF/subquery_decorrelation.go | **Done.** Walks tree, finds Filter with ExistsExpr, conservatively checks correlation via PS.ExprVisitor (default BaseVisitor dispatch). Plans subquery via `OC.Context.SubPlanner` (EX adapter wraps `Planner.Plan`). Builds SemiJoin via `Factory.NewHashJoin(_, _, _, _, pl.SemiJoin)`. Correlated subqueries left as Filter (per-row eval). Wired in all 3 Planner constructors after ConstantFolding. |
 | REQ001449 | Constant folding | SQO/PF/constant_folding.go | **Done.** Walks operator tree, folds Filter predicates via `RE.RewriteExpr`. No SQB import (uses SQF/RE only). |
 | REQ001450 | Wire passes into planSelect | SQB/EX/planner_select.go | **Done.** `runSQOPasses()` called after `fuseFilterProject()`. `OC.Context.Factory + Catalog` populated. Registered in all 3 Planner constructors. |
 
@@ -89,7 +89,7 @@ All importers compile at each phase; no commit breaks the build.
 
 | Item | Spec | Actual |
 |------|------|--------|
-| REQ001433 (ExprVisitor) | New interface in `SQF/PS/visitor.go` | Needed by REQ001448; built but not used yet |
+| REQ001433 (ExprVisitor) | New interface in `SQF/PS/visitor.go` | Used by REQ001448 (SubqueryDecorrelation.corrScan); wired end-to-end |
 | REQ001439 (predicate.go move) | Full file delete | ~325 lines remain (wrappers + *Planner methods) |
 | REQ001440 (cost.go move) | Full file delete | ~500 lines remain (*Planner methods dominate) |
 | REQ001441 (join_order.go move) | Full file delete | ~620 lines remain (*Planner methods + callbacks dominate) |
