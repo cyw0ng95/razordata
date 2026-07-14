@@ -1,10 +1,26 @@
 package PS
 
-// Visitor defines the interface for AST traversal (REQ000583).
-// Each Visit method is called for the corresponding AST node type.
-// Return true to continue traversal into child nodes, false to stop.
+// Visitor is the combined AST traversal interface. It has one
+// method per concrete Expr and Stmt node type so a pass can
+// dispatch without type-switching. The default AcceptExpr /
+// AcceptStmt functions call the matching Visit method and
+// recurse into children, returning false on early exit.
+//
+// REQ001433: scaffold. No callers in this commit. Passes are
+// added in REQ001448 (SubqueryDecorrelation) and beyond.
+// Purely additive.
 type Visitor interface {
-	// Expr visitors
+	ExprVisitor
+	StmtVisitor
+}
+
+// ExprVisitor has one method per Expr node type. StmtVisitor
+// has one method per Stmt node type. A visitor that wants to
+// walk only expressions or only statements embeds BaseVisitor
+// (which provides all methods) and overrides the ones it cares
+// about. The combined Visitor interface lets one struct handle
+// both (see testVisitor in visitor_test.go).
+type ExprVisitor interface {
 	VisitNumberLiteral(*NumberLiteral) bool
 	VisitFloatLiteral(*FloatLiteral) bool
 	VisitStringLiteral(*StringLiteral) bool
@@ -29,8 +45,9 @@ type Visitor interface {
 	VisitSubqueryExpr(*SubqueryExpr) bool
 	VisitIntervalLiteral(*IntervalLiteral) bool
 	VisitRaiseFunc(*RaiseFunc) bool
+}
 
-	// Stmt visitors
+type StmtVisitor interface {
 	VisitCreateTable(*CreateTable) bool
 	VisitDropTable(*DropTable) bool
 	VisitInsert(*Insert) bool
@@ -67,206 +84,523 @@ type Visitor interface {
 	VisitDetachStmt(*DetachStmt) bool
 }
 
-// BaseVisitor provides default no-op implementations for all
-// Visitor methods. Embed this in concrete visitors to avoid
-// implementing every method (REQ000583).
+// BaseVisitor is the default no-op implementation. Embed it in a
+// visitor type to inherit the default `return true` for any
+// method you don't override.
+//
+// Idiomatic use:
+//
+//	type findColumns struct {
+//	    PS.BaseVisitor
+//	    cols []string
+//	}
+//
+//	func (v *findColumns) VisitIdent(i *PS.Ident) bool {
+//	    v.cols = append(v.cols, i.Name)
+//	    return true
+//	}
 type BaseVisitor struct{}
 
-func (v *BaseVisitor) VisitNumberLiteral(*NumberLiteral) bool               { return true }
-func (v *BaseVisitor) VisitFloatLiteral(*FloatLiteral) bool                 { return true }
-func (v *BaseVisitor) VisitStringLiteral(*StringLiteral) bool               { return true }
-func (v *BaseVisitor) VisitBoolLiteral(*BoolLiteral) bool                   { return true }
-func (v *BaseVisitor) VisitNullLiteral(*NullLiteral) bool                   { return true }
-func (v *BaseVisitor) VisitIdent(*Ident) bool                               { return true }
-func (v *BaseVisitor) VisitQualifiedName(*QualifiedName) bool               { return true }
-func (v *BaseVisitor) VisitAliasedExpr(*AliasedExpr) bool                   { return true }
-func (v *BaseVisitor) VisitCastExpr(*CastExpr) bool                         { return true }
-func (v *BaseVisitor) VisitParam(*Param) bool                               { return true }
-func (v *BaseVisitor) VisitBinaryExpr(*BinaryExpr) bool                     { return true }
-func (v *BaseVisitor) VisitUnaryExpr(*UnaryExpr) bool                       { return true }
-func (v *BaseVisitor) VisitFunctionCall(*FunctionCall) bool                 { return true }
-func (v *BaseVisitor) VisitAggregateFunc(*AggregateFunc) bool               { return true }
-func (v *BaseVisitor) VisitWindowFunc(*WindowFunc) bool                     { return true }
-func (v *BaseVisitor) VisitStarExpr(*StarExpr) bool                         { return true }
-func (v *BaseVisitor) VisitListExpr(*ListExpr) bool                         { return true }
-func (v *BaseVisitor) VisitBetweenExpr(*BetweenExpr) bool                   { return true }
-func (v *BaseVisitor) VisitCaseExpr(*CaseExpr) bool                         { return true }
-func (v *BaseVisitor) VisitInExpr(*InExpr) bool                             { return true }
-func (v *BaseVisitor) VisitExistsExpr(*ExistsExpr) bool                     { return true }
-func (v *BaseVisitor) VisitSubqueryExpr(*SubqueryExpr) bool                 { return true }
-func (v *BaseVisitor) VisitIntervalLiteral(*IntervalLiteral) bool           { return true }
-func (v *BaseVisitor) VisitRaiseFunc(*RaiseFunc) bool                       { return true }
-func (v *BaseVisitor) VisitCreateTable(*CreateTable) bool                   { return true }
-func (v *BaseVisitor) VisitDropTable(*DropTable) bool                       { return true }
-func (v *BaseVisitor) VisitInsert(*Insert) bool                             { return true }
-func (v *BaseVisitor) VisitUpdate(*Update) bool                             { return true }
-func (v *BaseVisitor) VisitDelete(*Delete) bool                             { return true }
-func (v *BaseVisitor) VisitSelect(*Select) bool                             { return true }
-func (v *BaseVisitor) VisitCompoundStmt(*CompoundStmt) bool                 { return true }
-func (v *BaseVisitor) VisitBeginTX(*BeginTX) bool                           { return true }
-func (v *BaseVisitor) VisitCommitTX(*CommitTX) bool                         { return true }
-func (v *BaseVisitor) VisitRollbackTX(*RollbackTX) bool                     { return true }
-func (v *BaseVisitor) VisitExplainStmt(*ExplainStmt) bool                   { return true }
-func (v *BaseVisitor) VisitCreateIndexStmt(*CreateIndexStmt) bool           { return true }
-func (v *BaseVisitor) VisitDropIndexStmt(*DropIndexStmt) bool               { return true }
-func (v *BaseVisitor) VisitCreateViewStmt(*CreateViewStmt) bool             { return true }
-func (v *BaseVisitor) VisitAlterTableStmt(*AlterTableStmt) bool             { return true }
-func (v *BaseVisitor) VisitPragmaStmt(*PragmaStmt) bool                     { return true }
-func (v *BaseVisitor) VisitAnalyzeStmt(*AnalyzeStmt) bool                   { return true }
-func (v *BaseVisitor) VisitVacuumStmt(*VacuumStmt) bool                     { return true }
-func (v *BaseVisitor) VisitTriggerStmt(*TriggerStmt) bool                   { return true }
-func (v *BaseVisitor) VisitSavepointStmt(*SavepointStmt) bool               { return true }
-func (v *BaseVisitor) VisitReleaseSavepointStmt(*ReleaseSavepointStmt) bool { return true }
-func (v *BaseVisitor) VisitRollbackToStmt(*RollbackToStmt) bool             { return true }
-func (v *BaseVisitor) VisitWithStmt(*WithStmt) bool                         { return true }
-func (v *BaseVisitor) VisitTruncateStmt(*TruncateStmt) bool                 { return true }
-func (v *BaseVisitor) VisitReindexStmt(*ReindexStmt) bool                   { return true }
-func (v *BaseVisitor) VisitDropViewStmt(*DropViewStmt) bool                 { return true }
-func (v *BaseVisitor) VisitDropTriggerStmt(*DropTriggerStmt) bool           { return true }
-func (v *BaseVisitor) VisitCreateMatViewStmt(*CreateMatViewStmt) bool       { return true }
-func (v *BaseVisitor) VisitDropMatViewStmt(*DropMatViewStmt) bool           { return true }
-func (v *BaseVisitor) VisitRefreshMatViewStmt(*RefreshMatViewStmt) bool     { return true }
-func (v *BaseVisitor) VisitSetTransactionStmt(*SetTransactionStmt) bool     { return true }
-func (v *BaseVisitor) VisitValuesStmt(*ValuesStmt) bool                     { return true }
-func (v *BaseVisitor) VisitAttachStmt(*AttachStmt) bool                     { return true }
-func (v *BaseVisitor) VisitDetachStmt(*DetachStmt) bool                     { return true }
+func (BaseVisitor) VisitNumberLiteral(*NumberLiteral) bool   { return true }
+func (BaseVisitor) VisitFloatLiteral(*FloatLiteral) bool     { return true }
+func (BaseVisitor) VisitStringLiteral(*StringLiteral) bool   { return true }
+func (BaseVisitor) VisitBoolLiteral(*BoolLiteral) bool      { return true }
+func (BaseVisitor) VisitNullLiteral(*NullLiteral) bool      { return true }
+func (BaseVisitor) VisitIdent(*Ident) bool                  { return true }
+func (BaseVisitor) VisitQualifiedName(*QualifiedName) bool  { return true }
+func (BaseVisitor) VisitAliasedExpr(*AliasedExpr) bool      { return true }
+func (BaseVisitor) VisitCastExpr(*CastExpr) bool            { return true }
+func (BaseVisitor) VisitParam(*Param) bool                  { return true }
+func (BaseVisitor) VisitBinaryExpr(*BinaryExpr) bool        { return true }
+func (BaseVisitor) VisitUnaryExpr(*UnaryExpr) bool          { return true }
+func (BaseVisitor) VisitFunctionCall(*FunctionCall) bool    { return true }
+func (BaseVisitor) VisitAggregateFunc(*AggregateFunc) bool  { return true }
+func (BaseVisitor) VisitWindowFunc(*WindowFunc) bool        { return true }
+func (BaseVisitor) VisitStarExpr(*StarExpr) bool            { return true }
+func (BaseVisitor) VisitListExpr(*ListExpr) bool            { return true }
+func (BaseVisitor) VisitBetweenExpr(*BetweenExpr) bool      { return true }
+func (BaseVisitor) VisitCaseExpr(*CaseExpr) bool            { return true }
+func (BaseVisitor) VisitInExpr(*InExpr) bool                { return true }
+func (BaseVisitor) VisitExistsExpr(*ExistsExpr) bool        { return true }
+func (BaseVisitor) VisitSubqueryExpr(*SubqueryExpr) bool    { return true }
+func (BaseVisitor) VisitIntervalLiteral(*IntervalLiteral) bool {
+	return true
+}
+func (BaseVisitor) VisitRaiseFunc(*RaiseFunc) bool { return true }
 
-// AcceptExpr dispatches to the appropriate Visitor method based on
-// the concrete type of the expression (REQ000583).
-func AcceptExpr(e Expr, v Visitor) bool {
+func (BaseVisitor) VisitCreateTable(*CreateTable) bool                { return true }
+func (BaseVisitor) VisitDropTable(*DropTable) bool                    { return true }
+func (BaseVisitor) VisitInsert(*Insert) bool                          { return true }
+func (BaseVisitor) VisitUpdate(*Update) bool                          { return true }
+func (BaseVisitor) VisitDelete(*Delete) bool                          { return true }
+func (BaseVisitor) VisitSelect(*Select) bool                          { return true }
+func (BaseVisitor) VisitCompoundStmt(*CompoundStmt) bool              { return true }
+func (BaseVisitor) VisitBeginTX(*BeginTX) bool                        { return true }
+func (BaseVisitor) VisitCommitTX(*CommitTX) bool                      { return true }
+func (BaseVisitor) VisitRollbackTX(*RollbackTX) bool                  { return true }
+func (BaseVisitor) VisitExplainStmt(*ExplainStmt) bool                { return true }
+func (BaseVisitor) VisitCreateIndexStmt(*CreateIndexStmt) bool        { return true }
+func (BaseVisitor) VisitDropIndexStmt(*DropIndexStmt) bool            { return true }
+func (BaseVisitor) VisitCreateViewStmt(*CreateViewStmt) bool          { return true }
+func (BaseVisitor) VisitAlterTableStmt(*AlterTableStmt) bool          { return true }
+func (BaseVisitor) VisitPragmaStmt(*PragmaStmt) bool                  { return true }
+func (BaseVisitor) VisitAnalyzeStmt(*AnalyzeStmt) bool                { return true }
+func (BaseVisitor) VisitVacuumStmt(*VacuumStmt) bool                  { return true }
+func (BaseVisitor) VisitTriggerStmt(*TriggerStmt) bool                { return true }
+func (BaseVisitor) VisitSavepointStmt(*SavepointStmt) bool            { return true }
+func (BaseVisitor) VisitReleaseSavepointStmt(*ReleaseSavepointStmt) bool {
+	return true
+}
+func (BaseVisitor) VisitRollbackToStmt(*RollbackToStmt) bool     { return true }
+func (BaseVisitor) VisitWithStmt(*WithStmt) bool                 { return true }
+func (BaseVisitor) VisitTruncateStmt(*TruncateStmt) bool         { return true }
+func (BaseVisitor) VisitReindexStmt(*ReindexStmt) bool           { return true }
+func (BaseVisitor) VisitDropViewStmt(*DropViewStmt) bool         { return true }
+func (BaseVisitor) VisitDropTriggerStmt(*DropTriggerStmt) bool   { return true }
+func (BaseVisitor) VisitCreateMatViewStmt(*CreateMatViewStmt) bool {
+	return true
+}
+func (BaseVisitor) VisitDropMatViewStmt(*DropMatViewStmt) bool { return true }
+func (BaseVisitor) VisitRefreshMatViewStmt(*RefreshMatViewStmt) bool {
+	return true
+}
+func (BaseVisitor) VisitSetTransactionStmt(*SetTransactionStmt) bool {
+	return true
+}
+func (BaseVisitor) VisitValuesStmt(*ValuesStmt) bool { return true }
+func (BaseVisitor) VisitAttachStmt(*AttachStmt) bool { return true }
+func (BaseVisitor) VisitDetachStmt(*DetachStmt) bool { return true }
+
+// Compile-time checks: BaseVisitor satisfies all three interfaces.
+var (
+	_ ExprVisitor = BaseVisitor{}
+	_ StmtVisitor = BaseVisitor{}
+	_ Visitor     = BaseVisitor{}
+)
+
+// AcceptExpr visits the expression and recurses into children.
+// Returns false if the visitor returns false at any point (early
+// exit), true otherwise. AcceptExpr(nil, v) returns true (no-op).
+func AcceptExpr(e Expr, v ExprVisitor) bool {
 	if e == nil {
 		return true
 	}
 	switch n := e.(type) {
 	case *NumberLiteral:
-		return v.VisitNumberLiteral(n)
+		if !v.VisitNumberLiteral(n) {
+			return false
+		}
 	case *FloatLiteral:
-		return v.VisitFloatLiteral(n)
+		if !v.VisitFloatLiteral(n) {
+			return false
+		}
 	case *StringLiteral:
-		return v.VisitStringLiteral(n)
+		if !v.VisitStringLiteral(n) {
+			return false
+		}
 	case *BoolLiteral:
-		return v.VisitBoolLiteral(n)
+		if !v.VisitBoolLiteral(n) {
+			return false
+		}
 	case *NullLiteral:
-		return v.VisitNullLiteral(n)
+		if !v.VisitNullLiteral(n) {
+			return false
+		}
 	case *Ident:
-		return v.VisitIdent(n)
+		if !v.VisitIdent(n) {
+			return false
+		}
 	case *QualifiedName:
-		return v.VisitQualifiedName(n)
+		if !v.VisitQualifiedName(n) {
+			return false
+		}
 	case *AliasedExpr:
-		return v.VisitAliasedExpr(n)
+		if !v.VisitAliasedExpr(n) {
+			return false
+		}
+		return AcceptExpr(n.Expr, v)
 	case *CastExpr:
-		return v.VisitCastExpr(n)
+		if !v.VisitCastExpr(n) {
+			return false
+		}
+		return AcceptExpr(n.Expr, v)
 	case *Param:
-		return v.VisitParam(n)
+		if !v.VisitParam(n) {
+			return false
+		}
 	case *BinaryExpr:
-		return v.VisitBinaryExpr(n)
+		if !v.VisitBinaryExpr(n) {
+			return false
+		}
+		if !AcceptExpr(n.Left, v) {
+			return false
+		}
+		if !AcceptExpr(n.Right, v) {
+			return false
+		}
+		return AcceptExpr(n.Escape, v)
 	case *UnaryExpr:
-		return v.VisitUnaryExpr(n)
+		if !v.VisitUnaryExpr(n) {
+			return false
+		}
+		return AcceptExpr(n.Operand, v)
 	case *FunctionCall:
-		return v.VisitFunctionCall(n)
+		if !v.VisitFunctionCall(n) {
+			return false
+		}
+		for _, a := range n.Args {
+			if !AcceptExpr(a, v) {
+				return false
+			}
+		}
 	case *AggregateFunc:
-		return v.VisitAggregateFunc(n)
+		if !v.VisitAggregateFunc(n) {
+			return false
+		}
+		if !AcceptExpr(n.Arg, v) {
+			return false
+		}
+		if !AcceptExpr(n.Separator, v) {
+			return false
+		}
+		return AcceptExpr(n.Filter, v)
 	case *WindowFunc:
-		return v.VisitWindowFunc(n)
+		if !v.VisitWindowFunc(n) {
+			return false
+		}
+		for _, a := range n.Args {
+			if !AcceptExpr(a, v) {
+				return false
+			}
+		}
 	case *StarExpr:
-		return v.VisitStarExpr(n)
+		if !v.VisitStarExpr(n) {
+			return false
+		}
 	case *ListExpr:
-		return v.VisitListExpr(n)
+		if !v.VisitListExpr(n) {
+			return false
+		}
+		for _, item := range n.Items {
+			if !AcceptExpr(item, v) {
+				return false
+			}
+		}
 	case *BetweenExpr:
-		return v.VisitBetweenExpr(n)
+		if !v.VisitBetweenExpr(n) {
+			return false
+		}
+		if !AcceptExpr(n.Expr, v) {
+			return false
+		}
+		if !AcceptExpr(n.Low, v) {
+			return false
+		}
+		return AcceptExpr(n.High, v)
 	case *CaseExpr:
-		return v.VisitCaseExpr(n)
+		if !v.VisitCaseExpr(n) {
+			return false
+		}
+		if !AcceptExpr(n.Expr, v) {
+			return false
+		}
+		for _, w := range n.WhenList {
+			if !AcceptExpr(w.Cond, v) {
+				return false
+			}
+			if !AcceptExpr(w.Then, v) {
+				return false
+			}
+		}
+		return AcceptExpr(n.Else, v)
 	case *InExpr:
-		return v.VisitInExpr(n)
+		if !v.VisitInExpr(n) {
+			return false
+		}
+		if !AcceptExpr(n.Expr, v) {
+			return false
+		}
+		for _, item := range n.List {
+			if !AcceptExpr(item, v) {
+				return false
+			}
+		}
 	case *ExistsExpr:
-		return v.VisitExistsExpr(n)
+		if !v.VisitExistsExpr(n) {
+			return false
+		}
 	case *SubqueryExpr:
-		return v.VisitSubqueryExpr(n)
+		if !v.VisitSubqueryExpr(n) {
+			return false
+		}
 	case *IntervalLiteral:
-		return v.VisitIntervalLiteral(n)
+		if !v.VisitIntervalLiteral(n) {
+			return false
+		}
 	case *RaiseFunc:
-		return v.VisitRaiseFunc(n)
-	default:
-		return true
+		if !v.VisitRaiseFunc(n) {
+			return false
+		}
+		return AcceptExpr(n.Message, v)
 	}
+	return true
 }
 
-// AcceptStmt dispatches to the appropriate Visitor method based on
-// the concrete type of the statement (REQ000583).
+// AcceptStmt visits the statement and recurses into child
+// expressions. Returns false on early exit. AcceptStmt(nil, v)
+// returns true (no-op). The visitor argument must implement
+// Visitor (the combined Expr+Stmt interface) so the function
+// can recurse into expressions from inside a statement body.
 func AcceptStmt(s Stmt, v Visitor) bool {
 	if s == nil {
 		return true
 	}
 	switch n := s.(type) {
 	case *CreateTable:
-		return v.VisitCreateTable(n)
+		if !v.VisitCreateTable(n) {
+			return false
+		}
 	case *DropTable:
-		return v.VisitDropTable(n)
+		if !v.VisitDropTable(n) {
+			return false
+		}
 	case *Insert:
-		return v.VisitInsert(n)
+		if !v.VisitInsert(n) {
+			return false
+		}
+		for _, row := range n.Values {
+			for _, cell := range row {
+				if !AcceptExpr(cell, v) {
+					return false
+				}
+			}
+		}
+		for _, r := range n.Returning {
+			if !AcceptExpr(r, v) {
+				return false
+			}
+		}
+		if n.OnConflict != nil {
+			for _, sc := range n.OnConflict.SetClauses {
+				if !AcceptExpr(sc.Val, v) {
+					return false
+				}
+			}
+			if !AcceptExpr(n.OnConflict.TargetWhere, v) {
+				return false
+			}
+			if !AcceptExpr(n.OnConflict.UpdateWhere, v) {
+				return false
+			}
+		}
+		return AcceptStmt(n.Select, v)
 	case *Update:
-		return v.VisitUpdate(n)
+		if !v.VisitUpdate(n) {
+			return false
+		}
+		if !AcceptExpr(n.Where, v) {
+			return false
+		}
+		for _, a := range n.Set {
+			if !AcceptExpr(a.Val, v) {
+				return false
+			}
+		}
+		for _, r := range n.Returning {
+			if !AcceptExpr(r, v) {
+				return false
+			}
+		}
+		for _, ob := range n.OrderBy {
+			if !AcceptExpr(ob.Expr, v) {
+				return false
+			}
+		}
+		return AcceptExpr(n.Limit, v)
 	case *Delete:
-		return v.VisitDelete(n)
-	case *Select:
-		return v.VisitSelect(n)
-	case *CompoundStmt:
-		return v.VisitCompoundStmt(n)
-	case *BeginTX:
-		return v.VisitBeginTX(n)
-	case *CommitTX:
-		return v.VisitCommitTX(n)
-	case *RollbackTX:
-		return v.VisitRollbackTX(n)
-	case *ExplainStmt:
-		return v.VisitExplainStmt(n)
-	case *CreateIndexStmt:
-		return v.VisitCreateIndexStmt(n)
-	case *DropIndexStmt:
-		return v.VisitDropIndexStmt(n)
-	case *CreateViewStmt:
-		return v.VisitCreateViewStmt(n)
-	case *AlterTableStmt:
-		return v.VisitAlterTableStmt(n)
-	case *PragmaStmt:
-		return v.VisitPragmaStmt(n)
-	case *AnalyzeStmt:
-		return v.VisitAnalyzeStmt(n)
-	case *VacuumStmt:
-		return v.VisitVacuumStmt(n)
-	case *TriggerStmt:
-		return v.VisitTriggerStmt(n)
-	case *SavepointStmt:
-		return v.VisitSavepointStmt(n)
-	case *ReleaseSavepointStmt:
-		return v.VisitReleaseSavepointStmt(n)
-	case *RollbackToStmt:
-		return v.VisitRollbackToStmt(n)
-	case *WithStmt:
-		return v.VisitWithStmt(n)
-	case *TruncateStmt:
-		return v.VisitTruncateStmt(n)
-	case *ReindexStmt:
-		return v.VisitReindexStmt(n)
-	case *DropViewStmt:
-		return v.VisitDropViewStmt(n)
-	case *DropTriggerStmt:
-		return v.VisitDropTriggerStmt(n)
-	case *CreateMatViewStmt:
-		return v.VisitCreateMatViewStmt(n)
-	case *DropMatViewStmt:
-		return v.VisitDropMatViewStmt(n)
-	case *RefreshMatViewStmt:
-		return v.VisitRefreshMatViewStmt(n)
-	case *SetTransactionStmt:
-		return v.VisitSetTransactionStmt(n)
-	case *ValuesStmt:
-		return v.VisitValuesStmt(n)
-	case *AttachStmt:
-		return v.VisitAttachStmt(n)
-	case *DetachStmt:
-		return v.VisitDetachStmt(n)
-	default:
+		if !v.VisitDelete(n) {
+			return false
+		}
+		if !AcceptExpr(n.Where, v) {
+			return false
+		}
+		for _, r := range n.Returning {
+			if !AcceptExpr(r, v) {
+				return false
+			}
+		}
 		return true
+	case *Select:
+		if !v.VisitSelect(n) {
+			return false
+		}
+		for _, c := range n.Cols {
+			if !AcceptExpr(c, v) {
+				return false
+			}
+		}
+		if !AcceptExpr(n.Where, v) {
+			return false
+		}
+		for _, ob := range n.OrderBy {
+			if !AcceptExpr(ob.Expr, v) {
+				return false
+			}
+		}
+		for _, gb := range n.GroupBy {
+			if !AcceptExpr(gb, v) {
+				return false
+			}
+		}
+		if n.Having != nil {
+			if !AcceptExpr(n.Having, v) {
+				return false
+			}
+		}
+		return true
+	case *CompoundStmt:
+		if !v.VisitCompoundStmt(n) {
+			return false
+		}
+		if !AcceptStmt(n.Left, v) {
+			return false
+		}
+		return AcceptStmt(n.Right, v)
+	case *BeginTX:
+		if !v.VisitBeginTX(n) {
+			return false
+		}
+	case *CommitTX:
+		if !v.VisitCommitTX(n) {
+			return false
+		}
+	case *RollbackTX:
+		if !v.VisitRollbackTX(n) {
+			return false
+		}
+	case *ExplainStmt:
+		if !v.VisitExplainStmt(n) {
+			return false
+		}
+		return AcceptStmt(n.Inner, v)
+	case *CreateIndexStmt:
+		if !v.VisitCreateIndexStmt(n) {
+			return false
+		}
+		return AcceptExpr(n.Where, v)
+	case *DropIndexStmt:
+		if !v.VisitDropIndexStmt(n) {
+			return false
+		}
+	case *CreateViewStmt:
+		if !v.VisitCreateViewStmt(n) {
+			return false
+		}
+		return AcceptStmt(n.As, v)
+	case *AlterTableStmt:
+		if !v.VisitAlterTableStmt(n) {
+			return false
+		}
+		return AcceptExpr(n.NewExpr, v)
+	case *PragmaStmt:
+		if !v.VisitPragmaStmt(n) {
+			return false
+		}
+	case *AnalyzeStmt:
+		if !v.VisitAnalyzeStmt(n) {
+			return false
+		}
+	case *VacuumStmt:
+		if !v.VisitVacuumStmt(n) {
+			return false
+		}
+	case *TriggerStmt:
+		if !v.VisitTriggerStmt(n) {
+			return false
+		}
+		if !AcceptExpr(n.When, v) {
+			return false
+		}
+		for _, a := range n.Body {
+			if !AcceptStmt(a, v) {
+				return false
+			}
+		}
+	case *SavepointStmt:
+		if !v.VisitSavepointStmt(n) {
+			return false
+		}
+	case *ReleaseSavepointStmt:
+		if !v.VisitReleaseSavepointStmt(n) {
+			return false
+		}
+	case *RollbackToStmt:
+		if !v.VisitRollbackToStmt(n) {
+			return false
+		}
+	case *WithStmt:
+		if !v.VisitWithStmt(n) {
+			return false
+		}
+		for _, cte := range n.CTEs {
+			if !AcceptStmt(cte.Query, v) {
+				return false
+			}
+		}
+		return AcceptStmt(n.Inner, v)
+	case *TruncateStmt:
+		if !v.VisitTruncateStmt(n) {
+			return false
+		}
+	case *ReindexStmt:
+		if !v.VisitReindexStmt(n) {
+			return false
+		}
+	case *DropViewStmt:
+		if !v.VisitDropViewStmt(n) {
+			return false
+		}
+	case *DropTriggerStmt:
+		if !v.VisitDropTriggerStmt(n) {
+			return false
+		}
+	case *CreateMatViewStmt:
+		if !v.VisitCreateMatViewStmt(n) {
+			return false
+		}
+		return AcceptStmt(n.As, v)
+	case *DropMatViewStmt:
+		if !v.VisitDropMatViewStmt(n) {
+			return false
+		}
+	case *RefreshMatViewStmt:
+		if !v.VisitRefreshMatViewStmt(n) {
+			return false
+		}
+	case *SetTransactionStmt:
+		if !v.VisitSetTransactionStmt(n) {
+			return false
+		}
+	case *ValuesStmt:
+		if !v.VisitValuesStmt(n) {
+			return false
+		}
+		for _, row := range n.Rows {
+			for _, cell := range row {
+				if !AcceptExpr(cell, v) {
+					return false
+				}
+			}
+		}
+	case *AttachStmt:
+		if !v.VisitAttachStmt(n) {
+			return false
+		}
+		return AcceptExpr(n.Expr, v)
+	case *DetachStmt:
+		if !v.VisitDetachStmt(n) {
+			return false
+		}
 	}
+	return true
 }
