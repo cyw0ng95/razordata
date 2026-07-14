@@ -1,10 +1,9 @@
 package EX
 
 import (
-	"strings"
-
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -166,82 +165,9 @@ func secondChild(op DT.Operator) DT.Operator {
 // expressions. For Ident and QualifiedName it uses the name directly;
 // for other expression types it falls back to a placeholder.
 func projectColNames(cols []PS.Expr) []string {
-	names := make([]string, 0, len(cols))
-	for _, c := range cols {
-		switch e := c.(type) {
-		case *PS.Ident:
-			names = append(names, e.Name)
-		case *PS.QualifiedName:
-			names = append(names, e.Table+"."+e.Name)
-		case *PS.AliasedExpr:
-			names = append(names, e.Alias)
-		default:
-			names = append(names, "")
-		}
-	}
-	return names
+	return CO.ProjectColNames(cols)
 }
 
-// resolveExprSlots walks an expression tree and sets SlotIdx on each
-// Ident and QualifiedName node by looking up the column name in schema.
 func resolveExprSlots(expr PS.Expr, schema []string) {
-	if expr == nil || len(schema) == 0 {
-		return
-	}
-	switch e := expr.(type) {
-	case *PS.Ident:
-		for i, name := range schema {
-			if strings.EqualFold(name, e.Name) {
-				e.SlotIdx = i
-				return
-			}
-		}
-	case *PS.QualifiedName:
-		// Only resolve when the FULL qualified name matches the schema.
-		// Bare-name fallback is NOT used here because it would set SlotIdx
-		// for correlated subquery references (e.g. QN{t1.b} in an inner
-		// scan whose schema happens to contain "b" at a different index).
-		// The runtime Lookup path handles prefix and bare-name matching.
-		full := e.Table + "." + e.Name
-		for i, name := range schema {
-			if strings.EqualFold(name, full) {
-				e.SlotIdx = i
-				return
-			}
-		}
-	case *PS.BinaryExpr:
-		resolveExprSlots(e.Left, schema)
-		resolveExprSlots(e.Right, schema)
-	case *PS.UnaryExpr:
-		resolveExprSlots(e.Operand, schema)
-	case *PS.CastExpr:
-		resolveExprSlots(e.Expr, schema)
-	case *PS.CaseExpr:
-		resolveExprSlots(e.Expr, schema)
-		for _, w := range e.WhenList {
-			resolveExprSlots(w.Cond, schema)
-			resolveExprSlots(w.Then, schema)
-		}
-		resolveExprSlots(e.Else, schema)
-	case *PS.AggregateFunc:
-		resolveExprSlots(e.Arg, schema)
-		resolveExprSlots(e.Separator, schema)
-	case *PS.FunctionCall:
-		for _, a := range e.Args {
-			resolveExprSlots(a, schema)
-		}
-	case *PS.InExpr:
-		resolveExprSlots(e.Expr, schema)
-		for _, el := range e.List {
-			resolveExprSlots(el, schema)
-		}
-	case *PS.BetweenExpr:
-		resolveExprSlots(e.Expr, schema)
-		resolveExprSlots(e.Low, schema)
-		resolveExprSlots(e.High, schema)
-	case *PS.SubqueryExpr:
-		// Subqueries reference outer rows; skip resolution.
-	case *PS.ExistsExpr:
-		// Same — skip.
-	}
+	CO.ResolveExprSlots(expr, schema)
 }

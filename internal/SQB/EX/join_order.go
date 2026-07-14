@@ -1,10 +1,7 @@
 package EX
 
 import (
-	"slices"
-	"strings"
-
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -537,18 +534,7 @@ type joinTableInfo struct {
 // (joined-set, candidate) pair. REQ001096: sorts the set entries
 // so different iteration orders produce the same key.
 func n3PredCacheKey(joined map[string]bool, candidate string) string {
-	keys := make([]string, 0, len(joined)+1)
-	for k := range joined {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	var b strings.Builder
-	for _, k := range keys {
-		b.WriteString(k)
-		b.WriteByte(0)
-	}
-	b.WriteString(candidate)
-	return b.String()
+	return CO.N3PredCacheKey(joined, candidate)
 }
 
 // findPredicatesForPair finds the subset of WHERE predicates that
@@ -617,179 +603,11 @@ func (p *Planner) joinResultRows(leftRows, rightRows float64, predicates []PS.Ex
 // isConnectedGraph checks if all tables in joinOrder form a single
 // connected component via equi-join predicates. REQ001192.
 func isConnectedGraph(joinOrder []string, crossTablePredicates []PS.Expr) bool {
-	if len(joinOrder) <= 1 {
-		return true
-	}
-	// Build adjacency from equi-join predicates.
-	adj := map[string]map[string]bool{}
-	for _, pred := range crossTablePredicates {
-		bin, ok := pred.(*PS.BinaryExpr)
-		if !ok || bin.Op != LX.T_EQ {
-			continue
-		}
-		lTable, _ := extractTableColumn(bin.Left)
-		rTable, _ := extractTableColumn(bin.Right)
-		if lTable == "" || rTable == "" || lTable == rTable {
-			continue
-		}
-		if adj[lTable] == nil {
-			adj[lTable] = map[string]bool{}
-		}
-		adj[lTable][rTable] = true
-		if adj[rTable] == nil {
-			adj[rTable] = map[string]bool{}
-		}
-		adj[rTable][lTable] = true
-	}
-	// BFS from first table to check connectivity.
-	visited := map[string]bool{}
-	queue := []string{joinOrder[0]}
-	visited[joinOrder[0]] = true
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		for nb := range adj[cur] {
-			if !visited[nb] {
-				visited[nb] = true
-				queue = append(queue, nb)
-			}
-		}
-	}
-	// All tables in joinOrder must be reachable.
-	for _, tbl := range joinOrder {
-		if !visited[tbl] {
-			return false
-		}
-	}
-	return true
+	return CO.IsConnectedGraph(joinOrder, crossTablePredicates, extractTableColumn)
 }
 
-// groupBushyJoins detects independent equi-join pairs in the join
-// order and groups them for bushy plan execution. A pair of tables
-// is "independent" when their equi-join keys share no columns.
-// REQ000821.
 func groupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates []PS.Expr) [][]string {
-	k := len(joinOrder)
-	if k <= 3 {
-		// 2-3 tables: left-deep is fine, no bushy benefit.
-		return [][]string{joinOrder}
-	}
-
-	// REQ001192: detect connected equi-join graphs. If all tables
-	// form a single connected component via equi-join predicates,
-	// bushy grouping may split the chain incorrectly — the merge
-	// phase can't find cross-group equi-join keys. Return a single
-	// left-deep group for connected graphs.
-	if isConnectedGraph(joinOrder, crossTablePredicates) {
-		return [][]string{joinOrder}
-	}
-
-	// Extract equi-join column sets for each consecutive pair in the order.
-
-	// Extract equi-join column sets for each consecutive pair in the order.
-	type pairKey struct {
-		left  string
-		right string
-	}
-	pairKeys := map[pairKey][]string{}
-	// REQ001113: track which tables each table is equi-joined with, so
-	// we can detect transitive dependencies (e.g. a3=b9 AND a1=d9 →
-	// t3 and t1 both equi-join to t9, so they must be in the same group).
-	equiJoinTables := map[string]map[string]bool{}
-	for _, pred := range crossTablePredicates {
-		bin, ok := pred.(*PS.BinaryExpr)
-		if !ok || bin.Op != LX.T_EQ {
-			continue
-		}
-		lTable, lCol := extractTableColumn(bin.Left)
-		rTable, rCol := extractTableColumn(bin.Right)
-		if lTable == "" || rTable == "" {
-			continue
-		}
-		pk := pairKey{lTable, rTable}
-		pairKeys[pk] = append(pairKeys[pk], lCol+"="+rCol)
-		if equiJoinTables[lTable] == nil {
-			equiJoinTables[lTable] = map[string]bool{}
-		}
-		equiJoinTables[lTable][rTable] = true
-		if equiJoinTables[rTable] == nil {
-			equiJoinTables[rTable] = map[string]bool{}
-		}
-		equiJoinTables[rTable][lTable] = true
-	}
-
-	// Check for independent pairs: (A,B) and (C,D) where the equi-join
-	// columns of (A,B) don't overlap with those of (C,D).
-	// For simplicity, we look for the pattern where baseTable is joined
-	// to two different tables on different columns — classic star join.
-	groups := [][]string{{baseTable}}
-	for i := 1; i < k; i++ {
-		tbl := joinOrder[i]
-		// Check if this table's equi-join key with any already-grouped
-		// table is independent. If yes, start a new bushy group.
-		independent := true
-		targetGroup := len(groups) - 1 // default: last group
-		for gi, existing := range groups {
-			for _, et := range existing {
-				pk := pairKey{et, tbl}
-				if _, found := pairKeys[pk]; found {
-					independent = false
-					targetGroup = gi
-					break
-				}
-				pk = pairKey{tbl, et}
-				if _, found := pairKeys[pk]; found {
-					independent = false
-					targetGroup = gi
-					break
-				}
-			}
-			if !independent {
-				break
-			}
-		}
-		// REQ001113: also check transitive dependency via shared
-		// equi-join table. If the candidate table equi-joins to any
-		// table that is also equi-joined by a table in an existing
-		// group, they are transitively dependent. E.g. a3=b9 AND
-		// a1=d9: t3 equi-joins to t9, t1 equi-joins to t9, so
-		// t3 and t1 must be in the same group.
-		if independent {
-			tblJoins := equiJoinTables[tbl]
-			if len(tblJoins) > 0 {
-				for gi, existing := range groups {
-					for _, et := range existing {
-						etJoins := equiJoinTables[et]
-						// Check if the candidate and existing table share
-						// a common equi-join table (transitive dependency).
-						for shared := range tblJoins {
-							if etJoins[shared] {
-								independent = false
-								targetGroup = gi
-								break
-							}
-						}
-						if !independent {
-							break
-						}
-					}
-					if !independent {
-						break
-					}
-				}
-			}
-		}
-		if independent && len(groups[len(groups)-1]) >= 2 {
-			groups = append(groups, []string{tbl})
-		} else {
-			groups[targetGroup] = append(groups[targetGroup], tbl)
-		}
-	}
-
-	if len(groups) == 1 {
-		return [][]string{joinOrder}
-	}
-	return groups
+	return CO.GroupBushyJoins(baseTable, joinOrder, crossTablePredicates, extractTableColumn)
 }
 
 // extractTableColumn extracts (table, column) from an expression
@@ -798,16 +616,5 @@ func groupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates 
 // naming convention (d6 => t6.d) so groupBushyJoins can detect
 // cross-table equi-join dependencies. REQ001113.
 func extractTableColumn(e PS.Expr) (string, string) {
-	switch v := e.(type) {
-	case *PS.QualifiedName:
-		return v.Table, v.Name
-	case *PS.Ident:
-		// Resolve bare column to its owning table via SLT naming
-		// convention (e.g. "d6" => table "t6", column "d").
-		if tbl := findTableInSchemas(v.Name); tbl != "" {
-			return tbl, v.Name
-		}
-		return "", v.Name
-	}
-	return "", ""
+	return CO.ExtractTableColumn(e, findTableInSchemas)
 }
