@@ -590,6 +590,17 @@ func (i *Insert) Close() error {
 	return nil
 }
 
+// Reset reinitializes the Insert operator for reuse without Close.
+// Clears execution state (done, rows, resultRows) so the same
+// operator can be executed again with different parameters.
+// REQ001425: operator tree cache support.
+func (i *Insert) Reset() {
+	i.done = false
+	i.rows = 0
+	i.resultRows = nil
+	i.resultPos = 0
+}
+
 func (i *Insert) RowsAffected() int64 {
 	return i.rows
 }
