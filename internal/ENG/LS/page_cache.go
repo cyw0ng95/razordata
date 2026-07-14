@@ -66,16 +66,20 @@ func NewPageCache(capacityBytes int) *PageCache {
 		s := &pageCacheShard{
 			cap: capPerShard,
 		}
-		s.slots = make([]*pageEntry, s.cap)
-		s.index = make(map[pageKey]*pageEntry, s.cap)
+		// REQ001453: lazy page entry allocation — start with empty
+		// slots slice and allocate pageEntry on demand in evict().
+		// The cap ensures we never exceed the configured maximum.
+		// Map starts with a small hint too; with lazy allocation
+		// the page cache is rarely filled to capacity for short-lived
+		// engines (SLT, unit tests, embedded use cases).
+		s.slots = make([]*pageEntry, 0, s.cap)
+		mapHint := min(s.cap, 64)
+		s.index = make(map[pageKey]*pageEntry, mapHint)
 		s.bufPool = sync.Pool{
 			New: func() any {
 				buf := make([]byte, PageSize)
 				return &buf
 			},
-		}
-		for j := range s.slots {
-			s.slots[j] = &pageEntry{}
 		}
 		shards[i] = s
 	}
@@ -141,11 +145,23 @@ func (c *PageCache) Put(fileID uint64, offset uint32, data []byte) {
 }
 
 func (s *pageCacheShard) evict() *pageEntry {
-	for i := range s.cap {
+	// REQ001453: lazy page entry allocation — allocate on demand
+	// instead of pre-allocating all slots upfront. This reduces
+	// per-engine creation from 40 MB to <1 MB for short-lived
+	// engines (SLT, unit tests, embedded use cases).
+	for i := range s.slots {
 		if !s.slots[i].valid.Load() {
 			return s.slots[i]
 		}
 	}
+	// No invalid slot found. If we haven't reached capacity yet,
+	// allocate a new slot.
+	if len(s.slots) < cap(s.slots) {
+		slot := &pageEntry{}
+		s.slots = append(s.slots, slot)
+		return slot
+	}
+	// At capacity — clock-sweep eviction.
 	for {
 		slot := s.slots[s.hand]
 		s.hand = (s.hand + 1) % s.cap
