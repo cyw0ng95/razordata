@@ -9,6 +9,7 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -33,90 +34,15 @@ import (
 //   - AND = sum of children (reordered for short-circuit)
 //   - OR = sum of children
 func predicateCost(e PS.Expr) int {
-	if e == nil {
-		return 0
-	}
-	switch v := e.(type) {
-	case *PS.NumberLiteral, *PS.FloatLiteral, *PS.StringLiteral,
-		*PS.BoolLiteral, *PS.NullLiteral, *PS.StarExpr, *PS.Param:
-		return 1
-	// Column references
-	case *PS.Ident, *PS.QualifiedName:
-		return 1
-	case *PS.BinaryExpr:
-		switch v.Op {
-		case LX.T_AND, LX.T_OR:
-			return predicateCost(v.Left) + predicateCost(v.Right)
-		case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
-			return 2 + predicateCost(v.Left) + predicateCost(v.Right)
-		case LX.T_LIKE, LX.T_GLOB:
-			return 10 + predicateCost(v.Left) + predicateCost(v.Right)
-		case LX.T_IN:
-			return 5 + predicateCost(v.Left) + predicateCost(v.Right)
-		case LX.T_CONCAT:
-			return 4 + predicateCost(v.Left) + predicateCost(v.Right)
-		default:
-			// Arithmetic: +, -, *, /, %, DIV, bit ops, shift
-			return 3 + predicateCost(v.Left) + predicateCost(v.Right)
-		}
-	case *PS.UnaryExpr:
-		switch v.Op {
-		case LX.T_NOT:
-			return 1 + predicateCost(v.Operand)
-		default:
-			return 2 + predicateCost(v.Operand)
-		}
-	case *PS.FunctionCall:
-		return 5 + funcArgCost(v.Args)
-	case *PS.CaseExpr:
-		return 3 + caseExprCost(v)
-	case *PS.CastExpr:
-		return 3 + predicateCost(v.Expr)
-	case *PS.BetweenExpr:
-		return 4 + predicateCost(v.Expr) + predicateCost(v.Low) + predicateCost(v.High)
-	case *PS.InExpr:
-		return 5 + predicateCost(v.Expr) + funcArgCost(v.List)
-	case *PS.ExistsExpr, *PS.SubqueryExpr:
-		// Subqueries are very expensive; evaluate last.
-		return 100
-	case *PS.AggregateFunc:
-		return 5
-	case *PS.WindowFunc:
-		return 10
-	case *PS.ListExpr:
-		return funcArgCost(v.Items)
-	case *PS.IntervalLiteral:
-		return 2
-	// AliasedExpr: recurse through alias
-	case *PS.AliasedExpr:
-		return predicateCost(v.Expr)
-	case *PS.RaiseFunc:
-		return 1
-	default:
-		return 5
-	}
+	return CO.Cost(e)
 }
 
 func funcArgCost(args []PS.Expr) int {
-	sum := 0
-	for _, a := range args {
-		sum += predicateCost(a)
-	}
-	return sum
+	return CO.FuncArgCost(args)
 }
 
 func caseExprCost(e *PS.CaseExpr) int {
-	cost := 0
-	if e.Expr != nil {
-		cost += predicateCost(e.Expr)
-	}
-	for _, w := range e.WhenList {
-		cost += predicateCost(w.Cond) + predicateCost(w.Then)
-	}
-	if e.Else != nil {
-		cost += predicateCost(e.Else)
-	}
-	return cost
+	return CO.CaseExprCost(e)
 }
 
 // reorderIndices returns indices 0..n-1 sorted by the cost of
