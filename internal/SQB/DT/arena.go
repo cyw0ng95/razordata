@@ -5,13 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sync"
 	"unsafe"
 )
 
 type RowArena struct {
-	slabs   [][]byte // all slabs ever allocated — kept alive for GC tracing
-	slab    []byte   // current active slab
+	slabs   [][]Value // all slabs ever allocated — kept alive for GC tracing
+	slab    []Value   // current active slab
 	offset  int
 	slabCap int
 }
@@ -20,7 +19,7 @@ type RowArena struct {
 // colsPerRow columns, reducing the number of grow() calls during
 // execution. REQ001260.
 func (a *RowArena) Init(estimatedRows, colsPerRow int) {
-	needed := estimatedRows * colsPerRow * valueSize
+	needed := estimatedRows * colsPerRow
 	if needed <= 0 {
 		return
 	}
@@ -29,21 +28,17 @@ func (a *RowArena) Init(estimatedRows, colsPerRow int) {
 	if needed < arenaSlabSize {
 		needed = arenaSlabSize
 	}
-	// REQ001289: try size-bucketed cache first before allocating fresh.
-	a.slab = getSlab(needed)
+	a.slab = make([]Value, needed)
 	a.offset = 0
 	a.slabCap = len(a.slab)
 }
 
 func (a *RowArena) Reset() {
-	for _, s := range a.slabs {
-		putSlab(s)
-	}
+	// Let GC collect slabs naturally. Old Row.Data sub-slices
+	// created by AllocRow keep the slabs alive through normal
+	// GC tracing — no unsafe.Pointer overlay needed.
 	a.slabs = a.slabs[:0]
-	if a.slab != nil {
-		putSlab(a.slab)
-		a.slab = nil
-	}
+	a.slab = nil
 	a.offset = 0
 	a.slabCap = 0
 }
@@ -62,40 +57,40 @@ func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) *Row {
 			ColIndex: schema.ColIndex,
 		}
 	}
-	needed := a.offset + nCols*valueSize
+	needed := a.offset + nCols
 	if needed > a.slabCap {
 		a.grow(needed)
 	}
 	start := a.offset
-	a.offset += nCols * valueSize
+	a.offset += nCols
 	return &Row{
 		Cols:     schema.Cols,
-		Data:     (*[1 << 30]Value)(unsafe.Pointer(&a.slab[start]))[:nCols:nCols],
+		Data:     a.slab[start : start+nCols : start+nCols],
 		ColIndex: schema.ColIndex,
 	}
 }
 
 // BumpValues reserves `n` Value slots in the current slab and
-// returns the byte offset. Used by callers that want to fill the
+// returns the slot offset. Used by callers that want to fill the
 // slots directly without going through AllocRow's schema-bound
 // Row allocation. REQ001426 (INSERT batch arena path).
 func (a *RowArena) BumpValues(n int) (int, bool) {
 	if n <= 0 {
 		return 0, true
 	}
-	needed := a.offset + n*valueSize
+	needed := a.offset + n
 	if needed > a.slabCap {
 		a.grow(needed)
 	}
 	start := a.offset
-	a.offset += n * valueSize
+	a.offset += n
 	return start, true
 }
 
-// SliceAt returns the value-slice covering the given byte offset
-// + length. Caller is responsible for the offset being in range.
+// SliceAt returns the value-slice covering the given offset + length.
+// Caller is responsible for the offset being in range.
 func (a *RowArena) SliceAt(start, n int) []Value {
-	return (*[1 << 30]Value)(unsafe.Pointer(&a.slab[start]))[:n:n]
+	return a.slab[start : start+n : start+n]
 }
 
 func (a *RowArena) grow(needed int) {
@@ -112,14 +107,12 @@ func (a *RowArena) grow(needed int) {
 	if needed > cap {
 		cap = needed
 	}
-	s := make([]byte, cap)
-	a.slab = s
+	a.slab = make([]Value, cap)
 	a.offset = 0
 	a.slabCap = cap
 }
 
-const arenaSlabSize = 64 * 1024
-const valueSize = int(unsafe.Sizeof(Value{}))
+const arenaSlabSize = 64 * 1024 / int(unsafe.Sizeof(Value{})) // ~8K Values per slab
 
 func DecodeRowInto(row *Row, data []byte, schema *StoreSchema) error {
 	nCols := len(schema.Cols)
@@ -200,102 +193,6 @@ func DecodeRowInto(row *Row, data []byte, schema *StoreSchema) error {
 	return nil
 }
 
-// sizeBuckets defines the fixed slab size classes for the pool.
-// REQ001289: size-bucketed slab cache to avoid re-allocating large slabs on Init.
-var sizeBuckets = []int{
-	64 * 1024,       // 64 KB
-	256 * 1024,      // 256 KB
-	1024 * 1024,     // 1 MB
-	4 * 1024 * 1024, // 4 MB
-}
-
-// sizeBucketIndex returns the index of the smallest bucket >= n.
-// Returns -1 if n exceeds the largest bucket.
-func sizeBucketIndex(n int) int {
-	for i, sz := range sizeBuckets {
-		if n <= sz {
-			return i
-		}
-	}
-	return -1
-}
-
-// slabStack is a LIFO stack of slabs for one size class.
-type slabStack struct {
-	slabs [][]byte
-}
-
-// slabCache is a size-bucketed manual slab cache keyed by size class.
-// Replaces sync.Pool which drops items between GC cycles. REQ001290.
-var slabCache struct {
-	mu        sync.Mutex
-	stacks    [4]slabStack
-	total     int64
-	highWater int64
-}
-
-const defaultHighWater = 16 * 1024 * 1024 // 16 MB
-
-func init() {
-	slabCache.highWater = defaultHighWater
-}
-
-// getSlab returns a slab from the cache with capacity >= minSize,
-// or allocates a fresh one if no cached slab is large enough.
-func getSlab(minSize int) []byte {
-	idx := sizeBucketIndex(minSize)
-	if idx < 0 {
-		return make([]byte, minSize)
-	}
-	slabCache.mu.Lock()
-	st := &slabCache.stacks[idx]
-	if len(st.slabs) > 0 {
-		last := len(st.slabs) - 1
-		buf := st.slabs[last]
-		st.slabs = st.slabs[:last]
-		slabCache.total -= int64(cap(buf))
-		slabCache.mu.Unlock()
-		return buf
-	}
-	slabCache.mu.Unlock()
-	return make([]byte, sizeBuckets[idx])
-}
-
-// putSlab returns a slab to the appropriate size bucket.
-// Trims oldest slabs when total exceeds high-water mark.
-func putSlab(slab []byte) {
-	n := cap(slab)
-	idx := sizeBucketIndex(n)
-	if idx < 0 {
-		return // too large, let GC handle it
-	}
-	slabCache.mu.Lock()
-	slabCache.total += int64(n)
-	st := &slabCache.stacks[idx]
-	st.slabs = append(st.slabs, slab[:n])
-	// Trim oldest slabs when high-water mark exceeded.
-	for slabCache.total > slabCache.highWater {
-		// Find the size class with the most slabs.
-		maxIdx := 0
-		maxLen := len(slabCache.stacks[0].slabs)
-		for i := 1; i < 4; i++ {
-			if len(slabCache.stacks[i].slabs) > maxLen {
-				maxIdx = i
-				maxLen = len(slabCache.stacks[i].slabs)
-			}
-		}
-		if maxLen == 0 {
-			break
-		}
-		st := &slabCache.stacks[maxIdx]
-		last := len(st.slabs) - 1
-		discarded := cap(st.slabs[last])
-		st.slabs = st.slabs[:last]
-		slabCache.total -= int64(discarded)
-	}
-	slabCache.mu.Unlock()
-}
-
 // CloneRow clones an existing row into the arena. The returned row
 // has Cols/Types/ColIndex shared with the input, but Data is copied
 // into the arena's bump allocator. REQ001233.
@@ -307,13 +204,13 @@ func (a *RowArena) CloneRow(r Row) Row {
 	if n == 0 {
 		return r
 	}
-	needed := a.offset + n*valueSize
+	needed := a.offset + n
 	if needed > a.slabCap {
 		a.grow(needed)
 	}
 	start := a.offset
-	a.offset += n * valueSize
-	dst := (*[1 << 30]Value)(unsafe.Pointer(&a.slab[start]))[:n:n]
+	a.offset += n
+	dst := a.slab[start : start+n : start+n]
 	for i := 0; i < n; i++ {
 		dst[i] = r.Data[i]
 	}
