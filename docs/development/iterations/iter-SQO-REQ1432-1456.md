@@ -1,9 +1,9 @@
 # Iteration — REQ001432 ~ REQ001456 (SQO Subsystem Extraction)
 
-> **Status**: partial — completed through Step 5.8. Remaining: REQ001446 (index selection), REQ001448 (subquery decorrelation), REQ001449 (constant folding), REQ001451 (wrapper cleanup, partial), REQ001452 (ARCH.md done, iteration doc pending).
+> **Status**: partial — completed through REQ001446 (index selection), REQ001449 (constant folding), REQ001451 (wrapper cleanup, 24 deleted of 36), REQ001452 (ARCH.md), REQ001455 (GC crash bug filed). Remaining: REQ001448 (subquery decorrelation — blocked on ExprVisitor machinery).
 > **Spec**: `docs/compose/specs/sqo-subsystem/`
 > (requirements.md, design.md, tasklist.md)
-> **Outcome**: ~7,500 lines migrated from SQB/EX → SQO/CO + SQO/PF. SQO subsystem live: OC, PF, CO clusters active (JO, RS scoped). No SQB imports in SQO/. Full gate passes (select4 flaky unrelated).
+> **Outcome**: 6 optimizer passes shipped (IndexSelection, ColumnPruning, FilterProjectFusion, PredicatePushdown, LimitPushdown, ConstantFolding). 24 EX wrappers deleted; 12 callback-currying wrappers remain EX-bound. ~7,500 lines migrated from SQB/EX → SQO/CO + SQO/PF. SQO subsystem live: OC, PF, CO clusters active (JO, RS scoped). No SQB imports in SQO/.
 
 ## Scope
 
@@ -64,16 +64,16 @@ All importers compile at each phase; no commit breaks the build.
 | REQ001443 | Column pruning | SQO/PF/column_pruning.go | **Done.** Top-down `ColPrunable` propagation, `FilterBySchema` per join side |
 | REQ001444 | FilterProject fusion | SQO/PF/filter_project_fusion.go | **Done.** `Filter{Project{...}}` → `FilterProject` |
 | REQ001445 | Predicate pushdown | SQO/PF/predicate_pushdown.go | **Done.** Single-table predicate → scan |
-| REQ001446 | Index selection | SQO/PF/index_selection.go | **NOT STARTED.** Blocked by need for `CatalogReader.Indexes(table)` |
+| REQ001446 | Index selection | SQO/PF/index_selection.go | **Done.** Walks tree, finds `PredicateCarrier + RelationSource`, matches predicate col against index leading col via `CO.WalkExpr`, calls `Factory.NewIndexScan()`. Wired in all 3 Planner constructors after ConstantFoldingPass. Requires `exCatalogReader` adapter (REQ001432 Phase 2). |
 | REQ001447 | Limit pushdown (TopN) | SQO/PF/limit_pushdown.go | **Done.** `Sort → Limit` → TopN mark |
-| REQ001448 | Subquery decorrelation | SQO/PF/subquery_decorrelation.go | **NOT STARTED.** Needs `ExprVisitor` or expr-clone machinery |
-| REQ001449 | Constant folding | SQO/PF/constant_folding.go | **NOT STARTED.** No operator-tree constant folding exists in SQF/RE — all existing folding is AST-level in `rewrite.go`. Would be a new from-scratch pass. |
-| REQ001450 | Wire passes into planSelect | SQB/EX/planner_select.go | **Done.** `runSQOPasses()` called after `fuseFilterProject()`. `OC.Context.Factory` populated. Registered in all 3 Planner constructors. |
+| REQ001448 | Subquery decorrelation | SQO/PF/subquery_decorrelation.go | **NOT STARTED.** Needs `ExprVisitor` (REQ001433 built but unwired) or expr-clone machinery in SQF/PS |
+| REQ001449 | Constant folding | SQO/PF/constant_folding.go | **Done.** Walks operator tree, folds Filter predicates via `RE.RewriteExpr`. No SQB import (uses SQF/RE only). |
+| REQ001450 | Wire passes into planSelect | SQB/EX/planner_select.go | **Done.** `runSQOPasses()` called after `fuseFilterProject()`. `OC.Context.Factory + Catalog` populated. Registered in all 3 Planner constructors. |
 
 ### Cleanup (Step 6) — PARTIAL
 | REQ | What | Status |
 |-----|------|--------|
-| REQ001451 | Delete/trim EX wrapper files | **Partial.** 11 uncalled wrappers deleted across all 3 files. 36 called wrappers remain (deferred — callers need redirection to CO.XXX). 21 *Planner methods permanently EX-bound. |
+| REQ001451 | Delete/trim EX wrapper files | **Partial.** 24 wrappers deleted across 4 commits (predicate.go, cost.go, join_order.go). 12 callback-currying wrappers remain (inherently EX-bound: locking, planner state, callback functions). 21 *Planner methods permanently EX-bound due to cyclic import (SQB/OP/DT type refs). |
 | REQ001452 | Update docs/design/ARCH.md | **Done.** SQO subsystem entry added. Dependency arrow: `SQF → SQO → SQB`. Directory structure and interface documentation added. |
 
 ## Current Gate Status
@@ -96,4 +96,4 @@ All importers compile at each phase; no commit breaks the build.
 | REQ001442 (resolve_slots.go move) | Full file delete | ~173 lines remain (standalone + callback logic, no *Planner) |
 | REQ001444 (FilterProject fusion) | Both `Filter{Project}` and `Project{Filter}` | Only `Filter{Project{...}}` — planner emits this order |
 | REQ001449 (constant folding) | Move from SQF/RE | SQF/RE has no operator-tree folding; only AST-level in `rewrite.go`. Must build from scratch. |
-| REQ001451 (EX file deletion) | Delete all 5 files | 11 uncalled wrappers deleted; 36 called wrappers remain; 21 *Planner methods permanently EX-bound due to cyclic import constraint. |
+| REQ001451 (EX file deletion) | Delete all 5 files | 24 wrappers deleted (funcArgCost, predicateCost, splitAnd, estimatePredicateSelectivity, extractColumnLiteral, walkExpr, cost.go-6-deletes, etc.). 12 callback-currying wrappers remain EX-bound (splitAnd, findTableInSchemas, extractTableColumn, etc.); 21 *Planner methods permanently EX-bound due to cyclic import constraint. |
