@@ -14,6 +14,11 @@ import (
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
+// fusedRowThreshold mirrors OP.fusedRowThreshold. The planner
+// only applies FusedScan to in-memory tables whose row count is
+// at or below this threshold. REQ001463.
+const fusedRowThreshold = 1000
+
 func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	// REQ000241: view resolution — expand view to underlying SELECT
 	if viewSel := DT.LookupView(s.From); viewSel != nil {
@@ -327,6 +332,21 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	// per row. Skip when expressions contain subqueries or aggregates
 	// (those need the full eval machinery).
 	current = fuseFilterProject(current)
+
+	// REQ001463: FusedScan fusion — for small in-memory tables (<=1000
+	// rows), replace the Filter→SeqScan or FilterProject→SeqScan
+	// subtree with a single FusedScan operator that runs the scan,
+	// filter, and projection in one tight loop. This eliminates the
+	// per-row virtual dispatch overhead of 2-3 separate operator calls.
+	// Skip when sort/limit/aggregation sits above (they need batched
+	// rows from the underlying scan). Only applies to in-memory tables
+	// (DT-backed SeqScan, not store-backed LSM reads).
+	hasAgg := hasAnyAggregate(s.Cols) || len(s.GroupBy) > 0
+	if s.OrderBy == nil && !hasAgg {
+		if fused := tryFuseScan(current, s); fused != nil {
+			current = fused
+		}
+	}
 
 	// REQ001450: run SQO optimizer passes (column pruning, predicate
 	// pushdown, limit pushdown). Wraps the operator tree into an
@@ -1564,4 +1584,190 @@ func schemaCols(table, alias string) []string {
 		return cols
 	}
 	return nil
+}
+
+// tryFuseScan detects a leaf-scanning subtree (SeqScan, Filter(SeqScan),
+// or Project/FilterProject around SeqScan) for in-memory tables small
+// enough to inline. Returns the FusedScan operator if applicable, else
+// nil (indicating no transformation). REQ001463.
+//
+// Conditions for FusedScan:
+//   - Root is Filter, FilterProject, or Project wrapping SeqScan
+//   - SeqScan is in-memory (no store, table exists in DT.Tables)
+//   - Table size <= fusedRowThreshold (1000 rows)
+//   - No GroupBy/Aggregate in the SELECT
+//   - Sort/Limit/Aggregate are applied above, not interfering
+func tryFuseScan(op DT.Operator, s *PS.Select) DT.Operator {
+	if op == nil {
+		return nil
+	}
+	// REQ001463: only fuse for queries with a WHERE clause and/or
+	// projection. Bare SELECT * queries against small tables are
+	// uncommon in our corpus; the filter+project path is the common
+	// case. Skipping star queries avoids clobbering CTAS-created
+	// tables where the snapshot pre-dates the CTAS evaluation.
+	hasFilter := s.Where != nil
+	hasProject := len(s.Cols) > 0 && !isStarExpr(s.Cols)
+	if !hasFilter && !hasProject {
+		return nil
+	}
+	// Peel off Sort/Limit wrappers — Sort works on top of FusedScan.
+	var preOps []DT.Operator
+	for {
+		if sortOp, ok := op.(*OP.Sort); ok {
+			preOps = append(preOps, sortOp)
+			if sortOp.Child() == nil {
+				return nil
+			}
+			op = sortOp.Child()
+			continue
+		}
+		if limOp, ok := op.(*OP.Limit); ok {
+			preOps = append(preOps, limOp)
+			if limOp.Child() == nil {
+				return nil
+			}
+			op = limOp.Child()
+			continue
+		}
+		break
+	}
+
+	// Now identify the scan+filter+project chain.
+	var filterOp *OP.Filter
+	var projectOp *OP.Project
+	var fpOp *OP.FilterProject
+	var scanOp *OP.SeqScan
+	var tableName string
+
+	switch cur := op.(type) {
+	case *OP.SeqScan:
+		scanOp = cur
+		tableName = cur.Table()
+	case *OP.Filter:
+		if cur.Child() == nil {
+			return nil
+		}
+		scan, ok := cur.Child().(*OP.SeqScan)
+		if !ok {
+			return nil
+		}
+		filterOp = cur
+		scanOp = scan
+		tableName = scan.Table()
+	case *OP.FilterProject:
+		fpOp = cur
+		if cur.Child() == nil {
+			return nil
+		}
+		scan, ok := cur.Child().(*OP.SeqScan)
+		if !ok {
+			return nil
+		}
+		scanOp = scan
+		tableName = scan.Table()
+	case *OP.Project:
+		if cur.Child() == nil {
+			return nil
+		}
+		projectOp = cur
+		// Check for Filter wrapper.
+		if f, ok := cur.Child().(*OP.Filter); ok {
+			if f.Child() == nil {
+				return nil
+			}
+			scan, ok := f.Child().(*OP.SeqScan)
+			if !ok {
+				return nil
+			}
+			filterOp = f
+			scanOp = scan
+			tableName = scan.Table()
+		} else {
+			scan, ok := cur.Child().(*OP.SeqScan)
+			if !ok {
+				return nil
+			}
+			scanOp = scan
+			tableName = scan.Table()
+		}
+	default:
+		return nil
+	}
+
+	// Skip if the scan is store-backed (LSM, not in-memory).
+	if store := scanSchemaForScan(scanOp); store != nil {
+		_ = store
+		// FusedScan only handles DT.Tables (in-memory) for now.
+		// For store-backed scans, the existing path is fine.
+		return nil
+	}
+
+	// Check in-memory table size.
+	DT.TablesMu.RLock()
+	src := DT.Tables[tableName]
+	DT.TablesMu.RUnlock()
+	if len(src) == 0 || len(src) > fusedRowThreshold {
+		return nil
+	}
+
+	// Determine filter expression and projection.
+	var filterExpr PS.Expr
+	if filterOp != nil {
+		filterExpr = filterOp.Predicate()
+	} else if fpOp != nil {
+		filterExpr = fpOp.Predicate()
+	}
+	var projExprs []PS.Expr
+	if projectOp != nil {
+		projExprs = projectOp.Cols()
+	} else if fpOp != nil {
+		projExprs = fpOp.Cols()
+	} else if s.Cols != nil && !isStarExpr(s.Cols) {
+		projExprs = s.Cols
+	}
+
+	// Construct FusedScan. Returns nil if predicate/projection cannot
+	// be compiled. The data snapshot is taken lazily on the first
+	// Next() call, so filter literal updates from replaceLiteralsOnTree
+	// (plan cache) and table mutations (INSERT/UPDATE/DELETE between
+	// plan and execution) are all reflected correctly. REQ001463.
+	fused := OP.NewFusedScan(tableName, filterExpr, projExprs)
+	if fused == nil {
+		return nil
+	}
+
+	// Wrap with sort/limit above if any were peeled. Sort delegates
+	// to the (now-FusedScan) child via standard Sort on DT.Operator.
+	current := DT.Operator(fused)
+	for i := len(preOps) - 1; i >= 0; i-- {
+		switch p := preOps[i].(type) {
+		case *OP.Sort:
+			_ = p
+			// Sort has already been applied on the original chain.
+			// Re-running it now would double the work. Since this
+			// path only kicks in when the order doesn't matter
+			// (we only fuse if s.OrderBy == nil), keep `current`
+			// as the FusedScan.
+		case *OP.Limit:
+			current = OP.NewLimit(current, p.Limit())
+		}
+	}
+	return current
+}
+
+// scanSchemaForScan is a lightweight check to see if a scan is
+// store-backed. Returns nil for in-memory (DT.Tables) scans. REQ001463.
+func scanSchemaForScan(s *OP.SeqScan) any {
+	// SeqScan may be backed by either DT.Tables (in-memory) or
+	// a store handle. For now, check DT.Tables — if the table
+	// name exists (even empty), it's in-memory and FusedScan
+	// applies. Only return non-nil for store-backed scans.
+	DT.TablesMu.RLock()
+	src := DT.Tables[s.Table()]
+	DT.TablesMu.RUnlock()
+	if src != nil {
+		return nil // in-memory (empty or small)
+	}
+	return struct{}{} // store-backed (or table doesn't exist)
 }

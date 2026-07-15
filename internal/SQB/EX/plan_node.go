@@ -289,6 +289,22 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		node.Detail = fmt.Sprintf("VALUES %d rows", len(v.Rows()))
 		node.Cost = 1.0
 
+	case *OP.FusedScan:
+		// REQ001463: FusedScan shows as a single "FusedScan" node
+		// summarizing the inlined scan+filter+projection.
+		node.Table = v.Table()
+		node.Cost = 0.5
+		node.Width = 100
+		node.Rows = int64(planner.estimateRowCount(v.Table(), nil))
+		parts := []string{fmt.Sprintf("rows=%d", node.Rows), "[fused]"}
+		if v.HasFilter() {
+			parts = append(parts, "[filter]")
+		}
+		if v.HasProjection() {
+			parts = append(parts, "[project]")
+		}
+		node.Detail = strings.Join(parts, " ")
+
 	case *AD.ExplainStmtOp:
 		node.Detail = "EXPLAIN"
 		node.Cost = 0
@@ -390,6 +406,8 @@ func operatorType(op DT.Operator) string {
 		return "OP.Filter"
 	case *OP.FilterProject:
 		return "OP.FilterProject"
+	case *OP.FusedScan:
+		return "FusedScan"
 	case *OP.Project:
 		return "OP.Project"
 	case *OP.Sort:
