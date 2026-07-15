@@ -16,6 +16,7 @@ type VectorizedHashJoin struct {
 	probeKey int
 
 	ht        *UT.HashTable
+	bloom     *UT.BloomFilter
 	buildCols []UT.Column
 	rowIDs    [][]uint32
 	buildDone bool
@@ -120,6 +121,7 @@ func (j *VectorizedHashJoin) buildHashTable(ctx context.Context) error {
 	j.rowIDs = make([][]uint32, j.ht.Capacity)
 
 	keyCol := &j.buildCols[j.buildKey]
+	totalUnique := 0
 	for i := 0; i < totalRows; i++ {
 		if isColNull(keyCol, i) {
 			continue
@@ -134,6 +136,20 @@ func (j *VectorizedHashJoin) buildHashTable(ctx context.Context) error {
 				j.rowIDs[idx] = append(j.rowIDs[idx], uint32(i))
 			},
 		)
+		totalUnique++
+	}
+
+	// REQ001494: build bloom filter from unique build keys for probe-side
+	// pushdown.  Keys that are definitely absent from the build side can
+	// be skipped without touching the hash table.
+	if totalUnique > 0 {
+		j.bloom = UT.NewBloomFilter(totalUnique, 0.01)
+		for i := 0; i < totalRows; i++ {
+			if isColNull(keyCol, i) {
+				continue
+			}
+			j.bloom.Add(uint64(keyColVal(keyCol, i)))
+		}
 	}
 
 	j.buildDone = true
@@ -204,6 +220,13 @@ func (j *VectorizedHashJoin) probeCurrentRow() {
 		return
 	}
 	key := keyColVal(keyCol, j.probeRow)
+
+	// REQ001494: bloom filter quick-exit.  If the filter says the key
+	// is definitely absent we skip the hash-table lookup entirely.
+	if j.bloom != nil && !j.bloom.Contains(uint64(key)) {
+		return
+	}
+
 	hash := utHashInt64(key)
 	idx, found, _ := j.ht.Lookup([]int64{key}, hash)
 	if found {
