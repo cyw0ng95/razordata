@@ -127,10 +127,6 @@ func NewPlanner() *Planner {
 			AddPass(&PF.ConstantFoldingPass{}).
 			AddPass(&PF.SubqueryDecorrelationPass{}).
 			AddPass(&PF.IndexSelectionPass{}).
-			AddPass(&PF.RedundantPredicateEliminationPass{}).
-			AddPass(&PF.OrToInExpansionPass{}).
-			AddPass(&PF.ImplicitCastEliminationPass{}).
-			AddPass(&PF.SortEliminationPass{}).
 			AddPass(&PF.ColumnPruningPass{}).
 			AddPass(&PF.PredicatePushdownPass{}).
 			AddPass(&PF.LimitPushdownPass{}),
@@ -232,10 +228,6 @@ func NewPlannerWithStore(store DT.Store) *Planner {
 			AddPass(&PF.ConstantFoldingPass{}).
 			AddPass(&PF.SubqueryDecorrelationPass{}).
 			AddPass(&PF.IndexSelectionPass{}).
-			AddPass(&PF.RedundantPredicateEliminationPass{}).
-			AddPass(&PF.OrToInExpansionPass{}).
-			AddPass(&PF.ImplicitCastEliminationPass{}).
-			AddPass(&PF.SortEliminationPass{}).
 			AddPass(&PF.ColumnPruningPass{}).
 			AddPass(&PF.PredicatePushdownPass{}).
 			AddPass(&PF.LimitPushdownPass{}),
@@ -254,10 +246,6 @@ func NewPlannerWithStats(store DT.Store, statsCatalog DT.StatsCatalog) *Planner 
 			AddPass(&PF.ConstantFoldingPass{}).
 			AddPass(&PF.SubqueryDecorrelationPass{}).
 			AddPass(&PF.IndexSelectionPass{}).
-			AddPass(&PF.RedundantPredicateEliminationPass{}).
-			AddPass(&PF.OrToInExpansionPass{}).
-			AddPass(&PF.ImplicitCastEliminationPass{}).
-			AddPass(&PF.SortEliminationPass{}).
 			AddPass(&PF.ColumnPruningPass{}).
 			AddPass(&PF.PredicatePushdownPass{}).
 			AddPass(&PF.LimitPushdownPass{}),
