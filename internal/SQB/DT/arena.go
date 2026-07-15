@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sync"
 	"unsafe"
 )
 
@@ -18,9 +17,6 @@ type RowArena struct {
 	// can skip redundant Init() calls when the same arena is reused
 	// across multiple UPDATE/DELETE statements.
 	initialized bool
-	// REQ001496: pooledSlab holds a slab returned to the pool for
-	// the next grow() call, avoiding a pool Get/Put round-trip.
-	pooledSlab []Value
 }
 
 // Init pre-allocates a slab large enough for estimatedRows rows of
@@ -37,13 +33,7 @@ func (a *RowArena) Init(estimatedRows, colsPerRow int) {
 	if needed < arenaSlabSize {
 		needed = arenaSlabSize
 	}
-	// REQ001496: reuse pooled slab if capacity suffices.
-	if needed <= arenaSlabSize && a.pooledSlab != nil && cap(a.pooledSlab) >= needed {
-		a.slab = a.pooledSlab[:needed:needed]
-		a.pooledSlab = nil
-	} else {
-		a.slab = getSlab(needed)
-	}
+	a.slab = make([]Value, needed)
 	a.offset = 0
 	a.slabCap = len(a.slab)
 }
@@ -57,11 +47,6 @@ func (a *RowArena) Reset() {
 	// GC tracing — no unsafe.Pointer overlay needed.
 	a.initialized = false
 	a.slabs = a.slabs[:0]
-	// REQ001496: return the current slab to the pool if it fits.
-	if a.slab != nil && cap(a.slab) <= arenaSlabSize {
-		a.pooledSlab = a.slab
-		putSlab(a.slab)
-	}
 	a.slab = nil
 	a.offset = 0
 	a.slabCap = 0
@@ -122,7 +107,7 @@ func (a *RowArena) grow(needed int) {
 		a.slabs = append(a.slabs, a.slab) // keep alive for GC tracing
 	}
 	// REQ001285: geometric growth — double the slab each time to reduce
-	// grow() frequency. For 10K rows x 6 cols x 48B = 2.88MB, fixed
+	// grow() frequency. For 10K rows × 6 cols × 48B = 2.88MB, fixed
 	// 64KB slabs require ~44 grows; geometric doubling needs ~6.
 	cap := arenaSlabSize
 	if a.slabCap > 0 {
@@ -131,44 +116,12 @@ func (a *RowArena) grow(needed int) {
 	if needed > cap {
 		cap = needed
 	}
-	// REQ001496: reuse pooled slab if available.
-	if cap <= arenaSlabSize && a.pooledSlab != nil {
-		a.slab = a.pooledSlab[:cap:cap]
-		a.pooledSlab = nil
-	} else {
-		a.slab = getSlab(cap)
-	}
+	a.slab = make([]Value, cap)
 	a.offset = 0
-	a.slabCap = len(a.slab)
+	a.slabCap = cap
 }
 
 const arenaSlabSize = 64 * 1024 / int(unsafe.Sizeof(Value{})) // ~8K Values per slab
-
-// arenaSlabPool pools []Value slabs across RowArena instances to
-// eliminate per-query allocation. REQ001496.
-var arenaSlabPool = sync.Pool{
-	New: func() any { return make([]Value, arenaSlabSize) },
-}
-
-// getSlab returns a zeroed []Value of at least cap capacity from the pool.
-func getSlab(cap int) []Value {
-	if cap <= arenaSlabSize {
-		v := arenaSlabPool.Get().([]Value)
-		return v[:cap:cap]
-	}
-	// For larger capacities, allocate directly.
-	return make([]Value, cap)
-}
-
-// putSlab returns a slab to the pool if it fits.
-func putSlab(slab []Value) {
-	if cap(slab) <= arenaSlabSize {
-		for i := range slab {
-			slab[i] = Value{}
-		}
-		arenaSlabPool.Put(slab[:arenaSlabSize])
-	}
-}
 
 func DecodeRowInto(row *Row, data []byte, schema *StoreSchema) error {
 	nCols := len(schema.Cols)
