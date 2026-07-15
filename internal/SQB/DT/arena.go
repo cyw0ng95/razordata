@@ -249,6 +249,155 @@ func DecodeRowInto(row *Row, data []byte, schema *StoreSchema) error {
 	return nil
 }
 
+// DecodeRowSubsetInto decodes only the columns listed in wantedIdx
+// from the encoded row into row.Data. wantedIdx are indices into
+// schema.Cols; the row.Data slice must have length == len(wantedIdx).
+// Columns outside wantedIdx are skipped (bytes advanced) without
+// allocating values.
+//
+// REQ001434: per pprof, decodeRowBuffered is the top hot spot in
+// SeqScan (~45% of SeqScan.nextFromStore wall time). For projections
+// that reference only a subset of columns (common in SELECT a, b,
+// c FROM t), decoding all columns and then pruning wastes work:
+// string/blob columns allocate their decoded form needlessly, and
+// the encoder's per-column switch overhead scales with column count
+// regardless of need.
+//
+// The passed row must already have its Cols, Types, ColIndex set
+// by the caller (typically from a derived StoreSchema containing
+// only the wanted subset). The function only mutates row.Data.
+func DecodeRowSubsetInto(row *Row, data []byte, schema *StoreSchema, wantedIdx []int) error {
+	nFull := len(schema.Cols)
+	if len(row.Data) != len(wantedIdx) {
+		return fmt.Errorf("DT: subset row has %d cols, wantedIdx has %d", len(row.Data), len(wantedIdx))
+	}
+	if data == nil || len(data) == 0 {
+		return errors.New("DT: empty row payload")
+	}
+	off := 0
+	readVarint := func() (uint64, error) {
+		v, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return 0, errors.New("DT: bad varint")
+		}
+		off += n
+		return v, nil
+	}
+	colCount := uint64(data[off])
+	off++
+	if colCount == 255 {
+		var err error
+		colCount, err = readVarint()
+		if err != nil {
+			return err
+		}
+	}
+	if int(colCount) != nFull {
+		return fmt.Errorf("DT: row has %d cols, schema %d", colCount, nFull)
+	}
+	wantedSet := make(map[int]int, len(wantedIdx))
+	for pos, fullIdx := range wantedIdx {
+		wantedSet[fullIdx] = pos
+	}
+	for i := 0; i < nFull; i++ {
+		if off >= len(data) {
+			return errors.New("DT: truncated row")
+		}
+		tag := data[off]
+		off++
+		pos, want := wantedSet[i]
+		if !want {
+			// Skip this column's bytes without allocating.
+			switch tag {
+			case rvNull:
+				// nothing
+			case rvInt:
+				if off+8 > len(data) {
+					return errors.New("DT: truncated int")
+				}
+				off += 8
+			case rvFloat:
+				if off+8 > len(data) {
+					return errors.New("DT: truncated float")
+				}
+				off += 8
+			case rvBool:
+				if off+1 > len(data) {
+					return errors.New("DT: truncated bool")
+				}
+				off++
+			case rvString:
+				l, err := readVarint()
+				if err != nil {
+					return err
+				}
+				if off+int(l) > len(data) {
+					return errors.New("DT: truncated string")
+				}
+				off += int(l)
+			case rvBytes:
+				l, err := readVarint()
+				if err != nil {
+					return err
+				}
+				if off+int(l) > len(data) {
+					return errors.New("DT: truncated bytes")
+				}
+				off += int(l)
+			default:
+				return fmt.Errorf("DT: unknown row tag %d", tag)
+			}
+			continue
+		}
+		// Decode into the matching subset position.
+		switch tag {
+		case rvNull:
+			row.Data[pos] = NullValue()
+		case rvInt:
+			if off+8 > len(data) {
+				return errors.New("DT: truncated int")
+			}
+			row.Data[pos] = NewIntValue(int64(binary.BigEndian.Uint64(data[off : off+8])))
+			off += 8
+		case rvFloat:
+			if off+8 > len(data) {
+				return errors.New("DT: truncated float")
+			}
+			row.Data[pos] = NewFloatValue(math.Float64frombits(binary.BigEndian.Uint64(data[off : off+8])))
+			off += 8
+		case rvBool:
+			if off+1 > len(data) {
+				return errors.New("DT: truncated bool")
+			}
+			row.Data[pos] = NewBoolValue(data[off] != 0)
+			off++
+		case rvString:
+			l, err := readVarint()
+			if err != nil {
+				return err
+			}
+			if off+int(l) > len(data) {
+				return errors.New("DT: truncated string")
+			}
+			row.Data[pos] = NewTextValue(string(data[off : off+int(l)]))
+			off += int(l)
+		case rvBytes:
+			l, err := readVarint()
+			if err != nil {
+				return err
+			}
+			if off+int(l) > len(data) {
+				return errors.New("DT: truncated bytes")
+			}
+			row.Data[pos] = NewBlobValue(append([]byte{}, data[off:off+int(l)]...))
+			off += int(l)
+		default:
+			return fmt.Errorf("DT: unknown row tag %d", tag)
+		}
+	}
+	return nil
+}
+
 // CloneRow clones an existing row into the arena. The returned row
 // has Cols/Types/ColIndex shared with the input, but Data is copied
 // into the arena's bump allocator. REQ001233.

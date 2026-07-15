@@ -152,6 +152,16 @@ type SeqScan struct {
 	// REQ001221: rowArena replaces decodeBuf for bump-pointer
 	rowArena *DT.RowArena
 
+	// REQ001434: subsetSchema caches a derived StoreSchema whose
+	// Cols/ColTypes/ColIndex cover only the columns referenced
+	// by the planner (usedColIdx). Cached on the SeqScan so the
+	// subset construction runs once per scan, not per row.
+	subsetSchema *DT.StoreSchema
+	// REQ001434: subsetSchemaAliasKey records the alias context
+	// under which subsetSchema was built. When the seq alias or
+	// prefixedCols state changes, we rebuild the subset.
+	subsetSchemaAliasKey string
+
 	// REQ001225: rawByteFilter is a predicate compiled from a filter
 	// conjunct that can be evaluated on raw encoded bytes without
 	// decoding the row. Set by NewFilter when pushdown is possible.
@@ -247,6 +257,22 @@ func (s *SeqScan) WithUsedCols(cols []string) *SeqScan {
 	s.pruneBufTypes = make([]LX.TokenType, 0, len(cols))
 	s.pruneBufData = make([]Value, 0, len(cols))
 	s.pruneBufIndex = make(map[string]int, len(cols)*2)
+	// REQ001434: pre-compute the indices into the schema for
+	// fast column-aware decoding. decodeRowBuffered consults
+	// this to skip non-wanted columns during the byte-stream
+	// parse instead of decoding them and pruning them later.
+	if s.schema != nil {
+		s.usedColIdx = make([]int, 0, len(cols))
+		colIdx := make(map[string]int, len(s.schema.Cols))
+		for i, c := range s.schema.Cols {
+			colIdx[c] = i
+		}
+		for _, c := range cols {
+			if i, ok := colIdx[c]; ok {
+				s.usedColIdx = append(s.usedColIdx, i)
+			}
+		}
+	}
 	return s
 }
 
@@ -412,7 +438,7 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 			row.Planner = s.planner
 		}
 		row.TableName = s.table
-		if s.alias != "" {
+		if s.alias != "" && !row.RowFromSubsetDecode {
 			if s.prefixedCols != nil {
 				row.Cols = s.prefixedCols
 				row.ColIndex = s.prefixedColIndex
@@ -602,7 +628,7 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 			row.Planner = s.planner
 		}
 		row.TableName = s.table
-		if s.alias != "" {
+		if s.alias != "" && !row.RowFromSubsetDecode {
 			if s.prefixedCols != nil {
 				row.Cols = s.prefixedCols
 				row.ColIndex = s.prefixedColIndex
@@ -618,7 +644,7 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		}
 
 		// REQ001080: prune unused columns from the store-backed row.
-		if s.usedCols != nil {
+		if s.usedCols != nil && !row.RowFromSubsetDecode {
 			row = pruneRowCols(row, s.usedCols, s.usedColSet, s)
 			// Copy Data out of the shared prune buffer so later
 			// prune calls don't overwrite this row's values.
@@ -650,6 +676,11 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 // REQ001221: replaces per-row make([]Value, N) with RowArena bump
 // allocation. The arena is reset in Close(), freeing all rows at once.
 // REQ001260: pre-size arena to engineBatchSize rows to reduce grow calls.
+// REQ001434: when the planner set usedColIdx to a strict subset of the
+// schema, decode only that subset via DecodeRowSubsetInto. The decoded
+// row carries the SUBSET schema (Cols/Types/ColIndex built from the
+// wanted indices) so downstream Project sees only the columns the
+// query actually references, eliminating a per-row pruneRowCols pass.
 func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
 	if s.rowArena == nil {
 		s.rowArena = &DT.RowArena{}
@@ -658,6 +689,24 @@ func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
 	n := len(s.schema.Cols)
 	if n == 0 {
 		return Row{}, nil
+	}
+	// REQ001434: take the subset fast-path when the planner pinned
+	// a strict subset of columns AND every wanted index is present
+	// in the schema. If usedColIdx is nil/empty or matches the full
+	// schema, fall through to the original decode-all path.
+	if s.usedColIdx != nil && len(s.usedColIdx) > 0 && len(s.usedColIdx) < n {
+		row, err := s.decodeRowSubsetBuffered(data)
+		if err != nil {
+			return Row{}, err
+		}
+		// REQ001434: subset decode already produced row.Cols in
+		// the correct form (prefixed when an alias is set). The
+		// aliasing pass in nextFromStore would otherwise overwrite
+		// row.Cols with the FULL prefixed list, breaking the
+		// Data/Cols length invariant. Tag the row so the caller
+		// can skip the aliasing pass.
+		row.RowFromSubsetDecode = true
+		return row, nil
 	}
 	row := s.rowArena.AllocRow(n, s.schema)
 	if row == nil {
@@ -668,6 +717,62 @@ func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
 		return Row{}, err
 	}
 	return *row, nil
+}
+
+// decodeRowSubsetBuffered decodes only the columns listed in
+// usedColIdx, building a Row whose Cols/ColIndex/Types carry the
+// SUBSET schema. REQ001434.
+func (s *SeqScan) decodeRowSubsetBuffered(data []byte) (Row, error) {
+	wanted := s.usedColIdx
+	n := len(wanted)
+	if n == 0 {
+		return Row{}, nil
+	}
+	// REQ001434: build the subset schema once per scan and cache it
+	// on the SeqScan. Reusing across rows avoids per-row allocation
+	// of the subset Cols / ColIndex. When a table alias is set, the
+	// downstream prefixRowCols pass will overwrite row.Cols with
+	// the prefixed form, so the subset schema's Cols must use the
+	// prefix here to stay consistent with what callers see.
+	if s.subsetSchema == nil || len(s.subsetSchema.Cols) != n || s.subsetSchemaAliasKey != s.aliasCacheKey() {
+		subset := &DT.StoreSchema{
+			Cols:     make([]string, n),
+			ColTypes: make([]LX.TokenType, n),
+		}
+		subset.ColIndex = make(map[string]int, n*2)
+		prefix := ""
+		if s.alias != "" {
+			prefix = s.alias + "."
+		}
+		for pos, fullIdx := range wanted {
+			base := s.schema.Cols[fullIdx]
+			subset.Cols[pos] = prefix + base
+			if fullIdx < len(s.schema.ColTypes) {
+				subset.ColTypes[pos] = s.schema.ColTypes[fullIdx]
+			}
+			subset.ColIndex[subset.Cols[pos]] = pos
+		}
+		s.subsetSchema = subset
+		s.subsetSchemaAliasKey = s.aliasCacheKey()
+	}
+	row := s.rowArena.AllocRow(n, s.subsetSchema)
+	if row == nil {
+		return Row{}, errors.New("op: arena alloc failed")
+	}
+	err := DT.DecodeRowSubsetInto(row, data, s.schema, wanted)
+	if err != nil {
+		return Row{}, err
+	}
+	return *row, nil
+}
+
+// aliasCacheKey returns a stable identifier for the alias context
+// used to invalidate the cached subset schema. REQ001434.
+func (s *SeqScan) aliasCacheKey() string {
+	if s.prefixedCols != nil {
+		return s.alias + "|prefixed"
+	}
+	return s.alias
 }
 
 func (s *SeqScan) Close() error {

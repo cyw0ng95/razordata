@@ -82,6 +82,12 @@ type Row struct {
 	// subquery eval can resolve QualifiedName references against
 	// the correct table.
 	TableName string
+	// RowFromSubsetDecode is set by SeqScan when the row was
+	// produced by the column-aware subset decoder (REQ001434).
+	// The downstream alias pass in nextFromStore must skip
+	// rewriting row.Cols because the subset decoder already
+	// produced the correct (possibly aliased) names.
+	RowFromSubsetDecode bool
 }
 
 // Lookup returns the value at the given column name.
