@@ -1765,6 +1765,14 @@ func compileColRef(name string, slotIdx int) func(*Row) Value {
 		bareName = name[dot+1:]
 	}
 	bareLower := strings.ToLower(bareName)
+	// REQ001432: pre-compute the qualified-name suffix once at
+	// compile time. The original code rebuilt "."+bareLower inside
+	// the per-row loop via capture-via-escape, which forced a
+	// runtime.concatstring2 allocation each iteration. Note: we
+	// always build the suffix (even for unqualified refs) because
+	// multi-table join rows may carry qualified columns like
+	// "t4.b4" while the projection references bare "b4".
+	dotBareLower := "." + bareLower
 	return func(row *Row) Value {
 		if slotIdx >= 0 && slotIdx < len(row.Data) && slotIdx < len(row.Cols) {
 			cl := row.Cols[slotIdx]
@@ -1778,6 +1786,16 @@ func compileColRef(name string, slotIdx int) func(*Row) Value {
 			if i, ok := row.ColIndex[lower]; ok && i < len(row.Data) {
 				return row.Data[i]
 			}
+			// REQ001432: also probe the bare name. Rows from
+			// single-table scans populate ColIndex with the
+			// unqualified column name; rows from multi-table joins
+			// use the qualified form. Querying both removes a full
+			// O(n) Cols scan when the bare form matches.
+			if lower != bareLower {
+				if i, ok := row.ColIndex[bareLower]; ok && i < len(row.Data) {
+					return row.Data[i]
+				}
+			}
 		}
 		for i, c := range row.Cols {
 			cl := strings.ToLower(c)
@@ -1788,8 +1806,10 @@ func compileColRef(name string, slotIdx int) func(*Row) Value {
 				return Value{Kind: KindNull}
 			}
 		}
+		// REQ001432: qualified-suffix match. Hoisted dotBareLower
+		// avoids the per-iter "." + bareLower concat allocation.
 		for i, c := range row.Cols {
-			if strings.HasSuffix(strings.ToLower(c), "."+bareLower) && i < len(row.Data) {
+			if strings.HasSuffix(strings.ToLower(c), dotBareLower) && i < len(row.Data) {
 				return row.Data[i]
 			}
 		}
