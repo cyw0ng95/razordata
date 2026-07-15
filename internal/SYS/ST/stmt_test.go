@@ -256,3 +256,131 @@ func TestStmt_ParamBinding_MismatchReturnsError(t *testing.T) {
 		t.Errorf("ArgIdx = %d, want0", ate.ArgIdx)
 	}
 }
+
+// TestPreparedPlan_SelectQuery_Reuse — REQ001422: prepare a SELECT,
+// Query twice with different params, verify results are correct each time.
+func TestPreparedPlan_SelectQuery_Reuse(t *testing.T) {
+	eng, ctx := testEngine(t)
+	s, _ := eng.Begin(ctx)
+	if _, err := s.Exec(ctx, "INSERT INTO users VALUES (10, 'alice')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Exec(ctx, "INSERT INTO users VALUES (20, 'bob')"); err != nil {
+		t.Fatal(err)
+	}
+
+	stmt, err := PrepareFromInterface(eng, "SELECT name FROM users WHERE id = ?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stmt.Close()
+
+	// First query with id=10
+	rows1, err := stmt.Query(ctx, int64(10))
+	if err != nil {
+		t.Fatalf("first Query: %v", err)
+	}
+	row1, err := rows1.Next()
+	if err != nil {
+		t.Fatalf("first Query row: %v", err)
+	}
+	if row1.Data[0].String() != "alice" {
+		t.Errorf("first query: got name %v, want alice", row1.Data[0])
+	}
+	rows1.Close()
+
+	// Second query with id=20 — uses the cached CompiledPlan
+	rows2, err := stmt.Query(ctx, int64(20))
+	if err != nil {
+		t.Fatalf("second Query: %v", err)
+	}
+	row2, err := rows2.Next()
+	if err != nil {
+		t.Fatalf("second Query row: %v", err)
+	}
+	if row2.Data[0].String() != "bob" {
+		t.Errorf("second query: got name %v, want bob", row2.Data[0])
+	}
+	rows2.Close()
+}
+
+// TestPreparedPlan_InsertExec_Reuse — REQ001422: prepare an INSERT,
+// Exec multiple times with different args, verify all rows inserted.
+func TestPreparedPlan_InsertExec_Reuse(t *testing.T) {
+	eng, ctx := testEngine(t)
+	stmt, err := PrepareFromInterface(eng, "INSERT INTO users VALUES (?, ?)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stmt.Close()
+
+	for i := int64(1); i <= 3; i++ {
+		res, err := stmt.Exec(ctx, i, "user")
+		if err != nil {
+			t.Fatalf("Exec %d: %v", i, err)
+		}
+		if res.RowsAffected != 1 {
+			t.Errorf("Exec %d: RowsAffected = %d, want 1", i, res.RowsAffected)
+		}
+	}
+
+	// Verify all 3 rows via the engine directly.
+	s, _ := eng.Begin(ctx)
+	rows, err := s.Query(ctx, "SELECT count(*) FROM users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := rows.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Data[0].AsInt() != 3 {
+		t.Errorf("count = %d, want 3", row.Data[0].AsInt())
+	}
+}
+
+// TestPreparedPlan_ExecWithSELECT — REQ001422: Exec on a prepared SELECT
+// should be a no-op.
+func TestPreparedPlan_ExecWithSELECT(t *testing.T) {
+	eng, ctx := testEngine(t)
+	stmt, err := PrepareFromInterface(eng, "SELECT 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stmt.Close()
+	if _, err := stmt.Exec(ctx); err != nil {
+		t.Fatalf("Exec SELECT: %v", err)
+	}
+}
+
+// TestPreparedPlan_CloseCleansUp — REQ001422: Close on a Stmt
+// that has a cached CompiledPlan should clean up properly.
+func TestPreparedPlan_CloseCleansUp(t *testing.T) {
+	eng, ctx := testEngine(t)
+	s, _ := eng.Begin(ctx)
+	if _, err := s.Exec(ctx, "INSERT INTO users VALUES (1, 'a')"); err != nil {
+		t.Fatal(err)
+	}
+
+	stmt, err := PrepareFromInterface(eng, "SELECT name FROM users WHERE id = ?")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Execute to populate the cache
+	rows, err := stmt.Query(ctx, int64(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows.Close()
+
+	// Close the stmt
+	if err := stmt.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Exec after Close should error
+	if _, err := stmt.Query(ctx, int64(1)); !AP.IsKind(err, AP.KindClosed) {
+		t.Errorf("Query after Close: got %v, want ErrClosed", err)
+	}
+}

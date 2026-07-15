@@ -334,6 +334,92 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
     }, nil
 }
 
+// QueryStreamCompiled runs a CompiledPlan through the streaming path,
+// skipping re-parsing and re-planning. Only supports SELECT/compound
+// statements (non-DML). REQ001422.
+func (e *Executor) QueryStreamCompiled(ctx context.Context, cp *CompiledPlan, args ...any) (*streamIterator, error) {
+	if cp == nil {
+		return nil, errors.New("ex: QueryStreamCompiled: nil plan")
+	}
+	if cp.isDML {
+		return nil, errors.New("ex: QueryStreamCompiled: DML not supported for streaming")
+	}
+
+	plan := cp.plan
+	if plan == nil || plan.Root == nil {
+		return nil, errors.New("ex: QueryStreamCompiled: plan produced no root")
+	}
+	propagateParams(plan.Root, args)
+	propagatePlanner(plan.Root, e.planner)
+	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+	execCtx.RowArena = e.ensureArena()
+	propagateExecContext(plan.Root, execCtx)
+	plan.Root = tryVectorizePlan(plan.Root)
+
+	// Read first row to discover schema
+	firstRow, firstErr := plan.Root.Next(ctx)
+	if firstErr != nil {
+		if firstErr == DT.ErrNoRows {
+			plan.Root.Close()
+			return &streamIterator{
+				cols:  nil,
+				types: nil,
+				done:  true,
+			}, nil
+		}
+		plan.Root.Close()
+		return nil, firstErr
+	}
+	DT.WithExecContext(&firstRow, execCtx)
+	cols := append([]string(nil), firstRow.Cols...)
+	types := append([]LX.TokenType(nil), firstRow.Types...)
+
+	if isEligibleForSyncStream(cp.stmt, plan, e.planner) {
+		return e.streamFromOperator(ctx, plan, execCtx, firstRow, true, cols, types), nil
+	}
+
+	rowCh := make(chan DT.Row, 16)
+	rowCh <- firstRow
+	closed := false
+	var closeMu sync.Mutex
+	closer := func() error {
+		closeMu.Lock()
+		defer closeMu.Unlock()
+		if closed {
+			return nil
+		}
+		closed = true
+		return plan.Root.Close()
+	}
+	go func() {
+		defer close(rowCh)
+		for {
+			closeMu.Lock()
+			if closed {
+				closeMu.Unlock()
+				return
+			}
+			closeMu.Unlock()
+			r, err := plan.Root.Next(ctx)
+			if err != nil {
+				return
+			}
+			OP.WithExecContext(&r, execCtx)
+			select {
+			case rowCh <- r:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return &streamIterator{
+		cols:   cols,
+		types:  types,
+		rowCh:  rowCh,
+		closer: closer,
+	}, nil
+}
+
 // syncStreamPath accumulates all rows into a slice synchronously and
 // returns a slice-backed streamIterator. No goroutine or channel needed.
 // For very small result sets this is optimal because the caller can

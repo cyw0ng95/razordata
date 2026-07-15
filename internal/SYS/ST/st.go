@@ -11,6 +11,7 @@ import (
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQB/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	"github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
@@ -21,6 +22,10 @@ type Stmt struct {
 	mu         sync.Mutex
 	closed     atomic.Bool
 	paramTypes []int
+
+	// REQ001422: compiled plan cache — set after first Exec/Query,
+	// reused on subsequent calls to skip re-parsing and re-planning.
+	prepared *EX.CompiledPlan
 }
 
 func Prepare(engine *SY.Engine, sql string) (*Stmt, error) {
@@ -134,15 +139,54 @@ func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 		s.mu.Unlock()
 		return nil, AP.New(AP.KindClosed, "engine closed")
 	}
-	s.mu.Unlock()
 	if err := validateArgTypes(args, s.paramTypes); err != nil {
+		s.mu.Unlock()
 		return nil, err
 	}
+
 	exe := s.engine.Executor()
-	stream, err := exe.QueryStream(ctx, s.sql, args...)
+
+	// REQ001422: compiled plan path — reuses the operator tree.
+	if s.prepared != nil {
+		stream, err := exe.QueryStreamCompiled(ctx, s.prepared, args...)
+		s.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		next := func() (AP.Row, error) {
+			row, err := stream.Next()
+			if err != nil {
+				if err == DT.ErrNoRows {
+					return AP.Row{}, AP.New(AP.KindNotFound, "no more rows")
+				}
+				return AP.Row{}, err
+			}
+			return AP.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
+		}
+		return AP.NewRows(stream.Cols(), stream.Types(), next, func() error { return stream.Close() }), nil
+	}
+	s.mu.Unlock()
+
+	// First call: compile, cache, and execute.
+	cp, err := exe.CompilePlan(s.sql)
 	if err != nil {
 		return nil, err
 	}
+	stream, err := exe.QueryStreamCompiled(ctx, cp, args...)
+	if err != nil {
+		cp.Close()
+		return nil, err
+	}
+
+	// Cache the compiled plan for subsequent calls.
+	s.mu.Lock()
+	if s.prepared == nil {
+		s.prepared = cp
+	} else {
+		cp.Close() // another goroutine cached first
+	}
+	s.mu.Unlock()
+
 	next := func() (AP.Row, error) {
 		row, err := stream.Next()
 		if err != nil {
@@ -151,9 +195,6 @@ func (s *Stmt) Query(ctx context.Context, args ...any) (*AP.Rows, error) {
 			}
 			return AP.Row{}, err
 		}
-		// REQ000862: AP.Row.Data is now []AP.Value (same type as DT.Row.Data),
-		// so no boxing conversion is needed. Direct assignment eliminates
-		// the per-row []any allocation that was 53% of join memory.
 		return AP.Row{Cols: row.Cols, Types: row.Types, Data: row.Data}, nil
 	}
 	return AP.NewRows(stream.Cols(), stream.Types(), next, func() error { return stream.Close() }), nil
@@ -169,15 +210,44 @@ func (s *Stmt) Exec(ctx context.Context, args ...any) (AP.Result, error) {
 		s.mu.Unlock()
 		return AP.Result{}, AP.New(AP.KindClosed, "engine closed")
 	}
-	s.mu.Unlock()
 	if err := validateArgTypes(args, s.paramTypes); err != nil {
+		s.mu.Unlock()
 		return AP.Result{}, err
 	}
+
 	exe := s.engine.Executor()
-	res, err := exe.Exec(ctx, s.sql, args...)
+
+	// REQ001422: compiled plan path — reuses the operator tree.
+	if s.prepared != nil {
+		res, err := exe.ExecCompiled(ctx, s.prepared, args...)
+		s.mu.Unlock()
+		if err != nil {
+			return AP.Result{}, err
+		}
+		return AP.Result{RowsAffected: res.RowsAffected, LastInsertID: res.LastInsertID}, nil
+	}
+	s.mu.Unlock()
+
+	// First call: compile, execute, and cache the plan for reuse.
+	cp, err := exe.CompilePlan(s.sql)
 	if err != nil {
 		return AP.Result{}, err
 	}
+	res, err := exe.ExecCompiled(ctx, cp, args...)
+	if err != nil {
+		cp.Close()
+		return AP.Result{}, err
+	}
+
+	// Cache the compiled plan for subsequent calls.
+	s.mu.Lock()
+	if s.prepared == nil {
+		s.prepared = cp
+	} else {
+		cp.Close()
+	}
+	s.mu.Unlock()
+
 	return AP.Result{RowsAffected: res.RowsAffected, LastInsertID: res.LastInsertID}, nil
 }
 
@@ -188,6 +258,10 @@ func (s *Stmt) Close() error {
 		return nil
 	}
 	s.closed.Store(true)
+	if s.prepared != nil {
+		s.prepared.Close()
+		s.prepared = nil
+	}
 	return nil
 }
 

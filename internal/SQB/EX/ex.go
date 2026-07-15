@@ -1147,6 +1147,132 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 	return out, nil
 }
 
+// CompiledPlan holds a pre-compiled operator tree that skips re-parsing
+// and re-planning on each execution. Created by Executor.CompilePlan.
+// For SELECT/compound, plan is set with the compiled PlanResult.
+// For DML and other exec-only statements, op is set with the writer op.
+// REQ001422.
+type CompiledPlan struct {
+	stmt  PS.Stmt
+	isDML bool
+	plan  *pl.PlanResult
+	op    DT.Operator
+}
+
+// Close releases the operator tree in the CompiledPlan. Safe to call
+// after ExecCompiled/QueryStreamCompiled have closed the tree. REQ001422.
+func (cp *CompiledPlan) Close() {
+	if cp == nil {
+		return
+	}
+	if cp.isDML {
+		if cp.op != nil {
+			cp.op.Close()
+		}
+	} else {
+		if cp.plan != nil && cp.plan.Root != nil {
+			cp.plan.Root.Close()
+		}
+	}
+}
+
+// CompilePlan parses sql and returns a CompiledPlan that holds a
+// compiled operator tree ready for execution via ExecCompiled or
+// QueryStreamCompiled. Subsequent calls skip re-parsing and re-planning.
+// The caller must call CloseCompiled when the plan is no longer needed.
+// REQ001422.
+func (e *Executor) CompilePlan(sql string) (*CompiledPlan, error) {
+	parser := PS.NewParser(sql)
+	stmt, err := parser.Parse()
+	if err != nil {
+		return nil, err
+	}
+
+	switch stmt.(type) {
+	case *PS.Select, *PS.CompoundStmt:
+		plan, err := e.planWithCache(stmt)
+		if err != nil {
+			return nil, err
+		}
+		if plan == nil || plan.Root == nil {
+			return nil, errors.New("ex: CompilePlan: plan produced no root")
+		}
+		ResolvePlanSlots(plan.Root)
+		return &CompiledPlan{stmt: stmt, plan: plan}, nil
+
+	default:
+		// DML, DDL, PRAGMA, etc.
+		op, err := e.buildWriterOp(stmt)
+		if err != nil {
+			return nil, err
+		}
+		return &CompiledPlan{stmt: stmt, isDML: true, op: op}, nil
+	}
+}
+
+// ExecCompiled executes a CompiledPlan produced by CompilePlan,
+// injecting args into `?` placeholders. Skips re-parsing and
+// re-planning. REQ001422.
+func (e *Executor) ExecCompiled(ctx context.Context, cp *CompiledPlan, args ...any) (Result, error) {
+	if cp == nil {
+		return Result{}, errors.New("ex: ExecCompiled: nil plan")
+	}
+
+	if cp.isDML {
+		op := cp.op
+		// R16-1: thread args down to the operator tree so `?`
+		// placeholders resolve.
+		propagateParams(op, args)
+
+		if hasReturning(cp.stmt) {
+			defer op.Close()
+			var count int64
+			for {
+				_, err := op.Next(ctx)
+				if err != nil {
+					if err == DT.ErrNoRows {
+						break
+					}
+					return Result{}, err
+				}
+				count++
+			}
+			return Result{RowsAffected: count}, nil
+		}
+
+		propagatePlanner(op, e.planner)
+		execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
+		execCtx.RowArena = e.ensureArena()
+		propagateExecContext(op, execCtx)
+		defer op.Close()
+		if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
+			return Result{}, err
+		}
+		e.lastChanges = execCtx.LastChanges
+		e.totalChanges = execCtx.TotalChanges
+		res, err := extractResult(op)
+		if err == nil {
+			updateTableRowCount(op, e.planner)
+		}
+		return res, err
+	}
+
+	// SELECT/compound path
+	plan := cp.plan
+	propagateParams(plan.Root, args)
+	propagatePlanner(plan.Root, e.planner)
+	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+	execCtx.RowArena = e.ensureArena()
+	propagateExecContext(plan.Root, execCtx)
+	defer plan.Root.Close()
+	if _, err := plan.Root.Next(ctx); err != nil && err != DT.ErrNoRows {
+		return Result{}, err
+	}
+	e.lastChanges = execCtx.LastChanges
+	e.totalChanges = execCtx.TotalChanges
+	return Result{}, nil
+}
+
 // Precompile parses each SQL in sqls and populates the shared stmt cache.
 // Subsequent QueryAll calls skip the parse step. Plan caching is handled
 // by planWithCache on the first execution of each SQL. REQ001458.

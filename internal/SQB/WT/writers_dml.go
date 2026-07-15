@@ -587,6 +587,10 @@ func (i *Insert) Close() error {
 	if i.selectPlan != nil {
 		_ = i.selectPlan.Close()
 	}
+	i.done = false
+	i.rows = 0
+	i.resultRows = nil
+	i.resultPos = 0
 	return nil
 }
 
@@ -875,7 +879,12 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 }
 
 func (u *Update) Close() error {
-	return u.iter.Close()
+	err := u.iter.Close()
+	u.done = false
+	u.rows = 0
+	u.resultRows = nil
+	u.resultPos = 0
+	return err
 }
 
 func (u *Update) RowsAffected() int64 {
@@ -1106,7 +1115,12 @@ func (d *Delete) nextFromStore(ctx context.Context) (DT.Row, error) {
 }
 
 func (d *Delete) Close() error {
-	return d.iter.Close()
+	err := d.iter.Close()
+	d.done = false
+	d.rows = 0
+	d.resultRows = nil
+	d.resultPos = 0
+	return err
 }
 
 func (d *Delete) RowsAffected() int64 {
