@@ -961,6 +961,29 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 			}
 		}
 		return OP.NewPragmaResult("batch_size", strconv.Itoa(OP.EngineBatchSize()))
+	case "vectorized_mode":
+		// REQ001444: sets the planner's BatchSize knob.
+		// off → 1, auto → 0 (use heuristic), on → 1024, <int> → explicit.
+		if s.Value != "" {
+			switch s.Value {
+			case "off":
+				p.SetBatchSize(1)
+			case "auto":
+				p.SetBatchSize(0)
+			case "on":
+				p.SetBatchSize(1024)
+			default:
+				if n, err := strconv.Atoi(s.Value); err == nil {
+					p.SetBatchSize(n)
+				}
+			}
+		}
+		mode := p.batchSize
+		switch mode {
+		case 0:
+			mode = -1 // sentinel for "auto"
+		}
+		return OP.NewPragmaResult("vectorized_mode", strconv.Itoa(mode))
 	case "foreign_keys", "foreign_key_check":
 		// REQ000905/REQ000906: these are handled by the Pragma operator
 		// which needs access to the store for FK introspection.
