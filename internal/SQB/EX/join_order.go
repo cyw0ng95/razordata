@@ -14,14 +14,38 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		return []string{baseTable, joinTables[0].name}, p.getTableRowCount(baseTable) + p.getTableRowCount(joinTables[0].name)
 	}
 
+	// Pre-compute allTables, rowCounts, and table indices for bitmask cache keys.
+	allTables := make([]string, 0, k)
+	tableIndex := make(map[string]int, k+1)
+	tableRowCounts := make(map[string]float64, k+1)
+	tableSelectivity := make(map[string]float64)
+	hasDuplicates := false
+	seenNames := make(map[string]bool, k+1)
+
+	// baseTable gets index 0.
+	tableIndex[baseTable] = 0
+	seenNames[baseTable] = true
+	tableRowCounts[baseTable] = p.getTableRowCount(baseTable)
+	baseRows := tableRowCounts[baseTable]
+
+	for _, jt := range joinTables {
+		n := jt.name
+		allTables = append(allTables, n)
+		if seenNames[n] {
+			hasDuplicates = true
+		}
+		seenNames[n] = true
+		tableIndex[n] = len(tableIndex)
+		tableRowCounts[n] = p.getTableRowCount(n)
+	}
+
 	// REQ000883/REQ000909: pre-compute per-table selectivity from
 	// single-table WHERE predicates (both pushed-down and cross-table
 	// that reference a single table). This allows the N3 algorithm to
 	// prefer joining tables first that have highly selective filters.
-	tableSelectivity := make(map[string]float64)
 	for _, jt := range joinTables {
 		sel := 1.0
-		rowCnt := p.getTableRowCount(jt.name)
+		rowCnt := tableRowCounts[jt.name]
 		for _, pred := range wherePredicates {
 			if p.canPushDown(pred, jt.name) {
 				psel := p.joinPredSel(pred, rowCnt)
@@ -37,7 +61,7 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		for _, jt := range joinTables {
 			if preds, ok := pushedPredicates[jt.name]; ok && len(preds) > 0 {
 				sel := tableSelectivity[jt.name]
-				rowCnt := p.getTableRowCount(jt.name)
+				rowCnt := tableRowCounts[jt.name]
 				for _, pred := range preds {
 					psel := p.joinPredSel(pred, rowCnt)
 					sel *= psel
@@ -57,7 +81,6 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 
 	heap := make([]partial, 0, n3HeapMaxSize)
 
-	baseRows := p.getTableRowCount(baseTable)
 	// REQ000909: reduce base table rows by its own single-table selectivity.
 	if pushedPredicates != nil {
 		if preds, ok := pushedPredicates[baseTable]; ok && len(preds) > 0 {
@@ -77,7 +100,7 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 	for _, jt := range joinTables {
 		preds := p.findPredicatesForPair(baseTable, jt.name, wherePredicates)
 		hasIdx := p.hasIndexOnTable(jt.name)
-		rightRows := p.getTableRowCount(jt.name)
+		rightRows := tableRowCounts[jt.name]
 		// REQ000883: reduce right row count by single-table selectivity.
 		if sel, ok := tableSelectivity[jt.name]; ok {
 			r := rightRows * sel
@@ -96,14 +119,11 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		})
 	}
 
+	// Pre-compute the bitmask for the baseTable alone.
+	baseMask := uint64(1) << tableIndex[baseTable]
+
 	// Iteratively extend partial plans with the cheapest remaining table.
 	for step := 1; step < k; step++ {
-		// Determine which tables are still missing from each plan.
-		allTables := make([]string, 0, k)
-		for _, jt := range joinTables {
-			allTables = append(allTables, jt.name)
-		}
-
 		type candidate struct {
 			idx       int
 			cost      float64
@@ -115,9 +135,7 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 
 		// REQ000947: bestCost is the minimum cost among the current
 		// partial plans (heap[0]). Candidates whose cost exceeds
-		// bestCost × n3PruneMultiplier are pruned. For the first
-		// step, the partial plans are all the base-pair candidates
-		// in heap, so we look up the minimum from heap.
+		// bestCost × n3PruneMultiplier are pruned.
 		var bestCost float64
 		if len(heap) > 0 {
 			bestCost = heap[0].cost
@@ -130,27 +148,54 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		pruneThreshold := bestCost * n3PruneMultiplier
 
 		// REQ001096: memoize findPredicatesForSet keyed by
-		// (sorted joined-set, candidate). The N3 inner loop calls
-		// this O(heap × tables) times; the same (joined-set, tbl)
-		// pair recurs across heap entries, so the cache turns the
-		// inner-loop predicate scan from O(predicates) to O(1).
-		predCache := make(map[string][]PS.Expr, len(heap)*len(allTables))
+		// (joined-set, candidate). Use uint64 bitmask when table
+		// names are unique; fall back to string keys for self-joins.
+		var predCacheStr map[string][]PS.Expr
+		var predCacheBits map[uint64][]PS.Expr
+		if hasDuplicates {
+			predCacheStr = make(map[string][]PS.Expr, len(heap)*len(allTables))
+		} else {
+			predCacheBits = make(map[uint64][]PS.Expr, len(heap)*len(allTables))
+		}
 
 		for _, pp := range heap {
-			// Which tables are not yet joined?
+			// Pre-compute the bitmask for this partial plan's joined set.
+			var joinedMask uint64
+			if !hasDuplicates {
+				joinedMask = baseMask
+				for tbl := range pp.tablesSet {
+					if idx, ok := tableIndex[tbl]; ok {
+						joinedMask |= uint64(1) << idx
+					}
+				}
+			}
+
 			for _, tbl := range allTables {
 				if pp.tablesSet[tbl] {
 					continue
 				}
-				// REQ001096: cache lookup by sorted tables-set + tbl.
-				cacheKey := CO.N3PredCacheKey(pp.tablesSet, tbl)
-				preds, ok := predCache[cacheKey]
-				if !ok {
-					preds = p.findPredicatesForSet(pp.tablesSet, tbl, wherePredicates)
-					predCache[cacheKey] = preds
+				// Predicate cache lookup.
+				var preds []PS.Expr
+				if hasDuplicates {
+					cacheKey := CO.N3PredCacheKey(pp.tablesSet, tbl)
+					var ok bool
+					preds, ok = predCacheStr[cacheKey]
+					if !ok {
+						preds = p.findPredicatesForSet(pp.tablesSet, tbl, wherePredicates)
+						predCacheStr[cacheKey] = preds
+					}
+				} else {
+					candIdx, _ := tableIndex[tbl]
+					bitsKey := (joinedMask << 8) | uint64(candIdx)
+					var ok bool
+					preds, ok = predCacheBits[bitsKey]
+					if !ok {
+						preds = p.findPredicatesForSet(pp.tablesSet, tbl, wherePredicates)
+						predCacheBits[bitsKey] = preds
+					}
 				}
 				hasIdx := p.hasIndexOnTable(tbl)
-				rightRows := p.getTableRowCount(tbl)
+				rightRows := tableRowCounts[tbl]
 				// REQ000883: reduce right row count by single-table selectivity.
 				if sel, ok := tableSelectivity[tbl]; ok {
 					r := rightRows * sel
@@ -163,6 +208,13 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 				newCost := pp.cost + joinCost
 				newRows := p.joinResultRows(pp.rows, rightRows, preds)
 
+				// REQ000947: prune candidates whose cost exceeds
+				// bestCost × n3PruneMultiplier. Check BEFORE allocations.
+				if bestCost > 0 && newCost > pruneThreshold {
+					continue
+				}
+
+				// Only allocate for surviving candidates.
 				newOrder := make([]string, len(pp.order)+1)
 				copy(newOrder, pp.order)
 				newOrder[len(pp.order)] = tbl
@@ -179,13 +231,6 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 					order:     newOrder,
 					tablesSet: newSet,
 					rows:      newRows,
-				}
-
-				// REQ000947: prune candidates whose cost exceeds
-				// bestCost × n3PruneMultiplier. Skip both the
-				// append path and the replace path.
-				if bestCost > 0 && cand.cost > pruneThreshold {
-					continue
 				}
 
 				// Insert into nextHeap, keep top N.
@@ -240,8 +285,6 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 
 	// Return the cheapest complete plan.
 	if len(heap) == 0 {
-		// Fallback: return original FROM clause order when N3
-		// cannot find any valid join order.
 		order := make([]string, 0, 1+len(joinTables))
 		order = append(order, baseTable)
 		for _, jt := range joinTables {
@@ -255,9 +298,6 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 			best = pp
 		}
 	}
-	// REQ000914: guard against empty order slice — some code paths
-	// (e.g. self-joins with aliases) can produce a non-empty heap
-	// entry with a zero-length order. Fall back to raw joinTables order.
 	if len(best.order) == 0 {
 		order := make([]string, 0, 1+len(joinTables))
 		order = append(order, baseTable)
