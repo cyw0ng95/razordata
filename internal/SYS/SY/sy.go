@@ -363,6 +363,10 @@ func (e *Engine) Reset(ctx context.Context) error {
 	if e.rowArena != nil {
 		e.rowArena.Reset()
 	}
+	// REQ001497: reset the page cache to reclaim memory between resets.
+	if e.eng != nil {
+		e.eng.ResetPageCache()
+	}
 	return nil
 }
 func (e *Engine) IsReadOnly() bool { return e.opts.ReadOnly }

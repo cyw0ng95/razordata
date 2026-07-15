@@ -198,3 +198,16 @@ func (c *PageCache) Len() int {
 	}
 	return n
 }
+
+// Reset clears all pages from the cache without deallocating shard
+// structures. Called from Engine.Reset to reclaim page cache memory
+// between test runs. REQ001497.
+func (c *PageCache) Reset() {
+	for _, s := range c.shards {
+		s.mu.Lock()
+		s.slots = s.slots[:0]
+		s.index = make(map[pageKey]*pageEntry, min(s.cap, 64))
+		s.size = 0
+		s.mu.Unlock()
+	}
+}

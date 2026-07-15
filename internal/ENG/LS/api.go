@@ -280,6 +280,15 @@ func (eng *Engine) ManualCompact() error {
 	return eng.e.cm.ManualCompact()
 }
 
+// ResetPageCache clears all pages from the page cache.
+// Called from Engine.Reset between test runs to reclaim memory. REQ001497.
+func (eng *Engine) ResetPageCache() {
+	if eng == nil || eng.e == nil || eng.e.pageCache == nil {
+		return
+	}
+	eng.e.pageCache.Reset()
+}
+
 // RangeIter is an iterator over a sorted range of keys.
 type RangeIter interface {
 	Next() bool
