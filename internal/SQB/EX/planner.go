@@ -93,6 +93,10 @@ type Planner struct {
 	// passed to SubPlanner.PlanSubquery so candidate-join-key logic
 	// avoids columns belonging to the outer side. nil = no outer query.
 	outerAliases []string
+	// REQ001443: batchSize is the per-query batch size knob.
+	// Chosen by chooseBatchSize() based on LIMIT clause, estimated
+	// row count, and operator tree depth. 0 = use heuristic.
+	batchSize int
 }
 
 type tableInfo struct {
@@ -1028,4 +1032,65 @@ func isConstRowPlan(op DT.Operator) bool {
 		}
 	}
 	return false
+}
+
+// SetBatchSize sets the batch size for the planner. 0 means use
+// the adaptive heuristic (chooseBatchSize). REQ001443.
+func (p *Planner) SetBatchSize(size int) {
+	p.batchSize = size
+}
+
+// BatchSize returns the current batch size setting. REQ001443.
+func (p *Planner) BatchSize() int {
+	return p.batchSize
+}
+
+// chooseBatchSize selects the optimal batch size for a query based on
+// LIMIT clause, estimated row count, and operator tree depth.
+// Returns one of {1, 64, 256, 1024}. REQ001443.
+func (p *Planner) chooseBatchSize(stmt PS.Stmt, root DT.Operator) int {
+	// If the user set an explicit batch size, honour it.
+	if p.batchSize > 0 {
+		return p.batchSize
+	}
+
+	// 1. Check LIMIT: LIMIT 0 → 1, LIMIT ≤ 64 → 64, else → 256.
+	limitN := p.extractLimit(stmt)
+	if limitN > 0 {
+		if limitN <= 1 {
+			return 1
+		}
+		if limitN <= 64 {
+			return 64
+		}
+		return 256
+	}
+
+	// 2. Check estimated row count from catalog via existing helper.
+	est := int64(p.estimateRowCountFromOp(root))
+	if est <= 0 {
+		// Unknown estimate — default to 256.
+		return 256
+	}
+	if est <= 64 {
+		return 64
+	}
+	if est <= 256 {
+		return 256
+	}
+	return 1024
+}
+
+// extractLimit walks the parsed statement AST to find the LIMIT count.
+// Returns -1 if no LIMIT clause is present. REQ001443.
+func (p *Planner) extractLimit(stmt PS.Stmt) int64 {
+	switch s := stmt.(type) {
+	case *PS.Select:
+		if s.Limit != nil {
+			if lit, ok := s.Limit.(*PS.NumberLiteral); ok {
+				return lit.Val
+			}
+		}
+	}
+	return -1
 }
