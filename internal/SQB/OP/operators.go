@@ -697,6 +697,32 @@ func (s *SeqScan) Close() error {
 	return nil
 }
 
+// Reset reinitializes SeqScan cursor state for operator tree reuse.
+// Does NOT close the iterator (reopened lazily on next Next() call)
+// and does NOT close the child (none for leaf SeqScan).
+// REQ001464.
+func (s *SeqScan) Reset(ctx context.Context) error {
+	if s.it != nil {
+		_ = s.it.Close()
+		s.it = nil
+	}
+	s.pos = 0
+	s.rows = nil
+	s.currentKey = nil
+	s.ctxCheckCounter = 0
+	if s.rowArena != nil {
+		s.rowArena.Reset()
+	}
+	clear(s.pruneBufIndex)
+	s.pruneBufCols = s.pruneBufCols[:0]
+	s.pruneBufTypes = s.pruneBufTypes[:0]
+	s.pruneBufData = s.pruneBufData[:0]
+	s.pointLookupRows = nil
+	s.pointLookupOnce = false
+	s.pointLookupPos = 0
+	return nil
+}
+
 // prefixRowCols returns a copy of r with each column name prefixed
 // by "alias.". Used by SeqScan when a FROM alias is specified so
 // correlated subquery eval can resolve qualified names like x.col.
@@ -1299,6 +1325,27 @@ func (i *IndexScan) Close() error {
 		if err != nil {
 			return err
 		}
+	}
+	i.btreeIt = nil
+	i.pos = 0
+	i.rows = nil
+	// REQ001226: return any remaining pooled slice.
+	if i.lastDataSlice != nil {
+		DT.PutValueSlice(i.lastDataSlice)
+		i.lastDataSlice = nil
+	}
+	return nil
+}
+
+// Reset reinitializes IndexScan cursor. Does NOT close children. REQ001464.
+func (i *IndexScan) Reset(ctx context.Context) error {
+	if i.it != nil {
+		_ = i.it.Close()
+		i.it = nil
+	}
+	if i.indexIt != nil {
+		_ = i.indexIt.Close()
+		i.indexIt = nil
 	}
 	i.btreeIt = nil
 	i.pos = 0

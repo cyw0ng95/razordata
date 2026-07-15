@@ -215,6 +215,14 @@ func (fp *FilterProject) Close() error {
 	return fp.child.Close()
 }
 
+// Reset reinitializes FilterProject cursor state. Preserves compiled
+// filter and expression fns. Does NOT close the child. REQ001464.
+func (fp *FilterProject) Reset(ctx context.Context) error {
+	fp.dataBuf = fp.dataBuf[:0]
+	fp.dataPerRow = 0
+	return nil
+}
+
 // CountComparisonLiterals returns how many comparison-literal values
 // this FilterProject's predicate would consume when normalized. REQ001231.
 func (fp *FilterProject) CountComparisonLiterals() int {
@@ -752,6 +760,19 @@ func (f *Filter) Close() error {
 	return f.child.Close()
 }
 
+// Reset reinitializes Filter cursor state. Reuses batch buffers in-place
+// instead of returning them to the pool. Does NOT close the child.
+// REQ001464.
+func (f *Filter) Reset(ctx context.Context) error {
+	f.batchBuf = f.batchBuf[:0]
+	f.batchEmit = f.batchEmit[:0]
+	f.batchEmitPos = 0
+	f.batchRefilled = false
+	f.ctxCheckCounter = 0
+	f.curRow = Row{}
+	return nil
+}
+
 type Project struct {
 	child     Operator
 	cols      []PS.Expr
@@ -975,6 +996,14 @@ func (p *Project) Close() error {
 	p.dataBuf = nil
 	p.dataPerRow = 0
 	return p.child.Close()
+}
+
+// Reset reinitializes Project cursor state. Reuses dataBuf in-place.
+// Does NOT close the child. REQ001464.
+func (p *Project) Reset(ctx context.Context) error {
+	p.dataBuf = p.dataBuf[:0]
+	p.dataPerRow = 0
+	return nil
 }
 
 // compiled predicates today are column-literal comparisons which

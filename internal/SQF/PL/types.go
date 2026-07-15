@@ -46,6 +46,13 @@ type Operator interface {
 	Close() error
 }
 
+// Resettable is an optional interface an Operator can implement to
+// support cursor state reuse without operator tree deallocation.
+// REQ001464.
+type Resettable interface {
+	Reset(ctx context.Context) error
+}
+
 // Row is a single row of data with column metadata and outer-row
 // linkage for correlated subqueries.
 type Row struct {

@@ -88,6 +88,9 @@ func (d *Distinct) Close() error {
 	return d.child.Close()
 }
 
+// Reset reinitializes Distinct cursor. Does NOT close the child. REQ001464.
+func (d *Distinct) Reset(ctx context.Context) error { d.buf = nil; d.seen = nil; d.pos = 0; return nil }
+
 // Child returns the wrapped child operator.
 func (d *Distinct) Child() pl.Operator { return d.child }
 

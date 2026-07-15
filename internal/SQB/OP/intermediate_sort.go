@@ -404,3 +404,6 @@ func (s *Sort) Close() error {
 	s.materialized = false
 	return s.child.Close()
 }
+
+// Reset reinitializes Sort cursor. Does NOT close the child. REQ001464.
+func (s *Sort) Reset(ctx context.Context) error { s.buf = nil; s.pos = 0; s.materialized = false; return nil }

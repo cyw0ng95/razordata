@@ -52,6 +52,9 @@ func (l *Limit) Close() error {
 	return l.child.Close()
 }
 
+// Reset reinitializes Limit cursor. Does NOT close the child. REQ001464.
+func (l *Limit) Reset(ctx context.Context) error { l.seen = 0; return nil }
+
 // Offset skips the first n rows from its child before yielding. It pairs
 // with Limit to implement LIMIT/OFFSET pagination. A nil child or a
 // negative n is treated as zero (no offset).
@@ -103,6 +106,9 @@ func (o *Offset) Close() error {
 	}
 	return o.child.Close()
 }
+
+// Reset reinitializes Offset cursor. Does NOT close the child. REQ001464.
+func (o *Offset) Reset(ctx context.Context) error { o.skipped = 0; return nil }
 
 // REQ001088: predicate compilation is now per-Filter. The previous
 // global `sync.Map` cache was keyed by `fmt.Sprintf("%v", e)` which

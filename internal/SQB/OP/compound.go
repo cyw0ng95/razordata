@@ -353,6 +353,18 @@ func (c *CompoundOp) Close() error {
 	return err2
 }
 
+// Reset reinitializes CompoundOp cursor. Does NOT close children. REQ001464.
+func (c *CompoundOp) Reset(ctx context.Context) error {
+	c.buf = nil
+	c.pos = 0
+	c.materialized = false
+	c.streamSide = streamLeft
+	c.rightDrained = false
+	c.emittedKeys = nil
+	c.rightKeys = nil
+	return nil
+}
+
 // drainAll pulls up to maxRows rows from op. maxRows=0 means unlimited.
 // Defaults to 1M rows when maxRows is 0 (safety limit for intermediate
 // compound operator materialization — REQ001056).

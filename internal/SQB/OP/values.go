@@ -49,6 +49,7 @@ func (c *ConstRow) Next(ctx context.Context) (Row, error) {
 }
 
 func (c *ConstRow) Close() error { return nil } // no-op: no mutable state; memo skips ConstRow
+func (c *ConstRow) Reset(ctx context.Context) error { c.done.Store(false); return nil }
 func (c *ConstRow) WithParams(p []any) Operator { return c }
 
 // Values implements a single-row operator that evaluates scalar
@@ -106,6 +107,8 @@ func (v *Values) Close() error {
 	v.evaluated = false
 	return nil
 }
+
+func (v *Values) Reset(ctx context.Context) error { v.evaluated = false; return nil }
 
 func (v *Values) WithParams(p []any) Operator {
 	if v == nil {
@@ -264,6 +267,8 @@ func (v *ValuesRows) Close() error {
 	v.pos = 0
 	return nil
 }
+
+func (v *ValuesRows) Reset(ctx context.Context) error { v.pos = 0; return nil }
 
 func (v *ValuesRows) WithParams(p []any) Operator {
 	return v

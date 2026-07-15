@@ -90,6 +90,16 @@ func (s *IndexOnlyScan) Close() error {
 	return s.inner.Close()
 }
 
+// Reset reinitializes the inner operator. Does NOT close it. REQ001464.
+func (s *IndexOnlyScan) Reset(ctx context.Context) error {
+	if s != nil && s.inner != nil {
+		if r, ok := s.inner.(pl.Resettable); ok {
+			return r.Reset(ctx)
+		}
+	}
+	return nil
+}
+
 // IsCoveringIndex returns true when the supplied projected columns
 // are all covered by the index columns (plus optionally the
 // primary key). REQ001107. Empty projection is treated as a
