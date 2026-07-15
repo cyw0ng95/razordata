@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"hash"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 )
 
 // DiffResultSets returns "" when the actual result set matches the
@@ -147,17 +149,47 @@ func diffHashed(actual *ResultSet, marker string, sortMode SortMode) string {
 
 // rowString renders a row as a tab-separated string for lexicographic
 // sorting, matching SQLite's sqllogictest row-comparison convention.
+// Uses a pooled strings.Builder to avoid per-row allocation. REQ001456.
+var builderPool = sync.Pool{
+	New: func() any { return &strings.Builder{} },
+}
+
 func rowString(row []Value) string {
-	var b strings.Builder
+	b := builderPool.Get().(*strings.Builder)
+	b.Reset()
 	for i, v := range row {
 		if i > 0 {
 			b.WriteByte('\t')
 		}
-		b.WriteString(v.String())
+		writeValueToBuilder(b, v)
 	}
-	return b.String()
+	s := b.String()
+	builderPool.Put(b)
+	return s
 }
 
+// writeValueToBuilder writes a Value's string representation to a Builder
+// without an intermediate string allocation. REQ001456.
+func writeValueToBuilder(b *strings.Builder, v Value) {
+	switch v.Kind {
+	case TypeNull:
+		b.WriteString("NULL")
+	case TypeInteger:
+		buf := strconv.AppendInt(nil, v.Int, 10)
+		b.Write(buf)
+	case TypeReal:
+		buf := strconv.AppendFloat(nil, v.Real, 'f', 3, 64)
+		b.Write(buf)
+	case TypeBlob:
+		b.WriteString(v.Text)
+	default:
+		b.WriteString(v.Text)
+	}
+}
+
+// hashValues computes an MD5 hash over the string representation of
+// each value, separated by newlines. REQ001456: writes directly to
+// the hash via writeValueToBytes to avoid intermediate string allocs.
 func hashValues(vs []Value) string {
 	h := md5Pool.Get().(hash.Hash)
 	defer func() {
@@ -165,10 +197,28 @@ func hashValues(vs []Value) string {
 		md5Pool.Put(h)
 	}()
 	for _, v := range vs {
-		h.Write([]byte(v.String()))
+		writeValueToBytes(h, v)
 		h.Write([]byte{'\n'})
 	}
 	return bytehex(h.Sum(nil))
+}
+
+// writeValueToBytes writes a Value's string representation directly to
+// a hash.Hash, avoiding intermediate string and []byte allocations.
+// REQ001456.
+func writeValueToBytes(h hash.Hash, v Value) {
+	switch v.Kind {
+	case TypeNull:
+		h.Write([]byte("NULL"))
+	case TypeInteger:
+		h.Write(strconv.AppendInt(nil, v.Int, 10))
+	case TypeReal:
+		h.Write(strconv.AppendFloat(nil, v.Real, 'f', 3, 64))
+	case TypeBlob:
+		h.Write([]byte(v.Text))
+	default:
+		h.Write([]byte(v.Text))
+	}
 }
 
 // rowsEqual compares two rows column-by-column, with type-aware
