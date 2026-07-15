@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	_ "github.com/cyw0ng95/razordata/driver"
+	"github.com/cyw0ng95/razordata/internal/SYS/AP"
+	sy "github.com/cyw0ng95/razordata/internal/SYS/SY"
 )
 
 func setupSelect1(b *testing.B) *sql.DB {
@@ -58,8 +60,65 @@ func setupSelect1(b *testing.B) *sql.DB {
 	return db
 }
 
+// setupSelect1Engine creates a Razordata engine directly (bypassing
+// database/sql) and returns the engine so benchmarks can use QueryAll
+// to eliminate driver overhead. REQ001495.
+func setupSelect1Engine(b *testing.B) (*sy.Engine, func()) {
+	b.Helper()
+	dir, err := os.MkdirTemp("", "bench-eng-")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	eng, err := sy.Open(context.Background(), filepath.Join(dir, "db"), AP.Options{
+		Dir:              filepath.Join(dir, "db.engine"),
+		MemTableSize:     1 << 20,
+		BufferPoolMB:     64,
+		MaxMemoryPerQuery: 512 << 20,
+		JoinBufferSize:   256 << 20,
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	cleanup := func() {
+		eng.Close(context.Background())
+		os.RemoveAll(dir)
+	}
+
+	exe := eng.Executor()
+	stmts := []string{
+		"CREATE TABLE t1(a INTEGER, b INTEGER, c INTEGER, d INTEGER, e INTEGER)",
+		"INSERT INTO t1(e,c,b,d,a) VALUES(103,102,100,101,104)",
+		"INSERT INTO t1(a,c,d,e,b) VALUES(107,106,108,109,105)",
+		"INSERT INTO t1(e,d,b,a,c) VALUES(110,114,112,111,113)",
+		"INSERT INTO t1(d,c,e,a,b) VALUES(116,119,117,115,118)",
+		"INSERT INTO t1(c,d,b,e,a) VALUES(123,122,124,120,121)",
+		"INSERT INTO t1(a,d,b,e,c) VALUES(127,128,129,126,125)",
+		"INSERT INTO t1(e,c,a,d,b) VALUES(132,134,131,133,130)",
+		"INSERT INTO t1(a,d,b,e,c) VALUES(138,136,139,135,137)",
+		"INSERT INTO t1(e,c,d,a,b) VALUES(144,141,140,142,143)",
+		"INSERT INTO t1(b,a,e,d,c) VALUES(145,149,146,148,147)",
+		"INSERT INTO t1(b,c,a,d,e) VALUES(151,150,153,154,152)",
+		"INSERT INTO t1(c,e,a,d,b) VALUES(155,157,159,156,158)",
+		"INSERT INTO t1(c,b,a,d,e) VALUES(161,160,163,164,162)",
+		"INSERT INTO t1(b,d,a,e,c) VALUES(167,169,168,165,166)",
+		"INSERT INTO t1(d,b,c,e,a) VALUES(171,170,172,173,174)",
+		"INSERT INTO t1(e,c,a,d,b) VALUES(177,176,179,178,175)",
+		"INSERT INTO t1(b,e,a,d,c) VALUES(181,180,182,183,184)",
+		"INSERT INTO t1(c,a,b,e,d) VALUES(187,188,186,189,185)",
+		"INSERT INTO t1(d,b,c,e,a) VALUES(190,194,193,192,191)",
+	}
+	for _, s := range stmts {
+		if _, err := exe.Exec(context.Background(), s); err != nil {
+			b.Fatalf("setup %q: %v", s, err)
+		}
+	}
+	return eng, cleanup
+}
+
 // BenchmarkSelect1_Queries runs representative select1 queries through
-// the full engine path (database/sql → driver → executor → storage).
+// the full engine path (database/sql -> driver -> executor -> storage).
 func BenchmarkSelect1_Queries(b *testing.B) {
 	db := setupSelect1(b)
 
@@ -143,10 +202,13 @@ func BenchmarkSelect1_BlockCache(b *testing.B) {
 	}
 }
 
-// BenchmarkSelect1_Throughput measures total queries/second.
-func BenchmarkSelect1_Throughput(b *testing.B) {
-	db := setupSelect1(b)
+// BenchmarkSelect1_ThroughputDirect uses the engine's QueryAll directly
+// (bypassing database/sql) to measure pure engine throughput. REQ001495.
+func BenchmarkSelect1_ThroughputDirect(b *testing.B) {
+	eng, cleanup := setupSelect1Engine(b)
+	defer cleanup()
 	ctx := context.Background()
+	exe := eng.Executor()
 
 	sqls := []string{
 		"SELECT * FROM t1",
@@ -156,16 +218,17 @@ func BenchmarkSelect1_Throughput(b *testing.B) {
 		"SELECT count(*) FROM t1",
 	}
 
+	// Precompile all plans upfront (REQ001458).
+	exe.Precompile(ctx, sqls)
+
 	b.ResetTimer()
+	b.ReportAllocs()
 	for b.Loop() {
 		for _, q := range sqls {
-			rows, err := db.QueryContext(ctx, q)
+			_, err := exe.QueryAll(ctx, q)
 			if err != nil {
 				b.Fatal(err)
 			}
-			for rows.Next() {
-			}
-			rows.Close()
 		}
 	}
 }
