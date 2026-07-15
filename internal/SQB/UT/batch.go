@@ -384,3 +384,85 @@ func BatchValueAt(col Column, i int) any {
 	}
 	return nil
 }
+
+// ToValue converts a Batch cell (any-typed per the typed ColumnData
+// union) back to the strongly-typed Value used by `pl.Row`. Returns
+// `Value{Kind: KindNull}` for nulls and an out-of-bounds i. The
+// underlying string/int/float/bool stays shared with the Batch
+// (callers must not mutate); if isolation is needed, deep-copy via
+// `toOwnedValue` before the Batch is Put.
+//
+// REQ001440: the executor boundary uses ToRows to materialise the
+// final *Batch back into []pl.Row for the existing return contract.
+func ToValue(col Column, i int) pl.Value {
+	if col.Nulls != nil && i < len(col.Nulls) && col.Nulls[i] {
+		return pl.Value{Kind: pl.KindNull}
+	}
+	switch col.Type {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		if i < len(col.Data.Ints) {
+			return pl.Value{Kind: pl.KindInt, I64: col.Data.Ints[i]}
+		}
+	case LX.T_FLOAT_KW:
+		if i < len(col.Data.Floats) {
+			return pl.Value{Kind: pl.KindFloat, F64: col.Data.Floats[i]}
+		}
+	case LX.T_BOOL:
+		if i < len(col.Data.Bools) {
+			return pl.Value{Kind: pl.KindBool, Bo: col.Data.Bools[i]}
+		}
+	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+		if i < len(col.Data.Strs) {
+			return pl.Value{Kind: pl.KindText, S: col.Data.Strs[i]}
+		}
+	}
+	return pl.Value{Kind: pl.KindNull}
+}
+
+// ColNames returns the column-name slice corresponding to the
+// populated prefix of `b.Cols`. Stops at the first zero-length
+// type token (treated as "not allocated"). REQ001440.
+func (b *Batch) ColNames() []string {
+	out := make([]string, 0, len(b.Cols))
+	for i := range b.Cols {
+		if b.Cols[i].Name == "" && b.Cols[i].Type == 0 {
+			continue
+		}
+		out = append(out, b.Cols[i].Name)
+	}
+	return out
+}
+
+// ToRows materializes the (possibly Sel-filtered) Batch to a
+// `[]pl.Row`, sharing Cols across all rows so downstream callers
+// see stable column names without copy. The Data slice per row is
+// freshly allocated: Batch columnar data (split across Ints/Floats/
+// Strs/Bools) is converted row-by-row into the per-row Value slice
+// the existing `pl.Operator.Next()` contract returns. REQ001440.
+func (b *Batch) ToRows() []pl.Row {
+	if b == nil {
+		return nil
+	}
+	names := b.ColNames()
+	if len(names) == 0 {
+		return nil
+	}
+	logical := b.LogicalSize()
+	out := make([]pl.Row, 0, logical)
+	// Helper closure for the two variants.
+	for r := 0; r < logical; r++ {
+		phys := r
+		if b.Sel != nil {
+			phys = int(b.Sel[r])
+		}
+		row := pl.Row{
+			Cols: names,
+		}
+		row.Data = make([]pl.Value, len(names))
+		for c := range names {
+			row.Data[c] = ToValue(b.Cols[c], phys)
+		}
+		out = append(out, row)
+	}
+	return out
+}

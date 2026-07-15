@@ -8,30 +8,35 @@ import (
 )
 
 // BatchToRowAdapter wraps a BatchProducer and implements pl.Operator
-// (Next+Close) by extracting one row per Next() call from batches.
+// (Next+Close) by materialising one batch at a time via Batch.ToRows
+// and yielding one row per Next() call. This is the "row-at-a-time
+// is BatchSize=1" boundary: the source runs vectorized end-to-end, we
+// just iterate its output row by row. REQ001440.
 type BatchToRowAdapter struct {
 	source BatchProducer
-	batch  *Batch
-	row    int
+	rows   []pl.Row
+	pos    int
 	done   bool
 }
 
 // NewBatchToRowAdapter creates an adapter that wraps a BatchProducer
-// as a row-based Operator.
+// as a row-based Operator. Replaces the previous per-row per-Next
+// decode loop with a per-batch ToRows() call, amortising the
+// allocation cost across the entire batch.
 func NewBatchToRowAdapter(source BatchProducer) *BatchToRowAdapter {
 	return &BatchToRowAdapter{source: source}
 }
 
-// Next returns the next row from the current batch, fetching a new
-// batch from the source when the current one is exhausted. Returns
-// pl.ErrNoRows at EOF.
+// Next returns the next row from the buffered batch materialised
+// from source. When the buffer is exhausted, fetches the next batch
+// from source and materialises it via ToRows() before resuming.
+// Returns pl.ErrNoRows at EOF.
 func (a *BatchToRowAdapter) Next(ctx context.Context) (pl.Row, error) {
 	if a.done {
 		return pl.Row{}, pl.ErrNoRows
 	}
-
-	// Fetch a new batch if needed.
-	if a.batch == nil {
+	if a.pos >= len(a.rows) {
+		// Refill from source: fetch next batch and materialise.
 		b, err := a.source.NextBatch(ctx)
 		if err != nil {
 			return pl.Row{}, err
@@ -40,66 +45,35 @@ func (a *BatchToRowAdapter) Next(ctx context.Context) (pl.Row, error) {
 			a.done = true
 			return pl.Row{}, pl.ErrNoRows
 		}
-		a.batch = b
-		a.row = 0
-	}
-
-	// Check if we've exhausted the current batch.
-	if a.row >= a.batch.LogicalSize() {
-		if a.batch.Pooled {
-			a.batch.Put()
+		// REQ001440: materialise the entire batch at once via
+		// ToRows, then drop the batch's pool reference. This
+		// amortises the per-batch allocation across every row
+		// in the batch instead of allocating a fresh Row per
+		// Next.
+		a.rows = b.ToRows()
+		if b.Pooled {
+			b.Put()
 		}
-		a.batch = nil
-		return a.Next(ctx)
+		a.pos = 0
+		if len(a.rows) == 0 {
+			// Empty batch (e.g. all rows filtered out); retry
+			// the fetch path so we don't claim EOF prematurely.
+			return a.Next(ctx)
+		}
 	}
-
-	row := a.batchRow(a.row)
-	a.row++
-	return row, nil
+	r := a.rows[a.pos]
+	a.pos++
+	return r, nil
 }
 
-// Close returns the current batch to the pool and closes the source.
+// Close closes the source.
 func (a *BatchToRowAdapter) Close() error {
-	if a.batch != nil && a.batch.Pooled {
-		a.batch.Put()
-		a.batch = nil
-	}
+	a.rows = nil
+	a.pos = 0
 	if a.source != nil {
 		return a.source.Close()
 	}
 	return nil
-}
-
-// batchRow extracts a row from the batch at the given logical index,
-// respecting the Sel vector.
-func (a *BatchToRowAdapter) batchRow(logicalIdx int) pl.Row {
-	physicalIdx := logicalIdx
-	if a.batch.Sel != nil {
-		physicalIdx = int(a.batch.Sel[logicalIdx])
-	}
-
-	// Count actual columns (those with non-zero Type).
-	n := 0
-	for _, c := range a.batch.Cols {
-		if c.Type != 0 {
-			n++
-		}
-	}
-
-	cols := make([]string, 0, n)
-	types := make([]LX.TokenType, 0, n)
-	data := make([]pl.Value, 0, n)
-
-	for i := range a.batch.Cols {
-		if a.batch.Cols[i].Type == 0 {
-			continue
-		}
-		cols = append(cols, a.batch.Cols[i].Name)
-		types = append(types, a.batch.Cols[i].Type)
-		data = append(data, batchValueAt(a.batch.Cols[i], physicalIdx))
-	}
-
-	return pl.Row{Cols: cols, Types: types, Data: data}
 }
 
 // batchValueAt converts Column data at the given physical index to a pl.Value.
