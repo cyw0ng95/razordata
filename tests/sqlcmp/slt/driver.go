@@ -47,6 +47,15 @@ type RawQuerier interface {
 	QueryRaw(ctx context.Context, sql string) (*ResultSet, error)
 }
 
+// PlanPrecompiler is an optional interface a Driver can implement to
+// advertise support for batch SQL plan pre-compilation. The runner
+// calls Precompile before the execution loop to populate the
+// executor's stmt and plan caches, so each Query/Exec call skips
+// parse+plan overhead. REQ001458.
+type PlanPrecompiler interface {
+	Precompile(ctx context.Context, sqls []string)
+}
+
 // Classifier maps an engine-returned error to a runner-visible
 // verdict. A driver may implement this to advertise specific
 // errors as "unsupported" (skipped) rather than failures.

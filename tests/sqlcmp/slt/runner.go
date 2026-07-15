@@ -131,6 +131,24 @@ func (defaultClassifier) Classify(err error) Verdict {
 // RecordInvalid are counted as parse errors and skipped.
 func (r *Runner) Run(ctx context.Context, records []Record) Stats {
 	r.startTime = time.Now()
+
+	// REQ001458: batch pre-compile all SQL plans before the execution loop.
+	// Collects all executable SQLs and primes the executor's stmt+plan caches,
+	// so each Query/Exec call skips parse+plan overhead.
+	if pc, ok := r.driver.(PlanPrecompiler); ok {
+		sqls := make([]string, 0, len(records))
+		for i := range records {
+			rec := &records[i]
+			switch rec.Kind {
+			case RecordStatementOK, RecordStatementError, RecordQuery:
+				if rec.SQL != "" {
+					sqls = append(sqls, rec.SQL)
+				}
+			}
+		}
+		pc.Precompile(ctx, sqls)
+	}
+
 	for i := range records {
 		rec := &records[i]
 		r.stats.Total++

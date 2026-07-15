@@ -321,6 +321,18 @@ func apToSltValue(v AP.Value) Value {
 	}
 }
 
+// Precompile parses and plans all SQLs in sqls, populating the shared
+// executor caches so subsequent QueryRaw calls skip parse+plan. REQ001458.
+func (d *RazorDriver) Precompile(ctx context.Context, sqls []string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.engine == nil {
+		return
+	}
+	exe := d.engine.Executor()
+	exe.Precompile(ctx, sqls)
+}
+
 // EngineAccessor returns the underlying *ls.Engine for edge
 // probes. Returns false if no engine is wired.
 func (d *RazorDriver) EngineAccessor() (EngineSyncer, bool) {

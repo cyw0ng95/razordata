@@ -1147,6 +1147,29 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 	return out, nil
 }
 
+// Precompile parses each SQL in sqls and populates the shared stmt cache.
+// Subsequent QueryAll calls skip the parse step. Plan caching is handled
+// by planWithCache on the first execution of each SQL. REQ001458.
+func (e *Executor) Precompile(ctx context.Context, sqls []string) {
+	if e.stmtCache == nil || e.stmtCache.entries == nil {
+		return
+	}
+	for _, sql := range sqls {
+		if sql == "" {
+			continue
+		}
+		if e.getCachedStmt(sql) != nil {
+			continue // already cached
+		}
+		parser := PS.NewParser(sql)
+		stmt, err := parser.Parse()
+		if err != nil {
+			continue
+		}
+		e.putCachedStmt(sql, stmt)
+	}
+}
+
 // propagatePlanner walks the operator tree rooted at root and
 // calls WithPlanner(p) on every node that supports it. See
 // REQ000366.
