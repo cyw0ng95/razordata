@@ -149,6 +149,15 @@ func (r *Runner) Run(ctx context.Context, records []Record) Stats {
 		pc.Precompile(ctx, sqls)
 	}
 
+	// REQ001467: fast path for straight-through scripts — no control-flow
+	// directives (skipif/onlyif/halt/hash-threshold). Skips all state
+	// tracking overhead: pendingSkip, splitRange, profiling, fast-fail.
+	if r.splitStart == 0 && r.splitEnd == 0 && !r.FailFast && !r.profileOn {
+		if !hasControlFlow(records) {
+			return r.runStraightThrough(ctx, records)
+		}
+	}
+
 	for i := range records {
 		rec := &records[i]
 		r.stats.Total++
@@ -539,6 +548,97 @@ type slowTimer struct {
 	label string
 	sql   string
 	dur   time.Duration
+}
+
+// hasControlFlow reports whether records contain any control-flow
+// directives that prevent the straight-through fast path. REQ001467.
+func hasControlFlow(records []Record) bool {
+	for i := range records {
+		switch records[i].Kind {
+		case RecordSkipIf, RecordOnlyIf, RecordHalt, RecordHashThreshold:
+			return true
+		}
+	}
+	return false
+}
+
+// runStraightThrough is a tight loop for straight-through SLT scripts
+// that skips all state tracking overhead: pendingSkip, splitRange,
+// profiling, fast-fail. REQ001467.
+func (r *Runner) runStraightThrough(ctx context.Context, records []Record) Stats {
+	var passed, failed, skipped, total int
+	for i := range records {
+		rec := &records[i]
+		total++
+		switch rec.Kind {
+		case RecordInvalid:
+			skipped++
+			continue
+		case RecordStatementOK:
+			if err := r.driver.Exec(ctx, rec.SQL); err == nil {
+				passed++
+			} else {
+				switch r.classifier.Classify(err) {
+				case VerdictSkipped:
+					skipped++
+				default:
+					failed++
+					r.stats.FailureContext = append(r.stats.FailureContext, FailureContext{
+						Line: rec.Line, Kind: rec.Kind, SQL: rec.SQL,
+						Diag: fmt.Sprintf("exec error: %v", err),
+					})
+				}
+			}
+		case RecordStatementError:
+			if err := r.driver.Exec(ctx, rec.SQL); err != nil {
+				passed++ // error expected
+			} else {
+				failed++ // no error when one was expected
+				r.stats.FailureContext = append(r.stats.FailureContext, FailureContext{
+					Line: rec.Line, Kind: rec.Kind, SQL: rec.SQL,
+					Diag: "expected error but got none",
+				})
+			}
+		case RecordQuery:
+			rs, err := r.driver.Query(ctx, rec.SQL)
+			if err != nil {
+				switch r.classifier.Classify(err) {
+				case VerdictSkipped:
+					skipped++
+				default:
+					failed++
+					r.stats.FailureContext = append(r.stats.FailureContext, FailureContext{
+						Line: rec.Line, Kind: rec.Kind, SQL: rec.SQL,
+						Diag: fmt.Sprintf("query error: %v", err),
+					})
+				}
+				continue
+			}
+			if diff := DiffResultSets(rs, rec); diff != "" {
+				failed++
+				r.stats.FailureContext = append(r.stats.FailureContext, FailureContext{
+					Line: rec.Line, Kind: rec.Kind, SQL: rec.SQL,
+					Diag: diff,
+				})
+			} else {
+				passed++
+			}
+		default:
+			skipped++ // unexpected record kind
+		}
+		if r.haltOnTimeout {
+			remaining := len(records) - i - 1
+			if remaining > 0 {
+				skipped += remaining
+			}
+			break
+		}
+	}
+	r.stats.Total = total
+	r.stats.Passed = passed
+	r.stats.Failed = failed
+	r.stats.Skipped = skipped
+	return r.finalize()
 }
 
 // isContextDeadlineExceeded detects go context deadline errors.
