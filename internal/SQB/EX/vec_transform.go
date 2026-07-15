@@ -110,6 +110,12 @@ func isEligible(root DT.Operator) bool {
 			// harder to express purely in batch operations.
 			return o.CompoundOpType() == PS.CompoundUnionAll ||
 				o.CompoundOpType() == PS.CompoundUnion
+		case *OP.Sort:
+			// VectorizedSort supports any child that is eligible.
+			return isEligible(o.Child())
+		case *OP.Limit:
+			// VectorizedLimit supports any child that is eligible.
+			return isEligible(o.Child())
 		default:
 			return false
 		}
@@ -162,6 +168,18 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		return transformDistinct(o)
 	case *OP.CompoundOp:
 		return transformCompoundOp(o)
+	case *OP.Sort:
+		child := transformOp(o.Child())
+		if child == nil {
+			return nil
+		}
+		return OP.NewVectorizedSort(child, o.Keys())
+	case *OP.Limit:
+		child := transformOp(o.Child())
+		if child == nil {
+			return nil
+		}
+		return OP.NewVectorizedLimit(child, o.Limit())
 	}
 	return nil
 }
