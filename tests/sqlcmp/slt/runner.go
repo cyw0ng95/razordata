@@ -600,7 +600,14 @@ func (r *Runner) runStraightThrough(ctx context.Context, records []Record) Stats
 				})
 			}
 		case RecordQuery:
-			rs, err := r.driver.Query(ctx, rec.SQL)
+			var rs *ResultSet
+			var err error
+			// REQ001495: fast-path through QueryRaw when the driver supports it.
+			if rq, ok := r.driver.(RawQuerier); ok {
+				rs, err = rq.QueryRaw(ctx, rec.SQL)
+			} else {
+				rs, err = r.driver.Query(ctx, rec.SQL)
+			}
 			if err != nil {
 				switch r.classifier.Classify(err) {
 				case VerdictSkipped:
