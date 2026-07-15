@@ -37,6 +37,16 @@ type ResultSet struct {
 	Rows    [][]Value
 }
 
+// RawQuerier is an optional interface a Driver can implement to
+// bypass database/sql and execute queries directly against the
+// engine. The runner detects this interface and fast-paths
+// runQuery through it, eliminating Prepare, Rows interface
+// dispatch, and valueFromAny reflection per cell.
+// REQ001457.
+type RawQuerier interface {
+	QueryRaw(ctx context.Context, sql string) (*ResultSet, error)
+}
+
 // Classifier maps an engine-returned error to a runner-visible
 // verdict. A driver may implement this to advertise specific
 // errors as "unsupported" (skipped) rather than failures.

@@ -285,7 +285,15 @@ func (r *Runner) runStatementError(ctx context.Context, rec *Record) {
 // against the expected rows, and consults the classifier on
 // engine-side errors.
 func (r *Runner) runQuery(ctx context.Context, rec *Record) {
-	rs, err := r.driver.Query(ctx, rec.SQL)
+	// REQ001457: fast-path through QueryRaw when the driver supports
+	// it, bypassing database/sql's Prepare + Rows + reflection.
+	var rs *ResultSet
+	var err error
+	if rq, ok := r.driver.(RawQuerier); ok {
+		rs, err = rq.QueryRaw(ctx, rec.SQL)
+	} else {
+		rs, err = r.driver.Query(ctx, rec.SQL)
+	}
 	if err != nil {
 		// REQ001056: fast-fail on timeout — subsequent records will
 		// also time out in a cascade, wasting wall-clock time.

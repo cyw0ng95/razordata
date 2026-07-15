@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -255,6 +256,69 @@ func (d *RazorDriver) queryContext(ctx context.Context, sql string) (*ResultSet,
 		rs.Rows = append(rs.Rows, row)
 	}
 	return rs, rows.Err()
+}
+
+// QueryRaw bypasses database/sql and executes the query directly
+// against the engine, returning a materialized ResultSet. This
+// eliminates Prepare, Rows interface dispatch, and valueFromAny
+// reflection per cell — critical for select1's 12K simple queries.
+// REQ001457.
+func (d *RazorDriver) QueryRaw(ctx context.Context, sql string) (*ResultSet, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.engine == nil {
+		return nil, errors.New("slt: razor: not connected")
+	}
+	exe := d.engine.Executor()
+	rows, err := exe.QueryAll(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return &ResultSet{}, nil
+	}
+	// Column names come from the first row's metadata.
+	cols := rows[0].Cols
+	rs := &ResultSet{
+		Columns: make([]string, len(cols)),
+		Rows:    make([][]Value, len(rows)),
+	}
+	copy(rs.Columns, cols)
+	for i, row := range rows {
+		vrow := make([]Value, len(row.Data))
+		for j, v := range row.Data {
+			vrow[j] = apToSltValue(v)
+		}
+		rs.Rows[i] = vrow
+	}
+	return rs, nil
+}
+
+// apToSltValue converts an engine-native AP.Value to an SLT Value
+// without going through database/sql's any boxing. REQ001457.
+func apToSltValue(v AP.Value) Value {
+	switch v.Kind {
+	case AP.KindNull:
+		return Value{Kind: TypeNull}
+	case AP.KindInt:
+		return Value{Kind: TypeInteger, Int: v.I64}
+	case AP.KindFloat:
+		if v.F64 == float64(int64(v.F64)) && v.F64 >= -1e15 && v.F64 <= 1e15 {
+			return Value{Kind: TypeInteger, Int: int64(v.F64)}
+		}
+		return Value{Kind: TypeReal, Real: v.F64}
+	case AP.KindText:
+		return Value{Kind: TypeText, Text: v.S}
+	case AP.KindBlob:
+		return Value{Kind: TypeBlob, Text: hex.EncodeToString(v.B)}
+	case AP.KindBool:
+		if v.Bo {
+			return Value{Kind: TypeInteger, Int: 1}
+		}
+		return Value{Kind: TypeInteger, Int: 0}
+	default:
+		return Value{Kind: TypeText, Text: strconv.FormatInt(int64(v.Kind), 10)}
+	}
 }
 
 // EngineAccessor returns the underlying *ls.Engine for edge
