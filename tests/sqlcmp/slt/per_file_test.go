@@ -51,12 +51,19 @@ func TestSLT_PerFile(t *testing.T) {
 	}
 	t.Logf("discovered %d .test files under %s", len(files), root)
 
+	// REQ001454: create one driver for all files; reset between subtests
+	// instead of Close+Connect per file (saves ~42 MB + ~300 ms setup each).
+	driver := NewRazorDriver()
+	rootCtx, rootCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer rootCancel()
+
+	if err := driver.Connect(rootCtx); err != nil {
+		t.Fatalf("driver.Connect: %v", err)
+	}
+	t.Cleanup(func() { _ = driver.Close(context.Background()) })
+
 	for _, rel := range files {
 		rel := rel
-		// Use the relative path (without corpus root prefix) as the
-		// subtest name so -run patterns are intuitive:
-		//   -run 'TestSLT_PerFile/select4'
-		//   -run 'TestSLT_PerFile/evidence/slt_lang_update'
 		name := filepath.ToSlash(rel)
 		t.Run(name, func(t *testing.T) {
 			full := filepath.Join(root, rel)
@@ -65,11 +72,15 @@ func TestSLT_PerFile(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 
-			driver := NewRazorDriver()
-			if err := driver.Connect(ctx); err != nil {
-				t.Fatalf("driver.Connect: %v", err)
+			// Reset driver state between files (drops all user tables, resets
+			// catalog). This is ~1000× faster than Close+Connect.
+			//
+			// REQ001454: first file after Connect doesn't need Reset — the
+			// engine is already clean. But calling Reset redundantly is a
+			// no-op on an empty catalog, so we keep it for simplicity.
+			if err := driver.Reset(ctx); err != nil {
+				t.Fatalf("driver.Reset: %v", err)
 			}
-			t.Cleanup(func() { _ = driver.Close(context.Background()) })
 
 			f, err := os.Open(full)
 			if err != nil {

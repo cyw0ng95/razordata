@@ -340,6 +340,31 @@ func (e *Engine) Begin(ctx context.Context) (AP.Session, error) {
 }
 
 func (e *Engine) IsClosed() bool   { return e.closed.Load() }
+
+// Reset drops all user tables, schemas, and in-memory state, returning
+// the engine to a clean post-Open state. Preserves the directory, WAL,
+// and storage engine; only the logical catalog is reset. REQ001454.
+func (e *Engine) Reset(ctx context.Context) error {
+	DT.TablesMu.Lock()
+	defer DT.TablesMu.Unlock()
+	// Clear in-memory tables and schemas.
+	for k := range DT.Tables {
+		delete(DT.Tables, k)
+	}
+	for k := range DT.Schemas {
+		delete(DT.Schemas, k)
+	}
+	for k := range DT.InMemSchemas {
+		delete(DT.InMemSchemas, k)
+	}
+	// Reset the executor's plan cache.
+	e.exe.ClearPlanCache()
+	// Reset the per-engine row arena for fresh re-use.
+	if e.rowArena != nil {
+		e.rowArena.Reset()
+	}
+	return nil
+}
 func (e *Engine) IsReadOnly() bool { return e.opts.ReadOnly }
 
 func (e *Engine) Open(ctx context.Context, dir string, opts AP.Options) error {

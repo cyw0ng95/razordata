@@ -21,6 +21,11 @@ type Driver interface {
 	Close(ctx context.Context) error
 	Exec(ctx context.Context, sql string) error
 	Query(ctx context.Context, sql string) (*ResultSet, error)
+	// Reset drops all user tables/schemas and returns the engine to a
+	// clean post-Connect state without tearing down the connection.
+	// REQ001454. Optional — the Runner falls back to Close+Connect if
+	// the driver does not implement Reset.
+	Reset(ctx context.Context) error
 }
 
 // ResultSet is the materialized output of a SELECT-like query.

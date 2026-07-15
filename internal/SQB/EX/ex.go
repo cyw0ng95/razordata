@@ -552,8 +552,9 @@ func (e *Executor) putCachedPlan(key string, result *pl.PlanResult) {
 	}
 }
 
-// clearPlanCache clears the plan cache. Used in tests.
-func (e *Executor) clearPlanCache() {
+// ClearPlanCache clears the plan cache. Used in tests and by
+// Engine.Reset() (REQ001454).
+func (e *Executor) ClearPlanCache() {
 	e.planCache.mu.Lock()
 	defer e.planCache.mu.Unlock()
 	e.planCache.entries = nil

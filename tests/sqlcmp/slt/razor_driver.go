@@ -143,6 +143,17 @@ opts := AP.Options{
 	return nil
 }
 
+// Reset drops all user tables/schemas and resets the engine catalog,
+// returning the connection to a clean post-Connect state without
+// tearing down the connection or re-creating temp directories.
+// REQ001454.
+func (d *RazorDriver) Reset(ctx context.Context) error {
+	if d.engine == nil {
+		return nil
+	}
+	return d.engine.Reset(ctx)
+}
+
 // Close tears down the connection and removes the temp dir.
 func (d *RazorDriver) Close(ctx context.Context) error {
 	var firstErr error
