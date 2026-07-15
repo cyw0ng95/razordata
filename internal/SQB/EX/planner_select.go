@@ -1293,21 +1293,80 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			continue
 		}
 		var joinOp DT.Operator
-		if len(gr.preds) > 0 {
-			var lk, rk []string
-			var remaining []PS.Expr
-			for t := range gr.set {
+		// REQ001433: build the predicate pool for bridging this
+		// new group with the already-joined side. The previous code
+		// only inspected gr.preds (predicates consumed inside the
+		// new group); it missed the cross-group predicates such as
+		// "t3.x3 = t1.a1" that connect tables already joined to
+		// tables in this new group. Without scanning
+		// crossTablePredicates here, every bushy merge with
+		// multi-table groups degraded to NestedLoopJoin CrossJoin.
+		bridgePreds := make([]PS.Expr, 0, len(crossTablePredicates))
+		for _, c := range crossTablePredicates {
+			if consumedPreds[c] {
+				continue
+			}
+			tables := p.extractTablesFromExpr(c)
+			if len(tables) == 0 {
+				continue
+			}
+			touchesJoined := false
+			touchesGroup := false
+			hasOther := false
+			for t := range tables {
 				if joinedTables[t] {
-					continue
-				}
-				lk2, rk2, rem := p.extractEquiJoinKeys(gr.preds, joinedTables, t)
-				if len(lk2) > 0 {
-					lk, rk, remaining = lk2, rk2, rem
-					break
+					touchesJoined = true
+				} else if gr.set[t] {
+					touchesGroup = true
+				} else {
+					hasOther = true
 				}
 			}
-			if len(lk) == 0 {
-				lk, rk, remaining = p.extractEquiJoinKeys(gr.preds, joinedTables, gr.tbl)
+			// Bridging predicate must link joined-side
+			// and group-side tables; if it references a
+			// third group (yet to be merged), defer it to
+			// the later merge pass.
+			if hasOther {
+				continue
+			}
+			if touchesJoined && touchesGroup {
+				bridgePreds = append(bridgePreds, c)
+			}
+		}
+		if len(bridgePreds) > 0 || len(gr.preds) > 0 {
+			var lk, rk []string
+			var remaining []PS.Expr
+			// REQ001433: try bridgePreds first (cross-group equi
+			// keys), then gr.preds (intra-group fall-back).
+			if len(bridgePreds) > 0 {
+				for t := range gr.set {
+					if joinedTables[t] {
+						continue
+					}
+					lk2, rk2, rem := p.extractEquiJoinKeys(bridgePreds, joinedTables, t)
+					if len(lk2) > 0 {
+						lk, rk, remaining = lk2, rk2, rem
+						break
+					}
+				}
+				if len(lk) == 0 {
+					lk, rk, remaining = p.extractEquiJoinKeys(bridgePreds, joinedTables, gr.tbl)
+				}
+			}
+			if len(lk) == 0 && len(gr.preds) > 0 {
+				for t := range gr.set {
+					if joinedTables[t] {
+						continue
+					}
+					lk2, rk2, rem := p.extractEquiJoinKeys(gr.preds, joinedTables, t)
+					if len(lk2) > 0 {
+						lk, rk, remaining = lk2, rk2, rem
+						break
+					}
+				}
+				if len(lk) == 0 {
+					lk, rk, remaining = p.extractEquiJoinKeys(gr.preds, joinedTables, gr.tbl)
+				}
 			}
 			_ = remaining
 			if len(lk) > 0 {
