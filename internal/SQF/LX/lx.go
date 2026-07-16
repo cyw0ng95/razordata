@@ -153,6 +153,7 @@ func buildKeywordTrie() *keywordNode {
 		{"RIGHT", T_RIGHT},
 		{"INNER", T_INNER},
 		{"CROSS", T_CROSS},
+	{"NATURAL", T_NATURAL}, // REQ001359
 		{"ON", T_ON},
 		{"USING", T_USING},
 		{"GROUP", T_GROUP},

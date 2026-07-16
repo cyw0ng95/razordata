@@ -388,8 +388,9 @@ func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinC
 
 	for p.current.Type == LX.T_JOIN || p.current.Type == LX.T_LEFT ||
 		p.current.Type == LX.T_RIGHT || p.current.Type == LX.T_INNER ||
-		p.current.Type == LX.T_CROSS {
+		p.current.Type == LX.T_CROSS || p.current.Type == LX.T_NATURAL {
 		kind := "INNER"
+		natural := false
 		switch p.current.Type {
 		case LX.T_LEFT:
 			kind = "LEFT"
@@ -397,6 +398,30 @@ func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinC
 			kind = "RIGHT"
 		case LX.T_CROSS:
 			kind = "CROSS"
+		case LX.T_NATURAL:
+			// REQ001359: NATURAL [INNER] JOIN — common columns are
+			// resolved during planning by inspecting the catalog schemas.
+			natural = true
+			p.advance()
+			if p.current.Type == LX.T_INNER {
+				p.advance()
+			} else if p.current.Type == LX.T_LEFT || p.current.Type == LX.T_RIGHT {
+				kind = p.current.Lexeme
+				p.advance()
+				if p.current.Type == LX.T_OUTER {
+					p.advance()
+				}
+			}
+			if p.current.Type == LX.T_JOIN {
+				p.advance()
+			}
+			rightRef, err2 := p.parseTableRef()
+			if err2 != nil {
+				err = err2
+				return
+			}
+			joins = append(joins, JoinClause{Kind: kind, Right: rightRef, Natural: natural})
+			continue
 		}
 		p.advance()
 		if p.current.Type == LX.T_OUTER {

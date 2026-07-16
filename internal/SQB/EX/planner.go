@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -335,6 +336,49 @@ func (p *Planner) RegisterIndex(table, index string, cols []string) {
 	if t, ok := p.catalog[table]; ok {
 		t.indexes[index] = cols
 	}
+}
+
+// commonColumns returns the case-insensitive intersection of column names
+// between left and right tables. REQ001359: drives NATURAL JOIN ON-clause
+// synthesis. Falls back to DT.InMemSchemas for tables created via
+// CREATE TABLE (which populate the runtime schema map, not planner.catalog).
+func (p *Planner) commonColumns(left, right string) []string {
+	leftCols := p.tableColumns(left)
+	rightCols := p.tableColumns(right)
+	if leftCols == nil || rightCols == nil {
+		return nil
+	}
+	rightSet := make(map[string]bool, len(rightCols))
+	for _, c := range rightCols {
+		rightSet[strings.ToLower(c)] = true
+	}
+	var common []string
+	for _, c := range leftCols {
+		if rightSet[strings.ToLower(c)] {
+			common = append(common, c)
+		}
+	}
+	return common
+}
+
+// tableColumns returns the column names for a table from planner.catalog
+// or DT.InMemSchemas / DT.Schemas as a fallback (the latter is populated
+// by CREATE TABLE).
+func (p *Planner) tableColumns(table string) []string {
+	if t, ok := p.catalog[table]; ok {
+		out := make([]string, len(t.cols))
+		for i, c := range t.cols {
+			out[i] = c.Name
+		}
+		return out
+	}
+	if ss, ok := DT.InMemSchemas[table]; ok && ss != nil {
+		return ss.Cols
+	}
+	if cols, ok := DT.Schemas[table]; ok && cols != nil {
+		return cols
+	}
+	return nil
 }
 
 func (p *Planner) RegisterCollation(name string, fn DT.CollateFunc) error {
