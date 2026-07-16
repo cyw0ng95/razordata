@@ -138,8 +138,64 @@ func ValidateRow(schema *DT.StoreSchema, row DT.Row) error {
 			// schema.Nullable[i] == false from CREATE TABLE parsing.
 			return fmt.Errorf("%w: column %q is NOT NULL", ErrConstraint, col)
 		}
+		// REQ001369: STRICT table-type enforcement — values must
+		// match the declared column affinity (NULL is allowed for
+		// nullable columns).
+		if schema.Strict && !row.Data[i].IsNull() {
+			if !kindMatchesAffinity(row.Data[i].Kind, schema.ColTypes, i) {
+				return fmt.Errorf("%w: column %q: STRICT type mismatch (got %s, expected %s)",
+					ErrConstraint, col, row.Data[i].Kind, affinityName(schema.ColTypes, i))
+			}
+		}
 	}
 	return nil
+}
+
+// kindMatchesAffinity returns true when the value Kind satisfies the
+// declared column affinity. REQ001369.
+func kindMatchesAffinity(k DT.ValueKind, colTypes []LX.TokenType, i int) bool {
+	if i >= len(colTypes) {
+		return true // no declared type — accept any
+	}
+	aff := sqliteAffinity(colTypes[i])
+	switch aff {
+	case "INT":
+		return k == DT.KindInt
+	case "REAL":
+		return k == DT.KindInt || k == DT.KindFloat
+	case "TEXT":
+		return k == DT.KindText
+	case "BLOB":
+		return k == DT.KindBlob
+	case "ANY":
+		return true
+	default:
+		return true // unknown affinity — accept
+	}
+}
+
+// affinityName returns the affinity name for error reporting.
+func affinityName(colTypes []LX.TokenType, i int) string {
+	if i >= len(colTypes) {
+		return "ANY"
+	}
+	return sqliteAffinity(colTypes[i])
+}
+
+// sqliteAffinity computes SQLite's 5-affinity classification.
+func sqliteAffinity(t LX.TokenType) string {
+	switch t {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		return "INT"
+	case LX.T_FLOAT_KW, LX.T_DECIMAL, LX.T_NUMERIC:
+		return "REAL"
+	case LX.T_TEXT, LX.T_VARCHAR:
+		return "TEXT"
+	case LX.T_BLOB:
+		return "BLOB"
+	default:
+		return "ANY"
+	}
 }
 
 // isIntegerType returns true if the column type at index i is an

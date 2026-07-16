@@ -52,6 +52,10 @@ type StoreSchema struct {
 	// Built once at schema creation and shared across all rows.
 	// Eliminates per-row map allocation in Row.buildColIndex().
 	ColIndex map[string]int
+	// REQ001369: Strict enables SQLite STRICT table-type affinity.
+	// When true, INSERT must use values whose Kind matches the
+	// declared affinity of each column (or NULL for nullable cols).
+	Strict bool
 }
 
 // ForeignKeyConstraint describes a single FK constraint (REQ000126).
