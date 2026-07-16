@@ -140,6 +140,22 @@ type planCacheEntry struct {
 	result *pl.PlanResult
 }
 
+// textPlanCache is a simple LRU cache keyed by exact SQL text.
+// Bypasses stmtCache+planCache+memo-key overhead for identical queries.
+// REQ001464.
+type textPlanCache struct {
+	mu      sync.Mutex
+	maxSize int
+	entries map[string]*textPlanEntry
+	lru     []*textPlanEntry
+}
+
+// textPlanEntry holds a cached PlanResult for exact SQL text.
+type textPlanEntry struct {
+	sql  string
+	plan *pl.PlanResult
+}
+
 // globalStmtCache is the shared statement cache across all Executors.
 // REQ001223: eliminates per-Executor stmtCache allocation (171 MB per query).
 // Initialized lazily on first NewExecutor call.
@@ -197,6 +213,10 @@ type Executor struct {
 	// default 128 entries. Pointer shared across ShallowCopy clones
 	// (REQ001220).
 	planCache *planCache
+	// textPlanCache caches PlanResult keyed by exact SQL text.
+	// Bypasses stmtCache+planCache memo-key overhead for identical
+	// queries. LRU eviction, default 1000 entries. REQ001464.
+	textPlanCache *textPlanCache
 	// pool is the shared WorkerPool for parallel operator execution.
 	// Created in NewExecutor and sized to GOMAXPROCS. Shared across
 	// ShallowCopy clones via pointer. Shut down in Close().
@@ -391,6 +411,7 @@ func NewExecutorWithEngine(store DT.Store) *Executor {
 	e.planner.SetPool(e.pool)
 	e.initStmtCache(256)
 	e.initPlanCache(128)
+	e.initTextPlanCache(1000)
 	return e
 }
 
@@ -552,13 +573,71 @@ func (e *Executor) putCachedPlan(key string, result *pl.PlanResult) {
 	}
 }
 
-// ClearPlanCache clears the plan cache. Used in tests and by
-// Engine.Reset() (REQ001454).
+// PlanCache returns the plan cache (panic-safe if not initialized).
+func (e *Executor) PlanCache() *planCache {
+	if e.planCache == nil {
+		e.planCache = &planCache{entries: make(map[string]*planCacheEntry)}
+	}
+	return e.planCache
+}
 func (e *Executor) ClearPlanCache() {
 	e.planCache.mu.Lock()
 	defer e.planCache.mu.Unlock()
 	e.planCache.entries = nil
 	e.planCache.lru = nil
+	e.clearTextPlanCache()
+}
+
+// initTextPlanCache initialises the text-based plan cache. REQ001464.
+func (e *Executor) initTextPlanCache(maxSize int) {
+	if maxSize <= 0 {
+		maxSize = 1000
+	}
+	e.textPlanCache = &textPlanCache{
+		entries: make(map[string]*textPlanEntry, maxSize),
+		maxSize: maxSize,
+	}
+}
+
+// getTextPlan looks up a cached PlanResult by exact SQL text. REQ001464.
+func (e *Executor) getTextPlan(sql string) *pl.PlanResult {
+	if e.textPlanCache == nil {
+		return nil
+	}
+	e.textPlanCache.mu.Lock()
+	defer e.textPlanCache.mu.Unlock()
+	ent, ok := e.textPlanCache.entries[sql]
+	if !ok {
+		return nil
+	}
+	for i, entry := range e.textPlanCache.lru {
+		if entry == ent {
+			e.textPlanCache.lru = append(e.textPlanCache.lru[:i], e.textPlanCache.lru[i+1:]...)
+			break
+		}
+	}
+	e.textPlanCache.lru = append([]*textPlanEntry{ent}, e.textPlanCache.lru...)
+	return ent.plan
+}
+
+// putTextPlan stores a PlanResult keyed by exact SQL text. REQ001464.
+func (e *Executor) putTextPlan(sql string, plan *pl.PlanResult) {
+	if e.textPlanCache == nil {
+		return
+	}
+	e.textPlanCache.mu.Lock()
+	defer e.textPlanCache.mu.Unlock()
+	if _, ok := e.textPlanCache.entries[sql]; ok {
+		return
+	}
+	ent := &textPlanEntry{sql: sql, plan: plan}
+	e.textPlanCache.entries[sql] = ent
+	e.textPlanCache.lru = append([]*textPlanEntry{ent}, e.textPlanCache.lru...)
+	for len(e.textPlanCache.lru) > e.textPlanCache.maxSize {
+		oldest := e.textPlanCache.lru[len(e.textPlanCache.lru)-1]
+		e.textPlanCache.lru = e.textPlanCache.lru[:len(e.textPlanCache.lru)-1]
+		delete(e.textPlanCache.entries, oldest.sql)
+	}
 }
 
 // planWithCache returns a compiled plan for stmt, checking the plan
@@ -876,6 +955,9 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 			if err == nil {
 				updateTableRowCount(op, e.planner)
 			}
+			if isDDLStmt(stmt) {
+				e.clearTextPlanCache()
+			}
 			return res, err
 		}
 	}
@@ -934,10 +1016,11 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	if err == nil {
 		updateTableRowCount(op, e.planner)
 	}
+	if isDDLStmt(stmt) {
+		e.clearTextPlanCache()
+	}
 	return res, err
 }
-
-// hasReturning reports whether the statement has a RETURNING clause.
 func hasReturning(stmt PS.Stmt) bool {
 	switch s := stmt.(type) {
 	case *PS.Insert:
@@ -1071,6 +1154,20 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 }
 
 func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.Row, error) {
+	// REQ001464: textPlanCache bypasses parse+plan for identical SQL.
+	if e.textPlanCache != nil {
+		if plan := e.getTextPlan(sql); plan != nil {
+			propEctx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+			propEctx.RowArena = e.ensureArena()
+			propagateExecContext(plan.Root, propEctx)
+			propagateParams(plan.Root, args)
+			propagatePlanner(plan.Root, e.planner)
+			defer plan.Root.Close()
+			out, err := e.drainPlan(ctx, plan)
+			return out, err
+		}
+	}
+
 	// Try cache first (P0: StmtCache wiring, saves 12.70% CPU on parsing)
 	if e.stmtCache.entries != nil {
 		if cached := e.getCachedStmt(sql); cached != nil {
@@ -1081,6 +1178,10 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 			}
 			if plan == nil || plan.Root == nil {
 				return nil, errors.New("ex: plan produced no root")
+			}
+			// REQ001464: cache the plan by exact SQL text.
+			if plan.Root != nil && !isConstRowPlan(plan.Root) {
+				e.putTextPlan(sql, plan)
 			}
 			propagateParams(plan.Root, args)
 			propagatePlanner(plan.Root, e.planner)
@@ -1120,6 +1221,10 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 	if plan == nil || plan.Root == nil {
 		return nil, errors.New("ex: plan produced no root")
 	}
+	// REQ001464: cache the plan by exact SQL text.
+	if plan.Root != nil && !isConstRowPlan(plan.Root) {
+		e.putTextPlan(sql, plan)
+	}
 	propagateParams(plan.Root, args)
 	// REQ000366: thread the main-plan planner so SeqScan rows
 	// carry it into subquery evals. propagatePlanner is a
@@ -1145,6 +1250,51 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+// drainPlan drains all rows from a plan result into a slice.
+// REQ001464: extracted from QueryAll for reuse in textPlanCache hit path.
+func (e *Executor) drainPlan(ctx context.Context, plan *pl.PlanResult) ([]DT.Row, error) {
+	var out []DT.Row
+	for {
+		row, err := plan.Root.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				break
+			}
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+// clearTextPlanCache drops all entries from the text cache. REQ001464.
+func (e *Executor) clearTextPlanCache() {
+	if e.textPlanCache == nil {
+		return
+	}
+	e.textPlanCache.mu.Lock()
+	defer e.textPlanCache.mu.Unlock()
+	e.textPlanCache.entries = make(map[string]*textPlanEntry, e.textPlanCache.maxSize)
+	e.textPlanCache.lru = nil
+}
+
+// isDDLStmt reports whether stmt modifies the schema (CREATE/DROP/ALTER). REQ001464.
+func isDDLStmt(stmt PS.Stmt) bool {
+	switch stmt.(type) {
+	case *PS.CreateTable, *PS.DropTable,
+		*PS.CreateIndexStmt, *PS.DropIndexStmt,
+		*PS.CreateViewStmt, *PS.DropViewStmt,
+		*PS.CreateMatViewStmt, *PS.DropMatViewStmt,
+		*PS.RefreshMatViewStmt,
+		*PS.CreateVirtualTableStmt,
+		*PS.AlterTableStmt,
+		*PS.DropTriggerStmt,
+		*PS.ReindexStmt:
+		return true
+	}
+	return false
 }
 
 // CompiledPlan holds a pre-compiled operator tree that skips re-parsing
