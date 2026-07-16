@@ -197,6 +197,7 @@ func (m *mockDriver) Exec(_ context.Context, _ string) error { return m.execErr 
 func (m *mockDriver) Query(_ context.Context, _ string) (*ResultSet, error) {
 	return m.queryOut, m.queryErr
 }
+func (m *mockDriver) Reset(_ context.Context) error { return nil }
 
 type countingDriver struct {
 	queryFn func(ctx context.Context, sql string) (*ResultSet, error)
@@ -208,6 +209,7 @@ func (c *countingDriver) Exec(_ context.Context, _ string) error { return nil }
 func (c *countingDriver) Query(ctx context.Context, sql string) (*ResultSet, error) {
 	return c.queryFn(ctx, sql)
 }
+func (c *countingDriver) Reset(_ context.Context) error { return nil }
 
 // TestRunner_SplitRange verifies RAZOR_SLT_RANGE gating.
 func TestRunner_SplitRange(t *testing.T) {

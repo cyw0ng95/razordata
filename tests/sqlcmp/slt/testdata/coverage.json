@@ -39,8 +39,8 @@
     },
     "../corpus/test/index/between/1/slt_good_0.test": {
       "total": 10022,
-      "passed": 7439,
-      "failed": 2580,
+      "passed": 7442,
+      "failed": 2577,
       "skipped": 3,
       "parse_errors": 0
     },
@@ -60,20 +60,21 @@
     },
     "../corpus/test/select4.test": {
       "total": 3857,
-      "passed": 2431,
-      "failed": 1425,
+      "passed": 2436,
+      "failed": 1420,
       "skipped": 1,
       "parse_errors": 0
     }
   },
   "totals": {
     "Total": 16057,
-    "Passed": 10064,
-    "Failed": 5959,
+    "Passed": 10072,
+    "Failed": 5951,
     "Skipped": 15,
     "ParseErrors": 0,
-    "Duration": 217700,
+    "Duration": 212202,
     "Slowest": null,
-    "FailFastTriggered": false
+    "FailFastTriggered": false,
+    "FailureContext": null
   }
 }
