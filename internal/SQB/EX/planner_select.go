@@ -2,6 +2,7 @@ package EX
 
 import (
 	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
+	"fmt"
 	"strings"
 
 	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
@@ -10,6 +11,7 @@ import (
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -580,6 +582,23 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 	if p.store == nil {
 		return nil, remaining
 	}
+
+	// REQ001371: honor INDEXED BY / NOT INDEXED hints.
+	if s.IndexHint != nil {
+		if s.IndexHint.IndexedBy == "" {
+			if ssc, err := OP.NewSeqScanWithStore(p.store, s.From); err == nil {
+				return ssc, remaining
+			}
+			return nil, remaining
+		}
+		if !hasWriterIndex(s.From, s.IndexHint.IndexedBy) {
+			return WT.NewUnsupportedOp(s, fmt.Sprintf("no such index: %s", s.IndexHint.IndexedBy)), remaining
+		}
+	}
+	indexHint := ""
+	if s.IndexHint != nil {
+		indexHint = s.IndexHint.IndexedBy
+	}
 	// Try OP.IndexScan first when the WHERE references an indexed column.
 	// iter-22: prefer NewIndexScanWithIndex (real seek) over the
 	// prefix-scan fallback when the predicate is an equality on
@@ -600,7 +619,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		// idxDT.Store.Insert), hasWriterIndex returns false and
 		// we use the prefix-scan fallback.
 		if col, val, ok := indexedColumnEq(whereExpr); ok {
-			idx, found := p.selectIndex(s.From, col)
+			idx, found := p.selectIndexHinted(s.From, col, indexHint)
 			if found && hasWriterIndex(s.From, idx) {
 				tableID, _ := DT.TableIDFor(s.From)
 				if isc, err := OP.NewIndexScanWithIndex(p.store, tableID, s.From, idx, val, nil); err == nil {
@@ -624,7 +643,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		// for `col > X`, `col BETWEEN X AND Y`, etc.
 		if scan == nil {
 			if col, lo, loIncl, up, upIncl, ok := indexedColumnRange(whereExpr); ok {
-				idx, found := p.selectIndex(s.From, col)
+				idx, found := p.selectIndexHinted(s.From, col, indexHint)
 				if found && hasWriterIndex(s.From, idx) {
 					tableID, _ := DT.TableIDFor(s.From)
 					if isc, err := OP.NewIndexScanWithRange(p.store, tableID, s.From, idx, lo, loIncl, up, upIncl); err == nil {
@@ -648,7 +667,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 		// REQ001070: LIKE prefix range seek on an indexed column.
 		if scan == nil {
 			if col, prefix, ok := indexedColumnLikePrefix(whereExpr); ok {
-				idx, found := p.selectIndex(s.From, col)
+				idx, found := p.selectIndexHinted(s.From, col, indexHint)
 				if found && hasWriterIndex(s.From, idx) {
 					tableID, _ := DT.TableIDFor(s.From)
 					upper := make([]byte, len(prefix)+1)

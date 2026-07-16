@@ -499,6 +499,33 @@ func (p *Planner) selectIndex(table, col string) (string, bool) {
 	return "", false
 }
 
+// selectIndexHinted is like selectIndex but respects an INDEXED BY hint.
+// REQ001371: when hint is non-empty, only returns the named index if it
+// matches the column; otherwise returns false.
+func (p *Planner) selectIndexHinted(table, col, hint string) (string, bool) {
+	if hint != "" {
+		return hint, hasWriterIndex(table, hint) && p.indexHasColumn(table, hint, col)
+	}
+	return p.selectIndex(table, col)
+}
+
+func (p *Planner) indexHasColumn(table, idxName, col string) bool {
+	t, ok := p.catalog[table]
+	if !ok {
+		return false
+	}
+	idxCols, ok := t.indexes[idxName]
+	if !ok {
+		return false
+	}
+	for _, c := range idxCols {
+		if c == col {
+			return true
+		}
+	}
+	return false
+}
+
 // extractViewAliases returns a set of column alias names from a
 // view's SELECT columns. Used to detect when the outer query
 // references view column aliases (REQ000702).
