@@ -255,6 +255,9 @@ func (c *CreateTable) Next(ctx context.Context) (DT.Row, error) {
 	_ = ctx
 	DT.StoreMu.Unlock()
 
+	// REQ001319: increment DDL schema version.
+	DT.IncrDDLVersion()
+
 	// Persist to the system catalog if one is wired in (iter-12).
 	persistToCatalog(c.Stmt, cols, nullable, colTypes, unique, pk)
 
@@ -347,6 +350,9 @@ func (d *DropTable) Next(ctx context.Context) (DT.Row, error) {
 	// Drop indexes associated with this table (REQ000828).
 	delete(DT.RegisteredIndexes, d.Stmt.Name)
 	DT.StoreMu.Unlock()
+
+	// REQ001319: increment DDL schema version.
+	DT.IncrDDLVersion()
 
 	// Drop triggers associated with this table (REQ000828).
 	DropTriggersForTable(d.Stmt.Name)
@@ -529,6 +535,10 @@ func (c *CreateIndex) Next(ctx context.Context) (DT.Row, error) {
 		}
 	}
 	c.rowsAff = 0
+
+	// REQ001319: increment DDL schema version.
+	DT.IncrDDLVersion()
+
 	return DT.Row{}, DT.ErrNoRows
 }
 
@@ -599,6 +609,10 @@ func (d *DropIndex) Next(ctx context.Context) (DT.Row, error) {
 		}
 	}
 	d.rowsAff = 0
+
+	// REQ001319: increment DDL schema version.
+	DT.IncrDDLVersion()
+
 	return DT.Row{}, DT.ErrNoRows
 }
 

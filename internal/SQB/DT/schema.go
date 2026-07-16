@@ -698,3 +698,58 @@ func equalValue(a, b Value) bool {
 	}
 	return false
 }
+
+// DDL schema version tracking for SAVEPOINT/ROLLBACK TO (REQ001319).
+// The version increments on every DDL operation (CREATE/DROP TABLE, INDEX, etc.).
+// A savepoint captures the current version; ROLLBACK TO restores it.
+
+var (
+	ddlVersion        uint64 // protected by TablesMu
+	ddlVersionStack   []uint64
+	ddlVersionStackMu sync.Mutex
+)
+
+// IncrDDLVersion increments the DDL schema version. Must be called under TablesMu.
+func IncrDDLVersion() {
+	ddlVersion++
+}
+
+// DDLVersion returns the current DDL schema version.
+func DDLVersion() uint64 {
+	TablesMu.RLock()
+	defer TablesMu.RUnlock()
+	return ddlVersion
+}
+
+// PushDDLVersion saves the current DDL version onto the savepoint stack.
+func PushDDLVersion() {
+	TablesMu.RLock()
+	v := ddlVersion
+	TablesMu.RUnlock()
+	ddlVersionStackMu.Lock()
+	ddlVersionStack = append(ddlVersionStack, v)
+	ddlVersionStackMu.Unlock()
+}
+
+// PopDDLVersion restores the DDL version from the top of the stack.
+// Returns the restored version.
+func PopDDLVersion() uint64 {
+	ddlVersionStackMu.Lock()
+	defer ddlVersionStackMu.Unlock()
+	if len(ddlVersionStack) == 0 {
+		return 0
+	}
+	v := ddlVersionStack[len(ddlVersionStack)-1]
+	ddlVersionStack = ddlVersionStack[:len(ddlVersionStack)-1]
+	TablesMu.Lock()
+	ddlVersion = v
+	TablesMu.Unlock()
+	return v
+}
+
+// DDLVersionStackLen returns the number of saved versions on the stack.
+func DDLVersionStackLen() int {
+	ddlVersionStackMu.Lock()
+	defer ddlVersionStackMu.Unlock()
+	return len(ddlVersionStack)
+}

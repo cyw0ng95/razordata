@@ -360,6 +360,7 @@ func (s *Session) Savepoint(ctx context.Context, name string) error {
 	if s.txn == nil {
 		return AP.New(AP.KindConstraint, "no active transaction")
 	}
+	DT.PushDDLVersion()
 	return wrapEXError(s.txn.Savepoint(ctx, name))
 }
 
@@ -388,6 +389,7 @@ func (s *Session) RollbackTo(ctx context.Context, name string) error {
 	if s.txn == nil {
 		return AP.New(AP.KindConstraint, "no active transaction")
 	}
+	DT.PopDDLVersion()
 	return wrapEXError(s.txn.RollbackTo(ctx, name))
 }
 
