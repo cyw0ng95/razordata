@@ -140,6 +140,9 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 	case *OP.SeqScan:
 		schema := extractSchema(o)
 		types := extractTypes(o)
+		if cols := o.GetRequestedCols(); len(cols) > 0 {
+			return OP.NewVectorizedSeqScanWithCols(o, schema, types, cols)
+		}
 		return OP.NewVectorizedSeqScan(o, schema, types)
 	case *OP.Filter:
 		child := transformOp(o.Child())

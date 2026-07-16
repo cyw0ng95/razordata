@@ -19,12 +19,13 @@ import (
 // REQ000144 satisfied (partial): Vectorized SeqScan that
 // produces columnar batches for downstream operators.
 type VectorizedSeqScan struct {
-	source  Operator
-	schema  []string
-	types   []LX.TokenType
-	colMap  map[string]int
-	current *UT.Batch
-	done    bool
+	source       Operator
+	schema       []string
+	types        []LX.TokenType
+	colMap       map[string]int
+	requestedCols []int // nil = all columns
+	current      *UT.Batch
+	done         bool
 }
 
 // NewVectorizedSeqScan creates a vectorized scan over the given
@@ -43,6 +44,14 @@ func NewVectorizedSeqScan(source Operator, schema []string, types []LX.TokenType
 	}
 }
 
+// NewVectorizedSeqScanWithCols creates a vectorized scan that only
+// reads the requested columns (column pruning). REQ001450.
+func NewVectorizedSeqScanWithCols(source Operator, schema []string, types []LX.TokenType, requestedCols []int) *VectorizedSeqScan {
+	v := NewVectorizedSeqScan(source, schema, types)
+	v.requestedCols = requestedCols
+	return v
+}
+
 // NextBatch produces the next batch. Returns (nil, nil) at EOF.
 // Caller is responsible for calling Put() on each non-nil batch.
 func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
@@ -53,10 +62,26 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		return nil, err
 	}
 
-	batch := UT.GetBatch(len(v.schema))
+	// Determine which columns to read.
+	schema := v.schema
+	types := v.types
+	if len(v.requestedCols) > 0 {
+		// Build a pruned schema and types array for only the requested columns.
+		prunedSchema := make([]string, 0, len(v.requestedCols))
+		prunedTypes := make([]LX.TokenType, 0, len(v.requestedCols))
+		for _, ci := range v.requestedCols {
+			if ci >= 0 && ci < len(v.schema) {
+				prunedSchema = append(prunedSchema, v.schema[ci])
+				prunedTypes = append(prunedTypes, v.types[ci])
+			}
+		}
+		schema = prunedSchema
+		types = prunedTypes
+	}
+
+	batch := UT.GetBatch(len(schema))
 	batch.Size = 0
-	// Install column names and colMap for O(1) filter lookup
-	for i, name := range v.schema {
+	for i, name := range schema {
 		batch.SetColumnName(i, name)
 	}
 	batch.SetColMap(v.colMap)
@@ -71,14 +96,13 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 			batch.Put()
 			return nil, err
 		}
-		// Project row into columnar layout
-		for i, colName := range v.schema {
+		for i, colName := range schema {
 			val, ok := row.Lookup(colName)
 			if !ok {
 				val = nil
 			}
 			isNull := val == nil
-			batch.AppendRow(i, v.types[i], val, isNull)
+			batch.AppendRow(i, types[i], val, isNull)
 		}
 		batch.AdvanceSize()
 	}

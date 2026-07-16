@@ -4,7 +4,9 @@ import (
 	"context"
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/UT"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -151,3 +153,100 @@ func intToStr2(n int) string {
 	}
 	return string(buf[i:])
 }
+
+// REQ001450: VectorizedSeqScan respects column pruning.
+func TestVectorizedSeqScan_ColumnPruning(t *testing.T) {
+	// Create a mock source that yields rows with 3 columns.
+	rows := []map[string]any{
+		{"a": int64(1), "b": "x", "c": int64(10)},
+		{"a": int64(2), "b": "y", "c": int64(20)},
+	}
+	source := &mockRowSource{rows: rows, schema: []string{"a", "b", "c"}, types: []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}}
+	
+	// Create vectorized SeqScan requesting only columns 0 and 2.
+	vss := NewVectorizedSeqScanWithCols(source, []string{"a", "b", "c"}, []LX.TokenType{LX.T_INT_KW, LX.T_TEXT, LX.T_INT_KW}, []int{0, 2})
+	
+	var batches []*UT.Batch
+	for {
+		batch, err := vss.NextBatch(context.Background())
+		if err != nil {
+			t.Fatalf("NextBatch: %v", err)
+		}
+		if batch == nil {
+			break
+		}
+		batches = append(batches, batch)
+	}
+	
+	if len(batches) != 1 {
+		t.Fatalf("expected 1 batch, got %d", len(batches))
+	}
+	
+	b := batches[0]
+	// Should have only 2 columns (a and c), not 3.
+	colCount := 0
+	for _, c := range b.Cols {
+		if c.Type != 0 {
+			colCount++
+		}
+	}
+	if colCount != 2 {
+		t.Errorf("expected 2 columns, got %d", colCount)
+	}
+	
+	// Verify values.
+	if b.Size != 2 {
+		t.Errorf("expected 2 rows, got %d", b.Size)
+	}
+	if b.Size > 0 && len(b.Cols) > 0 && b.Cols[0].Type == LX.T_INT_KW {
+		if b.Cols[0].Data.Ints[0] != 1 {
+			t.Errorf("col 0 row 0: got %d, want 1", b.Cols[0].Data.Ints[0])
+		}
+		if b.Cols[0].Data.Ints[1] != 2 {
+			t.Errorf("col 0 row 1: got %d, want 2", b.Cols[0].Data.Ints[1])
+		}
+	}
+}
+
+// mockRowSource implements pl.Operator for testing VectorizedSeqScan.
+type mockRowSource struct {
+	rows   []map[string]any
+	schema []string
+	types  []LX.TokenType
+	idx    int
+}
+
+func (m *mockRowSource) Next(ctx context.Context) (pl.Row, error) {
+	if m.idx >= len(m.rows) {
+		return pl.Row{}, ErrNoRows
+	}
+	row := m.rows[m.idx]
+	m.idx++
+	data := make([]pl.Value, len(m.schema))
+	cols := make([]string, len(m.schema))
+	types := make([]LX.TokenType, len(m.schema))
+	for i, name := range m.schema {
+		cols[i] = name
+		types[i] = m.types[i]
+		if v, ok := row[name]; ok {
+			switch vv := v.(type) {
+			case int64:
+				data[i] = pl.Value{Kind: pl.KindInt, I64: vv}
+			case string:
+				data[i] = pl.Value{Kind: pl.KindText, S: vv}
+			default:
+				data[i] = pl.Value{Kind: pl.KindNull}
+			}
+		} else {
+			data[i] = pl.Value{Kind: pl.KindNull}
+		}
+	}
+	return pl.Row{Data: data, Cols: cols, Types: types}, nil
+}
+func (m *mockRowSource) Close() error                        { return nil }
+func (m *mockRowSource) WithParams(p []any) pl.Operator      { return m }
+func (m *mockRowSource) Predicate() PS.Expr                  { return nil }
+func (m *mockRowSource) Children() []pl.Operator             { return nil }
+func (m *mockRowSource) Reset(ctx context.Context) error     { m.idx = 0; return nil }
+func (m *mockRowSource) SetParams(p []any)                   {}
+func (m *mockRowSource) Schema() *DT.StoreSchema             { return nil }
