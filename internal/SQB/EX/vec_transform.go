@@ -105,11 +105,10 @@ func isEligible(root DT.Operator) bool {
 		case *OP.Distinct:
 			return true
 		case *OP.CompoundOp:
-			// Only UNION ALL and UNION are supported.
-			// INTERSECT/EXCEPT would require set-semantics that are
-			// harder to express purely in batch operations.
 			return o.CompoundOpType() == PS.CompoundUnionAll ||
-				o.CompoundOpType() == PS.CompoundUnion
+				o.CompoundOpType() == PS.CompoundUnion ||
+				o.CompoundOpType() == PS.CompoundExcept ||
+				o.CompoundOpType() == PS.CompoundIntersect
 		case *OP.Sort:
 			// VectorizedSort supports any child that is eligible.
 			return isEligible(o.Child())
@@ -404,8 +403,8 @@ func transformCompoundOp(co *OP.CompoundOp) UT.BatchProducer {
 		return nil
 	}
 	cols, types := extractSchemaFromOp(co.LeftChild())
-	return OP.NewVectorizedCompoundOp(left, right,
-		co.CompoundOpType() == PS.CompoundUnion, cols, types)
+	return OP.NewVectorizedCompoundOpWithOp(left, right,
+		co.CompoundOpType(), cols, types)
 }
 
 // extractSchemaFromOp extracts column schema from any eligible operator,

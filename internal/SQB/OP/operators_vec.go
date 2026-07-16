@@ -572,15 +572,19 @@ func appendUVarint(buf []byte, v uint64) []byte {
 type VectorizedCompoundOp struct {
 	left         UT.BatchProducer
 	right        UT.BatchProducer
-	op           int // 0=UNION ALL, 1=UNION
+	op           int // 0=UNION ALL, 1=UNION, 2=EXCEPT, 3=INTERSECT
 	cols         []string
 	types        []LX.TokenType
 	done         bool
 	onLeft       bool
 	currentBatch *UT.Batch
 	batchPos     int
-	bufBatches   []*UT.Batch // for UNION mode (full materialization)
+	bufBatches   []*UT.Batch // for UNION/EXCEPT/INTERSECT materialized mode
 	bufPos       int
+	// EXCEPT/INTERSECT streaming state
+	rightKeys    map[string]bool
+	emittedKeys  map[string]bool
+	rightDrained bool
 }
 
 func NewVectorizedCompoundOp(left, right UT.BatchProducer, isUnion bool, cols []string, types []LX.TokenType) *VectorizedCompoundOp {
@@ -597,6 +601,31 @@ func NewVectorizedCompoundOp(left, right UT.BatchProducer, isUnion bool, cols []
 	return v
 }
 
+// NewVectorizedCompoundOpWithOp creates a VectorizedCompoundOp with explicit
+// compound operation type. REQ001442.
+func NewVectorizedCompoundOpWithOp(left, right UT.BatchProducer, op PS.CompoundOp, cols []string, types []LX.TokenType) *VectorizedCompoundOp {
+	v := &VectorizedCompoundOp{
+		left:   left,
+		right:  right,
+		cols:   cols,
+		types:  types,
+		onLeft: true,
+	}
+	switch op {
+	case PS.CompoundUnionAll:
+		v.op = 0
+	case PS.CompoundUnion:
+		v.op = 1
+	case PS.CompoundExcept:
+		v.op = 2
+	case PS.CompoundIntersect:
+		v.op = 3
+	default:
+		v.op = 0
+	}
+	return v
+}
+
 func (c *VectorizedCompoundOp) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if c.done {
 		return nil, nil
@@ -605,13 +634,22 @@ func (c *VectorizedCompoundOp) NextBatch(ctx context.Context) (*UT.Batch, error)
 		return nil, err
 	}
 
-	if c.op == 0 {
+	switch c.op {
+	case 0:
 		// UNION ALL: stream batches from left then right
 		return c.nextUnionAll(ctx)
+	case 1:
+		// UNION: materialize all, dedup, emit one result batch
+		return c.nextUnion(ctx)
+	case 2:
+		// EXCEPT: stream left, skip rows present in right
+		return c.nextExcept(ctx)
+	case 3:
+		// INTERSECT: stream left, emit rows present in right
+		return c.nextIntersect(ctx)
+	default:
+		return c.nextUnionAll(ctx)
 	}
-
-	// UNION: materialize all, dedup, emit one result batch
-	return c.nextUnion(ctx)
 }
 
 func (c *VectorizedCompoundOp) nextUnionAll(ctx context.Context) (*UT.Batch, error) {
@@ -635,6 +673,242 @@ func (c *VectorizedCompoundOp) nextUnionAll(ctx context.Context) (*UT.Batch, err
 			return nil, nil
 		}
 		return batch, nil
+	}
+}
+
+// nextExcept streams left batches and emits rows whose keys are NOT
+// present in the right side. Right side is drained first into a hash set.
+// REQ001442.
+func (c *VectorizedCompoundOp) nextExcept(ctx context.Context) (*UT.Batch, error) {
+	if !c.rightDrained {
+		c.rightKeys = make(map[string]bool)
+		for {
+			batch, err := c.right.NextBatch(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if batch == nil {
+				break
+			}
+			sel := batch.Sel
+			for r := 0; r < batch.Size; r++ {
+				idx := r
+				if sel != nil {
+					if r >= len(sel) {
+						break
+					}
+					idx = int(sel[r])
+				}
+				key := batchDistinctKey(batch, idx)
+				if key != "" {
+					c.rightKeys[key] = true
+				}
+			}
+			batch.Put()
+		}
+		_ = c.right.Close()
+		c.rightDrained = true
+		c.emittedKeys = make(map[string]bool)
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		batch, err := c.left.NextBatch(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if batch == nil {
+			c.done = true
+			return nil, nil
+		}
+
+		nCols := len(c.cols)
+		var resultCols []UT.Column
+		first := true
+		var outSize int
+
+		drainLeft := func(src *UT.Batch) error {
+			sel := src.Sel
+			for r := 0; r < src.Size; r++ {
+				idx := r
+				if sel != nil {
+					if r >= len(sel) {
+						break
+					}
+					idx = int(sel[r])
+				}
+				key := batchDistinctKey(src, idx)
+				if key == "" {
+					continue
+				}
+				if c.rightKeys[key] {
+					continue
+				}
+				if c.emittedKeys[key] {
+					continue
+				}
+				c.emittedKeys[key] = true
+
+				if first {
+					resultCols = make([]UT.Column, nCols)
+					for i := 0; i < nCols; i++ {
+						resultCols[i].Name = c.cols[i]
+						resultCols[i].Type = src.Cols[i].Type
+					}
+					first = false
+				}
+				for i := 0; i < nCols && i < len(src.Cols); i++ {
+					copyBatchValue(&resultCols[i], &src.Cols[i], idx)
+				}
+				outSize++
+			}
+			return nil
+		}
+
+		if err := drainLeft(batch); err != nil {
+			batch.Put()
+			return nil, err
+		}
+
+		if outSize > 0 {
+			output := UT.GetBatch(nCols)
+			for i := 0; i < nCols; i++ {
+				output.Cols[i] = resultCols[i]
+				output.Cols[i].Name = c.cols[i]
+				switch resultCols[i].Type {
+				case LX.T_INT_KW, LX.T_BIGINT:
+					output.Size = len(resultCols[i].Data.Ints)
+				case LX.T_FLOAT_KW:
+					output.Size = len(resultCols[i].Data.Floats)
+				case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+					output.Size = len(resultCols[i].Data.Strs)
+				case LX.T_BOOL:
+					output.Size = len(resultCols[i].Data.Bools)
+				}
+			}
+			return output, nil
+		}
+
+		batch.Put()
+	}
+}
+
+// nextIntersect streams left batches and emits rows whose keys ARE
+// present in the right side. Right side is drained first into a hash set.
+// REQ001442.
+func (c *VectorizedCompoundOp) nextIntersect(ctx context.Context) (*UT.Batch, error) {
+	if !c.rightDrained {
+		c.rightKeys = make(map[string]bool)
+		for {
+			batch, err := c.right.NextBatch(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if batch == nil {
+				break
+			}
+			sel := batch.Sel
+			for r := 0; r < batch.Size; r++ {
+				idx := r
+				if sel != nil {
+					if r >= len(sel) {
+						break
+					}
+					idx = int(sel[r])
+				}
+				key := batchDistinctKey(batch, idx)
+				if key != "" {
+					c.rightKeys[key] = true
+				}
+			}
+			batch.Put()
+		}
+		_ = c.right.Close()
+		c.rightDrained = true
+		c.emittedKeys = make(map[string]bool)
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		batch, err := c.left.NextBatch(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if batch == nil {
+			c.done = true
+			return nil, nil
+		}
+
+		nCols := len(c.cols)
+		var resultCols []UT.Column
+		first := true
+
+		drainLeft := func(src *UT.Batch) error {
+			sel := src.Sel
+			for r := 0; r < src.Size; r++ {
+				idx := r
+				if sel != nil {
+					if r >= len(sel) {
+						break
+					}
+					idx = int(sel[r])
+				}
+				key := batchDistinctKey(src, idx)
+				if key == "" {
+					continue
+				}
+				if !c.rightKeys[key] {
+					continue
+				}
+				if c.emittedKeys[key] {
+					continue
+				}
+				c.emittedKeys[key] = true
+
+				if first {
+					resultCols = make([]UT.Column, nCols)
+					for i := 0; i < nCols; i++ {
+						resultCols[i].Name = c.cols[i]
+						resultCols[i].Type = src.Cols[i].Type
+					}
+					first = false
+				}
+				for i := 0; i < nCols && i < len(src.Cols); i++ {
+					copyBatchValue(&resultCols[i], &src.Cols[i], idx)
+				}
+			}
+			return nil
+		}
+
+		if err := drainLeft(batch); err != nil {
+			batch.Put()
+			return nil, err
+		}
+
+		if !first {
+			output := UT.GetBatch(nCols)
+			for i := 0; i < nCols; i++ {
+				output.Cols[i] = resultCols[i]
+				output.Cols[i].Name = c.cols[i]
+				switch resultCols[i].Type {
+				case LX.T_INT_KW, LX.T_BIGINT:
+					output.Size = len(resultCols[i].Data.Ints)
+				case LX.T_FLOAT_KW:
+					output.Size = len(resultCols[i].Data.Floats)
+				case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+					output.Size = len(resultCols[i].Data.Strs)
+				case LX.T_BOOL:
+					output.Size = len(resultCols[i].Data.Bools)
+				}
+			}
+			return output, nil
+		}
+
+		batch.Put()
 	}
 }
 
@@ -739,6 +1013,8 @@ func (c *VectorizedCompoundOp) Close() error {
 		b.Put()
 	}
 	c.bufBatches = nil
+	c.rightKeys = nil
+	c.emittedKeys = nil
 	if err1 != nil {
 		return err1
 	}
