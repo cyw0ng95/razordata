@@ -214,6 +214,9 @@ func ToInt64(v any) (int64, bool) {
 // CompareValue compares two Value values directly without boxing into any.
 // Returns -1 if a < b, 0 if a == b, 1 if a > b. NULLs sort less than
 // non-NULLs; two NULLs compare equal.
+// REQ001332: CollateFunc is a user-registered collation function.
+type CollateFunc = AP.CollateFunc
+
 func CompareValue(a, b Value) int {
 	if a.Kind == KindNull && b.Kind == KindNull {
 		return 0
@@ -265,6 +268,83 @@ func CompareValue(a, b Value) int {
 		}
 	case KindText:
 		if b.Kind == KindText {
+			return strings.Compare(a.S, b.S)
+		}
+	case KindBlob:
+		if b.Kind == KindBlob {
+			return bytes.Compare(a.B, b.B)
+		}
+	case KindBool:
+		if b.Kind == KindBool {
+			if !a.Bo && b.Bo {
+				return -1
+			}
+			if a.Bo && !b.Bo {
+				return 1
+			}
+			return 0
+		}
+	}
+	return 0
+}
+
+// CompareValueWithCollation compares two Values using an optional collation.
+// REQ001332: when coll is non-nil and both values are text, uses the
+// registered collation function instead of bytes.Compare.
+func CompareValueWithCollation(a, b Value, coll CollateFunc) int {
+	if a.Kind == KindNull && b.Kind == KindNull {
+		return 0
+	}
+	if a.Kind == KindNull {
+		return -1
+	}
+	if b.Kind == KindNull {
+		return 1
+	}
+	switch a.Kind {
+	case KindInt:
+		switch b.Kind {
+		case KindInt:
+			if a.I64 < b.I64 {
+				return -1
+			}
+			if a.I64 > b.I64 {
+				return 1
+			}
+			return 0
+		case KindFloat:
+			if float64(a.I64) < b.F64 {
+				return -1
+			}
+			if float64(a.I64) > b.F64 {
+				return 1
+			}
+			return 0
+		}
+	case KindFloat:
+		switch b.Kind {
+		case KindFloat:
+			if a.F64 < b.F64 {
+				return -1
+			}
+			if a.F64 > b.F64 {
+				return 1
+			}
+			return 0
+		case KindInt:
+			if a.F64 < float64(b.I64) {
+				return -1
+			}
+			if a.F64 > float64(b.I64) {
+				return 1
+			}
+			return 0
+		}
+	case KindText:
+		if b.Kind == KindText {
+			if coll != nil {
+				return coll([]byte(a.S), []byte(b.S))
+			}
 			return strings.Compare(a.S, b.S)
 		}
 	case KindBlob:

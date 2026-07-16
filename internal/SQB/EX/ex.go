@@ -909,6 +909,10 @@ func (e *Executor) RegisterIndex(table, index string, cols []string) {
 	e.planner.RegisterIndex(table, index, cols)
 }
 
+func (e *Executor) RegisterCollation(name string, fn DT.CollateFunc) error {
+	return e.planner.RegisterCollation(name, fn)
+}
+
 func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, error) {
 	// Try cache first (P0: StmtCache wiring, saves 12.70% CPU on parsing)
 	if e.stmtCache.entries != nil {

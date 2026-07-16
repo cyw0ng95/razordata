@@ -244,6 +244,8 @@ type QueryPlanner interface {
 	// REQ001420: row count metadata for COUNT(*) optimization.
 	UpdateTableRowCount(table string, delta int64)
 	GetTableRowCount(table string) int64
+	RegisterCollation(name string, fn CollateFunc) error // REQ001332
+	LookupCollation(name string) CollateFunc              // REQ001332
 }
 
 // ColInfo describes a single column in a table schema.

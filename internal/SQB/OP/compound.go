@@ -18,8 +18,9 @@ import (
 	"fmt"
 	"slices"
 
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -55,6 +56,9 @@ type CompoundOp struct {
 	// REQ001437: expected row count for pre-sizing drainAll output.
 	// 0 = unknown, use default growth.
 	expectedRows int64
+	// REQ001332: collRegistry resolves collation names to user-defined
+	// comparison functions. nil = no custom collations registered.
+	collRegistry func(string) DT.CollateFunc
 	// Re-exported from PS for convenience.
 	_ bool // alignment placeholder
 }
@@ -85,6 +89,12 @@ func (c *CompoundOp) WithMemoryLimit(v int64) *CompoundOp {
 // REQ001437.
 func (c *CompoundOp) WithExpectedRows(v int64) *CompoundOp {
 	c.expectedRows = v
+	return c
+}
+
+// WithCollationRegistry sets the collation name→function lookup. REQ001332.
+func (c *CompoundOp) WithCollationRegistry(fn func(string) DT.CollateFunc) *CompoundOp {
+	c.collRegistry = fn
 	return c
 }
 
@@ -177,19 +187,28 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 				decorated[i].row = result[i]
 				decorated[i].keys = vals
 			}
-			slices.SortStableFunc(decorated, func(a, b decoratedRow) int {
-				for j, k := range c.orderBy {
-					cmp := pl.CompareValue(a.keys[j], b.keys[j])
-					if cmp == 0 {
-						continue
+		slices.SortStableFunc(decorated, func(a, b decoratedRow) int {
+			for j, k := range c.orderBy {
+				var cmp int
+				if k.Collation != "" && c.collRegistry != nil {
+					if coll := c.collRegistry(k.Collation); coll != nil {
+						cmp = DT.CompareValueWithCollation(a.keys[j], b.keys[j], coll)
+					} else {
+						cmp = pl.CompareValue(a.keys[j], b.keys[j])
 					}
-					if k.Desc {
-						return -cmp
-					}
-					return cmp
+				} else {
+					cmp = pl.CompareValue(a.keys[j], b.keys[j])
 				}
-				return 0
-			})
+				if cmp == 0 {
+					continue
+				}
+				if k.Desc {
+					return -cmp
+				}
+				return cmp
+			}
+			return 0
+		})
 			for i, d := range decorated {
 				result[i] = d.row
 			}

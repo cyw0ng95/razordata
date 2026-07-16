@@ -27,6 +27,9 @@ type Sort struct {
 	// REQ001278: when true, data is already in sort order (e.g. ORDER BY
 	// primary key on SeqScan output). Skip materialization + sort.
 	preOrdered bool
+	// REQ001332: collRegistry resolves collation names to user-defined
+	// comparison functions. nil = no custom collations registered.
+	collRegistry func(string) DT.CollateFunc
 
 	closed atomic.Bool
 }
@@ -57,6 +60,12 @@ func (s *Sort) WithPool(pool *UT.WorkerPool) *Sort {
 // 0 = unlimited. REQ001065.
 func (s *Sort) WithSortBufferSize(v int64) *Sort {
 	s.sortBufferSize = v
+	return s
+}
+
+// WithCollationRegistry sets the collation name→function lookup. REQ001332.
+func (s *Sort) WithCollationRegistry(fn func(string) DT.CollateFunc) *Sort {
+	s.collRegistry = fn
 	return s
 }
 
@@ -220,7 +229,16 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 								return int(s.keys[ki].NullsOrder)
 							}
 						}
-						c := pl.CompareValue(ka[ki], kb[ki])
+						var c int
+						if s.keys[ki].Collation != "" && s.collRegistry != nil {
+							if coll := s.collRegistry(s.keys[ki].Collation); coll != nil {
+								c = DT.CompareValueWithCollation(ka[ki], kb[ki], coll)
+							} else {
+								c = pl.CompareValue(ka[ki], kb[ki])
+							}
+						} else {
+							c = pl.CompareValue(ka[ki], kb[ki])
+						}
 						if c == 0 {
 							continue
 						}

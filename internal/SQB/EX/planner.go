@@ -97,6 +97,9 @@ type Planner struct {
 	// Chosen by chooseBatchSize() based on LIMIT clause, estimated
 	// row count, and operator tree depth. 0 = use heuristic.
 	batchSize int
+	// REQ001332: collations is a registry of user-defined collation
+	// functions keyed by name.
+	collations map[string]DT.CollateFunc
 }
 
 type tableInfo struct {
@@ -332,6 +335,28 @@ func (p *Planner) RegisterIndex(table, index string, cols []string) {
 	if t, ok := p.catalog[table]; ok {
 		t.indexes[index] = cols
 	}
+}
+
+func (p *Planner) RegisterCollation(name string, fn DT.CollateFunc) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.collations == nil {
+		p.collations = make(map[string]DT.CollateFunc)
+	}
+	if _, ok := p.collations[name]; ok {
+		return fmt.Errorf("collation %q already registered", name)
+	}
+	p.collations[name] = fn
+	return nil
+}
+
+func (p *Planner) LookupCollation(name string) DT.CollateFunc {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.collations == nil {
+		return nil
+	}
+	return p.collations[name]
 }
 
 // UpdateTableRowCount adjusts the cached row count for a table (REQ001420).
@@ -1027,6 +1052,7 @@ func (p *Planner) planCompound(s *PS.CompoundStmt) DT.Operator {
 	left := p.planSubStmt(s.Left)
 	right := p.planSubStmt(s.Right)
 	cop := OP.NewCompoundOp(left, right, s.Op, s.OrderBy, s.Limit, s.Offset)
+	cop.WithCollationRegistry(p.LookupCollation)
 	if p.maxMemoryPerQuery > 0 {
 		cop.WithMemoryLimit(p.maxMemoryPerQuery)
 	}

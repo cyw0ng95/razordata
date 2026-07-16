@@ -15,6 +15,10 @@ import (
 
 const Version = "0.9.0"
 
+// CollateFunc is a user-registered collation function for ORDER BY / COMPARE.
+// REQ001332.
+type CollateFunc func(a, b []byte) int
+
 type Options struct {
 	Dir                string
 	PageSize           int
@@ -101,6 +105,7 @@ type Engine interface {
 	Close(ctx context.Context) error
 	Begin(ctx context.Context) (Session, error)
 	Stats() EngineStats
+	RegisterCollation(name string, fn CollateFunc) error // REQ001332
 }
 
 type Session interface {

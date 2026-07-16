@@ -514,6 +514,7 @@ func (p *Planner) planSelectSubquery(s *PS.Select) DT.Operator {
 	}
 	if len(s.OrderBy) > 0 {
 		so := OP.NewSort(current, s.OrderBy)
+		so.WithCollationRegistry(p.LookupCollation)
 		if p.pool != nil {
 			so.WithPool(p.pool.(*UT.WorkerPool))
 		}
@@ -868,6 +869,7 @@ func (p *Planner) planOrdering(s *PS.Select, current DT.Operator) DT.Operator {
 	if len(s.OrderBy) > 0 {
 		if !p.pkOrderMatches(s.From, s.OrderBy) {
 			sort := OP.NewSort(current, s.OrderBy)
+			sort.WithCollationRegistry(p.LookupCollation)
 			if p.pool != nil {
 				sort.WithPool(p.pool.(*UT.WorkerPool))
 			}

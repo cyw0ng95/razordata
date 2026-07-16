@@ -6,6 +6,9 @@ import (
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
+// CollateFunc is a user-registered collation function. REQ001332.
+type CollateFunc = AP.CollateFunc
+
 // cmpFloat compares two float64 values. Returns -1, 0, or 1.
 func cmpFloat(a, b float64) int {
 	if a < b {

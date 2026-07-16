@@ -411,6 +411,12 @@ func (e *Engine) Stats() AP.EngineStats {
 	return out
 }
 
+// RegisterCollation registers a user-defined collation function.
+// REQ001332.
+func (e *Engine) RegisterCollation(name string, fn AP.CollateFunc) error {
+	return e.exe.RegisterCollation(name, fn)
+}
+
 type executorStoreAdapter struct {
 	eng        *ls.Engine
 	snapshotTS uint64
