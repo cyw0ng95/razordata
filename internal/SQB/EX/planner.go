@@ -950,6 +950,8 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 	switch s.Name {
 	case "integrity_check":
 		return UT.NewIntegrityCheckWithStore(p.store)
+	case "cell_size_check":
+		return UT.NewCellSizeCheckWithStore(p.store)
 	case "cache_size", "journal_mode", "synchronous", "user_version":
 		// REQ000242: return pragma value as a single-row result
 		return OP.NewPragmaResult(s.Name, s.Value)
