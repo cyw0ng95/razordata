@@ -1023,6 +1023,24 @@ func (p *Planner) planCompound(s *PS.CompoundStmt) DT.Operator {
 	if p.maxMemoryPerQuery > 0 {
 		cop.WithMemoryLimit(p.maxMemoryPerQuery)
 	}
+	// REQ001437: estimate expected rows for drainAll pre-sizing.
+	// For UNION ALL, estimate left + right row counts.
+	// For EXCEPT/INTERSECT/UNION, use the smaller side as estimate.
+	if s.Left != nil {
+		if leftEst := p.estimateRowCountFromStmt(s.Left); leftEst > 0 {
+			rightEst := p.estimateRowCountFromStmt(s.Right)
+			switch s.Op {
+			case PS.CompoundUnionAll, PS.CompoundUnion:
+				cop.WithExpectedRows(leftEst + rightEst)
+			case PS.CompoundExcept, PS.CompoundIntersect:
+				if leftEst < rightEst {
+					cop.WithExpectedRows(leftEst)
+				} else {
+					cop.WithExpectedRows(rightEst)
+				}
+			}
+		}
+	}
 	return cop
 }
 
@@ -1118,4 +1136,28 @@ func (p *Planner) extractLimit(stmt PS.Stmt) int64 {
 		}
 	}
 	return -1
+}
+
+// estimateRowCountFromStmt estimates row count from a SELECT statement.
+// REQ001437.
+func (p *Planner) estimateRowCountFromStmt(stmt PS.Stmt) int64 {
+	sel, ok := stmt.(*PS.Select)
+	if !ok {
+		return 0
+	}
+	if sel.From == "" {
+		return 1
+	}
+	base := int64(p.estimateRowCount(sel.From, nil))
+	if base <= 0 {
+		return 0
+	}
+	// Apply WHERE selectivity
+	if sel.Where != nil {
+		base = int64(float64(base) * CO.EstimateSelectivity(sel.Where))
+	}
+	if base <= 0 {
+		base = 1
+	}
+	return base
 }

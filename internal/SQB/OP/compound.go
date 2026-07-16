@@ -52,6 +52,9 @@ type CompoundOp struct {
 	// REQ001057: memory limit for drainAll materialization.
 	// 0 = unlimited. Set by Planner from Executor.WithMemoryBudget.
 	maxMemory int64
+	// REQ001437: expected row count for pre-sizing drainAll output.
+	// 0 = unknown, use default growth.
+	expectedRows int64
 	// Re-exported from PS for convenience.
 	_ bool // alignment placeholder
 }
@@ -78,6 +81,13 @@ func (c *CompoundOp) WithMemoryLimit(v int64) *CompoundOp {
 	return c
 }
 
+// WithExpectedRows sets the expected row count for drainAll pre-sizing.
+// REQ001437.
+func (c *CompoundOp) WithExpectedRows(v int64) *CompoundOp {
+	c.expectedRows = v
+	return c
+}
+
 func (c *CompoundOp) WithParams(p []any) Operator {
 	c.params = p
 	return c
@@ -100,14 +110,14 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 		return c.nextStreaming(ctx)
 	}
 	if !c.materialized {
-		leftRows, err := drainAll(ctx, c.left, c.maxDrainRows, c.maxMemory)
+		leftRows, err := drainAll(ctx, c.left, c.maxDrainRows, c.maxMemory, c.expectedRows)
 		if err != nil {
 			return Row{}, err
 		}
 		// REQ001081: close children after draining to reset streaming
 		// state in nested compound operators.
 		_ = c.left.Close()
-		rightRows, err := drainAll(ctx, c.right, c.maxDrainRows, c.maxMemory)
+		rightRows, err := drainAll(ctx, c.right, c.maxDrainRows, c.maxMemory, c.expectedRows)
 		if err != nil {
 			return Row{}, err
 		}
@@ -285,7 +295,7 @@ func (c *CompoundOp) nextStreamingUnionAll(ctx context.Context) (Row, error) {
 
 func (c *CompoundOp) nextStreamingSetOp(ctx context.Context) (Row, error) {
 	if !c.rightDrained {
-		rightRows, err := drainAll(ctx, c.right, c.maxDrainRows, c.maxMemory)
+		rightRows, err := drainAll(ctx, c.right, c.maxDrainRows, c.maxMemory, c.expectedRows)
 		if err != nil {
 			return Row{}, err
 		}
@@ -366,14 +376,15 @@ func (c *CompoundOp) Reset(ctx context.Context) error {
 }
 
 // drainAll pulls up to maxRows rows from op. maxRows=0 means unlimited.
-// Defaults to 1M rows when maxRows is 0 (safety limit for intermediate
-// compound operator materialization — REQ001056).
-// maxMemory caps total memory usage (0 = unlimited). REQ001057.
-func drainAll(ctx context.Context, op Operator, maxRows int64, maxMemory int64) ([]Row, error) {
+// expectedRows is used for pre-sizing the output slice. REQ001437.
+func drainAll(ctx context.Context, op Operator, maxRows int64, maxMemory int64, expectedRows int64) ([]Row, error) {
 	if maxRows <= 0 {
 		maxRows = 1_000_000 // safety cap: 1M rows ≈ 50MB per drain
 	}
 	var out []Row
+	if expectedRows > 0 {
+		out = make([]Row, 0, expectedRows)
+	}
 	var memUsed int64
 	for {
 		if int64(len(out)) >= maxRows {
