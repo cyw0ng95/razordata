@@ -115,6 +115,15 @@ func isEligible(root DT.Operator) bool {
 		case *OP.Limit:
 			// VectorizedLimit supports any child that is eligible.
 			return isEligible(o.Child())
+		case *AG.HashAggregate:
+			if len(o.GroupCols()) > 0 {
+				for _, gc := range o.GroupCols() {
+					if _, ok := gc.(*PS.Ident); !ok {
+						return false
+					}
+				}
+			}
+			return true
 		default:
 			return false
 		}
@@ -155,6 +164,16 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 			return nil
 		}
 		result := transformAggregate(o, child)
+		if result == nil {
+			return nil
+		}
+		return result
+	case *AG.HashAggregate:
+		child := transformOp(o.Child())
+		if child == nil {
+			return nil
+		}
+		result := transformHashAggregate(o, child)
 		if result == nil {
 			return nil
 		}
@@ -242,6 +261,44 @@ func transformAggregate(a *AG.Aggregate, bp UT.BatchProducer) *AG.VectorizedHash
 		idx, ok := resolveColumnIndex(child, gc.(*PS.Ident).Name)
 		if !ok {
 			return nil // can't resolve group column
+		}
+		groupColIdxs[i] = idx
+	}
+	if len(groupCols) == 0 {
+		groupColIdxs = nil
+	}
+	return AG.NewVectorizedHashAggregate(bp, groupColIdxs, defs)
+}
+
+// transformHashAggregate converts a row HashAggregate to VectorizedHashAggregate.
+// REQ001446.
+func transformHashAggregate(h *AG.HashAggregate, bp UT.BatchProducer) *AG.VectorizedHashAggregate {
+	groupCols := h.GroupCols()
+	if len(groupCols) > 0 {
+		for _, gc := range groupCols {
+			if _, ok := gc.(*PS.Ident); !ok {
+				return nil
+			}
+		}
+	}
+	aggs := h.Aggs()
+	if len(aggs) == 0 {
+		return nil
+	}
+	defs := make([]AG.AggDef, 0, len(aggs))
+	child := h.Child()
+	for _, ag := range aggs {
+		kind, colIdx, ok := resolveAggDef(ag, child)
+		if !ok {
+			return nil
+		}
+		defs = append(defs, AG.AggDef{Kind: kind, Col: colIdx})
+	}
+	groupColIdxs := make([]int, len(groupCols))
+	for i, gc := range groupCols {
+		idx, ok := resolveColumnIndex(child, gc.(*PS.Ident).Name)
+		if !ok {
+			return nil
 		}
 		groupColIdxs[i] = idx
 	}
@@ -392,7 +449,7 @@ func transformDistinct(d *OP.Distinct) UT.BatchProducer {
 }
 
 // transformCompoundOp converts a row CompoundOp to VectorizedCompoundOp.
-// Only UNION ALL and UNION are supported (INTERSECT/EXCEPT fall back).
+// Supports UNION ALL, UNION, EXCEPT, INTERSECT. REQ001442.
 func transformCompoundOp(co *OP.CompoundOp) UT.BatchProducer {
 	left := transformOp(co.LeftChild())
 	if left == nil {
@@ -418,6 +475,8 @@ func extractSchemaFromOp(op DT.Operator) ([]string, []LX.TokenType) {
 	case *OP.Project:
 		return extractSchemaFromOp(o.Child())
 	case *AG.Aggregate:
+		return nil, nil
+	case *AG.HashAggregate:
 		return nil, nil
 	case *OP.Distinct:
 		return extractSchemaFromOp(o.Child())
