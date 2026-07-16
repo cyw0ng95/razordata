@@ -999,7 +999,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 	if costPredicates == nil && s.Where != nil {
 		costPredicates = p.splitAnd(s.Where)
 	}
-	const reorderJoinsLimit = 8
+	const reorderJoinsLimit = 12
 	joinOrder := []string(nil)
 	if len(joinInfos) <= 4 {
 		joinOrder = p.exhaustiveJoinOrder(s.From, joinInfos, costPredicates)
