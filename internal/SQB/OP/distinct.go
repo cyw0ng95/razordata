@@ -113,7 +113,12 @@ func DistinctKey(row pl.Row) string {
 			out = append(out, 'N')
 		case KindInt:
 			out = append(out, 'I')
-			out = strconv.AppendInt(out, d.I64, 10)
+			if d.I64 < 0 {
+				out = append(out, '-')
+				out = binary.AppendUvarint(out, uint64(-d.I64))
+			} else {
+				out = binary.AppendUvarint(out, uint64(d.I64))
+			}
 		case KindFloat:
 			out = append(out, 'F')
 			out = strconv.AppendFloat(out, d.F64, 'g', -1, 64)
