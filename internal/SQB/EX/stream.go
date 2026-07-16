@@ -85,13 +85,19 @@ func hasSubqueryExpr(e PS.Expr) bool {
 
 // hasComplexOperator walks the operator tree for join, aggregate, or sort
 // operators that would make the sync path inappropriate.
+// REQ001461: Sort over a simple single-table SeqScan is NOT complex —
+// it's just a post-process step that can safely run in the sync path.
 func hasComplexOperator(op DT.Operator) bool {
-	switch op.(type) {
+	switch o := op.(type) {
 	case *OP.NestedLoopJoin, *OP.HashJoin:
 		return true
 	case *AG.Aggregate:
 		return true
 	case *OP.Sort:
+		// REQ001461: simple sort over SeqScan is OK for sync path.
+		if isSimpleSort(o) {
+			return false
+		}
 		return true
 	}
 	for _, child := range childrenOf(op) {
@@ -100,6 +106,31 @@ func hasComplexOperator(op DT.Operator) bool {
 		}
 	}
 	return false
+}
+
+// isSimpleSort checks if a Sort operator is over a single-table SeqScan
+// with simple expressions (no subqueries, no joins, no aggregates).
+// REQ001461.
+func isSimpleSort(sortOp *OP.Sort) bool {
+	child := sortOp.Child()
+	_, isSeqScan := child.(*OP.SeqScan)
+	if !isSeqScan {
+		// Could be Filter(SeqScan) or Project(SeqScan) — walk down.
+		for {
+			switch c := child.(type) {
+			case *OP.SeqScan:
+				return true
+			case interface{ Child() DT.Operator }:
+				child = c.Child()
+				if child == nil {
+					return false
+				}
+			default:
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // childrenOf returns direct children of an operator.
