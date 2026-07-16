@@ -986,9 +986,16 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 			mode = -1 // sentinel for "auto"
 		}
 		return OP.NewPragmaResult("vectorized_mode", strconv.Itoa(mode))
-	case "foreign_keys", "foreign_key_check":
-		// REQ000905/REQ000906: these are handled by the Pragma operator
-		// which needs access to the store for FK introspection.
+	case "foreign_keys":
+		// REQ001307: toggle FK enforcement.
+		if s.Value != "" {
+			enabled := s.Value == "on" || s.Value == "1"
+			DT.SetForeignKeysEnabled(enabled)
+		}
+		enabled := DT.IsForeignKeysEnabled()
+		return OP.NewPragmaIntResult("foreign_keys", boolToInt64(enabled))
+	case "foreign_key_check":
+		// REQ000906: handled by the Pragma operator.
 		return WT.NewPragma(s).WithStore(p.store)
 	case "wal_autocheckpoint", "busy_timeout", "busy_handler":
 		// REQ001300 / REQ001301 / REQ001302: handled by Pragma operator.
@@ -1069,8 +1076,14 @@ func isConstRowPlan(op DT.Operator) bool {
 	if _, ok := op.(*OP.ConstRow); ok {
 		return true
 	}
+	if _, ok := op.(*OP.PragmaResult); ok {
+		return true
+	}
 	if ad, ok := op.(*AD.AdaptiveOp); ok {
 		if _, ok := ad.Inner.(*OP.ConstRow); ok {
+			return true
+		}
+		if _, ok := ad.Inner.(*OP.PragmaResult); ok {
 			return true
 		}
 	}
@@ -1160,4 +1173,11 @@ func (p *Planner) estimateRowCountFromStmt(stmt PS.Stmt) int64 {
 		base = 1
 	}
 	return base
+}
+
+func boolToInt64(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }
