@@ -368,7 +368,15 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 		row, lerr := j.left.Next(ctx)
 		if lerr != nil {
 			if lerr == ErrNoRows {
-				return j.emitUnmatchedRight(), nil
+				// REQ001355: when all unmatched rows are exhausted,
+				// emitUnmatchedRight returns an empty Row and sets
+				// rightEmitted=true. Propagate as ErrNoRows so callers
+				// don't see a phantom empty row.
+				result := j.emitUnmatchedRight()
+				if j.rightEmitted {
+					return Row{}, ErrNoRows
+				}
+				return result, nil
 			}
 			return Row{}, lerr
 		}
@@ -396,9 +404,14 @@ func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 					continue
 				}
 			}
+			// REQ001355: clear j.leftRow after a matched row so the next call
+// enters the right-outer emission path (line 364) instead of falling
+// into the INNER-style block NLJ path at line 440.
+			result := j.outerJoinRows(j.leftRow, &r)
 			j.matched = true
 			j.rightMatched[j.rightPos-1] = true
-			return j.emitLimitCheck(j.outerJoinRows(j.leftRow, &r)), nil
+			j.leftRow = nil
+			return j.emitLimitCheck(result), nil
 		}
 		// No matches for this left row.
 		if j.leftOuter && !j.matched {
@@ -632,10 +645,12 @@ func (j *NestedLoopJoin) nullLeftRow() Row {
 	leftSchema := DT.Tables[j.leftTbl]
 	DT.TablesMu.RUnlock()
 
+	cols := prefixCols(schemaCols(leftSchema), j.leftTbl)
 	nullRow := Row{
-		Cols:  prefixCols(schemaCols(leftSchema), j.leftTbl),
+		Cols:  cols,
 		Types: schemaTypes(leftSchema),
-		Data:  make([]Value, len(leftSchema)),
+		// REQ001355: size Data to match Cols count, not row count.
+		Data: make([]Value, len(cols)),
 	}
 	j.nullLeftRowCache = &nullRow
 	return nullRow

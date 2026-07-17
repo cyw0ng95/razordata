@@ -1256,7 +1256,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 							}
 						}
 					}
-					joinOp = OP.NewHashJoin(current, rightScan, leftTbl, rightTbl, lk, rk, 0)
+					joinOp = OP.NewHashJoin(current, rightScan, leftTbl, rightTbl, lk, rk, 0).WithKind(kind)
 					if p.joinBufferSize > 0 {
 						if hj, ok := joinOp.(*OP.HashJoin); ok {
 							hj.WithJoinBufferSize(p.joinBufferSize)
@@ -1428,7 +1428,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			}
 			_ = remaining
 			if len(lk) > 0 {
-				joinOp = OP.NewHashJoin(current, gr.op, leftTbl, gr.tbl, lk, rk, 0)
+				joinOp = OP.NewHashJoin(current, gr.op, leftTbl, gr.tbl, lk, rk, 0).WithKind(OP.JoinKindInner)
 				if p.joinBufferSize > 0 {
 					if hj, ok := joinOp.(*OP.HashJoin); ok {
 						hj.WithJoinBufferSize(p.joinBufferSize)
