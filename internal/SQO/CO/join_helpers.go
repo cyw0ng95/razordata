@@ -109,6 +109,12 @@ func GroupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates 
 		}
 		equiJoinTables[rTable][lTable] = true
 	}
+
+	// REQ001452: compute transitive closure of equi-join adjacency.
+	// Tables connected through a chain of equi-join predicates are
+	// considered joinable, preventing N3 from exploring dead-end
+	// partial plans.
+	reachableFrom := makeTransitiveClosure(equiJoinTables)
 	groups := [][]string{{baseTable}}
 	for i := 1; i < k; i++ {
 		tbl := joinOrder[i]
@@ -116,6 +122,15 @@ func GroupBushyJoins(baseTable string, joinOrder []string, crossTablePredicates 
 		targetGroup := len(groups) - 1
 		for gi, existing := range groups {
 			for _, et := range existing {
+				// REQ001452: use transitive closure for group membership
+				// decision — tables reachable via any chain of equi-join
+				// predicates belong in the same group.
+				if reachableFrom[tbl] != nil && reachableFrom[tbl][et] {
+					independent = false
+					targetGroup = gi
+					break
+				}
+				// Fallback to direct pairKeys for backward compat.
 				pk := pairKey{et, tbl}
 				if _, found := pairKeys[pk]; found {
 					independent = false
@@ -258,4 +273,35 @@ func ResolveExprSlots(expr PS.Expr, schema []string) {
 		ResolveExprSlots(e.High, schema)
 	case *PS.SubqueryExpr, *PS.ExistsExpr:
 	}
+}
+
+// makeTransitiveClosure computes the transitive closure of an
+// equi-join adjacency map. For each table, returns the set of all
+// tables reachable via any chain of equi-join predicates.
+// REQ001452.
+func makeTransitiveClosure(adj map[string]map[string]bool) map[string]map[string]bool {
+	closure := make(map[string]map[string]bool, len(adj))
+	for t := range adj {
+		closure[t] = make(map[string]bool)
+	}
+	for t := range adj {
+		if _, ok := closure[t]; !ok {
+			closure[t] = map[string]bool{t: true}
+			continue
+		}
+		visited := map[string]bool{}
+		var dfs func(string)
+		dfs = func(cur string) {
+			for next := range adj[cur] {
+				if !visited[next] {
+					visited[next] = true
+					closure[t][next] = true
+					dfs(next)
+				}
+			}
+		}
+		closure[t][t] = true
+		dfs(t)
+	}
+	return closure
 }
