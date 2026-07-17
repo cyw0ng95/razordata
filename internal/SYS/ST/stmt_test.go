@@ -133,8 +133,16 @@ func TestStmt_QueryReturnsCols(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rows.Close()
 	if len(rows.Cols()) != 2 || rows.Cols()[0] != "id" || rows.Cols()[1] != "name" {
 		t.Errorf("cols = %v, want [id name]", rows.Cols())
+	}
+	// Consume all rows to prevent race with Close().
+	for {
+		_, err := rows.Next()
+		if err != nil {
+			break
+		}
 	}
 }
 

@@ -214,6 +214,7 @@ var batchPool = sync.Pool{
 // index, the pool entries will be stale but the per-type get
 // functions ensure only matching slices are returned.
 type columnDataPool struct {
+	mu     sync.Mutex
 	ints   [MaxColumns][][]int64
 	floats [MaxColumns][][]float64
 	strs   [MaxColumns][][]string
@@ -223,6 +224,8 @@ type columnDataPool struct {
 var colDataPool = &columnDataPool{}
 
 func (p *columnDataPool) getInts(cols, n int) []int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	for i := range p.ints[cols] {
 		if cap(p.ints[cols][i]) >= n {
 			s := p.ints[cols][i][:n]
@@ -237,12 +240,16 @@ func (p *columnDataPool) getInts(cols, n int) []int64 {
 }
 
 func (p *columnDataPool) putInts(cols int, s []int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if cols < MaxColumns {
 		p.ints[cols] = append(p.ints[cols], s)
 	}
 }
 
 func (p *columnDataPool) getFloats(cols, n int) []float64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	for i := range p.floats[cols] {
 		if cap(p.floats[cols][i]) >= n {
 			s := p.floats[cols][i][:n]
@@ -257,12 +264,16 @@ func (p *columnDataPool) getFloats(cols, n int) []float64 {
 }
 
 func (p *columnDataPool) putFloats(cols int, s []float64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if cols < MaxColumns {
 		p.floats[cols] = append(p.floats[cols], s)
 	}
 }
 
 func (p *columnDataPool) getStrs(cols, n int) []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	for i := range p.strs[cols] {
 		if cap(p.strs[cols][i]) >= n {
 			s := p.strs[cols][i][:n]
@@ -277,12 +288,16 @@ func (p *columnDataPool) getStrs(cols, n int) []string {
 }
 
 func (p *columnDataPool) putStrs(cols int, s []string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if cols < MaxColumns {
 		p.strs[cols] = append(p.strs[cols], s)
 	}
 }
 
 func (p *columnDataPool) getBools(cols, n int) []bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	for i := range p.bools[cols] {
 		if cap(p.bools[cols][i]) >= n {
 			s := p.bools[cols][i][:n]
@@ -297,6 +312,8 @@ func (p *columnDataPool) getBools(cols, n int) []bool {
 }
 
 func (p *columnDataPool) putBools(cols int, s []bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if cols < MaxColumns {
 		p.bools[cols] = append(p.bools[cols], s)
 	}

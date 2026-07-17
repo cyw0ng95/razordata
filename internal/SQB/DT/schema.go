@@ -713,9 +713,11 @@ var (
 	ddlVersionStackMu sync.Mutex
 )
 
-// IncrDDLVersion increments the DDL schema version. Must be called under TablesMu.
+// IncrDDLVersion increments the DDL schema version. Self-locking via TablesMu.
 func IncrDDLVersion() {
+	TablesMu.Lock()
 	ddlVersion++
+	TablesMu.Unlock()
 }
 
 // DDLVersion returns the current DDL schema version.

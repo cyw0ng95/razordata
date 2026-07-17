@@ -10,6 +10,7 @@ import (
 )
 
 type RowArena struct {
+	mu      sync.Mutex
 	slabs   [][]Value // all slabs ever allocated — kept alive for GC tracing
 	slab    []Value   // current active slab
 	offset  int
@@ -27,6 +28,8 @@ type RowArena struct {
 // colsPerRow columns, reducing the number of grow() calls during
 // execution. REQ001260.
 func (a *RowArena) Init(estimatedRows, colsPerRow int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.initialized = true
 	needed := estimatedRows * colsPerRow
 	if needed <= 0 {
@@ -49,9 +52,15 @@ func (a *RowArena) Init(estimatedRows, colsPerRow int) {
 }
 
 // Initialized reports whether Init has been called on this arena.
-func (a *RowArena) Initialized() bool { return a.initialized }
+func (a *RowArena) Initialized() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.initialized
+}
 
 func (a *RowArena) Reset() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	// Let GC collect slabs naturally. Old Row.Data sub-slices
 	// created by AllocRow keep the slabs alive through normal
 	// GC tracing — no unsafe.Pointer overlay needed.
@@ -71,10 +80,14 @@ func (a *RowArena) Reset() {
 // cache. Used by REQ001419 (persistent Engine arena) to reuse the same
 // slab across queries without per-query allocation.
 func (a *RowArena) ResetOffset() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.offset = 0
 }
 
 func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) *Row {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if nCols <= 0 {
 		return &Row{
 			Cols:     schema.Cols,
@@ -83,7 +96,7 @@ func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) *Row {
 	}
 	needed := a.offset + nCols
 	if needed > a.slabCap {
-		a.grow(needed)
+		a.growLocked(needed)
 	}
 	start := a.offset
 	a.offset += nCols
@@ -99,12 +112,14 @@ func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) *Row {
 // slots directly without going through AllocRow's schema-bound
 // Row allocation. REQ001426 (INSERT batch arena path).
 func (a *RowArena) BumpValues(n int) (int, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if n <= 0 {
 		return 0, true
 	}
 	needed := a.offset + n
 	if needed > a.slabCap {
-		a.grow(needed)
+		a.growLocked(needed)
 	}
 	start := a.offset
 	a.offset += n
@@ -114,10 +129,19 @@ func (a *RowArena) BumpValues(n int) (int, bool) {
 // SliceAt returns the value-slice covering the given offset + length.
 // Caller is responsible for the offset being in range.
 func (a *RowArena) SliceAt(start, n int) []Value {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	return a.slab[start : start+n : start+n]
 }
 
 func (a *RowArena) grow(needed int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.growLocked(needed)
+}
+
+// growLocked grows the arena slab. Caller must hold a.mu.
+func (a *RowArena) growLocked(needed int) {
 	if a.slab != nil {
 		a.slabs = append(a.slabs, a.slab) // keep alive for GC tracing
 	}
@@ -140,6 +164,33 @@ func (a *RowArena) grow(needed int) {
 	}
 	a.offset = 0
 	a.slabCap = len(a.slab)
+}
+
+// cloneRowLocked clones a row into the arena. Caller must hold a.mu.
+func (a *RowArena) cloneRowLocked(r Row) Row {
+	if r.Data == nil {
+		return r
+	}
+	n := len(r.Data)
+	if n == 0 {
+		return r
+	}
+	needed := a.offset + n
+	if needed > a.slabCap {
+		a.growLocked(needed)
+	}
+	start := a.offset
+	a.offset += n
+	dst := a.slab[start : start+n : start+n]
+	for i := 0; i < n; i++ {
+		dst[i] = r.Data[i]
+	}
+	return Row{
+		Cols:     r.Cols,
+		Types:    r.Types,
+		ColIndex: r.ColIndex,
+		Data:     dst,
+	}
 }
 
 const arenaSlabSize = 64 * 1024 / int(unsafe.Sizeof(Value{})) // ~8K Values per slab
@@ -402,6 +453,8 @@ func DecodeRowSubsetInto(row *Row, data []byte, schema *StoreSchema, wantedIdx [
 // has Cols/Types/ColIndex shared with the input, but Data is copied
 // into the arena's bump allocator. REQ001233.
 func (a *RowArena) CloneRow(r Row) Row {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if r.Data == nil {
 		return r
 	}
@@ -411,7 +464,7 @@ func (a *RowArena) CloneRow(r Row) Row {
 	}
 	needed := a.offset + n
 	if needed > a.slabCap {
-		a.grow(needed)
+		a.growLocked(needed)
 	}
 	start := a.offset
 	a.offset += n
@@ -431,6 +484,8 @@ func (a *RowArena) CloneRow(r Row) Row {
 // of cloned rows. All rows share the same Cols/Types slices (from the
 // first row) and Data slices are copied into the arena. REQ001233.
 func (a *RowArena) CloneRowsBatch(rows []Row) []Row {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if len(rows) == 0 {
 		return nil
 	}
@@ -439,7 +494,7 @@ func (a *RowArena) CloneRowsBatch(rows []Row) []Row {
 	sharedTypes := rows[0].Types
 	out := make([]Row, 0, len(rows))
 	for _, r := range rows {
-		cloned := a.CloneRow(r)
+		cloned := a.cloneRowLocked(r)
 		cloned.Cols = sharedCols
 		cloned.Types = sharedTypes
 		out = append(out, cloned)
