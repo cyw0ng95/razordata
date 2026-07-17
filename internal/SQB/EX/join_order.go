@@ -2,6 +2,7 @@ package EX
 
 import (
 	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
+	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -556,7 +557,24 @@ func (p *Planner) estimateJoinOrderCost(order []string, predicates []PS.Expr) fl
 				}
 			}
 		}
-		intermediate := cost * nextRows * selectivity
+		// REQ001453: selectivity-weighted cost estimation. Multiply
+		// intermediate rows by NDV-derived selectivity for equi-join
+		// predicates, preferring plans that join highly-selective
+		// predicates early. Fallback to 0.5 when no stats available.
+		joinSel := 0.5 // default for unknown selectivity
+		for _, pred := range predicates {
+			bin, ok := pred.(*PS.BinaryExpr)
+			if !ok || bin.Op != LX.T_EQ {
+				continue
+			}
+			ndvL := p.ndvFromExpr(bin.Left)
+			ndvR := p.ndvFromExpr(bin.Right)
+			if ndvL > 0 && ndvR > 0 {
+				joinSel = 1.0 / float64(int(ndvL) + int(ndvR) - 1)
+				break
+			}
+		}
+		intermediate := cost * nextRows * selectivity * joinSel
 		cost += intermediate
 		joined[next] = true
 	}
