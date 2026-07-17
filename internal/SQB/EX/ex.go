@@ -1038,6 +1038,27 @@ func hasReturning(stmt PS.Stmt) bool {
 }
 
 func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, error) {
+	// REQ001480: textPlanCache fast-path — bypass parse/plan/NormalizeForMemo
+	// on cache hit. Mirrors QueryAll's fast-path at ex.go:1162-1172.
+	if e.textPlanCache != nil {
+		if plan := e.getTextPlan(sql); plan != nil {
+			propagateParams(plan.Root, args)
+			propagatePlanner(plan.Root, e.planner)
+			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+			execCtx.RowArena = e.ensureArena()
+			propagateExecContext(plan.Root, execCtx)
+			defer plan.Root.Close()
+			row, err := plan.Root.Next(ctx)
+			if err != nil {
+				if err == DT.ErrNoRows {
+					return &Rows{}, nil
+				}
+				return nil, err
+			}
+			DT.WithExecContext(&row, execCtx)
+			return &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]LX.TokenType(nil), row.Types...)}, nil
+		}
+	}
 	// Try cache first (P0: StmtCache wiring, saves 12.70% CPU on parsing)
 	if e.stmtCache.entries != nil {
 		if cached := e.getCachedStmt(sql); cached != nil {
@@ -1636,7 +1657,16 @@ func asAnySlice(args []any) []any {
 // Explain plans the statement and returns a human-readable
 // description of the operator tree. The plan is closed before
 // returning, so Explain does not run the query.
+// REQ001480: textPlanCache fast-path — bypass parse/plan/NormalizeForMemo
+// on cache hit. On hit, plan.Root is borrowed from the cache and must
+// not be Closed (other call paths still need it).
 func (e *Executor) Explain(sql string) (string, error) {
+	if e.textPlanCache != nil {
+		if plan := e.getTextPlan(sql); plan != nil && plan.Root != nil {
+			nodes := buildPlanNodeTree(plan.Root, e.planner)
+			return formatPlanNodes(nodes), nil
+		}
+	}
 	parser := PS.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
@@ -1649,9 +1679,19 @@ func (e *Executor) Explain(sql string) (string, error) {
 	if plan == nil || plan.Root == nil {
 		return "", errors.New("ex: plan produced no root")
 	}
+	// REQ001480: populate textPlanCache so subsequent Explain / Query /
+	// QueryAll calls with the same SQL bypass re-planning.
+	if e.textPlanCache != nil {
+		e.putTextPlan(sql, plan)
+	}
 	defer plan.Root.Close()
-	// Use formatPlanTree with default ExplainNormal mode for text output
 	nodes := buildPlanNodeTree(plan.Root, e.planner)
+	return formatPlanNodes(nodes), nil
+}
+
+// formatPlanNodes renders a PlanNode tree to a human-readable string.
+// Shared by the cached and uncached paths in Explain. REQ001480.
+func formatPlanNodes(nodes *AD.PlanNode) string {
 	var b strings.Builder
 	var walk func(node *AD.PlanNode, depth int)
 	walk = func(node *AD.PlanNode, depth int) {
@@ -1674,7 +1714,7 @@ func (e *Executor) Explain(sql string) (string, error) {
 		}
 	}
 	walk(nodes, 0)
-	return b.String(), nil
+	return b.String()
 }
 
 // isUpdatableView checks if a view is updatable (simple single-table

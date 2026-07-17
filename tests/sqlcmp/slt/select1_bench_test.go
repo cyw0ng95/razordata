@@ -232,3 +232,178 @@ func BenchmarkSelect1_ThroughputDirect(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkSelect1_QueryPath_TextCacheEffect measures the alloc
+// drop from REQ001480: before the fix, Query/Explain paths called
+// planWithCache on every call (full parse + NormalizeForMemo +
+// AST clone); after the fix, they short-circuit via textPlanCache.
+// REQ001480.
+func BenchmarkSelect1_QueryPath_TextCacheEffect(b *testing.B) {
+	eng, cleanup := setupSelect1Engine(b)
+	defer cleanup()
+	ctx := context.Background()
+
+	sqls := []string{
+		"SELECT * FROM t1",
+		"SELECT a FROM t1 WHERE a>150",
+		"SELECT a+b*2+c*3+d*4+e*5 FROM t1",
+		"SELECT CASE WHEN a<b-3 THEN 111 WHEN a<=b THEN 222 WHEN a<b+3 THEN 333 ELSE 444 END FROM t1",
+		"SELECT count(*) FROM t1",
+	}
+
+	// Use *sql.DB to drive Query path (since db.QueryContext calls
+	// the Executor.Query path, which is what REQ001480 targets).
+	db := setupSelect1(b)
+	defer db.Close()
+
+	b.Run("QueryPath_pre_warmed_cache", func(b *testing.B) {
+		// Pre-warm the cache by running each query once.
+		for _, q := range sqls {
+			rows, err := db.QueryContext(ctx, q)
+			if err != nil {
+				b.Fatal(err)
+			}
+			for rows.Next() {
+			}
+			rows.Close()
+		}
+		b.ResetTimer()
+		b.ReportAllocs()
+		for b.Loop() {
+			for _, q := range sqls {
+				rows, err := db.QueryContext(ctx, q)
+				if err != nil {
+					b.Fatal(err)
+				}
+				for rows.Next() {
+				}
+				rows.Close()
+			}
+		}
+	})
+
+	b.Run("QueryPath_fresh_executor_per_iter", func(b *testing.B) {
+		// Simulate the pre-REQ001480 behaviour: every iteration
+		// gets a fresh Executor via ShallowCopy (the engine's
+		// canonical entry point), which has no textPlanCache —
+		// mirrors the bug that REQ001480 fixes.
+		b.ReportAllocs()
+		for b.Loop() {
+			for _, q := range sqls {
+				freshExe := eng.Executor()
+				if _, err := freshExe.QueryAll(ctx, q); err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
+}
+
+// BenchmarkSelect1_ExplainPath_TextCacheEffect measures the alloc
+// drop on the Explain path. Before REQ001480, Explain called
+// parser.Parse + planWithCache (NormalizeForMemo + AST clone) on
+// every call. After the fix, Explain short-circuits via
+// textPlanCache on cache hit. The Explain path doesn't go through
+// database/sql, so the alloc saving is directly observable.
+func BenchmarkSelect1_ExplainPath_TextCacheEffect(b *testing.B) {
+	eng, cleanup := setupSelect1Engine(b)
+	defer cleanup()
+	exe := eng.Executor()
+
+	sqls := []string{
+		"SELECT * FROM t1",
+		"SELECT a FROM t1 WHERE a>150",
+		"SELECT a+b*2+c*3+d*4+e*5 FROM t1",
+		"SELECT CASE WHEN a<b-3 THEN 111 WHEN a<=b THEN 222 WHEN a<b+3 THEN 333 ELSE 444 END FROM t1",
+		"SELECT count(*) FROM t1",
+	}
+
+	b.Run("Explain_cached_reused_executor", func(b *testing.B) {
+		// Pre-warm.
+		for _, q := range sqls {
+			if _, err := exe.Explain(q); err != nil {
+				b.Fatal(err)
+			}
+		}
+		b.ResetTimer()
+		b.ReportAllocs()
+		for b.Loop() {
+			for _, q := range sqls {
+				if _, err := exe.Explain(q); err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
+
+	b.Run("Explain_fresh_executor_per_iter", func(b *testing.B) {
+		// Mirrors pre-REQ001480 behaviour.
+		b.ReportAllocs()
+		for b.Loop() {
+			for _, q := range sqls {
+				freshExe := eng.Executor()
+				if _, err := freshExe.Explain(q); err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
+}
+// contribution: runs the same 5 SQLs once uncached (plan miss path,
+// measures parse+plan+NormalizeForMemo+plan compile) vs cached
+// (textPlanCache hit, no parse, no plan). Per pprof captured
+// 2026-07-17, cloneExprForMemo + cloneStmtForMemo account for
+// 5.18% of alloc_objects in BenchmarkSelect1_ThroughputDirect.
+// REQ001480.
+func BenchmarkSelect1_TextPlanCacheEffect(b *testing.B) {
+	eng, cleanup := setupSelect1Engine(b)
+	defer cleanup()
+	ctx := context.Background()
+	exe := eng.Executor()
+
+	sqls := []string{
+		"SELECT * FROM t1",
+		"SELECT a FROM t1 WHERE a>150",
+		"SELECT a+b*2+c*3+d*4+e*5 FROM t1",
+		"SELECT CASE WHEN a<b-3 THEN 111 WHEN a<=b THEN 222 WHEN a<b+3 THEN 333 ELSE 444 END FROM t1",
+		"SELECT count(*) FROM t1",
+	}
+
+	b.Run("uncached_fresh_executor_per_iter", func(b *testing.B) {
+		// Each iteration creates a fresh Executor via ShallowCopy
+		// (the canonical engine pattern) — bypasses textPlanCache
+		// because the ShallowCopy does not propagate it (see
+		// ShallowCopy at ex.go:288). This simulates pre-REQ001464
+		// behaviour and gives the upper bound on alloc cost.
+		b.ReportAllocs()
+		for b.Loop() {
+			freshExe := eng.Executor()
+			for _, q := range sqls {
+				_, err := freshExe.QueryAll(ctx, q)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
+
+	b.Run("cached_reused_executor", func(b *testing.B) {
+		// Pre-warm the textPlanCache on the executor so subsequent
+		// calls hit it. This is the REQ001464 fix in action.
+		for _, q := range sqls {
+			if _, err := exe.QueryAll(ctx, q); err != nil {
+				b.Fatal(err)
+			}
+		}
+		b.ResetTimer()
+		b.ReportAllocs()
+		for b.Loop() {
+			for _, q := range sqls {
+				_, err := exe.QueryAll(ctx, q)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
+}
