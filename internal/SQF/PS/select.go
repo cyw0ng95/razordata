@@ -388,7 +388,8 @@ func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinC
 
 	for p.current.Type == LX.T_JOIN || p.current.Type == LX.T_LEFT ||
 		p.current.Type == LX.T_RIGHT || p.current.Type == LX.T_INNER ||
-		p.current.Type == LX.T_CROSS || p.current.Type == LX.T_NATURAL {
+		p.current.Type == LX.T_CROSS || p.current.Type == LX.T_NATURAL ||
+		p.current.Type == LX.T_FULL {
 		kind := "INNER"
 		natural := false
 		switch p.current.Type {
@@ -398,6 +399,10 @@ func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinC
 			kind = "RIGHT"
 		case LX.T_CROSS:
 			kind = "CROSS"
+		case LX.T_FULL:
+			// REQ001357: FULL [OUTER] JOIN — falls through to the
+			// common advance path (FULL, optional OUTER, JOIN).
+			kind = "FULL"
 		case LX.T_NATURAL:
 			// REQ001359: NATURAL [INNER] JOIN — common columns are
 			// resolved during planning by inspecting the catalog schemas.
