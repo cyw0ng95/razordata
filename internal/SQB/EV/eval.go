@@ -349,7 +349,9 @@ var ErrEval = errors.New("ex: eval error")
 var ErrEvalDivByZero = errors.New("ex: division by zero")
 var ErrTypeMismatch = errors.New("ex: type mismatch")
 var ErrSubquery = errors.New("ex: subquery not supported here")
-var ErrIgnoreRow = errors.New("ex: ignore row")
+ var ErrIgnoreRow = errors.New("ex: ignore row")
+ var ErrRaiseRollback = errors.New("ex: raise rollback")
+ var ErrRaiseFail = errors.New("ex: raise fail")
 
 func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 	if expr == nil {
@@ -1565,20 +1567,47 @@ var ErrTriggerAbort = errors.New("ex: trigger abort")
 
 func evalRaise(e *PS.RaiseFunc, row *Row, params []any) (Value, error) {
 	action := strings.ToUpper(e.Action)
-	if action == "IGNORE" {
+	switch action {
+	case "IGNORE":
 		return DT.NullValue(), ErrIgnoreRow
-	}
-	var msg string
-	if e.Message != nil {
-		v, err := evalFallbackEvalValue(e.Message, row, params)
-		if err != nil {
-			return DT.NullValue(), err
+	case "ROLLBACK":
+		var msg string
+		if e.Message != nil {
+			v, err := evalFallbackEvalValue(e.Message, row, params)
+			if err != nil {
+				return DT.NullValue(), err
+			}
+			if v.Kind == KindText {
+				msg = v.S
+			}
 		}
-		if v.Kind == KindText {
-			msg = v.S
+		return DT.NullValue(), fmt.Errorf("%w: %s", ErrRaiseRollback, msg)
+	case "FAIL":
+		var msg string
+		if e.Message != nil {
+			v, err := evalFallbackEvalValue(e.Message, row, params)
+			if err != nil {
+				return DT.NullValue(), err
+			}
+			if v.Kind == KindText {
+				msg = v.S
+			}
 		}
+		return DT.NullValue(), fmt.Errorf("%w: %s", ErrRaiseFail, msg)
+	default:
+		// ABORT (default)
+		var msg string
+		if e.Message != nil {
+			v, err := evalFallbackEvalValue(e.Message, row, params)
+			if err != nil {
+				return DT.NullValue(), err
+			}
+			if v.Kind == KindText {
+				msg = v.S
+			}
+		}
+		return DT.NullValue(), fmt.Errorf("%w: %s", ErrTriggerAbort, msg)
 	}
-	return DT.NullValue(), fmt.Errorf("%w: %s", ErrTriggerAbort, msg)
 }
 
 // REQ000382: ABS, HEX, ROUND scalar functions.

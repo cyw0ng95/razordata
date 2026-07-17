@@ -223,6 +223,19 @@ func ExecuteTrigger(trigger *PS.TriggerStmt, ctx *TriggerContext) error {
 
 	for _, stmt := range trigger.Body {
 		if err := ExecuteTriggerStmt(stmt, ctx); err != nil {
+			// REQ001373: handle RAISE sentinels.
+			if errors.Is(err, EV.ErrIgnoreRow) {
+				// RAISE(IGNORE): skip the row, continue with next trigger.
+				continue
+			}
+			if errors.Is(err, EV.ErrRaiseRollback) {
+				// RAISE(ROLLBACK): abort entire transaction.
+				return err
+			}
+			if errors.Is(err, EV.ErrRaiseFail) {
+				// RAISE(FAIL): abort current statement only.
+				return err
+			}
 			return err
 		}
 	}
