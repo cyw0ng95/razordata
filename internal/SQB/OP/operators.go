@@ -859,6 +859,167 @@ func prefixRowCols(r Row, alias string) Row {
 	return out
 }
 
+// nextColumnarBatch fills a batch directly from the store, bypassing
+// Row construction. Decodes only the columns in wantedCols via
+// DecodeRowSubsetIntoColumnar and writes directly to batch column
+// slices. REQ001480.
+func (s *SeqScan) nextColumnarBatch(ctx context.Context, batch *UT.Batch, wantedCols []int, wantedTypes []LX.TokenType) (int, error) {
+	if s.it == nil {
+		s.it = s.store.NewIterator(s.prefix)
+	}
+	if s.it == nil {
+		return 0, nil
+	}
+	rowIdx := 0
+	maxRows := UT.BatchSize
+	for rowIdx < maxRows && s.it.Next() {
+		s.ctxCheckCounter++
+		if s.ctxCheckCounter >= 1024 {
+			s.ctxCheckCounter = 0
+			if err := ctx.Err(); err != nil {
+				return rowIdx, err
+			}
+		}
+		v := s.it.Value()
+		if s.rawByteFilter != nil && !s.rawByteFilter(v) {
+			continue
+		}
+		w := &batchColumnWriter{
+			batch:  batch,
+			wanted: wantedCols,
+			types:  wantedTypes,
+			rowIdx: rowIdx,
+		}
+		if err := DT.DecodeRowSubsetIntoColumnar(v, s.schema, wantedCols, w); err != nil {
+			return rowIdx, err
+		}
+		rowIdx++
+	}
+	if err := s.it.Err(); err != nil {
+		return rowIdx, err
+	}
+	return rowIdx, nil
+}
+
+// batchColumnWriter implements DT.ColumnWriter for filling batch
+// column data directly from DecodeRowSubsetIntoColumnar.
+type batchColumnWriter struct {
+	batch  *UT.Batch
+	wanted []int
+	types  []LX.TokenType
+	rowIdx int
+}
+
+func (w *batchColumnWriter) colFor(fullColIdx int) (int, *UT.Column) {
+	for i, ci := range w.wanted {
+		if ci == fullColIdx {
+			if i < len(w.batch.Cols) {
+				return i, &w.batch.Cols[i]
+			}
+			return i, nil
+		}
+	}
+	return -1, nil
+}
+
+func (w *batchColumnWriter) ensureInt(col *UT.Column, colIdx int) {
+	if col.Data.Ints == nil {
+		col.Data.Ints = UT.PoolGetInts(colIdx, UT.BatchSize)
+	}
+}
+
+func (w *batchColumnWriter) ensureFloat(col *UT.Column, colIdx int) {
+	if col.Data.Floats == nil {
+		col.Data.Floats = UT.PoolGetFloats(colIdx, UT.BatchSize)
+	}
+}
+
+func (w *batchColumnWriter) ensureStr(col *UT.Column, colIdx int) {
+	if col.Data.Strs == nil {
+		col.Data.Strs = UT.PoolGetStrs(colIdx, UT.BatchSize)
+	}
+}
+
+func (w *batchColumnWriter) ensureBool(col *UT.Column, colIdx int) {
+	if col.Data.Bools == nil {
+		col.Data.Bools = UT.PoolGetBools(colIdx, UT.BatchSize)
+	}
+}
+
+func (w *batchColumnWriter) WriteNull(fullColIdx int) error {
+	_, col := w.colFor(fullColIdx)
+	if col == nil {
+		return nil
+	}
+	if col.Nulls == nil {
+		col.Nulls = make([]bool, UT.BatchSize)
+	}
+	if w.rowIdx < len(col.Nulls) {
+		col.Nulls[w.rowIdx] = true
+	}
+	return nil
+}
+
+func (w *batchColumnWriter) WriteInt(fullColIdx int, v int64) error {
+	colIdx, col := w.colFor(fullColIdx)
+	if col == nil {
+		return nil
+	}
+	w.ensureInt(col, colIdx)
+	if w.rowIdx < len(col.Data.Ints) {
+		col.Data.Ints[w.rowIdx] = v
+	}
+	return nil
+}
+
+func (w *batchColumnWriter) WriteFloat(fullColIdx int, v float64) error {
+	colIdx, col := w.colFor(fullColIdx)
+	if col == nil {
+		return nil
+	}
+	w.ensureFloat(col, colIdx)
+	if w.rowIdx < len(col.Data.Floats) {
+		col.Data.Floats[w.rowIdx] = v
+	}
+	return nil
+}
+
+func (w *batchColumnWriter) WriteBool(fullColIdx int, v bool) error {
+	colIdx, col := w.colFor(fullColIdx)
+	if col == nil {
+		return nil
+	}
+	w.ensureBool(col, colIdx)
+	if w.rowIdx < len(col.Data.Bools) {
+		col.Data.Bools[w.rowIdx] = v
+	}
+	return nil
+}
+
+func (w *batchColumnWriter) WriteString(fullColIdx int, v string) error {
+	colIdx, col := w.colFor(fullColIdx)
+	if col == nil {
+		return nil
+	}
+	w.ensureStr(col, colIdx)
+	if w.rowIdx < len(col.Data.Strs) {
+		col.Data.Strs[w.rowIdx] = v
+	}
+	return nil
+}
+
+func (w *batchColumnWriter) WriteBytes(fullColIdx int, v []byte) error {
+	colIdx, col := w.colFor(fullColIdx)
+	if col == nil {
+		return nil
+	}
+	w.ensureStr(col, colIdx)
+	if w.rowIdx < len(col.Data.Strs) {
+		col.Data.Strs[w.rowIdx] = string(v)
+	}
+	return nil
+}
+
 type IndexScan struct {
 	table      string
 	idx        string

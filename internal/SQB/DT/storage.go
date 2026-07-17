@@ -794,6 +794,168 @@ func (h *TableHandle) GetRow(pk any) (Row, bool, error) {
 	return row, true, nil
 }
 
+// ColumnWriter is the interface for decoding a row subset into
+// columnar storage. Implementations write directly to batch column
+// slices, avoiding Value allocation. REQ001480.
+type ColumnWriter interface {
+	WriteNull(colIdx int) error
+	WriteInt(colIdx int, v int64) error
+	WriteFloat(colIdx int, v float64) error
+	WriteBool(colIdx int, v bool) error
+	WriteString(colIdx int, v string) error
+	WriteBytes(colIdx int, v []byte) error
+}
+
+// DecodeRowSubsetIntoColumnar decodes only the columns in wantedCols
+// from the encoded row data, writing each value directly to the
+// provided ColumnWriter without constructing Row.Data values. Columns
+// not in wantedCols are skipped (bytes advanced) without allocation.
+// wantedCols are indices into the store schema's column list; the
+// writer receives these indices as the colIdx parameter. REQ001480.
+func DecodeRowSubsetIntoColumnar(data []byte, schema *StoreSchema, wantedCols []int, w ColumnWriter) error {
+	nFull := len(schema.Cols)
+	if data == nil || len(data) == 0 {
+		return errors.New("DT: empty row payload")
+	}
+
+	wantedSet := make(map[int]bool, len(wantedCols))
+	for _, idx := range wantedCols {
+		wantedSet[idx] = true
+	}
+
+	off := 0
+	readVarint := func() (uint64, error) {
+		v, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return 0, errors.New("DT: bad varint")
+		}
+		off += n
+		return v, nil
+	}
+
+	colCount := uint64(data[off])
+	off++
+	if colCount == 255 {
+		var err error
+		colCount, err = readVarint()
+		if err != nil {
+			return err
+		}
+	}
+	if int(colCount) != nFull {
+		return fmt.Errorf("DT: row has %d cols, schema %d", colCount, nFull)
+	}
+
+	for i := 0; i < nFull; i++ {
+		if off >= len(data) {
+			return errors.New("DT: truncated row")
+		}
+		tag := data[off]
+		off++
+		want := wantedSet[i]
+		if !want {
+			// Skip column bytes without allocation.
+			switch tag {
+			case rvNull:
+			case rvInt:
+				if off+8 > len(data) {
+					return errors.New("DT: truncated int")
+				}
+				off += 8
+			case rvFloat:
+				if off+8 > len(data) {
+					return errors.New("DT: truncated float")
+				}
+				off += 8
+			case rvBool:
+				if off+1 > len(data) {
+					return errors.New("DT: truncated bool")
+				}
+				off++
+			case rvString:
+				l, err := readVarint()
+				if err != nil {
+					return err
+				}
+				if off+int(l) > len(data) {
+					return errors.New("DT: truncated string")
+				}
+				off += int(l)
+			case rvBytes:
+				l, err := readVarint()
+				if err != nil {
+					return err
+				}
+				if off+int(l) > len(data) {
+					return errors.New("DT: truncated bytes")
+				}
+				off += int(l)
+			default:
+				return fmt.Errorf("DT: unknown row tag %d", tag)
+			}
+			continue
+		}
+		// Decode and write via the writer.
+		switch tag {
+		case rvNull:
+			if err := w.WriteNull(i); err != nil {
+				return err
+			}
+		case rvInt:
+			if off+8 > len(data) {
+				return errors.New("DT: truncated int")
+			}
+			if err := w.WriteInt(i, int64(binary.BigEndian.Uint64(data[off:off+8]))); err != nil {
+				return err
+			}
+			off += 8
+		case rvFloat:
+			if off+8 > len(data) {
+				return errors.New("DT: truncated float")
+			}
+			if err := w.WriteFloat(i, math.Float64frombits(binary.BigEndian.Uint64(data[off:off+8]))); err != nil {
+				return err
+			}
+			off += 8
+		case rvBool:
+			if off+1 > len(data) {
+				return errors.New("DT: truncated bool")
+			}
+			if err := w.WriteBool(i, data[off] != 0); err != nil {
+				return err
+			}
+			off++
+		case rvString:
+			l, err := readVarint()
+			if err != nil {
+				return err
+			}
+			if off+int(l) > len(data) {
+				return errors.New("DT: truncated string")
+			}
+			if err := w.WriteString(i, string(data[off:off+int(l)])); err != nil {
+				return err
+			}
+			off += int(l)
+		case rvBytes:
+			l, err := readVarint()
+			if err != nil {
+				return err
+			}
+			if off+int(l) > len(data) {
+				return errors.New("DT: truncated bytes")
+			}
+			if err := w.WriteBytes(i, data[off:off+int(l)]); err != nil {
+				return err
+			}
+			off += int(l)
+		default:
+			return fmt.Errorf("DT: unknown row tag %d", tag)
+		}
+	}
+	return nil
+}
+
 // Exists reports whether a row with PK `pk` is present in the store.
 // Convenience wrapper around GetRow for callers that only need the
 // boolean (e.g. INSERT OR IGNORE conflict detection).

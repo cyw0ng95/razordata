@@ -64,11 +64,10 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		return nil, err
 	}
 
-	// Determine which columns to read.
 	schema := v.schema
 	types := v.types
+	var wantedCols []int
 	if len(v.requestedCols) > 0 {
-		// Build a pruned schema and types array for only the requested columns.
 		prunedSchema := make([]string, 0, len(v.requestedCols))
 		prunedTypes := make([]LX.TokenType, 0, len(v.requestedCols))
 		for _, ci := range v.requestedCols {
@@ -79,6 +78,7 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		}
 		schema = prunedSchema
 		types = prunedTypes
+		wantedCols = v.requestedCols
 	}
 
 	batch := UT.GetBatch(len(schema))
@@ -88,6 +88,32 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	}
 	batch.SetColMap(v.colMap)
 
+	// Fast path: when the source is a SeqScan with a real store,
+	// read directly into columnar format from store bytes, bypassing
+	// Row construction and Value allocation. REQ001480.
+	if ss, ok := v.source.(*SeqScan); ok && ss.store != nil && !v.done {
+		decodeCols := wantedCols
+		if decodeCols == nil {
+			decodeCols = make([]int, len(schema))
+			for i := range decodeCols {
+				decodeCols[i] = i
+			}
+		}
+		n, err := ss.nextColumnarBatch(ctx, batch, decodeCols, types)
+		if err != nil {
+			batch.Put()
+			return nil, err
+		}
+		if n == 0 {
+			v.done = true
+			batch.Put()
+			return nil, nil
+		}
+		batch.Size = n
+		return batch, nil
+	}
+
+	// Fallback: row-at-a-time from the generic Operator source.
 	for batch.Size < UT.BatchSize {
 		row, err := v.source.Next(ctx)
 		if err != nil {
