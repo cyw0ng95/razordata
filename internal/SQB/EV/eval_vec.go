@@ -1024,6 +1024,9 @@ func EvalBatchExpr(expr PS.Expr, batch *UT.Batch, params []any) UT.Column {
 	case *PS.AliasedExpr:
 		return EvalBatchExpr(e.Expr, batch, params)
 
+	case *PS.FunctionCall:
+		return evalFunctionBatchExpr(e, batch, params)
+
 	default:
 		return evalRowFallbackColumn(expr, batch, params)
 	}

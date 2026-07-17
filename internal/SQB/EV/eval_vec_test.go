@@ -1,6 +1,7 @@
 package EV
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -191,6 +192,286 @@ func TestBatchToRow_PreservesNullColumns(t *testing.T) {
 // TestEvalBatch_8Wide compares the 8-wide path against the
 // 4-wide path to ensure they produce identical selection
 // vectors. REQ000310.
+// makeTextBatch creates a batch with a text column "z" for testing.
+func makeTextBatch(n int) *UT.Batch {
+	b := UT.GetBatch(1)
+	for i := 0; i < n; i++ {
+		b.AppendRow(0, LX.T_TEXT, fmt.Sprintf("value%d", i), false)
+		b.AdvanceSize()
+	}
+	b.Cols[0].Name = "z"
+	b.SetColMap(map[string]int{"z": 0})
+	return b
+}
+
+func TestEvalBatchExpr_Abs_Int64(t *testing.T) {
+	n := 4
+	b := UT.GetBatch(1)
+	vals := []int64{-3, 0, 7, -8}
+	nulls := []bool{false, false, false, true}
+	for i := 0; i < n; i++ {
+		b.AppendRow(0, LX.T_INT_KW, vals[i], nulls[i])
+		b.AdvanceSize()
+	}
+	b.Cols[0].Name = "x"
+	b.SetColMap(map[string]int{"x": 0})
+
+	expr := &PS.FunctionCall{Name: "abs", Args: []PS.Expr{&PS.Ident{Name: "x"}}}
+	col := EvalBatchExpr(expr, b, nil)
+
+	if col.Type != LX.T_INT_KW {
+		t.Fatalf("expected int type, got %v", col.Type)
+	}
+	expected := []int64{3, 0, 7, 0}
+	expectNull := []bool{false, false, false, true}
+	for i := 0; i < n; i++ {
+		isNull := col.Nulls != nil && i < len(col.Nulls) && col.Nulls[i]
+		if isNull != expectNull[i] {
+			t.Errorf("row %d: expected NULL=%v, got %v", i, expectNull[i], isNull)
+		}
+		if !isNull && col.Data.Ints[i] != expected[i] {
+			t.Errorf("row %d: expected %d, got %d", i, expected[i], col.Data.Ints[i])
+		}
+	}
+}
+
+func TestEvalBatchExpr_Abs_Float(t *testing.T) {
+	n := 3
+	b := UT.GetBatch(1)
+	vals := []float64{-3.5, 0.0, 4.2}
+	for i := 0; i < n; i++ {
+		b.AppendRow(0, LX.T_FLOAT_KW, vals[i], false)
+		b.AdvanceSize()
+	}
+	b.Cols[0].Name = "x"
+	b.SetColMap(map[string]int{"x": 0})
+
+	expr := &PS.FunctionCall{Name: "abs", Args: []PS.Expr{&PS.Ident{Name: "x"}}}
+	col := EvalBatchExpr(expr, b, nil)
+
+	if col.Type != LX.T_FLOAT_KW {
+		t.Fatalf("expected float type, got %v", col.Type)
+	}
+	expected := []float64{3.5, 0.0, 4.2}
+	for i := 0; i < n; i++ {
+		if col.Data.Floats[i] != expected[i] {
+			t.Errorf("row %d: expected %f, got %f", i, expected[i], col.Data.Floats[i])
+		}
+	}
+}
+
+func TestEvalBatchExpr_Length(t *testing.T) {
+	n := 3
+	b := makeTextBatch(n)
+	expr := &PS.FunctionCall{Name: "length", Args: []PS.Expr{&PS.Ident{Name: "z"}}}
+	col := EvalBatchExpr(expr, b, nil)
+
+	if col.Type != LX.T_INT_KW {
+		t.Fatalf("expected int type, got %v", col.Type)
+	}
+	expected := []int64{6, 6, 6} // "value0"=6, "value1"=6, "value2"=6
+	for i := 0; i < n; i++ {
+		if col.Data.Ints[i] != expected[i] {
+			t.Errorf("row %d: expected %d, got %d", i, expected[i], col.Data.Ints[i])
+		}
+	}
+}
+
+func TestEvalBatchExpr_Upper(t *testing.T) {
+	n := 2
+	b := UT.GetBatch(1)
+	b.AppendRow(0, LX.T_TEXT, "hello", false)
+	b.AdvanceSize()
+	b.AppendRow(0, LX.T_TEXT, "World", false)
+	b.AdvanceSize()
+	b.Cols[0].Name = "z"
+	b.SetColMap(map[string]int{"z": 0})
+
+	expr := &PS.FunctionCall{Name: "upper", Args: []PS.Expr{&PS.Ident{Name: "z"}}}
+	col := EvalBatchExpr(expr, b, nil)
+
+	if col.Type != LX.T_TEXT {
+		t.Fatalf("expected text type, got %v", col.Type)
+	}
+	expected := []string{"HELLO", "WORLD"}
+	for i := 0; i < n; i++ {
+		if col.Data.Strs[i] != expected[i] {
+			t.Errorf("row %d: expected %q, got %q", i, expected[i], col.Data.Strs[i])
+		}
+	}
+}
+
+func TestEvalBatchExpr_Lower(t *testing.T) {
+	n := 2
+	b := UT.GetBatch(1)
+	b.AppendRow(0, LX.T_TEXT, "HELLO", false)
+	b.AdvanceSize()
+	b.AppendRow(0, LX.T_TEXT, "World", false)
+	b.AdvanceSize()
+	b.Cols[0].Name = "z"
+	b.SetColMap(map[string]int{"z": 0})
+
+	expr := &PS.FunctionCall{Name: "lower", Args: []PS.Expr{&PS.Ident{Name: "z"}}}
+	col := EvalBatchExpr(expr, b, nil)
+
+	if col.Type != LX.T_TEXT {
+		t.Fatalf("expected text type, got %v", col.Type)
+	}
+	expected := []string{"hello", "world"}
+	for i := 0; i < n; i++ {
+		if col.Data.Strs[i] != expected[i] {
+			t.Errorf("row %d: expected %q, got %q", i, expected[i], col.Data.Strs[i])
+		}
+	}
+}
+
+func TestEvalBatchExpr_Mod(t *testing.T) {
+	n := 4
+	b := UT.GetBatch(2)
+	leftVals := []int64{10, 7, 5, 3}
+	rightVals := []int64{3, 0, 2, 7}
+	nulls := []bool{false, false, false, true}
+	for i := 0; i < n; i++ {
+		b.AppendRow(0, LX.T_INT_KW, leftVals[i], false)
+		b.AppendRow(1, LX.T_INT_KW, rightVals[i], nulls[i] || (i == 1))
+		b.AdvanceSize()
+	}
+	b.Cols[0].Name = "a"
+	b.Cols[1].Name = "b"
+	b.SetColMap(map[string]int{"a": 0, "b": 1})
+
+	// MOD(a, b)
+	expr := &PS.FunctionCall{Name: "mod", Args: []PS.Expr{
+		&PS.Ident{Name: "a"},
+		&PS.Ident{Name: "b"},
+	}}
+	col := EvalBatchExpr(expr, b, nil)
+
+	expected := []int64{1, 0, 1, 0}
+	expectNull := []bool{false, true, false, true}
+	for i := 0; i < n; i++ {
+		isNull := col.Nulls != nil && i < len(col.Nulls) && col.Nulls[i]
+		if isNull != expectNull[i] {
+			t.Errorf("row %d: expected NULL=%v, got %v", i, expectNull[i], isNull)
+		}
+		if !isNull && col.Data.Ints[i] != expected[i] {
+			t.Errorf("row %d: expected %d, got %d", i, expected[i], col.Data.Ints[i])
+		}
+	}
+}
+
+func TestEvalBatchExpr_Sign_Int(t *testing.T) {
+	n := 4
+	b := UT.GetBatch(1)
+	vals := []int64{-5, 0, 8, -1}
+	nulls := []bool{false, false, false, true}
+	for i := 0; i < n; i++ {
+		b.AppendRow(0, LX.T_INT_KW, vals[i], nulls[i])
+		b.AdvanceSize()
+	}
+	b.Cols[0].Name = "x"
+	b.SetColMap(map[string]int{"x": 0})
+
+	expr := &PS.FunctionCall{Name: "sign", Args: []PS.Expr{&PS.Ident{Name: "x"}}}
+	col := EvalBatchExpr(expr, b, nil)
+
+	expected := []int64{-1, 0, 1, 0}
+	expectNull := []bool{false, false, false, true}
+	for i := 0; i < n; i++ {
+		isNull := col.Nulls != nil && i < len(col.Nulls) && col.Nulls[i]
+		if isNull != expectNull[i] {
+			t.Errorf("row %d: expected NULL=%v, got %v", i, expectNull[i], isNull)
+		}
+		if !isNull && col.Data.Ints[i] != expected[i] {
+			t.Errorf("row %d: expected %d, got %d", i, expected[i], col.Data.Ints[i])
+		}
+	}
+}
+
+func TestEvalBatchExpr_Function_Fallback(t *testing.T) {
+	// Unknown function should fall back to row-at-a-time.
+	n := 2
+	b := makeTextBatch(n)
+	expr := &PS.FunctionCall{Name: "nonexistent", Args: []PS.Expr{&PS.Ident{Name: "z"}}}
+	col := EvalBatchExpr(expr, b, nil)
+	_ = col
+}
+
+func TestEvalBatchExpr_Abs_MinInt64_ReturnsNull(t *testing.T) {
+	b := UT.GetBatch(1)
+	b.AppendRow(0, LX.T_INT_KW, int64(-9223372036854775808), false)
+	b.AdvanceSize()
+	b.AppendRow(0, LX.T_INT_KW, int64(5), false)
+	b.AdvanceSize()
+	b.Cols[0].Name = "x"
+	b.SetColMap(map[string]int{"x": 0})
+
+	expr := &PS.FunctionCall{Name: "abs", Args: []PS.Expr{&PS.Ident{Name: "x"}}}
+	col := EvalBatchExpr(expr, b, nil)
+
+	if col.Nulls == nil || !col.Nulls[0] {
+		t.Error("expected ABS(MinInt64) to return NULL")
+	}
+	if col.Nulls != nil && len(col.Nulls) > 1 && col.Nulls[1] {
+		t.Error("expected ABS(5) to not be NULL")
+	}
+	if !col.Nulls[0] || col.Data.Ints[1] != 5 {
+		t.Errorf("expected row 1=5, got %d", col.Data.Ints[1])
+	}
+}
+
+func TestEvalBatchExpr_Length_Null(t *testing.T) {
+	b := UT.GetBatch(1)
+	b.AppendRow(0, LX.T_TEXT, "hello", false)
+	b.AdvanceSize()
+	b.AppendRow(0, LX.T_TEXT, "", true) // NULL
+	b.AdvanceSize()
+	b.Cols[0].Name = "z"
+	b.SetColMap(map[string]int{"z": 0})
+
+	expr := &PS.FunctionCall{Name: "length", Args: []PS.Expr{&PS.Ident{Name: "z"}}}
+	col := EvalBatchExpr(expr, b, nil)
+
+	if col.Data.Ints[0] != 5 {
+		t.Errorf("row 0: expected 5, got %d", col.Data.Ints[0])
+	}
+	if col.Nulls == nil || !col.Nulls[1] {
+		t.Error("expected row 1 to be NULL")
+	}
+}
+
+func TestEvalBatchExpr_OctetLength(t *testing.T) {
+	b := UT.GetBatch(1)
+	b.AppendRow(0, LX.T_TEXT, "hello", false)
+	b.AdvanceSize()
+	b.AppendRow(0, LX.T_TEXT, "你好", false)
+	b.AdvanceSize()
+	b.Cols[0].Name = "z"
+	b.SetColMap(map[string]int{"z": 0})
+
+	expr := &PS.FunctionCall{Name: "octet_length", Args: []PS.Expr{&PS.Ident{Name: "z"}}}
+	col := EvalBatchExpr(expr, b, nil)
+
+	if col.Data.Ints[0] != 5 {
+		t.Errorf("row 0 'hello': expected 5, got %d", col.Data.Ints[0])
+	}
+	if col.Data.Ints[1] != 6 {
+		t.Errorf("row 1 '你好': expected 6, got %d", col.Data.Ints[1])
+	}
+}
+
+func TestEvalBatchExpr_SqliteVersion(t *testing.T) {
+	b := UT.GetBatch(0)
+	b.Size = 0
+
+	expr := &PS.FunctionCall{Name: "sqlite_version", Args: nil}
+	col := EvalBatchExpr(expr, b, nil)
+
+	if col.Type != LX.T_TEXT {
+		t.Fatalf("expected text, got %v", col.Type)
+	}
+}
+
 func TestEvalBatch_8Wide(t *testing.T) {
 	b := makeIntBatch(nil)
 	defer b.Put()
