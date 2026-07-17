@@ -177,6 +177,14 @@ type Batch struct {
 // Pre-allocates Cols slice with MaxColumns capacity to avoid
 // re-allocation across batches. Data slices within each
 // Column are allocated per-batch based on actual column types.
+
+// GetBatch retrieves a batch from the pool with capacity for
+// the specified number of columns. The returned batch has
+// Size=0, Sel=nil, and all column Data reset to nil. Caller
+// must call Put() to return the batch when done.
+// If cols > MaxColumns, a new batch is allocated directly
+// (without pooling) and Pooled is set to false.
+
 var batchPool = sync.Pool{
 	New: func() any {
 		return &Batch{
@@ -187,12 +195,106 @@ var batchPool = sync.Pool{
 	},
 }
 
-// GetBatch retrieves a batch from the pool with capacity for
-// the specified number of columns. The returned batch has
-// Size=0, Sel=nil, and all column Data reset to nil. Caller
-// must call Put() to return the batch when done.
-// If cols > MaxColumns, a new batch is allocated directly
-// (without pooling) and Pooled is set to false.
+// columnDataPool pools per-(column-index) column data slices
+// to eliminate per-batch allocations. Each Batch returns its
+// column Data slices on Put() and reuses them on the next
+// GetBatch() if the same schema is encountered. REQ001470
+// follow-up.
+//
+// Keyed only by colIdx; the caller must keep the column Type
+// consistent across calls (same column position must always
+// be the same data type). For mixed-type columns at the same
+// index, the pool entries will be stale but the per-type get
+// functions ensure only matching slices are returned.
+type columnDataPool struct {
+	ints   [MaxColumns][][]int64
+	floats [MaxColumns][][]float64
+	strs   [MaxColumns][][]string
+	bools  [MaxColumns][][]bool
+}
+
+var colDataPool = &columnDataPool{}
+
+func (p *columnDataPool) getInts(cols, n int) []int64 {
+	for i := range p.ints[cols] {
+		if cap(p.ints[cols][i]) >= n {
+			s := p.ints[cols][i][:n]
+			last := len(p.ints[cols]) - 1
+			p.ints[cols][i] = p.ints[cols][last]
+			p.ints[cols][last] = nil
+			p.ints[cols] = p.ints[cols][:last]
+			return s
+		}
+	}
+	return make([]int64, n)
+}
+
+func (p *columnDataPool) putInts(cols int, s []int64) {
+	if cols < MaxColumns {
+		p.ints[cols] = append(p.ints[cols], s)
+	}
+}
+
+func (p *columnDataPool) getFloats(cols, n int) []float64 {
+	for i := range p.floats[cols] {
+		if cap(p.floats[cols][i]) >= n {
+			s := p.floats[cols][i][:n]
+			last := len(p.floats[cols]) - 1
+			p.floats[cols][i] = p.floats[cols][last]
+			p.floats[cols][last] = nil
+			p.floats[cols] = p.floats[cols][:last]
+			return s
+		}
+	}
+	return make([]float64, n)
+}
+
+func (p *columnDataPool) putFloats(cols int, s []float64) {
+	if cols < MaxColumns {
+		p.floats[cols] = append(p.floats[cols], s)
+	}
+}
+
+func (p *columnDataPool) getStrs(cols, n int) []string {
+	for i := range p.strs[cols] {
+		if cap(p.strs[cols][i]) >= n {
+			s := p.strs[cols][i][:n]
+			last := len(p.strs[cols]) - 1
+			p.strs[cols][i] = p.strs[cols][last]
+			p.strs[cols][last] = nil
+			p.strs[cols] = p.strs[cols][:last]
+			return s
+		}
+	}
+	return make([]string, n)
+}
+
+func (p *columnDataPool) putStrs(cols int, s []string) {
+	if cols < MaxColumns {
+		p.strs[cols] = append(p.strs[cols], s)
+	}
+}
+
+func (p *columnDataPool) getBools(cols, n int) []bool {
+	for i := range p.bools[cols] {
+		if cap(p.bools[cols][i]) >= n {
+			s := p.bools[cols][i][:n]
+			last := len(p.bools[cols]) - 1
+			p.bools[cols][i] = p.bools[cols][last]
+			p.bools[cols][last] = nil
+			p.bools[cols] = p.bools[cols][:last]
+			return s
+		}
+	}
+	return make([]bool, n)
+}
+
+func (p *columnDataPool) putBools(cols int, s []bool) {
+	if cols < MaxColumns {
+		p.bools[cols] = append(p.bools[cols], s)
+	}
+}
+
 func GetBatch(cols int) *Batch {
 	if cols > MaxColumns {
 		// Oversized batch: allocate directly, no pooling.
@@ -208,7 +310,7 @@ func GetBatch(cols int) *Batch {
 	b.Sel = nil
 	b.Pooled = true
 	// Reset only the first 'cols' columns to avoid scanning
-	// the entire pre-allocated slice.
+	// the entire pre-allocated slice. Reuse pooled column data.
 	for i := 0; i < cols && i < MaxColumns; i++ {
 		b.Cols[i].Type = 0
 		b.Cols[i].Data = ColumnData{}
@@ -218,23 +320,34 @@ func GetBatch(cols int) *Batch {
 }
 
 // Put returns a batch to the pool. No-op if the batch was not
-// obtained from the pool (Pooled == false). All column Data
-// and Nulls are released to GC; the batch struct itself is
-// reset to zero-state for reuse.
+// obtained from the pool (Pooled == false). Column data slices
+// are returned to the columnDataPool for reuse.
 func (b *Batch) Put() {
 	if b == nil || !b.Pooled {
 		return
 	}
 	b.Size = 0
 	b.Sel = nil
-	// Release column data for GC. We do not re-allocate the
-	// slices in the pool to avoid keeping memory alive across
-	// batches with different schemas. The sync.Pool will
-	// reallocate on demand via the New function.
 	for i := range b.Cols {
-		b.Cols[i].Type = 0
-		b.Cols[i].Data = ColumnData{}
-		b.Cols[i].Nulls = nil
+		col := &b.Cols[i]
+		if col.Data.Ints != nil {
+			colDataPool.putInts(i, col.Data.Ints)
+			col.Data.Ints = nil
+		}
+		if col.Data.Floats != nil {
+			colDataPool.putFloats(i, col.Data.Floats)
+			col.Data.Floats = nil
+		}
+		if col.Data.Strs != nil {
+			colDataPool.putStrs(i, col.Data.Strs)
+			col.Data.Strs = nil
+		}
+		if col.Data.Bools != nil {
+			colDataPool.putBools(i, col.Data.Bools)
+			col.Data.Bools = nil
+		}
+		col.Nulls = nil
+		col.Type = 0
 	}
 	batchPool.Put(b)
 }
@@ -260,28 +373,28 @@ func (b *Batch) AppendRow(colIdx int, typ LX.TokenType, val any, isNull bool) {
 	switch typ {
 	case LX.T_INT_KW, LX.T_BIGINT:
 		if col.Data.Ints == nil {
-			col.Data.Ints = make([]int64, BatchSize)
+			col.Data.Ints = colDataPool.getInts(colIdx, BatchSize)
 		}
 		if v, ok := val.(int64); ok {
 			col.Data.Ints[b.Size] = v
 		}
 	case LX.T_FLOAT_KW:
 		if col.Data.Floats == nil {
-			col.Data.Floats = make([]float64, BatchSize)
+			col.Data.Floats = colDataPool.getFloats(colIdx, BatchSize)
 		}
 		if v, ok := val.(float64); ok {
 			col.Data.Floats[b.Size] = v
 		}
 	case LX.T_BOOL:
 		if col.Data.Bools == nil {
-			col.Data.Bools = make([]bool, BatchSize)
+			col.Data.Bools = colDataPool.getBools(colIdx, BatchSize)
 		}
 		if v, ok := val.(bool); ok {
 			col.Data.Bools[b.Size] = v
 		}
 	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
 		if col.Data.Strs == nil {
-			col.Data.Strs = make([]string, BatchSize)
+			col.Data.Strs = colDataPool.getStrs(colIdx, BatchSize)
 		}
 		if v, ok := val.(string); ok {
 			col.Data.Strs[b.Size] = v

@@ -96,11 +96,8 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 			batch.Put()
 			return nil, err
 		}
-		for i, colName := range schema {
-			val, ok := row.Lookup(colName)
-			if !ok {
-				val = nil
-			}
+		for i := range schema {
+			val := row.Data[i].ToAny()
 			isNull := val == nil
 			batch.AppendRow(i, types[i], val, isNull)
 		}
