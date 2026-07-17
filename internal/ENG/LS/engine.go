@@ -13,6 +13,14 @@ import (
 
 var (
 	ErrNoActiveMemtable    = errors.New("ls: no active memtable")
+	// REQ001472: pageBufPool recycles 4KB buffers to eliminate
+	// per-page make([]byte, PageSize) allocations during SST loading.
+	pageBufPool = sync.Pool{
+		New: func() any {
+			b := make([]byte, PageSize)
+			return &b
+		},
+	}
 	ErrClosed              = errors.New("ls: engine is closed")
 	ErrNotFound            = errors.New("ls: key not found")
 	ErrRetryExceeded       = errors.New("ls: retry limit exceeded")
@@ -430,10 +438,12 @@ func (e *engine) loadSSTMeta(fileID uint64, path string) ([]byte, error) {
 
 	for off := dataStart; off < dataEnd; off += PageSize {
 		pageOff := (off / PageSize) * PageSize
-		pbuf := make([]byte, PageSize)
+		bufPtr := pageBufPool.Get().(*[]byte)
+		pbuf := *bufPtr
 		readStart := int64(pageOff)
 		n, err := f.ReadAt(pbuf, readStart)
 		if err != nil && err != io.EOF {
+			pageBufPool.Put(bufPtr)
 			return nil, err
 		}
 		pbuf = pbuf[:n]
@@ -449,6 +459,8 @@ func (e *engine) loadSSTMeta(fileID uint64, path string) ([]byte, error) {
 		if copyLen > 0 {
 			copy(data[destOff:destOff+copyLen], pbuf[srcOff:srcOff+copyLen])
 		}
+		// Buffer copied — return to pool.
+		pageBufPool.Put(bufPtr)
 	}
 
 	// Cache the assembled index+bloom data at sentinel offset 0
