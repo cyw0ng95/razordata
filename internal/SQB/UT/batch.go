@@ -295,6 +295,18 @@ func (p *columnDataPool) putBools(cols int, s []bool) {
 	}
 }
 
+// PoolGetInts returns a pooled []int64 slice for column colIdx.
+func PoolGetInts(colIdx, n int) []int64 { return colDataPool.getInts(colIdx, n) }
+
+// PoolGetFloats returns a pooled []float64 slice for column colIdx.
+func PoolGetFloats(colIdx, n int) []float64 { return colDataPool.getFloats(colIdx, n) }
+
+// PoolGetStrs returns a pooled []string slice for column colIdx.
+func PoolGetStrs(colIdx, n int) []string { return colDataPool.getStrs(colIdx, n) }
+
+// PoolGetBools returns a pooled []bool slice for column colIdx.
+func PoolGetBools(colIdx, n int) []bool { return colDataPool.getBools(colIdx, n) }
+
 func GetBatch(cols int) *Batch {
 	if cols > MaxColumns {
 		// Oversized batch: allocate directly, no pooling.

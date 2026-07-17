@@ -1,13 +1,15 @@
 package OP
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
-	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // VectorizedSeqScan produces columnar batches of up to UT.BatchSize
@@ -125,6 +127,123 @@ func (v *VectorizedSeqScan) Close() error {
 // Child returns the underlying row operator (the source).
 func (v *VectorizedSeqScan) Child() Operator {
 	return v.source
+}
+
+// VectorizedCoveringIndexScan produces columnar batches directly
+// from a covering index scan, bypassing row-at-a-time Row allocation.
+// Reads index entries from the store and fills batch column data
+// directly via coveringAppendToBatch. REQ001479.
+type VectorizedCoveringIndexScan struct {
+	idxScan  *IndexScan
+	done     bool
+
+	it interface {
+		Next() bool
+		Key() []byte
+		Value() []byte
+		Err() error
+		Close() error
+	}
+}
+
+// NewVectorizedCoveringIndexScan creates a vectorized covering index
+// scan from an IndexScan that has been configured as a covering scan
+// (SetCovering must have been called). Panics if coveringMode is false.
+func NewVectorizedCoveringIndexScan(is *IndexScan) *VectorizedCoveringIndexScan {
+	return &VectorizedCoveringIndexScan{idxScan: is}
+}
+
+// NextBatch produces the next batch of rows from the index iterator.
+// Returns (nil, nil) at EOF. Caller must Put() each non-nil batch.
+func (v *VectorizedCoveringIndexScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if v.done {
+		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	is := v.idxScan
+
+	// Lazily create the index iterator.
+	if v.it == nil {
+		if is.prefixIdxKey == nil {
+			is.prefixIdxKey = DT.BuildIndexKey(is.indexTableID, is.idx, nil)
+		}
+		if is.indexSeek != nil && is.indexLower == nil {
+			v.it = is.store.NewIterator(DT.BuildIndexKey(is.indexTableID, is.idx, is.indexSeek))
+		} else {
+			v.it = is.store.NewIterator(is.prefixIdxKey)
+		}
+		if v.it == nil {
+			v.done = true
+			return nil, nil
+		}
+	}
+
+	batch := UT.GetBatch(len(is.schema.Cols))
+	batch.Size = 0
+	for i, name := range is.schema.Cols {
+		batch.SetColumnName(i, name)
+	}
+	colMap := is.schema.ColIndex
+	batch.SetColMap(colMap)
+
+	rowIdx := 0
+	for rowIdx < UT.BatchSize {
+		if !v.it.Next() {
+			v.done = true
+			break
+		}
+		key := v.it.Key()
+		idxVal := DT.IndexValueFromKey(key, is.prefixIdxKey)
+		if idxVal == nil {
+			continue
+		}
+		// Check lower bound.
+		if is.indexLower != nil {
+			cmp := bytes.Compare(idxVal, is.indexLower)
+			if cmp < 0 || (cmp == 0 && is.indexLowerExclusive) {
+				continue
+			}
+		}
+		// Check upper bound.
+		if is.indexUpper != nil {
+			cmp := bytes.Compare(idxVal, is.indexUpper)
+			if cmp > 0 || (cmp == 0 && !is.indexUpperInclusive) {
+				v.done = true
+				break
+			}
+		}
+		// For exact-match seeks, filter beyond the specific value.
+		if is.indexSeek != nil && is.indexLower == nil && is.indexUpper == nil {
+			if bytes.Compare(idxVal, is.indexSeek) > 0 {
+				v.done = true
+				break
+			}
+		}
+
+		pk := v.it.Value()
+		if err := coveringAppendToBatch(is.schema, is.coverIdxCols, is.coverIdxTypes, idxVal, pk, is.coverPK, batch, rowIdx); err != nil {
+			batch.Put()
+			return nil, err
+		}
+		rowIdx++
+	}
+
+	if rowIdx == 0 {
+		batch.Put()
+		return nil, nil
+	}
+	batch.Size = rowIdx
+	return batch, nil
+}
+
+// Close closes the underlying index iterator.
+func (v *VectorizedCoveringIndexScan) Close() error {
+	if v.it != nil {
+		return v.it.Close()
+	}
+	return nil
 }
 
 // VectorizedFilter applies a predicate to batches from a child

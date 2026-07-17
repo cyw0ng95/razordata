@@ -36,30 +36,21 @@ func isEligible(root DT.Operator) bool {
 		switch o := op.(type) {
 		case *OP.SeqScan:
 			return true
+		case *OP.IndexScan:
+			return o.Covering()
 		case *OP.Filter:
-			child := o.Child()
-			_, isSeq := child.(*OP.SeqScan)
-			if isSeq {
-				return true
-			}
-			_, isAgg := child.(*AG.Aggregate)
-			if isAgg {
-				return true
-			}
-			return false
+			return isScanLeaf(o.Child()) || isRowAgg(o.Child())
 		case *OP.Project:
 			child := o.Child()
-			_, isSeq := child.(*OP.SeqScan)
-			if isSeq {
+			if isScanLeaf(child) {
 				return true
 			}
-			// Project(Filter(SeqScan)) shape
+			// Project(Filter(Scan)) shape
 			f, isFilt := child.(*OP.Filter)
 			if isFilt {
-				_, filtChildIsSeq := f.Child().(*OP.SeqScan)
-				return filtChildIsSeq
+				return isScanLeaf(f.Child())
 			}
-			// Project(Aggregate(SeqScan)) shape
+			// Project(Aggregate(Scan)) shape
 			_, isAgg := child.(*AG.Aggregate)
 			if isAgg {
 				return true
@@ -74,20 +65,16 @@ func isEligible(root DT.Operator) bool {
 				}
 			}
 			child := o.Child()
-			_, isSeq := child.(*OP.SeqScan)
-			if isSeq {
+			if isScanLeaf(child) {
 				return true
 			}
-			// Filter(SeqScan) shape
+			// Filter(Scan) shape
 			f, isFilt := child.(*OP.Filter)
 			if isFilt {
-				_, filtChildIsSeq := f.Child().(*OP.SeqScan)
-				return filtChildIsSeq
+				return isScanLeaf(f.Child())
 			}
 			return false
 		case *OP.HashJoin:
-			// VectorizedHashJoin supports single-column equi-joins only.
-			// Both children must be SeqScan for vectorization.
 			_, leftIsSeq := o.LeftChild().(*OP.SeqScan)
 			if !leftIsSeq {
 				return false
@@ -110,10 +97,8 @@ func isEligible(root DT.Operator) bool {
 				o.CompoundOpType() == PS.CompoundExcept ||
 				o.CompoundOpType() == PS.CompoundIntersect
 		case *OP.Sort:
-			// VectorizedSort supports any child that is eligible.
 			return isEligible(o.Child())
 		case *OP.Limit:
-			// VectorizedLimit supports any child that is eligible.
 			return isEligible(o.Child())
 		case *AG.HashAggregate:
 			if len(o.GroupCols()) > 0 {
@@ -131,6 +116,27 @@ func isEligible(root DT.Operator) bool {
 	return check(root)
 }
 
+// isScanLeaf returns true if op is a leaf scan operator that can
+// serve as the vectorization source: SeqScan or covering IndexScan.
+func isScanLeaf(op DT.Operator) bool {
+	switch o := op.(type) {
+	case *OP.SeqScan:
+		return true
+	case *OP.IndexScan:
+		return o.Covering()
+	}
+	return false
+}
+
+// isRowAgg returns true if op is a row-based Aggregate.
+func isRowAgg(op DT.Operator) bool {
+	switch op.(type) {
+	case *AG.Aggregate:
+		return true
+	}
+	return false
+}
+
 // transformOp transforms a row operator tree into a BatchProducer chain.
 func transformOp(op DT.Operator) UT.BatchProducer {
 	if op == nil {
@@ -144,6 +150,11 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 			return OP.NewVectorizedSeqScanWithCols(o, schema, types, cols)
 		}
 		return OP.NewVectorizedSeqScan(o, schema, types)
+	case *OP.IndexScan:
+		if o.Covering() {
+			return OP.NewVectorizedCoveringIndexScan(o)
+		}
+		return nil
 	case *OP.Filter:
 		child := transformOp(o.Child())
 		if child == nil {
