@@ -55,8 +55,14 @@ func releaseMergeIterator(mi *mergeIterator) {
 // + REQ001258.
 func (mi *mergeIterator) reset() {
 	mi.closed.Store(false)
-	mi.curKey = nil
-	mi.curVal = nil
+	// REQ001482: keep curKey/curVal capacity across resets so that
+	// append(mi.curKey[:0], data) reuses the backing array instead
+	// of allocating a new one on every acquire. The caller owns the
+	// returned key/value slices, so we zero the length but not the
+	// capacity — the append in Next() will grow in-place if the new
+	// key/value fits within the existing capacity.
+	mi.curKey = mi.curKey[:0]
+	mi.curVal = mi.curVal[:0]
 	mi.err = nil
 	// Detach sources slice — keep capacity for reuse.
 	for i := range mi.sources {
