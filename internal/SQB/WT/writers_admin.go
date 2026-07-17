@@ -275,11 +275,25 @@ func (p *Pragma) Next(ctx context.Context) (DT.Row, error) {
 		return row, nil
 	}
 
-	// Handle PRAGMA foreign_keys [= ON|OFF] (REQ000905)
+	// Handle PRAGMA foreign_keys [= ON/OFF] (REQ000905, REQ001307)
 	if p.Stmt.Name == "foreign_keys" {
 		if !p.done {
 			p.done = true
 			if p.Stmt.Value != "" {
+				// REQ001307: PRAGMA foreign_keys is a no-op inside a
+				// transaction (SQLite behavior).
+				if DT.IsInTransaction() {
+					// Read current value and return it.
+					v := 0
+					if DT.IsForeignKeysEnabled() {
+						v = 1
+					}
+					p.rows = append(p.rows, DT.Row{
+						Cols: []string{"foreign_keys"},
+						Data: []DT.Value{DT.NewIntValue(int64(v))},
+					})
+					return p.rows[p.idx], nil
+				}
 				// Write: set the toggle
 				val := strings.ToUpper(p.Stmt.Value)
 				DT.SetForeignKeysEnabled(val == "ON" || val == "1" || val == "TRUE")

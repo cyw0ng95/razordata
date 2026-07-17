@@ -129,3 +129,9 @@ func CurrentTxWriter() TxWriter {
 	}
 	return nil
 }
+
+// IsInTransaction returns true if a TxWriter is currently active,
+// meaning a transaction is in progress. REQ001307.
+func IsInTransaction() bool {
+	return CurrentTxWriter() != nil
+}
