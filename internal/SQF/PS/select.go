@@ -406,12 +406,19 @@ func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinC
 		case LX.T_NATURAL:
 			// REQ001359: NATURAL [INNER] JOIN — common columns are
 			// resolved during planning by inspecting the catalog schemas.
+			// REQ001360: extend to NATURAL LEFT/RIGHT/FULL JOIN.
 			natural = true
 			p.advance()
 			if p.current.Type == LX.T_INNER {
 				p.advance()
 			} else if p.current.Type == LX.T_LEFT || p.current.Type == LX.T_RIGHT {
 				kind = p.current.Lexeme
+				p.advance()
+				if p.current.Type == LX.T_OUTER {
+					p.advance()
+				}
+			} else if p.current.Type == LX.T_FULL {
+				kind = "FULL"
 				p.advance()
 				if p.current.Type == LX.T_OUTER {
 					p.advance()
