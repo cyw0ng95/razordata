@@ -1017,6 +1017,8 @@ func (p *Planner) planDropIndex(s *PS.DropIndexStmt) DT.Operator {
 // planPragma handles PRAGMA statements. REQ000261.
 func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 	switch s.Name {
+	case "quick_check":
+		return UT.NewQuickCheck()
 	case "integrity_check":
 		return UT.NewIntegrityCheckWithStore(p.store)
 	case "cell_size_check":

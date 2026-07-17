@@ -470,6 +470,8 @@ func operatorType(op DT.Operator) string {
 		return "Analyze"
 	case *UT.Vacuum:
 		return "UT.Vacuum"
+	case *UT.QuickCheck:
+		return "UT.QuickCheck"
 	case *UT.IntegrityCheck:
 		return "UT.IntegrityCheck"
 	case *WT.Truncate:
