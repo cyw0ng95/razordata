@@ -646,22 +646,14 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		// REQ001080: prune unused columns from the store-backed row.
 		if s.usedCols != nil && !row.RowFromSubsetDecode {
 			row = pruneRowCols(row, s.usedCols, s.usedColSet, s)
-			// Copy Data out of the shared prune buffer so later
-			// prune calls don't overwrite this row's values.
-			// The prune buffer reuses backing arrays across all
-			// rows of the same scan; allocate an independent copy
-			// for the returned row.
-			if len(row.Data) > 0 {
-				dst := make([]Value, len(row.Data))
-				copy(dst, row.Data)
-				row.Data = dst
-			}
-			// Same for Cols — it points into the shared buffer.
-			if len(row.Cols) > 0 {
-				dst := make([]string, len(row.Cols))
-				copy(dst, row.Cols)
-				row.Cols = dst
-			}
+			// REQ001481: no defensive copy needed. Downstream Project.Next
+			// evaluates expressions synchronously (fn(&row) / EvalValue)
+			// and writes results into its own dataBuf — it does not retain
+			// a reference to row.Data. The prune buffer (pruneBufCols/
+			// pruneBufData) lives on the SeqScan and is reused across
+			// rows; since Project.Next is called before the next
+			// nextFromStore call, the buffer's contents are still valid
+			// throughout Project.Next's synchronous evaluation.
 		}
 
 		return row, nil
