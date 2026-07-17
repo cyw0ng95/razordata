@@ -4,8 +4,8 @@ import (
 	"sync"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
 // Backward-compat aliases for cross-package references.
@@ -171,6 +171,13 @@ type Batch struct {
 	// colMap provides O(1) lookup from column name to index.
 	// Set by VectorizedSeqScan; nil for synthetic batches.
 	colMap map[string]int
+
+	// ExecCtx carries per-execution state for row-fallback paths
+	// (e.g. subquery evaluation). Set by VectorizedProject before
+	// calling EvalBatchExpr. The batch producer owns this field
+	// and must ensure it is set before the batch is used for eval.
+	// REQ001460.
+	ExecCtx *pl.ExecContext
 }
 
 // batchPool is the global pool of Batch structs.
@@ -348,6 +355,7 @@ func GetBatch(cols int) *Batch {
 	b.Size = 0
 	b.Sel = nil
 	b.Pooled = true
+	b.ExecCtx = nil
 	// Reset only the first 'cols' columns to avoid scanning
 	// the entire pre-allocated slice. Reuse pooled column data.
 	for i := 0; i < cols && i < MaxColumns; i++ {
@@ -367,6 +375,7 @@ func (b *Batch) Put() {
 	}
 	b.Size = 0
 	b.Sel = nil
+	b.ExecCtx = nil
 	for i := range b.Cols {
 		col := &b.Cols[i]
 		if col.Data.Ints != nil {

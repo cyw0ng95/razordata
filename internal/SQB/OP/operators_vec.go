@@ -7,6 +7,7 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
@@ -355,6 +356,10 @@ type VectorizedProject struct {
 	exprs []PS.Expr
 	names []string
 	done  bool
+	// REQ001460: per-execution state for subquery evaluation in
+	// row-fallback paths. Set by transformOp from the original
+	// row-based Project, propagated to childBatch before eval.
+	execCtx *pl.ExecContext
 }
 
 // NewVectorizedProject creates a vectorized projection operator.
@@ -365,6 +370,13 @@ func NewVectorizedProject(child UT.BatchProducer, exprs []PS.Expr, names []strin
 		names: names,
 	}
 }
+
+// SetExecCtx attaches an ExecContext for subquery evaluation in
+// row-fallback paths. The execCtx is propagated to each child
+// batch before EvalBatchExpr runs, so batchToRow's reconstructed
+// Row carries the ExecCtx to evalScalarSubquery via getSubqueryPlanner.
+// REQ001460.
+func (p *VectorizedProject) SetExecCtx(ec *pl.ExecContext) { p.execCtx = ec }
 
 // NextBatch produces the next projected batch. Returns (nil, nil) at EOF.
 func (p *VectorizedProject) NextBatch(ctx context.Context) (*UT.Batch, error) {
@@ -384,6 +396,10 @@ func (p *VectorizedProject) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		return nil, nil
 	}
 	defer childBatch.Put()
+	// REQ001460: propagate execCtx so row-fallback eval (notably
+	// non-correlated scalar subqueries) can locate the QueryPlanner
+	// via batchToRow -> row.ExecCtx -> getSubqueryPlanner.
+	childBatch.ExecCtx = p.execCtx
 
 	n := childBatch.LogicalSize()
 	output := UT.GetBatch(len(p.exprs))

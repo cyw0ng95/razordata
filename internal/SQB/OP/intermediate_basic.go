@@ -792,6 +792,11 @@ func (p *Project) SetChild(c Operator)           { p.child = c }
 func (p *Project) Cols() []PS.Expr               { return p.cols }
 func (p *Project) SetExecCtx(ec *pl.ExecContext) { p.execCtx = ec }
 
+// ExecCtx returns the ExecContext attached to this operator, used by
+// transformOp to forward execution state to the vectorized equivalent
+// (REQ001460).
+func (p *Project) ExecCtx() *pl.ExecContext { return p.execCtx }
+
 func NewProject(child Operator, cols []PS.Expr) *Project {
 	// REQ001091: acquire the data buffer from the pool so concurrent
 	// Projects share a backing array across queries. If the pool is

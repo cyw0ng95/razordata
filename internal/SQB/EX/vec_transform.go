@@ -171,7 +171,14 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		for i, e := range exprs {
 			names[i] = exprName(e)
 		}
-		return OP.NewVectorizedProject(child, exprs, names)
+		vp := OP.NewVectorizedProject(child, exprs, names)
+		// REQ001460: forward the ExecContext so row-fallback paths
+		// (notably non-correlated scalar subqueries) can locate the
+		// QueryPlanner via getSubqueryPlanner.
+		if ec := o.ExecCtx(); ec != nil {
+			vp.SetExecCtx(ec)
+		}
+		return vp
 	case *AG.Aggregate:
 		child := transformOp(o.Child())
 		if child == nil {

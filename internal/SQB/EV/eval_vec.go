@@ -947,10 +947,13 @@ func evalRowFallback(expr PS.Expr, batch *UT.Batch, params []any) []uint16 {
 
 // batchToRow converts a batch's i-th row to a Row for Eval.
 // This is expensive (allocates per row); used only as fallback.
+// REQ001460: forwards the batch's ExecContext so subquery
+// evaluation in the row-fallback path can locate the planner.
 func batchToRow(batch *UT.Batch, idx int) *Row {
 	row := &Row{
-		Cols: make([]string, 0, len(batch.Cols)),
-		Data: make([]Value, 0, len(batch.Cols)),
+		Cols:    make([]string, 0, len(batch.Cols)),
+		Data:    make([]Value, 0, len(batch.Cols)),
+		ExecCtx: batch.ExecCtx,
 	}
 	for c := range batch.Cols {
 		col := &batch.Cols[c]
@@ -1027,9 +1030,73 @@ func EvalBatchExpr(expr PS.Expr, batch *UT.Batch, params []any) UT.Column {
 	case *PS.FunctionCall:
 		return evalFunctionBatchExpr(e, batch, params)
 
+	case *PS.SubqueryExpr:
+		// REQ001460: vectorized scalar subquery evaluation.
+		// Non-correlated subqueries are evaluated once per batch
+		// (or once per query via the global cache) and broadcast
+		// as a constant column. Correlated subqueries fall back
+		// to per-row evaluation with the row's ExecCtx populated
+		// by batchToRow.
+		return evalSubqueryBatchExpr(e, batch, params)
+
 	default:
 		return evalRowFallbackColumn(expr, batch, params)
 	}
+}
+
+// evalSubqueryBatchExpr evaluates a scalar subquery over a batch,
+// dispatching on correlation status. Non-correlated subqueries
+// short-circuit via globalSubqueryCache (REQ001460):
+//
+//   - Cache hit: broadcast the cached value as a constant column.
+//   - Cache miss: evaluate once via evalScalarSubquery using a
+//     minimal Row carrying the batch's ExecCtx (for the planner),
+//     then broadcast.
+//
+// Correlated subqueries fall through to evalRowFallbackColumn which
+// invokes the row-at-a-time path; the Row reconstructed by
+// batchToRow now carries ExecCtx, so evalScalarSubquery can resolve
+// the planner via getSubqueryPlanner.
+func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any) UT.Column {
+	if subq == nil {
+		return fillNullColumn(batch)
+	}
+	n := batch.LogicalSize()
+	if n == 0 {
+		return UT.Column{Type: LX.T_NULL}
+	}
+	// Non-correlated subqueries: same result for every row.
+	// Use the cheap "no correlated columns" check first.
+	if _, ok := subq.Subquery.(*PS.Select); ok && len(cachedCorrelatedCols(subq)) == 0 {
+		// Try cache first; same key as the scalar path.
+		key := cachedSubqueryKey(subq)
+		if cached, ok := globalSubqueryCache.Load(key); ok {
+			if v, ok := cached.(Value); ok {
+				return broadcastValueColumn(batch, v)
+			}
+			return evalAnyLiteral(cached, batch)
+		}
+		// Cache miss: evaluate once via the existing scalar path.
+		// A minimal Row carrying ExecCtx gives getSubqueryPlanner
+		// the planner needed to execute the subquery.
+		probeRow := &Row{ExecCtx: batch.ExecCtx}
+		v, err := evalScalarSubquery(subq, probeRow, params)
+		if err == nil {
+			return broadcastValueColumn(batch, v)
+		}
+		// Fall through to row fallback for safety on error.
+	}
+	return evalRowFallbackColumn(subq, batch, params)
+}
+
+// broadcastValueColumn creates a constant column filled with v for
+// every logical row in the batch. NULL values set the per-row null
+// flag rather than producing zero-typed NULLs.
+func broadcastValueColumn(batch *UT.Batch, v Value) UT.Column {
+	if v.Kind == KindNull {
+		return fillNullColumn(batch)
+	}
+	return fillLiteralColumn(batch, tokenTypeFromValue(v), v.ToAny())
 }
 
 // evalBinaryBatchExpr dispatches binary expression evaluation to the

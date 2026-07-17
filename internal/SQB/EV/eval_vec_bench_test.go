@@ -3,9 +3,10 @@ package EV
 import (
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 // BenchmarkEvalBatchExpr_Abs_vs_Row compares batch ABS evaluation
@@ -88,6 +89,51 @@ func benchmarkExpr(b *testing.B, name string, fn func()) {
 		b.ResetTimer()
 		for range b.N {
 			fn()
+		}
+	})
+}
+
+// BenchmarkEvalBatchExpr_Subquery_NonCorrelated verifies REQ001460's
+// caching win: a non-correlated scalar subquery should be evaluated
+// once per query (via global cache) and broadcast as a constant
+// column, avoiding the per-row batchToRow fallback. This benchmark
+// cannot exercise the actual subquery execution (it requires a real
+// planner and engine), so it focuses on the projection-path dispatch
+// when the global cache is already populated. The benchmark
+// populates the cache once, then measures the broadcast path.
+//
+// Without this optimisation the same code path would call batchToRow
+// per row and re-enter evalScalarSubquery, paying Row allocation
+// (1KB+) for every batch row.
+func BenchmarkEvalBatchExpr_Subquery_NonCorrelated_CachedHit(b *testing.B) {
+	n := 1024
+	batch := UT.GetBatch(1)
+	batch.Cols[0].Name = "x"
+	batch.SetColMap(map[string]int{"x": 0})
+	for i := 0; i < n; i++ {
+		batch.AppendRow(0, LX.T_INT_KW, int64(i), false)
+		batch.AdvanceSize()
+	}
+
+	subq := &PS.SubqueryExpr{Subquery: &PS.Select{
+		From: "t",
+		Cols: []PS.Expr{&PS.NumberLiteral{Val: 42}},
+	}}
+	// Pre-populate the global cache so the broadcast path runs.
+	key := cachedSubqueryKey(subq)
+	globalSubqueryCache.Store(key, DT.NewIntValue(42))
+
+	benchmarkExpr(b, "broadcast_hit", func() {
+		col := EvalBatchExpr(subq, batch, nil)
+		// Touch the result so the compiler cannot elide the call.
+		if col.Data.Ints[0] != 42 {
+			b.Fatalf("unexpected value: %d", col.Data.Ints[0])
+		}
+	})
+	benchmarkExpr(b, "row_fallback_baseline", func() {
+		for i := 0; i < n; i++ {
+			row := batchToRow(batch, i)
+			_ = row
 		}
 	})
 }
