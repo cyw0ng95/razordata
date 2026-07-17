@@ -872,6 +872,13 @@ func (s *SeqScan) nextColumnarBatch(ctx context.Context, batch *UT.Batch, wanted
 	}
 	rowIdx := 0
 	maxRows := UT.BatchSize
+	interner := &UT.StringInterner{}
+	w := &batchColumnWriter{
+		batch:  batch,
+		wanted: wantedCols,
+		types:  wantedTypes,
+		intern: interner,
+	}
 	for rowIdx < maxRows && s.it.Next() {
 		s.ctxCheckCounter++
 		if s.ctxCheckCounter >= 1024 {
@@ -884,12 +891,7 @@ func (s *SeqScan) nextColumnarBatch(ctx context.Context, batch *UT.Batch, wanted
 		if s.rawByteFilter != nil && !s.rawByteFilter(v) {
 			continue
 		}
-		w := &batchColumnWriter{
-			batch:  batch,
-			wanted: wantedCols,
-			types:  wantedTypes,
-			rowIdx: rowIdx,
-		}
+		w.rowIdx = rowIdx
 		if err := DT.DecodeRowSubsetIntoColumnar(v, s.schema, wantedCols, w); err != nil {
 			return rowIdx, err
 		}
@@ -904,10 +906,11 @@ func (s *SeqScan) nextColumnarBatch(ctx context.Context, batch *UT.Batch, wanted
 // batchColumnWriter implements DT.ColumnWriter for filling batch
 // column data directly from DecodeRowSubsetIntoColumnar.
 type batchColumnWriter struct {
-	batch  *UT.Batch
-	wanted []int
-	types  []LX.TokenType
-	rowIdx int
+	batch   *UT.Batch
+	wanted  []int
+	types   []LX.TokenType
+	rowIdx  int
+	intern  *UT.StringInterner // optional, batch-scoped string dedup
 }
 
 func (w *batchColumnWriter) colFor(fullColIdx int) (int, *UT.Column) {
@@ -1003,6 +1006,9 @@ func (w *batchColumnWriter) WriteString(fullColIdx int, v string) error {
 	}
 	w.ensureStr(col, colIdx)
 	if w.rowIdx < len(col.Data.Strs) {
+		if w.intern != nil {
+			v = w.intern.Intern(v)
+		}
 		col.Data.Strs[w.rowIdx] = v
 	}
 	return nil
@@ -1015,7 +1021,11 @@ func (w *batchColumnWriter) WriteBytes(fullColIdx int, v []byte) error {
 	}
 	w.ensureStr(col, colIdx)
 	if w.rowIdx < len(col.Data.Strs) {
-		col.Data.Strs[w.rowIdx] = string(v)
+		s := string(v)
+		if w.intern != nil {
+			s = w.intern.Intern(s)
+		}
+		col.Data.Strs[w.rowIdx] = s
 	}
 	return nil
 }

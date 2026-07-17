@@ -307,6 +307,33 @@ func PoolGetStrs(colIdx, n int) []string { return colDataPool.getStrs(colIdx, n)
 // PoolGetBools returns a pooled []bool slice for column colIdx.
 func PoolGetBools(colIdx, n int) []bool { return colDataPool.getBools(colIdx, n) }
 
+// StringInterner is a batch-scoped string interning map. Reuses the
+// backing map across batches via Reset. REQ001481.
+type StringInterner struct {
+	m map[string]string
+}
+
+// Intern returns an interned (deduplicated) copy of s. Returns s
+// unchanged for empty strings. The interner keeps the first-seen
+// string for each unique byte sequence.
+func (si *StringInterner) Intern(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+	if si.m == nil {
+		si.m = make(map[string]string)
+	} else if cached, ok := si.m[s]; ok {
+		return cached
+	}
+	si.m[s] = s
+	return s
+}
+
+// Reset clears the interner for reuse across batches.
+func (si *StringInterner) Reset() {
+	si.m = nil
+}
+
 func GetBatch(cols int) *Batch {
 	if cols > MaxColumns {
 		// Oversized batch: allocate directly, no pooling.
