@@ -3,7 +3,7 @@ package OP
 import (
 	"context"
 	"fmt"
-	"hash/maphash"
+	"hash/fnv"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -649,36 +649,26 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	return nil
 }
 
-// hashKeySeed is a fixed maphash seed so identical keys
-// produce identical hashes (vital for join correctness).
-var hashKeySeed = maphash.MakeSeed()
-
-// hashKey computes a uint64 hash of a key value. maphash
-// is fast and distributes well. A fixed seed is used so
-// the same key always hashes to the same value across
-// calls and goroutines.
+// hashKey computes a uint64 hash of a key value using FNV-1a.
+// REQ001570: replaced maphash with zero-allocation FNV-1a for text/blob keys.
 func HashKey(v pl.Value) uint64 {
 	if v.IsNull() {
 		return 0
 	}
 	switch v.Kind {
 	case KindInt:
-		// REQ001039: fast path for int64 keys — FNV-1a mixing, zero allocation.
 		x := uint64(v.I64)
 		return x*0x9e3779b97f4a7c15 ^ (x >> 31)
 	case KindFloat:
-		// REQ001039: fast path for float64 keys — FNV-1a mixing, zero allocation.
 		u := uint64Bits(v.F64)
 		return u*0x9e3779b97f4a7c15 ^ (u >> 31)
 	case KindText:
-		var h maphash.Hash
-		h.SetSeed(hashKeySeed)
-		_, _ = h.WriteString(v.S)
+		h := fnv.New64a()
+		h.Write([]byte(v.S))
 		return h.Sum64()
 	default:
-		var h maphash.Hash
-		h.SetSeed(hashKeySeed)
-		_, _ = h.WriteString(stringify(v.ToAny()))
+		h := fnv.New64a()
+		h.Write([]byte(stringify(v.ToAny())))
 		return h.Sum64()
 	}
 }
@@ -750,12 +740,12 @@ func joinRows(left, right pl.Row, sharedCols []string, sharedColIndex map[string
 
 // hashKeys computes a uint64 hash of multiple key values by
 // hashing each value and combining the hashes.
+// REQ001570: replaced maphash with fnv.
 func hashKeys(vals []pl.Value) uint64 {
 	if len(vals) == 1 {
 		return HashKey(vals[0])
 	}
-	var h maphash.Hash
-	h.SetSeed(hashKeySeed)
+	h := fnv.New64a()
 	for _, v := range vals {
 		h2 := HashKey(v)
 		_, _ = h.Write([]byte{
