@@ -1071,6 +1071,41 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 	case "wal_autocheckpoint", "busy_timeout", "busy_handler":
 		// REQ001300 / REQ001301 / REQ001302: handled by Pragma operator.
 		return WT.NewPragma(s).WithStore(p.store)
+	case "auto_compact":
+		// REQ001304: toggle LSM auto-compaction mode.
+		if s.Value != "" {
+			switch s.Value {
+			case "none":
+				DT.SetAutoCompactMode(DT.AutoCompactNone)
+			case "incremental":
+				DT.SetAutoCompactMode(DT.AutoCompactIncremental)
+			case "full":
+				DT.SetAutoCompactMode(DT.AutoCompactFull)
+			default:
+				// Try parsing as integer: 0=none, 1=incremental, 2=full.
+				if n, err := strconv.Atoi(s.Value); err == nil {
+					switch n {
+					case 0:
+						DT.SetAutoCompactMode(DT.AutoCompactNone)
+					case 1:
+						DT.SetAutoCompactMode(DT.AutoCompactIncremental)
+					case 2:
+						DT.SetAutoCompactMode(DT.AutoCompactFull)
+					}
+				}
+			}
+		}
+		mode := DT.GetAutoCompactMode()
+		var modeStr string
+		switch mode {
+		case DT.AutoCompactNone:
+			modeStr = "none"
+		case DT.AutoCompactIncremental:
+			modeStr = "incremental"
+		case DT.AutoCompactFull:
+			modeStr = "full"
+		}
+		return OP.NewPragmaResult("auto_compact", modeStr)
 	default:
 		return OP.NewSeqScan("__pragma_unknown__")
 	}

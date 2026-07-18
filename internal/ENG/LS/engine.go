@@ -58,6 +58,10 @@ type Options struct {
 	MmapFiles      bool  // REQ001227: zero-copy reads via mmap
 	BlockCacheSize int   // REQ001242: decompressed SST block cache, 0 = disabled
 	SmallTableRows int64 // REQ001244: skip SST reads for tables with ≤N rows
+
+	// REQ001304: LSM auto-compaction settings.
+	AutoCompactMode    string  // "none" | "incremental" | "full", default "none"
+	AutoCompactThreshold float64 // garbage ratio threshold, default 0.3
 }
 
 func DefaultOptions() Options {
@@ -134,6 +138,8 @@ func newEngineWithOptions(dir string, opts Options) (*engine, error) {
 	}
 	e.manifest = manifest
 	e.cm = newCompactionManager(e.fs, dir, manifest, e.blockCache)
+	e.cm.autoCompactMode = opts.AutoCompactMode
+	e.cm.autoCompactThreshold = opts.AutoCompactThreshold
 	e.fm = newFlushManager(e.fs, dir, opts.MemTableSize, manifest)
 	return e, nil
 }
@@ -219,6 +225,8 @@ func (e *engine) Sync() error {
 	if p := e.fm.lastErr.Load(); p != nil {
 		return *p
 	}
+	// REQ001304: auto_compact — trigger compaction after flush.
+	e.cm.MaybeCompact()
 	return nil
 }
 

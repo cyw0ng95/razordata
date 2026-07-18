@@ -179,11 +179,13 @@ func (e *Engine) open(ctx context.Context) (err error) {
 		e.log.Warn("wal.replay", "err", err)
 	}
 	if e.eng, err = ls.OpenWithOptions(filepath.Join(e.dir, "eng"), ls.Options{
-		MemTableShards: ls.DefaultMemTableShards,
-		MemTableSize:   ls.DefaultMemTableSize,
-		MmapFiles:      e.opts.MmapFiles,
-		BlockCacheSize: e.opts.BlockCacheSize,
-		SmallTableRows: int64(e.opts.SmallTableRows),
+		MemTableShards:       ls.DefaultMemTableShards,
+		MemTableSize:         ls.DefaultMemTableSize,
+		MmapFiles:            e.opts.MmapFiles,
+		BlockCacheSize:       e.opts.BlockCacheSize,
+		SmallTableRows:       int64(e.opts.SmallTableRows),
+		AutoCompactMode:      e.opts.AutoCompactMode,
+		AutoCompactThreshold: e.opts.AutoCompactThreshold,
 	}); err != nil {
 		return err
 	}

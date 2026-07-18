@@ -479,6 +479,9 @@ type compactionManager struct {
 	perLevelRL atomic.Pointer[PerLevelRateLimiter]
 	// REQ001242: block cache for evicting stale entries after compaction.
 	blockCache *BlockCache
+	// REQ001304: auto-compaction settings.
+	autoCompactMode    string  // "none" | "incremental" | "full"
+	autoCompactThreshold float64 // garbage ratio threshold
 }
 
 // subCompactionThreshold is the input-file count at which the
@@ -610,6 +613,13 @@ func (cm *compactionManager) MaybeCompact() {
 		return
 	}
 
+	// REQ001304: auto_compact — check garbage ratio and trigger compaction.
+	if cm.autoCompactMode != "" && cm.autoCompactMode != "none" {
+		if cm.triggeredByGarbageRatio() {
+			return
+		}
+	}
+
 	cm.recalculateDebts()
 
 	bestLevel := -1
@@ -648,6 +658,72 @@ func (cm *compactionManager) MaybeCompact() {
 	if bestLevel >= 0 {
 		cm.requestCompaction(bestLevel)
 	}
+}
+
+// triggeredByGarbageRatio checks if the overall SST size exceeds the
+// budget by more than the threshold and enqueues an appropriate
+// compaction. REQ001304.
+func (cm *compactionManager) triggeredByGarbageRatio() bool {
+	v := cm.manifest.Current()
+	var totalBytes int64
+	for _, files := range v.levels {
+		for _, f := range files {
+			totalBytes += f.Size
+		}
+	}
+	if totalBytes == 0 {
+		return false
+	}
+
+	// Compute total budget across all levels.
+	var totalBudget int64
+	for level := range len(v.levels) - 1 {
+		totalBudget += cm.budget.budgetFor(level)
+	}
+	if totalBudget == 0 {
+		totalBudget = 1
+	}
+
+	// Garbage ratio = (totalBytes - totalBudget) / totalBytes.
+	// This represents the fraction of data that is "over budget"
+	// and could be reclaimed by compaction.
+	garbageBytes := totalBytes - totalBudget
+	if garbageBytes <= 0 {
+		return false
+	}
+	ratio := float64(garbageBytes) / float64(totalBytes)
+	threshold := cm.autoCompactThreshold
+	if threshold <= 0 {
+		threshold = 0.3
+	}
+	if ratio < threshold {
+		return false
+	}
+
+	// Threshold exceeded — enqueue compaction.
+	if cm.autoCompactMode == "full" {
+		// Full: compact all non-empty levels bottom-up.
+		for level := len(v.levels) - 2; level >= 0; level-- {
+			if len(v.levels[level]) > 0 {
+				cm.requestCompaction(level)
+			}
+		}
+	} else {
+		// Incremental: compact the single most over-budget level.
+		cm.recalculateDebts()
+		bestLevel := -1
+		bestDebt := int64(0)
+		for level, debt := range cm.debts {
+			if debt > bestDebt {
+				bestDebt = debt
+				bestLevel = level
+			}
+		}
+		if bestLevel >= 0 {
+			cm.requestCompaction(bestLevel)
+		}
+	}
+	return true
 }
 
 // ManualCompact forces a compaction across all levels (REQ000257, REQ000634).
@@ -918,4 +994,22 @@ func (cm *compactionManager) MergePartials(partials []*partialResult, manifest *
 	}
 
 	return nil
+}
+
+// SetAutoCompact updates the auto-compaction mode and threshold at runtime.
+// REQ001304.
+func (cm *compactionManager) SetAutoCompact(mode string, threshold float64) {
+	cm.compactionMu.Lock()
+	defer cm.compactionMu.Unlock()
+	cm.autoCompactMode = mode
+	if threshold > 0 {
+		cm.autoCompactThreshold = threshold
+	}
+}
+
+// GetAutoCompact returns the current auto-compaction settings.
+func (cm *compactionManager) GetAutoCompact() (string, float64) {
+	cm.compactionMu.Lock()
+	defer cm.compactionMu.Unlock()
+	return cm.autoCompactMode, cm.autoCompactThreshold
 }

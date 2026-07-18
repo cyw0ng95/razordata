@@ -460,3 +460,188 @@ func TestCompactionJob_RunRemovesOverlapFiles(t *testing.T) {
 		t.Errorf("REQ000601: overlap file %s still on disk after compaction", overlapPath)
 	}
 }
+
+// REQ001304: auto_compact=none does not trigger garbage-ratio compaction.
+// Traditional debt-based compaction may still fire.
+func TestAutoCompact_Disabled_NoOp(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_auto_compact_disabled")
+
+	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0755); err != nil {
+		t.Fatalf("create sst dir: %v", err)
+	}
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("new manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	// Build a version with L0 files well under budget.
+	v := manifest.Current()
+	v.levels = make([][]SSTFileMeta, 3)
+	v.levels[0] = []SSTFileMeta{
+		{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 1024}, // 1KB
+	}
+	manifest.Apply(*v)
+
+	cm := newCompactionManager(DefaultFS(), dir, manifest, nil)
+	cm.SetAutoCompact("none", 0.3)
+	defer cm.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	before := len(cm.compactionQueue)
+	cm.MaybeCompact()
+	after := len(cm.compactionQueue)
+	if before != after {
+		t.Errorf("auto_compact=none with under-budget data should not enqueue compaction: queue went from %d to %d", before, after)
+	}
+}
+
+// REQ001304: auto_compact=incremental triggers compaction when budget exceeded.
+func TestAutoCompact_Incremental_Triggered(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_auto_compact_incremental")
+
+	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0755); err != nil {
+		t.Fatalf("create sst dir: %v", err)
+	}
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("new manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	// Build a version with L0 files far exceeding budget (4MB default).
+	v := manifest.Current()
+	v.levels = make([][]SSTFileMeta, 3)
+	v.levels[0] = []SSTFileMeta{
+		{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 10 * 1024 * 1024},
+	}
+	manifest.Apply(*v)
+
+	cm := newCompactionManager(DefaultFS(), dir, manifest, nil)
+	defer cm.Close()
+
+	cm.SetAutoCompact("incremental", 0.01)
+
+	// MaybeCompact should queue a compaction job.
+	cm.MaybeCompact()
+	// The compaction loop drains the channel asynchronously; check that
+	// a job was enqueued by observing the queue length before the loop
+	// drains it.
+	if len(cm.compactionQueue) == 0 {
+		t.Error("auto_compact=incremental should enqueue a compaction job when budget exceeded")
+	}
+}
+
+// REQ001304: auto_compact=full triggers compaction on all levels.
+func TestAutoCompact_Full_Triggered(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_auto_compact_full")
+
+	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0755); err != nil {
+		t.Fatalf("create sst dir: %v", err)
+	}
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("new manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	// Build a version with files at multiple levels.
+	v := manifest.Current()
+	v.levels = make([][]SSTFileMeta, 3)
+	v.levels[0] = []SSTFileMeta{
+		{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 10 * 1024 * 1024},
+	}
+	v.levels[1] = []SSTFileMeta{
+		{FileID: 2, Level: 1, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 8 * 1024 * 1024},
+	}
+	manifest.Apply(*v)
+
+	cm := newCompactionManager(DefaultFS(), dir, manifest, nil)
+	defer cm.Close()
+
+	cm.SetAutoCompact("full", 0.01)
+
+	cm.MaybeCompact()
+	if len(cm.compactionQueue) == 0 {
+		t.Error("auto_compact=full should enqueue compaction jobs when budget exceeded")
+	}
+}
+
+// REQ001304: auto_compact does not trigger when under budget.
+func TestAutoCompact_UnderBudget_NoTrigger(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_auto_compact_under_budget")
+
+	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0755); err != nil {
+		t.Fatalf("create sst dir: %v", err)
+	}
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("new manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	// Build a version with files well under budget.
+	v := manifest.Current()
+	v.levels = make([][]SSTFileMeta, 3)
+	v.levels[0] = []SSTFileMeta{
+		{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 1024}, // 1KB
+	}
+	manifest.Apply(*v)
+
+	cm := newCompactionManager(DefaultFS(), dir, manifest, nil)
+	defer cm.Close()
+
+	cm.SetAutoCompact("incremental", 0.3)
+
+	before := cm.compacting.Load()
+	cm.MaybeCompact()
+	after := cm.compacting.Load()
+	if before || after {
+		t.Error("auto_compact should not trigger when under budget")
+	}
+}
+
+// REQ001304: SetAutoCompact/GetAutoCompact round-trip.
+func TestAutoCompact_GetSet(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_auto_compact_getset")
+
+	if err := os.MkdirAll(filepath.Join(dir, "sst"), 0755); err != nil {
+		t.Fatalf("create sst dir: %v", err)
+	}
+
+	manifest, err := newManifest(dir)
+	if err != nil {
+		t.Fatalf("new manifest: %v", err)
+	}
+	defer manifest.Close()
+
+	cm := newCompactionManager(DefaultFS(), dir, manifest, nil)
+	defer cm.Close()
+
+	mode, threshold := cm.GetAutoCompact()
+	if mode != "" {
+		t.Errorf("initial mode: got %q, want %q", mode, "")
+	}
+	if threshold != 0 {
+		t.Errorf("initial threshold: got %f, want 0", threshold)
+	}
+
+	cm.SetAutoCompact("incremental", 0.5)
+	mode, threshold = cm.GetAutoCompact()
+	if mode != "incremental" {
+		t.Errorf("after set: mode = %q, want %q", mode, "incremental")
+	}
+	if threshold != 0.5 {
+		t.Errorf("after set: threshold = %f, want 0.5", threshold)
+	}
+}

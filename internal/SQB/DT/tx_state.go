@@ -40,10 +40,20 @@ var busyHandlerRegistry sync.Map // map[string]BusyHandlerFunc
 // surface ErrBusy. REQ001302.
 type BusyHandlerFunc func(attempt int) bool
 
+// autoCompactMode controls whether LSM auto-compaction is triggered
+// on commit. Values: 0=none, 1=incremental, 2=full. Default 0. REQ001304.
+var autoCompactMode atomic.Int32
+
+// autoCompactThreshold stores the garbage ratio threshold * 1000 to
+// avoid atomic.Float64 (unsupported in Go 1.26). Default 300 (= 0.3). REQ001304.
+var autoCompactThreshold atomic.Int64
+
 func init() {
 	foreignKeysEnabled.Store(true)
 	walAutocheckpointPages.Store(1000)
 	busyHandlerNameStr.Store("")
+	autoCompactMode.Store(0)
+	autoCompactThreshold.Store(300) // 0.3 * 1000
 }
 
 // SetForeignKeysEnabled stores the FK enforcement toggle.
@@ -134,4 +144,33 @@ func CurrentTxWriter() TxWriter {
 // meaning a transaction is in progress. REQ001307.
 func IsInTransaction() bool {
 	return CurrentTxWriter() != nil
+}
+
+// AutoCompactMode represents the auto_compact PRAGMA mode. REQ001304.
+type AutoCompactMode int32
+
+const (
+	AutoCompactNone       AutoCompactMode = 0
+	AutoCompactIncremental AutoCompactMode = 1
+	AutoCompactFull        AutoCompactMode = 2
+)
+
+// SetAutoCompactMode stores the auto-compaction mode. REQ001304.
+func SetAutoCompactMode(m AutoCompactMode) {
+	autoCompactMode.Store(int32(m))
+}
+
+// GetAutoCompactMode returns the current auto-compaction mode. REQ001304.
+func GetAutoCompactMode() AutoCompactMode {
+	return AutoCompactMode(autoCompactMode.Load())
+}
+
+// SetAutoCompactThreshold stores the garbage ratio threshold (0.0–1.0). REQ001304.
+func SetAutoCompactThreshold(t float64) {
+	autoCompactThreshold.Store(int64(t * 1000))
+}
+
+// GetAutoCompactThreshold returns the current garbage ratio threshold. REQ001304.
+func GetAutoCompactThreshold() float64 {
+	return float64(autoCompactThreshold.Load()) / 1000.0
 }

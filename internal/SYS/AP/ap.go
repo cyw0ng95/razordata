@@ -50,6 +50,10 @@ type Options struct {
 	EnableDebugSignals bool
 	TraceEventCapacity int
 	SlowQueryThreshold time.Duration
+
+	// REQ001304: LSM auto-compaction settings.
+	AutoCompactMode    string // "none" | "incremental" | "full", default "none"
+	AutoCompactThreshold float64 // garbage ratio threshold, default 0.3
 }
 
 const (
