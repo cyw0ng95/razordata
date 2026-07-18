@@ -835,7 +835,7 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 			}
 			return DT.Row{}, err
 		}
-		snapshot := DT.CloneRow(row)
+		snapshot := DT.ShallowCloneRow(row)
 		// REQ000840: OP.SeqScan may return rows that share Data with the
 		// source table. Deep-copy Data before applyUpdate mutates it
 		// in-place, otherwise the source row is corrupted.
@@ -976,7 +976,7 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 			}
 			return DT.Row{}, err
 		}
-		oldRow := DT.CloneRow(row)
+		oldRow := DT.ShallowCloneRow(row)
 		if err := ApplyUpdate(&row, u.set, u.params); err != nil {
 			return DT.Row{}, err
 		}
@@ -1539,7 +1539,7 @@ func applyConflictUpdate(schema *DT.StoreSchema, existing []DT.Row, out DT.Row, 
 				}
 			}
 		}
-		updated := DT.CloneRow(target)
+		updated := DT.ShallowCloneRow(target)
 		for _, p := range onConflict.SetClauses {
 			ci := -1
 			for i, c := range schema.Cols {

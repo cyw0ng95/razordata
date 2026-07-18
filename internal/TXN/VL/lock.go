@@ -104,6 +104,10 @@ type LockTable struct {
 	shards  [lockTableShardCount]lockTableShard
 	timeout time.Duration
 	aborted atomic.Int64
+	// REQ001574: pre-allocated indices buffer to avoid per-acquisition
+	// allocation. Capacity equals max shard count (64) — the largest
+	// possible number of unique shards a single key set can touch.
+	indicesBuf []int
 }
 
 // shardFor computes the shard index for a given key hash.
@@ -115,6 +119,8 @@ func (lt *LockTable) shardFor(h uint64) int {
 func NewLockTable(timeout time.Duration) *LockTable {
 	lt := &LockTable{
 		timeout: timeout,
+		// REQ001574: pre-allocate indices buffer for lockShards.
+		indicesBuf: make([]int, lockTableShardCount),
 	}
 	for i := range lockTableShardCount {
 		lt.shards[i].locks = make(map[uint64]*LockEntry)
@@ -124,27 +130,35 @@ func NewLockTable(timeout time.Duration) *LockTable {
 
 // lockShards locks the shards for the given hashes in ascending order.
 func (lt *LockTable) lockShards(hashes []uint64) []int {
-	indices := make([]int, len(hashes))
+	// REQ001574: reuse pre-allocated buffer to avoid per-acquisition allocation.
+	buf := lt.indicesBuf[:len(hashes)]
 	for i, h := range hashes {
-		indices[i] = lt.shardFor(h)
+		buf[i] = lt.shardFor(h)
 	}
 	// Sort unique indices ascending
-	for i := 0; i < len(indices); i++ {
-		for j := i + 1; j < len(indices); j++ {
-			if indices[j] < indices[i] {
-				indices[i], indices[j] = indices[j], indices[i]
+	for i := 0; i < len(buf); i++ {
+		for j := i + 1; j < len(buf); j++ {
+			if buf[j] < buf[i] {
+				buf[i], buf[j] = buf[j], buf[i]
 			}
 		}
 	}
 	// Deduplicate
 	prev := -1
-	for _, idx := range indices {
+	for _, idx := range buf {
 		if idx != prev {
 			lt.shards[idx].mu.Lock()
 			prev = idx
 		}
 	}
-	return indices
+	// Return a copy so the caller owns the returned slice.
+	out := make([]int, 0, len(buf))
+	for i, idx := range buf {
+		if i == 0 || idx != buf[i-1] {
+			out = append(out, idx)
+		}
+	}
+	return out
 }
 
 // unlockShards unlocks the shards locked by lockShards (reversed order).

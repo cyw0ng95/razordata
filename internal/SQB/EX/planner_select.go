@@ -1307,7 +1307,13 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 					if projectedCols != nil {
 						nlj.WithProjection(projectedCols)
 					}
-					_ = deriveJoinSchema
+					// REQ001575: pre-build shared schema for NLJ so the runtime
+					// paths skip per-row make([]string) and make([]LX.TokenType)
+					// allocations. Without this, every NLJ in the join chain
+					// allocates Cols/Types/ColIndex on first Next() call.
+					if cols, types, idx := deriveJoinSchema(current, rightScan); cols != nil {
+						nlj.WithSharedSchema(cols, types, idx)
+					}
 					joinOp = nlj
 				}
 			}
@@ -1445,6 +1451,10 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			nlj := OP.NewNestedLoopJoin(current, gr.op, leftTbl, gr.tbl, nil, OP.JoinKindCross)
 			if projectedCols != nil {
 				nlj.WithProjection(projectedCols)
+			}
+			// REQ001575: pre-build shared schema for merge-phase NLJ.
+			if cols, types, idx := deriveJoinSchema(current, gr.op); cols != nil {
+				nlj.WithSharedSchema(cols, types, idx)
 			}
 			joinOp = nlj
 		}
