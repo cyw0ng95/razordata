@@ -272,6 +272,7 @@ func (t *Transaction) Savepoint(ctx context.Context, name string) error {
 		snap[k] = v
 	}
 	t.savepoints = append(t.savepoints, savepoint{name: name, writeSet: snap})
+	DT.PushDDLVersion()
 	return nil
 }
 
@@ -298,6 +299,7 @@ func (t *Transaction) ReleaseSavepoint(ctx context.Context, name string) error {
 		return ap.New(ap.KindConstraint, "unknown savepoint")
 	}
 	t.savepoints = t.savepoints[:idx]
+	DT.DiscardDDLVersion()
 	return nil
 }
 
@@ -337,7 +339,11 @@ func (t *Transaction) RollbackTo(ctx context.Context, name string) error {
 		}
 	}
 	t.writeSet = target
+	nPop := len(t.savepoints) - idx
 	t.savepoints = t.savepoints[:idx]
+	for range nPop {
+		DT.PopDDLVersion()
+	}
 	return nil
 }
 

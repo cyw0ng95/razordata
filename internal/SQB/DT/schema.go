@@ -710,6 +710,7 @@ func equalValue(a, b Value) bool {
 var (
 	ddlVersion        uint64 // protected by TablesMu
 	ddlVersionStack   []uint64
+	ddlTableSnapshots []map[string]bool // table name → existed at savepoint (REQ001320)
 	ddlVersionStackMu sync.Mutex
 )
 
@@ -727,30 +728,58 @@ func DDLVersion() uint64 {
 	return ddlVersion
 }
 
-// PushDDLVersion saves the current DDL version onto the savepoint stack.
+// PushDDLVersion saves the current DDL version and table snapshot
+// onto the savepoint stack (REQ001320).
 func PushDDLVersion() {
 	TablesMu.RLock()
 	v := ddlVersion
+	snap := make(map[string]bool, len(Tables))
+	for name := range Tables {
+		snap[name] = true
+	}
 	TablesMu.RUnlock()
 	ddlVersionStackMu.Lock()
 	ddlVersionStack = append(ddlVersionStack, v)
+	ddlTableSnapshots = append(ddlTableSnapshots, snap)
 	ddlVersionStackMu.Unlock()
 }
 
-// PopDDLVersion restores the DDL version from the top of the stack.
+// PopDDLVersion restores the DDL version from the top of the stack
+// and removes any tables created after the savepoint (REQ001320).
 // Returns the restored version.
 func PopDDLVersion() uint64 {
 	ddlVersionStackMu.Lock()
-	defer ddlVersionStackMu.Unlock()
 	if len(ddlVersionStack) == 0 {
+		ddlVersionStackMu.Unlock()
 		return 0
 	}
 	v := ddlVersionStack[len(ddlVersionStack)-1]
 	ddlVersionStack = ddlVersionStack[:len(ddlVersionStack)-1]
+	snap := ddlTableSnapshots[len(ddlTableSnapshots)-1]
+	ddlTableSnapshots = ddlTableSnapshots[:len(ddlTableSnapshots)-1]
+	ddlVersionStackMu.Unlock()
 	TablesMu.Lock()
 	ddlVersion = v
+	for name := range Tables {
+		if !snap[name] {
+			delete(Tables, name)
+			delete(Schemas, name)
+			delete(TablePKs, name)
+		}
+	}
 	TablesMu.Unlock()
 	return v
+}
+
+// DiscardDDLVersion pops the top version and table snapshot from the
+// stack without restoring (REQ001320). Used by RELEASE SAVEPOINT.
+func DiscardDDLVersion() {
+	ddlVersionStackMu.Lock()
+	if len(ddlVersionStack) > 0 {
+		ddlVersionStack = ddlVersionStack[:len(ddlVersionStack)-1]
+		ddlTableSnapshots = ddlTableSnapshots[:len(ddlTableSnapshots)-1]
+	}
+	ddlVersionStackMu.Unlock()
 }
 
 // DDLVersionStackLen returns the number of saved versions on the stack.
