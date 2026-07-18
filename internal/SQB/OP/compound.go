@@ -59,6 +59,8 @@ type CompoundOp struct {
 	// REQ001332: collRegistry resolves collation names to user-defined
 	// comparison functions. nil = no custom collations registered.
 	collRegistry func(string) DT.CollateFunc
+	// REQ001566: reusable seen map for dedupRows/intersectRows/exceptRows.
+	seenBuf map[string]bool
 	// Re-exported from PS for convenience.
 	_ bool // alignment placeholder
 }
@@ -155,11 +157,11 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 			result = append(result, leftRows...)
 			result = append(result, rightRows...)
 		case PS.CompoundUnion:
-			result = dedupRows(append(append([]Row{}, leftRows...), rightRows...))
+			result = c.dedupRows(append(append([]Row{}, leftRows...), rightRows...))
 		case PS.CompoundIntersect:
-			result = intersectRows(leftRows, rightRows)
+			result = c.intersectRows(leftRows, rightRows)
 		case PS.CompoundExcept:
-			result = exceptRows(leftRows, rightRows)
+			result = c.exceptRows(leftRows, rightRows)
 		}
 		// Normalize row schema to chosen cols/types. The right
 		// side's rows may have different Cols/Types; replace
@@ -425,55 +427,85 @@ func drainAll(ctx context.Context, op Operator, maxRows int64, maxMemory int64, 
 	}
 }
 
-func dedupRows(in []Row) []Row {
-	seen := make(map[string]bool, len(in))
+func (c *CompoundOp) dedupRows(in []Row) []Row {
+	if c.seenBuf == nil {
+		c.seenBuf = make(map[string]bool, len(in))
+	} else {
+		for k := range c.seenBuf {
+			delete(c.seenBuf, k)
+		}
+	}
 	out := make([]Row, 0, len(in))
 	for _, r := range in {
 		k := DistinctKey(r)
-		if !seen[k] {
-			seen[k] = true
+		if !c.seenBuf[k] {
+			c.seenBuf[k] = true
 			out = append(out, r)
 		}
 	}
 	return out
 }
 
-func intersectRows(left, right []Row) []Row {
+func (c *CompoundOp) intersectRows(left, right []Row) []Row {
 	if len(left) == 0 || len(right) == 0 {
 		return nil
 	}
-	rightKeys := make(map[string]bool, len(right))
-	for _, r := range right {
-		rightKeys[DistinctKey(r)] = true
+	if c.rightKeys == nil {
+		c.rightKeys = make(map[string]bool, len(right))
+	} else {
+		for k := range c.rightKeys {
+			delete(c.rightKeys, k)
+		}
 	}
-	seen := make(map[string]bool)
+	for _, r := range right {
+		c.rightKeys[DistinctKey(r)] = true
+	}
+	if c.seenBuf == nil {
+		c.seenBuf = make(map[string]bool)
+	} else {
+		for k := range c.seenBuf {
+			delete(c.seenBuf, k)
+		}
+	}
 	var out []Row
 	for _, r := range left {
 		k := DistinctKey(r)
-		if rightKeys[k] && !seen[k] {
-			seen[k] = true
+		if c.rightKeys[k] && !c.seenBuf[k] {
+			c.seenBuf[k] = true
 			out = append(out, r)
 		}
 	}
 	return out
 }
 
-func exceptRows(left, right []Row) []Row {
+func (c *CompoundOp) exceptRows(left, right []Row) []Row {
 	if len(left) == 0 {
 		return nil
 	}
-	rightKeys := make(map[string]bool, len(right))
-	for _, r := range right {
-		rightKeys[DistinctKey(r)] = true
+	if c.rightKeys == nil {
+		c.rightKeys = make(map[string]bool, len(right))
+	} else {
+		for k := range c.rightKeys {
+			delete(c.rightKeys, k)
+		}
 	}
-	seen := make(map[string]bool)
+	for _, r := range right {
+		c.rightKeys[DistinctKey(r)] = true
+	}
+	if c.seenBuf == nil {
+		c.seenBuf = make(map[string]bool)
+	} else {
+		for k := range c.seenBuf {
+			delete(c.seenBuf, k)
+		}
+	}
 	var out []Row
 	for _, r := range left {
 		k := DistinctKey(r)
-		if rightKeys[k] || seen[k] {
+		if c.rightKeys[k] || c.seenBuf[k] {
 			continue
 		}
-		seen[k] = true
+		c.seenBuf[k] = true
 		out = append(out, r)
 	}
 	return out
