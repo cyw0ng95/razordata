@@ -61,6 +61,8 @@ type CompoundOp struct {
 	collRegistry func(string) DT.CollateFunc
 	// REQ001566: reusable seen map for dedupRows/intersectRows/exceptRows.
 	seenBuf map[string]bool
+	// REQ001562: reusable sort key buffer for ORDER BY Schwartzian transform.
+	sortKeysBuf []Value
 	// Re-exported from PS for convenience.
 	_ bool // alignment placeholder
 }
@@ -180,8 +182,13 @@ func (c *CompoundOp) Next(ctx context.Context) (Row, error) {
 				keys []Value
 			}
 			decorated := make([]decoratedRow, len(result))
+			// REQ001562: pre-allocate a flat buffer for all sort keys, then
+			// slice per-row to avoid per-row make([]Value, N).
+			keyFlat := make([]Value, len(result)*len(c.orderBy))
 			for i := range result {
-				vals := make([]Value, len(c.orderBy))
+				base := i * len(c.orderBy)
+				end := base + len(c.orderBy)
+				vals := keyFlat[base:end:end]
 				for j, k := range c.orderBy {
 					v, _ := EV.EvalValue(k.Expr, &result[i], c.params)
 					vals[j] = v
