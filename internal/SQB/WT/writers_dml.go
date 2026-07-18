@@ -857,6 +857,11 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 	return DT.Row{}, DT.ErrNoRows
 }
 
+// updateChunkSize is the per-batch row count for chunked mutation.
+// REQ001555: amortises the per-call atomic checks (closed.Load,
+// ShouldFlush) and per-row Insert/EncodeRow overhead across N rows.
+const updateChunkSize = 256
+
 func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 	// If we have RETURNING results, return them
 	if len(u.resultRows) > 0 {
@@ -875,6 +880,30 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 	h, hErr := DT.OpenTable(u.store, u.table)
 	if hErr != nil {
 		return DT.Row{}, hErr
+	}
+	// REQ001555: pull rows in chunks of updateChunkSize and route
+	// each chunk through h.UpdateRowBatch. Per-row apply/validate
+	// still happens first (correctness); the batch pays off at
+	// the engine WriteBatch layer.
+	oldBuf := make([]DT.Row, 0, updateChunkSize)
+	newBuf := make([]DT.Row, 0, updateChunkSize)
+	flushChunk := func() error {
+		if len(oldBuf) == 0 {
+			return nil
+		}
+		keys, bufs, err := h.UpdateRowBatch(oldBuf, newBuf)
+		if err != nil {
+			return err
+		}
+		_ = prefix // retained for any future callers; UpdateRowBatch uses h.Prefix().
+		if u.txWriter != nil {
+			for i, k := range keys {
+				u.txWriter.RecordWrite(k, bufs[i])
+			}
+		}
+		oldBuf = oldBuf[:0]
+		newBuf = newBuf[:0]
+		return nil
 	}
 	for {
 		row, err := u.iter.Next(ctx)
@@ -903,24 +932,16 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 		if err := CheckUnique(u.schema, row, nil, DT.Row{}, noopLookup); err != nil {
 			return DT.Row{}, err
 		}
-		// REQ000987: route through TableHandle.UpdateRow. The returned
-		// (key, buf) feeds the TxWriter without re-extracting the PK
-		// or re-encoding the row.
-		key, buf, err := h.UpdateRow(oldRow, row)
-		if err != nil {
-			return DT.Row{}, err
-		}
-		_ = prefix // retained for any future callers; UpdateRow uses h.Prefix().
-		if u.txWriter != nil {
-			u.txWriter.RecordWrite(key, buf)
-		}
+		oldBuf = append(oldBuf, oldRow)
+		newBuf = append(newBuf, row)
 		u.rows++
 		if u.execCtx != nil {
 			u.execCtx.LastChanges++
 			u.execCtx.TotalChanges++
 		}
 
-		// Fire AFTER UPDATE triggers (REQ000316: incremental matview support)
+		// Fire AFTER UPDATE triggers (REQ000316: incremental matview support).
+		// Triggers fire per-row — batched trigger firing is REQ001578.
 		if err := fireUpdateTriggers(u.table, &oldRow, &row, u.params, u.store); err != nil {
 			return DT.Row{}, err
 		}
@@ -931,6 +952,15 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 				return DT.Row{}, err
 			}
 		}
+
+		if len(oldBuf) >= updateChunkSize {
+			if err := flushChunk(); err != nil {
+				return DT.Row{}, err
+			}
+		}
+	}
+	if err := flushChunk(); err != nil {
+		return DT.Row{}, err
 	}
 
 	// Return first RETURNING result if any
@@ -1115,6 +1145,11 @@ func (d *Delete) Next(ctx context.Context) (DT.Row, error) {
 	return DT.Row{}, DT.ErrNoRows
 }
 
+// deleteChunkSize is the per-batch row count for chunked deletion.
+// REQ001556: amortises the per-call atomic checks (closed.Load,
+// ShouldFlush) and per-row Delete/RowKey overhead across N rows.
+const deleteChunkSize = 256
+
 func (d *Delete) nextFromStore(ctx context.Context) (DT.Row, error) {
 	// If we have RETURNING results, return them
 	if len(d.resultRows) > 0 {
@@ -1134,6 +1169,29 @@ func (d *Delete) nextFromStore(ctx context.Context) (DT.Row, error) {
 	if hErr != nil {
 		return DT.Row{}, hErr
 	}
+	// REQ001556: pull rows in chunks of deleteChunkSize and route
+	// each chunk through h.DeleteRowBatch. RETURNING is evaluated
+	// before the batch flush so callers still see the pre-delete
+	// row contents. Triggers fire per-row — batched trigger firing
+	// is REQ001578.
+	delBuf := make([]DT.Row, 0, deleteChunkSize)
+	flushChunk := func() error {
+		if len(delBuf) == 0 {
+			return nil
+		}
+		keys, err := h.DeleteRowBatch(delBuf)
+		if err != nil {
+			return err
+		}
+		_ = prefix // retained for any future callers; DeleteRowBatch uses h.Prefix().
+		if d.txWriter != nil {
+			for _, k := range keys {
+				d.txWriter.RecordWrite(k, nil)
+			}
+		}
+		delBuf = delBuf[:0]
+		return nil
+	}
 	for {
 		row, err := d.iter.Next(ctx)
 		if err != nil {
@@ -1149,24 +1207,27 @@ func (d *Delete) nextFromStore(ctx context.Context) (DT.Row, error) {
 			}
 		}
 
-		key, err := h.DeleteRow(row)
-		if err != nil {
+		// Fire AFTER DELETE triggers before the batch flush so each
+		// deleted row's data is available to the trigger body.
+		if err := fireDeleteTriggers(d.table, &row, d.params, d.store); err != nil {
 			return DT.Row{}, err
 		}
-		_ = prefix // retained for any future callers; DeleteRow uses h.Prefix().
-		if d.txWriter != nil {
-			d.txWriter.RecordWrite(key, nil)
-		}
+
+		delBuf = append(delBuf, row)
 		d.rows++
 		if d.execCtx != nil {
 			d.execCtx.LastChanges++
 			d.execCtx.TotalChanges++
 		}
 
-		// Fire AFTER DELETE triggers (REQ000316: incremental matview support)
-		if err := fireDeleteTriggers(d.table, &row, d.params, d.store); err != nil {
-			return DT.Row{}, err
+		if len(delBuf) >= deleteChunkSize {
+			if err := flushChunk(); err != nil {
+				return DT.Row{}, err
+			}
 		}
+	}
+	if err := flushChunk(); err != nil {
+		return DT.Row{}, err
 	}
 
 	// Return first RETURNING result if any

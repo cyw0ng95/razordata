@@ -773,6 +773,116 @@ func (h *TableHandle) MustDeleteRow(row Row) error {
 	return err
 }
 
+// UpdateRowBatch writes a contiguous list of (oldRow, newRow) pairs
+// in a single amortised batch. Mirrors InsertRowBatch semantics:
+// when the store implements BatchStore, all row writes go through
+// one WriteBatch call; otherwise each row is inserted individually
+// with the per-row error contract preserved.
+//
+// Per-row secondary-index maintenance (MaintainIndexesOnUpdate) is
+// still per-row because each row may touch different index keys.
+//
+// REQ001555: the store-batch path amortises the per-call atomic
+// checks (closed.Load, ShouldFlush) over the whole batch — O(1)
+// instead of O(N). The returned (keys, bufs) slices match the
+// per-row UpdateRow shape so callers can hand them to
+// TxWriter.RecordWrite without re-extracting the PK or
+// re-encoding the row. Buffers are kept alive for the caller's
+// lifetime (no copies).
+func (h *TableHandle) UpdateRowBatch(oldRows, newRows []Row) (keys [][]byte, bufs [][]byte, err error) {
+	if len(oldRows) != len(newRows) {
+		return nil, nil, fmt.Errorf("DT: UpdateRowBatch length mismatch: old=%d new=%d", len(oldRows), len(newRows))
+	}
+	n := len(oldRows)
+	if n == 0 {
+		return nil, nil, nil
+	}
+	keys = make([][]byte, n)
+	bufs = make([][]byte, n)
+	for i := 0; i < n; i++ {
+		pk, perr := ExtractPKForUpdate(h.Schema, oldRows[i], h.prefix)
+		if perr != nil {
+			return nil, nil, perr
+		}
+		buf, eerr := EncodeRow(h.Schema, newRows[i])
+		if eerr != nil {
+			return nil, nil, eerr
+		}
+		keys[i] = RowKey(h.prefix, pk)
+		bufs[i] = buf
+	}
+	if bs, ok := h.Store.(BatchStore); ok {
+		if werr := bs.WriteBatch(keys, bufs); werr != nil {
+			return nil, nil, werr
+		}
+	} else {
+		for i := range keys {
+			if ierr := h.Store.Insert(keys[i], bufs[i]); ierr != nil {
+				return nil, nil, ierr
+			}
+		}
+	}
+	for i := 0; i < n; i++ {
+		pk, perr := ExtractPKForUpdate(h.Schema, oldRows[i], h.prefix)
+		if perr != nil {
+			return nil, nil, perr
+		}
+		if merr := MaintainIndexesOnUpdate(h.Store, h.Table, h.Schema, oldRows[i], newRows[i], pk); merr != nil {
+			return nil, nil, merr
+		}
+	}
+	return keys, bufs, nil
+}
+
+// DeleteRowBatch removes a contiguous list of rows in a single
+// amortised batch. Mirrors UpdateRowBatch semantics: when the
+// store implements BatchDeleteStore, all row deletes go through
+// one DeleteBatch call; otherwise each row is deleted individually
+// with the per-row error contract preserved.
+//
+// Per-row secondary-index maintenance (MaintainIndexesOnDelete)
+// is still per-row because each row may touch different index
+// keys.
+//
+// REQ001556: the store-batch path amortises the per-call atomic
+// checks (closed.Load, ShouldFlush) over the whole batch — O(1)
+// instead of O(N). The returned parallel (keys, ok) slices let
+// callers feed TxWriter.RecordWrite (use keys[i] when ok[i]) and
+// identify any row that failed before the batch short-circuit.
+func (h *TableHandle) DeleteRowBatch(rows []Row) (keys [][]byte, err error) {
+	n := len(rows)
+	if n == 0 {
+		return nil, nil
+	}
+	keys = make([][]byte, n)
+	pks := make([]any, n)
+	for i := 0; i < n; i++ {
+		pk, perr := ExtractPKForUpdate(h.Schema, rows[i], h.prefix)
+		if perr != nil {
+			return nil, perr
+		}
+		pks[i] = pk
+		keys[i] = RowKey(h.prefix, pk)
+	}
+	if bds, ok := h.Store.(BatchDeleteStore); ok {
+		if derr := bds.DeleteBatch(keys); derr != nil {
+			return nil, derr
+		}
+	} else {
+		for i := range keys {
+			if derr := h.Store.Delete(keys[i]); derr != nil {
+				return nil, derr
+			}
+		}
+	}
+	for i := 0; i < n; i++ {
+		if merr := MaintainIndexesOnDelete(h.Store, h.Table, h.Schema, rows[i]); merr != nil {
+			return nil, merr
+		}
+	}
+	return keys, nil
+}
+
 // GetRow reads the encoded row bytes for `pk` and decodes them.
 // Returns (Row{}, false, nil) if the key is not present.
 // This wraps Store.Get with the schema decode step so callers

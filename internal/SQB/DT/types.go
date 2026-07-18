@@ -132,6 +132,18 @@ type BatchStore interface {
 	WriteBatch(keys, values [][]byte) error
 }
 
+// BatchDeleteStore is an optional extension of Store supporting
+// bulk deletes. Symmetrical with BatchStore — implementations
+// (LS engine) implement DeleteBatch to amortise per-call overhead
+// across many keys in a single tombstone write batch.
+//
+// REQ001556: executor code type-asserts and uses DeleteBatch when
+// available, falling back to per-row Delete otherwise.
+type BatchDeleteStore interface {
+	Store
+	DeleteBatch(keys [][]byte) error
+}
+
 // StatsCatalog provides access to column statistics for
 // histogram-based selectivity estimation.
 type StatsCatalog interface {

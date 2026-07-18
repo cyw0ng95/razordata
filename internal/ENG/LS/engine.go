@@ -195,6 +195,34 @@ func (e *engine) WriteBatch(keys, values [][]byte) error {
 	return nil
 }
 
+// DeleteBatch writes tombstones for a contiguous list of keys in a
+// single amortised call. Symmetrical with WriteBatch — the closed
+// state and ShouldFlush atomic checks are paid once per batch
+// instead of per key. REQ001556.
+//
+// Empty input is a no-op. The first failed insert short-circuits
+// the rest of the batch (matching per-row Write/Delete semantics).
+func (e *engine) DeleteBatch(keys [][]byte) error {
+	if e.activeMem == nil {
+		return ErrNoActiveMemtable
+	}
+	if e.closed.Load() {
+		return ErrClosed
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	for i := range keys {
+		if err := e.activeMem.Insert(keys[i], tombstoneValue); err != nil {
+			return err
+		}
+	}
+	if e.activeMem.ShouldFlush() {
+		return e.flushActiveMemtable()
+	}
+	return nil
+}
+
 func (e *engine) flushActiveMemtable() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()

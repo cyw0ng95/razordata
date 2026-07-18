@@ -201,6 +201,21 @@ func (eng *Engine) Delete(key []byte) error {
 	return eng.e.Write(key, tombstoneValue)
 }
 
+// DeleteBatch writes tombstones for a contiguous list of keys in a
+// single amortised call. The per-row atomic checks (closed state,
+// flush threshold) are paid once per batch — O(1) instead of O(N).
+//
+// REQ001556: mirrors WriteBatch for the DELETE path used by
+// SQB/DT.TableHandle.DeleteRowBatch. Empty input is a no-op; the
+// first failed tombstone short-circuits the rest of the batch
+// (matching the per-row Delete error semantics).
+func (eng *Engine) DeleteBatch(keys [][]byte) error {
+	if eng == nil || eng.e == nil {
+		return ErrClosed
+	}
+	return eng.e.DeleteBatch(keys)
+}
+
 // NewIterator returns an iterator over all live keys with the given prefix.
 func (eng *Engine) NewIterator(prefix []byte) RangeIter {
 	e := eng.e
