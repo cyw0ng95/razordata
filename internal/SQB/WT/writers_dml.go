@@ -32,6 +32,7 @@ type Insert struct {
 	resultRows     []DT.Row
 	resultPos      int
 	execCtx        *DT.ExecContext // REQ000812
+	pending        map[string]struct{} // REQ001563: reused pending map for conflict resolution
 }
 
 // SetExecCtx sets the execution context. Used by EX.propagateExecContext.
@@ -138,13 +139,16 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 	if tw := DT.CurrentTxWriter(); tw != nil {
 		tw.RecordInMemoryTable(i.table, DT.SnapshotInMemoryTable(i.table))
 	}
-	var pending map[string]struct{}
+	if i.pending == nil {
+		i.pending = make(map[string]struct{}, len(i.values)+1)
+	} else {
+		clear(i.pending)
+	}
 	var iterValues [][]PS.Expr
 	if i.defaultValues {
-		pending = make(map[string]struct{}, 1)
+		clear(i.pending)
 		iterValues = [][]PS.Expr{nil}
 	} else {
-		pending = make(map[string]struct{}, len(i.values))
 		iterValues = i.values
 	}
 	lookup := InMemoryLookup(i.table)
@@ -185,7 +189,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 			if err := ValidateCheck(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := CheckUnique(cschema, out, pending, DT.Row{}, AsUniqueLookup(lookup)); err != nil {
+			if err := CheckUnique(cschema, out, i.pending, DT.Row{}, AsUniqueLookup(lookup)); err != nil {
 				if i.conflictAction == PS.ConflictActionReplace {
 					var removed int
 					existing, removed = RemoveConflicting(existing, cschema, out)
@@ -194,7 +198,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 						i.execCtx.LastChanges += int64(removed)
 						i.execCtx.TotalChanges += int64(removed)
 					}
-					pending = make(map[string]struct{}, len(i.values))
+					clear(i.pending)
 					goto doInsertReplace
 				}
 				if i.conflictAction == PS.ConflictActionIgnore {
@@ -241,7 +245,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 								i.execCtx.LastChanges += int64(removed)
 								i.execCtx.TotalChanges += int64(removed)
 							}
-							pending = make(map[string]struct{}, len(i.values))
+							clear(i.pending)
 							goto doInsertReplace
 						}
 						return DT.Row{}, cerr
@@ -278,7 +282,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 				i.execCtx.LastChanges += int64(removed)
 				i.execCtx.TotalChanges += int64(removed)
 			}
-			pending = make(map[string]struct{}, len(i.values))
+			clear(i.pending)
 		}
 		// REQ000126/REQ000905: FK validation on INSERT (skipped when PRAGMA foreign_keys = OFF)
 		if DT.IsForeignKeysEnabled() && cschema != nil && len(cschema.ForeignKeys) > 0 {
@@ -328,13 +332,16 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 	if hErr != nil {
 		return DT.Row{}, hErr
 	}
-	var pending map[string]struct{}
+	if i.pending == nil {
+		i.pending = make(map[string]struct{}, len(i.values)+1)
+	} else {
+		clear(i.pending)
+	}
 	var iterValues [][]PS.Expr
 	if i.defaultValues {
-		pending = make(map[string]struct{}, 1)
+		clear(i.pending)
 		iterValues = [][]PS.Expr{nil}
 	} else {
-		pending = make(map[string]struct{}, len(i.values))
 		iterValues = i.values
 	}
 	// In the engine path, use store-based lookup for PK uniqueness
@@ -404,7 +411,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 		if err := ValidateCheck(i.schema, out); err != nil {
 			return DT.Row{}, err
 		}
-		if err := CheckUnique(i.schema, out, pending, DT.Row{}, lookupFn); err != nil {
+		if err := CheckUnique(i.schema, out, i.pending, DT.Row{}, lookupFn); err != nil {
 			if i.conflictAction == PS.ConflictActionReplace {
 				// Delete the existing row via the handle, then fall
 				// through to insert below. REQ000987: InsertRow already
@@ -516,7 +523,11 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 		}
 	}
 
-	pending := make(map[string]struct{})
+	if i.pending == nil {
+		i.pending = make(map[string]struct{})
+	} else {
+		clear(i.pending)
+	}
 	lookup := InMemoryLookup(i.table)
 
 	for _, row := range selectRows {
@@ -533,7 +544,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 			if err := ValidateRow(cschema, out); err != nil {
 				return DT.Row{}, err
 			}
-			if err := CheckUnique(cschema, out, pending, DT.Row{}, AsUniqueLookup(lookup)); err != nil {
+			if err := CheckUnique(cschema, out, i.pending, DT.Row{}, AsUniqueLookup(lookup)); err != nil {
 				if i.conflictAction == PS.ConflictActionIgnore {
 					continue
 				}
