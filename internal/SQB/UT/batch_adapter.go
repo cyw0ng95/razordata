@@ -66,6 +66,14 @@ func (a *BatchToRowAdapter) Next(ctx context.Context) (pl.Row, error) {
 	return r, nil
 }
 
+// NextBatch forwards to the source BatchProducer. This allows
+// consumers that type-assert as BatchProducer to bypass the
+// row-at-a-time Next() path and drain entire batches at once.
+// REQ001582.
+func (a *BatchToRowAdapter) NextBatch(ctx context.Context) (*Batch, error) {
+	return a.source.NextBatch(ctx)
+}
+
 // Close closes the source.
 func (a *BatchToRowAdapter) Close() error {
 	a.rows = nil

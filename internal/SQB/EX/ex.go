@@ -1214,19 +1214,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 			execCtx.RowArena = e.ensureArena()
 			propagateExecContext(plan.Root, execCtx)
 			defer plan.Root.Close()
-			var out []DT.Row
-			for {
-				row, err := plan.Root.Next(ctx)
-				if err != nil {
-					if err == DT.ErrNoRows {
-						break
-					}
-					return nil, err
-				}
-				DT.WithExecContext(&row, execCtx)
-				out = append(out, row)
-			}
-			return out, nil
+			return e.drainPlan(ctx, plan)
 		}
 	}
 
@@ -1262,36 +1250,13 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(plan.Root, execCtx)
 	defer plan.Root.Close()
-	var out []DT.Row
-	for {
-		row, err := plan.Root.Next(ctx)
-		if err != nil {
-			if err == DT.ErrNoRows {
-				break
-			}
-			return nil, err
-		}
-		DT.WithExecContext(&row, execCtx)
-		out = append(out, row)
-	}
-	return out, nil
+	return e.drainPlan(ctx, plan)
 }
 
 // drainPlan drains all rows from a plan result into a slice.
 // REQ001464: extracted from QueryAll for reuse in textPlanCache hit path.
 func (e *Executor) drainPlan(ctx context.Context, plan *pl.PlanResult) ([]DT.Row, error) {
-	var out []DT.Row
-	for {
-		row, err := plan.Root.Next(ctx)
-		if err != nil {
-			if err == DT.ErrNoRows {
-				break
-			}
-			return nil, err
-		}
-		out = append(out, row)
-	}
-	return out, nil
+	return drainBatch(ctx, plan.Root)
 }
 
 // clearTextPlanCache drops all entries from the text cache. REQ001464.
