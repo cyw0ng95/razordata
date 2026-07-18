@@ -321,7 +321,7 @@ func (j *HashJoin) nextMatched() (pl.Row, int, int, int, bool) {
 			if matched {
 				right := bucket.rightRows[k]
 				leftData := j.leftRows[j.curLeftIdx].Data
-				outData := make([]pl.Value, j.dataPerRow)
+				outData := j.emitBuf[:j.dataPerRow]
 				copy(outData, leftData)
 				copy(outData[len(leftData):], right.Data)
 				hashJoinDebugRowFlow(j.leftTbl, uint64(j.curLeftIdx), false)
