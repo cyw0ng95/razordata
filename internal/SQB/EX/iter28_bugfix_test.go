@@ -1515,3 +1515,57 @@ func TestUpsert_DoUpdate_Where_AppliesUpdate(t *testing.T) {
 		t.Errorf("v = %d, want 99 (WHERE true should have applied the update)", v)
 	}
 }
+
+// REQ001383: UPSERT DO UPDATE with RETURNING returns the post-update row.
+func TestUpsert_Returning_DoUpdate(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	DT.RegisterStoreSchema("t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// INSERT ... ON CONFLICT (id) DO UPDATE SET v = 99 RETURNING id, v
+	rows, err := ex.QueryAll(ctx, "INSERT INTO t VALUES (1, 20) ON CONFLICT (id) DO UPDATE SET v = 99 RETURNING id, v")
+	if err != nil {
+		t.Fatalf("upsert returning: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	id, _ := rows[0].Data[0].ToAny().(int64)
+	v, _ := rows[0].Data[1].ToAny().(int64)
+	if id != 1 || v != 99 {
+		t.Errorf("RETURNING row = (%d, %d), want (1, 99) — must reflect post-update values", id, v)
+	}
+}
+
+// REQ001383: UPSERT DO NOTHING with RETURNING returns the pre-existing row.
+func TestUpsert_Returning_DoNothing(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	ex := NewExecutor()
+	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	DT.RegisterStoreSchema("t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+
+	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// INSERT ... ON CONFLICT (id) DO NOTHING RETURNING id, v
+	rows, err := ex.QueryAll(ctx, "INSERT INTO t VALUES (1, 99) ON CONFLICT (id) DO NOTHING RETURNING id, v")
+	if err != nil {
+		t.Fatalf("upsert returning: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	id, _ := rows[0].Data[0].ToAny().(int64)
+	v, _ := rows[0].Data[1].ToAny().(int64)
+	if id != 1 || v != 10 {
+		t.Errorf("RETURNING row = (%d, %d), want (1, 10) — must reflect pre-existing values for DO NOTHING", id, v)
+	}
+}

@@ -110,6 +110,8 @@ func (p *Parser) parseInsertTail(action ConflictAction) (*Insert, error) {
 		return &Insert{Table: table, Cols: cols, Select: sel, Returning: returning, ConflictAction: action}, nil
 	}
 
+	var err error
+
 	if err := p.expect(LX.T_VALUES); err != nil {
 		return nil, err
 	}
@@ -148,12 +150,8 @@ func (p *Parser) parseInsertTail(action ConflictAction) (*Insert, error) {
 		p.advance()
 	}
 
-	returning, err := p.parseReturning()
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse ON CONFLICT clause if present
+	// Parse ON CONFLICT clause if present (must come before RETURNING).
+	// REQ001383: RETURNING can also follow ON CONFLICT.
 	var onConflict *OnConflict
 	if p.current.Type == LX.T_ON {
 		// Peek to check if this is ON CONFLICT (not ON for JOIN)
@@ -165,6 +163,16 @@ func (p *Parser) parseInsertTail(action ConflictAction) (*Insert, error) {
 			}
 		}
 	}
+
+	// Parse RETURNING (now placed after ON CONFLICT so UPSERT RETURNING works).
+	returning, err := p.parseReturning()
+	if err != nil {
+		return nil, err
+	}
+
+	// Legacy path: ON CONFLICT after RETURNING was parsed. Since we now
+	// parse ON CONFLICT first, this block is unreachable but kept for
+	// defense-in-depth against grammar ambiguity.
 
 	return &Insert{Table: table, Cols: cols, Values: values, Returning: returning, OnConflict: onConflict, ConflictAction: action}, nil
 }
