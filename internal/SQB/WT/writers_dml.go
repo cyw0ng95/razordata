@@ -33,6 +33,7 @@ type Insert struct {
 	resultPos      int
 	execCtx        *DT.ExecContext // REQ000812
 	pending        map[string]struct{} // REQ001563: reused pending map for conflict resolution
+	colIndexMap    map[string]int      // REQ001564: pre-computed column index map for INSERT...SELECT
 }
 
 // SetExecCtx sets the execution context. Used by EX.propagateExecContext.
@@ -535,9 +536,17 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 	}
 	lookup := InMemoryLookup(i.table)
 
+	// REQ001564: pre-compute column index map once.
+	if i.colIndexMap == nil {
+		i.colIndexMap = make(map[string]int, len(schema))
+		for idx, c := range schema {
+			i.colIndexMap[c] = idx
+		}
+	}
+
 	for _, row := range selectRows {
 		// Build insert row from SELECT result
-		out, err := buildInsertRowFromSelect(schema, i.cols, row)
+		out, err := buildInsertRowFromSelectWithMap(schema, i.cols, row, i.colIndexMap)
 		if err != nil {
 			return DT.Row{}, err
 		}
@@ -598,6 +607,23 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 
 // buildInsertRowFromSelect builds an insert row from a SELECT result row.
 func buildInsertRowFromSelect(schema []string, cols []string, src DT.Row) (DT.Row, error) {
+	if len(cols) > 0 {
+		colIdx := make(map[string]int, len(schema))
+		for i, c := range schema {
+			colIdx[c] = i
+		}
+		return buildInsertRowFromSelectWithMap(schema, cols, src, colIdx)
+	}
+	// No column list: use SELECT columns directly
+	out := DT.Row{Cols: append([]string(nil), src.Cols...)}
+	out.Data = append([]DT.Value(nil), src.Data...)
+	return out, nil
+}
+
+// buildInsertRowFromSelectWithMap is the internal implementation that accepts
+// a pre-computed column index map to avoid per-row map allocation.
+// REQ001564.
+func buildInsertRowFromSelectWithMap(schema []string, cols []string, src DT.Row, colIdx map[string]int) (DT.Row, error) {
 	if len(cols) > 0 {
 		// Map SELECT columns to insert columns by position
 		out := DT.Row{Cols: append([]string(nil), schema...)}
