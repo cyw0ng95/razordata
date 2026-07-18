@@ -114,6 +114,25 @@ func resolveColIndices(row *Row, names []string) []int {
 	return idxs
 }
 
+// getInnerTableCols returns a set of column names for the given table.
+// Returns an empty map when the table is not found or has no columns.
+func getInnerTableCols(from string) map[string]struct{} {
+	if from == "" {
+		return nil
+	}
+	DT.TablesMu.RLock()
+	defer DT.TablesMu.RUnlock()
+	cols, ok := DT.Schemas[from]
+	if !ok || len(cols) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(cols))
+	for _, c := range cols {
+		set[c] = struct{}{}
+	}
+	return set
+}
+
 // extractCorrelatedColumns walks the subquery's WHERE AST and returns
 // the list of outer-column references. An Ident is treated as
 // correlated if it is NOT resolved by the subquery's FROM table.
@@ -125,6 +144,7 @@ func extractCorrelatedColumns(sel *PS.Select) []string {
 	}
 	subqAlias := sel.FromAlias
 	subqFrom := sel.From
+	innerCols := getInnerTableCols(subqFrom)
 	seen := map[string]bool{}
 	correlated := []string{}
 	var walk func(PS.Expr)
@@ -139,11 +159,12 @@ func extractCorrelatedColumns(sel *PS.Select) []string {
 		case *PS.UnaryExpr:
 			walk(e.Operand)
 		case *PS.Ident:
-			// A bare Ident in the subquery's WHERE without table qualifier.
-			// Without schema info, we cannot determine if it resolves to
-			// the inner table or the outer table. Conservatively treat it
-			// as NOT correlated (inner table) — correct, but no caching
-			// benefit for these queries.
+			if _, isInner := innerCols[e.Name]; !isInner {
+				if !seen[e.Name] {
+					correlated = append(correlated, e.Name)
+					seen[e.Name] = true
+				}
+			}
 		case *PS.QualifiedName:
 			// QualifiedName: correlated only when the table qualifier
 			// refers to the OUTER table, not the subquery's own FROM.

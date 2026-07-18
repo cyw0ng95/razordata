@@ -84,3 +84,110 @@ func TestSerializeCorrelatedValues_OutOfRangeIndex(t *testing.T) {
 		t.Fatalf("got %q, want NULL,NULL", got)
 	}
 }
+
+// TestExtractCorrelatedColumns_BareIdent_OnlyInOuter verifies REQ001470:
+// a bare Ident in the subquery's WHERE that is NOT a column of the inner
+// FROM table is treated as a correlated outer reference. Previously,
+// bare idents were conservatively treated as inner, which caused
+// correlated subqueries to be cached globally and return wrong results.
+func TestExtractCorrelatedColumns_BareIdent_OnlyInOuter(t *testing.T) {
+	DT.TablesMu.Lock()
+	DT.Schemas["subq_t"] = []string{"b", "c"}
+	DT.TablesMu.Unlock()
+	defer func() {
+		DT.TablesMu.Lock()
+		delete(DT.Schemas, "subq_t")
+		DT.TablesMu.Unlock()
+	}()
+
+	sel := &PS.Select{
+		From:      "subq_t",
+		FromAlias: "",
+		Where: &PS.BinaryExpr{
+			Op:    LX.T_EQ,
+			Left:  &PS.Ident{Name: "b"},
+			Right: &PS.Ident{Name: "a"},
+		},
+	}
+	cols := extractCorrelatedColumns(sel)
+	// b is in subq_t columns → NOT correlated. a is NOT in subq_t → correlated.
+	if len(cols) != 1 || cols[0] != "a" {
+		t.Fatalf("extractCorrelatedColumns: got %v, want [a]", cols)
+	}
+}
+
+// TestExtractCorrelatedColumns_BareIdent_BothInnerOuter verifies that
+// a bare Ident matching a column in both the inner FROM table and the
+// outer row is treated as NOT correlated (inner reference takes precedence).
+func TestExtractCorrelatedColumns_BareIdent_BothInnerOuter(t *testing.T) {
+	DT.TablesMu.Lock()
+	DT.Schemas["subq_t"] = []string{"a", "b", "c"}
+	DT.TablesMu.Unlock()
+	defer func() {
+		DT.TablesMu.Lock()
+		delete(DT.Schemas, "subq_t")
+		DT.TablesMu.Unlock()
+	}()
+
+	sel := &PS.Select{
+		From:      "subq_t",
+		FromAlias: "",
+		Where: &PS.BinaryExpr{
+			Op:    LX.T_EQ,
+			Left:  &PS.Ident{Name: "b"},
+			Right: &PS.Ident{Name: "a"},
+		},
+	}
+	cols := extractCorrelatedColumns(sel)
+	// Both a and b are in subq_t columns → NOT correlated.
+	if len(cols) != 0 {
+		t.Fatalf("extractCorrelatedColumns: got %v, want []", cols)
+	}
+}
+
+// TestExtractCorrelatedColumns_EmptyFrom verifies that subqueries
+// without a FROM table (e.g. SELECT 1) are handled gracefully.
+func TestExtractCorrelatedColumns_EmptyFrom(t *testing.T) {
+	sel := &PS.Select{
+		From: "",
+		Where: &PS.BinaryExpr{
+			Op:    LX.T_EQ,
+			Left:  &PS.Ident{Name: "b"},
+			Right: &PS.Ident{Name: "a"},
+		},
+	}
+	cols := extractCorrelatedColumns(sel)
+	// No FROM table → no inner columns → all bare idents are correlated.
+	if len(cols) != 2 {
+		t.Fatalf("extractCorrelatedColumns: got %d correlated cols, want 2", len(cols))
+	}
+}
+
+// TestExtractCorrelatedColumns_QualifiedName verifies that QualifiedName
+// detection still works correctly alongside the new bare Ident logic.
+func TestExtractCorrelatedColumns_QualifiedName(t *testing.T) {
+	DT.TablesMu.Lock()
+	DT.Schemas["inner"] = []string{"a", "b"}
+	DT.TablesMu.Unlock()
+	defer func() {
+		DT.TablesMu.Lock()
+		delete(DT.Schemas, "inner")
+		DT.TablesMu.Unlock()
+	}()
+
+	sel := &PS.Select{
+		From:      "inner",
+		FromAlias: "inner",
+		Where: &PS.BinaryExpr{
+			Op:    LX.T_EQ,
+			Left:  &PS.QualifiedName{Table: "outer", Name: "x"},
+			Right: &PS.QualifiedName{Table: "inner", Name: "a"},
+		},
+	}
+	cols := extractCorrelatedColumns(sel)
+	// "outer.x" is qualified with outer table → correlated.
+	// "inner.a" is qualified with inner table alias → NOT correlated.
+	if len(cols) != 1 || cols[0] != "x" {
+		t.Fatalf("extractCorrelatedColumns: got %v, want [x]", cols)
+	}
+}
