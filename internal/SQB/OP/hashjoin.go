@@ -323,7 +323,18 @@ func (j *HashJoin) nextMatched() (pl.Row, int, int, int, bool) {
 			if matched {
 				right := bucket.rightRows[k]
 				leftData := j.leftRows[j.curLeftIdx].Data
-				outData := j.emitBuf[:j.dataPerRow]
+				// REQ001594 (revert REQ001560): allocate a fresh
+				// output row per match. The reusable j.emitBuf was
+				// unsafe — when the consumer (e.g. NLJ block mode
+				// draining all matches into blkRightRows) retains
+				// multiple output rows across Next() calls, every
+				// retained row aliased the same backing array and
+				// ended up holding the *last* match's data, breaking
+				// downstream value lookups for multi-table joins
+				// such as select4 L39784 (returned 21 rows that all
+				// shared a single (t4, t6) tuple instead of the 3
+				// distinct equi-join pairs).
+				outData := make([]pl.Value, j.dataPerRow)
 				copy(outData, leftData)
 				copy(outData[len(leftData):], right.Data)
 				hashJoinDebugRowFlow(j.leftTbl, uint64(j.curLeftIdx), false)

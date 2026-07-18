@@ -1,12 +1,12 @@
-# REQ001410 — select4 L39784 NLJ Join Bug: Fix Status
+# REQ001410 / REQ001594 — select4 L39784 Join Bug: Fix Status
 
 ## Summary
 
-The 8-table join in `select4.test` L39784 returns **14 rows** instead of the expected **21 rows**. The bug is **table-order-dependent**: some FROM clause orderings produce correct results (21 rows), others produce wrong results (14 or 0 rows).
+The 8-table join in `select4.test` L39784 returns **21 rows** (correct count) but the cell values were aliased so every row read the same (t4, t6) equi-join pair instead of the 3 distinct pairs, giving the wrong hash `7ed8f2ad6ddd1577a494aac6e6b5ea14` instead of the canonical `34325f84dd0efa600c0be4e8e0770bc3`.
 
-## Status (2026-07-08 08:00 UTC)
+## Status (2026-07-18 13:30 UTC)
 
-**Partially resolved** — Row count fixed (14→21). Hash mismatch is pre-existing (not caused by budget fix).
+**Fully resolved** — both row count (21) and hash now match the canonical SLT value. REQ001594 reverted REQ001560's emitBuf reuse in `HashJoin.nextMatched`; the fresh per-match Data slice eliminates aliasing when consumers (NLJ block mode) retain multiple matches before reading them.
 
 ## What was applied
 
@@ -172,3 +172,14 @@ cd tests/sqlcmp && go test -tags slt_corpus -run TestSelect4_Join277_HashMismatc
 
 Expected: 21 rows, hash `34325f84dd0efa600c0be4e8e0770bc3`
 Actual: 21 rows, hash `3a3415d738ac1c62f2a07eb5e92eef2f` (row count correct, values wrong)
+
+## Outcome (REQ001594, 2026-07-18)
+
+**Shipped.** Both row count and hash now match the canonical SLT corpus. LoC: +1 unit-test file (2 test cases, ~110 lines), `internal/SQB/OP/hashjoin.go` reverts 1 line back to per-match `make([]pl.Value, j.dataPerRow)`, plus the doc updates (`docs/development/select4-fix-status.md`, `docs/development/REQUIREMENTS.md` REQ001594 row). Before-commit gate (internal + select1 + select2 + select3 + select4) passes. Deviation from the prior budget-fix plan: none — REQ001560's emitBuf optimization is reverted without restoring the underlying allocation pressure, since the downstream consumers that retain multiple matches (NLJ block mode in particular) are outnumbered by the inner-probe single-call pattern in other join configurations.
+
+The smoking-gun trace:
+- drill_e (FROM `t3, t7, t4, t5, t6`) — 21 rows emitted, ALL with the same `[223 1174]` t4/t6 pair; the engine was returning 7 unique (t3, a3+a5) values × 3 repetitions of the same (t6, t4) tuple.
+- drill_f (full 8-table) — same pattern, same row count.
+- drill_a (FROM `t4, t6` only) — correctly returned 3 distinct pairs `[707 543]`, `[1254 1237]`, `[223 1174]`.
+
+The bug only manifests when t4 is *not* the immediate predecessor of t6 in the FROM clause AND an additional table (t7) sits between them — that ordering pushes HashJoin into the merge-phase NLJ's block-mode inner, whose `blkRightRows` materialization retains shared Data across matches.
