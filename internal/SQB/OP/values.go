@@ -56,6 +56,7 @@ func (c *ConstRow) WithParams(p []any) Operator { return c }
 // expressions without a FROM source. Used for `SELECT expr[,expr...]`.
 type Values struct {
 	cols      []PS.Expr
+	colNames  []string // REQ001571: pre-computed column names
 	evaluated bool
 	row       Row
 	planner   pl.QueryPlanner
@@ -65,7 +66,13 @@ type Values struct {
 
 // newValuesOp creates a Values operator for the given column expressions.
 func NewValuesOp(cols []PS.Expr) *Values {
-	return &Values{cols: cols}
+	v := &Values{cols: cols}
+	// REQ001571: pre-compute column names at construction time.
+	v.colNames = make([]string, len(cols))
+	for i, e := range cols {
+		v.colNames[i] = exprString(e)
+	}
+	return v
 }
 
 var _ Operator = (*Values)(nil)
@@ -85,7 +92,6 @@ func (v *Values) Next(ctx context.Context) (Row, error) {
 	if v.planner != nil || v.execCtx != nil {
 		evalRow = &Row{Planner: v.planner, ExecCtx: v.execCtx}
 	}
-	cols := make([]string, len(v.cols))
 	data := make([]Value, len(v.cols))
 	types := make([]LX.TokenType, len(v.cols))
 
@@ -94,12 +100,11 @@ func (v *Values) Next(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
-		cols[i] = exprString(e)
 		data[i] = val
 		types[i] = inferType(val.ToAny())
 	}
 
-	v.row = Row{Cols: cols, Types: types, Data: data}
+	v.row = Row{Cols: v.colNames, Types: types, Data: data}
 	return v.row, nil
 }
 
@@ -242,7 +247,6 @@ func (v *ValuesRows) Next(ctx context.Context) (Row, error) {
 	}
 	rowExprs := v.rows[v.pos]
 	v.pos++
-	cols := make([]string, len(rowExprs))
 	data := make([]Value, len(rowExprs))
 	types := make([]LX.TokenType, len(rowExprs))
 	for i, e := range rowExprs {
@@ -250,14 +254,11 @@ func (v *ValuesRows) Next(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
-		if v.pos == 1 && i < len(v.schema) {
-			cols[i] = v.schema[i]
-		} else {
-			cols[i] = exprString(e)
-		}
 		data[i] = val
 		types[i] = inferType(val.ToAny())
 	}
+	// REQ001571: use pre-computed schema for column names (first row defines them).
+	cols := v.schema
 	return Row{Cols: cols, Types: types, Data: data}, nil
 }
 

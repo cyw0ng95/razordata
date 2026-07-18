@@ -632,6 +632,20 @@ func UnregisterTable(name string) {
 }
 
 // CloneRow creates a deep copy of a Row.
+// ShallowCloneRow copies the Data slice header only (no deep copy of elements).
+// Value is a struct type, so the elements themselves don't need deep copying.
+// Used for FK validation snapshots where only the values matter, not the source.
+// REQ001572.
+func ShallowCloneRow(r Row) Row {
+	out := r
+	if r.Data != nil {
+		out.Data = make([]Value, len(r.Data))
+		copy(out.Data, r.Data)
+	}
+	return out
+}
+
+// CloneRow creates a deep copy of a Row, copying all slice fields.
 func CloneRow(r Row) Row {
 	EC.BUG_ON(len(r.Data) != len(r.Types), "CloneRow row integrity: Data len %d != Types len %d", len(r.Data), len(r.Types))
 	out := Row{Cols: append([]string(nil), r.Cols...), Types: append([]LX.TokenType(nil), r.Types...), Outer: r.Outer, Planner: r.Planner, StoreKey: r.StoreKey, TableName: r.TableName}
