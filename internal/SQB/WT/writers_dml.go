@@ -15,6 +15,20 @@ import (
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
+// growSlice grows *s to length n without zeroing the new capacity.
+// It is a generic helper that avoids the per-call make pattern
+// (REQ001557 family of zero-alloc REQs).
+func growSlice[T any](s *[]T, n int) {
+	if cap(*s) >= n {
+		*s = (*s)[:n]
+		return
+	}
+	nc := max(cap(*s)*2, n)
+	b := make([]T, n, nc)
+	copy(b, *s)
+	*s = b
+}
+
 type Insert struct {
 	table          string
 	cols           []string
@@ -35,6 +49,9 @@ type Insert struct {
 	execCtx        *DT.ExecContext // REQ000812
 	pending        map[string]struct{} // REQ001563: reused pending map for conflict resolution
 	colIndexMap    map[string]int      // REQ001564: pre-computed column index map for INSERT...SELECT
+	rColsBuf  []string       // REQ001557: flat RETURNING col name backing
+	rTypesBuf []LX.TokenType // REQ001557: flat RETURNING type backing
+	rDataBuf  []DT.Value     // REQ001557: flat RETURNING data backing
 }
 
 // SetExecCtx sets the execution context. Used by EX.propagateExecContext.
@@ -89,7 +106,7 @@ func NewInsertWithStore(store DT.Store, table string, cols []string, values [][]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
 	}
-	return &Insert{
+	ins := &Insert{
 		table:      table,
 		cols:       cols,
 		values:     values,
@@ -97,7 +114,14 @@ func NewInsertWithStore(store DT.Store, table string, cols []string, values [][]
 		onConflict: onConflict,
 		store:      store,
 		schema:     ss,
-	}, nil
+	}
+	if len(returning) > 0 {
+		nCols := len(ss.Cols)
+		ins.rColsBuf = make([]string, 0, 256*nCols)
+		ins.rTypesBuf = make([]LX.TokenType, 0, 256*nCols)
+		ins.rDataBuf = make([]DT.Value, 0, 256*nCols)
+	}
+	return ins, nil
 }
 
 func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
@@ -225,7 +249,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 								return DT.Row{}, lerr
 							}
 							if found {
-								if err := evalReturning(i.returning, &existingRow, i.params, &i.resultRows); err != nil {
+								if err := evalReturning(i.returning, &existingRow, i.params, &i.resultRows, &i.rColsBuf, &i.rTypesBuf, &i.rDataBuf); err != nil {
 									return DT.Row{}, err
 								}
 							}
@@ -265,7 +289,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 					// REQ001383: emit RETURNING row for DO UPDATE
 					// using the post-update row.
 					if len(i.returning) > 0 {
-						if err := evalReturning(i.returning, &resultRow, i.params, &i.resultRows); err != nil {
+						if err := evalReturning(i.returning, &resultRow, i.params, &i.resultRows, &i.rColsBuf, &i.rTypesBuf, &i.rDataBuf); err != nil {
 							return DT.Row{}, err
 						}
 					}
@@ -306,7 +330,7 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(i.returning) > 0 {
-			if err := evalReturning(i.returning, &out, i.params, &i.resultRows); err != nil {
+			if err := evalReturning(i.returning, &out, i.params, &i.resultRows, &i.rColsBuf, &i.rTypesBuf, &i.rDataBuf); err != nil {
 				return DT.Row{}, err
 			}
 		}
@@ -468,7 +492,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(i.returning) > 0 {
-			if err := evalReturning(i.returning, &out, i.params, &i.resultRows); err != nil {
+			if err := evalReturning(i.returning, &out, i.params, &i.resultRows, &i.rColsBuf, &i.rTypesBuf, &i.rDataBuf); err != nil {
 				return DT.Row{}, err
 			}
 		}
@@ -591,7 +615,7 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 		}
 
 		if len(i.returning) > 0 {
-			if err := evalReturning(i.returning, &out, i.params, &i.resultRows); err != nil {
+			if err := evalReturning(i.returning, &out, i.params, &i.resultRows, &i.rColsBuf, &i.rTypesBuf, &i.rDataBuf); err != nil {
 				return DT.Row{}, err
 			}
 		}
@@ -694,6 +718,9 @@ type Update struct {
 	// appends; flushChunk fires triggers for the entire chunk in
 	// one pass before clearing the slice. REQ001578.
 	pendingUpdates []triggerEvent
+	rColsBuf  []string       // REQ001557: flat RETURNING col name backing
+	rTypesBuf []LX.TokenType // REQ001557: flat RETURNING type backing
+	rDataBuf  []DT.Value     // REQ001557: flat RETURNING data backing
 }
 
 // triggerEvent is one deferred trigger invocation captured during
@@ -740,7 +767,7 @@ func NewUpdateWithStore(store DT.Store, table string, set []PS.Pair, where PS.Ex
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
 	}
-	return &Update{
+	upd := &Update{
 		table:     table,
 		set:       set,
 		where:     where,
@@ -748,7 +775,14 @@ func NewUpdateWithStore(store DT.Store, table string, set []PS.Pair, where PS.Ex
 		returning: returning,
 		store:     store,
 		schema:    ss,
-	}, nil
+	}
+	if len(returning) > 0 {
+		nCols := len(ss.Cols)
+		upd.rColsBuf = make([]string, 0, 256*nCols)
+		upd.rTypesBuf = make([]LX.TokenType, 0, 256*nCols)
+		upd.rDataBuf = make([]DT.Value, 0, 256*nCols)
+	}
+	return upd, nil
 }
 
 func (u *Update) Next(ctx context.Context) (DT.Row, error) {
@@ -857,7 +891,7 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(u.returning) > 0 {
-			if err := evalReturning(u.returning, &row, u.params, &u.resultRows); err != nil {
+			if err := evalReturning(u.returning, &row, u.params, &u.resultRows, &u.rColsBuf, &u.rTypesBuf, &u.rDataBuf); err != nil {
 				return DT.Row{}, err
 			}
 		}
@@ -977,7 +1011,7 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(u.returning) > 0 {
-			if err := evalReturning(u.returning, &row, u.params, &u.resultRows); err != nil {
+			if err := evalReturning(u.returning, &row, u.params, &u.resultRows, &u.rColsBuf, &u.rTypesBuf, &u.rDataBuf); err != nil {
 				return DT.Row{}, err
 			}
 		}
@@ -1074,6 +1108,9 @@ type Delete struct {
 	// pendingDeletes collects oldRow snapshots whose AFTER DELETE
 	// triggers have not yet been fired. REQ001578.
 	pendingDeletes []triggerEvent
+	rColsBuf  []string       // REQ001557: flat RETURNING col name backing
+	rTypesBuf []LX.TokenType // REQ001557: flat RETURNING type backing
+	rDataBuf  []DT.Value     // REQ001557: flat RETURNING data backing
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -1104,14 +1141,21 @@ func NewDeleteWithStore(store DT.Store, table string, where PS.Expr, iter DT.Ope
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", OP.ErrTableNotRegisteredForStorage, table)
 	}
-	return &Delete{
+	del := &Delete{
 		table:     table,
 		where:     where,
 		iter:      iter,
 		returning: returning,
 		store:     store,
 		schema:    ss,
-	}, nil
+	}
+	if len(returning) > 0 {
+		nCols := len(ss.Cols)
+		del.rColsBuf = make([]string, 0, 256*nCols)
+		del.rTypesBuf = make([]LX.TokenType, 0, 256*nCols)
+		del.rDataBuf = make([]DT.Value, 0, 256*nCols)
+	}
+	return del, nil
 }
 
 func (d *Delete) Next(ctx context.Context) (DT.Row, error) {
@@ -1165,7 +1209,7 @@ func (d *Delete) Next(ctx context.Context) (DT.Row, error) {
 
 			// Evaluate RETURNING expressions before deleting (REQ000518: expand *)
 			if len(d.returning) > 0 {
-				if err := evalReturning(d.returning, &row, d.params, &d.resultRows); err != nil {
+				if err := evalReturning(d.returning, &row, d.params, &d.resultRows, &d.rColsBuf, &d.rTypesBuf, &d.rDataBuf); err != nil {
 					return DT.Row{}, err
 				}
 			}
@@ -1290,7 +1334,7 @@ func (d *Delete) nextFromStore(ctx context.Context) (DT.Row, error) {
 		}
 		// Evaluate RETURNING expressions before deleting (REQ000518: expand *)
 		if len(d.returning) > 0 {
-			if err := evalReturning(d.returning, &row, d.params, &d.resultRows); err != nil {
+			if err := evalReturning(d.returning, &row, d.params, &d.resultRows, &d.rColsBuf, &d.rTypesBuf, &d.rDataBuf); err != nil {
 				return DT.Row{}, err
 			}
 		}
@@ -1371,15 +1415,26 @@ func colNameForReturning(expr PS.Expr, colNames []string, idx int) string {
 
 // evalReturning evaluates RETURNING expressions for a single row.
 // REQ000984: extracted from 7 duplicated call sites in Insert/Update/Delete.
-func evalReturning(exprs []PS.Expr, row *DT.Row, params []any, resultRows *[]DT.Row) error {
+// REQ001557: bufCols/bufTypes/bufData are flat backing buffers reused across
+// rows within one statement execution, avoiding per-row make.
+func evalReturning(exprs []PS.Expr, row *DT.Row, params []any, resultRows *[]DT.Row,
+	bufCols *[]string, bufTypes *[]LX.TokenType, bufData *[]DT.Value) error {
 	if len(exprs) == 0 {
 		return nil
 	}
 	expanded := expandReturningStar(exprs, row.Cols)
+	n := len(expanded)
+
+	flatOff := len(*bufCols)
+	newLen := flatOff + n
+	growSlice(bufCols, newLen)
+	growSlice(bufTypes, newLen)
+	growSlice(bufData, newLen)
+
 	resultRow := DT.Row{
-		Cols:  make([]string, len(expanded)),
-		Types: make([]LX.TokenType, len(expanded)),
-		Data:  make([]DT.Value, len(expanded)),
+		Cols:  (*bufCols)[flatOff:newLen:newLen],
+		Types: (*bufTypes)[flatOff:newLen:newLen],
+		Data:  (*bufData)[flatOff:newLen:newLen],
 	}
 	for j, expr := range expanded {
 		val, err := EV.EvalValue(expr, row, params)
